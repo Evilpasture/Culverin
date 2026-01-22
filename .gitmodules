@@ -3,4 +3,4 @@
 	url = https://github.comhttps://github.com/jrouwe/JoltPhysics.git
 [submodule "extern/JoltC"]
 	path = extern/JoltC
-	url = https://github.com/amerkoleci/JoltC.git
+	url = https://github.com/Evilpasture/JoltC.git
