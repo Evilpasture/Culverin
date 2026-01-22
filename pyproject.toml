@@ -23,6 +23,5 @@ wheel.exclude = [
     "**/*.h",
     "**/*.cpp",
     "**/*.obj",
-    "**/*.lib",
-    "**/*.exp",
+    # Note: we DO NOT exclude .pyi files
 ]
