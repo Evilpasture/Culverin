@@ -1,0 +1,28 @@
+[build-system]
+requires = ["scikit-build-core", "setuptools"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "culverin"
+version = "0.1.0"
+description = "High-performance Jolt Physics wrapper using Shadow Buffers"
+readme = "README.md"
+requires-python = ">=3.13"
+
+[tool.scikit-build]
+cmake.build-type = "Release"
+# This is our base directory in the wheel
+wheel.install-dir = "culverin"
+
+# Clean up Jolt trash and source files
+wheel.exclude = [
+    "culverin/include/**",
+    "culverin/lib/**",
+    "culverin/share/**",
+    "**/*.c",
+    "**/*.h",
+    "**/*.cpp",
+    "**/*.obj",
+    "**/*.lib",
+    "**/*.exp",
+]

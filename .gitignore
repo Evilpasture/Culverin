@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+dist/
+build/
+*.egg-info/
+
+# Build System (scikit-build-core / CMake)
+_skbuild/
+CMakeFiles/
+CMakeCache.txt
+compile_commands.json
+*.pyd
+*.so
+*.lib
+*.exp
+*.pdb
+
+# Dependencies (If not using submodules)
+# extern/JoltPhysics/
+# extern/JoltC/
+
+# IDEs
+.vscode/
+.idea/
+.DS_Store
