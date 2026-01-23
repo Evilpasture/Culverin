@@ -42,6 +42,35 @@ typedef struct {
 // Python handles will be 64-bit integers: (Generation << 32) | SlotIndex
 typedef uint64_t BodyHandle;
 
+// --- Slot State Machine ---
+typedef enum {
+    SLOT_EMPTY = 0,
+    SLOT_PENDING_CREATE = 1,
+    SLOT_ALIVE = 2,
+    SLOT_PENDING_DESTROY = 3
+} SlotState;
+
+// --- Command Buffer ---
+typedef enum {
+    CMD_CREATE_BODY,
+    CMD_DESTROY_BODY
+} CommandType;
+
+typedef struct {
+    CommandType type;
+    union {
+        struct {
+            JPH_BodyCreationSettings* settings;
+            uint32_t slot;
+            // Generation is implicit in the slot map
+        } create;
+
+        struct {
+            uint32_t slot;
+        } destroy;
+    };
+} PhysicsCommand;
+
 // --- The Object Struct ---
 typedef struct {
     PyObject_HEAD
@@ -69,8 +98,13 @@ typedef struct {
     uint32_t* dense_to_slot;   // [Dense Index] -> Slot
     
     uint32_t* free_slots;      // Stack of available slots
+    uint8_t* slot_states;
     size_t free_count;
     size_t slot_capacity;      // Size of the mapping arrays
+
+    PhysicsCommand* command_queue;
+    size_t command_count;
+    size_t command_capacity;
 
     ShapeEntry* shape_cache;
     size_t shape_cache_count;
@@ -85,6 +119,11 @@ typedef struct {
     Py_ssize_t view_shape[2];
     Py_ssize_t view_strides[2];
 } PhysicsWorldObject;
+
+typedef struct {
+    PhysicsWorldObject* world;
+    PyObject* result_list; // Python List to append handles to
+} QueryContext;
 
 // --- Module State (PEP 489) ---
 typedef struct {

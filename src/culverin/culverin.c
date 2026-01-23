@@ -235,15 +235,29 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args, PyObject 
     self->slot_to_dense = PyMem_RawMalloc(self->slot_capacity * sizeof(uint32_t));
     self->dense_to_slot = PyMem_RawMalloc(self->slot_capacity * sizeof(uint32_t));
     self->free_slots = PyMem_RawMalloc(self->slot_capacity * sizeof(uint32_t));
+    self->slot_states = PyMem_RawCalloc(self->slot_capacity, sizeof(uint8_t));
     self->free_count = 0;
+    // Command Queue (Start small, grow as needed)
+    self->command_capacity = 64;
+    self->command_count = 0;
+    self->command_queue = PyMem_RawMalloc(self->command_capacity * sizeof(PhysicsCommand));
 
     // Check Allocations
     if (!self->positions || !self->rotations || !self->body_ids ||
         !self->linear_velocities || !self->angular_velocities ||
-        !self->generations || !self->slot_to_dense || !self->dense_to_slot || !self->free_slots) {
+        !self->generations || !self->slot_to_dense || !self->dense_to_slot || !self->free_slots ||
+        !self->slot_states || !self->command_queue) {
         Py_XDECREF(baked);
         PyErr_NoMemory();
         return -1;
+    }
+
+    // Initialize Slot States
+    for (uint32_t i = 0; i < (uint32_t)self->count; i++) {
+        self->slot_states[i] = SLOT_ALIVE;
+    }
+    for (uint32_t i = (uint32_t)self->count; i < (uint32_t)self->slot_capacity; i++) {
+        self->slot_states[i] = SLOT_EMPTY;
     }
 
     // 4. BODY CREATION LOOP
@@ -477,80 +491,335 @@ static PyObject* PhysicsWorld_raycast(PhysicsWorldObject* self, PyObject* args) 
 // }
 // ==============================================================================================================================================
 
-  // --- Methods & Getters (Standard) ---
 
-  static PyObject *PhysicsWorld_step(PhysicsWorldObject * self,
-                                     PyObject * args) {
+// Helper to grow queue
+static bool ensure_command_capacity(PhysicsWorldObject* self) {
+    if (self->command_count >= self->command_capacity) {
+        size_t new_cap = self->command_capacity * 2;
+        void* new_ptr = PyMem_RawRealloc(self->command_queue, new_cap * sizeof(PhysicsCommand));
+        if (!new_ptr) return false;
+        self->command_queue = (PhysicsCommand*)new_ptr;
+        self->command_capacity = new_cap;
+    }
+    return true;
+}
+
+static void flush_commands(PhysicsWorldObject* self) {
+    JPH_BodyInterface* bi = self->body_interface;
+
+    for (size_t i = 0; i < self->command_count; i++) {
+        PhysicsCommand* cmd = &self->command_queue[i];
+
+        if (cmd->type == CMD_CREATE_BODY) {
+            uint32_t slot = cmd->create.slot;
+            
+            // 1. Create in Jolt
+            JPH_BodyCreationSettings* s = cmd->create.settings;
+            JPH_BodyID bid = JPH_BodyInterface_CreateAndAddBody(bi, s, JPH_Activation_Activate);
+            
+            // 2. Map Slot -> Dense Index (Append to end)
+            // Note: We assume capacity check was done in Python create_body or we grow here
+            // For simplicity, we assume we have capacity in shadow buffers (checked in create)
+            
+            size_t dense_idx = self->count;
+            self->body_ids[dense_idx] = bid;
+            self->slot_to_dense[slot] = (uint32_t)dense_idx;
+            self->dense_to_slot[dense_idx] = slot;
+            
+            // 3. Init Shadow Data (Optional: Get from Jolt to be exact)
+            JPH_RVec3 pos; JPH_Quat rot;
+            JPH_BodyInterface_GetPosition(bi, bid, &pos);
+            JPH_BodyInterface_GetRotation(bi, bid, &rot);
+            
+            self->positions[dense_idx*4+0] = (float)pos.x;
+            self->positions[dense_idx*4+1] = (float)pos.y;
+            self->positions[dense_idx*4+2] = (float)pos.z;
+            self->positions[dense_idx*4+3] = 0.0f;
+            
+            self->rotations[dense_idx*4+0] = rot.x;
+            self->rotations[dense_idx*4+1] = rot.y;
+            self->rotations[dense_idx*4+2] = rot.z;
+            self->rotations[dense_idx*4+3] = rot.w;
+            
+            // Zero velocity initially
+            memset(&self->linear_velocities[dense_idx*4], 0, 4*sizeof(float));
+            memset(&self->angular_velocities[dense_idx*4], 0, 4*sizeof(float));
+
+            self->count++;
+            self->slot_states[slot] = SLOT_ALIVE;
+            
+            // Cleanup Jolt Settings Wrapper
+            JPH_BodyCreationSettings_Destroy(s);
+        
+        } 
+        else if (cmd->type == CMD_DESTROY_BODY) {
+            uint32_t slot = cmd->destroy.slot;
+            uint32_t dense_idx = self->slot_to_dense[slot];
+            
+            // 1. Jolt Cleanup
+            JPH_BodyID bid = self->body_ids[dense_idx];
+            JPH_BodyInterface_RemoveBody(bi, bid);
+            JPH_BodyInterface_DestroyBody(bi, bid);
+            
+            // 2. Swap and Pop (Dense Arrays)
+            size_t last_dense = self->count - 1;
+            
+            if (dense_idx != last_dense) {
+                // Move data
+                memcpy(&self->positions[dense_idx*4], &self->positions[last_dense*4], 16);
+                memcpy(&self->rotations[dense_idx*4], &self->rotations[last_dense*4], 16);
+                memcpy(&self->linear_velocities[dense_idx*4], &self->linear_velocities[last_dense*4], 16);
+                memcpy(&self->angular_velocities[dense_idx*4], &self->angular_velocities[last_dense*4], 16);
+                self->body_ids[dense_idx] = self->body_ids[last_dense];
+                
+                // Update Maps
+                uint32_t mover_slot = self->dense_to_slot[last_dense];
+                self->slot_to_dense[mover_slot] = (uint32_t)dense_idx;
+                self->dense_to_slot[dense_idx] = mover_slot;
+            }
+            
+            // 3. Recycle Slot
+            self->generations[slot]++; // Invalidate old handles
+            self->free_slots[self->free_count++] = slot;
+            self->slot_states[slot] = SLOT_EMPTY;
+            self->count--;
+        }
+    }
+    
+    self->command_count = 0;
+    self->view_shape[0] = (Py_ssize_t)self->count;
+}
+// --- Methods & Getters (Standard) ---
+
+static PyObject* PhysicsWorld_step(PhysicsWorldObject* self, PyObject* args) {
     float dt = 1.0f/60.0f;
     if (!PyArg_ParseTuple(args, "|f", &dt)) return NULL;
 
     Py_BEGIN_ALLOW_THREADS
+    
+    SHADOW_LOCK(&self->shadow_lock);
+    flush_commands(self); // <--- FLUSH BEFORE STEP
+    SHADOW_UNLOCK(&self->shadow_lock);
+
     JPH_PhysicsSystem_Update(self->system, dt, 1, self->job_system);
+    
     SHADOW_LOCK(&self->shadow_lock);
     culverin_sync_shadow_buffers(self);
     SHADOW_UNLOCK(&self->shadow_lock);
+    
     self->time += (double)dt;
     Py_END_ALLOW_THREADS
 
     Py_RETURN_NONE;
 }
 
-static PyObject* PhysicsWorld_remove_body(PhysicsWorldObject* self, PyObject* args) {
+static PyObject* PhysicsWorld_create_body(PhysicsWorldObject* self, PyObject* args, PyObject* kwds) {
+    // Parse args: pos=(0,0,0), rot=(0,0,0,1), size=(1,1,1), shape=BOX, motion=DYNAMIC
+    float px=0, py=0, pz=0;
+    float rx=0, ry=0, rz=0, rw=1;
+    float sx=1, sy=1, sz=1;
+    int shape_type = 0; // BOX
+    int motion_type = 2; // DYNAMIC
+    
+    static char *kwlist[] = {"pos", "rot", "size", "shape", "motion", NULL};
+    
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "|(fff)(ffff)(fff)ii", kwlist, 
+        &px, &py, &pz, &rx, &ry, &rz, &rw, &sx, &sy, &sz, &shape_type, &motion_type)) {
+        return NULL;
+    }
+
+    SHADOW_LOCK(&self->shadow_lock);
+
+    // 1. Capacity Check
+    if (self->count + self->command_count >= self->capacity) {
+        // TODO: Reallocate dense arrays logic here. 
+        // For now, we error to keep snippet small. User can set max_bodies high.
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_SetString(PyExc_MemoryError, "Max bodies reached");
+        return NULL;
+    }
+    
+    // 2. Get Free Slot
+    if (self->free_count == 0) {
+        // Grow slot capacity? Or error.
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_SetString(PyExc_MemoryError, "No free slots available");
+        return NULL;
+    }
+    uint32_t slot = self->free_slots[--self->free_count];
+    
+    // 3. Prepare Jolt Settings
+    float params[3] = {sx, sy, sz};
+    JPH_Shape* shape = find_or_create_shape(self, shape_type, params);
+    if (!shape) {
+        self->free_slots[self->free_count++] = slot; // Return slot
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_SetString(PyExc_ValueError, "Failed to create shape");
+        return NULL;
+    }
+
+    // Manual Alignment
+    JPH_STACK_ALLOC(JPH_RVec3, pos);
+    pos->x = px; pos->y = py; pos->z = pz;
+    JPH_STACK_ALLOC(JPH_Quat, rot);
+    rot->x = rx; rot->y = ry; rot->z = rz; rot->w = rw;
+
+    JPH_BodyCreationSettings* settings = JPH_BodyCreationSettings_Create3(
+        shape, pos, rot, (JPH_MotionType)motion_type, 
+        (motion_type == 2) ? 1 : 0 // Layer
+    );
+    JPH_BodyCreationSettings_SetUserData(settings, (uint64_t)slot);
+    if (motion_type == 2) JPH_BodyCreationSettings_SetAllowSleeping(settings, true);
+
+    // 4. Queue Command
+    if (!ensure_command_capacity(self)) {
+        JPH_BodyCreationSettings_Destroy(settings);
+        self->free_slots[self->free_count++] = slot;
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_NoMemory();
+        return NULL;
+    }
+
+    PhysicsCommand* cmd = &self->command_queue[self->command_count++];
+    cmd->type = CMD_CREATE_BODY;
+    cmd->create.settings = settings;
+    cmd->create.slot = slot;
+
+    // 5. Update State & Return Handle
+    self->slot_states[slot] = SLOT_PENDING_CREATE;
+    
+    uint32_t gen = self->generations[slot];
+    BodyHandle handle = make_handle(slot, gen);
+
+    SHADOW_UNLOCK(&self->shadow_lock);
+    return PyLong_FromUnsignedLongLong(handle);
+}
+
+static PyObject* PhysicsWorld_destroy_body(PhysicsWorldObject* self, PyObject* args) {
     uint64_t handle_raw;
-    if (!PyArg_ParseTuple(args, "K", &handle_raw)) return NULL; // 'K' = unsigned long long
+    if (!PyArg_ParseTuple(args, "K", &handle_raw)) return NULL;
 
     SHADOW_LOCK(&self->shadow_lock);
 
     uint32_t slot;
     if (!unpack_handle(self, (BodyHandle)handle_raw, &slot)) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_ValueError, "Invalid or stale body handle");
+        PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
         return NULL;
     }
 
-    // 1. Get Dense Index from Slot
-    uint32_t dense_idx = self->slot_to_dense[slot];
-
-    // 2. Jolt Cleanup
-    JPH_BodyInterface* bi = self->body_interface;
-    JPH_BodyID id_to_remove = self->body_ids[dense_idx];
-    JPH_BodyInterface_RemoveBody(bi, id_to_remove);
-    JPH_BodyInterface_DestroyBody(bi, id_to_remove);
-
-    // 3. Swap and Pop (Dense Arrays)
-    size_t last_dense = self->count - 1;
-
-    if (dense_idx != last_dense) {
-        // A. Swap Shadow Data
-        memcpy(&self->positions[dense_idx*4], &self->positions[last_dense*4], 4 * sizeof(float));
-        memcpy(&self->rotations[dense_idx*4], &self->rotations[last_dense*4], 4 * sizeof(float));
-        memcpy(&self->linear_velocities[dense_idx*4], &self->linear_velocities[last_dense*4], 4 * sizeof(float));
-        memcpy(&self->angular_velocities[dense_idx*4], &self->angular_velocities[last_dense*4], 4 * sizeof(float));
-        self->body_ids[dense_idx] = self->body_ids[last_dense];
-
-        // B. Update Maps
-        // Who lived at the end?
-        uint32_t mover_slot = self->dense_to_slot[last_dense];
-        
-        // Point that slot to the new location (dense_idx)
-        self->slot_to_dense[mover_slot] = dense_idx;
-        
-        // Update reverse map
-        self->dense_to_slot[dense_idx] = mover_slot;
-        
-        // NOTE: We do NOT need to update Jolt UserData! 
-        // Jolt holds 'mover_slot', which is still valid and uniquely identifies that body.
+    // Check State
+    if (self->slot_states[slot] != SLOT_ALIVE && self->slot_states[slot] != SLOT_PENDING_CREATE) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        Py_RETURN_NONE; // Already destroyed or pending
     }
 
-    // 4. Invalidate Handle
-    self->generations[slot]++; // Increment generation implies old handle is dead
-    self->free_slots[self->free_count++] = slot; // Recycle slot
+    // Queue Command
+    if (!ensure_command_capacity(self)) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_NoMemory();
+        return NULL;
+    }
 
-    self->count--;
-    self->view_shape[0] = (Py_ssize_t)self->count;
+    PhysicsCommand* cmd = &self->command_queue[self->command_count++];
+    cmd->type = CMD_DESTROY_BODY;
+    cmd->destroy.slot = slot;
+
+    self->slot_states[slot] = SLOT_PENDING_DESTROY;
 
     SHADOW_UNLOCK(&self->shadow_lock);
     Py_RETURN_NONE;
+}
+
+// Helper to deduce handle and append to list
+static void append_hit(QueryContext* ctx, JPH_BodyID bid) {
+    // 1. Get Slot from Jolt UserData
+    uint64_t slot = JPH_BodyInterface_GetUserData(ctx->world->body_interface, bid);
+    
+    // 2. Bound Check
+    if (slot >= ctx->world->slot_capacity) return;
+    
+    // 3. Validate Generation
+    // We only care about ALIVE bodies. If generation mismatches, it's a stale ID (rare in queries but possible)
+    uint32_t gen = ctx->world->generations[slot];
+    
+    // 4. Create Handle
+    BodyHandle h = make_handle((uint32_t)slot, gen);
+    
+    PyObject* py_h = PyLong_FromUnsignedLongLong(h);
+    PyList_Append(ctx->result_list, py_h);
+    Py_DECREF(py_h);
+}
+
+// Callback for NarrowPhase (Sphere Overlap)
+// Signature: float (*)(void *, const JPH_CollideShapeResult *)
+static float OverlapCallback_Narrow(void* context, const JPH_CollideShapeResult* result) {
+    QueryContext* ctx = (QueryContext*)context;
+    append_hit(ctx, result->bodyID2); // bodyID2 is the body in the world
+    return 1.0f; // Continue query
+}
+
+// Callback for BroadPhase (AABB Overlap)
+// Signature: float (*)(void *, const JPH_BodyID)
+static float OverlapCallback_Broad(void* context, const JPH_BodyID result) {
+    QueryContext* ctx = (QueryContext*)context;
+    append_hit(ctx, result);
+    return 1.0f; // Continue query
+}
+
+
+static PyObject* PhysicsWorld_overlap_sphere(PhysicsWorldObject* self, PyObject* args) {
+    float x, y, z, radius;
+    if (!PyArg_ParseTuple(args, "(fff)f", &x, &y, &z, &radius)) return NULL;
+
+    // Create Temp Sphere Shape
+    JPH_SphereShapeSettings* ss = JPH_SphereShapeSettings_Create(radius);
+    JPH_Shape* shape = (JPH_Shape*)JPH_SphereShapeSettings_CreateShape(ss);
+    JPH_ShapeSettings_Destroy((JPH_ShapeSettings*)ss);
+
+    QueryContext ctx = {self, PyList_New(0)};
+    
+    // Transform Setup
+    JPH_STACK_ALLOC(JPH_RVec3, pos);
+    pos->x = x; pos->y = y; pos->z = z;
+    
+    JPH_STACK_ALLOC(JPH_Quat, rot);
+    rot->x=0; rot->y=0; rot->z=0; rot->w=1;
+    
+    JPH_STACK_ALLOC(JPH_RMat4, com_transform);
+    JPH_RMat4_RotationTranslation(com_transform, rot, pos);
+    
+    JPH_STACK_ALLOC(JPH_Vec3, scale);
+    scale->x=1; scale->y=1; scale->z=1;
+
+    JPH_CollideShapeSettings collide_settings;
+    JPH_CollideShapeSettings_Init(&collide_settings);
+
+    const JPH_NarrowPhaseQuery* nq = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
+    
+    // FIX: Use OverlapCallback_Narrow here
+    JPH_NarrowPhaseQuery_CollideShape(nq, shape, scale, com_transform, &collide_settings, 
+                                      NULL, OverlapCallback_Narrow, &ctx, NULL, NULL, NULL, NULL);
+
+    JPH_Shape_Destroy(shape);
+    return ctx.result_list;
+}
+
+static PyObject* PhysicsWorld_overlap_aabb(PhysicsWorldObject* self, PyObject* args) {
+    float min_x, min_y, min_z, max_x, max_y, max_z;
+    if (!PyArg_ParseTuple(args, "(fff)(fff)", &min_x, &min_y, &min_z, &max_x, &max_y, &max_z)) return NULL;
+
+    JPH_AABox box;
+    box.min.x = min_x; box.min.y = min_y; box.min.z = min_z;
+    box.max.x = max_x; box.max.y = max_y; box.max.z = max_z;
+
+    QueryContext ctx = {self, PyList_New(0)};
+    const JPH_BroadPhaseQuery* bq = JPH_PhysicsSystem_GetBroadPhaseQuery(self->system);
+
+    // FIX: Use OverlapCallback_Broad here
+    JPH_BroadPhaseQuery_CollideAABox(bq, &box, OverlapCallback_Broad, &ctx, NULL, NULL);
+
+    return ctx.result_list;
 }
 
 static PyObject* PhysicsWorld_get_index(PhysicsWorldObject* self, PyObject* args) {
@@ -563,6 +832,24 @@ static PyObject* PhysicsWorld_get_index(PhysicsWorldObject* self, PyObject* args
     }
 
     return PyLong_FromUnsignedLong(self->slot_to_dense[slot]);
+}
+
+static PyObject* PhysicsWorld_is_alive(PhysicsWorldObject* self, PyObject* args) {
+    uint64_t handle_raw;
+    if (!PyArg_ParseTuple(args, "K", &handle_raw)) return NULL;
+
+    uint32_t slot;
+    // unpack_handle checks if slot is in bounds and if the generation matches
+    if (unpack_handle(self, (BodyHandle)handle_raw, &slot)) {
+        // A handle is considered "alive" if it is currently in the simulation
+        // OR if it was just created and is waiting for the next step() to flush.
+        uint8_t state = self->slot_states[slot];
+        if (state == SLOT_ALIVE || state == SLOT_PENDING_CREATE) {
+            Py_RETURN_TRUE;
+        }
+    }
+
+    Py_RETURN_FALSE;
 }
 
 static PyObject* make_view(PhysicsWorldObject* self, void* ptr) {
@@ -621,10 +908,14 @@ static PyGetSetDef PhysicsWorld_getset[] = {
 
 static PyMethodDef PhysicsWorld_methods[] = {
     {"step", (PyCFunction)PhysicsWorld_step, METH_VARARGS, NULL},
+    {"create_body", (PyCFunction)PhysicsWorld_create_body, METH_VARARGS|METH_KEYWORDS, NULL},
+    {"destroy_body", (PyCFunction)PhysicsWorld_destroy_body, METH_VARARGS, NULL},
     {"apply_impulse", (PyCFunction)PhysicsWorld_apply_impulse, METH_VARARGS, NULL},
     {"raycast", (PyCFunction)PhysicsWorld_raycast, METH_VARARGS, NULL},
-    {"remove_body", (PyCFunction)PhysicsWorld_remove_body, METH_VARARGS, NULL},
+    {"overlap_sphere", (PyCFunction)PhysicsWorld_overlap_sphere, METH_VARARGS, NULL},
+    {"overlap_aabb", (PyCFunction)PhysicsWorld_overlap_aabb, METH_VARARGS, NULL},
     {"get_index", (PyCFunction)PhysicsWorld_get_index, METH_VARARGS, NULL},
+    {"is_alive", (PyCFunction)PhysicsWorld_is_alive, METH_VARARGS, NULL},
     {NULL}
 };
 
