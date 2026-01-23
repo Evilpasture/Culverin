@@ -748,15 +748,19 @@ static PyObject* PhysicsWorld_create_character(PhysicsWorldObject* self, PyObjec
     }
 
     // 4. Wrap in Python Object
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
-    PyObject *char_type = PyType_FromModuleAndSpec(PyType_GetModule(Py_TYPE(self)), &Character_spec, NULL);
-    if (!char_type) { 
-        JPH_CharacterBase_Destroy((JPH_CharacterBase*)j_char); 
-        return NULL; 
+    PyObject *module = PyType_GetModule(Py_TYPE(self));
+    CulverinState *st = get_culverin_state(module);
+    
+    // Use the cached type from module state
+    PyObject *char_type = st->CharacterType;
+    if (!char_type) {
+        JPH_CharacterBase_Destroy((JPH_CharacterBase*)j_char);
+        PyErr_SetString(PyExc_RuntimeError, "Character type not initialized");
+        return NULL;
     }
 
     CharacterObject* obj = (CharacterObject*)PyObject_New(CharacterObject, (PyTypeObject*)char_type);
-    Py_DECREF(char_type); 
+    // Note: PyObject_New does NOT consume a reference to char_type, so don't DECREF it.
 
     obj->character = j_char;
     obj->world = self;
@@ -1627,36 +1631,44 @@ static PyType_Spec Character_spec = {
 static int culverin_exec(PyObject *m) {
     CulverinState *st = get_culverin_state(m);
 
-    // 1. Initialize Jolt Globally (Safe)
+    // 1. Initialize Jolt
     JPH_Init();
 
-    // 2. Import Helper Module
-    // We assume culverin._culverin is available in the python path
+    // 2. Import Helper
     st->helper = PyImport_ImportModule("culverin._culverin");
-    if (!st->helper) return -1; // ImportError
+    if (!st->helper) return -1;
 
-    // 3. Create Heap Type
+    // 3. Create PhysicsWorld Type
     st->PhysicsWorldType = PyType_FromModuleAndSpec(m, &PhysicsWorld_spec, NULL);
     if (!st->PhysicsWorldType) return -1;
 
-    // 4. Add to Module
-    Py_INCREF(st->PhysicsWorldType);
     if (PyModule_AddObject(m, "PhysicsWorld", st->PhysicsWorldType) < 0) {
         Py_DECREF(st->PhysicsWorldType);
         return -1;
     }
-    // --- Add Constants ---
+    Py_INCREF(st->PhysicsWorldType); // AddObject steals reference, but we keep one in struct
+
+    // 4. Create Character Type (NEW)
+    st->CharacterType = PyType_FromModuleAndSpec(m, &Character_spec, NULL);
+    if (!st->CharacterType) return -1;
+
+    if (PyModule_AddObject(m, "Character", st->CharacterType) < 0) {
+        Py_DECREF(st->CharacterType);
+        return -1;
+    }
+    Py_INCREF(st->CharacterType); // Keep ref in struct
+
+    // 5. Add Constants
     PyModule_AddIntConstant(m, "SHAPE_BOX", 0);
     PyModule_AddIntConstant(m, "SHAPE_SPHERE", 1);
     PyModule_AddIntConstant(m, "SHAPE_CAPSULE", 2);
+    PyModule_AddIntConstant(m, "SHAPE_CYLINDER", 3);
+    PyModule_AddIntConstant(m, "SHAPE_PLANE", 4);
+    PyModule_AddIntConstant(m, "SHAPE_MESH", 5);
 
     PyModule_AddIntConstant(m, "MOTION_STATIC", 0);
     PyModule_AddIntConstant(m, "MOTION_KINEMATIC", 1);
     PyModule_AddIntConstant(m, "MOTION_DYNAMIC", 2);
-    PyModule_AddIntConstant(m, "SHAPE_CYLINDER", 3);
-    PyModule_AddIntConstant(m, "SHAPE_PLANE", 4);
-    
-    PyModule_AddIntConstant(m, "SHAPE_MESH", 5); 
 
     return 0;
 }
@@ -1665,6 +1677,7 @@ static int culverin_traverse(PyObject *m, visitproc visit, void *arg) {
     CulverinState *st = get_culverin_state(m);
     Py_VISIT(st->helper);
     Py_VISIT(st->PhysicsWorldType);
+    Py_VISIT(st->CharacterType);
     return 0;
 }
 
@@ -1672,6 +1685,7 @@ static int culverin_clear(PyObject *m) {
     CulverinState *st = get_culverin_state(m);
     Py_CLEAR(st->helper);
     Py_CLEAR(st->PhysicsWorldType);
+    Py_CLEAR(st->CharacterType);
     return 0;
 }
 

@@ -169,6 +169,7 @@ typedef struct {
 typedef struct {
     PyObject *helper;           // Reference to culverin._culverin module
     PyObject *PhysicsWorldType; // Reference to the class
+    PyObject *CharacterType;    // Reference to the character class
 } CulverinState;
 
 // Helper to retrieve state from the module object
