@@ -1,35 +1,28 @@
-from typing import Tuple, List, Optional, TypedDict, Union
-from ._culverin_c import PhysicsWorld as PhysicsWorld
+import sys
+from typing import Tuple, Optional, Any, overload
 
-# Semantic Types
-Vec3 = Tuple[float, float, float]
-Quat = Tuple[float, float, float, float]
-
-class BodyConfig(TypedDict, total=False):
-    pos: Vec3          # (x, y, z)
-    rot: Quat          # (w, x, y, z)
-    size: Vec3         # (half_x, half_y, half_z)
-    mass: float        # 0.0 = Static, >0.0 = Dynamic
-    restitution: float
-    friction: float
-
-class WorldSettings(TypedDict, total=False):
-    gravity: Vec3
-    penetration_slop: float
-    max_bodies: int
-    max_pairs: int
-
-# We re-export PhysicsWorld with better type hints for the constructor
+# Raw C types are simple
 class PhysicsWorld:
     def __init__(
         self, 
-        settings: Optional[WorldSettings] = None, 
-        bodies: Optional[List[BodyConfig]] = None
+        settings: Optional[dict] = None, 
+        bodies: Optional[list[dict]] = None
     ) -> None: ...
 
     def step(self, dt: float = 1.0/60.0) -> None: ...
 
-    def create_box(self, pos: Vec3, size: Vec3) -> int: ...
+    def apply_impulse(self, index: int, x: float, y: float, z: float) -> None: ...
+
+    def raycast(
+        self, 
+        start: Tuple[float, float, float], 
+        direction: Tuple[float, float, float], 
+        max_dist: float = 1000.0
+    ) -> Optional[Tuple[int, float]]: 
+        """
+        Casts a ray. Returns (body_index, fraction) or None.
+        """
+        ...
 
     @property
     def positions(self) -> memoryview: ...
@@ -48,5 +41,3 @@ class PhysicsWorld:
 
     @property
     def time(self) -> float: ...
-
-__all__ = ["PhysicsWorld"]

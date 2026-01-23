@@ -6,6 +6,16 @@ MOTION_STATIC = 0
 MOTION_KINEMATIC = 1
 MOTION_DYNAMIC = 2
 
+# Shape Types
+SHAPE_BOX = 0
+SHAPE_SPHERE = 1
+SHAPE_CAPSULE = 2
+SHAPE_CYLINDER = 3
+
+# Layers
+LAYER_NON_MOVING = 0
+LAYER_MOVING = 1
+
 def _as_float(val, name):
     try:
         f = float(val)
@@ -53,46 +63,42 @@ def bake_scene(bodies):
     """
     Converts list of BodyConfig dicts into flat binary buffers.
     """
-    if not isinstance(bodies, list):
-        raise TypeError("bodies must be a list")
-
+    if not isinstance(bodies, list): raise TypeError("bodies must be a list")
     count = len(bodies)
-    if count == 0:
-        return 0, b"", b"", b"", b""
+    if count == 0: return 0, b"", b"", b"", b"", b""
 
-    # Arrays for flat C-memory (using 'f' for float)
-    # We add padding to vec3 to align to 16 bytes (x, y, z, w) for SIMD in C
     arr_pos = array.array('f')
     arr_rot = array.array('f')
-    arr_extent = array.array('f')
-    arr_motion = array.array('B') # Unsigned char for motion type
+    arr_shape_data = array.array('f') # [type, p1, p2, p3]
+    arr_motion = array.array('B')     # [motion_type]
+    arr_layer = array.array('B')      # [layer_id]
 
     for i, b in enumerate(bodies):
-        # 1. Position (x, y, z) -> Packed as (x, y, z, 0.0)
-        p = _as_vec3(b.get("pos", (0,0,0)), f"body[{i}].pos")
-        arr_pos.extend(p)
-        arr_pos.append(0.0) # Padding
+        # 1. Transform
+        arr_pos.extend(b.get("pos", (0, 0, 0)) + (0.0,))
+        arr_rot.extend(b.get("rot", (0, 0, 0, 1))) # x, y, z, w
 
-        # 2. Rotation (w, x, y, z)
-        r = _as_quat(b.get("rot", (1,0,0,0)), f"body[{i}].rot")
-        arr_rot.extend(r)
-
-        # 3. Extents (half_x, half_y, half_z) -> Packed as (x, y, z, 0.0)
-        s = _as_vec3(b.get("size", (0.5,0.5,0.5)), f"body[{i}].size")
-        arr_extent.extend(s)
-        arr_extent.append(0.0) # Padding
-
-        # 4. Motion Type (Derived from mass)
-        mass = _as_float(b.get("mass", 0.0), f"body[{i}].mass")
-        if mass > 0.0:
-            arr_motion.append(MOTION_DYNAMIC)
-        else:
-            arr_motion.append(MOTION_STATIC)
+        # 2. Shape Logic
+        stype = b.get("shape", SHAPE_BOX)
+        size = b.get("size", (0.5, 0.5, 0.5))
+        if stype == SHAPE_BOX:
+            arr_shape_data.extend([SHAPE_BOX, size[0], size[1], size[2]])
+        elif stype == SHAPE_SPHERE:
+            arr_shape_data.extend([SHAPE_SPHERE, size[0], 0.0, 0.0]) # radius
+        elif stype == SHAPE_CAPSULE:
+            arr_shape_data.extend([SHAPE_CAPSULE, size[0], size[1], 0.0]) # half-height, radius
+        
+        # 3. Dynamics & Layers
+        mass = b.get("mass", 1.0)
+        is_dynamic = mass > 0.0
+        arr_motion.append(2 if is_dynamic else 0) # Dynamic vs Static
+        arr_layer.append(LAYER_MOVING if is_dynamic else LAYER_NON_MOVING)
 
     return (
         count,
         arr_pos.tobytes(),
         arr_rot.tobytes(),
-        arr_extent.tobytes(),
-        arr_motion.tobytes()
+        arr_shape_data.tobytes(),
+        arr_motion.tobytes(),
+        arr_layer.tobytes()
     )

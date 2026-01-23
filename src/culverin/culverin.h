@@ -5,6 +5,17 @@
 #include <Python.h>
 #include "joltc.h"
 
+#ifndef JPH_INVALID_BODY_ID
+#define JPH_INVALID_BODY_ID 0xFFFFFFFF
+#endif
+
+// Allocate 'Type' on the stack with guaranteed 32-byte alignment.
+// USAGE: JPH_STACK_ALLOC(JPH_RVec3, my_vec);
+// This macro satisfies how Jolt Physics expects aligned data structures.
+#define JPH_STACK_ALLOC(Type, Name) \
+    char _mem_##Name[sizeof(Type) + 32]; \
+    Type* Name = (Type*)((uintptr_t)(_mem_##Name + 31) & ~31)
+
 // --- Threading Primitives (Python 3.14t support) ---
 #if PY_VERSION_HEX >= 0x030D0000
     typedef PyMutex ShadowMutex;
@@ -15,6 +26,17 @@
     #define SHADOW_LOCK(m) PyThread_acquire_lock(m, 1)
     #define SHADOW_UNLOCK(m) PyThread_release_lock(m)
 #endif
+
+// --- Shape Caching ---
+typedef struct {
+    uint32_t type;  // 0=Box, 1=Sphere, 2=Capsule
+    float p1, p2, p3; // Box: x,y,z | Sphere: r,0,0 | Capsule: h,r,0
+} ShapeKey;
+
+typedef struct {
+    ShapeKey key;
+    JPH_Shape* shape;
+} ShapeEntry;
 
 // --- The Object Struct ---
 typedef struct {
@@ -36,6 +58,10 @@ typedef struct {
     float* linear_velocities;
     float* angular_velocities;
     JPH_BodyID* body_ids;
+
+    ShapeEntry* shape_cache;
+    size_t shape_cache_count;
+    size_t shape_cache_capacity;
     
     size_t count;
     size_t capacity;
@@ -43,7 +69,6 @@ typedef struct {
 
     ShadowMutex shadow_lock;
 
-    // View Metadata
     Py_ssize_t view_shape[2];
     Py_ssize_t view_strides[2];
 } PhysicsWorldObject;

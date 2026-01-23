@@ -1,7 +1,7 @@
 import sys
-from typing import Tuple, Optional, Any
+from typing import Tuple, Optional, Any, overload
 
-# Define the C-level interface
+# Raw C types are simple
 class PhysicsWorld:
     def __init__(
         self, 
@@ -11,11 +11,18 @@ class PhysicsWorld:
 
     def step(self, dt: float = 1.0/60.0) -> None: ...
 
-    def create_box(
+    def apply_impulse(self, index: int, x: float, y: float, z: float) -> None: ...
+
+    def raycast(
         self, 
-        pos: Tuple[float, float, float], 
-        size: Tuple[float, float, float]
-    ) -> int: ...
+        start: Tuple[float, float, float], 
+        direction: Tuple[float, float, float], 
+        max_dist: float = 1000.0
+    ) -> Optional[Tuple[int, float]]: 
+        """
+        Casts a ray. Returns (body_index, fraction) or None.
+        """
+        ...
 
     @property
     def positions(self) -> memoryview: ...

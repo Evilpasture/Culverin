@@ -1,16 +1,107 @@
 #include "culverin.h"
-#include <structmember.h>
 
-// --- Memory Cleanup ---
-static void PhysicsWorld_dealloc(PhysicsWorldObject* self) {
-    if (self->system) JPH_PhysicsSystem_Destroy(self->system);
-    if (self->job_system) JPH_JobSystem_Destroy(self->job_system);
+// --- Helper: Shape Caching (Internal) ---
+static JPH_Shape* find_or_create_shape(PhysicsWorldObject* self, int type, const float* params) {
+    // 1. Construct Key
+    ShapeKey key;
+    memset(&key, 0, sizeof(ShapeKey));
+    key.type = (uint32_t)type;
     
-    // TODO: we would destroy with these calls below but API is unavailable. Jolt can handle during shutdown, for now.
+    // Normalize params based on type for cleaner cache hits
+    if (type == 0) { // BOX
+        key.p1 = params[0]; key.p2 = params[1]; key.p3 = params[2];
+    } else if (type == 1) { // SPHERE
+        key.p1 = params[0]; key.p2 = 0.0f; key.p3 = 0.0f;
+    } else if (type == 2) { // CAPSULE
+        key.p1 = params[0]; key.p2 = params[1]; key.p3 = 0.0f;
+    }
+
+    // 2. Search Cache (Linear Search is sufficient for < 100 unique shape types)
+    // If you have thousands of *unique* shapes, this should be a hash map.
+    for (size_t i = 0; i < self->shape_cache_count; i++) {
+        ShapeKey* k = &self->shape_cache[i].key;
+        // Exact float comparison is acceptable here because the input source
+        // is the same Python byte buffer.
+        if (k->type == key.type && k->p1 == key.p1 && k->p2 == key.p2 && k->p3 == key.p3) {
+            return self->shape_cache[i].shape;
+        }
+    }
+
+    // 3. Not Found -> Create New Jolt Shape
+    JPH_Shape* shape = NULL;
+    
+    if (type == 0) { // BOX
+        // Using {0} guarantees alignment safety on stack
+        JPH_Vec3 he = {0}; 
+        he.x = key.p1; he.y = key.p2; he.z = key.p3;
+        
+        JPH_BoxShapeSettings* s = JPH_BoxShapeSettings_Create(&he, 0.05f);
+        shape = (JPH_Shape*)JPH_BoxShapeSettings_CreateShape(s);
+        JPH_ShapeSettings_Destroy((JPH_ShapeSettings*)s);
+    } 
+    else if (type == 1) { // SPHERE
+        JPH_SphereShapeSettings* s = JPH_SphereShapeSettings_Create(key.p1);
+        shape = (JPH_Shape*)JPH_SphereShapeSettings_CreateShape(s);
+        JPH_ShapeSettings_Destroy((JPH_ShapeSettings*)s);
+    } 
+    else if (type == 2) { // CAPSULE
+        JPH_CapsuleShapeSettings* s = JPH_CapsuleShapeSettings_Create(key.p1, key.p2);
+        shape = (JPH_Shape*)JPH_CapsuleShapeSettings_CreateShape(s);
+        JPH_ShapeSettings_Destroy((JPH_ShapeSettings*)s);
+    }
+
+    if (!shape) return NULL;
+
+    // 4. Store in Cache
+    // Grow capacity if needed
+    if (self->shape_cache_count >= self->shape_cache_capacity) {
+        size_t new_cap = (self->shape_cache_capacity == 0) ? 16 : self->shape_cache_capacity * 2;
+        void* new_ptr = PyMem_RawRealloc(self->shape_cache, new_cap * sizeof(ShapeEntry));
+        if (!new_ptr) {
+            JPH_Shape_Destroy(shape);
+            return NULL; // OOM
+        }
+        self->shape_cache = (ShapeEntry*)new_ptr;
+        self->shape_cache_capacity = new_cap;
+    }
+
+    // Insert new entry
+    self->shape_cache[self->shape_cache_count].key = key;
+    self->shape_cache[self->shape_cache_count].shape = shape;
+    self->shape_cache_count++;
+
+    return shape;
+}
+
+// --- Lifecycle: Deallocation ---
+static void PhysicsWorld_dealloc(PhysicsWorldObject* self) {
+    // 1. Destroy Physics System FIRST
+    // This releases all Jolt Body references to the shapes.
+    // If we destroyed shapes before this, the system would segfault on shutdown.
+    if (self->system) JPH_PhysicsSystem_Destroy(self->system);
+    
+    // 2. Destroy Unique Shapes (The Cache)
+    // Now that the System is gone, the RefCount on these shapes should be 1 (ours).
+    // Calling Destroy now frees the underlying C++ memory safely.
+    if (self->shape_cache) {
+        for (size_t i = 0; i < self->shape_cache_count; i++) {
+            if (self->shape_cache[i].shape) {
+                JPH_Shape_Destroy(self->shape_cache[i].shape);
+            }
+        }
+        PyMem_RawFree(self->shape_cache);
+    }
+
+    // 3. Destroy Interfaces & Filters
+    // TODO: no C API for these. Jolt can handle, but we should expose them later.
     // if (self->bp_filter) JPH_ObjectVsBroadPhaseLayerFilter_Destroy(self->bp_filter);
     // if (self->pair_filter) JPH_ObjectLayerPairFilter_Destroy(self->pair_filter);
     // if (self->bp_interface) JPH_BroadPhaseLayerInterface_Destroy(self->bp_interface);
 
+    // 4. Destroy Job System (Last)
+    if (self->job_system) JPH_JobSystem_Destroy(self->job_system);
+
+    // 5. Free Shadow Buffers
     if (self->positions) PyMem_RawFree(self->positions);
     if (self->rotations) PyMem_RawFree(self->rotations);
     if (self->linear_velocities) PyMem_RawFree(self->linear_velocities);
@@ -21,13 +112,10 @@ static void PhysicsWorld_dealloc(PhysicsWorldObject* self) {
     if (self->shadow_lock) PyThread_free_lock(self->shadow_lock);
     #endif
 
-    // Decrement the heap type
-    PyTypeObject *tp = Py_TYPE(self);
-    tp->tp_free((PyObject*)self);
-    Py_DECREF(tp);
+    Py_TYPE(self)->tp_free((PyObject*)self);
 }
 
-// --- The Core Initialization Logic ---
+// --- Lifecycle: Initialization ---
 static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args, PyObject *kwds) {
     static char *kwlist[] = {"settings", "bodies", NULL};
     PyObject *settings_dict = NULL;
@@ -37,160 +125,313 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args, PyObject 
         return -1;
     }
 
-    // 1. Retrieve Module State to get the Helper
-    // For Heap Types, Py_TYPE(self) is the class, PyType_GetModule gets the defining module
+    // 1. Module State & Python Helpers
     PyObject *module = PyType_GetModule(Py_TYPE(self));
-    if (!module) {
-        PyErr_SetString(PyExc_RuntimeError, "Could not locate defining module.");
-        return -1;
-    }
+    if (!module) return -1;
     CulverinState *st = get_culverin_state(module);
-    if (!st || !st->helper) {
-        PyErr_SetString(PyExc_RuntimeError, "Module state not initialized (helper missing).");
-        return -1;
-    }
 
-    // 2. Validate Settings (Python Call)
     PyObject *val_func = PyObject_GetAttrString(st->helper, "validate_settings");
     if (!val_func) return -1;
-
     PyObject *norm_settings = PyObject_CallFunctionObjArgs(val_func, settings_dict ? settings_dict : Py_None, NULL);
     Py_DECREF(val_func);
     if (!norm_settings) return -1;
 
-    // Unpack Settings Tuple: (gx, gy, gz, slop, max_bodies, max_pairs)
     float gx, gy, gz, slop;
     int max_bodies, max_pairs;
-    if (!PyArg_ParseTuple(norm_settings, "ffffii", &gx, &gy, &gz, &slop, &max_bodies, &max_pairs)) {
-        Py_DECREF(norm_settings);
-        return -1;
-    }
+    PyArg_ParseTuple(norm_settings, "ffffii", &gx, &gy, &gz, &slop, &max_bodies, &max_pairs);
     Py_DECREF(norm_settings);
 
-    // 3. Initialize Jolt Systems
+    // 2. Initialize Jolt Systems
     JobSystemThreadPoolConfig job_cfg = { .maxJobs = 1024, .maxBarriers = 8, .numThreads = -1 };
     self->job_system = JPH_JobSystemThreadPool_Create(&job_cfg);
     
-    self->bp_interface = JPH_BroadPhaseLayerInterfaceMask_Create(1);
-    self->pair_filter = JPH_ObjectLayerPairFilterMask_Create();
-    self->bp_filter = JPH_ObjectVsBroadPhaseLayerFilterMask_Create(self->bp_interface);
+    // Configure Layers (0=Static, 1=Dynamic)
+    self->bp_interface = JPH_BroadPhaseLayerInterfaceTable_Create(2, 2);
+    JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(self->bp_interface, 0, 0); 
+    JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(self->bp_interface, 1, 1); 
+
+    self->pair_filter = JPH_ObjectLayerPairFilterTable_Create(2);
+    JPH_ObjectLayerPairFilterTable_EnableCollision(self->pair_filter, 1, 0); 
+    JPH_ObjectLayerPairFilterTable_EnableCollision(self->pair_filter, 1, 1); 
+    JPH_ObjectLayerPairFilterTable_DisableCollision(self->pair_filter, 0, 0); // Optimization: Static ignores Static
+
+    self->bp_filter = JPH_ObjectVsBroadPhaseLayerFilterTable_Create(self->bp_interface, 2, self->pair_filter, 2);
 
     JPH_PhysicsSystemSettings phys_settings = {
         .maxBodies = (uint32_t)max_bodies,
         .maxBodyPairs = (uint32_t)max_pairs,
-        .maxContactConstraints = 10240, // Could also expose this
+        .maxContactConstraints = 10240,
         .broadPhaseLayerInterface = self->bp_interface,
         .objectLayerPairFilter = self->pair_filter,
         .objectVsBroadPhaseLayerFilter = self->bp_filter
     };
     self->system = JPH_PhysicsSystem_Create(&phys_settings);
-    if (!self->system) {
-        PyErr_SetString(PyExc_RuntimeError, "Failed to create JPH_PhysicsSystem");
-        return -1;
-    }
-    JPH_PhysicsSystem_SetGravity(self->system, &(JPH_Vec3){gx, gy, gz});
+    
+    // Safe Gravity Init
+    JPH_Vec3 gravity = {0}; 
+    gravity.x = gx; gravity.y = gy; gravity.z = gz;
+    JPH_PhysicsSystem_SetGravity(self->system, &gravity);
+    
     self->body_interface = JPH_PhysicsSystem_GetBodyInterface(self->system);
 
     #if PY_VERSION_HEX < 0x030D0000
     self->shadow_lock = PyThread_allocate_lock();
     #endif
 
-    // 4. Bake Scene (Python Call) if bodies exist
+    // Initialize Shape Cache
+    self->shape_cache = NULL;
+    self->shape_cache_count = 0;
+    self->shape_cache_capacity = 0;
+
+    // 3. SCENE BAKING (The Culverin Pipeline)
     if (bodies_list && bodies_list != Py_None) {
         PyObject *bake_func = PyObject_GetAttrString(st->helper, "bake_scene");
-        if (!bake_func) return -1;
-
         PyObject *baked = PyObject_CallFunctionObjArgs(bake_func, bodies_list, NULL);
         Py_DECREF(bake_func);
         if (!baked) return -1;
 
-        // Unpack: (count, b_pos, b_rot, b_ext, b_mot)
-        Py_ssize_t count_arg = 0;
-        PyObject *o_pos, *o_rot, *o_ext, *o_mot;
-        if (!PyArg_ParseTuple(baked, "nOOOO", &count_arg, &o_pos, &o_rot, &o_ext, &o_mot)) {
+        Py_ssize_t count_arg;
+        PyObject *o_pos, *o_rot, *o_shape, *o_mot, *o_layer;
+        if (!PyArg_ParseTuple(baked, "nOOOOO", &count_arg, &o_pos, &o_rot, &o_shape, &o_mot, &o_layer)) {
             Py_DECREF(baked);
             return -1;
         }
 
-        size_t count = (size_t)count_arg;
-        self->capacity = (count < 1024) ? 1024 : count;
-        self->count = count;
+        self->count = (size_t)count_arg;
+        self->capacity = (self->count < 1024) ? 1024 : self->count;
 
-        // Allocate Shadow Buffers
-        self->positions = PyMem_RawMalloc(self->capacity * 4 * sizeof(float));
-        self->rotations = PyMem_RawMalloc(self->capacity * 4 * sizeof(float));
-        self->linear_velocities = PyMem_RawMalloc(self->capacity * 4 * sizeof(float));
-        self->angular_velocities = PyMem_RawMalloc(self->capacity * 4 * sizeof(float));
+        // Buffer Validation (Safety against malformed Python buffers)
+        Py_ssize_t expected_size = (Py_ssize_t)(self->count * 4 * sizeof(float));
+        if (PyBytes_Size(o_pos) < expected_size || 
+            PyBytes_Size(o_rot) < expected_size ||
+            PyBytes_Size(o_shape) < expected_size) {
+            Py_DECREF(baked);
+            PyErr_SetString(PyExc_ValueError, "Bake buffers truncated or invalid");
+            return -1;
+        }
+
+        // Allocations
+        self->positions = PyMem_RawCalloc(self->capacity * 4, sizeof(float));
+        self->rotations = PyMem_RawCalloc(self->capacity * 4, sizeof(float));
+        self->linear_velocities = PyMem_RawCalloc(self->capacity * 4, sizeof(float));
+        self->angular_velocities = PyMem_RawCalloc(self->capacity * 4, sizeof(float));
         self->body_ids = PyMem_RawMalloc(self->capacity * sizeof(JPH_BodyID));
 
-        if (!self->positions || !self->rotations || !self->body_ids) {
+        // Note: self->shapes array is NOT needed anymore because we use the cache!
+
+        if (!self->positions || !self->rotations || !self->body_ids ||
+            !self->linear_velocities || !self->angular_velocities) {
             Py_DECREF(baked);
             PyErr_NoMemory();
             return -1;
         }
 
-        // Access Raw Bytes safely
         float *f_pos = (float*)PyBytes_AsString(o_pos);
         float *f_rot = (float*)PyBytes_AsString(o_rot);
-        float *f_ext = (float*)PyBytes_AsString(o_ext);
+        float *f_shape = (float*)PyBytes_AsString(o_shape);
         unsigned char *u_mot = (unsigned char*)PyBytes_AsString(o_mot);
+        unsigned char *u_layer = (unsigned char*)PyBytes_AsString(o_layer);
 
-        if (!f_pos || !f_rot || !f_ext || !u_mot) {
-            Py_DECREF(baked);
-            return -1;
-        }
-
-        // Create Bodies Loop
         JPH_BodyInterface* bi = self->body_interface;
-        for (size_t i = 0; i < count; i++) {
-            JPH_BoxShapeSettings* box = JPH_BoxShapeSettings_Create(
-                &(JPH_Vec3){f_ext[i*4+0], f_ext[i*4+1], f_ext[i*4+2]}, 
-                0.05f
-            );
-            JPH_Shape* shape = JPH_BoxShapeSettings_CreateShape(box);
 
-            JPH_BodyCreationSettings* creation = JPH_BodyCreationSettings_Create3(
-                shape,
-                &(JPH_RVec3){f_pos[i*4+0], f_pos[i*4+1], f_pos[i*4+2]},
-                &(JPH_Quat){f_rot[i*4+0], f_rot[i*4+1], f_rot[i*4+2], f_rot[i*4+3]},
-                (JPH_MotionType)u_mot[i],
-                0 // Layer
-            );
-            
-            if (u_mot[i] == 2) { // Dynamic
-                JPH_BodyCreationSettings_SetAllowSleeping(creation, true);
+        // 4. Body Creation Loop
+        for (size_t i = 0; i < self->count; i++) {
+            // Stack Alignment Safety ({0} ensures no garbage padding)
+            #ifdef _MSC_VER
+                __declspec(align(32)) JPH_RVec3 body_pos = {0};
+                __declspec(align(16)) JPH_Quat body_rot = {0};
+            #else
+                JPH_RVec3 body_pos __attribute__((aligned(32))) = {0};
+                JPH_Quat body_rot __attribute__((aligned(16))) = {0};
+            #endif
+
+            body_pos.x = (double)f_pos[i*4]; 
+            body_pos.y = (double)f_pos[i*4+1]; 
+            body_pos.z = (double)f_pos[i*4+2];
+
+            body_rot.x = f_rot[i*4]; 
+            body_rot.y = f_rot[i*4+1]; 
+            body_rot.z = f_rot[i*4+2]; 
+            body_rot.w = f_rot[i*4+3];
+
+            // Deduplicated Shape Creation
+            float params[3] = {f_shape[i*4+1], f_shape[i*4+2], f_shape[i*4+3]};
+            JPH_Shape* shape = find_or_create_shape(self, (int)f_shape[i*4], params);
+
+            if (shape) {
+                JPH_BodyCreationSettings* creation = JPH_BodyCreationSettings_Create3(
+                    shape, &body_pos, &body_rot, 
+                    (JPH_MotionType)u_mot[i], (JPH_ObjectLayer)u_layer[i]
+                );
+
+                // O(1) Lookup Optimization
+                JPH_BodyCreationSettings_SetUserData(creation, (uint64_t)i);
+
+                if (u_mot[i] == 2) JPH_BodyCreationSettings_SetAllowSleeping(creation, true);
+
+                self->body_ids[i] = JPH_BodyInterface_CreateAndAddBody(bi, creation, JPH_Activation_Activate);
+                
+                JPH_BodyCreationSettings_Destroy(creation);
+                // NOTE: Do NOT destroy the shape here. The Cache owns it.
+            } else {
+                self->body_ids[i] = JPH_INVALID_BODY_ID; 
             }
-
-            JPH_BodyID bid = JPH_BodyInterface_CreateAndAddBody(bi, creation, JPH_Activation_Activate);
-            // TODO: usually we would check bid. but i don't see a convenient helper in joltc.h to do so.
-            self->body_ids[i] = bid;
-
-            JPH_Shape_Destroy(shape);
-            JPH_ShapeSettings_Destroy((JPH_ShapeSettings*)box);
-            JPH_BodyCreationSettings_Destroy(creation);
         }
 
-        // Initial Sync
+        Py_DECREF(baked);
         culverin_sync_shadow_buffers(self);
-        
-        Py_DECREF(baked); // Done with python buffers
     } else {
-        // Empty init
+        // Empty World Initialization
         self->capacity = 1024;
         self->count = 0;
-        self->positions = PyMem_RawMalloc(1024 * 4 * sizeof(float));
-        self->rotations = PyMem_RawMalloc(1024 * 4 * sizeof(float));
-        self->linear_velocities = PyMem_RawMalloc(1024 * 4 * sizeof(float));
-        self->angular_velocities = PyMem_RawMalloc(1024 * 4 * sizeof(float));
+        self->positions = PyMem_RawCalloc(1024 * 4, sizeof(float));
+        self->rotations = PyMem_RawCalloc(1024 * 4, sizeof(float));
+        self->linear_velocities = PyMem_RawCalloc(1024 * 4, sizeof(float));
+        self->angular_velocities = PyMem_RawCalloc(1024 * 4, sizeof(float));
         self->body_ids = PyMem_RawMalloc(1024 * sizeof(JPH_BodyID));
     }
 
     return 0;
 }
 
-// --- Methods & Getters (Standard) ---
+static PyObject* PhysicsWorld_apply_impulse(PhysicsWorldObject* self, PyObject* args) {
+    int index;
+    float ix, iy, iz;
+    if (!PyArg_ParseTuple(args, "ifff", &index, &ix, &iy, &iz)) return NULL;
 
-static PyObject* PhysicsWorld_step(PhysicsWorldObject* self, PyObject* args) {
+    if (index >= 0 && (size_t)index < self->count) {
+        JPH_BodyID bid = self->body_ids[index];
+        // Note: No-GIL safe because BodyInterface handles its own locking
+        JPH_BodyInterface_AddImpulse(self->body_interface, bid, &(JPH_Vec3){ix, iy, iz});
+    }
+    Py_RETURN_NONE;
+}
+
+// ABI BYPASS. 
+// WILL REPLACE WITH THE COMMENTED FUNCTION DEFINITION BELOW 
+// IF I FOUND A WAY TO FIX ABI MISMATCH.
+static PyObject* PhysicsWorld_raycast(PhysicsWorldObject* self, PyObject* args) {
+    float sx, sy, sz, dx, dy, dz;
+    float max_dist = 1000.0f; // Default max distance
+
+    // Parse: raycast((sx, sy, sz), (dx, dy, dz), max_dist=1000.0)
+    if (!PyArg_ParseTuple(args, "(fff)(fff)|f", &sx, &sy, &sz, &dx, &dy, &dz, &max_dist)) {
+        return NULL;
+    }
+
+    // --- THE "MANUAL ALIGNMENT" HACK ---
+    // We allocate enough bytes on the stack + 32 bytes of padding.
+    // Then we calculate a pointer address that is guaranteed to be 32-byte aligned.
+    // This solves the Segfault for AVX2/SSE without needing compiler-specific attributes.
+    JPH_STACK_ALLOC(JPH_RVec3, origin);
+    JPH_STACK_ALLOC(JPH_Vec3, direction);
+    // -----------------------------------
+
+    // 1. Fill Origin
+    origin->x = sx; origin->y = sy; origin->z = sz;
+
+    // 2. Fix Ray Length Logic
+    // Normalize input direction and scale by max_dist
+    float mag = sqrtf(dx*dx + dy*dy + dz*dz);
+    if (mag < 1e-6f) Py_RETURN_NONE;
+    
+    float scale = max_dist / mag;
+    direction->x = dx * scale;
+    direction->y = dy * scale;
+    direction->z = dz * scale;
+
+    // 3. Initialize Hit Result
+    // Jolt expects this to be clean, and 'fraction' helps early-out optimizations
+    JPH_RayCastResult hit; 
+    memset(&hit, 0, sizeof(JPH_RayCastResult));
+    hit.fraction = 1.0f + 1e-4f; // Ideally slightly > 1.0
+
+    const JPH_NarrowPhaseQuery* query = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
+    
+    // Pass our manually aligned pointers
+    bool has_hit = JPH_NarrowPhaseQuery_CastRay(query, origin, direction, &hit, NULL, NULL, NULL);
+
+    if (!has_hit) Py_RETURN_NONE;
+
+    // 4. Fast Lookup (O(1)) instead of Loop (O(N))
+    // We already baked the index into UserData in init()
+    uint64_t udata = JPH_BodyInterface_GetUserData(self->body_interface, hit.bodyID);
+    int hit_index = (int)udata;
+
+    // Safety check just in case
+    if (hit_index < 0 || (size_t)hit_index >= self->count) {
+        Py_RETURN_NONE;
+    }
+
+    return Py_BuildValue("if", hit_index, hit.fraction);
+}
+
+// ==============================================NO UNCOMMENT. AND LEAVE THIS ALONE.==============================================================
+// static PyObject* PhysicsWorld_raycast(PhysicsWorldObject* self, PyObject* args, PyObject* kwds) {
+//     float sx, sy, sz, dx, dy, dz;
+//     float max_dist = 1000.0f;
+//     static char *kwlist[] = {"start", "direction", "max_dist", NULL};
+
+//     if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)(fff)|f", kwlist, 
+//                                      &sx, &sy, &sz, &dx, &dy, &dz, &max_dist)) {
+//         return NULL;
+//     }
+
+//     float mag = sqrtf(dx*dx + dy*dy + dz*dz);
+//     if (mag < 1e-6f) {
+//         Py_RETURN_NONE;
+//     }
+
+//     // --- FIX START ---
+//     // Enforce alignment! 
+//     // JPH_Vec3 needs 16-byte alignment. JPH_RVec3 (Double) needs 32-byte (if AVX2).
+//     #ifdef _MSC_VER
+//         __declspec(align(32)) JPH_RVec3 ray_origin = {0};
+//         __declspec(align(16)) JPH_Vec3 ray_dir = {0};
+//     #else
+//         JPH_RVec3 ray_origin __attribute__((aligned(32))) = {0};
+//         JPH_Vec3 ray_dir __attribute__((aligned(16))) = {0};
+//     #endif
+//     // --- FIX END ---
+
+
+//     // Stack Allocation: Zero-Init is key to prevent garbage padding
+//     // JPH_RVec3 ray_origin = {0};
+//     ray_origin.x = (double)sx;
+//     ray_origin.y = (double)sy;
+//     ray_origin.z = (double)sz;
+
+//     // JPH_Vec3 ray_dir = {0};
+//     float scale = max_dist / mag;
+//     ray_dir.x = dx * scale;
+//     ray_dir.y = dy * scale;
+//     ray_dir.z = dz * scale;
+//     JPH_RayCastResult hit = {0};
+//     hit.fraction = 1.0f;
+
+//     const JPH_NarrowPhaseQuery* query = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
+    
+//     // NarrowPhaseQuery is thread-safe for reads, so no locks needed here 
+//     // IF we assume Update isn't mutating the tree concurrently (which it shouldn't be in your loop)
+//     bool has_hit = JPH_NarrowPhaseQuery_CastRay(query, &ray_origin, &ray_dir, &hit, NULL, NULL, NULL);
+
+//     if (!has_hit) Py_RETURN_NONE;
+
+//     uint64_t udata = JPH_BodyInterface_GetUserData(self->body_interface, hit.bodyID);
+//     int hit_index = (int)udata;
+
+//     if (hit_index < 0 || (size_t)hit_index >= self->count) {
+//         Py_RETURN_NONE;
+//     }
+
+//     return Py_BuildValue("if", hit_index, hit.fraction);
+// }
+// ==============================================================================================================================================
+
+  // --- Methods & Getters (Standard) ---
+
+  static PyObject *PhysicsWorld_step(PhysicsWorldObject * self,
+                                     PyObject * args) {
     float dt = 1.0f/60.0f;
     if (!PyArg_ParseTuple(args, "|f", &dt)) return NULL;
 
@@ -261,6 +502,8 @@ static PyGetSetDef PhysicsWorld_getset[] = {
 
 static PyMethodDef PhysicsWorld_methods[] = {
     {"step", (PyCFunction)PhysicsWorld_step, METH_VARARGS, NULL},
+    {"apply_impulse", (PyCFunction)PhysicsWorld_apply_impulse, METH_VARARGS, NULL},
+    {"raycast", (PyCFunction)PhysicsWorld_raycast, METH_VARARGS, NULL},
     {NULL}
 };
 
