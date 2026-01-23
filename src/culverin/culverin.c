@@ -939,6 +939,70 @@ static PyObject* PhysicsWorld_create_body(PhysicsWorldObject* self, PyObject* ar
     return PyLong_FromUnsignedLongLong(handle);
 }
 
+static PyObject* PhysicsWorld_create_mesh_body(PhysicsWorldObject* self, PyObject* args, PyObject* kwds) {
+    float px, py, pz;
+    float rx, ry, rz, rw;
+    Py_buffer v_view, i_view;
+    static char *kwlist[] = {"pos", "rot", "vertices", "indices", NULL};
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)(ffff)y*y*", kwlist, 
+                                     &px, &py, &pz, &rx, &ry, &rz, &rw, 
+                                     &v_view, &i_view)) {
+        return NULL;
+    }
+
+    // 1. Prepare Jolt Mesh Settings
+    // Jolt expects vertices as JPH_Vec3 and indices as JPH_IndexedTriangle
+    uint32_t vertex_count = (uint32_t)(v_view.len / (3 * sizeof(float)));
+    uint32_t tri_count = (uint32_t)(i_view.len / (3 * sizeof(uint32_t)));
+
+    JPH_MeshShapeSettings* mss = JPH_MeshShapeSettings_Create2(
+        (JPH_Vec3*)v_view.buf, vertex_count,
+        (JPH_IndexedTriangle*)i_view.buf, tri_count
+    );
+
+    JPH_Shape* shape = (JPH_Shape*)JPH_MeshShapeSettings_CreateShape(mss);
+    JPH_ShapeSettings_Destroy((JPH_ShapeSettings*)mss);
+
+    // 2. Reserve Slot and Queue Command (Same logic as create_body)
+    SHADOW_LOCK(&self->shadow_lock);
+    if (self->count + self->command_count >= self->capacity || self->free_count == 0) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        JPH_Shape_Destroy(shape);
+        PyBuffer_Release(&v_view); PyBuffer_Release(&i_view);
+        PyErr_SetString(PyExc_MemoryError, "World capacity reached");
+        return NULL;
+    }
+
+    uint32_t slot = self->free_slots[--self->free_count];
+
+    JPH_STACK_ALLOC(JPH_RVec3, pos);
+    pos->x = px; pos->y = py; pos->z = pz;
+    JPH_STACK_ALLOC(JPH_Quat, rot);
+    rot->x = rx; rot->y = ry; rot->z = rz; rot->w = rw;
+
+    // Meshes are almost always static terrain
+    JPH_BodyCreationSettings* settings = JPH_BodyCreationSettings_Create3(
+        shape, pos, rot, JPH_MotionType_Static, 0
+    );
+    JPH_BodyCreationSettings_SetUserData(settings, (uint64_t)slot);
+
+    ensure_command_capacity(self);
+    PhysicsCommand* cmd = &self->command_queue[self->command_count++];
+    cmd->type = CMD_CREATE_BODY;
+    cmd->slot = slot;
+    cmd->data.create.settings = settings;
+
+    self->slot_states[slot] = SLOT_PENDING_CREATE;
+    BodyHandle handle = make_handle(slot, self->generations[slot]);
+
+    SHADOW_UNLOCK(&self->shadow_lock);
+    PyBuffer_Release(&v_view);
+    PyBuffer_Release(&i_view);
+
+    return PyLong_FromUnsignedLongLong(handle);
+}
+
 static PyObject* PhysicsWorld_destroy_body(PhysicsWorldObject* self, PyObject* args, PyObject* kwds) {
     uint64_t handle_raw;
     static char *kwlist[] = {"handle", NULL};
@@ -1463,6 +1527,7 @@ static PyMethodDef PhysicsWorld_methods[] = {
     {"step", (PyCFunction)PhysicsWorld_step, METH_VARARGS, NULL},
     {"create_body", (PyCFunction)PhysicsWorld_create_body, METH_VARARGS | METH_KEYWORDS, NULL},
     {"destroy_body", (PyCFunction)PhysicsWorld_destroy_body, METH_VARARGS | METH_KEYWORDS, NULL},
+    {"create_mesh_body", (PyCFunction)PhysicsWorld_create_mesh_body, METH_VARARGS | METH_KEYWORDS, NULL},
     {"apply_impulse", (PyCFunction)PhysicsWorld_apply_impulse, METH_VARARGS | METH_KEYWORDS, NULL},
     {"raycast", (PyCFunction)PhysicsWorld_raycast, METH_VARARGS | METH_KEYWORDS, NULL},
     {"overlap_sphere", (PyCFunction)PhysicsWorld_overlap_sphere, METH_VARARGS | METH_KEYWORDS, NULL},
