@@ -1655,6 +1655,8 @@ static int culverin_exec(PyObject *m) {
     PyModule_AddIntConstant(m, "MOTION_DYNAMIC", 2);
     PyModule_AddIntConstant(m, "SHAPE_CYLINDER", 3);
     PyModule_AddIntConstant(m, "SHAPE_PLANE", 4);
+    
+    PyModule_AddIntConstant(m, "SHAPE_MESH", 5); 
 
     return 0;
 }

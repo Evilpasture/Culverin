@@ -11,8 +11,6 @@
 #define JPH_INVALID_BODY_ID 0xFFFFFFFF
 #endif
 
-#define SHAPE_MESH 5
-
 // Allocate 'Type' on the stack with guaranteed 32-byte alignment.
 // USAGE: JPH_STACK_ALLOC(JPH_RVec3, my_vec);
 // This macro satisfies how Jolt Physics expects aligned data structures.
