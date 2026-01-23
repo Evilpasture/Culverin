@@ -1360,10 +1360,17 @@ static PyMethodDef PhysicsWorld_methods[] = {
     {"get_index", (PyCFunction)PhysicsWorld_get_index, METH_VARARGS | METH_KEYWORDS, NULL},
     {"is_alive", (PyCFunction)PhysicsWorld_is_alive, METH_VARARGS | METH_KEYWORDS, NULL},
     {"set_position", (PyCFunction)PhysicsWorld_set_position, METH_VARARGS | METH_KEYWORDS, NULL},
+    {"set_rotation", (PyCFunction)PhysicsWorld_set_rotation, METH_VARARGS | METH_KEYWORDS, NULL},
+    {"set_linear_velocity", (PyCFunction)PhysicsWorld_set_linear_velocity, METH_VARARGS | METH_KEYWORDS, NULL},
+    {"set_angular_velocity", (PyCFunction)PhysicsWorld_set_angular_velocity, METH_VARARGS | METH_KEYWORDS, NULL},
     {"set_transform", (PyCFunction)PhysicsWorld_set_transform, METH_VARARGS | METH_KEYWORDS, NULL},
+    {"activate", (PyCFunction)PhysicsWorld_activate, METH_VARARGS | METH_KEYWORDS, NULL},
+    {"deactivate", (PyCFunction)PhysicsWorld_deactivate, METH_VARARGS | METH_KEYWORDS, NULL},
     {"save_state", (PyCFunction)PhysicsWorld_save_state, METH_NOARGS, NULL},
     {"load_state", (PyCFunction)PhysicsWorld_load_state, METH_VARARGS | METH_KEYWORDS, NULL},
-    {NULL}
+    {"get_motion_type", (PyCFunction)PhysicsWorld_get_motion_type, METH_VARARGS | METH_KEYWORDS, NULL},
+    {"set_motion_type", (PyCFunction)PhysicsWorld_set_motion_type, METH_VARARGS | METH_KEYWORDS, NULL},
+    {NULL, NULL, 0, NULL}
 };
 
 static PyType_Slot PhysicsWorld_slots[] = {
