@@ -10,6 +10,8 @@ Handle = int  # 64-bit Stable Identifier
 SHAPE_BOX: int = 0
 SHAPE_SPHERE: int = 1
 SHAPE_CAPSULE: int = 2
+SHAPE_CYLINDER: int = 3
+SHAPE_PLANE: int = 4
 
 MOTION_STATIC: int = 0
 MOTION_KINEMATIC: int = 1
@@ -19,7 +21,7 @@ class BodyConfig(TypedDict, total=False):
     pos: Vec3
     rot: Quat
     shape: int
-    size: Vec3
+    size: Union[Tuple[float, float], Tuple[float, float, float], Tuple[float, float, float, float]]
     mass: float
 
 class WorldSettings(TypedDict, total=False):
@@ -132,6 +134,42 @@ class PhysicsWorld(_culverin_c.PhysicsWorld):
     def count(self) -> int: ...
     @property
     def time(self) -> float: ...
+    # -- Mutators --
+    def set_position(self, handle: Handle, x: float, y: float, z: float) -> None: 
+        """Teleports body. Updates shadow buffers immediately."""
+        ...
+    def set_rotation(self, handle: Handle, x: float, y: float, z: float, w: float) -> None: ...
+    def set_linear_velocity(self, handle: Handle, x: float, y: float, z: float) -> None: ...
+    def set_angular_velocity(self, handle: Handle, x: float, y: float, z: float) -> None: ...
+
+    def get_motion_type(self, handle: Handle) -> int: 
+        """Returns 0 (Static), 1 (Kinematic), or 2 (Dynamic)."""
+        ...
+    def set_motion_type(self, handle: Handle, motion_type: int) -> None: ...
+
+    def activate(self, handle: Handle) -> None: 
+        """Forces a sleeping body to wake up."""
+        ...
+    def deactivate(self, handle: Handle) -> None: 
+        """Forces a body to sleep immediately."""
+        ...
+    def set_transform(self, handle: Handle, pos: Vec3, rot: Quat) -> None:
+        """Atomic update of position and rotation. Buffered."""
+        ...
+
+    def save_state(self) -> bytes:
+        """
+        Captures a complete binary snapshot of the simulation state.
+        Includes all transforms, velocities, handles, and timing.
+        """
+        ...
+
+    def load_state(self, state: bytes) -> None:
+        """
+        Restores simulation to a previous snapshot. 
+        Synchronizes Jolt's internal broadphase immediately.
+        """
+        ...
 
 __all__ = ["PhysicsWorld", "BodyConfig", "WorldSettings", "Handle", 
            "SHAPE_BOX", "SHAPE_SPHERE", "SHAPE_CAPSULE"]

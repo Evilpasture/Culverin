@@ -11,6 +11,7 @@ SHAPE_BOX = 0
 SHAPE_SPHERE = 1
 SHAPE_CAPSULE = 2
 SHAPE_CYLINDER = 3
+SHAPE_PLANE = 4
 
 # Layers
 LAYER_NON_MOVING = 0
@@ -74,19 +75,20 @@ def bake_scene(bodies):
     arr_layer = array.array('B')      # [layer_id]
 
     for i, b in enumerate(bodies):
-        # 1. Transform
-        arr_pos.extend(b.get("pos", (0, 0, 0)) + (0.0,))
-        arr_rot.extend(b.get("rot", (0, 0, 0, 1))) # x, y, z, w
-
-        # 2. Shape Logic
         stype = b.get("shape", SHAPE_BOX)
-        size = b.get("size", (0.5, 0.5, 0.5))
+        # Ensure default size has 4 elements
+        size = b.get("size", (0, 0, 0, 0)) 
+        
         if stype == SHAPE_BOX:
-            arr_shape_data.extend([SHAPE_BOX, size[0], size[1], size[2]])
+            arr_shape_data.extend([SHAPE_BOX, size[0], size[1], size[2], 0.0])
         elif stype == SHAPE_SPHERE:
-            arr_shape_data.extend([SHAPE_SPHERE, size[0], 0.0, 0.0]) # radius
+            arr_shape_data.extend([SHAPE_SPHERE, size[0], 0.0, 0.0, 0.0])
         elif stype == SHAPE_CAPSULE:
-            arr_shape_data.extend([SHAPE_CAPSULE, size[0], size[1], 0.0]) # half-height, radius
+            arr_shape_data.extend([SHAPE_CAPSULE, size[0], size[1], 0.0, 0.0])
+        elif stype == SHAPE_CYLINDER:
+            arr_shape_data.extend([SHAPE_CYLINDER, size[0], size[1], 0.0, 0.0])
+        elif stype == SHAPE_PLANE:
+            arr_shape_data.extend([SHAPE_PLANE, size[0], size[1], size[2], size[3]])
         
         # 3. Dynamics & Layers
         mass = b.get("mass", 1.0)

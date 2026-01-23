@@ -3,6 +3,8 @@
 
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
+#include <string.h>
+#include <math.h>
 #include "joltc.h"
 
 #ifndef JPH_INVALID_BODY_ID
@@ -30,8 +32,8 @@
 
 // --- Shape Caching ---
 typedef struct {
-    uint32_t type;  // 0=Box, 1=Sphere, 2=Capsule
-    float p1, p2, p3; // Box: x,y,z | Sphere: r,0,0 | Capsule: h,r,0
+    uint32_t type;     // 0=Box, 1=Sphere, 2=Capsule, 3=Cylinder, 4=Plane
+    float p1, p2, p3, p4; 
 } ShapeKey;
 
 typedef struct {
@@ -54,22 +56,43 @@ typedef enum {
 // --- Command Buffer ---
 typedef enum {
     CMD_CREATE_BODY,
-    CMD_DESTROY_BODY
+    CMD_DESTROY_BODY,
+    CMD_SET_POS,
+    CMD_SET_ROT,
+    CMD_SET_TRNS, // Position + Rotation
+    CMD_SET_LINVEL,
+    CMD_SET_ANGVEL,
+    CMD_SET_MOTION,
+    CMD_ACTIVATE,
+    CMD_DEACTIVATE
 } CommandType;
 
 typedef struct {
     CommandType type;
+    uint32_t slot; // Every command targets a slot
     union {
+        // CMD_CREATE_BODY
         struct {
             JPH_BodyCreationSettings* settings;
-            uint32_t slot;
-            // Generation is implicit in the slot map
         } create;
 
+        // CMD_SET_POS, CMD_SET_ROT, CMD_SET_LINVEL, CMD_SET_ANGVEL
         struct {
-            uint32_t slot;
-        } destroy;
-    };
+            float x, y, z, w; // w used for rotation
+        } vec;
+
+        // CMD_SET_TRNS (Combined Pos + Rot)
+        struct {
+            float px, py, pz;
+            float rx, ry, rz, rw;
+        } transform;
+
+        // CMD_SET_MOTION
+        int motion_type;
+
+        // Note: CMD_DESTROY_BODY, CMD_ACTIVATE, CMD_DEACTIVATE 
+        // only need the 'slot' member defined above.
+    } data;
 } PhysicsCommand;
 
 // --- The Object Struct ---
