@@ -38,6 +38,10 @@ typedef struct {
     JPH_Shape* shape;
 } ShapeEntry;
 
+// Minimal Handle Helper
+// Python handles will be 64-bit integers: (Generation << 32) | SlotIndex
+typedef uint64_t BodyHandle;
+
 // --- The Object Struct ---
 typedef struct {
     PyObject_HEAD
@@ -58,6 +62,15 @@ typedef struct {
     float* linear_velocities;
     float* angular_velocities;
     JPH_BodyID* body_ids;
+
+    // --- Indirection System ---
+    uint32_t* generations;     // [Slot] -> Generation
+    uint32_t* slot_to_dense;   // [Slot] -> Dense Index
+    uint32_t* dense_to_slot;   // [Dense Index] -> Slot
+    
+    uint32_t* free_slots;      // Stack of available slots
+    size_t free_count;
+    size_t slot_capacity;      // Size of the mapping arrays
 
     ShapeEntry* shape_cache;
     size_t shape_cache_count;

@@ -52,6 +52,16 @@ class PhysicsWorld(_culverin_c.PhysicsWorld):
         """
         ...
 
+    def remove_body(self, index: int) -> None:
+        """
+        Removes a body from the simulation.
+        
+        WARNING: This performs a 'Swap and Pop'. The body at the end of the 
+        arrays will be moved to fill the gap left by the removed body.
+        The indices of other bodies (except the last one) remain unchanged.
+        """
+        ...
+
     @property
     def positions(self) -> memoryview: 
         """Flat array of floats (count * 4). Layout: [x, y, z, pad, ...]"""

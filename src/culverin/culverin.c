@@ -73,6 +73,19 @@ static JPH_Shape* find_or_create_shape(PhysicsWorldObject* self, int type, const
     return shape;
 }
 
+// --- Handle Helper ---
+static inline BodyHandle make_handle(uint32_t slot, uint32_t gen) {
+    return ((uint64_t)gen << 32) | (uint64_t)slot;
+}
+
+static inline bool unpack_handle(PhysicsWorldObject* self, BodyHandle h, uint32_t* slot) {
+    *slot = (uint32_t)(h & 0xFFFFFFFF);
+    uint32_t gen = (uint32_t)(h >> 32);
+    
+    if (*slot >= self->slot_capacity) return false;
+    return self->generations[*slot] == gen;
+}
+
 // --- Lifecycle: Deallocation ---
 static void PhysicsWorld_dealloc(PhysicsWorldObject* self) {
     // 1. Destroy Physics System FIRST
@@ -107,6 +120,10 @@ static void PhysicsWorld_dealloc(PhysicsWorldObject* self) {
     if (self->linear_velocities) PyMem_RawFree(self->linear_velocities);
     if (self->angular_velocities) PyMem_RawFree(self->angular_velocities);
     if (self->body_ids) PyMem_RawFree(self->body_ids);
+    if (self->generations) PyMem_RawFree(self->generations);
+    if (self->slot_to_dense) PyMem_RawFree(self->slot_to_dense);
+    if (self->dense_to_slot) PyMem_RawFree(self->dense_to_slot);
+    if (self->free_slots) PyMem_RawFree(self->free_slots);
 
     #if PY_VERSION_HEX < 0x030D0000
     if (self->shadow_lock) PyThread_free_lock(self->shadow_lock);
@@ -153,7 +170,7 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args, PyObject 
     self->pair_filter = JPH_ObjectLayerPairFilterTable_Create(2);
     JPH_ObjectLayerPairFilterTable_EnableCollision(self->pair_filter, 1, 0); 
     JPH_ObjectLayerPairFilterTable_EnableCollision(self->pair_filter, 1, 1); 
-    JPH_ObjectLayerPairFilterTable_DisableCollision(self->pair_filter, 0, 0); // Optimization: Static ignores Static
+    JPH_ObjectLayerPairFilterTable_DisableCollision(self->pair_filter, 0, 0); // Static ignores Static
 
     self->bp_filter = JPH_ObjectVsBroadPhaseLayerFilterTable_Create(self->bp_interface, 2, self->pair_filter, 2);
 
@@ -183,48 +200,59 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args, PyObject 
     self->shape_cache_count = 0;
     self->shape_cache_capacity = 0;
 
-    // 3. SCENE BAKING (The Culverin Pipeline)
+    // 3. SCENE BAKING & MEMORY ALLOCATION
+    PyObject *baked = NULL;
+    size_t baked_count = 0;
+
     if (bodies_list && bodies_list != Py_None) {
         PyObject *bake_func = PyObject_GetAttrString(st->helper, "bake_scene");
-        PyObject *baked = PyObject_CallFunctionObjArgs(bake_func, bodies_list, NULL);
+        baked = PyObject_CallFunctionObjArgs(bake_func, bodies_list, NULL);
         Py_DECREF(bake_func);
         if (!baked) return -1;
+    }
 
-        Py_ssize_t count_arg;
-        PyObject *o_pos, *o_rot, *o_shape, *o_mot, *o_layer;
-        if (!PyArg_ParseTuple(baked, "nOOOOO", &count_arg, &o_pos, &o_rot, &o_shape, &o_mot, &o_layer)) {
-            Py_DECREF(baked);
-            return -1;
-        }
+    // Determine Capacity (Must accommodate max_bodies from settings)
+    if (baked) {
+        PyObject* o_cnt = PyTuple_GetItem(baked, 0);
+        baked_count = (size_t)PyLong_AsSize_t(o_cnt);
+    }
 
-        self->count = (size_t)count_arg;
-        self->capacity = (self->count < 1024) ? 1024 : self->count;
+    self->count = baked_count;
+    // Capacity must be at least count, but preferably max_bodies to avoid reallocs
+    self->capacity = (size_t)max_bodies;
+    if (self->capacity < self->count) self->capacity = self->count + 1024;
 
-        // Buffer Validation (Safety against malformed Python buffers)
-        Py_ssize_t expected_size = (Py_ssize_t)(self->count * 4 * sizeof(float));
-        if (PyBytes_Size(o_pos) < expected_size || 
-            PyBytes_Size(o_rot) < expected_size ||
-            PyBytes_Size(o_shape) < expected_size) {
-            Py_DECREF(baked);
-            PyErr_SetString(PyExc_ValueError, "Bake buffers truncated or invalid");
-            return -1;
-        }
+    // --- ALLOCATE DENSE SHADOW BUFFERS ---
+    self->positions = PyMem_RawCalloc(self->capacity * 4, sizeof(float));
+    self->rotations = PyMem_RawCalloc(self->capacity * 4, sizeof(float));
+    self->linear_velocities = PyMem_RawCalloc(self->capacity * 4, sizeof(float));
+    self->angular_velocities = PyMem_RawCalloc(self->capacity * 4, sizeof(float));
+    self->body_ids = PyMem_RawMalloc(self->capacity * sizeof(JPH_BodyID));
 
-        // Allocations
-        self->positions = PyMem_RawCalloc(self->capacity * 4, sizeof(float));
-        self->rotations = PyMem_RawCalloc(self->capacity * 4, sizeof(float));
-        self->linear_velocities = PyMem_RawCalloc(self->capacity * 4, sizeof(float));
-        self->angular_velocities = PyMem_RawCalloc(self->capacity * 4, sizeof(float));
-        self->body_ids = PyMem_RawMalloc(self->capacity * sizeof(JPH_BodyID));
+    // --- ALLOCATE SPARSE SET / HANDLES ---
+    self->slot_capacity = self->capacity;
+    self->generations = PyMem_RawCalloc(self->slot_capacity, sizeof(uint32_t));
+    self->slot_to_dense = PyMem_RawMalloc(self->slot_capacity * sizeof(uint32_t));
+    self->dense_to_slot = PyMem_RawMalloc(self->slot_capacity * sizeof(uint32_t));
+    self->free_slots = PyMem_RawMalloc(self->slot_capacity * sizeof(uint32_t));
+    self->free_count = 0;
 
-        // Note: self->shapes array is NOT needed anymore because we use the cache!
+    // Check Allocations
+    if (!self->positions || !self->rotations || !self->body_ids ||
+        !self->linear_velocities || !self->angular_velocities ||
+        !self->generations || !self->slot_to_dense || !self->dense_to_slot || !self->free_slots) {
+        Py_XDECREF(baked);
+        PyErr_NoMemory();
+        return -1;
+    }
 
-        if (!self->positions || !self->rotations || !self->body_ids ||
-            !self->linear_velocities || !self->angular_velocities) {
-            Py_DECREF(baked);
-            PyErr_NoMemory();
-            return -1;
-        }
+    // 4. BODY CREATION LOOP
+    if (baked) {
+        PyObject *o_pos = PyTuple_GetItem(baked, 1);
+        PyObject *o_rot = PyTuple_GetItem(baked, 2);
+        PyObject *o_shape = PyTuple_GetItem(baked, 3);
+        PyObject *o_mot = PyTuple_GetItem(baked, 4);
+        PyObject *o_layer = PyTuple_GetItem(baked, 5);
 
         float *f_pos = (float*)PyBytes_AsString(o_pos);
         float *f_rot = (float*)PyBytes_AsString(o_rot);
@@ -234,9 +262,8 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args, PyObject 
 
         JPH_BodyInterface* bi = self->body_interface;
 
-        // 4. Body Creation Loop
         for (size_t i = 0; i < self->count; i++) {
-            // Stack Alignment Safety ({0} ensures no garbage padding)
+            // Stack Alignment Safety
             #ifdef _MSC_VER
                 __declspec(align(32)) JPH_RVec3 body_pos = {0};
                 __declspec(align(16)) JPH_Quat body_rot = {0};
@@ -254,7 +281,6 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args, PyObject 
             body_rot.z = f_rot[i*4+2]; 
             body_rot.w = f_rot[i*4+3];
 
-            // Deduplicated Shape Creation
             float params[3] = {f_shape[i*4+1], f_shape[i*4+2], f_shape[i*4+3]};
             JPH_Shape* shape = find_or_create_shape(self, (int)f_shape[i*4], params);
 
@@ -264,46 +290,67 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args, PyObject 
                     (JPH_MotionType)u_mot[i], (JPH_ObjectLayer)u_layer[i]
                 );
 
-                // O(1) Lookup Optimization
+                // --- KEY HANDLE LOGIC ---
+                // For initial bodies, Slot Index == Dense Index == i
+                // We set Jolt UserData to the SLOT index (i)
                 JPH_BodyCreationSettings_SetUserData(creation, (uint64_t)i);
 
                 if (u_mot[i] == 2) JPH_BodyCreationSettings_SetAllowSleeping(creation, true);
 
                 self->body_ids[i] = JPH_BodyInterface_CreateAndAddBody(bi, creation, JPH_Activation_Activate);
-                
                 JPH_BodyCreationSettings_Destroy(creation);
-                // NOTE: Do NOT destroy the shape here. The Cache owns it.
+                
+                // Initialize Indirection Maps
+                self->generations[i] = 1;      // Start at Generation 1
+                self->slot_to_dense[i] = (uint32_t)i;
+                self->dense_to_slot[i] = (uint32_t)i;
             } else {
                 self->body_ids[i] = JPH_INVALID_BODY_ID; 
             }
         }
-
         Py_DECREF(baked);
-        culverin_sync_shadow_buffers(self);
-    } else {
-        // Empty World Initialization
-        self->capacity = 1024;
-        self->count = 0;
-        self->positions = PyMem_RawCalloc(1024 * 4, sizeof(float));
-        self->rotations = PyMem_RawCalloc(1024 * 4, sizeof(float));
-        self->linear_velocities = PyMem_RawCalloc(1024 * 4, sizeof(float));
-        self->angular_velocities = PyMem_RawCalloc(1024 * 4, sizeof(float));
-        self->body_ids = PyMem_RawMalloc(1024 * sizeof(JPH_BodyID));
     }
 
+    // 5. Initialize Free Slots
+    // All slots beyond 'count' are available
+    for (uint32_t i = (uint32_t)self->count; i < (uint32_t)self->slot_capacity; i++) {
+        self->generations[i] = 1;
+        self->free_slots[self->free_count++] = i;
+    }
+
+    culverin_sync_shadow_buffers(self);
     return 0;
 }
 
 static PyObject* PhysicsWorld_apply_impulse(PhysicsWorldObject* self, PyObject* args) {
-    int index;
+    uint64_t handle_raw;
     float ix, iy, iz;
-    if (!PyArg_ParseTuple(args, "ifff", &index, &ix, &iy, &iz)) return NULL;
+    
+    // Change 'i' to 'K' to accept the 64-bit Handle
+    if (!PyArg_ParseTuple(args, "Kfff", &handle_raw, &ix, &iy, &iz)) return NULL;
 
-    if (index >= 0 && (size_t)index < self->count) {
-        JPH_BodyID bid = self->body_ids[index];
-        // Note: No-GIL safe because BodyInterface handles its own locking
-        JPH_BodyInterface_AddImpulse(self->body_interface, bid, &(JPH_Vec3){ix, iy, iz});
+    // 1. Unpack Handle
+    uint32_t slot;
+    if (!unpack_handle(self, (BodyHandle)handle_raw, &slot)) {
+        // Option A: Silent fail (robust for games)
+        // Py_RETURN_NONE; 
+        
+        // Option B: Raise error (better for debugging)
+        PyErr_SetString(PyExc_ValueError, "Invalid or stale body handle");
+        return NULL;
     }
+
+    // 2. Convert Slot -> Dense Index
+    uint32_t dense_idx = self->slot_to_dense[slot];
+
+    // 3. Apply to Jolt Body
+    JPH_BodyID bid = self->body_ids[dense_idx];
+    
+    // Note: Cast raw float args to JPH_Vec3. 
+    // We use a compound literal for the pointer.
+    JPH_Vec3 impulse = {ix, iy, iz};
+    JPH_BodyInterface_AddImpulse(self->body_interface, bid, &impulse);
+    
     Py_RETURN_NONE;
 }
 
@@ -353,17 +400,19 @@ static PyObject* PhysicsWorld_raycast(PhysicsWorldObject* self, PyObject* args) 
 
     if (!has_hit) Py_RETURN_NONE;
 
-    // 4. Fast Lookup (O(1)) instead of Loop (O(N))
-    // We already baked the index into UserData in init()
-    uint64_t udata = JPH_BodyInterface_GetUserData(self->body_interface, hit.bodyID);
-    int hit_index = (int)udata;
+    // 1. Get Slot from UserData
+    // In our new system, UserData IS the slot index.
+    uint64_t slot_idx = JPH_BodyInterface_GetUserData(self->body_interface, hit.bodyID);
 
-    // Safety check just in case
-    if (hit_index < 0 || (size_t)hit_index >= self->count) {
-        Py_RETURN_NONE;
-    }
+    // 2. Validate
+    if (slot_idx >= self->slot_capacity) Py_RETURN_NONE;
 
-    return Py_BuildValue("if", hit_index, hit.fraction);
+    // 3. Construct Handle
+    // We combine the fixed slot with the current generation
+    uint32_t gen = self->generations[slot_idx];
+    BodyHandle handle = make_handle((uint32_t)slot_idx, gen);
+
+    return Py_BuildValue("Kf", handle, hit.fraction); // 'K' for uint64
 }
 
 // ==============================================NO UNCOMMENT. AND LEAVE THIS ALONE.==============================================================
@@ -446,6 +495,76 @@ static PyObject* PhysicsWorld_raycast(PhysicsWorldObject* self, PyObject* args) 
     Py_RETURN_NONE;
 }
 
+static PyObject* PhysicsWorld_remove_body(PhysicsWorldObject* self, PyObject* args) {
+    uint64_t handle_raw;
+    if (!PyArg_ParseTuple(args, "K", &handle_raw)) return NULL; // 'K' = unsigned long long
+
+    SHADOW_LOCK(&self->shadow_lock);
+
+    uint32_t slot;
+    if (!unpack_handle(self, (BodyHandle)handle_raw, &slot)) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_SetString(PyExc_ValueError, "Invalid or stale body handle");
+        return NULL;
+    }
+
+    // 1. Get Dense Index from Slot
+    uint32_t dense_idx = self->slot_to_dense[slot];
+
+    // 2. Jolt Cleanup
+    JPH_BodyInterface* bi = self->body_interface;
+    JPH_BodyID id_to_remove = self->body_ids[dense_idx];
+    JPH_BodyInterface_RemoveBody(bi, id_to_remove);
+    JPH_BodyInterface_DestroyBody(bi, id_to_remove);
+
+    // 3. Swap and Pop (Dense Arrays)
+    size_t last_dense = self->count - 1;
+
+    if (dense_idx != last_dense) {
+        // A. Swap Shadow Data
+        memcpy(&self->positions[dense_idx*4], &self->positions[last_dense*4], 4 * sizeof(float));
+        memcpy(&self->rotations[dense_idx*4], &self->rotations[last_dense*4], 4 * sizeof(float));
+        memcpy(&self->linear_velocities[dense_idx*4], &self->linear_velocities[last_dense*4], 4 * sizeof(float));
+        memcpy(&self->angular_velocities[dense_idx*4], &self->angular_velocities[last_dense*4], 4 * sizeof(float));
+        self->body_ids[dense_idx] = self->body_ids[last_dense];
+
+        // B. Update Maps
+        // Who lived at the end?
+        uint32_t mover_slot = self->dense_to_slot[last_dense];
+        
+        // Point that slot to the new location (dense_idx)
+        self->slot_to_dense[mover_slot] = dense_idx;
+        
+        // Update reverse map
+        self->dense_to_slot[dense_idx] = mover_slot;
+        
+        // NOTE: We do NOT need to update Jolt UserData! 
+        // Jolt holds 'mover_slot', which is still valid and uniquely identifies that body.
+    }
+
+    // 4. Invalidate Handle
+    self->generations[slot]++; // Increment generation implies old handle is dead
+    self->free_slots[self->free_count++] = slot; // Recycle slot
+
+    self->count--;
+    self->view_shape[0] = (Py_ssize_t)self->count;
+
+    SHADOW_UNLOCK(&self->shadow_lock);
+    Py_RETURN_NONE;
+}
+
+static PyObject* PhysicsWorld_get_index(PhysicsWorldObject* self, PyObject* args) {
+    uint64_t handle_raw;
+    if (!PyArg_ParseTuple(args, "K", &handle_raw)) return NULL;
+
+    uint32_t slot;
+    if (!unpack_handle(self, (BodyHandle)handle_raw, &slot)) {
+        Py_RETURN_NONE; // Or -1
+    }
+
+    return PyLong_FromUnsignedLong(self->slot_to_dense[slot]);
+}
+
 static PyObject* make_view(PhysicsWorldObject* self, void* ptr) {
     if (!ptr) Py_RETURN_NONE;
 
@@ -504,6 +623,8 @@ static PyMethodDef PhysicsWorld_methods[] = {
     {"step", (PyCFunction)PhysicsWorld_step, METH_VARARGS, NULL},
     {"apply_impulse", (PyCFunction)PhysicsWorld_apply_impulse, METH_VARARGS, NULL},
     {"raycast", (PyCFunction)PhysicsWorld_raycast, METH_VARARGS, NULL},
+    {"remove_body", (PyCFunction)PhysicsWorld_remove_body, METH_VARARGS, NULL},
+    {"get_index", (PyCFunction)PhysicsWorld_get_index, METH_VARARGS, NULL},
     {NULL}
 };
 
