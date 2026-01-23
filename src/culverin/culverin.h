@@ -64,7 +64,8 @@ typedef enum {
     CMD_SET_ANGVEL,
     CMD_SET_MOTION,
     CMD_ACTIVATE,
-    CMD_DEACTIVATE
+    CMD_DEACTIVATE,
+    CMD_SET_USER_DATA
 } CommandType;
 
 typedef struct {
@@ -74,6 +75,7 @@ typedef struct {
         // CMD_CREATE_BODY
         struct {
             JPH_BodyCreationSettings* settings;
+            uint64_t user_data;
         } create;
 
         // CMD_SET_POS, CMD_SET_ROT, CMD_SET_LINVEL, CMD_SET_ANGVEL
@@ -89,6 +91,9 @@ typedef struct {
 
         // CMD_SET_MOTION
         int motion_type;
+
+        // CMD_SET_USER_DATA
+        uint64_t user_data_val;
 
         // Note: CMD_DESTROY_BODY, CMD_ACTIVATE, CMD_DEACTIVATE 
         // only need the 'slot' member defined above.
@@ -115,6 +120,7 @@ typedef struct {
     float* linear_velocities;
     float* angular_velocities;
     JPH_BodyID* body_ids;
+    uint64_t* user_data;
 
     // --- Indirection System ---
     uint32_t* generations;     // [Slot] -> Generation

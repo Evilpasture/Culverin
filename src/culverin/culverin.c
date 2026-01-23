@@ -103,7 +103,7 @@ static void PhysicsWorld_dealloc(PhysicsWorldObject* self) {
     PyMem_RawFree(self->body_ids); PyMem_RawFree(self->generations);
     PyMem_RawFree(self->slot_to_dense); PyMem_RawFree(self->dense_to_slot);
     PyMem_RawFree(self->free_slots); PyMem_RawFree(self->slot_states);
-    PyMem_RawFree(self->command_queue);
+    PyMem_RawFree(self->command_queue); PyMem_RawFree(self->user_data);
 
     #if PY_VERSION_HEX < 0x030D0000
     if (self->shadow_lock) PyThread_free_lock(self->shadow_lock);
@@ -166,6 +166,8 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args, PyObject 
     self->linear_velocities = PyMem_RawCalloc(self->capacity * 4, sizeof(float));
     self->angular_velocities = PyMem_RawCalloc(self->capacity * 4, sizeof(float));
     self->body_ids = PyMem_RawMalloc(self->capacity * sizeof(JPH_BodyID));
+    // Allocate User Data Buffer (Initialized to 0)
+    self->user_data = PyMem_RawCalloc(self->capacity, sizeof(uint64_t)); 
     self->slot_capacity = self->capacity;
     self->generations = PyMem_RawCalloc(self->slot_capacity, sizeof(uint32_t));
     self->slot_to_dense = PyMem_RawMalloc(self->slot_capacity * sizeof(uint32_t));
@@ -174,6 +176,16 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args, PyObject 
     self->slot_states = PyMem_RawCalloc(self->slot_capacity, sizeof(uint8_t));
     self->command_queue = PyMem_RawMalloc(64 * sizeof(PhysicsCommand));
     self->command_capacity = 64; self->command_count = 0;
+
+    if (!self->positions || !self->rotations || !self->body_ids ||
+        !self->linear_velocities || !self->angular_velocities || !self->user_data ||
+        !self->generations || !self->slot_to_dense || !self->dense_to_slot || 
+        !self->free_slots || !self->slot_states || !self->command_queue) {
+        
+        Py_XDECREF(baked);
+        PyErr_NoMemory();
+        return -1;
+    }
 
     if (baked) {
         float *f_pos = (float*)PyBytes_AsString(PyTuple_GetItem(baked, 1));
@@ -387,6 +399,7 @@ static void flush_commands(PhysicsWorldObject* self) {
                 self->body_ids[new_dense] = new_bid;
                 self->slot_to_dense[slot] = (uint32_t)new_dense;
                 self->dense_to_slot[new_dense] = slot;
+                self->user_data[new_dense] = cmd->data.create.user_data; 
                 
                 // 3. Force immediate Shadow Buffer sync for this new body
                 JPH_STACK_ALLOC(JPH_RVec3, p);
@@ -431,6 +444,7 @@ static void flush_commands(PhysicsWorldObject* self) {
                     uint32_t mover_slot = self->dense_to_slot[last_dense];
                     self->slot_to_dense[mover_slot] = dense_idx;
                     self->dense_to_slot[dense_idx] = mover_slot;
+                    self->user_data[dense_idx] = self->user_data[last_dense];
                 }
                 
                 // 3. Recycle Slot
@@ -516,6 +530,11 @@ static void flush_commands(PhysicsWorldObject* self) {
 
             case CMD_DEACTIVATE: {
                 JPH_BodyInterface_DeactivateBody(bi, bid);
+                break;
+            }
+            case CMD_SET_USER_DATA: {
+                uint32_t dense_idx = self->slot_to_dense[slot];
+                self->user_data[dense_idx] = cmd->data.user_data_val;
                 break;
             }
             default: {
@@ -781,14 +800,15 @@ static PyObject* PhysicsWorld_create_body(PhysicsWorldObject* self, PyObject* ar
     float s[4] = {1.0f, 1.0f, 1.0f, 0.0f}; // Default size params
     int shape_type = 0;  // SHAPE_BOX
     int motion_type = 2; // MOTION_DYNAMIC
+    unsigned long long user_data = 0;
     
     PyObject* py_size = NULL;
-    static char *kwlist[] = {"pos", "rot", "size", "shape", "motion", NULL};
+    static char *kwlist[] = {"pos", "rot", "size", "shape", "motion", "user_data", NULL};
 
     // 1. Parse Arguments
     // Note: size is parsed as a generic Object 'O' for flexible tuple length
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "|(fff)(ffff)Oii", kwlist, 
-        &px, &py, &pz, &rx, &ry, &rz, &rw, &py_size, &shape_type, &motion_type)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "|(fff)(ffff)OiiK", kwlist, 
+        &px, &py, &pz, &rx, &ry, &rz, &rw, &py_size, &shape_type, &motion_type, &user_data)) {
         return NULL;
     }
 
@@ -870,6 +890,7 @@ static PyObject* PhysicsWorld_create_body(PhysicsWorldObject* self, PyObject* ar
     cmd->type = CMD_CREATE_BODY;
     cmd->slot = slot;
     cmd->data.create.settings = settings; // Command now owns this pointer
+    cmd->data.create.user_data = (uint64_t)user_data;
 
     // 9. Update State Machine
     self->slot_states[slot] = SLOT_PENDING_CREATE;
@@ -887,11 +908,12 @@ static PyObject* PhysicsWorld_create_mesh_body(PhysicsWorldObject* self, PyObjec
     float px, py, pz;
     float rx, ry, rz, rw;
     Py_buffer v_view, i_view;
-    static char *kwlist[] = {"pos", "rot", "vertices", "indices", NULL};
+    unsigned long long user_data = 0;
+    static char *kwlist[] = {"pos", "rot", "vertices", "indices", "user_data", NULL};
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)(ffff)y*y*", kwlist, 
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)(ffff)y*y*K", kwlist, 
                                      &px, &py, &pz, &rx, &ry, &rz, &rw, 
-                                     &v_view, &i_view)) {
+                                     &v_view, &i_view, &user_data)) {
         return NULL;
     }
 
@@ -971,6 +993,7 @@ static PyObject* PhysicsWorld_create_mesh_body(PhysicsWorldObject* self, PyObjec
     cmd->type = CMD_CREATE_BODY;
     cmd->slot = slot;
     cmd->data.create.settings = settings;
+    cmd->data.create.user_data = (uint64_t)user_data;
 
     self->slot_states[slot] = SLOT_PENDING_CREATE;
     BodyHandle handle = make_handle(slot, self->generations[slot]);
@@ -1180,6 +1203,50 @@ static PyObject* PhysicsWorld_set_motion_type(PhysicsWorldObject* self, PyObject
     
     SHADOW_UNLOCK(&self->shadow_lock); // UNLOCK
     Py_RETURN_NONE;
+}
+
+static PyObject* PhysicsWorld_set_user_data(PhysicsWorldObject* self, PyObject* args, PyObject* kwds) {
+    uint64_t handle_raw;
+    unsigned long long data;
+    static char *kwlist[] = {"handle", "data", NULL};
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "KK", kwlist, &handle_raw, &data)) 
+        return NULL;
+
+    SHADOW_LOCK(&self->shadow_lock);
+    uint32_t slot;
+    if (!unpack_handle(self, (BodyHandle)handle_raw, &slot)) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_SetString(PyExc_ValueError, "Invalid handle");
+        return NULL;
+    }
+
+    // Immediate update (Safe because we hold lock)
+    uint32_t dense = self->slot_to_dense[slot];
+    self->user_data[dense] = (uint64_t)data;
+    
+    SHADOW_UNLOCK(&self->shadow_lock);
+    Py_RETURN_NONE;
+}
+
+static PyObject* PhysicsWorld_get_user_data(PhysicsWorldObject* self, PyObject* args, PyObject* kwds) {
+    uint64_t handle_raw;
+    static char *kwlist[] = {"handle", NULL};
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "K", kwlist, &handle_raw)) 
+        return NULL;
+
+    SHADOW_LOCK(&self->shadow_lock);
+    uint32_t slot;
+    if (!unpack_handle(self, (BodyHandle)handle_raw, &slot)) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        Py_RETURN_NONE;
+    }
+    
+    uint64_t val = self->user_data[self->slot_to_dense[slot]];
+    SHADOW_UNLOCK(&self->shadow_lock);
+    
+    return PyLong_FromUnsignedLongLong(val);
 }
 
 static PyObject* PhysicsWorld_activate(PhysicsWorldObject* self, PyObject* args, PyObject* kwds) {
@@ -1445,6 +1512,29 @@ static PyObject* make_view(PhysicsWorldObject* self, void* ptr) {
     return mv;
 }
 
+static PyObject* get_user_data_buffer(PhysicsWorldObject* self, void* c) {
+    // Similar to make_view but for uint64
+    if (!self->user_data) Py_RETURN_NONE;
+    
+    self->view_shape[0] = (Py_ssize_t)self->count;
+    self->view_shape[1] = 1; // 1D array effectively
+    
+    Py_buffer buf;
+    memset(&buf, 0, sizeof(Py_buffer));
+    buf.buf = self->user_data;
+    buf.obj = (PyObject*)self;
+    Py_INCREF(self);
+    buf.len = (Py_ssize_t)(self->count * sizeof(uint64_t));
+    buf.readonly = 1;
+    buf.itemsize = sizeof(uint64_t);
+    buf.format = "Q"; // Unsigned Long Long
+    buf.ndim = 1;
+    buf.shape = &self->view_shape[0];
+    buf.strides = &buf.itemsize;
+
+    return PyMemoryView_FromBuffer(&buf);
+}
+
 // --- Character Methods ---
 
 static void Character_dealloc(CharacterObject* self) {
@@ -1559,32 +1649,49 @@ static PyGetSetDef PhysicsWorld_getset[] = {
     {"angular_velocities", (getter)get_angular_velocities, NULL, NULL, NULL},
     {"count", (getter)get_count, NULL, NULL, NULL},
     {"time", (getter)get_time, NULL, NULL, NULL},
+    {"user_data", (getter)get_user_data_buffer, NULL, NULL, NULL},
     {NULL}
 };
 
 static PyMethodDef PhysicsWorld_methods[] = {
+    // --- Lifecycle ---
     {"step", (PyCFunction)PhysicsWorld_step, METH_VARARGS, NULL},
     {"create_body", (PyCFunction)PhysicsWorld_create_body, METH_VARARGS | METH_KEYWORDS, NULL},
     {"destroy_body", (PyCFunction)PhysicsWorld_destroy_body, METH_VARARGS | METH_KEYWORDS, NULL},
     {"create_mesh_body", (PyCFunction)PhysicsWorld_create_mesh_body, METH_VARARGS | METH_KEYWORDS, NULL},
+    
+    // --- Interaction ---
     {"apply_impulse", (PyCFunction)PhysicsWorld_apply_impulse, METH_VARARGS | METH_KEYWORDS, NULL},
-    {"raycast", (PyCFunction)PhysicsWorld_raycast, METH_VARARGS | METH_KEYWORDS, NULL},
-    {"overlap_sphere", (PyCFunction)PhysicsWorld_overlap_sphere, METH_VARARGS | METH_KEYWORDS, NULL},
-    {"overlap_aabb", (PyCFunction)PhysicsWorld_overlap_aabb, METH_VARARGS | METH_KEYWORDS, NULL},
-    {"get_index", (PyCFunction)PhysicsWorld_get_index, METH_VARARGS | METH_KEYWORDS, NULL},
-    {"is_alive", (PyCFunction)PhysicsWorld_is_alive, METH_VARARGS | METH_KEYWORDS, NULL},
     {"set_position", (PyCFunction)PhysicsWorld_set_position, METH_VARARGS | METH_KEYWORDS, NULL},
     {"set_rotation", (PyCFunction)PhysicsWorld_set_rotation, METH_VARARGS | METH_KEYWORDS, NULL},
     {"set_linear_velocity", (PyCFunction)PhysicsWorld_set_linear_velocity, METH_VARARGS | METH_KEYWORDS, NULL},
     {"set_angular_velocity", (PyCFunction)PhysicsWorld_set_angular_velocity, METH_VARARGS | METH_KEYWORDS, NULL},
     {"set_transform", (PyCFunction)PhysicsWorld_set_transform, METH_VARARGS | METH_KEYWORDS, NULL},
-    {"activate", (PyCFunction)PhysicsWorld_activate, METH_VARARGS | METH_KEYWORDS, NULL},
-    {"deactivate", (PyCFunction)PhysicsWorld_deactivate, METH_VARARGS | METH_KEYWORDS, NULL},
-    {"save_state", (PyCFunction)PhysicsWorld_save_state, METH_NOARGS, NULL},
-    {"load_state", (PyCFunction)PhysicsWorld_load_state, METH_VARARGS | METH_KEYWORDS, NULL},
+    
+    // --- Motion Control ---
     {"get_motion_type", (PyCFunction)PhysicsWorld_get_motion_type, METH_VARARGS | METH_KEYWORDS, NULL},
     {"set_motion_type", (PyCFunction)PhysicsWorld_set_motion_type, METH_VARARGS | METH_KEYWORDS, NULL},
+    {"activate", (PyCFunction)PhysicsWorld_activate, METH_VARARGS | METH_KEYWORDS, NULL},
+    {"deactivate", (PyCFunction)PhysicsWorld_deactivate, METH_VARARGS | METH_KEYWORDS, NULL},
+
+    // --- Queries ---
+    {"raycast", (PyCFunction)PhysicsWorld_raycast, METH_VARARGS | METH_KEYWORDS, NULL},
+    {"overlap_sphere", (PyCFunction)PhysicsWorld_overlap_sphere, METH_VARARGS | METH_KEYWORDS, NULL},
+    {"overlap_aabb", (PyCFunction)PhysicsWorld_overlap_aabb, METH_VARARGS | METH_KEYWORDS, NULL},
+
+    // --- Utilities ---
+    {"get_index", (PyCFunction)PhysicsWorld_get_index, METH_VARARGS | METH_KEYWORDS, NULL},
+    {"is_alive", (PyCFunction)PhysicsWorld_is_alive, METH_VARARGS | METH_KEYWORDS, NULL},
+
+    // --- User Data (New) ---
+    {"get_user_data", (PyCFunction)PhysicsWorld_get_user_data, METH_VARARGS | METH_KEYWORDS, NULL},
+    {"set_user_data", (PyCFunction)PhysicsWorld_set_user_data, METH_VARARGS | METH_KEYWORDS, NULL},
+
+    // --- State & Advanced ---
+    {"save_state", (PyCFunction)PhysicsWorld_save_state, METH_NOARGS, NULL},
+    {"load_state", (PyCFunction)PhysicsWorld_load_state, METH_VARARGS | METH_KEYWORDS, NULL},
     {"create_character", (PyCFunction)PhysicsWorld_create_character, METH_VARARGS | METH_KEYWORDS, NULL},
+
     {NULL, NULL, 0, NULL}
 };
 
