@@ -31,6 +31,23 @@ class WorldSettings(TypedDict, total=False):
     max_bodies: int
     max_pairs: int
 
+# FIX: Inherit from _culverin_c.Character so the type checker knows they are compatible
+class Character(_culverin_c.Character):
+    def move(self, velocity: Vec3, dt: float) -> None:
+        """
+        Moves the character using Jolt's virtual character logic.
+        Handles slopes, stairs, and sliding automatically.
+        
+        Args:
+            velocity: (vx, vy, vz) linear velocity. Apply gravity manually before passing!
+            dt: Delta time.
+        """
+        ...
+    def get_position(self) -> Vec3: ...
+    def set_position(self, pos: Vec3) -> None: ...
+    def set_rotation(self, rot: Quat) -> None: ...
+    def is_grounded(self) -> bool: ...
+
 class PhysicsWorld(_culverin_c.PhysicsWorld):
     def __init__(
         self, 
@@ -57,6 +74,15 @@ class PhysicsWorld(_culverin_c.PhysicsWorld):
         indices: Any
     ) -> Handle: ...
 
+    def create_character(
+        self,
+        pos: Vec3,
+        height: float = 1.8,
+        radius: float = 0.4,
+        step_height: float = 0.4,
+        max_slope: float = 45.0
+    ) -> Character: ...
+
     def destroy_body(self, handle: Handle) -> None: ...
     
     # -- Mutators --
@@ -68,18 +94,10 @@ class PhysicsWorld(_culverin_c.PhysicsWorld):
     def set_angular_velocity(self, handle: Handle, x: float, y: float, z: float) -> None: ...
 
     # -- Activation & Motion --
-    def activate(self, handle: Handle) -> None: 
-        """Forces a sleeping body to wake up."""
-        ...
-    def deactivate(self, handle: Handle) -> None: 
-        """Forces a body to sleep immediately."""
-        ...
-    def get_motion_type(self, handle: Handle) -> int: 
-        """Returns 0 (Static), 1 (Kinematic), or 2 (Dynamic)."""
-        ...
-    def set_motion_type(self, handle: Handle, motion: int) -> None: 
-        """Sets motion type. 0=Static, 1=Kinematic, 2=Dynamic."""
-        ...
+    def activate(self, handle: Handle) -> None: ...
+    def deactivate(self, handle: Handle) -> None: ...
+    def get_motion_type(self, handle: Handle) -> int: ...
+    def set_motion_type(self, handle: Handle, motion: int) -> None: ...
     
     # -- Queries --
     def raycast(self, start: Vec3, direction: Vec3, max_dist: float = 1000.0) -> Optional[Tuple[Handle, float]]: ...
@@ -106,7 +124,7 @@ class PhysicsWorld(_culverin_c.PhysicsWorld):
     def time(self) -> float: ...
 
 __all__ = [
-    "PhysicsWorld", "BodyConfig", "WorldSettings", "Handle", 
+    "PhysicsWorld", "Character", "BodyConfig", "WorldSettings", "Handle", 
     "SHAPE_BOX", "SHAPE_SPHERE", "SHAPE_CAPSULE", "SHAPE_CYLINDER", "SHAPE_PLANE", "SHAPE_MESH",
     "MOTION_STATIC", "MOTION_KINEMATIC", "MOTION_DYNAMIC"
 ]

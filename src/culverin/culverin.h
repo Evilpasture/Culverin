@@ -146,6 +146,22 @@ typedef struct {
     Py_ssize_t view_strides[2];
 } PhysicsWorldObject;
 
+// --- Character Object ---
+typedef struct {
+    PyObject_HEAD
+    JPH_CharacterVirtual* character;
+    PhysicsWorldObject* world; // Keep a reference to keep the world alive
+    
+    // We need filters for the character's movement query
+    JPH_BodyFilter* body_filter;
+    JPH_ShapeFilter* shape_filter;
+    JPH_BroadPhaseLayerFilter* bp_filter;
+    JPH_ObjectLayerFilter* obj_filter;
+} CharacterObject;
+
+// Add this to the declarations
+extern PyType_Spec Character_spec;
+
 typedef struct {
     PhysicsWorldObject* world;
     PyObject* result_list; // Python List to append handles to

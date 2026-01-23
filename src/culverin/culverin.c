@@ -2,16 +2,29 @@
 
 // --- Helper: Shape Caching (Internal) ---
 static JPH_Shape* find_or_create_shape(PhysicsWorldObject* self, int type, const float* params) {
-    // STANDARD: All shapes now use 4 parameters for the key
+    // 1. Construct Key
     ShapeKey key = { (uint32_t)type, params[0], params[1], params[2], params[3] };
 
+    // 2. Search Cache (Manual Compare)
     for (size_t i = 0; i < self->shape_cache_count; i++) {
-        if (memcmp(&self->shape_cache[i].key, &key, sizeof(ShapeKey)) == 0) {
+        ShapeKey* k = &self->shape_cache[i].key;
+        
+        // Compare members directly to avoid structure padding issues
+        // Note: Exact float equality is intended here. We only want a cache hit
+        // if the requested size is bit-identical to the cached size.
+        if (k->type == key.type &&
+            k->p1 == key.p1 &&
+            k->p2 == key.p2 &&
+            k->p3 == key.p3 &&
+            k->p4 == key.p4) {
+            
             return self->shape_cache[i].shape;
         }
     }
 
+    // 3. Not Found -> Create New Jolt Shape
     JPH_Shape* shape = NULL;
+    
     if (type == 0) { // BOX
         JPH_Vec3 he = {key.p1, key.p2, key.p3};
         JPH_BoxShapeSettings* s = JPH_BoxShapeSettings_Create(&he, 0.05f);
@@ -42,10 +55,14 @@ static JPH_Shape* find_or_create_shape(PhysicsWorldObject* self, int type, const
 
     if (!shape) return NULL;
 
+    // 4. Store in Cache
     if (self->shape_cache_count >= self->shape_cache_capacity) {
         size_t new_cap = (self->shape_cache_capacity == 0) ? 16 : self->shape_cache_capacity * 2;
         void* new_ptr = PyMem_RawRealloc(self->shape_cache, new_cap * sizeof(ShapeEntry));
-        if (!new_ptr) { JPH_Shape_Destroy(shape); return NULL; }
+        if (!new_ptr) {
+            JPH_Shape_Destroy(shape);
+            return NULL; // OOM
+        }
         self->shape_cache = (ShapeEntry*)new_ptr;
         self->shape_cache_capacity = new_cap;
     }
@@ -53,6 +70,7 @@ static JPH_Shape* find_or_create_shape(PhysicsWorldObject* self, int type, const
     self->shape_cache[self->shape_cache_count].key = key;
     self->shape_cache[self->shape_cache_count].shape = shape;
     self->shape_cache_count++;
+
     return shape;
 }
 
@@ -656,6 +674,100 @@ static PyObject* PhysicsWorld_step(PhysicsWorldObject* self, PyObject* args) {
     Py_END_ALLOW_THREADS
 
     Py_RETURN_NONE;
+}
+
+static PyObject* PhysicsWorld_create_character(PhysicsWorldObject* self, PyObject* args, PyObject* kwds) {
+    float px=0, py=0, pz=0;
+    float height=1.8f, radius=0.4f, step_height=0.4f, max_slope=45.0f;
+    static char *kwlist[] = {"pos", "height", "radius", "step_height", "max_slope", NULL};
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)|ffff", kwlist, 
+        &px, &py, &pz, &height, &radius, &step_height, &max_slope)) {
+        return NULL;
+    }
+
+    // 1. Create Shape (Capsule)
+    float half_h = (height - 2.0f * radius) * 0.5f;
+    if (half_h < 0.1f) half_h = 0.1f;
+
+    JPH_CapsuleShapeSettings* ss = JPH_CapsuleShapeSettings_Create(half_h, radius);
+    JPH_Shape* shape = (JPH_Shape*)JPH_CapsuleShapeSettings_CreateShape(ss);
+    JPH_ShapeSettings_Destroy((JPH_ShapeSettings*)ss);
+
+    if (!shape) return PyErr_NoMemory();
+
+    // 2. Settings (Stack Allocation + Direct Access)
+    JPH_CharacterVirtualSettings settings;
+    memset(&settings, 0, sizeof(JPH_CharacterVirtualSettings));
+    JPH_CharacterVirtualSettings_Init(&settings); // Important: Sets defaults
+
+    // Direct Member Access (No _Set functions)
+    settings.base.shape = shape;
+    
+    // Up Vector (Y-Up)
+    settings.base.up.x = 0; 
+    settings.base.up.y = 1; 
+    settings.base.up.z = 0;
+    
+    // Infinite Plane Supporting Volume (Normal -Y, Distance huge)
+    settings.base.supportingVolume.normal.x = 0;
+    settings.base.supportingVolume.normal.y = -1;
+    settings.base.supportingVolume.normal.z = 0;
+    settings.base.supportingVolume.distance = 1.0e10f; 
+
+    float slope_rad = max_slope * (3.14159f / 180.0f);
+    settings.base.maxSlopeAngle = slope_rad;
+    settings.base.enhancedInternalEdgeRemoval = true;
+
+    // Config
+    settings.mass = 70.0f;
+    settings.maxStrength = 100.0f;
+    settings.characterPadding = 0.02f;
+    settings.penetrationRecoverySpeed = 1.0f;
+    settings.predictiveContactDistance = 0.1f;
+    settings.maxCollisionIterations = 5;
+    settings.maxConstraintIterations = 15;
+    settings.minTimeRemaining = 0.0001f;
+    settings.collisionTolerance = 0.001f;
+
+    // 3. Create Jolt Character
+    JPH_RVec3 pos = {(double)px, (double)py, (double)pz};
+    JPH_Quat rot = {0, 0, 0, 1};
+    
+    // Pass address of stack settings
+    JPH_CharacterVirtual* j_char = JPH_CharacterVirtual_Create(
+        &settings, &pos, &rot, 0, self->system
+    );
+    
+    // Jolt adds a ref to the shape, so we can release our pointer
+    JPH_Shape_Destroy(shape);
+
+    if (!j_char) {
+        PyErr_SetString(PyExc_RuntimeError, "Failed to create CharacterVirtual");
+        return NULL;
+    }
+
+    // 4. Wrap in Python Object
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+    PyObject *char_type = PyType_FromModuleAndSpec(PyType_GetModule(Py_TYPE(self)), &Character_spec, NULL);
+    if (!char_type) { 
+        JPH_CharacterBase_Destroy((JPH_CharacterBase*)j_char); 
+        return NULL; 
+    }
+
+    CharacterObject* obj = (CharacterObject*)PyObject_New(CharacterObject, (PyTypeObject*)char_type);
+    Py_DECREF(char_type); 
+
+    obj->character = j_char;
+    obj->world = self;
+    Py_INCREF(self); 
+
+    obj->body_filter = JPH_BodyFilter_Create(NULL);
+    obj->shape_filter = JPH_ShapeFilter_Create(NULL);
+    obj->bp_filter = JPH_BroadPhaseLayerFilter_Create(NULL);
+    obj->obj_filter = JPH_ObjectLayerFilter_Create(NULL);
+
+    return (PyObject*)obj;
 }
 
 static PyObject* PhysicsWorld_create_body(PhysicsWorldObject* self, PyObject* args, PyObject* kwds) {
@@ -1329,6 +1441,104 @@ static PyObject* make_view(PhysicsWorldObject* self, void* ptr) {
     return mv;
 }
 
+// --- Character Methods ---
+
+static void Character_dealloc(CharacterObject* self) {
+    // FIX 1: Use Base Destructor (Virtual inherits Base)
+    if (self->character) JPH_CharacterBase_Destroy((JPH_CharacterBase*)self->character);
+    
+    if (self->body_filter) JPH_BodyFilter_Destroy(self->body_filter);
+    if (self->shape_filter) JPH_ShapeFilter_Destroy(self->shape_filter);
+    if (self->bp_filter) JPH_BroadPhaseLayerFilter_Destroy(self->bp_filter);
+    if (self->obj_filter) JPH_ObjectLayerFilter_Destroy(self->obj_filter);
+    
+    Py_XDECREF(self->world);
+    Py_TYPE(self)->tp_free((PyObject*)self);
+}
+
+// Move the character (Apply Velocity + Gravity + Collision resolution)
+static PyObject* Character_move(CharacterObject* self, PyObject* args, PyObject* kwds) {
+    float vx, vy, vz, dt;
+    static char *kwlist[] = {"velocity", "dt", NULL};
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)f", kwlist, &vx, &vy, &vz, &dt)) {
+        return NULL;
+    }
+
+    // 1. Update Linear Velocity
+    JPH_Vec3 v = {vx, vy, vz};
+    JPH_CharacterVirtual_SetLinearVelocity(self->character, &v);
+
+    // 2. Extended Update Settings (Stack Allocated)
+    JPH_ExtendedUpdateSettings update_settings;
+    memset(&update_settings, 0, sizeof(JPH_ExtendedUpdateSettings));
+    
+    // Stick to floor (prevents bouncing down slopes)
+    update_settings.stickToFloorStepDown.x = 0;
+    update_settings.stickToFloorStepDown.y = -0.5f; 
+    update_settings.stickToFloorStepDown.z = 0;
+    
+    // Step Up (Stairs)
+    update_settings.walkStairsStepUp.x = 0;
+    update_settings.walkStairsStepUp.y = 0.4f;
+    update_settings.walkStairsStepUp.z = 0;
+    
+    update_settings.walkStairsMinStepForward = 0.02f;
+    update_settings.walkStairsStepForwardTest = 0.15f;
+    update_settings.walkStairsCosAngleForwardContact = 0.996f; // ~5 degrees
+    
+    update_settings.walkStairsStepDownExtra.x = 0;
+    update_settings.walkStairsStepDownExtra.y = 0;
+    update_settings.walkStairsStepDownExtra.z = 0;
+
+    // 3. Execute Update (FIX: Added missing &update_settings arg)
+    JPH_CharacterVirtual_ExtendedUpdate(
+        self->character, 
+        dt, 
+        &update_settings, // <--- Was missing!
+        1, // Layer (Moving)
+        self->world->system, 
+        self->body_filter, 
+        self->shape_filter
+    );
+
+    Py_RETURN_NONE;
+}
+
+static PyObject* Character_get_position(CharacterObject* self, PyObject* args) {
+    JPH_RVec3 pos;
+    JPH_CharacterVirtual_GetPosition(self->character, &pos);
+    return Py_BuildValue("fff", (float)pos.x, (float)pos.y, (float)pos.z);
+}
+
+static PyObject* Character_set_position(CharacterObject* self, PyObject* args, PyObject* kwds) {
+    float x, y, z;
+    static char *kwlist[] = {"pos", NULL};
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)", kwlist, &x, &y, &z)) return NULL;
+
+    JPH_RVec3 pos = { (double)x, (double)y, (double)z };
+    JPH_CharacterVirtual_SetPosition(self->character, &pos);
+    Py_RETURN_NONE;
+}
+
+static PyObject* Character_set_rotation(CharacterObject* self, PyObject* args, PyObject* kwds) {
+    float x, y, z, w;
+    static char *kwlist[] = {"rot", NULL};
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "(ffff)", kwlist, &x, &y, &z, &w)) return NULL;
+
+    JPH_Quat q = {x, y, z, w};
+    JPH_CharacterVirtual_SetRotation(self->character, &q);
+    Py_RETURN_NONE;
+}
+
+static PyObject* Character_is_grounded(CharacterObject* self, PyObject* args) {
+    JPH_GroundState state = JPH_CharacterBase_GetGroundState((JPH_CharacterBase*)self->character);
+    if (state == JPH_GroundState_OnGround || state == JPH_GroundState_OnSteepGround) {
+        Py_RETURN_TRUE;
+    }
+    Py_RETURN_FALSE;
+}
+
 static PyObject* get_positions(PhysicsWorldObject* self, void* c) { return make_view(self, self->positions); }
 static PyObject* get_rotations(PhysicsWorldObject* self, void* c) { return make_view(self, self->rotations); }
 static PyObject* get_velocities(PhysicsWorldObject* self, void* c) { return make_view(self, self->linear_velocities); }
@@ -1370,7 +1580,17 @@ static PyMethodDef PhysicsWorld_methods[] = {
     {"load_state", (PyCFunction)PhysicsWorld_load_state, METH_VARARGS | METH_KEYWORDS, NULL},
     {"get_motion_type", (PyCFunction)PhysicsWorld_get_motion_type, METH_VARARGS | METH_KEYWORDS, NULL},
     {"set_motion_type", (PyCFunction)PhysicsWorld_set_motion_type, METH_VARARGS | METH_KEYWORDS, NULL},
+    {"create_character", (PyCFunction)PhysicsWorld_create_character, METH_VARARGS | METH_KEYWORDS, NULL},
     {NULL, NULL, 0, NULL}
+};
+
+static PyMethodDef Character_methods[] = {
+    {"move", (PyCFunction)Character_move, METH_VARARGS | METH_KEYWORDS, NULL},
+    {"get_position", (PyCFunction)Character_get_position, METH_NOARGS, NULL},
+    {"set_position", (PyCFunction)Character_set_position, METH_VARARGS | METH_KEYWORDS, NULL},
+    {"set_rotation", (PyCFunction)Character_set_rotation, METH_VARARGS | METH_KEYWORDS, NULL},
+    {"is_grounded", (PyCFunction)Character_is_grounded, METH_NOARGS, NULL},
+    {NULL}
 };
 
 static PyType_Slot PhysicsWorld_slots[] = {
@@ -1382,11 +1602,24 @@ static PyType_Slot PhysicsWorld_slots[] = {
     {0, NULL},
 };
 
+static PyType_Slot Character_slots[] = {
+    {Py_tp_dealloc, Character_dealloc},
+    {Py_tp_methods, Character_methods},
+    {0, NULL},
+};
+
 static PyType_Spec PhysicsWorld_spec = {
     .name = "culverin._culverin_c.PhysicsWorld",
     .basicsize = sizeof(PhysicsWorldObject),
     .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
     .slots = PhysicsWorld_slots,
+};
+
+static PyType_Spec Character_spec = {
+    .name = "culverin._culverin_c.Character",
+    .basicsize = sizeof(CharacterObject),
+    .flags = Py_TPFLAGS_DEFAULT, // Not a base type
+    .slots = Character_slots,
 };
 
 // --- Module Initialization ---

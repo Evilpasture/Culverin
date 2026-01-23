@@ -13,6 +13,13 @@ MOTION_STATIC: int = 0
 MOTION_KINEMATIC: int = 1
 MOTION_DYNAMIC: int = 2
 
+class Character:
+    def move(self, velocity: Tuple[float, float, float], dt: float) -> None: ...
+    def get_position(self) -> Tuple[float, float, float]: ...
+    def set_position(self, pos: Tuple[float, float, float]) -> None: ...
+    def set_rotation(self, rot: Tuple[float, float, float, float]) -> None: ...
+    def is_grounded(self) -> bool: ...
+
 class PhysicsWorld:
     def __init__(
         self, 
@@ -39,6 +46,15 @@ class PhysicsWorld:
         vertices: bytes,
         indices: bytes
     ) -> int: ...
+
+    def create_character(
+        self,
+        pos: Tuple[float, float, float],
+        height: float = 1.8,
+        radius: float = 0.4,
+        step_height: float = 0.4,
+        max_slope: float = 45.0
+    ) -> Character: ...
 
     def destroy_body(self, handle: int) -> None: ...
     
