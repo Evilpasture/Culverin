@@ -194,40 +194,50 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args, PyObject 
         unsigned char *u_mot = (unsigned char*)PyBytes_AsString(PyTuple_GetItem(baked, 4));
         unsigned char *u_layer = (unsigned char*)PyBytes_AsString(PyTuple_GetItem(baked, 5));
         
-        // NEW: Extract UserData (Entity IDs) from the 7th tuple element (index 6)
+        // NEW: Extract User Data (Entity IDs) from the new 7th element in the tuple
         uint64_t *u_data = (uint64_t*)PyBytes_AsString(PyTuple_GetItem(baked, 6));
+
+        JPH_BodyInterface* bi = self->body_interface;
 
         for (size_t i = 0; i < self->count; i++) {
             JPH_STACK_ALLOC(JPH_RVec3, body_pos);
-            body_pos->x = f_pos[i*4]; body_pos->y = f_pos[i*4+1]; body_pos->z = f_pos[i*4+2];
-            JPH_STACK_ALLOC(JPH_Quat, body_rot);
-            body_rot->x = f_rot[i*4]; body_rot->y = f_rot[i*4+1]; body_rot->z = f_rot[i*4+2]; body_rot->w = f_rot[i*4+3];
+            body_pos->x = (double)f_pos[i*4]; 
+            body_pos->y = (double)f_pos[i*4+1]; 
+            body_pos->z = (double)f_pos[i*4+2];
 
-            // Stride is 5 because of [Type, P1, P2, P3, P4]
+            JPH_STACK_ALLOC(JPH_Quat, body_rot);
+            body_rot->x = f_rot[i*4]; 
+            body_rot->y = f_rot[i*4+1]; 
+            body_rot->z = f_rot[i*4+2]; 
+            body_rot->w = f_rot[i*4+3];
+
+            // Correct stride is 5: [type, p1, p2, p3, p4]
             float params[4] = {f_shape[i*5+1], f_shape[i*5+2], f_shape[i*5+3], f_shape[i*5+4]};
             JPH_Shape* shape = find_or_create_shape(self, (int)f_shape[i*5], params);
 
             if (shape) {
-                JPH_BodyCreationSettings* creation = JPH_BodyCreationSettings_Create3(shape, body_pos, body_rot, (JPH_MotionType)u_mot[i], (JPH_ObjectLayer)u_layer[i]);
-                
-                // UserData in Jolt must remain the SLOT index
+                JPH_BodyCreationSettings* creation = JPH_BodyCreationSettings_Create3(
+                    shape, body_pos, body_rot, (JPH_MotionType)u_mot[i], (JPH_ObjectLayer)u_layer[i]
+                );
+
+                // UserData in Jolt holds the SLOT index
                 JPH_BodyCreationSettings_SetUserData(creation, (uint64_t)i);
-                
+
                 if (u_mot[i] == 2) JPH_BodyCreationSettings_SetAllowSleeping(creation, true);
-                
-                self->body_ids[i] = JPH_BodyInterface_CreateAndAddBody(self->body_interface, creation, JPH_Activation_Activate);
+
+                self->body_ids[i] = JPH_BodyInterface_CreateAndAddBody(bi, creation, JPH_Activation_Activate);
                 JPH_BodyCreationSettings_Destroy(creation);
                 
-                // INITIALIZE MAPPING ARRAYS
+                // Init Mappings
                 self->generations[i] = 1; 
                 self->slot_to_dense[i] = (uint32_t)i; 
                 self->dense_to_slot[i] = (uint32_t)i; 
                 self->slot_states[i] = SLOT_ALIVE;
                 
-                // INITIALIZE THE PARALLEL USER DATA (Entity ID)
+                // NEW: Init the Parallel User Data Array (Entity ID)
                 self->user_data[i] = u_data[i]; 
             } else {
-                self->body_ids[i] = JPH_INVALID_BODY_ID;
+                self->body_ids[i] = JPH_INVALID_BODY_ID; 
             }
         }
         Py_DECREF(baked);
@@ -930,7 +940,7 @@ static PyObject* PhysicsWorld_create_mesh_body(PhysicsWorldObject* self, PyObjec
     unsigned long long user_data = 0;
     static char *kwlist[] = {"pos", "rot", "vertices", "indices", "user_data", NULL};
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)(ffff)y*y*K", kwlist, 
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)(ffff)y*y*|K", kwlist, 
                                      &px, &py, &pz, &rx, &ry, &rz, &rw, 
                                      &v_view, &i_view, &user_data)) {
         return NULL;

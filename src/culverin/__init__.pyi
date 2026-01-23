@@ -56,7 +56,7 @@ class PhysicsWorld(_culverin_c.PhysicsWorld):
         size: Union[float, Vec3, Tuple[float, ...]] = (1, 1, 1),
         shape: int = SHAPE_BOX,
         motion: int = MOTION_DYNAMIC,
-        user_data: int = 0 # ADDED: Mirrors base 7th param
+        user_data: int = 0 # Mirrors base 7th param
     ) -> Handle: ...
 
     def create_mesh_body(
@@ -65,7 +65,7 @@ class PhysicsWorld(_culverin_c.PhysicsWorld):
         rot: Quat,
         vertices: Any,
         indices: Any,
-        user_data: int = 0 # ADDED: Mirrors base 6th param
+        user_data: int = 0 # Mirrors base 6th param
     ) -> Handle: ...
 
     def create_character(
