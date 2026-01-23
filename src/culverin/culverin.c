@@ -951,20 +951,56 @@ static PyObject* PhysicsWorld_create_mesh_body(PhysicsWorldObject* self, PyObjec
         return NULL;
     }
 
-    // 1. Prepare Jolt Mesh Settings
-    // Jolt expects vertices as JPH_Vec3 and indices as JPH_IndexedTriangle
+    // 1. Calculate counts
     uint32_t vertex_count = (uint32_t)(v_view.len / (3 * sizeof(float)));
-    uint32_t tri_count = (uint32_t)(i_view.len / (3 * sizeof(uint32_t)));
+    uint32_t index_count = (uint32_t)(i_view.len / sizeof(uint32_t));
+    uint32_t tri_count = index_count / 3;
 
+    // 2. INFLATE INDICES
+    // We create a temporary buffer of Jolt-sized structs
+    JPH_IndexedTriangle* jolt_tris = (JPH_IndexedTriangle*)PyMem_RawMalloc(tri_count * sizeof(JPH_IndexedTriangle));
+    if (!jolt_tris) {
+        PyBuffer_Release(&v_view); PyBuffer_Release(&i_view);
+        return PyErr_NoMemory();
+    }
+
+    uint32_t* raw_indices = (uint32_t*)i_view.buf;
+    for (uint32_t t = 0; t < tri_count; t++) {
+        jolt_tris[t].i1 = raw_indices[t * 3 + 0];
+        jolt_tris[t].i2 = raw_indices[t * 3 + 1];
+        jolt_tris[t].i3 = raw_indices[t * 3 + 2];
+        jolt_tris[t].materialIndex = 0; // Default
+        jolt_tris[t].userData = 0;      // Default
+    }
+
+    // 3. Create Jolt Mesh Shape
+    // JPH_Vec3 is simple (3 floats), so we can pass v_view.buf directly
     JPH_MeshShapeSettings* mss = JPH_MeshShapeSettings_Create2(
         (JPH_Vec3*)v_view.buf, vertex_count,
-        (JPH_IndexedTriangle*)i_view.buf, tri_count
+        jolt_tris, tri_count
     );
+
+    if (!mss) {
+        PyMem_RawFree(jolt_tris);
+        PyBuffer_Release(&v_view); PyBuffer_Release(&i_view);
+        PyErr_SetString(PyExc_RuntimeError, "Jolt failed to create MeshShapeSettings");
+        return NULL;
+    }
 
     JPH_Shape* shape = (JPH_Shape*)JPH_MeshShapeSettings_CreateShape(mss);
     JPH_ShapeSettings_Destroy((JPH_ShapeSettings*)mss);
+    
+    // We can free our inflated index buffer NOW because CreateShape 
+    // builds an internal BVH and no longer needs the original pointers.
+    PyMem_RawFree(jolt_tris);
 
-    // 2. Reserve Slot and Queue Command (Same logic as create_body)
+    if (!shape) {
+        PyBuffer_Release(&v_view); PyBuffer_Release(&i_view);
+        PyErr_SetString(PyExc_RuntimeError, "Jolt failed to build Mesh BVH");
+        return NULL;
+    }
+
+    // 4. Reserve Slot and Queue Command (Normal Boilerplate)
     SHADOW_LOCK(&self->shadow_lock);
     if (self->count + self->command_count >= self->capacity || self->free_count == 0) {
         SHADOW_UNLOCK(&self->shadow_lock);
@@ -981,9 +1017,8 @@ static PyObject* PhysicsWorld_create_mesh_body(PhysicsWorldObject* self, PyObjec
     JPH_STACK_ALLOC(JPH_Quat, rot);
     rot->x = rx; rot->y = ry; rot->z = rz; rot->w = rw;
 
-    // Meshes are almost always static terrain
     JPH_BodyCreationSettings* settings = JPH_BodyCreationSettings_Create3(
-        shape, pos, rot, JPH_MotionType_Static, 0
+        shape, pos, rot, JPH_MotionType_Static, 0 // Mesh usually Static, Layer 0
     );
     JPH_BodyCreationSettings_SetUserData(settings, (uint64_t)slot);
 
@@ -997,6 +1032,7 @@ static PyObject* PhysicsWorld_create_mesh_body(PhysicsWorldObject* self, PyObjec
     BodyHandle handle = make_handle(slot, self->generations[slot]);
 
     SHADOW_UNLOCK(&self->shadow_lock);
+    
     PyBuffer_Release(&v_view);
     PyBuffer_Release(&i_view);
 
