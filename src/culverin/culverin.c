@@ -1359,19 +1359,27 @@ static PyObject* PhysicsWorld_overlap_aabb(PhysicsWorldObject* self, PyObject* a
 static PyObject* PhysicsWorld_get_index(PhysicsWorldObject* self, PyObject* args, PyObject* kwds) {
     uint64_t handle_raw;
     static char *kwlist[] = {"handle", NULL};
-    
-    // Fix: Pass kwds and kwlist
     if (!PyArg_ParseTupleAndKeywords(args, kwds, "K", kwlist, &handle_raw)) return NULL;
 
     SHADOW_LOCK(&self->shadow_lock);
     uint32_t slot;
+    
+    // 1. Check handle validity
     if (!unpack_handle(self, (BodyHandle)handle_raw, &slot)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         Py_RETURN_NONE; 
     }
 
+    // 2. NEW: Check if the body actually has a dense index yet
+    // If it's PENDING_CREATE, it exists logically but not in the float buffers.
+    if (self->slot_states[slot] != SLOT_ALIVE) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        Py_RETURN_NONE;
+    }
+
     uint32_t dense = self->slot_to_dense[slot];
     SHADOW_UNLOCK(&self->shadow_lock);
+    
     return PyLong_FromUnsignedLong(dense);
 }
 
