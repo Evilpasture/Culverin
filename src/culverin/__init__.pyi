@@ -1,17 +1,26 @@
-from typing import Tuple, List, Optional, TypedDict, Union, overload
-# We don't import the class directly to allow for re-definition with better types
+from typing import Tuple, List, Optional, TypedDict, Union
 from . import _culverin_c
 
 # Semantic Types
 Vec3 = Tuple[float, float, float]
 Quat = Tuple[float, float, float, float]
+Handle = int  # 64-bit Stable Identifier
+
+# Constants for convenience
+SHAPE_BOX: int = 0
+SHAPE_SPHERE: int = 1
+SHAPE_CAPSULE: int = 2
+
+MOTION_STATIC: int = 0
+MOTION_KINEMATIC: int = 1
+MOTION_DYNAMIC: int = 2
 
 class BodyConfig(TypedDict, total=False):
-    pos: Vec3          # (x, y, z)
-    rot: Quat          # (x, y, z, w)
-    shape: int         # 0=Box, 1=Sphere, 2=Capsule
-    size: Vec3         # (half_x, half_y, half_z) or (radius, 0, 0)
-    mass: float        # 0.0 = Static, >0.0 = Dynamic
+    pos: Vec3
+    rot: Quat
+    shape: int
+    size: Vec3
+    mass: float
 
 class WorldSettings(TypedDict, total=False):
     gravity: Vec3
@@ -19,7 +28,6 @@ class WorldSettings(TypedDict, total=False):
     max_bodies: int
     max_pairs: int
 
-# We define this class to shadow the C one with richer types
 class PhysicsWorld(_culverin_c.PhysicsWorld):
     def __init__(
         self, 
@@ -27,61 +35,103 @@ class PhysicsWorld(_culverin_c.PhysicsWorld):
         bodies: Optional[List[BodyConfig]] = None
     ) -> None: ...
 
-    def step(self, dt: float = 1.0/60.0) -> None: ...
+    def step(self, dt: float = 1.0/60.0) -> None:
+        """
+        Advances the simulation by 'dt'.
+        Flushes any pending create/destroy commands at the start of the step.
+        Updates memoryviews (positions, rotations) automatically.
+        """
+        ...
 
-    def apply_impulse(self, index: int, x: float, y: float, z: float) -> None: ...
+    def create_body(
+        self, 
+        pos: Vec3 = (0, 0, 0),
+        rot: Quat = (0, 0, 0, 1),
+        size: Vec3 = (1, 1, 1),
+        shape: int = SHAPE_BOX,
+        motion: int = MOTION_DYNAMIC
+    ) -> Handle:
+        """
+        Queues a body for creation. The body will be added to the simulation
+        at the beginning of the next step().
+        
+        Returns:
+            A stable Handle (int) used to reference this body.
+        """
+        ...
+
+    def destroy_body(self, handle: Handle) -> None:
+        """
+        Queues a body for destruction. The body is removed at the start 
+        of the next step().
+        """
+        ...
+
+    def apply_impulse(self, handle: Handle, x: float, y: float, z: float) -> None:
+        """
+        Applies an instantaneous force impulse to the body.
+        Safe to call during simulation (e.g. inside callbacks) or main loop.
+        """
+        ...
 
     def raycast(
         self, 
         start: Vec3, 
         direction: Vec3, 
         max_dist: float = 1000.0
-    ) -> Optional[Tuple[int, float]]: 
+    ) -> Optional[Tuple[Handle, float]]: 
         """
-        Casts a ray into the scene.
-        
-        Args:
-            start: (x, y, z) origin
-            direction: (x, y, z) direction vector
-            max_dist: Maximum ray length (default 1000.0)
-            
-        Returns:
-            None if miss.
-            (body_index, fraction) if hit. 
-            Hit Position = start + (direction_normalized * max_dist * fraction)
+        Casts a ray. Returns (Handle, Fraction) or None if missed.
         """
         ...
 
-    def remove_body(self, index: int) -> None:
+    def overlap_sphere(self, center: Vec3, radius: float) -> List[Handle]:
+        """Returns a list of Handles for all bodies touching the sphere."""
+        ...
+
+    def overlap_aabb(self, min_point: Vec3, max_point: Vec3) -> List[Handle]:
+        """Returns a list of Handles for all bodies overlapping the AABB."""
+        ...
+
+    def get_index(self, handle: Handle) -> Optional[int]: 
         """
-        Removes a body from the simulation.
+        Converts a stable Handle to a dense Index.
         
-        WARNING: This performs a 'Swap and Pop'. The body at the end of the 
-        arrays will be moved to fill the gap left by the removed body.
-        The indices of other bodies (except the last one) remain unchanged.
+        Use this to look up data in the .positions / .rotations memoryviews.
+        Note: Indices change when bodies are removed (Swap-and-Pop), 
+        Handles do not.
+        
+        Returns None if the handle is invalid or destroyed.
+        """
+        ...
+    
+    def is_alive(self, handle: Handle) -> bool:
+        """
+        Checks if a handle refers to a valid, non-destroyed body.
+        Returns True for bodies created this frame (pending) and active bodies.
+        Returns False for stale handles or bodies marked for destruction.
         """
         ...
 
+    # --- Properties ---
     @property
     def positions(self) -> memoryview: 
-        """Flat array of floats (count * 4). Layout: [x, y, z, pad, ...]"""
+        """Flat f32 array [count * 4]. Layout: [x,y,z,pad, x,y,z,pad...]"""
         ...
     
     @property
     def rotations(self) -> memoryview: 
-        """Flat array of floats (count * 4). Layout: [x, y, z, w, ...]"""
+        """Flat f32 array [count * 4]. Layout: [x,y,z,w, ...]"""
         ...
 
     @property
     def velocities(self) -> memoryview: ...
-    
     @property
     def angular_velocities(self) -> memoryview: ...
-    
     @property
     def count(self) -> int: ...
-
     @property
     def time(self) -> float: ...
 
-__all__ = ["PhysicsWorld", "BodyConfig", "WorldSettings"]
+__all__ = ["PhysicsWorld", "BodyConfig", "WorldSettings", "Handle", 
+           "SHAPE_BOX", "SHAPE_SPHERE", "SHAPE_CAPSULE"]
