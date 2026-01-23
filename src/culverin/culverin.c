@@ -19,6 +19,7 @@ static JPH_Shape* find_or_create_shape(PhysicsWorldObject* self, int type, const
     // 2. Search Cache (Linear Search is sufficient for < 100 unique shape types)
     // If you have thousands of *unique* shapes, this should be a hash map.
     for (size_t i = 0; i < self->shape_cache_count; i++) {
+        
         ShapeKey* k = &self->shape_cache[i].key;
         // Exact float comparison is acceptable here because the input source
         // is the same Python byte buffer.
@@ -153,8 +154,12 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args, PyObject 
     Py_DECREF(val_func);
     if (!norm_settings) return -1;
 
-    float gx, gy, gz, slop;
-    int max_bodies, max_pairs;
+    float gx;
+    float gy;
+    float gz;
+    float slop;
+    int max_bodies;
+    int max_pairs;
     PyArg_ParseTuple(norm_settings, "ffffii", &gx, &gy, &gz, &slop, &max_bodies, &max_pairs);
     Py_DECREF(norm_settings);
 
@@ -214,7 +219,7 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args, PyObject 
     // Determine Capacity (Must accommodate max_bodies from settings)
     if (baked) {
         PyObject* o_cnt = PyTuple_GetItem(baked, 0);
-        baked_count = (size_t)PyLong_AsSize_t(o_cnt);
+        baked_count = PyLong_AsSize_t(o_cnt);
     }
 
     self->count = baked_count;
@@ -338,7 +343,9 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args, PyObject 
 
 static PyObject* PhysicsWorld_apply_impulse(PhysicsWorldObject* self, PyObject* args) {
     uint64_t handle_raw;
-    float ix, iy, iz;
+    float ix;
+    float iy;
+    float iz;
     
     // Change 'i' to 'K' to accept the 64-bit Handle
     if (!PyArg_ParseTuple(args, "Kfff", &handle_raw, &ix, &iy, &iz)) return NULL;
@@ -566,15 +573,15 @@ static void flush_commands(PhysicsWorldObject* self) {
             
             if (dense_idx != last_dense) {
                 // Move data
-                memcpy(&self->positions[dense_idx*4], &self->positions[last_dense*4], 16);
-                memcpy(&self->rotations[dense_idx*4], &self->rotations[last_dense*4], 16);
-                memcpy(&self->linear_velocities[dense_idx*4], &self->linear_velocities[last_dense*4], 16);
-                memcpy(&self->angular_velocities[dense_idx*4], &self->angular_velocities[last_dense*4], 16);
+                memcpy(&self->positions[dense_idx*4ULL], &self->positions[last_dense*4ULL], 16);
+                memcpy(&self->rotations[dense_idx*4ULL], &self->rotations[last_dense*4ULL], 16);
+                memcpy(&self->linear_velocities[dense_idx*4ULL], &self->linear_velocities[last_dense*4ULL], 16);
+                memcpy(&self->angular_velocities[dense_idx*4ULL], &self->angular_velocities[last_dense*4ULL], 16);
                 self->body_ids[dense_idx] = self->body_ids[last_dense];
                 
                 // Update Maps
                 uint32_t mover_slot = self->dense_to_slot[last_dense];
-                self->slot_to_dense[mover_slot] = (uint32_t)dense_idx;
+                self->slot_to_dense[mover_slot] = dense_idx;
                 self->dense_to_slot[dense_idx] = mover_slot;
             }
             
@@ -615,9 +622,16 @@ static PyObject* PhysicsWorld_step(PhysicsWorldObject* self, PyObject* args) {
 
 static PyObject* PhysicsWorld_create_body(PhysicsWorldObject* self, PyObject* args, PyObject* kwds) {
     // Parse args: pos=(0,0,0), rot=(0,0,0,1), size=(1,1,1), shape=BOX, motion=DYNAMIC
-    float px=0, py=0, pz=0;
-    float rx=0, ry=0, rz=0, rw=1;
-    float sx=1, sy=1, sz=1;
+    float px=0;
+    float py=0;
+    float pz=0;
+    float rx=0;
+    float ry=0;
+    float rz=0;
+    float rw=1;
+    float sx=1;
+    float sy=1;
+    float sz=1;
     int shape_type = 0; // BOX
     int motion_type = 2; // DYNAMIC
     
@@ -769,7 +783,10 @@ static float OverlapCallback_Broad(void* context, const JPH_BodyID result) {
 
 
 static PyObject* PhysicsWorld_overlap_sphere(PhysicsWorldObject* self, PyObject* args) {
-    float x, y, z, radius;
+    float x;
+    float y;
+    float z;
+    float radius;
     if (!PyArg_ParseTuple(args, "(fff)f", &x, &y, &z, &radius)) return NULL;
 
     // Create Temp Sphere Shape
@@ -806,7 +823,12 @@ static PyObject* PhysicsWorld_overlap_sphere(PhysicsWorldObject* self, PyObject*
 }
 
 static PyObject* PhysicsWorld_overlap_aabb(PhysicsWorldObject* self, PyObject* args) {
-    float min_x, min_y, min_z, max_x, max_y, max_z;
+    float min_x;
+    float min_y;
+    float min_z;
+    float max_x;
+    float max_y;
+    float max_z;
     if (!PyArg_ParseTuple(args, "(fff)(fff)", &min_x, &min_y, &min_z, &max_x, &max_y, &max_z)) return NULL;
 
     JPH_AABox box;

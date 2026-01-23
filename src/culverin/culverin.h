@@ -12,6 +12,7 @@
 // Allocate 'Type' on the stack with guaranteed 32-byte alignment.
 // USAGE: JPH_STACK_ALLOC(JPH_RVec3, my_vec);
 // This macro satisfies how Jolt Physics expects aligned data structures.
+// I know. This is a hack.
 #define JPH_STACK_ALLOC(Type, Name) \
     char _mem_##Name[sizeof(Type) + 32]; \
     Type* Name = (Type*)((uintptr_t)(_mem_##Name + 31) & ~31)
