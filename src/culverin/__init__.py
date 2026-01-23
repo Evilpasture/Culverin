@@ -3,6 +3,8 @@ from ._culverin_c import (
     SHAPE_BOX,
     SHAPE_SPHERE,
     SHAPE_CAPSULE,
+    SHAPE_CYLINDER,
+    SHAPE_PLANE,
     MOTION_STATIC,
     MOTION_KINEMATIC,
     MOTION_DYNAMIC
@@ -10,6 +12,6 @@ from ._culverin_c import (
 
 __all__ = [
     "PhysicsWorld", 
-    "SHAPE_BOX", "SHAPE_SPHERE", "SHAPE_CAPSULE",
+    "SHAPE_BOX", "SHAPE_SPHERE", "SHAPE_CAPSULE", "SHAPE_CYLINDER", "SHAPE_PLANE",
     "MOTION_STATIC", "MOTION_KINEMATIC", "MOTION_DYNAMIC"
 ]
