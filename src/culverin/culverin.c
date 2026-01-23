@@ -696,11 +696,11 @@ static PyObject* PhysicsWorld_create_body(PhysicsWorldObject* self, PyObject* ar
     SHADOW_LOCK(&self->shadow_lock);
 
     // 4. Capacity and Slot Check
-    if (self->count + self->command_count >= self->capacity) {
-        SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_MemoryError, "World capacity reached. Increase max_bodies in settings.");
-        return NULL;
-    }
+    // if (self->count + self->command_count >= self->capacity) {
+    //     SHADOW_UNLOCK(&self->shadow_lock);
+    //     PyErr_SetString(PyExc_MemoryError, "World capacity reached. Increase max_bodies in settings.");
+    //     return NULL;
+    // }
 
     if (self->free_count == 0) {
         SHADOW_UNLOCK(&self->shadow_lock);
