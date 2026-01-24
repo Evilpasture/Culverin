@@ -1,12 +1,12 @@
 from ._culverin_c import (
     PhysicsWorld,
-    Character, # Don't forget Character if you haven't added it yet!
+    Character,
     SHAPE_BOX,
     SHAPE_SPHERE,
     SHAPE_CAPSULE,
     SHAPE_CYLINDER,
     SHAPE_PLANE,
-    SHAPE_MESH, # <--- Added
+    SHAPE_MESH,
     MOTION_STATIC,
     MOTION_KINEMATIC,
     MOTION_DYNAMIC
@@ -15,6 +15,6 @@ from ._culverin_c import (
 __all__ = [
     "PhysicsWorld", "Character",
     "SHAPE_BOX", "SHAPE_SPHERE", "SHAPE_CAPSULE", 
-    "SHAPE_CYLINDER", "SHAPE_PLANE", "SHAPE_MESH", # <--- Added
+    "SHAPE_CYLINDER", "SHAPE_PLANE", "SHAPE_MESH",
     "MOTION_STATIC", "MOTION_KINEMATIC", "MOTION_DYNAMIC"
 ]
