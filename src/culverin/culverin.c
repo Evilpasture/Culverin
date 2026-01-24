@@ -1618,36 +1618,28 @@ static PyObject* PhysicsWorld_is_alive(PhysicsWorldObject* self, PyObject* args,
 static PyObject* make_view(PhysicsWorldObject* self, void* ptr) {
     if (!ptr) Py_RETURN_NONE;
 
-    // 1. Update the persistent metadata on the object
-    // This MUST stay alive as long as the memoryview exists
-    self->view_shape[0] = (Py_ssize_t)self->count;
-    self->view_shape[1] = 4;
-    self->view_strides[0] = (Py_ssize_t)(4 * sizeof(float));
-    self->view_strides[1] = (Py_ssize_t)sizeof(float);
+    // We tell Python: "This is one long list of floats"
+    self->view_shape[0] = (Py_ssize_t)(self->count * 4); 
+    self->view_strides[0] = (Py_ssize_t)sizeof(float);
 
-    // 2. Manually fill the Py_buffer
     Py_buffer buf;
     memset(&buf, 0, sizeof(Py_buffer));
     
     buf.buf = ptr;
     buf.obj = (PyObject*)self;
-    Py_INCREF(self); // The memoryview now owns a reference to 'self'
+    Py_INCREF(self); 
     
     buf.len = (Py_ssize_t)(self->count * 4 * sizeof(float));
-    buf.readonly = 1;         // Read-only for safety
+    buf.readonly = 1;         
     buf.itemsize = sizeof(float);
-    buf.format = "f";         // Signal that these are C-floats
-    buf.ndim = 2;
-    buf.shape = self->view_shape;     // Points to the array in our struct
-    buf.strides = self->view_strides; // Points to the array in our struct
+    buf.format = "f";         
+    
+    // THE CRITICAL CHANGES:
+    buf.ndim = 1;                     // Set to 1 Dimension
+    buf.shape = &self->view_shape[0]; // Point to the first element of shape
+    buf.strides = &self->view_strides[0]; 
 
-    // 3. Create the memoryview from our hand-crafted buffer
-    PyObject* mv = PyMemoryView_FromBuffer(&buf);
-    if (!mv) {
-        Py_DECREF(self);
-        return NULL;
-    }
-    return mv;
+    return PyMemoryView_FromBuffer(&buf);
 }
 
 static PyObject* get_user_data_buffer(PhysicsWorldObject* self, void* c) {
