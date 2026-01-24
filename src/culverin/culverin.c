@@ -319,9 +319,9 @@ static PyObject* PhysicsWorld_raycast(PhysicsWorldObject* self, PyObject* args, 
     origin->x = sx; 
     origin->y = sy; 
     origin->z = sz;
-    #if defined(JPH_DOUBLE_PRECISION)
-    origin->_padding = 0.0;
-    #endif
+    // Safety against uninitialized padding if macro mismatch exists
+    memset(origin, 0, sizeof(double)*4); 
+    origin->x = sx; origin->y = sy; origin->z = sz;
 
     JPH_STACK_ALLOC(JPH_Vec3, direction);
     direction->x = dx * scale;
@@ -1064,6 +1064,13 @@ static PyObject* PhysicsWorld_create_mesh_body(PhysicsWorldObject* self, PyObjec
     JPH_BodyCreationSettings* settings = JPH_BodyCreationSettings_Create3(
         shape, pos, rot, JPH_MotionType_Static, 0 // Mesh usually Static, Layer 0
     );
+    JPH_Shape_Destroy(shape);
+    if (!settings) {
+        // Handle error if settings creation failed (unlikely)
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyBuffer_Release(&v_view); PyBuffer_Release(&i_view);
+        return PyErr_NoMemory();
+    }
     JPH_BodyCreationSettings_SetUserData(settings, (uint64_t)slot);
 
     ensure_command_capacity(self);
@@ -1483,9 +1490,6 @@ static PyObject* PhysicsWorld_overlap_sphere(PhysicsWorldObject* self, PyObject*
     pos->x = x; 
     pos->y = y; 
     pos->z = z;
-    #if defined(JPH_DOUBLE_PRECISION)
-    pos->_padding = 0.0;
-    #endif
 
     // Rotation (Identity)
     JPH_STACK_ALLOC(JPH_Quat, rot);
@@ -1502,9 +1506,6 @@ static PyObject* PhysicsWorld_overlap_sphere(PhysicsWorldObject* self, PyObject*
     // Base Offset (Zero)
     JPH_STACK_ALLOC(JPH_RVec3, base_offset);
     base_offset->x = 0; base_offset->y = 0; base_offset->z = 0;
-    #if defined(JPH_DOUBLE_PRECISION)
-    base_offset->_padding = 0.0;
-    #endif
 
     // Settings
     JPH_STACK_ALLOC(JPH_CollideShapeSettings, settings);
