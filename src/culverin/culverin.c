@@ -949,11 +949,11 @@ static PyObject* PhysicsWorld_create_body(PhysicsWorldObject* self, PyObject* ar
     SHADOW_LOCK(&self->shadow_lock);
 
     // 4. Capacity and Slot Check
-    if (self->count + self->command_count >= self->capacity) {
-        SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_MemoryError, "World capacity reached. Increase max_bodies in settings.");
-        return NULL;
-    }
+    // if (self->count + self->command_count >= self->capacity) {
+    //     SHADOW_UNLOCK(&self->shadow_lock);
+    //     PyErr_SetString(PyExc_MemoryError, "World capacity reached. Increase max_bodies in settings.");
+    //     return NULL;
+    // }
 
     // if (self->free_count == 0) {
     //     SHADOW_UNLOCK(&self->shadow_lock);
@@ -1103,13 +1103,13 @@ static PyObject* PhysicsWorld_create_mesh_body(PhysicsWorldObject* self, PyObjec
         }
     }
 
-    if (self->count + self->command_count >= self->capacity || self->free_count == 0) {
-        SHADOW_UNLOCK(&self->shadow_lock);
-        JPH_Shape_Destroy(shape);
-        PyBuffer_Release(&v_view); PyBuffer_Release(&i_view);
-        PyErr_SetString(PyExc_MemoryError, "World capacity reached");
-        return NULL;
-    }
+    // if (self->count + self->command_count >= self->capacity || self->free_count == 0) {
+    //     SHADOW_UNLOCK(&self->shadow_lock);
+    //     JPH_Shape_Destroy(shape);
+    //     PyBuffer_Release(&v_view); PyBuffer_Release(&i_view);
+    //     PyErr_SetString(PyExc_MemoryError, "World capacity reached");
+    //     return NULL;
+    // }
 
     uint32_t slot = self->free_slots[--self->free_count];
 
