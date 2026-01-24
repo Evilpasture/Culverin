@@ -163,6 +163,11 @@ typedef struct {
     JPH_ObjectLayerFilter* obj_filter;
 
     JPH_CharacterContactListener* listener;
+    float push_strength; 
+
+    float last_vx;
+    float last_vy;
+    float last_vz;
 } CharacterObject;
 
 extern PyType_Spec Character_spec;

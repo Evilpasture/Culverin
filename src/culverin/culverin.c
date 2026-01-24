@@ -6,13 +6,43 @@ static bool JPH_API_CALL char_on_contact_validate(void* userData, const JPH_Char
     return true; // Usually true, unless you want to walk through certain bodies
 }
 
-// Callback: Handle the collision settings (THIS IS HOW YOU PUSH OBJECTS)
+// Callback: Handle the collision settings AND Apply Impulse
 static void JPH_API_CALL char_on_contact_added(void* userData, const JPH_CharacterVirtual* character, JPH_BodyID bodyID2, JPH_SubShapeID subShapeID2, const JPH_RVec3* contactPosition, const JPH_Vec3* contactNormal, JPH_CharacterContactSettings* ioSettings) {
-    // Allows the character to push dynamic bodies
     ioSettings->canPushCharacter = true; 
-    
-    // Allows the character to be pushed by moving platforms/bodies
     ioSettings->canReceiveImpulses = true; 
+
+    CharacterObject* self = (CharacterObject*)userData;
+    JPH_BodyInterface* bi = self->world->body_interface;
+
+    if (JPH_BodyInterface_GetMotionType(bi, bodyID2) != JPH_MotionType_Dynamic) return;
+
+    float vx = self->last_vx;
+    float vy = self->last_vy;
+    float vz = self->last_vz;
+
+    // Normal points FROM Character TO Body.
+    // If we are moving towards the body, Velocity and Normal align -> Dot is Positive.
+    float dot = vx * contactNormal->x + vy * contactNormal->y + vz * contactNormal->z;
+
+    // FIX: Check for Positive Dot (Moving towards object)
+    if (dot > 0.01f) { 
+        
+        // FIX: Positive factor
+        float factor = dot * self->push_strength; 
+
+        JPH_Vec3 impulse;
+        // FIX: Push ALONG the normal (Towards body)
+        impulse.x = contactNormal->x * factor;
+        
+        // Flatten Y: Only allow upward pushes (lifting), ignore downward (friction)
+        float y_push = contactNormal->y * factor;
+        impulse.y = (y_push > 0.0f) ? y_push : 0.0f; 
+        
+        impulse.z = contactNormal->z * factor;
+
+        JPH_BodyInterface_AddImpulse(bi, bodyID2, &impulse);
+        JPH_BodyInterface_ActivateBody(bi, bodyID2);
+    }
 }
 
 // Map the procs
@@ -20,7 +50,7 @@ static JPH_CharacterContactListener_Procs char_listener_procs = {
     .OnContactValidate = char_on_contact_validate,
     .OnContactAdded = char_on_contact_added,
     .OnAdjustBodyVelocity = NULL, // Use defaults
-    .OnContactPersisted = NULL,
+    .OnContactPersisted = char_on_contact_added,
     .OnContactRemoved = NULL,
     .OnCharacterContactValidate = NULL,
     .OnCharacterContactAdded = NULL,
@@ -858,6 +888,8 @@ static PyObject* PhysicsWorld_create_character(PhysicsWorldObject* self, PyObjec
 
     obj->character = j_char;
     obj->world = self;
+    obj->push_strength = 25.0f;
+    obj->last_vx = 0; obj->last_vy = 0; obj->last_vz = 0;
     Py_INCREF(self); 
 
     JPH_CharacterContactListener_SetProcs(&char_listener_procs);
@@ -1747,6 +1779,10 @@ static PyObject* Character_move(CharacterObject* self, PyObject* args, PyObject*
         return NULL;
     }
 
+    self->last_vx = vx;
+    self->last_vy = vy;
+    self->last_vz = vz;
+
     // 1. Update Linear Velocity
     JPH_Vec3 v = {vx, vy, vz};
     JPH_CharacterVirtual_SetLinearVelocity(self->character, &v);
@@ -1777,8 +1813,8 @@ static PyObject* Character_move(CharacterObject* self, PyObject* args, PyObject*
     JPH_CharacterVirtual_ExtendedUpdate(
         self->character, 
         dt, 
-        &update_settings, // <--- Was missing!
-        1, // Layer (Moving)
+        &update_settings, 
+        1, 
         self->world->system, 
         self->body_filter, 
         self->shape_filter
@@ -1825,8 +1861,12 @@ static PyObject* Character_set_strength(CharacterObject* self, PyObject* args) {
     float strength;
     if (!PyArg_ParseTuple(args, "f", &strength)) return NULL;
     
-    // JPH_CharacterVirtual_SetMaxStrength is the C-API call
+    // Store in our struct for the callback
+    self->push_strength = strength;
+    
+    // Also update Jolt's internal max strength (for char-vs-char interaction)
     JPH_CharacterVirtual_SetMaxStrength(self->character, strength);
+    
     Py_RETURN_NONE;
 }
 
