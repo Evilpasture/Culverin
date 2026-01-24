@@ -774,9 +774,9 @@ static PyObject* PhysicsWorld_create_character(PhysicsWorldObject* self, PyObjec
     
     // Infinite Plane Supporting Volume (Normal -Y, Distance huge)
     settings.base.supportingVolume.normal.x = 0;
-    settings.base.supportingVolume.normal.y = -1;
+    settings.base.supportingVolume.normal.y = 1;
     settings.base.supportingVolume.normal.z = 0;
-    settings.base.supportingVolume.distance = 1.0e10f; 
+    settings.base.supportingVolume.distance = -1.0e10f; 
 
     float slope_rad = max_slope * (3.14159f / 180.0f);
     settings.base.maxSlopeAngle = slope_rad;
