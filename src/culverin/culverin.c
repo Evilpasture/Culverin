@@ -287,7 +287,7 @@ static PyObject* PhysicsWorld_raycast(PhysicsWorldObject* self, PyObject* args, 
 
     // 3. Fix Ray Length Logic
     float mag = sqrtf(dx*dx + dy*dy + dz*dz);
-    if (mag < 1e-6f) Py_RETURN_NONE;
+    if (mag < 1e-9f) Py_RETURN_NONE;
     
     float scale = max_dist / mag;
     direction->x = dx * scale;
@@ -641,6 +641,21 @@ static PyObject* PhysicsWorld_load_state(PhysicsWorldObject* self, PyObject* arg
         return NULL;
     }
 
+    // Calculate expected size based on saved_count
+    size_t expected_meta = sizeof(size_t) * 3 + sizeof(double); // header was partly read, but logic holds
+    size_t expected_dense = saved_count * 16 * 4; // 4 buffers * 16 bytes (vec4)
+    size_t expected_mapping = self->slot_capacity * (sizeof(uint32_t) * 4 + sizeof(uint8_t));
+
+    // Note: We already advanced 'ptr' by sizeof(size_t), so we check remaining length
+    size_t required_remaining = sizeof(double) + expected_dense + expected_mapping;
+    
+    if ((size_t)(view.len - sizeof(size_t)) < required_remaining) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyBuffer_Release(&view);
+        PyErr_SetString(PyExc_ValueError, "Snapshot buffer is too small for the declared body count");
+        return NULL;
+    }
+
     // 1. Restore Meta
     self->count = saved_count;
     // Update the view shape so Python's count and future memoryviews are correct
@@ -718,8 +733,8 @@ static PyObject* PhysicsWorld_step(PhysicsWorldObject* self, PyObject* args) {
     culverin_sync_shadow_buffers(self);
     SHADOW_UNLOCK(&self->shadow_lock);
     
-    self->time += (double)dt;
     Py_END_ALLOW_THREADS
+    self->time += (double)dt;
 
     Py_RETURN_NONE;
 }
