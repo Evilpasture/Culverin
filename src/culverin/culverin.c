@@ -1,5 +1,34 @@
 #include "culverin.h"
 
+// Character helpers
+// Callback: Can the character collide with this object?
+static bool JPH_API_CALL char_on_contact_validate(void* userData, const JPH_CharacterVirtual* character, JPH_BodyID bodyID2, JPH_SubShapeID subShapeID2) {
+    return true; // Usually true, unless you want to walk through certain bodies
+}
+
+// Callback: Handle the collision settings (THIS IS HOW YOU PUSH OBJECTS)
+static void JPH_API_CALL char_on_contact_added(void* userData, const JPH_CharacterVirtual* character, JPH_BodyID bodyID2, JPH_SubShapeID subShapeID2, const JPH_RVec3* contactPosition, const JPH_Vec3* contactNormal, JPH_CharacterContactSettings* ioSettings) {
+    CharacterObject* self = (CharacterObject*)userData;
+
+    ioSettings->canPushCharacter = true;
+    ioSettings->canReceiveImpulses = true;
+
+}
+
+// Map the procs
+static JPH_CharacterContactListener_Procs char_listener_procs = {
+    .OnContactValidate = char_on_contact_validate,
+    .OnContactAdded = char_on_contact_added,
+    .OnAdjustBodyVelocity = NULL, // Use defaults
+    .OnContactPersisted = NULL,
+    .OnContactRemoved = NULL,
+    .OnCharacterContactValidate = NULL,
+    .OnCharacterContactAdded = NULL,
+    .OnCharacterContactPersisted = NULL,
+    .OnCharacterContactRemoved = NULL,
+    .OnContactSolve = NULL
+};
+
 // --- Helper: Shape Caching (Internal) ---
 static JPH_Shape* find_or_create_shape(PhysicsWorldObject* self, int type, const float* params) {
     // 1. Construct Key
@@ -61,6 +90,7 @@ static JPH_Shape* find_or_create_shape(PhysicsWorldObject* self, int type, const
         void* new_ptr = PyMem_RawRealloc(self->shape_cache, new_cap * sizeof(ShapeEntry));
         if (!new_ptr) {
             JPH_Shape_Destroy(shape);
+            PyErr_NoMemory();
             return NULL; // OOM
         }
         self->shape_cache = (ShapeEntry*)new_ptr;
@@ -269,7 +299,6 @@ static PyObject* PhysicsWorld_raycast(PhysicsWorldObject* self, PyObject* args, 
     float max_dist = 1000.0f;
     static char *kwlist[] = {"start", "direction", "max_dist", NULL};
 
-    // 1. Parse Arguments with Keywords
     if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)(fff)|f", kwlist, 
                                      &sx, &sy, &sz, 
                                      &dx, &dy, &dz, 
@@ -277,39 +306,44 @@ static PyObject* PhysicsWorld_raycast(PhysicsWorldObject* self, PyObject* args, 
         return NULL;
     }
 
-    // 2. ABI Alignment Hack
-    JPH_STACK_ALLOC(JPH_RVec3, origin);
-    JPH_STACK_ALLOC(JPH_Vec3, direction);
-
-    origin->x = (double)sx; 
-    origin->y = (double)sy; 
-    origin->z = (double)sz;
-
-    // 3. Fix Ray Length Logic
-    float mag = sqrtf(dx*dx + dy*dy + dz*dz);
-    if (mag < 1e-9f) Py_RETURN_NONE;
-    
+    // 1. Calculate Magnitude & Scaling
+    float mag_sq = dx*dx + dy*dy + dz*dz;
+    if (mag_sq < 1e-9f) {
+        Py_RETURN_NONE; // Safety: Zero length ray
+    }
+    float mag = sqrtf(mag_sq);
     float scale = max_dist / mag;
+
+    // 2. Stack Alloc with Alignment (CRITICAL for your build)
+    JPH_STACK_ALLOC(JPH_RVec3, origin);
+    origin->x = sx; 
+    origin->y = sy; 
+    origin->z = sz;
+    #if defined(JPH_DOUBLE_PRECISION)
+    origin->_padding = 0.0;
+    #endif
+
+    JPH_STACK_ALLOC(JPH_Vec3, direction);
     direction->x = dx * scale;
     direction->y = dy * scale;
     direction->z = dz * scale;
 
-    // 4. Initialize Hit Result
-    JPH_RayCastResult hit; 
-    memset(&hit, 0, sizeof(JPH_RayCastResult));
-    hit.fraction = 1.0f + 1e-4f; 
+    JPH_STACK_ALLOC(JPH_RayCastResult, hit);
+    memset(hit, 0, sizeof(JPH_RayCastResult));
 
-    // 5. Execute Query
+    // 3. Execute
     const JPH_NarrowPhaseQuery* query = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
-    bool has_hit = JPH_NarrowPhaseQuery_CastRay(query, origin, direction, &hit, NULL, NULL, NULL);
+    
+    // Pass pointers to the aligned stack variables
+    bool has_hit = JPH_NarrowPhaseQuery_CastRay(query, origin, direction, hit, NULL, NULL, NULL);
 
     if (!has_hit) Py_RETURN_NONE;
 
-    // 6. Construct Stable Handle with Locking
+    // 4. Resolve Handle
     SHADOW_LOCK(&self->shadow_lock);
     
     // In Culverin, UserData IS the slot index
-    uint64_t slot_idx = JPH_BodyInterface_GetUserData(self->body_interface, hit.bodyID);
+    uint64_t slot_idx = JPH_BodyInterface_GetUserData(self->body_interface, hit->bodyID);
 
     if (slot_idx >= self->slot_capacity) {
         SHADOW_UNLOCK(&self->shadow_lock);
@@ -321,7 +355,7 @@ static PyObject* PhysicsWorld_raycast(PhysicsWorldObject* self, PyObject* args, 
     
     SHADOW_UNLOCK(&self->shadow_lock);
 
-    return Py_BuildValue("Kf", handle, hit.fraction);
+    return Py_BuildValue("Kf", handle, hit->fraction);
 }
 
 // ==============================================NO UNCOMMENT. AND LEAVE THIS ALONE.==============================================================
@@ -613,7 +647,6 @@ static PyObject* PhysicsWorld_load_state(PhysicsWorldObject* self, PyObject* arg
     Py_buffer view;
     static char *kwlist[] = {"state", NULL};
 
-    // 1. Parse Arguments with Keywords
     if (!PyArg_ParseTupleAndKeywords(args, kwds, "y*", kwlist, &view)) {
         return NULL;
     }
@@ -623,11 +656,11 @@ static PyObject* PhysicsWorld_load_state(PhysicsWorldObject* self, PyObject* arg
     char* ptr = (char*)view.buf;
     size_t saved_count;
     
-    // Safety check: Ensure buffer is at least large enough for the count header
+    // 1. Basic Header Check
     if (view.len < (Py_ssize_t)sizeof(size_t)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyBuffer_Release(&view);
-        PyErr_SetString(PyExc_ValueError, "Invalid snapshot: buffer too small");
+        PyErr_SetString(PyExc_ValueError, "Snapshot too small (header missing)");
         return NULL;
     }
 
@@ -637,48 +670,45 @@ static PyObject* PhysicsWorld_load_state(PhysicsWorldObject* self, PyObject* arg
     if (saved_count > self->capacity) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyBuffer_Release(&view);
-        PyErr_SetString(PyExc_ValueError, "Snapshot exceeds world capacity");
+        PyErr_SetString(PyExc_ValueError, "Snapshot body count exceeds world capacity");
         return NULL;
     }
 
-    // Calculate expected size based on saved_count
-    size_t expected_meta = sizeof(size_t) * 3 + sizeof(double); // header was partly read, but logic holds
-    size_t expected_dense = saved_count * 16 * 4; // 4 buffers * 16 bytes (vec4)
-    size_t expected_mapping = self->slot_capacity * (sizeof(uint32_t) * 4 + sizeof(uint8_t));
+    // 2. CRITICAL: Calculate Required Size before reading
+    // Header (remaining): time(double)
+    // Arrays: 4 arrays * count * 4 floats * sizeof(float)
+    // Mappings: 3 arrays * slot_cap * 4 bytes + 1 array * slot_cap * 1 byte
+    size_t required_size = sizeof(size_t) + sizeof(double); // Meta
+    required_size += saved_count * 16 * 4 * sizeof(float);   // Dense Buffers
+    required_size += self->slot_capacity * (3 * sizeof(uint32_t) + 1 * sizeof(uint8_t)); // Mappings
 
-    // Note: We already advanced 'ptr' by sizeof(size_t), so we check remaining length
-    size_t required_remaining = sizeof(double) + expected_dense + expected_mapping;
-    
-    if ((size_t)(view.len - sizeof(size_t)) < required_remaining) {
+    if ((size_t)view.len < required_size) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyBuffer_Release(&view);
-        PyErr_SetString(PyExc_ValueError, "Snapshot buffer is too small for the declared body count");
+        PyErr_SetString(PyExc_ValueError, "Snapshot buffer is corrupted or truncated");
         return NULL;
     }
 
-    // 1. Restore Meta
+    // 3. Restore Meta
     self->count = saved_count;
-    // Update the view shape so Python's count and future memoryviews are correct
     self->view_shape[0] = (Py_ssize_t)self->count;
 
     memcpy(&self->time, ptr, sizeof(double)); 
     ptr += sizeof(double);
 
-    // 2. Restore Dense Buffers
+    // 4. Restore Dense Buffers
     memcpy(self->positions, ptr, self->count * 16); ptr += self->count * 16;
     memcpy(self->rotations, ptr, self->count * 16); ptr += self->count * 16;
     memcpy(self->linear_velocities, ptr, self->count * 16); ptr += self->count * 16;
     memcpy(self->angular_velocities, ptr, self->count * 16); ptr += self->count * 16;
 
-    // 3. Restore Mappings
+    // 5. Restore Mappings
     memcpy(self->generations, ptr, self->slot_capacity * 4); ptr += self->slot_capacity * 4;
     memcpy(self->slot_to_dense, ptr, self->slot_capacity * 4); ptr += self->slot_capacity * 4;
     memcpy(self->dense_to_slot, ptr, self->slot_capacity * 4); ptr += self->slot_capacity * 4;
-    memcpy(self->slot_states, ptr, self->slot_capacity); ptr += self->slot_capacity;
+    memcpy(self->slot_states, ptr, self->slot_capacity);
 
-    // 4. CRITICAL: Re-Sync Jolt Source of Truth
-    // We iterate through the restored dense array and tell Jolt to teleport
-    // the existing BodyIDs to the saved coordinates.
+    // 6. Re-Sync Jolt
     for (size_t i = 0; i < self->count; i++) {
         JPH_BodyID bid = self->body_ids[i];
         if (bid == JPH_INVALID_BODY_ID) continue;
@@ -828,6 +858,10 @@ static PyObject* PhysicsWorld_create_character(PhysicsWorldObject* self, PyObjec
     obj->character = j_char;
     obj->world = self;
     Py_INCREF(self); 
+
+    JPH_CharacterContactListener_SetProcs(&char_listener_procs);
+    obj->listener = JPH_CharacterContactListener_Create(obj); // Pass 'obj' as userData
+    JPH_CharacterVirtual_SetListener(j_char, obj->listener);
 
     obj->body_filter = JPH_BodyFilter_Create(NULL);
     obj->shape_filter = JPH_ShapeFilter_Create(NULL);
@@ -1373,20 +1407,47 @@ static void append_hit(QueryContext* ctx, JPH_BodyID bid) {
     Py_DECREF(py_h);
 }
 
-// Callback for NarrowPhase (Sphere Overlap)
-// Signature: float (*)(void *, const JPH_CollideShapeResult *)
+// JoltC Callback for CollideShape (Narrowphase)
+// Signature: void (*)(void *, const JPH_CollideShapeResult *)
+// Note: JoltC uses a void return for collecting hits in some versions, 
+// or a float return for casts. Checking joltc.h... 
+// typedef float JPH_CollideShapeCollectorCallback(void* context, const JPH_CollideShapeResult* result);
 static float OverlapCallback_Narrow(void* context, const JPH_CollideShapeResult* result) {
-    QueryContext* ctx = (QueryContext*)context;
-    append_hit(ctx, result->bodyID2); // bodyID2 is the body in the world
-    return 1.0f; // Continue query
+    OverlapContext* ctx = (OverlapContext*)context;
+    
+    // Result contains bodyID2 (the body we hit)
+    uint64_t slot = JPH_BodyInterface_GetUserData(ctx->world->body_interface, result->bodyID2);
+    
+    if (slot < ctx->world->slot_capacity) {
+        uint32_t gen = ctx->world->generations[slot];
+        BodyHandle h = make_handle((uint32_t)slot, gen);
+        
+        PyObject* py_h = PyLong_FromUnsignedLongLong(h);
+        PyList_Append(ctx->result_list, py_h);
+        Py_DECREF(py_h);
+    }
+    
+    // Return fraction to continue query (usually 1.0 for "find all")
+    // If we wanted to stop at first hit, we'd return 0.0.
+    return 1.0f; 
 }
 
-// Callback for BroadPhase (AABB Overlap)
-// Signature: float (*)(void *, const JPH_BodyID)
+// JoltC Callback for BroadPhase
+// typedef float JPH_CollideShapeBodyCollectorCallback(void* context, const JPH_BodyID result);
 static float OverlapCallback_Broad(void* context, const JPH_BodyID result) {
-    QueryContext* ctx = (QueryContext*)context;
-    append_hit(ctx, result);
-    return 1.0f; // Continue query
+    OverlapContext* ctx = (OverlapContext*)context;
+    
+    uint64_t slot = JPH_BodyInterface_GetUserData(ctx->world->body_interface, result);
+    
+    if (slot < ctx->world->slot_capacity) {
+        uint32_t gen = ctx->world->generations[slot];
+        BodyHandle h = make_handle((uint32_t)slot, gen);
+        
+        PyObject* py_h = PyLong_FromUnsignedLongLong(h);
+        PyList_Append(ctx->result_list, py_h);
+        Py_DECREF(py_h);
+    }
+    return 1.0f;
 }
 
 
@@ -1398,41 +1459,58 @@ static PyObject* PhysicsWorld_overlap_sphere(PhysicsWorldObject* self, PyObject*
         return NULL;
     }
 
-    // 1. Create Shape
+    // 1. Create Temporary Jolt Shape
+    // This requires heap allocation by Jolt, but we destroy it immediately after.
     JPH_SphereShapeSettings* ss = JPH_SphereShapeSettings_Create(radius);
+    if (!ss) return PyErr_NoMemory();
+    
     JPH_Shape* shape = (JPH_Shape*)JPH_SphereShapeSettings_CreateShape(ss);
     JPH_ShapeSettings_Destroy((JPH_ShapeSettings*)ss);
 
-    // 2. Prepare Result List with Safety Check
+    if (!shape) return PyErr_NoMemory();
+
+    // 2. Prepare Result List
     PyObject* results = PyList_New(0);
     if (!results) {
         JPH_Shape_Destroy(shape);
-        return PyErr_NoMemory();
+        return NULL;
     }
 
-    // 3. ABI Aligned Setup
-    JPH_STACK_ALLOC(JPH_RVec3, pos);
-    pos->x = (double)x; pos->y = (double)y; pos->z = (double)z;
+    // 3. Stack Allocation with Alignment (CRITICAL)
     
+    // Position
+    JPH_STACK_ALLOC(JPH_RVec3, pos);
+    pos->x = x; 
+    pos->y = y; 
+    pos->z = z;
+    #if defined(JPH_DOUBLE_PRECISION)
+    pos->_padding = 0.0;
+    #endif
+
+    // Rotation (Identity)
     JPH_STACK_ALLOC(JPH_Quat, rot);
     rot->x = 0; rot->y = 0; rot->z = 0; rot->w = 1;
-    
-    JPH_STACK_ALLOC(JPH_RMat4, com_transform);
-    JPH_RMat4_RotationTranslation(com_transform, rot, pos);
-    
-    JPH_STACK_ALLOC(JPH_Vec3, scale);
-    scale->x = 1; scale->y = 1; scale->z = 1;
 
-    // Use a real aligned zero vector for baseOffset instead of NULL
+    // Transform Matrix (Pos + Rot)
+    JPH_STACK_ALLOC(JPH_RMat4, transform);
+    JPH_RMat4_RotationTranslation(transform, rot, pos);
+
+    // Scale (Identity)
+    JPH_STACK_ALLOC(JPH_Vec3, scale);
+    scale->x = 1.0f; scale->y = 1.0f; scale->z = 1.0f;
+
+    // Base Offset (Zero)
     JPH_STACK_ALLOC(JPH_RVec3, base_offset);
     base_offset->x = 0; base_offset->y = 0; base_offset->z = 0;
+    #if defined(JPH_DOUBLE_PRECISION)
+    base_offset->_padding = 0.0;
+    #endif
 
-    // 4. Initialize Settings (Strict Zero-Init)
-    JPH_CollideShapeSettings collide_settings;
-    memset(&collide_settings, 0, sizeof(JPH_CollideShapeSettings));
-    JPH_CollideShapeSettings_Init(&collide_settings);
+    // Settings
+    JPH_STACK_ALLOC(JPH_CollideShapeSettings, settings);
+    JPH_CollideShapeSettings_Init(settings);
 
-    // 5. Query with valid Filters
+    // 4. Execute Query
     QueryContext ctx = {self, results};
     const JPH_NarrowPhaseQuery* nq = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
 
@@ -1441,19 +1519,21 @@ static PyObject* PhysicsWorld_overlap_sphere(PhysicsWorldObject* self, PyObject*
         nq, 
         shape, 
         scale, 
-        com_transform, 
-        &collide_settings, 
-        base_offset,             // Pass aligned zero vec
+        transform, 
+        settings, 
+        base_offset, 
         OverlapCallback_Narrow, 
         &ctx, 
-        NULL,                    // BroadPhaseLayerFilter (NULL is usually OK here if BP is skipped)
-        NULL,                    // ObjectLayerFilter
-        NULL,                    // BodyFilter
-        NULL                     // ShapeFilter
+        NULL, // BroadPhaseLayerFilter (NULL = collide with everything)
+        NULL, // ObjectLayerFilter
+        NULL, // BodyFilter
+        NULL  // ShapeFilter
     );
     SHADOW_UNLOCK(&self->shadow_lock);
 
+    // 5. Cleanup
     JPH_Shape_Destroy(shape);
+    
     return results;
 }
 
@@ -1468,20 +1548,33 @@ static PyObject* PhysicsWorld_overlap_aabb(PhysicsWorldObject* self, PyObject* a
         return NULL;
     }
 
-    JPH_AABox box;
-    box.min.x = min_x; box.min.y = min_y; box.min.z = min_z;
-    box.max.x = max_x; box.max.y = max_y; box.max.z = max_z;
-
+    // 1. Prepare Result List
     PyObject* results = PyList_New(0);
-    if (!results) return PyErr_NoMemory();
+    if (!results) return NULL;
 
+    // 2. Stack Allocation with Alignment (CRITICAL)
+    JPH_STACK_ALLOC(JPH_AABox, box);
+    box->min.x = min_x; 
+    box->min.y = min_y; 
+    box->min.z = min_z;
+    
+    box->max.x = max_x; 
+    box->max.y = max_y; 
+    box->max.z = max_z;
+
+    // 3. Execute Query
     QueryContext ctx = {self, results};
     const JPH_BroadPhaseQuery* bq = JPH_PhysicsSystem_GetBroadPhaseQuery(self->system);
 
     SHADOW_LOCK(&self->shadow_lock);
-    // Note: We leave filters as NULL for now. 
-    // If it still crashes here, we need to create a 'DefaultAll' filter in Init.
-    JPH_BroadPhaseQuery_CollideAABox(bq, &box, OverlapCallback_Broad, &ctx, NULL, NULL);
+    JPH_BroadPhaseQuery_CollideAABox(
+        bq, 
+        box, 
+        OverlapCallback_Broad, 
+        &ctx, 
+        NULL, // BroadPhaseLayerFilter
+        NULL  // ObjectLayerFilter
+    );
     SHADOW_UNLOCK(&self->shadow_lock);
 
     return results;
@@ -1584,6 +1677,7 @@ static PyObject* get_user_data_buffer(PhysicsWorldObject* self, void* c) {
 static void Character_dealloc(CharacterObject* self) {
     // FIX 1: Use Base Destructor (Virtual inherits Base)
     if (self->character) JPH_CharacterBase_Destroy((JPH_CharacterBase*)self->character);
+    if (self->listener) JPH_CharacterContactListener_Destroy(self->listener);
     
     if (self->body_filter) JPH_BodyFilter_Destroy(self->body_filter);
     if (self->shape_filter) JPH_ShapeFilter_Destroy(self->shape_filter);

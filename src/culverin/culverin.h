@@ -161,15 +161,23 @@ typedef struct {
     JPH_ShapeFilter* shape_filter;
     JPH_BroadPhaseLayerFilter* bp_filter;
     JPH_ObjectLayerFilter* obj_filter;
+
+    JPH_CharacterContactListener* listener;
 } CharacterObject;
 
-// Add this to the declarations
 extern PyType_Spec Character_spec;
 
 typedef struct {
     PhysicsWorldObject* world;
     PyObject* result_list; // Python List to append handles to
 } QueryContext;
+
+// Helper for Overlap Callbacks
+// Context struct to pass Python List into the C callback
+typedef struct {
+    PhysicsWorldObject* world;
+    PyObject* result_list;
+} OverlapContext;
 
 // --- Module State (PEP 489) ---
 typedef struct {
