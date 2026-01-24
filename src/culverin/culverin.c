@@ -169,7 +169,7 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args, PyObject 
     JPH_ObjectLayerPairFilterTable_EnableCollision(self->pair_filter, 1, 1); 
     self->bp_filter = JPH_ObjectVsBroadPhaseLayerFilterTable_Create(self->bp_interface, 2, self->pair_filter, 2);
 
-    JPH_PhysicsSystemSettings phys_settings = { .maxBodies = (uint32_t)max_bodies, .maxBodyPairs = (uint32_t)max_pairs, .maxContactConstraints = 10240, .broadPhaseLayerInterface = self->bp_interface, .objectLayerPairFilter = self->pair_filter, .objectVsBroadPhaseLayerFilter = self->bp_filter };
+    JPH_PhysicsSystemSettings phys_settings = { .maxBodies = 1000000, .maxBodyPairs = 1000000, .maxContactConstraints = 102400, .broadPhaseLayerInterface = self->bp_interface, .objectLayerPairFilter = self->pair_filter, .objectVsBroadPhaseLayerFilter = self->bp_filter };
     self->system = JPH_PhysicsSystem_Create(&phys_settings);
     JPH_Vec3 gravity = {gx, gy, gz}; JPH_PhysicsSystem_SetGravity(self->system, &gravity);
     self->body_interface = JPH_PhysicsSystem_GetBodyInterface(self->system);
@@ -189,6 +189,7 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args, PyObject 
 
     self->count = baked_count;
     self->capacity = (size_t)max_bodies;
+    if (self->capacity < 128) self->capacity = 128; // Sanity minimum
     if (self->capacity < self->count) self->capacity = self->count + 1024;
 
     self->positions = PyMem_RawCalloc(self->capacity * 4, sizeof(float));
@@ -871,6 +872,44 @@ static PyObject* PhysicsWorld_create_character(PhysicsWorldObject* self, PyObjec
     return (PyObject*)obj;
 }
 
+static int PhysicsWorld_resize(PhysicsWorldObject* self, size_t new_capacity) {
+    if (new_capacity <= self->capacity) return 0;
+
+    // Reallocate Shadow Buffers (SoA)
+    self->positions = PyMem_RawRealloc(self->positions, new_capacity * 16);
+    self->rotations = PyMem_RawRealloc(self->rotations, new_capacity * 16);
+    self->linear_velocities = PyMem_RawRealloc(self->linear_velocities, new_capacity * 16);
+    self->angular_velocities = PyMem_RawRealloc(self->angular_velocities, new_capacity * 16);
+    self->body_ids = PyMem_RawRealloc(self->body_ids, new_capacity * sizeof(JPH_BodyID));
+    self->user_data = PyMem_RawRealloc(self->user_data, new_capacity * sizeof(uint64_t));
+
+    // Reallocate Mapping Arrays
+    self->generations = PyMem_RawRealloc(self->generations, new_capacity * sizeof(uint32_t));
+    self->slot_to_dense = PyMem_RawRealloc(self->slot_to_dense, new_capacity * sizeof(uint32_t));
+    self->dense_to_slot = PyMem_RawRealloc(self->dense_to_slot, new_capacity * sizeof(uint32_t));
+    self->slot_states = PyMem_RawRealloc(self->slot_states, new_capacity * sizeof(uint8_t));
+    
+    // The Free Slot stack needs to be expanded
+    uint32_t* new_free_slots = PyMem_RawRealloc(self->free_slots, new_capacity * sizeof(uint32_t));
+    
+    if (!self->positions || !self->rotations || !new_free_slots) {
+        PyErr_NoMemory();
+        return -1;
+    }
+    self->free_slots = new_free_slots;
+
+    // Initialize the new slots as free
+    for (size_t i = self->slot_capacity; i < new_capacity; i++) {
+        self->generations[i] = 1;
+        self->slot_states[i] = SLOT_EMPTY;
+        self->free_slots[self->free_count++] = (uint32_t)i;
+    }
+
+    self->capacity = new_capacity;
+    self->slot_capacity = new_capacity;
+    return 0;
+}
+
 static PyObject* PhysicsWorld_create_body(PhysicsWorldObject* self, PyObject* args, PyObject* kwds) {
     // Default values
     float px = 0.0f, py = 0.0f, pz = 0.0f;
@@ -910,16 +949,24 @@ static PyObject* PhysicsWorld_create_body(PhysicsWorldObject* self, PyObject* ar
     SHADOW_LOCK(&self->shadow_lock);
 
     // 4. Capacity and Slot Check
-    // if (self->count + self->command_count >= self->capacity) {
+    if (self->count + self->command_count >= self->capacity) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_SetString(PyExc_MemoryError, "World capacity reached. Increase max_bodies in settings.");
+        return NULL;
+    }
+
+    // if (self->free_count == 0) {
     //     SHADOW_UNLOCK(&self->shadow_lock);
-    //     PyErr_SetString(PyExc_MemoryError, "World capacity reached. Increase max_bodies in settings.");
+    //     PyErr_SetString(PyExc_MemoryError, "No free slots available.");
     //     return NULL;
     // }
 
+    // If out of slots, auto-resize (Double the capacity)
     if (self->free_count == 0) {
-        SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_MemoryError, "No free slots available.");
-        return NULL;
+        if (PhysicsWorld_resize(self, self->capacity * 2) < 0) {
+            SHADOW_UNLOCK(&self->shadow_lock);
+            return NULL; 
+        }
     }
 
     // 5. Reserve Slot
@@ -1046,6 +1093,16 @@ static PyObject* PhysicsWorld_create_mesh_body(PhysicsWorldObject* self, PyObjec
 
     // 4. Reserve Slot and Queue Command (Normal Boilerplate)
     SHADOW_LOCK(&self->shadow_lock);
+    if (self->free_count == 0) {
+        // Double the capacity or grow by a fixed chunk
+        if (PhysicsWorld_resize(self, self->capacity + 1024) < 0) {
+            SHADOW_UNLOCK(&self->shadow_lock);
+            JPH_Shape_Destroy(shape); // Cleanup local ref!
+            PyBuffer_Release(&v_view); PyBuffer_Release(&i_view);
+            return NULL; // PhysicsWorld_resize sets the PyErr_NoMemory
+        }
+    }
+
     if (self->count + self->command_count >= self->capacity || self->free_count == 0) {
         SHADOW_UNLOCK(&self->shadow_lock);
         JPH_Shape_Destroy(shape);
