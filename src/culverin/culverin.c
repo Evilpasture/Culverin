@@ -8,11 +8,11 @@ static bool JPH_API_CALL char_on_contact_validate(void* userData, const JPH_Char
 
 // Callback: Handle the collision settings (THIS IS HOW YOU PUSH OBJECTS)
 static void JPH_API_CALL char_on_contact_added(void* userData, const JPH_CharacterVirtual* character, JPH_BodyID bodyID2, JPH_SubShapeID subShapeID2, const JPH_RVec3* contactPosition, const JPH_Vec3* contactNormal, JPH_CharacterContactSettings* ioSettings) {
-    CharacterObject* self = (CharacterObject*)userData;
-
-    ioSettings->canPushCharacter = true;
-    ioSettings->canReceiveImpulses = true;
-
+    // Allows the character to push dynamic bodies
+    ioSettings->canPushCharacter = true; 
+    
+    // Allows the character to be pushed by moving platforms/bodies
+    ioSettings->canReceiveImpulses = true; 
 }
 
 // Map the procs
@@ -814,7 +814,7 @@ static PyObject* PhysicsWorld_create_character(PhysicsWorldObject* self, PyObjec
 
     // Config
     settings.mass = 70.0f;
-    settings.maxStrength = 100.0f;
+    settings.maxStrength = 500.0f;
     settings.characterPadding = 0.02f;
     settings.penetrationRecoverySpeed = 1.0f;
     settings.predictiveContactDistance = 0.1f;
@@ -1771,6 +1771,15 @@ static PyObject* Character_is_grounded(CharacterObject* self, PyObject* args) {
     Py_RETURN_FALSE;
 }
 
+static PyObject* Character_set_strength(CharacterObject* self, PyObject* args) {
+    float strength;
+    if (!PyArg_ParseTuple(args, "f", &strength)) return NULL;
+    
+    // JPH_CharacterVirtual_SetMaxStrength is the C-API call
+    JPH_CharacterVirtual_SetMaxStrength(self->character, strength);
+    Py_RETURN_NONE;
+}
+
 static PyObject* get_positions(PhysicsWorldObject* self, void* c) { return make_view(self, self->positions); }
 static PyObject* get_rotations(PhysicsWorldObject* self, void* c) { return make_view(self, self->rotations); }
 static PyObject* get_velocities(PhysicsWorldObject* self, void* c) { return make_view(self, self->linear_velocities); }
@@ -1839,6 +1848,7 @@ static PyMethodDef Character_methods[] = {
     {"set_position", (PyCFunction)Character_set_position, METH_VARARGS | METH_KEYWORDS, NULL},
     {"set_rotation", (PyCFunction)Character_set_rotation, METH_VARARGS | METH_KEYWORDS, NULL},
     {"is_grounded", (PyCFunction)Character_is_grounded, METH_NOARGS, NULL},
+    {"set_strength", (PyCFunction)Character_set_strength, METH_VARARGS, "Set the max pushing force"},
     {NULL}
 };
 
