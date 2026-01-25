@@ -163,9 +163,15 @@ def bake_scene(bodies):
         )
 
         # Pack Position (with 4th float padding for alignment compatibility)
-        arr_pos.extend([pos[0], pos[1], pos[2], 0.0])
+        arr_pos.append(pos[0])
+        arr_pos.append(pos[1])
+        arr_pos.append(pos[2])
+        arr_pos.append(0.0)
         # Pack Rotation
-        arr_rot.extend(rot)
+        arr_rot.append(rot[0])
+        arr_rot.append(rot[1])
+        arr_rot.append(rot[2])
+        arr_rot.append(rot[3])
         # Pack Shape [Type, P1, P2, P3, P4]
         arr_shape_data.append(float(stype))
         arr_shape_data.extend(shape_params)
