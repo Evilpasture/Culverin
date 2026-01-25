@@ -77,21 +77,21 @@ static void JPH_API_CALL char_on_contact_added(
 static void JPH_API_CALL on_contact_added(void* userData, const JPH_Body* body1, const JPH_Body* body2, const JPH_ContactManifold* manifold, JPH_ContactSettings* settings) {
     PhysicsWorldObject* self = (PhysicsWorldObject*)userData;
 
-    // 1. Get User Data
-    // Note: Casting away const is required because joltc.h defines GetUserData as taking 'JPH_Body*'
+    // 1. Get User Data (Slots)
+    // Casting away const is required for the JoltC body functions
     uint64_t slot1 = JPH_Body_GetUserData((JPH_Body*)body1);
     uint64_t slot2 = JPH_Body_GetUserData((JPH_Body*)body2);
 
     // 2. Bound Check (Safety)
     if (slot1 >= self->slot_capacity || slot2 >= self->slot_capacity) return;
 
-    // 3. Construct Handles
+    // 3. Construct Handles (ID + Generation)
     BodyHandle h1 = make_handle((uint32_t)slot1, self->generations[slot1]);
     BodyHandle h2 = make_handle((uint32_t)slot2, self->generations[slot2]);
 
     SHADOW_LOCK(&self->shadow_lock);
     
-    // 4. Resize Buffer if needed
+    // 4. Resize Event Buffer if full
     if (self->contact_count >= self->contact_capacity) {
         size_t new_cap = (self->contact_capacity == 0) ? 64 : self->contact_capacity * 2;
         void* new_ptr = PyMem_RawRealloc(self->contact_events, new_cap * sizeof(ContactEvent));
@@ -107,20 +107,15 @@ static void JPH_API_CALL on_contact_added(void* userData, const JPH_Body* body1,
     ev->body1 = h1;
     ev->body2 = h2;
 
-    // 5. Get Normal
-    // Prototype: void JPH_ContactManifold_GetWorldSpaceNormal(const JPH_ContactManifold* manifold, JPH_Vec3* result);
+    // 5. Get Contact Normal
     JPH_Vec3 n;
     JPH_ContactManifold_GetWorldSpaceNormal(manifold, &n);
     ev->nx = n.x; ev->ny = n.y; ev->nz = n.z;
 
     // 6. Get Contact Point
-    // Prototype: uint32_t JPH_ContactManifold_GetPointCount(const JPH_ContactManifold* manifold);
     if (JPH_ContactManifold_GetPointCount(manifold) > 0) {
-        // Prototype: void JPH_ContactManifold_GetWorldSpaceContactPointOn1(const JPH_ContactManifold* manifold, uint32_t index, JPH_RVec3* result);
         JPH_RVec3 p;
         JPH_ContactManifold_GetWorldSpaceContactPointOn1(manifold, 0, &p);
-        
-        // Cast RVec3 (potentially double) to float for our struct
         ev->px = (float)p.x; 
         ev->py = (float)p.y; 
         ev->pz = (float)p.z;
@@ -128,9 +123,20 @@ static void JPH_API_CALL on_contact_added(void* userData, const JPH_Body* body1,
         ev->px = 0.0f; ev->py = 0.0f; ev->pz = 0.0f;
     }
 
-    // 7. Get Penetration Depth (as proxy for impulse strength in Added callback)
-    // Prototype: float JPH_ContactManifold_GetPenetrationDepth(const JPH_ContactManifold* manifold);
-    ev->impulse = JPH_ContactManifold_GetPenetrationDepth(manifold);
+    // --- 7. CALCULATE IMPACT SPEED (FOR AUDIO/GAMEPLAY) ---
+    JPH_Vec3 v1, v2;
+    JPH_Body_GetLinearVelocity((JPH_Body*)body1, &v1);
+    JPH_Body_GetLinearVelocity((JPH_Body*)body2, &v2);
+
+    // Calculate relative velocity vector
+    float rv_x = v1.x - v2.x;
+    float rv_y = v1.y - v2.y;
+    float rv_z = v1.z - v2.z;
+
+    // Closing speed is the dot product of relative velocity and the normal
+    // We use absolute value so the result is always positive regardless of body order
+    float closing_speed = rv_x * n.x + rv_y * n.y + rv_z * n.z;
+    ev->impulse = fabsf(closing_speed);
 
     self->contact_count++;
     SHADOW_UNLOCK(&self->shadow_lock);
