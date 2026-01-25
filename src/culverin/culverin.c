@@ -638,40 +638,28 @@ static PyObject *PhysicsWorld_apply_impulse(PhysicsWorldObject *self,
 // ABI BYPASS.
 // WILL REPLACE WITH THE COMMENTED FUNCTION DEFINITION BELOW
 // IF I FIND A WAY TO FIX ABI MISMATCH.
-static PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *args,
-                                      PyObject *kwds) {
-  float sx = NAN;
-  float sy = NAN;
-  float sz = NAN;
-  float dx = NAN;
-  float dy = NAN;
-  float dz = NAN;
+static PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *args, PyObject *kwds) {
+    float sx, sy, sz;
+    float dx, dy, dz;
   float max_dist = 1000.0f;
   static char *kwlist[] = {"start", "direction", "max_dist", NULL};
 
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)(fff)|f", kwlist, &sx, &sy,
-                                   &sz, &dx, &dy, &dz, &max_dist)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)(fff)|f", kwlist, 
+                                     &sx, &sy, &sz, 
+                                     &dx, &dy, &dz, 
+                                     &max_dist)) {
     return NULL;
   }
 
-  // 1. Calculate Magnitude & Scaling
-  float mag_sq = dx * dx + dy * dy + dz * dz;
-  if (mag_sq < 1e-9f) {
-    Py_RETURN_NONE; // Safety: Zero length ray
-  }
+    float mag_sq = dx*dx + dy*dy + dz*dz;
+    if (mag_sq < 1e-9f) Py_RETURN_NONE;
+    
   float mag = sqrtf(mag_sq);
   float scale = max_dist / mag;
 
-  // 2. Stack Alloc with Alignment (CRITICAL for your build)
   JPH_STACK_ALLOC(JPH_RVec3, origin);
-  origin->x = sx;
-  origin->y = sy;
-  origin->z = sz;
-  // Safety against uninitialized padding if macro mismatch exists
-  memset(origin, 0, sizeof(double) * 4);
-  origin->x = sx;
-  origin->y = sy;
-  origin->z = sz;
+    memset(origin, 0, sizeof(JPH_RVec3));
+    origin->x = sx; origin->y = sy; origin->z = sz;
 
   JPH_STACK_ALLOC(JPH_Vec3, direction);
   direction->x = dx * scale;
@@ -681,24 +669,38 @@ static PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *args,
   JPH_STACK_ALLOC(JPH_RayCastResult, hit);
   memset(hit, 0, sizeof(JPH_RayCastResult));
 
-  // 3. Execute
-  const JPH_NarrowPhaseQuery *query =
-      JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
+    const JPH_NarrowPhaseQuery *query = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
+    bool has_hit = JPH_NarrowPhaseQuery_CastRay(query, origin, direction, hit, NULL, NULL, NULL);
 
-  // Pass pointers to the aligned stack variables
-  bool has_hit = JPH_NarrowPhaseQuery_CastRay(query, origin, direction, hit,
-                                              NULL, NULL, NULL);
+    if (!has_hit) Py_RETURN_NONE;
 
-  if (!has_hit) {
-    Py_RETURN_NONE;
-  }
+    // --- NEW: SAFE NORMAL EXTRACTION VIA LOCK ---
+    JPH_Vec3 normal = {0, 1, 0}; // Fallback
+    
+    // 1. Get the Lock Interface
+    const JPH_BodyLockInterface* lock_iface = JPH_PhysicsSystem_GetBodyLockInterface(self->system);
+    
+    // 2. Try to lock the body for reading
+    JPH_BodyLockRead lock;
+    JPH_BodyLockInterface_LockRead(lock_iface, hit->bodyID, &lock);
 
-  // 4. Resolve Handle
+    if (lock.body) {
+        // Calculate hit position: P = O + D * fraction
+        JPH_RVec3 hit_pos;
+        hit_pos.x = origin->x + direction->x * hit->fraction;
+        hit_pos.y = origin->y + direction->y * hit->fraction;
+        hit_pos.z = origin->z + direction->z * hit->fraction;
+
+        // Ask the locked body for the normal at the specific subshape hit
+        JPH_Body_GetWorldSpaceSurfaceNormal(lock.body, hit->subShapeID2, &hit_pos, &normal);
+    }
+    
+    // 3. IMPORTANT: Unlock immediately
+    JPH_BodyLockInterface_UnlockRead(lock_iface, &lock);
+
+    // 4. Resolve Handle (Slot + Gen)
   SHADOW_LOCK(&self->shadow_lock);
-
-  // In Culverin, UserData IS the slot index
-  uint64_t slot_idx =
-      JPH_BodyInterface_GetUserData(self->body_interface, hit->bodyID);
+    uint64_t slot_idx = JPH_BodyInterface_GetUserData(self->body_interface, hit->bodyID);
 
   if (slot_idx >= self->slot_capacity) {
     SHADOW_UNLOCK(&self->shadow_lock);
@@ -707,10 +709,10 @@ static PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *args,
 
   uint32_t gen = self->generations[slot_idx];
   BodyHandle handle = make_handle((uint32_t)slot_idx, gen);
-
   SHADOW_UNLOCK(&self->shadow_lock);
 
-  return Py_BuildValue("Kf", handle, hit->fraction);
+    // Return: (Handle, Fraction, (NormX, NormY, NormZ))
+    return Py_BuildValue("Kf(fff)", handle, hit->fraction, normal.x, normal.y, normal.z);
 }
 
 // ==============================================NO UNCOMMENT. AND LEAVE THIS
