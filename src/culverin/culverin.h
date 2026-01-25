@@ -5,7 +5,6 @@
 #include <Python.h>
 #include "joltc.h"
 #include <math.h>
-#include <stdalign.h>
 #include <string.h>
 
 
@@ -17,9 +16,24 @@
 // USAGE: JPH_STACK_ALLOC(JPH_RVec3, my_vec);
 // This macro satisfies how Jolt Physics expects aligned data structures.
 // I know. This is a hack.
-#define JPH_STACK_ALLOC(Type, Name)                                            \
-  alignas(32) Type Name##_storage;                                             \
-  Type *Name = &Name##_storage
+#if defined(_MSC_VER)
+    // Microsoft Visual Studio syntax
+    #define JPH_ALIGNED_STORAGE(Type, Name, Align) \
+        __declspec(align(Align)) Type Name
+#elif defined(__GNUC__) || defined(__clang__)
+    // GCC/Clang syntax (supports both C and C++)
+    #define JPH_ALIGNED_STORAGE(Type, Name, Align) \
+        Type Name __attribute__((aligned(Align)))
+#else
+    // Standard C11 (requires <stdalign.h> if not in C++)
+    #include <stdalign.h>
+    #define JPH_ALIGNED_STORAGE(Type, Name, Align) \
+        alignas(Align) Type Name
+#endif
+
+#define JPH_STACK_ALLOC(Type, Name) \
+    JPH_ALIGNED_STORAGE(Type, Name##_storage, 32); \
+    Type *Name = &Name##_storage
 
 // --- Threading Primitives (Python 3.14t support) ---
 #if PY_VERSION_HEX >= 0x030D0000
