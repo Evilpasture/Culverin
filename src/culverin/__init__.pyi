@@ -1,4 +1,4 @@
-from typing import Tuple, List, Optional, TypedDict, Union, Any
+from typing import Tuple, List, Optional, TypedDict, Union, Any, Dict
 from . import _culverin_c
 
 # Semantic Types
@@ -25,6 +25,7 @@ class BodyConfig(TypedDict, total=False):
     size: Union[Tuple[float], Tuple[float, float], Tuple[float, float, float], Tuple[float, float, float, float]]
     mass: float
     user_data: int
+    motion: int
 
 class WorldSettings(TypedDict, total=False):
     gravity: Vec3
@@ -41,11 +42,7 @@ class Character(_culverin_c.Character):
     def set_strength(self, strength: float) -> None: ...
 
 class PhysicsWorld(_culverin_c.PhysicsWorld):
-    def __init__(
-        self, 
-        settings: Optional[WorldSettings] = None, 
-        bodies: Optional[List[BodyConfig]] = None
-    ) -> None: ...
+    def __init__(self, settings: Optional[WorldSettings] = None, bodies: Optional[List[BodyConfig]] = None) -> None: ...
 
     def step(self, dt: float = 1.0/60.0) -> None: ...
 
@@ -56,26 +53,13 @@ class PhysicsWorld(_culverin_c.PhysicsWorld):
         size: Union[float, Vec3, Tuple[float, ...]] = (1, 1, 1),
         shape: int = SHAPE_BOX,
         motion: int = MOTION_DYNAMIC,
-        user_data: int = 0
+        user_data: int = 0,
+        is_sensor: bool = False
     ) -> Handle: ...
 
-    def create_mesh_body(
-        self,
-        pos: Vec3,
-        rot: Quat,
-        vertices: Any,
-        indices: Any,
-        user_data: int = 0
-    ) -> Handle: ...
+    def create_mesh_body(self, pos: Vec3, rot: Quat, vertices: Any, indices: Any, user_data: int = 0) -> Handle: ...
 
-    def create_character(
-        self,
-        pos: Vec3,
-        height: float = 1.8,
-        radius: float = 0.4,
-        step_height: float = 0.4,
-        max_slope: float = 45.0
-    ) -> Character: ...
+    def create_character(self, pos: Vec3, height: float = 1.8, radius: float = 0.4, step_height: float = 0.4, max_slope: float = 45.0) -> Character: ...
 
     def destroy_body(self, handle: Handle) -> None: ...
     def apply_impulse(self, handle: Handle, x: float, y: float, z: float) -> None: ...
@@ -91,10 +75,15 @@ class PhysicsWorld(_culverin_c.PhysicsWorld):
     def set_user_data(self, handle: Handle, data: int) -> None: ...
     def get_user_data(self, handle: Handle) -> int: ...
     
-    # New Query Methods
+    # Query Methods
     def raycast(self, start: Vec3, direction: Vec3, max_dist: float = 1000.0) -> Optional[Tuple[Handle, float]]: ...
     def overlap_sphere(self, center: Vec3, radius: float) -> List[Handle]: ...
     def overlap_aabb(self, min: Vec3, max: Vec3) -> List[Handle]: ...
+    
+    # Event System
+    def get_contact_events(self) -> List[Tuple[Handle, Handle]]: ...
+    def get_contact_events_ex(self) -> List[Dict[str, Any]]: ...
+    def get_contact_events_raw(self) -> memoryview: ...
     
     def get_index(self, handle: Handle) -> Optional[int]: ...
     def is_alive(self, handle: Handle) -> bool: ...
