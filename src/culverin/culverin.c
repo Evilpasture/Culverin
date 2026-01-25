@@ -3,6 +3,22 @@
 #include <math.h>
 #include <stddef.h>
 
+// --- Handle Helper ---
+static inline BodyHandle make_handle(uint32_t slot, uint32_t gen) {
+  return ((uint64_t)gen << 32) | (uint64_t)slot;
+}
+
+static inline bool unpack_handle(PhysicsWorldObject *self, BodyHandle h,
+                                 uint32_t *slot) {
+  *slot = (uint32_t)(h & 0xFFFFFFFF);
+  uint32_t gen = (uint32_t)(h >> 32);
+
+  if (*slot >= self->slot_capacity) {
+    return false;
+  }
+  return self->generations[*slot] == gen;
+}
+
 // Character helpers
 // Callback: Can the character collide with this object?
 static bool JPH_API_CALL
@@ -57,6 +73,210 @@ static void JPH_API_CALL char_on_contact_added(
   }
 }
 
+// --- Global Contact Listener ---
+static void JPH_API_CALL on_contact_added(void* userData, const JPH_Body* body1, const JPH_Body* body2, const JPH_ContactManifold* manifold, JPH_ContactSettings* settings) {
+    PhysicsWorldObject* self = (PhysicsWorldObject*)userData;
+
+    // 1. Get User Data
+    // Note: Casting away const is required because joltc.h defines GetUserData as taking 'JPH_Body*'
+    uint64_t slot1 = JPH_Body_GetUserData((JPH_Body*)body1);
+    uint64_t slot2 = JPH_Body_GetUserData((JPH_Body*)body2);
+
+    // 2. Bound Check (Safety)
+    if (slot1 >= self->slot_capacity || slot2 >= self->slot_capacity) return;
+
+    // 3. Construct Handles
+    BodyHandle h1 = make_handle((uint32_t)slot1, self->generations[slot1]);
+    BodyHandle h2 = make_handle((uint32_t)slot2, self->generations[slot2]);
+
+    SHADOW_LOCK(&self->shadow_lock);
+    
+    // 4. Resize Buffer if needed
+    if (self->contact_count >= self->contact_capacity) {
+        size_t new_cap = (self->contact_capacity == 0) ? 64 : self->contact_capacity * 2;
+        void* new_ptr = PyMem_RawRealloc(self->contact_events, new_cap * sizeof(ContactEvent));
+        if (!new_ptr) { 
+            SHADOW_UNLOCK(&self->shadow_lock); 
+            return; 
+        }
+        self->contact_events = (ContactEvent*)new_ptr;
+        self->contact_capacity = new_cap;
+    }
+
+    ContactEvent* ev = &self->contact_events[self->contact_count];
+    ev->body1 = h1;
+    ev->body2 = h2;
+
+    // 5. Get Normal
+    // Prototype: void JPH_ContactManifold_GetWorldSpaceNormal(const JPH_ContactManifold* manifold, JPH_Vec3* result);
+    JPH_Vec3 n;
+    JPH_ContactManifold_GetWorldSpaceNormal(manifold, &n);
+    ev->nx = n.x; ev->ny = n.y; ev->nz = n.z;
+
+    // 6. Get Contact Point
+    // Prototype: uint32_t JPH_ContactManifold_GetPointCount(const JPH_ContactManifold* manifold);
+    if (JPH_ContactManifold_GetPointCount(manifold) > 0) {
+        // Prototype: void JPH_ContactManifold_GetWorldSpaceContactPointOn1(const JPH_ContactManifold* manifold, uint32_t index, JPH_RVec3* result);
+        JPH_RVec3 p;
+        JPH_ContactManifold_GetWorldSpaceContactPointOn1(manifold, 0, &p);
+        
+        // Cast RVec3 (potentially double) to float for our struct
+        ev->px = (float)p.x; 
+        ev->py = (float)p.y; 
+        ev->pz = (float)p.z;
+    } else {
+        ev->px = 0.0f; ev->py = 0.0f; ev->pz = 0.0f;
+    }
+
+    // 7. Get Penetration Depth (as proxy for impulse strength in Added callback)
+    // Prototype: float JPH_ContactManifold_GetPenetrationDepth(const JPH_ContactManifold* manifold);
+    ev->impulse = JPH_ContactManifold_GetPenetrationDepth(manifold);
+
+    self->contact_count++;
+    SHADOW_UNLOCK(&self->shadow_lock);
+}
+
+static PyObject* PhysicsWorld_get_contact_events(PhysicsWorldObject* self, PyObject* args) {
+    SHADOW_LOCK(&self->shadow_lock);
+    
+    // 1. Quick Exit
+    if (self->contact_count == 0) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        return PyList_New(0);
+    }
+
+    // 2. Determine Snapshot Size
+    // We strictly Read-Only here. Logic in 'step()' handles the clearing.
+    size_t total = self->contact_count;
+    size_t to_process = (total > (size_t)PY_SSIZE_T_MAX) ? (size_t)PY_SSIZE_T_MAX : total;
+    
+    // 3. Stack Buffer Optimization
+    // Avoids malloc for the 99% case where you have few collisions per frame
+    ContactEvent stack_buffer[64]; 
+    ContactEvent* scratch = NULL;
+
+    if (to_process <= 64) {
+        scratch = stack_buffer;
+    } else {
+        scratch = PyMem_RawMalloc(to_process * sizeof(ContactEvent));
+        if (!scratch) {
+            SHADOW_UNLOCK(&self->shadow_lock);
+            return PyErr_NoMemory();
+        }
+    }
+    
+    // 4. Copy Data
+    memcpy(scratch, self->contact_events, to_process * sizeof(ContactEvent));
+
+    // NOTE: We do NOT 'memmove' or clear 'contact_count' here.
+    // This allows get_contact_events_ex() to read the same data later.
+    // The buffer is reset in PhysicsWorld_step().
+
+    SHADOW_UNLOCK(&self->shadow_lock);
+
+    // 5. Build List (Manual Tuple Packing for Speed)
+    PyObject* list = PyList_New((Py_ssize_t)to_process);
+    if (!list) {
+        if (scratch != stack_buffer) PyMem_RawFree(scratch);
+        return NULL;
+    }
+
+    for (size_t i = 0; i < to_process; i++) {
+        // Create Longs
+        PyObject* v1 = PyLong_FromUnsignedLongLong(scratch[i].body1);
+        if (!v1) {
+            Py_DECREF(list);
+            if (scratch != stack_buffer) PyMem_RawFree(scratch);
+            return NULL;
+        }
+
+        PyObject* v2 = PyLong_FromUnsignedLongLong(scratch[i].body2);
+        if (!v2) {
+            Py_DECREF(v1);
+            Py_DECREF(list);
+            if (scratch != stack_buffer) PyMem_RawFree(scratch);
+            return NULL;
+        }
+
+        // Create Tuple
+        PyObject* item = PyTuple_New(2);
+        if (!item) {
+            Py_DECREF(v1);
+            Py_DECREF(v2);
+            Py_DECREF(list);
+            if (scratch != stack_buffer) PyMem_RawFree(scratch);
+            return NULL;
+        }
+
+        // Steal References (Fastest way to pack)
+        PyTuple_SET_ITEM(item, 0, v1);
+        PyTuple_SET_ITEM(item, 1, v2);
+
+        // Add to List
+        PyList_SET_ITEM(list, (Py_ssize_t)i, item);
+    }
+
+    if (scratch != stack_buffer) PyMem_RawFree(scratch);
+
+    // 6. Handle Overflow Warning
+    if (total > to_process) {
+        if (PyErr_WarnFormat(PyExc_RuntimeWarning, 1, 
+            "Contact event limit reached: %zu events detected. "
+            "Returning first %zd events. (Note: Buffer is Frame-Persistent)", 
+            total, (Py_ssize_t)to_process) < 0) 
+        {
+            Py_DECREF(list);
+            return NULL;
+        }
+    }
+
+    return list;
+}
+
+static PyObject* PhysicsWorld_get_contact_events_ex(PhysicsWorldObject* self, PyObject* args) {
+    SHADOW_LOCK(&self->shadow_lock);
+    size_t count = self->contact_count;
+    if (count == 0) { SHADOW_UNLOCK(&self->shadow_lock); return PyList_New(0); }
+
+    ContactEvent* scratch = PyMem_RawMalloc(count * sizeof(ContactEvent));
+    memcpy(scratch, self->contact_events, count * sizeof(ContactEvent));
+    // No clear.
+    SHADOW_UNLOCK(&self->shadow_lock);
+
+    PyObject* list = PyList_New((Py_ssize_t)count);
+    for (size_t i = 0; i < count; i++) {
+        ContactEvent* e = &scratch[i];
+        PyObject* d = Py_BuildValue("{s:(KK),s:(fff),s:(fff),s:f}",
+            "bodies", e->body1, e->body2,
+            "position", e->px, e->py, e->pz,
+            "normal", e->nx, e->ny, e->nz,
+            "strength", e->impulse
+        );
+        PyList_SET_ITEM(list, i, d);
+    }
+    PyMem_RawFree(scratch);
+    return list;
+}
+
+static PyObject* PhysicsWorld_get_contact_events_raw(PhysicsWorldObject* self, PyObject* args) {
+    SHADOW_LOCK(&self->shadow_lock);
+    size_t count = self->contact_count;
+    if (count == 0) { SHADOW_UNLOCK(&self->shadow_lock); return PyMemoryView_FromMemory(NULL, 0, PyBUF_READ); }
+
+    // We must copy because self->contact_events might be realloc'd in the next step,
+    // invalidating the pointer. PyBytes makes a safe copy.
+    size_t bytes_size = count * sizeof(ContactEvent);
+    PyObject* raw_bytes = PyBytes_FromStringAndSize((char*)self->contact_events, (Py_ssize_t)bytes_size);
+    
+    // No clear.
+    SHADOW_UNLOCK(&self->shadow_lock);
+
+    if (!raw_bytes) return NULL;
+    PyObject* view = PyMemoryView_FromObject(raw_bytes);
+    Py_DECREF(raw_bytes);
+    return view;
+}
+
 // Map the procs
 static const JPH_CharacterContactListener_Procs char_listener_procs = {
     .OnContactValidate = char_on_contact_validate,
@@ -69,6 +289,13 @@ static const JPH_CharacterContactListener_Procs char_listener_procs = {
     .OnCharacterContactPersisted = NULL,
     .OnCharacterContactRemoved = NULL,
     .OnContactSolve = NULL};
+
+static JPH_ContactListener_Procs contact_procs = {
+    .OnContactValidate = NULL, // Default behavior
+    .OnContactAdded = on_contact_added,
+    .OnContactPersisted = NULL, // Ignore sliding/resting contacts for performance
+    .OnContactRemoved = NULL
+};
 
 // --- Helper: Shape Caching (Internal) ---
 static JPH_Shape *find_or_create_shape(PhysicsWorldObject *self, int type,
@@ -146,22 +373,6 @@ static JPH_Shape *find_or_create_shape(PhysicsWorldObject *self, int type,
   return shape;
 }
 
-// --- Handle Helper ---
-static inline BodyHandle make_handle(uint32_t slot, uint32_t gen) {
-  return ((uint64_t)gen << 32) | (uint64_t)slot;
-}
-
-static inline bool unpack_handle(PhysicsWorldObject *self, BodyHandle h,
-                                 uint32_t *slot) {
-  *slot = (uint32_t)(h & 0xFFFFFFFF);
-  uint32_t gen = (uint32_t)(h >> 32);
-
-  if (*slot >= self->slot_capacity) {
-    return false;
-  }
-  return self->generations[*slot] == gen;
-}
-
 // --- Lifecycle: Deallocation ---
 static void PhysicsWorld_dealloc(PhysicsWorldObject *self) {
   if (self->system) {
@@ -178,6 +389,8 @@ static void PhysicsWorld_dealloc(PhysicsWorldObject *self) {
   if (self->job_system) {
     JPH_JobSystem_Destroy(self->job_system);
   }
+  if (self->contact_listener) {JPH_ContactListener_Destroy(self->contact_listener);}
+    if (self->contact_events) {PyMem_RawFree(self->contact_events);}
 
   PyMem_RawFree(self->positions);
   PyMem_RawFree(self->rotations);
@@ -256,6 +469,16 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
   JPH_Vec3 gravity = {gx, gy, gz};
   JPH_PhysicsSystem_SetGravity(self->system, &gravity);
   self->body_interface = JPH_PhysicsSystem_GetBodyInterface(self->system);
+
+  // Init Contact Event Buffer
+    self->contact_events = PyMem_RawMalloc(64 * sizeof(ContactEvent));
+    self->contact_capacity = 64;
+    self->contact_count = 0;
+
+    // Create and Register Listener
+    JPH_ContactListener_SetProcs(&contact_procs);
+    self->contact_listener = JPH_ContactListener_Create(self); // Pass self as userData
+    JPH_PhysicsSystem_SetContactListener(self->system, self->contact_listener);
 
 #if PY_VERSION_HEX < 0x030D0000
   self->shadow_lock = PyThread_allocate_lock();
@@ -921,27 +1144,34 @@ static PyObject *PhysicsWorld_load_state(PhysicsWorldObject *self,
 }
 // --- Methods & Getters (Standard) ---
 
-static PyObject *PhysicsWorld_step(PhysicsWorldObject *self, PyObject *args) {
-  float dt = 1.0f / 60.0f;
-  if (!PyArg_ParseTuple(args, "|f", &dt)) {
-    return NULL;
-  }
+static PyObject* PhysicsWorld_step(PhysicsWorldObject* self, PyObject* args) {
+    float dt = 1.0f/60.0f;
+    if (!PyArg_ParseTuple(args, "|f", &dt)) return NULL;
 
-  Py_BEGIN_ALLOW_THREADS
+    Py_BEGIN_ALLOW_THREADS
+    
+    SHADOW_LOCK(&self->shadow_lock);
+    
+    // 1. Flush Creation Queue
+    flush_commands(self);
+    
+    // 2. RESET CONTACT BUFFER (The Fix)
+    // This ensures the buffer contains only events from THIS step.
+    self->contact_count = 0;
+    
+    SHADOW_UNLOCK(&self->shadow_lock);
 
-      SHADOW_LOCK(&self->shadow_lock);
-  flush_commands(self); // <--- FLUSH BEFORE STEP
-  SHADOW_UNLOCK(&self->shadow_lock);
+    // 3. Run Simulation (New contacts will be appended)
+    JPH_PhysicsSystem_Update(self->system, dt, 1, self->job_system);
+    
+    SHADOW_LOCK(&self->shadow_lock);
+    culverin_sync_shadow_buffers(self);
+    SHADOW_UNLOCK(&self->shadow_lock);
+    
+    Py_END_ALLOW_THREADS
+    self->time += (double)dt;
 
-  JPH_PhysicsSystem_Update(self->system, dt, 1, self->job_system);
-
-  SHADOW_LOCK(&self->shadow_lock);
-  culverin_sync_shadow_buffers(self);
-  SHADOW_UNLOCK(&self->shadow_lock);
-
-  Py_END_ALLOW_THREADS self->time += (double)dt;
-
-  Py_RETURN_NONE;
+    Py_RETURN_NONE;
 }
 
 static PyObject *PhysicsWorld_create_character(PhysicsWorldObject *self,
@@ -1128,18 +1358,17 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
   int shape_type = 0;                    // SHAPE_BOX
   int motion_type = 2;                   // MOTION_DYNAMIC
   unsigned long long user_data = 0;
+  int is_sensor = 0; // Boolean flag
 
   PyObject *py_size = NULL;
-  static char *kwlist[] = {"pos",    "rot",       "size", "shape",
-                           "motion", "user_data", NULL};
+  static char *kwlist[] = {"pos", "rot", "size", "shape", "motion", "user_data", "is_sensor", NULL};
 
   // 1. Parse Arguments
   // Note: size is parsed as a generic Object 'O' for flexible tuple length
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "|(fff)(ffff)OiiK", kwlist, &px,
-                                   &py, &pz, &rx, &ry, &rz, &rw, &py_size,
-                                   &shape_type, &motion_type, &user_data)) {
-    return NULL;
-  }
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "|(fff)(ffff)OiiKp", kwlist, 
+        &px, &py, &pz, &rx, &ry, &rz, &rw, &py_size, &shape_type, &motion_type, &user_data, &is_sensor)) {
+        return NULL;
+    }
 
   // 2. Extract Size Params from Tuple
   if (py_size && PyTuple_Check(py_size)) {
@@ -1212,6 +1441,9 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
 
   JPH_BodyCreationSettings *settings = JPH_BodyCreationSettings_Create3(
       shape, pos, rot, (JPH_MotionType)motion_type, (JPH_ObjectLayer)layer);
+    if (is_sensor) {
+        JPH_BodyCreationSettings_SetIsSensor(settings, true);
+    }
 
   // CRITICAL: Set UserData to the SLOT index for handle resolution
   JPH_BodyCreationSettings_SetUserData(settings, (uint64_t)slot);
@@ -2299,6 +2531,15 @@ static const PyMethodDef PhysicsWorld_methods[] = {
      METH_VARARGS | METH_KEYWORDS, NULL},
     {"set_user_data", (PyCFunction)PhysicsWorld_set_user_data,
      METH_VARARGS | METH_KEYWORDS, NULL},
+
+     // -- Event Logic ---
+
+    {"get_contact_events", (PyCFunction)PhysicsWorld_get_contact_events, 
+     METH_NOARGS, NULL},
+    {"get_contact_events_ex", (PyCFunction)PhysicsWorld_get_contact_events_ex, 
+    METH_NOARGS, "Get rich collision data as dicts"},
+    {"get_contact_events_raw", (PyCFunction)PhysicsWorld_get_contact_events_raw, 
+    METH_NOARGS, "Get raw collision buffer as memoryview"},
 
     // --- State & Advanced ---
     {"save_state", (PyCFunction)PhysicsWorld_save_state, METH_NOARGS, NULL},

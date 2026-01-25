@@ -116,6 +116,15 @@ typedef struct {
   } data;
 } PhysicsCommand;
 
+// --- Callback Logic ---
+typedef struct {
+    uint64_t body1;
+    uint64_t body2;
+    float px, py, pz;
+    float nx, ny, nz;
+    float impulse;
+} ContactEvent;
+
 // --- The Object Struct ---
 typedef struct {
   PyObject_HEAD
@@ -129,6 +138,14 @@ typedef struct {
   JPH_BroadPhaseLayerInterface *bp_interface;
   JPH_ObjectLayerPairFilter *pair_filter;
   JPH_ObjectVsBroadPhaseLayerFilter *bp_filter;
+
+  // --- Global Contact Listener ---
+  JPH_ContactListener* contact_listener;
+
+  // --- Event Buffer ---
+  ContactEvent* contact_events;
+  size_t contact_count;
+  size_t contact_capacity;
 
   // Shadow Buffers
   float *positions;
