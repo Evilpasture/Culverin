@@ -91,6 +91,14 @@ class PhysicsWorld(_culverin_c.PhysicsWorld):
     
     # Query Methods
     def raycast(self, start: Vec3, direction: Vec3, max_dist: float = 1000.0) -> Optional[Tuple[Handle, float, Vec3]]: ...
+    def shapecast(
+        self, 
+        shape: int, 
+        pos: Vec3, 
+        rot: Quat, 
+        dir: Vec3, 
+        size: Any
+    ) -> Optional[Tuple[Handle, float, Vec3, Vec3]]: ...
     def overlap_sphere(self, center: Vec3, radius: float) -> List[Handle]: ...
     def overlap_aabb(self, min: Vec3, max: Vec3) -> List[Handle]: ...
     

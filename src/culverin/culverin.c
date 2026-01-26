@@ -757,6 +757,92 @@ static PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *args, 
     return Py_BuildValue("Kf(fff)", handle, hit->fraction, normal.x, normal.y, normal.z);
 }
 
+static PyObject* PhysicsWorld_shapecast(PhysicsWorldObject* self, PyObject* args, PyObject* kwds) {
+    int shape_type;
+    float px, py, pz;
+    float rx, ry, rz, rw;
+    float dx, dy, dz;
+    PyObject* py_size = NULL;
+    static char *kwlist[] = {"shape", "pos", "rot", "dir", "size", NULL};
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "i(fff)(ffff)(fff)O", kwlist, 
+                                     &shape_type, &px, &py, &pz, 
+                                     &rx, &ry, &rz, &rw, 
+                                     &dx, &dy, &dz, &py_size)) {
+        return NULL;
+    }
+
+    // 1. Prepare Shape Params (reuse your existing logic)
+    float s[4] = {0, 0, 0, 0};
+    if (py_size && PyTuple_Check(py_size)) {
+        Py_ssize_t sz_len = PyTuple_Size(py_size);
+        for (Py_ssize_t i = 0; i < sz_len && i < 4; i++) {
+            PyObject *item = PyTuple_GetItem(py_size, i);
+            if (PyNumber_Check(item)) s[i] = (float)PyFloat_AsDouble(item);
+        }
+    } else if (py_size && PyNumber_Check(py_size)) {
+        s[0] = (float)PyFloat_AsDouble(py_size);
+    }
+
+    // 2. Find/Create the shape from cache
+    JPH_Shape* shape = find_or_create_shape(self, shape_type, s);
+    if (!shape) {
+        PyErr_SetString(PyExc_RuntimeError, "Invalid shape for shapecast");
+        return NULL;
+    }
+
+    // 3. Setup Start Transform and Sweep Direction
+    JPH_STACK_ALLOC(JPH_RMat4, transform);
+    JPH_RMat4_RotationTranslation(transform, &(JPH_Quat){rx, ry, rz, rw}, &(JPH_RVec3){px, py, pz});
+    
+    JPH_Vec3 sweep_dir = {dx, dy, dz};
+
+    // 4. Configure Settings
+    JPH_STACK_ALLOC(JPH_ShapeCastSettings, settings);
+    JPH_ShapeCastSettings_Init(settings);
+    // Use defaults: backface culling enabled, return closest hit.
+
+    // 5. Execute Query
+    JPH_STACK_ALLOC(JPH_ShapeCastResult, hit);
+    memset(hit, 0, sizeof(JPH_ShapeCastResult));
+    hit->fraction = 1.0f; // Reset fraction to max
+
+    const JPH_NarrowPhaseQuery* nq = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
+    
+    // We use RVec3(0,0,0) as base offset because our transform is in world space
+    bool has_hit = JPH_NarrowPhaseQuery_CastShape(nq, shape, transform, &sweep_dir, settings, &(JPH_RVec3){0,0,0}, 
+                                                  NULL, NULL, // Collector logic is internal to this helper
+                                                  NULL, NULL, NULL, NULL);
+
+    if (!has_hit) Py_RETURN_NONE;
+
+    // 6. Resolve Handle
+    SHADOW_LOCK(&self->shadow_lock);
+    uint64_t slot_idx = JPH_BodyInterface_GetUserData(self->body_interface, hit->bodyID2);
+    if (slot_idx >= self->slot_capacity) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        Py_RETURN_NONE;
+    }
+    BodyHandle handle = make_handle((uint32_t)slot_idx, self->generations[slot_idx]);
+    SHADOW_UNLOCK(&self->shadow_lock);
+
+    // 7. Construct Result: (Handle, Fraction, (ContactX, Y, Z), (NormalX, Y, Z))
+    // Note: hit->contactPointOn2 is the point on the body we hit
+    // hit->penetrationAxis is the surface normal (inverted)
+    
+    PyObject* contact = Py_BuildValue("fff", hit->contactPointOn2.x, hit->contactPointOn2.y, hit->contactPointOn2.z);
+    // Jolt penetration axis points from Body2 to Shape1, so we negate for surface normal
+    PyObject* normal  = Py_BuildValue("fff", -hit->penetrationAxis.x, -hit->penetrationAxis.y, -hit->penetrationAxis.z);
+    
+    PyObject* result = PyTuple_New(4);
+    PyTuple_SET_ITEM(result, 0, PyLong_FromUnsignedLongLong(handle));
+    PyTuple_SET_ITEM(result, 1, PyFloat_FromDouble(hit->fraction));
+    PyTuple_SET_ITEM(result, 2, contact);
+    PyTuple_SET_ITEM(result, 3, normal);
+
+    return result;
+}
+
 // Helper to grow queue
 static bool ensure_command_capacity(PhysicsWorldObject *self) {
   if (self->command_count >= self->command_capacity) {
@@ -2662,6 +2748,8 @@ static const PyMethodDef PhysicsWorld_methods[] = {
     // --- Queries ---
     {"raycast", (PyCFunction)PhysicsWorld_raycast, METH_VARARGS | METH_KEYWORDS,
      NULL},
+    {"shapecast", (PyCFunction)PhysicsWorld_shapecast, METH_VARARGS | METH_KEYWORDS, 
+    "Sweeps a shape along a direction vector. Returns (Handle, Fraction, ContactPoint, Normal) or None."},
     {"overlap_sphere", (PyCFunction)PhysicsWorld_overlap_sphere,
      METH_VARARGS | METH_KEYWORDS, NULL},
     {"overlap_aabb", (PyCFunction)PhysicsWorld_overlap_aabb,
