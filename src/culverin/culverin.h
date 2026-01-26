@@ -203,6 +203,9 @@ typedef struct {
   float last_vx;
   float last_vy;
   float last_vz;
+
+  float prev_px, prev_py, prev_pz;
+  float prev_rx, prev_ry, prev_rz, prev_rw;
 } CharacterObject;
 
 extern const PyType_Spec Character_spec;

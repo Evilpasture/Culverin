@@ -178,33 +178,102 @@ static PyObject* PhysicsWorld_get_contact_events(PhysicsWorldObject* self, PyObj
 static PyObject* PhysicsWorld_get_contact_events_ex(PhysicsWorldObject* self, PyObject* args) {
     SHADOW_LOCK(&self->shadow_lock);
     size_t count = self->contact_count;
-    if (count == 0) { SHADOW_UNLOCK(&self->shadow_lock); return PyList_New(0); }
+    if (count == 0) { 
+        SHADOW_UNLOCK(&self->shadow_lock); 
+        return PyList_New(0); 
+    }
 
     ContactEvent* scratch = PyMem_RawMalloc(count * sizeof(ContactEvent));
-    if (!scratch) { SHADOW_UNLOCK(&self->shadow_lock); return PyErr_NoMemory(); }
+    if (!scratch) { 
+        SHADOW_UNLOCK(&self->shadow_lock); 
+        return PyErr_NoMemory(); 
+    }
     
     memcpy(scratch, self->contact_events, count * sizeof(ContactEvent));
     SHADOW_UNLOCK(&self->shadow_lock);
 
+    // --- OPTIMIZATION 1: Pre-allocate Keys ---
+    // Using InternFromString is slightly faster for subsequent lookups
+    PyObject* k_bodies = PyUnicode_InternFromString("bodies");
+    PyObject* k_pos    = PyUnicode_InternFromString("position");
+    PyObject* k_norm   = PyUnicode_InternFromString("normal");
+    PyObject* k_str    = PyUnicode_InternFromString("strength");
+
+    if (!k_bodies || !k_pos || !k_norm || !k_str) {
+        Py_XDECREF(k_bodies); Py_XDECREF(k_pos); 
+        Py_XDECREF(k_norm); Py_XDECREF(k_str);
+        PyMem_RawFree(scratch);
+        return NULL;
+    }
+
     PyObject* list = PyList_New((Py_ssize_t)count);
+    if (!list) {
+        // Cleanup keys and scratch on failure
+        Py_DECREF(k_bodies); Py_DECREF(k_pos); 
+        Py_DECREF(k_norm); Py_DECREF(k_str);
+        PyMem_RawFree(scratch);
+        return NULL;
+    }
+
     for (size_t i = 0; i < count; i++) {
         ContactEvent* e = &scratch[i];
-        PyObject* d = Py_BuildValue("{s:(KK),s:(fff),s:(fff),s:f}",
-            "bodies", e->body1, e->body2,
-            "position", e->px, e->py, e->pz,
-            "normal", e->nx, e->ny, e->nz,
-            "strength", e->impulse
-        );
-        PyList_SET_ITEM(list, i, d);
+        
+        // --- OPTIMIZATION 2: Direct Dict Construction ---
+        PyObject* dict = PyDict_New();
+        if (!dict) continue; // Should handle error, but skip for speed/simplicity here
+
+        // 1. Bodies Tuple (u64, u64)
+        PyObject* b_tuple = PyTuple_New(2);
+        PyTuple_SET_ITEM(b_tuple, 0, PyLong_FromUnsignedLongLong(e->body1));
+        PyTuple_SET_ITEM(b_tuple, 1, PyLong_FromUnsignedLongLong(e->body2));
+        PyDict_SetItem(dict, k_bodies, b_tuple); 
+        Py_DECREF(b_tuple); // Dict_SetItem increments ref, so we drop ours
+
+        // 2. Position Tuple (f, f, f)
+        PyObject* p_tuple = PyTuple_New(3);
+        PyTuple_SET_ITEM(p_tuple, 0, PyFloat_FromDouble(e->px));
+        PyTuple_SET_ITEM(p_tuple, 1, PyFloat_FromDouble(e->py));
+        PyTuple_SET_ITEM(p_tuple, 2, PyFloat_FromDouble(e->pz));
+        PyDict_SetItem(dict, k_pos, p_tuple);
+        Py_DECREF(p_tuple);
+
+        // 3. Normal Tuple (f, f, f)
+        PyObject* n_tuple = PyTuple_New(3);
+        PyTuple_SET_ITEM(n_tuple, 0, PyFloat_FromDouble(e->nx));
+        PyTuple_SET_ITEM(n_tuple, 1, PyFloat_FromDouble(e->ny));
+        PyTuple_SET_ITEM(n_tuple, 2, PyFloat_FromDouble(e->nz));
+        PyDict_SetItem(dict, k_norm, n_tuple);
+        Py_DECREF(n_tuple);
+
+        // 4. Strength Float
+        PyObject* s_val = PyFloat_FromDouble(e->impulse);
+        PyDict_SetItem(dict, k_str, s_val);
+        Py_DECREF(s_val);
+
+        // Add to List (Steals Reference)
+        PyList_SET_ITEM(list, (Py_ssize_t)i, dict);
     }
+
+    // Cleanup Keys
+    Py_DECREF(k_bodies);
+    Py_DECREF(k_pos);
+    Py_DECREF(k_norm);
+    Py_DECREF(k_str);
+
     PyMem_RawFree(scratch);
     return list;
 }
 
+// ContactEvent layout (packed, little-endian):
+// uint64 body1
+// uint64 body2
+// float32 px, py, pz
+// float32 nx, ny, nz
+// float32 impulse
 static PyObject* PhysicsWorld_get_contact_events_raw(PhysicsWorldObject* self, PyObject* args) {
     SHADOW_LOCK(&self->shadow_lock);
     size_t count = self->contact_count;
-    if (count == 0) { SHADOW_UNLOCK(&self->shadow_lock); return PyMemoryView_FromMemory(NULL, 0, PyBUF_READ); }
+    if (count == 0) { SHADOW_UNLOCK(&self->shadow_lock); return PyMemoryView_FromObject(PyBytes_FromStringAndSize("", 0)); }
 
     size_t bytes_size = count * sizeof(ContactEvent);
     PyObject* raw_bytes = PyBytes_FromStringAndSize((char*)self->contact_events, (Py_ssize_t)bytes_size);
@@ -1058,7 +1127,18 @@ static PyObject *PhysicsWorld_create_character(PhysicsWorldObject *self,
 
   obj->character = j_char;
   obj->world = self;
-  obj->push_strength = 25.0f;
+
+  // Set 'Previous' to 'Current' so frame 0 doesn't jitter
+  obj->prev_px = px;
+  obj->prev_py = py;
+  obj->prev_pz = pz;
+  // Assuming Identity rotation for start, or convert 'rot' if provided
+  obj->prev_rx = 0.0f;
+  obj->prev_ry = 0.0f;
+  obj->prev_rz = 0.0f;
+  obj->prev_rw = 1.0f;
+
+  obj->push_strength = 200.0f;
   obj->last_vx = 0;
   obj->last_vy = 0;
   obj->last_vz = 0;
@@ -1871,82 +1951,55 @@ static PyObject* PhysicsWorld_get_render_state(PhysicsWorldObject* self, PyObjec
     float alpha;
     if (!PyArg_ParseTuple(args, "f", &alpha)) return NULL;
 
-    // Clamp alpha to [0, 1] to prevent explosions
-    if (alpha < 0.0f) alpha = 0.0f;
-    if (alpha > 1.0f) alpha = 1.0f;
+    alpha = (alpha < 0.0f) ? 0.0f : (alpha > 1.0f ? 1.0f : alpha);
 
     SHADOW_LOCK(&self->shadow_lock);
-
-    // Create a temporary buffer for the result
-    // We combine Pos (3) + Rot (4) = 7 floats per body to minimize Python calls
     size_t count = self->count;
-    size_t stride = 7; 
-    size_t total_floats = count * stride;
-    
-    float* result_buffer = PyMem_RawMalloc(total_floats * sizeof(float));
-    if (!result_buffer) {
+    size_t total_bytes = count * 7 * sizeof(float);
+
+    // 1. Allocate the Python Bytes object immediately with NULL.
+    // This reserves the memory inside the Python Heap.
+    PyObject* bytes_obj = PyBytes_FromStringAndSize(NULL, (Py_ssize_t)total_bytes);
+    if (!bytes_obj) {
         SHADOW_UNLOCK(&self->shadow_lock);
         return PyErr_NoMemory();
     }
 
-    // SIMD Optimization Opportunity here, but standard loop for now
+    // 2. Get the direct pointer to the Bytes object's internal buffer.
+    float* out = (float*)PyBytes_AsString(bytes_obj);
+
     for (size_t i = 0; i < count; i++) {
-        size_t src_idx = i * 4; // Shadow buffers are aligned to 4 floats
-        size_t dst_idx = i * 7; // Output is packed
+        size_t src = i * 4;
+        size_t dst = i * 7;
 
-        // --- Position LERP ---
-        float p_old_x = self->prev_positions[src_idx + 0];
-        float p_old_y = self->prev_positions[src_idx + 1];
-        float p_old_z = self->prev_positions[src_idx + 2];
+        // Position Lerp
+        out[dst+0] = self->prev_positions[src+0] + (self->positions[src+0] - self->prev_positions[src+0]) * alpha;
+        out[dst+1] = self->prev_positions[src+1] + (self->positions[src+1] - self->prev_positions[src+1]) * alpha;
+        out[dst+2] = self->prev_positions[src+2] + (self->positions[src+2] - self->prev_positions[src+2]) * alpha;
 
-        float p_new_x = self->positions[src_idx + 0];
-        float p_new_y = self->positions[src_idx + 1];
-        float p_new_z = self->positions[src_idx + 2];
+        // Rotation NLerp
+        float q1x = self->prev_rotations[src+0], q1y = self->prev_rotations[src+1], q1z = self->prev_rotations[src+2], q1w = self->prev_rotations[src+3];
+        float q2x = self->rotations[src+0], q2y = self->rotations[src+1], q2z = self->rotations[src+2], q2w = self->rotations[src+3];
 
-        result_buffer[dst_idx + 0] = p_old_x + (p_new_x - p_old_x) * alpha;
-        result_buffer[dst_idx + 1] = p_old_y + (p_new_y - p_old_y) * alpha;
-        result_buffer[dst_idx + 2] = p_old_z + (p_new_z - p_old_z) * alpha;
+        float dot = q1x*q2x + q1y*q2y + q1z*q2z + q1w*q2w;
+        if (dot < 0.0f) { q2x = -q2x; q2y = -q2y; q2z = -q2z; q2w = -q2w; }
 
-        // --- Rotation NLERP ---
-        // 1. Dot product to ensure shortest path
-        float r_old_x = self->prev_rotations[src_idx + 0];
-        float r_old_y = self->prev_rotations[src_idx + 1];
-        float r_old_z = self->prev_rotations[src_idx + 2];
-        float r_old_w = self->prev_rotations[src_idx + 3];
+        float rx = q1x + (q2x - q1x) * alpha;
+        float ry = q1y + (q2y - q1y) * alpha;
+        float rz = q1z + (q2z - q1z) * alpha;
+        float rw = q1w + (q2w - q1w) * alpha;
 
-        float r_new_x = self->rotations[src_idx + 0];
-        float r_new_y = self->rotations[src_idx + 1];
-        float r_new_z = self->rotations[src_idx + 2];
-        float r_new_w = self->rotations[src_idx + 3];
-
-        float dot = r_old_x*r_new_x + r_old_y*r_new_y + r_old_z*r_new_z + r_old_w*r_new_w;
-
-        if (dot < 0.0f) {
-            // Flip new quaternion to take shortest path
-            r_new_x = -r_new_x; r_new_y = -r_new_y; r_new_z = -r_new_z; r_new_w = -r_new_w;
-        }
-
-        // 2. Linear Interp
-        float rx = r_old_x + (r_new_x - r_old_x) * alpha;
-        float ry = r_old_y + (r_new_y - r_old_y) * alpha;
-        float rz = r_old_z + (r_new_z - r_old_z) * alpha;
-        float rw = r_old_w + (r_new_w - r_old_w) * alpha;
-
-        // 3. Normalize (Fast approximation is okay, but sqrt is safer)
         float inv_len = 1.0f / sqrtf(rx*rx + ry*ry + rz*rz + rw*rw);
-        
-        result_buffer[dst_idx + 3] = rx * inv_len;
-        result_buffer[dst_idx + 4] = ry * inv_len;
-        result_buffer[dst_idx + 5] = rz * inv_len;
-        result_buffer[dst_idx + 6] = rw * inv_len;
+        out[dst+3] = rx * inv_len;
+        out[dst+4] = ry * inv_len;
+        out[dst+5] = rz * inv_len;
+        out[dst+6] = rw * inv_len;
     }
 
     SHADOW_UNLOCK(&self->shadow_lock);
-    
-    // Return as bytes/memoryview so Python can wrap it in numpy/struct
-    PyObject* bytes = PyBytes_FromStringAndSize((char*)result_buffer, total_floats * sizeof(float));
-    PyMem_RawFree(result_buffer);
-    return bytes;
+
+    // Return the object directly to Python
+    return bytes_obj;
 }
 
 // --- Character Methods ---
@@ -1992,6 +2045,19 @@ static PyObject *Character_move(CharacterObject *self, PyObject *args,
 
   self->last_vx = vx; self->last_vy = vy; self->last_vz = vz;
 
+  JPH_RVec3 current_pos;
+  JPH_Quat current_rot;
+  JPH_CharacterVirtual_GetPosition(self->character, &current_pos);
+  JPH_CharacterVirtual_GetRotation(self->character, &current_rot);
+
+  self->prev_px = (float)current_pos.x;
+  self->prev_py = (float)current_pos.y;
+  self->prev_pz = (float)current_pos.z;
+  self->prev_rx = current_rot.x;
+  self->prev_ry = current_rot.y;
+  self->prev_rz = current_rot.z;
+  self->prev_rw = current_rot.w;
+
   JPH_Vec3 v = {vx, vy, vz};
   JPH_CharacterVirtual_SetLinearVelocity(self->character, &v);
 
@@ -2016,10 +2082,23 @@ static PyObject *Character_move(CharacterObject *self, PyObject *args,
   Py_RETURN_NONE;
 }
 
-static PyObject *Character_get_position(CharacterObject *self, PyObject *args) {
+static PyObject *Character_get_position(CharacterObject *self, PyObject *Py_UNUSED(ignored)) {
   JPH_RVec3 pos;
   JPH_CharacterVirtual_GetPosition(self->character, &pos);
-  return Py_BuildValue("fff", (float)pos.x, (float)pos.y, (float)pos.z);
+
+  // 1. Allocate Tuple
+  PyObject *ret = PyTuple_New(3);
+  if (!ret) return NULL;
+
+  // 2. Fill Tuple
+  // Note: We remove the (float) cast. Python floats are doubles.
+  // If Jolt is running in double precision, this preserves that precision.
+  // PyTuple_SET_ITEM "steals" the reference, so no DECREF needed.
+  PyTuple_SET_ITEM(ret, 0, PyFloat_FromDouble(pos.x));
+  PyTuple_SET_ITEM(ret, 1, PyFloat_FromDouble(pos.y));
+  PyTuple_SET_ITEM(ret, 2, PyFloat_FromDouble(pos.z));
+
+  return ret;
 }
 
 static PyObject *Character_set_position(CharacterObject *self, PyObject *args,
@@ -2063,6 +2142,79 @@ static PyObject *Character_set_strength(CharacterObject *self, PyObject *args) {
   self->push_strength = strength;
   JPH_CharacterVirtual_SetMaxStrength(self->character, strength);
   Py_RETURN_NONE;
+}
+
+// 1. Change signature to take PyObject* arg directly
+static PyObject* Character_get_render_transform(CharacterObject* self, PyObject* arg) {
+    // --- OPTIMIZATION 1: Fast Argument Parsing ---
+    // METH_O passes the object directly. We simply convert it to double.
+    double alpha_dbl = PyFloat_AsDouble(arg);
+    
+    // Check for conversion error (e.g. if arg wasn't a number)
+    if (alpha_dbl == -1.0 && PyErr_Occurred()) {
+        return NULL;
+    }
+    
+    float alpha = (float)alpha_dbl;
+
+    // 1. Clamp Alpha
+    if (alpha < 0.0f) alpha = 0.0f;
+    if (alpha > 1.0f) alpha = 1.0f;
+
+    // 2. Get Current State (Direct Jolt Access)
+    JPH_RVec3 cur_p;
+    JPH_Quat cur_r;
+    JPH_CharacterVirtual_GetPosition(self->character, &cur_p);
+    JPH_CharacterVirtual_GetRotation(self->character, &cur_r);
+
+    // 3. Position LERP
+    float px = self->prev_px + ((float)cur_p.x - self->prev_px) * alpha;
+    float py = self->prev_py + ((float)cur_p.y - self->prev_py) * alpha;
+    float pz = self->prev_pz + ((float)cur_p.z - self->prev_pz) * alpha;
+
+    // 4. Rotation NLERP
+    float q1x = self->prev_rx; float q1y = self->prev_ry; float q1z = self->prev_rz; float q1w = self->prev_rw;
+    float q2x = cur_r.x;       float q2y = cur_r.y;       float q2z = cur_r.z;       float q2w = cur_r.w;
+
+    float dot = q1x*q2x + q1y*q2y + q1z*q2z + q1w*q2w;
+    if (dot < 0.0f) { q2x = -q2x; q2y = -q2y; q2z = -q2z; q2w = -q2w; }
+
+    float rx = q1x + (q2x - q1x) * alpha;
+    float ry = q1y + (q2y - q1y) * alpha;
+    float rz = q1z + (q2z - q1z) * alpha;
+    float rw = q1w + (q2w - q1w) * alpha;
+
+    float mag_sq = rx*rx + ry*ry + rz*rz + rw*rw;
+    if (mag_sq > 1e-9f) {
+        float inv_len = 1.0f / sqrtf(mag_sq);
+        rx *= inv_len; ry *= inv_len; rz *= inv_len; rw *= inv_len;
+    } else {
+        rx = 0.0f; ry = 0.0f; rz = 0.0f; rw = 1.0f;
+    }
+
+    // --- OPTIMIZATION 2: Manual Object Construction ---
+    // This is faster than Py_BuildValue. 
+    // PyTuple_SET_ITEM "steals" the reference, so we don't need to DECREF the floats.
+    
+    // Create Position Tuple (x, y, z)
+    PyObject* pos = PyTuple_New(3);
+    PyTuple_SET_ITEM(pos, 0, PyFloat_FromDouble(px));
+    PyTuple_SET_ITEM(pos, 1, PyFloat_FromDouble(py));
+    PyTuple_SET_ITEM(pos, 2, PyFloat_FromDouble(pz));
+
+    // Create Rotation Tuple (x, y, z, w)
+    PyObject* rot = PyTuple_New(4);
+    PyTuple_SET_ITEM(rot, 0, PyFloat_FromDouble(rx));
+    PyTuple_SET_ITEM(rot, 1, PyFloat_FromDouble(ry));
+    PyTuple_SET_ITEM(rot, 2, PyFloat_FromDouble(rz));
+    PyTuple_SET_ITEM(rot, 3, PyFloat_FromDouble(rw));
+
+    // Create Result Tuple (pos, rot)
+    PyObject* out = PyTuple_New(2);
+    PyTuple_SET_ITEM(out, 0, pos);
+    PyTuple_SET_ITEM(out, 1, rot);
+
+    return out;
 }
 
 static PyObject *get_positions(PhysicsWorldObject *self, void *c) {
@@ -2188,6 +2340,8 @@ static const PyMethodDef Character_methods[] = {
     {"is_grounded", (PyCFunction)Character_is_grounded, METH_NOARGS, NULL},
     {"set_strength", (PyCFunction)Character_set_strength, METH_VARARGS,
      "Set the max pushing force"},
+    {"get_render_transform", (PyCFunction)Character_get_render_transform, METH_O, 
+     "Returns interpolated ((x,y,z), (rx,ry,rz,rw)) based on alpha [0-1]."},
     {NULL}};
 
 static const PyType_Slot PhysicsWorld_slots[] = {
