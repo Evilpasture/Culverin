@@ -65,6 +65,24 @@ static void JPH_API_CALL char_on_contact_added(
   }
 }
 
+// Helper to find an arbitrary vector perpendicular to 'in'
+static void vec3_get_perpendicular(const JPH_Vec3* in, JPH_Vec3* out) {
+    if (fabsf(in->x) > fabsf(in->z)) {
+        out->x = -in->y; out->y = in->x; out->z = 0.0f; // Cross(in, Z)
+    } else {
+        out->x = 0.0f; out->y = -in->z; out->z = in->y; // Cross(in, X)
+    }
+    // Normalize
+    float len = sqrtf(out->x * out->x + out->y * out->y + out->z * out->z);
+    if (len > 1e-6f) {
+        float inv = 1.0f / len;
+        out->x *= inv; out->y *= inv; out->z *= inv;
+    } else {
+        // Fallback if 'in' is zero
+        out->x = 1.0f; out->y = 0.0f; out->z = 0.0f;
+    }
+}
+
 // --- Global Contact Listener ---
 static void JPH_API_CALL on_contact_added(void* userData, const JPH_Body* body1, const JPH_Body* body2, const JPH_ContactManifold* manifold, JPH_ContactSettings* settings) {
     PhysicsWorldObject* self = (PhysicsWorldObject*)userData;
@@ -400,6 +418,16 @@ static void PhysicsWorld_dealloc(PhysicsWorldObject *self) {
   PyMem_RawFree(self->command_queue);
   PyMem_RawFree(self->user_data);
 
+  if (self->constraints) {
+    for(size_t i=0; i<self->constraint_capacity; i++) {
+        if(self->constraints[i]) JPH_Constraint_Destroy(self->constraints[i]);
+    }
+    PyMem_RawFree((void *)self->constraints);
+  }
+  PyMem_RawFree(self->constraint_generations);
+  PyMem_RawFree(self->free_constraint_slots);
+  PyMem_RawFree(self->constraint_states);
+
 #if PY_VERSION_HEX < 0x030D0000
   if (self->shadow_lock)
     PyThread_free_lock(self->shadow_lock);
@@ -549,11 +577,25 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
   self->command_capacity = 64;
   self->command_count = 0;
 
+  self->constraint_capacity = 256; // Start small
+  self->constraints = (JPH_Constraint **)PyMem_RawCalloc(self->constraint_capacity, sizeof(JPH_Constraint*));
+  self->constraint_generations = PyMem_RawCalloc(self->constraint_capacity, sizeof(uint32_t));
+  self->free_constraint_slots = PyMem_RawMalloc(self->constraint_capacity * sizeof(uint32_t));
+  self->constraint_states = PyMem_RawCalloc(self->constraint_capacity, sizeof(uint8_t));
+
+  for(uint32_t i=0; i<self->constraint_capacity; i++) {
+      self->constraint_generations[i] = 1;
+      self->free_constraint_slots[i] = i;
+  }
+  self->free_constraint_count = self->constraint_capacity;
+
   if (!self->positions || !self->rotations || !self->body_ids ||
       !self->linear_velocities || !self->angular_velocities ||
       !self->user_data || !self->generations || !self->slot_to_dense ||
       !self->dense_to_slot || !self->free_slots || !self->slot_states ||
-      !self->command_queue || !self->prev_positions || !self->prev_rotations) {
+      !self->command_queue || !self->prev_positions || !self->prev_rotations ||
+      !self->constraints || !self->constraint_generations ||
+      !self->free_constraint_slots || !self->constraint_states) {
 
     Py_XDECREF(baked);
     PyErr_NoMemory();
@@ -908,6 +950,320 @@ static void flush_commands(PhysicsWorldObject *self) {
 
   self->command_count = 0;
   self->view_shape[0] = (Py_ssize_t)self->count;
+}
+
+// Constraints
+// --- 1. Unified Parameter Struct ---
+typedef struct {
+    float px, py, pz;       // Pivot / Point
+    float ax, ay, az;       // Axis (Hinge/Slider/Cone)
+    float limit_min;        // Min Angle or Min Distance
+    float limit_max;        // Max Angle or Max Distance
+    float half_cone_angle;  // Cone specific
+} ConstraintParams;
+
+// Initialize defaults to avoid garbage data
+static void params_init(ConstraintParams* p) {
+    p->px = 0; p->py = 0; p->pz = 0;
+    p->ax = 0; p->ay = 1; p->az = 0; // Default Up axis
+    p->limit_min = -FLT_MAX;
+    p->limit_max = FLT_MAX;
+    p->half_cone_angle = 0.0f;
+}
+
+// --- 2. Python Parsers ---
+
+static int parse_point_params(PyObject* args, ConstraintParams* p) {
+    if (!args || args == Py_None) return 1; // Use defaults (0,0,0)
+    return PyArg_ParseTuple(args, "fff", &p->px, &p->py, &p->pz);
+}
+
+static int parse_hinge_params(PyObject* args, ConstraintParams* p) {
+    p->limit_min = -JPH_M_PI; p->limit_max = JPH_M_PI; // Hinge defaults
+    if (!args) return 1;
+    // (Pivot), (Axis), [Min, Max]
+    return PyArg_ParseTuple(args, "(fff)(fff)|ff", 
+        &p->px, &p->py, &p->pz, 
+        &p->ax, &p->ay, &p->az, 
+        &p->limit_min, &p->limit_max);
+}
+
+static int parse_slider_params(PyObject* args, ConstraintParams* p) {
+    // Slider axis defaults to X usually, but Y is fine. Limits default to free.
+    if (!args) return 1;
+    return PyArg_ParseTuple(args, "(fff)(fff)|ff", 
+        &p->px, &p->py, &p->pz, 
+        &p->ax, &p->ay, &p->az, 
+        &p->limit_min, &p->limit_max);
+}
+
+static int parse_cone_params(PyObject* args, ConstraintParams* p) {
+    if (!args) return 1;
+    // (Pivot), (TwistAxis), HalfAngle
+    return PyArg_ParseTuple(args, "(fff)(fff)f", 
+        &p->px, &p->py, &p->pz, 
+        &p->ax, &p->ay, &p->az, 
+        &p->half_cone_angle);
+}
+
+static int parse_distance_params(PyObject* args, ConstraintParams* p) {
+    p->limit_min = 0.0f; p->limit_max = 10.0f;
+    if (!args) return 1;
+    // Min, Max
+    return PyArg_ParseTuple(args, "ff", &p->limit_min, &p->limit_max);
+}
+
+// --- 3. Jolt Creator Helpers ---
+
+static JPH_Constraint* create_fixed(const ConstraintParams* p, JPH_Body* b1, JPH_Body* b2) {
+    JPH_FixedConstraintSettings s;
+    JPH_FixedConstraintSettings_Init(&s);
+    s.base.enabled = true;
+    s.autoDetectPoint = true; 
+    return (JPH_Constraint*)JPH_FixedConstraint_Create(&s, b1, b2);
+}
+
+static JPH_Constraint* create_point(const ConstraintParams* p, JPH_Body* b1, JPH_Body* b2) {
+    JPH_PointConstraintSettings s;
+    JPH_PointConstraintSettings_Init(&s);
+    s.base.enabled = true;
+    s.space = JPH_ConstraintSpace_WorldSpace;
+    s.point1.x = p->px; s.point1.y = p->py; s.point1.z = p->pz;
+    s.point2 = s.point1;
+    return (JPH_Constraint*)JPH_PointConstraint_Create(&s, b1, b2);
+}
+
+static JPH_Constraint* create_hinge(const ConstraintParams* p, JPH_Body* b1, JPH_Body* b2) {
+    JPH_HingeConstraintSettings s;
+    JPH_HingeConstraintSettings_Init(&s);
+    s.base.enabled = true;
+    s.space = JPH_ConstraintSpace_WorldSpace;
+    
+    s.point1.x = p->px; s.point1.y = p->py; s.point1.z = p->pz;
+    s.point2 = s.point1;
+
+    JPH_Vec3 axis = {p->ax, p->ay, p->az};
+    JPH_Vec3_Normalize(&axis, &axis);
+    
+    JPH_Vec3 norm;
+    vec3_get_perpendicular(&axis, &norm);
+
+    s.hingeAxis1 = axis; s.hingeAxis2 = axis;
+    s.normalAxis1 = norm; s.normalAxis2 = norm;
+    s.limitsMin = p->limit_min;
+    s.limitsMax = p->limit_max;
+    
+    return (JPH_Constraint*)JPH_HingeConstraint_Create(&s, b1, b2);
+}
+
+static JPH_Constraint* create_slider(const ConstraintParams* p, JPH_Body* b1, JPH_Body* b2) {
+    JPH_SliderConstraintSettings s;
+    JPH_SliderConstraintSettings_Init(&s);
+    s.base.enabled = true;
+    s.space = JPH_ConstraintSpace_WorldSpace;
+    s.autoDetectPoint = false;
+
+    s.point1.x = p->px; s.point1.y = p->py; s.point1.z = p->pz;
+    s.point2 = s.point1;
+
+    JPH_Vec3 axis = {p->ax, p->ay, p->az};
+    JPH_Vec3_Normalize(&axis, &axis);
+    
+    JPH_Vec3 norm;
+    vec3_get_perpendicular(&axis, &norm);
+
+    s.sliderAxis1 = axis; s.sliderAxis2 = axis;
+    s.normalAxis1 = norm; s.normalAxis2 = norm;
+    s.limitsMin = p->limit_min;
+    s.limitsMax = p->limit_max;
+
+    return (JPH_Constraint*)JPH_SliderConstraint_Create(&s, b1, b2);
+}
+
+static JPH_Constraint* create_cone(const ConstraintParams* p, JPH_Body* b1, JPH_Body* b2) {
+    JPH_ConeConstraintSettings s;
+    JPH_ConeConstraintSettings_Init(&s);
+    s.base.enabled = true;
+    s.space = JPH_ConstraintSpace_WorldSpace;
+
+    s.point1.x = p->px; s.point1.y = p->py; s.point1.z = p->pz;
+    s.point2 = s.point1;
+
+    JPH_Vec3 axis = {p->ax, p->ay, p->az};
+    JPH_Vec3_Normalize(&axis, &axis);
+
+    s.twistAxis1 = axis; 
+    s.twistAxis2 = axis;
+    s.halfConeAngle = p->half_cone_angle;
+
+    return (JPH_Constraint*)JPH_ConeConstraint_Create(&s, b1, b2);
+}
+
+static JPH_Constraint* create_distance(const ConstraintParams* p, JPH_Body* b1, JPH_Body* b2) {
+    JPH_DistanceConstraintSettings s;
+    JPH_DistanceConstraintSettings_Init(&s);
+    s.base.enabled = true;
+    s.space = JPH_ConstraintSpace_WorldSpace;
+    
+    // Auto-detect anchor points based on current body positions
+    JPH_Body_GetPosition(b1, &s.point1);
+    JPH_Body_GetPosition(b2, &s.point2);
+    
+    s.minDistance = p->limit_min;
+    s.maxDistance = p->limit_max;
+
+    return (JPH_Constraint*)JPH_DistanceConstraint_Create(&s, b1, b2);
+}
+
+static PyObject* PhysicsWorld_create_constraint(PhysicsWorldObject* self, PyObject* args, PyObject* kwds) {
+    int type;
+    uint64_t h1, h2;
+    PyObject* params = NULL;
+    static char *kwlist[] = {"type", "body1", "body2", "params", NULL};
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "iKK|O", kwlist, &type, &h1, &h2, &params)) {
+        return NULL;
+    }
+
+    // --- 1. Parse Parameters ---
+    ConstraintParams p;
+    params_init(&p);
+    int parse_ok = 1;
+
+    switch (type) {
+        case CONSTRAINT_FIXED:    /* No params */ break;
+        case CONSTRAINT_POINT:    parse_ok = parse_point_params(params, &p); break;
+        case CONSTRAINT_HINGE:    parse_ok = parse_hinge_params(params, &p); break;
+        case CONSTRAINT_SLIDER:   parse_ok = parse_slider_params(params, &p); break;
+        case CONSTRAINT_CONE:     parse_ok = parse_cone_params(params, &p); break;
+        case CONSTRAINT_DISTANCE: parse_ok = parse_distance_params(params, &p); break;
+        default:
+            PyErr_SetString(PyExc_ValueError, "Unknown constraint type");
+            return NULL;
+    }
+
+    if (!parse_ok) return NULL; // PyArg_ParseTuple sets the error
+
+    // --- 2. Handle Resolution & Memory Check ---
+    SHADOW_LOCK(&self->shadow_lock);
+    uint32_t s1, s2;
+    if (!unpack_handle(self, h1, &s1) || self->slot_states[s1] != SLOT_ALIVE ||
+        !unpack_handle(self, h2, &s2) || self->slot_states[s2] != SLOT_ALIVE) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_SetString(PyExc_ValueError, "Invalid body handles");
+        return NULL;
+    }
+    
+    JPH_BodyID bid1 = self->body_ids[self->slot_to_dense[s1]];
+    JPH_BodyID bid2 = self->body_ids[self->slot_to_dense[s2]];
+    
+    if (self->free_constraint_count == 0) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_SetString(PyExc_MemoryError, "Max constraints reached");
+        return NULL;
+    }
+    uint32_t c_slot = self->free_constraint_slots[--self->free_constraint_count];
+    SHADOW_UNLOCK(&self->shadow_lock);
+
+    // --- 3. Jolt Body Locking ---
+    const JPH_BodyLockInterface* lock_iface = JPH_PhysicsSystem_GetBodyLockInterface(self->system);
+    JPH_BodyLockWrite lock1, lock2;
+    JPH_BodyLockInterface_LockWrite(lock_iface, bid1, &lock1);
+    JPH_BodyLockInterface_LockWrite(lock_iface, bid2, &lock2);
+
+    if (!lock1.body || !lock2.body) {
+        JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock1);
+        JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock2);
+        SHADOW_LOCK(&self->shadow_lock);
+        self->free_constraint_slots[self->free_constraint_count++] = c_slot;
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_SetString(PyExc_RuntimeError, "Failed to lock bodies");
+        return NULL;
+    }
+
+    // --- 4. Constraint Creation ---
+    JPH_Constraint* constraint = NULL;
+    switch (type) {
+        case CONSTRAINT_FIXED:    constraint = create_fixed(&p, lock1.body, lock2.body); break;
+        case CONSTRAINT_POINT:    constraint = create_point(&p, lock1.body, lock2.body); break;
+        case CONSTRAINT_HINGE:    constraint = create_hinge(&p, lock1.body, lock2.body); break;
+        case CONSTRAINT_SLIDER:   constraint = create_slider(&p, lock1.body, lock2.body); break;
+        case CONSTRAINT_CONE:     constraint = create_cone(&p, lock1.body, lock2.body); break;
+        case CONSTRAINT_DISTANCE: constraint = create_distance(&p, lock1.body, lock2.body); break;
+        default: break; // Already handled above
+    }
+
+    // --- 5. Cleanup & Registration ---
+    JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock1);
+    JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock2);
+
+    if (!constraint) {
+        SHADOW_LOCK(&self->shadow_lock);
+        self->free_constraint_slots[self->free_constraint_count++] = c_slot;
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_SetString(PyExc_RuntimeError, "Jolt failed to create constraint");
+        return NULL;
+    }
+
+    JPH_PhysicsSystem_AddConstraint(self->system, constraint);
+    
+    SHADOW_LOCK(&self->shadow_lock);
+    self->constraints[c_slot] = constraint;
+    self->constraint_states[c_slot] = SLOT_ALIVE;
+    uint32_t gen = self->constraint_generations[c_slot];
+    ConstraintHandle handle = ((uint64_t)gen << 32) | c_slot;
+    SHADOW_UNLOCK(&self->shadow_lock);
+
+    return PyLong_FromUnsignedLongLong(handle);
+}
+
+static PyObject* PhysicsWorld_destroy_constraint(PhysicsWorldObject* self, PyObject* args, PyObject* kwds) {
+    uint64_t h = 0;
+    static char *kwlist[] = {"handle", NULL};
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "K", kwlist, &h)) {
+        return NULL;
+    }
+
+    SHADOW_LOCK(&self->shadow_lock);
+
+    // 1. Unpack Handle manually (since the helper is for bodies)
+    uint32_t slot = (uint32_t)(h & 0xFFFFFFFF);
+    uint32_t gen = (uint32_t)(h >> 32);
+
+    // 2. Validate Slot & Generation
+    if (slot >= self->constraint_capacity) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_SetString(PyExc_ValueError, "Invalid constraint handle (slot out of bounds)");
+        return NULL;
+    }
+
+    if (self->constraint_generations[slot] != gen) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_SetString(PyExc_ValueError, "Invalid constraint handle (stale generation)");
+        return NULL;
+    }
+
+    // 3. Check State
+    if (self->constraint_states[slot] == SLOT_ALIVE) {
+        JPH_Constraint* c = self->constraints[slot];
+        
+        // 4. Jolt Cleanup
+        // Safe to call even if simulation is running (Jolt locks internally)
+        if (c) {
+            JPH_PhysicsSystem_RemoveConstraint(self->system, c);
+            JPH_Constraint_Destroy(c);
+        }
+
+        // 5. Recycle Slot
+        self->constraints[slot] = NULL;
+        self->constraint_states[slot] = SLOT_EMPTY;
+        self->constraint_generations[slot]++; // Increment gen to invalidate old handles
+        self->free_constraint_slots[self->free_constraint_count++] = slot;
+    }
+
+    SHADOW_UNLOCK(&self->shadow_lock);
+    Py_RETURN_NONE;
 }
 
 static PyObject *PhysicsWorld_save_state(PhysicsWorldObject *self,
@@ -2264,6 +2620,10 @@ static const PyMethodDef PhysicsWorld_methods[] = {
      METH_VARARGS | METH_KEYWORDS, NULL},
     {"create_mesh_body", (PyCFunction)PhysicsWorld_create_mesh_body,
      METH_VARARGS | METH_KEYWORDS, NULL},
+    {"create_constraint", (PyCFunction)PhysicsWorld_create_constraint, METH_VARARGS | METH_KEYWORDS, 
+    "Create a constraint between two bodies. Params depend on type."},
+    {"destroy_constraint", (PyCFunction)PhysicsWorld_destroy_constraint, METH_VARARGS | METH_KEYWORDS, 
+    "Remove and destroy a constraint by handle."},
 
     // --- Interaction ---
     {"apply_impulse", (PyCFunction)PhysicsWorld_apply_impulse,
@@ -2411,6 +2771,13 @@ static int culverin_exec(PyObject *m) {
   PyModule_AddIntConstant(m, "MOTION_STATIC", 0);
   PyModule_AddIntConstant(m, "MOTION_KINEMATIC", 1);
   PyModule_AddIntConstant(m, "MOTION_DYNAMIC", 2);
+
+  PyModule_AddIntConstant(m, "CONSTRAINT_FIXED", 0);
+  PyModule_AddIntConstant(m, "CONSTRAINT_POINT", 1);
+  PyModule_AddIntConstant(m, "CONSTRAINT_HINGE", 2);
+  PyModule_AddIntConstant(m, "CONSTRAINT_SLIDER", 3);
+  PyModule_AddIntConstant(m, "CONSTRAINT_DISTANCE", 4);
+  PyModule_AddIntConstant(m, "CONSTRAINT_CONE", 5);
 
   return 0;
 }

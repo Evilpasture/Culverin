@@ -18,6 +18,13 @@ MOTION_STATIC: int = 0
 MOTION_KINEMATIC: int = 1
 MOTION_DYNAMIC: int = 2
 
+CONSTRAINT_FIXED: int = 0
+CONSTRAINT_POINT: int = 1
+CONSTRAINT_HINGE: int = 2
+CONSTRAINT_SLIDER: int = 3
+CONSTRAINT_DISTANCE: int = 4
+CONSTRAINT_CONE: int = 5
+
 class BodyConfig(TypedDict, total=False):
     pos: Vec3
     rot: Quat
@@ -65,6 +72,10 @@ class PhysicsWorld(_culverin_c.PhysicsWorld):
     def create_character(self, pos: Vec3, height: float = 1.8, radius: float = 0.4, step_height: float = 0.4, max_slope: float = 45.0) -> Character: ...
 
     def destroy_body(self, handle: Handle) -> None: ...
+
+    def create_constraint(self, type: int, body1: int, body2: int, params: Optional[Any] = None) -> int: ...
+    def destroy_constraint(self, handle: int) -> None: ...
+
     def apply_impulse(self, handle: Handle, x: float, y: float, z: float) -> None: ...
     def set_position(self, handle: Handle, x: float, y: float, z: float) -> None: ...
     def set_rotation(self, handle: Handle, x: float, y: float, z: float, w: float) -> None: ...
@@ -86,7 +97,23 @@ class PhysicsWorld(_culverin_c.PhysicsWorld):
     # Event System
     def get_contact_events(self) -> List[Tuple[Handle, Handle]]: ...
     def get_contact_events_ex(self) -> List[Dict[str, Any]]: ...
-    def get_contact_events_raw(self) -> memoryview: ...
+    def get_contact_events_raw(self) -> memoryview: 
+        """
+        Returns a read-only memoryview of packed ContactEvent structs:
+
+        struct ContactEvent {
+            uint64 body1;
+            uint64 body2;
+            float  px, py, pz;
+            float  nx, ny, nz;
+            float  impulse;
+        }
+
+        Stride: 40 bytes
+        Little-endian
+        """
+        ...
+    
     
     def get_index(self, handle: Handle) -> Optional[int]: ...
     def get_active_indices(self) -> bytes: ...
@@ -98,6 +125,8 @@ class PhysicsWorld(_culverin_c.PhysicsWorld):
     def get_render_state(self, alpha: float) -> bytes: 
         """Returns a packed float32 buffer of [pos.xyz, rot.xyzw] for all bodies."""
         ...
+
+    # “Returned views are invalidated if the world resizes (e.g. body creation).”
 
     @property
     def positions(self) -> memoryview: ...

@@ -16,7 +16,20 @@ SHAPE_MESH = 5
 LAYER_NON_MOVING = 0
 LAYER_MOVING = 1
 
+CONSTRAINT_FIXED = 0
+CONSTRAINT_POINT = 1
+CONSTRAINT_HINGE = 2
+CONSTRAINT_SLIDER = 3
+CONSTRAINT_DISTANCE = 4
+CONSTRAINT_CONE = 5
+
 # --- Internal Validation Helpers ---
+
+# TODO: implement constraint validation
+def validate_constraint(type, body1, body2, params):
+    # Validates that body1/2 are ints
+    # Validates params (e.g., Hinge needs a Pivot and an Axis)
+    pass
 
 def _force_float(val, name):
     try:

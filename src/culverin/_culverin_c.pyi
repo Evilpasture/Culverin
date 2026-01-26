@@ -12,6 +12,13 @@ MOTION_STATIC: int = 0
 MOTION_KINEMATIC: int = 1
 MOTION_DYNAMIC: int = 2
 
+CONSTRAINT_FIXED: int = 0
+CONSTRAINT_POINT: int = 1
+CONSTRAINT_HINGE: int = 2
+CONSTRAINT_SLIDER: int = 3
+CONSTRAINT_DISTANCE: int = 4
+CONSTRAINT_CONE: int = 5
+
 class Character:
     def move(self, velocity: Tuple[float, float, float], dt: float) -> None: ...
     def get_position(self) -> Tuple[float, float, float]: ...
@@ -61,6 +68,9 @@ class PhysicsWorld:
     ) -> Character: ...
 
     def destroy_body(self, handle: int) -> None: ...
+
+    def create_constraint(self, type: int, body1: int, body2: int, params: Optional[Any] = None) -> int: ...
+    def destroy_constraint(self, handle: int) -> None: ...
     
     # Interaction
     def apply_impulse(self, handle: int, x: float, y: float, z: float) -> None: ...

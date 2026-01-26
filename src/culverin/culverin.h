@@ -6,6 +6,7 @@
 #include "joltc.h"
 #include <math.h>
 #include <string.h>
+#include <float.h>
 
 
 #ifndef JPH_INVALID_BODY_ID
@@ -58,6 +59,19 @@ typedef struct {
 // Minimal Handle Helper
 // Python handles will be 64-bit integers: (Generation << 32) | SlotIndex
 typedef uint64_t BodyHandle;
+
+// Constraint Types
+typedef enum {
+    CONSTRAINT_FIXED = 0,
+    CONSTRAINT_POINT = 1,
+    CONSTRAINT_HINGE = 2,
+    CONSTRAINT_SLIDER = 3,
+    CONSTRAINT_DISTANCE = 4,
+    CONSTRAINT_CONE = 5
+} ConstraintType;
+
+// Minimal Handle for Constraints (Distinct from BodyHandle)
+typedef uint64_t ConstraintHandle;
 
 // --- Slot State Machine ---
 typedef enum {
@@ -175,6 +189,16 @@ typedef struct {
   size_t count;
   size_t capacity;
   double time;
+
+  // --- Constraint Registry ---
+  JPH_Constraint **constraints;
+  uint32_t *constraint_generations;
+  uint32_t *free_constraint_slots;
+  uint8_t *constraint_states; // ALIVE / EMPTY
+  
+  size_t constraint_count;
+  size_t constraint_capacity;
+  size_t free_constraint_count;
 
   // MemoryView Safety
   int view_export_count; // Tracks active memoryviews to prevent unsafe resize
