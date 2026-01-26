@@ -250,6 +250,11 @@ typedef struct {
     bool has_hit;
 } CastShapeContext;
 
+// Optional filter to ignore a specific body
+typedef struct {
+    JPH_BodyID ignore_id;
+} CastShapeFilter;
+
 // --- Module State (PEP 489) ---
 typedef struct {
   PyObject *helper;           // Reference to culverin._culverin module

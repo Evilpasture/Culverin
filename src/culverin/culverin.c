@@ -771,21 +771,28 @@ static float CastShape_ClosestCollector(void* context, const JPH_ShapeCastResult
     return result->fraction; 
 }
 
+static bool JPH_API_CALL CastShape_BodyFilter(void* userData, JPH_BodyID bodyID) {
+    CastShapeFilter* ctx = (CastShapeFilter*)userData;
+    return (ctx->ignore_id == 0 || bodyID != ctx->ignore_id);
+}
+
 static PyObject* PhysicsWorld_shapecast(PhysicsWorldObject* self, PyObject* args, PyObject* kwds) {
     int shape_type;
     float px, py, pz;
     float rx, ry, rz, rw;
     float dx, dy, dz;
     PyObject* py_size = NULL;
-    static char *kwlist[] = {"shape", "pos", "rot", "dir", "size", NULL};
+    uint64_t ignore_h = 0; // NEW: Optional body to ignore
+    static char *kwlist[] = {"shape", "pos", "rot", "dir", "size", "ignore", NULL};
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "i(fff)(ffff)(fff)O", kwlist, 
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "i(fff)(ffff)(fff)O|K", kwlist, 
                                      &shape_type, &px, &py, &pz, 
                                      &rx, &ry, &rz, &rw, 
-                                     &dx, &dy, &dz, &py_size)) {
+                                     &dx, &dy, &dz, &py_size, &ignore_h)) {
         return NULL;
     }
 
+    // 1. Prepare Shape
     float s[4] = {0, 0, 0, 0};
     if (py_size && PyTuple_Check(py_size)) {
         Py_ssize_t sz_len = PyTuple_Size(py_size);
@@ -803,7 +810,7 @@ static PyObject* PhysicsWorld_shapecast(PhysicsWorldObject* self, PyObject* args
         return NULL;
     }
 
-    // --- Start Fix ---
+    // 2. Setup Transform & Direction
     JPH_STACK_ALLOC(JPH_RMat4, transform);
     JPH_Quat q = {rx, ry, rz, rw};
     JPH_RVec3 p = {(double)px, (double)py, (double)pz};
@@ -811,27 +818,42 @@ static PyObject* PhysicsWorld_shapecast(PhysicsWorldObject* self, PyObject* args
     
     JPH_Vec3 sweep_dir = {dx, dy, dz};
 
+    // 3. Settings & Context
     JPH_STACK_ALLOC(JPH_ShapeCastSettings, settings);
     JPH_ShapeCastSettings_Init(settings);
+    // CRITICAL: Ignore back-faces to avoid getting stuck inside geometry
+    settings->backFaceModeTriangles = JPH_BackFaceMode_IgnoreBackFaces;
+    settings->backFaceModeConvex = JPH_BackFaceMode_IgnoreBackFaces;
 
-    // Prepare Context and Result
-    CastShapeContext ctx;
-    memset(&ctx, 0, sizeof(CastShapeContext));
+    CastShapeContext ctx = { .has_hit = false };
     ctx.hit.fraction = 1.0f;
-    ctx.has_hit = false;
 
-    // Use RVec3 zero for base offset
+    // 4. Setup Ignore Filter
+    CastShapeFilter filter_ctx = { .ignore_id = 0 };
+    if (ignore_h != 0) {
+        uint32_t ignore_slot;
+        if (unpack_handle(self, ignore_h, &ignore_slot)) {
+            filter_ctx.ignore_id = self->body_ids[self->slot_to_dense[ignore_slot]];
+        }
+    }
+
+    JPH_BodyFilter_Procs filter_procs = { .ShouldCollide = CastShape_BodyFilter };
+    JPH_BodyFilter* body_filter = JPH_BodyFilter_Create(&filter_ctx);
+    JPH_BodyFilter_SetProcs(&filter_procs);
+
+    // 5. Execute
     JPH_RVec3 base_offset = {0, 0, 0};
-
     const JPH_NarrowPhaseQuery* nq = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
     
-    // Execute with the actual collector callback
     JPH_NarrowPhaseQuery_CastShape(nq, shape, transform, &sweep_dir, settings, &base_offset, 
                                    CastShape_ClosestCollector, &ctx, 
-                                   NULL, NULL, NULL, NULL);
+                                   NULL, NULL, body_filter, NULL);
+
+    JPH_BodyFilter_Destroy(body_filter);
 
     if (!ctx.has_hit) Py_RETURN_NONE;
 
+    // 6. Handle & Normal Unpacking
     SHADOW_LOCK(&self->shadow_lock);
     uint64_t slot_idx = JPH_BodyInterface_GetUserData(self->body_interface, ctx.hit.bodyID2);
     if (slot_idx >= self->slot_capacity) {
@@ -841,17 +863,21 @@ static PyObject* PhysicsWorld_shapecast(PhysicsWorldObject* self, PyObject* args
     BodyHandle handle = make_handle((uint32_t)slot_idx, self->generations[slot_idx]);
     SHADOW_UNLOCK(&self->shadow_lock);
 
-    // Build Result
-    PyObject* contact = PyTuple_New(3);
-    PyTuple_SET_ITEM(contact, 0, PyFloat_FromDouble(ctx.hit.contactPointOn2.x));
-    PyTuple_SET_ITEM(contact, 1, PyFloat_FromDouble(ctx.hit.contactPointOn2.y));
-    PyTuple_SET_ITEM(contact, 2, PyFloat_FromDouble(ctx.hit.contactPointOn2.z));
+    // 7. Calculate Normalized Surface Normal
+    // Jolt penetrationAxis points from Body2 to Shape1. Negate for Surface Normal.
+    float nx = -ctx.hit.penetrationAxis.x;
+    float ny = -ctx.hit.penetrationAxis.y;
+    float nz = -ctx.hit.penetrationAxis.z;
+    float n_len = sqrtf(nx*nx + ny*ny + nz*nz);
+    if (n_len > 1e-6f) {
+        float inv = 1.0f / n_len;
+        nx *= inv; ny *= inv; nz *= inv;
+    }
 
-    PyObject* normal = PyTuple_New(3);
-    // Negate penetration axis to get surface normal
-    PyTuple_SET_ITEM(normal, 0, PyFloat_FromDouble(-ctx.hit.penetrationAxis.x));
-    PyTuple_SET_ITEM(normal, 1, PyFloat_FromDouble(-ctx.hit.penetrationAxis.y));
-    PyTuple_SET_ITEM(normal, 2, PyFloat_FromDouble(-ctx.hit.penetrationAxis.z));
+    PyObject* contact = Py_BuildValue("fff", (float)ctx.hit.contactPointOn2.x, 
+                                             (float)ctx.hit.contactPointOn2.y, 
+                                             (float)ctx.hit.contactPointOn2.z);
+    PyObject* normal = Py_BuildValue("fff", nx, ny, nz);
     
     PyObject* result = PyTuple_New(4);
     PyTuple_SET_ITEM(result, 0, PyLong_FromUnsignedLongLong(handle));
