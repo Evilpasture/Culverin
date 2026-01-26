@@ -641,33 +641,33 @@ static PyObject *PhysicsWorld_apply_impulse(PhysicsWorldObject *self,
 static PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *args, PyObject *kwds) {
     float sx, sy, sz;
     float dx, dy, dz;
-  float max_dist = 1000.0f;
-  static char *kwlist[] = {"start", "direction", "max_dist", NULL};
+    float max_dist = 1000.0f;
+    static char *kwlist[] = {"start", "direction", "max_dist", NULL};
 
     if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)(fff)|f", kwlist, 
                                      &sx, &sy, &sz, 
                                      &dx, &dy, &dz, 
                                      &max_dist)) {
-    return NULL;
-  }
+        return NULL;
+    }
 
     float mag_sq = dx*dx + dy*dy + dz*dz;
     if (mag_sq < 1e-9f) Py_RETURN_NONE;
     
-  float mag = sqrtf(mag_sq);
-  float scale = max_dist / mag;
+    float mag = sqrtf(mag_sq);
+    float scale = max_dist / mag;
 
-  JPH_STACK_ALLOC(JPH_RVec3, origin);
+    JPH_STACK_ALLOC(JPH_RVec3, origin);
     memset(origin, 0, sizeof(JPH_RVec3));
     origin->x = sx; origin->y = sy; origin->z = sz;
 
-  JPH_STACK_ALLOC(JPH_Vec3, direction);
-  direction->x = dx * scale;
-  direction->y = dy * scale;
-  direction->z = dz * scale;
+    JPH_STACK_ALLOC(JPH_Vec3, direction);
+    direction->x = dx * scale;
+    direction->y = dy * scale;
+    direction->z = dz * scale;
 
-  JPH_STACK_ALLOC(JPH_RayCastResult, hit);
-  memset(hit, 0, sizeof(JPH_RayCastResult));
+    JPH_STACK_ALLOC(JPH_RayCastResult, hit);
+    memset(hit, 0, sizeof(JPH_RayCastResult));
 
     const JPH_NarrowPhaseQuery *query = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
     bool has_hit = JPH_NarrowPhaseQuery_CastRay(query, origin, direction, hit, NULL, NULL, NULL);
@@ -699,17 +699,17 @@ static PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *args, 
     JPH_BodyLockInterface_UnlockRead(lock_iface, &lock);
 
     // 4. Resolve Handle (Slot + Gen)
-  SHADOW_LOCK(&self->shadow_lock);
+    SHADOW_LOCK(&self->shadow_lock);
     uint64_t slot_idx = JPH_BodyInterface_GetUserData(self->body_interface, hit->bodyID);
+    
+    if (slot_idx >= self->slot_capacity) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        Py_RETURN_NONE;
+    }
 
-  if (slot_idx >= self->slot_capacity) {
+    uint32_t gen = self->generations[slot_idx];
+    BodyHandle handle = make_handle((uint32_t)slot_idx, gen);
     SHADOW_UNLOCK(&self->shadow_lock);
-    Py_RETURN_NONE;
-  }
-
-  uint32_t gen = self->generations[slot_idx];
-  BodyHandle handle = make_handle((uint32_t)slot_idx, gen);
-  SHADOW_UNLOCK(&self->shadow_lock);
 
     // Return: (Handle, Fraction, (NormX, NormY, NormZ))
     return Py_BuildValue("Kf(fff)", handle, hit->fraction, normal.x, normal.y, normal.z);
@@ -2287,6 +2287,41 @@ static PyObject *make_view(PhysicsWorldObject *self, void *ptr) {
   return PyMemoryView_FromBuffer(&buf);
 }
 
+static PyObject* PhysicsWorld_get_active_indices(PhysicsWorldObject* self, PyObject* args) {
+    SHADOW_LOCK(&self->shadow_lock);
+    
+    // Allocate scratch buffer. Worst case: All bodies active.
+    // 4000 bodies * 4 bytes = 16KB (Very fast allocation)
+    uint32_t* indices = (uint32_t*)PyMem_RawMalloc(self->count * sizeof(uint32_t));
+    if (!indices) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        return PyErr_NoMemory();
+    }
+
+    size_t active_count = 0;
+    JPH_BodyInterface* bi = self->body_interface;
+
+    // Iterate dense array to find active bodies
+    for (size_t i = 0; i < self->count; i++) {
+        JPH_BodyID bid = self->body_ids[i];
+        
+        // Skip invalid or sleeping bodies
+        // Jolt's IsActive is fast (atomic check usually)
+        if (bid != JPH_INVALID_BODY_ID && JPH_BodyInterface_IsActive(bi, bid)) {
+            indices[active_count++] = (uint32_t)i;
+        }
+    }
+
+    SHADOW_UNLOCK(&self->shadow_lock);
+
+    // Return as bytes. Python's np.frombuffer() can read this directly.
+    // We copy to a Python Bytes object so we can free our C scratch buffer immediately.
+    PyObject* bytes_obj = PyBytes_FromStringAndSize((char*)indices, active_count * sizeof(uint32_t));
+    
+    PyMem_RawFree(indices);
+    return bytes_obj;
+}
+
 static PyObject *get_user_data_buffer(PhysicsWorldObject *self, void *c) {
   // Similar to make_view but for uint64
   if (!self->user_data) {
@@ -2533,6 +2568,8 @@ static const PyMethodDef PhysicsWorld_methods[] = {
      METH_VARARGS | METH_KEYWORDS, NULL},
     {"is_alive", (PyCFunction)PhysicsWorld_is_alive,
      METH_VARARGS | METH_KEYWORDS, NULL},
+    {"get_active_indices", (PyCFunction)PhysicsWorld_get_active_indices, METH_NOARGS, 
+     "Returns a bytes object containing uint32 indices of all active (awake) bodies."},
 
     // --- User Data (New) ---
     {"get_user_data", (PyCFunction)PhysicsWorld_get_user_data,
