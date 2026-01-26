@@ -1251,6 +1251,16 @@ static PyObject* PhysicsWorld_destroy_constraint(PhysicsWorldObject* self, PyObj
         // 4. Jolt Cleanup
         // Safe to call even if simulation is running (Jolt locks internally)
         if (c) {
+            // NEW: Automatically wake up bodies attached to this constraint
+            // This prevents "floating" bodies when joints break.
+            JPH_ConstraintType c_type = JPH_Constraint_GetType(c);
+            if (c_type == JPH_ConstraintType_TwoBodyConstraint) {
+                JPH_TwoBodyConstraint* tbc = (JPH_TwoBodyConstraint*)c;
+                JPH_Body* b1 = JPH_TwoBodyConstraint_GetBody1(tbc);
+                JPH_Body* b2 = JPH_TwoBodyConstraint_GetBody2(tbc);
+                if (b1) JPH_BodyInterface_ActivateBody(self->body_interface, JPH_Body_GetID(b1));
+                if (b2) JPH_BodyInterface_ActivateBody(self->body_interface, JPH_Body_GetID(b2));
+            }
             JPH_PhysicsSystem_RemoveConstraint(self->system, c);
             JPH_Constraint_Destroy(c);
         }
