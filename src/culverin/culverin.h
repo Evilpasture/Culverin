@@ -245,6 +245,11 @@ typedef struct {
   PyObject *result_list;
 } OverlapContext;
 
+typedef struct {
+    JPH_ShapeCastResult hit;
+    bool has_hit;
+} CastShapeContext;
+
 // --- Module State (PEP 489) ---
 typedef struct {
   PyObject *helper;           // Reference to culverin._culverin module
