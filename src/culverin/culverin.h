@@ -14,8 +14,6 @@
 
 // Allocate 'Type' on the stack with guaranteed 32-byte alignment.
 // USAGE: JPH_STACK_ALLOC(JPH_RVec3, my_vec);
-// This macro satisfies how Jolt Physics expects aligned data structures.
-// I know. This is a hack.
 #if defined(_MSC_VER)
     // Microsoft Visual Studio syntax
     #define JPH_ALIGNED_STORAGE(Type, Name, Align) \
@@ -110,9 +108,6 @@ typedef struct {
 
     // CMD_SET_USER_DATA
     uint64_t user_data_val;
-
-    // Note: CMD_DESTROY_BODY, CMD_ACTIVATE, CMD_DEACTIVATE
-    // only need the 'slot' member defined above.
   } data;
 } PhysicsCommand;
 
@@ -129,8 +124,8 @@ typedef struct {
 typedef struct {
   PyObject_HEAD
 
-      // Jolt Handles
-      JPH_PhysicsSystem *system;
+  // Jolt Handles
+  JPH_PhysicsSystem *system;
   JPH_BodyInterface *body_interface;
   JPH_JobSystem *job_system;
 
@@ -150,6 +145,10 @@ typedef struct {
   // Shadow Buffers
   float *positions;
   float *rotations;
+  // Previous State Buffers (For Interpolation)
+  float *prev_positions;
+  float *prev_rotations;
+
   float *linear_velocities;
   float *angular_velocities;
   JPH_BodyID *body_ids;
@@ -177,6 +176,9 @@ typedef struct {
   size_t capacity;
   double time;
 
+  // MemoryView Safety
+  int view_export_count; // Tracks active memoryviews to prevent unsafe resize
+
   ShadowMutex shadow_lock;
 
   Py_ssize_t view_shape[2];
@@ -185,7 +187,8 @@ typedef struct {
 
 // --- Character Object ---
 typedef struct {
-  PyObject_HEAD JPH_CharacterVirtual *character;
+  PyObject_HEAD
+  JPH_CharacterVirtual *character;
   PhysicsWorldObject *world; // Keep a reference to keep the world alive
 
   // We need filters for the character's movement query
@@ -210,7 +213,6 @@ typedef struct {
 } QueryContext;
 
 // Helper for Overlap Callbacks
-// Context struct to pass Python List into the C callback
 typedef struct {
   PhysicsWorldObject *world;
   PyObject *result_list;
