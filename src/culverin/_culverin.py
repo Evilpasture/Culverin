@@ -25,11 +25,85 @@ CONSTRAINT_CONE = 5
 
 # --- Internal Validation Helpers ---
 
-# TODO: implement constraint validation
-def validate_constraint(type, body1, body2, params):
-    # Validates that body1/2 are ints
-    # Validates params (e.g., Hinge needs a Pivot and an Axis)
-    pass
+def validate_constraint(type_id, body1, body2, params):
+    """
+    Validates arguments for creating a physics constraint.
+    Returns the normalized params tuple expected by the C extension.
+    """
+    # 1. Validate Handles
+    if not isinstance(body1, int) or not isinstance(body2, int):
+        raise TypeError("Constraint bodies must be integer handles")
+    
+    # 2. Validate Type
+    if not isinstance(type_id, int):
+        raise TypeError("Constraint type must be an integer")
+
+    # 3. Validate Params based on type
+    
+    # --- FIXED: No params ---
+    if type_id == CONSTRAINT_FIXED:
+        return None
+
+    # --- POINT: (px, py, pz) ---
+    if type_id == CONSTRAINT_POINT:
+        # C expects: "fff" -> (x, y, z)
+        return _validate_vec3(params, "point.pivot")
+
+    # --- DISTANCE: (min, max) ---
+    if type_id == CONSTRAINT_DISTANCE:
+        # C expects: "ff" -> (min, max)
+        if not isinstance(params, (tuple, list)) or len(params) != 2:
+            raise ValueError("DistanceConstraint requires params=(min_dist, max_dist)")
+        
+        mn = _force_float(params[0], "min_dist")
+        mx = _force_float(params[1], "max_dist")
+        if mn < 0 or mx < 0:
+            raise ValueError("Distance constraints cannot be negative")
+        if mn > mx:
+            raise ValueError(f"Min distance ({mn}) cannot be greater than max distance ({mx})")
+            
+        return (mn, mx)
+
+    # --- HINGE / SLIDER: ((px,py,pz), (ax,ay,az), [min, max]) ---
+    if type_id in (CONSTRAINT_HINGE, CONSTRAINT_SLIDER):
+        # C expects: "(fff)(fff)|ff"
+        name = "Hinge" if type_id == CONSTRAINT_HINGE else "Slider"
+        
+        if not isinstance(params, (tuple, list)) or len(params) < 2:
+            raise ValueError(f"{name}Constraint requires params=((pivot), (axis), [min, max])")
+        
+        pivot = _validate_vec3(params[0], f"{name}.pivot")
+        axis = _validate_vec3(params[1], f"{name}.axis")
+        
+        # Axis sanity check (must be non-zero for cross product logic in C)
+        if sum(x*x for x in axis) < 1e-9:
+            raise ValueError(f"{name}.axis cannot be a zero vector")
+
+        if len(params) == 4:
+            mn = _force_float(params[2], f"{name}.min")
+            mx = _force_float(params[3], f"{name}.max")
+            return (pivot, axis, mn, mx)
+        elif len(params) == 2:
+            return (pivot, axis)
+        else:
+            raise ValueError(f"{name} limits must be provided as a pair (min, max)")
+
+    # --- CONE: ((px,py,pz), (ax,ay,az), half_angle) ---
+    if type_id == CONSTRAINT_CONE:
+        # C expects: "(fff)(fff)f"
+        if not isinstance(params, (tuple, list)) or len(params) != 3:
+            raise ValueError("ConeConstraint requires params=((pivot), (twist_axis), half_angle)")
+        
+        pivot = _validate_vec3(params[0], "cone.pivot")
+        axis = _validate_vec3(params[1], "cone.twist_axis")
+        angle = _force_float(params[2], "cone.half_angle")
+        
+        if sum(x*x for x in axis) < 1e-9:
+            raise ValueError("Cone.twist_axis cannot be a zero vector")
+            
+        return (pivot, axis, angle)
+
+    raise ValueError(f"Unknown constraint type ID: {type_id}")
 
 def _force_float(val, name):
     try:
