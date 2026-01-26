@@ -29,6 +29,9 @@ class Character:
     # New Interpolation Method
     def get_render_transform(self, alpha: float) -> Tuple[Tuple[float, float, float], Tuple[float, float, float, float]]: ...
 
+    @property
+    def handle(self) -> int: ...
+
 class PhysicsWorld:
     def __init__(
         self, 
@@ -92,15 +95,21 @@ class PhysicsWorld:
     def is_alive(self, handle: int) -> bool: ...
     
     # Queries
-    def raycast(self, start: Tuple[float, float, float], direction: Tuple[float, float, float], max_dist: float = 1000.0) -> Optional[Tuple[int, float, Tuple[float, float, float]]]:
-        ...
+    def raycast(
+        self, 
+        start: Tuple[float, float, float], 
+        direction: Tuple[float, float, float], 
+        max_dist: float = 1000.0,
+        ignore: int = 0
+    ) -> Optional[Tuple[int, float, Tuple[float, float, float]]]: ...
     def shapecast(
         self,
         shape: int,
         pos: Tuple[float, float, float],
         rot: Tuple[float, float, float, float],
         dir: Tuple[float, float, float],
-        size: Any
+        size: Any,
+        ignore: int = 0
     ) -> Optional[Tuple[int, float, Tuple[float, float, float], Tuple[float, float, float]]]: ...
     def overlap_sphere(self, center: Tuple[float, float, float], radius: float) -> List[int]: ...
     def overlap_aabb(self, min: Tuple[float, float, float], max: Tuple[float, float, float]) -> List[int]: ...

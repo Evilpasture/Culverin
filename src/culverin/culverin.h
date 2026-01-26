@@ -215,6 +215,8 @@ typedef struct {
   JPH_CharacterVirtual *character;
   PhysicsWorldObject *world; // Keep a reference to keep the world alive
 
+  BodyHandle handle;
+
   // We need filters for the character's movement query
   JPH_BodyFilter *body_filter;
   JPH_ShapeFilter *shape_filter;
@@ -265,6 +267,11 @@ typedef struct {
 // Helper to retrieve state from the module object
 static inline CulverinState *get_culverin_state(PyObject *module) {
   return (CulverinState *)PyModule_GetState(module);
+}
+
+static inline bool JPH_API_CALL CastShape_BodyFilter(void* userData, JPH_BodyID bodyID) {
+    CastShapeFilter* ctx = (CastShapeFilter*)userData;
+    return (ctx->ignore_id == 0 || bodyID != ctx->ignore_id);
 }
 
 // Sync function (defined in shadow_sync.c)

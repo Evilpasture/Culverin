@@ -695,12 +695,14 @@ static PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *args, 
     float sx, sy, sz;
     float dx, dy, dz;
     float max_dist = 1000.0f;
-    static char *kwlist[] = {"start", "direction", "max_dist", NULL};
+    uint64_t ignore_h = 0; // NEW: Optional handle to ignore
+    static char *kwlist[] = {"start", "direction", "max_dist", "ignore", NULL};
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)(fff)|f", kwlist, 
+    // Updated format string to "|fK" for max_dist and ignore_h
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)(fff)|fK", kwlist, 
                                      &sx, &sy, &sz, 
                                      &dx, &dy, &dz, 
-                                     &max_dist)) {
+                                     &max_dist, &ignore_h)) {
         return NULL;
     }
 
@@ -722,13 +724,34 @@ static PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *args, 
     JPH_STACK_ALLOC(JPH_RayCastResult, hit);
     memset(hit, 0, sizeof(JPH_RayCastResult));
 
+    // --- NEW: Setup Ignore Filter ---
+    JPH_BodyID ignore_bid = 0;
+    if (ignore_h != 0) {
+        uint32_t ignore_slot;
+        SHADOW_LOCK(&self->shadow_lock);
+        if (unpack_handle(self, ignore_h, &ignore_slot)) {
+            ignore_bid = self->body_ids[self->slot_to_dense[ignore_slot]];
+        }
+        SHADOW_UNLOCK(&self->shadow_lock);
+    }
+
+    // Reuse the filter context/logic we defined for shapecast
+    CastShapeFilter filter_ctx = { .ignore_id = ignore_bid };
+    JPH_BodyFilter_Procs filter_procs = { .ShouldCollide = CastShape_BodyFilter };
+    JPH_BodyFilter* body_filter = JPH_BodyFilter_Create(&filter_ctx);
+    JPH_BodyFilter_SetProcs(&filter_procs);
+
     const JPH_NarrowPhaseQuery *query = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
-    bool has_hit = JPH_NarrowPhaseQuery_CastRay(query, origin, direction, hit, NULL, NULL, NULL);
+    
+    // Pass the body_filter as the last argument
+    bool has_hit = JPH_NarrowPhaseQuery_CastRay(query, origin, direction, hit, NULL, NULL, body_filter);
+
+    JPH_BodyFilter_Destroy(body_filter);
 
     if (!has_hit) Py_RETURN_NONE;
 
+    // --- Normal Extraction ---
     JPH_Vec3 normal = {0, 1, 0}; 
-    
     const JPH_BodyLockInterface* lock_iface = JPH_PhysicsSystem_GetBodyLockInterface(self->system);
     JPH_BodyLockRead lock;
     JPH_BodyLockInterface_LockRead(lock_iface, hit->bodyID, &lock);
@@ -742,6 +765,7 @@ static PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *args, 
     }
     JPH_BodyLockInterface_UnlockRead(lock_iface, &lock);
 
+    // --- Resolve Handle ---
     SHADOW_LOCK(&self->shadow_lock);
     uint64_t slot_idx = JPH_BodyInterface_GetUserData(self->body_interface, hit->bodyID);
     
@@ -754,7 +778,18 @@ static PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *args, 
     BodyHandle handle = make_handle((uint32_t)slot_idx, gen);
     SHADOW_UNLOCK(&self->shadow_lock);
 
-    return Py_BuildValue("Kf(fff)", handle, hit->fraction, normal.x, normal.y, normal.z);
+    // Faster return construction
+    PyObject* norm_tuple = PyTuple_New(3);
+    PyTuple_SET_ITEM(norm_tuple, 0, PyFloat_FromDouble(normal.x));
+    PyTuple_SET_ITEM(norm_tuple, 1, PyFloat_FromDouble(normal.y));
+    PyTuple_SET_ITEM(norm_tuple, 2, PyFloat_FromDouble(normal.z));
+
+    PyObject* result = PyTuple_New(3);
+    PyTuple_SET_ITEM(result, 0, PyLong_FromUnsignedLongLong(handle));
+    PyTuple_SET_ITEM(result, 1, PyFloat_FromDouble(hit->fraction));
+    PyTuple_SET_ITEM(result, 2, norm_tuple);
+
+    return result;
 }
 
 // Callback: Called by Jolt when a hit is found during the sweep
@@ -769,11 +804,6 @@ static float CastShape_ClosestCollector(void* context, const JPH_ShapeCastResult
     
     // Returning the fraction tells Jolt to ignore any future hits further than this one
     return result->fraction; 
-}
-
-static bool JPH_API_CALL CastShape_BodyFilter(void* userData, JPH_BodyID bodyID) {
-    CastShapeFilter* ctx = (CastShapeFilter*)userData;
-    return (ctx->ignore_id == 0 || bodyID != ctx->ignore_id);
 }
 
 static PyObject* PhysicsWorld_shapecast(PhysicsWorldObject* self, PyObject* args, PyObject* kwds) {
@@ -1246,6 +1276,48 @@ static JPH_Constraint* create_distance(const ConstraintParams* p, JPH_Body* b1, 
     return (JPH_Constraint*)JPH_DistanceConstraint_Create(&s, b1, b2);
 }
 
+static int PhysicsWorld_resize(PhysicsWorldObject *self, size_t new_capacity) {
+  // NEW: Safe Resize Check
+  if (self->view_export_count > 0) {
+      PyErr_SetString(PyExc_BufferError, "Cannot resize world while memory views are exported.");
+      return -1;
+  }
+
+  if (new_capacity <= self->capacity) return 0;
+
+  self->positions = PyMem_RawRealloc(self->positions, new_capacity * 16);
+  self->rotations = PyMem_RawRealloc(self->rotations, new_capacity * 16);
+  self->prev_positions = PyMem_RawRealloc(self->prev_positions, new_capacity * 16);
+  self->prev_rotations = PyMem_RawRealloc(self->prev_rotations, new_capacity * 16);
+  self->linear_velocities = PyMem_RawRealloc(self->linear_velocities, new_capacity * 16);
+  self->angular_velocities = PyMem_RawRealloc(self->angular_velocities, new_capacity * 16);
+  self->body_ids = PyMem_RawRealloc(self->body_ids, new_capacity * sizeof(JPH_BodyID));
+  self->user_data = PyMem_RawRealloc(self->user_data, new_capacity * sizeof(uint64_t));
+
+  self->generations = PyMem_RawRealloc(self->generations, new_capacity * sizeof(uint32_t));
+  self->slot_to_dense = PyMem_RawRealloc(self->slot_to_dense, new_capacity * sizeof(uint32_t));
+  self->dense_to_slot = PyMem_RawRealloc(self->dense_to_slot, new_capacity * sizeof(uint32_t));
+  self->slot_states = PyMem_RawRealloc(self->slot_states, new_capacity * sizeof(uint8_t));
+
+  uint32_t *new_free_slots = PyMem_RawRealloc(self->free_slots, new_capacity * sizeof(uint32_t));
+
+  if (!self->positions || !self->rotations || !self->prev_positions || !self->prev_rotations || !new_free_slots) {
+    PyErr_NoMemory();
+    return -1;
+  }
+  self->free_slots = new_free_slots;
+
+  for (size_t i = self->slot_capacity; i < new_capacity; i++) {
+    self->generations[i] = 1;
+    self->slot_states[i] = SLOT_EMPTY;
+    self->free_slots[self->free_count++] = (uint32_t)i;
+  }
+
+  self->capacity = new_capacity;
+  self->slot_capacity = new_capacity;
+  return 0;
+}
+
 static PyObject* PhysicsWorld_create_constraint(PhysicsWorldObject* self, PyObject* args, PyObject* kwds) {
     int type;
     uint64_t h1, h2;
@@ -1567,6 +1639,16 @@ static PyObject *PhysicsWorld_create_character(PhysicsWorldObject *self,
     return NULL;
   }
 
+  SHADOW_LOCK(&self->shadow_lock);
+  if (self->free_count == 0) {
+    if (PhysicsWorld_resize(self, self->capacity * 2) < 0) {
+      SHADOW_UNLOCK(&self->shadow_lock);
+      return NULL;
+    }
+  }
+  uint32_t char_slot = self->free_slots[--self->free_count];
+  SHADOW_UNLOCK(&self->shadow_lock);
+
   float half_h = (height - 2.0f * radius) * 0.5f;
   if (half_h < 0.1f) half_h = 0.1f;
 
@@ -1611,6 +1693,25 @@ static PyObject *PhysicsWorld_create_character(PhysicsWorldObject *self,
     return NULL;
   }
 
+  // Resolve the internal BodyID
+  JPH_BodyID internal_bid = JPH_CharacterVirtual_GetInnerBodyID(j_char);
+
+  // Set UserData on the internal body so queries return this slot index
+  JPH_BodyInterface *bi = self->body_interface;
+  JPH_BodyInterface_SetUserData(bi, internal_bid, (uint64_t)char_slot);
+
+  // CRITICAL: Register the character's body in the slot map
+  SHADOW_LOCK(&self->shadow_lock);
+  uint32_t dense_idx = (uint32_t)self->count;
+  self->body_ids[dense_idx] = internal_bid;
+  self->slot_to_dense[char_slot] = dense_idx;
+  self->dense_to_slot[dense_idx] = char_slot;
+  self->slot_states[char_slot] = SLOT_ALIVE;
+  uint32_t gen = self->generations[char_slot];
+  self->count++;
+  self->view_shape[0] = (Py_ssize_t)self->count;
+  SHADOW_UNLOCK(&self->shadow_lock);
+
   PyObject *module = PyType_GetModule(Py_TYPE(self));
   CulverinState *st = get_culverin_state(module);
   PyObject *char_type = st->CharacterType;
@@ -1624,6 +1725,9 @@ static PyObject *PhysicsWorld_create_character(PhysicsWorldObject *self,
 
   obj->character = j_char;
   obj->world = self;
+
+  // Link the slot to the Character object so we can retrieve it
+  obj->handle = make_handle(char_slot, 1);
 
   // Set 'Previous' to 'Current' so frame 0 doesn't jitter
   obj->prev_px = px;
@@ -1654,48 +1758,6 @@ static PyObject *PhysicsWorld_create_character(PhysicsWorldObject *self,
   PyObject_GC_Track((PyObject *)obj);
 
   return (PyObject *)obj;
-}
-
-static int PhysicsWorld_resize(PhysicsWorldObject *self, size_t new_capacity) {
-  // NEW: Safe Resize Check
-  if (self->view_export_count > 0) {
-      PyErr_SetString(PyExc_BufferError, "Cannot resize world while memory views are exported.");
-      return -1;
-  }
-
-  if (new_capacity <= self->capacity) return 0;
-
-  self->positions = PyMem_RawRealloc(self->positions, new_capacity * 16);
-  self->rotations = PyMem_RawRealloc(self->rotations, new_capacity * 16);
-  self->prev_positions = PyMem_RawRealloc(self->prev_positions, new_capacity * 16);
-  self->prev_rotations = PyMem_RawRealloc(self->prev_rotations, new_capacity * 16);
-  self->linear_velocities = PyMem_RawRealloc(self->linear_velocities, new_capacity * 16);
-  self->angular_velocities = PyMem_RawRealloc(self->angular_velocities, new_capacity * 16);
-  self->body_ids = PyMem_RawRealloc(self->body_ids, new_capacity * sizeof(JPH_BodyID));
-  self->user_data = PyMem_RawRealloc(self->user_data, new_capacity * sizeof(uint64_t));
-
-  self->generations = PyMem_RawRealloc(self->generations, new_capacity * sizeof(uint32_t));
-  self->slot_to_dense = PyMem_RawRealloc(self->slot_to_dense, new_capacity * sizeof(uint32_t));
-  self->dense_to_slot = PyMem_RawRealloc(self->dense_to_slot, new_capacity * sizeof(uint32_t));
-  self->slot_states = PyMem_RawRealloc(self->slot_states, new_capacity * sizeof(uint8_t));
-
-  uint32_t *new_free_slots = PyMem_RawRealloc(self->free_slots, new_capacity * sizeof(uint32_t));
-
-  if (!self->positions || !self->rotations || !self->prev_positions || !self->prev_rotations || !new_free_slots) {
-    PyErr_NoMemory();
-    return -1;
-  }
-  self->free_slots = new_free_slots;
-
-  for (size_t i = self->slot_capacity; i < new_capacity; i++) {
-    self->generations[i] = 1;
-    self->slot_states[i] = SLOT_EMPTY;
-    self->free_slots[self->free_count++] = (uint32_t)i;
-  }
-
-  self->capacity = new_capacity;
-  self->slot_capacity = new_capacity;
-  return 0;
 }
 
 static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
@@ -2502,8 +2564,33 @@ static PyObject* PhysicsWorld_get_render_state(PhysicsWorldObject* self, PyObjec
 // --- Character Methods ---
 
 static void Character_dealloc(CharacterObject *self) {
-  // NEW: GC Untrack
   PyObject_GC_UnTrack(self);
+
+  // Recycle the slot in the world
+  uint32_t slot = (uint32_t)(self->handle & 0xFFFFFFFF);
+  SHADOW_LOCK(&self->world->shadow_lock);
+  
+  // Note: We don't need to manually remove the internal body from Jolt 
+  // because JPH_CharacterBase_Destroy handles that. 
+  // We just need to cleanup our dense map.
+  uint32_t dense_idx = self->world->slot_to_dense[slot];
+  uint32_t last_dense = (uint32_t)self->world->count - 1;
+  
+  if (dense_idx != last_dense) {
+      // Swap and Pop logic to keep array dense
+      self->world->body_ids[dense_idx] = self->world->body_ids[last_dense];
+      uint32_t mover_slot = self->world->dense_to_slot[last_dense];
+      self->world->slot_to_dense[mover_slot] = dense_idx;
+      self->world->dense_to_slot[dense_idx] = mover_slot;
+  }
+  
+  self->world->generations[slot]++;
+  self->world->free_slots[self->world->free_count++] = slot;
+  self->world->slot_states[slot] = SLOT_EMPTY;
+  self->world->count--;
+  self->world->view_shape[0] = (Py_ssize_t)self->world->count;
+  
+  SHADOW_UNLOCK(&self->world->shadow_lock);
 
   if (self->character) {
     JPH_CharacterBase_Destroy((JPH_CharacterBase *)self->character);
@@ -2714,6 +2801,10 @@ static PyObject* Character_get_render_transform(CharacterObject* self, PyObject*
     return out;
 }
 
+static PyObject* Character_get_handle(CharacterObject* self, void* closure) {
+    return PyLong_FromUnsignedLongLong(self->handle);
+}
+
 static PyObject *get_positions(PhysicsWorldObject *self, void *c) {
   return make_view(self, self->positions);
 }
@@ -2751,6 +2842,11 @@ static const PyGetSetDef PhysicsWorld_getset[] = {
     {"time", (getter)get_time, NULL, NULL, NULL},
     {"user_data", (getter)get_user_data_buffer, NULL, NULL, NULL},
     {NULL}};
+
+static const PyGetSetDef Character_getset[] = {
+    {"handle", (getter)Character_get_handle, NULL, "The unique physics handle for this character.", NULL},
+    {NULL}
+};
 
 static const PyMethodDef PhysicsWorld_methods[] = {
     // --- Lifecycle ---
@@ -2862,6 +2958,7 @@ static const PyType_Slot Character_slots[] = {
     {Py_tp_traverse, Character_traverse},
     {Py_tp_clear, Character_clear},
     {Py_tp_methods, (PyMethodDef *)Character_methods},
+    {Py_tp_getset, (PyGetSetDef *)Character_getset},
     {0, NULL},
 };
 

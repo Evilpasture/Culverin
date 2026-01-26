@@ -51,6 +51,9 @@ class Character(_culverin_c.Character):
         """Returns interpolated (position, rotation) based on accumulation alpha."""
         ...
 
+    @property
+    def handle(self) -> Handle: ...
+
 class PhysicsWorld(_culverin_c.PhysicsWorld):
     def __init__(self, settings: Optional[WorldSettings] = None, bodies: Optional[List[BodyConfig]] = None) -> None: ...
 
@@ -90,14 +93,15 @@ class PhysicsWorld(_culverin_c.PhysicsWorld):
     def get_user_data(self, handle: Handle) -> int: ...
     
     # Query Methods
-    def raycast(self, start: Vec3, direction: Vec3, max_dist: float = 1000.0) -> Optional[Tuple[Handle, float, Vec3]]: ...
+    def raycast(self, start: Vec3, direction: Vec3, max_dist: float = 1000.0, ignore: Handle = 0) -> Optional[Tuple[Handle, float, Vec3]]: ...
     def shapecast(
         self, 
         shape: int, 
         pos: Vec3, 
         rot: Quat, 
         dir: Vec3, 
-        size: Any
+        size: Any,
+        ignore: int = 0
     ) -> Optional[Tuple[Handle, float, Vec3, Vec3]]: ...
     def overlap_sphere(self, center: Vec3, radius: float) -> List[Handle]: ...
     def overlap_aabb(self, min: Vec3, max: Vec3) -> List[Handle]: ...
@@ -154,5 +158,7 @@ class PhysicsWorld(_culverin_c.PhysicsWorld):
 __all__ = [
     "PhysicsWorld", "Character", "BodyConfig", "WorldSettings", "Handle", 
     "SHAPE_BOX", "SHAPE_SPHERE", "SHAPE_CAPSULE", "SHAPE_CYLINDER", "SHAPE_PLANE", "SHAPE_MESH",
-    "MOTION_STATIC", "MOTION_KINEMATIC", "MOTION_DYNAMIC"
+    "MOTION_STATIC", "MOTION_KINEMATIC", "MOTION_DYNAMIC",
+    "CONSTRAINT_FIXED", "CONSTRAINT_POINT", "CONSTRAINT_HINGE", 
+    "CONSTRAINT_SLIDER", "CONSTRAINT_DISTANCE", "CONSTRAINT_CONE"
 ]
