@@ -243,11 +243,7 @@ static PyObject* PhysicsWorld_get_contact_events(PhysicsWorldObject* self, PyObj
     SHADOW_LOCK(&self->shadow_lock);
     
     // GUARD: Ensure we aren't mid-step and prevent a new step from starting
-    if (self->is_stepping) {
-        SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_RuntimeError, "Cannot read events while physics is stepping.");
-        return NULL;
-    }
+    BLOCK_UNTIL_NOT_STEPPING(self);
 
     // 2. Acquire index (Memory Visibility)
     size_t count = atomic_load_explicit(&self->contact_atomic_idx, memory_order_acquire);
@@ -291,11 +287,7 @@ static PyObject* PhysicsWorld_get_contact_events_ex(PhysicsWorldObject* self, Py
     // 1. Enter lock and check if step() is running
     SHADOW_LOCK(&self->shadow_lock);
     
-    if (self->is_stepping) {
-        SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_RuntimeError, "Cannot get contact events while physics is stepping.");
-        return NULL;
-    }
+    BLOCK_UNTIL_NOT_STEPPING(self);
 
     // 2. Acquire index with memory visibility
     size_t count = atomic_load_explicit(&self->contact_atomic_idx, memory_order_acquire);
@@ -405,7 +397,7 @@ static PyObject* PhysicsWorld_get_contact_events_ex(PhysicsWorldObject* self, Py
 static PyObject* PhysicsWorld_get_contact_events_raw(PhysicsWorldObject* self, PyObject* args) {
     // 1. Phase Guard
     SHADOW_LOCK(&self->shadow_lock);
-    GUARD_STEPPING(self);
+    BLOCK_UNTIL_NOT_STEPPING(self);
 
     // 2. Atomic Acquire (Publication Visibility)
     size_t count = atomic_load_explicit(&self->contact_atomic_idx, memory_order_acquire);
@@ -925,7 +917,8 @@ static PyObject *PhysicsWorld_apply_impulse(PhysicsWorldObject *self,
     return NULL;
   }
   SHADOW_LOCK(&self->shadow_lock);
-  GUARD_STEPPING(self); 
+  BLOCK_UNTIL_NOT_STEPPING(self);
+  BLOCK_UNTIL_NOT_QUERYING(self);
   uint32_t slot = 0;
   if (!unpack_handle(self, h, &slot) || self->slot_states[slot] != SLOT_ALIVE) {
     SHADOW_UNLOCK(&self->shadow_lock);
@@ -956,16 +949,16 @@ static PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *args, 
     PyObject* result = NULL;
     bool query_active = false;
     JPH_BodyID ignore_bid = 0;
+    
+    // Filter pointers
+    JPH_BroadPhaseLayerFilter* bp_filter = NULL;
+    JPH_ObjectLayerFilter* obj_filter = NULL;
+    JPH_BodyFilter* body_filter = NULL;
 
     // --- 1. ENTRY & LOCKING ---
     SHADOW_LOCK(&self->shadow_lock);
-    if (self->is_stepping) {
-        SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_RuntimeError, "Cannot raycast while physics is stepping");
-        return NULL;
-    }
-
-    atomic_fetch_add(&self->active_queries, 1);
+    BLOCK_UNTIL_NOT_STEPPING(self);
+    atomic_fetch_add_explicit(&self->active_queries, 1, memory_order_relaxed);
     query_active = true;
 
     if (ignore_h != 0) {
@@ -978,9 +971,8 @@ static PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *args, 
 
     // --- 2. VALIDATION ---
     float mag_sq = dx*dx + dy*dy + dz*dz;
-    if (mag_sq < 1e-9f) goto exit; 
+    if (mag_sq < 1e-9f) goto exit;
 
-    // --- 3. JOLT EXECUTION ---
     float mag = sqrtf(mag_sq);
     float scale = max_dist / mag;
 
@@ -991,31 +983,33 @@ static PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *args, 
     JPH_STACK_ALLOC(JPH_RayCastResult, hit);
     memset(hit, 0, sizeof(JPH_RayCastResult));
 
-    // --- SETUP FILTERS ---
+    // --- 3. FILTER SETUP & EXECUTION (Serialized) ---
+    // ALL SetProcs calls must be inside this lock to prevent the Access Violation
+    SHADOW_LOCK(&g_jph_trampoline_lock);
+
     JPH_BroadPhaseLayerFilter_Procs bp_procs = { .ShouldCollide = filter_allow_all_bp };
-    JPH_BroadPhaseLayerFilter* bp_filter = JPH_BroadPhaseLayerFilter_Create(NULL);
+    bp_filter = JPH_BroadPhaseLayerFilter_Create(NULL);
     JPH_BroadPhaseLayerFilter_SetProcs(&bp_procs);
 
     JPH_ObjectLayerFilter_Procs obj_procs = { .ShouldCollide = filter_allow_all_obj };
-    JPH_ObjectLayerFilter* obj_filter = JPH_ObjectLayerFilter_Create(NULL);
+    obj_filter = JPH_ObjectLayerFilter_Create(NULL);
     JPH_ObjectLayerFilter_SetProcs(&obj_procs);
 
     CastShapeFilter filter_ctx = { .ignore_id = ignore_bid };
     JPH_BodyFilter_Procs filter_procs = { .ShouldCollide = CastShape_BodyFilter };
-    JPH_BodyFilter* body_filter = JPH_BodyFilter_Create(&filter_ctx);
-
-    SHADOW_LOCK(&g_jph_trampoline_lock);
+    body_filter = JPH_BodyFilter_Create(&filter_ctx);
     JPH_BodyFilter_SetProcs(&filter_procs);
 
     const JPH_NarrowPhaseQuery *query = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
     
-    // Pass the layer filters here
     bool has_hit = JPH_NarrowPhaseQuery_CastRay(query, origin, direction, hit, 
                                                 bp_filter, obj_filter, body_filter);
 
+    // Restore Default Body Filter & Unlock
     JPH_BodyFilter_SetProcs(&global_bf_procs);
     SHADOW_UNLOCK(&g_jph_trampoline_lock);
 
+    // Cleanup filters immediately
     JPH_BodyFilter_Destroy(body_filter);
     JPH_BroadPhaseLayerFilter_Destroy(bp_filter);
     JPH_ObjectLayerFilter_Destroy(obj_filter);
@@ -1028,16 +1022,17 @@ static PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *args, 
     JPH_BodyLockRead lock;
     JPH_BodyLockInterface_LockRead(lock_iface, hit->bodyID, &lock);
     if (lock.body) {
-        JPH_RVec3 hit_p = { origin->x + direction->x * hit->fraction, 
-                           origin->y + direction->y * hit->fraction, 
-                           origin->z + direction->z * hit->fraction };
+        JPH_RVec3 hit_p = {
+            origin->x + direction->x * hit->fraction, 
+            origin->y + direction->y * hit->fraction, 
+            origin->z + direction->z * hit->fraction
+        };
         JPH_Body_GetWorldSpaceSurfaceNormal(lock.body, hit->subShapeID2, &hit_p, &normal);
     }
     JPH_BodyLockInterface_UnlockRead(lock_iface, &lock);
 
-    // --- 5. RESOLVE IDENTITY (Consistent with shapecast) ---
+    // --- 5. RESOLVE HANDLE ---
     SHADOW_LOCK(&self->shadow_lock);
-    // UserData is the baked 64-bit handle
     BodyHandle handle = (BodyHandle)JPH_BodyInterface_GetUserData(self->body_interface, hit->bodyID);
     uint32_t slot = (uint32_t)(handle & 0xFFFFFFFF);
     uint32_t gen  = (uint32_t)(handle >> 32);
@@ -1051,10 +1046,9 @@ static PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *args, 
     SHADOW_UNLOCK(&self->shadow_lock);
 
 exit:
-    if (query_active) atomic_fetch_sub(&self->active_queries, 1);
-
+    if (query_active) atomic_fetch_sub_explicit(&self->active_queries, 1, memory_order_release);
     if (result) return result;
-    Py_RETURN_NONE;
+    Py_RETURN_NONE; 
 }
 
 // Callback: Called by Jolt when a hit is found during the sweep
@@ -1073,9 +1067,7 @@ static float CastShape_ClosestCollector(void* context, const JPH_ShapeCastResult
 
 static PyObject* PhysicsWorld_shapecast(PhysicsWorldObject* self, PyObject* args, PyObject* kwds) {
     int shape_type;
-    float px, py, pz;
-    float rx, ry, rz, rw;
-    float dx, dy, dz;
+    float px, py, pz, rx, ry, rz, rw, dx, dy, dz;
     PyObject* py_size = NULL;
     uint64_t ignore_h = 0; 
     static char *kwlist[] = {"shape", "pos", "rot", "dir", "size", "ignore", NULL};
@@ -1083,20 +1075,22 @@ static PyObject* PhysicsWorld_shapecast(PhysicsWorldObject* self, PyObject* args
     if (!PyArg_ParseTupleAndKeywords(args, kwds, "i(fff)(ffff)(fff)O|K", kwlist, 
                                      &shape_type, &px, &py, &pz, 
                                      &rx, &ry, &rz, &rw, 
-                                     &dx, &dy, &dz, &py_size, &ignore_h)) {
-        return NULL;
-    }
+                                     &dx, &dy, &dz, &py_size, &ignore_h)) return NULL;
 
     PyObject* result = NULL;
     bool query_active = false;
     JPH_BodyID ignore_bid = 0;
     JPH_Shape* shape = NULL;
+    
+    // Filter pointers
+    JPH_BroadPhaseLayerFilter* bp_filter = NULL;
+    JPH_ObjectLayerFilter* obj_filter = NULL;
+    JPH_BodyFilter* body_filter = NULL;
 
-    // --- 1. VALIDATE DIRECTION ---
+    // --- 1. VALIDATION & PREP ---
     float mag_sq = dx*dx + dy*dy + dz*dz;
     if (mag_sq < 1e-9f) goto exit; 
 
-    // --- 2. PREPARE SHAPE & TRANSFORM ---
     float s[4] = {0, 0, 0, 0};
     if (py_size && PyTuple_Check(py_size)) {
         Py_ssize_t sz_len = PyTuple_Size(py_size);
@@ -1108,13 +1102,9 @@ static PyObject* PhysicsWorld_shapecast(PhysicsWorldObject* self, PyObject* args
         s[0] = (float)PyFloat_AsDouble(py_size);
     }
 
-    // --- 3. PHASE GUARD & RESOURCE RESOLUTION ---
+    // --- 2. PHASE GUARD ---
     SHADOW_LOCK(&self->shadow_lock);
-    if (self->is_stepping) {
-        SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_RuntimeError, "Cannot shapecast while physics is stepping");
-        return NULL;
-    }
+    BLOCK_UNTIL_NOT_STEPPING(self);
 
     shape = find_or_create_shape(self, shape_type, s);
     if (!shape) {
@@ -1123,7 +1113,7 @@ static PyObject* PhysicsWorld_shapecast(PhysicsWorldObject* self, PyObject* args
         return NULL;
     }
 
-    atomic_fetch_add(&self->active_queries, 1);
+    atomic_fetch_add_explicit(&self->active_queries, 1, memory_order_relaxed);
     query_active = true;
 
     if (ignore_h != 0) {
@@ -1134,12 +1124,11 @@ static PyObject* PhysicsWorld_shapecast(PhysicsWorldObject* self, PyObject* args
     }
     SHADOW_UNLOCK(&self->shadow_lock);
 
-    // --- 4. EXECUTE JOLT QUERY (SERIALIZED VTABLE) ---
+    // --- 3. EXECUTE QUERY (Serialized) ---
     JPH_STACK_ALLOC(JPH_RMat4, transform);
     JPH_Quat q = {rx, ry, rz, rw};
     JPH_RVec3 p = {(double)px, (double)py, (double)pz};
     JPH_RMat4_RotationTranslation(transform, &q, &p);
-    
     JPH_Vec3 sweep_dir = {dx, dy, dz};
 
     JPH_STACK_ALLOC(JPH_ShapeCastSettings, settings);
@@ -1147,20 +1136,21 @@ static PyObject* PhysicsWorld_shapecast(PhysicsWorldObject* self, PyObject* args
     settings->backFaceModeTriangles = JPH_BackFaceMode_IgnoreBackFaces;
     settings->backFaceModeConvex = JPH_BackFaceMode_IgnoreBackFaces;
 
-    // --- SETUP FILTERS (The Missing Piece) ---
+    // LOCK TRAMPOLINE
+    SHADOW_LOCK(&g_jph_trampoline_lock);
+    
+    // Create filters inside lock
     JPH_BroadPhaseLayerFilter_Procs bp_procs = { .ShouldCollide = filter_allow_all_bp };
-    JPH_BroadPhaseLayerFilter* bp_filter = JPH_BroadPhaseLayerFilter_Create(NULL);
+    bp_filter = JPH_BroadPhaseLayerFilter_Create(NULL);
     JPH_BroadPhaseLayerFilter_SetProcs(&bp_procs);
 
     JPH_ObjectLayerFilter_Procs obj_procs = { .ShouldCollide = filter_allow_all_obj };
-    JPH_ObjectLayerFilter* obj_filter = JPH_ObjectLayerFilter_Create(NULL);
+    obj_filter = JPH_ObjectLayerFilter_Create(NULL);
     JPH_ObjectLayerFilter_SetProcs(&obj_procs);
 
     CastShapeFilter filter_ctx = { .ignore_id = ignore_bid };
     JPH_BodyFilter_Procs filter_procs = { .ShouldCollide = CastShape_BodyFilter };
-    JPH_BodyFilter* body_filter = JPH_BodyFilter_Create(&filter_ctx);
-
-    SHADOW_LOCK(&g_jph_trampoline_lock);
+    body_filter = JPH_BodyFilter_Create(&filter_ctx);
     JPH_BodyFilter_SetProcs(&filter_procs);
 
     CastShapeContext ctx = { .has_hit = false };
@@ -1168,12 +1158,11 @@ static PyObject* PhysicsWorld_shapecast(PhysicsWorldObject* self, PyObject* args
 
     JPH_RVec3 base_offset = {0, 0, 0};
     const JPH_NarrowPhaseQuery* nq = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
-    
-    // Pass bp_filter and obj_filter
     JPH_NarrowPhaseQuery_CastShape(nq, shape, transform, &sweep_dir, settings, &base_offset, 
                                    CastShape_ClosestCollector, &ctx, 
                                    bp_filter, obj_filter, body_filter, NULL);
 
+    // RESTORE & UNLOCK
     JPH_BodyFilter_SetProcs(&global_bf_procs);
     SHADOW_UNLOCK(&g_jph_trampoline_lock);
 
@@ -1183,7 +1172,7 @@ static PyObject* PhysicsWorld_shapecast(PhysicsWorldObject* self, PyObject* args
 
     if (!ctx.has_hit) goto exit;
 
-    // --- 5. RESOLVE IDENTITY & GEOMETRY ---
+    // --- 4. RESOLVE RESULTS ---
     float nx = -ctx.hit.penetrationAxis.x;
     float ny = -ctx.hit.penetrationAxis.y;
     float nz = -ctx.hit.penetrationAxis.z;
@@ -1214,12 +1203,9 @@ static PyObject* PhysicsWorld_shapecast(PhysicsWorldObject* self, PyObject* args
     SHADOW_UNLOCK(&self->shadow_lock);
 
 exit:
-    if (query_active) {
-        atomic_fetch_sub(&self->active_queries, 1);
-    }
-
+    if (query_active) atomic_fetch_sub_explicit(&self->active_queries, 1, memory_order_release);
     if (result) return result;
-    Py_RETURN_NONE;
+    Py_RETURN_NONE; 
 }
 
 // Helper to grow queue
@@ -1671,11 +1657,8 @@ static PyObject* PhysicsWorld_create_constraint(PhysicsWorldObject* self, PyObje
     if (!parse_ok) return NULL;
 
     SHADOW_LOCK(&self->shadow_lock);
-    if (self->is_stepping || atomic_load(&self->active_queries) > 0) {
-        SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_RuntimeError, "Cannot create constraint while world is busy");
-        return NULL;
-    }
+    BLOCK_UNTIL_NOT_STEPPING(self);
+    BLOCK_UNTIL_NOT_QUERYING(self);
 
     uint32_t s1, s2;
     if (!unpack_handle(self, h1, &s1) || self->slot_states[s1] != SLOT_ALIVE ||
@@ -1762,11 +1745,8 @@ static PyObject* PhysicsWorld_destroy_constraint(PhysicsWorldObject* self, PyObj
     SHADOW_LOCK(&self->shadow_lock);
 
     // Guard against both Physics Step AND active Queries
-    if (self->is_stepping || atomic_load(&self->active_queries) > 0) {
-        SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_RuntimeError, "Cannot destroy constraint while world is busy (stepping or querying)");
-        return NULL;
-    }
+    BLOCK_UNTIL_NOT_STEPPING(self);
+    BLOCK_UNTIL_NOT_QUERYING(self);
 
     uint32_t slot = (uint32_t)(h & 0xFFFFFFFF);
     uint32_t gen = (uint32_t)(h >> 32);
@@ -1818,11 +1798,8 @@ static PyObject* PhysicsWorld_destroy_constraint(PhysicsWorldObject* self, PyObj
 static PyObject *PhysicsWorld_save_state(PhysicsWorldObject *self, PyObject *Py_UNUSED(unused)) {
     SHADOW_LOCK(&self->shadow_lock);
     
-    if (self->is_stepping || atomic_load(&self->active_queries) > 0) {
-        SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_RuntimeError, "Cannot save state while world is busy");
-        return NULL;
-    }
+    BLOCK_UNTIL_NOT_STEPPING(self);
+    BLOCK_UNTIL_NOT_QUERYING(self);
 
     // 1. Unambiguous Size Calculation
     size_t header_size = sizeof(size_t) /* count */ + 
@@ -1868,21 +1845,32 @@ static PyObject *PhysicsWorld_load_state(PhysicsWorldObject *self, PyObject *arg
     Py_buffer view;
     static char *kwlist[] = {"state", NULL};
     if (!PyArg_ParseTupleAndKeywords(args, kwds, "y*", kwlist, &view)) return NULL;
+    
+    // IMMEDIATE SNAPSHOT (Unlocked, GIL held)
+    // We copy the data to the C heap so we can release the Python object 
+    // before we start yielding/waiting.
+    void* local_state_copy = PyMem_RawMalloc(view.len);
+    if (!local_state_copy) {
+        PyBuffer_Release(&view);
+        return PyErr_NoMemory();
+    }
+    memcpy(local_state_copy, view.buf, view.len);
+    size_t total_len = (size_t)view.len;
+    
+    // Release the Python buffer immediately. We don't need it anymore.
+    PyBuffer_Release(&view);
 
     SHADOW_LOCK(&self->shadow_lock);
 
     // 1. CONCURRENCY GUARD
-    if (self->is_stepping || atomic_load(&self->active_queries) > 0) {
-        SHADOW_UNLOCK(&self->shadow_lock);
-        PyBuffer_Release(&view);
-        PyErr_SetString(PyExc_RuntimeError, "Cannot load state while world is busy");
-        return NULL;
-    }
+    BLOCK_UNTIL_NOT_STEPPING(self);
+    BLOCK_UNTIL_NOT_QUERYING(self);
 
     // 2. HEADER VALIDATION
     if ((size_t)view.len < (sizeof(size_t) * 2 + sizeof(double))) goto size_fail;
 
-    char *ptr = (char *)view.buf;
+    char *ptr = (char *)local_state_copy;
+    if (total_len < (sizeof(size_t) * 2 + sizeof(double))) goto size_fail;
     size_t saved_count, saved_slot_cap;
     double saved_time;
 
@@ -1968,12 +1956,12 @@ static PyObject *PhysicsWorld_load_state(PhysicsWorldObject *self, PyObject *arg
         JPH_BodyInterface_SetUserData(bi, bid, (uint64_t)new_h);
     }
 
-    PyBuffer_Release(&view);
+    PyMem_RawFree(local_state_copy);
     Py_RETURN_NONE;
 
 size_fail:
     SHADOW_UNLOCK(&self->shadow_lock);
-    PyBuffer_Release(&view);
+    PyMem_RawFree(local_state_copy);
     PyErr_SetString(PyExc_ValueError, "Snapshot buffer truncated or capacity mismatch");
     return NULL;
 }
@@ -1990,13 +1978,7 @@ static PyObject* PhysicsWorld_step(PhysicsWorldObject* self, PyObject* args) {
         PyErr_SetString(PyExc_RuntimeError, "Concurrent step detected");
         return NULL;
     }
-    // NEW: Wait for active raycasts/shapecasts to finish
-    // This prevents us from deleting bodies while a raycast is looking at them.
-    if (atomic_load(&self->active_queries) > 0) {
-        SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_RuntimeError, "Cannot step while queries (raycast/shapecast) are active");
-        return NULL;
-    }
+    BLOCK_UNTIL_NOT_QUERYING(self);
     self->is_stepping = true;
 
     // 2. BUFFER MANAGEMENT (Reset Phase)
@@ -2073,11 +2055,8 @@ static PyObject *PhysicsWorld_create_character(PhysicsWorldObject *self,
 
   // --- 1. SLOT RESERVATION ---
   SHADOW_LOCK(&self->shadow_lock);
-  if (self->is_stepping || atomic_load(&self->active_queries) > 0) {
-      SHADOW_UNLOCK(&self->shadow_lock);
-      PyErr_SetString(PyExc_RuntimeError, "Cannot create character while world is busy");
-      return NULL;
-  }
+  BLOCK_UNTIL_NOT_STEPPING(self);
+  BLOCK_UNTIL_NOT_QUERYING(self);
 
   if (self->free_count == 0) {
     if (PhysicsWorld_resize(self, self->capacity * 2) < 0) {
@@ -2233,13 +2212,15 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
   SHADOW_LOCK(&self->shadow_lock);
   
   // 1. Thread Safety Guard
-  GUARD_STEPPING(self);
+  BLOCK_UNTIL_NOT_STEPPING(self);
+  BLOCK_UNTIL_NOT_QUERYING(self);
 
   // 2. Resize Logic
   if (self->free_count == 0) {
     if (PhysicsWorld_resize(self, self->capacity * 2) < 0) {
       SHADOW_UNLOCK(&self->shadow_lock);
-      PyErr_SetString(PyExc_MemoryError, "Failed to resize PhysicsWorld");
+      // DO NOT set PyExc_MemoryError here. 
+      // PhysicsWorld_resize already set a specific RuntimeError or NoMemory error.
       return NULL;
     }
   }
@@ -2373,11 +2354,8 @@ static PyObject *PhysicsWorld_create_mesh_body(PhysicsWorldObject *self,
   SHADOW_LOCK(&self->shadow_lock);
   
   // Guard with Acquire ordering to match query entry/exit barriers
-  if (self->is_stepping || atomic_load_explicit(&self->active_queries, memory_order_acquire) > 0) {
-      SHADOW_UNLOCK(&self->shadow_lock);
-      PyErr_SetString(PyExc_RuntimeError, "Cannot create mesh while world is busy (stepping or querying)");
-      goto cleanup;
-  }
+  BLOCK_UNTIL_NOT_STEPPING(self);
+  BLOCK_UNTIL_NOT_QUERYING(self);
   
   if (self->free_count == 0) {
     if (PhysicsWorld_resize(self, self->capacity + 1024) < 0) {
@@ -2450,11 +2428,8 @@ static PyObject *PhysicsWorld_destroy_body(PhysicsWorldObject *self,
   // 1. MUTATION GUARD
   // Prevents modifying topology while Jolt is stepping or while 
   // background threads are querying the world state.
-  if (self->is_stepping || atomic_load_explicit(&self->active_queries, memory_order_acquire) > 0) {
-      SHADOW_UNLOCK(&self->shadow_lock);
-      PyErr_SetString(PyExc_RuntimeError, "Cannot destroy body while world is busy (stepping or querying)");
-      return NULL;
-  }
+  BLOCK_UNTIL_NOT_STEPPING(self);
+  BLOCK_UNTIL_NOT_QUERYING(self);
 
   // 2. HANDLE RESOLUTION
   uint32_t slot = 0;
@@ -2527,11 +2502,8 @@ static PyObject* PhysicsWorld_create_vehicle(PhysicsWorldObject* self, PyObject*
 
     // --- 1. CHASSIS RESOLUTION & INITIAL GUARD ---
     SHADOW_LOCK(&self->shadow_lock);
-    if (self->is_stepping || atomic_load_explicit(&self->active_queries, memory_order_acquire) > 0) {
-        SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_RuntimeError, "Cannot create vehicle while world is busy");
-        return NULL;
-    }
+    BLOCK_UNTIL_NOT_STEPPING(self);
+    BLOCK_UNTIL_NOT_QUERYING(self);
 
     flush_commands(self); 
     
@@ -2672,11 +2644,8 @@ static PyObject* PhysicsWorld_create_vehicle(PhysicsWorldObject* self, PyObject*
 
     // --- 6. INSERTION (Shadow Locked) ---
     SHADOW_LOCK(&self->shadow_lock);
-    if (self->is_stepping || atomic_load_explicit(&self->active_queries, memory_order_acquire) > 0) {
-        SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_RuntimeError, "World became busy during insertion");
-        goto error_cleanup;
-    }
+    BLOCK_UNTIL_NOT_STEPPING(self);
+    BLOCK_UNTIL_NOT_QUERYING(self);
 
     JPH_PhysicsSystem_AddConstraint(self->system, (JPH_Constraint*)j_veh);
     constraint_added = true;
@@ -2731,7 +2700,8 @@ static PyObject *PhysicsWorld_set_position(PhysicsWorldObject *self,
     return NULL;
   }
   SHADOW_LOCK(&self->shadow_lock);
-  GUARD_STEPPING(self);
+  BLOCK_UNTIL_NOT_STEPPING(self);
+  BLOCK_UNTIL_NOT_QUERYING(self);
 
   uint32_t slot = 0;
   if (!unpack_handle(self, handle_raw, &slot) || self->slot_states[slot] != SLOT_ALIVE) {
@@ -2770,7 +2740,8 @@ static PyObject *PhysicsWorld_set_rotation(PhysicsWorldObject *self,
     return NULL;
   }
   SHADOW_LOCK(&self->shadow_lock); 
-  GUARD_STEPPING(self);
+  BLOCK_UNTIL_NOT_STEPPING(self);
+  BLOCK_UNTIL_NOT_QUERYING(self);
 
   uint32_t slot = 0;
   if (!unpack_handle(self, (BodyHandle)handle_raw, &slot) || self->slot_states[slot] != SLOT_ALIVE) {
@@ -2810,7 +2781,8 @@ static PyObject *PhysicsWorld_set_linear_velocity(PhysicsWorldObject *self,
     return NULL;
   }
   SHADOW_LOCK(&self->shadow_lock);
-  GUARD_STEPPING(self);
+  BLOCK_UNTIL_NOT_STEPPING(self);
+  BLOCK_UNTIL_NOT_QUERYING(self);
   uint32_t slot = 0;
   if (!unpack_handle(self, (BodyHandle)handle_raw, &slot)) {
     SHADOW_UNLOCK(&self->shadow_lock);
@@ -2840,7 +2812,8 @@ static PyObject *PhysicsWorld_set_angular_velocity(PhysicsWorldObject *self,
     return NULL;
   }
   SHADOW_LOCK(&self->shadow_lock);
-  GUARD_STEPPING(self);
+  BLOCK_UNTIL_NOT_STEPPING(self);
+  BLOCK_UNTIL_NOT_QUERYING(self);
   uint32_t slot = 0;
   if (!unpack_handle(self, (BodyHandle)handle_raw, &slot)) {
     SHADOW_UNLOCK(&self->shadow_lock);
@@ -2868,7 +2841,7 @@ static PyObject *PhysicsWorld_get_motion_type(PhysicsWorldObject *self,
   SHADOW_LOCK(&self->shadow_lock);
   
   // FIX: Consistency Guard
-  GUARD_STEPPING(self);
+  BLOCK_UNTIL_NOT_STEPPING(self);
 
   uint32_t slot = 0;
   if (!unpack_handle(self, (BodyHandle)handle_raw, &slot) || self->slot_states[slot] != SLOT_ALIVE) {
@@ -2894,7 +2867,8 @@ static PyObject *PhysicsWorld_set_motion_type(PhysicsWorldObject *self,
     return NULL;
   }
   SHADOW_LOCK(&self->shadow_lock);
-  GUARD_STEPPING(self);
+  BLOCK_UNTIL_NOT_STEPPING(self);
+  BLOCK_UNTIL_NOT_QUERYING(self);
   uint32_t slot = 0;
   if (!unpack_handle(self, (BodyHandle)handle_raw, &slot)) {
     SHADOW_UNLOCK(&self->shadow_lock);
@@ -2921,7 +2895,8 @@ static PyObject *PhysicsWorld_set_user_data(PhysicsWorldObject *self,
   SHADOW_LOCK(&self->shadow_lock);
   
   // 1. FIX: Prevent mutation while step() is rearranging the dense array
-  GUARD_STEPPING(self);
+  BLOCK_UNTIL_NOT_STEPPING(self);
+  BLOCK_UNTIL_NOT_QUERYING(self);
 
   uint32_t slot = 0;
   if (!unpack_handle(self, (BodyHandle)handle_raw, &slot) || self->slot_states[slot] != SLOT_ALIVE) {
@@ -2947,7 +2922,7 @@ static PyObject *PhysicsWorld_get_user_data(PhysicsWorldObject *self,
   SHADOW_LOCK(&self->shadow_lock);
   
   // 1. FIX: Ensure indices aren't shifting while we read
-  GUARD_STEPPING(self);
+  BLOCK_UNTIL_NOT_STEPPING(self);
 
   uint32_t slot = 0;
   if (!unpack_handle(self, (BodyHandle)handle_raw, &slot) || self->slot_states[slot] != SLOT_ALIVE) {
@@ -2968,7 +2943,8 @@ static PyObject *PhysicsWorld_activate(PhysicsWorldObject *self, PyObject *args,
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "K", kwlist, &handle_raw)) return NULL;
 
   SHADOW_LOCK(&self->shadow_lock);
-  GUARD_STEPPING(self);                                      
+  BLOCK_UNTIL_NOT_STEPPING(self);
+  BLOCK_UNTIL_NOT_QUERYING(self);
 
   uint32_t slot = 0;
   // Consistency Check: Unpack AND verify the slot is currently ALIVE
@@ -2993,7 +2969,8 @@ static PyObject *PhysicsWorld_deactivate(PhysicsWorldObject *self,
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "K", kwlist, &handle_raw)) return NULL;
 
   SHADOW_LOCK(&self->shadow_lock);
-  GUARD_STEPPING(self);
+  BLOCK_UNTIL_NOT_STEPPING(self);
+  BLOCK_UNTIL_NOT_QUERYING(self);
 
   uint32_t slot = 0;
   if (!unpack_handle(self, (BodyHandle)handle_raw, &slot) || self->slot_states[slot] != SLOT_ALIVE) {
@@ -3025,7 +3002,8 @@ static PyObject *PhysicsWorld_set_transform(PhysicsWorldObject *self,
   SHADOW_LOCK(&self->shadow_lock);
   
   // 1. Mutation Guard
-  GUARD_STEPPING(self);
+  BLOCK_UNTIL_NOT_STEPPING(self);
+  BLOCK_UNTIL_NOT_QUERYING(self);
 
   // 2. Handle Resolution & Liveness check
   uint32_t slot = 0;
@@ -3100,35 +3078,29 @@ static PyObject *PhysicsWorld_overlap_sphere(PhysicsWorldObject *self,
   static char *kwlist[] = {"center", "radius", NULL};
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)f", kwlist, &x, &y, &z, &radius)) return NULL;
 
-  // Trackers for safe cleanup
   PyObject *ret_val = NULL; 
   OverlapContext ctx = { .world = self, .hits = NULL, .count = 0, .capacity = 0 };
-  bool query_active = false;
+  
+  // Jolt Resources
   JPH_Shape *shape = NULL;
+  JPH_BroadPhaseLayerFilter* bp_filter = NULL;
+  JPH_ObjectLayerFilter* obj_filter = NULL;
+  JPH_BodyFilter* body_filter = NULL;
 
-  // --- 1. PHASE GUARD ---
+  // --- 1. PHASE GUARD (Blocking) ---
   SHADOW_LOCK(&self->shadow_lock);
-  if (self->is_stepping) {
-      SHADOW_UNLOCK(&self->shadow_lock);
-      PyErr_SetString(PyExc_RuntimeError, "Cannot overlap_sphere while physics is stepping");
-      return NULL;
-  }
+  BLOCK_UNTIL_NOT_STEPPING(self);
+  
+  // Reserve query slot
   atomic_fetch_add_explicit(&self->active_queries, 1, memory_order_relaxed);
-  query_active = true;
   SHADOW_UNLOCK(&self->shadow_lock);
 
-  // --- 2. JOLT RESOURCE PREP (Unlocked) ---
+  // --- 2. RESOURCE PREP ---
   JPH_SphereShapeSettings *ss = JPH_SphereShapeSettings_Create(radius);
-  if (!ss) { 
-      PyErr_NoMemory(); 
-      goto cleanup; 
-  }
+  if (!ss) { PyErr_NoMemory(); goto cleanup; }
   shape = (JPH_Shape *)JPH_SphereShapeSettings_CreateShape(ss);
   JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)ss);
-  if (!shape) { 
-      PyErr_NoMemory(); 
-      goto cleanup; 
-  }
+  if (!shape) { PyErr_NoMemory(); goto cleanup; }
 
   JPH_STACK_ALLOC(JPH_RVec3, pos);
   pos->x = (double)x; pos->y = (double)y; pos->z = (double)z;
@@ -3143,14 +3115,38 @@ static PyObject *PhysicsWorld_overlap_sphere(PhysicsWorldObject *self,
   JPH_STACK_ALLOC(JPH_CollideShapeSettings, settings);
   JPH_CollideShapeSettings_Init(settings);
 
-  // --- 3. EXECUTE QUERY (Unlocked) ---
+  // --- 3. FILTER SETUP & EXECUTION (Serialized) ---
+  // We MUST lock the trampoline because SetProcs modifies global state.
+  SHADOW_LOCK(&g_jph_trampoline_lock);
+
+  // BroadPhase: Allow All
+  JPH_BroadPhaseLayerFilter_Procs bp_procs = { .ShouldCollide = filter_allow_all_bp };
+  bp_filter = JPH_BroadPhaseLayerFilter_Create(NULL);
+  JPH_BroadPhaseLayerFilter_SetProcs(&bp_procs);
+
+  // ObjectLayer: Allow All
+  JPH_ObjectLayerFilter_Procs obj_procs = { .ShouldCollide = filter_allow_all_obj };
+  obj_filter = JPH_ObjectLayerFilter_Create(NULL);
+  JPH_ObjectLayerFilter_SetProcs(&obj_procs);
+
+  // BodyFilter: Default (True)
+  JPH_BodyFilter_Procs bf_procs = { .ShouldCollide = filter_true_body };
+  body_filter = JPH_BodyFilter_Create(NULL);
+  JPH_BodyFilter_SetProcs(&bf_procs); 
+
   const JPH_NarrowPhaseQuery *nq = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
+  
   JPH_NarrowPhaseQuery_CollideShape(
       nq, shape, scale, transform, settings, base_offset,
-      OverlapCallback_Narrow, &ctx, NULL, NULL, NULL, NULL
+      OverlapCallback_Narrow, &ctx, 
+      bp_filter, obj_filter, body_filter, NULL
   );
 
-  // --- 4. VALIDATION & LIST CONSTRUCTION (Locked) ---
+  // Restore Defaults & Unlock
+  // (filter_true_body is effectively the default, but we set it explicitly above)
+  SHADOW_UNLOCK(&g_jph_trampoline_lock);
+
+  // --- 4. VALIDATION (Locked) ---
   ret_val = PyList_New(0);
   if (!ret_val) goto cleanup;
 
@@ -3174,9 +3170,16 @@ static PyObject *PhysicsWorld_overlap_sphere(PhysicsWorldObject *self,
   SHADOW_UNLOCK(&self->shadow_lock);
 
 cleanup:
-  if (query_active) atomic_fetch_sub_explicit(&self->active_queries, 1, memory_order_relaxed);
+  // Release query slot
+  atomic_fetch_sub_explicit(&self->active_queries, 1, memory_order_release);
+  
   if (shape) JPH_Shape_Destroy(shape);
+  if (bp_filter) JPH_BroadPhaseLayerFilter_Destroy(bp_filter);
+  if (obj_filter) JPH_ObjectLayerFilter_Destroy(obj_filter);
+  if (body_filter) JPH_BodyFilter_Destroy(body_filter);
+  
   if (ctx.hits) PyMem_RawFree(ctx.hits);
+  
   return ret_val; 
 }
 
@@ -3191,17 +3194,14 @@ static PyObject *PhysicsWorld_overlap_aabb(PhysicsWorldObject *self,
 
   PyObject *ret_val = NULL;
   OverlapContext ctx = { .world = self, .hits = NULL, .count = 0, .capacity = 0 };
-  bool query_active = false;
+  
+  JPH_BroadPhaseLayerFilter* bp_filter = NULL;
+  JPH_ObjectLayerFilter* obj_filter = NULL;
 
   // --- 1. PHASE GUARD ---
   SHADOW_LOCK(&self->shadow_lock);
-  if (self->is_stepping) {
-      SHADOW_UNLOCK(&self->shadow_lock);
-      PyErr_SetString(PyExc_RuntimeError, "Cannot overlap_aabb while physics is stepping");
-      return NULL;
-  }
+  BLOCK_UNTIL_NOT_STEPPING(self);
   atomic_fetch_add_explicit(&self->active_queries, 1, memory_order_relaxed);
-  query_active = true;
   SHADOW_UNLOCK(&self->shadow_lock);
 
   // --- 2. JOLT PREP ---
@@ -3209,11 +3209,23 @@ static PyObject *PhysicsWorld_overlap_aabb(PhysicsWorldObject *self,
   box->min.x = min_x; box->min.y = min_y; box->min.z = min_z;
   box->max.x = max_x; box->max.y = max_y; box->max.z = max_z;
 
-  // --- 3. EXECUTE BROADPHASE (Unlocked) ---
-  const JPH_BroadPhaseQuery *bq = JPH_PhysicsSystem_GetBroadPhaseQuery(self->system);
-  JPH_BroadPhaseQuery_CollideAABox(bq, box, OverlapCallback_Broad, &ctx, NULL, NULL);
+  // --- 3. FILTER & EXECUTION (Serialized) ---
+  SHADOW_LOCK(&g_jph_trampoline_lock);
 
-  // --- 4. VALIDATION & CONSTRUCTION (Locked) ---
+  JPH_BroadPhaseLayerFilter_Procs bp_procs = { .ShouldCollide = filter_allow_all_bp };
+  bp_filter = JPH_BroadPhaseLayerFilter_Create(NULL);
+  JPH_BroadPhaseLayerFilter_SetProcs(&bp_procs);
+
+  JPH_ObjectLayerFilter_Procs obj_procs = { .ShouldCollide = filter_allow_all_obj };
+  obj_filter = JPH_ObjectLayerFilter_Create(NULL);
+  JPH_ObjectLayerFilter_SetProcs(&obj_procs);
+
+  const JPH_BroadPhaseQuery *bq = JPH_PhysicsSystem_GetBroadPhaseQuery(self->system);
+  JPH_BroadPhaseQuery_CollideAABox(bq, box, OverlapCallback_Broad, &ctx, bp_filter, obj_filter);
+
+  SHADOW_UNLOCK(&g_jph_trampoline_lock);
+
+  // --- 4. VALIDATION ---
   ret_val = PyList_New(0);
   if (!ret_val) goto cleanup;
 
@@ -3237,8 +3249,12 @@ static PyObject *PhysicsWorld_overlap_aabb(PhysicsWorldObject *self,
   SHADOW_UNLOCK(&self->shadow_lock);
 
 cleanup:
-  if (query_active) atomic_fetch_sub_explicit(&self->active_queries, 1, memory_order_relaxed);
+  atomic_fetch_sub_explicit(&self->active_queries, 1, memory_order_release);
+  
+  if (bp_filter) JPH_BroadPhaseLayerFilter_Destroy(bp_filter);
+  if (obj_filter) JPH_ObjectLayerFilter_Destroy(obj_filter);
   if (ctx.hits) PyMem_RawFree(ctx.hits);
+  
   return ret_val;
 }
 
@@ -3470,12 +3486,11 @@ static PyObject* Vehicle_set_input(VehicleObject* self, PyObject* args, PyObject
     SHADOW_LOCK(&self->world->shadow_lock);
     
     // 1. RE-ENTRANCY GUARD
-    if (self->world->is_stepping) {
-        SHADOW_UNLOCK(&self->world->shadow_lock);
-        PyErr_SetString(PyExc_RuntimeError, "Cannot set vehicle input during physics step");
-        return NULL;
-    }
+    BLOCK_UNTIL_NOT_STEPPING(self->world);
+    BLOCK_UNTIL_NOT_QUERYING(self->world);
 
+    // While we were yielding in the block above, another thread 
+    // could have acquired the lock and destroyed this vehicle.
     if (!self->vehicle) {
         SHADOW_UNLOCK(&self->world->shadow_lock);
         PyErr_SetString(PyExc_RuntimeError, "Vehicle instance is invalid or destroyed");
@@ -3577,11 +3592,7 @@ static PyObject* Vehicle_get_wheel_transform(VehicleObject* self, PyObject* args
     if (!PyArg_ParseTuple(args, "I", &index)) return NULL;
 
     SHADOW_LOCK(&self->world->shadow_lock);
-    if (self->world->is_stepping) {
-        SHADOW_UNLOCK(&self->world->shadow_lock);
-        PyErr_SetString(PyExc_RuntimeError, "Cannot query wheel transform during physics step");
-        return NULL;
-    }
+    BLOCK_UNTIL_NOT_STEPPING(self->world);
     if (!self->vehicle || index >= self->num_wheels) {
         SHADOW_UNLOCK(&self->world->shadow_lock);
         Py_RETURN_NONE;
@@ -3762,11 +3773,8 @@ static PyObject* Vehicle_destroy(VehicleObject* self, PyObject* Py_UNUSED(ignore
     SHADOW_LOCK(&self->world->shadow_lock);
 
     // GUARD: Prevents mutation while Jolt is busy stepping or querying
-    if (self->world->is_stepping || atomic_load_explicit(&self->world->active_queries, memory_order_acquire) > 0) {
-        SHADOW_UNLOCK(&self->world->shadow_lock);
-        PyErr_SetString(PyExc_RuntimeError, "Cannot destroy vehicle while world is busy (stepping or querying)");
-        return NULL;
-    }
+    BLOCK_UNTIL_NOT_STEPPING(self->world);
+    BLOCK_UNTIL_NOT_QUERYING(self->world);
 
     if (!self->vehicle) {
         SHADOW_UNLOCK(&self->world->shadow_lock);
@@ -3936,11 +3944,7 @@ static PyObject *Character_move(CharacterObject *self, PyObject *args,
   SHADOW_LOCK(&self->world->shadow_lock);
   
   // 1. RE-ENTRANCY GUARD
-  if (self->world->is_stepping) {
-      SHADOW_UNLOCK(&self->world->shadow_lock);
-      PyErr_SetString(PyExc_RuntimeError, "Cannot move character during physics step");
-      return NULL;
-  }
+  BLOCK_UNTIL_NOT_STEPPING(self->world);
 
   // 2. ATOMIC INPUT STORAGE
   // Satisfies the memory model for the lock-free contact callbacks
@@ -4043,7 +4047,7 @@ static PyObject *Character_set_position(CharacterObject *self, PyObject *args,
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)", kwlist, &x, &y, &z)) return NULL;
 
   SHADOW_LOCK(&self->world->shadow_lock);
-  GUARD_STEPPING(self->world);
+  BLOCK_UNTIL_NOT_STEPPING(self->world);
 
   // 1. Update Jolt (Aligned)
   JPH_STACK_ALLOC(JPH_RVec3, pos);
@@ -4074,7 +4078,7 @@ static PyObject *Character_set_rotation(CharacterObject *self, PyObject *args,
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "(ffff)", kwlist, &x, &y, &z, &w)) return NULL;
 
   SHADOW_LOCK(&self->world->shadow_lock);
-  GUARD_STEPPING(self->world);
+  BLOCK_UNTIL_NOT_STEPPING(self->world);
 
   // 1. Update Jolt
   JPH_STACK_ALLOC(JPH_Quat, q);
@@ -4111,7 +4115,8 @@ static PyObject *Character_set_strength(CharacterObject *self, PyObject *args) {
   if (!PyArg_ParseTuple(args, "f", &strength)) return NULL;
 
   SHADOW_LOCK(&self->world->shadow_lock);
-  GUARD_STEPPING(self->world);
+  BLOCK_UNTIL_NOT_STEPPING(self->world);
+  BLOCK_UNTIL_NOT_QUERYING(self->world);
 
   // 1. Update Atomic for Jolt worker threads
   atomic_store_explicit(&self->push_strength, strength, memory_order_relaxed);

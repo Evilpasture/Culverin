@@ -9,6 +9,13 @@
 #include <float.h>
 #include <stdatomic.h>
 #include <stddef.h>
+#ifdef _WIN32
+    #define WIN32_LEAN_AND_MEAN
+    #include <windows.h>
+#elif defined(__linux__) || defined(__apple__)
+    #include <sched.h>
+    #include <unistd.h>
+#endif
 
 
 #ifndef JPH_INVALID_BODY_ID
@@ -65,7 +72,68 @@ static ShadowMutex g_jph_trampoline_lock; // Global lock for JPH callbacks
         return NULL; \
     } \
     while (0)
-    /* Must use while in lock */
+    /* Must use while in lock(no longer used in favor for more friendlier methods, only use for debug) */
+
+// Processor-level hint to save power during spin-waits
+static inline void culverin_cpu_relax() {
+    #if defined(_MSC_VER) || defined(__INTEL_COMPILER)
+        // MSVC and Intel use intrinsics
+        #include <immintrin.h>
+        _mm_pause();
+    #elif defined(__GNUC__) || defined(__clang__)
+        #if defined(__i386__) || defined(__x86_64__)
+            __asm__ __volatile__("pause");
+        #elif defined(__arm__) || defined(__aarch64__)
+            __asm__ __volatile__("yield");
+        #endif
+    #endif
+}
+
+static inline void culverin_yield() {
+    // 1. Give the CPU a break (Hardware level)
+    culverin_cpu_relax();
+
+    // 2. Give the OS a break (Kernel level)
+    #if defined(_WIN32)
+        // SwitchToThread() is the gold standard for Windows yielding
+        if (SwitchToThread() == FALSE) {
+            Sleep(0);
+        }
+    #elif defined(__linux__) || defined(__FreeBSD__)
+        sched_yield();
+    #elif defined(__APPLE__)
+        // macOS deprecated sched_yield behavior; usleep(0) is often preferred 
+        // for thread arbitration in user-space.
+        usleep(0);
+    #else
+        // Fallback for unknown POSIX systems
+        sleep(0); 
+    #endif
+}
+
+// Blocks until the world is not mid-step.
+// Must be called while holding SHADOW_LOCK. Re-acquires it before returning.
+#define BLOCK_UNTIL_NOT_STEPPING(self) do { \
+    while ((self)->is_stepping) { \
+        SHADOW_UNLOCK(&(self)->shadow_lock); \
+        Py_BEGIN_ALLOW_THREADS \
+        culverin_yield(); \
+        Py_END_ALLOW_THREADS \
+        SHADOW_LOCK(&(self)->shadow_lock); \
+    } \
+} while (0)
+
+// Blocks until no queries (raycasts/shapecasts) are running.
+// Must be called while holding SHADOW_LOCK.
+#define BLOCK_UNTIL_NOT_QUERYING(self) do { \
+    while (atomic_load_explicit(&(self)->active_queries, memory_order_acquire) > 0) { \
+        SHADOW_UNLOCK(&(self)->shadow_lock); \
+        Py_BEGIN_ALLOW_THREADS \
+        culverin_yield(); \
+        Py_END_ALLOW_THREADS \
+        SHADOW_LOCK(&(self)->shadow_lock); \
+    } \
+} while (0)
 
 // --- Shape Caching ---
 typedef struct {
@@ -147,14 +215,26 @@ typedef struct {
   } data;
 } PhysicsCommand;
 
+#ifdef _MSC_VER
+#pragma pack(push, 1)
+#endif
+
 // --- Callback Logic ---
-typedef struct __attribute__((packed)) ContactEvent {
+typedef struct 
+#ifndef _MSC_VER
+__attribute__((packed)) 
+#endif 
+ContactEvent {
     uint64_t body1;
     uint64_t body2;
     float px, py, pz;
     float nx, ny, nz;
     float impulse;
 } ContactEvent;
+
+#ifdef _MSC_VER
+#pragma pack(pop)
+#endif
 
 // --- The Object Struct ---
 typedef struct {
