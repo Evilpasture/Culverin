@@ -2287,8 +2287,8 @@ static PyObject* PhysicsWorld_create_vehicle(PhysicsWorldObject* self, PyObject*
 
         JPH_WheelSettingsWV_SetLongitudinalFriction(w, f_curve);
         JPH_WheelSettingsWV_SetLateralFriction(w, f_curve);
-        JPH_WheelSettingsWV_SetMaxBrakeTorque(w, 4000.0f);
-        JPH_WheelSettingsWV_SetMaxHandBrakeTorque(w, 4000.0f);
+        JPH_WheelSettingsWV_SetMaxBrakeTorque(w, 5000.0f);
+        JPH_WheelSettingsWV_SetMaxHandBrakeTorque(w, 8000.0f);
         JPH_WheelSettingsWV_SetInertia(w, 0.5f);
 
         if (i < 2) { 
@@ -2318,11 +2318,11 @@ static PyObject* PhysicsWorld_create_vehicle(PhysicsWorldObject* self, PyObject*
     trans = JPH_VehicleTransmissionSettings_Create();
     JPH_VehicleTransmissionSettings_SetMode(trans, JPH_TransmissionMode_Manual);
     // FIX: Forward gears ONLY. Gear 1 is index 0.
-    float forward_gears[] = { 3.0f, 2.0f, 1.5f, 1.0f, 0.8f }; 
+    float forward_gears[] = { 4.0f, 2.0f, 1.5f, 1.1f, 0.9f }; 
     JPH_VehicleTransmissionSettings_SetGearRatios(trans, forward_gears, 5);
     
     // FIX: Reverse gears separately.
-    float reverse_gears[] = { -3.0f };
+    float reverse_gears[] = { -3.5f };
     JPH_VehicleTransmissionSettings_SetReverseGearRatios(trans, reverse_gears, 1);
     JPH_VehicleTransmissionSettings_SetClutchStrength(trans, 10000.0f); 
     
@@ -3045,51 +3045,75 @@ static PyObject* Vehicle_set_input(VehicleObject* self, PyObject* args, PyObject
     const JPH_Body* chassis = JPH_VehicleConstraint_GetVehicleBody(self->vehicle);
     JPH_VehicleTransmission* transmission = (JPH_VehicleTransmission*)JPH_WheeledVehicleController_GetTransmission(controller);
     
+    // Ensure the chassis is active so physics run
     JPH_BodyInterface_ActivateBody(self->world->body_interface, JPH_Body_GetID(chassis));
 
-    // Get Forward Speed
+    // 1. Get Forward Speed
     JPH_Vec3 linear_vel;
     JPH_Body_GetLinearVelocity((JPH_Body *)chassis, &linear_vel);
-    
-    JPH_Vec3 forward_dir;
-    JPH_VehicleConstraint_GetLocalForward(self->vehicle, &forward_dir);
     JPH_RMat4 world_transform;
     JPH_Body_GetWorldTransform(chassis, &world_transform);
-    JPH_Vec3 world_fwd = {world_transform.column[2].x, world_transform.column[2].y, world_transform.column[2].z}; 
-
+    // Forward vector is Z-axis (Column 2)
+    JPH_Vec3 world_fwd = { (float)world_transform.column[2].x, (float)world_transform.column[2].y, (float)world_transform.column[2].z }; 
     float speed = linear_vel.x * world_fwd.x + linear_vel.y * world_fwd.y + linear_vel.z * world_fwd.z;
 
+    // 2. State Machine for Gears and Clutch
     float input_throttle = 0.0f;
     float input_brake = brake; 
-
-    // GEAR MAPPING:
-    // -1 = Reverse, 0 = Neutral, 1 = 1st, 2 = 2nd
+    float clutch_friction = 1.0f; // Default engaged
     int target_gear = self->current_gear;
 
-    if (forward > 0.0f) {
+    // Deadzone
+    if (fabsf(forward) < 0.05f) forward = 0.0f;
+
+    if (forward > 0.01f) {
+        // User wants to go FORWARD
         if (speed < -0.5f) {
-            input_brake = 1.0f; input_throttle = 0.0f;
+            // But we are moving backward: Apply BRAKE
+            input_brake = 1.0f;
+            input_throttle = 0.0f;
         } else {
+            // Stopped or moving forward: DRIVE
             input_throttle = forward;
-            if (target_gear < 1) target_gear = 1; // Switch to 1st
+            target_gear = 1; 
+            clutch_friction = 1.0f;
         }
-    } else if (forward < 0.0f) {
+    } 
+    else if (forward < -0.01f) {
+        // User wants to go BACKWARD
         if (speed > 0.5f) {
-            input_brake = 1.0f; input_throttle = 0.0f;
+            // But we are moving forward: Apply BRAKE
+            input_brake = 1.0f;
+            input_throttle = 0.0f;
         } else {
+            // Stopped or moving backward: REVERSE
             input_throttle = fabsf(forward);
-            if (target_gear != -1) target_gear = -1; // Switch to Reverse
+            target_gear = -1; 
+            clutch_friction = 1.0f;
         }
-    } else {
+    } 
+    else {
+        // NO INPUT: Neutralize to prevent the "Idle Crawl"
         input_throttle = 0.0f;
+        target_gear = 0;      // Neutral
+        clutch_friction = 0.0f; // Disengage engine from wheels
+        
+        // Rolling resistance: If we aren't braking, apply 5% brake to eventually stop
+        if (input_brake < 0.01f) input_brake = 0.05f; 
     }
 
+    // 3. Apply to Jolt
     self->current_gear = target_gear;
-    
-    // Always force the state to keep the clutch engaged
-    JPH_VehicleTransmission_Set(transmission, self->current_gear, 1.0f);
+    JPH_VehicleTransmission_Set(transmission, self->current_gear, clutch_friction);
 
-    JPH_WheeledVehicleController_SetDriverInput(controller, input_throttle, right, input_brake, handbrake);
+    JPH_WheeledVehicleController_SetDriverInput(
+        controller,
+        input_throttle,
+        right,
+        input_brake,
+        handbrake
+    );
+    
     Py_RETURN_NONE;
 }
 
