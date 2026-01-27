@@ -1,5 +1,5 @@
 [build-system]
-requires = ["scikit-build-core", "setuptools"]
+requires = ["scikit-build-core>=0.10.0"]
 build-backend = "scikit_build_core.build"
 
 [project]
@@ -8,13 +8,17 @@ version = "0.1.0"
 description = "High-performance Jolt Physics wrapper using Shadow Buffers"
 readme = "README.md"
 requires-python = ">=3.13"
+dependencies = ["numpy>=1.24"]
 
 [tool.scikit-build]
 cmake.build-type = "Release"
-# This is our base directory in the wheel
 wheel.install-dir = "culverin"
 
-# Clean up Jolt trash and source files
+# --- THE FIX: Force Clang-CL Toolset ---
+cmake.args = [
+    "-T", "ClangCL",
+]
+
 wheel.exclude = [
     "culverin/include/**",
     "culverin/lib/**",
@@ -23,5 +27,6 @@ wheel.exclude = [
     "**/*.h",
     "**/*.cpp",
     "**/*.obj",
-    # Note: we DO NOT exclude .pyi files
+    "**/*.a",
+    "**/*.lib",
 ]

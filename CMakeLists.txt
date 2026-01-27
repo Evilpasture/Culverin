@@ -1,84 +1,76 @@
 cmake_minimum_required(VERSION 3.16)
-project(culverin LANGUAGES C CXX)
 
 # ==============================================================================
-# 1. GLOBAL JOLT CONFIGURATION (MUST BE BEFORE ADD_SUBDIRECTORY)
+# 0. THE NUCLEAR INITIALIZATION
 # ==============================================================================
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+cmake_policy(SET CMP0091 NEW)
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 
-# --- THE FIX: Force 32-bit Object Layers Globally ---
-# This ensures Jolt Physics signatures match the JoltC wrapper signatures.
-set(OBJECT_LAYER_BITS 32 CACHE STRING "Number of bits for Object Layer" FORCE)
-add_definitions(-DJPH_OBJECT_LAYER_BITS=32)
-
-# --- Precision & Hardware Flags ---
-option(DOUBLE_PRECISION "Use double precision math" ON)
-set(JPH_USE_AVX2 ON CACHE BOOL "" FORCE)
-set(JPH_USE_SSE4_2 ON CACHE BOOL "" FORCE)
-
-# --- Build Type Fixes ---
-set(JPH_STATIC_LIBRARY ON CACHE BOOL "" FORCE)
-set(JPH_OBJECT_LIBRARY OFF CACHE BOOL "" FORCE) 
+# --- THE ABI FIX: Force Double Precision into the Cache ---
+# Jolt's internal CMakeLists uses the variable 'DOUBLE_PRECISION'.
+# We must set it as a CACHE FORCE variable so Jolt cannot overwrite it.
+set(DOUBLE_PRECISION ON CACHE BOOL "Use double precision math" FORCE)
+set(USE_STATIC_MSVC_RUNTIME OFF CACHE BOOL "" FORCE)
 set(FORCE_MT_RUNTIME OFF CACHE BOOL "" FORCE)
 
-# Stop Jolt's install pollution in the wheel
-set(JPH_INSTALL OFF CACHE BOOL "" FORCE)
-set(JPH_SAMPLES OFF CACHE BOOL "" FORCE)
-set(JPH_UNIT_TESTS OFF CACHE BOOL "" FORCE)
+# Define the C++ macro globally for every target in the project
+add_definitions(-DJPH_DOUBLE_PRECISION)
+add_definitions(-DJPH_OBJECT_LAYER_BITS=32)
 
-macro(SET_INTERPROCEDURAL_OPTIMIZATION)
-    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
-endmacro()
+project(culverin LANGUAGES C CXX)
+
+# Force /MD on all flag strings as a backup
+foreach(flag_var
+    CMAKE_C_FLAGS CMAKE_C_FLAGS_DEBUG CMAKE_C_FLAGS_RELEASE
+    CMAKE_CXX_FLAGS CMAKE_CXX_FLAGS_DEBUG CMAKE_CXX_FLAGS_RELEASE)
+    if(${flag_var})
+        string(REPLACE "/MT" "/MD" ${flag_var} "${${flag_var}}")
+    endif()
+endforeach()
+
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
 
 # ==============================================================================
-# 2. BUILD JOLT PHYSICS (The Engine)
+# 2. BUILD JOLT PHYSICS
 # ==============================================================================
 get_filename_component(JOLT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/extern/JoltPhysics" ABSOLUTE)
+add_subdirectory("${JOLT_DIR}/Build" jolt_physics_build)
 
-if(EXISTS "${JOLT_DIR}/Build/CMakeLists.txt")
-    add_subdirectory("${JOLT_DIR}/Build" jolt_physics_build)
-else()
-    message(FATAL_ERROR "JoltPhysics not found in extern/JoltPhysics.")
+# Double-check Jolt target properties
+if(TARGET Jolt)
+    set_property(TARGET Jolt PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+    # Ensure Jolt target itself has the DP define (some versions need this explicitly)
+    target_compile_definitions(Jolt PUBLIC JPH_DOUBLE_PRECISION JPH_OBJECT_LAYER_BITS=32)
 endif()
 
 # ==============================================================================
-# 3. BUILD JOLTC (The Manual Wrapper Target)
+# 3. BUILD JOLTC
 # ==============================================================================
 set(JOLTC_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/extern/JoltC/include")
 set(JOLTC_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/extern/JoltC/src")
+set(JOLTC_TARGET joltc_double)
 
-set(JOLTC_SOURCES
+add_library(${JOLTC_TARGET} STATIC 
     "${JOLTC_SOURCE_DIR}/joltc.cpp"
     "${JOLTC_SOURCE_DIR}/joltc_assert.cpp"
     "${JOLTC_SOURCE_DIR}/joltc.c"
 )
-
-if (DOUBLE_PRECISION)
-    set(JOLTC_TARGET joltc_double)
-else()
-    set(JOLTC_TARGET joltc)
-endif ()
-
-add_library(${JOLTC_TARGET} STATIC ${JOLTC_SOURCES})
-
-# Force rebuild JoltC if headers change
-set_source_files_properties(${JOLTC_SOURCES} PROPERTIES OBJECT_DEPENDS "${JOLTC_INCLUDE_DIR}/joltc.h")
-
 target_include_directories(${JOLTC_TARGET} PUBLIC "${JOLTC_INCLUDE_DIR}" "${JOLT_DIR}")
 target_link_libraries(${JOLTC_TARGET} PRIVATE Jolt)
 
-# Force definitions to match
-target_compile_definitions(${JOLTC_TARGET} PUBLIC JPH_OBJECT_LAYER_BITS=32)
-if (DOUBLE_PRECISION)
-    target_compile_definitions(${JOLTC_TARGET} PUBLIC JPH_DOUBLE_PRECISION)
-endif()
+# Force definitions for the wrapper
+target_compile_definitions(${JOLTC_TARGET} PUBLIC 
+    JPH_OBJECT_LAYER_BITS=32 
+    JPH_DOUBLE_PRECISION
+)
 
-# Propagate Hardware Flags
-if (MSVC)
-    target_compile_options(${JOLTC_TARGET} PRIVATE /arch:AVX2)
-else()
+set_property(TARGET ${JOLTC_TARGET} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+
+if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     target_compile_options(${JOLTC_TARGET} PRIVATE -mavx2 -mfma)
+else()
+    target_compile_options(${JOLTC_TARGET} PRIVATE /arch:AVX2)
 endif()
 
 # ==============================================================================
@@ -91,58 +83,40 @@ python_add_library(_culverin_c MODULE
     src/culverin/shadow_sync.c
 )
 
-# Header dependency
-set_source_files_properties(src/culverin/culverin.c src/culverin/shadow_sync.c 
-    PROPERTIES OBJECT_DEPENDS "${JOLTC_INCLUDE_DIR}/joltc.h"
-)
-
 target_include_directories(_culverin_c PRIVATE "${JOLTC_INCLUDE_DIR}" "${JOLT_DIR}" ${Python_INCLUDE_DIRS})
 
+# Ensure the C Extension knows about Double Precision (affects RVec3 size)
 target_compile_definitions(_culverin_c PRIVATE 
     MS_WIN64 
-    _CRT_SECURE_NO_WARNINGS
-    JPH_OBJECT_LAYER_BITS=32
+    _CRT_SECURE_NO_WARNINGS 
+    JPH_OBJECT_LAYER_BITS=32 
+    JPH_DOUBLE_PRECISION
 )
-
-if(DOUBLE_PRECISION)
-    target_compile_definitions(_culverin_c PRIVATE JPH_DOUBLE_PRECISION)
-endif()
 
 if(Python_VERSION VERSION_GREATER_EQUAL "3.13")
     target_compile_definitions(_culverin_c PRIVATE Py_GIL_DISABLED=1)
 endif()
 
 target_link_libraries(_culverin_c PRIVATE ${JOLTC_TARGET} Winmm.lib)
+set_property(TARGET _culverin_c PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 
-# Match hardware flags
-if (MSVC)
-    target_compile_options(_culverin_c PRIVATE /arch:AVX2)
+if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    target_compile_options(_culverin_c PRIVATE -mavx2 -mfma -Xclang -std=c11)
 else()
-    target_compile_options(_culverin_c PRIVATE -mavx2 -mfma)
+    target_compile_options(_culverin_c PRIVATE /arch:AVX2 /std:c11)
 endif()
 
 set_target_properties(_culverin_c PROPERTIES OUTPUT_NAME "_culverin_c" PREFIX "")
 
 # ==============================================================================
-# 5. MSVC COMPATIBILITY FIXES (THE "HAMMER")
+# 5. INSTALLATION
 # ==============================================================================
-if (MSVC)
-    # 1. Force /MD (Dynamic Runtime) on ALL targets to match Python
-    foreach(t ${JOLTC_TARGET} Jolt _culverin_c)
-        if (TARGET ${t})
-            set_property(TARGET ${t} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
-        endif()
-    endforeach()
-
-    # 2. Disable /GL (Whole Program Optimization) to prevent LTCG mismatches during build
-    string(REPLACE "/GL" "" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
-    string(REPLACE "/GL" "" CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE}")
-    
-    # 3. Fix for C++ Exception handling required by Jolt
-    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:/EHsc>)
-endif()
-
-# ==============================================================================
-# 6. INSTALLATION
-# ==============================================================================
+# We use "." because pyproject.toml already sets the install-dir to "culverin"
 install(TARGETS _culverin_c DESTINATION .)
+
+# Install the Python helper files into the package root
+install(FILES 
+    src/culverin/__init__.py 
+    src/culverin/_culverin.py 
+    DESTINATION .
+)
