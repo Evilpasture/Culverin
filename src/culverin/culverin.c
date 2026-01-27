@@ -2602,7 +2602,13 @@ static PyObject* PhysicsWorld_create_vehicle(PhysicsWorldObject* self, PyObject*
         JPH_WheelSettings_SetWidth((JPH_WheelSettings*)w, width);
         JPH_WheelSettingsWV_SetLongitudinalFriction(w, f_curve);
         JPH_WheelSettingsWV_SetLateralFriction(w, f_curve);
-        if (i < 2) JPH_WheelSettingsWV_SetMaxSteerAngle(w, 0.5f);
+        if (pz > 0.1f) {
+          // FRONT WHEELS: Set your desired steer angle
+          JPH_WheelSettingsWV_SetMaxSteerAngle(w, 0.5f); 
+        } else {
+          // REAR WHEELS: Force steering to be locked
+          JPH_WheelSettingsWV_SetMaxSteerAngle(w, 0.0f); 
+        }
         w_settings[i] = (JPH_WheelSettings*)w;
     }
 
