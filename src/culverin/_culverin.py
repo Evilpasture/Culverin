@@ -1,6 +1,15 @@
 import math
 import array
-from typing import Union
+from typing import Union, List, Tuple, Dict, Any
+
+__all__ = [
+    "MOTION_STATIC", "MOTION_KINEMATIC", "MOTION_DYNAMIC",
+    "SHAPE_BOX", "SHAPE_SPHERE", "SHAPE_CAPSULE", "SHAPE_CYLINDER", "SHAPE_PLANE", "SHAPE_MESH",
+    "LAYER_NON_MOVING", "LAYER_MOVING",
+    "CONSTRAINT_FIXED", "CONSTRAINT_POINT", "CONSTRAINT_HINGE", "CONSTRAINT_SLIDER", "CONSTRAINT_DISTANCE", "CONSTRAINT_CONE",
+    "Engine", "Transmission", "Automatic", "Manual",
+    "validate_constraint", "validate_settings", "bake_scene"
+]
 
 # --- Constants matching Jolt/JoltC ---
 MOTION_STATIC = 0

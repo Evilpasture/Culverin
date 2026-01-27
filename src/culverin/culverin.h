@@ -7,6 +7,8 @@
 #include <math.h>
 #include <string.h>
 #include <float.h>
+#include <stdatomic.h>
+#include <stddef.h>
 
 
 #ifndef JPH_INVALID_BODY_ID
@@ -44,6 +46,8 @@ typedef PyThread_type_lock ShadowMutex;
 #define SHADOW_LOCK(m) PyThread_acquire_lock(m, 1)
 #define SHADOW_UNLOCK(m) PyThread_release_lock(m)
 #endif
+
+static ShadowMutex g_jph_trampoline_lock; // Global lock for JPH callbacks
 
 // Comment this line out to disable all debug prints
 #define CULVERIN_DEBUG
@@ -144,7 +148,7 @@ typedef struct {
 } PhysicsCommand;
 
 // --- Callback Logic ---
-typedef struct {
+typedef struct __attribute__((packed)) ContactEvent {
     uint64_t body1;
     uint64_t body2;
     float px, py, pz;
@@ -174,6 +178,15 @@ typedef struct {
   ContactEvent* contact_events;
   size_t contact_count;
   size_t contact_capacity;
+
+  // Change contact_count to an atomic
+  atomic_size_t contact_atomic_idx;
+
+  atomic_int active_queries; // Tracks threads currently inside Jolt queries
+  
+  // The buffer must be large and pre-allocated
+  ContactEvent* contact_buffer;
+  size_t contact_max_capacity;
 
   // Shadow Buffers
   float *positions;
@@ -233,23 +246,23 @@ typedef struct {
 typedef struct {
   PyObject_HEAD
   JPH_CharacterVirtual *character;
-  PhysicsWorldObject *world; // Keep a reference to keep the world alive
-
+  PhysicsWorldObject *world;
   BodyHandle handle;
-
-  // We need filters for the character's movement query
+  
+  // Filters and listeners
   JPH_BodyFilter *body_filter;
   JPH_ShapeFilter *shape_filter;
   JPH_BroadPhaseLayerFilter *bp_filter;
   JPH_ObjectLayerFilter *obj_filter;
-
   JPH_CharacterContactListener *listener;
-  float push_strength;
 
-  float last_vx;
-  float last_vy;
-  float last_vz;
+  // ATOMIC INPUTS: Read by Jolt worker threads in callbacks
+  _Atomic float push_strength;
+  _Atomic float last_vx;
+  _Atomic float last_vy;
+  _Atomic float last_vz;
 
+  // Non-atomic: Used by main thread only for rendering
   float prev_px, prev_py, prev_pz;
   float prev_rx, prev_ry, prev_rz, prev_rw;
 } CharacterObject;
@@ -283,7 +296,9 @@ typedef struct {
 // Helper for Overlap Callbacks
 typedef struct {
   PhysicsWorldObject *world;
-  PyObject *result_list;
+  uint64_t *hits;        // C array to store baked handles
+  size_t count;
+  size_t capacity;
 } OverlapContext;
 
 typedef struct {
