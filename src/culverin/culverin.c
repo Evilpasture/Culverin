@@ -25,6 +25,13 @@ char_on_contact_validate(void *userData, const JPH_CharacterVirtual *character,
   return true; // Usually true, unless you want to walk through certain bodies
 }
 
+// --- Query Filters ---
+static bool JPH_API_CALL filter_allow_all_bp(void* userData, JPH_BroadPhaseLayer layer) {
+    return true; // Allow ray to see all broadphase regions
+}
+static bool JPH_API_CALL filter_allow_all_obj(void* userData, JPH_ObjectLayer layer) {
+    return true; // Allow ray to see all object layers (0 and 1)
+}
 
 static bool JPH_API_CALL filter_true_body(void *userData, JPH_BodyID bodyID) { return true; }
 static bool JPH_API_CALL filter_true_shape(void *userData, const JPH_Shape *shape, const JPH_SubShapeID *id) { return true; }
@@ -958,7 +965,6 @@ static PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *args, 
         return NULL;
     }
 
-    // Mark query as active to block step()
     atomic_fetch_add(&self->active_queries, 1);
     query_active = true;
 
@@ -972,7 +978,7 @@ static PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *args, 
 
     // --- 2. VALIDATION ---
     float mag_sq = dx*dx + dy*dy + dz*dz;
-    if (mag_sq < 1e-9f) goto exit; // Return None
+    if (mag_sq < 1e-9f) goto exit; 
 
     // --- 3. JOLT EXECUTION ---
     float mag = sqrtf(mag_sq);
@@ -985,21 +991,34 @@ static PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *args, 
     JPH_STACK_ALLOC(JPH_RayCastResult, hit);
     memset(hit, 0, sizeof(JPH_RayCastResult));
 
-    // Lock the global trampoline/vtable
-    SHADOW_LOCK(&g_jph_trampoline_lock);
-    
+    // --- SETUP FILTERS ---
+    JPH_BroadPhaseLayerFilter_Procs bp_procs = { .ShouldCollide = filter_allow_all_bp };
+    JPH_BroadPhaseLayerFilter* bp_filter = JPH_BroadPhaseLayerFilter_Create(NULL);
+    JPH_BroadPhaseLayerFilter_SetProcs(&bp_procs);
+
+    JPH_ObjectLayerFilter_Procs obj_procs = { .ShouldCollide = filter_allow_all_obj };
+    JPH_ObjectLayerFilter* obj_filter = JPH_ObjectLayerFilter_Create(NULL);
+    JPH_ObjectLayerFilter_SetProcs(&obj_procs);
+
     CastShapeFilter filter_ctx = { .ignore_id = ignore_bid };
     JPH_BodyFilter_Procs filter_procs = { .ShouldCollide = CastShape_BodyFilter };
     JPH_BodyFilter* body_filter = JPH_BodyFilter_Create(&filter_ctx);
+
+    SHADOW_LOCK(&g_jph_trampoline_lock);
     JPH_BodyFilter_SetProcs(&filter_procs);
 
     const JPH_NarrowPhaseQuery *query = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
-    bool has_hit = JPH_NarrowPhaseQuery_CastRay(query, origin, direction, hit, NULL, NULL, body_filter);
+    
+    // Pass the layer filters here
+    bool has_hit = JPH_NarrowPhaseQuery_CastRay(query, origin, direction, hit, 
+                                                bp_filter, obj_filter, body_filter);
 
-    // Restore vtable before releasing trampoline lock
     JPH_BodyFilter_SetProcs(&global_bf_procs);
     SHADOW_UNLOCK(&g_jph_trampoline_lock);
+
     JPH_BodyFilter_Destroy(body_filter);
+    JPH_BroadPhaseLayerFilter_Destroy(bp_filter);
+    JPH_ObjectLayerFilter_Destroy(obj_filter);
 
     if (!has_hit) goto exit;
 
@@ -1009,36 +1028,33 @@ static PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *args, 
     JPH_BodyLockRead lock;
     JPH_BodyLockInterface_LockRead(lock_iface, hit->bodyID, &lock);
     if (lock.body) {
-        JPH_RVec3 hit_p = {
-            origin->x + direction->x * hit->fraction, 
-            origin->y + direction->y * hit->fraction, 
-            origin->z + direction->z * hit->fraction
-        };
+        JPH_RVec3 hit_p = { origin->x + direction->x * hit->fraction, 
+                           origin->y + direction->y * hit->fraction, 
+                           origin->z + direction->z * hit->fraction };
         JPH_Body_GetWorldSpaceSurfaceNormal(lock.body, hit->subShapeID2, &hit_p, &normal);
     }
     JPH_BodyLockInterface_UnlockRead(lock_iface, &lock);
 
-    // --- 5. RESOLVE HANDLE ---
+    // --- 5. RESOLVE IDENTITY (Consistent with shapecast) ---
     SHADOW_LOCK(&self->shadow_lock);
-    uint64_t slot_idx = JPH_BodyInterface_GetUserData(self->body_interface, hit->bodyID);
-    if (slot_idx < self->slot_capacity) {
-        BodyHandle handle = make_handle((uint32_t)slot_idx, self->generations[slot_idx]);
-        // Build result inside shadow_lock for safe array access
+    // UserData is the baked 64-bit handle
+    BodyHandle handle = (BodyHandle)JPH_BodyInterface_GetUserData(self->body_interface, hit->bodyID);
+    uint32_t slot = (uint32_t)(handle & 0xFFFFFFFF);
+    uint32_t gen  = (uint32_t)(handle >> 32);
+
+    if (slot < self->slot_capacity && 
+        self->generations[slot] == gen && 
+        self->slot_states[slot] == SLOT_ALIVE) 
+    {
         result = Py_BuildValue("Kf(fff)", handle, hit->fraction, normal.x, normal.y, normal.z);
     }
     SHADOW_UNLOCK(&self->shadow_lock);
 
 exit:
-    // --- 6. CLEANUP & RETURN ---
-    if (query_active) {
-        atomic_fetch_sub(&self->active_queries, 1);
-    }
+    if (query_active) atomic_fetch_sub(&self->active_queries, 1);
 
-    if (result) {
-        return result;
-    } else {
-        Py_RETURN_NONE; // Correctly handles refcount
-    }
+    if (result) return result;
+    Py_RETURN_NONE;
 }
 
 // Callback: Called by Jolt when a hit is found during the sweep
@@ -1081,7 +1097,6 @@ static PyObject* PhysicsWorld_shapecast(PhysicsWorldObject* self, PyObject* args
     if (mag_sq < 1e-9f) goto exit; 
 
     // --- 2. PREPARE SHAPE & TRANSFORM ---
-    // (Local stack work - safe to do before locking)
     float s[4] = {0, 0, 0, 0};
     if (py_size && PyTuple_Check(py_size)) {
         Py_ssize_t sz_len = PyTuple_Size(py_size);
@@ -1108,7 +1123,6 @@ static PyObject* PhysicsWorld_shapecast(PhysicsWorldObject* self, PyObject* args
         return NULL;
     }
 
-    // Mark query active to prevent step() from starting
     atomic_fetch_add(&self->active_queries, 1);
     query_active = true;
 
@@ -1133,10 +1147,20 @@ static PyObject* PhysicsWorld_shapecast(PhysicsWorldObject* self, PyObject* args
     settings->backFaceModeTriangles = JPH_BackFaceMode_IgnoreBackFaces;
     settings->backFaceModeConvex = JPH_BackFaceMode_IgnoreBackFaces;
 
-    SHADOW_LOCK(&g_jph_trampoline_lock);
+    // --- SETUP FILTERS (The Missing Piece) ---
+    JPH_BroadPhaseLayerFilter_Procs bp_procs = { .ShouldCollide = filter_allow_all_bp };
+    JPH_BroadPhaseLayerFilter* bp_filter = JPH_BroadPhaseLayerFilter_Create(NULL);
+    JPH_BroadPhaseLayerFilter_SetProcs(&bp_procs);
+
+    JPH_ObjectLayerFilter_Procs obj_procs = { .ShouldCollide = filter_allow_all_obj };
+    JPH_ObjectLayerFilter* obj_filter = JPH_ObjectLayerFilter_Create(NULL);
+    JPH_ObjectLayerFilter_SetProcs(&obj_procs);
+
     CastShapeFilter filter_ctx = { .ignore_id = ignore_bid };
     JPH_BodyFilter_Procs filter_procs = { .ShouldCollide = CastShape_BodyFilter };
     JPH_BodyFilter* body_filter = JPH_BodyFilter_Create(&filter_ctx);
+
+    SHADOW_LOCK(&g_jph_trampoline_lock);
     JPH_BodyFilter_SetProcs(&filter_procs);
 
     CastShapeContext ctx = { .has_hit = false };
@@ -1144,19 +1168,22 @@ static PyObject* PhysicsWorld_shapecast(PhysicsWorldObject* self, PyObject* args
 
     JPH_RVec3 base_offset = {0, 0, 0};
     const JPH_NarrowPhaseQuery* nq = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
+    
+    // Pass bp_filter and obj_filter
     JPH_NarrowPhaseQuery_CastShape(nq, shape, transform, &sweep_dir, settings, &base_offset, 
                                    CastShape_ClosestCollector, &ctx, 
-                                   NULL, NULL, body_filter, NULL);
+                                   bp_filter, obj_filter, body_filter, NULL);
 
     JPH_BodyFilter_SetProcs(&global_bf_procs);
     SHADOW_UNLOCK(&g_jph_trampoline_lock);
+
     JPH_BodyFilter_Destroy(body_filter);
+    JPH_BroadPhaseLayerFilter_Destroy(bp_filter);
+    JPH_ObjectLayerFilter_Destroy(obj_filter);
 
     if (!ctx.has_hit) goto exit;
 
     // --- 5. RESOLVE IDENTITY & GEOMETRY ---
-    
-    // Normal calculation from penetration axis
     float nx = -ctx.hit.penetrationAxis.x;
     float ny = -ctx.hit.penetrationAxis.y;
     float nz = -ctx.hit.penetrationAxis.z;
@@ -1167,18 +1194,14 @@ static PyObject* PhysicsWorld_shapecast(PhysicsWorldObject* self, PyObject* args
     }
 
     SHADOW_LOCK(&self->shadow_lock);
-    // Retrieve the immutable handle stamped into UserData
     BodyHandle handle = (BodyHandle)JPH_BodyInterface_GetUserData(self->body_interface, ctx.hit.bodyID2);
-    
     uint32_t slot = (uint32_t)(handle & 0xFFFFFFFF);
     uint32_t gen  = (uint32_t)(handle >> 32);
 
-    // Generational validation
     if (slot < self->slot_capacity && 
         self->generations[slot] == gen && 
         self->slot_states[slot] == SLOT_ALIVE) 
     {
-        // Construct the final Python result inside the lock
         result = Py_BuildValue("Kf(fff)(fff)", 
             handle, 
             ctx.hit.fraction, 
@@ -1191,16 +1214,12 @@ static PyObject* PhysicsWorld_shapecast(PhysicsWorldObject* self, PyObject* args
     SHADOW_UNLOCK(&self->shadow_lock);
 
 exit:
-    // --- 6. CLEANUP & RETURN ---
     if (query_active) {
         atomic_fetch_sub(&self->active_queries, 1);
     }
 
-    if (result) {
-        return result;
-    } else {
-        Py_RETURN_NONE; 
-    }
+    if (result) return result;
+    Py_RETURN_NONE;
 }
 
 // Helper to grow queue
