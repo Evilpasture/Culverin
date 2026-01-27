@@ -2525,7 +2525,7 @@ static PyObject* PhysicsWorld_create_vehicle(PhysicsWorldObject* self, PyObject*
         return NULL;
     }
 
-    // --- 1. CHASSIS RESOLUTION ---
+    // --- 1. CHASSIS RESOLUTION & INITIAL GUARD ---
     SHADOW_LOCK(&self->shadow_lock);
     if (self->is_stepping || atomic_load_explicit(&self->active_queries, memory_order_acquire) > 0) {
         SHADOW_UNLOCK(&self->shadow_lock);
@@ -2534,6 +2534,7 @@ static PyObject* PhysicsWorld_create_vehicle(PhysicsWorldObject* self, PyObject*
     }
 
     flush_commands(self); 
+    
     uint32_t slot;
     if (!unpack_handle(self, chassis_h, &slot)) {
         SHADOW_UNLOCK(&self->shadow_lock);
@@ -2582,10 +2583,16 @@ static PyObject* PhysicsWorld_create_vehicle(PhysicsWorldObject* self, PyObject*
 
         PyObject *o_pos = PyDict_GetItemString(w_dict, "pos");
         float px, py, pz, radius = 0.4f, width = 0.2f;
-        if (!o_pos || !PyArg_ParseTuple(o_pos, "fff", &px, &py, &pz)) {
-            PyErr_SetString(PyExc_ValueError, "Wheel 'pos' (x,y,z) is required");
+
+        // FIXED: Generic sequence parsing for 'pos' (Accepts lists and tuples)
+        if (!o_pos || !PySequence_Check(o_pos) || PySequence_Size(o_pos) != 3) {
+            PyErr_SetString(PyExc_ValueError, "Wheel 'pos' must be a sequence of 3 floats");
             goto error_cleanup;
         }
+        PyObject* p0 = PySequence_GetItem(o_pos, 0); px = (float)PyFloat_AsDouble(p0); Py_DECREF(p0);
+        PyObject* p1 = PySequence_GetItem(o_pos, 1); py = (float)PyFloat_AsDouble(p1); Py_DECREF(p1);
+        PyObject* p2 = PySequence_GetItem(o_pos, 2); pz = (float)PyFloat_AsDouble(p2); Py_DECREF(p2);
+
         GET_FLOAT_ATTR(w_dict, "radius", radius);
         GET_FLOAT_ATTR(w_dict, "width", width);
 
@@ -2599,7 +2606,7 @@ static PyObject* PhysicsWorld_create_vehicle(PhysicsWorldObject* self, PyObject*
         w_settings[i] = (JPH_WheelSettings*)w;
     }
 
-    // --- 4. ENGINE & TRANSMISSION PARSING ---
+    // --- 4. ENGINE & TRANSMISSION ---
     v_ctrl = JPH_WheeledVehicleControllerSettings_Create();
     
     float torque = 500.0f, max_rpm = 7000.0f, min_rpm = 1000.0f, inertia = 0.5f;
@@ -2623,9 +2630,14 @@ static PyObject* PhysicsWorld_create_vehicle(PhysicsWorldObject* self, PyObject*
     }
     JPH_VehicleTransmissionSettings_SetMode(v_trans_set, (JPH_TransmissionMode)t_mode);
     JPH_VehicleTransmissionSettings_SetClutchStrength(v_trans_set, clutch); 
+    
+    // FIXED: Default Reverse Gear Ratio
+    float rev_gears[] = { -3.0f };
+    JPH_VehicleTransmissionSettings_SetReverseGearRatios(v_trans_set, rev_gears, 1);
+
     JPH_WheeledVehicleControllerSettings_SetTransmission(v_ctrl, v_trans_set);
 
-    // Differentials (OOB Safe logic)
+    // Differentials (Patched JoltC helper)
     if (strcmp(drive_str, "FWD") == 0) {
         JPH_WheeledVehicleControllerSettings_AddDifferential(v_ctrl, 0, 1);
     } else if (strcmp(drive_str, "AWD") == 0 && num_wheels >= 4) {
@@ -2637,15 +2649,22 @@ static PyObject* PhysicsWorld_create_vehicle(PhysicsWorldObject* self, PyObject*
         JPH_WheeledVehicleControllerSettings_AddDifferential(v_ctrl, i1, i2);
     }
 
-    // --- 5. CONSTRAINT CREATION & INSERTION ---
+    // --- 5. CONSTRAINT ASSEMBLY ---
     JPH_VehicleConstraintSettings v_set; JPH_VehicleConstraintSettings_Init(&v_set);
     v_set.wheelsCount = (uint32_t)num_wheels; 
     v_set.wheels = w_settings; 
     v_set.controller = (JPH_VehicleControllerSettings*)v_ctrl;
+    v_set.up.x = 0; v_set.up.y = 1; v_set.up.z = 0;
+    v_set.forward.x = 0; v_set.forward.y = 0; v_set.forward.z = 1;
 
     j_veh = JPH_VehicleConstraint_Create(lock.body, &v_set);
     if (!j_veh) { PyErr_SetString(PyExc_RuntimeError, "Jolt vehicle construction failed"); goto error_cleanup; }
 
+    // Collision Tester attached BEFORE insertion
+    tester = JPH_VehicleCollisionTesterRay_Create(1, &(JPH_Vec3){0, 1, 0}, 1.0f);
+    JPH_VehicleConstraint_SetVehicleCollisionTester(j_veh, (JPH_VehicleCollisionTester*)tester);
+
+    // --- 6. INSERTION (Shadow Locked) ---
     SHADOW_LOCK(&self->shadow_lock);
     if (self->is_stepping || atomic_load_explicit(&self->active_queries, memory_order_acquire) > 0) {
         SHADOW_UNLOCK(&self->shadow_lock);
@@ -2656,15 +2675,12 @@ static PyObject* PhysicsWorld_create_vehicle(PhysicsWorldObject* self, PyObject*
     JPH_PhysicsSystem_AddConstraint(self->system, (JPH_Constraint*)j_veh);
     constraint_added = true;
     JPH_PhysicsSystem_AddStepListener(self->system, JPH_VehicleConstraint_AsPhysicsStepListener(j_veh));
-    
-    tester = JPH_VehicleCollisionTesterRay_Create(1, &(JPH_Vec3){0, 1, 0}, 1.0f);
-    JPH_VehicleConstraint_SetVehicleCollisionTester(j_veh, (JPH_VehicleCollisionTester*)tester);
     SHADOW_UNLOCK(&self->shadow_lock);
 
     JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
     body_locked = false;
 
-    // --- 6. PYTHON WRAPPER ---
+    // --- 7. PYTHON WRAPPER ---
     PyObject *module = PyType_GetModule(Py_TYPE(self));
     CulverinState *st = get_culverin_state(module);
     VehicleObject *obj = (VehicleObject *)PyObject_New(VehicleObject, (PyTypeObject *)st->VehicleType);
@@ -2688,7 +2704,7 @@ error_cleanup:
         }
         JPH_Constraint_Destroy((JPH_Constraint*)j_veh); 
     }
-    if (tester) JPH_VehicleCollisionTester_Destroy((JPH_VehicleCollisionTester*)tester);
+    if (tester) JPH_VehicleCollisionTester_Destroy(tester);
     if (v_trans_set) JPH_VehicleTransmissionSettings_Destroy(v_trans_set);
     if (v_ctrl) JPH_VehicleControllerSettings_Destroy((JPH_VehicleControllerSettings*)v_ctrl);
     if (w_settings) {
@@ -3554,40 +3570,31 @@ static PyObject* Vehicle_get_wheel_transform(VehicleObject* self, PyObject* args
     uint32_t index;
     if (!PyArg_ParseTuple(args, "I", &index)) return NULL;
 
-    // 1. LOCK AND GUARD
     SHADOW_LOCK(&self->world->shadow_lock);
-    
     if (self->world->is_stepping) {
         SHADOW_UNLOCK(&self->world->shadow_lock);
         PyErr_SetString(PyExc_RuntimeError, "Cannot query wheel transform during physics step");
         return NULL;
     }
-
-    if (!self->vehicle) {
+    if (!self->vehicle || index >= self->num_wheels) {
         SHADOW_UNLOCK(&self->world->shadow_lock);
-        PyErr_SetString(PyExc_RuntimeError, "Vehicle instance is invalid or destroyed");
-        return NULL;
+        Py_RETURN_NONE;
     }
 
-    if (index >= self->num_wheels) {
-        SHADOW_UNLOCK(&self->world->shadow_lock);
-        return PyErr_Format(PyExc_IndexError, "Wheel index %u out of range", index);
-    }
-
-    // 2. JOLT EXTRACTION (Aligned)
     JPH_STACK_ALLOC(JPH_RMat4, transform);
     JPH_Vec3 right = {1.0f, 0.0f, 0.0f};
     JPH_Vec3 up = {0.0f, 1.0f, 0.0f};
 
-    // This query is safe because we are locked and not stepping
     JPH_VehicleConstraint_GetWheelWorldTransform(self->vehicle, index, &right, &up, transform);
 
-    // Extract Position (Double Precision column[3])
-    double px = (double)transform->column[3].x;
-    double py = (double)transform->column[3].y;
-    double pz = (double)transform->column[3].z;
+    // --- CRITICAL FIX: Layout Mapping ---
+    
+    // 1. Position: In Double Precision, this is the 'column3' member (RVec3/doubles)
+    double px = transform->column3.x;
+    double py = transform->column3.y;
+    double pz = transform->column3.z;
 
-    // Extract Rotation (Convert 4x4 to 3x3 Mat4 for Quaternion extraction)
+    // 2. Rotation: These are the first 3 columns (Vec4/floats)
     JPH_STACK_ALLOC(JPH_Mat4, rot_only_mat);
     JPH_Mat4_Identity(rot_only_mat);
     rot_only_mat->column[0] = transform->column[0];
@@ -3597,25 +3604,63 @@ static PyObject* Vehicle_get_wheel_transform(VehicleObject* self, PyObject* args
     JPH_STACK_ALLOC(JPH_Quat, q);
     JPH_Mat4_GetQuaternion(rot_only_mat, q);
 
-    // 3. UNLOCK ASAP
-    // We have all raw data on the stack; we don't need the shadow lock for Python construction.
     SHADOW_UNLOCK(&self->world->shadow_lock);
 
-    // 4. SAFE PYTHON CONSTRUCTION
+    // Safe Python construction
     PyObject* py_pos = Py_BuildValue("(ddd)", px, py, pz);
     PyObject* py_rot = Py_BuildValue("(ffff)", q->x, q->y, q->z, q->w);
-
+    
     if (!py_pos || !py_rot) {
-        Py_XDECREF(py_pos);
-        Py_XDECREF(py_rot);
-        return NULL; // Exception already set by BuildValue
+        Py_XDECREF(py_pos); Py_XDECREF(py_rot);
+        return NULL;
     }
 
     PyObject* result = PyTuple_Pack(2, py_pos, py_rot);
+    Py_DECREF(py_pos); Py_DECREF(py_rot);
+    return result;
+}
+
+static PyObject* Vehicle_get_wheel_local_transform(VehicleObject* self, PyObject* args) {
+    uint32_t index;
+    if (!PyArg_ParseTuple(args, "I", &index)) return NULL;
+
+    SHADOW_LOCK(&self->world->shadow_lock);
+    if (!self->vehicle || index >= self->num_wheels) {
+        SHADOW_UNLOCK(&self->world->shadow_lock);
+        Py_RETURN_NONE;
+    }
+
+    // 1. Use JPH_Mat4 (Standard 4x4 float matrix)
+    JPH_STACK_ALLOC(JPH_Mat4, local_transform);
     
-    // Cleanup temporary refs
-    Py_DECREF(py_pos);
-    Py_DECREF(py_rot);
+    JPH_Vec3 right = {1.0f, 0.0f, 0.0f};
+    JPH_Vec3 up = {0.0f, 1.0f, 0.0f};
+
+    // Jolt fills the float matrix
+    JPH_VehicleConstraint_GetWheelLocalTransform(self->vehicle, index, &right, &up, local_transform);
+
+    // 2. Extract Translation (column[3] is the 4th column in Mat4)
+    float lx = local_transform->column[3].x;
+    float ly = local_transform->column[3].y;
+    float lz = local_transform->column[3].z;
+
+    // 3. Extract Rotation
+    JPH_STACK_ALLOC(JPH_Quat, q);
+    JPH_Mat4_GetQuaternion(local_transform, q);
+
+    SHADOW_UNLOCK(&self->world->shadow_lock);
+
+    // Build the Python response: ((lx, ly, lz), (rx, ry, rz, rw))
+    PyObject* py_pos = Py_BuildValue("(fff)", lx, ly, lz);
+    PyObject* py_rot = Py_BuildValue("(ffff)", q->x, q->y, q->z, q->w);
+    
+    if (!py_pos || !py_rot) {
+        Py_XDECREF(py_pos); Py_XDECREF(py_rot);
+        return NULL;
+    }
+
+    PyObject* result = PyTuple_Pack(2, py_pos, py_rot);
+    Py_DECREF(py_pos); Py_DECREF(py_rot);
     
     return result;
 }
@@ -4326,6 +4371,8 @@ static const PyMethodDef Vehicle_methods[] = {
      "Set driver inputs: forward [-1..1], right [-1..1], brake [0..1], handbrake [0..1]"},
     {"get_wheel_transform", (PyCFunction)Vehicle_get_wheel_transform, METH_VARARGS, 
      "Get world-space transform of a wheel by index."},
+    {"get_wheel_local_transform", (PyCFunction)Vehicle_get_wheel_local_transform, METH_VARARGS, 
+     "Get local-space transform of a wheel by index."},
     {"destroy", (PyCFunction)Vehicle_destroy, METH_NOARGS, "Manually remove the vehicle from physics."},
     {"get_debug_state", (PyCFunction)Vehicle_get_debug_state, METH_NOARGS, "Print drivetrain and wheel status to stderr"},
     {NULL}};
