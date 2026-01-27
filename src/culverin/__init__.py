@@ -1,4 +1,4 @@
-from ._culverin_c import (
+from culverin._culverin_c import (
     PhysicsWorld,
     Character,
     # Shapes

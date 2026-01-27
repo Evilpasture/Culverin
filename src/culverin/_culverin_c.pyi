@@ -1,4 +1,4 @@
-from typing import Tuple, List, Optional, Any, Dict
+from typing import Tuple, List, Optional, Any, Dict, Union, Sequence
 
 # Constants
 SHAPE_BOX: int = 0
@@ -26,11 +26,21 @@ class Character:
     def set_rotation(self, rot: Tuple[float, float, float, float]) -> None: ...
     def is_grounded(self) -> bool: ...
     def set_strength(self, strength: float) -> None: ...
-    # New Interpolation Method
     def get_render_transform(self, alpha: float) -> Tuple[Tuple[float, float, float], Tuple[float, float, float, float]]: ...
-
+    
     @property
     def handle(self) -> int: ...
+
+class Vehicle:
+    def set_input(
+        self, 
+        forward: float = 0.0, 
+        right: float = 0.0, 
+        brake: float = 0.0, 
+        handbrake: float = 0.0
+    ) -> None: ...
+    def get_wheel_transform(self, index: int) -> Tuple[Tuple[float, float, float], Tuple[float, float, float, float]]: ...
+    def destroy(self) -> None: ...
 
 class PhysicsWorld:
     def __init__(
@@ -69,6 +79,12 @@ class PhysicsWorld:
         step_height: float = 0.4,
         max_slope: float = 45.0
     ) -> Character: ...
+    
+    def create_vehicle(
+        self,
+        chassis: int,
+        wheels: Sequence[Any]
+    ) -> Vehicle: ...
 
     def destroy_body(self, handle: int) -> None: ...
 
@@ -100,7 +116,7 @@ class PhysicsWorld:
         start: Tuple[float, float, float], 
         direction: Tuple[float, float, float], 
         max_dist: float = 1000.0,
-        ignore: int = 0
+        ignore: Any = 0
     ) -> Optional[Tuple[int, float, Tuple[float, float, float]]]: ...
     def shapecast(
         self,
@@ -109,7 +125,7 @@ class PhysicsWorld:
         rot: Tuple[float, float, float, float],
         dir: Tuple[float, float, float],
         size: Any,
-        ignore: int = 0
+        ignore: Any = 0
     ) -> Optional[Tuple[int, float, Tuple[float, float, float], Tuple[float, float, float]]]: ...
     def overlap_sphere(self, center: Tuple[float, float, float], radius: float) -> List[int]: ...
     def overlap_aabb(self, min: Tuple[float, float, float], max: Tuple[float, float, float]) -> List[int]: ...

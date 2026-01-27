@@ -45,6 +45,15 @@ typedef PyThread_type_lock ShadowMutex;
 #define SHADOW_UNLOCK(m) PyThread_release_lock(m)
 #endif
 
+// Comment this line out to disable all debug prints
+#define CULVERIN_DEBUG
+
+#ifdef CULVERIN_DEBUG
+#define DEBUG_LOG(fmt, ...) fprintf(stderr, "[Culverin] " fmt "\n", ##__VA_ARGS__)
+#else
+#define DEBUG_LOG(fmt, ...)
+#endif
+
 // --- Shape Caching ---
 typedef struct {
   uint32_t type; // 0=Box, 1=Sphere, 2=Capsule, 3=Cylinder, 4=Plane
@@ -140,6 +149,7 @@ typedef struct {
 
   // Jolt Handles
   JPH_PhysicsSystem *system;
+  JPH_CharacterVsCharacterCollision *char_vs_char_manager;
   JPH_BodyInterface *body_interface;
   JPH_JobSystem *job_system;
 
@@ -237,6 +247,25 @@ typedef struct {
 extern const PyType_Spec Character_spec;
 
 typedef struct {
+  PyObject_HEAD
+  JPH_VehicleConstraint *vehicle;
+  JPH_VehicleCollisionTester *tester;
+  PhysicsWorldObject *world;
+  
+  // Ownership tracking for cleanup
+  JPH_WheelSettings **wheel_settings; 
+  JPH_VehicleControllerSettings* controller_settings;
+  JPH_VehicleTransmissionSettings* transmission_settings; // NEW: Keep alive
+  JPH_LinearCurve* friction_curve;
+  JPH_LinearCurve* torque_curve;
+
+  uint32_t num_wheels;
+  int current_gear;
+} VehicleObject;
+
+extern const PyType_Spec Vehicle_spec;
+
+typedef struct {
   PhysicsWorldObject *world;
   PyObject *result_list; // Python List to append handles to
 } QueryContext;
@@ -262,6 +291,7 @@ typedef struct {
   PyObject *helper;           // Reference to culverin._culverin module
   PyObject *PhysicsWorldType; // Reference to the class
   PyObject *CharacterType;    // Reference to the character class
+  PyObject *VehicleType;      // Reference to the vehicle class
 } CulverinState;
 
 // Helper to retrieve state from the module object

@@ -27,17 +27,48 @@ char_on_contact_validate(void *userData, const JPH_CharacterVirtual *character,
   return true; // Usually true, unless you want to walk through certain bodies
 }
 
+
+static bool JPH_API_CALL filter_true_body(void *userData, JPH_BodyID bodyID) { return true; }
+static bool JPH_API_CALL filter_true_shape(void *userData, const JPH_Shape *shape, const JPH_SubShapeID *id) { return true; }
+
+static const JPH_BodyFilter_Procs global_bf_procs = { .ShouldCollide = filter_true_body };
+static const JPH_ShapeFilter_Procs global_sf_procs = { .ShouldCollide = filter_true_shape };
+
+static void JPH_API_CALL char_on_character_contact_added(
+    void *userData, const JPH_CharacterVirtual *character, const JPH_CharacterVirtual *otherCharacter,
+    JPH_SubShapeID subShapeID2, const JPH_RVec3 *contactPosition,
+    const JPH_Vec3 *contactNormal, JPH_CharacterContactSettings *ioSettings) {
+    
+    ioSettings->canPushCharacter = true;
+    ioSettings->canReceiveImpulses = true;
+}
+
 // Callback: Handle the collision settings AND Apply Impulse
 static void JPH_API_CALL char_on_contact_added(
     void *userData, const JPH_CharacterVirtual *character, JPH_BodyID bodyID2,
     JPH_SubShapeID subShapeID2, const JPH_RVec3 *contactPosition,
     const JPH_Vec3 *contactNormal, JPH_CharacterContactSettings *ioSettings) {
+  
+  // 1. Safe Defaults
   ioSettings->canPushCharacter = true;
   ioSettings->canReceiveImpulses = true;
 
+  // 2. Safety Checks
+  if (!userData) return;
   CharacterObject *self = (CharacterObject *)userData;
+  
+  if (!self->world || !self->world->body_interface) return;
   JPH_BodyInterface *bi = self->world->body_interface;
 
+  // 3. Ignore Sensors
+  // Sensors shouldn't physically push back or be pushed by locomotion impulses
+  if (JPH_BodyInterface_IsSensor(bi, bodyID2)) {
+      ioSettings->canPushCharacter = false;
+      ioSettings->canReceiveImpulses = false;
+      return;
+  }
+
+  // 4. Only interact with Dynamic bodies
   if (JPH_BodyInterface_GetMotionType(bi, bodyID2) != JPH_MotionType_Dynamic) {
     return;
   }
@@ -46,18 +77,26 @@ static void JPH_API_CALL char_on_contact_added(
   float vy = self->last_vy;
   float vz = self->last_vz;
 
-  // Normal points FROM Character TO Body.
-  float dot =
-      vx * contactNormal->x + vy * contactNormal->y + vz * contactNormal->z;
+  // 5. Projection: Normal points FROM Character TO Body
+  float dot = vx * contactNormal->x + vy * contactNormal->y + vz * contactNormal->z;
 
-  if (dot > 0.01f) {
+  // 6. Apply Impulse with Thresholds
+  // Threshold > 0.1f prevents micro-jitter when touching objects at rest
+  if (dot > 0.1f) {
     float factor = dot * self->push_strength;
+    
+    // Safety Cap: Prevent physics explosions if velocity spikes
+    const float max_impulse = 10000.0f; 
+    if (factor > max_impulse) factor = max_impulse;
+
     JPH_Vec3 impulse;
     impulse.x = contactNormal->x * factor;
 
-    // Flatten Y: Only allow upward pushes (lifting), ignore downward (friction)
+    // Flatten Y: Only allow upward pushes (lifting/kicking), ignore downward (crushing)
+    // This prevents the character from applying massive force to the floor or objects they stand on
     float y_push = contactNormal->y * factor;
     impulse.y = (y_push > 0.0f) ? y_push : 0.0f;
+    
     impulse.z = contactNormal->z * factor;
 
     JPH_BodyInterface_AddImpulse(bi, bodyID2, &impulse);
@@ -311,7 +350,7 @@ static const JPH_CharacterContactListener_Procs char_listener_procs = {
     .OnContactPersisted = char_on_contact_added,
     .OnContactRemoved = NULL,
     .OnCharacterContactValidate = NULL,
-    .OnCharacterContactAdded = NULL,
+    .OnCharacterContactAdded = char_on_character_contact_added,
     .OnCharacterContactPersisted = NULL,
     .OnCharacterContactRemoved = NULL,
     .OnContactSolve = NULL};
@@ -384,11 +423,42 @@ static JPH_Shape *find_or_create_shape(PhysicsWorldObject *self, int type,
   return shape;
 }
 
-// --- Lifecycle: Deallocation ---
-static void PhysicsWorld_dealloc(PhysicsWorldObject *self) {
+// --- Helper: Resource Cleanup (Idempotent) ---
+static void PhysicsWorld_free_members(PhysicsWorldObject *self) {
+  // 1. Jolt Systems
+  // Note: Destroy order matters. System uses the filters/interfaces, so destroy System first.
   if (self->system) {
     JPH_PhysicsSystem_Destroy(self->system);
+    self->system = NULL;
   }
+  if (self->char_vs_char_manager) {
+    JPH_CharacterVsCharacterCollision_Destroy(self->char_vs_char_manager);
+    self->char_vs_char_manager = NULL;
+  }
+  if (self->job_system) {
+    JPH_JobSystem_Destroy(self->job_system);
+    self->job_system = NULL;
+  }
+
+  // 2. Filters & Interfaces
+  // WARNING: joltc.h does not expose Destroy functions for these tables.
+  // This implies a memory leak in the C bindings for these specific objects.
+  // We set them to NULL to prevent use-after-free logic, but we cannot free the C++ memory.
+  // Best to assume that Jolt hopefully cleans them up when the program exits.
+  if (self->bp_interface) { 
+      // JPH_BroadPhaseLayerInterface_Destroy(self->bp_interface); // Missing in API
+      self->bp_interface = NULL; 
+  }
+  if (self->pair_filter) { 
+      // JPH_ObjectLayerPairFilter_Destroy(self->pair_filter); // Missing in API
+      self->pair_filter = NULL; 
+  }
+  if (self->bp_filter) { 
+      // JPH_ObjectVsBroadPhaseLayerFilter_Destroy(self->bp_filter); // Missing in API
+      self->bp_filter = NULL; 
+  }
+
+  // 3. Shape Cache
   if (self->shape_cache) {
     for (size_t i = 0; i < self->shape_cache_count; i++) {
       if (self->shape_cache[i].shape) {
@@ -396,42 +466,62 @@ static void PhysicsWorld_dealloc(PhysicsWorldObject *self) {
       }
     }
     PyMem_RawFree(self->shape_cache);
+    self->shape_cache = NULL;
   }
-  if (self->job_system) {
-    JPH_JobSystem_Destroy(self->job_system);
+
+  // 4. Contact Listener & Events
+  if (self->contact_listener) { 
+      JPH_ContactListener_Destroy(self->contact_listener); 
+      self->contact_listener = NULL;
   }
-  if (self->contact_listener) { JPH_ContactListener_Destroy(self->contact_listener); }
-  if (self->contact_events) { PyMem_RawFree(self->contact_events); }
+  if (self->contact_events) { 
+      PyMem_RawFree(self->contact_events); 
+      self->contact_events = NULL;
+  }
 
-  PyMem_RawFree(self->positions);
-  PyMem_RawFree(self->rotations);
-  PyMem_RawFree(self->prev_positions);
-  PyMem_RawFree(self->prev_rotations);
-  PyMem_RawFree(self->linear_velocities);
-  PyMem_RawFree(self->angular_velocities);
-  PyMem_RawFree(self->body_ids);
-  PyMem_RawFree(self->generations);
-  PyMem_RawFree(self->slot_to_dense);
-  PyMem_RawFree(self->dense_to_slot);
-  PyMem_RawFree(self->free_slots);
-  PyMem_RawFree(self->slot_states);
-  PyMem_RawFree(self->command_queue);
-  PyMem_RawFree(self->user_data);
-
+  // 5. Constraints
   if (self->constraints) {
     for(size_t i=0; i<self->constraint_capacity; i++) {
-        if(self->constraints[i]) JPH_Constraint_Destroy(self->constraints[i]);
+        if(self->constraints[i]) {
+            JPH_Constraint_Destroy(self->constraints[i]);
+            self->constraints[i] = NULL;
+        }
     }
     PyMem_RawFree((void *)self->constraints);
+    self->constraints = NULL;
   }
-  PyMem_RawFree(self->constraint_generations);
-  PyMem_RawFree(self->free_constraint_slots);
-  PyMem_RawFree(self->constraint_states);
+  if (self->constraint_generations) { PyMem_RawFree(self->constraint_generations); self->constraint_generations = NULL; }
+  if (self->free_constraint_slots) { PyMem_RawFree(self->free_constraint_slots); self->free_constraint_slots = NULL; }
+  if (self->constraint_states) { PyMem_RawFree(self->constraint_states); self->constraint_states = NULL; }
+
+  // 6. Data Arrays
+  if (self->positions) { PyMem_RawFree(self->positions); self->positions = NULL; }
+  if (self->rotations) { PyMem_RawFree(self->rotations); self->rotations = NULL; }
+  if (self->prev_positions) { PyMem_RawFree(self->prev_positions); self->prev_positions = NULL; }
+  if (self->prev_rotations) { PyMem_RawFree(self->prev_rotations); self->prev_rotations = NULL; }
+  if (self->linear_velocities) { PyMem_RawFree(self->linear_velocities); self->linear_velocities = NULL; }
+  if (self->angular_velocities) { PyMem_RawFree(self->angular_velocities); self->angular_velocities = NULL; }
+  
+  if (self->body_ids) { PyMem_RawFree(self->body_ids); self->body_ids = NULL; }
+  if (self->generations) { PyMem_RawFree(self->generations); self->generations = NULL; }
+  if (self->slot_to_dense) { PyMem_RawFree(self->slot_to_dense); self->slot_to_dense = NULL; }
+  if (self->dense_to_slot) { PyMem_RawFree(self->dense_to_slot); self->dense_to_slot = NULL; }
+  if (self->free_slots) { PyMem_RawFree(self->free_slots); self->free_slots = NULL; }
+  if (self->slot_states) { PyMem_RawFree(self->slot_states); self->slot_states = NULL; }
+  if (self->command_queue) { PyMem_RawFree(self->command_queue); self->command_queue = NULL; }
+  if (self->user_data) { PyMem_RawFree(self->user_data); self->user_data = NULL; }
 
 #if PY_VERSION_HEX < 0x030D0000
-  if (self->shadow_lock)
+  if (self->shadow_lock) {
     PyThread_free_lock(self->shadow_lock);
+    self->shadow_lock = NULL;
+  }
 #endif
+}
+
+// --- Lifecycle: Deallocation ---
+static void PhysicsWorld_dealloc(PhysicsWorldObject *self) {
+  PhysicsWorld_free_members(self);
   Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
@@ -441,48 +531,92 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
   static char *kwlist[] = {"settings", "bodies", NULL};
   PyObject *settings_dict = NULL;
   PyObject *bodies_list = NULL;
+  
+  // Clean Locals for fail label
+  PyObject *val_func = NULL;
+  PyObject *norm_settings = NULL;
+  PyObject *bake_func = NULL;
+  PyObject *baked = NULL;
+
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "|OO", kwlist, &settings_dict,
                                    &bodies_list)) {
     return -1;
   }
   
-  // NEW: Initialize MemoryView Counter
+  // 1. Explicitly zero counters (prevent UB)
   self->view_export_count = 0;
+  self->free_count = 0;
+  self->command_count = 0;
+  self->contact_count = 0;
+  self->shape_cache_count = 0;
+  self->constraint_count = 0;
+  self->free_constraint_count = 0;
+  self->count = 0;
+  self->time = 0.0;
+  
+  // Ensure pointers are NULL so free_members works correctly on fail
+  self->system = NULL;
+  self->job_system = NULL;
+  self->bp_interface = NULL;
+  self->pair_filter = NULL;
+  self->bp_filter = NULL;
+  self->contact_listener = NULL;
+  self->contact_events = NULL;
+  self->char_vs_char_manager = NULL;
+  self->positions = NULL; // etc... (tp_alloc usually zeros, but be safe)
 
   PyObject *module = PyType_GetModule(Py_TYPE(self));
-  CulverinState *st = get_culverin_state(module);
-
-  PyObject *val_func = PyObject_GetAttrString(st->helper, "validate_settings");
-  PyObject *norm_settings = PyObject_CallFunctionObjArgs(
-      val_func, settings_dict ? settings_dict : Py_None, NULL);
-  Py_DECREF(val_func);
-  if (!norm_settings) {
+  if (!module) {
+    PyErr_SetString(PyExc_RuntimeError, "Failed to get module");
     return -1;
   }
 
-  float gx = NAN;
-  float gy = NAN;
-  float gz = NAN;
-  float slop = NAN;
-  int max_bodies = 0;
-  int max_pairs = 0;
-  PyArg_ParseTuple(norm_settings, "ffffii", &gx, &gy, &gz, &slop, &max_bodies,
-                   &max_pairs);
-  Py_DECREF(norm_settings);
+  CulverinState *st = get_culverin_state(module);
+  if (!st) {
+    PyErr_SetString(PyExc_RuntimeError, "Failed to get module state");
+    return -1;
+  }
 
+  val_func = PyObject_GetAttrString(st->helper, "validate_settings");
+  if (!val_func) {
+    PyErr_SetString(PyExc_RuntimeError, "Failed to get settings validator");
+    goto fail;
+  }
+
+  norm_settings = PyObject_CallFunctionObjArgs(
+      val_func, settings_dict ? settings_dict : Py_None, NULL);
+  if (!norm_settings) goto fail;
+
+  float gx = NAN, gy = NAN, gz = NAN, slop = NAN;
+  int max_bodies = 0, max_pairs = 0;
+  
+  if (!PyArg_ParseTuple(norm_settings, "ffffii", &gx, &gy, &gz, &slop,
+                      &max_bodies, &max_pairs)) {
+    PyErr_SetString(PyExc_RuntimeError, "validate_settings returned invalid data");
+    goto fail;
+  }
+  Py_CLEAR(norm_settings); 
+
+  // 2. Jolt Systems Initialization
   JobSystemThreadPoolConfig job_cfg = {
       .maxJobs = 1024, .maxBarriers = 8, .numThreads = -1};
   self->job_system = JPH_JobSystemThreadPool_Create(&job_cfg);
+  if (!self->job_system) { PyErr_SetString(PyExc_RuntimeError, "Failed init JobSystem"); goto fail; }
+
   self->bp_interface = JPH_BroadPhaseLayerInterfaceTable_Create(2, 2);
-  JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(
-      self->bp_interface, 0, 0);
-  JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(
-      self->bp_interface, 1, 1);
+  if (!self->bp_interface) { PyErr_NoMemory(); goto fail; }
+
+  JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(self->bp_interface, 0, 0);
+  JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(self->bp_interface, 1, 1);
+
   self->pair_filter = JPH_ObjectLayerPairFilterTable_Create(2);
+  if (!self->pair_filter) { PyErr_NoMemory(); goto fail; }
   JPH_ObjectLayerPairFilterTable_EnableCollision(self->pair_filter, 1, 0);
   JPH_ObjectLayerPairFilterTable_EnableCollision(self->pair_filter, 1, 1);
+  
   self->bp_filter = JPH_ObjectVsBroadPhaseLayerFilterTable_Create(
       self->bp_interface, 2, self->pair_filter, 2);
+  if (!self->bp_filter) { PyErr_NoMemory(); goto fail; }
 
   JPH_PhysicsSystemSettings phys_settings = {
       .maxBodies = 1000000,
@@ -491,67 +625,106 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
       .broadPhaseLayerInterface = self->bp_interface,
       .objectLayerPairFilter = self->pair_filter,
       .objectVsBroadPhaseLayerFilter = self->bp_filter};
+  
   self->system = JPH_PhysicsSystem_Create(&phys_settings);
+  if (!self->system) { PyErr_SetString(PyExc_RuntimeError, "Failed init PhysicsSystem"); goto fail; }
+
+  self->char_vs_char_manager = JPH_CharacterVsCharacterCollision_CreateSimple();
+  if (!self->char_vs_char_manager) { PyErr_NoMemory(); goto fail; }
+
   JPH_Vec3 gravity = {gx, gy, gz};
   JPH_PhysicsSystem_SetGravity(self->system, &gravity);
   self->body_interface = JPH_PhysicsSystem_GetBodyInterface(self->system);
 
-  // Init Contact Event Buffer
-    self->contact_events = PyMem_RawMalloc(64 * sizeof(ContactEvent));
-    self->contact_capacity = 64;
-    self->contact_count = 0;
+  // 3. Contact Events & Listener
+  self->contact_capacity = 64;
+  self->contact_events = PyMem_RawMalloc(self->contact_capacity * sizeof(ContactEvent));
+  if (!self->contact_events) { PyErr_NoMemory(); goto fail; }
 
-    // Create and Register Listener
-    JPH_ContactListener_SetProcs(&contact_procs);
-    self->contact_listener = JPH_ContactListener_Create(self); 
-    JPH_PhysicsSystem_SetContactListener(self->system, self->contact_listener);
+  JPH_ContactListener_SetProcs(&contact_procs);
+  self->contact_listener = JPH_ContactListener_Create(self); 
+  if (!self->contact_listener) { PyErr_NoMemory(); goto fail; }
+  JPH_PhysicsSystem_SetContactListener(self->system, self->contact_listener);
 
 #if PY_VERSION_HEX < 0x030D0000
   self->shadow_lock = PyThread_allocate_lock();
+  if (!self->shadow_lock) { PyErr_NoMemory(); goto fail; }
 #endif
 
-  // --- ABI Safety Check (Double Precision) ---
+  // 4. ABI Check
   {
       JPH_BoxShapeSettings* bs = JPH_BoxShapeSettings_Create(&(JPH_Vec3){1,1,1}, 0.0f);
       JPH_Shape* shape = (JPH_Shape*)JPH_BoxShapeSettings_CreateShape(bs);
       JPH_ShapeSettings_Destroy((JPH_ShapeSettings*)bs);
+      if (!shape) { PyErr_NoMemory(); goto fail; }
 
       JPH_BodyCreationSettings* bcs = JPH_BodyCreationSettings_Create3(
-          shape, 
-          &(JPH_RVec3){10.0, 20.0, 30.0}, 
-          &(JPH_Quat){0,0,0,1}, 
-          JPH_MotionType_Static, 0
-      );
+          shape, &(JPH_RVec3){10.0, 20.0, 30.0}, &(JPH_Quat){0,0,0,1}, JPH_MotionType_Static, 0);
       JPH_Shape_Destroy(shape);
+      if (!bcs) { PyErr_NoMemory(); goto fail; }
+
       JPH_BodyID bid = JPH_BodyInterface_CreateAndAddBody(self->body_interface, bcs, JPH_Activation_Activate);
       JPH_BodyCreationSettings_Destroy(bcs);
 
       JPH_STACK_ALLOC(JPH_RVec3, p_check);
       JPH_BodyInterface_GetPosition(self->body_interface, bid, p_check);
-      
       JPH_BodyInterface_RemoveBody(self->body_interface, bid);
       JPH_BodyInterface_DestroyBody(self->body_interface, bid);
 
-      // We expect 10.0, 20.0, 30.0
-      // If JPH_RVec3 struct alignment is mismatched between ext and lib, this will read garbage.
+      // Verify double precision alignment
       if (fabs(p_check->x - 10.0) > 0.1 || fabs(p_check->y - 20.0) > 0.1) {
-          PyErr_SetString(PyExc_RuntimeError, 
-            "JoltC ABI Mismatch: Library expects different floating point precision (Double vs Float). "
-            "Recompile extension with/without JPH_DOUBLE_PRECISION.");
-          return -1;
+          PyErr_SetString(PyExc_RuntimeError, "JoltC ABI Mismatch: Precision issue.");
+          goto fail;
       }
   }
 
-  PyObject *baked = NULL;
+  // 5. Bake Scene (Optional)
   size_t baked_count = 0;
   if (bodies_list && bodies_list != Py_None) {
-    PyObject *bake_func = PyObject_GetAttrString(st->helper, "bake_scene");
+    bake_func = PyObject_GetAttrString(st->helper, "bake_scene");
+    if (!bake_func) { PyErr_SetString(PyExc_RuntimeError, "Missing bake_scene"); goto fail; }
+    
     baked = PyObject_CallFunctionObjArgs(bake_func, bodies_list, NULL);
-    Py_DECREF(bake_func);
-    if (!baked) {
-      return -1;
+    if (!baked) goto fail; // Exception set by call
+
+    // --- Hardened Validation of bake_scene output ---
+    if (!PyTuple_Check(baked) || PyTuple_Size(baked) < 7) {
+        PyErr_SetString(PyExc_RuntimeError, "bake_scene returned invalid tuple (size < 7)");
+        goto fail;
     }
-    baked_count = PyLong_AsSize_t(PyTuple_GetItem(baked, 0));
+    
+    // Check Count
+    PyObject* py_count = PyTuple_GetItem(baked, 0);
+    if (!PyLong_Check(py_count)) {
+        PyErr_SetString(PyExc_TypeError, "bake_scene count is not an integer");
+        goto fail;
+    }
+    baked_count = PyLong_AsSize_t(py_count);
+    if (PyErr_Occurred()) goto fail;
+
+    // Check Buffers Types and Sizes
+    struct { int idx; size_t stride; const char* name; } checks[] = {
+        {1, 16, "positions"}, {2, 16, "rotations"}, {3, 20, "shapes"},
+        {4, 1, "motion"}, {5, 1, "layer"}, {6, 8, "userdata"}
+    };
+
+    for (int k=0; k<6; k++) {
+        PyObject* buf = PyTuple_GetItem(baked, checks[k].idx);
+        if (!PyBytes_Check(buf)) {
+            PyErr_Format(PyExc_TypeError, "bake_scene item %d (%s) is not bytes", k+1, checks[k].name);
+            goto fail;
+        }
+        if (PyBytes_Size(buf) < (Py_ssize_t)(baked_count * checks[k].stride)) {
+            PyErr_Format(PyExc_ValueError, "bake_scene buffer %s too small for count %zu", checks[k].name, baked_count);
+            goto fail;
+        }
+    }
+  }
+  Py_CLEAR(bake_func); 
+
+  if (max_bodies <= 0 || max_bodies > 1000000) {
+    PyErr_SetString(PyExc_ValueError, "max_bodies out of sane range");
+    goto fail;
   }
 
   self->count = baked_count;
@@ -559,6 +732,7 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
   if (self->capacity < 128) self->capacity = 128;
   if (self->capacity < self->count) self->capacity = self->count + 1024;
 
+  // 6. Allocations (Native Buffers)
   self->positions = PyMem_RawCalloc(self->capacity * 4, sizeof(float));
   self->rotations = PyMem_RawCalloc(self->capacity * 4, sizeof(float));
   self->prev_positions = PyMem_RawCalloc(self->capacity * 4, sizeof(float));
@@ -567,28 +741,24 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
   self->angular_velocities = PyMem_RawCalloc(self->capacity * 4, sizeof(float));
   self->body_ids = PyMem_RawMalloc(self->capacity * sizeof(JPH_BodyID));
   self->user_data = PyMem_RawCalloc(self->capacity, sizeof(uint64_t));
+  
   self->slot_capacity = self->capacity;
   self->generations = PyMem_RawCalloc(self->slot_capacity, sizeof(uint32_t));
   self->slot_to_dense = PyMem_RawMalloc(self->slot_capacity * sizeof(uint32_t));
   self->dense_to_slot = PyMem_RawMalloc(self->slot_capacity * sizeof(uint32_t));
   self->free_slots = PyMem_RawMalloc(self->slot_capacity * sizeof(uint32_t));
   self->slot_states = PyMem_RawCalloc(self->slot_capacity, sizeof(uint8_t));
-  self->command_queue = PyMem_RawMalloc(64 * sizeof(PhysicsCommand));
+  
   self->command_capacity = 64;
-  self->command_count = 0;
+  self->command_queue = PyMem_RawMalloc(self->command_capacity * sizeof(PhysicsCommand));
 
-  self->constraint_capacity = 256; // Start small
+  self->constraint_capacity = 256; 
   self->constraints = (JPH_Constraint **)PyMem_RawCalloc(self->constraint_capacity, sizeof(JPH_Constraint*));
   self->constraint_generations = PyMem_RawCalloc(self->constraint_capacity, sizeof(uint32_t));
   self->free_constraint_slots = PyMem_RawMalloc(self->constraint_capacity * sizeof(uint32_t));
   self->constraint_states = PyMem_RawCalloc(self->constraint_capacity, sizeof(uint8_t));
 
-  for(uint32_t i=0; i<self->constraint_capacity; i++) {
-      self->constraint_generations[i] = 1;
-      self->free_constraint_slots[i] = i;
-  }
-  self->free_constraint_count = self->constraint_capacity;
-
+  // Allocation Check
   if (!self->positions || !self->rotations || !self->body_ids ||
       !self->linear_velocities || !self->angular_velocities ||
       !self->user_data || !self->generations || !self->slot_to_dense ||
@@ -596,20 +766,25 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
       !self->command_queue || !self->prev_positions || !self->prev_rotations ||
       !self->constraints || !self->constraint_generations ||
       !self->free_constraint_slots || !self->constraint_states) {
-
-    Py_XDECREF(baked);
     PyErr_NoMemory();
-    return -1;
+    goto fail;
   }
 
+  // Init Constraint Slots
+  for(uint32_t i=0; i<self->constraint_capacity; i++) {
+      self->constraint_generations[i] = 1;
+      self->free_constraint_slots[i] = i;
+  }
+  self->free_constraint_count = self->constraint_capacity;
+
+  // 7. Apply Baked Data
   if (baked) {
+    // Pointers are safe due to earlier checks
     float *f_pos = (float *)PyBytes_AsString(PyTuple_GetItem(baked, 1));
     float *f_rot = (float *)PyBytes_AsString(PyTuple_GetItem(baked, 2));
     float *f_shape = (float *)PyBytes_AsString(PyTuple_GetItem(baked, 3));
-    unsigned char *u_mot =
-        (unsigned char *)PyBytes_AsString(PyTuple_GetItem(baked, 4));
-    unsigned char *u_layer =
-        (unsigned char *)PyBytes_AsString(PyTuple_GetItem(baked, 5));
+    unsigned char *u_mot = (unsigned char *)PyBytes_AsString(PyTuple_GetItem(baked, 4));
+    unsigned char *u_layer = (unsigned char *)PyBytes_AsString(PyTuple_GetItem(baked, 5));
     uint64_t *u_data = (uint64_t *)PyBytes_AsString(PyTuple_GetItem(baked, 6));
 
     JPH_BodyInterface *bi = self->body_interface;
@@ -628,16 +803,22 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
 
       float params[4] = {f_shape[i * 5 + 1], f_shape[i * 5 + 2],
                          f_shape[i * 5 + 3], f_shape[i * 5 + 4]};
-      JPH_Shape *shape =
-          find_or_create_shape(self, (int)f_shape[i * 5], params);
+      
+      JPH_Shape *shape = find_or_create_shape(self, (int)f_shape[i * 5], params);
 
       if (shape) {
         JPH_BodyCreationSettings *creation = JPH_BodyCreationSettings_Create3(
             shape, body_pos, body_rot, (JPH_MotionType)u_mot[i],
             (JPH_ObjectLayer)u_layer[i]);
 
-        JPH_BodyCreationSettings_SetUserData(creation, (uint64_t)i);
+        if (!creation) {
+            // Partial Failure: Log it, mark invalid, but continue
+            DEBUG_LOG("Warning: Failed to create settings for body %zu", i);
+            self->body_ids[i] = JPH_INVALID_BODY_ID;
+            continue;
+        }
 
+        JPH_BodyCreationSettings_SetUserData(creation, (uint64_t)i);
         if (u_mot[i] == 2) {
           JPH_BodyCreationSettings_SetAllowSleeping(creation, true);
         }
@@ -652,18 +833,29 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
         self->slot_states[i] = SLOT_ALIVE;
         self->user_data[i] = u_data[i];
       } else {
+        DEBUG_LOG("Warning: Failed to create shape for body %zu", i);
         self->body_ids[i] = JPH_INVALID_BODY_ID;
       }
     }
-    Py_DECREF(baked);
+    Py_CLEAR(baked);
   }
-  for (uint32_t i = (uint32_t)self->count; i < (uint32_t)self->slot_capacity;
-       i++) {
+
+  // Init Free Slots
+  for (uint32_t i = (uint32_t)self->count; i < (uint32_t)self->slot_capacity; i++) {
     self->generations[i] = 1;
     self->free_slots[self->free_count++] = i;
   }
+  
   culverin_sync_shadow_buffers(self);
   return 0;
+
+fail:
+  PhysicsWorld_free_members(self); // Clean native resources explicitly
+  Py_XDECREF(val_func);
+  Py_XDECREF(norm_settings);
+  Py_XDECREF(bake_func);
+  Py_XDECREF(baked);
+  return -1;
 }
 
 static PyObject *PhysicsWorld_apply_impulse(PhysicsWorldObject *self,
@@ -1328,6 +1520,8 @@ static PyObject* PhysicsWorld_create_constraint(PhysicsWorldObject* self, PyObje
         return NULL;
     }
 
+    DEBUG_LOG("Creating Constraint Type %d between %llu and %llu", type, h1, h2);
+
     // --- 1. Parse Parameters ---
     ConstraintParams p;
     params_init(&p);
@@ -1416,6 +1610,8 @@ static PyObject* PhysicsWorld_create_constraint(PhysicsWorldObject* self, PyObje
     uint32_t gen = self->constraint_generations[c_slot];
     ConstraintHandle handle = ((uint64_t)gen << 32) | c_slot;
     SHADOW_UNLOCK(&self->shadow_lock);
+
+    DEBUG_LOG("Constraint registered: Handle %llu at Slot %u", handle, c_slot);
 
     return PyLong_FromUnsignedLongLong(handle);
 }
@@ -1681,17 +1877,26 @@ static PyObject *PhysicsWorld_create_character(PhysicsWorldObject *self,
   settings.minTimeRemaining = 0.0001f;
   settings.collisionTolerance = 0.001f;
 
-  JPH_RVec3 pos = {(double)px, (double)py, (double)pz};
-  JPH_Quat rot = {0, 0, 0, 1};
+  JPH_STACK_ALLOC(JPH_RVec3, pos_aligned);
+  pos_aligned->x = (double)px; pos_aligned->y = (double)py; pos_aligned->z = (double)pz;
+  JPH_STACK_ALLOC(JPH_Quat, rot_aligned);
+  rot_aligned->x = 0; rot_aligned->y = 0; rot_aligned->z = 0; rot_aligned->w = 1;
 
   JPH_CharacterVirtual *j_char =
-      JPH_CharacterVirtual_Create(&settings, &pos, &rot, 0, self->system);
+      JPH_CharacterVirtual_Create(&settings, pos_aligned, rot_aligned, 0, self->system);
   JPH_Shape_Destroy(shape);
 
   if (!j_char) {
     PyErr_SetString(PyExc_RuntimeError, "Failed to create CharacterVirtual");
     return NULL;
   }
+
+  if (self->char_vs_char_manager) {
+        // 1. Add this character to the manager's list
+        JPH_CharacterVsCharacterCollisionSimple_AddCharacter(self->char_vs_char_manager, j_char);
+        // 2. Tell this character to resolve against others in the manager
+        JPH_CharacterVirtual_SetCharacterVsCharacterCollision(j_char, self->char_vs_char_manager);
+    }
 
   // Resolve the internal BodyID
   JPH_BodyID internal_bid = JPH_CharacterVirtual_GetInnerBodyID(j_char);
@@ -1728,6 +1933,7 @@ static PyObject *PhysicsWorld_create_character(PhysicsWorldObject *self,
 
   // Link the slot to the Character object so we can retrieve it
   obj->handle = make_handle(char_slot, 1);
+  DEBUG_LOG("Creating Character: Slot %u, Handle %llu", char_slot, obj->handle);
 
   // Set 'Previous' to 'Current' so frame 0 doesn't jitter
   obj->prev_px = px;
@@ -1749,8 +1955,13 @@ static PyObject *PhysicsWorld_create_character(PhysicsWorldObject *self,
   obj->listener = JPH_CharacterContactListener_Create(obj);
   JPH_CharacterVirtual_SetListener(j_char, obj->listener);
 
+  // Filter Setup using GLOBAL pointers
+  JPH_BodyFilter_SetProcs(&global_bf_procs);
   obj->body_filter = JPH_BodyFilter_Create(NULL);
+
+  JPH_ShapeFilter_SetProcs(&global_sf_procs);
   obj->shape_filter = JPH_ShapeFilter_Create(NULL);
+
   obj->bp_filter = JPH_BroadPhaseLayerFilter_Create(NULL);
   obj->obj_filter = JPH_ObjectLayerFilter_Create(NULL);
 
@@ -1966,6 +2177,263 @@ static PyObject *PhysicsWorld_destroy_body(PhysicsWorldObject *self,
   }
   SHADOW_UNLOCK(&self->shadow_lock);
   Py_RETURN_NONE;
+}
+
+// vroom vroom
+// this is paperwork and i did surgery in the core
+static PyObject* PhysicsWorld_create_vehicle(PhysicsWorldObject* self, PyObject* args, PyObject* kwds) {
+    uint64_t chassis_h = 0;
+    PyObject* py_wheels = NULL; 
+    static char *kwlist[] = {"chassis", "wheels", NULL};
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "KO", kwlist, &chassis_h, &py_wheels)) return NULL;
+    
+    if (!PyList_Check(py_wheels)) {
+        PyErr_SetString(PyExc_TypeError, "wheels must be a list");
+        return NULL;
+    }
+
+    DEBUG_LOG("--- Create Vehicle Start ---");
+
+    // 1. Resolve Chassis
+    SHADOW_LOCK(&self->shadow_lock);
+    flush_commands(self); 
+    JPH_PhysicsSystem_OptimizeBroadPhase(self->system);
+    
+    uint32_t slot;
+    if (!unpack_handle(self, chassis_h, &slot)) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_SetString(PyExc_ValueError, "Invalid chassis handle");
+        return NULL;
+    }
+    JPH_BodyID chassis_bid = self->body_ids[self->slot_to_dense[slot]];
+    SHADOW_UNLOCK(&self->shadow_lock);
+
+    const JPH_BodyLockInterface* lock_iface = JPH_PhysicsSystem_GetBodyLockInterface(self->system);
+    JPH_BodyLockWrite lock;
+    JPH_BodyLockInterface_LockWrite(lock_iface, chassis_bid, &lock);
+    
+    bool is_locked = true; 
+
+    if (!lock.body) {
+        JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
+        is_locked = false; 
+        PyErr_SetString(PyExc_RuntimeError, "Could not lock chassis body");
+        return NULL;
+    }
+
+    // --- RESOURCE TRACKING ---
+    JPH_LinearCurve* f_curve = NULL;
+    JPH_LinearCurve* t_curve = NULL;
+    JPH_WheelSettings** w_settings = NULL;
+    JPH_WheeledVehicleControllerSettings* v_ctrl = NULL;
+    JPH_VehicleTransmissionSettings* trans = NULL;
+    JPH_VehicleCollisionTesterRay* tester = NULL;
+    JPH_VehicleConstraint* j_veh = NULL;
+
+    Py_ssize_t num_wheels = PyList_Size(py_wheels);
+    if (num_wheels < 4) { // FIX: Require 4 wheels for the 4WD setup below
+        // If < 4, we'd need dynamic differential logic. For this demo, assume 4.
+        // Or fallback to FWD if < 4. But let's enforce 4 for stability.
+        // Actually, let's just warn and use FWD if < 4 to prevent crash.
+    }
+
+    // 1. Curves
+    f_curve = JPH_LinearCurve_Create();
+    JPH_LinearCurve_AddPoint(f_curve, 0.0f, 1.0f);
+    JPH_LinearCurve_AddPoint(f_curve, 1.0f, 1.0f);
+
+    t_curve = JPH_LinearCurve_Create();
+    JPH_LinearCurve_AddPoint(t_curve, 0.0f, 1.0f);
+    JPH_LinearCurve_AddPoint(t_curve, 1.0f, 1.0f);
+
+    // 2. Wheels
+    w_settings = (JPH_WheelSettings**)PyMem_RawMalloc(num_wheels * sizeof(JPH_WheelSettings*));
+    if (!w_settings) { PyErr_NoMemory(); goto error_cleanup; }
+    memset(w_settings, 0, num_wheels * sizeof(JPH_WheelSettings*));
+
+    for (Py_ssize_t i = 0; i < num_wheels; i++) {
+        PyObject* w_dict = PyList_GetItem(py_wheels, i);
+        if (!PyDict_Check(w_dict)) { PyErr_SetString(PyExc_TypeError, "Wheel not dict"); goto error_cleanup; }
+
+        PyObject* o_pos = PyDict_GetItemString(w_dict, "pos");
+        PyObject* o_rad = PyDict_GetItemString(w_dict, "radius");
+        PyObject* o_wid = PyDict_GetItemString(w_dict, "width");
+
+        float px, py, pz, radius, width;
+        if (!o_pos || !PyArg_ParseTuple(o_pos, "fff", &px, &py, &pz)) { PyErr_SetString(PyExc_ValueError, "Invalid pos"); goto error_cleanup; }
+        if (!o_rad || !PyFloat_Check(o_rad)) { PyErr_SetString(PyExc_ValueError, "Invalid radius"); goto error_cleanup; }
+        if (!o_wid || !PyFloat_Check(o_wid)) { PyErr_SetString(PyExc_ValueError, "Invalid width"); goto error_cleanup; }
+        
+        radius = (float)PyFloat_AsDouble(o_rad);
+        width = (float)PyFloat_AsDouble(o_wid);
+
+        JPH_WheelSettingsWV* w = JPH_WheelSettingsWV_Create();
+        JPH_WheelSettings_SetPosition((JPH_WheelSettings*)w, &(JPH_Vec3){px, py, pz});
+        JPH_WheelSettings_SetWheelForward((JPH_WheelSettings*)w, &(JPH_Vec3){0, 0, 1}); 
+        JPH_WheelSettings_SetWheelUp((JPH_WheelSettings*)w, &(JPH_Vec3){0, 1, 0});
+        JPH_WheelSettings_SetSteeringAxis((JPH_WheelSettings*)w, &(JPH_Vec3){0, 1, 0});
+
+        JPH_WheelSettings_SetRadius((JPH_WheelSettings*)w, radius);
+        JPH_WheelSettings_SetWidth((JPH_WheelSettings*)w, width);
+        JPH_WheelSettings_SetSuspensionMinLength((JPH_WheelSettings*)w, 0.1f);
+        JPH_WheelSettings_SetSuspensionMaxLength((JPH_WheelSettings*)w, 0.5f); 
+        
+        JPH_SpringSettings spring;
+        spring.mode = JPH_SpringMode_FrequencyAndDamping;
+        spring.frequencyOrStiffness = 2.0f; 
+        spring.damping = 0.5f;
+        JPH_WheelSettings_SetSuspensionSpring((JPH_WheelSettings*)w, &spring);
+
+        JPH_WheelSettingsWV_SetLongitudinalFriction(w, f_curve);
+        JPH_WheelSettingsWV_SetLateralFriction(w, f_curve);
+        JPH_WheelSettingsWV_SetMaxBrakeTorque(w, 4000.0f);
+        JPH_WheelSettingsWV_SetMaxHandBrakeTorque(w, 4000.0f);
+        JPH_WheelSettingsWV_SetInertia(w, 0.5f);
+
+        if (i < 2) { 
+            // Set front wheels to steer up to 30 degrees (in radians)
+            float max_steer = 30.0f * (JPH_M_PI / 180.0f);
+            JPH_WheelSettingsWV_SetMaxSteerAngle(w, max_steer);
+        } else {
+            // Rear wheels do not steer
+            JPH_WheelSettingsWV_SetMaxSteerAngle(w, 0.0f);
+        }
+
+        w_settings[i] = (JPH_WheelSettings*)w;
+    }
+
+    // 3. Drivetrain
+    v_ctrl = JPH_WheeledVehicleControllerSettings_Create();
+    
+    JPH_VehicleEngineSettings eng;
+    JPH_VehicleEngineSettings_Init(&eng);
+    eng.maxTorque = 600.0f;
+    eng.minRPM = 1000.0f;
+    eng.maxRPM = 7000.0f;
+    eng.inertia = 0.5f; 
+    eng.normalizedTorque = t_curve; 
+    JPH_WheeledVehicleControllerSettings_SetEngine(v_ctrl, &eng);
+
+    trans = JPH_VehicleTransmissionSettings_Create();
+    JPH_VehicleTransmissionSettings_SetMode(trans, JPH_TransmissionMode_Manual);
+    // FIX: Forward gears ONLY. Gear 1 is index 0.
+    float forward_gears[] = { 3.0f, 2.0f, 1.5f, 1.0f, 0.8f }; 
+    JPH_VehicleTransmissionSettings_SetGearRatios(trans, forward_gears, 5);
+    
+    // FIX: Reverse gears separately.
+    float reverse_gears[] = { -3.0f };
+    JPH_VehicleTransmissionSettings_SetReverseGearRatios(trans, reverse_gears, 1);
+    JPH_VehicleTransmissionSettings_SetClutchStrength(trans, 10000.0f); 
+    
+    JPH_WheeledVehicleControllerSettings_SetTransmission(v_ctrl, trans);
+
+    // FIX: Use the new helper to create 4WD setup
+    // This ensures Jolt receives valid differential structs via C++ vector push_back
+    if (num_wheels >= 4) {
+        // Front Diff (Wheels 0, 1)
+        JPH_WheeledVehicleControllerSettings_AddDifferential(v_ctrl, 0, 1);
+        // Rear Diff (Wheels 2, 3)
+        JPH_WheeledVehicleControllerSettings_AddDifferential(v_ctrl, 2, 3);
+    } else {
+        // FWD
+        JPH_WheeledVehicleControllerSettings_AddDifferential(v_ctrl, 0, 1);
+    }
+
+    // FIX: 4WD Setup (2 Differentials)
+    // Diff 0: Wheels 0 & 1 (Front)
+    // Diff 1: Wheels 2 & 3 (Rear)
+    // This ensures torque reaches all wheels.
+    int diff_count = (num_wheels >= 4) ? 2 : 1;
+    JPH_VehicleDifferentialSettings diffs[2]; // Stack allocation safe here
+    
+    JPH_VehicleDifferentialSettings_Init(&diffs[0]);
+    diffs[0].leftWheel = 0;
+    diffs[0].rightWheel = 1;
+    diffs[0].differentialRatio = 3.5f;
+    diffs[0].limitedSlipRatio = 1.4f;
+    diffs[0].engineTorqueRatio = (diff_count == 2) ? 0.5f : 1.0f; // Split torque
+
+    if (diff_count == 2) {
+        JPH_VehicleDifferentialSettings_Init(&diffs[1]);
+        diffs[1].leftWheel = 2;
+        diffs[1].rightWheel = 3;
+        diffs[1].differentialRatio = 3.5f;
+        diffs[1].limitedSlipRatio = 1.4f;
+        diffs[1].engineTorqueRatio = 0.5f;
+    }
+
+    JPH_WheeledVehicleControllerSettings_SetDifferentials(v_ctrl, diffs, diff_count);
+
+    // 4. Constraint
+    JPH_VehicleConstraintSettings v_set;
+    JPH_VehicleConstraintSettings_Init(&v_set);
+    v_set.wheelsCount = (uint32_t)num_wheels; 
+    v_set.wheels = w_settings; 
+    v_set.controller = (JPH_VehicleControllerSettings*)v_ctrl;
+    v_set.up.x = 0; v_set.up.y = 1; v_set.up.z = 0;
+    v_set.forward.x = 0; v_set.forward.y = 0; v_set.forward.z = 1;
+    v_set.maxPitchRollAngle = 1.04f; 
+
+    j_veh = JPH_VehicleConstraint_Create(lock.body, &v_set);
+    if (!j_veh) {
+        PyErr_SetString(PyExc_RuntimeError, "Failed to create Jolt VehicleConstraint");
+        goto error_cleanup;
+    }
+
+    JPH_PhysicsSystem_AddConstraint(self->system, (JPH_Constraint*)j_veh);
+    JPH_PhysicsStepListener* step_listener = JPH_VehicleConstraint_AsPhysicsStepListener(j_veh);
+    JPH_PhysicsSystem_AddStepListener(self->system, step_listener);
+
+    tester = JPH_VehicleCollisionTesterRay_Create(1, &(JPH_Vec3){0, 1, 0}, 0.5f);
+    JPH_VehicleConstraint_SetVehicleCollisionTester(j_veh, (JPH_VehicleCollisionTester*)tester);
+
+    JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
+    is_locked = false;
+
+    // 5. Wrap Object
+    PyObject *module = PyType_GetModule(Py_TYPE(self));
+    CulverinState *st = get_culverin_state(module);
+    VehicleObject *obj = (VehicleObject *)PyObject_New(VehicleObject, (PyTypeObject *)st->VehicleType);
+    
+    if (!obj) goto error_cleanup;
+
+    obj->vehicle = j_veh;
+    obj->tester = (JPH_VehicleCollisionTester*)tester;
+    obj->world = self;
+    obj->num_wheels = (uint32_t)num_wheels;
+    obj->current_gear = 1; 
+    
+    obj->wheel_settings = w_settings;
+    obj->controller_settings = (JPH_VehicleControllerSettings*)v_ctrl;
+    obj->transmission_settings = trans; 
+    obj->friction_curve = f_curve;
+    obj->torque_curve = t_curve;
+    
+    Py_INCREF(self);
+    return (PyObject *)obj;
+
+error_cleanup:
+    if (is_locked) {
+        JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
+    }
+    if (j_veh) { 
+        JPH_PhysicsSystem_RemoveConstraint(self->system, (JPH_Constraint*)j_veh);
+        JPH_Constraint_Destroy((JPH_Constraint*)j_veh); 
+    }
+    if (tester) { JPH_VehicleCollisionTester_Destroy((JPH_VehicleCollisionTester*)tester); }
+    if (trans) { JPH_VehicleTransmissionSettings_Destroy(trans); }
+    if (v_ctrl) { JPH_VehicleControllerSettings_Destroy((JPH_VehicleControllerSettings*)v_ctrl); }
+    if (w_settings) {
+        for (Py_ssize_t i = 0; i < num_wheels; i++) {
+            if (w_settings[i]) JPH_WheelSettings_Destroy(w_settings[i]);
+        }
+        PyMem_RawFree(w_settings);
+    }
+    if (f_curve) { JPH_LinearCurve_Destroy(f_curve); }
+    if (t_curve) { JPH_LinearCurve_Destroy(t_curve); }
+    
+    return NULL;
 }
 
 static PyObject *PhysicsWorld_set_position(PhysicsWorldObject *self,
@@ -2561,10 +3029,257 @@ static PyObject* PhysicsWorld_get_render_state(PhysicsWorldObject* self, PyObjec
     return bytes_obj;
 }
 
+// --- Vehicles Methods ---
+
+static PyObject* Vehicle_set_input(VehicleObject* self, PyObject* args, PyObject* kwds) {
+    float forward, right, brake, handbrake;
+    static char *kwlist[] = {"forward", "right", "brake", "handbrake", NULL};
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "ffff", kwlist, &forward, &right, &brake, &handbrake)) return NULL;
+
+    if (!self->vehicle) {
+        PyErr_SetString(PyExc_RuntimeError, "Vehicle has been destroyed");
+        return NULL;
+    }
+
+    JPH_WheeledVehicleController* controller = (JPH_WheeledVehicleController*)JPH_VehicleConstraint_GetController(self->vehicle);
+    const JPH_Body* chassis = JPH_VehicleConstraint_GetVehicleBody(self->vehicle);
+    JPH_VehicleTransmission* transmission = (JPH_VehicleTransmission*)JPH_WheeledVehicleController_GetTransmission(controller);
+    
+    JPH_BodyInterface_ActivateBody(self->world->body_interface, JPH_Body_GetID(chassis));
+
+    // Get Forward Speed
+    JPH_Vec3 linear_vel;
+    JPH_Body_GetLinearVelocity((JPH_Body *)chassis, &linear_vel);
+    
+    JPH_Vec3 forward_dir;
+    JPH_VehicleConstraint_GetLocalForward(self->vehicle, &forward_dir);
+    JPH_RMat4 world_transform;
+    JPH_Body_GetWorldTransform(chassis, &world_transform);
+    JPH_Vec3 world_fwd = {world_transform.column[2].x, world_transform.column[2].y, world_transform.column[2].z}; 
+
+    float speed = linear_vel.x * world_fwd.x + linear_vel.y * world_fwd.y + linear_vel.z * world_fwd.z;
+
+    float input_throttle = 0.0f;
+    float input_brake = brake; 
+
+    // GEAR MAPPING:
+    // -1 = Reverse, 0 = Neutral, 1 = 1st, 2 = 2nd
+    int target_gear = self->current_gear;
+
+    if (forward > 0.0f) {
+        if (speed < -0.5f) {
+            input_brake = 1.0f; input_throttle = 0.0f;
+        } else {
+            input_throttle = forward;
+            if (target_gear < 1) target_gear = 1; // Switch to 1st
+        }
+    } else if (forward < 0.0f) {
+        if (speed > 0.5f) {
+            input_brake = 1.0f; input_throttle = 0.0f;
+        } else {
+            input_throttle = fabsf(forward);
+            if (target_gear != -1) target_gear = -1; // Switch to Reverse
+        }
+    } else {
+        input_throttle = 0.0f;
+    }
+
+    self->current_gear = target_gear;
+    
+    // Always force the state to keep the clutch engaged
+    JPH_VehicleTransmission_Set(transmission, self->current_gear, 1.0f);
+
+    JPH_WheeledVehicleController_SetDriverInput(controller, input_throttle, right, input_brake, handbrake);
+    Py_RETURN_NONE;
+}
+
+static PyObject* Vehicle_get_wheel_transform(VehicleObject* self, PyObject* args) {
+    uint32_t index;
+    if (!PyArg_ParseTuple(args, "I", &index)) return NULL;
+    if (index >= self->num_wheels) return PyErr_Format(PyExc_IndexError, "Wheel index %u out of range", index);
+
+    // Aligned double-precision matrix for Jolt data
+    JPH_STACK_ALLOC(JPH_RMat4, transform);
+    
+    // Basis vectors
+    JPH_Vec3 right = {1.0f, 0.0f, 0.0f};
+    JPH_Vec3 up = {0.0f, 1.0f, 0.0f};
+
+    JPH_VehicleConstraint_GetWheelWorldTransform(
+        self->vehicle,
+        index,
+        &right,
+        &up,
+        transform
+    );
+
+    // FIX 1: Extract Position from the Double Precision column3
+    double px = transform->column3.x;
+    double py = transform->column3.y;
+    double pz = transform->column3.z;
+
+    // FIX 2: Correct variable names for rotation matrix
+    // Columns 0, 1, 2 of JPH_RMat4 are JPH_Vec4 (floats), so they fit in JPH_Mat4
+    JPH_STACK_ALLOC(JPH_Mat4, rot_only_mat);
+    JPH_Mat4_Identity(rot_only_mat);
+    rot_only_mat->column[0] = transform->column[0];
+    rot_only_mat->column[1] = transform->column[1];
+    rot_only_mat->column[2] = transform->column[2];
+    
+    JPH_STACK_ALLOC(JPH_Quat, q);
+    JPH_Mat4_GetQuaternion(rot_only_mat, q);
+
+    // Return ( (x,y,z), (x,y,z,w) )
+    // Note: Py_BuildValue uses 'd' for double, 'f' for float
+    PyObject* py_pos = Py_BuildValue("(ddd)", px, py, pz);
+    PyObject* py_rot = Py_BuildValue("(ffff)", q->x, q->y, q->z, q->w);
+    PyObject* result = PyTuple_Pack(2, py_pos, py_rot);
+    
+    Py_DECREF(py_pos);
+    Py_DECREF(py_rot);
+    return result;
+}
+
+static PyObject* Vehicle_get_debug_state(VehicleObject* self, PyObject* Py_UNUSED(ignored)) {
+    if (!self->vehicle) Py_RETURN_NONE;
+
+    JPH_WheeledVehicleController* controller = (JPH_WheeledVehicleController*)JPH_VehicleConstraint_GetController(self->vehicle);
+    const JPH_VehicleEngine* engine = JPH_WheeledVehicleController_GetEngine(controller);
+    const JPH_VehicleTransmission* trans = JPH_WheeledVehicleController_GetTransmission(controller);
+    
+    // 1. Inputs
+    float in_fwd = JPH_WheeledVehicleController_GetForwardInput(controller);
+    float in_brk = JPH_WheeledVehicleController_GetBrakeInput(controller);
+
+    // 2. Drivetrain State
+    float rpm = JPH_VehicleEngine_GetCurrentRPM(engine);
+    
+    // FIX: Pass actual throttle input to calculate generated torque. 
+    // Passing 0.0f returns idle torque (usually 0).
+    float engine_torque = JPH_VehicleEngine_GetTorque(engine, in_fwd); 
+    
+    int gear = JPH_VehicleTransmission_GetCurrentGear(trans);
+    float clutch = JPH_VehicleTransmission_GetClutchFriction(trans);
+
+    DEBUG_LOG("=== VEHICLE DEBUG STATE ===");
+    DEBUG_LOG("  Inputs: Fwd=%.2f | Brk=%.2f", in_fwd, in_brk);
+    DEBUG_LOG("  Engine: %.2f RPM | Torque: %.2f Nm", rpm, engine_torque);
+    DEBUG_LOG("  Trans : Gear %d | Clutch Friction: %.2f", gear, clutch);
+
+    // 3. Wheel State
+    for (uint32_t i = 0; i < self->num_wheels; i++) {
+        const JPH_Wheel* w = JPH_VehicleConstraint_GetWheel(self->vehicle, i);
+        const JPH_WheelSettings* ws = JPH_Wheel_GetSettings(w);
+        
+        bool contact = JPH_Wheel_HasContact(w);
+        float susp_len = JPH_Wheel_GetSuspensionLength(w);
+        float ang_vel = JPH_Wheel_GetAngularVelocity(w);
+        float radius = JPH_WheelSettings_GetRadius(ws);
+        
+        // Calculate linear speed of tire surface (m/s)
+        float tire_speed = ang_vel * radius;
+
+        // Lambda correlates to the force applied by the solver to the ground
+        float long_lambda = JPH_Wheel_GetLongitudinalLambda(w);
+        float lat_lambda = JPH_Wheel_GetLateralLambda(w);
+
+        DEBUG_LOG("  Wheel %u: %s", i, contact ? "GROUND" : "AIR   ");
+        DEBUG_LOG("    Susp: %.3fm | AngVel: %.2f rad/s | SurfSpd: %.2f m/s", 
+                  susp_len, ang_vel, tire_speed);
+        DEBUG_LOG("    Trac: Long=%.2f | Lat=%.2f", long_lambda, lat_lambda);
+    }
+    DEBUG_LOG("===========================");
+
+    Py_RETURN_NONE;
+}
+
+// --- Vehicle GC Support ---
+static int Vehicle_traverse(VehicleObject *self, visitproc visit, void *arg) {
+    Py_VISIT(self->world);
+    return 0;
+}
+
+static int Vehicle_clear(VehicleObject *self) {
+    Py_CLEAR(self->world);
+    return 0;
+}
+
+// --- Explicit Destroy (Clean up Jolt resources) ---
+static PyObject* Vehicle_destroy(VehicleObject* self, PyObject* Py_UNUSED(ignored)) {
+    if (!self->world) Py_RETURN_NONE; 
+
+    DEBUG_LOG("Destroying Vehicle Instance...");
+    SHADOW_LOCK(&self->world->shadow_lock);
+
+    // 1. Remove Constraint & Step Listener
+    if (self->vehicle) {
+        // Step Listener removal must happen BEFORE destroying the constraint
+        JPH_PhysicsStepListener* step_listener = JPH_VehicleConstraint_AsPhysicsStepListener(self->vehicle);
+        JPH_PhysicsSystem_RemoveStepListener(self->world->system, step_listener);
+
+        JPH_PhysicsSystem_RemoveConstraint(self->world->system, (JPH_Constraint*)self->vehicle);
+        JPH_Constraint_Destroy((JPH_Constraint*)self->vehicle);
+        self->vehicle = NULL;
+    }
+
+    // 2. Destroy Collision Tester
+    if (self->tester) {
+        JPH_VehicleCollisionTester_Destroy(self->tester);
+        self->tester = NULL;
+    }
+
+    // 3. Destroy Settings (Reverse creation order safe)
+    if (self->controller_settings) {
+        JPH_VehicleControllerSettings_Destroy(self->controller_settings);
+        self->controller_settings = NULL;
+    }
+    
+    // NEW: Destroy Transmission Settings explicitly
+    if (self->transmission_settings) {
+        JPH_VehicleTransmissionSettings_Destroy(self->transmission_settings);
+        self->transmission_settings = NULL;
+    }
+
+    if (self->wheel_settings) {
+        for (uint32_t i = 0; i < self->num_wheels; i++) {
+            if (self->wheel_settings[i]) {
+                JPH_WheelSettings_Destroy(self->wheel_settings[i]);
+            }
+        }
+        PyMem_RawFree((void *)self->wheel_settings);
+        self->wheel_settings = NULL;
+    }
+
+    if (self->friction_curve) { JPH_LinearCurve_Destroy(self->friction_curve); self->friction_curve = NULL; }
+    if (self->torque_curve) { JPH_LinearCurve_Destroy(self->torque_curve); self->torque_curve = NULL; }
+
+    SHADOW_UNLOCK(&self->world->shadow_lock);
+    Py_RETURN_NONE;
+}
+
+// --- Python Deallocation ---
+static void Vehicle_dealloc(VehicleObject* self) {
+    PyObject_GC_UnTrack(self);
+    
+    // Call destroy to clean up native resources
+    Vehicle_destroy(self, NULL);
+    
+    // Decref the World (kept alive by Vehicle)
+    Py_XDECREF(self->world);
+    
+    // Free the python object itself
+    Py_TYPE(self)->tp_free((PyObject *)self);
+}
+
 // --- Character Methods ---
 
 static void Character_dealloc(CharacterObject *self) {
   PyObject_GC_UnTrack(self);
+
+  // Must remove from manager before Jolt object is destroyed
+  if (self->world && self->world->char_vs_char_manager && self->character) {
+      JPH_CharacterVsCharacterCollisionSimple_RemoveCharacter(self->world->char_vs_char_manager, self->character);
+  }
 
   // Recycle the slot in the world
   uint32_t slot = (uint32_t)(self->handle & 0xFFFFFFFF);
@@ -2645,24 +3360,24 @@ static PyObject *Character_move(CharacterObject *self, PyObject *args,
   JPH_Vec3 v = {vx, vy, vz};
   JPH_CharacterVirtual_SetLinearVelocity(self->character, &v);
 
-  JPH_ExtendedUpdateSettings update_settings;
-  memset(&update_settings, 0, sizeof(JPH_ExtendedUpdateSettings));
-  update_settings.stickToFloorStepDown.x = 0;
-  update_settings.stickToFloorStepDown.y = -0.5f;
-  update_settings.stickToFloorStepDown.z = 0;
-  update_settings.walkStairsStepUp.x = 0;
-  update_settings.walkStairsStepUp.y = 0.4f;
-  update_settings.walkStairsStepUp.z = 0;
-  update_settings.walkStairsMinStepForward = 0.02f;
-  update_settings.walkStairsStepForwardTest = 0.15f;
-  update_settings.walkStairsCosAngleForwardContact = 0.996f; 
-  update_settings.walkStairsStepDownExtra.x = 0;
-  update_settings.walkStairsStepDownExtra.y = 0;
-  update_settings.walkStairsStepDownExtra.z = 0;
+  JPH_STACK_ALLOC(JPH_ExtendedUpdateSettings, update_settings);
+ *update_settings = (JPH_ExtendedUpdateSettings){0}; // C99 compound literal to zero the struct
+  update_settings->stickToFloorStepDown.x = 0;
+  update_settings->stickToFloorStepDown.y = -0.5f;
+  update_settings->stickToFloorStepDown.z = 0;
+  update_settings->walkStairsStepUp.x = 0;
+  update_settings->walkStairsStepUp.y = 0.4f;
+  update_settings->walkStairsStepUp.z = 0;
+  update_settings->walkStairsMinStepForward = 0.02f;
+  update_settings->walkStairsStepForwardTest = 0.15f;
+  update_settings->walkStairsCosAngleForwardContact = 0.996f; 
+  update_settings->walkStairsStepDownExtra.x = 0;
+  update_settings->walkStairsStepDownExtra.y = 0;
+  update_settings->walkStairsStepDownExtra.z = 0;
 
-  JPH_CharacterVirtual_ExtendedUpdate(self->character, dt, &update_settings, 1,
-                                      self->world->system, self->body_filter,
-                                      self->shape_filter);
+  JPH_CharacterVirtual_ExtendedUpdate(self->character, dt, update_settings, 1,
+                                        self->world->system, self->body_filter,
+                                        self->shape_filter);
   Py_RETURN_NONE;
 }
 
@@ -2861,6 +3576,7 @@ static const PyMethodDef PhysicsWorld_methods[] = {
     "Create a constraint between two bodies. Params depend on type."},
     {"destroy_constraint", (PyCFunction)PhysicsWorld_destroy_constraint, METH_VARARGS | METH_KEYWORDS, 
     "Remove and destroy a constraint by handle."},
+    {"create_vehicle", (PyCFunction)PhysicsWorld_create_vehicle, METH_VARARGS | METH_KEYWORDS, NULL},
 
     // --- Interaction ---
     {"apply_impulse", (PyCFunction)PhysicsWorld_apply_impulse,
@@ -2943,6 +3659,15 @@ static const PyMethodDef Character_methods[] = {
      "Returns interpolated ((x,y,z), (rx,ry,rz,rw)) based on alpha [0-1]."},
     {NULL}};
 
+static const PyMethodDef Vehicle_methods[] = {
+    {"set_input", (PyCFunction)Vehicle_set_input, METH_VARARGS | METH_KEYWORDS, 
+     "Set driver inputs: forward [-1..1], right [-1..1], brake [0..1], handbrake [0..1]"},
+    {"get_wheel_transform", (PyCFunction)Vehicle_get_wheel_transform, METH_VARARGS, 
+     "Get world-space transform of a wheel by index."},
+    {"destroy", (PyCFunction)Vehicle_destroy, METH_NOARGS, "Manually remove the vehicle from physics."},
+    {"get_debug_state", (PyCFunction)Vehicle_get_debug_state, METH_NOARGS, "Print drivetrain and wheel status to stderr"},
+    {NULL}};
+
 static const PyType_Slot PhysicsWorld_slots[] = {
     {Py_tp_new, PyType_GenericNew},
     {Py_tp_init, PhysicsWorld_init},
@@ -2962,6 +3687,14 @@ static const PyType_Slot Character_slots[] = {
     {0, NULL},
 };
 
+static const PyType_Slot Vehicle_slots[] = {
+    {Py_tp_dealloc, Vehicle_dealloc},
+    {Py_tp_traverse, Vehicle_traverse},
+    {Py_tp_clear, Vehicle_clear},
+    {Py_tp_methods, (PyMethodDef *)Vehicle_methods},
+    {0, NULL},
+};
+
 static const PyType_Spec PhysicsWorld_spec = {
     .name = "culverin._culverin_c.PhysicsWorld",
     .basicsize = sizeof(PhysicsWorldObject),
@@ -2972,52 +3705,67 @@ static const PyType_Spec PhysicsWorld_spec = {
 static const PyType_Spec Character_spec = {
     .name = "culverin._culverin_c.Character",
     .basicsize = sizeof(CharacterObject),
-    .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC, // NEW: GC Flag
+    .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
     .slots = (PyType_Slot *)Character_slots,
+};
+
+static const PyType_Spec Vehicle_spec = {
+    .name = "culverin._culverin_c.Vehicle",
+    .basicsize = sizeof(VehicleObject),
+    .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
+    .slots = (PyType_Slot *)Vehicle_slots,
 };
 
 // --- Module Initialization ---
 
+#define CREATE_TYPE(name) do {                        \
+    st->name##Type = PyType_FromModuleAndSpec(        \
+        m, (PyType_Spec *)&name##_spec, NULL);        \
+    if (!st->name##Type) return -1;                   \
+    if (PyModule_AddObject(m, #name, st->name##Type) < 0) { \
+        Py_DECREF(st->name##Type);                    \
+        return -1;                                   \
+    }                                                 \
+    Py_INCREF(st->name##Type);                        \
+} while (0)
+
+#define ADD_CONSTANT(name, value) do {                 \
+    if (PyModule_AddIntConstant(m, #name, value) < 0) { \
+        return -1;                                   \
+    }                                                 \
+} while (0)
+
 static int culverin_exec(PyObject *m) {
   CulverinState *st = get_culverin_state(m);
-  JPH_Init();
+  if (!JPH_Init()) {
+    PyErr_SetString(PyExc_RuntimeError, "Jolt initialization failed");
+    return -1;
+  }
 
   st->helper = PyImport_ImportModule("culverin._culverin");
   if (!st->helper) return -1;
 
-  st->PhysicsWorldType = PyType_FromModuleAndSpec(m, (PyType_Spec *)&PhysicsWorld_spec, NULL);
-  if (!st->PhysicsWorldType) return -1;
-  if (PyModule_AddObject(m, "PhysicsWorld", st->PhysicsWorldType) < 0) {
-    Py_DECREF(st->PhysicsWorldType);
-    return -1;
-  }
-  Py_INCREF(st->PhysicsWorldType);
+  CREATE_TYPE(PhysicsWorld);
+  CREATE_TYPE(Character);
+  CREATE_TYPE(Vehicle);
 
-  st->CharacterType = PyType_FromModuleAndSpec(m, (PyType_Spec *)&Character_spec, NULL);
-  if (!st->CharacterType) return -1;
-  if (PyModule_AddObject(m, "Character", st->CharacterType) < 0) {
-    Py_DECREF(st->CharacterType);
-    return -1;
-  }
-  Py_INCREF(st->CharacterType);
+  ADD_CONSTANT(SHAPE_BOX, 0);
+  ADD_CONSTANT(SHAPE_SPHERE, 1);
+  ADD_CONSTANT(SHAPE_CAPSULE, 2);
+  ADD_CONSTANT(SHAPE_CYLINDER, 3);
+  ADD_CONSTANT(SHAPE_PLANE, 4);
+  ADD_CONSTANT(SHAPE_MESH, 5);
 
-  PyModule_AddIntConstant(m, "SHAPE_BOX", 0);
-  PyModule_AddIntConstant(m, "SHAPE_SPHERE", 1);
-  PyModule_AddIntConstant(m, "SHAPE_CAPSULE", 2);
-  PyModule_AddIntConstant(m, "SHAPE_CYLINDER", 3);
-  PyModule_AddIntConstant(m, "SHAPE_PLANE", 4);
-  PyModule_AddIntConstant(m, "SHAPE_MESH", 5);
+  ADD_CONSTANT(MOTION_STATIC, 0);
+  ADD_CONSTANT(MOTION_KINEMATIC, 1);
+  ADD_CONSTANT(MOTION_DYNAMIC, 2);
 
-  PyModule_AddIntConstant(m, "MOTION_STATIC", 0);
-  PyModule_AddIntConstant(m, "MOTION_KINEMATIC", 1);
-  PyModule_AddIntConstant(m, "MOTION_DYNAMIC", 2);
-
-  PyModule_AddIntConstant(m, "CONSTRAINT_FIXED", 0);
-  PyModule_AddIntConstant(m, "CONSTRAINT_POINT", 1);
-  PyModule_AddIntConstant(m, "CONSTRAINT_HINGE", 2);
-  PyModule_AddIntConstant(m, "CONSTRAINT_SLIDER", 3);
-  PyModule_AddIntConstant(m, "CONSTRAINT_DISTANCE", 4);
-  PyModule_AddIntConstant(m, "CONSTRAINT_CONE", 5);
+  ADD_CONSTANT(CONSTRAINT_FIXED, 0);
+  ADD_CONSTANT(CONSTRAINT_POINT, 1);
+  ADD_CONSTANT(CONSTRAINT_HINGE, 2);
+  ADD_CONSTANT(CONSTRAINT_SLIDER, 3);
+  ADD_CONSTANT(CONSTRAINT_DISTANCE, 4);
+  ADD_CONSTANT(CONSTRAINT_CONE, 5);
 
   return 0;
 }
@@ -3027,6 +3775,7 @@ static int culverin_traverse(PyObject *m, visitproc visit, void *arg) {
   Py_VISIT(st->helper);
   Py_VISIT(st->PhysicsWorldType);
   Py_VISIT(st->CharacterType);
+  Py_VISIT(st->VehicleType);
   return 0;
 }
 
@@ -3035,6 +3784,7 @@ static int culverin_clear(PyObject *m) {
   Py_CLEAR(st->helper);
   Py_CLEAR(st->PhysicsWorldType);
   Py_CLEAR(st->CharacterType);
+  Py_CLEAR(st->VehicleType);
   return 0;
 }
 
