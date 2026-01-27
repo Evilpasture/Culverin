@@ -1,5 +1,6 @@
 import math
 import array
+from typing import Union
 
 # --- Constants matching Jolt/JoltC ---
 MOTION_STATIC = 0
@@ -22,6 +23,37 @@ CONSTRAINT_HINGE = 2
 CONSTRAINT_SLIDER = 3
 CONSTRAINT_DISTANCE = 4
 CONSTRAINT_CONE = 5
+
+class Engine:
+    def __init__(self, max_torque=500.0, max_rpm=7000.0, min_rpm=1000.0, inertia=0.5):
+        self.max_torque = float(max_torque)
+        self.max_rpm = float(max_rpm)
+        self.min_rpm = float(min_rpm)
+        self.inertia = float(inertia)
+
+class Transmission:
+    def __init__(self, gears: Union[int, list] = 5, clutch_strength=2000.0):
+        self.clutch_strength = float(clutch_strength)
+        # If gears is an int, provide standard ratios. If list, use as provided.
+        if isinstance(gears, int):
+            # Standard 1st to Nth ratios
+            presets = [4.0, 2.5, 1.7, 1.2, 1.0, 0.8, 0.7]
+            self.ratios = presets[:gears]
+        else:
+            self.ratios = [float(g) for g in gears]
+        self.reverse_ratios = [-3.0]
+
+class Automatic(Transmission):
+    def __init__(self, gears=5, clutch_strength=2000.0, shift_up_rpm=5000.0, shift_down_rpm=2000.0):
+        super().__init__(gears, clutch_strength)
+        self.mode = 0 # JPH_TransmissionMode_Auto
+        self.shift_up_rpm = float(shift_up_rpm)
+        self.shift_down_rpm = float(shift_down_rpm)
+
+class Manual(Transmission):
+    def __init__(self, gears=5, clutch_strength=5000.0):
+        super().__init__(gears, clutch_strength)
+        self.mode = 1 # JPH_TransmissionMode_Manual
 
 # --- Internal Validation Helpers ---
 

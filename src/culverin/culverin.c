@@ -597,6 +597,8 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
   }
   Py_CLEAR(norm_settings); 
 
+  self->is_stepping = false;
+
   // 2. Jolt Systems Initialization
   JobSystemThreadPoolConfig job_cfg = {
       .maxJobs = 1024, .maxBarriers = 8, .numThreads = -1};
@@ -1543,6 +1545,7 @@ static PyObject* PhysicsWorld_create_constraint(PhysicsWorldObject* self, PyObje
 
     // --- 2. Handle Resolution & Memory Check ---
     SHADOW_LOCK(&self->shadow_lock);
+    GUARD_STEPPING(self);
     uint32_t s1, s2;
     if (!unpack_handle(self, h1, &s1) || self->slot_states[s1] != SLOT_ALIVE ||
         !unpack_handle(self, h2, &s2) || self->slot_states[s2] != SLOT_ALIVE) {
@@ -1625,6 +1628,7 @@ static PyObject* PhysicsWorld_destroy_constraint(PhysicsWorldObject* self, PyObj
     }
 
     SHADOW_LOCK(&self->shadow_lock);
+    GUARD_STEPPING(self);
 
     // 1. Unpack Handle manually (since the helper is for bodies)
     uint32_t slot = (uint32_t)(h & 0xFFFFFFFF);
@@ -1789,8 +1793,17 @@ static PyObject* PhysicsWorld_step(PhysicsWorldObject* self, PyObject* args) {
     float dt = 1.0f/60.0f;
     if (!PyArg_ParseTuple(args, "|f", &dt)) return NULL;
 
-    Py_BEGIN_ALLOW_THREADS
+    
     SHADOW_LOCK(&self->shadow_lock);
+
+    // RE-ENTRANCY CHECK
+    if (self->is_stepping) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_SetString(PyExc_RuntimeError, "PhysicsWorld is already stepping (Concurrent access detected)");
+        return NULL;
+    }
+    
+    self->is_stepping = true; // LOCK THE GATE
     
     // 1. Snapshot CURRENT state to PREVIOUS state
     // We copy the entire dense array. This is very fast (memcpy).
@@ -1803,15 +1816,17 @@ static PyObject* PhysicsWorld_step(PhysicsWorldObject* self, PyObject* args) {
     
     SHADOW_UNLOCK(&self->shadow_lock);
 
+    Py_BEGIN_ALLOW_THREADS
     // 3. Jolt Physics Update (Updates internal Jolt state)
     JPH_PhysicsSystem_Update(self->system, dt, 1, self->job_system);
+    Py_END_ALLOW_THREADS
     
     SHADOW_LOCK(&self->shadow_lock);
     // 4. Sync Jolt state back to CURRENT buffers
     culverin_sync_shadow_buffers(self);
+    self->is_stepping = false; // UNLOCK THE GATE
     SHADOW_UNLOCK(&self->shadow_lock);
     
-    Py_END_ALLOW_THREADS
     self->time += (double)dt;
 
     Py_RETURN_NONE;
@@ -1907,6 +1922,7 @@ static PyObject *PhysicsWorld_create_character(PhysicsWorldObject *self,
 
   // CRITICAL: Register the character's body in the slot map
   SHADOW_LOCK(&self->shadow_lock);
+  GUARD_STEPPING(self);
   uint32_t dense_idx = (uint32_t)self->count;
   self->body_ids[dense_idx] = internal_bid;
   self->slot_to_dense[char_slot] = dense_idx;
@@ -2004,9 +2020,11 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
   }
 
   SHADOW_LOCK(&self->shadow_lock);
+  GUARD_STEPPING(self);
   if (self->free_count == 0) {
     if (PhysicsWorld_resize(self, self->capacity * 2) < 0) {
       SHADOW_UNLOCK(&self->shadow_lock);
+      PyErr_SetString(PyExc_MemoryError, "Failed to resize PhysicsWorld");
       return NULL;
     }
   }
@@ -2108,6 +2126,7 @@ static PyObject *PhysicsWorld_create_mesh_body(PhysicsWorldObject *self,
   }
 
   SHADOW_LOCK(&self->shadow_lock);
+  GUARD_STEPPING(self);
   if (self->free_count == 0) {
     if (PhysicsWorld_resize(self, self->capacity + 1024) < 0) {
       SHADOW_UNLOCK(&self->shadow_lock);
@@ -2179,24 +2198,39 @@ static PyObject *PhysicsWorld_destroy_body(PhysicsWorldObject *self,
   Py_RETURN_NONE;
 }
 
+
+// Helper macro to get a float attribute, decref it, and handle errors
+#define GET_FLOAT_ATTR(obj, name, target) do { \
+    PyObject* attr = PyObject_GetAttrString(obj, name); \
+    if (attr) { \
+        target = (float)PyFloat_AsDouble(attr); \
+        Py_DECREF(attr); \
+    } \
+    PyErr_Clear(); \
+} while(0)
+
 // vroom vroom
 // this is paperwork and i did surgery in the core
 static PyObject* PhysicsWorld_create_vehicle(PhysicsWorldObject* self, PyObject* args, PyObject* kwds) {
     uint64_t chassis_h = 0;
     PyObject* py_wheels = NULL; 
-    static char *kwlist[] = {"chassis", "wheels", NULL};
+    char* drive_str = "RWD";
+    PyObject* py_engine = NULL;
+    PyObject* py_trans = NULL;
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "KO", kwlist, &chassis_h, &py_wheels)) return NULL;
+    static char *kwlist[] = {"chassis", "wheels", "drive", "engine", "transmission", NULL};
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "KO|sOO", kwlist, 
+        &chassis_h, &py_wheels, &drive_str, &py_engine, &py_trans)) return NULL;
     
     if (!PyList_Check(py_wheels)) {
         PyErr_SetString(PyExc_TypeError, "wheels must be a list");
         return NULL;
     }
 
-    DEBUG_LOG("--- Create Vehicle Start ---");
-
-    // 1. Resolve Chassis
+    // --- 1. Resolve Chassis ---
     SHADOW_LOCK(&self->shadow_lock);
+    GUARD_STEPPING(self);
     flush_commands(self); 
     JPH_PhysicsSystem_OptimizeBroadPhase(self->system);
     
@@ -2212,17 +2246,15 @@ static PyObject* PhysicsWorld_create_vehicle(PhysicsWorldObject* self, PyObject*
     const JPH_BodyLockInterface* lock_iface = JPH_PhysicsSystem_GetBodyLockInterface(self->system);
     JPH_BodyLockWrite lock;
     JPH_BodyLockInterface_LockWrite(lock_iface, chassis_bid, &lock);
-    
     bool is_locked = true; 
 
     if (!lock.body) {
         JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
-        is_locked = false; 
         PyErr_SetString(PyExc_RuntimeError, "Could not lock chassis body");
         return NULL;
     }
 
-    // --- RESOURCE TRACKING ---
+    // --- 2. Resource Tracking ---
     JPH_LinearCurve* f_curve = NULL;
     JPH_LinearCurve* t_curve = NULL;
     JPH_WheelSettings** w_settings = NULL;
@@ -2232,140 +2264,109 @@ static PyObject* PhysicsWorld_create_vehicle(PhysicsWorldObject* self, PyObject*
     JPH_VehicleConstraint* j_veh = NULL;
 
     Py_ssize_t num_wheels = PyList_Size(py_wheels);
-    if (num_wheels < 4) { // FIX: Require 4 wheels for the 4WD setup below
-        // If < 4, we'd need dynamic differential logic. For this demo, assume 4.
-        // Or fallback to FWD if < 4. But let's enforce 4 for stability.
-        // Actually, let's just warn and use FWD if < 4 to prevent crash.
+
+    // --- 3. Parse Engine ---
+    float eng_torque = 500.0f, eng_max_rpm = 7000.0f, eng_min_rpm = 1000.0f, eng_inertia = 0.5f;
+    if (py_engine && py_engine != Py_None) {
+        GET_FLOAT_ATTR(py_engine, "max_torque", eng_torque);
+        GET_FLOAT_ATTR(py_engine, "max_rpm", eng_max_rpm);
+        GET_FLOAT_ATTR(py_engine, "min_rpm", eng_min_rpm);
+        GET_FLOAT_ATTR(py_engine, "inertia", eng_inertia);
     }
 
-    // 1. Curves
+    // --- 4. Parse Transmission ---
+    int trans_mode = 1; // Default Manual
+    float clutch_strength = 2000.0f;
+    PyObject* py_ratios = NULL;
+    if (py_trans && py_trans != Py_None) {
+        PyObject* o_mode = PyObject_GetAttrString(py_trans, "mode");
+        if (o_mode) { trans_mode = (int)PyLong_AsLong(o_mode); Py_DECREF(o_mode); }
+        
+        GET_FLOAT_ATTR(py_trans, "clutch_strength", clutch_strength);
+        py_ratios = PyObject_GetAttrString(py_trans, "ratios"); // Kept for later, must DECREF
+    }
+    PyErr_Clear();
+
+    // 5. Initialize Curves
     f_curve = JPH_LinearCurve_Create();
     JPH_LinearCurve_AddPoint(f_curve, 0.0f, 1.0f);
     JPH_LinearCurve_AddPoint(f_curve, 1.0f, 1.0f);
-
     t_curve = JPH_LinearCurve_Create();
     JPH_LinearCurve_AddPoint(t_curve, 0.0f, 1.0f);
     JPH_LinearCurve_AddPoint(t_curve, 1.0f, 1.0f);
 
-    // 2. Wheels
+    // 6. Create Wheels
     w_settings = (JPH_WheelSettings**)PyMem_RawMalloc(num_wheels * sizeof(JPH_WheelSettings*));
     if (!w_settings) { PyErr_NoMemory(); goto error_cleanup; }
     memset(w_settings, 0, num_wheels * sizeof(JPH_WheelSettings*));
 
     for (Py_ssize_t i = 0; i < num_wheels; i++) {
         PyObject* w_dict = PyList_GetItem(py_wheels, i);
-        if (!PyDict_Check(w_dict)) { PyErr_SetString(PyExc_TypeError, "Wheel not dict"); goto error_cleanup; }
-
-        PyObject* o_pos = PyDict_GetItemString(w_dict, "pos");
-        PyObject* o_rad = PyDict_GetItemString(w_dict, "radius");
-        PyObject* o_wid = PyDict_GetItemString(w_dict, "width");
+        PyObject *o_pos = PyDict_GetItemString(w_dict, "pos");
+        PyObject *o_rad = PyDict_GetItemString(w_dict, "radius");
+        PyObject *o_wid = PyDict_GetItemString(w_dict, "width");
 
         float px, py, pz, radius, width;
-        if (!o_pos || !PyArg_ParseTuple(o_pos, "fff", &px, &py, &pz)) { PyErr_SetString(PyExc_ValueError, "Invalid pos"); goto error_cleanup; }
-        if (!o_rad || !PyFloat_Check(o_rad)) { PyErr_SetString(PyExc_ValueError, "Invalid radius"); goto error_cleanup; }
-        if (!o_wid || !PyFloat_Check(o_wid)) { PyErr_SetString(PyExc_ValueError, "Invalid width"); goto error_cleanup; }
-        
-        radius = (float)PyFloat_AsDouble(o_rad);
-        width = (float)PyFloat_AsDouble(o_wid);
+        if (!o_pos || !PyArg_ParseTuple(o_pos, "fff", &px, &py, &pz)) goto error_cleanup;
+        radius = o_rad ? (float)PyFloat_AsDouble(o_rad) : 0.4f;
+        width = o_wid ? (float)PyFloat_AsDouble(o_wid) : 0.3f;
 
         JPH_WheelSettingsWV* w = JPH_WheelSettingsWV_Create();
         JPH_WheelSettings_SetPosition((JPH_WheelSettings*)w, &(JPH_Vec3){px, py, pz});
-        JPH_WheelSettings_SetWheelForward((JPH_WheelSettings*)w, &(JPH_Vec3){0, 0, 1}); 
-        JPH_WheelSettings_SetWheelUp((JPH_WheelSettings*)w, &(JPH_Vec3){0, 1, 0});
-        JPH_WheelSettings_SetSteeringAxis((JPH_WheelSettings*)w, &(JPH_Vec3){0, 1, 0});
-
         JPH_WheelSettings_SetRadius((JPH_WheelSettings*)w, radius);
         JPH_WheelSettings_SetWidth((JPH_WheelSettings*)w, width);
-        JPH_WheelSettings_SetSuspensionMinLength((JPH_WheelSettings*)w, 0.1f);
         JPH_WheelSettings_SetSuspensionMaxLength((JPH_WheelSettings*)w, 0.5f); 
-        
-        JPH_SpringSettings spring;
-        spring.mode = JPH_SpringMode_FrequencyAndDamping;
-        spring.frequencyOrStiffness = 2.0f; 
-        spring.damping = 0.5f;
-        JPH_WheelSettings_SetSuspensionSpring((JPH_WheelSettings*)w, &spring);
-
         JPH_WheelSettingsWV_SetLongitudinalFriction(w, f_curve);
         JPH_WheelSettingsWV_SetLateralFriction(w, f_curve);
-        JPH_WheelSettingsWV_SetMaxBrakeTorque(w, 5000.0f);
-        JPH_WheelSettingsWV_SetMaxHandBrakeTorque(w, 8000.0f);
         JPH_WheelSettingsWV_SetInertia(w, 0.5f);
 
-        if (i < 2) { 
-            // Set front wheels to steer up to 30 degrees (in radians)
-            float max_steer = 30.0f * (JPH_M_PI / 180.0f);
-            JPH_WheelSettingsWV_SetMaxSteerAngle(w, max_steer);
-        } else {
-            // Rear wheels do not steer
-            JPH_WheelSettingsWV_SetMaxSteerAngle(w, 0.0f);
-        }
+        if (i < 2) JPH_WheelSettingsWV_SetMaxSteerAngle(w, 30.0f * (JPH_M_PI / 180.0f));
 
         w_settings[i] = (JPH_WheelSettings*)w;
     }
 
-    // 3. Drivetrain
+    // 7. Setup Controller
     v_ctrl = JPH_WheeledVehicleControllerSettings_Create();
     
-    JPH_VehicleEngineSettings eng;
-    JPH_VehicleEngineSettings_Init(&eng);
-    eng.maxTorque = 600.0f;
-    eng.minRPM = 1000.0f;
-    eng.maxRPM = 7000.0f;
-    eng.inertia = 0.5f; 
-    eng.normalizedTorque = t_curve; 
-    JPH_WheeledVehicleControllerSettings_SetEngine(v_ctrl, &eng);
+    JPH_VehicleEngineSettings eng_set;
+    JPH_VehicleEngineSettings_Init(&eng_set);
+    eng_set.maxTorque = eng_torque;
+    eng_set.maxRPM = eng_max_rpm;
+    eng_set.minRPM = eng_min_rpm;
+    eng_set.inertia = eng_inertia;
+    eng_set.normalizedTorque = t_curve; 
+    JPH_WheeledVehicleControllerSettings_SetEngine(v_ctrl, &eng_set);
 
     trans = JPH_VehicleTransmissionSettings_Create();
-    JPH_VehicleTransmissionSettings_SetMode(trans, JPH_TransmissionMode_Manual);
-    // FIX: Forward gears ONLY. Gear 1 is index 0.
-    float forward_gears[] = { 4.0f, 2.0f, 1.5f, 1.1f, 0.9f }; 
-    JPH_VehicleTransmissionSettings_SetGearRatios(trans, forward_gears, 5);
-    
-    // FIX: Reverse gears separately.
-    float reverse_gears[] = { -3.5f };
-    JPH_VehicleTransmissionSettings_SetReverseGearRatios(trans, reverse_gears, 1);
-    JPH_VehicleTransmissionSettings_SetClutchStrength(trans, 10000.0f); 
+    JPH_VehicleTransmissionSettings_SetMode(trans, (JPH_TransmissionMode)trans_mode);
+    JPH_VehicleTransmissionSettings_SetClutchStrength(trans, clutch_strength); 
+
+    if (py_ratios && PyList_Check(py_ratios)) {
+        Py_ssize_t n_gears = PyList_Size(py_ratios);
+        float* ratios = malloc(n_gears * sizeof(float));
+        for(Py_ssize_t g=0; g<n_gears; g++) ratios[g] = (float)PyFloat_AsDouble(PyList_GetItem(py_ratios, g));
+        JPH_VehicleTransmissionSettings_SetGearRatios(trans, ratios, (uint32_t)n_gears);
+        free(ratios);
+    } else {
+        float def_gears[] = { 4.0f, 2.0f, 1.5f, 1.1f, 0.9f };
+        JPH_VehicleTransmissionSettings_SetGearRatios(trans, def_gears, 5);
+    }
+    float rev_gears[] = { -3.5f };
+    JPH_VehicleTransmissionSettings_SetReverseGearRatios(trans, rev_gears, 1);
     
     JPH_WheeledVehicleControllerSettings_SetTransmission(v_ctrl, trans);
 
-    // FIX: Use the new helper to create 4WD setup
-    // This ensures Jolt receives valid differential structs via C++ vector push_back
-    if (num_wheels >= 4) {
-        // Front Diff (Wheels 0, 1)
+    // 8. Differentials (Using the "Surgery" helper exclusively)
+    if (strcmp(drive_str, "FWD") == 0) {
         JPH_WheeledVehicleControllerSettings_AddDifferential(v_ctrl, 0, 1);
-        // Rear Diff (Wheels 2, 3)
+    } else if (strcmp(drive_str, "AWD") == 0) {
+        JPH_WheeledVehicleControllerSettings_AddDifferential(v_ctrl, 0, 1);
         JPH_WheeledVehicleControllerSettings_AddDifferential(v_ctrl, 2, 3);
-    } else {
-        // FWD
-        JPH_WheeledVehicleControllerSettings_AddDifferential(v_ctrl, 0, 1);
+    } else { // Default RWD
+        JPH_WheeledVehicleControllerSettings_AddDifferential(v_ctrl, 2, 3);
     }
 
-    // FIX: 4WD Setup (2 Differentials)
-    // Diff 0: Wheels 0 & 1 (Front)
-    // Diff 1: Wheels 2 & 3 (Rear)
-    // This ensures torque reaches all wheels.
-    int diff_count = (num_wheels >= 4) ? 2 : 1;
-    JPH_VehicleDifferentialSettings diffs[2]; // Stack allocation safe here
-    
-    JPH_VehicleDifferentialSettings_Init(&diffs[0]);
-    diffs[0].leftWheel = 0;
-    diffs[0].rightWheel = 1;
-    diffs[0].differentialRatio = 3.5f;
-    diffs[0].limitedSlipRatio = 1.4f;
-    diffs[0].engineTorqueRatio = (diff_count == 2) ? 0.5f : 1.0f; // Split torque
-
-    if (diff_count == 2) {
-        JPH_VehicleDifferentialSettings_Init(&diffs[1]);
-        diffs[1].leftWheel = 2;
-        diffs[1].rightWheel = 3;
-        diffs[1].differentialRatio = 3.5f;
-        diffs[1].limitedSlipRatio = 1.4f;
-        diffs[1].engineTorqueRatio = 0.5f;
-    }
-
-    JPH_WheeledVehicleControllerSettings_SetDifferentials(v_ctrl, diffs, diff_count);
-
-    // 4. Constraint
+    // 9. Constraint Creation
     JPH_VehicleConstraintSettings v_set;
     JPH_VehicleConstraintSettings_Init(&v_set);
     v_set.wheelsCount = (uint32_t)num_wheels; 
@@ -2373,66 +2374,46 @@ static PyObject* PhysicsWorld_create_vehicle(PhysicsWorldObject* self, PyObject*
     v_set.controller = (JPH_VehicleControllerSettings*)v_ctrl;
     v_set.up.x = 0; v_set.up.y = 1; v_set.up.z = 0;
     v_set.forward.x = 0; v_set.forward.y = 0; v_set.forward.z = 1;
-    v_set.maxPitchRollAngle = 1.04f; 
 
     j_veh = JPH_VehicleConstraint_Create(lock.body, &v_set);
-    if (!j_veh) {
-        PyErr_SetString(PyExc_RuntimeError, "Failed to create Jolt VehicleConstraint");
-        goto error_cleanup;
-    }
+    if (!j_veh) { PyErr_SetString(PyExc_RuntimeError, "Jolt Vehicle Fail"); goto error_cleanup; }
 
     JPH_PhysicsSystem_AddConstraint(self->system, (JPH_Constraint*)j_veh);
-    JPH_PhysicsStepListener* step_listener = JPH_VehicleConstraint_AsPhysicsStepListener(j_veh);
-    JPH_PhysicsSystem_AddStepListener(self->system, step_listener);
-
+    JPH_PhysicsSystem_AddStepListener(self->system, JPH_VehicleConstraint_AsPhysicsStepListener(j_veh));
     tester = JPH_VehicleCollisionTesterRay_Create(1, &(JPH_Vec3){0, 1, 0}, 0.5f);
     JPH_VehicleConstraint_SetVehicleCollisionTester(j_veh, (JPH_VehicleCollisionTester*)tester);
 
     JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
     is_locked = false;
 
-    // 5. Wrap Object
+    // 10. Success Path
+    Py_XDECREF(py_ratios);
     PyObject *module = PyType_GetModule(Py_TYPE(self));
     CulverinState *st = get_culverin_state(module);
     VehicleObject *obj = (VehicleObject *)PyObject_New(VehicleObject, (PyTypeObject *)st->VehicleType);
-    
     if (!obj) goto error_cleanup;
 
-    obj->vehicle = j_veh;
-    obj->tester = (JPH_VehicleCollisionTester*)tester;
-    obj->world = self;
-    obj->num_wheels = (uint32_t)num_wheels;
-    obj->current_gear = 1; 
-    
-    obj->wheel_settings = w_settings;
-    obj->controller_settings = (JPH_VehicleControllerSettings*)v_ctrl;
-    obj->transmission_settings = trans; 
-    obj->friction_curve = f_curve;
-    obj->torque_curve = t_curve;
+    obj->vehicle = j_veh; obj->tester = (JPH_VehicleCollisionTester*)tester; obj->world = self;
+    obj->num_wheels = (uint32_t)num_wheels; obj->current_gear = 1; 
+    obj->wheel_settings = w_settings; obj->controller_settings = (JPH_VehicleControllerSettings*)v_ctrl;
+    obj->transmission_settings = trans; obj->friction_curve = f_curve; obj->torque_curve = t_curve;
     
     Py_INCREF(self);
     return (PyObject *)obj;
 
 error_cleanup:
-    if (is_locked) {
-        JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
-    }
-    if (j_veh) { 
-        JPH_PhysicsSystem_RemoveConstraint(self->system, (JPH_Constraint*)j_veh);
-        JPH_Constraint_Destroy((JPH_Constraint*)j_veh); 
-    }
-    if (tester) { JPH_VehicleCollisionTester_Destroy((JPH_VehicleCollisionTester*)tester); }
-    if (trans) { JPH_VehicleTransmissionSettings_Destroy(trans); }
-    if (v_ctrl) { JPH_VehicleControllerSettings_Destroy((JPH_VehicleControllerSettings*)v_ctrl); }
+    Py_XDECREF(py_ratios);
+    if (is_locked) JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
+    if (j_veh) { JPH_PhysicsSystem_RemoveConstraint(self->system, (JPH_Constraint*)j_veh); JPH_Constraint_Destroy((JPH_Constraint*)j_veh); }
+    if (tester) JPH_VehicleCollisionTester_Destroy((JPH_VehicleCollisionTester*)tester);
+    if (trans) JPH_VehicleTransmissionSettings_Destroy(trans);
+    if (v_ctrl) JPH_VehicleControllerSettings_Destroy((JPH_VehicleControllerSettings*)v_ctrl);
     if (w_settings) {
-        for (Py_ssize_t i = 0; i < num_wheels; i++) {
-            if (w_settings[i]) JPH_WheelSettings_Destroy(w_settings[i]);
-        }
+        for (Py_ssize_t i = 0; i < num_wheels; i++) if (w_settings[i]) JPH_WheelSettings_Destroy(w_settings[i]);
         PyMem_RawFree(w_settings);
     }
-    if (f_curve) { JPH_LinearCurve_Destroy(f_curve); }
-    if (t_curve) { JPH_LinearCurve_Destroy(t_curve); }
-    
+    if (f_curve) JPH_LinearCurve_Destroy(f_curve);
+    if (t_curve) JPH_LinearCurve_Destroy(t_curve);
     return NULL;
 }
 
@@ -3036,6 +3017,13 @@ static PyObject* Vehicle_set_input(VehicleObject* self, PyObject* args, PyObject
     static char *kwlist[] = {"forward", "right", "brake", "handbrake", NULL};
     if (!PyArg_ParseTupleAndKeywords(args, kwds, "ffff", kwlist, &forward, &right, &brake, &handbrake)) return NULL;
 
+    SHADOW_LOCK(&self->world->shadow_lock);
+    if (self->world->is_stepping) {
+        SHADOW_UNLOCK(&self->world->shadow_lock);
+        PyErr_SetString(PyExc_RuntimeError, "Cannot set vehicle input during physics step");
+        return NULL;
+    }
+
     if (!self->vehicle) {
         PyErr_SetString(PyExc_RuntimeError, "Vehicle has been destroyed");
         return NULL;
@@ -3113,7 +3101,7 @@ static PyObject* Vehicle_set_input(VehicleObject* self, PyObject* args, PyObject
         input_brake,
         handbrake
     );
-    
+    SHADOW_UNLOCK(&self->world->shadow_lock);
     Py_RETURN_NONE;
 }
 
@@ -3366,6 +3354,13 @@ static PyObject *Character_move(CharacterObject *self, PyObject *args,
     return NULL;
   }
 
+  SHADOW_LOCK(&self->world->shadow_lock);
+  if (self->world->is_stepping) {
+      SHADOW_UNLOCK(&self->world->shadow_lock);
+      PyErr_SetString(PyExc_RuntimeError, "Cannot move character during physics step");
+      return NULL;
+  }
+
   self->last_vx = vx; self->last_vy = vy; self->last_vz = vz;
 
   JPH_RVec3 current_pos;
@@ -3567,7 +3562,7 @@ static PyObject *get_time(PhysicsWorldObject *self, void *c) {
   return PyFloat_FromDouble(self->time);
 }
 
-// NEW: Buffer Release Slot
+// Buffer Release Slot
 static void PhysicsWorld_releasebuffer(PhysicsWorldObject *self, Py_buffer *view) {
     SHADOW_LOCK(&self->shadow_lock);
     if (self->view_export_count > 0) self->view_export_count--;

@@ -54,6 +54,15 @@ typedef PyThread_type_lock ShadowMutex;
 #define DEBUG_LOG(fmt, ...)
 #endif
 
+#define GUARD_STEPPING(self) do \
+    if ((self)->is_stepping) { \
+        SHADOW_UNLOCK(&(self)->shadow_lock); \
+        PyErr_SetString(PyExc_RuntimeError, "Cannot modify physics world during simulation step"); \
+        return NULL; \
+    } \
+    while (0)
+    /* Must use while in lock */
+
 // --- Shape Caching ---
 typedef struct {
   uint32_t type; // 0=Box, 1=Sphere, 2=Capsule, 3=Cylinder, 4=Plane
@@ -214,6 +223,7 @@ typedef struct {
   int view_export_count; // Tracks active memoryviews to prevent unsafe resize
 
   ShadowMutex shadow_lock;
+  bool is_stepping;
 
   Py_ssize_t view_shape[2];
   Py_ssize_t view_strides[2];

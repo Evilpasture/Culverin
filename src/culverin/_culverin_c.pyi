@@ -87,7 +87,10 @@ class PhysicsWorld:
     def create_vehicle(
         self,
         chassis: int,
-        wheels: Sequence[Any]
+        wheels: Sequence[Any],
+        drive: str = "RWD",
+        engine: Optional[Any] = None,
+        transmission: Optional[Any] = None
     ) -> Vehicle: ...
 
     def destroy_body(self, handle: int) -> None: ...
