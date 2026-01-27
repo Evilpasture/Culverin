@@ -40,7 +40,11 @@ class Vehicle:
         handbrake: float = 0.0
     ) -> None: ...
     def get_wheel_transform(self, index: int) -> Tuple[Tuple[float, float, float], Tuple[float, float, float, float]]: ...
+    def get_debug_state(self) -> None: ...
     def destroy(self) -> None: ...
+
+    @property
+    def wheel_count(self) -> int: ...
 
 class PhysicsWorld:
     def __init__(
@@ -116,7 +120,7 @@ class PhysicsWorld:
         start: Tuple[float, float, float], 
         direction: Tuple[float, float, float], 
         max_dist: float = 1000.0,
-        ignore: Any = 0
+        ignore: int = 0
     ) -> Optional[Tuple[int, float, Tuple[float, float, float]]]: ...
     def shapecast(
         self,
@@ -125,7 +129,7 @@ class PhysicsWorld:
         rot: Tuple[float, float, float, float],
         dir: Tuple[float, float, float],
         size: Any,
-        ignore: Any = 0
+        ignore: int = 0
     ) -> Optional[Tuple[int, float, Tuple[float, float, float], Tuple[float, float, float]]]: ...
     def overlap_sphere(self, center: Tuple[float, float, float], radius: float) -> List[int]: ...
     def overlap_aabb(self, min: Tuple[float, float, float], max: Tuple[float, float, float]) -> List[int]: ...

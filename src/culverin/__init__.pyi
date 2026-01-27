@@ -29,10 +29,11 @@ class BodyConfig(TypedDict, total=False):
     pos: Vec3
     rot: Quat
     shape: int
-    size: Union[Tuple[float], Tuple[float, float], Tuple[float, float, float], Tuple[float, float, float, float]]
+    size: Union[float, Tuple[float], Tuple[float, float], Tuple[float, float, float], Tuple[float, float, float, float]]
     mass: float
     user_data: int
     motion: int
+    is_sensor: bool
 
 class WorldSettings(TypedDict, total=False):
     gravity: Vec3
@@ -59,7 +60,11 @@ class Character(_culverin_c.Character):
 class Vehicle(_culverin_c.Vehicle):
     def set_input(self, forward: float = 0.0, right: float = 0.0, brake: float = 0.0, handbrake: float = 0.0) -> None: ...
     def get_wheel_transform(self, index: int) -> Tuple[Vec3, Quat]: ...
+    def get_debug_state(self) -> None: ...
     def destroy(self) -> None: ...
+
+    @property
+    def wheel_count(self) -> int: ...
 
 class PhysicsWorld(_culverin_c.PhysicsWorld):
     def __init__(self, settings: Optional[WorldSettings] = None, bodies: Optional[List[BodyConfig]] = None) -> None: ...
@@ -85,7 +90,7 @@ class PhysicsWorld(_culverin_c.PhysicsWorld):
 
     def destroy_body(self, handle: Handle) -> None: ...
 
-    def create_constraint(self, type: int, body1: int, body2: int, params: Optional[Any] = None) -> int: ...
+    def create_constraint(self, type: int, body1: Handle, body2: Handle, params: Optional[Any] = None) -> int: ...
     def destroy_constraint(self, handle: int) -> None: ...
 
     def apply_impulse(self, handle: Handle, x: float, y: float, z: float) -> None: ...
@@ -121,21 +126,14 @@ class PhysicsWorld(_culverin_c.PhysicsWorld):
     def get_contact_events_ex(self) -> List[Dict[str, Any]]: ...
     def get_contact_events_raw(self) -> memoryview: 
         """
-        Returns a read-only memoryview of packed ContactEvent structs:
-
-        struct ContactEvent {
-            uint64 body1;
-            uint64 body2;
-            float  px, py, pz;
-            float  nx, ny, nz;
-            float  impulse;
-        }
-
-        Stride: 40 bytes
-        Little-endian
+        Returns a read-only memoryview of packed ContactEvent structs (40 bytes each).
+        Fields (Little-Endian):
+          uint64 body1, body2
+          float32 px, py, pz (Contact Point)
+          float32 nx, ny, nz (Normal)
+          float32 impulse
         """
         ...
-    
     
     def get_index(self, handle: Handle) -> Optional[int]: ...
     def get_active_indices(self) -> bytes: ...
@@ -145,10 +143,8 @@ class PhysicsWorld(_culverin_c.PhysicsWorld):
 
     # Interpolation
     def get_render_state(self, alpha: float) -> bytes: 
-        """Returns a packed float32 buffer of [pos.xyz, rot.xyzw] for all bodies."""
+        """Returns a packed float32 buffer of [pos.xyz, rot.xyzw] for all bodies (28 bytes per body)."""
         ...
-
-    # “Returned views are invalidated if the world resizes (e.g. body creation).”
 
     @property
     def positions(self) -> memoryview: ...
@@ -166,7 +162,7 @@ class PhysicsWorld(_culverin_c.PhysicsWorld):
     def time(self) -> float: ...
 
 __all__ = [
-    "PhysicsWorld", "Character", "BodyConfig", "WorldSettings", "Handle", 
+    "PhysicsWorld", "Character", "Vehicle", "BodyConfig", "WorldSettings", "WheelConfig", "Handle", 
     "SHAPE_BOX", "SHAPE_SPHERE", "SHAPE_CAPSULE", "SHAPE_CYLINDER", "SHAPE_PLANE", "SHAPE_MESH",
     "MOTION_STATIC", "MOTION_KINEMATIC", "MOTION_DYNAMIC",
     "CONSTRAINT_FIXED", "CONSTRAINT_POINT", "CONSTRAINT_HINGE", 

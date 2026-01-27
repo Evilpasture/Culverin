@@ -3540,6 +3540,10 @@ static PyObject* Character_get_render_transform(CharacterObject* self, PyObject*
     return out;
 }
 
+static PyObject* Vehicle_get_wheel_count(VehicleObject* self, void* closure) {
+    return PyLong_FromUnsignedLong(self->num_wheels);
+}
+
 static PyObject* Character_get_handle(CharacterObject* self, void* closure) {
     return PyLong_FromUnsignedLongLong(self->handle);
 }
@@ -3584,6 +3588,11 @@ static const PyGetSetDef PhysicsWorld_getset[] = {
 
 static const PyGetSetDef Character_getset[] = {
     {"handle", (getter)Character_get_handle, NULL, "The unique physics handle for this character.", NULL},
+    {NULL}
+};
+
+static const PyGetSetDef Vehicle_getset[] = {
+    {"wheel_count", (getter)Vehicle_get_wheel_count, NULL, "Number of wheels attached to this vehicle.", NULL},
     {NULL}
 };
 
@@ -3716,6 +3725,7 @@ static const PyType_Slot Vehicle_slots[] = {
     {Py_tp_traverse, Vehicle_traverse},
     {Py_tp_clear, Vehicle_clear},
     {Py_tp_methods, (PyMethodDef *)Vehicle_methods},
+    {Py_tp_getset, (PyGetSetDef *)Vehicle_getset},
     {0, NULL},
 };
 
