@@ -4,6 +4,7 @@ High-performance Python bindings for Jolt Physics using Shadow Buffers and Gener
 """
 
 from typing import Tuple, List, Optional, TypedDict, Union, Any, Dict, Sequence
+from . import _culverin_c
 
 # Semantic Types
 Vec3 = Tuple[float, float, float]
@@ -131,6 +132,7 @@ class PhysicsWorld:
         """Initialize the physics system. 'bodies' can be pre-baked for speed."""
     def step(self, dt: float = 1.0/60.0) -> None:
         """Advance simulation. Flushes command queue and syncs shadow buffers."""
+    
     def create_body(
         self, 
         pos: Vec3 = (0, 0, 0),
@@ -142,32 +144,54 @@ class PhysicsWorld:
         is_sensor: bool = False,
         mass: float = -1.0,
         category: int = 0xFFFF,
-        mask: int = 0xFFFF
+        mask: int = 0xFFFF,
+        friction: float = 0.2,
+        restitution: float = 0.0,
+        material_id: int = 0
     ) -> Handle:
         """
-        Create a body with collision filtering.
-        Logic: (A.category & B.mask) != 0 AND (B.category & A.mask) != 0
+        Queue creation of a standard rigid body.
+        Args:
+            category: Bitmask for 'What Am I'.
+            mask: Bitmask for 'What I Collide With'.
+            material_id: User-defined ID for audio/VFX lookup.
         """
         ...
-    def set_collision_filter(self, handle: Handle, category: int, mask: int) -> None:
-        """Dynamically update what a body can collide with."""
-        ...
-    def create_mesh_body(self, pos: Vec3, rot: Quat, vertices: Any, indices: Any, user_data: int = 0) -> Handle:
+        
+    def create_mesh_body(self, pos: Vec3, rot: Quat, vertices: Any, indices: Any, user_data: int = 0, category: int = 0xFFFF, mask: int = 0xFFFF) -> Handle:
         """Queue creation of a static triangle mesh body."""
+        
     def create_character(self, pos: Vec3, height: float = 1.8, radius: float = 0.4, step_height: float = 0.4, max_slope: float = 45.0) -> Character:
         """Create a virtual character controller."""
+        
     def create_vehicle(self, chassis: Handle, wheels: Sequence[WheelConfig], drive: str = "RWD", engine: Optional[Engine] = None, transmission: Optional[Union[Automatic, Manual]] = None) -> Vehicle:
         """Combine bodies into a wheeled vehicle system."""
+        
     def create_ragdoll_settings(self, skeleton: Skeleton) -> RagdollSettings:
         """Create a ragdoll configuration template."""
-    def create_ragdoll(self, settings: RagdollSettings, pos: Vec3, rot: Quat = (0, 0, 0, 1), user_data: int = 0) -> Ragdoll:
+        
+    def create_ragdoll(
+        self, 
+        settings: RagdollSettings, 
+        pos: Vec3, 
+        rot: Quat = (0, 0, 0, 1), 
+        user_data: int = 0,
+        category: int = 0xFFFF,
+        mask: int = 0xFFFF,
+        material_id: int = 0
+    ) -> Ragdoll:
         """Instantiate a ragdoll into the world."""
+        
     def destroy_body(self, handle: Handle) -> None:
         """Queue destruction of a body. Handle becomes invalid immediately."""
+        
     def create_constraint(self, type: int, body1: Handle, body2: Handle, params: Optional[Any] = None) -> int:
         """Create a joint between two bodies."""
+        
     def destroy_constraint(self, handle: int) -> None: ...
+    
     def apply_impulse(self, handle: Handle, x: float, y: float, z: float) -> None: ...
+    
     def apply_buoyancy(
         self, 
         handle: Handle, 
@@ -179,60 +203,51 @@ class PhysicsWorld:
         fluid_velocity: Vec3 = (0, 0, 0)
     ) -> bool:
         """
-        Calculates and applies buoyancy and fluid drag to a body.
-        
-        Args:
-            handle: The body to affect.
-            surface_y: The world-space height of the fluid surface.
-            buoyancy: Scale of the upward force (1.0 matches gravity for body density).
-            linear_drag: Resistance to movement through fluid.
-            angular_drag: Resistance to rotation through fluid.
-            dt: The timestep (usually matches your world.step call).
-            fluid_velocity: World-space velocity of the fluid (for currents/rivers).
-            
-        Returns:
-            True if the body is at least partially submerged.
+        Apply fluid dynamics (Archimedes' principle).
+        Returns True if body is submerged.
         """
         ...
+        
     def set_position(self, handle: Handle, x: float, y: float, z: float) -> None: ...
     def set_rotation(self, handle: Handle, x: float, y: float, z: float, w: float) -> None: ...
     def set_transform(self, handle: Handle, pos: Vec3, rot: Quat) -> None: ...
     def set_linear_velocity(self, handle: Handle, x: float, y: float, z: float) -> None: ...
     def set_angular_velocity(self, handle: Handle, x: float, y: float, z: float) -> None: ...
+    def set_collision_filter(self, handle: Handle, category: int, mask: int) -> None: ...
+    
     def activate(self, handle: Handle) -> None: ...
     def deactivate(self, handle: Handle) -> None: ...
     def get_motion_type(self, handle: Handle) -> int: ...
     def set_motion_type(self, handle: Handle, motion: int) -> None: ...
     def set_user_data(self, handle: Handle, data: int) -> None: ...
     def get_user_data(self, handle: Handle) -> int: ...
+    
     def raycast(self, start: Vec3, direction: Vec3, max_dist: float = 1000.0, ignore: Union[Handle, Character] = 0) -> Optional[Tuple[Handle, float, Vec3]]: ...
     def raycast_batch(self, starts: bytes, directions: bytes, max_dist: float = 1000.0) -> bytes:
         """
-        Execute multiple raycasts in a single GIL-free C loop.
-        
-        Returns:
-            Packed bytes buffer of RayCastBatchResult (N*48 bytes).
-            Result format (Little-Endian):
-                uint64 handle      (offset 0)
-                float32 fraction    (offset 8)
-                float32 nx, ny, nz  (Normal, offset 12)
-                float32 px, py, pz  (Point, offset 24)
-                uint32 subshape_id  (offset 36)
-                ... padding ...     (offset 40-48)
+        Execute multiple raycasts efficiently (GIL-released).
+        Returns N * 48 bytes of packed RayCastBatchResult structs.
         """
         ...
     def shapecast(self, shape: int, pos: Vec3, rot: Quat, dir: Vec3, size: Any, ignore: Union[Handle, Character] = 0) -> Optional[Tuple[Handle, float, Vec3, Vec3]]: ...
     def overlap_sphere(self, center: Vec3, radius: float) -> List[Handle]: ...
     def overlap_aabb(self, min: Vec3, max: Vec3) -> List[Handle]: ...
+    
     def get_contact_events(self) -> List[Tuple[Handle, Handle]]:
         """Returns basic (ID1, ID2) collision pairs for the last frame."""
     def get_contact_events_ex(self) -> List[Dict[str, Any]]:
-        """Returns detailed dictionaries including position, normal, and strength."""
+        """Returns detailed dictionaries including position, normal, strength, and materials."""
     def get_contact_events_raw(self) -> memoryview: 
         """
-        Returns a read-only memoryview of packed ContactEvent structs (48 bytes each).
+        Returns a read-only memoryview of packed ContactEvent structs (64 bytes each).
+        Fields (Little-Endian):
+          uint64 body1, body2
+          float32 px, py, pz, nx, ny, nz
+          float32 impulse, sliding_speed_sq
+          uint32 mat1, mat2
         """
         ...
+    
     def get_index(self, handle: Handle) -> Optional[int]:
         """Map a handle to the current dense array index (changes when bodies are deleted)."""
     def get_active_indices(self) -> bytes:
