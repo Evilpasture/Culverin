@@ -190,50 +190,68 @@ static void vec3_get_perpendicular(const JPH_Vec3* in, JPH_Vec3* out) {
 // --- Global Contact Listener ---
 static void JPH_API_CALL on_contact_added(void* userData, const JPH_Body* body1, const JPH_Body* body2, const JPH_ContactManifold* manifold, JPH_ContactSettings* settings) {
     PhysicsWorldObject* self = (PhysicsWorldObject*)userData;
+    
+    // 1. Atomic Reservation
     size_t idx = atomic_fetch_add_explicit(&self->contact_atomic_idx, 1, memory_order_relaxed);
     if (idx >= self->contact_max_capacity) return;
 
     ContactEvent* ev = &self->contact_buffer[idx];
 
-    // 1. Canonical Handle Ordering (Helps Python Deduplication)
+    // 2. Canonical Handle Ordering
     BodyHandle h1 = (BodyHandle)JPH_Body_GetUserData((JPH_Body*)body1);
     BodyHandle h2 = (BodyHandle)JPH_Body_GetUserData((JPH_Body*)body2);
     
     JPH_STACK_ALLOC(JPH_Vec3, n);
-    JPH_ContactManifold_GetWorldSpaceNormal(manifold, (JPH_Vec3*)&n);
+    // FIX: Just pass 'n', it is already a pointer.
+    JPH_ContactManifold_GetWorldSpaceNormal(manifold, n);
 
-    if (h1 < h2) {
+    bool swapped = (h1 > h2);
+    if (!swapped) {
         ev->body1 = h1; ev->body2 = h2;
     } else {
         ev->body1 = h2; ev->body2 = h1;
-        n->x = -n->x; n->y = -n->y; n->z = -n->z; // Keep normal consistent
+        // Flip normal so it always points from the new body1 to body2
+        n->x = -n->x; n->y = -n->y; n->z = -n->z; 
     }
     ev->nx = n->x; ev->ny = n->y; ev->nz = n->z;
 
-    // 2. Geometry
-    // Manifolds almost always have points; we skip the branch for speed.
-    // JoltC usually guarantees index 0 is valid in Added callback.
+    // 3. Geometry
     JPH_STACK_ALLOC(JPH_RVec3, p);
-    JPH_ContactManifold_GetWorldSpaceContactPointOn1(manifold, 0, (JPH_RVec3*)&p);
+    // FIX: Just pass 'p'
+    JPH_ContactManifold_GetWorldSpaceContactPointOn1(manifold, 0, p);
     ev->px = (float)p->x; ev->py = (float)p->y; ev->pz = (float)p->z;
-    // 3. Optimized Velocity Math
-    JPH_Vec3 v1, v2;
-    JPH_Body_GetLinearVelocity((JPH_Body*)body1, &v1);
-    JPH_Body_GetLinearVelocity((JPH_Body*)body2, &v2);
 
-    float dv_x = v1.x - v2.x;
-    float dv_y = v1.y - v2.y;
-    float dv_z = v1.z - v2.z;
+    // 4. Relative Velocity Math
+    JPH_Vec3 v1_raw, v2_raw;
+    JPH_Body_GetLinearVelocity((JPH_Body*)body1, &v1_raw);
+    JPH_Body_GetLinearVelocity((JPH_Body*)body2, &v2_raw);
 
+    // Calculate relative velocity (v1 - v2)
+    // If we swapped handles, we must swap velocity order to keep math consistent with flipped normal
+    float dv_x, dv_y, dv_z;
+    if (!swapped) {
+        dv_x = v1_raw.x - v2_raw.x;
+        dv_y = v1_raw.y - v2_raw.y;
+        dv_z = v1_raw.z - v2_raw.z;
+    } else {
+        dv_x = v2_raw.x - v1_raw.x;
+        dv_y = v2_raw.y - v1_raw.y;
+        dv_z = v2_raw.z - v1_raw.z;
+    }
+
+    // Normal component (Impact)
     float dot = dv_x * n->x + dv_y * n->y + dv_z * n->z;
+    
+    // We use fabsf because 'strength' should be positive regardless of direction
     ev->impulse = fabsf(dot); 
 
-    // Calculate Tangent Velocity Squared (No Sqrt!)
+    // Tangent component (Sliding)
     float tx = dv_x - (dot * n->x);
     float ty = dv_y - (dot * n->y);
     float tz = dv_z - (dot * n->z);
     ev->sliding_speed_sq = (tx*tx + ty*ty + tz*tz);
 
+    // 5. Release Fence
     atomic_thread_fence(memory_order_release);
 }
 
@@ -261,10 +279,10 @@ static PyObject* PhysicsWorld_get_contact_events(PhysicsWorldObject* self, PyObj
         return PyErr_NoMemory();
     }
     
-    // This is the only part that MUST be synchronized with step()
+    // Snapshot the buffer data
     memcpy(scratch, self->contact_buffer, count * sizeof(ContactEvent));
     
-    // Clear the buffer for the next frame
+    // Clear the buffer index for the next frame
     atomic_store_explicit(&self->contact_atomic_idx, 0, memory_order_relaxed);
 
     // 4. EXIT the lock immediately
@@ -272,10 +290,26 @@ static PyObject* PhysicsWorld_get_contact_events(PhysicsWorldObject* self, PyObj
 
     // 5. Slow Python Work (Done while the next physics step can run in parallel!)
     PyObject* list = PyList_New((Py_ssize_t)count);
+    if (!list) {
+        PyMem_RawFree(scratch);
+        return NULL;
+    }
+
     for (size_t i = 0; i < count; i++) {
-        PyObject* item = PyTuple_New(2);
+        // Create a 4-item tuple: (ID1, ID2, ImpactStrength, SlidingStrengthSq)
+        PyObject* item = PyTuple_New(4);
+        if (!item) {
+            Py_DECREF(list);
+            PyMem_RawFree(scratch);
+            return NULL;
+        }
+
+        // PyTuple_SET_ITEM "steals" the reference, so no extra DECREF needed on these creators
         PyTuple_SET_ITEM(item, 0, PyLong_FromUnsignedLongLong(scratch[i].body1));
         PyTuple_SET_ITEM(item, 1, PyLong_FromUnsignedLongLong(scratch[i].body2));
+        PyTuple_SET_ITEM(item, 2, PyFloat_FromDouble(scratch[i].impulse));
+        PyTuple_SET_ITEM(item, 3, PyFloat_FromDouble(scratch[i].sliding_speed_sq));
+        
         PyList_SET_ITEM(list, (Py_ssize_t)i, item);
     }
 
@@ -284,56 +318,45 @@ static PyObject* PhysicsWorld_get_contact_events(PhysicsWorldObject* self, PyObj
 }
 
 static PyObject* PhysicsWorld_get_contact_events_ex(PhysicsWorldObject* self, PyObject* args) {
-    // 1. Enter lock and check if step() is running
     SHADOW_LOCK(&self->shadow_lock);
-    
     BLOCK_UNTIL_NOT_STEPPING(self);
 
-    // 2. Acquire index with memory visibility
     size_t count = atomic_load_explicit(&self->contact_atomic_idx, memory_order_acquire);
     if (count == 0) { 
         SHADOW_UNLOCK(&self->shadow_lock); 
         return PyList_New(0); 
     }
 
-    // Defensive clamping
-    if (count > self->contact_max_capacity) {
-        count = self->contact_max_capacity;
-    }
+    if (count > self->contact_max_capacity) count = self->contact_max_capacity;
 
-    // 3. Fast Scratch Copy
     ContactEvent* scratch = PyMem_RawMalloc(count * sizeof(ContactEvent));
     if (!scratch) { 
         SHADOW_UNLOCK(&self->shadow_lock); 
         return PyErr_NoMemory(); 
     }
     
-    // Copy from the lock-free contact_buffer
     memcpy(scratch, self->contact_buffer, count * sizeof(ContactEvent));
-    
-    // Reset the index so the next physics step starts at 0
     atomic_store_explicit(&self->contact_atomic_idx, 0, memory_order_relaxed);
-
     SHADOW_UNLOCK(&self->shadow_lock);
 
     // 4. Build Python Objects (Outside the lock)
-    // Optimization: Pre-intern the dictionary keys
     PyObject* k_bodies = PyUnicode_InternFromString("bodies");
     PyObject* k_pos    = PyUnicode_InternFromString("position");
     PyObject* k_norm   = PyUnicode_InternFromString("normal");
     PyObject* k_str    = PyUnicode_InternFromString("strength");
+    PyObject* k_slide  = PyUnicode_InternFromString("slide_sq"); // <--- NEW KEY
 
-    if (!k_bodies || !k_pos || !k_norm || !k_str) {
+    if (!k_bodies || !k_pos || !k_norm || !k_str || !k_slide) {
         Py_XDECREF(k_bodies); Py_XDECREF(k_pos); 
-        Py_XDECREF(k_norm); Py_XDECREF(k_str);
+        Py_XDECREF(k_norm); Py_XDECREF(k_str); Py_XDECREF(k_slide);
         PyMem_RawFree(scratch);
         return NULL;
     }
 
     PyObject* list = PyList_New((Py_ssize_t)count);
     if (!list) {
-        Py_DECREF(k_bodies); Py_DECREF(k_pos); 
-        Py_DECREF(k_norm); Py_DECREF(k_str);
+        Py_XDECREF(k_bodies); Py_XDECREF(k_pos); 
+        Py_XDECREF(k_norm); Py_XDECREF(k_str); Py_XDECREF(k_slide);
         PyMem_RawFree(scratch);
         return NULL;
     }
@@ -376,6 +399,11 @@ static PyObject* PhysicsWorld_get_contact_events_ex(PhysicsWorldObject* self, Py
         PyDict_SetItem(dict, k_str, s_val);
         Py_DECREF(s_val);
 
+        // 5. Sliding Speed Squared (Friction/Scrape strength) <--- NEW BLOCK
+        PyObject* sl_val = PyFloat_FromDouble(e->sliding_speed_sq);
+        PyDict_SetItem(dict, k_slide, sl_val);
+        Py_DECREF(sl_val);
+
         PyList_SET_ITEM(list, (Py_ssize_t)i, dict);
     }
 
@@ -384,6 +412,7 @@ static PyObject* PhysicsWorld_get_contact_events_ex(PhysicsWorldObject* self, Py
     Py_DECREF(k_pos);
     Py_DECREF(k_norm);
     Py_DECREF(k_str);
+    Py_DECREF(k_slide); // <--- DON'T FORGET THIS
 
     PyMem_RawFree(scratch);
     return list;
@@ -4264,6 +4293,8 @@ static PyObject* Character_get_render_transform(CharacterObject* self, PyObject*
 
     return out;
 }
+
+
 
 /* --- Immutable Getters (Safe without locks) --- */
 

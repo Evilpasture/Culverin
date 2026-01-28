@@ -72,7 +72,7 @@ static ShadowMutex g_jph_trampoline_lock; // Global lock for JPH callbacks
         return NULL; \
     } \
     while (0)
-    /* Must use while in lock(no longer used in favor for more friendlier methods, only use for debug) */
+    /* Must use while in lock(deprecated, only use for debug) */
 
 // Processor-level hint to save power during spin-waits
 static inline void culverin_cpu_relax() {
@@ -370,6 +370,37 @@ typedef struct {
 } VehicleObject;
 
 extern const PyType_Spec Vehicle_spec;
+
+// --- Ragdoll Structures ---
+
+typedef struct {
+    PyObject_HEAD
+    JPH_Skeleton* skeleton;
+} SkeletonObject;
+
+extern const PyType_Spec Skeleton_spec;
+
+typedef struct {
+    PyObject_HEAD
+    JPH_RagdollSettings* settings;
+    PhysicsWorldObject* world; // Kept to access Shape Cache
+} RagdollSettingsObject;
+
+extern const PyType_Spec RagdollSettings_spec;
+
+typedef struct {
+    PyObject_HEAD
+    JPH_Ragdoll* ragdoll;
+    PhysicsWorldObject* world;
+    
+    // We must track the handles of the parts so we can 
+    // invalid the slots when the ragdoll is destroyed.
+    size_t body_count;
+    uint32_t* body_slots; 
+} RagdollObject;
+
+extern const PyType_Spec Ragdoll_spec;
+
 
 typedef struct {
   PhysicsWorldObject *world;
