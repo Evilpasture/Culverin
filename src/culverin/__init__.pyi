@@ -140,12 +140,17 @@ class PhysicsWorld:
         motion: int = MOTION_DYNAMIC,
         user_data: int = 0,
         is_sensor: bool = False,
-        mass: float = -1.0  # Added
+        mass: float = -1.0,
+        category: int = 0xFFFF,
+        mask: int = 0xFFFF
     ) -> Handle:
         """
-        Queue creation of a standard rigid body.
-        If mass > 0, it overrides the default mass calculated from shape density.
+        Create a body with collision filtering.
+        Logic: (A.category & B.mask) != 0 AND (B.category & A.mask) != 0
         """
+        ...
+    def set_collision_filter(self, handle: Handle, category: int, mask: int) -> None:
+        """Dynamically update what a body can collide with."""
         ...
     def create_mesh_body(self, pos: Vec3, rot: Quat, vertices: Any, indices: Any, user_data: int = 0) -> Handle:
         """Queue creation of a static triangle mesh body."""

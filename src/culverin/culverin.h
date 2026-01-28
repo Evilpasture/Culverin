@@ -194,6 +194,8 @@ typedef struct {
     struct {
       JPH_BodyCreationSettings *settings;
       uint64_t user_data;
+      uint32_t category;
+      uint32_t mask;
     } create;
 
     // CMD_SET_POS, CMD_SET_ROT, CMD_SET_LINVEL, CMD_SET_ANGVEL
@@ -306,6 +308,9 @@ typedef struct {
   uint64_t *user_data;
 
   // --- Indirection System ---
+  uint32_t *categories; // [Dense Index]
+  uint32_t *masks;      // [Dense Index]
+
   uint32_t *generations;   // [Slot] -> Generation
   uint32_t *slot_to_dense; // [Slot] -> Dense Index
   uint32_t *dense_to_slot; // [Dense Index] -> Slot

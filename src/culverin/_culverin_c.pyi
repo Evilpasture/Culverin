@@ -92,8 +92,13 @@ class PhysicsWorld:
         motion: int = 2,
         user_data: int = 0,
         is_sensor: bool = False,
-        mass: float = -1.0
+        mass: float = -1.0,
+        category: int = 0xFFFF,
+        mask: int = 0xFFFF
     ) -> int: ...
+
+    def set_collision_filter(self, handle: int, category: int, mask: int) -> None:
+        ...
 
     def create_mesh_body(
         self,
