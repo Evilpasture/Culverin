@@ -91,7 +91,8 @@ class PhysicsWorld:
         shape: int = 0,
         motion: int = 2,
         user_data: int = 0,
-        is_sensor: bool = False
+        is_sensor: bool = False,
+        mass: float = -1.0
     ) -> int: ...
 
     def create_mesh_body(
@@ -136,6 +137,17 @@ class PhysicsWorld:
     
     # Interaction
     def apply_impulse(self, handle: int, x: float, y: float, z: float) -> None: ...
+    def apply_buoyancy(
+        self, 
+        handle: int, 
+        surface_y: float, 
+        buoyancy: float = 1.0, 
+        linear_drag: float = 0.5, 
+        angular_drag: float = 0.5, 
+        dt: float = 1.0/60.0,
+        fluid_velocity: Tuple[float, float, float] = (0, 0, 0)
+    ) -> bool:
+        ...
     def set_position(self, handle: int, x: float, y: float, z: float) -> None: ...
     def set_rotation(self, handle: int, x: float, y: float, z: float, w: float) -> None: ...
     def set_transform(self, handle: int, pos: Tuple[float, float, float], rot: Tuple[float, float, float, float]) -> None: ...

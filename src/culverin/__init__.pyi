@@ -131,8 +131,22 @@ class PhysicsWorld:
         """Initialize the physics system. 'bodies' can be pre-baked for speed."""
     def step(self, dt: float = 1.0/60.0) -> None:
         """Advance simulation. Flushes command queue and syncs shadow buffers."""
-    def create_body(self, pos: Vec3 = (0, 0, 0), rot: Quat = (0, 0, 0, 1), size: Union[float, Vec3, Tuple[float, ...]] = (1, 1, 1), shape: int = SHAPE_BOX, motion: int = MOTION_DYNAMIC, user_data: int = 0, is_sensor: bool = False) -> Handle:
-        """Queue creation of a standard rigid body."""
+    def create_body(
+        self, 
+        pos: Vec3 = (0, 0, 0),
+        rot: Quat = (0, 0, 0, 1),
+        size: Union[float, Vec3, Tuple[float, ...]] = (1, 1, 1),
+        shape: int = SHAPE_BOX,
+        motion: int = MOTION_DYNAMIC,
+        user_data: int = 0,
+        is_sensor: bool = False,
+        mass: float = -1.0  # Added
+    ) -> Handle:
+        """
+        Queue creation of a standard rigid body.
+        If mass > 0, it overrides the default mass calculated from shape density.
+        """
+        ...
     def create_mesh_body(self, pos: Vec3, rot: Quat, vertices: Any, indices: Any, user_data: int = 0) -> Handle:
         """Queue creation of a static triangle mesh body."""
     def create_character(self, pos: Vec3, height: float = 1.8, radius: float = 0.4, step_height: float = 0.4, max_slope: float = 45.0) -> Character:
@@ -149,6 +163,32 @@ class PhysicsWorld:
         """Create a joint between two bodies."""
     def destroy_constraint(self, handle: int) -> None: ...
     def apply_impulse(self, handle: Handle, x: float, y: float, z: float) -> None: ...
+    def apply_buoyancy(
+        self, 
+        handle: Handle, 
+        surface_y: float, 
+        buoyancy: float = 1.0, 
+        linear_drag: float = 0.5, 
+        angular_drag: float = 0.5, 
+        dt: float = 1.0/60.0,
+        fluid_velocity: Vec3 = (0, 0, 0)
+    ) -> bool:
+        """
+        Calculates and applies buoyancy and fluid drag to a body.
+        
+        Args:
+            handle: The body to affect.
+            surface_y: The world-space height of the fluid surface.
+            buoyancy: Scale of the upward force (1.0 matches gravity for body density).
+            linear_drag: Resistance to movement through fluid.
+            angular_drag: Resistance to rotation through fluid.
+            dt: The timestep (usually matches your world.step call).
+            fluid_velocity: World-space velocity of the fluid (for currents/rivers).
+            
+        Returns:
+            True if the body is at least partially submerged.
+        """
+        ...
     def set_position(self, handle: Handle, x: float, y: float, z: float) -> None: ...
     def set_rotation(self, handle: Handle, x: float, y: float, z: float, w: float) -> None: ...
     def set_transform(self, handle: Handle, pos: Vec3, rot: Quat) -> None: ...
