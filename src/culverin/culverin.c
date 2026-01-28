@@ -5082,6 +5082,107 @@ static PyObject* Ragdoll_get_debug_info(RagdollObject* self, PyObject* Py_UNUSED
     return list;
 }
 
+static PyObject* PhysicsWorld_create_heightfield(PhysicsWorldObject* self, PyObject* args, PyObject* kwds) {
+    float px=0, py=0, pz=0;
+    float rx=0, ry=0, rz=0, rw=1.0f;
+    float sx=1.0f, sy=1.0f, sz=1.0f;
+    int grid_size;
+    Py_buffer h_view = {0};
+    uint64_t user_data = 0;
+    uint32_t category = 0xFFFF, mask = 0xFFFF, material_id = 0;
+    float friction = 0.2f, restitution = 0.0f;
+
+    static char *kwlist[] = {
+        "pos", "rot", "scale", "heights", "grid_size", 
+        "user_data", "category", "mask", "material_id", "friction", "restitution", NULL
+    };
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)(ffff)(fff)y*i|KIIIff", kwlist,
+        &px, &py, &pz, &rx, &ry, &rz, &rw, &sx, &sy, &sz, &h_view, &grid_size,
+        &user_data, &category, &mask, &material_id, &friction, &restitution)) {
+        return NULL;
+    }
+
+    if (h_view.len != (Py_ssize_t)(grid_size * grid_size * sizeof(float))) {
+        PyBuffer_Release(&h_view);
+        return PyErr_Format(PyExc_ValueError, "Height buffer size mismatch. Expected %d floats.", grid_size * grid_size);
+    }
+
+    SHADOW_LOCK(&self->shadow_lock);
+    BLOCK_UNTIL_NOT_STEPPING(self);
+    BLOCK_UNTIL_NOT_QUERYING(self);
+
+    if (self->free_count == 0) {
+        if (PhysicsWorld_resize(self, self->capacity + 1024) < 0) {
+            SHADOW_UNLOCK(&self->shadow_lock);
+            PyBuffer_Release(&h_view);
+            return NULL;
+        }
+    }
+    
+    JPH_Vec3 offset = {0, 0, 0};
+    JPH_Vec3 scale = {sx, sy, sz};
+    
+    // FIX: Added NULL for materialIndices
+    JPH_HeightFieldShapeSettings* hf_settings = JPH_HeightFieldShapeSettings_Create(
+        (float*)h_view.buf, &offset, &scale, (uint32_t)grid_size, NULL
+    );
+    
+    PyBuffer_Release(&h_view);
+
+    if (!hf_settings) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        return PyErr_NoMemory();
+    }
+
+    JPH_Shape* shape = (JPH_Shape*)JPH_HeightFieldShapeSettings_CreateShape(hf_settings);
+    JPH_ShapeSettings_Destroy((JPH_ShapeSettings*)hf_settings);
+
+    if (!shape) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        return PyErr_Format(PyExc_RuntimeError, "Failed to create HeightField shape");
+    }
+
+    uint32_t slot = self->free_slots[--self->free_count];
+    self->slot_states[slot] = SLOT_PENDING_CREATE;
+
+    JPH_STACK_ALLOC(JPH_RVec3, pos);
+    pos->x = (double)px; pos->y = (double)py; pos->z = (double)pz;
+    JPH_STACK_ALLOC(JPH_Quat, rot);
+    rot->x = rx; rot->y = ry; rot->z = rz; rot->w = rw;
+
+    JPH_BodyCreationSettings *settings = JPH_BodyCreationSettings_Create3(
+        shape, pos, rot, JPH_MotionType_Static, 1 
+    );
+    
+    JPH_BodyCreationSettings_SetFriction(settings, friction);
+    JPH_BodyCreationSettings_SetRestitution(settings, restitution);
+
+    uint32_t gen = self->generations[slot];
+    BodyHandle handle = make_handle(slot, gen);
+    JPH_BodyCreationSettings_SetUserData(settings, (uint64_t)handle);
+
+    if (!ensure_command_capacity(self)) {
+        JPH_BodyCreationSettings_Destroy(settings);
+        self->slot_states[slot] = SLOT_EMPTY;
+        self->free_slots[self->free_count++] = slot;
+        SHADOW_UNLOCK(&self->shadow_lock);
+        return PyErr_NoMemory();
+    }
+
+    PhysicsCommand *cmd = &self->command_queue[self->command_count++];
+    cmd->type = CMD_CREATE_BODY;
+    cmd->slot = slot;
+    cmd->data.create.settings = settings;
+    cmd->data.create.user_data = (uint64_t)user_data;
+    cmd->data.create.category = category;
+    cmd->data.create.mask = mask;
+    cmd->data.create.material_id = material_id;
+
+    SHADOW_UNLOCK(&self->shadow_lock);
+    return PyLong_FromUnsignedLongLong(handle);
+}
+
 /* --- Immutable Getters (Safe without locks) --- */
 
 static PyObject* Vehicle_get_wheel_count(VehicleObject* self, void* closure) {
@@ -5174,6 +5275,7 @@ static const PyMethodDef PhysicsWorld_methods[] = {
     {"create_vehicle", (PyCFunction)PhysicsWorld_create_vehicle, METH_VARARGS | METH_KEYWORDS, NULL},
     {"create_ragdoll_settings", (PyCFunction)PhysicsWorld_create_ragdoll_settings, METH_VARARGS, "Create settings bound to this world"},
     {"create_ragdoll", (PyCFunction)PhysicsWorld_create_ragdoll, METH_VARARGS | METH_KEYWORDS, "Instantiate a ragdoll"},
+    {"create_heightfield", (PyCFunction)PhysicsWorld_create_heightfield, METH_VARARGS | METH_KEYWORDS, "Create a static terrain from a height grid."},
 
     // --- Interaction ---
     {"apply_impulse", (PyCFunction)PhysicsWorld_apply_impulse,

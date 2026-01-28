@@ -98,6 +98,22 @@ class PhysicsWorld:
         material_id: int = 0
     ) -> Ragdoll: ...
 
+    def create_heightfield(
+        self, 
+        pos: Tuple[float, float, float], 
+        rot: Tuple[float, float, float, float], 
+        scale: Tuple[float, float, float], 
+        heights: bytes, 
+        grid_size: int, 
+        user_data: int = 0,
+        category: int = 0xFFFF,
+        mask: int = 0xFFFF,
+        material_id: int = 0,
+        friction: float = 0.5,
+        restitution: float = 0.0
+    ) -> int:
+        ...
+
     def destroy_body(self, handle: int) -> None: ...
     def create_constraint(self, type: int, body1: int, body2: int, params: Optional[Any] = None) -> int: ...
     def destroy_constraint(self, handle: int) -> None: ...

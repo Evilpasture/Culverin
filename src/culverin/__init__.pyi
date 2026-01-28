@@ -181,6 +181,33 @@ class PhysicsWorld:
         material_id: int = 0
     ) -> Ragdoll:
         """Instantiate a ragdoll into the world."""
+
+    def create_heightfield(
+        self, 
+        pos: Vec3, 
+        rot: Quat, 
+        scale: Vec3, 
+        heights: bytes, 
+        grid_size: int, 
+        user_data: int = 0,
+        category: int = 0xFFFF,
+        mask: int = 0xFFFF,
+        material_id: int = 0,
+        friction: float = 0.5,
+        restitution: float = 0.0
+    ) -> Handle:
+        """
+        Create a static terrain from a square grid of height values.
+        
+        Args:
+            pos: World position of the (0,0) corner of the heightfield.
+            rot: World rotation.
+            scale: (x_scale, y_scale, z_scale). X/Z are grid spacing, Y is height multiplier.
+            heights: Packed float32 buffer of size (grid_size * grid_size).
+            grid_size: The width/depth of the grid (number of samples along one axis).
+            material_id: ID for terrain surface type (e.g., Grass, Mud).
+        """
+        ...
         
     def destroy_body(self, handle: Handle) -> None:
         """Queue destruction of a body. Handle becomes invalid immediately."""
