@@ -230,11 +230,14 @@ ContactEvent {
     float px, py, pz;
     float nx, ny, nz;
     float impulse;
+    float sliding_speed_sq; // Scratching speed squared(tangential)
 } ContactEvent;
 
 #ifdef _MSC_VER
 #pragma pack(pop)
 #endif
+
+_Static_assert(sizeof(ContactEvent) == 48, "ContactEvent size mismatch");
 
 // --- The Object Struct ---
 typedef struct {

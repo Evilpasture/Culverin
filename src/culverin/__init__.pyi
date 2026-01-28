@@ -149,6 +149,7 @@ class PhysicsWorld(_culverin_c.PhysicsWorld):
           float32 px, py, pz (Contact Point)
           float32 nx, ny, nz (Normal)
           float32 impulse
+          float32 sliding_speed_sq (Tangential Velocity Squared)
         """
         ...
     
