@@ -237,6 +237,28 @@ ContactEvent {
 #pragma pack(pop)
 #endif
 
+// --- Raycast Batch Result (Aligned to 16-bytes, Total 48-bytes) ---
+#ifdef _MSC_VER
+#pragma pack(push, 1)
+#endif
+typedef struct 
+#ifndef _MSC_VER
+__attribute__((packed)) 
+#endif 
+{
+    uint64_t handle;      // 8 bytes
+    float fraction;       // 4 bytes
+    float nx, ny, nz;     // 12 bytes
+    float px, py, pz;     // 12 bytes
+    uint32_t subShapeID;  // 4 bytes
+    uint32_t _pad[2];     // 8 bytes (Total: 48)
+} RayCastBatchResult; 
+#ifdef _MSC_VER
+#pragma pack(pop)
+#endif
+
+_Static_assert(sizeof(RayCastBatchResult) == 48, "RayCastBatchResult size mismatch");
+
 _Static_assert(sizeof(ContactEvent) == 48, "ContactEvent size mismatch");
 
 // --- The Object Struct ---

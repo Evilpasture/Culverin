@@ -170,6 +170,8 @@ class PhysicsWorld:
         self, start: Tuple[float, float, float], direction: Tuple[float, float, float], 
         max_dist: float = 1000.0, ignore: int = 0
     ) -> Optional[Tuple[int, float, Tuple[float, float, float]]]: ...
+    def raycast_batch(self, starts: bytes, directions: bytes, max_dist: float = 1000.0) -> bytes:
+        ...
     def shapecast(
         self, shape: int, pos: Tuple[float, float, float], rot: Tuple[float, float, float, float],
         dir: Tuple[float, float, float], size: Any, ignore: int = 0

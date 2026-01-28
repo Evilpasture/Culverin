@@ -1109,6 +1109,110 @@ exit:
     Py_RETURN_NONE; 
 }
 
+static PyObject* PhysicsWorld_raycast_batch(PhysicsWorldObject* self, PyObject* args, PyObject* kwds) {
+    Py_buffer b_starts, b_dirs;
+    float max_dist = 1000.0f;
+    static char *kwlist[] = {"starts", "directions", "max_dist", NULL};
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "y*y*|f", kwlist, 
+                                     &b_starts, &b_dirs, &max_dist)) return NULL;
+
+    // 1. Validation
+    if (b_starts.len != b_dirs.len || (b_starts.len % (3 * sizeof(float)) != 0)) {
+        PyBuffer_Release(&b_starts); PyBuffer_Release(&b_dirs);
+        PyErr_SetString(PyExc_ValueError, "Buffers must be equal size and multiples of 3*float32");
+        return NULL;
+    }
+
+    size_t count = b_starts.len / (3 * sizeof(float));
+    PyObject* result_bytes = PyBytes_FromStringAndSize(NULL, (Py_ssize_t)(count * sizeof(RayCastBatchResult)));
+    if (!result_bytes) {
+        PyBuffer_Release(&b_starts); PyBuffer_Release(&b_dirs);
+        return PyErr_NoMemory();
+    }
+
+    RayCastBatchResult* results = (RayCastBatchResult*)PyBytes_AsString(result_bytes);
+    float* f_starts = (float*)b_starts.buf;
+    float* f_dirs = (float*)b_dirs.buf;
+
+    // 2. Lock & Phase Guard
+    SHADOW_LOCK(&self->shadow_lock);
+    BLOCK_UNTIL_NOT_STEPPING(self);
+    atomic_fetch_add_explicit(&self->active_queries, 1, memory_order_relaxed);
+    SHADOW_UNLOCK(&self->shadow_lock);
+
+    // 3. Multithreaded Execution (GIL Released)
+    Py_BEGIN_ALLOW_THREADS
+    
+    // We lock the trampoline once for the whole batch
+    SHADOW_LOCK(&g_jph_trampoline_lock);
+
+    const JPH_NarrowPhaseQuery* query = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
+    const JPH_BodyLockInterface* lock_iface = JPH_PhysicsSystem_GetBodyLockInterface(self->system);
+
+    // Filter setup
+    JPH_BroadPhaseLayerFilter* bp_filter = JPH_BroadPhaseLayerFilter_Create(NULL);
+    JPH_BroadPhaseLayerFilter_SetProcs(&(JPH_BroadPhaseLayerFilter_Procs){.ShouldCollide = filter_allow_all_bp});
+    JPH_ObjectLayerFilter* obj_filter = JPH_ObjectLayerFilter_Create(NULL);
+    JPH_ObjectLayerFilter_SetProcs(&(JPH_ObjectLayerFilter_Procs){.ShouldCollide = filter_allow_all_obj});
+    JPH_BodyFilter* body_filter = JPH_BodyFilter_Create(NULL);
+    JPH_BodyFilter_SetProcs(&(JPH_BodyFilter_Procs){.ShouldCollide = filter_true_body});
+
+    for (size_t i = 0; i < count; i++) {
+        size_t off = i * 3;
+        RayCastBatchResult* res = &results[i];
+        memset(res, 0, sizeof(RayCastBatchResult));
+
+        JPH_RVec3 origin = { (double)f_starts[off], (double)f_starts[off+1], (double)f_starts[off+2] };
+        
+        // Normalize and scale direction
+        float dx = f_dirs[off], dy = f_dirs[off+1], dz = f_dirs[off+2];
+        float mag = sqrtf(dx*dx + dy*dy + dz*dz);
+        if (mag < 1e-9f) continue;
+        float scale = max_dist / mag;
+        JPH_Vec3 direction = { dx * scale, dy * scale, dz * scale };
+
+        JPH_RayCastResult hit;
+        memset(&hit, 0, sizeof(hit));
+
+        if (JPH_NarrowPhaseQuery_CastRay(query, &origin, &direction, &hit, bp_filter, obj_filter, body_filter)) {
+            res->handle = JPH_BodyInterface_GetUserData(self->body_interface, hit.bodyID);
+            res->fraction = hit.fraction;
+            res->subShapeID = hit.subShapeID2;
+            
+            // World normal extraction
+            JPH_BodyLockRead lock;
+            JPH_BodyLockInterface_LockRead(lock_iface, hit.bodyID, &lock);
+            if (lock.body) {
+                JPH_RVec3 hit_p = {
+                    origin.x + (double)direction.x * (double)hit.fraction, 
+                    origin.y + (double)direction.y * (double)hit.fraction, 
+                    origin.z + (double)direction.z * (double)hit.fraction
+                };
+                JPH_Vec3 norm;
+                JPH_Body_GetWorldSpaceSurfaceNormal(lock.body, hit.subShapeID2, &hit_p, &norm);
+                res->nx = norm.x; res->ny = norm.y; res->nz = norm.z;
+                res->px = (float)hit_p.x; res->py = (float)hit_p.y; res->pz = (float)hit_p.z;
+            }
+            JPH_BodyLockInterface_UnlockRead(lock_iface, &lock);
+        }
+    }
+
+    JPH_BodyFilter_Destroy(body_filter);
+    JPH_BroadPhaseLayerFilter_Destroy(bp_filter);
+    JPH_ObjectLayerFilter_Destroy(obj_filter);
+    SHADOW_UNLOCK(&g_jph_trampoline_lock);
+    
+    Py_END_ALLOW_THREADS
+
+    // 4. Cleanup
+    atomic_fetch_sub_explicit(&self->active_queries, 1, memory_order_release);
+    PyBuffer_Release(&b_starts);
+    PyBuffer_Release(&b_dirs);
+
+    return result_bytes;
+}
+
 static PyObject* PhysicsWorld_apply_buoyancy(PhysicsWorldObject* self, PyObject* args, PyObject* kwds) {
     uint64_t handle_raw;
     float surface_y; // Simplification: assume flat horizontal water
@@ -4945,6 +5049,8 @@ static const PyMethodDef PhysicsWorld_methods[] = {
     // --- Queries ---
     {"raycast", (PyCFunction)PhysicsWorld_raycast, METH_VARARGS | METH_KEYWORDS,
      NULL},
+     {"raycast_batch", (PyCFunction)PhysicsWorld_raycast_batch, METH_VARARGS | METH_KEYWORDS, 
+    "Execute multiple raycasts efficiently."},
     {"shapecast", (PyCFunction)PhysicsWorld_shapecast, METH_VARARGS | METH_KEYWORDS, 
     "Sweeps a shape along a direction vector. Returns (Handle, Fraction, ContactPoint, Normal) or None."},
     {"overlap_sphere", (PyCFunction)PhysicsWorld_overlap_sphere,
