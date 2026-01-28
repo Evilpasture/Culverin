@@ -196,6 +196,7 @@ typedef struct {
       uint64_t user_data;
       uint32_t category;
       uint32_t mask;
+      uint32_t material_id;
     } create;
 
     // CMD_SET_POS, CMD_SET_ROT, CMD_SET_LINVEL, CMD_SET_ANGVEL
@@ -233,6 +234,9 @@ ContactEvent {
     float nx, ny, nz;
     float impulse;
     float sliding_speed_sq; // Scratching speed squared(tangential)
+    uint32_t mat1;        // 4 (New)
+    uint32_t mat2;        // 4 (New)
+    uint32_t _pad[2];     // 8 (Padding to 64 bytes)
 } ContactEvent;
 
 #ifdef _MSC_VER
@@ -253,7 +257,8 @@ __attribute__((packed))
     float nx, ny, nz;     // 12 bytes
     float px, py, pz;     // 12 bytes
     uint32_t subShapeID;  // 4 bytes
-    uint32_t _pad[2];     // 8 bytes (Total: 48)
+    uint32_t material_id; // 4 bytes
+    uint32_t _pad;
 } RayCastBatchResult; 
 #ifdef _MSC_VER
 #pragma pack(pop)
@@ -261,7 +266,7 @@ __attribute__((packed))
 
 _Static_assert(sizeof(RayCastBatchResult) == 48, "RayCastBatchResult size mismatch");
 
-_Static_assert(sizeof(ContactEvent) == 48, "ContactEvent size mismatch");
+_Static_assert(sizeof(ContactEvent) == 64, "ContactEvent size mismatch");
 
 // --- The Object Struct ---
 typedef struct {
@@ -310,6 +315,7 @@ typedef struct {
   // --- Indirection System ---
   uint32_t *categories; // [Dense Index]
   uint32_t *masks;      // [Dense Index]
+  uint32_t *material_ids;
 
   uint32_t *generations;   // [Slot] -> Generation
   uint32_t *slot_to_dense; // [Slot] -> Dense Index

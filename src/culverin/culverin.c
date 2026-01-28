@@ -264,6 +264,8 @@ static void JPH_API_CALL on_contact_added(void* userData, const JPH_Body* body1,
     uint32_t mask1 = self->masks[idx1];
     uint32_t cat2 = self->categories[idx2];
     uint32_t mask2 = self->masks[idx2];
+    uint32_t mat1 = self->material_ids[idx1];
+    uint32_t mat2 = self->material_ids[idx2];
     SHADOW_UNLOCK(&self->shadow_lock);
 
     // Standard Game Engine Bitmask Logic
@@ -327,6 +329,12 @@ static void JPH_API_CALL on_contact_added(void* userData, const JPH_Body* body1,
     float ty = dv_y - (dot * n->y);
     float tz = dv_z - (dot * n->z);
     ev->sliding_speed_sq = (tx*tx + ty*ty + tz*tz);
+
+    if (!swapped) {
+        ev->mat1 = mat1; ev->mat2 = mat2;
+    } else {
+        ev->mat1 = mat2; ev->mat2 = mat1;
+    }
 
     // Release Fence
     atomic_thread_fence(memory_order_release);
@@ -416,24 +424,28 @@ static PyObject* PhysicsWorld_get_contact_events_ex(PhysicsWorldObject* self, Py
     atomic_store_explicit(&self->contact_atomic_idx, 0, memory_order_relaxed);
     SHADOW_UNLOCK(&self->shadow_lock);
 
-    // 4. Build Python Objects (Outside the lock)
+    // --- KEY HANDLING ---
     PyObject* k_bodies = PyUnicode_InternFromString("bodies");
     PyObject* k_pos    = PyUnicode_InternFromString("position");
     PyObject* k_norm   = PyUnicode_InternFromString("normal");
     PyObject* k_str    = PyUnicode_InternFromString("strength");
-    PyObject* k_slide  = PyUnicode_InternFromString("slide_sq"); // <--- NEW KEY
+    PyObject* k_slide  = PyUnicode_InternFromString("slide_sq");
+    PyObject* k_mat    = PyUnicode_InternFromString("materials"); // <--- interned
 
-    if (!k_bodies || !k_pos || !k_norm || !k_str || !k_slide) {
+    // FIX 1: Include k_mat in the NULL check
+    if (!k_bodies || !k_pos || !k_norm || !k_str || !k_slide || !k_mat) {
         Py_XDECREF(k_bodies); Py_XDECREF(k_pos); 
-        Py_XDECREF(k_norm); Py_XDECREF(k_str); Py_XDECREF(k_slide);
+        Py_XDECREF(k_norm);   Py_XDECREF(k_str); 
+        Py_XDECREF(k_slide);  Py_XDECREF(k_mat); // <--- clean up k_mat
         PyMem_RawFree(scratch);
         return NULL;
     }
 
     PyObject* list = PyList_New((Py_ssize_t)count);
     if (!list) {
-        Py_XDECREF(k_bodies); Py_XDECREF(k_pos); 
-        Py_XDECREF(k_norm); Py_XDECREF(k_str); Py_XDECREF(k_slide);
+        Py_DECREF(k_bodies); Py_DECREF(k_pos); 
+        Py_DECREF(k_norm);   Py_DECREF(k_str); 
+        Py_DECREF(k_slide);  Py_DECREF(k_mat);
         PyMem_RawFree(scratch);
         return NULL;
     }
@@ -448,14 +460,14 @@ static PyObject* PhysicsWorld_get_contact_events_ex(PhysicsWorldObject* self, Py
             continue;
         }
 
-        // 1. Bodies Tuple (u64, u64)
+        // 1. Bodies (u64, u64)
         PyObject* b_tuple = PyTuple_New(2);
         PyTuple_SET_ITEM(b_tuple, 0, PyLong_FromUnsignedLongLong(e->body1));
         PyTuple_SET_ITEM(b_tuple, 1, PyLong_FromUnsignedLongLong(e->body2));
         PyDict_SetItem(dict, k_bodies, b_tuple); 
         Py_DECREF(b_tuple); 
 
-        // 2. Position Tuple (f, f, f)
+        // 2. Position (f, f, f)
         PyObject* p_tuple = PyTuple_New(3);
         PyTuple_SET_ITEM(p_tuple, 0, PyFloat_FromDouble(e->px));
         PyTuple_SET_ITEM(p_tuple, 1, PyFloat_FromDouble(e->py));
@@ -463,7 +475,7 @@ static PyObject* PhysicsWorld_get_contact_events_ex(PhysicsWorldObject* self, Py
         PyDict_SetItem(dict, k_pos, p_tuple);
         Py_DECREF(p_tuple);
 
-        // 3. Normal Tuple (f, f, f)
+        // 3. Normal (f, f, f)
         PyObject* n_tuple = PyTuple_New(3);
         PyTuple_SET_ITEM(n_tuple, 0, PyFloat_FromDouble(e->nx));
         PyTuple_SET_ITEM(n_tuple, 1, PyFloat_FromDouble(e->ny));
@@ -471,12 +483,19 @@ static PyObject* PhysicsWorld_get_contact_events_ex(PhysicsWorldObject* self, Py
         PyDict_SetItem(dict, k_norm, n_tuple);
         Py_DECREF(n_tuple);
 
-        // 4. Strength Float (Closing speed)
+        // 4. Materials (u32, u32)
+        PyObject* m_tuple = PyTuple_New(2);
+        PyTuple_SET_ITEM(m_tuple, 0, PyLong_FromUnsignedLong(e->mat1));
+        PyTuple_SET_ITEM(m_tuple, 1, PyLong_FromUnsignedLong(e->mat2));
+        PyDict_SetItem(dict, k_mat, m_tuple);
+        Py_DECREF(m_tuple);
+
+        // 5. Strength (Closing speed)
         PyObject* s_val = PyFloat_FromDouble(e->impulse);
         PyDict_SetItem(dict, k_str, s_val);
         Py_DECREF(s_val);
 
-        // 5. Sliding Speed Squared (Friction/Scrape strength) <--- NEW BLOCK
+        // 6. Sliding Speed Squared
         PyObject* sl_val = PyFloat_FromDouble(e->sliding_speed_sq);
         PyDict_SetItem(dict, k_slide, sl_val);
         Py_DECREF(sl_val);
@@ -484,17 +503,17 @@ static PyObject* PhysicsWorld_get_contact_events_ex(PhysicsWorldObject* self, Py
         PyList_SET_ITEM(list, (Py_ssize_t)i, dict);
     }
 
-    // Cleanup Interned Keys
+    // FIX 2: Cleanup k_mat reference
     Py_DECREF(k_bodies);
     Py_DECREF(k_pos);
     Py_DECREF(k_norm);
     Py_DECREF(k_str);
-    Py_DECREF(k_slide); // <--- DON'T FORGET THIS
+    Py_DECREF(k_slide);
+    Py_DECREF(k_mat); // <--- clean up k_mat
 
     PyMem_RawFree(scratch);
     return list;
 }
-
 // ContactEvent layout (packed, little-endian):
 // uint64 body1, uint64 body2
 // float32 px, py, pz
@@ -758,6 +777,7 @@ static void PhysicsWorld_free_members(PhysicsWorldObject *self) {
   if (self->user_data) { PyMem_RawFree(self->user_data); self->user_data = NULL; }
   if (self->categories) { PyMem_RawFree(self->categories); self->categories = NULL; }
   if (self->masks) { PyMem_RawFree(self->masks); self->masks = NULL; }
+  if (self->material_ids) { PyMem_RawFree(self->material_ids); self->material_ids = NULL; }
 
 
 #if PY_VERSION_HEX < 0x030D0000
@@ -922,6 +942,7 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
   self->user_data = PyMem_RawCalloc(self->capacity, sizeof(uint64_t));
   self->categories = PyMem_RawMalloc(self->capacity * sizeof(uint32_t));
   self->masks = PyMem_RawMalloc(self->capacity * sizeof(uint32_t));
+  self->material_ids = PyMem_RawCalloc(self->capacity, sizeof(uint32_t));
   if (self->categories && self->masks) {
       for (size_t i = 0; i < self->capacity; i++) {
           self->categories[i] = 0xFFFF; 
@@ -947,7 +968,7 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
 
   if (!self->positions || !self->rotations || !self->prev_positions ||
     !self->prev_rotations || !self->linear_velocities || !self->angular_velocities ||
-    !self->body_ids || !self->user_data || !self->categories || !self->masks ||
+    !self->body_ids || !self->user_data || !self->categories || !self->masks || !self->material_ids ||
     !self->generations || !self->slot_to_dense || !self->dense_to_slot ||
     !self->free_slots || !self->slot_states ||
     !self->command_queue ||
@@ -1203,6 +1224,7 @@ static PyObject* PhysicsWorld_raycast_batch(PhysicsWorldObject* self, PyObject* 
     // 2. Lock & Phase Guard
     SHADOW_LOCK(&self->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
+    // This atomic prevents step() or resize() from running while we are in the C++ loop
     atomic_fetch_add_explicit(&self->active_queries, 1, memory_order_relaxed);
     SHADOW_UNLOCK(&self->shadow_lock);
 
@@ -1245,6 +1267,19 @@ static PyObject* PhysicsWorld_raycast_batch(PhysicsWorldObject* self, PyObject* 
             res->fraction = hit.fraction;
             res->subShapeID = hit.subShapeID2;
             
+            // --- Material ID Lookup ---
+            // Safe to read shadow buffers here because active_queries prevents 
+            // step() or resize() from mutating them while we run.
+            uint32_t slot = (uint32_t)(res->handle & 0xFFFFFFFF);
+            uint32_t gen  = (uint32_t)(res->handle >> 32);
+            
+            if (slot < self->slot_capacity && self->generations[slot] == gen) {
+                uint32_t dense = self->slot_to_dense[slot];
+                res->material_id = self->material_ids[dense];
+            } else {
+                res->material_id = 0;
+            }
+
             // World normal extraction
             JPH_BodyLockRead lock;
             JPH_BodyLockInterface_LockRead(lock_iface, hit.bodyID, &lock);
@@ -1575,8 +1610,12 @@ static void flush_commands(PhysicsWorldObject *self) {
       self->rotations[new_dense * 4 + 3] = q->w;
       memcpy(&self->prev_rotations[new_dense * 4], &self->rotations[new_dense * 4], 16);
 
+      memset(&self->linear_velocities[new_dense * 4], 0, 16);
+      memset(&self->angular_velocities[new_dense * 4], 0, 16);
+
       self->categories[new_dense] = cmd->data.create.category;
       self->masks[new_dense] = cmd->data.create.mask;
+      self->material_ids[new_dense] = cmd->data.create.material_id;
 
       self->count++;
       self->slot_states[slot] = SLOT_ALIVE;
@@ -1602,6 +1641,7 @@ static void flush_commands(PhysicsWorldObject *self) {
         self->user_data[dense_idx] = self->user_data[last_dense];
         self->categories[dense_idx] = self->categories[last_dense];
         self->masks[dense_idx] = self->masks[last_dense];
+        self->material_ids[dense_idx] = self->material_ids[last_dense];
 
         uint32_t mover_slot = self->dense_to_slot[last_dense];
         self->slot_to_dense[mover_slot] = dense_idx;
@@ -1895,6 +1935,7 @@ static int PhysicsWorld_resize(PhysicsWorldObject *self, size_t new_capacity) {
     uint32_t* new_free = (uint32_t*)PyMem_RawMalloc(new_capacity * sizeof(uint32_t));
     uint32_t* new_cats = (uint32_t*)PyMem_RawMalloc(new_capacity * sizeof(uint32_t));
     uint32_t* new_masks = (uint32_t*)PyMem_RawMalloc(new_capacity * sizeof(uint32_t));
+    uint32_t* new_mats = (uint32_t*)PyMem_RawMalloc(new_capacity * sizeof(uint32_t));
 
     // --- 2. Check for Allocation Failure ---
     if (!new_pos || !new_rot || !new_ppos || !new_prot || !new_lvel || !new_avel || 
@@ -1937,6 +1978,7 @@ static int PhysicsWorld_resize(PhysicsWorldObject *self, size_t new_capacity) {
         memcpy(new_udat, self->user_data,  self->count * sizeof(uint64_t));
         memcpy(new_cats, self->categories, self->count * sizeof(uint32_t));
         memcpy(new_masks, self->masks, self->count * sizeof(uint32_t));
+        memcpy(new_mats, self->material_ids, self->count * sizeof(uint32_t));
     }
 
     // Slot/Mapping Arrays: Copy entire existing capacity
@@ -1970,6 +2012,7 @@ static int PhysicsWorld_resize(PhysicsWorldObject *self, size_t new_capacity) {
     PyMem_RawFree(self->user_data); self->user_data = new_udat;
     PyMem_RawFree(self->categories); self->categories = new_cats;
     PyMem_RawFree(self->masks);      self->masks = new_masks;
+    PyMem_RawFree(self->material_ids); self->material_ids = new_mats;
     
     PyMem_RawFree(self->generations); self->generations = new_gens;
     PyMem_RawFree(self->slot_to_dense); self->slot_to_dense = new_s2d;
@@ -2545,15 +2588,21 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
   float mass = -1.0f;
   uint32_t category = 0xFFFF; 
   uint32_t mask = 0xFFFF;     
+  float friction = 0.2f;      // Default Jolt
+  float restitution = 0.0f;   // Default Jolt
+  uint32_t material_id = 0;
 
   PyObject *py_size = NULL;
-  static char *kwlist[] = {"pos", "rot", "size", "shape", "motion", "user_data", "is_sensor", "mass", "category", "mask", NULL};
+  static char *kwlist[] = {"pos", "rot", "size", "shape", "motion", "user_data", "is_sensor", "mass", 
+    "category", "mask", "friction", "restitution", "material_id", NULL};
 
   // Updated format string: "f" for mass, "I" for category, "I" for mask
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "|(fff)(ffff)OiiKpfII", kwlist, 
-        &px, &py, &pz, &rx, &ry, &rz, &rw, &py_size, &shape_type, &motion_type, &user_data, &is_sensor, &mass, &category, &mask)) {
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "|(fff)(ffff)OiiKpfIIffI", kwlist, 
+        &px, &py, &pz, &rx, &ry, &rz, &rw, &py_size, &shape_type, &motion_type, 
+        &user_data, &is_sensor, &mass, &category, &mask,
+        &friction, &restitution, &material_id)) {
         return NULL;
-    }
+  }
 
   if (py_size && PyTuple_Check(py_size)) {
     Py_ssize_t sz_len = PyTuple_Size(py_size);
@@ -2600,6 +2649,9 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
   if (is_sensor) JPH_BodyCreationSettings_SetIsSensor(settings, true);
   if (motion_type == 2) JPH_BodyCreationSettings_SetAllowSleeping(settings, true);
 
+  JPH_BodyCreationSettings_SetFriction(settings, friction);
+  JPH_BodyCreationSettings_SetRestitution(settings, restitution);
+
   if (mass > 0.0f) {
       JPH_MassProperties mp;
       JPH_Shape_GetMassProperties(shape, &mp);
@@ -2627,6 +2679,7 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
   cmd->data.create.user_data = (uint64_t)user_data;
   cmd->data.create.category = category;
   cmd->data.create.mask = mask;
+  cmd->data.create.material_id = material_id; 
   
   self->slot_states[slot] = SLOT_PENDING_CREATE;
 
@@ -4827,40 +4880,40 @@ static PyObject* PhysicsWorld_create_ragdoll(PhysicsWorldObject* self, PyObject*
     uint64_t user_data = 0;
     uint32_t category = 0xFFFF;
     uint32_t mask = 0xFFFF;
+    uint32_t material_id = 0;
 
-    static char* kwlist[] = {"settings", "pos", "rot", "user_data", "category", "mask", NULL};
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!(fff)|(ffff)KII", kwlist, 
+    static char* kwlist[] = {"settings", "pos", "rot", "user_data", "category", "mask", "material_id", NULL};
+    
+    // FIX 1: Added third "I" to format string for material_id
+     if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!(fff)|(ffff)KIII", kwlist, 
         get_culverin_state(PyType_GetModule(Py_TYPE(self)))->RagdollSettingsType, &py_settings,
-        &px, &py, &pz, &rx, &ry, &rz, &rw, &user_data, &category, &mask)) return NULL;
+        &px, &py, &pz, &rx, &ry, &rz, &rw, &user_data, &category, &mask, &material_id)) return NULL;
 
-    // 1. Finalize Settings
     JPH_RagdollSettings_CalculateBodyIndexToConstraintIndex(py_settings->settings);
     JPH_RagdollSettings_CalculateConstraintIndexToBodyIdxPair(py_settings->settings);
 
-    // 2. Instantiate (Limbs are initially at Ragdoll Root)
     JPH_Ragdoll* j_rag = JPH_RagdollSettings_CreateRagdoll(py_settings->settings, self->system, 0, user_data);
     if (!j_rag) return PyErr_Format(PyExc_RuntimeError, "Jolt failed to create Ragdoll instance");
 
-    // 3. EXTRACT RESOLVED NEUTRAL POSE
-    // Instead of computing matrices from the skeleton, we ask the Ragdoll 
-    // to give us the limb matrices it just built from RagdollSettings.
     int joint_count = JPH_Skeleton_GetJointCount(JPH_RagdollSettings_GetSkeleton(py_settings->settings));
     JPH_Mat4* neutral_matrices = (JPH_Mat4*)PyMem_RawMalloc(joint_count * sizeof(JPH_Mat4));
     JPH_STACK_ALLOC(JPH_RVec3, dummy_root);
-    
-    // This returns the limb offsets (e.g., Spine at 0.5) relative to the ragdoll origin.
     JPH_Ragdoll_GetPose2(j_rag, dummy_root, neutral_matrices, true);
 
-    // 4. SET WORLD POSE
-    // Now we tell Jolt: "Put the Ragdoll at (px,py,pz) and use these limb offsets."
     JPH_STACK_ALLOC(JPH_RVec3, root_pos); root_pos->x = px; root_pos->y = py; root_pos->z = pz;
+    JPH_STACK_ALLOC(JPH_Quat, root_q); root_q->x = rx; root_q->y = ry; root_q->z = rz; root_q->w = rw;
     JPH_Ragdoll_SetPose2(j_rag, root_pos, neutral_matrices, true);
 
-    // 5. REGISTRATION & PERFECT WARM-UP
     int body_count = JPH_Ragdoll_GetBodyCount(j_rag);
     PyObject* module = PyType_GetModule(Py_TYPE(self));
     CulverinState* st = get_culverin_state(module);
     RagdollObject* obj = (RagdollObject*)PyObject_New(RagdollObject, (PyTypeObject*)st->RagdollType);
+    
+    if (!obj) {
+        JPH_Ragdoll_Destroy(j_rag);
+        PyMem_RawFree(neutral_matrices); // FIX 2: Prevent leak if allocation fails
+        return NULL;
+    }
     
     obj->ragdoll = j_rag;
     obj->world = self;
@@ -4875,36 +4928,37 @@ static PyObject* PhysicsWorld_create_ragdoll(PhysicsWorldObject* self, PyObject*
         PhysicsWorld_resize(self, self->capacity + body_count + 128);
     }
 
-    // We manually populate shadow buffers using the matrices we just used for SetPose.
-    // This bypasses the "Lazy Update" issue and prevents the gravity drop.
     for (int i=0; i < body_count; i++) {
         JPH_BodyID bid = JPH_Ragdoll_GetBodyID(j_rag, i);
         uint32_t slot = self->free_slots[--self->free_count];
         obj->body_slots[i] = slot;
         uint32_t dense = (uint32_t)self->count;
 
-        // Use the neutral matrix to find the shadow buffer position
         JPH_STACK_ALLOC(JPH_Vec3, local_offset);
         JPH_Mat4_GetTranslation(&neutral_matrices[i], local_offset);
+        
+        // FIX 3: Apply root rotation to limb offset for perfect world positioning
+        JPH_STACK_ALLOC(JPH_Vec3, rotated_offset);
+        manual_vec3_rotate_by_quat(local_offset, root_q, rotated_offset);
 
-        // Root position is (px, py, pz). Spine position is (px, py + 0.5, pz).
-        self->positions[dense * 4 + 0] = (float)(px + local_offset->x);
-        self->positions[dense * 4 + 1] = (float)(py + local_offset->y);
-        self->positions[dense * 4 + 2] = (float)(pz + local_offset->z);
+        self->positions[dense * 4 + 0] = (float)(px + rotated_offset->x);
+        self->positions[dense * 4 + 1] = (float)(py + rotated_offset->y);
+        self->positions[dense * 4 + 2] = (float)(pz + rotated_offset->z);
         self->positions[dense * 4 + 3] = 0.0f;
 
-        // Rotation
         JPH_STACK_ALLOC(JPH_Quat, local_q);
         JPH_Mat4_GetQuaternion(&neutral_matrices[i], local_q);
-        // Note: For simplicity, this assumes Root rotation is identity. 
-        // If not, you'd multiply q_root * local_q.
-        memcpy(&self->rotations[dense * 4], local_q, 16);
+        JPH_STACK_ALLOC(JPH_Quat, world_q);
+        manual_quat_multiply(root_q, local_q, world_q);
+        memcpy(&self->rotations[dense * 4], world_q, 16);
 
         // Sync metadata
-        self->prev_positions[dense * 4 + 0] = self->positions[dense * 4 + 0];
-        self->prev_positions[dense * 4 + 1] = self->positions[dense * 4 + 1];
-        self->prev_positions[dense * 4 + 2] = self->positions[dense * 4 + 2];
+        memcpy(&self->prev_positions[dense * 4], &self->positions[dense * 4], 16);
         memcpy(&self->prev_rotations[dense * 4], &self->rotations[dense * 4], 16);
+        
+        // FIX 4: Zero out velocities to prevent "Exploding Launch" from stale memory
+        memset(&self->linear_velocities[dense * 4], 0, 16);
+        memset(&self->angular_velocities[dense * 4], 0, 16);
 
         self->body_ids[dense] = bid;
         self->slot_to_dense[slot] = dense;
@@ -4913,14 +4967,13 @@ static PyObject* PhysicsWorld_create_ragdoll(PhysicsWorldObject* self, PyObject*
         self->user_data[dense] = user_data;
         self->categories[dense] = category;
         self->masks[dense] = mask;
+        self->material_ids[dense] = material_id;
         self->count++;
 
         JPH_BodyInterface_SetUserData(self->body_interface, bid, (uint64_t)make_handle(slot, self->generations[slot]));
     }
     
-    // Finally, add to system and activate
     JPH_Ragdoll_AddToPhysicsSystem(j_rag, JPH_Activation_Activate, true);
-    
     SHADOW_UNLOCK(&self->shadow_lock);
 
     PyMem_RawFree(neutral_matrices);
