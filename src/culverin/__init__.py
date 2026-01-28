@@ -1,6 +1,10 @@
-from culverin._culverin_c import (
+from ._culverin_c import (
     PhysicsWorld,
     Character,
+    Vehicle,          # <--- Added
+    Skeleton,         # <--- Added
+    RagdollSettings,  # <--- Added
+    Ragdoll,          # <--- Added
     # Shapes
     SHAPE_BOX,
     SHAPE_SPHERE,
@@ -12,7 +16,7 @@ from culverin._culverin_c import (
     MOTION_STATIC,
     MOTION_KINEMATIC,
     MOTION_DYNAMIC,
-    # NEW: Constraints
+    # Constraints
     CONSTRAINT_FIXED,
     CONSTRAINT_POINT,
     CONSTRAINT_HINGE,
@@ -21,8 +25,25 @@ from culverin._culverin_c import (
     CONSTRAINT_CONE
 )
 
+# Import Python helpers from _culverin.py
+from ._culverin import (
+    Engine,
+    Transmission,
+    Automatic,
+    Manual
+)
+
 __all__ = [
-    "PhysicsWorld", "Character",
+    "PhysicsWorld", 
+    "Character", 
+    "Vehicle", 
+    "Skeleton", 
+    "RagdollSettings", 
+    "Ragdoll",
+    "Engine", 
+    "Transmission", 
+    "Automatic", 
+    "Manual",
     "SHAPE_BOX", "SHAPE_SPHERE", "SHAPE_CAPSULE", 
     "SHAPE_CYLINDER", "SHAPE_PLANE", "SHAPE_MESH",
     "MOTION_STATIC", "MOTION_KINEMATIC", "MOTION_DYNAMIC",

@@ -431,6 +431,9 @@ typedef struct {
   PyObject *PhysicsWorldType; // Reference to the class
   PyObject *CharacterType;    // Reference to the character class
   PyObject *VehicleType;      // Reference to the vehicle class
+  PyObject *SkeletonType;
+  PyObject *RagdollSettingsType;
+  PyObject *RagdollType;
 } CulverinState;
 
 // Helper to retrieve state from the module object
