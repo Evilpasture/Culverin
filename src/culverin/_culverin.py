@@ -64,6 +64,29 @@ class Manual(Transmission):
         super().__init__(gears, clutch_strength)
         self.mode = 1 # JPH_TransmissionMode_Manual
 
+class Skeleton:
+    def __init__(self, joints: List[str]):
+        """
+        joints: List of parent-ordered joint names.
+        Example: ["Root", "Spine", "Head", "L_Arm"] 
+        (Assumes index based parenting or simple linear for MVP, 
+         better pass List[Tuple[name, parent_idx]])
+        """
+        # In C, we expose add_joint.
+        pass
+
+class RagdollSettings:
+    def add_part(self, joint_index: int, shape_type: int, size: tuple, mass: float, parent_index: int,
+                 twist_min: float, twist_max: float, cone_angle: float,
+                 axis: tuple = (1,0,0), normal: tuple = (0,1,0)):
+        pass
+
+class Ragdoll:
+    def drive_to_pose(self, root_pos, root_rot, matrices_bytes):
+        pass
+    def get_body_handles(self) -> List[int]:
+        ...
+
 # --- Internal Validation Helpers ---
 
 def validate_constraint(type_id, body1, body2, params):
