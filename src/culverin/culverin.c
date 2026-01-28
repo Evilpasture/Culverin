@@ -779,6 +779,11 @@ static void PhysicsWorld_free_members(PhysicsWorldObject *self) {
   if (self->masks) { PyMem_RawFree(self->masks); self->masks = NULL; }
   if (self->material_ids) { PyMem_RawFree(self->material_ids); self->material_ids = NULL; }
 
+  if (self->materials) {
+    PyMem_RawFree(self->materials);
+    self->materials = NULL;
+  }
+
 
 #if PY_VERSION_HEX < 0x030D0000
   if (self->shadow_lock) {
@@ -832,6 +837,10 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
   self->contact_buffer = NULL; // Updated Name
   self->char_vs_char_manager = NULL;
   self->positions = NULL;
+
+  self->materials = NULL;
+  self->material_count = 0;
+  self->material_capacity = 0;
 
   PyObject *module = PyType_GetModule(Py_TYPE(self));
   CulverinState *st = get_culverin_state(module);
@@ -2588,8 +2597,8 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
   float mass = -1.0f;
   uint32_t category = 0xFFFF; 
   uint32_t mask = 0xFFFF;     
-  float friction = 0.2f;      // Default Jolt
-  float restitution = 0.0f;   // Default Jolt
+  float friction = -1.0f; // Sentinel
+  float restitution = -1.0f;
   uint32_t material_id = 0;
 
   PyObject *py_size = NULL;
@@ -2603,6 +2612,27 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
         &friction, &restitution, &material_id)) {
         return NULL;
   }
+
+  // --- MATERIAL LOOKUP ---
+  // If material_id is set, try to find defaults in the registry
+  float final_friction = 0.2f;     // Jolt Default
+  float final_restitution = 0.0f;  // Jolt Default
+
+  if (material_id > 0) {
+      SHADOW_LOCK(&self->shadow_lock);
+      for (size_t i = 0; i < self->material_count; i++) {
+          if (self->materials[i].id == material_id) {
+              final_friction = self->materials[i].friction;
+              final_restitution = self->materials[i].restitution;
+              break;
+          }
+      }
+      SHADOW_UNLOCK(&self->shadow_lock);
+  }
+
+  // Allow explicit overrides
+  if (friction >= 0.0f) final_friction = friction;
+  if (restitution >= 0.0f) final_restitution = restitution;
 
   if (py_size && PyTuple_Check(py_size)) {
     Py_ssize_t sz_len = PyTuple_Size(py_size);
@@ -2649,8 +2679,8 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
   if (is_sensor) JPH_BodyCreationSettings_SetIsSensor(settings, true);
   if (motion_type == 2) JPH_BodyCreationSettings_SetAllowSleeping(settings, true);
 
-  JPH_BodyCreationSettings_SetFriction(settings, friction);
-  JPH_BodyCreationSettings_SetRestitution(settings, restitution);
+  JPH_BodyCreationSettings_SetFriction(settings, final_friction);
+  JPH_BodyCreationSettings_SetRestitution(settings, final_restitution);
 
   if (mass > 0.0f) {
       JPH_MassProperties mp;
@@ -5082,6 +5112,53 @@ static PyObject* Ragdoll_get_debug_info(RagdollObject* self, PyObject* Py_UNUSED
     return list;
 }
 
+static PyObject* PhysicsWorld_register_material(PhysicsWorldObject* self, PyObject* args, PyObject* kwds) {
+    uint32_t id;
+    float friction = 0.5f;
+    float restitution = 0.0f;
+    // Note: 'combine' requires complex callback logic. 
+    // For this foundation, we rely on Jolt's standard combination (Geometric Mean for Friction).
+
+    static char *kwlist[] = {"id", "friction", "restitution", NULL};
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "I|ff", kwlist, &id, &friction, &restitution)) {
+        return NULL;
+    }
+
+    SHADOW_LOCK(&self->shadow_lock);
+    
+    // 1. Check for existing (Update)
+    for (size_t i = 0; i < self->material_count; i++) {
+        if (self->materials[i].id == id) {
+            self->materials[i].friction = friction;
+            self->materials[i].restitution = restitution;
+            SHADOW_UNLOCK(&self->shadow_lock);
+            Py_RETURN_NONE;
+        }
+    }
+
+    // 2. Grow capacity if needed
+    if (self->material_count >= self->material_capacity) {
+        size_t new_cap = (self->material_capacity == 0) ? 16 : self->material_capacity * 2;
+        MaterialData* new_ptr = PyMem_RawRealloc(self->materials, new_cap * sizeof(MaterialData));
+        if (!new_ptr) {
+            SHADOW_UNLOCK(&self->shadow_lock);
+            return PyErr_NoMemory();
+        }
+        self->materials = new_ptr;
+        self->material_capacity = new_cap;
+    }
+
+    // 3. Add new
+    self->materials[self->material_count].id = id;
+    self->materials[self->material_count].friction = friction;
+    self->materials[self->material_count].restitution = restitution;
+    self->material_count++;
+
+    SHADOW_UNLOCK(&self->shadow_lock);
+    Py_RETURN_NONE;
+}
+
 static PyObject* PhysicsWorld_create_heightfield(PhysicsWorldObject* self, PyObject* args, PyObject* kwds) {
     float px=0, py=0, pz=0;
     float rx=0, ry=0, rz=0, rw=1.0f;
@@ -5294,6 +5371,8 @@ static const PyMethodDef PhysicsWorld_methods[] = {
      METH_VARARGS | METH_KEYWORDS, NULL},
     {"set_collision_filter", (PyCFunction)PhysicsWorld_set_collision_filter, 
      METH_VARARGS | METH_KEYWORDS, "Dynamically update collision bitmasks."},
+    {"register_material", (PyCFunction)PhysicsWorld_register_material, METH_VARARGS | METH_KEYWORDS, 
+    "Define properties for a material ID."},
 
     // --- Motion Control ---
     {"get_motion_type", (PyCFunction)PhysicsWorld_get_motion_type,

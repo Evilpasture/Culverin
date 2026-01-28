@@ -234,6 +234,13 @@ class PhysicsWorld:
         Returns True if body is submerged.
         """
         ...
+
+    def register_material(self, id: int, friction: float = 0.5, restitution: float = 0.0) -> None:
+        """
+        Define physical properties for a material ID.
+        Bodies created with this material_id will inherit these properties.
+        """
+        ...
         
     def set_position(self, handle: Handle, x: float, y: float, z: float) -> None: ...
     def set_rotation(self, handle: Handle, x: float, y: float, z: float, w: float) -> None: ...

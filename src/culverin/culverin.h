@@ -268,6 +268,14 @@ _Static_assert(sizeof(RayCastBatchResult) == 48, "RayCastBatchResult size mismat
 
 _Static_assert(sizeof(ContactEvent) == 64, "ContactEvent size mismatch");
 
+// --- Material Registry ---
+typedef struct {
+    uint32_t id;
+    float friction;
+    float restitution;
+    // Padding/Alignment isn't critical here as this is a lookup array, not a stream
+} MaterialData;
+
 // --- The Object Struct ---
 typedef struct {
   PyObject_HEAD
@@ -315,7 +323,12 @@ typedef struct {
   // --- Indirection System ---
   uint32_t *categories; // [Dense Index]
   uint32_t *masks;      // [Dense Index]
-  uint32_t *material_ids;
+  uint32_t *material_ids; // Shadow buffer (Per-Body)
+
+  // Registry (Global for this world)
+  MaterialData *materials;
+  size_t material_count;
+  size_t material_capacity;
 
   uint32_t *generations;   // [Slot] -> Generation
   uint32_t *slot_to_dense; // [Slot] -> Dense Index
