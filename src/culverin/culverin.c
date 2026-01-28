@@ -1109,6 +1109,68 @@ exit:
     Py_RETURN_NONE; 
 }
 
+static PyObject* PhysicsWorld_apply_buoyancy(PhysicsWorldObject* self, PyObject* args, PyObject* kwds) {
+    uint64_t handle_raw;
+    float surface_y; // Simplification: assume flat horizontal water
+    float buoyancy = 1.0f;    // 1.0 = neutral buoyancy for density 1.0
+    float lin_drag = 0.5f;
+    float ang_drag = 0.5f;
+    float dt;
+    float vx = 0, vy = 0, vz = 0; // Fluid velocity (currents)
+
+    static char* kwlist[] = {
+        "handle", "surface_y", "buoyancy", "linear_drag", "angular_drag", "dt", "fluid_velocity", NULL
+    };
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "Kf|ffff(fff)", kwlist,
+        &handle_raw, &surface_y, &buoyancy, &lin_drag, &ang_drag, &dt, &vx, &vy, &vz)) return NULL;
+
+    SHADOW_LOCK(&self->shadow_lock);
+    BLOCK_UNTIL_NOT_STEPPING(self);
+    BLOCK_UNTIL_NOT_QUERYING(self);
+
+    uint32_t slot = 0;
+    if (!unpack_handle(self, handle_raw, &slot) || self->slot_states[slot] != SLOT_ALIVE) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        Py_RETURN_FALSE;
+    }
+
+    JPH_BodyID bid = self->body_ids[self->slot_to_dense[slot]];
+    
+    // Jolt needs the world-space gravity to calculate the counter-force
+    JPH_Vec3 gravity;
+    JPH_PhysicsSystem_GetGravity(self->system, &gravity);
+
+    // Surface definition
+    JPH_STACK_ALLOC(JPH_RVec3, surf_pos);
+    surf_pos->x = 0; surf_pos->y = (double)surface_y; surf_pos->z = 0;
+    
+    JPH_STACK_ALLOC(JPH_Vec3, surf_norm);
+    surf_norm->x = 0; surf_norm->y = 1.0f; surf_norm->z = 0;
+
+    JPH_STACK_ALLOC(JPH_Vec3, fluid_vel);
+    fluid_vel->x = vx; fluid_vel->y = vy; fluid_vel->z = vz;
+
+    // ApplyBuoyancyImpulse handles the submerged volume calculation
+    // returns true if the body was at least partially submerged
+    bool submerged = JPH_BodyInterface_ApplyBuoyancyImpulse(
+        self->body_interface,
+        bid,
+        surf_pos,
+        surf_norm,
+        buoyancy,
+        lin_drag,
+        ang_drag,
+        fluid_vel,
+        &gravity,
+        dt
+    );
+
+    SHADOW_UNLOCK(&self->shadow_lock);
+
+    return PyBool_FromLong(submerged);
+}
+
 // Callback: Called by Jolt when a hit is found during the sweep
 static float CastShape_ClosestCollector(void* context, const JPH_ShapeCastResult* result) {
     CastShapeContext* ctx = (CastShapeContext*)context;
@@ -2297,12 +2359,13 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
   int shape_type = 0; int motion_type = 2;                   
   unsigned long long user_data = 0;
   int is_sensor = 0; 
+  float mass = -1.0f;
 
   PyObject *py_size = NULL;
-  static char *kwlist[] = {"pos", "rot", "size", "shape", "motion", "user_data", "is_sensor", NULL};
+  static char *kwlist[] = {"pos", "rot", "size", "shape", "motion", "user_data", "is_sensor", "mass", NULL};
 
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "|(fff)(ffff)OiiKp", kwlist, 
-        &px, &py, &pz, &rx, &ry, &rz, &rw, &py_size, &shape_type, &motion_type, &user_data, &is_sensor)) {
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "|(fff)(ffff)OiiKpf", kwlist, 
+        &px, &py, &pz, &rx, &ry, &rz, &rw, &py_size, &shape_type, &motion_type, &user_data, &is_sensor, &mass)) {
         return NULL;
     }
 
@@ -2357,6 +2420,25 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
   if (is_sensor) JPH_BodyCreationSettings_SetIsSensor(settings, true);
 
   if (motion_type == 2) JPH_BodyCreationSettings_SetAllowSleeping(settings, true);
+
+  // --- Apply Mass Override ---
+  if (mass > 0.0f) {
+      JPH_MassProperties mp;
+      
+      // 1. Get the default mass properties for this shape.
+      // This ensures we have a valid Inertia Tensor (rotational resistance) 
+      // for a box/sphere/capsule.
+      JPH_Shape_GetMassProperties(shape, &mp);
+      
+      // 2. Overwrite only the mass with the user-provided value.
+      mp.mass = mass;
+      
+      // 3. Apply the modified mass properties to the settings.
+      JPH_BodyCreationSettings_SetMassPropertiesOverride(settings, &mp);
+      
+      // 4. Tell Jolt to use our provided mass while calculating inertia from the shape.
+      JPH_BodyCreationSettings_SetOverrideMassProperties(settings, JPH_OverrideMassProperties_CalculateInertia);
+  }
 
   // 3. CRITICAL: Embed the Full Handle (Slot + Gen) into Jolt UserData
   // This allows the lock-free callback to identify the body correctly.
@@ -4837,6 +4919,8 @@ static const PyMethodDef PhysicsWorld_methods[] = {
     // --- Interaction ---
     {"apply_impulse", (PyCFunction)PhysicsWorld_apply_impulse,
      METH_VARARGS | METH_KEYWORDS, NULL},
+     {"apply_buoyancy", (PyCFunction)PhysicsWorld_apply_buoyancy, 
+     METH_VARARGS | METH_KEYWORDS, "Apply fluid forces to a body."},
     {"set_position", (PyCFunction)PhysicsWorld_set_position,
      METH_VARARGS | METH_KEYWORDS, NULL},
     {"set_rotation", (PyCFunction)PhysicsWorld_set_rotation,
