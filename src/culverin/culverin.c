@@ -83,6 +83,8 @@ static void JPH_API_CALL char_on_character_contact_added(
             ev->body2 = h1;
         }
 
+        ev->sliding_speed_sq = 0.0f; // No tangential speed for character-character contacts, for now.
+
         // normal points from Character to otherCharacter
         ev->nx = contactNormal->x;
         ev->ny = contactNormal->y;
@@ -119,10 +121,10 @@ static void JPH_API_CALL char_on_contact_added(
   // 3. Thread-Safe Member Access
   // We use relaxed atomics here. If the main thread is mid-write, 
   // we just want 'a' valid value, we don't need strict synchronization.
-  float vx = atomic_load_explicit((_Atomic float*)&self->last_vx, memory_order_relaxed);
-  float vy = atomic_load_explicit((_Atomic float*)&self->last_vy, memory_order_relaxed);
-  float vz = atomic_load_explicit((_Atomic float*)&self->last_vz, memory_order_relaxed);
-  float strength = atomic_load_explicit((_Atomic float*)&self->push_strength, memory_order_relaxed);
+  float vx = atomic_load_explicit((&self->last_vx), memory_order_relaxed);
+  float vy = atomic_load_explicit((&self->last_vy), memory_order_relaxed);
+  float vz = atomic_load_explicit((&self->last_vz), memory_order_relaxed);
+  float strength = atomic_load_explicit((&self->push_strength), memory_order_relaxed);
 
   // 4. Jolt Interface (Safe to call from worker threads)
   JPH_BodyInterface *bi = self->world->body_interface;
@@ -188,52 +190,50 @@ static void vec3_get_perpendicular(const JPH_Vec3* in, JPH_Vec3* out) {
 // --- Global Contact Listener ---
 static void JPH_API_CALL on_contact_added(void* userData, const JPH_Body* body1, const JPH_Body* body2, const JPH_ContactManifold* manifold, JPH_ContactSettings* settings) {
     PhysicsWorldObject* self = (PhysicsWorldObject*)userData;
-
-    // 1. ATOMIC RESERVATION (Wait-Free)
-    // "idx" is our exclusive slot. No other thread will write here.
     size_t idx = atomic_fetch_add_explicit(&self->contact_atomic_idx, 1, memory_order_relaxed);
-
-    // 2. BOUNDS CHECK
-    if (idx >= self->contact_max_capacity) {
-        return; // Buffer full, drop event
-    }
+    if (idx >= self->contact_max_capacity) return;
 
     ContactEvent* ev = &self->contact_buffer[idx];
 
-    // 3. RETRIEVE IMMUTABLE HANDLES
-    // We read the handles stamped at creation. 
-    // Even if the main thread has destroyed the body and incremented the generation
-    // in the shadow array, these handles reflect the bodies *as they existed* 
-    // when the collision occurred.
-    ev->body1 = (BodyHandle)JPH_Body_GetUserData((JPH_Body*)body1);
-    ev->body2 = (BodyHandle)JPH_Body_GetUserData((JPH_Body*)body2);
+    // 1. Canonical Handle Ordering (Helps Python Deduplication)
+    BodyHandle h1 = (BodyHandle)JPH_Body_GetUserData((JPH_Body*)body1);
+    BodyHandle h2 = (BodyHandle)JPH_Body_GetUserData((JPH_Body*)body2);
+    
+    JPH_STACK_ALLOC(JPH_Vec3, n);
+    JPH_ContactManifold_GetWorldSpaceNormal(manifold, (JPH_Vec3*)&n);
 
-    // 4. GATHER GEOMETRY (No Locks)
-    JPH_Vec3 n;
-    JPH_ContactManifold_GetWorldSpaceNormal(manifold, &n);
-    ev->nx = n.x; ev->ny = n.y; ev->nz = n.z;
-
-    if (JPH_ContactManifold_GetPointCount(manifold) > 0) {
-        JPH_RVec3 p;
-        JPH_ContactManifold_GetWorldSpaceContactPointOn1(manifold, 0, &p);
-        ev->px = (float)p.x; ev->py = (float)p.y; ev->pz = (float)p.z;
+    if (h1 < h2) {
+        ev->body1 = h1; ev->body2 = h2;
     } else {
-        ev->px = 0.0f; ev->py = 0.0f; ev->pz = 0.0f;
+        ev->body1 = h2; ev->body2 = h1;
+        n->x = -n->x; n->y = -n->y; n->z = -n->z; // Keep normal consistent
     }
+    ev->nx = n->x; ev->ny = n->y; ev->nz = n->z;
 
-    // 5. CALCULATE IMPULSE (No Locks)
+    // 2. Geometry
+    // Manifolds almost always have points; we skip the branch for speed.
+    // JoltC usually guarantees index 0 is valid in Added callback.
+    JPH_STACK_ALLOC(JPH_RVec3, p);
+    JPH_ContactManifold_GetWorldSpaceContactPointOn1(manifold, 0, (JPH_RVec3*)&p);
+    ev->px = (float)p->x; ev->py = (float)p->y; ev->pz = (float)p->z;
+    // 3. Optimized Velocity Math
     JPH_Vec3 v1, v2;
     JPH_Body_GetLinearVelocity((JPH_Body*)body1, &v1);
     JPH_Body_GetLinearVelocity((JPH_Body*)body2, &v2);
-    
-    float closing_speed = (v1.x - v2.x) * n.x + 
-                          (v1.y - v2.y) * n.y + 
-                          (v1.z - v2.z) * n.z;
-    ev->impulse = fabsf(closing_speed);
 
-    // 6. PUBLICATION FENCE (Critical for Weak Memory Models)
-    // Ensures all writes to 'ev' above are visible to any thread that
-    // later observes 'contact_atomic_idx > idx'.
+    float dv_x = v1.x - v2.x;
+    float dv_y = v1.y - v2.y;
+    float dv_z = v1.z - v2.z;
+
+    float dot = dv_x * n->x + dv_y * n->y + dv_z * n->z;
+    ev->impulse = fabsf(dot); 
+
+    // Calculate Tangent Velocity Squared (No Sqrt!)
+    float tx = dv_x - (dot * n->x);
+    float ty = dv_y - (dot * n->y);
+    float tz = dv_z - (dot * n->z);
+    ev->sliding_speed_sq = (tx*tx + ty*ty + tz*tz);
+
     atomic_thread_fence(memory_order_release);
 }
 
@@ -483,9 +483,15 @@ static JPH_Shape *find_or_create_shape(PhysicsWorldObject *self, int type,
   }
 
   // 2. CACHE LOOKUP
-  // Linear search is fine for typical game usage (usually < 100 unique shapes)
   for (size_t i = 0; i < self->shape_cache_count; i++) {
-    if (memcmp(&self->shape_cache[i].key, &key, sizeof(ShapeKey)) == 0) {
+    ShapeKey *entry_key = &self->shape_cache[i].key;
+    
+    // Explicit comparison avoids padding/alignment issues and handles -0.0 vs 0.0 correctly
+    if (entry_key->type == key.type &&
+        entry_key->p1 == key.p1 &&
+        entry_key->p2 == key.p2 &&
+        entry_key->p3 == key.p3 &&
+        entry_key->p4 == key.p4) {
       return self->shape_cache[i].shape;
     }
   }
@@ -1194,9 +1200,9 @@ static PyObject* PhysicsWorld_shapecast(PhysicsWorldObject* self, PyObject* args
         result = Py_BuildValue("Kf(fff)(fff)", 
             handle, 
             ctx.hit.fraction, 
-            (float)ctx.hit.contactPointOn2.x, 
-            (float)ctx.hit.contactPointOn2.y, 
-            (float)ctx.hit.contactPointOn2.z,
+            ctx.hit.contactPointOn2.x, 
+            ctx.hit.contactPointOn2.y, 
+            ctx.hit.contactPointOn2.z,
             nx, ny, nz
         );
     }
@@ -1299,18 +1305,18 @@ static void flush_commands(PhysicsWorldObject *self) {
       size_t last_dense = self->count - 1;
       if (dense_idx != last_dense) {
         // Correct Swap-and-Pop: Move all shadow data
-        memcpy(&self->positions[dense_idx * 4], &self->positions[last_dense * 4], 16);
-        memcpy(&self->rotations[dense_idx * 4], &self->rotations[last_dense * 4], 16);
-        memcpy(&self->prev_positions[dense_idx * 4], &self->prev_positions[last_dense * 4], 16);
-        memcpy(&self->prev_rotations[dense_idx * 4], &self->prev_rotations[last_dense * 4], 16);
-        memcpy(&self->linear_velocities[dense_idx * 4], &self->linear_velocities[last_dense * 4], 16);
-        memcpy(&self->angular_velocities[dense_idx * 4], &self->angular_velocities[last_dense * 4], 16);
+        memcpy(&self->positions[(size_t)dense_idx * 4], &self->positions[last_dense * 4], 16);
+        memcpy(&self->rotations[(size_t)dense_idx * 4], &self->rotations[last_dense * 4], 16);
+        memcpy(&self->prev_positions[(size_t)dense_idx * 4], &self->prev_positions[last_dense * 4], 16);
+        memcpy(&self->prev_rotations[(size_t)dense_idx * 4], &self->prev_rotations[last_dense * 4], 16);
+        memcpy(&self->linear_velocities[(size_t)dense_idx * 4], &self->linear_velocities[last_dense * 4], 16);
+        memcpy(&self->angular_velocities[(size_t)dense_idx * 4], &self->angular_velocities[last_dense * 4], 16);
         
         self->body_ids[dense_idx] = self->body_ids[last_dense];
         self->user_data[dense_idx] = self->user_data[last_dense];
 
         uint32_t mover_slot = self->dense_to_slot[last_dense];
-        self->slot_to_dense[mover_slot] = (uint32_t)dense_idx;
+        self->slot_to_dense[mover_slot] = dense_idx;
         self->dense_to_slot[dense_idx] = mover_slot;
       }
 
@@ -1335,7 +1341,7 @@ static void flush_commands(PhysicsWorldObject *self) {
       JPH_STACK_ALLOC(JPH_Quat, q);
       q->x = cmd->data.vec.x; q->y = cmd->data.vec.y; q->z = cmd->data.vec.z; q->w = cmd->data.vec.w;
       JPH_BodyInterface_SetRotation(bi, bid, q, JPH_Activation_Activate);
-      memcpy(&self->rotations[dense_idx * 4], &cmd->data.vec, 16);
+      memcpy(&self->rotations[(size_t)dense_idx * 4], &cmd->data.vec, 16);
       break;
     }
 
@@ -1350,7 +1356,7 @@ static void flush_commands(PhysicsWorldObject *self) {
       self->positions[dense_idx * 4 + 0] = (float)p->x;
       self->positions[dense_idx * 4 + 1] = (float)p->y;
       self->positions[dense_idx * 4 + 2] = (float)p->z;
-      memcpy(&self->rotations[dense_idx * 4], &cmd->data.transform.rx, 16);
+      memcpy(&self->rotations[(size_t)dense_idx * 4], &cmd->data.transform.rx, 16);
       break;
     }
 
@@ -1570,58 +1576,113 @@ static int PhysicsWorld_resize(PhysicsWorldObject *self, size_t new_capacity) {
         PyErr_SetString(PyExc_BufferError, "Cannot resize world while memory views are exported.");
         return -1;
     }
-    // We check this inside the SHADOW_LOCK (which the caller must hold).
-    // Because raycast/shapecast increment this counter WHILE holding the lock,
-    // we are guaranteed that if this is 0, no new queries can start 
-    // until we release the lock.
+    // Guaranteed no active queries due to lock held by caller
     if (atomic_load_explicit(&self->active_queries, memory_order_relaxed) > 0) {
         PyErr_SetString(PyExc_RuntimeError, "Cannot resize world while queries (raycast/shapecast) are active.");
         return -1;
     }
     if (new_capacity <= self->capacity) return 0;
 
-    // 1. Allocate all new buffers to TEMPORARY pointers first
-    void* p_pos = PyMem_RawRealloc(self->positions, new_capacity * 16);
-    void* p_rot = PyMem_RawRealloc(self->rotations, new_capacity * 16);
-    void* p_ppos = PyMem_RawRealloc(self->prev_positions, new_capacity * 16);
-    void* p_prot = PyMem_RawRealloc(self->prev_rotations, new_capacity * 16);
-    void* p_lvel = PyMem_RawRealloc(self->linear_velocities, new_capacity * 16);
-    void* p_avel = PyMem_RawRealloc(self->angular_velocities, new_capacity * 16);
-    void* p_bids = PyMem_RawRealloc(self->body_ids, new_capacity * sizeof(JPH_BodyID));
-    void* p_udat = PyMem_RawRealloc(self->user_data, new_capacity * sizeof(uint64_t));
-    void* p_gens = PyMem_RawRealloc(self->generations, new_capacity * sizeof(uint32_t));
-    void* p_s2d  = PyMem_RawRealloc(self->slot_to_dense, new_capacity * sizeof(uint32_t));
-    void* p_d2s  = PyMem_RawRealloc(self->dense_to_slot, new_capacity * sizeof(uint32_t));
-    void* p_stat = PyMem_RawRealloc(self->slot_states, new_capacity * sizeof(uint8_t));
-    void* p_free = PyMem_RawRealloc(self->free_slots, new_capacity * sizeof(uint32_t));
+    // --- 1. Transactional Allocation (Allocate ALL new buffers first) ---
+    // We use RawMalloc instead of Realloc to ensure the old data remains valid 
+    // until we are sure we have enough memory for the whole operation.
+    
+    size_t dense_stride = 4 * sizeof(float); // 16 bytes alignment preference
+    size_t count_bytes = self->count * dense_stride; // Amount of valid dense data to copy
 
-    // 2. Check if ANY allocation failed
-    if (!p_pos || !p_rot || !p_ppos || !p_prot || !p_lvel || !p_avel || 
-        !p_bids || !p_udat || !p_gens || !p_s2d || !p_d2s || !p_stat || !p_free) {
-        // Note: PyMem_RawRealloc does not free the original pointer on failure.
-        // We just return -1; the struct still points to the old (valid) memory.
+    float* new_pos  = (float*)PyMem_RawMalloc(new_capacity * dense_stride);
+    float* new_rot  = (float*)PyMem_RawMalloc(new_capacity * dense_stride);
+    float* new_ppos = (float*)PyMem_RawMalloc(new_capacity * dense_stride);
+    float* new_prot = (float*)PyMem_RawMalloc(new_capacity * dense_stride);
+    float* new_lvel = (float*)PyMem_RawMalloc(new_capacity * dense_stride);
+    float* new_avel = (float*)PyMem_RawMalloc(new_capacity * dense_stride);
+    
+    JPH_BodyID* new_bids = (JPH_BodyID*)PyMem_RawMalloc(new_capacity * sizeof(JPH_BodyID));
+    uint64_t*   new_udat = (uint64_t*)PyMem_RawMalloc(new_capacity * sizeof(uint64_t));
+    
+    uint32_t* new_gens = (uint32_t*)PyMem_RawMalloc(new_capacity * sizeof(uint32_t));
+    uint32_t* new_s2d  = (uint32_t*)PyMem_RawMalloc(new_capacity * sizeof(uint32_t));
+    uint32_t* new_d2s  = (uint32_t*)PyMem_RawMalloc(new_capacity * sizeof(uint32_t));
+    uint8_t*  new_stat = (uint8_t*)PyMem_RawMalloc(new_capacity * sizeof(uint8_t));
+    uint32_t* new_free = (uint32_t*)PyMem_RawMalloc(new_capacity * sizeof(uint32_t));
+
+    // --- 2. Check for Allocation Failure ---
+    if (!new_pos || !new_rot || !new_ppos || !new_prot || !new_lvel || !new_avel || 
+        !new_bids || !new_udat || !new_gens || !new_s2d || !new_d2s || !new_stat || !new_free) {
+        
+        // Cleanup new attempts (No side effects on 'self')
+        if (new_pos) PyMem_RawFree(new_pos);
+        if (new_rot) PyMem_RawFree(new_rot);
+        if (new_ppos) PyMem_RawFree(new_ppos);
+        if (new_prot) PyMem_RawFree(new_prot);
+        if (new_lvel) PyMem_RawFree(new_lvel);
+        if (new_avel) PyMem_RawFree(new_avel);
+        if (new_bids) PyMem_RawFree(new_bids);
+        if (new_udat) PyMem_RawFree(new_udat);
+        if (new_gens) PyMem_RawFree(new_gens);
+        if (new_s2d) PyMem_RawFree(new_s2d);
+        if (new_d2s) PyMem_RawFree(new_d2s);
+        if (new_stat) PyMem_RawFree(new_stat);
+        if (new_free) PyMem_RawFree(new_free);
+
         PyErr_NoMemory();
         return -1;
     }
 
-    // 3. COMMIT all pointers at once
-    self->positions = p_pos; self->rotations = p_rot;
-    self->prev_positions = p_ppos; self->prev_rotations = p_prot;
-    self->linear_velocities = p_lvel; self->angular_velocities = p_avel;
-    self->body_ids = p_bids; self->user_data = p_udat;
-    self->generations = p_gens; self->slot_to_dense = p_s2d;
-    self->dense_to_slot = p_d2s; self->slot_states = p_stat;
-    self->free_slots = p_free;
-
-    // 4. Initialize new slots
-    for (size_t i = self->slot_capacity; i < new_capacity; i++) {
-        self->generations[i] = 1;
-        self->slot_states[i] = SLOT_EMPTY;
-        self->free_slots[self->free_count++] = (uint32_t)i;
+    // --- 3. Data Migration (Copy valid data) ---
+    
+    // Dense Arrays: Copy only active bodies (0 to count)
+    // We don't need to copy the garbage beyond 'count'
+    if (self->count > 0) {
+        memcpy(new_pos,  self->positions,  count_bytes);
+        memcpy(new_rot,  self->rotations,  count_bytes);
+        memcpy(new_ppos, self->prev_positions, count_bytes);
+        memcpy(new_prot, self->prev_rotations, count_bytes);
+        memcpy(new_lvel, self->linear_velocities, count_bytes);
+        memcpy(new_avel, self->angular_velocities, count_bytes);
+        memcpy(new_bids, self->body_ids,   self->count * sizeof(JPH_BodyID));
+        memcpy(new_udat, self->user_data,  self->count * sizeof(uint64_t));
     }
+
+    // Slot/Mapping Arrays: Copy entire existing capacity
+    // We must preserve the state of existing slots (ALIVE/EMPTY) and generations
+    size_t slot_copy_size = self->slot_capacity; 
+    memcpy(new_gens, self->generations, slot_copy_size * sizeof(uint32_t));
+    memcpy(new_s2d,  self->slot_to_dense, slot_copy_size * sizeof(uint32_t));
+    memcpy(new_d2s,  self->dense_to_slot, slot_copy_size * sizeof(uint32_t));
+    memcpy(new_stat, self->slot_states,   slot_copy_size * sizeof(uint8_t));
+    
+    // Free List: Copy existing free list
+    memcpy(new_free, self->free_slots, self->free_count * sizeof(uint32_t));
+
+    // --- 4. Initialize New Tail ---
+    // Setup the newly added slots
+    for (size_t i = self->slot_capacity; i < new_capacity; i++) {
+        new_gens[i] = 1;              // Start generation at 1
+        new_stat[i] = SLOT_EMPTY;     // Mark empty
+        new_free[self->free_count++] = (uint32_t)i; // Add to free list
+    }
+
+    // --- 5. Commit (Swap and Free Old) ---
+    PyMem_RawFree(self->positions); self->positions = new_pos;
+    PyMem_RawFree(self->rotations); self->rotations = new_rot;
+    PyMem_RawFree(self->prev_positions); self->prev_positions = new_ppos;
+    PyMem_RawFree(self->prev_rotations); self->prev_rotations = new_prot;
+    PyMem_RawFree(self->linear_velocities); self->linear_velocities = new_lvel;
+    PyMem_RawFree(self->angular_velocities); self->angular_velocities = new_avel;
+    
+    PyMem_RawFree(self->body_ids); self->body_ids = new_bids;
+    PyMem_RawFree(self->user_data); self->user_data = new_udat;
+    
+    PyMem_RawFree(self->generations); self->generations = new_gens;
+    PyMem_RawFree(self->slot_to_dense); self->slot_to_dense = new_s2d;
+    PyMem_RawFree(self->dense_to_slot); self->dense_to_slot = new_d2s;
+    PyMem_RawFree(self->slot_states); self->slot_states = new_stat;
+    PyMem_RawFree(self->free_slots); self->free_slots = new_free;
 
     self->capacity = new_capacity;
     self->slot_capacity = new_capacity;
+
     return 0;
 }
 
@@ -1643,7 +1704,6 @@ static PyObject* PhysicsWorld_create_constraint(PhysicsWorldObject* self, PyObje
 
     ConstraintParams p;
     params_init(&p);
-    // ... (parsing logic same as before) ...
     int parse_ok = 1;
     switch (type) {
         case CONSTRAINT_FIXED:    break;
@@ -2470,7 +2530,7 @@ static PyObject *PhysicsWorld_destroy_body(PhysicsWorldObject *self,
     if (attr) {                                          \
         double _v = PyFloat_AsDouble(attr);              \
         Py_DECREF(attr);                                 \
-        if (!PyErr_Occurred()) target = (float)_v;       \
+        if (!PyErr_Occurred()) (target) = (float)_v;       \
     }                                                     \
     PyErr_Clear();                                       \
 } while(0)
@@ -2624,7 +2684,7 @@ static PyObject* PhysicsWorld_create_vehicle(PhysicsWorldObject* self, PyObject*
     } else { // RWD
         uint32_t i1 = (num_wheels >= 4) ? 2 : 0;
         uint32_t i2 = (num_wheels >= 4) ? 3 : 1;
-        JPH_WheeledVehicleControllerSettings_AddDifferential(v_ctrl, i1, i2);
+        JPH_WheeledVehicleControllerSettings_AddDifferential(v_ctrl, (int)i1, (int)i2);
     }
 
     // --- 5. CONSTRAINT ASSEMBLY ---
@@ -2679,12 +2739,12 @@ error_cleanup:
         }
         JPH_Constraint_Destroy((JPH_Constraint*)j_veh); 
     }
-    if (tester) JPH_VehicleCollisionTester_Destroy(tester);
+    if (tester) JPH_VehicleCollisionTester_Destroy((JPH_VehicleCollisionTester*)tester);
     if (v_trans_set) JPH_VehicleTransmissionSettings_Destroy(v_trans_set);
     if (v_ctrl) JPH_VehicleControllerSettings_Destroy((JPH_VehicleControllerSettings*)v_ctrl);
     if (w_settings) {
         for (Py_ssize_t i = 0; i < num_wheels; i++) if (w_settings[i]) JPH_WheelSettings_Destroy(w_settings[i]);
-        PyMem_RawFree(w_settings);
+        PyMem_RawFree((void*)w_settings);
     }
     if (f_curve) JPH_LinearCurve_Destroy(f_curve);
     if (t_curve) JPH_LinearCurve_Destroy(t_curve);
@@ -2764,7 +2824,7 @@ static PyObject *PhysicsWorld_set_rotation(PhysicsWorldObject *self,
   self->rotations[dense_idx * 4 + 3] = w;
 
   // 3. FIX: Update Previous Shadow to reset interpolation
-  memcpy(&self->prev_rotations[dense_idx * 4], &self->rotations[dense_idx * 4], 16);
+  memcpy(&self->prev_rotations[(size_t)dense_idx * 4], &self->rotations[(size_t)dense_idx * 4], 16);
 
   SHADOW_UNLOCK(&self->shadow_lock); 
   Py_RETURN_NONE;
@@ -3059,7 +3119,7 @@ static void overlap_record_hit(OverlapContext *ctx, JPH_BodyID bid) {
 
     // 2. Retrieve the baked Handle from Jolt UserData
     // This handle contains the Generation + Slot at the time of creation.
-    ctx->hits[ctx->count++] = (uint64_t)JPH_BodyInterface_GetUserData(ctx->world->body_interface, bid);
+    ctx->hits[ctx->count++] = JPH_BodyInterface_GetUserData(ctx->world->body_interface, bid);
 }
 
 static float OverlapCallback_Narrow(void *context, const JPH_CollideShapeResult *result) {
@@ -3378,7 +3438,7 @@ static PyObject* PhysicsWorld_get_active_indices(PhysicsWorldObject* self, PyObj
     }
 
     // 3. Construct Python object and cleanup
-    PyObject* bytes_obj = PyBytes_FromStringAndSize((char*)results, active_count * sizeof(uint32_t));
+    PyObject* bytes_obj = PyBytes_FromStringAndSize((char*)results, (Py_ssize_t)(active_count * sizeof(uint32_t)));
     PyMem_RawFree(id_scratch);
     PyMem_RawFree(results);
     return bytes_obj;
@@ -3425,7 +3485,7 @@ static PyObject* PhysicsWorld_get_render_state(PhysicsWorldObject* self, PyObjec
     float alpha;
     if (!PyArg_ParseTuple(args, "f", &alpha)) return NULL;
 
-    alpha = (alpha < 0.0f) ? 0.0f : (alpha > 1.0f ? 1.0f : alpha);
+    alpha = fmaxf(0.0f, fminf(1.0f, alpha));
 
     SHADOW_LOCK(&self->shadow_lock);
     size_t count = self->count;
@@ -3520,9 +3580,9 @@ static PyObject* Vehicle_set_input(VehicleObject* self, PyObject* args, PyObject
     
     // Forward vector is Z-axis (Column 2). Note: Jolt uses column-major matrices.
     JPH_Vec3 world_fwd = { 
-        (float)world_transform->column[2].x, 
-        (float)world_transform->column[2].y, 
-        (float)world_transform->column[2].z 
+        world_transform->column[2].x, 
+        world_transform->column[2].y, 
+        world_transform->column[2].z 
     }; 
     
     // Dot product for forward speed
@@ -3822,7 +3882,7 @@ static PyObject* Vehicle_destroy(VehicleObject* self, PyObject* Py_UNUSED(ignore
         for (uint32_t i = 0; i < wheel_count; i++) {
             if (wheels[i]) JPH_WheelSettings_Destroy(wheels[i]);
         }
-        PyMem_RawFree(wheels);
+        PyMem_RawFree((void*)wheels);
     }
 
     if (f_curve) JPH_LinearCurve_Destroy(f_curve);
