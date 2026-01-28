@@ -47,13 +47,40 @@ class Vehicle:
     @property
     def wheel_count(self) -> int: ...
 
-class PhysicsWorld:
-    def __init__(
-        self, 
-        settings: Optional[dict] = None, 
-        bodies: Optional[list[dict]] = None
-    ) -> None: ...
+class Skeleton:
+    def add_joint(self, name: str, parent_index: int = -1) -> int: ...
+    def finalize(self) -> None: 
+        """Bakes the hierarchy and prepares joint indices for Ragdoll creation."""
+        ...
 
+class RagdollSettings:
+    def add_part(
+        self, 
+        joint_index: int, 
+        shape_type: int, 
+        size: Any, 
+        mass: float, 
+        parent_index: int, 
+        twist_min: float = -0.1, 
+        twist_max: float = 0.1, 
+        cone_angle: float = 0.0, 
+        axis: Tuple[float, float, float] = (1, 0, 0), 
+        normal: Tuple[float, float, float] = (0, 1, 0),
+        pos: Tuple[float, float, float] = (0, 0, 0)
+    ) -> None: 
+        """Configures a limb part. 'pos' defines the Bind Pose offset relative to the parent joint."""
+        ...
+    def stabilize(self) -> bool: ...
+
+class Ragdoll:
+    def drive_to_pose(self, root_pos: Tuple[float, float, float], root_rot: Tuple[float, float, float, float], matrices: bytes) -> None: ...
+    def get_body_handles(self) -> List[int]: ...
+    def get_debug_info(self) -> List[Dict[str, Any]]: 
+        """Returns a list of dicts containing 'index', 'pos', and 'vel' for every limb."""
+        ...
+
+class PhysicsWorld:
+    def __init__(self, settings: Optional[dict] = None, bodies: Optional[List[dict]] = None) -> None: ...
     def step(self, dt: float = 1.0/60.0) -> None: ...
 
     def create_body(
@@ -94,8 +121,16 @@ class PhysicsWorld:
         transmission: Optional[Any] = None
     ) -> Vehicle: ...
 
-    def destroy_body(self, handle: int) -> None: ...
+    def create_ragdoll_settings(self, skeleton: Skeleton) -> RagdollSettings: ...
+    def create_ragdoll(
+        self, 
+        settings: RagdollSettings, 
+        pos: Tuple[float, float, float], 
+        rot: Tuple[float, float, float, float] = (0, 0, 0, 1), 
+        user_data: int = 0
+    ) -> Ragdoll: ...
 
+    def destroy_body(self, handle: int) -> None: ...
     def create_constraint(self, type: int, body1: int, body2: int, params: Optional[Any] = None) -> int: ...
     def destroy_constraint(self, handle: int) -> None: ...
     
@@ -120,20 +155,12 @@ class PhysicsWorld:
     
     # Queries
     def raycast(
-        self, 
-        start: Tuple[float, float, float], 
-        direction: Tuple[float, float, float], 
-        max_dist: float = 1000.0,
-        ignore: int = 0
+        self, start: Tuple[float, float, float], direction: Tuple[float, float, float], 
+        max_dist: float = 1000.0, ignore: int = 0
     ) -> Optional[Tuple[int, float, Tuple[float, float, float]]]: ...
     def shapecast(
-        self,
-        shape: int,
-        pos: Tuple[float, float, float],
-        rot: Tuple[float, float, float, float],
-        dir: Tuple[float, float, float],
-        size: Any,
-        ignore: int = 0
+        self, shape: int, pos: Tuple[float, float, float], rot: Tuple[float, float, float, float],
+        dir: Tuple[float, float, float], size: Any, ignore: int = 0
     ) -> Optional[Tuple[int, float, Tuple[float, float, float], Tuple[float, float, float]]]: ...
     def overlap_sphere(self, center: Tuple[float, float, float], radius: float) -> List[int]: ...
     def overlap_aabb(self, min: Tuple[float, float, float], max: Tuple[float, float, float]) -> List[int]: ...
@@ -143,14 +170,10 @@ class PhysicsWorld:
     def get_contact_events_ex(self) -> List[Dict[str, Any]]: ...
     def get_contact_events_raw(self) -> memoryview: ...
 
-    # Snapshots
     def save_state(self) -> bytes: ...
     def load_state(self, state: bytes) -> None: ...
-
-    # Interpolation
     def get_render_state(self, alpha: float) -> bytes: ...
 
-    # Shadow Buffers
     @property
     def positions(self) -> memoryview: ...
     @property
