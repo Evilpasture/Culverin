@@ -1,5 +1,7 @@
 #include "culverin.h"
 
+#include <stddef.h>
+
 
 // --- Handle Helper ---
 static inline BodyHandle make_handle(uint32_t slot, uint32_t gen) {
@@ -4971,24 +4973,24 @@ static PyObject* PhysicsWorld_create_ragdoll(PhysicsWorldObject* self, PyObject*
         JPH_STACK_ALLOC(JPH_Vec3, rotated_offset);
         manual_vec3_rotate_by_quat(local_offset, root_q, rotated_offset);
 
-        self->positions[dense * 4 + 0] = (float)(px + rotated_offset->x);
-        self->positions[dense * 4 + 1] = (float)(py + rotated_offset->y);
-        self->positions[dense * 4 + 2] = (float)(pz + rotated_offset->z);
+        self->positions[dense * 4 + 0] = (px + rotated_offset->x);
+        self->positions[dense * 4 + 1] = (py + rotated_offset->y);
+        self->positions[dense * 4 + 2] = (pz + rotated_offset->z);
         self->positions[dense * 4 + 3] = 0.0f;
 
         JPH_STACK_ALLOC(JPH_Quat, local_q);
         JPH_Mat4_GetQuaternion(&neutral_matrices[i], local_q);
         JPH_STACK_ALLOC(JPH_Quat, world_q);
         manual_quat_multiply(root_q, local_q, world_q);
-        memcpy(&self->rotations[dense * 4], world_q, 16);
+        memcpy(&self->rotations[(size_t)dense * 4], world_q, 16);
 
         // Sync metadata
-        memcpy(&self->prev_positions[dense * 4], &self->positions[dense * 4], 16);
-        memcpy(&self->prev_rotations[dense * 4], &self->rotations[dense * 4], 16);
+        memcpy(&self->prev_positions[(size_t)dense * 4], &self->positions[(size_t)dense * 4], 16);
+        memcpy(&self->prev_rotations[(size_t)dense * 4], &self->rotations[(size_t)dense * 4], 16);
         
         // FIX 4: Zero out velocities to prevent "Exploding Launch" from stale memory
-        memset(&self->linear_velocities[dense * 4], 0, 16);
-        memset(&self->angular_velocities[dense * 4], 0, 16);
+        memset(&self->linear_velocities[(size_t)dense * 4], 0, 16);
+        memset(&self->angular_velocities[(size_t)dense * 4], 0, 16);
 
         self->body_ids[dense] = bid;
         self->slot_to_dense[slot] = dense;
@@ -5064,7 +5066,7 @@ static PyObject* Ragdoll_drive_to_pose(RagdollObject* self, PyObject* args, PyOb
 
 static PyObject* Ragdoll_get_body_ids(RagdollObject* self, PyObject* args) {
     // Helper to get the Body Handles of the parts so users can manipulate specific limbs
-    PyObject* list = PyList_New(self->body_count);
+    PyObject* list = PyList_New((Py_ssize_t)self->body_count);
     SHADOW_LOCK(&self->world->shadow_lock);
     for (size_t i=0; i<self->body_count; i++) {
         uint32_t slot = self->body_slots[i];
@@ -5180,7 +5182,7 @@ static PyObject* PhysicsWorld_create_heightfield(PhysicsWorldObject* self, PyObj
         return NULL;
     }
 
-    if (h_view.len != (Py_ssize_t)(grid_size * grid_size * sizeof(float))) {
+    if (h_view.len != (Py_ssize_t)((Py_ssize_t)grid_size * grid_size * sizeof(float))) {
         PyBuffer_Release(&h_view);
         return PyErr_Format(PyExc_ValueError, "Height buffer size mismatch. Expected %d floats.", grid_size * grid_size);
     }
@@ -5251,7 +5253,7 @@ static PyObject* PhysicsWorld_create_heightfield(PhysicsWorldObject* self, PyObj
     cmd->type = CMD_CREATE_BODY;
     cmd->slot = slot;
     cmd->data.create.settings = settings;
-    cmd->data.create.user_data = (uint64_t)user_data;
+    cmd->data.create.user_data = user_data;
     cmd->data.create.category = category;
     cmd->data.create.mask = mask;
     cmd->data.create.material_id = material_id;
