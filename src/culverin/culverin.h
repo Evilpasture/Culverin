@@ -2,21 +2,21 @@
 #define PYJOLT_H
 
 #define PY_SSIZE_T_CLEAN
-#include <Python.h>
 #include "joltc.h"
-#include <math.h>
-#include <string.h>
+#include <Python.h>
 #include <float.h>
+#include <math.h>
 #include <stdatomic.h>
 #include <stddef.h>
-#ifdef _WIN32
-    #define WIN32_LEAN_AND_MEAN
-    #include <windows.h>
-#elif defined(__linux__) || defined(__apple__)
-    #include <sched.h>
-    #include <unistd.h>
-#endif
+#include <string.h>
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#elif defined(__linux__) || defined(__apple__)
+#include <sched.h>
+#include <unistd.h>
+#endif
 
 #ifndef JPH_INVALID_BODY_ID
 #define JPH_INVALID_BODY_ID 0xFFFFFFFF
@@ -25,23 +25,22 @@
 // Allocate 'Type' on the stack with guaranteed 32-byte alignment.
 // USAGE: JPH_STACK_ALLOC(JPH_RVec3, my_vec);
 #if defined(_MSC_VER)
-    // Microsoft Visual Studio syntax
-    #define JPH_ALIGNED_STORAGE(Type, Name, Align) \
-        __declspec(align(Align)) Type Name
+// Microsoft Visual Studio syntax
+#define JPH_ALIGNED_STORAGE(Type, Name, Align)                                 \
+  __declspec(align(Align)) Type Name
 #elif defined(__GNUC__) || defined(__clang__)
-    // GCC/Clang syntax (supports both C and C++)
-    #define JPH_ALIGNED_STORAGE(Type, Name, Align) \
-        Type Name __attribute__((aligned(Align)))
+// GCC/Clang syntax (supports both C and C++)
+#define JPH_ALIGNED_STORAGE(Type, Name, Align)                                 \
+  Type Name __attribute__((aligned(Align)))
 #else
-    // Standard C11 (requires <stdalign.h> if not in C++)
-    #include <stdalign.h>
-    #define JPH_ALIGNED_STORAGE(Type, Name, Align) \
-        alignas(Align) Type Name
+// Standard C11 (requires <stdalign.h> if not in C++)
+#include <stdalign.h>
+#define JPH_ALIGNED_STORAGE(Type, Name, Align) alignas(Align) Type Name
 #endif
 
-#define JPH_STACK_ALLOC(Type, Name) \
-    JPH_ALIGNED_STORAGE(Type, Name##_storage, 32); \
-    Type *Name = &Name##_storage
+#define JPH_STACK_ALLOC(Type, Name)                                            \
+  JPH_ALIGNED_STORAGE(Type, Name##_storage, 32);                               \
+  Type *Name = &Name##_storage
 
 // --- Threading Primitives (Python 3.14t support) ---
 #if PY_VERSION_HEX >= 0x030D0000
@@ -60,80 +59,82 @@ static ShadowMutex g_jph_trampoline_lock; // Global lock for JPH callbacks
 #define CULVERIN_DEBUG
 
 #ifdef CULVERIN_DEBUG
-#define DEBUG_LOG(fmt, ...) fprintf(stderr, "[Culverin] " fmt "\n", ##__VA_ARGS__)
+#define DEBUG_LOG(fmt, ...)                                                    \
+  fprintf(stderr, "[Culverin] " fmt "\n", ##__VA_ARGS__)
 #else
 #define DEBUG_LOG(fmt, ...)
 #endif
 
-#define GUARD_STEPPING(self) do \
-    if ((self)->is_stepping) { \
-        SHADOW_UNLOCK(&(self)->shadow_lock); \
-        PyErr_SetString(PyExc_RuntimeError, "Cannot modify physics world during simulation step"); \
-        return NULL; \
-    } \
-    while (0)
-    /* Must use while in lock(deprecated, only use for debug) */
+#define GUARD_STEPPING(self)                                                   \
+  do                                                                           \
+    if ((self)->is_stepping) {                                                 \
+      SHADOW_UNLOCK(&(self)->shadow_lock);                                     \
+      PyErr_SetString(PyExc_RuntimeError,                                      \
+                      "Cannot modify physics world during simulation step");   \
+      return NULL;                                                             \
+    }                                                                          \
+  while (0)
+/* Must use while in lock(deprecated, only use for debug) */
 
 // Processor-level hint to save power during spin-waits
 static inline void culverin_cpu_relax() {
-    #if defined(_MSC_VER) || defined(__INTEL_COMPILER)
-        // MSVC and Intel use intrinsics
-        #include <immintrin.h>
-        _mm_pause();
-    #elif defined(__GNUC__) || defined(__clang__)
-        #if defined(__i386__) || defined(__x86_64__)
-            __asm__ __volatile__("pause");
-        #elif defined(__arm__) || defined(__aarch64__)
-            __asm__ __volatile__("yield");
-        #endif
-    #endif
+#if defined(_MSC_VER) || defined(__INTEL_COMPILER)
+// MSVC and Intel use intrinsics
+#include <immintrin.h>
+  _mm_pause();
+#elif defined(__GNUC__) || defined(__clang__)
+#if defined(__i386__) || defined(__x86_64__)
+  __asm__ __volatile__("pause");
+#elif defined(__arm__) || defined(__aarch64__)
+  __asm__ __volatile__("yield");
+#endif
+#endif
 }
 
 static inline void culverin_yield() {
-    // 1. Give the CPU a break (Hardware level)
-    culverin_cpu_relax();
+  // 1. Give the CPU a break (Hardware level)
+  culverin_cpu_relax();
 
-    // 2. Give the OS a break (Kernel level)
-    #if defined(_WIN32)
-        // SwitchToThread() is the gold standard for Windows yielding
-        if (SwitchToThread() == FALSE) {
-            Sleep(0);
-        }
-    #elif defined(__linux__) || defined(__FreeBSD__)
-        sched_yield();
-    #elif defined(__APPLE__)
-        // macOS deprecated sched_yield behavior; usleep(0) is often preferred 
-        // for thread arbitration in user-space.
-        usleep(0);
-    #else
-        // Fallback for unknown POSIX systems
-        sleep(0); 
-    #endif
+// 2. Give the OS a break (Kernel level)
+#if defined(_WIN32)
+  // SwitchToThread() is the gold standard for Windows yielding
+  if (SwitchToThread() == FALSE) {
+    Sleep(0);
+  }
+#elif defined(__linux__) || defined(__FreeBSD__)
+  sched_yield();
+#elif defined(__APPLE__)
+  // macOS deprecated sched_yield behavior; usleep(0) is often preferred
+  // for thread arbitration in user-space.
+  usleep(0);
+#else
+  // Fallback for unknown POSIX systems
+  sleep(0);
+#endif
 }
 
 // Blocks until the world is not mid-step.
 // Must be called while holding SHADOW_LOCK. Re-acquires it before returning.
-#define BLOCK_UNTIL_NOT_STEPPING(self) do { \
-    while ((self)->is_stepping) { \
-        SHADOW_UNLOCK(&(self)->shadow_lock); \
-        Py_BEGIN_ALLOW_THREADS \
-        culverin_yield(); \
-        Py_END_ALLOW_THREADS \
-        SHADOW_LOCK(&(self)->shadow_lock); \
-    } \
-} while (0)
+#define BLOCK_UNTIL_NOT_STEPPING(self)                                         \
+  do {                                                                         \
+    while ((self)->is_stepping) {                                              \
+      SHADOW_UNLOCK(&(self)->shadow_lock);                                     \
+      Py_BEGIN_ALLOW_THREADS culverin_yield();                                 \
+      Py_END_ALLOW_THREADS SHADOW_LOCK(&(self)->shadow_lock);                  \
+    }                                                                          \
+  } while (0)
 
 // Blocks until no queries (raycasts/shapecasts) are running.
 // Must be called while holding SHADOW_LOCK.
-#define BLOCK_UNTIL_NOT_QUERYING(self) do { \
-    while (atomic_load_explicit(&(self)->active_queries, memory_order_acquire) > 0) { \
-        SHADOW_UNLOCK(&(self)->shadow_lock); \
-        Py_BEGIN_ALLOW_THREADS \
-        culverin_yield(); \
-        Py_END_ALLOW_THREADS \
-        SHADOW_LOCK(&(self)->shadow_lock); \
-    } \
-} while (0)
+#define BLOCK_UNTIL_NOT_QUERYING(self)                                         \
+  do {                                                                         \
+    while (atomic_load_explicit(&(self)->active_queries,                       \
+                                memory_order_acquire) > 0) {                   \
+      SHADOW_UNLOCK(&(self)->shadow_lock);                                     \
+      Py_BEGIN_ALLOW_THREADS culverin_yield();                                 \
+      Py_END_ALLOW_THREADS SHADOW_LOCK(&(self)->shadow_lock);                  \
+    }                                                                          \
+  } while (0)
 
 // --- Shape Caching ---
 typedef struct {
@@ -152,12 +153,12 @@ typedef uint64_t BodyHandle;
 
 // Constraint Types
 typedef enum {
-    CONSTRAINT_FIXED = 0,
-    CONSTRAINT_POINT = 1,
-    CONSTRAINT_HINGE = 2,
-    CONSTRAINT_SLIDER = 3,
-    CONSTRAINT_DISTANCE = 4,
-    CONSTRAINT_CONE = 5
+  CONSTRAINT_FIXED = 0,
+  CONSTRAINT_POINT = 1,
+  CONSTRAINT_HINGE = 2,
+  CONSTRAINT_SLIDER = 3,
+  CONSTRAINT_DISTANCE = 4,
+  CONSTRAINT_CONE = 5
 } ConstraintType;
 
 // Minimal Handle for Constraints (Distinct from BodyHandle)
@@ -223,20 +224,20 @@ typedef struct {
 #endif
 
 // --- Callback Logic ---
-typedef struct 
+typedef struct
 #ifndef _MSC_VER
-__attribute__((packed)) 
-#endif 
-ContactEvent {
-    uint64_t body1;
-    uint64_t body2;
-    float px, py, pz;
-    float nx, ny, nz;
-    float impulse;
-    float sliding_speed_sq; // Scratching speed squared(tangential)
-    uint32_t mat1;        // 4 (New)
-    uint32_t mat2;        // 4 (New)
-    uint32_t _pad[2];     // 8 (Padding to 64 bytes)
+    __attribute__((packed))
+#endif
+    ContactEvent {
+  uint64_t body1;
+  uint64_t body2;
+  float px, py, pz;
+  float nx, ny, nz;
+  float impulse;
+  float sliding_speed_sq; // Scratching speed squared(tangential)
+  uint32_t mat1;          // 4 (New)
+  uint32_t mat2;          // 4 (New)
+  uint32_t _pad[2];       // 8 (Padding to 64 bytes)
 } ContactEvent;
 
 #ifdef _MSC_VER
@@ -247,41 +248,43 @@ ContactEvent {
 #ifdef _MSC_VER
 #pragma pack(push, 1)
 #endif
-typedef struct 
+typedef struct
 #ifndef _MSC_VER
-__attribute__((packed)) 
-#endif 
+    __attribute__((packed))
+#endif
 {
-    uint64_t handle;      // 8 bytes
-    float fraction;       // 4 bytes
-    float nx, ny, nz;     // 12 bytes
-    float px, py, pz;     // 12 bytes
-    uint32_t subShapeID;  // 4 bytes
-    uint32_t material_id; // 4 bytes
-    uint32_t _pad;
-} RayCastBatchResult; 
+  uint64_t handle;      // 8 bytes
+  float fraction;       // 4 bytes
+  float nx, ny, nz;     // 12 bytes
+  float px, py, pz;     // 12 bytes
+  uint32_t subShapeID;  // 4 bytes
+  uint32_t material_id; // 4 bytes
+  uint32_t _pad;
+} RayCastBatchResult;
 #ifdef _MSC_VER
 #pragma pack(pop)
 #endif
 
-_Static_assert(sizeof(RayCastBatchResult) == 48, "RayCastBatchResult size mismatch");
+_Static_assert(sizeof(RayCastBatchResult) == 48,
+               "RayCastBatchResult size mismatch");
 
 _Static_assert(sizeof(ContactEvent) == 64, "ContactEvent size mismatch");
 
 // --- Material Registry ---
 typedef struct {
-    uint32_t id;
-    float friction;
-    float restitution;
-    // Padding/Alignment isn't critical here as this is a lookup array, not a stream
+  uint32_t id;
+  float friction;
+  float restitution;
+  // Padding/Alignment isn't critical here as this is a lookup array, not a
+  // stream
 } MaterialData;
 
 // --- The Object Struct ---
 typedef struct {
   PyObject_HEAD
 
-  // Jolt Handles
-  JPH_PhysicsSystem *system;
+      // Jolt Handles
+      JPH_PhysicsSystem *system;
   JPH_CharacterVsCharacterCollision *char_vs_char_manager;
   JPH_BodyInterface *body_interface;
   JPH_JobSystem *job_system;
@@ -292,10 +295,10 @@ typedef struct {
   JPH_ObjectVsBroadPhaseLayerFilter *bp_filter;
 
   // --- Global Contact Listener ---
-  JPH_ContactListener* contact_listener;
+  JPH_ContactListener *contact_listener;
 
   // --- Event Buffer ---
-  ContactEvent* contact_events;
+  ContactEvent *contact_events;
   size_t contact_count;
   size_t contact_capacity;
 
@@ -303,9 +306,9 @@ typedef struct {
   atomic_size_t contact_atomic_idx;
 
   atomic_int active_queries; // Tracks threads currently inside Jolt queries
-  
+
   // The buffer must be large and pre-allocated
-  ContactEvent* contact_buffer;
+  ContactEvent *contact_buffer;
   size_t contact_max_capacity;
 
   // Shadow Buffers
@@ -321,8 +324,8 @@ typedef struct {
   uint64_t *user_data;
 
   // --- Indirection System ---
-  uint32_t *categories; // [Dense Index]
-  uint32_t *masks;      // [Dense Index]
+  uint32_t *categories;   // [Dense Index]
+  uint32_t *masks;        // [Dense Index]
   uint32_t *material_ids; // Shadow buffer (Per-Body)
 
   // Registry (Global for this world)
@@ -356,7 +359,7 @@ typedef struct {
   uint32_t *constraint_generations;
   uint32_t *free_constraint_slots;
   uint8_t *constraint_states; // ALIVE / EMPTY
-  
+
   size_t constraint_count;
   size_t constraint_capacity;
   size_t free_constraint_count;
@@ -373,11 +376,10 @@ typedef struct {
 
 // --- Character Object ---
 typedef struct {
-  PyObject_HEAD
-  JPH_CharacterVirtual *character;
+  PyObject_HEAD JPH_CharacterVirtual *character;
   PhysicsWorldObject *world;
   BodyHandle handle;
-  
+
   // Filters and listeners
   JPH_BodyFilter *body_filter;
   JPH_ShapeFilter *shape_filter;
@@ -399,17 +401,16 @@ typedef struct {
 extern const PyType_Spec Character_spec;
 
 typedef struct {
-  PyObject_HEAD
-  JPH_VehicleConstraint *vehicle;
+  PyObject_HEAD JPH_VehicleConstraint *vehicle;
   JPH_VehicleCollisionTester *tester;
   PhysicsWorldObject *world;
-  
+
   // Ownership tracking for cleanup
-  JPH_WheelSettings **wheel_settings; 
-  JPH_VehicleControllerSettings* controller_settings;
-  JPH_VehicleTransmissionSettings* transmission_settings; // NEW: Keep alive
-  JPH_LinearCurve* friction_curve;
-  JPH_LinearCurve* torque_curve;
+  JPH_WheelSettings **wheel_settings;
+  JPH_VehicleControllerSettings *controller_settings;
+  JPH_VehicleTransmissionSettings *transmission_settings; // NEW: Keep alive
+  JPH_LinearCurve *friction_curve;
+  JPH_LinearCurve *torque_curve;
 
   uint32_t num_wheels;
   int current_gear;
@@ -420,33 +421,29 @@ extern const PyType_Spec Vehicle_spec;
 // --- Ragdoll Structures ---
 
 typedef struct {
-    PyObject_HEAD
-    JPH_Skeleton* skeleton;
+  PyObject_HEAD JPH_Skeleton *skeleton;
 } SkeletonObject;
 
 extern const PyType_Spec Skeleton_spec;
 
 typedef struct {
-    PyObject_HEAD
-    JPH_RagdollSettings* settings;
-    PhysicsWorldObject* world; // Kept to access Shape Cache
+  PyObject_HEAD JPH_RagdollSettings *settings;
+  PhysicsWorldObject *world; // Kept to access Shape Cache
 } RagdollSettingsObject;
 
 extern const PyType_Spec RagdollSettings_spec;
 
 typedef struct {
-    PyObject_HEAD
-    JPH_Ragdoll* ragdoll;
-    PhysicsWorldObject* world;
-    
-    // We must track the handles of the parts so we can 
-    // invalid the slots when the ragdoll is destroyed.
-    size_t body_count;
-    uint32_t* body_slots; 
+  PyObject_HEAD JPH_Ragdoll *ragdoll;
+  PhysicsWorldObject *world;
+
+  // We must track the handles of the parts so we can
+  // invalid the slots when the ragdoll is destroyed.
+  size_t body_count;
+  uint32_t *body_slots;
 } RagdollObject;
 
 extern const PyType_Spec Ragdoll_spec;
-
 
 typedef struct {
   PhysicsWorldObject *world;
@@ -456,19 +453,19 @@ typedef struct {
 // Helper for Overlap Callbacks
 typedef struct {
   PhysicsWorldObject *world;
-  uint64_t *hits;        // C array to store baked handles
+  uint64_t *hits; // C array to store baked handles
   size_t count;
   size_t capacity;
 } OverlapContext;
 
 typedef struct {
-    JPH_ShapeCastResult hit;
-    bool has_hit;
+  JPH_ShapeCastResult hit;
+  bool has_hit;
 } CastShapeContext;
 
 // Optional filter to ignore a specific body
 typedef struct {
-    JPH_BodyID ignore_id;
+  JPH_BodyID ignore_id;
 } CastShapeFilter;
 
 // --- Module State (PEP 489) ---
@@ -487,9 +484,10 @@ static inline CulverinState *get_culverin_state(PyObject *module) {
   return (CulverinState *)PyModule_GetState(module);
 }
 
-static inline bool JPH_API_CALL CastShape_BodyFilter(void* userData, JPH_BodyID bodyID) {
-    CastShapeFilter* ctx = (CastShapeFilter*)userData;
-    return (ctx->ignore_id == 0 || bodyID != ctx->ignore_id);
+static inline bool JPH_API_CALL CastShape_BodyFilter(void *userData,
+                                                     JPH_BodyID bodyID) {
+  CastShapeFilter *ctx = (CastShapeFilter *)userData;
+  return (ctx->ignore_id == 0 || bodyID != ctx->ignore_id);
 }
 
 // Sync function (defined in shadow_sync.c)
