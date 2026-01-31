@@ -1,6 +1,8 @@
 #include "culverin.h"
 
-#include <stddef.h>
+// Global lock for JPH callbacks
+static ShadowMutex
+    g_jph_trampoline_lock; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
 // --- Handle Helper ---
 static inline BodyHandle make_handle(uint32_t slot, uint32_t gen) {
@@ -38,9 +40,6 @@ static JPH_ValidateResult JPH_API_CALL on_contact_validate(
   uint32_t slot2 = (uint32_t)(h2 & 0xFFFFFFFF);
 
   // 2. Bitmask Filter
-  // Note: We use the lock. Since Jolt is multi-threaded, multiple worker
-  // threads might hit this lock simultaneously.
-  SHADOW_LOCK(&self->shadow_lock);
   uint32_t idx1 = self->slot_to_dense[slot1];
   uint32_t idx2 = self->slot_to_dense[slot2];
 
@@ -48,7 +47,6 @@ static JPH_ValidateResult JPH_API_CALL on_contact_validate(
   uint32_t mask1 = self->masks[idx1];
   uint32_t cat2 = self->categories[idx2];
   uint32_t mask2 = self->masks[idx2];
-  SHADOW_UNLOCK(&self->shadow_lock);
 
   // 3. Logic: If either doesn't want to hit the other's category, reject.
   if (!(cat1 & mask2) || !(cat2 & mask1)) {
@@ -91,8 +89,9 @@ static void JPH_API_CALL char_on_character_contact_added(
 
   // 1. Resolve Self
   CharacterObject *self = (CharacterObject *)userData;
-  if (!self || !self->world)
+  if (!self || !self->world) {
     return;
+  }
   PhysicsWorldObject *world = self->world;
 
   // 2. Define Physics Interaction
@@ -167,8 +166,9 @@ static void JPH_API_CALL char_on_contact_added(
   ioSettings->canReceiveImpulses = true;
 
   // 2. Resolve Character Object
-  if (!userData)
+  if (!userData) {
     return;
+  }
   CharacterObject *self = (CharacterObject *)userData;
 
   // 3. Thread-Safe Member Access
@@ -203,8 +203,9 @@ static void JPH_API_CALL char_on_contact_added(
 
     // Safety Cap: Prevent "Physics Nukes" from velocity spikes
     const float max_impulse = 5000.0f;
-    if (factor > max_impulse)
+    if (factor > max_impulse) {
       factor = max_impulse;
+    }
 
     JPH_Vec3 impulse;
     impulse.x = contactNormal->x * factor;
@@ -295,7 +296,6 @@ static void JPH_API_CALL on_contact_added(void *userData, const JPH_Body *body1,
   // BITMASK FILTERING
   // We access the dense arrays. Since this is a callback, we assume slots are
   // valid.
-  SHADOW_LOCK(&self->shadow_lock);
   uint32_t idx1 = self->slot_to_dense[slot1];
   uint32_t idx2 = self->slot_to_dense[slot2];
 
@@ -305,7 +305,6 @@ static void JPH_API_CALL on_contact_added(void *userData, const JPH_Body *body1,
   uint32_t mask2 = self->masks[idx2];
   uint32_t mat1 = self->material_ids[idx1];
   uint32_t mat2 = self->material_ids[idx2];
-  SHADOW_UNLOCK(&self->shadow_lock);
 
   // Standard Game Engine Bitmask Logic
   if (!(cat1 & mask2) || !(cat2 & mask1)) {
@@ -318,8 +317,9 @@ static void JPH_API_CALL on_contact_added(void *userData, const JPH_Body *body1,
 
   size_t idx = atomic_fetch_add_explicit(&self->contact_atomic_idx, 1,
                                          memory_order_relaxed);
-  if (idx >= self->contact_max_capacity)
+  if (idx >= self->contact_max_capacity) {
     return;
+  }
 
   ContactEvent *ev = &self->contact_buffer[idx];
   JPH_STACK_ALLOC(JPH_Vec3, n);
@@ -351,14 +351,17 @@ static void JPH_API_CALL on_contact_added(void *userData, const JPH_Body *body1,
   ev->pz = (float)p->z;
 
   // Relative Velocity Math
-  JPH_Vec3 v1_raw, v2_raw;
+  JPH_Vec3 v1_raw;
+  JPH_Vec3 v2_raw;
   JPH_Body_GetLinearVelocity((JPH_Body *)body1, &v1_raw);
   JPH_Body_GetLinearVelocity((JPH_Body *)body2, &v2_raw);
 
   // Calculate relative velocity (v1 - v2)
   // If we swapped handles, we must swap velocity order to keep math consistent
   // with flipped normal
-  float dv_x, dv_y, dv_z;
+  float dv_x = NAN;
+  float dv_y = NAN;
+  float dv_z = NAN;
   if (!swapped) {
     dv_x = v1_raw.x - v2_raw.x;
     dv_y = v1_raw.y - v2_raw.y;
@@ -410,8 +413,9 @@ static PyObject *PhysicsWorld_get_contact_events(PhysicsWorldObject *self,
     return PyList_New(0);
   }
 
-  if (count > self->contact_max_capacity)
+  if (count > self->contact_max_capacity) {
     count = self->contact_max_capacity;
+  }
 
   // 3. Fast Copy (Hold lock for the shortest possible time)
   ContactEvent *scratch = PyMem_RawMalloc(count * sizeof(ContactEvent));
@@ -471,8 +475,9 @@ static PyObject *PhysicsWorld_get_contact_events_ex(PhysicsWorldObject *self,
     return PyList_New(0);
   }
 
-  if (count > self->contact_max_capacity)
+  if (count > self->contact_max_capacity) {
     count = self->contact_max_capacity;
+  }
 
   ContactEvent *scratch = PyMem_RawMalloc(count * sizeof(ContactEvent));
   if (!scratch) {
@@ -621,8 +626,9 @@ static PyObject *PhysicsWorld_get_contact_events_raw(PhysicsWorldObject *self,
 
   SHADOW_UNLOCK(&self->shadow_lock);
 
-  if (!raw_bytes)
+  if (!raw_bytes) {
     return NULL;
+  }
 
   // 5. Wrap in MemoryView
   // This allows the user to use np.frombuffer(events, dtype=...) without extra
@@ -645,7 +651,7 @@ static const JPH_CharacterContactListener_Procs char_listener_procs = {
     .OnCharacterContactRemoved = NULL,
     .OnContactSolve = NULL};
 
-static JPH_ContactListener_Procs contact_procs = {
+static const JPH_ContactListener_Procs contact_procs = {
     .OnContactValidate = on_contact_validate,
     .OnContactAdded = on_contact_added,
     .OnContactPersisted = NULL,
@@ -729,8 +735,9 @@ static JPH_Shape *find_or_create_shape(PhysicsWorldObject *self, int type,
     JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);
   }
 
-  if (!shape)
+  if (!shape) {
     return NULL;
+  }
 
   // 4. CACHE EXPANSION
   if (self->shape_cache_count >= self->shape_cache_capacity) {
@@ -830,12 +837,15 @@ static void PhysicsWorld_free_members(PhysicsWorldObject *self) {
 
   // --- 4. Filters & Interfaces ---
   // Still missing Destroy APIs in JoltC as of current version.
-  if (self->bp_interface)
+  if (self->bp_interface) {
     self->bp_interface = NULL;
-  if (self->pair_filter)
+  }
+  if (self->pair_filter) {
     self->pair_filter = NULL;
-  if (self->bp_filter)
+  }
+  if (self->bp_filter) {
     self->bp_filter = NULL;
+  }
 
   // --- 5. Shape Cache ---
   if (self->shape_cache) {
@@ -935,12 +945,7 @@ static void PhysicsWorld_free_members(PhysicsWorldObject *self) {
     self->materials = NULL;
   }
 
-#if PY_VERSION_HEX < 0x030D0000
-  if (self->shadow_lock) {
-    PyThread_free_lock(self->shadow_lock);
-    self->shadow_lock = NULL;
-  }
-#endif
+  FREE_LOCK(self->shadow_lock);
 }
 
 // --- Lifecycle: Deallocation ---
@@ -996,22 +1001,37 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
   CulverinState *st = get_culverin_state(module);
 
   val_func = PyObject_GetAttrString(st->helper, "validate_settings");
-  if (!val_func)
+  if (!val_func) {
     goto fail;
+  }
 
   norm_settings = PyObject_CallFunctionObjArgs(
       val_func, settings_dict ? settings_dict : Py_None, NULL);
-  if (!norm_settings)
+  if (!norm_settings) {
     goto fail;
+  }
 
-  float gx, gy, gz, slop;
-  int max_bodies, max_pairs;
+  float gx = NAN;
+  float gy = NAN;
+  float gz = NAN;
+  float slop = NAN;
+  int max_bodies = 0;
+  int max_pairs = 0;
   if (!PyArg_ParseTuple(norm_settings, "ffffii", &gx, &gy, &gz, &slop,
-                        &max_bodies, &max_pairs))
+                        &max_bodies, &max_pairs)) {
     goto fail;
+  }
   Py_CLEAR(norm_settings);
 
   self->is_stepping = false;
+
+  INIT_LOCK(self->shadow_lock);
+#if PY_VERSION_HEX < 0x030D0000
+  if (!self->shadow_lock) {
+    PyErr_SetString(PyExc_MemoryError, "Failed to allocate shadow lock");
+    return -1;
+  }
+#endif
 
   // 2. Jolt Systems Initialization
   JobSystemThreadPoolConfig job_cfg = {
@@ -1104,16 +1124,18 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
   if (bodies_list && bodies_list != Py_None) {
     bake_func = PyObject_GetAttrString(st->helper, "bake_scene");
     baked = PyObject_CallFunctionObjArgs(bake_func, bodies_list, NULL);
-    if (!baked)
+    if (!baked) {
       goto fail;
+    }
     baked_count = PyLong_AsSize_t(PyTuple_GetItem(baked, 0));
   }
   Py_XDECREF(bake_func);
 
   self->count = baked_count;
   self->capacity = (size_t)max_bodies;
-  if (self->capacity < self->count + 128)
+  if (self->capacity < self->count + 128) {
     self->capacity = self->count + 1024;
+  }
 
   // 6. Native Buffer Allocations
   self->positions = PyMem_RawCalloc(self->capacity * 4, sizeof(float));
@@ -1216,8 +1238,9 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
         BodyHandle h = make_handle((uint32_t)i, 1);
         JPH_BodyCreationSettings_SetUserData(creation, (uint64_t)h);
 
-        if (u_mot[i] == 2)
+        if (u_mot[i] == 2) {
           JPH_BodyCreationSettings_SetAllowSleeping(creation, true);
+        }
 
         self->body_ids[i] = JPH_BodyInterface_CreateAndAddBody(
             self->body_interface, creation, JPH_Activation_Activate);
@@ -1227,6 +1250,9 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
         self->dense_to_slot[i] = (uint32_t)i;
         self->slot_states[i] = SLOT_ALIVE;
         self->user_data[i] = u_data[i];
+        self->categories[i] = 0xFFFF; // Default to hit everything
+        self->masks[i] = 0xFFFF;
+        self->material_ids[i] = 0;
       }
     }
     Py_CLEAR(baked);
@@ -1282,7 +1308,13 @@ static PyObject *PhysicsWorld_apply_impulse(PhysicsWorldObject *self,
 
 static PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *args,
                                       PyObject *kwds) {
-  float sx, sy, sz, dx, dy, dz, max_dist = 1000.0f;
+  float sx = NAN;
+  float sy = NAN;
+  float sz = NAN;
+  float dx = NAN;
+  float dy = NAN;
+  float dz = NAN;
+  float max_dist = 1000.0f;
   uint64_t ignore_h = 0;
   static char *kwlist[] = {"start", "direction", "max_dist", "ignore", NULL};
 
@@ -1308,7 +1340,7 @@ static PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *args,
   query_active = true;
 
   if (ignore_h != 0) {
-    uint32_t ignore_slot;
+    uint32_t ignore_slot = 0;
     if (unpack_handle(self, ignore_h, &ignore_slot)) {
       ignore_bid = self->body_ids[self->slot_to_dense[ignore_slot]];
     }
@@ -1317,8 +1349,9 @@ static PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *args,
 
   // --- 2. VALIDATION ---
   float mag_sq = dx * dx + dy * dy + dz * dz;
-  if (mag_sq < 1e-9f)
+  if (mag_sq < 1e-9f) {
     goto exit;
+  }
 
   float mag = sqrtf(mag_sq);
   float scale = max_dist / mag;
@@ -1368,8 +1401,9 @@ static PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *args,
   JPH_BroadPhaseLayerFilter_Destroy(bp_filter);
   JPH_ObjectLayerFilter_Destroy(obj_filter);
 
-  if (!has_hit)
+  if (!has_hit) {
     goto exit;
+  }
 
   // --- 4. EXTRACT GEOMETRY ---
   JPH_Vec3 normal = {0, 1, 0};
@@ -1401,22 +1435,26 @@ static PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *args,
   SHADOW_UNLOCK(&self->shadow_lock);
 
 exit:
-  if (query_active)
+  if (query_active) {
     atomic_fetch_sub_explicit(&self->active_queries, 1, memory_order_release);
-  if (result)
+  }
+  if (result) {
     return result;
+  }
   Py_RETURN_NONE;
 }
 
 static PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self,
                                             PyObject *args, PyObject *kwds) {
-  Py_buffer b_starts, b_dirs;
+  Py_buffer b_starts;
+  Py_buffer b_dirs;
   float max_dist = 1000.0f;
   static char *kwlist[] = {"starts", "directions", "max_dist", NULL};
 
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "y*y*|f", kwlist, &b_starts,
-                                   &b_dirs, &max_dist))
+                                   &b_dirs, &max_dist)) {
     return NULL;
+  }
 
   // 1. Validation
   if (b_starts.len != b_dirs.len || (b_starts.len % (3 * sizeof(float)) != 0)) {
@@ -1480,10 +1518,13 @@ static PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self,
                         (double)f_starts[off + 2]};
 
     // Normalize and scale direction
-    float dx = f_dirs[off], dy = f_dirs[off + 1], dz = f_dirs[off + 2];
+    float dx = f_dirs[off];
+    float dy = f_dirs[off + 1];
+    float dz = f_dirs[off + 2];
     float mag = sqrtf(dx * dx + dy * dy + dz * dz);
-    if (mag < 1e-9f)
+    if (mag < 1e-9f) {
       continue;
+    }
     float scale = max_dist / mag;
     JPH_Vec3 direction = {dx * scale, dy * scale, dz * scale};
 
@@ -1549,13 +1590,15 @@ static PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self,
 
 static PyObject *PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self,
                                              PyObject *args, PyObject *kwds) {
-  uint64_t handle_raw;
-  float surface_y;       // Simplification: assume flat horizontal water
-  float buoyancy = 1.0f; // 1.0 = neutral buoyancy for density 1.0
+  uint64_t handle_raw = 0;
+  float surface_y = 0.0f;
+  float buoyancy = 1.0f;
   float lin_drag = 0.5f;
   float ang_drag = 0.5f;
-  float dt;
-  float vx = 0, vy = 0, vz = 0; // Fluid velocity (currents)
+  float dt = 1.0f / 60.0f;
+  float vx = 0;
+  float vy = 0;
+  float vz = 0;
 
   static char *kwlist[] = {
       "handle",       "surface_y", "buoyancy",       "linear_drag",
@@ -1563,9 +1606,11 @@ static PyObject *PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self,
 
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "Kf|ffff(fff)", kwlist,
                                    &handle_raw, &surface_y, &buoyancy,
-                                   &lin_drag, &ang_drag, &dt, &vx, &vy, &vz))
+                                   &lin_drag, &ang_drag, &dt, &vx, &vy, &vz)) {
     return NULL;
+  }
 
+  // --- 1. RESOLUTION PHASE (Locked) ---
   SHADOW_LOCK(&self->shadow_lock);
   BLOCK_UNTIL_NOT_STEPPING(self);
   BLOCK_UNTIL_NOT_QUERYING(self);
@@ -1577,13 +1622,23 @@ static PyObject *PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self,
     Py_RETURN_FALSE;
   }
 
+  // Capture the BodyID and pointer to interface
   JPH_BodyID bid = self->body_ids[self->slot_to_dense[slot]];
+  JPH_BodyInterface *bi = self->body_interface;
+  JPH_PhysicsSystem *system = self->system;
 
-  // Jolt needs the world-space gravity to calculate the counter-force
+  // RELEASE the lock early. The body will not be destroyed until
+  // the next world.step() call because deletions are deferred.
+  SHADOW_UNLOCK(&self->shadow_lock);
+
+  // --- 2. EXECUTION PHASE (Unlocked & GIL-Friendly) ---
+
+  // Wake up the body so it continues to simulate in the fluid
+  JPH_BodyInterface_ActivateBody(bi, bid);
+
   JPH_Vec3 gravity;
-  JPH_PhysicsSystem_GetGravity(self->system, &gravity);
+  JPH_PhysicsSystem_GetGravity(system, &gravity);
 
-  // Surface definition
   JPH_STACK_ALLOC(JPH_RVec3, surf_pos);
   surf_pos->x = 0;
   surf_pos->y = (double)surface_y;
@@ -1599,13 +1654,11 @@ static PyObject *PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self,
   fluid_vel->y = vy;
   fluid_vel->z = vz;
 
-  // ApplyBuoyancyImpulse handles the submerged volume calculation
-  // returns true if the body was at least partially submerged
+  // Heavy lifting done GIL-free if Python were configured that way,
+  // but crucially, it's done without blocking the Shadow Buffers.
   bool submerged = JPH_BodyInterface_ApplyBuoyancyImpulse(
-      self->body_interface, bid, surf_pos, surf_norm, buoyancy, lin_drag,
-      ang_drag, fluid_vel, &gravity, dt);
-
-  SHADOW_UNLOCK(&self->shadow_lock);
+      bi, bid, surf_pos, surf_norm, buoyancy, lin_drag, ang_drag, fluid_vel,
+      &gravity, dt);
 
   return PyBool_FromLong(submerged);
 }
@@ -1628,8 +1681,17 @@ static float CastShape_ClosestCollector(void *context,
 
 static PyObject *PhysicsWorld_shapecast(PhysicsWorldObject *self,
                                         PyObject *args, PyObject *kwds) {
-  int shape_type;
-  float px, py, pz, rx, ry, rz, rw, dx, dy, dz;
+  int shape_type = 0;
+  float px = NAN;
+  float py = NAN;
+  float pz = NAN;
+  float rx = NAN;
+  float ry = NAN;
+  float rz = NAN;
+  float rw = NAN;
+  float dx = NAN;
+  float dy = NAN;
+  float dz = NAN;
   PyObject *py_size = NULL;
   uint64_t ignore_h = 0;
   static char *kwlist[] = {"shape", "pos",    "rot", "dir",
@@ -1637,8 +1699,9 @@ static PyObject *PhysicsWorld_shapecast(PhysicsWorldObject *self,
 
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "i(fff)(ffff)(fff)O|K", kwlist,
                                    &shape_type, &px, &py, &pz, &rx, &ry, &rz,
-                                   &rw, &dx, &dy, &dz, &py_size, &ignore_h))
+                                   &rw, &dx, &dy, &dz, &py_size, &ignore_h)) {
     return NULL;
+  }
 
   PyObject *result = NULL;
   bool query_active = false;
@@ -1652,16 +1715,18 @@ static PyObject *PhysicsWorld_shapecast(PhysicsWorldObject *self,
 
   // --- 1. VALIDATION & PREP ---
   float mag_sq = dx * dx + dy * dy + dz * dz;
-  if (mag_sq < 1e-9f)
+  if (mag_sq < 1e-9f) {
     goto exit;
+  }
 
   float s[4] = {0, 0, 0, 0};
   if (py_size && PyTuple_Check(py_size)) {
     Py_ssize_t sz_len = PyTuple_Size(py_size);
     for (Py_ssize_t i = 0; i < sz_len && i < 4; i++) {
       PyObject *item = PyTuple_GetItem(py_size, i);
-      if (PyNumber_Check(item))
+      if (PyNumber_Check(item)) {
         s[i] = (float)PyFloat_AsDouble(item);
+      }
     }
   } else if (py_size && PyNumber_Check(py_size)) {
     s[0] = (float)PyFloat_AsDouble(py_size);
@@ -1682,7 +1747,7 @@ static PyObject *PhysicsWorld_shapecast(PhysicsWorldObject *self,
   query_active = true;
 
   if (ignore_h != 0) {
-    uint32_t ignore_slot;
+    uint32_t ignore_slot = 0;
     if (unpack_handle(self, ignore_h, &ignore_slot)) {
       ignore_bid = self->body_ids[self->slot_to_dense[ignore_slot]];
     }
@@ -1738,8 +1803,9 @@ static PyObject *PhysicsWorld_shapecast(PhysicsWorldObject *self,
   JPH_BroadPhaseLayerFilter_Destroy(bp_filter);
   JPH_ObjectLayerFilter_Destroy(obj_filter);
 
-  if (!ctx.has_hit)
+  if (!ctx.has_hit) {
     goto exit;
+  }
 
   // --- 4. RESOLVE RESULTS ---
   float nx = -ctx.hit.penetrationAxis.x;
@@ -1768,10 +1834,12 @@ static PyObject *PhysicsWorld_shapecast(PhysicsWorldObject *self,
   SHADOW_UNLOCK(&self->shadow_lock);
 
 exit:
-  if (query_active)
+  if (query_active) {
     atomic_fetch_sub_explicit(&self->active_queries, 1, memory_order_release);
-  if (result)
+  }
+  if (result) {
     return result;
+  }
   Py_RETURN_NONE;
 }
 
@@ -1800,8 +1868,9 @@ static bool ensure_command_capacity(PhysicsWorldObject *self) {
 }
 
 static void flush_commands(PhysicsWorldObject *self) {
-  if (self->command_count == 0)
+  if (self->command_count == 0) {
     return;
+  }
 
   JPH_BodyInterface *bi = self->body_interface;
 
@@ -1842,7 +1911,9 @@ static void flush_commands(PhysicsWorldObject *self) {
       JPH_BodyInterface_GetPosition(bi, new_bid, p);
       JPH_BodyInterface_GetRotation(bi, new_bid, q);
 
-      float fx = (float)p->x, fy = (float)p->y, fz = (float)p->z;
+      float fx = (float)p->x;
+      float fy = (float)p->y;
+      float fz = (float)p->z;
       self->positions[new_dense * 4 + 0] = fx;
       self->positions[new_dense * 4 + 1] = fy;
       self->positions[new_dense * 4 + 2] = fz;
@@ -2009,16 +2080,18 @@ static void params_init(ConstraintParams *p) {
 // --- 2. Python Parsers ---
 
 static int parse_point_params(PyObject *args, ConstraintParams *p) {
-  if (!args || args == Py_None)
+  if (!args || args == Py_None) {
     return 1; // Use defaults (0,0,0)
+  }
   return PyArg_ParseTuple(args, "fff", &p->px, &p->py, &p->pz);
 }
 
 static int parse_hinge_params(PyObject *args, ConstraintParams *p) {
   p->limit_min = -JPH_M_PI;
   p->limit_max = JPH_M_PI; // Hinge defaults
-  if (!args)
+  if (!args) {
     return 1;
+  }
   // (Pivot), (Axis), [Min, Max]
   return PyArg_ParseTuple(args, "(fff)(fff)|ff", &p->px, &p->py, &p->pz, &p->ax,
                           &p->ay, &p->az, &p->limit_min, &p->limit_max);
@@ -2026,15 +2099,17 @@ static int parse_hinge_params(PyObject *args, ConstraintParams *p) {
 
 static int parse_slider_params(PyObject *args, ConstraintParams *p) {
   // Slider axis defaults to X usually, but Y is fine. Limits default to free.
-  if (!args)
+  if (!args) {
     return 1;
+  }
   return PyArg_ParseTuple(args, "(fff)(fff)|ff", &p->px, &p->py, &p->pz, &p->ax,
                           &p->ay, &p->az, &p->limit_min, &p->limit_max);
 }
 
 static int parse_cone_params(PyObject *args, ConstraintParams *p) {
-  if (!args)
+  if (!args) {
     return 1;
+  }
   // (Pivot), (TwistAxis), HalfAngle
   return PyArg_ParseTuple(args, "(fff)(fff)f", &p->px, &p->py, &p->pz, &p->ax,
                           &p->ay, &p->az, &p->half_cone_angle);
@@ -2043,8 +2118,9 @@ static int parse_cone_params(PyObject *args, ConstraintParams *p) {
 static int parse_distance_params(PyObject *args, ConstraintParams *p) {
   p->limit_min = 0.0f;
   p->limit_max = 10.0f;
-  if (!args)
+  if (!args) {
     return 1;
+  }
   // Min, Max
   return PyArg_ParseTuple(args, "ff", &p->limit_min, &p->limit_max);
 }
@@ -2217,8 +2293,9 @@ static int PhysicsWorld_resize(PhysicsWorldObject *self, size_t new_capacity) {
         "Cannot resize world while queries (raycast/shapecast) are active.");
     return -1;
   }
-  if (new_capacity <= self->capacity)
+  if (new_capacity <= self->capacity) {
     return 0;
+  }
 
   // --- 1. Transactional Allocation (Allocate ALL new buffers first) ---
   // We use RawMalloc instead of Realloc to ensure the old data remains valid
@@ -2263,36 +2340,51 @@ static int PhysicsWorld_resize(PhysicsWorldObject *self, size_t new_capacity) {
       !new_d2s || !new_stat || !new_free || !new_cats || !new_masks) {
 
     // Cleanup new attempts (No side effects on 'self')
-    if (new_pos)
+    if (new_pos) {
       PyMem_RawFree(new_pos);
-    if (new_rot)
+    }
+    if (new_rot) {
       PyMem_RawFree(new_rot);
-    if (new_ppos)
+    }
+    if (new_ppos) {
       PyMem_RawFree(new_ppos);
-    if (new_prot)
+    }
+    if (new_prot) {
       PyMem_RawFree(new_prot);
-    if (new_lvel)
+    }
+    if (new_lvel) {
       PyMem_RawFree(new_lvel);
-    if (new_avel)
+    }
+    if (new_avel) {
       PyMem_RawFree(new_avel);
-    if (new_bids)
+    }
+    if (new_bids) {
       PyMem_RawFree(new_bids);
-    if (new_udat)
+    }
+    if (new_udat) {
       PyMem_RawFree(new_udat);
-    if (new_gens)
+    }
+    if (new_gens) {
       PyMem_RawFree(new_gens);
-    if (new_s2d)
+    }
+    if (new_s2d) {
       PyMem_RawFree(new_s2d);
-    if (new_d2s)
+    }
+    if (new_d2s) {
       PyMem_RawFree(new_d2s);
-    if (new_stat)
+    }
+    if (new_stat) {
       PyMem_RawFree(new_stat);
-    if (new_free)
+    }
+    if (new_free) {
       PyMem_RawFree(new_free);
-    if (new_cats)
+    }
+    if (new_cats) {
       PyMem_RawFree(new_cats);
-    if (new_masks)
+    }
+    if (new_masks) {
       PyMem_RawFree(new_masks);
+    }
 
     PyErr_NoMemory();
     return -1;
@@ -2380,8 +2472,9 @@ static int PhysicsWorld_resize(PhysicsWorldObject *self, size_t new_capacity) {
 static PyObject *PhysicsWorld_create_constraint(PhysicsWorldObject *self,
                                                 PyObject *args,
                                                 PyObject *kwds) {
-  int type;
-  uint64_t h1, h2;
+  int type = 0;
+  uint64_t h1 = 0;
+  uint64_t h2 = 0;
   PyObject *params = NULL;
   static char *kwlist[] = {"type", "body1", "body2", "params", NULL};
 
@@ -2422,14 +2515,16 @@ static PyObject *PhysicsWorld_create_constraint(PhysicsWorldObject *self,
     PyErr_SetString(PyExc_ValueError, "Unknown constraint type");
     return NULL;
   }
-  if (!parse_ok)
+  if (!parse_ok) {
     return NULL;
+  }
 
   SHADOW_LOCK(&self->shadow_lock);
   BLOCK_UNTIL_NOT_STEPPING(self);
   BLOCK_UNTIL_NOT_QUERYING(self);
 
-  uint32_t s1, s2;
+  uint32_t s1 = 0;
+  uint32_t s2 = 0;
   if (!unpack_handle(self, h1, &s1) || self->slot_states[s1] != SLOT_ALIVE ||
       !unpack_handle(self, h2, &s2) || self->slot_states[s2] != SLOT_ALIVE) {
     SHADOW_UNLOCK(&self->shadow_lock);
@@ -2450,7 +2545,8 @@ static PyObject *PhysicsWorld_create_constraint(PhysicsWorldObject *self,
 
   const JPH_BodyLockInterface *lock_iface =
       JPH_PhysicsSystem_GetBodyLockInterface(self->system);
-  JPH_BodyLockWrite lock1, lock2;
+  JPH_BodyLockWrite lock1;
+  JPH_BodyLockWrite lock2;
 
   // Sort for Deadlock Prevention
   if (bid1 < bid2) {
@@ -2572,12 +2668,14 @@ static PyObject *PhysicsWorld_destroy_constraint(PhysicsWorldObject *self,
       JPH_Body *b2 = JPH_TwoBodyConstraint_GetBody2(tbc);
 
       // JPH_BodyInterface_ActivateBody is thread-safe
-      if (b1)
+      if (b1) {
         JPH_BodyInterface_ActivateBody(self->body_interface,
                                        JPH_Body_GetID(b1));
-      if (b2)
+      }
+      if (b2) {
         JPH_BodyInterface_ActivateBody(self->body_interface,
                                        JPH_Body_GetID(b2));
+      }
     }
 
     // Remove and Destroy
@@ -2651,8 +2749,9 @@ static PyObject *PhysicsWorld_load_state(PhysicsWorldObject *self,
                                          PyObject *args, PyObject *kwds) {
   Py_buffer view;
   static char *kwlist[] = {"state", NULL};
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "y*", kwlist, &view))
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "y*", kwlist, &view)) {
     return NULL;
+  }
 
   // IMMEDIATE SNAPSHOT (Unlocked, GIL held)
   // We copy the data to the C heap so we can release the Python object
@@ -2675,14 +2774,17 @@ static PyObject *PhysicsWorld_load_state(PhysicsWorldObject *self,
   BLOCK_UNTIL_NOT_QUERYING(self);
 
   // 2. HEADER VALIDATION
-  if ((size_t)view.len < (sizeof(size_t) * 2 + sizeof(double)))
+  if ((size_t)view.len < (sizeof(size_t) * 2 + sizeof(double))) {
     goto size_fail;
+  }
 
   char *ptr = (char *)local_state_copy;
-  if (total_len < (sizeof(size_t) * 2 + sizeof(double)))
+  if (total_len < (sizeof(size_t) * 2 + sizeof(double))) {
     goto size_fail;
-  size_t saved_count, saved_slot_cap;
-  double saved_time;
+  }
+  size_t saved_count = 0;
+  size_t saved_slot_cap = 0;
+  double saved_time = NAN;
 
   memcpy(&saved_count, ptr, sizeof(size_t));
   ptr += sizeof(size_t);
@@ -2708,8 +2810,9 @@ static PyObject *PhysicsWorld_load_state(PhysicsWorldObject *self,
                     (saved_count * 4 * dense_stride) +
                     (saved_slot_cap * (4 * 3 + 1));
 
-  if ((size_t)view.len != expected)
+  if ((size_t)view.len != expected) {
     goto size_fail;
+  }
 
   // 4. RESTORE SHADOW STATE
   self->count = saved_count;
@@ -2763,8 +2866,9 @@ static PyObject *PhysicsWorld_load_state(PhysicsWorldObject *self,
   // 8. JOLT SYNC (Unlocked to prevent deadlocks)
   for (size_t i = 0; i < self->count; i++) {
     JPH_BodyID bid = self->body_ids[i];
-    if (bid == JPH_INVALID_BODY_ID)
+    if (bid == JPH_INVALID_BODY_ID) {
       continue;
+    }
 
     JPH_STACK_ALLOC(JPH_RVec3, p);
     p->x = (double)self->positions[i * 4];
@@ -2802,8 +2906,9 @@ size_fail:
 
 static PyObject *PhysicsWorld_step(PhysicsWorldObject *self, PyObject *args) {
   float dt = 1.0f / 60.0f;
-  if (!PyArg_ParseTuple(args, "|f", &dt))
+  if (!PyArg_ParseTuple(args, "|f", &dt)) {
     return NULL;
+  }
 
   SHADOW_LOCK(&self->shadow_lock);
 
@@ -2853,7 +2958,7 @@ static PyObject *PhysicsWorld_step(PhysicsWorldObject *self, PyObject *args) {
       // Ensure we see all data written by the worker threads before we read the
       // index. While allow_threads implies a barrier, explicit acquire pairs
       // with the callback's release.
-          atomic_thread_fence(memory_order_acquire);
+      atomic_thread_fence(memory_order_acquire);
 
   SHADOW_LOCK(&self->shadow_lock);
 
@@ -2878,8 +2983,13 @@ static PyObject *PhysicsWorld_step(PhysicsWorldObject *self, PyObject *args) {
 
 static PyObject *PhysicsWorld_create_character(PhysicsWorldObject *self,
                                                PyObject *args, PyObject *kwds) {
-  float px = 0, py = 0, pz = 0, height = 1.8f, radius = 0.4f,
-        step_height = 0.4f, max_slope = 45.0f;
+  float px = 0;
+  float py = 0;
+  float pz = 0;
+  float height = 1.8f;
+  float radius = 0.4f;
+  float step_height = 0.4f;
+  float max_slope = 45.0f;
   static char *kwlist[] = {"pos",         "height",    "radius",
                            "step_height", "max_slope", NULL};
 
@@ -2913,15 +3023,17 @@ static PyObject *PhysicsWorld_create_character(PhysicsWorldObject *self,
 
   // --- 2. JOLT CHARACTER CREATION (Unlocked) ---
   float half_h = (height - 2.0f * radius) * 0.5f;
-  if (half_h < 0.1f)
+  if (half_h < 0.1f) {
     half_h = 0.1f;
+  }
 
   JPH_CapsuleShapeSettings *ss =
       JPH_CapsuleShapeSettings_Create(half_h, radius);
   JPH_Shape *shape = (JPH_Shape *)JPH_CapsuleShapeSettings_CreateShape(ss);
   JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)ss);
-  if (!shape)
+  if (!shape) {
     goto fail;
+  }
 
   JPH_CharacterVirtualSettings settings;
   JPH_CharacterVirtualSettings_Init(&settings);
@@ -2942,8 +3054,9 @@ static PyObject *PhysicsWorld_create_character(PhysicsWorldObject *self,
   j_char = JPH_CharacterVirtual_Create(&settings, pos_aligned, rot_aligned, 1,
                                        self->system);
   JPH_Shape_Destroy(shape);
-  if (!j_char)
+  if (!j_char) {
     goto fail;
+  }
 
   if (self->char_vs_char_manager) {
     JPH_CharacterVsCharacterCollisionSimple_AddCharacter(
@@ -2957,8 +3070,9 @@ static PyObject *PhysicsWorld_create_character(PhysicsWorldObject *self,
   CulverinState *st = get_culverin_state(module);
   obj = (CharacterObject *)PyObject_GC_New(CharacterObject,
                                            (PyTypeObject *)st->CharacterType);
-  if (!obj)
+  if (!obj) {
     goto fail;
+  }
 
   // Initialize fields (Atomics)
   atomic_store_explicit(&obj->push_strength, 200.0f, memory_order_relaxed);
@@ -3032,8 +3146,9 @@ fail:
     // destructor (Character_dealloc) will handle j_char/filters.
     Py_DECREF(obj);
   } else {
-    if (j_char)
+    if (j_char) {
       JPH_CharacterBase_Destroy((JPH_CharacterBase *)j_char);
+    }
     if (slot_reserved) {
       SHADOW_LOCK(&self->shadow_lock);
       self->slot_states[char_slot] = SLOT_EMPTY;
@@ -3046,10 +3161,16 @@ fail:
 
 static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
                                           PyObject *args, PyObject *kwds) {
-  float px = 0.0f, py = 0.0f, pz = 0.0f;
-  float rx = 0.0f, ry = 0.0f, rz = 0.0f, rw = 1.0f;
+  float px = 0.0f;
+  float py = 0.0f;
+  float pz = 0.0f;
+  float rx = 0.0f;
+  float ry = 0.0f;
+  float rz = 0.0f;
+  float rw = 1.0f;
   float s[4] = {1.0f, 1.0f, 1.0f, 0.0f};
-  int shape_type = 0, motion_type = 2;
+  int shape_type = 0;
+  int motion_type = 2;
   unsigned long long user_data = 0;
   int is_sensor = 0;
   float mass = -1.0f;
@@ -3092,17 +3213,20 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
   }
 
   // Allow explicit overrides
-  if (friction >= 0.0f)
+  if (friction >= 0.0f) {
     final_friction = friction;
-  if (restitution >= 0.0f)
+  }
+  if (restitution >= 0.0f) {
     final_restitution = restitution;
+  }
 
   if (py_size && PyTuple_Check(py_size)) {
     Py_ssize_t sz_len = PyTuple_Size(py_size);
     for (Py_ssize_t i = 0; i < sz_len && i < 4; i++) {
       PyObject *item = PyTuple_GetItem(py_size, i);
-      if (PyNumber_Check(item))
+      if (PyNumber_Check(item)) {
         s[i] = (float)PyFloat_AsDouble(item);
+      }
     }
   }
 
@@ -3145,10 +3269,12 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
   JPH_BodyCreationSettings *settings = JPH_BodyCreationSettings_Create3(
       shape, pos, rot, (JPH_MotionType)motion_type, (JPH_ObjectLayer)layer);
 
-  if (is_sensor)
+  if (is_sensor) {
     JPH_BodyCreationSettings_SetIsSensor(settings, true);
-  if (motion_type == 2)
+  }
+  if (motion_type == 2) {
     JPH_BodyCreationSettings_SetAllowSleeping(settings, true);
+  }
 
   JPH_BodyCreationSettings_SetFriction(settings, final_friction);
   JPH_BodyCreationSettings_SetRestitution(settings, final_restitution);
@@ -3156,7 +3282,18 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
   if (mass > 0.0f) {
     JPH_MassProperties mp;
     JPH_Shape_GetMassProperties(shape, &mp);
+
+    // Calculate scaling factor
+    float scale = mass / mp.mass;
     mp.mass = mass;
+
+    // SCALE the inertia matrix columns to match the new mass
+    for (int i = 0; i < 3; i++) {
+      mp.inertia.column[i].x *= scale;
+      mp.inertia.column[i].y *= scale;
+      mp.inertia.column[i].z *= scale;
+    }
+
     JPH_BodyCreationSettings_SetMassPropertiesOverride(settings, &mp);
     JPH_BodyCreationSettings_SetOverrideMassProperties(
         settings, JPH_OverrideMassProperties_CalculateInertia);
@@ -3194,7 +3331,13 @@ static PyObject *PhysicsWorld_create_mesh_body(PhysicsWorldObject *self,
   // 1. SAFE INITIALIZATION
   Py_buffer v_view = {0};
   Py_buffer i_view = {0};
-  float px = 0, py = 0, pz = 0, rx = 0, ry = 0, rz = 0, rw = 1.0f;
+  float px = 0;
+  float py = 0;
+  float pz = 0;
+  float rx = 0;
+  float ry = 0;
+  float rz = 0;
+  float rw = 1.0f;
   unsigned long long user_data = 0;
   uint32_t category = 0xFFFF;
   uint32_t mask = 0xFFFF;
@@ -3342,12 +3485,15 @@ static PyObject *PhysicsWorld_create_mesh_body(PhysicsWorldObject *self,
   ret_val = PyLong_FromUnsignedLongLong(handle);
 
 cleanup:
-  if (shape)
+  if (shape) {
     JPH_Shape_Destroy(shape);
-  if (v_view.obj)
+  }
+  if (v_view.obj) {
     PyBuffer_Release(&v_view);
-  if (i_view.obj)
+  }
+  if (i_view.obj) {
     PyBuffer_Release(&i_view);
+  }
   return ret_val;
 }
 
@@ -3356,8 +3502,9 @@ static PyObject *PhysicsWorld_destroy_body(PhysicsWorldObject *self,
   uint64_t handle_raw = 0;
   static char *kwlist[] = {"handle", NULL};
 
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "K", kwlist, &handle_raw))
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "K", kwlist, &handle_raw)) {
     return NULL;
+  }
 
   SHADOW_LOCK(&self->shadow_lock);
 
@@ -3412,179 +3559,103 @@ static PyObject *PhysicsWorld_destroy_body(PhysicsWorldObject *self,
     PyErr_Clear();                                                             \
   } while (0)
 
+// --- Low-complexity helper to fetch attributes with a fallback ---
+static float get_py_float_attr(PyObject *obj, const char *name,
+                               float default_val) {
+  if (!obj || obj == Py_None) {
+    return default_val;
+  }
+
+  float result = default_val;
+  PyObject *attr = PyObject_GetAttrString(obj, name);
+
+  if (attr) {
+    double v = PyFloat_AsDouble(attr);
+    if (!PyErr_Occurred()) {
+      result = (float)v;
+    }
+    Py_DECREF(attr);
+  }
+
+  // Clear any errors (like AttributeError) to allow fallback to default
+  PyErr_Clear();
+  return result;
+}
+
 // vroom vroom
 // this is paperwork and i did surgery in the core
-static PyObject *PhysicsWorld_create_vehicle(PhysicsWorldObject *self,
-                                             PyObject *args, PyObject *kwds) {
-  uint64_t chassis_h = 0;
-  PyObject *py_wheels = NULL;
-  char *drive_str = "RWD";
-  PyObject *py_engine = NULL;
-  PyObject *py_trans = NULL;
+// --- Internal Helpers to reduce complexity ---
 
-  static char *kwlist[] = {"chassis", "wheels",       "drive",
-                           "engine",  "transmission", NULL};
-
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "KO|sOO", kwlist, &chassis_h,
-                                   &py_wheels, &drive_str, &py_engine,
-                                   &py_trans))
-    return NULL;
-
-  if (!PyList_Check(py_wheels)) {
-    PyErr_SetString(PyExc_TypeError, "wheels must be a list of dictionaries");
-    return NULL;
+// --- Reusable helper for Vec3 parsing (Complexity: 2) ---
+static int parse_py_vec3(PyObject *obj, float *x, float *y, float *z) {
+  // 1. Initial validation
+  if (!obj || !PySequence_Check(obj) || PySequence_Size(obj) != 3) {
+    return 0;
   }
 
-  Py_ssize_t num_wheels = PyList_Size(py_wheels);
-  if (num_wheels < 2) {
-    PyErr_SetString(PyExc_ValueError, "Vehicle must have at least 2 wheels");
-    return NULL;
-  }
-
-  // --- 1. CHASSIS RESOLUTION & INITIAL GUARD ---
-  SHADOW_LOCK(&self->shadow_lock);
-  BLOCK_UNTIL_NOT_STEPPING(self);
-  BLOCK_UNTIL_NOT_QUERYING(self);
-
-  flush_commands(self);
-
-  uint32_t slot;
-  if (!unpack_handle(self, chassis_h, &slot)) {
-    SHADOW_UNLOCK(&self->shadow_lock);
-    PyErr_SetString(PyExc_ValueError, "Invalid chassis handle");
-    return NULL;
-  }
-  JPH_BodyID chassis_bid = self->body_ids[self->slot_to_dense[slot]];
-  SHADOW_UNLOCK(&self->shadow_lock);
-
-  // --- 2. JOLT BODY LOCKING ---
-  const JPH_BodyLockInterface *lock_iface =
-      JPH_PhysicsSystem_GetBodyLockInterface(self->system);
-  JPH_BodyLockWrite lock;
-  JPH_BodyLockInterface_LockWrite(lock_iface, chassis_bid, &lock);
-  bool body_locked = true;
-
-  if (!lock.body) {
-    JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
-    body_locked = false;
-    PyErr_SetString(PyExc_RuntimeError, "Could not lock chassis body");
-    return NULL;
-  }
-
-  // --- 3. RESOURCE TRACKING (Zero-init for safe cleanup) ---
-  JPH_LinearCurve *f_curve = NULL;
-  JPH_LinearCurve *t_curve = NULL;
-  JPH_WheelSettings **w_settings = NULL;
-  JPH_WheeledVehicleControllerSettings *v_ctrl = NULL;
-  JPH_VehicleTransmissionSettings *v_trans_set = NULL;
-  JPH_VehicleCollisionTesterRay *tester = NULL;
-  JPH_VehicleConstraint *j_veh = NULL;
-  bool constraint_added = false;
-
-  // curves
-  f_curve = JPH_LinearCurve_Create();
-  JPH_LinearCurve_AddPoint(f_curve, 0.0f, 1.0f);
-  JPH_LinearCurve_AddPoint(f_curve, 1.0f, 1.0f);
-  t_curve = JPH_LinearCurve_Create();
-  JPH_LinearCurve_AddPoint(t_curve, 0.0f, 1.0f);
-  JPH_LinearCurve_AddPoint(t_curve, 1.0f, 1.0f);
-
-  // wheels
-  w_settings = (JPH_WheelSettings **)PyMem_RawCalloc(
-      num_wheels, sizeof(JPH_WheelSettings *));
-  if (!w_settings) {
-    PyErr_NoMemory();
-    goto error_cleanup;
-  }
-
-  for (Py_ssize_t i = 0; i < num_wheels; i++) {
-    PyObject *w_dict = PyList_GetItem(py_wheels, i);
-    if (!PyDict_Check(w_dict)) {
-      PyErr_SetString(PyExc_TypeError, "Each wheel entry must be a dict");
-      goto error_cleanup;
+  float results[3];
+  for (int i = 0; i < 3; i++) {
+    PyObject *item = PySequence_GetItem(obj, i);
+    if (!item) {
+      return 0; // Exception already set by Python
     }
 
-    PyObject *o_pos = PyDict_GetItemString(w_dict, "pos");
-    float px, py, pz, radius = 0.4f, width = 0.2f;
+    results[i] = (float)PyFloat_AsDouble(item);
+    Py_DECREF(item);
 
-    // FIXED: Generic sequence parsing for 'pos' (Accepts lists and tuples)
-    if (!o_pos || !PySequence_Check(o_pos) || PySequence_Size(o_pos) != 3) {
-      PyErr_SetString(PyExc_ValueError,
-                      "Wheel 'pos' must be a sequence of 3 floats");
-      goto error_cleanup;
+    // 2. Explicit early bail on conversion failure
+    // PyFloat_AsDouble returns -1.0 on failure, but -1.0 can be a valid value.
+    // PyErr_Occurred() is the only 100% reliable check.
+    if (PyErr_Occurred()) {
+      return 0;
     }
-    PyObject *p0 = PySequence_GetItem(o_pos, 0);
-    px = (float)PyFloat_AsDouble(p0);
-    Py_DECREF(p0);
-    PyObject *p1 = PySequence_GetItem(o_pos, 1);
-    py = (float)PyFloat_AsDouble(p1);
-    Py_DECREF(p1);
-    PyObject *p2 = PySequence_GetItem(o_pos, 2);
-    pz = (float)PyFloat_AsDouble(p2);
-    Py_DECREF(p2);
-
-    GET_FLOAT_ATTR(w_dict, "radius", radius);
-    GET_FLOAT_ATTR(w_dict, "width", width);
-
-    JPH_WheelSettingsWV *w = JPH_WheelSettingsWV_Create();
-    JPH_WheelSettings_SetPosition((JPH_WheelSettings *)w,
-                                  &(JPH_Vec3){px, py, pz});
-    JPH_WheelSettings_SetRadius((JPH_WheelSettings *)w, radius);
-    JPH_WheelSettings_SetWidth((JPH_WheelSettings *)w, width);
-    JPH_WheelSettingsWV_SetLongitudinalFriction(w, f_curve);
-    JPH_WheelSettingsWV_SetLateralFriction(w, f_curve);
-    if (pz > 0.1f) {
-      // FRONT WHEELS: Set your desired steer angle
-      JPH_WheelSettingsWV_SetMaxSteerAngle(w, 0.5f);
-    } else {
-      // REAR WHEELS: Force steering to be locked
-      JPH_WheelSettingsWV_SetMaxSteerAngle(w, 0.0f);
-    }
-    w_settings[i] = (JPH_WheelSettings *)w;
   }
 
-  // --- 4. ENGINE & TRANSMISSION ---
-  v_ctrl = JPH_WheeledVehicleControllerSettings_Create();
+  // 3. Only write to output pointers if the whole vector is valid
+  *x = results[0];
+  *y = results[1];
+  *z = results[2];
 
-  float torque = 500.0f, max_rpm = 7000.0f, min_rpm = 1000.0f, inertia = 0.5f;
-  if (py_engine && py_engine != Py_None) {
-    GET_FLOAT_ATTR(py_engine, "max_torque", torque);
-    GET_FLOAT_ATTR(py_engine, "max_rpm", max_rpm);
-    GET_FLOAT_ATTR(py_engine, "min_rpm", min_rpm);
-    GET_FLOAT_ATTR(py_engine, "inertia", inertia);
+  return 1;
+}
+
+// --- Refactored Wheel Creation (Complexity: 2) ---
+static JPH_WheelSettings *create_single_wheel(PyObject *w_dict,
+                                              JPH_LinearCurve *f_curve) {
+  float px = NAN;
+  float py = NAN;
+  float pz = NAN;
+
+  // 1. Parse Position using helper
+  if (!parse_py_vec3(PyDict_GetItemString(w_dict, "pos"), &px, &py, &pz)) {
+    PyErr_SetString(PyExc_ValueError,
+                    "Wheel 'pos' must be a sequence of 3 floats");
+    return NULL;
   }
-  JPH_VehicleEngineSettings eng_set;
-  JPH_VehicleEngineSettings_Init(&eng_set);
-  eng_set.maxTorque = torque;
-  eng_set.maxRPM = max_rpm;
-  eng_set.minRPM = min_rpm;
-  eng_set.inertia = inertia;
-  eng_set.normalizedTorque = t_curve;
-  JPH_WheeledVehicleControllerSettings_SetEngine(v_ctrl, &eng_set);
 
-  v_trans_set = JPH_VehicleTransmissionSettings_Create();
-  int t_mode = 1;
-  float clutch = 2000.0f;
-  if (py_trans && py_trans != Py_None) {
-    PyObject *o_mode = PyObject_GetAttrString(py_trans, "mode");
-    if (o_mode) {
-      t_mode = (int)PyLong_AsLong(o_mode);
-      Py_DECREF(o_mode);
-    }
-    GET_FLOAT_ATTR(py_trans, "clutch_strength", clutch);
-  }
-  JPH_VehicleTransmissionSettings_SetMode(v_trans_set,
-                                          (JPH_TransmissionMode)t_mode);
-  JPH_VehicleTransmissionSettings_SetClutchStrength(v_trans_set, clutch);
+  // 2. Parse Float Attributes using consistent helper
+  float radius = get_py_float_attr(w_dict, "radius", 0.4f);
+  float width = get_py_float_attr(w_dict, "width", 0.2f);
 
-  // FIXED: Default Reverse Gear Ratio
-  float rev_gears[] = {-3.0f};
-  JPH_VehicleTransmissionSettings_SetReverseGearRatios(v_trans_set, rev_gears,
-                                                       1);
+  // 3. Jolt Object Setup
+  JPH_WheelSettingsWV *w = JPH_WheelSettingsWV_Create();
+  JPH_WheelSettings_SetPosition((JPH_WheelSettings *)w,
+                                &(JPH_Vec3){px, py, pz});
+  JPH_WheelSettings_SetRadius((JPH_WheelSettings *)w, radius);
+  JPH_WheelSettings_SetWidth((JPH_WheelSettings *)w, width);
 
-  JPH_WheeledVehicleControllerSettings_SetTransmission(v_ctrl, v_trans_set);
+  JPH_WheelSettingsWV_SetLongitudinalFriction(w, f_curve);
+  JPH_WheelSettingsWV_SetLateralFriction(w, f_curve);
 
-  // Differentials (Patched JoltC helper)
+  // Steering logic (Simple branch)
+  JPH_WheelSettingsWV_SetMaxSteerAngle(w, (pz > 0.1f) ? 0.5f : 0.0f);
+
+  return (JPH_WheelSettings *)w;
+}
+
+static void
+setup_vehicle_differentials(JPH_WheeledVehicleControllerSettings *v_ctrl,
+                            const char *drive_str, uint32_t num_wheels) {
   if (strcmp(drive_str, "FWD") == 0) {
     JPH_WheeledVehicleControllerSettings_AddDifferential(v_ctrl, 0, 1);
   } else if (strcmp(drive_str, "AWD") == 0 && num_wheels >= 4) {
@@ -3596,96 +3667,248 @@ static PyObject *PhysicsWorld_create_vehicle(PhysicsWorldObject *self,
     JPH_WheeledVehicleControllerSettings_AddDifferential(v_ctrl, (int)i1,
                                                          (int)i2);
   }
+}
 
-  // --- 5. CONSTRAINT ASSEMBLY ---
-  JPH_VehicleConstraintSettings v_set;
-  JPH_VehicleConstraintSettings_Init(&v_set);
-  v_set.wheelsCount = (uint32_t)num_wheels;
-  v_set.wheels = w_settings;
-  v_set.controller = (JPH_VehicleControllerSettings *)v_ctrl;
-  v_set.up.x = 0;
-  v_set.up.y = 1;
-  v_set.up.z = 0;
-  v_set.forward.x = 0;
-  v_set.forward.y = 0;
-  v_set.forward.z = 1;
+// --- Internal Helpers for Vehicle Construction ---
 
-  j_veh = JPH_VehicleConstraint_Create(lock.body, &v_set);
-  if (!j_veh) {
-    PyErr_SetString(PyExc_RuntimeError, "Jolt vehicle construction failed");
-    goto error_cleanup;
+typedef struct {
+  JPH_LinearCurve *f_curve;
+  JPH_LinearCurve *t_curve;
+  JPH_WheelSettings **w_settings;
+  JPH_WheeledVehicleControllerSettings *v_ctrl;
+  JPH_VehicleTransmissionSettings *v_trans_set;
+  JPH_VehicleCollisionTesterRay *tester;
+  JPH_VehicleConstraint *j_veh;
+  bool is_added_to_world;
+} VehicleResources;
+
+static void cleanup_vehicle_resources(VehicleResources *r, uint32_t num_wheels,
+                                      PhysicsWorldObject *self) {
+  if (r->j_veh) {
+    // If it was already added to Jolt, we MUST remove it before destroying it
+    if (r->is_added_to_world && self && self->system) {
+      JPH_PhysicsSystem_RemoveStepListener(
+          self->system, JPH_VehicleConstraint_AsPhysicsStepListener(r->j_veh));
+      JPH_PhysicsSystem_RemoveConstraint(self->system,
+                                         (JPH_Constraint *)r->j_veh);
+    }
+    JPH_Constraint_Destroy((JPH_Constraint *)r->j_veh);
   }
 
-  // Collision Tester attached BEFORE insertion
-  tester = JPH_VehicleCollisionTesterRay_Create(1, &(JPH_Vec3){0, 1, 0}, 1.0f);
-  JPH_VehicleConstraint_SetVehicleCollisionTester(
-      j_veh, (JPH_VehicleCollisionTester *)tester);
+  if (r->tester) {
+    JPH_VehicleCollisionTester_Destroy((JPH_VehicleCollisionTester *)r->tester);
+  }
+  if (r->v_trans_set) {
+    JPH_VehicleTransmissionSettings_Destroy(r->v_trans_set);
+  }
+  if (r->v_ctrl) {
+    JPH_VehicleControllerSettings_Destroy(
+        (JPH_VehicleControllerSettings *)r->v_ctrl);
+  }
 
-  // --- 6. INSERTION (Shadow Locked) ---
+  if (r->w_settings) {
+    for (uint32_t i = 0; i < num_wheels; i++) {
+      if (r->w_settings[i]) {
+        JPH_WheelSettings_Destroy(r->w_settings[i]);
+      }
+    }
+    PyMem_RawFree((void *)r->w_settings);
+  }
+
+  if (r->f_curve) {
+    JPH_LinearCurve_Destroy(r->f_curve);
+  }
+  if (r->t_curve) {
+    JPH_LinearCurve_Destroy(r->t_curve);
+  }
+}
+
+// --- Sub-helper: Engine Configuration ---
+static void setup_engine(JPH_WheeledVehicleControllerSettings *v_ctrl,
+                         JPH_LinearCurve *t_curve, PyObject *py_engine) {
+  JPH_VehicleEngineSettings eng_set;
+  JPH_VehicleEngineSettings_Init(&eng_set);
+
+  // Flat execution: no nesting, no hidden macro branches
+  eng_set.maxTorque = get_py_float_attr(py_engine, "max_torque", 500.0f);
+  eng_set.maxRPM = get_py_float_attr(py_engine, "max_rpm", 7000.0f);
+  eng_set.minRPM = get_py_float_attr(py_engine, "min_rpm", 1000.0f);
+  eng_set.inertia = get_py_float_attr(py_engine, "inertia", 0.5f);
+
+  eng_set.normalizedTorque = t_curve;
+
+  JPH_WheeledVehicleControllerSettings_SetEngine(v_ctrl, &eng_set);
+}
+
+// --- Sub-helper: Transmission Configuration ---
+static void setup_transmission(JPH_WheeledVehicleControllerSettings *v_ctrl,
+                               JPH_VehicleTransmissionSettings *v_trans_set,
+                               PyObject *py_trans) {
+  // Determine mode
+  int t_mode = 1; // Default Manual
+  PyObject *o_mode = (py_trans && py_trans != Py_None)
+                         ? PyObject_GetAttrString(py_trans, "mode")
+                         : NULL;
+  if (o_mode) {
+    t_mode = (int)PyLong_AsLong(o_mode);
+    Py_DECREF(o_mode);
+  }
+  PyErr_Clear();
+
+  JPH_VehicleTransmissionSettings_SetMode(v_trans_set,
+                                          (JPH_TransmissionMode)t_mode);
+  JPH_VehicleTransmissionSettings_SetClutchStrength(
+      v_trans_set, get_py_float_attr(py_trans, "clutch_strength", 2000.0f));
+  JPH_VehicleTransmissionSettings_SetReverseGearRatios(v_trans_set,
+                                                       (float[]){-3.0f}, 1);
+
+  JPH_WheeledVehicleControllerSettings_SetTransmission(v_ctrl, v_trans_set);
+}
+
+// --- Main coordinate function (Complexity: 1) ---
+static void configure_drivetrain(VehicleResources *r, PyObject *py_engine,
+                                 PyObject *py_trans, const char *drive_str,
+                                 uint32_t num_wheels) {
+
+  setup_engine(r->v_ctrl, r->t_curve, py_engine);
+
+  setup_transmission(r->v_ctrl, r->v_trans_set, py_trans);
+
+  setup_vehicle_differentials(r->v_ctrl, drive_str, num_wheels);
+}
+
+// --- Main Function ---
+
+static PyObject *PhysicsWorld_create_vehicle(PhysicsWorldObject *self,
+                                             PyObject *args, PyObject *kwds) {
+  uint64_t chassis_h = 0;
+  PyObject *py_wheels = NULL;
+  PyObject *py_engine = NULL;
+  PyObject *py_trans = NULL;
+  char *drive_str = "RWD";
+  static char *kwlist[] = {"chassis", "wheels",       "drive",
+                           "engine",  "transmission", NULL};
+
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "KO|sOO", kwlist, &chassis_h,
+                                   &py_wheels, &drive_str, &py_engine,
+                                   &py_trans)) {
+    return NULL;
+  }
+
+  if (!PyList_Check(py_wheels) || PyList_Size(py_wheels) < 2) {
+    PyErr_SetString(PyExc_ValueError,
+                    "Wheels must be a list of at least 2 dictionaries");
+    return NULL;
+  }
+  uint32_t num_wheels = (uint32_t)PyList_Size(py_wheels);
+
+  // 1. Resolve Body (Double-Locking Pattern)
   SHADOW_LOCK(&self->shadow_lock);
   BLOCK_UNTIL_NOT_STEPPING(self);
   BLOCK_UNTIL_NOT_QUERYING(self);
+  flush_commands(self);
+  uint32_t slot = 0;
+  if (!unpack_handle(self, chassis_h, &slot)) {
+    SHADOW_UNLOCK(&self->shadow_lock);
+    return PyErr_Format(PyExc_ValueError, "Invalid chassis handle");
+  }
+  JPH_BodyID chassis_bid = self->body_ids[self->slot_to_dense[slot]];
+  SHADOW_UNLOCK(&self->shadow_lock);
 
-  JPH_PhysicsSystem_AddConstraint(self->system, (JPH_Constraint *)j_veh);
-  constraint_added = true;
+  const JPH_BodyLockInterface *lock_iface =
+      JPH_PhysicsSystem_GetBodyLockInterface(self->system);
+  JPH_BodyLockWrite lock;
+  JPH_BodyLockInterface_LockWrite(lock_iface, chassis_bid, &lock);
+  if (!lock.body) {
+    JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
+    return PyErr_Format(PyExc_RuntimeError, "Could not lock chassis body");
+  }
+
+  // 2. Initialize Resources
+  VehicleResources r = {0};
+  r.f_curve = JPH_LinearCurve_Create();
+  JPH_LinearCurve_AddPoint(r.f_curve, 0.0f, 1.0f);
+  JPH_LinearCurve_AddPoint(r.f_curve, 1.0f, 1.0f);
+  r.t_curve = JPH_LinearCurve_Create();
+  JPH_LinearCurve_AddPoint(r.t_curve, 0.0f, 1.0f);
+  JPH_LinearCurve_AddPoint(r.t_curve, 1.0f, 1.0f);
+  r.w_settings = (JPH_WheelSettings **)PyMem_RawCalloc(
+      num_wheels, sizeof(JPH_WheelSettings *));
+  r.v_ctrl = JPH_WheeledVehicleControllerSettings_Create();
+  r.v_trans_set = JPH_VehicleTransmissionSettings_Create();
+
+  // 3. Generate Wheels
+  for (uint32_t i = 0; i < num_wheels; i++) {
+    r.w_settings[i] =
+        create_single_wheel(PyList_GetItem(py_wheels, i), r.f_curve);
+    if (!r.w_settings[i]) {
+      cleanup_vehicle_resources(&r, num_wheels, self);
+      JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
+      return NULL;
+    }
+  }
+
+  // 4. Setup Drivetrain & Assembly
+  configure_drivetrain(&r, py_engine, py_trans, drive_str, num_wheels);
+
+  JPH_VehicleConstraintSettings v_set;
+  JPH_VehicleConstraintSettings_Init(&v_set);
+  v_set.wheelsCount = num_wheels;
+  v_set.wheels = r.w_settings;
+  v_set.controller = (JPH_VehicleControllerSettings *)r.v_ctrl;
+
+  r.j_veh = JPH_VehicleConstraint_Create(lock.body, &v_set);
+  if (!r.j_veh) {
+    PyErr_SetString(PyExc_RuntimeError, "Jolt vehicle creation failed");
+    cleanup_vehicle_resources(&r, num_wheels, self);
+    JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
+    return NULL;
+  }
+
+  r.tester =
+      JPH_VehicleCollisionTesterRay_Create(1, &(JPH_Vec3){0, 1, 0}, 1.0f);
+  JPH_VehicleConstraint_SetVehicleCollisionTester(
+      r.j_veh, (JPH_VehicleCollisionTester *)r.tester);
+
+  // 5. World Insertion
+  SHADOW_LOCK(&self->shadow_lock);
+  // We must ensure no queries started while we were busy parsing Python dicts!
+  BLOCK_UNTIL_NOT_STEPPING(self); // Safety check
+  BLOCK_UNTIL_NOT_QUERYING(self);
+  JPH_PhysicsSystem_AddConstraint(self->system, (JPH_Constraint *)r.j_veh);
   JPH_PhysicsSystem_AddStepListener(
-      self->system, JPH_VehicleConstraint_AsPhysicsStepListener(j_veh));
+      self->system, JPH_VehicleConstraint_AsPhysicsStepListener(r.j_veh));
+  r.is_added_to_world = true;
   SHADOW_UNLOCK(&self->shadow_lock);
 
   JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
-  body_locked = false;
 
-  // --- 7. PYTHON WRAPPER ---
-  PyObject *module = PyType_GetModule(Py_TYPE(self));
-  CulverinState *st = get_culverin_state(module);
+  // --- 6. Python Wrapper (FIXED) ---
+  CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
   VehicleObject *obj = (VehicleObject *)PyObject_New(
       VehicleObject, (PyTypeObject *)st->VehicleType);
-  if (!obj)
-    goto error_cleanup;
 
-  obj->vehicle = j_veh;
-  obj->tester = (JPH_VehicleCollisionTester *)tester;
+  if (!obj) {
+    cleanup_vehicle_resources(&r, num_wheels, self);
+    return NULL;
+  }
+
+  // Assign individual fields to preserve PyObject_HEAD
+  obj->vehicle = r.j_veh;
+  obj->tester = (JPH_VehicleCollisionTester *)r.tester;
   obj->world = self;
-  obj->num_wheels = (uint32_t)num_wheels;
+  obj->num_wheels = num_wheels;
   obj->current_gear = 1;
-  obj->wheel_settings = w_settings;
-  obj->controller_settings = (JPH_VehicleControllerSettings *)v_ctrl;
-  obj->transmission_settings = v_trans_set;
-  obj->friction_curve = f_curve;
-  obj->torque_curve = t_curve;
+  obj->wheel_settings = r.w_settings;
+  obj->controller_settings = (JPH_VehicleControllerSettings *)r.v_ctrl;
+  obj->transmission_settings = r.v_trans_set;
+  obj->friction_curve = r.f_curve;
+  obj->torque_curve = r.t_curve;
 
+  // IMPORTANT: Keep the world alive as long as the vehicle exists
   Py_INCREF(self);
-  return (PyObject *)obj;
 
-error_cleanup:
-  if (body_locked)
-    JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
-  if (j_veh) {
-    if (constraint_added) {
-      SHADOW_LOCK(&self->shadow_lock);
-      JPH_PhysicsSystem_RemoveConstraint(self->system, (JPH_Constraint *)j_veh);
-      SHADOW_UNLOCK(&self->shadow_lock);
-    }
-    JPH_Constraint_Destroy((JPH_Constraint *)j_veh);
-  }
-  if (tester)
-    JPH_VehicleCollisionTester_Destroy((JPH_VehicleCollisionTester *)tester);
-  if (v_trans_set)
-    JPH_VehicleTransmissionSettings_Destroy(v_trans_set);
-  if (v_ctrl)
-    JPH_VehicleControllerSettings_Destroy(
-        (JPH_VehicleControllerSettings *)v_ctrl);
-  if (w_settings) {
-    for (Py_ssize_t i = 0; i < num_wheels; i++)
-      if (w_settings[i])
-        JPH_WheelSettings_Destroy(w_settings[i]);
-    PyMem_RawFree((void *)w_settings);
-  }
-  if (f_curve)
-    JPH_LinearCurve_Destroy(f_curve);
-  if (t_curve)
-    JPH_LinearCurve_Destroy(t_curve);
-  return NULL;
+  return (PyObject *)obj;
 }
 
 static PyObject *PhysicsWorld_set_position(PhysicsWorldObject *self,
@@ -3738,7 +3961,10 @@ static PyObject *PhysicsWorld_set_position(PhysicsWorldObject *self,
 static PyObject *PhysicsWorld_set_rotation(PhysicsWorldObject *self,
                                            PyObject *args, PyObject *kwds) {
   uint64_t handle_raw = 0;
-  float x, y, z, w;
+  float x = NAN;
+  float y = NAN;
+  float z = NAN;
+  float w = NAN;
   static char *kwlist[] = {"handle", "x", "y", "z", "w", NULL};
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "Kffff", kwlist, &handle_raw, &x,
                                    &y, &z, &w)) {
@@ -3851,8 +4077,9 @@ static PyObject *PhysicsWorld_get_motion_type(PhysicsWorldObject *self,
                                               PyObject *args, PyObject *kwds) {
   uint64_t handle_raw = 0;
   static char *kwlist[] = {"handle", NULL};
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "K", kwlist, &handle_raw))
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "K", kwlist, &handle_raw)) {
     return NULL;
+  }
 
   SHADOW_LOCK(&self->shadow_lock);
 
@@ -3936,8 +4163,9 @@ static PyObject *PhysicsWorld_get_user_data(PhysicsWorldObject *self,
                                             PyObject *args, PyObject *kwds) {
   uint64_t handle_raw = 0;
   static char *kwlist[] = {"handle", NULL};
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "K", kwlist, &handle_raw))
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "K", kwlist, &handle_raw)) {
     return NULL;
+  }
 
   SHADOW_LOCK(&self->shadow_lock);
 
@@ -3961,8 +4189,9 @@ static PyObject *PhysicsWorld_activate(PhysicsWorldObject *self, PyObject *args,
                                        PyObject *kwds) {
   uint64_t handle_raw = 0;
   static char *kwlist[] = {"handle", NULL};
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "K", kwlist, &handle_raw))
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "K", kwlist, &handle_raw)) {
     return NULL;
+  }
 
   SHADOW_LOCK(&self->shadow_lock);
   BLOCK_UNTIL_NOT_STEPPING(self);
@@ -3989,8 +4218,9 @@ static PyObject *PhysicsWorld_deactivate(PhysicsWorldObject *self,
                                          PyObject *args, PyObject *kwds) {
   uint64_t handle_raw = 0;
   static char *kwlist[] = {"handle", NULL};
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "K", kwlist, &handle_raw))
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "K", kwlist, &handle_raw)) {
     return NULL;
+  }
 
   SHADOW_LOCK(&self->shadow_lock);
   BLOCK_UNTIL_NOT_STEPPING(self);
@@ -4014,8 +4244,13 @@ static PyObject *PhysicsWorld_deactivate(PhysicsWorldObject *self,
 static PyObject *PhysicsWorld_set_transform(PhysicsWorldObject *self,
                                             PyObject *args, PyObject *kwds) {
   uint64_t handle_raw = 0;
-  float px = 0, py = 0, pz = 0;
-  float rx = 0, ry = 0, rz = 0, rw = 1.0f;
+  float px = 0;
+  float py = 0;
+  float pz = 0;
+  float rx = 0;
+  float ry = 0;
+  float rz = 0;
+  float rw = 1.0f;
   static char *kwlist[] = {"handle", "pos", "rot", NULL};
 
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "K(fff)(ffff)", kwlist,
@@ -4083,8 +4318,9 @@ static void overlap_record_hit(OverlapContext *ctx, JPH_BodyID bid) {
   if (ctx->count >= ctx->capacity) {
     size_t new_cap = (ctx->capacity == 0) ? 32 : ctx->capacity * 2;
     uint64_t *new_ptr = PyMem_RawRealloc(ctx->hits, new_cap * sizeof(uint64_t));
-    if (!new_ptr)
+    if (!new_ptr) {
       return; // Drop hit on OOM (safer than crashing)
+    }
     ctx->hits = new_ptr;
     ctx->capacity = new_cap;
   }
@@ -4108,11 +4344,15 @@ static float OverlapCallback_Broad(void *context, const JPH_BodyID result_bid) {
 
 static PyObject *PhysicsWorld_overlap_sphere(PhysicsWorldObject *self,
                                              PyObject *args, PyObject *kwds) {
-  float x = 0.0f, y = 0.0f, z = 0.0f, radius = 1.0f;
+  float x = 0.0f;
+  float y = 0.0f;
+  float z = 0.0f;
+  float radius = 1.0f;
   static char *kwlist[] = {"center", "radius", NULL};
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)f", kwlist, &x, &y, &z,
-                                   &radius))
+                                   &radius)) {
     return NULL;
+  }
 
   PyObject *ret_val = NULL;
   OverlapContext ctx = {.world = self, .hits = NULL, .count = 0, .capacity = 0};
@@ -4201,8 +4441,9 @@ static PyObject *PhysicsWorld_overlap_sphere(PhysicsWorldObject *self,
 
   // --- 4. VALIDATION (Locked) ---
   ret_val = PyList_New(0);
-  if (!ret_val)
+  if (!ret_val) {
     goto cleanup;
+  }
 
   SHADOW_LOCK(&self->shadow_lock);
   for (size_t i = 0; i < ctx.count; i++) {
@@ -4225,24 +4466,34 @@ cleanup:
   // Release query slot
   atomic_fetch_sub_explicit(&self->active_queries, 1, memory_order_release);
 
-  if (shape)
+  if (shape) {
     JPH_Shape_Destroy(shape);
-  if (bp_filter)
+  }
+  if (bp_filter) {
     JPH_BroadPhaseLayerFilter_Destroy(bp_filter);
-  if (obj_filter)
+  }
+  if (obj_filter) {
     JPH_ObjectLayerFilter_Destroy(obj_filter);
-  if (body_filter)
+  }
+  if (body_filter) {
     JPH_BodyFilter_Destroy(body_filter);
+  }
 
-  if (ctx.hits)
+  if (ctx.hits) {
     PyMem_RawFree(ctx.hits);
+  }
 
   return ret_val;
 }
 
 static PyObject *PhysicsWorld_overlap_aabb(PhysicsWorldObject *self,
                                            PyObject *args, PyObject *kwds) {
-  float min_x, min_y, min_z, max_x, max_y, max_z;
+  float min_x = NAN;
+  float min_y = NAN;
+  float min_z = NAN;
+  float max_x = NAN;
+  float max_y = NAN;
+  float max_z = NAN;
   static char *kwlist[] = {"min", "max", NULL};
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)(fff)", kwlist, &min_x,
                                    &min_y, &min_z, &max_x, &max_y, &max_z)) {
@@ -4292,8 +4543,9 @@ static PyObject *PhysicsWorld_overlap_aabb(PhysicsWorldObject *self,
 
   // --- 4. VALIDATION ---
   ret_val = PyList_New(0);
-  if (!ret_val)
+  if (!ret_val) {
     goto cleanup;
+  }
 
   SHADOW_LOCK(&self->shadow_lock);
   for (size_t i = 0; i < ctx.count; i++) {
@@ -4315,12 +4567,15 @@ static PyObject *PhysicsWorld_overlap_aabb(PhysicsWorldObject *self,
 cleanup:
   atomic_fetch_sub_explicit(&self->active_queries, 1, memory_order_release);
 
-  if (bp_filter)
+  if (bp_filter) {
     JPH_BroadPhaseLayerFilter_Destroy(bp_filter);
-  if (obj_filter)
+  }
+  if (obj_filter) {
     JPH_ObjectLayerFilter_Destroy(obj_filter);
-  if (ctx.hits)
+  }
+  if (ctx.hits) {
     PyMem_RawFree(ctx.hits);
+  }
 
   return ret_val;
 }
@@ -4329,8 +4584,9 @@ static PyObject *PhysicsWorld_get_index(PhysicsWorldObject *self,
                                         PyObject *args, PyObject *kwds) {
   uint64_t h = 0;
   static char *kwlist[] = {"handle", NULL};
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "K", kwlist, &h))
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "K", kwlist, &h)) {
     return NULL;
+  }
 
   SHADOW_LOCK(&self->shadow_lock);
   uint32_t slot = 0;
@@ -4363,14 +4619,16 @@ static PyObject *PhysicsWorld_is_alive(PhysicsWorldObject *self, PyObject *args,
   }
   SHADOW_UNLOCK(&self->shadow_lock);
 
-  if (alive)
+  if (alive) {
     Py_RETURN_TRUE;
+  }
   Py_RETURN_FALSE;
 }
 
 static PyObject *make_view(PhysicsWorldObject *self, void *ptr) {
-  if (!ptr)
+  if (!ptr) {
     Py_RETURN_NONE;
+  }
 
   // 1. Capture State Under Lock
   SHADOW_LOCK(&self->shadow_lock);
@@ -4409,8 +4667,9 @@ static PyObject *make_view(PhysicsWorldObject *self, void *ptr) {
   if (!mv) {
     // Clean up on failure
     SHADOW_LOCK(&self->shadow_lock);
-    if (self->view_export_count > 0)
+    if (self->view_export_count > 0) {
       self->view_export_count--;
+    }
     SHADOW_UNLOCK(&self->shadow_lock);
 
     Py_DECREF(self); // Drop the ownership link ref
@@ -4460,8 +4719,9 @@ static PyObject *PhysicsWorld_get_active_indices(PhysicsWorldObject *self,
 }
 
 static PyObject *get_user_data_buffer(PhysicsWorldObject *self, void *c) {
-  if (!self->user_data)
+  if (!self->user_data) {
     Py_RETURN_NONE;
+  }
 
   SHADOW_LOCK(&self->shadow_lock);
   size_t current_count = self->count;
@@ -4489,8 +4749,9 @@ static PyObject *get_user_data_buffer(PhysicsWorldObject *self, void *c) {
   PyObject *mv = PyMemoryView_FromBuffer(&buf);
   if (!mv) {
     SHADOW_LOCK(&self->shadow_lock);
-    if (self->view_export_count > 0)
+    if (self->view_export_count > 0) {
       self->view_export_count--;
+    }
     SHADOW_UNLOCK(&self->shadow_lock);
     Py_DECREF(self);
     return NULL;
@@ -4500,9 +4761,10 @@ static PyObject *get_user_data_buffer(PhysicsWorldObject *self, void *c) {
 
 static PyObject *PhysicsWorld_get_render_state(PhysicsWorldObject *self,
                                                PyObject *args) {
-  float alpha;
-  if (!PyArg_ParseTuple(args, "f", &alpha))
+  float alpha = NAN;
+  if (!PyArg_ParseTuple(args, "f", &alpha)) {
     return NULL;
+  }
 
   alpha = fmaxf(0.0f, fminf(1.0f, alpha));
 
@@ -4538,12 +4800,14 @@ static PyObject *PhysicsWorld_get_render_state(PhysicsWorldObject *self,
         (self->positions[src + 2] - self->prev_positions[src + 2]) * alpha;
 
     // Rotation NLerp
-    float q1x = self->prev_rotations[src + 0],
-          q1y = self->prev_rotations[src + 1],
-          q1z = self->prev_rotations[src + 2],
-          q1w = self->prev_rotations[src + 3];
-    float q2x = self->rotations[src + 0], q2y = self->rotations[src + 1],
-          q2z = self->rotations[src + 2], q2w = self->rotations[src + 3];
+    float q1x = self->prev_rotations[src + 0];
+    float q1y = self->prev_rotations[src + 1];
+    float q1z = self->prev_rotations[src + 2];
+    float q1w = self->prev_rotations[src + 3];
+    float q2x = self->rotations[src + 0];
+    float q2y = self->rotations[src + 1];
+    float q2z = self->rotations[src + 2];
+    float q2w = self->rotations[src + 3];
 
     float dot = q1x * q2x + q1y * q2y + q1z * q2z + q1w * q2w;
     if (dot < 0.0f) {
@@ -4575,61 +4839,60 @@ static PyObject *PhysicsWorld_get_render_state(PhysicsWorldObject *self,
 
 static PyObject *Vehicle_set_input(VehicleObject *self, PyObject *args,
                                    PyObject *kwds) {
-  float forward, right, brake, handbrake;
+  float forward = NAN;
+  float right = NAN;
+  float brake = NAN;
+  float handbrake = NAN;
   static char *kwlist[] = {"forward", "right", "brake", "handbrake", NULL};
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "ffff", kwlist, &forward, &right,
-                                   &brake, &handbrake))
-    return NULL;
-
-  SHADOW_LOCK(&self->world->shadow_lock);
-
-  // 1. RE-ENTRANCY GUARD
-  BLOCK_UNTIL_NOT_STEPPING(self->world);
-  BLOCK_UNTIL_NOT_QUERYING(self->world);
-
-  // While we were yielding in the block above, another thread
-  // could have acquired the lock and destroyed this vehicle.
-  if (!self->vehicle) {
-    SHADOW_UNLOCK(&self->world->shadow_lock);
-    PyErr_SetString(PyExc_RuntimeError,
-                    "Vehicle instance is invalid or destroyed");
+                                   &brake, &handbrake)) {
     return NULL;
   }
 
-  // 2. RESOLVE JOLT COMPONENTS
+  // 1. Initial Shadow Guard
+  SHADOW_LOCK(&self->world->shadow_lock);
+  BLOCK_UNTIL_NOT_STEPPING(self->world);
+  BLOCK_UNTIL_NOT_QUERYING(self->world);
+
+  if (!self->vehicle) {
+    SHADOW_UNLOCK(&self->world->shadow_lock);
+    Py_RETURN_NONE;
+  }
+
+  // 2. Resolve Jolt Components
   JPH_WheeledVehicleController *controller =
       (JPH_WheeledVehicleController *)JPH_VehicleConstraint_GetController(
           self->vehicle);
   if (!controller) {
     SHADOW_UNLOCK(&self->world->shadow_lock);
-    PyErr_SetString(PyExc_RuntimeError, "Vehicle controller is missing");
-    return NULL;
+    Py_RETURN_NONE;
   }
 
   const JPH_Body *chassis = JPH_VehicleConstraint_GetVehicleBody(self->vehicle);
-  JPH_VehicleTransmission *transmission =
-      (JPH_VehicleTransmission *)JPH_WheeledVehicleController_GetTransmission(
-          controller);
+  JPH_BodyID chassis_id =
+      JPH_Body_GetID(chassis); // Get the ID, not the pointer
+  JPH_BodyInterface *bi = self->world->body_interface;
 
-  // Wake up the car if it went to sleep
-  JPH_BodyInterface_ActivateBody(self->world->body_interface,
-                                 JPH_Body_GetID(chassis));
+  // 3. THREAD-SAFE QUERIES (Using BodyInterface)
+  // Wake up the body
+  JPH_BodyInterface_ActivateBody(bi, chassis_id);
 
-  // 3. SPEED & DIRECTION CALCULATIONS (ALIGNED)
+  // Get Velocity
   JPH_STACK_ALLOC(JPH_Vec3, linear_vel);
-  JPH_Body_GetLinearVelocity((JPH_Body *)chassis, linear_vel);
+  JPH_BodyInterface_GetLinearVelocity(bi, chassis_id, linear_vel);
 
-  JPH_STACK_ALLOC(JPH_RMat4, world_transform);
-  JPH_Body_GetWorldTransform(chassis, world_transform);
+  // Get Rotation (Instead of Matrix, which has alignment issues)
+  JPH_STACK_ALLOC(JPH_Quat, chassis_q);
+  JPH_BodyInterface_GetRotation(bi, chassis_id, chassis_q);
 
-  // Forward vector is Z-axis (Column 2). Note: Jolt uses column-major matrices.
-  JPH_Vec3 world_fwd = {world_transform->column[2].x,
-                        world_transform->column[2].y,
-                        world_transform->column[2].z};
+  // Calculate World Forward: Rotate (0,0,1) by current rotation
+  JPH_Vec3 local_fwd = {0, 0, 1.0f};
+  JPH_Vec3 world_fwd;
+  manual_vec3_rotate_by_quat(&local_fwd, chassis_q, &world_fwd);
 
-  // Dot product for forward speed
-  float speed = linear_vel->x * world_fwd.x + linear_vel->y * world_fwd.y +
-                linear_vel->z * world_fwd.z;
+  // Calculate Forward Speed
+  float speed = (linear_vel->x * world_fwd.x) + (linear_vel->y * world_fwd.y) +
+                (linear_vel->z * world_fwd.z);
 
   // 4. SMART INPUT STATE MACHINE
   float input_throttle = 0.0f;
@@ -4637,47 +4900,45 @@ static PyObject *Vehicle_set_input(VehicleObject *self, PyObject *args,
   float clutch_friction = 1.0f;
   int target_gear = self->current_gear;
 
-  // Apply deadzone
-  if (fabsf(forward) < 0.01f)
+  if (fabsf(forward) < 0.01f) {
     forward = 0.0f;
+  }
 
   if (forward > 0.01f) {
-    // DRIVE LOGIC
-    if (speed < -0.5f) {
-      // Moving backward, user pressed forward: BRAKE
+    if (speed < -0.5f) { // Moving back, trying to go forward -> Brake
       input_brake = 1.0f;
       input_throttle = 0.0f;
     } else {
       input_throttle = forward;
       target_gear = 1;
-      clutch_friction = 1.0f;
     }
   } else if (forward < -0.01f) {
-    // REVERSE LOGIC
-    if (speed > 0.5f) {
-      // Moving forward, user pressed backward: BRAKE
+    if (speed > 0.5f) { // Moving forward, trying to go back -> Brake
       input_brake = 1.0f;
       input_throttle = 0.0f;
     } else {
       input_throttle = fabsf(forward);
       target_gear = -1;
-      clutch_friction = 1.0f;
     }
   } else {
-    // NEUTRAL / COASTING
     input_throttle = 0.0f;
     target_gear = 0;
     clutch_friction = 0.0f;
-
-    // Gentle rolling resistance
-    if (input_brake < 0.01f)
+    if (input_brake < 0.01f) {
       input_brake = 0.05f;
+    }
   }
 
   // 5. APPLY TO JOLT
-  self->current_gear = target_gear;
-  JPH_VehicleTransmission_Set(transmission, self->current_gear,
-                              clutch_friction);
+  JPH_VehicleTransmission *transmission =
+      (JPH_VehicleTransmission *)JPH_WheeledVehicleController_GetTransmission(
+          controller);
+
+  if (transmission) {
+    self->current_gear = target_gear;
+    JPH_VehicleTransmission_Set(transmission, self->current_gear,
+                                clutch_friction);
+  }
 
   JPH_WheeledVehicleController_SetDriverInput(controller, input_throttle, right,
                                               input_brake, handbrake);
@@ -4688,12 +4949,14 @@ static PyObject *Vehicle_set_input(VehicleObject *self, PyObject *args,
 
 static PyObject *Vehicle_get_wheel_transform(VehicleObject *self,
                                              PyObject *args) {
-  uint32_t index;
-  if (!PyArg_ParseTuple(args, "I", &index))
+  uint32_t index = 0;
+  if (!PyArg_ParseTuple(args, "I", &index)) {
     return NULL;
+  }
 
   SHADOW_LOCK(&self->world->shadow_lock);
   BLOCK_UNTIL_NOT_STEPPING(self->world);
+
   if (!self->vehicle || index >= self->num_wheels) {
     SHADOW_UNLOCK(&self->world->shadow_lock);
     Py_RETURN_NONE;
@@ -4703,6 +4966,7 @@ static PyObject *Vehicle_get_wheel_transform(VehicleObject *self,
   JPH_Vec3 right = {1.0f, 0.0f, 0.0f};
   JPH_Vec3 up = {0.0f, 1.0f, 0.0f};
 
+  // Get Transform in Double Precision
   JPH_VehicleConstraint_GetWheelWorldTransform(self->vehicle, index, &right,
                                                &up, transform);
 
@@ -4714,9 +4978,12 @@ static PyObject *Vehicle_get_wheel_transform(VehicleObject *self,
   double py = transform->column3.y;
   double pz = transform->column3.z;
 
-  // 2. Rotation: These are the first 3 columns (Vec4/floats)
+  // 2. Rotation: These are the first 3 columns (Vec4/floats in RMat44)
+  // We copy them to a standard Mat4 to extract the quaternion.
   JPH_STACK_ALLOC(JPH_Mat4, rot_only_mat);
   JPH_Mat4_Identity(rot_only_mat);
+
+  // Safe struct copy of Vec4/Vec3 columns
   rot_only_mat->column[0] = transform->column[0];
   rot_only_mat->column[1] = transform->column[1];
   rot_only_mat->column[2] = transform->column[2];
@@ -4744,38 +5011,39 @@ static PyObject *Vehicle_get_wheel_transform(VehicleObject *self,
 
 static PyObject *Vehicle_get_wheel_local_transform(VehicleObject *self,
                                                    PyObject *args) {
-  uint32_t index;
-  if (!PyArg_ParseTuple(args, "I", &index))
+  uint32_t index = 0;
+  if (!PyArg_ParseTuple(args, "I", &index)) {
     return NULL;
+  }
 
   SHADOW_LOCK(&self->world->shadow_lock);
+  // Re-entry guard: Ensure we aren't stepping while querying
+  BLOCK_UNTIL_NOT_STEPPING(self->world);
+
   if (!self->vehicle || index >= self->num_wheels) {
     SHADOW_UNLOCK(&self->world->shadow_lock);
     Py_RETURN_NONE;
   }
 
-  // 1. Use JPH_Mat4 (Standard 4x4 float matrix)
   JPH_STACK_ALLOC(JPH_Mat4, local_transform);
+  // Initialize to identity just in case the API call fails or partially writes
+  JPH_Mat4_Identity(local_transform);
 
   JPH_Vec3 right = {1.0f, 0.0f, 0.0f};
   JPH_Vec3 up = {0.0f, 1.0f, 0.0f};
 
-  // Jolt fills the float matrix
   JPH_VehicleConstraint_GetWheelLocalTransform(self->vehicle, index, &right,
                                                &up, local_transform);
 
-  // 2. Extract Translation (column[3] is the 4th column in Mat4)
   float lx = local_transform->column[3].x;
   float ly = local_transform->column[3].y;
   float lz = local_transform->column[3].z;
 
-  // 3. Extract Rotation
   JPH_STACK_ALLOC(JPH_Quat, q);
   JPH_Mat4_GetQuaternion(local_transform, q);
 
   SHADOW_UNLOCK(&self->world->shadow_lock);
 
-  // Build the Python response: ((lx, ly, lz), (rx, ry, rz, rw))
   PyObject *py_pos = Py_BuildValue("(fff)", lx, ly, lz);
   PyObject *py_rot = Py_BuildValue("(ffff)", q->x, q->y, q->z, q->w);
 
@@ -4883,8 +5151,9 @@ static int Vehicle_clear(VehicleObject *self) {
 // --- Explicit Destroy (Clean up Jolt resources) ---
 static PyObject *Vehicle_destroy(VehicleObject *self,
                                  PyObject *Py_UNUSED(ignored)) {
-  if (!self->world)
+  if (!self->world) {
     Py_RETURN_NONE;
+  }
 
   // --- 1. CAPTURE & INVALIDATE PHASE (Locked) ---
   SHADOW_LOCK(&self->world->shadow_lock);
@@ -4933,25 +5202,31 @@ static PyObject *Vehicle_destroy(VehicleObject *self,
     JPH_Constraint_Destroy((JPH_Constraint *)j_veh);
   }
 
-  if (tester)
+  if (tester) {
     JPH_VehicleCollisionTester_Destroy(tester);
-  if (v_ctrl)
+  }
+  if (v_ctrl) {
     JPH_VehicleControllerSettings_Destroy(v_ctrl);
-  if (v_trans)
+  }
+  if (v_trans) {
     JPH_VehicleTransmissionSettings_Destroy(v_trans);
+  }
 
   if (wheels) {
     for (uint32_t i = 0; i < wheel_count; i++) {
-      if (wheels[i])
+      if (wheels[i]) {
         JPH_WheelSettings_Destroy(wheels[i]);
+      }
     }
     PyMem_RawFree((void *)wheels);
   }
 
-  if (f_curve)
+  if (f_curve) {
     JPH_LinearCurve_Destroy(f_curve);
-  if (t_curve)
+  }
+  if (t_curve) {
     JPH_LinearCurve_Destroy(t_curve);
+  }
 
   Py_RETURN_NONE;
 }
@@ -4977,8 +5252,9 @@ static void Vehicle_dealloc(VehicleObject *self) {
 static void Character_dealloc(CharacterObject *self) {
   PyObject_GC_UnTrack(self);
 
-  if (!self->world)
+  if (!self->world) {
     goto finalize;
+  }
 
   // 1. REMOVE FROM JOLT MANAGER (Unlocked)
   // This is safe because the manager is thread-safe for removal.
@@ -5044,14 +5320,18 @@ static void Character_dealloc(CharacterObject *self) {
   if (self->listener) {
     JPH_CharacterContactListener_Destroy(self->listener);
   }
-  if (self->body_filter)
+  if (self->body_filter) {
     JPH_BodyFilter_Destroy(self->body_filter);
-  if (self->shape_filter)
+  }
+  if (self->shape_filter) {
     JPH_ShapeFilter_Destroy(self->shape_filter);
-  if (self->bp_filter)
+  }
+  if (self->bp_filter) {
     JPH_BroadPhaseLayerFilter_Destroy(self->bp_filter);
-  if (self->obj_filter)
+  }
+  if (self->obj_filter) {
     JPH_ObjectLayerFilter_Destroy(self->obj_filter);
+  }
 
 finalize:
   Py_XDECREF(self->world);
@@ -5071,7 +5351,10 @@ static int Character_clear(CharacterObject *self) {
 
 static PyObject *Character_move(CharacterObject *self, PyObject *args,
                                 PyObject *kwds) {
-  float vx = 0, vy = 0, vz = 0, dt = 0;
+  float vx = 0;
+  float vy = 0;
+  float vz = 0;
+  float dt = 0;
   static char *kwlist[] = {"velocity", "dt", NULL};
 
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)f", kwlist, &vx, &vy, &vz,
@@ -5175,8 +5458,9 @@ static PyObject *Character_get_position(CharacterObject *self,
   SHADOW_UNLOCK(&self->world->shadow_lock);
 
   PyObject *ret = PyTuple_New(3);
-  if (!ret)
+  if (!ret) {
     return NULL;
+  }
 
   // Use the double precision provided by RVec3
   PyTuple_SET_ITEM(ret, 0, PyFloat_FromDouble(pos->x));
@@ -5188,10 +5472,13 @@ static PyObject *Character_get_position(CharacterObject *self,
 
 static PyObject *Character_set_position(CharacterObject *self, PyObject *args,
                                         PyObject *kwds) {
-  float x, y, z;
+  float x = NAN;
+  float y = NAN;
+  float z = NAN;
   static char *kwlist[] = {"pos", NULL};
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)", kwlist, &x, &y, &z))
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)", kwlist, &x, &y, &z)) {
     return NULL;
+  }
 
   SHADOW_LOCK(&self->world->shadow_lock);
   BLOCK_UNTIL_NOT_STEPPING(self->world);
@@ -5222,11 +5509,15 @@ static PyObject *Character_set_position(CharacterObject *self, PyObject *args,
 
 static PyObject *Character_set_rotation(CharacterObject *self, PyObject *args,
                                         PyObject *kwds) {
-  float x, y, z, w;
+  float x = NAN;
+  float y = NAN;
+  float z = NAN;
+  float w = NAN;
   static char *kwlist[] = {"rot", NULL};
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "(ffff)", kwlist, &x, &y, &z,
-                                   &w))
+                                   &w)) {
     return NULL;
+  }
 
   SHADOW_LOCK(&self->world->shadow_lock);
   BLOCK_UNTIL_NOT_STEPPING(self->world);
@@ -5267,9 +5558,10 @@ static PyObject *Character_is_grounded(CharacterObject *self, PyObject *args) {
 }
 
 static PyObject *Character_set_strength(CharacterObject *self, PyObject *args) {
-  float strength;
-  if (!PyArg_ParseTuple(args, "f", &strength))
+  float strength = NAN;
+  if (!PyArg_ParseTuple(args, "f", &strength)) {
     return NULL;
+  }
 
   SHADOW_LOCK(&self->world->shadow_lock);
   BLOCK_UNTIL_NOT_STEPPING(self->world);
@@ -5290,14 +5582,16 @@ static PyObject *Character_get_render_transform(CharacterObject *self,
                                                 PyObject *arg) {
   // --- OPTIMIZATION 1: Fast Argument Parsing ---
   double alpha_dbl = PyFloat_AsDouble(arg);
-  if (alpha_dbl == -1.0 && PyErr_Occurred())
+  if (alpha_dbl == -1.0 && PyErr_Occurred()) {
     return NULL;
+  }
 
   float alpha = (float)alpha_dbl;
-  if (alpha < 0.0f)
+  if (alpha < 0.0f) {
     alpha = 0.0f;
-  else if (alpha > 1.0f)
+  } else if (alpha > 1.0f) {
     alpha = 1.0f;
+  }
 
   // --- 1. ALIGNED STACK ALLOCATION ---
   // Mandatory for SIMD safety
@@ -5308,9 +5602,13 @@ static PyObject *Character_get_render_transform(CharacterObject *self,
   SHADOW_LOCK(&self->world->shadow_lock);
 
   // We snapshot both the 'prev' state and 'current' state together
-  float p_px = self->prev_px, p_py = self->prev_py, p_pz = self->prev_pz;
-  float p_rx = self->prev_rx, p_ry = self->prev_ry, p_rz = self->prev_rz,
-        p_rw = self->prev_rw;
+  float p_px = self->prev_px;
+  float p_py = self->prev_py;
+  float p_pz = self->prev_pz;
+  float p_rx = self->prev_rx;
+  float p_ry = self->prev_ry;
+  float p_rz = self->prev_rz;
+  float p_rw = self->prev_rw;
 
   JPH_CharacterVirtual_GetPosition(self->character, cur_p);
   JPH_CharacterVirtual_GetRotation(self->character, cur_r);
@@ -5326,7 +5624,10 @@ static PyObject *Character_get_render_transform(CharacterObject *self,
   // Rotation NLERP
   float dot =
       p_rx * cur_r->x + p_ry * cur_r->y + p_rz * cur_r->z + p_rw * cur_r->w;
-  float q2x = cur_r->x, q2y = cur_r->y, q2z = cur_r->z, q2w = cur_r->w;
+  float q2x = cur_r->x;
+  float q2y = cur_r->y;
+  float q2z = cur_r->z;
+  float q2w = cur_r->w;
   if (dot < 0.0f) {
     q2x = -q2x;
     q2y = -q2y;
@@ -5386,13 +5687,15 @@ static PyObject *Character_get_render_transform(CharacterObject *self,
 static PyObject *PhysicsWorld_set_collision_filter(PhysicsWorldObject *self,
                                                    PyObject *args,
                                                    PyObject *kwds) {
-  uint64_t handle_raw;
-  uint32_t category, mask;
+  uint64_t handle_raw = 0;
+  uint32_t category = 0;
+  uint32_t mask = 0;
   static char *kwlist[] = {"handle", "category", "mask", NULL};
 
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "KII", kwlist, &handle_raw,
-                                   &category, &mask))
+                                   &category, &mask)) {
     return NULL;
+  }
 
   SHADOW_LOCK(&self->shadow_lock);
 
@@ -5421,8 +5724,9 @@ static PyObject *PhysicsWorld_set_collision_filter(PhysicsWorldObject *self,
 // --- Skeleton Implementation ---
 
 static void Skeleton_dealloc(SkeletonObject *self) {
-  if (self->skeleton)
+  if (self->skeleton) {
     JPH_Skeleton_Destroy(self->skeleton);
+  }
   Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
@@ -5440,10 +5744,11 @@ static PyObject *Skeleton_new(PyTypeObject *type, PyObject *args,
 }
 
 static PyObject *Skeleton_add_joint(SkeletonObject *self, PyObject *args) {
-  const char *name;
+  const char *name = NULL;
   int parent_idx = -1; // Default to root
-  if (!PyArg_ParseTuple(args, "s|i", &name, &parent_idx))
+  if (!PyArg_ParseTuple(args, "s|i", &name, &parent_idx)) {
     return NULL;
+  }
 
   int idx = (int)JPH_Skeleton_AddJoint2(self->skeleton, name, parent_idx);
   return PyLong_FromLong(idx);
@@ -5451,9 +5756,10 @@ static PyObject *Skeleton_add_joint(SkeletonObject *self, PyObject *args) {
 
 static PyObject *Skeleton_get_joint_index(SkeletonObject *self,
                                           PyObject *args) {
-  const char *name;
-  if (!PyArg_ParseTuple(args, "s", &name))
+  const char *name = NULL;
+  if (!PyArg_ParseTuple(args, "s", &name)) {
     return NULL;
+  }
   int idx = JPH_Skeleton_GetJointIndex(self->skeleton, name);
   return PyLong_FromLong(idx);
 }
@@ -5461,28 +5767,31 @@ static PyObject *Skeleton_get_joint_index(SkeletonObject *self,
 // --- Ragdoll Settings Implementation ---
 
 static void RagdollSettings_dealloc(RagdollSettingsObject *self) {
-  if (self->settings)
+  if (self->settings) {
     JPH_RagdollSettings_Destroy(self->settings);
+  }
   Py_XDECREF(self->world);
   Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
 static PyObject *PhysicsWorld_create_ragdoll_settings(PhysicsWorldObject *self,
                                                       PyObject *args) {
-  SkeletonObject *py_skel;
+  SkeletonObject *py_skel = NULL;
   if (!PyArg_ParseTuple(
           args, "O!",
           get_culverin_state(PyType_GetModule(Py_TYPE(self)))->SkeletonType,
-          &py_skel))
+          &py_skel)) {
     return NULL;
+  }
 
   PyObject *module = PyType_GetModule(Py_TYPE(self));
   CulverinState *st = get_culverin_state(module);
 
   RagdollSettingsObject *obj = (RagdollSettingsObject *)PyObject_New(
       RagdollSettingsObject, (PyTypeObject *)st->RagdollSettingsType);
-  if (!obj)
+  if (!obj) {
     return NULL;
+  }
 
   obj->settings = JPH_RagdollSettings_Create();
   JPH_RagdollSettings_SetSkeleton(obj->settings, py_skel->skeleton);
@@ -5495,12 +5804,22 @@ static PyObject *PhysicsWorld_create_ragdoll_settings(PhysicsWorldObject *self,
 
 static PyObject *RagdollSettings_add_part(RagdollSettingsObject *self,
                                           PyObject *args, PyObject *kwds) {
-  int joint_idx, parent_idx, shape_type = 0;
+  int joint_idx = 0;
+  int parent_idx = 0;
+  int shape_type = 0;
   float mass = 10.0f;
-  PyObject *py_size = NULL, *py_pos = NULL; // Added py_pos
+  PyObject *py_size = NULL;
+  PyObject *py_pos = NULL;
 
-  float twist_min = -0.1f, twist_max = 0.1f, cone_angle = 0.0f;
-  float cx = 1, cy = 0, cz = 0, nx = 0, ny = 1, nz = 0;
+  float twist_min = -0.1f;
+  float twist_max = 0.1f;
+  float cone_angle = 0.0f;
+  float cx = 1;
+  float cy = 0;
+  float cz = 0;
+  float nx = 0;
+  float ny = 1;
+  float nz = 0;
 
   static char *kwlist[] = {
       "joint_index",  "shape_type", "size",      "mass",
@@ -5512,13 +5831,15 @@ static PyObject *RagdollSettings_add_part(RagdollSettingsObject *self,
   if (!PyArg_ParseTupleAndKeywords(
           args, kwds, "iiOfi|fff(fff)(fff)O", kwlist, &joint_idx, &shape_type,
           &py_size, &mass, &parent_idx, &twist_min, &twist_max, &cone_angle,
-          &cx, &cy, &cz, &nx, &ny, &nz, &py_pos))
+          &cx, &cy, &cz, &nx, &ny, &nz, &py_pos)) {
     return NULL;
+  }
 
   float s[4] = {1, 1, 1, 0};
   if (py_size && PyTuple_Check(py_size)) {
-    for (Py_ssize_t i = 0; i < PyTuple_Size(py_size) && i < 4; i++)
+    for (Py_ssize_t i = 0; i < PyTuple_Size(py_size) && i < 4; i++) {
       s[i] = (float)PyFloat_AsDouble(PyTuple_GetItem(py_size, i));
+    }
   } else if (py_size && PyNumber_Check(py_size)) {
     s[0] = (float)PyFloat_AsDouble(py_size);
   }
@@ -5527,8 +5848,9 @@ static PyObject *RagdollSettings_add_part(RagdollSettingsObject *self,
   JPH_Shape *shape = find_or_create_shape(self->world, shape_type, s);
   SHADOW_UNLOCK(&self->world->shadow_lock);
 
-  if (!shape)
+  if (!shape) {
     return PyErr_Format(PyExc_ValueError, "Invalid shape configuration");
+  }
 
   int current_cap = JPH_RagdollSettings_GetPartCount(self->settings);
   JPH_Skeleton *skel =
@@ -5540,8 +5862,9 @@ static PyObject *RagdollSettings_add_part(RagdollSettingsObject *self,
     JPH_RagdollSettings_ResizeParts(self->settings, skel_count);
   }
 
-  if (joint_idx >= skel_count)
+  if (joint_idx >= skel_count) {
     return PyErr_Format(PyExc_IndexError, "Joint index out of bounds");
+  }
 
   JPH_RagdollSettings_SetPartShape(self->settings, joint_idx, shape);
   JPH_RagdollSettings_SetPartMassProperties(self->settings, joint_idx, mass);
@@ -5591,8 +5914,9 @@ static PyObject *RagdollSettings_add_part(RagdollSettingsObject *self,
 
 static PyObject *RagdollSettings_stabilize(RagdollSettingsObject *self,
                                            PyObject *args) {
-  if (JPH_RagdollSettings_Stabilize(self->settings))
+  if (JPH_RagdollSettings_Stabilize(self->settings)) {
     Py_RETURN_TRUE;
+  }
   Py_RETURN_FALSE;
 }
 
@@ -5615,8 +5939,9 @@ static void Ragdoll_dealloc(RagdollObject *self) {
     // This is expensive but necessary.
     for (size_t i = 0; i < self->body_count; i++) {
       uint32_t slot = self->body_slots[i];
-      if (self->world->slot_states[slot] != SLOT_ALIVE)
+      if (self->world->slot_states[slot] != SLOT_ALIVE) {
         continue; // Already dead?
+      }
 
       uint32_t dense_idx = self->world->slot_to_dense[slot];
       uint32_t last_dense = (uint32_t)self->world->count - 1;
@@ -5656,10 +5981,12 @@ static void Ragdoll_dealloc(RagdollObject *self) {
     SHADOW_UNLOCK(&self->world->shadow_lock);
   }
 
-  if (self->ragdoll)
+  if (self->ragdoll) {
     JPH_Ragdoll_Destroy(self->ragdoll);
-  if (self->body_slots)
+  }
+  if (self->body_slots) {
     PyMem_RawFree(self->body_slots);
+  }
 
   Py_XDECREF(self->world);
   Py_TYPE(self)->tp_free((PyObject *)self);
@@ -5678,8 +6005,14 @@ static PyObject *Skeleton_finalize(SkeletonObject *self, PyObject *args) {
 
 static PyObject *PhysicsWorld_create_ragdoll(PhysicsWorldObject *self,
                                              PyObject *args, PyObject *kwds) {
-  RagdollSettingsObject *py_settings;
-  float px = 0, py = 0, pz = 0, rx = 0, ry = 0, rz = 0, rw = 1;
+  RagdollSettingsObject *py_settings = NULL;
+  float px = 0;
+  float py = 0;
+  float pz = 0;
+  float rx = 0;
+  float ry = 0;
+  float rz = 0;
+  float rw = 1;
   uint64_t user_data = 0;
   uint32_t category = 0xFFFF;
   uint32_t mask = 0xFFFF;
@@ -5694,8 +6027,9 @@ static PyObject *PhysicsWorld_create_ragdoll(PhysicsWorldObject *self,
           get_culverin_state(PyType_GetModule(Py_TYPE(self)))
               ->RagdollSettingsType,
           &py_settings, &px, &py, &pz, &rx, &ry, &rz, &rw, &user_data,
-          &category, &mask, &material_id))
+          &category, &mask, &material_id)) {
     return NULL;
+  }
 
   JPH_RagdollSettings_CalculateBodyIndexToConstraintIndex(
       py_settings->settings);
@@ -5704,9 +6038,10 @@ static PyObject *PhysicsWorld_create_ragdoll(PhysicsWorldObject *self,
 
   JPH_Ragdoll *j_rag = JPH_RagdollSettings_CreateRagdoll(
       py_settings->settings, self->system, 0, user_data);
-  if (!j_rag)
+  if (!j_rag) {
     return PyErr_Format(PyExc_RuntimeError,
                         "Jolt failed to create Ragdoll instance");
+  }
 
   int joint_count = JPH_Skeleton_GetJointCount(
       JPH_RagdollSettings_GetSkeleton(py_settings->settings));
@@ -5810,19 +6145,26 @@ static PyObject *PhysicsWorld_create_ragdoll(PhysicsWorldObject *self,
 
 static PyObject *Ragdoll_drive_to_pose(RagdollObject *self, PyObject *args,
                                        PyObject *kwds) {
-  float root_x, root_y, root_z;
-  float rx, ry, rz, rw;
-  PyObject *py_matrices;
+  float root_x = NAN;
+  float root_y = NAN;
+  float root_z = NAN;
+  float rx = NAN;
+  float ry = NAN;
+  float rz = NAN;
+  float rw = NAN;
+  PyObject *py_matrices = NULL;
 
   static char *kwlist[] = {"root_pos", "root_rot", "matrices", NULL};
 
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)(ffff)O", kwlist, &root_x,
                                    &root_y, &root_z, &rx, &ry, &rz, &rw,
-                                   &py_matrices))
+                                   &py_matrices)) {
     return NULL;
+  }
 
-  if (!self->ragdoll || !self->world)
+  if (!self->ragdoll || !self->world) {
     return NULL;
+  }
 
   // 1. Construct Pose Object (Needed for Motors)
   JPH_SkeletonPose *pose = JPH_SkeletonPose_Create();
@@ -5890,8 +6232,9 @@ static PyObject *Ragdoll_get_body_ids(RagdollObject *self, PyObject *args) {
 
 static PyObject *Ragdoll_get_debug_info(RagdollObject *self,
                                         PyObject *Py_UNUSED(ignored)) {
-  if (!self->ragdoll || !self->world)
+  if (!self->ragdoll || !self->world) {
     Py_RETURN_NONE;
+  }
 
   int body_count = JPH_Ragdoll_GetBodyCount(self->ragdoll);
   PyObject *list = PyList_New(body_count);
@@ -5927,7 +6270,7 @@ static PyObject *Ragdoll_get_debug_info(RagdollObject *self,
 static PyObject *PhysicsWorld_register_material(PhysicsWorldObject *self,
                                                 PyObject *args,
                                                 PyObject *kwds) {
-  uint32_t id;
+  uint32_t id = 0;
   float friction = 0.5f;
   float restitution = 0.0f;
   // Note: 'combine' requires complex callback logic.
@@ -5980,14 +6323,24 @@ static PyObject *PhysicsWorld_register_material(PhysicsWorldObject *self,
 static PyObject *PhysicsWorld_create_heightfield(PhysicsWorldObject *self,
                                                  PyObject *args,
                                                  PyObject *kwds) {
-  float px = 0, py = 0, pz = 0;
-  float rx = 0, ry = 0, rz = 0, rw = 1.0f;
-  float sx = 1.0f, sy = 1.0f, sz = 1.0f;
-  int grid_size;
+  float px = 0;
+  float py = 0;
+  float pz = 0;
+  float rx = 0;
+  float ry = 0;
+  float rz = 0;
+  float rw = 1.0f;
+  float sx = 1.0f;
+  float sy = 1.0f;
+  float sz = 1.0f;
+  int grid_size = 0;
   Py_buffer h_view = {0};
   uint64_t user_data = 0;
-  uint32_t category = 0xFFFF, mask = 0xFFFF, material_id = 0;
-  float friction = 0.2f, restitution = 0.0f;
+  uint32_t category = 0xFFFF;
+  uint32_t mask = 0xFFFF;
+  uint32_t material_id = 0;
+  float friction = 0.2f;
+  float restitution = 0.0f;
 
   static char *kwlist[] = {"pos",         "rot",       "scale",       "heights",
                            "grid_size",   "user_data", "category",    "mask",
@@ -6140,8 +6493,9 @@ static PyObject *get_time(PhysicsWorldObject *self, void *c) {
 static void PhysicsWorld_releasebuffer(PhysicsWorldObject *self,
                                        Py_buffer *view) {
   SHADOW_LOCK(&self->shadow_lock);
-  if (self->view_export_count > 0)
+  if (self->view_export_count > 0) {
     self->view_export_count--;
+  }
   SHADOW_UNLOCK(&self->shadow_lock);
 }
 
@@ -6419,74 +6773,87 @@ static const PyType_Spec Ragdoll_spec = {
 
 // --- Module Initialization ---
 
-#define CREATE_TYPE(name)                                                      \
-  do {                                                                         \
-    st->name##Type =                                                           \
-        PyType_FromModuleAndSpec(m, (PyType_Spec *)&name##_spec, NULL);        \
-    if (!st->name##Type)                                                       \
-      return -1;                                                               \
-    if (PyModule_AddObject(m, #name, st->name##Type) < 0) {                    \
-      Py_DECREF(st->name##Type);                                               \
-      return -1;                                                               \
-    }                                                                          \
-    Py_INCREF(st->name##Type);                                                 \
-  } while (0)
+// 1. Logic for registering types (from the previous refactor)
+static int init_types(PyObject *m, CulverinState *st) {
+  struct {
+    PyType_Spec *spec;
+    PyObject **slot;
+    const char *name;
+  } types[] = {
+      {(PyType_Spec *)&PhysicsWorld_spec, &st->PhysicsWorldType,
+       "PhysicsWorld"},
+      {(PyType_Spec *)&Character_spec, &st->CharacterType, "Character"},
+      {(PyType_Spec *)&Vehicle_spec, &st->VehicleType, "Vehicle"},
+      {(PyType_Spec *)&RagdollSettings_spec, &st->RagdollSettingsType,
+       "RagdollSettings"},
+      {(PyType_Spec *)&Ragdoll_spec, &st->RagdollType, "Ragdoll"},
+      {(PyType_Spec *)&Skeleton_spec, &st->SkeletonType, "Skeleton"}};
 
-#define ADD_CONSTANT(name, value)                                              \
-  do {                                                                         \
-    if (PyModule_AddIntConstant(m, #name, value) < 0) {                        \
-      return -1;                                                               \
-    }                                                                          \
-  } while (0)
+  for (size_t i = 0; i < sizeof(types) / sizeof(types[0]); i++) {
+    PyObject *type = PyType_FromModuleAndSpec(m, types[i].spec, NULL);
+    if (!type) {
+      return -1;
+    }
+    if (PyModule_AddObject(m, types[i].name, type) < 0) {
+      Py_DECREF(type);
+      return -1;
+    }
+    Py_INCREF(type);
+    *types[i].slot = type;
+  }
+  return 0;
+}
 
+// 2. Logic for constants
+static int init_constants(PyObject *m) {
+  static const struct {
+    const char *name;
+    int value;
+  } consts[] = {{"SHAPE_BOX", 0},         {"SHAPE_SPHERE", 1},
+                {"SHAPE_CAPSULE", 2},     {"SHAPE_CYLINDER", 3},
+                {"SHAPE_PLANE", 4},       {"SHAPE_MESH", 5},
+                {"MOTION_STATIC", 0},     {"MOTION_KINEMATIC", 1},
+                {"MOTION_DYNAMIC", 2},    {"CONSTRAINT_FIXED", 0},
+                {"CONSTRAINT_POINT", 1},  {"CONSTRAINT_HINGE", 2},
+                {"CONSTRAINT_SLIDER", 3}, {"CONSTRAINT_DISTANCE", 4},
+                {"CONSTRAINT_CONE", 5}};
+  for (size_t i = 0; i < sizeof(consts) / sizeof(consts[0]); i++) {
+    if (PyModule_AddIntConstant(m, consts[i].name, consts[i].value) < 0) {
+      return -1;
+    }
+  }
+  return 0;
+}
+
+// 3. Main Entry (Complexity: ~5)
 static int culverin_exec(PyObject *m) {
   CulverinState *st = get_culverin_state(m);
+
   if (!JPH_Init()) {
     PyErr_SetString(PyExc_RuntimeError, "Jolt initialization failed");
     return -1;
   }
 
+  // Initialize the GLOBAL lock for Jolt trampolines
+  INIT_LOCK(g_jph_trampoline_lock);
 #if PY_VERSION_HEX < 0x030D0000
-  self->shadow_lock = PyThread_allocate_lock();
-  if (!self->shadow_lock) {
-    PyErr_NoMemory();
-    goto fail;
-  }
-  g_jph_trampoline_lock = PyThread_allocate_lock();
   if (!g_jph_trampoline_lock) {
     PyErr_NoMemory();
-    goto fail;
+    return -1;
   }
 #endif
 
   st->helper = PyImport_ImportModule("culverin._culverin");
-  if (!st->helper)
+  if (!st->helper) {
     return -1;
+  }
 
-  CREATE_TYPE(PhysicsWorld);
-  CREATE_TYPE(Character);
-  CREATE_TYPE(Vehicle);
-  CREATE_TYPE(RagdollSettings);
-  CREATE_TYPE(Ragdoll);
-  CREATE_TYPE(Skeleton);
-
-  ADD_CONSTANT(SHAPE_BOX, 0);
-  ADD_CONSTANT(SHAPE_SPHERE, 1);
-  ADD_CONSTANT(SHAPE_CAPSULE, 2);
-  ADD_CONSTANT(SHAPE_CYLINDER, 3);
-  ADD_CONSTANT(SHAPE_PLANE, 4);
-  ADD_CONSTANT(SHAPE_MESH, 5);
-
-  ADD_CONSTANT(MOTION_STATIC, 0);
-  ADD_CONSTANT(MOTION_KINEMATIC, 1);
-  ADD_CONSTANT(MOTION_DYNAMIC, 2);
-
-  ADD_CONSTANT(CONSTRAINT_FIXED, 0);
-  ADD_CONSTANT(CONSTRAINT_POINT, 1);
-  ADD_CONSTANT(CONSTRAINT_HINGE, 2);
-  ADD_CONSTANT(CONSTRAINT_SLIDER, 3);
-  ADD_CONSTANT(CONSTRAINT_DISTANCE, 4);
-  ADD_CONSTANT(CONSTRAINT_CONE, 5);
+  if (init_types(m, st) < 0) {
+    return -1;
+  }
+  if (init_constants(m) < 0) {
+    return -1;
+  }
 
   return 0;
 }
@@ -6522,6 +6889,7 @@ static const PyModuleDef_Slot culverin_slots[] = {
 #endif
     {0, NULL}};
 
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 static PyModuleDef culverin_module = {
     PyModuleDef_HEAD_INIT,
     .m_name = "_culverin_c",
