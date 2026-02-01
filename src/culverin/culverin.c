@@ -20,6 +20,51 @@ static inline bool unpack_handle(PhysicsWorldObject *self, BodyHandle h,
   return self->generations[*slot] == gen;
 }
 
+/**
+ * Internal helper to remove a body from the dense arrays.
+ * Maintains a packed, contiguous array by swapping the last body into the hole.
+ * MUST be called while holding SHADOW_LOCK.
+ */
+static void world_remove_body_slot(PhysicsWorldObject *self, uint32_t slot) {
+    uint32_t dense_idx = self->slot_to_dense[slot];
+    uint32_t last_dense = (uint32_t)self->count - 1;
+
+    // 1. If we aren't already the last element, move the last element into this hole
+    if (dense_idx != last_dense) {
+        size_t dst = (size_t)dense_idx * 4;
+        size_t src = (size_t)last_dense * 4;
+
+        // Copy Shadow Buffers (16 bytes each)
+        memcpy(&self->positions[dst],          &self->positions[src],          16);
+        memcpy(&self->rotations[dst],          &self->rotations[src],          16);
+        memcpy(&self->prev_positions[dst],     &self->prev_positions[src],     16);
+        memcpy(&self->prev_rotations[dst],     &self->prev_rotations[src],     16);
+        memcpy(&self->linear_velocities[dst],  &self->linear_velocities[src],  16);
+        memcpy(&self->angular_velocities[dst], &self->angular_velocities[src], 16);
+
+        // Copy Metadata
+        self->body_ids[dense_idx]     = self->body_ids[last_dense];
+        self->user_data[dense_idx]    = self->user_data[last_dense];
+        self->categories[dense_idx]   = self->categories[last_dense];
+        self->masks[dense_idx]        = self->masks[last_dense];
+        self->material_ids[dense_idx] = self->material_ids[last_dense];
+
+        // Update Indirection Maps
+        uint32_t mover_slot = self->dense_to_slot[last_dense];
+        self->slot_to_dense[mover_slot] = dense_idx;
+        self->dense_to_slot[dense_idx]  = mover_slot;
+    }
+
+    // 2. Invalidate the slot
+    self->generations[slot]++;
+    self->free_slots[self->free_count++] = slot;
+    self->slot_states[slot] = SLOT_EMPTY;
+
+    // 3. Update World Counters
+    self->count--;
+    self->view_shape[0] = (Py_ssize_t)self->count;
+}
+
 // Character helpers
 // Callback: Can the character collide with this object?
 static bool JPH_API_CALL
@@ -1945,38 +1990,7 @@ static void flush_commands(PhysicsWorldObject *self) {
     case CMD_DESTROY_BODY: {
       JPH_BodyInterface_RemoveBody(bi, bid);
       JPH_BodyInterface_DestroyBody(bi, bid);
-
-      size_t last_dense = self->count - 1;
-      if (dense_idx != last_dense) {
-        // Correct Swap-and-Pop: Move all shadow data
-        memcpy(&self->positions[(size_t)dense_idx * 4],
-               &self->positions[last_dense * 4], 16);
-        memcpy(&self->rotations[(size_t)dense_idx * 4],
-               &self->rotations[last_dense * 4], 16);
-        memcpy(&self->prev_positions[(size_t)dense_idx * 4],
-               &self->prev_positions[last_dense * 4], 16);
-        memcpy(&self->prev_rotations[(size_t)dense_idx * 4],
-               &self->prev_rotations[last_dense * 4], 16);
-        memcpy(&self->linear_velocities[(size_t)dense_idx * 4],
-               &self->linear_velocities[last_dense * 4], 16);
-        memcpy(&self->angular_velocities[(size_t)dense_idx * 4],
-               &self->angular_velocities[last_dense * 4], 16);
-
-        self->body_ids[dense_idx] = self->body_ids[last_dense];
-        self->user_data[dense_idx] = self->user_data[last_dense];
-        self->categories[dense_idx] = self->categories[last_dense];
-        self->masks[dense_idx] = self->masks[last_dense];
-        self->material_ids[dense_idx] = self->material_ids[last_dense];
-
-        uint32_t mover_slot = self->dense_to_slot[last_dense];
-        self->slot_to_dense[mover_slot] = dense_idx;
-        self->dense_to_slot[dense_idx] = mover_slot;
-      }
-
-      self->generations[slot]++;
-      self->free_slots[self->free_count++] = slot;
-      self->slot_states[slot] = SLOT_EMPTY;
-      self->count--;
+      world_remove_body_slot(self, slot);
       break;
     }
 
@@ -5269,46 +5283,9 @@ static void Character_dealloc(CharacterObject *self) {
 
   // GUARD: We must wait for queries to finish. Dealloc cannot return error,
   // so we must block. Since queries are fast, this is a very short wait.
-  while (atomic_load_explicit(&self->world->active_queries,
-                              memory_order_acquire) > 0) {
-    // Busy wait or yield.
-  }
+  BLOCK_UNTIL_NOT_QUERYING(self->world);
 
-  uint32_t dense_idx = self->world->slot_to_dense[slot];
-  uint32_t last_dense = (uint32_t)self->world->count - 1;
-
-  if (dense_idx != last_dense) {
-    // --- THE FIX: COMPLETE SWAP AND POP ---
-    // Move EVERY shadow array element to maintain pack integrity.
-    size_t dst = (size_t)dense_idx * 4;
-    size_t src = (size_t)last_dense * 4;
-
-    memcpy(&self->world->positions[dst], &self->world->positions[src], 16);
-    memcpy(&self->world->rotations[dst], &self->world->rotations[src], 16);
-    memcpy(&self->world->prev_positions[dst], &self->world->prev_positions[src],
-           16);
-    memcpy(&self->world->prev_rotations[dst], &self->world->prev_rotations[src],
-           16);
-    memcpy(&self->world->linear_velocities[dst],
-           &self->world->linear_velocities[src], 16);
-    memcpy(&self->world->angular_velocities[dst],
-           &self->world->angular_velocities[src], 16);
-
-    self->world->body_ids[dense_idx] = self->world->body_ids[last_dense];
-    self->world->user_data[dense_idx] = self->world->user_data[last_dense];
-
-    // Update Indirection Map
-    uint32_t mover_slot = self->world->dense_to_slot[last_dense];
-    self->world->slot_to_dense[mover_slot] = dense_idx;
-    self->world->dense_to_slot[dense_idx] = mover_slot;
-  }
-
-  // Recycle Slot
-  self->world->generations[slot]++;
-  self->world->free_slots[self->world->free_count++] = slot;
-  self->world->slot_states[slot] = SLOT_EMPTY;
-  self->world->count--;
-  self->world->view_shape[0] = (Py_ssize_t)self->world->count;
+  world_remove_body_slot(self->world, slot);
 
   SHADOW_UNLOCK(&self->world->shadow_lock);
 
@@ -5943,41 +5920,8 @@ static void Ragdoll_dealloc(RagdollObject *self) {
         continue; // Already dead?
       }
 
-      uint32_t dense_idx = self->world->slot_to_dense[slot];
-      uint32_t last_dense = (uint32_t)self->world->count - 1;
-
-      if (dense_idx != last_dense) {
-        // Swap-and-Pop Logic (Duplicated from destroy_body/Char_dealloc)
-        // In a real codebase, factor this into `PhysicsWorld_free_slot(world,
-        // slot)`
-        size_t dst = (size_t)dense_idx * 4;
-        size_t src = (size_t)last_dense * 4;
-
-        memcpy(&self->world->positions[dst], &self->world->positions[src], 16);
-        memcpy(&self->world->rotations[dst], &self->world->rotations[src], 16);
-        memcpy(&self->world->prev_positions[dst],
-               &self->world->prev_positions[src], 16);
-        memcpy(&self->world->prev_rotations[dst],
-               &self->world->prev_rotations[src], 16);
-        memcpy(&self->world->linear_velocities[dst],
-               &self->world->linear_velocities[src], 16);
-        memcpy(&self->world->angular_velocities[dst],
-               &self->world->angular_velocities[src], 16);
-
-        self->world->body_ids[dense_idx] = self->world->body_ids[last_dense];
-        self->world->user_data[dense_idx] = self->world->user_data[last_dense];
-
-        uint32_t mover_slot = self->world->dense_to_slot[last_dense];
-        self->world->slot_to_dense[mover_slot] = dense_idx;
-        self->world->dense_to_slot[dense_idx] = mover_slot;
-      }
-
-      self->world->generations[slot]++;
-      self->world->free_slots[self->world->free_count++] = slot;
-      self->world->slot_states[slot] = SLOT_EMPTY;
-      self->world->count--;
+      world_remove_body_slot(self->world, slot);
     }
-
     SHADOW_UNLOCK(&self->world->shadow_lock);
   }
 
