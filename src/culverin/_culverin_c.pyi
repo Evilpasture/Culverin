@@ -71,8 +71,8 @@ class PhysicsWorld:
         mass: float = -1.0,
         category: int = 0xFFFF,
         mask: int = 0xFFFF,
-        friction: float = 0.2,
-        restitution: float = 0.0,
+        friction: float = -1.0,
+        restitution: float = -1.0,
         material_id: int = 0
     ) -> int: ...
 

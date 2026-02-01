@@ -18,6 +18,7 @@ SHAPE_CAPSULE: int = 2
 SHAPE_CYLINDER: int = 3
 SHAPE_PLANE: int = 4
 SHAPE_MESH: int = 5
+SHAPE_HEIGHTFIELD: int = 6
 
 MOTION_STATIC: int = 0
 MOTION_KINEMATIC: int = 1
@@ -260,7 +261,16 @@ class PhysicsWorld:
     def raycast_batch(self, starts: bytes, directions: bytes, max_dist: float = 1000.0) -> bytes:
         """
         Execute multiple raycasts efficiently (GIL-released).
-        Returns N * 48 bytes of packed RayCastBatchResult structs.
+        Returns:
+            Packed bytes buffer of RayCastBatchResult (N*48 bytes).
+            Result format (Little-Endian):
+                uint64 handle      (offset 0)
+                float32 fraction    (offset 8)
+                float32 nx, ny, nz  (Normal, offset 12)
+                float32 px, py, pz  (Point, offset 24)
+                uint32 subshape_id  (offset 36)
+                uint32 material_id  (offset 40)
+                uint32 padding      (offset 44)
         """
         ...
     def shapecast(self, shape: int, pos: Vec3, rot: Quat, dir: Vec3, size: Any, ignore: Union[Handle, Character] = 0) -> Optional[Tuple[Handle, float, Vec3, Vec3]]: ...
