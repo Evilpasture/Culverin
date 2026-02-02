@@ -226,6 +226,31 @@ class PhysicsWorld:
             ccd: Enable Continuous Collision Detection.
         """
         ...
+
+    def create_compound_body(
+        self,
+        pos: Vec3,
+        rot: Quat,
+        parts: List[Tuple[Vec3, Quat, int, Any]],
+        motion: int = MOTION_DYNAMIC,
+        mass: float = -1.0,
+        user_data: int = 0,
+        is_sensor: bool = False,
+        category: int = 0xFFFF,
+        mask: int = 0xFFFF,
+        material_id: int = 0,
+        friction: float = 0.2,
+        restitution: float = 0.0,
+        ccd: bool = False
+    ) -> Handle:
+        """
+        Create a single rigid body from multiple shapes.
+        
+        Args:
+            parts: List of (local_pos, local_rot, shape_type, size).
+                   Example: [((0,1,0), (0,0,0,1), SHAPE_BOX, (0.5,0.5,0.5))]
+        """
+        ...
         
     def destroy_body(self, handle: Handle) -> None:
         """Queue destruction of a body. Handle becomes invalid immediately."""

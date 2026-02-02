@@ -137,6 +137,24 @@ class PhysicsWorld:
         ccd: bool = False
     ) -> int: ...
 
+    def create_compound_body(
+        self,
+        pos: Tuple[float, float, float],
+        rot: Tuple[float, float, float, float],
+        parts: List[Tuple[Tuple[float, float, float], Tuple[float, float, float, float], int, Any]],
+        motion: int = MOTION_DYNAMIC,
+        mass: float = -1.0,
+        user_data: int = 0,
+        is_sensor: bool = False,
+        category: int = 0xFFFF,
+        mask: int = 0xFFFF,
+        material_id: int = 0,
+        friction: float = 0.2,
+        restitution: float = 0.0,
+        ccd: bool = False
+    ) -> int:
+        ...
+
     def destroy_body(self, handle: int) -> None: ...
     def create_constraint(self, type: int, body1: int, body2: int, params: Optional[Any] = None) -> int: ...
     def destroy_constraint(self, handle: int) -> None: ...
