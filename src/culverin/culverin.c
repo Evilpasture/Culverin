@@ -1444,6 +1444,39 @@ static PyObject *PhysicsWorld_apply_impulse(PhysicsWorldObject *self,
   Py_RETURN_NONE;
 }
 
+static PyObject *PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self,
+                                               PyObject *args, PyObject *kwds) {
+  uint64_t h = 0;
+  float ix=0, iy=0, iz=0; // Impulse
+  float px=0, py=0, pz=0; // Position
+  
+  static char *kwlist[] = {"handle", "ix", "iy", "iz", "px", "py", "pz", NULL};
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "Kffffff", kwlist, &h, &ix, &iy, &iz, &px, &py, &pz)) {
+    return NULL;
+  }
+  
+  SHADOW_LOCK(&self->shadow_lock);
+  BLOCK_UNTIL_NOT_STEPPING(self);
+  BLOCK_UNTIL_NOT_QUERYING(self);
+
+  uint32_t slot = 0;
+  if (!unpack_handle(self, h, &slot) || self->slot_states[slot] != SLOT_ALIVE) {
+    SHADOW_UNLOCK(&self->shadow_lock);
+    PyErr_SetString(PyExc_ValueError, "Invalid handle");
+    return NULL;
+  }
+  JPH_BodyID bid = self->body_ids[self->slot_to_dense[slot]];
+
+  JPH_Vec3 imp = {ix, iy, iz};
+  JPH_RVec3 pos = {(double)px, (double)py, (double)pz};
+  
+  JPH_BodyInterface_AddImpulse2(self->body_interface, bid, &imp, &pos);
+  JPH_BodyInterface_ActivateBody(self->body_interface, bid);
+  
+  SHADOW_UNLOCK(&self->shadow_lock);
+  Py_RETURN_NONE;
+}
+
 static PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *args,
                                       PyObject *kwds) {
   float sx = NAN;
@@ -7097,6 +7130,8 @@ static const PyMethodDef PhysicsWorld_methods[] = {
     // --- Interaction ---
     {"apply_impulse", (PyCFunction)PhysicsWorld_apply_impulse,
      METH_VARARGS | METH_KEYWORDS, NULL},
+    {"apply_impulse_at", (PyCFunction)PhysicsWorld_apply_impulse_at, 
+     METH_VARARGS | METH_KEYWORDS, "Apply impulse at world position."},
     {"apply_buoyancy", (PyCFunction)PhysicsWorld_apply_buoyancy,
      METH_VARARGS | METH_KEYWORDS, "Apply fluid forces to a body."},
     {"set_position", (PyCFunction)PhysicsWorld_set_position,
