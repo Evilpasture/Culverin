@@ -59,6 +59,10 @@ class WheelConfig(TypedDict):
     radius: float
     width: float
 
+class TrackConfig(TypedDict):
+    indices: List[int] # Indices of wheels belonging to this track
+    driven_wheel: int  # Index of the sprocket wheel within the global wheels list
+
 class Character:
     def move(self, velocity: Vec3, dt: float) -> None:
         """Move the virtual character, resolve collisions and stair climbing."""
@@ -114,6 +118,11 @@ class Manual:
 class Vehicle:
     def set_input(self, forward: float = 0.0, right: float = 0.0, brake: float = 0.0, handbrake: float = 0.0) -> None:
         """Set driver inputs (throttles, steering, braking)."""
+    def set_tank_input(self, left: float, right: float, brake: float = 0.0) -> None:
+        """
+        Set inputs for tracked vehicles. 
+        Corrects engine RPM for pivot turns and reverses track ratios when backing up.
+        """
     def get_wheel_transform(self, index: int) -> Tuple[Vec3, Quat]:
         """Get world-space wheel transform."""
     def get_wheel_local_transform(self, index: int) -> Tuple[Vec3, Quat]:
@@ -166,6 +175,17 @@ class PhysicsWorld:
     def create_vehicle(self, chassis: Handle, wheels: Sequence[WheelConfig], drive: str = "RWD", engine: Optional[Engine] = None, transmission: Optional[Union[Automatic, Manual]] = None) -> Vehicle:
         """Combine bodies into a wheeled vehicle system."""
         
+    def create_tracked_vehicle(
+        self, 
+        chassis: Handle, 
+        wheels: Sequence[WheelConfig], 
+        tracks: Sequence[TrackConfig], 
+        max_torque: float = 5000.0, 
+        max_rpm: float = 6000.0
+    ) -> Vehicle:
+        """Create a native Jolt tracked vehicle (tank) with physical treads."""
+        ...
+
     def create_ragdoll_settings(self, skeleton: Skeleton) -> RagdollSettings:
         """Create a ragdoll configuration template."""
         
@@ -261,6 +281,15 @@ class PhysicsWorld:
     def destroy_constraint(self, handle: int) -> None: ...
     
     def apply_impulse(self, handle: Handle, x: float, y: float, z: float) -> None: ...
+
+    def apply_impulse_at(self, handle: Handle, ix: float, iy: float, iz: float, px: float, py: float, pz: float) -> None:
+        """
+        Apply a linear impulse at a specific world-space position to generate torque.
+        Args:
+            ix, iy, iz: Impulse vector.
+            px, py, pz: World-space application point.
+        """
+        ...
     
     def apply_buoyancy(
         self, handle: Handle, surface_y: float, buoyancy: float = 1.0, 

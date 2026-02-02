@@ -39,6 +39,7 @@ class Character:
 
 class Vehicle:
     def set_input(self, forward: float = 0.0, right: float = 0.0, brake: float = 0.0, handbrake: float = 0.0) -> None: ...
+    def set_tank_input(self, left: float, right: float, brake: float = 0.0) -> None: ...
     def get_wheel_transform(self, index: int) -> Tuple[Tuple[float, float, float], Tuple[float, float, float, float]]: ...
     def get_wheel_local_transform(self, index: int) -> Tuple[Tuple[float, float, float], Tuple[float, float, float, float]]: ...
     def get_debug_state(self) -> None: ...
@@ -92,6 +93,15 @@ class PhysicsWorld:
     
     def create_vehicle(self, chassis: int, wheels: Sequence[Any], drive: str = "RWD", 
                        engine: Optional[Any] = None, transmission: Optional[Any] = None) -> Vehicle: ...
+    
+    def create_tracked_vehicle(
+        self, 
+        chassis: int, 
+        wheels: Sequence[Any], 
+        tracks: Sequence[Any], 
+        max_torque: float = 5000.0, 
+        max_rpm: float = 6000.0
+    ) -> Vehicle: ...
     
     def create_ragdoll_settings(self, skeleton: Skeleton) -> RagdollSettings: ...
     
@@ -160,6 +170,13 @@ class PhysicsWorld:
     def destroy_constraint(self, handle: int) -> None: ...
     
     def apply_impulse(self, handle: int, x: float, y: float, z: float) -> None: ...
+
+    def apply_impulse_at(
+        self, 
+        handle: int, 
+        ix: float, iy: float, iz: float, 
+        px: float, py: float, pz: float
+    ) -> None: ...
     
     def apply_buoyancy(
         self, 
