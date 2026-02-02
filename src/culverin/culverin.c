@@ -20,6 +20,36 @@ static inline bool unpack_handle(PhysicsWorldObject *self, BodyHandle h,
   return self->generations[*slot] == gen;
 }
 
+// --- Debug Buffer Helpers ---
+static void debug_buffer_ensure(DebugBuffer* buf, size_t count_needed) {
+    if (buf->count + count_needed > buf->capacity) {
+        size_t new_cap = (buf->capacity == 0) ? 4096 : buf->capacity * 2;
+        while (buf->count + count_needed > new_cap) new_cap *= 2;
+        
+        void* new_ptr = PyMem_RawRealloc(buf->data, new_cap * sizeof(DebugVertex));
+        if (!new_ptr) return; // Silent fail on OOM for debug info
+        
+        buf->data = (DebugVertex*)new_ptr;
+        buf->capacity = new_cap;
+    }
+}
+
+static void debug_buffer_push(DebugBuffer* buf, float x, float y, float z, uint32_t color) {
+    if (buf->count >= buf->capacity) return; // Safety
+    buf->data[buf->count].x = x;
+    buf->data[buf->count].y = y;
+    buf->data[buf->count].z = z;
+    buf->data[buf->count].color = color;
+    buf->count++;
+}
+
+static void debug_buffer_free(DebugBuffer* buf) {
+    if (buf->data) PyMem_RawFree(buf->data);
+    buf->data = NULL;
+    buf->count = 0;
+    buf->capacity = 0;
+}
+
 /**
  * Internal helper to remove a body from the dense arrays.
  * Maintains a packed, contiguous array by swapping the last body into the hole.
@@ -330,6 +360,33 @@ static inline void manual_quat_multiply(const JPH_Quat *a, const JPH_Quat *b,
   out->z = a->w * b->z + a->x * b->y - a->y * b->x + a->z * b->w;
   out->w = a->w * b->w - a->x * b->x - a->y * b->y - a->z * b->z;
 }
+
+// --- Jolt Debug Callbacks ---
+static void JPH_API_CALL OnDebugDrawLine(void* userData, const JPH_RVec3* from, const JPH_RVec3* to, JPH_Color color) {
+    PhysicsWorldObject* self = (PhysicsWorldObject*)userData;
+    debug_buffer_ensure(&self->debug_lines, 2);
+    debug_buffer_push(&self->debug_lines, (float)from->x, (float)from->y, (float)from->z, color);
+    debug_buffer_push(&self->debug_lines, (float)to->x, (float)to->y, (float)to->z, color);
+}
+
+static void JPH_API_CALL OnDebugDrawTriangle(void* userData, const JPH_RVec3* v1, const JPH_RVec3* v2, const JPH_RVec3* v3, JPH_Color color, JPH_DebugRenderer_CastShadow castShadow) {
+    PhysicsWorldObject* self = (PhysicsWorldObject*)userData;
+    debug_buffer_ensure(&self->debug_triangles, 3);
+    debug_buffer_push(&self->debug_triangles, (float)v1->x, (float)v1->y, (float)v1->z, color);
+    debug_buffer_push(&self->debug_triangles, (float)v2->x, (float)v2->y, (float)v2->z, color);
+    debug_buffer_push(&self->debug_triangles, (float)v3->x, (float)v3->y, (float)v3->z, color);
+}
+
+static void JPH_API_CALL OnDebugDrawText(void* userData, const JPH_RVec3* position, const char* str, JPH_Color color, float height) {
+    // Text is hard to batch efficiently to Python bytes. 
+    // Usually ignored or printed to stdout.
+}
+
+static const JPH_DebugRenderer_Procs debug_procs = {
+    .DrawLine = OnDebugDrawLine,
+    .DrawTriangle = OnDebugDrawTriangle,
+    .DrawText3D = OnDebugDrawText
+};
 
 // --- Internal Contact Helper ---
 static void process_contact_manifold(PhysicsWorldObject *self, 
@@ -895,6 +952,13 @@ static void PhysicsWorld_free_members(PhysicsWorldObject *self) {
     self->job_system = NULL;
   }
 
+  if (self->debug_renderer) {
+    JPH_DebugRenderer_Destroy(self->debug_renderer);
+    self->debug_renderer = NULL;
+  }
+  debug_buffer_free(&self->debug_lines);
+  debug_buffer_free(&self->debug_triangles);
+
   // --- 4. Filters & Interfaces ---
   // Still missing Destroy APIs in JoltC as of current version.
   if (self->bp_interface) {
@@ -1057,6 +1121,12 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
   self->positions = NULL;
   self->materials = NULL;
   self->id_to_handle_map = NULL;
+
+  self->debug_lines.data = NULL; self->debug_lines.count = 0; self->debug_lines.capacity = 0;
+  self->debug_triangles.data = NULL; self->debug_triangles.count = 0; self->debug_triangles.capacity = 0;
+
+  self->debug_renderer = JPH_DebugRenderer_Create(self);
+  JPH_DebugRenderer_SetProcs(&debug_procs);
 
   PyObject *module = PyType_GetModule(Py_TYPE(self));
   CulverinState *st = get_culverin_state(module);
@@ -2091,6 +2161,14 @@ static void flush_commands(PhysicsWorldObject *self) {
     case CMD_SET_USER_DATA: {
       self->user_data[dense_idx] = cmd->data.user_data_val;
       break;
+    }
+    case CMD_SET_CCD: {
+        JPH_MotionQuality qual = cmd->data.motion_type ? 
+                                 JPH_MotionQuality_LinearCast : 
+                                 JPH_MotionQuality_Discrete;
+        
+        JPH_BodyInterface_SetMotionQuality(bi, bid, qual);
+        break;
     }
     default:
       break;
@@ -3227,6 +3305,7 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
   int motion_type = 2;
   unsigned long long user_data = 0;
   int is_sensor = 0;
+  int use_ccd = 0;
   float mass = -1.0f;
   uint32_t category = 0xFFFF;
   uint32_t mask = 0xFFFF;
@@ -3238,14 +3317,14 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
   static char *kwlist[] = {
       "pos",       "rot",         "size",        "shape",    "motion",
       "user_data", "is_sensor",   "mass",        "category", "mask",
-      "friction",  "restitution", "material_id", NULL};
+      "friction",  "restitution", "material_id", "ccd", NULL};
 
   // Updated format string: "f" for mass, "I" for category, "I" for mask
   if (!PyArg_ParseTupleAndKeywords(
-          args, kwds, "|(fff)(ffff)OiiKpfIIffI", kwlist, &px, &py, &pz, &rx,
+          args, kwds, "|(fff)(ffff)OiiKpfIIffIp", kwlist, &px, &py, &pz, &rx,
           &ry, &rz, &rw, &py_size, &shape_type, &motion_type, &user_data,
           &is_sensor, &mass, &category, &mask, &friction, &restitution,
-          &material_id)) {
+          &material_id, &use_ccd)) {
     return NULL;
   }
 
@@ -3325,6 +3404,9 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
 
   if (is_sensor) {
     JPH_BodyCreationSettings_SetIsSensor(settings, true);
+  }
+  if (use_ccd) {
+    JPH_BodyCreationSettings_SetMotionQuality(settings, JPH_MotionQuality_LinearCast);
   }
   if (motion_type == 2) {
     JPH_BodyCreationSettings_SetAllowSleeping(settings, true);
@@ -4361,6 +4443,43 @@ static PyObject *PhysicsWorld_set_transform(PhysicsWorldObject *self,
   // This prevents the "Visual Streak" on the frame the body is moved.
   memcpy(&self->prev_positions[off], &self->positions[off], 16);
   memcpy(&self->prev_rotations[off], &self->rotations[off], 16);
+
+  SHADOW_UNLOCK(&self->shadow_lock);
+  Py_RETURN_NONE;
+}
+
+static PyObject *PhysicsWorld_set_ccd(PhysicsWorldObject *self,
+                                      PyObject *args, PyObject *kwds) {
+  uint64_t handle_raw = 0;
+  int enabled = 0;
+  static char *kwlist[] = {"handle", "enabled", NULL};
+
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "Kp", kwlist, &handle_raw, &enabled)) {
+    return NULL;
+  }
+
+  SHADOW_LOCK(&self->shadow_lock);
+  BLOCK_UNTIL_NOT_STEPPING(self);
+  BLOCK_UNTIL_NOT_QUERYING(self);
+
+  uint32_t slot = 0;
+  if (!unpack_handle(self, (BodyHandle)handle_raw, &slot) ||
+      self->slot_states[slot] != SLOT_ALIVE) {
+    SHADOW_UNLOCK(&self->shadow_lock);
+    PyErr_SetString(PyExc_ValueError, "Invalid handle");
+    return NULL;
+  }
+
+  if (!ensure_command_capacity(self)) {
+      SHADOW_UNLOCK(&self->shadow_lock);
+      return PyErr_NoMemory();
+  }
+
+  // Reuse the 'motion_type' field in the union since it's just an int
+  PhysicsCommand *cmd = &self->command_queue[self->command_count++];
+  cmd->type = CMD_SET_CCD;
+  cmd->slot = slot;
+  cmd->data.motion_type = enabled; // 1 = LinearCast, 0 = Discrete
 
   SHADOW_UNLOCK(&self->shadow_lock);
   Py_RETURN_NONE;
@@ -6426,6 +6545,70 @@ static PyObject *PhysicsWorld_create_heightfield(PhysicsWorldObject *self,
   return PyLong_FromUnsignedLongLong(handle);
 }
 
+static PyObject* PhysicsWorld_get_debug_data(PhysicsWorldObject* self, PyObject* args, PyObject* kwds) {
+    int draw_shapes = 1;
+    int draw_constraints = 1;
+    int draw_bounding_box = 0;
+    int draw_centers = 0;
+    int wireframe = 1;
+
+    static char* kwlist[] = {"shapes", "constraints", "bbox", "centers", "wireframe", NULL};
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "|ppppp", kwlist, 
+        &draw_shapes, &draw_constraints, &draw_bounding_box, &draw_centers, &wireframe)) {
+        return NULL;
+    }
+
+    SHADOW_LOCK(&self->shadow_lock);
+    BLOCK_UNTIL_NOT_STEPPING(self);
+
+    // 1. Reset Buffer Counts (Reuse memory)
+    self->debug_lines.count = 0;
+    self->debug_triangles.count = 0;
+
+    // 2. Configure Draw Settings (For Bodies Only)
+    JPH_DrawSettings settings;
+    JPH_DrawSettings_InitDefault(&settings);
+    settings.drawShape = draw_shapes;
+    settings.drawShapeWireframe = wireframe;
+    settings.drawBoundingBox = draw_bounding_box;
+    settings.drawCenterOfMassTransform = draw_centers;
+    
+    // 3. Draw Bodies
+    if (draw_shapes || draw_bounding_box || draw_centers) {
+        JPH_PhysicsSystem_DrawBodies(self->system, &settings, self->debug_renderer, NULL);
+    }
+    
+    // 4. Draw Constraints (Explicit Calls)
+    if (draw_constraints) {
+        JPH_PhysicsSystem_DrawConstraints(self->system, self->debug_renderer);
+        JPH_PhysicsSystem_DrawConstraintLimits(self->system, self->debug_renderer);
+    }
+
+    // 5. Export to Python Bytes
+    // We snapshot the C-arrays into Python immutable bytes objects.
+    PyObject* lines_bytes = PyBytes_FromStringAndSize(
+        (char*)self->debug_lines.data, 
+        (Py_ssize_t)(self->debug_lines.count * sizeof(DebugVertex))
+    );
+    PyObject* tris_bytes = PyBytes_FromStringAndSize(
+        (char*)self->debug_triangles.data, 
+        (Py_ssize_t)(self->debug_triangles.count * sizeof(DebugVertex))
+    );
+
+    SHADOW_UNLOCK(&self->shadow_lock);
+
+    if (!lines_bytes || !tris_bytes) {
+        Py_XDECREF(lines_bytes);
+        Py_XDECREF(tris_bytes);
+        return PyErr_NoMemory();
+    }
+
+    PyObject* ret = PyTuple_Pack(2, lines_bytes, tris_bytes);
+    Py_DECREF(lines_bytes);
+    Py_DECREF(tris_bytes);
+    return ret;
+}
+
 /* --- Immutable Getters (Safe without locks) --- */
 
 static PyObject *Vehicle_get_wheel_count(VehicleObject *self, void *closure) {
@@ -6560,6 +6743,8 @@ static const PyMethodDef PhysicsWorld_methods[] = {
      METH_VARARGS | METH_KEYWORDS, NULL},
     {"deactivate", (PyCFunction)PhysicsWorld_deactivate,
      METH_VARARGS | METH_KEYWORDS, NULL},
+    {"set_ccd", (PyCFunction)PhysicsWorld_set_ccd,
+     METH_VARARGS | METH_KEYWORDS, "Enable/Disable Continuous Collision Detection."},
 
     // --- Queries ---
     {"raycast", (PyCFunction)PhysicsWorld_raycast, METH_VARARGS | METH_KEYWORDS,
@@ -6587,6 +6772,8 @@ static const PyMethodDef PhysicsWorld_methods[] = {
      METH_VARARGS,
      "Returns a packed bytes object of interpolated positions and rotations "
      "(3+4 floats per body)."},
+    {"get_debug_data", (PyCFunction)PhysicsWorld_get_debug_data, METH_VARARGS | METH_KEYWORDS, 
+     "Returns (lines_bytes, triangles_bytes). Each vertex is 16 bytes: [x, y, z, color_u32]."},
 
     // --- User Data ---
     {"get_user_data", (PyCFunction)PhysicsWorld_get_user_data,
@@ -6796,6 +6983,7 @@ static int init_constants(PyObject *m) {
   } consts[] = {{"SHAPE_BOX", 0},         {"SHAPE_SPHERE", 1},
                 {"SHAPE_CAPSULE", 2},     {"SHAPE_CYLINDER", 3},
                 {"SHAPE_PLANE", 4},       {"SHAPE_MESH", 5},
+                {"SHAPE_HEIGHTFIELD", 6},
                 {"MOTION_STATIC", 0},     {"MOTION_KINEMATIC", 1},
                 {"MOTION_DYNAMIC", 2},    {"CONSTRAINT_FIXED", 0},
                 {"CONSTRAINT_POINT", 1},  {"CONSTRAINT_HINGE", 2},
