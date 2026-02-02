@@ -3291,6 +3291,160 @@ fail:
   return NULL;
 }
 
+static PyObject *PhysicsWorld_create_convex_hull(PhysicsWorldObject *self,
+                                                 PyObject *args, PyObject *kwds) {
+  float px = 0;
+  float py = 0;
+  float pz = 0;
+  float rx = 0;
+  float ry = 0;
+  float rz = 0;
+  float rw = 1.0f;
+  
+  Py_buffer points_view = {0};
+  uint64_t user_data = 0;
+  
+  int motion_type = 2; // Dynamic by default for hulls!
+  float mass = -1.0f;
+  uint32_t category = 0xFFFF;
+  uint32_t mask = 0xFFFF;
+  uint32_t material_id = 0;
+  float friction = 0.2f;
+  float restitution = 0.0f;
+  int use_ccd = 0;
+
+  static char *kwlist[] = {
+      "pos", "rot", "points", 
+      "motion", "mass", "user_data", 
+      "category", "mask", "material_id", 
+      "friction", "restitution", "ccd", NULL};
+
+  if (!PyArg_ParseTupleAndKeywords(
+          args, kwds, "(fff)(ffff)y*|ifKIIffp", kwlist, 
+          &px, &py, &pz, &rx, &ry, &rz, &rw, 
+          &points_view, &motion_type, &mass, &user_data,
+          &category, &mask, &material_id, 
+          &friction, &restitution, &use_ccd)) {
+    return NULL;
+  }
+
+  // 1. Buffer Validation
+  if (points_view.len % (3 * sizeof(float)) != 0) {
+    PyBuffer_Release(&points_view);
+    return PyErr_Format(PyExc_ValueError, "Points buffer must be 3 * float32");
+  }
+
+  size_t num_points = points_view.len / (3 * sizeof(float));
+  if (num_points < 3) {
+    PyBuffer_Release(&points_view);
+    return PyErr_Format(PyExc_ValueError, "Convex Hull requires at least 3 points");
+  }
+
+  // 2. Convert to Jolt format
+  // We copy to a temporary C array because JPH_Vec3 alignment might differ from packed floats
+  JPH_Vec3* jolt_points = PyMem_RawMalloc(num_points * sizeof(JPH_Vec3));
+  if (!jolt_points) {
+      PyBuffer_Release(&points_view);
+      return PyErr_NoMemory();
+  }
+
+  float* raw_floats = (float*)points_view.buf;
+  for (size_t i = 0; i < num_points; i++) {
+      jolt_points[i].x = raw_floats[i*3 + 0];
+      jolt_points[i].y = raw_floats[i*3 + 1];
+      jolt_points[i].z = raw_floats[i*3 + 2];
+  }
+  PyBuffer_Release(&points_view); // Done with Python object
+
+  // 3. Create Shape (Unlocked - Heavy Math)
+  // 0.05f is the standard convex radius "shrink" to improve performance
+  JPH_ConvexHullShapeSettings* hull_settings = 
+      JPH_ConvexHullShapeSettings_Create(jolt_points, (uint32_t)num_points, 0.05f);
+  
+  PyMem_RawFree(jolt_points); // Free temp buffer
+
+  if (!hull_settings) {
+      return PyErr_Format(PyExc_RuntimeError, "Failed to allocate Hull Settings");
+  }
+
+  JPH_Shape* shape = (JPH_Shape*)JPH_ConvexHullShapeSettings_CreateShape(hull_settings);
+  JPH_ShapeSettings_Destroy((JPH_ShapeSettings*)hull_settings);
+
+  if (!shape) {
+      return PyErr_Format(PyExc_RuntimeError, 
+          "Failed to build Convex Hull. Points might be coplanar or degenerate.");
+  }
+
+  // 4. World Registration (Locked)
+  SHADOW_LOCK(&self->shadow_lock);
+  BLOCK_UNTIL_NOT_STEPPING(self);
+  BLOCK_UNTIL_NOT_QUERYING(self);
+
+  if (self->free_count == 0) {
+    if (PhysicsWorld_resize(self, self->capacity * 2) < 0) {
+      SHADOW_UNLOCK(&self->shadow_lock);
+      JPH_Shape_Destroy(shape); // Clean up orphaned shape
+      return NULL;
+    }
+  }
+
+  uint32_t slot = self->free_slots[--self->free_count];
+  self->slot_states[slot] = SLOT_PENDING_CREATE;
+
+  JPH_STACK_ALLOC(JPH_RVec3, pos);
+  pos->x = (double)px; pos->y = (double)py; pos->z = (double)pz;
+  JPH_STACK_ALLOC(JPH_Quat, rot);
+  rot->x = rx; rot->y = ry; rot->z = rz; rot->w = rw;
+
+  JPH_BodyCreationSettings *settings = JPH_BodyCreationSettings_Create3(
+      shape, pos, rot, (JPH_MotionType)motion_type, 
+      (motion_type == 0) ? 0 : 1); // Layer 0 for Static, 1 for Moving
+
+  // Mass Override
+  if (mass > 0.0f) {
+      JPH_MassProperties mp;
+      JPH_Shape_GetMassProperties(shape, &mp);
+      float scale = mass / mp.mass;
+      mp.mass = mass;
+      for(int i=0; i<3; i++) {
+          mp.inertia.column[i].x *= scale;
+          mp.inertia.column[i].y *= scale;
+          mp.inertia.column[i].z *= scale;
+      }
+      JPH_BodyCreationSettings_SetMassPropertiesOverride(settings, &mp);
+      JPH_BodyCreationSettings_SetOverrideMassProperties(
+          settings, JPH_OverrideMassProperties_CalculateInertia);
+  }
+
+  JPH_BodyCreationSettings_SetFriction(settings, friction);
+  JPH_BodyCreationSettings_SetRestitution(settings, restitution);
+  if (use_ccd) JPH_BodyCreationSettings_SetMotionQuality(settings, JPH_MotionQuality_LinearCast);
+
+  uint32_t gen = self->generations[slot];
+  BodyHandle handle = make_handle(slot, gen);
+  JPH_BodyCreationSettings_SetUserData(settings, (uint64_t)handle);
+
+  if (!ensure_command_capacity(self)) {
+      JPH_BodyCreationSettings_Destroy(settings);
+      self->slot_states[slot] = SLOT_EMPTY;
+      self->free_slots[self->free_count++] = slot;
+      SHADOW_UNLOCK(&self->shadow_lock);
+      return PyErr_NoMemory();
+  }
+
+  PhysicsCommand *cmd = &self->command_queue[self->command_count++];
+  cmd->type = CMD_CREATE_BODY;
+  cmd->slot = slot;
+  cmd->data.create.settings = settings;
+  cmd->data.create.user_data = user_data;
+  cmd->data.create.category = category;
+  cmd->data.create.mask = mask;
+  cmd->data.create.material_id = material_id;
+
+  SHADOW_UNLOCK(&self->shadow_lock);
+  return PyLong_FromUnsignedLongLong(handle);
+}
+
 static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
                                           PyObject *args, PyObject *kwds) {
   float px = 0.0f;
@@ -6713,6 +6867,9 @@ static const PyMethodDef PhysicsWorld_methods[] = {
     {"create_heightfield", (PyCFunction)PhysicsWorld_create_heightfield,
      METH_VARARGS | METH_KEYWORDS,
      "Create a static terrain from a height grid."},
+   {"create_convex_hull", (PyCFunction)PhysicsWorld_create_convex_hull,
+     METH_VARARGS | METH_KEYWORDS,
+     "Create a body from a point cloud. Points are wrapped in a convex shell."},
 
     // --- Interaction ---
     {"apply_impulse", (PyCFunction)PhysicsWorld_apply_impulse,
@@ -6983,7 +7140,7 @@ static int init_constants(PyObject *m) {
   } consts[] = {{"SHAPE_BOX", 0},         {"SHAPE_SPHERE", 1},
                 {"SHAPE_CAPSULE", 2},     {"SHAPE_CYLINDER", 3},
                 {"SHAPE_PLANE", 4},       {"SHAPE_MESH", 5},
-                {"SHAPE_HEIGHTFIELD", 6},
+                {"SHAPE_HEIGHTFIELD", 6}, {"SHAPE_CONVEX_HULL", 7},
                 {"MOTION_STATIC", 0},     {"MOTION_KINEMATIC", 1},
                 {"MOTION_DYNAMIC", 2},    {"CONSTRAINT_FIXED", 0},
                 {"CONSTRAINT_POINT", 1},  {"CONSTRAINT_HINGE", 2},
