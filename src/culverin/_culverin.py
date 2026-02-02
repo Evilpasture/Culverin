@@ -4,7 +4,8 @@ from typing import Union, List, Tuple, Dict, Any
 
 __all__ = [
     "MOTION_STATIC", "MOTION_KINEMATIC", "MOTION_DYNAMIC",
-    "SHAPE_BOX", "SHAPE_SPHERE", "SHAPE_CAPSULE", "SHAPE_CYLINDER", "SHAPE_PLANE", "SHAPE_MESH", "SHAPE_HEIGHTFIELD", "SHAPE_CONVEX_HULL",
+    "SHAPE_BOX", "SHAPE_SPHERE", "SHAPE_CAPSULE", "SHAPE_CYLINDER", "SHAPE_PLANE", 
+    "SHAPE_MESH", "SHAPE_HEIGHTFIELD", "SHAPE_CONVEX_HULL",
     "LAYER_NON_MOVING", "LAYER_MOVING",
     "CONSTRAINT_FIXED", "CONSTRAINT_POINT", "CONSTRAINT_HINGE", "CONSTRAINT_SLIDER", "CONSTRAINT_DISTANCE", "CONSTRAINT_CONE", 
     "EVENT_ADDED", "EVENT_PERSISTED", "EVENT_REMOVED",
@@ -79,7 +80,6 @@ class Skeleton:
         (Assumes index based parenting or simple linear for MVP, 
          better pass List[Tuple[name, parent_idx]])
         """
-        # In C, we expose add_joint.
         pass
 
 class RagdollSettings:
@@ -275,10 +275,17 @@ def validate_body_params(shape_type, pos, rot, size, motion_type):
         if not (0.9 < n_mag < 1.1):
             raise ValueError("Plane normal must be a unit vector")
     
-    elif shape_type == SHAPE_MESH:
-        # Meshes cannot be baked via simple config dicts because they need 
-        # pointer data (vertices/indices). They must be created at runtime.
-        raise ValueError("SHAPE_MESH cannot be baked via init. Use create_mesh_body() instead.")
+    elif shape_type in (SHAPE_MESH, SHAPE_HEIGHTFIELD, SHAPE_CONVEX_HULL):
+        # These shapes cannot be baked via simple config dicts because they need 
+        # pointer data (vertices/indices/heights) or complex buffers. 
+        # They must be created at runtime using their specific methods.
+        type_names = {
+            SHAPE_MESH: "SHAPE_MESH", 
+            SHAPE_HEIGHTFIELD: "SHAPE_HEIGHTFIELD", 
+            SHAPE_CONVEX_HULL: "SHAPE_CONVEX_HULL"
+        }
+        name = type_names.get(shape_type, "Complex Shape")
+        raise ValueError(f"{name} cannot be baked via init. Use world.create_{name.lower()[6:]}() instead.")
     
     else:
         raise ValueError(f"Unknown shape type: {shape_type}")
