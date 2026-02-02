@@ -31,6 +31,7 @@ CONSTRAINT_SLIDER: int = 3
 CONSTRAINT_DISTANCE: int = 4
 CONSTRAINT_CONE: int = 5
 
+# Contact Event Types
 EVENT_ADDED: int = 0
 EVENT_PERSISTED: int = 1
 EVENT_REMOVED: int = 2
@@ -44,6 +45,7 @@ class BodyConfig(TypedDict, total=False):
     user_data: int
     motion: int
     is_sensor: bool
+    ccd: bool
 
 class WorldSettings(TypedDict, total=False):
     gravity: Vec3
@@ -58,7 +60,7 @@ class WheelConfig(TypedDict):
 
 class Character:
     def move(self, velocity: Vec3, dt: float) -> None:
-        """Move the virtual character. resolve collisions and stair climbing."""
+        """Move the virtual character, resolve collisions and stair climbing."""
     def get_position(self) -> Vec3:
         """Get high-precision world position."""
     def set_position(self, pos: Vec3) -> None:
@@ -87,27 +89,17 @@ class RagdollSettings:
         twist_min: float = -0.1, twist_max: float = 0.1, cone_angle: float = 0.0, 
         axis: Vec3 = (1,0,0), normal: Vec3 = (0,1,0), pos: Vec3 = (0,0,0)
     ) -> None:
-        """
-        Configure a limb part.
-        Args:
-            pos: The local offset in Bind Pose relative to the parent joint.
-            axis: The twist axis for the SwingTwist constraint.
-            normal: The plane normal for the SwingTwist constraint.
-        """
+        """Configure a limb part."""
     def stabilize(self) -> bool:
         """Attempts to remove initial interpenetrations in the pose."""
 
 class Ragdoll:
     def drive_to_pose(self, root_pos: Vec3, root_rot: Quat, matrices: bytes) -> None:
-        """
-        Sets the target pose for the ragdoll motors.
-        Args:
-            matrices: Packed Float32 array of 4x4 Model-Space matrices (one per joint).
-        """
+        """Sets the target pose for the ragdoll motors via packed Model-Space matrices."""
     def get_body_handles(self) -> List[Handle]:
         """Returns a list of physics handles for every limb in the ragdoll."""
     def get_debug_info(self) -> List[Dict[str, Any]]:
-        """Returns position and velocity data for every limb for diagnostic use."""
+        """Returns diagnostic position/velocity data for every limb."""
 
 class Engine:
     def __init__(self, max_torque: float = 500.0, max_rpm: float = 7000.0, min_rpm: float = 1000.0, inertia: float = 0.5): ...
@@ -120,11 +112,11 @@ class Manual:
 
 class Vehicle:
     def set_input(self, forward: float = 0.0, right: float = 0.0, brake: float = 0.0, handbrake: float = 0.0) -> None:
-        """Set driver inputs. Steering is usually automatically mapped to wheels with MaxSteerAngle."""
+        """Set driver inputs (throttles, steering, braking)."""
     def get_wheel_transform(self, index: int) -> Tuple[Vec3, Quat]:
         """Get world-space wheel transform."""
     def get_wheel_local_transform(self, index: int) -> Tuple[Vec3, Quat]:
-        """Get wheel transform relative to chassis COM."""
+        """Get wheel transform relative to chassis."""
     def get_debug_state(self) -> None:
         """Print detailed drivetrain and wheel status to stderr."""
     def destroy(self) -> None:
@@ -136,7 +128,7 @@ class PhysicsWorld:
     def __init__(self, settings: Optional[WorldSettings] = None, bodies: Optional[List[BodyConfig]] = None) -> None:
         """Initialize the physics system. 'bodies' can be pre-baked for speed."""
     def step(self, dt: float = 1.0/60.0) -> None:
-        """Advance simulation. Flushes command queue and syncs shadow buffers."""
+        """Advance simulation and sync shadow buffers."""
     
     def create_body(
         self, 
@@ -152,7 +144,8 @@ class PhysicsWorld:
         mask: int = 0xFFFF,
         friction: float = 0.2,
         restitution: float = 0.0,
-        material_id: int = 0
+        material_id: int = 0,
+        ccd: bool = False
     ) -> Handle:
         """
         Queue creation of a standard rigid body.
@@ -163,7 +156,7 @@ class PhysicsWorld:
         """
         ...
         
-    def create_mesh_body(self, pos: Vec3, rot: Quat, vertices: Any, indices: Any, user_data: int = 0, category: int = 0xFFFF, mask: int = 0xFFFF) -> Handle:
+    def create_mesh_body(self, pos: Vec3, rot: Quat, vertices: bytes, indices: bytes, user_data: int = 0, category: int = 0xFFFF, mask: int = 0xFFFF) -> Handle:
         """Queue creation of a static triangle mesh body."""
         
     def create_character(self, pos: Vec3, height: float = 1.8, radius: float = 0.4, step_height: float = 0.4, max_slope: float = 45.0) -> Character:
@@ -188,18 +181,9 @@ class PhysicsWorld:
         """Instantiate a ragdoll into the world."""
 
     def create_heightfield(
-        self, 
-        pos: Vec3, 
-        rot: Quat, 
-        scale: Vec3, 
-        heights: bytes, 
-        grid_size: int, 
-        user_data: int = 0,
-        category: int = 0xFFFF,
-        mask: int = 0xFFFF,
-        material_id: int = 0,
-        friction: float = 0.5,
-        restitution: float = 0.0
+        self, pos: Vec3, rot: Quat, scale: Vec3, heights: bytes, grid_size: int, 
+        user_data: int = 0, category: int = 0xFFFF, mask: int = 0xFFFF,
+        material_id: int = 0, friction: float = 0.5, restitution: float = 0.0
     ) -> Handle:
         """
         Create a static terrain from a square grid of height values.
@@ -225,26 +209,15 @@ class PhysicsWorld:
     def apply_impulse(self, handle: Handle, x: float, y: float, z: float) -> None: ...
     
     def apply_buoyancy(
-        self, 
-        handle: Handle, 
-        surface_y: float, 
-        buoyancy: float = 1.0, 
-        linear_drag: float = 0.5, 
-        angular_drag: float = 0.5, 
-        dt: float = 1.0/60.0,
+        self, handle: Handle, surface_y: float, buoyancy: float = 1.0, 
+        linear_drag: float = 0.5, angular_drag: float = 0.5, dt: float = 1.0/60.0,
         fluid_velocity: Vec3 = (0, 0, 0)
     ) -> bool:
-        """
-        Apply fluid dynamics (Archimedes' principle).
-        Returns True if body is submerged.
-        """
+        """Apply Archimedes' principle fluid forces."""
         ...
 
     def register_material(self, id: int, friction: float = 0.5, restitution: float = 0.0) -> None:
-        """
-        Define physical properties for a material ID.
-        Bodies created with this material_id will inherit these properties.
-        """
+        """Define physical properties for a material ID lookup."""
         ...
         
     def set_position(self, handle: Handle, x: float, y: float, z: float) -> None: ...
@@ -252,6 +225,8 @@ class PhysicsWorld:
     def set_transform(self, handle: Handle, pos: Vec3, rot: Quat) -> None: ...
     def set_linear_velocity(self, handle: Handle, x: float, y: float, z: float) -> None: ...
     def set_angular_velocity(self, handle: Handle, x: float, y: float, z: float) -> None: ...
+    def set_ccd(self, handle: Handle, enabled: bool) -> None:
+        """Enable/Disable Continuous Collision Detection for a body."""
     def set_collision_filter(self, handle: Handle, category: int, mask: int) -> None: ...
     
     def activate(self, handle: Handle) -> None: ...
@@ -263,28 +238,15 @@ class PhysicsWorld:
     
     def raycast(self, start: Vec3, direction: Vec3, max_dist: float = 1000.0, ignore: Union[Handle, Character] = 0) -> Optional[Tuple[Handle, float, Vec3]]: ...
     def raycast_batch(self, starts: bytes, directions: bytes, max_dist: float = 1000.0) -> bytes:
-        """
-        Execute multiple raycasts efficiently (GIL-released).
-        Returns:
-            Packed bytes buffer of RayCastBatchResult (N*48 bytes).
-            Result format (Little-Endian):
-                uint64 handle      (offset 0)
-                float32 fraction    (offset 8)
-                float32 nx, ny, nz  (Normal, offset 12)
-                float32 px, py, pz  (Point, offset 24)
-                uint32 subshape_id  (offset 36)
-                uint32 material_id  (offset 40)
-                uint32 padding      (offset 44)
-        """
+        """Execute multiple raycasts efficiently (GIL-released)."""
         ...
     def shapecast(self, shape: int, pos: Vec3, rot: Quat, dir: Vec3, size: Any, ignore: Union[Handle, Character] = 0) -> Optional[Tuple[Handle, float, Vec3, Vec3]]: ...
     def overlap_sphere(self, center: Vec3, radius: float) -> List[Handle]: ...
     def overlap_aabb(self, min: Vec3, max: Vec3) -> List[Handle]: ...
     
-    def get_contact_events(self) -> List[Tuple[Handle, Handle]]:
-        """Returns basic (ID1, ID2) collision pairs for the last frame."""
+    def get_contact_events(self) -> List[Tuple[Handle, Handle]]: ...
     def get_contact_events_ex(self) -> List[Dict[str, Any]]:
-        """Returns detailed dictionaries including position, normal, strength, and materials."""
+        """Returns details including pos, normal, impulse, and EVENT_TYPE."""
     def get_contact_events_raw(self) -> memoryview: 
         """
         Returns a read-only memoryview of packed ContactEvent structs (64 bytes each).
@@ -296,7 +258,9 @@ class PhysicsWorld:
           uint32 type
         """
         ...
-    
+    def get_debug_data(self, shapes: bool = True, constraints: bool = True, bbox: bool = False, centers: bool = False, wireframe: bool = True) -> Tuple[bytes, bytes]:
+        """Returns (line_verts, triangle_verts) as packed byte buffers."""
+        ...
     def get_index(self, handle: Handle) -> Optional[int]:
         """Map a handle to the current dense array index (changes when bodies are deleted)."""
     def get_active_indices(self) -> bytes:
@@ -335,8 +299,9 @@ class PhysicsWorld:
 __all__ = [
     "PhysicsWorld", "Character", "Vehicle", "Skeleton", "RagdollSettings", "Ragdoll", 
     "BodyConfig", "WorldSettings", "WheelConfig", "Handle", 
-    "SHAPE_BOX", "SHAPE_SPHERE", "SHAPE_CAPSULE", "SHAPE_CYLINDER", "SHAPE_PLANE", "SHAPE_MESH",
+    "SHAPE_BOX", "SHAPE_SPHERE", "SHAPE_CAPSULE", "SHAPE_CYLINDER", "SHAPE_PLANE", "SHAPE_MESH", "SHAPE_HEIGHTFIELD",
     "MOTION_STATIC", "MOTION_KINEMATIC", "MOTION_DYNAMIC",
     "CONSTRAINT_FIXED", "CONSTRAINT_POINT", "CONSTRAINT_HINGE", 
-    "CONSTRAINT_SLIDER", "CONSTRAINT_DISTANCE", "CONSTRAINT_CONE"
+    "CONSTRAINT_SLIDER", "CONSTRAINT_DISTANCE", "CONSTRAINT_CONE",
+    "EVENT_ADDED", "EVENT_PERSISTED", "EVENT_REMOVED"
 ]
