@@ -4439,6 +4439,249 @@ static PyObject *PhysicsWorld_create_vehicle(PhysicsWorldObject *self,
   return (PyObject *)obj;
 }
 
+// --- Tracked Vehicle Implementation ---
+
+static JPH_WheelSettings *create_track_wheel(PyObject *w_dict) {
+  float px = 0, py = 0, pz = 0;
+  if (!parse_py_vec3(PyDict_GetItemString(w_dict, "pos"), &px, &py, &pz)) {
+    return NULL; 
+  }
+
+  float radius = get_py_float_attr(w_dict, "radius", 0.4f);
+  float width = get_py_float_attr(w_dict, "width", 0.2f);
+  float suspension_len = get_py_float_attr(w_dict, "suspension", 0.5f);
+  
+  // Tracked wheels use a float, not a curve
+  float friction = get_py_float_attr(w_dict, "friction", 1.0f);
+
+  JPH_WheelSettingsTV *w = JPH_WheelSettingsTV_Create();
+  
+  JPH_WheelSettings_SetPosition((JPH_WheelSettings *)w, &(JPH_Vec3){px, py, pz});
+  JPH_WheelSettings_SetRadius((JPH_WheelSettings *)w, radius);
+  JPH_WheelSettings_SetWidth((JPH_WheelSettings *)w, width);
+  
+  JPH_WheelSettings_SetSuspensionMinLength((JPH_WheelSettings *)w, 0.05f);
+  JPH_WheelSettings_SetSuspensionMaxLength((JPH_WheelSettings *)w, suspension_len); 
+
+  // FIXED: Pass 'friction' (float) instead of 'f_curve'
+  JPH_WheelSettingsTV_SetLongitudinalFriction(w, friction);
+  JPH_WheelSettingsTV_SetLateralFriction(w, friction);
+
+  return (JPH_WheelSettings *)w;
+}
+
+static PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
+                                                     PyObject *args, PyObject *kwds) {
+  uint64_t chassis_h = 0;
+  PyObject *py_wheels = NULL;
+  PyObject *py_tracks = NULL; // List of dicts describing tracks
+  
+  // Default specs (M1 Abrams-ish / Heavy Tank)
+  float max_rpm = 6000.0f;
+  float min_rpm = 500.0f;
+  float max_torque = 5000.0f; // High torque for tracks
+  
+  static char *kwlist[] = {"chassis", "wheels", "tracks", "max_torque", "max_rpm", NULL};
+
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "KOO|ff", kwlist, 
+      &chassis_h, &py_wheels, &py_tracks, &max_torque, &max_rpm)) {
+    return NULL;
+  }
+
+  if (!PyList_Check(py_wheels)) return PyErr_Format(PyExc_TypeError, "wheels must be a list");
+  if (!PyList_Check(py_tracks)) return PyErr_Format(PyExc_TypeError, "tracks must be a list");
+
+  // 1. Lock & Resolve Body
+  SHADOW_LOCK(&self->shadow_lock);
+  BLOCK_UNTIL_NOT_STEPPING(self);
+  flush_commands(self); 
+  
+  uint32_t slot = 0;
+  if (!unpack_handle(self, chassis_h, &slot)) {
+    SHADOW_UNLOCK(&self->shadow_lock);
+    return PyErr_Format(PyExc_ValueError, "Invalid chassis handle");
+  }
+  JPH_BodyID chassis_bid = self->body_ids[self->slot_to_dense[slot]];
+  SHADOW_UNLOCK(&self->shadow_lock);
+
+  const JPH_BodyLockInterface *lock_iface = JPH_PhysicsSystem_GetBodyLockInterface(self->system);
+  JPH_BodyLockWrite lock;
+  JPH_BodyLockInterface_LockWrite(lock_iface, chassis_bid, &lock);
+  if (!lock.body) return PyErr_Format(PyExc_RuntimeError, "Could not lock chassis body");
+
+  // 2. Initialize Resources
+  VehicleResources r = {0};
+  r.f_curve = JPH_LinearCurve_Create();
+  JPH_LinearCurve_AddPoint(r.f_curve, 0.0f, 1.0f);
+  JPH_LinearCurve_AddPoint(r.f_curve, 1.0f, 1.0f);
+  
+  uint32_t num_wheels = (uint32_t)PyList_Size(py_wheels);
+  r.w_settings = PyMem_RawCalloc(num_wheels, sizeof(JPH_WheelSettings*));
+  if (!r.w_settings) {
+       JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
+       return PyErr_NoMemory();
+  }
+
+  // 3. Create Wheels
+  for (uint32_t i = 0; i < num_wheels; i++) {
+      // Logic fix: remove f_curve from argument
+      r.w_settings[i] = create_track_wheel(PyList_GetItem(py_wheels, i));
+      
+      if (!r.w_settings[i]) {
+           JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
+           return NULL; 
+      }
+  }
+
+  // 4. Create Tracked Controller
+  JPH_TrackedVehicleControllerSettings* t_ctrl = JPH_TrackedVehicleControllerSettings_Create();
+  r.v_ctrl = (JPH_VehicleControllerSettings*)t_ctrl; 
+
+  // Engine
+  JPH_VehicleEngineSettings eng;
+  JPH_VehicleEngineSettings_Init(&eng);
+  eng.maxTorque = max_torque;
+  eng.maxRPM = max_rpm;
+  eng.minRPM = min_rpm;
+  JPH_TrackedVehicleControllerSettings_SetEngine(t_ctrl, &eng);
+
+  // Transmission
+  JPH_VehicleTransmissionSettings* trans = JPH_VehicleTransmissionSettings_Create();
+  JPH_VehicleTransmissionSettings_SetMode(trans, JPH_TransmissionMode_Auto);
+  
+  // --- THE FIX: Define Gears ---
+  // Without gears, the tank stays in Neutral and never moves.
+  float gears[] = {2.0f, 1.4f, 1.0f, 0.7f}; // 4 Forward gears
+  JPH_VehicleTransmissionSettings_SetGearRatios(trans, gears, 4);
+  float reverse[] = {-1.5f}; // 1 Reverse gear
+  JPH_VehicleTransmissionSettings_SetReverseGearRatios(trans, reverse, 1);
+  // -----------------------------
+
+  JPH_TrackedVehicleControllerSettings_SetTransmission(t_ctrl, trans);
+  r.v_trans_set = trans;
+
+  // 5. Configure Tracks
+  Py_ssize_t num_tracks = PyList_Size(py_tracks);
+  if (num_tracks > 2) num_tracks = 2; 
+  
+  uint32_t** track_indices_ptrs = PyMem_RawCalloc(num_tracks, sizeof(uint32_t*));
+
+  for (int t = 0; t < num_tracks; t++) {
+      PyObject* track_dict = PyList_GetItem(py_tracks, t);
+      JPH_VehicleTrackSettings track_set;
+      JPH_VehicleTrackSettings_Init(&track_set);
+      
+      // Parse indices
+      PyObject* py_idxs = PyDict_GetItemString(track_dict, "indices");
+      if (py_idxs && PyList_Check(py_idxs)) {
+          uint32_t count = (uint32_t)PyList_Size(py_idxs);
+          uint32_t* indices = PyMem_RawMalloc(count * sizeof(uint32_t));
+          track_indices_ptrs[t] = indices;
+          for(uint32_t k=0; k<count; k++) {
+              indices[k] = (uint32_t)PyLong_AsLong(PyList_GetItem(py_idxs, k));
+          }
+          track_set.wheels = indices;
+          track_set.wheelsCount = count;
+      }
+      
+      // Parse Driven Wheel (The sprocket)
+      // FIX: Use PyLong_AsUnsignedLong directly to avoid float attribute helper overhead
+      PyObject* py_driven = PyDict_GetItemString(track_dict, "driven_wheel");
+      if (py_driven) track_set.drivenWheel = (uint32_t)PyLong_AsUnsignedLong(py_driven);
+      
+      JPH_TrackedVehicleControllerSettings_SetTrack(t_ctrl, (uint32_t)t, &track_set);
+  }
+
+  // 6. Assembly
+  JPH_VehicleConstraintSettings v_set;
+  JPH_VehicleConstraintSettings_Init(&v_set);
+  v_set.wheelsCount = num_wheels;
+  v_set.wheels = r.w_settings;
+  v_set.controller = (JPH_VehicleControllerSettings*)t_ctrl;
+
+  r.j_veh = JPH_VehicleConstraint_Create(lock.body, &v_set);
+  
+  // Collision Tester
+  r.tester = (JPH_VehicleCollisionTesterRay*)JPH_VehicleCollisionTesterRay_Create(1, &(JPH_Vec3){0, 1, 0}, 1.0f); 
+  JPH_VehicleConstraint_SetVehicleCollisionTester(r.j_veh, (JPH_VehicleCollisionTester*)r.tester);
+
+  // 7. World Insertion
+  SHADOW_LOCK(&self->shadow_lock);
+  BLOCK_UNTIL_NOT_STEPPING(self);
+  BLOCK_UNTIL_NOT_QUERYING(self);
+  JPH_PhysicsSystem_AddConstraint(self->system, (JPH_Constraint*)r.j_veh);
+  JPH_PhysicsSystem_AddStepListener(self->system, JPH_VehicleConstraint_AsPhysicsStepListener(r.j_veh));
+  r.is_added_to_world = true;
+  SHADOW_UNLOCK(&self->shadow_lock);
+  
+  JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
+
+  // Cleanup temporary C arrays
+  for(int i=0; i<num_tracks; i++) {
+      if(track_indices_ptrs[i]) PyMem_RawFree(track_indices_ptrs[i]);
+  }
+  PyMem_RawFree(track_indices_ptrs);
+
+  // 8. Return
+  CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+  VehicleObject *obj = (VehicleObject *)PyObject_New(VehicleObject, (PyTypeObject *)st->VehicleType);
+  if (!obj) return NULL;
+  
+  obj->vehicle = r.j_veh;
+  obj->tester = (JPH_VehicleCollisionTester *)r.tester;
+  obj->world = self;
+  obj->num_wheels = num_wheels;
+  obj->wheel_settings = r.w_settings;
+  obj->controller_settings = (JPH_VehicleControllerSettings*)t_ctrl;
+  obj->transmission_settings = r.v_trans_set;
+  obj->friction_curve = r.f_curve;
+  obj->torque_curve = NULL; 
+  
+  Py_INCREF(self);
+  return (PyObject *)obj;
+}
+
+// Helper: Set Tank Input
+static PyObject *Vehicle_set_tank_input(VehicleObject *self, PyObject *args, PyObject *kwds) {
+    float left = 0.0f;
+    float right = 0.0f;
+    float brake = 0.0f;
+    
+    static char *kwlist[] = {"left", "right", "brake", NULL};
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "ff|f", kwlist, &left, &right, &brake)) {
+        return NULL;
+    }
+
+    if (!self->vehicle || !self->world) Py_RETURN_NONE;
+
+    SHADOW_LOCK(&self->world->shadow_lock);
+    BLOCK_UNTIL_NOT_STEPPING(self->world);
+
+    // WAKE UP the tank so it can react to throttle
+    JPH_BodyID bid = JPH_Body_GetID(JPH_VehicleConstraint_GetVehicleBody(self->vehicle));
+    JPH_BodyInterface_ActivateBody(self->world->body_interface, bid);
+    
+    JPH_TrackedVehicleController* t_ctrl = (JPH_TrackedVehicleController*)JPH_VehicleConstraint_GetController(self->vehicle);
+    
+    // Convert Inputs: Jolt uses (Forward, LeftRatio, RightRatio, Brake)
+    float forward = (left + right) / 2.0f;
+    
+    // Fix Pivot Turn (Forward=0 but L/R opposed)
+    if (fabsf(forward) < 0.01f && fabsf(left - right) > 0.01f) {
+        forward = 1.0f; 
+    }
+    // Fix Reverse
+    if (forward < 0.0f) {
+        // When engine reverses, we must flip ratios to keep logic consistent
+        JPH_TrackedVehicleController_SetDriverInput(t_ctrl, forward, -left, -right, brake);
+    } else {
+        JPH_TrackedVehicleController_SetDriverInput(t_ctrl, forward, left, right, brake);
+    }
+    
+    SHADOW_UNLOCK(&self->world->shadow_lock);
+    Py_RETURN_NONE;
+}
+
 static PyObject *PhysicsWorld_set_position(PhysicsWorldObject *self,
                                            PyObject *args, PyObject *kwds) {
   uint64_t handle_raw = 0;
@@ -7112,6 +7355,8 @@ static const PyMethodDef PhysicsWorld_methods[] = {
      "Remove and destroy a constraint by handle."},
     {"create_vehicle", (PyCFunction)PhysicsWorld_create_vehicle,
      METH_VARARGS | METH_KEYWORDS, NULL},
+    {"create_tracked_vehicle", (PyCFunction)PhysicsWorld_create_tracked_vehicle, 
+     METH_VARARGS | METH_KEYWORDS, "Create a tank-style vehicle."},
     {"create_ragdoll_settings",
      (PyCFunction)PhysicsWorld_create_ragdoll_settings, METH_VARARGS,
      "Create settings bound to this world"},
@@ -7232,6 +7477,8 @@ static const PyMethodDef Vehicle_methods[] = {
     {"set_input", (PyCFunction)Vehicle_set_input, METH_VARARGS | METH_KEYWORDS,
      "Set driver inputs: forward [-1..1], right [-1..1], brake [0..1], "
      "handbrake [0..1]"},
+    {"set_tank_input", (PyCFunction)Vehicle_set_tank_input, METH_VARARGS | METH_KEYWORDS, 
+     "Set inputs for tracked vehicle: (left, right, brake)."},
     {"get_wheel_transform", (PyCFunction)Vehicle_get_wheel_transform,
      METH_VARARGS, "Get world-space transform of a wheel by index."},
     {"get_wheel_local_transform",
