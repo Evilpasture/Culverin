@@ -28,6 +28,13 @@ static inline bool unpack_handle(PhysicsWorldObject *self, BodyHandle h,
 static void world_remove_body_slot(PhysicsWorldObject *self, uint32_t slot) {
     uint32_t dense_idx = self->slot_to_dense[slot];
     uint32_t last_dense = (uint32_t)self->count - 1;
+    JPH_BodyID bid = self->body_ids[dense_idx];
+    if (bid != JPH_INVALID_BODY_ID) {
+        uint32_t j_idx = JPH_ID_TO_INDEX(bid); // Use Macro
+        if (self->id_to_handle_map && j_idx < self->max_jolt_bodies) {
+            self->id_to_handle_map[j_idx] = 0;
+        }
+    }
 
     // 1. If we aren't already the last element, move the last element into this hole
     if (dense_idx != last_dense) {
@@ -166,7 +173,7 @@ static void JPH_API_CALL char_on_character_contact_added(
 
   if (idx < world->contact_max_capacity) {
     ContactEvent *ev = &world->contact_buffer[idx];
-
+    ev->type = EVENT_ADDED;
     // Ensure consistent ordering (h1 < h2) to avoid duplicate entries
     // if both characters are being updated in the same step.
     if (h1 < h2) {
@@ -324,121 +331,122 @@ static inline void manual_quat_multiply(const JPH_Quat *a, const JPH_Quat *b,
   out->w = a->w * b->w - a->x * b->x - a->y * b->y - a->z * b->z;
 }
 
-// --- Global Contact Listener ---
-static void JPH_API_CALL on_contact_added(void *userData, const JPH_Body *body1,
-                                          const JPH_Body *body2,
-                                          const JPH_ContactManifold *manifold,
-                                          JPH_ContactSettings *settings) {
-  PhysicsWorldObject *self = (PhysicsWorldObject *)userData;
-
-  // Canonical Handle Ordering
+// --- Internal Contact Helper ---
+static void process_contact_manifold(PhysicsWorldObject *self, 
+                                     const JPH_Body *body1, const JPH_Body *body2, 
+                                     const JPH_ContactManifold *manifold,
+                                     ContactEventType type) {
+  
+  // Fast Pointer-based UserData retrieval (No Jolt locks)
   BodyHandle h1 = (BodyHandle)JPH_Body_GetUserData((JPH_Body *)body1);
   BodyHandle h2 = (BodyHandle)JPH_Body_GetUserData((JPH_Body *)body2);
 
   uint32_t slot1 = (uint32_t)(h1 & 0xFFFFFFFF);
   uint32_t slot2 = (uint32_t)(h2 & 0xFFFFFFFF);
 
-  // BITMASK FILTERING
-  // We access the dense arrays. Since this is a callback, we assume slots are
-  // valid.
+  // Safety: Ensure slot is within our shadow buffer range
+  if (slot1 >= self->slot_capacity || slot2 >= self->slot_capacity) return;
+
   uint32_t idx1 = self->slot_to_dense[slot1];
   uint32_t idx2 = self->slot_to_dense[slot2];
 
-  uint32_t cat1 = self->categories[idx1];
-  uint32_t mask1 = self->masks[idx1];
-  uint32_t cat2 = self->categories[idx2];
-  uint32_t mask2 = self->masks[idx2];
-  uint32_t mat1 = self->material_ids[idx1];
-  uint32_t mat2 = self->material_ids[idx2];
+  // Bitmask Filter
+  if (!(self->categories[idx1] & self->masks[idx2]) || 
+      !(self->categories[idx2] & self->masks[idx1])) return;
 
-  // Standard Game Engine Bitmask Logic
-  if (!(cat1 & mask2) || !(cat2 & mask1)) {
-    // Rejection: Tell Jolt to ignore this collision entirely for the physics
-    // solver This prevents things like the character being pushed by their own
-    // sword. NOTE: Depending on JoltC version, settings->isSensor might be used
-    // or return.
-    return;
-  }
-
-  size_t idx = atomic_fetch_add_explicit(&self->contact_atomic_idx, 1,
-                                         memory_order_relaxed);
-  if (idx >= self->contact_max_capacity) {
-    return;
-  }
+  size_t idx = atomic_fetch_add_explicit(&self->contact_atomic_idx, 1, memory_order_relaxed);
+  if (idx >= self->contact_max_capacity) return;
 
   ContactEvent *ev = &self->contact_buffer[idx];
+  ev->type = (uint32_t)type;
+
   JPH_STACK_ALLOC(JPH_Vec3, n);
-  // FIX: Just pass 'n', it is already a pointer.
   JPH_ContactManifold_GetWorldSpaceNormal(manifold, n);
 
   bool swapped = (h1 > h2);
   if (!swapped) {
-    ev->body1 = h1;
-    ev->body2 = h2;
+    ev->body1 = h1; ev->body2 = h2;
   } else {
-    ev->body1 = h2;
-    ev->body2 = h1;
-    // Flip normal so it always points from the new body1 to body2
-    n->x = -n->x;
-    n->y = -n->y;
-    n->z = -n->z;
+    ev->body1 = h2; ev->body2 = h1;
+    n->x = -n->x; n->y = -n->y; n->z = -n->z;
   }
-  ev->nx = n->x;
-  ev->ny = n->y;
-  ev->nz = n->z;
+  ev->nx = n->x; ev->ny = n->y; ev->nz = n->z;
 
-  // Geometry
   JPH_STACK_ALLOC(JPH_RVec3, p);
-  // FIX: Just pass 'p'
   JPH_ContactManifold_GetWorldSpaceContactPointOn1(manifold, 0, p);
-  ev->px = (float)p->x;
-  ev->py = (float)p->y;
-  ev->pz = (float)p->z;
+  ev->px = (float)p->x; ev->py = (float)p->y; ev->pz = (float)p->z;
 
-  // Relative Velocity Math
-  JPH_Vec3 v1_raw;
-  JPH_Vec3 v2_raw;
-  JPH_Body_GetLinearVelocity((JPH_Body *)body1, &v1_raw);
-  JPH_Body_GetLinearVelocity((JPH_Body *)body2, &v2_raw);
-
-  // Calculate relative velocity (v1 - v2)
-  // If we swapped handles, we must swap velocity order to keep math consistent
-  // with flipped normal
-  float dv_x = NAN;
-  float dv_y = NAN;
-  float dv_z = NAN;
-  if (!swapped) {
-    dv_x = v1_raw.x - v2_raw.x;
-    dv_y = v1_raw.y - v2_raw.y;
-    dv_z = v1_raw.z - v2_raw.z;
+  // Impulse math skipped for sensors to prevent Static Body access violations
+  if (JPH_Body_IsSensor((JPH_Body*)body1) || JPH_Body_IsSensor((JPH_Body*)body2)) {
+      ev->impulse = 0.0f;
+      ev->sliding_speed_sq = 0.0f;
   } else {
-    dv_x = v2_raw.x - v1_raw.x;
-    dv_y = v2_raw.y - v1_raw.y;
-    dv_z = v2_raw.z - v1_raw.z;
+      JPH_Vec3 v1 = {0,0,0}, v2 = {0,0,0};
+      if (JPH_Body_GetMotionType((JPH_Body*)body1) != JPH_MotionType_Static) 
+          JPH_Body_GetLinearVelocity((JPH_Body*)body1, &v1);
+      if (JPH_Body_GetMotionType((JPH_Body*)body2) != JPH_MotionType_Static) 
+          JPH_Body_GetLinearVelocity((JPH_Body*)body2, &v2);
+
+      float dvx = swapped ? (v2.x - v1.x) : (v1.x - v2.x);
+      float dvy = swapped ? (v2.y - v1.y) : (v1.y - v2.y);
+      float dvz = swapped ? (v2.z - v1.z) : (v1.z - v2.z);
+
+      float dot = dvx * ev->nx + dvy * ev->ny + dvz * ev->nz;
+      ev->impulse = fabsf(dot);
+      ev->sliding_speed_sq = (dvx*dvx + dvy*dvy + dvz*dvz) - (dot*dot);
   }
 
-  // Normal component (Impact)
-  float dot = dv_x * n->x + dv_y * n->y + dv_z * n->z;
+  ev->mat1 = self->material_ids[idx1];
+  ev->mat2 = self->material_ids[idx2];
 
-  // We use fabsf because 'strength' should be positive regardless of direction
-  ev->impulse = fabsf(dot);
-
-  // Tangent component (Sliding)
-  float tx = dv_x - (dot * n->x);
-  float ty = dv_y - (dot * n->y);
-  float tz = dv_z - (dot * n->z);
-  ev->sliding_speed_sq = (tx * tx + ty * ty + tz * tz);
-
-  if (!swapped) {
-    ev->mat1 = mat1;
-    ev->mat2 = mat2;
-  } else {
-    ev->mat1 = mat2;
-    ev->mat2 = mat1;
-  }
-
-  // Release Fence
   atomic_thread_fence(memory_order_release);
+}
+
+// --- Global Contact Listener ---
+// 1. ADDED
+static void JPH_API_CALL on_contact_added(void *userData, const JPH_Body *body1,
+                                          const JPH_Body *body2,
+                                          const JPH_ContactManifold *manifold,
+                                          JPH_ContactSettings *settings) {
+    process_contact_manifold((PhysicsWorldObject *)userData, body1, body2, manifold, EVENT_ADDED);
+}
+
+// 2. PERSISTED (Uses same helper, different type ID)
+static void JPH_API_CALL on_contact_persisted(void *userData, const JPH_Body *body1,
+                                              const JPH_Body *body2,
+                                              const JPH_ContactManifold *manifold,
+                                              JPH_ContactSettings *settings) {
+    process_contact_manifold((PhysicsWorldObject *)userData, body1, body2, manifold, EVENT_PERSISTED);
+}
+
+// 3. REMOVED (Simpler logic, no manifold)
+static void JPH_API_CALL on_contact_removed(void *userData, const JPH_SubShapeIDPair *pair) {
+    PhysicsWorldObject *self = (PhysicsWorldObject *)userData;
+
+    // Use indices from BodyIDs to look up handles in our private map
+    uint32_t i1 = JPH_ID_TO_INDEX(pair->Body1ID);
+    uint32_t i2 = JPH_ID_TO_INDEX(pair->Body2ID);
+
+    BodyHandle h1 = 0, h2 = 0;
+    if (self->id_to_handle_map) {
+        if (i1 < self->max_jolt_bodies) h1 = self->id_to_handle_map[i1];
+        if (i2 < self->max_jolt_bodies) h2 = self->id_to_handle_map[i2];
+    }
+    
+    if (h1 == 0 || h2 == 0) return; // Ignore unmapped bodies
+
+    size_t idx = atomic_fetch_add_explicit(&self->contact_atomic_idx, 1, memory_order_relaxed);
+    if (idx >= self->contact_max_capacity) return;
+
+    ContactEvent *ev = &self->contact_buffer[idx];
+    ev->type = EVENT_REMOVED;
+    ev->body1 = (h1 < h2) ? h1 : h2;
+    ev->body2 = (h1 < h2) ? h2 : h1;
+
+    // Zero geometry for removal
+    memset(&ev->px, 0, sizeof(float) * 8); 
+
+    atomic_thread_fence(memory_order_release);
 }
 
 // Fixed get_contact_events to be safer with locking
@@ -541,6 +549,7 @@ static PyObject *PhysicsWorld_get_contact_events_ex(PhysicsWorldObject *self,
   PyObject *k_str = PyUnicode_InternFromString("strength");
   PyObject *k_slide = PyUnicode_InternFromString("slide_sq");
   PyObject *k_mat = PyUnicode_InternFromString("materials"); // <--- interned
+  PyObject *k_type = PyUnicode_InternFromString("type");
 
   // FIX 1: Include k_mat in the NULL check
   if (!k_bodies || !k_pos || !k_norm || !k_str || !k_slide || !k_mat) {
@@ -616,6 +625,11 @@ static PyObject *PhysicsWorld_get_contact_events_ex(PhysicsWorldObject *self,
     PyDict_SetItem(dict, k_slide, sl_val);
     Py_DECREF(sl_val);
 
+    // 7. Event Type (0=Add, 1=Stay, 2=Remove)
+    PyObject *t_val = PyLong_FromUnsignedLong(e->type);
+    PyDict_SetItem(dict, k_type, t_val);
+    Py_DECREF(t_val);
+
     PyList_SET_ITEM(list, (Py_ssize_t)i, dict);
   }
 
@@ -626,6 +640,7 @@ static PyObject *PhysicsWorld_get_contact_events_ex(PhysicsWorldObject *self,
   Py_DECREF(k_str);
   Py_DECREF(k_slide);
   Py_DECREF(k_mat); // <--- clean up k_mat
+  Py_DECREF(k_type);
 
   PyMem_RawFree(scratch);
   return list;
@@ -699,8 +714,8 @@ static const JPH_CharacterContactListener_Procs char_listener_procs = {
 static const JPH_ContactListener_Procs contact_procs = {
     .OnContactValidate = on_contact_validate,
     .OnContactAdded = on_contact_added,
-    .OnContactPersisted = NULL,
-    .OnContactRemoved = NULL};
+    .OnContactPersisted = on_contact_persisted,
+    .OnContactRemoved = on_contact_removed};
 
 // --- Helper: Shape Caching (Internal) ---
 static JPH_Shape *find_or_create_shape(PhysicsWorldObject *self, int type,
@@ -1026,6 +1041,9 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
   self->free_constraint_count = 0;
   self->count = 0;
   self->time = 0.0;
+  self->material_count = 0;
+  self->material_capacity = 0;
+  self->max_jolt_bodies = 0;
 
   // Initialize Pointers to NULL for safe fail-cleanup
   self->system = NULL;
@@ -1034,13 +1052,11 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
   self->pair_filter = NULL;
   self->bp_filter = NULL;
   self->contact_listener = NULL;
-  self->contact_buffer = NULL; // Updated Name
+  self->contact_buffer = NULL;
   self->char_vs_char_manager = NULL;
   self->positions = NULL;
-
   self->materials = NULL;
-  self->material_count = 0;
-  self->material_capacity = 0;
+  self->id_to_handle_map = NULL;
 
   PyObject *module = PyType_GetModule(Py_TYPE(self));
   CulverinState *st = get_culverin_state(module);
@@ -1181,6 +1197,7 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
   if (self->capacity < self->count + 128) {
     self->capacity = self->count + 1024;
   }
+  self->max_jolt_bodies = (uint32_t)max_bodies; // Store the limit
 
   // 6. Native Buffer Allocations
   self->positions = PyMem_RawCalloc(self->capacity * 4, sizeof(float));
@@ -1200,6 +1217,8 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
       self->masks[i] = 0xFFFF;
     }
   }
+
+  self->id_to_handle_map = PyMem_RawCalloc(self->max_jolt_bodies, sizeof(BodyHandle));
 
   self->slot_capacity = self->capacity;
   self->generations = PyMem_RawCalloc(self->slot_capacity, sizeof(uint32_t));
@@ -1225,7 +1244,7 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
   if (!self->positions || !self->rotations || !self->prev_positions ||
       !self->prev_rotations || !self->linear_velocities ||
       !self->angular_velocities || !self->body_ids || !self->user_data ||
-      !self->categories || !self->masks || !self->material_ids ||
+      !self->categories || !self->masks || !self->material_ids || !self->id_to_handle_map ||
       !self->generations || !self->slot_to_dense || !self->dense_to_slot ||
       !self->free_slots || !self->slot_states || !self->command_queue ||
       !self->constraints || !self->constraint_generations ||
@@ -1289,6 +1308,10 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
 
         self->body_ids[i] = JPH_BodyInterface_CreateAndAddBody(
             self->body_interface, creation, JPH_Activation_Activate);
+        uint32_t j_idx = JPH_ID_TO_INDEX(self->body_ids[i]); // Use Macro
+        if (j_idx < self->max_jolt_bodies) {
+            self->id_to_handle_map[j_idx] = make_handle((uint32_t)i, 1);
+        }
         JPH_BodyCreationSettings_Destroy(creation);
 
         self->slot_to_dense[i] = (uint32_t)i;
@@ -1933,16 +1956,26 @@ static void flush_commands(PhysicsWorldObject *self) {
     switch (cmd->type) {
     case CMD_CREATE_BODY: {
       JPH_BodyCreationSettings *s = cmd->data.create.settings;
-      JPH_BodyID new_bid =
-          JPH_BodyInterface_CreateAndAddBody(bi, s, JPH_Activation_Activate);
+      JPH_BodyID new_bid = JPH_BodyInterface_CreateAndAddBody(bi, s, JPH_Activation_Activate);
 
-      // Handle Jolt spawn failure
+      // SAFETY 1: Check for Jolt failure
       if (new_bid == JPH_INVALID_BODY_ID) {
         self->slot_states[slot] = SLOT_EMPTY;
         self->generations[slot]++;
         self->free_slots[self->free_count++] = slot;
         JPH_BodyCreationSettings_Destroy(s);
         continue;
+      }
+
+      uint32_t slot = cmd->slot;
+      uint32_t gen = self->generations[slot];
+      BodyHandle handle = make_handle(slot, gen);
+      
+      uint32_t jolt_idx = JPH_ID_TO_INDEX(new_bid);
+      
+      // SAFETY 2: Bounds Check
+      if (self->id_to_handle_map && jolt_idx < self->max_jolt_bodies) {
+          self->id_to_handle_map[jolt_idx] = handle;
       }
 
       size_t new_dense = self->count;
@@ -3117,6 +3150,13 @@ static PyObject *PhysicsWorld_create_character(PhysicsWorldObject *self,
   obj->handle = handle;
 
   uint32_t dense_idx = (uint32_t)self->count;
+  JPH_BodyID char_bid = JPH_CharacterVirtual_GetInnerBodyID(j_char);
+  if (char_bid != JPH_INVALID_BODY_ID) { // Check for JPH_INVALID_BODY_ID
+      uint32_t j_idx = JPH_ID_TO_INDEX(char_bid); // Use Macro
+      if (j_idx < self->max_jolt_bodies) {
+          self->id_to_handle_map[j_idx] = handle;
+      }
+  }
   self->body_ids[dense_idx] = JPH_CharacterVirtual_GetInnerBodyID(j_char);
   self->slot_to_dense[char_slot] = dense_idx;
   self->dense_to_slot[dense_idx] = char_slot;
@@ -6760,7 +6800,8 @@ static int init_constants(PyObject *m) {
                 {"MOTION_DYNAMIC", 2},    {"CONSTRAINT_FIXED", 0},
                 {"CONSTRAINT_POINT", 1},  {"CONSTRAINT_HINGE", 2},
                 {"CONSTRAINT_SLIDER", 3}, {"CONSTRAINT_DISTANCE", 4},
-                {"CONSTRAINT_CONE", 5}};
+                {"CONSTRAINT_CONE", 5},   {"EVENT_ADDED", 0},
+                {"EVENT_PERSISTED", 1},   {"EVENT_REMOVED", 2}};
   for (size_t i = 0; i < sizeof(consts) / sizeof(consts[0]); i++) {
     if (PyModule_AddIntConstant(m, consts[i].name, consts[i].value) < 0) {
       return -1;

@@ -22,6 +22,14 @@
 #define JPH_INVALID_BODY_ID 0xFFFFFFFF
 #endif
 
+// Jolt BodyID layout: [8 bits sequence | 24 bits index]
+#ifndef JPH_BODY_ID_INDEX_MASK
+#define JPH_BODY_ID_INDEX_MASK 0x00FFFFFF
+#endif
+
+// Mask for the raw array index (Stripping the 24th bit used for Static flags)
+#define JPH_ID_TO_INDEX(id) ((id) & 0x7FFFFF)
+
 // Allocate 'Type' on the stack with guaranteed 32-byte alignment.
 // USAGE: JPH_STACK_ALLOC(JPH_RVec3, my_vec);
 #if defined(_MSC_VER)
@@ -230,6 +238,13 @@ typedef struct {
   } data;
 } PhysicsCommand;
 
+// --- Contact Lifecycle Types ---
+typedef enum {
+    EVENT_ADDED = 0,
+    EVENT_PERSISTED = 1,
+    EVENT_REMOVED = 2
+} ContactEventType;
+
 #ifdef _MSC_VER
 #pragma pack(push, 1)
 #endif
@@ -248,7 +263,8 @@ typedef struct
   float sliding_speed_sq; // Scratching speed squared(tangential)
   uint32_t mat1;          // 4 (New)
   uint32_t mat2;          // 4 (New)
-  uint32_t _pad[2];       // 8 (Padding to 64 bytes)
+  uint32_t type;          // <--- Replaces _pad[0]
+  uint32_t _pad;          // Reduced padding
 } ContactEvent;
 
 #ifdef _MSC_VER
@@ -364,6 +380,10 @@ typedef struct {
   size_t count;
   size_t capacity;
   double time;
+
+  // Fast index-to-handle lookup to avoid Jolt locks in callbacks
+  BodyHandle *id_to_handle_map; 
+  uint32_t max_jolt_bodies;
 
   // --- Constraint Registry ---
   JPH_Constraint **constraints;
