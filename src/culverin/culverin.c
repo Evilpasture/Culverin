@@ -3445,6 +3445,192 @@ static PyObject *PhysicsWorld_create_convex_hull(PhysicsWorldObject *self,
   return PyLong_FromUnsignedLongLong(handle);
 }
 
+static PyObject *PhysicsWorld_create_compound_body(PhysicsWorldObject *self,
+                                                   PyObject *args, PyObject *kwds) {
+  float px = 0;
+  float py = 0;
+  float pz = 0;
+  float rx = 0;
+  float ry = 0;
+  float rz = 0;
+  float rw = 1.0f;
+  
+  PyObject *parts = NULL;
+  int motion_type = 2;
+  float mass = -1.0f;
+  uint64_t user_data = 0;
+  int is_sensor = 0;
+  uint32_t category = 0xFFFF;
+  uint32_t mask = 0xFFFF;
+  uint32_t material_id = 0;
+  float friction = 0.2f;
+  float restitution = 0.0f;
+  int use_ccd = 0;
+
+  static char *kwlist[] = {
+      "pos", "rot", "parts", 
+      "motion", "mass", "user_data", "is_sensor",
+      "category", "mask", "material_id", 
+      "friction", "restitution", "ccd", NULL};
+
+  if (!PyArg_ParseTupleAndKeywords(
+          args, kwds, "(fff)(ffff)O|ifKpIIffp", kwlist, 
+          &px, &py, &pz, &rx, &ry, &rz, &rw, 
+          &parts, &motion_type, &mass, &user_data, &is_sensor,
+          &category, &mask, &material_id, 
+          &friction, &restitution, &use_ccd)) {
+    return NULL;
+  }
+
+  if (!PyList_Check(parts)) {
+    return PyErr_Format(PyExc_TypeError, "Parts must be a list of tuples");
+  }
+
+  // --- 1. PHASE GUARD & LOCKING ---
+  // We need the lock immediately because find_or_create_shape accesses the shared shape cache.
+  SHADOW_LOCK(&self->shadow_lock);
+  BLOCK_UNTIL_NOT_STEPPING(self);
+  BLOCK_UNTIL_NOT_QUERYING(self);
+
+  if (self->free_count == 0) {
+    if (PhysicsWorld_resize(self, self->capacity * 2) < 0) {
+      SHADOW_UNLOCK(&self->shadow_lock);
+      return NULL;
+    }
+  }
+
+  // --- 2. BUILD COMPOUND SETTINGS ---
+  // Cast: StaticCompoundSettings inherits from CompoundShapeSettings in C++ layout
+  JPH_StaticCompoundShapeSettings* compound_settings = JPH_StaticCompoundShapeSettings_Create();
+  JPH_CompoundShapeSettings* base_settings = (JPH_CompoundShapeSettings*)compound_settings;
+
+  Py_ssize_t num_parts = PyList_Size(parts);
+  for (Py_ssize_t i = 0; i < num_parts; i++) {
+      PyObject *item = PyList_GetItem(parts, i); // Borrowed ref
+      
+      // Expected format: ((x,y,z), (x,y,z,w), shape_type, size_tuple)
+      // We parse manually to be robust
+      if (!PyTuple_Check(item) || PyTuple_Size(item) != 4) {
+          JPH_ShapeSettings_Destroy((JPH_ShapeSettings*)compound_settings);
+          SHADOW_UNLOCK(&self->shadow_lock);
+          return PyErr_Format(PyExc_ValueError, "Part %d invalid. Expected ((x,y,z), (rx,ry,rz,rw), type, size)", i);
+      }
+
+      PyObject *p_pos = PyTuple_GetItem(item, 0);
+      PyObject *p_rot = PyTuple_GetItem(item, 1);
+      int type = (int)PyLong_AsLong(PyTuple_GetItem(item, 2));
+      PyObject *p_size = PyTuple_GetItem(item, 3);
+
+      // Parse Transform
+      float lx=0, ly=0, lz=0;
+      float lrx=0, lry=0, lrz=0, lrw=1;
+      
+      if(PyTuple_Check(p_pos) && PyTuple_Size(p_pos)==3) {
+          lx = (float)PyFloat_AsDouble(PyTuple_GetItem(p_pos, 0));
+          ly = (float)PyFloat_AsDouble(PyTuple_GetItem(p_pos, 1));
+          lz = (float)PyFloat_AsDouble(PyTuple_GetItem(p_pos, 2));
+      }
+      if(PyTuple_Check(p_rot) && PyTuple_Size(p_rot)==4) {
+          lrx = (float)PyFloat_AsDouble(PyTuple_GetItem(p_rot, 0));
+          lry = (float)PyFloat_AsDouble(PyTuple_GetItem(p_rot, 1));
+          lrz = (float)PyFloat_AsDouble(PyTuple_GetItem(p_rot, 2));
+          lrw = (float)PyFloat_AsDouble(PyTuple_GetItem(p_rot, 3));
+      }
+
+      // Parse Params for Cache
+      float params[4] = {0,0,0,0};
+      if (PyTuple_Check(p_size)) {
+          for(int j=0; j<4 && j<PyTuple_Size(p_size); j++) 
+              params[j] = (float)PyFloat_AsDouble(PyTuple_GetItem(p_size, j));
+      } else {
+          params[0] = (float)PyFloat_AsDouble(p_size);
+      }
+
+      // Get Sub-Shape from Cache
+      JPH_Shape* sub_shape = find_or_create_shape(self, type, params);
+      if (!sub_shape) {
+          // Error handling inside loop is tricky, aborting compound
+          JPH_ShapeSettings_Destroy((JPH_ShapeSettings*)compound_settings);
+          SHADOW_UNLOCK(&self->shadow_lock);
+          return PyErr_Format(PyExc_RuntimeError, "Failed to create shape for part %d", i);
+      }
+
+      // Add to Compound
+      JPH_Vec3 local_p = {lx, ly, lz};
+      JPH_Quat local_q = {lrx, lry, lrz, lrw};
+      JPH_CompoundShapeSettings_AddShape2(base_settings, &local_p, &local_q, sub_shape, 0);
+  }
+
+  // --- 3. FINALIZE SHAPE ---
+  JPH_Shape* final_shape = (JPH_Shape*)JPH_StaticCompoundShape_Create(compound_settings);
+  JPH_ShapeSettings_Destroy((JPH_ShapeSettings*)compound_settings);
+
+  if (!final_shape) {
+      SHADOW_UNLOCK(&self->shadow_lock);
+      return PyErr_Format(PyExc_RuntimeError, "Jolt failed to bake Compound Shape");
+  }
+
+  // --- 4. QUEUE BODY CREATION ---
+  uint32_t slot = self->free_slots[--self->free_count];
+  self->slot_states[slot] = SLOT_PENDING_CREATE;
+
+  JPH_STACK_ALLOC(JPH_RVec3, pos);
+  pos->x = (double)px; pos->y = (double)py; pos->z = (double)pz;
+  JPH_STACK_ALLOC(JPH_Quat, rot);
+  rot->x = rx; rot->y = ry; rot->z = rz; rot->w = rw;
+
+  JPH_BodyCreationSettings *settings = JPH_BodyCreationSettings_Create3(
+      final_shape, pos, rot, (JPH_MotionType)motion_type, 
+      (motion_type == 0) ? 0 : 1);
+
+  if (mass > 0.0f) {
+      JPH_MassProperties mp;
+      JPH_Shape_GetMassProperties(final_shape, &mp);
+      
+      // Prevent division by zero if compound shape has no volume
+      if (mp.mass > 1e-6f) {
+          float scale = mass / mp.mass;
+          mp.mass = mass;
+          for(int i=0; i<3; i++) {
+              mp.inertia.column[i].x *= scale;
+              mp.inertia.column[i].y *= scale;
+              mp.inertia.column[i].z *= scale;
+          }
+          JPH_BodyCreationSettings_SetMassPropertiesOverride(settings, &mp);
+          JPH_BodyCreationSettings_SetOverrideMassProperties(settings, JPH_OverrideMassProperties_CalculateInertia);
+      }
+  }
+
+  if (is_sensor) JPH_BodyCreationSettings_SetIsSensor(settings, true);
+  if (use_ccd) JPH_BodyCreationSettings_SetMotionQuality(settings, JPH_MotionQuality_LinearCast);
+  JPH_BodyCreationSettings_SetFriction(settings, friction);
+  JPH_BodyCreationSettings_SetRestitution(settings, restitution);
+
+  uint32_t gen = self->generations[slot];
+  BodyHandle handle = make_handle(slot, gen);
+  JPH_BodyCreationSettings_SetUserData(settings, (uint64_t)handle);
+
+  if (!ensure_command_capacity(self)) {
+      JPH_BodyCreationSettings_Destroy(settings);
+      self->slot_states[slot] = SLOT_EMPTY;
+      self->free_slots[self->free_count++] = slot;
+      SHADOW_UNLOCK(&self->shadow_lock);
+      return PyErr_NoMemory();
+  }
+
+  PhysicsCommand *cmd = &self->command_queue[self->command_count++];
+  cmd->type = CMD_CREATE_BODY;
+  cmd->slot = slot;
+  cmd->data.create.settings = settings;
+  cmd->data.create.user_data = user_data;
+  cmd->data.create.category = category;
+  cmd->data.create.mask = mask;
+  cmd->data.create.material_id = material_id;
+
+  SHADOW_UNLOCK(&self->shadow_lock);
+  return PyLong_FromUnsignedLongLong(handle);
+}
+
 static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
                                           PyObject *args, PyObject *kwds) {
   float px = 0.0f;
@@ -6870,6 +7056,9 @@ static const PyMethodDef PhysicsWorld_methods[] = {
    {"create_convex_hull", (PyCFunction)PhysicsWorld_create_convex_hull,
      METH_VARARGS | METH_KEYWORDS,
      "Create a body from a point cloud. Points are wrapped in a convex shell."},
+   {"create_compound_body", (PyCFunction)PhysicsWorld_create_compound_body,
+     METH_VARARGS | METH_KEYWORDS,
+     "Create a body made of multiple primitives. parts=[((x,y,z), (rx,ry,rz,rw), type, size), ...]"},
 
     // --- Interaction ---
     {"apply_impulse", (PyCFunction)PhysicsWorld_apply_impulse,
