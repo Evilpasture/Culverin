@@ -2142,6 +2142,25 @@ static void flush_commands(PhysicsWorldObject *self) {
       break;
     }
 
+    case CMD_SET_LINVEL: {
+        JPH_Vec3 v = {cmd->data.vec.x, cmd->data.vec.y, cmd->data.vec.z};
+        JPH_BodyInterface_SetLinearVelocity(bi, bid, &v);
+        // Update shadow buffer immediately so get_velocities() is accurate next frame
+        self->linear_velocities[dense_idx * 4 + 0] = cmd->data.vec.x;
+        self->linear_velocities[dense_idx * 4 + 1] = cmd->data.vec.y;
+        self->linear_velocities[dense_idx * 4 + 2] = cmd->data.vec.z;
+        break;
+    }
+
+    case CMD_SET_ANGVEL: {
+        JPH_Vec3 v = {cmd->data.vec.x, cmd->data.vec.y, cmd->data.vec.z};
+        JPH_BodyInterface_SetAngularVelocity(bi, bid, &v);
+        self->angular_velocities[dense_idx * 4 + 0] = cmd->data.vec.x;
+        self->angular_velocities[dense_idx * 4 + 1] = cmd->data.vec.y;
+        self->angular_velocities[dense_idx * 4 + 2] = cmd->data.vec.z;
+        break;
+    }
+
     case CMD_SET_MOTION: {
       JPH_BodyInterface_SetMotionType(bi, bid,
                                       (JPH_MotionType)cmd->data.motion_type,
@@ -4498,20 +4517,29 @@ static PyObject *PhysicsWorld_set_linear_velocity(PhysicsWorldObject *self,
   SHADOW_LOCK(&self->shadow_lock);
   BLOCK_UNTIL_NOT_STEPPING(self);
   BLOCK_UNTIL_NOT_QUERYING(self);
-  uint32_t slot = 0;
-  if (!unpack_handle(self, (BodyHandle)handle_raw, &slot)) {
-    SHADOW_UNLOCK(&self->shadow_lock);
-    PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
-    return NULL;
-  }
-  uint32_t dense_idx = self->slot_to_dense[slot];
-  JPH_BodyID bid = self->body_ids[dense_idx];
 
-  JPH_Vec3 v = {x, y, z};
-  JPH_BodyInterface_SetLinearVelocity(self->body_interface, bid, &v);
-  self->linear_velocities[dense_idx * 4 + 0] = x;
-  self->linear_velocities[dense_idx * 4 + 1] = y;
-  self->linear_velocities[dense_idx * 4 + 2] = z;
+  uint32_t slot = 0;
+  // Note: We check for ALIVE OR PENDING_CREATE now
+  if (!unpack_handle(self, (BodyHandle)handle_raw, &slot)) {
+      SHADOW_UNLOCK(&self->shadow_lock);
+      PyErr_SetString(PyExc_ValueError, "Invalid handle");
+      return NULL;
+  }
+
+  // Ensure queue space
+  if (!ensure_command_capacity(self)) {
+      SHADOW_UNLOCK(&self->shadow_lock);
+      return PyErr_NoMemory();
+  }
+
+  // Queue the command
+  PhysicsCommand *cmd = &self->command_queue[self->command_count++];
+  cmd->type = CMD_SET_LINVEL;
+  cmd->slot = slot;
+  cmd->data.vec.x = x;
+  cmd->data.vec.y = y;
+  cmd->data.vec.z = z;
+
   SHADOW_UNLOCK(&self->shadow_lock);
   Py_RETURN_NONE;
 }
@@ -4531,20 +4559,26 @@ static PyObject *PhysicsWorld_set_angular_velocity(PhysicsWorldObject *self,
   SHADOW_LOCK(&self->shadow_lock);
   BLOCK_UNTIL_NOT_STEPPING(self);
   BLOCK_UNTIL_NOT_QUERYING(self);
+
   uint32_t slot = 0;
   if (!unpack_handle(self, (BodyHandle)handle_raw, &slot)) {
-    SHADOW_UNLOCK(&self->shadow_lock);
-    PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
-    return NULL;
+      SHADOW_UNLOCK(&self->shadow_lock);
+      PyErr_SetString(PyExc_ValueError, "Invalid handle");
+      return NULL;
   }
-  uint32_t dense_idx = self->slot_to_dense[slot];
-  JPH_BodyID bid = self->body_ids[dense_idx];
 
-  JPH_Vec3 v = {x, y, z};
-  JPH_BodyInterface_SetAngularVelocity(self->body_interface, bid, &v);
-  self->angular_velocities[dense_idx * 4 + 0] = x;
-  self->angular_velocities[dense_idx * 4 + 1] = y;
-  self->angular_velocities[dense_idx * 4 + 2] = z;
+  if (!ensure_command_capacity(self)) {
+      SHADOW_UNLOCK(&self->shadow_lock);
+      return PyErr_NoMemory();
+  }
+
+  PhysicsCommand *cmd = &self->command_queue[self->command_count++];
+  cmd->type = CMD_SET_ANGVEL;
+  cmd->slot = slot;
+  cmd->data.vec.x = x;
+  cmd->data.vec.y = y;
+  cmd->data.vec.z = z;
+
   SHADOW_UNLOCK(&self->shadow_lock);
   Py_RETURN_NONE;
 }
