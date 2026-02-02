@@ -19,6 +19,10 @@ CONSTRAINT_SLIDER: int = 3
 CONSTRAINT_DISTANCE: int = 4
 CONSTRAINT_CONE: int = 5
 
+EVENT_ADDED: int = 0
+EVENT_PERSISTED: int = 1
+EVENT_REMOVED: int = 2
+
 class Character:
     def move(self, velocity: Tuple[float, float, float], dt: float) -> None: ...
     def get_position(self) -> Tuple[float, float, float]: ...

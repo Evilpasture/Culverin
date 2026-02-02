@@ -31,6 +31,10 @@ CONSTRAINT_SLIDER: int = 3
 CONSTRAINT_DISTANCE: int = 4
 CONSTRAINT_CONE: int = 5
 
+EVENT_ADDED: int = 0
+EVENT_PERSISTED: int = 1
+EVENT_REMOVED: int = 2
+
 class BodyConfig(TypedDict, total=False):
     pos: Vec3
     rot: Quat
@@ -289,6 +293,7 @@ class PhysicsWorld:
           float32 px, py, pz, nx, ny, nz
           float32 impulse, sliding_speed_sq
           uint32 mat1, mat2
+          uint32 type
         """
         ...
     
