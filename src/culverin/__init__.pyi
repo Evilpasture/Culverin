@@ -198,6 +198,34 @@ class PhysicsWorld:
             material_id: ID for terrain surface type (e.g., Grass, Mud).
         """
         ...
+
+    def create_convex_hull(
+        self,
+        pos: Vec3,
+        rot: Quat,
+        points: bytes,
+        motion: int = MOTION_DYNAMIC,
+        mass: float = -1.0,
+        user_data: int = 0,
+        category: int = 0xFFFF,
+        mask: int = 0xFFFF,
+        material_id: int = 0,
+        friction: float = 0.2,
+        restitution: float = 0.0,
+        ccd: bool = False
+    ) -> Handle:
+        """
+        Create a body from a point cloud. Jolt will generate a tight convex wrapper.
+        
+        Args:
+            pos: World position.
+            rot: World rotation.
+            points: Packed float32 bytes of vertices (3 floats per point).
+            motion: MOTION_DYNAMIC (2), MOTION_KINEMATIC (1), or MOTION_STATIC (0).
+            mass: If > 0, overrides calculated mass.
+            ccd: Enable Continuous Collision Detection.
+        """
+        ...
         
     def destroy_body(self, handle: Handle) -> None:
         """Queue destruction of a body. Handle becomes invalid immediately."""
