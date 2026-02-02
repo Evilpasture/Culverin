@@ -6396,7 +6396,7 @@ static PyObject *PhysicsWorld_create_heightfield(PhysicsWorldObject *self,
   rot->w = rw;
 
   JPH_BodyCreationSettings *settings = JPH_BodyCreationSettings_Create3(
-      shape, pos, rot, JPH_MotionType_Static, 1);
+      shape, pos, rot, JPH_MotionType_Static, 0);
 
   JPH_BodyCreationSettings_SetFriction(settings, friction);
   JPH_BodyCreationSettings_SetRestitution(settings, restitution);
