@@ -25,6 +25,10 @@ git clone https://github.com/Evilpasture/culverin
 cd culverin
 pip install .
 ```
+or in your Python project terminal with your virtual environment activated
+```bash
+pip install git+https://github.com/Evilpasture/culverin.git
+```
 *(Requires CMake and a C++ compiler for Jolt integration)*
 
 ### 🏎 Quick Start
