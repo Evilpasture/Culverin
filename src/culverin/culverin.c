@@ -4516,7 +4516,7 @@ static PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
   JPH_LinearCurve_AddPoint(r.f_curve, 1.0f, 1.0f);
   
   uint32_t num_wheels = (uint32_t)PyList_Size(py_wheels);
-  r.w_settings = PyMem_RawCalloc(num_wheels, sizeof(JPH_WheelSettings*));
+  r.w_settings = (JPH_WheelSettings **)PyMem_RawCalloc(num_wheels, sizeof(JPH_WheelSettings*));
   if (!r.w_settings) {
        JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
        return PyErr_NoMemory();
@@ -4535,7 +4535,7 @@ static PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
 
   // 4. Create Tracked Controller
   JPH_TrackedVehicleControllerSettings* t_ctrl = JPH_TrackedVehicleControllerSettings_Create();
-  r.v_ctrl = (JPH_VehicleControllerSettings*)t_ctrl; 
+  r.v_ctrl = (JPH_WheeledVehicleControllerSettings*)t_ctrl; 
 
   // Engine
   JPH_VehicleEngineSettings eng;
@@ -4564,7 +4564,7 @@ static PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
   Py_ssize_t num_tracks = PyList_Size(py_tracks);
   if (num_tracks > 2) num_tracks = 2; 
   
-  uint32_t** track_indices_ptrs = PyMem_RawCalloc(num_tracks, sizeof(uint32_t*));
+  uint32_t** track_indices_ptrs = (uint32_t**)PyMem_RawCalloc(num_tracks, sizeof(uint32_t*));
 
   for (int t = 0; t < num_tracks; t++) {
       PyObject* track_dict = PyList_GetItem(py_tracks, t);
@@ -4602,7 +4602,7 @@ static PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
   r.j_veh = JPH_VehicleConstraint_Create(lock.body, &v_set);
   
   // Collision Tester
-  r.tester = (JPH_VehicleCollisionTesterRay*)JPH_VehicleCollisionTesterRay_Create(1, &(JPH_Vec3){0, 1, 0}, 1.0f); 
+  r.tester = JPH_VehicleCollisionTesterRay_Create(1, &(JPH_Vec3){0, 1, 0}, 1.0f); 
   JPH_VehicleConstraint_SetVehicleCollisionTester(r.j_veh, (JPH_VehicleCollisionTester*)r.tester);
 
   // 7. World Insertion
@@ -4620,7 +4620,7 @@ static PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
   for(int i=0; i<num_tracks; i++) {
       if(track_indices_ptrs[i]) PyMem_RawFree(track_indices_ptrs[i]);
   }
-  PyMem_RawFree(track_indices_ptrs);
+  PyMem_RawFree((void *)track_indices_ptrs);
 
   // 8. Return
   CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
