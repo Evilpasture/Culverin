@@ -5,23 +5,60 @@ build-backend = "scikit_build_core.build"
 [project]
 name = "culverin"
 version = "0.1.0"
-description = "High-performance Jolt Physics wrapper using Shadow Buffers"
+description = "High-performance Jolt Physics bindings for Python featuring Shadow Buffers and Free-Threading support."
 readme = "README.md"
 requires-python = ">=3.13"
+authors = [
+    {name = "Mai Huy Hiếu"}
+]
+license = {text = "MIT"}
+keywords = [
+    "physics", 
+    "jolt", 
+    "gamedev", 
+    "free-threading", 
+    "3d", 
+    "simulation", 
+    "collision-detection",
+    "robotics"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: C",
+    "Programming Language :: C++",
+    "Topic :: Games/Entertainment",
+    "Topic :: Multimedia :: Graphics :: 3D Rendering",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+# Install your own NumPy.
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/Evilpasture/culverin"
+Repository = "https://github.com/Evilpasture/culverin.git"
+"Bug Tracker" = "https://github.com/Evilpasture/culverin/issues"
 
 [tool.scikit-build]
 cmake.build-type = "Release"
 wheel.install-dir = "culverin"
 
-# --- THE FIX: Force Clang-CL Toolset ---
+# Use ClangCL for high-performance Windows builds
 cmake.args = [
     "-T", "ClangCL",
 ]
 
+# Ensure we don't ship build artifacts or raw source in the final wheel
 wheel.exclude = [
     "culverin/include/**",
     "culverin/lib/**",
     "culverin/share/**",
+    "src/**",
     "**/*.c",
     "**/*.h",
     "**/*.cpp",
@@ -29,3 +66,5 @@ wheel.exclude = [
     "**/*.a",
     "**/*.lib",
 ]
+
+sdist.include = ["culverin/*.pyi"]
