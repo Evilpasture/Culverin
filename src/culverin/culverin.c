@@ -2049,9 +2049,16 @@ static void flush_commands(PhysicsWorldObject *self) {
     PhysicsCommand *cmd = &self->command_queue[i];
     uint32_t slot = cmd->slot;
 
+    // Resolve dense index dynamically because previous CMD_DESTROY 
+    // operations in this very loop might have shifted indices.
     uint32_t dense_idx = 0;
     JPH_BodyID bid = 0;
+    
     if (cmd->type != CMD_CREATE_BODY) {
+      // Safety: Ensure slot is actually valid before lookup
+      // (In case user queued a move command on a body they also destroyed in this batch)
+      if (self->slot_states[slot] != SLOT_ALIVE) continue; 
+      
       dense_idx = self->slot_to_dense[slot];
       bid = self->body_ids[dense_idx];
     }
@@ -2061,7 +2068,6 @@ static void flush_commands(PhysicsWorldObject *self) {
       JPH_BodyCreationSettings *s = cmd->data.create.settings;
       JPH_BodyID new_bid = JPH_BodyInterface_CreateAndAddBody(bi, s, JPH_Activation_Activate);
 
-      // SAFETY 1: Check for Jolt failure
       if (new_bid == JPH_INVALID_BODY_ID) {
         self->slot_states[slot] = SLOT_EMPTY;
         self->generations[slot]++;
@@ -2075,8 +2081,6 @@ static void flush_commands(PhysicsWorldObject *self) {
       BodyHandle handle = make_handle(slot, gen);
       
       uint32_t jolt_idx = JPH_ID_TO_INDEX(new_bid);
-      
-      // SAFETY 2: Bounds Check
       if (self->id_to_handle_map && jolt_idx < self->max_jolt_bodies) {
           self->id_to_handle_map[jolt_idx] = handle;
       }
@@ -2095,23 +2099,25 @@ static void flush_commands(PhysicsWorldObject *self) {
       float fx = (float)p->x;
       float fy = (float)p->y;
       float fz = (float)p->z;
-      self->positions[new_dense * 4 + 0] = fx;
-      self->positions[new_dense * 4 + 1] = fy;
-      self->positions[new_dense * 4 + 2] = fz;
-      // Sync prev to prevent frame-0 jitter
-      self->prev_positions[new_dense * 4 + 0] = fx;
-      self->prev_positions[new_dense * 4 + 1] = fy;
-      self->prev_positions[new_dense * 4 + 2] = fz;
+      
+      size_t offset = new_dense * 4;
+      
+      self->positions[offset + 0] = fx;
+      self->positions[offset + 1] = fy;
+      self->positions[offset + 2] = fz;
+      // Correctly preventing creation jitter
+      self->prev_positions[offset + 0] = fx;
+      self->prev_positions[offset + 1] = fy;
+      self->prev_positions[offset + 2] = fz;
 
-      self->rotations[new_dense * 4 + 0] = q->x;
-      self->rotations[new_dense * 4 + 1] = q->y;
-      self->rotations[new_dense * 4 + 2] = q->z;
-      self->rotations[new_dense * 4 + 3] = q->w;
-      memcpy(&self->prev_rotations[new_dense * 4],
-             &self->rotations[new_dense * 4], 16);
+      self->rotations[offset + 0] = q->x;
+      self->rotations[offset + 1] = q->y;
+      self->rotations[offset + 2] = q->z;
+      self->rotations[offset + 3] = q->w;
+      memcpy(&self->prev_rotations[offset], &self->rotations[offset], 16);
 
-      memset(&self->linear_velocities[new_dense * 4], 0, 16);
-      memset(&self->angular_velocities[new_dense * 4], 0, 16);
+      memset(&self->linear_velocities[offset], 0, 16);
+      memset(&self->angular_velocities[offset], 0, 16);
 
       self->categories[new_dense] = cmd->data.create.category;
       self->masks[new_dense] = cmd->data.create.mask;
@@ -2136,9 +2142,16 @@ static void flush_commands(PhysicsWorldObject *self) {
       p->y = cmd->data.vec.y;
       p->z = cmd->data.vec.z;
       JPH_BodyInterface_SetPosition(bi, bid, p, JPH_Activation_Activate);
-      self->positions[dense_idx * 4 + 0] = cmd->data.vec.x;
-      self->positions[dense_idx * 4 + 1] = cmd->data.vec.y;
-      self->positions[dense_idx * 4 + 2] = cmd->data.vec.z;
+      
+      size_t offset = (size_t)dense_idx * 4;
+      self->positions[offset + 0] = cmd->data.vec.x;
+      self->positions[offset + 1] = cmd->data.vec.y;
+      self->positions[offset + 2] = cmd->data.vec.z;
+
+      // FIX: Reset interpolation (Teleport)
+      self->prev_positions[offset + 0] = cmd->data.vec.x;
+      self->prev_positions[offset + 1] = cmd->data.vec.y;
+      self->prev_positions[offset + 2] = cmd->data.vec.z;
       break;
     }
 
@@ -2149,7 +2162,11 @@ static void flush_commands(PhysicsWorldObject *self) {
       q->z = cmd->data.vec.z;
       q->w = cmd->data.vec.w;
       JPH_BodyInterface_SetRotation(bi, bid, q, JPH_Activation_Activate);
-      memcpy(&self->rotations[(size_t)dense_idx * 4], &cmd->data.vec, 16);
+      
+      size_t offset = (size_t)dense_idx * 4;
+      memcpy(&self->rotations[offset], &cmd->data.vec, 16);
+      // FIX: Reset interpolation
+      memcpy(&self->prev_rotations[offset], &cmd->data.vec, 16);
       break;
     }
 
@@ -2164,21 +2181,25 @@ static void flush_commands(PhysicsWorldObject *self) {
       q->z = cmd->data.transform.rz;
       q->w = cmd->data.transform.rw;
 
-      JPH_BodyInterface_SetPositionAndRotation(bi, bid, p, q,
-                                               JPH_Activation_Activate);
+      JPH_BodyInterface_SetPositionAndRotation(bi, bid, p, q, JPH_Activation_Activate);
 
-      self->positions[dense_idx * 4 + 0] = (float)p->x;
-      self->positions[dense_idx * 4 + 1] = (float)p->y;
-      self->positions[dense_idx * 4 + 2] = (float)p->z;
-      memcpy(&self->rotations[(size_t)dense_idx * 4], &cmd->data.transform.rx,
-             16);
+      size_t offset = (size_t)dense_idx * 4;
+      self->positions[offset + 0] = (float)p->x;
+      self->positions[offset + 1] = (float)p->y;
+      self->positions[offset + 2] = (float)p->z;
+      memcpy(&self->rotations[offset], &cmd->data.transform.rx, 16);
+
+      // FIX: Reset interpolation
+      self->prev_positions[offset + 0] = (float)p->x;
+      self->prev_positions[offset + 1] = (float)p->y;
+      self->prev_positions[offset + 2] = (float)p->z;
+      memcpy(&self->prev_rotations[offset], &cmd->data.transform.rx, 16);
       break;
     }
 
     case CMD_SET_LINVEL: {
         JPH_Vec3 v = {cmd->data.vec.x, cmd->data.vec.y, cmd->data.vec.z};
         JPH_BodyInterface_SetLinearVelocity(bi, bid, &v);
-        // Update shadow buffer immediately so get_velocities() is accurate next frame
         self->linear_velocities[dense_idx * 4 + 0] = cmd->data.vec.x;
         self->linear_velocities[dense_idx * 4 + 1] = cmd->data.vec.y;
         self->linear_velocities[dense_idx * 4 + 2] = cmd->data.vec.z;
@@ -2186,20 +2207,21 @@ static void flush_commands(PhysicsWorldObject *self) {
     }
 
     case CMD_SET_ANGVEL: {
-        JPH_Vec3 v = {cmd->data.vec.x, cmd->data.vec.y, cmd->data.vec.z};
-        JPH_BodyInterface_SetAngularVelocity(bi, bid, &v);
-        self->angular_velocities[dense_idx * 4 + 0] = cmd->data.vec.x;
-        self->angular_velocities[dense_idx * 4 + 1] = cmd->data.vec.y;
-        self->angular_velocities[dense_idx * 4 + 2] = cmd->data.vec.z;
-        break;
+      JPH_Vec3 v = {cmd->data.vec.x, cmd->data.vec.y, cmd->data.vec.z};
+      JPH_BodyInterface_SetAngularVelocity(bi, bid, &v);
+      self->angular_velocities[dense_idx * 4 + 0] = cmd->data.vec.x;
+      self->angular_velocities[dense_idx * 4 + 1] = cmd->data.vec.y;
+      self->angular_velocities[dense_idx * 4 + 2] = cmd->data.vec.z;
+      break;
     }
 
     case CMD_SET_MOTION: {
       JPH_BodyInterface_SetMotionType(bi, bid,
-                                      (JPH_MotionType)cmd->data.motion_type,
-                                      JPH_Activation_Activate);
-      // Logic Note: User should manually update layer if switching between
-      // Static (0) and Moving (1)
+                                    (JPH_MotionType)cmd->data.motion_type,
+                                    JPH_Activation_Activate);
+      // Optional: If you use Layer 0 for Static and Layer 1 for Moving
+      uint32_t layer = (cmd->data.motion_type == 0) ? 0 : 1;
+      JPH_BodyInterface_SetObjectLayer(bi, bid, (JPH_ObjectLayer)layer);
       break;
     }
 
@@ -2218,7 +2240,6 @@ static void flush_commands(PhysicsWorldObject *self) {
         JPH_MotionQuality qual = cmd->data.motion_type ? 
                                  JPH_MotionQuality_LinearCast : 
                                  JPH_MotionQuality_Discrete;
-        
         JPH_BodyInterface_SetMotionQuality(bi, bid, qual);
         break;
     }
@@ -4698,32 +4719,32 @@ static PyObject *PhysicsWorld_set_position(PhysicsWorldObject *self,
   BLOCK_UNTIL_NOT_QUERYING(self);
 
   uint32_t slot = 0;
-  if (!unpack_handle(self, handle_raw, &slot) ||
-      self->slot_states[slot] != SLOT_ALIVE) {
-    SHADOW_UNLOCK(&self->shadow_lock);
-    PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
-    return NULL;
+  // Allow PENDING_CREATE so users can move bodies they just created
+  if (!unpack_handle(self, (BodyHandle)handle_raw, &slot)) {
+      SHADOW_UNLOCK(&self->shadow_lock);
+      PyErr_SetString(PyExc_ValueError, "Invalid handle");
+      return NULL;
+  }
+  
+  uint8_t state = self->slot_states[slot];
+  if (state != SLOT_ALIVE && state != SLOT_PENDING_CREATE) {
+      SHADOW_UNLOCK(&self->shadow_lock);
+      PyErr_SetString(PyExc_ValueError, "Stale handle");
+      return NULL;
   }
 
-  uint32_t idx = self->slot_to_dense[slot];
-  JPH_STACK_ALLOC(JPH_RVec3, p);
-  p->x = (double)x;
-  p->y = (double)y;
-  p->z = (double)z;
+  // Queue it instead of immediate execution
+  if (!ensure_command_capacity(self)) {
+      SHADOW_UNLOCK(&self->shadow_lock);
+      return PyErr_NoMemory();
+  }
 
-  // 1. Update Jolt (Thread-safe)
-  JPH_BodyInterface_SetPosition(self->body_interface, self->body_ids[idx], p,
-                                JPH_Activation_Activate);
-
-  // 2. Update Shadow Buffer
-  self->positions[idx * 4 + 0] = x;
-  self->positions[idx * 4 + 1] = y;
-  self->positions[idx * 4 + 2] = z;
-
-  // 3. FIX: Reset interpolation state to prevent "teleport streaks"
-  self->prev_positions[idx * 4 + 0] = x;
-  self->prev_positions[idx * 4 + 1] = y;
-  self->prev_positions[idx * 4 + 2] = z;
+  PhysicsCommand *cmd = &self->command_queue[self->command_count++];
+  cmd->type = CMD_SET_POS;
+  cmd->slot = slot;
+  cmd->data.vec.x = x;
+  cmd->data.vec.y = y;
+  cmd->data.vec.z = z;
 
   SHADOW_UNLOCK(&self->shadow_lock);
   Py_RETURN_NONE;
@@ -4732,47 +4753,48 @@ static PyObject *PhysicsWorld_set_position(PhysicsWorldObject *self,
 static PyObject *PhysicsWorld_set_rotation(PhysicsWorldObject *self,
                                            PyObject *args, PyObject *kwds) {
   uint64_t handle_raw = 0;
-  float x = NAN;
-  float y = NAN;
-  float z = NAN;
-  float w = NAN;
+  float x = NAN, y = NAN, z = NAN, w = NAN;
   static char *kwlist[] = {"handle", "x", "y", "z", "w", NULL};
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "Kffff", kwlist, &handle_raw, &x,
-                                   &y, &z, &w)) {
+
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "Kffff", kwlist, &handle_raw, 
+                                   &x, &y, &z, &w)) {
     return NULL;
   }
+
   SHADOW_LOCK(&self->shadow_lock);
   BLOCK_UNTIL_NOT_STEPPING(self);
   BLOCK_UNTIL_NOT_QUERYING(self);
 
   uint32_t slot = 0;
-  if (!unpack_handle(self, (BodyHandle)handle_raw, &slot) ||
-      self->slot_states[slot] != SLOT_ALIVE) {
+  // Use unpack_handle to verify generation
+  if (!unpack_handle(self, (BodyHandle)handle_raw, &slot)) {
     SHADOW_UNLOCK(&self->shadow_lock);
-    PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
+    PyErr_SetString(PyExc_ValueError, "Invalid handle");
     return NULL;
   }
 
-  uint32_t dense_idx = self->slot_to_dense[slot];
-  JPH_STACK_ALLOC(JPH_Quat, q);
-  q->x = x;
-  q->y = y;
-  q->z = z;
-  q->w = w;
+  // Allow rotation on bodies that are alive OR just about to be created
+  uint8_t state = self->slot_states[slot];
+  if (state != SLOT_ALIVE && state != SLOT_PENDING_CREATE) {
+    SHADOW_UNLOCK(&self->shadow_lock);
+    PyErr_SetString(PyExc_ValueError, "Handle is stale or body is being destroyed");
+    return NULL;
+  }
 
-  // 1. Update Jolt
-  JPH_BodyInterface_SetRotation(self->body_interface, self->body_ids[dense_idx],
-                                q, JPH_Activation_Activate);
+  // Ensure queue has space
+  if (!ensure_command_capacity(self)) {
+    SHADOW_UNLOCK(&self->shadow_lock);
+    return PyErr_NoMemory();
+  }
 
-  // 2. Update Current Shadow
-  self->rotations[dense_idx * 4 + 0] = x;
-  self->rotations[dense_idx * 4 + 1] = y;
-  self->rotations[dense_idx * 4 + 2] = z;
-  self->rotations[dense_idx * 4 + 3] = w;
-
-  // 3. FIX: Update Previous Shadow to reset interpolation
-  memcpy(&self->prev_rotations[(size_t)dense_idx * 4],
-         &self->rotations[(size_t)dense_idx * 4], 16);
+  // Queue the command
+  PhysicsCommand *cmd = &self->command_queue[self->command_count++];
+  cmd->type = CMD_SET_ROT;
+  cmd->slot = slot;
+  cmd->data.vec.x = x;
+  cmd->data.vec.y = y;
+  cmd->data.vec.z = z;
+  cmd->data.vec.w = w;
 
   SHADOW_UNLOCK(&self->shadow_lock);
   Py_RETURN_NONE;
@@ -4892,23 +4914,42 @@ static PyObject *PhysicsWorld_set_motion_type(PhysicsWorldObject *self,
   uint64_t handle_raw = 0;
   int motion_type = 0;
   static char *kwlist[] = {"handle", "motion", NULL};
+
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "Ki", kwlist, &handle_raw,
                                    &motion_type)) {
     return NULL;
   }
+
   SHADOW_LOCK(&self->shadow_lock);
   BLOCK_UNTIL_NOT_STEPPING(self);
   BLOCK_UNTIL_NOT_QUERYING(self);
+
   uint32_t slot = 0;
   if (!unpack_handle(self, (BodyHandle)handle_raw, &slot)) {
     SHADOW_UNLOCK(&self->shadow_lock);
-    PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
+    PyErr_SetString(PyExc_ValueError, "Invalid handle");
     return NULL;
   }
-  JPH_BodyID bid = self->body_ids[self->slot_to_dense[slot]];
-  JPH_BodyInterface_SetMotionType(self->body_interface, bid,
-                                  (JPH_MotionType)motion_type,
-                                  JPH_Activation_Activate);
+
+  // Allow modifying bodies created in the current frame
+  uint8_t state = self->slot_states[slot];
+  if (state != SLOT_ALIVE && state != SLOT_PENDING_CREATE) {
+    SHADOW_UNLOCK(&self->shadow_lock);
+    PyErr_SetString(PyExc_ValueError, "Handle is stale or body is being destroyed");
+    return NULL;
+  }
+
+  if (!ensure_command_capacity(self)) {
+    SHADOW_UNLOCK(&self->shadow_lock);
+    return PyErr_NoMemory();
+  }
+
+  // Queue the command
+  PhysicsCommand *cmd = &self->command_queue[self->command_count++];
+  cmd->type = CMD_SET_MOTION;
+  cmd->slot = slot;
+  cmd->data.motion_type = motion_type;
+
   SHADOW_UNLOCK(&self->shadow_lock);
   Py_RETURN_NONE;
 }
@@ -4918,28 +4959,40 @@ static PyObject *PhysicsWorld_set_user_data(PhysicsWorldObject *self,
   uint64_t handle_raw = 0;
   unsigned long long data = 0;
   static char *kwlist[] = {"handle", "data", NULL};
+
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "KK", kwlist, &handle_raw,
                                    &data)) {
     return NULL;
   }
 
   SHADOW_LOCK(&self->shadow_lock);
-
-  // 1. FIX: Prevent mutation while step() is rearranging the dense array
   BLOCK_UNTIL_NOT_STEPPING(self);
   BLOCK_UNTIL_NOT_QUERYING(self);
 
   uint32_t slot = 0;
-  if (!unpack_handle(self, (BodyHandle)handle_raw, &slot) ||
-      self->slot_states[slot] != SLOT_ALIVE) {
+  if (!unpack_handle(self, (BodyHandle)handle_raw, &slot)) {
     SHADOW_UNLOCK(&self->shadow_lock);
-    PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
+    PyErr_SetString(PyExc_ValueError, "Invalid handle");
     return NULL;
   }
 
-  // 2. Map to the dense index (safe because we are locked and not stepping)
-  uint32_t dense = self->slot_to_dense[slot];
-  self->user_data[dense] = (uint64_t)data;
+  uint8_t state = self->slot_states[slot];
+  if (state != SLOT_ALIVE && state != SLOT_PENDING_CREATE) {
+    SHADOW_UNLOCK(&self->shadow_lock);
+    PyErr_SetString(PyExc_ValueError, "Handle is stale or invalid");
+    return NULL;
+  }
+
+  if (!ensure_command_capacity(self)) {
+    SHADOW_UNLOCK(&self->shadow_lock);
+    return PyErr_NoMemory();
+  }
+
+  // Queue the command
+  PhysicsCommand *cmd = &self->command_queue[self->command_count++];
+  cmd->type = CMD_SET_USER_DATA;
+  cmd->slot = slot;
+  cmd->data.user_data_val = (uint64_t)data;
 
   SHADOW_UNLOCK(&self->shadow_lock);
   Py_RETURN_NONE;
@@ -4984,17 +5037,27 @@ static PyObject *PhysicsWorld_activate(PhysicsWorldObject *self, PyObject *args,
   BLOCK_UNTIL_NOT_QUERYING(self);
 
   uint32_t slot = 0;
-  // Consistency Check: Unpack AND verify the slot is currently ALIVE
-  if (!unpack_handle(self, (BodyHandle)handle_raw, &slot) ||
-      self->slot_states[slot] != SLOT_ALIVE) {
+  if (!unpack_handle(self, (BodyHandle)handle_raw, &slot)) {
     SHADOW_UNLOCK(&self->shadow_lock);
-    PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
+    PyErr_SetString(PyExc_ValueError, "Invalid handle");
     return NULL;
   }
 
-  // Thread-safe call into Jolt internal state
-  JPH_BodyInterface_ActivateBody(self->body_interface,
-                                 self->body_ids[self->slot_to_dense[slot]]);
+  uint8_t state = self->slot_states[slot];
+  if (state != SLOT_ALIVE && state != SLOT_PENDING_CREATE) {
+    SHADOW_UNLOCK(&self->shadow_lock);
+    PyErr_SetString(PyExc_ValueError, "Body is stale or invalid");
+    return NULL;
+  }
+
+  if (!ensure_command_capacity(self)) {
+    SHADOW_UNLOCK(&self->shadow_lock);
+    return PyErr_NoMemory();
+  }
+
+  PhysicsCommand *cmd = &self->command_queue[self->command_count++];
+  cmd->type = CMD_ACTIVATE;
+  cmd->slot = slot;
 
   SHADOW_UNLOCK(&self->shadow_lock);
   Py_RETURN_NONE;
@@ -5013,15 +5076,27 @@ static PyObject *PhysicsWorld_deactivate(PhysicsWorldObject *self,
   BLOCK_UNTIL_NOT_QUERYING(self);
 
   uint32_t slot = 0;
-  if (!unpack_handle(self, (BodyHandle)handle_raw, &slot) ||
-      self->slot_states[slot] != SLOT_ALIVE) {
+  if (!unpack_handle(self, (BodyHandle)handle_raw, &slot)) {
     SHADOW_UNLOCK(&self->shadow_lock);
-    PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
+    PyErr_SetString(PyExc_ValueError, "Invalid handle");
     return NULL;
   }
 
-  JPH_BodyInterface_DeactivateBody(self->body_interface,
-                                   self->body_ids[self->slot_to_dense[slot]]);
+  uint8_t state = self->slot_states[slot];
+  if (state != SLOT_ALIVE && state != SLOT_PENDING_CREATE) {
+    SHADOW_UNLOCK(&self->shadow_lock);
+    PyErr_SetString(PyExc_ValueError, "Body is stale or invalid");
+    return NULL;
+  }
+
+  if (!ensure_command_capacity(self)) {
+    SHADOW_UNLOCK(&self->shadow_lock);
+    return PyErr_NoMemory();
+  }
+
+  PhysicsCommand *cmd = &self->command_queue[self->command_count++];
+  cmd->type = CMD_DEACTIVATE;
+  cmd->slot = slot;
 
   SHADOW_UNLOCK(&self->shadow_lock);
   Py_RETURN_NONE;
@@ -5030,13 +5105,8 @@ static PyObject *PhysicsWorld_deactivate(PhysicsWorldObject *self,
 static PyObject *PhysicsWorld_set_transform(PhysicsWorldObject *self,
                                             PyObject *args, PyObject *kwds) {
   uint64_t handle_raw = 0;
-  float px = 0;
-  float py = 0;
-  float pz = 0;
-  float rx = 0;
-  float ry = 0;
-  float rz = 0;
-  float rw = 1.0f;
+  float px = 0, py = 0, pz = 0;
+  float rx = 0, ry = 0, rz = 0, rw = 1.0f;
   static char *kwlist[] = {"handle", "pos", "rot", NULL};
 
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "K(fff)(ffff)", kwlist,
@@ -5046,53 +5116,45 @@ static PyObject *PhysicsWorld_set_transform(PhysicsWorldObject *self,
   }
 
   SHADOW_LOCK(&self->shadow_lock);
-
-  // 1. Mutation Guard
   BLOCK_UNTIL_NOT_STEPPING(self);
   BLOCK_UNTIL_NOT_QUERYING(self);
 
-  // 2. Handle Resolution & Liveness check
   uint32_t slot = 0;
-  if (!unpack_handle(self, (BodyHandle)handle_raw, &slot) ||
-      self->slot_states[slot] != SLOT_ALIVE) {
+  // Use unpack_handle to verify identity and generation
+  if (!unpack_handle(self, (BodyHandle)handle_raw, &slot)) {
     SHADOW_UNLOCK(&self->shadow_lock);
-    PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
+    PyErr_SetString(PyExc_ValueError, "Invalid handle");
     return NULL;
   }
 
-  uint32_t dense_idx = self->slot_to_dense[slot];
-  JPH_BodyID bid = self->body_ids[dense_idx];
+  // Support modifying bodies created in the same frame
+  uint8_t state = self->slot_states[slot];
+  if (state != SLOT_ALIVE && state != SLOT_PENDING_CREATE) {
+    SHADOW_UNLOCK(&self->shadow_lock);
+    PyErr_SetString(PyExc_ValueError, "Body handle is stale or invalid");
+    return NULL;
+  }
 
-  // 3. Jolt Sync (Immediate)
-  // Because callbacks are lock-free, we can call this safely under shadow_lock.
-  JPH_STACK_ALLOC(JPH_RVec3, pos);
-  pos->x = (double)px;
-  pos->y = (double)py;
-  pos->z = (double)pz;
-  JPH_STACK_ALLOC(JPH_Quat, rot);
-  rot->x = rx;
-  rot->y = ry;
-  rot->z = rz;
-  rot->w = rw;
+  if (!ensure_command_capacity(self)) {
+    SHADOW_UNLOCK(&self->shadow_lock);
+    return PyErr_NoMemory();
+  }
 
-  JPH_BodyInterface_SetPositionAndRotation(self->body_interface, bid, pos, rot,
-                                           JPH_Activation_Activate);
-
-  // 4. Current Shadow Buffer Update
-  size_t off = (size_t)dense_idx * 4;
-  self->positions[off + 0] = px;
-  self->positions[off + 1] = py;
-  self->positions[off + 2] = pz;
-
-  self->rotations[off + 0] = rx;
-  self->rotations[off + 1] = ry;
-  self->rotations[off + 2] = rz;
-  self->rotations[off + 3] = rw;
-
-  // 5. Previous Shadow Buffer Update (Reset Interpolation)
-  // This prevents the "Visual Streak" on the frame the body is moved.
-  memcpy(&self->prev_positions[off], &self->positions[off], 16);
-  memcpy(&self->prev_rotations[off], &self->rotations[off], 16);
+  // Queue CMD_SET_TRNS
+  PhysicsCommand *cmd = &self->command_queue[self->command_count++];
+  cmd->type = CMD_SET_TRNS;
+  cmd->slot = slot;
+  
+  // Pack position
+  cmd->data.transform.px = px;
+  cmd->data.transform.py = py;
+  cmd->data.transform.pz = pz;
+  
+  // Pack rotation
+  cmd->data.transform.rx = rx;
+  cmd->data.transform.ry = ry;
+  cmd->data.transform.rz = rz;
+  cmd->data.transform.rw = rw;
 
   SHADOW_UNLOCK(&self->shadow_lock);
   Py_RETURN_NONE;
@@ -6836,7 +6898,14 @@ static PyObject *PhysicsWorld_create_ragdoll(PhysicsWorldObject *self,
   BLOCK_UNTIL_NOT_STEPPING(self);
 
   if (self->free_count < (size_t)body_count) {
-    PhysicsWorld_resize(self, self->capacity + body_count + 128);
+    if (PhysicsWorld_resize(self, self->capacity + body_count + 128) < 0) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        // Clean up the Jolt ragdoll since we can't track it
+        JPH_Ragdoll_Destroy(j_rag);
+        PyMem_RawFree(neutral_matrices);
+        Py_DECREF(obj); 
+        return NULL;
+    }
   }
 
   for (int i = 0; i < body_count; i++) {
