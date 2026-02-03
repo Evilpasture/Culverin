@@ -573,134 +573,131 @@ static PyObject *PhysicsWorld_get_contact_events(PhysicsWorldObject *self,
   return list;
 }
 
-static PyObject *PhysicsWorld_get_contact_events_ex(PhysicsWorldObject *self,
-                                                    PyObject *args) {
-  SHADOW_LOCK(&self->shadow_lock);
-  BLOCK_UNTIL_NOT_STEPPING(self);
+static PyObject *PhysicsWorld_get_contact_events_ex(PhysicsWorldObject *self, PyObject *args) {
+    // 1. Acquire Lock & Copy Data
+    SHADOW_LOCK(&self->shadow_lock);
+    BLOCK_UNTIL_NOT_STEPPING(self);
 
-  size_t count =
-      atomic_load_explicit(&self->contact_atomic_idx, memory_order_acquire);
-  if (count == 0) {
-    SHADOW_UNLOCK(&self->shadow_lock);
-    return PyList_New(0);
-  }
-
-  if (count > self->contact_max_capacity) {
-    count = self->contact_max_capacity;
-  }
-
-  ContactEvent *scratch = PyMem_RawMalloc(count * sizeof(ContactEvent));
-  if (!scratch) {
-    SHADOW_UNLOCK(&self->shadow_lock);
-    return PyErr_NoMemory();
-  }
-
-  memcpy(scratch, self->contact_buffer, count * sizeof(ContactEvent));
-  atomic_store_explicit(&self->contact_atomic_idx, 0, memory_order_relaxed);
-  SHADOW_UNLOCK(&self->shadow_lock);
-
-  // --- KEY HANDLING ---
-  PyObject *k_bodies = PyUnicode_InternFromString("bodies");
-  PyObject *k_pos = PyUnicode_InternFromString("position");
-  PyObject *k_norm = PyUnicode_InternFromString("normal");
-  PyObject *k_str = PyUnicode_InternFromString("strength");
-  PyObject *k_slide = PyUnicode_InternFromString("slide_sq");
-  PyObject *k_mat = PyUnicode_InternFromString("materials"); // <--- interned
-  PyObject *k_type = PyUnicode_InternFromString("type");
-
-  // FIX 1: Include k_mat in the NULL check
-  if (!k_bodies || !k_pos || !k_norm || !k_str || !k_slide || !k_mat) {
-    Py_XDECREF(k_bodies);
-    Py_XDECREF(k_pos);
-    Py_XDECREF(k_norm);
-    Py_XDECREF(k_str);
-    Py_XDECREF(k_slide);
-    Py_XDECREF(k_mat); // <--- clean up k_mat
-    PyMem_RawFree(scratch);
-    return NULL;
-  }
-
-  PyObject *list = PyList_New((Py_ssize_t)count);
-  if (!list) {
-    Py_DECREF(k_bodies);
-    Py_DECREF(k_pos);
-    Py_DECREF(k_norm);
-    Py_DECREF(k_str);
-    Py_DECREF(k_slide);
-    Py_DECREF(k_mat);
-    PyMem_RawFree(scratch);
-    return NULL;
-  }
-
-  for (size_t i = 0; i < count; i++) {
-    ContactEvent *e = &scratch[i];
-
-    PyObject *dict = PyDict_New();
-    if (!dict) {
-      Py_INCREF(Py_None);
-      PyList_SET_ITEM(list, (Py_ssize_t)i, Py_None);
-      continue;
+    size_t count = atomic_load_explicit(&self->contact_atomic_idx, memory_order_acquire);
+    
+    if (count == 0) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        return PyList_New(0);
     }
 
-    // 1. Bodies (u64, u64)
-    PyObject *b_tuple = PyTuple_New(2);
-    PyTuple_SET_ITEM(b_tuple, 0, PyLong_FromUnsignedLongLong(e->body1));
-    PyTuple_SET_ITEM(b_tuple, 1, PyLong_FromUnsignedLongLong(e->body2));
-    PyDict_SetItem(dict, k_bodies, b_tuple);
-    Py_DECREF(b_tuple);
+    if (count > self->contact_max_capacity) {
+        count = self->contact_max_capacity;
+    }
 
-    // 2. Position (f, f, f)
-    PyObject *p_tuple = PyTuple_New(3);
-    PyTuple_SET_ITEM(p_tuple, 0, PyFloat_FromDouble(e->px));
-    PyTuple_SET_ITEM(p_tuple, 1, PyFloat_FromDouble(e->py));
-    PyTuple_SET_ITEM(p_tuple, 2, PyFloat_FromDouble(e->pz));
-    PyDict_SetItem(dict, k_pos, p_tuple);
-    Py_DECREF(p_tuple);
+    // Allocate scratch buffer
+    ContactEvent *scratch = PyMem_RawMalloc(count * sizeof(ContactEvent));
+    if (!scratch) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        return PyErr_NoMemory();
+    }
 
-    // 3. Normal (f, f, f)
-    PyObject *n_tuple = PyTuple_New(3);
-    PyTuple_SET_ITEM(n_tuple, 0, PyFloat_FromDouble(e->nx));
-    PyTuple_SET_ITEM(n_tuple, 1, PyFloat_FromDouble(e->ny));
-    PyTuple_SET_ITEM(n_tuple, 2, PyFloat_FromDouble(e->nz));
-    PyDict_SetItem(dict, k_norm, n_tuple);
-    Py_DECREF(n_tuple);
+    // Copy data and release lock immediately
+    memcpy(scratch, self->contact_buffer, count * sizeof(ContactEvent));
+    atomic_store_explicit(&self->contact_atomic_idx, 0, memory_order_relaxed);
+    SHADOW_UNLOCK(&self->shadow_lock);
 
-    // 4. Materials (u32, u32)
-    PyObject *m_tuple = PyTuple_New(2);
-    PyTuple_SET_ITEM(m_tuple, 0, PyLong_FromUnsignedLong(e->mat1));
-    PyTuple_SET_ITEM(m_tuple, 1, PyLong_FromUnsignedLong(e->mat2));
-    PyDict_SetItem(dict, k_mat, m_tuple);
-    Py_DECREF(m_tuple);
+    // 2. Static Keys (Allocated ONCE)
+    // We intentionally "leak" these references for the lifetime of the app.
+    // This provides a massive speedup and stability fix.
+    static PyObject *k_bodies = NULL;
+    static PyObject *k_pos = NULL;
+    static PyObject *k_norm = NULL;
+    static PyObject *k_str = NULL;
+    static PyObject *k_slide = NULL;
+    static PyObject *k_mat = NULL;
+    static PyObject *k_type = NULL;
 
-    // 5. Strength (Closing speed)
-    PyObject *s_val = PyFloat_FromDouble(e->impulse);
-    PyDict_SetItem(dict, k_str, s_val);
-    Py_DECREF(s_val);
+    if (!k_bodies) {
+        k_bodies = PyUnicode_InternFromString("bodies");
+        k_pos = PyUnicode_InternFromString("position");
+        k_norm = PyUnicode_InternFromString("normal");
+        k_str = PyUnicode_InternFromString("strength");
+        k_slide = PyUnicode_InternFromString("slide_sq");
+        k_mat = PyUnicode_InternFromString("materials");
+        k_type = PyUnicode_InternFromString("type");
 
-    // 6. Sliding Speed Squared
-    PyObject *sl_val = PyFloat_FromDouble(e->sliding_speed_sq);
-    PyDict_SetItem(dict, k_slide, sl_val);
-    Py_DECREF(sl_val);
+        // Paranoid check: if any failed during init, clean up and fail
+        if (!k_bodies || !k_pos || !k_norm || !k_str || !k_slide || !k_mat || !k_type) {
+            PyMem_RawFree(scratch);
+            return PyErr_NoMemory();
+        }
+    }
 
-    // 7. Event Type (0=Add, 1=Stay, 2=Remove)
-    PyObject *t_val = PyLong_FromUnsignedLong(e->type);
-    PyDict_SetItem(dict, k_type, t_val);
-    Py_DECREF(t_val);
+    // 3. Build Python List
+    PyObject *list = PyList_New((Py_ssize_t)count);
+    if (!list) {
+        PyMem_RawFree(scratch);
+        return NULL;
+    }
 
-    PyList_SET_ITEM(list, (Py_ssize_t)i, dict);
-  }
+    for (size_t i = 0; i < count; i++) {
+        ContactEvent *e = &scratch[i];
 
-  // FIX 2: Cleanup k_mat reference
-  Py_DECREF(k_bodies);
-  Py_DECREF(k_pos);
-  Py_DECREF(k_norm);
-  Py_DECREF(k_str);
-  Py_DECREF(k_slide);
-  Py_DECREF(k_mat); // <--- clean up k_mat
-  Py_DECREF(k_type);
+        PyObject *dict = PyDict_New();
+        if (!dict) {
+            Py_INCREF(Py_None);
+            PyList_SET_ITEM(list, (Py_ssize_t)i, Py_None);
+            continue;
+        }
 
-  PyMem_RawFree(scratch);
-  return list;
+        // 1. Bodies (u64, u64)
+        PyObject *b_tuple = PyTuple_New(2);
+        PyTuple_SET_ITEM(b_tuple, 0, PyLong_FromUnsignedLongLong(e->body1));
+        PyTuple_SET_ITEM(b_tuple, 1, PyLong_FromUnsignedLongLong(e->body2));
+        PyDict_SetItem(dict, k_bodies, b_tuple);
+        Py_DECREF(b_tuple);
+
+        // 2. Position (f, f, f)
+        PyObject *p_tuple = PyTuple_New(3);
+        PyTuple_SET_ITEM(p_tuple, 0, PyFloat_FromDouble(e->px));
+        PyTuple_SET_ITEM(p_tuple, 1, PyFloat_FromDouble(e->py));
+        PyTuple_SET_ITEM(p_tuple, 2, PyFloat_FromDouble(e->pz));
+        PyDict_SetItem(dict, k_pos, p_tuple);
+        Py_DECREF(p_tuple);
+
+        // 3. Normal (f, f, f)
+        PyObject *n_tuple = PyTuple_New(3);
+        PyTuple_SET_ITEM(n_tuple, 0, PyFloat_FromDouble(e->nx));
+        PyTuple_SET_ITEM(n_tuple, 1, PyFloat_FromDouble(e->ny));
+        PyTuple_SET_ITEM(n_tuple, 2, PyFloat_FromDouble(e->nz));
+        PyDict_SetItem(dict, k_norm, n_tuple);
+        Py_DECREF(n_tuple);
+
+        // 4. Materials (u32, u32)
+        PyObject *m_tuple = PyTuple_New(2);
+        PyTuple_SET_ITEM(m_tuple, 0, PyLong_FromUnsignedLong(e->mat1));
+        PyTuple_SET_ITEM(m_tuple, 1, PyLong_FromUnsignedLong(e->mat2));
+        PyDict_SetItem(dict, k_mat, m_tuple);
+        Py_DECREF(m_tuple);
+
+        // 5. Strength (float)
+        PyObject *s_val = PyFloat_FromDouble(e->impulse);
+        PyDict_SetItem(dict, k_str, s_val);
+        Py_DECREF(s_val);
+
+        // 6. Sliding Speed (float)
+        PyObject *sl_val = PyFloat_FromDouble(e->sliding_speed_sq);
+        PyDict_SetItem(dict, k_slide, sl_val);
+        Py_DECREF(sl_val);
+
+        // 7. Event Type (int)
+        PyObject *t_val = PyLong_FromUnsignedLong(e->type);
+        PyDict_SetItem(dict, k_type, t_val);
+        Py_DECREF(t_val);
+
+        // Steals ref to dict
+        PyList_SET_ITEM(list, (Py_ssize_t)i, dict);
+    }
+
+    // REMOVED: Py_DECREF(keys) - we keep them alive statically now.
+    
+    PyMem_RawFree(scratch);
+    return list;
 }
 // ContactEvent layout (packed, little-endian):
 // uint64 body1, uint64 body2
