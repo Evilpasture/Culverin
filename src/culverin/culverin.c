@@ -878,64 +878,72 @@ static JPH_Shape *find_or_create_shape(PhysicsWorldObject *self, int type,
   return shape;
 }
 
+static void free_constraints(PhysicsWorldObject *self) {
+  if (self->constraints) {
+    for (size_t i = 0; i < self->constraint_capacity; i++) {
+          if (!self->constraints[i]) continue;
+
+          bool is_alive = !self->constraint_states || self->constraint_states[i] == SLOT_ALIVE;
+          if (is_alive) {
+          if (self->system) {
+                  JPH_PhysicsSystem_RemoveConstraint(self->system, self->constraints[i]);
+          }
+          JPH_Constraint_Destroy(self->constraints[i]);
+        }
+        self->constraints[i] = NULL;
+      }
+    PyMem_RawFree((void *)self->constraints);
+    self->constraints = NULL;
+  }
+  PyMem_RawFree(self->constraint_generations); self->constraint_generations = NULL;
+  PyMem_RawFree(self->free_constraint_slots);  self->free_constraint_slots = NULL;
+  PyMem_RawFree(self->constraint_states);      self->constraint_states = NULL;
+  }
+
+static void free_shape_cache(PhysicsWorldObject *self) {
+  if (!self->shape_cache) return;
+
+  for (size_t i = 0; i < self->shape_cache_count; i++) {
+      if (self->shape_cache[i].shape) {
+          JPH_Shape_Destroy(self->shape_cache[i].shape);
+      }
+  }
+  PyMem_RawFree(self->shape_cache);
+  self->shape_cache = NULL;
+  self->shape_cache_count = 0;
+}
+
+static void free_shadow_buffers(PhysicsWorldObject *self) {
+  PyMem_RawFree(self->positions);          self->positions = NULL;
+  PyMem_RawFree(self->rotations);          self->rotations = NULL;
+  PyMem_RawFree(self->prev_positions);     self->prev_positions = NULL;
+  PyMem_RawFree(self->prev_rotations);     self->prev_rotations = NULL;
+  PyMem_RawFree(self->linear_velocities);  self->linear_velocities = NULL;
+  PyMem_RawFree(self->angular_velocities); self->angular_velocities = NULL;
+  PyMem_RawFree(self->body_ids);           self->body_ids = NULL;
+  PyMem_RawFree(self->generations);        self->generations = NULL;
+  PyMem_RawFree(self->slot_to_dense);      self->slot_to_dense = NULL;
+  PyMem_RawFree(self->dense_to_slot);      self->dense_to_slot = NULL;
+  PyMem_RawFree(self->free_slots);         self->free_slots = NULL;
+  PyMem_RawFree(self->slot_states);        self->slot_states = NULL;
+  PyMem_RawFree(self->command_queue);      self->command_queue = NULL;
+  PyMem_RawFree(self->user_data);          self->user_data = NULL;
+  PyMem_RawFree(self->categories);         self->categories = NULL;
+  PyMem_RawFree(self->masks);              self->masks = NULL;
+  PyMem_RawFree(self->material_ids);       self->material_ids = NULL;
+  PyMem_RawFree(self->materials);          self->materials = NULL;
+  }
+
 // --- Helper: Resource Cleanup (Idempotent) ---
 // SAFETY:
 // - Must not be called while PhysicsSystem is stepping
 // - Must not be called from a Jolt callback
 // - Must not race with Python memoryview access
 static void PhysicsWorld_free_members(PhysicsWorldObject *self) {
-  // --- 0. Pre-allocation Safety ---
-  // If the object was partially allocated, some arrays might be NULL.
-  // We check array existence before any loops.
+  // 1. Constraints (Must go before PhysicsSystem)
+  free_constraints(self);
 
-  // --- 1. Vehicles (Special Constraints) ---
-  // Vehicles must be destroyed before the system because they act as
-  // constraints and step-listeners. Note: Since VehicleObjects are
-  // Python-owned, they usually handle their own Jolt cleanup in
-  // Vehicle_dealloc, but we ensure the system is still valid while they exist.
-
-  // --- 2. Constraints (Standard) ---
-  // CRITICAL: Constraints must be destroyed BEFORE the PhysicsSystem.
-  // This ensures Jolt handles the reference counting while the BodyManager is
-  // alive.
-  if (self->constraints) {
-    for (size_t i = 0; i < self->constraint_capacity; i++) {
-      // Only destroy if the pointer exists AND the state array confirms it is
-      // alive. We check self->constraint_states existence to handle partial
-      // init failure.
-      if (self->constraints[i]) {
-        if (!self->constraint_states ||
-            self->constraint_states[i] == SLOT_ALIVE) {
-          // If the system is still alive, Jolt recommends removing before
-          // destroying
-          if (self->system) {
-            JPH_PhysicsSystem_RemoveConstraint(self->system,
-                                               self->constraints[i]);
-          }
-          JPH_Constraint_Destroy(self->constraints[i]);
-        }
-        self->constraints[i] = NULL;
-      }
-    }
-    PyMem_RawFree((void *)self->constraints);
-    self->constraints = NULL;
-  }
-
-  if (self->constraint_generations) {
-    PyMem_RawFree(self->constraint_generations);
-    self->constraint_generations = NULL;
-  }
-  if (self->free_constraint_slots) {
-    PyMem_RawFree(self->free_constraint_slots);
-    self->free_constraint_slots = NULL;
-  }
-  if (self->constraint_states) {
-    PyMem_RawFree(self->constraint_states);
-    self->constraint_states = NULL;
-  }
-
-  // --- 3. Jolt Systems ---
-  // Now that constraints are gone, it is safe to tear down the system.
+  // 2. Jolt Core Systems
   if (self->system) {
     JPH_PhysicsSystem_Destroy(self->system);
     self->system = NULL;
@@ -949,6 +957,7 @@ static void PhysicsWorld_free_members(PhysicsWorldObject *self) {
     self->job_system = NULL;
   }
 
+  // 3. Debug Utilities
   if (self->debug_renderer) {
     JPH_DebugRenderer_Destroy(self->debug_renderer);
     self->debug_renderer = NULL;
@@ -956,115 +965,26 @@ static void PhysicsWorld_free_members(PhysicsWorldObject *self) {
   debug_buffer_free(&self->debug_lines);
   debug_buffer_free(&self->debug_triangles);
 
-  // --- 4. Filters & Interfaces ---
-  // Still missing Destroy APIs in JoltC as of current version.
-  if (self->bp_interface) {
-    self->bp_interface = NULL;
-  }
-  if (self->pair_filter) {
-    self->pair_filter = NULL;
-  }
-  if (self->bp_filter) {
-    self->bp_filter = NULL;
-  }
+  // 4. Shape Cache
+  free_shape_cache(self);
 
-  // --- 5. Shape Cache ---
-  if (self->shape_cache) {
-    for (size_t i = 0; i < self->shape_cache_count; i++) {
-      if (self->shape_cache[i].shape) {
-        JPH_Shape_Destroy(self->shape_cache[i].shape);
-      }
-    }
-    PyMem_RawFree(self->shape_cache);
-    self->shape_cache = NULL;
-    self->shape_cache_count = 0;
-  }
-
-  // --- 6. Contact Listener & Atomic Buffer ---
+  // 5. Contact Listener & Buffers
   if (self->contact_listener) {
     JPH_ContactListener_Destroy(self->contact_listener);
     self->contact_listener = NULL;
   }
-  if (self->contact_buffer) {
     PyMem_RawFree(self->contact_buffer);
     self->contact_buffer = NULL;
-  }
 
-  // --- 7. Core Shadow Buffers ---
-  if (self->positions) {
-    PyMem_RawFree(self->positions);
-    self->positions = NULL;
-  }
-  if (self->rotations) {
-    PyMem_RawFree(self->rotations);
-    self->rotations = NULL;
-  }
-  if (self->prev_positions) {
-    PyMem_RawFree(self->prev_positions);
-    self->prev_positions = NULL;
-  }
-  if (self->prev_rotations) {
-    PyMem_RawFree(self->prev_rotations);
-    self->prev_rotations = NULL;
-  }
-  if (self->linear_velocities) {
-    PyMem_RawFree(self->linear_velocities);
-    self->linear_velocities = NULL;
-  }
-  if (self->angular_velocities) {
-    PyMem_RawFree(self->angular_velocities);
-    self->angular_velocities = NULL;
-  }
+  // 6. Native Memory Buffers
+  free_shadow_buffers(self);
 
-  if (self->body_ids) {
-    PyMem_RawFree(self->body_ids);
-    self->body_ids = NULL;
-  }
-  if (self->generations) {
-    PyMem_RawFree(self->generations);
-    self->generations = NULL;
-  }
-  if (self->slot_to_dense) {
-    PyMem_RawFree(self->slot_to_dense);
-    self->slot_to_dense = NULL;
-  }
-  if (self->dense_to_slot) {
-    PyMem_RawFree(self->dense_to_slot);
-    self->dense_to_slot = NULL;
-  }
-  if (self->free_slots) {
-    PyMem_RawFree(self->free_slots);
-    self->free_slots = NULL;
-  }
-  if (self->slot_states) {
-    PyMem_RawFree(self->slot_states);
-    self->slot_states = NULL;
-  }
-  if (self->command_queue) {
-    PyMem_RawFree(self->command_queue);
-    self->command_queue = NULL;
-  }
-  if (self->user_data) {
-    PyMem_RawFree(self->user_data);
-    self->user_data = NULL;
-  }
-  if (self->categories) {
-    PyMem_RawFree(self->categories);
-    self->categories = NULL;
-  }
-  if (self->masks) {
-    PyMem_RawFree(self->masks);
-    self->masks = NULL;
-  }
-  if (self->material_ids) {
-    PyMem_RawFree(self->material_ids);
-    self->material_ids = NULL;
-  }
-
-  if (self->materials) {
-    PyMem_RawFree(self->materials);
-    self->materials = NULL;
-  }
+  // 7. Cleanup remaining pointers
+  self->bp_interface = NULL;
+  self->pair_filter = NULL;
+  self->bp_filter = NULL;
+  PyMem_RawFree(self->id_to_handle_map);
+  self->id_to_handle_map = NULL;
 
   FREE_LOCK(self->shadow_lock);
 }
