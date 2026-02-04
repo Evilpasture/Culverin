@@ -7414,7 +7414,7 @@ static int culverin_exec(PyObject *m) {
 
   return 0;
 }
-
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 static int culverin_traverse(PyObject *m, visitproc visit, void *arg) {
   CulverinState *st = get_culverin_state(m);
   Py_VISIT(st->helper);
