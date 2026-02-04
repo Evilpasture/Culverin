@@ -1151,7 +1151,7 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
   }
   Py_CLEAR(norm_settings);
 
-  self->is_stepping = false;
+  atomic_init(&self->is_stepping, false);
 
   INIT_LOCK(self->shadow_lock);
 #if PY_VERSION_HEX < 0x030D0000
@@ -3108,13 +3108,14 @@ static PyObject *PhysicsWorld_step(PhysicsWorldObject *self, PyObject *args) {
   SHADOW_LOCK(&self->shadow_lock);
 
   // 1. RE-ENTRANCY GUARD
-  if (self->is_stepping) {
+  if (atomic_load_explicit(&self->is_stepping, memory_order_relaxed)) {
     SHADOW_UNLOCK(&self->shadow_lock);
     PyErr_SetString(PyExc_RuntimeError, "Concurrent step detected");
     return NULL;
   }
   BLOCK_UNTIL_NOT_QUERYING(self);
-  self->is_stepping = true;
+  // Set to true via atomic store
+  atomic_store_explicit(&self->is_stepping, true, memory_order_relaxed);
 
   // 2. BUFFER MANAGEMENT (Reset Phase)
   // Safe because is_stepping=true ensures no other thread is inside step(),
@@ -3124,7 +3125,7 @@ static PyObject *PhysicsWorld_step(PhysicsWorldObject *self, PyObject *args) {
     self->contact_buffer =
         PyMem_RawMalloc(self->contact_max_capacity * sizeof(ContactEvent));
     if (!self->contact_buffer) {
-      self->is_stepping = false;
+      atomic_store_explicit(&self->is_stepping, false, memory_order_relaxed); // Reset before leaving
       SHADOW_UNLOCK(&self->shadow_lock);
       return PyErr_NoMemory();
     }
@@ -3168,7 +3169,8 @@ static PyObject *PhysicsWorld_step(PhysicsWorldObject *self, PyObject *args) {
   }
   self->contact_count = count; // Publish to Python-facing field
 
-  self->is_stepping = false;
+  // Set back to false via atomic store
+  atomic_store_explicit(&self->is_stepping, false, memory_order_relaxed);
   self->time += (double)dt;
 
   SHADOW_UNLOCK(&self->shadow_lock);

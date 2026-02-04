@@ -136,7 +136,7 @@ static inline void culverin_yield() {
 // Must be called while holding SHADOW_LOCK. Re-acquires it before returning.
 #define BLOCK_UNTIL_NOT_STEPPING(self)                                         \
   do {                                                                         \
-    while ((self)->is_stepping) {                                              \
+    while (atomic_load_explicit(&(self)->is_stepping, memory_order_relaxed)) { \
       SHADOW_UNLOCK(&(self)->shadow_lock);                                     \
       Py_BEGIN_ALLOW_THREADS culverin_yield();                                 \
       Py_END_ALLOW_THREADS SHADOW_LOCK(&(self)->shadow_lock);                  \
@@ -413,7 +413,7 @@ typedef struct {
   int view_export_count; // Tracks active memoryviews to prevent unsafe resize
 
   ShadowMutex shadow_lock;
-  bool is_stepping;
+  _Atomic bool is_stepping;
 
   Py_ssize_t view_shape[2];
   Py_ssize_t view_strides[2];
@@ -444,6 +444,12 @@ typedef struct {
   _Atomic float last_vz;
 
   // Non-atomic: Used by main thread only for rendering
+  // AVOID FALSE SHARING.
+#if defined(_MSC_VER)
+  __declspec(align(64)) 
+#else
+  _Alignas(64) 
+#endif
   float prev_px, prev_py, prev_pz;
   float prev_rx, prev_ry, prev_rz, prev_rw;
 } CharacterObject;
