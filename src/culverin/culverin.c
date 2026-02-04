@@ -2291,192 +2291,114 @@ static JPH_Constraint *create_distance(const ConstraintParams *p, JPH_Body *b1,
   return (JPH_Constraint *)JPH_DistanceConstraint_Create(&s, b1, b2);
 }
 
-static int PhysicsWorld_resize(PhysicsWorldObject *self, size_t new_capacity) {
-  if (self->view_export_count > 0) {
-    PyErr_SetString(PyExc_BufferError,
-                    "Cannot resize world while memory views are exported.");
+static void free_new_buffers(NewBuffers *nb) {
+    PyMem_RawFree(nb->pos);  PyMem_RawFree(nb->rot);
+    PyMem_RawFree(nb->ppos); PyMem_RawFree(nb->prot);
+    PyMem_RawFree(nb->lvel); PyMem_RawFree(nb->avel);
+    PyMem_RawFree(nb->bids); PyMem_RawFree(nb->udat);
+    PyMem_RawFree(nb->gens); PyMem_RawFree(nb->s2d);
+    PyMem_RawFree(nb->d2s);  PyMem_RawFree(nb->stat);
+    PyMem_RawFree(nb->free); PyMem_RawFree(nb->cats);
+    PyMem_RawFree(nb->masks); PyMem_RawFree(nb->mats);
+  }
+
+static int alloc_new_buffers(NewBuffers *nb, size_t cap) {
+    memset(nb, 0, sizeof(NewBuffers));
+    size_t f4 = cap * 4 * sizeof(float);
+    
+    nb->pos = PyMem_RawMalloc(f4);  nb->rot = PyMem_RawMalloc(f4);
+    nb->ppos = PyMem_RawMalloc(f4); nb->prot = PyMem_RawMalloc(f4);
+    nb->lvel = PyMem_RawMalloc(f4); nb->avel = PyMem_RawMalloc(f4);
+
+    nb->bids  = PyMem_RawMalloc(cap * sizeof(JPH_BodyID));
+    nb->udat  = PyMem_RawMalloc(cap * sizeof(uint64_t));
+    nb->gens  = PyMem_RawMalloc(cap * sizeof(uint32_t));
+    nb->s2d   = PyMem_RawMalloc(cap * sizeof(uint32_t));
+    nb->d2s   = PyMem_RawMalloc(cap * sizeof(uint32_t));
+    nb->stat  = PyMem_RawMalloc(cap * sizeof(uint8_t));
+    nb->free  = PyMem_RawMalloc(cap * sizeof(uint32_t));
+    nb->cats  = PyMem_RawMalloc(cap * sizeof(uint32_t));
+    nb->masks = PyMem_RawMalloc(cap * sizeof(uint32_t));
+    nb->mats  = PyMem_RawMalloc(cap * sizeof(uint32_t));
+
+    if (!nb->pos || !nb->rot || !nb->ppos || !nb->prot || !nb->lvel || !nb->avel ||
+        !nb->bids || !nb->udat || !nb->gens || !nb->s2d || !nb->d2s || !nb->stat ||
+        !nb->free || !nb->cats || !nb->masks || !nb->mats) {
+        free_new_buffers(nb);
     return -1;
   }
-  // Guaranteed no active queries due to lock held by caller
-  if (atomic_load_explicit(&self->active_queries, memory_order_relaxed) > 0) {
-    PyErr_SetString(
-        PyExc_RuntimeError,
-        "Cannot resize world while queries (raycast/shapecast) are active.");
-    return -1;
-  }
-  if (new_capacity <= self->capacity) {
     return 0;
   }
 
-  // --- 1. Transactional Allocation (Allocate ALL new buffers first) ---
-  // We use RawMalloc instead of Realloc to ensure the old data remains valid
-  // until we are sure we have enough memory for the whole operation.
-
-  size_t dense_stride = 4 * sizeof(float); // 16 bytes alignment preference
-  size_t count_bytes =
-      self->count * dense_stride; // Amount of valid dense data to copy
-
-  float *new_pos = (float *)PyMem_RawMalloc(new_capacity * dense_stride);
-  float *new_rot = (float *)PyMem_RawMalloc(new_capacity * dense_stride);
-  float *new_ppos = (float *)PyMem_RawMalloc(new_capacity * dense_stride);
-  float *new_prot = (float *)PyMem_RawMalloc(new_capacity * dense_stride);
-  float *new_lvel = (float *)PyMem_RawMalloc(new_capacity * dense_stride);
-  float *new_avel = (float *)PyMem_RawMalloc(new_capacity * dense_stride);
-
-  JPH_BodyID *new_bids =
-      (JPH_BodyID *)PyMem_RawMalloc(new_capacity * sizeof(JPH_BodyID));
-  uint64_t *new_udat =
-      (uint64_t *)PyMem_RawMalloc(new_capacity * sizeof(uint64_t));
-
-  uint32_t *new_gens =
-      (uint32_t *)PyMem_RawMalloc(new_capacity * sizeof(uint32_t));
-  uint32_t *new_s2d =
-      (uint32_t *)PyMem_RawMalloc(new_capacity * sizeof(uint32_t));
-  uint32_t *new_d2s =
-      (uint32_t *)PyMem_RawMalloc(new_capacity * sizeof(uint32_t));
-  uint8_t *new_stat =
-      (uint8_t *)PyMem_RawMalloc(new_capacity * sizeof(uint8_t));
-  uint32_t *new_free =
-      (uint32_t *)PyMem_RawMalloc(new_capacity * sizeof(uint32_t));
-  uint32_t *new_cats =
-      (uint32_t *)PyMem_RawMalloc(new_capacity * sizeof(uint32_t));
-  uint32_t *new_masks =
-      (uint32_t *)PyMem_RawMalloc(new_capacity * sizeof(uint32_t));
-  uint32_t *new_mats =
-      (uint32_t *)PyMem_RawMalloc(new_capacity * sizeof(uint32_t));
-
-  // --- 2. Check for Allocation Failure ---
-  if (!new_pos || !new_rot || !new_ppos || !new_prot || !new_lvel ||
-      !new_avel || !new_bids || !new_udat || !new_gens || !new_s2d ||
-      !new_d2s || !new_stat || !new_free || !new_cats || !new_masks) {
-
-    // Cleanup new attempts (No side effects on 'self')
-    if (new_pos) {
-      PyMem_RawFree(new_pos);
-    }
-    if (new_rot) {
-      PyMem_RawFree(new_rot);
-    }
-    if (new_ppos) {
-      PyMem_RawFree(new_ppos);
-    }
-    if (new_prot) {
-      PyMem_RawFree(new_prot);
-    }
-    if (new_lvel) {
-      PyMem_RawFree(new_lvel);
-    }
-    if (new_avel) {
-      PyMem_RawFree(new_avel);
-    }
-    if (new_bids) {
-      PyMem_RawFree(new_bids);
-    }
-    if (new_udat) {
-      PyMem_RawFree(new_udat);
-    }
-    if (new_gens) {
-      PyMem_RawFree(new_gens);
-    }
-    if (new_s2d) {
-      PyMem_RawFree(new_s2d);
-    }
-    if (new_d2s) {
-      PyMem_RawFree(new_d2s);
-    }
-    if (new_stat) {
-      PyMem_RawFree(new_stat);
-    }
-    if (new_free) {
-      PyMem_RawFree(new_free);
-    }
-    if (new_cats) {
-      PyMem_RawFree(new_cats);
-    }
-    if (new_masks) {
-      PyMem_RawFree(new_masks);
+static void migrate_and_init(PhysicsWorldObject *self, NewBuffers *nb, size_t new_cap) {
+    size_t stride = 4 * sizeof(float);
+    if (self->count > 0) {
+        memcpy(nb->pos,  self->positions,         self->count * stride);
+        memcpy(nb->rot,  self->rotations,         self->count * stride);
+        memcpy(nb->ppos, self->prev_positions,    self->count * stride);
+        memcpy(nb->prot, self->prev_rotations,    self->count * stride);
+        memcpy(nb->lvel, self->linear_velocities, self->count * stride);
+        memcpy(nb->avel, self->angular_velocities,self->count * stride);
+        memcpy(nb->bids, self->body_ids,          self->count * sizeof(JPH_BodyID));
+        memcpy(nb->udat, self->user_data,         self->count * sizeof(uint64_t));
+        memcpy(nb->cats, self->categories,        self->count * sizeof(uint32_t));
+        memcpy(nb->masks,self->masks,             self->count * sizeof(uint32_t));
+        memcpy(nb->mats, self->material_ids,      self->count * sizeof(uint32_t));
     }
 
+    memcpy(nb->gens, self->generations, self->slot_capacity * sizeof(uint32_t));
+    memcpy(nb->s2d,  self->slot_to_dense, self->slot_capacity * sizeof(uint32_t));
+    memcpy(nb->d2s,  self->dense_to_slot, self->slot_capacity * sizeof(uint32_t));
+    memcpy(nb->stat, self->slot_states,   self->slot_capacity * sizeof(uint8_t));
+    memcpy(nb->free, self->free_slots,    self->free_count * sizeof(uint32_t));
+
+    for (size_t i = self->slot_capacity; i < new_cap; i++) {
+        nb->gens[i] = 1;
+        nb->stat[i] = SLOT_EMPTY;
+        nb->free[self->free_count++] = (uint32_t)i;
+    }
+}
+
+static int PhysicsWorld_resize(PhysicsWorldObject *self, size_t new_capacity) {
+    // 1. Validation
+    if (self->view_export_count > 0) {
+        PyErr_SetString(PyExc_BufferError, "Cannot resize while views are exported.");
+        return -1;
+    }
+    BLOCK_UNTIL_NOT_QUERYING(self);
+    if (new_capacity <= self->capacity) return 0;
+
+    // 2. Transactional Allocation
+    NewBuffers nb;
+    if (alloc_new_buffers(&nb, new_capacity) < 0) {
     PyErr_NoMemory();
     return -1;
   }
 
-  // --- 3. Data Migration (Copy valid data) ---
+    // 3. Data Migration
+    migrate_and_init(self, &nb, new_capacity);
 
-  // Dense Arrays: Copy only active bodies (0 to count)
-  // We don't need to copy the garbage beyond 'count'
-  if (self->count > 0) {
-    memcpy(new_pos, self->positions, count_bytes);
-    memcpy(new_rot, self->rotations, count_bytes);
-    memcpy(new_ppos, self->prev_positions, count_bytes);
-    memcpy(new_prot, self->prev_rotations, count_bytes);
-    memcpy(new_lvel, self->linear_velocities, count_bytes);
-    memcpy(new_avel, self->angular_velocities, count_bytes);
-    memcpy(new_bids, self->body_ids, self->count * sizeof(JPH_BodyID));
-    memcpy(new_udat, self->user_data, self->count * sizeof(uint64_t));
-    memcpy(new_cats, self->categories, self->count * sizeof(uint32_t));
-    memcpy(new_masks, self->masks, self->count * sizeof(uint32_t));
-    memcpy(new_mats, self->material_ids, self->count * sizeof(uint32_t));
-  }
+    // 4. Commit: Free OLD, assign NEW
+    PyMem_RawFree(self->positions);          self->positions = nb.pos;
+    PyMem_RawFree(self->rotations);          self->rotations = nb.rot;
+    PyMem_RawFree(self->prev_positions);     self->prev_positions = nb.ppos;
+    PyMem_RawFree(self->prev_rotations);     self->prev_rotations = nb.prot;
+    PyMem_RawFree(self->linear_velocities);  self->linear_velocities = nb.lvel;
+    PyMem_RawFree(self->angular_velocities); self->angular_velocities = nb.avel;
 
-  // Slot/Mapping Arrays: Copy entire existing capacity
-  // We must preserve the state of existing slots (ALIVE/EMPTY) and generations
-  size_t slot_copy_size = self->slot_capacity;
-  memcpy(new_gens, self->generations, slot_copy_size * sizeof(uint32_t));
-  memcpy(new_s2d, self->slot_to_dense, slot_copy_size * sizeof(uint32_t));
-  memcpy(new_d2s, self->dense_to_slot, slot_copy_size * sizeof(uint32_t));
-  memcpy(new_stat, self->slot_states, slot_copy_size * sizeof(uint8_t));
-
-  // Free List: Copy existing free list
-  memcpy(new_free, self->free_slots, self->free_count * sizeof(uint32_t));
-
-  // --- 4. Initialize New Tail ---
-  // Setup the newly added slots
-  for (size_t i = self->slot_capacity; i < new_capacity; i++) {
-    new_gens[i] = 1;                            // Start generation at 1
-    new_stat[i] = SLOT_EMPTY;                   // Mark empty
-    new_free[self->free_count++] = (uint32_t)i; // Add to free list
-  }
-
-  // --- 5. Commit (Swap and Free Old) ---
-  PyMem_RawFree(self->positions);
-  self->positions = new_pos;
-  PyMem_RawFree(self->rotations);
-  self->rotations = new_rot;
-  PyMem_RawFree(self->prev_positions);
-  self->prev_positions = new_ppos;
-  PyMem_RawFree(self->prev_rotations);
-  self->prev_rotations = new_prot;
-  PyMem_RawFree(self->linear_velocities);
-  self->linear_velocities = new_lvel;
-  PyMem_RawFree(self->angular_velocities);
-  self->angular_velocities = new_avel;
-
-  PyMem_RawFree(self->body_ids);
-  self->body_ids = new_bids;
-  PyMem_RawFree(self->user_data);
-  self->user_data = new_udat;
-  PyMem_RawFree(self->categories);
-  self->categories = new_cats;
-  PyMem_RawFree(self->masks);
-  self->masks = new_masks;
-  PyMem_RawFree(self->material_ids);
-  self->material_ids = new_mats;
-
-  PyMem_RawFree(self->generations);
-  self->generations = new_gens;
-  PyMem_RawFree(self->slot_to_dense);
-  self->slot_to_dense = new_s2d;
-  PyMem_RawFree(self->dense_to_slot);
-  self->dense_to_slot = new_d2s;
-  PyMem_RawFree(self->slot_states);
-  self->slot_states = new_stat;
-  PyMem_RawFree(self->free_slots);
-  self->free_slots = new_free;
+    PyMem_RawFree(self->body_ids);           self->body_ids = nb.bids;
+    PyMem_RawFree(self->user_data);          self->user_data = nb.udat;
+    PyMem_RawFree(self->generations);        self->generations = nb.gens;
+    PyMem_RawFree(self->slot_to_dense);      self->slot_to_dense = nb.s2d;
+    PyMem_RawFree(self->dense_to_slot);      self->dense_to_slot = nb.d2s;
+    PyMem_RawFree(self->slot_states);        self->slot_states = nb.stat;
+    PyMem_RawFree(self->free_slots);         self->free_slots = nb.free;
+    PyMem_RawFree(self->categories);         self->categories = nb.cats;
+    PyMem_RawFree(self->masks);              self->masks = nb.masks;
+    PyMem_RawFree(self->material_ids);       self->material_ids = nb.mats;
 
   self->capacity = new_capacity;
   self->slot_capacity = new_capacity;
-
   return 0;
 }
 
