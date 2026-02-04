@@ -3222,170 +3222,148 @@ static PyObject *PhysicsWorld_create_convex_hull(PhysicsWorldObject *self,
   return PyLong_FromUnsignedLongLong(handle);
 }
 
-static PyObject *PhysicsWorld_create_compound_body(PhysicsWorldObject *self,
-                                                   PyObject *args, PyObject *kwds) {
-  float px = 0;
-  float py = 0;
-  float pz = 0;
-  float rx = 0;
-  float ry = 0;
-  float rz = 0;
-  float rw = 1.0f;
-  
-  PyObject *parts = NULL;
-  int motion_type = 2;
-  float mass = -1.0f;
-  uint64_t user_data = 0;
-  int is_sensor = 0;
-  uint32_t category = 0xFFFF;
-  uint32_t mask = 0xFFFF;
-  uint32_t material_id = 0;
-  float friction = 0.2f;
-  float restitution = 0.0f;
-  int use_ccd = 0;
-
-  static char *kwlist[] = {
-      "pos", "rot", "parts", 
-      "motion", "mass", "user_data", "is_sensor",
-      "category", "mask", "material_id", 
-      "friction", "restitution", "ccd", NULL};
-
-  if (!PyArg_ParseTupleAndKeywords(
-          args, kwds, "(fff)(ffff)O|ifKpIIffp", kwlist, 
-          &px, &py, &pz, &rx, &ry, &rz, &rw, 
-          &parts, &motion_type, &mass, &user_data, &is_sensor,
-          &category, &mask, &material_id, 
-          &friction, &restitution, &use_ccd)) {
-    return NULL;
-  }
-
-  if (!PyList_Check(parts)) {
-    return PyErr_Format(PyExc_TypeError, "Parts must be a list of tuples");
-  }
-
-  // --- 1. PHASE GUARD & LOCKING ---
-  // We need the lock immediately because find_or_create_shape accesses the shared shape cache.
-  SHADOW_LOCK(&self->shadow_lock);
-  BLOCK_UNTIL_NOT_STEPPING(self);
-  BLOCK_UNTIL_NOT_QUERYING(self);
-
-  if (self->free_count == 0) {
-    if (PhysicsWorld_resize(self, self->capacity * 2) < 0) {
-      SHADOW_UNLOCK(&self->shadow_lock);
-      return NULL;
-    }
-  }
-
-  // --- 2. BUILD COMPOUND SETTINGS ---
-  // Cast: StaticCompoundSettings inherits from CompoundShapeSettings in C++ layout
-  JPH_StaticCompoundShapeSettings* compound_settings = JPH_StaticCompoundShapeSettings_Create();
-  JPH_CompoundShapeSettings* base_settings = (JPH_CompoundShapeSettings*)compound_settings;
+// Helper 1: Build the Jolt Compound Shape from the Python parts list
+static JPH_Shape *init_compound_shape(PhysicsWorldObject *self,
+                                      PyObject *parts) {
+  JPH_StaticCompoundShapeSettings *compound_settings =
+      JPH_StaticCompoundShapeSettings_Create();
+  JPH_CompoundShapeSettings *base_settings =
+      (JPH_CompoundShapeSettings *)compound_settings;
 
   Py_ssize_t num_parts = PyList_Size(parts);
   for (Py_ssize_t i = 0; i < num_parts; i++) {
-      PyObject *item = PyList_GetItem(parts, i); // Borrowed ref
-      
-      // Expected format: ((x,y,z), (x,y,z,w), shape_type, size_tuple)
-      // We parse manually to be robust
-      if (!PyTuple_Check(item) || PyTuple_Size(item) != 4) {
-          JPH_ShapeSettings_Destroy((JPH_ShapeSettings*)compound_settings);
-          SHADOW_UNLOCK(&self->shadow_lock);
-          return PyErr_Format(PyExc_ValueError, "Part %d invalid. Expected ((x,y,z), (rx,ry,rz,rw), type, size)", i);
-      }
+    PyObject *item = PyList_GetItem(parts, i);
+    if (!PyTuple_Check(item) || PyTuple_Size(item) != 4)
+      goto fail;
 
       PyObject *p_pos = PyTuple_GetItem(item, 0);
       PyObject *p_rot = PyTuple_GetItem(item, 1);
       int type = (int)PyLong_AsLong(PyTuple_GetItem(item, 2));
       PyObject *p_size = PyTuple_GetItem(item, 3);
 
-      // Parse Transform
-      float lx=0, ly=0, lz=0;
-      float lrx=0, lry=0, lrz=0, lrw=1;
+    // Parse Vectors and Params
+    JPH_Vec3 local_p = {0};
+    JPH_Quat local_q = {0, 0, 0, 1};
+    float params[4] = {0};
       
-      if(PyTuple_Check(p_pos) && PyTuple_Size(p_pos)==3) {
-          lx = (float)PyFloat_AsDouble(PyTuple_GetItem(p_pos, 0));
-          ly = (float)PyFloat_AsDouble(PyTuple_GetItem(p_pos, 1));
-          lz = (float)PyFloat_AsDouble(PyTuple_GetItem(p_pos, 2));
+    if (PyTuple_Check(p_pos) && PyTuple_Size(p_pos) == 3) {
+      local_p.x = (float)PyFloat_AsDouble(PyTuple_GetItem(p_pos, 0));
+      local_p.y = (float)PyFloat_AsDouble(PyTuple_GetItem(p_pos, 1));
+      local_p.z = (float)PyFloat_AsDouble(PyTuple_GetItem(p_pos, 2));
       }
-      if(PyTuple_Check(p_rot) && PyTuple_Size(p_rot)==4) {
-          lrx = (float)PyFloat_AsDouble(PyTuple_GetItem(p_rot, 0));
-          lry = (float)PyFloat_AsDouble(PyTuple_GetItem(p_rot, 1));
-          lrz = (float)PyFloat_AsDouble(PyTuple_GetItem(p_rot, 2));
-          lrw = (float)PyFloat_AsDouble(PyTuple_GetItem(p_rot, 3));
+    if (PyTuple_Check(p_rot) && PyTuple_Size(p_rot) == 4) {
+      local_q.x = (float)PyFloat_AsDouble(PyTuple_GetItem(p_rot, 0));
+      local_q.y = (float)PyFloat_AsDouble(PyTuple_GetItem(p_rot, 1));
+      local_q.z = (float)PyFloat_AsDouble(PyTuple_GetItem(p_rot, 2));
+      local_q.w = (float)PyFloat_AsDouble(PyTuple_GetItem(p_rot, 3));
       }
-
-      // Parse Params for Cache
-      float params[4] = {0,0,0,0};
       if (PyTuple_Check(p_size)) {
-          for(int j=0; j<4 && j<PyTuple_Size(p_size); j++) 
+      for (int j = 0; j < 4 && j < PyTuple_Size(p_size); j++)
               params[j] = (float)PyFloat_AsDouble(PyTuple_GetItem(p_size, j));
       } else {
           params[0] = (float)PyFloat_AsDouble(p_size);
       }
 
-      // Get Sub-Shape from Cache
-      JPH_Shape* sub_shape = find_or_create_shape(self, type, params);
-      if (!sub_shape) {
-          // Error handling inside loop is tricky, aborting compound
-          JPH_ShapeSettings_Destroy((JPH_ShapeSettings*)compound_settings);
-          SHADOW_UNLOCK(&self->shadow_lock);
-          return PyErr_Format(PyExc_RuntimeError, "Failed to create shape for part %d", i);
-      }
+    JPH_Shape *sub_shape = find_or_create_shape(self, type, params);
+    if (!sub_shape)
+      goto fail;
 
-      // Add to Compound
-      JPH_Vec3 local_p = {lx, ly, lz};
-      JPH_Quat local_q = {lrx, lry, lrz, lrw};
-      JPH_CompoundShapeSettings_AddShape2(base_settings, &local_p, &local_q, sub_shape, 0);
+    JPH_CompoundShapeSettings_AddShape2(base_settings, &local_p, &local_q,
+                                        sub_shape, 0);
   }
 
-  // --- 3. FINALIZE SHAPE ---
-  JPH_Shape* final_shape = (JPH_Shape*)JPH_StaticCompoundShape_Create(compound_settings);
-  JPH_ShapeSettings_Destroy((JPH_ShapeSettings*)compound_settings);
+  JPH_Shape *final_shape =
+      (JPH_Shape *)JPH_StaticCompoundShape_Create(compound_settings);
+  JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)compound_settings);
+  return final_shape;
 
-  if (!final_shape) {
-      SHADOW_UNLOCK(&self->shadow_lock);
-      return PyErr_Format(PyExc_RuntimeError, "Jolt failed to bake Compound Shape");
+fail:
+  JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)compound_settings);
+  return NULL;
   }
 
-  // --- 4. QUEUE BODY CREATION ---
-  uint32_t slot = self->free_slots[--self->free_count];
-  self->slot_states[slot] = SLOT_PENDING_CREATE;
-
-  JPH_STACK_ALLOC(JPH_RVec3, pos);
-  pos->x = (double)px; pos->y = (double)py; pos->z = (double)pz;
-  JPH_STACK_ALLOC(JPH_Quat, rot);
-  rot->x = rx; rot->y = ry; rot->z = rz; rot->w = rw;
-
-  JPH_BodyCreationSettings *settings = JPH_BodyCreationSettings_Create3(
-      final_shape, pos, rot, (JPH_MotionType)motion_type, 
-      (motion_type == 0) ? 0 : 1);
-
+// Helper 2: Apply physics properties (mass, friction, etc) to creation settings
+static void apply_body_creation_props(JPH_BodyCreationSettings *settings,
+                                      JPH_Shape *shape, float mass,
+                                      int is_sensor, int use_ccd,
+                                      float friction, float restitution) {
   if (mass > 0.0f) {
       JPH_MassProperties mp;
-      JPH_Shape_GetMassProperties(final_shape, &mp);
-      
-      // Prevent division by zero if compound shape has no volume
+    JPH_Shape_GetMassProperties(shape, &mp);
       if (mp.mass > 1e-6f) {
           float scale = mass / mp.mass;
           mp.mass = mass;
-          for(int i=0; i<3; i++) {
+      for (int i = 0; i < 3; i++) {
               mp.inertia.column[i].x *= scale;
               mp.inertia.column[i].y *= scale;
               mp.inertia.column[i].z *= scale;
           }
           JPH_BodyCreationSettings_SetMassPropertiesOverride(settings, &mp);
-          JPH_BodyCreationSettings_SetOverrideMassProperties(settings, JPH_OverrideMassProperties_CalculateInertia);
+      JPH_BodyCreationSettings_SetOverrideMassProperties(
+          settings, JPH_OverrideMassProperties_CalculateInertia);
       }
   }
-
-  if (is_sensor) JPH_BodyCreationSettings_SetIsSensor(settings, true);
-  if (use_ccd) JPH_BodyCreationSettings_SetMotionQuality(settings, JPH_MotionQuality_LinearCast);
+  if (is_sensor)
+    JPH_BodyCreationSettings_SetIsSensor(settings, true);
+  if (use_ccd)
+    JPH_BodyCreationSettings_SetMotionQuality(settings,
+                                              JPH_MotionQuality_LinearCast);
   JPH_BodyCreationSettings_SetFriction(settings, friction);
   JPH_BodyCreationSettings_SetRestitution(settings, restitution);
+}
 
-  uint32_t gen = self->generations[slot];
-  BodyHandle handle = make_handle(slot, gen);
-  JPH_BodyCreationSettings_SetUserData(settings, (uint64_t)handle);
+// Orchestrator
+static PyObject *PhysicsWorld_create_compound_body(PhysicsWorldObject *self,
+                                                   PyObject *args,
+                                                   PyObject *kwds) {
+  float px = 0, py = 0, pz = 0, rx = 0, ry = 0, rz = 0, rw = 1.0f, mass = -1.0f,
+        friction = 0.2f, restitution = 0.0f;
+  int motion_type = 2, is_sensor = 0, use_ccd = 0;
+  uint64_t user_data = 0;
+  uint32_t category = 0xFFFF, mask = 0xFFFF, material_id = 0;
+  PyObject *parts = NULL;
+  static char *kwlist[] = {"pos",  "rot",         "parts",     "motion",
+                           "mass", "user_data",   "is_sensor", "category",
+                           "mask", "material_id", "friction",  "restitution",
+                           "ccd",  NULL};
+
+  if (!PyArg_ParseTupleAndKeywords(
+          args, kwds, "(fff)(ffff)O|ifKpIIffp", kwlist, &px, &py, &pz, &rx, &ry,
+          &rz, &rw, &parts, &motion_type, &mass, &user_data, &is_sensor,
+          &category, &mask, &material_id, &friction, &restitution, &use_ccd))
+    return NULL;
+
+  if (!PyList_Check(parts))
+    return PyErr_Format(PyExc_TypeError, "Parts must be a list");
+
+  SHADOW_LOCK(&self->shadow_lock);
+  BLOCK_UNTIL_NOT_STEPPING(self);
+  BLOCK_UNTIL_NOT_QUERYING(self);
+
+  if (self->free_count == 0 &&
+      PhysicsWorld_resize(self, self->capacity * 2) < 0) {
+    SHADOW_UNLOCK(&self->shadow_lock);
+    return NULL;
+  }
+
+  JPH_Shape *final_shape = init_compound_shape(self, parts);
+  if (!final_shape) {
+    SHADOW_UNLOCK(&self->shadow_lock);
+    return PyErr_Format(PyExc_RuntimeError, "Failed to create Compound Shape");
+  }
+
+  uint32_t slot = self->free_slots[--self->free_count];
+  self->slot_states[slot] = SLOT_PENDING_CREATE;
+
+  JPH_BodyCreationSettings *settings = JPH_BodyCreationSettings_Create3(
+      final_shape, &(JPH_RVec3){(double)px, (double)py, (double)pz},
+      &(JPH_Quat){rx, ry, rz, rw}, (JPH_MotionType)motion_type,
+      (motion_type == 0) ? 0 : 1);
+
+  apply_body_creation_props(settings, final_shape, mass, is_sensor, use_ccd,
+                            friction, restitution);
+  JPH_BodyCreationSettings_SetUserData(
+      settings, (uint64_t)make_handle(slot, self->generations[slot]));
 
   if (!ensure_command_capacity(self)) {
       JPH_BodyCreationSettings_Destroy(settings);
@@ -3405,156 +3383,143 @@ static PyObject *PhysicsWorld_create_compound_body(PhysicsWorldObject *self,
   cmd->data.create.material_id = material_id;
 
   SHADOW_UNLOCK(&self->shadow_lock);
-  return PyLong_FromUnsignedLongLong(handle);
+  return PyLong_FromUnsignedLongLong(
+      make_handle(slot, self->generations[slot]));
 }
 
-static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
-                                          PyObject *args, PyObject *kwds) {
-  float px = 0.0f;
-  float py = 0.0f;
-  float pz = 0.0f;
-  float rx = 0.0f;
-  float ry = 0.0f;
-  float rz = 0.0f;
-  float rw = 1.0f;
-  float s[4] = {1.0f, 1.0f, 1.0f, 0.0f};
-  int shape_type = 0;
-  int motion_type = 2;
-  unsigned long long user_data = 0;
-  int is_sensor = 0;
-  int use_ccd = 0;
-  float mass = -1.0f;
-  uint32_t category = 0xFFFF;
-  uint32_t mask = 0xFFFF;
-  float friction = -1.0f; // Sentinel
-  float restitution = -1.0f;
-  uint32_t material_id = 0;
-
-  PyObject *py_size = NULL;
-  static char *kwlist[] = {
-      "pos",       "rot",         "size",        "shape",    "motion",
-      "user_data", "is_sensor",   "mass",        "category", "mask",
-      "friction",  "restitution", "material_id", "ccd", NULL};
-
-  // Updated format string: "f" for mass, "I" for category, "I" for mask
-  if (!PyArg_ParseTupleAndKeywords(
-          args, kwds, "|(fff)(ffff)OiiKpfIIffIp", kwlist, &px, &py, &pz, &rx,
-          &ry, &rz, &rw, &py_size, &shape_type, &motion_type, &user_data,
-          &is_sensor, &mass, &category, &mask, &friction, &restitution,
-          &material_id, &use_ccd)) {
-    return NULL;
-  }
-
-  // --- MATERIAL LOOKUP ---
-  // If material_id is set, try to find defaults in the registry
-  float final_friction = 0.2f;    // Jolt Default
-  float final_restitution = 0.0f; // Jolt Default
-
+// Helper 1: Resolve material properties based on ID and explicit overrides
+static void resolve_material_params(PhysicsWorldObject *self,
+                                    uint32_t material_id, float *friction,
+                                    float *restitution) {
+  float f = 0.2f, r = 0.0f; // Jolt defaults
   if (material_id > 0) {
     SHADOW_LOCK(&self->shadow_lock);
     for (size_t i = 0; i < self->material_count; i++) {
       if (self->materials[i].id == material_id) {
-        final_friction = self->materials[i].friction;
-        final_restitution = self->materials[i].restitution;
+        f = self->materials[i].friction;
+        r = self->materials[i].restitution;
         break;
       }
     }
     SHADOW_UNLOCK(&self->shadow_lock);
   }
+  if (*friction >= 0.0f)
+    f = *friction;
+  if (*restitution >= 0.0f)
+    r = *restitution;
+  *friction = f;
+  *restitution = r;
+}
 
-  // Allow explicit overrides
-  if (friction >= 0.0f) {
-    final_friction = friction;
-  }
-  if (restitution >= 0.0f) {
-    final_restitution = restitution;
-  }
-
-  if (py_size && PyTuple_Check(py_size)) {
+// Helper 2: Parse the size object (tuple or float) into a 4-float array
+static void parse_body_size(PyObject *py_size, float s[4]) {
+  s[0] = 1.0f;
+  s[1] = 1.0f;
+  s[2] = 1.0f;
+  s[3] = 0.0f; // Defaults
+  if (!py_size || py_size == Py_None)
+    return;
+  if (PyTuple_Check(py_size)) {
     Py_ssize_t sz_len = PyTuple_Size(py_size);
     for (Py_ssize_t i = 0; i < sz_len && i < 4; i++) {
       PyObject *item = PyTuple_GetItem(py_size, i);
-      if (PyNumber_Check(item)) {
+      if (PyNumber_Check(item))
         s[i] = (float)PyFloat_AsDouble(item);
       }
+  } else if (PyNumber_Check(py_size)) {
+    s[0] = (float)PyFloat_AsDouble(py_size);
     }
   }
 
-  if (shape_type == 4 && motion_type != 0) {
-    PyErr_SetString(PyExc_ValueError, "SHAPE_PLANE must be MOTION_STATIC");
-    return NULL;
-  }
-
-  SHADOW_LOCK(&self->shadow_lock);
-  BLOCK_UNTIL_NOT_STEPPING(self);
-  BLOCK_UNTIL_NOT_QUERYING(self);
-
-  if (self->free_count == 0) {
-    if (PhysicsWorld_resize(self, self->capacity * 2) < 0) {
-      SHADOW_UNLOCK(&self->shadow_lock);
-      return NULL;
-    }
-  }
-
-  uint32_t slot = self->free_slots[--self->free_count];
-  JPH_Shape *shape = find_or_create_shape(self, shape_type, s);
-  if (!shape) {
-    self->free_slots[self->free_count++] = slot;
-    SHADOW_UNLOCK(&self->shadow_lock);
-    PyErr_SetString(PyExc_RuntimeError, "Failed to create shape.");
-    return NULL;
-  }
-
-  JPH_STACK_ALLOC(JPH_RVec3, pos);
-  pos->x = (double)px;
-  pos->y = (double)py;
-  pos->z = (double)pz;
-  JPH_STACK_ALLOC(JPH_Quat, rot);
-  rot->x = rx;
-  rot->y = ry;
-  rot->z = rz;
-  rot->w = rw;
-
-  uint32_t layer = (motion_type == 0) ? 0 : 1;
-  JPH_BodyCreationSettings *settings = JPH_BodyCreationSettings_Create3(
-      shape, pos, rot, (JPH_MotionType)motion_type, (JPH_ObjectLayer)layer);
-
-  if (is_sensor) {
+// Helper 3: Apply mass, sensor, CCD, and sleeping settings to the creation
+// struct
+static void configure_body_settings(JPH_BodyCreationSettings *settings,
+                                    JPH_Shape *shape, float mass,
+                                    float friction, float restitution,
+                                    int is_sensor, int use_ccd,
+                                    int motion_type) {
+  if (is_sensor)
     JPH_BodyCreationSettings_SetIsSensor(settings, true);
-  }
-  if (use_ccd) {
-    JPH_BodyCreationSettings_SetMotionQuality(settings, JPH_MotionQuality_LinearCast);
-  }
-  if (motion_type == 2) {
+  if (use_ccd)
+    JPH_BodyCreationSettings_SetMotionQuality(settings,
+                                              JPH_MotionQuality_LinearCast);
+  if (motion_type == 2)
     JPH_BodyCreationSettings_SetAllowSleeping(settings, true);
-  }
 
-  JPH_BodyCreationSettings_SetFriction(settings, final_friction);
-  JPH_BodyCreationSettings_SetRestitution(settings, final_restitution);
+  JPH_BodyCreationSettings_SetFriction(settings, friction);
+  JPH_BodyCreationSettings_SetRestitution(settings, restitution);
 
   if (mass > 0.0f) {
     JPH_MassProperties mp;
     JPH_Shape_GetMassProperties(shape, &mp);
-
-    // Calculate scaling factor
-    float scale = mass / mp.mass;
+    float scale = mass / fmaxf(mp.mass, 1e-6f);
     mp.mass = mass;
-
-    // SCALE the inertia matrix columns to match the new mass
     for (int i = 0; i < 3; i++) {
       mp.inertia.column[i].x *= scale;
       mp.inertia.column[i].y *= scale;
       mp.inertia.column[i].z *= scale;
     }
-
     JPH_BodyCreationSettings_SetMassPropertiesOverride(settings, &mp);
     JPH_BodyCreationSettings_SetOverrideMassProperties(
         settings, JPH_OverrideMassProperties_CalculateInertia);
   }
+}
 
-  uint32_t gen = self->generations[slot];
-  BodyHandle handle = make_handle(slot, gen);
-  JPH_BodyCreationSettings_SetUserData(settings, (uint64_t)handle);
+// Main Orchestrator
+static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
+                                          PyObject *args, PyObject *kwds) {
+  float px = 0.0f, py = 0.0f, pz = 0.0f, rx = 0.0f, ry = 0.0f, rz = 0.0f,
+        rw = 1.0f, mass = -1.0f, friction = -1.0f, restitution = -1.0f;
+  int shape_type = 0, motion_type = 2, is_sensor = 0, use_ccd = 0;
+  uint32_t category = 0xFFFF, mask = 0xFFFF, material_id = 0;
+  unsigned long long user_data = 0;
+  PyObject *py_size = NULL;
+  static char *kwlist[] = {
+      "pos",       "rot",         "size",        "shape",    "motion",
+      "user_data", "is_sensor",   "mass",        "category", "mask",
+      "friction",  "restitution", "material_id", "ccd",      NULL};
+
+  if (!PyArg_ParseTupleAndKeywords(
+          args, kwds, "|(fff)(ffff)OiiKpfIIffIp", kwlist, &px, &py, &pz, &rx,
+          &ry, &rz, &rw, &py_size, &shape_type, &motion_type, &user_data,
+          &is_sensor, &mass, &category, &mask, &friction, &restitution,
+          &material_id, &use_ccd))
+    return NULL;
+
+  if (shape_type == 4 && motion_type != 0) {
+    return PyErr_Format(PyExc_ValueError, "SHAPE_PLANE must be MOTION_STATIC");
+  }
+
+  resolve_material_params(self, material_id, &friction, &restitution);
+  float s[4];
+  parse_body_size(py_size, s);
+
+  SHADOW_LOCK(&self->shadow_lock);
+  BLOCK_UNTIL_NOT_STEPPING(self);
+  BLOCK_UNTIL_NOT_QUERYING(self);
+
+  if (self->free_count == 0 &&
+      PhysicsWorld_resize(self, self->capacity * 2) < 0) {
+    SHADOW_UNLOCK(&self->shadow_lock);
+    return NULL;
+  }
+
+  JPH_Shape *shape = find_or_create_shape(self, shape_type, s);
+  if (!shape) {
+    SHADOW_UNLOCK(&self->shadow_lock);
+    return PyErr_Format(PyExc_RuntimeError, "Failed to create shape");
+  }
+
+  uint32_t slot = self->free_slots[--self->free_count];
+  JPH_BodyCreationSettings *settings = JPH_BodyCreationSettings_Create3(
+      shape, &(JPH_RVec3){(double)px, (double)py, (double)pz},
+      &(JPH_Quat){rx, ry, rz, rw}, (JPH_MotionType)motion_type,
+      (motion_type == 0) ? 0 : 1);
+
+  configure_body_settings(settings, shape, mass, friction, restitution,
+                          is_sensor, use_ccd, motion_type);
+  JPH_BodyCreationSettings_SetUserData(
+      settings, (uint64_t)make_handle(slot, self->generations[slot]));
 
   if (!ensure_command_capacity(self)) {
     JPH_BodyCreationSettings_Destroy(settings);
@@ -3563,7 +3528,6 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
     return PyErr_NoMemory();
   }
 
-  // Pack the Command
   PhysicsCommand *cmd = &self->command_queue[self->command_count++];
   cmd->type = CMD_CREATE_BODY;
   cmd->slot = slot;
@@ -3574,77 +3538,32 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
   cmd->data.create.material_id = material_id;
 
   self->slot_states[slot] = SLOT_PENDING_CREATE;
-
   SHADOW_UNLOCK(&self->shadow_lock);
-  return PyLong_FromUnsignedLongLong(handle);
-}
-
-static PyObject *PhysicsWorld_create_mesh_body(PhysicsWorldObject *self,
-                                               PyObject *args, PyObject *kwds) {
-  // 1. SAFE INITIALIZATION
-  Py_buffer v_view = {0};
-  Py_buffer i_view = {0};
-  float px = 0;
-  float py = 0;
-  float pz = 0;
-  float rx = 0;
-  float ry = 0;
-  float rz = 0;
-  float rw = 1.0f;
-  unsigned long long user_data = 0;
-  uint32_t category = 0xFFFF;
-  uint32_t mask = 0xFFFF;
-  static char *kwlist[] = {"pos",       "rot",      "vertices", "indices",
-                           "user_data", "category", "mask",     NULL};
-
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)(ffff)y*y*|KII", kwlist,
-                                   &px, &py, &pz, &rx, &ry, &rz, &rw, &v_view,
-                                   &i_view, &user_data, &category, &mask)) {
-    return NULL;
+  return PyLong_FromUnsignedLongLong(
+      make_handle(slot, self->generations[slot]));
   }
 
-  PyObject *ret_val = NULL;
-  JPH_Shape *shape = NULL;
-  uint32_t slot = 0xFFFFFFFF;
-  bool slot_reserved = false;
-
-  // 2. BUFFER ALIGNMENT VALIDATION
-  if (v_view.len % (3 * sizeof(float)) != 0) {
-    PyErr_SetString(
-        PyExc_ValueError,
-        "Vertex buffer size mismatch (must be 3*float32 per vertex)");
-    goto cleanup;
-  }
-  if (i_view.len % (3 * sizeof(uint32_t)) != 0) {
-    PyErr_SetString(
-        PyExc_ValueError,
-        "Index buffer size mismatch (must be 3*uint32 per triangle)");
-    goto cleanup;
-  }
-
-  uint32_t vertex_count = (uint32_t)(v_view.len / (3 * sizeof(float)));
-  uint32_t tri_count = (uint32_t)(i_view.len / (3 * sizeof(uint32_t)));
-
-  // 3. JOLT MESH BUILDING (Triangle Copy + Index Bounds Check)
+/**
+ * Helper 1: Build the Jolt triangle array while verifying index bounds.
+ */
+static JPH_IndexedTriangle *build_mesh_triangles(const uint32_t *raw,
+                                                 uint32_t tri_count,
+                                                 uint32_t vertex_count) {
   JPH_IndexedTriangle *jolt_tris = (JPH_IndexedTriangle *)PyMem_RawMalloc(
       tri_count * sizeof(JPH_IndexedTriangle));
   if (!jolt_tris) {
-    ret_val = PyErr_NoMemory();
-    goto cleanup;
+    PyErr_NoMemory();
+    return NULL;
   }
 
-  uint32_t *raw_indices = (uint32_t *)i_view.buf;
   for (uint32_t t = 0; t < tri_count; t++) {
-    uint32_t i1 = raw_indices[t * 3 + 0];
-    uint32_t i2 = raw_indices[t * 3 + 1];
-    uint32_t i3 = raw_indices[t * 3 + 2];
+    uint32_t i1 = raw[t * 3 + 0], i2 = raw[t * 3 + 1], i3 = raw[t * 3 + 2];
 
-    // CRITICAL: Prevent Jolt from reading past v_view.buf
     if (i1 >= vertex_count || i2 >= vertex_count || i3 >= vertex_count) {
       PyMem_RawFree(jolt_tris);
       PyErr_Format(PyExc_ValueError, "Mesh index out of range: %u/%u/%u >= %u",
                    i1, i2, i3, vertex_count);
-      goto cleanup;
+      return NULL;
     }
 
     jolt_tris[t].i1 = i1;
@@ -3653,67 +3572,90 @@ static PyObject *PhysicsWorld_create_mesh_body(PhysicsWorldObject *self,
     jolt_tris[t].materialIndex = 0;
     jolt_tris[t].userData = 0;
   }
+  return jolt_tris;
+}
 
-  JPH_MeshShapeSettings *mss = JPH_MeshShapeSettings_Create2(
-      (JPH_Vec3 *)v_view.buf, vertex_count, jolt_tris, tri_count);
-  PyMem_RawFree(jolt_tris);
-
+/**
+ * Helper 2: Encapsulate Jolt Mesh creation (Settings -> BVH build -> Shape).
+ */
+static JPH_Shape *build_mesh_shape(const void *v_data, uint32_t v_count,
+                                   JPH_IndexedTriangle *tris,
+                                   uint32_t t_count) {
+  JPH_MeshShapeSettings *mss =
+      JPH_MeshShapeSettings_Create2((JPH_Vec3 *)v_data, v_count, tris, t_count);
   if (!mss) {
     PyErr_SetString(PyExc_RuntimeError, "Jolt MeshSettings allocation failed");
-    goto cleanup;
+    return NULL;
   }
 
-  shape = (JPH_Shape *)JPH_MeshShapeSettings_CreateShape(mss);
+  JPH_Shape *shape = (JPH_Shape *)JPH_MeshShapeSettings_CreateShape(mss);
   JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)mss);
 
   if (!shape) {
     PyErr_SetString(PyExc_RuntimeError,
                     "Jolt Mesh BVH build failed (Triangle data degenerate?)");
+  }
+  return shape;
+}
+
+/**
+ * Main Orchestrator
+ */
+static PyObject *PhysicsWorld_create_mesh_body(PhysicsWorldObject *self,
+                                               PyObject *args, PyObject *kwds) {
+  Py_buffer v_view = {0}, i_view = {0};
+  float px = 0, py = 0, pz = 0, rx = 0, ry = 0, rz = 0, rw = 1.0f;
+  unsigned long long user_data = 0;
+  uint32_t cat = 0xFFFF, mask = 0xFFFF;
+  static char *kwlist[] = {"pos",       "rot",      "vertices", "indices",
+                           "user_data", "category", "mask",     NULL};
+
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)(ffff)y*y*|KII", kwlist,
+                                   &px, &py, &pz, &rx, &ry, &rz, &rw, &v_view,
+                                   &i_view, &user_data, &cat, &mask))
+    return NULL;
+
+  // 1. Validation
+  if (v_view.len % 12 != 0 || i_view.len % 12 != 0) {
+    PyErr_SetString(PyExc_ValueError,
+                    "Buffer size mismatch: must be multiples of 12 bytes");
     goto cleanup;
   }
 
-  // 4. MUTATION PHASE (Locked)
-  SHADOW_LOCK(&self->shadow_lock);
+  uint32_t v_count = (uint32_t)(v_view.len / 12);
+  uint32_t t_count = (uint32_t)(i_view.len / 12);
 
-  // Guard with Acquire ordering to match query entry/exit barriers
+  // 2. Triangle processing
+  JPH_IndexedTriangle *tris =
+      build_mesh_triangles((uint32_t *)i_view.buf, t_count, v_count);
+  if (!tris)
+    goto cleanup;
+
+  // 3. Jolt Shape Build
+  JPH_Shape *shape = build_mesh_shape(v_view.buf, v_count, tris, t_count);
+  PyMem_RawFree(tris);
+  if (!shape)
+    goto cleanup;
+
+  // 4. World Reservation & Command Queuing
+  SHADOW_LOCK(&self->shadow_lock);
   BLOCK_UNTIL_NOT_STEPPING(self);
   BLOCK_UNTIL_NOT_QUERYING(self);
 
-  if (self->free_count == 0) {
-    if (PhysicsWorld_resize(self, self->capacity + 1024) < 0) {
+  if (self->free_count == 0 &&
+      PhysicsWorld_resize(self, self->capacity + 1024) < 0) {
       SHADOW_UNLOCK(&self->shadow_lock);
       goto cleanup;
     }
-  }
 
-  slot = self->free_slots[--self->free_count];
+  uint32_t slot = self->free_slots[--self->free_count];
   self->slot_states[slot] = SLOT_PENDING_CREATE;
-  slot_reserved = true;
-
-  JPH_STACK_ALLOC(JPH_RVec3, pos);
-  pos->x = (double)px;
-  pos->y = (double)py;
-  pos->z = (double)pz;
-  JPH_STACK_ALLOC(JPH_Quat, rot);
-  rot->x = rx;
-  rot->y = ry;
-  rot->z = rz;
-  rot->w = rw;
 
   JPH_BodyCreationSettings *settings = JPH_BodyCreationSettings_Create3(
-      shape, pos, rot, JPH_MotionType_Static, 0);
+      shape, &(JPH_RVec3){(double)px, (double)py, (double)pz},
+      &(JPH_Quat){rx, ry, rz, rw}, JPH_MotionType_Static, 0);
 
-  if (!settings) {
-    self->slot_states[slot] = SLOT_EMPTY;
-    self->free_slots[self->free_count++] = slot;
-    SHADOW_UNLOCK(&self->shadow_lock);
-    ret_val = PyErr_NoMemory();
-    goto cleanup;
-  }
-
-  // Identity Publishing
-  uint32_t gen = self->generations[slot];
-  BodyHandle handle = make_handle(slot, gen);
+  BodyHandle handle = make_handle(slot, self->generations[slot]);
   JPH_BodyCreationSettings_SetUserData(settings, (uint64_t)handle);
 
   if (!ensure_command_capacity(self)) {
@@ -3721,7 +3663,7 @@ static PyObject *PhysicsWorld_create_mesh_body(PhysicsWorldObject *self,
     self->slot_states[slot] = SLOT_EMPTY;
     self->free_slots[self->free_count++] = slot;
     SHADOW_UNLOCK(&self->shadow_lock);
-    ret_val = PyErr_NoMemory();
+    PyErr_NoMemory();
     goto cleanup;
   }
 
@@ -3729,25 +3671,21 @@ static PyObject *PhysicsWorld_create_mesh_body(PhysicsWorldObject *self,
   cmd->type = CMD_CREATE_BODY;
   cmd->slot = slot;
   cmd->data.create.settings = settings;
-  cmd->data.create.user_data = (uint64_t)user_data;
-  cmd->data.create.category = category;
+  cmd->data.create.user_data = user_data;
+  cmd->data.create.category = cat;
   cmd->data.create.mask = mask;
 
   SHADOW_UNLOCK(&self->shadow_lock);
-
-  ret_val = PyLong_FromUnsignedLongLong(handle);
+  PyBuffer_Release(&v_view);
+  PyBuffer_Release(&i_view);
+  return PyLong_FromUnsignedLongLong(handle);
 
 cleanup:
-  if (shape) {
-    JPH_Shape_Destroy(shape);
-  }
-  if (v_view.obj) {
+  if (v_view.obj)
     PyBuffer_Release(&v_view);
-  }
-  if (i_view.obj) {
+  if (i_view.obj)
     PyBuffer_Release(&i_view);
-  }
-  return ret_val;
+  return NULL;
 }
 
 static PyObject *PhysicsWorld_destroy_body(PhysicsWorldObject *self,
