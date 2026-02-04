@@ -1688,19 +1688,72 @@ static float CastShape_ClosestCollector(void *context,
   return result->fraction;
 }
 
+// Helper 1: Parse shape parameters from Python tuple or float
+static void parse_shape_params(PyObject *py_size, float s[4]) {
+  memset(s, 0, sizeof(float) * 4);
+  if (!py_size || py_size == Py_None)
+    return;
+
+  if (PyTuple_Check(py_size)) {
+    Py_ssize_t sz_len = PyTuple_Size(py_size);
+    for (Py_ssize_t i = 0; i < sz_len && i < 4; i++) {
+      PyObject *item = PyTuple_GetItem(py_size, i);
+      if (PyNumber_Check(item))
+        s[i] = (float)PyFloat_AsDouble(item);
+    }
+  } else if (PyNumber_Check(py_size)) {
+    s[0] = (float)PyFloat_AsDouble(py_size);
+  }
+}
+
+// Helper 2: Internal logic to run the actual query under trampoline locks
+static void shapecast_execute_internal(PhysicsWorldObject *self,
+                                       const JPH_Shape *shape,
+                                       const JPH_RMat4 *transform,
+                                       const JPH_Vec3 *sweep_dir,
+                                       JPH_BodyID ignore_bid,
+                                       CastShapeContext *ctx) {
+  SHADOW_LOCK(&g_jph_trampoline_lock);
+
+  JPH_BroadPhaseLayerFilter_Procs bp_p = {.ShouldCollide = filter_allow_all_bp};
+  JPH_BroadPhaseLayerFilter *bp_f = JPH_BroadPhaseLayerFilter_Create(NULL);
+  JPH_BroadPhaseLayerFilter_SetProcs(&bp_p);
+
+  JPH_ObjectLayerFilter_Procs obj_p = {.ShouldCollide = filter_allow_all_obj};
+  JPH_ObjectLayerFilter *obj_f = JPH_ObjectLayerFilter_Create(NULL);
+  JPH_ObjectLayerFilter_SetProcs(&obj_p);
+
+  CastShapeFilter filter_ctx = {.ignore_id = ignore_bid};
+  JPH_BodyFilter_Procs bf_p = {.ShouldCollide = CastShape_BodyFilter};
+  JPH_BodyFilter *bf = JPH_BodyFilter_Create(&filter_ctx);
+  JPH_BodyFilter_SetProcs(&bf_p);
+
+  JPH_STACK_ALLOC(JPH_ShapeCastSettings, settings);
+  JPH_ShapeCastSettings_Init(settings);
+  settings->backFaceModeTriangles = JPH_BackFaceMode_IgnoreBackFaces;
+  settings->backFaceModeConvex = JPH_BackFaceMode_IgnoreBackFaces;
+
+  JPH_RVec3 base_offset = {0, 0, 0};
+  const JPH_NarrowPhaseQuery *nq =
+      JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
+
+  JPH_NarrowPhaseQuery_CastShape(nq, shape, transform, sweep_dir, settings,
+                                 &base_offset, CastShape_ClosestCollector, ctx,
+                                 bp_f, obj_f, bf, NULL);
+
+  JPH_BodyFilter_SetProcs(&global_bf_procs);
+  SHADOW_UNLOCK(&g_jph_trampoline_lock);
+
+  JPH_BodyFilter_Destroy(bf);
+  JPH_BroadPhaseLayerFilter_Destroy(bp_f);
+  JPH_ObjectLayerFilter_Destroy(obj_f);
+}
+
+// Main Orchestrator
 static PyObject *PhysicsWorld_shapecast(PhysicsWorldObject *self,
                                         PyObject *args, PyObject *kwds) {
   int shape_type = 0;
-  float px = NAN;
-  float py = NAN;
-  float pz = NAN;
-  float rx = NAN;
-  float ry = NAN;
-  float rz = NAN;
-  float rw = NAN;
-  float dx = NAN;
-  float dy = NAN;
-  float dz = NAN;
+  float px, py, pz, rx, ry, rz, rw, dx, dy, dz = NAN;
   PyObject *py_size = NULL;
   uint64_t ignore_h = 0;
   static char *kwlist[] = {"shape", "pos",    "rot", "dir",
@@ -1708,148 +1761,70 @@ static PyObject *PhysicsWorld_shapecast(PhysicsWorldObject *self,
 
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "i(fff)(ffff)(fff)O|K", kwlist,
                                    &shape_type, &px, &py, &pz, &rx, &ry, &rz,
-                                   &rw, &dx, &dy, &dz, &py_size, &ignore_h)) {
+                                   &rw, &dx, &dy, &dz, &py_size, &ignore_h))
     return NULL;
-  }
 
-  PyObject *result = NULL;
-  bool query_active = false;
-  JPH_BodyID ignore_bid = 0;
-  JPH_Shape *shape = NULL;
-
-  // Filter pointers
-  JPH_BroadPhaseLayerFilter *bp_filter = NULL;
-  JPH_ObjectLayerFilter *obj_filter = NULL;
-  JPH_BodyFilter *body_filter = NULL;
-
-  // --- 1. VALIDATION & PREP ---
   float mag_sq = dx * dx + dy * dy + dz * dz;
-  if (mag_sq < 1e-9f) {
-    goto exit;
-  }
+  if (mag_sq < 1e-9f)
+    Py_RETURN_NONE;
 
-  float s[4] = {0, 0, 0, 0};
-  if (py_size && PyTuple_Check(py_size)) {
-    Py_ssize_t sz_len = PyTuple_Size(py_size);
-    for (Py_ssize_t i = 0; i < sz_len && i < 4; i++) {
-      PyObject *item = PyTuple_GetItem(py_size, i);
-      if (PyNumber_Check(item)) {
-        s[i] = (float)PyFloat_AsDouble(item);
-      }
-    }
-  } else if (py_size && PyNumber_Check(py_size)) {
-    s[0] = (float)PyFloat_AsDouble(py_size);
-  }
+  float s[4];
+  parse_shape_params(py_size, s);
 
-  // --- 2. PHASE GUARD ---
   SHADOW_LOCK(&self->shadow_lock);
   BLOCK_UNTIL_NOT_STEPPING(self);
-
-  shape = find_or_create_shape(self, shape_type, s);
+  JPH_Shape *shape = find_or_create_shape(self, shape_type, s);
   if (!shape) {
     SHADOW_UNLOCK(&self->shadow_lock);
-    PyErr_SetString(PyExc_RuntimeError, "Invalid shape parameters");
-    return NULL;
+    return PyErr_Format(PyExc_RuntimeError, "Invalid shape parameters");
   }
 
   atomic_fetch_add_explicit(&self->active_queries, 1, memory_order_relaxed);
-  query_active = true;
-
-  if (ignore_h != 0) {
-    uint32_t ignore_slot = 0;
-    if (unpack_handle(self, ignore_h, &ignore_slot)) {
+  JPH_BodyID ignore_bid = 0;
+  uint32_t ignore_slot;
+  if (ignore_h && unpack_handle(self, ignore_h, &ignore_slot)) {
       ignore_bid = self->body_ids[self->slot_to_dense[ignore_slot]];
     }
-  }
   SHADOW_UNLOCK(&self->shadow_lock);
 
-  // --- 3. EXECUTE QUERY (Serialized) ---
   JPH_STACK_ALLOC(JPH_RMat4, transform);
-  JPH_Quat q = {rx, ry, rz, rw};
-  JPH_RVec3 p = {(double)px, (double)py, (double)pz};
-  JPH_RMat4_RotationTranslation(transform, &q, &p);
+  JPH_RMat4_RotationTranslation(transform, &(JPH_Quat){rx, ry, rz, rw},
+                                &(JPH_RVec3){px, py, pz});
   JPH_Vec3 sweep_dir = {dx, dy, dz};
-
-  JPH_STACK_ALLOC(JPH_ShapeCastSettings, settings);
-  JPH_ShapeCastSettings_Init(settings);
-  settings->backFaceModeTriangles = JPH_BackFaceMode_IgnoreBackFaces;
-  settings->backFaceModeConvex = JPH_BackFaceMode_IgnoreBackFaces;
-
-  // LOCK TRAMPOLINE
-  SHADOW_LOCK(&g_jph_trampoline_lock);
-
-  // Create filters inside lock
-  JPH_BroadPhaseLayerFilter_Procs bp_procs = {.ShouldCollide =
-                                                  filter_allow_all_bp};
-  bp_filter = JPH_BroadPhaseLayerFilter_Create(NULL);
-  JPH_BroadPhaseLayerFilter_SetProcs(&bp_procs);
-
-  JPH_ObjectLayerFilter_Procs obj_procs = {.ShouldCollide =
-                                               filter_allow_all_obj};
-  obj_filter = JPH_ObjectLayerFilter_Create(NULL);
-  JPH_ObjectLayerFilter_SetProcs(&obj_procs);
-
-  CastShapeFilter filter_ctx = {.ignore_id = ignore_bid};
-  JPH_BodyFilter_Procs filter_procs = {.ShouldCollide = CastShape_BodyFilter};
-  body_filter = JPH_BodyFilter_Create(&filter_ctx);
-  JPH_BodyFilter_SetProcs(&filter_procs);
 
   CastShapeContext ctx = {.has_hit = false};
   ctx.hit.fraction = 1.0f;
 
-  JPH_RVec3 base_offset = {0, 0, 0};
-  const JPH_NarrowPhaseQuery *nq =
-      JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
-  JPH_NarrowPhaseQuery_CastShape(nq, shape, transform, &sweep_dir, settings,
-                                 &base_offset, CastShape_ClosestCollector, &ctx,
-                                 bp_filter, obj_filter, body_filter, NULL);
+  shapecast_execute_internal(self, shape, transform, &sweep_dir, ignore_bid,
+                             &ctx);
 
-  // RESTORE & UNLOCK
-  JPH_BodyFilter_SetProcs(&global_bf_procs);
-  SHADOW_UNLOCK(&g_jph_trampoline_lock);
-
-  JPH_BodyFilter_Destroy(body_filter);
-  JPH_BroadPhaseLayerFilter_Destroy(bp_filter);
-  JPH_ObjectLayerFilter_Destroy(obj_filter);
-
-  if (!ctx.has_hit) {
-    goto exit;
-  }
-
-  // --- 4. RESOLVE RESULTS ---
-  float nx = -ctx.hit.penetrationAxis.x;
-  float ny = -ctx.hit.penetrationAxis.y;
-  float nz = -ctx.hit.penetrationAxis.z;
+  PyObject *result = NULL;
+  if (ctx.has_hit) {
+    float nx = -ctx.hit.penetrationAxis.x, ny = -ctx.hit.penetrationAxis.y,
+          nz = -ctx.hit.penetrationAxis.z;
   float n_len = sqrtf(nx * nx + ny * ny + nz * nz);
   if (n_len > 1e-6f) {
-    float inv = 1.0f / n_len;
-    nx *= inv;
-    ny *= inv;
-    nz *= inv;
+      nx /= n_len;
+      ny /= n_len;
+      nz /= n_len;
   }
 
   SHADOW_LOCK(&self->shadow_lock);
-  BodyHandle handle = (BodyHandle)JPH_BodyInterface_GetUserData(
+    BodyHandle h = (BodyHandle)JPH_BodyInterface_GetUserData(
       self->body_interface, ctx.hit.bodyID2);
-  uint32_t slot = (uint32_t)(handle & 0xFFFFFFFF);
-  uint32_t gen = (uint32_t)(handle >> 32);
-
-  if (slot < self->slot_capacity && self->generations[slot] == gen &&
+    uint32_t slot = (uint32_t)(h & 0xFFFFFFFF);
+    if (slot < self->slot_capacity &&
+        self->generations[slot] == (uint32_t)(h >> 32) &&
       self->slot_states[slot] == SLOT_ALIVE) {
-    result = Py_BuildValue("Kf(fff)(fff)", handle, ctx.hit.fraction,
-                           ctx.hit.contactPointOn2.x, ctx.hit.contactPointOn2.y,
-                           ctx.hit.contactPointOn2.z, nx, ny, nz);
+      result = Py_BuildValue(
+          "Kf(fff)(fff)", h, ctx.hit.fraction, ctx.hit.contactPointOn2.x,
+          ctx.hit.contactPointOn2.y, ctx.hit.contactPointOn2.z, nx, ny, nz);
   }
   SHADOW_UNLOCK(&self->shadow_lock);
+  }
 
-exit:
-  if (query_active) {
     atomic_fetch_sub_explicit(&self->active_queries, 1, memory_order_release);
-  }
-  if (result) {
-    return result;
-  }
-  Py_RETURN_NONE;
+  return result ? result : Py_None;
 }
 
 // Helper to grow queue
