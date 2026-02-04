@@ -524,6 +524,15 @@ typedef struct {
   JPH_BodyID ignore_id;
 } CastShapeFilter;
 
+// Temporary container for resize
+typedef struct {
+    float *pos, *rot, *ppos, *prot, *lvel, *avel;
+    JPH_BodyID *bids;
+    uint64_t *udat;
+    uint32_t *gens, *s2d, *d2s, *free, *cats, *masks, *mats;
+    uint8_t *stat;
+} NewBuffers;
+
 // --- Module State (PEP 489) ---
 typedef struct {
   PyObject *helper;           // Reference to culverin._culverin module
