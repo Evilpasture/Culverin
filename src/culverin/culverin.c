@@ -2916,82 +2916,30 @@ static PyObject *PhysicsWorld_step(PhysicsWorldObject *self, PyObject *args) {
   Py_RETURN_NONE;
 }
 
-static PyObject *PhysicsWorld_create_character(PhysicsWorldObject *self,
-                                               PyObject *args, PyObject *kwds) {
-  float px = 0;
-  float py = 0;
-  float pz = 0;
-  float height = 1.8f;
-  float radius = 0.4f;
-  float step_height = 0.4f;
-  float max_slope = 45.0f;
-  static char *kwlist[] = {"pos",         "height",    "radius",
-                           "step_height", "max_slope", NULL};
-
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)|ffff", kwlist, &px, &py,
-                                   &pz, &height, &radius, &step_height,
-                                   &max_slope)) {
-    return NULL;
-  }
-
-  // Locals for cleanup
-  JPH_CharacterVirtual *j_char = NULL;
-  CharacterObject *obj = NULL;
-  uint32_t char_slot = 0xFFFFFFFF;
-  bool slot_reserved = false;
-
-  // --- 1. SLOT RESERVATION ---
-  SHADOW_LOCK(&self->shadow_lock);
-  BLOCK_UNTIL_NOT_STEPPING(self);
-  BLOCK_UNTIL_NOT_QUERYING(self);
-
-  if (self->free_count == 0) {
-    if (PhysicsWorld_resize(self, self->capacity * 2) < 0) {
-      SHADOW_UNLOCK(&self->shadow_lock);
-      return NULL;
-    }
-  }
-  char_slot = self->free_slots[--self->free_count];
-  self->slot_states[char_slot] = SLOT_PENDING_CREATE;
-  slot_reserved = true;
-  SHADOW_UNLOCK(&self->shadow_lock);
-
-  // --- 2. JOLT CHARACTER CREATION (Unlocked) ---
-  float half_h = (height - 2.0f * radius) * 0.5f;
-  if (half_h < 0.1f) {
-    half_h = 0.1f;
-  }
-
+// Helper 1: Jolt-side allocation and Collision Manager linking
+static JPH_CharacterVirtual *alloc_j_char(PhysicsWorldObject *self, float px,
+                                          float py, float pz, float height,
+                                          float radius, float max_slope) {
+  float half_h = fmaxf((height - 2.0f * radius) * 0.5f, 0.1f);
   JPH_CapsuleShapeSettings *ss =
       JPH_CapsuleShapeSettings_Create(half_h, radius);
   JPH_Shape *shape = (JPH_Shape *)JPH_CapsuleShapeSettings_CreateShape(ss);
   JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)ss);
-  if (!shape) {
-    goto fail;
-  }
+  if (!shape)
+    return NULL;
 
   JPH_CharacterVirtualSettings settings;
   JPH_CharacterVirtualSettings_Init(&settings);
   settings.base.shape = shape;
   settings.base.maxSlopeAngle = max_slope * (JPH_M_PI / 180.0f);
 
-  JPH_STACK_ALLOC(JPH_RVec3, pos_aligned);
-  pos_aligned->x = (double)px;
-  pos_aligned->y = (double)py;
-  pos_aligned->z = (double)pz;
-  JPH_STACK_ALLOC(JPH_Quat, rot_aligned);
-  rot_aligned->x = 0;
-  rot_aligned->y = 0;
-  rot_aligned->z = 0;
-  rot_aligned->w = 1;
+  JPH_CharacterVirtual *j_char = JPH_CharacterVirtual_Create(
+      &settings, &(JPH_RVec3){(double)px, (double)py, (double)pz},
+      &(JPH_Quat){0, 0, 0, 1}, 1, self->system);
 
-  // Use Layer 1 (Moving)
-  j_char = JPH_CharacterVirtual_Create(&settings, pos_aligned, rot_aligned, 1,
-                                       self->system);
   JPH_Shape_Destroy(shape);
-  if (!j_char) {
-    goto fail;
-  }
+  if (!j_char)
+    return NULL;
 
   if (self->char_vs_char_manager) {
     JPH_CharacterVsCharacterCollisionSimple_AddCharacter(
@@ -2999,24 +2947,97 @@ static PyObject *PhysicsWorld_create_character(PhysicsWorldObject *self,
     JPH_CharacterVirtual_SetCharacterVsCharacterCollision(
         j_char, self->char_vs_char_manager);
   }
+  return j_char;
+}
 
-  // --- 3. PYTHON WRAPPER ALLOCATION ---
-  PyObject *module = PyType_GetModule(Py_TYPE(self));
-  CulverinState *st = get_culverin_state(module);
-  obj = (CharacterObject *)PyObject_GC_New(CharacterObject,
-                                           (PyTypeObject *)st->CharacterType);
-  if (!obj) {
-    goto fail;
+// Helper 2: Shadow Buffer Registration (Atomic Commit)
+static void register_char(PhysicsWorldObject *self, CharacterObject *obj,
+                          JPH_CharacterVirtual *j_char, uint32_t slot) {
+  SHADOW_LOCK(&self->shadow_lock);
+
+  BodyHandle h = make_handle(slot, self->generations[slot]);
+  obj->handle = h;
+
+  uint32_t dense_idx = (uint32_t)self->count;
+  JPH_BodyID bid = JPH_CharacterVirtual_GetInnerBodyID(j_char);
+  uint32_t j_idx = JPH_ID_TO_INDEX(bid);
+
+      if (j_idx < self->max_jolt_bodies) {
+    self->id_to_handle_map[j_idx] = h;
+      }
+
+  self->body_ids[dense_idx] = bid;
+  self->slot_to_dense[slot] = dense_idx;
+  self->dense_to_slot[dense_idx] = slot;
+  self->slot_states[slot] = SLOT_ALIVE;
+  self->user_data[dense_idx] = 0;
+  self->count++;
+  self->view_shape[0] = (Py_ssize_t)self->count;
+
+  JPH_BodyInterface_SetUserData(self->body_interface, bid, (uint64_t)h);
+  SHADOW_UNLOCK(&self->shadow_lock);
+}
+
+// Helper 3: Filter and Listener serialization (Trampoline Lock)
+static void setup_char_filters(CharacterObject *obj) {
+  SHADOW_LOCK(&g_jph_trampoline_lock);
+  JPH_CharacterContactListener_SetProcs(&char_listener_procs);
+  obj->listener = JPH_CharacterContactListener_Create(obj);
+  JPH_BodyFilter_SetProcs(&global_bf_procs);
+  obj->body_filter = JPH_BodyFilter_Create(NULL);
+  JPH_ShapeFilter_SetProcs(&global_sf_procs);
+  obj->shape_filter = JPH_ShapeFilter_Create(NULL);
+  SHADOW_UNLOCK(&g_jph_trampoline_lock);
+
+  JPH_CharacterVirtual_SetListener(obj->character, obj->listener);
+  obj->bp_filter = JPH_BroadPhaseLayerFilter_Create(NULL);
+  obj->obj_filter = JPH_ObjectLayerFilter_Create(NULL);
+}
+
+// Main Orchestrator
+static PyObject *PhysicsWorld_create_character(PhysicsWorldObject *self,
+                                               PyObject *args, PyObject *kwds) {
+  float px = 0, py = 0, pz = 0, height = 1.8f, radius = 0.4f, step_h = 0.4f,
+        slope = 45.0f;
+  static char *kwlist[] = {"pos",         "height",    "radius",
+                           "step_height", "max_slope", NULL};
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)|ffff", kwlist, &px, &py,
+                                   &pz, &height, &radius, &step_h, &slope))
+    return NULL;
+
+  // 1. Slot Reservation
+  SHADOW_LOCK(&self->shadow_lock);
+  BLOCK_UNTIL_NOT_STEPPING(self);
+  BLOCK_UNTIL_NOT_QUERYING(self);
+  if (self->free_count == 0 &&
+      PhysicsWorld_resize(self, self->capacity * 2) < 0) {
+    SHADOW_UNLOCK(&self->shadow_lock);
+    return NULL;
   }
+  uint32_t char_slot = self->free_slots[--self->free_count];
+  self->slot_states[char_slot] = SLOT_PENDING_CREATE;
+  SHADOW_UNLOCK(&self->shadow_lock);
 
-  // Initialize fields (Atomics)
-  atomic_store_explicit(&obj->push_strength, 200.0f, memory_order_relaxed);
-  atomic_store_explicit(&obj->last_vx, 0.0f, memory_order_relaxed);
-  atomic_store_explicit(&obj->last_vy, 0.0f, memory_order_relaxed);
-  atomic_store_explicit(&obj->last_vz, 0.0f, memory_order_relaxed);
+  // 2. Resource Allocation
+  JPH_CharacterVirtual *j_char =
+      alloc_j_char(self, px, py, pz, height, radius, slope);
+  if (!j_char)
+    goto fail_jolt;
 
-  obj->world = self;
+  CharacterObject *obj = (CharacterObject *)PyObject_GC_New(
+      CharacterObject,
+      (PyTypeObject *)get_culverin_state(PyType_GetModule(Py_TYPE(self)))
+          ->CharacterType);
+  if (!obj)
+    goto fail_py;
+
+  // 3. Initialization
+  obj->world = (PhysicsWorldObject *)Py_NewRef(self);
   obj->character = j_char;
+  atomic_store(&obj->push_strength, 200.0f);
+  atomic_store(&obj->last_vx, 0.0f);
+  atomic_store(&obj->last_vy, 0.0f);
+  atomic_store(&obj->last_vz, 0.0f);
   obj->prev_px = px;
   obj->prev_py = py;
   obj->prev_pz = pz;
@@ -3030,74 +3051,20 @@ static PyObject *PhysicsWorld_create_character(PhysicsWorldObject *self,
   obj->bp_filter = NULL;
   obj->obj_filter = NULL;
 
-  // --- 4. WORLD REGISTRATION (Atomic Commit) ---
-  SHADOW_LOCK(&self->shadow_lock);
+  // 4. Registration & Filter Setup
+  register_char(self, obj, j_char, char_slot);
+  setup_char_filters(obj);
 
-  uint32_t gen = self->generations[char_slot];
-  BodyHandle handle = ((uint64_t)gen << 32) | (uint64_t)char_slot;
-  obj->handle = handle;
-
-  uint32_t dense_idx = (uint32_t)self->count;
-  JPH_BodyID char_bid = JPH_CharacterVirtual_GetInnerBodyID(j_char);
-  if (char_bid != JPH_INVALID_BODY_ID) { // Check for JPH_INVALID_BODY_ID
-      uint32_t j_idx = JPH_ID_TO_INDEX(char_bid); // Use Macro
-      if (j_idx < self->max_jolt_bodies) {
-          self->id_to_handle_map[j_idx] = handle;
-      }
-  }
-  self->body_ids[dense_idx] = JPH_CharacterVirtual_GetInnerBodyID(j_char);
-  self->slot_to_dense[char_slot] = dense_idx;
-  self->dense_to_slot[dense_idx] = char_slot;
-  self->slot_states[char_slot] = SLOT_ALIVE;
-  self->user_data[dense_idx] = 0;
-  self->count++;
-  self->view_shape[0] = (Py_ssize_t)self->count;
-
-  // Stamp identity into Jolt LAST to ensure dense maps are ready if a callback
-  // fires
-  JPH_BodyInterface_SetUserData(self->body_interface, self->body_ids[dense_idx],
-                                (uint64_t)handle);
-
-  SHADOW_UNLOCK(&self->shadow_lock);
-
-  // --- 5. GLOBAL PROC SERIALIZATION & FILTER INIT ---
-  SHADOW_LOCK(&g_jph_trampoline_lock);
-
-  JPH_CharacterContactListener_SetProcs(&char_listener_procs);
-  obj->listener = JPH_CharacterContactListener_Create(obj);
-
-  JPH_BodyFilter_SetProcs(&global_bf_procs);
-  obj->body_filter = JPH_BodyFilter_Create(NULL);
-
-  JPH_ShapeFilter_SetProcs(&global_sf_procs);
-  obj->shape_filter = JPH_ShapeFilter_Create(NULL);
-
-  SHADOW_UNLOCK(&g_jph_trampoline_lock);
-
-  JPH_CharacterVirtual_SetListener(j_char, obj->listener);
-  obj->bp_filter = JPH_BroadPhaseLayerFilter_Create(NULL);
-  obj->obj_filter = JPH_ObjectLayerFilter_Create(NULL);
-
-  Py_INCREF(self);
   PyObject_GC_Track((PyObject *)obj);
   return (PyObject *)obj;
 
-fail:
-  if (obj) {
-    // If we got here, registration didn't happen, so we just DECREF and the
-    // destructor (Character_dealloc) will handle j_char/filters.
-    Py_DECREF(obj);
-  } else {
-    if (j_char) {
+fail_py:
       JPH_CharacterBase_Destroy((JPH_CharacterBase *)j_char);
-    }
-    if (slot_reserved) {
+fail_jolt:
       SHADOW_LOCK(&self->shadow_lock);
       self->slot_states[char_slot] = SLOT_EMPTY;
       self->free_slots[self->free_count++] = char_slot;
       SHADOW_UNLOCK(&self->shadow_lock);
-    }
-  }
   return NULL;
 }
 
