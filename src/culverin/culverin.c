@@ -34,11 +34,11 @@ static void debug_buffer_ensure(DebugBuffer* buf, size_t count_needed) {
     }
 }
 
-static void debug_buffer_push(DebugBuffer* buf, float x, float y, float z, uint32_t color) {
+static void debug_buffer_push(DebugBuffer* buf, DebugCoordinates pos, uint32_t color) {
     if (buf->count >= buf->capacity) return; // Safety
-    buf->data[buf->count].x = x;
-    buf->data[buf->count].y = y;
-    buf->data[buf->count].z = z;
+    buf->data[buf->count].x = pos.x;
+    buf->data[buf->count].y = pos.y;
+    buf->data[buf->count].z = pos.z;
     buf->data[buf->count].color = color;
     buf->count++;
 }
@@ -104,8 +104,10 @@ static void world_remove_body_slot(PhysicsWorldObject *self, uint32_t slot) {
 
 // Character helpers
 // Callback: Can the character collide with this object?
+
 static bool JPH_API_CALL
 char_on_contact_validate(void *userData, const JPH_CharacterVirtual *character,
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
                          JPH_BodyID bodyID2, JPH_SubShapeID subShapeID2) {
   return true; // Usually true, unless you want to walk through certain bodies
 }
@@ -164,6 +166,7 @@ static const JPH_ShapeFilter_Procs global_sf_procs = {.ShouldCollide =
                                                           filter_true_shape};
 
 static void JPH_API_CALL char_on_character_contact_added(
+//NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     void *userData, const JPH_CharacterVirtual *character,
     const JPH_CharacterVirtual *otherCharacter, JPH_SubShapeID subShapeID2,
     const JPH_RVec3 *contactPosition, const JPH_Vec3 *contactNormal,
@@ -239,6 +242,7 @@ static void JPH_API_CALL char_on_character_contact_added(
 
 // Callback: Handle the collision settings AND Apply Impulse
 static void JPH_API_CALL char_on_contact_added(
+//NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     void *userData, const JPH_CharacterVirtual *character, JPH_BodyID bodyID2,
     JPH_SubShapeID subShapeID2, const JPH_RVec3 *contactPosition,
     const JPH_Vec3 *contactNormal, JPH_CharacterContactSettings *ioSettings) {
@@ -362,24 +366,44 @@ static inline void manual_quat_multiply(const JPH_Quat *a, const JPH_Quat *b,
 }
 
 // --- Jolt Debug Callbacks ---
-static void JPH_API_CALL OnDebugDrawLine(void* userData, const JPH_RVec3* from, const JPH_RVec3* to, JPH_Color color) {
-    PhysicsWorldObject* self = (PhysicsWorldObject*)userData;
-    debug_buffer_ensure(&self->debug_lines, 2);
-    debug_buffer_push(&self->debug_lines, (float)from->x, (float)from->y, (float)from->z, color);
-    debug_buffer_push(&self->debug_lines, (float)to->x, (float)to->y, (float)to->z, color);
+static void JPH_API_CALL OnDebugDrawLine(void *userData, const JPH_RVec3 *from,
+                                         const JPH_RVec3 *to, JPH_Color color) {
+  PhysicsWorldObject *self = (PhysicsWorldObject *)userData;
+  debug_buffer_ensure(&self->debug_lines, 2);
+  debug_buffer_push(
+      &self->debug_lines,
+      (DebugCoordinates){(float)from->x, (float)from->y, (float)from->z},
+      color);
+  debug_buffer_push(
+      &self->debug_lines,
+      (DebugCoordinates){(float)to->x, (float)to->y, (float)to->z}, color);
 }
 
-static void JPH_API_CALL OnDebugDrawTriangle(void* userData, const JPH_RVec3* v1, const JPH_RVec3* v2, const JPH_RVec3* v3, JPH_Color color, JPH_DebugRenderer_CastShadow castShadow) {
-    PhysicsWorldObject* self = (PhysicsWorldObject*)userData;
-    debug_buffer_ensure(&self->debug_triangles, 3);
-    debug_buffer_push(&self->debug_triangles, (float)v1->x, (float)v1->y, (float)v1->z, color);
-    debug_buffer_push(&self->debug_triangles, (float)v2->x, (float)v2->y, (float)v2->z, color);
-    debug_buffer_push(&self->debug_triangles, (float)v3->x, (float)v3->y, (float)v3->z, color);
+static void JPH_API_CALL
+OnDebugDrawTriangle(void *userData, const JPH_RVec3 *v1, const JPH_RVec3 *v2,
+//NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+                    const JPH_RVec3 *v3, JPH_Color color,
+                    JPH_DebugRenderer_CastShadow castShadow) {
+  PhysicsWorldObject *self = (PhysicsWorldObject *)userData;
+  debug_buffer_ensure(&self->debug_triangles, 3);
+  debug_buffer_push(
+      &self->debug_triangles,
+      (DebugCoordinates){(float)v1->x, (float)v1->y, (float)v1->z}, color);
+  debug_buffer_push(
+      &self->debug_triangles,
+      (DebugCoordinates){(float)v2->x, (float)v2->y, (float)v2->z}, color);
+  debug_buffer_push(
+      &self->debug_triangles,
+      (DebugCoordinates){(float)v3->x, (float)v3->y, (float)v3->z}, color);
 }
 
-static void JPH_API_CALL OnDebugDrawText(void* userData, const JPH_RVec3* position, const char* str, JPH_Color color, float height) {
-    // Text is hard to batch efficiently to Python bytes. 
-    // Usually ignored or printed to stdout.
+static void JPH_API_CALL OnDebugDrawText(void *userData,
+                                         const JPH_RVec3 *position,
+//NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+                                         const char *str, JPH_Color color,
+                                         float height) {
+  // Text is hard to batch efficiently to Python bytes.
+  // Usually ignored or printed to stdout.
 }
 
 static const JPH_DebugRenderer_Procs debug_procs = {
@@ -1020,8 +1044,7 @@ static int init_settings(PhysicsWorldObject *self, PyObject *settings_dict,
 }
 
 // helper: Initialize Jolt Core Systems
-static int init_jolt_core(PhysicsWorldObject *self, int max_bodies,
-                          int max_pairs, float gx, float gy, float gz) {
+static int init_jolt_core(PhysicsWorldObject *self, WorldLimits limits, GravityVector gravity) {
   JobSystemThreadPoolConfig job_cfg = {
       .maxJobs = 1024, .maxBarriers = 8, .numThreads = -1};
   self->job_system = JPH_JobSystemThreadPool_Create(&job_cfg);
@@ -1037,16 +1060,16 @@ static int init_jolt_core(PhysicsWorldObject *self, int max_bodies,
       self->bp_interface, 2, self->pair_filter, 2);
 
   JPH_PhysicsSystemSettings phys_settings = {
-      .maxBodies = (uint32_t)max_bodies,
-      .maxBodyPairs = (uint32_t)max_pairs,
-      .maxContactConstraints = 102400,
-      .broadPhaseLayerInterface = self->bp_interface,
-      .objectLayerPairFilter = self->pair_filter,
-      .objectVsBroadPhaseLayerFilter = self->bp_filter};
+        .maxBodies = (uint32_t)limits.max_bodies,
+        .maxBodyPairs = (uint32_t)limits.max_pairs, // Now safe
+        .maxContactConstraints = 102400,
+        .broadPhaseLayerInterface = self->bp_interface,
+        .objectLayerPairFilter = self->pair_filter,
+        .objectVsBroadPhaseLayerFilter = self->bp_filter};
 
   self->system = JPH_PhysicsSystem_Create(&phys_settings);
   self->char_vs_char_manager = JPH_CharacterVsCharacterCollision_CreateSimple();
-  JPH_PhysicsSystem_SetGravity(self->system, &(JPH_Vec3){gx, gy, gz});
+  JPH_PhysicsSystem_SetGravity(self->system, &(JPH_Vec3){gravity.gx, gravity.gy, gravity.gz});
   self->body_interface = JPH_PhysicsSystem_GetBodyInterface(self->system);
   return 0;
 }
@@ -1190,7 +1213,9 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
   if (init_settings(self, settings_dict, &gx, &gy, &gz, &max_bodies,
                     &max_pairs) < 0)
     goto fail;
-  if (init_jolt_core(self, max_bodies, max_pairs, gx, gy, gz) < 0)
+  WorldLimits limits = {max_bodies, max_pairs};
+  GravityVector gravity = {gx, gy, gz};
+  if (init_jolt_core(self, limits, gravity) < 0) 
     goto fail;
 
   if (verify_abi_alignment(self->body_interface) < 0)
@@ -1418,6 +1443,7 @@ static bool execute_raycast_query(PhysicsWorldObject *self,
 }
 
 // Helper 2: Extract World Space Normal after hit
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 static void extract_hit_normal(PhysicsWorldObject *self, JPH_BodyID bodyID,
                                JPH_SubShapeID subShapeID2,
                                const JPH_RVec3 *origin, const JPH_Vec3 *ray_dir,
@@ -3082,37 +3108,40 @@ static PyObject *PhysicsWorld_step(PhysicsWorldObject *self, PyObject *args) {
 }
 
 // Helper 1: Jolt-side allocation and Collision Manager linking
-static JPH_CharacterVirtual *alloc_j_char(PhysicsWorldObject *self, float px,
-                                          float py, float pz, float height,
-                                          float radius, float max_slope) {
-  float half_h = fmaxf((height - 2.0f * radius) * 0.5f, 0.1f);
-  JPH_CapsuleShapeSettings *ss =
-      JPH_CapsuleShapeSettings_Create(half_h, radius);
-  JPH_Shape *shape = (JPH_Shape *)JPH_CapsuleShapeSettings_CreateShape(ss);
-  JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)ss);
-  if (!shape)
-    return NULL;
+static JPH_CharacterVirtual *alloc_j_char(PhysicsWorldObject *self, 
+                                          PositionVector pos,
+                                          CharacterParams params) { // Reduced to 2 conceptual arguments
+    
+    // Position parameters are now accessed via pos.px, pos.py, pos.pz
+    // Size parameters are now accessed via params.height, params.radius, etc.
+    
+    float half_h = fmaxf((params.height - 2.0f * params.radius) * 0.5f, 0.1f);
+    JPH_CapsuleShapeSettings *ss =
+        JPH_CapsuleShapeSettings_Create(half_h, params.radius);
+    JPH_Shape *shape = (JPH_Shape *)JPH_CapsuleShapeSettings_CreateShape(ss);
+    JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)ss);
+    if (!shape) return NULL;
 
-  JPH_CharacterVirtualSettings settings;
-  JPH_CharacterVirtualSettings_Init(&settings);
-  settings.base.shape = shape;
-  settings.base.maxSlopeAngle = max_slope * (JPH_M_PI / 180.0f);
+    JPH_CharacterVirtualSettings settings;
+    JPH_CharacterVirtualSettings_Init(&settings);
+    settings.base.shape = shape;
+    settings.base.maxSlopeAngle = params.max_slope * (JPH_M_PI / 180.0f);
 
-  JPH_CharacterVirtual *j_char = JPH_CharacterVirtual_Create(
-      &settings, &(JPH_RVec3){(double)px, (double)py, (double)pz},
-      &(JPH_Quat){0, 0, 0, 1}, 1, self->system);
+    JPH_CharacterVirtual *j_char = JPH_CharacterVirtual_Create(
+        &settings, 
+        &(JPH_RVec3){(double)pos.px, (double)pos.py, (double)pos.pz},
+        &(JPH_Quat){0, 0, 0, 1}, 1, self->system);
 
-  JPH_Shape_Destroy(shape);
-  if (!j_char)
-    return NULL;
+    JPH_Shape_Destroy(shape);
+    if (!j_char) return NULL;
 
-  if (self->char_vs_char_manager) {
-    JPH_CharacterVsCharacterCollisionSimple_AddCharacter(
-        self->char_vs_char_manager, j_char);
-    JPH_CharacterVirtual_SetCharacterVsCharacterCollision(
-        j_char, self->char_vs_char_manager);
-  }
-  return j_char;
+    if (self->char_vs_char_manager) {
+        JPH_CharacterVsCharacterCollisionSimple_AddCharacter(
+            self->char_vs_char_manager, j_char);
+        JPH_CharacterVirtual_SetCharacterVsCharacterCollision(
+            j_char, self->char_vs_char_manager);
+    }
+    return j_char;
 }
 
 // Helper 2: Shadow Buffer Registration (Atomic Commit)
@@ -3184,9 +3213,11 @@ static PyObject *PhysicsWorld_create_character(PhysicsWorldObject *self,
   SHADOW_UNLOCK(&self->shadow_lock);
 
   // 2. Resource Allocation
-  JPH_CharacterVirtual *j_char =
-      alloc_j_char(self, px, py, pz, height, radius, slope);
-  if (!j_char)
+  PositionVector pos_vec = {px, py, pz};
+  CharacterParams char_params = {height, radius, slope};
+
+  JPH_CharacterVirtual *j_char = alloc_j_char(self, pos_vec, char_params);
+  if (!j_char) 
     goto fail_jolt;
 
   CharacterObject *obj = (CharacterObject *)PyObject_GC_New(
@@ -3449,32 +3480,33 @@ fail:
 
 // Helper 2: Apply physics properties (mass, friction, etc) to creation settings
 static void apply_body_creation_props(JPH_BodyCreationSettings *settings,
-                                      JPH_Shape *shape, float mass,
-                                      int is_sensor, int use_ccd,
-                                      float friction, float restitution) {
-  if (mass > 0.0f) {
-    JPH_MassProperties mp;
-    JPH_Shape_GetMassProperties(shape, &mp);
-    if (mp.mass > 1e-6f) {
-      float scale = mass / mp.mass;
-      mp.mass = mass;
-      for (int i = 0; i < 3; i++) {
-        mp.inertia.column[i].x *= scale;
-        mp.inertia.column[i].y *= scale;
-        mp.inertia.column[i].z *= scale;
-      }
-      JPH_BodyCreationSettings_SetMassPropertiesOverride(settings, &mp);
-      JPH_BodyCreationSettings_SetOverrideMassProperties(
-          settings, JPH_OverrideMassProperties_CalculateInertia);
+                                      JPH_Shape *shape, 
+                                      BodyCreationProps props) {
+    if (props.mass > 0.0f) {
+        JPH_MassProperties mp;
+        JPH_Shape_GetMassProperties(shape, &mp);
+        if (mp.mass > 1e-6f) {
+            float scale = props.mass / mp.mass;
+            mp.mass = props.mass;
+            for (int i = 0; i < 3; i++) {
+                mp.inertia.column[i].x *= scale;
+                mp.inertia.column[i].y *= scale;
+                mp.inertia.column[i].z *= scale;
+            }
+            JPH_BodyCreationSettings_SetMassPropertiesOverride(settings, &mp);
+            JPH_BodyCreationSettings_SetOverrideMassProperties(
+                settings, JPH_OverrideMassProperties_CalculateInertia);
+        }
     }
-  }
-  if (is_sensor)
-    JPH_BodyCreationSettings_SetIsSensor(settings, true);
-  if (use_ccd)
-    JPH_BodyCreationSettings_SetMotionQuality(settings,
-                                              JPH_MotionQuality_LinearCast);
-  JPH_BodyCreationSettings_SetFriction(settings, friction);
-  JPH_BodyCreationSettings_SetRestitution(settings, restitution);
+    
+    if (props.is_sensor)
+        JPH_BodyCreationSettings_SetIsSensor(settings, true);
+    
+    if (props.use_ccd)
+        JPH_BodyCreationSettings_SetMotionQuality(settings, JPH_MotionQuality_LinearCast);
+        
+    JPH_BodyCreationSettings_SetFriction(settings, props.friction);
+    JPH_BodyCreationSettings_SetRestitution(settings, props.restitution);
 }
 
 // Orchestrator
@@ -3525,8 +3557,15 @@ static PyObject *PhysicsWorld_create_compound_body(PhysicsWorldObject *self,
       &(JPH_Quat){rx, ry, rz, rw}, (JPH_MotionType)motion_type,
       (motion_type == 0) ? 0 : 1);
 
-  apply_body_creation_props(settings, final_shape, mass, is_sensor, use_ccd,
-                            friction, restitution);
+  BodyCreationProps props = {
+    .mass = mass,
+    .friction = friction,
+    .restitution = restitution,
+    .is_sensor = is_sensor,
+    .use_ccd = use_ccd
+  };
+
+  apply_body_creation_props(settings, final_shape, props);
   JPH_BodyCreationSettings_SetUserData(
       settings, (uint64_t)make_handle(slot, self->generations[slot]));
 
@@ -3553,27 +3592,31 @@ static PyObject *PhysicsWorld_create_compound_body(PhysicsWorldObject *self,
 }
 
 // Helper 1: Resolve material properties based on ID and explicit overrides
-static void resolve_material_params(PhysicsWorldObject *self,
-                                    uint32_t material_id, float *friction,
-                                    float *restitution) {
-  float f = 0.2f, r = 0.0f; // Jolt defaults
-  if (material_id > 0) {
-    SHADOW_LOCK(&self->shadow_lock);
-    for (size_t i = 0; i < self->material_count; i++) {
-      if (self->materials[i].id == material_id) {
-        f = self->materials[i].friction;
-        r = self->materials[i].restitution;
-        break;
-      }
+static MaterialSettings resolve_material_params(PhysicsWorldObject *self,
+                                                uint32_t material_id,
+                                                MaterialSettings input) {
+    // 1. Start with Jolt Defaults
+    float f = 0.2f, r = 0.0f;
+
+    // 2. Lookup Registry Defaults
+    if (material_id > 0) {
+        SHADOW_LOCK(&self->shadow_lock);
+        for (size_t i = 0; i < self->material_count; i++) {
+            if (self->materials[i].id == material_id) {
+                f = self->materials[i].friction;
+                r = self->materials[i].restitution;
+                break;
+            }
+        }
+        SHADOW_UNLOCK(&self->shadow_lock);
     }
-    SHADOW_UNLOCK(&self->shadow_lock);
-  }
-  if (*friction >= 0.0f)
-    f = *friction;
-  if (*restitution >= 0.0f)
-    r = *restitution;
-  *friction = f;
-  *restitution = r;
+
+    // 3. Apply Overrides (if input values are non-negative)
+    MaterialSettings resolved;
+    resolved.friction = (input.friction >= 0.0f) ? input.friction : f;
+    resolved.restitution = (input.restitution >= 0.0f) ? input.restitution : r;
+
+    return resolved;
 }
 
 // Helper 2: Parse the size object (tuple or float) into a 4-float array
@@ -3599,26 +3642,27 @@ static void parse_body_size(PyObject *py_size, float s[4]) {
 // Helper 3: Apply mass, sensor, CCD, and sleeping settings to the creation
 // struct
 static void configure_body_settings(JPH_BodyCreationSettings *settings,
-                                    JPH_Shape *shape, float mass,
-                                    float friction, float restitution,
-                                    int is_sensor, int use_ccd,
-                                    int motion_type) {
-  if (is_sensor)
+                                    JPH_Shape *shape, 
+                                    BodyConfig cfg) {
+  // Use the members of the struct instead of loose variables
+  if (cfg.is_sensor)
     JPH_BodyCreationSettings_SetIsSensor(settings, true);
-  if (use_ccd)
+  
+  if (cfg.use_ccd)
     JPH_BodyCreationSettings_SetMotionQuality(settings,
                                               JPH_MotionQuality_LinearCast);
-  if (motion_type == 2)
+  
+  if (cfg.motion_type == 2) // MOTION_DYNAMIC
     JPH_BodyCreationSettings_SetAllowSleeping(settings, true);
 
-  JPH_BodyCreationSettings_SetFriction(settings, friction);
-  JPH_BodyCreationSettings_SetRestitution(settings, restitution);
+  JPH_BodyCreationSettings_SetFriction(settings, cfg.friction);
+  JPH_BodyCreationSettings_SetRestitution(settings, cfg.restitution);
 
-  if (mass > 0.0f) {
+  if (cfg.mass > 0.0f) {
     JPH_MassProperties mp;
     JPH_Shape_GetMassProperties(shape, &mp);
-    float scale = mass / fmaxf(mp.mass, 1e-6f);
-    mp.mass = mass;
+    float scale = cfg.mass / fmaxf(mp.mass, 1e-6f);
+    mp.mass = cfg.mass;
     for (int i = 0; i < 3; i++) {
       mp.inertia.column[i].x *= scale;
       mp.inertia.column[i].y *= scale;
@@ -3655,7 +3699,10 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
     return PyErr_Format(PyExc_ValueError, "SHAPE_PLANE must be MOTION_STATIC");
   }
 
-  resolve_material_params(self, material_id, &friction, &restitution);
+  MaterialSettings input = { .friction = friction, .restitution = restitution };
+
+  // Resolve
+  MaterialSettings mat = resolve_material_params(self, material_id, input);
   float s[4];
   parse_body_size(py_size, s);
 
@@ -3681,8 +3728,16 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
       &(JPH_Quat){rx, ry, rz, rw}, (JPH_MotionType)motion_type,
       (motion_type == 0) ? 0 : 1);
 
-  configure_body_settings(settings, shape, mass, friction, restitution,
-                          is_sensor, use_ccd, motion_type);
+  BodyConfig config = {
+    .mass = mass,
+    .friction = friction,
+    .restitution = restitution,
+    .is_sensor = is_sensor,
+    .use_ccd = use_ccd,
+    .motion_type = motion_type
+  };
+
+  configure_body_settings(settings, shape, config);
   JPH_BodyCreationSettings_SetUserData(
       settings, (uint64_t)make_handle(slot, self->generations[slot]));
 
