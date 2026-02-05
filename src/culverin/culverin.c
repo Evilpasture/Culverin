@@ -2254,6 +2254,7 @@ static void flush_commands(PhysicsWorldObject *self) {
         break;
     }
     default:
+      DEBUG_LOG("Warning: Invalid command during flush. Check flush_commands.");
       break;
     }
   }
