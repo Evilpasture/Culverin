@@ -1,5 +1,5 @@
 [build-system]
-requires = ["scikit-build-core>=0.10.0", "cmake>=3.16", "ninja"]
+requires = ["scikit-build-core>=0.10.0"]
 build-backend = "scikit_build_core.build"
 
 [project]
@@ -49,7 +49,11 @@ Repository = "https://github.com/Evilpasture/culverin.git"
 cmake.build-type = "Release"
 cmake.args = [
     "-DDOUBLE_PRECISION=ON",
-    "-DCMAKE_OSX_DEPLOYMENT_TARGET=11.0" 
+    "-DUSE_MTL=OFF",            # Explicitly disable Metal (macOS)
+    "-DINTEROP_COMPUTE=OFF",    # Disable cross-platform compute
+    "-DUSE_GL_COMPUTE=OFF",     # Disable OpenGL compute (Linux/Win)
+    "-DGENERATE_SAMPLES=OFF",   # Save build time
+    "-DGENERATE_UNIT_TESTS=OFF" # Save build time
 ]
 wheel.install-dir = "culverin"
 
