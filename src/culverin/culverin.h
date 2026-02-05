@@ -329,6 +329,57 @@ typedef struct {
     size_t capacity;
 } DebugBuffer;
 
+typedef struct {
+    float x;
+    float y;
+    float z;
+} DebugCoordinates;
+
+typedef struct {
+    int max_bodies;
+    int max_pairs;
+} WorldLimits;
+
+typedef struct {
+    float gx;
+    float gy;
+    float gz;
+} GravityVector;
+
+typedef struct {
+    float px;
+    float py;
+    float pz;
+} PositionVector; // Can use GravityVector if it's identical
+
+typedef struct {
+    float height;
+    float radius;
+    float max_slope;
+} CharacterParams;
+
+typedef struct {
+    float mass;
+    float friction;
+    float restitution;
+    int is_sensor;
+    int use_ccd;
+} BodyCreationProps;
+
+typedef struct {
+    float friction;
+    float restitution;
+} MaterialSettings;
+
+typedef struct {
+    float mass;
+    float friction;
+    float restitution;
+    int is_sensor;
+    int use_ccd;
+    int motion_type;
+} BodyConfig;
+
 // --- The Object Struct ---
 typedef struct {
   PyObject_HEAD
