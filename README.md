@@ -21,7 +21,7 @@ Culverin is designed for **Zero-Copy** workflows.
 
 ### Installation (Build from Source)
 ```bash
-git clone https://github.com/Evilpasture/culverin
+git clone --recursive https://github.com/Evilpasture/culverin.git
 cd culverin
 pip install .
 ```
