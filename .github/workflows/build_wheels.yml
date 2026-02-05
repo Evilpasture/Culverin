@@ -14,43 +14,37 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Building for Windows and Linux. 
-        # (MacOS added for portability, though Jolt works best on x86_64/arm64)
         os: [windows-latest, ubuntu-latest, macos-latest]
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          submodules: recursive # REQUIRED for extern/JoltPhysics
+          submodules: recursive
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          # Use 3.13 as the runner host; it has the best support for building 3.14 wheels
           python-version: '3.13'
 
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.22.0
         env:
-          # 1. Enable Free-Threaded and Alpha support
-          CIBW_ENABLE: "freethreaded cpython-prerelease"
+          # --- THE STABLE FLAGS ---
+          CIBW_FREE_THREADED_SUPPORT: 1
+          CIBW_PRERELEASE_PYTHONS: 1
+          
+          # Selection
           CIBW_BUILD: "cp313t-* cp314t-*"
           
-          # 2. Architectures
+          # Architectures
           CIBW_ARCHS_WINDOWS: "AMD64"
           CIBW_ARCHS_LINUX: "x86_64"
           CIBW_ARCHS_MACOS: "x86_64 arm64"
 
-          # 3. Environment Variables
-          # We pass Py_GIL_DISABLED so the C code #ifdefs trigger correctly
+          # Environment
           CIBW_ENVIRONMENT: "Py_GIL_DISABLED=1"
-          
-          # 4. Platform Specifics
-          # On Linux, we need to ensure cmake is present in the build container
           CIBW_BEFORE_ALL_LINUX: "yum install -y cmake"
-          
-          # Skip tests to speed up the CI loop for Beta 1
           CIBW_TEST_SKIP: "*"
 
       - name: Upload Artifacts
@@ -81,11 +75,9 @@ jobs:
           body: |
             Culverin Physics Beta Release ${{ github.ref_name }}
             
-            Binaries provided for:
+            Optimized for:
             - Python 3.13t (Free-Threaded)
             - Python 3.14t (Free-Threaded Alpha)
-            
-            Supports Windows (AMD64), Linux (x86_64), and macOS.
           prerelease: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
