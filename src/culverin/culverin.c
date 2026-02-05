@@ -3399,6 +3399,7 @@ static PyObject *PhysicsWorld_create_convex_hull(PhysicsWorldObject *self,
 
   if (!ensure_command_capacity(self)) {
       JPH_BodyCreationSettings_Destroy(settings);
+      JPH_Shape_Destroy(shape); 
       self->slot_states[slot] = SLOT_EMPTY;
       self->free_slots[self->free_count++] = slot;
       SHADOW_UNLOCK(&self->shadow_lock);
@@ -3571,6 +3572,7 @@ static PyObject *PhysicsWorld_create_compound_body(PhysicsWorldObject *self,
 
   if (!ensure_command_capacity(self)) {
     JPH_BodyCreationSettings_Destroy(settings);
+    JPH_Shape_Destroy(final_shape);
     self->slot_states[slot] = SLOT_EMPTY;
     self->free_slots[self->free_count++] = slot;
     SHADOW_UNLOCK(&self->shadow_lock);
@@ -4493,6 +4495,16 @@ static PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
   v_set.controller = (JPH_VehicleControllerSettings *)t_ctrl;
 
   r.j_veh = JPH_VehicleConstraint_Create(lock.body, &v_set);
+  if (!r.j_veh) {
+      cleanup_vehicle_resources(&r, num_wheels, self);
+      JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
+      
+      // Clean up the track indices we just allocated
+      for(int i=0; i<num_tracks; i++) PyMem_RawFree(track_indices_ptrs[i]);
+      PyMem_RawFree((void *)track_indices_ptrs);
+      
+      return PyErr_Format(PyExc_RuntimeError, "Failed to create Tracked Vehicle Constraint");
+  }
   r.tester =
       JPH_VehicleCollisionTesterRay_Create(1, &(JPH_Vec3){0, 1, 0}, 1.0f);
   JPH_VehicleConstraint_SetVehicleCollisionTester(
@@ -6013,6 +6025,11 @@ static void Character_dealloc(CharacterObject *self) {
   if (!self->world) {
     goto finalize;
   }
+  // We must wait for the physics step to finish before touching the Jolt Character.
+  // Otherwise, Jolt might be using this pointer in a worker thread.
+  SHADOW_LOCK(&self->world->shadow_lock);
+  BLOCK_UNTIL_NOT_STEPPING(self->world);
+  SHADOW_UNLOCK(&self->world->shadow_lock);
 
   // 1. REMOVE FROM JOLT MANAGER (Unlocked)
   // This is safe because the manager is thread-safe for removal.
@@ -6024,6 +6041,8 @@ static void Character_dealloc(CharacterObject *self) {
   // 2. WORLD REGISTRY CLEANUP (Locked)
   uint32_t slot = (uint32_t)(self->handle & 0xFFFFFFFF);
   SHADOW_LOCK(&self->world->shadow_lock);
+  // Re-check stepping just to be paranoid/consistent, though strictly we handled it above. It costs nothing.
+  BLOCK_UNTIL_NOT_STEPPING(self->world); 
 
   // GUARD: We must wait for queries to finish. Dealloc cannot return error,
   // so we must block. Since queries are fast, this is a very short wait.
