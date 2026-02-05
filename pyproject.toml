@@ -47,7 +47,10 @@ Repository = "https://github.com/Evilpasture/culverin.git"
 
 [tool.scikit-build]
 cmake.build-type = "Release"
-cmake.args = ["-DDOUBLE_PRECISION=ON"]
+cmake.args = [
+    "-DDOUBLE_PRECISION=ON",
+    "-DCMAKE_OSX_DEPLOYMENT_TARGET=11.0" 
+]
 wheel.install-dir = "culverin"
 
 
