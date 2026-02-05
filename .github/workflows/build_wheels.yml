@@ -37,7 +37,7 @@ jobs:
           CIBW_ARCHS_LINUX: "x86_64"
           CIBW_ARCHS_MACOS: "x86_64 arm64"
           # FORCE modern macOS target for compatibility with Python 3.13
-          MACOSX_DEPLOYMENT_TARGET: "11.0" 
+          MACOSX_DEPLOYMENT_TARGET: "13.0" 
           CIBW_ENVIRONMENT: "Py_GIL_DISABLED=1"
           CIBW_ENVIRONMENT_WINDOWS: "CC=clang-cl CXX=clang-cl Py_GIL_DISABLED=1"
           CIBW_TEST_SKIP: "*"
