@@ -3,14 +3,22 @@ cmake_minimum_required(VERSION 3.16)
 # ==============================================================================
 # 0. GLOBAL COMPILER & RUNTIME SETTINGS
 # ==============================================================================
-cmake_policy(SET CMP0091 NEW) # Required for CMAKE_MSVC_RUNTIME_LIBRARY
+cmake_policy(SET CMP0091 NEW) 
+
+# FIX 1: Ensure all static libraries are built with -fPIC for Linux shared modules
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # Force /MD (Dynamic Runtime) globally for Python compatibility
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 
-# Force Jolt-specific variables into the cache so its internal scripts can't override them
+# Force Jolt-specific variables into the cache
 set(USE_STATIC_MSVC_RUNTIME OFF CACHE BOOL "Use /MD instead of /MT" FORCE)
 set(DOUBLE_PRECISION ON CACHE BOOL "Use double precision math" FORCE)
+
+# FIX 2: Disable Jolt features that break old macOS compatibility or slow down builds
+set(INTEROP_COMPUTE OFF CACHE BOOL "" FORCE)
+set(USE_MTL OFF CACHE BOOL "Disable Metal to fix macOS deployment target issues" FORCE)
+set(USE_GL_COMPUTE OFF CACHE BOOL "" FORCE)
 
 add_definitions(-DJPH_DOUBLE_PRECISION)
 add_definitions(-DJPH_OBJECT_LAYER_BITS=32)
@@ -22,19 +30,18 @@ project(culverin LANGUAGES C CXX)
 # ==============================================================================
 get_filename_component(JOLT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/extern/JoltPhysics" ABSOLUTE)
 
-# Disable Jolt's own unit tests and samples to speed up CI
 set(GENERATE_UNIT_TESTS OFF CACHE BOOL "" FORCE)
 set(GENERATE_SAMPLES OFF CACHE BOOL "" FORCE)
 
 add_subdirectory("${JOLT_DIR}/Build" jolt_physics_build)
 
-# --- THE JOLT RUNTIME FIX ---
-# Even with global settings, Jolt sometimes resets its own target properties.
-# We force them back to /MD here.
+# Ensure Jolt target inherits the PIC setting and custom defines
 if(TARGET Jolt)
+    set_property(TARGET Jolt PROPERTY POSITION_INDEPENDENT_CODE ON)
     set_property(TARGET Jolt PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
     target_compile_definitions(Jolt PUBLIC JPH_DOUBLE_PRECISION JPH_OBJECT_LAYER_BITS=32)
 endif()
+
 
 # ==============================================================================
 # 2. BUILD JOLTC (The C++ Wrapper)
