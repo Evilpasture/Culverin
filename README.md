@@ -47,3 +47,12 @@ while True:
     pos = world.positions[world.get_index(box) * 4 : world.get_index(box) * 4 + 3]
     print(f"Box is at: {pos}")
 ```
+### Standard specs
+
+| Spec | Default / Standard |
+| :--- | :--- |
+| **Units** | Metric (1.0 = 1 meter) |
+| **Coordinate System** | Right-Handed (X-Right, Y-Up, Z-Back) |
+| **Angles** | Radians |
+| **Quaternions** | `(x, y, z, w)` |
+| **Precision** | Double (Internal) / Float32 (Shadow Buffers) |
