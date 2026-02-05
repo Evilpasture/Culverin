@@ -47,12 +47,9 @@ Repository = "https://github.com/Evilpasture/culverin.git"
 
 [tool.scikit-build]
 cmake.build-type = "Release"
+cmake.args = ["-DDOUBLE_PRECISION=ON"]
 wheel.install-dir = "culverin"
 
-# Use ClangCL for high-performance Windows builds
-cmake.args = [
-    "-T", "ClangCL",
-]
 
 # Ensure we don't ship build artifacts or raw source in the final wheel
 wheel.exclude = [
