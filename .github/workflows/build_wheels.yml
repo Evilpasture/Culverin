@@ -45,7 +45,6 @@ jobs:
           # Environment
           CIBW_ENVIRONMENT: "Py_GIL_DISABLED=1"
           CIBW_ENVIRONMENT_WINDOWS: "CC=clang-cl CXX=clang-cl Py_GIL_DISABLED=1"
-          CIBW_BEFORE_ALL_LINUX: "yum install -y cmake"
           CIBW_TEST_SKIP: "*"
 
       - name: Upload Artifacts
