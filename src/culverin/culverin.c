@@ -2905,59 +2905,53 @@ size_fail:
 
 static PyObject *PhysicsWorld_step(PhysicsWorldObject *self, PyObject *args) {
   float dt = 1.0f / 60.0f;
-  if (!PyArg_ParseTuple(args, "|f", &dt)) {
+  if (UNLIKELY(
+          !PyArg_ParseTuple(args, "|f", &dt))) { // UNLIKELY fail to parse args
     return NULL;
   }
 
   SHADOW_LOCK(&self->shadow_lock);
 
   // 1. RE-ENTRANCY GUARD
-  if (atomic_load_explicit(&self->is_stepping, memory_order_relaxed)) {
+  if (UNLIKELY(atomic_load_explicit(
+          &self->is_stepping,
+          memory_order_relaxed))) { // UNLIKELY concurrent call
     SHADOW_UNLOCK(&self->shadow_lock);
     PyErr_SetString(PyExc_RuntimeError, "Concurrent step detected");
     return NULL;
   }
   BLOCK_UNTIL_NOT_QUERYING(self);
-  // Set to true via atomic store
   atomic_store_explicit(&self->is_stepping, true, memory_order_relaxed);
 
   // 2. BUFFER MANAGEMENT (Reset Phase)
-  // Safe because is_stepping=true ensures no other thread is inside step(),
-  // and Jolt is not running yet, so no callbacks are firing.
-  if (!self->contact_buffer) {
-    self->contact_max_capacity = 4096; // Fixed size batch buffer
+  if (UNLIKELY(!self->contact_buffer)) { // UNLIKELY re-allocation needed
+    self->contact_max_capacity = 4096;
     self->contact_buffer =
         PyMem_RawMalloc(self->contact_max_capacity * sizeof(ContactEvent));
-    if (!self->contact_buffer) {
-      atomic_store_explicit(&self->is_stepping, false, memory_order_relaxed); // Reset before leaving
+    if (UNLIKELY(!self->contact_buffer)) { // UNLIKELY OOM
+      atomic_store_explicit(&self->is_stepping, false, memory_order_relaxed);
       SHADOW_UNLOCK(&self->shadow_lock);
       return PyErr_NoMemory();
     }
   }
-  // RESET the atomic index for the new frame
   atomic_store_explicit(&self->contact_atomic_idx, 0, memory_order_relaxed);
 
   // 3. FLUSH COMMANDS
-  // This updates Jolt bodies and sets their UserData handles.
+  // Note: Assuming command_count > 0 is LIKELY if user queues anything
   flush_commands(self);
 
-  // Snapshot state for interpolation
+  // Snapshot state for interpolation (always done)
   memcpy(self->prev_positions, self->positions, self->count * 16);
   memcpy(self->prev_rotations, self->rotations, self->count * 16);
 
   SHADOW_UNLOCK(&self->shadow_lock);
 
-  // 4. JOLT UPDATE (The Producer Phase)
-  // The main thread sleeps here. Jolt worker threads run and fire
-  // on_contact_added.
+  // 4. JOLT UPDATE (Unlocked)
   Py_BEGIN_ALLOW_THREADS JPH_PhysicsSystem_Update(self->system, dt, 1,
                                                   self->job_system);
   Py_END_ALLOW_THREADS
 
-      // 5. ACQUIRE FENCE (The Consumer Phase)
-      // Ensure we see all data written by the worker threads before we read the
-      // index. While allow_threads implies a barrier, explicit acquire pairs
-      // with the callback's release.
+      // 5. ACQUIRE FENCE (Consumer Phase)
       atomic_thread_fence(memory_order_acquire);
 
   SHADOW_LOCK(&self->shadow_lock);
@@ -2968,12 +2962,12 @@ static PyObject *PhysicsWorld_step(PhysicsWorldObject *self, PyObject *args) {
   // 7. FINALIZE COUNT
   size_t count =
       atomic_load_explicit(&self->contact_atomic_idx, memory_order_acquire);
-  if (count > self->contact_max_capacity) {
+
+  if (UNLIKELY(count > self->contact_max_capacity)) { // UNLIKELY overflow
     count = self->contact_max_capacity;
   }
-  self->contact_count = count; // Publish to Python-facing field
+  self->contact_count = count;
 
-  // Set back to false via atomic store
   atomic_store_explicit(&self->is_stepping, false, memory_order_relaxed);
   self->time += (double)dt;
 
