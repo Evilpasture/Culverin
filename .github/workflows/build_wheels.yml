@@ -34,7 +34,7 @@ jobs:
         run: python -m cibuildwheel --output-dir wheelhouse
         env:
           # 1. TELL CIBUILDWHEEL TO ALLOW THE EXPERIMENTAL 't' TAG
-          CIBW_ENABLE: freethreaded
+          CIBW_ENABLE: cpython-freethreaded
           
           # 2. TELL CIBUILDWHEEL TO ALLOW ALPHAS/BETAS (Needed for 3.14)
           CIBW_PRERELEASE_PYTHONS: True
