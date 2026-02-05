@@ -27,6 +27,31 @@ all_positions = np.frombuffer(world.positions, dtype=np.float32)
 renderer.upload_instance_buffer(all_positions)
 ```
 
+### Memory Layouts
+All shadow buffers use `float32` and are 16-byte aligned to ensure SIMD compatibility.
+
+*   **`world.positions`**: 16 bytes per body. `[float x, float y, float z, float 0.0]`. 
+    *   *The 4th float is padding for SIMD alignment.*
+*   **`world.rotations`**: 16 bytes per body. `[float x, float y, float z, float w]`.
+*   **`world.velocities`**: 16 bytes per body. `[float vx, float vy, float vz, float 0.0]`.
+*   **`world.get_render_state(alpha)`**: 28 bytes per body. `[float x, y, z, float x, y, z, w]`.
+    *   *Used for direct GPU Instance Buffer uploads.*
+
+### Render State Layout (28 Bytes)
+When calling `get_render_state(alpha)`, the returned buffer is packed like this:
+
+| Offset | Type | Component |
+| :--- | :--- | :--- |
+| 0 | float32 | Position X |
+| 4 | float32 | Position Y |
+| 8 | float32 | Position Z |
+| 12 | float32 | Rotation X |
+| 16 | float32 | Rotation Y |
+| 20 | float32 | Rotation Z |
+| 24 | float32 | Rotation W |
+
+**Note:** Unlike the raw shadow buffers, this interpolation buffer **removes the 4th padding float** from the position to save bandwidth during GPU uploads.
+
 ## Generational Handles
 Culverin does not return object references. It returns `uint64` handles.
 *   **Bits 0-31:** Index in the dense array.
