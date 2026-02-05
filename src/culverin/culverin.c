@@ -1255,31 +1255,59 @@ fail:
 
 static PyObject *PhysicsWorld_apply_impulse(PhysicsWorldObject *self,
                                             PyObject *args, PyObject *kwds) {
-  uint64_t h = 0;
-  float x = NAN;
-  float y = NAN;
-  float z = NAN;
-  static char *kwlist[] = {"handle", "x", "y", "z", NULL};
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "Kfff", kwlist, &h, &x, &y,
-                                   &z)) {
-    return NULL;
-  }
-  SHADOW_LOCK(&self->shadow_lock);
-  BLOCK_UNTIL_NOT_STEPPING(self);
-  BLOCK_UNTIL_NOT_QUERYING(self);
-  uint32_t slot = 0;
-  if (!unpack_handle(self, h, &slot) || self->slot_states[slot] != SLOT_ALIVE) {
+    uint64_t h;
+    float x, y, z;
+
+    // --- MANUALLY PARSE ARGS (FAST PATH) ---
+    // If no keywords are provided and we have exactly 4 arguments
+    if (LIKELY(kwds == NULL && PyTuple_GET_SIZE(args) == 4)) {
+        PyObject *py_h = PyTuple_GET_ITEM(args, 0);
+        PyObject *py_x = PyTuple_GET_ITEM(args, 1);
+        PyObject *py_y = PyTuple_GET_ITEM(args, 2);
+        PyObject *py_z = PyTuple_GET_ITEM(args, 3);
+
+        h = PyLong_AsUnsignedLongLong(py_h);
+        x = (float)PyFloat_AsDouble(py_x);
+        y = (float)PyFloat_AsDouble(py_y);
+        z = (float)PyFloat_AsDouble(py_z);
+
+        // Check if conversion failed (e.g. user passed a string or None)
+        if (UNLIKELY(PyErr_Occurred())) {
+            return NULL;
+        }
+    } else {
+        // --- FALLBACK TO STANDARD PARSING (SLOW PATH) ---
+        static char *kwlist[] = {"handle", "x", "y", "z", NULL};
+        if (!PyArg_ParseTupleAndKeywords(args, kwds, "Kfff", kwlist, &h, &x, &y, &z)) {
+            return NULL;
+        }
+    }
+
+    // --- EXECUTION ---
+    SHADOW_LOCK(&self->shadow_lock);
+    BLOCK_UNTIL_NOT_STEPPING(self);
+    BLOCK_UNTIL_NOT_QUERYING(self);
+
+    uint32_t slot = 0;
+    // Check liveness and generation
+    if (UNLIKELY(!unpack_handle(self, h, &slot) || self->slot_states[slot] != SLOT_ALIVE)) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
+        return NULL;
+    }
+
+    // Single lookup of indices
+    uint32_t dense_idx = self->slot_to_dense[slot];
+    JPH_BodyID bid = self->body_ids[dense_idx];
+    
+    JPH_Vec3 imp = {x, y, z};
+    
+    // Jolt thread-safe application
+    JPH_BodyInterface_AddImpulse(self->body_interface, bid, &imp);
+    JPH_BodyInterface_ActivateBody(self->body_interface, bid);
+
     SHADOW_UNLOCK(&self->shadow_lock);
-    PyErr_SetString(PyExc_ValueError, "Invalid handle");
-    return NULL;
-  }
-  JPH_BodyID bid = self->body_ids[self->slot_to_dense[slot]];
-  JPH_Vec3 imp = {x, y, z};
-  JPH_BodyInterface_AddImpulse(self->body_interface,
-                               self->body_ids[self->slot_to_dense[slot]], &imp);
-  JPH_BodyInterface_ActivateBody(self->body_interface, bid);
-  SHADOW_UNLOCK(&self->shadow_lock);
-  Py_RETURN_NONE;
+    Py_RETURN_NONE;
 }
 
 static PyObject *PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self,
