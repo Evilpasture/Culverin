@@ -1,82 +1,91 @@
-name: Build and Release Wheels
+name: Build Culverin Wheels
 
 on:
   push:
-    branches: [ master ]
+    branches: [ main ]
     tags: [ 'v*' ]
-  workflow_dispatch: # Allows you to run this manually from the "Actions" tab
+  pull_request:
+    branches: [ main ]
 
 jobs:
   build_wheels:
     name: Build wheels on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
-        # Windows is primary, Ubuntu ensures Linux portability
-        os: [windows-latest, ubuntu-latest]
+        # Building for Windows and Linux. 
+        # (MacOS added for portability, though Jolt works best on x86_64/arm64)
+        os: [windows-latest, ubuntu-latest, macos-latest]
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: recursive # REQUIRED for extern/JoltPhysics
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          # We use 3.12 to RUN the build process for better stability.
-          # It will still produce 3.13t and 3.14t wheels.
-          python-version: '3.12' 
-
-      - name: Install cibuildwheel
-        run: python -m pip install cibuildwheel==2.22.0
+          # Use 3.13 as the runner host; it has the best support for building 3.14 wheels
+          python-version: '3.13'
 
       - name: Build wheels
-        run: python -m cibuildwheel --output-dir wheelhouse
+        uses: pypa/cibuildwheel@v2.22.0
         env:
-          # 1. Enable BOTH free-threaded and alpha/beta versions
-          CIBW_ENABLE: "cpython-freethreaded cpython-prerelease"
-          
-          # 2. Select the specific free-threaded versions.
-          # Note: If cp314t still fails, it means the 3.14 alpha isn't in 
-          # the CI images yet. In that case, use: "cp313t-*"
+          # 1. Enable Free-Threaded and Alpha support
+          CIBW_ENABLE: "freethreaded cpython-prerelease"
           CIBW_BUILD: "cp313t-* cp314t-*"
           
-          CIBW_ENVIRONMENT: Py_GIL_DISABLED=1
+          # 2. Architectures
           CIBW_ARCHS_WINDOWS: "AMD64"
           CIBW_ARCHS_LINUX: "x86_64"
+          CIBW_ARCHS_MACOS: "x86_64 arm64"
+
+          # 3. Environment Variables
+          # We pass Py_GIL_DISABLED so the C code #ifdefs trigger correctly
+          CIBW_ENVIRONMENT: "Py_GIL_DISABLED=1"
+          
+          # 4. Platform Specifics
+          # On Linux, we need to ensure cmake is present in the build container
+          CIBW_BEFORE_ALL_LINUX: "yum install -y cmake"
+          
+          # Skip tests to speed up the CI loop for Beta 1
           CIBW_TEST_SKIP: "*"
 
-      - name: Upload artifacts
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: cibw-wheels-${{ matrix.os }}-${{ strategy.job-index }}
+          name: culverin-wheels-${{ matrix.os }}
           path: ./wheelhouse/*.whl
 
-  github_release:
-    name: Create GitHub Release
+  release:
+    name: Release Wheels
     needs: [build_wheels]
-    runs-on: ubuntu-latest
-    # Only run this job if we are pushing a tag
     if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
     permissions:
-      contents: write # Required to create a release
+      contents: write
     steps:
-      - name: Download all wheels
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: cibw-wheels-*
-          path: dist
+          path: wheelhouse
+          pattern: culverin-wheels-*
           merge-multiple: true
 
-      - name: Create Release
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.whl
+          files: wheelhouse/*.whl
           body: |
-            Culverin Beta Release ${{ github.ref_name }}
+            Culverin Physics Beta Release ${{ github.ref_name }}
             
-            This release contains pre-built binaries for Python 3.13t (Free-Threaded).
-            Built for Windows (AMD64) and Linux (x86_64).
-          draft: false
+            Binaries provided for:
+            - Python 3.13t (Free-Threaded)
+            - Python 3.14t (Free-Threaded Alpha)
+            
+            Supports Windows (AMD64), Linux (x86_64), and macOS.
           prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
