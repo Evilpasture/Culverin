@@ -526,8 +526,6 @@ typedef struct {
   float prev_rx, prev_ry, prev_rz, prev_rw;
 } CharacterObject;
 
-extern const PyType_Spec Character_spec;
-
 typedef struct {
   PyObject_HEAD JPH_VehicleConstraint *vehicle;
   JPH_VehicleCollisionTester *tester;
@@ -544,22 +542,16 @@ typedef struct {
   int current_gear;
 } VehicleObject;
 
-extern const PyType_Spec Vehicle_spec;
-
 // --- Ragdoll Structures ---
 
 typedef struct {
   PyObject_HEAD JPH_Skeleton *skeleton;
 } SkeletonObject;
 
-extern const PyType_Spec Skeleton_spec;
-
 typedef struct {
   PyObject_HEAD JPH_RagdollSettings *settings;
   PhysicsWorldObject *world; // Kept to access Shape Cache
 } RagdollSettingsObject;
-
-extern const PyType_Spec RagdollSettings_spec;
 
 typedef struct {
   PyObject_HEAD JPH_Ragdoll *ragdoll;
@@ -570,8 +562,6 @@ typedef struct {
   size_t body_count;
   uint32_t *body_slots;
 } RagdollObject;
-
-extern const PyType_Spec Ragdoll_spec;
 
 typedef struct {
   PhysicsWorldObject *world;
