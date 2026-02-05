@@ -34,14 +34,14 @@ jobs:
       - name: Build wheels
         run: python -m cibuildwheel --output-dir wheelhouse
         env:
-          # 1. Selection: Just specify the free-threaded tags directly.
-          # 2.22.0 identifies these without the extra 'ENABLE' flag.
+          # 1. Enable BOTH free-threaded and alpha/beta versions
+          CIBW_ENABLE: "cpython-freethreaded cpython-prerelease"
+          
+          # 2. Select the specific free-threaded versions.
+          # Note: If cp314t still fails, it means the 3.14 alpha isn't in 
+          # the CI images yet. In that case, use: "cp313t-*"
           CIBW_BUILD: "cp313t-* cp314t-*"
           
-          # 2. Still required for 3.14 support
-          CIBW_PRERELEASE_PYTHONS: True
-
-          # 3. Environment/Architecture
           CIBW_ENVIRONMENT: Py_GIL_DISABLED=1
           CIBW_ARCHS_WINDOWS: "AMD64"
           CIBW_ARCHS_LINUX: "x86_64"
