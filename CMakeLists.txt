@@ -84,18 +84,37 @@ if(Python_VERSION VERSION_GREATER_EQUAL "3.13")
     target_compile_definitions(_culverin_c PRIVATE Py_GIL_DISABLED=1)
 endif()
 
+# 1. Handle Windows (MSVC)
 if(MSVC)
     target_link_libraries(_culverin_c PRIVATE Winmm.lib)
     set_property(TARGET _culverin_c PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 
     if(CMAKE_C_COMPILER_ID MATCHES "Clang")
-        target_compile_options(_culverin_c PRIVATE -mavx2 -mfma -std=c11)
+        # Only add AVX if we are targeting x86_64
+        if(CMAKE_SYSTEM_PROCESSOR MATCHES "AMD64|x86_64")
+            target_compile_options(_culverin_c PRIVATE -mavx2 -mfma)
+        endif()
+        target_compile_options(_culverin_c PRIVATE -std=c11)
     else()
-        # Ensure stdatomic.h works on standard MSVC
-        target_compile_options(_culverin_c PRIVATE /arch:AVX2 /std:c11 /experimental:c11atomics)
+        # Standard MSVC
+        if(CMAKE_VS_PLATFORM_NAME STREQUAL "x64" OR CMAKE_SYSTEM_PROCESSOR MATCHES "AMD64|x86_64")
+            target_compile_options(_culverin_c PRIVATE /arch:AVX2)
+        endif()
+        target_compile_options(_culverin_c PRIVATE /std:c11 /experimental:c11atomics)
     endif()
+
+# 2. Handle everything else (Linux, macOS, etc.)
 else()
-    target_compile_options(_culverin_c PRIVATE -mavx2 -mfma -std=c11)
+    target_compile_options(_culverin_c PRIVATE -std=c11)
+    
+    # Check if we are building for Intel/AMD to avoid arm64 errors
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+        target_compile_options(_culverin_c PRIVATE -mavx2 -mfma)
+        add_definitions(-DJPH_USE_AVX2)
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+        # ARM64/Apple Silicon uses NEON; Jolt handles this automatically
+        message(STATUS "Detected ARM64: Skipping AVX flags and using NEON")
+    endif()
 endif()
 
 set_target_properties(_culverin_c PROPERTIES OUTPUT_NAME "_culverin_c" PREFIX "")
