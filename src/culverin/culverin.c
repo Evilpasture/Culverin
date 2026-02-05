@@ -1312,13 +1312,38 @@ static PyObject *PhysicsWorld_apply_impulse(PhysicsWorldObject *self,
 
 static PyObject *PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self,
                                                PyObject *args, PyObject *kwds) {
-  uint64_t h = 0;
-  float ix=0, iy=0, iz=0; // Impulse
-  float px=0, py=0, pz=0; // Position
+  uint64_t h;
+  float ix, iy, iz; // Impulse
+  float px, py, pz; // Position
   
-  static char *kwlist[] = {"handle", "ix", "iy", "iz", "px", "py", "pz", NULL};
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "Kffffff", kwlist, &h, &ix, &iy, &iz, &px, &py, &pz)) {
-    return NULL;
+  // --- MANUALLY PARSE ARGS (FAST PATH) ---
+  // Optimizing for positional-only calls: handle, ix, iy, iz, px, py, pz
+  if (LIKELY(kwds == NULL && PyTuple_GET_SIZE(args) == 7)) {
+      PyObject *p_h = PyTuple_GET_ITEM(args, 0);
+      PyObject *p_ix = PyTuple_GET_ITEM(args, 1);
+      PyObject *p_iy = PyTuple_GET_ITEM(args, 2);
+      PyObject *p_iz = PyTuple_GET_ITEM(args, 3);
+      PyObject *p_px = PyTuple_GET_ITEM(args, 4);
+      PyObject *p_py = PyTuple_GET_ITEM(args, 5);
+      PyObject *p_pz = PyTuple_GET_ITEM(args, 6);
+
+      h = PyLong_AsUnsignedLongLong(p_h);
+      ix = (float)PyFloat_AsDouble(p_ix);
+      iy = (float)PyFloat_AsDouble(p_iy);
+      iz = (float)PyFloat_AsDouble(p_iz);
+      px = (float)PyFloat_AsDouble(p_px);
+      py = (float)PyFloat_AsDouble(p_py);
+      pz = (float)PyFloat_AsDouble(p_pz);
+
+      if (UNLIKELY(PyErr_Occurred())) {
+          return NULL;
+      }
+  } else {
+      // --- FALLBACK TO STANDARD PARSING (SLOW PATH) ---
+      static char *kwlist[] = {"handle", "ix", "iy", "iz", "px", "py", "pz", NULL};
+      if (!PyArg_ParseTupleAndKeywords(args, kwds, "Kffffff", kwlist, &h, &ix, &iy, &iz, &px, &py, &pz)) {
+        return NULL;
+      }
   }
   
   SHADOW_LOCK(&self->shadow_lock);
@@ -1326,16 +1351,20 @@ static PyObject *PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self,
   BLOCK_UNTIL_NOT_QUERYING(self);
 
   uint32_t slot = 0;
-  if (!unpack_handle(self, h, &slot) || self->slot_states[slot] != SLOT_ALIVE) {
+  if (UNLIKELY(!unpack_handle(self, h, &slot) || self->slot_states[slot] != SLOT_ALIVE)) {
     SHADOW_UNLOCK(&self->shadow_lock);
     PyErr_SetString(PyExc_ValueError, "Invalid handle");
     return NULL;
   }
+  
+  // Single lookup for body ID
   JPH_BodyID bid = self->body_ids[self->slot_to_dense[slot]];
 
+  // JPH_Vec3 is float[3], JPH_RVec3 is double[3]
   JPH_Vec3 imp = {ix, iy, iz};
   JPH_RVec3 pos = {(double)px, (double)py, (double)pz};
   
+  // Apply Impulse (Immediate, relies on Jolt internal locking)
   JPH_BodyInterface_AddImpulse2(self->body_interface, bid, &imp, &pos);
   JPH_BodyInterface_ActivateBody(self->body_interface, bid);
   
