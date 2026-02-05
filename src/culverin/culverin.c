@@ -4000,7 +4000,7 @@ static float get_py_float_attr(PyObject *obj, const char *name,
 // --- Internal Helpers to reduce complexity ---
 
 // --- Reusable helper for Vec3 parsing (Complexity: 2) ---
-static int parse_py_vec3(PyObject *obj, float *x, float *y, float *z) {
+static int parse_py_vec3(PyObject *obj, Vec3f *out) {
   // 1. Initial validation
   if (!obj || !PySequence_Check(obj) || PySequence_Size(obj) != 3) {
     return 0;
@@ -4010,24 +4010,21 @@ static int parse_py_vec3(PyObject *obj, float *x, float *y, float *z) {
   for (int i = 0; i < 3; i++) {
     PyObject *item = PySequence_GetItem(obj, i);
     if (!item) {
-      return 0; // Exception already set by Python
+      return 0;
     }
 
     results[i] = (float)PyFloat_AsDouble(item);
     Py_DECREF(item);
 
-    // 2. Explicit early bail on conversion failure
-    // PyFloat_AsDouble returns -1.0 on failure, but -1.0 can be a valid value.
-    // PyErr_Occurred() is the only 100% reliable check.
-    if (PyErr_Occurred()) {
+    if (UNLIKELY(PyErr_Occurred())) {
       return 0;
     }
   }
 
-  // 3. Only write to output pointers if the whole vector is valid
-  *x = results[0];
-  *y = results[1];
-  *z = results[2];
+  // 3. Assignment to struct members
+  out->x = results[0];
+  out->y = results[1];
+  out->z = results[2];
 
   return 1;
 }
@@ -4035,14 +4032,11 @@ static int parse_py_vec3(PyObject *obj, float *x, float *y, float *z) {
 // --- Refactored Wheel Creation (Complexity: 2) ---
 static JPH_WheelSettings *create_single_wheel(PyObject *w_dict,
                                               JPH_LinearCurve *f_curve) {
-  float px = NAN;
-  float py = NAN;
-  float pz = NAN;
+  Vec3f pos;
 
   // 1. Parse Position using helper
-  if (!parse_py_vec3(PyDict_GetItemString(w_dict, "pos"), &px, &py, &pz)) {
-    PyErr_SetString(PyExc_ValueError,
-                    "Wheel 'pos' must be a sequence of 3 floats");
+  if (!parse_py_vec3(PyDict_GetItemString(w_dict, "pos"), &pos)) {
+    PyErr_SetString(PyExc_ValueError, "Wheel 'pos' must be a sequence of 3 floats");
     return NULL;
   }
 
@@ -4053,7 +4047,7 @@ static JPH_WheelSettings *create_single_wheel(PyObject *w_dict,
   // 3. Jolt Object Setup
   JPH_WheelSettingsWV *w = JPH_WheelSettingsWV_Create();
   JPH_WheelSettings_SetPosition((JPH_WheelSettings *)w,
-                                &(JPH_Vec3){px, py, pz});
+                                &(JPH_Vec3){pos.x, pos.y, pos.z});
   JPH_WheelSettings_SetRadius((JPH_WheelSettings *)w, radius);
   JPH_WheelSettings_SetWidth((JPH_WheelSettings *)w, width);
 
@@ -4061,7 +4055,7 @@ static JPH_WheelSettings *create_single_wheel(PyObject *w_dict,
   JPH_WheelSettingsWV_SetLateralFriction(w, f_curve);
 
   // Steering logic (Simple branch)
-  JPH_WheelSettingsWV_SetMaxSteerAngle(w, (pz > 0.1f) ? 0.5f : 0.0f);
+  JPH_WheelSettingsWV_SetMaxSteerAngle(w, (pos.z > 0.1f) ? 0.5f : 0.0f);
 
   return (JPH_WheelSettings *)w;
 }
@@ -4327,8 +4321,9 @@ static PyObject *PhysicsWorld_create_vehicle(PhysicsWorldObject *self,
 // --- Tracked Vehicle Implementation ---
 
 static JPH_WheelSettings *create_track_wheel(PyObject *w_dict) {
-  float px = 0, py = 0, pz = 0;
-  if (!parse_py_vec3(PyDict_GetItemString(w_dict, "pos"), &px, &py, &pz)) {
+  Vec3f pos;
+  if (!parse_py_vec3(PyDict_GetItemString(w_dict, "pos"), &pos)) {
+    PyErr_SetString(PyExc_ValueError, "Wheel 'pos' must be a sequence of 3 floats");
     return NULL; 
   }
 
@@ -4341,7 +4336,7 @@ static JPH_WheelSettings *create_track_wheel(PyObject *w_dict) {
 
   JPH_WheelSettingsTV *w = JPH_WheelSettingsTV_Create();
   
-  JPH_WheelSettings_SetPosition((JPH_WheelSettings *)w, &(JPH_Vec3){px, py, pz});
+  JPH_WheelSettings_SetPosition((JPH_WheelSettings *)w, &(JPH_Vec3){pos.x, pos.y, pos.z});
   JPH_WheelSettings_SetRadius((JPH_WheelSettings *)w, radius);
   JPH_WheelSettings_SetWidth((JPH_WheelSettings *)w, width);
   
@@ -4357,7 +4352,7 @@ static JPH_WheelSettings *create_track_wheel(PyObject *w_dict) {
 
 // Helper 1: Setup Engine, Transmission, and Controller settings
 static JPH_TrackedVehicleControllerSettings *
-init_tracked_controller_settings(float torque, float max_rpm, float min_rpm,
+init_tracked_controller_settings(TrackedEngineConfig config,
                                  JPH_VehicleTransmissionSettings **out_trans) {
 
   JPH_TrackedVehicleControllerSettings *t_ctrl =
@@ -4365,9 +4360,12 @@ init_tracked_controller_settings(float torque, float max_rpm, float min_rpm,
 
   JPH_VehicleEngineSettings eng;
   JPH_VehicleEngineSettings_Init(&eng);
-  eng.maxTorque = torque;
-  eng.maxRPM = max_rpm;
-  eng.minRPM = min_rpm;
+  
+  // Use members from the config struct
+  eng.maxTorque = config.torque;
+  eng.maxRPM = config.max_rpm;
+  eng.minRPM = config.min_rpm;
+  
   JPH_TrackedVehicleControllerSettings_SetEngine(t_ctrl, &eng);
 
   JPH_VehicleTransmissionSettings *trans =
@@ -4478,8 +4476,15 @@ static PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
 
   // 3. Controller & Tracks
   JPH_VehicleTransmissionSettings *v_trans = NULL;
+  // Package the engine specs
+  TrackedEngineConfig eng_cfg = {
+      .torque = max_torque,
+      .max_rpm = max_rpm,
+      .min_rpm = min_rpm
+  };
+
   JPH_TrackedVehicleControllerSettings *t_ctrl =
-      init_tracked_controller_settings(max_torque, max_rpm, min_rpm, &v_trans);
+      init_tracked_controller_settings(eng_cfg, &v_trans);
   r.v_ctrl = (JPH_WheeledVehicleControllerSettings *)t_ctrl;
   r.v_trans_set = v_trans;
 
