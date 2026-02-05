@@ -1372,52 +1372,93 @@ static PyObject *PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self,
   Py_RETURN_NONE;
 }
 
+// Helper 1: Run the Raycast (Encapsulates all Jolt Filter/Lock/Cleanup
+// boilerplate)
+static bool execute_raycast_query(PhysicsWorldObject *self,
+                                  JPH_BodyID ignore_bid,
+                                  const JPH_RVec3 *origin,
+                                  const JPH_Vec3 *direction,
+                                  JPH_RayCastResult *hit) {
+  bool has_hit;
+
+  // 1. LOCK TRAMPOLINE
+  SHADOW_LOCK(&g_jph_trampoline_lock);
+
+  // 2. Filter Setup
+  JPH_BroadPhaseLayerFilter_Procs bp_procs = {.ShouldCollide =
+                                                  filter_allow_all_bp};
+  JPH_BroadPhaseLayerFilter *bp_f = JPH_BroadPhaseLayerFilter_Create(NULL);
+  JPH_BroadPhaseLayerFilter_SetProcs(&bp_procs);
+
+  JPH_ObjectLayerFilter_Procs obj_procs = {.ShouldCollide =
+                                               filter_allow_all_obj};
+  JPH_ObjectLayerFilter *obj_f = JPH_ObjectLayerFilter_Create(NULL);
+  JPH_ObjectLayerFilter_SetProcs(&obj_procs);
+
+  CastShapeFilter filter_ctx = {.ignore_id = ignore_bid};
+  JPH_BodyFilter_Procs filter_procs = {.ShouldCollide = CastShape_BodyFilter};
+  JPH_BodyFilter *bf = JPH_BodyFilter_Create(&filter_ctx);
+  JPH_BodyFilter_SetProcs(&filter_procs);
+
+  // 3. Execution
+  const JPH_NarrowPhaseQuery *query =
+      JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
+  has_hit = JPH_NarrowPhaseQuery_CastRay(query, origin, direction, hit, bp_f,
+                                         obj_f, bf);
+
+  // 4. Restore & Cleanup
+  JPH_BodyFilter_SetProcs(&global_bf_procs);
+  SHADOW_UNLOCK(&g_jph_trampoline_lock);
+
+  JPH_BodyFilter_Destroy(bf);
+  JPH_BroadPhaseLayerFilter_Destroy(bp_f);
+  JPH_ObjectLayerFilter_Destroy(obj_f);
+
+  return has_hit;
+}
+
+// Helper 2: Extract World Space Normal after hit
+static void extract_hit_normal(PhysicsWorldObject *self, JPH_BodyID bodyID,
+                               JPH_SubShapeID subShapeID2,
+                               const JPH_RVec3 *origin, const JPH_Vec3 *ray_dir,
+                               float fraction, JPH_Vec3 *normal_out) {
+  const JPH_BodyLockInterface *lock_iface =
+      JPH_PhysicsSystem_GetBodyLockInterface(self->system);
+  JPH_BodyLockRead lock;
+  JPH_BodyLockInterface_LockRead(lock_iface, bodyID, &lock);
+
+  if (lock.body) {
+    JPH_RVec3 hit_p = {origin->x + ray_dir->x * fraction,
+                       origin->y + ray_dir->y * fraction,
+                       origin->z + ray_dir->z * fraction};
+    JPH_Body_GetWorldSpaceSurfaceNormal(lock.body, subShapeID2, &hit_p,
+                                        normal_out);
+  } else {
+    normal_out->x = 0;
+    normal_out->y = 1;
+    normal_out->z = 0;
+  }
+  JPH_BodyLockInterface_UnlockRead(lock_iface, &lock);
+}
+
+// Main Orchestrator
 static PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *args,
                                       PyObject *kwds) {
-  float sx = NAN;
-  float sy = NAN;
-  float sz = NAN;
-  float dx = NAN;
-  float dy = NAN;
-  float dz = NAN;
-  float max_dist = 1000.0f;
+  float sx, sy, sz, dx, dy, dz, max_dist = 1000.0f;
   uint64_t ignore_h = 0;
   static char *kwlist[] = {"start", "direction", "max_dist", "ignore", NULL};
 
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)(fff)|fK", kwlist, &sx,
                                    &sy, &sz, &dx, &dy, &dz, &max_dist,
-                                   &ignore_h)) {
+                                   &ignore_h))
     return NULL;
-  }
 
   PyObject *result = NULL;
-  bool query_active = false;
-  JPH_BodyID ignore_bid = 0;
 
-  // Filter pointers
-  JPH_BroadPhaseLayerFilter *bp_filter = NULL;
-  JPH_ObjectLayerFilter *obj_filter = NULL;
-  JPH_BodyFilter *body_filter = NULL;
-
-  // --- 1. ENTRY & LOCKING ---
-  SHADOW_LOCK(&self->shadow_lock);
-  BLOCK_UNTIL_NOT_STEPPING(self);
-  atomic_fetch_add_explicit(&self->active_queries, 1, memory_order_relaxed);
-  query_active = true;
-
-  if (ignore_h != 0) {
-    uint32_t ignore_slot = 0;
-    if (unpack_handle(self, ignore_h, &ignore_slot)) {
-      ignore_bid = self->body_ids[self->slot_to_dense[ignore_slot]];
-    }
-  }
-  SHADOW_UNLOCK(&self->shadow_lock);
-
-  // --- 2. VALIDATION ---
+  // --- 1. Validation & Pre-calc ---
   float mag_sq = dx * dx + dy * dy + dz * dz;
-  if (mag_sq < 1e-9f) {
-    goto exit;
-  }
+  if (mag_sq < 1e-9f)
+    Py_RETURN_NONE;
 
   float mag = sqrtf(mag_sq);
   float scale = max_dist / mag;
@@ -1433,60 +1474,31 @@ static PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *args,
   JPH_STACK_ALLOC(JPH_RayCastResult, hit);
   memset(hit, 0, sizeof(JPH_RayCastResult));
 
-  // --- 3. FILTER SETUP & EXECUTION (Serialized) ---
-  // ALL SetProcs calls must be inside this lock to prevent the Access Violation
-  SHADOW_LOCK(&g_jph_trampoline_lock);
+  // --- 2. Query Setup (Lock/Wait/Increment) ---
+  SHADOW_LOCK(&self->shadow_lock);
+  BLOCK_UNTIL_NOT_STEPPING(self);
+  atomic_fetch_add_explicit(&self->active_queries, 1, memory_order_relaxed);
 
-  JPH_BroadPhaseLayerFilter_Procs bp_procs = {.ShouldCollide =
-                                                  filter_allow_all_bp};
-  bp_filter = JPH_BroadPhaseLayerFilter_Create(NULL);
-  JPH_BroadPhaseLayerFilter_SetProcs(&bp_procs);
+  JPH_BodyID ignore_bid = 0;
+  uint32_t ignore_slot = 0;
+  if (ignore_h != 0 && unpack_handle(self, ignore_h, &ignore_slot)) {
+    ignore_bid = self->body_ids[self->slot_to_dense[ignore_slot]];
+  }
+  SHADOW_UNLOCK(&self->shadow_lock);
 
-  JPH_ObjectLayerFilter_Procs obj_procs = {.ShouldCollide =
-                                               filter_allow_all_obj};
-  obj_filter = JPH_ObjectLayerFilter_Create(NULL);
-  JPH_ObjectLayerFilter_SetProcs(&obj_procs);
+  // --- 3. Execution (Unlocked, Trampoline Locked internally) ---
+  bool has_hit =
+      execute_raycast_query(self, ignore_bid, origin, direction, hit);
 
-  CastShapeFilter filter_ctx = {.ignore_id = ignore_bid};
-  JPH_BodyFilter_Procs filter_procs = {.ShouldCollide = CastShape_BodyFilter};
-  body_filter = JPH_BodyFilter_Create(&filter_ctx);
-  JPH_BodyFilter_SetProcs(&filter_procs);
-
-  const JPH_NarrowPhaseQuery *query =
-      JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
-
-  bool has_hit = JPH_NarrowPhaseQuery_CastRay(
-      query, origin, direction, hit, bp_filter, obj_filter, body_filter);
-
-  // Restore Default Body Filter & Unlock
-  JPH_BodyFilter_SetProcs(&global_bf_procs);
-  SHADOW_UNLOCK(&g_jph_trampoline_lock);
-
-  // Cleanup filters immediately
-  JPH_BodyFilter_Destroy(body_filter);
-  JPH_BroadPhaseLayerFilter_Destroy(bp_filter);
-  JPH_ObjectLayerFilter_Destroy(obj_filter);
-
-  if (!has_hit) {
+  if (!has_hit)
     goto exit;
-  }
 
-  // --- 4. EXTRACT GEOMETRY ---
-  JPH_Vec3 normal = {0, 1, 0};
-  const JPH_BodyLockInterface *lock_iface =
-      JPH_PhysicsSystem_GetBodyLockInterface(self->system);
-  JPH_BodyLockRead lock;
-  JPH_BodyLockInterface_LockRead(lock_iface, hit->bodyID, &lock);
-  if (lock.body) {
-    JPH_RVec3 hit_p = {origin->x + direction->x * hit->fraction,
-                       origin->y + direction->y * hit->fraction,
-                       origin->z + direction->z * hit->fraction};
-    JPH_Body_GetWorldSpaceSurfaceNormal(lock.body, hit->subShapeID2, &hit_p,
-                                        &normal);
-  }
-  JPH_BodyLockInterface_UnlockRead(lock_iface, &lock);
+  // --- 4. Hit Result Extraction ---
+  JPH_Vec3 normal;
+  extract_hit_normal(self, hit->bodyID, hit->subShapeID2, origin, direction,
+                     hit->fraction, &normal);
 
-  // --- 5. RESOLVE HANDLE ---
+  // --- 5. Resolve Handle (Shadow Locked) ---
   SHADOW_LOCK(&self->shadow_lock);
   BodyHandle handle = (BodyHandle)JPH_BodyInterface_GetUserData(
       self->body_interface, hit->bodyID);
@@ -1501,13 +1513,10 @@ static PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *args,
   SHADOW_UNLOCK(&self->shadow_lock);
 
 exit:
-  if (query_active) {
-    atomic_fetch_sub_explicit(&self->active_queries, 1, memory_order_release);
-  }
-  if (result) {
-    return result;
-  }
-  Py_RETURN_NONE;
+  // Decrement active query counter
+  atomic_fetch_sub_explicit(&self->active_queries, 1, memory_order_release);
+
+  return result ? result : Py_None;
 }
 
 static PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self,
