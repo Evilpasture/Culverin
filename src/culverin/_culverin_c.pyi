@@ -189,6 +189,18 @@ class PhysicsWorld:
         fluid_velocity: Tuple[float, float, float] = (0, 0, 0)
     ) -> bool: ...
 
+    def apply_buoyancy_batch(
+        self,
+        handles: Union[bytes, memoryview, "Sequence[int]"],
+        surface_y: float = 0.0,
+        buoyancy: float = 1.0,
+        linear_drag: float = 0.5,
+        angular_drag: float = 0.5,
+        dt: float = 1.0/60.0,
+        fluid_velocity: Tuple[float, float, float] = (0, 0, 0)
+    ) -> None:
+        ...
+
     def register_material(self, id: int, friction: float = 0.5, restitution: float = 0.0) -> None: ...
 
     def set_position(self, handle: int, x: float, y: float, z: float) -> None: ...

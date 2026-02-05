@@ -10,6 +10,7 @@ from . import _culverin_c
 Vec3 = Tuple[float, float, float]
 Quat = Tuple[float, float, float, float]
 Handle = int 
+HandleBuffer = Union[bytes, memoryview, "Sequence[int]"]
 
 # --- Constants ---
 SHAPE_BOX: int = 0
@@ -41,7 +42,7 @@ class BodyConfig(TypedDict, total=False):
     pos: Vec3
     rot: Quat
     shape: int
-    size: Union[float, Tuple[float], Tuple[float, float], Tuple[float, float, float], Tuple[float, float, float, float]]
+    size: Union[float, Tuple[float], Tuple[float, float], Vec3, Quat]
     mass: float
     user_data: int
     motion: int
@@ -297,6 +298,30 @@ class PhysicsWorld:
         fluid_velocity: Vec3 = (0, 0, 0)
     ) -> bool:
         """Apply Archimedes' principle fluid forces."""
+        ...
+
+    def apply_buoyancy_batch(
+        self,
+        handles: HandleBuffer,
+        surface_y: float = 0.0,
+        buoyancy: float = 1.0,
+        linear_drag: float = 0.5,
+        angular_drag: float = 0.5,
+        dt: float = 1.0/60.0,
+        fluid_velocity: Vec3 = (0, 0, 0)
+    ) -> None:
+        """
+        Applies Archimedes' principle fluid forces to a batch of bodies.
+
+        :param handles: Contiguous buffer of uint64 physics handles (e.g., np.array(..., dtype=np.uint64)).
+        :param surface_y: The world Y-coordinate of the fluid surface.
+        :param buoyancy: The ratio of fluid density to body density (1.0 = neutral buoyancy).
+        :param linear_drag: Linear drag coefficient.
+        :param angular_drag: Angular drag coefficient.
+        :param dt: The simulation time step (typically 1/60.0).
+        :param fluid_velocity: The velocity vector (vx, vy, vz) of the fluid flow.
+        :return: None (Forces are applied, result per body is not returned in batch mode).
+        """
         ...
 
     def register_material(self, id: int, friction: float = 0.5, restitution: float = 0.0) -> None:
