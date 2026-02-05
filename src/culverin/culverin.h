@@ -336,6 +336,12 @@ typedef struct {
 } DebugCoordinates;
 
 typedef struct {
+    float x;
+    float y;
+    float z;
+} Vec3f; // General Vec3f
+
+typedef struct {
     int max_bodies;
     int max_pairs;
 } WorldLimits;
@@ -379,6 +385,12 @@ typedef struct {
     int use_ccd;
     int motion_type;
 } BodyConfig;
+
+typedef struct {
+    float torque;
+    float max_rpm;
+    float min_rpm;
+} TrackedEngineConfig;
 
 // --- The Object Struct ---
 typedef struct {
