@@ -72,6 +72,15 @@ typedef PyThread_type_lock ShadowMutex;
 #define SHADOW_UNLOCK(m) PyThread_release_lock(m)
 #endif
 
+// --- Compiler Hints ---
+#if defined(__GNUC__) || defined(__clang__)
+    #define LIKELY(x)   __builtin_expect(!!(x), 1)
+    #define UNLIKELY(x) __builtin_expect(!!(x), 0)
+#else
+    // Fallback for MSVC or other compilers that don't support built-in expect
+    #define LIKELY(x)   (x)
+    #define UNLIKELY(x) (x)
+#endif
 
 
 // Comment this line out to disable all debug prints
