@@ -1738,6 +1738,111 @@ static PyObject *PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self,
   return PyBool_FromLong(submerged);
 }
 
+static PyObject *PhysicsWorld_apply_buoyancy_batch(PhysicsWorldObject *self,
+                                                   PyObject *args, PyObject *kwds) {
+  Py_buffer h_view = {0};
+  float surface_y = 0.0f;
+  float buoyancy = 1.0f;
+  float lin_drag = 0.5f;
+  float ang_drag = 0.5f;
+  float dt = 1.0f / 60.0f;
+  float vx = 0;
+  float vy = 0;
+  float vz = 0;
+
+  static char *kwlist[] = {
+      "handles",      "surface_y",   "buoyancy", "linear_drag",
+      "angular_drag", "dt",          "fluid_velocity", NULL};
+
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "y*|fffff(fff)", kwlist, &h_view,
+                                   &surface_y, &buoyancy, &lin_drag, &ang_drag,
+                                   &dt, &vx, &vy, &vz)) {
+    return NULL;
+  }
+
+  // 1. Validation
+  if (h_view.itemsize != 8) {
+    PyBuffer_Release(&h_view);
+    return PyErr_Format(PyExc_ValueError, 
+        "Handle buffer must be uint64 (itemsize=8), got %zd", h_view.itemsize);
+  }
+  
+  size_t count = h_view.len / 8;
+  if (count == 0) {
+    PyBuffer_Release(&h_view);
+    Py_RETURN_NONE;
+  }
+
+  // 2. Allocate Temp Storage for BodyIDs
+  // We do this to avoid holding the SHADOW_LOCK during the heavy Jolt math loop
+  JPH_BodyID *ids = (JPH_BodyID *)PyMem_RawMalloc(count * sizeof(JPH_BodyID));
+  if (!ids) {
+    PyBuffer_Release(&h_view);
+    return PyErr_NoMemory();
+  }
+
+  uint64_t *handles = (uint64_t *)h_view.buf;
+  size_t valid_count = 0;
+
+  // 3. RESOLUTION PHASE (Locked)
+  SHADOW_LOCK(&self->shadow_lock);
+  BLOCK_UNTIL_NOT_STEPPING(self);
+  BLOCK_UNTIL_NOT_QUERYING(self);
+
+  for (size_t i = 0; i < count; i++) {
+    uint32_t slot = 0;
+    // Fast unpack inline
+    uint64_t h = handles[i];
+    slot = (uint32_t)(h & 0xFFFFFFFF);
+    uint32_t gen = (uint32_t)(h >> 32);
+
+    if (slot < self->slot_capacity && self->generations[slot] == gen &&
+        self->slot_states[slot] == SLOT_ALIVE) {
+      uint32_t dense = self->slot_to_dense[slot];
+      ids[valid_count++] = self->body_ids[dense];
+    }
+  }
+  SHADOW_UNLOCK(&self->shadow_lock);
+  
+  PyBuffer_Release(&h_view); // Done with Python object
+
+  // 4. EXECUTION PHASE (Unlocked)
+  // Jolt is thread-safe for these calls.
+  JPH_BodyInterface *bi = self->body_interface;
+  JPH_PhysicsSystem *sys = self->system;
+  
+  JPH_Vec3 gravity;
+  JPH_PhysicsSystem_GetGravity(sys, &gravity);
+
+  JPH_STACK_ALLOC(JPH_RVec3, surf_pos);
+  surf_pos->x = 0;
+  surf_pos->y = (double)surface_y;
+  surf_pos->z = 0;
+
+  JPH_STACK_ALLOC(JPH_Vec3, surf_norm);
+  surf_norm->x = 0;
+  surf_norm->y = 1.0f;
+  surf_norm->z = 0;
+
+  JPH_STACK_ALLOC(JPH_Vec3, fluid_vel);
+  fluid_vel->x = vx;
+  fluid_vel->y = vy;
+  fluid_vel->z = vz;
+
+  for (size_t i = 0; i < valid_count; i++) {
+      JPH_BodyID bid = ids[i];
+      // Wake up
+      JPH_BodyInterface_ActivateBody(bi, bid);
+      // Apply
+      JPH_BodyInterface_ApplyBuoyancyImpulse(
+          bi, bid, surf_pos, surf_norm, buoyancy, lin_drag, ang_drag, 
+          fluid_vel, &gravity, dt);
+  }
+
+  PyMem_RawFree(ids);
+  Py_RETURN_NONE;
+}
+
 // Callback: Called by Jolt when a hit is found during the sweep
 static float CastShape_ClosestCollector(void *context,
                                         const JPH_ShapeCastResult *result) {
@@ -7161,6 +7266,8 @@ static const PyMethodDef PhysicsWorld_methods[] = {
      METH_VARARGS | METH_KEYWORDS, "Apply impulse at world position."},
     {"apply_buoyancy", (PyCFunction)PhysicsWorld_apply_buoyancy,
      METH_VARARGS | METH_KEYWORDS, "Apply fluid forces to a body."},
+    {"apply_buoyancy_batch", (PyCFunction)PhysicsWorld_apply_buoyancy_batch,
+     METH_VARARGS | METH_KEYWORDS, "Apply buoyancy to a list of bodies. handles must be a buffer of uint64."},
     {"set_position", (PyCFunction)PhysicsWorld_set_position,
      METH_VARARGS | METH_KEYWORDS, NULL},
     {"set_rotation", (PyCFunction)PhysicsWorld_set_rotation,
