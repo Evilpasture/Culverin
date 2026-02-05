@@ -33,18 +33,18 @@ jobs:
       - name: Build wheels
         run: python -m cibuildwheel --output-dir wheelhouse
         env:
-          # Build only Free-Threaded (t) versions for 3.13 and 3.14
-          # Note: cp314t support will appear as soon as the images are available
+          # 1. TELL CIBUILDWHEEL TO ALLOW THE EXPERIMENTAL 't' TAG
+          CIBW_ENABLE: freethreaded
+          
+          # 2. TELL CIBUILDWHEEL TO ALLOW ALPHAS/BETAS (Needed for 3.14)
+          CIBW_PRERELEASE_PYTHONS: True
+
+          # Now it will actually find these identifiers
           CIBW_BUILD: "cp313t-* cp314t-*"
           
-          # Pass the GIL-disabled flag to the C compiler
           CIBW_ENVIRONMENT: Py_GIL_DISABLED=1
-          
-          # Optimization hints
           CIBW_ARCHS_WINDOWS: "AMD64"
           CIBW_ARCHS_LINUX: "x86_64"
-          
-          # Skip tests during CI for now to speed up the process
           CIBW_TEST_SKIP: "*"
 
       - name: Upload artifacts
