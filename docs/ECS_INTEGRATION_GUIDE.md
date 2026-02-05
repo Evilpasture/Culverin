@@ -1,6 +1,6 @@
 # Integrating with ECS (PyBullet Eviction Guide)
 
-So, you're tired of PyBullet. You're tired of the clunky API, the overhead of creating Python tuples for every single position update, and the struggle to run physics on a separate thread without the GIL fighting you.
+So, you're tired of PyBullet. You're tired of the clunky API, the overhead of creating Python tuples for every single position update, and the struggle to run physics on a separate thread without the GIL fighting you. And you want a game engine in Python with fast physics.
 
 Culverin was built to solve this. It is designed to sit inside a **Physics System** within an ECS architecture.
 
@@ -149,6 +149,12 @@ def process_collisions(self):
         # Dispatch event to your game logic
         Events.emit("collision", entity_a, entity_b, c['impulse'])
 ```
+
+### The "Trigger Event" timing 
+
+`get_contact_events()` returns the events accumulated *during* the most recent `world.step()`. 
+
+Therefore, collision logic should usually run immediately **after** the step.
 
 ## 4. Interpolation (Render Threading)
 
