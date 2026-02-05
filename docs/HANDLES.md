@@ -96,3 +96,25 @@ else:
 | **Get Generation** | `handle >> 32` | Versioning. Useful for checking reuse count. |
 | **Get Memory Index** | `world.get_index(handle)` | **Required** to read `world.positions`, `world.velocities`, etc. |
 | **Check Validity** | `world.is_alive(handle)` | Checks if the object still exists. |
+
+## Explicit Destruction
+
+Since handles are just `int` primitives, there is no `__del__` magic. If you don't call `world.destroy_body(handle)`, that object stays in the physics simulation forever. 
+
+This is the only way to "leak" memory in Culverin.
+
+### The "Self-Cleaning" Pattern
+Since handles don't clean themselves up, use a simple wrapper if you prefer OOP:
+
+```python
+class MyEntity:
+    def __init__(self, world):
+        self.world = world
+        self.handle = world.create_body(...)
+        
+    def __del__(self):
+        # Optional: Be careful with __del__ timing in Python.
+        # It's better to have an explicit 'destroy' method.
+        if self.world and self.handle:
+            self.world.destroy_body(self.handle)
+```
