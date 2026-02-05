@@ -49,11 +49,13 @@ Repository = "https://github.com/Evilpasture/culverin.git"
 cmake.build-type = "Release"
 cmake.args = [
     "-DDOUBLE_PRECISION=ON",
-    "-DUSE_MTL=OFF",            # Explicitly disable Metal (macOS)
-    "-DINTEROP_COMPUTE=OFF",    # Disable cross-platform compute
-    "-DUSE_GL_COMPUTE=OFF",     # Disable OpenGL compute (Linux/Win)
-    "-DGENERATE_SAMPLES=OFF",   # Save build time
-    "-DGENERATE_UNIT_TESTS=OFF" # Save build time
+    "-DUSE_MTL=OFF",
+    "-DUSE_CPU_COMPUTE=OFF",
+    "-DINTEROP_COMPUTE=OFF",
+    "-DUSE_GL_COMPUTE=OFF",
+    "-DGENERATE_SAMPLES=OFF",
+    "-DGENERATE_UNIT_TESTS=OFF",
+    "-DCMAKE_OSX_DEPLOYMENT_TARGET=11.0"
 ]
 wheel.install-dir = "culverin"
 
