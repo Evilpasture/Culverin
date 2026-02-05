@@ -15,10 +15,10 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 set(USE_STATIC_MSVC_RUNTIME OFF CACHE BOOL "Use /MD instead of /MT" FORCE)
 set(DOUBLE_PRECISION ON CACHE BOOL "Use double precision math" FORCE)
 
-# FIX 2: Disable Jolt features that break old macOS compatibility or slow down builds
+set(USE_MTL OFF CACHE BOOL "" FORCE)
 set(INTEROP_COMPUTE OFF CACHE BOOL "" FORCE)
-set(USE_MTL OFF CACHE BOOL "Disable Metal to fix macOS deployment target issues" FORCE)
 set(USE_GL_COMPUTE OFF CACHE BOOL "" FORCE)
+set(USE_CPU_COMPUTE OFF CACHE BOOL "" FORCE)
 
 add_definitions(-DJPH_DOUBLE_PRECISION)
 add_definitions(-DJPH_OBJECT_LAYER_BITS=32)
