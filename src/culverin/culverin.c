@@ -963,10 +963,10 @@ static void clear_command_queue(PhysicsWorldObject *self) {
 
     for (size_t i = 0; i < self->command_count; i++) {
         PhysicsCommand *cmd = &self->command_queue[i];
-        if (cmd->type == CMD_CREATE_BODY) {
+        if (CMD_GET_TYPE(cmd->header) == CMD_CREATE_BODY) {
             // We own this pointer until it's consumed by Jolt
-            if (cmd->data.create.settings) {
-                JPH_BodyCreationSettings_Destroy(cmd->data.create.settings);
+            if (cmd->create.settings) {
+                JPH_BodyCreationSettings_Destroy(cmd->create.settings);
             }
         }
     }
@@ -1641,10 +1641,13 @@ static PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self,
     float dx = f_dirs[off];
     float dy = f_dirs[off + 1];
     float dz = f_dirs[off + 2];
-    float mag = sqrtf(dx * dx + dy * dy + dz * dz);
-    if (mag < 1e-9f) {
+    float mag_sq = dx * dx + dy * dy + dz * dz;
+    // Check mag_sq to avoid sqrt(0) and division by zero
+    if (mag_sq < 1e-12f) {
+      results[i].handle = 0; // No hit for zero-length ray
       continue;
     }
+    float mag = sqrtf(mag_sq);
     float scale = max_dist / mag;
     JPH_Vec3 direction = {dx * scale, dy * scale, dz * scale};
 
@@ -2076,23 +2079,29 @@ static void flush_commands(PhysicsWorldObject *self) {
 
   for (size_t i = 0; i < self->command_count; i++) {
     PhysicsCommand *cmd = &self->command_queue[i];
-    uint32_t slot = cmd->slot;
-    
-   // --- The Global Guard ---
-    // If it's not a creation, it MUST be alive to proceed.
-    if (cmd->type != CMD_CREATE_BODY && self->slot_states[slot] != SLOT_ALIVE) {
-        continue;
+    // Unpack Header
+    uint32_t header = cmd->header;
+    CommandType type = CMD_GET_TYPE(header);
+    uint32_t slot = CMD_GET_SLOT(header);
+
+    // --- Safety Checks ---
+    if (type != CMD_CREATE_BODY) {
+       if (self->slot_states[slot] != SLOT_ALIVE) continue;
     }
 
-    // --- The Contextual Lookup ---
-    // Now we know it's safe to touch the dense arrays.
-    uint32_t dense_idx = (cmd->type != CMD_CREATE_BODY) ? self->slot_to_dense[slot] : 0;
-    JPH_BodyID bid = (cmd->type != CMD_CREATE_BODY) ? self->body_ids[dense_idx] : JPH_INVALID_BODY_ID;
+    // Resolve dense index
+    uint32_t dense_idx = 0;
+    JPH_BodyID bid = JPH_INVALID_BODY_ID;
+    
+    if (type != CMD_CREATE_BODY) {
+      dense_idx = self->slot_to_dense[slot];
+      bid = self->body_ids[dense_idx];
+    }
 
 
-    switch (cmd->type) {
+    switch (type) {
     case CMD_CREATE_BODY: {
-      JPH_BodyCreationSettings *s = cmd->data.create.settings;
+      JPH_BodyCreationSettings *s = cmd->create.settings;
       JPH_BodyID new_bid = JPH_BodyInterface_CreateAndAddBody(bi, s, JPH_Activation_Activate);
 
       if (new_bid == JPH_INVALID_BODY_ID) {
@@ -2102,8 +2111,6 @@ static void flush_commands(PhysicsWorldObject *self) {
         JPH_BodyCreationSettings_Destroy(s);
         continue;
       }
-
-      uint32_t slot = cmd->slot;
       uint32_t gen = self->generations[slot];
       BodyHandle handle = make_handle(slot, gen);
       
@@ -2116,7 +2123,7 @@ static void flush_commands(PhysicsWorldObject *self) {
       self->body_ids[new_dense] = new_bid;
       self->slot_to_dense[slot] = (uint32_t)new_dense;
       self->dense_to_slot[new_dense] = slot;
-      self->user_data[new_dense] = cmd->data.create.user_data;
+      self->user_data[new_dense] = cmd->create.user_data;
 
       JPH_STACK_ALLOC(JPH_RVec3, p);
       JPH_STACK_ALLOC(JPH_Quat, q);
@@ -2146,9 +2153,9 @@ static void flush_commands(PhysicsWorldObject *self) {
       memset(&self->linear_velocities[offset], 0, 16);
       memset(&self->angular_velocities[offset], 0, 16);
 
-      self->categories[new_dense] = cmd->data.create.category;
-      self->masks[new_dense] = cmd->data.create.mask;
-      self->material_ids[new_dense] = cmd->data.create.material_id;
+      self->categories[new_dense] = cmd->create.category;
+      self->masks[new_dense] = cmd->create.mask;
+      self->material_ids[new_dense] = cmd->create.material_id;
 
       self->count++;
       self->slot_states[slot] = SLOT_ALIVE;
@@ -2165,48 +2172,48 @@ static void flush_commands(PhysicsWorldObject *self) {
 
     case CMD_SET_POS: {
       JPH_STACK_ALLOC(JPH_RVec3, p);
-      p->x = cmd->data.vec.x;
-      p->y = cmd->data.vec.y;
-      p->z = cmd->data.vec.z;
+      p->x = cmd->vec.x;
+      p->y = cmd->vec.y;
+      p->z = cmd->vec.z;
       JPH_BodyInterface_SetPosition(bi, bid, p, JPH_Activation_Activate);
       
       size_t offset = (size_t)dense_idx * 4;
-      self->positions[offset + 0] = cmd->data.vec.x;
-      self->positions[offset + 1] = cmd->data.vec.y;
-      self->positions[offset + 2] = cmd->data.vec.z;
+      self->positions[offset + 0] = cmd->vec.x;
+      self->positions[offset + 1] = cmd->vec.y;
+      self->positions[offset + 2] = cmd->vec.z;
 
       // FIX: Reset interpolation (Teleport)
-      self->prev_positions[offset + 0] = cmd->data.vec.x;
-      self->prev_positions[offset + 1] = cmd->data.vec.y;
-      self->prev_positions[offset + 2] = cmd->data.vec.z;
+      self->prev_positions[offset + 0] = cmd->vec.x;
+      self->prev_positions[offset + 1] = cmd->vec.y;
+      self->prev_positions[offset + 2] = cmd->vec.z;
       break;
     }
 
     case CMD_SET_ROT: {
       JPH_STACK_ALLOC(JPH_Quat, q);
-      q->x = cmd->data.vec.x;
-      q->y = cmd->data.vec.y;
-      q->z = cmd->data.vec.z;
-      q->w = cmd->data.vec.w;
+      q->x = cmd->vec.x;
+      q->y = cmd->vec.y;
+      q->z = cmd->vec.z;
+      q->w = cmd->vec.w;
       JPH_BodyInterface_SetRotation(bi, bid, q, JPH_Activation_Activate);
       
       size_t offset = (size_t)dense_idx * 4;
-      memcpy(&self->rotations[offset], &cmd->data.vec, 16);
+      memcpy(&self->rotations[offset], &cmd->vec, 16);
       // FIX: Reset interpolation
-      memcpy(&self->prev_rotations[offset], &cmd->data.vec, 16);
+      memcpy(&self->prev_rotations[offset], &cmd->vec, 16);
       break;
     }
 
     case CMD_SET_TRNS: {
       JPH_STACK_ALLOC(JPH_RVec3, p);
-      p->x = cmd->data.transform.px;
-      p->y = cmd->data.transform.py;
-      p->z = cmd->data.transform.pz;
+      p->x = cmd->transform.px;
+      p->y = cmd->transform.py;
+      p->z = cmd->transform.pz;
       JPH_STACK_ALLOC(JPH_Quat, q);
-      q->x = cmd->data.transform.rx;
-      q->y = cmd->data.transform.ry;
-      q->z = cmd->data.transform.rz;
-      q->w = cmd->data.transform.rw;
+      q->x = cmd->transform.rx;
+      q->y = cmd->transform.ry;
+      q->z = cmd->transform.rz;
+      q->w = cmd->transform.rw;
 
       JPH_BodyInterface_SetPositionAndRotation(bi, bid, p, q, JPH_Activation_Activate);
 
@@ -2214,40 +2221,40 @@ static void flush_commands(PhysicsWorldObject *self) {
       self->positions[offset + 0] = (float)p->x;
       self->positions[offset + 1] = (float)p->y;
       self->positions[offset + 2] = (float)p->z;
-      memcpy(&self->rotations[offset], &cmd->data.transform.rx, 16);
+      memcpy(&self->rotations[offset], &cmd->transform.rx, 16);
 
       // FIX: Reset interpolation
       self->prev_positions[offset + 0] = (float)p->x;
       self->prev_positions[offset + 1] = (float)p->y;
       self->prev_positions[offset + 2] = (float)p->z;
-      memcpy(&self->prev_rotations[offset], &cmd->data.transform.rx, 16);
+      memcpy(&self->prev_rotations[offset], &cmd->transform.rx, 16);
       break;
     }
 
     case CMD_SET_LINVEL: {
-        JPH_Vec3 v = {cmd->data.vec.x, cmd->data.vec.y, cmd->data.vec.z};
+        JPH_Vec3 v = {cmd->vec.x, cmd->vec.y, cmd->vec.z};
         JPH_BodyInterface_SetLinearVelocity(bi, bid, &v);
-        self->linear_velocities[dense_idx * 4 + 0] = cmd->data.vec.x;
-        self->linear_velocities[dense_idx * 4 + 1] = cmd->data.vec.y;
-        self->linear_velocities[dense_idx * 4 + 2] = cmd->data.vec.z;
+        self->linear_velocities[dense_idx * 4 + 0] = cmd->vec.x;
+        self->linear_velocities[dense_idx * 4 + 1] = cmd->vec.y;
+        self->linear_velocities[dense_idx * 4 + 2] = cmd->vec.z;
         break;
     }
 
     case CMD_SET_ANGVEL: {
-      JPH_Vec3 v = {cmd->data.vec.x, cmd->data.vec.y, cmd->data.vec.z};
+      JPH_Vec3 v = {cmd->vec.x, cmd->vec.y, cmd->vec.z};
       JPH_BodyInterface_SetAngularVelocity(bi, bid, &v);
-      self->angular_velocities[dense_idx * 4 + 0] = cmd->data.vec.x;
-      self->angular_velocities[dense_idx * 4 + 1] = cmd->data.vec.y;
-      self->angular_velocities[dense_idx * 4 + 2] = cmd->data.vec.z;
+      self->angular_velocities[dense_idx * 4 + 0] = cmd->vec.x;
+      self->angular_velocities[dense_idx * 4 + 1] = cmd->vec.y;
+      self->angular_velocities[dense_idx * 4 + 2] = cmd->vec.z;
       break;
     }
 
     case CMD_SET_MOTION: {
       JPH_BodyInterface_SetMotionType(bi, bid,
-                                    (JPH_MotionType)cmd->data.motion_type,
+                                    (JPH_MotionType)cmd->motion.motion_type,
                                     JPH_Activation_Activate);
       // Optional: If you use Layer 0 for Static and Layer 1 for Moving
-      uint32_t layer = (cmd->data.motion_type == 0) ? 0 : 1;
+      uint32_t layer = (cmd->motion.motion_type == 0) ? 0 : 1;
       JPH_BodyInterface_SetObjectLayer(bi, bid, (JPH_ObjectLayer)layer);
       break;
     }
@@ -2260,11 +2267,11 @@ static void flush_commands(PhysicsWorldObject *self) {
       break;
 
     case CMD_SET_USER_DATA: {
-      self->user_data[dense_idx] = cmd->data.user_data_val;
+      self->user_data[dense_idx] = cmd->user_data.user_data_val;
       break;
     }
     case CMD_SET_CCD: {
-        JPH_MotionQuality qual = cmd->data.motion_type ? 
+        JPH_MotionQuality qual = cmd->motion.motion_type ? 
                                  JPH_MotionQuality_LinearCast : 
                                  JPH_MotionQuality_Discrete;
         JPH_BodyInterface_SetMotionQuality(bi, bid, qual);
@@ -3427,13 +3434,12 @@ static PyObject *PhysicsWorld_create_convex_hull(PhysicsWorldObject *self,
   }
 
   PhysicsCommand *cmd = &self->command_queue[self->command_count++];
-  cmd->type = CMD_CREATE_BODY;
-  cmd->slot = slot;
-  cmd->data.create.settings = settings;
-  cmd->data.create.user_data = user_data;
-  cmd->data.create.category = category;
-  cmd->data.create.mask = mask;
-  cmd->data.create.material_id = material_id;
+  cmd->header = CMD_HEADER(CMD_CREATE_BODY, slot);
+  cmd->create.settings = settings;
+  cmd->create.user_data = user_data;
+  cmd->create.category = category;
+  cmd->create.mask = mask;
+  cmd->create.material_id = material_id;
 
   SHADOW_UNLOCK(&self->shadow_lock);
   return PyLong_FromUnsignedLongLong(handle);
@@ -3600,13 +3606,12 @@ static PyObject *PhysicsWorld_create_compound_body(PhysicsWorldObject *self,
   }
 
   PhysicsCommand *cmd = &self->command_queue[self->command_count++];
-  cmd->type = CMD_CREATE_BODY;
-  cmd->slot = slot;
-  cmd->data.create.settings = settings;
-  cmd->data.create.user_data = user_data;
-  cmd->data.create.category = category;
-  cmd->data.create.mask = mask;
-  cmd->data.create.material_id = material_id;
+  cmd->header = CMD_HEADER(CMD_CREATE_BODY, slot);
+  cmd->create.settings = settings;
+  cmd->create.user_data = user_data;
+  cmd->create.category = category;
+  cmd->create.mask = mask;
+  cmd->create.material_id = material_id;
 
   SHADOW_UNLOCK(&self->shadow_lock);
   return PyLong_FromUnsignedLongLong(
@@ -3771,13 +3776,12 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
   }
 
   PhysicsCommand *cmd = &self->command_queue[self->command_count++];
-  cmd->type = CMD_CREATE_BODY;
-  cmd->slot = slot;
-  cmd->data.create.settings = settings;
-  cmd->data.create.user_data = (uint64_t)user_data;
-  cmd->data.create.category = category;
-  cmd->data.create.mask = mask;
-  cmd->data.create.material_id = material_id;
+  cmd->header = CMD_HEADER(CMD_CREATE_BODY, slot);
+  cmd->create.settings = settings;
+  cmd->create.user_data = (uint64_t)user_data;
+  cmd->create.category = category;
+  cmd->create.mask = mask;
+  cmd->create.material_id = material_id;
 
   self->slot_states[slot] = SLOT_PENDING_CREATE;
   SHADOW_UNLOCK(&self->shadow_lock);
@@ -3910,12 +3914,11 @@ static PyObject *PhysicsWorld_create_mesh_body(PhysicsWorldObject *self,
   }
 
   PhysicsCommand *cmd = &self->command_queue[self->command_count++];
-  cmd->type = CMD_CREATE_BODY;
-  cmd->slot = slot;
-  cmd->data.create.settings = settings;
-  cmd->data.create.user_data = user_data;
-  cmd->data.create.category = cat;
-  cmd->data.create.mask = mask;
+  cmd->header = CMD_HEADER(CMD_CREATE_BODY, slot);
+  cmd->create.settings = settings;
+  cmd->create.user_data = user_data;
+  cmd->create.category = cat;
+  cmd->create.mask = mask;
 
   SHADOW_UNLOCK(&self->shadow_lock);
   PyBuffer_Release(&v_view);
@@ -3967,8 +3970,7 @@ static PyObject *PhysicsWorld_destroy_body(PhysicsWorldObject *self,
     }
 
     PhysicsCommand *cmd = &self->command_queue[self->command_count++];
-    cmd->type = CMD_DESTROY_BODY;
-    cmd->slot = slot;
+    cmd->header = CMD_HEADER(CMD_CREATE_BODY, slot);
 
     // Mark the slot immediately. This ensures that any logic
     // running between now and the next step() treats this body as "gone".
@@ -4656,11 +4658,10 @@ static PyObject *PhysicsWorld_set_position(PhysicsWorldObject *self,
   }
 
   PhysicsCommand *cmd = &self->command_queue[self->command_count++];
-  cmd->type = CMD_SET_POS;
-  cmd->slot = slot;
-  cmd->data.vec.x = x;
-  cmd->data.vec.y = y;
-  cmd->data.vec.z = z;
+  cmd->header = CMD_HEADER(CMD_SET_POS, slot);
+  cmd->vec.x = x;
+  cmd->vec.y = y;
+  cmd->vec.z = z;
 
   SHADOW_UNLOCK(&self->shadow_lock);
   Py_RETURN_NONE;
@@ -4705,12 +4706,11 @@ static PyObject *PhysicsWorld_set_rotation(PhysicsWorldObject *self,
 
   // Queue the command
   PhysicsCommand *cmd = &self->command_queue[self->command_count++];
-  cmd->type = CMD_SET_ROT;
-  cmd->slot = slot;
-  cmd->data.vec.x = x;
-  cmd->data.vec.y = y;
-  cmd->data.vec.z = z;
-  cmd->data.vec.w = w;
+  cmd->header = CMD_HEADER(CMD_SET_ROT, slot);
+  cmd->vec.x = x;
+  cmd->vec.y = y;
+  cmd->vec.z = z;
+  cmd->vec.w = w;
 
   SHADOW_UNLOCK(&self->shadow_lock);
   Py_RETURN_NONE;
@@ -4748,11 +4748,10 @@ static PyObject *PhysicsWorld_set_linear_velocity(PhysicsWorldObject *self,
 
   // Queue the command
   PhysicsCommand *cmd = &self->command_queue[self->command_count++];
-  cmd->type = CMD_SET_LINVEL;
-  cmd->slot = slot;
-  cmd->data.vec.x = x;
-  cmd->data.vec.y = y;
-  cmd->data.vec.z = z;
+  cmd->header = CMD_HEADER(CMD_SET_LINVEL, slot);
+  cmd->vec.x = x;
+  cmd->vec.y = y;
+  cmd->vec.z = z;
 
   SHADOW_UNLOCK(&self->shadow_lock);
   Py_RETURN_NONE;
@@ -4787,11 +4786,10 @@ static PyObject *PhysicsWorld_set_angular_velocity(PhysicsWorldObject *self,
   }
 
   PhysicsCommand *cmd = &self->command_queue[self->command_count++];
-  cmd->type = CMD_SET_ANGVEL;
-  cmd->slot = slot;
-  cmd->data.vec.x = x;
-  cmd->data.vec.y = y;
-  cmd->data.vec.z = z;
+  cmd->header = CMD_HEADER(CMD_SET_ANGVEL, slot);
+  cmd->vec.x = x;
+  cmd->vec.y = y;
+  cmd->vec.z = z;
 
   SHADOW_UNLOCK(&self->shadow_lock);
   Py_RETURN_NONE;
@@ -4862,9 +4860,8 @@ static PyObject *PhysicsWorld_set_motion_type(PhysicsWorldObject *self,
 
   // Queue the command
   PhysicsCommand *cmd = &self->command_queue[self->command_count++];
-  cmd->type = CMD_SET_MOTION;
-  cmd->slot = slot;
-  cmd->data.motion_type = motion_type;
+  cmd->header = CMD_HEADER(CMD_SET_MOTION, slot);
+  cmd->motion.motion_type = motion_type;
 
   SHADOW_UNLOCK(&self->shadow_lock);
   Py_RETURN_NONE;
@@ -4906,9 +4903,8 @@ static PyObject *PhysicsWorld_set_user_data(PhysicsWorldObject *self,
 
   // Queue the command
   PhysicsCommand *cmd = &self->command_queue[self->command_count++];
-  cmd->type = CMD_SET_USER_DATA;
-  cmd->slot = slot;
-  cmd->data.user_data_val = (uint64_t)data;
+  cmd->header = CMD_HEADER(CMD_SET_USER_DATA, slot);
+  cmd->user_data.user_data_val = (uint64_t)data;
 
   SHADOW_UNLOCK(&self->shadow_lock);
   Py_RETURN_NONE;
@@ -4972,8 +4968,7 @@ static PyObject *PhysicsWorld_activate(PhysicsWorldObject *self, PyObject *args,
   }
 
   PhysicsCommand *cmd = &self->command_queue[self->command_count++];
-  cmd->type = CMD_ACTIVATE;
-  cmd->slot = slot;
+  cmd->header = CMD_HEADER(CMD_ACTIVATE, slot);
 
   SHADOW_UNLOCK(&self->shadow_lock);
   Py_RETURN_NONE;
@@ -5011,9 +5006,7 @@ static PyObject *PhysicsWorld_deactivate(PhysicsWorldObject *self,
   }
 
   PhysicsCommand *cmd = &self->command_queue[self->command_count++];
-  cmd->type = CMD_DEACTIVATE;
-  cmd->slot = slot;
-
+  cmd->header = CMD_HEADER(CMD_DEACTIVATE, slot);
   SHADOW_UNLOCK(&self->shadow_lock);
   Py_RETURN_NONE;
 }
@@ -5058,19 +5051,18 @@ static PyObject *PhysicsWorld_set_transform(PhysicsWorldObject *self,
 
   // Queue CMD_SET_TRNS
   PhysicsCommand *cmd = &self->command_queue[self->command_count++];
-  cmd->type = CMD_SET_TRNS;
-  cmd->slot = slot;
+  cmd->header = CMD_HEADER(CMD_SET_TRNS, slot);
   
   // Pack position
-  cmd->data.transform.px = px;
-  cmd->data.transform.py = py;
-  cmd->data.transform.pz = pz;
+  cmd->transform.px = px;
+  cmd->transform.py = py;
+  cmd->transform.pz = pz;
   
   // Pack rotation
-  cmd->data.transform.rx = rx;
-  cmd->data.transform.ry = ry;
-  cmd->data.transform.rz = rz;
-  cmd->data.transform.rw = rw;
+  cmd->transform.rx = rx;
+  cmd->transform.ry = ry;
+  cmd->transform.rz = rz;
+  cmd->transform.rw = rw;
 
   SHADOW_UNLOCK(&self->shadow_lock);
   Py_RETURN_NONE;
@@ -5105,9 +5097,8 @@ static PyObject *PhysicsWorld_set_ccd(PhysicsWorldObject *self,
 
   // Reuse the 'motion_type' field in the union since it's just an int
   PhysicsCommand *cmd = &self->command_queue[self->command_count++];
-  cmd->type = CMD_SET_CCD;
-  cmd->slot = slot;
-  cmd->data.motion_type = enabled; // 1 = LinearCast, 0 = Discrete
+  cmd->header = CMD_HEADER(CMD_SET_CCD, slot);
+  cmd->motion.motion_type = enabled; // 1 = LinearCast, 0 = Discrete
 
   SHADOW_UNLOCK(&self->shadow_lock);
   Py_RETURN_NONE;
@@ -7177,13 +7168,12 @@ static PyObject *PhysicsWorld_create_heightfield(PhysicsWorldObject *self,
   }
 
   PhysicsCommand *cmd = &self->command_queue[self->command_count++];
-  cmd->type = CMD_CREATE_BODY;
-  cmd->slot = slot;
-  cmd->data.create.settings = settings;
-  cmd->data.create.user_data = user_data;
-  cmd->data.create.category = category;
-  cmd->data.create.mask = mask;
-  cmd->data.create.material_id = material_id;
+  cmd->header = CMD_HEADER(CMD_CREATE_BODY, slot);
+  cmd->create.settings = settings;
+  cmd->create.user_data = user_data;
+  cmd->create.category = category;
+  cmd->create.mask = mask;
+  cmd->create.material_id = material_id;
 
   SHADOW_UNLOCK(&self->shadow_lock);
   return PyLong_FromUnsignedLongLong(handle);
