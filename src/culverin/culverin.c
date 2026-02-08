@@ -2077,20 +2077,18 @@ static void flush_commands(PhysicsWorldObject *self) {
   for (size_t i = 0; i < self->command_count; i++) {
     PhysicsCommand *cmd = &self->command_queue[i];
     uint32_t slot = cmd->slot;
-
-    // Resolve dense index dynamically because previous CMD_DESTROY 
-    // operations in this very loop might have shifted indices.
-    uint32_t dense_idx = 0;
-    JPH_BodyID bid = 0;
     
-    if (cmd->type != CMD_CREATE_BODY) {
-      // Safety: Ensure slot is actually valid before lookup
-      // (In case user queued a move command on a body they also destroyed in this batch)
-      if (self->slot_states[slot] != SLOT_ALIVE) continue; 
-      
-      dense_idx = self->slot_to_dense[slot];
-      bid = self->body_ids[dense_idx];
+   // --- The Global Guard ---
+    // If it's not a creation, it MUST be alive to proceed.
+    if (cmd->type != CMD_CREATE_BODY && self->slot_states[slot] != SLOT_ALIVE) {
+        continue;
     }
+
+    // --- The Contextual Lookup ---
+    // Now we know it's safe to touch the dense arrays.
+    uint32_t dense_idx = (cmd->type != CMD_CREATE_BODY) ? self->slot_to_dense[slot] : 0;
+    JPH_BodyID bid = (cmd->type != CMD_CREATE_BODY) ? self->body_ids[dense_idx] : JPH_INVALID_BODY_ID;
+
 
     switch (cmd->type) {
     case CMD_CREATE_BODY: {
