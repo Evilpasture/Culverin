@@ -4186,8 +4186,14 @@ static void setup_transmission(JPH_WheeledVehicleControllerSettings *v_ctrl,
                                           (JPH_TransmissionMode)t_mode);
   JPH_VehicleTransmissionSettings_SetClutchStrength(
       v_trans_set, get_py_float_attr(py_trans, "clutch_strength", 2000.0f));
-  JPH_VehicleTransmissionSettings_SetReverseGearRatios(v_trans_set,
-                                                       (float[]){-3.0f}, 1);
+
+  // --- Define default gear ratios to prevent Division by Zero ---
+  // If py_trans doesn't provide ratios, we must provide defaults.
+  float forward_gears[] = {2.8f, 1.75f, 1.3f, 1.0f, 0.8f};
+  JPH_VehicleTransmissionSettings_SetGearRatios(v_trans_set, forward_gears, 5);
+  
+  float reverse_gears[] = {-3.0f};
+  JPH_VehicleTransmissionSettings_SetReverseGearRatios(v_trans_set, reverse_gears, 1);
 
   JPH_WheeledVehicleControllerSettings_SetTransmission(v_ctrl, v_trans_set);
 }
