@@ -3417,7 +3417,9 @@ static PyObject *PhysicsWorld_create_convex_hull(PhysicsWorldObject *self,
 
   if (!ensure_command_capacity(self)) {
       JPH_BodyCreationSettings_Destroy(settings);
+      settings = NULL;
       JPH_Shape_Destroy(shape); 
+      shape = NULL;
       self->slot_states[slot] = SLOT_EMPTY;
       self->free_slots[self->free_count++] = slot;
       SHADOW_UNLOCK(&self->shadow_lock);
