@@ -5730,6 +5730,8 @@ static PyObject *Vehicle_set_input(VehicleObject *self, PyObject *args,
           controller);
 
   if (transmission) {
+    if (target_gear > 5) target_gear = 5; 
+    if (target_gear < -1) target_gear = -1;
     self->current_gear = target_gear;
     JPH_VehicleTransmission_Set(transmission, self->current_gear,
                                 clutch_friction);
