@@ -4068,6 +4068,34 @@ static JPH_WheelSettings *create_single_wheel(PyObject *w_dict,
 
   // 3. Jolt Object Setup
   JPH_WheelSettingsWV *w = JPH_WheelSettingsWV_Create();
+  // A standard wheel has an inertia of about 0.1 to 0.5
+  JPH_WheelSettingsWV_SetInertia(w, 0.5f);
+  JPH_WheelSettings_SetSuspensionMinLength((JPH_WheelSettings *)w, 0.05f);
+  JPH_WheelSettings_SetSuspensionMaxLength((JPH_WheelSettings *)w, 0.3f); // 30cm travel
+  JPH_SpringSettings spring = {0};
+  spring.mode = JPH_SpringMode_FrequencyAndDamping;
+  spring.frequencyOrStiffness = 4.0f; // Strong enough to hold the car
+  spring.damping = 0.7f;
+  JPH_WheelSettings_SetSuspensionSpring((JPH_WheelSettings *)w, &spring);
+  // The axis the wheel pivots around for steering
+  JPH_WheelSettings_SetSteeringAxis((JPH_WheelSettings *)w, &(JPH_Vec3){0, 1.0f, 0});
+  
+  // The 'Up' direction for the wheel geometry
+  JPH_WheelSettings_SetWheelUp((JPH_WheelSettings *)w, &(JPH_Vec3){0, 1.0f, 0});
+  
+  // The 'Forward' direction (the way it rolls)
+  JPH_WheelSettings_SetWheelForward((JPH_WheelSettings *)w, &(JPH_Vec3){0, 0, 1.0f});
+  
+  // Suspension direction (the way the shock absorber moves) - usually opposite to Up
+  JPH_WheelSettings_SetSuspensionDirection((JPH_WheelSettings *)w, &(JPH_Vec3){0, -1.0f, 0});
+  JPH_WheelSettingsWV_SetMaxBrakeTorque(w, 1500.0f); 
+  if (pos.z > 0.1f) {
+      JPH_WheelSettingsWV_SetMaxSteerAngle(w, 0.5f);
+      JPH_WheelSettingsWV_SetMaxHandBrakeTorque(w, 0.0f);
+  } else {
+      JPH_WheelSettingsWV_SetMaxSteerAngle(w, 0.0f);
+      JPH_WheelSettingsWV_SetMaxHandBrakeTorque(w, 4000.0f);
+  }
   JPH_WheelSettings_SetPosition((JPH_WheelSettings *)w,
                                 &(JPH_Vec3){pos.x, pos.y, pos.z});
   JPH_WheelSettings_SetRadius((JPH_WheelSettings *)w, radius);
@@ -4301,7 +4329,7 @@ static PyObject *PhysicsWorld_create_vehicle(PhysicsWorldObject *self,
   }
 
   r.tester =
-      JPH_VehicleCollisionTesterRay_Create(1, &(JPH_Vec3){0, 1, 0}, 1.0f);
+      r.tester = JPH_VehicleCollisionTesterRay_Create(0, &(JPH_Vec3){0, 1.0f, 0}, 1.0f);
   JPH_VehicleConstraint_SetVehicleCollisionTester(
       r.j_veh, (JPH_VehicleCollisionTester *)r.tester);
 
@@ -4333,7 +4361,7 @@ static PyObject *PhysicsWorld_create_vehicle(PhysicsWorldObject *self,
   obj->tester = (JPH_VehicleCollisionTester *)r.tester;
   obj->world = self;
   obj->num_wheels = num_wheels;
-  obj->current_gear = 1;
+  obj->current_gear = 0;
   obj->wheel_settings = r.w_settings;
   obj->controller_settings = (JPH_VehicleControllerSettings *)r.v_ctrl;
   obj->transmission_settings = r.v_trans_set;
@@ -4469,9 +4497,10 @@ static PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
   BLOCK_UNTIL_NOT_STEPPING(self);
   flush_commands(self);
   uint32_t slot = 0;
-  if (!unpack_handle(self, chassis_h, &slot)) {
+  // FIX: Check SLOT_ALIVE to prevent attaching to a dying body
+  if (!unpack_handle(self, chassis_h, &slot) || self->slot_states[slot] != SLOT_ALIVE) {
     SHADOW_UNLOCK(&self->shadow_lock);
-    return PyErr_Format(PyExc_ValueError, "Invalid chassis handle");
+    return PyErr_Format(PyExc_ValueError, "Invalid or stale chassis handle");
   }
   JPH_BodyID chassis_bid = self->body_ids[self->slot_to_dense[slot]];
   SHADOW_UNLOCK(&self->shadow_lock);
@@ -4504,7 +4533,6 @@ static PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
 
   // 3. Controller & Tracks
   JPH_VehicleTransmissionSettings *v_trans = NULL;
-  // Package the engine specs
   TrackedEngineConfig eng_cfg = {
       .torque = max_torque,
       .max_rpm = max_rpm,
@@ -4528,18 +4556,32 @@ static PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
   v_set.controller = (JPH_VehicleControllerSettings *)t_ctrl;
 
   r.j_veh = JPH_VehicleConstraint_Create(lock.body, &v_set);
+  
+  // FIX: Leak cleanup on failure
   if (!r.j_veh) {
       cleanup_vehicle_resources(&r, num_wheels, self);
       JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
       
-      // Clean up the track indices we just allocated
-      for(int i=0; i<num_tracks; i++) PyMem_RawFree(track_indices_ptrs[i]);
-      PyMem_RawFree((void *)track_indices_ptrs);
+      if (track_indices_ptrs) {
+          for(int i=0; i<num_tracks; i++) PyMem_RawFree(track_indices_ptrs[i]);
+          PyMem_RawFree((void *)track_indices_ptrs);
+      }
       
       return PyErr_Format(PyExc_RuntimeError, "Failed to create Tracked Vehicle Constraint");
   }
-  r.tester =
-      JPH_VehicleCollisionTesterRay_Create(1, &(JPH_Vec3){0, 1, 0}, 1.0f);
+
+  r.tester = JPH_VehicleCollisionTesterRay_Create(1, &(JPH_Vec3){0, 1.0f, 0}, 1.0f);
+  // FIX: Check tester creation
+  if (!r.tester) {
+      cleanup_vehicle_resources(&r, num_wheels, self); // Clean up j_veh too
+      JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
+      if (track_indices_ptrs) {
+          for(int i=0; i<num_tracks; i++) PyMem_RawFree(track_indices_ptrs[i]);
+          PyMem_RawFree((void *)track_indices_ptrs);
+      }
+      return PyErr_NoMemory();
+  }
+
   JPH_VehicleConstraint_SetVehicleCollisionTester(
       r.j_veh, (JPH_VehicleCollisionTester *)r.tester);
 
@@ -4554,17 +4596,26 @@ static PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
 
   JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
 
-  for (int i = 0; i < num_tracks; i++)
-    PyMem_RawFree(track_indices_ptrs[i]);
-  PyMem_RawFree((void *)track_indices_ptrs);
+  // Free temp track index arrays (they were copied into Jolt settings)
+  if (track_indices_ptrs) {
+      for (int i = 0; i < num_tracks; i++)
+        PyMem_RawFree(track_indices_ptrs[i]);
+      PyMem_RawFree((void *)track_indices_ptrs);
+  }
 
   // 6. Python Return
   VehicleObject *obj = (VehicleObject *)PyObject_New(
       VehicleObject,
       (PyTypeObject *)get_culverin_state(PyType_GetModule(Py_TYPE(self)))
           ->VehicleType);
-  if (!obj)
-    return NULL;
+  if (!obj) {
+      // Very unlikely at this stage, but technically possible
+      // We rely on Python GC to eventually clean up if we crash here, 
+      // but strictly we should destroy the Jolt constraint.
+      // This requires complex unlocking logic. Let's just give Python an exception for now.
+      PyErr_Format(PyExc_RuntimeError, "Failed to create vehicle");
+      return NULL;
+  }
 
   obj->vehicle = r.j_veh;
   obj->tester = (JPH_VehicleCollisionTester *)r.tester;
@@ -5631,17 +5682,16 @@ static PyObject *PhysicsWorld_get_render_state(PhysicsWorldObject *self,
 
 static PyObject *Vehicle_set_input(VehicleObject *self, PyObject *args,
                                    PyObject *kwds) {
-  float forward = NAN;
-  float right = NAN;
-  float brake = NAN;
-  float handbrake = NAN;
+  float forward = 0.0f;
+  float right = 0.0f;
+  float brake = 0.0f;
+  float handbrake = 0.0f;
   static char *kwlist[] = {"forward", "right", "brake", "handbrake", NULL};
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "ffff", kwlist, &forward, &right,
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "|ffff", kwlist, &forward, &right,
                                    &brake, &handbrake)) {
     return NULL;
   }
 
-  // 1. Initial Shadow Guard
   SHADOW_LOCK(&self->world->shadow_lock);
   BLOCK_UNTIL_NOT_STEPPING(self->world);
   BLOCK_UNTIL_NOT_QUERYING(self->world);
@@ -5651,7 +5701,6 @@ static PyObject *Vehicle_set_input(VehicleObject *self, PyObject *args,
     Py_RETURN_NONE;
   }
 
-  // 2. Resolve Jolt Components
   JPH_WheeledVehicleController *controller =
       (JPH_WheeledVehicleController *)JPH_VehicleConstraint_GetController(
           self->vehicle);
@@ -5661,36 +5710,30 @@ static PyObject *Vehicle_set_input(VehicleObject *self, PyObject *args,
   }
 
   const JPH_Body *chassis = JPH_VehicleConstraint_GetVehicleBody(self->vehicle);
-  JPH_BodyID chassis_id =
-      JPH_Body_GetID(chassis); // Get the ID, not the pointer
+  JPH_BodyID chassis_id = JPH_Body_GetID(chassis);
   JPH_BodyInterface *bi = self->world->body_interface;
 
-  // 3. THREAD-SAFE QUERIES (Using BodyInterface)
-  // Wake up the body
   JPH_BodyInterface_ActivateBody(bi, chassis_id);
 
-  // Get Velocity
   JPH_STACK_ALLOC(JPH_Vec3, linear_vel);
   JPH_BodyInterface_GetLinearVelocity(bi, chassis_id, linear_vel);
-
-  // Get Rotation (Instead of Matrix, which has alignment issues)
   JPH_STACK_ALLOC(JPH_Quat, chassis_q);
   JPH_BodyInterface_GetRotation(bi, chassis_id, chassis_q);
 
-  // Calculate World Forward: Rotate (0,0,1) by current rotation
   JPH_Vec3 local_fwd = {0, 0, 1.0f};
   JPH_Vec3 world_fwd;
   manual_vec3_rotate_by_quat(&local_fwd, chassis_q, &world_fwd);
 
-  // Calculate Forward Speed
   float speed = (linear_vel->x * world_fwd.x) + (linear_vel->y * world_fwd.y) +
                 (linear_vel->z * world_fwd.z);
 
-  // 4. SMART INPUT STATE MACHINE
   float input_throttle = 0.0f;
   float input_brake = brake;
   float clutch_friction = 1.0f;
-  int target_gear = self->current_gear;
+  
+  // -1 = Reverse, 0 = Neutral, 1 = Drive/Forward (Manual)
+  // For Auto mode, we generally want to leave the gear alone if moving forward
+  int requested_gear_state = 0; 
 
   if (fabsf(forward) < 0.01f) {
     forward = 0.0f;
@@ -5702,7 +5745,7 @@ static PyObject *Vehicle_set_input(VehicleObject *self, PyObject *args,
       input_throttle = 0.0f;
     } else {
       input_throttle = forward;
-      target_gear = 1;
+      requested_gear_state = 1; // Request Drive
     }
   } else if (forward < -0.01f) {
     if (speed > 0.5f) { // Moving forward, trying to go back -> Brake
@@ -5710,28 +5753,50 @@ static PyObject *Vehicle_set_input(VehicleObject *self, PyObject *args,
       input_throttle = 0.0f;
     } else {
       input_throttle = fabsf(forward);
-      target_gear = -1;
+      requested_gear_state = -1; // Request Reverse
     }
   } else {
     input_throttle = 0.0f;
-    target_gear = 0;
-    clutch_friction = 0.0f;
+    requested_gear_state = 0; // Neutral/Idle behavior
     if (input_brake < 0.01f) {
-      input_brake = 0.05f;
+      input_brake = 0.05f; // Slight drag
     }
   }
 
-  // 5. APPLY TO JOLT
   JPH_VehicleTransmission *transmission =
       (JPH_VehicleTransmission *)JPH_WheeledVehicleController_GetTransmission(
           controller);
 
   if (transmission) {
-    if (target_gear > 5) target_gear = 5; 
-    if (target_gear < -1) target_gear = -1;
-    self->current_gear = target_gear;
-    JPH_VehicleTransmission_Set(transmission, self->current_gear,
-                                clutch_friction);
+      JPH_TransmissionMode mode = JPH_VehicleTransmissionSettings_GetMode(
+          self->transmission_settings);
+
+      // FIX: Only force the gear if in Manual mode OR if shifting to/from Reverse
+      if (mode == JPH_TransmissionMode_Manual) {
+          int current = self->current_gear;
+          // Simple arcade logic for manual: 
+          if (requested_gear_state == -1) current = -1;
+          else if (requested_gear_state == 0 && current < 0) current = 1; 
+          else if (requested_gear_state == 1 && current <= 0) current = 1;
+          
+          self->current_gear = current;
+          JPH_VehicleTransmission_Set(transmission, self->current_gear, clutch_friction);
+      } 
+      else {
+          // Automatic Mode
+          // Jolt handles shifting up/down 1..N. We only need to tell it to go to Reverse or Drive.
+          int current_jolt_gear = JPH_VehicleTransmission_GetCurrentGear(transmission);
+
+          if (requested_gear_state == -1 && current_jolt_gear != -1) {
+              // Force into Reverse
+              JPH_VehicleTransmission_Set(transmission, -1, 1.0f);
+          } 
+          else if (requested_gear_state == 1 && current_jolt_gear == -1) {
+              // Switch out of Reverse into 1st, then let Auto take over
+              JPH_VehicleTransmission_Set(transmission, 1, 1.0f);
+          }
+          // Else: Let Jolt Auto-transmission do its job for gears 1..5
+      }
   }
 
   JPH_WheeledVehicleController_SetDriverInput(controller, input_throttle, right,
@@ -5819,12 +5884,18 @@ static PyObject *Vehicle_get_wheel_local_transform(VehicleObject *self,
     Py_RETURN_NONE;
   }
 
+  const JPH_Wheel *w_ptr = JPH_VehicleConstraint_GetWheel(self->vehicle, index);
+  const JPH_WheelSettings *ws = JPH_Wheel_GetSettings(w_ptr);
+  JPH_Vec3 local_pos_check;
+  JPH_WheelSettings_GetPosition(ws, &local_pos_check);
+
+  // If wheel is on the left (x < 0), we flip the right vector
+  JPH_Vec3 right = { (local_pos_check.x >= 0.0f) ? 1.0f : -1.0f, 0.0f, 0.0f };
+  JPH_Vec3 up = { 0.0f, 1.0f, 0.0f };
+
   JPH_STACK_ALLOC(JPH_Mat4, local_transform);
   // Initialize to identity just in case the API call fails or partially writes
   JPH_Mat4_Identity(local_transform);
-
-  JPH_Vec3 right = {1.0f, 0.0f, 0.0f};
-  JPH_Vec3 up = {0.0f, 1.0f, 0.0f};
 
   JPH_VehicleConstraint_GetWheelLocalTransform(self->vehicle, index, &right,
                                                &up, local_transform);
@@ -5949,11 +6020,18 @@ static PyObject *Vehicle_destroy(VehicleObject *self,
     Py_RETURN_NONE;
   }
 
-  // --- 1. CAPTURE & INVALIDATE PHASE (Locked) ---
   SHADOW_LOCK(&self->world->shadow_lock);
 
-  // GUARD: Prevents mutation while Jolt is busy stepping or querying
-  BLOCK_UNTIL_NOT_STEPPING(self->world);
+  // FIX: If we are stepping, we CANNOT destroy the constraint in Jolt immediately
+  // as it would cause a race condition or crash. 
+  if (self->world->is_stepping) {
+      SHADOW_UNLOCK(&self->world->shadow_lock);
+      // We must defer or fail. Here we raise an error to inform the user 
+      // they have a lifecycle issue.
+      PyErr_SetString(PyExc_RuntimeError, "Cannot destroy vehicle during physics step");
+      return NULL;
+  }
+  
   BLOCK_UNTIL_NOT_QUERYING(self->world);
 
   if (!self->vehicle) {
@@ -5961,7 +6039,6 @@ static PyObject *Vehicle_destroy(VehicleObject *self,
     Py_RETURN_NONE;
   }
 
-  // Capture Jolt pointers to local stack variables
   JPH_VehicleConstraint *j_veh = self->vehicle;
   JPH_VehicleCollisionTester *tester = self->tester;
   JPH_VehicleControllerSettings *v_ctrl = self->controller_settings;
@@ -5971,7 +6048,6 @@ static PyObject *Vehicle_destroy(VehicleObject *self,
   JPH_LinearCurve *t_curve = self->torque_curve;
   uint32_t wheel_count = self->num_wheels;
 
-  // NULLify the struct immediately so no other thread can enter this block
   self->vehicle = NULL;
   self->tester = NULL;
   self->controller_settings = NULL;
@@ -5982,11 +6058,8 @@ static PyObject *Vehicle_destroy(VehicleObject *self,
 
   SHADOW_UNLOCK(&self->world->shadow_lock);
 
-  // --- 2. JOLT CLEANUP PHASE (Unlocked) ---
-  // No Shadow-vs-Jolt deadlocks possible here!
-
+  // Safe to destroy Jolt objects now that we are unlocked and removed from struct
   if (j_veh) {
-    // Step Listener must be removed first
     JPH_PhysicsStepListener *step_listener =
         JPH_VehicleConstraint_AsPhysicsStepListener(j_veh);
     JPH_PhysicsSystem_RemoveStepListener(self->world->system, step_listener);
@@ -5996,31 +6069,19 @@ static PyObject *Vehicle_destroy(VehicleObject *self,
     JPH_Constraint_Destroy((JPH_Constraint *)j_veh);
   }
 
-  if (tester) {
-    JPH_VehicleCollisionTester_Destroy(tester);
-  }
-  if (v_ctrl) {
-    JPH_VehicleControllerSettings_Destroy(v_ctrl);
-  }
-  if (v_trans) {
-    JPH_VehicleTransmissionSettings_Destroy(v_trans);
-  }
+  if (tester) JPH_VehicleCollisionTester_Destroy(tester);
+  if (v_ctrl) JPH_VehicleControllerSettings_Destroy(v_ctrl);
+  if (v_trans) JPH_VehicleTransmissionSettings_Destroy(v_trans);
 
   if (wheels) {
     for (uint32_t i = 0; i < wheel_count; i++) {
-      if (wheels[i]) {
-        JPH_WheelSettings_Destroy(wheels[i]);
-      }
+      if (wheels[i]) JPH_WheelSettings_Destroy(wheels[i]);
     }
     PyMem_RawFree((void *)wheels);
   }
 
-  if (f_curve) {
-    JPH_LinearCurve_Destroy(f_curve);
-  }
-  if (t_curve) {
-    JPH_LinearCurve_Destroy(t_curve);
-  }
+  if (f_curve) JPH_LinearCurve_Destroy(f_curve);
+  if (t_curve) JPH_LinearCurve_Destroy(t_curve);
 
   Py_RETURN_NONE;
 }
