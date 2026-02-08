@@ -958,12 +958,31 @@ static void free_shadow_buffers(PhysicsWorldObject *self) {
   PyMem_RawFree(self->materials);          self->materials = NULL;
 }
 
+static void clear_command_queue(PhysicsWorldObject *self) {
+    if (!self->command_queue) return;
+
+    for (size_t i = 0; i < self->command_count; i++) {
+        PhysicsCommand *cmd = &self->command_queue[i];
+        if (cmd->type == CMD_CREATE_BODY) {
+            // We own this pointer until it's consumed by Jolt
+            if (cmd->data.create.settings) {
+                JPH_BodyCreationSettings_Destroy(cmd->data.create.settings);
+            }
+        }
+    }
+    self->command_count = 0;
+}
+
 // --- Helper: Resource Cleanup (Idempotent) ---
 // SAFETY:
 // - Must not be called while PhysicsSystem is stepping
 // - Must not be called from a Jolt callback
 // - Must not race with Python memoryview access
 static void PhysicsWorld_free_members(PhysicsWorldObject *self) {
+  // Clear pending commands
+  clear_command_queue(self);
+  PyMem_RawFree(self->command_queue);
+  self->command_queue = NULL;
   // 1. Constraints (Must go before PhysicsSystem)
   free_constraints(self);
 
