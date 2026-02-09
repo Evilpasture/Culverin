@@ -3970,7 +3970,7 @@ static PyObject *PhysicsWorld_destroy_body(PhysicsWorldObject *self,
     }
 
     PhysicsCommand *cmd = &self->command_queue[self->command_count++];
-    cmd->header = CMD_HEADER(CMD_CREATE_BODY, slot);
+    cmd->header = CMD_HEADER(CMD_DESTROY_BODY, slot);
 
     // Mark the slot immediately. This ensures that any logic
     // running between now and the next step() treats this body as "gone".
