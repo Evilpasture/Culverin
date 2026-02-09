@@ -36,10 +36,9 @@ jobs:
           CIBW_ARCHS_WINDOWS: "AMD64"
           CIBW_ARCHS_LINUX: "x86_64"
           CIBW_ARCHS_MACOS: "x86_64 arm64"
-          # FORCE modern macOS target for compatibility with Python 3.13
           MACOSX_DEPLOYMENT_TARGET: "13.0" 
+          # Remove CFLAGS/CXXFLAGS from here to let CMake handle architecture detection
           CIBW_ENVIRONMENT: "Py_GIL_DISABLED=1"
-          CIBW_ENVIRONMENT_WINDOWS: "Py_GIL_DISABLED=1"
           CIBW_TEST_SKIP: "*"
 
       - name: Upload Artifacts

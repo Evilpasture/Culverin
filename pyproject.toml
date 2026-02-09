@@ -48,7 +48,6 @@ Repository = "https://github.com/Evilpasture/culverin.git"
 [tool.scikit-build]
 cmake.build-type = "Release"
 cmake.args = [
-    "-T", "ClangCL",
     "-DDOUBLE_PRECISION=ON",
     "-DUSE_MTL=OFF",
     "-DUSE_CPU_COMPUTE=OFF",
@@ -61,9 +60,14 @@ cmake.args = [
 wheel.install-dir = "culverin"
 
 [[tool.scikit-build.overrides]]
+if.platform-system = "windows"
+cmake.args = ["-T", "ClangCL"]
+
+[[tool.scikit-build.overrides]]
 if.platform-system = "linux"
-# Ensure we use modern C++ and SIMD on Linux workers
-cmake.args = ["-DCMAKE_CXX_FLAGS=-mavx2 -mfma"]
+# On Linux, CMake will pick up GCC/Clang automatically. 
+# SIMD is handled inside CMakeLists.txt now.
+cmake.args = []
 
 # Ensure we don't ship build artifacts or raw source in the final wheel
 wheel.exclude = [
@@ -80,8 +84,3 @@ wheel.exclude = [
 ]
 
 sdist.include = ["culverin/*.pyi"]
-
-[tool.cibuildwheel.environment]
-# Force GCC-style flags for Linux builds
-CFLAGS = "-mavx2 -std=c11"
-CXXFLAGS = "-mavx2 -std=c++17"
