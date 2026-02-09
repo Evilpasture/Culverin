@@ -6014,16 +6014,7 @@ static PyObject *Vehicle_destroy(VehicleObject *self,
 
   SHADOW_LOCK(&self->world->shadow_lock);
 
-  // FIX: If we are stepping, we CANNOT destroy the constraint in Jolt immediately
-  // as it would cause a race condition or crash. 
-  if (self->world->is_stepping) {
-      SHADOW_UNLOCK(&self->world->shadow_lock);
-      // We must defer or fail. Here we raise an error to inform the user 
-      // they have a lifecycle issue.
-      PyErr_SetString(PyExc_RuntimeError, "Cannot destroy vehicle during physics step");
-      return NULL;
-  }
-  
+  BLOCK_UNTIL_NOT_STEPPING(self->world);
   BLOCK_UNTIL_NOT_QUERYING(self->world);
 
   if (!self->vehicle) {
