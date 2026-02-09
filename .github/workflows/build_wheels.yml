@@ -31,14 +31,14 @@ jobs:
         uses: pypa/cibuildwheel@v2.22.0
         env:
           CIBW_FREE_THREADED_SUPPORT: 1
-          CIBW_PRERELEASE_PYTHONS: 1
           CIBW_BUILD: "cp313t-* cp314t-*"
           CIBW_ARCHS_WINDOWS: "AMD64"
           CIBW_ARCHS_LINUX: "x86_64"
           CIBW_ARCHS_MACOS: "x86_64 arm64"
-          MACOSX_DEPLOYMENT_TARGET: "13.0" 
-          # Remove CFLAGS/CXXFLAGS from here to let CMake handle architecture detection
+          MACOSX_DEPLOYMENT_TARGET: "13.0"
           CIBW_ENVIRONMENT: "Py_GIL_DISABLED=1"
+          # FORCE ClangCL on Windows
+          CIBW_ENVIRONMENT_WINDOWS: "CC=clang-cl CXX=clang-cl Py_GIL_DISABLED=1"
           CIBW_TEST_SKIP: "*"
 
       - name: Upload Artifacts

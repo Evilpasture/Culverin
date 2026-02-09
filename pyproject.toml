@@ -49,27 +49,13 @@ Repository = "https://github.com/Evilpasture/culverin.git"
 cmake.build-type = "Release"
 cmake.args = [
     "-DDOUBLE_PRECISION=ON",
-    "-DUSE_MTL=OFF",
-    "-DUSE_CPU_COMPUTE=OFF",
-    "-DINTEROP_COMPUTE=OFF",
-    "-DUSE_GL_COMPUTE=OFF",
     "-DGENERATE_SAMPLES=OFF",
     "-DGENERATE_UNIT_TESTS=OFF",
+    "-DUSE_VULKAN=OFF",
     "-DCMAKE_OSX_DEPLOYMENT_TARGET=13.0"
 ]
 wheel.install-dir = "culverin"
 
-[[tool.scikit-build.overrides]]
-if.platform-system = "windows"
-cmake.args = ["-T", "ClangCL"]
-
-[[tool.scikit-build.overrides]]
-if.platform-system = "linux"
-# On Linux, CMake will pick up GCC/Clang automatically. 
-# SIMD is handled inside CMakeLists.txt now.
-cmake.args = []
-
-# Ensure we don't ship build artifacts or raw source in the final wheel
 wheel.exclude = [
     "culverin/include/**",
     "culverin/lib/**",
