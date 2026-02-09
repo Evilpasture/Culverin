@@ -99,11 +99,14 @@ endif()
 
 target_link_libraries(_culverin_c PRIVATE ${JOLTC_TARGET} Winmm.lib)
 set_property(TARGET _culverin_c PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
-
-if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    target_compile_options(_culverin_c PRIVATE -mavx2 -mfma -Xclang -std=c11)
+if (MSVC)
+    if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        target_compile_options(_culverin_c PRIVATE -mavx2 -mfma -Xclang -std=c11)
+    else()
+        target_compile_options(_culverin_c PRIVATE /arch:AVX2 /std:c11)
+    endif()
 else()
-    target_compile_options(_culverin_c PRIVATE /arch:AVX2 /std:c11)
+    target_compile_options(_culverin_c PRIVATE -mavx2 -mfma -std=c11)
 endif()
 
 set_target_properties(_culverin_c PROPERTIES OUTPUT_NAME "_culverin_c" PREFIX "")

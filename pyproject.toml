@@ -80,3 +80,8 @@ wheel.exclude = [
 ]
 
 sdist.include = ["culverin/*.pyi"]
+
+[tool.cibuildwheel.environment]
+# Force GCC-style flags for Linux builds
+CFLAGS = "-mavx2 -std=c11"
+CXXFLAGS = "-mavx2 -std=c++17"
