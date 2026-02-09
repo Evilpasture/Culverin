@@ -1487,6 +1487,90 @@ static PyObject *PhysicsWorld_apply_angular_impulse(PhysicsWorldObject *self, Py
     Py_RETURN_NONE;
 }
 
+static PyObject *PhysicsWorld_apply_force(PhysicsWorldObject *self, PyObject *args, PyObject *kwds) {
+    uint64_t h; float x, y, z;
+    static char *kwlist[] = {"handle", "x", "y", "z", NULL};
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "Kfff", kwlist, &h, &x, &y, &z)) return NULL;
+
+    SHADOW_LOCK(&self->shadow_lock);
+    BLOCK_UNTIL_NOT_STEPPING(self);
+    uint32_t slot = 0;
+    if (!unpack_handle(self, h, &slot) || self->slot_states[slot] != SLOT_ALIVE) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        return NULL;
+    }
+    JPH_BodyID bid = self->body_ids[self->slot_to_dense[slot]];
+    JPH_Vec3 f = {x, y, z};
+    JPH_BodyInterface_AddForce(self->body_interface, bid, &f); // Adds to accumulator
+    JPH_BodyInterface_ActivateBody(self->body_interface, bid);
+    SHADOW_UNLOCK(&self->shadow_lock);
+    Py_RETURN_NONE;
+}
+
+static PyObject *PhysicsWorld_apply_torque(PhysicsWorldObject *self, PyObject *args, PyObject *kwds) {
+    uint64_t h; float x, y, z;
+    static char *kwlist[] = {"handle", "x", "y", "z", NULL};
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "Kfff", kwlist, &h, &x, &y, &z)) return NULL;
+
+    SHADOW_LOCK(&self->shadow_lock);
+    BLOCK_UNTIL_NOT_STEPPING(self);
+    uint32_t slot = 0;
+    if (!unpack_handle(self, h, &slot) || self->slot_states[slot] != SLOT_ALIVE) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        return NULL;
+    }
+    JPH_BodyID bid = self->body_ids[self->slot_to_dense[slot]];
+    JPH_Vec3 t = {x, y, z};
+    JPH_BodyInterface_AddTorque(self->body_interface, bid, &t);
+    JPH_BodyInterface_ActivateBody(self->body_interface, bid);
+    SHADOW_UNLOCK(&self->shadow_lock);
+    Py_RETURN_NONE;
+}
+
+static PyObject *PhysicsWorld_set_gravity(PhysicsWorldObject *self, PyObject *args) {
+    float x, y, z;
+    if (!PyArg_ParseTuple(args, "(fff)", &x, &y, &z)) return NULL;
+
+    SHADOW_LOCK(&self->shadow_lock);
+    BLOCK_UNTIL_NOT_STEPPING(self);
+    
+    JPH_Vec3 g = {x, y, z};
+    JPH_PhysicsSystem_SetGravity(self->system, &g);
+    
+    // Wake up all bodies so they react to the new gravity direction immediately
+    // (Optional, but usually expected)
+    JPH_BodyInterface_ActivateBodies(self->body_interface, self->body_ids, self->count);
+
+    SHADOW_UNLOCK(&self->shadow_lock);
+    Py_RETURN_NONE;
+}
+
+static PyObject *PhysicsWorld_get_body_stats(PhysicsWorldObject *self, PyObject *args, PyObject *kwds) {
+    uint64_t h;
+    static char *kwlist[] = {"handle", NULL};
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "K", kwlist, &h)) return NULL;
+
+    SHADOW_LOCK(&self->shadow_lock);
+    uint32_t slot = 0;
+    if (!unpack_handle(self, h, &slot) || self->slot_states[slot] != SLOT_ALIVE) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        Py_RETURN_NONE;
+    }
+    
+    uint32_t i = self->slot_to_dense[slot];
+    
+    // Extract straight from shadow buffers (Fastest access)
+    PyObject* pos = Py_BuildValue("(fff)", self->positions[(size_t)i*4], self->positions[i*4+1], self->positions[i*4+2]);
+    PyObject* rot = Py_BuildValue("(ffff)", self->rotations[(size_t)i*4], self->rotations[i*4+1], self->rotations[i*4+2], self->rotations[i*4+3]);
+    PyObject* vel = Py_BuildValue("(fff)", self->linear_velocities[(size_t)i*4], self->linear_velocities[i*4+1], self->linear_velocities[i*4+2]);
+    
+    SHADOW_UNLOCK(&self->shadow_lock);
+
+    PyObject* ret = PyTuple_Pack(3, pos, rot, vel);
+    Py_DECREF(pos); Py_DECREF(rot); Py_DECREF(vel);
+    return ret; // Returns ((x,y,z), (x,y,z,w), (vx,vy,vz))
+}
+
 // Helper 1: Run the Raycast (Encapsulates all Jolt Filter/Lock/Cleanup
 // boilerplate)
 static bool execute_raycast_query(PhysicsWorldObject *self,
@@ -7544,6 +7628,12 @@ static const PyMethodDef PhysicsWorld_methods[] = {
      METH_VARARGS | METH_KEYWORDS, "Apply rotational momentum."},
     {"apply_impulse_at", (PyCFunction)PhysicsWorld_apply_impulse_at, 
      METH_VARARGS | METH_KEYWORDS, "Apply impulse at world position."},
+    {"apply_force", (PyCFunction)PhysicsWorld_apply_force, 
+     METH_VARARGS | METH_KEYWORDS, NULL},
+    {"apply_torque", (PyCFunction)PhysicsWorld_apply_torque, 
+     METH_VARARGS | METH_KEYWORDS, NULL},
+    {"set_gravity", (PyCFunction)PhysicsWorld_set_gravity, 
+     METH_VARARGS, NULL},
     {"apply_buoyancy", (PyCFunction)PhysicsWorld_apply_buoyancy,
      METH_VARARGS | METH_KEYWORDS, "Apply fluid forces to a body."},
     {"apply_buoyancy_batch", (PyCFunction)PhysicsWorld_apply_buoyancy_batch,
@@ -7605,6 +7695,8 @@ static const PyMethodDef PhysicsWorld_methods[] = {
      "(3+4 floats per body)."},
     {"get_debug_data", (PyCFunction)PhysicsWorld_get_debug_data, METH_VARARGS | METH_KEYWORDS, 
      "Returns (lines_bytes, triangles_bytes). Each vertex is 16 bytes: [x, y, z, color_u32]."},
+    {"get_body_stats", (PyCFunction)PhysicsWorld_get_body_stats, 
+     METH_VARARGS | METH_KEYWORDS, NULL},
 
     // --- User Data ---
     {"get_user_data", (PyCFunction)PhysicsWorld_get_user_data,
