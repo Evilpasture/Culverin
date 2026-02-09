@@ -3764,8 +3764,8 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
 
   BodyConfig config = {
     .mass = mass,
-    .friction = friction,
-    .restitution = restitution,
+    .friction = mat.friction,
+    .restitution = mat.restitution,
     .is_sensor = is_sensor,
     .use_ccd = use_ccd,
     .motion_type = motion_type
