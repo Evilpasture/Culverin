@@ -300,31 +300,21 @@ typedef enum {
     EVENT_REMOVED = 2
 } ContactEventType;
 
-#ifdef _MSC_VER
-#pragma pack(push, 1)
-#endif
-
 // --- Callback Logic ---
-typedef struct
-#ifndef _MSC_VER
-    __attribute__((packed))
-#endif
-    ContactEvent {
+typedef struct ContactEvent {
   uint64_t body1;
   uint64_t body2;
   float px, py, pz;
   float nx, ny, nz;
   float impulse;
   float sliding_speed_sq; // Scratching speed squared(tangential)
-  uint32_t mat1;          // 4 (New)
-  uint32_t mat2;          // 4 (New)
-  uint32_t type;          // <--- Replaces _pad[0]
-  uint32_t _pad;          // Reduced padding
+  uint32_t mat1;
+  uint32_t mat2;
+  uint32_t type;
+  uint32_t _pad;
 } ContactEvent;
 
-#ifdef _MSC_VER
-#pragma pack(pop)
-#endif
+_Static_assert(sizeof(ContactEvent) == 64, "ContactEvent must be 64 bytes for performance");
 
 // --- Raycast Batch Result (Aligned to 16-bytes, Total 48-bytes) ---
 #ifdef _MSC_VER

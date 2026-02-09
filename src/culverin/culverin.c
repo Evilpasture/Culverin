@@ -1081,7 +1081,7 @@ static int init_jolt_core(PhysicsWorldObject *self, WorldLimits limits, GravityV
   JPH_PhysicsSystemSettings phys_settings = {
         .maxBodies = (uint32_t)limits.max_bodies,
         .maxBodyPairs = (uint32_t)limits.max_pairs, // Now safe
-        .maxContactConstraints = 102400,
+        .maxContactConstraints = 1024*1024,
         .broadPhaseLayerInterface = self->bp_interface,
         .objectLayerPairFilter = self->pair_filter,
         .objectVsBroadPhaseLayerFilter = self->bp_filter};
@@ -1325,6 +1325,11 @@ static PyObject *PhysicsWorld_apply_impulse(PhysicsWorldObject *self,
         if (!PyArg_ParseTupleAndKeywords(args, kwds, "Kfff", kwlist, &h, &x, &y, &z)) {
             return NULL;
         }
+    }
+
+    if (UNLIKELY(!isfinite(x) || !isfinite(y) || !isfinite(z))) {
+        PyErr_SetString(PyExc_ValueError, "Impulse components must be finite (no NaN/Inf)");
+        return NULL;
     }
 
     // --- EXECUTION ---
@@ -4333,7 +4338,7 @@ static PyObject *PhysicsWorld_create_vehicle(PhysicsWorldObject *self,
   }
 
   r.tester =
-      r.tester = JPH_VehicleCollisionTesterRay_Create(0, &(JPH_Vec3){0, 1.0f, 0}, 1.0f);
+      r.tester = JPH_VehicleCollisionTesterRay_Create(0, &(JPH_Vec3){0, 1.0f, 0}, 2.0f);
   JPH_VehicleConstraint_SetVehicleCollisionTester(
       r.j_veh, (JPH_VehicleCollisionTester *)r.tester);
 
@@ -4576,7 +4581,7 @@ static PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
       return PyErr_Format(PyExc_RuntimeError, "Failed to create Tracked Vehicle Constraint");
   }
 
-  r.tester = JPH_VehicleCollisionTesterRay_Create(1, &(JPH_Vec3){0, 1.0f, 0}, 1.0f);
+  r.tester = JPH_VehicleCollisionTesterRay_Create(1, &(JPH_Vec3){0, 1.0f, 0}, 2.0f);
   // FIX: Check tester creation
   if (!r.tester) {
       cleanup_vehicle_resources(&r, num_wheels, self); // Clean up j_veh too
@@ -5687,125 +5692,73 @@ static PyObject *PhysicsWorld_get_render_state(PhysicsWorldObject *self,
 
 static PyObject *Vehicle_set_input(VehicleObject *self, PyObject *args,
                                    PyObject *kwds) {
-  float forward = 0.0f;
-  float right = 0.0f;
-  float brake = 0.0f;
-  float handbrake = 0.0f;
+  float forward = 0.0f, right = 0.0f, brake = 0.0f, handbrake = 0.0f;
   static char *kwlist[] = {"forward", "right", "brake", "handbrake", NULL};
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "|ffff", kwlist, &forward, &right,
-                                   &brake, &handbrake)) {
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "|ffff", kwlist, &forward, &right, &brake, &handbrake)) 
     return NULL;
-  }
 
   SHADOW_LOCK(&self->world->shadow_lock);
-  BLOCK_UNTIL_NOT_STEPPING(self->world);
-  BLOCK_UNTIL_NOT_QUERYING(self->world);
-
-  if (!self->vehicle) {
+  // Re-entrancy guard
+  if (UNLIKELY(self->world->is_stepping || !self->vehicle)) {
     SHADOW_UNLOCK(&self->world->shadow_lock);
     Py_RETURN_NONE;
   }
 
-  JPH_WheeledVehicleController *controller =
-      (JPH_WheeledVehicleController *)JPH_VehicleConstraint_GetController(
-          self->vehicle);
-  if (!controller) {
-    SHADOW_UNLOCK(&self->world->shadow_lock);
-    Py_RETURN_NONE;
-  }
-
-  const JPH_Body *chassis = JPH_VehicleConstraint_GetVehicleBody(self->vehicle);
-  JPH_BodyID chassis_id = JPH_Body_GetID(chassis);
+  JPH_WheeledVehicleController *controller = (JPH_WheeledVehicleController *)JPH_VehicleConstraint_GetController(self->vehicle);
   JPH_BodyInterface *bi = self->world->body_interface;
+  JPH_BodyID chassis_id = JPH_Body_GetID(JPH_VehicleConstraint_GetVehicleBody(self->vehicle));
 
+  // 1. Wake Body
   JPH_BodyInterface_ActivateBody(bi, chassis_id);
 
+  // 2. Query Velocity and Rotation for Speed Calculation
   JPH_STACK_ALLOC(JPH_Vec3, linear_vel);
   JPH_BodyInterface_GetLinearVelocity(bi, chassis_id, linear_vel);
   JPH_STACK_ALLOC(JPH_Quat, chassis_q);
   JPH_BodyInterface_GetRotation(bi, chassis_id, chassis_q);
 
-  JPH_Vec3 local_fwd = {0, 0, 1.0f};
+  // Calculate World Forward
   JPH_Vec3 world_fwd;
-  manual_vec3_rotate_by_quat(&local_fwd, chassis_q, &world_fwd);
+  manual_vec3_rotate_by_quat(&(JPH_Vec3){0, 0, 1.0f}, chassis_q, &world_fwd);
+  float speed = (linear_vel->x * world_fwd.x) + (linear_vel->y * world_fwd.y) + (linear_vel->z * world_fwd.z);
 
-  float speed = (linear_vel->x * world_fwd.x) + (linear_vel->y * world_fwd.y) +
-                (linear_vel->z * world_fwd.z);
-
+  // 3. Logic: Determine Intended Movement
   float input_throttle = 0.0f;
   float input_brake = brake;
-  float clutch_friction = 1.0f;
-  
-  // -1 = Reverse, 0 = Neutral, 1 = Drive/Forward (Manual)
-  // For Auto mode, we generally want to leave the gear alone if moving forward
-  int requested_gear_state = 0; 
-
-  if (fabsf(forward) < 0.01f) {
-    forward = 0.0f;
-  }
+  int requested_direction = 0; // 1: Forward, -1: Reverse, 0: Neutral
 
   if (forward > 0.01f) {
-    if (speed < -0.5f) { // Moving back, trying to go forward -> Brake
-      input_brake = 1.0f;
-      input_throttle = 0.0f;
-    } else {
-      input_throttle = forward;
-      requested_gear_state = 1; // Request Drive
-    }
+    if (speed < -0.5f) { input_brake = 1.0f; } // Moving backward, pressing forward -> Brake
+    else { input_throttle = forward; requested_direction = 1; }
   } else if (forward < -0.01f) {
-    if (speed > 0.5f) { // Moving forward, trying to go back -> Brake
-      input_brake = 1.0f;
-      input_throttle = 0.0f;
-    } else {
-      input_throttle = fabsf(forward);
-      requested_gear_state = -1; // Request Reverse
+    if (speed > 0.5f) { input_brake = 1.0f; } // Moving forward, pressing backward -> Brake
+    else { input_throttle = fabsf(forward); requested_direction = -1; }
+  }
+
+  // 4. Transmission Management (Undeclared Function fix)
+  JPH_VehicleTransmission *trans = (JPH_VehicleTransmission *)JPH_WheeledVehicleController_GetTransmission(controller);
+  if (trans) {
+    int current_gear = JPH_VehicleTransmission_GetCurrentGear(trans);
+
+    // Smart Gear Switching:
+    // We only call SetGear when switching between Forward/Reverse/Neutral.
+    // If we are already in a forward gear (1,2,3...) we let Jolt's Auto-trans handle it.
+    if (requested_direction == 1 && current_gear <= 0) {
+        // Shift from Neutral/Reverse to Drive
+        JPH_VehicleTransmission_Set(trans, 1, 1.0f);
+    } 
+    else if (requested_direction == -1 && current_gear >= 0) {
+        // Shift from Neutral/Drive to Reverse
+        JPH_VehicleTransmission_Set(trans, -1, 1.0f);
     }
-  } else {
-    input_throttle = 0.0f;
-    requested_gear_state = 0; // Neutral/Idle behavior
-    if (input_brake < 0.01f) {
-      input_brake = 0.05f; // Slight drag
+    else if (requested_direction == 0 && current_gear != 0 && fabsf(speed) < 0.2f) {
+        // Shift to Neutral when stopped and no input
+        JPH_VehicleTransmission_Set(trans, 0, 0.0f);
     }
   }
 
-  JPH_VehicleTransmission *transmission =
-      (JPH_VehicleTransmission *)JPH_WheeledVehicleController_GetTransmission(
-          controller);
-
-  if (transmission) {
-      JPH_TransmissionMode mode = JPH_VehicleTransmissionSettings_GetMode(
-          self->transmission_settings);
-
-      // FIX: Only force the gear if in Manual mode OR if shifting to/from Reverse
-      if (mode == JPH_TransmissionMode_Manual) {
-          int current = self->current_gear;
-          // Simple arcade logic for manual: 
-          if (requested_gear_state == -1) current = -1;
-          else if (requested_gear_state == 0 && current < 0) current = 1; 
-          else if (requested_gear_state == 1 && current <= 0) current = 1;
-          
-          self->current_gear = current;
-          JPH_VehicleTransmission_Set(transmission, self->current_gear, clutch_friction);
-      } 
-      else {
-          // Automatic Mode
-          // Jolt handles shifting up/down 1..N. We only need to tell it to go to Reverse or Drive.
-          int current_jolt_gear = JPH_VehicleTransmission_GetCurrentGear(transmission);
-
-          if (requested_gear_state == -1 && current_jolt_gear != -1) {
-              // Force into Reverse
-              JPH_VehicleTransmission_Set(transmission, -1, 1.0f);
-          } 
-          else if (requested_gear_state == 1 && current_jolt_gear == -1) {
-              // Switch out of Reverse into 1st, then let Auto take over
-              JPH_VehicleTransmission_Set(transmission, 1, 1.0f);
-          }
-          // Else: Let Jolt Auto-transmission do its job for gears 1..5
-      }
-  }
-
-  JPH_WheeledVehicleController_SetDriverInput(controller, input_throttle, right,
-                                              input_brake, handbrake);
+  // 5. Apply to Jolt
+  JPH_WheeledVehicleController_SetDriverInput(controller, input_throttle, right, input_brake, handbrake);
 
   SHADOW_UNLOCK(&self->world->shadow_lock);
   Py_RETURN_NONE;
