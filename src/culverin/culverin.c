@@ -3389,6 +3389,7 @@ static PyObject *PhysicsWorld_create_convex_hull(PhysicsWorldObject *self,
   JPH_BodyCreationSettings *settings = JPH_BodyCreationSettings_Create3(
       shape, pos, rot, (JPH_MotionType)motion_type, 
       (motion_type == 0) ? 0 : 1); // Layer 0 for Static, 1 for Moving
+  JPH_Shape_Destroy(shape);
 
   // Mass Override
   if (mass > 0.0f) {
@@ -3562,6 +3563,7 @@ static PyObject *PhysicsWorld_create_compound_body(PhysicsWorldObject *self,
     return NULL;
   }
 
+  // Ref Count = 1 (Created)
   JPH_Shape *final_shape = init_compound_shape(self, parts);
   if (!final_shape) {
     SHADOW_UNLOCK(&self->shadow_lock);
@@ -3571,10 +3573,17 @@ static PyObject *PhysicsWorld_create_compound_body(PhysicsWorldObject *self,
   uint32_t slot = self->free_slots[--self->free_count];
   self->slot_states[slot] = SLOT_PENDING_CREATE;
 
+  // Ref Count -> 2 (Held by Settings)
   JPH_BodyCreationSettings *settings = JPH_BodyCreationSettings_Create3(
       final_shape, &(JPH_RVec3){(double)px, (double)py, (double)pz},
       &(JPH_Quat){rx, ry, rz, rw}, (JPH_MotionType)motion_type,
       (motion_type == 0) ? 0 : 1);
+
+  // FIX: Release our local reference. 
+  // The 'settings' object now owns the shape. 
+  // When 'settings' is destroyed in flush_commands, it releases the shape.
+  // If the body was created, the Body owns the shape.
+  JPH_Shape_Destroy(final_shape); 
 
   BodyCreationProps props = {
     .mass = mass,
@@ -3589,8 +3598,9 @@ static PyObject *PhysicsWorld_create_compound_body(PhysicsWorldObject *self,
       settings, (uint64_t)make_handle(slot, self->generations[slot]));
 
   if (!ensure_command_capacity(self)) {
-    JPH_BodyCreationSettings_Destroy(settings);
-    JPH_Shape_Destroy(final_shape);
+    JPH_BodyCreationSettings_Destroy(settings); 
+    // ^ This releases the shape ref (Ref -> 0), effectively destroying the shape correctly.
+    
     self->slot_states[slot] = SLOT_EMPTY;
     self->free_slots[self->free_count++] = slot;
     SHADOW_UNLOCK(&self->shadow_lock);
@@ -3892,6 +3902,8 @@ static PyObject *PhysicsWorld_create_mesh_body(PhysicsWorldObject *self,
   JPH_BodyCreationSettings *settings = JPH_BodyCreationSettings_Create3(
       shape, &(JPH_RVec3){(double)px, (double)py, (double)pz},
       &(JPH_Quat){rx, ry, rz, rw}, JPH_MotionType_Static, 0);
+
+  JPH_Shape_Destroy(shape); 
 
   BodyHandle handle = make_handle(slot, self->generations[slot]);
   JPH_BodyCreationSettings_SetUserData(settings, (uint64_t)handle);
@@ -4606,8 +4618,7 @@ static PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
       // Very unlikely at this stage, but technically possible
       // We rely on Python GC to eventually clean up if we crash here, 
       // but strictly we should destroy the Jolt constraint.
-      // This requires complex unlocking logic. Let's just give Python an exception for now.
-      PyErr_Format(PyExc_RuntimeError, "Failed to create vehicle");
+      // This requires complex unlocking logic.
       return NULL;
   }
 
@@ -7205,6 +7216,8 @@ static PyObject *PhysicsWorld_create_heightfield(PhysicsWorldObject *self,
 
   JPH_BodyCreationSettings *settings = JPH_BodyCreationSettings_Create3(
       shape, pos, rot, JPH_MotionType_Static, 0);
+
+  JPH_Shape_Destroy(shape);
 
   JPH_BodyCreationSettings_SetFriction(settings, friction);
   JPH_BodyCreationSettings_SetRestitution(settings, restitution);
