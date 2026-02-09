@@ -6740,27 +6740,27 @@ static PyObject *RagdollSettings_stabilize(RagdollSettingsObject *self,
 // --- Ragdoll Instance Implementation ---
 
 static void Ragdoll_dealloc(RagdollObject *self) {
-  // 1. Clean up Physics World Registration
   if (self->world && self->ragdoll) {
     SHADOW_LOCK(&self->world->shadow_lock);
 
-    // Guard against concurrency
     BLOCK_UNTIL_NOT_STEPPING(self->world);
     BLOCK_UNTIL_NOT_QUERYING(self->world);
 
-    // Remove from simulation
     JPH_Ragdoll_RemoveFromPhysicsSystem(self->ragdoll, true);
 
-    // Free Slots in World
-    // We must perform the Swap-and-Pop logic for EVERY body in the ragdoll.
-    // This is expensive but necessary.
-    for (size_t i = 0; i < self->body_count; i++) {
-      uint32_t slot = self->body_slots[i];
-      if (self->world->slot_states[slot] != SLOT_ALIVE) {
-        continue; // Already dead?
-      }
+    // Validate pointers before iteration to prevent corruption
+    if (self->body_slots && self->world->slot_states) {
+        for (size_t i = 0; i < self->body_count; i++) {
+          uint32_t slot = self->body_slots[i];
+          
+          // Boundary check
+          if (slot >= self->world->slot_capacity) continue;
 
-      world_remove_body_slot(self->world, slot);
+          if (self->world->slot_states[slot] != SLOT_ALIVE) {
+            continue; 
+          }
+          world_remove_body_slot(self->world, slot);
+        }
     }
     SHADOW_UNLOCK(&self->world->shadow_lock);
   }
@@ -6770,6 +6770,7 @@ static void Ragdoll_dealloc(RagdollObject *self) {
   }
   if (self->body_slots) {
     PyMem_RawFree(self->body_slots);
+    self->body_slots = NULL; // Prevent double-free in weird recursion cases
   }
 
   Py_XDECREF(self->world);
