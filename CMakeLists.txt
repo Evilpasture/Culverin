@@ -34,7 +34,7 @@ if(MSVC OR (WIN32 AND CMAKE_C_COMPILER_ID MATCHES "Clang"))
     if(CMAKE_C_COMPILER_ID MATCHES "Clang")
         set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /clang:-std=c11")
     else()
-        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /std:c11 /experimental:c11atomics")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /std:c11 /experimental:c11atomics /fp:fast")
     endif()
 else()
     # LINUX & MACOS
@@ -89,6 +89,16 @@ target_link_libraries(${JOLTC_TARGET} PRIVATE Jolt)
 
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 python_add_library(_culverin_c MODULE src/culverin/culverin.c src/culverin/shadow_sync.c)
+if(MSVC)
+    # 1. Add /Zi to generate debug info (symbols) even in Release builds
+    # 2. Add /DEBUG to the linker to create the .pdb file
+    # 3. Add /OPT:REF /OPT:ICF to ensure the Release build remains optimized and small
+    target_compile_options(_culverin_c PRIVATE /Zi /std:c11 /experimental:c11atomics /fp:fast)
+    target_link_options(_culverin_c PRIVATE /DEBUG /OPT:REF /OPT:ICF)
+    
+    # Fix for some MSVC headers being stubborn about standards
+    target_compile_definitions(_culverin_c PRIVATE _CRT_DECLARE_NONSTDC_NAMES=1)
+endif()
 target_include_directories(_culverin_c PRIVATE "extern/JoltC/include" "${JOLT_DIR}" ${Python_INCLUDE_DIRS})
 
 if(WIN32)
@@ -107,4 +117,8 @@ set_property(TARGET ${JOLTC_TARGET} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded
 set_property(TARGET _culverin_c PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 
 install(TARGETS _culverin_c DESTINATION .)
+if(MSVC)
+    # We use a Generator Expression to find the exact PDB location
+    install(FILES $<TARGET_PDB_FILE:_culverin_c> DESTINATION . OPTIONAL)
+endif()
 install(FILES src/culverin/__init__.py src/culverin/_culverin.py DESTINATION .)
