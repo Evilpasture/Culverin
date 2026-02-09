@@ -9,6 +9,8 @@
 #include <stdatomic.h>
 #include <stddef.h>
 #include <string.h>
+// MSVC and Intel use intrinsics
+#include <immintrin.h>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -32,22 +34,20 @@
 
 // Allocate 'Type' on the stack with guaranteed 32-byte alignment.
 // USAGE: JPH_STACK_ALLOC(JPH_RVec3, my_vec);
-#if defined(_MSC_VER)
-// Microsoft Visual Studio syntax
-#define JPH_ALIGNED_STORAGE(Type, Name, Align)                                 \
-  __declspec(align(Align)) Type Name
-#elif defined(__GNUC__) || defined(__clang__)
-// GCC/Clang syntax (supports both C and C++)
-#define JPH_ALIGNED_STORAGE(Type, Name, Align)                                 \
-  Type Name __attribute__((aligned(Align)))
+#if defined(__clang__) || defined(__GNUC__)
+  // Clang/LLVM alignment logic (highly robust)
+  #define JPH_ALIGNED_STORAGE(Type, Name, Align) \
+    Type Name __attribute__((aligned(Align)))
+#elif defined(_MSC_VER)
+  #define JPH_ALIGNED_STORAGE(Type, Name, Align) \
+    __declspec(align(Align)) Type Name
 #else
-// Standard C11 (requires <stdalign.h> if not in C++)
-#include <stdalign.h>
-#define JPH_ALIGNED_STORAGE(Type, Name, Align) alignas(Align) Type Name
+  #include <stdalign.h>
+  #define JPH_ALIGNED_STORAGE(Type, Name, Align) alignas(Align) Type Name
 #endif
 
-#define JPH_STACK_ALLOC(Type, Name)                                            \
-  JPH_ALIGNED_STORAGE(Type, Name##_storage, 32);                               \
+#define JPH_STACK_ALLOC(Type, Name) \
+  JPH_ALIGNED_STORAGE(Type, Name##_storage, 32); \
   Type *Name = &Name##_storage
 
 // --- Lock Helpers in culverin.h ---
@@ -107,8 +107,6 @@ typedef PyThread_type_lock ShadowMutex;
 // Processor-level hint to save power during spin-waits
 static inline void culverin_cpu_relax() {
 #if defined(_MSC_VER) || defined(__INTEL_COMPILER)
-// MSVC and Intel use intrinsics
-#include <immintrin.h>
   _mm_pause();
 #elif defined(__GNUC__) || defined(__clang__)
 #if defined(__i386__) || defined(__x86_64__)
