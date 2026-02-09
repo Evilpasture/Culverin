@@ -4074,17 +4074,19 @@ static JPH_WheelSettings *create_single_wheel(PyObject *w_dict,
   // 2. Parse Float Attributes using consistent helper
   float radius = get_py_float_attr(w_dict, "radius", 0.4f);
   float width = get_py_float_attr(w_dict, "width", 0.2f);
+  float brake = get_py_float_attr(w_dict, "brake_torque", 1500.0f);
+  float handbrake = get_py_float_attr(w_dict, "handbrake_torque", 4000.0f);
+  float susp_max = get_py_float_attr(w_dict, "suspension", 0.3f);
+  float freq = get_py_float_attr(w_dict, "spring_freq", 1.5f);
+  float damp = get_py_float_attr(w_dict, "spring_damp", 0.5f);
 
   // 3. Jolt Object Setup
   JPH_WheelSettingsWV *w = JPH_WheelSettingsWV_Create();
   // A standard wheel has an inertia of about 0.1 to 0.5
   JPH_WheelSettingsWV_SetInertia(w, 0.5f);
   JPH_WheelSettings_SetSuspensionMinLength((JPH_WheelSettings *)w, 0.05f);
-  JPH_WheelSettings_SetSuspensionMaxLength((JPH_WheelSettings *)w, 0.3f); // 30cm travel
-  JPH_SpringSettings spring = {0};
-  spring.mode = JPH_SpringMode_FrequencyAndDamping;
-  spring.frequencyOrStiffness = 4.0f; // Strong enough to hold the car
-  spring.damping = 0.7f;
+  JPH_WheelSettings_SetSuspensionMaxLength((JPH_WheelSettings *)w, susp_max); 
+  JPH_SpringSettings spring = {JPH_SpringMode_FrequencyAndDamping, freq, damp};
   JPH_WheelSettings_SetSuspensionSpring((JPH_WheelSettings *)w, &spring);
   // The axis the wheel pivots around for steering
   JPH_WheelSettings_SetSteeringAxis((JPH_WheelSettings *)w, &(JPH_Vec3){0, 1.0f, 0});
@@ -4097,13 +4099,13 @@ static JPH_WheelSettings *create_single_wheel(PyObject *w_dict,
   
   // Suspension direction (the way the shock absorber moves) - usually opposite to Up
   JPH_WheelSettings_SetSuspensionDirection((JPH_WheelSettings *)w, &(JPH_Vec3){0, -1.0f, 0});
-  JPH_WheelSettingsWV_SetMaxBrakeTorque(w, 1500.0f); 
+  JPH_WheelSettingsWV_SetMaxBrakeTorque(w, brake);
   if (pos.z > 0.1f) {
       JPH_WheelSettingsWV_SetMaxSteerAngle(w, 0.5f);
       JPH_WheelSettingsWV_SetMaxHandBrakeTorque(w, 0.0f);
   } else {
       JPH_WheelSettingsWV_SetMaxSteerAngle(w, 0.0f);
-      JPH_WheelSettingsWV_SetMaxHandBrakeTorque(w, 4000.0f);
+      JPH_WheelSettingsWV_SetMaxHandBrakeTorque(w, handbrake);
   }
   JPH_WheelSettings_SetPosition((JPH_WheelSettings *)w,
                                 &(JPH_Vec3){pos.x, pos.y, pos.z});
@@ -4136,17 +4138,6 @@ setup_vehicle_differentials(JPH_WheeledVehicleControllerSettings *v_ctrl,
 }
 
 // --- Internal Helpers for Vehicle Construction ---
-
-typedef struct {
-  JPH_LinearCurve *f_curve;
-  JPH_LinearCurve *t_curve;
-  JPH_WheelSettings **w_settings;
-  JPH_WheeledVehicleControllerSettings *v_ctrl;
-  JPH_VehicleTransmissionSettings *v_trans_set;
-  JPH_VehicleCollisionTesterRay *tester;
-  JPH_VehicleConstraint *j_veh;
-  bool is_added_to_world;
-} VehicleResources;
 
 static void cleanup_vehicle_resources(VehicleResources *r, uint32_t num_wheels,
                                       PhysicsWorldObject *self) {
@@ -4212,41 +4203,70 @@ static void setup_transmission(JPH_WheeledVehicleControllerSettings *v_ctrl,
                                PyObject *py_trans) {
   // Determine mode
   int t_mode = 1; // Default Manual
-  PyObject *o_mode = (py_trans && py_trans != Py_None)
-                         ? PyObject_GetAttrString(py_trans, "mode")
-                         : NULL;
-  if (o_mode) {
-    t_mode = (int)PyLong_AsLong(o_mode);
-    Py_DECREF(o_mode);
+  if (py_trans && py_trans != Py_None) {
+      PyObject *o_mode = PyObject_GetAttrString(py_trans, "mode");
+      if (o_mode) {
+          t_mode = (int)PyLong_AsLong(o_mode);
+          Py_DECREF(o_mode);
+      }
+      PyErr_Clear();
   }
-  PyErr_Clear();
 
   JPH_VehicleTransmissionSettings_SetMode(v_trans_set,
                                           (JPH_TransmissionMode)t_mode);
   JPH_VehicleTransmissionSettings_SetClutchStrength(
       v_trans_set, get_py_float_attr(py_trans, "clutch_strength", 2000.0f));
 
-  // --- Define default gear ratios to prevent Division by Zero ---
-  // If py_trans doesn't provide ratios, we must provide defaults.
-  float forward_gears[] = {2.8f, 1.75f, 1.3f, 1.0f, 0.8f};
-  JPH_VehicleTransmissionSettings_SetGearRatios(v_trans_set, forward_gears, 5);
+  // Extract Gear Ratios from Python list
+  if (py_trans && py_trans != Py_None) {
+      PyObject *py_ratios = PyObject_GetAttrString(py_trans, "ratios");
+      if (py_ratios && PyList_Check(py_ratios)) {
+          Py_ssize_t n = PyList_Size(py_ratios);
+          float* r = PyMem_RawMalloc(n * sizeof(float));
+          if (r) {
+              for(Py_ssize_t i=0; i<n; i++) r[i] = (float)PyFloat_AsDouble(PyList_GetItem(py_ratios, i));
+              JPH_VehicleTransmissionSettings_SetGearRatios(v_trans_set, r, (int)n);
+              PyMem_RawFree(r);
+          }
+      }
+      Py_XDECREF(py_ratios);
+      PyErr_Clear();
+  } else {
+      // DEFAULT GEARS: If no transmission object provided, give it some standard gears
+      // Otherwise, the car will have 0 gears and won't move!
+      float default_ratios[] = { 2.66f, 1.78f, 1.30f, 1.00f, 0.74f, 0.50f };
+      JPH_VehicleTransmissionSettings_SetGearRatios(v_trans_set, default_ratios, 6);
+  }
   
-  float reverse_gears[] = {-3.0f};
-  JPH_VehicleTransmissionSettings_SetReverseGearRatios(v_trans_set, reverse_gears, 1);
-
-  JPH_WheeledVehicleControllerSettings_SetTransmission(v_ctrl, v_trans_set);
+  // Apply Differential Ratio from Python Transmission object
+  float diff_ratio = get_py_float_attr(py_trans, "differential_ratio", 3.42f);
+  uint32_t num_diffs = JPH_WheeledVehicleControllerSettings_GetDifferentialsCount(v_ctrl);
+  for (uint32_t d = 0; d < num_diffs; d++) {
+    JPH_VehicleDifferentialSettings ds;
+    
+    // 1. Get the current settings (Pass pointer to 'ds' as 3rd arg)
+    JPH_WheeledVehicleControllerSettings_GetDifferential(v_ctrl, d, &ds);
+    
+    // 2. Modify the local copy
+    ds.differentialRatio = diff_ratio;
+    
+    // 3. Set it back (Most wrappers have a matching SetDifferential)
+    JPH_WheeledVehicleControllerSettings_SetDifferential(v_ctrl, d, &ds);
+  }
 }
 
 // --- Main coordinate function (Complexity: 1) ---
 static void configure_drivetrain(VehicleResources *r, PyObject *py_engine,
                                  PyObject *py_trans, const char *drive_str,
                                  uint32_t num_wheels) {
+  // 1. Setup Diffs FIRST so they exist when we want to set ratios
+  setup_vehicle_differentials(r->v_ctrl, drive_str, num_wheels);
 
+  // 2. Setup Engine
   setup_engine(r->v_ctrl, r->t_curve, py_engine);
 
+  // 3. Setup Transmission (Now can find the diffs to apply the ratio)
   setup_transmission(r->v_ctrl, r->v_trans_set, py_trans);
-
-  setup_vehicle_differentials(r->v_ctrl, drive_str, num_wheels);
 }
 
 // --- Main Function ---
@@ -4299,8 +4319,9 @@ static PyObject *PhysicsWorld_create_vehicle(PhysicsWorldObject *self,
   // 2. Initialize Resources
   VehicleResources r = {0};
   r.f_curve = JPH_LinearCurve_Create();
-  JPH_LinearCurve_AddPoint(r.f_curve, 0.0f, 1.0f);
-  JPH_LinearCurve_AddPoint(r.f_curve, 1.0f, 1.0f);
+  JPH_LinearCurve_AddPoint(r.f_curve, 0.0f, 1.0f);   // Full grip at stop
+  JPH_LinearCurve_AddPoint(r.f_curve, 0.1f, 2.0f);   // Peak grip (10% slip)
+  JPH_LinearCurve_AddPoint(r.f_curve, 1.0f, 1.2f);   // Sliding grip
   r.t_curve = JPH_LinearCurve_Create();
   JPH_LinearCurve_AddPoint(r.t_curve, 0.0f, 1.0f);
   JPH_LinearCurve_AddPoint(r.t_curve, 1.0f, 1.0f);
@@ -4336,9 +4357,15 @@ static PyObject *PhysicsWorld_create_vehicle(PhysicsWorldObject *self,
     JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
     return NULL;
   }
-
+  // --- COLLISION TESTER SETUP ---
+  // CRITICAL: The raycaster MUST use ObjectLayer 1 (MOVING).
+  // Logic: In Culverin, the floor is Layer 0 (STATIC). Jolt's collision filters 
+  // are configured so that Static does NOT collide with Static (0 vs 0).
+  // If you set this to 0, the wheels will fall through the floor. 
+  // Setting this to 1 ensures the rays are "Moving," allowing them to 
+  // detect and collide with the "Static" floor.
   r.tester =
-      r.tester = JPH_VehicleCollisionTesterRay_Create(0, &(JPH_Vec3){0, 1.0f, 0}, 2.0f);
+      r.tester = JPH_VehicleCollisionTesterRay_Create(1, &(JPH_Vec3){0, 1.0f, 0}, 2.0f);
   JPH_VehicleConstraint_SetVehicleCollisionTester(
       r.j_veh, (JPH_VehicleCollisionTester *)r.tester);
 
@@ -5690,74 +5717,74 @@ static PyObject *PhysicsWorld_get_render_state(PhysicsWorldObject *self,
 
 // --- Vehicles Methods ---
 
-static PyObject *Vehicle_set_input(VehicleObject *self, PyObject *args,
-                                   PyObject *kwds) {
+static PyObject *Vehicle_set_input(VehicleObject *self, PyObject *args, PyObject *kwds) {
   float forward = 0.0f, right = 0.0f, brake = 0.0f, handbrake = 0.0f;
   static char *kwlist[] = {"forward", "right", "brake", "handbrake", NULL};
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "|ffff", kwlist, &forward, &right, &brake, &handbrake)) 
     return NULL;
 
   SHADOW_LOCK(&self->world->shadow_lock);
-  // Re-entrancy guard
   if (UNLIKELY(self->world->is_stepping || !self->vehicle)) {
     SHADOW_UNLOCK(&self->world->shadow_lock);
     Py_RETURN_NONE;
   }
 
   JPH_WheeledVehicleController *controller = (JPH_WheeledVehicleController *)JPH_VehicleConstraint_GetController(self->vehicle);
-  JPH_BodyInterface *bi = self->world->body_interface;
   JPH_BodyID chassis_id = JPH_Body_GetID(JPH_VehicleConstraint_GetVehicleBody(self->vehicle));
-
-  // 1. Wake Body
+  JPH_BodyInterface *bi = self->world->body_interface;
   JPH_BodyInterface_ActivateBody(bi, chassis_id);
 
-  // 2. Query Velocity and Rotation for Speed Calculation
+  // 1. Get Directional Speed
   JPH_STACK_ALLOC(JPH_Vec3, linear_vel);
   JPH_BodyInterface_GetLinearVelocity(bi, chassis_id, linear_vel);
   JPH_STACK_ALLOC(JPH_Quat, chassis_q);
   JPH_BodyInterface_GetRotation(bi, chassis_id, chassis_q);
-
-  // Calculate World Forward
   JPH_Vec3 world_fwd;
   manual_vec3_rotate_by_quat(&(JPH_Vec3){0, 0, 1.0f}, chassis_q, &world_fwd);
   float speed = (linear_vel->x * world_fwd.x) + (linear_vel->y * world_fwd.y) + (linear_vel->z * world_fwd.z);
 
-  // 3. Logic: Determine Intended Movement
-  float input_throttle = 0.0f;
+  float input_throttle = fabsf(forward);
   float input_brake = brake;
-  int requested_direction = 0; // 1: Forward, -1: Reverse, 0: Neutral
 
-  if (forward > 0.01f) {
-    if (speed < -0.5f) { input_brake = 1.0f; } // Moving backward, pressing forward -> Brake
-    else { input_throttle = forward; requested_direction = 1; }
-  } else if (forward < -0.01f) {
-    if (speed > 0.5f) { input_brake = 1.0f; } // Moving forward, pressing backward -> Brake
-    else { input_throttle = fabsf(forward); requested_direction = -1; }
-  }
-
-  // 4. Transmission Management (Undeclared Function fix)
   JPH_VehicleTransmission *trans = (JPH_VehicleTransmission *)JPH_WheeledVehicleController_GetTransmission(controller);
-  if (trans) {
-    int current_gear = JPH_VehicleTransmission_GetCurrentGear(trans);
+  int cur_gear = JPH_VehicleTransmission_GetCurrentGear(trans);
 
-    // Smart Gear Switching:
-    // We only call SetGear when switching between Forward/Reverse/Neutral.
-    // If we are already in a forward gear (1,2,3...) we let Jolt's Auto-trans handle it.
-    if (requested_direction == 1 && current_gear <= 0) {
-        // Shift from Neutral/Reverse to Drive
-        JPH_VehicleTransmission_Set(trans, 1, 1.0f);
-    } 
-    else if (requested_direction == -1 && current_gear >= 0) {
-        // Shift from Neutral/Drive to Reverse
-        JPH_VehicleTransmission_Set(trans, -1, 1.0f);
-    }
-    else if (requested_direction == 0 && current_gear != 0 && fabsf(speed) < 0.2f) {
-        // Shift to Neutral when stopped and no input
-        JPH_VehicleTransmission_Set(trans, 0, 0.0f);
-    }
+  // 2. DRIVE STATE MACHINE
+  if (forward > 0.01f) {
+      // FORWARD: Auto Shifting
+      JPH_VehicleTransmission_SetMode(trans, JPH_TransmissionMode_Auto);
+      // Force into Gear 1 if we were stuck in Neutral/Reverse
+      if (cur_gear <= 0 && speed > -0.5f) {
+          JPH_VehicleTransmission_Set(trans, 1, 1.0f);
+      }
+      // Arcade Brake: Moving back while wanting forward
+      if (speed < -0.1f) input_brake = 1.0f;
+  } 
+  else if (forward < -0.01f) {
+      // REVERSE: Manual Shifting
+      JPH_VehicleTransmission_SetMode(trans, JPH_TransmissionMode_Manual);
+      // Force into Gear -1 if we aren't there
+      if (cur_gear != -1 && speed < 0.5f) {
+          JPH_VehicleTransmission_Set(trans, -1, 1.0f);
+      }
+      // Arcade Brake: Moving forward while wanting reverse
+      if (speed > 0.1f) input_brake = 1.0f;
+  } 
+  else {
+      // COASTING: Neutral Force
+      input_throttle = 0.0f;
+      // Disconnect engine immediately to stop "Idle Creep" acceleration
+      JPH_VehicleTransmission_SetMode(trans, JPH_TransmissionMode_Manual);
+      if (cur_gear != 0) {
+          JPH_VehicleTransmission_Set(trans, 0, 0.0f); // 0.0 clutch = no connection
+      }
+      // Apply 5% rolling resistance to guarantee speed decay in Test 4
+      if (fabsf(speed) > 0.1f) {
+          input_brake = fmaxf(input_brake, 0.05f);
+      }
   }
 
-  // 5. Apply to Jolt
+  // 3. Final Driver Input
   JPH_WheeledVehicleController_SetDriverInput(controller, input_throttle, right, input_brake, handbrake);
 
   SHADOW_UNLOCK(&self->world->shadow_lock);

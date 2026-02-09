@@ -49,27 +49,25 @@ class Engine:
         self.inertia = float(inertia)
 
 class Transmission:
-    def __init__(self, gears: Union[int, list] = 5, clutch_strength=2000.0):
+    def __init__(self, gears=5, clutch_strength=2000.0, differential_ratio=3.42):
         self.clutch_strength = float(clutch_strength)
-        # If gears is an int, provide standard ratios. If list, use as provided.
-        if isinstance(gears, int):
-            # Standard 1st to Nth ratios
-            presets = [4.0, 2.5, 1.7, 1.2, 1.0, 0.8, 0.7]
-            self.ratios = presets[:gears]
-        else:
-            self.ratios = [float(g) for g in gears]
-        self.reverse_ratios = [-3.0]
+        self.differential_ratio = float(differential_ratio)
+        # Default ratios for a 5-speed
+        presets = [2.66, 1.78, 1.30, 1.0, 0.74]
+        self.ratios = presets[:gears]
+        self.reverse_ratios = [-2.90]
 
 class Automatic(Transmission):
-    def __init__(self, gears=5, clutch_strength=2000.0, shift_up_rpm=5000.0, shift_down_rpm=2000.0):
-        super().__init__(gears, clutch_strength)
+    def __init__(self, gears=5, clutch_strength=2000.0, differential_ratio=3.42, 
+                 shift_up_rpm=5000.0, shift_down_rpm=2000.0):
+        super().__init__(gears, clutch_strength, differential_ratio)
         self.mode = 0 # JPH_TransmissionMode_Auto
         self.shift_up_rpm = float(shift_up_rpm)
         self.shift_down_rpm = float(shift_down_rpm)
 
 class Manual(Transmission):
-    def __init__(self, gears=5, clutch_strength=5000.0):
-        super().__init__(gears, clutch_strength)
+    def __init__(self, gears=5, clutch_strength=5000.0, differential_ratio=3.42):
+        super().__init__(gears, clutch_strength, differential_ratio)
         self.mode = 1 # JPH_TransmissionMode_Manual
 
 class Skeleton:

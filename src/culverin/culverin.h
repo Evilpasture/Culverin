@@ -2,7 +2,7 @@
 #define PYJOLT_H
 
 #define PY_SSIZE_T_CLEAN
-#include "joltc.h"
+#include "joltc.h" // Amer Koleci's JoltC binder.
 #include <Python.h>
 #include <float.h>
 #include <math.h>
@@ -557,6 +557,17 @@ typedef struct {
   float prev_px, prev_py, prev_pz;
   float prev_rx, prev_ry, prev_rz, prev_rw;
 } CharacterObject;
+
+typedef struct {
+  JPH_LinearCurve *f_curve;
+  JPH_LinearCurve *t_curve;
+  JPH_WheelSettings **w_settings;
+  JPH_WheeledVehicleControllerSettings *v_ctrl;
+  JPH_VehicleTransmissionSettings *v_trans_set;
+  JPH_VehicleCollisionTesterRay *tester;
+  JPH_VehicleConstraint *j_veh;
+  bool is_added_to_world;
+} VehicleResources;
 
 typedef struct {
   PyObject_HEAD JPH_VehicleConstraint *vehicle;
