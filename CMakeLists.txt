@@ -33,8 +33,14 @@ if(MSVC OR (WIN32 AND CMAKE_C_COMPILER_ID MATCHES "Clang"))
     add_compile_options(/arch:AVX2)
     if(CMAKE_C_COMPILER_ID MATCHES "Clang")
         set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /clang:-std=c11")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /std:c++17")
+        set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /clang:-O3 /Ob2")
+        set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /clang:-O3 /Ob2")
+        message(STATUS "Culverin: Enabled /clang:-O3 for Release builds")
     else()
         set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /std:c11 /experimental:c11atomics /fp:fast")
+        set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /Ox /Ob2")
+        set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /Ox /Ob2")
     endif()
 else()
     # LINUX & MACOS
@@ -50,6 +56,9 @@ else()
 
     # Standard C11 for all Unix-like
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c11")
+    # Ensure, just in case.
+    set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -O3")
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3")
 endif()
 
 
