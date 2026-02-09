@@ -188,11 +188,19 @@ typedef enum {
 
 // --- Unified Parameter Struct ---
 typedef struct {
-  float px, py, pz;      // Pivot / Point
-  float ax, ay, az;      // Axis (Hinge/Slider/Cone)
-  float limit_min;       // Min Angle or Min Distance
-  float limit_max;       // Max Angle or Max Distance
-  float half_cone_angle; // Cone specific
+  float px, py, pz;      // Pivot
+  float ax, ay, az;      // Axis
+  float limit_min;       // Limits
+  float limit_max;
+  float half_cone_angle; 
+  
+  // --- NEW: Motor Settings ---
+  bool has_motor;
+  int motor_type;     // 0=Off, 1=Velocity, 2=Position
+  float motor_target; // Target Velocity or Target Position
+  float max_torque;   // Max Force/Torque
+  float frequency;    // Spring stiffness (0 = stiff)
+  float damping;      // Spring damping
 } ConstraintParams;
 
 // Minimal Handle for Constraints (Distinct from BodyHandle)

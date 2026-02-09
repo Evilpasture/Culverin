@@ -4,6 +4,30 @@
 static ShadowMutex
     g_jph_trampoline_lock; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
+// --- Low-complexity helper to fetch attributes with a fallback ---
+static float get_py_float_attr(PyObject *obj, const char *name,
+                               float default_val) {
+  if (!obj || obj == Py_None) {
+    return default_val;
+  }
+
+  float result = default_val;
+  PyObject *attr = PyObject_GetAttrString(obj, name);
+
+  if (attr) {
+    double v = PyFloat_AsDouble(attr);
+    if (!PyErr_Occurred()) {
+      result = (float)v;
+    }
+    Py_DECREF(attr);
+  }
+
+  // Clear any errors (like AttributeError) to allow fallback to default
+  PyErr_Clear();
+  return result;
+}
+
+
 // --- Handle Helper ---
 static inline BodyHandle make_handle(uint32_t slot, uint32_t gen) {
   return ((uint64_t)gen << 32) | (uint64_t)slot;
@@ -1067,20 +1091,32 @@ static int init_jolt_core(PhysicsWorldObject *self, WorldLimits limits, GravityV
   JobSystemThreadPoolConfig job_cfg = {
       .maxJobs = 1024, .maxBarriers = 8, .numThreads = -1};
   self->job_system = JPH_JobSystemThreadPool_Create(&job_cfg);
-  self->bp_interface = JPH_BroadPhaseLayerInterfaceTable_Create(2, 2);
-  JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(
-      self->bp_interface, 0, 0);
-  JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(
-      self->bp_interface, 1, 1);
-  self->pair_filter = JPH_ObjectLayerPairFilterTable_Create(2);
-  JPH_ObjectLayerPairFilterTable_EnableCollision(self->pair_filter, 1, 0);
+
+  // --- 3 LAYERS: 0=Static, 1=Dynamic, 2=VehicleRay ---
+  self->bp_interface = JPH_BroadPhaseLayerInterfaceTable_Create(3, 3);
+  JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(self->bp_interface, 0, 0);
+  JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(self->bp_interface, 1, 1);
+  JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(self->bp_interface, 2, 2);
+
+  self->pair_filter = JPH_ObjectLayerPairFilterTable_Create(3);
+  
+  // Matrix:
+  // 0 (Static)  vs 1 (Dynamic) -> ON
+  // 0 (Static)  vs 2 (Ray)     -> ON
+  // 1 (Dynamic) vs 1 (Dynamic) -> ON
+  // 1 (Dynamic) vs 2 (Ray)     -> OFF (Fixes self-collision)
+  // 2 (Ray)     vs 2 (Ray)     -> OFF
+  JPH_ObjectLayerPairFilterTable_EnableCollision(self->pair_filter, 0, 1);
+  JPH_ObjectLayerPairFilterTable_EnableCollision(self->pair_filter, 0, 2);
   JPH_ObjectLayerPairFilterTable_EnableCollision(self->pair_filter, 1, 1);
+  JPH_ObjectLayerPairFilterTable_DisableCollision(self->pair_filter, 1, 2);
+
   self->bp_filter = JPH_ObjectVsBroadPhaseLayerFilterTable_Create(
-      self->bp_interface, 2, self->pair_filter, 2);
+      self->bp_interface, 3, self->pair_filter, 3);
 
   JPH_PhysicsSystemSettings phys_settings = {
         .maxBodies = (uint32_t)limits.max_bodies,
-        .maxBodyPairs = (uint32_t)limits.max_pairs, // Now safe
+        .maxBodyPairs = (uint32_t)limits.max_pairs, 
         .maxContactConstraints = 1024*1024,
         .broadPhaseLayerInterface = self->bp_interface,
         .objectLayerPairFilter = self->pair_filter,
@@ -1419,6 +1455,36 @@ static PyObject *PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self,
   
   SHADOW_UNLOCK(&self->shadow_lock);
   Py_RETURN_NONE;
+}
+
+static PyObject *PhysicsWorld_apply_angular_impulse(PhysicsWorldObject *self, PyObject *args, PyObject *kwds) {
+    uint64_t h;
+    float x, y, z;
+    static char *kwlist[] = {"handle", "x", "y", "z", NULL};
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "Kfff", kwlist, &h, &x, &y, &z)) {
+        return NULL;
+    }
+
+    SHADOW_LOCK(&self->shadow_lock);
+    BLOCK_UNTIL_NOT_STEPPING(self);
+    
+    uint32_t slot = 0;
+    if (!unpack_handle(self, h, &slot) || self->slot_states[slot] != SLOT_ALIVE) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_SetString(PyExc_ValueError, "Invalid handle");
+        return NULL;
+    }
+
+    JPH_BodyID bid = self->body_ids[self->slot_to_dense[slot]];
+    JPH_Vec3 imp = {x, y, z};
+    
+    // Call Jolt's Angular Impulse API
+    JPH_BodyInterface_AddAngularImpulse(self->body_interface, bid, &imp);
+    JPH_BodyInterface_ActivateBody(self->body_interface, bid);
+
+    SHADOW_UNLOCK(&self->shadow_lock);
+    Py_RETURN_NONE;
 }
 
 // Helper 1: Run the Raycast (Encapsulates all Jolt Filter/Lock/Cleanup
@@ -2296,18 +2362,48 @@ static void flush_commands(PhysicsWorldObject *self) {
 
 // Initialize defaults to avoid garbage data
 static void params_init(ConstraintParams *p) {
-  p->px = 0;
-  p->py = 0;
-  p->pz = 0;
-  p->ax = 0;
-  p->ay = 1;
-  p->az = 0; // Default Up axis
+  memset(p, 0, sizeof(ConstraintParams)); // Zero everything first
+  p->ay = 1; // Default Up
   p->limit_min = -FLT_MAX;
   p->limit_max = FLT_MAX;
-  p->half_cone_angle = 0.0f;
+  p->frequency = 20.0f; // Default decent stiffness
+  p->damping = 1.0f;
 }
 
 // --- 1. Python Parsers ---
+
+static float get_py_dict_float(PyObject *dict, const char *key, float default_val) {
+    if (!dict || !PyDict_Check(dict)) return default_val;
+    PyObject *item = PyDict_GetItemString(dict, key); // Returns borrowed reference
+    if (item) {
+        double v = PyFloat_AsDouble(item);
+        if (!PyErr_Occurred()) return (float)v;
+        PyErr_Clear();
+    }
+    return default_val;
+}
+
+static void parse_motor_config(PyObject *motor_dict, ConstraintParams *p) {
+    if (!motor_dict || motor_dict == Py_None) return;
+    
+    p->has_motor = true;
+    
+    // Parse Mode string
+    PyObject* type_obj = PyDict_GetItemString(motor_dict, "mode");
+    if (type_obj) {
+        const char* s = PyUnicode_AsUTF8(type_obj);
+        if (s) {
+            if (strcmp(s, "velocity") == 0) p->motor_type = 1;
+            else if (strcmp(s, "position") == 0) p->motor_type = 2;
+        }
+    }
+    
+    // Parse Floats using DICT helper
+    p->motor_target = get_py_dict_float(motor_dict, "target", 0.0f);
+    p->max_torque = get_py_dict_float(motor_dict, "max_force", 1000.0f);
+    p->frequency = get_py_dict_float(motor_dict, "stiffness", 0.0f);
+    p->damping = get_py_dict_float(motor_dict, "damping", 1.0f);
+}
 
 static int parse_point_params(PyObject *args, ConstraintParams *p) {
   if (!args || args == Py_None) {
@@ -2379,41 +2475,48 @@ static JPH_Constraint *create_point(const ConstraintParams *p, JPH_Body *b1,
   return (JPH_Constraint *)JPH_PointConstraint_Create(&s, b1, b2);
 }
 
-static JPH_Constraint *create_hinge(const ConstraintParams *p, JPH_Body *b1,
-                                    JPH_Body *b2) {
+static JPH_Constraint *create_hinge(const ConstraintParams *p, JPH_Body *b1, JPH_Body *b2) {
   JPH_HingeConstraintSettings s;
   JPH_HingeConstraintSettings_Init(&s);
   s.base.enabled = true;
   s.space = JPH_ConstraintSpace_WorldSpace;
 
-  s.point1.x = p->px;
-  s.point1.y = p->py;
-  s.point1.z = p->pz;
+  s.point1.x = p->px; s.point1.y = p->py; s.point1.z = p->pz;
   s.point2 = s.point1;
 
   JPH_Vec3 axis = {p->ax, p->ay, p->az};
+  // ... (Keep existing normalization logic) ...
   float len_sq = axis.x * axis.x + axis.y * axis.y + axis.z * axis.z;
-
-  // SAFETY: If axis is zero, default to "UP" to prevent NaN explosion
-  if (len_sq < 1e-9f) {
-    axis.x = 0.0f;
-    axis.y = 1.0f;
-    axis.z = 0.0f;
-  } else {
-    JPH_Vec3_Normalize(&axis, &axis);
-  }
+  if (len_sq > 1e-9f) JPH_Vec3_Normalize(&axis, &axis);
+  else { axis.x = 0; axis.y = 1; axis.z = 0; }
 
   JPH_Vec3 norm;
   vec3_get_perpendicular(&axis, &norm);
 
-  s.hingeAxis1 = axis;
-  s.hingeAxis2 = axis;
-  s.normalAxis1 = norm;
-  s.normalAxis2 = norm;
+  s.hingeAxis1 = axis; s.hingeAxis2 = axis;
+  s.normalAxis1 = norm; s.normalAxis2 = norm;
   s.limitsMin = p->limit_min;
   s.limitsMax = p->limit_max;
 
-  return (JPH_Constraint *)JPH_HingeConstraint_Create(&s, b1, b2);
+  // --- MOTOR CONFIG ---
+  if (p->has_motor) {
+      s.motorSettings.springSettings.mode = (p->frequency > 0) ? JPH_SpringMode_FrequencyAndDamping : JPH_SpringMode_StiffnessAndDamping;
+      s.motorSettings.springSettings.frequencyOrStiffness = p->frequency;
+      s.motorSettings.springSettings.damping = p->damping;
+      s.motorSettings.maxTorqueLimit = p->max_torque;
+      s.motorSettings.minTorqueLimit = -p->max_torque;
+  }
+
+  JPH_HingeConstraint* c = JPH_HingeConstraint_Create(&s, b1, b2);
+  
+  // Apply Runtime State immediately
+  if (c && p->has_motor && p->motor_type > 0) {
+      JPH_HingeConstraint_SetMotorState(c, (JPH_MotorState)p->motor_type);
+      if (p->motor_type == 1) JPH_HingeConstraint_SetTargetAngularVelocity(c, p->motor_target);
+      if (p->motor_type == 2) JPH_HingeConstraint_SetTargetAngle(c, p->motor_target);
+  }
+  
+  return (JPH_Constraint *)c;
 }
 
 static JPH_Constraint *create_slider(const ConstraintParams *p, JPH_Body *b1,
@@ -2628,10 +2731,12 @@ static PyObject *PhysicsWorld_create_constraint(PhysicsWorldObject *self,
   uint64_t h1 = 0;
   uint64_t h2 = 0;
   PyObject *params = NULL;
-  static char *kwlist[] = {"type", "body1", "body2", "params", NULL};
+  PyObject *motor_dict = NULL; // NEW
+  
+  static char *kwlist[] = {"type", "body1", "body2", "params", "motor", NULL}; // Updated
 
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "iKK|O", kwlist, &type, &h1, &h2,
-                                   &params)) {
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "iKK|OO", kwlist, &type, &h1, &h2,
+                                   &params, &motor_dict)) {
     return NULL;
   }
 
@@ -2669,6 +2774,10 @@ static PyObject *PhysicsWorld_create_constraint(PhysicsWorldObject *self,
   }
   if (!parse_ok) {
     return NULL;
+  }
+
+  if (motor_dict) {
+      parse_motor_config(motor_dict, &p);
   }
 
   SHADOW_LOCK(&self->shadow_lock);
@@ -2836,6 +2945,63 @@ static PyObject *PhysicsWorld_destroy_constraint(PhysicsWorldObject *self,
   }
 
   Py_RETURN_NONE;
+}
+
+static PyObject *PhysicsWorld_set_constraint_target(PhysicsWorldObject *self,
+                                                    PyObject *args, PyObject *kwds) {
+    uint64_t h = 0;
+    float target = 0.0f;
+    static char *kwlist[] = {"handle", "target", NULL};
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "Kf", kwlist, &h, &target)) {
+        return NULL;
+    }
+
+    SHADOW_LOCK(&self->shadow_lock);
+    BLOCK_UNTIL_NOT_STEPPING(self);
+
+    uint32_t slot = 0;
+    if (!unpack_handle(self, h, &slot) || self->constraint_states[slot] != SLOT_ALIVE) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_SetString(PyExc_ValueError, "Invalid constraint handle");
+        return NULL;
+    }
+
+    JPH_Constraint* c = self->constraints[slot];
+    JPH_ConstraintType type = JPH_Constraint_GetType(c);
+    JPH_ConstraintSubType sub = JPH_Constraint_GetSubType(c);
+
+    // HINGE
+    if (sub == JPH_ConstraintSubType_Hinge) {
+        JPH_HingeConstraint* hc = (JPH_HingeConstraint*)c;
+        JPH_MotorState state = JPH_HingeConstraint_GetMotorState(hc);
+        if (state == JPH_MotorState_Velocity) {
+            JPH_HingeConstraint_SetTargetAngularVelocity(hc, target);
+        } else if (state == JPH_MotorState_Position) {
+            JPH_HingeConstraint_SetTargetAngle(hc, target);
+        }
+    }
+    // SLIDER
+    else if (sub == JPH_ConstraintSubType_Slider) {
+        JPH_SliderConstraint* sc = (JPH_SliderConstraint*)c;
+        JPH_MotorState state = JPH_SliderConstraint_GetMotorState(sc);
+        if (state == JPH_MotorState_Velocity) {
+            JPH_SliderConstraint_SetTargetVelocity(sc, target);
+        } else if (state == JPH_MotorState_Position) {
+            JPH_SliderConstraint_SetTargetPosition(sc, target);
+        }
+    }
+
+    // Wake up bodies!
+    if (type == JPH_ConstraintType_TwoBodyConstraint) {
+        JPH_Body* b1 = JPH_TwoBodyConstraint_GetBody1((JPH_TwoBodyConstraint*)c);
+        JPH_Body* b2 = JPH_TwoBodyConstraint_GetBody2((JPH_TwoBodyConstraint*)c);
+        JPH_BodyInterface_ActivateBody(self->body_interface, JPH_Body_GetID(b1));
+        JPH_BodyInterface_ActivateBody(self->body_interface, JPH_Body_GetID(b2));
+    }
+
+    SHADOW_UNLOCK(&self->shadow_lock);
+    Py_RETURN_NONE;
 }
 
 static PyObject *PhysicsWorld_save_state(PhysicsWorldObject *self,
@@ -4003,29 +4169,6 @@ static PyObject *PhysicsWorld_destroy_body(PhysicsWorldObject *self,
     PyErr_Clear();                                                             \
   } while (0)
 
-// --- Low-complexity helper to fetch attributes with a fallback ---
-static float get_py_float_attr(PyObject *obj, const char *name,
-                               float default_val) {
-  if (!obj || obj == Py_None) {
-    return default_val;
-  }
-
-  float result = default_val;
-  PyObject *attr = PyObject_GetAttrString(obj, name);
-
-  if (attr) {
-    double v = PyFloat_AsDouble(attr);
-    if (!PyErr_Occurred()) {
-      result = (float)v;
-    }
-    Py_DECREF(attr);
-  }
-
-  // Clear any errors (like AttributeError) to allow fallback to default
-  PyErr_Clear();
-  return result;
-}
-
 // vroom vroom
 // this is paperwork and i did surgery in the core
 // --- Internal Helpers to reduce complexity ---
@@ -4358,14 +4501,9 @@ static PyObject *PhysicsWorld_create_vehicle(PhysicsWorldObject *self,
     return NULL;
   }
   // --- COLLISION TESTER SETUP ---
-  // CRITICAL: The raycaster MUST use ObjectLayer 1 (MOVING).
-  // Logic: In Culverin, the floor is Layer 0 (STATIC). Jolt's collision filters 
-  // are configured so that Static does NOT collide with Static (0 vs 0).
-  // If you set this to 0, the wheels will fall through the floor. 
-  // Setting this to 1 ensures the rays are "Moving," allowing them to 
-  // detect and collide with the "Static" floor.
+  // Use Layer 2 for rays so they ignore Layer 1 (Chassis/Dynamic Bodies)
   r.tester =
-      r.tester = JPH_VehicleCollisionTesterRay_Create(1, &(JPH_Vec3){0, 1.0f, 0}, 2.0f);
+      r.tester = JPH_VehicleCollisionTesterRay_Create(2, &(JPH_Vec3){0, 1.0f, 0}, 2.0f);
   JPH_VehicleConstraint_SetVehicleCollisionTester(
       r.j_veh, (JPH_VehicleCollisionTester *)r.tester);
 
@@ -4415,16 +4553,17 @@ static PyObject *PhysicsWorld_create_vehicle(PhysicsWorldObject *self,
 static JPH_WheelSettings *create_track_wheel(PyObject *w_dict) {
   Vec3f pos;
   if (!parse_py_vec3(PyDict_GetItemString(w_dict, "pos"), &pos)) {
-    PyErr_SetString(PyExc_ValueError, "Wheel 'pos' must be a sequence of 3 floats");
     return NULL; 
   }
 
   float radius = get_py_float_attr(w_dict, "radius", 0.4f);
   float width = get_py_float_attr(w_dict, "width", 0.2f);
   float suspension_len = get_py_float_attr(w_dict, "suspension", 0.5f);
-  
-  // Tracked wheels use a float, not a curve
   float friction = get_py_float_attr(w_dict, "friction", 1.0f);
+  
+  // NEW: Suspension Spring Properties
+  float freq = get_py_float_attr(w_dict, "spring_freq", 2.0f); // Stiffness
+  float damp = get_py_float_attr(w_dict, "spring_damp", 0.5f); // Bounciness
 
   JPH_WheelSettingsTV *w = JPH_WheelSettingsTV_Create();
   
@@ -4435,7 +4574,10 @@ static JPH_WheelSettings *create_track_wheel(PyObject *w_dict) {
   JPH_WheelSettings_SetSuspensionMinLength((JPH_WheelSettings *)w, 0.05f);
   JPH_WheelSettings_SetSuspensionMaxLength((JPH_WheelSettings *)w, suspension_len); 
 
-  // FIXED: Pass 'friction' (float) instead of 'f_curve'
+  // NEW: Apply Spring
+  JPH_SpringSettings spring = {JPH_SpringMode_FrequencyAndDamping, freq, damp};
+  JPH_WheelSettings_SetSuspensionSpring((JPH_WheelSettings *)w, &spring);
+
   JPH_WheelSettingsTV_SetLongitudinalFriction(w, friction);
   JPH_WheelSettingsTV_SetLateralFriction(w, friction);
 
@@ -4608,10 +4750,9 @@ static PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
       return PyErr_Format(PyExc_RuntimeError, "Failed to create Tracked Vehicle Constraint");
   }
 
-  r.tester = JPH_VehicleCollisionTesterRay_Create(1, &(JPH_Vec3){0, 1.0f, 0}, 2.0f);
-  // FIX: Check tester creation
+  r.tester = JPH_VehicleCollisionTesterRay_Create(2, &(JPH_Vec3){0, 1.0f, 0}, 2.0f); // <--- CHANGED
   if (!r.tester) {
-      cleanup_vehicle_resources(&r, num_wheels, self); // Clean up j_veh too
+      cleanup_vehicle_resources(&r, num_wheels, self);
       JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
       if (track_indices_ptrs) {
           for(int i=0; i<num_tracks; i++) PyMem_RawFree(track_indices_ptrs[i]);
@@ -4670,40 +4811,33 @@ static PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
 
 // Helper: Set Tank Input
 static PyObject *Vehicle_set_tank_input(VehicleObject *self, PyObject *args, PyObject *kwds) {
-    float left = 0.0f;
-    float right = 0.0f;
-    float brake = 0.0f;
-    
+    float left = 0.0f, right = 0.0f, brake = 0.0f;
     static char *kwlist[] = {"left", "right", "brake", NULL};
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "ff|f", kwlist, &left, &right, &brake)) {
-        return NULL;
-    }
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "ff|f", kwlist, &left, &right, &brake)) return NULL;
 
     if (!self->vehicle || !self->world) Py_RETURN_NONE;
 
     SHADOW_LOCK(&self->world->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self->world);
 
-    // WAKE UP the tank so it can react to throttle
+    JPH_TrackedVehicleController* t_ctrl = (JPH_TrackedVehicleController*)JPH_VehicleConstraint_GetController(self->vehicle);
     JPH_BodyID bid = JPH_Body_GetID(JPH_VehicleConstraint_GetVehicleBody(self->vehicle));
     JPH_BodyInterface_ActivateBody(self->world->body_interface, bid);
     
-    JPH_TrackedVehicleController* t_ctrl = (JPH_TrackedVehicleController*)JPH_VehicleConstraint_GetController(self->vehicle);
+    JPH_VehicleTransmission* trans = (JPH_VehicleTransmission*)JPH_TrackedVehicleController_GetTransmission(t_ctrl);
+    int gear = JPH_VehicleTransmission_GetCurrentGear(trans);
     
-    // Convert Inputs: Jolt uses (Forward, LeftRatio, RightRatio, Brake)
-    float forward = (left + right) / 2.0f;
+    // Throttle is the max power requested by either track
+    float throttle = fmaxf(fabsf(left), fabsf(right));
     
-    // Fix Pivot Turn (Forward=0 but L/R opposed)
-    if (fabsf(forward) < 0.01f && fabsf(left - right) > 0.01f) {
-        forward = 1.0f; 
-    }
-    // Fix Reverse
-    if (forward < 0.0f) {
-        // When engine reverses, we must flip ratios to keep logic consistent
-        JPH_TrackedVehicleController_SetDriverInput(t_ctrl, forward, -left, -right, brake);
+    // Kickstart/Neutral logic
+    if (throttle > 0.01f) {
+        if (gear == 0) JPH_VehicleTransmission_Set(trans, 1, 1.0f); // Shift to 1
     } else {
-        JPH_TrackedVehicleController_SetDriverInput(t_ctrl, forward, left, right, brake);
+        if (gear != 0) JPH_VehicleTransmission_Set(trans, 0, 0.0f); // Force Neutral
     }
+
+    JPH_TrackedVehicleController_SetDriverInput(t_ctrl, throttle, left, right, brake);
     
     SHADOW_UNLOCK(&self->world->shadow_lock);
     Py_RETURN_NONE;
@@ -7406,6 +7540,8 @@ static const PyMethodDef PhysicsWorld_methods[] = {
     // --- Interaction ---
     {"apply_impulse", (PyCFunction)PhysicsWorld_apply_impulse,
      METH_VARARGS | METH_KEYWORDS, NULL},
+    {"apply_angular_impulse", (PyCFunction)PhysicsWorld_apply_angular_impulse, 
+     METH_VARARGS | METH_KEYWORDS, "Apply rotational momentum."},
     {"apply_impulse_at", (PyCFunction)PhysicsWorld_apply_impulse_at, 
      METH_VARARGS | METH_KEYWORDS, "Apply impulse at world position."},
     {"apply_buoyancy", (PyCFunction)PhysicsWorld_apply_buoyancy,
@@ -7426,6 +7562,8 @@ static const PyMethodDef PhysicsWorld_methods[] = {
      METH_VARARGS | METH_KEYWORDS, "Dynamically update collision bitmasks."},
     {"register_material", (PyCFunction)PhysicsWorld_register_material,
      METH_VARARGS | METH_KEYWORDS, "Define properties for a material ID."},
+    {"set_constraint_target", (PyCFunction)PhysicsWorld_set_constraint_target, 
+     METH_VARARGS | METH_KEYWORDS, NULL},
 
     // --- Motion Control ---
     {"get_motion_type", (PyCFunction)PhysicsWorld_get_motion_type,
