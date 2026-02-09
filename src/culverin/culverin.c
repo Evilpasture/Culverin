@@ -2288,14 +2288,6 @@ static void flush_commands(PhysicsWorldObject *self) {
 }
 
 // Constraints
-// --- 1. Unified Parameter Struct ---
-typedef struct {
-  float px, py, pz;      // Pivot / Point
-  float ax, ay, az;      // Axis (Hinge/Slider/Cone)
-  float limit_min;       // Min Angle or Min Distance
-  float limit_max;       // Max Angle or Max Distance
-  float half_cone_angle; // Cone specific
-} ConstraintParams;
 
 // Initialize defaults to avoid garbage data
 static void params_init(ConstraintParams *p) {
@@ -2310,7 +2302,7 @@ static void params_init(ConstraintParams *p) {
   p->half_cone_angle = 0.0f;
 }
 
-// --- 2. Python Parsers ---
+// --- 1. Python Parsers ---
 
 static int parse_point_params(PyObject *args, ConstraintParams *p) {
   if (!args || args == Py_None) {
@@ -2358,7 +2350,7 @@ static int parse_distance_params(PyObject *args, ConstraintParams *p) {
   return PyArg_ParseTuple(args, "ff", &p->limit_min, &p->limit_max);
 }
 
-// --- 3. Jolt Creator Helpers ---
+// --- 2. Jolt Creator Helpers ---
 
 static JPH_Constraint *create_fixed(const ConstraintParams *p, JPH_Body *b1,
                                     JPH_Body *b2) {

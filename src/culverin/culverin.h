@@ -189,6 +189,15 @@ typedef enum {
   CONSTRAINT_CONE = 5
 } ConstraintType;
 
+// --- Unified Parameter Struct ---
+typedef struct {
+  float px, py, pz;      // Pivot / Point
+  float ax, ay, az;      // Axis (Hinge/Slider/Cone)
+  float limit_min;       // Min Angle or Min Distance
+  float limit_max;       // Max Angle or Max Distance
+  float half_cone_angle; // Cone specific
+} ConstraintParams;
+
 // Minimal Handle for Constraints (Distinct from BodyHandle)
 typedef uint64_t ConstraintHandle;
 
