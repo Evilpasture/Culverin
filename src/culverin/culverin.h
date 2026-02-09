@@ -9,8 +9,6 @@
 #include <stdatomic.h>
 #include <stddef.h>
 #include <string.h>
-// MSVC and Intel use intrinsics
-#include <immintrin.h>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -107,6 +105,7 @@ typedef PyThread_type_lock ShadowMutex;
 // Processor-level hint to save power during spin-waits
 static inline void culverin_cpu_relax() {
 #if defined(_MSC_VER) || defined(__INTEL_COMPILER)
+#include <immintrin.h>
   _mm_pause();
 #elif defined(__GNUC__) || defined(__clang__)
 #if defined(__i386__) || defined(__x86_64__)
