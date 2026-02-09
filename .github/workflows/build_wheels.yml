@@ -39,7 +39,7 @@ jobs:
           # FORCE modern macOS target for compatibility with Python 3.13
           MACOSX_DEPLOYMENT_TARGET: "13.0" 
           CIBW_ENVIRONMENT: "Py_GIL_DISABLED=1"
-          CIBW_ENVIRONMENT_WINDOWS: "CC=clang-cl CXX=clang-cl Py_GIL_DISABLED=1"
+          CIBW_ENVIRONMENT_WINDOWS: "Py_GIL_DISABLED=1"
           CIBW_TEST_SKIP: "*"
 
       - name: Upload Artifacts

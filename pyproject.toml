@@ -1,5 +1,5 @@
 [build-system]
-requires = ["scikit-build-core>=0.10.0"]
+requires = ["scikit-build-core>=0.10.0", "ninja"]
 build-backend = "scikit_build_core.build"
 
 [project]
@@ -48,6 +48,7 @@ Repository = "https://github.com/Evilpasture/culverin.git"
 [tool.scikit-build]
 cmake.build-type = "Release"
 cmake.args = [
+    "-T", "ClangCL",
     "-DDOUBLE_PRECISION=ON",
     "-DUSE_MTL=OFF",
     "-DUSE_CPU_COMPUTE=OFF",
@@ -59,6 +60,10 @@ cmake.args = [
 ]
 wheel.install-dir = "culverin"
 
+[[tool.scikit-build.overrides]]
+if.platform-system = "linux"
+# Ensure we use modern C++ and SIMD on Linux workers
+cmake.args = ["-DCMAKE_CXX_FLAGS=-mavx2 -mfma"]
 
 # Ensure we don't ship build artifacts or raw source in the final wheel
 wheel.exclude = [
