@@ -6954,15 +6954,35 @@ static PyObject *Ragdoll_drive_to_pose(RagdollObject *self, PyObject *args,
   }
 
   if (!self->ragdoll || !self->world) {
-    return NULL;
+    Py_RETURN_NONE; // Or error
   }
 
-  // 1. Construct Pose Object (Needed for Motors)
-  JPH_SkeletonPose *pose = JPH_SkeletonPose_Create();
   const JPH_RagdollSettings *settings =
       JPH_Ragdoll_GetRagdollSettings(self->ragdoll);
   JPH_Skeleton *skel =
       (JPH_Skeleton *)JPH_RagdollSettings_GetSkeleton(settings);
+  int joint_count = JPH_Skeleton_GetJointCount(skel);
+
+  // 1. Validate Buffer Size BEFORE access
+  Py_buffer view;
+  if (PyObject_GetBuffer(py_matrices, &view, PyBUF_SIMPLE) < 0) {
+    return NULL;
+  }
+  
+  // JPH_Mat4 is 16 floats = 64 bytes.
+  size_t required_size = (size_t)joint_count * 64; 
+  if ((size_t)view.len < required_size) {
+      PyBuffer_Release(&view);
+      return PyErr_Format(PyExc_ValueError, 
+          "Matrices buffer too small. Expected %zu bytes for %d joints, got %zd",
+          required_size, joint_count, view.len);
+  }
+
+  // 2. Access Matrix Buffer
+  JPH_Mat4 *matrices = (JPH_Mat4 *)view.buf;
+
+  // 3. Construct Pose Object
+  JPH_SkeletonPose *pose = JPH_SkeletonPose_Create();
   JPH_SkeletonPose_SetSkeleton(pose, skel);
 
   JPH_STACK_ALLOC(JPH_RVec3, r_pos);
@@ -6971,25 +6991,12 @@ static PyObject *Ragdoll_drive_to_pose(RagdollObject *self, PyObject *args,
   r_pos->z = (double)root_z;
   JPH_SkeletonPose_SetRootOffset(pose, r_pos);
 
-  // 2. Access Matrix Buffer
-  Py_buffer view;
-  if (PyObject_GetBuffer(py_matrices, &view, PyBUF_SIMPLE) < 0) {
-    JPH_SkeletonPose_Destroy(pose);
-    return NULL;
-  }
-  int joint_count = JPH_Skeleton_GetJointCount(skel);
-  JPH_Mat4 *matrices = (JPH_Mat4 *)view.buf;
-
-  // 3. EXECUTE TELEPORT (Shadow Locked)
+  // 4. EXECUTE TELEPORT (Shadow Locked)
   SHADOW_LOCK(&self->world->shadow_lock);
   BLOCK_UNTIL_NOT_STEPPING(self->world);
 
-  // --- THE FIX: Warp the entire Ragdoll assembly ---
-  // Instead of just moving the root body, we move every part of the ragdoll
-  // to the target pose. This ensures constraints aren't stretched.
   JPH_Ragdoll_SetPose2(self->ragdoll, r_pos, matrices, true);
 
-  // Now initialize the Motors to maintain this pose during subsequent steps
   JPH_SkeletonPose_SetJointMatrices(pose, matrices, joint_count);
   JPH_Ragdoll_Activate(self->ragdoll, true);
   JPH_Ragdoll_DriveToPoseUsingMotors(self->ragdoll, pose);
