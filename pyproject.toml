@@ -52,6 +52,7 @@ cmake.args = [
     "-DGENERATE_SAMPLES=OFF",
     "-DGENERATE_UNIT_TESTS=OFF",
     "-DUSE_VULKAN=OFF",
+    "-DUSE_MTL=OFF",
     "-DCMAKE_OSX_DEPLOYMENT_TARGET=13.0"
 ]
 wheel.install-dir = "culverin"

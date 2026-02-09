@@ -12,9 +12,6 @@ set(USE_STATIC_MSVC_RUNTIME OFF CACHE BOOL "" FORCE)
 set(FORCE_MT_RUNTIME OFF CACHE BOOL "" FORCE)
 set(USE_VULKAN OFF CACHE BOOL "" FORCE)
 
-# Set the global runtime default to /MD (MultiThreadedDLL)
-set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
-
 project(culverin LANGUAGES C CXX)
 
 # Standards
@@ -31,21 +28,30 @@ add_definitions(-DJPH_OBJECT_LAYER_BITS=32)
 # 2. COMPILER SPECIFIC FLAGS
 # ==============================================================================
 if(MSVC OR (WIN32 AND CMAKE_C_COMPILER_ID MATCHES "Clang"))
+    # Windows logic (Clang-CL / MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
     add_compile_options(/arch:AVX2)
-
     if(CMAKE_C_COMPILER_ID MATCHES "Clang")
-        # Ensure Clang-CL uses C11 for .c files
         set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /clang:-std=c11")
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /std:c++17")
     else()
         set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /std:c11 /experimental:c11atomics")
     endif()
 else()
-    # Linux & macOS
-    if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+    # LINUX & MACOS
+    # We check the architecture of the CURRENT build slice (important for macOS Universal)
+    if(CMAKE_OSX_ARCHITECTURES MATCHES "arm64" OR CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
+        # ARM64 specific flags (usually none needed for Jolt/C11)
+        message(STATUS "Building for ARM64")
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64" OR CMAKE_OSX_ARCHITECTURES MATCHES "x86_64")
+        # x86_64 specific flags
         add_compile_options(-mavx2 -mfma)
+        message(STATUS "Building for x86_64")
     endif()
+
+    # Standard C11 for all Unix-like
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c11")
 endif()
+
 
 # ==============================================================================
 # 3. BUILD JOLT PHYSICS
