@@ -1223,10 +1223,10 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
   // 1. Initial State
   memset(((char *)self) + offsetof(PhysicsWorldObject, system), 0,
          sizeof(PhysicsWorldObject) - offsetof(PhysicsWorldObject, system));
+  INIT_LOCK(self->shadow_lock);
   self->debug_renderer = JPH_DebugRenderer_Create(self);
   JPH_DebugRenderer_SetProcs(&debug_procs);
   atomic_init(&self->is_stepping, false);
-  INIT_LOCK(self->shadow_lock);
 
   // 2. Settings & Jolt Init
   if (init_settings(self, settings_dict, &gx, &gy, &gz, &max_bodies,
