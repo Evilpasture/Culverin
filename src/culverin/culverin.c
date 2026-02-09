@@ -4555,7 +4555,9 @@ static PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
       JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
       
       if (track_indices_ptrs) {
-          for(int i=0; i<num_tracks; i++) PyMem_RawFree(track_indices_ptrs[i]);
+          for(int i = 0; i < num_tracks; i++) {
+            PyMem_RawFree(track_indices_ptrs[i]);
+          }
           PyMem_RawFree((void *)track_indices_ptrs);
       }
       
