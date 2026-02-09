@@ -1977,7 +1977,7 @@ static void shapecast_execute_internal(PhysicsWorldObject *self,
 static PyObject *PhysicsWorld_shapecast(PhysicsWorldObject *self,
                                         PyObject *args, PyObject *kwds) {
   int shape_type = 0;
-  float px, py, pz, rx, ry, rz, rw, dx, dy, dz = NAN;
+  float px, py, pz, rx, ry, rz, rw, dx, dy, dz = 0.0f;
   PyObject *py_size = NULL;
   uint64_t ignore_h = 0;
   static char *kwlist[] = {"shape", "pos",    "rot", "dir",
@@ -2936,7 +2936,7 @@ static PyObject *PhysicsWorld_load_state(PhysicsWorldObject *self,
   }
   size_t saved_count = 0;
   size_t saved_slot_cap = 0;
-  double saved_time = NAN;
+  double saved_time = 0.0f;
 
   memcpy(&saved_count, ptr, sizeof(size_t));
   ptr += sizeof(size_t);
@@ -4685,9 +4685,9 @@ static PyObject *Vehicle_set_tank_input(VehicleObject *self, PyObject *args, PyO
 static PyObject *PhysicsWorld_set_position(PhysicsWorldObject *self,
                                            PyObject *args, PyObject *kwds) {
   uint64_t handle_raw = 0;
-  float x = NAN;
-  float y = NAN;
-  float z = NAN;
+  float x = 0.0f;
+  float y = 0.0f;
+  float z = 0.0f;
   static char *kwlist[] = {"handle", "x", "y", "z", NULL};
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "Kfff", kwlist, &handle_raw, &x,
                                    &y, &z)) {
@@ -4731,7 +4731,7 @@ static PyObject *PhysicsWorld_set_position(PhysicsWorldObject *self,
 static PyObject *PhysicsWorld_set_rotation(PhysicsWorldObject *self,
                                            PyObject *args, PyObject *kwds) {
   uint64_t handle_raw = 0;
-  float x = NAN, y = NAN, z = NAN, w = NAN;
+  float x = 0.0f, y = 0.0f, z = 0.0f, w = 0.0f;
   static char *kwlist[] = {"handle", "x", "y", "z", "w", NULL};
 
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "Kffff", kwlist, &handle_raw, 
@@ -4781,9 +4781,9 @@ static PyObject *PhysicsWorld_set_linear_velocity(PhysicsWorldObject *self,
                                                   PyObject *args,
                                                   PyObject *kwds) {
   uint64_t handle_raw = 0;
-  float x = NAN;
-  float y = NAN;
-  float z = NAN;
+  float x = 0.0f;
+  float y = 0.0f;
+  float z = 0.0f;
   static char *kwlist[] = {"handle", "x", "y", "z", NULL};
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "Kfff", kwlist, &handle_raw, &x,
                                    &y, &z)) {
@@ -4822,9 +4822,9 @@ static PyObject *PhysicsWorld_set_angular_velocity(PhysicsWorldObject *self,
                                                    PyObject *args,
                                                    PyObject *kwds) {
   uint64_t handle_raw = 0;
-  float x = NAN;
-  float y = NAN;
-  float z = NAN;
+  float x = 0.0f;
+  float y = 0.0f;
+  float z = 0.0f;
   static char *kwlist[] = {"handle", "x", "y", "z", NULL};
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "Kfff", kwlist, &handle_raw, &x,
                                    &y, &z)) {
@@ -5341,12 +5341,12 @@ cleanup:
 
 static PyObject *PhysicsWorld_overlap_aabb(PhysicsWorldObject *self,
                                            PyObject *args, PyObject *kwds) {
-  float min_x = NAN;
-  float min_y = NAN;
-  float min_z = NAN;
-  float max_x = NAN;
-  float max_y = NAN;
-  float max_z = NAN;
+  float min_x = 0.0f;
+  float min_y = 0.0f;
+  float min_z = 0.0f;
+  float max_x = 0.0f;
+  float max_y = 0.0f;
+  float max_z = 0.0f;
   static char *kwlist[] = {"min", "max", NULL};
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)(fff)", kwlist, &min_x,
                                    &min_y, &min_z, &max_x, &max_y, &max_z)) {
@@ -5614,7 +5614,7 @@ static PyObject *get_user_data_buffer(PhysicsWorldObject *self, void *c) {
 
 static PyObject *PhysicsWorld_get_render_state(PhysicsWorldObject *self,
                                                PyObject *args) {
-  float alpha = NAN;
+  float alpha = 0.0f;
   if (!PyArg_ParseTuple(args, "f", &alpha)) {
     return NULL;
   }
@@ -6246,9 +6246,9 @@ static PyObject *Character_get_position(CharacterObject *self,
 
 static PyObject *Character_set_position(CharacterObject *self, PyObject *args,
                                         PyObject *kwds) {
-  float x = NAN;
-  float y = NAN;
-  float z = NAN;
+  float x = 0.0f;
+  float y = 0.0f;
+  float z = 0.0f;
   static char *kwlist[] = {"pos", NULL};
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)", kwlist, &x, &y, &z)) {
     return NULL;
@@ -6283,10 +6283,10 @@ static PyObject *Character_set_position(CharacterObject *self, PyObject *args,
 
 static PyObject *Character_set_rotation(CharacterObject *self, PyObject *args,
                                         PyObject *kwds) {
-  float x = NAN;
-  float y = NAN;
-  float z = NAN;
-  float w = NAN;
+  float x = 0.0f;
+  float y = 0.0f;
+  float z = 0.0f;
+  float w = 0.0f;
   static char *kwlist[] = {"rot", NULL};
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "(ffff)", kwlist, &x, &y, &z,
                                    &w)) {
@@ -6332,7 +6332,7 @@ static PyObject *Character_is_grounded(CharacterObject *self, PyObject *args) {
 }
 
 static PyObject *Character_set_strength(CharacterObject *self, PyObject *args) {
-  float strength = NAN;
+  float strength = 0.0f;
   if (!PyArg_ParseTuple(args, "f", &strength)) {
     return NULL;
   }
@@ -6894,13 +6894,13 @@ static PyObject *PhysicsWorld_create_ragdoll(PhysicsWorldObject *self,
 
 static PyObject *Ragdoll_drive_to_pose(RagdollObject *self, PyObject *args,
                                        PyObject *kwds) {
-  float root_x = NAN;
-  float root_y = NAN;
-  float root_z = NAN;
-  float rx = NAN;
-  float ry = NAN;
-  float rz = NAN;
-  float rw = NAN;
+  float root_x = 0.0f;
+  float root_y = 0.0f;
+  float root_z = 0.0f;
+  float rx = 0.0f;
+  float ry = 0.0f;
+  float rz = 0.0f;
+  float rw = 0.0f;
   PyObject *py_matrices = NULL;
 
   static char *kwlist[] = {"root_pos", "root_rot", "matrices", NULL};
