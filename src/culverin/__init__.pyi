@@ -308,6 +308,17 @@ class PhysicsWorld:
             px, py, pz: World-space application point.
         """
         ...
+
+    def apply_force(self, handle: Handle, x: float, y: float, z: float) -> None: 
+        "Apply force. Continuous push over time. Good for wind, thrusters, magnets, hovercrafts."
+        ...
+    def apply_torque(self, handle: Handle, x: float, y: float, z: float) -> None: ...
+    def set_gravity(self, gravity: Vec3) -> None: 
+        "Change gravity during runtime."
+        ...
+    def get_body_stats(self, handle: Handle) -> Optional[Tuple[Vec3, Quat, Vec3]]: 
+        """Returns ((pos), (rot), (lin_vel)) for a single body, or None if invalid."""
+        ...
     
     def apply_buoyancy(
         self, handle: Handle, surface_y: float, buoyancy: float = 1.0, 
