@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "culverin"
-version = "0.1.0b1"
+version = "0.1.0b2"
 description = "High-performance Jolt Physics bindings for Python featuring Shadow Buffers and Free-Threading support."
 readme = "README.md"
 requires-python = ">=3.13"
