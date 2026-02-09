@@ -14,6 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # We use these three to cover all major platforms
         os: [windows-latest, ubuntu-latest, macos-latest]
 
     steps:
@@ -30,15 +31,25 @@ jobs:
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.22.0
         env:
+          # Enable Free-Threading support
           CIBW_FREE_THREADED_SUPPORT: 1
+          CIBW_PRERELEASE_PYTHONS: 1
           CIBW_BUILD: "cp313t-* cp314t-*"
+          
+          # Architecture Settings
           CIBW_ARCHS_WINDOWS: "AMD64"
           CIBW_ARCHS_LINUX: "x86_64"
           CIBW_ARCHS_MACOS: "x86_64 arm64"
-          MACOSX_DEPLOYMENT_TARGET: "13.0"
+
+          # Universal Environment (Free-Threading flag)
           CIBW_ENVIRONMENT: "Py_GIL_DISABLED=1"
-          # FORCE ClangCL on Windows
-          CIBW_ENVIRONMENT_WINDOWS: "CC=clang-cl CXX=clang-cl Py_GIL_DISABLED=1"
+
+          # Windows Specific: Force the ClangCL Toolset via SKBUILD
+          CIBW_ENVIRONMENT_WINDOWS: "SKBUILD_CMAKE_ARGS='-T ClangCL' Py_GIL_DISABLED=1"
+
+          # macOS Specific: Target modern OS for Python 3.13 compatibility
+          MACOSX_DEPLOYMENT_TARGET: "13.0" 
+          
           CIBW_TEST_SKIP: "*"
 
       - name: Upload Artifacts
@@ -67,11 +78,12 @@ jobs:
         with:
           files: wheelhouse/*.whl
           body: |
-            Culverin Physics Beta Release ${{ github.ref_name }}
+            Culverin Physics Release ${{ github.ref_name }}
             
             Optimized for:
             - Python 3.13t (Free-Threaded)
             - Python 3.14t (Free-Threaded Alpha)
-          prerelease: true
+            - High-performance AVX2 SIMD (x86_64)
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
