@@ -13,30 +13,29 @@ Handle = int
 HandleBuffer = Union[bytes, memoryview, "Sequence[int]"]
 
 # --- Constants ---
-SHAPE_BOX: int = 0
-SHAPE_SPHERE: int = 1
-SHAPE_CAPSULE: int = 2
-SHAPE_CYLINDER: int = 3
-SHAPE_PLANE: int = 4
-SHAPE_MESH: int = 5
-SHAPE_HEIGHTFIELD: int = 6
-SHAPE_CONVEX_HULL: int = 7
+SHAPE_BOX: int = _culverin_c.SHAPE_BOX
+SHAPE_SPHERE: int = _culverin_c.SHAPE_SPHERE
+SHAPE_CAPSULE: int = _culverin_c.SHAPE_CAPSULE
+SHAPE_CYLINDER: int = _culverin_c.SHAPE_CYLINDER
+SHAPE_PLANE: int = _culverin_c.SHAPE_PLANE
+SHAPE_MESH: int = _culverin_c.SHAPE_MESH
+SHAPE_HEIGHTFIELD: int = _culverin_c.SHAPE_HEIGHTFIELD
+SHAPE_CONVEX_HULL: int = _culverin_c.SHAPE_CONVEX_HULL
 
-MOTION_STATIC: int = 0
-MOTION_KINEMATIC: int = 1
-MOTION_DYNAMIC: int = 2
+MOTION_STATIC: int = _culverin_c.MOTION_STATIC
+MOTION_KINEMATIC: int = _culverin_c.MOTION_KINEMATIC
+MOTION_DYNAMIC: int = _culverin_c.MOTION_DYNAMIC
 
-CONSTRAINT_FIXED: int = 0
-CONSTRAINT_POINT: int = 1
-CONSTRAINT_HINGE: int = 2
-CONSTRAINT_SLIDER: int = 3
-CONSTRAINT_DISTANCE: int = 4
-CONSTRAINT_CONE: int = 5
+CONSTRAINT_FIXED: int = _culverin_c.CONSTRAINT_FIXED
+CONSTRAINT_POINT: int = _culverin_c.CONSTRAINT_POINT
+CONSTRAINT_HINGE: int = _culverin_c.CONSTRAINT_HINGE
+CONSTRAINT_SLIDER: int = _culverin_c.CONSTRAINT_SLIDER
+CONSTRAINT_DISTANCE: int = _culverin_c.CONSTRAINT_DISTANCE
+CONSTRAINT_CONE: int = _culverin_c.CONSTRAINT_CONE
 
-# Contact Event Types
-EVENT_ADDED: int = 0
-EVENT_PERSISTED: int = 1
-EVENT_REMOVED: int = 2
+EVENT_ADDED: int = _culverin_c.EVENT_ADDED
+EVENT_PERSISTED: int = _culverin_c.EVENT_PERSISTED
+EVENT_REMOVED: int = _culverin_c.EVENT_REMOVED
 
 class BodyConfig(TypedDict, total=False):
     pos: Vec3
@@ -108,13 +107,31 @@ class Ragdoll:
         """Returns diagnostic position/velocity data for every limb."""
 
 class Engine:
-    def __init__(self, max_torque: float = 500.0, max_rpm: float = 7000.0, min_rpm: float = 1000.0, inertia: float = 0.5): ...
+    """Engine configuration for wheeled and tracked vehicles."""
+    def __init__(self, max_torque: float = 500.0, max_rpm: float = 7000.0, min_rpm: float = 1000.0, inertia: float = 0.5):
+        self.max_torque = max_torque
+        self.max_rpm = max_rpm
+        self.min_rpm = min_rpm
+        self.inertia = inertia
 
 class Automatic:
-    def __init__(self, gears: Union[int, List[float]] = 5, clutch_strength: float = 2000.0, shift_up_rpm: float = 5000.0, shift_down_rpm: float = 2000.0): ...
+    """Automatic transmission configuration. Includes Arcade Shifter logic."""
+    def __init__(self, gears: Union[int, List[float]] = 5, clutch_strength: float = 2000.0, 
+                 shift_up_rpm: float = 5000.0, shift_down_rpm: float = 2000.0, differential_ratio: float = 3.42):
+        self.mode = 0 # Auto
+        self.ratios = gears if isinstance(gears, list) else [2.66, 1.78, 1.30, 1.00, 0.74, 0.50][:gears]
+        self.clutch_strength = clutch_strength
+        self.shift_up_rpm = shift_up_rpm
+        self.shift_down_rpm = shift_down_rpm
+        self.differential_ratio = differential_ratio
 
 class Manual:
-    def __init__(self, gears: Union[int, List[float]] = 5, clutch_strength: float = 5000.0): ...
+    """Manual transmission configuration."""
+    def __init__(self, gears: Union[int, List[float]] = 5, clutch_strength: float = 5000.0, differential_ratio: float = 3.42):
+        self.mode = 1 # Manual
+        self.ratios = gears if isinstance(gears, list) else [2.66, 1.78, 1.30, 1.00, 0.74, 0.50][:gears]
+        self.clutch_strength = clutch_strength
+        self.differential_ratio = differential_ratio
 
 class Vehicle:
     def set_input(self, forward: float = 0.0, right: float = 0.0, brake: float = 0.0, handbrake: float = 0.0) -> None:

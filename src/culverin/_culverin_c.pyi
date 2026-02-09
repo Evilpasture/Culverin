@@ -1,4 +1,5 @@
 from typing import Tuple, List, Optional, Any, Dict, Union, Sequence
+from . import _culverin_c
 
 # Constants
 SHAPE_BOX: int = 0
@@ -21,7 +22,6 @@ CONSTRAINT_SLIDER: int = 3
 CONSTRAINT_DISTANCE: int = 4
 CONSTRAINT_CONE: int = 5
 
-# Contact Event Types
 EVENT_ADDED: int = 0
 EVENT_PERSISTED: int = 1
 EVENT_REMOVED: int = 2
@@ -67,142 +67,34 @@ class PhysicsWorld:
     def __init__(self, settings: Optional[dict] = None, bodies: Optional[List[dict]] = None) -> None: ...
     def step(self, dt: float = 1.0/60.0) -> None: ...
     
-    def create_body(
-        self, 
-        pos: Tuple[float, float, float] = (0, 0, 0),
-        rot: Tuple[float, float, float, float] = (0, 0, 0, 1),
-        size: Any = (1, 1, 1),
-        shape: int = 0,
-        motion: int = 2,
-        user_data: int = 0,
-        is_sensor: bool = False,
-        mass: float = -1.0,
-        category: int = 0xFFFF,
-        mask: int = 0xFFFF,
-        friction: float = -1.0,
-        restitution: float = -1.0,
-        material_id: int = 0,
-        ccd: bool = False
-    ) -> int: ...
-
+    def create_body(self, **kwargs) -> int: ...
     def create_mesh_body(self, pos: Tuple[float, float, float], rot: Tuple[float, float, float, float], 
-                         vertices: bytes, indices: bytes, user_data: int = 0, category: int = 0xFFFF, mask: int = 0xFFFF) -> int: ...
-    
-    def create_character(self, pos: Tuple[float, float, float], height: float = 1.8, radius: float = 0.4, 
-                         step_height: float = 0.4, max_slope: float = 45.0) -> Character: ...
+                         vertices: bytes, indices: bytes, **kwargs) -> int: ...
+    def create_character(self, pos: Tuple[float, float, float], **kwargs) -> Character: ...
     
     def create_vehicle(self, chassis: int, wheels: Sequence[Any], drive: str = "RWD", 
                        engine: Optional[Any] = None, transmission: Optional[Any] = None) -> Vehicle: ...
     
-    def create_tracked_vehicle(
-        self, 
-        chassis: int, 
-        wheels: Sequence[Any], 
-        tracks: Sequence[Any], 
-        max_torque: float = 5000.0, 
-        max_rpm: float = 6000.0
-    ) -> Vehicle: ...
-    
+    def create_tracked_vehicle(self, chassis: int, wheels: Sequence[Any], tracks: Sequence[Any], 
+                               max_torque: float = 5000.0, max_rpm: float = 6000.0) -> Vehicle: ...
+
     def create_ragdoll_settings(self, skeleton: Skeleton) -> RagdollSettings: ...
-    
-    def create_ragdoll(
-        self, 
-        settings: RagdollSettings, 
-        pos: Tuple[float, float, float], 
-        rot: Tuple[float, float, float, float] = (0, 0, 0, 1), 
-        user_data: int = 0,
-        category: int = 0xFFFF,
-        mask: int = 0xFFFF,
-        material_id: int = 0
-    ) -> Ragdoll: ...
-
-    def create_heightfield(
-        self, 
-        pos: Tuple[float, float, float], 
-        rot: Tuple[float, float, float, float], 
-        scale: Tuple[float, float, float], 
-        heights: bytes, 
-        grid_size: int, 
-        user_data: int = 0,
-        category: int = 0xFFFF,
-        mask: int = 0xFFFF,
-        material_id: int = 0,
-        friction: float = 0.5,
-        restitution: float = 0.0
-    ) -> int: ...
-
-    def create_convex_hull(
-        self,
-        pos: Tuple[float, float, float],
-        rot: Tuple[float, float, float, float],
-        points: bytes,
-        motion: int = 2,
-        mass: float = -1.0,
-        user_data: int = 0,
-        category: int = 0xFFFF,
-        mask: int = 0xFFFF,
-        material_id: int = 0,
-        friction: float = 0.2,
-        restitution: float = 0.0,
-        ccd: bool = False
-    ) -> int: ...
-
-    def create_compound_body(
-        self,
-        pos: Tuple[float, float, float],
-        rot: Tuple[float, float, float, float],
-        parts: List[Tuple[Tuple[float, float, float], Tuple[float, float, float, float], int, Any]],
-        motion: int = MOTION_DYNAMIC,
-        mass: float = -1.0,
-        user_data: int = 0,
-        is_sensor: bool = False,
-        category: int = 0xFFFF,
-        mask: int = 0xFFFF,
-        material_id: int = 0,
-        friction: float = 0.2,
-        restitution: float = 0.0,
-        ccd: bool = False
-    ) -> int:
-        ...
+    def create_ragdoll(self, settings: RagdollSettings, pos: Tuple[float, float, float], **kwargs) -> Ragdoll: ...
+    def create_heightfield(self, pos: Tuple[float, float, float], rot: Tuple[float, float, float, float], 
+                           scale: Tuple[float, float, float], heights: bytes, grid_size: int, **kwargs) -> int: ...
+    def create_convex_hull(self, pos: Tuple[float, float, float], rot: Tuple[float, float, float, float], 
+                           points: bytes, **kwargs) -> int: ...
+    def create_compound_body(self, pos: Tuple[float, float, float], rot: Tuple[float, float, float, float], 
+                             parts: List[Tuple[Any, Any, int, Any]], **kwargs) -> int: ...
 
     def destroy_body(self, handle: int) -> None: ...
     def create_constraint(self, type: int, body1: int, body2: int, params: Optional[Any] = None) -> int: ...
     def destroy_constraint(self, handle: int) -> None: ...
-    
     def apply_impulse(self, handle: int, x: float, y: float, z: float) -> None: ...
-
-    def apply_impulse_at(
-        self, 
-        handle: int, 
-        ix: float, iy: float, iz: float, 
-        px: float, py: float, pz: float
-    ) -> None: ...
-    
-    def apply_buoyancy(
-        self, 
-        handle: int, 
-        surface_y: float, 
-        buoyancy: float = 1.0, 
-        linear_drag: float = 0.5, 
-        angular_drag: float = 0.5, 
-        dt: float = 1.0/60.0,
-        fluid_velocity: Tuple[float, float, float] = (0, 0, 0)
-    ) -> bool: ...
-
-    def apply_buoyancy_batch(
-        self,
-        handles: Union[bytes, memoryview, "Sequence[int]"],
-        surface_y: float = 0.0,
-        buoyancy: float = 1.0,
-        linear_drag: float = 0.5,
-        angular_drag: float = 0.5,
-        dt: float = 1.0/60.0,
-        fluid_velocity: Tuple[float, float, float] = (0, 0, 0)
-    ) -> None:
-        ...
-
+    def apply_impulse_at(self, handle: int, ix: float, iy: float, iz: float, px: float, py: float, pz: float) -> None: ...
+    def apply_buoyancy(self, handle: int, surface_y: float, **kwargs) -> bool: ...
+    def apply_buoyancy_batch(self, handles: Union[bytes, memoryview, Sequence[int]], surface_y: float = 0.0, **kwargs) -> None: ...
     def register_material(self, id: int, friction: float = 0.5, restitution: float = 0.0) -> None: ...
-
     def set_position(self, handle: int, x: float, y: float, z: float) -> None: ...
     def set_rotation(self, handle: int, x: float, y: float, z: float, w: float) -> None: ...
     def set_transform(self, handle: int, pos: Tuple[float, float, float], rot: Tuple[float, float, float, float]) -> None: ...
@@ -216,7 +108,6 @@ class PhysicsWorld:
     def set_user_data(self, handle: int, data: int) -> None: ...
     def get_user_data(self, handle: int) -> int: ...
     def set_collision_filter(self, handle: int, category: int, mask: int) -> None: ...
-
     def raycast(self, start: Tuple[float, float, float], direction: Tuple[float, float, float], 
                 max_dist: float = 1000.0, ignore: int = 0) -> Optional[Tuple[int, float, Tuple[float, float, float]]]: ...
     def raycast_batch(self, starts: bytes, directions: bytes, max_dist: float = 1000.0) -> bytes: ...
@@ -224,19 +115,13 @@ class PhysicsWorld:
                   dir: Tuple[float, float, float], size: Any, ignore: int = 0) -> Optional[Tuple[int, float, Tuple[float, float, float], Tuple[float, float, float]]]: ...
     def overlap_sphere(self, center: Tuple[float, float, float], radius: float) -> List[int]: ...
     def overlap_aabb(self, min: Tuple[float, float, float], max: Tuple[float, float, float]) -> List[int]: ...
-    
     def get_contact_events(self) -> List[Tuple[int, int]]: ...
     def get_contact_events_ex(self) -> List[Dict[str, Any]]: ...
     def get_contact_events_raw(self) -> memoryview: ...
-    
-    def get_debug_data(self, shapes: bool = True, constraints: bool = True, bbox: bool = False, centers: bool = False, wireframe: bool = True) -> Tuple[bytes, bytes]:
-        """Returns (line_vertices, triangle_vertices). Vertices are 16-bytes: [f32 x, y, z, u32 color]."""
-        ...
-
+    def get_debug_data(self, **kwargs) -> Tuple[bytes, bytes]: ...
     def get_index(self, handle: int) -> Optional[int]: ...
     def get_active_indices(self) -> bytes: ...
     def is_alive(self, handle: int) -> bool: ...
-    
     def save_state(self) -> bytes: ...
     def load_state(self, state: bytes) -> None: ...
     def get_render_state(self, alpha: float) -> bytes: ...
