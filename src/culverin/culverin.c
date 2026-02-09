@@ -4108,7 +4108,7 @@ static PyObject *PhysicsWorld_create_mesh_body(PhysicsWorldObject *self,
                                                PyObject *args, PyObject *kwds) {
   Py_buffer v_view = {0}, i_view = {0};
   float px = 0, py = 0, pz = 0, rx = 0, ry = 0, rz = 0, rw = 1.0f;
-  unsigned long long user_data = 0;
+  size_t user_data = 0;
   uint32_t cat = 0xFFFF, mask = 0xFFFF;
   static char *kwlist[] = {"pos",       "rot",      "vertices", "indices",
                            "user_data", "category", "mask",     NULL};
