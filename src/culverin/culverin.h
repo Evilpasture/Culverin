@@ -12,6 +12,7 @@
 #include "debug_render.h"
 #include "culverin_filters.h"
 #include "culverin_character.h"
+#include "culverin_contact_listener.h"
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
