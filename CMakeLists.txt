@@ -99,8 +99,8 @@ target_link_libraries(${JOLTC_TARGET} PRIVATE Jolt)
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 python_add_library(_culverin_c MODULE 
     src/culverin/culverin.c 
-    src/culverin/shadow_sync.c
-    src/culverin/debug_render.c
+    src/culverin/culverin_shadow_sync.c
+    src/culverin/culverin_debug_render.c
     src/culverin/culverin_getters.c
     src/culverin/culverin_character.c
     src/culverin/culverin_contact_listener.c

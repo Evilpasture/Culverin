@@ -1,6 +1,6 @@
 #include <Python.h>
 #include "culverin.h"
-#include "debug_render.h"
+#include "culverin_debug_render.h"
 
 // --- Debug Buffer Helpers ---
 void debug_buffer_ensure(DebugBuffer* buf, size_t count_needed) {

@@ -9,7 +9,7 @@
 #include <stddef.h>
 #include <string.h>
 #include "culverin_math.h"
-#include "debug_render.h"
+#include "culverin_debug_render.h"
 #include "culverin_filters.h"
 #include "culverin_character.h"
 #include "culverin_contact_listener.h"
@@ -675,4 +675,4 @@ static inline bool unpack_handle(PhysicsWorldObject *self, BodyHandle h,
 
 // INCLUDE LAST!!!
 #include "culverin_getters.h"
-#include "shadow_sync.h"
+#include "culverin_shadow_sync.h"
