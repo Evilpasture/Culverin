@@ -27,53 +27,6 @@ static float get_py_float_attr(PyObject *obj, const char *name,
   return result;
 }
 
-
-// --- Handle Helper ---
-static inline BodyHandle make_handle(uint32_t slot, uint32_t gen) {
-  return ((uint64_t)gen << 32) | (uint64_t)slot;
-}
-
-static inline bool unpack_handle(PhysicsWorldObject *self, BodyHandle h,
-                                 uint32_t *slot) {
-  *slot = (uint32_t)(h & 0xFFFFFFFF);
-  uint32_t gen = (uint32_t)(h >> 32);
-
-  if (*slot >= self->slot_capacity) {
-    return false;
-  }
-  return self->generations[*slot] == gen;
-}
-
-// --- Debug Buffer Helpers ---
-static void debug_buffer_ensure(DebugBuffer* buf, size_t count_needed) {
-    if (buf->count + count_needed > buf->capacity) {
-        size_t new_cap = (buf->capacity == 0) ? 4096 : buf->capacity * 2;
-        while (buf->count + count_needed > new_cap) new_cap *= 2;
-        
-        void* new_ptr = PyMem_RawRealloc(buf->data, new_cap * sizeof(DebugVertex));
-        if (!new_ptr) return; // Silent fail on OOM for debug info
-        
-        buf->data = (DebugVertex*)new_ptr;
-        buf->capacity = new_cap;
-    }
-}
-
-static void debug_buffer_push(DebugBuffer* buf, DebugCoordinates pos, uint32_t color) {
-    if (buf->count >= buf->capacity) return; // Safety
-    buf->data[buf->count].x = pos.x;
-    buf->data[buf->count].y = pos.y;
-    buf->data[buf->count].z = pos.z;
-    buf->data[buf->count].color = color;
-    buf->count++;
-}
-
-static void debug_buffer_free(DebugBuffer* buf) {
-    if (buf->data) PyMem_RawFree(buf->data);
-    buf->data = NULL;
-    buf->count = 0;
-    buf->capacity = 0;
-}
-
 /**
  * Internal helper to remove a body from the dense arrays.
  * Maintains a packed, contiguous array by swapping the last body into the hole.
