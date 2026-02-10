@@ -668,6 +668,22 @@ static inline bool JPH_API_CALL CastShape_BodyFilter(void *userData,
   return (ctx->ignore_id == 0 || bodyID != ctx->ignore_id);
 }
 
+// --- Handle Helper ---
+static inline BodyHandle make_handle(uint32_t slot, uint32_t gen) {
+  return ((uint64_t)gen << 32) | (uint64_t)slot;
+}
+
+static inline bool unpack_handle(PhysicsWorldObject *self, BodyHandle h,
+                                 uint32_t *slot) {
+  *slot = (uint32_t)(h & 0xFFFFFFFF);
+  uint32_t gen = (uint32_t)(h >> 32);
+
+  if (*slot >= self->slot_capacity) {
+    return false;
+  }
+  return self->generations[*slot] == gen;
+}
+
 // Sync function (defined in shadow_sync.c)
 void culverin_sync_shadow_buffers(PhysicsWorldObject *self);
 
