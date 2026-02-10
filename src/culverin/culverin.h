@@ -1,5 +1,4 @@
-#ifndef PYJOLT_H
-#define PYJOLT_H
+#pragma once
 
 #define PY_SSIZE_T_CLEAN
 #include "joltc.h" // Amer Koleci's JoltC binder.
@@ -686,5 +685,3 @@ static inline bool unpack_handle(PhysicsWorldObject *self, BodyHandle h,
 
 // Sync function (defined in shadow_sync.c)
 void culverin_sync_shadow_buffers(PhysicsWorldObject *self);
-
-#endif
