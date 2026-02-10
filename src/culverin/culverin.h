@@ -28,6 +28,8 @@
 #define JPH_BODY_ID_INDEX_MASK 0x00FFFFFF
 #endif
 
+#define CONTACT_MAX_CAPACITY 16384
+
 // Mask for the raw array index (Stripping the 24th bit used for Static flags)
 #define JPH_ID_TO_INDEX(id) ((id) & 0x7FFFFF)
 
