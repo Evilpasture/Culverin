@@ -105,6 +105,9 @@ python_add_library(_culverin_c MODULE
     src/culverin/culverin_character.c
     src/culverin/culverin_contact_listener.c
     src/culverin/culverin_parsers.c
+    src/culverin/culverin_vehicle.c
+    src/culverin/culverin_command_buffer.c
+    src/culverin/culverin_tracked_vehicle.c
 )
 if(MSVC)
     # 1. Add /Zi to generate debug info (symbols) even in Release builds
