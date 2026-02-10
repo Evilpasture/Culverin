@@ -8,6 +8,8 @@
 #include <stdatomic.h>
 #include <stddef.h>
 #include <string.h>
+#include "debug_render.h"
+#include "culverin_math.h"
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
