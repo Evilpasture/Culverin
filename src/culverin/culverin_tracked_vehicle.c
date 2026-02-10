@@ -260,3 +260,37 @@ PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
   Py_INCREF(self);
   return (PyObject *)obj;
 }
+
+// Helper: Set Tank Input
+PyObject *Vehicle_set_tank_input(VehicleObject *self, PyObject *args, PyObject *kwds) {
+    float left = 0.0f, right = 0.0f, brake = 0.0f;
+    static char *kwlist[] = {"left", "right", "brake", NULL};
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "ff|f", kwlist, &left, &right, &brake)) return NULL;
+
+    if (!self->vehicle || !self->world) Py_RETURN_NONE;
+
+    SHADOW_LOCK(&self->world->shadow_lock);
+    BLOCK_UNTIL_NOT_STEPPING(self->world);
+
+    JPH_TrackedVehicleController* t_ctrl = (JPH_TrackedVehicleController*)JPH_VehicleConstraint_GetController(self->vehicle);
+    JPH_BodyID bid = JPH_Body_GetID(JPH_VehicleConstraint_GetVehicleBody(self->vehicle));
+    JPH_BodyInterface_ActivateBody(self->world->body_interface, bid);
+    
+    JPH_VehicleTransmission* trans = (JPH_VehicleTransmission*)JPH_TrackedVehicleController_GetTransmission(t_ctrl);
+    int gear = JPH_VehicleTransmission_GetCurrentGear(trans);
+    
+    // Throttle is the max power requested by either track
+    float throttle = fmaxf(fabsf(left), fabsf(right));
+    
+    // Kickstart/Neutral logic
+    if (throttle > 0.01f) {
+        if (gear == 0) JPH_VehicleTransmission_Set(trans, 1, 1.0f); // Shift to 1
+    } else {
+        if (gear != 0) JPH_VehicleTransmission_Set(trans, 0, 0.0f); // Force Neutral
+    }
+
+    JPH_TrackedVehicleController_SetDriverInput(t_ctrl, throttle, left, right, brake);
+    
+    SHADOW_UNLOCK(&self->world->shadow_lock);
+    Py_RETURN_NONE;
+}

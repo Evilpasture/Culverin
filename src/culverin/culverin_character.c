@@ -10,35 +10,6 @@ char_on_contact_validate(void *userData, const JPH_CharacterVirtual *character,
   return true; // Usually true, unless you want to walk through certain bodies
 }
 
-static JPH_ValidateResult JPH_API_CALL on_contact_validate(
-    void *userData, const JPH_Body *body1, const JPH_Body *body2,
-    const JPH_RVec3 *baseOffset, const JPH_CollideShapeResult *result) {
-  PhysicsWorldObject *self = (PhysicsWorldObject *)userData;
-
-  // 1. Extract Slots
-  BodyHandle h1 = (BodyHandle)JPH_Body_GetUserData((JPH_Body *)body1);
-  BodyHandle h2 = (BodyHandle)JPH_Body_GetUserData((JPH_Body *)body2);
-  uint32_t slot1 = (uint32_t)(h1 & 0xFFFFFFFF);
-  uint32_t slot2 = (uint32_t)(h2 & 0xFFFFFFFF);
-
-  // 2. Bitmask Filter
-  uint32_t idx1 = self->slot_to_dense[slot1];
-  uint32_t idx2 = self->slot_to_dense[slot2];
-
-  uint32_t cat1 = self->categories[idx1];
-  uint32_t mask1 = self->masks[idx1];
-  uint32_t cat2 = self->categories[idx2];
-  uint32_t mask2 = self->masks[idx2];
-
-  // 3. Logic: If either doesn't want to hit the other's category, reject.
-  if (!(cat1 & mask2) || !(cat2 & mask1)) {
-    return JPH_ValidateResult_RejectContact; // <--- This stops the PHYSICS
-                                             // solver
-  }
-
-  return JPH_ValidateResult_AcceptContact;
-}
-
 static void record_character_contact(CharacterObject *self, JPH_BodyID bodyID2, 
                                      const JPH_RVec3 *pos, const JPH_Vec3 *norm, 
                                      ContactEventType type) {
@@ -282,3 +253,338 @@ const JPH_CharacterContactListener_Procs char_listener_procs = {
     .OnCharacterContactRemoved = char_on_character_contact_removed,     // ADDED
     .OnContactSolve = NULL                            // Advanced, keep NULL
 };
+
+PyObject *Character_move(CharacterObject *self, PyObject *args,
+                                PyObject *kwds) {
+  float vx = 0;
+  float vy = 0;
+  float vz = 0;
+  float dt = 0;
+  static char *kwlist[] = {"velocity", "dt", NULL};
+
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)f", kwlist, &vx, &vy, &vz,
+                                   &dt)) {
+    return NULL;
+  }
+
+  SHADOW_LOCK(&self->world->shadow_lock);
+
+  // 1. RE-ENTRANCY GUARD
+  BLOCK_UNTIL_NOT_STEPPING(self->world);
+
+  // 2. ATOMIC INPUT STORAGE
+  // Satisfies the memory model for the lock-free contact callbacks
+  atomic_store_explicit(&self->last_vx, vx, memory_order_relaxed);
+  atomic_store_explicit(&self->last_vy, vy, memory_order_relaxed);
+  atomic_store_explicit(&self->last_vz, vz, memory_order_relaxed);
+
+  // 3. CAPTURE PRE-MOVE STATE (For Interpolation)
+  JPH_STACK_ALLOC(JPH_RVec3, current_pos);
+  JPH_STACK_ALLOC(JPH_Quat, current_rot);
+  JPH_CharacterVirtual_GetPosition(self->character, current_pos);
+  JPH_CharacterVirtual_GetRotation(self->character, current_rot);
+
+  // Update object-local prev state
+  self->prev_px = (float)current_pos->x;
+  self->prev_py = (float)current_pos->y;
+  self->prev_pz = (float)current_pos->z;
+  self->prev_rx = current_rot->x;
+  self->prev_ry = current_rot->y;
+  self->prev_rz = current_rot->z;
+  self->prev_rw = current_rot->w;
+
+  // Sync to GLOBAL shadow buffers so get_render_state() works
+  uint32_t slot = (uint32_t)(self->handle & 0xFFFFFFFF);
+  uint32_t dense_idx = self->world->slot_to_dense[slot];
+  size_t off = (size_t)dense_idx * 4;
+
+  memcpy(&self->world->prev_positions[off], &self->world->positions[off],
+         12); // Copy x,y,z
+  memcpy(&self->world->prev_rotations[off], &self->world->rotations[off], 16);
+
+  // --- 4. JOLT EXECUTION ---
+  JPH_Vec3 v = {vx, vy, vz};
+  JPH_CharacterVirtual_SetLinearVelocity(self->character, &v);
+
+  JPH_STACK_ALLOC(JPH_ExtendedUpdateSettings, update_settings);
+
+  // 1. Zero out the memory first
+  memset(update_settings, 0, sizeof(JPH_ExtendedUpdateSettings));
+
+  // 2. Set Jolt's standard defaults (these are non-zero in the C++ core)
+  update_settings->stickToFloorStepDown.x = 0.0f;
+  update_settings->stickToFloorStepDown.y = -0.5f; // How far to look for floor
+  update_settings->stickToFloorStepDown.z = 0.0f;
+
+  update_settings->walkStairsStepUp.x = 0.0f;
+  update_settings->walkStairsStepUp.y = 0.4f; // Maximum step height
+  update_settings->walkStairsStepUp.z = 0.0f;
+
+  update_settings->walkStairsMinStepForward = 0.02f;
+  update_settings->walkStairsStepForwardTest = 0.15f;
+  update_settings->walkStairsCosAngleForwardContact = 0.996f; // ~5 degrees
+
+  update_settings->walkStairsStepDownExtra.x = 0.0f;
+  update_settings->walkStairsStepDownExtra.y = 0.0f;
+  update_settings->walkStairsStepDownExtra.z = 0.0f;
+
+  // Now execute
+  JPH_CharacterVirtual_ExtendedUpdate(self->character, dt, update_settings, 1,
+                                      self->world->system, self->body_filter,
+                                      self->shape_filter);
+
+  // 5. POST-MOVE SYNC
+  // Retrieve the final position after collision resolution
+  JPH_CharacterVirtual_GetPosition(self->character, current_pos);
+  JPH_CharacterVirtual_GetRotation(self->character, current_rot);
+
+  // Update current positions for queries and rendering
+  self->world->positions[off + 0] = (float)current_pos->x;
+  self->world->positions[off + 1] = (float)current_pos->y;
+  self->world->positions[off + 2] = (float)current_pos->z;
+
+  self->world->rotations[off + 0] = current_rot->x;
+  self->world->rotations[off + 1] = current_rot->y;
+  self->world->rotations[off + 2] = current_rot->z;
+  self->world->rotations[off + 3] = current_rot->w;
+
+  SHADOW_UNLOCK(&self->world->shadow_lock);
+  Py_RETURN_NONE;
+}
+
+PyObject *Character_get_position(CharacterObject *self,
+                                        PyObject *Py_UNUSED(ignored)) {
+  // 1. Aligned stack storage for SIMD
+  JPH_STACK_ALLOC(JPH_RVec3, pos);
+
+  // 2. Lock for consistency (ensure we aren't reading mid-step)
+  SHADOW_LOCK(&self->world->shadow_lock);
+  JPH_CharacterVirtual_GetPosition(self->character, pos);
+  SHADOW_UNLOCK(&self->world->shadow_lock);
+
+  PyObject *ret = PyTuple_New(3);
+  if (!ret) {
+    return NULL;
+  }
+
+  // Use the double precision provided by RVec3
+  PyTuple_SET_ITEM(ret, 0, PyFloat_FromDouble(pos->x));
+  PyTuple_SET_ITEM(ret, 1, PyFloat_FromDouble(pos->y));
+  PyTuple_SET_ITEM(ret, 2, PyFloat_FromDouble(pos->z));
+
+  return ret;
+}
+
+PyObject *Character_set_position(CharacterObject *self, PyObject *args,
+                                        PyObject *kwds) {
+  float x = 0.0f;
+  float y = 0.0f;
+  float z = 0.0f;
+  static char *kwlist[] = {"pos", NULL};
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)", kwlist, &x, &y, &z)) {
+    return NULL;
+  }
+
+  SHADOW_LOCK(&self->world->shadow_lock);
+  BLOCK_UNTIL_NOT_STEPPING(self->world);
+
+  // 1. Update Jolt (Aligned)
+  JPH_STACK_ALLOC(JPH_RVec3, pos);
+  pos->x = (double)x;
+  pos->y = (double)y;
+  pos->z = (double)z;
+  JPH_CharacterVirtual_SetPosition(self->character, pos);
+
+  // 2. Update Shadow Buffers (Reset Interpolation to prevent streaks)
+  uint32_t slot = (uint32_t)(self->handle & 0xFFFFFFFF);
+  uint32_t dense_idx = self->world->slot_to_dense[slot];
+  size_t off = (size_t)dense_idx * 4;
+
+  self->world->positions[off + 0] = x;
+  self->world->positions[off + 1] = y;
+  self->world->positions[off + 2] = z;
+
+  self->world->prev_positions[off + 0] = x;
+  self->world->prev_positions[off + 1] = y;
+  self->world->prev_positions[off + 2] = z;
+
+  SHADOW_UNLOCK(&self->world->shadow_lock);
+  Py_RETURN_NONE;
+}
+
+PyObject *Character_set_rotation(CharacterObject *self, PyObject *args,
+                                        PyObject *kwds) {
+  float x = 0.0f;
+  float y = 0.0f;
+  float z = 0.0f;
+  float w = 0.0f;
+  static char *kwlist[] = {"rot", NULL};
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "(ffff)", kwlist, &x, &y, &z,
+                                   &w)) {
+    return NULL;
+  }
+
+  SHADOW_LOCK(&self->world->shadow_lock);
+  BLOCK_UNTIL_NOT_STEPPING(self->world);
+
+  // 1. Update Jolt
+  JPH_STACK_ALLOC(JPH_Quat, q);
+  q->x = x;
+  q->y = y;
+  q->z = z;
+  q->w = w;
+  JPH_CharacterVirtual_SetRotation(self->character, q);
+
+  // 2. Update Shadow Buffers
+  uint32_t slot = (uint32_t)(self->handle & 0xFFFFFFFF);
+  uint32_t dense_idx = self->world->slot_to_dense[slot];
+  size_t off = (size_t)dense_idx * 4;
+
+  memcpy(&self->world->rotations[off], q, 16);
+  memcpy(&self->world->prev_rotations[off], q, 16);
+
+  SHADOW_UNLOCK(&self->world->shadow_lock);
+  Py_RETURN_NONE;
+}
+
+PyObject *Character_is_grounded(CharacterObject *self, PyObject *args) {
+  SHADOW_LOCK(&self->world->shadow_lock);
+  // No need for GUARD_STEPPING here as it's a non-destructive status check,
+  // but holding the lock ensures the character hasn't been deallocated.
+  JPH_GroundState state =
+      JPH_CharacterBase_GetGroundState((JPH_CharacterBase *)self->character);
+  SHADOW_UNLOCK(&self->world->shadow_lock);
+
+  if (state == JPH_GroundState_OnGround ||
+      state == JPH_GroundState_OnSteepGround) {
+    Py_RETURN_TRUE;
+  }
+  Py_RETURN_FALSE;
+}
+
+PyObject *Character_set_strength(CharacterObject *self, PyObject *args) {
+  float strength = 0.0f;
+  if (!PyArg_ParseTuple(args, "f", &strength)) {
+    return NULL;
+  }
+
+  SHADOW_LOCK(&self->world->shadow_lock);
+  BLOCK_UNTIL_NOT_STEPPING(self->world);
+  BLOCK_UNTIL_NOT_QUERYING(self->world);
+
+  // 1. Update Atomic for Jolt worker threads
+  atomic_store_explicit(&self->push_strength, strength, memory_order_relaxed);
+
+  // 2. Update Jolt internal state
+  JPH_CharacterVirtual_SetMaxStrength(self->character, strength);
+
+  SHADOW_UNLOCK(&self->world->shadow_lock);
+  Py_RETURN_NONE;
+}
+
+// Change signature to take PyObject* arg directly
+PyObject *Character_get_render_transform(CharacterObject *self,
+                                                PyObject *arg) {
+  // --- OPTIMIZATION 1: Fast Argument Parsing ---
+  double alpha_dbl = PyFloat_AsDouble(arg);
+  if (alpha_dbl == -1.0 && PyErr_Occurred()) {
+    return NULL;
+  }
+
+  float alpha = (float)alpha_dbl;
+  if (alpha < 0.0f) {
+    alpha = 0.0f;
+  } else if (alpha > 1.0f) {
+    alpha = 1.0f;
+  }
+
+  // --- 1. ALIGNED STACK ALLOCATION ---
+  // Mandatory for SIMD safety
+  JPH_STACK_ALLOC(JPH_RVec3, cur_p);
+  JPH_STACK_ALLOC(JPH_Quat, cur_r);
+
+  // --- 2. CONSISTENT SNAPSHOT (Locked) ---
+  SHADOW_LOCK(&self->world->shadow_lock);
+
+  // We snapshot both the 'prev' state and 'current' state together
+  float p_px = self->prev_px;
+  float p_py = self->prev_py;
+  float p_pz = self->prev_pz;
+  float p_rx = self->prev_rx;
+  float p_ry = self->prev_ry;
+  float p_rz = self->prev_rz;
+  float p_rw = self->prev_rw;
+
+  JPH_CharacterVirtual_GetPosition(self->character, cur_p);
+  JPH_CharacterVirtual_GetRotation(self->character, cur_r);
+
+  SHADOW_UNLOCK(&self->world->shadow_lock);
+
+  // --- 3. MATH (Unlocked) ---
+  // Position LERP
+  float px = p_px + ((float)cur_p->x - p_px) * alpha;
+  float py = p_py + ((float)cur_p->y - p_py) * alpha;
+  float pz = p_pz + ((float)cur_p->z - p_pz) * alpha;
+
+  // Rotation NLERP
+  float dot =
+      p_rx * cur_r->x + p_ry * cur_r->y + p_rz * cur_r->z + p_rw * cur_r->w;
+  float q2x = cur_r->x;
+  float q2y = cur_r->y;
+  float q2z = cur_r->z;
+  float q2w = cur_r->w;
+  if (dot < 0.0f) {
+    q2x = -q2x;
+    q2y = -q2y;
+    q2z = -q2z;
+    q2w = -q2w;
+  }
+
+  float rx = p_rx + (q2x - p_rx) * alpha;
+  float ry = p_ry + (q2y - p_ry) * alpha;
+  float rz = p_rz + (q2z - p_rz) * alpha;
+  float rw = p_rw + (q2w - p_rw) * alpha;
+
+  float mag_sq = rx * rx + ry * ry + rz * rz + rw * rw;
+  if (mag_sq > 1e-9f) {
+    float inv_len = 1.0f / sqrtf(mag_sq);
+    rx *= inv_len;
+    ry *= inv_len;
+    rz *= inv_len;
+    rw *= inv_len;
+  } else {
+    rx = 0.0f;
+    ry = 0.0f;
+    rz = 0.0f;
+    rw = 1.0f;
+  }
+
+  // --- 4. HARDENED MANUAL CONSTRUCTION ---
+  PyObject *pos = PyTuple_New(3);
+  PyObject *rot = PyTuple_New(4);
+  PyObject *out = PyTuple_New(2);
+
+  if (!pos || !rot || !out) {
+    Py_XDECREF(pos);
+    Py_XDECREF(rot);
+    Py_XDECREF(out);
+    return PyErr_NoMemory();
+  }
+
+  // Safely fill tuples (PyFloat_FromDouble can fail, but unlikely)
+  // If these return NULL, the whole return 'out' will be cleaned up by the
+  // user's logic
+  PyTuple_SET_ITEM(pos, 0, PyFloat_FromDouble(px));
+  PyTuple_SET_ITEM(pos, 1, PyFloat_FromDouble(py));
+  PyTuple_SET_ITEM(pos, 2, PyFloat_FromDouble(pz));
+
+  PyTuple_SET_ITEM(rot, 0, PyFloat_FromDouble(rx));
+  PyTuple_SET_ITEM(rot, 1, PyFloat_FromDouble(ry));
+  PyTuple_SET_ITEM(rot, 2, PyFloat_FromDouble(rz));
+  PyTuple_SET_ITEM(rot, 3, PyFloat_FromDouble(rw));
+
+  PyTuple_SET_ITEM(out, 0, pos);
+  PyTuple_SET_ITEM(out, 1, rot);
+
+  return out;
+}

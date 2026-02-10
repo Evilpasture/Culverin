@@ -33,3 +33,14 @@ PyObject *PhysicsWorld_create_vehicle(struct PhysicsWorldObject *self,
                                              PyObject *args, PyObject *kwds);
 void cleanup_vehicle_resources(VehicleResources *r, uint32_t num_wheels,
                                       struct PhysicsWorldObject *self);
+
+PyObject *Vehicle_set_input(VehicleObject *self, PyObject *args, PyObject *kwds);
+
+PyObject *Vehicle_get_wheel_transform(VehicleObject *self,
+                                             PyObject *args);
+
+PyObject *Vehicle_get_wheel_local_transform(VehicleObject *self,
+                                                   PyObject *args);            
+                                                   
+PyObject *Vehicle_get_debug_state(VehicleObject *self,
+                                         PyObject *Py_UNUSED(ignored));

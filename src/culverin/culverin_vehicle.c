@@ -345,3 +345,275 @@ PyObject *PhysicsWorld_create_vehicle(PhysicsWorldObject *self,
 
   return (PyObject *)obj;
 }
+
+// --- Vehicles Methods ---
+
+PyObject *Vehicle_set_input(VehicleObject *self, PyObject *args, PyObject *kwds) {
+  float forward = 0.0f, right = 0.0f, brake = 0.0f, handbrake = 0.0f;
+  static char *kwlist[] = {"forward", "right", "brake", "handbrake", NULL};
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "|ffff", kwlist, &forward, &right, &brake, &handbrake)) 
+    return NULL;
+
+  SHADOW_LOCK(&self->world->shadow_lock);
+  if (UNLIKELY(self->world->is_stepping || !self->vehicle)) {
+    SHADOW_UNLOCK(&self->world->shadow_lock);
+    Py_RETURN_NONE;
+  }
+
+  JPH_WheeledVehicleController *controller = (JPH_WheeledVehicleController *)JPH_VehicleConstraint_GetController(self->vehicle);
+  JPH_BodyID chassis_id = JPH_Body_GetID(JPH_VehicleConstraint_GetVehicleBody(self->vehicle));
+  JPH_BodyInterface *bi = self->world->body_interface;
+  JPH_BodyInterface_ActivateBody(bi, chassis_id);
+
+  // 1. Get Directional Speed
+  JPH_STACK_ALLOC(JPH_Vec3, linear_vel);
+  JPH_BodyInterface_GetLinearVelocity(bi, chassis_id, linear_vel);
+  JPH_STACK_ALLOC(JPH_Quat, chassis_q);
+  JPH_BodyInterface_GetRotation(bi, chassis_id, chassis_q);
+  JPH_Vec3 world_fwd;
+  manual_vec3_rotate_by_quat(&(JPH_Vec3){0, 0, 1.0f}, chassis_q, &world_fwd);
+  float speed = (linear_vel->x * world_fwd.x) + (linear_vel->y * world_fwd.y) + (linear_vel->z * world_fwd.z);
+
+  float input_throttle = fabsf(forward);
+  float input_brake = brake;
+
+  JPH_VehicleTransmission *trans = (JPH_VehicleTransmission *)JPH_WheeledVehicleController_GetTransmission(controller);
+  int cur_gear = JPH_VehicleTransmission_GetCurrentGear(trans);
+
+  // 2. DRIVE STATE MACHINE
+  if (forward > 0.01f) {
+      // FORWARD: Auto Shifting
+      JPH_VehicleTransmission_SetMode(trans, JPH_TransmissionMode_Auto);
+      // Force into Gear 1 if we were stuck in Neutral/Reverse
+      if (cur_gear <= 0 && speed > -0.5f) {
+          JPH_VehicleTransmission_Set(trans, 1, 1.0f);
+      }
+      // Arcade Brake: Moving back while wanting forward
+      if (speed < -0.1f) input_brake = 1.0f;
+  } 
+  else if (forward < -0.01f) {
+      // REVERSE: Manual Shifting
+      JPH_VehicleTransmission_SetMode(trans, JPH_TransmissionMode_Manual);
+      // Force into Gear -1 if we aren't there
+      if (cur_gear != -1 && speed < 0.5f) {
+          JPH_VehicleTransmission_Set(trans, -1, 1.0f);
+      }
+      // Arcade Brake: Moving forward while wanting reverse
+      if (speed > 0.1f) input_brake = 1.0f;
+  } 
+  else {
+      // COASTING: Neutral Force
+      input_throttle = 0.0f;
+      // Disconnect engine immediately to stop "Idle Creep" acceleration
+      JPH_VehicleTransmission_SetMode(trans, JPH_TransmissionMode_Manual);
+      if (cur_gear != 0) {
+          JPH_VehicleTransmission_Set(trans, 0, 0.0f); // 0.0 clutch = no connection
+      }
+      // Apply 5% rolling resistance to guarantee speed decay in Test 4
+      if (fabsf(speed) > 0.1f) {
+          input_brake = fmaxf(input_brake, 0.05f);
+      }
+  }
+
+  // 3. Final Driver Input
+  JPH_WheeledVehicleController_SetDriverInput(controller, input_throttle, right, input_brake, handbrake);
+
+  SHADOW_UNLOCK(&self->world->shadow_lock);
+  Py_RETURN_NONE;
+}
+
+PyObject *Vehicle_get_wheel_transform(VehicleObject *self,
+                                             PyObject *args) {
+  uint32_t index = 0;
+  if (!PyArg_ParseTuple(args, "I", &index)) {
+    return NULL;
+  }
+
+  SHADOW_LOCK(&self->world->shadow_lock);
+  BLOCK_UNTIL_NOT_STEPPING(self->world);
+
+  if (!self->vehicle || index >= self->num_wheels) {
+    SHADOW_UNLOCK(&self->world->shadow_lock);
+    Py_RETURN_NONE;
+  }
+
+  JPH_STACK_ALLOC(JPH_RMat4, transform);
+  JPH_Vec3 right = {1.0f, 0.0f, 0.0f};
+  JPH_Vec3 up = {0.0f, 1.0f, 0.0f};
+
+  // Get Transform in Double Precision
+  JPH_VehicleConstraint_GetWheelWorldTransform(self->vehicle, index, &right,
+                                               &up, transform);
+
+  // --- CRITICAL FIX: Layout Mapping ---
+
+  // 1. Position: In Double Precision, this is the 'column3' member
+  // (RVec3/doubles)
+  double px = transform->column3.x;
+  double py = transform->column3.y;
+  double pz = transform->column3.z;
+
+  // 2. Rotation: These are the first 3 columns (Vec4/floats in RMat44)
+  // We copy them to a standard Mat4 to extract the quaternion.
+  JPH_STACK_ALLOC(JPH_Mat4, rot_only_mat);
+  JPH_Mat4_Identity(rot_only_mat);
+
+  // Safe struct copy of Vec4/Vec3 columns
+  rot_only_mat->column[0] = transform->column[0];
+  rot_only_mat->column[1] = transform->column[1];
+  rot_only_mat->column[2] = transform->column[2];
+
+  JPH_STACK_ALLOC(JPH_Quat, q);
+  JPH_Mat4_GetQuaternion(rot_only_mat, q);
+
+  SHADOW_UNLOCK(&self->world->shadow_lock);
+
+  // Safe Python construction
+  PyObject *py_pos = Py_BuildValue("(ddd)", px, py, pz);
+  PyObject *py_rot = Py_BuildValue("(ffff)", q->x, q->y, q->z, q->w);
+
+  if (!py_pos || !py_rot) {
+    Py_XDECREF(py_pos);
+    Py_XDECREF(py_rot);
+    return NULL;
+  }
+
+  PyObject *result = PyTuple_Pack(2, py_pos, py_rot);
+  Py_DECREF(py_pos);
+  Py_DECREF(py_rot);
+  return result;
+}
+
+PyObject *Vehicle_get_wheel_local_transform(VehicleObject *self,
+                                                   PyObject *args) {
+  uint32_t index = 0;
+  if (!PyArg_ParseTuple(args, "I", &index)) {
+    return NULL;
+  }
+
+  SHADOW_LOCK(&self->world->shadow_lock);
+  // Re-entry guard: Ensure we aren't stepping while querying
+  BLOCK_UNTIL_NOT_STEPPING(self->world);
+
+  if (!self->vehicle || index >= self->num_wheels) {
+    SHADOW_UNLOCK(&self->world->shadow_lock);
+    Py_RETURN_NONE;
+  }
+
+  const JPH_Wheel *w_ptr = JPH_VehicleConstraint_GetWheel(self->vehicle, index);
+  const JPH_WheelSettings *ws = JPH_Wheel_GetSettings(w_ptr);
+  JPH_Vec3 local_pos_check;
+  JPH_WheelSettings_GetPosition(ws, &local_pos_check);
+
+  // If wheel is on the left (x < 0), we flip the right vector
+  JPH_Vec3 right = { (local_pos_check.x >= 0.0f) ? 1.0f : -1.0f, 0.0f, 0.0f };
+  JPH_Vec3 up = { 0.0f, 1.0f, 0.0f };
+
+  JPH_STACK_ALLOC(JPH_Mat4, local_transform);
+  // Initialize to identity just in case the API call fails or partially writes
+  JPH_Mat4_Identity(local_transform);
+
+  JPH_VehicleConstraint_GetWheelLocalTransform(self->vehicle, index, &right,
+                                               &up, local_transform);
+
+  float lx = local_transform->column[3].x;
+  float ly = local_transform->column[3].y;
+  float lz = local_transform->column[3].z;
+
+  JPH_STACK_ALLOC(JPH_Quat, q);
+  JPH_Mat4_GetQuaternion(local_transform, q);
+
+  SHADOW_UNLOCK(&self->world->shadow_lock);
+
+  PyObject *py_pos = Py_BuildValue("(fff)", lx, ly, lz);
+  PyObject *py_rot = Py_BuildValue("(ffff)", q->x, q->y, q->z, q->w);
+
+  if (!py_pos || !py_rot) {
+    Py_XDECREF(py_pos);
+    Py_XDECREF(py_rot);
+    return NULL;
+  }
+
+  PyObject *result = PyTuple_Pack(2, py_pos, py_rot);
+  Py_DECREF(py_pos);
+  Py_DECREF(py_rot);
+
+  return result;
+}
+
+PyObject *Vehicle_get_debug_state(VehicleObject *self,
+                                         PyObject *Py_UNUSED(ignored)) {
+  // 1. LOCK AND GUARD
+  // We need the world lock to ensure the vehicle pointer is stable
+  // and the physics step isn't currently mutating these values.
+  SHADOW_LOCK(&self->world->shadow_lock);
+
+  if (self->world->is_stepping) {
+    SHADOW_UNLOCK(&self->world->shadow_lock);
+    // Debug prints usually shouldn't raise Python errors,
+    // so we just log a warning and return.
+    DEBUG_LOG("Warning: Cannot get debug state while physics is stepping.");
+    Py_RETURN_NONE;
+  }
+
+  if (!self->vehicle) {
+    SHADOW_UNLOCK(&self->world->shadow_lock);
+    DEBUG_LOG("Warning: Vehicle has been destroyed.");
+    Py_RETURN_NONE;
+  }
+
+  // 2. RESOLVE JOLT COMPONENTS
+  JPH_WheeledVehicleController *controller =
+      (JPH_WheeledVehicleController *)JPH_VehicleConstraint_GetController(
+          self->vehicle);
+  if (!controller) {
+    SHADOW_UNLOCK(&self->world->shadow_lock);
+    Py_RETURN_NONE;
+  }
+
+  const JPH_VehicleEngine *engine =
+      JPH_WheeledVehicleController_GetEngine(controller);
+  const JPH_VehicleTransmission *trans =
+      JPH_WheeledVehicleController_GetTransmission(controller);
+
+  // 3. CAPTURE INPUTS
+  float in_fwd = JPH_WheeledVehicleController_GetForwardInput(controller);
+  float in_brk = JPH_WheeledVehicleController_GetBrakeInput(controller);
+
+  // 4. CAPTURE DRIVETRAIN
+  float rpm = JPH_VehicleEngine_GetCurrentRPM(engine);
+  float engine_torque = JPH_VehicleEngine_GetTorque(engine, in_fwd);
+  int gear = JPH_VehicleTransmission_GetCurrentGear(trans);
+  float clutch = JPH_VehicleTransmission_GetClutchFriction(trans);
+
+  DEBUG_LOG("=== VEHICLE DEBUG STATE ===");
+  DEBUG_LOG("  Inputs: Fwd=%.2f | Brk=%.2f", in_fwd, in_brk);
+  DEBUG_LOG("  Engine: %.2f RPM | Torque: %.2f Nm", rpm, engine_torque);
+  DEBUG_LOG("  Trans : Gear %d | Clutch Friction: %.2f", gear, clutch);
+
+  // 5. CAPTURE WHEEL STATE
+  for (uint32_t i = 0; i < self->num_wheels; i++) {
+    const JPH_Wheel *w = JPH_VehicleConstraint_GetWheel(self->vehicle, i);
+    const JPH_WheelSettings *ws = JPH_Wheel_GetSettings(w);
+
+    bool contact = JPH_Wheel_HasContact(w);
+    float susp_len = JPH_Wheel_GetSuspensionLength(w);
+    float ang_vel = JPH_Wheel_GetAngularVelocity(w);
+    float radius = JPH_WheelSettings_GetRadius(ws);
+
+    float tire_speed = ang_vel * radius;
+    float long_lambda = JPH_Wheel_GetLongitudinalLambda(w);
+    float lat_lambda = JPH_Wheel_GetLateralLambda(w);
+
+    DEBUG_LOG("  Wheel %u: %s", i, contact ? "GROUND" : "AIR   ");
+    DEBUG_LOG("    Susp: %.3fm | AngVel: %.2f rad/s | SurfSpd: %.2f m/s",
+              susp_len, ang_vel, tire_speed);
+    DEBUG_LOG("    Trac: Long=%.2f | Lat=%.2f", long_lambda, lat_lambda);
+  }
+  DEBUG_LOG("===========================");
+
+  // 6. UNLOCK
+  SHADOW_UNLOCK(&self->world->shadow_lock);
+
+  Py_RETURN_NONE;
+}

@@ -3,6 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+struct PhysicsWorldObject; 
+typedef struct PhysicsWorldObject PhysicsWorldObject;
 
 // --- Command Buffer Optimized Layout (32 Bytes) ---
 
