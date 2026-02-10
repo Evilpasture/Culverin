@@ -359,25 +359,6 @@ typedef struct {
   // stream
 } MaterialData;
 
-// 16-byte strided vertex for easy GPU upload: [X, Y, Z, Color(u32)]
-typedef struct {
-    float x, y, z;
-    uint32_t color;
-} DebugVertex;
-
-// A simple dynamic array container
-typedef struct {
-    DebugVertex* data;
-    size_t count;
-    size_t capacity;
-} DebugBuffer;
-
-typedef struct {
-    float x;
-    float y;
-    float z;
-} DebugCoordinates;
-
 typedef struct {
     float x;
     float y;
