@@ -97,7 +97,11 @@ target_include_directories(${JOLTC_TARGET} PUBLIC "extern/JoltC/include" "${JOLT
 target_link_libraries(${JOLTC_TARGET} PRIVATE Jolt)
 
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
-python_add_library(_culverin_c MODULE src/culverin/culverin.c src/culverin/shadow_sync.c)
+python_add_library(_culverin_c MODULE 
+    src/culverin/culverin.c 
+    src/culverin/shadow_sync.c
+    src/culverin/debug_render.c
+)
 if(MSVC)
     # 1. Add /Zi to generate debug info (symbols) even in Release builds
     # 2. Add /DEBUG to the linker to create the .pdb file
@@ -108,7 +112,12 @@ if(MSVC)
     # Fix for some MSVC headers being stubborn about standards
     target_compile_definitions(_culverin_c PRIVATE _CRT_DECLARE_NONSTDC_NAMES=1)
 endif()
-target_include_directories(_culverin_c PRIVATE "extern/JoltC/include" "${JOLT_DIR}" ${Python_INCLUDE_DIRS})
+target_include_directories(_culverin_c PRIVATE 
+    "src/culverin"
+    "extern/JoltC/include" 
+    "${JOLT_DIR}" 
+    ${Python_INCLUDE_DIRS}
+)
 
 if(WIN32)
     target_link_libraries(_culverin_c PRIVATE Winmm.lib)
