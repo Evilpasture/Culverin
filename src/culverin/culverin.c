@@ -1260,8 +1260,8 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
   if (verify_abi_alignment(self->body_interface) < 0)
     goto fail;
 
-  self->contact_max_capacity = 4096;
-  self->contact_buffer = PyMem_RawMalloc(4096 * sizeof(ContactEvent));
+  self->contact_max_capacity = CONTACT_MAX_CAPACITY;
+  self->contact_buffer = PyMem_RawMalloc(CONTACT_MAX_CAPACITY * sizeof(ContactEvent));
   atomic_init(&self->contact_atomic_idx, 0);
   JPH_ContactListener_SetProcs(&contact_procs);
   self->contact_listener = JPH_ContactListener_Create(self);
@@ -3312,7 +3312,7 @@ static PyObject *PhysicsWorld_step(PhysicsWorldObject *self, PyObject *args) {
 
   // 2. BUFFER MANAGEMENT (Reset Phase)
   if (UNLIKELY(!self->contact_buffer)) { // UNLIKELY re-allocation needed
-    self->contact_max_capacity = 4096;
+    self->contact_max_capacity = CONTACT_MAX_CAPACITY;
     self->contact_buffer =
         PyMem_RawMalloc(self->contact_max_capacity * sizeof(ContactEvent));
     if (UNLIKELY(!self->contact_buffer)) { // UNLIKELY OOM
