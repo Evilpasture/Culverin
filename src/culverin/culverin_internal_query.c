@@ -107,3 +107,132 @@ JPH_Shape *find_or_create_shape(PhysicsWorldObject *self, int type,
 
   return shape;
 }
+
+// Helper 1: Run the Raycast (Encapsulates all Jolt Filter/Lock/Cleanup
+// boilerplate)
+bool execute_raycast_query(PhysicsWorldObject *self,
+                                  JPH_BodyID ignore_bid,
+                                  const JPH_RVec3 *origin,
+                                  const JPH_Vec3 *direction,
+                                  JPH_RayCastResult *hit) {
+  bool has_hit;
+
+  // 1. LOCK TRAMPOLINE
+  SHADOW_LOCK(&g_jph_trampoline_lock);
+
+  // 2. Filter Setup
+  JPH_BroadPhaseLayerFilter_Procs bp_procs = {.ShouldCollide =
+                                                  filter_allow_all_bp};
+  JPH_BroadPhaseLayerFilter *bp_f = JPH_BroadPhaseLayerFilter_Create(NULL);
+  JPH_BroadPhaseLayerFilter_SetProcs(&bp_procs);
+
+  JPH_ObjectLayerFilter_Procs obj_procs = {.ShouldCollide =
+                                               filter_allow_all_obj};
+  JPH_ObjectLayerFilter *obj_f = JPH_ObjectLayerFilter_Create(NULL);
+  JPH_ObjectLayerFilter_SetProcs(&obj_procs);
+
+  CastShapeFilter filter_ctx = {.ignore_id = ignore_bid};
+  JPH_BodyFilter_Procs filter_procs = {.ShouldCollide = CastShape_BodyFilter};
+  JPH_BodyFilter *bf = JPH_BodyFilter_Create(&filter_ctx);
+  JPH_BodyFilter_SetProcs(&filter_procs);
+
+  // 3. Execution
+  const JPH_NarrowPhaseQuery *query =
+      JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
+  has_hit = JPH_NarrowPhaseQuery_CastRay(query, origin, direction, hit, bp_f,
+                                         obj_f, bf);
+
+  // 4. Restore & Cleanup
+  JPH_BodyFilter_SetProcs(&global_bf_procs);
+  SHADOW_UNLOCK(&g_jph_trampoline_lock);
+
+  JPH_BodyFilter_Destroy(bf);
+  JPH_BroadPhaseLayerFilter_Destroy(bp_f);
+  JPH_ObjectLayerFilter_Destroy(obj_f);
+
+  return has_hit;
+}
+
+// Helper 2: Extract World Space Normal after hit
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+void extract_hit_normal(PhysicsWorldObject *self, JPH_BodyID bodyID,
+                               JPH_SubShapeID subShapeID2,
+                               const JPH_RVec3 *origin, const JPH_Vec3 *ray_dir,
+                               float fraction, JPH_Vec3 *normal_out) {
+  const JPH_BodyLockInterface *lock_iface =
+      JPH_PhysicsSystem_GetBodyLockInterface(self->system);
+  JPH_BodyLockRead lock;
+  JPH_BodyLockInterface_LockRead(lock_iface, bodyID, &lock);
+
+  if (lock.body) {
+    JPH_RVec3 hit_p = {origin->x + ray_dir->x * fraction,
+                       origin->y + ray_dir->y * fraction,
+                       origin->z + ray_dir->z * fraction};
+    JPH_Body_GetWorldSpaceSurfaceNormal(lock.body, subShapeID2, &hit_p,
+                                        normal_out);
+  } else {
+    normal_out->x = 0;
+    normal_out->y = 1;
+    normal_out->z = 0;
+  }
+  JPH_BodyLockInterface_UnlockRead(lock_iface, &lock);
+}
+
+// Callback: Called by Jolt when a hit is found during the sweep
+float CastShape_ClosestCollector(void *context,
+                                        const JPH_ShapeCastResult *result) {
+  CastShapeContext *ctx = (CastShapeContext *)context;
+
+  // We only care about the closest hit (smallest fraction)
+  if (result->fraction < ctx->hit.fraction) {
+    ctx->hit = *result;
+    ctx->has_hit = true;
+  }
+
+  // Returning the fraction tells Jolt to ignore any future hits further than
+  // this one
+  return result->fraction;
+}
+
+// Helper 2: Internal logic to run the actual query under trampoline locks
+void shapecast_execute_internal(PhysicsWorldObject *self,
+                                       const JPH_Shape *shape,
+                                       const JPH_RMat4 *transform,
+                                       const JPH_Vec3 *sweep_dir,
+                                       JPH_BodyID ignore_bid,
+                                       CastShapeContext *ctx) {
+  SHADOW_LOCK(&g_jph_trampoline_lock);
+
+  JPH_BroadPhaseLayerFilter_Procs bp_p = {.ShouldCollide = filter_allow_all_bp};
+  JPH_BroadPhaseLayerFilter *bp_f = JPH_BroadPhaseLayerFilter_Create(NULL);
+  JPH_BroadPhaseLayerFilter_SetProcs(&bp_p);
+
+  JPH_ObjectLayerFilter_Procs obj_p = {.ShouldCollide = filter_allow_all_obj};
+  JPH_ObjectLayerFilter *obj_f = JPH_ObjectLayerFilter_Create(NULL);
+  JPH_ObjectLayerFilter_SetProcs(&obj_p);
+
+  CastShapeFilter filter_ctx = {.ignore_id = ignore_bid};
+  JPH_BodyFilter_Procs bf_p = {.ShouldCollide = CastShape_BodyFilter};
+  JPH_BodyFilter *bf = JPH_BodyFilter_Create(&filter_ctx);
+  JPH_BodyFilter_SetProcs(&bf_p);
+
+  JPH_STACK_ALLOC(JPH_ShapeCastSettings, settings);
+  JPH_ShapeCastSettings_Init(settings);
+  settings->backFaceModeTriangles = JPH_BackFaceMode_IgnoreBackFaces;
+  settings->backFaceModeConvex = JPH_BackFaceMode_IgnoreBackFaces;
+
+  JPH_RVec3 base_offset = {0, 0, 0};
+  const JPH_NarrowPhaseQuery *nq =
+      JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
+
+  JPH_NarrowPhaseQuery_CastShape(nq, shape, transform, sweep_dir, settings,
+                                 &base_offset, CastShape_ClosestCollector, ctx,
+                                 bp_f, obj_f, bf, NULL);
+
+  JPH_BodyFilter_SetProcs(&global_bf_procs);
+  SHADOW_UNLOCK(&g_jph_trampoline_lock);
+
+  JPH_BodyFilter_Destroy(bf);
+  JPH_BroadPhaseLayerFilter_Destroy(bp_f);
+  JPH_ObjectLayerFilter_Destroy(obj_f);
+}
