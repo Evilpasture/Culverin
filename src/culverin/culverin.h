@@ -14,6 +14,9 @@
 #include "culverin_character.h"
 #include "culverin_contact_listener.h"
 #include "culverin_parsers.h"
+#include "culverin_command_buffer.h"
+#include "culverin_vehicle.h"
+#include "culverin_tracked_vehicle.h"
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -213,98 +216,6 @@ typedef struct {
 // Minimal Handle for Constraints (Distinct from BodyHandle)
 typedef uint64_t ConstraintHandle;
 
-// --- Slot State Machine ---
-typedef enum {
-  SLOT_EMPTY = 0,
-  SLOT_PENDING_CREATE = 1,
-  SLOT_ALIVE = 2,
-  SLOT_PENDING_DESTROY = 3
-} SlotState;
-
-// --- Command Buffer Optimized Layout (32 Bytes) ---
-
-// Bit-packing helper macros
-#define CMD_HEADER(type, slot) ((uint32_t)((type) & 0xFF) | ((slot) << 8))
-#define CMD_GET_TYPE(header)   ((CommandType)((header) & 0xFF))
-#define CMD_GET_SLOT(header)   ((header) >> 8)
-
-typedef enum {
-  CMD_CREATE_BODY,
-  CMD_DESTROY_BODY,
-  CMD_SET_POS,
-  CMD_SET_ROT,
-  CMD_SET_TRNS, // Position + Rotation
-  CMD_SET_LINVEL,
-  CMD_SET_ANGVEL,
-  CMD_SET_MOTION,
-  CMD_ACTIVATE,
-  CMD_DEACTIVATE,
-  CMD_SET_USER_DATA,
-  CMD_SET_CCD
-} CommandType;
-
-// Force 8-byte alignment for the whole union to ensure 64-bit pointers align
-// correctly wherever they fall inside the 32-byte block.
-#if defined(_MSC_VER)
-__declspec(align(8))
-#else
-__attribute__((aligned(8)))
-#endif
-typedef union {
-  uint32_t header;
-
-  // 1. Create Body (32 Bytes - Full)
-  struct {
-    uint32_t header;
-    uint32_t material_id;
-    JPH_BodyCreationSettings *settings;
-    uint64_t user_data;
-    uint32_t category;
-    uint32_t mask;
-  } create;
-
-  // 2. Transform (32 Bytes - Full)
-  struct {
-    uint32_t header;
-    float px, py, pz;
-    float rx, ry, rz, rw;
-    // No padding needed: 4 + 12 + 16 = 32
-  } transform;
-
-  // 3. Vector (20 Bytes -> 32 Bytes)
-  struct {
-    uint32_t header;
-    float x, y, z, w;
-    uint8_t _pad[12]; // Explicitly fill the rest
-  } vec;
-
-  // 4. Motion (8 Bytes -> 32 Bytes)
-  struct {
-    uint32_t header;
-    int32_t motion_type;
-    uint8_t _pad[24];
-  } motion;
-
-  // 5. User Data (16 Bytes -> 32 Bytes)
-  // Note: uint64 must align to 8 bytes.
-  // Layout: [H:4][Pad:4][U64:8][Pad:16]
-  struct {
-    uint32_t header;        // 4 bytes (Offset 0)
-    uint32_t _align_pad;    // 4 bytes (Offset 4) -> Aligns next u64 to 8
-    uint64_t user_data_val; // 8 bytes (Offset 8)
-    uint8_t _tail_pad[16];  // 16 bytes (Offset 16)
-  } user_data;
-
-} PhysicsCommand;
-
-// Per-struct guards. If any individual struct grows > 32, build fails.
-_Static_assert(sizeof(PhysicsCommand) == 32,
-               "PhysicsCommand union must be 32 bytes");
-_Static_assert(sizeof(((PhysicsCommand *)0)->create) == 32,
-               "Create struct overflow");
-_Static_assert(sizeof(((PhysicsCommand *)0)->transform) == 32,
-               "Transform struct overflow");
-
 // --- Contact Lifecycle Types ---
 typedef enum {
     EVENT_ADDED = 0,
@@ -407,12 +318,6 @@ typedef struct {
     int use_ccd;
     int motion_type;
 } BodyConfig;
-
-typedef struct {
-    float torque;
-    float max_rpm;
-    float min_rpm;
-} TrackedEngineConfig;
 
 // --- The Object Struct ---
 typedef struct PhysicsWorldObject {
@@ -547,33 +452,6 @@ typedef struct CharacterObject {
   float prev_px, prev_py, prev_pz;
   float prev_rx, prev_ry, prev_rz, prev_rw;
 } CharacterObject;
-
-typedef struct {
-  JPH_LinearCurve *f_curve;
-  JPH_LinearCurve *t_curve;
-  JPH_WheelSettings **w_settings;
-  JPH_WheeledVehicleControllerSettings *v_ctrl;
-  JPH_VehicleTransmissionSettings *v_trans_set;
-  JPH_VehicleCollisionTesterRay *tester;
-  JPH_VehicleConstraint *j_veh;
-  bool is_added_to_world;
-} VehicleResources;
-
-typedef struct VehicleObject {
-  PyObject_HEAD JPH_VehicleConstraint *vehicle;
-  JPH_VehicleCollisionTester *tester;
-  PhysicsWorldObject *world;
-
-  // Ownership tracking for cleanup
-  JPH_WheelSettings **wheel_settings;
-  JPH_VehicleControllerSettings *controller_settings;
-  JPH_VehicleTransmissionSettings *transmission_settings; // NEW: Keep alive
-  JPH_LinearCurve *friction_curve;
-  JPH_LinearCurve *torque_curve;
-
-  uint32_t num_wheels;
-  int current_gear;
-} VehicleObject;
 
 // --- Ragdoll Structures ---
 
