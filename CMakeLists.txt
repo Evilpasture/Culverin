@@ -111,6 +111,7 @@ python_add_library(_culverin_c MODULE
     src/culverin/culverin_ragdoll.c
     src/culverin/culverin_internal_query.c
     src/culverin/culverin_physics_world_internal.c
+    src/culverin/culverin_query_methods.c
 )
 if(MSVC)
     # 1. Add /Zi to generate debug info (symbols) even in Release builds
