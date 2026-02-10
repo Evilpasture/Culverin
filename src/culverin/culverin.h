@@ -13,6 +13,7 @@
 #include "culverin_filters.h"
 #include "culverin_character.h"
 #include "culverin_contact_listener.h"
+#include "culverin_parsers.h"
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -361,12 +362,6 @@ typedef struct {
   // Padding/Alignment isn't critical here as this is a lookup array, not a
   // stream
 } MaterialData;
-
-typedef struct {
-    float x;
-    float y;
-    float z;
-} Vec3f; // General Vec3f
 
 typedef struct {
     int max_bodies;
