@@ -8,8 +8,8 @@
 #include <stdatomic.h>
 #include <stddef.h>
 #include <string.h>
-#include "debug_render.h"
 #include "culverin_math.h"
+#include "debug_render.h"
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -417,7 +417,7 @@ typedef struct {
 } TrackedEngineConfig;
 
 // --- The Object Struct ---
-typedef struct {
+typedef struct PhysicsWorldObject {
   PyObject_HEAD
 
       // Jolt Handles
@@ -521,7 +521,7 @@ typedef struct {
 } PhysicsWorldObject;
 
 // --- Character Object ---
-typedef struct {
+typedef struct CharacterObject {
   PyObject_HEAD JPH_CharacterVirtual *character;
   PhysicsWorldObject *world;
   BodyHandle handle;
@@ -561,7 +561,7 @@ typedef struct {
   bool is_added_to_world;
 } VehicleResources;
 
-typedef struct {
+typedef struct VehicleObject {
   PyObject_HEAD JPH_VehicleConstraint *vehicle;
   JPH_VehicleCollisionTester *tester;
   PhysicsWorldObject *world;
@@ -579,7 +579,7 @@ typedef struct {
 
 // --- Ragdoll Structures ---
 
-typedef struct {
+typedef struct SkeletonObject {
   PyObject_HEAD JPH_Skeleton *skeleton;
 } SkeletonObject;
 
@@ -668,5 +668,8 @@ static inline bool unpack_handle(PhysicsWorldObject *self, BodyHandle h,
   return self->generations[*slot] == gen;
 }
 
-// Sync function (defined in shadow_sync.c)
-void culverin_sync_shadow_buffers(PhysicsWorldObject *self);
+
+
+// INCLUDE LAST!!!
+#include "culverin_getters.h"
+#include "shadow_sync.h"
