@@ -19,6 +19,7 @@
 #include "culverin_ragdoll.h"
 #include "culverin_internal_query.h"
 #include "culverin_physics_world_internal.h"
+#include "culverin_query_methods.h"
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -186,23 +187,6 @@ typedef enum {
   CONSTRAINT_DISTANCE = 4,
   CONSTRAINT_CONE = 5
 } ConstraintType;
-
-// --- Unified Parameter Struct ---
-typedef struct {
-  float px, py, pz;      // Pivot
-  float ax, ay, az;      // Axis
-  float limit_min;       // Limits
-  float limit_max;
-  float half_cone_angle; 
-  
-  // --- NEW: Motor Settings ---
-  bool has_motor;
-  int motor_type;     // 0=Off, 1=Velocity, 2=Position
-  float motor_target; // Target Velocity or Target Position
-  float max_torque;   // Max Force/Torque
-  float frequency;    // Spring stiffness (0 = stiff)
-  float damping;      // Spring damping
-} ConstraintParams;
 
 // Minimal Handle for Constraints (Distinct from BodyHandle)
 typedef uint64_t ConstraintHandle;
@@ -415,19 +399,6 @@ typedef struct PhysicsWorldObject {
 } PhysicsWorldObject;
 
 typedef struct {
-  PhysicsWorldObject *world;
-  PyObject *result_list; // Python List to append handles to
-} QueryContext;
-
-// Helper for Overlap Callbacks
-typedef struct {
-  PhysicsWorldObject *world;
-  uint64_t *hits; // C array to store baked handles
-  size_t count;
-  size_t capacity;
-} OverlapContext;
-
-typedef struct {
   JPH_ShapeCastResult hit;
   bool has_hit;
 } CastShapeContext;
@@ -484,7 +455,7 @@ static inline bool unpack_handle(PhysicsWorldObject *self, BodyHandle h,
   return self->generations[*slot] == gen;
 }
 
-
+extern ShadowMutex g_jph_trampoline_lock;
 
 // INCLUDE LAST!!!
 #include "culverin_getters.h"
