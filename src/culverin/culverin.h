@@ -11,12 +11,14 @@
 #include "culverin_math.h"
 #include "culverin_debug_render.h"
 #include "culverin_filters.h"
-#include "culverin_character.h"
 #include "culverin_contact_listener.h"
 #include "culverin_parsers.h"
 #include "culverin_command_buffer.h"
 #include "culverin_vehicle.h"
 #include "culverin_tracked_vehicle.h"
+#include "culverin_ragdoll.h"
+#include "culverin_internal_query.h"
+#include "culverin_physics_world_internal.h"
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -170,17 +172,6 @@ static inline void culverin_yield() {
       Py_END_ALLOW_THREADS SHADOW_LOCK(&(self)->shadow_lock);                  \
     }                                                                          \
   } while (0)
-
-// --- Shape Caching ---
-typedef struct {
-  uint32_t type; // 0=Box, 1=Sphere, 2=Capsule, 3=Cylinder, 4=Plane
-  float p1, p2, p3, p4;
-} ShapeKey;
-
-typedef struct {
-  ShapeKey key;
-  JPH_Shape *shape;
-} ShapeEntry;
 
 // Minimal Handle Helper
 // Python handles will be 64-bit integers: (Generation << 32) | SlotIndex
@@ -423,57 +414,6 @@ typedef struct PhysicsWorldObject {
   DebugBuffer debug_triangles;
 } PhysicsWorldObject;
 
-// --- Character Object ---
-typedef struct CharacterObject {
-  PyObject_HEAD JPH_CharacterVirtual *character;
-  PhysicsWorldObject *world;
-  BodyHandle handle;
-
-  // Filters and listeners
-  JPH_BodyFilter *body_filter;
-  JPH_ShapeFilter *shape_filter;
-  JPH_BroadPhaseLayerFilter *bp_filter;
-  JPH_ObjectLayerFilter *obj_filter;
-  JPH_CharacterContactListener *listener;
-
-  // ATOMIC INPUTS: Read by Jolt worker threads in callbacks
-  _Atomic float push_strength;
-  _Atomic float last_vx;
-  _Atomic float last_vy;
-  _Atomic float last_vz;
-
-  // Non-atomic: Used by main thread only for rendering
-  // AVOID FALSE SHARING.
-#if defined(_MSC_VER)
-  __declspec(align(64)) 
-#else
-  _Alignas(64) 
-#endif
-  float prev_px, prev_py, prev_pz;
-  float prev_rx, prev_ry, prev_rz, prev_rw;
-} CharacterObject;
-
-// --- Ragdoll Structures ---
-
-typedef struct SkeletonObject {
-  PyObject_HEAD JPH_Skeleton *skeleton;
-} SkeletonObject;
-
-typedef struct {
-  PyObject_HEAD JPH_RagdollSettings *settings;
-  PhysicsWorldObject *world; // Kept to access Shape Cache
-} RagdollSettingsObject;
-
-typedef struct {
-  PyObject_HEAD JPH_Ragdoll *ragdoll;
-  PhysicsWorldObject *world;
-
-  // We must track the handles of the parts so we can
-  // invalid the slots when the ragdoll is destroyed.
-  size_t body_count;
-  uint32_t *body_slots;
-} RagdollObject;
-
 typedef struct {
   PhysicsWorldObject *world;
   PyObject *result_list; // Python List to append handles to
@@ -549,3 +489,4 @@ static inline bool unpack_handle(PhysicsWorldObject *self, BodyHandle h,
 // INCLUDE LAST!!!
 #include "culverin_getters.h"
 #include "culverin_shadow_sync.h"
+#include "culverin_character.h"
