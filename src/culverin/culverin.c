@@ -4,29 +4,6 @@
 static ShadowMutex
     g_jph_trampoline_lock; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
-// --- Low-complexity helper to fetch attributes with a fallback ---
-static float get_py_float_attr(PyObject *obj, const char *name,
-                               float default_val) {
-  if (!obj || obj == Py_None) {
-    return default_val;
-  }
-
-  float result = default_val;
-  PyObject *attr = PyObject_GetAttrString(obj, name);
-
-  if (attr) {
-    double v = PyFloat_AsDouble(attr);
-    if (!PyErr_Occurred()) {
-      result = (float)v;
-    }
-    Py_DECREF(attr);
-  }
-
-  // Clear any errors (like AttributeError) to allow fallback to default
-  PyErr_Clear();
-  return result;
-}
-
 /**
  * Internal helper to remove a body from the dense arrays.
  * Maintains a packed, contiguous array by swapping the last body into the hole.
@@ -3745,53 +3722,8 @@ static PyObject *PhysicsWorld_destroy_body(PhysicsWorldObject *self,
   Py_RETURN_NONE;
 }
 
-// Helper macro to get a float attribute, decref it, and handle errors
-#define GET_FLOAT_ATTR(obj, name, target)                                      \
-  do {                                                                         \
-    PyObject *attr = PyObject_GetAttrString(obj, name);                        \
-    if (attr) {                                                                \
-      double _v = PyFloat_AsDouble(attr);                                      \
-      Py_DECREF(attr);                                                         \
-      if (!PyErr_Occurred())                                                   \
-        (target) = (float)_v;                                                  \
-    }                                                                          \
-    PyErr_Clear();                                                             \
-  } while (0)
-
 // vroom vroom
 // this is paperwork and i did surgery in the core
-// --- Internal Helpers to reduce complexity ---
-
-// --- Reusable helper for Vec3 parsing (Complexity: 2) ---
-static int parse_py_vec3(PyObject *obj, Vec3f *out) {
-  // 1. Initial validation
-  if (!obj || !PySequence_Check(obj) || PySequence_Size(obj) != 3) {
-    return 0;
-  }
-
-  float results[3];
-  for (int i = 0; i < 3; i++) {
-    PyObject *item = PySequence_GetItem(obj, i);
-    if (!item) {
-      return 0;
-    }
-
-    results[i] = (float)PyFloat_AsDouble(item);
-    Py_DECREF(item);
-
-    if (UNLIKELY(PyErr_Occurred())) {
-      return 0;
-    }
-  }
-
-  // 3. Assignment to struct members
-  out->x = results[0];
-  out->y = results[1];
-  out->z = results[2];
-
-  return 1;
-}
-
 // --- Refactored Wheel Creation (Complexity: 2) ---
 static JPH_WheelSettings *create_single_wheel(PyObject *w_dict,
                                               JPH_LinearCurve *f_curve) {
