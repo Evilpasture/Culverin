@@ -398,16 +398,6 @@ typedef struct PhysicsWorldObject {
   DebugBuffer debug_triangles;
 } PhysicsWorldObject;
 
-typedef struct {
-  JPH_ShapeCastResult hit;
-  bool has_hit;
-} CastShapeContext;
-
-// Optional filter to ignore a specific body
-typedef struct {
-  JPH_BodyID ignore_id;
-} CastShapeFilter;
-
 // Temporary container for resize
 typedef struct {
     float *pos, *rot, *ppos, *prot, *lvel, *avel;
