@@ -102,9 +102,11 @@ PyObject *PhysicsWorld_overlap_sphere(PhysicsWorldObject *self, PyObject *args,
   JPH_STACK_ALLOC(JPH_CollideShapeSettings, settings);
   JPH_CollideShapeSettings_Init(settings);
 
-  // --- EXECUTION (Release GIL before acquiring Jolt Lock) ---
+  // --- EXECUTION ---
+  
   Py_BEGIN_ALLOW_THREADS 
-  SHADOW_LOCK(&g_jph_trampoline_lock);
+  NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+  
 
   JPH_BroadPhaseLayerFilter_Procs bp_procs = {.ShouldCollide = filter_allow_all_bp};
   bp_filter = JPH_BroadPhaseLayerFilter_Create(NULL);
@@ -123,9 +125,9 @@ PyObject *PhysicsWorld_overlap_sphere(PhysicsWorldObject *self, PyObject *args,
   JPH_NarrowPhaseQuery_CollideShape(nq, shape, scale, transform, settings,
                                     base_offset, OverlapCallback_Narrow, &ctx,
                                     bp_filter, obj_filter, body_filter, NULL);
-
-  SHADOW_UNLOCK(&g_jph_trampoline_lock);
+  NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
   Py_END_ALLOW_THREADS 
+  
 
   ret_val = PyList_New(0);
   if (!ret_val) {
@@ -188,8 +190,10 @@ PyObject *PhysicsWorld_overlap_aabb(PhysicsWorldObject *self, PyObject *args,
   JPH_STACK_ALLOC(JPH_AABox, box);
   box->min.x = min_x; box->min.y = min_y; box->min.z = min_z;
   box->max.x = max_x; box->max.y = max_y; box->max.z = max_z;
+  
   Py_BEGIN_ALLOW_THREADS
-  SHADOW_LOCK(&g_jph_trampoline_lock);
+  NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+  
 
   JPH_BroadPhaseLayerFilter_Procs bp_procs = {.ShouldCollide = filter_allow_all_bp};
   bp_filter = JPH_BroadPhaseLayerFilter_Create(NULL);
@@ -203,8 +207,9 @@ PyObject *PhysicsWorld_overlap_aabb(PhysicsWorldObject *self, PyObject *args,
   JPH_BroadPhaseQuery_CollideAABox(bq, box, OverlapCallback_Broad, &ctx,
                                    bp_filter, obj_filter);
 
-  SHADOW_UNLOCK(&g_jph_trampoline_lock);
+  NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
   Py_END_ALLOW_THREADS
+  
 
   ret_val = PyList_New(0);
   if (!ret_val) {
@@ -280,12 +285,12 @@ PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *args,
   }
   SHADOW_UNLOCK(&self->shadow_lock);
 
-  // --- MANDATORY FIX: RELEASE GIL & LOCK JPH ---
   bool has_hit = false;
   JPH_Vec3 normal = {0, 0, 0};
-
   Py_BEGIN_ALLOW_THREADS
-  SHADOW_LOCK(&g_jph_trampoline_lock);
+  NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+  
+  
 
   // These two functions call Jolt internals. They MUST be inside the JPH lock.
   has_hit = execute_raycast_query(self, ignore_bid, origin, direction, hit);
@@ -295,9 +300,9 @@ PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *args,
                        hit->fraction, &normal);
   }
 
-  SHADOW_UNLOCK(&g_jph_trampoline_lock);
+  NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
   Py_END_ALLOW_THREADS
-  // --- GIL RE-ACQUIRED ---
+  
 
   if (!has_hit) {
     goto exit;
@@ -326,28 +331,18 @@ exit:
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self, PyObject *args,
                                      PyObject *kwds) {
-  Py_buffer b_starts;
-  Py_buffer b_dirs;
+  Py_buffer b_starts, b_dirs;
   float max_dist = 1000.0f;
   static char *kwlist[] = {"starts", "directions", "max_dist", NULL};
 
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "y*y*|f", kwlist, &b_starts,
-                                   &b_dirs, &max_dist)) {
-    return NULL;
-  }
-
-  if (b_starts.len != b_dirs.len || (b_starts.len % (3 * sizeof(float)) != 0)) {
-    PyBuffer_Release(&b_starts);
-    PyBuffer_Release(&b_dirs);
-    PyErr_SetString(PyExc_ValueError, "Buffer size mismatch");
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "y*y*|f", kwlist, &b_starts, &b_dirs, &max_dist)) {
     return NULL;
   }
 
   size_t count = b_starts.len / (3 * sizeof(float));
   PyObject *result_bytes = PyBytes_FromStringAndSize(NULL, (Py_ssize_t)(count * sizeof(RayCastBatchResult)));
   if (!result_bytes) {
-    PyBuffer_Release(&b_starts);
-    PyBuffer_Release(&b_dirs);
+    PyBuffer_Release(&b_starts); PyBuffer_Release(&b_dirs);
     return PyErr_NoMemory();
   }
 
@@ -355,53 +350,30 @@ PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self, PyObject *args,
   float *f_starts = (float *)b_starts.buf;
   float *f_dirs = (float *)b_dirs.buf;
 
-  // 1. Enter Query Phase
+  // 1. PHASE GUARD (Shadow Lock)
   SHADOW_LOCK(&self->shadow_lock);
   BLOCK_UNTIL_NOT_STEPPING(self);
   BLOCK_IF_STEP_PENDING(self);
   atomic_fetch_add_explicit(&self->active_queries, 1, memory_order_relaxed);
   SHADOW_UNLOCK(&self->shadow_lock);
 
-  // 2. Heavy Lifting (Release GIL)
+  // 2. EXECUTION (Native Lock + GIL Release)
+  
   Py_BEGIN_ALLOW_THREADS
+  NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
 
   const JPH_NarrowPhaseQuery *query = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
   const JPH_BodyLockInterface *lock_iface = JPH_PhysicsSystem_GetBodyLockInterface(self->system);
 
-  // Initialize filters once outside the loop
-  JPH_BroadPhaseLayerFilter *bp_filter = JPH_BroadPhaseLayerFilter_Create(NULL);
+  // Setup Filters
+  JPH_BroadPhaseLayerFilter *bp_f = JPH_BroadPhaseLayerFilter_Create(NULL);
   JPH_BroadPhaseLayerFilter_SetProcs(&(JPH_BroadPhaseLayerFilter_Procs){.ShouldCollide = filter_allow_all_bp});
-  JPH_ObjectLayerFilter *obj_filter = JPH_ObjectLayerFilter_Create(NULL);
+  JPH_ObjectLayerFilter *obj_f = JPH_ObjectLayerFilter_Create(NULL);
   JPH_ObjectLayerFilter_SetProcs(&(JPH_ObjectLayerFilter_Procs){.ShouldCollide = filter_allow_all_obj});
-  JPH_BodyFilter *body_filter = JPH_BodyFilter_Create(NULL);
+  JPH_BodyFilter *body_f = JPH_BodyFilter_Create(NULL);
   JPH_BodyFilter_SetProcs(&(JPH_BodyFilter_Procs){.ShouldCollide = filter_true_body});
 
   for (size_t i = 0; i < count; i++) {
-    // --- CHUNKED LOCKING ---
-    // Every 32 rays, we release and re-acquire the global lock.
-    // This allows the Stepper thread to jump in and process a frame.
-    if (i % 32 == 0) {
-        if (i > 0) SHADOW_UNLOCK(&g_jph_trampoline_lock);
-        
-        // This is the magic part: 
-        // When we yield the lock, we check if the Stepper is waiting.
-        // If it is, we actually drop out of Jolt and wait for the step to finish.
-        SHADOW_LOCK(&self->shadow_lock);
-        if (atomic_load_explicit(&self->step_requested, memory_order_relaxed)) {
-            atomic_fetch_sub(&self->active_queries, 1);
-            // Signal stepper that we are out
-            NATIVE_MUTEX_LOCK(self->step_sync.mutex);
-            NATIVE_COND_BROADCAST(self->step_sync.cond);
-            NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
-            
-            BLOCK_IF_STEP_PENDING(self); 
-            atomic_fetch_add(&self->active_queries, 1);
-        }
-        SHADOW_UNLOCK(&self->shadow_lock);
-        
-        SHADOW_LOCK(&g_jph_trampoline_lock);
-    }
-
     size_t off = i * 3;
     RayCastBatchResult *res = &results[i];
     memset(res, 0, sizeof(RayCastBatchResult));
@@ -411,18 +383,17 @@ PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self, PyObject *args,
     float mag_sq = dx * dx + dy * dy + dz * dz;
     
     if (mag_sq > 1e-12f) {
-      float mag = sqrtf(mag_sq);
-      float scale = max_dist / mag;
+      float scale = max_dist / sqrtf(mag_sq);
       JPH_Vec3 direction = {dx * scale, dy * scale, dz * scale};
       JPH_RayCastResult hit;
-      memset(&hit, 0, sizeof(hit));
 
-      if (JPH_NarrowPhaseQuery_CastRay(query, &origin, &direction, &hit, bp_filter, obj_filter, body_filter)) {
+      if (JPH_NarrowPhaseQuery_CastRay(query, &origin, &direction, &hit, bp_f, obj_f, body_f)) {
+        // ALL Jolt calls MUST happen inside this native lock
         res->handle = JPH_BodyInterface_GetUserData(self->body_interface, hit.bodyID);
         res->fraction = hit.fraction;
         res->subShapeID = hit.subShapeID2;
 
-        // Shadow buffer reads (safe because active_queries blocks resize)
+        // SAFE to read material_ids here because the native lock prevents step() from running
         uint32_t slot = (uint32_t)(res->handle & 0xFFFFFFFF);
         if (slot < self->slot_capacity && self->generations[slot] == (uint32_t)(res->handle >> 32)) {
           res->material_id = self->material_ids[self->slot_to_dense[slot]];
@@ -442,21 +413,16 @@ PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self, PyObject *args,
     }
   }
 
-  // Cleanup JPH resources
-  JPH_BodyFilter_Destroy(body_filter);
-  JPH_BroadPhaseLayerFilter_Destroy(bp_filter);
-  JPH_ObjectLayerFilter_Destroy(obj_filter);
-  
-  // Final unlock
-  SHADOW_UNLOCK(&g_jph_trampoline_lock);
-
+  JPH_BodyFilter_Destroy(body_f);
+  JPH_BroadPhaseLayerFilter_Destroy(bp_f);
+  JPH_ObjectLayerFilter_Destroy(obj_f);
+  NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
   Py_END_ALLOW_THREADS
+  
 
-  // 3. Exit Query Phase & Signal Stepper
+  // 3. SIGNAL
   end_query_scope(self);
-
-  PyBuffer_Release(&b_starts);
-  PyBuffer_Release(&b_dirs);
+  PyBuffer_Release(&b_starts); PyBuffer_Release(&b_dirs);
   return result_bytes;
 }
 
@@ -510,15 +476,15 @@ PyObject *PhysicsWorld_shapecast(PhysicsWorldObject *self, PyObject *args,
   CastShapeContext ctx = {.has_hit = false};
   ctx.hit.fraction = 1.0f;
 
-  // --- MANDATORY FIX: RELEASE GIL & LOCK JPH ---
+  
   Py_BEGIN_ALLOW_THREADS
-  SHADOW_LOCK(&g_jph_trampoline_lock);
+  NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
 
   shapecast_execute_internal(self, shape, transform, &sweep_dir, ignore_bid,
                              &ctx);
-
-  SHADOW_UNLOCK(&g_jph_trampoline_lock);
+  NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
   Py_END_ALLOW_THREADS
+  
   // --- GIL RE-ACQUIRED ---
 
   PyObject *result = NULL;

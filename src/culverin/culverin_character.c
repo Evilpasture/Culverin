@@ -316,97 +316,73 @@ const JPH_CharacterContactListener_Procs char_listener_procs = {
 
 PyObject *Character_move(CharacterObject *self, PyObject *args,
                          PyObject *kwds) {
-  float vx = 0;
-  float vy = 0;
-  float vz = 0;
-  float dt = 0;
+  float vx = 0; float vy = 0; float vz = 0; float dt = 0;
   static char *kwlist[] = {"velocity", "dt", NULL};
 
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)f", kwlist, &vx, &vy, &vz,
-                                   &dt)) {
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)f", kwlist, &vx, &vy, &vz, &dt)) {
     return NULL;
   }
 
+  // 1. PRE-MOVE GUARD (Shadow Lock)
   SHADOW_LOCK(&self->world->shadow_lock);
-
-  // 1. RE-ENTRANCY GUARD
   BLOCK_UNTIL_NOT_STEPPING(self->world);
-
-  // 2. ATOMIC INPUT STORAGE
-  // Satisfies the memory model for the lock-free contact callbacks
+  // Optional: Character moves are queries, so they should respect step priority
+  BLOCK_IF_STEP_PENDING(self->world); 
+  
   atomic_store_explicit(&self->last_vx, vx, memory_order_relaxed);
   atomic_store_explicit(&self->last_vy, vy, memory_order_relaxed);
   atomic_store_explicit(&self->last_vz, vz, memory_order_relaxed);
 
-  // 3. CAPTURE PRE-MOVE STATE (For Interpolation)
+  // Capture current state for interpolation
   JPH_STACK_ALLOC(JPH_RVec3, current_pos);
   JPH_STACK_ALLOC(JPH_Quat, current_rot);
   JPH_CharacterVirtual_GetPosition(self->character, current_pos);
   JPH_CharacterVirtual_GetRotation(self->character, current_rot);
 
-  // Update object-local prev state
-  self->prev_px = (float)current_pos->x;
-  self->prev_py = (float)current_pos->y;
-  self->prev_pz = (float)current_pos->z;
-  self->prev_rx = current_rot->x;
-  self->prev_ry = current_rot->y;
-  self->prev_rz = current_rot->z;
-  self->prev_rw = current_rot->w;
-
-  // Sync to GLOBAL shadow buffers so get_render_state() works
   uint32_t slot = (uint32_t)(self->handle & 0xFFFFFFFF);
   uint32_t dense_idx = self->world->slot_to_dense[slot];
   size_t off = (size_t)dense_idx * 4;
 
-  memcpy(&self->world->prev_positions[off], &self->world->positions[off],
-         12); // Copy x,y,z
+  self->prev_px = (float)current_pos->x;
+  self->prev_py = (float)current_pos->y;
+  self->prev_pz = (float)current_pos->z;
+  memcpy(&self->world->prev_positions[off], &self->world->positions[off], 12);
   memcpy(&self->world->prev_rotations[off], &self->world->rotations[off], 16);
 
-  // --- 4. JOLT EXECUTION ---
+  SHADOW_UNLOCK(&self->world->shadow_lock);
+
+  // --- 2. JOLT EXECUTION (Hard Serialization) ---
   JPH_Vec3 v = {vx, vy, vz};
   JPH_CharacterVirtual_SetLinearVelocity(self->character, &v);
 
   JPH_STACK_ALLOC(JPH_ExtendedUpdateSettings, update_settings);
-
-  // 1. Zero out the memory first
   memset(update_settings, 0, sizeof(JPH_ExtendedUpdateSettings));
-
-  // 2. Set Jolt's standard defaults (these are non-zero in the C++ core)
-  update_settings->stickToFloorStepDown.x = 0.0f;
-  update_settings->stickToFloorStepDown.y = -0.5f; // How far to look for floor
-  update_settings->stickToFloorStepDown.z = 0.0f;
-
-  update_settings->walkStairsStepUp.x = 0.0f;
-  update_settings->walkStairsStepUp.y = 0.4f; // Maximum step height
-  update_settings->walkStairsStepUp.z = 0.0f;
-
+  update_settings->stickToFloorStepDown.y = -0.5f;
+  update_settings->walkStairsStepUp.y = 0.4f;
   update_settings->walkStairsMinStepForward = 0.02f;
   update_settings->walkStairsStepForwardTest = 0.15f;
-  update_settings->walkStairsCosAngleForwardContact = 0.996f; // ~5 degrees
+  update_settings->walkStairsCosAngleForwardContact = 0.996f;
 
-  update_settings->walkStairsStepDownExtra.x = 0.0f;
-  update_settings->walkStairsStepDownExtra.y = 0.0f;
-  update_settings->walkStairsStepDownExtra.z = 0.0f;
-
-  // Now execute
+  // LOCK NATIVE -> RELEASE GIL -> DO PHYSICS
+  NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+  Py_BEGIN_ALLOW_THREADS
+  
   JPH_CharacterVirtual_ExtendedUpdate(self->character, dt, update_settings, 1,
                                       self->world->system, self->body_filter,
                                       self->shape_filter);
 
-  // 5. POST-MOVE SYNC
-  // Retrieve the final position after collision resolution
+  Py_END_ALLOW_THREADS
+  NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+
+  // --- 3. POST-MOVE SYNC (Shadow Lock) ---
+  SHADOW_LOCK(&self->world->shadow_lock);
   JPH_CharacterVirtual_GetPosition(self->character, current_pos);
   JPH_CharacterVirtual_GetRotation(self->character, current_rot);
 
-  // Update current positions for queries and rendering
   self->world->positions[off + 0] = (float)current_pos->x;
   self->world->positions[off + 1] = (float)current_pos->y;
   self->world->positions[off + 2] = (float)current_pos->z;
-
-  self->world->rotations[off + 0] = current_rot->x;
-  self->world->rotations[off + 1] = current_rot->y;
-  self->world->rotations[off + 2] = current_rot->z;
-  self->world->rotations[off + 3] = current_rot->w;
+  memcpy(&self->world->rotations[off], current_rot, 16);
 
   SHADOW_UNLOCK(&self->world->shadow_lock);
   Py_RETURN_NONE;
@@ -660,58 +636,32 @@ int Character_clear(CharacterObject *self) {
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void Character_dealloc(CharacterObject *self) {
   PyObject_GC_UnTrack(self);
+  if (!self->world) goto finalize;
 
-  if (!self->world) {
-    goto finalize;
-  }
-  // We must wait for the physics step to finish before touching the Jolt
-  // Character. Otherwise, Jolt might be using this pointer in a worker thread.
+  // 1. DRAIN (Wait for world to stop)
   SHADOW_LOCK(&self->world->shadow_lock);
   BLOCK_UNTIL_NOT_STEPPING(self->world);
+  BLOCK_UNTIL_NOT_QUERYING(self->world);
+  uint32_t slot = (uint32_t)(self->handle & 0xFFFFFFFF);
+  world_remove_body_slot(self->world, slot);
   SHADOW_UNLOCK(&self->world->shadow_lock);
 
-  // 1. REMOVE FROM JOLT MANAGER (Unlocked)
-  // This is safe because the manager is thread-safe for removal.
+  // 2. JOLT DESTRUCTION (Hard Serialized)
+  NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+  
   if (self->world->char_vs_char_manager && self->character) {
     JPH_CharacterVsCharacterCollisionSimple_RemoveCharacter(
         self->world->char_vs_char_manager, self->character);
   }
 
-  // 2. WORLD REGISTRY CLEANUP (Locked)
-  uint32_t slot = (uint32_t)(self->handle & 0xFFFFFFFF);
-  SHADOW_LOCK(&self->world->shadow_lock);
-  // Re-check stepping just to be paranoid/consistent, though strictly we
-  // handled it above. It costs nothing.
-  BLOCK_UNTIL_NOT_STEPPING(self->world);
+  if (self->character) JPH_CharacterBase_Destroy((JPH_CharacterBase *)self->character);
+  if (self->listener) JPH_CharacterContactListener_Destroy(self->listener);
+  if (self->body_filter) JPH_BodyFilter_Destroy(self->body_filter);
+  if (self->shape_filter) JPH_ShapeFilter_Destroy(self->shape_filter);
+  if (self->bp_filter) JPH_BroadPhaseLayerFilter_Destroy(self->bp_filter);
+  if (self->obj_filter) JPH_ObjectLayerFilter_Destroy(self->obj_filter);
 
-  // GUARD: We must wait for queries to finish. Dealloc cannot return error,
-  // so we must block. Since queries are fast, this is a very short wait.
-  BLOCK_UNTIL_NOT_QUERYING(self->world);
-
-  world_remove_body_slot(self->world, slot);
-
-  SHADOW_UNLOCK(&self->world->shadow_lock);
-
-  // 3. JOLT RESOURCE DESTRUCTION (Unlocked)
-  // No lock held here to avoid AB-BA deadlock with contact callbacks
-  if (self->character) {
-    JPH_CharacterBase_Destroy((JPH_CharacterBase *)self->character);
-  }
-  if (self->listener) {
-    JPH_CharacterContactListener_Destroy(self->listener);
-  }
-  if (self->body_filter) {
-    JPH_BodyFilter_Destroy(self->body_filter);
-  }
-  if (self->shape_filter) {
-    JPH_ShapeFilter_Destroy(self->shape_filter);
-  }
-  if (self->bp_filter) {
-    JPH_BroadPhaseLayerFilter_Destroy(self->bp_filter);
-  }
-  if (self->obj_filter) {
-    JPH_ObjectLayerFilter_Destroy(self->obj_filter);
-  }
+  NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
 
 finalize:
   Py_XDECREF(self->world);
@@ -788,14 +738,14 @@ static void register_char(PhysicsWorldObject *self, CharacterObject *obj,
 
 // Helper 3: Filter and Listener serialization (Trampoline Lock)
 static void setup_char_filters(CharacterObject *obj) {
-  SHADOW_LOCK(&g_jph_trampoline_lock);
+  NATIVE_MUTEX_LOCK(g_jph_trampoline_lock); // Fix: Use Native
   JPH_CharacterContactListener_SetProcs(&char_listener_procs);
   obj->listener = JPH_CharacterContactListener_Create(obj);
   JPH_BodyFilter_SetProcs(&global_bf_procs);
   obj->body_filter = JPH_BodyFilter_Create(NULL);
   JPH_ShapeFilter_SetProcs(&global_sf_procs);
   obj->shape_filter = JPH_ShapeFilter_Create(NULL);
-  SHADOW_UNLOCK(&g_jph_trampoline_lock);
+  NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
 
   JPH_CharacterVirtual_SetListener(obj->character, obj->listener);
   obj->bp_filter = JPH_BroadPhaseLayerFilter_Create(NULL);

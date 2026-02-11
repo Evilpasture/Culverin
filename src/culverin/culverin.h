@@ -509,4 +509,4 @@ static inline bool unpack_handle(PhysicsWorldObject *self, BodyHandle h,
   return self->generations[*slot] == gen;
 }
 
-extern ShadowMutex g_jph_trampoline_lock;
+extern NativeMutex g_jph_trampoline_lock;

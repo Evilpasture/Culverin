@@ -11,7 +11,7 @@
 #include "culverin_vehicle.h"
 
 // Global lock for JPH callbacks
-ShadowMutex
+NativeMutex 
     g_jph_trampoline_lock; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
 // --- Lifecycle: Deallocation ---
@@ -831,8 +831,8 @@ static PyObject *PhysicsWorld_step(PhysicsWorldObject *self, PyObject *args) {
   atomic_store_explicit(&self->step_requested, true, memory_order_relaxed);
 
   // 1. RE-ENTRANCY GUARD
-  BLOCK_UNTIL_NOT_STEPPING(self); 
   BLOCK_UNTIL_NOT_QUERYING(self);
+  BLOCK_UNTIL_NOT_STEPPING(self); 
   atomic_store_explicit(&self->is_stepping, true, memory_order_relaxed);
 
   // 2. BUFFER MANAGEMENT (Reset Phase)
@@ -864,10 +864,13 @@ static PyObject *PhysicsWorld_step(PhysicsWorldObject *self, PyObject *args) {
   SHADOW_UNLOCK(&self->shadow_lock);
 
   // 4. JOLT UPDATE (Unlocked)
-  Py_BEGIN_ALLOW_THREADS SHADOW_LOCK(&g_jph_trampoline_lock); 
-  JPH_PhysicsSystem_Update(self->system, dt, 1,
-                                                  self->job_system);
-  SHADOW_UNLOCK(&g_jph_trampoline_lock);                                                
+  // RELEASE GIL FIRST, then take Native Lock
+  Py_BEGIN_ALLOW_THREADS 
+  NATIVE_MUTEX_LOCK(g_jph_trampoline_lock); 
+  
+  JPH_PhysicsSystem_Update(self->system, dt, 1, self->job_system);
+
+  NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
   Py_END_ALLOW_THREADS
 
       // 5. ACQUIRE FENCE (Consumer Phase)
@@ -2953,7 +2956,7 @@ static int culverin_exec(PyObject *m) {
   }
 
   // Initialize the GLOBAL lock for Jolt trampolines
-  INIT_LOCK(g_jph_trampoline_lock);
+  INIT_NATIVE_MUTEX(g_jph_trampoline_lock);
 #if PY_VERSION_HEX < 0x030D0000
   if (!g_jph_trampoline_lock) {
     PyErr_NoMemory();
