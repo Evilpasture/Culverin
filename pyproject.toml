@@ -7,7 +7,7 @@ name = "culverin"
 version = "0.1.1b1"
 description = "High-performance Jolt Physics bindings for Python featuring Shadow Buffers and Free-Threading support."
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.13"
 authors = [
     {name = "Mai Huy Hiếu"}
 ]

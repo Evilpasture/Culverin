@@ -33,7 +33,7 @@ jobs:
         env:
           # Enable Free-Threading support
           CIBW_ENABLE: "cpython-prerelease cpython-freethreading"
-          CIBW_BUILD: "cp314t-*"
+          CIBW_BUILD: "cp313t, cp314t-*"
           CIBW_PROJECT_REQUIRES_PYTHON: ">=3.13"
           
           # Architecture Settings
