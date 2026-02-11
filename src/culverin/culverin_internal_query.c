@@ -4,66 +4,88 @@
 // --- Helper: Shape Caching (Internal) ---
 // This is called during creation (e.g. create_body). 
 // Since creation is low-frequency compared to rays, we handle locking internally here.
+// --- Helper: Shape Caching (Internal) ---
 JPH_Shape *find_or_create_shape(PhysicsWorldObject *self, int type,
                                 const float *params) {
   ShapeKey key;
   memset(&key, 0, sizeof(ShapeKey));
   key.type = (uint32_t)type;
 
-  switch (type) {
-    case 0: key.p1 = params[0]; key.p2 = params[1]; key.p3 = params[2]; break;
-    case 1: key.p1 = params[0]; break;
-    case 2:
-    case 3: key.p1 = params[0]; key.p2 = params[1]; break;
-    case 4: key.p1 = params[0]; key.p2 = params[1]; key.p3 = params[2]; key.p4 = params[3]; break;
-  }
+  // 1. SANITIZATION: Jolt shapes (especially Box/Sphere) can fail if size is 0.
+  // We enforce a 1mm minimum size.
+  float p1 = (params[0] < 0.001f) ? 0.001f : params[0];
+  float p2 = (params[1] < 0.001f) ? 0.001f : params[1];
+  float p3 = (params[2] < 0.001f) ? 0.001f : params[2];
+  float p4 = params[3];
 
-  // Cache lookup (Under shadow_lock, which the caller create_body already holds)
+  key.p1 = p1; key.p2 = p2; key.p3 = p3; key.p4 = p4;
+
+  // 2. CACHE LOOKUP (Under Shadow Lock)
   for (size_t i = 0; i < self->shape_cache_count; i++) {
-    ShapeKey *entry_key = &self->shape_cache[i].key;
-    if (entry_key->type == key.type && entry_key->p1 == key.p1 &&
-        entry_key->p2 == key.p2 && entry_key->p3 == key.p3 &&
-        entry_key->p4 == key.p4) {
+    if (memcmp(&self->shape_cache[i].key, &key, sizeof(ShapeKey)) == 0) {
       return self->shape_cache[i].shape;
     }
   }
 
-  // --- Jolt Shape Creation ---
-  // We need the trampoline lock because shape creation uses the global s_TempAllocator
-  
+  // 3. JOLT CREATION WITH RETRY
   JPH_Shape *shape = NULL;
-  Py_BEGIN_ALLOW_THREADS
-  NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
-  if (type == 0) {
-    JPH_Vec3 he = {key.p1, key.p2, key.p3};
-    JPH_BoxShapeSettings *s = JPH_BoxShapeSettings_Create(&he, 0.05f);
-    shape = (JPH_Shape *)JPH_BoxShapeSettings_CreateShape(s);
-    JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);
-  } else if (type == 1) {
-    JPH_SphereShapeSettings *s = JPH_SphereShapeSettings_Create(key.p1);
-    shape = (JPH_Shape *)JPH_SphereShapeSettings_CreateShape(s);
-    JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);
-  } else if (type == 2) {
-    JPH_CapsuleShapeSettings *s = JPH_CapsuleShapeSettings_Create(key.p1, key.p2);
-    shape = (JPH_Shape *)JPH_CapsuleShapeSettings_CreateShape(s);
-    JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);
-  } else if (type == 3) {
-    JPH_CylinderShapeSettings *s = JPH_CylinderShapeSettings_Create(key.p1, key.p2, 0.05f);
-    shape = (JPH_Shape *)JPH_CylinderShapeSettings_CreateShape(s);
-    JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);
-  } else if (type == 4) {
-    JPH_Plane p = {{key.p1, key.p2, key.p3}, key.p4};
-    JPH_PlaneShapeSettings *s = JPH_PlaneShapeSettings_Create(&p, NULL, 1000.0f);
-    shape = (JPH_Shape *)JPH_PlaneShapeSettings_CreateShape(s);
-    JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);
-  }
+  int retries = 5;
 
-  NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
-  Py_END_ALLOW_THREADS
+  while (retries-- > 0) {
+    Py_BEGIN_ALLOW_THREADS
+    NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+
+    if (type == 0) { // BOX
+      JPH_Vec3 he = {p1, p2, p3};
+      JPH_BoxShapeSettings *s = JPH_BoxShapeSettings_Create(&he, 0.05f);
+      if (s) {
+          shape = (JPH_Shape *)JPH_BoxShapeSettings_CreateShape(s);
+          JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);
+      }
+    } else if (type == 1) { // SPHERE
+      JPH_SphereShapeSettings *s = JPH_SphereShapeSettings_Create(p1);
+      if (s) {
+          shape = (JPH_Shape *)JPH_SphereShapeSettings_CreateShape(s);
+          JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);
+      }
+    } else if (type == 2) { // CAPSULE
+      JPH_CapsuleShapeSettings *s = JPH_CapsuleShapeSettings_Create(p1, p2);
+      if (s) {
+          shape = (JPH_Shape *)JPH_CapsuleShapeSettings_CreateShape(s);
+          JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);
+      }
+    } else if (type == 3) { // CYLINDER
+      JPH_CylinderShapeSettings *s = JPH_CylinderShapeSettings_Create(p1, p2, 0.05f);
+      if (s) {
+          shape = (JPH_Shape *)JPH_CylinderShapeSettings_CreateShape(s);
+          JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);
+      }
+    } else if (type == 4) { // PLANE
+      JPH_Plane p = {{p1, p2, p3}, p4};
+      JPH_PlaneShapeSettings *s = JPH_PlaneShapeSettings_Create(&p, NULL, 1000.0f);
+      if (s) {
+          shape = (JPH_Shape *)JPH_PlaneShapeSettings_CreateShape(s);
+          JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);
+      }
+    }
+
+    NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+    Py_END_ALLOW_THREADS
+
+    // Success!
+    if (shape) break;
+
+    // Failure: Yield or Sleep briefly before retry to allow memory to defragment
+    if (retries > 0) {
+        Py_BEGIN_ALLOW_THREADS
+        culverin_yield(); // Uses SwitchToThread/sched_yield
+        Py_END_ALLOW_THREADS
+    }
+  }
 
   if (!shape) return NULL;
 
-  // Cache expansion
+  // 4. CACHE STORAGE
   if (self->shape_cache_count >= self->shape_cache_capacity) {
     size_t new_cap = (self->shape_cache_capacity == 0) ? 16 : self->shape_cache_capacity * 2;
     void *new_ptr = PyMem_RawRealloc(self->shape_cache, new_cap * sizeof(ShapeEntry));
