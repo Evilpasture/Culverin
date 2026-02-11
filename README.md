@@ -1,58 +1,75 @@
-# Culverin Physics Engine
+# Culverin Physics
 
-**Culverin** is a high-performance Python binding for **Jolt Physics**, engineered specifically for high-fidelity 3D games and simulations. It is designed to bridge the gap between the speed of C/C++ and the ease of Python.
+Culverin is a Python wrapper for the **Jolt Physics** engine. It is designed for 3D games and simulations that require high performance and multi-threaded execution.
 
-### Key Features
-*   **Built for Python 3.13t/3.14t:** Optimized for the Free-Threaded interpreter. Releases the GIL during simulation steps.
-*   **Shadow Buffer Architecture:** State is mirrored in high-speed C arrays. Read positions and rotations via `memoryview` or `numpy` without a single Python overhead per object.
-*   **Double-Precision Core:** Uses `RVec3` (double-precision) internally to eliminate "jitter" and "shaking" in large-scale open worlds.
-*   **Generational Handles:** 64-bit handles prevent crashes. Even if an object is deleted, Python logic won't access "stale" pointers.
-*   **Professional Features:**
-    *   **Character Controllers:** Native Jolt virtual character with stair-climbing and slope-sliding.
-    *   **Native Tanks:** Real physical treads and skid-steering (not just raycast boxes).
-    *   **Ragdolls & Motors:** Full skeleton support with motor-driven poses.
-    *   **Trigger Lifecycle:** Native `ENTER`, `STAY`, and `EXIT` events for gameplay zones.
-    *   **CCD:** Continuous Collision Detection for high-speed projectiles.
+### Key Concepts
 
-### Performance
-Culverin is designed for **Zero-Copy** workflows.
-*   **Batch Raycasting:** Fire hundreds of rays in a single call with the GIL released.
-*   **Render State Slicing:** Get interpolated [Position, Rotation] for all 10,000 objects in one `bytes` block for instant GPU upload.
+*   **Free-Threading Support:** Designed for Python 3.13t and 3.14t. The engine releases the Global Interpreter Lock (GIL) during physics updates and raycast batches.
+*   **Shadow Buffers:** All body positions, rotations, and velocities are stored in contiguous C-arrays. You can access this data via `memoryview` or `numpy` without the overhead of creating Python objects for every body.
+*   **Thread-Safe API:** The engine uses a priority-based locking system. Simulation steps, state mutations, and queries can run on different threads without causing deadlocks or memory corruption.
+*   **Generational Handles:** Bodies are referenced by 64-bit handles rather than pointers. This ensures that using a handle for a deleted object will not crash the program.
+*   **Double-Precision Internal:** Uses double-precision floats for world positions to prevent physics jitter in large environments, while mirroring data to float32 buffers for rendering efficiency.
 
-### Installation (Build from Source)
+### Features
+
+*   **Standard Primitives:** Box, Sphere, Capsule, Cylinder, and Plane shapes.
+*   **Complex Shapes:** Support for Convex Hulls, Heightfields (Terrain), and static Meshes.
+*   **Compound Bodies:** Create single bodies composed of multiple child shapes.
+*   **Character Controller:** A virtual character controller with built-in support for climbing stairs, sliding down slopes, and pushing objects.
+*   **Vehicles:** Support for wheeled vehicles and tracked vehicles (tanks) with physical treads and skid-steering.
+*   **Constraints:** Fixed, Point, Hinge, Slider, Distance, and Cone constraints.
+*   **Queries:** Efficient single and batch Raycasting, Shapecasting (sweeps), and Overlap queries.
+*   **Collision Events:** Native event buffer for contact added, persisted, and removed events.
+
+### Installation
+
+Building from source requires CMake and a C++ compiler (Visual Studio on Windows, GCC or Clang on Linux/macOS).
+
 ```bash
+# Clone the repository including submodules
 git clone --recursive https://github.com/Evilpasture/culverin.git
 cd culverin
+
+# Install the package
 pip install .
 ```
-or in your Python project terminal with your virtual environment activated
-```bash
-pip install git+https://github.com/Evilpasture/culverin.git
-```
-*(Requires CMake and a C++ compiler for Jolt integration)*
 
-### 🏎 Quick Start
+### Quick Start
+
 ```python
 import culverin
+import numpy as np
 
-# Create World
-world = culverin.PhysicsWorld(settings={"gravity": (0, -9.81, 0)})
+# Initialize the world with 500 bodies capacity
+world = culverin.PhysicsWorld(settings={"gravity": (0, -9.81, 0), "max_bodies": 1000})
 
-# Create a Dynamic Body
-box = world.create_body(pos=(0, 10, 0), size=(0.5, 0.5, 0.5), shape=culverin.SHAPE_BOX)
+# Create a ground plane
+world.create_body(pos=(0, 0, 0), shape=culverin.SHAPE_PLANE, motion=culverin.MOTION_STATIC)
 
-# Main Loop
-while True:
+# Create a dynamic box
+handle = world.create_body(pos=(0, 10, 0), size=(1, 1, 1), shape=culverin.SHAPE_BOX, motion=culverin.MOTION_DYNAMIC)
+
+# Simulation loop
+for _ in range(1000):
     world.step(1/60)
-    pos = world.positions[world.get_index(box) * 4 : world.get_index(box) * 4 + 3]
-    print(f"Box is at: {pos}")
+    
+    # Access position directly from the shadow buffer
+    idx = world.get_index(handle)
+    pos = world.positions[idx * 4 : idx * 4 + 3]
+    print(f"Box Height: {pos[1]}")
 ```
-### Standard specs
 
-| Spec | Default / Standard |
+### Technical Specifications
+
+| Spec | Standard |
 | :--- | :--- |
 | **Units** | Metric (1.0 = 1 meter) |
-| **Coordinate System** | Right-Handed (X-Right, Y-Up, Z-Back) |
-| **Angles** | Radians |
-| **Quaternions** | `(x, y, z, w)` |
-| **Precision** | Double (Internal) / Float32 (Shadow Buffers) |
+| **Coordinate System** | Right-Handed (Y-Up) |
+| **Angle Units** | Radians |
+| **Quaternion Format** | `(x, y, z, w)` |
+| **Internal Precision** | Float64 (Double) |
+| **Buffer Precision** | Float32 |
+| **Minimum Python** | 3.11 (3.13+ recommended for multi-threading) |
+
+### Performance Note
+For maximum performance when reading state, use the `world.positions` and `world.rotations` attributes. These return `memoryview` objects that point directly to the engine's internal memory. Use `numpy.frombuffer(world.positions, dtype=np.float32)` to wrap them in a NumPy array without copying the data.
