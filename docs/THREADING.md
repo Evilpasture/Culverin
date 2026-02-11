@@ -33,8 +33,10 @@ Functions that modify the world state (e.g., `create_body`, `destroy_body`, `set
 ### Asynchronous Queries (Serialized)
 Raycasts, Shapecasts, and Overlap queries release the GIL and can be called from any thread. 
 
-*   **Thread-Safe Allocation:** Culverin uses a custom JoltC build with `TempAllocatorMalloc`. This replaces Jolt's default stack-based memory with a thread-safe heap allocator. This eliminates the "Freeing in wrong order" crashes common in other Jolt wrappers.
-*   **Broadphase Integrity:** Although memory allocation is now thread-safe, queries are still **hard-serialized** against the simulation step (`world.step()`) using a Native Mutex. This ensures that a raycast never attempts to traverse Jolt's internal acceleration structures (the Broadphase) while they are being actively rebuilt or modified during a physics update.
+*   **Thread-Safe Allocation:** ~~Culverin uses a custom JoltC build with `TempAllocatorMalloc`. This replaces Jolt's default stack-based memory with a thread-safe heap allocator. This eliminates the "Freeing in wrong order" crashes common in other Jolt wrappers.~~ 
+
+Continues using `TempAllocatorImplWithMallocFallback`.
+*   **Broadphase Integrity:** Although memory allocation is now thread-safe, queries are still **hard-serialized** against the simulation step (`world.step()`) using a Native Mutex. This ensures that a raycast never attempts to read the acceleration structure while the simulation is actively re-balancing the tree, which avoids undefined behavior even with thread-safe memory.
 *   **High Throughput:** Because queries are extremely fast (often microsecond scale), this serialization provides massive throughput for AI and visibility logic without the risk of read-after-write hazards.
 
 
