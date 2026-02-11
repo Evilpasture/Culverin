@@ -172,21 +172,6 @@ void free_constraints(PhysicsWorldObject *self) {
   self->constraint_states = NULL;
 }
 
-void free_shape_cache(PhysicsWorldObject *self) {
-  if (!self->shape_cache) {
-    return;
-  }
-
-  for (size_t i = 0; i < self->shape_cache_count; i++) {
-    if (self->shape_cache[i].shape) {
-      JPH_Shape_Destroy(self->shape_cache[i].shape);
-    }
-  }
-  PyMem_RawFree(self->shape_cache);
-  self->shape_cache = NULL;
-  self->shape_cache_count = 0;
-}
-
 void free_shadow_buffers(PhysicsWorldObject *self) {
   PyMem_RawFree(self->positions);
   self->positions = NULL;

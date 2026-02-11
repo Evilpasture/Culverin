@@ -5,8 +5,6 @@ int PhysicsWorld_resize(struct PhysicsWorldObject *self, size_t new_capacity);
 
 void free_constraints(PhysicsWorldObject *self);
 
-void free_shape_cache(PhysicsWorldObject *self);
-
 void free_shadow_buffers(PhysicsWorldObject *self);
 
 void PhysicsWorld_free_members(PhysicsWorldObject *self);
