@@ -8,132 +8,168 @@
 
 static bool JPH_API_CALL
 char_on_contact_validate(void *userData, const JPH_CharacterVirtual *character,
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+                         // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
                          JPH_BodyID bodyID2, JPH_SubShapeID subShapeID2) {
   return true; // Usually true, unless you want to walk through certain bodies
 }
 
-static void record_character_contact(CharacterObject *self, JPH_BodyID bodyID2, 
-                                     const JPH_RVec3 *pos, const JPH_Vec3 *norm, 
+static void record_character_contact(CharacterObject *self, JPH_BodyID bodyID2,
+                                     const JPH_RVec3 *pos, const JPH_Vec3 *norm,
                                      ContactEventType type) {
-    PhysicsWorldObject *world = self->world;
-    uint32_t j_idx = JPH_ID_TO_INDEX(bodyID2);
-    BodyHandle h2 = 0;
-    
-    if (world->id_to_handle_map && j_idx < world->max_jolt_bodies) {
-        h2 = world->id_to_handle_map[j_idx];
+  PhysicsWorldObject *world = self->world;
+  uint32_t j_idx = JPH_ID_TO_INDEX(bodyID2);
+  BodyHandle h2 = 0;
+
+  if (world->id_to_handle_map && j_idx < world->max_jolt_bodies) {
+    h2 = world->id_to_handle_map[j_idx];
+  }
+  if (h2 == 0) {
+    return; // Ignore unmapped bodies (like internal Jolt helpers)
+  }
+
+  BodyHandle h1 = self->handle;
+  size_t idx = atomic_fetch_add_explicit(&world->contact_atomic_idx, 1,
+                                         memory_order_relaxed);
+
+  if (idx < world->contact_max_capacity) {
+    ContactEvent *ev = &world->contact_buffer[idx];
+    ev->type = (uint32_t)type;
+
+    // Consistent ordering for Python set logic
+    if (h1 < h2) {
+      ev->body1 = h1;
+      ev->body2 = h2;
+    } else {
+      ev->body1 = h2;
+      ev->body2 = h1;
     }
-    if (h2 == 0) return; // Ignore unmapped bodies (like internal Jolt helpers)
 
-    BodyHandle h1 = self->handle;
-    size_t idx = atomic_fetch_add_explicit(&world->contact_atomic_idx, 1, memory_order_relaxed);
-    
-    if (idx < world->contact_max_capacity) {
-        ContactEvent *ev = &world->contact_buffer[idx];
-        ev->type = (uint32_t)type;
-        
-        // Consistent ordering for Python set logic
-        if (h1 < h2) { ev->body1 = h1; ev->body2 = h2; }
-        else { ev->body1 = h2; ev->body2 = h1; }
+    ev->px = (float)pos->x;
+    ev->py = (float)pos->y;
+    ev->pz = (float)pos->z;
+    ev->nx = norm->x;
+    ev->ny = norm->y;
+    ev->nz = norm->z;
+    ev->impulse = 1.0f; // Logical trigger strength
+    ev->sliding_speed_sq = 0.0f;
 
-        ev->px = (float)pos->x; ev->py = (float)pos->y; ev->pz = (float)pos->z;
-        ev->nx = norm->x; ev->ny = norm->y; ev->nz = norm->z;
-        ev->impulse = 1.0f; // Logical trigger strength
-        ev->sliding_speed_sq = 0.0f;
-        
-        // Look up material of the object we hit
-        uint32_t slot2 = (uint32_t)(h2 & 0xFFFFFFFF);
-        uint32_t dense2 = world->slot_to_dense[slot2];
-        ev->mat1 = 0; // Characters don't have materials yet
-        ev->mat2 = world->material_ids[dense2];
+    // Look up material of the object we hit
+    uint32_t slot2 = (uint32_t)(h2 & 0xFFFFFFFF);
+    uint32_t dense2 = world->slot_to_dense[slot2];
+    ev->mat1 = 0; // Characters don't have materials yet
+    ev->mat2 = world->material_ids[dense2];
 
-        atomic_thread_fence(memory_order_release);
-    }
+    atomic_thread_fence(memory_order_release);
+  }
 }
 
-static void report_char_vs_char(CharacterObject *self, const JPH_CharacterVirtual *other, 
-                                const JPH_Vec3 *normal, const JPH_RVec3 *pos, 
+static void report_char_vs_char(CharacterObject *self,
+                                const JPH_CharacterVirtual *other,
+                                const JPH_Vec3 *normal, const JPH_RVec3 *pos,
                                 ContactEventType type) {
-    PhysicsWorldObject *world = self->world;
-    BodyHandle h1 = self->handle;
-    
-    // 1. Get Inner Body ID
-    JPH_BodyID other_bid = JPH_CharacterVirtual_GetInnerBodyID(other);
-    
-    // 2. Direct Jolt Lookup (Bypasses our map, which might be too small for Virtual IDs)
-    uint64_t userdata = JPH_BodyInterface_GetUserData(world->body_interface, other_bid);
-    BodyHandle h2 = (BodyHandle)userdata;
-    
-    if (h2 == 0) return; // Not a known Culverin object
+  PhysicsWorldObject *world = self->world;
+  BodyHandle h1 = self->handle;
 
-    size_t idx = atomic_fetch_add_explicit(&world->contact_atomic_idx, 1, memory_order_relaxed);
-    if (idx < world->contact_max_capacity) {
-        ContactEvent *ev = &world->contact_buffer[idx];
-        ev->type = (uint32_t)type;
-        
-        // Canonicalize Order
-        if (h1 < h2) { ev->body1 = h1; ev->body2 = h2; } 
-        else { ev->body1 = h2; ev->body2 = h1; }
+  // 1. Get Inner Body ID
+  JPH_BodyID other_bid = JPH_CharacterVirtual_GetInnerBodyID(other);
 
-        ev->sliding_speed_sq = 0.0f;
-        ev->nx = normal->x; ev->ny = normal->y; ev->nz = normal->z;
-        ev->px = (float)pos->x; ev->py = (float)pos->y; ev->pz = (float)pos->z;
-        ev->impulse = 1.0f;
-        ev->mat1 = 0; ev->mat2 = 0; 
+  // 2. Direct Jolt Lookup (Bypasses our map, which might be too small for
+  // Virtual IDs)
+  uint64_t userdata =
+      JPH_BodyInterface_GetUserData(world->body_interface, other_bid);
+  BodyHandle h2 = (BodyHandle)userdata;
 
-        atomic_thread_fence(memory_order_release);
+  if (h2 == 0) {
+    return; // Not a known Culverin object
+  }
+
+  size_t idx = atomic_fetch_add_explicit(&world->contact_atomic_idx, 1,
+                                         memory_order_relaxed);
+  if (idx < world->contact_max_capacity) {
+    ContactEvent *ev = &world->contact_buffer[idx];
+    ev->type = (uint32_t)type;
+
+    // Canonicalize Order
+    if (h1 < h2) {
+      ev->body1 = h1;
+      ev->body2 = h2;
+    } else {
+      ev->body1 = h2;
+      ev->body2 = h1;
     }
+
+    ev->sliding_speed_sq = 0.0f;
+    ev->nx = normal->x;
+    ev->ny = normal->y;
+    ev->nz = normal->z;
+    ev->px = (float)pos->x;
+    ev->py = (float)pos->y;
+    ev->pz = (float)pos->z;
+    ev->impulse = 1.0f;
+    ev->mat1 = 0;
+    ev->mat2 = 0;
+
+    atomic_thread_fence(memory_order_release);
+  }
 }
 static void JPH_API_CALL char_on_character_contact_added(
     void *userData, const JPH_CharacterVirtual *character,
     const JPH_CharacterVirtual *otherCharacter, JPH_SubShapeID subShapeID2,
     const JPH_RVec3 *contactPosition, const JPH_Vec3 *contactNormal,
     JPH_CharacterContactSettings *ioSettings) {
-    
-    ioSettings->canPushCharacter = true;
-    ioSettings->canReceiveImpulses = true;
-    
-    CharacterObject *self = (CharacterObject *)userData;
-    if (!self || !self->world) return;
-    
-    report_char_vs_char(self, otherCharacter, contactNormal, contactPosition, EVENT_ADDED);
+
+  ioSettings->canPushCharacter = true;
+  ioSettings->canReceiveImpulses = true;
+
+  CharacterObject *self = (CharacterObject *)userData;
+  if (!self || !self->world) {
+    return;
+  }
+
+  report_char_vs_char(self, otherCharacter, contactNormal, contactPosition,
+                      EVENT_ADDED);
 }
 
-static void apply_character_impulse(CharacterObject *self, JPH_BodyID bodyID2, const JPH_Vec3 *contactNormal) {
-    // 1. Thread-Safe Member Access
-    float vx = atomic_load_explicit((&self->last_vx), memory_order_relaxed);
-    float vy = atomic_load_explicit((&self->last_vy), memory_order_relaxed);
-    float vz = atomic_load_explicit((&self->last_vz), memory_order_relaxed);
-    float strength = atomic_load_explicit((&self->push_strength), memory_order_relaxed);
+static void apply_character_impulse(CharacterObject *self, JPH_BodyID bodyID2,
+                                    const JPH_Vec3 *contactNormal) {
+  // 1. Thread-Safe Member Access
+  float vx = atomic_load_explicit((&self->last_vx), memory_order_relaxed);
+  float vy = atomic_load_explicit((&self->last_vy), memory_order_relaxed);
+  float vz = atomic_load_explicit((&self->last_vz), memory_order_relaxed);
+  float strength =
+      atomic_load_explicit((&self->push_strength), memory_order_relaxed);
 
-    JPH_BodyInterface *bi = self->world->body_interface;
+  JPH_BodyInterface *bi = self->world->body_interface;
 
-    // 2. Ignore Sensors & Non-Dynamic Bodies
-    if (JPH_BodyInterface_IsSensor(bi, bodyID2) ||
-        JPH_BodyInterface_GetMotionType(bi, bodyID2) != JPH_MotionType_Dynamic) {
-        return;
+  // 2. Ignore Sensors & Non-Dynamic Bodies
+  if (JPH_BodyInterface_IsSensor(bi, bodyID2) ||
+      JPH_BodyInterface_GetMotionType(bi, bodyID2) != JPH_MotionType_Dynamic) {
+    return;
+  }
+
+  // 3. Calculate Pushing Force
+  float dot =
+      vx * contactNormal->x + vy * contactNormal->y + vz * contactNormal->z;
+
+  if (dot > 0.1f) {
+    float factor = dot * strength;
+    const float max_impulse = 5000.0f;
+    if (factor > max_impulse) {
+      factor = max_impulse;
     }
 
-    // 3. Calculate Pushing Force
-    float dot = vx * contactNormal->x + vy * contactNormal->y + vz * contactNormal->z;
+    JPH_Vec3 impulse;
+    impulse.x = contactNormal->x * factor;
 
-    if (dot > 0.1f) {
-        float factor = dot * strength;
-        const float max_impulse = 5000.0f;
-        if (factor > max_impulse) factor = max_impulse;
+    // Flatten Y Response (allow kicking up, suppress crushing down)
+    float y_push = contactNormal->y * factor;
+    impulse.y = (y_push > 0.0f) ? y_push : 0.0f;
 
-        JPH_Vec3 impulse;
-        impulse.x = contactNormal->x * factor;
-        
-        // Flatten Y Response (allow kicking up, suppress crushing down)
-        float y_push = contactNormal->y * factor;
-        impulse.y = (y_push > 0.0f) ? y_push : 0.0f;
-        
-        impulse.z = contactNormal->z * factor;
+    impulse.z = contactNormal->z * factor;
 
-        JPH_BodyInterface_AddImpulse(bi, bodyID2, &impulse);
-        JPH_BodyInterface_ActivateBody(bi, bodyID2);
-    }
+    JPH_BodyInterface_AddImpulse(bi, bodyID2, &impulse);
+    JPH_BodyInterface_ActivateBody(bi, bodyID2);
+  }
 }
 
 // --- Updated Added Callback ---
@@ -146,58 +182,70 @@ static void JPH_API_CALL char_on_contact_added(
   ioSettings->canReceiveImpulses = true;
 
   CharacterObject *self = (CharacterObject *)userData;
-  if (!self) return;
+  if (!self) {
+    return;
+  }
 
   // Record Event
-  record_character_contact(self, bodyID2, contactPosition, contactNormal, EVENT_ADDED);
+  record_character_contact(self, bodyID2, contactPosition, contactNormal,
+                           EVENT_ADDED);
 
   // Apply Impulse
   apply_character_impulse(self, bodyID2, contactNormal);
 }
-
 
 static void JPH_API_CALL char_on_contact_persisted(
     void *userData, const JPH_CharacterVirtual *character, JPH_BodyID bodyID2,
     JPH_SubShapeID subShapeID2, const JPH_RVec3 *contactPosition,
     const JPH_Vec3 *contactNormal, JPH_CharacterContactSettings *ioSettings) {
 
-    ioSettings->canPushCharacter = true;
-    ioSettings->canReceiveImpulses = true;
+  ioSettings->canPushCharacter = true;
+  ioSettings->canReceiveImpulses = true;
 
-    CharacterObject *self = (CharacterObject *)userData;
-    if (!self) return;
+  CharacterObject *self = (CharacterObject *)userData;
+  if (!self) {
+    return;
+  }
 
-    // Record Event
-    record_character_contact(self, bodyID2, contactPosition, contactNormal, EVENT_PERSISTED);
+  // Record Event
+  record_character_contact(self, bodyID2, contactPosition, contactNormal,
+                           EVENT_PERSISTED);
 
-    // Apply Impulse (CRITICAL FIX)
-    apply_character_impulse(self, bodyID2, contactNormal);
+  // Apply Impulse (CRITICAL FIX)
+  apply_character_impulse(self, bodyID2, contactNormal);
 }
 
-static void JPH_API_CALL char_on_contact_removed(void *userData, const JPH_CharacterVirtual *character, JPH_BodyID bodyID2, JPH_SubShapeID subShapeID2) {
-    CharacterObject *self = (CharacterObject *)userData;
-    if (!self || !self->world) return;
+static void JPH_API_CALL
+char_on_contact_removed(void *userData, const JPH_CharacterVirtual *character,
+                        JPH_BodyID bodyID2, JPH_SubShapeID subShapeID2) {
+  CharacterObject *self = (CharacterObject *)userData;
+  if (!self || !self->world) {
+    return;
+  }
 
-    PhysicsWorldObject *world = self->world;
-    uint32_t j_idx = JPH_ID_TO_INDEX(bodyID2);
-    
-    BodyHandle h1 = self->handle;
-    BodyHandle h2 = 0;
-    if (world->id_to_handle_map && j_idx < world->max_jolt_bodies) {
-        h2 = world->id_to_handle_map[j_idx];
-    }
-    if (h2 == 0) return;
+  PhysicsWorldObject *world = self->world;
+  uint32_t j_idx = JPH_ID_TO_INDEX(bodyID2);
 
-    size_t idx = atomic_fetch_add_explicit(&world->contact_atomic_idx, 1, memory_order_relaxed);
-    if (idx < world->contact_max_capacity) {
-        ContactEvent *ev = &world->contact_buffer[idx];
-        ev->type = EVENT_REMOVED;
-        ev->body1 = (h1 < h2) ? h1 : h2;
-        ev->body2 = (h1 < h2) ? h2 : h1;
-        // Geometry is zeroed for removal
-        memset(&ev->px, 0, sizeof(float) * 8); 
-        atomic_thread_fence(memory_order_release);
-    }
+  BodyHandle h1 = self->handle;
+  BodyHandle h2 = 0;
+  if (world->id_to_handle_map && j_idx < world->max_jolt_bodies) {
+    h2 = world->id_to_handle_map[j_idx];
+  }
+  if (h2 == 0) {
+    return;
+  }
+
+  size_t idx = atomic_fetch_add_explicit(&world->contact_atomic_idx, 1,
+                                         memory_order_relaxed);
+  if (idx < world->contact_max_capacity) {
+    ContactEvent *ev = &world->contact_buffer[idx];
+    ev->type = EVENT_REMOVED;
+    ev->body1 = (h1 < h2) ? h1 : h2;
+    ev->body2 = (h1 < h2) ? h2 : h1;
+    // Geometry is zeroed for removal
+    memset(&ev->px, 0, sizeof(float) * 8);
+    atomic_thread_fence(memory_order_release);
+  }
 }
 
 static void JPH_API_CALL char_on_character_contact_persisted(
@@ -206,41 +254,49 @@ static void JPH_API_CALL char_on_character_contact_persisted(
     const JPH_RVec3 *contactPosition, const JPH_Vec3 *contactNormal,
     JPH_CharacterContactSettings *ioSettings) {
 
-    ioSettings->canPushCharacter = true;
-    ioSettings->canReceiveImpulses = true;
+  ioSettings->canPushCharacter = true;
+  ioSettings->canReceiveImpulses = true;
 
-    CharacterObject *self = (CharacterObject *)userData;
-    if (!self || !self->world) return;
+  CharacterObject *self = (CharacterObject *)userData;
+  if (!self || !self->world) {
+    return;
+  }
 
-    report_char_vs_char(self, otherCharacter, contactNormal, contactPosition, EVENT_PERSISTED);
+  report_char_vs_char(self, otherCharacter, contactNormal, contactPosition,
+                      EVENT_PERSISTED);
 }
 
-static void JPH_API_CALL char_on_character_contact_removed(void *userData, const JPH_CharacterVirtual *character, const JPH_CharacterID otherCharacterID, JPH_SubShapeID subShapeID2) {
-    CharacterObject *self = (CharacterObject *)userData;
-    PhysicsWorldObject *world = self->world;
+static void JPH_API_CALL char_on_character_contact_removed(
+    void *userData, const JPH_CharacterVirtual *character,
+    const JPH_CharacterID otherCharacterID, JPH_SubShapeID subShapeID2) {
+  CharacterObject *self = (CharacterObject *)userData;
+  PhysicsWorldObject *world = self->world;
 
-    BodyHandle h1 = self->handle;
-    // We have to use the CharacterID to find the handle. 
-    // Jolt CharacterIDs usually map to the inner BodyID.
-    uint32_t j_idx = JPH_ID_TO_INDEX(otherCharacterID);
-    BodyHandle h2 = world->id_to_handle_map[j_idx];
+  BodyHandle h1 = self->handle;
+  // We have to use the CharacterID to find the handle.
+  // Jolt CharacterIDs usually map to the inner BodyID.
+  uint32_t j_idx = JPH_ID_TO_INDEX(otherCharacterID);
+  BodyHandle h2 = world->id_to_handle_map[j_idx];
 
-    size_t idx = atomic_fetch_add_explicit(&world->contact_atomic_idx, 1, memory_order_relaxed);
-    if (idx < world->contact_max_capacity) {
-        ContactEvent *ev = &world->contact_buffer[idx];
-        ev->type = EVENT_REMOVED;
-        ev->body1 = (h1 < h2) ? h1 : h2;
-        ev->body2 = (h1 < h2) ? h2 : h1;
-        atomic_thread_fence(memory_order_release);
-    }
+  size_t idx = atomic_fetch_add_explicit(&world->contact_atomic_idx, 1,
+                                         memory_order_relaxed);
+  if (idx < world->contact_max_capacity) {
+    ContactEvent *ev = &world->contact_buffer[idx];
+    ev->type = EVENT_REMOVED;
+    ev->body1 = (h1 < h2) ? h1 : h2;
+    ev->body2 = (h1 < h2) ? h2 : h1;
+    atomic_thread_fence(memory_order_release);
+  }
 }
 
-static void JPH_API_CALL char_on_adjust_velocity(
-    void *userData, const JPH_CharacterVirtual *character, const JPH_Body *body2, 
-    JPH_Vec3 *ioLinearVelocity, JPH_Vec3 *ioAngularVelocity) {
-    
-    // Usually, we want the default behavior (character follows the body).
-    // TODO: add logic here if you want the character to "slip" on certain materials.
+static void JPH_API_CALL
+char_on_adjust_velocity(void *userData, const JPH_CharacterVirtual *character,
+                        const JPH_Body *body2, JPH_Vec3 *ioLinearVelocity,
+                        JPH_Vec3 *ioAngularVelocity) {
+
+  // Usually, we want the default behavior (character follows the body).
+  // TODO: add logic here if you want the character to "slip" on certain
+  // materials.
 }
 
 // Map the procs
@@ -248,17 +304,18 @@ const JPH_CharacterContactListener_Procs char_listener_procs = {
     .OnContactValidate = char_on_contact_validate,
     .OnContactAdded = char_on_contact_added,
     .OnAdjustBodyVelocity = char_on_adjust_velocity, // ADDED
-    .OnContactPersisted = char_on_contact_persisted, // CHANGED from char_on_contact_added
-    .OnContactRemoved = char_on_contact_removed,      // ADDED
-    .OnCharacterContactValidate = NULL,               // Default True is fine
+    .OnContactPersisted =
+        char_on_contact_persisted, // CHANGED from char_on_contact_added
+    .OnContactRemoved = char_on_contact_removed, // ADDED
+    .OnCharacterContactValidate = NULL,          // Default True is fine
     .OnCharacterContactAdded = char_on_character_contact_added,
     .OnCharacterContactPersisted = char_on_character_contact_persisted, // ADDED
     .OnCharacterContactRemoved = char_on_character_contact_removed,     // ADDED
-    .OnContactSolve = NULL                            // Advanced, keep NULL
+    .OnContactSolve = NULL // Advanced, keep NULL
 };
 
 PyObject *Character_move(CharacterObject *self, PyObject *args,
-                                PyObject *kwds) {
+                         PyObject *kwds) {
   float vx = 0;
   float vy = 0;
   float vz = 0;
@@ -356,7 +413,7 @@ PyObject *Character_move(CharacterObject *self, PyObject *args,
 }
 
 PyObject *Character_get_position(CharacterObject *self,
-                                        PyObject *Py_UNUSED(ignored)) {
+                                 PyObject *Py_UNUSED(ignored)) {
   // 1. Aligned stack storage for SIMD
   JPH_STACK_ALLOC(JPH_RVec3, pos);
 
@@ -379,7 +436,7 @@ PyObject *Character_get_position(CharacterObject *self,
 }
 
 PyObject *Character_set_position(CharacterObject *self, PyObject *args,
-                                        PyObject *kwds) {
+                                 PyObject *kwds) {
   float x = 0.0f;
   float y = 0.0f;
   float z = 0.0f;
@@ -416,7 +473,7 @@ PyObject *Character_set_position(CharacterObject *self, PyObject *args,
 }
 
 PyObject *Character_set_rotation(CharacterObject *self, PyObject *args,
-                                        PyObject *kwds) {
+                                 PyObject *kwds) {
   float x = 0.0f;
   float y = 0.0f;
   float z = 0.0f;
@@ -486,8 +543,7 @@ PyObject *Character_set_strength(CharacterObject *self, PyObject *args) {
 }
 
 // Change signature to take PyObject* arg directly
-PyObject *Character_get_render_transform(CharacterObject *self,
-                                                PyObject *arg) {
+PyObject *Character_get_render_transform(CharacterObject *self, PyObject *arg) {
   // --- OPTIMIZATION 1: Fast Argument Parsing ---
   double alpha_dbl = PyFloat_AsDouble(arg);
   if (alpha_dbl == -1.0 && PyErr_Occurred()) {
@@ -593,8 +649,7 @@ PyObject *Character_get_render_transform(CharacterObject *self,
 }
 
 // NEW: GC Traverse/Clear for Character
-int Character_traverse(CharacterObject *self, visitproc visit,
-                              void *arg) {
+int Character_traverse(CharacterObject *self, visitproc visit, void *arg) {
   Py_VISIT(self->world);
   return 0;
 }
@@ -602,15 +657,15 @@ int Character_clear(CharacterObject *self) {
   Py_CLEAR(self->world);
   return 0;
 }
-
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void Character_dealloc(CharacterObject *self) {
   PyObject_GC_UnTrack(self);
 
   if (!self->world) {
     goto finalize;
   }
-  // We must wait for the physics step to finish before touching the Jolt Character.
-  // Otherwise, Jolt might be using this pointer in a worker thread.
+  // We must wait for the physics step to finish before touching the Jolt
+  // Character. Otherwise, Jolt might be using this pointer in a worker thread.
   SHADOW_LOCK(&self->world->shadow_lock);
   BLOCK_UNTIL_NOT_STEPPING(self->world);
   SHADOW_UNLOCK(&self->world->shadow_lock);
@@ -625,8 +680,9 @@ void Character_dealloc(CharacterObject *self) {
   // 2. WORLD REGISTRY CLEANUP (Locked)
   uint32_t slot = (uint32_t)(self->handle & 0xFFFFFFFF);
   SHADOW_LOCK(&self->world->shadow_lock);
-  // Re-check stepping just to be paranoid/consistent, though strictly we handled it above. It costs nothing.
-  BLOCK_UNTIL_NOT_STEPPING(self->world); 
+  // Re-check stepping just to be paranoid/consistent, though strictly we
+  // handled it above. It costs nothing.
+  BLOCK_UNTIL_NOT_STEPPING(self->world);
 
   // GUARD: We must wait for queries to finish. Dealloc cannot return error,
   // so we must block. Since queries are fast, this is a very short wait.
@@ -663,40 +719,43 @@ finalize:
 }
 
 // Helper 1: Jolt-side allocation and Collision Manager linking
-static JPH_CharacterVirtual *alloc_j_char(PhysicsWorldObject *self, 
-                                          PositionVector pos,
-                                          CharacterParams params) { // Reduced to 2 conceptual arguments
-    
-    // Position parameters are now accessed via pos.px, pos.py, pos.pz
-    // Size parameters are now accessed via params.height, params.radius, etc.
-    
-    float half_h = fmaxf((params.height - 2.0f * params.radius) * 0.5f, 0.1f);
-    JPH_CapsuleShapeSettings *ss =
-        JPH_CapsuleShapeSettings_Create(half_h, params.radius);
-    JPH_Shape *shape = (JPH_Shape *)JPH_CapsuleShapeSettings_CreateShape(ss);
-    JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)ss);
-    if (!shape) return NULL;
+static JPH_CharacterVirtual *
+alloc_j_char(PhysicsWorldObject *self, PositionVector pos,
+             CharacterParams params) { // Reduced to 2 conceptual arguments
 
-    JPH_CharacterVirtualSettings settings;
-    JPH_CharacterVirtualSettings_Init(&settings);
-    settings.base.shape = shape;
-    settings.base.maxSlopeAngle = params.max_slope * (JPH_M_PI / 180.0f);
+  // Position parameters are now accessed via pos.px, pos.py, pos.pz
+  // Size parameters are now accessed via params.height, params.radius, etc.
 
-    JPH_CharacterVirtual *j_char = JPH_CharacterVirtual_Create(
-        &settings, 
-        &(JPH_RVec3){(double)pos.px, (double)pos.py, (double)pos.pz},
-        &(JPH_Quat){0, 0, 0, 1}, 1, self->system);
+  float half_h = fmaxf((params.height - 2.0f * params.radius) * 0.5f, 0.1f);
+  JPH_CapsuleShapeSettings *ss =
+      JPH_CapsuleShapeSettings_Create(half_h, params.radius);
+  JPH_Shape *shape = (JPH_Shape *)JPH_CapsuleShapeSettings_CreateShape(ss);
+  JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)ss);
+  if (!shape) {
+    return NULL;
+  }
 
-    JPH_Shape_Destroy(shape);
-    if (!j_char) return NULL;
+  JPH_CharacterVirtualSettings settings;
+  JPH_CharacterVirtualSettings_Init(&settings);
+  settings.base.shape = shape;
+  settings.base.maxSlopeAngle = params.max_slope * (JPH_M_PI / 180.0f);
 
-    if (self->char_vs_char_manager) {
-        JPH_CharacterVsCharacterCollisionSimple_AddCharacter(
-            self->char_vs_char_manager, j_char);
-        JPH_CharacterVirtual_SetCharacterVsCharacterCollision(
-            j_char, self->char_vs_char_manager);
-    }
-    return j_char;
+  JPH_CharacterVirtual *j_char = JPH_CharacterVirtual_Create(
+      &settings, &(JPH_RVec3){(double)pos.px, (double)pos.py, (double)pos.pz},
+      &(JPH_Quat){0, 0, 0, 1}, 1, self->system);
+
+  JPH_Shape_Destroy(shape);
+  if (!j_char) {
+    return NULL;
+  }
+
+  if (self->char_vs_char_manager) {
+    JPH_CharacterVsCharacterCollisionSimple_AddCharacter(
+        self->char_vs_char_manager, j_char);
+    JPH_CharacterVirtual_SetCharacterVsCharacterCollision(
+        j_char, self->char_vs_char_manager);
+  }
+  return j_char;
 }
 
 // Helper 2: Shadow Buffer Registration (Atomic Commit)
@@ -745,14 +804,20 @@ static void setup_char_filters(CharacterObject *obj) {
 
 // Main Orchestrator
 PyObject *PhysicsWorld_create_character(PhysicsWorldObject *self,
-                                               PyObject *args, PyObject *kwds) {
-  float px = 0, py = 0, pz = 0, height = 1.8f, radius = 0.4f, step_h = 0.4f,
-        slope = 45.0f;
+                                        PyObject *args, PyObject *kwds) {
+  float px = 0;
+  float py = 0;
+  float pz = 0;
+  float height = 1.8f;
+  float radius = 0.4f;
+  float step_h = 0.4f;
+  float slope = 45.0f;
   static char *kwlist[] = {"pos",         "height",    "radius",
                            "step_height", "max_slope", NULL};
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)|ffff", kwlist, &px, &py,
-                                   &pz, &height, &radius, &step_h, &slope))
+                                   &pz, &height, &radius, &step_h, &slope)) {
     return NULL;
+  }
 
   // 1. Slot Reservation
   SHADOW_LOCK(&self->shadow_lock);
@@ -772,15 +837,17 @@ PyObject *PhysicsWorld_create_character(PhysicsWorldObject *self,
   CharacterParams char_params = {height, radius, slope};
 
   JPH_CharacterVirtual *j_char = alloc_j_char(self, pos_vec, char_params);
-  if (!j_char) 
+  if (!j_char) {
     goto fail_jolt;
+  }
 
   CharacterObject *obj = (CharacterObject *)PyObject_GC_New(
       CharacterObject,
       (PyTypeObject *)get_culverin_state(PyType_GetModule(Py_TYPE(self)))
           ->CharacterType);
-  if (!obj)
+  if (!obj) {
     goto fail_py;
+  }
 
   // 3. Initialization
   obj->world = (PhysicsWorldObject *)Py_NewRef(self);

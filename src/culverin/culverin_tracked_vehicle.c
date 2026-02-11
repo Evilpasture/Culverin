@@ -1,30 +1,33 @@
 #include "culverin_tracked_vehicle.h"
+#include "culverin_parsers.h"
 
 // --- Tracked Vehicle Implementation ---
 
 static JPH_WheelSettings *create_track_wheel(PyObject *w_dict) {
   Vec3f pos;
   if (!parse_py_vec3(PyDict_GetItemString(w_dict, "pos"), &pos)) {
-    return NULL; 
+    return NULL;
   }
 
   float radius = get_py_float_attr(w_dict, "radius", 0.4f);
   float width = get_py_float_attr(w_dict, "width", 0.2f);
   float suspension_len = get_py_float_attr(w_dict, "suspension", 0.5f);
   float friction = get_py_float_attr(w_dict, "friction", 1.0f);
-  
+
   // NEW: Suspension Spring Properties
   float freq = get_py_float_attr(w_dict, "spring_freq", 2.0f); // Stiffness
   float damp = get_py_float_attr(w_dict, "spring_damp", 0.5f); // Bounciness
 
   JPH_WheelSettingsTV *w = JPH_WheelSettingsTV_Create();
-  
-  JPH_WheelSettings_SetPosition((JPH_WheelSettings *)w, &(JPH_Vec3){pos.x, pos.y, pos.z});
+
+  JPH_WheelSettings_SetPosition((JPH_WheelSettings *)w,
+                                &(JPH_Vec3){pos.x, pos.y, pos.z});
   JPH_WheelSettings_SetRadius((JPH_WheelSettings *)w, radius);
   JPH_WheelSettings_SetWidth((JPH_WheelSettings *)w, width);
-  
+
   JPH_WheelSettings_SetSuspensionMinLength((JPH_WheelSettings *)w, 0.05f);
-  JPH_WheelSettings_SetSuspensionMaxLength((JPH_WheelSettings *)w, suspension_len); 
+  JPH_WheelSettings_SetSuspensionMaxLength((JPH_WheelSettings *)w,
+                                           suspension_len);
 
   // NEW: Apply Spring
   JPH_SpringSettings spring = {JPH_SpringMode_FrequencyAndDamping, freq, damp};
@@ -46,12 +49,12 @@ init_tracked_controller_settings(TrackedEngineConfig config,
 
   JPH_VehicleEngineSettings eng;
   JPH_VehicleEngineSettings_Init(&eng);
-  
+
   // Use members from the config struct
   eng.maxTorque = config.torque;
   eng.maxRPM = config.max_rpm;
   eng.minRPM = config.min_rpm;
-  
+
   JPH_TrackedVehicleControllerSettings_SetEngine(t_ctrl, &eng);
 
   JPH_VehicleTransmissionSettings *trans =
@@ -74,8 +77,9 @@ static void parse_tracks_config(JPH_TrackedVehicleControllerSettings *t_ctrl,
                                 PyObject *py_tracks, uint32_t ***ptr_list,
                                 int *num_out) {
   Py_ssize_t num_tracks = PyList_Size(py_tracks);
-  if (num_tracks > 2)
+  if (num_tracks > 2) {
     num_tracks = 2;
+  }
   *num_out = (int)num_tracks;
   *ptr_list = (uint32_t **)PyMem_RawCalloc(num_tracks, sizeof(uint32_t *));
 
@@ -97,8 +101,9 @@ static void parse_tracks_config(JPH_TrackedVehicleControllerSettings *t_ctrl,
     }
 
     PyObject *py_driven = PyDict_GetItemString(track_dict, "driven_wheel");
-    if (py_driven)
+    if (py_driven) {
       track_set.drivenWheel = (uint32_t)PyLong_AsUnsignedLong(py_driven);
+    }
 
     JPH_TrackedVehicleControllerSettings_SetTrack(t_ctrl, (uint32_t)t,
                                                   &track_set);
@@ -106,21 +111,26 @@ static void parse_tracks_config(JPH_TrackedVehicleControllerSettings *t_ctrl,
 }
 
 // Orchestrator
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
-                                                     PyObject *args,
-                                                     PyObject *kwds) {
+                                              PyObject *args, PyObject *kwds) {
   uint64_t chassis_h = 0;
-  PyObject *py_wheels = NULL, *py_tracks = NULL;
-  float max_rpm = 6000.0f, min_rpm = 500.0f, max_torque = 5000.0f;
+  PyObject *py_wheels = NULL;
+  PyObject *py_tracks = NULL;
+  float max_rpm = 6000.0f;
+  float min_rpm = 500.0f;
+  float max_torque = 5000.0f;
   static char *kwlist[] = {"chassis",    "wheels",  "tracks",
                            "max_torque", "max_rpm", NULL};
 
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "KOO|ff", kwlist, &chassis_h,
                                    &py_wheels, &py_tracks, &max_torque,
-                                   &max_rpm))
+                                   &max_rpm)) {
     return NULL;
-  if (!PyList_Check(py_wheels) || !PyList_Check(py_tracks))
+  }
+  if (!PyList_Check(py_wheels) || !PyList_Check(py_tracks)) {
     return PyErr_Format(PyExc_TypeError, "Inputs must be lists");
+  }
 
   // 1. Resolve Chassis
   SHADOW_LOCK(&self->shadow_lock);
@@ -128,7 +138,8 @@ PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
   flush_commands(self);
   uint32_t slot = 0;
   // FIX: Check SLOT_ALIVE to prevent attaching to a dying body
-  if (!unpack_handle(self, chassis_h, &slot) || self->slot_states[slot] != SLOT_ALIVE) {
+  if (!unpack_handle(self, chassis_h, &slot) ||
+      self->slot_states[slot] != SLOT_ALIVE) {
     SHADOW_UNLOCK(&self->shadow_lock);
     return PyErr_Format(PyExc_ValueError, "Invalid or stale chassis handle");
   }
@@ -139,8 +150,9 @@ PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
       JPH_PhysicsSystem_GetBodyLockInterface(self->system);
   JPH_BodyLockWrite lock;
   JPH_BodyLockInterface_LockWrite(lock_iface, chassis_bid, &lock);
-  if (!lock.body)
+  if (!lock.body) {
     return PyErr_Format(PyExc_RuntimeError, "Could not lock chassis body");
+  }
 
   // 2. Resource Management
   VehicleResources r = {0};
@@ -164,10 +176,7 @@ PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
   // 3. Controller & Tracks
   JPH_VehicleTransmissionSettings *v_trans = NULL;
   TrackedEngineConfig eng_cfg = {
-      .torque = max_torque,
-      .max_rpm = max_rpm,
-      .min_rpm = min_rpm
-  };
+      .torque = max_torque, .max_rpm = max_rpm, .min_rpm = min_rpm};
 
   JPH_TrackedVehicleControllerSettings *t_ctrl =
       init_tracked_controller_settings(eng_cfg, &v_trans);
@@ -186,31 +195,35 @@ PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
   v_set.controller = (JPH_VehicleControllerSettings *)t_ctrl;
 
   r.j_veh = JPH_VehicleConstraint_Create(lock.body, &v_set);
-  
+
   // FIX: Leak cleanup on failure
   if (!r.j_veh) {
-      cleanup_vehicle_resources(&r, num_wheels, self);
-      JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
-      
-      if (track_indices_ptrs) {
-          for(int i = 0; i < num_tracks; i++) {
-            PyMem_RawFree(track_indices_ptrs[i]);
-          }
-          PyMem_RawFree((void *)track_indices_ptrs);
+    cleanup_vehicle_resources(&r, num_wheels, self);
+    JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
+
+    if (track_indices_ptrs) {
+      for (int i = 0; i < num_tracks; i++) {
+        PyMem_RawFree(track_indices_ptrs[i]);
       }
-      
-      return PyErr_Format(PyExc_RuntimeError, "Failed to create Tracked Vehicle Constraint");
+      PyMem_RawFree((void *)track_indices_ptrs);
+    }
+
+    return PyErr_Format(PyExc_RuntimeError,
+                        "Failed to create Tracked Vehicle Constraint");
   }
 
-  r.tester = JPH_VehicleCollisionTesterRay_Create(2, &(JPH_Vec3){0, 1.0f, 0}, 2.0f); // <--- CHANGED
+  r.tester = JPH_VehicleCollisionTesterRay_Create(2, &(JPH_Vec3){0, 1.0f, 0},
+                                                  2.0f); // <--- CHANGED
   if (!r.tester) {
-      cleanup_vehicle_resources(&r, num_wheels, self);
-      JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
-      if (track_indices_ptrs) {
-          for(int i=0; i<num_tracks; i++) PyMem_RawFree(track_indices_ptrs[i]);
-          PyMem_RawFree((void *)track_indices_ptrs);
+    cleanup_vehicle_resources(&r, num_wheels, self);
+    JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
+    if (track_indices_ptrs) {
+      for (int i = 0; i < num_tracks; i++) {
+        PyMem_RawFree(track_indices_ptrs[i]);
       }
-      return PyErr_NoMemory();
+      PyMem_RawFree((void *)track_indices_ptrs);
+    }
+    return PyErr_NoMemory();
   }
 
   JPH_VehicleConstraint_SetVehicleCollisionTester(
@@ -229,9 +242,10 @@ PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
 
   // Free temp track index arrays (they were copied into Jolt settings)
   if (track_indices_ptrs) {
-      for (int i = 0; i < num_tracks; i++)
-        PyMem_RawFree(track_indices_ptrs[i]);
-      PyMem_RawFree((void *)track_indices_ptrs);
+    for (int i = 0; i < num_tracks; i++) {
+      PyMem_RawFree(track_indices_ptrs[i]);
+    }
+    PyMem_RawFree((void *)track_indices_ptrs);
   }
 
   // 6. Python Return
@@ -240,11 +254,11 @@ PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
       (PyTypeObject *)get_culverin_state(PyType_GetModule(Py_TYPE(self)))
           ->VehicleType);
   if (!obj) {
-      // Very unlikely at this stage, but technically possible
-      // We rely on Python GC to eventually clean up if we crash here, 
-      // but strictly we should destroy the Jolt constraint.
-      // This requires complex unlocking logic.
-      return NULL;
+    // Very unlikely at this stage, but technically possible
+    // We rely on Python GC to eventually clean up if we crash here,
+    // but strictly we should destroy the Jolt constraint.
+    // This requires complex unlocking logic.
+    return NULL;
   }
 
   obj->vehicle = r.j_veh;
@@ -262,35 +276,53 @@ PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
 }
 
 // Helper: Set Tank Input
-PyObject *Vehicle_set_tank_input(VehicleObject *self, PyObject *args, PyObject *kwds) {
-    float left = 0.0f, right = 0.0f, brake = 0.0f;
-    static char *kwlist[] = {"left", "right", "brake", NULL};
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "ff|f", kwlist, &left, &right, &brake)) return NULL;
+PyObject *Vehicle_set_tank_input(VehicleObject *self, PyObject *args,
+                                 PyObject *kwds) {
+  float left = 0.0f;
+  float right = 0.0f;
+  float brake = 0.0f;
+  static char *kwlist[] = {"left", "right", "brake", NULL};
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "ff|f", kwlist, &left, &right,
+                                   &brake)) {
+    return NULL;
+  }
 
-    if (!self->vehicle || !self->world) Py_RETURN_NONE;
-
-    SHADOW_LOCK(&self->world->shadow_lock);
-    BLOCK_UNTIL_NOT_STEPPING(self->world);
-
-    JPH_TrackedVehicleController* t_ctrl = (JPH_TrackedVehicleController*)JPH_VehicleConstraint_GetController(self->vehicle);
-    JPH_BodyID bid = JPH_Body_GetID(JPH_VehicleConstraint_GetVehicleBody(self->vehicle));
-    JPH_BodyInterface_ActivateBody(self->world->body_interface, bid);
-    
-    JPH_VehicleTransmission* trans = (JPH_VehicleTransmission*)JPH_TrackedVehicleController_GetTransmission(t_ctrl);
-    int gear = JPH_VehicleTransmission_GetCurrentGear(trans);
-    
-    // Throttle is the max power requested by either track
-    float throttle = fmaxf(fabsf(left), fabsf(right));
-    
-    // Kickstart/Neutral logic
-    if (throttle > 0.01f) {
-        if (gear == 0) JPH_VehicleTransmission_Set(trans, 1, 1.0f); // Shift to 1
-    } else {
-        if (gear != 0) JPH_VehicleTransmission_Set(trans, 0, 0.0f); // Force Neutral
-    }
-
-    JPH_TrackedVehicleController_SetDriverInput(t_ctrl, throttle, left, right, brake);
-    
-    SHADOW_UNLOCK(&self->world->shadow_lock);
+  if (!self->vehicle || !self->world) {
     Py_RETURN_NONE;
+  }
+
+  SHADOW_LOCK(&self->world->shadow_lock);
+  BLOCK_UNTIL_NOT_STEPPING(self->world);
+
+  JPH_TrackedVehicleController *t_ctrl =
+      (JPH_TrackedVehicleController *)JPH_VehicleConstraint_GetController(
+          self->vehicle);
+  JPH_BodyID bid =
+      JPH_Body_GetID(JPH_VehicleConstraint_GetVehicleBody(self->vehicle));
+  JPH_BodyInterface_ActivateBody(self->world->body_interface, bid);
+
+  JPH_VehicleTransmission *trans =
+      (JPH_VehicleTransmission *)JPH_TrackedVehicleController_GetTransmission(
+          t_ctrl);
+  int gear = JPH_VehicleTransmission_GetCurrentGear(trans);
+
+  // Throttle is the max power requested by either track
+  float throttle = fmaxf(fabsf(left), fabsf(right));
+
+  // Kickstart/Neutral logic
+  if (throttle > 0.01f) {
+    if (gear == 0) {
+      JPH_VehicleTransmission_Set(trans, 1, 1.0f); // Shift to 1
+    }
+  } else {
+    if (gear != 0) {
+      JPH_VehicleTransmission_Set(trans, 0, 0.0f); // Force Neutral
+    }
+  }
+
+  JPH_TrackedVehicleController_SetDriverInput(t_ctrl, throttle, left, right,
+                                              brake);
+
+  SHADOW_UNLOCK(&self->world->shadow_lock);
+  Py_RETURN_NONE;
 }

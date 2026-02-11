@@ -3,15 +3,18 @@
 #define PY_SSIZE_T_CLEAN
 #include "joltc.h" // Amer Koleci's JoltC binder.
 #include <Python.h>
+
+
+#include "culverin_command_buffer.h"
+#include "culverin_debug_render.h"
+#include "culverin_internal_query.h"
+#include "culverin_tracked_vehicle.h"
 #include <float.h>
 #include <math.h>
 #include <stdatomic.h>
 #include <stddef.h>
 #include <string.h>
-#include "culverin_debug_render.h"
-#include "culverin_command_buffer.h"
-#include "culverin_tracked_vehicle.h"
-#include "culverin_internal_query.h"
+
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -38,30 +41,35 @@
 // Allocate 'Type' on the stack with guaranteed 32-byte alignment.
 // USAGE: JPH_STACK_ALLOC(JPH_RVec3, my_vec);
 #if defined(__clang__) || defined(__GNUC__)
-  // Clang/LLVM alignment logic (highly robust)
-  #define JPH_ALIGNED_STORAGE(Type, Name, Align) \
-    Type Name __attribute__((aligned(Align)))
+// Clang/LLVM alignment logic (highly robust)
+#define JPH_ALIGNED_STORAGE(Type, Name, Align)                                 \
+  Type Name __attribute__((aligned(Align)))
 #elif defined(_MSC_VER)
-  #define JPH_ALIGNED_STORAGE(Type, Name, Align) \
-    __declspec(align(Align)) Type Name
+#define JPH_ALIGNED_STORAGE(Type, Name, Align)                                 \
+  __declspec(align(Align)) Type Name
 #else
-  #include <stdalign.h>
-  #define JPH_ALIGNED_STORAGE(Type, Name, Align) alignas(Align) Type Name
+#include <stdalign.h>
+#define JPH_ALIGNED_STORAGE(Type, Name, Align) alignas(Align) Type Name
 #endif
 
-#define JPH_STACK_ALLOC(Type, Name) \
-  JPH_ALIGNED_STORAGE(Type, Name##_storage, 32); \
+#define JPH_STACK_ALLOC(Type, Name)                                            \
+  JPH_ALIGNED_STORAGE(Type, Name##_storage, 32);                               \
   Type *Name = &Name##_storage
 
 // --- Lock Helpers in culverin.h ---
 #if PY_VERSION_HEX >= 0x030D0000
-    // Python 3.13+ uses PyMutex (no allocation needed, just zero init)
-    #define INIT_LOCK(m) memset(&(m), 0, sizeof(ShadowMutex))
-    #define FREE_LOCK(m) 
+// Python 3.13+ uses PyMutex (no allocation needed, just zero init)
+#define INIT_LOCK(m) memset(&(m), 0, sizeof(ShadowMutex))
+#define FREE_LOCK(m)
 #else
-    // Older Python versions use PyThread_type_lock (requires allocation)
-    #define INIT_LOCK(m) (m) = PyThread_allocate_lock()
-    #define FREE_LOCK(m) do { if(m) PyThread_free_lock(m); (m) = NULL; } while(0)
+// Older Python versions use PyThread_type_lock (requires allocation)
+#define INIT_LOCK(m) (m) = PyThread_allocate_lock()
+#define FREE_LOCK(m)                                                           \
+  do {                                                                         \
+    if (m)                                                                     \
+      PyThread_free_lock(m);                                                   \
+    (m) = NULL;                                                                \
+  } while (0)
 #endif
 
 // --- Threading Primitives (Python 3.14t support) ---
@@ -77,14 +85,13 @@ typedef PyThread_type_lock ShadowMutex;
 
 // --- Compiler Hints ---
 #if defined(__GNUC__) || defined(__clang__)
-    #define LIKELY(x)   __builtin_expect(!!(x), 1)
-    #define UNLIKELY(x) __builtin_expect(!!(x), 0)
+#define LIKELY(x) __builtin_expect(!!(x), 1)
+#define UNLIKELY(x) __builtin_expect(!!(x), 0)
 #else
-    // Fallback for MSVC or other compilers that don't support built-in expect
-    #define LIKELY(x)   (x)
-    #define UNLIKELY(x) (x)
+// Fallback for MSVC or other compilers that don't support built-in expect
+#define LIKELY(x) (x)
+#define UNLIKELY(x) (x)
 #endif
-
 
 // Comment this line out to disable all debug prints
 #define CULVERIN_DEBUG
@@ -185,9 +192,9 @@ typedef uint64_t ConstraintHandle;
 
 // --- Contact Lifecycle Types ---
 typedef enum {
-    EVENT_ADDED = 0,
-    EVENT_PERSISTED = 1,
-    EVENT_REMOVED = 2
+  EVENT_ADDED = 0,
+  EVENT_PERSISTED = 1,
+  EVENT_REMOVED = 2
 } ContactEventType;
 
 // --- Callback Logic ---
@@ -204,7 +211,8 @@ typedef struct ContactEvent {
   uint32_t _pad;
 } ContactEvent;
 
-_Static_assert(sizeof(ContactEvent) == 64, "ContactEvent must be 64 bytes for performance");
+_Static_assert(sizeof(ContactEvent) == 64,
+               "ContactEvent must be 64 bytes for performance");
 
 // --- Raycast Batch Result (Aligned to 16-bytes, Total 48-bytes) ---
 #ifdef _MSC_VER
@@ -242,48 +250,48 @@ typedef struct {
 } MaterialData;
 
 typedef struct {
-    int max_bodies;
-    int max_pairs;
+  int max_bodies;
+  int max_pairs;
 } WorldLimits;
 
 typedef struct {
-    float gx;
-    float gy;
-    float gz;
+  float gx;
+  float gy;
+  float gz;
 } GravityVector;
 
 typedef struct {
-    float px;
-    float py;
-    float pz;
+  float px;
+  float py;
+  float pz;
 } PositionVector; // Can use GravityVector if it's identical
 
 typedef struct {
-    float height;
-    float radius;
-    float max_slope;
+  float height;
+  float radius;
+  float max_slope;
 } CharacterParams;
 
 typedef struct {
-    float mass;
-    float friction;
-    float restitution;
-    int is_sensor;
-    int use_ccd;
+  float mass;
+  float friction;
+  float restitution;
+  int is_sensor;
+  int use_ccd;
 } BodyCreationProps;
 
 typedef struct {
-    float friction;
-    float restitution;
+  float friction;
+  float restitution;
 } MaterialSettings;
 
 typedef struct {
-    float mass;
-    float friction;
-    float restitution;
-    int is_sensor;
-    int use_ccd;
-    int motion_type;
+  float mass;
+  float friction;
+  float restitution;
+  int is_sensor;
+  int use_ccd;
+  int motion_type;
 } BodyConfig;
 
 // --- The Object Struct ---
@@ -362,7 +370,7 @@ typedef struct PhysicsWorldObject {
   double time;
 
   // Fast index-to-handle lookup to avoid Jolt locks in callbacks
-  BodyHandle *id_to_handle_map; 
+  BodyHandle *id_to_handle_map;
   uint32_t max_jolt_bodies;
 
   // --- Constraint Registry ---
@@ -385,18 +393,18 @@ typedef struct PhysicsWorldObject {
   Py_ssize_t view_strides[2];
 
   // --- Debug Renderer ---
-  JPH_DebugRenderer* debug_renderer;
+  JPH_DebugRenderer *debug_renderer;
   DebugBuffer debug_lines;
   DebugBuffer debug_triangles;
 } PhysicsWorldObject;
 
 // Temporary container for resize
 typedef struct {
-    float *pos, *rot, *ppos, *prot, *lvel, *avel;
-    JPH_BodyID *bids;
-    uint64_t *udat;
-    uint32_t *gens, *s2d, *d2s, *free, *cats, *masks, *mats;
-    uint8_t *stat;
+  float *pos, *rot, *ppos, *prot, *lvel, *avel;
+  JPH_BodyID *bids;
+  uint64_t *udat;
+  uint32_t *gens, *s2d, *d2s, *free, *cats, *masks, *mats;
+  uint8_t *stat;
 } NewBuffers;
 
 // --- Module State (PEP 489) ---

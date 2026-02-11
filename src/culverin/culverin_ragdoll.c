@@ -13,8 +13,7 @@ PyObject *Skeleton_add_joint(SkeletonObject *self, PyObject *args) {
   return PyLong_FromLong(idx);
 }
 
-PyObject *Skeleton_get_joint_index(SkeletonObject *self,
-                                          PyObject *args) {
+PyObject *Skeleton_get_joint_index(SkeletonObject *self, PyObject *args) {
   const char *name = NULL;
   if (!PyArg_ParseTuple(args, "s", &name)) {
     return NULL;
@@ -37,7 +36,7 @@ PyObject *Skeleton_finalize(SkeletonObject *self, PyObject *args) {
 // --- Ragdoll Settings Implementation ---
 
 PyObject *PhysicsWorld_create_ragdoll_settings(PhysicsWorldObject *self,
-                                                      PyObject *args) {
+                                               PyObject *args) {
   SkeletonObject *py_skel = NULL;
   if (!PyArg_ParseTuple(
           args, "O!",
@@ -64,8 +63,8 @@ PyObject *PhysicsWorld_create_ragdoll_settings(PhysicsWorldObject *self,
   return (PyObject *)obj;
 }
 
-PyObject *RagdollSettings_add_part(RagdollSettingsObject *self,
-                                          PyObject *args, PyObject *kwds) {
+PyObject *RagdollSettings_add_part(RagdollSettingsObject *self, PyObject *args,
+                                   PyObject *kwds) {
   int joint_idx = 0;
   int parent_idx = 0;
   int shape_type = 0;
@@ -175,15 +174,15 @@ PyObject *RagdollSettings_add_part(RagdollSettingsObject *self,
 }
 
 PyObject *RagdollSettings_stabilize(RagdollSettingsObject *self,
-                                           PyObject *args) {
+                                    PyObject *args) {
   if (JPH_RagdollSettings_Stabilize(self->settings)) {
     Py_RETURN_TRUE;
   }
   Py_RETURN_FALSE;
 }
 
-PyObject *PhysicsWorld_create_ragdoll(PhysicsWorldObject *self,
-                                             PyObject *args, PyObject *kwds) {
+PyObject *PhysicsWorld_create_ragdoll(PhysicsWorldObject *self, PyObject *args,
+                                      PyObject *kwds) {
   RagdollSettingsObject *py_settings = NULL;
   float px = 0;
   float py = 0;
@@ -263,12 +262,12 @@ PyObject *PhysicsWorld_create_ragdoll(PhysicsWorldObject *self,
 
   if (self->free_count < (size_t)body_count) {
     if (PhysicsWorld_resize(self, self->capacity + body_count + 128) < 0) {
-        SHADOW_UNLOCK(&self->shadow_lock);
-        // Clean up the Jolt ragdoll since we can't track it
-        JPH_Ragdoll_Destroy(j_rag);
-        PyMem_RawFree(neutral_matrices);
-        Py_DECREF(obj); 
-        return NULL;
+      SHADOW_UNLOCK(&self->shadow_lock);
+      // Clean up the Jolt ragdoll since we can't track it
+      JPH_Ragdoll_Destroy(j_rag);
+      PyMem_RawFree(neutral_matrices);
+      Py_DECREF(obj);
+      return NULL;
     }
   }
 
@@ -330,7 +329,7 @@ PyObject *PhysicsWorld_create_ragdoll(PhysicsWorldObject *self,
 }
 
 PyObject *Ragdoll_drive_to_pose(RagdollObject *self, PyObject *args,
-                                       PyObject *kwds) {
+                                PyObject *kwds) {
   float root_x = 0.0f;
   float root_y = 0.0f;
   float root_z = 0.0f;
@@ -363,14 +362,15 @@ PyObject *Ragdoll_drive_to_pose(RagdollObject *self, PyObject *args,
   if (PyObject_GetBuffer(py_matrices, &view, PyBUF_SIMPLE) < 0) {
     return NULL;
   }
-  
+
   // JPH_Mat4 is 16 floats = 64 bytes.
-  size_t required_size = (size_t)joint_count * 64; 
+  size_t required_size = (size_t)joint_count * 64;
   if ((size_t)view.len < required_size) {
-      PyBuffer_Release(&view);
-      return PyErr_Format(PyExc_ValueError, 
-          "Matrices buffer too small. Expected %zu bytes for %d joints, got %zd",
-          required_size, joint_count, view.len);
+    PyBuffer_Release(&view);
+    return PyErr_Format(
+        PyExc_ValueError,
+        "Matrices buffer too small. Expected %zu bytes for %d joints, got %zd",
+        required_size, joint_count, view.len);
   }
 
   // 2. Access Matrix Buffer
@@ -424,7 +424,7 @@ PyObject *Ragdoll_get_body_ids(RagdollObject *self, PyObject *args) {
 }
 
 PyObject *Ragdoll_get_debug_info(RagdollObject *self,
-                                        PyObject *Py_UNUSED(ignored)) {
+                                 PyObject *Py_UNUSED(ignored)) {
   if (!self->ragdoll || !self->world) {
     Py_RETURN_NONE;
   }
@@ -467,8 +467,7 @@ void Skeleton_dealloc(SkeletonObject *self) {
   Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
-PyObject *Skeleton_new(PyTypeObject *type, PyObject *args,
-                              PyObject *kwds) {
+PyObject *Skeleton_new(PyTypeObject *type, PyObject *args, PyObject *kwds) {
   SkeletonObject *self = (SkeletonObject *)type->tp_alloc(type, 0);
   if (self) {
     self->skeleton = JPH_Skeleton_Create();
@@ -489,7 +488,7 @@ void RagdollSettings_dealloc(RagdollSettingsObject *self) {
 }
 
 // --- Ragdoll Instance Implementation ---
-
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void Ragdoll_dealloc(RagdollObject *self) {
   if (self->world && self->ragdoll) {
     SHADOW_LOCK(&self->world->shadow_lock);
@@ -501,17 +500,19 @@ void Ragdoll_dealloc(RagdollObject *self) {
 
     // Validate pointers before iteration to prevent corruption
     if (self->body_slots && self->world->slot_states) {
-        for (size_t i = 0; i < self->body_count; i++) {
-          uint32_t slot = self->body_slots[i];
-          
-          // Boundary check
-          if (slot >= self->world->slot_capacity) continue;
+      for (size_t i = 0; i < self->body_count; i++) {
+        uint32_t slot = self->body_slots[i];
 
-          if (self->world->slot_states[slot] != SLOT_ALIVE) {
-            continue; 
-          }
-          world_remove_body_slot(self->world, slot);
+        // Boundary check
+        if (slot >= self->world->slot_capacity) {
+          continue;
         }
+
+        if (self->world->slot_states[slot] != SLOT_ALIVE) {
+          continue;
+        }
+        world_remove_body_slot(self->world, slot);
+      }
     }
     SHADOW_UNLOCK(&self->world->shadow_lock);
   }

@@ -1,146 +1,186 @@
 #include "culverin_physics_world_internal.h"
-#include "culverin_math.h"
 
 static void free_new_buffers(NewBuffers *nb) {
-    PyMem_RawFree(nb->pos);  PyMem_RawFree(nb->rot);
-    PyMem_RawFree(nb->ppos); PyMem_RawFree(nb->prot);
-    PyMem_RawFree(nb->lvel); PyMem_RawFree(nb->avel);
-    PyMem_RawFree(nb->bids); PyMem_RawFree(nb->udat);
-    PyMem_RawFree(nb->gens); PyMem_RawFree(nb->s2d);
-    PyMem_RawFree(nb->d2s);  PyMem_RawFree(nb->stat);
-    PyMem_RawFree(nb->free); PyMem_RawFree(nb->cats);
-    PyMem_RawFree(nb->masks); PyMem_RawFree(nb->mats);
+  PyMem_RawFree(nb->pos);
+  PyMem_RawFree(nb->rot);
+  PyMem_RawFree(nb->ppos);
+  PyMem_RawFree(nb->prot);
+  PyMem_RawFree(nb->lvel);
+  PyMem_RawFree(nb->avel);
+  PyMem_RawFree(nb->bids);
+  PyMem_RawFree(nb->udat);
+  PyMem_RawFree(nb->gens);
+  PyMem_RawFree(nb->s2d);
+  PyMem_RawFree(nb->d2s);
+  PyMem_RawFree(nb->stat);
+  PyMem_RawFree(nb->free);
+  PyMem_RawFree(nb->cats);
+  PyMem_RawFree(nb->masks);
+  PyMem_RawFree(nb->mats);
 }
 
 static int alloc_new_buffers(NewBuffers *nb, size_t cap) {
-    memset(nb, 0, sizeof(NewBuffers));
-    size_t f4 = cap * 4 * sizeof(float);
-    
-    nb->pos = PyMem_RawMalloc(f4);  nb->rot = PyMem_RawMalloc(f4);
-    nb->ppos = PyMem_RawMalloc(f4); nb->prot = PyMem_RawMalloc(f4);
-    nb->lvel = PyMem_RawMalloc(f4); nb->avel = PyMem_RawMalloc(f4);
+  memset(nb, 0, sizeof(NewBuffers));
+  size_t f4 = cap * 4 * sizeof(float);
 
-    nb->bids  = PyMem_RawMalloc(cap * sizeof(JPH_BodyID));
-    nb->udat  = PyMem_RawMalloc(cap * sizeof(uint64_t));
-    nb->gens  = PyMem_RawMalloc(cap * sizeof(uint32_t));
-    nb->s2d   = PyMem_RawMalloc(cap * sizeof(uint32_t));
-    nb->d2s   = PyMem_RawMalloc(cap * sizeof(uint32_t));
-    nb->stat  = PyMem_RawMalloc(cap * sizeof(uint8_t));
-    nb->free  = PyMem_RawMalloc(cap * sizeof(uint32_t));
-    nb->cats  = PyMem_RawMalloc(cap * sizeof(uint32_t));
-    nb->masks = PyMem_RawMalloc(cap * sizeof(uint32_t));
-    nb->mats  = PyMem_RawMalloc(cap * sizeof(uint32_t));
+  nb->pos = PyMem_RawMalloc(f4);
+  nb->rot = PyMem_RawMalloc(f4);
+  nb->ppos = PyMem_RawMalloc(f4);
+  nb->prot = PyMem_RawMalloc(f4);
+  nb->lvel = PyMem_RawMalloc(f4);
+  nb->avel = PyMem_RawMalloc(f4);
 
-    if (!nb->pos || !nb->rot || !nb->ppos || !nb->prot || !nb->lvel || !nb->avel ||
-        !nb->bids || !nb->udat || !nb->gens || !nb->s2d || !nb->d2s || !nb->stat ||
-        !nb->free || !nb->cats || !nb->masks || !nb->mats) {
-        free_new_buffers(nb);
-        return -1;
-    }
-    return 0;
+  nb->bids = PyMem_RawMalloc(cap * sizeof(JPH_BodyID));
+  nb->udat = PyMem_RawMalloc(cap * sizeof(uint64_t));
+  nb->gens = PyMem_RawMalloc(cap * sizeof(uint32_t));
+  nb->s2d = PyMem_RawMalloc(cap * sizeof(uint32_t));
+  nb->d2s = PyMem_RawMalloc(cap * sizeof(uint32_t));
+  nb->stat = PyMem_RawMalloc(cap * sizeof(uint8_t));
+  nb->free = PyMem_RawMalloc(cap * sizeof(uint32_t));
+  nb->cats = PyMem_RawMalloc(cap * sizeof(uint32_t));
+  nb->masks = PyMem_RawMalloc(cap * sizeof(uint32_t));
+  nb->mats = PyMem_RawMalloc(cap * sizeof(uint32_t));
+
+  if (!nb->pos || !nb->rot || !nb->ppos || !nb->prot || !nb->lvel ||
+      !nb->avel || !nb->bids || !nb->udat || !nb->gens || !nb->s2d ||
+      !nb->d2s || !nb->stat || !nb->free || !nb->cats || !nb->masks ||
+      !nb->mats) {
+    free_new_buffers(nb);
+    return -1;
+  }
+  return 0;
 }
 
-static void migrate_and_init(PhysicsWorldObject *self, NewBuffers *nb, size_t new_cap) {
-    size_t stride = 4 * sizeof(float);
-    if (self->count > 0) {
-        memcpy(nb->pos,  self->positions,         self->count * stride);
-        memcpy(nb->rot,  self->rotations,         self->count * stride);
-        memcpy(nb->ppos, self->prev_positions,    self->count * stride);
-        memcpy(nb->prot, self->prev_rotations,    self->count * stride);
-        memcpy(nb->lvel, self->linear_velocities, self->count * stride);
-        memcpy(nb->avel, self->angular_velocities,self->count * stride);
-        memcpy(nb->bids, self->body_ids,          self->count * sizeof(JPH_BodyID));
-        memcpy(nb->udat, self->user_data,         self->count * sizeof(uint64_t));
-        memcpy(nb->cats, self->categories,        self->count * sizeof(uint32_t));
-        memcpy(nb->masks,self->masks,             self->count * sizeof(uint32_t));
-        memcpy(nb->mats, self->material_ids,      self->count * sizeof(uint32_t));
-    }
+static void migrate_and_init(PhysicsWorldObject *self, NewBuffers *nb,
+                             size_t new_cap) {
+  size_t stride = 4 * sizeof(float);
+  if (self->count > 0) {
+    memcpy(nb->pos, self->positions, self->count * stride);
+    memcpy(nb->rot, self->rotations, self->count * stride);
+    memcpy(nb->ppos, self->prev_positions, self->count * stride);
+    memcpy(nb->prot, self->prev_rotations, self->count * stride);
+    memcpy(nb->lvel, self->linear_velocities, self->count * stride);
+    memcpy(nb->avel, self->angular_velocities, self->count * stride);
+    memcpy(nb->bids, self->body_ids, self->count * sizeof(JPH_BodyID));
+    memcpy(nb->udat, self->user_data, self->count * sizeof(uint64_t));
+    memcpy(nb->cats, self->categories, self->count * sizeof(uint32_t));
+    memcpy(nb->masks, self->masks, self->count * sizeof(uint32_t));
+    memcpy(nb->mats, self->material_ids, self->count * sizeof(uint32_t));
+  }
 
-    memcpy(nb->gens, self->generations, self->slot_capacity * sizeof(uint32_t));
-    memcpy(nb->s2d,  self->slot_to_dense, self->slot_capacity * sizeof(uint32_t));
-    memcpy(nb->d2s,  self->dense_to_slot, self->slot_capacity * sizeof(uint32_t));
-    memcpy(nb->stat, self->slot_states,   self->slot_capacity * sizeof(uint8_t));
-    memcpy(nb->free, self->free_slots,    self->free_count * sizeof(uint32_t));
+  memcpy(nb->gens, self->generations, self->slot_capacity * sizeof(uint32_t));
+  memcpy(nb->s2d, self->slot_to_dense, self->slot_capacity * sizeof(uint32_t));
+  memcpy(nb->d2s, self->dense_to_slot, self->slot_capacity * sizeof(uint32_t));
+  memcpy(nb->stat, self->slot_states, self->slot_capacity * sizeof(uint8_t));
+  memcpy(nb->free, self->free_slots, self->free_count * sizeof(uint32_t));
 
-    for (size_t i = self->slot_capacity; i < new_cap; i++) {
-        nb->gens[i] = 1;
-        nb->stat[i] = SLOT_EMPTY;
-        nb->free[self->free_count++] = (uint32_t)i;
-    }
+  for (size_t i = self->slot_capacity; i < new_cap; i++) {
+    nb->gens[i] = 1;
+    nb->stat[i] = SLOT_EMPTY;
+    nb->free[self->free_count++] = (uint32_t)i;
+  }
 }
 
 int PhysicsWorld_resize(PhysicsWorldObject *self, size_t new_capacity) {
-    // 1. Validation
-    if (self->view_export_count > 0) {
-        PyErr_SetString(PyExc_BufferError, "Cannot resize while views are exported.");
-        return -1;
-    }
-    BLOCK_UNTIL_NOT_QUERYING(self);
-    if (new_capacity <= self->capacity) return 0;
-
-    // 2. Transactional Allocation
-    NewBuffers nb;
-    if (alloc_new_buffers(&nb, new_capacity) < 0) {
-        PyErr_NoMemory();
-        return -1;
-    }
-
-    // 3. Data Migration
-    migrate_and_init(self, &nb, new_capacity);
-
-    // 4. Commit: Free OLD, assign NEW
-    PyMem_RawFree(self->positions);          self->positions = nb.pos;
-    PyMem_RawFree(self->rotations);          self->rotations = nb.rot;
-    PyMem_RawFree(self->prev_positions);     self->prev_positions = nb.ppos;
-    PyMem_RawFree(self->prev_rotations);     self->prev_rotations = nb.prot;
-    PyMem_RawFree(self->linear_velocities);  self->linear_velocities = nb.lvel;
-    PyMem_RawFree(self->angular_velocities); self->angular_velocities = nb.avel;
-    
-    PyMem_RawFree(self->body_ids);           self->body_ids = nb.bids;
-    PyMem_RawFree(self->user_data);          self->user_data = nb.udat;
-    PyMem_RawFree(self->generations);        self->generations = nb.gens;
-    PyMem_RawFree(self->slot_to_dense);      self->slot_to_dense = nb.s2d;
-    PyMem_RawFree(self->dense_to_slot);      self->dense_to_slot = nb.d2s;
-    PyMem_RawFree(self->slot_states);        self->slot_states = nb.stat;
-    PyMem_RawFree(self->free_slots);         self->free_slots = nb.free;
-    PyMem_RawFree(self->categories);         self->categories = nb.cats;
-    PyMem_RawFree(self->masks);              self->masks = nb.masks;
-    PyMem_RawFree(self->material_ids);       self->material_ids = nb.mats;
-
-    self->capacity = new_capacity;
-    self->slot_capacity = new_capacity;
+  // 1. Validation
+  if (self->view_export_count > 0) {
+    PyErr_SetString(PyExc_BufferError,
+                    "Cannot resize while views are exported.");
+    return -1;
+  }
+  BLOCK_UNTIL_NOT_QUERYING(self);
+  if (new_capacity <= self->capacity) {
     return 0;
+  }
+
+  // 2. Transactional Allocation
+  NewBuffers nb;
+  if (alloc_new_buffers(&nb, new_capacity) < 0) {
+    PyErr_NoMemory();
+    return -1;
+  }
+
+  // 3. Data Migration
+  migrate_and_init(self, &nb, new_capacity);
+
+  // 4. Commit: Free OLD, assign NEW
+  PyMem_RawFree(self->positions);
+  self->positions = nb.pos;
+  PyMem_RawFree(self->rotations);
+  self->rotations = nb.rot;
+  PyMem_RawFree(self->prev_positions);
+  self->prev_positions = nb.ppos;
+  PyMem_RawFree(self->prev_rotations);
+  self->prev_rotations = nb.prot;
+  PyMem_RawFree(self->linear_velocities);
+  self->linear_velocities = nb.lvel;
+  PyMem_RawFree(self->angular_velocities);
+  self->angular_velocities = nb.avel;
+
+  PyMem_RawFree(self->body_ids);
+  self->body_ids = nb.bids;
+  PyMem_RawFree(self->user_data);
+  self->user_data = nb.udat;
+  PyMem_RawFree(self->generations);
+  self->generations = nb.gens;
+  PyMem_RawFree(self->slot_to_dense);
+  self->slot_to_dense = nb.s2d;
+  PyMem_RawFree(self->dense_to_slot);
+  self->dense_to_slot = nb.d2s;
+  PyMem_RawFree(self->slot_states);
+  self->slot_states = nb.stat;
+  PyMem_RawFree(self->free_slots);
+  self->free_slots = nb.free;
+  PyMem_RawFree(self->categories);
+  self->categories = nb.cats;
+  PyMem_RawFree(self->masks);
+  self->masks = nb.masks;
+  PyMem_RawFree(self->material_ids);
+  self->material_ids = nb.mats;
+
+  self->capacity = new_capacity;
+  self->slot_capacity = new_capacity;
+  return 0;
 }
 
 void free_constraints(PhysicsWorldObject *self) {
   if (self->constraints) {
-      for (size_t i = 0; i < self->constraint_capacity; i++) {
-          if (!self->constraints[i]) continue;
-
-          bool is_alive = !self->constraint_states || self->constraint_states[i] == SLOT_ALIVE;
-          if (is_alive) {
-              if (self->system) {
-                  JPH_PhysicsSystem_RemoveConstraint(self->system, self->constraints[i]);
-              }
-              JPH_Constraint_Destroy(self->constraints[i]);
-          }
-          self->constraints[i] = NULL;
+    for (size_t i = 0; i < self->constraint_capacity; i++) {
+      if (!self->constraints[i]) {
+        continue;
       }
-      PyMem_RawFree((void *)self->constraints);
-      self->constraints = NULL;
+
+      bool is_alive =
+          !self->constraint_states || self->constraint_states[i] == SLOT_ALIVE;
+      if (is_alive) {
+        if (self->system) {
+          JPH_PhysicsSystem_RemoveConstraint(self->system,
+                                             self->constraints[i]);
+        }
+        JPH_Constraint_Destroy(self->constraints[i]);
+      }
+      self->constraints[i] = NULL;
+    }
+    PyMem_RawFree((void *)self->constraints);
+    self->constraints = NULL;
   }
-  PyMem_RawFree(self->constraint_generations); self->constraint_generations = NULL;
-  PyMem_RawFree(self->free_constraint_slots);  self->free_constraint_slots = NULL;
-  PyMem_RawFree(self->constraint_states);      self->constraint_states = NULL;
+  PyMem_RawFree(self->constraint_generations);
+  self->constraint_generations = NULL;
+  PyMem_RawFree(self->free_constraint_slots);
+  self->free_constraint_slots = NULL;
+  PyMem_RawFree(self->constraint_states);
+  self->constraint_states = NULL;
 }
 
 void free_shape_cache(PhysicsWorldObject *self) {
-  if (!self->shape_cache) return;
+  if (!self->shape_cache) {
+    return;
+  }
 
   for (size_t i = 0; i < self->shape_cache_count; i++) {
-      if (self->shape_cache[i].shape) {
-          JPH_Shape_Destroy(self->shape_cache[i].shape);
-      }
+    if (self->shape_cache[i].shape) {
+      JPH_Shape_Destroy(self->shape_cache[i].shape);
+    }
   }
   PyMem_RawFree(self->shape_cache);
   self->shape_cache = NULL;
@@ -148,24 +188,42 @@ void free_shape_cache(PhysicsWorldObject *self) {
 }
 
 void free_shadow_buffers(PhysicsWorldObject *self) {
-  PyMem_RawFree(self->positions);          self->positions = NULL;
-  PyMem_RawFree(self->rotations);          self->rotations = NULL;
-  PyMem_RawFree(self->prev_positions);     self->prev_positions = NULL;
-  PyMem_RawFree(self->prev_rotations);     self->prev_rotations = NULL;
-  PyMem_RawFree(self->linear_velocities);  self->linear_velocities = NULL;
-  PyMem_RawFree(self->angular_velocities); self->angular_velocities = NULL;
-  PyMem_RawFree(self->body_ids);           self->body_ids = NULL;
-  PyMem_RawFree(self->generations);        self->generations = NULL;
-  PyMem_RawFree(self->slot_to_dense);      self->slot_to_dense = NULL;
-  PyMem_RawFree(self->dense_to_slot);      self->dense_to_slot = NULL;
-  PyMem_RawFree(self->free_slots);         self->free_slots = NULL;
-  PyMem_RawFree(self->slot_states);        self->slot_states = NULL;
-  PyMem_RawFree(self->command_queue);      self->command_queue = NULL;
-  PyMem_RawFree(self->user_data);          self->user_data = NULL;
-  PyMem_RawFree(self->categories);         self->categories = NULL;
-  PyMem_RawFree(self->masks);              self->masks = NULL;
-  PyMem_RawFree(self->material_ids);       self->material_ids = NULL;
-  PyMem_RawFree(self->materials);          self->materials = NULL;
+  PyMem_RawFree(self->positions);
+  self->positions = NULL;
+  PyMem_RawFree(self->rotations);
+  self->rotations = NULL;
+  PyMem_RawFree(self->prev_positions);
+  self->prev_positions = NULL;
+  PyMem_RawFree(self->prev_rotations);
+  self->prev_rotations = NULL;
+  PyMem_RawFree(self->linear_velocities);
+  self->linear_velocities = NULL;
+  PyMem_RawFree(self->angular_velocities);
+  self->angular_velocities = NULL;
+  PyMem_RawFree(self->body_ids);
+  self->body_ids = NULL;
+  PyMem_RawFree(self->generations);
+  self->generations = NULL;
+  PyMem_RawFree(self->slot_to_dense);
+  self->slot_to_dense = NULL;
+  PyMem_RawFree(self->dense_to_slot);
+  self->dense_to_slot = NULL;
+  PyMem_RawFree(self->free_slots);
+  self->free_slots = NULL;
+  PyMem_RawFree(self->slot_states);
+  self->slot_states = NULL;
+  PyMem_RawFree(self->command_queue);
+  self->command_queue = NULL;
+  PyMem_RawFree(self->user_data);
+  self->user_data = NULL;
+  PyMem_RawFree(self->categories);
+  self->categories = NULL;
+  PyMem_RawFree(self->masks);
+  self->masks = NULL;
+  PyMem_RawFree(self->material_ids);
+  self->material_ids = NULL;
+  PyMem_RawFree(self->materials);
+  self->materials = NULL;
 }
 
 // --- Helper: Resource Cleanup (Idempotent) ---
@@ -228,20 +286,21 @@ void PhysicsWorld_free_members(PhysicsWorldObject *self) {
 }
 
 // helper: Initialize settings via Python helper
-int init_settings(PhysicsWorldObject *self, PyObject *settings_dict,
-                         float *gx, float *gy, float *gz, int *max_bodies,
-                         int *max_pairs) {
+int init_settings(PhysicsWorldObject *self, PyObject *settings_dict, float *gx,
+                  float *gy, float *gz, int *max_bodies, int *max_pairs) {
   PyObject *st_module = PyType_GetModule(Py_TYPE(self));
   CulverinState *st = get_culverin_state(st_module);
   PyObject *val_func = PyObject_GetAttrString(st->helper, "validate_settings");
-  if (!val_func)
+  if (!val_func) {
     return -1;
+  }
 
   PyObject *norm = PyObject_CallFunctionObjArgs(
       val_func, settings_dict ? settings_dict : Py_None, NULL);
   Py_DECREF(val_func);
-  if (!norm)
+  if (!norm) {
     return -1;
+  }
 
   float slop;
   int ok = PyArg_ParseTuple(norm, "ffffii", gx, gy, gz, &slop, max_bodies,
@@ -251,19 +310,23 @@ int init_settings(PhysicsWorldObject *self, PyObject *settings_dict,
 }
 
 // helper: Initialize Jolt Core Systems
-int init_jolt_core(PhysicsWorldObject *self, WorldLimits limits, GravityVector gravity) {
+int init_jolt_core(PhysicsWorldObject *self, WorldLimits limits,
+                   GravityVector gravity) {
   JobSystemThreadPoolConfig job_cfg = {
       .maxJobs = 1024, .maxBarriers = 8, .numThreads = -1};
   self->job_system = JPH_JobSystemThreadPool_Create(&job_cfg);
 
   // --- 3 LAYERS: 0=Static, 1=Dynamic, 2=VehicleRay ---
   self->bp_interface = JPH_BroadPhaseLayerInterfaceTable_Create(3, 3);
-  JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(self->bp_interface, 0, 0);
-  JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(self->bp_interface, 1, 1);
-  JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(self->bp_interface, 2, 2);
+  JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(
+      self->bp_interface, 0, 0);
+  JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(
+      self->bp_interface, 1, 1);
+  JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(
+      self->bp_interface, 2, 2);
 
   self->pair_filter = JPH_ObjectLayerPairFilterTable_Create(3);
-  
+
   // Matrix:
   // 0 (Static)  vs 1 (Dynamic) -> ON
   // 0 (Static)  vs 2 (Ray)     -> ON
@@ -279,16 +342,17 @@ int init_jolt_core(PhysicsWorldObject *self, WorldLimits limits, GravityVector g
       self->bp_interface, 3, self->pair_filter, 3);
 
   JPH_PhysicsSystemSettings phys_settings = {
-        .maxBodies = (uint32_t)limits.max_bodies,
-        .maxBodyPairs = (uint32_t)limits.max_pairs, 
-        .maxContactConstraints = 1024*1024,
-        .broadPhaseLayerInterface = self->bp_interface,
-        .objectLayerPairFilter = self->pair_filter,
-        .objectVsBroadPhaseLayerFilter = self->bp_filter};
+      .maxBodies = (uint32_t)limits.max_bodies,
+      .maxBodyPairs = (uint32_t)limits.max_pairs,
+      .maxContactConstraints = 1024 * 1024,
+      .broadPhaseLayerInterface = self->bp_interface,
+      .objectLayerPairFilter = self->pair_filter,
+      .objectVsBroadPhaseLayerFilter = self->bp_filter};
 
   self->system = JPH_PhysicsSystem_Create(&phys_settings);
   self->char_vs_char_manager = JPH_CharacterVsCharacterCollision_CreateSimple();
-  JPH_PhysicsSystem_SetGravity(self->system, &(JPH_Vec3){gravity.gx, gravity.gy, gravity.gz});
+  JPH_PhysicsSystem_SetGravity(self->system,
+                               &(JPH_Vec3){gravity.gx, gravity.gy, gravity.gz});
   self->body_interface = JPH_PhysicsSystem_GetBodyInterface(self->system);
   return 0;
 }
@@ -296,8 +360,9 @@ int init_jolt_core(PhysicsWorldObject *self, WorldLimits limits, GravityVector g
 // helper: Allocate shadow buffers and indirection maps
 int allocate_buffers(PhysicsWorldObject *self, int max_bodies) {
   self->capacity = (size_t)max_bodies;
-  if (self->capacity < self->count + 128)
+  if (self->capacity < self->count + 128) {
     self->capacity = self->count + 1024;
+  }
   self->max_jolt_bodies = (uint32_t)max_bodies;
   self->slot_capacity = self->capacity;
 
@@ -323,8 +388,9 @@ int allocate_buffers(PhysicsWorldObject *self, int max_bodies) {
   self->command_capacity = 64;
 
   if (!self->positions || !self->id_to_handle_map || !self->command_queue ||
-      !self->slot_states)
+      !self->slot_states) {
     return -1;
+  }
 
   for (size_t i = 0; i < self->capacity; i++) {
     self->categories[i] = 0xFFFF;
@@ -348,8 +414,9 @@ int load_baked_scene(PhysicsWorldObject *self, PyObject *baked) {
     float params[4] = {f_shape[i * 5 + 1], f_shape[i * 5 + 2],
                        f_shape[i * 5 + 3], f_shape[i * 5 + 4]};
     JPH_Shape *shape = find_or_create_shape(self, (int)f_shape[i * 5], params);
-    if (!shape)
+    if (!shape) {
       return -1;
+    }
 
     JPH_BodyCreationSettings *creation = JPH_BodyCreationSettings_Create3(
         shape, &(JPH_RVec3){f_pos[i * 4], f_pos[i * 4 + 1], f_pos[i * 4 + 2]},
@@ -360,14 +427,16 @@ int load_baked_scene(PhysicsWorldObject *self, PyObject *baked) {
     self->generations[i] = 1;
     JPH_BodyCreationSettings_SetUserData(creation,
                                          (uint64_t)make_handle((uint32_t)i, 1));
-    if (u_mot[i] == 2)
+    if (u_mot[i] == 2) {
       JPH_BodyCreationSettings_SetAllowSleeping(creation, true);
+    }
 
     self->body_ids[i] = JPH_BodyInterface_CreateAndAddBody(
         self->body_interface, creation, JPH_Activation_Activate);
     uint32_t j_idx = JPH_ID_TO_INDEX(self->body_ids[i]);
-    if (j_idx < self->max_jolt_bodies)
+    if (j_idx < self->max_jolt_bodies) {
       self->id_to_handle_map[j_idx] = make_handle((uint32_t)i, 1);
+    }
 
     self->slot_to_dense[i] = self->dense_to_slot[i] = (uint32_t)i;
     self->slot_states[i] = SLOT_ALIVE;
@@ -382,15 +451,17 @@ int verify_abi_alignment(JPH_BodyInterface *bi) {
       JPH_BoxShapeSettings_Create(&(JPH_Vec3){1, 1, 1}, 0.0f);
   JPH_Shape *shape = (JPH_Shape *)JPH_BoxShapeSettings_CreateShape(bs);
   JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)bs);
-  if (!shape)
+  if (!shape) {
     return -1;
+  }
 
   JPH_BodyCreationSettings *bcs = JPH_BodyCreationSettings_Create3(
       shape, &(JPH_RVec3){10.0, 20.0, 30.0}, &(JPH_Quat){0, 0, 0, 1},
       JPH_MotionType_Static, 0);
   JPH_Shape_Destroy(shape);
-  if (!bcs)
+  if (!bcs) {
     return -1;
+  }
 
   JPH_BodyID bid =
       JPH_BodyInterface_CreateAndAddBody(bi, bcs, JPH_Activation_Activate);
@@ -409,8 +480,7 @@ int verify_abi_alignment(JPH_BodyInterface *bi) {
 }
 
 // Buffer Release Slot
-void PhysicsWorld_releasebuffer(PhysicsWorldObject *self,
-                                       Py_buffer *view) {
+void PhysicsWorld_releasebuffer(PhysicsWorldObject *self, Py_buffer *view) {
   SHADOW_LOCK(&self->shadow_lock);
   if (self->view_export_count > 0) {
     self->view_export_count--;

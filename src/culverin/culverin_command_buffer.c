@@ -6,50 +6,51 @@
  * MUST be called while holding SHADOW_LOCK.
  */
 void world_remove_body_slot(PhysicsWorldObject *self, uint32_t slot) {
-    uint32_t dense_idx = self->slot_to_dense[slot];
-    uint32_t last_dense = (uint32_t)self->count - 1;
-    JPH_BodyID bid = self->body_ids[dense_idx];
-    if (bid != JPH_INVALID_BODY_ID) {
-        uint32_t j_idx = JPH_ID_TO_INDEX(bid); // Use Macro
-        if (self->id_to_handle_map && j_idx < self->max_jolt_bodies) {
-            self->id_to_handle_map[j_idx] = 0;
-        }
+  uint32_t dense_idx = self->slot_to_dense[slot];
+  uint32_t last_dense = (uint32_t)self->count - 1;
+  JPH_BodyID bid = self->body_ids[dense_idx];
+  if (bid != JPH_INVALID_BODY_ID) {
+    uint32_t j_idx = JPH_ID_TO_INDEX(bid); // Use Macro
+    if (self->id_to_handle_map && j_idx < self->max_jolt_bodies) {
+      self->id_to_handle_map[j_idx] = 0;
     }
+  }
 
-    // 1. If we aren't already the last element, move the last element into this hole
-    if (dense_idx != last_dense) {
-        size_t dst = (size_t)dense_idx * 4;
-        size_t src = (size_t)last_dense * 4;
+  // 1. If we aren't already the last element, move the last element into this
+  // hole
+  if (dense_idx != last_dense) {
+    size_t dst = (size_t)dense_idx * 4;
+    size_t src = (size_t)last_dense * 4;
 
-        // Copy Shadow Buffers (16 bytes each)
-        memcpy(&self->positions[dst],          &self->positions[src],          16);
-        memcpy(&self->rotations[dst],          &self->rotations[src],          16);
-        memcpy(&self->prev_positions[dst],     &self->prev_positions[src],     16);
-        memcpy(&self->prev_rotations[dst],     &self->prev_rotations[src],     16);
-        memcpy(&self->linear_velocities[dst],  &self->linear_velocities[src],  16);
-        memcpy(&self->angular_velocities[dst], &self->angular_velocities[src], 16);
+    // Copy Shadow Buffers (16 bytes each)
+    memcpy(&self->positions[dst], &self->positions[src], 16);
+    memcpy(&self->rotations[dst], &self->rotations[src], 16);
+    memcpy(&self->prev_positions[dst], &self->prev_positions[src], 16);
+    memcpy(&self->prev_rotations[dst], &self->prev_rotations[src], 16);
+    memcpy(&self->linear_velocities[dst], &self->linear_velocities[src], 16);
+    memcpy(&self->angular_velocities[dst], &self->angular_velocities[src], 16);
 
-        // Copy Metadata
-        self->body_ids[dense_idx]     = self->body_ids[last_dense];
-        self->user_data[dense_idx]    = self->user_data[last_dense];
-        self->categories[dense_idx]   = self->categories[last_dense];
-        self->masks[dense_idx]        = self->masks[last_dense];
-        self->material_ids[dense_idx] = self->material_ids[last_dense];
+    // Copy Metadata
+    self->body_ids[dense_idx] = self->body_ids[last_dense];
+    self->user_data[dense_idx] = self->user_data[last_dense];
+    self->categories[dense_idx] = self->categories[last_dense];
+    self->masks[dense_idx] = self->masks[last_dense];
+    self->material_ids[dense_idx] = self->material_ids[last_dense];
 
-        // Update Indirection Maps
-        uint32_t mover_slot = self->dense_to_slot[last_dense];
-        self->slot_to_dense[mover_slot] = dense_idx;
-        self->dense_to_slot[dense_idx]  = mover_slot;
-    }
+    // Update Indirection Maps
+    uint32_t mover_slot = self->dense_to_slot[last_dense];
+    self->slot_to_dense[mover_slot] = dense_idx;
+    self->dense_to_slot[dense_idx] = mover_slot;
+  }
 
-    // 2. Invalidate the slot
-    self->generations[slot]++;
-    self->free_slots[self->free_count++] = slot;
-    self->slot_states[slot] = SLOT_EMPTY;
+  // 2. Invalidate the slot
+  self->generations[slot]++;
+  self->free_slots[self->free_count++] = slot;
+  self->slot_states[slot] = SLOT_EMPTY;
 
-    // 3. Update World Counters
-    self->count--;
-    self->view_shape[0] = (Py_ssize_t)self->count;
+  // 3. Update World Counters
+  self->count--;
+  self->view_shape[0] = (Py_ssize_t)self->count;
 }
 
 // Helper to grow queue
@@ -76,6 +77,7 @@ bool ensure_command_capacity(PhysicsWorldObject *self) {
   return true;
 }
 
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void flush_commands(PhysicsWorldObject *self) {
   if (self->command_count == 0) {
     return;
@@ -92,23 +94,25 @@ void flush_commands(PhysicsWorldObject *self) {
 
     // --- Safety Checks ---
     if (type != CMD_CREATE_BODY) {
-       if (self->slot_states[slot] != SLOT_ALIVE) continue;
+      if (self->slot_states[slot] != SLOT_ALIVE) {
+        continue;
+      }
     }
 
     // Resolve dense index
     uint32_t dense_idx = 0;
     JPH_BodyID bid = JPH_INVALID_BODY_ID;
-    
+
     if (type != CMD_CREATE_BODY) {
       dense_idx = self->slot_to_dense[slot];
       bid = self->body_ids[dense_idx];
     }
 
-
     switch (type) {
     case CMD_CREATE_BODY: {
       JPH_BodyCreationSettings *s = cmd->create.settings;
-      JPH_BodyID new_bid = JPH_BodyInterface_CreateAndAddBody(bi, s, JPH_Activation_Activate);
+      JPH_BodyID new_bid =
+          JPH_BodyInterface_CreateAndAddBody(bi, s, JPH_Activation_Activate);
 
       if (new_bid == JPH_INVALID_BODY_ID) {
         self->slot_states[slot] = SLOT_EMPTY;
@@ -119,10 +123,10 @@ void flush_commands(PhysicsWorldObject *self) {
       }
       uint32_t gen = self->generations[slot];
       BodyHandle handle = make_handle(slot, gen);
-      
+
       uint32_t jolt_idx = JPH_ID_TO_INDEX(new_bid);
       if (self->id_to_handle_map && jolt_idx < self->max_jolt_bodies) {
-          self->id_to_handle_map[jolt_idx] = handle;
+        self->id_to_handle_map[jolt_idx] = handle;
       }
 
       size_t new_dense = self->count;
@@ -139,9 +143,9 @@ void flush_commands(PhysicsWorldObject *self) {
       float fx = (float)p->x;
       float fy = (float)p->y;
       float fz = (float)p->z;
-      
+
       size_t offset = new_dense * 4;
-      
+
       self->positions[offset + 0] = fx;
       self->positions[offset + 1] = fy;
       self->positions[offset + 2] = fz;
@@ -182,7 +186,7 @@ void flush_commands(PhysicsWorldObject *self) {
       p->y = cmd->vec.y;
       p->z = cmd->vec.z;
       JPH_BodyInterface_SetPosition(bi, bid, p, JPH_Activation_Activate);
-      
+
       size_t offset = (size_t)dense_idx * 4;
       self->positions[offset + 0] = cmd->vec.x;
       self->positions[offset + 1] = cmd->vec.y;
@@ -202,7 +206,7 @@ void flush_commands(PhysicsWorldObject *self) {
       q->z = cmd->vec.z;
       q->w = cmd->vec.w;
       JPH_BodyInterface_SetRotation(bi, bid, q, JPH_Activation_Activate);
-      
+
       size_t offset = (size_t)dense_idx * 4;
       memcpy(&self->rotations[offset], &cmd->vec, 16);
       // FIX: Reset interpolation
@@ -221,7 +225,8 @@ void flush_commands(PhysicsWorldObject *self) {
       q->z = cmd->transform.rz;
       q->w = cmd->transform.rw;
 
-      JPH_BodyInterface_SetPositionAndRotation(bi, bid, p, q, JPH_Activation_Activate);
+      JPH_BodyInterface_SetPositionAndRotation(bi, bid, p, q,
+                                               JPH_Activation_Activate);
 
       size_t offset = (size_t)dense_idx * 4;
       self->positions[offset + 0] = (float)p->x;
@@ -238,12 +243,12 @@ void flush_commands(PhysicsWorldObject *self) {
     }
 
     case CMD_SET_LINVEL: {
-        JPH_Vec3 v = {cmd->vec.x, cmd->vec.y, cmd->vec.z};
-        JPH_BodyInterface_SetLinearVelocity(bi, bid, &v);
-        self->linear_velocities[dense_idx * 4 + 0] = cmd->vec.x;
-        self->linear_velocities[dense_idx * 4 + 1] = cmd->vec.y;
-        self->linear_velocities[dense_idx * 4 + 2] = cmd->vec.z;
-        break;
+      JPH_Vec3 v = {cmd->vec.x, cmd->vec.y, cmd->vec.z};
+      JPH_BodyInterface_SetLinearVelocity(bi, bid, &v);
+      self->linear_velocities[dense_idx * 4 + 0] = cmd->vec.x;
+      self->linear_velocities[dense_idx * 4 + 1] = cmd->vec.y;
+      self->linear_velocities[dense_idx * 4 + 2] = cmd->vec.z;
+      break;
     }
 
     case CMD_SET_ANGVEL: {
@@ -257,8 +262,8 @@ void flush_commands(PhysicsWorldObject *self) {
 
     case CMD_SET_MOTION: {
       JPH_BodyInterface_SetMotionType(bi, bid,
-                                    (JPH_MotionType)cmd->motion.motion_type,
-                                    JPH_Activation_Activate);
+                                      (JPH_MotionType)cmd->motion.motion_type,
+                                      JPH_Activation_Activate);
       // Optional: If you use Layer 0 for Static and Layer 1 for Moving
       uint32_t layer = (cmd->motion.motion_type == 0) ? 0 : 1;
       JPH_BodyInterface_SetObjectLayer(bi, bid, (JPH_ObjectLayer)layer);
@@ -277,11 +282,11 @@ void flush_commands(PhysicsWorldObject *self) {
       break;
     }
     case CMD_SET_CCD: {
-        JPH_MotionQuality qual = cmd->motion.motion_type ? 
-                                 JPH_MotionQuality_LinearCast : 
-                                 JPH_MotionQuality_Discrete;
-        JPH_BodyInterface_SetMotionQuality(bi, bid, qual);
-        break;
+      JPH_MotionQuality qual = cmd->motion.motion_type
+                                   ? JPH_MotionQuality_LinearCast
+                                   : JPH_MotionQuality_Discrete;
+      JPH_BodyInterface_SetMotionQuality(bi, bid, qual);
+      break;
     }
     default:
       DEBUG_LOG("Warning: Invalid command during flush. Check flush_commands.");
@@ -294,16 +299,18 @@ void flush_commands(PhysicsWorldObject *self) {
 }
 
 void clear_command_queue(PhysicsWorldObject *self) {
-    if (!self->command_queue) return;
+  if (!self->command_queue) {
+    return;
+  }
 
-    for (size_t i = 0; i < self->command_count; i++) {
-        PhysicsCommand *cmd = &self->command_queue[i];
-        if (CMD_GET_TYPE(cmd->header) == CMD_CREATE_BODY) {
-            // We own this pointer until it's consumed by Jolt
-            if (cmd->create.settings) {
-                JPH_BodyCreationSettings_Destroy(cmd->create.settings);
-            }
-        }
+  for (size_t i = 0; i < self->command_count; i++) {
+    PhysicsCommand *cmd = &self->command_queue[i];
+    if (CMD_GET_TYPE(cmd->header) == CMD_CREATE_BODY) {
+      // We own this pointer until it's consumed by Jolt
+      if (cmd->create.settings) {
+        JPH_BodyCreationSettings_Destroy(cmd->create.settings);
+      }
     }
-    self->command_count = 0;
+  }
+  self->command_count = 0;
 }

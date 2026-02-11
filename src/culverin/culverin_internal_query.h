@@ -25,25 +25,22 @@ typedef struct {
 #include "culverin.h"
 
 JPH_Shape *find_or_create_shape(struct PhysicsWorldObject *self, int type,
-                                       const float *params);
+                                const float *params);
 
-bool execute_raycast_query(PhysicsWorldObject *self,
-                                  JPH_BodyID ignore_bid,
-                                  const JPH_RVec3 *origin,
-                                  const JPH_Vec3 *direction,
-                                  JPH_RayCastResult *hit);
+bool execute_raycast_query(PhysicsWorldObject *self, JPH_BodyID ignore_bid,
+                           const JPH_RVec3 *origin, const JPH_Vec3 *direction,
+                           JPH_RayCastResult *hit);
 
 void extract_hit_normal(PhysicsWorldObject *self, JPH_BodyID bodyID,
-                               JPH_SubShapeID subShapeID2,
-                               const JPH_RVec3 *origin, const JPH_Vec3 *ray_dir,
-                               float fraction, JPH_Vec3 *normal_out);
+                        JPH_SubShapeID subShapeID2, const JPH_RVec3 *origin,
+                        const JPH_Vec3 *ray_dir, float fraction,
+                        JPH_Vec3 *normal_out);
 
 float CastShape_ClosestCollector(void *context,
-                                        const JPH_ShapeCastResult *result);
+                                 const JPH_ShapeCastResult *result);
 
 void shapecast_execute_internal(PhysicsWorldObject *self,
-                                       const JPH_Shape *shape,
-                                       const JPH_RMat4 *transform,
-                                       const JPH_Vec3 *sweep_dir,
-                                       JPH_BodyID ignore_bid,
-                                       CastShapeContext *ctx);
+                                const JPH_Shape *shape,
+                                const JPH_RMat4 *transform,
+                                const JPH_Vec3 *sweep_dir,
+                                JPH_BodyID ignore_bid, CastShapeContext *ctx);

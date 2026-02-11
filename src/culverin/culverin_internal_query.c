@@ -3,8 +3,9 @@
 #include "culverin_filters.h"
 
 // --- Helper: Shape Caching (Internal) ---
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 JPH_Shape *find_or_create_shape(PhysicsWorldObject *self, int type,
-                                       const float *params) {
+                                const float *params) {
   // 1. HARDENED KEY CONSTRUCTION
   // We zero out the key first so that unused parameters for a specific
   // shape type (like p2-p4 for a Sphere) don't cause cache misses.
@@ -111,11 +112,9 @@ JPH_Shape *find_or_create_shape(PhysicsWorldObject *self, int type,
 
 // Helper 1: Run the Raycast (Encapsulates all Jolt Filter/Lock/Cleanup
 // boilerplate)
-bool execute_raycast_query(PhysicsWorldObject *self,
-                                  JPH_BodyID ignore_bid,
-                                  const JPH_RVec3 *origin,
-                                  const JPH_Vec3 *direction,
-                                  JPH_RayCastResult *hit) {
+bool execute_raycast_query(PhysicsWorldObject *self, JPH_BodyID ignore_bid,
+                           const JPH_RVec3 *origin, const JPH_Vec3 *direction,
+                           JPH_RayCastResult *hit) {
   bool has_hit;
 
   // 1. LOCK TRAMPOLINE
@@ -157,9 +156,9 @@ bool execute_raycast_query(PhysicsWorldObject *self,
 // Helper 2: Extract World Space Normal after hit
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void extract_hit_normal(PhysicsWorldObject *self, JPH_BodyID bodyID,
-                               JPH_SubShapeID subShapeID2,
-                               const JPH_RVec3 *origin, const JPH_Vec3 *ray_dir,
-                               float fraction, JPH_Vec3 *normal_out) {
+                        JPH_SubShapeID subShapeID2, const JPH_RVec3 *origin,
+                        const JPH_Vec3 *ray_dir, float fraction,
+                        JPH_Vec3 *normal_out) {
   const JPH_BodyLockInterface *lock_iface =
       JPH_PhysicsSystem_GetBodyLockInterface(self->system);
   JPH_BodyLockRead lock;
@@ -181,7 +180,7 @@ void extract_hit_normal(PhysicsWorldObject *self, JPH_BodyID bodyID,
 
 // Callback: Called by Jolt when a hit is found during the sweep
 float CastShape_ClosestCollector(void *context,
-                                        const JPH_ShapeCastResult *result) {
+                                 const JPH_ShapeCastResult *result) {
   CastShapeContext *ctx = (CastShapeContext *)context;
 
   // We only care about the closest hit (smallest fraction)
@@ -197,11 +196,10 @@ float CastShape_ClosestCollector(void *context,
 
 // Helper 2: Internal logic to run the actual query under trampoline locks
 void shapecast_execute_internal(PhysicsWorldObject *self,
-                                       const JPH_Shape *shape,
-                                       const JPH_RMat4 *transform,
-                                       const JPH_Vec3 *sweep_dir,
-                                       JPH_BodyID ignore_bid,
-                                       CastShapeContext *ctx) {
+                                const JPH_Shape *shape,
+                                const JPH_RMat4 *transform,
+                                const JPH_Vec3 *sweep_dir,
+                                JPH_BodyID ignore_bid, CastShapeContext *ctx) {
   SHADOW_LOCK(&g_jph_trampoline_lock);
 
   JPH_BroadPhaseLayerFilter_Procs bp_p = {.ShouldCollide = filter_allow_all_bp};

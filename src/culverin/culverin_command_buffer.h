@@ -3,15 +3,15 @@
 #include <stddef.h>
 #include <stdint.h>
 
-struct PhysicsWorldObject; 
+struct PhysicsWorldObject;
 typedef struct PhysicsWorldObject PhysicsWorldObject;
 
 // --- Command Buffer Optimized Layout (32 Bytes) ---
 
 // Bit-packing helper macros
 #define CMD_HEADER(type, slot) ((uint32_t)((type) & 0xFF) | ((slot) << 8))
-#define CMD_GET_TYPE(header)   ((CommandType)((header) & 0xFF))
-#define CMD_GET_SLOT(header)   ((header) >> 8)
+#define CMD_GET_TYPE(header) ((CommandType)((header) & 0xFF))
+#define CMD_GET_SLOT(header) ((header) >> 8)
 
 // --- Slot State Machine ---
 typedef enum {

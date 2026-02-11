@@ -1,19 +1,20 @@
 #include "culverin_constraint.h"
 #include "culverin_constraint_factory.h"
 
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 PyObject *PhysicsWorld_create_constraint(PhysicsWorldObject *self,
-                                                PyObject *args,
-                                                PyObject *kwds) {
+                                         PyObject *args, PyObject *kwds) {
   int type = 0;
   uint64_t h1 = 0;
   uint64_t h2 = 0;
   PyObject *params = NULL;
   PyObject *motor_dict = NULL; // NEW
-  
-  static char *kwlist[] = {"type", "body1", "body2", "params", "motor", NULL}; // Updated
 
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "iKK|OO", kwlist, &type, &h1, &h2,
-                                   &params, &motor_dict)) {
+  static char *kwlist[] = {"type",   "body1", "body2",
+                           "params", "motor", NULL}; // Updated
+
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "iKK|OO", kwlist, &type, &h1,
+                                   &h2, &params, &motor_dict)) {
     return NULL;
   }
 
@@ -54,7 +55,7 @@ PyObject *PhysicsWorld_create_constraint(PhysicsWorldObject *self,
   }
 
   if (motor_dict) {
-      parse_motor_config(motor_dict, &p);
+    parse_motor_config(motor_dict, &p);
   }
 
   SHADOW_LOCK(&self->shadow_lock);
@@ -151,9 +152,9 @@ PyObject *PhysicsWorld_create_constraint(PhysicsWorldObject *self,
   return PyLong_FromUnsignedLongLong(handle);
 }
 
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 PyObject *PhysicsWorld_destroy_constraint(PhysicsWorldObject *self,
-                                                 PyObject *args,
-                                                 PyObject *kwds) {
+                                          PyObject *args, PyObject *kwds) {
   uint64_t h = 0;
   static char *kwlist[] = {"handle", NULL};
 
@@ -225,58 +226,59 @@ PyObject *PhysicsWorld_destroy_constraint(PhysicsWorldObject *self,
 }
 
 PyObject *PhysicsWorld_set_constraint_target(PhysicsWorldObject *self,
-                                                    PyObject *args, PyObject *kwds) {
-    uint64_t h = 0;
-    float target = 0.0f;
-    static char *kwlist[] = {"handle", "target", NULL};
+                                             PyObject *args, PyObject *kwds) {
+  uint64_t h = 0;
+  float target = 0.0f;
+  static char *kwlist[] = {"handle", "target", NULL};
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "Kf", kwlist, &h, &target)) {
-        return NULL;
-    }
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "Kf", kwlist, &h, &target)) {
+    return NULL;
+  }
 
-    SHADOW_LOCK(&self->shadow_lock);
-    BLOCK_UNTIL_NOT_STEPPING(self);
+  SHADOW_LOCK(&self->shadow_lock);
+  BLOCK_UNTIL_NOT_STEPPING(self);
 
-    uint32_t slot = 0;
-    if (!unpack_handle(self, h, &slot) || self->constraint_states[slot] != SLOT_ALIVE) {
-        SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_ValueError, "Invalid constraint handle");
-        return NULL;
-    }
-
-    JPH_Constraint* c = self->constraints[slot];
-    JPH_ConstraintType type = JPH_Constraint_GetType(c);
-    JPH_ConstraintSubType sub = JPH_Constraint_GetSubType(c);
-
-    // HINGE
-    if (sub == JPH_ConstraintSubType_Hinge) {
-        JPH_HingeConstraint* hc = (JPH_HingeConstraint*)c;
-        JPH_MotorState state = JPH_HingeConstraint_GetMotorState(hc);
-        if (state == JPH_MotorState_Velocity) {
-            JPH_HingeConstraint_SetTargetAngularVelocity(hc, target);
-        } else if (state == JPH_MotorState_Position) {
-            JPH_HingeConstraint_SetTargetAngle(hc, target);
-        }
-    }
-    // SLIDER
-    else if (sub == JPH_ConstraintSubType_Slider) {
-        JPH_SliderConstraint* sc = (JPH_SliderConstraint*)c;
-        JPH_MotorState state = JPH_SliderConstraint_GetMotorState(sc);
-        if (state == JPH_MotorState_Velocity) {
-            JPH_SliderConstraint_SetTargetVelocity(sc, target);
-        } else if (state == JPH_MotorState_Position) {
-            JPH_SliderConstraint_SetTargetPosition(sc, target);
-        }
-    }
-
-    // Wake up bodies!
-    if (type == JPH_ConstraintType_TwoBodyConstraint) {
-        JPH_Body* b1 = JPH_TwoBodyConstraint_GetBody1((JPH_TwoBodyConstraint*)c);
-        JPH_Body* b2 = JPH_TwoBodyConstraint_GetBody2((JPH_TwoBodyConstraint*)c);
-        JPH_BodyInterface_ActivateBody(self->body_interface, JPH_Body_GetID(b1));
-        JPH_BodyInterface_ActivateBody(self->body_interface, JPH_Body_GetID(b2));
-    }
-
+  uint32_t slot = 0;
+  if (!unpack_handle(self, h, &slot) ||
+      self->constraint_states[slot] != SLOT_ALIVE) {
     SHADOW_UNLOCK(&self->shadow_lock);
-    Py_RETURN_NONE;
+    PyErr_SetString(PyExc_ValueError, "Invalid constraint handle");
+    return NULL;
+  }
+
+  JPH_Constraint *c = self->constraints[slot];
+  JPH_ConstraintType type = JPH_Constraint_GetType(c);
+  JPH_ConstraintSubType sub = JPH_Constraint_GetSubType(c);
+
+  // HINGE
+  if (sub == JPH_ConstraintSubType_Hinge) {
+    JPH_HingeConstraint *hc = (JPH_HingeConstraint *)c;
+    JPH_MotorState state = JPH_HingeConstraint_GetMotorState(hc);
+    if (state == JPH_MotorState_Velocity) {
+      JPH_HingeConstraint_SetTargetAngularVelocity(hc, target);
+    } else if (state == JPH_MotorState_Position) {
+      JPH_HingeConstraint_SetTargetAngle(hc, target);
+    }
+  }
+  // SLIDER
+  else if (sub == JPH_ConstraintSubType_Slider) {
+    JPH_SliderConstraint *sc = (JPH_SliderConstraint *)c;
+    JPH_MotorState state = JPH_SliderConstraint_GetMotorState(sc);
+    if (state == JPH_MotorState_Velocity) {
+      JPH_SliderConstraint_SetTargetVelocity(sc, target);
+    } else if (state == JPH_MotorState_Position) {
+      JPH_SliderConstraint_SetTargetPosition(sc, target);
+    }
+  }
+
+  // Wake up bodies!
+  if (type == JPH_ConstraintType_TwoBodyConstraint) {
+    JPH_Body *b1 = JPH_TwoBodyConstraint_GetBody1((JPH_TwoBodyConstraint *)c);
+    JPH_Body *b2 = JPH_TwoBodyConstraint_GetBody2((JPH_TwoBodyConstraint *)c);
+    JPH_BodyInterface_ActivateBody(self->body_interface, JPH_Body_GetID(b1));
+    JPH_BodyInterface_ActivateBody(self->body_interface, JPH_Body_GetID(b2));
+  }
+
+  SHADOW_UNLOCK(&self->shadow_lock);
+  Py_RETURN_NONE;
 }

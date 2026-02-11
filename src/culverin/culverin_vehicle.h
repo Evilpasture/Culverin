@@ -1,6 +1,5 @@
 #pragma once
 #include "culverin.h"
-#include "culverin_parsers.h"
 
 typedef struct {
   JPH_LinearCurve *f_curve;
@@ -30,26 +29,25 @@ typedef struct VehicleObject {
 } VehicleObject;
 
 PyObject *PhysicsWorld_create_vehicle(struct PhysicsWorldObject *self,
-                                             PyObject *args, PyObject *kwds);
+                                      PyObject *args, PyObject *kwds);
 void cleanup_vehicle_resources(VehicleResources *r, uint32_t num_wheels,
-                                      struct PhysicsWorldObject *self);
+                               struct PhysicsWorldObject *self);
 
-PyObject *Vehicle_set_input(VehicleObject *self, PyObject *args, PyObject *kwds);
+PyObject *Vehicle_set_input(VehicleObject *self, PyObject *args,
+                            PyObject *kwds);
 
-PyObject *Vehicle_get_wheel_transform(VehicleObject *self,
-                                             PyObject *args);
+PyObject *Vehicle_get_wheel_transform(VehicleObject *self, PyObject *args);
 
 PyObject *Vehicle_get_wheel_local_transform(VehicleObject *self,
-                                                   PyObject *args);            
-                                                   
+                                            PyObject *args);
+
 PyObject *Vehicle_get_debug_state(VehicleObject *self,
-                                         PyObject *Py_UNUSED(ignored));
+                                  PyObject *Py_UNUSED(ignored));
 
 int Vehicle_traverse(VehicleObject *self, visitproc visit, void *arg);
 
 int Vehicle_clear(VehicleObject *self);
 
-PyObject *Vehicle_destroy(VehicleObject *self,
-                                 PyObject *Py_UNUSED(ignored));
+PyObject *Vehicle_destroy(VehicleObject *self, PyObject *Py_UNUSED(ignored));
 
 void Vehicle_dealloc(VehicleObject *self);

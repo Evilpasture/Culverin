@@ -1,6 +1,6 @@
 #include "culverin_query_methods.h"
 #include "culverin_filters.h"
-
+#include "culverin_parsers.h"
 
 // Unified hit collector for both Broad and Narrow phase overlaps
 static void overlap_record_hit(OverlapContext *ctx, JPH_BodyID bid) {
@@ -31,9 +31,9 @@ static float OverlapCallback_Broad(void *context, const JPH_BodyID result_bid) {
   overlap_record_hit((OverlapContext *)context, result_bid);
   return 1.0f; // Continue
 }
-
-PyObject *PhysicsWorld_overlap_sphere(PhysicsWorldObject *self,
-                                             PyObject *args, PyObject *kwds) {
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+PyObject *PhysicsWorld_overlap_sphere(PhysicsWorldObject *self, PyObject *args,
+                                      PyObject *kwds) {
   float x = 0.0f;
   float y = 0.0f;
   float z = 0.0f;
@@ -175,9 +175,9 @@ cleanup:
 
   return ret_val;
 }
-
-PyObject *PhysicsWorld_overlap_aabb(PhysicsWorldObject *self,
-                                           PyObject *args, PyObject *kwds) {
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+PyObject *PhysicsWorld_overlap_aabb(PhysicsWorldObject *self, PyObject *args,
+                                    PyObject *kwds) {
   float min_x = 0.0f;
   float min_y = 0.0f;
   float min_z = 0.0f;
@@ -272,22 +272,30 @@ cleanup:
 
 // Main Orchestrator
 PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *args,
-                                      PyObject *kwds) {
-  float sx, sy, sz, dx, dy, dz, max_dist = 1000.0f;
+                               PyObject *kwds) {
+  float sx;
+  float sy;
+  float sz;
+  float dx;
+  float dy;
+  float dz;
+  float max_dist = 1000.0f;
   uint64_t ignore_h = 0;
   static char *kwlist[] = {"start", "direction", "max_dist", "ignore", NULL};
 
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)(fff)|fK", kwlist, &sx,
                                    &sy, &sz, &dx, &dy, &dz, &max_dist,
-                                   &ignore_h))
+                                   &ignore_h)) {
     return NULL;
+  }
 
   PyObject *result = NULL;
 
   // --- 1. Validation & Pre-calc ---
   float mag_sq = dx * dx + dy * dy + dz * dz;
-  if (mag_sq < 1e-9f)
+  if (mag_sq < 1e-9f) {
     Py_RETURN_NONE;
+  }
 
   float mag = sqrtf(mag_sq);
   float scale = max_dist / mag;
@@ -319,8 +327,9 @@ PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *args,
   bool has_hit =
       execute_raycast_query(self, ignore_bid, origin, direction, hit);
 
-  if (!has_hit)
+  if (!has_hit) {
     goto exit;
+  }
 
   // --- 4. Hit Result Extraction ---
   JPH_Vec3 normal;
@@ -347,9 +356,9 @@ exit:
 
   return result ? result : Py_None;
 }
-
-PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self,
-                                            PyObject *args, PyObject *kwds) {
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self, PyObject *args,
+                                     PyObject *kwds) {
   Py_buffer b_starts;
   Py_buffer b_dirs;
   float max_dist = 1000.0f;
@@ -496,10 +505,19 @@ PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self,
 }
 
 // Main Orchestrator
-PyObject *PhysicsWorld_shapecast(PhysicsWorldObject *self,
-                                        PyObject *args, PyObject *kwds) {
+PyObject *PhysicsWorld_shapecast(PhysicsWorldObject *self, PyObject *args,
+                                 PyObject *kwds) {
   int shape_type = 0;
-  float px, py, pz, rx, ry, rz, rw, dx, dy, dz = 0.0f;
+  float px;
+  float py;
+  float pz;
+  float rx;
+  float ry;
+  float rz;
+  float rw;
+  float dx;
+  float dy;
+  float dz = 0.0f;
   PyObject *py_size = NULL;
   uint64_t ignore_h = 0;
   static char *kwlist[] = {"shape", "pos",    "rot", "dir",
@@ -507,12 +525,14 @@ PyObject *PhysicsWorld_shapecast(PhysicsWorldObject *self,
 
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "i(fff)(ffff)(fff)O|K", kwlist,
                                    &shape_type, &px, &py, &pz, &rx, &ry, &rz,
-                                   &rw, &dx, &dy, &dz, &py_size, &ignore_h))
+                                   &rw, &dx, &dy, &dz, &py_size, &ignore_h)) {
     return NULL;
+  }
 
   float mag_sq = dx * dx + dy * dy + dz * dz;
-  if (mag_sq < 1e-9f)
+  if (mag_sq < 1e-9f) {
     Py_RETURN_NONE;
+  }
 
   float s[4];
   parse_shape_params(py_size, s);
@@ -546,8 +566,9 @@ PyObject *PhysicsWorld_shapecast(PhysicsWorldObject *self,
 
   PyObject *result = NULL;
   if (ctx.has_hit) {
-    float nx = -ctx.hit.penetrationAxis.x, ny = -ctx.hit.penetrationAxis.y,
-          nz = -ctx.hit.penetrationAxis.z;
+    float nx = -ctx.hit.penetrationAxis.x;
+    float ny = -ctx.hit.penetrationAxis.y;
+    float nz = -ctx.hit.penetrationAxis.z;
     float n_len = sqrtf(nx * nx + ny * ny + nz * nz);
     if (n_len > 1e-6f) {
       nx /= n_len;
