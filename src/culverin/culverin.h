@@ -103,53 +103,6 @@ typedef PyThread_type_lock ShadowMutex;
 #define DEBUG_LOG(fmt, ...)
 #endif
 
-#define GUARD_STEPPING(self)                                                   \
-  do                                                                           \
-    if ((self)->is_stepping) {                                                 \
-      SHADOW_UNLOCK(&(self)->shadow_lock);                                     \
-      PyErr_SetString(PyExc_RuntimeError,                                      \
-                      "Cannot modify physics world during simulation step");   \
-      return NULL;                                                             \
-    }                                                                          \
-  while (0)
-/* Must use while in lock(deprecated, only use for debug) */
-
-// Processor-level hint to save power during spin-waits
-static inline void culverin_cpu_relax() {
-#if defined(_MSC_VER) || defined(__INTEL_COMPILER)
-#include <immintrin.h>
-  _mm_pause();
-#elif defined(__GNUC__) || defined(__clang__)
-#if defined(__i386__) || defined(__x86_64__)
-  __asm__ __volatile__("pause");
-#elif defined(__arm__) || defined(__aarch64__)
-  __asm__ __volatile__("yield");
-#endif
-#endif
-}
-
-static inline void culverin_yield() {
-  // 1. Give the CPU a break (Hardware level)
-  culverin_cpu_relax();
-
-// 2. Give the OS a break (Kernel level)
-#if defined(_WIN32)
-  // SwitchToThread() is the gold standard for Windows yielding
-  if (SwitchToThread() == FALSE) {
-    Sleep(0);
-  }
-#elif defined(__linux__) || defined(__FreeBSD__)
-  sched_yield();
-#elif defined(__APPLE__)
-  // macOS deprecated sched_yield behavior; usleep(0) is often preferred
-  // for thread arbitration in user-space.
-  usleep(0);
-#else
-  // Fallback for unknown POSIX systems
-  sleep(0);
-#endif
-}
-
 // Minimal Handle Helper
 // Python handles will be 64-bit integers: (Generation << 32) | SlotIndex
 typedef uint64_t BodyHandle;
@@ -242,12 +195,6 @@ typedef struct {
   float py;
   float pz;
 } PositionVector; // Can use GravityVector if it's identical
-
-typedef struct {
-  float height;
-  float radius;
-  float max_slope;
-} CharacterParams;
 
 typedef struct {
   float mass;
