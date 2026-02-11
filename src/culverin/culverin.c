@@ -2802,7 +2802,7 @@ static const PyMethodDef PhysicsWorld_methods[] = {
     {"raycast", (PyCFunction)PhysicsWorld_raycast, METH_VARARGS | METH_KEYWORDS,
      NULL},
     {"raycast_batch", (PyCFunction)PhysicsWorld_raycast_batch,
-     METH_VARARGS | METH_KEYWORDS, "Execute multiple raycasts efficiently."},
+     METH_FASTCALL | METH_KEYWORDS, "Execute multiple raycasts efficiently."},
     {"shapecast", (PyCFunction)PhysicsWorld_shapecast,
      METH_VARARGS | METH_KEYWORDS,
      "Sweeps a shape along a direction vector. Returns (Handle, Fraction, "
