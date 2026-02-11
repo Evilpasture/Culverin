@@ -34,6 +34,12 @@ typedef struct CharacterObject {
   float prev_rx, prev_ry, prev_rz, prev_rw;
 } CharacterObject;
 
+typedef struct {
+  float height;
+  float radius;
+  float max_slope;
+} CharacterParams;
+
 /* We expose the Procs table so the main module can assign it
    when creating the Character Virtual instance.
 */
