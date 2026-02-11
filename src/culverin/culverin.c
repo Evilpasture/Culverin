@@ -17,6 +17,8 @@ ShadowMutex
 // --- Lifecycle: Deallocation ---
 static void PhysicsWorld_dealloc(PhysicsWorldObject *self) {
   PhysicsWorld_free_members(self);
+  FREE_NATIVE_MUTEX(self->step_sync.mutex);
+  FREE_NATIVE_COND(self->step_sync.cond);
   Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
@@ -48,6 +50,9 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
   self->debug_renderer = JPH_DebugRenderer_Create(self);
   JPH_DebugRenderer_SetProcs(&debug_procs);
   atomic_init(&self->is_stepping, false);
+
+  INIT_NATIVE_MUTEX(self->step_sync.mutex);
+  INIT_NATIVE_COND(self->step_sync.cond);
 
   // 2. Settings & Jolt Init
   if (init_settings(self, settings_dict, &gx, &gy, &gz, &max_bodies,
@@ -122,6 +127,8 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
 
 fail:
   Py_XDECREF(baked);
+  FREE_NATIVE_MUTEX(self->step_sync.mutex);
+  FREE_NATIVE_COND(self->step_sync.cond);
   PhysicsWorld_free_members(self);
   return -1;
 }
@@ -821,15 +828,10 @@ static PyObject *PhysicsWorld_step(PhysicsWorldObject *self, PyObject *args) {
   }
 
   SHADOW_LOCK(&self->shadow_lock);
+  atomic_store_explicit(&self->step_requested, true, memory_order_relaxed);
 
   // 1. RE-ENTRANCY GUARD
-  if (UNLIKELY(atomic_load_explicit(
-          &self->is_stepping,
-          memory_order_relaxed))) { // UNLIKELY concurrent call
-    SHADOW_UNLOCK(&self->shadow_lock);
-    PyErr_SetString(PyExc_RuntimeError, "Concurrent step detected");
-    return NULL;
-  }
+  BLOCK_UNTIL_NOT_STEPPING(self); 
   BLOCK_UNTIL_NOT_QUERYING(self);
   atomic_store_explicit(&self->is_stepping, true, memory_order_relaxed);
 
@@ -838,8 +840,14 @@ static PyObject *PhysicsWorld_step(PhysicsWorldObject *self, PyObject *args) {
     self->contact_max_capacity = CONTACT_MAX_CAPACITY;
     self->contact_buffer =
         PyMem_RawMalloc(self->contact_max_capacity * sizeof(ContactEvent));
-    if (UNLIKELY(!self->contact_buffer)) { // UNLIKELY OOM
-      atomic_store_explicit(&self->is_stepping, false, memory_order_relaxed);
+    if (UNLIKELY(!self->contact_buffer)) { 
+      // --- FIX: MUST SIGNAL BEFORE RETURNING ---
+      NATIVE_MUTEX_LOCK(self->step_sync.mutex);
+      atomic_store_explicit(&self->is_stepping, false, memory_order_release);
+      atomic_store_explicit(&self->step_requested, false, memory_order_release); 
+      NATIVE_COND_BROADCAST(self->step_sync.cond);
+      NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
+      
       SHADOW_UNLOCK(&self->shadow_lock);
       return PyErr_NoMemory();
     }
@@ -856,8 +864,10 @@ static PyObject *PhysicsWorld_step(PhysicsWorldObject *self, PyObject *args) {
   SHADOW_UNLOCK(&self->shadow_lock);
 
   // 4. JOLT UPDATE (Unlocked)
-  Py_BEGIN_ALLOW_THREADS JPH_PhysicsSystem_Update(self->system, dt, 1,
+  Py_BEGIN_ALLOW_THREADS SHADOW_LOCK(&g_jph_trampoline_lock); 
+  JPH_PhysicsSystem_Update(self->system, dt, 1,
                                                   self->job_system);
+  SHADOW_UNLOCK(&g_jph_trampoline_lock);                                                
   Py_END_ALLOW_THREADS
 
       // 5. ACQUIRE FENCE (Consumer Phase)
@@ -877,7 +887,13 @@ static PyObject *PhysicsWorld_step(PhysicsWorldObject *self, PyObject *args) {
   }
   self->contact_count = count;
 
-  atomic_store_explicit(&self->is_stepping, false, memory_order_relaxed);
+  // --- UPDATED SIGNALING LOGIC ---
+  NATIVE_MUTEX_LOCK(self->step_sync.mutex);
+  atomic_store_explicit(&self->is_stepping, false, memory_order_release);
+  atomic_store_explicit(&self->step_requested, false, memory_order_release);
+  NATIVE_COND_BROADCAST(self->step_sync.cond);
+  NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
+
   self->time += (double)dt;
 
   SHADOW_UNLOCK(&self->shadow_lock);

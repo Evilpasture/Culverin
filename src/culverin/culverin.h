@@ -150,29 +150,6 @@ static inline void culverin_yield() {
 #endif
 }
 
-// Blocks until the world is not mid-step.
-// Must be called while holding SHADOW_LOCK. Re-acquires it before returning.
-#define BLOCK_UNTIL_NOT_STEPPING(self)                                         \
-  do {                                                                         \
-    while (atomic_load_explicit(&(self)->is_stepping, memory_order_relaxed)) { \
-      SHADOW_UNLOCK(&(self)->shadow_lock);                                     \
-      Py_BEGIN_ALLOW_THREADS culverin_yield();                                 \
-      Py_END_ALLOW_THREADS SHADOW_LOCK(&(self)->shadow_lock);                  \
-    }                                                                          \
-  } while (0)
-
-// Blocks until no queries (raycasts/shapecasts) are running.
-// Must be called while holding SHADOW_LOCK.
-#define BLOCK_UNTIL_NOT_QUERYING(self)                                         \
-  do {                                                                         \
-    while (atomic_load_explicit(&(self)->active_queries,                       \
-                                memory_order_acquire) > 0) {                   \
-      SHADOW_UNLOCK(&(self)->shadow_lock);                                     \
-      Py_BEGIN_ALLOW_THREADS culverin_yield();                                 \
-      Py_END_ALLOW_THREADS SHADOW_LOCK(&(self)->shadow_lock);                  \
-    }                                                                          \
-  } while (0)
-
 // Minimal Handle Helper
 // Python handles will be 64-bit integers: (Generation << 32) | SlotIndex
 typedef uint64_t BodyHandle;
@@ -294,6 +271,91 @@ typedef struct {
   int motion_type;
 } BodyConfig;
 
+// --- Native Condition Variable Support ---
+
+#ifdef _WIN32
+  typedef SRWLOCK NativeMutex;
+  typedef CONDITION_VARIABLE NativeCond;
+  #define INIT_NATIVE_MUTEX(m) InitializeSRWLock(&(m))
+  #define FREE_NATIVE_MUTEX(m) (void)(m) // No cleanup needed for SRWLock
+  #define NATIVE_MUTEX_LOCK(m) AcquireSRWLockExclusive(&(m))
+  #define NATIVE_MUTEX_UNLOCK(m) ReleaseSRWLockExclusive(&(m))
+  
+  #define INIT_NATIVE_COND(c) InitializeConditionVariable(&(c))
+  #define FREE_NATIVE_COND(c) (void)(c) // No cleanup needed
+  #define NATIVE_COND_WAIT(c, m) SleepConditionVariableSRW(&(c), &(m), INFINITE, 0)
+  #define NATIVE_COND_BROADCAST(c) WakeAllConditionVariable(&(c))
+#else
+  #include <pthread.h>
+  typedef pthread_mutex_t NativeMutex;
+  typedef pthread_cond_t NativeCond;
+  #define INIT_NATIVE_MUTEX(m) pthread_mutex_init(&(m), NULL)
+  #define FREE_NATIVE_MUTEX(m) pthread_mutex_destroy(&(m))
+  #define NATIVE_MUTEX_LOCK(m) pthread_mutex_lock(&(m))
+  #define NATIVE_MUTEX_UNLOCK(m) pthread_mutex_unlock(&(m))
+
+  #define INIT_NATIVE_COND(c) pthread_cond_init(&(c), NULL)
+  #define FREE_NATIVE_COND(c) pthread_cond_destroy(&(c))
+  #define NATIVE_COND_WAIT(c, m) pthread_cond_wait(&(c), &(m))
+  #define NATIVE_COND_BROADCAST(c) pthread_cond_broadcast(&(c))
+#endif
+
+// Blocks until the world is not mid-step.
+// Must be called while holding SHADOW_LOCK. Re-acquires it before returning.
+#define BLOCK_UNTIL_NOT_STEPPING(self)                                         \
+  do {                                                                         \
+    if (atomic_load_explicit(&(self)->is_stepping, memory_order_relaxed)) {    \
+      SHADOW_UNLOCK(&(self)->shadow_lock);                                     \
+      Py_BEGIN_ALLOW_THREADS                                                   \
+      NATIVE_MUTEX_LOCK((self)->step_sync.mutex);                              \
+      /* The Double Check: check again after acquiring native lock */          \
+      while (atomic_load_explicit(&(self)->is_stepping, memory_order_relaxed)) { \
+        NATIVE_COND_WAIT((self)->step_sync.cond, (self)->step_sync.mutex);     \
+      }                                                                        \
+      NATIVE_MUTEX_UNLOCK((self)->step_sync.mutex);                            \
+      Py_END_ALLOW_THREADS                                                     \
+      SHADOW_LOCK(&(self)->shadow_lock);                                       \
+    }                                                                          \
+  } while (0)
+
+#define BLOCK_UNTIL_NOT_QUERYING(self)                                         \
+  do {                                                                         \
+    if (atomic_load_explicit(&(self)->active_queries, memory_order_acquire) > 0) { \
+      SHADOW_UNLOCK(&(self)->shadow_lock);                                     \
+      Py_BEGIN_ALLOW_THREADS                                                   \
+      NATIVE_MUTEX_LOCK((self)->step_sync.mutex);                              \
+      /* The Double Check */                                                   \
+      while (atomic_load_explicit(&(self)->active_queries, memory_order_relaxed) > 0) { \
+        NATIVE_COND_WAIT((self)->step_sync.cond, (self)->step_sync.mutex);     \
+      }                                                                        \
+      NATIVE_MUTEX_UNLOCK((self)->step_sync.mutex);                            \
+      Py_END_ALLOW_THREADS                                                     \
+      SHADOW_LOCK(&(self)->shadow_lock);                                       \
+    }                                                                          \
+  } while (0)
+
+// Queries use this to wait if a Step is about to happen
+#define BLOCK_IF_STEP_PENDING(self)                                            \
+  do {                                                                         \
+    if (atomic_load_explicit(&(self)->step_requested, memory_order_relaxed)) { \
+      SHADOW_UNLOCK(&(self)->shadow_lock);                                     \
+      Py_BEGIN_ALLOW_THREADS                                                   \
+      NATIVE_MUTEX_LOCK((self)->step_sync.mutex);                              \
+      while (atomic_load_explicit(&(self)->step_requested, memory_order_relaxed)) { \
+        NATIVE_COND_WAIT((self)->step_sync.cond, (self)->step_sync.mutex);     \
+      }                                                                        \
+      NATIVE_MUTEX_UNLOCK((self)->step_sync.mutex);                            \
+      Py_END_ALLOW_THREADS                                                     \
+      SHADOW_LOCK(&(self)->shadow_lock);                                       \
+    }                                                                          \
+  } while (0)
+
+// A container to sync state changes (stepping finished, query finished)
+typedef struct {
+    NativeMutex mutex;
+    NativeCond cond;
+} ShadowSync;
+
 // --- The Object Struct ---
 typedef struct PhysicsWorldObject {
   PyObject_HEAD
@@ -387,6 +449,8 @@ typedef struct PhysicsWorldObject {
   int view_export_count; // Tracks active memoryviews to prevent unsafe resize
 
   ShadowMutex shadow_lock;
+  ShadowSync step_sync; 
+  atomic_bool step_requested; // New: Stepper wants to run
   _Atomic bool is_stepping;
 
   Py_ssize_t view_shape[2];
