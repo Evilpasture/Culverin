@@ -115,6 +115,9 @@ python_add_library(_culverin_c MODULE
     src/culverin/culverin_constraint.c
     src/culverin/culverin_constraint_factory.c
 )
+add_custom_command(TARGET _culverin_c POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E echo "Extension built at: $<TARGET_FILE:_culverin_c>"
+)
 if(MSVC)
     # 1. Add /Zi to generate debug info (symbols) even in Release builds
     # 2. Add /DEBUG to the linker to create the .pdb file
