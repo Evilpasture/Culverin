@@ -47,7 +47,7 @@ static inline void manual_vec3_rotate_by_quat(const JPH_Vec3 *v,
 
 // Helper for quaternion multiplication (q_out = q_a * q_b)
 static inline void manual_quat_multiply(const JPH_Quat *a, const JPH_Quat *b,
-                                        JPH_Quat *out) {
+                                        JPH_Quat *__restrict out) {
   out->x = a->w * b->x + a->x * b->w + a->y * b->z - a->z * b->y;
   out->y = a->w * b->y - a->x * b->z + a->y * b->w + a->z * b->x;
   out->z = a->w * b->z + a->x * b->y - a->y * b->x + a->z * b->w;
