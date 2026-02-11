@@ -34,6 +34,18 @@ cd culverin
 pip install .
 ```
 
+If you want Python 3.14t:
+```bash
+# Please install build module
+pip install build
+
+# Then build your wheel. Keyword: python3.14t, and have your 3.14t interpreter activated or available in PATH. usually the Python installer manages it for you.
+python3.14t -m build --wheel
+
+# then install via the wheel. please use your actual file name.
+pip install culverin-*-win_amd64.whl
+```
+
 ### Quick Start
 
 ```python
