@@ -1783,51 +1783,77 @@ cleanup:
 }
 
 static PyObject *PhysicsWorld_destroy_body(PhysicsWorldObject *self,
-                                           PyObject *args, PyObject *kwds) {
-  uint64_t handle_raw = 0;
-  static char *kwlist[] = {"handle", NULL};
+                                           PyObject *const *args, 
+                                           size_t nargsf, 
+                                           PyObject *kwnames) {
+    Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
+    uint64_t handle_raw = 0;
 
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "K", kwlist, &handle_raw)) {
-    return NULL;
-  }
+    // --- 1. THE FAST PATH: Positional Only (No keywords, exactly 1 arg) ---
+    if (LIKELY(kwnames == NULL && nargs == 1)) {
+        handle_raw = PyLong_AsUnsignedLongLong(args[0]);
+        if (UNLIKELY(PyErr_Occurred())) return NULL;
+    } 
+    else {
+        // --- 2. THE SLOW PATH: Keywords Fallback ---
+        static char *kwlist[] = {"handle", NULL};
+        
+        // Manual bridge to standard public API
+        PyObject *temp_tuple = PyTuple_New(nargs);
+        if (!temp_tuple) return NULL;
+        for (Py_ssize_t i = 0; i < nargs; i++) {
+            Py_INCREF(args[i]);
+            PyTuple_SET_ITEM(temp_tuple, i, args[i]);
+        }
 
-  SHADOW_LOCK(&self->shadow_lock);
+        PyObject *temp_dict = NULL;
+        if (kwnames) {
+            temp_dict = PyDict_New();
+            Py_ssize_t nkw = PyTuple_GET_SIZE(kwnames);
+            for (Py_ssize_t i = 0; i < nkw; i++) {
+                PyDict_SetItem(temp_dict, PyTuple_GET_ITEM(kwnames, i), args[nargs + i]);
+            }
+        }
 
-  // 1. MUTATION GUARD
-  // Prevents modifying topology while Jolt is stepping or while
-  // background threads are querying the world state.
-  BLOCK_UNTIL_NOT_STEPPING(self);
-  BLOCK_UNTIL_NOT_QUERYING(self);
-
-  // 2. HANDLE RESOLUTION
-  uint32_t slot = 0;
-  if (!unpack_handle(self, (BodyHandle)handle_raw, &slot)) {
-    SHADOW_UNLOCK(&self->shadow_lock);
-    PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
-    return NULL;
-  }
-
-  // 3. DEFERRED DESTRUCTION
-  // We check if it's ALIVE or PENDING_CREATE.
-  // If it's already PENDING_DESTROY, we do nothing (idempotent).
-  if (self->slot_states[slot] == SLOT_ALIVE ||
-      self->slot_states[slot] == SLOT_PENDING_CREATE) {
-
-    if (!ensure_command_capacity(self)) {
-      SHADOW_UNLOCK(&self->shadow_lock);
-      return PyErr_NoMemory();
+        int ok = PyArg_ParseTupleAndKeywords(temp_tuple, temp_dict, "K", kwlist, &handle_raw);
+        Py_XDECREF(temp_dict);
+        Py_DECREF(temp_tuple);
+        if (!ok) return NULL;
     }
 
-    PhysicsCommand *cmd = &self->command_queue[self->command_count++];
-    cmd->header = CMD_HEADER(CMD_DESTROY_BODY, slot);
+    // --- 3. EXECUTION ---
+    SHADOW_LOCK(&self->shadow_lock);
 
-    // Mark the slot immediately. This ensures that any logic
-    // running between now and the next step() treats this body as "gone".
-    self->slot_states[slot] = SLOT_PENDING_DESTROY;
-  }
+    // We block for STEPPING because flush_commands modifies the same dense arrays.
+    // We REMOVED the block for Queries as it is not needed for deferred commands.
+    BLOCK_UNTIL_NOT_STEPPING(self);
 
-  SHADOW_UNLOCK(&self->shadow_lock);
-  Py_RETURN_NONE;
+    uint32_t slot = 0;
+    if (UNLIKELY(!unpack_handle(self, (BodyHandle)handle_raw, &slot))) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
+        return NULL;
+    }
+
+    // Mark for deferred destruction
+    uint8_t state = self->slot_states[slot];
+    if (state == SLOT_ALIVE || state == SLOT_PENDING_CREATE) {
+
+        if (UNLIKELY(!ensure_command_capacity(self))) {
+            SHADOW_UNLOCK(&self->shadow_lock);
+            return PyErr_NoMemory();
+        }
+
+        PhysicsCommand *cmd = &self->command_queue[self->command_count++];
+        cmd->header = CMD_HEADER(CMD_DESTROY_BODY, slot);
+
+        // Mark logically dead immediately so Python scripts treat it as gone.
+        // Memory remains valid for current queries.
+        self->slot_states[slot] = SLOT_PENDING_DESTROY;
+    }
+
+    SHADOW_UNLOCK(&self->shadow_lock);
+    Py_RETURN_NONE;
 }
 
 static PyObject *PhysicsWorld_set_position(PhysicsWorldObject *self,
@@ -2792,7 +2818,7 @@ static const PyMethodDef PhysicsWorld_methods[] = {
     {"create_body", (PyCFunction)PhysicsWorld_create_body,
      METH_FASTCALL | METH_KEYWORDS, NULL},
     {"destroy_body", (PyCFunction)PhysicsWorld_destroy_body,
-     METH_VARARGS | METH_KEYWORDS, NULL},
+     METH_FASTCALL | METH_KEYWORDS, NULL},
     {"create_mesh_body", (PyCFunction)PhysicsWorld_create_mesh_body,
      METH_VARARGS | METH_KEYWORDS, NULL},
     {"create_constraint", (PyCFunction)PhysicsWorld_create_constraint,
