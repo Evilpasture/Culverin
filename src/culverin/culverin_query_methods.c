@@ -337,7 +337,7 @@ PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self,
     Py_buffer b_starts = {0}, b_dirs = {0};
     float max_dist = 1000.0f;
 
-    // --- 1. THE FAST PATH: Positional Only ---
+    // --- 1. ARGUMENT PARSING ---
     if (LIKELY(kwnames == NULL && (nargs == 2 || nargs == 3))) {
         if (UNLIKELY(PyObject_GetBuffer(args[0], &b_starts, PyBUF_SIMPLE) < 0)) return NULL;
         if (UNLIKELY(PyObject_GetBuffer(args[1], &b_dirs, PyBUF_SIMPLE) < 0)) {
@@ -349,7 +349,6 @@ PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self,
         }
     } 
     else {
-        // --- 2. THE SLOW PATH: Keywords Fallback ---
         static char *kwlist[] = {"starts", "directions", "max_dist", NULL};
         PyObject *temp_tuple = PyTuple_New(nargs);
         if (!temp_tuple) return NULL;
@@ -370,7 +369,6 @@ PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self,
         if (!ok) return NULL;
     }
 
-    // --- 3. PRE-COMPUTATION ---
     if (UNLIKELY(b_starts.len != b_dirs.len || (b_starts.len % 12 != 0))) {
         PyErr_SetString(PyExc_ValueError, "Buffer size mismatch");
         goto fail_buffers;
@@ -380,87 +378,80 @@ PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self,
     PyObject *result_bytes = PyBytes_FromStringAndSize(NULL, (Py_ssize_t)(count * sizeof(RayCastBatchResult)));
     if (UNLIKELY(!result_bytes)) goto fail_buffers;
 
+    // --- 2. PHASE GUARD & SNAPSHOT ---
+    SHADOW_LOCK(&self->shadow_lock);
+    BLOCK_UNTIL_NOT_STEPPING(self);
+    BLOCK_IF_STEP_PENDING(self);
+
+    const uint32_t *CULV_RESTRICT s2d = self->slot_to_dense;
+    const uint32_t *CULV_RESTRICT mats = self->material_ids;
+    const size_t slot_cap = self->slot_capacity;
+    const size_t body_count = self->count;
+
+    atomic_fetch_add_explicit(&self->active_queries, 1, memory_order_seq_cst);
+    SHADOW_UNLOCK(&self->shadow_lock);
+
+    // --- 3. JOLT EXECUTION ---
     const float *CULV_RESTRICT f_starts = (const float *)b_starts.buf;
     const float *CULV_RESTRICT f_dirs   = (const float *)b_dirs.buf;
     RayCastBatchResult *CULV_RESTRICT results = (RayCastBatchResult *)PyBytes_AsString(result_bytes);
     
-    const float inv_eps = 1e-12f;
     const JPH_NarrowPhaseQuery *query = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
     const JPH_BodyLockInterface *lock_iface = JPH_PhysicsSystem_GetBodyLockInterface(self->system);
+    JPH_BodyInterface *bi = self->body_interface;
 
-    // --- 4. LOCK & PHASE GUARD ---
-    SHADOW_LOCK(&self->shadow_lock);
-    BLOCK_UNTIL_NOT_STEPPING(self);
-    BLOCK_IF_STEP_PENDING(self);
-    atomic_fetch_add(&self->active_queries, 1);
-    SHADOW_UNLOCK(&self->shadow_lock);
-
-    // --- 5. JOLT EXECUTION ---
     Py_BEGIN_ALLOW_THREADS
     NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
 
-    JPH_BroadPhaseLayerFilter *bp_f = JPH_BroadPhaseLayerFilter_Create(NULL);
-    JPH_ObjectLayerFilter *obj_f = JPH_ObjectLayerFilter_Create(NULL);
-    JPH_BodyFilter *body_f = JPH_BodyFilter_Create(NULL);
-
     for (size_t i = 0; i < count; i++) {
-        results[i].handle = 0; // Pre-invalidate
+        results[i].handle = 0; 
         size_t off = i * 3;
         float dx = f_dirs[off], dy = f_dirs[off+1], dz = f_dirs[off+2];
         float mag_sq = dx*dx + dy*dy + dz*dz;
 
-        if (mag_sq < inv_eps) continue;
+        if (mag_sq < 1e-12f) continue;
 
         float scale = max_dist / sqrtf(mag_sq);
         JPH_Vec3 v_dir = { dx * scale, dy * scale, dz * scale };
         JPH_RVec3 v_ori = { (double)f_starts[off], (double)f_starts[off+1], (double)f_starts[off+2] };
 
         JPH_RayCastResult hit;
-        if (JPH_NarrowPhaseQuery_CastRay(query, &v_ori, &v_dir, &hit, bp_f, obj_f, body_f)) {
-            uint64_t handle = JPH_BodyInterface_GetUserData(self->body_interface, hit.bodyID);
-            
-            // --- SAFETY CHECK: Ignore non-Culverin bodies ---
-            if (handle != 0) {
+        // PASSING NULL for filters is the safest and fastest way in JoltC
+        if (JPH_NarrowPhaseQuery_CastRay(query, &v_ori, &v_dir, &hit, NULL, NULL, NULL)) {
+            uint64_t h = JPH_BodyInterface_GetUserData(bi, hit.bodyID);
+            if (h != 0) {
                 RayCastBatchResult *res = &results[i];
-                res->handle = handle;
+                res->handle = h;
                 res->fraction = hit.fraction;
                 res->subShapeID = hit.subShapeID2;
 
-                uint32_t slot = (uint32_t)(handle & 0xFFFFFFFF);
-                // Ensure slot is valid and material_ids is allocated
-                if (slot < self->slot_capacity && self->material_ids) {
-                    res->material_id = self->material_ids[self->slot_to_dense[slot]];
-                } else {
-                    res->material_id = 0;
+                uint32_t slot = (uint32_t)(h & 0xFFFFFFFF);
+                if (slot < slot_cap) {
+                    uint32_t dense = s2d[slot];
+                    if (dense < body_count && mats) res->material_id = mats[dense];
                 }
 
-                JPH_BodyLockRead lock;
-                JPH_BodyLockInterface_LockRead(lock_iface, hit.bodyID, &lock);
-                if (lock.body) {
+                JPH_BodyLockRead j_lock;
+                JPH_BodyLockInterface_LockRead(lock_iface, hit.bodyID, &j_lock);
+                if (j_lock.body) {
                     JPH_RVec3 hit_p = { v_ori.x + (double)v_dir.x * (double)hit.fraction, 
                                         v_ori.y + (double)v_dir.y * (double)hit.fraction, 
                                         v_ori.z + (double)v_dir.z * (double)hit.fraction };
                     JPH_Vec3 norm;
-                    JPH_Body_GetWorldSpaceSurfaceNormal(lock.body, hit.subShapeID2, &hit_p, &norm);
+                    JPH_Body_GetWorldSpaceSurfaceNormal(j_lock.body, hit.subShapeID2, &hit_p, &norm);
                     res->nx = norm.x; res->ny = norm.y; res->nz = norm.z;
                     res->px = (float)hit_p.x; res->py = (float)hit_p.y; res->pz = (float)hit_p.z;
                 }
-                JPH_BodyLockInterface_UnlockRead(lock_iface, &lock);
+                JPH_BodyLockInterface_UnlockRead(lock_iface, &j_lock);
             }
         }
     }
 
-    JPH_BodyFilter_Destroy(body_f);
-    JPH_BroadPhaseLayerFilter_Destroy(bp_f);
-    JPH_ObjectLayerFilter_Destroy(obj_f);
-
     NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
     Py_END_ALLOW_THREADS
 
-    // --- 6. CLEANUP ---
     end_query_scope(self);
-    PyBuffer_Release(&b_starts);
-    PyBuffer_Release(&b_dirs);
+    PyBuffer_Release(&b_starts); PyBuffer_Release(&b_dirs);
     return result_bytes;
 
 fail_buffers:
