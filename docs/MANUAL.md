@@ -42,3 +42,6 @@ To see your physics shapes, use `get_debug_data()`. It returns raw vertex data f
 lines, triangles = world.get_debug_data()
 # Each vertex is 16 bytes: [float x, y, z, uint32 color]
 ```
+### Possible Limitations:
+* **Determinism:** While Jolt is deterministic, Python floating-point order of operations across threads is not guaranteed. Replays are deterministic only if single-threaded or strictly ordered.
+* **Large Coordinates:** While Culverin uses Double Precision, rendering engines often use Float32. Large-world jitter may still appear visually if your renderer (not the physics) runs out of precision.
