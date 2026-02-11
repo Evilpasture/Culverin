@@ -150,16 +150,6 @@ void extract_hit_normal(PhysicsWorldObject *self, JPH_BodyID bodyID,
   JPH_BodyLockInterface_UnlockRead(lock_iface, &lock);
 }
 
-// Collector for Shapecast
-float CastShape_ClosestCollector(void *context, const JPH_ShapeCastResult *result) {
-  CastShapeContext *ctx = (CastShapeContext *)context;
-  if (result->fraction < ctx->hit.fraction) {
-    ctx->hit = *result;
-    ctx->has_hit = true;
-  }
-  return result->fraction;
-}
-
 // Helper 3: Internal logic to run the actual query
 // ASSUMPTION: Caller has already acquired g_jph_trampoline_lock and released GIL.
 void shapecast_execute_internal(PhysicsWorldObject *self,

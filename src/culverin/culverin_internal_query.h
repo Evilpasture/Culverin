@@ -38,11 +38,24 @@ void extract_hit_normal(PhysicsWorldObject *self, JPH_BodyID bodyID,
                         const JPH_Vec3 *ray_dir, float fraction,
                         JPH_Vec3 *normal_out);
 
-float CastShape_ClosestCollector(void *context,
-                                 const JPH_ShapeCastResult *result);
-
 void shapecast_execute_internal(PhysicsWorldObject *self,
                                 const JPH_Shape *shape,
                                 const JPH_RMat4 *transform,
                                 const JPH_Vec3 *sweep_dir,
                                 JPH_BodyID ignore_bid, CastShapeContext *ctx);
+
+// Collector for Shapecast
+static inline float CastShape_ClosestCollector(void *context, const JPH_ShapeCastResult *result) {
+  CastShapeContext *ctx = (CastShapeContext *)context;
+  if (result->fraction < ctx->hit.fraction) {
+    ctx->hit = *result;
+    ctx->has_hit = true;
+  }
+  return result->fraction;
+}
+
+static inline bool JPH_API_CALL CastShape_BodyFilter(void *userData,
+                                                     JPH_BodyID bodyID) {
+  CastShapeFilter *ctx = (CastShapeFilter *)userData;
+  return (ctx->ignore_id == 0 || bodyID != ctx->ignore_id);
+}
