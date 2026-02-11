@@ -329,7 +329,7 @@ exit:
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-static PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self,
+PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self,
                                             PyObject *const *args, 
                                             size_t nargsf, 
                                             PyObject *kwnames) {
