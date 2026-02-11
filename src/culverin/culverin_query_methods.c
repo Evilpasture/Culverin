@@ -329,7 +329,7 @@ exit:
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self,
+static PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self,
                                             PyObject *const *args, 
                                             size_t nargsf, 
                                             PyObject *kwnames) {
@@ -337,7 +337,7 @@ PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self,
     Py_buffer b_starts = {0}, b_dirs = {0};
     float max_dist = 1000.0f;
 
-    // --- 1. THE FAST PATH: Positional Only (99% of calls) ---
+    // --- 1. THE FAST PATH: Positional Only ---
     if (LIKELY(kwnames == NULL && (nargs == 2 || nargs == 3))) {
         if (UNLIKELY(PyObject_GetBuffer(args[0], &b_starts, PyBUF_SIMPLE) < 0)) return NULL;
         if (UNLIKELY(PyObject_GetBuffer(args[1], &b_dirs, PyBUF_SIMPLE) < 0)) {
@@ -349,36 +349,28 @@ PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self,
         }
     } 
     else {
-        // --- 2. THE SLOW PATH: Keywords or Count Mismatch ---
-        // We fallback to the standard public API. This is only called once per batch.
+        // --- 2. THE SLOW PATH: Keywords Fallback ---
         static char *kwlist[] = {"starts", "directions", "max_dist", NULL};
-        
-        // Pack positional args into a tuple for the old API
         PyObject *temp_tuple = PyTuple_New(nargs);
         if (!temp_tuple) return NULL;
         for (Py_ssize_t i = 0; i < nargs; i++) {
             Py_INCREF(args[i]);
             PyTuple_SET_ITEM(temp_tuple, i, args[i]);
         }
-
-        // Convert kwnames (tuple) to a temporary dict (required by ParseTupleAndKeywords)
         PyObject *temp_dict = NULL;
         if (kwnames) {
             temp_dict = PyDict_New();
-            Py_ssize_t nkw = PyTuple_GET_SIZE(kwnames);
-            for (Py_ssize_t i = 0; i < nkw; i++) {
+            for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(kwnames); i++) {
                 PyDict_SetItem(temp_dict, PyTuple_GET_ITEM(kwnames, i), args[nargs + i]);
             }
         }
-
         int ok = PyArg_ParseTupleAndKeywords(temp_tuple, temp_dict, "y*y*|f", kwlist, 
                                              &b_starts, &b_dirs, &max_dist);
-        Py_XDECREF(temp_dict);
-        Py_DECREF(temp_tuple);
+        Py_XDECREF(temp_dict); Py_DECREF(temp_tuple);
         if (!ok) return NULL;
     }
 
-    // --- 3. PRE-COMPUTATION & SIMD HOISTING ---
+    // --- 3. PRE-COMPUTATION ---
     if (UNLIKELY(b_starts.len != b_dirs.len || (b_starts.len % 12 != 0))) {
         PyErr_SetString(PyExc_ValueError, "Buffer size mismatch");
         goto fail_buffers;
@@ -403,53 +395,58 @@ PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self,
     atomic_fetch_add(&self->active_queries, 1);
     SHADOW_UNLOCK(&self->shadow_lock);
 
+    // --- 5. JOLT EXECUTION ---
     Py_BEGIN_ALLOW_THREADS
     NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
 
-    // Filter allocation (reusable across batch)
     JPH_BroadPhaseLayerFilter *bp_f = JPH_BroadPhaseLayerFilter_Create(NULL);
     JPH_ObjectLayerFilter *obj_f = JPH_ObjectLayerFilter_Create(NULL);
     JPH_BodyFilter *body_f = JPH_BodyFilter_Create(NULL);
 
-    // --- 5. THE HOT LOOP ---
     for (size_t i = 0; i < count; i++) {
-        results[i].handle = 0; // Faster than memset(results[i], 0, 48)
-
+        results[i].handle = 0; // Pre-invalidate
         size_t off = i * 3;
         float dx = f_dirs[off], dy = f_dirs[off+1], dz = f_dirs[off+2];
         float mag_sq = dx*dx + dy*dy + dz*dz;
 
         if (mag_sq < inv_eps) continue;
 
-        // Vectorizable block (sqrt + mul)
         float scale = max_dist / sqrtf(mag_sq);
         JPH_Vec3 v_dir = { dx * scale, dy * scale, dz * scale };
         JPH_RVec3 v_ori = { (double)f_starts[off], (double)f_starts[off+1], (double)f_starts[off+2] };
 
         JPH_RayCastResult hit;
         if (JPH_NarrowPhaseQuery_CastRay(query, &v_ori, &v_dir, &hit, bp_f, obj_f, body_f)) {
-            RayCastBatchResult *res = &results[i];
-            res->handle = JPH_BodyInterface_GetUserData(self->body_interface, hit.bodyID);
-            res->fraction = hit.fraction;
-            res->subShapeID = hit.subShapeID2;
+            uint64_t handle = JPH_BodyInterface_GetUserData(self->body_interface, hit.bodyID);
+            
+            // --- SAFETY CHECK: Ignore non-Culverin bodies ---
+            if (handle != 0) {
+                RayCastBatchResult *res = &results[i];
+                res->handle = handle;
+                res->fraction = hit.fraction;
+                res->subShapeID = hit.subShapeID2;
 
-            // Direct Material Lookup (Bypasses Python handle logic)
-            uint32_t slot = (uint32_t)(res->handle & 0xFFFFFFFF);
-            res->material_id = self->material_ids[self->slot_to_dense[slot]];
+                uint32_t slot = (uint32_t)(handle & 0xFFFFFFFF);
+                // Ensure slot is valid and material_ids is allocated
+                if (slot < self->slot_capacity && self->material_ids) {
+                    res->material_id = self->material_ids[self->slot_to_dense[slot]];
+                } else {
+                    res->material_id = 0;
+                }
 
-            // Normal Extraction (Requires JPH Body Lock)
-            JPH_BodyLockRead lock;
-            JPH_BodyLockInterface_LockRead(lock_iface, hit.bodyID, &lock);
-            if (lock.body) {
-                JPH_RVec3 hit_p = { v_ori.x + (double)v_dir.x * (double)hit.fraction, 
-                                    v_ori.y + (double)v_dir.y * (double)hit.fraction, 
-                                    v_ori.z + (double)v_dir.z * (double)hit.fraction };
-                JPH_Vec3 norm;
-                JPH_Body_GetWorldSpaceSurfaceNormal(lock.body, hit.subShapeID2, &hit_p, &norm);
-                res->nx = norm.x; res->ny = norm.y; res->nz = norm.z;
-                res->px = (float)hit_p.x; res->py = (float)hit_p.y; res->pz = (float)hit_p.z;
+                JPH_BodyLockRead lock;
+                JPH_BodyLockInterface_LockRead(lock_iface, hit.bodyID, &lock);
+                if (lock.body) {
+                    JPH_RVec3 hit_p = { v_ori.x + (double)v_dir.x * (double)hit.fraction, 
+                                        v_ori.y + (double)v_dir.y * (double)hit.fraction, 
+                                        v_ori.z + (double)v_dir.z * (double)hit.fraction };
+                    JPH_Vec3 norm;
+                    JPH_Body_GetWorldSpaceSurfaceNormal(lock.body, hit.subShapeID2, &hit_p, &norm);
+                    res->nx = norm.x; res->ny = norm.y; res->nz = norm.z;
+                    res->px = (float)hit_p.x; res->py = (float)hit_p.y; res->pz = (float)hit_p.z;
+                }
+                JPH_BodyLockInterface_UnlockRead(lock_iface, &lock);
             }
-            JPH_BodyLockInterface_UnlockRead(lock_iface, &lock);
         }
     }
 
