@@ -33,9 +33,8 @@ jobs:
         env:
           # Enable Free-Threading support
           CIBW_ENABLE: "cpython-prerelease cpython-freethreading"
-          CIBW_FREE_THREADED_SUPPORT: 1
-          CIBW_PRERELEASE_PYTHONS: 1
           CIBW_BUILD: "cp314t-*"
+          CIBW_PROJECT_REQUIRES_PYTHON: ">=3.13"
           
           # Architecture Settings
           CIBW_ARCHS_WINDOWS: "AMD64"
