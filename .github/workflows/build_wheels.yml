@@ -32,6 +32,7 @@ jobs:
         uses: pypa/cibuildwheel@v2.22.0
         env:
           # Enable Free-Threading support
+          CIBW_ENABLE: "cpython-prerelease cpython-freethreading"
           CIBW_FREE_THREADED_SUPPORT: 1
           CIBW_PRERELEASE_PYTHONS: 1
           CIBW_BUILD: "cp314t-*"
