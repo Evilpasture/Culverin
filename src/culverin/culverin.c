@@ -134,51 +134,50 @@ fail:
 }
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 static PyObject *PhysicsWorld_apply_impulse(PhysicsWorldObject *self,
-                                            PyObject *args, PyObject *kwds) {
+                                            PyObject *const *args,
+                                            size_t nargsf, PyObject *kwnames) {
+  Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
   uint64_t h;
-  float x;
-  float y;
-  float z;
+  float x, y, z;
 
-  // --- MANUALLY PARSE ARGS (FAST PATH) ---
-  // If no keywords are provided and we have exactly 4 arguments
-  if (LIKELY(kwds == NULL && PyTuple_GET_SIZE(args) == 4)) {
-    PyObject *py_h = PyTuple_GET_ITEM(args, 0);
-    PyObject *py_x = PyTuple_GET_ITEM(args, 1);
-    PyObject *py_y = PyTuple_GET_ITEM(args, 2);
-    PyObject *py_z = PyTuple_GET_ITEM(args, 3);
+  // --- 1. VECTOR PARSING (Ultra Fast Path) ---
+  // No tuple creation by the interpreter. We read directly from the stack.
+  if (LIKELY(kwnames == NULL && nargs == 4)) {
+    h = PyLong_AsUnsignedLongLong(args[0]);
+    x = (float)PyFloat_AsDouble(args[1]);
+    y = (float)PyFloat_AsDouble(args[2]);
+    z = (float)PyFloat_AsDouble(args[3]);
 
-    h = PyLong_AsUnsignedLongLong(py_h);
-    x = (float)PyFloat_AsDouble(py_x);
-    y = (float)PyFloat_AsDouble(py_y);
-    z = (float)PyFloat_AsDouble(py_z);
-
-    // Check if conversion failed (e.g. user passed a string or None)
-    if (UNLIKELY(PyErr_Occurred())) {
+    if (UNLIKELY(PyErr_Occurred()))
       return NULL;
-    }
   } else {
-    // --- FALLBACK TO STANDARD PARSING (SLOW PATH) ---
+    // --- 2. FALLBACK (Slow Path) ---
     static char *kwlist[] = {"handle", "x", "y", "z", NULL};
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "Kfff", kwlist, &h, &x, &y,
-                                     &z)) {
+    PyObject *temp_tuple = PyTuple_New(nargs);
+    if (!temp_tuple)
       return NULL;
+    for (Py_ssize_t i = 0; i < nargs; i++) {
+      Py_INCREF(args[i]);
+      PyTuple_SET_ITEM(temp_tuple, i, args[i]);
     }
+    int ok = PyArg_ParseTupleAndKeywords(temp_tuple, kwnames, "Kfff", kwlist,
+                                         &h, &x, &y, &z);
+    Py_DECREF(temp_tuple);
+    if (!ok)
+      return NULL;
   }
 
   if (UNLIKELY(!isfinite(x) || !isfinite(y) || !isfinite(z))) {
-    PyErr_SetString(PyExc_ValueError,
-                    "Impulse components must be finite (no NaN/Inf)");
+    PyErr_SetString(PyExc_ValueError, "Impulse components must be finite");
     return NULL;
   }
 
-  // --- EXECUTION ---
+  // --- 3. EXECUTION ---
   SHADOW_LOCK(&self->shadow_lock);
   BLOCK_UNTIL_NOT_STEPPING(self);
   BLOCK_UNTIL_NOT_QUERYING(self);
 
   uint32_t slot = 0;
-  // Check liveness and generation
   if (UNLIKELY(!unpack_handle(self, h, &slot) ||
                self->slot_states[slot] != SLOT_ALIVE)) {
     SHADOW_UNLOCK(&self->shadow_lock);
@@ -186,62 +185,64 @@ static PyObject *PhysicsWorld_apply_impulse(PhysicsWorldObject *self,
     return NULL;
   }
 
-  // Single lookup of indices
   uint32_t dense_idx = self->slot_to_dense[slot];
   JPH_BodyID bid = self->body_ids[dense_idx];
 
-  JPH_Vec3 imp = {x, y, z};
-
-  // Jolt thread-safe application
+  // Release GIL for the JPH call. In Free-Threaded Python, this is a massive
+  // win as it prevents this thread from blocking the GC or other logic threads.
+  Py_BEGIN_ALLOW_THREADS JPH_Vec3 imp = {x, y, z};
   JPH_BodyInterface_AddImpulse(self->body_interface, bid, &imp);
   JPH_BodyInterface_ActivateBody(self->body_interface, bid);
+  Py_END_ALLOW_THREADS
 
-  SHADOW_UNLOCK(&self->shadow_lock);
+      SHADOW_UNLOCK(&self->shadow_lock);
   Py_RETURN_NONE;
 }
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 static PyObject *PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self,
-                                               PyObject *args, PyObject *kwds) {
+                                               PyObject *const *args,
+                                               size_t nargsf,
+                                               PyObject *kwnames) {
+  // Get actual number of positional arguments
+  Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
   uint64_t h;
-  float ix;
-  float iy;
-  float iz; // Impulse
-  float px;
-  float py;
-  float pz; // Position
+  float ix, iy, iz, px, py, pz;
 
-  // --- MANUALLY PARSE ARGS (FAST PATH) ---
-  // Optimizing for positional-only calls: handle, ix, iy, iz, px, py, pz
-  if (LIKELY(kwds == NULL && PyTuple_GET_SIZE(args) == 7)) {
-    PyObject *p_h = PyTuple_GET_ITEM(args, 0);
-    PyObject *p_ix = PyTuple_GET_ITEM(args, 1);
-    PyObject *p_iy = PyTuple_GET_ITEM(args, 2);
-    PyObject *p_iz = PyTuple_GET_ITEM(args, 3);
-    PyObject *p_px = PyTuple_GET_ITEM(args, 4);
-    PyObject *p_py = PyTuple_GET_ITEM(args, 5);
-    PyObject *p_pz = PyTuple_GET_ITEM(args, 6);
+  // --- 1. FAST PATH: Positional only (No keywords, exactly 7 args) ---
+  if (LIKELY(kwnames == NULL && nargs == 7)) {
+    h = PyLong_AsUnsignedLongLong(args[0]);
+    ix = (float)PyFloat_AsDouble(args[1]);
+    iy = (float)PyFloat_AsDouble(args[2]);
+    iz = (float)PyFloat_AsDouble(args[3]);
+    px = (float)PyFloat_AsDouble(args[4]);
+    py = (float)PyFloat_AsDouble(args[5]);
+    pz = (float)PyFloat_AsDouble(args[6]);
 
-    h = PyLong_AsUnsignedLongLong(p_h);
-    ix = (float)PyFloat_AsDouble(p_ix);
-    iy = (float)PyFloat_AsDouble(p_iy);
-    iz = (float)PyFloat_AsDouble(p_iz);
-    px = (float)PyFloat_AsDouble(p_px);
-    py = (float)PyFloat_AsDouble(p_py);
-    pz = (float)PyFloat_AsDouble(p_pz);
-
-    if (UNLIKELY(PyErr_Occurred())) {
+    if (UNLIKELY(PyErr_Occurred()))
       return NULL;
-    }
   } else {
-    // --- FALLBACK TO STANDARD PARSING (SLOW PATH) ---
+    // --- 2. SLOW PATH: Keywords or wrong count ---
+    // We use the standard public API by creating a temporary tuple.
+    // This is only called when the user uses keywords (rare in hot loops).
     static char *kwlist[] = {"handle", "ix", "iy", "iz",
                              "px",     "py", "pz", NULL};
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "Kffffff", kwlist, &h, &ix,
-                                     &iy, &iz, &px, &py, &pz)) {
+
+    PyObject *temp_tuple = PyTuple_New(nargs);
+    if (!temp_tuple)
       return NULL;
+    for (Py_ssize_t i = 0; i < nargs; i++) {
+      Py_INCREF(args[i]);
+      PyTuple_SET_ITEM(temp_tuple, i, args[i]);
     }
+
+    int ok = PyArg_ParseTupleAndKeywords(temp_tuple, kwnames, "Kffffff", kwlist,
+                                         &h, &ix, &iy, &iz, &px, &py, &pz);
+    Py_DECREF(temp_tuple);
+    if (!ok)
+      return NULL;
   }
 
+  // --- 3. CONCURRENCY & EXECUTION ---
   SHADOW_LOCK(&self->shadow_lock);
   BLOCK_UNTIL_NOT_STEPPING(self);
   BLOCK_UNTIL_NOT_QUERYING(self);
@@ -254,108 +255,217 @@ static PyObject *PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self,
     return NULL;
   }
 
-  // Single lookup for body ID
   JPH_BodyID bid = self->body_ids[self->slot_to_dense[slot]];
 
-  // JPH_Vec3 is float[3], JPH_RVec3 is double[3]
-  JPH_Vec3 imp = {ix, iy, iz};
-  JPH_RVec3 pos = {(double)px, (double)py, (double)pz};
+  Py_BEGIN_ALLOW_THREADS JPH_Vec3 imp = {ix, iy, iz};
+  JPH_RVec3 v_pos = {(double)px, (double)py, (double)pz};
 
-  // Apply Impulse (Immediate, relies on Jolt internal locking)
-  JPH_BodyInterface_AddImpulse2(self->body_interface, bid, &imp, &pos);
+  JPH_BodyInterface_AddImpulse2(self->body_interface, bid, &imp, &v_pos);
   JPH_BodyInterface_ActivateBody(self->body_interface, bid);
+  Py_END_ALLOW_THREADS
 
-  SHADOW_UNLOCK(&self->shadow_lock);
+      SHADOW_UNLOCK(&self->shadow_lock);
   Py_RETURN_NONE;
 }
 
 static PyObject *PhysicsWorld_apply_angular_impulse(PhysicsWorldObject *self,
-                                                    PyObject *args,
-                                                    PyObject *kwds) {
+                                                    PyObject *const *args,
+                                                    size_t nargsf,
+                                                    PyObject *kwnames) {
+  Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
   uint64_t h;
-  float x;
-  float y;
-  float z;
-  static char *kwlist[] = {"handle", "x", "y", "z", NULL};
+  float x, y, z;
 
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "Kfff", kwlist, &h, &x, &y,
-                                   &z)) {
+  // --- 1. FAST PATH (Zero Allocation) ---
+  if (LIKELY(kwnames == NULL && nargs == 4)) {
+    h = PyLong_AsUnsignedLongLong(args[0]);
+    x = (float)PyFloat_AsDouble(args[1]);
+    y = (float)PyFloat_AsDouble(args[2]);
+    z = (float)PyFloat_AsDouble(args[3]);
+
+    if (UNLIKELY(PyErr_Occurred()))
+      return NULL;
+  } else {
+    // --- 2. FALLBACK (Keyword/Count Mismatch) ---
+    static char *kwlist[] = {"handle", "x", "y", "z", NULL};
+    PyObject *temp_tuple = PyTuple_New(nargs);
+    if (!temp_tuple)
+      return NULL;
+    for (Py_ssize_t i = 0; i < nargs; i++) {
+      Py_INCREF(args[i]);
+      PyTuple_SET_ITEM(temp_tuple, i, args[i]);
+    }
+    int ok = PyArg_ParseTupleAndKeywords(temp_tuple, kwnames, "Kfff", kwlist,
+                                         &h, &x, &y, &z);
+    Py_DECREF(temp_tuple);
+    if (!ok)
+      return NULL;
+  }
+
+  // Safety check for physics stability
+  if (UNLIKELY(!isfinite(x) || !isfinite(y) || !isfinite(z))) {
+    PyErr_SetString(PyExc_ValueError,
+                    "Angular impulse components must be finite");
     return NULL;
   }
 
+  // --- 3. CONCURRENCY & JOLT EXECUTION ---
   SHADOW_LOCK(&self->shadow_lock);
   BLOCK_UNTIL_NOT_STEPPING(self);
+  BLOCK_UNTIL_NOT_QUERYING(self);
 
   uint32_t slot = 0;
-  if (!unpack_handle(self, h, &slot) || self->slot_states[slot] != SLOT_ALIVE) {
+  if (UNLIKELY(!unpack_handle(self, h, &slot) ||
+               self->slot_states[slot] != SLOT_ALIVE)) {
     SHADOW_UNLOCK(&self->shadow_lock);
-    PyErr_SetString(PyExc_ValueError, "Invalid handle");
+    PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
     return NULL;
   }
 
   JPH_BodyID bid = self->body_ids[self->slot_to_dense[slot]];
-  JPH_Vec3 imp = {x, y, z};
 
-  // Call Jolt's Angular Impulse API
+  Py_BEGIN_ALLOW_THREADS JPH_Vec3 imp = {x, y, z};
   JPH_BodyInterface_AddAngularImpulse(self->body_interface, bid, &imp);
   JPH_BodyInterface_ActivateBody(self->body_interface, bid);
+  Py_END_ALLOW_THREADS
 
-  SHADOW_UNLOCK(&self->shadow_lock);
+      SHADOW_UNLOCK(&self->shadow_lock);
   Py_RETURN_NONE;
 }
 
 static PyObject *PhysicsWorld_apply_force(PhysicsWorldObject *self,
-                                          PyObject *args, PyObject *kwds) {
+                                          PyObject *const *args, size_t nargsf,
+                                          PyObject *kwnames) {
+  Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
   uint64_t h;
-  float x;
-  float y;
-  float z;
-  static char *kwlist[] = {"handle", "x", "y", "z", NULL};
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "Kfff", kwlist, &h, &x, &y,
-                                   &z)) {
+  float x, y, z;
+
+  // --- 1. FAST PATH (Zero Allocation) ---
+  if (LIKELY(kwnames == NULL && nargs == 4)) {
+    h = PyLong_AsUnsignedLongLong(args[0]);
+    x = (float)PyFloat_AsDouble(args[1]);
+    y = (float)PyFloat_AsDouble(args[2]);
+    z = (float)PyFloat_AsDouble(args[3]);
+
+    if (UNLIKELY(PyErr_Occurred()))
+      return NULL;
+  } else {
+    // --- 2. FALLBACK (Slow Path) ---
+    static char *kwlist[] = {"handle", "x", "y", "z", NULL};
+    PyObject *temp_tuple = PyTuple_New(nargs);
+    if (!temp_tuple)
+      return NULL;
+    for (Py_ssize_t i = 0; i < nargs; i++) {
+      Py_INCREF(args[i]);
+      PyTuple_SET_ITEM(temp_tuple, i, args[i]);
+    }
+    int ok = PyArg_ParseTupleAndKeywords(temp_tuple, kwnames, "Kfff", kwlist,
+                                         &h, &x, &y, &z);
+    Py_DECREF(temp_tuple);
+    if (!ok)
+      return NULL;
+  }
+
+  // Safety: NaNs in forces can instantly delete the entire world broadphase
+  if (UNLIKELY(!isfinite(x) || !isfinite(y) || !isfinite(z))) {
+    PyErr_SetString(PyExc_ValueError, "Force components must be finite");
     return NULL;
   }
 
+  // --- 3. CONCURRENCY & EXECUTION ---
   SHADOW_LOCK(&self->shadow_lock);
+
+  // We use the priority-aware blocking we implemented for the 1M body test
   BLOCK_UNTIL_NOT_STEPPING(self);
+  BLOCK_IF_STEP_PENDING(self);
+  BLOCK_UNTIL_NOT_QUERYING(self);
+
   uint32_t slot = 0;
-  if (!unpack_handle(self, h, &slot) || self->slot_states[slot] != SLOT_ALIVE) {
+  if (UNLIKELY(!unpack_handle(self, h, &slot) ||
+               self->slot_states[slot] != SLOT_ALIVE)) {
     SHADOW_UNLOCK(&self->shadow_lock);
+    PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
     return NULL;
   }
+
   JPH_BodyID bid = self->body_ids[self->slot_to_dense[slot]];
-  JPH_Vec3 f = {x, y, z};
-  JPH_BodyInterface_AddForce(self->body_interface, bid,
-                             &f); // Adds to accumulator
+
+  Py_BEGIN_ALLOW_THREADS JPH_Vec3 f = {x, y, z};
+  // Adds to the accumulator (cleared after every world.step())
+  JPH_BodyInterface_AddForce(self->body_interface, bid, &f);
   JPH_BodyInterface_ActivateBody(self->body_interface, bid);
-  SHADOW_UNLOCK(&self->shadow_lock);
+  Py_END_ALLOW_THREADS
+
+      SHADOW_UNLOCK(&self->shadow_lock);
   Py_RETURN_NONE;
 }
 
 static PyObject *PhysicsWorld_apply_torque(PhysicsWorldObject *self,
-                                           PyObject *args, PyObject *kwds) {
+                                           PyObject *const *args, size_t nargsf,
+                                           PyObject *kwnames) {
+  Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
   uint64_t h;
-  float x;
-  float y;
-  float z;
-  static char *kwlist[] = {"handle", "x", "y", "z", NULL};
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "Kfff", kwlist, &h, &x, &y,
-                                   &z)) {
+  float x, y, z;
+
+  // --- 1. FAST PATH (Zero-Allocation Argument Extraction) ---
+  if (LIKELY(kwnames == NULL && nargs == 4)) {
+    h = PyLong_AsUnsignedLongLong(args[0]);
+    x = (float)PyFloat_AsDouble(args[1]);
+    y = (float)PyFloat_AsDouble(args[2]);
+    z = (float)PyFloat_AsDouble(args[3]);
+
+    if (UNLIKELY(PyErr_Occurred()))
+      return NULL;
+  } else {
+    // --- 2. FALLBACK (Keyword/Count Mismatch) ---
+    static char *kwlist[] = {"handle", "x", "y", "z", NULL};
+    PyObject *temp_tuple = PyTuple_New(nargs);
+    if (!temp_tuple)
+      return NULL;
+    for (Py_ssize_t i = 0; i < nargs; i++) {
+      Py_INCREF(args[i]);
+      PyTuple_SET_ITEM(temp_tuple, i, args[i]);
+    }
+    int ok = PyArg_ParseTupleAndKeywords(temp_tuple, kwnames, "Kfff", kwlist,
+                                         &h, &x, &y, &z);
+    Py_DECREF(temp_tuple);
+    if (!ok)
+      return NULL;
+  }
+
+  // Safety: Prevent Jolt broadphase corruption from invalid math
+  if (UNLIKELY(!isfinite(x) || !isfinite(y) || !isfinite(z))) {
+    PyErr_SetString(PyExc_ValueError, "Torque components must be finite");
     return NULL;
   }
 
+  // --- 3. CONCURRENCY & JPH EXECUTION ---
   SHADOW_LOCK(&self->shadow_lock);
+
+  // Use the priority-aware blocking pattern
   BLOCK_UNTIL_NOT_STEPPING(self);
+  BLOCK_IF_STEP_PENDING(self);
+  BLOCK_UNTIL_NOT_QUERYING(self);
+
   uint32_t slot = 0;
-  if (!unpack_handle(self, h, &slot) || self->slot_states[slot] != SLOT_ALIVE) {
+  if (UNLIKELY(!unpack_handle(self, h, &slot) ||
+               self->slot_states[slot] != SLOT_ALIVE)) {
     SHADOW_UNLOCK(&self->shadow_lock);
+    PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
     return NULL;
   }
+
+  // Look up ID while under shadow_lock
   JPH_BodyID bid = self->body_ids[self->slot_to_dense[slot]];
-  JPH_Vec3 t = {x, y, z};
+
+  Py_BEGIN_ALLOW_THREADS JPH_Vec3 t = {x, y, z};
+  // Adds to torque accumulator (cleared per world.step)
   JPH_BodyInterface_AddTorque(self->body_interface, bid, &t);
+  // Ensure body is awake to process the new torque
   JPH_BodyInterface_ActivateBody(self->body_interface, bid);
-  SHADOW_UNLOCK(&self->shadow_lock);
+  Py_END_ALLOW_THREADS
+
+      SHADOW_UNLOCK(&self->shadow_lock);
   Py_RETURN_NONE;
 }
 
@@ -2644,13 +2754,13 @@ static const PyMethodDef PhysicsWorld_methods[] = {
 
     // --- Interaction ---
     {"apply_impulse", (PyCFunction)PhysicsWorld_apply_impulse,
-     METH_VARARGS | METH_KEYWORDS, NULL},
+     METH_FASTCALL | METH_KEYWORDS, NULL},
     {"apply_angular_impulse", (PyCFunction)PhysicsWorld_apply_angular_impulse,
-     METH_VARARGS | METH_KEYWORDS, "Apply rotational momentum."},
+     METH_FASTCALL | METH_KEYWORDS, "Apply rotational momentum."},
     {"apply_impulse_at", (PyCFunction)PhysicsWorld_apply_impulse_at,
-     METH_VARARGS | METH_KEYWORDS, "Apply impulse at world position."},
+     METH_FASTCALL | METH_KEYWORDS, "Apply impulse at world position."},
     {"apply_force", (PyCFunction)PhysicsWorld_apply_force,
-     METH_VARARGS | METH_KEYWORDS, NULL},
+     METH_FASTCALL | METH_KEYWORDS, NULL},
     {"apply_torque", (PyCFunction)PhysicsWorld_apply_torque,
      METH_VARARGS | METH_KEYWORDS, NULL},
     {"set_gravity", (PyCFunction)PhysicsWorld_set_gravity, METH_VARARGS, NULL},
