@@ -1,5 +1,6 @@
 #include <Python.h>
 #include "culverin.h"
+#include "culverin_character.h"
 #include "culverin_getters.h"
 
 static PyObject *make_view(PhysicsWorldObject *self, void *ptr) {

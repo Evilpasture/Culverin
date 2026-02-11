@@ -1,5 +1,6 @@
 #pragma once
 #include "culverin.h"
+#include "culverin_vehicle.h"
 
 struct PhysicsWorldObject; 
 typedef struct PhysicsWorldObject PhysicsWorldObject;

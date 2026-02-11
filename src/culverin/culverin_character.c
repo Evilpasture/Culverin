@@ -1,3 +1,4 @@
+#include "culverin_character.h"
 #include "culverin.h"
 
 // Character helpers

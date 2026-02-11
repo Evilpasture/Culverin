@@ -1,5 +1,6 @@
 
 #include "culverin_internal_query.h"
+#include "culverin_filters.h"
 
 // --- Helper: Shape Caching (Internal) ---
 JPH_Shape *find_or_create_shape(PhysicsWorldObject *self, int type,

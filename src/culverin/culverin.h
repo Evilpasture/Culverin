@@ -8,18 +8,10 @@
 #include <stdatomic.h>
 #include <stddef.h>
 #include <string.h>
-#include "culverin_math.h"
 #include "culverin_debug_render.h"
-#include "culverin_filters.h"
-#include "culverin_contact_listener.h"
-#include "culverin_parsers.h"
 #include "culverin_command_buffer.h"
-#include "culverin_vehicle.h"
 #include "culverin_tracked_vehicle.h"
-#include "culverin_ragdoll.h"
 #include "culverin_internal_query.h"
-#include "culverin_physics_world_internal.h"
-#include "culverin_query_methods.h"
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -446,8 +438,3 @@ static inline bool unpack_handle(PhysicsWorldObject *self, BodyHandle h,
 }
 
 extern ShadowMutex g_jph_trampoline_lock;
-
-// INCLUDE LAST!!!
-#include "culverin_getters.h"
-#include "culverin_shadow_sync.h"
-#include "culverin_character.h"

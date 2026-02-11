@@ -1,4 +1,5 @@
 #include "culverin_ragdoll.h"
+#include "culverin_math.h"
 #include "culverin_physics_world_internal.h"
 
 PyObject *Skeleton_add_joint(SkeletonObject *self, PyObject *args) {

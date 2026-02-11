@@ -1,4 +1,16 @@
 #include "culverin.h"
+#include "culverin_character.h"
+#include "culverin_contact_listener.h"
+#include "culverin_filters.h"
+#include "culverin_math.h"
+#include "culverin_parsers.h"
+#include "culverin_physics_world_internal.h"
+#include "culverin_query_methods.h"
+#include "culverin_ragdoll.h"
+#include "culverin_shadow_sync.h"
+#include "culverin_vehicle.h"
+#include "culverin_getters.h"
+
 
 // Global lock for JPH callbacks
 ShadowMutex g_jph_trampoline_lock; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)

@@ -1,4 +1,5 @@
 #include "culverin_query_methods.h"
+#include "culverin_filters.h"
 
 
 // Unified hit collector for both Broad and Narrow phase overlaps
