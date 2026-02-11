@@ -2594,6 +2594,7 @@ static const PyGetSetDef PhysicsWorld_getset[] = {
     {"count", (getter)get_count, NULL, NULL, NULL},
     {"time", (getter)get_time, NULL, NULL, NULL},
     {"user_data", (getter)get_user_data_buffer, NULL, NULL, NULL},
+    {"shape_count", (getter)get_shape_count, NULL, "Number of unique shapes in cache", NULL},
     {NULL}};
 
 static const PyGetSetDef Character_getset[] = {
