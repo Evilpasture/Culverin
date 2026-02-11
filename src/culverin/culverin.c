@@ -1452,102 +1452,171 @@ static void configure_body_settings(JPH_BodyCreationSettings *settings,
 
 // Main Orchestrator
 static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
-                                          PyObject *args, PyObject *kwds) {
-  float px = 0.0f;
-  float py = 0.0f;
-  float pz = 0.0f;
-  float rx = 0.0f;
-  float ry = 0.0f;
-  float rz = 0.0f;
-  float rw = 1.0f;
-  float mass = -1.0f;
-  float friction = -1.0f;
-  float restitution = -1.0f;
-  int shape_type = 0;
-  int motion_type = 2;
-  int is_sensor = 0;
-  int use_ccd = 0;
-  uint32_t category = 0xFFFF;
-  uint32_t mask = 0xFFFF;
-  uint32_t material_id = 0;
-  unsigned long long user_data = 0;
-  PyObject *py_size = NULL;
-  static char *kwlist[] = {
-      "pos",       "rot",         "size",        "shape",    "motion",
-      "user_data", "is_sensor",   "mass",        "category", "mask",
-      "friction",  "restitution", "material_id", "ccd",      NULL};
+                                          PyObject *const *args, 
+                                          size_t nargsf, 
+                                          PyObject *kwnames) {
+    Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
 
-  if (!PyArg_ParseTupleAndKeywords(
-          args, kwds, "|(fff)(ffff)OiiKpfIIffIp", kwlist, &px, &py, &pz, &rx,
-          &ry, &rz, &rw, &py_size, &shape_type, &motion_type, &user_data,
-          &is_sensor, &mass, &category, &mask, &friction, &restitution,
-          &material_id, &use_ccd)) {
-    return NULL;
-  }
+    // 1. DEFAULT VALUES
+    float px = 0.0f, py = 0.0f, pz = 0.0f;
+    float rx = 0.0f, ry = 0.0f, rz = 0.0f, rw = 1.0f;
+    float mass = -1.0f, friction = -1.0f, restitution = -1.0f;
+    int shape_type = 0, motion_type = 2, is_sensor = 0, use_ccd = 0;
+    uint32_t category = 0xFFFF, mask = 0xFFFF, material_id = 0;
+    unsigned long long user_data = 0;
+    PyObject *py_size = NULL;
 
-  if (shape_type == 4 && motion_type != 0) {
-    return PyErr_Format(PyExc_ValueError, "SHAPE_PLANE must be MOTION_STATIC");
-  }
+    // --- 2. ARGUMENT PARSING (Fast Path Pattern) ---
+    static char *kwlist[] = {
+        "pos", "rot", "size", "shape", "motion", "user_data", "is_sensor",
+        "mass", "category", "mask", "friction", "restitution", "material_id", "ccd", NULL
+    };
 
-  MaterialSettings input = {.friction = friction, .restitution = restitution};
+    // We create a temporary tuple to use the public API safely for 14 arguments.
+    // This is still much faster than METH_VARARGS because the interpreter didn't do it for us.
+    PyObject *temp_tuple = PyTuple_New(nargs);
+    if (UNLIKELY(!temp_tuple)) return NULL;
+    for (Py_ssize_t i = 0; i < nargs; i++) {
+        Py_INCREF(args[i]);
+        PyTuple_SET_ITEM(temp_tuple, i, args[i]);
+    }
 
-  // Resolve
-  MaterialSettings mat = resolve_material_params(self, material_id, input);
-  float s[4];
-  parse_body_size(py_size, s);
+    PyObject *temp_dict = NULL;
+    if (kwnames) {
+        temp_dict = PyDict_New();
+        Py_ssize_t nkw = PyTuple_GET_SIZE(kwnames);
+        for (Py_ssize_t i = 0; i < nkw; i++) {
+            PyDict_SetItem(temp_dict, PyTuple_GET_ITEM(kwnames, i), args[nargs + i]);
+        }
+    }
 
-  SHADOW_LOCK(&self->shadow_lock);
-  BLOCK_UNTIL_NOT_STEPPING(self);
-  BLOCK_UNTIL_NOT_QUERYING(self);
+    int ok = PyArg_ParseTupleAndKeywords(temp_tuple, temp_dict, "|(fff)(ffff)OiiKpfIIffIp", kwlist,
+                                         &px, &py, &pz, &rx, &ry, &rz, &rw, &py_size,
+                                         &shape_type, &motion_type, &user_data, &is_sensor,
+                                         &mass, &category, &mask, &friction, &restitution,
+                                         &material_id, &use_ccd);
+    
+    Py_XDECREF(temp_dict);
+    Py_DECREF(temp_tuple);
+    if (!ok) return NULL;
 
-  if (self->free_count == 0 &&
-      PhysicsWorld_resize(self, self->capacity * 2) < 0) {
+    // --- 3. LOGIC VALIDATION ---
+    if (shape_type == 4 && motion_type != 0) {
+        return PyErr_Format(PyExc_ValueError, "SHAPE_PLANE must be MOTION_STATIC");
+    }
+
+    // Resolve material and parse size
+    MaterialSettings mat_in = {friction, restitution};
+    MaterialSettings mat = resolve_material_params(self, material_id, mat_in);
+    float s[4]; 
+    parse_body_size(py_size, s);
+
+    // --- 4. RESOURCE ACQUISITION (Shadow Lock) ---
+    SHADOW_LOCK(&self->shadow_lock);
+    
+    BLOCK_UNTIL_NOT_STEPPING(self);
+    BLOCK_UNTIL_NOT_QUERYING(self);
+
+    // Ensure space in dense arrays
+    if (UNLIKELY(self->free_count == 0)) {
+        if (PhysicsWorld_resize(self, self->capacity * 2) < 0) {
+            SHADOW_UNLOCK(&self->shadow_lock);
+            return NULL;
+        }
+    }
+
+    // Get the shape (find_or_create handles its own g_jph_trampoline_lock internally)
+    JPH_Shape *shape = find_or_create_shape(self, shape_type, s);
+    if (!shape) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        return PyErr_Format(PyExc_RuntimeError, "Jolt shape creation failed");
+    }
+
+    // Claim slot and calculate dense index
+    uint32_t slot = self->free_slots[--self->free_count];
+    uint32_t dense_idx = (uint32_t)self->count; 
+
+    // --- 5. IMMEDIATE SHADOW WRITE ---
+    // We populate the memory now so it's visible to Python immediately
+    size_t off = (size_t)dense_idx * 4;
+    
+    self->positions[off+0] = px;
+    self->positions[off+1] = py;
+    self->positions[off+2] = pz;
+    self->prev_positions[off+0] = px;
+    self->prev_positions[off+1] = py;
+    self->prev_positions[off+2] = pz;
+
+    self->rotations[off+0] = rx;
+    self->rotations[off+1] = ry;
+    self->rotations[off+2] = rz;
+    self->rotations[off+3] = rw;
+    self->prev_rotations[off+0] = rx;
+    self->prev_rotations[off+1] = ry;
+    self->prev_rotations[off+2] = rz;
+    self->prev_rotations[off+3] = rw;
+
+    // Initialize physics metadata
+    self->categories[dense_idx] = category;
+    self->masks[dense_idx] = mask;
+    self->material_ids[dense_idx] = material_id;
+    self->user_data[dense_idx] = (uint64_t)user_data;
+    
+    // Clear velocities for new body
+    memset(&self->linear_velocities[off], 0, 16);
+    memset(&self->angular_velocities[off], 0, 16);
+
+    // Commit the mappings
+    self->slot_to_dense[slot] = dense_idx;
+    self->dense_to_slot[dense_idx] = slot;
+    self->slot_states[slot] = SLOT_PENDING_CREATE;
+    
+    // Atomic-ish increment (protected by shadow_lock)
+    self->count++;
+    self->view_shape[0] = (Py_ssize_t)self->count;
+
+    // --- 6. JOLT PREP ---
+    JPH_BodyCreationSettings *settings = JPH_BodyCreationSettings_Create3(
+        shape, 
+        &(JPH_RVec3){(double)px, (double)py, (double)pz},
+        &(JPH_Quat){rx, ry, rz, rw}, 
+        (JPH_MotionType)motion_type,
+        (motion_type == 0) ? 0 : 1);
+
+    BodyConfig config = {
+        .mass = mass, .friction = mat.friction, .restitution = mat.restitution,
+        .is_sensor = is_sensor, .use_ccd = use_ccd, .motion_type = motion_type
+    };
+    configure_body_settings(settings, shape, config);
+    
+    BodyHandle handle = make_handle(slot, self->generations[slot]);
+    JPH_BodyCreationSettings_SetUserData(settings, (uint64_t)handle);
+
+    // --- 7. COMMAND QUEUEING ---
+    if (UNLIKELY(!ensure_command_capacity(self))) {
+        // Rollback on queue failure
+        self->count--;
+        self->free_slots[self->free_count++] = slot;
+        self->slot_states[slot] = SLOT_EMPTY;
+        JPH_BodyCreationSettings_Destroy(settings);
+        SHADOW_UNLOCK(&self->shadow_lock);
+        return PyErr_NoMemory();
+    }
+
+    PhysicsCommand *cmd = &self->command_queue[self->command_count++];
+    cmd->header = CMD_HEADER(CMD_CREATE_BODY, slot);
+    cmd->create.settings = settings;
+    // Note: We've already handled metadata, but we keep the command fields 
+    // for compatibility with your existing 32-byte union layout.
+    cmd->create.user_data = (uint64_t)user_data;
+    cmd->create.category = category;
+    cmd->create.mask = mask;
+    cmd->create.material_id = material_id;
+
     SHADOW_UNLOCK(&self->shadow_lock);
-    return NULL;
-  }
 
-  JPH_Shape *shape = find_or_create_shape(self, shape_type, s);
-  if (!shape) {
-    SHADOW_UNLOCK(&self->shadow_lock);
-    return PyErr_Format(PyExc_RuntimeError, "Failed to create shape");
-  }
-
-  uint32_t slot = self->free_slots[--self->free_count];
-  JPH_BodyCreationSettings *settings = JPH_BodyCreationSettings_Create3(
-      shape, &(JPH_RVec3){(double)px, (double)py, (double)pz},
-      &(JPH_Quat){rx, ry, rz, rw}, (JPH_MotionType)motion_type,
-      (motion_type == 0) ? 0 : 1);
-
-  BodyConfig config = {.mass = mass,
-                       .friction = mat.friction,
-                       .restitution = mat.restitution,
-                       .is_sensor = is_sensor,
-                       .use_ccd = use_ccd,
-                       .motion_type = motion_type};
-
-  configure_body_settings(settings, shape, config);
-  JPH_BodyCreationSettings_SetUserData(
-      settings, (uint64_t)make_handle(slot, self->generations[slot]));
-
-  if (!ensure_command_capacity(self)) {
-    JPH_BodyCreationSettings_Destroy(settings);
-    self->free_slots[self->free_count++] = slot;
-    SHADOW_UNLOCK(&self->shadow_lock);
-    return PyErr_NoMemory();
-  }
-
-  PhysicsCommand *cmd = &self->command_queue[self->command_count++];
-  cmd->header = CMD_HEADER(CMD_CREATE_BODY, slot);
-  cmd->create.settings = settings;
-  cmd->create.user_data = (uint64_t)user_data;
-  cmd->create.category = category;
-  cmd->create.mask = mask;
-  cmd->create.material_id = material_id;
-
-  self->slot_states[slot] = SLOT_PENDING_CREATE;
-  SHADOW_UNLOCK(&self->shadow_lock);
-  return PyLong_FromUnsignedLongLong(
-      make_handle(slot, self->generations[slot]));
+    // Return the handle as a Python long
+    return PyLong_FromUnsignedLongLong(handle);
 }
 
 /**
@@ -2721,7 +2790,7 @@ static const PyMethodDef PhysicsWorld_methods[] = {
     // --- Lifecycle ---
     {"step", (PyCFunction)PhysicsWorld_step, METH_VARARGS, NULL},
     {"create_body", (PyCFunction)PhysicsWorld_create_body,
-     METH_VARARGS | METH_KEYWORDS, NULL},
+     METH_FASTCALL | METH_KEYWORDS, NULL},
     {"destroy_body", (PyCFunction)PhysicsWorld_destroy_body,
      METH_VARARGS | METH_KEYWORDS, NULL},
     {"create_mesh_body", (PyCFunction)PhysicsWorld_create_mesh_body,

@@ -111,63 +111,28 @@ void flush_commands(PhysicsWorldObject *self) {
     switch (type) {
     case CMD_CREATE_BODY: {
       JPH_BodyCreationSettings *s = cmd->create.settings;
-      JPH_BodyID new_bid =
-          JPH_BodyInterface_CreateAndAddBody(bi, s, JPH_Activation_Activate);
+      JPH_BodyID new_bid = JPH_BodyInterface_CreateAndAddBody(bi, s, JPH_Activation_Activate);
 
-      if (new_bid == JPH_INVALID_BODY_ID) {
+      if (UNLIKELY(new_bid == JPH_INVALID_BODY_ID)) {
+        // If Jolt fails, we must roll back our immediate writes
+        self->count--;
         self->slot_states[slot] = SLOT_EMPTY;
         self->generations[slot]++;
         self->free_slots[self->free_count++] = slot;
         JPH_BodyCreationSettings_Destroy(s);
         continue;
       }
-      uint32_t gen = self->generations[slot];
-      BodyHandle handle = make_handle(slot, gen);
 
+      // Find where we put it in create_body
+      uint32_t dense = self->slot_to_dense[slot];
+      self->body_ids[dense] = new_bid;
+
+      // Update the handle lookup map for callbacks
       uint32_t jolt_idx = JPH_ID_TO_INDEX(new_bid);
       if (self->id_to_handle_map && jolt_idx < self->max_jolt_bodies) {
-        self->id_to_handle_map[jolt_idx] = handle;
+        self->id_to_handle_map[jolt_idx] = make_handle(slot, self->generations[slot]);
       }
 
-      size_t new_dense = self->count;
-      self->body_ids[new_dense] = new_bid;
-      self->slot_to_dense[slot] = (uint32_t)new_dense;
-      self->dense_to_slot[new_dense] = slot;
-      self->user_data[new_dense] = cmd->create.user_data;
-
-      JPH_STACK_ALLOC(JPH_RVec3, p);
-      JPH_STACK_ALLOC(JPH_Quat, q);
-      JPH_BodyInterface_GetPosition(bi, new_bid, p);
-      JPH_BodyInterface_GetRotation(bi, new_bid, q);
-
-      float fx = (float)p->x;
-      float fy = (float)p->y;
-      float fz = (float)p->z;
-
-      size_t offset = new_dense * 4;
-
-      self->positions[offset + 0] = fx;
-      self->positions[offset + 1] = fy;
-      self->positions[offset + 2] = fz;
-      // Correctly preventing creation jitter
-      self->prev_positions[offset + 0] = fx;
-      self->prev_positions[offset + 1] = fy;
-      self->prev_positions[offset + 2] = fz;
-
-      self->rotations[offset + 0] = q->x;
-      self->rotations[offset + 1] = q->y;
-      self->rotations[offset + 2] = q->z;
-      self->rotations[offset + 3] = q->w;
-      memcpy(&self->prev_rotations[offset], &self->rotations[offset], 16);
-
-      memset(&self->linear_velocities[offset], 0, 16);
-      memset(&self->angular_velocities[offset], 0, 16);
-
-      self->categories[new_dense] = cmd->create.category;
-      self->masks[new_dense] = cmd->create.mask;
-      self->material_ids[new_dense] = cmd->create.material_id;
-
-      self->count++;
       self->slot_states[slot] = SLOT_ALIVE;
       JPH_BodyCreationSettings_Destroy(s);
       break;
