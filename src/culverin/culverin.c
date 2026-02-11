@@ -2762,7 +2762,7 @@ static const PyMethodDef PhysicsWorld_methods[] = {
     {"apply_force", (PyCFunction)PhysicsWorld_apply_force,
      METH_FASTCALL | METH_KEYWORDS, NULL},
     {"apply_torque", (PyCFunction)PhysicsWorld_apply_torque,
-     METH_VARARGS | METH_KEYWORDS, NULL},
+     METH_FASTCALL | METH_KEYWORDS, NULL},
     {"set_gravity", (PyCFunction)PhysicsWorld_set_gravity, METH_VARARGS, NULL},
     {"apply_buoyancy", (PyCFunction)PhysicsWorld_apply_buoyancy,
      METH_VARARGS | METH_KEYWORDS, "Apply fluid forces to a body."},
