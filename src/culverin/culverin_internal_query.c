@@ -83,6 +83,21 @@ JPH_Shape *find_or_create_shape(PhysicsWorldObject *self, int type,
   return shape;
 }
 
+void free_shape_cache(PhysicsWorldObject *self) {
+  if (!self->shape_cache) {
+    return;
+  }
+
+  for (size_t i = 0; i < self->shape_cache_count; i++) {
+    if (self->shape_cache[i].shape) {
+      JPH_Shape_Destroy(self->shape_cache[i].shape);
+    }
+  }
+  PyMem_RawFree(self->shape_cache);
+  self->shape_cache = NULL;
+  self->shape_cache_count = 0;
+}
+
 // Helper 1: Run the Raycast
 // ASSUMPTION: Caller has already acquired g_jph_trampoline_lock and released GIL.
 bool execute_raycast_query(PhysicsWorldObject *self, JPH_BodyID ignore_bid,

@@ -27,6 +27,8 @@ typedef struct {
 JPH_Shape *find_or_create_shape(struct PhysicsWorldObject *self, int type,
                                 const float *params);
 
+void free_shape_cache(PhysicsWorldObject *self);
+
 bool execute_raycast_query(PhysicsWorldObject *self, JPH_BodyID ignore_bid,
                            const JPH_RVec3 *origin, const JPH_Vec3 *direction,
                            JPH_RayCastResult *hit);
