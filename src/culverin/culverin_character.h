@@ -64,3 +64,6 @@ int Character_traverse(CharacterObject *self, visitproc visit,
 int Character_clear(CharacterObject *self);
 
 void Character_dealloc(CharacterObject *self);
+
+PyObject *PhysicsWorld_create_character(PhysicsWorldObject *self,
+                                               PyObject *args, PyObject *kwds);

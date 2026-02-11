@@ -1,5 +1,7 @@
 #include "culverin_character.h"
 #include "culverin.h"
+#include "culverin_filters.h"
+#include "culverin_physics_world_internal.h"
 
 // Character helpers
 // Callback: Can the character collide with this object?
@@ -658,4 +660,161 @@ void Character_dealloc(CharacterObject *self) {
 finalize:
   Py_XDECREF(self->world);
   Py_TYPE(self)->tp_free((PyObject *)self);
+}
+
+// Helper 1: Jolt-side allocation and Collision Manager linking
+static JPH_CharacterVirtual *alloc_j_char(PhysicsWorldObject *self, 
+                                          PositionVector pos,
+                                          CharacterParams params) { // Reduced to 2 conceptual arguments
+    
+    // Position parameters are now accessed via pos.px, pos.py, pos.pz
+    // Size parameters are now accessed via params.height, params.radius, etc.
+    
+    float half_h = fmaxf((params.height - 2.0f * params.radius) * 0.5f, 0.1f);
+    JPH_CapsuleShapeSettings *ss =
+        JPH_CapsuleShapeSettings_Create(half_h, params.radius);
+    JPH_Shape *shape = (JPH_Shape *)JPH_CapsuleShapeSettings_CreateShape(ss);
+    JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)ss);
+    if (!shape) return NULL;
+
+    JPH_CharacterVirtualSettings settings;
+    JPH_CharacterVirtualSettings_Init(&settings);
+    settings.base.shape = shape;
+    settings.base.maxSlopeAngle = params.max_slope * (JPH_M_PI / 180.0f);
+
+    JPH_CharacterVirtual *j_char = JPH_CharacterVirtual_Create(
+        &settings, 
+        &(JPH_RVec3){(double)pos.px, (double)pos.py, (double)pos.pz},
+        &(JPH_Quat){0, 0, 0, 1}, 1, self->system);
+
+    JPH_Shape_Destroy(shape);
+    if (!j_char) return NULL;
+
+    if (self->char_vs_char_manager) {
+        JPH_CharacterVsCharacterCollisionSimple_AddCharacter(
+            self->char_vs_char_manager, j_char);
+        JPH_CharacterVirtual_SetCharacterVsCharacterCollision(
+            j_char, self->char_vs_char_manager);
+    }
+    return j_char;
+}
+
+// Helper 2: Shadow Buffer Registration (Atomic Commit)
+static void register_char(PhysicsWorldObject *self, CharacterObject *obj,
+                          JPH_CharacterVirtual *j_char, uint32_t slot) {
+  SHADOW_LOCK(&self->shadow_lock);
+
+  BodyHandle h = make_handle(slot, self->generations[slot]);
+  obj->handle = h;
+
+  uint32_t dense_idx = (uint32_t)self->count;
+  JPH_BodyID bid = JPH_CharacterVirtual_GetInnerBodyID(j_char);
+  uint32_t j_idx = JPH_ID_TO_INDEX(bid);
+
+  if (j_idx < self->max_jolt_bodies) {
+    self->id_to_handle_map[j_idx] = h;
+  }
+
+  self->body_ids[dense_idx] = bid;
+  self->slot_to_dense[slot] = dense_idx;
+  self->dense_to_slot[dense_idx] = slot;
+  self->slot_states[slot] = SLOT_ALIVE;
+  self->user_data[dense_idx] = 0;
+  self->count++;
+  self->view_shape[0] = (Py_ssize_t)self->count;
+
+  JPH_BodyInterface_SetUserData(self->body_interface, bid, (uint64_t)h);
+  SHADOW_UNLOCK(&self->shadow_lock);
+}
+
+// Helper 3: Filter and Listener serialization (Trampoline Lock)
+static void setup_char_filters(CharacterObject *obj) {
+  SHADOW_LOCK(&g_jph_trampoline_lock);
+  JPH_CharacterContactListener_SetProcs(&char_listener_procs);
+  obj->listener = JPH_CharacterContactListener_Create(obj);
+  JPH_BodyFilter_SetProcs(&global_bf_procs);
+  obj->body_filter = JPH_BodyFilter_Create(NULL);
+  JPH_ShapeFilter_SetProcs(&global_sf_procs);
+  obj->shape_filter = JPH_ShapeFilter_Create(NULL);
+  SHADOW_UNLOCK(&g_jph_trampoline_lock);
+
+  JPH_CharacterVirtual_SetListener(obj->character, obj->listener);
+  obj->bp_filter = JPH_BroadPhaseLayerFilter_Create(NULL);
+  obj->obj_filter = JPH_ObjectLayerFilter_Create(NULL);
+}
+
+// Main Orchestrator
+PyObject *PhysicsWorld_create_character(PhysicsWorldObject *self,
+                                               PyObject *args, PyObject *kwds) {
+  float px = 0, py = 0, pz = 0, height = 1.8f, radius = 0.4f, step_h = 0.4f,
+        slope = 45.0f;
+  static char *kwlist[] = {"pos",         "height",    "radius",
+                           "step_height", "max_slope", NULL};
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)|ffff", kwlist, &px, &py,
+                                   &pz, &height, &radius, &step_h, &slope))
+    return NULL;
+
+  // 1. Slot Reservation
+  SHADOW_LOCK(&self->shadow_lock);
+  BLOCK_UNTIL_NOT_STEPPING(self);
+  BLOCK_UNTIL_NOT_QUERYING(self);
+  if (self->free_count == 0 &&
+      PhysicsWorld_resize(self, self->capacity * 2) < 0) {
+    SHADOW_UNLOCK(&self->shadow_lock);
+    return NULL;
+  }
+  uint32_t char_slot = self->free_slots[--self->free_count];
+  self->slot_states[char_slot] = SLOT_PENDING_CREATE;
+  SHADOW_UNLOCK(&self->shadow_lock);
+
+  // 2. Resource Allocation
+  PositionVector pos_vec = {px, py, pz};
+  CharacterParams char_params = {height, radius, slope};
+
+  JPH_CharacterVirtual *j_char = alloc_j_char(self, pos_vec, char_params);
+  if (!j_char) 
+    goto fail_jolt;
+
+  CharacterObject *obj = (CharacterObject *)PyObject_GC_New(
+      CharacterObject,
+      (PyTypeObject *)get_culverin_state(PyType_GetModule(Py_TYPE(self)))
+          ->CharacterType);
+  if (!obj)
+    goto fail_py;
+
+  // 3. Initialization
+  obj->world = (PhysicsWorldObject *)Py_NewRef(self);
+  obj->character = j_char;
+  atomic_store(&obj->push_strength, 200.0f);
+  atomic_store(&obj->last_vx, 0.0f);
+  atomic_store(&obj->last_vy, 0.0f);
+  atomic_store(&obj->last_vz, 0.0f);
+  obj->prev_px = px;
+  obj->prev_py = py;
+  obj->prev_pz = pz;
+  obj->prev_rx = 0.0f;
+  obj->prev_ry = 0.0f;
+  obj->prev_rz = 0.0f;
+  obj->prev_rw = 1.0f;
+  obj->listener = NULL;
+  obj->body_filter = NULL;
+  obj->shape_filter = NULL;
+  obj->bp_filter = NULL;
+  obj->obj_filter = NULL;
+
+  // 4. Registration & Filter Setup
+  register_char(self, obj, j_char, char_slot);
+  setup_char_filters(obj);
+
+  PyObject_GC_Track((PyObject *)obj);
+  return (PyObject *)obj;
+
+fail_py:
+  JPH_CharacterBase_Destroy((JPH_CharacterBase *)j_char);
+fail_jolt:
+  SHADOW_LOCK(&self->shadow_lock);
+  self->slot_states[char_slot] = SLOT_EMPTY;
+  self->free_slots[self->free_count++] = char_slot;
+  SHADOW_UNLOCK(&self->shadow_lock);
+  return NULL;
 }
