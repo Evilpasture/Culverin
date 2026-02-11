@@ -26,7 +26,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.14'
+          python-version: '3.13'
 
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.22.0
@@ -34,7 +34,7 @@ jobs:
           # Enable Free-Threading support
           CIBW_FREE_THREADED_SUPPORT: 1
           CIBW_PRERELEASE_PYTHONS: 1
-          CIBW_BUILD: "cp313t-* cp314t-*"
+          CIBW_BUILD: "cp314t-*"
           
           # Architecture Settings
           CIBW_ARCHS_WINDOWS: "AMD64"
