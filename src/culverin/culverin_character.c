@@ -589,3 +589,73 @@ PyObject *Character_get_render_transform(CharacterObject *self,
 
   return out;
 }
+
+// NEW: GC Traverse/Clear for Character
+int Character_traverse(CharacterObject *self, visitproc visit,
+                              void *arg) {
+  Py_VISIT(self->world);
+  return 0;
+}
+int Character_clear(CharacterObject *self) {
+  Py_CLEAR(self->world);
+  return 0;
+}
+
+void Character_dealloc(CharacterObject *self) {
+  PyObject_GC_UnTrack(self);
+
+  if (!self->world) {
+    goto finalize;
+  }
+  // We must wait for the physics step to finish before touching the Jolt Character.
+  // Otherwise, Jolt might be using this pointer in a worker thread.
+  SHADOW_LOCK(&self->world->shadow_lock);
+  BLOCK_UNTIL_NOT_STEPPING(self->world);
+  SHADOW_UNLOCK(&self->world->shadow_lock);
+
+  // 1. REMOVE FROM JOLT MANAGER (Unlocked)
+  // This is safe because the manager is thread-safe for removal.
+  if (self->world->char_vs_char_manager && self->character) {
+    JPH_CharacterVsCharacterCollisionSimple_RemoveCharacter(
+        self->world->char_vs_char_manager, self->character);
+  }
+
+  // 2. WORLD REGISTRY CLEANUP (Locked)
+  uint32_t slot = (uint32_t)(self->handle & 0xFFFFFFFF);
+  SHADOW_LOCK(&self->world->shadow_lock);
+  // Re-check stepping just to be paranoid/consistent, though strictly we handled it above. It costs nothing.
+  BLOCK_UNTIL_NOT_STEPPING(self->world); 
+
+  // GUARD: We must wait for queries to finish. Dealloc cannot return error,
+  // so we must block. Since queries are fast, this is a very short wait.
+  BLOCK_UNTIL_NOT_QUERYING(self->world);
+
+  world_remove_body_slot(self->world, slot);
+
+  SHADOW_UNLOCK(&self->world->shadow_lock);
+
+  // 3. JOLT RESOURCE DESTRUCTION (Unlocked)
+  // No lock held here to avoid AB-BA deadlock with contact callbacks
+  if (self->character) {
+    JPH_CharacterBase_Destroy((JPH_CharacterBase *)self->character);
+  }
+  if (self->listener) {
+    JPH_CharacterContactListener_Destroy(self->listener);
+  }
+  if (self->body_filter) {
+    JPH_BodyFilter_Destroy(self->body_filter);
+  }
+  if (self->shape_filter) {
+    JPH_ShapeFilter_Destroy(self->shape_filter);
+  }
+  if (self->bp_filter) {
+    JPH_BroadPhaseLayerFilter_Destroy(self->bp_filter);
+  }
+  if (self->obj_filter) {
+    JPH_ObjectLayerFilter_Destroy(self->obj_filter);
+  }
+
+finalize:
+  Py_XDECREF(self->world);
+  Py_TYPE(self)->tp_free((PyObject *)self);
+}

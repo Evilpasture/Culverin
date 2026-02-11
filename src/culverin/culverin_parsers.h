@@ -44,3 +44,5 @@ int parse_slider_params(PyObject *args, ConstraintParams *p);
 int parse_cone_params(PyObject *args, ConstraintParams *p);
 
 int parse_distance_params(PyObject *args, ConstraintParams *p);
+
+void parse_body_size(PyObject *py_size, float s[4]);

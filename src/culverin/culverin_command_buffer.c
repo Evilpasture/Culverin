@@ -292,3 +292,18 @@ void flush_commands(PhysicsWorldObject *self) {
   self->command_count = 0;
   self->view_shape[0] = (Py_ssize_t)self->count;
 }
+
+void clear_command_queue(PhysicsWorldObject *self) {
+    if (!self->command_queue) return;
+
+    for (size_t i = 0; i < self->command_count; i++) {
+        PhysicsCommand *cmd = &self->command_queue[i];
+        if (CMD_GET_TYPE(cmd->header) == CMD_CREATE_BODY) {
+            // We own this pointer until it's consumed by Jolt
+            if (cmd->create.settings) {
+                JPH_BodyCreationSettings_Destroy(cmd->create.settings);
+            }
+        }
+    }
+    self->command_count = 0;
+}

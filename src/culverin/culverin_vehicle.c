@@ -618,3 +618,93 @@ PyObject *Vehicle_get_debug_state(VehicleObject *self,
 
   Py_RETURN_NONE;
 }
+
+// --- Vehicle GC Support ---
+int Vehicle_traverse(VehicleObject *self, visitproc visit, void *arg) {
+  Py_VISIT(self->world);
+  return 0;
+}
+
+int Vehicle_clear(VehicleObject *self) {
+  Py_CLEAR(self->world);
+  return 0;
+}
+
+// --- Explicit Destroy (Clean up Jolt resources) ---
+PyObject *Vehicle_destroy(VehicleObject *self,
+                                 PyObject *Py_UNUSED(ignored)) {
+  if (!self->world) {
+    Py_RETURN_NONE;
+  }
+
+  SHADOW_LOCK(&self->world->shadow_lock);
+
+  BLOCK_UNTIL_NOT_STEPPING(self->world);
+  BLOCK_UNTIL_NOT_QUERYING(self->world);
+
+  if (!self->vehicle) {
+    SHADOW_UNLOCK(&self->world->shadow_lock);
+    Py_RETURN_NONE;
+  }
+
+  JPH_VehicleConstraint *j_veh = self->vehicle;
+  JPH_VehicleCollisionTester *tester = self->tester;
+  JPH_VehicleControllerSettings *v_ctrl = self->controller_settings;
+  JPH_VehicleTransmissionSettings *v_trans = self->transmission_settings;
+  JPH_WheelSettings **wheels = self->wheel_settings;
+  JPH_LinearCurve *f_curve = self->friction_curve;
+  JPH_LinearCurve *t_curve = self->torque_curve;
+  uint32_t wheel_count = self->num_wheels;
+
+  self->vehicle = NULL;
+  self->tester = NULL;
+  self->controller_settings = NULL;
+  self->transmission_settings = NULL;
+  self->wheel_settings = NULL;
+  self->friction_curve = NULL;
+  self->torque_curve = NULL;
+
+  SHADOW_UNLOCK(&self->world->shadow_lock);
+
+  // Safe to destroy Jolt objects now that we are unlocked and removed from struct
+  if (j_veh) {
+    JPH_PhysicsStepListener *step_listener =
+        JPH_VehicleConstraint_AsPhysicsStepListener(j_veh);
+    JPH_PhysicsSystem_RemoveStepListener(self->world->system, step_listener);
+
+    JPH_PhysicsSystem_RemoveConstraint(self->world->system,
+                                       (JPH_Constraint *)j_veh);
+    JPH_Constraint_Destroy((JPH_Constraint *)j_veh);
+  }
+
+  if (tester) JPH_VehicleCollisionTester_Destroy(tester);
+  if (v_ctrl) JPH_VehicleControllerSettings_Destroy(v_ctrl);
+  if (v_trans) JPH_VehicleTransmissionSettings_Destroy(v_trans);
+
+  if (wheels) {
+    for (uint32_t i = 0; i < wheel_count; i++) {
+      if (wheels[i]) JPH_WheelSettings_Destroy(wheels[i]);
+    }
+    PyMem_RawFree((void *)wheels);
+  }
+
+  if (f_curve) JPH_LinearCurve_Destroy(f_curve);
+  if (t_curve) JPH_LinearCurve_Destroy(t_curve);
+
+  Py_RETURN_NONE;
+}
+
+void Vehicle_dealloc(VehicleObject *self) {
+  PyObject_GC_UnTrack(self);
+
+  // Attempt to clean up. If the world is stepping, this might fail
+  // to remove the constraint from Jolt immediately.
+  // However, in standard cleanup paths, the world will be idle.
+  Vehicle_destroy(self, NULL);
+
+  // If destroy failed because the world was busy, the pointers
+  // are still in the struct. This is a leak, but a safe one (no crash).
+
+  Py_XDECREF(self->world);
+  Py_TYPE(self)->tp_free((PyObject *)self);
+}

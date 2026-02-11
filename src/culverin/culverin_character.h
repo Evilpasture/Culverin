@@ -56,3 +56,11 @@ PyObject *Character_set_strength(CharacterObject *self, PyObject *args);
 
 PyObject *Character_get_render_transform(CharacterObject *self,
                                                 PyObject *arg);
+
+int Character_traverse(CharacterObject *self, visitproc visit,
+                              void *arg);
+
+
+int Character_clear(CharacterObject *self);
+
+void Character_dealloc(CharacterObject *self);

@@ -459,3 +459,71 @@ PyObject *Ragdoll_get_debug_info(RagdollObject *self,
 
   return list;
 }
+
+void Skeleton_dealloc(SkeletonObject *self) {
+  if (self->skeleton) {
+    JPH_Skeleton_Destroy(self->skeleton);
+  }
+  Py_TYPE(self)->tp_free((PyObject *)self);
+}
+
+PyObject *Skeleton_new(PyTypeObject *type, PyObject *args,
+                              PyObject *kwds) {
+  SkeletonObject *self = (SkeletonObject *)type->tp_alloc(type, 0);
+  if (self) {
+    self->skeleton = JPH_Skeleton_Create();
+    if (!self->skeleton) {
+      Py_DECREF(self);
+      return PyErr_NoMemory();
+    }
+  }
+  return (PyObject *)self;
+}
+
+void RagdollSettings_dealloc(RagdollSettingsObject *self) {
+  if (self->settings) {
+    JPH_RagdollSettings_Destroy(self->settings);
+  }
+  Py_XDECREF(self->world);
+  Py_TYPE(self)->tp_free((PyObject *)self);
+}
+
+// --- Ragdoll Instance Implementation ---
+
+void Ragdoll_dealloc(RagdollObject *self) {
+  if (self->world && self->ragdoll) {
+    SHADOW_LOCK(&self->world->shadow_lock);
+
+    BLOCK_UNTIL_NOT_STEPPING(self->world);
+    BLOCK_UNTIL_NOT_QUERYING(self->world);
+
+    JPH_Ragdoll_RemoveFromPhysicsSystem(self->ragdoll, true);
+
+    // Validate pointers before iteration to prevent corruption
+    if (self->body_slots && self->world->slot_states) {
+        for (size_t i = 0; i < self->body_count; i++) {
+          uint32_t slot = self->body_slots[i];
+          
+          // Boundary check
+          if (slot >= self->world->slot_capacity) continue;
+
+          if (self->world->slot_states[slot] != SLOT_ALIVE) {
+            continue; 
+          }
+          world_remove_body_slot(self->world, slot);
+        }
+    }
+    SHADOW_UNLOCK(&self->world->shadow_lock);
+  }
+
+  if (self->ragdoll) {
+    JPH_Ragdoll_Destroy(self->ragdoll);
+  }
+  if (self->body_slots) {
+    PyMem_RawFree(self->body_slots);
+    self->body_slots = NULL; // Prevent double-free in weird recursion cases
+  }
+
+  Py_XDECREF(self->world);
+  Py_TYPE(self)->tp_free((PyObject *)self);
+}

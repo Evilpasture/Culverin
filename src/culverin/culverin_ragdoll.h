@@ -47,3 +47,12 @@ PyObject *Ragdoll_get_body_ids(RagdollObject *self, PyObject *args);
 
 PyObject *Ragdoll_get_debug_info(RagdollObject *self,
                                         PyObject *Py_UNUSED(ignored));
+
+void Skeleton_dealloc(SkeletonObject *self);
+
+PyObject *Skeleton_new(PyTypeObject *type, PyObject *args,
+                              PyObject *kwds);
+
+void RagdollSettings_dealloc(RagdollSettingsObject *self);
+
+void Ragdoll_dealloc(RagdollObject *self);

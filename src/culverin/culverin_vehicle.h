@@ -44,3 +44,12 @@ PyObject *Vehicle_get_wheel_local_transform(VehicleObject *self,
                                                    
 PyObject *Vehicle_get_debug_state(VehicleObject *self,
                                          PyObject *Py_UNUSED(ignored));
+
+int Vehicle_traverse(VehicleObject *self, visitproc visit, void *arg);
+
+int Vehicle_clear(VehicleObject *self);
+
+PyObject *Vehicle_destroy(VehicleObject *self,
+                                 PyObject *Py_UNUSED(ignored));
+
+void Vehicle_dealloc(VehicleObject *self);

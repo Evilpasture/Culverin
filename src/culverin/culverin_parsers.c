@@ -153,3 +153,23 @@ int parse_distance_params(PyObject *args, ConstraintParams *p) {
   // Min, Max
   return PyArg_ParseTuple(args, "ff", &p->limit_min, &p->limit_max);
 }
+
+// Helper 2: Parse the size object (tuple or float) into a 4-float array
+void parse_body_size(PyObject *py_size, float s[4]) {
+  s[0] = 1.0f;
+  s[1] = 1.0f;
+  s[2] = 1.0f;
+  s[3] = 0.0f; // Defaults
+  if (!py_size || py_size == Py_None)
+    return;
+  if (PyTuple_Check(py_size)) {
+    Py_ssize_t sz_len = PyTuple_Size(py_size);
+    for (Py_ssize_t i = 0; i < sz_len && i < 4; i++) {
+      PyObject *item = PyTuple_GetItem(py_size, i);
+      if (PyNumber_Check(item))
+        s[i] = (float)PyFloat_AsDouble(item);
+    }
+  } else if (PyNumber_Check(py_size)) {
+    s[0] = (float)PyFloat_AsDouble(py_size);
+  }
+}
