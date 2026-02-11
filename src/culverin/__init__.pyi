@@ -434,6 +434,9 @@ class PhysicsWorld:
     @property
     def time(self) -> float:
         """Total simulation time."""
+    @property
+    def shape_count(self) -> int:
+        """Number of unique shapes in cache"""
 
 __all__ = [
     "PhysicsWorld", "Character", "Vehicle", "Skeleton", "RagdollSettings", "Ragdoll", 
