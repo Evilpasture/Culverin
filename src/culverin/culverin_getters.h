@@ -17,3 +17,5 @@ PyObject *get_user_data_buffer(struct PhysicsWorldObject *self, void *c);
 PyObject *Character_get_handle(struct CharacterObject *self, void *closure);
 
 PyObject *Vehicle_get_wheel_count(struct VehicleObject *self, void *closure);
+
+PyObject *get_shape_count(struct PhysicsWorldObject *self, void *closure);

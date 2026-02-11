@@ -145,3 +145,7 @@ PyObject *get_user_data_buffer(PhysicsWorldObject *self, void *c) {
   }
   return mv;
 }
+
+PyObject *get_shape_count(PhysicsWorldObject *self, void *closure) {
+    return PyLong_FromSize_t(self->shape_cache_count);
+}
