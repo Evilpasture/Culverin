@@ -33,6 +33,14 @@
 #define JPH_BODY_ID_INDEX_MASK 0x00FFFFFF
 #endif
 
+// Use restrict keyword to tell the compiler these buffers do not overlap.
+// This is the single best way to enable SIMD auto-vectorization.
+#ifdef _MSC_VER
+#define CULV_RESTRICT __restrict
+#else
+#define CULV_RESTRICT __restrict__
+#endif
+
 #define CONTACT_MAX_CAPACITY 16384
 
 // Mask for the raw array index (Stripping the 24th bit used for Static flags)
