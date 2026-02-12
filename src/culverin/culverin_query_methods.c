@@ -463,17 +463,18 @@ fail_buffers:
 PyObject *PhysicsWorld_shapecast(PhysicsWorldObject *self, PyObject *args,
                                  PyObject *kwds) {
   int shape_type = 0;
-  float px; float py; float pz;
-  float rx; float ry; float rz; float rw;
-  float dx; float dy; float dz = 0.0f;
+  JPH_Real px, py, pz;
+  float rx, ry, rz, rw;
+  float dx, dy, dz;
   PyObject *py_size = NULL;
   uint64_t ignore_h = 0;
-  static char *kwlist[] = {"shape", "pos",    "rot", "dir",
-                           "size",  "ignore", NULL};
+  
+  static char *kwlist[] = {"shape", "pos", "rot", "dir", "size", "ignore", NULL};
 
+  // 1. ARGUMENT PARSING (GIL HELD)
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "i(fff)(ffff)(fff)O|K", kwlist,
-                                   &shape_type, &px, &py, &pz, &rx, &ry, &rz,
-                                   &rw, &dx, &dy, &dz, &py_size, &ignore_h)) {
+                                   &shape_type, &px, &py, &pz, &rx, &ry, &rz, &rw,
+                                   &dx, &dy, &dz, &py_size, &ignore_h)) {
     return NULL;
   }
 
@@ -481,72 +482,119 @@ PyObject *PhysicsWorld_shapecast(PhysicsWorldObject *self, PyObject *args,
   if (mag_sq < 1e-9f) {
     Py_RETURN_NONE;
   }
+  
   float s[4];
-  parse_shape_params(py_size, s);
+  parse_body_size(py_size, s); // Helper parses tuple/float/None into float[4]
+  CastShapeContext ctx = {0};
+  // 2. SHAPE ACQUISITION (Release GIL, Jolt Lock -> Shadow Lock)
+  Py_BEGIN_ALLOW_THREADS
 
+  NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
   SHADOW_LOCK(&self->shadow_lock);
-  BLOCK_UNTIL_NOT_STEPPING(self);
-  BLOCK_IF_STEP_PENDING(self);
-  JPH_Shape *shape = find_or_create_shape(self, shape_type, s);
-  if (!shape) {
-    SHADOW_UNLOCK(&self->shadow_lock);
-    return PyErr_Format(PyExc_RuntimeError, "Invalid shape parameters");
+
+  // Safe to create shape now
+  JPH_Shape *shape = find_or_create_shape_locked(self, shape_type, s);
+
+  // We are about to start a query. Increment counter while holding Shadow Lock.
+  if (shape) {
+      atomic_fetch_add_explicit(&self->active_queries, 1, memory_order_acquire);
+  }
+  
+  // Resolve ignore body ID while we have the shadow data
+  JPH_BodyID ignore_bid = JPH_INVALID_BODY_ID;
+  if (ignore_h) {
+      uint32_t slot;
+      if (unpack_handle(self, ignore_h, &slot) && self->slot_states[slot] == SLOT_ALIVE) {
+          ignore_bid = self->body_ids[self->slot_to_dense[slot]];
+      }
   }
 
-  atomic_fetch_add_explicit(&self->active_queries, 1, memory_order_relaxed);
-  JPH_BodyID ignore_bid = 0;
-  uint32_t ignore_slot;
-  if (ignore_h && unpack_handle(self, ignore_h, &ignore_slot)) {
-    ignore_bid = self->body_ids[self->slot_to_dense[ignore_slot]];
-  }
+  // Release Shadow Lock immediately, keep Jolt Lock
   SHADOW_UNLOCK(&self->shadow_lock);
 
-  // --- PREP VECTORS ---
-  JPH_STACK_ALLOC(JPH_RMat4, transform);
-  JPH_RMat4_RotationTranslation(transform, &(JPH_Quat){rx, ry, rz, rw},
-                                &(JPH_RVec3){px, py, pz});
-  JPH_Vec3 sweep_dir = {dx, dy, dz};
-
-  CastShapeContext ctx = {.has_hit = false};
-  ctx.hit.fraction = 1.0f;
-
-  
-  Py_BEGIN_ALLOW_THREADS
-  NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
-
-  shapecast_execute_internal(self, shape, transform, &sweep_dir, ignore_bid,
-                             &ctx);
-  NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
-  Py_END_ALLOW_THREADS
-  
-  // --- GIL RE-ACQUIRED ---
-
-  PyObject *result = NULL;
-  if (ctx.has_hit) {
-    float nx = -ctx.hit.penetrationAxis.x;
-    float ny = -ctx.hit.penetrationAxis.y;
-    float nz = -ctx.hit.penetrationAxis.z;
-    float n_len = sqrtf(nx * nx + ny * ny + nz * nz);
-    if (n_len > 1e-6f) {
-      nx /= n_len; ny /= n_len; nz /= n_len;
-    }
-
-    SHADOW_LOCK(&self->shadow_lock);
-    BodyHandle h = (BodyHandle)JPH_BodyInterface_GetUserData(
-        self->body_interface, ctx.hit.bodyID2);
-    uint32_t slot = (uint32_t)(h & 0xFFFFFFFF);
-    if (slot < self->slot_capacity &&
-        self->generations[slot] == (uint32_t)(h >> 32) &&
-        self->slot_states[slot] == SLOT_ALIVE) {
-      result = Py_BuildValue(
-          "Kf(fff)(fff)", h, ctx.hit.fraction, ctx.hit.contactPointOn2.x,
-          ctx.hit.contactPointOn2.y, ctx.hit.contactPointOn2.z, nx, ny, nz);
-    }
-    SHADOW_UNLOCK(&self->shadow_lock);
+  if (!shape) {
+      NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+      Py_BLOCK_THREADS;
+      return PyErr_Format(PyExc_RuntimeError, "Invalid shape parameters");
   }
 
-  // --- SIGNALING CHANGE HERE ---
-  end_query_scope(self);
+  // 3. QUERY EXECUTION (Jolt Lock Held, GIL Released)
+  // Ensure we don't query while a step is flushing writes
+  // (Note: Since we hold g_jph_trampoline_lock, step() cannot run Jolt updates, 
+  // but it might be in the middle of flush_commands. That's okay because 
+  // flush_commands only touches Shadow data which we aren't reading here, 
+  // OR Jolt data which is protected by the trampoline lock).
+
+  // Prepare Vectors
+  JPH_RMat4 transform;
+  JPH_RVec3 pos = {px, py, pz};
+  JPH_Quat rot = {rx, ry, rz, rw};
+  JPH_RMat4_RotationTranslation(&transform, &rot, &pos);
   
-  return result ? result : Py_None;
+  JPH_Vec3 sweep_dir = {dx, dy, dz};
+
+  // Prepare Context
+  ctx.has_hit = false;
+  ctx.hit.fraction = 1.0f;
+  
+  // Execute Jolt Query
+  shapecast_execute_internal(self, shape, &transform, &sweep_dir, ignore_bid, &ctx);
+
+  NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+  Py_END_ALLOW_THREADS
+
+  // 4. PROCESS RESULTS (GIL Re-acquired)
+  PyObject *result = Py_None;
+  Py_INCREF(Py_None); // Default return
+
+  if (ctx.has_hit) {
+      float nx = -ctx.hit.penetrationAxis.x;
+      float ny = -ctx.hit.penetrationAxis.y;
+      float nz = -ctx.hit.penetrationAxis.z;
+      
+      // Normalize normal
+      float n_len = sqrtf(nx*nx + ny*ny + nz*nz);
+      if (n_len > 1e-6f) {
+          float inv_len = 1.0f / n_len;
+          nx *= inv_len; ny *= inv_len; nz *= inv_len;
+      }
+
+      // 5. RESOLVE HIT BODY (Shadow Lock Required)
+      SHADOW_LOCK(&self->shadow_lock);
+      
+      // We need to look up the handle associated with the body ID
+      // Jolt UserData stores the 64-bit Handle
+      uint64_t h_raw = JPH_BodyInterface_GetUserData(self->body_interface, ctx.hit.bodyID2);
+      BodyHandle h = (BodyHandle)h_raw;
+      
+      uint32_t slot = (uint32_t)(h & 0xFFFFFFFF);
+      uint32_t gen = (uint32_t)(h >> 32);
+
+      // Validate handle is still alive in our world
+      if (slot < self->slot_capacity && 
+          self->generations[slot] == gen && 
+          self->slot_states[slot] == SLOT_ALIVE) {
+          
+          Py_DECREF(result); // Decrement None
+          result = Py_BuildValue("Kf(fff)(fff)", h, ctx.hit.fraction, 
+                                 (float)ctx.hit.contactPointOn2.x, 
+                                 (float)ctx.hit.contactPointOn2.y, 
+                                 (float)ctx.hit.contactPointOn2.z, 
+                                 nx, ny, nz);
+      }
+      SHADOW_UNLOCK(&self->shadow_lock);
+  }
+
+  // 6. SIGNAL QUERY END
+  // We must decrement active_queries and signal the condition variable
+  // so that step() knows it can proceed if it was waiting.
+  int prev = atomic_fetch_sub_explicit(&self->active_queries, 1, memory_order_release);
+  if (prev == 1) {
+      // If we were the last query, wake up the stepper
+      NATIVE_MUTEX_LOCK(self->step_sync.mutex);
+      NATIVE_COND_BROADCAST(self->step_sync.cond);
+      NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
+  }
+
+  return result;
 }

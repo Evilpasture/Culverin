@@ -24,7 +24,7 @@ typedef struct {
 
 #include "culverin.h"
 
-JPH_Shape *find_or_create_shape(struct PhysicsWorldObject *self, int type,
+JPH_Shape *find_or_create_shape_locked(struct PhysicsWorldObject *self, int type,
                                 const float *params);
 
 void free_shape_cache(PhysicsWorldObject *self);

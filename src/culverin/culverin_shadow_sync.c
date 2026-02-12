@@ -20,9 +20,9 @@ void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
 
     // Reuse the same aligned memory for every body
     JPH_BodyInterface_GetPosition(bi, id, pos);
-    self->positions[idx + 0] = (float)pos->x;
-    self->positions[idx + 1] = (float)pos->y;
-    self->positions[idx + 2] = (float)pos->z;
+    self->positions[idx + 0] = pos->x;
+    self->positions[idx + 1] = pos->y;
+    self->positions[idx + 2] = pos->z;
     self->positions[idx + 3] = 0.0f;
 
     JPH_BodyInterface_GetRotation(bi, id, rot);

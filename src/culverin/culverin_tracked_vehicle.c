@@ -117,77 +117,78 @@ PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
   uint64_t chassis_h = 0;
   PyObject *py_wheels = NULL;
   PyObject *py_tracks = NULL;
-  float max_rpm = 6000.0f;
-  float min_rpm = 500.0f;
-  float max_torque = 5000.0f;
-  static char *kwlist[] = {"chassis",    "wheels",  "tracks",
-                           "max_torque", "max_rpm", NULL};
+  float max_rpm = 6000.0f, min_rpm = 500.0f, max_torque = 5000.0f;
+  static char *kwlist[] = {"chassis", "wheels", "tracks", "max_torque", "max_rpm", NULL};
+
+  PyThreadState *_save = NULL; 
 
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "KOO|ff", kwlist, &chassis_h,
-                                   &py_wheels, &py_tracks, &max_torque,
-                                   &max_rpm)) {
+                                   &py_wheels, &py_tracks, &max_torque, &max_rpm)) {
     return NULL;
   }
-  if (!PyList_Check(py_wheels) || !PyList_Check(py_tracks)) {
-    return PyErr_Format(PyExc_TypeError, "Inputs must be lists");
-  }
 
-  // 1. Resolve Chassis
+  // --- 1. RESOLVE CHASSIS (Requires GIL & Shadow Lock) ---
   SHADOW_LOCK(&self->shadow_lock);
-  BLOCK_UNTIL_NOT_STEPPING(self);
-  flush_commands(self);
+  sync_and_flush_internal(self);
   uint32_t slot = 0;
-  // FIX: Check SLOT_ALIVE to prevent attaching to a dying body
-  if (!unpack_handle(self, chassis_h, &slot) ||
-      self->slot_states[slot] != SLOT_ALIVE) {
+  if (!unpack_handle(self, chassis_h, &slot) || self->slot_states[slot] != SLOT_ALIVE) {
     SHADOW_UNLOCK(&self->shadow_lock);
-    return PyErr_Format(PyExc_ValueError, "Invalid or stale chassis handle");
+    return PyErr_Format(PyExc_ValueError, "Invalid chassis handle");
   }
   JPH_BodyID chassis_bid = self->body_ids[self->slot_to_dense[slot]];
   SHADOW_UNLOCK(&self->shadow_lock);
 
-  const JPH_BodyLockInterface *lock_iface =
-      JPH_PhysicsSystem_GetBodyLockInterface(self->system);
-  JPH_BodyLockWrite lock;
-  JPH_BodyLockInterface_LockWrite(lock_iface, chassis_bid, &lock);
-  if (!lock.body) {
-    return PyErr_Format(PyExc_RuntimeError, "Could not lock chassis body");
-  }
-
-  // 2. Resource Management
+  // --- 2. PRE-JOLT RESOURCE ALLOCATION (GIL HELD) ---
   VehicleResources r = {0};
+  uint32_t num_wheels = (uint32_t)PyList_Size(py_wheels);
+  
   r.f_curve = JPH_LinearCurve_Create();
   JPH_LinearCurve_AddPoint(r.f_curve, 0.0f, 1.0f);
   JPH_LinearCurve_AddPoint(r.f_curve, 1.0f, 1.0f);
 
-  uint32_t num_wheels = (uint32_t)PyList_Size(py_wheels);
-  r.w_settings = (JPH_WheelSettings **)PyMem_RawCalloc(
-      num_wheels, sizeof(JPH_WheelSettings *));
-
+  r.w_settings = (JPH_WheelSettings **)PyMem_RawCalloc(num_wheels, sizeof(JPH_WheelSettings *));
   for (uint32_t i = 0; i < num_wheels; i++) {
+    // CRITICAL: Call this while GIL is held
     r.w_settings[i] = create_track_wheel(PyList_GetItem(py_wheels, i));
-    if (!r.w_settings[i]) {
-      cleanup_vehicle_resources(&r, num_wheels, self);
-      JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
-      return NULL;
-    }
+    if (!r.w_settings[i]) goto python_fail;
   }
 
-  // 3. Controller & Tracks
-  JPH_VehicleTransmissionSettings *v_trans = NULL;
-  TrackedEngineConfig eng_cfg = {
-      .torque = max_torque, .max_rpm = max_rpm, .min_rpm = min_rpm};
+  // Parse Track Config into C structs while GIL is held
+  TrackData tracks[2];
+  int num_tracks = 0;
+  parse_tracks_to_c(py_tracks, tracks, &num_tracks);
 
-  JPH_TrackedVehicleControllerSettings *t_ctrl =
-      init_tracked_controller_settings(eng_cfg, &v_trans);
+  // --- 3. JOLT COMMIT (No GIL) ---
+  bool jolt_locked = false;
+  Py_UNBLOCK_THREADS;
+
+  NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+  jolt_locked = true;
+
+  const JPH_BodyLockInterface *lock_iface = JPH_PhysicsSystem_GetBodyLockInterface(self->system);
+  JPH_BodyLockWrite lock = {0};
+  JPH_BodyLockInterface_LockWrite(lock_iface, chassis_bid, &lock);
+
+  if (UNLIKELY(!lock.body)) goto jolt_fail;
+
+  // Setup Controller
+  TrackedEngineConfig eng_cfg = {.torque = max_torque, .max_rpm = max_rpm, .min_rpm = min_rpm};
+  JPH_VehicleTransmissionSettings *v_trans = NULL;
+  JPH_TrackedVehicleControllerSettings *t_ctrl = init_tracked_controller_settings(eng_cfg, &v_trans);
   r.v_ctrl = (JPH_WheeledVehicleControllerSettings *)t_ctrl;
   r.v_trans_set = v_trans;
 
-  uint32_t **track_indices_ptrs = NULL;
-  int num_tracks = 0;
-  parse_tracks_config(t_ctrl, py_tracks, &track_indices_ptrs, &num_tracks);
+  // Apply Track Data to Jolt Controller
+  for (int t = 0; t < num_tracks; t++) {
+    JPH_VehicleTrackSettings track_set;
+    JPH_VehicleTrackSettings_Init(&track_set);
+    track_set.wheels = tracks[t].indices;
+    track_set.wheelsCount = tracks[t].count;
+    track_set.drivenWheel = tracks[t].driven_idx;
+    JPH_TrackedVehicleControllerSettings_SetTrack(t_ctrl, (uint32_t)t, &track_set);
+  }
 
-  // 4. Assembly
+  // Assembly
   JPH_VehicleConstraintSettings v_set;
   JPH_VehicleConstraintSettings_Init(&v_set);
   v_set.wheelsCount = num_wheels;
@@ -195,69 +196,30 @@ PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
   v_set.controller = (JPH_VehicleControllerSettings *)t_ctrl;
 
   r.j_veh = JPH_VehicleConstraint_Create(lock.body, &v_set);
+  if (!r.j_veh) goto jolt_fail;
 
-  // FIX: Leak cleanup on failure
-  if (!r.j_veh) {
-    cleanup_vehicle_resources(&r, num_wheels, self);
-    JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
+  r.tester = JPH_VehicleCollisionTesterRay_Create(2, &(JPH_Vec3){0, 1.0f, 0}, 2.0f);
+  if (!r.tester) goto jolt_fail;
 
-    if (track_indices_ptrs) {
-      for (int i = 0; i < num_tracks; i++) {
-        PyMem_RawFree(track_indices_ptrs[i]);
-      }
-      PyMem_RawFree((void *)track_indices_ptrs);
-    }
-
-    return PyErr_Format(PyExc_RuntimeError,
-                        "Failed to create Tracked Vehicle Constraint");
-  }
-
-  r.tester = JPH_VehicleCollisionTesterRay_Create(2, &(JPH_Vec3){0, 1.0f, 0},
-                                                  2.0f); // <--- CHANGED
-  if (!r.tester) {
-    cleanup_vehicle_resources(&r, num_wheels, self);
-    JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
-    if (track_indices_ptrs) {
-      for (int i = 0; i < num_tracks; i++) {
-        PyMem_RawFree(track_indices_ptrs[i]);
-      }
-      PyMem_RawFree((void *)track_indices_ptrs);
-    }
-    return PyErr_NoMemory();
-  }
-
-  JPH_VehicleConstraint_SetVehicleCollisionTester(
-      r.j_veh, (JPH_VehicleCollisionTester *)r.tester);
-
-  // 5. Commit
-  SHADOW_LOCK(&self->shadow_lock);
-  BLOCK_UNTIL_NOT_STEPPING(self);
+  JPH_VehicleConstraint_SetVehicleCollisionTester(r.j_veh, (JPH_VehicleCollisionTester *)r.tester);
   JPH_PhysicsSystem_AddConstraint(self->system, (JPH_Constraint *)r.j_veh);
-  JPH_PhysicsSystem_AddStepListener(
-      self->system, JPH_VehicleConstraint_AsPhysicsStepListener(r.j_veh));
+  JPH_PhysicsSystem_AddStepListener(self->system, JPH_VehicleConstraint_AsPhysicsStepListener(r.j_veh));
   r.is_added_to_world = true;
-  SHADOW_UNLOCK(&self->shadow_lock);
 
   JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
+  NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+  jolt_locked = false;
+  Py_BLOCK_THREADS;
 
-  // Free temp track index arrays (they were copied into Jolt settings)
-  if (track_indices_ptrs) {
-    for (int i = 0; i < num_tracks; i++) {
-      PyMem_RawFree(track_indices_ptrs[i]);
-    }
-    PyMem_RawFree((void *)track_indices_ptrs);
-  }
+  // --- 4. CLEANUP & WRAP ---
+  for (int t = 0; t < num_tracks; t++) PyMem_RawFree(tracks[t].indices);
 
-  // 6. Python Return
-  VehicleObject *obj = (VehicleObject *)PyObject_New(
-      VehicleObject,
-      (PyTypeObject *)get_culverin_state(PyType_GetModule(Py_TYPE(self)))
-          ->VehicleType);
+  CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+  VehicleObject *obj = (VehicleObject *)PyObject_New(VehicleObject, (PyTypeObject *)st->VehicleType);
   if (!obj) {
-    // Very unlikely at this stage, but technically possible
-    // We rely on Python GC to eventually clean up if we crash here,
-    // but strictly we should destroy the Jolt constraint.
-    // This requires complex unlocking logic.
+    SHADOW_LOCK(&self->shadow_lock);
+    cleanup_vehicle_resources(&r, num_wheels, self);
+    SHADOW_UNLOCK(&self->shadow_lock);
     return NULL;
   }
 
@@ -273,6 +235,18 @@ PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
 
   Py_INCREF(self);
   return (PyObject *)obj;
+
+jolt_fail:
+  if (lock.body) JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
+  if (jolt_locked) NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+  Py_BLOCK_THREADS;
+
+python_fail:
+  for (int t = 0; t < num_tracks; t++) if(tracks[t].indices) PyMem_RawFree(tracks[t].indices);
+  SHADOW_LOCK(&self->shadow_lock);
+  cleanup_vehicle_resources(&r, num_wheels, self);
+  SHADOW_UNLOCK(&self->shadow_lock);
+  return PyErr_Format(PyExc_RuntimeError, "Tracked vehicle creation failed");
 }
 
 // Helper: Set Tank Input

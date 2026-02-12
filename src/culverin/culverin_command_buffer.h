@@ -110,5 +110,6 @@ _Static_assert(sizeof(((PhysicsCommand *)0)->transform) == 32,
 
 void world_remove_body_slot(struct PhysicsWorldObject *self, uint32_t slot);
 bool ensure_command_capacity(struct PhysicsWorldObject *self);
-void flush_commands(struct PhysicsWorldObject *self);
+void flush_commands_internal(struct PhysicsWorldObject *self, PhysicsCommand *queue, size_t count);
+void sync_and_flush_internal(struct PhysicsWorldObject *self);
 void clear_command_queue(struct PhysicsWorldObject *self);

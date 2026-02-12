@@ -33,6 +33,15 @@
 #define JPH_BODY_ID_INDEX_MASK 0x00FFFFFF
 #endif
 
+// --- Jolt Precision Compatibility ---
+#ifndef JPH_Real
+  #ifdef JPH_DOUBLE_PRECISION
+    typedef double JPH_Real;
+  #else
+    typedef float JPH_Real;
+  #endif
+#endif
+
 // Use restrict keyword to tell the compiler these buffers do not overlap.
 // This is the single best way to enable SIMD auto-vectorization.
 #ifdef _MSC_VER
@@ -262,6 +271,14 @@ typedef struct {
   int motion_type;
 } BodyConfig;
 
+// Struct to hold parsed Python data safely in C
+typedef struct {
+    JPH_Vec3 local_p;
+    JPH_Quat local_q;
+    float params[4];
+    int type;
+} CompoundPart;
+
 // --- Native Condition Variable Support ---
 
 #ifdef _WIN32
@@ -380,7 +397,7 @@ typedef struct PhysicsWorldObject {
   size_t contact_max_capacity;
 
   // Shadow Buffers
-  float *positions;
+  JPH_Real *positions;
   float *rotations;
   // Previous State Buffers (For Interpolation)
   float *prev_positions;

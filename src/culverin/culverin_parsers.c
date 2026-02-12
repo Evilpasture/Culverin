@@ -187,3 +187,31 @@ void parse_body_size(PyObject *py_size, float s[4]) {
     s[0] = (float)PyFloat_AsDouble(py_size);
   }
 }
+
+void parse_tracks_to_c(PyObject *py_tracks, TrackData *out_data, int *num_out) {
+    Py_ssize_t num = PyList_Size(py_tracks);
+    if (num > 2) num = 2;
+    *num_out = (int)num;
+
+    for (int t = 0; t < *num_out; t++) {
+        PyObject *dict = PyList_GetItem(py_tracks, t);
+        PyObject *py_idxs = PyDict_GetItemString(dict, "indices");
+        
+        out_data[t].count = 0;
+        out_data[t].indices = NULL;
+        out_data[t].driven_idx = 0;
+
+        if (py_idxs && PyList_Check(py_idxs)) {
+            out_data[t].count = (uint32_t)PyList_Size(py_idxs);
+            out_data[t].indices = PyMem_RawMalloc(out_data[t].count * sizeof(uint32_t));
+            for (uint32_t k = 0; k < out_data[t].count; k++) {
+                out_data[t].indices[k] = (uint32_t)PyLong_AsLong(PyList_GetItem(py_idxs, k));
+            }
+        }
+
+        PyObject *py_driven = PyDict_GetItemString(dict, "driven_wheel");
+        if (py_driven) {
+            out_data[t].driven_idx = (uint32_t)PyLong_AsUnsignedLong(py_driven);
+        }
+    }
+}

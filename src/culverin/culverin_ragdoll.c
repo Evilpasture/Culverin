@@ -65,8 +65,9 @@ PyObject *PhysicsWorld_create_ragdoll_settings(PhysicsWorldObject *self,
 
 PyObject *RagdollSettings_add_part(RagdollSettingsObject *self, PyObject *args,
                                    PyObject *kwds) {
+  // 1. ARGUMENT PARSING
   int joint_idx = 0;
-  int parent_idx = 0;
+  int parent_idx = -1; // Root parts have no parent
   int shape_type = 0;
   float mass = 10.0f;
   PyObject *py_size = NULL;
@@ -75,27 +76,28 @@ PyObject *RagdollSettings_add_part(RagdollSettingsObject *self, PyObject *args,
   float twist_min = -0.1f;
   float twist_max = 0.1f;
   float cone_angle = 0.0f;
-  float cx = 1;
-  float cy = 0;
-  float cz = 0;
-  float nx = 0;
-  float ny = 1;
-  float nz = 0;
+  
+  float cx = 1.0f, cy = 0.0f, cz = 0.0f; // Unpacked from axis tuple
+  float nx = 0.0f, ny = 1.0f, nz = 0.0f; // Unpacked from normal tuple
 
   static char *kwlist[] = {
       "joint_index",  "shape_type", "size",      "mass",
       "parent_index", "twist_min",  "twist_max", "cone_angle",
-      "axis",         "normal",     "pos",       NULL // Added "pos"
+      "axis",         "normal",     "pos",       NULL 
   };
 
-  // Added "O" at the end of the format string for the position tuple
+  // Preserve the (fff) format for the tuples passed in Python
   if (!PyArg_ParseTupleAndKeywords(
-          args, kwds, "iiOfi|fff(fff)(fff)O", kwlist, &joint_idx, &shape_type,
-          &py_size, &mass, &parent_idx, &twist_min, &twist_max, &cone_angle,
-          &cx, &cy, &cz, &nx, &ny, &nz, &py_pos)) {
+          args, kwds, "iiOfi|fff(fff)(fff)O", kwlist, 
+          &joint_idx, &shape_type, &py_size, &mass, &parent_idx, 
+          &twist_min, &twist_max, &cone_angle,
+          &cx, &cy, &cz, 
+          &nx, &ny, &nz,
+          &py_pos)) {
     return NULL;
   }
 
+  // 2. SHAPE ACQUISITION (Thread-Safe)
   float s[4] = {1, 1, 1, 0};
   if (py_size && PyTuple_Check(py_size)) {
     for (Py_ssize_t i = 0; i < PyTuple_Size(py_size) && i < 4; i++) {
@@ -105,35 +107,41 @@ PyObject *RagdollSettings_add_part(RagdollSettingsObject *self, PyObject *args,
     s[0] = (float)PyFloat_AsDouble(py_size);
   }
 
+  JPH_Shape *shape = NULL;
+  Py_BEGIN_ALLOW_THREADS
+
+  NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
   SHADOW_LOCK(&self->world->shadow_lock);
-  JPH_Shape *shape = find_or_create_shape(self->world, shape_type, s);
+  shape = find_or_create_shape_locked(self->world, shape_type, s);
   SHADOW_UNLOCK(&self->world->shadow_lock);
+  NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
 
-  if (!shape) {
-    return PyErr_Format(PyExc_ValueError, "Invalid shape configuration");
-  }
+  Py_END_ALLOW_THREADS;
 
-  int current_cap = JPH_RagdollSettings_GetPartCount(self->settings);
-  JPH_Skeleton *skel =
-      (JPH_Skeleton *)JPH_RagdollSettings_GetSkeleton(self->settings);
+  if (!shape) return PyErr_Format(PyExc_ValueError, "Invalid shape configuration");
+
+  // 3. APPLY SETTINGS
+  JPH_Skeleton *skel = (JPH_Skeleton *)JPH_RagdollSettings_GetSkeleton(self->settings);
   int skel_count = JPH_Skeleton_GetJointCount(skel);
 
-  // Ensure capacity matches skeleton
-  if (current_cap < skel_count) {
-    JPH_RagdollSettings_ResizeParts(self->settings, skel_count);
+  if (joint_idx < 0 || joint_idx >= skel_count) {
+    return PyErr_Format(PyExc_IndexError, "Joint index %d out of bounds", joint_idx);
   }
 
-  if (joint_idx >= skel_count) {
-    return PyErr_Format(PyExc_IndexError, "Joint index out of bounds");
+  // Ensure capacity
+  if (JPH_RagdollSettings_GetPartCount(self->settings) <= joint_idx) {
+    JPH_RagdollSettings_ResizeParts(self->settings, skel_count);
   }
 
   JPH_RagdollSettings_SetPartShape(self->settings, joint_idx, shape);
   JPH_RagdollSettings_SetPartMassProperties(self->settings, joint_idx, mass);
   JPH_RagdollSettings_SetPartObjectLayer(self->settings, joint_idx, 1);
-  JPH_RagdollSettings_SetPartMotionType(self->settings, joint_idx,
-                                        JPH_MotionType_Dynamic);
+  JPH_RagdollSettings_SetPartMotionType(self->settings, joint_idx, JPH_MotionType_Dynamic);
 
+  // --- CRITICAL FIX: POSITION (RVec3) ---
   if (py_pos && PyTuple_Check(py_pos) && PyTuple_Size(py_pos) == 3) {
+    // Use the Stack Alloc macro to ensure correct precision (float vs double) 
+    // and alignment for JPH_RVec3.
     JPH_STACK_ALLOC(JPH_RVec3, p);
     p->x = PyFloat_AsDouble(PyTuple_GetItem(py_pos, 0));
     p->y = PyFloat_AsDouble(PyTuple_GetItem(py_pos, 1));
@@ -141,26 +149,20 @@ PyObject *RagdollSettings_add_part(RagdollSettingsObject *self, PyObject *args,
     JPH_RagdollSettings_SetPartPosition(self->settings, joint_idx, p);
   }
 
+  // Handle Parent Constraint
   if (parent_idx >= 0) {
     JPH_SwingTwistConstraintSettings cs;
     JPH_SwingTwistConstraintSettings_Init(&cs);
-
     cs.base.enabled = true;
+    
+    // Explicitly zero out RVec3 positions
+    cs.position1.x = 0; cs.position1.y = 0; cs.position1.z = 0;
+    cs.position2.x = 0; cs.position2.y = 0; cs.position2.z = 0;
 
-    JPH_Vec3 twist_axis = {cx, cy, cz};
-    JPH_Vec3 plane_normal = {nx, ny, nz};
-
-    cs.position1.x = 0;
-    cs.position1.y = 0;
-    cs.position1.z = 0;
-    cs.position2.x = 0;
-    cs.position2.y = 0;
-    cs.position2.z = 0;
-
-    cs.twistAxis1 = twist_axis;
-    cs.twistAxis2 = twist_axis;
-    cs.planeAxis1 = plane_normal;
-    cs.planeAxis2 = plane_normal;
+    cs.twistAxis1 = (JPH_Vec3){cx, cy, cz};
+    cs.twistAxis2 = (JPH_Vec3){cx, cy, cz};
+    cs.planeAxis1 = (JPH_Vec3){nx, ny, nz};
+    cs.planeAxis2 = (JPH_Vec3){nx, ny, nz};
 
     cs.normalHalfConeAngle = cone_angle;
     cs.planeHalfConeAngle = cone_angle;
@@ -184,70 +186,71 @@ PyObject *RagdollSettings_stabilize(RagdollSettingsObject *self,
 PyObject *PhysicsWorld_create_ragdoll(PhysicsWorldObject *self, PyObject *args,
                                       PyObject *kwds) {
   RagdollSettingsObject *py_settings = NULL;
-  float px = 0;
-  float py = 0;
-  float pz = 0;
-  float rx = 0;
-  float ry = 0;
-  float rz = 0;
-  float rw = 1;
+  float px, py, pz;
+  float rx = 0, ry = 0, rz = 0, rw = 1;
   uint64_t user_data = 0;
-  uint32_t category = 0xFFFF;
-  uint32_t mask = 0xFFFF;
-  uint32_t material_id = 0;
+  uint32_t category = 0xFFFF, mask = 0xFFFF, material_id = 0;
 
-  static char *kwlist[] = {"settings", "pos",  "rot",         "user_data",
+  static char *kwlist[] = {"settings", "pos", "rot", "user_data",
                            "category", "mask", "material_id", NULL};
 
-  // FIX 1: Added third "I" to format string for material_id
   if (!PyArg_ParseTupleAndKeywords(
           args, kwds, "O!(fff)|(ffff)KIII", kwlist,
-          get_culverin_state(PyType_GetModule(Py_TYPE(self)))
-              ->RagdollSettingsType,
-          &py_settings, &px, &py, &pz, &rx, &ry, &rz, &rw, &user_data,
-          &category, &mask, &material_id)) {
+          get_culverin_state(PyType_GetModule(Py_TYPE(self)))->RagdollSettingsType,
+          &py_settings, &px, &py, &pz, &rx, &ry, &rz, &rw, 
+          &user_data, &category, &mask, &material_id)) {
     return NULL;
   }
 
-  JPH_RagdollSettings_CalculateBodyIndexToConstraintIndex(
-      py_settings->settings);
-  JPH_RagdollSettings_CalculateConstraintIndexToBodyIdxPair(
-      py_settings->settings);
+  // 1. Jolt Preparation (Release GIL)
+  PyThreadState *_save = NULL;
+  Py_UNBLOCK_THREADS;
+  NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
 
-  JPH_Ragdoll *j_rag = JPH_RagdollSettings_CreateRagdoll(
-      py_settings->settings, self->system, 0, user_data);
+  // Initialize internal Jolt mappings
+  JPH_RagdollSettings_CalculateBodyIndexToConstraintIndex(py_settings->settings);
+  JPH_RagdollSettings_CalculateConstraintIndexToBodyIdxPair(py_settings->settings);
+
+  // Create the Ragdoll instance
+  JPH_Ragdoll *j_rag = JPH_RagdollSettings_CreateRagdoll(py_settings->settings, self->system, 0, user_data);
+  
   if (!j_rag) {
-    return PyErr_Format(PyExc_RuntimeError,
-                        "Jolt failed to create Ragdoll instance");
+    NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+    Py_BLOCK_THREADS;
+    return PyErr_Format(PyExc_RuntimeError, "Jolt failed to create Ragdoll instance");
   }
 
-  int joint_count = JPH_Skeleton_GetJointCount(
-      JPH_RagdollSettings_GetSkeleton(py_settings->settings));
-  JPH_Mat4 *neutral_matrices =
-      (JPH_Mat4 *)PyMem_RawMalloc(joint_count * sizeof(JPH_Mat4));
-  JPH_STACK_ALLOC(JPH_RVec3, dummy_root);
-  JPH_Ragdoll_GetPose2(j_rag, dummy_root, neutral_matrices, true);
+  // Set the initial Pose in Jolt
+  // We get the "Bind Pose" (Identity matrices) first
+  int joint_count = JPH_Skeleton_GetJointCount(JPH_RagdollSettings_GetSkeleton(py_settings->settings));
+  JPH_Mat4 *neutral_matrices = (JPH_Mat4 *)PyMem_RawMalloc(joint_count * sizeof(JPH_Mat4));
+  
+  JPH_RVec3 zero_root = {0, 0, 0};
+  JPH_Ragdoll_GetPose2(j_rag, &zero_root, neutral_matrices, true);
 
-  JPH_STACK_ALLOC(JPH_RVec3, root_pos);
-  root_pos->x = px;
-  root_pos->y = py;
-  root_pos->z = pz;
-  JPH_STACK_ALLOC(JPH_Quat, root_q);
-  root_q->x = rx;
-  root_q->y = ry;
-  root_q->z = rz;
-  root_q->w = rw;
-  JPH_Ragdoll_SetPose2(j_rag, root_pos, neutral_matrices, true);
+  // Now set the actual World Pose
+  JPH_RVec3 root_pos = {px, py, pz};
+  JPH_Quat root_q = {rx, ry, rz, rw};
+  JPH_Ragdoll_SetPose2(j_rag, &root_pos, neutral_matrices, true);
+
+  // Add to system so we can query final positions
+  JPH_Ragdoll_AddToPhysicsSystem(j_rag, JPH_Activation_Activate, true);
 
   int body_count = JPH_Ragdoll_GetBodyCount(j_rag);
-  PyObject *module = PyType_GetModule(Py_TYPE(self));
-  CulverinState *st = get_culverin_state(module);
-  RagdollObject *obj = (RagdollObject *)PyObject_New(
-      RagdollObject, (PyTypeObject *)st->RagdollType);
+  
+  NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+  Py_BLOCK_THREADS;
 
+  // 2. Python Object Creation
+  CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+  RagdollObject *obj = (RagdollObject *)PyObject_New(RagdollObject, (PyTypeObject *)st->RagdollType);
   if (!obj) {
+    Py_BEGIN_ALLOW_THREADS
+    NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
     JPH_Ragdoll_Destroy(j_rag);
-    PyMem_RawFree(neutral_matrices); // FIX 2: Prevent leak if allocation fails
+    NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+    Py_END_ALLOW_THREADS
+    PyMem_RawFree(neutral_matrices);
     return NULL;
   }
 
@@ -257,9 +260,10 @@ PyObject *PhysicsWorld_create_ragdoll(PhysicsWorldObject *self, PyObject *args,
   obj->body_count = (size_t)body_count;
   obj->body_slots = (uint32_t *)PyMem_RawMalloc(body_count * sizeof(uint32_t));
 
+  // 3. Shadow Buffer "Warm-up" (Sync Jolt -> CPU)
   SHADOW_LOCK(&self->shadow_lock);
-  BLOCK_UNTIL_NOT_STEPPING(self);
-
+  
+  // Ensure capacity for all ragdoll parts
   if (self->free_count < (size_t)body_count) {
     if (PhysicsWorld_resize(self, self->capacity + body_count + 128) < 0) {
       SHADOW_UNLOCK(&self->shadow_lock);
@@ -271,40 +275,33 @@ PyObject *PhysicsWorld_create_ragdoll(PhysicsWorldObject *self, PyObject *args,
     }
   }
 
+  JPH_BodyInterface *bi = self->body_interface;
+
   for (int i = 0; i < body_count; i++) {
     JPH_BodyID bid = JPH_Ragdoll_GetBodyID(j_rag, i);
     uint32_t slot = self->free_slots[--self->free_count];
     obj->body_slots[i] = slot;
     uint32_t dense = (uint32_t)self->count;
 
-    JPH_STACK_ALLOC(JPH_Vec3, local_offset);
-    JPH_Mat4_GetTranslation(&neutral_matrices[i], local_offset);
+    // --- ACCURATE WARM-UP ---
+    // Query Jolt directly for where it placed the body after SetPose2
+    JPH_RVec3 world_p;
+    JPH_Quat world_q;
+    JPH_BodyInterface_GetPosition(bi, bid, &world_p);
+    JPH_BodyInterface_GetRotation(bi, bid, &world_q);
 
-    // FIX 3: Apply root rotation to limb offset for perfect world positioning
-    JPH_STACK_ALLOC(JPH_Vec3, rotated_offset);
-    manual_vec3_rotate_by_quat(local_offset, root_q, rotated_offset);
+    size_t off = (size_t)dense * 4;
+    self->positions[off + 0] = (float)world_p.x;
+    self->positions[off + 1] = (float)world_p.y;
+    self->positions[off + 2] = (float)world_p.z;
+    
+    memcpy(&self->rotations[off], &world_q, 16);
+    memcpy(&self->prev_positions[off], &self->positions[off], 16);
+    memcpy(&self->prev_rotations[off], &self->rotations[off], 16);
 
-    self->positions[dense * 4 + 0] = (px + rotated_offset->x);
-    self->positions[dense * 4 + 1] = (py + rotated_offset->y);
-    self->positions[dense * 4 + 2] = (pz + rotated_offset->z);
-    self->positions[dense * 4 + 3] = 0.0f;
-
-    JPH_STACK_ALLOC(JPH_Quat, local_q);
-    JPH_Mat4_GetQuaternion(&neutral_matrices[i], local_q);
-    JPH_STACK_ALLOC(JPH_Quat, world_q);
-    manual_quat_multiply(root_q, local_q, world_q);
-    memcpy(&self->rotations[(size_t)dense * 4], world_q, 16);
-
-    // Sync metadata
-    memcpy(&self->prev_positions[(size_t)dense * 4],
-           &self->positions[(size_t)dense * 4], 16);
-    memcpy(&self->prev_rotations[(size_t)dense * 4],
-           &self->rotations[(size_t)dense * 4], 16);
-
-    // FIX 4: Zero out velocities to prevent "Exploding Launch" from stale
-    // memory
-    memset(&self->linear_velocities[(size_t)dense * 4], 0, 16);
-    memset(&self->angular_velocities[(size_t)dense * 4], 0, 16);
+    // Initial state
+    memset(&self->linear_velocities[off], 0, 16);
+    memset(&self->angular_velocities[off], 0, 16);
 
     self->body_ids[dense] = bid;
     self->slot_to_dense[slot] = dense;
@@ -316,12 +313,10 @@ PyObject *PhysicsWorld_create_ragdoll(PhysicsWorldObject *self, PyObject *args,
     self->material_ids[dense] = material_id;
     self->count++;
 
-    JPH_BodyInterface_SetUserData(
-        self->body_interface, bid,
-        (uint64_t)make_handle(slot, self->generations[slot]));
+    // Link Jolt Body back to our Handle for callbacks
+    JPH_BodyInterface_SetUserData(bi, bid, (uint64_t)make_handle(slot, self->generations[slot]));
   }
 
-  JPH_Ragdoll_AddToPhysicsSystem(j_rag, JPH_Activation_Activate, true);
   SHADOW_UNLOCK(&self->shadow_lock);
 
   PyMem_RawFree(neutral_matrices);

@@ -289,6 +289,28 @@ class PhysicsWorld:
                    Example: [((0,1,0), (0,0,0,1), SHAPE_BOX, (0.5,0.5,0.5))]
         """
         ...
+
+    def create_bodies_batch(
+        self, 
+        positions: List[Vec3], 
+        sizes: List[Vec3], 
+        shape_type: int = SHAPE_BOX, 
+        motion_type: int = MOTION_DYNAMIC
+    ) -> List[Optional[Handle]]:
+        """
+        Creates multiple physics bodies in a single high-performance batch.
+        
+        This method is significantly faster than calling create_body in a loop 
+        as it releases the GIL once and batches internal memory reallocations.
+
+        :param positions: A list of (x, y, z) coordinates for each body.
+        :param sizes: A list of size parameters (e.g., (hx, hy, hz) for boxes).
+        :param shape_type: The shape identifier (default: Box).
+        :param motion_type: The motion type (default: Dynamic).
+        :return: A list of 64-bit integer handles for the created bodies. 
+                 Returns None for indices where creation failed.
+        """
+        ...
         
     def destroy_body(self, handle: Handle) -> None:
         """Queue destruction of a body. Handle becomes invalid immediately."""

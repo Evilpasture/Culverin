@@ -385,7 +385,11 @@ int allocate_buffers(PhysicsWorldObject *self, int max_bodies) {
 }
 
 // helper: Iterate over baked Python data to create initial Jolt bodies
+// helper: Iterate over baked Python data to create initial Jolt bodies
 int load_baked_scene(PhysicsWorldObject *self, PyObject *baked) {
+  // 1. EXTRACT POINTERS (GIL HELD)
+  // We assume the caller (Python) ensures these tuples/bytes are valid and match 'self->count'.
+  
   float *f_pos = (float *)PyBytes_AsString(PyTuple_GetItem(baked, 1));
   float *f_rot = (float *)PyBytes_AsString(PyTuple_GetItem(baked, 2));
   float *f_shape = (float *)PyBytes_AsString(PyTuple_GetItem(baked, 3));
@@ -395,40 +399,81 @@ int load_baked_scene(PhysicsWorldObject *self, PyObject *baked) {
       (unsigned char *)PyBytes_AsString(PyTuple_GetItem(baked, 5));
   uint64_t *u_data = (uint64_t *)PyBytes_AsString(PyTuple_GetItem(baked, 6));
 
+  if (!f_pos || !f_rot || !f_shape || !u_mot || !u_layer || !u_data) {
+      PyErr_SetString(PyExc_ValueError, "Invalid baked data structure");
+      return -1;
+  }
+
+  int result = 0;
+
+  // 2. ENTER CRITICAL SECTION (Release GIL)
+  Py_BEGIN_ALLOW_THREADS
+
+  // Acquire locks in the Safe Order: Jolt (Outer) -> Shadow (Inner)
+  NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+  SHADOW_LOCK(&self->shadow_lock);
+
+  JPH_BodyInterface *bi = self->body_interface;
+
   for (size_t i = 0; i < self->count; i++) {
+    // A. Shape Lookup (Safe: Both locks held)
+    // Structure: [Type, P1, P2, P3, P4] per shape entry
     float params[4] = {f_shape[i * 5 + 1], f_shape[i * 5 + 2],
                        f_shape[i * 5 + 3], f_shape[i * 5 + 4]};
-    JPH_Shape *shape = find_or_create_shape(self, (int)f_shape[i * 5], params);
-    if (!shape) {
-      return -1;
+    
+    JPH_Shape *shape = find_or_create_shape_locked(self, (int)f_shape[i * 5], params);
+    
+    if (UNLIKELY(!shape)) {
+      result = -1;
+      break; // Exit loop, cleanup locks below
     }
 
+    // B. Create Settings
+    // Note: f_pos stride appears to be 4 in your data (likely aligned Vec4 or X,Y,Z,Pad)
     JPH_BodyCreationSettings *creation = JPH_BodyCreationSettings_Create3(
-        shape, &(JPH_RVec3){f_pos[i * 4], f_pos[i * 4 + 1], f_pos[i * 4 + 2]},
-        &(JPH_Quat){f_rot[i * 4], f_rot[i * 4 + 1], f_rot[i * 4 + 2],
-                    f_rot[i * 4 + 3]},
-        (JPH_MotionType)u_mot[i], (JPH_ObjectLayer)u_layer[i]);
+        shape, 
+        &(JPH_RVec3){f_pos[i * 4], f_pos[i * 4 + 1], f_pos[i * 4 + 2]},
+        &(JPH_Quat){f_rot[i * 4], f_rot[i * 4 + 1], f_rot[i * 4 + 2], f_rot[i * 4 + 3]},
+        (JPH_MotionType)u_mot[i], 
+        (JPH_ObjectLayer)u_layer[i]
+    );
 
+    // C. Metadata Setup
     self->generations[i] = 1;
-    JPH_BodyCreationSettings_SetUserData(creation,
-                                         (uint64_t)make_handle((uint32_t)i, 1));
-    if (u_mot[i] == 2) {
+    JPH_BodyCreationSettings_SetUserData(creation, (uint64_t)make_handle((uint32_t)i, 1));
+    
+    if (u_mot[i] == 2) { // KINEMATIC/DYNAMIC check
       JPH_BodyCreationSettings_SetAllowSleeping(creation, true);
     }
 
-    self->body_ids[i] = JPH_BodyInterface_CreateAndAddBody(
-        self->body_interface, creation, JPH_Activation_Activate);
+    // D. Jolt Creation
+    self->body_ids[i] = JPH_BodyInterface_CreateAndAddBody(bi, creation, JPH_Activation_Activate);
+    
+    // E. Shadow Updates
     uint32_t j_idx = JPH_ID_TO_INDEX(self->body_ids[i]);
-    if (j_idx < self->max_jolt_bodies) {
+    if (self->id_to_handle_map && j_idx < self->max_jolt_bodies) {
       self->id_to_handle_map[j_idx] = make_handle((uint32_t)i, 1);
     }
 
-    self->slot_to_dense[i] = self->dense_to_slot[i] = (uint32_t)i;
+    self->slot_to_dense[i] = (uint32_t)i;
+    self->dense_to_slot[i] = (uint32_t)i;
     self->slot_states[i] = SLOT_ALIVE;
     self->user_data[i] = u_data[i];
+
     JPH_BodyCreationSettings_Destroy(creation);
   }
-  return 0;
+
+  // 3. EXIT CRITICAL SECTION
+  SHADOW_UNLOCK(&self->shadow_lock);
+  NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+  
+  Py_END_ALLOW_THREADS
+
+  if (result == -1) {
+      PyErr_SetString(PyExc_RuntimeError, "Failed to create shape during baked load");
+  }
+
+  return result;
 }
 
 int verify_abi_alignment(JPH_BodyInterface *bi) {

@@ -1,6 +1,7 @@
 #pragma once
 #include <Python.h>
 #include <stdbool.h>
+#include "culverin_tracked_vehicle.h"
 
 typedef struct {
   float x;
@@ -45,3 +46,5 @@ int parse_cone_params(PyObject *args, ConstraintParams *p);
 int parse_distance_params(PyObject *args, ConstraintParams *p);
 
 void parse_body_size(PyObject *py_size, float s[4]);
+
+void parse_tracks_to_c(PyObject *py_tracks, TrackData *out_data, int *num_out);

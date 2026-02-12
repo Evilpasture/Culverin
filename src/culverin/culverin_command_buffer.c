@@ -78,34 +78,33 @@ bool ensure_command_capacity(PhysicsWorldObject *self) {
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-void flush_commands(PhysicsWorldObject *self) {
-  if (self->command_count == 0) {
-    return;
-  }
-
+void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *queue, size_t count) {
+  if (count == 0) return;
   JPH_BodyInterface *bi = self->body_interface;
 
-  for (size_t i = 0; i < self->command_count; i++) {
-    PhysicsCommand *cmd = &self->command_queue[i];
-    // Unpack Header
+  for (size_t i = 0; i < count; i++) {
+    PhysicsCommand *cmd = &queue[i];
     uint32_t header = cmd->header;
     CommandType type = CMD_GET_TYPE(header);
     uint32_t slot = CMD_GET_SLOT(header);
 
-    // --- Safety Checks ---
-    if (type != CMD_CREATE_BODY) {
-      if (self->slot_states[slot] != SLOT_ALIVE) {
-        continue;
-      }
-    }
-
-    // Resolve dense index
-    uint32_t dense_idx = 0;
+    // --- 1. DYNAMIC RESOLUTION (Brief Lock) ---
+    // We must resolve the ID and Index right before processing.
+    // This allows Create -> Destroy in the same frame to work.
+    SHADOW_LOCK(&self->shadow_lock);
+    SlotState state = self->slot_states[slot];
     JPH_BodyID bid = JPH_INVALID_BODY_ID;
+    uint32_t dense_idx = 0;
 
-    if (type != CMD_CREATE_BODY) {
+    if (state == SLOT_ALIVE || state == SLOT_PENDING_CREATE) {
       dense_idx = self->slot_to_dense[slot];
       bid = self->body_ids[dense_idx];
+    }
+    SHADOW_UNLOCK(&self->shadow_lock);
+
+    // If the body doesn't exist and we aren't creating it, skip this command.
+    if (type != CMD_CREATE_BODY && bid == JPH_INVALID_BODY_ID) {
+      continue;
     }
 
     switch (type) {
@@ -113,27 +112,25 @@ void flush_commands(PhysicsWorldObject *self) {
       JPH_BodyCreationSettings *s = cmd->create.settings;
       JPH_BodyID new_bid = JPH_BodyInterface_CreateAndAddBody(bi, s, JPH_Activation_Activate);
 
+      SHADOW_LOCK(&self->shadow_lock);
       if (UNLIKELY(new_bid == JPH_INVALID_BODY_ID)) {
-        // If Jolt fails, we must roll back our immediate writes
+        // Jolt Failed: Rollback the slot reservation
         self->count--;
         self->slot_states[slot] = SLOT_EMPTY;
         self->generations[slot]++;
         self->free_slots[self->free_count++] = slot;
-        JPH_BodyCreationSettings_Destroy(s);
-        continue;
+      } else {
+        // Success: Finalize the shadow buffers
+        uint32_t d = self->slot_to_dense[slot];
+        self->body_ids[d] = new_bid;
+        
+        uint32_t j_idx = JPH_ID_TO_INDEX(new_bid);
+        if (self->id_to_handle_map && j_idx < self->max_jolt_bodies) {
+          self->id_to_handle_map[j_idx] = make_handle(slot, self->generations[slot]);
+        }
+        self->slot_states[slot] = SLOT_ALIVE;
       }
-
-      // Find where we put it in create_body
-      uint32_t dense = self->slot_to_dense[slot];
-      self->body_ids[dense] = new_bid;
-
-      // Update the handle lookup map for callbacks
-      uint32_t jolt_idx = JPH_ID_TO_INDEX(new_bid);
-      if (self->id_to_handle_map && jolt_idx < self->max_jolt_bodies) {
-        self->id_to_handle_map[jolt_idx] = make_handle(slot, self->generations[slot]);
-      }
-
-      self->slot_states[slot] = SLOT_ALIVE;
+      SHADOW_UNLOCK(&self->shadow_lock);
       JPH_BodyCreationSettings_Destroy(s);
       break;
     }
@@ -141,126 +138,146 @@ void flush_commands(PhysicsWorldObject *self) {
     case CMD_DESTROY_BODY: {
       JPH_BodyInterface_RemoveBody(bi, bid);
       JPH_BodyInterface_DestroyBody(bi, bid);
+      
+      SHADOW_LOCK(&self->shadow_lock);
       world_remove_body_slot(self, slot);
+      SHADOW_UNLOCK(&self->shadow_lock);
       break;
     }
 
     case CMD_SET_POS: {
       JPH_STACK_ALLOC(JPH_RVec3, p);
-      p->x = cmd->vec.x;
-      p->y = cmd->vec.y;
-      p->z = cmd->vec.z;
+      p->x = (JPH_Real)cmd->vec.x; p->y = (JPH_Real)cmd->vec.y; p->z = (JPH_Real)cmd->vec.z;
       JPH_BodyInterface_SetPosition(bi, bid, p, JPH_Activation_Activate);
 
-      size_t offset = (size_t)dense_idx * 4;
-      self->positions[offset + 0] = cmd->vec.x;
-      self->positions[offset + 1] = cmd->vec.y;
-      self->positions[offset + 2] = cmd->vec.z;
-
-      // FIX: Reset interpolation (Teleport)
-      self->prev_positions[offset + 0] = cmd->vec.x;
-      self->prev_positions[offset + 1] = cmd->vec.y;
-      self->prev_positions[offset + 2] = cmd->vec.z;
+      SHADOW_LOCK(&self->shadow_lock);
+      // RE-FETCH: Previous commands in this batch might have triggered a 
+      // swap-and-pop, changing our dense index. We must re-fetch.
+      uint32_t current_dense = self->slot_to_dense[slot];
+      size_t off = (size_t)current_dense * 4;
+      self->positions[off+0] = cmd->vec.x; self->positions[off+1] = cmd->vec.y; self->positions[off+2] = cmd->vec.z;
+      self->prev_positions[off+0] = cmd->vec.x; self->prev_positions[off+1] = cmd->vec.y; self->prev_positions[off+2] = cmd->vec.z;
+      SHADOW_UNLOCK(&self->shadow_lock);
       break;
     }
 
     case CMD_SET_ROT: {
       JPH_STACK_ALLOC(JPH_Quat, q);
-      q->x = cmd->vec.x;
-      q->y = cmd->vec.y;
-      q->z = cmd->vec.z;
-      q->w = cmd->vec.w;
+      q->x = cmd->vec.x; q->y = cmd->vec.y; q->z = cmd->vec.z; q->w = cmd->vec.w;
       JPH_BodyInterface_SetRotation(bi, bid, q, JPH_Activation_Activate);
 
-      size_t offset = (size_t)dense_idx * 4;
-      memcpy(&self->rotations[offset], &cmd->vec, 16);
-      // FIX: Reset interpolation
-      memcpy(&self->prev_rotations[offset], &cmd->vec, 16);
+      SHADOW_LOCK(&self->shadow_lock);
+      uint32_t current_dense = self->slot_to_dense[slot];
+      memcpy(&self->rotations[current_dense * 4], &cmd->vec, 16);
+      memcpy(&self->prev_rotations[current_dense * 4], &cmd->vec, 16);
+      SHADOW_UNLOCK(&self->shadow_lock);
       break;
     }
 
     case CMD_SET_TRNS: {
       JPH_STACK_ALLOC(JPH_RVec3, p);
-      p->x = cmd->transform.px;
-      p->y = cmd->transform.py;
-      p->z = cmd->transform.pz;
+      p->x = (JPH_Real)cmd->transform.px; p->y = (JPH_Real)cmd->transform.py; p->z = (JPH_Real)cmd->transform.pz;
       JPH_STACK_ALLOC(JPH_Quat, q);
-      q->x = cmd->transform.rx;
-      q->y = cmd->transform.ry;
-      q->z = cmd->transform.rz;
-      q->w = cmd->transform.rw;
+      q->x = cmd->transform.rx; q->y = cmd->transform.ry; q->z = cmd->transform.rz; q->w = cmd->transform.rw;
+      JPH_BodyInterface_SetPositionAndRotation(bi, bid, p, q, JPH_Activation_Activate);
 
-      JPH_BodyInterface_SetPositionAndRotation(bi, bid, p, q,
-                                               JPH_Activation_Activate);
-
-      size_t offset = (size_t)dense_idx * 4;
-      self->positions[offset + 0] = (float)p->x;
-      self->positions[offset + 1] = (float)p->y;
-      self->positions[offset + 2] = (float)p->z;
-      memcpy(&self->rotations[offset], &cmd->transform.rx, 16);
-
-      // FIX: Reset interpolation
-      self->prev_positions[offset + 0] = (float)p->x;
-      self->prev_positions[offset + 1] = (float)p->y;
-      self->prev_positions[offset + 2] = (float)p->z;
-      memcpy(&self->prev_rotations[offset], &cmd->transform.rx, 16);
+      SHADOW_LOCK(&self->shadow_lock);
+      uint32_t current_dense = self->slot_to_dense[slot];
+      size_t off = (size_t)current_dense * 4;
+      self->positions[off+0] = cmd->transform.px; self->positions[off+1] = cmd->transform.py; self->positions[off+2] = cmd->transform.pz;
+      self->prev_positions[off+0] = cmd->transform.px; self->prev_positions[off+1] = cmd->transform.py; self->prev_positions[off+2] = cmd->transform.pz;
+      memcpy(&self->rotations[off], &cmd->transform.rx, 16);
+      memcpy(&self->prev_rotations[off], &cmd->transform.rx, 16);
+      SHADOW_UNLOCK(&self->shadow_lock);
       break;
     }
 
     case CMD_SET_LINVEL: {
       JPH_Vec3 v = {cmd->vec.x, cmd->vec.y, cmd->vec.z};
       JPH_BodyInterface_SetLinearVelocity(bi, bid, &v);
-      self->linear_velocities[dense_idx * 4 + 0] = cmd->vec.x;
-      self->linear_velocities[dense_idx * 4 + 1] = cmd->vec.y;
-      self->linear_velocities[dense_idx * 4 + 2] = cmd->vec.z;
+      SHADOW_LOCK(&self->shadow_lock);
+      uint32_t current_dense = self->slot_to_dense[slot];
+      self->linear_velocities[current_dense * 4 + 0] = v.x;
+      self->linear_velocities[current_dense * 4 + 1] = v.y;
+      self->linear_velocities[current_dense * 4 + 2] = v.z;
+      SHADOW_UNLOCK(&self->shadow_lock);
       break;
     }
 
     case CMD_SET_ANGVEL: {
       JPH_Vec3 v = {cmd->vec.x, cmd->vec.y, cmd->vec.z};
       JPH_BodyInterface_SetAngularVelocity(bi, bid, &v);
-      self->angular_velocities[dense_idx * 4 + 0] = cmd->vec.x;
-      self->angular_velocities[dense_idx * 4 + 1] = cmd->vec.y;
-      self->angular_velocities[dense_idx * 4 + 2] = cmd->vec.z;
+      SHADOW_LOCK(&self->shadow_lock);
+      uint32_t current_dense = self->slot_to_dense[slot];
+      self->angular_velocities[current_dense * 4 + 0] = v.x;
+      self->angular_velocities[current_dense * 4 + 1] = v.y;
+      self->angular_velocities[current_dense * 4 + 2] = v.z;
+      SHADOW_UNLOCK(&self->shadow_lock);
       break;
     }
 
     case CMD_SET_MOTION: {
-      JPH_BodyInterface_SetMotionType(bi, bid,
-                                      (JPH_MotionType)cmd->motion.motion_type,
-                                      JPH_Activation_Activate);
-      // Optional: If you use Layer 0 for Static and Layer 1 for Moving
+      JPH_BodyInterface_SetMotionType(bi, bid, (JPH_MotionType)cmd->motion.motion_type, JPH_Activation_Activate);
       uint32_t layer = (cmd->motion.motion_type == 0) ? 0 : 1;
       JPH_BodyInterface_SetObjectLayer(bi, bid, (JPH_ObjectLayer)layer);
       break;
     }
 
-    case CMD_ACTIVATE:
-      JPH_BodyInterface_ActivateBody(bi, bid);
-      break;
-    case CMD_DEACTIVATE:
-      JPH_BodyInterface_DeactivateBody(bi, bid);
+    case CMD_ACTIVATE: JPH_BodyInterface_ActivateBody(bi, bid); break;
+    case CMD_DEACTIVATE: JPH_BodyInterface_DeactivateBody(bi, bid); break;
+
+    case CMD_SET_USER_DATA:
+      SHADOW_LOCK(&self->shadow_lock);
+      self->user_data[self->slot_to_dense[slot]] = cmd->user_data.user_data_val;
+      SHADOW_UNLOCK(&self->shadow_lock);
       break;
 
-    case CMD_SET_USER_DATA: {
-      self->user_data[dense_idx] = cmd->user_data.user_data_val;
-      break;
-    }
     case CMD_SET_CCD: {
-      JPH_MotionQuality qual = cmd->motion.motion_type
-                                   ? JPH_MotionQuality_LinearCast
-                                   : JPH_MotionQuality_Discrete;
+      JPH_MotionQuality qual = cmd->motion.motion_type ? JPH_MotionQuality_LinearCast : JPH_MotionQuality_Discrete;
       JPH_BodyInterface_SetMotionQuality(bi, bid, qual);
       break;
     }
-    default:
-      DEBUG_LOG("Warning: Invalid command during flush. Check flush_commands.");
-      break;
+    default: break;
     }
   }
 
-  self->command_count = 0;
+  // Final count sync for MemoryViews
+  SHADOW_LOCK(&self->shadow_lock);
   self->view_shape[0] = (Py_ssize_t)self->count;
+  SHADOW_UNLOCK(&self->shadow_lock);
+}
+
+/**
+ * Helper: Flushes pending commands while releasing shadow_lock to 
+ * avoid stalling the world during heavy Jolt operations.
+ */
+void sync_and_flush_internal(PhysicsWorldObject *self) {
+    BLOCK_UNTIL_NOT_STEPPING(self);
+    BLOCK_UNTIL_NOT_QUERYING(self);
+
+    if (self->command_count == 0) return;
+
+    // Capture queue and swap
+    PhysicsCommand *captured_queue = self->command_queue;
+    size_t captured_count = self->command_count;
+    self->command_queue = NULL;
+    self->command_count = 0;
+    self->command_capacity = 0;
+
+    // RELEASE SHADOW LOCK completely before Jolt/Flush
+    SHADOW_UNLOCK(&self->shadow_lock);
+    
+    Py_BEGIN_ALLOW_THREADS
+    NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+
+    flush_commands_internal(self, captured_queue, captured_count);
+    PyMem_RawFree(captured_queue);
+
+    NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+    Py_END_ALLOW_THREADS
+
+    // Re-acquire for the caller
+    SHADOW_LOCK(&self->shadow_lock);
 }
 
 void clear_command_queue(PhysicsWorldObject *self) {

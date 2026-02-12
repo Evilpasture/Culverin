@@ -4,15 +4,13 @@
 // --- Helper: Shape Caching (Internal) ---
 // This is called during creation (e.g. create_body). 
 // Since creation is low-frequency compared to rays, we handle locking internally here.
-// --- Helper: Shape Caching (Internal) ---
-JPH_Shape *find_or_create_shape(PhysicsWorldObject *self, int type,
-                                const float *params) {
+// Requires: SHADOW_LOCK held AND g_jph_trampoline_lock held
+JPH_Shape *find_or_create_shape_locked(PhysicsWorldObject *self, int type, const float *params) {
   ShapeKey key;
   memset(&key, 0, sizeof(ShapeKey));
   key.type = (uint32_t)type;
 
-  // 1. SANITIZATION: Jolt shapes (especially Box/Sphere) can fail if size is 0.
-  // We enforce a 1mm minimum size.
+  // 1. SANITIZATION
   float p1 = (params[0] < 0.001f) ? 0.001f : params[0];
   float p2 = (params[1] < 0.001f) ? 0.001f : params[1];
   float p3 = (params[2] < 0.001f) ? 0.001f : params[2];
@@ -20,78 +18,60 @@ JPH_Shape *find_or_create_shape(PhysicsWorldObject *self, int type,
 
   key.p1 = p1; key.p2 = p2; key.p3 = p3; key.p4 = p4;
 
-  // 2. CACHE LOOKUP (Under Shadow Lock)
+  // 2. CACHE LOOKUP (Safe because SHADOW_LOCK is held)
   for (size_t i = 0; i < self->shape_cache_count; i++) {
     if (memcmp(&self->shape_cache[i].key, &key, sizeof(ShapeKey)) == 0) {
       return self->shape_cache[i].shape;
     }
   }
 
-  // 3. JOLT CREATION WITH RETRY
+  // 3. JOLT CREATION (Safe because Jolt Lock is held)
   JPH_Shape *shape = NULL;
-  int retries = 5;
-
-  while (retries-- > 0) {
-    Py_BEGIN_ALLOW_THREADS
-    NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
-
-    if (type == 0) { // BOX
+  
+  if (type == 0) { // BOX
       JPH_Vec3 he = {p1, p2, p3};
       JPH_BoxShapeSettings *s = JPH_BoxShapeSettings_Create(&he, 0.05f);
       if (s) {
           shape = (JPH_Shape *)JPH_BoxShapeSettings_CreateShape(s);
           JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);
       }
-    } else if (type == 1) { // SPHERE
+  } else if (type == 1) { // SPHERE
       JPH_SphereShapeSettings *s = JPH_SphereShapeSettings_Create(p1);
       if (s) {
           shape = (JPH_Shape *)JPH_SphereShapeSettings_CreateShape(s);
           JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);
       }
-    } else if (type == 2) { // CAPSULE
+  } else if (type == 2) { // CAPSULE
       JPH_CapsuleShapeSettings *s = JPH_CapsuleShapeSettings_Create(p1, p2);
       if (s) {
           shape = (JPH_Shape *)JPH_CapsuleShapeSettings_CreateShape(s);
           JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);
       }
-    } else if (type == 3) { // CYLINDER
+  } else if (type == 3) { // CYLINDER
       JPH_CylinderShapeSettings *s = JPH_CylinderShapeSettings_Create(p1, p2, 0.05f);
       if (s) {
           shape = (JPH_Shape *)JPH_CylinderShapeSettings_CreateShape(s);
           JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);
       }
-    } else if (type == 4) { // PLANE
+  } else if (type == 4) { // PLANE
       JPH_Plane p = {{p1, p2, p3}, p4};
       JPH_PlaneShapeSettings *s = JPH_PlaneShapeSettings_Create(&p, NULL, 1000.0f);
       if (s) {
           shape = (JPH_Shape *)JPH_PlaneShapeSettings_CreateShape(s);
           JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);
       }
-    }
-
-    NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
-    Py_END_ALLOW_THREADS
-
-    // Success!
-    if (shape) break;
-
-    // Failure: Yield or Sleep briefly before retry to allow memory to defragment
-    if (retries > 0) {
-        Py_BEGIN_ALLOW_THREADS
-        culverin_yield(); // Uses SwitchToThread/sched_yield
-        Py_END_ALLOW_THREADS
-    }
   }
 
   if (!shape) return NULL;
 
-  // 4. CACHE STORAGE
+  // 4. CACHE STORAGE (Safe realloc because SHADOW_LOCK is held)
   if (self->shape_cache_count >= self->shape_cache_capacity) {
     size_t new_cap = (self->shape_cache_capacity == 0) ? 16 : self->shape_cache_capacity * 2;
     void *new_ptr = PyMem_RawRealloc(self->shape_cache, new_cap * sizeof(ShapeEntry));
     if (!new_ptr) {
       JPH_Shape_Destroy(shape);
-      PyErr_NoMemory();
+      // Do not set PyErr_NoMemory here if we are released GIL. 
+      // Just return NULL and let caller handle it.
       return NULL;
     }
     self->shape_cache = (ShapeEntry *)new_ptr;

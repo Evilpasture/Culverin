@@ -235,6 +235,9 @@ PyObject *PhysicsWorld_create_vehicle(PhysicsWorldObject *self, PyObject *args,
   static char *kwlist[] = {"chassis", "wheels",       "drive",
                            "engine",  "transmission", NULL};
 
+  // Necessary for Py_UNBLOCK_THREADS / Py_BLOCK_THREADS
+  PyThreadState *_save = NULL;
+
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "KO|sOO", kwlist, &chassis_h,
                                    &py_wheels, &drive_str, &py_engine,
                                    &py_trans)) {
@@ -242,62 +245,60 @@ PyObject *PhysicsWorld_create_vehicle(PhysicsWorldObject *self, PyObject *args,
   }
 
   if (!PyList_Check(py_wheels) || PyList_Size(py_wheels) < 2) {
-    PyErr_SetString(PyExc_ValueError,
-                    "Wheels must be a list of at least 2 dictionaries");
-    return NULL;
+    return PyErr_Format(PyExc_ValueError, "Wheels must be a list of at least 2 dictionaries");
   }
   uint32_t num_wheels = (uint32_t)PyList_Size(py_wheels);
 
-  // 1. Resolve Body (Double-Locking Pattern)
+  // --- 1. RESOLVE CHASSIS (Shadow Lock + Command Sync) ---
   SHADOW_LOCK(&self->shadow_lock);
-  BLOCK_UNTIL_NOT_STEPPING(self);
-  BLOCK_UNTIL_NOT_QUERYING(self);
-  flush_commands(self);
+  sync_and_flush_internal(self); 
+
   uint32_t slot = 0;
-  if (!unpack_handle(self, chassis_h, &slot)) {
+  if (!unpack_handle(self, chassis_h, &slot) || self->slot_states[slot] != SLOT_ALIVE) {
     SHADOW_UNLOCK(&self->shadow_lock);
-    return PyErr_Format(PyExc_ValueError, "Invalid chassis handle");
+    return PyErr_Format(PyExc_ValueError, "Invalid or stale chassis handle");
   }
   JPH_BodyID chassis_bid = self->body_ids[self->slot_to_dense[slot]];
   SHADOW_UNLOCK(&self->shadow_lock);
 
-  const JPH_BodyLockInterface *lock_iface =
-      JPH_PhysicsSystem_GetBodyLockInterface(self->system);
-  JPH_BodyLockWrite lock;
-  JPH_BodyLockInterface_LockWrite(lock_iface, chassis_bid, &lock);
-  if (!lock.body) {
-    JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
-    return PyErr_Format(PyExc_RuntimeError, "Could not lock chassis body");
-  }
-
-  // 2. Initialize Resources
+  // --- 2. PRE-JOLT RESOURCE ALLOCATION (GIL Held) ---
+  // We parse the Python dictionaries while we still have the GIL.
   VehicleResources r = {0};
   r.f_curve = JPH_LinearCurve_Create();
-  JPH_LinearCurve_AddPoint(r.f_curve, 0.0f, 1.0f); // Full grip at stop
-  JPH_LinearCurve_AddPoint(r.f_curve, 0.1f, 2.0f); // Peak grip (10% slip)
-  JPH_LinearCurve_AddPoint(r.f_curve, 1.0f, 1.2f); // Sliding grip
+  JPH_LinearCurve_AddPoint(r.f_curve, 0.0f, 1.0f);
+  JPH_LinearCurve_AddPoint(r.f_curve, 0.1f, 2.0f);
+  JPH_LinearCurve_AddPoint(r.f_curve, 1.0f, 1.2f);
+  
   r.t_curve = JPH_LinearCurve_Create();
   JPH_LinearCurve_AddPoint(r.t_curve, 0.0f, 1.0f);
   JPH_LinearCurve_AddPoint(r.t_curve, 1.0f, 1.0f);
-  r.w_settings = (JPH_WheelSettings **)PyMem_RawCalloc(
-      num_wheels, sizeof(JPH_WheelSettings *));
+
+  r.w_settings = (JPH_WheelSettings **)PyMem_RawCalloc(num_wheels, sizeof(JPH_WheelSettings *));
   r.v_ctrl = JPH_WheeledVehicleControllerSettings_Create();
   r.v_trans_set = JPH_VehicleTransmissionSettings_Create();
 
-  // 3. Generate Wheels
   for (uint32_t i = 0; i < num_wheels; i++) {
-    r.w_settings[i] =
-        create_single_wheel(PyList_GetItem(py_wheels, i), r.f_curve);
-    if (!r.w_settings[i]) {
-      cleanup_vehicle_resources(&r, num_wheels, self);
-      JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
-      return NULL;
-    }
+    // create_single_wheel uses Python API to parse dicts, must have GIL
+    r.w_settings[i] = create_single_wheel(PyList_GetItem(py_wheels, i), r.f_curve);
+    if (!r.w_settings[i]) goto python_fail;
   }
 
-  // 4. Setup Drivetrain & Assembly
   configure_drivetrain(&r, py_engine, py_trans, drive_str, num_wheels);
 
+  // --- 3. JOLT COMMIT (Release GIL, Lock Jolt) ---
+  bool jolt_locked = false;
+  Py_UNBLOCK_THREADS;
+
+  NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+  jolt_locked = true;
+
+  const JPH_BodyLockInterface *lock_iface = JPH_PhysicsSystem_GetBodyLockInterface(self->system);
+  JPH_BodyLockWrite lock = {0};
+  JPH_BodyLockInterface_LockWrite(lock_iface, chassis_bid, &lock);
+
+  if (UNLIKELY(!lock.body)) goto jolt_fail;
+
+  // Assembly
   JPH_VehicleConstraintSettings v_set;
   JPH_VehicleConstraintSettings_Init(&v_set);
   v_set.wheelsCount = num_wheels;
@@ -305,43 +306,36 @@ PyObject *PhysicsWorld_create_vehicle(PhysicsWorldObject *self, PyObject *args,
   v_set.controller = (JPH_VehicleControllerSettings *)r.v_ctrl;
 
   r.j_veh = JPH_VehicleConstraint_Create(lock.body, &v_set);
-  if (!r.j_veh) {
-    PyErr_SetString(PyExc_RuntimeError, "Jolt vehicle creation failed");
-    cleanup_vehicle_resources(&r, num_wheels, self);
-    JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
-    return NULL;
-  }
-  // --- COLLISION TESTER SETUP ---
-  // Use Layer 2 for rays so they ignore Layer 1 (Chassis/Dynamic Bodies)
-  r.tester =
-      JPH_VehicleCollisionTesterRay_Create(2, &(JPH_Vec3){0, 1.0f, 0}, 2.0f);
-  JPH_VehicleConstraint_SetVehicleCollisionTester(
-      r.j_veh, (JPH_VehicleCollisionTester *)r.tester);
+  if (!r.j_veh) goto jolt_fail;
 
-  // 5. World Insertion
-  SHADOW_LOCK(&self->shadow_lock);
-  // We must ensure no queries started while we were busy parsing Python dicts!
-  BLOCK_UNTIL_NOT_STEPPING(self); // Safety check
-  BLOCK_UNTIL_NOT_QUERYING(self);
+  r.tester = JPH_VehicleCollisionTesterRay_Create(2, &(JPH_Vec3){0, 1.0f, 0}, 2.0f);
+  if (!r.tester) goto jolt_fail;
+
+  JPH_VehicleConstraint_SetVehicleCollisionTester(r.j_veh, (JPH_VehicleCollisionTester *)r.tester);
+
+  // Commit to Physics System
   JPH_PhysicsSystem_AddConstraint(self->system, (JPH_Constraint *)r.j_veh);
-  JPH_PhysicsSystem_AddStepListener(
-      self->system, JPH_VehicleConstraint_AsPhysicsStepListener(r.j_veh));
+  JPH_PhysicsSystem_AddStepListener(self->system, JPH_VehicleConstraint_AsPhysicsStepListener(r.j_veh));
   r.is_added_to_world = true;
-  SHADOW_UNLOCK(&self->shadow_lock);
 
   JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
+  NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+  jolt_locked = false;
 
-  // --- 6. Python Wrapper (FIXED) ---
+  // Restore GIL
+  Py_BLOCK_THREADS;
+
+  // --- 4. PYTHON WRAPPER ---
   CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
-  VehicleObject *obj = (VehicleObject *)PyObject_New(
-      VehicleObject, (PyTypeObject *)st->VehicleType);
+  VehicleObject *obj = (VehicleObject *)PyObject_New(VehicleObject, (PyTypeObject *)st->VehicleType);
 
   if (!obj) {
+    SHADOW_LOCK(&self->shadow_lock);
     cleanup_vehicle_resources(&r, num_wheels, self);
+    SHADOW_UNLOCK(&self->shadow_lock);
     return NULL;
   }
 
-  // Assign individual fields to preserve PyObject_HEAD
   obj->vehicle = r.j_veh;
   obj->tester = (JPH_VehicleCollisionTester *)r.tester;
   obj->world = self;
@@ -353,10 +347,25 @@ PyObject *PhysicsWorld_create_vehicle(PhysicsWorldObject *self, PyObject *args,
   obj->friction_curve = r.f_curve;
   obj->torque_curve = r.t_curve;
 
-  // IMPORTANT: Keep the world alive as long as the vehicle exists
   Py_INCREF(self);
-
   return (PyObject *)obj;
+
+jolt_fail:
+  // Cleanup Jolt lock and mutex before re-acquiring GIL
+  if (lock.body) JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
+  if (jolt_locked) NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+  Py_BLOCK_THREADS;
+
+python_fail:
+  // We reach here with the GIL held
+  SHADOW_LOCK(&self->shadow_lock);
+  cleanup_vehicle_resources(&r, num_wheels, self);
+  SHADOW_UNLOCK(&self->shadow_lock);
+  
+  if (!PyErr_Occurred()) {
+      PyErr_SetString(PyExc_RuntimeError, "Jolt vehicle creation failed");
+  }
+  return NULL;
 }
 
 // --- Vehicles Methods ---
