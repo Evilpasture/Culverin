@@ -36,6 +36,13 @@ typedef enum {
   CMD_SET_CCD
 } CommandType;
 
+// Internal helper to resolve slots to Jolt IDs safely
+typedef struct {
+    JPH_BodyID bid;
+    uint32_t dense_idx;
+    bool is_alive;
+} ResolvedCmd;
+
 // Force 8-byte alignment for the whole union to ensure 64-bit pointers align
 // correctly wherever they fall inside the 32-byte block.
 #if defined(_MSC_VER)
