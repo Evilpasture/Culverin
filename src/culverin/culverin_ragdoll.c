@@ -220,17 +220,29 @@ PyObject *PhysicsWorld_create_ragdoll(PhysicsWorldObject *self, PyObject *args,
     return PyErr_Format(PyExc_RuntimeError, "Jolt failed to create Ragdoll instance");
   }
 
-  // Set the initial Pose in Jolt
-  // We get the "Bind Pose" (Identity matrices) first
+  // 1. Get Bind Pose (Model Space)
   int joint_count = JPH_Skeleton_GetJointCount(JPH_RagdollSettings_GetSkeleton(py_settings->settings));
   JPH_Mat4 *neutral_matrices = (JPH_Mat4 *)PyMem_RawMalloc(joint_count * sizeof(JPH_Mat4));
   
   JPH_RVec3 zero_root = {0, 0, 0};
   JPH_Ragdoll_GetPose2(j_rag, &zero_root, neutral_matrices, true);
 
-  // Now set the actual World Pose
+  // 2. Apply Spawn Rotation to all joint matrices
+  JPH_STACK_ALLOC(JPH_Quat, root_q);
+  root_q->x = rx; root_q->y = ry; root_q->z = rz; root_q->w = rw;
+
+  JPH_STACK_ALLOC(JPH_Mat4, rot_matrix);
+  manual_mat4_from_quat(root_q, rot_matrix); // <--- CHANGED
+
+  // Pre-multiply all joint matrices by the root rotation
+  for(int i = 0; i < joint_count; i++) {
+      JPH_STACK_ALLOC(JPH_Mat4, result);
+      manual_mat4_multiply(rot_matrix, &neutral_matrices[i], result); // <--- CHANGED
+      neutral_matrices[i] = *result;
+  }
+
+  // 3. Set World Pose
   JPH_RVec3 root_pos = {px, py, pz};
-  JPH_Quat root_q = {rx, ry, rz, rw};
   JPH_Ragdoll_SetPose2(j_rag, &root_pos, neutral_matrices, true);
 
   // Add to system so we can query final positions

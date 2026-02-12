@@ -400,7 +400,7 @@ typedef struct PhysicsWorldObject {
   JPH_Real *positions;
   float *rotations;
   // Previous State Buffers (For Interpolation)
-  float *prev_positions;
+  JPH_Real *prev_positions;
   float *prev_rotations;
 
   float *linear_velocities;
@@ -472,7 +472,8 @@ typedef struct PhysicsWorldObject {
 
 // Temporary container for resize
 typedef struct {
-  float *pos, *rot, *ppos, *prot, *lvel, *avel;
+  JPH_Real *pos, *ppos;
+  float *rot, *prot, *lvel, *avel;
   JPH_BodyID *bids;
   uint64_t *udat;
   uint32_t *gens, *s2d, *d2s, *free, *cats, *masks, *mats;

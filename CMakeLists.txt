@@ -28,37 +28,42 @@ add_definitions(-DJPH_OBJECT_LAYER_BITS=32)
 # 2. COMPILER SPECIFIC FLAGS
 # ==============================================================================
 if(MSVC OR (WIN32 AND CMAKE_C_COMPILER_ID MATCHES "Clang"))
-    # Windows logic (Clang-CL / MSVC)
+    # --- Windows logic (Clang-CL / MSVC) ---
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
-    add_compile_options(/arch:AVX2)
+    add_compile_options(/arch:AVX2) 
+    
     if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+        # Aggressive Clang-CL specific flags
         set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /clang:-std=c11")
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /std:c++17")
-        set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /clang:-O3 /Ob2")
-        set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /clang:-O3 /Ob2")
-        message(STATUS "Culverin: Enabled /clang:-O3 for Release builds")
+        # ADDED: -ffast-math and -march=native for Clang-CL
+        set(RELEASE_FLAGS "/clang:-O3 /clang:-ffast-math /clang:-march=native /Ob2")
+        set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} ${RELEASE_FLAGS}")
+        set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} ${RELEASE_FLAGS}")
     else()
+        # Pure MSVC - use /fp:fast and /Ot (Favor fast code)
         set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /std:c11 /experimental:c11atomics /fp:fast")
-        set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /Ox /Ob2")
-        set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /Ox /Ob2")
-    endif()
-else()
-    # LINUX & MACOS
-    # We check the architecture of the CURRENT build slice (important for macOS Universal)
-    if(CMAKE_OSX_ARCHITECTURES MATCHES "arm64" OR CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
-        # ARM64 specific flags (usually none needed for Jolt/C11)
-        message(STATUS "Building for ARM64")
-    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64" OR CMAKE_OSX_ARCHITECTURES MATCHES "x86_64")
-        # x86_64 specific flags
-        add_compile_options(-mavx2 -mfma)
-        message(STATUS "Building for x86_64")
+        set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /Ox /Ot /Ob2 /Oi")
+        set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /Ox /Ot /Ob2 /Oi")
     endif()
 
-    # Standard C11 for all Unix-like
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c11")
-    # Ensure, just in case.
-    set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -O3")
-    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3")
+else()
+    # --- LINUX & MACOS ---
+    # Global Unix Release Speedups
+    set(UNIX_RELEASE_FLAGS "-O3 -ffast-math -fomit-frame-pointer")
+
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64" OR CMAKE_OSX_ARCHITECTURES MATCHES "x86_64")
+        # Specific target for x86_64: use FMA and AVX2
+        set(UNIX_RELEASE_FLAGS "${UNIX_RELEASE_FLAGS} -mavx2 -mfma -march=native")
+        message(STATUS "Culverin: Optimized for x86_64 with AVX2/FMA/Native")
+    elseif(CMAKE_OSX_ARCHITECTURES MATCHES "arm64" OR CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
+        # ARM64: Native targeting for M1/M2/M3 or Graviton
+        set(UNIX_RELEASE_FLAGS "${UNIX_RELEASE_FLAGS} -march=native")
+        message(STATUS "Culverin: Optimized for ARM64 Native")
+    endif()
+
+    set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} ${UNIX_RELEASE_FLAGS}")
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} ${UNIX_RELEASE_FLAGS}")
 endif()
 
 

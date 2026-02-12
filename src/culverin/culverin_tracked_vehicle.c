@@ -14,9 +14,9 @@ static JPH_WheelSettings *create_track_wheel(PyObject *w_dict) {
   float suspension_len = get_py_float_attr(w_dict, "suspension", 0.5f);
   float friction = get_py_float_attr(w_dict, "friction", 1.0f);
 
-  // NEW: Suspension Spring Properties
-  float freq = get_py_float_attr(w_dict, "spring_freq", 2.0f); // Stiffness
-  float damp = get_py_float_attr(w_dict, "spring_damp", 0.5f); // Bounciness
+  // Suspension Spring Properties
+  float freq = get_py_float_attr(w_dict, "spring_freq", 2.0f);
+  float damp = get_py_float_attr(w_dict, "spring_damp", 0.5f);
 
   JPH_WheelSettingsTV *w = JPH_WheelSettingsTV_Create();
 
@@ -29,7 +29,6 @@ static JPH_WheelSettings *create_track_wheel(PyObject *w_dict) {
   JPH_WheelSettings_SetSuspensionMaxLength((JPH_WheelSettings *)w,
                                            suspension_len);
 
-  // NEW: Apply Spring
   JPH_SpringSettings spring = {JPH_SpringMode_FrequencyAndDamping, freq, damp};
   JPH_WheelSettings_SetSuspensionSpring((JPH_WheelSettings *)w, &spring);
 
@@ -50,7 +49,6 @@ init_tracked_controller_settings(TrackedEngineConfig config,
   JPH_VehicleEngineSettings eng;
   JPH_VehicleEngineSettings_Init(&eng);
 
-  // Use members from the config struct
   eng.maxTorque = config.torque;
   eng.maxRPM = config.max_rpm;
   eng.minRPM = config.min_rpm;
@@ -61,7 +59,6 @@ init_tracked_controller_settings(TrackedEngineConfig config,
       JPH_VehicleTransmissionSettings_Create();
   JPH_VehicleTransmissionSettings_SetMode(trans, JPH_TransmissionMode_Auto);
 
-  // Default Gears
   float gears[] = {2.0f, 1.4f, 1.0f, 0.7f};
   JPH_VehicleTransmissionSettings_SetGearRatios(trans, gears, 4);
   float reverse[] = {-1.5f};
@@ -72,46 +69,7 @@ init_tracked_controller_settings(TrackedEngineConfig config,
   return t_ctrl;
 }
 
-// Helper 2: Parse track dictionaries and map wheels to tracks
-static void parse_tracks_config(JPH_TrackedVehicleControllerSettings *t_ctrl,
-                                PyObject *py_tracks, uint32_t ***ptr_list,
-                                int *num_out) {
-  Py_ssize_t num_tracks = PyList_Size(py_tracks);
-  if (num_tracks > 2) {
-    num_tracks = 2;
-  }
-  *num_out = (int)num_tracks;
-  *ptr_list = (uint32_t **)PyMem_RawCalloc(num_tracks, sizeof(uint32_t *));
-
-  for (int t = 0; t < num_tracks; t++) {
-    PyObject *track_dict = PyList_GetItem(py_tracks, t);
-    JPH_VehicleTrackSettings track_set;
-    JPH_VehicleTrackSettings_Init(&track_set);
-
-    PyObject *py_idxs = PyDict_GetItemString(track_dict, "indices");
-    if (py_idxs && PyList_Check(py_idxs)) {
-      uint32_t count = (uint32_t)PyList_Size(py_idxs);
-      uint32_t *indices = PyMem_RawMalloc(count * sizeof(uint32_t));
-      (*ptr_list)[t] = indices;
-      for (uint32_t k = 0; k < count; k++) {
-        indices[k] = (uint32_t)PyLong_AsLong(PyList_GetItem(py_idxs, k));
-      }
-      track_set.wheels = indices;
-      track_set.wheelsCount = count;
-    }
-
-    PyObject *py_driven = PyDict_GetItemString(track_dict, "driven_wheel");
-    if (py_driven) {
-      track_set.drivenWheel = (uint32_t)PyLong_AsUnsignedLong(py_driven);
-    }
-
-    JPH_TrackedVehicleControllerSettings_SetTrack(t_ctrl, (uint32_t)t,
-                                                  &track_set);
-  }
-}
-
 // Orchestrator
-// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
                                               PyObject *args, PyObject *kwds) {
   uint64_t chassis_h = 0;
@@ -142,6 +100,11 @@ PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
   VehicleResources r = {0};
   uint32_t num_wheels = (uint32_t)PyList_Size(py_wheels);
   
+  // FIX: Declare and initialize tracks BEFORE any goto that might jump to cleanup
+  TrackData tracks[2];
+  memset(tracks, 0, sizeof(tracks));
+  int num_tracks = 0;
+  
   r.f_curve = JPH_LinearCurve_Create();
   JPH_LinearCurve_AddPoint(r.f_curve, 0.0f, 1.0f);
   JPH_LinearCurve_AddPoint(r.f_curve, 1.0f, 1.0f);
@@ -154,8 +117,6 @@ PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
   }
 
   // Parse Track Config into C structs while GIL is held
-  TrackData tracks[2];
-  int num_tracks = 0;
   parse_tracks_to_c(py_tracks, tracks, &num_tracks);
 
   // --- 3. JOLT COMMIT (No GIL) ---
@@ -212,6 +173,7 @@ PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
   Py_BLOCK_THREADS;
 
   // --- 4. CLEANUP & WRAP ---
+  // Free the temp index arrays from parsing
   for (int t = 0; t < num_tracks; t++) PyMem_RawFree(tracks[t].indices);
 
   CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
@@ -242,7 +204,9 @@ jolt_fail:
   Py_BLOCK_THREADS;
 
 python_fail:
+  // If num_tracks was 0 because we jumped here early, this loop does nothing (safe)
   for (int t = 0; t < num_tracks; t++) if(tracks[t].indices) PyMem_RawFree(tracks[t].indices);
+  
   SHADOW_LOCK(&self->shadow_lock);
   cleanup_vehicle_resources(&r, num_wheels, self);
   SHADOW_UNLOCK(&self->shadow_lock);

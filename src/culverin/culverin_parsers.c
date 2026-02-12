@@ -188,6 +188,7 @@ void parse_body_size(PyObject *py_size, float s[4]) {
   }
 }
 
+// must hold GIL
 void parse_tracks_to_c(PyObject *py_tracks, TrackData *out_data, int *num_out) {
     Py_ssize_t num = PyList_Size(py_tracks);
     if (num > 2) num = 2;
