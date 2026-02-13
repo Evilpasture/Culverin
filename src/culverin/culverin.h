@@ -422,8 +422,10 @@ typedef struct PhysicsWorldObject {
   size_t slot_capacity; // Size of the mapping arrays
 
   PhysicsCommand *command_queue;
+  PhysicsCommand *command_queue_spare;
   size_t command_count;
   size_t command_capacity;
+  size_t spare_capacity;
 
   ShapeEntry *shape_cache;
   size_t shape_cache_count;
