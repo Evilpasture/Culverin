@@ -13,64 +13,89 @@
  */
 void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
     const JPH_PhysicsSystem *sys = self->system;
+    
     uint32_t active_count = JPH_PhysicsSystem_GetNumActiveBodies(sys, JPH_BodyType_Rigid);
     if (active_count == 0) return;
-
-    JPH_BodyID *active_ids = (JPH_BodyID *)PyMem_RawMalloc(active_count * sizeof(JPH_BodyID));
+    const JPH_BodyID *active_ids = JPH_PhysicsSystem_GetActiveBodiesUnsafe(sys, JPH_BodyType_Rigid);
     if (!active_ids) return;
-    JPH_PhysicsSystem_GetActiveBodies(sys, active_ids, active_count);
 
-    PosStride *CULV_RESTRICT shadow_pos  = (PosStride *)self->positions;
-    PosStride *CULV_RESTRICT shadow_ppos = (PosStride *)self->prev_positions;
-    AuxStride *CULV_RESTRICT shadow_rot  = (AuxStride *)self->rotations;
-    AuxStride *CULV_RESTRICT shadow_prot = (AuxStride *)self->prev_rotations;
-    AuxStride *CULV_RESTRICT shadow_lvel = (AuxStride *)self->linear_velocities;
-    AuxStride *CULV_RESTRICT shadow_avel = (AuxStride *)self->angular_velocities;
+    PosStride *CULV_RESTRICT s_pos  = (PosStride *)self->positions;
+    PosStride *CULV_RESTRICT s_ppos = (PosStride *)self->prev_positions;
+    AuxStride *CULV_RESTRICT s_rot  = (AuxStride *)self->rotations;
+    AuxStride *CULV_RESTRICT s_prot = (AuxStride *)self->prev_rotations;
+    AuxStride *CULV_RESTRICT s_lvel = (AuxStride *)self->linear_velocities;
+    AuxStride *CULV_RESTRICT s_avel = (AuxStride *)self->angular_velocities;
 
     const JPH_Body* chunk[16];
     const int CHUNK_SIZE = 16;
 
+    // Cache the lookup table pointer for speed
+    const uint32_t *CULV_RESTRICT s2d = self->slot_to_dense;
+
     for (uint32_t i = 0; i < active_count; i += CHUNK_SIZE) {
         uint32_t rem = (active_count - i < CHUNK_SIZE) ? (active_count - i) : CHUNK_SIZE;
 
-        // Phase 1: Resolve & Prefetch
+        // Phase 1: Resolve & Dual-Prefetch
         for (uint32_t j = 0; j < rem; j++) {
             const JPH_Body* b = JPH_PhysicsSystem_GetBodyPtr(sys, active_ids[i + j]);
             chunk[j] = b;
-            if (b) {
+            
+            if (LIKELY(b)) {
+                // 1. Prefetch SOURCE (Jolt Body)
                 #if defined(__GNUC__) || defined(__clang__)
                     __builtin_prefetch(((const char*)b) + 48, 0, 3);
+                #elif defined(_MSC_VER)
+                    _mm_prefetch(((const char*)b) + 48, _MM_HINT_T0);
+                #endif
+
+                // 2. Prefetch DESTINATION (Shadow Buffer)
+                // We need to calculate the dense index early
+                uint64_t handle = JPH_Body_GetUserData(b);
+                uint32_t dense = s2d[(uint32_t)(handle & 0xFFFFFFFF)];
+                
+                // Prefetch the Write Location (1 = Write access)
+                #if defined(__GNUC__) || defined(__clang__)
+                    __builtin_prefetch(&s_pos[dense], 1, 3);
+                #elif defined(_MSC_VER)
+                    _mm_prefetch((const char*)&s_pos[dense], _MM_HINT_T0);
                 #endif
             }
         }
 
-        // Phase 2: Double-Sync (Current to Prev, then Jolt to Current)
+        // Phase 2: Burst Write (Shadow Lock Held)
+        SHADOW_LOCK(&self->shadow_lock);
+        
+        // Compiler Hint: Assume loop count is small but > 0
+        // This encourages unrolling without massive overhead
+        #if defined(__clang__)
+        #pragma clang loop unroll(full)
+        #endif
         for (uint32_t j = 0; j < rem; j++) {
             const JPH_Body* b = chunk[j];
-            if (!b) continue;
+            if (UNLIKELY(!b)) continue;
 
             uint64_t handle = JPH_Body_GetUserData(b);
             uint32_t dense = self->slot_to_dense[(uint32_t)(handle & 0xFFFFFFFF)];
 
-            // --- THE SELECTIVE SNAPSHOT ---
-            // Move "Old Current" to "Previous" for this specific body.
-            // This is extremely fast because shadow_pos[dense] is likely 
-            // already in the CPU cache from the previous frame's renderer read.
-            shadow_ppos[dense] = shadow_pos[dense];
-            shadow_prot[dense] = shadow_rot[dense];
-
-            // Now perform the standard Jolt-to-Shadow sync
+            // 1. Read Jolt (Load into Registers)
             JPH_RVec3 p; JPH_Quat q; JPH_Vec3 lv, av;
             JPH_Body_GetPosition(b, &p);
             JPH_Body_GetRotation(b, &q);
             JPH_Body_GetLinearVelocity(b, &lv);
             JPH_Body_GetAngularVelocity(b, &av);
 
-            shadow_pos[dense]  = (PosStride){p.x, p.y, p.z};
-            shadow_rot[dense]  = (AuxStride){q.x, q.y, q.z, q.w};
-            shadow_lvel[dense] = (AuxStride){lv.x, lv.y, lv.z, 0.0f};
-            shadow_avel[dense] = (AuxStride){av.x, av.y, av.z, 0.0f};
+            // 2. Snapshot (Memory to Memory)
+            // Note: We read the *current* Shadow values, not the Jolt values here.
+            // This is cache-friendly because we are about to overwrite this cache line.
+            s_ppos[dense] = s_pos[dense];
+            s_prot[dense] = s_rot[dense];
+
+            // 3. Write New (Registers to Memory)
+            s_pos[dense]  = (PosStride){p.x, p.y, p.z};
+            s_rot[dense]  = (AuxStride){q.x, q.y, q.z, q.w};
+            s_lvel[dense] = (AuxStride){lv.x, lv.y, lv.z, 0.0f};
+            s_avel[dense] = (AuxStride){av.x, av.y, av.z, 0.0f};
         }
+        SHADOW_UNLOCK(&self->shadow_lock);
     }
-    PyMem_RawFree(active_ids);
 }
