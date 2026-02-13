@@ -964,51 +964,58 @@ static PyObject *PhysicsWorld_step(PhysicsWorldObject *self, PyObject *args) {
     BLOCK_UNTIL_NOT_STEPPING(self);
     atomic_store_explicit(&self->is_stepping, true, memory_order_relaxed);
 
-    // --- OPTIMIZATION: Command Swap ---
-    // Capture the current queue and "detach" it from the world
-    PhysicsCommand *captured_queue = self->command_queue;
-    size_t captured_count = self->command_count;
-    
-    // Reset world queue so other threads can start filling it for the next frame
-    self->command_queue = NULL; 
-    self->command_count = 0;
-    self->command_capacity = 0; // ensure_command_capacity will realloc a new one
-
-    // Snapshot state for interpolation
+    // --- 1. THE INTERPOLATION SNAPSHOT ---
+    // At 1M bodies, this is 32MB of data. 
+    // We do this while locked to ensure the "Previous" state is consistent.
     memcpy(self->prev_positions, self->positions, self->count * sizeof(PosStride));
     memcpy(self->prev_rotations, self->rotations, self->count * sizeof(AuxStride));
 
+    // --- 2. COMMAND QUEUE SWAP (Double Buffering) ---
+    PhysicsCommand *captured_queue = self->command_queue;
+    size_t captured_count = self->command_count;
+    
+    // Instead of NULL, we should ideally keep a secondary pre-allocated buffer 
+    // to avoid the 'ensure_command_capacity' overhead on the next frame.
+    // For now, we'll stick to your swap but ensure we reset the atomic contact index.
+    self->command_queue = NULL; 
+    self->command_count = 0;
+    self->command_capacity = 0;
+
+    // Reset contact index BEFORE the solver runs
+    atomic_store_explicit(&self->contact_atomic_idx, 0, memory_order_relaxed);
+
     SHADOW_UNLOCK(&self->shadow_lock);
 
-    // --- HEAVY LIFTING (Unlocked / Parallel) ---
+    // --- 3. HEAVY LIFTING (Parallel Execution) ---
     Py_BEGIN_ALLOW_THREADS 
     NATIVE_MUTEX_LOCK(g_jph_trampoline_lock); 
 
-    // 1. Process Jolt commands and Update Shadow Buffers
-    // We pass 'self' but the function must handle its own internal locking
-    // for shadow buffer consistency.
     if (captured_count > 0) {
         flush_commands_internal(self, captured_queue, captured_count);
-        // Clean up the captured queue memory
         PyMem_RawFree(captured_queue);
     }
 
-    // 2. Perform the actual physics step
+    // Solve Physics
     JPH_PhysicsSystem_Update(self->system, dt, 1, self->job_system);
+
+    // --- 4. PARALLEL SHADOW SYNC ---
+    // Optimization: At 1M bodies, the sync loop takes ~10ms. 
+    // We should run this while still holding the JPH lock but with GIL released.
+    // If you have a task system, you can split culverin_sync_shadow_buffers 
+    // into 4 chunks of 250k bodies each. 
+    culverin_sync_shadow_buffers(self); 
 
     NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
     Py_END_ALLOW_THREADS
 
-    // --- SYNC PHASE ---
-    atomic_thread_fence(memory_order_acquire);
+    // --- 5. FINALIZATION ---
     SHADOW_LOCK(&self->shadow_lock);
 
-    culverin_sync_shadow_buffers(self);
+    // Update the public contact count for Python
+    size_t c_idx = atomic_load_explicit(&self->contact_atomic_idx, memory_order_acquire);
+    self->contact_count = (c_idx > self->contact_max_capacity) ? self->contact_max_capacity : c_idx;
 
-    size_t count = atomic_load_explicit(&self->contact_atomic_idx, memory_order_acquire);
-    self->contact_count = (count > self->contact_max_capacity) ? self->contact_max_capacity : count;
-
-    // SIGNALING
+    // Signal completion
     NATIVE_MUTEX_LOCK(self->step_sync.mutex);
     atomic_store_explicit(&self->is_stepping, false, memory_order_release);
     atomic_store_explicit(&self->step_requested, false, memory_order_release);
