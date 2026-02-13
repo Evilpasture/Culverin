@@ -12,31 +12,31 @@
  * 4. Use Stride Structs to ensure the compiler generates packed SIMD stores.
  */
 void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
-    const JPH_PhysicsSystem *sys = self->system;
+    const auto *sys = self->system;
     
     uint32_t active_count = JPH_PhysicsSystem_GetNumActiveBodies(sys, JPH_BodyType_Rigid);
     if (active_count == 0) return;
     const JPH_BodyID *active_ids = JPH_PhysicsSystem_GetActiveBodiesUnsafe(sys, JPH_BodyType_Rigid);
     if (!active_ids) return;
 
-    PosStride *CULV_RESTRICT s_pos  = (PosStride *)self->positions;
-    PosStride *CULV_RESTRICT s_ppos = (PosStride *)self->prev_positions;
-    AuxStride *CULV_RESTRICT s_rot  = (AuxStride *)self->rotations;
-    AuxStride *CULV_RESTRICT s_prot = (AuxStride *)self->prev_rotations;
-    AuxStride *CULV_RESTRICT s_lvel = (AuxStride *)self->linear_velocities;
-    AuxStride *CULV_RESTRICT s_avel = (AuxStride *)self->angular_velocities;
+    auto *CULV_RESTRICT s_pos  = (PosStride *)self->positions;
+    auto *CULV_RESTRICT s_ppos = (PosStride *)self->prev_positions;
+    auto *CULV_RESTRICT s_rot  = (AuxStride *)self->rotations;
+    auto *CULV_RESTRICT s_prot = (AuxStride *)self->prev_rotations;
+    auto *CULV_RESTRICT s_lvel = (AuxStride *)self->linear_velocities;
+    auto *CULV_RESTRICT s_avel = (AuxStride *)self->angular_velocities;
 
     const JPH_Body* chunk[16];
-    const int CHUNK_SIZE = 16;
+    constexpr int CHUNK_SIZE = 16;
 
     // Cache the lookup table pointer for speed
     const uint32_t *CULV_RESTRICT s2d = self->slot_to_dense;
 
-    for (uint32_t i = 0; i < active_count; i += CHUNK_SIZE) {
-        uint32_t rem = (active_count - i < CHUNK_SIZE) ? (active_count - i) : CHUNK_SIZE;
+    for (auto i = 0u; i < active_count; i += CHUNK_SIZE) {
+        auto rem = (active_count - i < CHUNK_SIZE) ? (active_count - i) : CHUNK_SIZE;
 
         // Phase 1: Resolve & Dual-Prefetch
-        for (uint32_t j = 0; j < rem; j++) {
+        for (auto j = 0u; j < rem; j++) {
             const JPH_Body* b = JPH_PhysicsSystem_GetBodyPtr(sys, active_ids[i + j]);
             chunk[j] = b;
             
@@ -50,8 +50,8 @@ void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
 
                 // 2. Prefetch DESTINATION (Shadow Buffer)
                 // We need to calculate the dense index early
-                uint64_t handle = JPH_Body_GetUserData(b);
-                uint32_t dense = s2d[(uint32_t)(handle & 0xFFFFFFFF)];
+                uint64_t handle = JPH_Body_GetUserData((JPH_Body *)b);
+                auto dense = s2d[(uint32_t)(handle & 0xFFFFFFFF)];
                 
                 // Prefetch the Write Location (1 = Write access)
                 #if defined(__GNUC__) || defined(__clang__)
@@ -74,8 +74,8 @@ void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
             const JPH_Body* b = chunk[j];
             if (UNLIKELY(!b)) continue;
 
-            uint64_t handle = JPH_Body_GetUserData(b);
-            uint32_t dense = self->slot_to_dense[(uint32_t)(handle & 0xFFFFFFFF)];
+            uint64_t handle = JPH_Body_GetUserData((JPH_Body *)b);
+            auto dense = self->slot_to_dense[(uint32_t)(handle & 0xFFFFFFFF)];
 
             // 1. Read Jolt (Load into Registers)
             JPH_RVec3 p; JPH_Quat q; JPH_Vec3 lv, av;
