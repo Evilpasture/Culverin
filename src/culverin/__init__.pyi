@@ -3,7 +3,7 @@ Culverin Physics Engine
 High-performance Python bindings for Jolt Physics using Shadow Buffers and Generational Handles.
 """
 
-from typing import Tuple, List, Optional, TypedDict, Union, Any, Dict, Sequence
+from typing import Tuple, List, Optional, TypedDict, Union, Any, Dict, Sequence, Iterable
 from . import _culverin_c
 
 # Semantic Types
@@ -315,6 +315,20 @@ class PhysicsWorld:
     def destroy_body(self, handle: Handle) -> None:
         """Queue destruction of a body. Handle becomes invalid immediately."""
         
+    def destroy_bodies_batch(self, handles: Union[Sequence[Handle], Iterable[Handle]]) -> None:
+        """
+        Queues a batch of bodies for destruction in a single lock cycle.
+        
+        This method is O(N) where N is the number of handles provided. It 
+        pre-allocates the internal command queue to avoid multiple reallocations.
+        
+        Args:
+            handles: A sequence or iterable of body handles to remove.
+                     Supports lists, tuples, or any object implementing the 
+                     sequence protocol.
+        """
+        ...
+
     def create_constraint(self, type: int, body1: Handle, body2: Handle, params: Optional[Any] = None) -> int:
         """Create a joint between two bodies."""
         

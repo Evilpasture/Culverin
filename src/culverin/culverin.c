@@ -2064,6 +2064,79 @@ static PyObject *PhysicsWorld_destroy_body(PhysicsWorldObject *self,
     Py_RETURN_NONE;
 }
 
+static PyObject *PhysicsWorld_destroy_bodies_batch(PhysicsWorldObject *self, PyObject *args, PyObject *kwds) {
+    PyObject *py_handles = NULL;
+    static char *kwlist[] = {"handles", NULL};
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O", kwlist, &py_handles)) {
+        return NULL;
+    }
+
+    if (!PySequence_Check(py_handles)) {
+        return PyErr_Format(PyExc_TypeError, "Expected a sequence of handles");
+    }
+
+    Py_ssize_t batch_count = PySequence_Size(py_handles);
+    if (batch_count == 0) Py_RETURN_NONE;
+
+    SHADOW_LOCK(&self->shadow_lock);
+    
+    // We must ensure the engine isn't currently flushing commands
+    BLOCK_UNTIL_NOT_STEPPING(self);
+
+    // --- 1. PRE-ALLOCATE COMMAND QUEUE ---
+    // Growing the queue once is significantly faster than doing it in a loop
+    size_t needed = self->command_count + batch_count;
+    if (needed > self->command_capacity) {
+        size_t new_cap = (self->command_capacity * 2 > needed) ? self->command_capacity * 2 : needed;
+        void *new_ptr = PyMem_RawRealloc(self->command_queue, new_cap * sizeof(PhysicsCommand));
+        if (!new_ptr) {
+            SHADOW_UNLOCK(&self->shadow_lock);
+            return PyErr_NoMemory();
+        }
+        self->command_queue = (PhysicsCommand *)new_ptr;
+        self->command_capacity = new_cap;
+    }
+
+    int actual_destroyed = 0;
+
+    // --- 2. FAST ITERATION ---
+    for (Py_ssize_t i = 0; i < batch_count; i++) {
+        // Use Sequence API to support list, tuple, or even NumPy arrays
+        PyObject *item = PySequence_GetItem(py_handles, i);
+        if (UNLIKELY(!item)) continue;
+
+        uint64_t h_raw = PyLong_AsUnsignedLongLong(item);
+        Py_DECREF(item);
+
+        if (UNLIKELY(PyErr_Occurred())) {
+            PyErr_Clear();
+            continue;
+        }
+
+        uint32_t slot = 0;
+        if (unpack_handle(self, (BodyHandle)h_raw, &slot)) {
+            uint8_t state = self->slot_states[slot];
+            
+            // Only destroy if it's currently alive or just created
+            if (state == SLOT_ALIVE || state == SLOT_PENDING_CREATE) {
+                PhysicsCommand *cmd = &self->command_queue[self->command_count++];
+                cmd->header = CMD_HEADER(CMD_DESTROY_BODY, slot);
+
+                // Mark logically dead immediately.
+                // This ensures is_alive(h) returns False right now.
+                self->slot_states[slot] = SLOT_PENDING_DESTROY;
+                actual_destroyed++;
+            }
+        }
+    }
+
+    SHADOW_UNLOCK(&self->shadow_lock);
+    
+    DEBUG_LOG("Batch Destroy: Queued %d bodies for removal.", actual_destroyed);
+    Py_RETURN_NONE;
+}
+
 static PyObject *PhysicsWorld_set_position(PhysicsWorldObject *self,
                                            PyObject *args, PyObject *kwds) {
   uint64_t handle_raw = 0;
@@ -3037,6 +3110,8 @@ static const PyMethodDef PhysicsWorld_methods[] = {
      METH_VARARGS | METH_KEYWORDS, NULL},
     {"destroy_body", (PyCFunction)PhysicsWorld_destroy_body,
      METH_FASTCALL | METH_KEYWORDS, NULL},
+    {"destroy_bodies_batch", (PyCFunction)PhysicsWorld_destroy_bodies_batch, 
+     METH_VARARGS | METH_KEYWORDS, NULL},
     {"create_mesh_body", (PyCFunction)PhysicsWorld_create_mesh_body,
      METH_VARARGS | METH_KEYWORDS, NULL},
     {"create_constraint", (PyCFunction)PhysicsWorld_create_constraint,
