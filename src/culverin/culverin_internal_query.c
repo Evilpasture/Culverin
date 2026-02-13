@@ -14,13 +14,21 @@ JPH_Shape *find_or_create_shape_locked(PhysicsWorldObject *self, int type, const
   float p1 = (params[0] < 0.001f) ? 0.001f : params[0];
   float p2 = (params[1] < 0.001f) ? 0.001f : params[1];
   float p3 = (params[2] < 0.001f) ? 0.001f : params[2];
-  float p4 = params[3];
+  float p4 = (type == 4) ? params[3] : 0.0f; // Only Plane uses p4
 
   key.p1 = p1; key.p2 = p2; key.p3 = p3; key.p4 = p4;
 
   // 2. CACHE LOOKUP (Safe because SHADOW_LOCK is held)
   for (size_t i = 0; i < self->shape_cache_count; i++) {
-    if (memcmp(&self->shape_cache[i].key, &key, sizeof(ShapeKey)) == 0) {
+    ShapeKey *cached = &self->shape_cache[i].key;
+    
+    // Compare each field logically
+    if (cached->type == key.type &&
+        cached->p1 == key.p1 &&
+        cached->p2 == key.p2 &&
+        cached->p3 == key.p3 &&
+        cached->p4 == key.p4) 
+    {
       return self->shape_cache[i].shape;
     }
   }
@@ -135,16 +143,19 @@ bool execute_raycast_query(PhysicsWorldObject *self, JPH_BodyID ignore_bid,
 // ASSUMPTION: Caller holds the Jolt lock.
 void extract_hit_normal(PhysicsWorldObject *self, JPH_BodyID bodyID,
                         JPH_SubShapeID subShapeID2, const JPH_RVec3 *origin,
-                        const JPH_Vec3 *ray_dir, float fraction,
+                        const JPH_Vec3 *ray_dir, JPH_Real fraction,
                         JPH_Vec3 *normal_out) {
   const JPH_BodyLockInterface *lock_iface = JPH_PhysicsSystem_GetBodyLockInterface(self->system);
   JPH_BodyLockRead lock;
   JPH_BodyLockInterface_LockRead(lock_iface, bodyID, &lock);
 
   if (lock.body) {
-    JPH_RVec3 hit_p = {origin->x + ray_dir->x * fraction,
-                       origin->y + ray_dir->y * fraction,
-                       origin->z + ray_dir->z * fraction};
+    // Perform hit point calculation in high precision
+    JPH_RVec3 hit_p = {
+        origin->x + (JPH_Real)ray_dir->x * fraction,
+        origin->y + (JPH_Real)ray_dir->y * fraction,
+        origin->z + (JPH_Real)ray_dir->z * fraction
+    };
     JPH_Body_GetWorldSpaceSurfaceNormal(lock.body, subShapeID2, &hit_p, normal_out);
   } else {
     *normal_out = (JPH_Vec3){0, 1, 0};

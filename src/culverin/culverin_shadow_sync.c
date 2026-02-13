@@ -1,46 +1,49 @@
+#include "culverin_shadow_sync.h"
 #include "culverin.h"
 
 void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
-  JPH_BodyInterface *bi = self->body_interface;
-  const size_t count = self->count;
+    const JPH_PhysicsSystem *sys = self->system; // Use system directly
+    const size_t count = self->count;
+    const JPH_BodyID *CULV_RESTRICT body_ids = self->body_ids;
 
-  // Allocate aligned storage ONCE outside the loop
-  JPH_STACK_ALLOC(JPH_RVec3, pos);
-  JPH_STACK_ALLOC(JPH_Quat, rot);
-  JPH_STACK_ALLOC(JPH_Vec3, lin);
-  JPH_STACK_ALLOC(JPH_Vec3, ang);
+    PosStride *CULV_RESTRICT shadow_pos  = (PosStride *)self->positions;
+    AuxStride *CULV_RESTRICT shadow_rot  = (AuxStride *)self->rotations;
+    AuxStride *CULV_RESTRICT shadow_lvel = (AuxStride *)self->linear_velocities;
+    AuxStride *CULV_RESTRICT shadow_avel = (AuxStride *)self->angular_velocities;
 
-  for (size_t i = 0; i < count; i++) {
-    JPH_BodyID id = self->body_ids[i];
-    if (id == JPH_INVALID_BODY_ID) {
-      continue;
+    const JPH_Body* chunk[8];
+
+    for (size_t i = 0; i < count; i += 8) {
+        int rem = (count - i < 8) ? (int)(count - i) : 8;
+
+        // Phase 1: Pointer Resolution (1 call per body)
+        for (int j = 0; j < rem; j++) {
+            JPH_BodyID bid = body_ids[i + j];
+            if (bid != JPH_INVALID_BODY_ID) {
+                chunk[j] = JPH_PhysicsSystem_GetBodyPtr(sys, bid);
+            } else {
+                chunk[j] = NULL;
+            }
+        }
+
+        // Phase 2: Hot Copy (No calls, Compiler Vectorizes)
+        for (int j = 0; j < rem; j++) {
+            const JPH_Body* b = chunk[j];
+            if (!b) continue;
+            size_t idx = i + j;
+
+            JPH_RVec3 p; JPH_Quat q; JPH_Vec3 lv; JPH_Vec3 av;
+
+            // These remain fast because they take a Body* and resolve to direct offsets
+            JPH_Body_GetPosition(b, &p);
+            JPH_Body_GetRotation(b, &q);
+            JPH_Body_GetLinearVelocity((JPH_Body*)b, &lv);
+            JPH_Body_GetAngularVelocity((JPH_Body*)b, &av);
+
+            shadow_pos[idx]  = (PosStride){p.x, p.y, p.z};
+            shadow_rot[idx]  = (AuxStride){q.x, q.y, q.z, q.w};
+            shadow_lvel[idx] = (AuxStride){lv.x, lv.y, lv.z, 0.0f};
+            shadow_avel[idx] = (AuxStride){av.x, av.y, av.z, 0.0f};
+        }
     }
-
-    size_t idx = i * 4;
-
-    // Reuse the same aligned memory for every body
-    JPH_BodyInterface_GetPosition(bi, id, pos);
-    self->positions[idx + 0] = pos->x;
-    self->positions[idx + 1] = pos->y;
-    self->positions[idx + 2] = pos->z;
-    self->positions[idx + 3] = 0.0f;
-
-    JPH_BodyInterface_GetRotation(bi, id, rot);
-    self->rotations[idx + 0] = rot->x;
-    self->rotations[idx + 1] = rot->y;
-    self->rotations[idx + 2] = rot->z;
-    self->rotations[idx + 3] = rot->w;
-
-    JPH_BodyInterface_GetLinearVelocity(bi, id, lin);
-    self->linear_velocities[idx + 0] = lin->x;
-    self->linear_velocities[idx + 1] = lin->y;
-    self->linear_velocities[idx + 2] = lin->z;
-    self->linear_velocities[idx + 3] = 0.0f;
-
-    JPH_BodyInterface_GetAngularVelocity(bi, id, ang);
-    self->angular_velocities[idx + 0] = ang->x;
-    self->angular_velocities[idx + 1] = ang->y;
-    self->angular_velocities[idx + 2] = ang->z;
-    self->angular_velocities[idx + 3] = 0.0f;
-  }
 }

@@ -9,46 +9,52 @@ void world_remove_body_slot(PhysicsWorldObject *self, uint32_t slot) {
   uint32_t dense_idx = self->slot_to_dense[slot];
   uint32_t last_dense = (uint32_t)self->count - 1;
   JPH_BodyID bid = self->body_ids[dense_idx];
+
+  // 1. Cleanup Jolt Mapping
   if (bid != JPH_INVALID_BODY_ID) {
-    uint32_t j_idx = JPH_ID_TO_INDEX(bid); // Use Macro
+    uint32_t j_idx = JPH_ID_TO_INDEX(bid);
     if (self->id_to_handle_map && j_idx < self->max_jolt_bodies) {
       self->id_to_handle_map[j_idx] = 0;
     }
   }
 
-  // 1. If we aren't already the last element, move the last element into this
-  // hole
+  // 2. Swap-and-Pop
   if (dense_idx != last_dense) {
-    size_t dst = (size_t)dense_idx * 4;
-    size_t src = (size_t)last_dense * 4;
+    // Type-safe Casts
+    PosStride *pos = (PosStride *)self->positions;
+    PosStride *prev_pos = (PosStride *)self->prev_positions;
+    
+    AuxStride *rot = (AuxStride *)self->rotations;
+    AuxStride *prev_rot = (AuxStride *)self->prev_rotations;
+    AuxStride *lvel = (AuxStride *)self->linear_velocities;
+    AuxStride *avel = (AuxStride *)self->angular_velocities;
 
-    // Copy Shadow Buffers (16 bytes each)
-    memcpy(&self->positions[dst], &self->positions[src], 16);
-    memcpy(&self->rotations[dst], &self->rotations[src], 16);
-    memcpy(&self->prev_positions[dst], &self->prev_positions[src], 16);
-    memcpy(&self->prev_rotations[dst], &self->prev_rotations[src], 16);
-    memcpy(&self->linear_velocities[dst], &self->linear_velocities[src], 16);
-    memcpy(&self->angular_velocities[dst], &self->angular_velocities[src], 16);
+    // Struct Copy (Compiler handles size/alignment)
+    pos[dense_idx] = pos[last_dense];
+    prev_pos[dense_idx] = prev_pos[last_dense];
 
-    // Copy Metadata
+    rot[dense_idx] = rot[last_dense];
+    prev_rot[dense_idx] = prev_rot[last_dense];
+    lvel[dense_idx] = lvel[last_dense];
+    avel[dense_idx] = avel[last_dense];
+
+    // Metadata Copy
     self->body_ids[dense_idx] = self->body_ids[last_dense];
     self->user_data[dense_idx] = self->user_data[last_dense];
     self->categories[dense_idx] = self->categories[last_dense];
     self->masks[dense_idx] = self->masks[last_dense];
     self->material_ids[dense_idx] = self->material_ids[last_dense];
 
-    // Update Indirection Maps
+    // Fix Indirection
     uint32_t mover_slot = self->dense_to_slot[last_dense];
     self->slot_to_dense[mover_slot] = dense_idx;
     self->dense_to_slot[dense_idx] = mover_slot;
   }
 
-  // 2. Invalidate the slot
+  // 3. Finalize
   self->generations[slot]++;
   self->free_slots[self->free_count++] = slot;
   self->slot_states[slot] = SLOT_EMPTY;
-
-  // 3. Update World Counters
   self->count--;
   self->view_shape[0] = (Py_ssize_t)self->count;
 }
@@ -82,48 +88,47 @@ void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *queue, si
   if (count == 0) return;
   JPH_BodyInterface *bi = self->body_interface;
 
+  // Pre-cast buffers for safe access inside the loop
+  auto *shadow_pos = (PosStride *)self->positions;
+  auto *shadow_prev_pos = (PosStride *)self->prev_positions;
+  auto *shadow_rot = (AuxStride *)self->rotations;
+  auto *shadow_prev_rot = (AuxStride *)self->prev_rotations;
+  auto *shadow_lvel = (AuxStride *)self->linear_velocities;
+  auto *shadow_avel = (AuxStride *)self->angular_velocities;
+
   for (size_t i = 0; i < count; i++) {
     PhysicsCommand *cmd = &queue[i];
     uint32_t header = cmd->header;
     CommandType type = CMD_GET_TYPE(header);
     uint32_t slot = CMD_GET_SLOT(header);
 
-    // --- 1. DYNAMIC RESOLUTION (Brief Lock) ---
-    // We must resolve the ID and Index right before processing.
-    // This allows Create -> Destroy in the same frame to work.
     SHADOW_LOCK(&self->shadow_lock);
     SlotState state = self->slot_states[slot];
     JPH_BodyID bid = JPH_INVALID_BODY_ID;
-    uint32_t dense_idx = 0;
+    uint32_t dense = 0;
 
     if (state == SLOT_ALIVE || state == SLOT_PENDING_CREATE) {
-      dense_idx = self->slot_to_dense[slot];
-      bid = self->body_ids[dense_idx];
+      dense = self->slot_to_dense[slot];
+      bid = self->body_ids[dense];
     }
     SHADOW_UNLOCK(&self->shadow_lock);
 
-    // If the body doesn't exist and we aren't creating it, skip this command.
-    if (type != CMD_CREATE_BODY && bid == JPH_INVALID_BODY_ID) {
-      continue;
-    }
+    if (type != CMD_CREATE_BODY && bid == JPH_INVALID_BODY_ID) continue;
 
     switch (type) {
     case CMD_CREATE_BODY: {
       JPH_BodyCreationSettings *s = cmd->create.settings;
       JPH_BodyID new_bid = JPH_BodyInterface_CreateAndAddBody(bi, s, JPH_Activation_Activate);
+      JPH_BodyCreationSettings_Destroy(s);
 
       SHADOW_LOCK(&self->shadow_lock);
       if (UNLIKELY(new_bid == JPH_INVALID_BODY_ID)) {
-        // Jolt Failed: Rollback the slot reservation
         self->count--;
         self->slot_states[slot] = SLOT_EMPTY;
         self->generations[slot]++;
         self->free_slots[self->free_count++] = slot;
       } else {
-        // Success: Finalize the shadow buffers
-        uint32_t d = self->slot_to_dense[slot];
-        self->body_ids[d] = new_bid;
-        
+        self->body_ids[self->slot_to_dense[slot]] = new_bid;
         uint32_t j_idx = JPH_ID_TO_INDEX(new_bid);
         if (self->id_to_handle_map && j_idx < self->max_jolt_bodies) {
           self->id_to_handle_map[j_idx] = make_handle(slot, self->generations[slot]);
@@ -131,7 +136,6 @@ void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *queue, si
         self->slot_states[slot] = SLOT_ALIVE;
       }
       SHADOW_UNLOCK(&self->shadow_lock);
-      JPH_BodyCreationSettings_Destroy(s);
       break;
     }
 
@@ -147,71 +151,87 @@ void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *queue, si
 
     case CMD_SET_POS: {
       JPH_STACK_ALLOC(JPH_RVec3, p);
-      p->x = (JPH_Real)cmd->vec.x; p->y = (JPH_Real)cmd->vec.y; p->z = (JPH_Real)cmd->vec.z;
+      // Use JPH_Real from command directly
+      p->x = cmd->pos.x; p->y = cmd->pos.y; p->z = cmd->pos.z; 
       JPH_BodyInterface_SetPosition(bi, bid, p, JPH_Activation_Activate);
 
       SHADOW_LOCK(&self->shadow_lock);
-      // RE-FETCH: Previous commands in this batch might have triggered a 
-      // swap-and-pop, changing our dense index. We must re-fetch.
-      uint32_t current_dense = self->slot_to_dense[slot];
-      size_t off = (size_t)current_dense * 4;
-      self->positions[off+0] = cmd->vec.x; self->positions[off+1] = cmd->vec.y; self->positions[off+2] = cmd->vec.z;
-      self->prev_positions[off+0] = cmd->vec.x; self->prev_positions[off+1] = cmd->vec.y; self->prev_positions[off+2] = cmd->vec.z;
+      uint32_t d = self->slot_to_dense[slot];
+      PosStride *shadow_pos = (PosStride *)self->positions;
+      PosStride *shadow_ppos = (PosStride *)self->prev_positions;
+      
+      shadow_pos[d] = (PosStride){cmd->pos.x, cmd->pos.y, cmd->pos.z};
+      shadow_ppos[d] = shadow_pos[d];
       SHADOW_UNLOCK(&self->shadow_lock);
       break;
     }
 
     case CMD_SET_ROT: {
       JPH_STACK_ALLOC(JPH_Quat, q);
-      q->x = cmd->vec.x; q->y = cmd->vec.y; q->z = cmd->vec.z; q->w = cmd->vec.w;
+      // No conversion logic needed; already floats
+      q->x = cmd->quat.x; 
+      q->y = cmd->quat.y; 
+      q->z = cmd->quat.z; 
+      q->w = cmd->quat.w;
+      
       JPH_BodyInterface_SetRotation(bi, bid, q, JPH_Activation_Activate);
 
       SHADOW_LOCK(&self->shadow_lock);
-      uint32_t current_dense = self->slot_to_dense[slot];
-      memcpy(&self->rotations[current_dense * 4], &cmd->vec, 16);
-      memcpy(&self->prev_rotations[current_dense * 4], &cmd->vec, 16);
+      dense = self->slot_to_dense[slot];
+      
+      // AuxStride is float-based, so this is a direct assignment
+      AuxStride *shadow_rot = (AuxStride *)self->rotations;
+      AuxStride *shadow_prot = (AuxStride *)self->prev_rotations;
+      
+      shadow_rot[dense] = (AuxStride){cmd->quat.x, cmd->quat.y, cmd->quat.z, cmd->quat.w};
+      shadow_prot[dense] = shadow_rot[dense];
+      
       SHADOW_UNLOCK(&self->shadow_lock);
       break;
     }
 
     case CMD_SET_TRNS: {
       JPH_STACK_ALLOC(JPH_RVec3, p);
-      p->x = (JPH_Real)cmd->transform.px; p->y = (JPH_Real)cmd->transform.py; p->z = (JPH_Real)cmd->transform.pz;
+      p->x = cmd->transform.px; p->y = cmd->transform.py; p->z = cmd->transform.pz;
       JPH_STACK_ALLOC(JPH_Quat, q);
       q->x = cmd->transform.rx; q->y = cmd->transform.ry; q->z = cmd->transform.rz; q->w = cmd->transform.rw;
       JPH_BodyInterface_SetPositionAndRotation(bi, bid, p, q, JPH_Activation_Activate);
 
       SHADOW_LOCK(&self->shadow_lock);
-      uint32_t current_dense = self->slot_to_dense[slot];
-      size_t off = (size_t)current_dense * 4;
-      self->positions[off+0] = cmd->transform.px; self->positions[off+1] = cmd->transform.py; self->positions[off+2] = cmd->transform.pz;
-      self->prev_positions[off+0] = cmd->transform.px; self->prev_positions[off+1] = cmd->transform.py; self->prev_positions[off+2] = cmd->transform.pz;
-      memcpy(&self->rotations[off], &cmd->transform.rx, 16);
-      memcpy(&self->prev_rotations[off], &cmd->transform.rx, 16);
+      dense = self->slot_to_dense[slot];
+      PosStride new_p = {cmd->transform.px, cmd->transform.py, cmd->transform.pz};
+      AuxStride new_q = {cmd->transform.rx, cmd->transform.ry, cmd->transform.rz, cmd->transform.rw};
+      
+      shadow_pos[dense] = new_p;
+      shadow_prev_pos[dense] = new_p;
+      shadow_rot[dense] = new_q;
+      shadow_prev_rot[dense] = new_q;
       SHADOW_UNLOCK(&self->shadow_lock);
       break;
     }
 
     case CMD_SET_LINVEL: {
-      JPH_Vec3 v = {cmd->vec.x, cmd->vec.y, cmd->vec.z};
+      // Direct assignment to Jolt struct
+      JPH_Vec3 v = {cmd->vec3f.x, cmd->vec3f.y, cmd->vec3f.z};
       JPH_BodyInterface_SetLinearVelocity(bi, bid, &v);
+
       SHADOW_LOCK(&self->shadow_lock);
-      uint32_t current_dense = self->slot_to_dense[slot];
-      self->linear_velocities[current_dense * 4 + 0] = v.x;
-      self->linear_velocities[current_dense * 4 + 1] = v.y;
-      self->linear_velocities[current_dense * 4 + 2] = v.z;
+      dense = self->slot_to_dense[slot];
+      
+      // Update shadow buffer (float-to-float)
+      shadow_lvel[dense] = (AuxStride){v.x, v.y, v.z, 0.0f};
       SHADOW_UNLOCK(&self->shadow_lock);
       break;
     }
 
     case CMD_SET_ANGVEL: {
-      JPH_Vec3 v = {cmd->vec.x, cmd->vec.y, cmd->vec.z};
+      JPH_Vec3 v = {cmd->vec3f.x, cmd->vec3f.y, cmd->vec3f.z};
       JPH_BodyInterface_SetAngularVelocity(bi, bid, &v);
+
       SHADOW_LOCK(&self->shadow_lock);
-      uint32_t current_dense = self->slot_to_dense[slot];
-      self->angular_velocities[current_dense * 4 + 0] = v.x;
-      self->angular_velocities[current_dense * 4 + 1] = v.y;
-      self->angular_velocities[current_dense * 4 + 2] = v.z;
+      dense = self->slot_to_dense[slot];
+      
+      shadow_avel[dense] = (AuxStride){v.x, v.y, v.z, 0.0f};
       SHADOW_UNLOCK(&self->shadow_lock);
       break;
     }

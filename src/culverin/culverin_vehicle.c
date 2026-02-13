@@ -172,12 +172,12 @@ static void setup_transmission(JPH_WheeledVehicleControllerSettings *v_ctrl,
     PyObject *py_ratios = PyObject_GetAttrString(py_trans, "ratios");
     if (py_ratios && PyList_Check(py_ratios)) {
       Py_ssize_t n = PyList_Size(py_ratios);
-      float *r = PyMem_RawMalloc(n * sizeof(float));
+      float *r = PyMem_RawMalloc((size_t)n * sizeof(float));
       if (r) {
         for (Py_ssize_t i = 0; i < n; i++) {
           r[i] = (float)PyFloat_AsDouble(PyList_GetItem(py_ratios, i));
         }
-        JPH_VehicleTransmissionSettings_SetGearRatios(v_trans_set, r, (int)n);
+        JPH_VehicleTransmissionSettings_SetGearRatios(v_trans_set, r, (uint32_t)n);
         PyMem_RawFree(r);
       }
     }
@@ -308,7 +308,7 @@ PyObject *PhysicsWorld_create_vehicle(PhysicsWorldObject *self, PyObject *args,
   r.j_veh = JPH_VehicleConstraint_Create(lock.body, &v_set);
   if (!r.j_veh) goto jolt_fail;
 
-  r.tester = JPH_VehicleCollisionTesterRay_Create(2, &(JPH_Vec3){0, 1.0f, 0}, 2.0f);
+  r.tester = JPH_VehicleCollisionTesterRay_Create(LAYER_DYNAMIC, &(JPH_Vec3){0, 1.0f, 0}, 2.0f);
   if (!r.tester) goto jolt_fail;
 
   JPH_VehicleConstraint_SetVehicleCollisionTester(r.j_veh, (JPH_VehicleCollisionTester *)r.tester);
@@ -506,7 +506,7 @@ PyObject *Vehicle_get_wheel_transform(VehicleObject *self, PyObject *args) {
 
   // Safe Python construction
   PyObject *py_pos = Py_BuildValue("(ddd)", px, py, pz);
-  PyObject *py_rot = Py_BuildValue("(ffff)", q->x, q->y, q->z, q->w);
+  PyObject *py_rot = Py_BuildValue("(dddd)", (double)q->x, (double)q->y, (double)q->z, (double)q->w);
 
   if (!py_pos || !py_rot) {
     Py_XDECREF(py_pos);

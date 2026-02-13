@@ -2,6 +2,8 @@
 #include "joltc.h"
 #include <stddef.h>
 #include <stdint.h>
+#include "culverin_types.h"
+
 
 struct PhysicsWorldObject;
 typedef struct PhysicsWorldObject PhysicsWorldObject;
@@ -53,7 +55,7 @@ __attribute__((aligned(8)))
 typedef union {
   uint32_t header;
 
-  // 1. Create Body (32 Bytes - Full)
+  // 1. Create Body (Matches current logic)
   struct {
     uint32_t header;
     uint32_t material_id;
@@ -61,49 +63,64 @@ typedef union {
     uint64_t user_data;
     uint32_t category;
     uint32_t mask;
+    uint8_t _pad[32]; // Padding to 64
   } create;
 
-  // 2. Transform (32 Bytes - Full)
+  // 2. Transform (Updated to JPH_Real for Position)
   struct {
     uint32_t header;
-    float px, py, pz;
-    float rx, ry, rz, rw;
-    // No padding needed: 4 + 12 + 16 = 32
+    uint32_t _pad_align;    // Ensure JPH_Real starts at 8-byte boundary
+    JPH_Real px, py, pz;    // 24 bytes (Double precision safe)
+    float rx, ry, rz, rw;   // 16 bytes (Rotations are floats in Jolt)
+    uint8_t _tail[16];      // Padding to 64
   } transform;
 
-  // 3. Vector (20 Bytes -> 32 Bytes)
+  // 3. Vector and quat (Updated to JPH_Real for Position/Velocity consistency)
+  struct {
+    uint32_t header;
+    float x, y, z;
+    uint8_t _pad[48]; 
+  } vec3f;
+
+  struct {
+    uint32_t header;
+    uint32_t _pad;
+    JPH_Real x, y, z; 
+    uint8_t _tail[32]; 
+  } pos;
+
   struct {
     uint32_t header;
     float x, y, z, w;
-    uint8_t _pad[12]; // Explicitly fill the rest
-  } vec;
+    uint8_t _tail[44]; 
+  } quat;
 
-  // 4. Motion (8 Bytes -> 32 Bytes)
+  // 4. Motion / CCD
   struct {
     uint32_t header;
     int32_t motion_type;
-    uint8_t _pad[24];
+    uint8_t _pad[56];
   } motion;
 
-  // 5. User Data (16 Bytes -> 32 Bytes)
-  // Note: uint64 must align to 8 bytes.
-  // Layout: [H:4][Pad:4][U64:8][Pad:16]
+  // 5. User Data
   struct {
-    uint32_t header;        // 4 bytes (Offset 0)
-    uint32_t _align_pad;    // 4 bytes (Offset 4) -> Aligns next u64 to 8
-    uint64_t user_data_val; // 8 bytes (Offset 8)
-    uint8_t _tail_pad[16];  // 16 bytes (Offset 16)
+    uint32_t header;        
+    uint32_t _align_pad;    
+    uint64_t user_data_val; 
+    uint8_t _tail_pad[48];  
   } user_data;
+
+  struct {
+    uint32_t header;
+    uint32_t _pad;
+    PosStride pos;      // 24 bytes
+    AuxStride velocity; // 16 bytes (New!)
+    uint8_t _tail[16];  // Padding reduced!
+  } teleport; // TODO: unused, but interesting. will implement later
 
 } PhysicsCommand;
 
-// Per-struct guards. If any individual struct grows > 32, build fails.
-_Static_assert(sizeof(PhysicsCommand) == 32,
-               "PhysicsCommand union must be 32 bytes");
-_Static_assert(sizeof(((PhysicsCommand *)0)->create) == 32,
-               "Create struct overflow");
-_Static_assert(sizeof(((PhysicsCommand *)0)->transform) == 32,
-               "Transform struct overflow");
+_Static_assert(sizeof(PhysicsCommand) == 64, "PhysicsCommand must be 64 bytes");
 
 // INCLUDE AFTER PHYSICSCOMMAND!
 #include "culverin.h"

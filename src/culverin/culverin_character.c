@@ -326,32 +326,33 @@ PyObject *Character_move(CharacterObject *self, PyObject *args,
   // 1. PRE-MOVE GUARD (Shadow Lock)
   SHADOW_LOCK(&self->world->shadow_lock);
   BLOCK_UNTIL_NOT_STEPPING(self->world);
-  // Optional: Character moves are queries, so they should respect step priority
   BLOCK_IF_STEP_PENDING(self->world); 
   
   atomic_store_explicit(&self->last_vx, vx, memory_order_relaxed);
   atomic_store_explicit(&self->last_vy, vy, memory_order_relaxed);
   atomic_store_explicit(&self->last_vz, vz, memory_order_relaxed);
 
-  // Capture current state for interpolation
-  JPH_STACK_ALLOC(JPH_RVec3, current_pos);
-  JPH_STACK_ALLOC(JPH_Quat, current_rot);
-  JPH_CharacterVirtual_GetPosition(self->character, current_pos);
-  JPH_CharacterVirtual_GetRotation(self->character, current_rot);
-
   uint32_t slot = (uint32_t)(self->handle & 0xFFFFFFFF);
-  uint32_t dense_idx = self->world->slot_to_dense[slot];
-  size_t off = (size_t)dense_idx * 4;
+  uint32_t dense = self->world->slot_to_dense[slot];
 
-  self->prev_px = (float)current_pos->x;
-  self->prev_py = (float)current_pos->y;
-  self->prev_pz = (float)current_pos->z;
-  memcpy(&self->world->prev_positions[off], &self->world->positions[off], 12);
-  memcpy(&self->world->prev_rotations[off], &self->world->rotations[off], 16);
+  // Cast World Shadow Buffers to Stride Structs
+  PosStride *shadow_pos  = (PosStride *)self->world->positions;
+  PosStride *shadow_ppos = (PosStride *)self->world->prev_positions;
+  AuxStride *shadow_rot  = (AuxStride *)self->world->rotations;
+  AuxStride *shadow_prot = (AuxStride *)self->world->prev_rotations;
+
+  // Sync "Previous" state for interpolation (Snapshot before movement)
+  shadow_ppos[dense] = shadow_pos[dense];
+  shadow_prot[dense] = shadow_rot[dense];
+
+  // Store internal float-based previous position for Character-specific logic
+  self->prev_px = (float)shadow_pos[dense].x;
+  self->prev_py = (float)shadow_pos[dense].y;
+  self->prev_pz = (float)shadow_pos[dense].z;
 
   SHADOW_UNLOCK(&self->world->shadow_lock);
 
-  // --- 2. JOLT EXECUTION (Hard Serialization) ---
+  // --- 2. JOLT EXECUTION ---
   JPH_Vec3 v = {vx, vy, vz};
   JPH_CharacterVirtual_SetLinearVelocity(self->character, &v);
 
@@ -374,15 +375,17 @@ PyObject *Character_move(CharacterObject *self, PyObject *args,
   Py_END_ALLOW_THREADS
   NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
 
-  // --- 3. POST-MOVE SYNC (Shadow Lock) ---
+  // --- 3. POST-MOVE SYNC ---
   SHADOW_LOCK(&self->world->shadow_lock);
+  
+  JPH_STACK_ALLOC(JPH_RVec3, current_pos);
+  JPH_STACK_ALLOC(JPH_Quat, current_rot);
   JPH_CharacterVirtual_GetPosition(self->character, current_pos);
   JPH_CharacterVirtual_GetRotation(self->character, current_rot);
 
-  self->world->positions[off + 0] = (float)current_pos->x;
-  self->world->positions[off + 1] = (float)current_pos->y;
-  self->world->positions[off + 2] = (float)current_pos->z;
-  memcpy(&self->world->rotations[off], current_rot, 16);
+  // Update World Shadow using Structs (compiler handles stride 3 vs 4)
+  shadow_pos[dense] = (PosStride){current_pos->x, current_pos->y, current_pos->z};
+  shadow_rot[dense] = (AuxStride){current_rot->x, current_rot->y, current_rot->z, current_rot->w};
 
   SHADOW_UNLOCK(&self->world->shadow_lock);
   Py_RETURN_NONE;
@@ -413,11 +416,11 @@ PyObject *Character_get_position(CharacterObject *self,
 
 PyObject *Character_set_position(CharacterObject *self, PyObject *args,
                                  PyObject *kwds) {
-  float x = 0.0f;
-  float y = 0.0f;
-  float z = 0.0f;
+  JPH_Real x = 0.0;
+  JPH_Real y = 0.0;
+  JPH_Real z = 0.0;
   static char *kwlist[] = {"pos", NULL};
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)", kwlist, &x, &y, &z)) {
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "(ddd)", kwlist, &x, &y, &z)) {
     return NULL;
   }
 
@@ -426,9 +429,9 @@ PyObject *Character_set_position(CharacterObject *self, PyObject *args,
 
   // 1. Update Jolt (Aligned)
   JPH_STACK_ALLOC(JPH_RVec3, pos);
-  pos->x = (double)x;
-  pos->y = (double)y;
-  pos->z = (double)z;
+  pos->x = x;
+  pos->y = y;
+  pos->z = z;
   JPH_CharacterVirtual_SetPosition(self->character, pos);
 
   // 2. Update Shadow Buffers (Reset Interpolation to prevent streaks)
@@ -520,108 +523,70 @@ PyObject *Character_set_strength(CharacterObject *self, PyObject *args) {
 
 // Change signature to take PyObject* arg directly
 PyObject *Character_get_render_transform(CharacterObject *self, PyObject *arg) {
-  // --- OPTIMIZATION 1: Fast Argument Parsing ---
+  // --- 1. Fast Argument Parsing ---
   double alpha_dbl = PyFloat_AsDouble(arg);
   if (alpha_dbl == -1.0 && PyErr_Occurred()) {
     return NULL;
   }
 
-  float alpha = (float)alpha_dbl;
-  if (alpha < 0.0f) {
-    alpha = 0.0f;
-  } else if (alpha > 1.0f) {
-    alpha = 1.0f;
-  }
+  // Clamp alpha to [0.0, 1.0]
+  JPH_Real alpha = ((JPH_Real)alpha_dbl < 0.0) ? 0.0 : ((JPH_Real)alpha_dbl > 1.0) ? 1.0 : (JPH_Real)alpha_dbl;
 
-  // --- 1. ALIGNED STACK ALLOCATION ---
-  // Mandatory for SIMD safety
-  JPH_STACK_ALLOC(JPH_RVec3, cur_p);
-  JPH_STACK_ALLOC(JPH_Quat, cur_r);
-
-  // --- 2. CONSISTENT SNAPSHOT (Locked) ---
+  // --- 2. Snapshot State (Locked) ---
   SHADOW_LOCK(&self->world->shadow_lock);
+  
+  // Consistency Guard: Ensure we aren't reading while the world is stepping/swapping
+  BLOCK_UNTIL_NOT_STEPPING(self->world);
 
-  // We snapshot both the 'prev' state and 'current' state together
-  float p_px = self->prev_px;
-  float p_py = self->prev_py;
-  float p_pz = self->prev_pz;
-  float p_rx = self->prev_rx;
-  float p_ry = self->prev_ry;
-  float p_rz = self->prev_rz;
-  float p_rw = self->prev_rw;
+  uint32_t slot = (uint32_t)(self->handle & 0xFFFFFFFF);
+  uint32_t dense = self->world->slot_to_dense[slot];
 
-  JPH_CharacterVirtual_GetPosition(self->character, cur_p);
-  JPH_CharacterVirtual_GetRotation(self->character, cur_r);
+  // Map world buffers using Strides
+  PosStride *shadow_ppos = (PosStride *)self->world->prev_positions;
+  AuxStride *shadow_prot = (AuxStride *)self->world->prev_rotations;
+
+  // Capture High-Precision "Start" state from the shadow buffer
+  PosStride start_p = shadow_ppos[dense];
+  AuxStride start_r = shadow_prot[dense];
+
+  // Capture High-Precision "End" state from Jolt
+  JPH_STACK_ALLOC(JPH_RVec3, end_p);
+  JPH_STACK_ALLOC(JPH_Quat, end_r);
+  JPH_CharacterVirtual_GetPosition(self->character, end_p);
+  JPH_CharacterVirtual_GetRotation(self->character, end_r);
 
   SHADOW_UNLOCK(&self->world->shadow_lock);
 
   // --- 3. MATH (Unlocked) ---
-  // Position LERP
-  float px = p_px + ((float)cur_p->x - p_px) * alpha;
-  float py = p_py + ((float)cur_p->y - p_py) * alpha;
-  float pz = p_pz + ((float)cur_p->z - p_pz) * alpha;
 
-  // Rotation NLERP
-  float dot =
-      p_rx * cur_r->x + p_ry * cur_r->y + p_rz * cur_r->z + p_rw * cur_r->w;
-  float q2x = cur_r->x;
-  float q2y = cur_r->y;
-  float q2z = cur_r->z;
-  float q2w = cur_r->w;
+  // Position LERP (Performed in DOUBLE to prevent jitter far from origin)
+  JPH_Real px = start_p.x + (end_p->x - start_p.x) * alpha;
+  JPH_Real py = start_p.y + (end_p->y - start_p.y) * alpha;
+  JPH_Real pz = start_p.z + (end_p->z - start_p.z) * alpha;
+
+  // Rotation NLERP (Performed in FLOAT)
+  float p_rx = start_r.x; float p_ry = start_r.y;
+  float p_rz = start_r.z; float p_rw = start_r.w;
+
+  float dot = p_rx * end_r->x + p_ry * end_r->y + p_rz * end_r->z + p_rw * end_r->w;
+  float q2x = end_r->x; float q2y = end_r->y; float q2z = end_r->z; float q2w = end_r->w;
+
   if (dot < 0.0f) {
-    q2x = -q2x;
-    q2y = -q2y;
-    q2z = -q2z;
-    q2w = -q2w;
+    q2x = -q2x; q2y = -q2y; q2z = -q2z; q2w = -q2w;
   }
 
-  float rx = p_rx + (q2x - p_rx) * alpha;
-  float ry = p_ry + (q2y - p_ry) * alpha;
-  float rz = p_rz + (q2z - p_rz) * alpha;
-  float rw = p_rw + (q2w - p_rw) * alpha;
+  float rx = p_rx + (q2x - p_rx) * (float)alpha;
+  float ry = p_ry + (q2y - p_ry) * (float)alpha;
+  float rz = p_rz + (q2z - p_rz) * (float)alpha;
+  float rw = p_rw + (q2w - p_rw) * (float)alpha;
 
   float mag_sq = rx * rx + ry * ry + rz * rz + rw * rw;
-  if (mag_sq > 1e-9f) {
-    float inv_len = 1.0f / sqrtf(mag_sq);
-    rx *= inv_len;
-    ry *= inv_len;
-    rz *= inv_len;
-    rw *= inv_len;
-  } else {
-    rx = 0.0f;
-    ry = 0.0f;
-    rz = 0.0f;
-    rw = 1.0f;
-  }
+  float inv_len = (mag_sq > 1e-9f) ? 1.0f / sqrtf(mag_sq) : 1.0f;
+  rx *= inv_len; ry *= inv_len; rz *= inv_len; rw *= inv_len;
 
-  // --- 4. HARDENED MANUAL CONSTRUCTION ---
-  PyObject *pos = PyTuple_New(3);
-  PyObject *rot = PyTuple_New(4);
-  PyObject *out = PyTuple_New(2);
-
-  if (!pos || !rot || !out) {
-    Py_XDECREF(pos);
-    Py_XDECREF(rot);
-    Py_XDECREF(out);
-    return PyErr_NoMemory();
-  }
-
-  // Safely fill tuples (PyFloat_FromDouble can fail, but unlikely)
-  // If these return NULL, the whole return 'out' will be cleaned up by the
-  // user's logic
-  PyTuple_SET_ITEM(pos, 0, PyFloat_FromDouble(px));
-  PyTuple_SET_ITEM(pos, 1, PyFloat_FromDouble(py));
-  PyTuple_SET_ITEM(pos, 2, PyFloat_FromDouble(pz));
-
-  PyTuple_SET_ITEM(rot, 0, PyFloat_FromDouble(rx));
-  PyTuple_SET_ITEM(rot, 1, PyFloat_FromDouble(ry));
-  PyTuple_SET_ITEM(rot, 2, PyFloat_FromDouble(rz));
-  PyTuple_SET_ITEM(rot, 3, PyFloat_FromDouble(rw));
-
-  PyTuple_SET_ITEM(out, 0, pos);
-  PyTuple_SET_ITEM(out, 1, rot);
-
-  return out;
+  // --- 4. Return to Python ---
+  // Python floats are doubles, so we pass the high-precision LERP results
+  return Py_BuildValue("((ddd)(ffff))", px, py, pz, rx, ry, rz, rw);
 }
 
 // NEW: GC Traverse/Clear for Character

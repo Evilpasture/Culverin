@@ -85,7 +85,7 @@ JPH_Constraint *create_hinge(const ConstraintParams *p, JPH_Body *b1,
   JPH_HingeConstraint *c = JPH_HingeConstraint_Create(&s, b1, b2);
 
   // Apply Runtime State immediately
-  if (c && p->has_motor && p->motor_type > 0) {
+  if (c && (int)p->has_motor && p->motor_type > 0) {
     JPH_HingeConstraint_SetMotorState(c, (JPH_MotorState)p->motor_type);
     if (p->motor_type == 1) {
       JPH_HingeConstraint_SetTargetAngularVelocity(c, p->motor_target);

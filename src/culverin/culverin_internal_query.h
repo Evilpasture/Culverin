@@ -1,6 +1,9 @@
 #pragma once
 #include "joltc.h"
 
+struct PhysicsWorldObject;
+typedef struct PhysicsWorldObject PhysicsWorldObject;
+
 // --- Shape Caching ---
 typedef struct {
   uint32_t type; // 0=Box, 1=Sphere, 2=Capsule, 3=Cylinder, 4=Plane
@@ -35,7 +38,7 @@ bool execute_raycast_query(PhysicsWorldObject *self, JPH_BodyID ignore_bid,
 
 void extract_hit_normal(PhysicsWorldObject *self, JPH_BodyID bodyID,
                         JPH_SubShapeID subShapeID2, const JPH_RVec3 *origin,
-                        const JPH_Vec3 *ray_dir, float fraction,
+                        const JPH_Vec3 *ray_dir, JPH_Real fraction,
                         JPH_Vec3 *normal_out);
 
 void shapecast_execute_internal(PhysicsWorldObject *self,

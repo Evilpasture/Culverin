@@ -186,7 +186,7 @@ PyObject *RagdollSettings_stabilize(RagdollSettingsObject *self,
 PyObject *PhysicsWorld_create_ragdoll(PhysicsWorldObject *self, PyObject *args,
                                       PyObject *kwds) {
   RagdollSettingsObject *py_settings = NULL;
-  float px, py, pz;
+  JPH_Real px, py, pz;
   float rx = 0, ry = 0, rz = 0, rw = 1;
   uint64_t user_data = 0;
   uint32_t category = 0xFFFF, mask = 0xFFFF, material_id = 0;
@@ -195,7 +195,7 @@ PyObject *PhysicsWorld_create_ragdoll(PhysicsWorldObject *self, PyObject *args,
                            "category", "mask", "material_id", NULL};
 
   if (!PyArg_ParseTupleAndKeywords(
-          args, kwds, "O!(fff)|(ffff)KIII", kwlist,
+          args, kwds, "O!(ddd)|(ffff)KIII", kwlist,
           get_culverin_state(PyType_GetModule(Py_TYPE(self)))->RagdollSettingsType,
           &py_settings, &px, &py, &pz, &rx, &ry, &rz, &rw, 
           &user_data, &category, &mask, &material_id)) {
@@ -221,7 +221,7 @@ PyObject *PhysicsWorld_create_ragdoll(PhysicsWorldObject *self, PyObject *args,
   }
 
   // 1. Get Bind Pose (Model Space)
-  int joint_count = JPH_Skeleton_GetJointCount(JPH_RagdollSettings_GetSkeleton(py_settings->settings));
+  auto joint_count = (size_t)JPH_Skeleton_GetJointCount(JPH_RagdollSettings_GetSkeleton(py_settings->settings));
   JPH_Mat4 *neutral_matrices = (JPH_Mat4 *)PyMem_RawMalloc(joint_count * sizeof(JPH_Mat4));
   
   JPH_RVec3 zero_root = {0, 0, 0};
@@ -235,7 +235,7 @@ PyObject *PhysicsWorld_create_ragdoll(PhysicsWorldObject *self, PyObject *args,
   manual_mat4_from_quat(root_q, rot_matrix); // <--- CHANGED
 
   // Pre-multiply all joint matrices by the root rotation
-  for(int i = 0; i < joint_count; i++) {
+  for(size_t i = 0; i < joint_count; i++) {
       JPH_STACK_ALLOC(JPH_Mat4, result);
       manual_mat4_multiply(rot_matrix, &neutral_matrices[i], result); // <--- CHANGED
       neutral_matrices[i] = *result;
@@ -248,7 +248,7 @@ PyObject *PhysicsWorld_create_ragdoll(PhysicsWorldObject *self, PyObject *args,
   // Add to system so we can query final positions
   JPH_Ragdoll_AddToPhysicsSystem(j_rag, JPH_Activation_Activate, true);
 
-  int body_count = JPH_Ragdoll_GetBodyCount(j_rag);
+  auto body_count = (size_t)JPH_Ragdoll_GetBodyCount(j_rag);
   
   NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
   Py_BLOCK_THREADS;
@@ -269,17 +269,15 @@ PyObject *PhysicsWorld_create_ragdoll(PhysicsWorldObject *self, PyObject *args,
   obj->ragdoll = j_rag;
   obj->world = self;
   Py_INCREF(self);
-  obj->body_count = (size_t)body_count;
+  obj->body_count = body_count;
   obj->body_slots = (uint32_t *)PyMem_RawMalloc(body_count * sizeof(uint32_t));
 
   // 3. Shadow Buffer "Warm-up" (Sync Jolt -> CPU)
   SHADOW_LOCK(&self->shadow_lock);
   
-  // Ensure capacity for all ragdoll parts
-  if (self->free_count < (size_t)body_count) {
-    if (PhysicsWorld_resize(self, self->capacity + body_count + 128) < 0) {
+  if (self->free_count < body_count) {
+    if (PhysicsWorld_resize(self, self->capacity + body_count + 1024) < 0) {
       SHADOW_UNLOCK(&self->shadow_lock);
-      // Clean up the Jolt ragdoll since we can't track it
       JPH_Ragdoll_Destroy(j_rag);
       PyMem_RawFree(neutral_matrices);
       Py_DECREF(obj);
@@ -288,47 +286,59 @@ PyObject *PhysicsWorld_create_ragdoll(PhysicsWorldObject *self, PyObject *args,
   }
 
   JPH_BodyInterface *bi = self->body_interface;
+  
+  // Cast pointers to Stride Structs for safe indexing
+  auto *shadow_pos  = (PosStride *)self->positions;
+  auto *shadow_ppos = (PosStride *)self->prev_positions;
+  auto *shadow_rot  = (AuxStride *)self->rotations;
+  auto *shadow_prot = (AuxStride *)self->prev_rotations;
+  auto *shadow_lvel = (AuxStride *)self->linear_velocities;
+  auto *shadow_avel = (AuxStride *)self->angular_velocities;
 
-  for (int i = 0; i < body_count; i++) {
-    JPH_BodyID bid = JPH_Ragdoll_GetBodyID(j_rag, i);
+  for (size_t i = 0; i < body_count; i++) {
+    JPH_BodyID bid = JPH_Ragdoll_GetBodyID(j_rag, (int)i);
     uint32_t slot = self->free_slots[--self->free_count];
     obj->body_slots[i] = slot;
-    uint32_t dense = (uint32_t)self->count;
+    uint32_t dense = (uint32_t)self->count++; // Index of the new body
 
-    // --- ACCURATE WARM-UP ---
-    // Query Jolt directly for where it placed the body after SetPose2
+    // Query Jolt directly for the final world-space transform calculated by SetPose2
     JPH_RVec3 world_p;
     JPH_Quat world_q;
     JPH_BodyInterface_GetPosition(bi, bid, &world_p);
     JPH_BodyInterface_GetRotation(bi, bid, &world_q);
 
-    size_t off = (size_t)dense * 4;
-    self->positions[off + 0] = (float)world_p.x;
-    self->positions[off + 1] = (float)world_p.y;
-    self->positions[off + 2] = (float)world_p.z;
-    
-    memcpy(&self->rotations[off], &world_q, 16);
-    memcpy(&self->prev_positions[off], &self->positions[off], 16);
-    memcpy(&self->prev_rotations[off], &self->rotations[off], 16);
+    // --- STRIDE-SAFE ASSIGNMENT ---
+    shadow_pos[dense]  = (PosStride){world_p.x, world_p.y, world_p.z};
+    shadow_ppos[dense] = shadow_pos[dense];
 
-    // Initial state
-    memset(&self->linear_velocities[off], 0, 16);
-    memset(&self->angular_velocities[off], 0, 16);
+    shadow_rot[dense]  = (AuxStride){world_q.x, world_q.y, world_q.z, world_q.w};
+    shadow_prot[dense] = shadow_rot[dense];
 
-    self->body_ids[dense] = bid;
+    // Initialize physics state
+    shadow_lvel[dense] = (AuxStride){0, 0, 0, 0};
+    shadow_avel[dense] = (AuxStride){0, 0, 0, 0};
+
+    // Metadata
+    self->body_ids[dense]     = bid;
     self->slot_to_dense[slot] = dense;
     self->dense_to_slot[dense] = slot;
-    self->slot_states[slot] = SLOT_ALIVE;
-    self->user_data[dense] = user_data;
-    self->categories[dense] = category;
-    self->masks[dense] = mask;
-    self->material_ids[dense] = material_id;
-    self->count++;
+    self->slot_states[slot]    = SLOT_ALIVE;
+    self->user_data[dense]     = user_data;
+    self->categories[dense]    = category;
+    self->masks[dense]         = mask;
+    self->material_ids[dense]  = material_id;
 
-    // Link Jolt Body back to our Handle for callbacks
+    // Fast handle map update (crucial for collisions)
+    uint32_t j_idx = JPH_ID_TO_INDEX(bid);
+    if (self->id_to_handle_map && j_idx < self->max_jolt_bodies) {
+      self->id_to_handle_map[j_idx] = make_handle(slot, self->generations[slot]);
+    }
+
+    // Link Jolt Body back to our Handle
     JPH_BodyInterface_SetUserData(bi, bid, (uint64_t)make_handle(slot, self->generations[slot]));
   }
 
+  self->view_shape[0] = (Py_ssize_t)self->count;
   SHADOW_UNLOCK(&self->shadow_lock);
 
   PyMem_RawFree(neutral_matrices);
@@ -458,7 +468,7 @@ PyObject *Ragdoll_get_debug_info(RagdollObject *self,
     PyDict_SetItemString(dict, "pos",
                          Py_BuildValue("(ddd)", pos->x, pos->y, pos->z));
     PyDict_SetItemString(dict, "vel",
-                         Py_BuildValue("(fff)", vel->x, vel->y, vel->z));
+                         Py_BuildValue("(ddd)", (double)vel->x, (double)vel->y, (double)vel->z));
 
     PyList_SET_ITEM(list, i, dict);
   }

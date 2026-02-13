@@ -21,25 +21,26 @@ static void free_new_buffers(NewBuffers *nb) {
 
 static int alloc_new_buffers(NewBuffers *nb, size_t cap) {
   memset(nb, 0, sizeof(NewBuffers));
-  size_t f4 = cap * 4 * sizeof(float);
+  
+  // Allocate vectors using strict stride structs
+  nb->pos  = (JPH_Real *)PyMem_RawMalloc(cap * sizeof(PosStride));
+  nb->ppos = (JPH_Real *)PyMem_RawMalloc(cap * sizeof(PosStride));
+  
+  nb->rot  = (float *)PyMem_RawMalloc(cap * sizeof(AuxStride));
+  nb->prot = (float *)PyMem_RawMalloc(cap * sizeof(AuxStride));
+  nb->lvel = (float *)PyMem_RawMalloc(cap * sizeof(AuxStride));
+  nb->avel = (float *)PyMem_RawMalloc(cap * sizeof(AuxStride));
 
-  nb->pos = PyMem_RawMalloc(f4);
-  nb->rot = PyMem_RawMalloc(f4);
-  nb->ppos = PyMem_RawMalloc(f4);
-  nb->prot = PyMem_RawMalloc(f4);
-  nb->lvel = PyMem_RawMalloc(f4);
-  nb->avel = PyMem_RawMalloc(f4);
-
-  nb->bids = PyMem_RawMalloc(cap * sizeof(JPH_BodyID));
-  nb->udat = PyMem_RawMalloc(cap * sizeof(uint64_t));
-  nb->gens = PyMem_RawMalloc(cap * sizeof(uint32_t));
-  nb->s2d = PyMem_RawMalloc(cap * sizeof(uint32_t));
-  nb->d2s = PyMem_RawMalloc(cap * sizeof(uint32_t));
-  nb->stat = PyMem_RawMalloc(cap * sizeof(uint8_t));
-  nb->free = PyMem_RawMalloc(cap * sizeof(uint32_t));
-  nb->cats = PyMem_RawMalloc(cap * sizeof(uint32_t));
-  nb->masks = PyMem_RawMalloc(cap * sizeof(uint32_t));
-  nb->mats = PyMem_RawMalloc(cap * sizeof(uint32_t));
+  nb->bids = (JPH_BodyID *)PyMem_RawMalloc(cap * sizeof(JPH_BodyID));
+  nb->udat = (uint64_t *)PyMem_RawMalloc(cap * sizeof(uint64_t));
+  nb->gens = (uint32_t *)PyMem_RawMalloc(cap * sizeof(uint32_t));
+  nb->s2d  = (uint32_t *)PyMem_RawMalloc(cap * sizeof(uint32_t));
+  nb->d2s  = (uint32_t *)PyMem_RawMalloc(cap * sizeof(uint32_t));
+  nb->stat = (uint8_t *)PyMem_RawMalloc(cap * sizeof(uint8_t));
+  nb->free = (uint32_t *)PyMem_RawMalloc(cap * sizeof(uint32_t));
+  nb->cats = (uint32_t *)PyMem_RawMalloc(cap * sizeof(uint32_t));
+  nb->masks= (uint32_t *)PyMem_RawMalloc(cap * sizeof(uint32_t));
+  nb->mats = (uint32_t *)PyMem_RawMalloc(cap * sizeof(uint32_t));
 
   if (!nb->pos || !nb->rot || !nb->ppos || !nb->prot || !nb->lvel ||
       !nb->avel || !nb->bids || !nb->udat || !nb->gens || !nb->s2d ||
@@ -53,14 +54,19 @@ static int alloc_new_buffers(NewBuffers *nb, size_t cap) {
 
 static void migrate_and_init(PhysicsWorldObject *self, NewBuffers *nb,
                              size_t new_cap) {
-  size_t stride = 4 * sizeof(float);
   if (self->count > 0) {
-    memcpy(nb->pos, self->positions, self->count * stride);
-    memcpy(nb->rot, self->rotations, self->count * stride);
-    memcpy(nb->ppos, self->prev_positions, self->count * stride);
-    memcpy(nb->prot, self->prev_rotations, self->count * stride);
-    memcpy(nb->lvel, self->linear_velocities, self->count * stride);
-    memcpy(nb->avel, self->angular_velocities, self->count * stride);
+    // Copy using Stride sizes
+    size_t copy_size_pos = self->count * sizeof(PosStride);
+    memcpy(nb->pos, self->positions, copy_size_pos);
+    memcpy(nb->ppos, self->prev_positions, copy_size_pos);
+
+    size_t copy_size_aux = self->count * sizeof(AuxStride);
+    memcpy(nb->rot, self->rotations, copy_size_aux);
+    memcpy(nb->prot, self->prev_rotations, copy_size_aux);
+    memcpy(nb->lvel, self->linear_velocities, copy_size_aux);
+    memcpy(nb->avel, self->angular_velocities, copy_size_aux);
+    
+    // Copy other arrays (Stride 1)
     memcpy(nb->bids, self->body_ids, self->count * sizeof(JPH_BodyID));
     memcpy(nb->udat, self->user_data, self->count * sizeof(uint64_t));
     memcpy(nb->cats, self->categories, self->count * sizeof(uint32_t));
@@ -68,17 +74,66 @@ static void migrate_and_init(PhysicsWorldObject *self, NewBuffers *nb,
     memcpy(nb->mats, self->material_ids, self->count * sizeof(uint32_t));
   }
 
+  // Copy mapping tables
   memcpy(nb->gens, self->generations, self->slot_capacity * sizeof(uint32_t));
   memcpy(nb->s2d, self->slot_to_dense, self->slot_capacity * sizeof(uint32_t));
   memcpy(nb->d2s, self->dense_to_slot, self->slot_capacity * sizeof(uint32_t));
   memcpy(nb->stat, self->slot_states, self->slot_capacity * sizeof(uint8_t));
   memcpy(nb->free, self->free_slots, self->free_count * sizeof(uint32_t));
 
+  // Initialize new slots
   for (size_t i = self->slot_capacity; i < new_cap; i++) {
     nb->gens[i] = 1;
     nb->stat[i] = SLOT_EMPTY;
     nb->free[self->free_count++] = (uint32_t)i;
   }
+}
+
+// helper: Allocate shadow buffers and indirection maps
+int allocate_buffers(PhysicsWorldObject *self, int max_bodies) {
+  self->capacity = (size_t)max_bodies;
+  if (self->capacity < self->count + 128) {
+    self->capacity = self->count + 1024;
+  }
+  self->max_jolt_bodies = (uint32_t)max_bodies;
+  self->slot_capacity = self->capacity;
+
+  // Fix: Allocate based on strides using Calloc
+  self->positions = (JPH_Real *)PyMem_RawCalloc(self->capacity, sizeof(PosStride));
+  self->prev_positions = (JPH_Real *)PyMem_RawCalloc(self->capacity, sizeof(PosStride));
+
+  self->rotations = (float *)PyMem_RawCalloc(self->capacity, sizeof(AuxStride));
+  self->prev_rotations = (float *)PyMem_RawCalloc(self->capacity, sizeof(AuxStride));
+  self->linear_velocities = (float *)PyMem_RawCalloc(self->capacity, sizeof(AuxStride));
+  self->angular_velocities = (float *)PyMem_RawCalloc(self->capacity, sizeof(AuxStride));
+
+  self->body_ids = (JPH_BodyID *)PyMem_RawMalloc(self->capacity * sizeof(JPH_BodyID));
+  self->user_data = (uint64_t *)PyMem_RawCalloc(self->capacity, sizeof(uint64_t));
+  self->categories = (uint32_t *)PyMem_RawMalloc(self->capacity * sizeof(uint32_t));
+  self->masks = (uint32_t *)PyMem_RawMalloc(self->capacity * sizeof(uint32_t));
+  self->material_ids = (uint32_t *)PyMem_RawCalloc(self->capacity, sizeof(uint32_t));
+  
+  self->id_to_handle_map = (BodyHandle *)PyMem_RawCalloc(self->max_jolt_bodies, sizeof(BodyHandle));
+  
+  self->generations = (uint32_t *)PyMem_RawCalloc(self->slot_capacity, sizeof(uint32_t));
+  self->slot_to_dense = (uint32_t *)PyMem_RawMalloc(self->slot_capacity * sizeof(uint32_t));
+  self->dense_to_slot = (uint32_t *)PyMem_RawMalloc(self->slot_capacity * sizeof(uint32_t));
+  self->free_slots = (uint32_t *)PyMem_RawMalloc(self->slot_capacity * sizeof(uint32_t));
+  self->slot_states = (uint8_t *)PyMem_RawCalloc(self->slot_capacity, sizeof(uint8_t));
+  
+  self->command_queue = (PhysicsCommand *)PyMem_RawMalloc(64 * sizeof(PhysicsCommand));
+  self->command_capacity = 64;
+
+  if (!self->positions || !self->rotations || !self->id_to_handle_map || 
+      !self->command_queue || !self->slot_states) {
+    return -1;
+  }
+
+  for (size_t i = 0; i < self->capacity; i++) {
+    self->categories[i] = 0xFFFF;
+    self->masks[i] = 0xFFFF;
+  }
+  return 0;
 }
 
 int PhysicsWorld_resize(PhysicsWorldObject *self, size_t new_capacity) {
@@ -342,114 +397,84 @@ int init_jolt_core(PhysicsWorldObject *self, WorldLimits limits,
   return 0;
 }
 
-// helper: Allocate shadow buffers and indirection maps
-int allocate_buffers(PhysicsWorldObject *self, int max_bodies) {
-  self->capacity = (size_t)max_bodies;
-  if (self->capacity < self->count + 128) {
-    self->capacity = self->count + 1024;
-  }
-  self->max_jolt_bodies = (uint32_t)max_bodies;
-  self->slot_capacity = self->capacity;
-
-  self->positions = PyMem_RawCalloc(self->capacity * 4, sizeof(float));
-  self->rotations = PyMem_RawCalloc(self->capacity * 4, sizeof(float));
-  self->prev_positions = PyMem_RawCalloc(self->capacity * 4, sizeof(float));
-  self->prev_rotations = PyMem_RawCalloc(self->capacity * 4, sizeof(float));
-  self->linear_velocities = PyMem_RawCalloc(self->capacity * 4, sizeof(float));
-  self->angular_velocities = PyMem_RawCalloc(self->capacity * 4, sizeof(float));
-  self->body_ids = PyMem_RawMalloc(self->capacity * sizeof(JPH_BodyID));
-  self->user_data = PyMem_RawCalloc(self->capacity, sizeof(uint64_t));
-  self->categories = PyMem_RawMalloc(self->capacity * sizeof(uint32_t));
-  self->masks = PyMem_RawMalloc(self->capacity * sizeof(uint32_t));
-  self->material_ids = PyMem_RawCalloc(self->capacity, sizeof(uint32_t));
-  self->id_to_handle_map =
-      PyMem_RawCalloc(self->max_jolt_bodies, sizeof(BodyHandle));
-  self->generations = PyMem_RawCalloc(self->slot_capacity, sizeof(uint32_t));
-  self->slot_to_dense = PyMem_RawMalloc(self->slot_capacity * sizeof(uint32_t));
-  self->dense_to_slot = PyMem_RawMalloc(self->slot_capacity * sizeof(uint32_t));
-  self->free_slots = PyMem_RawMalloc(self->slot_capacity * sizeof(uint32_t));
-  self->slot_states = PyMem_RawCalloc(self->slot_capacity, sizeof(uint8_t));
-  self->command_queue = PyMem_RawMalloc(64 * sizeof(PhysicsCommand));
-  self->command_capacity = 64;
-
-  if (!self->positions || !self->id_to_handle_map || !self->command_queue ||
-      !self->slot_states) {
-    return -1;
-  }
-
-  for (size_t i = 0; i < self->capacity; i++) {
-    self->categories[i] = 0xFFFF;
-    self->masks[i] = 0xFFFF;
-  }
-  return 0;
-}
-
-// helper: Iterate over baked Python data to create initial Jolt bodies
 // helper: Iterate over baked Python data to create initial Jolt bodies
 int load_baked_scene(PhysicsWorldObject *self, PyObject *baked) {
   // 1. EXTRACT POINTERS (GIL HELD)
-  // We assume the caller (Python) ensures these tuples/bytes are valid and match 'self->count'.
+  // We assume the Python "baker" has been updated to provide:
+  // - Positions: JPH_Real (double) in Stride 3 (X, Y, Z)
+  // - Rotations: float in Stride 4 (X, Y, Z, W)
   
-  float *f_pos = (float *)PyBytes_AsString(PyTuple_GetItem(baked, 1));
-  float *f_rot = (float *)PyBytes_AsString(PyTuple_GetItem(baked, 2));
-  float *f_shape = (float *)PyBytes_AsString(PyTuple_GetItem(baked, 3));
-  unsigned char *u_mot =
-      (unsigned char *)PyBytes_AsString(PyTuple_GetItem(baked, 4));
-  unsigned char *u_layer =
-      (unsigned char *)PyBytes_AsString(PyTuple_GetItem(baked, 5));
-  uint64_t *u_data = (uint64_t *)PyBytes_AsString(PyTuple_GetItem(baked, 6));
+  auto *baked_pos = (JPH_Real *)PyBytes_AsString(PyTuple_GetItem(baked, 1));
+  auto *baked_rot = (float *)PyBytes_AsString(PyTuple_GetItem(baked, 2));
+  auto *baked_shape = (float *)PyBytes_AsString(PyTuple_GetItem(baked, 3));
+  auto *u_mot = (unsigned char *)PyBytes_AsString(PyTuple_GetItem(baked, 4));
+  auto *u_layer = (unsigned char *)PyBytes_AsString(PyTuple_GetItem(baked, 5));
+  auto *u_data = (uint64_t *)PyBytes_AsString(PyTuple_GetItem(baked, 6));
 
-  if (!f_pos || !f_rot || !f_shape || !u_mot || !u_layer || !u_data) {
-      PyErr_SetString(PyExc_ValueError, "Invalid baked data structure");
+  if (!baked_pos || !baked_rot || !baked_shape || !u_mot || !u_layer || !u_data) {
+      PyErr_SetString(PyExc_ValueError, "Invalid or truncated baked data bytes");
       return -1;
   }
 
   int result = 0;
 
-  // 2. ENTER CRITICAL SECTION (Release GIL)
+  // 2. ENTER CRITICAL SECTION
   Py_BEGIN_ALLOW_THREADS
-
-  // Acquire locks in the Safe Order: Jolt (Outer) -> Shadow (Inner)
   NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
   SHADOW_LOCK(&self->shadow_lock);
 
   JPH_BodyInterface *bi = self->body_interface;
 
+  // Map shadow buffers to Stride Structs for safe writing
+  auto *shadow_pos = (PosStride *)self->positions;
+  auto *shadow_ppos = (PosStride *)self->prev_positions;
+  auto *shadow_rot = (AuxStride *)self->rotations;
+  auto *shadow_prot = (AuxStride *)self->prev_rotations;
+
+  // Map Baked Input to Stride Structs for safe reading
+  auto *in_pos = (PosStride *)baked_pos;
+  auto *in_rot = (AuxStride *)baked_rot;
+
   for (size_t i = 0; i < self->count; i++) {
-    // A. Shape Lookup (Safe: Both locks held)
-    // Structure: [Type, P1, P2, P3, P4] per shape entry
-    float params[4] = {f_shape[i * 5 + 1], f_shape[i * 5 + 2],
-                       f_shape[i * 5 + 3], f_shape[i * 5 + 4]};
+    // A. Shape Lookup
+    // f_shape layout: [Type, P1, P2, P3, P4]
+    float *s_data = &baked_shape[i * 5];
+    float params[4] = {s_data[1], s_data[2], s_data[3], s_data[4]};
     
-    JPH_Shape *shape = find_or_create_shape_locked(self, (int)f_shape[i * 5], params);
+    JPH_Shape *shape = find_or_create_shape_locked(self, (int)s_data[0], params);
     
     if (UNLIKELY(!shape)) {
       result = -1;
-      break; // Exit loop, cleanup locks below
+      break; 
     }
 
-    // B. Create Settings
-    // Note: f_pos stride appears to be 4 in your data (likely aligned Vec4 or X,Y,Z,Pad)
+    // B. Commit to Shadow Buffers (High Precision)
+    shadow_pos[i] = in_pos[i];
+    shadow_ppos[i] = in_pos[i];
+    shadow_rot[i] = in_rot[i];
+    shadow_prot[i] = in_rot[i];
+
+    // C. Jolt Create Settings
+    // We use the data directly from our stride-validated shadow buffer
+    JPH_RVec3 j_pos = { shadow_pos[i].x, shadow_pos[i].y, shadow_pos[i].z };
+    JPH_Quat j_rot = { shadow_rot[i].x, shadow_rot[i].y, shadow_rot[i].z, shadow_rot[i].w };
+
     JPH_BodyCreationSettings *creation = JPH_BodyCreationSettings_Create3(
-        shape, 
-        &(JPH_RVec3){f_pos[i * 4], f_pos[i * 4 + 1], f_pos[i * 4 + 2]},
-        &(JPH_Quat){f_rot[i * 4], f_rot[i * 4 + 1], f_rot[i * 4 + 2], f_rot[i * 4 + 3]},
-        (JPH_MotionType)u_mot[i], 
-        (JPH_ObjectLayer)u_layer[i]
+        shape, &j_pos, &j_rot, (JPH_MotionType)u_mot[i], (JPH_ObjectLayer)u_layer[i]
     );
 
-    // C. Metadata Setup
+    // D. Metadata & Flags
     self->generations[i] = 1;
     JPH_BodyCreationSettings_SetUserData(creation, (uint64_t)make_handle((uint32_t)i, 1));
     
-    if (u_mot[i] == 2) { // KINEMATIC/DYNAMIC check
+    if (u_mot[i] == 2) { // MOTION_DYNAMIC
       JPH_BodyCreationSettings_SetAllowSleeping(creation, true);
     }
 
-    // D. Jolt Creation
+    // E. Add to Jolt System
     self->body_ids[i] = JPH_BodyInterface_CreateAndAddBody(bi, creation, JPH_Activation_Activate);
     
-    // E. Shadow Updates
+    // F. Final Map Update
     uint32_t j_idx = JPH_ID_TO_INDEX(self->body_ids[i]);
     if (self->id_to_handle_map && j_idx < self->max_jolt_bodies) {
       self->id_to_handle_map[j_idx] = make_handle((uint32_t)i, 1);
@@ -463,14 +488,12 @@ int load_baked_scene(PhysicsWorldObject *self, PyObject *baked) {
     JPH_BodyCreationSettings_Destroy(creation);
   }
 
-  // 3. EXIT CRITICAL SECTION
   SHADOW_UNLOCK(&self->shadow_lock);
   NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
-  
   Py_END_ALLOW_THREADS
 
   if (result == -1) {
-      PyErr_SetString(PyExc_RuntimeError, "Failed to create shape during baked load");
+      PyErr_SetString(PyExc_RuntimeError, "Failed to create shape during baked load. Check shape parameters.");
   }
 
   return result;

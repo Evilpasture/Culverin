@@ -4,7 +4,7 @@
 #include "joltc.h" // Amer Koleci's JoltC binder.
 #include <Python.h>
 
-
+#include "culverin_types.h"
 #include "culverin_command_buffer.h"
 #include "culverin_debug_render.h"
 #include "culverin_internal_query.h"
@@ -14,7 +14,6 @@
 #include <stdatomic.h>
 #include <stddef.h>
 #include <string.h>
-
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -33,13 +32,8 @@
 #define JPH_BODY_ID_INDEX_MASK 0x00FFFFFF
 #endif
 
-// --- Jolt Precision Compatibility ---
-#ifndef JPH_Real
-  #ifdef JPH_DOUBLE_PRECISION
-    typedef double JPH_Real;
-  #else
-    typedef float JPH_Real;
-  #endif
+#ifndef JPH_DOUBLE_PRECISION
+#define JPH_DOUBLE_PRECISION 1
 #endif
 
 // Use restrict keyword to tell the compiler these buffers do not overlap.
@@ -50,7 +44,7 @@
 #define CULV_RESTRICT __restrict__
 #endif
 
-#define CONTACT_MAX_CAPACITY 16384
+constexpr int CONTACT_MAX_CAPACITY = 16384;
 
 // Mask for the raw array index (Stripping the 24th bit used for Static flags)
 #define JPH_ID_TO_INDEX(id) ((id) & 0x7FFFFF)

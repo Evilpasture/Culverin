@@ -48,6 +48,7 @@ Repository = "https://github.com/Evilpasture/culverin.git"
 [tool.scikit-build]
 cmake.build-type = "Release"
 cmake.args = [
+    "-GNinja",
     "-DDOUBLE_PRECISION=ON",
     "-DGENERATE_SAMPLES=OFF",
     "-DGENERATE_UNIT_TESTS=OFF",

@@ -9,6 +9,8 @@ typedef struct {
   float z;
 } Vec3f; // General Vec3f
 
+typedef struct { float p[4]; } ShapeParams; // 4 floats to prevent over-read
+
 // --- Unified Parameter Struct ---
 typedef struct {
   float px, py, pz; // Pivot

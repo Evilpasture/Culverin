@@ -28,6 +28,9 @@ jobs:
         with:
           python-version: '3.13'
 
+      - name: Verify Clang
+        run: clang --version
+
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.22.0
         env:

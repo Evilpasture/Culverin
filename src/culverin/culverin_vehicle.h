@@ -1,6 +1,10 @@
 #pragma once
 #include "culverin.h"
 
+constexpr uint32_t LAYER_STATIC = 1;
+constexpr uint32_t LAYER_DYNAMIC = 2;
+constexpr uint32_t LAYER_SPECIAL  = 3;
+
 typedef struct {
   JPH_LinearCurve *f_curve;
   JPH_LinearCurve *t_curve;

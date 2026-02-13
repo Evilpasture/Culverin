@@ -4,54 +4,44 @@
 #include <Python.h>
 
 
-static PyObject *make_view(PhysicsWorldObject *self, void *ptr) {
+// Helper to create MemoryViews with specific types and sizes
+static PyObject *make_view(PhysicsWorldObject *self, void *ptr, const char *format, size_t itemsize, int stride) {
   if (!ptr) {
     Py_RETURN_NONE;
   }
 
-  // 1. Capture State Under Lock
   SHADOW_LOCK(&self->shadow_lock);
-
-  // We capture the current count at the moment the view is exported
   size_t current_count = self->count;
-
-  // Increment export count to prevent resize() from moving this pointer
   self->view_export_count++;
-
   SHADOW_UNLOCK(&self->shadow_lock);
 
-  // 2. Setup Local Buffer Metadata
-  // These are copied by Python into the memoryview object.
-  // We use 4 floats per body (stride is 16 bytes).
-  Py_ssize_t local_shape[1] = {(Py_ssize_t)(current_count * 4)};
-  Py_ssize_t local_strides[1] = {(Py_ssize_t)sizeof(float)};
+  // CRITICAL: Use the passed-in stride instead of hardcoded 4
+  Py_ssize_t total_elements = (Py_ssize_t)(current_count * stride);
+  
+  Py_ssize_t local_shape[1] = {total_elements};
+  Py_ssize_t local_strides[1] = {(Py_ssize_t)itemsize};
 
   Py_buffer buf;
   memset(&buf, 0, sizeof(Py_buffer));
   buf.buf = ptr;
-  buf.obj = (PyObject *)self; // Ownership link
+  buf.obj = (PyObject *)self; 
   Py_INCREF(self);
 
-  buf.len = local_shape[0] * (Py_ssize_t)sizeof(float);
+  buf.len = total_elements * (Py_ssize_t)itemsize;
   buf.readonly = 1;
-  buf.itemsize = sizeof(float);
-  buf.format = "f";
+  buf.itemsize = (Py_ssize_t)itemsize;
+  buf.format = (char *)format; 
   buf.ndim = 1;
   buf.shape = local_shape;
   buf.strides = local_strides;
 
-  // 3. Create MemoryView
   PyObject *mv = PyMemoryView_FromBuffer(&buf);
 
   if (!mv) {
-    // Clean up on failure
     SHADOW_LOCK(&self->shadow_lock);
-    if (self->view_export_count > 0) {
-      self->view_export_count--;
-    }
+    if (self->view_export_count > 0) self->view_export_count--;
     SHADOW_UNLOCK(&self->shadow_lock);
-
-    Py_DECREF(self); // Drop the ownership link ref
+    Py_DECREF(self);
     return NULL;
   }
 
@@ -73,21 +63,24 @@ PyObject *Character_get_handle(CharacterObject *self, void *closure) {
 /* --- Shadow Buffer Getters (Safe via hardened make_view) --- */
 
 PyObject *get_positions(PhysicsWorldObject *self, void *c) {
-  // make_view internally acquires SHADOW_LOCK and snapshots count
-  return make_view(self, self->positions);
+  // Positions are Stride 3 (X, Y, Z)
+  return make_view(self, self->positions, "d", sizeof(JPH_Real), 3);
 }
 
 PyObject *get_rotations(PhysicsWorldObject *self, void *c) {
-  return make_view(self, self->rotations);
+  // Rotations are Stride 4 (X, Y, Z, W)
+  return make_view(self, self->rotations, "f", sizeof(float), 4);
 }
 
 PyObject *get_velocities(PhysicsWorldObject *self, void *c) {
-  return make_view(self, self->linear_velocities);
+  // Velocities are Stride 4 (X, Y, Z, Pad)
+  return make_view(self, self->linear_velocities, "f", sizeof(float), 4);
 }
 
 PyObject *get_angular_velocities(PhysicsWorldObject *self, void *c) {
-  return make_view(self, self->angular_velocities);
+  return make_view(self, self->angular_velocities, "f", sizeof(float), 4);
 }
+
 
 /* --- Mutable Metadata Getters (Hardened with Locks) --- */
 
@@ -106,46 +99,14 @@ PyObject *get_time(PhysicsWorldObject *self, void *c) {
 }
 
 PyObject *get_user_data_buffer(PhysicsWorldObject *self, void *c) {
-  if (!self->user_data) {
-    Py_RETURN_NONE;
-  }
-
-  SHADOW_LOCK(&self->shadow_lock);
-  size_t current_count = self->count;
-  self->view_export_count++;
-  SHADOW_UNLOCK(&self->shadow_lock);
-
-  // Use stack-allocated metadata to prevent cross-thread corruption
-  Py_ssize_t local_shape[1] = {(Py_ssize_t)current_count};
-  Py_ssize_t local_stride = sizeof(uint64_t);
-
-  Py_buffer buf;
-  memset(&buf, 0, sizeof(Py_buffer));
-  buf.buf = self->user_data;
-  buf.obj = (PyObject *)self;
-  Py_INCREF(self);
-
-  buf.len = (Py_ssize_t)(current_count * sizeof(uint64_t));
-  buf.readonly = 1;
-  buf.itemsize = sizeof(uint64_t);
-  buf.format = "Q";
-  buf.ndim = 1;
-  buf.shape = local_shape;
-  buf.strides = &local_stride;
-
-  PyObject *mv = PyMemoryView_FromBuffer(&buf);
-  if (!mv) {
-    SHADOW_LOCK(&self->shadow_lock);
-    if (self->view_export_count > 0) {
-      self->view_export_count--;
-    }
-    SHADOW_UNLOCK(&self->shadow_lock);
-    Py_DECREF(self);
-    return NULL;
-  }
-  return mv;
+  // User data is Stride 1 (One uint64 per body)
+  return make_view(self, self->user_data, "Q", sizeof(uint64_t), 1);
 }
 
 PyObject *get_shape_count(PhysicsWorldObject *self, void *closure) {
-    return PyLong_FromSize_t(self->shape_cache_count);
+    // Protected because resize() could move shape_cache
+    SHADOW_LOCK(&self->shadow_lock);
+    size_t count = self->shape_cache_count;
+    SHADOW_UNLOCK(&self->shadow_lock);
+    return PyLong_FromSize_t(count);
 }

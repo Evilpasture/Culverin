@@ -271,7 +271,9 @@ PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *args,
   JPH_STACK_ALLOC(JPH_Vec3, direction);
   direction->x = dx * scale; direction->y = dy * scale; direction->z = dz * scale;
   JPH_STACK_ALLOC(JPH_RayCastResult, hit);
-  memset(hit, 0, sizeof(JPH_RayCastResult));
+  hit->bodyID = JPH_INVALID_BODY_ID;
+  hit->fraction = 1.0f;
+  hit->subShapeID2 = 0;
 
   SHADOW_LOCK(&self->shadow_lock);
   BLOCK_UNTIL_NOT_STEPPING(self);
@@ -416,6 +418,9 @@ PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self,
         JPH_RVec3 v_ori = { (double)f_starts[off], (double)f_starts[off+1], (double)f_starts[off+2] };
 
         JPH_RayCastResult hit;
+        hit.bodyID = JPH_INVALID_BODY_ID;
+        hit.fraction = 1.0f;
+        hit.subShapeID2 = 0;
         // PASSING NULL for filters is the safest and fastest way in JoltC
         if (JPH_NarrowPhaseQuery_CastRay(query, &v_ori, &v_dir, &hit, NULL, NULL, NULL)) {
             uint64_t h = JPH_BodyInterface_GetUserData(bi, hit.bodyID);

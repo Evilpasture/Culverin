@@ -159,7 +159,7 @@ PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
   r.j_veh = JPH_VehicleConstraint_Create(lock.body, &v_set);
   if (!r.j_veh) goto jolt_fail;
 
-  r.tester = JPH_VehicleCollisionTesterRay_Create(2, &(JPH_Vec3){0, 1.0f, 0}, 2.0f);
+  r.tester = JPH_VehicleCollisionTesterRay_Create(TRACKED_LAYER_DRIVABLE, &(JPH_Vec3){0, 1.0f, 0}, 2.0f);
   if (!r.tester) goto jolt_fail;
 
   JPH_VehicleConstraint_SetVehicleCollisionTester(r.j_veh, (JPH_VehicleCollisionTester *)r.tester);
