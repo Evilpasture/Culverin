@@ -171,8 +171,8 @@ PyObject *PhysicsWorld_destroy_constraint(PhysicsWorldObject *self,
   BLOCK_UNTIL_NOT_STEPPING(self);
   BLOCK_UNTIL_NOT_QUERYING(self);
 
-  uint32_t slot = (uint32_t)(h & 0xFFFFFFFF);
-  uint32_t gen = (uint32_t)(h >> 32);
+  auto slot = (uint32_t)(h & 0xFFFFFFFF);
+  auto gen = (uint32_t)(h >> 32);
 
   // Validate identity
   if (slot >= self->constraint_capacity ||
@@ -202,7 +202,7 @@ PyObject *PhysicsWorld_destroy_constraint(PhysicsWorldObject *self,
     // when the joint holding them is deleted.
     if (JPH_Constraint_GetType(c_to_destroy) ==
         JPH_ConstraintType_TwoBodyConstraint) {
-      JPH_TwoBodyConstraint *tbc = (JPH_TwoBodyConstraint *)c_to_destroy;
+      auto *tbc = (JPH_TwoBodyConstraint *)c_to_destroy;
       JPH_Body *b1 = JPH_TwoBodyConstraint_GetBody1(tbc);
       JPH_Body *b2 = JPH_TwoBodyConstraint_GetBody2(tbc);
 
@@ -252,7 +252,7 @@ PyObject *PhysicsWorld_set_constraint_target(PhysicsWorldObject *self,
 
   // HINGE
   if (sub == JPH_ConstraintSubType_Hinge) {
-    JPH_HingeConstraint *hc = (JPH_HingeConstraint *)c;
+    auto *hc = (JPH_HingeConstraint *)c;
     JPH_MotorState state = JPH_HingeConstraint_GetMotorState(hc);
     if (state == JPH_MotorState_Velocity) {
       JPH_HingeConstraint_SetTargetAngularVelocity(hc, target);
@@ -262,7 +262,7 @@ PyObject *PhysicsWorld_set_constraint_target(PhysicsWorldObject *self,
   }
   // SLIDER
   else if (sub == JPH_ConstraintSubType_Slider) {
-    JPH_SliderConstraint *sc = (JPH_SliderConstraint *)c;
+    auto *sc = (JPH_SliderConstraint *)c;
     JPH_MotorState state = JPH_SliderConstraint_GetMotorState(sc);
     if (state == JPH_MotorState_Velocity) {
       JPH_SliderConstraint_SetTargetVelocity(sc, target);

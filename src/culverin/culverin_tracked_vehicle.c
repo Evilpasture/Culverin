@@ -98,7 +98,7 @@ PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
 
   // --- 2. PRE-JOLT RESOURCE ALLOCATION (GIL HELD) ---
   VehicleResources r = {0};
-  uint32_t num_wheels = (uint32_t)PyList_Size(py_wheels);
+  auto num_wheels = (uint32_t)PyList_Size(py_wheels);
   
   // FIX: Declare and initialize tracks BEFORE any goto that might jump to cleanup
   TrackData tracks[2];
@@ -176,8 +176,8 @@ PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
   // Free the temp index arrays from parsing
   for (int t = 0; t < num_tracks; t++) PyMem_RawFree(tracks[t].indices);
 
-  CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
-  VehicleObject *obj = (VehicleObject *)PyObject_New(VehicleObject, (PyTypeObject *)st->VehicleType);
+  auto *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+  auto *obj = (VehicleObject *)PyObject_New(VehicleObject, (PyTypeObject *)st->VehicleType);
   if (!obj) {
     SHADOW_LOCK(&self->shadow_lock);
     cleanup_vehicle_resources(&r, num_wheels, self);

@@ -92,7 +92,7 @@ void cleanup_vehicle_resources(VehicleResources *r, uint32_t num_wheels,
                                PhysicsWorldObject *self) {
   if (r->j_veh) {
     // If it was already added to Jolt, we MUST remove it before destroying it
-    if (r->is_added_to_world && self && self->system) {
+    if ((int)r->is_added_to_world && self && self->system) {
       JPH_PhysicsSystem_RemoveStepListener(
           self->system, JPH_VehicleConstraint_AsPhysicsStepListener(r->j_veh));
       JPH_PhysicsSystem_RemoveConstraint(self->system,
@@ -113,7 +113,7 @@ void cleanup_vehicle_resources(VehicleResources *r, uint32_t num_wheels,
   }
 
   if (r->w_settings) {
-    for (uint32_t i = 0; i < num_wheels; i++) {
+    for (auto i = 0u; i < num_wheels; i++) {
       if (r->w_settings[i]) {
         JPH_WheelSettings_Destroy(r->w_settings[i]);
       }
@@ -152,11 +152,11 @@ static void setup_transmission(JPH_WheeledVehicleControllerSettings *v_ctrl,
                                JPH_VehicleTransmissionSettings *v_trans_set,
                                PyObject *py_trans) {
   // Determine mode
-  int t_mode = 1; // Default Manual
+  auto t_mode = 1; // Default Manual
   if (py_trans && py_trans != Py_None) {
     PyObject *o_mode = PyObject_GetAttrString(py_trans, "mode");
     if (o_mode) {
-      t_mode = (int)PyLong_AsLong(o_mode);
+      t_mode = PyLong_AsLong(o_mode);
       Py_DECREF(o_mode);
     }
     PyErr_Clear();
@@ -277,7 +277,7 @@ PyObject *PhysicsWorld_create_vehicle(PhysicsWorldObject *self, PyObject *args,
   r.v_ctrl = JPH_WheeledVehicleControllerSettings_Create();
   r.v_trans_set = JPH_VehicleTransmissionSettings_Create();
 
-  for (uint32_t i = 0; i < num_wheels; i++) {
+  for (auto i = 0u; i < num_wheels; i++) {
     // create_single_wheel uses Python API to parse dicts, must have GIL
     r.w_settings[i] = create_single_wheel(PyList_GetItem(py_wheels, i), r.f_curve);
     if (!r.w_settings[i]) goto python_fail;
@@ -326,8 +326,8 @@ PyObject *PhysicsWorld_create_vehicle(PhysicsWorldObject *self, PyObject *args,
   Py_BLOCK_THREADS;
 
   // --- 4. PYTHON WRAPPER ---
-  CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
-  VehicleObject *obj = (VehicleObject *)PyObject_New(VehicleObject, (PyTypeObject *)st->VehicleType);
+  auto *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+  auto *obj = (VehicleObject *)PyObject_New(VehicleObject, (PyTypeObject *)st->VehicleType);
 
   if (!obj) {
     SHADOW_LOCK(&self->shadow_lock);
@@ -388,7 +388,7 @@ PyObject *Vehicle_set_input(VehicleObject *self, PyObject *args,
     Py_RETURN_NONE;
   }
 
-  JPH_WheeledVehicleController *controller =
+  auto *controller =
       (JPH_WheeledVehicleController *)JPH_VehicleConstraint_GetController(
           self->vehicle);
   JPH_BodyID chassis_id =
@@ -485,9 +485,9 @@ PyObject *Vehicle_get_wheel_transform(VehicleObject *self, PyObject *args) {
 
   // 1. Position: In Double Precision, this is the 'column3' member
   // (RVec3/doubles)
-  double px = transform->column3.x;
-  double py = transform->column3.y;
-  double pz = transform->column3.z;
+  auto px = transform->column3.x;
+  auto py = transform->column3.y;
+  auto pz = transform->column3.z;
 
   // 2. Rotation: These are the first 3 columns (Vec4/floats in RMat44)
   // We copy them to a standard Mat4 to extract the quaternion.
@@ -514,7 +514,7 @@ PyObject *Vehicle_get_wheel_transform(VehicleObject *self, PyObject *args) {
     return NULL;
   }
 
-  PyObject *result = PyTuple_Pack(2, py_pos, py_rot);
+  auto *result = PyTuple_Pack(2, py_pos, py_rot);
   Py_DECREF(py_pos);
   Py_DECREF(py_rot);
   return result;
@@ -570,7 +570,7 @@ PyObject *Vehicle_get_wheel_local_transform(VehicleObject *self,
     return NULL;
   }
 
-  PyObject *result = PyTuple_Pack(2, py_pos, py_rot);
+  auto *result = PyTuple_Pack(2, py_pos, py_rot);
   Py_DECREF(py_pos);
   Py_DECREF(py_rot);
 
@@ -599,7 +599,7 @@ PyObject *Vehicle_get_debug_state(VehicleObject *self,
   }
 
   // 2. RESOLVE JOLT COMPONENTS
-  JPH_WheeledVehicleController *controller =
+  auto *controller =
       (JPH_WheeledVehicleController *)JPH_VehicleConstraint_GetController(
           self->vehicle);
   if (!controller) {
@@ -607,9 +607,9 @@ PyObject *Vehicle_get_debug_state(VehicleObject *self,
     Py_RETURN_NONE;
   }
 
-  const JPH_VehicleEngine *engine =
+  const auto *engine =
       JPH_WheeledVehicleController_GetEngine(controller);
-  const JPH_VehicleTransmission *trans =
+  const auto *trans =
       JPH_WheeledVehicleController_GetTransmission(controller);
 
   // 3. CAPTURE INPUTS
@@ -689,7 +689,7 @@ PyObject *Vehicle_destroy(VehicleObject *self, PyObject *Py_UNUSED(ignored)) {
   JPH_WheelSettings **wheels = self->wheel_settings;
   JPH_LinearCurve *f_curve = self->friction_curve;
   JPH_LinearCurve *t_curve = self->torque_curve;
-  uint32_t wheel_count = self->num_wheels;
+  auto wheel_count = self->num_wheels;
 
   self->vehicle = NULL;
   self->tester = NULL;
@@ -724,7 +724,7 @@ PyObject *Vehicle_destroy(VehicleObject *self, PyObject *Py_UNUSED(ignored)) {
   }
 
   if (wheels) {
-    for (uint32_t i = 0; i < wheel_count; i++) {
+    for (auto i = 0u; i < wheel_count; i++) {
       if (wheels[i]) {
         JPH_WheelSettings_Destroy(wheels[i]);
       }

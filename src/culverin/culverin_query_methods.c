@@ -282,7 +282,7 @@ PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *args,
 
   JPH_BodyID ignore_bid = 0;
   uint32_t ignore_slot = 0;
-  if (ignore_h != 0 && unpack_handle(self, ignore_h, &ignore_slot)) {
+  if (ignore_h != 0 && (int)unpack_handle(self, ignore_h, &ignore_slot)) {
     ignore_bid = self->body_ids[self->slot_to_dense[ignore_slot]];
   }
   SHADOW_UNLOCK(&self->shadow_lock);
@@ -509,7 +509,7 @@ PyObject *PhysicsWorld_shapecast(PhysicsWorldObject *self, PyObject *args,
   JPH_BodyID ignore_bid = JPH_INVALID_BODY_ID;
   if (ignore_h) {
       uint32_t slot;
-      if (unpack_handle(self, ignore_h, &slot) && self->slot_states[slot] == SLOT_ALIVE) {
+      if ((int)unpack_handle(self, ignore_h, &slot) && self->slot_states[slot] == SLOT_ALIVE) {
           ignore_bid = self->body_ids[self->slot_to_dense[slot]];
       }
   }
@@ -549,8 +549,7 @@ PyObject *PhysicsWorld_shapecast(PhysicsWorldObject *self, PyObject *args,
   Py_END_ALLOW_THREADS
 
   // 4. PROCESS RESULTS (GIL Re-acquired)
-  PyObject *result = Py_None;
-  Py_INCREF(Py_None); // Default return
+  PyObject *result = NULL;
 
   if (ctx.has_hit) {
       float nx = -ctx.hit.penetrationAxis.x;
@@ -582,9 +581,9 @@ PyObject *PhysicsWorld_shapecast(PhysicsWorldObject *self, PyObject *args,
           
           Py_DECREF(result); // Decrement None
           result = Py_BuildValue("Kf(fff)(fff)", h, ctx.hit.fraction, 
-                                 (float)ctx.hit.contactPointOn2.x, 
-                                 (float)ctx.hit.contactPointOn2.y, 
-                                 (float)ctx.hit.contactPointOn2.z, 
+                                 ctx.hit.contactPointOn2.x, 
+                                 ctx.hit.contactPointOn2.y, 
+                                 ctx.hit.contactPointOn2.z, 
                                  nx, ny, nz);
       }
       SHADOW_UNLOCK(&self->shadow_lock);
@@ -600,6 +599,7 @@ PyObject *PhysicsWorld_shapecast(PhysicsWorldObject *self, PyObject *args,
       NATIVE_COND_BROADCAST(self->step_sync.cond);
       NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
   }
-
+  if (!result)
+    Py_RETURN_NONE;
   return result;
 }

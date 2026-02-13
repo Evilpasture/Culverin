@@ -155,7 +155,7 @@ static inline void culverin_yield() {
 typedef uint64_t BodyHandle;
 
 // Constraint Types
-typedef enum {
+typedef enum ConstraintType : uint8_t {
   CONSTRAINT_FIXED = 0,
   CONSTRAINT_POINT = 1,
   CONSTRAINT_HINGE = 2,
@@ -168,7 +168,7 @@ typedef enum {
 typedef uint64_t ConstraintHandle;
 
 // --- Contact Lifecycle Types ---
-typedef enum {
+typedef enum ContactEventType : uint8_t {
   EVENT_ADDED = 0,
   EVENT_PERSISTED = 1,
   EVENT_REMOVED = 2

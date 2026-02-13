@@ -16,7 +16,7 @@ static PyObject *make_view(PhysicsWorldObject *self, void *ptr, const char *form
   SHADOW_UNLOCK(&self->shadow_lock);
 
   // CRITICAL: Use the passed-in stride instead of hardcoded 4
-  Py_ssize_t total_elements = (Py_ssize_t)(current_count * stride);
+  auto total_elements = (Py_ssize_t)(current_count * stride);
   
   Py_ssize_t local_shape[1] = {total_elements};
   Py_ssize_t local_strides[1] = {(Py_ssize_t)itemsize};

@@ -51,7 +51,6 @@ JPH_Constraint *create_hinge(const ConstraintParams *p, JPH_Body *b1,
   s.point2 = s.point1;
 
   JPH_Vec3 axis = {p->ax, p->ay, p->az};
-  // ... (Keep existing normalization logic) ...
   float len_sq = axis.x * axis.x + axis.y * axis.y + axis.z * axis.z;
   if (len_sq > 1e-9f) {
     JPH_Vec3_Normalize(&axis, &axis);

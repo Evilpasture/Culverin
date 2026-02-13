@@ -2686,7 +2686,7 @@ static PyObject *PhysicsWorld_get_active_indices(PhysicsWorldObject *self,
   }
 
   // 1. Snapshot the BodyIDs while locked (Fast)
-  JPH_BodyID *id_scratch =
+  auto *id_scratch =
       (JPH_BodyID *)PyMem_RawMalloc(count * sizeof(JPH_BodyID));
   if (!id_scratch) {
     SHADOW_UNLOCK(&self->shadow_lock);
@@ -2696,7 +2696,7 @@ static PyObject *PhysicsWorld_get_active_indices(PhysicsWorldObject *self,
   SHADOW_UNLOCK(&self->shadow_lock);
 
   // 2. Query activity state WHILE UNLOCKED (Deadlock safe)
-  uint32_t *results = (uint32_t *)PyMem_RawMalloc(count * sizeof(uint32_t));
+  auto *results = (uint32_t *)PyMem_RawMalloc(count * sizeof(uint32_t));
   size_t active_count = 0;
   JPH_BodyInterface *bi = self->body_interface;
 
@@ -2724,7 +2724,7 @@ static PyObject *PhysicsWorld_get_render_state(PhysicsWorldObject *self,
 
   // Clamp alpha to [0, 1]
   alpha = fmaxf(0.0f, fminf(1.0f, alpha));
-  double d_alpha = (double)alpha; // Use double for position math
+  auto d_alpha = (double)alpha; // Use double for position math
 
   SHADOW_LOCK(&self->shadow_lock);
   
@@ -2957,7 +2957,7 @@ static PyObject *PhysicsWorld_create_heightfield(PhysicsWorldObject *self,
     return PyErr_NoMemory();
   }
 
-  JPH_Shape *shape =
+  auto *shape =
       (JPH_Shape *)JPH_HeightFieldShapeSettings_CreateShape(hf_settings);
   JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)hf_settings);
 
@@ -3038,10 +3038,10 @@ static PyObject *PhysicsWorld_get_debug_data(PhysicsWorldObject *self,
   // 2. Configure Draw Settings (For Bodies Only)
   JPH_DrawSettings settings;
   JPH_DrawSettings_InitDefault(&settings);
-  settings.drawShape = draw_shapes;
-  settings.drawShapeWireframe = wireframe;
-  settings.drawBoundingBox = draw_bounding_box;
-  settings.drawCenterOfMassTransform = draw_centers;
+  settings.drawShape = (bool)draw_shapes;
+  settings.drawShapeWireframe = (bool)wireframe;
+  settings.drawBoundingBox = (bool)draw_bounding_box;
+  settings.drawCenterOfMassTransform = (bool)draw_centers;
 
   // 3. Draw Bodies
   if (draw_shapes || draw_bounding_box || draw_centers) {

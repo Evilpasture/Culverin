@@ -10,11 +10,11 @@ static void process_contact_manifold(PhysicsWorldObject *self,
                                      ContactEventType type) {
 
   // Fast Pointer-based UserData retrieval (No Jolt locks)
-  BodyHandle h1 = (BodyHandle)JPH_Body_GetUserData((JPH_Body *)body1);
-  BodyHandle h2 = (BodyHandle)JPH_Body_GetUserData((JPH_Body *)body2);
+  auto h1 = (BodyHandle)JPH_Body_GetUserData((JPH_Body *)body1);
+  auto h2 = (BodyHandle)JPH_Body_GetUserData((JPH_Body *)body2);
 
-  uint32_t slot1 = (uint32_t)(h1 & 0xFFFFFFFF);
-  uint32_t slot2 = (uint32_t)(h2 & 0xFFFFFFFF);
+  auto slot1 = (uint32_t)(h1 & 0xFFFFFFFF);
+  auto slot2 = (uint32_t)(h2 & 0xFFFFFFFF);
 
   // Safety: Ensure slot is within our shadow buffer range
   if (slot1 >= self->slot_capacity || slot2 >= self->slot_capacity) {
@@ -64,8 +64,8 @@ static void process_contact_manifold(PhysicsWorldObject *self,
   ev->pz = (float)p->z;
 
   // Impulse math skipped for sensors to prevent Static Body access violations
-  if (JPH_Body_IsSensor((JPH_Body *)body1) ||
-      JPH_Body_IsSensor((JPH_Body *)body2)) {
+  if ((int)JPH_Body_IsSensor((JPH_Body *)body1) ||
+      (int)JPH_Body_IsSensor((JPH_Body *)body2)) {
     ev->impulse = 0.0f;
     ev->sliding_speed_sq = 0.0f;
   } else {
@@ -78,9 +78,9 @@ static void process_contact_manifold(PhysicsWorldObject *self,
       JPH_Body_GetLinearVelocity((JPH_Body *)body2, &v2);
     }
 
-    float dvx = swapped ? (v2.x - v1.x) : (v1.x - v2.x);
-    float dvy = swapped ? (v2.y - v1.y) : (v1.y - v2.y);
-    float dvz = swapped ? (v2.z - v1.z) : (v1.z - v2.z);
+    float dvx = (int)swapped ? (v2.x - v1.x) : (v1.x - v2.x);
+    float dvy = (int)swapped ? (v2.y - v1.y) : (v1.y - v2.y);
+    float dvz = (int)swapped ? (v2.z - v1.z) : (v1.z - v2.z);
 
     float dot = dvx * ev->nx + dvy * ev->ny + dvz * ev->nz;
     ev->impulse = fabsf(dot);
@@ -158,8 +158,8 @@ static JPH_ValidateResult JPH_API_CALL on_contact_validate(
   PhysicsWorldObject *self = (PhysicsWorldObject *)userData;
 
   // 1. Extract Slots
-  BodyHandle h1 = (BodyHandle)JPH_Body_GetUserData((JPH_Body *)body1);
-  BodyHandle h2 = (BodyHandle)JPH_Body_GetUserData((JPH_Body *)body2);
+  auto h1 = (BodyHandle)JPH_Body_GetUserData((JPH_Body *)body1);
+  auto h2 = (BodyHandle)JPH_Body_GetUserData((JPH_Body *)body2);
   uint32_t slot1 = (uint32_t)(h1 & 0xFFFFFFFF);
   uint32_t slot2 = (uint32_t)(h2 & 0xFFFFFFFF);
 
