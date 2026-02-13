@@ -964,61 +964,45 @@ static PyObject *PhysicsWorld_step(PhysicsWorldObject *self, PyObject *args) {
     BLOCK_UNTIL_NOT_STEPPING(self);
     atomic_store_explicit(&self->is_stepping, true, memory_order_relaxed);
 
-    // --- 1. THE INTERPOLATION SNAPSHOT ---
-    // We keep this inside the lock to ensure "Previous" is a bit-perfect 
-    // copy of the last frame's "Current" before any new commands or physics apply.
-    memcpy(self->prev_positions, self->positions, self->count * sizeof(PosStride));
-    memcpy(self->prev_rotations, self->rotations, self->count * sizeof(AuxStride));
+    // --- SNAPSHOT REMOVED ---
+    // The 40MB memcpy is gone. The lock is now extremely "thin".
 
-    // --- 2. COMMAND QUEUE DOUBLE-BUFFERING ---
+    // Double-buffer swap (Recycling logic)
     PhysicsCommand *captured_queue = self->command_queue;
     size_t captured_count = self->command_count;
-    
-    // Ensure the spare buffer exists and matches the current capacity
-    // (This handles cases where PhysicsWorld_resize was called)
     if (UNLIKELY(!self->command_queue_spare || self->command_capacity > self->spare_capacity)) {
         PyMem_RawFree(self->command_queue_spare);
         self->command_queue_spare = (PhysicsCommand*)PyMem_RawMalloc(self->command_capacity * sizeof(PhysicsCommand));
         self->spare_capacity = self->command_capacity;
     }
-    
-    // SWAP: Give the world the clean spare, we take the full captured one
     self->command_queue = self->command_queue_spare;
     self->command_queue_spare = captured_queue; 
     self->command_count = 0;
-    // self->command_capacity stays the same for the new main queue
 
-    // Reset contact index 
     atomic_store_explicit(&self->contact_atomic_idx, 0, memory_order_relaxed);
-
     SHADOW_UNLOCK(&self->shadow_lock);
 
-    // --- 3. HEAVY LIFTING (Parallel Execution) ---
+    // --- HEAVY LIFTING ---
     Py_BEGIN_ALLOW_THREADS 
     NATIVE_MUTEX_LOCK(g_jph_trampoline_lock); 
 
-    // Process commands (Note: captured_queue is now 'spare' in the object)
     if (captured_count > 0) {
         flush_commands_internal(self, captured_queue, captured_count);
     }
 
-    // Solve Physics
     JPH_PhysicsSystem_Update(self->system, dt, 1, self->job_system);
 
-    // Selective Sync (Only moving parts)
+    // The Snapshot + Sync now happen together in one GIL-free loop
     culverin_sync_shadow_buffers(self); 
 
     NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
     Py_END_ALLOW_THREADS
 
-    // --- 4. FINALIZATION ---
+    // --- FINALIZATION ---
     SHADOW_LOCK(&self->shadow_lock);
-
-    // Update public contact count
     size_t c_idx = atomic_load_explicit(&self->contact_atomic_idx, memory_order_acquire);
     self->contact_count = (c_idx > self->contact_max_capacity) ? self->contact_max_capacity : c_idx;
 
-    // Signal workers that they can resume
     NATIVE_MUTEX_LOCK(self->step_sync.mutex);
     atomic_store_explicit(&self->is_stepping, false, memory_order_release);
     atomic_store_explicit(&self->step_requested, false, memory_order_release);
