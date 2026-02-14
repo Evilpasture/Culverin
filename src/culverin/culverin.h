@@ -190,80 +190,53 @@ typedef struct ContactEvent {
 _Static_assert(sizeof(ContactEvent) == 64,
                "ContactEvent must be 64 bytes for performance");
 
-// Aligned to 64 bytes
-typedef struct ContactEventSlim {
-    alignas(64)
-    // 16 Bytes: Identification
-    BodyHandle body1;       // 8 bytes (assuming pointer/u64)
-    BodyHandle body2;       // 8 bytes
+// 1. Remove alignas from the inner struct
+typedef struct {
+    BodyHandle body1;       // 8
+    BodyHandle body2;       // 8
+    JPH_Real px, py, pz;    // 24/12
+    float nx, ny, nz;       // 12
+    float impulse;          // 4
+    float sliding_speed;    // 4
+    uint32_t flags;         // 4
+    #if !defined(JPH_DOUBLE_PRECISION)
+        uint32_t padding_magic[3]; 
+    #endif
+} ContactEventSlim; // Just a 64-byte data block now
 
-    // 24 Bytes: High Precision Position (JPH_Real = double)
-    double px, py, pz;      
+// 2. The Tail (Already 64 bytes)
+typedef struct {
+    // --- 8-byte Alignment Block (Offset 0 to 16) ---
+    uint64_t udata1;            // 8
+    uint64_t udata2;            // 8
 
-    // 12 Bytes: Normals (Keep as float, direction rarely needs double)
-    float nx, ny, nz;       
-
-    // 8 Bytes: Physics Data
-    float impulse;          // 4 bytes
-    float sliding_speed;    // 4 bytes
-
-    // Total used: 16 + 24 + 12 + 8 = 60 Bytes.
-    // 4 Bytes padding/flags left.
-    uint32_t flags;         // Packed booleans (IsSensor, IsNew, etc.)
-
-} ContactEventSlim;
-
-_Static_assert(sizeof(ContactEventSlim) == 64, "Slim event must fit cache line");
-
-// Aligned to 128 bytes (2 Cache Lines)
-typedef struct ContactEventFat {
-    // --- CACHE LINE 1 (Geometry & ID) ---
-    // 16 Bytes: IDs
-    BodyHandle body1;
-    BodyHandle body2;
-    // 16 Bytes: User Data
-    // You have room here for game-specific data like "TeamID" or "WeaponID"
-    uint64_t user_data_1;
-    uint64_t user_data_2;
-
-    // 24 Bytes: World Position (Double)
-    double px, py, pz;
-
-    // 24 Bytes: World Normal & Tangent (Float)
-    // Tangents are crucial for sliding sound effects!
-    float nx, ny, nz;
-
-    // --- CACHE LINE 2 (Physics & Metadata) ---
-    float tx, ty, tz; 
+    // --- 4-byte Alignment Block (Offset 16 to 64) ---
+    float rvx, rvy, rvz;        // 12 (Total 28)
+    float toi;                  // 4  (Total 32)
+    float penetration;          // 4  (Total 36)
     
-    // 12 Bytes: Relative Velocity (Float)
-    // (body2_vel - body1_vel) - vital for damage calculation
-    float rvx, rvy, rvz; 
+    uint32_t mat1;              // 4  (Total 40)
+    uint32_t mat2;              // 4  (Total 44)
+    
+    uint32_t sub1;              // 4  (Total 48)
+    uint32_t sub2;              // 4  (Total 52)
+    
+    uint32_t padding[3];        // 12 (Total 64!)
+} ContactEventFatExt;
 
-    // 8 Bytes: Scalar Physics
-    float impulse;
-    float sliding_speed_sq;
+_Static_assert(sizeof(ContactEventFatExt) == 64, "FatExt is now a perfect 64-byte block");
 
-    // 8 Bytes: Material IDs (Direct access, no lookup needed)
-    uint32_t mat1;
-    uint32_t mat2;
+// 3. The Outer Container (Where the alignment lives)
+// typedef struct ContactEvent {
+//     alignas(64)
+//     ContactEventSlim slim;   // Offset 0
+//     ContactEventFatExt fat;  // Offset 64
+// } ContactEvent;
 
-    // 8 Bytes: Classification
-    uint32_t contact_type;  // Enter, Stay, Exit
-    uint32_t worker_id;     // Debugging: which thread solved this?
+// _Static_assert(sizeof(ContactEvent) == 128, "ContactEvent must be exactly 128 bytes.");
+// _Static_assert(offsetof(ContactEvent, fat) == 64, "Fat extension must start on new cache line.");
 
-    // 4 Bytes: Time of Impact (0.0 - 1.0)
-    float toi; 
-
-    // 2 Bytes: Combined "Bounciness" (Restitution)
-    // 2 Bytes: Combined "Grip" (Friction)
-    uint16_t combined_restitution; // Normalized 0-65535
-    uint16_t combined_friction;    // Normalized 0-65535
-} ContactEventFat;
-
-_Static_assert(sizeof(ContactEventFat) == 128, "Fat event must be 128 bytes");
-
-constexpr int CONTACT_MAX_CAPACITY = sizeof(ContactEvent) * 8 << 5;
+constexpr int CONTACT_MAX_CAPACITY = 64 * 8 << 5;
 
 // --- Raycast Batch Result (Aligned to 16-bytes, Total 48-bytes) ---
 #ifdef _MSC_VER
