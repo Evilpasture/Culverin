@@ -1,7 +1,6 @@
 #include "culverin_shadow_sync.h"
 #include "culverin.h"
 
-#define CULVERIN_PROFILE_SYNC
 
 #ifdef CULVERIN_PROFILE_SYNC
 static inline uint64_t rdtsc() {
@@ -32,6 +31,7 @@ void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
     if (active_count == 0) return;
     const JPH_BodyID *active_ids = JPH_PhysicsSystem_GetActiveBodiesUnsafe(sys, JPH_BodyType_Rigid);
     if (!active_ids) return;
+    if (!self->positions || !self->prev_positions) return;
 
     auto *CULV_RESTRICT s_pos  = (PosStride *)self->positions;
     auto *CULV_RESTRICT s_ppos = (PosStride *)self->prev_positions;
@@ -72,13 +72,14 @@ void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
                     self->generations[slot] == gen && 
                     self->slot_states[slot] == SLOT_ALIVE)) {
                     
-                    auto dense = self->slot_to_dense[slot];
+                    uint32_t dense = s2d[slot];
 
                     // Only prefetch if we are sure the slot is valid
+                    if (LIKELY(dense < self->count)) {
                     #if defined(__GNUC__) || defined(__clang__)
-                        __builtin_prefetch(((const char*)b) + 48, 0, 3);
                         __builtin_prefetch(&s_pos[dense], 1, 3);
                     #endif
+                    }
                 } else {
                     chunk[j] = NULL; // Mark as "ignore" for Phase 2
                 }
@@ -100,8 +101,10 @@ void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
             uint64_t handle = JPH_Body_GetUserData((JPH_Body *)b);
             uint32_t slot = (uint32_t)(handle & 0xFFFFFFFF);
             // Double check state under lock
+            if (UNLIKELY(slot >= self->slot_capacity)) continue;
             if (UNLIKELY(self->slot_states[slot] != SLOT_ALIVE)) continue;
-            auto dense = self->slot_to_dense[(uint32_t)(handle & 0xFFFFFFFF)];
+            uint32_t dense = s2d[slot];
+            if (UNLIKELY(dense >= self->count)) continue;  // Extra safety
 
             // 1. Read Jolt (Load into Registers)
             JPH_RVec3 p; JPH_Quat q; JPH_Vec3 lv, av;
