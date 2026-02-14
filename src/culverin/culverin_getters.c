@@ -63,8 +63,8 @@ PyObject *Character_get_handle(CharacterObject *self, void *closure) {
 /* --- Shadow Buffer Getters (Safe via hardened make_view) --- */
 
 PyObject *get_positions(PhysicsWorldObject *self, void *c) {
-  // Positions are Stride 3 (X, Y, Z)
-  return make_view(self, self->positions, "d", sizeof(JPH_Real), 3);
+  // Positions are Stride 4 (X, Y, Z, _pad)
+  return make_view(self, self->positions, "d", sizeof(JPH_Real), 4);
 }
 
 PyObject *get_rotations(PhysicsWorldObject *self, void *c) {
