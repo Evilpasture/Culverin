@@ -558,7 +558,7 @@ static PyObject *PhysicsWorld_get_body_stats(PhysicsWorldObject *self,
 static PyObject *PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self,
                                              PyObject *args, PyObject *kwds) {
   uint64_t handle_raw = 0;
-  float surface_y = 0.0f;
+  double surface_y = 0.0;
   float buoyancy = 1.0f;
   float lin_drag = 0.5f;
   float ang_drag = 0.5f;
@@ -571,7 +571,7 @@ static PyObject *PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self,
       "handle",       "surface_y", "buoyancy",       "linear_drag",
       "angular_drag", "dt",        "fluid_velocity", NULL};
 
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "Kf|ffff(fff)", kwlist,
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "Kd|ffff(fff)", kwlist,
                                    &handle_raw, &surface_y, &buoyancy,
                                    &lin_drag, &ang_drag, &dt, &vx, &vy, &vz)) {
     return NULL;
@@ -608,7 +608,7 @@ static PyObject *PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self,
 
   JPH_STACK_ALLOC(JPH_RVec3, surf_pos);
   surf_pos->x = 0;
-  surf_pos->y = (double)surface_y;
+  surf_pos->y = surface_y;
   surf_pos->z = 0;
 
   JPH_STACK_ALLOC(JPH_Vec3, surf_norm);
@@ -634,7 +634,7 @@ static PyObject *PhysicsWorld_apply_buoyancy_batch(PhysicsWorldObject *self,
                                                    PyObject *args,
                                                    PyObject *kwds) {
   Py_buffer h_view = {0};
-  float surface_y = 0.0f;
+  double surface_y = 0.0;
   float buoyancy = 1.0f;
   float lin_drag = 0.5f;
   float ang_drag = 0.5f;
@@ -647,7 +647,7 @@ static PyObject *PhysicsWorld_apply_buoyancy_batch(PhysicsWorldObject *self,
       "handles",      "surface_y", "buoyancy",       "linear_drag",
       "angular_drag", "dt",        "fluid_velocity", NULL};
 
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "y*|fffff(fff)", kwlist, &h_view,
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "y*|dffff(fff)", kwlist, &h_view,
                                    &surface_y, &buoyancy, &lin_drag, &ang_drag,
                                    &dt, &vx, &vy, &vz)) {
     return NULL;
@@ -710,7 +710,7 @@ static PyObject *PhysicsWorld_apply_buoyancy_batch(PhysicsWorldObject *self,
 
   JPH_STACK_ALLOC(JPH_RVec3, surf_pos);
   surf_pos->x = 0;
-  surf_pos->y = (double)surface_y;
+  surf_pos->y = surface_y;
   surf_pos->z = 0;
 
   JPH_STACK_ALLOC(JPH_Vec3, surf_norm);
@@ -745,21 +745,25 @@ static PyObject *PhysicsWorld_save_state(PhysicsWorldObject *self,
   BLOCK_UNTIL_NOT_QUERYING(self);
 
   // 1. Unambiguous Size Calculation using Stride Structs
-  size_t header_size = sizeof(size_t) /* count */ + 
-                       sizeof(double) /* time */ +
-                       sizeof(size_t) /* slot_capacity */;
+  // Create a compile-time constant for the header size
+  constexpr size_t HEADER_SIZE = sizeof(self->count) + 
+                              sizeof(self->slot_capacity) + 
+                              sizeof(self->time);
 
   // Stride 3 for Positions, Stride 4 for Rot/Vel/AngVel
   size_t pos_size_total = self->count * sizeof(PosStride);
   size_t aux_size_total = self->count * sizeof(AuxStride);
 
   size_t mapping_size =
-      self->slot_capacity *
-      (sizeof(uint32_t) * 3 /* gen, s2d, d2s */ + sizeof(uint8_t) /* states */
-      );
+      self->slot_capacity * ( \
+        sizeof(typeof(*self->generations)) + \
+        sizeof(typeof(*self->slot_to_dense)) + \
+        sizeof(typeof(*self->dense_to_slot)) + \
+        sizeof(typeof(*self->slot_states)) \
+    );
 
   // Total = Header + (1 * PosStride) + (3 * AuxStride) + Mapping
-  size_t total_size = header_size + pos_size_total + (3 * aux_size_total) + mapping_size;
+  size_t total_size = HEADER_SIZE + pos_size_total + (3 * aux_size_total) + mapping_size;
 
   PyObject *bytes = PyBytes_FromStringAndSize(NULL, (Py_ssize_t)total_size);
   if (!bytes) {
@@ -770,15 +774,15 @@ static PyObject *PhysicsWorld_save_state(PhysicsWorldObject *self,
   char *ptr = PyBytes_AsString(bytes);
 
   // 2. Encode Header
-  memcpy(ptr, &self->count, sizeof(size_t));
-  ptr += sizeof(size_t);
-  memcpy(ptr, &self->time, sizeof(double));
-  ptr += sizeof(double);
-  memcpy(ptr, &self->slot_capacity, sizeof(size_t));
-  ptr += sizeof(size_t);
+  memcpy(ptr, &self->count, sizeof(typeof(self->count)));
+  ptr += sizeof(typeof(self->count));
+  memcpy(ptr, &self->time, sizeof(typeof(self->time)));
+  ptr += sizeof(typeof(self->time));
+  memcpy(ptr, &self->slot_capacity, sizeof(typeof(self->slot_capacity)));
+  ptr += sizeof(typeof(self->slot_capacity));
 
   // 3. Encode Dense Buffers (Stride Sensitive)
-  // Position (Stride 3)
+  // Position (Stride 3 + 1 _pad)
   memcpy(ptr, self->positions, pos_size_total);
   ptr += pos_size_total;
   
@@ -794,14 +798,26 @@ static PyObject *PhysicsWorld_save_state(PhysicsWorldObject *self,
   memcpy(ptr, self->angular_velocities, aux_size_total);
   ptr += aux_size_total;
 
-  // 4. Encode Mapping Tables
-  memcpy(ptr, self->generations, self->slot_capacity * sizeof(uint32_t));
-  ptr += self->slot_capacity * sizeof(uint32_t);
-  memcpy(ptr, self->slot_to_dense, self->slot_capacity * sizeof(uint32_t));
-  ptr += self->slot_capacity * sizeof(uint32_t);
-  memcpy(ptr, self->dense_to_slot, self->slot_capacity * sizeof(uint32_t));
-  ptr += self->slot_capacity * sizeof(uint32_t);
-  memcpy(ptr, self->slot_states, self->slot_capacity);
+  // 4. Encode Mapping Tables (Source -> Destination)
+  // generations
+  size_t gen_sz = self->slot_capacity * sizeof(*self->generations);
+  memcpy(ptr, self->generations, gen_sz); // FIX: ptr is the target
+  ptr += gen_sz;
+
+  // slot_to_dense
+  size_t s2d_sz = self->slot_capacity * sizeof(*self->slot_to_dense);
+  memcpy(ptr, self->slot_to_dense, s2d_sz); // FIX: ptr is the target
+  ptr += s2d_sz;
+
+  // dense_to_slot
+  size_t d2s_sz = self->slot_capacity * sizeof(*self->dense_to_slot);
+  memcpy(ptr, self->dense_to_slot, d2s_sz); // FIX: ptr is the target
+  ptr += d2s_sz;
+
+  // slot_states
+  size_t state_sz = self->slot_capacity * sizeof(*self->slot_states);
+  memcpy(ptr, self->slot_states, state_sz); // FIX: ptr is the target
+  ptr += state_sz;
 
   SHADOW_UNLOCK(&self->shadow_lock);
   return bytes;
@@ -823,7 +839,7 @@ static PyObject *PhysicsWorld_load_state(PhysicsWorldObject *self,
     return PyErr_NoMemory();
   }
   memcpy(local_state_copy, view.buf, view.len);
-  size_t total_len = (size_t)view.len;
+  auto total_len = (size_t)view.len;
   PyBuffer_Release(&view);
 
   SHADOW_LOCK(&self->shadow_lock);
@@ -834,20 +850,28 @@ static PyObject *PhysicsWorld_load_state(PhysicsWorldObject *self,
 
   // 3. HEADER EXTRACTION
   auto *ptr = (char *)local_state_copy;
-  if (total_len < (sizeof(size_t) * 2 + sizeof(double))) {
-    goto size_fail;
-  }
 
-  size_t saved_count = 0;
-  size_t saved_slot_cap = 0;
-  double saved_time = 0.0;
+  // Create a compile-time constant for the header size
+  constexpr size_t HEADER_SIZE = sizeof(self->count) + 
+                              sizeof(self->slot_capacity) + 
+                              sizeof(self->time);
 
-  memcpy(&saved_count, ptr, sizeof(size_t));
-  ptr += sizeof(size_t);
-  memcpy(&saved_time, ptr, sizeof(double));
-  ptr += sizeof(double);
-  memcpy(&saved_slot_cap, ptr, sizeof(size_t));
-  ptr += sizeof(size_t);
+  if (total_len < HEADER_SIZE) goto size_fail;
+
+  // Declare with exact types
+  auto saved_count    = (typeof(self->count))0;
+  auto saved_slot_cap = (typeof(self->slot_capacity))0;
+  auto saved_time     = (typeof(self->time))0.0;
+
+  // COPY PHASE: Use the type of the target to dictate the size
+  memcpy(&saved_count, ptr, sizeof(saved_count));
+  ptr += sizeof(saved_count);
+
+  memcpy(&saved_time, ptr, sizeof(saved_time));
+  ptr += sizeof(saved_time);
+
+  memcpy(&saved_slot_cap, ptr, sizeof(saved_slot_cap));
+  ptr += sizeof(saved_slot_cap);
 
   // CRITICAL: Slot capacity must match exactly
   if (saved_slot_cap != self->slot_capacity) {
@@ -862,15 +886,18 @@ static PyObject *PhysicsWorld_load_state(PhysicsWorldObject *self,
   // 4. FULL SIZE VALIDATION (Stride Sensitive)
   size_t pos_bytes = saved_count * sizeof(PosStride);
   size_t aux_bytes = saved_count * sizeof(AuxStride);
-  size_t mapping_bytes = saved_slot_cap * (sizeof(uint32_t) * 3 + 1);
+  size_t mapping_bytes = saved_slot_cap * ( \
+      sizeof(typeof(*self->generations)) + \
+      sizeof(typeof(*self->slot_to_dense)) + \
+      sizeof(typeof(*self->dense_to_slot)) + \
+      sizeof(typeof(*self->slot_states)) \
+  );
 
-  size_t expected = (sizeof(size_t) * 2 + sizeof(double)) +
-                    pos_bytes + (aux_bytes * 3) + mapping_bytes;
+  size_t expected = HEADER_SIZE + pos_bytes + (aux_bytes * 3) + mapping_bytes;
 
-  if (total_len != expected) {
+  if (UNLIKELY(total_len != expected)) {
     goto size_fail;
   }
-
   // 5. RESTORE SHADOW STATE
   self->count = saved_count;
   self->time = saved_time;
@@ -883,23 +910,35 @@ static PyObject *PhysicsWorld_load_state(PhysicsWorldObject *self,
   memcpy(self->angular_velocities, ptr, aux_bytes);  ptr += aux_bytes;
 
   // Mapping Tables
-  memcpy(self->generations, ptr, self->slot_capacity * sizeof(uint32_t));
-  ptr += self->slot_capacity * sizeof(uint32_t);
-  memcpy(self->slot_to_dense, ptr, self->slot_capacity * sizeof(uint32_t));
-  ptr += self->slot_capacity * sizeof(uint32_t);
-  memcpy(self->dense_to_slot, ptr, self->slot_capacity * sizeof(uint32_t));
-  ptr += self->slot_capacity * sizeof(uint32_t);
-  memcpy(self->slot_states, ptr, self->slot_capacity);
+  // Slurp 'generations'
+  size_t gen_sz = self->slot_capacity * sizeof(*self->generations);
+  memcpy(self->generations, ptr, gen_sz);
+  ptr += gen_sz;
+
+  // Slurp 'slot_to_dense'
+  size_t s2d_sz = self->slot_capacity * sizeof(*self->slot_to_dense);
+  memcpy(self->slot_to_dense, ptr, s2d_sz);
+  ptr += s2d_sz;
+
+  // Slurp 'dense_to_slot'
+  size_t d2s_sz = self->slot_capacity * sizeof(*self->dense_to_slot);
+  memcpy(self->dense_to_slot, ptr, d2s_sz);
+  ptr += d2s_sz;
+
+  // Slurp 'slot_states'
+  size_t state_sz = self->slot_capacity * sizeof(*self->slot_states);
+  memcpy(self->slot_states, ptr, state_sz);
+  ptr += state_sz;
 
   // 6. HANDLE INVALIDATION
   // Increment generations so old Python handles become invalid.
-  for (size_t i = 0; i < self->slot_capacity; i++) {
+  for (auto i = 0u; i < self->slot_capacity; i++) {
     self->generations[i]++;
   }
 
   // 7. REBUILD FREE LIST
   self->free_count = 0;
-  for (uint32_t i = 0; i < (uint32_t)self->slot_capacity; i++) {
+  for (auto i = 0u; i < (uint32_t)self->slot_capacity; i++) {
     if (self->slot_states[i] == SLOT_EMPTY) {
       self->free_slots[self->free_count++] = i;
     }
