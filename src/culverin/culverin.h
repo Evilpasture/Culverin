@@ -176,8 +176,8 @@ typedef enum ContactEventType : uint8_t {
 
 // --- Callback Logic ---
 typedef struct ContactEvent {
-  uint64_t body1;
-  uint64_t body2;
+  BodyHandle body1;
+  BodyHandle body2;
   float px, py, pz;
   float nx, ny, nz;
   float impulse;
@@ -272,6 +272,11 @@ typedef struct {
     float params[4];
     int type;
 } CompoundPart;
+
+typedef struct {
+    uint32_t tri_count;
+    uint32_t vertex_count;
+} MeshBounds;
 
 // --- Native Condition Variable Support ---
 

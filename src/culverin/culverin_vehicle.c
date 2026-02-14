@@ -7,12 +7,12 @@
 // --- Refactored Wheel Creation (Complexity: 2) ---
 static JPH_WheelSettings *create_single_wheel(PyObject *w_dict,
                                               JPH_LinearCurve *f_curve) {
-  Vec3f pos;
+  PosStride pos;
 
   // 1. Parse Position using helper
   if (!parse_py_vec3(PyDict_GetItemString(w_dict, "pos"), &pos)) {
     PyErr_SetString(PyExc_ValueError,
-                    "Wheel 'pos' must be a sequence of 3 floats");
+                    "Wheel 'pos' must be a sequence of 3 real numbers");
     return NULL;
   }
 

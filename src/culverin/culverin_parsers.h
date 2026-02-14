@@ -29,7 +29,18 @@ typedef struct {
 } ConstraintParams;
 
 float get_py_float_attr(PyObject *obj, const char *name, float default_val);
-int parse_py_vec3(PyObject *obj, Vec3f *out);
+int parse_py_vec3f(PyObject *obj, Vec3f *out);
+int parse_py_vec3_pos(PyObject *obj, PosStride *out);
+int parse_py_vec3_aux(PyObject *obj, AuxStride *out);
+
+#define parse_py_vec3(obj, out) _Generic((out), \
+    PosStride*: parse_py_vec3_pos,              \
+    const PosStride*: parse_py_vec3_pos,         \
+    AuxStride*: parse_py_vec3_aux,              \
+    const AuxStride*: parse_py_vec3_aux,              \
+    Vec3f*:      parse_py_vec3f,        \
+    const Vec3f*:      parse_py_vec3f        \
+)(obj, out)
 
 void parse_shape_params(PyObject *py_size, float s[4]);
 

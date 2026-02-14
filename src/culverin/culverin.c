@@ -116,7 +116,7 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
   }
   Py_XDECREF(baked);
 
-  for (uint32_t i = (uint32_t)self->count; i < (uint32_t)self->slot_capacity;
+  for (auto i = (uint32_t)self->count; i < (uint32_t)self->slot_capacity;
        i++) {
     self->generations[i] = 1;
     self->free_slots[self->free_count++] = i;
@@ -206,7 +206,8 @@ static PyObject *PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self,
   // Get actual number of positional arguments
   Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
   uint64_t h;
-  float ix, iy, iz, px, py, pz;
+  float ix, iy, iz;
+  JPH_Real px, py, pz;
 
   // --- 1. FAST PATH: Positional only (No keywords, exactly 7 args) ---
   if (LIKELY(kwnames == NULL && nargs == 7)) {
@@ -214,9 +215,9 @@ static PyObject *PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self,
     ix = (float)PyFloat_AsDouble(args[1]);
     iy = (float)PyFloat_AsDouble(args[2]);
     iz = (float)PyFloat_AsDouble(args[3]);
-    px = (float)PyFloat_AsDouble(args[4]);
-    py = (float)PyFloat_AsDouble(args[5]);
-    pz = (float)PyFloat_AsDouble(args[6]);
+    px = PyFloat_AsDouble(args[4]);
+    py = PyFloat_AsDouble(args[5]);
+    pz = PyFloat_AsDouble(args[6]);
 
     if (UNLIKELY(PyErr_Occurred()))
       return NULL;
@@ -235,7 +236,7 @@ static PyObject *PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self,
       PyTuple_SET_ITEM(temp_tuple, i, args[i]);
     }
 
-    int ok = PyArg_ParseTupleAndKeywords(temp_tuple, kwnames, "Kffffff", kwlist,
+    int ok = PyArg_ParseTupleAndKeywords(temp_tuple, kwnames, "Kfffddd", kwlist,
                                          &h, &ix, &iy, &iz, &px, &py, &pz);
     Py_DECREF(temp_tuple);
     if (!ok)
@@ -258,7 +259,7 @@ static PyObject *PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self,
   JPH_BodyID bid = self->body_ids[self->slot_to_dense[slot]];
 
   Py_BEGIN_ALLOW_THREADS JPH_Vec3 imp = {ix, iy, iz};
-  JPH_RVec3 v_pos = {(double)px, (double)py, (double)pz};
+  JPH_RVec3 v_pos = {px, py, pz};
 
   JPH_BodyInterface_AddImpulse2(self->body_interface, bid, &imp, &v_pos);
   JPH_BodyInterface_ActivateBody(self->body_interface, bid);
@@ -485,7 +486,7 @@ static PyObject *PhysicsWorld_set_gravity(PhysicsWorldObject *self,
   JPH_PhysicsSystem_SetGravity(self->system, &g);
 
   if (self->count > UINT32_MAX) {
-    PyErr_SetString(PyExc_OverflowError, "Body count exceeds Jolt's 32-bit limit");
+    PyErr_SetString(PyExc_OverflowError, "Body count exceeds Jolt's 32-bit limit. Please make your world sane.");
     return NULL;
   }
 
@@ -832,7 +833,7 @@ static PyObject *PhysicsWorld_load_state(PhysicsWorldObject *self,
   BLOCK_UNTIL_NOT_QUERYING(self);
 
   // 3. HEADER EXTRACTION
-  char *ptr = (char *)local_state_copy;
+  auto *ptr = (char *)local_state_copy;
   if (total_len < (sizeof(size_t) * 2 + sizeof(double))) {
     goto size_fail;
   }
@@ -905,10 +906,10 @@ static PyObject *PhysicsWorld_load_state(PhysicsWorldObject *self,
   }
 
   // Cast internal buffers to stride structs for the Sync Phase
-  PosStride *shadow_pos = (PosStride *)self->positions;
-  AuxStride *shadow_rot = (AuxStride *)self->rotations;
-  AuxStride *shadow_lvel = (AuxStride *)self->linear_velocities;
-  AuxStride *shadow_avel = (AuxStride *)self->angular_velocities;
+  auto *shadow_pos = (PosStride *)self->positions;
+  auto *shadow_rot = (AuxStride *)self->rotations;
+  auto *shadow_lvel = (AuxStride *)self->linear_velocities;
+  auto *shadow_avel = (AuxStride *)self->angular_velocities;
 
   // 8. JOLT SYNC (Unlocked to prevent deadlocks)
   // Snapshot the current BodyID table while locked
@@ -1018,8 +1019,8 @@ static PyObject *PhysicsWorld_step(PhysicsWorldObject *self, PyObject *args) {
 static PyObject *PhysicsWorld_create_convex_hull(PhysicsWorldObject *self,
                                                  PyObject *args,
                                                  PyObject *kwds) {
-  float px = 0, py = 0, pz = 0;
-  float rx = 0, ry = 0, rz = 0, rw = 1.0f;
+  JPH_Real px = 0.0, py = 0.0, pz = 0.0;
+  float rx = 0.0f, ry = 0.0f, rz = 0.0f, rw = 1.0f;
   Py_buffer points_view = {0};
   uint64_t user_data = 0;
   int motion_type = 2; 
@@ -1032,7 +1033,7 @@ static PyObject *PhysicsWorld_create_convex_hull(PhysicsWorldObject *self,
                            "category", "mask", "material_id", "friction", 
                            "restitution", "ccd", NULL};
 
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)(ffff)y*|ifKIIffp", kwlist, 
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "(ddd)(ffff)y*|ifKIIffp", kwlist, 
                                    &px, &py, &pz, &rx, &ry, &rz, &rw, &points_view, 
                                    &motion_type, &mass, &user_data, &category,
                                    &mask, &material_id, &friction, &restitution, &use_ccd)) {
@@ -1113,14 +1114,14 @@ static PyObject *PhysicsWorld_create_convex_hull(PhysicsWorldObject *self,
   JPH_BodyCreationSettings_SetUserData(settings, (uint64_t)handle);
 
   // --- IMMEDIATE SHADOW WRITE (Stride Sensitive) ---
-  PosStride *shadow_pos = (PosStride *)self->positions;
-  PosStride *shadow_ppos = (PosStride *)self->prev_positions;
-  AuxStride *shadow_rot = (AuxStride *)self->rotations;
-  AuxStride *shadow_prot = (AuxStride *)self->prev_rotations;
-  AuxStride *shadow_lvel = (AuxStride *)self->linear_velocities;
-  AuxStride *shadow_avel = (AuxStride *)self->angular_velocities;
+  auto *shadow_pos = (PosStride *)self->positions;
+  auto *shadow_ppos = (PosStride *)self->prev_positions;
+  auto *shadow_rot = (AuxStride *)self->rotations;
+  auto *shadow_prot = (AuxStride *)self->prev_rotations;
+  auto *shadow_lvel = (AuxStride *)self->linear_velocities;
+  auto *shadow_avel = (AuxStride *)self->angular_velocities;
 
-  PosStride p = {(JPH_Real)px, (JPH_Real)py, (JPH_Real)pz};
+  PosStride p = {px, py, pz};
   shadow_pos[dense] = p;
   shadow_ppos[dense] = p;
 
@@ -1327,7 +1328,7 @@ static void apply_body_creation_props(JPH_BodyCreationSettings *settings,
 static PyObject *PhysicsWorld_create_compound_body(PhysicsWorldObject *self,
                                                    PyObject *args,
                                                    PyObject *kwds) {
-  float px = 0, py = 0, pz = 0;
+  JPH_Real px = 0, py = 0, pz = 0;
   float rx = 0, ry = 0, rz = 0, rw = 1.0f;
   float mass = -1.0f, friction = 0.2f, restitution = 0.0f;
   int motion_type = 2, is_sensor = 0, use_ccd = 0;
@@ -1341,7 +1342,7 @@ static PyObject *PhysicsWorld_create_compound_body(PhysicsWorldObject *self,
                            "ccd",  NULL};
 
   if (!PyArg_ParseTupleAndKeywords(
-          args, kwds, "(fff)(ffff)O|ifKpIIffp", kwlist, &px, &py, &pz, &rx, &ry,
+          args, kwds, "(ddd)(ffff)O|ifKpIIffp", kwlist, &px, &py, &pz, &rx, &ry,
           &rz, &rw, &parts, &motion_type, &mass, &user_data, &is_sensor,
           &category, &mask, &material_id, &friction, &restitution, &use_ccd)) {
     return NULL;
@@ -1360,7 +1361,7 @@ static PyObject *PhysicsWorld_create_compound_body(PhysicsWorldObject *self,
 
   // 2. Prep Creation Settings
   JPH_BodyCreationSettings *settings = JPH_BodyCreationSettings_Create3(
-      final_shape, &(JPH_RVec3){(double)px, (double)py, (double)pz},
+      final_shape, &(JPH_RVec3){px, py, pz},
       &(JPH_Quat){rx, ry, rz, rw}, (JPH_MotionType)motion_type,
       (motion_type == 0) ? 0 : 1);
 
@@ -1391,15 +1392,15 @@ static PyObject *PhysicsWorld_create_compound_body(PhysicsWorldObject *self,
   JPH_BodyCreationSettings_SetUserData(settings, (uint64_t)handle);
 
   // --- IMMEDIATE SHADOW WRITE (Stride Sensitive) ---
-  PosStride *shadow_pos = (PosStride *)self->positions;
-  PosStride *shadow_ppos = (PosStride *)self->prev_positions;
-  AuxStride *shadow_rot = (AuxStride *)self->rotations;
-  AuxStride *shadow_prot = (AuxStride *)self->prev_rotations;
-  AuxStride *shadow_lvel = (AuxStride *)self->linear_velocities;
-  AuxStride *shadow_avel = (AuxStride *)self->angular_velocities;
+  auto *shadow_pos = (PosStride *)self->positions;
+  auto *shadow_ppos = (PosStride *)self->prev_positions;
+  auto *shadow_rot = (AuxStride *)self->rotations;
+  auto *shadow_prot = (AuxStride *)self->prev_rotations;
+  auto *shadow_lvel = (AuxStride *)self->linear_velocities;
+  auto *shadow_avel = (AuxStride *)self->angular_velocities;
 
   // Initialize Position/Rotation
-  PosStride p = {(JPH_Real)px, (JPH_Real)py, (JPH_Real)pz};
+  PosStride p = {px, py, pz};
   shadow_pos[dense] = p;
   shadow_ppos[dense] = p;
 
@@ -1526,7 +1527,7 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
     Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
 
     // 1. DEFAULT VALUES
-    float px = 0.0f, py = 0.0f, pz = 0.0f;
+    JPH_Real px = 0.0f, py = 0.0f, pz = 0.0f;
     float rx = 0.0f, ry = 0.0f, rz = 0.0f, rw = 1.0f;
     float mass = -1.0f, friction = -1.0f, restitution = -1.0f;
     int shape_type = 0, motion_type = 2, is_sensor = 0, use_ccd = 0;
@@ -1556,7 +1557,7 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
         }
     }
 
-    int ok = PyArg_ParseTupleAndKeywords(temp_tuple, temp_dict, "|(fff)(ffff)OiiKpfIIffIp", kwlist,
+    int ok = PyArg_ParseTupleAndKeywords(temp_tuple, temp_dict, "|(ddd)(ffff)OiiKpfIIffIp", kwlist,
                                          &px, &py, &pz, &rx, &ry, &rz, &rw, &py_size,
                                          &shape_type, &motion_type, &user_data, &is_sensor,
                                          &mass, &category, &mask, &friction, &restitution,
@@ -1590,7 +1591,7 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
     if (LIKELY(shape)) {
         settings = JPH_BodyCreationSettings_Create3(
             shape, 
-            &(JPH_RVec3){(double)px, (double)py, (double)pz},
+            &(JPH_RVec3){px, py, pz},
             &(JPH_Quat){rx, ry, rz, rw}, 
             (JPH_MotionType)motion_type,
             (motion_type == 0) ? 0 : 1);
@@ -1702,18 +1703,18 @@ PyObject *PhysicsWorld_create_bodies_batch(PhysicsWorldObject *self, PyObject *a
     if (PyList_Size(py_sizes) != batch_count) return PyErr_Format(PyExc_ValueError, "List length mismatch");
 
     // 1. ALLOCATE TEMP BUFFERS
-    Vec3f *pos_buf = PyMem_RawMalloc(batch_count * sizeof(Vec3f));
+    PosStride *pos_buf = PyMem_RawMalloc(batch_count * sizeof(PosStride));
     ShapeParams *size_buf = PyMem_RawMalloc(batch_count * sizeof(ShapeParams));
-    JPH_BodyCreationSettings **settings_buf = PyMem_RawCalloc(batch_count, sizeof(JPH_BodyCreationSettings*));
+    auto **settings_buf = (JPH_BodyCreationSettings **)PyMem_RawCalloc(batch_count, sizeof(JPH_BodyCreationSettings*));
 
     if (!pos_buf || !size_buf || !settings_buf) {
-        PyMem_RawFree(pos_buf); PyMem_RawFree(size_buf); PyMem_RawFree(settings_buf);
+        PyMem_RawFree(pos_buf); PyMem_RawFree(size_buf); PyMem_RawFree((void *)settings_buf);
         return PyErr_NoMemory();
     }
 
     // 2. PARSE (GIL HELD)
     for (Py_ssize_t i = 0; i < batch_count; i++) {
-        if (!parse_py_vec3(PyList_GetItem(py_positions, i), &pos_buf[i])) pos_buf[i] = (Vec3f){0,0,0};
+        if (!parse_py_vec3(PyList_GetItem(py_positions, i), &pos_buf[i])) pos_buf[i] = (PosStride){0,0,0};
         parse_body_size(PyList_GetItem(py_sizes, i), size_buf[i].p);
     }
 
@@ -1729,9 +1730,9 @@ PyObject *PhysicsWorld_create_bodies_batch(PhysicsWorldObject *self, PyObject *a
     for (Py_ssize_t i = 0; i < batch_count; i++) {
         JPH_Shape *shape = find_or_create_shape_locked(self, shape_type, size_buf[i].p);
         if (shape) {
-            j_pos->x = (JPH_Real)pos_buf[i].x; 
-            j_pos->y = (JPH_Real)pos_buf[i].y; 
-            j_pos->z = (JPH_Real)pos_buf[i].z;
+            j_pos->x = pos_buf[i].x; 
+            j_pos->y = pos_buf[i].y; 
+            j_pos->z = pos_buf[i].z;
             settings_buf[i] = JPH_BodyCreationSettings_Create3(shape, j_pos, j_rot, (JPH_MotionType)motion_type, (motion_type == 0 ? 0 : 1));
         }
     }
@@ -1770,12 +1771,12 @@ PyObject *PhysicsWorld_create_bodies_batch(PhysicsWorldObject *self, PyObject *a
     }
 
     // Typed Pointers for clean indexing
-    PosStride *shadow_pos = (PosStride *)self->positions;
-    PosStride *shadow_prev_pos = (PosStride *)self->prev_positions;
-    AuxStride *shadow_rot = (AuxStride *)self->rotations;
-    AuxStride *shadow_prev_rot = (AuxStride *)self->prev_rotations;
-    AuxStride *shadow_lvel = (AuxStride *)self->linear_velocities;
-    AuxStride *shadow_avel = (AuxStride *)self->angular_velocities;
+    auto *shadow_pos = (PosStride *)self->positions;
+    auto *shadow_prev_pos = (PosStride *)self->prev_positions;
+    auto *shadow_rot = (AuxStride *)self->rotations;
+    auto *shadow_prev_rot = (AuxStride *)self->prev_rotations;
+    auto *shadow_lvel = (AuxStride *)self->linear_velocities;
+    auto *shadow_avel = (AuxStride *)self->angular_velocities;
 
     for (Py_ssize_t i = 0; i < batch_count; i++) {
         if (!settings_buf[i]) {
@@ -1785,12 +1786,12 @@ PyObject *PhysicsWorld_create_bodies_batch(PhysicsWorldObject *self, PyObject *a
         }
 
         uint32_t slot = self->free_slots[--self->free_count];
-        uint32_t dense = (uint32_t)self->count++;
+        auto dense = (uint32_t)self->count++;
         BodyHandle handle = make_handle(slot, self->generations[slot]);
         JPH_BodyCreationSettings_SetUserData(settings_buf[i], (uint64_t)handle);
 
         // --- Clean Struct Assignment ---
-        PosStride p = {(JPH_Real)pos_buf[i].x, (JPH_Real)pos_buf[i].y, (JPH_Real)pos_buf[i].z};
+        PosStride p = {pos_buf[i].x, pos_buf[i].y, pos_buf[i].z};
         shadow_pos[dense] = p;
         shadow_prev_pos[dense] = p;
         
@@ -1831,24 +1832,23 @@ fail:
  * Helper 1: Build the Jolt triangle array while verifying index bounds.
  */
 static JPH_IndexedTriangle *build_mesh_triangles(const uint32_t *raw,
-                                                 uint32_t tri_count,
-                                                 uint32_t vertex_count) {
-  JPH_IndexedTriangle *jolt_tris = (JPH_IndexedTriangle *)PyMem_RawMalloc(
-      tri_count * sizeof(JPH_IndexedTriangle));
+                                                 MeshBounds bounds) {
+  auto *jolt_tris = (JPH_IndexedTriangle *)PyMem_RawMalloc(
+      bounds.tri_count * sizeof(JPH_IndexedTriangle));
   if (!jolt_tris) {
     PyErr_NoMemory();
     return NULL;
   }
 
-  for (uint32_t t = 0; t < tri_count; t++) {
+  for (uint32_t t = 0; t < bounds.tri_count; t++) {
     uint32_t i1 = raw[t * 3 + 0];
     uint32_t i2 = raw[t * 3 + 1];
     uint32_t i3 = raw[t * 3 + 2];
 
-    if (i1 >= vertex_count || i2 >= vertex_count || i3 >= vertex_count) {
+    if (i1 >= bounds.vertex_count || i2 >= bounds.vertex_count || i3 >= bounds.vertex_count) {
       PyMem_RawFree(jolt_tris);
       PyErr_Format(PyExc_ValueError, "Mesh index out of range: %u/%u/%u >= %u",
-                   i1, i2, i3, vertex_count);
+                   i1, i2, i3, bounds.vertex_count);
       return NULL;
     }
 
@@ -1864,11 +1864,10 @@ static JPH_IndexedTriangle *build_mesh_triangles(const uint32_t *raw,
 /**
  * Helper 2: Encapsulate Jolt Mesh creation (Settings -> BVH build -> Shape).
  */
-static JPH_Shape *build_mesh_shape(const void *v_data, uint32_t v_count,
-                                   JPH_IndexedTriangle *tris,
-                                   uint32_t t_count) {
+static JPH_Shape *build_mesh_shape(const void *v_data, MeshBounds bounds,
+                                   JPH_IndexedTriangle *tris) {
   JPH_MeshShapeSettings *mss =
-      JPH_MeshShapeSettings_Create2((JPH_Vec3 *)v_data, v_count, tris, t_count);
+      JPH_MeshShapeSettings_Create2((JPH_Vec3 *)v_data, bounds.vertex_count, tris, bounds.tri_count);
   if (!mss) {
     PyErr_SetString(PyExc_RuntimeError, "Jolt MeshSettings allocation failed");
     return NULL;
@@ -1893,9 +1892,9 @@ static PyObject *PhysicsWorld_create_mesh_body(PhysicsWorldObject *self,
                                                PyObject *args, PyObject *kwds) {
   Py_buffer v_view = {0};
   Py_buffer i_view = {0};
-  float px = 0;
-  float py = 0;
-  float pz = 0;
+  JPH_Real px = 0;
+  JPH_Real py = 0;
+  JPH_Real pz = 0;
   float rx = 0;
   float ry = 0;
   float rz = 0;
@@ -1906,7 +1905,7 @@ static PyObject *PhysicsWorld_create_mesh_body(PhysicsWorldObject *self,
   static char *kwlist[] = {"pos",       "rot",      "vertices", "indices",
                            "user_data", "category", "mask",     NULL};
 
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)(ffff)y*y*|KII", kwlist,
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "(ddd)(ffff)y*y*|KII", kwlist,
                                    &px, &py, &pz, &rx, &ry, &rz, &rw, &v_view,
                                    &i_view, &user_data, &cat, &mask)) {
     return NULL;
@@ -1919,18 +1918,19 @@ static PyObject *PhysicsWorld_create_mesh_body(PhysicsWorldObject *self,
     goto cleanup;
   }
 
-  uint32_t v_count = (uint32_t)(v_view.len / 12);
-  uint32_t t_count = (uint32_t)(i_view.len / 12);
+  MeshBounds bounds = {0};
+  bounds.tri_count = (uint32_t)(i_view.len / 12);
+  bounds.vertex_count = (uint32_t)(v_view.len / 12);
 
   // 2. Triangle processing
   JPH_IndexedTriangle *tris =
-      build_mesh_triangles((uint32_t *)i_view.buf, t_count, v_count);
+      build_mesh_triangles((uint32_t *)i_view.buf, bounds);
   if (!tris) {
     goto cleanup;
   }
 
   // 3. Jolt Shape Build
-  JPH_Shape *shape = build_mesh_shape(v_view.buf, v_count, tris, t_count);
+  JPH_Shape *shape = build_mesh_shape(v_view.buf, bounds, tris);
   PyMem_RawFree(tris);
   if (!shape) {
     goto cleanup;
@@ -1951,7 +1951,7 @@ static PyObject *PhysicsWorld_create_mesh_body(PhysicsWorldObject *self,
   self->slot_states[slot] = SLOT_PENDING_CREATE;
 
   JPH_BodyCreationSettings *settings = JPH_BodyCreationSettings_Create3(
-      shape, &(JPH_RVec3){(double)px, (double)py, (double)pz},
+      shape, &(JPH_RVec3){px, py, pz},
       &(JPH_Quat){rx, ry, rz, rw}, JPH_MotionType_Static, 0);
 
   JPH_Shape_Destroy(shape);
@@ -2892,9 +2892,9 @@ static PyObject *PhysicsWorld_register_material(PhysicsWorldObject *self,
 static PyObject *PhysicsWorld_create_heightfield(PhysicsWorldObject *self,
                                                  PyObject *args,
                                                  PyObject *kwds) {
-  float px = 0;
-  float py = 0;
-  float pz = 0;
+  JPH_Real px = 0;
+  JPH_Real py = 0;
+  JPH_Real pz = 0;
   float rx = 0;
   float ry = 0;
   float rz = 0;
@@ -2916,7 +2916,7 @@ static PyObject *PhysicsWorld_create_heightfield(PhysicsWorldObject *self,
                            "material_id", "friction",  "restitution", NULL};
 
   if (!PyArg_ParseTupleAndKeywords(
-          args, kwds, "(fff)(ffff)(fff)y*i|KIIIff", kwlist, &px, &py, &pz, &rx,
+          args, kwds, "(ddd)(ffff)(fff)y*i|KIIIff", kwlist, &px, &py, &pz, &rx,
           &ry, &rz, &rw, &sx, &sy, &sz, &h_view, &grid_size, &user_data,
           &category, &mask, &material_id, &friction, &restitution)) {
     return NULL;
@@ -2971,9 +2971,9 @@ static PyObject *PhysicsWorld_create_heightfield(PhysicsWorldObject *self,
   self->slot_states[slot] = SLOT_PENDING_CREATE;
 
   JPH_STACK_ALLOC(JPH_RVec3, pos);
-  pos->x = (double)px;
-  pos->y = (double)py;
-  pos->z = (double)pz;
+  pos->x = px;
+  pos->y = py;
+  pos->z = pz;
   JPH_STACK_ALLOC(JPH_Quat, rot);
   rot->x = rx;
   rot->y = ry;

@@ -26,7 +26,7 @@ float get_py_float_attr(PyObject *obj, const char *name, float default_val) {
 }
 
 // --- Reusable helper for Vec3 parsing (Complexity: 2) ---
-int parse_py_vec3(PyObject *obj, Vec3f *out) {
+int parse_py_vec3f(PyObject *obj, Vec3f *out) {
   // 1. Initial validation
   if (!obj || !PySequence_Check(obj) || PySequence_Size(obj) != 3) {
     return 0;
@@ -51,6 +51,65 @@ int parse_py_vec3(PyObject *obj, Vec3f *out) {
   out->x = results[0];
   out->y = results[1];
   out->z = results[2];
+
+  return 1;
+}
+
+int parse_py_vec3_pos(PyObject *obj, PosStride *out) {
+  // 1. Initial validation
+  if (!obj || !PySequence_Check(obj) || PySequence_Size(obj) != 3) {
+    return 0;
+  }
+
+  JPH_Real results[3];
+  for (int i = 0; i < 3; i++) {
+    PyObject *item = PySequence_GetItem(obj, i);
+    if (!item) {
+      return 0;
+    }
+
+    results[i] = PyFloat_AsDouble(item);
+    Py_DECREF(item);
+
+    if (UNLIKELY(PyErr_Occurred())) {
+      return 0;
+    }
+  }
+
+  // 3. Assignment to struct members
+  out->x = results[0];
+  out->y = results[1];
+  out->z = results[2];
+
+  return 1;
+}
+
+int parse_py_vec3_aux(PyObject *obj, AuxStride *out) {
+  // 1. Initial validation
+  if (!obj || !PySequence_Check(obj) || PySequence_Size(obj) != 4) {
+    return 0;
+  }
+
+  float results[4];
+  for (int i = 0; i < 4; i++) {
+    PyObject *item = PySequence_GetItem(obj, i);
+    if (!item) {
+      return 0;
+    }
+
+    results[i] = (float)PyFloat_AsDouble(item);
+    Py_DECREF(item);
+
+    if (UNLIKELY(PyErr_Occurred())) {
+      return 0;
+    }
+  }
+
+  // 3. Assignment to struct members
+  out->x = results[0];
+  out->y = results[1];
+  out->z = results[2];
+  out->w = results[3];
 
   return 1;
 }
