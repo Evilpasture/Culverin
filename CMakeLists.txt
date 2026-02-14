@@ -4,6 +4,8 @@ cmake_minimum_required(VERSION 3.16)
 # CMP0091 allows us to use CMAKE_MSVC_RUNTIME_LIBRARY
 cmake_policy(SET CMP0091 NEW)
 
+option(ENABLE_SANITIZER "Enable Clang Sanitizers (ASan/TSan/UBSan)" OFF)
+
 # Force Jolt settings into the CACHE so they can't be overridden
 set(DOUBLE_PRECISION ON CACHE BOOL "Use double precision math" FORCE)
 set(GENERATE_SAMPLES OFF CACHE BOOL "" FORCE)
@@ -68,6 +70,14 @@ if(MSVC)
 else()
     # --- GNU-like Logic (Vanilla Clang or GCC) ---
     message(STATUS "Culverin: Using GNU-like flags (-O3, etc.)")
+
+    set(SAN_FLAGS "")
+    if(ENABLE_SANITIZER)
+        # Choose ONE: -fsanitize=address OR -fsanitize=thread
+        # You generally cannot run ASan and TSan at the same time.
+        set(SAN_FLAGS "-fsanitize=address -fno-omit-frame-pointer -fsanitize=undefined")
+        message(STATUS "Culverin: SANITIZERS ENABLED: ${SAN_FLAGS}")
+    endif()
     
     set(UNIX_RELEASE_FLAGS "-O3 -Wall -Wextra -Wconversion -Wdouble-promotion -Wpadded -ffast-math -fomit-frame-pointer")
 
@@ -162,8 +172,40 @@ if(MSVC)
     
     # Fix for some MSVC headers being stubborn about standards
     target_compile_definitions(_culverin_c PRIVATE _CRT_DECLARE_NONSTDC_NAMES=1)
-else()
+else() # Vanilla Clang / GNU-like
     message(STATUS "Culverin: Enforcing Strict Physics-Migration Flags")
+
+    # 1. SETUP DEBUG/PDB FLAGS
+    # Use -g and -gcodeview for Windows PDB compatibility
+    set(DEBUG_FLAGS "-g" "-gcodeview")
+    
+    # 2. SETUP SANITIZER FLAGS (If enabled)
+    set(SAN_FLAGS "")
+    if(ENABLE_SANITIZER)
+        set(SAN_FLAGS "-fsanitize=address" "-fsanitize=undefined" "-fno-omit-frame-pointer")
+    endif()
+
+    # 3. APPLY TO TARGET
+    # We add these directly to the target to ensure they aren't overridden by global options
+    target_compile_options(_culverin_c PRIVATE 
+        ${DEBUG_FLAGS} 
+        ${SAN_FLAGS}
+        "-std=c2x"
+    )
+
+    # 4. THE LINKER IS THE KEY
+    # On Windows with vanilla Clang, we need to be very explicit with the linker
+    target_link_options(_culverin_c PRIVATE 
+        "-Wl,-debug"           # Generate PDB
+        "-Wl,-nodefaultlib:libcmt" # Prevent collision with static CRT if necessary
+        ${SAN_FLAGS}           # Link ASan runtime
+    )
+
+    # Performance flags
+    set(PERF_FLAGS "-O3" "-ffast-math" "-fomit-frame-pointer")
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+        list(APPEND PERF_FLAGS "-mavx2" "-mfma" "-march=native")
+    endif()
 
     # Use a list for cleaner appending
     set(STRICT_FLAGS 
@@ -176,11 +218,6 @@ else()
         # "-Werror=conversion"         # Treat what's LEFT of conversion as an error
         # "-fmax-errors=5"
     )
-    # Performance flags
-    set(PERF_FLAGS "-O3" "-ffast-math" "-fomit-frame-pointer")
-    if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
-        list(APPEND PERF_FLAGS "-mavx2" "-mfma" "-march=native")
-    endif()
 
     # Apply PERF flags to the whole project
     add_compile_options("${PERF_FLAGS}")
@@ -222,7 +259,7 @@ set_property(TARGET ${JOLTC_TARGET} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded
 set_property(TARGET _culverin_c PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 
 install(TARGETS _culverin_c DESTINATION .)
-if(MSVC)
+if(MSVC OR WIN32)
     # We use a Generator Expression to find the exact PDB location
     install(FILES $<TARGET_PDB_FILE:_culverin_c> DESTINATION . OPTIONAL)
 endif()
