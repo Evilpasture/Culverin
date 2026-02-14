@@ -50,7 +50,7 @@ void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
         if (UNLIKELY(!b)) continue;
 
         // --- PHASE 1: PREPARATION (No Lock) ---
-        uint64_t handle = JPH_Body_GetUserData(b);
+        uint64_t handle = JPH_Body_GetUserData((JPH_Body *)b);
         uint32_t slot = (uint32_t)(handle & 0xFFFFFFFF);
         uint32_t gen = (uint32_t)(handle >> 32);
 
@@ -74,32 +74,38 @@ void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
         // --- PHASE 2: BURST SYNC (Hold Shadow Lock) ---
         if (work_ptr == 32 || (i == active_count - 1 && work_ptr > 0)) {
             SHADOW_LOCK(&self->shadow_lock);
-            
-            // Hint to the compiler to use YMM registers (AVX)
-            #if defined(__clang__)
-            #pragma clang loop vectorize(enable) interleave(enable)
-            #endif
+
+            // ========== PHASE A: SNAPSHOT (Shadow → Shadow) ==========
+            // This is a pure memory copy with known stride, easy to vectorize
+            #pragma clang loop unroll(full) vectorize(enable)
+            for (uint32_t j = 0; j < work_ptr; j++) {
+                uint32_t D = worklist[j].dense_idx;
+                s_ppos[D] = s_pos[D];   // 32-byte AVX move
+                s_prot[D] = s_rot[D];   // 16-byte SSE move
+            }
+
+            // ========== PHASE B: SYNC (Jolt → Shadow) ==========
+            #pragma clang loop unroll(full)
             for (uint32_t j = 0; j < work_ptr; j++) {
                 const JPH_Body* B = worklist[j].body;
                 uint32_t D = worklist[j].dense_idx;
 
-                // 1. Snapshot for Interpolation (Shadow -> Shadow)
-                s_ppos[D] = s_pos[D];
-                s_prot[D] = s_rot[D];
+                // Use stack locals as "landing zones" for the getters
+                JPH_RVec3 p;
+                JPH_Quat q;
+                JPH_Vec3 lv, av;
 
-                // 2. Load Jolt State (Direct members access via bitmask or JoltC)
-                // We use local variables to ensure the compiler uses registers
-                JPH_RVec3 p; JPH_Quat q; JPH_Vec3 lv, av;
+                // The compiler can only optimize these if it can see the source code
                 JPH_Body_GetPosition(B, &p);
                 JPH_Body_GetRotation(B, &q);
-                JPH_Body_GetLinearVelocity(B, &lv);
-                JPH_Body_GetAngularVelocity(B, &av);
+                JPH_Body_GetLinearVelocity((JPH_Body *)B, &lv);
+                JPH_Body_GetAngularVelocity((JPH_Body *)B, &av);
 
-                // 3. Store to Shadow Buffers (Slam into Memory)
-                s_pos[D].x = p.x; s_pos[D].y = p.y; s_pos[D].z = p.z;
-                s_rot[D]   = (AuxStride){q.x, q.y, q.z, q.w};
-                s_lvel[D]  = (AuxStride){lv.x, lv.y, lv.z, 0.0f};
-                s_avel[D]  = (AuxStride){av.x, av.y, av.z, 0.0f};
+                // Slam into Shadow
+                s_pos[D]  = (PosStride){p.x, p.y, p.z, 0.0};
+                s_rot[D]  = (AuxStride){q.x, q.y, q.z, q.w};
+                s_lvel[D] = (AuxStride){lv.x, lv.y, lv.z, 0.0f};
+                s_avel[D] = (AuxStride){av.x, av.y, av.z, 0.0f};
             }
 
             SHADOW_UNLOCK(&self->shadow_lock);
