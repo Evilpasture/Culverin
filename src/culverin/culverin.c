@@ -960,6 +960,7 @@ static PyObject *PhysicsWorld_step(PhysicsWorldObject *self, PyObject *args) {
 
     SHADOW_LOCK(&self->shadow_lock);
     atomic_store_explicit(&self->step_requested, true, memory_order_relaxed);
+    self->needs_optimization = false;
 
     BLOCK_UNTIL_NOT_QUERYING(self);
     BLOCK_UNTIL_NOT_STEPPING(self);
@@ -989,9 +990,19 @@ static PyObject *PhysicsWorld_step(PhysicsWorldObject *self, PyObject *args) {
 
     if (captured_count > 0) {
         flush_commands_internal(self, captured_queue, captured_count);
+        self->needs_optimization = true;
     }
-
-    JPH_PhysicsSystem_Update(self->system, dt, 1, self->job_system);
+    // If it's a "Query Prep" step (dt=0), force the tree to rebuild
+    if (dt <= 0.0f) {
+        JPH_PhysicsSystem_OptimizeBroadPhase(self->system);
+        self->needs_optimization = false;
+    } else {
+        // Normal simulation step
+        JPH_PhysicsSystem_Update(self->system, dt, 1, self->job_system);
+        // Jolt Update usually refits the tree internally, but if you've 
+        // done massive teleports in flush_commands, a manual Optimize 
+        // right before Update can actually improve solver performance.
+    }
 
     // The Snapshot + Sync now happen together in one GIL-free loop
     culverin_sync_shadow_buffers(self); 
@@ -1941,28 +1952,59 @@ static PyObject *PhysicsWorld_create_mesh_body(PhysicsWorldObject *self,
   BLOCK_UNTIL_NOT_STEPPING(self);
   BLOCK_UNTIL_NOT_QUERYING(self);
 
-  if (self->free_count == 0 &&
-      PhysicsWorld_resize(self, self->capacity + 1024) < 0) {
-    SHADOW_UNLOCK(&self->shadow_lock);
-    goto cleanup;
+  // Ensure Capacity (Check count + 1 against capacity)
+  if (UNLIKELY(self->free_count == 0 || self->count + 1 > self->capacity)) {
+    size_t needed = (self->capacity == 0) ? 1024 : self->capacity * 2;
+    if (PhysicsWorld_resize(self, needed) < 0) {
+      SHADOW_UNLOCK(&self->shadow_lock);
+      goto cleanup;
+    }
   }
 
   uint32_t slot = self->free_slots[--self->free_count];
-  self->slot_states[slot] = SLOT_PENDING_CREATE;
+  uint32_t dense = (uint32_t)self->count++; // FIX: Increment count and get dense index
+  
+  BodyHandle handle = make_handle(slot, self->generations[slot]);
 
+  // FIX: Initialize Shadow Buffers immediately so the dense array remains valid
+  auto *shadow_pos = (PosStride *)self->positions;
+  auto *shadow_ppos = (PosStride *)self->prev_positions;
+  auto *shadow_rot = (AuxStride *)self->rotations;
+  auto *shadow_prot = (AuxStride *)self->prev_rotations;
+
+  PosStride p = {px, py, pz};
+  shadow_pos[dense] = p;
+  shadow_ppos[dense] = p;
+
+  AuxStride q = {rx, ry, rz, rw};
+  shadow_rot[dense] = q;
+  shadow_prot[dense] = q;
+
+  // Map the indirection
+  self->slot_to_dense[slot] = dense;
+  self->dense_to_slot[dense] = slot;
+  self->body_ids[dense] = JPH_INVALID_BODY_ID;
+  self->user_data[dense] = (uint64_t)user_data;
+  self->categories[dense] = cat;
+  self->masks[dense] = mask;
+  
+  self->slot_states[slot] = SLOT_PENDING_CREATE;
+  self->view_shape[0] = (Py_ssize_t)self->count;
+
+  // Create Jolt Settings
   JPH_BodyCreationSettings *settings = JPH_BodyCreationSettings_Create3(
       shape, &(JPH_RVec3){px, py, pz},
       &(JPH_Quat){rx, ry, rz, rw}, JPH_MotionType_Static, 0);
 
   JPH_Shape_Destroy(shape);
-
-  BodyHandle handle = make_handle(slot, self->generations[slot]);
   JPH_BodyCreationSettings_SetUserData(settings, (uint64_t)handle);
 
   if (!ensure_command_capacity(self)) {
-    JPH_BodyCreationSettings_Destroy(settings);
+    // Rollback on failure
+    self->count--;
     self->slot_states[slot] = SLOT_EMPTY;
     self->free_slots[self->free_count++] = slot;
+    JPH_BodyCreationSettings_Destroy(settings);
     SHADOW_UNLOCK(&self->shadow_lock);
     PyErr_NoMemory();
     goto cleanup;
@@ -2133,7 +2175,7 @@ static PyObject *PhysicsWorld_destroy_bodies_batch(PhysicsWorldObject *self, PyO
 
     SHADOW_UNLOCK(&self->shadow_lock);
     
-    DEBUG_LOG("Batch Destroy: Queued %d bodies for removal.", actual_destroyed);
+    // DEBUG_LOG("Batch Destroy: Queued %d bodies for removal.", actual_destroyed);
     Py_RETURN_NONE;
 }
 
