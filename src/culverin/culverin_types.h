@@ -21,8 +21,3 @@ typedef struct { float x, y, z, w; } AuxStride;
 // Sanity check sizes
 _Static_assert(sizeof(PosStride) == sizeof(JPH_Real) * 4, "PosStride padding error");
 _Static_assert(sizeof(AuxStride) == sizeof(float) * 4,    "AuxStride padding error");
-
-typedef struct {
-    const JPH_Body* body;
-    uint32_t dense_idx;
-} SyncWorkItem;
