@@ -7,7 +7,7 @@
  */
 void world_remove_body_slot(PhysicsWorldObject *self, uint32_t slot) {
   uint32_t dense_idx = self->slot_to_dense[slot];
-  uint32_t last_dense = (uint32_t)self->count - 1;
+  auto last_dense = (uint32_t)self->count - 1;
   JPH_BodyID bid = self->body_ids[dense_idx];
 
   // 1. Cleanup Jolt Mapping
@@ -21,13 +21,13 @@ void world_remove_body_slot(PhysicsWorldObject *self, uint32_t slot) {
   // 2. Swap-and-Pop
   if (dense_idx != last_dense) {
     // Type-safe Casts
-    PosStride *pos = (PosStride *)self->positions;
-    PosStride *prev_pos = (PosStride *)self->prev_positions;
+    auto *pos = (PosStride *)self->positions;
+    auto *prev_pos = (PosStride *)self->prev_positions;
     
-    AuxStride *rot = (AuxStride *)self->rotations;
-    AuxStride *prev_rot = (AuxStride *)self->prev_rotations;
-    AuxStride *lvel = (AuxStride *)self->linear_velocities;
-    AuxStride *avel = (AuxStride *)self->angular_velocities;
+    auto *rot = (AuxStride *)self->rotations;
+    auto *prev_rot = (AuxStride *)self->prev_rotations;
+    auto *lvel = (AuxStride *)self->linear_velocities;
+    auto *avel = (AuxStride *)self->angular_velocities;
 
     // Struct Copy (Compiler handles size/alignment)
     pos[dense_idx] = pos[last_dense];
@@ -157,8 +157,8 @@ void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *queue, si
 
       SHADOW_LOCK(&self->shadow_lock);
       uint32_t d = self->slot_to_dense[slot];
-      PosStride *shadow_pos = (PosStride *)self->positions;
-      PosStride *shadow_ppos = (PosStride *)self->prev_positions;
+      auto *shadow_pos = (PosStride *)self->positions;
+      auto *shadow_ppos = (PosStride *)self->prev_positions;
       
       shadow_pos[d] = (PosStride){cmd->pos.x, cmd->pos.y, cmd->pos.z};
       shadow_ppos[d] = shadow_pos[d];
@@ -180,8 +180,8 @@ void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *queue, si
       dense = self->slot_to_dense[slot];
       
       // AuxStride is float-based, so this is a direct assignment
-      AuxStride *shadow_rot = (AuxStride *)self->rotations;
-      AuxStride *shadow_prot = (AuxStride *)self->prev_rotations;
+      auto *shadow_rot = (AuxStride *)self->rotations;
+      auto *shadow_prot = (AuxStride *)self->prev_rotations;
       
       shadow_rot[dense] = (AuxStride){cmd->quat.x, cmd->quat.y, cmd->quat.z, cmd->quat.w};
       shadow_prot[dense] = shadow_rot[dense];
@@ -201,6 +201,11 @@ void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *queue, si
       dense = self->slot_to_dense[slot];
       PosStride new_p = {cmd->transform.px, cmd->transform.py, cmd->transform.pz};
       AuxStride new_q = {cmd->transform.rx, cmd->transform.ry, cmd->transform.rz, cmd->transform.rw};
+
+      auto *shadow_pos = (PosStride *)self->positions;
+      auto *shadow_prev_pos = (PosStride *)self->prev_positions;
+      auto *shadow_rot = (AuxStride *)self->rotations;
+      auto *shadow_prev_rot = (AuxStride *)self->prev_rotations;
       
       shadow_pos[dense] = new_p;
       shadow_prev_pos[dense] = new_p;
@@ -256,6 +261,9 @@ void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *queue, si
       JPH_MotionQuality qual = cmd->motion.motion_type ? JPH_MotionQuality_LinearCast : JPH_MotionQuality_Discrete;
       JPH_BodyInterface_SetMotionQuality(bi, bid, qual);
       break;
+    }
+    case CMD_TELEPORT: {
+      // TODO: add teleport method
     }
     default: break;
     }
