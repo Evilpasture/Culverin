@@ -9,6 +9,7 @@
 #include "culverin_debug_render.h"
 #include "culverin_internal_query.h"
 #include "culverin_tracked_vehicle.h"
+#include "culverin_threading.h"
 #include <float.h>
 #include <math.h>
 #include <stdatomic.h>
@@ -81,17 +82,6 @@
   } while (0)
 #endif
 
-// --- Threading Primitives (Python 3.14t support) ---
-#if PY_VERSION_HEX >= 0x030D0000
-typedef PyMutex ShadowMutex;
-#define SHADOW_LOCK(m) PyMutex_Lock(m)
-#define SHADOW_UNLOCK(m) PyMutex_Unlock(m)
-#else
-typedef PyThread_type_lock ShadowMutex;
-#define SHADOW_LOCK(m) PyThread_acquire_lock(m, 1)
-#define SHADOW_UNLOCK(m) PyThread_release_lock(m)
-#endif
-
 // --- Compiler Hints ---
 #if defined(__GNUC__) || defined(__clang__)
 #define LIKELY(x) __builtin_expect(!!(x), 1)
@@ -112,66 +102,6 @@ typedef PyThread_type_lock ShadowMutex;
 #define DEBUG_LOG(fmt, ...)
 #endif
 
-// Processor-level hint to save power during spin-waits
-static inline void culverin_cpu_relax() {
-#if defined(_MSC_VER) || defined(__INTEL_COMPILER)
-#include <immintrin.h>
-  _mm_pause();
-#elif defined(__GNUC__) || defined(__clang__)
-#if defined(__i386__) || defined(__x86_64__)
-  __asm__ __volatile__("pause");
-#elif defined(__arm__) || defined(__aarch64__)
-  __asm__ __volatile__("yield");
-#endif
-#endif
-}
-
-static inline void culverin_yield() {
-  // 1. Give the CPU a break (Hardware level)
-  culverin_cpu_relax();
-
-// 2. Give the OS a break (Kernel level)
-#if defined(_WIN32)
-  // SwitchToThread() is the gold standard for Windows yielding
-  if (SwitchToThread() == FALSE) {
-    Sleep(0);
-  }
-#elif defined(__linux__) || defined(__FreeBSD__)
-  sched_yield();
-#elif defined(__APPLE__)
-  // macOS deprecated sched_yield behavior; usleep(0) is often preferred
-  // for thread arbitration in user-space.
-  usleep(0);
-#else
-  // Fallback for unknown POSIX systems
-  sleep(0);
-#endif
-}
-
-// Minimal Handle Helper
-// Python handles will be 64-bit integers: (Generation << 32) | SlotIndex
-typedef uint64_t BodyHandle;
-
-// Constraint Types
-typedef enum ConstraintType : uint8_t {
-  CONSTRAINT_FIXED = 0,
-  CONSTRAINT_POINT = 1,
-  CONSTRAINT_HINGE = 2,
-  CONSTRAINT_SLIDER = 3,
-  CONSTRAINT_DISTANCE = 4,
-  CONSTRAINT_CONE = 5
-} ConstraintType;
-
-// Minimal Handle for Constraints (Distinct from BodyHandle)
-typedef uint64_t ConstraintHandle;
-
-// --- Contact Lifecycle Types ---
-typedef enum ContactEventType : uint8_t {
-  EVENT_ADDED = 0,
-  EVENT_PERSISTED = 1,
-  EVENT_REMOVED = 2
-} ContactEventType;
-
 // --- Callback Logic ---
 // Old ContactEvent for compatibility
 typedef struct ContactEvent {
@@ -189,52 +119,6 @@ typedef struct ContactEvent {
 
 _Static_assert(sizeof(ContactEvent) == 64,
                "ContactEvent must be 64 bytes for performance");
-
-// 1. Remove alignas from the inner struct
-typedef struct {
-    BodyHandle body1;       // 8
-    BodyHandle body2;       // 8
-    JPH_Real px, py, pz;    // 24/12
-    float nx, ny, nz;       // 12
-    float impulse;          // 4
-    float sliding_speed;    // 4
-    uint32_t flags;         // 4
-    #if !defined(JPH_DOUBLE_PRECISION)
-        uint32_t padding_magic[3]; 
-    #endif
-} ContactEventSlim; // Just a 64-byte data block now
-
-// 2. The Tail (Already 64 bytes)
-typedef struct {
-    // --- 8-byte Alignment Block (Offset 0 to 16) ---
-    uint64_t udata1;            // 8
-    uint64_t udata2;            // 8
-
-    // --- 4-byte Alignment Block (Offset 16 to 64) ---
-    float rvx, rvy, rvz;        // 12 (Total 28)
-    float toi;                  // 4  (Total 32)
-    float penetration;          // 4  (Total 36)
-    
-    uint32_t mat1;              // 4  (Total 40)
-    uint32_t mat2;              // 4  (Total 44)
-    
-    uint32_t sub1;              // 4  (Total 48)
-    uint32_t sub2;              // 4  (Total 52)
-    
-    uint32_t padding[3];        // 12 (Total 64!)
-} ContactEventFatExt;
-
-_Static_assert(sizeof(ContactEventFatExt) == 64, "FatExt is now a perfect 64-byte block");
-
-// 3. The Outer Container (Where the alignment lives)
-// typedef struct ContactEvent {
-//     alignas(64)
-//     ContactEventSlim slim;   // Offset 0
-//     ContactEventFatExt fat;  // Offset 64
-// } ContactEvent;
-
-// _Static_assert(sizeof(ContactEvent) == 128, "ContactEvent must be exactly 128 bytes.");
-// _Static_assert(offsetof(ContactEvent, fat) == 64, "Fat extension must start on new cache line.");
 
 constexpr int CONTACT_MAX_CAPACITY = 64 * 8 << 5;
 
@@ -322,91 +206,6 @@ typedef struct {
     uint32_t tri_count;
     uint32_t vertex_count;
 } MeshBounds;
-
-// --- Native Condition Variable Support ---
-
-#ifdef _WIN32
-  typedef SRWLOCK NativeMutex;
-  typedef CONDITION_VARIABLE NativeCond;
-  #define INIT_NATIVE_MUTEX(m) InitializeSRWLock(&(m))
-  #define FREE_NATIVE_MUTEX(m) (void)(m) // No cleanup needed for SRWLock
-  #define NATIVE_MUTEX_LOCK(m) AcquireSRWLockExclusive(&(m))
-  #define NATIVE_MUTEX_UNLOCK(m) ReleaseSRWLockExclusive(&(m))
-  
-  #define INIT_NATIVE_COND(c) InitializeConditionVariable(&(c))
-  #define FREE_NATIVE_COND(c) (void)(c) // No cleanup needed
-  #define NATIVE_COND_WAIT(c, m) SleepConditionVariableSRW(&(c), &(m), INFINITE, 0)
-  #define NATIVE_COND_BROADCAST(c) WakeAllConditionVariable(&(c))
-#else
-  #include <pthread.h>
-  typedef pthread_mutex_t NativeMutex;
-  typedef pthread_cond_t NativeCond;
-  #define INIT_NATIVE_MUTEX(m) pthread_mutex_init(&(m), NULL)
-  #define FREE_NATIVE_MUTEX(m) pthread_mutex_destroy(&(m))
-  #define NATIVE_MUTEX_LOCK(m) pthread_mutex_lock(&(m))
-  #define NATIVE_MUTEX_UNLOCK(m) pthread_mutex_unlock(&(m))
-
-  #define INIT_NATIVE_COND(c) pthread_cond_init(&(c), NULL)
-  #define FREE_NATIVE_COND(c) pthread_cond_destroy(&(c))
-  #define NATIVE_COND_WAIT(c, m) pthread_cond_wait(&(c), &(m))
-  #define NATIVE_COND_BROADCAST(c) pthread_cond_broadcast(&(c))
-#endif
-
-// Blocks until the world is not mid-step.
-// Must be called while holding SHADOW_LOCK. Re-acquires it before returning.
-#define BLOCK_UNTIL_NOT_STEPPING(self)                                         \
-  do {                                                                         \
-    if (atomic_load_explicit(&(self)->is_stepping, memory_order_relaxed)) {    \
-      SHADOW_UNLOCK(&(self)->shadow_lock);                                     \
-      Py_BEGIN_ALLOW_THREADS                                                   \
-      NATIVE_MUTEX_LOCK((self)->step_sync.mutex);                              \
-      /* The Double Check: check again after acquiring native lock */          \
-      while (atomic_load_explicit(&(self)->is_stepping, memory_order_relaxed)) { \
-        NATIVE_COND_WAIT((self)->step_sync.cond, (self)->step_sync.mutex);     \
-      }                                                                        \
-      NATIVE_MUTEX_UNLOCK((self)->step_sync.mutex);                            \
-      Py_END_ALLOW_THREADS                                                     \
-      SHADOW_LOCK(&(self)->shadow_lock);                                       \
-    }                                                                          \
-  } while (0)
-
-#define BLOCK_UNTIL_NOT_QUERYING(self)                                         \
-  do {                                                                         \
-    if (atomic_load_explicit(&(self)->active_queries, memory_order_acquire) > 0) { \
-      SHADOW_UNLOCK(&(self)->shadow_lock);                                     \
-      Py_BEGIN_ALLOW_THREADS                                                   \
-      NATIVE_MUTEX_LOCK((self)->step_sync.mutex);                              \
-      /* The Double Check */                                                   \
-      while (atomic_load_explicit(&(self)->active_queries, memory_order_relaxed) > 0) { \
-        NATIVE_COND_WAIT((self)->step_sync.cond, (self)->step_sync.mutex);     \
-      }                                                                        \
-      NATIVE_MUTEX_UNLOCK((self)->step_sync.mutex);                            \
-      Py_END_ALLOW_THREADS                                                     \
-      SHADOW_LOCK(&(self)->shadow_lock);                                       \
-    }                                                                          \
-  } while (0)
-
-// Queries use this to wait if a Step is about to happen
-#define BLOCK_IF_STEP_PENDING(self)                                            \
-  do {                                                                         \
-    if (atomic_load_explicit(&(self)->step_requested, memory_order_relaxed)) { \
-      SHADOW_UNLOCK(&(self)->shadow_lock);                                     \
-      Py_BEGIN_ALLOW_THREADS                                                   \
-      NATIVE_MUTEX_LOCK((self)->step_sync.mutex);                              \
-      while (atomic_load_explicit(&(self)->step_requested, memory_order_relaxed)) { \
-        NATIVE_COND_WAIT((self)->step_sync.cond, (self)->step_sync.mutex);     \
-      }                                                                        \
-      NATIVE_MUTEX_UNLOCK((self)->step_sync.mutex);                            \
-      Py_END_ALLOW_THREADS                                                     \
-      SHADOW_LOCK(&(self)->shadow_lock);                                       \
-    }                                                                          \
-  } while (0)
-
-// A container to sync state changes (stepping finished, query finished)
-typedef struct {
-    NativeMutex mutex;
-    NativeCond cond;
-} ShadowSync;
 
 // --- The Object Struct ---
 typedef struct PhysicsWorldObject {
@@ -558,5 +357,3 @@ static inline bool unpack_handle(PhysicsWorldObject *self, BodyHandle h,
   }
   return self->generations[*slot] == gen;
 }
-
-extern NativeMutex g_jph_trampoline_lock;
