@@ -477,7 +477,7 @@ PyObject *PhysicsWorld_shapecast(PhysicsWorldObject *self, PyObject *args,
   static char *kwlist[] = {"shape", "pos", "rot", "dir", "size", "ignore", NULL};
 
   // 1. ARGUMENT PARSING (GIL HELD)
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "i(fff)(ffff)(fff)O|K", kwlist,
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "i(ddd)(ffff)(fff)O|K", kwlist,
                                    &shape_type, &px, &py, &pz, &rx, &ry, &rz, &rw,
                                    &dx, &dy, &dz, &py_size, &ignore_h)) {
     return NULL;
@@ -489,117 +489,148 @@ PyObject *PhysicsWorld_shapecast(PhysicsWorldObject *self, PyObject *args,
   }
   
   float s[4];
-  parse_body_size(py_size, s); // Helper parses tuple/float/None into float[4]
+  parse_body_size(py_size, s);
+  
   CastShapeContext ctx = {0};
-  // 2. SHAPE ACQUISITION (Release GIL, Jolt Lock -> Shadow Lock)
+  uint64_t hit_handle = 0;
+  bool has_valid_hit = false;
+  
+  // 2. QUERY SETUP AND EXECUTION (GIL Released, Jolt Lock Held)
   Py_BEGIN_ALLOW_THREADS
 
   NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
   SHADOW_LOCK(&self->shadow_lock);
 
-  // Safe to create shape now
   JPH_Shape *shape = find_or_create_shape_locked(self, shape_type, s);
-
-  // We are about to start a query. Increment counter while holding Shadow Lock.
-  if (shape) {
-      atomic_fetch_add_explicit(&self->active_queries, 1, memory_order_acquire);
-  }
   
-  // Resolve ignore body ID while we have the shadow data
   JPH_BodyID ignore_bid = JPH_INVALID_BODY_ID;
   if (ignore_h) {
       uint32_t slot;
-      if ((int)unpack_handle(self, ignore_h, &slot) && self->slot_states[slot] == SLOT_ALIVE) {
+      if ((int)unpack_handle(self, ignore_h, &slot) && 
+          self->slot_states[slot] == SLOT_ALIVE) {
           ignore_bid = self->body_ids[self->slot_to_dense[slot]];
       }
   }
 
-  // Release Shadow Lock immediately, keep Jolt Lock
-  SHADOW_UNLOCK(&self->shadow_lock);
-
   if (!shape) {
+      SHADOW_UNLOCK(&self->shadow_lock);
       NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
       Py_BLOCK_THREADS;
       return PyErr_Format(PyExc_RuntimeError, "Invalid shape parameters");
   }
+  SHADOW_UNLOCK(&self->shadow_lock);
 
-  // 3. QUERY EXECUTION (Jolt Lock Held, GIL Released)
-  // Ensure we don't query while a step is flushing writes
-  // (Note: Since we hold g_jph_trampoline_lock, step() cannot run Jolt updates, 
-  // but it might be in the middle of flush_commands. That's okay because 
-  // flush_commands only touches Shadow data which we aren't reading here, 
-  // OR Jolt data which is protected by the trampoline lock).
+  // Increment query counter AFTER validation
+  atomic_fetch_add_explicit(&self->active_queries, 1, memory_order_acquire);
 
-  // Prepare Vectors
+  // 3. EXECUTE QUERY
   JPH_RMat4 transform;
   JPH_RVec3 pos = {px, py, pz};
   JPH_Quat rot = {rx, ry, rz, rw};
   JPH_RMat4_RotationTranslation(&transform, &rot, &pos);
   
   JPH_Vec3 sweep_dir = {dx, dy, dz};
-
-  // Prepare Context
   ctx.has_hit = false;
   ctx.hit.fraction = 1.0f;
   
-  // Execute Jolt Query
   shapecast_execute_internal(self, shape, &transform, &sweep_dir, ignore_bid, &ctx);
 
+  // 4. RESOLVE HIT HANDLE (While holding Jolt lock)
+  if (ctx.has_hit) {
+      uint64_t h_raw = JPH_BodyInterface_GetUserData(self->body_interface, ctx.hit.bodyID2);
+      hit_handle = h_raw;
+      has_valid_hit = true;
+  }
+
   NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+
+  // 5. SIGNAL QUERY END (Before re-acquiring GIL)
+  int prev = atomic_fetch_sub_explicit(&self->active_queries, 1, memory_order_release);
+  if (prev == 1) {
+      NATIVE_MUTEX_LOCK(self->step_sync.mutex);
+      NATIVE_COND_BROADCAST(self->step_sync.cond);
+      NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
+  }
+
   Py_END_ALLOW_THREADS
 
-  // 4. PROCESS RESULTS (GIL Re-acquired)
+  // 6. BUILD RESULT (GIL Re-acquired)
   PyObject *result = NULL;
-
-  if (ctx.has_hit) {
+  
+  if (has_valid_hit) {
+      // Normalize normal
       float nx = -ctx.hit.penetrationAxis.x;
       float ny = -ctx.hit.penetrationAxis.y;
       float nz = -ctx.hit.penetrationAxis.z;
       
-      // Normalize normal
       float n_len = sqrtf(nx*nx + ny*ny + nz*nz);
       if (n_len > 1e-6f) {
           float inv_len = 1.0f / n_len;
           nx *= inv_len; ny *= inv_len; nz *= inv_len;
       }
 
-      // 5. RESOLVE HIT BODY (Shadow Lock Required)
+      // Check shadow data under lock
       SHADOW_LOCK(&self->shadow_lock);
       
-      // We need to look up the handle associated with the body ID
-      // Jolt UserData stores the 64-bit Handle
-      uint64_t h_raw = JPH_BodyInterface_GetUserData(self->body_interface, ctx.hit.bodyID2);
-      BodyHandle h = (BodyHandle)h_raw;
-      
-      uint32_t slot = (uint32_t)(h & 0xFFFFFFFF);
-      uint32_t gen = (uint32_t)(h >> 32);
+      uint32_t slot = (uint32_t)(hit_handle & 0xFFFFFFFF);
+      uint32_t gen = (uint32_t)(hit_handle >> 32);
 
-      // Validate handle is still alive in our world
       if (slot < self->slot_capacity && 
           self->generations[slot] == gen && 
           self->slot_states[slot] == SLOT_ALIVE) {
           
-          Py_DECREF(result); // Decrement None
-          result = Py_BuildValue("Kf(fff)(fff)", h, ctx.hit.fraction, 
-                                 ctx.hit.contactPointOn2.x, 
-                                 ctx.hit.contactPointOn2.y, 
-                                 ctx.hit.contactPointOn2.z, 
-                                 nx, ny, nz);
+          // Create all atomic objects first
+          PyObject *handle_obj = PyLong_FromUnsignedLongLong(hit_handle);
+          PyObject *fraction_obj = PyFloat_FromDouble(ctx.hit.fraction);
+          PyObject *px = PyFloat_FromDouble(ctx.hit.contactPointOn2.x);
+          PyObject *py = PyFloat_FromDouble(ctx.hit.contactPointOn2.y);
+          PyObject *pz = PyFloat_FromDouble(ctx.hit.contactPointOn2.z);
+          PyObject *nx_obj = PyFloat_FromDouble(nx);
+          PyObject *ny_obj = PyFloat_FromDouble(ny);
+          PyObject *nz_obj = PyFloat_FromDouble(nz);
+          
+          // Check for allocation failures
+          if (!handle_obj || !fraction_obj || !px || !py || !pz || 
+              !nx_obj || !ny_obj || !nz_obj) {
+              Py_XDECREF(handle_obj); Py_XDECREF(fraction_obj);
+              Py_XDECREF(px); Py_XDECREF(py); Py_XDECREF(pz);
+              Py_XDECREF(nx_obj); Py_XDECREF(ny_obj); Py_XDECREF(nz_obj);
+              SHADOW_UNLOCK(&self->shadow_lock);
+              return NULL;
+          }
+          
+          PyObject *pos_tup = PyTuple_Pack(3, px, py, pz);
+          PyObject *norm_tup = PyTuple_Pack(3, nx_obj, ny_obj, nz_obj);
+          
+          // Decrement the float refs (tuple now owns them)
+          Py_DECREF(px); Py_DECREF(py); Py_DECREF(pz);
+          Py_DECREF(nx_obj); Py_DECREF(ny_obj); Py_DECREF(nz_obj);
+          
+          if (!pos_tup || !norm_tup) {
+              Py_XDECREF(pos_tup); Py_XDECREF(norm_tup);
+              Py_DECREF(handle_obj); Py_DECREF(fraction_obj);
+              SHADOW_UNLOCK(&self->shadow_lock);
+              return NULL;
+          }
+          
+          result = PyTuple_Pack(4, handle_obj, fraction_obj, pos_tup, norm_tup);
+          
+          // Decrement all intermediate objects
+          Py_DECREF(handle_obj);
+          Py_DECREF(fraction_obj);
+          Py_DECREF(pos_tup);
+          Py_DECREF(norm_tup);
+          
+          if (!result) {
+              SHADOW_UNLOCK(&self->shadow_lock);
+              return NULL;
+          }
       }
       SHADOW_UNLOCK(&self->shadow_lock);
   }
 
-  // 6. SIGNAL QUERY END
-  // We must decrement active_queries and signal the condition variable
-  // so that step() knows it can proceed if it was waiting.
-  int prev = atomic_fetch_sub_explicit(&self->active_queries, 1, memory_order_release);
-  if (prev == 1) {
-      // If we were the last query, wake up the stepper
-      NATIVE_MUTEX_LOCK(self->step_sync.mutex);
-      NATIVE_COND_BROADCAST(self->step_sync.cond);
-      NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
+  if (!result) {
+      Py_RETURN_NONE;
   }
-  if (!result)
-    Py_RETURN_NONE;
   return result;
 }
