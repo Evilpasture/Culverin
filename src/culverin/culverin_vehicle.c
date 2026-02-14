@@ -57,7 +57,7 @@ static JPH_WheelSettings *create_single_wheel(PyObject *w_dict,
     JPH_WheelSettingsWV_SetMaxHandBrakeTorque(w, handbrake);
   }
   JPH_WheelSettings_SetPosition((JPH_WheelSettings *)w,
-                                &(JPH_Vec3){pos.x, pos.y, pos.z});
+                                &(JPH_Vec3){(float)pos.x, (float)pos.y, (float)pos.z});
   JPH_WheelSettings_SetRadius((JPH_WheelSettings *)w, radius);
   JPH_WheelSettings_SetWidth((JPH_WheelSettings *)w, width);
 
