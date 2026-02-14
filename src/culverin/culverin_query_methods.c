@@ -246,88 +246,116 @@ cleanup:
 
 PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *args,
                                PyObject *kwds) {
-  float sx; float sy; float sz;
-  float dx; float dy; float dz;
+  float sx, sy, sz;
+  float dx, dy, dz;
   float max_dist = 1000.0f;
   uint64_t ignore_h = 0;
   static char *kwlist[] = {"start", "direction", "max_dist", "ignore", NULL};
 
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)(fff)|fK", kwlist, &sx,
-                                   &sy, &sz, &dx, &dy, &dz, &max_dist,
-                                   &ignore_h)) {
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)(fff)|fK", kwlist, 
+                                   &sx, &sy, &sz, &dx, &dy, &dz, 
+                                   &max_dist, &ignore_h)) {
     return NULL;
   }
 
-  PyObject *result = NULL;
   float mag_sq = dx * dx + dy * dy + dz * dz;
   if (mag_sq < 1e-9f) {
     Py_RETURN_NONE;
   }
+  
   float mag = sqrtf(mag_sq);
   float scale = max_dist / mag;
 
   JPH_STACK_ALLOC(JPH_RVec3, origin);
   origin->x = sx; origin->y = sy; origin->z = sz;
+  
   JPH_STACK_ALLOC(JPH_Vec3, direction);
-  direction->x = dx * scale; direction->y = dy * scale; direction->z = dz * scale;
+  direction->x = dx * scale; 
+  direction->y = dy * scale; 
+  direction->z = dz * scale;
+  
   JPH_STACK_ALLOC(JPH_RayCastResult, hit);
   hit->bodyID = JPH_INVALID_BODY_ID;
   hit->fraction = 1.0f;
   hit->subShapeID2 = 0;
 
+  // Resolve ignore body under lock
   SHADOW_LOCK(&self->shadow_lock);
   BLOCK_UNTIL_NOT_STEPPING(self);
   BLOCK_IF_STEP_PENDING(self);
-  atomic_fetch_add_explicit(&self->active_queries, 1, memory_order_relaxed);
 
-  JPH_BodyID ignore_bid = 0;
-  uint32_t ignore_slot = 0;
-  if (ignore_h != 0 && (int)unpack_handle(self, ignore_h, &ignore_slot)) {
-    ignore_bid = self->body_ids[self->slot_to_dense[ignore_slot]];
+  JPH_BodyID ignore_bid = JPH_INVALID_BODY_ID;
+  if (ignore_h != 0) {
+      uint32_t ignore_slot;
+      if ((int)unpack_handle(self, ignore_h, &ignore_slot) && 
+          self->slot_states[ignore_slot] == SLOT_ALIVE) {
+          uint32_t dense = self->slot_to_dense[ignore_slot];
+          
+          // Bounds check against CAPACITY, not count
+          if (dense < self->capacity) {
+              ignore_bid = self->body_ids[dense];
+          }
+      }
   }
-  SHADOW_UNLOCK(&self->shadow_lock);
 
+  atomic_fetch_add_explicit(&self->active_queries, 1, memory_order_acquire);
+  SHADOW_UNLOCK(&self->shadow_lock);
+  // Execute raycast (GIL released, Jolt lock held)
   bool has_hit = false;
   JPH_Vec3 normal = {0, 0, 0};
+  BodyHandle hit_handle = 0;
+  float hit_fraction = 0.0f;
+  
   Py_BEGIN_ALLOW_THREADS
   NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
-  
-  
 
-  // These two functions call Jolt internals. They MUST be inside the JPH lock.
   has_hit = execute_raycast_query(self, ignore_bid, origin, direction, hit);
   
   if (has_hit) {
     extract_hit_normal(self, hit->bodyID, hit->subShapeID2, origin, direction,
                        hit->fraction, &normal);
+    // Get handle while holding Jolt lock
+    hit_handle = (BodyHandle)JPH_BodyInterface_GetUserData(
+        self->body_interface, hit->bodyID);
+    hit_fraction = hit->fraction;
   }
 
   NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
-  Py_END_ALLOW_THREADS
   
+  // Decrement query counter before re-acquiring GIL
+  end_query_scope(self);
+  
+  Py_END_ALLOW_THREADS
 
+  // Build result (GIL held)
   if (!has_hit) {
-    goto exit;
+    Py_RETURN_NONE;
   }
 
+  PyObject *result = NULL;
   SHADOW_LOCK(&self->shadow_lock);
-  BodyHandle handle = (BodyHandle)JPH_BodyInterface_GetUserData(
-      self->body_interface, hit->bodyID);
-  uint32_t slot = (uint32_t)(handle & 0xFFFFFFFF);
-  uint32_t gen = (uint32_t)(handle >> 32);
+  
+  uint32_t slot = (uint32_t)(hit_handle & 0xFFFFFFFF);
+  uint32_t gen = (uint32_t)(hit_handle >> 32);
 
-  if (slot < self->slot_capacity && self->generations[slot] == gen &&
+  if (slot < self->slot_capacity && 
+      self->generations[slot] == gen &&
       self->slot_states[slot] == SLOT_ALIVE) {
-    result = Py_BuildValue("Kf(fff)", handle, hit->fraction, normal.x, normal.y,
+    
+    result = Py_BuildValue("Kf(fff)", 
+                           hit_handle, 
+                           hit_fraction, 
+                           normal.x, 
+                           normal.y,
                            normal.z);
   }
+  
   SHADOW_UNLOCK(&self->shadow_lock);
 
-exit:
-  // --- SIGNALING CHANGE HERE ---
-  end_query_scope(self);
-
-  return result ? result : Py_None;
+  if (!result) {
+    Py_RETURN_NONE;
+  }
+  return result;
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
@@ -377,7 +405,17 @@ PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self,
     }
 
     size_t count = b_starts.len / 12;
-    PyObject *result_bytes = PyBytes_FromStringAndSize(NULL, (Py_ssize_t)(count * sizeof(RayCastBatchResult)));
+    
+    // Prevent overflow and excessive memory usage
+    if (count > 10000000) {  // 10M rays max (480MB result buffer)
+        PyErr_SetString(PyExc_ValueError, "Batch size exceeds 10M rays");
+        goto fail_buffers;
+    }
+    
+    PyObject *result_bytes = PyBytes_FromStringAndSize(
+        NULL, 
+        (Py_ssize_t)(count * sizeof(RayCastBatchResult))
+    );
     if (UNLIKELY(!result_bytes)) goto fail_buffers;
 
     // --- 2. PHASE GUARD & SNAPSHOT ---
@@ -385,12 +423,14 @@ PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self,
     BLOCK_UNTIL_NOT_STEPPING(self);
     BLOCK_IF_STEP_PENDING(self);
 
+    // SAFETY: We hold g_jph_trampoline_lock during execution, which prevents
+    // flush_commands_internal from reallocating these arrays.
     const uint32_t *CULV_RESTRICT s2d = self->slot_to_dense;
     const uint32_t *CULV_RESTRICT mats = self->material_ids;
     const size_t slot_cap = self->slot_capacity;
-    const size_t body_count = self->count;
+    const size_t body_cap = self->capacity;  // Use capacity, not count!
 
-    atomic_fetch_add_explicit(&self->active_queries, 1, memory_order_seq_cst);
+    atomic_fetch_add_explicit(&self->active_queries, 1, memory_order_acquire);
     SHADOW_UNLOCK(&self->shadow_lock);
 
     // --- 3. JOLT EXECUTION ---
@@ -415,13 +455,17 @@ PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self,
 
         float scale = max_dist / sqrtf(mag_sq);
         JPH_Vec3 v_dir = { dx * scale, dy * scale, dz * scale };
-        JPH_RVec3 v_ori = { (double)f_starts[off], (double)f_starts[off+1], (double)f_starts[off+2] };
+        JPH_RVec3 v_ori = { 
+            (double)f_starts[off], 
+            (double)f_starts[off+1], 
+            (double)f_starts[off+2] 
+        };
 
         JPH_RayCastResult hit;
         hit.bodyID = JPH_INVALID_BODY_ID;
         hit.fraction = 1.0f;
         hit.subShapeID2 = 0;
-        // PASSING NULL for filters is the safest and fastest way in JoltC
+
         if (JPH_NarrowPhaseQuery_CastRay(query, &v_ori, &v_dir, &hit, NULL, NULL, NULL)) {
             uint64_t h = JPH_BodyInterface_GetUserData(bi, hit.bodyID);
             if (h != 0) {
@@ -430,18 +474,24 @@ PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self,
                 res->fraction = hit.fraction;
                 res->subShapeID = hit.subShapeID2;
 
+                // Note: We don't validate generation for performance.
+                // Stale handles will fail later validation.
                 uint32_t slot = (uint32_t)(h & 0xFFFFFFFF);
                 if (slot < slot_cap) {
                     uint32_t dense = s2d[slot];
-                    if (dense < body_count && mats) res->material_id = mats[dense];
+                    if (dense < body_cap && mats) {  // Check capacity, not count!
+                        res->material_id = mats[dense];
+                    }
                 }
 
                 JPH_BodyLockRead j_lock;
                 JPH_BodyLockInterface_LockRead(lock_iface, hit.bodyID, &j_lock);
                 if (j_lock.body) {
-                    JPH_RVec3 hit_p = { v_ori.x + (double)v_dir.x * (double)hit.fraction, 
-                                        v_ori.y + (double)v_dir.y * (double)hit.fraction, 
-                                        v_ori.z + (double)v_dir.z * (double)hit.fraction };
+                    JPH_RVec3 hit_p = { 
+                        v_ori.x + (double)v_dir.x * (double)hit.fraction, 
+                        v_ori.y + (double)v_dir.y * (double)hit.fraction, 
+                        v_ori.z + (double)v_dir.z * (double)hit.fraction 
+                    };
                     JPH_Vec3 norm;
                     JPH_Body_GetWorldSpaceSurfaceNormal(j_lock.body, hit.subShapeID2, &hit_p, &norm);
                     res->nx = norm.x; res->ny = norm.y; res->nz = norm.z;
@@ -453,13 +503,19 @@ PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self,
     }
 
     NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+    
+    // Decrement query counter BEFORE re-acquiring GIL
+    end_query_scope(self);
+    
     Py_END_ALLOW_THREADS
 
-    end_query_scope(self);
-    PyBuffer_Release(&b_starts); PyBuffer_Release(&b_dirs);
+    PyBuffer_Release(&b_starts); 
+    PyBuffer_Release(&b_dirs);
     return result_bytes;
 
 fail_buffers:
+    // Note: We only reach here before incrementing active_queries,
+    // so we don't need to call end_query_scope.
     if (b_starts.obj) PyBuffer_Release(&b_starts);
     if (b_dirs.obj) PyBuffer_Release(&b_dirs);
     return NULL;
