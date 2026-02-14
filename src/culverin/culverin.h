@@ -44,8 +44,6 @@
 #define CULV_RESTRICT __restrict__
 #endif
 
-constexpr int CONTACT_MAX_CAPACITY = 16384;
-
 // Mask for the raw array index (Stripping the 24th bit used for Static flags)
 #define JPH_ID_TO_INDEX(id) ((id) & 0x7FFFFF)
 
@@ -175,6 +173,7 @@ typedef enum ContactEventType : uint8_t {
 } ContactEventType;
 
 // --- Callback Logic ---
+// Old ContactEvent for compatibility
 typedef struct ContactEvent {
   BodyHandle body1;
   BodyHandle body2;
@@ -190,6 +189,81 @@ typedef struct ContactEvent {
 
 _Static_assert(sizeof(ContactEvent) == 64,
                "ContactEvent must be 64 bytes for performance");
+
+// Aligned to 64 bytes
+typedef struct ContactEventSlim {
+    alignas(64)
+    // 16 Bytes: Identification
+    BodyHandle body1;       // 8 bytes (assuming pointer/u64)
+    BodyHandle body2;       // 8 bytes
+
+    // 24 Bytes: High Precision Position (JPH_Real = double)
+    double px, py, pz;      
+
+    // 12 Bytes: Normals (Keep as float, direction rarely needs double)
+    float nx, ny, nz;       
+
+    // 8 Bytes: Physics Data
+    float impulse;          // 4 bytes
+    float sliding_speed;    // 4 bytes
+
+    // Total used: 16 + 24 + 12 + 8 = 60 Bytes.
+    // 4 Bytes padding/flags left.
+    uint32_t flags;         // Packed booleans (IsSensor, IsNew, etc.)
+
+} ContactEventSlim;
+
+_Static_assert(sizeof(ContactEventSlim) == 64, "Slim event must fit cache line");
+
+// Aligned to 128 bytes (2 Cache Lines)
+typedef struct ContactEventFat {
+    // --- CACHE LINE 1 (Geometry & ID) ---
+    // 16 Bytes: IDs
+    BodyHandle body1;
+    BodyHandle body2;
+    // 16 Bytes: User Data
+    // You have room here for game-specific data like "TeamID" or "WeaponID"
+    uint64_t user_data_1;
+    uint64_t user_data_2;
+
+    // 24 Bytes: World Position (Double)
+    double px, py, pz;
+
+    // 24 Bytes: World Normal & Tangent (Float)
+    // Tangents are crucial for sliding sound effects!
+    float nx, ny, nz;
+
+    // --- CACHE LINE 2 (Physics & Metadata) ---
+    float tx, ty, tz; 
+    
+    // 12 Bytes: Relative Velocity (Float)
+    // (body2_vel - body1_vel) - vital for damage calculation
+    float rvx, rvy, rvz; 
+
+    // 8 Bytes: Scalar Physics
+    float impulse;
+    float sliding_speed_sq;
+
+    // 8 Bytes: Material IDs (Direct access, no lookup needed)
+    uint32_t mat1;
+    uint32_t mat2;
+
+    // 8 Bytes: Classification
+    uint32_t contact_type;  // Enter, Stay, Exit
+    uint32_t worker_id;     // Debugging: which thread solved this?
+
+    // 4 Bytes: Time of Impact (0.0 - 1.0)
+    float toi; 
+
+    // 2 Bytes: Combined "Bounciness" (Restitution)
+    // 2 Bytes: Combined "Grip" (Friction)
+    uint16_t combined_restitution; // Normalized 0-65535
+    uint16_t combined_friction;    // Normalized 0-65535
+} ContactEventFat;
+
+_Static_assert(sizeof(ContactEventFat) == 128, "Fat event must be 128 bytes");
+
+constexpr int CONTACT_MAX_CAPACITY = sizeof(ContactEvent) * 8 << 5;
 
 // --- Raycast Batch Result (Aligned to 16-bytes, Total 48-bytes) ---
 #ifdef _MSC_VER
@@ -214,8 +288,6 @@ typedef struct
 
 _Static_assert(sizeof(RayCastBatchResult) == 48,
                "RayCastBatchResult size mismatch");
-
-_Static_assert(sizeof(ContactEvent) == 64, "ContactEvent size mismatch");
 
 // --- Material Registry ---
 typedef struct {
@@ -461,6 +533,7 @@ typedef struct PhysicsWorldObject {
   ShadowSync step_sync; 
   atomic_bool step_requested; // New: Stepper wants to run
   _Atomic bool is_stepping;
+  bool needs_optimization;
 
   Py_ssize_t view_shape[2];
   Py_ssize_t view_strides[2];
@@ -507,7 +580,7 @@ static inline bool unpack_handle(PhysicsWorldObject *self, BodyHandle h,
   *slot = (uint32_t)(h & 0xFFFFFFFF);
   uint32_t gen = (uint32_t)(h >> 32);
 
-  if (*slot >= self->slot_capacity) {
+  if (*slot >= self->slot_capacity || self->slot_capacity == 0) {
     return false;
   }
   return self->generations[*slot] == gen;
