@@ -1,6 +1,17 @@
 #include "culverin_shadow_sync.h"
 #include "culverin.h"
 
+#define CULVERIN_PROFILE_SYNC
+
+#ifdef CULVERIN_PROFILE_SYNC
+static inline uint64_t rdtsc() {
+    uint32_t lo, hi;
+    __asm__ __volatile__("rdtsc" : "=a"(lo), "=d"(hi));
+    return ((uint64_t)hi << 32) | lo;
+}
+#endif
+
+
 /**
  * High-Performance Shadow Sync
  * Optimized for 1,000,000+ bodies.
@@ -12,6 +23,9 @@
  * 4. Use Stride Structs to ensure the compiler generates packed SIMD stores.
  */
 void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
+    #ifdef CULVERIN_PROFILE_SYNC
+    uint64_t start = rdtsc();
+    #endif
     const auto *sys = self->system;
     
     uint32_t active_count = JPH_PhysicsSystem_GetNumActiveBodies(sys, JPH_BodyType_Rigid);
@@ -26,8 +40,8 @@ void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
     auto *CULV_RESTRICT s_lvel = (AuxStride *)self->linear_velocities;
     auto *CULV_RESTRICT s_avel = (AuxStride *)self->angular_velocities;
 
-    const JPH_Body* chunk[16];
     constexpr int CHUNK_SIZE = 16;
+    const JPH_Body* chunk[CHUNK_SIZE];
 
     // Cache the lookup table pointer for speed
     const uint32_t *CULV_RESTRICT s2d = self->slot_to_dense;
@@ -51,14 +65,23 @@ void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
                 // 2. Prefetch DESTINATION (Shadow Buffer)
                 // We need to calculate the dense index early
                 uint64_t handle = JPH_Body_GetUserData((JPH_Body *)b);
-                auto dense = s2d[(uint32_t)(handle & 0xFFFFFFFF)];
-                
-                // Prefetch the Write Location (1 = Write access)
-                #if defined(__GNUC__) || defined(__clang__)
-                    __builtin_prefetch(&s_pos[dense], 1, 3);
-                #elif defined(_MSC_VER)
-                    _mm_prefetch((const char*)&s_pos[dense], _MM_HINT_T0);
-                #endif
+                uint32_t slot = (uint32_t)(handle & 0xFFFFFFFF);
+                uint32_t gen = (uint32_t)(handle >> 32);
+                // Validate against our Slot System
+                if (LIKELY(slot < self->slot_capacity && 
+                    self->generations[slot] == gen && 
+                    self->slot_states[slot] == SLOT_ALIVE)) {
+                    
+                    auto dense = self->slot_to_dense[slot];
+
+                    // Only prefetch if we are sure the slot is valid
+                    #if defined(__GNUC__) || defined(__clang__)
+                        __builtin_prefetch(((const char*)b) + 48, 0, 3);
+                        __builtin_prefetch(&s_pos[dense], 1, 3);
+                    #endif
+                } else {
+                    chunk[j] = NULL; // Mark as "ignore" for Phase 2
+                }
             }
         }
 
@@ -75,14 +98,17 @@ void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
             if (UNLIKELY(!b)) continue;
 
             uint64_t handle = JPH_Body_GetUserData((JPH_Body *)b);
+            uint32_t slot = (uint32_t)(handle & 0xFFFFFFFF);
+            // Double check state under lock
+            if (UNLIKELY(self->slot_states[slot] != SLOT_ALIVE)) continue;
             auto dense = self->slot_to_dense[(uint32_t)(handle & 0xFFFFFFFF)];
 
             // 1. Read Jolt (Load into Registers)
             JPH_RVec3 p; JPH_Quat q; JPH_Vec3 lv, av;
             JPH_Body_GetPosition(b, &p);
             JPH_Body_GetRotation(b, &q);
-            JPH_Body_GetLinearVelocity(b, &lv);
-            JPH_Body_GetAngularVelocity(b, &av);
+            JPH_Body_GetLinearVelocity((JPH_Body *)b, &lv);
+            JPH_Body_GetAngularVelocity((JPH_Body *)b, &av);
 
             // 2. Snapshot (Memory to Memory)
             // Note: We read the *current* Shadow values, not the Jolt values here.
@@ -98,4 +124,11 @@ void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
         }
         SHADOW_UNLOCK(&self->shadow_lock);
     }
+    #ifdef CULVERIN_PROFILE_SYNC
+    uint64_t elapsed = rdtsc() - start;
+    if (active_count > 0) {
+        fprintf(stderr, "Sync: %llu cycles for %u bodies (%.1f cyc/body)\n",
+                elapsed, active_count, (double)elapsed / active_count);
+    }
+    #endif
 }
