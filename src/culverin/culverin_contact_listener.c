@@ -114,7 +114,7 @@ static void JPH_API_CALL on_contact_persisted(
 // 3. REMOVED (Simpler logic, no manifold)
 static void JPH_API_CALL on_contact_removed(void *userData,
                                             const JPH_SubShapeIDPair *pair) {
-  PhysicsWorldObject *self = (PhysicsWorldObject *)userData;
+  auto *self = (PhysicsWorldObject *)userData;
 
   // Use indices from BodyIDs to look up handles in our private map
   uint32_t i1 = JPH_ID_TO_INDEX(pair->Body1ID);
@@ -160,8 +160,8 @@ static JPH_ValidateResult JPH_API_CALL on_contact_validate(
   // 1. Extract Slots
   auto h1 = (BodyHandle)JPH_Body_GetUserData((JPH_Body *)body1);
   auto h2 = (BodyHandle)JPH_Body_GetUserData((JPH_Body *)body2);
-  uint32_t slot1 = (uint32_t)(h1 & 0xFFFFFFFF);
-  uint32_t slot2 = (uint32_t)(h2 & 0xFFFFFFFF);
+  auto slot1 = (uint32_t)(h1 & 0xFFFFFFFF);
+  auto slot2 = (uint32_t)(h2 & 0xFFFFFFFF);
 
   // 2. Bitmask Filter
   uint32_t idx1 = self->slot_to_dense[slot1];

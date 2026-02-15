@@ -77,8 +77,12 @@ PyObject *RagdollSettings_add_part(RagdollSettingsObject *self, PyObject *args,
   float twist_max = 0.1f;
   float cone_angle = 0.0f;
   
-  float cx = 1.0f, cy = 0.0f, cz = 0.0f; // Unpacked from axis tuple
-  float nx = 0.0f, ny = 1.0f, nz = 0.0f; // Unpacked from normal tuple
+  float cx = 1.0f;
+  float cy = 0.0f;
+  float cz = 0.0f; // Unpacked from axis tuple
+  float nx = 0.0f;
+  float ny = 1.0f;
+  float nz = 0.0f; // Unpacked from normal tuple
 
   static char *kwlist[] = {
       "joint_index",  "shape_type", "size",      "mass",
@@ -118,7 +122,8 @@ PyObject *RagdollSettings_add_part(RagdollSettingsObject *self, PyObject *args,
 
   Py_END_ALLOW_THREADS;
 
-  if (!shape) return PyErr_Format(PyExc_ValueError, "Invalid shape configuration");
+  if (!shape) { return PyErr_Format(PyExc_ValueError, "Invalid shape configuration");
+}
 
   // 3. APPLY SETTINGS
   JPH_Skeleton *skel = (JPH_Skeleton *)JPH_RagdollSettings_GetSkeleton(self->settings);
@@ -186,25 +191,35 @@ PyObject *RagdollSettings_stabilize(RagdollSettingsObject *self,
 PyObject *PhysicsWorld_create_ragdoll(PhysicsWorldObject *self, PyObject *args,
                                       PyObject *kwds) {
   RagdollSettingsObject *py_settings = NULL;
-  JPH_Real px, py, pz;
-  float rx = 0, ry = 0, rz = 0, rw = 1;
+  JPH_Real px;
+  JPH_Real py;
+  JPH_Real pz;
+  float rx = 0;
+  float ry = 0;
+  float rz = 0;
+  float rw = 1;
   uint64_t user_data = 0;
-  uint32_t category = 0xFFFF, mask = 0xFFFF, material_id = 0;
+  uint32_t category = 0xFFFF;
+  uint32_t mask = 0xFFFF;
+  uint32_t material_id = 0;
 
-  static char *kwlist[] = {"settings", "pos", "rot", "user_data",
+  static char *const kwlist[] = {"settings", "pos", "rot", "user_data",
                            "category", "mask", "material_id", NULL};
 
   if (!PyArg_ParseTupleAndKeywords(
-          args, kwds, "O!(ddd)|(ffff)KIII", kwlist,
+          args, kwds, "O!("JPH_REAL_STRING JPH_REAL_STRING JPH_REAL_STRING")|(ffff)KIII", kwlist,
           get_culverin_state(PyType_GetModule(Py_TYPE(self)))->RagdollSettingsType,
           &py_settings, &px, &py, &pz, &rx, &ry, &rz, &rw, 
           &user_data, &category, &mask, &material_id)) {
     return NULL;
   }
 
+  JPH_Ragdoll *j_rag = NULL;
+  JPH_Mat4 *neutral_matrices = NULL;
+  size_t body_count = 0;
+
   // 1. Jolt Preparation (Release GIL)
-  PyThreadState *_save = NULL;
-  Py_UNBLOCK_THREADS;
+  Py_BEGIN_ALLOW_THREADS
   NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
 
   // Initialize internal Jolt mappings
@@ -212,7 +227,7 @@ PyObject *PhysicsWorld_create_ragdoll(PhysicsWorldObject *self, PyObject *args,
   JPH_RagdollSettings_CalculateConstraintIndexToBodyIdxPair(py_settings->settings);
 
   // Create the Ragdoll instance
-  JPH_Ragdoll *j_rag = JPH_RagdollSettings_CreateRagdoll(py_settings->settings, self->system, 0, user_data);
+  j_rag = JPH_RagdollSettings_CreateRagdoll(py_settings->settings, self->system, 0, user_data);
   
   if (!j_rag) {
     NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
@@ -222,7 +237,7 @@ PyObject *PhysicsWorld_create_ragdoll(PhysicsWorldObject *self, PyObject *args,
 
   // 1. Get Bind Pose (Model Space)
   auto joint_count = (size_t)JPH_Skeleton_GetJointCount(JPH_RagdollSettings_GetSkeleton(py_settings->settings));
-  JPH_Mat4 *neutral_matrices = (JPH_Mat4 *)PyMem_RawMalloc(joint_count * sizeof(JPH_Mat4));
+  neutral_matrices = (JPH_Mat4 *)PyMem_RawMalloc(joint_count * sizeof(JPH_Mat4));
   
   JPH_RVec3 zero_root = {0, 0, 0};
   JPH_Ragdoll_GetPose2(j_rag, &zero_root, neutral_matrices, true);
@@ -248,14 +263,14 @@ PyObject *PhysicsWorld_create_ragdoll(PhysicsWorldObject *self, PyObject *args,
   // Add to system so we can query final positions
   JPH_Ragdoll_AddToPhysicsSystem(j_rag, JPH_Activation_Activate, true);
 
-  auto body_count = (size_t)JPH_Ragdoll_GetBodyCount(j_rag);
+  body_count = (size_t)JPH_Ragdoll_GetBodyCount(j_rag);
   
   NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
-  Py_BLOCK_THREADS;
+  Py_END_ALLOW_THREADS;
 
   // 2. Python Object Creation
   CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
-  RagdollObject *obj = (RagdollObject *)PyObject_New(RagdollObject, (PyTypeObject *)st->RagdollType);
+  auto *obj = (RagdollObject *)PyObject_New(RagdollObject, (PyTypeObject *)st->RagdollType);
   if (!obj) {
     Py_BEGIN_ALLOW_THREADS
     NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
@@ -299,7 +314,7 @@ PyObject *PhysicsWorld_create_ragdoll(PhysicsWorldObject *self, PyObject *args,
     JPH_BodyID bid = JPH_Ragdoll_GetBodyID(j_rag, (int)i);
     uint32_t slot = self->free_slots[--self->free_count];
     obj->body_slots[i] = slot;
-    uint32_t dense = (uint32_t)self->count++; // Index of the new body
+    auto dense = (uint32_t)self->count++; // Index of the new body
 
     // Query Jolt directly for the final world-space transform calculated by SetPose2
     JPH_RVec3 world_p;
@@ -347,9 +362,9 @@ PyObject *PhysicsWorld_create_ragdoll(PhysicsWorldObject *self, PyObject *args,
 
 PyObject *Ragdoll_drive_to_pose(RagdollObject *self, PyObject *args,
                                 PyObject *kwds) {
-  float root_x = 0.0f;
-  float root_y = 0.0f;
-  float root_z = 0.0f;
+  JPH_Real root_x = 0.0f;
+  JPH_Real root_y = 0.0f;
+  JPH_Real root_z = 0.0f;
   float rx = 0.0f;
   float ry = 0.0f;
   float rz = 0.0f;
@@ -358,7 +373,7 @@ PyObject *Ragdoll_drive_to_pose(RagdollObject *self, PyObject *args,
 
   static char *kwlist[] = {"root_pos", "root_rot", "matrices", NULL};
 
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)(ffff)O", kwlist, &root_x,
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "("JPH_REAL_STRING JPH_REAL_STRING JPH_REAL_STRING")(ffff)O", kwlist, &root_x,
                                    &root_y, &root_z, &rx, &ry, &rz, &rw,
                                    &py_matrices)) {
     return NULL;
@@ -398,9 +413,9 @@ PyObject *Ragdoll_drive_to_pose(RagdollObject *self, PyObject *args,
   JPH_SkeletonPose_SetSkeleton(pose, skel);
 
   JPH_STACK_ALLOC(JPH_RVec3, r_pos);
-  r_pos->x = (double)root_x;
-  r_pos->y = (double)root_y;
-  r_pos->z = (double)root_z;
+  r_pos->x = root_x;
+  r_pos->y = root_y;
+  r_pos->z = root_z;
   JPH_SkeletonPose_SetRootOffset(pose, r_pos);
 
   // 4. EXECUTE TELEPORT (Shadow Locked)

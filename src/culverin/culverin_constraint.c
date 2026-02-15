@@ -8,9 +8,9 @@ PyObject *PhysicsWorld_create_constraint(PhysicsWorldObject *self,
   uint64_t h1 = 0;
   uint64_t h2 = 0;
   PyObject *params = NULL;
-  PyObject *motor_dict = NULL; // NEW
+  PyObject *motor_dict = NULL; 
 
-  static char *kwlist[] = {"type",   "body1", "body2",
+  static char *const kwlist[] = {"type",   "body1", "body2",
                            "params", "motor", NULL}; // Updated
 
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "iKK|OO", kwlist, &type, &h1,
@@ -156,7 +156,7 @@ PyObject *PhysicsWorld_create_constraint(PhysicsWorldObject *self,
 PyObject *PhysicsWorld_destroy_constraint(PhysicsWorldObject *self,
                                           PyObject *args, PyObject *kwds) {
   uint64_t h = 0;
-  static char *kwlist[] = {"handle", NULL};
+  static char *const kwlist[] = {"handle", NULL};
 
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "K", kwlist, &h)) {
     return NULL;

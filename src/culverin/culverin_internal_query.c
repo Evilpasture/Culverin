@@ -70,7 +70,7 @@ JPH_Shape *find_or_create_shape_locked(PhysicsWorldObject *self, int type, const
       }
   }
 
-  if (!shape) return NULL;
+  if (!shape) {return NULL;}
 
   // 4. CACHE STORAGE (Safe realloc because SHADOW_LOCK is held)
   if (self->shape_cache_count >= self->shape_cache_capacity) {

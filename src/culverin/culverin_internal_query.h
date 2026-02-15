@@ -60,5 +60,5 @@ static inline float CastShape_ClosestCollector(void *context, const JPH_ShapeCas
 static inline bool JPH_API_CALL CastShape_BodyFilter(void *userData,
                                                      JPH_BodyID bodyID) {
   CastShapeFilter *ctx = (CastShapeFilter *)userData;
-  return (ctx->ignore_id == 0 || bodyID != ctx->ignore_id);
+  return (bool)(ctx->ignore_id == 0 || bodyID != ctx->ignore_id);
 }

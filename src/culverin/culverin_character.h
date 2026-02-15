@@ -29,7 +29,7 @@ typedef struct CharacterObject {
 #else
   _Alignas(64)
 #endif
-  float prev_px,
+  JPH_Real prev_px,
       prev_py, prev_pz;
   float prev_rx, prev_ry, prev_rz, prev_rw;
 } CharacterObject;

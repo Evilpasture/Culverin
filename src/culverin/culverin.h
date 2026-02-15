@@ -167,10 +167,10 @@ typedef struct {
 } GravityVector;
 
 typedef struct {
-  float px;
-  float py;
-  float pz;
-} PositionVector; // Can use GravityVector if it's identical
+  JPH_Real px;
+  JPH_Real py;
+  JPH_Real pz;
+} PositionVector;
 
 typedef struct {
   float mass;

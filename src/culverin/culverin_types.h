@@ -1,15 +1,18 @@
 #pragma once
-#include "joltc.h"
+#include <stdint.h>
 
 // --- Jolt Precision Compatibility ---
 #ifndef JPH_Real
   #ifdef JPH_DOUBLE_PRECISION
     typedef double JPH_Real;
+    #define JPH_REAL_CHAR 'd'
+    #define JPH_REAL_STRING "d"
   #else
     typedef float JPH_Real;
+    #define JPH_REAL_CHAR 'f'
+    #define JPH_REAL_STRING "f"
   #endif
 #endif
-
 
 // --- Memory Stride Helpers ---
 // Maps to self->positions (Packed X, Y, Z)

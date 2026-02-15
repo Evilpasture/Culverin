@@ -206,7 +206,7 @@ void free_constraints(PhysicsWorldObject *self) {
       }
 
       bool is_alive =
-          !self->constraint_states || self->constraint_states[i] == SLOT_ALIVE;
+          (!self->constraint_states || self->constraint_states[i] == SLOT_ALIVE) != 0;
       if (is_alive) {
         if (self->system) {
           JPH_PhysicsSystem_RemoveConstraint(self->system,
@@ -502,7 +502,7 @@ int load_baked_scene(PhysicsWorldObject *self, PyObject *baked) {
 int verify_abi_alignment(JPH_BodyInterface *bi) {
   JPH_BoxShapeSettings *bs =
       JPH_BoxShapeSettings_Create(&(JPH_Vec3){1, 1, 1}, 0.0f);
-  JPH_Shape *shape = (JPH_Shape *)JPH_BoxShapeSettings_CreateShape(bs);
+  auto *shape = (JPH_Shape *)JPH_BoxShapeSettings_CreateShape(bs);
   JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)bs);
   if (!shape) {
     return -1;

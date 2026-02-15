@@ -280,7 +280,8 @@ PyObject *PhysicsWorld_create_vehicle(PhysicsWorldObject *self, PyObject *args,
   for (auto i = 0u; i < num_wheels; i++) {
     // create_single_wheel uses Python API to parse dicts, must have GIL
     r.w_settings[i] = create_single_wheel(PyList_GetItem(py_wheels, i), r.f_curve);
-    if (!r.w_settings[i]) goto python_fail;
+    if (!r.w_settings[i]) { goto python_fail;
+}
   }
 
   configure_drivetrain(&r, py_engine, py_trans, drive_str, num_wheels);
@@ -296,7 +297,8 @@ PyObject *PhysicsWorld_create_vehicle(PhysicsWorldObject *self, PyObject *args,
   JPH_BodyLockWrite lock = {0};
   JPH_BodyLockInterface_LockWrite(lock_iface, chassis_bid, &lock);
 
-  if (UNLIKELY(!lock.body)) goto jolt_fail;
+  if (UNLIKELY(!lock.body)) { goto jolt_fail;
+}
 
   // Assembly
   JPH_VehicleConstraintSettings v_set;
@@ -306,10 +308,12 @@ PyObject *PhysicsWorld_create_vehicle(PhysicsWorldObject *self, PyObject *args,
   v_set.controller = (JPH_VehicleControllerSettings *)r.v_ctrl;
 
   r.j_veh = JPH_VehicleConstraint_Create(lock.body, &v_set);
-  if (!r.j_veh) goto jolt_fail;
+  if (!r.j_veh) { goto jolt_fail;
+}
 
   r.tester = JPH_VehicleCollisionTesterRay_Create(LAYER_DYNAMIC, &(JPH_Vec3){0, 1.0f, 0}, 2.0f);
-  if (!r.tester) goto jolt_fail;
+  if (!r.tester) { goto jolt_fail;
+}
 
   JPH_VehicleConstraint_SetVehicleCollisionTester(r.j_veh, (JPH_VehicleCollisionTester *)r.tester);
 
@@ -352,8 +356,10 @@ PyObject *PhysicsWorld_create_vehicle(PhysicsWorldObject *self, PyObject *args,
 
 jolt_fail:
   // Cleanup Jolt lock and mutex before re-acquiring GIL
-  if (lock.body) JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
-  if (jolt_locked) NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+  if (lock.body) { JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
+}
+  if (jolt_locked) { NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+}
   Py_BLOCK_THREADS;
 
 python_fail:
