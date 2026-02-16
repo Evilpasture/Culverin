@@ -1,5 +1,5 @@
 #include "culverin_parsers.h"
-#include "culverin.h"
+#include "culverin_compiler_specifics.h"
 
 // --- Internal Helpers to reduce complexity ---
 

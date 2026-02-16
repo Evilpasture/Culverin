@@ -1,6 +1,7 @@
 #include "culverin_query_methods.h"
 #include "culverin_filters.h"
 #include "culverin_parsers.h"
+#include "culverin_compiler_specifics.h"
 
 // --- Helper: Signal End of Query ---
 // This is crucial for the Condition Variable approach.

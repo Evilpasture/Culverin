@@ -16,10 +16,10 @@
 
 // --- Memory Stride Helpers ---
 // Maps to self->positions (Packed X, Y, Z)
-typedef struct { JPH_Real x, y, z, _pad; } PosStride;
+typedef struct { alignas(32) JPH_Real x; JPH_Real y, z, _pad; } PosStride;
 
 // Maps to self->rotations, velocities (Packed X, Y, Z, W)
-typedef struct { float x, y, z, w; } AuxStride; 
+typedef struct { alignas(16) float x; float y, z, w; } AuxStride; 
 
 // Sanity check sizes
 _Static_assert(sizeof(PosStride) == sizeof(JPH_Real) * 4, "PosStride padding error");

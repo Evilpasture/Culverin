@@ -9,6 +9,7 @@
 #include "culverin_ragdoll.h"
 #include "culverin_shadow_sync.h"
 #include "culverin_vehicle.h"
+#include "culverin_compiler_specifics.h"
 
 // Global lock for JPH callbacks
 NativeMutex

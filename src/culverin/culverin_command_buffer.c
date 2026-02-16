@@ -1,4 +1,5 @@
 #include "culverin_command_buffer.h"
+#include "culverin_compiler_specifics.h"
 
 /**
  * Internal helper to remove a body from the dense arrays.

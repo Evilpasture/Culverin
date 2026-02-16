@@ -10,6 +10,7 @@
 #include "culverin_internal_query.h"
 #include "culverin_tracked_vehicle.h"
 #include "culverin_threading.h"
+#include "culverin_compiler_specifics.h"
 #include <float.h>
 #include <math.h>
 #include <stdatomic.h>
@@ -35,14 +36,6 @@
 
 #ifndef JPH_DOUBLE_PRECISION
 #define JPH_DOUBLE_PRECISION 1
-#endif
-
-// Use restrict keyword to tell the compiler these buffers do not overlap.
-// This is the single best way to enable SIMD auto-vectorization.
-#ifdef _MSC_VER
-#define CULV_RESTRICT __restrict
-#else
-#define CULV_RESTRICT __restrict__
 #endif
 
 // Mask for the raw array index (Stripping the 24th bit used for Static flags)
@@ -82,18 +75,6 @@
   } while (0)
 #endif
 
-// --- Compiler Hints ---
-#if defined(__GNUC__) || defined(__clang__)
-#define LIKELY(x) __builtin_expect(!!(x), 1)
-#define UNLIKELY(x) __builtin_expect(!!(x), 0)
-#else
-// Fallback for MSVC or other compilers that don't support built-in expect
-#define LIKELY(x) (x)
-#define UNLIKELY(x) (x)
-#endif
-
-// Comment this line out to disable all debug prints
-#define CULVERIN_DEBUG
 
 #ifdef CULVERIN_DEBUG
 #define DEBUG_LOG(fmt, ...)                                                    \
@@ -209,111 +190,94 @@ typedef struct {
 
 // --- The Object Struct ---
 typedef struct PhysicsWorldObject {
-  PyObject_HEAD
+    PyObject_HEAD // 16 bytes
 
-      // Jolt Handles
-      JPH_PhysicsSystem *system;
-  JPH_CharacterVsCharacterCollision *char_vs_char_manager;
-  JPH_BodyInterface *body_interface;
-  JPH_JobSystem *job_system;
+    // --- BUCKET 1: Pointers & 8-byte types (Zero Padding) ---
+    JPH_PhysicsSystem *system;
+    JPH_CharacterVsCharacterCollision *char_vs_char_manager;
+    JPH_BodyInterface *body_interface;
+    JPH_JobSystem *job_system;
+    JPH_BroadPhaseLayerInterface *bp_interface;
+    JPH_ObjectLayerPairFilter *pair_filter;
+    JPH_ObjectVsBroadPhaseLayerFilter *bp_filter;
+    JPH_ContactListener *contact_listener;
+    
+    // --- HOT SYNC BLOCK: Kept together for L1d Locality ---
+    alignas(64) JPH_Real *positions;
+    JPH_Real *prev_positions;
+    float *rotations;
+    float *prev_rotations;
+    float *linear_velocities;
+    float *angular_velocities;
+    JPH_BodyID *body_ids;
+    uint64_t *user_data;
+    uint32_t *material_ids;
+    
+    // --- Data Buffers ---
+    ContactEvent *contact_events;
+    ContactEvent *contact_buffer;
+    MaterialData *materials;
+    PhysicsCommand *command_queue;
+    PhysicsCommand *command_queue_spare;
+    ShapeEntry *shape_cache;
+    BodyHandle *id_to_handle_map;
+    JPH_Constraint **constraints;
+    uint32_t *categories;
+    uint32_t *masks;
+    uint32_t *generations;
+    uint32_t *slot_to_dense;
+    uint32_t *dense_to_slot;
+    uint32_t *free_slots;
+    uint32_t *constraint_generations;
+    uint32_t *free_constraint_slots;
+    
+    // --- Counters (8-byte) ---
+    size_t contact_count;
+    size_t contact_capacity;
+    size_t contact_max_capacity;
+    atomic_size_t contact_atomic_idx;
+    size_t material_count;
+    size_t material_capacity;
+    size_t free_count;
+    size_t slot_capacity;
+    size_t command_count;
+    size_t command_capacity;
+    size_t spare_capacity;
+    size_t shape_cache_count;
+    size_t shape_cache_capacity;
+    size_t count;
+    size_t capacity;
+    size_t constraint_count;
+    size_t constraint_capacity;
+    size_t free_constraint_count;
+    double time;
 
-  // Filters
-  JPH_BroadPhaseLayerInterface *bp_interface;
-  JPH_ObjectLayerPairFilter *pair_filter;
-  JPH_ObjectVsBroadPhaseLayerFilter *bp_filter;
+    // --- BUCKET 2: 4-byte types (Packed 2-per-slot) ---
+    // These three now share 12 bytes total + 4 bytes padding at the end
+    // instead of creating holes between every pointer.
+    uint32_t max_jolt_bodies;
+    atomic_int active_queries;
+    int view_export_count;
 
-  // --- Global Contact Listener ---
-  JPH_ContactListener *contact_listener;
+    // --- BUCKET 3: Structs & Complex Types ---
+    ShadowSync step_sync;    // 16 bytes (Internal 8-byte alignment)
+    ShadowMutex shadow_lock; // PyMutex (usually 1-4 bytes)
+    
+    // --- BUCKET 4: Small types (Packed at the tail) ---
+    uint8_t *slot_states;
+    uint8_t *constraint_states;
+    atomic_bool step_requested;
+    atomic_bool is_stepping;
+    bool needs_optimization;
 
-  // --- Event Buffer ---
-  ContactEvent *contact_events;
-  size_t contact_count;
-  size_t contact_capacity;
-
-  // Change contact_count to an atomic
-  atomic_size_t contact_atomic_idx;
-
-  atomic_int active_queries; // Tracks threads currently inside Jolt queries
-
-  // The buffer must be large and pre-allocated
-  ContactEvent *contact_buffer;
-  size_t contact_max_capacity;
-
-  // Shadow Buffers
-  JPH_Real *positions;
-  float *rotations;
-  // Previous State Buffers (For Interpolation)
-  JPH_Real *prev_positions;
-  float *prev_rotations;
-
-  float *linear_velocities;
-  float *angular_velocities;
-  JPH_BodyID *body_ids;
-  uint64_t *user_data;
-
-  // --- Indirection System ---
-  uint32_t *categories;   // [Dense Index]
-  uint32_t *masks;        // [Dense Index]
-  uint32_t *material_ids; // Shadow buffer (Per-Body)
-
-  // Registry (Global for this world)
-  MaterialData *materials;
-  size_t material_count;
-  size_t material_capacity;
-
-  uint32_t *generations;   // [Slot] -> Generation
-  uint32_t *slot_to_dense; // [Slot] -> Dense Index
-  uint32_t *dense_to_slot; // [Dense Index] -> Slot
-
-  uint32_t *free_slots; // Stack of available slots
-  uint8_t *slot_states;
-  size_t free_count;
-  size_t slot_capacity; // Size of the mapping arrays
-
-  PhysicsCommand *command_queue;
-  PhysicsCommand *command_queue_spare;
-  size_t command_count;
-  size_t command_capacity;
-  size_t spare_capacity;
-
-  ShapeEntry *shape_cache;
-  size_t shape_cache_count;
-  size_t shape_cache_capacity;
-
-  size_t count;
-  size_t capacity;
-  double time;
-
-  // Fast index-to-handle lookup to avoid Jolt locks in callbacks
-  BodyHandle *id_to_handle_map;
-  uint32_t max_jolt_bodies;
-
-  // --- Constraint Registry ---
-  JPH_Constraint **constraints;
-  uint32_t *constraint_generations;
-  uint32_t *free_constraint_slots;
-  uint8_t *constraint_states; // ALIVE / EMPTY
-
-  size_t constraint_count;
-  size_t constraint_capacity;
-  size_t free_constraint_count;
-
-  // MemoryView Safety
-  int view_export_count; // Tracks active memoryviews to prevent unsafe resize
-
-  ShadowMutex shadow_lock;
-  ShadowSync step_sync; 
-  atomic_bool step_requested; // New: Stepper wants to run
-  _Atomic bool is_stepping;
-  bool needs_optimization;
-
-  Py_ssize_t view_shape[2];
-  Py_ssize_t view_strides[2];
-
-  // --- Debug Renderer ---
-  JPH_DebugRenderer *debug_renderer;
-  DebugBuffer debug_lines;
-  DebugBuffer debug_triangles;
+    // --- Large Tail Arrays ---
+    Py_ssize_t view_shape[2];
+    Py_ssize_t view_strides[2];
+    
+    // --- Debug Renderer ---
+    JPH_DebugRenderer *debug_renderer;
+    DebugBuffer debug_lines;
+    DebugBuffer debug_triangles;
 } PhysicsWorldObject;
 
 // Temporary container for resize

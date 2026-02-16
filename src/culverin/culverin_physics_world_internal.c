@@ -1,4 +1,5 @@
 #include "culverin_physics_world_internal.h"
+#include "culverin_compiler_specifics.h"
 
 static void free_new_buffers(NewBuffers *nb) {
   PyMem_RawFree(nb->pos);
@@ -384,7 +385,7 @@ int init_jolt_core(PhysicsWorldObject *self, WorldLimits limits,
   JPH_PhysicsSystemSettings phys_settings = {
       .maxBodies = (uint32_t)limits.max_bodies,
       .maxBodyPairs = (uint32_t)limits.max_pairs,
-      .maxContactConstraints = 1024 * 1024,
+      .maxContactConstraints = 1024 * 32,
       .broadPhaseLayerInterface = self->bp_interface,
       .objectLayerPairFilter = self->pair_filter,
       .objectVsBroadPhaseLayerFilter = self->bp_filter};

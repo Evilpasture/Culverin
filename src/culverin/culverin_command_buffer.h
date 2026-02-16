@@ -110,8 +110,8 @@ typedef union {
   struct {
     uint32_t header;
     uint32_t _pad;
-    PosStride pos;      // 24 bytes
-    AuxStride velocity; // 16 bytes
+    JPH_Real pos[4];      // 24 bytes (unaligned)
+    float vel[4];         // 12 bytes
   } teleport; // TODO: unused, but interesting. will implement later
 
   uint8_t _cache_line_padding[64];

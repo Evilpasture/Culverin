@@ -1,5 +1,6 @@
 #include "culverin_tracked_vehicle.h"
 #include "culverin_parsers.h"
+#include "culverin_compiler_specifics.h"
 
 // --- Tracked Vehicle Implementation ---
 

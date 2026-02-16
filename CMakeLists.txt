@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.16)
 # CMP0091 allows us to use CMAKE_MSVC_RUNTIME_LIBRARY
 cmake_policy(SET CMP0091 NEW)
 
-option(ENABLE_SANITIZER "Enable Clang Sanitizers (ASan/TSan/UBSan)" OFF)
+option(ENABLE_SANITIZER "Enable Clang Sanitizers (ASan/TSan/UBSan)" ON)
 
 # Force Jolt settings into the CACHE so they can't be overridden
 set(DOUBLE_PRECISION ON CACHE BOOL "Use double precision math" FORCE)
