@@ -2,55 +2,69 @@
 #include "culverin_compiler_specifics.h"
 
 static void free_new_buffers(NewBuffers *nb) {
-  PyMem_RawFree(nb->pos);
-  PyMem_RawFree(nb->rot);
-  PyMem_RawFree(nb->ppos);
-  PyMem_RawFree(nb->prot);
-  PyMem_RawFree(nb->lvel);
-  PyMem_RawFree(nb->avel);
-  PyMem_RawFree(nb->bids);
-  PyMem_RawFree(nb->udat);
-  PyMem_RawFree(nb->gens);
-  PyMem_RawFree(nb->s2d);
-  PyMem_RawFree(nb->d2s);
-  PyMem_RawFree(nb->stat);
-  PyMem_RawFree(nb->free);
-  PyMem_RawFree(nb->cats);
-  PyMem_RawFree(nb->masks);
-  PyMem_RawFree(nb->mats);
+    if (!nb) return;
+
+    // Use the aligned wrapper for every buffer allocated via CulvMem_RawMallocAligned
+    CulvMem_RawFreeAligned(nb->pos);
+    CulvMem_RawFreeAligned(nb->rot);
+    CulvMem_RawFreeAligned(nb->ppos);
+    CulvMem_RawFreeAligned(nb->prot);
+    CulvMem_RawFreeAligned(nb->lvel);
+    CulvMem_RawFreeAligned(nb->avel);
+
+    CulvMem_RawFreeAligned(nb->bids);
+    CulvMem_RawFreeAligned(nb->udat);
+    CulvMem_RawFreeAligned(nb->gens);
+    CulvMem_RawFreeAligned(nb->s2d);
+    CulvMem_RawFreeAligned(nb->d2s);
+    CulvMem_RawFreeAligned(nb->stat);
+    CulvMem_RawFreeAligned(nb->free);
+    CulvMem_RawFreeAligned(nb->cats);
+    CulvMem_RawFreeAligned(nb->masks);
+    CulvMem_RawFreeAligned(nb->mats);
+
+    // Defensive: Zero the struct so we don't accidentally Use-After-Free
+    memset(nb, 0, sizeof(NewBuffers));
 }
 
 static int alloc_new_buffers(NewBuffers *nb, size_t cap) {
-  memset(nb, 0, sizeof(NewBuffers));
-  
-  // Allocate vectors using strict stride structs
-  nb->pos  = (JPH_Real *)PyMem_RawMalloc(cap * sizeof(PosStride));
-  nb->ppos = (JPH_Real *)PyMem_RawMalloc(cap * sizeof(PosStride));
-  
-  nb->rot  = (float *)PyMem_RawMalloc(cap * sizeof(AuxStride));
-  nb->prot = (float *)PyMem_RawMalloc(cap * sizeof(AuxStride));
-  nb->lvel = (float *)PyMem_RawMalloc(cap * sizeof(AuxStride));
-  nb->avel = (float *)PyMem_RawMalloc(cap * sizeof(AuxStride));
+    memset(nb, 0, sizeof(NewBuffers));
+    
+    // 32-byte alignment is required for AVX-256 (vmovaps)
+    constexpr size_t ALIGN = 32;
 
-  nb->bids = (JPH_BodyID *)PyMem_RawMalloc(cap * sizeof(JPH_BodyID));
-  nb->udat = (uint64_t *)PyMem_RawMalloc(cap * sizeof(uint64_t));
-  nb->gens = (uint32_t *)PyMem_RawMalloc(cap * sizeof(uint32_t));
-  nb->s2d  = (uint32_t *)PyMem_RawMalloc(cap * sizeof(uint32_t));
-  nb->d2s  = (uint32_t *)PyMem_RawMalloc(cap * sizeof(uint32_t));
-  nb->stat = (uint8_t *)PyMem_RawMalloc(cap * sizeof(uint8_t));
-  nb->free = (uint32_t *)PyMem_RawMalloc(cap * sizeof(uint32_t));
-  nb->cats = (uint32_t *)PyMem_RawMalloc(cap * sizeof(uint32_t));
-  nb->masks= (uint32_t *)PyMem_RawMalloc(cap * sizeof(uint32_t));
-  nb->mats = (uint32_t *)PyMem_RawMalloc(cap * sizeof(uint32_t));
+    // SIMD-Heavy Buffers (The ones that were crashing)
+    nb->pos  = (JPH_Real *)CulvMem_RawMallocAligned(cap * sizeof(PosStride), ALIGN);
+    nb->ppos = (JPH_Real *)CulvMem_RawMallocAligned(cap * sizeof(PosStride), ALIGN);
+    
+    nb->rot  = (float *)CulvMem_RawMallocAligned(cap * sizeof(AuxStride), ALIGN);
+    nb->prot = (float *)CulvMem_RawMallocAligned(cap * sizeof(AuxStride), ALIGN);
+    nb->lvel = (float *)CulvMem_RawMallocAligned(cap * sizeof(AuxStride), ALIGN);
+    nb->avel = (float *)CulvMem_RawMallocAligned(cap * sizeof(AuxStride), ALIGN);
 
-  if (!nb->pos || !nb->rot || !nb->ppos || !nb->prot || !nb->lvel ||
-      !nb->avel || !nb->bids || !nb->udat || !nb->gens || !nb->s2d ||
-      !nb->d2s || !nb->stat || !nb->free || !nb->cats || !nb->masks ||
-      !nb->mats) {
-    free_new_buffers(nb);
-    return -1;
-  }
-  return 0;
+    // Standard Data Buffers (Aligned for cache-line efficiency)
+    nb->bids  = (JPH_BodyID *)CulvMem_RawMallocAligned(cap * sizeof(JPH_BodyID), ALIGN);
+    nb->udat  = (uint64_t *)CulvMem_RawMallocAligned(cap * sizeof(uint64_t), ALIGN);
+    nb->gens  = (uint32_t *)CulvMem_RawMallocAligned(cap * sizeof(uint32_t), ALIGN);
+    nb->s2d   = (uint32_t *)CulvMem_RawMallocAligned(cap * sizeof(uint32_t), ALIGN);
+    nb->d2s   = (uint32_t *)CulvMem_RawMallocAligned(cap * sizeof(uint32_t), ALIGN);
+    nb->stat  = (uint8_t *)CulvMem_RawMallocAligned(cap * sizeof(uint8_t), ALIGN);
+    nb->free  = (uint32_t *)CulvMem_RawMallocAligned(cap * sizeof(uint32_t), ALIGN);
+    nb->cats  = (uint32_t *)CulvMem_RawMallocAligned(cap * sizeof(uint32_t), ALIGN);
+    nb->masks = (uint32_t *)CulvMem_RawMallocAligned(cap * sizeof(uint32_t), ALIGN);
+    nb->mats  = (uint32_t *)CulvMem_RawMallocAligned(cap * sizeof(uint32_t), ALIGN);
+
+    // Check all allocations
+    if (!nb->pos || !nb->rot || !nb->ppos || !nb->prot || !nb->lvel ||
+        !nb->avel || !nb->bids || !nb->udat || !nb->gens || !nb->s2d ||
+        !nb->d2s || !nb->stat || !nb->free || !nb->cats || !nb->masks ||
+        !nb->mats) {
+        
+        // IMPORTANT: Ensure free_new_buffers uses CulvMem_RawFreeAligned!
+        free_new_buffers(nb); 
+        return -1;
+    }
+    return 0;
 }
 
 static void migrate_and_init(PhysicsWorldObject *self, NewBuffers *nb,
@@ -83,10 +97,11 @@ static void migrate_and_init(PhysicsWorldObject *self, NewBuffers *nb,
   memcpy(nb->free, self->free_slots, self->free_count * sizeof(uint32_t));
 
   // Initialize new slots
+  size_t updated_free_count = self->free_count;
   for (size_t i = self->slot_capacity; i < new_cap; i++) {
     nb->gens[i] = 1;
     nb->stat[i] = SLOT_EMPTY;
-    nb->free[self->free_count++] = (uint32_t)i;
+    nb->free[updated_free_count++] = (uint32_t)i;
   }
 }
 

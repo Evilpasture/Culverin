@@ -22,6 +22,7 @@ static_assert(sizeof(AuxStride) == sizeof(float) * 4);
 // We now rely on 'vmovups' (Unaligned) via the compiler's natural 
 // optimization path to ensure safety across varying heap-alignment 
 // scenarios while maintaining ~13 cycles/body performance.
+// That is, we assume we used PyMem_RawMalloc(16 byte alignment) for our shadow buffers. But it is aligned now.
 // -------------------------------------------------------------------------
 // static_assert(alignof(PosStride) >= sizeof(PosStride));
 // static_assert(alignof(AuxStride) >= sizeof(AuxStride));
