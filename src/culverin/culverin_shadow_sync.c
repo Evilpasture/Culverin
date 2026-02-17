@@ -24,8 +24,8 @@ static_assert(sizeof(AuxStride) == sizeof(float) * 4);
 // scenarios while maintaining ~13 cycles/body performance.
 // That is, we assume we used PyMem_RawMalloc(16 byte alignment) for our shadow buffers. But it is aligned now.
 // -------------------------------------------------------------------------
-// static_assert(alignof(PosStride) >= sizeof(PosStride));
-// static_assert(alignof(AuxStride) >= sizeof(AuxStride));
+static_assert(alignof(PosStride) >= sizeof(PosStride));
+static_assert(alignof(AuxStride) >= sizeof(AuxStride));
 
 // 3. Verify Cache Line Friendliness
 // To prevent False Sharing, ensure the arrays start on 64-byte boundaries.
@@ -108,8 +108,8 @@ void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
 
 // ========== PHASE A: SNAPSHOT (Shadow → Shadow) ==========
 // This is a pure memory copy with known stride, easy to vectorize
-#pragma clang loop unroll_count(8) interleave(enable)
-// #pragma clang loop unroll(full) vectorize(enable)
+// #pragma clang loop unroll_count(8) interleave(enable)
+#pragma clang loop unroll(full) vectorize(enable)
       for (uint32_t j = 0; j < work_ptr; j++) {
         uint32_t D = worklist[j].dense_idx;
         s_ppos[D] = s_pos[D]; // 32-byte AVX move
@@ -117,7 +117,7 @@ void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
       }
 
 // ========== PHASE B: SYNC (Jolt → Shadow) ==========
-#pragma clang loop unroll_count(WORK_CHUNK) vectorize(enable)// do we want to unroll? yes.
+#pragma clang loop unroll(full) vectorize(enable)// do we want to unroll? yes.
       for (uint32_t j = 0; j < work_ptr; j++) {
         const JPH_Body *B = worklist[j].body;
         uint32_t D = worklist[j].dense_idx;

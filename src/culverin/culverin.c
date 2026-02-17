@@ -1964,6 +1964,13 @@ static PyObject *PhysicsWorld_create_bodies_batch(PhysicsWorldObject *self,
       continue;
     }
 
+    if (UNLIKELY(self->free_count == 0)) {
+      // This should technically be impossible if the resize logic is correct,
+      // but it stops a Segfault/ASan abort.
+      SHADOW_UNLOCK(&self->shadow_lock);
+      goto fail; 
+    }
+
     uint32_t slot = self->free_slots[--self->free_count];
     auto dense = (uint32_t)self->count++;
     BodyHandle handle = make_handle(slot, self->generations[slot]);

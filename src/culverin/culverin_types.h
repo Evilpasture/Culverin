@@ -15,15 +15,24 @@
 #endif
 
 // --- Memory Stride Helpers ---
-// Maps to self->positions (Packed X, Y, Z)
-typedef struct { JPH_Real x; JPH_Real y, z, _pad; } PosStride;
+// Use a clear name to avoid collisions with Jolt's internal defines
+constexpr int CULV_STRIDE_ALIGN = 32;
+
+typedef struct {
+    // Align the first member to force the whole struct to 32-byte alignment
+    alignas(CULV_STRIDE_ALIGN) JPH_Real x;
+    JPH_Real y;
+    JPH_Real z;
+    // Explicitly calculate padding based on the target width
+    JPH_Real _pad[(CULV_STRIDE_ALIGN / sizeof(JPH_Real)) - 3];
+} PosStride;
 
 // Maps to self->rotations, velocities (Packed X, Y, Z, W)
-typedef struct { float x; float y, z, w; } AuxStride; 
+typedef struct { alignas(16) float x; float y, z, w; } AuxStride; 
 
 // Sanity check sizes
-_Static_assert(sizeof(PosStride) == sizeof(JPH_Real) * 4, "PosStride padding error");
-_Static_assert(sizeof(AuxStride) == sizeof(float) * 4,    "AuxStride padding error");
+static_assert(sizeof(PosStride) == 32);
+static_assert(sizeof(AuxStride) == 16);
 
 // Minimal Handle Helper
 // Python handles will be 64-bit integers: (Generation << 32) | SlotIndex
