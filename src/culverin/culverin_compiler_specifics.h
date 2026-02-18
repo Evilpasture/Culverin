@@ -56,7 +56,13 @@
 static inline uint64_t rdtsc() {
 #ifdef _MSC_VER
   return __rdtsc();
+#elif defined(__aarch64__) || defined(__arm64__)
+  // ARM64 / Apple Silicon equivalent
+  uint64_t val;
+  __asm__ __volatile__("mrs %0, cntvct_el0" : "=r"(val));
+  return val;
 #else
+  // Original x86 block
   uint32_t lo, hi;
   __asm__ __volatile__("rdtsc" : "=a"(lo), "=d"(hi));
   return ((uint64_t)hi << 32) | lo;

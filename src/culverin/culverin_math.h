@@ -1,13 +1,12 @@
 #pragma once
 #include "joltc.h"
+#include "culverin_compiler_specifics.h"
 #include <math.h>
 
 #ifdef _MSC_VER
 #define RESTRICT __restrict
 #else
 #define RESTRICT __restrict__
-q = __builtin_assume_aligned(q, 16);
-out = __builtin_assume_aligned(out, 16);
 #endif
 
 

@@ -1,0 +1,35 @@
+CompileFlags:
+  # This helps clangd find the headers relative to the .clangd file
+  CompilationDatabase: "build"
+  Add:
+    - "-Wall"
+    - "-Wextra"
+
+---
+# 1. C23 Configuration (Main)
+If:
+  PathMatch: [.*\.c, .*\.h]
+CompileFlags:
+  Add:
+    - "-x"
+    - "c"
+    - "-std=c23"
+    # Using relative paths without the variable is often safer on macOS
+    - "-Iextern/JoltPhysics"
+    - "-Iextern/JoltC/include"
+    - "-I/Library/Frameworks/Python.framework/Versions/3.14/include/python3.14"
+
+---
+# 2. C++17 Configuration (Jolt)
+If:
+  PathMatch: [.*\.cpp, .*\.hpp, .*\.cc]
+CompileFlags:
+  Add:
+    - "-x"
+    - "c++"
+    - "-std=c++17"
+    - "-fno-exceptions"
+    - "-fno-rtti"
+    - "-Iextern/JoltPhysics"
+    - "-Iextern/JoltC/include"
+    - "-I/Library/Frameworks/Python.framework/Versions/3.14/include/python3.14"
