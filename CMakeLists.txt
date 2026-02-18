@@ -205,12 +205,16 @@ else() # Vanilla Clang / GNU-like
     )
 
     # 4. THE LINKER IS THE KEY
-    # On Windows with vanilla Clang, we need to be very explicit with the linker
-    target_link_options(_culverin_c PRIVATE 
-        "-Wl,-debug"           # Generate PDB
-        "-Wl,-nodefaultlib:libcmt" # Prevent collision with static CRT if necessary
-        ${SAN_FLAGS}           # Link ASan runtime
-    )
+    if(WIN32)
+        target_link_options(_culverin_c PRIVATE 
+            "-Wl,-debug"           
+            "-Wl,-nodefaultlib:libcmt" 
+            ${SAN_FLAGS}           
+        )
+    else()
+        # Mac/Linux don't need those Windows flags!
+        target_link_options(_culverin_c PRIVATE ${SAN_FLAGS})
+    endif()
 
     # Performance flags
     set(PERF_FLAGS "-O3" "-ffast-math" "-fomit-frame-pointer")
