@@ -1,5 +1,50 @@
 cmake_minimum_required(VERSION 3.16)
 
+# ==============================================================================
+# 0. THE COMPILER ENFORCER
+# ==============================================================================
+function(enforce_modern_compiler)
+    # CMAKE_C_COMPILER_ID is only available AFTER project() or enable_language()
+    # So we check the environment or the forced variables
+    
+    # If the compiler is NOT Clang and NOT GNU, then we trigger the guard
+    if(CMAKE_C_COMPILER_ID AND NOT CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+        
+        message(STATUS "Detected Compiler ID: ${CMAKE_C_COMPILER_ID}")
+        
+        message(STATUS "Culverin: MSVC detected. Searching for alternatives...")
+
+        # 2. Try to find Clang or GCC in the system PATH
+        find_program(CLANG_PATH NAMES clang clang-cl)
+        find_program(GCC_PATH NAMES gcc)
+
+        set(HELP_MSG "\n################################################################\n")
+        string(APPEND HELP_MSG " Guard triggered: MSVC (cl.exe) is incapable of compilation.\n")
+        string(APPEND HELP_MSG "################################################################\n")
+        string(APPEND HELP_MSG " C23 features and Jolt optimization require Clang or GCC.\n\n")
+
+        if(CLANG_PATH OR GCC_PATH)
+            string(APPEND HELP_MSG " Alternatives on your computer:\n")
+            if(CLANG_PATH)
+                string(APPEND HELP_MSG "  - Clang's emplacement: ${CLANG_PATH}\n")
+            endif()
+            if(GCC_PATH)
+                string(APPEND HELP_MSG "  - GCC's emplacement:   ${GCC_PATH}\n")
+            endif()
+            string(APPEND HELP_MSG "\n Instruction: Decimate your 'build' folder and run:\n")
+            string(APPEND HELP_MSG " cmake -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ ..\n")
+        else()
+            string(APPEND HELP_MSG " NO SUITABLE COMPILER FOUND in system PATH.\n")
+            string(APPEND HELP_MSG " Please download and install LLVM (Clang) from:\n")
+            string(APPEND HELP_MSG " https://github.com/llvm/llvm-project/releases\n")
+        endif()
+        
+        string(APPEND HELP_MSG "################################################################\n")
+        message(FATAL_ERROR "${HELP_MSG}")
+    endif()
+endfunction()
+
+
 # 1. THE NUCLEAR INITIALIZATION
 # CMP0091 allows us to use CMAKE_MSVC_RUNTIME_LIBRARY
 cmake_policy(SET CMP0091 NEW)
@@ -15,6 +60,7 @@ set(FORCE_MT_RUNTIME OFF CACHE BOOL "" FORCE)
 set(USE_VULKAN OFF CACHE BOOL "" FORCE)
 
 project(culverin LANGUAGES C CXX)
+enforce_modern_compiler()
 message(STATUS "--- COMPILER VERIFICATION ---")
 message(STATUS "C Compiler:   ${CMAKE_C_COMPILER}")
 message(STATUS "CXX Compiler: ${CMAKE_CXX_COMPILER}")
@@ -22,7 +68,18 @@ message(STATUS "Clang Version: ${CMAKE_CXX_COMPILER_VERSION}")
 message(STATUS "-----------------------------")
 
 # Standards
-set(CMAKE_C_STANDARD 23)
+if(CMAKE_C_COMPILER_ID STREQUAL "GNU" OR CMAKE_C_COMPILER_ID MATCHES "Clang")
+    if(CMAKE_C_COMPILER_VERSION VERSION_LESS "13.0")
+        message(FATAL_ERROR "Culverin: Your compiler is too old! Need GCC 13+ or Clang 17+ for C23.")
+    endif()
+    
+    # GCC 13/14 often prefer c2x, GCC 15+ likes c23
+    if(CMAKE_C_COMPILER_VERSION VERSION_GREATER_EQUAL "15.0")
+        set(CMAKE_C_STANDARD 23)
+    else()
+        set(CMAKE_C_STANDARD 2x) 
+    endif()
+endif()
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
