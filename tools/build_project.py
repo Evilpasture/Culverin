@@ -56,13 +56,15 @@ def build_extension():
         print(">>> Compiling and packaging...")
         build_wheel(str(DIST_DIR), config_settings=config)
 
-        print(f">>> Deploying .pyd to {TARGET_DIR}...")
-        pyd_files = [f for f in BUILD_DIR.glob("**/*.pyd") if "CMakeFiles" not in str(f)]
+        extension = ".pyd" if sys.platform == "win32" else ".so"
+        print(f">>> Deploying {extension} to {TARGET_DIR}...")
+        # The "Platform-Aware" Glob
+        binary_files = [f for f in BUILD_DIR.glob(f"**/*{extension}") if "CMakeFiles" not in str(f)]
         
-        if not pyd_files:
+        if not binary_files:
             raise FileNotFoundError("Build finished but no .pyd found.")
 
-        for pyd in pyd_files:
+        for pyd in binary_files:
             shutil.copy2(pyd, TARGET_DIR / pyd.name)
         
         print(f"\n{GREEN}========================================{RESET}")
