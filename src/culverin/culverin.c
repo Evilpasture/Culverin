@@ -37,7 +37,7 @@ static void PhysicsWorld_dealloc(PhysicsWorldObject *self) {
     // Required for Heap Types (PyType_FromSpec)
     PyTypeObject *tp = Py_TYPE(self);
     tp->tp_free((PyObject *)self);
-    Py_DECREF(tp); 
+    Py_XDECREF(tp); 
 }
 
 // --- Lifecycle: Initialization ---
