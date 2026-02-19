@@ -10,6 +10,7 @@
 #include "culverin_ragdoll.h"
 #include "culverin_shadow_sync.h"
 #include "culverin_vehicle.h"
+#include "culverin_fast_parse.h"
 
 
 // Global lock for JPH callbacks
@@ -1690,52 +1691,68 @@ static void configure_body_settings(JPH_BodyCreationSettings *settings,
 }
 
 // Main Orchestrator
+// Define the size as a constexpr for C23 safety
+constexpr size_t BODY_ARG_COUNT = 14;
+
+// This is the static registry that stores interned strings and function pointers
+static FastArgSpec BodySpecs[BODY_ARG_COUNT];
+void init_physics_parsers(void) {
+    // 1. Define local variables just for type deduction in the FP_ARG macro
+    float f; int i; uint32_t u; uint64_t k; bool b; PyObject *o;
+
+    // 2. Build the specs (The macro uses typeof_unqual to pick the right converter)
+    FastArgSpec specs[BODY_ARG_COUNT] = {
+        FP_ARG("pos", o),          FP_ARG("rot", o),          FP_ARG("size", o),
+        FP_ARG("shape", i),        FP_ARG("motion", i),       FP_ARG("user_data", k),
+        FP_ARG("is_sensor", b),    FP_ARG("mass", f),         FP_ARG("category", u),
+        FP_ARG("mask", u),         FP_ARG("friction", f),     FP_ARG("restitution", f),
+        FP_ARG("material_id", u),  FP_ARG("ccd", b)
+    };
+
+    // 3. Copy to the static global and intern the strings
+    for (size_t j = 0; j < BODY_ARG_COUNT; j++) {
+        BodySpecs[j] = specs[j];
+    }
+    
+    // This function from the header creates the interned PyObjects for the keys
+    FastParse_Init(BodySpecs, BODY_ARG_COUNT);
+}
 static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
                                           PyObject *const *args, size_t nargsf,
                                           PyObject *kwnames) {
-  Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
+    // C23 auto deduction
+    auto nargs = PyVectorcall_NARGS(nargsf);
 
-  // 1. DEFAULT VALUES
-  JPH_Real px = 0.0f, py = 0.0f, pz = 0.0f;
-  float rx = 0.0f, ry = 0.0f, rz = 0.0f, rw = 1.0f;
-  float mass = -1.0f, friction = -1.0f, restitution = -1.0f;
-  int shape_type = 0, motion_type = 2, is_sensor = 0, use_ccd = 0;
-  uint32_t category = 0xFFFF, mask = 0xFFFF, material_id = 0;
-  unsigned long long user_data = 0;
+    // 1. DEFAULT VALUES
+    JPH_Real px = 0.0f, py = 0.0f, pz = 0.0f;
+    float rx = 0.0f, ry = 0.0f, rz = 0.0f, rw = 1.0f;
+    float mass = -1.0f, friction = -1.0f, restitution = -1.0f;
+    int shape_type = 0, motion_type = 2;
+    uint32_t category = 0xFFFF, mask = 0xFFFF, material_id = 0;
+    uint64_t user_data = 0;
+    bool is_sensor = false, use_ccd = false;
+    PyObject *o_pos = nullptr, *o_rot = nullptr, *o_size = nullptr;
 
-  // 2. EXTRACT ARGUMENTS (No Allocations)
-  PyObject *o_pos    = find_arg(0, BP.keys[0], args, nargs, kwnames);
-  PyObject *o_rot    = find_arg(1, BP.keys[1], args, nargs, kwnames);
-  PyObject *o_size   = find_arg(2, BP.keys[2], args, nargs, kwnames);
-  PyObject *o_shape  = find_arg(3, BP.keys[3], args, nargs, kwnames);
-  PyObject *o_motion = find_arg(4, BP.keys[4], args, nargs, kwnames);
-  PyObject *o_udata  = find_arg(5, BP.keys[5], args, nargs, kwnames);
-  PyObject *o_sensor = find_arg(6, BP.keys[6], args, nargs, kwnames);
-  PyObject *o_mass   = find_arg(7, BP.keys[7], args, nargs, kwnames);
-  PyObject *o_cat    = find_arg(8, BP.keys[8], args, nargs, kwnames);
-  PyObject *o_mask   = find_arg(9, BP.keys[9], args, nargs, kwnames);
-  PyObject *o_fric   = find_arg(10, BP.keys[10], args, nargs, kwnames);
-  PyObject *o_rest   = find_arg(11, BP.keys[11], args, nargs, kwnames);
-  PyObject *o_matid  = find_arg(12, BP.keys[12], args, nargs, kwnames);
-  PyObject *o_ccd    = find_arg(13, BP.keys[13], args, nargs, kwnames);
+    // 2. TARGET MAPPING
+    // Order must match the order in init_physics_parsers
+    void *targets[BODY_ARG_COUNT] = {
+        &o_pos, &o_rot, &o_size, &shape_type, &motion_type,
+        &user_data, &is_sensor, &mass, &category, &mask,
+        &friction, &restitution, &material_id, &use_ccd
+    };
 
-  // 3. CONVERT VALUES
-  if (o_pos && !parse_vec3_direct(o_pos, &px, &py, &pz)) return NULL;
-  if (o_rot && !parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) return NULL;
-  
-  if (o_shape)  shape_type  = (int)PyLong_AsLong(o_shape);
-  if (o_motion) motion_type = (int)PyLong_AsLong(o_motion);
-  if (o_udata)  user_data   = PyLong_AsUnsignedLongLong(o_udata);
-  if (o_sensor) is_sensor   = PyObject_IsTrue(o_sensor);
-  if (o_mass)   mass        = (float)PyFloat_AsDouble(o_mass);
-  if (o_cat)    category    = (uint32_t)PyLong_AsUnsignedLongMask(o_cat);
-  if (o_mask)   mask        = (uint32_t)PyLong_AsUnsignedLongMask(o_mask);
-  if (o_fric)   friction    = (float)PyFloat_AsDouble(o_fric);
-  if (o_rest)   restitution = (float)PyFloat_AsDouble(o_rest);
-  if (o_matid)  material_id = (uint32_t)PyLong_AsUnsignedLongMask(o_matid);
-  if (o_ccd)    use_ccd     = PyObject_IsTrue(o_ccd);
+    // C23 Static check to ensure you didn't miss a target
+    static_assert(sizeof(targets) / sizeof(void*) == BODY_ARG_COUNT);
 
-  if (UNLIKELY(PyErr_Occurred())) return NULL;
+    // 3. THE FAST PARSE (This replaces the 14 manual find_arg calls)
+    if (!FastParse_Unified(args, nargs, kwnames, BodySpecs, targets, BODY_ARG_COUNT)) {
+        return nullptr;
+    }
+
+    // 4. CONVERT COMPLEX TYPES
+    if (o_pos && !parse_vec3_direct(o_pos, &px, &py, &pz)) return nullptr;
+    if (o_rot && !parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) return nullptr;
+
 
   // Validation
   if (shape_type == 4 && motion_type != 0) {
@@ -3749,6 +3766,8 @@ static int culverin_exec(PyObject *m) {
     PyErr_SetString(PyExc_RuntimeError, "Jolt initialization failed");
     return -1;
   }
+
+  init_physics_parsers();
 
   // Initialize the GLOBAL lock for Jolt trampolines
   INIT_NATIVE_MUTEX(g_jph_trampoline_lock);
