@@ -1172,7 +1172,7 @@ static PyObject *PhysicsWorld_create_convex_hull(PhysicsWorldObject *self,
                            NULL};
 
   if (!PyArg_ParseTupleAndKeywords(
-          args, kwds, "(ddd)(ffff)y*|ifKIIffp", kwlist, &px, &py, &pz, &rx, &ry,
+          args, kwds, "("JPH_REAL_STRING JPH_REAL_STRING JPH_REAL_STRING")(ffff)y*|ifKIIffp", kwlist, &px, &py, &pz, &rx, &ry,
           &rz, &rw, &points_view, &motion_type, &mass, &user_data, &category,
           &mask, &material_id, &friction, &restitution, &use_ccd)) {
     return NULL;
@@ -1510,7 +1510,7 @@ static PyObject *PhysicsWorld_create_compound_body(PhysicsWorldObject *self,
                            "ccd",  NULL};
 
   if (!PyArg_ParseTupleAndKeywords(
-          args, kwds, "(ddd)(ffff)O|ifKpIIffp", kwlist, &px, &py, &pz, &rx, &ry,
+          args, kwds, "("JPH_REAL_STRING JPH_REAL_STRING JPH_REAL_STRING")(ffff)O|ifKpIIffp", kwlist, &px, &py, &pz, &rx, &ry,
           &rz, &rw, &parts, &motion_type, &mass, &user_data, &is_sensor,
           &category, &mask, &material_id, &friction, &restitution, &use_ccd)) {
     return NULL;
@@ -1741,7 +1741,7 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
   }
 
   int ok = PyArg_ParseTupleAndKeywords(
-      temp_tuple, temp_dict, "|(ddd)(ffff)OiiKpfIIffIp", kwlist, &px, &py, &pz,
+      temp_tuple, temp_dict, "|("JPH_REAL_STRING JPH_REAL_STRING JPH_REAL_STRING")(ffff)OiiKpfIIffIp", kwlist, &px, &py, &pz,
       &rx, &ry, &rz, &rw, &py_size, &shape_type, &motion_type, &user_data,
       &is_sensor, &mass, &category, &mask, &friction, &restitution,
       &material_id, &use_ccd);
@@ -2133,7 +2133,7 @@ static PyObject *PhysicsWorld_create_mesh_body(PhysicsWorldObject *self,
   static char *kwlist[] = {"pos",       "rot",      "vertices", "indices",
                            "user_data", "category", "mask",     NULL};
 
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "(ddd)(ffff)y*y*|KII", kwlist,
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "("JPH_REAL_STRING JPH_REAL_STRING JPH_REAL_STRING")(ffff)y*y*|KII", kwlist,
                                    &px, &py, &pz, &rx, &ry, &rz, &rw, &v_view,
                                    &i_view, &user_data, &cat, &mask)) {
     return NULL;
@@ -3196,7 +3196,7 @@ static PyObject *PhysicsWorld_create_heightfield(PhysicsWorldObject *self,
                            "material_id", "friction",  "restitution", NULL};
 
   if (!PyArg_ParseTupleAndKeywords(
-          args, kwds, "(ddd)(ffff)(fff)y*i|KIIIff", kwlist, &px, &py, &pz, &rx,
+          args, kwds, "("JPH_REAL_STRING JPH_REAL_STRING JPH_REAL_STRING")(ffff)(fff)y*i|KIIIff", kwlist, &px, &py, &pz, &rx,
           &ry, &rz, &rw, &sx, &sy, &sz, &h_view, &grid_size, &user_data,
           &category, &mask, &material_id, &friction, &restitution)) {
     return NULL;
