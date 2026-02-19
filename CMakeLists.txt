@@ -59,6 +59,12 @@ set(USE_STATIC_MSVC_RUNTIME OFF CACHE BOOL "" FORCE)
 set(FORCE_MT_RUNTIME OFF CACHE BOOL "" FORCE)
 set(USE_VULKAN OFF CACHE BOOL "" FORCE)
 
+# Force RTTI ON for the entire build tree before Jolt is processed
+add_definitions(-D_HAS_STATIC_RTTI=1)
+
+# Ensure Jolt doesn't override it internally
+set(FORCE_RTTI ON CACHE BOOL "Force RTTI on" FORCE)
+
 project(culverin LANGUAGES C CXX)
 enforce_modern_compiler()
 message(STATUS "--- COMPILER VERIFICATION ---")
@@ -66,6 +72,10 @@ message(STATUS "C Compiler:   ${CMAKE_C_COMPILER}")
 message(STATUS "CXX Compiler: ${CMAKE_CXX_COMPILER}")
 message(STATUS "Clang Version: ${CMAKE_CXX_COMPILER_VERSION}")
 message(STATUS "-----------------------------")
+
+if(NOT MSVC)
+    add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-frtti>")
+endif()
 
 # Standards
 if(CMAKE_C_COMPILER_ID STREQUAL "GNU" OR CMAKE_C_COMPILER_ID MATCHES "Clang")
@@ -144,7 +154,7 @@ else()
 
     # Ensure C23/C++17 for vanilla clang
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c2x") # or c23 depending on clang version
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -frtti")
 
     set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} ${UNIX_RELEASE_FLAGS}")
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} ${UNIX_RELEASE_FLAGS}")
@@ -155,6 +165,11 @@ endif()
 # 3. BUILD JOLT PHYSICS
 # ==============================================================================
 get_filename_component(JOLT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/extern/JoltPhysics" ABSOLUTE)
+# 1. Add this globally before add_subdirectory(Jolt)
+add_definitions(-DJPH_DEBUG_RENDERER)
+
+# 2. CRITICAL: Jolt's CMake has a toggle for this. Force it:
+set(DEBUG_RENDERER_IN_DEBUG_AND_RELEASE ON CACHE BOOL "" FORCE)
 add_subdirectory("${JOLT_DIR}/Build" jolt_physics_build)
 
 # THE CRITICAL STEP: Align all Jolt targets to /MD
@@ -318,12 +333,39 @@ target_include_directories(_culverin_c PRIVATE
 if(WIN32)
     target_link_libraries(_culverin_c PRIVATE Winmm.lib)
 endif()
-
+target_compile_definitions(_culverin_c PRIVATE JPH_DEBUG_RENDERER)
 if(Python_VERSION VERSION_GREATER_EQUAL "3.13")
-    target_compile_definitions(_culverin_c PRIVATE Py_GIL_DISABLED=1)
+    # Only disable the GIL if the current interpreter actually supports it
+    execute_process(
+        COMMAND ${Python_EXECUTABLE} -c "import sys; print(int(bool(sys._get_gil_config().get('enabled', True) == False)))"
+        OUTPUT_VARIABLE PYTHON_IS_FREE_THREADED
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+
+    if(PYTHON_IS_FREE_THREADED EQUAL 1)
+        message(STATUS "Culverin: Free-threading detected. Disabling GIL.")
+        target_compile_definitions(_culverin_c PRIVATE Py_GIL_DISABLED=1)
+    else()
+        message(STATUS "Culverin: Standard Python detected. GIL remains enabled.")
+    endif()
 endif()
 
-target_link_libraries(_culverin_c PRIVATE ${JOLTC_TARGET})
+if(APPLE)
+    message(STATUS "Culverin: Enforcing Strong Symbol Export")
+
+    # Force RTTI ON for the wrapper so it can see Jolt's RTTI
+    target_compile_options(${JOLTC_TARGET} PRIVATE "-frtti")
+    target_compile_options(_culverin_c PRIVATE "-frtti")
+
+    target_link_libraries(_culverin_c PRIVATE ${JOLTC_TARGET} Jolt)
+
+    target_link_options(_culverin_c PRIVATE 
+        "-Wl,-all_load"
+        "-Wl,-export_dynamic"
+        "-Wl,-flat_namespace" 
+    )
+endif()
 set_target_properties(_culverin_c PROPERTIES OUTPUT_NAME "_culverin_c" PREFIX "")
 
 # Final sanity check: ensure our own targets are also /MD
