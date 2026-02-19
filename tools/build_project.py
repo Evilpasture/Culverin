@@ -38,6 +38,7 @@ def build_extension():
     
     config = {
         "cmake.define.DOUBLE_PRECISION": "ON",
+        "build.tool-args": ["-j12"], # This passes -j12 directly to Ninja/Make
         "cmake.define.JPH_DOUBLE_PRECISION": "ON",
         "build-dir": str(BUILD_DIR),
     }
