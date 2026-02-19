@@ -28,6 +28,18 @@ typedef struct {
   float damping;      // Spring damping
 } ConstraintParams;
 
+typedef struct {
+    PyObject *keys[14];
+} BodyParser;
+
+// Direct variable extraction (Fast path)
+int parse_vec3_direct(PyObject *obj, JPH_Real *x, JPH_Real *y, JPH_Real *z);
+int parse_quat_direct(PyObject *obj, float *x, float *y, float *z, float *w);
+
+// The global parser keys
+extern BodyParser BP;
+void init_body_parser(void);
+
 float get_py_float_attr(PyObject *obj, const char *name, float default_val);
 int parse_py_vec3f(PyObject *obj, Vec3f *out);
 int parse_py_vec3_pos(PyObject *obj, PosStride *out);
@@ -61,3 +73,18 @@ int parse_distance_params(PyObject *args, ConstraintParams *p);
 void parse_body_size(PyObject *py_size, float s[4]);
 
 void parse_tracks_to_c(PyObject *py_tracks, TrackData *out_data, int *num_out);
+
+static inline PyObject* find_arg(Py_ssize_t pos_idx, PyObject *target_key, 
+                                 PyObject *const *args, Py_ssize_t nargs, 
+                                 PyObject *kwnames) {
+    if (pos_idx < nargs) return args[pos_idx];
+    if (kwnames) {
+        Py_ssize_t nkw = PyTuple_GET_SIZE(kwnames);
+        for (Py_ssize_t i = 0; i < nkw; i++) {
+            if (PyTuple_GET_ITEM(kwnames, i) == target_key) {
+                return args[nargs + i];
+            }
+        }
+    }
+    return NULL;
+}

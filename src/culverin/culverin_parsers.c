@@ -2,6 +2,67 @@
 #include "culverin_compiler_specifics.h"
 
 // --- Internal Helpers to reduce complexity ---
+BodyParser BP;
+
+void init_body_parser(void) {
+    const char *kw_names[] = {
+        "pos", "rot", "size", "shape", "motion", 
+        "user_data", "is_sensor", "mass", "category", "mask", 
+        "friction", "restitution", "material_id", "ccd"
+    };
+    for (int i = 0; i < 14; i++) {
+        BP.keys[i] = PyUnicode_InternFromString(kw_names[i]);
+    }
+}
+
+int parse_vec3_direct(PyObject *obj, JPH_Real *x, JPH_Real *y, JPH_Real *z) {
+    if (UNLIKELY(!obj || obj == Py_None)) return 1; // Keep defaults
+    
+    if (PyTuple_CheckExact(obj) && PyTuple_GET_SIZE(obj) == 3) {
+        *x = (JPH_Real)PyFloat_AsDouble(PyTuple_GET_ITEM(obj, 0));
+        *y = (JPH_Real)PyFloat_AsDouble(PyTuple_GET_ITEM(obj, 1));
+        *z = (JPH_Real)PyFloat_AsDouble(PyTuple_GET_ITEM(obj, 2));
+    } else if (PySequence_Check(obj) && PySequence_Size(obj) == 3) {
+        // Fallback for lists or other sequences
+        PyObject *i0 = PySequence_GetItem(obj, 0);
+        PyObject *i1 = PySequence_GetItem(obj, 1);
+        PyObject *i2 = PySequence_GetItem(obj, 2);
+        *x = (JPH_Real)PyFloat_AsDouble(i0);
+        *y = (JPH_Real)PyFloat_AsDouble(i1);
+        *z = (JPH_Real)PyFloat_AsDouble(i2);
+        Py_XDECREF(i0); Py_XDECREF(i1); Py_XDECREF(i2);
+    } else {
+        PyErr_SetString(PyExc_TypeError, "Expected a sequence of 3 real numbers for position");
+        return 0;
+    }
+    return !PyErr_Occurred();
+}
+
+int parse_quat_direct(PyObject *obj, float *x, float *y, float *z, float *w) {
+    if (UNLIKELY(!obj || obj == Py_None)) return 1;
+    
+    if (PyTuple_CheckExact(obj) && PyTuple_GET_SIZE(obj) == 4) {
+        *x = (float)PyFloat_AsDouble(PyTuple_GET_ITEM(obj, 0));
+        *y = (float)PyFloat_AsDouble(PyTuple_GET_ITEM(obj, 1));
+        *z = (float)PyFloat_AsDouble(PyTuple_GET_ITEM(obj, 2));
+        *w = (float)PyFloat_AsDouble(PyTuple_GET_ITEM(obj, 3));
+    } else if (PySequence_Check(obj) && PySequence_Size(obj) == 4) {
+        PyObject *i0 = PySequence_GetItem(obj, 0);
+        PyObject *i1 = PySequence_GetItem(obj, 1);
+        PyObject *i2 = PySequence_GetItem(obj, 2);
+        PyObject *i3 = PySequence_GetItem(obj, 3);
+        *x = (float)PyFloat_AsDouble(i0);
+        *y = (float)PyFloat_AsDouble(i1);
+        *z = (float)PyFloat_AsDouble(i2);
+        *w = (float)PyFloat_AsDouble(i3);
+        Py_XDECREF(i0); Py_XDECREF(i1); Py_XDECREF(i2); Py_XDECREF(i3);
+    } else {
+        PyErr_SetString(PyExc_TypeError, "Expected a sequence of 4 floats for rotation");
+        return 0;
+    }
+    return !PyErr_Occurred();
+}
+
 
 // --- Low-complexity helper to fetch attributes with a fallback ---
 float get_py_float_attr(PyObject *obj, const char *name, float default_val) {
