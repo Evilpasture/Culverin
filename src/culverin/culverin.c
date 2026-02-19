@@ -29,6 +29,12 @@ static void PhysicsWorld_dealloc(PhysicsWorldObject *self) {
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
                              PyObject *kwds) {
+  if (self->system != NULL) { 
+      // Please don't call __init__() again.
+      PyErr_SetString(PyExc_RuntimeError, 
+            "PhysicsWorld instance has already been initialized and cannot be re-initialized.");
+      return -1;
+  }
   PyObject *settings_dict = NULL;
   PyObject *bodies_list = NULL;
   PyObject *baked = NULL;
