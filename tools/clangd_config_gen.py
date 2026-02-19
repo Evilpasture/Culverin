@@ -1,5 +1,7 @@
 from pathlib import Path
 import os
+import sys
+import sysconfig
 
 def generate_clangd():
     # Project location
@@ -13,15 +15,14 @@ def generate_clangd():
 
     project_root = get_project_root()
     print(f"Project root found at: {project_root}")
-    
-    # Specific freethreaded Python path
-    python_base = Path("C:/Users/Admin/AppData/Local/Python/pythoncore-3.14t-64")
-    python_include = python_base / "include"
+
+    # Build the path dynamically
+    include_path = Path(sysconfig.get_path("include"))
 
     # Some Python installs nest headers deeper
     # e.g., include/python3.14t/Python.h
-    final_python_path = python_include
-    for root, dirs, files in os.walk(python_include):
+    final_python_path = include_path
+    for root, dirs, files in os.walk(include_path):
         if "Python.h" in files:
             final_python_path = Path(root)
             break
