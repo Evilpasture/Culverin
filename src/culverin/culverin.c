@@ -17,10 +17,27 @@ NativeMutex
 
 // --- Lifecycle: Deallocation ---
 static void PhysicsWorld_dealloc(PhysicsWorldObject *self) {
-  PhysicsWorld_free_members(self);
-  FREE_NATIVE_MUTEX(self->step_sync.mutex);
-  FREE_NATIVE_COND(self->step_sync.cond);
-  Py_TYPE(self)->tp_free((PyObject *)self);
+    // 1. Clear managed weakrefs (fires callbacks)
+    PyObject_ClearWeakRefs((PyObject *)self);
+
+    // 2. RESURRECTION CHECK
+    // If a weakref callback saved 'self', the refcount is no longer 0.
+    if (Py_REFCNT(self) > 0) {
+        return; // Bail out! The object lives to die another day.
+    }
+
+    // 3. Finalize Jolt and Mutexes
+    // Only happens if the object is truly dying.
+    PhysicsWorld_free_members(self);
+    
+    FREE_NATIVE_MUTEX(self->step_sync.mutex);
+    FREE_NATIVE_COND(self->step_sync.cond);
+
+    // 4. Clean up the Type Reference
+    // Required for Heap Types (PyType_FromSpec)
+    PyTypeObject *tp = Py_TYPE(self);
+    tp->tp_free((PyObject *)self);
+    Py_DECREF(tp); 
 }
 
 // --- Lifecycle: Initialization ---
@@ -3605,7 +3622,7 @@ static const PyType_Slot RagdollSettings_slots[] = {
 static const PyType_Spec PhysicsWorld_spec = {
     .name = "culverin._culverin_c.PhysicsWorld",
     .basicsize = sizeof(PhysicsWorldObject),
-    .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
+    .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_MANAGED_WEAKREF,
     .slots = (PyType_Slot *)PhysicsWorld_slots,
 };
 
