@@ -1,5 +1,6 @@
 #include "culverin.h"
 #include "culverin_character.h"
+#include "culverin_compiler_specifics.h"
 #include "culverin_constraint.h"
 #include "culverin_contact_listener.h"
 #include "culverin_getters.h"
@@ -9,7 +10,7 @@
 #include "culverin_ragdoll.h"
 #include "culverin_shadow_sync.h"
 #include "culverin_vehicle.h"
-#include "culverin_compiler_specifics.h"
+
 
 // Global lock for JPH callbacks
 NativeMutex
@@ -17,27 +18,27 @@ NativeMutex
 
 // --- Lifecycle: Deallocation ---
 static void PhysicsWorld_dealloc(PhysicsWorldObject *self) {
-    // 1. Clear managed weakrefs (fires callbacks)
-    PyObject_ClearWeakRefs((PyObject *)self);
+  // 1. Clear managed weakrefs (fires callbacks)
+  PyObject_ClearWeakRefs((PyObject *)self);
 
-    // 2. RESURRECTION CHECK
-    // If a weakref callback saved 'self', the refcount is no longer 0.
-    if (Py_REFCNT(self) > 0) {
-        return; // Bail out! The object lives to die another day.
-    }
+  // 2. RESURRECTION CHECK
+  // If a weakref callback saved 'self', the refcount is no longer 0.
+  if (Py_REFCNT(self) > 0) {
+    return; // Bail out! The object lives to die another day.
+  }
 
-    // 3. Finalize Jolt and Mutexes
-    // Only happens if the object is truly dying.
-    PhysicsWorld_free_members(self);
-    
-    FREE_NATIVE_MUTEX(self->step_sync.mutex);
-    FREE_NATIVE_COND(self->step_sync.cond);
+  // 3. Finalize Jolt and Mutexes
+  // Only happens if the object is truly dying.
+  PhysicsWorld_free_members(self);
 
-    // 4. Clean up the Type Reference
-    // Required for Heap Types (PyType_FromSpec)
-    PyTypeObject *tp = Py_TYPE(self);
-    tp->tp_free((PyObject *)self);
-    Py_XDECREF(tp); 
+  FREE_NATIVE_MUTEX(self->step_sync.mutex);
+  FREE_NATIVE_COND(self->step_sync.cond);
+
+  // 4. Clean up the Type Reference
+  // Required for Heap Types (PyType_FromSpec)
+  PyTypeObject *tp = Py_TYPE(self);
+  tp->tp_free((PyObject *)self);
+  Py_XDECREF(tp);
 }
 
 // --- Lifecycle: Initialization ---
@@ -46,11 +47,12 @@ static void PhysicsWorld_dealloc(PhysicsWorldObject *self) {
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
                              PyObject *kwds) {
-  if (self->system != NULL) { 
-      // Please don't call __init__() again.
-      PyErr_SetString(PyExc_RuntimeError, 
-            "PhysicsWorld instance has already been initialized and cannot be re-initialized.");
-      return -1;
+  if (self->system != NULL) {
+    // Please don't call __init__() again.
+    PyErr_SetString(PyExc_RuntimeError,
+                    "PhysicsWorld instance has already been initialized and "
+                    "cannot be re-initialized.");
+    return -1;
   }
   PyObject *settings_dict = NULL;
   PyObject *bodies_list = NULL;
@@ -270,8 +272,10 @@ static PyObject *PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self,
       PyTuple_SET_ITEM(temp_tuple, i, args[i]);
     }
 
-    int ok = PyArg_ParseTupleAndKeywords(temp_tuple, kwnames, "Kfff"JPH_REAL_STRING JPH_REAL_STRING JPH_REAL_STRING"", kwlist,
-                                         &h, &ix, &iy, &iz, &px, &py, &pz);
+    int ok = PyArg_ParseTupleAndKeywords(
+        temp_tuple, kwnames,
+        "Kfff" JPH_REAL_STRING JPH_REAL_STRING JPH_REAL_STRING "", kwlist, &h,
+        &ix, &iy, &iz, &px, &py, &pz);
     Py_DECREF(temp_tuple);
     if (!ok) {
       return NULL;
@@ -587,8 +591,8 @@ static PyObject *PhysicsWorld_get_body_stats(PhysicsWorldObject *self,
 
   // Build the Python objects
   // Note: We use "ddd" for position to support JPH_DOUBLE_PRECISION (double)
-  PyObject *py_pos =
-      Py_BuildValue("("JPH_REAL_STRING JPH_REAL_STRING JPH_REAL_STRING")", p.x, p.y, p.z);
+  PyObject *py_pos = Py_BuildValue(
+      "(" JPH_REAL_STRING JPH_REAL_STRING JPH_REAL_STRING ")", p.x, p.y, p.z);
   PyObject *py_rot = Py_BuildValue("(dddd)", (double)r.x, (double)r.y,
                                    (double)r.z, (double)r.w);
   PyObject *py_vel =
@@ -703,9 +707,9 @@ static PyObject *PhysicsWorld_apply_buoyancy_batch(PhysicsWorldObject *self,
       "handles",      "surface_y", "buoyancy",       "linear_drag",
       "angular_drag", "dt",        "fluid_velocity", NULL};
 
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "y*|"JPH_REAL_STRING"ffff(fff)", kwlist, &h_view,
-                                   &surface_y, &buoyancy, &lin_drag, &ang_drag,
-                                   &dt, &vx, &vy, &vz)) {
+  if (!PyArg_ParseTupleAndKeywords(
+          args, kwds, "y*|" JPH_REAL_STRING "ffff(fff)", kwlist, &h_view,
+          &surface_y, &buoyancy, &lin_drag, &ang_drag, &dt, &vx, &vy, &vz)) {
     return NULL;
   }
 
@@ -1057,10 +1061,16 @@ size_fail:
   return NULL;
 }
 
-static PyObject *PhysicsWorld_step(PhysicsWorldObject *self, PyObject *args) {
+static PyObject *PhysicsWorld_step(PhysicsWorldObject *self,
+                                   PyObject *const *args, Py_ssize_t nargs) {
   float dt = 1.0f / 60.0f;
-  if (UNLIKELY(!PyArg_ParseTuple(args, "|f", &dt))) {
-    return NULL;
+
+  // Fast path: No tuple creation, no format string parsing.
+  if (nargs > 0) {
+    dt = (float)PyFloat_AsDouble(args[0]);
+    if (UNLIKELY(dt == -1.0 && PyErr_Occurred())) {
+      return NULL;
+    }
   }
 
   SHADOW_LOCK(&self->shadow_lock);
@@ -1991,7 +2001,7 @@ static PyObject *PhysicsWorld_create_bodies_batch(PhysicsWorldObject *self,
       // This should technically be impossible if the resize logic is correct,
       // but it stops a Segfault/ASan abort.
       SHADOW_UNLOCK(&self->shadow_lock);
-      goto fail; 
+      goto fail;
     }
 
     uint32_t slot = self->free_slots[--self->free_count];
@@ -3374,107 +3384,127 @@ static const PyGetSetDef Vehicle_getset[] = {
 
 static const PyMethodDef PhysicsWorld_methods[] = {
     // --- Lifecycle ---
-    {"step", (PyCFunction)PhysicsWorld_step, METH_VARARGS, NULL},
-    {"create_body", (PyCFunction)(void(*)(void))PhysicsWorld_create_body,
+    {"step", (PyCFunction)PhysicsWorld_step, METH_FASTCALL, NULL},
+    {"create_body", (PyCFunction)(void (*)(void))PhysicsWorld_create_body,
      METH_FASTCALL | METH_KEYWORDS, NULL},
-    {"create_bodies_batch", (PyCFunction)(void(*)(void))PhysicsWorld_create_bodies_batch,
+    {"create_bodies_batch",
+     (PyCFunction)(void (*)(void))PhysicsWorld_create_bodies_batch,
      METH_VARARGS | METH_KEYWORDS, NULL},
-    {"destroy_body", (PyCFunction)(void(*)(void))PhysicsWorld_destroy_body,
+    {"destroy_body", (PyCFunction)(void (*)(void))PhysicsWorld_destroy_body,
      METH_FASTCALL | METH_KEYWORDS, NULL},
-    {"destroy_bodies_batch", (PyCFunction)(void(*)(void))PhysicsWorld_destroy_bodies_batch,
+    {"destroy_bodies_batch",
+     (PyCFunction)(void (*)(void))PhysicsWorld_destroy_bodies_batch,
      METH_VARARGS | METH_KEYWORDS, NULL},
-    {"create_mesh_body", (PyCFunction)(void(*)(void))PhysicsWorld_create_mesh_body,
+    {"create_mesh_body",
+     (PyCFunction)(void (*)(void))PhysicsWorld_create_mesh_body,
      METH_VARARGS | METH_KEYWORDS, NULL},
-    {"create_constraint", (PyCFunction)(void(*)(void))PhysicsWorld_create_constraint,
+    {"create_constraint",
+     (PyCFunction)(void (*)(void))PhysicsWorld_create_constraint,
      METH_VARARGS | METH_KEYWORDS,
      "Create a constraint between two bodies. Params depend on type."},
-    {"destroy_constraint", (PyCFunction)(void(*)(void))PhysicsWorld_destroy_constraint,
+    {"destroy_constraint",
+     (PyCFunction)(void (*)(void))PhysicsWorld_destroy_constraint,
      METH_VARARGS | METH_KEYWORDS,
      "Remove and destroy a constraint by handle."},
-    {"create_vehicle", (PyCFunction)(void(*)(void))PhysicsWorld_create_vehicle,
+    {"create_vehicle", (PyCFunction)(void (*)(void))PhysicsWorld_create_vehicle,
      METH_VARARGS | METH_KEYWORDS, NULL},
-    {"create_tracked_vehicle", (PyCFunction)(void(*)(void))PhysicsWorld_create_tracked_vehicle,
+    {"create_tracked_vehicle",
+     (PyCFunction)(void (*)(void))PhysicsWorld_create_tracked_vehicle,
      METH_VARARGS | METH_KEYWORDS, "Create a tank-style vehicle."},
     {"create_ragdoll_settings",
      (PyCFunction)PhysicsWorld_create_ragdoll_settings, METH_VARARGS,
      "Create settings bound to this world"},
-    {"create_ragdoll", (PyCFunction)(void(*)(void))PhysicsWorld_create_ragdoll,
+    {"create_ragdoll", (PyCFunction)(void (*)(void))PhysicsWorld_create_ragdoll,
      METH_VARARGS | METH_KEYWORDS, "Instantiate a ragdoll"},
-    {"create_heightfield", (PyCFunction)(void(*)(void))PhysicsWorld_create_heightfield,
+    {"create_heightfield",
+     (PyCFunction)(void (*)(void))PhysicsWorld_create_heightfield,
      METH_VARARGS | METH_KEYWORDS,
      "Create a static terrain from a height grid."},
-    {"create_convex_hull", (PyCFunction)(void(*)(void))PhysicsWorld_create_convex_hull,
+    {"create_convex_hull",
+     (PyCFunction)(void (*)(void))PhysicsWorld_create_convex_hull,
      METH_VARARGS | METH_KEYWORDS,
      "Create a body from a point cloud. Points are wrapped in a convex shell."},
-    {"create_compound_body", (PyCFunction)(void(*)(void))PhysicsWorld_create_compound_body,
+    {"create_compound_body",
+     (PyCFunction)(void (*)(void))PhysicsWorld_create_compound_body,
      METH_VARARGS | METH_KEYWORDS,
      "Create a body made of multiple primitives. parts=[((x,y,z), "
      "(rx,ry,rz,rw), type, size), ...]"},
 
     // --- Interaction ---
-    {"apply_impulse", (PyCFunction)(void(*)(void))PhysicsWorld_apply_impulse,
+    {"apply_impulse", (PyCFunction)(void (*)(void))PhysicsWorld_apply_impulse,
      METH_FASTCALL | METH_KEYWORDS, NULL},
-    {"apply_angular_impulse", (PyCFunction)(void(*)(void))PhysicsWorld_apply_angular_impulse,
+    {"apply_angular_impulse",
+     (PyCFunction)(void (*)(void))PhysicsWorld_apply_angular_impulse,
      METH_FASTCALL | METH_KEYWORDS, "Apply rotational momentum."},
-    {"apply_impulse_at", (PyCFunction)(void(*)(void))PhysicsWorld_apply_impulse_at,
+    {"apply_impulse_at",
+     (PyCFunction)(void (*)(void))PhysicsWorld_apply_impulse_at,
      METH_FASTCALL | METH_KEYWORDS, "Apply impulse at world position."},
-    {"apply_force", (PyCFunction)(void(*)(void))PhysicsWorld_apply_force,
+    {"apply_force", (PyCFunction)(void (*)(void))PhysicsWorld_apply_force,
      METH_FASTCALL | METH_KEYWORDS, NULL},
-    {"apply_torque", (PyCFunction)(void(*)(void))PhysicsWorld_apply_torque,
+    {"apply_torque", (PyCFunction)(void (*)(void))PhysicsWorld_apply_torque,
      METH_FASTCALL | METH_KEYWORDS, NULL},
     {"set_gravity", (PyCFunction)PhysicsWorld_set_gravity, METH_VARARGS, NULL},
-    {"apply_buoyancy", (PyCFunction)(void(*)(void))PhysicsWorld_apply_buoyancy,
+    {"apply_buoyancy", (PyCFunction)(void (*)(void))PhysicsWorld_apply_buoyancy,
      METH_VARARGS | METH_KEYWORDS, "Apply fluid forces to a body."},
-    {"apply_buoyancy_batch", (PyCFunction)(void(*)(void))PhysicsWorld_apply_buoyancy_batch,
+    {"apply_buoyancy_batch",
+     (PyCFunction)(void (*)(void))PhysicsWorld_apply_buoyancy_batch,
      METH_VARARGS | METH_KEYWORDS,
      "Apply buoyancy to a list of bodies. handles must be a buffer of uint64."},
-    {"set_position", (PyCFunction)(void(*)(void))PhysicsWorld_set_position,
+    {"set_position", (PyCFunction)(void (*)(void))PhysicsWorld_set_position,
      METH_VARARGS | METH_KEYWORDS, NULL},
-    {"set_rotation", (PyCFunction)(void(*)(void))PhysicsWorld_set_rotation,
+    {"set_rotation", (PyCFunction)(void (*)(void))PhysicsWorld_set_rotation,
      METH_VARARGS | METH_KEYWORDS, NULL},
-    {"set_linear_velocity", (PyCFunction)(void(*)(void))PhysicsWorld_set_linear_velocity,
+    {"set_linear_velocity",
+     (PyCFunction)(void (*)(void))PhysicsWorld_set_linear_velocity,
      METH_VARARGS | METH_KEYWORDS, NULL},
-    {"set_angular_velocity", (PyCFunction)(void(*)(void))PhysicsWorld_set_angular_velocity,
+    {"set_angular_velocity",
+     (PyCFunction)(void (*)(void))PhysicsWorld_set_angular_velocity,
      METH_VARARGS | METH_KEYWORDS, NULL},
-    {"set_transform", (PyCFunction)(void(*)(void))PhysicsWorld_set_transform,
+    {"set_transform", (PyCFunction)(void (*)(void))PhysicsWorld_set_transform,
      METH_VARARGS | METH_KEYWORDS, NULL},
-    {"set_collision_filter", (PyCFunction)(void(*)(void))PhysicsWorld_set_collision_filter,
+    {"set_collision_filter",
+     (PyCFunction)(void (*)(void))PhysicsWorld_set_collision_filter,
      METH_VARARGS | METH_KEYWORDS, "Dynamically update collision bitmasks."},
-    {"register_material", (PyCFunction)(void(*)(void))PhysicsWorld_register_material,
+    {"register_material",
+     (PyCFunction)(void (*)(void))PhysicsWorld_register_material,
      METH_VARARGS | METH_KEYWORDS, "Define properties for a material ID."},
-    {"set_constraint_target", (PyCFunction)(void(*)(void))PhysicsWorld_set_constraint_target,
+    {"set_constraint_target",
+     (PyCFunction)(void (*)(void))PhysicsWorld_set_constraint_target,
      METH_VARARGS | METH_KEYWORDS, NULL},
 
     // --- Motion Control ---
-    {"get_motion_type", (PyCFunction)(void(*)(void))PhysicsWorld_get_motion_type,
+    {"get_motion_type",
+     (PyCFunction)(void (*)(void))PhysicsWorld_get_motion_type,
      METH_VARARGS | METH_KEYWORDS, NULL},
-    {"set_motion_type", (PyCFunction)(void(*)(void))PhysicsWorld_set_motion_type,
+    {"set_motion_type",
+     (PyCFunction)(void (*)(void))PhysicsWorld_set_motion_type,
      METH_VARARGS | METH_KEYWORDS, NULL},
-    {"activate", (PyCFunction)(void(*)(void))PhysicsWorld_activate,
+    {"activate", (PyCFunction)(void (*)(void))PhysicsWorld_activate,
      METH_VARARGS | METH_KEYWORDS, NULL},
-    {"deactivate", (PyCFunction)(void(*)(void))PhysicsWorld_deactivate,
+    {"deactivate", (PyCFunction)(void (*)(void))PhysicsWorld_deactivate,
      METH_VARARGS | METH_KEYWORDS, NULL},
-    {"set_ccd", (PyCFunction)(void(*)(void))PhysicsWorld_set_ccd, METH_VARARGS | METH_KEYWORDS,
+    {"set_ccd", (PyCFunction)(void (*)(void))PhysicsWorld_set_ccd,
+     METH_VARARGS | METH_KEYWORDS,
      "Enable/Disable Continuous Collision Detection."},
 
     // --- Queries ---
-    {"raycast", (PyCFunction)(void(*)(void))PhysicsWorld_raycast, METH_VARARGS | METH_KEYWORDS,
-     NULL},
-    {"raycast_batch", (PyCFunction)(void(*)(void))PhysicsWorld_raycast_batch,
+    {"raycast", (PyCFunction)(void (*)(void))PhysicsWorld_raycast,
+     METH_VARARGS | METH_KEYWORDS, NULL},
+    {"raycast_batch", (PyCFunction)(void (*)(void))PhysicsWorld_raycast_batch,
      METH_FASTCALL | METH_KEYWORDS, "Execute multiple raycasts efficiently."},
-    {"shapecast", (PyCFunction)(void(*)(void))PhysicsWorld_shapecast,
+    {"shapecast", (PyCFunction)(void (*)(void))PhysicsWorld_shapecast,
      METH_VARARGS | METH_KEYWORDS,
      "Sweeps a shape along a direction vector. Returns (Handle, Fraction, "
      "ContactPoint, Normal) or None."},
-    {"overlap_sphere", (PyCFunction)(void(*)(void))PhysicsWorld_overlap_sphere,
+    {"overlap_sphere", (PyCFunction)(void (*)(void))PhysicsWorld_overlap_sphere,
      METH_VARARGS | METH_KEYWORDS, NULL},
-    {"overlap_aabb", (PyCFunction)(void(*)(void))PhysicsWorld_overlap_aabb,
+    {"overlap_aabb", (PyCFunction)(void (*)(void))PhysicsWorld_overlap_aabb,
      METH_VARARGS | METH_KEYWORDS, NULL},
 
     // --- Utilities ---
-    {"get_index", (PyCFunction)(void(*)(void))PhysicsWorld_get_index,
+    {"get_index", (PyCFunction)(void (*)(void))PhysicsWorld_get_index,
      METH_VARARGS | METH_KEYWORDS, NULL},
-    {"is_alive", (PyCFunction)(void(*)(void))PhysicsWorld_is_alive,
+    {"is_alive", (PyCFunction)(void (*)(void))PhysicsWorld_is_alive,
      METH_VARARGS | METH_KEYWORDS, NULL},
     {"get_active_indices", (PyCFunction)PhysicsWorld_get_active_indices,
      METH_NOARGS,
@@ -3483,17 +3513,17 @@ static const PyMethodDef PhysicsWorld_methods[] = {
      METH_VARARGS,
      "Returns a packed bytes object of interpolated positions and rotations "
      "(3+4 floats per body)."},
-    {"get_debug_data", (PyCFunction)(void(*)(void))PhysicsWorld_get_debug_data,
+    {"get_debug_data", (PyCFunction)(void (*)(void))PhysicsWorld_get_debug_data,
      METH_VARARGS | METH_KEYWORDS,
      "Returns (lines_bytes, triangles_bytes). Each vertex is 16 bytes: [x, y, "
      "z, color_u32]."},
-    {"get_body_stats", (PyCFunction)(void(*)(void))PhysicsWorld_get_body_stats,
+    {"get_body_stats", (PyCFunction)(void (*)(void))PhysicsWorld_get_body_stats,
      METH_VARARGS | METH_KEYWORDS, NULL},
 
     // --- User Data ---
-    {"get_user_data", (PyCFunction)(void(*)(void))PhysicsWorld_get_user_data,
+    {"get_user_data", (PyCFunction)(void (*)(void))PhysicsWorld_get_user_data,
      METH_VARARGS | METH_KEYWORDS, NULL},
-    {"set_user_data", (PyCFunction)(void(*)(void))PhysicsWorld_set_user_data,
+    {"set_user_data", (PyCFunction)(void (*)(void))PhysicsWorld_set_user_data,
      METH_VARARGS | METH_KEYWORDS, NULL},
 
     // -- Event Logic ---
@@ -3506,19 +3536,22 @@ static const PyMethodDef PhysicsWorld_methods[] = {
 
     // --- State & Advanced ---
     {"save_state", (PyCFunction)PhysicsWorld_save_state, METH_NOARGS, NULL},
-    {"load_state", (PyCFunction)(void(*)(void))PhysicsWorld_load_state,
+    {"load_state", (PyCFunction)(void (*)(void))PhysicsWorld_load_state,
      METH_VARARGS | METH_KEYWORDS, NULL},
-    {"create_character", (PyCFunction)(void(*)(void))PhysicsWorld_create_character,
+    {"create_character",
+     (PyCFunction)(void (*)(void))PhysicsWorld_create_character,
      METH_VARARGS | METH_KEYWORDS, NULL},
 
     {NULL, NULL, 0, NULL}};
 
 static const PyMethodDef Character_methods[] = {
-    {"move", (PyCFunction)(void(*)(void))Character_move, METH_VARARGS | METH_KEYWORDS, NULL},
-    {"get_position", (PyCFunction)(void(*)(void))Character_get_position, METH_NOARGS, NULL},
-    {"set_position", (PyCFunction)(void(*)(void))Character_set_position,
+    {"move", (PyCFunction)(void (*)(void))Character_move,
      METH_VARARGS | METH_KEYWORDS, NULL},
-    {"set_rotation", (PyCFunction)(void(*)(void))Character_set_rotation,
+    {"get_position", (PyCFunction)(void (*)(void))Character_get_position,
+     METH_NOARGS, NULL},
+    {"set_position", (PyCFunction)(void (*)(void))Character_set_position,
+     METH_VARARGS | METH_KEYWORDS, NULL},
+    {"set_rotation", (PyCFunction)(void (*)(void))Character_set_rotation,
      METH_VARARGS | METH_KEYWORDS, NULL},
     {"is_grounded", (PyCFunction)Character_is_grounded, METH_NOARGS, NULL},
     {"set_strength", (PyCFunction)Character_set_strength, METH_VARARGS,
@@ -3529,10 +3562,11 @@ static const PyMethodDef Character_methods[] = {
     {NULL, NULL, 0, NULL}};
 
 static const PyMethodDef Vehicle_methods[] = {
-    {"set_input", (PyCFunction)(void(*)(void))Vehicle_set_input, METH_VARARGS | METH_KEYWORDS,
+    {"set_input", (PyCFunction)(void (*)(void))Vehicle_set_input,
+     METH_VARARGS | METH_KEYWORDS,
      "Set driver inputs: forward [-1..1], right [-1..1], brake [0..1], "
      "handbrake [0..1]"},
-    {"set_tank_input", (PyCFunction)(void(*)(void))Vehicle_set_tank_input,
+    {"set_tank_input", (PyCFunction)(void (*)(void))Vehicle_set_tank_input,
      METH_VARARGS | METH_KEYWORDS,
      "Set inputs for tracked vehicle: (left, right, brake)."},
     {"get_wheel_transform", (PyCFunction)Vehicle_get_wheel_transform,
@@ -3556,7 +3590,7 @@ static const PyMethodDef Skeleton_methods[] = {
     {NULL, NULL, 0, NULL}};
 
 static const PyMethodDef Ragdoll_methods[] = {
-    {"drive_to_pose", (PyCFunction)(void(*)(void))Ragdoll_drive_to_pose,
+    {"drive_to_pose", (PyCFunction)(void (*)(void))Ragdoll_drive_to_pose,
      METH_VARARGS | METH_KEYWORDS, "Drive motors to target pose"},
     {"get_body_handles", (PyCFunction)Ragdoll_get_body_ids, METH_NOARGS,
      "Get list of body handles"},
@@ -3565,7 +3599,7 @@ static const PyMethodDef Ragdoll_methods[] = {
     {NULL, NULL, 0, NULL}};
 
 static const PyMethodDef RagdollSettings_methods[] = {
-    {"add_part", (PyCFunction)(void(*)(void))RagdollSettings_add_part,
+    {"add_part", (PyCFunction)(void (*)(void))RagdollSettings_add_part,
      METH_VARARGS | METH_KEYWORDS, "Config part"},
     {"stabilize", (PyCFunction)RagdollSettings_stabilize, METH_NOARGS,
      "Auto-detect collisions"},
@@ -3622,7 +3656,8 @@ static const PyType_Slot RagdollSettings_slots[] = {
 static const PyType_Spec PhysicsWorld_spec = {
     .name = "culverin._culverin_c.PhysicsWorld",
     .basicsize = sizeof(PhysicsWorldObject),
-    .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_MANAGED_WEAKREF,
+    .flags =
+        Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_MANAGED_WEAKREF,
     .slots = (PyType_Slot *)PhysicsWorld_slots,
 };
 
