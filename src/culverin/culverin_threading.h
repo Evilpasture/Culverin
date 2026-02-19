@@ -81,6 +81,7 @@ static inline void culverin_yield() {
 #elif defined(__linux__) || defined(__FreeBSD__)
   sched_yield();
 #elif defined(__APPLE__)
+#include <unistd.h>
   // macOS deprecated sched_yield behavior; usleep(0) is often preferred
   // for thread arbitration in user-space.
   usleep(0);
