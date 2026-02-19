@@ -1696,70 +1696,57 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
   Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
 
   // 1. DEFAULT VALUES
-  JPH_Real px = 0.0f;
-  JPH_Real py = 0.0f;
-  JPH_Real pz = 0.0f;
-  float rx = 0.0f;
-  float ry = 0.0f;
-  float rz = 0.0f;
-  float rw = 1.0f;
-  float mass = -1.0f;
-  float friction = -1.0f;
-  float restitution = -1.0f;
-  int shape_type = 0;
-  int motion_type = 2;
-  int is_sensor = 0;
-  int use_ccd = 0;
-  uint32_t category = 0xFFFF;
-  uint32_t mask = 0xFFFF;
-  uint32_t material_id = 0;
+  JPH_Real px = 0.0f, py = 0.0f, pz = 0.0f;
+  float rx = 0.0f, ry = 0.0f, rz = 0.0f, rw = 1.0f;
+  float mass = -1.0f, friction = -1.0f, restitution = -1.0f;
+  int shape_type = 0, motion_type = 2, is_sensor = 0, use_ccd = 0;
+  uint32_t category = 0xFFFF, mask = 0xFFFF, material_id = 0;
   unsigned long long user_data = 0;
-  PyObject *py_size = NULL;
 
-  static char *kwlist[] = {
-      "pos",       "rot",         "size",        "shape",    "motion",
-      "user_data", "is_sensor",   "mass",        "category", "mask",
-      "friction",  "restitution", "material_id", "ccd",      NULL};
+  // 2. EXTRACT ARGUMENTS (No Allocations)
+  PyObject *o_pos    = find_arg(0, BP.keys[0], args, nargs, kwnames);
+  PyObject *o_rot    = find_arg(1, BP.keys[1], args, nargs, kwnames);
+  PyObject *o_size   = find_arg(2, BP.keys[2], args, nargs, kwnames);
+  PyObject *o_shape  = find_arg(3, BP.keys[3], args, nargs, kwnames);
+  PyObject *o_motion = find_arg(4, BP.keys[4], args, nargs, kwnames);
+  PyObject *o_udata  = find_arg(5, BP.keys[5], args, nargs, kwnames);
+  PyObject *o_sensor = find_arg(6, BP.keys[6], args, nargs, kwnames);
+  PyObject *o_mass   = find_arg(7, BP.keys[7], args, nargs, kwnames);
+  PyObject *o_cat    = find_arg(8, BP.keys[8], args, nargs, kwnames);
+  PyObject *o_mask   = find_arg(9, BP.keys[9], args, nargs, kwnames);
+  PyObject *o_fric   = find_arg(10, BP.keys[10], args, nargs, kwnames);
+  PyObject *o_rest   = find_arg(11, BP.keys[11], args, nargs, kwnames);
+  PyObject *o_matid  = find_arg(12, BP.keys[12], args, nargs, kwnames);
+  PyObject *o_ccd    = find_arg(13, BP.keys[13], args, nargs, kwnames);
 
-  // Argument parsing logic (Keep existing)
-  PyObject *temp_tuple = PyTuple_New(nargs);
-  if (UNLIKELY(!temp_tuple)) {
-    return NULL;
-  }
-  for (Py_ssize_t i = 0; i < nargs; i++) {
-    Py_INCREF(args[i]);
-    PyTuple_SET_ITEM(temp_tuple, i, args[i]);
-  }
+  // 3. CONVERT VALUES
+  if (o_pos && !parse_vec3_direct(o_pos, &px, &py, &pz)) return NULL;
+  if (o_rot && !parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) return NULL;
+  
+  if (o_shape)  shape_type  = (int)PyLong_AsLong(o_shape);
+  if (o_motion) motion_type = (int)PyLong_AsLong(o_motion);
+  if (o_udata)  user_data   = PyLong_AsUnsignedLongLong(o_udata);
+  if (o_sensor) is_sensor   = PyObject_IsTrue(o_sensor);
+  if (o_mass)   mass        = (float)PyFloat_AsDouble(o_mass);
+  if (o_cat)    category    = (uint32_t)PyLong_AsUnsignedLongMask(o_cat);
+  if (o_mask)   mask        = (uint32_t)PyLong_AsUnsignedLongMask(o_mask);
+  if (o_fric)   friction    = (float)PyFloat_AsDouble(o_fric);
+  if (o_rest)   restitution = (float)PyFloat_AsDouble(o_rest);
+  if (o_matid)  material_id = (uint32_t)PyLong_AsUnsignedLongMask(o_matid);
+  if (o_ccd)    use_ccd     = PyObject_IsTrue(o_ccd);
 
-  PyObject *temp_dict = NULL;
-  if (kwnames) {
-    temp_dict = PyDict_New();
-    Py_ssize_t nkw = PyTuple_GET_SIZE(kwnames);
-    for (Py_ssize_t i = 0; i < nkw; i++) {
-      PyDict_SetItem(temp_dict, PyTuple_GET_ITEM(kwnames, i), args[nargs + i]);
-    }
-  }
+  if (UNLIKELY(PyErr_Occurred())) return NULL;
 
-  int ok = PyArg_ParseTupleAndKeywords(
-      temp_tuple, temp_dict, "|("JPH_REAL_STRING JPH_REAL_STRING JPH_REAL_STRING")(ffff)OiiKpfIIffIp", kwlist, &px, &py, &pz,
-      &rx, &ry, &rz, &rw, &py_size, &shape_type, &motion_type, &user_data,
-      &is_sensor, &mass, &category, &mask, &friction, &restitution,
-      &material_id, &use_ccd);
-
-  Py_XDECREF(temp_dict);
-  Py_DECREF(temp_tuple);
-  if (!ok) {
-    return NULL;
-  }
-
+  // Validation
   if (shape_type == 4 && motion_type != 0) {
     return PyErr_Format(PyExc_ValueError, "SHAPE_PLANE must be MOTION_STATIC");
   }
 
+  // Handle Material & Size
   MaterialSettings mat_in = {friction, restitution};
   MaterialSettings mat = resolve_material_params(self, material_id, mat_in);
   float s[4];
-  parse_body_size(py_size, s);
+  parse_body_size(o_size, s); // Uses existing helper
 
   JPH_Shape *shape = NULL;
   JPH_BodyCreationSettings *settings = NULL;
@@ -1829,8 +1816,11 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
   AuxStride *shadow_lvel = (AuxStride *)self->linear_velocities;
   AuxStride *shadow_avel = (AuxStride *)self->angular_velocities;
 
-  // 1. Position Commit (Stride 3)
-  PosStride p = {px, py, pz};
+  // 1. Position Commit (Stride 4)
+  PosStride p = {};
+  p.x = px;
+  p.y = py;
+  p.z = pz;
   shadow_pos[dense] = p;
   shadow_ppos[dense] = p;
 
@@ -1840,7 +1830,7 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
   shadow_prot[dense] = q;
 
   // 3. Aux Data Commit (Stride 4 / Stride 1)
-  AuxStride zero = {0, 0, 0, 0};
+  AuxStride zero = {};
   shadow_lvel[dense] = zero;
   shadow_avel[dense] = zero;
 
