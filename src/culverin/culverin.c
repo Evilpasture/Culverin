@@ -19,27 +19,28 @@ NativeMutex
 
 // --- Lifecycle: Deallocation ---
 static void PhysicsWorld_dealloc(PhysicsWorldObject *self) {
-  // 1. Clear managed weakrefs (fires callbacks)
+  PyTypeObject *tp = Py_TYPE(self);
+
+  // 1. Clear weakrefs immediately. 
+  // In 3.13+, if you have MANAGED_WEAKREF, this is essential.
   PyObject_ClearWeakRefs((PyObject *)self);
 
-  // 2. RESURRECTION CHECK
-  // If a weakref callback saved 'self', the refcount is no longer 0.
+  // 2. Resurrection Check
+  // If a weakref callback saved the object, stop deallocation.
   if (Py_REFCNT(self) > 0) {
-    return; // Bail out! The object lives to die another day.
+    return;
   }
 
-  // 3. Finalize Jolt and Mutexes
-  // Only happens if the object is truly dying.
+  // 3. Custom Cleanup
   PhysicsWorld_free_members(self);
 
+  // 4. Free synchronization primitives
   FREE_NATIVE_MUTEX(self->step_sync.mutex);
   FREE_NATIVE_COND(self->step_sync.cond);
 
-  // 4. Clean up the Type Reference
-  // Required for Heap Types (PyType_FromSpec)
-  PyTypeObject *tp = Py_TYPE(self);
+  // 5. Finalize the Type and free memory
   tp->tp_free((PyObject *)self);
-  Py_XDECREF(tp);
+  Py_DECREF(tp);
 }
 
 // --- Lifecycle: Initialization ---
@@ -71,8 +72,89 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
   }
 
   // 1. Initial State
-  memset(((char *)self) + offsetof(PhysicsWorldObject, system), 0,
-         sizeof(PhysicsWorldObject) - offsetof(PhysicsWorldObject, system));
+  // 1.1 Jolt Core Pointers
+  self->system = nullptr;
+  self->char_vs_char_manager = nullptr;
+  self->body_interface = nullptr;
+  self->job_system = nullptr;
+  self->bp_interface = nullptr;
+  self->pair_filter = nullptr;
+  self->bp_filter = nullptr;
+  self->contact_listener = nullptr;
+
+  // 1.2. Hot Sync Shadow Buffers
+  self->positions = nullptr;
+  self->prev_positions = nullptr;
+  self->rotations = nullptr;
+  self->prev_rotations = nullptr;
+  self->linear_velocities = nullptr;
+  self->angular_velocities = nullptr;
+  self->body_ids = nullptr;
+  self->user_data = nullptr;
+  self->material_ids = nullptr;
+
+  // 1.3. Data Buffers & Mapping Tables
+  self->contact_events = nullptr;
+  self->contact_buffer = nullptr;
+  self->materials = nullptr;
+  self->command_queue = nullptr;
+  self->command_queue_spare = nullptr;
+  self->shape_cache = nullptr;
+  self->id_to_handle_map = nullptr;
+  self->constraints = nullptr;
+  self->categories = nullptr;
+  self->masks = nullptr;
+  self->generations = nullptr;
+  self->slot_to_dense = nullptr;
+  self->dense_to_slot = nullptr;
+  self->free_slots = nullptr;
+  self->constraint_generations = nullptr;
+  self->free_constraint_slots = nullptr;
+  self->slot_states = nullptr;
+  self->constraint_states = nullptr;
+
+  // 1.4. Counters & Simulation State
+  self->contact_count = 0;
+  self->contact_capacity = 0;
+  self->contact_max_capacity = 0;
+  atomic_init(&self->contact_atomic_idx, 0);
+  
+  self->material_count = 0;
+  self->material_capacity = 0;
+  self->free_count = 0;
+  self->slot_capacity = 0;
+  self->command_count = 0;
+  self->command_capacity = 0;
+  self->spare_capacity = 0;
+  self->shape_cache_count = 0;
+  self->shape_cache_capacity = 0;
+  self->count = 0;
+  self->capacity = 0;
+  self->constraint_count = 0;
+  self->constraint_capacity = 0;
+  self->free_constraint_count = 0;
+  self->time = 0.0;
+
+  // 1.5. Query & Sync State
+  self->max_jolt_bodies = 0;
+  atomic_init(&self->active_queries, 0);
+  self->view_export_count = 0;
+  atomic_init(&self->step_requested, false);
+  atomic_init(&self->is_stepping, false);
+  self->needs_optimization = false;
+
+  // 1.6. Complex Structs (Safe to zero these individually)
+  memset(&self->step_sync, 0, sizeof(ShadowSync));
+  // Note: INIT_LOCK(self->shadow_lock) handles its own initialization
+
+  // 1.7. View Metadata
+  self->view_shape[0] = 0;   self->view_shape[1] = 0;
+  self->view_strides[0] = 0; self->view_strides[1] = 0;
+
+  // 1.8. Debug Renderer
+  self->debug_renderer = nullptr;
+  memset(&self->debug_lines, 0, sizeof(DebugBuffer));
+  memset(&self->debug_triangles, 0, sizeof(DebugBuffer));
   INIT_LOCK(self->shadow_lock);
   self->debug_renderer = JPH_DebugRenderer_Create(self);
   JPH_DebugRenderer_SetProcs(&debug_procs);
