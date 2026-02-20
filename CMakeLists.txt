@@ -60,7 +60,9 @@ set(FORCE_MT_RUNTIME OFF CACHE BOOL "" FORCE)
 set(USE_VULKAN OFF CACHE BOOL "" FORCE)
 
 # Force RTTI ON for the entire build tree before Jolt is processed
-add_definitions(-D_HAS_STATIC_RTTI=1)
+# if(NOT DEFINED -D_HAS_STATIC_RTTI)
+#     add_definitions(-D_HAS_STATIC_RTTI=1)
+# endif()
 
 # Ensure Jolt doesn't override it internally
 set(FORCE_RTTI ON CACHE BOOL "Force RTTI on" FORCE)
@@ -352,6 +354,8 @@ if(Python_VERSION VERSION_GREATER_EQUAL "3.13")
     endif()
 endif()
 
+target_link_libraries(_culverin_c PRIVATE ${JOLTC_TARGET} Jolt)
+
 if(APPLE)
     message(STATUS "Culverin: Enforcing Strong Symbol Export")
 
@@ -359,7 +363,6 @@ if(APPLE)
     target_compile_options(${JOLTC_TARGET} PRIVATE "-frtti")
     target_compile_options(_culverin_c PRIVATE "-frtti")
 
-    target_link_libraries(_culverin_c PRIVATE ${JOLTC_TARGET} Jolt)
 
     target_link_options(_culverin_c PRIVATE 
         "-Wl,-all_load"
