@@ -2,6 +2,8 @@
 #include <Python.h>
 #include <stdbool.h>
 #include "culverin_tracked_vehicle.h"
+#include "culverin_fast_parse.h"
+#include "culverin_arg_indices.h"
 
 typedef struct {
   float x;
@@ -83,3 +85,20 @@ static inline PyObject* find_arg(Py_ssize_t pos_idx, PyObject *target_key,
     }
     return NULL;
 }
+
+// PARSER STORAGE.
+
+static FastParser BodyParser;
+static FastArgSpec BodySpecs[IDX_BODY_COUNT];
+
+static FastParser SetPosParser;
+static FastArgSpec SetPosSpecs[IDX_SETPOS_COUNT];
+
+static FastParser SetVelParser;
+static FastArgSpec SetVelSpecs[IDX_SETVEL_COUNT];
+
+static FastParser BatchCreateParser;
+static FastArgSpec BatchCreateSpecs[IDX_BATCH_COUNT];
+
+static FastParser BatchDestroyParser;
+static FastArgSpec BatchDestroySpecs[IDX_BATCH_DESTROY_COUNT];

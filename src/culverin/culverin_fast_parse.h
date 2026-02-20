@@ -195,7 +195,10 @@ static inline bool fp_parse_vector(PyObject *const *args, Py_ssize_t nargs,
         size_t h = fp_hash_ptr(key, fp->table_mask);
         while (fp->lookup_table[h] != FP_EMPTY_SLOT) {
           size_t idx = fp->lookup_table[h];
-          if (specs[idx].interned == key) {
+          // FIX: Check pointer first (fast), then fall back to string compare
+          // (safe)
+          if (specs[idx].interned == key ||
+              PyUnicode_Compare(key, specs[idx].interned) == 0) {
             provided_mask |= (1ULL << idx);
             if (kw_vals[i] != Py_None) {
               specs[idx].convert(kw_vals[i], targets[idx]);
@@ -208,7 +211,9 @@ static inline bool fp_parse_vector(PyObject *const *args, Py_ssize_t nargs,
         }
       } else {
         for (size_t j = 0; j < count; ++j) {
-          if (key == specs[j].interned) {
+          // FIX: Fallback here too
+          if (key == specs[j].interned ||
+              PyUnicode_Compare(key, specs[j].interned) == 0) {
             provided_mask |= (1ULL << j);
             if (kw_vals[i] != Py_None) {
               specs[j].convert(kw_vals[i], targets[j]);

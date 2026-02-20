@@ -1,0 +1,32 @@
+// culverin_arg_indices.h
+#pragma once
+
+typedef enum {
+    IDX_POS, IDX_ROT, IDX_SIZE, IDX_SHAPE, IDX_MOTION,
+    IDX_USER_DATA, IDX_SENSOR, IDX_MASS, IDX_CAT, IDX_MASK,
+    IDX_FRIC, IDX_REST, IDX_MAT, IDX_CCD,
+    IDX_BODY_COUNT
+} BodyArgIdx;
+
+typedef enum {
+    IDX_BATCH_POSITIONS,
+    IDX_BATCH_SIZES,
+    IDX_BATCH_SHAPE_TYPE,
+    IDX_BATCH_MOTION_TYPE,
+    IDX_BATCH_COUNT 
+} BatchCreateArgIdx;
+
+typedef enum {
+    IDX_SETPOS_HANDLE, IDX_SETPOS_X, IDX_SETPOS_Y, IDX_SETPOS_Z,
+    IDX_SETPOS_COUNT
+} SetPosArgIdx;
+
+typedef enum {
+    IDX_SETVEL_HANDLE, IDX_SETVEL_VX, IDX_SETVEL_VY, IDX_SETVEL_VZ,
+    IDX_SETVEL_COUNT
+} SetVelArgIdx;
+
+typedef enum {
+    IDX_BATCH_DESTROY_HANDLES,
+    IDX_BATCH_DESTROY_COUNT
+} BatchDestroyArgIdx;

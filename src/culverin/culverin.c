@@ -1793,35 +1793,9 @@ static void configure_body_settings(JPH_BodyCreationSettings *settings,
 }
 
 // Main Orchestrator
-// Define the size as a constexpr for C23 safety
-constexpr size_t BODY_ARG_COUNT = 14;
-
-// This is the static registry that stores interned strings and function pointers
-static FastParser BodyParser;
-static FastArgSpec BodySpecs[BODY_ARG_COUNT];
-void init_physics_parsers(void) {
-    // 1. Define local variables just for type deduction in the FP_ARG macro
-    float f; int i; uint32_t u; uint64_t k; bool b; PyObject *o;
-
-    // 2. Build the specs (The macro uses typeof_unqual to pick the right converter)
-    FastArgSpec temp[BODY_ARG_COUNT] = {
-        FP_ARG("pos", o),          FP_ARG("rot", o),          FP_ARG("size", o),
-        FP_ARG("shape", i),        FP_ARG("motion", i),       FP_ARG("user_data", k),
-        FP_ARG("is_sensor", b),    FP_ARG("mass", f),         FP_ARG("category", u),
-        FP_ARG("mask", u),         FP_ARG("friction", f),     FP_ARG("restitution", f),
-        FP_ARG("material_id", u),  FP_ARG("ccd", b)
-    };
-
-    // 3. Copy to the static global and intern the strings
-    memcpy(BodySpecs, temp, sizeof(temp));
-    
-    // This function from the header creates the interned PyObjects for the keys
-    FastParse_Init(&BodyParser, BodySpecs, BODY_ARG_COUNT);
-}
 static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
                                           PyObject *const *args, size_t nargsf,
                                           PyObject *kwnames) {
-    // C23 auto deduction
     auto nargs = PyVectorcall_NARGS(nargsf);
 
     // 1. DEFAULT VALUES
@@ -1834,23 +1808,31 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
     bool is_sensor = false, use_ccd = false;
     PyObject *o_pos = nullptr, *o_rot = nullptr, *o_size = nullptr;
 
-    // 2. TARGET MAPPING
-    // Order must match the order in init_physics_parsers
-    void *targets[BODY_ARG_COUNT] = {
-        &o_pos, &o_rot, &o_size, &shape_type, &motion_type,
-        &user_data, &is_sensor, &mass, &category, &mask,
-        &friction, &restitution, &material_id, &use_ccd
-    };
+    // 2. TARGET MAPPING (Explicitly mapped via Enum)
+    // Using explicit indices [IDX_...] makes this reorder-proof.
+    void *targets[IDX_BODY_COUNT]; 
+    targets[IDX_POS]          = &o_pos;
+    targets[IDX_ROT]          = &o_rot;
+    targets[IDX_SIZE]         = &o_size;
+    targets[IDX_SHAPE]        = &shape_type;
+    targets[IDX_MOTION]       = &motion_type;
+    targets[IDX_USER_DATA]    = &user_data;
+    targets[IDX_SENSOR]       = &is_sensor;
+    targets[IDX_MASS]         = &mass;
+    targets[IDX_CAT]          = &category;
+    targets[IDX_MASK]         = &mask;
+    targets[IDX_FRIC]         = &friction;
+    targets[IDX_REST]         = &restitution;
+    targets[IDX_MAT]          = &material_id;
+    targets[IDX_CCD]          = &use_ccd;
 
-    // C23 Static check to ensure you didn't miss a target
-    static_assert(sizeof(targets) / sizeof(void*) == BODY_ARG_COUNT);
-
-    // 3. THE FAST PARSE (This replaces the 14 manual find_arg calls)
+    // 3. THE FAST PARSE
+    // We pass the global 'BodyParser' defined in the God Init helper
     if (!FastParse_Unified(args, nargs, kwnames, &BodyParser, targets)) {
         return nullptr;
     }
 
-    // 4. CONVERT COMPLEX TYPES
+    // 4. CONVERT COMPLEX TYPES (Post-parse logic)
     if (o_pos && !parse_vec3_direct(o_pos, &px, &py, &pz)) return nullptr;
     if (o_rot && !parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) return nullptr;
 
@@ -1989,178 +1971,168 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
 }
 
 static PyObject *PhysicsWorld_create_bodies_batch(PhysicsWorldObject *self,
-                                                  PyObject *args,
-                                                  PyObject *kwds) {
-  PyObject *py_positions = NULL;
-  PyObject *py_sizes = NULL;
-  int shape_type = 0;
-  int motion_type = 2;
-  static char *kwlist[] = {"positions", "sizes", "shape_type", "motion_type",
-                           NULL};
+                                                  PyObject *const *args, size_t nargsf,
+                                                  PyObject *kwnames) {
+    // 1. FAST PARSE (Zero Lock Contention)
+    PyObject *py_positions = NULL;
+    PyObject *py_sizes = NULL;
+    int shape_type = 0;
+    int motion_type = 2;
 
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "OO|ii", kwlist, &py_positions,
-                                   &py_sizes, &shape_type, &motion_type)) {
-    return NULL;
-  }
+    void *targets[IDX_BATCH_COUNT];
+    targets[IDX_BATCH_POSITIONS]   = &py_positions;
+    targets[IDX_BATCH_SIZES]       = &py_sizes;
+    targets[IDX_BATCH_SHAPE_TYPE]  = &shape_type;
+    targets[IDX_BATCH_MOTION_TYPE] = &motion_type;
 
-  Py_ssize_t batch_count = PyList_Size(py_positions);
-  if (PyList_Size(py_sizes) != batch_count) {
-    return PyErr_Format(PyExc_ValueError, "List length mismatch");
-  }
+    auto nargs = PyVectorcall_NARGS(nargsf);
+    if (!FastParse_Unified(args, nargs, kwnames, &BatchCreateParser, targets)) {
+        return NULL;
+    }
+    // Initial Validation
+    if (!PyList_Check(py_positions) || !PyList_Check(py_sizes)) {
+        return PyErr_Format(PyExc_TypeError, "positions and sizes must be lists");
+    }
 
-  // 1. ALLOCATE TEMP BUFFERS
-  PosStride *pos_buf = PyMem_RawMalloc(batch_count * sizeof(PosStride));
-  ShapeParams *size_buf = PyMem_RawMalloc(batch_count * sizeof(ShapeParams));
-  auto **settings_buf = (JPH_BodyCreationSettings **)PyMem_RawCalloc(
-      batch_count, sizeof(JPH_BodyCreationSettings *));
+    Py_ssize_t batch_count = PyList_GET_SIZE(py_positions);
+    if (PyList_GET_SIZE(py_sizes) != batch_count) {
+        return PyErr_Format(PyExc_ValueError, "List length mismatch");
+    }
 
-  if (!pos_buf || !size_buf || !settings_buf) {
+    // 2. TEMP ALLOCATION
+    PosStride *pos_buf = PyMem_RawMalloc(batch_count * sizeof(PosStride));
+    ShapeParams *size_buf = PyMem_RawMalloc(batch_count * sizeof(ShapeParams));
+    auto **settings_buf = (JPH_BodyCreationSettings **)PyMem_RawCalloc(
+        batch_count, sizeof(JPH_BodyCreationSettings *));
+
+    if (!pos_buf || !size_buf || !settings_buf) {
+        PyMem_RawFree(pos_buf); PyMem_RawFree(size_buf); PyMem_RawFree(settings_buf);
+        return PyErr_NoMemory();
+    }
+
+    // 3. PARSE INTO C BUFFERS (GIL HELD)
+    for (Py_ssize_t i = 0; i < batch_count; i++) {
+        // Using GET_ITEM is safe here because we verified types/lengths above
+        if (!parse_py_vec3(PyList_GET_ITEM(py_positions, i), &pos_buf[i])) {
+            pos_buf[i] = (PosStride){0, 0, 0};
+        }
+        parse_body_size(PyList_GET_ITEM(py_sizes, i), size_buf[i].p);
+    }
+
+    // 4. JOLT PREP (NO GIL)
+    Py_BEGIN_ALLOW_THREADS 
+    NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+    SHADOW_LOCK(&self->shadow_lock);
+
+    JPH_STACK_ALLOC(JPH_RVec3, j_pos);
+    JPH_STACK_ALLOC(JPH_Quat, j_rot);
+    *j_rot = (JPH_Quat){0.0f, 0.0f, 0.0f, 1.0f};
+
+    for (Py_ssize_t i = 0; i < batch_count; i++) {
+        JPH_Shape *shape = find_or_create_shape_locked(self, shape_type, size_buf[i].p);
+        if (shape) {
+            *j_pos = (JPH_RVec3){pos_buf[i].x, pos_buf[i].y, pos_buf[i].z};
+            settings_buf[i] = JPH_BodyCreationSettings_Create3(
+                shape, j_pos, j_rot, (JPH_MotionType)motion_type,
+                (motion_type == 0 ? 0 : 1));
+        }
+    }
+    SHADOW_UNLOCK(&self->shadow_lock);
+    NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+    Py_END_ALLOW_THREADS
+
+    // 5. COMMIT PHASE (SHADOW LOCK)
+    SHADOW_LOCK(&self->shadow_lock);
+
+    // Bulk capacity check for slots and dense buffers
+    if (self->free_count < (size_t)batch_count || (self->count + batch_count) > self->capacity) {
+        size_t needed = self->count + batch_count + 1024;
+        if (PhysicsWorld_resize(self, needed) < 0) {
+            SHADOW_UNLOCK(&self->shadow_lock);
+            goto fail;
+        }
+    }
+
+    // Bulk capacity check for command queue
+    size_t needed_cmds = self->command_count + batch_count;
+    if (self->command_capacity < needed_cmds) {
+        void *new_q = PyMem_RawRealloc(self->command_queue, needed_cmds * sizeof(PhysicsCommand));
+        if (!new_q) {
+            SHADOW_UNLOCK(&self->shadow_lock);
+            goto fail;
+        }
+        self->command_queue = (PhysicsCommand *)new_q;
+        self->command_capacity = (uint32_t)needed_cmds;
+    }
+
+    PyObject *result_list = PyList_New(batch_count);
+    if (!result_list) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        goto fail;
+    }
+
+    auto *shadow_pos = (PosStride *)self->positions;
+    auto *shadow_ppos = (PosStride *)self->prev_positions;
+    auto *shadow_rot = (AuxStride *)self->rotations;
+    auto *shadow_prot = (AuxStride *)self->prev_rotations;
+    auto *shadow_lvel = (AuxStride *)self->linear_velocities;
+    auto *shadow_avel = (AuxStride *)self->angular_velocities;
+
+    for (Py_ssize_t i = 0; i < batch_count; i++) {
+        if (!settings_buf[i]) {
+            Py_INCREF(Py_None);
+            PyList_SET_ITEM(result_list, i, Py_None);
+            continue;
+        }
+
+        uint32_t slot = self->free_slots[--self->free_count];
+        uint32_t dense = (uint32_t)self->count++;
+        BodyHandle handle = make_handle(slot, self->generations[slot]);
+        JPH_BodyCreationSettings_SetUserData(settings_buf[i], (uint64_t)handle);
+
+        // Immediate Shadow Buffer Update
+        PosStride p = {pos_buf[i].x, pos_buf[i].y, pos_buf[i].z};
+        shadow_pos[dense] = p;
+        shadow_ppos[dense] = p;
+
+        AuxStride identity_q = {0.0f, 0.0f, 0.0f, 1.0f};
+        shadow_rot[dense] = identity_q;
+        shadow_prot[dense] = identity_q;
+        
+        shadow_lvel[dense] = (AuxStride){0};
+        shadow_avel[dense] = (AuxStride){0};
+
+        // Indirection Mapping
+        self->body_ids[dense] = JPH_INVALID_BODY_ID;
+        self->slot_to_dense[slot] = dense;
+        self->dense_to_slot[dense] = slot;
+        self->slot_states[slot] = SLOT_PENDING_CREATE;
+
+        // Queue Creation Command
+        PhysicsCommand *cmd = &self->command_queue[self->command_count++];
+        cmd->header = CMD_HEADER(CMD_CREATE_BODY, slot);
+        cmd->create.settings = settings_buf[i];
+
+        // Store result handle
+        PyList_SET_ITEM(result_list, i, PyLong_FromUnsignedLongLong(handle));
+    }
+
+    self->view_shape[0] = (Py_ssize_t)self->count;
+    SHADOW_UNLOCK(&self->shadow_lock);
+
     PyMem_RawFree(pos_buf);
     PyMem_RawFree(size_buf);
-    PyMem_RawFree((void *)settings_buf);
-    return PyErr_NoMemory();
-  }
-
-  // 2. PARSE (GIL HELD)
-  for (Py_ssize_t i = 0; i < batch_count; i++) {
-    if (!parse_py_vec3(PyList_GetItem(py_positions, i), &pos_buf[i])) {
-      pos_buf[i] = (PosStride){0, 0, 0};
-    }
-    parse_body_size(PyList_GetItem(py_sizes, i), size_buf[i].p);
-  }
-
-  // 3. JOLT PREP (NO GIL)
-  Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
-  SHADOW_LOCK(&self->shadow_lock);
-
-  JPH_STACK_ALLOC(JPH_RVec3, j_pos);
-  JPH_STACK_ALLOC(JPH_Quat, j_rot);
-  j_rot->x = 0;
-  j_rot->y = 0;
-  j_rot->z = 0;
-  j_rot->w = 1.0f;
-
-  for (Py_ssize_t i = 0; i < batch_count; i++) {
-    JPH_Shape *shape =
-        find_or_create_shape_locked(self, shape_type, size_buf[i].p);
-    if (shape) {
-      j_pos->x = pos_buf[i].x;
-      j_pos->y = pos_buf[i].y;
-      j_pos->z = pos_buf[i].z;
-      settings_buf[i] = JPH_BodyCreationSettings_Create3(
-          shape, j_pos, j_rot, (JPH_MotionType)motion_type,
-          (motion_type == 0 ? 0 : 1));
-    }
-  }
-  SHADOW_UNLOCK(&self->shadow_lock);
-  NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
-  Py_END_ALLOW_THREADS
-
-      // --- 4. COMMIT PHASE (SHADOW LOCK) ---
-      SHADOW_LOCK(&self->shadow_lock);
-
-  // Resize Checks (Slots + Dense Capacity)
-  if (self->free_count < (size_t)batch_count ||
-      (self->count + (size_t)batch_count) > self->capacity) {
-    size_t needed = (self->count + (size_t)batch_count > self->capacity)
-                        ? (self->count + (size_t)batch_count + 1024)
-                        : self->capacity;
-    if (PhysicsWorld_resize(self, needed) < 0) {
-      SHADOW_UNLOCK(&self->shadow_lock);
-      goto fail;
-    }
-  }
-
-  // Command Queue Checks
-  size_t needed_cmds = self->command_count + batch_count;
-  if (self->command_capacity < needed_cmds) {
-    void *new_q = PyMem_RawRealloc(self->command_queue,
-                                   needed_cmds * sizeof(PhysicsCommand));
-    if (!new_q) {
-      SHADOW_UNLOCK(&self->shadow_lock);
-      goto fail;
-    }
-    self->command_queue = (PhysicsCommand *)new_q;
-    self->command_capacity = needed_cmds;
-  }
-
-  PyObject *result_list = PyList_New(batch_count);
-  if (!result_list) {
-    SHADOW_UNLOCK(&self->shadow_lock);
-    goto fail;
-  }
-
-  // Typed Pointers for clean indexing
-  auto *shadow_pos = (PosStride *)self->positions;
-  auto *shadow_prev_pos = (PosStride *)self->prev_positions;
-  auto *shadow_rot = (AuxStride *)self->rotations;
-  auto *shadow_prev_rot = (AuxStride *)self->prev_rotations;
-  auto *shadow_lvel = (AuxStride *)self->linear_velocities;
-  auto *shadow_avel = (AuxStride *)self->angular_velocities;
-
-  for (Py_ssize_t i = 0; i < batch_count; i++) {
-    if (!settings_buf[i]) {
-      Py_INCREF(Py_None);
-      PyList_SetItem(result_list, i, Py_None);
-      continue;
-    }
-
-    if (UNLIKELY(self->free_count == 0)) {
-      // This should technically be impossible if the resize logic is correct,
-      // but it stops a Segfault/ASan abort.
-      SHADOW_UNLOCK(&self->shadow_lock);
-      goto fail;
-    }
-
-    uint32_t slot = self->free_slots[--self->free_count];
-    auto dense = (uint32_t)self->count++;
-    BodyHandle handle = make_handle(slot, self->generations[slot]);
-    JPH_BodyCreationSettings_SetUserData(settings_buf[i], (uint64_t)handle);
-
-    // --- Clean Struct Assignment ---
-    PosStride p = {pos_buf[i].x, pos_buf[i].y, pos_buf[i].z};
-    shadow_pos[dense] = p;
-    shadow_prev_pos[dense] = p;
-
-    AuxStride r = {0.0f, 0.0f, 0.0f, 1.0f}; // Identity Quaternion
-    shadow_rot[dense] = r;
-    shadow_prev_rot[dense] = r;
-
-    AuxStride zero_vel = {0.0f, 0.0f, 0.0f, 0.0f};
-    shadow_lvel[dense] = zero_vel;
-    shadow_avel[dense] = zero_vel;
-
-    // Metadata
-    self->body_ids[dense] = JPH_INVALID_BODY_ID;
-    self->slot_to_dense[slot] = dense;
-    self->dense_to_slot[dense] = slot;
-    self->slot_states[slot] = SLOT_PENDING_CREATE;
-
-    PhysicsCommand *cmd = &self->command_queue[self->command_count++];
-    cmd->header = CMD_HEADER(CMD_CREATE_BODY, slot);
-    cmd->create.settings = settings_buf[i];
-
-    PyList_SetItem(result_list, i, PyLong_FromUnsignedLongLong(handle));
-  }
-
-  self->view_shape[0] = (Py_ssize_t)self->count;
-  SHADOW_UNLOCK(&self->shadow_lock);
-
-  PyMem_RawFree(pos_buf);
-  PyMem_RawFree(size_buf);
-  PyMem_RawFree((void *)settings_buf);
-  return result_list;
+    PyMem_RawFree(settings_buf);
+    return result_list;
 
 fail:
-  for (Py_ssize_t i = 0; i < batch_count; i++) {
-    if (settings_buf[i]) {
-      JPH_BodyCreationSettings_Destroy(settings_buf[i]);
+    for (Py_ssize_t i = 0; i < batch_count; i++) {
+        if (settings_buf[i]) JPH_BodyCreationSettings_Destroy(settings_buf[i]);
     }
-  }
-  PyMem_RawFree(pos_buf);
-  PyMem_RawFree(size_buf);
-  PyMem_RawFree((void *)settings_buf);
-  return NULL;
+    PyMem_RawFree(pos_buf);
+    PyMem_RawFree(size_buf);
+    PyMem_RawFree(settings_buf);
+    return NULL;
 }
 
 /**
@@ -2440,132 +2412,137 @@ static PyObject *PhysicsWorld_destroy_body(PhysicsWorldObject *self,
 }
 
 static PyObject *PhysicsWorld_destroy_bodies_batch(PhysicsWorldObject *self,
-                                                   PyObject *args,
-                                                   PyObject *kwds) {
-  PyObject *py_handles = NULL;
-  static char *kwlist[] = {"handles", NULL};
+                                                   PyObject *const *args, size_t nargsf,
+                                                   PyObject *kwnames) {
+    PyObject *py_handles_in = NULL;
+    void *targets[IDX_BATCH_DESTROY_COUNT];
+    targets[IDX_BATCH_DESTROY_HANDLES] = &py_handles_in;
 
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "O", kwlist, &py_handles)) {
-    return NULL;
-  }
+    auto nargs = PyVectorcall_NARGS(nargsf);
+    if (!FastParse_Unified(args, nargs, kwnames, &BatchDestroyParser, targets)) {
+        return NULL;
+    }
 
-  if (!PySequence_Check(py_handles)) {
-    return PyErr_Format(PyExc_TypeError, "Expected a sequence of handles");
-  }
+    // MANDATORY NULL CHECK:
+    // If the parser succeeded but didn't find the arg (or it was missing), 
+    // py_handles_in will be NULL.
+    if (UNLIKELY(!py_handles_in)) {
+        Py_RETURN_NONE; 
+    }
 
-  Py_ssize_t batch_count = PySequence_Size(py_handles);
-  if (batch_count == 0) {
+    // Now it is safe to call PySequence_Fast
+    PyObject *py_handles = PySequence_Fast(py_handles_in, "handles must be a sequence");
+    if (UNLIKELY(!py_handles)) return NULL;
+
+    Py_ssize_t batch_count = PySequence_Fast_GET_SIZE(py_handles);
+    PyObject **items = PySequence_Fast_ITEMS(py_handles);
+
+    if (batch_count <= 0) {
+        Py_DECREF(py_handles);
+        Py_RETURN_NONE;
+    }
+
+    // --- LOCK SECTION ---
+    SHADOW_LOCK(&self->shadow_lock);
+    BLOCK_UNTIL_NOT_STEPPING(self);
+
+    int actual_destroyed = 0;
+
+    for (Py_ssize_t i = 0; i < batch_count; i++) {
+        PyObject *item = items[i];
+
+        // This converts to int. In 3.14t, this is thread-safe on interned longs.
+        uint64_t h_raw = PyLong_AsUnsignedLongLong(item);
+        
+        if (UNLIKELY(PyErr_Occurred())) {
+            PyErr_Clear();
+            continue;
+        }
+
+        uint32_t slot = 0;
+        if (unpack_handle(self, (BodyHandle)h_raw, &slot)) {
+            uint8_t state = self->slot_states[slot];
+
+            if (state == SLOT_ALIVE || state == SLOT_PENDING_CREATE) {
+                if (UNLIKELY(!ensure_command_capacity(self))) {
+                    SHADOW_UNLOCK(&self->shadow_lock);
+                    Py_DECREF(py_handles);
+                    return PyErr_NoMemory();
+                }
+
+                PhysicsCommand *cmd = &self->command_queue[self->command_count++];
+                cmd->header = CMD_HEADER(CMD_DESTROY_BODY, slot);
+                
+                self->slot_states[slot] = SLOT_PENDING_DESTROY;
+                actual_destroyed++;
+            }
+        }
+    }
+
+    SHADOW_UNLOCK(&self->shadow_lock);
+    // --- UNLOCK SECTION ---
+
+    Py_DECREF(py_handles);
     Py_RETURN_NONE;
-  }
-
-  SHADOW_LOCK(&self->shadow_lock);
-
-  // We must ensure the engine isn't currently flushing commands
-  BLOCK_UNTIL_NOT_STEPPING(self);
-
-  // --- 1. PRE-ALLOCATE COMMAND QUEUE ---
-  // Growing the queue once is significantly faster than doing it in a loop
-  size_t needed = self->command_count + batch_count;
-  if (needed > self->command_capacity) {
-    size_t new_cap = (self->command_capacity * 2 > needed)
-                         ? self->command_capacity * 2
-                         : needed;
-    void *new_ptr =
-        PyMem_RawRealloc(self->command_queue, new_cap * sizeof(PhysicsCommand));
-    if (!new_ptr) {
-      SHADOW_UNLOCK(&self->shadow_lock);
-      return PyErr_NoMemory();
-    }
-    self->command_queue = (PhysicsCommand *)new_ptr;
-    self->command_capacity = new_cap;
-  }
-
-  int actual_destroyed = 0;
-
-  // --- 2. FAST ITERATION ---
-  for (Py_ssize_t i = 0; i < batch_count; i++) {
-    // Use Sequence API to support list, tuple, or even NumPy arrays
-    PyObject *item = PySequence_GetItem(py_handles, i);
-    if (UNLIKELY(!item)) {
-      continue;
-    }
-
-    uint64_t h_raw = PyLong_AsUnsignedLongLong(item);
-    Py_DECREF(item);
-
-    if (UNLIKELY(PyErr_Occurred())) {
-      PyErr_Clear();
-      continue;
-    }
-
-    uint32_t slot = 0;
-    if (unpack_handle(self, (BodyHandle)h_raw, &slot)) {
-      uint8_t state = self->slot_states[slot];
-
-      // Only destroy if it's currently alive or just created
-      if (state == SLOT_ALIVE || state == SLOT_PENDING_CREATE) {
-        PhysicsCommand *cmd = &self->command_queue[self->command_count++];
-        cmd->header = CMD_HEADER(CMD_DESTROY_BODY, slot);
-
-        // Mark logically dead immediately.
-        // This ensures is_alive(h) returns False right now.
-        self->slot_states[slot] = SLOT_PENDING_DESTROY;
-        actual_destroyed++;
-      }
-    }
-  }
-
-  SHADOW_UNLOCK(&self->shadow_lock);
-
-  DEBUG_LOG("Batch Destroy: Queued %d bodies for removal.",
-  actual_destroyed);
-  Py_RETURN_NONE;
 }
 
 static PyObject *PhysicsWorld_set_position(PhysicsWorldObject *self,
-                                           PyObject *args, PyObject *kwds) {
-  uint64_t handle_raw = 0;
-  JPH_Real x = 0.0;
-  JPH_Real y = 0.0;
-  JPH_Real z = 0.0;
-  static char *kwlist[] = {"handle", "x", "y", "z", NULL};
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "Kddd", kwlist, &handle_raw, &x,
-                                   &y, &z)) {
-    return NULL;
-  }
-  SHADOW_LOCK(&self->shadow_lock);
-  BLOCK_UNTIL_NOT_STEPPING(self);
-  BLOCK_UNTIL_NOT_QUERYING(self);
+                                           PyObject *const *args, size_t nargsf,
+                                           PyObject *kwnames) {
+    // 1. RAW PARSING 
+    uint64_t handle_raw;
+    JPH_Real x, y, z;
 
-  uint32_t slot = 0;
-  // Allow PENDING_CREATE so users can move bodies they just created
-  if (!unpack_handle(self, (BodyHandle)handle_raw, &slot)) {
+    // Mapping using explicit Enum indices
+    void *targets[IDX_SETPOS_COUNT];
+    targets[IDX_SETPOS_HANDLE] = &handle_raw;
+    targets[IDX_SETPOS_X]      = &x;
+    targets[IDX_SETPOS_Y]      = &y;
+    targets[IDX_SETPOS_Z]      = &z;
+
+    auto nargs = PyVectorcall_NARGS(nargsf);
+    if (!FastParse_Unified(args, nargs, kwnames, &SetPosParser, targets)) {
+        return NULL;
+    }
+
+    // 2. CRITICAL SECTION
+    SHADOW_LOCK(&self->shadow_lock);
+    
+    BLOCK_UNTIL_NOT_STEPPING(self);
+    BLOCK_UNTIL_NOT_QUERYING(self);
+
+    uint32_t slot = 0;
+    if (UNLIKELY(!unpack_handle(self, (BodyHandle)handle_raw, &slot))) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_SetString(PyExc_ValueError, "Invalid handle");
+        return NULL;
+    }
+
+    uint8_t state = self->slot_states[slot];
+    if (UNLIKELY(state != SLOT_ALIVE && state != SLOT_PENDING_CREATE)) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_SetString(PyExc_ValueError, "Stale handle");
+        return NULL;
+    }
+
+    // 3. COMMAND COMMIT
+    if (UNLIKELY(!ensure_command_capacity(self))) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        return PyErr_NoMemory();
+    }
+
+    PhysicsCommand *cmd = &self->command_queue[self->command_count++];
+    cmd->header = CMD_HEADER(CMD_SET_POS, slot);
+    cmd->pos.x = x;
+    cmd->pos.y = y;
+    cmd->pos.z = z;
+
+    // Mirror to shadow buffer for immediate read-back
+    PosStride *shadow_pos = (PosStride *)self->positions;
+    shadow_pos[self->slot_to_dense[slot]] = (PosStride){x, y, z, 0};
+
     SHADOW_UNLOCK(&self->shadow_lock);
-    PyErr_SetString(PyExc_ValueError, "Invalid handle");
-    return NULL;
-  }
-
-  uint8_t state = self->slot_states[slot];
-  if (state != SLOT_ALIVE && state != SLOT_PENDING_CREATE) {
-    SHADOW_UNLOCK(&self->shadow_lock);
-    PyErr_SetString(PyExc_ValueError, "Stale handle");
-    return NULL;
-  }
-
-  // Queue it instead of immediate execution
-  if (!ensure_command_capacity(self)) {
-    SHADOW_UNLOCK(&self->shadow_lock);
-    return PyErr_NoMemory();
-  }
-
-  PhysicsCommand *cmd = &self->command_queue[self->command_count++];
-  cmd->header = CMD_HEADER(CMD_SET_POS, slot);
-  cmd->pos.x = x;
-  cmd->pos.y = y;
-  cmd->pos.z = z;
-
-  SHADOW_UNLOCK(&self->shadow_lock);
-  Py_RETURN_NONE;
+    Py_RETURN_NONE;
 }
 
 static PyObject *PhysicsWorld_set_rotation(PhysicsWorldObject *self,
@@ -3497,7 +3474,7 @@ static const PyMethodDef PhysicsWorld_methods[] = {
      METH_FASTCALL | METH_KEYWORDS, NULL},
     {"create_bodies_batch",
      (PyCFunction)(void (*)(void))PhysicsWorld_create_bodies_batch,
-     METH_VARARGS | METH_KEYWORDS, NULL},
+     METH_FASTCALL | METH_KEYWORDS, NULL},
     {"destroy_body", (PyCFunction)(void (*)(void))PhysicsWorld_destroy_body,
      METH_FASTCALL | METH_KEYWORDS, NULL},
     {"destroy_bodies_batch",
@@ -3559,7 +3536,7 @@ static const PyMethodDef PhysicsWorld_methods[] = {
      METH_VARARGS | METH_KEYWORDS,
      "Apply buoyancy to a list of bodies. handles must be a buffer of uint64."},
     {"set_position", (PyCFunction)(void (*)(void))PhysicsWorld_set_position,
-     METH_VARARGS | METH_KEYWORDS, NULL},
+     METH_FASTCALL | METH_KEYWORDS, NULL},
     {"set_rotation", (PyCFunction)(void (*)(void))PhysicsWorld_set_rotation,
      METH_VARARGS | METH_KEYWORDS, NULL},
     {"set_linear_velocity",
@@ -3867,6 +3844,76 @@ static int init_constants(PyObject *m) {
   return 0;
 }
 
+void culverin_init_all_parsers(void) {
+  // 1. Dummies for Type Deduction (Used by FP_ARG macros)
+  PyObject *o;
+  float f;
+  double d;
+  int i;
+  uint32_t u;
+  uint64_t k;
+  bool b;
+
+  // --- A. PHYSICS BODY CREATION ---
+  {
+    FastArgSpec specs[] = {[IDX_POS] = FP_ARG("pos", o),
+                           [IDX_ROT] = FP_ARG("rot", o),
+                           [IDX_SIZE] = FP_ARG("size", o),
+                           [IDX_SHAPE] = FP_ARG("shape", i),
+                           [IDX_MOTION] = FP_ARG("motion", i),
+                           [IDX_USER_DATA] = FP_ARG("user_data", k),
+                           [IDX_SENSOR] = FP_ARG("is_sensor", b),
+                           [IDX_MASS] = FP_ARG("mass", f),
+                           [IDX_CAT] = FP_ARG("category", u),
+                           [IDX_MASK] = FP_ARG("mask", u),
+                           [IDX_FRIC] = FP_ARG("friction", f),
+                           [IDX_REST] = FP_ARG("restitution", f),
+                           [IDX_MAT] = FP_ARG("material_id", u),
+                           [IDX_CCD] = FP_ARG("ccd", b)};
+    memcpy(BodySpecs, specs, sizeof(specs));
+    FastParse_Init(&BodyParser, BodySpecs, IDX_BODY_COUNT);
+  }
+
+  // --- B. SET POSITION ---
+  {
+    FastArgSpec specs[] = {[IDX_SETPOS_HANDLE] = FP_REQ_ARG("handle", k),
+                           [IDX_SETPOS_X] = FP_REQ_ARG("x", d),
+                           [IDX_SETPOS_Y] = FP_REQ_ARG("y", d),
+                           [IDX_SETPOS_Z] = FP_REQ_ARG("z", d)};
+    memcpy(SetPosSpecs, specs, sizeof(specs));
+    FastParse_Init(&SetPosParser, SetPosSpecs, IDX_SETPOS_COUNT);
+  }
+
+  // --- C. SET VELOCITY ---
+  {
+    FastArgSpec specs[] = {[IDX_SETVEL_HANDLE] = FP_REQ_ARG("handle", k),
+                           [IDX_SETVEL_VX] = FP_REQ_ARG("vx", f),
+                           [IDX_SETVEL_VY] = FP_REQ_ARG("vy", f),
+                           [IDX_SETVEL_VZ] = FP_REQ_ARG("vz", f)};
+    memcpy(SetVelSpecs, specs, sizeof(specs));
+    FastParse_Init(&SetVelParser, SetVelSpecs, IDX_SETVEL_COUNT);
+  }
+
+  {
+    PyObject *o;
+    int i;
+    FastArgSpec specs[] = {[IDX_BATCH_POSITIONS] = FP_REQ_ARG("positions", o),
+                           [IDX_BATCH_SIZES] = FP_REQ_ARG("sizes", o),
+                           [IDX_BATCH_SHAPE_TYPE] = FP_ARG("shape_type", i),
+                           [IDX_BATCH_MOTION_TYPE] = FP_ARG("motion_type", i)};
+    memcpy(BatchCreateSpecs, specs, sizeof(specs));
+    FastParse_Init(&BatchCreateParser, BatchCreateSpecs, IDX_BATCH_COUNT);
+  }
+  {
+    PyObject *o;
+    FastArgSpec specs[] = {[IDX_BATCH_DESTROY_HANDLES] =
+                               FP_REQ_ARG("handles", o)};
+    memcpy(BatchDestroySpecs, specs, sizeof(specs));
+    FastParse_Init(&BatchDestroyParser, BatchDestroySpecs,
+                   IDX_BATCH_DESTROY_COUNT);
+  }
+}
+
 // 3. Main Entry (Complexity: ~5)
 static int culverin_exec(PyObject *m) {
   CulverinState *st = get_culverin_state(m);
@@ -3876,7 +3923,7 @@ static int culverin_exec(PyObject *m) {
     return -1;
   }
 
-  init_physics_parsers();
+  culverin_init_all_parsers();
 
   // Initialize the GLOBAL lock for Jolt trampolines
   INIT_NATIVE_MUTEX(g_jph_trampoline_lock);
