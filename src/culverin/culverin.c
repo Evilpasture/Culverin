@@ -262,153 +262,123 @@ fail:
 }
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 static PyObject *PhysicsWorld_apply_impulse(PhysicsWorldObject *self,
-                                            PyObject *const *args,
-                                            size_t nargsf, PyObject *kwnames) {
-  Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
-  uint64_t h;
-  float x;
-  float y;
-  float z;
+                                            PyObject *const *args, size_t nargsf,
+                                            PyObject *kwnames) {
+    // 1. FAST PARSE (Zero Lock Contention)
+    uint64_t handle_raw;
+    float x, y, z;
 
-  // --- 1. VECTOR PARSING (Ultra Fast Path) ---
-  // No tuple creation by the interpreter. We read directly from the stack.
-  if (LIKELY(kwnames == NULL && nargs == 4)) {
-    h = PyLong_AsUnsignedLongLong(args[0]);
-    x = (float)PyFloat_AsDouble(args[1]);
-    y = (float)PyFloat_AsDouble(args[2]);
-    z = (float)PyFloat_AsDouble(args[3]);
+    void *targets[IDX_IMPULSE_COUNT];
+    targets[IDX_IMPULSE_HANDLE] = &handle_raw;
+    targets[IDX_IMPULSE_X]      = &x;
+    targets[IDX_SETROT_Y]      = &y; // Fix: use Y target
+    targets[IDX_IMPULSE_Z]      = &z;
 
-    if (UNLIKELY(PyErr_Occurred())) {
-      return NULL;
+    auto nargs = PyVectorcall_NARGS(nargsf);
+    if (!FastParse_Unified(args, nargs, kwnames, &ImpulseParser, targets)) {
+        return NULL;
     }
-  } else {
-    // --- 2. FALLBACK (Slow Path) ---
-    static char *const kwlist[] = {"handle", "x", "y", "z", NULL};
-    PyObject *temp_tuple = PyTuple_New(nargs);
-    if (!temp_tuple) {
-      return NULL;
-    }
-    for (Py_ssize_t i = 0; i < nargs; i++) {
-      Py_INCREF(args[i]);
-      PyTuple_SET_ITEM(temp_tuple, i, args[i]);
-    }
-    int ok = PyArg_ParseTupleAndKeywords(temp_tuple, kwnames, "Kfff", kwlist,
-                                         &h, &x, &y, &z);
-    Py_DECREF(temp_tuple);
-    if (!ok) {
-      return NULL;
-    }
-  }
 
-  if (UNLIKELY(!isfinite(x) || !isfinite(y) || !isfinite(z))) {
-    PyErr_SetString(PyExc_ValueError, "Impulse components must be finite");
-    return NULL;
-  }
+    // Finite check (Fast path, keep outside lock)
+    if (UNLIKELY(!isfinite(x) || !isfinite(y) || !isfinite(z))) {
+        PyErr_SetString(PyExc_ValueError, "Impulse components must be finite");
+        return NULL;
+    }
 
-  // --- 3. EXECUTION ---
-  SHADOW_LOCK(&self->shadow_lock);
-  BLOCK_UNTIL_NOT_STEPPING(self);
-  BLOCK_UNTIL_NOT_QUERYING(self);
+    // 2. CRITICAL SECTION
+    SHADOW_LOCK(&self->shadow_lock);
+    
+    // We can't apply an immediate impulse if Jolt is currently 
+    // updating (stepping) or if we are querying.
+    BLOCK_UNTIL_NOT_STEPPING(self);
 
-  uint32_t slot = 0;
-  if (UNLIKELY(!unpack_handle(self, h, &slot) ||
-               self->slot_states[slot] != SLOT_ALIVE)) {
+    uint32_t slot = 0;
+    if (UNLIKELY(!unpack_handle(self, (BodyHandle)handle_raw, &slot))) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_SetString(PyExc_ValueError, "Invalid handle");
+        return NULL;
+    }
+
+    // --- IMMEDIATE EXECUTION CONSTRAINT ---
+    // Only SLOT_ALIVE bodies have a valid JPH_BodyID. 
+    // If it's PENDING_CREATE, we can't talk to Jolt yet.
+    if (UNLIKELY(self->slot_states[slot] != SLOT_ALIVE)) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_SetString(PyExc_ValueError, "Body is not yet active in simulation");
+        return NULL;
+    }
+
+    uint32_t dense_idx = self->slot_to_dense[slot];
+    JPH_BodyID bid = self->body_ids[dense_idx];
+
+    // 3. JOLT INTERACTION (Release GIL)
+    // We release the GIL because AddImpulse/Activate might involve Jolt 
+    // internal mutexes. In 3.14t, this keeps other threads running.
+    Py_BEGIN_ALLOW_THREADS 
+    JPH_Vec3 imp = {x, y, z};
+    JPH_BodyInterface_AddImpulse(self->body_interface, bid, &imp);
+    JPH_BodyInterface_ActivateBody(self->body_interface, bid);
+    Py_END_ALLOW_THREADS
+
     SHADOW_UNLOCK(&self->shadow_lock);
-    PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
-    return NULL;
-  }
-
-  uint32_t dense_idx = self->slot_to_dense[slot];
-  JPH_BodyID bid = self->body_ids[dense_idx];
-
-  // Release GIL for the JPH call. In Free-Threaded Python, this is a massive
-  // win as it prevents this thread from blocking the GC or other logic threads.
-  Py_BEGIN_ALLOW_THREADS JPH_Vec3 imp = {x, y, z};
-  JPH_BodyInterface_AddImpulse(self->body_interface, bid, &imp);
-  JPH_BodyInterface_ActivateBody(self->body_interface, bid);
-  Py_END_ALLOW_THREADS
-
-      SHADOW_UNLOCK(&self->shadow_lock);
-  Py_RETURN_NONE;
+    Py_RETURN_NONE;
 }
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 static PyObject *PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self,
-                                               PyObject *const *args,
-                                               size_t nargsf,
+                                               PyObject *const *args, size_t nargsf,
                                                PyObject *kwnames) {
-  // Get actual number of positional arguments
-  Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
-  uint64_t h;
-  float ix;
-  float iy;
-  float iz;
-  JPH_Real px;
-  JPH_Real py;
-  JPH_Real pz;
+    // 1. FAST PARSE (Zero Lock Contention)
+    uint64_t handle_raw;
+    float ix, iy, iz;
+    JPH_Real px, py, pz;
 
-  // --- 1. FAST PATH: Positional only (No keywords, exactly 7 args) ---
-  if (LIKELY(kwnames == NULL && nargs == 7)) {
-    h = PyLong_AsUnsignedLongLong(args[0]);
-    ix = (float)PyFloat_AsDouble(args[1]);
-    iy = (float)PyFloat_AsDouble(args[2]);
-    iz = (float)PyFloat_AsDouble(args[3]);
-    px = PyFloat_AsDouble(args[4]);
-    py = PyFloat_AsDouble(args[5]);
-    pz = PyFloat_AsDouble(args[6]);
+    void *targets[IDX_IMPULSE_AT_COUNT];
+    targets[IDX_IMPULSE_AT_HANDLE] = &handle_raw;
+    targets[IDX_IMPULSE_AT_IX]     = &ix;
+    targets[IDX_IMPULSE_AT_IY]     = &iy;
+    targets[IDX_IMPULSE_AT_IZ]     = &iz;
+    targets[IDX_IMPULSE_AT_PX]     = &px;
+    targets[IDX_IMPULSE_AT_PY]     = &py;
+    targets[IDX_IMPULSE_AT_PZ]     = &pz;
 
-    if (UNLIKELY(PyErr_Occurred())) {
-      return NULL;
-    }
-  } else {
-    // --- 2. SLOW PATH: Keywords or wrong count ---
-    // We use the standard public API by creating a temporary tuple.
-    // This is only called when the user uses keywords (rare in hot loops).
-    static char *kwlist[] = {"handle", "ix", "iy", "iz",
-                             "px",     "py", "pz", NULL};
-
-    PyObject *temp_tuple = PyTuple_New(nargs);
-    if (!temp_tuple) {
-      return NULL;
-    }
-    for (Py_ssize_t i = 0; i < nargs; i++) {
-      Py_INCREF(args[i]);
-      PyTuple_SET_ITEM(temp_tuple, i, args[i]);
+    auto nargs = PyVectorcall_NARGS(nargsf);
+    if (!FastParse_Unified(args, nargs, kwnames, &ImpulseAtParser, targets)) {
+        return NULL;
     }
 
-    int ok = PyArg_ParseTupleAndKeywords(
-        temp_tuple, kwnames,
-        "Kfff" JPH_REAL_STRING JPH_REAL_STRING JPH_REAL_STRING "", kwlist, &h,
-        &ix, &iy, &iz, &px, &py, &pz);
-    Py_DECREF(temp_tuple);
-    if (!ok) {
-      return NULL;
+    // 2. CRITICAL SECTION
+    SHADOW_LOCK(&self->shadow_lock);
+    
+    // Immediate execution requires Jolt not to be stepping
+    BLOCK_UNTIL_NOT_STEPPING(self);
+
+    uint32_t slot = 0;
+    if (UNLIKELY(!unpack_handle(self, (BodyHandle)handle_raw, &slot))) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_SetString(PyExc_ValueError, "Invalid handle");
+        return NULL;
     }
-  }
 
-  // --- 3. CONCURRENCY & EXECUTION ---
-  SHADOW_LOCK(&self->shadow_lock);
-  BLOCK_UNTIL_NOT_STEPPING(self);
-  BLOCK_UNTIL_NOT_QUERYING(self);
+    // Only SLOT_ALIVE bodies can receive immediate impulses
+    if (UNLIKELY(self->slot_states[slot] != SLOT_ALIVE)) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_SetString(PyExc_ValueError, "Body is not active in simulation");
+        return NULL;
+    }
 
-  uint32_t slot = 0;
-  if (UNLIKELY(!unpack_handle(self, h, &slot) ||
-               self->slot_states[slot] != SLOT_ALIVE)) {
+    uint32_t dense_idx = self->slot_to_dense[slot];
+    JPH_BodyID bid = self->body_ids[dense_idx];
+
+    // 3. JOLT INTERACTION (Release GIL)
+    Py_BEGIN_ALLOW_THREADS 
+    JPH_Vec3 imp = {ix, iy, iz};
+    JPH_RVec3 v_pos = {px, py, pz};
+    JPH_BodyInterface_AddImpulse2(self->body_interface, bid, &imp, &v_pos);
+    JPH_BodyInterface_ActivateBody(self->body_interface, bid);
+    Py_END_ALLOW_THREADS
+
     SHADOW_UNLOCK(&self->shadow_lock);
-    PyErr_SetString(PyExc_ValueError, "Invalid handle");
-    return NULL;
-  }
-
-  JPH_BodyID bid = self->body_ids[self->slot_to_dense[slot]];
-
-  Py_BEGIN_ALLOW_THREADS JPH_Vec3 imp = {ix, iy, iz};
-  JPH_RVec3 v_pos = {px, py, pz};
-
-  JPH_BodyInterface_AddImpulse2(self->body_interface, bid, &imp, &v_pos);
-  JPH_BodyInterface_ActivateBody(self->body_interface, bid);
-  Py_END_ALLOW_THREADS
-
-      SHADOW_UNLOCK(&self->shadow_lock);
-  Py_RETURN_NONE;
+    Py_RETURN_NONE;
 }
 
 static PyObject *PhysicsWorld_apply_angular_impulse(PhysicsWorldObject *self,
@@ -2546,135 +2516,189 @@ static PyObject *PhysicsWorld_set_position(PhysicsWorldObject *self,
 }
 
 static PyObject *PhysicsWorld_set_rotation(PhysicsWorldObject *self,
-                                           PyObject *args, PyObject *kwds) {
-  uint64_t handle_raw = 0;
-  float x = 0.0f;
-  float y = 0.0f;
-  float z = 0.0f;
-  float w = 0.0f;
-  static char *kwlist[] = {"handle", "x", "y", "z", "w", NULL};
+                                           PyObject *const *args, size_t nargsf,
+                                           PyObject *kwnames) {
+    // 1. FAST PARSE (Outside of Lock)
+    uint64_t handle_raw;
+    float x, y, z, w;
 
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "Kffff", kwlist, &handle_raw, &x,
-                                   &y, &z, &w)) {
-    return NULL;
-  }
+    void *targets[IDX_SETROT_COUNT];
+    targets[IDX_SETROT_HANDLE] = &handle_raw;
+    targets[IDX_SETROT_X]      = &x;
+    targets[IDX_SETROT_Y]      = &y;
+    targets[IDX_SETROT_Z]      = &z;
+    targets[IDX_SETROT_W]      = &w;
 
-  SHADOW_LOCK(&self->shadow_lock);
-  BLOCK_UNTIL_NOT_STEPPING(self);
-  BLOCK_UNTIL_NOT_QUERYING(self);
+    auto nargs = PyVectorcall_NARGS(nargsf);
+    if (!FastParse_Unified(args, nargs, kwnames, &SetRotParser, targets)) {
+        return NULL;
+    }
 
-  uint32_t slot = 0;
-  // Use unpack_handle to verify generation
-  if (!unpack_handle(self, (BodyHandle)handle_raw, &slot)) {
+    // 2. CRITICAL SECTION
+    SHADOW_LOCK(&self->shadow_lock);
+    
+    BLOCK_UNTIL_NOT_STEPPING(self);
+    BLOCK_UNTIL_NOT_QUERYING(self);
+
+    uint32_t slot = 0;
+    if (UNLIKELY(!unpack_handle(self, (BodyHandle)handle_raw, &slot))) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_SetString(PyExc_ValueError, "Invalid handle");
+        return NULL;
+    }
+
+    uint8_t state = self->slot_states[slot];
+    if (UNLIKELY(state != SLOT_ALIVE && state != SLOT_PENDING_CREATE)) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_SetString(PyExc_ValueError, "Stale handle or body being destroyed");
+        return NULL;
+    }
+
+    // 3. COMMAND COMMIT
+    if (UNLIKELY(!ensure_command_capacity(self))) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        return PyErr_NoMemory();
+    }
+
+    PhysicsCommand *cmd = &self->command_queue[self->command_count++];
+    cmd->header = CMD_HEADER(CMD_SET_ROT, slot);
+    cmd->quat.x = x;
+    cmd->quat.y = y;
+    cmd->quat.z = z;
+    cmd->quat.w = w;
+
+    // --- CAUSAL CONSISTENCY ---
+    // Mirror the new rotation to the shadow buffer immediately.
+    // This ensures that Python-side get_rotation() calls return 
+    // the value just set, even before Jolt processes the command.
+    uint32_t dense = self->slot_to_dense[slot];
+    auto *shadow_rot = (AuxStride *)self->rotations;
+    shadow_rot[dense] = (AuxStride){x, y, z, w};
+
     SHADOW_UNLOCK(&self->shadow_lock);
-    PyErr_SetString(PyExc_ValueError, "Invalid handle");
-    return NULL;
-  }
-
-  // Allow rotation on bodies that are alive OR just about to be created
-  uint8_t state = self->slot_states[slot];
-  if (state != SLOT_ALIVE && state != SLOT_PENDING_CREATE) {
-    SHADOW_UNLOCK(&self->shadow_lock);
-    PyErr_SetString(PyExc_ValueError,
-                    "Handle is stale or body is being destroyed");
-    return NULL;
-  }
-
-  // Ensure queue has space
-  if (!ensure_command_capacity(self)) {
-    SHADOW_UNLOCK(&self->shadow_lock);
-    return PyErr_NoMemory();
-  }
-
-  // Queue the command
-  PhysicsCommand *cmd = &self->command_queue[self->command_count++];
-  cmd->header = CMD_HEADER(CMD_SET_ROT, slot);
-  cmd->quat.x = x;
-  cmd->quat.y = y;
-  cmd->quat.z = z;
-  cmd->quat.w = w;
-
-  SHADOW_UNLOCK(&self->shadow_lock);
-  Py_RETURN_NONE;
+    Py_RETURN_NONE;
 }
 
 static PyObject *PhysicsWorld_set_linear_velocity(PhysicsWorldObject *self,
-                                                  PyObject *args,
-                                                  PyObject *kwds) {
-  uint64_t handle_raw = 0;
-  float x = 0.0f;
-  float y = 0.0f;
-  float z = 0.0f;
-  static char *kwlist[] = {"handle", "x", "y", "z", NULL};
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "Kfff", kwlist, &handle_raw, &x,
-                                   &y, &z)) {
-    return NULL;
-  }
-  SHADOW_LOCK(&self->shadow_lock);
-  BLOCK_UNTIL_NOT_STEPPING(self);
-  BLOCK_UNTIL_NOT_QUERYING(self);
+                                                  PyObject *const *args, size_t nargsf,
+                                                  PyObject *kwnames) {
+    // 1. FAST PARSE (Zero Lock Contention)
+    uint64_t handle_raw;
+    float x, y, z;
 
-  uint32_t slot = 0;
-  // Note: We check for ALIVE OR PENDING_CREATE now
-  if (!unpack_handle(self, (BodyHandle)handle_raw, &slot)) {
+    void *targets[IDX_SETLINVEL_COUNT];
+    targets[IDX_SETLINVEL_HANDLE] = &handle_raw;
+    targets[IDX_SETLINVEL_X]      = &x;
+    targets[IDX_SETLINVEL_Y]      = &y;
+    targets[IDX_SETLINVEL_Z]      = &z;
+
+    auto nargs = PyVectorcall_NARGS(nargsf);
+    if (!FastParse_Unified(args, nargs, kwnames, &SetLinVelParser, targets)) {
+        return NULL;
+    }
+
+    // 2. CRITICAL SECTION
+    SHADOW_LOCK(&self->shadow_lock);
+    
+    BLOCK_UNTIL_NOT_STEPPING(self);
+    BLOCK_UNTIL_NOT_QUERYING(self);
+
+    uint32_t slot = 0;
+    if (UNLIKELY(!unpack_handle(self, (BodyHandle)handle_raw, &slot))) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_SetString(PyExc_ValueError, "Invalid handle");
+        return NULL;
+    }
+
+    uint8_t state = self->slot_states[slot];
+    if (UNLIKELY(state != SLOT_ALIVE && state != SLOT_PENDING_CREATE)) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_SetString(PyExc_ValueError, "Stale handle or body being destroyed");
+        return NULL;
+    }
+
+    // 3. COMMAND COMMIT
+    if (UNLIKELY(!ensure_command_capacity(self))) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        return PyErr_NoMemory();
+    }
+
+    PhysicsCommand *cmd = &self->command_queue[self->command_count++];
+    cmd->header = CMD_HEADER(CMD_SET_LINVEL, slot);
+    cmd->vec3f.x = x;
+    cmd->vec3f.y = y;
+    cmd->vec3f.z = z;
+
+    // --- CAUSAL CONSISTENCY ---
+    // Update the linear_velocities shadow buffer immediately.
+    // This allows immediate read-back of the value in Python.
+    uint32_t dense = self->slot_to_dense[slot];
+    AuxStride *shadow_lvel = (AuxStride *)self->linear_velocities;
+    shadow_lvel[dense] = (AuxStride){x, y, z, 0.0f};
+
     SHADOW_UNLOCK(&self->shadow_lock);
-    PyErr_SetString(PyExc_ValueError, "Invalid handle");
-    return NULL;
-  }
-
-  // Ensure queue space
-  if (!ensure_command_capacity(self)) {
-    SHADOW_UNLOCK(&self->shadow_lock);
-    return PyErr_NoMemory();
-  }
-
-  // Queue the command
-  PhysicsCommand *cmd = &self->command_queue[self->command_count++];
-  cmd->header = CMD_HEADER(CMD_SET_LINVEL, slot);
-  cmd->vec3f.x = x;
-  cmd->vec3f.y = y;
-  cmd->vec3f.z = z;
-
-  SHADOW_UNLOCK(&self->shadow_lock);
-  Py_RETURN_NONE;
+    Py_RETURN_NONE;
 }
 
 static PyObject *PhysicsWorld_set_angular_velocity(PhysicsWorldObject *self,
-                                                   PyObject *args,
-                                                   PyObject *kwds) {
-  uint64_t handle_raw = 0;
-  float x = 0.0f;
-  float y = 0.0f;
-  float z = 0.0f;
-  static char *kwlist[] = {"handle", "x", "y", "z", NULL};
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "Kfff", kwlist, &handle_raw, &x,
-                                   &y, &z)) {
-    return NULL;
-  }
-  SHADOW_LOCK(&self->shadow_lock);
-  BLOCK_UNTIL_NOT_STEPPING(self);
-  BLOCK_UNTIL_NOT_QUERYING(self);
+                                                   PyObject *const *args, size_t nargsf,
+                                                   PyObject *kwnames) {
+    // 1. FAST PARSE (Outside of lock)
+    uint64_t handle_raw;
+    float x, y, z;
 
-  uint32_t slot = 0;
-  if (!unpack_handle(self, (BodyHandle)handle_raw, &slot)) {
+    void *targets[IDX_SETANGVEL_COUNT];
+    targets[IDX_SETANGVEL_HANDLE] = &handle_raw;
+    targets[IDX_SETANGVEL_X]      = &x;
+    targets[IDX_SETANGVEL_Y]      = &y;
+    targets[IDX_SETANGVEL_Z]      = &z;
+
+    auto nargs = PyVectorcall_NARGS(nargsf);
+    if (!FastParse_Unified(args, nargs, kwnames, &SetAngVelParser, targets)) {
+        return NULL;
+    }
+
+    // 2. CRITICAL SECTION
+    SHADOW_LOCK(&self->shadow_lock);
+    
+    BLOCK_UNTIL_NOT_STEPPING(self);
+    BLOCK_UNTIL_NOT_QUERYING(self);
+
+    uint32_t slot = 0;
+    if (UNLIKELY(!unpack_handle(self, (BodyHandle)handle_raw, &slot))) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_SetString(PyExc_ValueError, "Invalid handle");
+        return NULL;
+    }
+
+    // Check state: allow if alive or newly created
+    uint8_t state = self->slot_states[slot];
+    if (UNLIKELY(state != SLOT_ALIVE && state != SLOT_PENDING_CREATE)) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_SetString(PyExc_ValueError, "Stale handle or body being destroyed");
+        return NULL;
+    }
+
+    // 3. COMMAND COMMIT
+    if (UNLIKELY(!ensure_command_capacity(self))) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        return PyErr_NoMemory();
+    }
+
+    PhysicsCommand *cmd = &self->command_queue[self->command_count++];
+    cmd->header = CMD_HEADER(CMD_SET_ANGVEL, slot);
+    cmd->vec3f.x = x;
+    cmd->vec3f.y = y;
+    cmd->vec3f.z = z;
+
+    // --- CAUSAL CONSISTENCY MIRROR ---
+    // Update the angular_velocities shadow buffer immediately.
+    uint32_t dense = self->slot_to_dense[slot];
+    AuxStride *shadow_avel = (AuxStride *)self->angular_velocities;
+    shadow_avel[dense] = (AuxStride){x, y, z, 0.0f};
+
     SHADOW_UNLOCK(&self->shadow_lock);
-    PyErr_SetString(PyExc_ValueError, "Invalid handle");
-    return NULL;
-  }
-
-  if (!ensure_command_capacity(self)) {
-    SHADOW_UNLOCK(&self->shadow_lock);
-    return PyErr_NoMemory();
-  }
-
-  PhysicsCommand *cmd = &self->command_queue[self->command_count++];
-  cmd->header = CMD_HEADER(CMD_SET_ANGVEL, slot);
-  cmd->vec3f.x = x;
-  cmd->vec3f.y = y;
-  cmd->vec3f.z = z;
-
-  SHADOW_UNLOCK(&self->shadow_lock);
-  Py_RETURN_NONE;
+    Py_RETURN_NONE;
 }
 
 static PyObject *PhysicsWorld_get_motion_type(PhysicsWorldObject *self,
@@ -3538,13 +3562,13 @@ static const PyMethodDef PhysicsWorld_methods[] = {
     {"set_position", (PyCFunction)(void (*)(void))PhysicsWorld_set_position,
      METH_FASTCALL | METH_KEYWORDS, NULL},
     {"set_rotation", (PyCFunction)(void (*)(void))PhysicsWorld_set_rotation,
-     METH_VARARGS | METH_KEYWORDS, NULL},
+     METH_FASTCALL | METH_KEYWORDS, NULL},
     {"set_linear_velocity",
      (PyCFunction)(void (*)(void))PhysicsWorld_set_linear_velocity,
-     METH_VARARGS | METH_KEYWORDS, NULL},
+     METH_FASTCALL | METH_KEYWORDS, NULL},
     {"set_angular_velocity",
      (PyCFunction)(void (*)(void))PhysicsWorld_set_angular_velocity,
-     METH_VARARGS | METH_KEYWORDS, NULL},
+     METH_FASTCALL | METH_KEYWORDS, NULL},
     {"set_transform", (PyCFunction)(void (*)(void))PhysicsWorld_set_transform,
      METH_VARARGS | METH_KEYWORDS, NULL},
     {"set_collision_filter",
@@ -3912,6 +3936,62 @@ void culverin_init_all_parsers(void) {
     FastParse_Init(&BatchDestroyParser, BatchDestroySpecs,
                    IDX_BATCH_DESTROY_COUNT);
   }
+  {
+    uint64_t k;
+    float f;
+    FastArgSpec specs[] = {[IDX_SETROT_HANDLE] = FP_REQ_ARG("handle", k),
+                           [IDX_SETROT_X] = FP_REQ_ARG("x", f),
+                           [IDX_SETROT_Y] = FP_REQ_ARG("y", f),
+                           [IDX_SETROT_Z] = FP_REQ_ARG("z", f),
+                           [IDX_SETROT_W] = FP_REQ_ARG("w", f)};
+    memcpy(SetRotSpecs, specs, sizeof(specs));
+    FastParse_Init(&SetRotParser, SetRotSpecs, IDX_SETROT_COUNT);
+  }
+  {
+    uint64_t k;
+    float f;
+    FastArgSpec specs[] = {[IDX_SETLINVEL_HANDLE] = FP_REQ_ARG("handle", k),
+                           [IDX_SETLINVEL_X] = FP_REQ_ARG("x", f),
+                           [IDX_SETLINVEL_Y] = FP_REQ_ARG("y", f),
+                           [IDX_SETLINVEL_Z] = FP_REQ_ARG("z", f)};
+    memcpy(SetLinVelSpecs, specs, sizeof(specs));
+    FastParse_Init(&SetLinVelParser, SetLinVelSpecs, IDX_SETLINVEL_COUNT);
+  }
+  {
+    uint64_t k;
+    float f;
+    FastArgSpec specs[] = {[IDX_SETANGVEL_HANDLE] = FP_REQ_ARG("handle", k),
+                           [IDX_SETANGVEL_X] = FP_REQ_ARG("x", f),
+                           [IDX_SETANGVEL_Y] = FP_REQ_ARG("y", f),
+                           [IDX_SETANGVEL_Z] = FP_REQ_ARG("z", f)};
+    memcpy(SetAngVelSpecs, specs, sizeof(specs));
+    FastParse_Init(&SetAngVelParser, SetAngVelSpecs, IDX_SETANGVEL_COUNT);
+  }
+  {
+    uint64_t k; float f;
+    FastArgSpec specs[] = {
+        [IDX_IMPULSE_HANDLE] = FP_REQ_ARG("handle", k),
+        [IDX_IMPULSE_X]      = FP_REQ_ARG("x", f),
+        [IDX_IMPULSE_Y]      = FP_REQ_ARG("y", f),
+        [IDX_IMPULSE_Z]      = FP_REQ_ARG("z", f)
+    };
+    memcpy(ImpulseSpecs, specs, sizeof(specs));
+    FastParse_Init(&ImpulseParser, ImpulseSpecs, IDX_IMPULSE_COUNT);
+}
+{
+    uint64_t k; float f; JPH_Real r;
+    FastArgSpec specs[] = {
+        [IDX_IMPULSE_AT_HANDLE] = FP_REQ_ARG("handle", k),
+        [IDX_IMPULSE_AT_IX]     = FP_REQ_ARG("ix", f),
+        [IDX_IMPULSE_AT_IY]     = FP_REQ_ARG("iy", f),
+        [IDX_IMPULSE_AT_IZ]     = FP_REQ_ARG("iz", f),
+        [IDX_IMPULSE_AT_PX]     = FP_REQ_ARG("px", r),
+        [IDX_IMPULSE_AT_PY]     = FP_REQ_ARG("py", r),
+        [IDX_IMPULSE_AT_PZ]     = FP_REQ_ARG("pz", r)
+    };
+    memcpy(ImpulseAtSpecs, specs, sizeof(specs));
+    FastParse_Init(&ImpulseAtParser, ImpulseAtSpecs, IDX_IMPULSE_AT_COUNT);
+}
 }
 
 // 3. Main Entry (Complexity: ~5)
