@@ -346,11 +346,11 @@ if(Python_VERSION VERSION_GREATER_EQUAL "3.13")
         ERROR_QUIET
     )
 
-    if(PYTHON_IS_FREE_THREADED EQUAL 1)
-        message(STATUS "Culverin: Free-threading detected. Disabling GIL.")
+   if(Python_ABI_FLAGS MATCHES "t")
+        message(STATUS "Culverin: Free-threading (3.13t) detected via ABI flags.")
         target_compile_definitions(_culverin_c PRIVATE Py_GIL_DISABLED=1)
     else()
-        message(STATUS "Culverin: Standard Python detected. GIL remains enabled.")
+        message(STATUS "Culverin: Standard Python detected.")
     endif()
 endif()
 

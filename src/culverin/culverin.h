@@ -191,6 +191,7 @@ typedef struct {
 // --- The Object Struct ---
 typedef struct PhysicsWorldObject {
     PyObject_HEAD // 16 bytes
+    PyObject *weakreflist;
 
     // --- BUCKET 1: Pointers & 8-byte types (Zero Padding) ---
     JPH_PhysicsSystem *system;

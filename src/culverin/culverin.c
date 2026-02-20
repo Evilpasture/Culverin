@@ -17,30 +17,52 @@
 NativeMutex
     g_jph_trampoline_lock; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
-// --- Lifecycle: Deallocation ---
-static void PhysicsWorld_dealloc(PhysicsWorldObject *self) {
-  PyTypeObject *tp = Py_TYPE(self);
+static PyObject *PhysicsWorld_alloc(PyTypeObject *tp, Py_ssize_t Py_UNUSED(nitems)) {
+  size_t size = (size_t)tp->tp_basicsize;
 
-  // 1. Clear weakrefs immediately. 
-  // In 3.13+, if you have MANAGED_WEAKREF, this is essential.
-  PyObject_ClearWeakRefs((PyObject *)self);
-
-  // 2. Resurrection Check
-  // If a weakref callback saved the object, stop deallocation.
-  if (Py_REFCNT(self) > 0) {
-    return;
+  // Allocate 64-byte aligned memory to suppress UBSan alignas(64) warnings
+  PhysicsWorldObject *self = (PhysicsWorldObject *)CulvMem_RawMallocAligned(size, 64);
+  if (!self) {
+    return PyErr_NoMemory();
   }
 
-  // 3. Custom Cleanup
-  PhysicsWorld_free_members(self);
+  // tp_alloc is expected to return zero-initialized memory
+  memset(self, 0, size);
 
-  // 4. Free synchronization primitives
-  FREE_NATIVE_MUTEX(self->step_sync.mutex);
-  FREE_NATIVE_COND(self->step_sync.cond);
+  // Initialize PyObject fields (refcnt, ob_type)
+  PyObject_Init((PyObject *)self, tp);
 
-  // 5. Finalize the Type and free memory
-  tp->tp_free((PyObject *)self);
-  Py_DECREF(tp);
+  return (PyObject *)self;
+}
+
+static void PhysicsWorld_free(void *obj) {
+  CulvMem_RawFreeAligned(obj);
+}
+
+// --- Lifecycle: Deallocation ---
+static void PhysicsWorld_dealloc(PhysicsWorldObject *self) {
+    PyTypeObject *tp = Py_TYPE(self);
+
+    // 1. Notify Python's tracking system (if using GC)
+    PyObject_GC_UnTrack(self);
+
+    // 2. Clear weak references
+    // This MUST happen before we destroy the Jolt data, 
+    // in case a callback tries to look at the world.
+    if (self->weakreflist != NULL) {
+        PyObject_ClearWeakRefs((PyObject *)self);
+    }
+
+    // 3. Custom Cleanup: The "C" parts
+    // It is cleaner to put the Mutex/Cond frees INSIDE free_members
+    PhysicsWorld_free_members(self);
+
+    // 4. Free the memory using the slot we defined
+    // This calls your PhysicsWorld_free (CulvMem_RawFreeAligned)
+    tp->tp_free((PyObject *)self);
+
+    // 5. Decrease refcount of the Heap Type itself
+    Py_DECREF(tp);
 }
 
 // --- Lifecycle: Initialization ---
@@ -235,8 +257,6 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
 
 fail:
   Py_XDECREF(baked);
-  FREE_NATIVE_MUTEX(self->step_sync.mutex);
-  FREE_NATIVE_COND(self->step_sync.cond);
   PhysicsWorld_free_members(self);
   return -1;
 }
@@ -2497,8 +2517,8 @@ static PyObject *PhysicsWorld_destroy_bodies_batch(PhysicsWorldObject *self,
 
   SHADOW_UNLOCK(&self->shadow_lock);
 
-  // DEBUG_LOG("Batch Destroy: Queued %d bodies for removal.",
-  // actual_destroyed);
+  DEBUG_LOG("Batch Destroy: Queued %d bodies for removal.",
+  actual_destroyed);
   Py_RETURN_NONE;
 }
 
@@ -3693,11 +3713,19 @@ static const PyMethodDef RagdollSettings_methods[] = {
      "Auto-detect collisions"},
     {NULL, NULL, 0, NULL}};
 
+static PyMemberDef PhysicsWorld_members[] = {
+    {"__weaklistoffset__", Py_T_PYSSIZET, offsetof(PhysicsWorldObject, weakreflist), Py_READONLY, NULL},
+    {NULL}
+};
+
 static const PyType_Slot PhysicsWorld_slots[] = {
     {Py_tp_new, PyType_GenericNew},
     {Py_tp_init, PhysicsWorld_init},
+    {Py_tp_alloc, PhysicsWorld_alloc},
+    {Py_tp_free, PhysicsWorld_free},
     {Py_tp_dealloc, PhysicsWorld_dealloc},
     {Py_tp_methods, (PyMethodDef *)PhysicsWorld_methods},
+    {Py_tp_members, (PyMemberDef *)PhysicsWorld_members},
     {Py_tp_getset, (PyGetSetDef *)PhysicsWorld_getset},
     {Py_bf_releasebuffer, PhysicsWorld_releasebuffer},
     {0, NULL},
@@ -3745,7 +3773,7 @@ static const PyType_Spec PhysicsWorld_spec = {
     .name = "culverin._culverin_c.PhysicsWorld",
     .basicsize = sizeof(PhysicsWorldObject),
     .flags =
-        Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_MANAGED_WEAKREF,
+        Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
     .slots = (PyType_Slot *)PhysicsWorld_slots,
 };
 

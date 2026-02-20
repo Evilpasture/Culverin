@@ -348,6 +348,8 @@ void PhysicsWorld_free_members(PhysicsWorldObject *self) {
   self->id_to_handle_map = NULL;
 
   FREE_LOCK(self->shadow_lock);
+  FREE_NATIVE_MUTEX(self->step_sync.mutex);
+  FREE_NATIVE_COND(self->step_sync.cond);
 }
 
 // helper: Initialize settings via Python helper

@@ -15,20 +15,16 @@
 #endif
 
 // --- Memory Stride Helpers ---
-// Use a clear name to avoid collisions with Jolt's internal defines
-constexpr int CULV_STRIDE_ALIGN = 32;
 
 typedef struct {
-    // Align the first member to force the whole struct to 32-byte alignment
-    alignas(CULV_STRIDE_ALIGN) JPH_Real x;
+    JPH_Real x;
     JPH_Real y;
     JPH_Real z;
-    // Explicitly calculate padding based on the target width
-    JPH_Real _pad[(CULV_STRIDE_ALIGN / sizeof(JPH_Real)) - 3];
+    JPH_Real w;
 } PosStride;
 
 // Maps to self->rotations, velocities (Packed X, Y, Z, W)
-typedef struct { alignas(16) float x; float y, z, w; } AuxStride; 
+typedef struct {float x, y, z, w; } AuxStride; 
 
 // Sanity check sizes
 static_assert(sizeof(PosStride) == 32);
