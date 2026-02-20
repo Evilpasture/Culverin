@@ -28,16 +28,11 @@ typedef struct {
   float damping;      // Spring damping
 } ConstraintParams;
 
-typedef struct {
-    PyObject *keys[14];
-} BodyParser;
-
 // Direct variable extraction (Fast path)
 int parse_vec3_direct(PyObject *obj, JPH_Real *x, JPH_Real *y, JPH_Real *z);
 int parse_quat_direct(PyObject *obj, float *x, float *y, float *z, float *w);
 
 // The global parser keys
-extern BodyParser BP;
 void init_body_parser(void);
 
 float get_py_float_attr(PyObject *obj, const char *name, float default_val);

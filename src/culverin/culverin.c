@@ -1777,13 +1777,14 @@ static void configure_body_settings(JPH_BodyCreationSettings *settings,
 constexpr size_t BODY_ARG_COUNT = 14;
 
 // This is the static registry that stores interned strings and function pointers
+static FastParser BodyParser;
 static FastArgSpec BodySpecs[BODY_ARG_COUNT];
 void init_physics_parsers(void) {
     // 1. Define local variables just for type deduction in the FP_ARG macro
     float f; int i; uint32_t u; uint64_t k; bool b; PyObject *o;
 
     // 2. Build the specs (The macro uses typeof_unqual to pick the right converter)
-    FastArgSpec specs[BODY_ARG_COUNT] = {
+    FastArgSpec temp[BODY_ARG_COUNT] = {
         FP_ARG("pos", o),          FP_ARG("rot", o),          FP_ARG("size", o),
         FP_ARG("shape", i),        FP_ARG("motion", i),       FP_ARG("user_data", k),
         FP_ARG("is_sensor", b),    FP_ARG("mass", f),         FP_ARG("category", u),
@@ -1792,12 +1793,10 @@ void init_physics_parsers(void) {
     };
 
     // 3. Copy to the static global and intern the strings
-    for (size_t j = 0; j < BODY_ARG_COUNT; j++) {
-        BodySpecs[j] = specs[j];
-    }
+    memcpy(BodySpecs, temp, sizeof(temp));
     
     // This function from the header creates the interned PyObjects for the keys
-    FastParse_Init(BodySpecs, BODY_ARG_COUNT);
+    FastParse_Init(&BodyParser, BodySpecs, BODY_ARG_COUNT);
 }
 static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
                                           PyObject *const *args, size_t nargsf,
@@ -1827,7 +1826,7 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
     static_assert(sizeof(targets) / sizeof(void*) == BODY_ARG_COUNT);
 
     // 3. THE FAST PARSE (This replaces the 14 manual find_arg calls)
-    if (!FastParse_Unified(args, nargs, kwnames, BodySpecs, targets, BODY_ARG_COUNT)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &BodyParser, targets)) {
         return nullptr;
     }
 
@@ -2757,7 +2756,7 @@ static PyObject *PhysicsWorld_set_motion_type(PhysicsWorldObject *self,
 static PyObject *PhysicsWorld_set_user_data(PhysicsWorldObject *self,
                                             PyObject *args, PyObject *kwds) {
   uint64_t handle_raw = 0;
-  unsigned long long data = 0;
+  uint64_t data = 0;
   static char *kwlist[] = {"handle", "data", NULL};
 
   if (!PyArg_ParseTupleAndKeywords(args, kwds, "KK", kwlist, &handle_raw,
