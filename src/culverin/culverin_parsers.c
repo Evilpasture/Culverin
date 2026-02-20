@@ -1,19 +1,6 @@
 #include "culverin_parsers.h"
 #include "culverin_compiler_specifics.h"
 
-// --- Internal Helpers to reduce complexity ---
-BodyParser BP;
-
-void init_body_parser(void) {
-    const char *kw_names[] = {
-        "pos", "rot", "size", "shape", "motion", 
-        "user_data", "is_sensor", "mass", "category", "mask", 
-        "friction", "restitution", "material_id", "ccd"
-    };
-    for (int i = 0; i < 14; i++) {
-        BP.keys[i] = PyUnicode_InternFromString(kw_names[i]);
-    }
-}
 
 int parse_vec3_direct(PyObject *obj, JPH_Real *x, JPH_Real *y, JPH_Real *z) {
     if (UNLIKELY(!obj || obj == Py_None)) return 1; // Keep defaults
