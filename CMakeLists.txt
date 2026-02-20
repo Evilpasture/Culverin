@@ -297,6 +297,14 @@ else() # Vanilla Clang / GNU-like
         list(APPEND PERF_FLAGS "-mavx2" "-mfma" "-march=native")
     endif()
 
+    list(APPEND PERF_FLAGS 
+        "-mllvm" "-unroll-threshold=1000"       # Default is usually ~150; 1000 is aggressive
+        "-mllvm" "-unroll-allow-partial"      # Allows unrolling loops even if trip count isn't known
+        "-mllvm" "-vectorize-slp-aggressive"  # Better for your "Slam into Shadow" block
+        "-mllvm" "-force-vector-width=8"      # Force AVX2 width if the compiler is hesitating
+        "-fslp-vectorize-aggressive"
+    )
+
     # Use a list for cleaner appending
     set(STRICT_FLAGS 
         "-Wall" 
@@ -355,6 +363,11 @@ if(Python_VERSION VERSION_GREATER_EQUAL "3.13")
 endif()
 
 target_link_libraries(_culverin_c PRIVATE ${JOLTC_TARGET} Jolt)
+
+target_compile_options(_culverin_c PRIVATE 
+    "-mllvm" "-inline-threshold=2000"  # Massive inlining to help it "see" JPH_Body_GetPosition
+    "-mllvm" "-unroll-max-percent-threshold-boost=200"
+)
 
 if(APPLE)
     message(STATUS "Culverin: Enforcing Strong Symbol Export")
