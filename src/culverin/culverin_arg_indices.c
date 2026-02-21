@@ -54,6 +54,9 @@ ALLOC_PARSER(BatchCreate, BatchCreate)
 ALLOC_PARSER(BatchDestroy, BatchDestroy)
 ALLOC_PARSER(SetRot, SetRot)
 ALLOC_PARSER(Render, Render)
+ALLOC_PARSER(Raycast, Raycast)
+ALLOC_PARSER(RayBatch, RayBatch)
+ALLOC_PARSER(Shapecast, Shapecast)
 
 // --- 3. INITIALIZATION ---
 
@@ -89,4 +92,7 @@ void culverin_init_all_parsers(void) {
   INIT_PARSER(ConvexHull, HC, SCHEMA_HC_HULL);
   INIT_PARSER(Compound, HC, SCHEMA_HC_COMP);
   INIT_PARSER(Render, Render, SCHEMA_RENDER);
+  INIT_PARSER(Raycast, Raycast, SCHEMA_RAYCAST);
+  INIT_PARSER(RayBatch, RayBatch, SCHEMA_RAYCAST_BATCH);
+  INIT_PARSER(Shapecast, Shapecast, SCHEMA_SHAPECAST);
 }

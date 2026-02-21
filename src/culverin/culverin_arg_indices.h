@@ -167,6 +167,25 @@
 #define SCHEMA_RENDER(X) \
     X(IDX_RND_ALPHA, "alpha", float, 1)
 
+#define SCHEMA_RAYCAST(X) \
+    X(IDX_RAY_START, "start",     PyObject*, 1) \
+    X(IDX_RAY_DIR,   "direction", PyObject*, 1) \
+    X(IDX_RAY_DIST,  "max_dist",  float,     0) \
+    X(IDX_RAY_IGN,   "ignore",    BodyHandle,0)
+
+#define SCHEMA_RAYCAST_BATCH(X) \
+    X(IDX_RB_STARTS, "starts",     PyObject*, 1) \
+    X(IDX_RB_DIRS,   "directions", PyObject*, 1) \
+    X(IDX_RB_DIST,   "max_dist",   float,     0)
+
+#define SCHEMA_SHAPECAST(X) \
+    X(IDX_SC_SHAPE,  "shape",  int,        1) \
+    X(IDX_SC_POS,    "pos",    PyObject*,  1) \
+    X(IDX_SC_ROT,    "rot",    PyObject*,  1) \
+    X(IDX_SC_DIR,    "dir",    PyObject*,  1) \
+    X(IDX_SC_SIZE,   "size",   PyObject*,  0) \
+    X(IDX_SC_IGNORE, "ignore", BodyHandle, 0)
+
 /** --- THE GENERATOR ENGINE --- **/
 
 #define GEN_ENUM(ID, NAME, TYPE, REQ) ID,
@@ -197,6 +216,9 @@ DEFINE_INDEX_GROUP(BatchCreate, SCHEMA_BATCH_CREATE)
 DEFINE_INDEX_GROUP(BatchDestroy, SCHEMA_BATCH_DESTROY)
 DEFINE_INDEX_GROUP(SetRot, SCHEMA_SET_ROT)
 DEFINE_INDEX_GROUP(Render, SCHEMA_RENDER)
+DEFINE_INDEX_GROUP(Raycast, SCHEMA_RAYCAST)
+DEFINE_INDEX_GROUP(RayBatch, SCHEMA_RAYCAST_BATCH)
+DEFINE_INDEX_GROUP(Shapecast, SCHEMA_SHAPECAST)
 
 // B. Declare the Parsers
 DECLARE_PARSER(Body, Body)
@@ -223,5 +245,8 @@ DECLARE_PARSER(BatchCreate, BatchCreate)
 DECLARE_PARSER(BatchDestroy, BatchDestroy)
 DECLARE_PARSER(SetRot, SetRot)
 DECLARE_PARSER(Render, Render)
+DECLARE_PARSER(Raycast, Raycast)
+DECLARE_PARSER(RayBatch, RayBatch)
+DECLARE_PARSER(Shapecast, Shapecast)
 
 void culverin_init_all_parsers(void);

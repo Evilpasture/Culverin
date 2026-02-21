@@ -3584,11 +3584,11 @@ static const PyMethodDef PhysicsWorld_methods[] = {
 
     // --- Queries ---
     {"raycast", (PyCFunction)(void (*)(void))PhysicsWorld_raycast,
-     METH_VARARGS | METH_KEYWORDS, NULL},
+     METH_FASTCALL | METH_KEYWORDS, NULL},
     {"raycast_batch", (PyCFunction)(void (*)(void))PhysicsWorld_raycast_batch,
      METH_FASTCALL | METH_KEYWORDS, "Execute multiple raycasts efficiently."},
     {"shapecast", (PyCFunction)(void (*)(void))PhysicsWorld_shapecast,
-     METH_VARARGS | METH_KEYWORDS,
+     METH_FASTCALL | METH_KEYWORDS,
      "Sweeps a shape along a direction vector. Returns (Handle, Fraction, "
      "ContactPoint, Normal) or None."},
     {"overlap_sphere", (PyCFunction)(void (*)(void))PhysicsWorld_overlap_sphere,
