@@ -24,7 +24,7 @@ void world_remove_body_slot(PhysicsWorldObject *self, uint32_t slot) {
     // Type-safe Casts
     auto *pos = (PosStride *)self->positions;
     auto *prev_pos = (PosStride *)self->prev_positions;
-    
+
     auto *rot = (AuxStride *)self->rotations;
     auto *prev_rot = (AuxStride *)self->prev_rotations;
     auto *lvel = (AuxStride *)self->linear_velocities;
@@ -85,8 +85,10 @@ bool ensure_command_capacity(PhysicsWorldObject *self) {
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *queue, size_t count) {
-  if (count == 0) return;
+void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *queue,
+                             size_t count) {
+  if (count == 0)
+    return;
   JPH_BodyInterface *bi = self->body_interface;
 
   // Pre-cast buffers for safe access inside the loop
@@ -114,12 +116,14 @@ void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *queue, si
     }
     SHADOW_UNLOCK(&self->shadow_lock);
 
-    if (type != CMD_CREATE_BODY && bid == JPH_INVALID_BODY_ID) continue;
+    if (type != CMD_CREATE_BODY && bid == JPH_INVALID_BODY_ID)
+      continue;
 
     switch (type) {
     case CMD_CREATE_BODY: {
       JPH_BodyCreationSettings *s = cmd->create.settings;
-      JPH_BodyID new_bid = JPH_BodyInterface_CreateAndAddBody(bi, s, JPH_Activation_Activate);
+      JPH_BodyID new_bid =
+          JPH_BodyInterface_CreateAndAddBody(bi, s, JPH_Activation_Activate);
       JPH_BodyCreationSettings_Destroy(s);
 
       SHADOW_LOCK(&self->shadow_lock);
@@ -132,7 +136,8 @@ void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *queue, si
         self->body_ids[self->slot_to_dense[slot]] = new_bid;
         uint32_t j_idx = JPH_ID_TO_INDEX(new_bid);
         if (self->id_to_handle_map && j_idx < self->max_jolt_bodies) {
-          self->id_to_handle_map[j_idx] = make_handle(slot, self->generations[slot]);
+          self->id_to_handle_map[j_idx] =
+              make_handle(slot, self->generations[slot]);
         }
         self->slot_states[slot] = SLOT_ALIVE;
       }
@@ -143,7 +148,7 @@ void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *queue, si
     case CMD_DESTROY_BODY: {
       JPH_BodyInterface_RemoveBody(bi, bid);
       JPH_BodyInterface_DestroyBody(bi, bid);
-      
+
       SHADOW_LOCK(&self->shadow_lock);
       world_remove_body_slot(self, slot);
       SHADOW_UNLOCK(&self->shadow_lock);
@@ -153,14 +158,16 @@ void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *queue, si
     case CMD_SET_POS: {
       JPH_STACK_ALLOC(JPH_RVec3, p);
       // Use JPH_Real from command directly
-      p->x = cmd->pos.x; p->y = cmd->pos.y; p->z = cmd->pos.z; 
+      p->x = cmd->pos.x;
+      p->y = cmd->pos.y;
+      p->z = cmd->pos.z;
       JPH_BodyInterface_SetPosition(bi, bid, p, JPH_Activation_Activate);
 
       SHADOW_LOCK(&self->shadow_lock);
       uint32_t d = self->slot_to_dense[slot];
       auto *shadow_pos = (PosStride *)self->positions;
       auto *shadow_ppos = (PosStride *)self->prev_positions;
-      
+
       shadow_pos[d] = (PosStride){cmd->pos.x, cmd->pos.y, cmd->pos.z};
       shadow_ppos[d] = shadow_pos[d];
       SHADOW_UNLOCK(&self->shadow_lock);
@@ -170,44 +177,53 @@ void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *queue, si
     case CMD_SET_ROT: {
       JPH_STACK_ALLOC(JPH_Quat, q);
       // No conversion logic needed; already floats
-      q->x = cmd->quat.x; 
-      q->y = cmd->quat.y; 
-      q->z = cmd->quat.z; 
+      q->x = cmd->quat.x;
+      q->y = cmd->quat.y;
+      q->z = cmd->quat.z;
       q->w = cmd->quat.w;
-      
+
       JPH_BodyInterface_SetRotation(bi, bid, q, JPH_Activation_Activate);
 
       SHADOW_LOCK(&self->shadow_lock);
       dense = self->slot_to_dense[slot];
-      
+
       // AuxStride is float-based, so this is a direct assignment
       auto *shadow_rot = (AuxStride *)self->rotations;
       auto *shadow_prot = (AuxStride *)self->prev_rotations;
-      
-      shadow_rot[dense] = (AuxStride){cmd->quat.x, cmd->quat.y, cmd->quat.z, cmd->quat.w};
+
+      shadow_rot[dense] =
+          (AuxStride){cmd->quat.x, cmd->quat.y, cmd->quat.z, cmd->quat.w};
       shadow_prot[dense] = shadow_rot[dense];
-      
+
       SHADOW_UNLOCK(&self->shadow_lock);
       break;
     }
 
     case CMD_SET_TRNS: {
       JPH_STACK_ALLOC(JPH_RVec3, p);
-      p->x = cmd->transform.px; p->y = cmd->transform.py; p->z = cmd->transform.pz;
+      p->x = cmd->transform.px;
+      p->y = cmd->transform.py;
+      p->z = cmd->transform.pz;
       JPH_STACK_ALLOC(JPH_Quat, q);
-      q->x = cmd->transform.rx; q->y = cmd->transform.ry; q->z = cmd->transform.rz; q->w = cmd->transform.rw;
-      JPH_BodyInterface_SetPositionAndRotation(bi, bid, p, q, JPH_Activation_Activate);
+      q->x = cmd->transform.rx;
+      q->y = cmd->transform.ry;
+      q->z = cmd->transform.rz;
+      q->w = cmd->transform.rw;
+      JPH_BodyInterface_SetPositionAndRotation(bi, bid, p, q,
+                                               JPH_Activation_Activate);
 
       SHADOW_LOCK(&self->shadow_lock);
       dense = self->slot_to_dense[slot];
-      PosStride new_p = {cmd->transform.px, cmd->transform.py, cmd->transform.pz};
-      AuxStride new_q = {cmd->transform.rx, cmd->transform.ry, cmd->transform.rz, cmd->transform.rw};
+      PosStride new_p = {cmd->transform.px, cmd->transform.py,
+                         cmd->transform.pz};
+      AuxStride new_q = {cmd->transform.rx, cmd->transform.ry,
+                         cmd->transform.rz, cmd->transform.rw};
 
       auto *shadow_pos = (PosStride *)self->positions;
       auto *shadow_prev_pos = (PosStride *)self->prev_positions;
       auto *shadow_rot = (AuxStride *)self->rotations;
       auto *shadow_prev_rot = (AuxStride *)self->prev_rotations;
-      
+
       shadow_pos[dense] = new_p;
       shadow_prev_pos[dense] = new_p;
       shadow_rot[dense] = new_q;
@@ -223,7 +239,7 @@ void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *queue, si
 
       SHADOW_LOCK(&self->shadow_lock);
       dense = self->slot_to_dense[slot];
-      
+
       // Update shadow buffer (float-to-float)
       shadow_lvel[dense] = (AuxStride){v.x, v.y, v.z, 0.0f};
       SHADOW_UNLOCK(&self->shadow_lock);
@@ -236,21 +252,27 @@ void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *queue, si
 
       SHADOW_LOCK(&self->shadow_lock);
       dense = self->slot_to_dense[slot];
-      
+
       shadow_avel[dense] = (AuxStride){v.x, v.y, v.z, 0.0f};
       SHADOW_UNLOCK(&self->shadow_lock);
       break;
     }
 
     case CMD_SET_MOTION: {
-      JPH_BodyInterface_SetMotionType(bi, bid, (JPH_MotionType)cmd->motion.motion_type, JPH_Activation_Activate);
+      JPH_BodyInterface_SetMotionType(bi, bid,
+                                      (JPH_MotionType)cmd->motion.motion_type,
+                                      JPH_Activation_Activate);
       uint32_t layer = (cmd->motion.motion_type == 0) ? 0 : 1;
       JPH_BodyInterface_SetObjectLayer(bi, bid, (JPH_ObjectLayer)layer);
       break;
     }
 
-    case CMD_ACTIVATE: JPH_BodyInterface_ActivateBody(bi, bid); break;
-    case CMD_DEACTIVATE: JPH_BodyInterface_DeactivateBody(bi, bid); break;
+    case CMD_ACTIVATE:
+      JPH_BodyInterface_ActivateBody(bi, bid);
+      break;
+    case CMD_DEACTIVATE:
+      JPH_BodyInterface_DeactivateBody(bi, bid);
+      break;
 
     case CMD_SET_USER_DATA:
       SHADOW_LOCK(&self->shadow_lock);
@@ -259,14 +281,17 @@ void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *queue, si
       break;
 
     case CMD_SET_CCD: {
-      JPH_MotionQuality qual = cmd->motion.motion_type ? JPH_MotionQuality_LinearCast : JPH_MotionQuality_Discrete;
+      JPH_MotionQuality qual = cmd->motion.motion_type
+                                   ? JPH_MotionQuality_LinearCast
+                                   : JPH_MotionQuality_Discrete;
       JPH_BodyInterface_SetMotionQuality(bi, bid, qual);
       break;
     }
     case CMD_TELEPORT: {
       // TODO: add teleport method
     }
-    default: break;
+    default:
+      break;
     }
   }
 
@@ -277,36 +302,36 @@ void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *queue, si
 }
 
 /**
- * Helper: Flushes pending commands while releasing shadow_lock to 
+ * Helper: Flushes pending commands while releasing shadow_lock to
  * avoid stalling the world during heavy Jolt operations.
  */
 void sync_and_flush_internal(PhysicsWorldObject *self) {
-    BLOCK_UNTIL_NOT_STEPPING(self);
-    BLOCK_UNTIL_NOT_QUERYING(self);
+  BLOCK_UNTIL_NOT_STEPPING(self);
+  BLOCK_UNTIL_NOT_QUERYING(self);
 
-    if (self->command_count == 0) return;
+  if (self->command_count == 0)
+    return;
 
-    // Capture queue and swap
-    PhysicsCommand *captured_queue = self->command_queue;
-    size_t captured_count = self->command_count;
-    self->command_queue = NULL;
-    self->command_count = 0;
-    self->command_capacity = 0;
+  // Capture queue and swap
+  PhysicsCommand *captured_queue = self->command_queue;
+  size_t captured_count = self->command_count;
+  self->command_queue = NULL;
+  self->command_count = 0;
+  self->command_capacity = 0;
 
-    // RELEASE SHADOW LOCK completely before Jolt/Flush
-    SHADOW_UNLOCK(&self->shadow_lock);
-    
-    Py_BEGIN_ALLOW_THREADS
-    NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+  // RELEASE SHADOW LOCK completely before Jolt/Flush
+  SHADOW_UNLOCK(&self->shadow_lock);
 
-    flush_commands_internal(self, captured_queue, captured_count);
-    PyMem_RawFree(captured_queue);
+  Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
 
-    NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
-    Py_END_ALLOW_THREADS
+  flush_commands_internal(self, captured_queue, captured_count);
+  PyMem_RawFree(captured_queue);
 
-    // Re-acquire for the caller
-    SHADOW_LOCK(&self->shadow_lock);
+  NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+  Py_END_ALLOW_THREADS
+
+      // Re-acquire for the caller
+      SHADOW_LOCK(&self->shadow_lock);
 }
 
 void clear_command_queue(PhysicsWorldObject *self) {

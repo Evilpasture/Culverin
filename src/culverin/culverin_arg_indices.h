@@ -127,14 +127,14 @@
   X(IDX_HC_DATA, "points", PyObject *, 1) /* Change name to "points" */        \
   X(IDX_HC_MOTION, "motion", int, 0)                                           \
   X(IDX_HC_MASS, "mass", float, 0)                                             \
-      X(IDX_HC_USER_DATA, "user_data", uint64_t, 0)                            \
-          X(IDX_HC_SENSOR, "is_sensor", bool, 0)                               \
-              X(IDX_HC_CAT, "category", uint32_t, 0)                           \
-                  X(IDX_HC_MASK, "mask", uint32_t, 0)                          \
-                      X(IDX_HC_MAT_ID, "material_id", uint32_t, 0)             \
-                          X(IDX_HC_FRIC, "friction", float, 0)                 \
-                              X(IDX_HC_REST, "restitution", float, 0)          \
-                                  X(IDX_HC_CCD, "ccd", bool, 0)
+  X(IDX_HC_USER_DATA, "user_data", uint64_t, 0)                                \
+  X(IDX_HC_SENSOR, "is_sensor", bool, 0)                                       \
+  X(IDX_HC_CAT, "category", uint32_t, 0)                                       \
+  X(IDX_HC_MASK, "mask", uint32_t, 0)                                          \
+  X(IDX_HC_MAT_ID, "material_id", uint32_t, 0)                                 \
+  X(IDX_HC_FRIC, "friction", float, 0)                                         \
+  X(IDX_HC_REST, "restitution", float, 0)                                      \
+  X(IDX_HC_CCD, "ccd", bool, 0)
 
 #define SCHEMA_HC_COMP(X)                                                      \
   X(IDX_HC_POS, "pos", PyObject *, 1)                                          \
@@ -142,14 +142,14 @@
   X(IDX_HC_DATA, "parts", PyObject *, 1) /* Change name to "parts" */          \
   X(IDX_HC_MOTION, "motion", int, 0)                                           \
   X(IDX_HC_MASS, "mass", float, 0)                                             \
-      X(IDX_HC_USER_DATA, "user_data", uint64_t, 0)                            \
-          X(IDX_HC_SENSOR, "is_sensor", bool, 0)                               \
-              X(IDX_HC_CAT, "category", uint32_t, 0)                           \
-                  X(IDX_HC_MASK, "mask", uint32_t, 0)                          \
-                      X(IDX_HC_MAT_ID, "material_id", uint32_t, 0)             \
-                          X(IDX_HC_FRIC, "friction", float, 0)                 \
-                              X(IDX_HC_REST, "restitution", float, 0)          \
-                                  X(IDX_HC_CCD, "ccd", bool, 0)
+  X(IDX_HC_USER_DATA, "user_data", uint64_t, 0)                                \
+  X(IDX_HC_SENSOR, "is_sensor", bool, 0)                                       \
+  X(IDX_HC_CAT, "category", uint32_t, 0)                                       \
+  X(IDX_HC_MASK, "mask", uint32_t, 0)                                          \
+  X(IDX_HC_MAT_ID, "material_id", uint32_t, 0)                                 \
+  X(IDX_HC_FRIC, "friction", float, 0)                                         \
+  X(IDX_HC_REST, "restitution", float, 0)                                      \
+  X(IDX_HC_CCD, "ccd", bool, 0)
 
 #define SCHEMA_BATCH_CREATE(X)                                                 \
   X(IDX_BC_POSITIONS, "positions", PyObject *, 1)                              \
@@ -199,54 +199,52 @@
   X(IDX_SUD_H, "handle", BodyHandle, 1)                                        \
   X(IDX_SUD_D, "data", uint64_t, 1)
 
-#define SCHEMA_SET_MOTION(X) \
-    X(IDX_SM_H, "handle", BodyHandle, 1) \
-    X(IDX_SM_M, "motion", int,        1)
+#define SCHEMA_SET_MOTION(X)                                                   \
+  X(IDX_SM_H, "handle", BodyHandle, 1)                                         \
+  X(IDX_SM_M, "motion", int, 1)
 
-#define SCHEMA_COL_FILTER(X) \
-    X(IDX_CF_H, "handle",   BodyHandle, 1) \
-    X(IDX_CF_C, "category", uint32_t,   1) \
-    X(IDX_CF_M, "mask",     uint32_t,   1)
+#define SCHEMA_COL_FILTER(X)                                                   \
+  X(IDX_CF_H, "handle", BodyHandle, 1)                                         \
+  X(IDX_CF_C, "category", uint32_t, 1)                                         \
+  X(IDX_CF_M, "mask", uint32_t, 1)
 
-#define SCHEMA_REG_MAT(X) \
-    X(IDX_RM_ID,   "id",          uint32_t, 1) \
-    X(IDX_RM_FRIC, "friction",    float,    0) \
-    X(IDX_RM_REST, "restitution", float,    0)
+#define SCHEMA_REG_MAT(X)                                                      \
+  X(IDX_RM_ID, "id", uint32_t, 1)                                              \
+  X(IDX_RM_FRIC, "friction", float, 0)                                         \
+  X(IDX_RM_REST, "restitution", float, 0)
 
-#define SCHEMA_SET_CONSTR_TARGET(X) \
-    X(IDX_SCT_H, "handle", uint64_t, 1) \
-    X(IDX_SCT_T, "target", float,    1)
+#define SCHEMA_SET_CONSTR_TARGET(X)                                            \
+  X(IDX_SCT_H, "handle", uint64_t, 1)                                          \
+  X(IDX_SCT_T, "target", float, 1)
 
-#define SCHEMA_HEIGHTFIELD(X) \
-    X(IDX_HF_POS,       "pos",         PyObject*, 1) \
-    X(IDX_HF_ROT,       "rot",         PyObject*, 1) \
-    X(IDX_HF_SCALE,     "scale",       PyObject*, 1) \
-    X(IDX_HF_HEIGHTS,   "heights",     PyObject*, 1) \
-    X(IDX_HF_GRID_SIZE, "grid_size",   int,       1) \
-    X(IDX_HF_USER_DATA, "user_data",   uint64_t,  0) \
-    X(IDX_HF_CAT,       "category",    uint32_t,  0) \
-    X(IDX_HF_MASK,      "mask",        uint32_t,  0) \
-    X(IDX_HF_MAT_ID,    "material_id", uint32_t,  0) \
-    X(IDX_HF_FRIC,      "friction",    float,     0) \
-    X(IDX_HF_REST,      "restitution", float,     0)
-    
-#define SCHEMA_DEBUG_DATA(X) \
-    X(IDX_DD_SHAPES,      "shapes",      bool, 0) \
-    X(IDX_DD_CONSTRAINTS, "constraints", bool, 0) \
-    X(IDX_DD_BBOX,        "bbox",        bool, 0) \
-    X(IDX_DD_CENTERS,     "centers",     bool, 0) \
-    X(IDX_DD_WIREFRAME,   "wireframe",   bool, 0)
+#define SCHEMA_HEIGHTFIELD(X)                                                  \
+  X(IDX_HF_POS, "pos", PyObject *, 1)                                          \
+  X(IDX_HF_ROT, "rot", PyObject *, 1)                                          \
+  X(IDX_HF_SCALE, "scale", PyObject *, 1)                                      \
+  X(IDX_HF_HEIGHTS, "heights", PyObject *, 1)                                  \
+  X(IDX_HF_GRID_SIZE, "grid_size", int, 1)                                     \
+  X(IDX_HF_USER_DATA, "user_data", uint64_t, 0)                                \
+  X(IDX_HF_CAT, "category", uint32_t, 0)                                       \
+  X(IDX_HF_MASK, "mask", uint32_t, 0)                                          \
+  X(IDX_HF_MAT_ID, "material_id", uint32_t, 0)                                 \
+  X(IDX_HF_FRIC, "friction", float, 0)                                         \
+  X(IDX_HF_REST, "restitution", float, 0)
 
-#define SCHEMA_CREATE_CONSTR(X) \
-    X(IDX_CC_TYPE,   "type",   int,        1) \
-    X(IDX_CC_BODY1,  "body1",  BodyHandle, 1) \
-    X(IDX_CC_BODY2,  "body2",  BodyHandle, 1) \
-    X(IDX_CC_PARAMS, "params", PyObject*,  0) \
-    X(IDX_CC_MOTOR,  "motor",  PyObject*,  0)
+#define SCHEMA_DEBUG_DATA(X)                                                   \
+  X(IDX_DD_SHAPES, "shapes", bool, 0)                                          \
+  X(IDX_DD_CONSTRAINTS, "constraints", bool, 0)                                \
+  X(IDX_DD_BBOX, "bbox", bool, 0)                                              \
+  X(IDX_DD_CENTERS, "centers", bool, 0)                                        \
+  X(IDX_DD_WIREFRAME, "wireframe", bool, 0)
 
-#define SCHEMA_STEP(X) \
-    X(IDX_STEP_DT, "dt", float, 0) // Optional (0)
+#define SCHEMA_CREATE_CONSTR(X)                                                \
+  X(IDX_CC_TYPE, "type", int, 1)                                               \
+  X(IDX_CC_BODY1, "body1", BodyHandle, 1)                                      \
+  X(IDX_CC_BODY2, "body2", BodyHandle, 1)                                      \
+  X(IDX_CC_PARAMS, "params", PyObject *, 0)                                    \
+  X(IDX_CC_MOTOR, "motor", PyObject *, 0)
 
+#define SCHEMA_STEP(X) X(IDX_STEP_DT, "dt", float, 0) // Optional (0)
 
 /** --- THE GENERATOR ENGINE --- **/
 
@@ -325,7 +323,7 @@ DECLARE_PARSER(OverlapSphere, OverlapSphere)
 DECLARE_PARSER(OverlapAABB, OverlapAABB)
 DECLARE_PARSER(SetUserData, SetUserData)
 DECLARE_PARSER(GetUserData, HOnly) // Reuses Handle-Only group
-DECLARE_PARSER(GetMotion, HOnly)     // Reuses Handle-Only group
+DECLARE_PARSER(GetMotion, HOnly)   // Reuses Handle-Only group
 DECLARE_PARSER(SetMotion, SetMotion)
 DECLARE_PARSER(ColFilter, ColFilter)
 DECLARE_PARSER(RegMat, RegMat)

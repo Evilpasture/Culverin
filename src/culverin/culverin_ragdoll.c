@@ -22,7 +22,7 @@ PyObject *Skeleton_get_joint_index(SkeletonObject *self, PyObject *args) {
   return PyLong_FromLong(idx);
 }
 
-PyObject *Skeleton_finalize(SkeletonObject *self, PyObject *args) {
+PyObject *Skeleton_finalize(SkeletonObject *self, PyObject *Py_UNUSED(args)) {
   JPH_Skeleton_CalculateParentJointIndices(self->skeleton);
   if (!JPH_Skeleton_AreJointsCorrectlyOrdered(self->skeleton)) {
     PyErr_SetString(
@@ -181,7 +181,7 @@ PyObject *RagdollSettings_add_part(RagdollSettingsObject *self, PyObject *args,
 }
 
 PyObject *RagdollSettings_stabilize(RagdollSettingsObject *self,
-                                    PyObject *args) {
+                                    PyObject *Py_UNUSED(args)) {
   if (JPH_RagdollSettings_Stabilize(self->settings)) {
     Py_RETURN_TRUE;
   }
@@ -323,15 +323,15 @@ PyObject *PhysicsWorld_create_ragdoll(PhysicsWorldObject *self, PyObject *args,
     JPH_BodyInterface_GetRotation(bi, bid, &world_q);
 
     // --- STRIDE-SAFE ASSIGNMENT ---
-    shadow_pos[dense]  = (PosStride){world_p.x, world_p.y, world_p.z};
+    shadow_pos[dense]  = (PosStride){.x = world_p.x, .y = world_p.y, .z = world_p.z};
     shadow_ppos[dense] = shadow_pos[dense];
 
-    shadow_rot[dense]  = (AuxStride){world_q.x, world_q.y, world_q.z, world_q.w};
+    shadow_rot[dense]  = (AuxStride){.x = world_q.x, .y = world_q.y, .z = world_q.z, .w = world_q.w};
     shadow_prot[dense] = shadow_rot[dense];
 
     // Initialize physics state
-    shadow_lvel[dense] = (AuxStride){0, 0, 0, 0};
-    shadow_avel[dense] = (AuxStride){0, 0, 0, 0};
+    shadow_lvel[dense] = (AuxStride){};
+    shadow_avel[dense] = (AuxStride){};
 
     // Metadata
     self->body_ids[dense]     = bid;
@@ -435,7 +435,7 @@ PyObject *Ragdoll_drive_to_pose(RagdollObject *self, PyObject *args,
   Py_RETURN_NONE;
 }
 
-PyObject *Ragdoll_get_body_ids(RagdollObject *self, PyObject *args) {
+PyObject *Ragdoll_get_body_ids(RagdollObject *self, PyObject *Py_UNUSED(args)) {
   // Helper to get the Body Handles of the parts so users can manipulate
   // specific limbs
   PyObject *list = PyList_New((Py_ssize_t)self->body_count);
@@ -499,8 +499,8 @@ void Skeleton_dealloc(SkeletonObject *self) {
   Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
-PyObject *Skeleton_new(PyTypeObject *type, PyObject *args, PyObject *kwds) {
-  SkeletonObject *self = (SkeletonObject *)type->tp_alloc(type, 0);
+PyObject *Skeleton_new(PyTypeObject *type, PyObject *Py_UNUSED(args), PyObject *Py_UNUSED(kwds)) {
+  auto *self = (SkeletonObject *)type->tp_alloc(type, 0);
   if (self) {
     self->skeleton = JPH_Skeleton_Create();
     if (!self->skeleton) {

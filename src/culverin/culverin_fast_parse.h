@@ -11,14 +11,14 @@
  * ============================================================================
  *
  * A high-performance, zero-allocation argument parsing system for Python C
- * extensions. Replaces PyArg_ParseTupleAndKeywords with a hybrid system using 
+ * extensions. Replaces PyArg_ParseTupleAndKeywords with a hybrid system using
  * X-Macro Schemas for "Lazy" maintenance and Pointer Hashing for O(1) lookups.
  *
  * ----------------------------------------------------------------------------
  * 1. THE SETUP (Lazy Schema Definition)
  * ----------------------------------------------------------------------------
  * Define your API once in culverin_arg_indices.h using X-Macros.
- * 
+ *
  *   #define SCHEMA_VEC3(X) \
  *       X(IDX_V3_H, "handle", uint64_t, 1) \  // REQUIRED (1)
  *       X(IDX_V3_X, "x",      float,    1) \
@@ -29,7 +29,7 @@
  *   DEFINE_INDEX_GROUP(Vec3, SCHEMA_VEC3)
  *
  *   // Declare specific Parser objects
- *   DECLARE_PARSER(Force, Vec3) 
+ *   DECLARE_PARSER(Force, Vec3)
  *   DECLARE_PARSER(Torque, Vec3)
  *
  * ----------------------------------------------------------------------------
@@ -59,7 +59,7 @@
  *       targets[IDX_V3_Y] = &y;
  *       targets[IDX_V3_Z] = &z;
  *
- *       if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, 
+ *       if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
  *                              &ForceParser, targets))
  *           return nullptr;
  *
@@ -71,17 +71,17 @@
  * ----------------------------------------------------------------------------
  *
  * INVARIANT A: SCHEMA INTEGRITY
- * The ID used in the 'targets' array (e.g., IDX_V3_X) MUST match the schema 
- * used to initialize the parser. The X-Macro ensures this by generating the 
+ * The ID used in the 'targets' array (e.g., IDX_V3_X) MUST match the schema
+ * used to initialize the parser. The X-Macro ensures this by generating the
  * Enum and Parser Specs from the same source.
  *
  * INVARIANT B: PRECISION SAFETY
- * Using 'JPH_Real' in the Schema allows the engine to automatically dispatch 
- * to either 'float' or 'double' converters based on your Jolt build, 
+ * Using 'JPH_Real' in the Schema allows the engine to automatically dispatch
+ * to either 'float' or 'double' converters based on your Jolt build,
  * preventing stack corruption.
  *
  * INVARIANT C: INITIALIZATION
- * culverin_init_all_parsers() MUST be called in the module exec phase. 
+ * culverin_init_all_parsers() MUST be called in the module exec phase.
  * If interned pointers are uninitialized, O(1) address-hashing will fail.
  *
  * ----------------------------------------------------------------------------
@@ -95,7 +95,7 @@
  * ============================================================================
  */
 
-#define FP_EMPTY_SLOT 0xFFFF
+constexpr int FP_EMPTY_SLOT = 0xFFFF;
 
 /** --- 1. TYPES & STRUCTS --- **/
 

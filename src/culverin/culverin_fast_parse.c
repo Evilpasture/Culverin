@@ -81,15 +81,16 @@ void fp_init_impl(FastParser *fp, FastArgSpec *specs, size_t count) {
  * Not intended for hot loops, so we keep it out of the header.
  */
 bool fp_parse_legacy(PyObject *args, PyObject *kwargs, const FastParser *fp,
-                     void **targets, [[maybe_unused]] size_t dummy) {
+                     void **targets, CULV_MAYBE_UNUSED size_t dummy) {
   uint64_t provided_mask = 0;
   const size_t count = fp->count;
   const FastArgSpec *specs = fp->specs;
 
   if (args) {
     Py_ssize_t nargs = PyTuple_GET_SIZE(args);
-    if (nargs > (Py_ssize_t)count)
+    if (nargs > (Py_ssize_t)count) {
       return fp_report_too_many(fp, nargs);
+    }
 
     for (Py_ssize_t i = 0; i < nargs; ++i) {
       provided_mask |= (1ULL << i);
@@ -98,7 +99,8 @@ bool fp_parse_legacy(PyObject *args, PyObject *kwargs, const FastParser *fp,
   }
 
   if (kwargs) {
-    PyObject *key, *val;
+    PyObject *key;
+    PyObject *val;
     Py_ssize_t pos = 0;
     while (PyDict_Next(kwargs, &pos, &key, &val)) {
       int idx = -1;

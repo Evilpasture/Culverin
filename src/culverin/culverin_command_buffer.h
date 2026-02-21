@@ -1,9 +1,8 @@
 #pragma once
+#include "culverin_types.h"
 #include "joltc.h"
 #include <stddef.h>
 #include <stdint.h>
-#include "culverin_types.h"
-
 
 struct PhysicsWorldObject;
 typedef struct PhysicsWorldObject PhysicsWorldObject;
@@ -16,14 +15,14 @@ typedef struct PhysicsWorldObject PhysicsWorldObject;
 #define CMD_GET_SLOT(header) ((header) >> 8)
 
 // --- Slot State Machine ---
-typedef enum SlotState: uint8_t {
+typedef enum SlotState : uint8_t {
   SLOT_EMPTY = 0,
   SLOT_PENDING_CREATE = 1,
   SLOT_ALIVE = 2,
   SLOT_PENDING_DESTROY = 3
 } SlotState;
 
-typedef enum CommandType: uint8_t {
+typedef enum CommandType : uint8_t {
   CMD_CREATE_BODY,
   CMD_DESTROY_BODY,
   CMD_SET_POS,
@@ -41,9 +40,9 @@ typedef enum CommandType: uint8_t {
 
 // Internal helper to resolve slots to Jolt IDs safely
 typedef struct {
-    JPH_BodyID bid;
-    uint32_t dense_idx;
-    bool is_alive;
+  JPH_BodyID bid;
+  uint32_t dense_idx;
+  bool is_alive;
 } ResolvedCmd;
 
 // Force 8-byte alignment for the whole union to ensure 64-bit pointers align
@@ -69,9 +68,9 @@ typedef union {
   // 2. Transform (Updated to JPH_Real for Position)
   struct {
     uint32_t header;
-    uint32_t _pad_align;    // Ensure JPH_Real starts at 8-byte boundary
-    JPH_Real px, py, pz;    // 24 bytes (Double precision safe)
-    float rx, ry, rz, rw;   // 16 bytes (Rotations are floats in Jolt)
+    uint32_t _pad_align;  // Ensure JPH_Real starts at 8-byte boundary
+    JPH_Real px, py, pz;  // 24 bytes (Double precision safe)
+    float rx, ry, rz, rw; // 16 bytes (Rotations are floats in Jolt)
   } transform;
 
   // 3. Vector and quat (Updated to JPH_Real for Position/Velocity consistency)
@@ -84,7 +83,7 @@ typedef union {
   struct {
     uint32_t header;
     uint32_t _pad;
-    JPH_Real x, y, z; 
+    JPH_Real x, y, z;
   } pos;
 
   struct {
@@ -102,34 +101,40 @@ typedef union {
 
   // 5. User Data
   struct {
-    uint32_t header;        
-    uint32_t _align_pad;    
-    uint64_t user_data_val; 
+    uint32_t header;
+    uint32_t _align_pad;
+    uint64_t user_data_val;
   } user_data;
 
   struct {
     uint32_t header;
     uint32_t _pad;
-    JPH_Real pos[4];      // 24 bytes (unaligned)
-    float vel[4];         // 12 bytes
-  } teleport; // TODO: unused, but interesting. will implement later
+    JPH_Real pos[4]; // 24 bytes (unaligned)
+    float vel[4];    // 12 bytes
+  } teleport;        // TODO: unused, but interesting. will implement later
 
   uint8_t _cache_line_padding[64];
 
 } PhysicsCommand;
 
 _Static_assert(sizeof(PhysicsCommand) == 64, "PhysicsCommand must be 64 bytes");
-_Static_assert(offsetof(PhysicsCommand, vec3f.x) == 8, "vec3f.x must start at offset 8");
-_Static_assert(offsetof(PhysicsCommand, transform.px) == 8, "transform.px must start at offset 8");
-_Static_assert(offsetof(PhysicsCommand, create.settings) == 8, "create.settings must start at offset 8");
-_Static_assert(_Alignof(PhysicsCommand) == 8, "PhysicsCommand must be 8-byte aligned");
-_Static_assert(offsetof(PhysicsCommand, _cache_line_padding) == 0, "Padding must be in union");
+_Static_assert(offsetof(PhysicsCommand, vec3f.x) == 8,
+               "vec3f.x must start at offset 8");
+_Static_assert(offsetof(PhysicsCommand, transform.px) == 8,
+               "transform.px must start at offset 8");
+_Static_assert(offsetof(PhysicsCommand, create.settings) == 8,
+               "create.settings must start at offset 8");
+_Static_assert(_Alignof(PhysicsCommand) == 8,
+               "PhysicsCommand must be 8-byte aligned");
+_Static_assert(offsetof(PhysicsCommand, _cache_line_padding) == 0,
+               "Padding must be in union");
 
 // INCLUDE AFTER PHYSICSCOMMAND!
 #include "culverin.h"
 
 void world_remove_body_slot(struct PhysicsWorldObject *self, uint32_t slot);
 bool ensure_command_capacity(struct PhysicsWorldObject *self);
-void flush_commands_internal(struct PhysicsWorldObject *self, PhysicsCommand *queue, size_t count);
+void flush_commands_internal(struct PhysicsWorldObject *self,
+                             PhysicsCommand *queue, size_t count);
 void sync_and_flush_internal(struct PhysicsWorldObject *self);
 void clear_command_queue(struct PhysicsWorldObject *self);
