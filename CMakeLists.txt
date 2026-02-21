@@ -186,7 +186,7 @@ if(MSVC OR (WIN32 AND CMAKE_C_COMPILER_ID MATCHES "Clang"))
                 else()
                     # For vanilla clang.exe (What you are currently using)
                     # We add -mfma and -mf16c to satisfy the intrinsic requirements
-                    target_compile_options(${t} PRIVATE -mavx2 -mfma -mf16c -std=c++17)
+                    target_compile_options(${t} PRIVATE -mavx2 -mlzcnt -mfma -mf16c -std=c++17)
                 endif()
             endif()
         endif()
