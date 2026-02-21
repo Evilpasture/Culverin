@@ -2,10 +2,13 @@ name: Build Culverin Wheels
 
 on:
   push:
-    branches: [ master ]
+    branches: 
+      - master
+      - optimization-WIP
     tags: [ 'v*' ]
   pull_request:
-    branches: [ master ]
+    branches: 
+      - master
 
 jobs:
   build_wheels:
