@@ -124,7 +124,6 @@ if(MSVC)
             /clang:-march=native \
             /clang:-mavx2 \
             /clang:-fstrict-aliasing \
-            /clang:-mllvm /clang:-vectorize-slp-aggressive \
             /clang:-mllvm /clang:-inline-threshold=1000 \
             /Ob2 /Oi /Ot \
         ")
