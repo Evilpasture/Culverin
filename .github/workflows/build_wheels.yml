@@ -38,17 +38,17 @@ jobs:
         uses: pypa/cibuildwheel@v2.22.0
         env:
           CIBW_FREE_THREADED_SUPPORT: 1
-          CIBW_BUILD: "cp313t-* cp314t-*"
+          # Focus only on 64-bit architectures
+          CIBW_BUILD: "cp313t-manylinux_x86_64 cp313t-win_amd64 cp313t-macosx_*"
           
-          # Linux: Use manylinux_2_28 to get a modern glibc
+          # Linux 64-bit setup
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
-          # This ensures yum only runs on Linux
           CIBW_BEFORE_ALL_LINUX: >
             yum install -y clang llvm && 
             clang --version
           CIBW_ENVIRONMENT_LINUX: "CC=clang CXX=clang++ Py_GIL_DISABLED=1"
 
-          # Windows: Specifically target the ClangCL toolset
+          # Windows 64-bit setup
           CIBW_ENVIRONMENT_WINDOWS: "SKBUILD_CMAKE_ARGS='-T ClangCL' Py_GIL_DISABLED=1"
 
           # MacOS: Already works, don't touch it!
