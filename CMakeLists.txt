@@ -400,15 +400,28 @@ if(MSVC OR WIN32)
 endif()
 install(FILES src/culverin/__init__.py src/culverin/_culverin.py DESTINATION .)
 # ==============================================================================
-# 5. POST-DEFINITION FLAG INJECTION (For C23 / Clang-CL)
+# 5. POST-DEFINITION FLAG INJECTION
 # ==============================================================================
-if(TARGET joltc_double AND TARGET _culverin_c)
-    message(STATUS "Culverin: Applying C23 flags to targets...")
+
+# Use a function or an explicit check to ensure targets exist
+if(TARGET joltc_double)
+    message(STATUS "Culverin: Applying C23 flags to joltc_double...")
+    
     if(MSVC AND CMAKE_C_COMPILER_ID MATCHES "Clang")
-        target_compile_options(joltc_double PRIVATE /clang:-std=c23)
-        target_compile_options(_culverin_c PRIVATE /clang:-std=c23)
+        # Apply C23 ONLY to C files within the target for Clang-CL
+        target_compile_options(joltc_double PRIVATE $<$<COMPILE_LANGUAGE:C>:/clang:-std=c23>)
     else()
-        target_compile_options(joltc_double PRIVATE -std=c23)
-        target_compile_options(_culverin_c PRIVATE -std=c23)
+        # Apply C23 ONLY to C files for vanilla Clang/GCC
+        target_compile_options(joltc_double PRIVATE $<$<COMPILE_LANGUAGE:C>:-std=c23>)
+    endif()
+endif()
+
+if(TARGET _culverin_c)
+    message(STATUS "Culverin: Applying C23 flags to _culverin_c...")
+    
+    if(MSVC AND CMAKE_C_COMPILER_ID MATCHES "Clang")
+        target_compile_options(_culverin_c PRIVATE $<$<COMPILE_LANGUAGE:C>:/clang:-std=c23>)
+    else()
+        target_compile_options(_culverin_c PRIVATE $<$<COMPILE_LANGUAGE:C>:-std=c23>)
     endif()
 endif()
