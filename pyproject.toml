@@ -45,17 +45,6 @@ Documentation = "https://github.com/Evilpasture/culverin/tree/master/docs"
 Repository = "https://github.com/Evilpasture/culverin.git"
 "Bug Tracker" = "https://github.com/Evilpasture/culverin/issues"
 
-[tool.cibuildwheel]
-# Use a modern image that actually knows what C23 is
-manylinux-x86_64-image = "manylinux_2_28" 
-
-# On Linux, we need to force it to use Clang instead of the default old GCC
-environment = { CC="clang", CXX="clang++" }
-
-# Before building, ensure we have a modern Clang 
-# (manylinux_2_28 usually has 15-16, we want 17+ or 18)
-before-all = "yum install -y clang"
-
 [tool.scikit-build]
 cmake.build-type = "Release"
 cmake.args = [

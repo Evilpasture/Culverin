@@ -80,22 +80,19 @@ if(NOT MSVC)
 endif()
 
 # Standards
-if(CMAKE_C_COMPILER_ID STREQUAL "GNU" OR CMAKE_C_COMPILER_ID MATCHES "Clang")
-    # Only enforce the version check on non-MSVC environments
-    if(NOT MSVC AND CMAKE_C_COMPILER_VERSION VERSION_LESS "13.0")
-        message(FATAL_ERROR "Culverin: Your compiler is too old! Need GCC 13+ or Clang 17+ for C23.")
-    endif()
-    
-    # If on Windows/Clang-CL, don't set CMAKE_C_STANDARD 23 yet, 
-    # as CMake doesn't know how to map it to clang-cl flags.
+if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    # Satisfy CMake with a standard it definitely knows
+    set(CMAKE_C_STANDARD 17)
+    set(CMAKE_C_STANDARD_REQUIRED ON)
+
     if(MSVC)
-        set(CMAKE_C_STANDARD 17) 
+        # Windows Clang-CL tunnel
+        add_compile_options($<$<COMPILE_LANGUAGE:C>:/clang:-std=c23>)
     else()
-        if(CMAKE_C_COMPILER_VERSION VERSION_GREATER_EQUAL "15.0")
-            set(CMAKE_C_STANDARD 23)
-        else()
-            set(CMAKE_C_STANDARD 2x) 
-        endif()
+        # Linux/macOS: Force the flag manually to avoid "Dialect not supported" errors
+        add_compile_options($<$<COMPILE_LANGUAGE:C>:-std=c23>)
+        # Fallback for older Clang that only knows c2x
+        add_compile_options($<$<COMPILE_LANGUAGE:C>:-Wno-unknown-warning-option>) 
     endif()
 endif()
 set(CMAKE_C_STANDARD_REQUIRED ON)
