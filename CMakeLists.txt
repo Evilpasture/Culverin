@@ -86,7 +86,7 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     
     if(MSVC)
         # Windows/Clang-CL: Needs the /clang: prefix to see C23 auto/constexpr
-        add_compile_options($<$<COMPILE_LANGUAGE:C>:/clang:-std=c23>)
+        # add_compile_options($<$<COMPILE_LANGUAGE:C>:/clang:-std=c23>)
     else()
         # Linux/macOS: Try c23, but allow c2x as a fallback for Clang 15/16
         # These flags are required for 'auto' and 'constexpr' in C
@@ -126,7 +126,6 @@ if(MSVC)
         ")
     else()
         message(STATUS "Culverin: Detected Pure MSVC")
-        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /std:clatest /experimental:c11atomics /fp:fast")
         set(RELEASE_FLAGS "/Ox /Ot /Ob2 /Oi")
     endif()
 
@@ -252,7 +251,7 @@ if(MSVC)
     # 1. Add /Zi to generate debug info (symbols) even in Release builds
     # 2. Add /DEBUG to the linker to create the .pdb file
     # 3. Add /OPT:REF /OPT:ICF to ensure the Release build remains optimized and small
-    target_compile_options(_culverin_c PRIVATE /Zi /std:clatest /experimental:c11atomics /fp:fast)
+    target_compile_options(_culverin_c PRIVATE /Zi /fp:fast)
     target_link_options(_culverin_c PRIVATE /DEBUG /OPT:REF /OPT:ICF)
     
     # Fix for some MSVC headers being stubborn about standards
@@ -392,19 +391,18 @@ if(MSVC OR WIN32)
 endif()
 install(FILES src/culverin/__init__.py src/culverin/_culverin.py DESTINATION .)
 # ==============================================================================
-# 5. POST-DEFINITION FLAG INJECTION (FINAL RECONCILIATION)
+# 5. THE TRINITY OF GREEN: C23 ENFORCEMENT
 # ==============================================================================
 foreach(t joltc_double _culverin_c)
     if(TARGET ${t})
         if(MSVC AND CMAKE_C_COMPILER_ID MATCHES "Clang")
-            message(STATUS "Culverin: Hammering C23 into ${t} (Clang-CL)...")
-            # We use the /clang: prefix to bypass the MSVC driver's ignorance
+            message(STATUS "Culverin: Hammering C23 into ${t} via Clang-CL Shell")
+            # We use "SHELL:" to prevent CMake from de-duplicating or 'fixing' the flags
             target_compile_options(${t} PRIVATE 
-                $<$<COMPILE_LANGUAGE:C>:/clang:-std=c23>
-                $<$<COMPILE_LANGUAGE:C>:/clang:-Wno-c23-extensions>
+                $<$<COMPILE_LANGUAGE:C>:"SHELL:/clang:-std=c23">
+                $<$<COMPILE_LANGUAGE:C>:"SHELL:/clang:-Wno-c23-extensions">
             )
         else()
-            message(STATUS "Culverin: Applying C23 to ${t} (Vanilla/Apple)...")
             target_compile_options(${t} PRIVATE $<$<COMPILE_LANGUAGE:C>:-std=c23>)
         endif()
     endif()
