@@ -13,6 +13,7 @@ BUILD_DIR = PROJECT_ROOT / "build"
 TARGET_DIR = PROJECT_ROOT / "src" / "culverin"
 
 IS_CI = os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS")
+cpu_count = os.cpu_count() or 4
 
 def alert(success=True):
     """Audio cues for headless building."""
@@ -38,7 +39,7 @@ def build_extension():
     
     config = {
         "cmake.define.DOUBLE_PRECISION": "ON",
-        "build.tool-args": ["-j12"], # This passes -j12 directly to Ninja/Make
+        "build.tool-args": [f"-j{cpu_count}"], # This passes -j12 directly to Ninja/Make
         "cmake.define.JPH_DOUBLE_PRECISION": "ON",
         "build-dir": str(BUILD_DIR),
     }
