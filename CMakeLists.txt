@@ -81,15 +81,21 @@ endif()
 
 # Standards
 if(CMAKE_C_COMPILER_ID STREQUAL "GNU" OR CMAKE_C_COMPILER_ID MATCHES "Clang")
-    if(CMAKE_C_COMPILER_VERSION VERSION_LESS "13.0")
+    # Only enforce the version check on non-MSVC environments
+    if(NOT MSVC AND CMAKE_C_COMPILER_VERSION VERSION_LESS "13.0")
         message(FATAL_ERROR "Culverin: Your compiler is too old! Need GCC 13+ or Clang 17+ for C23.")
     endif()
     
-    # GCC 13/14 often prefer c2x, GCC 15+ likes c23
-    if(CMAKE_C_COMPILER_VERSION VERSION_GREATER_EQUAL "15.0")
-        set(CMAKE_C_STANDARD 23)
+    # If on Windows/Clang-CL, don't set CMAKE_C_STANDARD 23 yet, 
+    # as CMake doesn't know how to map it to clang-cl flags.
+    if(MSVC)
+        set(CMAKE_C_STANDARD 17) 
     else()
-        set(CMAKE_C_STANDARD 2x) 
+        if(CMAKE_C_COMPILER_VERSION VERSION_GREATER_EQUAL "15.0")
+            set(CMAKE_C_STANDARD 23)
+        else()
+            set(CMAKE_C_STANDARD 2x) 
+        endif()
     endif()
 endif()
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -126,6 +132,7 @@ if(MSVC)
             /clang:-mllvm /clang:-inline-threshold=1000 \
             /Ob2 /Oi /Ot \
         ")
+        target_compile_options(joltc_double PRIVATE /clang:-std=c23)
     else()
         message(STATUS "Culverin: Detected Pure MSVC")
         set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /std:clatest /experimental:c11atomics /fp:fast")
