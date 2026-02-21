@@ -268,18 +268,20 @@ static PyObject *PhysicsWorld_apply_impulse(PhysicsWorldObject *self,
     uint64_t handle_raw;
     float x, y, z;
 
-    void *targets[IDX_IMPULSE_COUNT];
-    targets[IDX_IMPULSE_HANDLE] = &handle_raw;
-    targets[IDX_IMPULSE_X]      = &x;
-    targets[IDX_IMPULSE_Y]      = &y;
-    targets[IDX_IMPULSE_Z]      = &z;
+    // We now use the shared Vec3 Group indices and count
+    void *targets[Vec3_COUNT]; 
+    targets[IDX_V3_H] = &handle_raw;
+    targets[IDX_V3_X] = &x;
+    targets[IDX_V3_Y] = &y;
+    targets[IDX_V3_Z] = &z;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
+    // Use the ImpulseParser (initialized with SCHEMA_VEC3)
     if (!FastParse_Unified(args, nargs, kwnames, &ImpulseParser, targets)) {
         return NULL;
     }
 
-    // Finite check (Fast path, keep outside lock)
+    // Finite check (Outside lock)
     if (UNLIKELY(!isfinite(x) || !isfinite(y) || !isfinite(z))) {
         PyErr_SetString(PyExc_ValueError, "Impulse components must be finite");
         return NULL;
@@ -287,9 +289,6 @@ static PyObject *PhysicsWorld_apply_impulse(PhysicsWorldObject *self,
 
     // 2. CRITICAL SECTION
     SHADOW_LOCK(&self->shadow_lock);
-    
-    // We can't apply an immediate impulse if Jolt is currently 
-    // updating (stepping) or if we are querying.
     BLOCK_UNTIL_NOT_STEPPING(self);
 
     uint32_t slot = 0;
@@ -299,9 +298,6 @@ static PyObject *PhysicsWorld_apply_impulse(PhysicsWorldObject *self,
         return NULL;
     }
 
-    // --- IMMEDIATE EXECUTION CONSTRAINT ---
-    // Only SLOT_ALIVE bodies have a valid JPH_BodyID. 
-    // If it's PENDING_CREATE, we can't talk to Jolt yet.
     if (UNLIKELY(self->slot_states[slot] != SLOT_ALIVE)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Body is not yet active in simulation");
@@ -311,9 +307,7 @@ static PyObject *PhysicsWorld_apply_impulse(PhysicsWorldObject *self,
     uint32_t dense_idx = self->slot_to_dense[slot];
     JPH_BodyID bid = self->body_ids[dense_idx];
 
-    // 3. JOLT INTERACTION (Release GIL)
-    // We release the GIL because AddImpulse/Activate might involve Jolt 
-    // internal mutexes. In 3.14t, this keeps other threads running.
+    // 3. JOLT INTERACTION (No GIL)
     Py_BEGIN_ALLOW_THREADS 
     JPH_Vec3 imp = {x, y, z};
     JPH_BodyInterface_AddImpulse(self->body_interface, bid, &imp);
@@ -332,14 +326,14 @@ static PyObject *PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self,
     float ix, iy, iz;
     JPH_Real px, py, pz;
 
-    void *targets[IDX_IMPULSE_AT_COUNT];
-    targets[IDX_IMPULSE_AT_HANDLE] = &handle_raw;
-    targets[IDX_IMPULSE_AT_IX]     = &ix;
-    targets[IDX_IMPULSE_AT_IY]     = &iy;
-    targets[IDX_IMPULSE_AT_IZ]     = &iz;
-    targets[IDX_IMPULSE_AT_PX]     = &px;
-    targets[IDX_IMPULSE_AT_PY]     = &py;
-    targets[IDX_IMPULSE_AT_PZ]     = &pz;
+    void *targets[ImpAt_COUNT];
+    targets[IDX_IMPAT_H]  = &handle_raw;
+    targets[IDX_IMPAT_IX] = &ix;
+    targets[IDX_IMPAT_IY]     = &iy;
+    targets[IDX_IMPAT_IZ]     = &iz;
+    targets[IDX_IMPAT_PX]     = &px;
+    targets[IDX_IMPAT_PY]     = &py;
+    targets[IDX_IMPAT_PZ]     = &pz;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &ImpulseAtParser, targets)) {
@@ -389,14 +383,16 @@ static PyObject *PhysicsWorld_apply_angular_impulse(PhysicsWorldObject *self,
     uint64_t handle_raw;
     float x, y, z;
 
-    void *targets[IDX_ANGIMP_COUNT];
-    targets[IDX_ANGIMP_HANDLE] = &handle_raw;
-    targets[IDX_ANGIMP_X]      = &x;
-    targets[IDX_ANGIMP_Y]      = &y;
-    targets[IDX_ANGIMP_Z]      = &z;
+    // Use the shared Vec3 index group
+    void *targets[Vec3_COUNT];
+    targets[IDX_V3_H] = &handle_raw;
+    targets[IDX_V3_X] = &x;
+    targets[IDX_V3_Y] = &y;
+    targets[IDX_V3_Z] = &z;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &AngImpParser, targets)) {
+    // Use the AngImpulseParser generated via the X-Macro
+    if (!FastParse_Unified(args, nargs, kwnames, &AngImpulseParser, targets)) {
         return NULL;
     }
 
@@ -409,7 +405,6 @@ static PyObject *PhysicsWorld_apply_angular_impulse(PhysicsWorldObject *self,
     // 3. CONCURRENCY & EXECUTION
     SHADOW_LOCK(&self->shadow_lock);
     
-    // Ensure we aren't modifying while physics are updating or buffers are swapping
     BLOCK_UNTIL_NOT_STEPPING(self);
     BLOCK_UNTIL_NOT_QUERYING(self);
 
@@ -421,15 +416,13 @@ static PyObject *PhysicsWorld_apply_angular_impulse(PhysicsWorldObject *self,
         return NULL;
     }
 
-    // Resolve dense index and Jolt ID
+    // Resolve dense index and Jolt ID while locked
     JPH_BodyID bid = self->body_ids[self->slot_to_dense[slot]];
 
     // 4. JOLT INTERACTION (Release GIL)
     Py_BEGIN_ALLOW_THREADS 
     JPH_Vec3 imp = {x, y, z};
     JPH_BodyInterface_AddAngularImpulse(self->body_interface, bid, &imp);
-    // Angular impulse doesn't automatically wake a body in some Jolt versions,
-    // so we explicitly activate to be safe.
     JPH_BodyInterface_ActivateBody(self->body_interface, bid);
     Py_END_ALLOW_THREADS
 
@@ -444,11 +437,12 @@ static PyObject *PhysicsWorld_apply_force(PhysicsWorldObject *self,
     uint64_t handle_raw;
     float x, y, z;
 
-    void *targets[IDX_FORCE_COUNT];
-    targets[IDX_FORCE_HANDLE] = &handle_raw;
-    targets[IDX_FORCE_X]      = &x;
-    targets[IDX_FORCE_Y]      = &y;
-    targets[IDX_FORCE_Z]      = &z;
+    // Use shared Vec3 Index Group
+    void *targets[Vec3_COUNT];
+    targets[IDX_V3_H] = &handle_raw;
+    targets[IDX_V3_X] = &x;
+    targets[IDX_V3_Y] = &y;
+    targets[IDX_V3_Z] = &z;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &ForceParser, targets)) {
@@ -484,7 +478,7 @@ static PyObject *PhysicsWorld_apply_force(PhysicsWorldObject *self,
     // 4. JOLT INTERACTION (Release GIL)
     Py_BEGIN_ALLOW_THREADS 
     JPH_Vec3 force_vec = {x, y, z};
-    // Note: Force is an accumulator, it is cleared inside Jolt after the step.
+    // Force is an accumulator, cleared inside Jolt after the next step().
     JPH_BodyInterface_AddForce(self->body_interface, bid, &force_vec);
     JPH_BodyInterface_ActivateBody(self->body_interface, bid);
     Py_END_ALLOW_THREADS
@@ -500,11 +494,12 @@ static PyObject *PhysicsWorld_apply_torque(PhysicsWorldObject *self,
     uint64_t handle_raw;
     float x, y, z;
 
-    void *targets[IDX_TORQUE_COUNT];
-    targets[IDX_TORQUE_HANDLE] = &handle_raw;
-    targets[IDX_TORQUE_X]      = &x;
-    targets[IDX_TORQUE_Y]      = &y;
-    targets[IDX_TORQUE_Z]      = &z;
+    // Use shared Vec3 Index Group indices and count
+    void *targets[Vec3_COUNT]; 
+    targets[IDX_V3_H] = &handle_raw;
+    targets[IDX_V3_X] = &x;
+    targets[IDX_V3_Y] = &y;
+    targets[IDX_V3_Z] = &z;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &TorqueParser, targets)) {
@@ -520,13 +515,13 @@ static PyObject *PhysicsWorld_apply_torque(PhysicsWorldObject *self,
     // 3. CONCURRENCY & EXECUTION
     SHADOW_LOCK(&self->shadow_lock);
 
-    // Use your priority-aware blocking pattern
+    // Use priority-aware blocking pattern
     BLOCK_UNTIL_NOT_STEPPING(self);
     BLOCK_IF_STEP_PENDING(self);
     BLOCK_UNTIL_NOT_QUERYING(self);
 
     uint32_t slot = 0;
-    if (UNLIKELY(!unpack_handle(self, handle_raw, &slot) ||
+    if (UNLIKELY(!unpack_handle(self, (BodyHandle)handle_raw, &slot) ||
                  self->slot_states[slot] != SLOT_ALIVE)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
@@ -550,12 +545,14 @@ static PyObject *PhysicsWorld_apply_torque(PhysicsWorldObject *self,
 static PyObject *PhysicsWorld_set_gravity(PhysicsWorldObject *self,
                                           PyObject *const *args, size_t nargsf,
                                           PyObject *kwnames) {
-    // 1. FAST PARSE (Stack-allocated targets)
+    // 1. FAST PARSE (Zero-Allocation)
     float x, y, z;
-    void *targets[IDX_GRAV_COUNT];
-    targets[IDX_GRAV_X] = &x;
-    targets[IDX_GRAV_Y] = &y;
-    targets[IDX_GRAV_Z] = &z;
+    
+    // Uses the shared XYZ group count and indices
+    void *targets[XYZ_COUNT];
+    targets[IDX_XYZ_X] = &x;
+    targets[IDX_XYZ_Y] = &y;
+    targets[IDX_XYZ_Z] = &z;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &GravityParser, targets)) {
@@ -565,22 +562,21 @@ static PyObject *PhysicsWorld_set_gravity(PhysicsWorldObject *self,
     // 2. CRITICAL SECTION
     SHADOW_LOCK(&self->shadow_lock);
     
-    // Ensure we aren't modifying gravity while Jolt is mid-step
+    // Modification of global world properties requires the engine to be idle
     BLOCK_UNTIL_NOT_STEPPING(self);
 
-    // Jolt Interaction
+    // Jolt Interaction (JPH_Vec3 uses floats)
     JPH_Vec3 g = {x, y, z};
     JPH_PhysicsSystem_SetGravity(self->system, &g);
 
-    // Safety check for body count overflow
+    // Safety check for body count overflow (Jolt limit)
     if (UNLIKELY(self->count > UINT32_MAX)) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_OverflowError, "Body count exceeds Jolt's 32-bit limit");
+        PyErr_SetString(PyExc_OverflowError, "Body count exceeds Jolt limit");
         return NULL;
     }
 
-    // Wake up all bodies so they react to the new gravity direction immediately.
-    // We do this while the lock is held to ensure the body_ids array is stable.
+    // Immediate reaction: Wake up all bodies so they fall in the new direction
     if (self->count > 0) {
         JPH_BodyInterface_ActivateBodies(self->body_interface, self->body_ids,
                                          (uint32_t)self->count);
@@ -591,63 +587,51 @@ static PyObject *PhysicsWorld_set_gravity(PhysicsWorldObject *self,
 }
 
 static PyObject *PhysicsWorld_get_body_stats(PhysicsWorldObject *self,
-                                             PyObject *args, PyObject *kwds) {
-  uint64_t h;
-  static char *kwlist[] = {"handle", NULL};
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "K", kwlist, &h)) {
-    return NULL;
-  }
+                                             PyObject *const *args, size_t nargsf,
+                                             PyObject *kwnames) {
+    // 1. FAST PARSE (Zero-Allocation)
+    uint64_t handle_raw;
+    void *targets[HOnly_COUNT];
+    targets[IDX_H_H] = &handle_raw;
 
-  SHADOW_LOCK(&self->shadow_lock);
+    auto nargs = PyVectorcall_NARGS(nargsf);
+    if (!FastParse_Unified(args, nargs, kwnames, &HOnlyParser, targets)) {
+        return NULL;
+    }
 
-  // Consistency Guard: Ensure we aren't reading while the world is swapping
-  // buffers
-  BLOCK_UNTIL_NOT_STEPPING(self);
+    // 2. CRITICAL SECTION
+    SHADOW_LOCK(&self->shadow_lock);
+    
+    // Safety: Don't read while buffers are being swapped/cleared
+    BLOCK_UNTIL_NOT_STEPPING(self);
 
-  uint32_t slot = 0;
-  if (!unpack_handle(self, h, &slot) || self->slot_states[slot] != SLOT_ALIVE) {
+    uint32_t slot = 0;
+    if (UNLIKELY(!unpack_handle(self, (BodyHandle)handle_raw, &slot) || 
+                 self->slot_states[slot] != SLOT_ALIVE)) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        Py_RETURN_NONE;
+    }
+
+    uint32_t i = self->slot_to_dense[slot];
+
+    // Snapshot values while holding the lock
+    PosStride p = ((PosStride *)self->positions)[i];
+    AuxStride r = ((AuxStride *)self->rotations)[i];
+    AuxStride v = ((AuxStride *)self->linear_velocities)[i];
+
     SHADOW_UNLOCK(&self->shadow_lock);
-    Py_RETURN_NONE;
-  }
 
-  uint32_t i = self->slot_to_dense[slot];
-
-  // Cast to stride structs for safe, indexed access
-  auto *shadow_pos = (PosStride *)self->positions;
-  auto *shadow_rot = (AuxStride *)self->rotations;
-  auto *shadow_vel = (AuxStride *)self->linear_velocities;
-
-  // Snapshot the values while holding the lock
-  PosStride p = shadow_pos[i];
-  AuxStride r = shadow_rot[i];
-  AuxStride v = shadow_vel[i];
-
-  SHADOW_UNLOCK(&self->shadow_lock);
-
-  // Build the Python objects
-  // Note: We use "ddd" for position to support JPH_DOUBLE_PRECISION (double)
-  PyObject *py_pos = Py_BuildValue(
-      "(" JPH_REAL_STRING JPH_REAL_STRING JPH_REAL_STRING ")", p.x, p.y, p.z);
-  PyObject *py_rot = Py_BuildValue("(dddd)", (double)r.x, (double)r.y,
-                                   (double)r.z, (double)r.w);
-  PyObject *py_vel =
-      Py_BuildValue("(ddd)", (double)v.x, (double)v.y, (double)v.z);
-
-  if (!py_pos || !py_rot || !py_vel) {
-    Py_XDECREF(py_pos);
-    Py_XDECREF(py_rot);
-    Py_XDECREF(py_vel);
-    return NULL;
-  }
-
-  PyObject *ret = PyTuple_Pack(3, py_pos, py_rot, py_vel);
-
-  // Clean up local references
-  Py_DECREF(py_pos);
-  Py_DECREF(py_rot);
-  Py_DECREF(py_vel);
-
-  return ret; // Returns ((x,y,z), (x,y,z,w), (vx,vy,vz))
+    // 3. RESULT CONSTRUCTION
+    // Use Py_BuildValue to create the nested structure ((x,y,z), (x,y,z,w), (vx,vy,vz))
+    // JPH_REAL_STRING is "d" or "f" depending on double-precision builds
+    return Py_BuildValue(
+        "( " JPH_REAL_STRING JPH_REAL_STRING JPH_REAL_STRING ") " // Position
+        "(dddd) "                                                 // Rotation
+        "(ddd)",                                                  // Velocity
+        p.x, p.y, p.z,
+        (double)r.x, (double)r.y, (double)r.z, (double)r.w,
+        (double)v.x, (double)v.y, (double)v.z
+    );
 }
 
 static PyObject *PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self,
@@ -662,8 +646,8 @@ static PyObject *PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self,
     float dt = 1.0f / 60.0f;
     PyObject *o_vel = NULL;
 
-    // 2. TARGET MAPPING
-    void *targets[IDX_BUOY_COUNT];
+    // 2. TARGET MAPPING (Using Buoy Group count and schema indices)
+    void *targets[Buoy_COUNT];
     targets[IDX_BUOY_HANDLE]    = &handle_raw;
     targets[IDX_BUOY_SURFACE_Y] = &surface_y;
     targets[IDX_BUOY_BUOYANCY]  = &buoyancy;
@@ -673,13 +657,15 @@ static PyObject *PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self,
     targets[IDX_BUOY_VEL]       = &o_vel;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &BuoyancyParser, targets)) {
+    // Use the BuoyParser generated via the X-Macro
+    if (!FastParse_Unified(args, nargs, kwnames, &BuoyParser, targets)) {
         return NULL;
     }
 
-    // Parse fluid velocity tuple if provided
+    // Parse fluid velocity tuple if provided (Outside Lock)
     float vx = 0, vy = 0, vz = 0;
     if (o_vel && o_vel != Py_None) {
+        // Generic dispatcher handles JPH_Real vs float automatically
         if (!parse_vec3_direct(o_vel, &vx, &vy, &vz)) {
             return NULL;
         }
@@ -691,7 +677,7 @@ static PyObject *PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self,
     BLOCK_UNTIL_NOT_QUERYING(self);
 
     uint32_t slot = 0;
-    if (UNLIKELY(!unpack_handle(self, handle_raw, &slot) ||
+    if (UNLIKELY(!unpack_handle(self, (BodyHandle)handle_raw, &slot) ||
                  self->slot_states[slot] != SLOT_ALIVE)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         Py_RETURN_FALSE;
@@ -701,19 +687,18 @@ static PyObject *PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self,
     JPH_BodyInterface *bi = self->body_interface;
     JPH_PhysicsSystem *system = self->system;
 
-    bool submerged = false;
-
-    // Release lock early to let other threads access Shadow Buffers
+    // Release lock early to keep Shadow Buffers accessible during math
     SHADOW_UNLOCK(&self->shadow_lock);
 
     // 4. EXECUTION PHASE (Unlocked & GIL-Friendly)
+    bool submerged = false;
     Py_BEGIN_ALLOW_THREADS
     JPH_BodyInterface_ActivateBody(bi, bid);
 
     JPH_Vec3 gravity;
     JPH_PhysicsSystem_GetGravity(system, &gravity);
 
-    // Stack allocate Jolt structures
+    // Stack allocate Jolt structures with alignment
     JPH_STACK_ALLOC(JPH_RVec3, surf_pos);
     *surf_pos = (JPH_RVec3){0, (JPH_Real)surface_y, 0};
 
@@ -744,7 +729,7 @@ static PyObject *PhysicsWorld_apply_buoyancy_batch(PhysicsWorldObject *self,
     PyObject *o_vel = NULL;
 
     // 2. FAST PARSE
-    void *targets[IDX_BBUOY_COUNT];
+    void *targets[BatchBuoy_COUNT];
     targets[IDX_BBUOY_HANDLES]   = &o_handles;
     targets[IDX_BBUOY_SURFACE_Y] = &surface_y;
     targets[IDX_BBUOY_BUOYANCY]  = &buoyancy;
@@ -754,7 +739,7 @@ static PyObject *PhysicsWorld_apply_buoyancy_batch(PhysicsWorldObject *self,
     targets[IDX_BBUOY_VEL]       = &o_vel;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &BatchBuoyancyParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &BatchBuoyParser, targets)) {
         return NULL;
     }
 
@@ -1192,26 +1177,27 @@ static PyObject *PhysicsWorld_create_convex_hull(PhysicsWorldObject *self,
     // 1. DEFAULT VALUES
     PyObject *o_pos = NULL, *o_rot = NULL, *o_points = NULL;
     int motion_type = 2;
-    float mass = -1.0f;
+    float mass = -1.0f, friction = 0.2f, restitution = 0.0f;
     uint64_t user_data = 0;
     uint32_t category = 0xFFFF, mask = 0xFFFF, material_id = 0;
-    float friction = 0.2f, restitution = 0.0f;
+    bool is_sensor = false; 
     bool use_ccd = false;
 
-    // 2. FAST PARSE
-    void *targets[IDX_HULL_COUNT];
-    targets[IDX_HULL_POS]       = &o_pos;
-    targets[IDX_HULL_ROT]       = &o_rot;
-    targets[IDX_HULL_POINTS]    = &o_points;
-    targets[IDX_HULL_MOTION]    = &motion_type;
-    targets[IDX_HULL_MASS]      = &mass;
-    targets[IDX_HULL_USER_DATA] = &user_data;
-    targets[IDX_HULL_CAT]       = &category;
-    targets[IDX_HULL_MASK]      = &mask;
-    targets[IDX_HULL_MAT_ID]    = &material_id;
-    targets[IDX_HULL_FRIC]      = &friction;
-    targets[IDX_HULL_REST]      = &restitution;
-    targets[IDX_HULL_CCD]       = &use_ccd;
+    // 2. FAST PARSE (Using Unified HC Group)
+    void *targets[HC_COUNT];
+    targets[IDX_HC_POS]       = &o_pos;
+    targets[IDX_HC_ROT]       = &o_rot;
+    targets[IDX_HC_DATA]      = &o_points; // Schema Overlay interns this as "points"
+    targets[IDX_HC_MOTION]    = &motion_type;
+    targets[IDX_HC_MASS]      = &mass;
+    targets[IDX_HC_USER_DATA] = &user_data;
+    targets[IDX_HC_SENSOR]    = &is_sensor;
+    targets[IDX_HC_CAT]       = &category;
+    targets[IDX_HC_MASK]      = &mask;
+    targets[IDX_HC_MAT_ID]    = &material_id;
+    targets[IDX_HC_FRIC]      = &friction;
+    targets[IDX_HC_REST]      = &restitution;
+    targets[IDX_HC_CCD]       = &use_ccd;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &ConvexHullParser, targets)) {
@@ -1227,24 +1213,23 @@ static PyObject *PhysicsWorld_create_convex_hull(PhysicsWorldObject *self,
     Py_buffer points_view;
     if (PyObject_GetBuffer(o_points, &points_view, PyBUF_SIMPLE) != 0) return NULL;
 
-    // Buffer Validation
-    if (UNLIKELY(points_view.len % (3 * sizeof(float)) != 0)) {
+    if (UNLIKELY(points_view.len % 12 != 0)) {
         PyBuffer_Release(&points_view);
         return PyErr_Format(PyExc_ValueError, "Points buffer must be 3 * float32");
     }
-    size_t num_points = points_view.len / (3 * sizeof(float));
+    size_t num_points = points_view.len / 12;
     if (UNLIKELY(num_points < 3)) {
         PyBuffer_Release(&points_view);
         return PyErr_Format(PyExc_ValueError, "Convex Hull requires at least 3 points");
     }
 
-    // 4. SHAPE CREATION (Released GIL for heavy math)
+    // 4. SHAPE CREATION (No GIL, No Shadow Lock)
     JPH_Shape *shape = NULL;
     Py_BEGIN_ALLOW_THREADS
-    JPH_Vec3 *jolt_points = PyMem_RawMalloc(num_points * sizeof(JPH_Vec3));
-    float *raw_floats = (float *)points_view.buf;
+    auto *jolt_points = (JPH_Vec3 *)PyMem_RawMalloc(num_points * sizeof(JPH_Vec3));
+    float *raw = (float *)points_view.buf;
     for (size_t i = 0; i < num_points; i++) {
-        jolt_points[i] = (JPH_Vec3){raw_floats[i*3], raw_floats[i*3+1], raw_floats[i*3+2]};
+        jolt_points[i] = (JPH_Vec3){raw[i*3], raw[i*3+1], raw[i*3+2]};
     }
 
     JPH_ConvexHullShapeSettings *hull_settings = JPH_ConvexHullShapeSettings_Create(
@@ -1258,41 +1243,51 @@ static PyObject *PhysicsWorld_create_convex_hull(PhysicsWorldObject *self,
     Py_END_ALLOW_THREADS
     PyBuffer_Release(&points_view);
 
-    if (!shape) return PyErr_Format(PyExc_RuntimeError, "Failed to build Convex Hull");
+    if (!shape) return PyErr_Format(PyExc_RuntimeError, "Jolt Convex Hull build failed");
 
-    // 5. JOLT SETTINGS PREP
+    // 5. BODY SETTINGS PREP
     JPH_BodyCreationSettings *settings = JPH_BodyCreationSettings_Create3(
         shape, &(JPH_RVec3){px, py, pz}, &(JPH_Quat){rx, ry, rz, rw},
         (JPH_MotionType)motion_type, (motion_type == 0) ? 0 : 1);
 
-    // Mass Properties Override
+    // Apply is_sensor
+    if (is_sensor) {
+        JPH_BodyCreationSettings_SetIsSensor(settings, true);
+    }
+
+    // Apply Mass/Friction/Restitution logic
     if (mass > 0.0f) {
         JPH_MassProperties mp;
         JPH_Shape_GetMassProperties(shape, &mp);
         float scale = mass / fmaxf(mp.mass, 1e-6f);
         mp.mass = mass;
         for (int i = 0; i < 3; i++) {
-            mp.inertia.column[i].x *= scale;
-            mp.inertia.column[i].y *= scale;
+            mp.inertia.column[i].x *= scale; 
+            mp.inertia.column[i].y *= scale; 
             mp.inertia.column[i].z *= scale;
         }
         JPH_BodyCreationSettings_SetMassPropertiesOverride(settings, &mp);
         JPH_BodyCreationSettings_SetOverrideMassProperties(settings, JPH_OverrideMassProperties_CalculateInertia);
     }
+    
     JPH_BodyCreationSettings_SetFriction(settings, friction);
     JPH_BodyCreationSettings_SetRestitution(settings, restitution);
-    if (use_ccd) JPH_BodyCreationSettings_SetMotionQuality(settings, JPH_MotionQuality_LinearCast);
+    
+    if (use_ccd) {
+        JPH_BodyCreationSettings_SetMotionQuality(settings, JPH_MotionQuality_LinearCast);
+    }
 
-    // 6. COMMIT PHASE (Shadow Lock)
+    // 6. COMMIT PHASE (Critical Section)
     SHADOW_LOCK(&self->shadow_lock);
+    
+    // Protect against concurrent simulation or shadow buffer queries
     BLOCK_UNTIL_NOT_STEPPING(self);
     BLOCK_UNTIL_NOT_QUERYING(self);
 
     if (UNLIKELY(self->free_count == 0 || self->count + 1 > self->capacity)) {
         if (PhysicsWorld_resize(self, (self->capacity == 0) ? 1024 : self->capacity * 2) < 0) {
             SHADOW_UNLOCK(&self->shadow_lock);
-            JPH_BodyCreationSettings_Destroy(settings);
-            JPH_Shape_Destroy(shape);
+            JPH_BodyCreationSettings_Destroy(settings); JPH_Shape_Destroy(shape);
             return NULL;
         }
     }
@@ -1302,28 +1297,34 @@ static PyObject *PhysicsWorld_create_convex_hull(PhysicsWorldObject *self,
     BodyHandle handle = make_handle(slot, self->generations[slot]);
     JPH_BodyCreationSettings_SetUserData(settings, (uint64_t)handle);
 
-    // Shadow Buffer Sync
+    // Update Shadow Buffers
     ((PosStride *)self->positions)[dense] = (PosStride){px, py, pz};
     ((AuxStride *)self->rotations)[dense] = (AuxStride){rx, ry, rz, rw};
     ((AuxStride *)self->linear_velocities)[dense] = (AuxStride){0};
     ((AuxStride *)self->angular_velocities)[dense] = (AuxStride){0};
+
     self->categories[dense] = category;
     self->masks[dense] = mask;
     self->material_ids[dense] = material_id;
     self->user_data[dense] = user_data;
     self->body_ids[dense] = JPH_INVALID_BODY_ID;
+    
     self->slot_to_dense[slot] = dense;
     self->dense_to_slot[dense] = slot;
     self->slot_states[slot] = SLOT_PENDING_CREATE;
     self->view_shape[0] = (Py_ssize_t)self->count;
 
     if (UNLIKELY(!ensure_command_capacity(self))) {
-        self->count--; self->free_slots[self->free_count++] = slot; self->slot_states[slot] = SLOT_EMPTY;
+        // Rollback structural changes
+        self->count--; 
+        self->free_slots[self->free_count++] = slot; 
+        self->slot_states[slot] = SLOT_EMPTY;
         SHADOW_UNLOCK(&self->shadow_lock);
         JPH_BodyCreationSettings_Destroy(settings); JPH_Shape_Destroy(shape);
         return PyErr_NoMemory();
     }
 
+    // Queue Creation Command
     PhysicsCommand *cmd = &self->command_queue[self->command_count++];
     cmd->header = CMD_HEADER(CMD_CREATE_BODY, slot);
     cmd->create.settings = settings;
@@ -1333,7 +1334,10 @@ static PyObject *PhysicsWorld_create_convex_hull(PhysicsWorldObject *self,
     cmd->create.material_id = material_id;
 
     SHADOW_UNLOCK(&self->shadow_lock);
+    
+    // BodySettings/Jolt now owns the shape ref; destroy local handle
     JPH_Shape_Destroy(shape); 
+    
     return PyLong_FromUnsignedLongLong(handle);
 }
 
@@ -1507,43 +1511,45 @@ static PyObject *PhysicsWorld_create_compound_body(PhysicsWorldObject *self,
     uint32_t category = 0xFFFF, mask = 0xFFFF, material_id = 0;
     bool is_sensor = false, use_ccd = false;
 
-    // 2. FAST PARSE
-    void *targets[IDX_CMP_COUNT];
-    targets[IDX_CMP_POS]       = &o_pos;
-    targets[IDX_CMP_ROT]       = &o_rot;
-    targets[IDX_CMP_PARTS]     = &o_parts;
-    targets[IDX_CMP_MOTION]    = &motion_type;
-    targets[IDX_CMP_MASS]      = &mass;
-    targets[IDX_CMP_USER_DATA] = &user_data;
-    targets[IDX_CMP_SENSOR]    = &is_sensor;
-    targets[IDX_CMP_CAT]       = &category;
-    targets[IDX_CMP_MASK]      = &mask;
-    targets[IDX_CMP_MAT_ID]    = &material_id;
-    targets[IDX_CMP_FRIC]      = &friction;
-    targets[IDX_CMP_REST]      = &restitution;
-    targets[IDX_CMP_CCD]       = &use_ccd;
+    // 2. TARGET MAPPING (Using the shared HullComp Index Group)
+    void *targets[HC_COUNT];
+    targets[IDX_HC_POS]       = &o_pos;
+    targets[IDX_HC_ROT]       = &o_rot;
+    targets[IDX_HC_DATA]      = &o_parts;
+    targets[IDX_HC_MOTION]    = &motion_type;
+    targets[IDX_HC_MASS]      = &mass;
+    targets[IDX_HC_USER_DATA] = &user_data;
+    targets[IDX_HC_SENSOR]    = &is_sensor;
+    targets[IDX_HC_CAT]       = &category;
+    targets[IDX_HC_MASK]      = &mask;
+    targets[IDX_HC_MAT_ID]    = &material_id;
+    targets[IDX_HC_FRIC]      = &friction;
+    targets[IDX_HC_REST]      = &restitution;
+    targets[IDX_HC_CCD]       = &use_ccd;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
+    // Use the HullCompParser initialized via X-Macro
     if (!FastParse_Unified(args, nargs, kwnames, &CompoundParser, targets)) {
         return NULL;
     }
 
-    // 3. COMPLEX TYPE EXTRACTION
+    // 3. COMPLEX TYPE EXTRACTION (Outside Shadow Lock)
     JPH_Real px, py, pz;
     float rx, ry, rz, rw;
     if (!parse_vec3_direct(o_pos, &px, &py, &pz)) return NULL;
     if (!parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) return NULL;
 
+    // SCHEMA defines IDX_HC_DATA as required, but we verify it's a list here
     if (UNLIKELY(!PyList_Check(o_parts))) {
         PyErr_SetString(PyExc_TypeError, "'parts' must be a list of tuples");
         return NULL;
     }
 
-    // 4. SHAPE BUILD (Heavy lifting - init_compound_shape handles GIL internals)
+    // 4. SHAPE BUILD (Heavy lifting - released GIL internally)
     JPH_Shape *final_shape = init_compound_shape(self, o_parts);
-    if (!final_shape) return NULL; // PyErr set by helper
+    if (!final_shape) return NULL; 
 
-    // 5. JOLT PREP (Outside Shadow Lock)
+    // 5. JOLT PREP
     JPH_BodyCreationSettings *settings = JPH_BodyCreationSettings_Create3(
         final_shape, &(JPH_RVec3){px, py, pz}, &(JPH_Quat){rx, ry, rz, rw},
         (JPH_MotionType)motion_type, (motion_type == 0) ? 0 : 1);
@@ -1556,6 +1562,8 @@ static PyObject *PhysicsWorld_create_compound_body(PhysicsWorldObject *self,
 
     // 6. COMMIT PHASE (Shadow Lock)
     SHADOW_LOCK(&self->shadow_lock);
+    
+    // Critical: Block for both simulation and current queries (e.g. Raycasts)
     BLOCK_UNTIL_NOT_STEPPING(self);
     BLOCK_UNTIL_NOT_QUERYING(self);
 
@@ -1600,10 +1608,13 @@ static PyObject *PhysicsWorld_create_compound_body(PhysicsWorldObject *self,
 
     // 7. QUEUE COMMAND
     if (UNLIKELY(!ensure_command_capacity(self))) {
-        // Rollback
-        self->count--; self->free_slots[self->free_count++] = slot; self->slot_states[slot] = SLOT_EMPTY;
+        // Rollback structural changes on failure
+        self->count--; 
+        self->free_slots[self->free_count++] = slot; 
+        self->slot_states[slot] = SLOT_EMPTY;
         SHADOW_UNLOCK(&self->shadow_lock);
-        JPH_BodyCreationSettings_Destroy(settings); JPH_Shape_Destroy(final_shape);
+        JPH_BodyCreationSettings_Destroy(settings); 
+        JPH_Shape_Destroy(final_shape);
         return PyErr_NoMemory();
     }
 
@@ -1617,7 +1628,7 @@ static PyObject *PhysicsWorld_create_compound_body(PhysicsWorldObject *self,
 
     SHADOW_UNLOCK(&self->shadow_lock);
 
-    // BodySettings/Jolt now owns the shape ref
+    // Local ref destroyed; Jolt Settings and the Body now own the shape ref.
     JPH_Shape_Destroy(final_shape);
     return PyLong_FromUnsignedLongLong(handle);
 }
@@ -1706,7 +1717,7 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
 
     // 2. TARGET MAPPING (Explicitly mapped via Enum)
     // Using explicit indices [IDX_...] makes this reorder-proof.
-    void *targets[IDX_BODY_COUNT]; 
+    void *targets[Body_COUNT]; 
     targets[IDX_POS]          = &o_pos;
     targets[IDX_ROT]          = &o_rot;
     targets[IDX_SIZE]         = &o_size;
@@ -1875,11 +1886,12 @@ static PyObject *PhysicsWorld_create_bodies_batch(PhysicsWorldObject *self,
     int shape_type = 0;
     int motion_type = 2;
 
-    void *targets[IDX_BATCH_COUNT];
-    targets[IDX_BATCH_POSITIONS]   = &py_positions;
-    targets[IDX_BATCH_SIZES]       = &py_sizes;
-    targets[IDX_BATCH_SHAPE_TYPE]  = &shape_type;
-    targets[IDX_BATCH_MOTION_TYPE] = &motion_type;
+    // Use BatchCreate Group count and schema IDs
+    void *targets[BatchCreate_COUNT];
+    targets[IDX_BC_POSITIONS]   = &py_positions;
+    targets[IDX_BC_SIZES]       = &py_sizes;
+    targets[IDX_BC_SHAPE]       = &shape_type;
+    targets[IDX_BC_MOTION]      = &motion_type;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &BatchCreateParser, targets)) {
@@ -2095,23 +2107,28 @@ static JPH_Shape *build_mesh_shape(const void *v_data, MeshBounds bounds,
 static PyObject *PhysicsWorld_create_mesh_body(PhysicsWorldObject *self,
                                                PyObject *const *args, size_t nargsf,
                                                PyObject *kwnames) {
+    // 1. DEFAULT VALUES
     PyObject *o_pos = NULL, *o_rot = NULL, *o_verts = NULL, *o_indices = NULL;
     uint64_t user_data = 0;
     uint32_t cat = 0xFFFF, mask = 0xFFFF;
 
-    void *targets[IDX_MESH_COUNT];
-    targets[IDX_MESH_POS]       = &o_pos;
-    targets[IDX_MESH_ROT]       = &o_rot;
-    targets[IDX_MESH_VERTS]     = &o_verts;
-    targets[IDX_MESH_INDICES]   = &o_indices;
-    targets[IDX_MESH_USER_DATA] = &user_data;
-    targets[IDX_MESH_CAT]       = &cat;
-    targets[IDX_MESH_MASK]      = &mask;
+    // 2. TARGET MAPPING (Using Mesh Group)
+    void *targets[Mesh_COUNT]; // Mesh_COUNT generated by DEFINE_INDEX_GROUP
+    targets[IDX_MSH_POS]       = &o_pos;
+    targets[IDX_MSH_ROT]       = &o_rot;
+    targets[IDX_MSH_VERTS]     = &o_verts;
+    targets[IDX_MSH_INDICES]   = &o_indices;
+    targets[IDX_MSH_USER_DATA] = &user_data;
+    targets[IDX_MSH_CAT]       = &cat;
+    targets[IDX_MSH_MASK]      = &mask;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &MeshParser, targets)) return NULL;
+    // Use MeshParser initialized via SCHEMA_MESH
+    if (!FastParse_Unified(args, nargs, kwnames, &MeshParser, targets)) {
+        return NULL;
+    }
 
-    // 1. Vector/Quat Extraction
+    // 3. VECTOR/QUAT EXTRACTION (Precision Safe)
     JPH_Real px, py, pz;
     float rx, ry, rz, rw;
     if (!parse_vec3_direct(o_pos, &px, &py, &pz)) return NULL;
@@ -2218,11 +2235,13 @@ static PyObject *PhysicsWorld_destroy_body(PhysicsWorldObject *self,
                                            PyObject *kwnames) {
     // 1. FAST PARSE (Zero-Allocation)
     uint64_t handle_raw;
-    void *targets[IDX_DESTROY_COUNT];
-    targets[IDX_DESTROY_HANDLE] = &handle_raw;
+    
+    // Group name is HOnly, Index ID is IDX_H_H
+    void *targets[HOnly_COUNT];
+    targets[IDX_H_H] = &handle_raw;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    // This handles both h=123 (keyword) and 123 (positional) instantly
+    // Uses the DestroyParser (which points to the HOnly group)
     if (!FastParse_Unified(args, nargs, kwnames, &DestroyParser, targets)) {
         return NULL;
     }
@@ -2266,20 +2285,15 @@ static PyObject *PhysicsWorld_destroy_body(PhysicsWorldObject *self,
 static PyObject *PhysicsWorld_destroy_bodies_batch(PhysicsWorldObject *self,
                                                    PyObject *const *args, size_t nargsf,
                                                    PyObject *kwnames) {
+    // 1. FAST PARSE (Zero-Allocation)
     PyObject *py_handles_in = NULL;
-    void *targets[IDX_BATCH_DESTROY_COUNT];
-    targets[IDX_BATCH_DESTROY_HANDLES] = &py_handles_in;
+    
+    void *targets[BatchDestroy_COUNT];
+    targets[IDX_BD_HANDLES] = &py_handles_in;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &BatchDestroyParser, targets)) {
         return NULL;
-    }
-
-    // MANDATORY NULL CHECK:
-    // If the parser succeeded but didn't find the arg (or it was missing), 
-    // py_handles_in will be NULL.
-    if (UNLIKELY(!py_handles_in)) {
-        Py_RETURN_NONE; 
     }
 
     // Now it is safe to call PySequence_Fast
@@ -2341,18 +2355,19 @@ static PyObject *PhysicsWorld_destroy_bodies_batch(PhysicsWorldObject *self,
 static PyObject *PhysicsWorld_set_position(PhysicsWorldObject *self,
                                            PyObject *const *args, size_t nargsf,
                                            PyObject *kwnames) {
-    // 1. RAW PARSING 
+    // 1. FAST PARSE (Zero-Allocation)
     uint64_t handle_raw;
     JPH_Real x, y, z;
 
-    // Mapping using explicit Enum indices
-    void *targets[IDX_SETPOS_COUNT];
+    // Use auto-generated Group Count and Index IDs
+    void *targets[SetPos_COUNT];
     targets[IDX_SETPOS_HANDLE] = &handle_raw;
     targets[IDX_SETPOS_X]      = &x;
     targets[IDX_SETPOS_Y]      = &y;
     targets[IDX_SETPOS_Z]      = &z;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
+    // Use SetPosParser initialized via SCHEMA_SET_POS
     if (!FastParse_Unified(args, nargs, kwnames, &SetPosParser, targets)) {
         return NULL;
     }
@@ -2400,16 +2415,16 @@ static PyObject *PhysicsWorld_set_position(PhysicsWorldObject *self,
 static PyObject *PhysicsWorld_set_rotation(PhysicsWorldObject *self,
                                            PyObject *const *args, size_t nargsf,
                                            PyObject *kwnames) {
-    // 1. FAST PARSE (Outside of Lock)
+    // 1. FAST PARSE (Zero-Allocation)
     uint64_t handle_raw;
     float x, y, z, w;
 
-    void *targets[IDX_SETROT_COUNT];
-    targets[IDX_SETROT_HANDLE] = &handle_raw;
-    targets[IDX_SETROT_X]      = &x;
-    targets[IDX_SETROT_Y]      = &y;
-    targets[IDX_SETROT_Z]      = &z;
-    targets[IDX_SETROT_W]      = &w;
+    void *targets[SetRot_COUNT];
+    targets[IDX_SETROT_H] = &handle_raw;
+    targets[IDX_SETROT_X] = &x;
+    targets[IDX_SETROT_Y] = &y;
+    targets[IDX_SETROT_Z] = &z;
+    targets[IDX_SETROT_W] = &w;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &SetRotParser, targets)) {
@@ -2464,15 +2479,16 @@ static PyObject *PhysicsWorld_set_rotation(PhysicsWorldObject *self,
 static PyObject *PhysicsWorld_set_linear_velocity(PhysicsWorldObject *self,
                                                   PyObject *const *args, size_t nargsf,
                                                   PyObject *kwnames) {
-    // 1. FAST PARSE (Zero Lock Contention)
+    // 1. FAST PARSE (Zero-Allocation)
     uint64_t handle_raw;
     float x, y, z;
 
-    void *targets[IDX_SETLINVEL_COUNT];
-    targets[IDX_SETLINVEL_HANDLE] = &handle_raw;
-    targets[IDX_SETLINVEL_X]      = &x;
-    targets[IDX_SETLINVEL_Y]      = &y;
-    targets[IDX_SETLINVEL_Z]      = &z;
+    // Use shared Vec3 Group count and IDs
+    void *targets[Vec3_COUNT];
+    targets[IDX_V3_H] = &handle_raw;
+    targets[IDX_V3_X] = &x;
+    targets[IDX_V3_Y] = &y;
+    targets[IDX_V3_Z] = &z;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &SetLinVelParser, targets)) {
@@ -2523,17 +2539,18 @@ static PyObject *PhysicsWorld_set_linear_velocity(PhysicsWorldObject *self,
 }
 
 static PyObject *PhysicsWorld_set_angular_velocity(PhysicsWorldObject *self,
-                                                   PyObject *const *args, size_t nargsf,
-                                                   PyObject *kwnames) {
-    // 1. FAST PARSE (Outside of lock)
+                                                  PyObject *const *args, size_t nargsf,
+                                                  PyObject *kwnames) {
+    // 1. FAST PARSE (Zero-Allocation)
     uint64_t handle_raw;
     float x, y, z;
 
-    void *targets[IDX_SETANGVEL_COUNT];
-    targets[IDX_SETANGVEL_HANDLE] = &handle_raw;
-    targets[IDX_SETANGVEL_X]      = &x;
-    targets[IDX_SETANGVEL_Y]      = &y;
-    targets[IDX_SETANGVEL_Z]      = &z;
+    // Use shared Vec3 Group count and IDs
+    void *targets[Vec3_COUNT];
+    targets[IDX_V3_H] = &handle_raw;
+    targets[IDX_V3_X] = &x;
+    targets[IDX_V3_Y] = &y;
+    targets[IDX_V3_Z] = &z;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &SetAngVelParser, targets)) {
@@ -2730,11 +2747,14 @@ static PyObject *PhysicsWorld_activate(PhysicsWorldObject *self,
                                        PyObject *kwnames) {
     // 1. FAST PARSE (Zero-Allocation)
     uint64_t handle_raw;
-    void *targets[IDX_HANDLE_ONLY_COUNT];
-    targets[IDX_HANDLE_ONLY] = &handle_raw;
+    
+    // Group Name: HOnly, Index ID: IDX_H_H
+    void *targets[HOnly_COUNT];
+    targets[IDX_H_H] = &handle_raw;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &HandleOnlyParser, targets)) {
+    // Use the specific ActivateParser pointing to the HOnly layout
+    if (!FastParse_Unified(args, nargs, kwnames, &ActivateParser, targets)) {
         return NULL;
     }
 
@@ -2776,12 +2796,18 @@ static PyObject *PhysicsWorld_activate(PhysicsWorldObject *self,
 static PyObject *PhysicsWorld_deactivate(PhysicsWorldObject *self,
                                          PyObject *const *args, size_t nargsf,
                                          PyObject *kwnames) {
+    // 1. FAST PARSE (Zero-Allocation)
     uint64_t handle_raw;
-    void *targets[IDX_HANDLE_ONLY_COUNT];
-    targets[IDX_HANDLE_ONLY] = &handle_raw;
+    
+    // Group Name: HOnly, Index ID: IDX_H_H
+    void *targets[HOnly_COUNT];
+    targets[IDX_H_H] = &handle_raw;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &HandleOnlyParser, targets)) return NULL;
+    // Use the specific ActivateParser pointing to the HOnly layout
+    if (!FastParse_Unified(args, nargs, kwnames, &ActivateParser, targets)) {
+        return NULL;
+    }
 
     SHADOW_LOCK(&self->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
@@ -2812,13 +2838,15 @@ static PyObject *PhysicsWorld_set_transform(PhysicsWorldObject *self,
     uint64_t handle_raw;
     PyObject *o_pos = NULL, *o_rot = NULL;
 
-    void *targets[IDX_SETTRNS_COUNT];
-    targets[IDX_SETTRNS_HANDLE] = &handle_raw;
-    targets[IDX_SETTRNS_POS]    = &o_pos;
-    targets[IDX_SETTRNS_ROT]    = &o_rot;
+    // Use auto-generated Group Count and Index IDs (IDX_ST_...)
+    void *targets[SetTrns_COUNT];
+    targets[IDX_ST_HANDLE] = &handle_raw;
+    targets[IDX_ST_POS]    = &o_pos;
+    targets[IDX_ST_ROT]    = &o_rot;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &SetTransformParser, targets)) {
+    // Use the SetTrnsParser defined via X-Macro
+    if (!FastParse_Unified(args, nargs, kwnames, &SetTrnsParser, targets)) {
         return NULL;
     }
 
@@ -2883,11 +2911,13 @@ static PyObject *PhysicsWorld_set_ccd(PhysicsWorldObject *self,
     uint64_t handle_raw;
     bool enabled;
 
-    void *targets[IDX_CCD_COUNT];
-    targets[IDX_CCD_HANDLE]  = &handle_raw;
-    targets[IDX_CCD_ENABLED] = &enabled;
+    // Use auto-generated Group Count (CCD_COUNT) and IDs (IDX_CCD_H, IDX_CCD_E)
+    void *targets[CCD_COUNT];
+    targets[IDX_CCD_H] = &handle_raw;
+    targets[IDX_CCD_E] = &enabled;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
+    // Use the CCDParser initialized via SCHEMA_CCD
     if (!FastParse_Unified(args, nargs, kwnames, &CCDParser, targets)) {
         return NULL;
     }
@@ -2936,11 +2966,14 @@ static PyObject *PhysicsWorld_get_index(PhysicsWorldObject *self,
                                         PyObject *kwnames) {
     // 1. FAST PARSE (Zero-Allocation)
     uint64_t handle_raw;
-    void *targets[IDX_HANDLE_ONLY_COUNT];
-    targets[IDX_HANDLE_ONLY] = &handle_raw;
+    
+    // Group Name: HOnly, Index ID: IDX_H_H
+    void *targets[HOnly_COUNT];
+    targets[IDX_H_H] = &handle_raw;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &HandleOnlyParser, targets)) {
+    // Use the specific ActivateParser pointing to the HOnly layout
+    if (!FastParse_Unified(args, nargs, kwnames, &ActivateParser, targets)) {
         return NULL;
     }
 
@@ -2968,13 +3001,16 @@ static PyObject *PhysicsWorld_get_index(PhysicsWorldObject *self,
 static PyObject *PhysicsWorld_is_alive(PhysicsWorldObject *self,
                                        PyObject *const *args, size_t nargsf,
                                        PyObject *kwnames) {
-    // 1. FAST PARSE
+    // 1. FAST PARSE (Zero-Allocation)
     uint64_t handle_raw;
-    void *targets[IDX_HANDLE_ONLY_COUNT];
-    targets[IDX_HANDLE_ONLY] = &handle_raw;
+    
+    // Group Name: HOnly, Index ID: IDX_H_H
+    void *targets[HOnly_COUNT];
+    targets[IDX_H_H] = &handle_raw;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &HandleOnlyParser, targets)) {
+    // Use the specific ActivateParser pointing to the HOnly layout
+    if (!FastParse_Unified(args, nargs, kwnames, &ActivateParser, targets)) {
         return NULL;
     }
 

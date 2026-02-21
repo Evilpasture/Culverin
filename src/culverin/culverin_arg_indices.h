@@ -1,266 +1,215 @@
-// culverin_arg_indices.h
 #pragma once
+
 #include "culverin_fast_parse.h"
+#include "culverin_types.h"
+
+/** 
+ * SCHEMA DEFINITIONS
+ * Format: X(IndexName, PythonName, C-Type, IsRequired)
+ */
+
+#define SCHEMA_BODY(X) \
+    X(IDX_POS,       "pos",         PyObject*, 0) \
+    X(IDX_ROT,       "rot",         PyObject*, 0) \
+    X(IDX_SIZE,      "size",        PyObject*, 0) \
+    X(IDX_SHAPE,     "shape",       int,       0) \
+    X(IDX_MOTION,    "motion",      int,       0) \
+    X(IDX_USER_DATA, "user_data",   uint64_t,  0) \
+    X(IDX_SENSOR,    "is_sensor",   bool,      0) \
+    X(IDX_MASS,      "mass",        float,     0) \
+    X(IDX_CAT,       "category",    uint32_t,  0) \
+    X(IDX_MASK,      "mask",        uint32_t,  0) \
+    X(IDX_FRIC,      "friction",    float,     0) \
+    X(IDX_REST,      "restitution", float,     0) \
+    X(IDX_MAT,       "material_id", uint32_t,  0) \
+    X(IDX_CCD,       "ccd",         bool,      0)
+
+#define SCHEMA_SET_POS(X) \
+    X(IDX_SETPOS_HANDLE, "handle", BodyHandle, 1) \
+    X(IDX_SETPOS_X,      "x",      JPH_Real, 1) \
+    X(IDX_SETPOS_Y,      "y",      JPH_Real, 1) \
+    X(IDX_SETPOS_Z,      "z",      JPH_Real, 1)
+
+ // Shared by Impulse, AngImpulse, Force, and Torque
+#define SCHEMA_VEC3(X) \
+    X(IDX_V3_H, "handle", BodyHandle, 1) \
+    X(IDX_V3_X, "x",      float,    1) \
+    X(IDX_V3_Y, "y",      float,    1) \
+    X(IDX_V3_Z, "z",      float,    1)
+
+#define SCHEMA_IMPULSE_AT(X) \
+    X(IDX_IMPAT_H,  "handle", BodyHandle, 1) \
+    X(IDX_IMPAT_IX, "ix",     float,    1) \
+    X(IDX_IMPAT_IY, "iy",     float,    1) \
+    X(IDX_IMPAT_IZ, "iz",     float,    1) \
+    X(IDX_IMPAT_PX, "px",     JPH_Real, 1) \
+    X(IDX_IMPAT_PY, "py",     JPH_Real, 1) \
+    X(IDX_IMPAT_PZ, "pz",     JPH_Real, 1)
+
+#define SCHEMA_BUOYANCY(X) \
+    X(IDX_BUOY_HANDLE,    "handle",         BodyHandle,  1) \
+    X(IDX_BUOY_SURFACE_Y, "surface_y",      double,    1) \
+    X(IDX_BUOY_BUOYANCY,  "buoyancy",       float,     0) \
+    X(IDX_BUOY_LIN_DRAG,  "linear_drag",    float,     0) \
+    X(IDX_BUOY_ANG_DRAG,  "angular_drag",   float,     0) \
+    X(IDX_BUOY_DT,        "dt",             float,     0) \
+    X(IDX_BUOY_VEL,       "fluid_velocity", PyObject*, 0)
+
+#define SCHEMA_HULL_OR_COMP(X) \
+    X(IDX_HC_POS,       "pos",         PyObject*, 1) \
+    X(IDX_HC_ROT,       "rot",         PyObject*, 1) \
+    X(IDX_HC_DATA,      "points_or_parts", PyObject*, 1) \
+    X(IDX_HC_MOTION,    "motion",      int,       0) \
+    X(IDX_HC_MASS,      "mass",        float,     0) \
+    X(IDX_HC_USER_DATA, "user_data",   uint64_t,  0) \
+    X(IDX_HC_SENSOR,    "is_sensor",   bool,      0) \
+    X(IDX_HC_CAT,       "category",    uint32_t,  0) \
+    X(IDX_HC_MASK,      "mask",        uint32_t,  0) \
+    X(IDX_HC_MAT_ID,    "material_id", uint32_t,  0) \
+    X(IDX_HC_FRIC,      "friction",    float,     0) \
+    X(IDX_HC_REST,      "restitution", float,     0) \
+    X(IDX_HC_CCD,       "ccd",         bool,      0)
+
+#define SCHEMA_MESH(X) \
+    X(IDX_MSH_POS,       "pos",       PyObject*, 1) \
+    X(IDX_MSH_ROT,       "rot",       PyObject*, 1) \
+    X(IDX_MSH_VERTS,     "vertices",  PyObject*, 1) \
+    X(IDX_MSH_INDICES,   "indices",   PyObject*, 1) \
+    X(IDX_MSH_USER_DATA, "user_data", uint64_t,  0) \
+    X(IDX_MSH_CAT,       "category",  uint32_t,  0) \
+    X(IDX_MSH_MASK,      "mask",      uint32_t,  0)
+
+#define SCHEMA_HANDLE_ONLY(X) \
+    X(IDX_H_H, "handle", BodyHandle, 1)
+
+#define SCHEMA_SET_TRNS(X) \
+    X(IDX_ST_HANDLE, "handle", BodyHandle, 1) \
+    X(IDX_ST_POS,    "pos",    PyObject*, 1) \
+    X(IDX_ST_ROT,    "rot",    PyObject*, 1)
+
+#define SCHEMA_CCD(X) \
+    X(IDX_CCD_H, "handle",  BodyHandle, 1) \
+    X(IDX_CCD_E, "enabled", bool,     1)
+
+#define SCHEMA_XYZ(X) \
+    X(IDX_XYZ_X, "x", float, 1) \
+    X(IDX_XYZ_Y, "y", float, 1) \
+    X(IDX_XYZ_Z, "z", float, 1)
+
+#define SCHEMA_BATCH_BUOYANCY(X) \
+    X(IDX_BBUOY_HANDLES,   "handles",        PyObject*, 1) \
+    X(IDX_BBUOY_SURFACE_Y, "surface_y",      double,    1) \
+    X(IDX_BBUOY_BUOYANCY,  "buoyancy",       float,     0) \
+    X(IDX_BBUOY_LIN_DRAG,  "linear_drag",    float,     0) \
+    X(IDX_BBUOY_ANG_DRAG,  "angular_drag",   float,     0) \
+    X(IDX_BBUOY_DT,        "dt",             float,     0) \
+    X(IDX_BBUOY_VEL,       "fluid_velocity", PyObject*, 0)
+
+// This is the "Master" structural schema for Hull/Compound/Body-like objects
+#define SCHEMA_HC_MASTER(X) \
+    X(IDX_HC_POS,       "pos",         PyObject*, 1) \
+    X(IDX_HC_ROT,       "rot",         PyObject*, 1) \
+    X(IDX_HC_DATA,      "data",        PyObject*, 1) \
+    X(IDX_HC_MOTION,    "motion",      int,       0) \
+    X(IDX_HC_MASS,      "mass",        float,     0) \
+    X(IDX_HC_USER_DATA, "user_data",   uint64_t,  0) \
+    X(IDX_HC_SENSOR,    "is_sensor",   bool,      0) \
+    X(IDX_HC_CAT,       "category",    uint32_t,  0) \
+    X(IDX_HC_MASK,      "mask",        uint32_t,  0) \
+    X(IDX_HC_MAT_ID,    "material_id", uint32_t,  0) \
+    X(IDX_HC_FRIC,      "friction",    float,     0) \
+    X(IDX_HC_REST,      "restitution", float,     0) \
+    X(IDX_HC_CCD,       "ccd",         bool,      0)
+
+// These are specific overlays just to change the Python keyword strings
+#define SCHEMA_HC_HULL(X) \
+    X(IDX_HC_POS, "pos", PyObject*, 1) X(IDX_HC_ROT, "rot", PyObject*, 1) \
+    X(IDX_HC_DATA, "points", PyObject*, 1) /* Change name to "points" */ \
+    X(IDX_HC_MOTION, "motion", int, 0) X(IDX_HC_MASS, "mass", float, 0) \
+    X(IDX_HC_USER_DATA, "user_data", uint64_t, 0) X(IDX_HC_SENSOR, "is_sensor", bool, 0) \
+    X(IDX_HC_CAT, "category", uint32_t, 0) X(IDX_HC_MASK, "mask", uint32_t, 0) \
+    X(IDX_HC_MAT_ID, "material_id", uint32_t, 0) X(IDX_HC_FRIC, "friction", float, 0) \
+    X(IDX_HC_REST, "restitution", float, 0) X(IDX_HC_CCD, "ccd", bool, 0)
+
+#define SCHEMA_HC_COMP(X) \
+    X(IDX_HC_POS, "pos", PyObject*, 1) X(IDX_HC_ROT, "rot", PyObject*, 1) \
+    X(IDX_HC_DATA, "parts", PyObject*, 1) /* Change name to "parts" */ \
+    X(IDX_HC_MOTION, "motion", int, 0) X(IDX_HC_MASS, "mass", float, 0) \
+    X(IDX_HC_USER_DATA, "user_data", uint64_t, 0) X(IDX_HC_SENSOR, "is_sensor", bool, 0) \
+    X(IDX_HC_CAT, "category", uint32_t, 0) X(IDX_HC_MASK, "mask", uint32_t, 0) \
+    X(IDX_HC_MAT_ID, "material_id", uint32_t, 0) X(IDX_HC_FRIC, "friction", float, 0) \
+    X(IDX_HC_REST, "restitution", float, 0) X(IDX_HC_CCD, "ccd", bool, 0)
+
+#define SCHEMA_BATCH_CREATE(X) \
+    X(IDX_BC_POSITIONS, "positions",   PyObject*, 1) \
+    X(IDX_BC_SIZES,     "sizes",       PyObject*, 1) \
+    X(IDX_BC_SHAPE,     "shape_type",  int,       0) \
+    X(IDX_BC_MOTION,    "motion_type", int,       0)
+
+#define SCHEMA_BATCH_DESTROY(X) \
+    X(IDX_BD_HANDLES, "handles", PyObject*, 1)
+
+#define SCHEMA_SET_ROT(X) \
+    X(IDX_SETROT_H, "handle", BodyHandle, 1) \
+    X(IDX_SETROT_X, "x",      float,    1) \
+    X(IDX_SETROT_Y, "y",      float,    1) \
+    X(IDX_SETROT_Z, "z",      float,    1) \
+    X(IDX_SETROT_W, "w",      float,    1)
+
+
+/** --- THE GENERATOR ENGINE --- **/
+
+#define GEN_ENUM(ID, NAME, TYPE, REQ) ID,
+
+// Defines the Enum and the Count for a signature type
+#define DEFINE_INDEX_GROUP(GroupName, Schema) \
+    typedef enum { Schema(GEN_ENUM) GroupName##_COUNT } GroupName##_Idx;
+
+// Declares a specific parser that uses an Index Group
+#define DECLARE_PARSER(ParserName, GroupName) \
+    extern FastParser ParserName##Parser; \
+    extern FastArgSpec ParserName##Specs[GroupName##_COUNT];
+    
+// A. Define the Index Groups (One per unique signature)
+DEFINE_INDEX_GROUP(Body,      SCHEMA_BODY)
+DEFINE_INDEX_GROUP(Vec3,      SCHEMA_VEC3)
+DEFINE_INDEX_GROUP(ImpAt,     SCHEMA_IMPULSE_AT)
+DEFINE_INDEX_GROUP(HOnly,     SCHEMA_HANDLE_ONLY)
+DEFINE_INDEX_GROUP(XYZ,       SCHEMA_XYZ)
+DEFINE_INDEX_GROUP(SetPos,    SCHEMA_SET_POS)
+DEFINE_INDEX_GROUP(Buoy,      SCHEMA_BUOYANCY)
+DEFINE_INDEX_GROUP(BatchBuoy, SCHEMA_BATCH_BUOYANCY)
+DEFINE_INDEX_GROUP(Mesh,      SCHEMA_MESH)
+DEFINE_INDEX_GROUP(SetTrns,   SCHEMA_SET_TRNS)
+DEFINE_INDEX_GROUP(CCD,       SCHEMA_CCD)
+DEFINE_INDEX_GROUP(HC,   SCHEMA_HC_MASTER) // HC group defined ONLY once
+DEFINE_INDEX_GROUP(BatchCreate, SCHEMA_BATCH_CREATE)
+DEFINE_INDEX_GROUP(BatchDestroy, SCHEMA_BATCH_DESTROY)
+DEFINE_INDEX_GROUP(SetRot, SCHEMA_SET_ROT)
+
+// B. Declare the Parsers
+DECLARE_PARSER(Body,       Body)
+DECLARE_PARSER(Impulse,    Vec3)
+DECLARE_PARSER(AngImpulse, Vec3)
+DECLARE_PARSER(Force,      Vec3)
+DECLARE_PARSER(Torque,     Vec3)
+DECLARE_PARSER(SetLinVel, Vec3)
+DECLARE_PARSER(SetAngVel, Vec3)
+DECLARE_PARSER(ImpulseAt,  ImpAt)
+DECLARE_PARSER(HOnly,      HOnly)
+DECLARE_PARSER(Destroy,    HOnly)
+DECLARE_PARSER(Activate,   HOnly)
+DECLARE_PARSER(Gravity,    XYZ)
+DECLARE_PARSER(SetPos,     SetPos)
+DECLARE_PARSER(Buoy,       Buoy)
+DECLARE_PARSER(BatchBuoy,  BatchBuoy)
+DECLARE_PARSER(Mesh,       Mesh)
+DECLARE_PARSER(SetTrns,    SetTrns)
+DECLARE_PARSER(CCD,        CCD)
+DECLARE_PARSER(ConvexHull, HC)
+DECLARE_PARSER(Compound,   HC)
+DECLARE_PARSER(BatchCreate, BatchCreate)
+DECLARE_PARSER(BatchDestroy, BatchDestroy)
+DECLARE_PARSER(SetRot, SetRot)
 
 void culverin_init_all_parsers(void);
-
-typedef enum {
-    IDX_POS, IDX_ROT, IDX_SIZE, IDX_SHAPE, IDX_MOTION,
-    IDX_USER_DATA, IDX_SENSOR, IDX_MASS, IDX_CAT, IDX_MASK,
-    IDX_FRIC, IDX_REST, IDX_MAT, IDX_CCD,
-    IDX_BODY_COUNT
-} BodyArgIdx;
-
-typedef enum {
-    IDX_BATCH_POSITIONS,
-    IDX_BATCH_SIZES,
-    IDX_BATCH_SHAPE_TYPE,
-    IDX_BATCH_MOTION_TYPE,
-    IDX_BATCH_COUNT 
-} BatchCreateArgIdx;
-
-typedef enum {
-    IDX_SETPOS_HANDLE, IDX_SETPOS_X, IDX_SETPOS_Y, IDX_SETPOS_Z,
-    IDX_SETPOS_COUNT
-} SetPosArgIdx;
-
-typedef enum {
-    IDX_SETVEL_HANDLE, IDX_SETVEL_VX, IDX_SETVEL_VY, IDX_SETVEL_VZ,
-    IDX_SETVEL_COUNT
-} SetVelArgIdx;
-
-typedef enum {
-    IDX_BATCH_DESTROY_HANDLES,
-    IDX_BATCH_DESTROY_COUNT
-} BatchDestroyArgIdx;
-
-typedef enum {
-    IDX_SETROT_HANDLE,
-    IDX_SETROT_X,
-    IDX_SETROT_Y,
-    IDX_SETROT_Z,
-    IDX_SETROT_W,
-    IDX_SETROT_COUNT
-} SetRotArgIdx;
-
-typedef enum {
-    IDX_SETLINVEL_HANDLE,
-    IDX_SETLINVEL_X,
-    IDX_SETLINVEL_Y,
-    IDX_SETLINVEL_Z,
-    IDX_SETLINVEL_COUNT
-} SetLinVelArgIdx;
-
-typedef enum {
-    IDX_SETANGVEL_HANDLE,
-    IDX_SETANGVEL_X,
-    IDX_SETANGVEL_Y,
-    IDX_SETANGVEL_Z,
-    IDX_SETANGVEL_COUNT
-} SetAngVelArgIdx;
-
-typedef enum {
-    IDX_IMPULSE_HANDLE,
-    IDX_IMPULSE_X,
-    IDX_IMPULSE_Y,
-    IDX_IMPULSE_Z,
-    IDX_IMPULSE_COUNT
-} ImpulseArgIdx;
-
-typedef enum {
-    IDX_IMPULSE_AT_HANDLE,
-    IDX_IMPULSE_AT_IX,
-    IDX_IMPULSE_AT_IY,
-    IDX_IMPULSE_AT_IZ,
-    IDX_IMPULSE_AT_PX,
-    IDX_IMPULSE_AT_PY,
-    IDX_IMPULSE_AT_PZ,
-    IDX_IMPULSE_AT_COUNT
-} ImpulseAtArgIdx;
-
-typedef enum {
-    IDX_GRAV_X, IDX_GRAV_Y, IDX_GRAV_Z,
-    IDX_GRAV_COUNT
-} GravityArgIdx;
-
-typedef enum {
-    IDX_BUOY_HANDLE,
-    IDX_BUOY_SURFACE_Y,
-    IDX_BUOY_BUOYANCY,
-    IDX_BUOY_LIN_DRAG,
-    IDX_BUOY_ANG_DRAG,
-    IDX_BUOY_DT,
-    IDX_BUOY_VEL, // We'll take this as a PyObject* to handle the (fff)
-    IDX_BUOY_COUNT
-} BuoyancyArgIdx;
-
-typedef enum {
-    IDX_BBUOY_HANDLES,
-    IDX_BBUOY_SURFACE_Y,
-    IDX_BBUOY_BUOYANCY,
-    IDX_BBUOY_LIN_DRAG,
-    IDX_BBUOY_ANG_DRAG,
-    IDX_BBUOY_DT,
-    IDX_BBUOY_VEL,
-    IDX_BBUOY_COUNT
-} BatchBuoyancyArgIdx;
-
-typedef enum {
-    IDX_HULL_POS,
-    IDX_HULL_ROT,
-    IDX_HULL_POINTS,
-    IDX_HULL_MOTION,
-    IDX_HULL_MASS,
-    IDX_HULL_USER_DATA,
-    IDX_HULL_CAT,
-    IDX_HULL_MASK,
-    IDX_HULL_MAT_ID,
-    IDX_HULL_FRIC,
-    IDX_HULL_REST,
-    IDX_HULL_CCD,
-    IDX_HULL_COUNT
-} ConvexHullArgIdx;
-
-typedef enum {
-    IDX_TORQUE_HANDLE,
-    IDX_TORQUE_X,
-    IDX_TORQUE_Y,
-    IDX_TORQUE_Z,
-    IDX_TORQUE_COUNT
-} TorqueArgIdx;
-
-typedef enum {
-    IDX_FORCE_HANDLE,
-    IDX_FORCE_X,
-    IDX_FORCE_Y,
-    IDX_FORCE_Z,
-    IDX_FORCE_COUNT
-} ForceArgIdx;
-
-typedef enum {
-    IDX_ANGIMP_HANDLE,
-    IDX_ANGIMP_X,
-    IDX_ANGIMP_Y,
-    IDX_ANGIMP_Z,
-    IDX_ANGIMP_COUNT
-} AngImpArgIdx;
-
-typedef enum {
-    IDX_CMP_POS,
-    IDX_CMP_ROT,
-    IDX_CMP_PARTS,
-    IDX_CMP_MOTION,
-    IDX_CMP_MASS,
-    IDX_CMP_USER_DATA,
-    IDX_CMP_SENSOR,
-    IDX_CMP_CAT,
-    IDX_CMP_MASK,
-    IDX_CMP_MAT_ID,
-    IDX_CMP_FRIC,
-    IDX_CMP_REST,
-    IDX_CMP_CCD,
-    IDX_CMP_COUNT
-} CompoundArgIdx;
-
-typedef enum {
-    IDX_MESH_POS,
-    IDX_MESH_ROT,
-    IDX_MESH_VERTS,
-    IDX_MESH_INDICES,
-    IDX_MESH_USER_DATA,
-    IDX_MESH_CAT,
-    IDX_MESH_MASK,
-    IDX_MESH_COUNT
-} MeshArgIdx;
-
-typedef enum {
-    IDX_DESTROY_HANDLE,
-    IDX_DESTROY_COUNT
-} DestroyArgIdx;
-
-typedef enum {
-    IDX_SETTRNS_HANDLE,
-    IDX_SETTRNS_POS,
-    IDX_SETTRNS_ROT,
-    IDX_SETTRNS_COUNT
-} SetTransformArgIdx;
-
-typedef enum {
-    IDX_HANDLE_ONLY,
-    IDX_HANDLE_ONLY_COUNT
-} HandleOnlyArgIdx;
-
-typedef enum {
-    IDX_CCD_HANDLE,
-    IDX_CCD_ENABLED,
-    IDX_CCD_COUNT
-} CCDArgIdx;
-
-static FastParser BodyParser;
-static FastArgSpec BodySpecs[IDX_BODY_COUNT];
-
-static FastParser SetPosParser;
-static FastArgSpec SetPosSpecs[IDX_SETPOS_COUNT];
-
-static FastParser SetVelParser;
-static FastArgSpec SetVelSpecs[IDX_SETVEL_COUNT];
-
-static FastParser BatchCreateParser;
-static FastArgSpec BatchCreateSpecs[IDX_BATCH_COUNT];
-
-static FastParser BatchDestroyParser;
-static FastArgSpec BatchDestroySpecs[IDX_BATCH_DESTROY_COUNT];
-
-static FastParser SetRotParser;
-static FastArgSpec SetRotSpecs[IDX_SETROT_COUNT];
-
-static FastParser SetLinVelParser;
-static FastArgSpec SetLinVelSpecs[IDX_SETLINVEL_COUNT];
-
-static FastParser SetAngVelParser;
-static FastArgSpec SetAngVelSpecs[IDX_SETANGVEL_COUNT];
-
-static FastParser ImpulseParser;
-static FastArgSpec ImpulseSpecs[IDX_IMPULSE_COUNT];
-
-static FastParser ImpulseAtParser;
-static FastArgSpec ImpulseAtSpecs[IDX_IMPULSE_AT_COUNT];
-
-static FastParser GravityParser;
-static FastArgSpec GravitySpecs[IDX_GRAV_COUNT];
-
-static FastParser BuoyancyParser;
-static FastArgSpec BuoyancySpecs[IDX_BUOY_COUNT];
-
-static FastParser BatchBuoyancyParser;
-static FastArgSpec BatchBuoyancySpecs[IDX_BBUOY_COUNT];
-
-static FastParser ConvexHullParser;
-static FastArgSpec ConvexHullSpecs[IDX_HULL_COUNT];
-
-static FastParser TorqueParser;
-static FastArgSpec TorqueSpecs[IDX_TORQUE_COUNT];
-
-static FastParser ForceParser;
-static FastArgSpec ForceSpecs[IDX_FORCE_COUNT];
-
-static FastParser AngImpParser;
-static FastArgSpec AngImpSpecs[IDX_ANGIMP_COUNT];
-
-static FastParser CompoundParser;
-static FastArgSpec CompoundSpecs[IDX_CMP_COUNT];
-
-static FastParser MeshParser;
-static FastArgSpec MeshSpecs[IDX_MESH_COUNT];
-
-static FastParser DestroyParser;
-static FastArgSpec DestroySpecs[IDX_DESTROY_COUNT];
-
-static FastParser SetTransformParser;
-static FastArgSpec SetTransformSpecs[IDX_SETTRNS_COUNT];
-
-static FastParser HandleOnlyParser;
-static FastArgSpec HandleOnlySpecs[IDX_HANDLE_ONLY_COUNT];
-
-static FastParser CCDParser;
-static FastArgSpec CCDSpecs[IDX_CCD_COUNT];
