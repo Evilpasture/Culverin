@@ -3592,9 +3592,9 @@ static const PyMethodDef PhysicsWorld_methods[] = {
      "Sweeps a shape along a direction vector. Returns (Handle, Fraction, "
      "ContactPoint, Normal) or None."},
     {"overlap_sphere", (PyCFunction)(void (*)(void))PhysicsWorld_overlap_sphere,
-     METH_VARARGS | METH_KEYWORDS, NULL},
+     METH_FASTCALL | METH_KEYWORDS, NULL},
     {"overlap_aabb", (PyCFunction)(void (*)(void))PhysicsWorld_overlap_aabb,
-     METH_VARARGS | METH_KEYWORDS, NULL},
+     METH_FASTCALL | METH_KEYWORDS, NULL},
 
     // --- Utilities ---
     {"get_index", (PyCFunction)(void (*)(void))PhysicsWorld_get_index,

@@ -9,11 +9,13 @@ typedef struct {
   size_t capacity;
 } OverlapContext;
 
-PyObject *PhysicsWorld_overlap_sphere(PhysicsWorldObject *self, PyObject *args,
-                                      PyObject *kwds);
+PyObject *PhysicsWorld_overlap_sphere(PhysicsWorldObject *self,
+                                      PyObject *const *args, size_t nargsf,
+                                      PyObject *kwnames);
 
-PyObject *PhysicsWorld_overlap_aabb(PhysicsWorldObject *self, PyObject *args,
-                                    PyObject *kwds);
+PyObject *PhysicsWorld_overlap_aabb(PhysicsWorldObject *self,
+                                    PyObject *const *args, size_t nargsf,
+                                    PyObject *kwnames);
 
 PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self,
                                PyObject *const *args, size_t nargsf,

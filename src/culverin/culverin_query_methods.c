@@ -51,230 +51,229 @@ static float OverlapCallback_Broad(void *context, const JPH_BodyID result_bid) {
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-PyObject *PhysicsWorld_overlap_sphere(PhysicsWorldObject *self, PyObject *args,
-                                      PyObject *kwds) {
-  float x = 0.0f;
-  float y = 0.0f;
-  float z = 0.0f;
-  float radius = 1.0f;
-  static char *kwlist[] = {"center", "radius", NULL};
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)f", kwlist, &x, &y, &z,
-                                   &radius)) {
-    return NULL;
-  }
+PyObject *PhysicsWorld_overlap_sphere(PhysicsWorldObject *self,
+                                      PyObject *const *args, size_t nargsf,
+                                      PyObject *kwnames) {
+    // 1. DEFAULT VALUES
+    PyObject *o_center = NULL;
+    float radius = 1.0f;
 
-  PyObject *ret_val = NULL;
-  OverlapContext ctx = {.world = self, .hits = NULL, .count = 0, .capacity = 0};
+    // 2. FAST PARSE (Zero-Allocation)
+    void *targets[OverlapSphere_COUNT];
+    targets[IDX_OS_CENTER] = &o_center;
+    targets[IDX_OS_RADIUS] = &radius;
 
-  JPH_Shape *shape = NULL;
-  JPH_BroadPhaseLayerFilter *bp_filter = NULL;
-  JPH_ObjectLayerFilter *obj_filter = NULL;
-  JPH_BodyFilter *body_filter = NULL;
-
-  SHADOW_LOCK(&self->shadow_lock);
-  BLOCK_UNTIL_NOT_STEPPING(self);
-  BLOCK_IF_STEP_PENDING(self);
-  atomic_fetch_add_explicit(&self->active_queries, 1, memory_order_relaxed);
-  SHADOW_UNLOCK(&self->shadow_lock);
-
-  JPH_SphereShapeSettings *ss = JPH_SphereShapeSettings_Create(radius);
-  if (!ss) {
-    PyErr_NoMemory();
-    goto cleanup;
-  }
-  shape = (JPH_Shape *)JPH_SphereShapeSettings_CreateShape(ss);
-  JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)ss);
-  if (!shape) {
-    PyErr_NoMemory();
-    goto cleanup;
-  }
-
-  JPH_STACK_ALLOC(JPH_RVec3, pos);
-  pos->x = (double)x;
-  pos->y = (double)y;
-  pos->z = (double)z;
-  JPH_STACK_ALLOC(JPH_Quat, rot);
-  rot->x = 0;
-  rot->y = 0;
-  rot->z = 0;
-  rot->w = 1;
-  JPH_STACK_ALLOC(JPH_RMat4, transform);
-  JPH_RMat4_RotationTranslation(transform, rot, pos);
-  JPH_STACK_ALLOC(JPH_Vec3, scale);
-  scale->x = 1.0f;
-  scale->y = 1.0f;
-  scale->z = 1.0f;
-  JPH_STACK_ALLOC(JPH_RVec3, base_offset);
-  base_offset->x = 0;
-  base_offset->y = 0;
-  base_offset->z = 0;
-  JPH_STACK_ALLOC(JPH_CollideShapeSettings, settings);
-  JPH_CollideShapeSettings_Init(settings);
-
-  // --- EXECUTION ---
-
-  Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
-
-  JPH_BroadPhaseLayerFilter_Procs bp_procs = {.ShouldCollide =
-                                                  filter_allow_all_bp};
-  bp_filter = JPH_BroadPhaseLayerFilter_Create(NULL);
-  JPH_BroadPhaseLayerFilter_SetProcs(&bp_procs);
-
-  JPH_ObjectLayerFilter_Procs obj_procs = {.ShouldCollide =
-                                               filter_allow_all_obj};
-  obj_filter = JPH_ObjectLayerFilter_Create(NULL);
-  JPH_ObjectLayerFilter_SetProcs(&obj_procs);
-
-  JPH_BodyFilter_Procs bf_procs = {.ShouldCollide = filter_true_body};
-  body_filter = JPH_BodyFilter_Create(NULL);
-  JPH_BodyFilter_SetProcs(&bf_procs);
-
-  const JPH_NarrowPhaseQuery *nq =
-      JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
-
-  JPH_NarrowPhaseQuery_CollideShape(nq, shape, scale, transform, settings,
-                                    base_offset, OverlapCallback_Narrow, &ctx,
-                                    bp_filter, obj_filter, body_filter, NULL);
-  NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
-  Py_END_ALLOW_THREADS
-
-      ret_val = PyList_New(0);
-  if (!ret_val) {
-    goto cleanup;
-  }
-
-  SHADOW_LOCK(&self->shadow_lock);
-  for (size_t i = 0; i < ctx.count; i++) {
-    uint64_t h = ctx.hits[i];
-    uint32_t slot = (uint32_t)(h & 0xFFFFFFFF);
-    uint32_t gen = (uint32_t)(h >> 32);
-
-    if (slot < self->slot_capacity && self->generations[slot] == gen &&
-        self->slot_states[slot] == SLOT_ALIVE) {
-      PyObject *py_h = PyLong_FromUnsignedLongLong(h);
-      if (py_h) {
-        PyList_Append(ret_val, py_h);
-        Py_DECREF(py_h);
-      }
+    auto nargs = PyVectorcall_NARGS(nargsf);
+    if (!FastParse_Unified(args, nargs, kwnames, &OverlapSphereParser, targets)) {
+        return NULL;
     }
-  }
-  SHADOW_UNLOCK(&self->shadow_lock);
 
-cleanup:
-  // --- SIGNALING CHANGE HERE ---
-  end_query_scope(self);
+    // 3. VECTOR EXTRACTION (Outside Lock)
+    JPH_Real cx, cy, cz;
+    if (!parse_vec3_direct(o_center, &cx, &cy, &cz)) return NULL;
 
-  if (shape) {
-    JPH_Shape_Destroy(shape);
-  }
-  if (bp_filter) {
-    JPH_BroadPhaseLayerFilter_Destroy(bp_filter);
-  }
-  if (obj_filter) {
-    JPH_ObjectLayerFilter_Destroy(obj_filter);
-  }
-  if (body_filter) {
-    JPH_BodyFilter_Destroy(body_filter);
-  }
-  if (ctx.hits) {
-    PyMem_RawFree(ctx.hits);
-  }
+    PyObject *ret_val = NULL;
+    OverlapContext ctx = {.world = self, .hits = NULL, .count = 0, .capacity = 0};
 
-  return ret_val;
+    JPH_Shape *shape = NULL;
+    JPH_BroadPhaseLayerFilter *bp_filter = NULL;
+    JPH_ObjectLayerFilter *obj_filter = NULL;
+    JPH_BodyFilter *body_filter = NULL;
+
+    // 4. PHASE GUARD
+    SHADOW_LOCK(&self->shadow_lock);
+    BLOCK_UNTIL_NOT_STEPPING(self);
+    BLOCK_IF_STEP_PENDING(self);
+    atomic_fetch_add_explicit(&self->active_queries, 1, memory_order_acquire);
+    SHADOW_UNLOCK(&self->shadow_lock);
+
+    // Shape Creation
+    JPH_SphereShapeSettings *ss = JPH_SphereShapeSettings_Create(radius);
+    if (!ss) {
+        PyErr_NoMemory();
+        goto query_cleanup;
+    }
+    shape = (JPH_Shape *)JPH_SphereShapeSettings_CreateShape(ss);
+    JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)ss);
+    
+    if (!shape) {
+        PyErr_SetString(PyExc_RuntimeError, "Failed to create sphere shape");
+        goto query_cleanup;
+    }
+
+    // Prepare Jolt Math
+    JPH_STACK_ALLOC(JPH_RVec3, pos);
+    *pos = (JPH_RVec3){cx, cy, cz};
+    JPH_STACK_ALLOC(JPH_Quat, rot);
+    *rot = (JPH_Quat){0, 0, 0, 1};
+    JPH_STACK_ALLOC(JPH_RMat4, transform);
+    JPH_RMat4_RotationTranslation(transform, rot, pos);
+    JPH_STACK_ALLOC(JPH_Vec3, scale);
+    *scale = (JPH_Vec3){1.0f, 1.0f, 1.0f};
+    JPH_STACK_ALLOC(JPH_RVec3, base_offset);
+    *base_offset = (JPH_RVec3){0, 0, 0};
+    JPH_STACK_ALLOC(JPH_CollideShapeSettings, settings);
+    JPH_CollideShapeSettings_Init(settings);
+
+    // 5. EXECUTION (No GIL)
+    Py_BEGIN_ALLOW_THREADS 
+    NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+
+    // Filter setup (These could be cached, but creating them is relatively cheap)
+    JPH_BroadPhaseLayerFilter_Procs bp_p = {.ShouldCollide = filter_allow_all_bp};
+    bp_filter = JPH_BroadPhaseLayerFilter_Create(NULL);
+    JPH_BroadPhaseLayerFilter_SetProcs(&bp_p);
+
+    JPH_ObjectLayerFilter_Procs obj_p = {.ShouldCollide = filter_allow_all_obj};
+    obj_filter = JPH_ObjectLayerFilter_Create(NULL);
+    JPH_ObjectLayerFilter_SetProcs(&obj_p);
+
+    JPH_BodyFilter_Procs bf_p = {.ShouldCollide = filter_true_body};
+    body_filter = JPH_BodyFilter_Create(NULL);
+    JPH_BodyFilter_SetProcs(&bf_p);
+
+    const JPH_NarrowPhaseQuery *nq = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
+
+    JPH_NarrowPhaseQuery_CollideShape(nq, shape, scale, transform, settings,
+                                      base_offset, OverlapCallback_Narrow, &ctx,
+                                      bp_filter, obj_filter, body_filter, NULL);
+    
+    NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+    Py_END_ALLOW_THREADS
+
+    // 6. RESULT CONSTRUCTION (GIL Held)
+    ret_val = PyList_New(0);
+    if (!ret_val) goto query_cleanup;
+
+    SHADOW_LOCK(&self->shadow_lock);
+    for (size_t i = 0; i < ctx.count; i++) {
+        uint64_t h = ctx.hits[i];
+        uint32_t slot;
+        // Verify handle remains valid
+        if (unpack_handle(self, h, &slot) && self->slot_states[slot] == SLOT_ALIVE) {
+            PyObject *py_h = PyLong_FromUnsignedLongLong(h);
+            if (py_h) {
+                PyList_Append(ret_val, py_h);
+                Py_DECREF(py_h);
+            }
+        }
+    }
+    SHADOW_UNLOCK(&self->shadow_lock);
+
+query_cleanup:
+    // --- CRITICAL SIGNALING ---
+    // This ensures world.step() wakes up if it was waiting for this query.
+    int prev = atomic_fetch_sub_explicit(&self->active_queries, 1, memory_order_release);
+    if (prev == 1) {
+        NATIVE_MUTEX_LOCK(self->step_sync.mutex);
+        NATIVE_COND_BROADCAST(self->step_sync.cond);
+        NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
+    }
+
+    if (shape)       JPH_Shape_Destroy(shape);
+    if (bp_filter)   JPH_BroadPhaseLayerFilter_Destroy(bp_filter);
+    if (obj_filter)  JPH_ObjectLayerFilter_Destroy(obj_filter);
+    if (body_filter) JPH_BodyFilter_Destroy(body_filter);
+    if (ctx.hits)    PyMem_RawFree(ctx.hits);
+
+    return ret_val;
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-PyObject *PhysicsWorld_overlap_aabb(PhysicsWorldObject *self, PyObject *args,
-                                    PyObject *kwds) {
-  float min_x = 0.0f;
-  float min_y = 0.0f;
-  float min_z = 0.0f;
-  float max_x = 0.0f;
-  float max_y = 0.0f;
-  float max_z = 0.0f;
-  static char *kwlist[] = {"min", "max", NULL};
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)(fff)", kwlist, &min_x,
-                                   &min_y, &min_z, &max_x, &max_y, &max_z)) {
-    return NULL;
-  }
+PyObject *PhysicsWorld_overlap_aabb(PhysicsWorldObject *self,
+                                    PyObject *const *args, size_t nargsf,
+                                    PyObject *kwnames) {
+    // 1. DEFAULT VALUES
+    PyObject *o_min = NULL;
+    PyObject *o_max = NULL;
 
-  PyObject *ret_val = NULL;
-  OverlapContext ctx = {.world = self, .hits = NULL, .count = 0, .capacity = 0};
+    // 2. FAST PARSE (Zero-Allocation)
+    void *targets[OverlapAABB_COUNT];
+    targets[IDX_OA_MIN] = &o_min;
+    targets[IDX_OA_MAX] = &o_max;
 
-  JPH_BroadPhaseLayerFilter *bp_filter = NULL;
-  JPH_ObjectLayerFilter *obj_filter = NULL;
-
-  SHADOW_LOCK(&self->shadow_lock);
-  BLOCK_UNTIL_NOT_STEPPING(self);
-  BLOCK_IF_STEP_PENDING(self);
-  atomic_fetch_add_explicit(&self->active_queries, 1, memory_order_relaxed);
-  SHADOW_UNLOCK(&self->shadow_lock);
-
-  JPH_STACK_ALLOC(JPH_AABox, box);
-  box->min.x = min_x;
-  box->min.y = min_y;
-  box->min.z = min_z;
-  box->max.x = max_x;
-  box->max.y = max_y;
-  box->max.z = max_z;
-
-  Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
-
-  JPH_BroadPhaseLayerFilter_Procs bp_procs = {.ShouldCollide =
-                                                  filter_allow_all_bp};
-  bp_filter = JPH_BroadPhaseLayerFilter_Create(NULL);
-  JPH_BroadPhaseLayerFilter_SetProcs(&bp_procs);
-
-  JPH_ObjectLayerFilter_Procs obj_procs = {.ShouldCollide =
-                                               filter_allow_all_obj};
-  obj_filter = JPH_ObjectLayerFilter_Create(NULL);
-  JPH_ObjectLayerFilter_SetProcs(&obj_procs);
-
-  const JPH_BroadPhaseQuery *bq =
-      JPH_PhysicsSystem_GetBroadPhaseQuery(self->system);
-  JPH_BroadPhaseQuery_CollideAABox(bq, box, OverlapCallback_Broad, &ctx,
-                                   bp_filter, obj_filter);
-
-  NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
-  Py_END_ALLOW_THREADS
-
-      ret_val = PyList_New(0);
-  if (!ret_val) {
-    goto cleanup;
-  }
-
-  SHADOW_LOCK(&self->shadow_lock);
-  for (size_t i = 0; i < ctx.count; i++) {
-    uint64_t h = ctx.hits[i];
-    uint32_t slot = (uint32_t)(h & 0xFFFFFFFF);
-    uint32_t gen = (uint32_t)(h >> 32);
-
-    if (slot < self->slot_capacity && self->generations[slot] == gen &&
-        self->slot_states[slot] == SLOT_ALIVE) {
-      PyObject *py_h = PyLong_FromUnsignedLongLong(h);
-      if (py_h) {
-        PyList_Append(ret_val, py_h);
-        Py_DECREF(py_h);
-      }
+    auto nargs = PyVectorcall_NARGS(nargsf);
+    if (!FastParse_Unified(args, nargs, kwnames, &OverlapAABBParser, targets)) {
+        return NULL;
     }
-  }
-  SHADOW_UNLOCK(&self->shadow_lock);
 
-cleanup:
-  // --- SIGNALING CHANGE HERE ---
-  end_query_scope(self);
+    // 3. VECTOR EXTRACTION (Outside Lock)
+    // AABB coordinates in Jolt are typically floats, but we parse via JPH_Real 
+    // for precision safety before assigning to the AABox struct.
+    JPH_Real mix, miy, miz;
+    JPH_Real max, may, maz;
+    if (!parse_vec3_direct(o_min, &mix, &miy, &miz)) return NULL;
+    if (!parse_vec3_direct(o_max, &max, &may, &maz)) return NULL;
 
-  if (bp_filter) {
-    JPH_BroadPhaseLayerFilter_Destroy(bp_filter);
-  }
-  if (obj_filter) {
-    JPH_ObjectLayerFilter_Destroy(obj_filter);
-  }
-  if (ctx.hits) {
-    PyMem_RawFree(ctx.hits);
-  }
+    PyObject *ret_val = NULL;
+    OverlapContext ctx = {.world = self, .hits = NULL, .count = 0, .capacity = 0};
+    JPH_BroadPhaseLayerFilter *bp_filter = NULL;
+    JPH_ObjectLayerFilter *obj_filter = NULL;
 
-  return ret_val;
+    // 4. PHASE GUARD
+    SHADOW_LOCK(&self->shadow_lock);
+    BLOCK_UNTIL_NOT_STEPPING(self);
+    BLOCK_IF_STEP_PENDING(self);
+    atomic_fetch_add_explicit(&self->active_queries, 1, memory_order_acquire);
+    SHADOW_UNLOCK(&self->shadow_lock);
+
+    // Prepare Jolt AABox
+    JPH_STACK_ALLOC(JPH_AABox, box);
+    box->min.x = (float)mix; box->min.y = (float)miy; box->min.z = (float)miz;
+    box->max.x = (float)max; box->max.y = (float)may; box->max.z = (float)maz;
+
+    // 5. EXECUTION (No GIL, Jolt Lock)
+    Py_BEGIN_ALLOW_THREADS 
+    NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+
+    JPH_BroadPhaseLayerFilter_Procs bp_p = {.ShouldCollide = filter_allow_all_bp};
+    bp_filter = JPH_BroadPhaseLayerFilter_Create(NULL);
+    JPH_BroadPhaseLayerFilter_SetProcs(&bp_p);
+
+    JPH_ObjectLayerFilter_Procs obj_p = {.ShouldCollide = filter_allow_all_obj};
+    obj_filter = JPH_ObjectLayerFilter_Create(NULL);
+    JPH_ObjectLayerFilter_SetProcs(&obj_p);
+
+    const JPH_BroadPhaseQuery *bq = JPH_PhysicsSystem_GetBroadPhaseQuery(self->system);
+    JPH_BroadPhaseQuery_CollideAABox(bq, box, OverlapCallback_Broad, &ctx,
+                                     bp_filter, obj_filter);
+
+    NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+    Py_END_ALLOW_THREADS
+
+    // 6. RESULT CONSTRUCTION (GIL Held)
+    ret_val = PyList_New(0);
+    if (!ret_val) goto query_cleanup;
+
+    SHADOW_LOCK(&self->shadow_lock);
+    for (size_t i = 0; i < ctx.count; i++) {
+        uint64_t h = ctx.hits[i];
+        uint32_t slot;
+        if (unpack_handle(self, h, &slot) && self->slot_states[slot] == SLOT_ALIVE) {
+            PyObject *py_h = PyLong_FromUnsignedLongLong(h);
+            if (py_h) {
+                PyList_Append(ret_val, py_h);
+                Py_DECREF(py_h);
+            }
+        }
+    }
+    SHADOW_UNLOCK(&self->shadow_lock);
+
+query_cleanup:
+    // --- CRITICAL SIGNALING ---
+    // Signal that this query is done so world.step() can proceed
+    int prev = atomic_fetch_sub_explicit(&self->active_queries, 1, memory_order_release);
+    if (prev == 1) {
+        NATIVE_MUTEX_LOCK(self->step_sync.mutex);
+        NATIVE_COND_BROADCAST(self->step_sync.cond);
+        NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
+    }
+
+    if (bp_filter)  JPH_BroadPhaseLayerFilter_Destroy(bp_filter);
+    if (obj_filter) JPH_ObjectLayerFilter_Destroy(obj_filter);
+    if (ctx.hits)    PyMem_RawFree(ctx.hits);
+
+    return ret_val;
 }
 
 PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self,

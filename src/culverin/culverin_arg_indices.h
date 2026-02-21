@@ -186,6 +186,14 @@
     X(IDX_SC_SIZE,   "size",   PyObject*,  0) \
     X(IDX_SC_IGNORE, "ignore", BodyHandle, 0)
 
+#define SCHEMA_OVERLAP_SPHERE(X) \
+    X(IDX_OS_CENTER, "center", PyObject*, 1) \
+    X(IDX_OS_RADIUS, "radius", float,     1)
+
+#define SCHEMA_OVERLAP_AABB(X) \
+    X(IDX_OA_MIN, "min", PyObject*, 1) \
+    X(IDX_OA_MAX, "max", PyObject*, 1)
+
 /** --- THE GENERATOR ENGINE --- **/
 
 #define GEN_ENUM(ID, NAME, TYPE, REQ) ID,
@@ -219,6 +227,8 @@ DEFINE_INDEX_GROUP(Render, SCHEMA_RENDER)
 DEFINE_INDEX_GROUP(Raycast, SCHEMA_RAYCAST)
 DEFINE_INDEX_GROUP(RayBatch, SCHEMA_RAYCAST_BATCH)
 DEFINE_INDEX_GROUP(Shapecast, SCHEMA_SHAPECAST)
+DEFINE_INDEX_GROUP(OverlapSphere, SCHEMA_OVERLAP_SPHERE)
+DEFINE_INDEX_GROUP(OverlapAABB, SCHEMA_OVERLAP_AABB)
 
 // B. Declare the Parsers
 DECLARE_PARSER(Body, Body)
@@ -248,5 +258,7 @@ DECLARE_PARSER(Render, Render)
 DECLARE_PARSER(Raycast, Raycast)
 DECLARE_PARSER(RayBatch, RayBatch)
 DECLARE_PARSER(Shapecast, Shapecast)
+DECLARE_PARSER(OverlapSphere, OverlapSphere)
+DECLARE_PARSER(OverlapAABB, OverlapAABB)
 
 void culverin_init_all_parsers(void);

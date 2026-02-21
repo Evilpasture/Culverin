@@ -57,6 +57,9 @@ ALLOC_PARSER(Render, Render)
 ALLOC_PARSER(Raycast, Raycast)
 ALLOC_PARSER(RayBatch, RayBatch)
 ALLOC_PARSER(Shapecast, Shapecast)
+ALLOC_PARSER(OverlapSphere, OverlapSphere)
+ALLOC_PARSER(OverlapAABB, OverlapAABB)
+
 
 // --- 3. INITIALIZATION ---
 
@@ -95,4 +98,6 @@ void culverin_init_all_parsers(void) {
   INIT_PARSER(Raycast, Raycast, SCHEMA_RAYCAST);
   INIT_PARSER(RayBatch, RayBatch, SCHEMA_RAYCAST_BATCH);
   INIT_PARSER(Shapecast, Shapecast, SCHEMA_SHAPECAST);
+  INIT_PARSER(OverlapSphere, OverlapSphere, SCHEMA_OVERLAP_SPHERE);
+  INIT_PARSER(OverlapAABB, OverlapAABB, SCHEMA_OVERLAP_AABB);
 }
