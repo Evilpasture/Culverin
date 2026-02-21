@@ -128,7 +128,6 @@ if(MSVC)
             /clang:-mllvm /clang:-inline-threshold=1000 \
             /Ob2 /Oi /Ot \
         ")
-        target_compile_options(joltc_double PRIVATE /clang:-std=c23)
     else()
         message(STATUS "Culverin: Detected Pure MSVC")
         set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /std:clatest /experimental:c11atomics /fp:fast")
