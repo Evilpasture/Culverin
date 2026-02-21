@@ -11,83 +11,87 @@
  * ============================================================================
  *
  * A high-performance, zero-allocation argument parsing system for Python C
- * extensions. Replaces PyArg_ParseTupleAndKeywords with a hybrid system that
- * uses Linear Search for small arg counts and Pointer Hashing for large ones.
+ * extensions. Replaces PyArg_ParseTupleAndKeywords with a hybrid system using 
+ * X-Macro Schemas for "Lazy" maintenance and Pointer Hashing for O(1) lookups.
  *
  * ----------------------------------------------------------------------------
- * 1. THE SETUP (Module Level)
+ * 1. THE SETUP (Lazy Schema Definition)
  * ----------------------------------------------------------------------------
- * Define a global Parser and its Specs.
+ * Define your API once in culverin_arg_indices.h using X-Macros.
+ * 
+ *   #define SCHEMA_VEC3(X) \
+ *       X(IDX_V3_H, "handle", uint64_t, 1) \  // REQUIRED (1)
+ *       X(IDX_V3_X, "x",      float,    1) \
+ *       X(IDX_V3_Y, "y",      float,    1) \
+ *       X(IDX_V3_Z, "z",      float,    1)
  *
- *   static FastParser BodyParser;
- *   static FastArgSpec BodySpecs[14];
+ *   // Generate Enum (IDX_V3_H...) and Count (Vec3_COUNT)
+ *   DEFINE_INDEX_GROUP(Vec3, SCHEMA_VEC3)
  *
- *   void init_my_parser() {
- *       float f; int i; PyObject *o; // Dummies for type deduction
- *       FastArgSpec temp[] = {
- *           FP_REQ_ARG("pos", o),   // REQUIRED (index 0)
- *           FP_ARG("mass", f),      // OPTIONAL (index 1)
- *           FP_REQ_ARG("shape", i)  // REQUIRED (index 2)
- *       };
- *       memcpy(BodySpecs, temp, sizeof(temp));
+ *   // Declare specific Parser objects
+ *   DECLARE_PARSER(Force, Vec3) 
+ *   DECLARE_PARSER(Torque, Vec3)
  *
- *       // FastParse_Init:
- *       // - Interns strings for pointer equality
- *       // - Calculates bitmask for REQUIRED arguments
- *       // - Builds O(1) Pointer-Hash-Table if count > 10
- *       FastParse_Init(&BodyParser, BodySpecs, 14);
+ * ----------------------------------------------------------------------------
+ * 2. INITIALIZATION (Module Level)
+ * ----------------------------------------------------------------------------
+ * In culverin_arg_indices.c, allocate and initialize with one line:
+ *
+ *   ALLOC_PARSER(Force, Vec3)
+ *
+ *   void culverin_init_all_parsers() {
+ *       INIT_PARSER(Force, Vec3, SCHEMA_VEC3);
  *   }
  *
  * ----------------------------------------------------------------------------
- * 2. THE USAGE (Function Level)
+ * 3. THE USAGE (Function Level)
  * ----------------------------------------------------------------------------
  * Use the FastParse_Unified macro. It branches between Vectorcall and Legacy.
  *
  *   static PyObject* my_func(PyObject* self, PyObject* const* args,
  *                            size_t nargsf, PyObject* kwnames) {
- *       auto nargs = PyVectorcall_NARGS(nargsf);
+ *       uint64_t h; float x, y, z;
  *
- *       // 1. Define C variables with default values
- *       PyObject *o_pos = nullptr; float mass = 1.0f; int shape = 0;
+ *       // Target Array - Explicitly mapped using Schema IDs
+ *       void *targets[Vec3_COUNT];
+ *       targets[IDX_V3_H] = &h;
+ *       targets[IDX_V3_X] = &x;
+ *       targets[IDX_V3_Y] = &y;
+ *       targets[IDX_V3_Z] = &z;
  *
- *       // 2. Target Array - MUST MATCH SPEC ORDER EXACTLY
- *       void *targets[] = { &o_pos, &mass, &shape };
- *       static_assert(sizeof(targets)/sizeof(void*) == 3);
- *
- *       // 3. Fast Parse (5-argument signature)
- *       if (!FastParse_Unified(args, nargs, kwnames, &BodyParser, targets))
+ *       if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, 
+ *                              &ForceParser, targets))
  *           return nullptr;
  *
- *       // ... logic ...
+ *       // ... physics logic ...
  *   }
  *
  * ----------------------------------------------------------------------------
- * 3. CRITICAL INVARIANTS (The "Don't Crash" Rules)
+ * 4. CRITICAL INVARIANTS (The "Don't Crash" Rules)
  * ----------------------------------------------------------------------------
  *
- * INVARIANT A: ORDER SYNC
- * The index of a key in 'BodySpecs' MUST correspond to the index of its
- * pointer in the 'targets' array. Break this, and you corrupt C memory.
+ * INVARIANT A: SCHEMA INTEGRITY
+ * The ID used in the 'targets' array (e.g., IDX_V3_X) MUST match the schema 
+ * used to initialize the parser. The X-Macro ensures this by generating the 
+ * Enum and Parser Specs from the same source.
  *
- * INVARIANT B: TYPE SYNC
- * The type used in FP_ARG/FP_REQ_ARG MUST match the actual C type of the
- * target variable. The parser uses C23 typeof_unqual to select converters.
+ * INVARIANT B: PRECISION SAFETY
+ * Using 'JPH_Real' in the Schema allows the engine to automatically dispatch 
+ * to either 'float' or 'double' converters based on your Jolt build, 
+ * preventing stack corruption.
  *
  * INVARIANT C: INITIALIZATION
- * FastParse_Init() MUST be called in the module exec/init phase. If
- * interned pointers or the lookup table are uninitialized, lookups will fail.
- *
- * INVARIANT D: BITMASK LIMIT
- * This system supports up to 64 arguments per function (uint64_t mask).
+ * culverin_init_all_parsers() MUST be called in the module exec phase. 
+ * If interned pointers are uninitialized, O(1) address-hashing will fail.
  *
  * ----------------------------------------------------------------------------
- * 4. PERFORMANCE CHARACTERISTICS
+ * 5. PERFORMANCE CHARACTERISTICS
  * ----------------------------------------------------------------------------
- * - Small Functions (<= 10 args): Uses cache-friendly linear pointer search.
- * - Large Functions (> 10 args): Uses O(1) Linear Probing Hash Table.
- * - Hashing: Hashes the memory address of interned PyObjects (extremely fast).
- * - Required Check: Validated via a single bitwise AND/CMP instruction.
- * - Allocations: Zero heap allocations during the function call.
+ * - Zero Allocation: No Python tuples/dicts created during the hot path.
+ * - Pointer Hashing: Hashes interned string addresses (extremely fast O(1)).
+ * - C23 Dispatch: Uses 'typeof_unqual' to select type-correct converters.
+ * - Bitmask Validation: 'Required' args checked via 1 instruction (AND/CMP).
+ * - Multi-Signature Reuse: One Schema can power many functions (Force/Torque).
  * ============================================================================
  */
 
