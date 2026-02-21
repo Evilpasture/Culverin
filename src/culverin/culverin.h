@@ -59,23 +59,6 @@
   JPH_ALIGNED_STORAGE(Type, Name##_storage, 32);                               \
   Type *Name = &Name##_storage
 
-// --- Lock Helpers in culverin.h ---
-#if PY_VERSION_HEX >= 0x030D0000
-// Python 3.13+ uses PyMutex (no allocation needed, just zero init)
-#define INIT_LOCK(m) memset(&(m), 0, sizeof(ShadowMutex))
-#define FREE_LOCK(m)
-#else
-// Older Python versions use PyThread_type_lock (requires allocation)
-#define INIT_LOCK(m) (m) = PyThread_allocate_lock()
-#define FREE_LOCK(m)                                                           \
-  do {                                                                         \
-    if (m)                                                                     \
-      PyThread_free_lock(m);                                                   \
-    (m) = NULL;                                                                \
-  } while (0)
-#endif
-
-
 #ifdef CULVERIN_DEBUG
 #define DEBUG_LOG(fmt, ...)                                                    \
   fprintf(stderr, "[Culverin] " fmt "\n", ##__VA_ARGS__)
