@@ -2,6 +2,38 @@
 #include "culverin_parsers.h"
 #include "culverin_compiler_specifics.h"
 
+// --- Tracked Vehicle Constants ---
+
+// Wheel configuration defaults
+static constexpr float TRACKED_WHEEL_RADIUS_DEFAULT = 0.4f;
+static constexpr float TRACKED_WHEEL_WIDTH_DEFAULT = 0.2f;
+static constexpr float TRACKED_WHEEL_SUSPENSION_DEFAULT = 0.5f;
+
+// Suspension parameters
+static constexpr float TRACKED_SUSPENSION_MIN_LENGTH = 0.05f;
+
+// Spring properties
+static constexpr float TRACKED_SPRING_FREQ_DEFAULT = 2.0f;
+static constexpr float TRACKED_SPRING_DAMP_DEFAULT = 0.5f;
+
+// Transmission gear ratios
+static constexpr float TRACKED_GEAR_RATIO_1 = 2.0f;
+static constexpr float TRACKED_GEAR_RATIO_2 = 1.4f;
+static constexpr float TRACKED_GEAR_RATIO_3 = 1.0f;
+static constexpr float TRACKED_GEAR_RATIO_4 = 0.7f;
+static constexpr float TRACKED_REVERSE_GEAR_RATIO = -1.5f;
+
+// Engine parameters (RPM and torque)
+static constexpr float TRACKED_ENGINE_MAX_RPM_DEFAULT = 6000.0f;
+static constexpr float TRACKED_ENGINE_MIN_RPM_DEFAULT = 500.0f;
+static constexpr float TRACKED_ENGINE_MAX_TORQUE_DEFAULT = 5000.0f;
+
+// Collision tester parameters
+static constexpr float TRACKED_COLLISION_TESTER_SCALE = 2.0f;
+
+// Throttle activation threshold
+static constexpr float TRACKED_THROTTLE_KICKSTART_THRESHOLD = 0.01f;
+
 // --- Tracked Vehicle Implementation ---
 
 static JPH_WheelSettings *create_track_wheel(PyObject *w_dict) {
@@ -10,14 +42,14 @@ static JPH_WheelSettings *create_track_wheel(PyObject *w_dict) {
     return NULL;
   }
 
-  float radius = get_py_float_attr(w_dict, "radius", 0.4f);
-  float width = get_py_float_attr(w_dict, "width", 0.2f);
-  float suspension_len = get_py_float_attr(w_dict, "suspension", 0.5f);
+  float radius = get_py_float_attr(w_dict, "radius", TRACKED_WHEEL_RADIUS_DEFAULT);
+  float width = get_py_float_attr(w_dict, "width", TRACKED_WHEEL_WIDTH_DEFAULT);
+  float suspension_len = get_py_float_attr(w_dict, "suspension", TRACKED_WHEEL_SUSPENSION_DEFAULT);
   float friction = get_py_float_attr(w_dict, "friction", 1.0f);
 
   // Suspension Spring Properties
-  float freq = get_py_float_attr(w_dict, "spring_freq", 2.0f);
-  float damp = get_py_float_attr(w_dict, "spring_damp", 0.5f);
+  float freq = get_py_float_attr(w_dict, "spring_freq", TRACKED_SPRING_FREQ_DEFAULT);
+  float damp = get_py_float_attr(w_dict, "spring_damp", TRACKED_SPRING_DAMP_DEFAULT);
 
   JPH_WheelSettingsTV *w = JPH_WheelSettingsTV_Create();
 
@@ -26,7 +58,7 @@ static JPH_WheelSettings *create_track_wheel(PyObject *w_dict) {
   JPH_WheelSettings_SetRadius((JPH_WheelSettings *)w, radius);
   JPH_WheelSettings_SetWidth((JPH_WheelSettings *)w, width);
 
-  JPH_WheelSettings_SetSuspensionMinLength((JPH_WheelSettings *)w, 0.05f);
+  JPH_WheelSettings_SetSuspensionMinLength((JPH_WheelSettings *)w, TRACKED_SUSPENSION_MIN_LENGTH);
   JPH_WheelSettings_SetSuspensionMaxLength((JPH_WheelSettings *)w,
                                            suspension_len);
 
@@ -59,9 +91,9 @@ init_tracked_controller_settings(TrackedEngineConfig config,
   auto *trans = JPH_VehicleTransmissionSettings_Create();
   JPH_VehicleTransmissionSettings_SetMode(trans, JPH_TransmissionMode_Auto);
 
-  float gears[] = {2.0f, 1.4f, 1.0f, 0.7f};
+  float gears[] = {TRACKED_GEAR_RATIO_1, TRACKED_GEAR_RATIO_2, TRACKED_GEAR_RATIO_3, TRACKED_GEAR_RATIO_4};
   JPH_VehicleTransmissionSettings_SetGearRatios(trans, gears, 4);
-  float reverse[] = {-1.5f};
+  float reverse[] = {TRACKED_REVERSE_GEAR_RATIO};
   JPH_VehicleTransmissionSettings_SetReverseGearRatios(trans, reverse, 1);
 
   JPH_TrackedVehicleControllerSettings_SetTransmission(t_ctrl, trans);
@@ -75,9 +107,9 @@ PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
   uint64_t chassis_h = 0;
   PyObject *py_wheels = NULL;
   PyObject *py_tracks = NULL;
-  float max_rpm = 6000.0f;
-  float min_rpm = 500.0f;
-  float max_torque = 5000.0f;
+  float max_rpm = TRACKED_ENGINE_MAX_RPM_DEFAULT;
+  float min_rpm = TRACKED_ENGINE_MIN_RPM_DEFAULT;
+  float max_torque = TRACKED_ENGINE_MAX_TORQUE_DEFAULT;
   static char *const kwlist[] = {"chassis", "wheels", "tracks", "max_torque", "max_rpm", NULL};
 
   PyThreadState *_save = NULL; 
@@ -164,7 +196,7 @@ PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
   if (!r.j_veh) { goto jolt_fail;
 }
 
-  r.tester = JPH_VehicleCollisionTesterRay_Create(TRACKED_LAYER_DRIVABLE, &(JPH_Vec3){0, 1.0f, 0}, 2.0f);
+  r.tester = JPH_VehicleCollisionTesterRay_Create(TRACKED_LAYER_DRIVABLE, &(JPH_Vec3){0, 1.0f, 0}, TRACKED_COLLISION_TESTER_SCALE);
   if (!r.tester) { goto jolt_fail;
 }
 
@@ -259,7 +291,7 @@ PyObject *Vehicle_set_tank_input(VehicleObject *self, PyObject *args,
   float throttle = fmaxf(fabsf(left), fabsf(right));
 
   // Kickstart/Neutral logic
-  if (throttle > 0.01f) {
+  if (throttle > TRACKED_THROTTLE_KICKSTART_THRESHOLD) {
     if (gear == 0) {
       JPH_VehicleTransmission_Set(trans, 1, 1.0f); // Shift to 1
     }

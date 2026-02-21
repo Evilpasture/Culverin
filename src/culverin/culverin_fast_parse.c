@@ -1,5 +1,6 @@
 #include "culverin_fast_parse.h"
 #include "culverin_compiler_specifics.h"
+#include "culverin_default_config.h"
 
 /**
  * fp_report_missing
@@ -34,7 +35,7 @@ bool fp_report_too_many(const FastParser *fp, Py_ssize_t nargs) {
  * Initialization logic: intern strings and build O(1) lookup table.
  */
 void fp_init_impl(FastParser *fp, FastArgSpec *specs, size_t count) {
-  if (count > 64) {
+  if (count > MAX_ARG_LIMIT) {
     Py_FatalError("FastParse: Argument count exceeds bitmask limit of 64.");
   }
 
@@ -52,7 +53,7 @@ void fp_init_impl(FastParser *fp, FastArgSpec *specs, size_t count) {
     }
   }
 
-  if (count > 10) {
+  if (count > FP_HASH_THRESHOLD) {
     size_t table_size = 1;
     while (table_size < (count * 2)) {
       table_size <<= 1;

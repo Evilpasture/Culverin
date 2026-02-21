@@ -2,6 +2,22 @@
 #include "culverin_math.h"
 #include "culverin_physics_world_internal.h"
 
+// Default mass
+static constexpr float RAGDOLL_DEFAULT_PART_MASS = 10.0f;
+
+// Ragdoll constraint angle limits (in radians)
+static constexpr float RAGDOLL_DEFAULT_TWIST_MIN = -0.1f;
+static constexpr float RAGDOLL_DEFAULT_TWIST_MAX = 0.1f;
+
+// Jolt Physics collision masks (all layers/categories)
+static constexpr uint32_t JOLT_ALL_LAYER_BITS = 0xFFFF;
+
+// Buffer allocation increments
+static constexpr size_t RAGDOLL_BODY_BUFFER_INCREMENT = 1024;
+
+// JPH_Mat4 size in bytes (16 floats)
+static constexpr size_t JPH_MAT4_SIZE_BYTES = 64;
+
 PyObject *Skeleton_add_joint(SkeletonObject *self, PyObject *args) {
   const char *name = NULL;
   int parent_idx = -1; // Default to root
@@ -69,12 +85,12 @@ PyObject *RagdollSettings_add_part(RagdollSettingsObject *self, PyObject *args,
   int joint_idx = 0;
   int parent_idx = -1; // Root parts have no parent
   int shape_type = 0;
-  float mass = 10.0f;
+  float mass = RAGDOLL_DEFAULT_PART_MASS;
   PyObject *py_size = NULL;
   PyObject *py_pos = NULL;
 
-  float twist_min = -0.1f;
-  float twist_max = 0.1f;
+  float twist_min = RAGDOLL_DEFAULT_TWIST_MIN;
+  float twist_max = RAGDOLL_DEFAULT_TWIST_MAX;
   float cone_angle = 0.0f;
   
   float cx = 1.0f;
@@ -199,8 +215,8 @@ PyObject *PhysicsWorld_create_ragdoll(PhysicsWorldObject *self, PyObject *args,
   float rz = 0;
   float rw = 1;
   uint64_t user_data = 0;
-  uint32_t category = 0xFFFF;
-  uint32_t mask = 0xFFFF;
+  uint32_t category = JOLT_ALL_LAYER_BITS;
+  uint32_t mask = JOLT_ALL_LAYER_BITS;
   uint32_t material_id = 0;
 
   static char *const kwlist[] = {"settings", "pos", "rot", "user_data",
@@ -291,7 +307,7 @@ PyObject *PhysicsWorld_create_ragdoll(PhysicsWorldObject *self, PyObject *args,
   SHADOW_LOCK(&self->shadow_lock);
   
   if (self->free_count < body_count) {
-    if (PhysicsWorld_resize(self, self->capacity + body_count + 1024) < 0) {
+    if (PhysicsWorld_resize(self, self->capacity + body_count + RAGDOLL_BODY_BUFFER_INCREMENT) < 0) {
       SHADOW_UNLOCK(&self->shadow_lock);
       JPH_Ragdoll_Destroy(j_rag);
       PyMem_RawFree(neutral_matrices);
@@ -396,7 +412,7 @@ PyObject *Ragdoll_drive_to_pose(RagdollObject *self, PyObject *args,
   }
 
   // JPH_Mat4 is 16 floats = 64 bytes.
-  size_t required_size = (size_t)joint_count * 64;
+  size_t required_size = (size_t)joint_count * JPH_MAT4_SIZE_BYTES;
   if ((size_t)view.len < required_size) {
     PyBuffer_Release(&view);
     return PyErr_Format(

@@ -11,6 +11,7 @@
 #include "culverin_threading.h"
 #include "culverin_tracked_vehicle.h"
 #include "culverin_types.h"
+#include "culverin_default_config.h"
 #include <float.h>
 #include <math.h>
 #include <stdatomic.h>

@@ -3,8 +3,48 @@
 #include "culverin_parsers.h"
 #include "culverin_compiler_specifics.h"
 
-// vroom vroom
-// this is paperwork and i did surgery in the core
+// --- Wheel Configuration Defaults ---
+static constexpr float WHEEL_RADIUS_DEFAULT = 0.4f;
+static constexpr float WHEEL_WIDTH_DEFAULT = 0.2f;
+static constexpr float WHEEL_BRAKE_TORQUE_DEFAULT = 1500.0f;
+static constexpr float WHEEL_HANDBRAKE_TORQUE_DEFAULT = 4000.0f;
+static constexpr float WHEEL_SUSPENSION_MAX_DEFAULT = 0.3f;
+static constexpr float WHEEL_SUSPENSION_MIN_LENGTH = 0.05f;
+static constexpr float WHEEL_SPRING_FREQ_DEFAULT = 1.5f;
+static constexpr float WHEEL_SPRING_DAMP_DEFAULT = 0.5f;
+static constexpr float WHEEL_INERTIA_DEFAULT = 0.5f;
+static constexpr float WHEEL_STEER_THRESHOLD = 0.1f;
+static constexpr float WHEEL_MAX_STEER_ANGLE = 0.5f;
+
+// --- Engine Configuration Defaults ---
+static constexpr float ENGINE_MAX_TORQUE_DEFAULT = 500.0f;
+static constexpr float ENGINE_MAX_RPM_DEFAULT = 7000.0f;
+static constexpr float ENGINE_MIN_RPM_DEFAULT = 1000.0f;
+static constexpr float ENGINE_INERTIA_DEFAULT = 0.5f;
+
+// --- Transmission Configuration ---
+static constexpr float TRANSMISSION_CLUTCH_STRENGTH_DEFAULT = 2000.0f;
+static constexpr float TRANSMISSION_GEAR_RATIO_1 = 2.66f;
+static constexpr float TRANSMISSION_GEAR_RATIO_2 = 1.78f;
+static constexpr float TRANSMISSION_GEAR_RATIO_3 = 1.30f;
+static constexpr float TRANSMISSION_GEAR_RATIO_DIRECT = 1.00f;
+static constexpr float TRANSMISSION_GEAR_RATIO_4 = 0.74f;
+static constexpr float TRANSMISSION_GEAR_RATIO_5 = 0.50f;
+static constexpr uint32_t TRANSMISSION_DEFAULT_GEAR_COUNT = 6;
+static constexpr float DIFFERENTIAL_RATIO_DEFAULT = 3.42f;
+
+// --- Friction Curve Points ---
+static constexpr float FRICTION_CURVE_X1 = 0.1f;
+static constexpr float FRICTION_CURVE_Y1 = 2.0f;
+static constexpr float FRICTION_CURVE_Y2 = 1.2f;
+
+// --- Vehicle Motion Thresholds ---
+static constexpr float VEHICLE_COLLISION_TESTER_SCALE = 2.0f;
+static constexpr float THROTTLE_INPUT_THRESHOLD = 0.01f;
+static constexpr float SPEED_DIRECTION_THRESHOLD = 0.5f;
+static constexpr float SPEED_MIN_THRESHOLD = 0.1f;
+static constexpr float ROLLING_RESISTANCE_COASTING = 0.05f;
+
 // --- Refactored Wheel Creation (Complexity: 2) ---
 static JPH_WheelSettings *create_single_wheel(PyObject *w_dict,
                                               JPH_LinearCurve *f_curve) {
@@ -18,19 +58,19 @@ static JPH_WheelSettings *create_single_wheel(PyObject *w_dict,
   }
 
   // 2. Parse Float Attributes using consistent helper
-  float radius = get_py_float_attr(w_dict, "radius", 0.4f);
-  float width = get_py_float_attr(w_dict, "width", 0.2f);
-  float brake = get_py_float_attr(w_dict, "brake_torque", 1500.0f);
-  float handbrake = get_py_float_attr(w_dict, "handbrake_torque", 4000.0f);
-  float susp_max = get_py_float_attr(w_dict, "suspension", 0.3f);
-  float freq = get_py_float_attr(w_dict, "spring_freq", 1.5f);
-  float damp = get_py_float_attr(w_dict, "spring_damp", 0.5f);
+  float radius = get_py_float_attr(w_dict, "radius", WHEEL_RADIUS_DEFAULT);
+  float width = get_py_float_attr(w_dict, "width", WHEEL_WIDTH_DEFAULT);
+  float brake = get_py_float_attr(w_dict, "brake_torque", WHEEL_BRAKE_TORQUE_DEFAULT);
+  float handbrake = get_py_float_attr(w_dict, "handbrake_torque", WHEEL_HANDBRAKE_TORQUE_DEFAULT);
+  float susp_max = get_py_float_attr(w_dict, "suspension", WHEEL_SUSPENSION_MAX_DEFAULT);
+  float freq = get_py_float_attr(w_dict, "spring_freq", WHEEL_SPRING_FREQ_DEFAULT);
+  float damp = get_py_float_attr(w_dict, "spring_damp", WHEEL_SPRING_DAMP_DEFAULT);
 
   // 3. Jolt Object Setup
   JPH_WheelSettingsWV *w = JPH_WheelSettingsWV_Create();
   // A standard wheel has an inertia of about 0.1 to 0.5
-  JPH_WheelSettingsWV_SetInertia(w, 0.5f);
-  JPH_WheelSettings_SetSuspensionMinLength((JPH_WheelSettings *)w, 0.05f);
+  JPH_WheelSettingsWV_SetInertia(w, WHEEL_INERTIA_DEFAULT);
+  JPH_WheelSettings_SetSuspensionMinLength((JPH_WheelSettings *)w, WHEEL_SUSPENSION_MIN_LENGTH);
   JPH_WheelSettings_SetSuspensionMaxLength((JPH_WheelSettings *)w, susp_max);
   JPH_SpringSettings spring = {JPH_SpringMode_FrequencyAndDamping, freq, damp};
   JPH_WheelSettings_SetSuspensionSpring((JPH_WheelSettings *)w, &spring);
@@ -50,8 +90,8 @@ static JPH_WheelSettings *create_single_wheel(PyObject *w_dict,
   JPH_WheelSettings_SetSuspensionDirection((JPH_WheelSettings *)w,
                                            &(JPH_Vec3){0, -1.0f, 0});
   JPH_WheelSettingsWV_SetMaxBrakeTorque(w, brake);
-  if (pos.z > 0.1f) {
-    JPH_WheelSettingsWV_SetMaxSteerAngle(w, 0.5f);
+  if (pos.z > WHEEL_STEER_THRESHOLD) {
+    JPH_WheelSettingsWV_SetMaxSteerAngle(w, WHEEL_MAX_STEER_ANGLE);
     JPH_WheelSettingsWV_SetMaxHandBrakeTorque(w, 0.0f);
   } else {
     JPH_WheelSettingsWV_SetMaxSteerAngle(w, 0.0f);
@@ -66,7 +106,7 @@ static JPH_WheelSettings *create_single_wheel(PyObject *w_dict,
   JPH_WheelSettingsWV_SetLateralFriction(w, f_curve);
 
   // Steering logic (Simple branch)
-  JPH_WheelSettingsWV_SetMaxSteerAngle(w, (pos.z > 0.1f) ? 0.5f : 0.0f);
+  JPH_WheelSettingsWV_SetMaxSteerAngle(w, (pos.z > WHEEL_STEER_THRESHOLD) ? WHEEL_MAX_STEER_ANGLE : 0.0f);
 
   return (JPH_WheelSettings *)w;
 }
@@ -137,10 +177,10 @@ static void setup_engine(JPH_WheeledVehicleControllerSettings *v_ctrl,
   JPH_VehicleEngineSettings_Init(&eng_set);
 
   // Flat execution: no nesting, no hidden macro branches
-  eng_set.maxTorque = get_py_float_attr(py_engine, "max_torque", 500.0f);
-  eng_set.maxRPM = get_py_float_attr(py_engine, "max_rpm", 7000.0f);
-  eng_set.minRPM = get_py_float_attr(py_engine, "min_rpm", 1000.0f);
-  eng_set.inertia = get_py_float_attr(py_engine, "inertia", 0.5f);
+  eng_set.maxTorque = get_py_float_attr(py_engine, "max_torque", ENGINE_MAX_TORQUE_DEFAULT);
+  eng_set.maxRPM = get_py_float_attr(py_engine, "max_rpm", ENGINE_MAX_RPM_DEFAULT);
+  eng_set.minRPM = get_py_float_attr(py_engine, "min_rpm", ENGINE_MIN_RPM_DEFAULT);
+  eng_set.inertia = get_py_float_attr(py_engine, "inertia", ENGINE_INERTIA_DEFAULT);
 
   eng_set.normalizedTorque = t_curve;
 
@@ -166,7 +206,7 @@ static void setup_transmission(JPH_WheeledVehicleControllerSettings *v_ctrl,
   JPH_VehicleTransmissionSettings_SetMode(v_trans_set,
                                           (JPH_TransmissionMode)t_mode);
   JPH_VehicleTransmissionSettings_SetClutchStrength(
-      v_trans_set, get_py_float_attr(py_trans, "clutch_strength", 2000.0f));
+      v_trans_set, get_py_float_attr(py_trans, "clutch_strength", TRANSMISSION_CLUTCH_STRENGTH_DEFAULT));
 
   // Extract Gear Ratios from Python list
   if (py_trans && py_trans != Py_None) {
@@ -187,13 +227,13 @@ static void setup_transmission(JPH_WheeledVehicleControllerSettings *v_ctrl,
   } else {
     // DEFAULT GEARS: If no transmission object provided, give it some standard
     // gears Otherwise, the car will have 0 gears and won't move!
-    float default_ratios[] = {2.66f, 1.78f, 1.30f, 1.00f, 0.74f, 0.50f};
+    float default_ratios[] = {TRANSMISSION_GEAR_RATIO_1, TRANSMISSION_GEAR_RATIO_2, TRANSMISSION_GEAR_RATIO_3, TRANSMISSION_GEAR_RATIO_DIRECT, TRANSMISSION_GEAR_RATIO_4, TRANSMISSION_GEAR_RATIO_5};
     JPH_VehicleTransmissionSettings_SetGearRatios(v_trans_set, default_ratios,
-                                                  6);
+                                                  TRANSMISSION_DEFAULT_GEAR_COUNT);
   }
 
   // Apply Differential Ratio from Python Transmission object
-  float diff_ratio = get_py_float_attr(py_trans, "differential_ratio", 3.42f);
+  float diff_ratio = get_py_float_attr(py_trans, "differential_ratio", DIFFERENTIAL_RATIO_DEFAULT);
   uint32_t num_diffs =
       JPH_WheeledVehicleControllerSettings_GetDifferentialsCount(v_ctrl);
   for (uint32_t d = 0; d < num_diffs; d++) {
@@ -267,8 +307,8 @@ PyObject *PhysicsWorld_create_vehicle(PhysicsWorldObject *self, PyObject *args,
   VehicleResources r = {0};
   r.f_curve = JPH_LinearCurve_Create();
   JPH_LinearCurve_AddPoint(r.f_curve, 0.0f, 1.0f);
-  JPH_LinearCurve_AddPoint(r.f_curve, 0.1f, 2.0f);
-  JPH_LinearCurve_AddPoint(r.f_curve, 1.0f, 1.2f);
+  JPH_LinearCurve_AddPoint(r.f_curve, FRICTION_CURVE_X1, FRICTION_CURVE_Y1);
+  JPH_LinearCurve_AddPoint(r.f_curve, 1.0f, FRICTION_CURVE_Y2);
   
   r.t_curve = JPH_LinearCurve_Create();
   JPH_LinearCurve_AddPoint(r.t_curve, 0.0f, 1.0f);
@@ -312,7 +352,7 @@ PyObject *PhysicsWorld_create_vehicle(PhysicsWorldObject *self, PyObject *args,
   if (!r.j_veh) { goto jolt_fail;
 }
 
-  r.tester = JPH_VehicleCollisionTesterRay_Create(LAYER_DYNAMIC, &(JPH_Vec3){0, 1.0f, 0}, 2.0f);
+  r.tester = JPH_VehicleCollisionTesterRay_Create(LAYER_DYNAMIC, &(JPH_Vec3){0, 1.0f, 0}, VEHICLE_COLLISION_TESTER_SCALE);
   if (!r.tester) { goto jolt_fail;
 }
 
@@ -422,26 +462,26 @@ PyObject *Vehicle_set_input(VehicleObject *self, PyObject *args,
   int cur_gear = JPH_VehicleTransmission_GetCurrentGear(trans);
 
   // 2. DRIVE STATE MACHINE
-  if (forward > 0.01f) {
+  if (forward > THROTTLE_INPUT_THRESHOLD) {
     // FORWARD: Auto Shifting
     JPH_VehicleTransmission_SetMode(trans, JPH_TransmissionMode_Auto);
     // Force into Gear 1 if we were stuck in Neutral/Reverse
-    if (cur_gear <= 0 && speed > -0.5f) {
+    if (cur_gear <= 0 && speed > -SPEED_DIRECTION_THRESHOLD) {
       JPH_VehicleTransmission_Set(trans, 1, 1.0f);
     }
     // Arcade Brake: Moving back while wanting forward
-    if (speed < -0.1f) {
+    if (speed < -SPEED_MIN_THRESHOLD) {
       input_brake = 1.0f;
     }
-  } else if (forward < -0.01f) {
+  } else if (forward < -THROTTLE_INPUT_THRESHOLD) {
     // REVERSE: Manual Shifting
     JPH_VehicleTransmission_SetMode(trans, JPH_TransmissionMode_Manual);
     // Force into Gear -1 if we aren't there
-    if (cur_gear != -1 && speed < 0.5f) {
+    if (cur_gear != -1 && speed < SPEED_DIRECTION_THRESHOLD) {
       JPH_VehicleTransmission_Set(trans, -1, 1.0f);
     }
     // Arcade Brake: Moving forward while wanting reverse
-    if (speed > 0.1f) {
+    if (speed > SPEED_MIN_THRESHOLD) {
       input_brake = 1.0f;
     }
   } else {
@@ -453,8 +493,8 @@ PyObject *Vehicle_set_input(VehicleObject *self, PyObject *args,
       JPH_VehicleTransmission_Set(trans, 0, 0.0f); // 0.0 clutch = no connection
     }
     // Apply 5% rolling resistance to guarantee speed decay in Test 4
-    if (fabsf(speed) > 0.1f) {
-      input_brake = fmaxf(input_brake, 0.05f);
+    if (fabsf(speed) > SPEED_MIN_THRESHOLD) {
+      input_brake = fmaxf(input_brake, ROLLING_RESISTANCE_COASTING);
     }
   }
 
