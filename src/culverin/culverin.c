@@ -271,7 +271,7 @@ static PyObject *PhysicsWorld_apply_impulse(PhysicsWorldObject *self,
     void *targets[IDX_IMPULSE_COUNT];
     targets[IDX_IMPULSE_HANDLE] = &handle_raw;
     targets[IDX_IMPULSE_X]      = &x;
-    targets[IDX_SETROT_Y]      = &y; // Fix: use Y target
+    targets[IDX_IMPULSE_Y]      = &y;
     targets[IDX_IMPULSE_Z]      = &z;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
@@ -1769,7 +1769,7 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self,
     auto nargs = PyVectorcall_NARGS(nargsf);
 
     // 1. DEFAULT VALUES
-    JPH_Real px = 0.0f, py = 0.0f, pz = 0.0f;
+    JPH_Real px = 0.0, py = 0.0, pz = 0.0;
     float rx = 0.0f, ry = 0.0f, rz = 0.0f, rw = 1.0f;
     float mass = -1.0f, friction = -1.0f, restitution = -1.0f;
     int shape_type = 0, motion_type = 2;
@@ -3968,30 +3968,29 @@ void culverin_init_all_parsers(void) {
     FastParse_Init(&SetAngVelParser, SetAngVelSpecs, IDX_SETANGVEL_COUNT);
   }
   {
-    uint64_t k; float f;
-    FastArgSpec specs[] = {
-        [IDX_IMPULSE_HANDLE] = FP_REQ_ARG("handle", k),
-        [IDX_IMPULSE_X]      = FP_REQ_ARG("x", f),
-        [IDX_IMPULSE_Y]      = FP_REQ_ARG("y", f),
-        [IDX_IMPULSE_Z]      = FP_REQ_ARG("z", f)
-    };
+    uint64_t k;
+    float f;
+    FastArgSpec specs[] = {[IDX_IMPULSE_HANDLE] = FP_REQ_ARG("handle", k),
+                           [IDX_IMPULSE_X] = FP_REQ_ARG("x", f),
+                           [IDX_IMPULSE_Y] = FP_REQ_ARG("y", f),
+                           [IDX_IMPULSE_Z] = FP_REQ_ARG("z", f)};
     memcpy(ImpulseSpecs, specs, sizeof(specs));
     FastParse_Init(&ImpulseParser, ImpulseSpecs, IDX_IMPULSE_COUNT);
-}
-{
-    uint64_t k; float f; JPH_Real r;
-    FastArgSpec specs[] = {
-        [IDX_IMPULSE_AT_HANDLE] = FP_REQ_ARG("handle", k),
-        [IDX_IMPULSE_AT_IX]     = FP_REQ_ARG("ix", f),
-        [IDX_IMPULSE_AT_IY]     = FP_REQ_ARG("iy", f),
-        [IDX_IMPULSE_AT_IZ]     = FP_REQ_ARG("iz", f),
-        [IDX_IMPULSE_AT_PX]     = FP_REQ_ARG("px", r),
-        [IDX_IMPULSE_AT_PY]     = FP_REQ_ARG("py", r),
-        [IDX_IMPULSE_AT_PZ]     = FP_REQ_ARG("pz", r)
-    };
+  }
+  {
+    uint64_t k;
+    float f;
+    JPH_Real r;
+    FastArgSpec specs[] = {[IDX_IMPULSE_AT_HANDLE] = FP_REQ_ARG("handle", k),
+                           [IDX_IMPULSE_AT_IX] = FP_REQ_ARG("ix", f),
+                           [IDX_IMPULSE_AT_IY] = FP_REQ_ARG("iy", f),
+                           [IDX_IMPULSE_AT_IZ] = FP_REQ_ARG("iz", f),
+                           [IDX_IMPULSE_AT_PX] = FP_REQ_ARG("px", r),
+                           [IDX_IMPULSE_AT_PY] = FP_REQ_ARG("py", r),
+                           [IDX_IMPULSE_AT_PZ] = FP_REQ_ARG("pz", r)};
     memcpy(ImpulseAtSpecs, specs, sizeof(specs));
     FastParse_Init(&ImpulseAtParser, ImpulseAtSpecs, IDX_IMPULSE_AT_COUNT);
-}
+  }
 }
 
 // 3. Main Entry (Complexity: ~5)

@@ -27,7 +27,7 @@ typedef struct {
 typedef struct {float x, y, z, w; } AuxStride; 
 
 // Sanity check sizes
-static_assert(sizeof(PosStride) == 32);
+static_assert(sizeof(PosStride) == sizeof(JPH_Real)*4);
 static_assert(sizeof(AuxStride) == 16);
 
 // Minimal Handle Helper

@@ -109,13 +109,13 @@ int allocate_buffers(PhysicsWorldObject *self, int max_bodies) {
   self->slot_capacity = self->capacity;
 
   // Fix: Allocate with proper alignment for SIMD operations
-  self->positions = (JPH_Real *)CulvMem_RawMallocAligned(self->capacity * sizeof(PosStride), alignof(PosStride));
-  self->prev_positions = (JPH_Real *)CulvMem_RawMallocAligned(self->capacity * sizeof(PosStride), alignof(PosStride));
+  self->positions = (JPH_Real *)CulvMem_RawMallocAligned(self->capacity * sizeof(PosStride), 32);
+  self->prev_positions = (JPH_Real *)CulvMem_RawMallocAligned(self->capacity * sizeof(PosStride), 32);
 
-  self->rotations = (float *)CulvMem_RawMallocAligned(self->capacity * sizeof(AuxStride), alignof(AuxStride));
-  self->prev_rotations = (float *)CulvMem_RawMallocAligned(self->capacity * sizeof(AuxStride), alignof(AuxStride));
-  self->linear_velocities = (float *)CulvMem_RawMallocAligned(self->capacity * sizeof(AuxStride), alignof(AuxStride));
-  self->angular_velocities = (float *)CulvMem_RawMallocAligned(self->capacity * sizeof(AuxStride), alignof(AuxStride));
+  self->rotations = (float *)CulvMem_RawMallocAligned(self->capacity * sizeof(AuxStride), 32);
+  self->prev_rotations = (float *)CulvMem_RawMallocAligned(self->capacity * sizeof(AuxStride), 32);
+  self->linear_velocities = (float *)CulvMem_RawMallocAligned(self->capacity * sizeof(AuxStride), 32);
+  self->angular_velocities = (float *)CulvMem_RawMallocAligned(self->capacity * sizeof(AuxStride), 32);
 
   self->body_ids = (JPH_BodyID *)PyMem_RawMalloc(self->capacity * sizeof(JPH_BodyID));
   self->user_data = (uint64_t *)PyMem_RawCalloc(self->capacity, sizeof(uint64_t));
@@ -426,17 +426,23 @@ int init_jolt_core(PhysicsWorldObject *self, WorldLimits limits,
 
 // helper: Iterate over baked Python data to create initial Jolt bodies
 int load_baked_scene(PhysicsWorldObject *self, PyObject *baked) {
-  // 1. EXTRACT POINTERS (GIL HELD)
-  // We assume the Python "baker" has been updated to provide:
-  // - Positions: JPH_Real (double) in Stride 3 (X, Y, Z)
-  // - Rotations: float in Stride 4 (X, Y, Z, W)
+  PyObject *pos_bytes_obj = PyTuple_GetItem(baked, 1);
+  Py_ssize_t pos_len = PyBytes_Size(pos_bytes_obj);
   
-  auto *baked_pos = (JPH_Real *)PyBytes_AsString(PyTuple_GetItem(baked, 1));
-  auto *baked_rot = (float *)PyBytes_AsString(PyTuple_GetItem(baked, 2));
-  auto *baked_shape = (float *)PyBytes_AsString(PyTuple_GetItem(baked, 3));
-  auto *u_mot = (unsigned char *)PyBytes_AsString(PyTuple_GetItem(baked, 4));
-  auto *u_layer = (unsigned char *)PyBytes_AsString(PyTuple_GetItem(baked, 5));
-  auto *u_data = (uint64_t *)PyBytes_AsString(PyTuple_GetItem(baked, 6));
+  // Safety check: Expected Stride 4 * sizeof(JPH_Real)
+  if (pos_len < (Py_ssize_t)(self->count * sizeof(PosStride))) {
+      PyErr_Format(PyExc_ValueError, "Baked position buffer too small. Expected %zu bytes, got %zd. Check Python bake_scene precision.", 
+                   self->count * sizeof(PosStride), pos_len);
+      return -1;
+  }
+  
+  // 1. EXTRACT RAW BYTES AS PACKED ARRAYS
+  JPH_Real *baked_pos = (JPH_Real *)PyBytes_AsString(PyTuple_GetItem(baked, 1));
+  float *baked_rot = (float *)PyBytes_AsString(PyTuple_GetItem(baked, 2));
+  float *baked_shape = (float *)PyBytes_AsString(PyTuple_GetItem(baked, 3));
+  unsigned char *u_mot = (unsigned char *)PyBytes_AsString(PyTuple_GetItem(baked, 4));
+  unsigned char *u_layer = (unsigned char *)PyBytes_AsString(PyTuple_GetItem(baked, 5));
+  uint64_t *u_data = (uint64_t *)PyBytes_AsString(PyTuple_GetItem(baked, 6));
 
   if (!baked_pos || !baked_rot || !baked_shape || !u_mot || !u_layer || !u_data) {
       PyErr_SetString(PyExc_ValueError, "Invalid or truncated baked data bytes");
@@ -444,45 +450,33 @@ int load_baked_scene(PhysicsWorldObject *self, PyObject *baked) {
   }
 
   int result = 0;
-
-  // 2. ENTER CRITICAL SECTION
-  Py_BEGIN_ALLOW_THREADS
-  NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
   SHADOW_LOCK(&self->shadow_lock);
 
   JPH_BodyInterface *bi = self->body_interface;
-
-  // Map shadow buffers to Stride Structs for safe writing
   auto *shadow_pos = (PosStride *)self->positions;
-  auto *shadow_ppos = (PosStride *)self->prev_positions;
   auto *shadow_rot = (AuxStride *)self->rotations;
-  auto *shadow_prot = (AuxStride *)self->prev_rotations;
-
-  // Map Baked Input to Stride Structs for safe reading
-  auto *in_pos = (PosStride *)baked_pos;
-  auto *in_rot = (AuxStride *)baked_rot;
 
   for (size_t i = 0; i < self->count; i++) {
     // A. Shape Lookup
-    // f_shape layout: [Type, P1, P2, P3, P4]
     float *s_data = &baked_shape[i * 5];
     float params[4] = {s_data[1], s_data[2], s_data[3], s_data[4]};
-    
     JPH_Shape *shape = find_or_create_shape_locked(self, (int)s_data[0], params);
     
-    if (UNLIKELY(!shape)) {
-      result = -1;
-      break; 
-    }
+    if (UNLIKELY(!shape)) { result = -1; break; }
 
-    // B. Commit to Shadow Buffers (High Precision)
-    shadow_pos[i] = in_pos[i];
-    shadow_ppos[i] = in_pos[i];
-    shadow_rot[i] = in_rot[i];
-    shadow_prot[i] = in_rot[i];
+    // B. EXTRACT POSITION (Python packed 4 JPH_Real per body)
+    shadow_pos[i].x = baked_pos[i * 4 + 0];
+    shadow_pos[i].y = baked_pos[i * 4 + 1];
+    shadow_pos[i].z = baked_pos[i * 4 + 2];
+    shadow_pos[i].w = 0.0;
+
+    // Quaternions are always floats
+    shadow_rot[i].x = baked_rot[i * 4 + 0];
+    shadow_rot[i].y = baked_rot[i * 4 + 1];
+    shadow_rot[i].z = baked_rot[i * 4 + 2];
+    shadow_rot[i].w = baked_rot[i * 4 + 3];
 
     // C. Jolt Create Settings
-    // We use the data directly from our stride-validated shadow buffer
     JPH_RVec3 j_pos = { shadow_pos[i].x, shadow_pos[i].y, shadow_pos[i].z };
     JPH_Quat j_rot = { shadow_rot[i].x, shadow_rot[i].y, shadow_rot[i].z, shadow_rot[i].w };
 
@@ -490,18 +484,12 @@ int load_baked_scene(PhysicsWorldObject *self, PyObject *baked) {
         shape, &j_pos, &j_rot, (JPH_MotionType)u_mot[i], (JPH_ObjectLayer)u_layer[i]
     );
 
-    // D. Metadata & Flags
     self->generations[i] = 1;
     JPH_BodyCreationSettings_SetUserData(creation, (uint64_t)make_handle((uint32_t)i, 1));
-    
-    if (u_mot[i] == 2) { // MOTION_DYNAMIC
-      JPH_BodyCreationSettings_SetAllowSleeping(creation, true);
-    }
+    if (u_mot[i] == 2) JPH_BodyCreationSettings_SetAllowSleeping(creation, true);
 
-    // E. Add to Jolt System
     self->body_ids[i] = JPH_BodyInterface_CreateAndAddBody(bi, creation, JPH_Activation_Activate);
     
-    // F. Final Map Update
     uint32_t j_idx = JPH_ID_TO_INDEX(self->body_ids[i]);
     if (self->id_to_handle_map && j_idx < self->max_jolt_bodies) {
       self->id_to_handle_map[j_idx] = make_handle((uint32_t)i, 1);
@@ -516,13 +504,6 @@ int load_baked_scene(PhysicsWorldObject *self, PyObject *baked) {
   }
 
   SHADOW_UNLOCK(&self->shadow_lock);
-  NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
-  Py_END_ALLOW_THREADS
-
-  if (result == -1) {
-      PyErr_SetString(PyExc_RuntimeError, "Failed to create shape during baked load. Check shape parameters.");
-  }
-
   return result;
 }
 
@@ -560,7 +541,7 @@ int verify_abi_alignment(JPH_BodyInterface *bi) {
 }
 
 // Buffer Release Slot
-void PhysicsWorld_releasebuffer(PhysicsWorldObject *self, Py_buffer *view) {
+void PhysicsWorld_releasebuffer(PhysicsWorldObject *self, Py_buffer* Py_UNUSED(view)) {
   SHADOW_LOCK(&self->shadow_lock);
   if (self->view_export_count > 0) {
     self->view_export_count--;

@@ -293,30 +293,28 @@ def validate_body_params(shape_type, pos, rot, size, motion_type):
 def bake_scene(bodies):
     """
     Validates a list of bodies and packs them into flat binary buffers.
-    Returns a 7-element tuple required by C-init.
     """
     if not isinstance(bodies, list):
         raise TypeError("Bake Error: 'bodies' must be a list of dicts")
         
     count = len(bodies)
-    # Return empty buffers if count is 0. Note the 7th empty bytes for user_data
     if count == 0:
         return 0, b"", b"", b"", b"", b"", b""
 
-    # Use 'f' for float32, 'B' for unsigned char
-    arr_pos = array.array('f')
+    # --- THE FIX: Match C-Extension Precision ---
+    # Positions must be 'd' (double) for JPH_DOUBLE_PRECISION
+    # Rotations are ALWAYS 'f' (float) in Jolt regardless of position precision
+    arr_pos = array.array('d') 
     arr_rot = array.array('f')
-    arr_shape_data = array.array('f') # [type, p1, p2, p3, p4]
+    arr_shape_data = array.array('f') 
     arr_motion = array.array('B')
     arr_layer = array.array('B')
-    arr_user_data = array.array('Q')  # uint64_t for Entity IDs
+    arr_user_data = array.array('Q')
 
-    for i, b in enumerate(bodies):
+    for b in bodies:
         stype = b.get("shape", SHAPE_BOX)
         motion = b.get("motion", MOTION_DYNAMIC if b.get("mass", 1.0) > 0 else MOTION_STATIC)
         
-        # Enforce all rules
-        # Use default size (0,0,0,0) if missing, validator handles specific requirements
         pos, rot, shape_params = validate_body_params(
             stype, 
             b.get("pos", (0,0,0)), 
@@ -325,16 +323,17 @@ def bake_scene(bodies):
             motion
         )
 
-        # Pack Position (with 4th float padding for alignment compatibility)
-        arr_pos.append(pos[0])
-        arr_pos.append(pos[1])
-        arr_pos.append(pos[2])
-        arr_pos.append(0.0)
-        # Pack Rotation
-        arr_rot.append(rot[0])
-        arr_rot.append(rot[1])
-        arr_rot.append(rot[2])
-        arr_rot.append(rot[3])
+        # Pack Position (Stride 4 for SIMD compatibility)
+        arr_pos.append(float(pos[0]))
+        arr_pos.append(float(pos[1]))
+        arr_pos.append(float(pos[2]))
+        arr_pos.append(0.0) # Padding
+        
+        # Pack Rotation (Stride 4)
+        arr_rot.append(float(rot[0]))
+        arr_rot.append(float(rot[1]))
+        arr_rot.append(float(rot[2]))
+        arr_rot.append(float(rot[3]))
         # Pack Shape [Type, P1, P2, P3, P4]
         arr_shape_data.append(float(stype))
         arr_shape_data.extend(shape_params)

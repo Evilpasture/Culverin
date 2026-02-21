@@ -23,9 +23,11 @@
   // MSVC doesn't have a direct equivalent to assume_aligned, 
   // though __assume( ((intptr_t)x & 31) == 0 ) is sometimes used.
   #define CULV_ASSUME_ALIGNED(x, alignment) (x) 
+  #define CULV_FORCE_INLINE __forceinline
 #else
   #define CULV_RESTRICT __restrict__
   #define CULV_ASSUME_ALIGNED(x, alignment) __builtin_assume_aligned((x), (alignment))
+  #define CULV_FORCE_INLINE inline __attribute__((always_inline))
 #endif
 
 #if defined(CULVERIN_DEBUG)
