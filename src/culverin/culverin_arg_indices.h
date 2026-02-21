@@ -124,30 +124,32 @@
 #define SCHEMA_HC_HULL(X)                                                      \
   X(IDX_HC_POS, "pos", PyObject *, 1)                                          \
   X(IDX_HC_ROT, "rot", PyObject *, 1)                                          \
-      X(IDX_HC_DATA, "points", PyObject *, 1) /* Change name to "points" */    \
-      X(IDX_HC_MOTION, "motion", int, 0) X(IDX_HC_MASS, "mass", float, 0)      \
-          X(IDX_HC_USER_DATA, "user_data", uint64_t, 0)                        \
-              X(IDX_HC_SENSOR, "is_sensor", bool, 0)                           \
-                  X(IDX_HC_CAT, "category", uint32_t, 0)                       \
-                      X(IDX_HC_MASK, "mask", uint32_t, 0)                      \
-                          X(IDX_HC_MAT_ID, "material_id", uint32_t, 0)         \
-                              X(IDX_HC_FRIC, "friction", float, 0)             \
-                                  X(IDX_HC_REST, "restitution", float, 0)      \
-                                      X(IDX_HC_CCD, "ccd", bool, 0)
+  X(IDX_HC_DATA, "points", PyObject *, 1) /* Change name to "points" */        \
+  X(IDX_HC_MOTION, "motion", int, 0)                                           \
+  X(IDX_HC_MASS, "mass", float, 0)                                             \
+      X(IDX_HC_USER_DATA, "user_data", uint64_t, 0)                            \
+          X(IDX_HC_SENSOR, "is_sensor", bool, 0)                               \
+              X(IDX_HC_CAT, "category", uint32_t, 0)                           \
+                  X(IDX_HC_MASK, "mask", uint32_t, 0)                          \
+                      X(IDX_HC_MAT_ID, "material_id", uint32_t, 0)             \
+                          X(IDX_HC_FRIC, "friction", float, 0)                 \
+                              X(IDX_HC_REST, "restitution", float, 0)          \
+                                  X(IDX_HC_CCD, "ccd", bool, 0)
 
 #define SCHEMA_HC_COMP(X)                                                      \
   X(IDX_HC_POS, "pos", PyObject *, 1)                                          \
   X(IDX_HC_ROT, "rot", PyObject *, 1)                                          \
-      X(IDX_HC_DATA, "parts", PyObject *, 1) /* Change name to "parts" */      \
-      X(IDX_HC_MOTION, "motion", int, 0) X(IDX_HC_MASS, "mass", float, 0)      \
-          X(IDX_HC_USER_DATA, "user_data", uint64_t, 0)                        \
-              X(IDX_HC_SENSOR, "is_sensor", bool, 0)                           \
-                  X(IDX_HC_CAT, "category", uint32_t, 0)                       \
-                      X(IDX_HC_MASK, "mask", uint32_t, 0)                      \
-                          X(IDX_HC_MAT_ID, "material_id", uint32_t, 0)         \
-                              X(IDX_HC_FRIC, "friction", float, 0)             \
-                                  X(IDX_HC_REST, "restitution", float, 0)      \
-                                      X(IDX_HC_CCD, "ccd", bool, 0)
+  X(IDX_HC_DATA, "parts", PyObject *, 1) /* Change name to "parts" */          \
+  X(IDX_HC_MOTION, "motion", int, 0)                                           \
+  X(IDX_HC_MASS, "mass", float, 0)                                             \
+      X(IDX_HC_USER_DATA, "user_data", uint64_t, 0)                            \
+          X(IDX_HC_SENSOR, "is_sensor", bool, 0)                               \
+              X(IDX_HC_CAT, "category", uint32_t, 0)                           \
+                  X(IDX_HC_MASK, "mask", uint32_t, 0)                          \
+                      X(IDX_HC_MAT_ID, "material_id", uint32_t, 0)             \
+                          X(IDX_HC_FRIC, "friction", float, 0)                 \
+                              X(IDX_HC_REST, "restitution", float, 0)          \
+                                  X(IDX_HC_CCD, "ccd", bool, 0)
 
 #define SCHEMA_BATCH_CREATE(X)                                                 \
   X(IDX_BC_POSITIONS, "positions", PyObject *, 1)                              \
@@ -164,35 +166,87 @@
   X(IDX_SETROT_Z, "z", float, 1)                                               \
   X(IDX_SETROT_W, "w", float, 1)
 
-#define SCHEMA_RENDER(X) \
-    X(IDX_RND_ALPHA, "alpha", float, 1)
+#define SCHEMA_RENDER(X) X(IDX_RND_ALPHA, "alpha", float, 1)
 
-#define SCHEMA_RAYCAST(X) \
-    X(IDX_RAY_START, "start",     PyObject*, 1) \
-    X(IDX_RAY_DIR,   "direction", PyObject*, 1) \
-    X(IDX_RAY_DIST,  "max_dist",  float,     0) \
-    X(IDX_RAY_IGN,   "ignore",    BodyHandle,0)
+#define SCHEMA_RAYCAST(X)                                                      \
+  X(IDX_RAY_START, "start", PyObject *, 1)                                     \
+  X(IDX_RAY_DIR, "direction", PyObject *, 1)                                   \
+  X(IDX_RAY_DIST, "max_dist", float, 0)                                        \
+  X(IDX_RAY_IGN, "ignore", BodyHandle, 0)
 
-#define SCHEMA_RAYCAST_BATCH(X) \
-    X(IDX_RB_STARTS, "starts",     PyObject*, 1) \
-    X(IDX_RB_DIRS,   "directions", PyObject*, 1) \
-    X(IDX_RB_DIST,   "max_dist",   float,     0)
+#define SCHEMA_RAYCAST_BATCH(X)                                                \
+  X(IDX_RB_STARTS, "starts", PyObject *, 1)                                    \
+  X(IDX_RB_DIRS, "directions", PyObject *, 1)                                  \
+  X(IDX_RB_DIST, "max_dist", float, 0)
 
-#define SCHEMA_SHAPECAST(X) \
-    X(IDX_SC_SHAPE,  "shape",  int,        1) \
-    X(IDX_SC_POS,    "pos",    PyObject*,  1) \
-    X(IDX_SC_ROT,    "rot",    PyObject*,  1) \
-    X(IDX_SC_DIR,    "dir",    PyObject*,  1) \
-    X(IDX_SC_SIZE,   "size",   PyObject*,  0) \
-    X(IDX_SC_IGNORE, "ignore", BodyHandle, 0)
+#define SCHEMA_SHAPECAST(X)                                                    \
+  X(IDX_SC_SHAPE, "shape", int, 1)                                             \
+  X(IDX_SC_POS, "pos", PyObject *, 1)                                          \
+  X(IDX_SC_ROT, "rot", PyObject *, 1)                                          \
+  X(IDX_SC_DIR, "dir", PyObject *, 1)                                          \
+  X(IDX_SC_SIZE, "size", PyObject *, 0)                                        \
+  X(IDX_SC_IGNORE, "ignore", BodyHandle, 0)
 
-#define SCHEMA_OVERLAP_SPHERE(X) \
-    X(IDX_OS_CENTER, "center", PyObject*, 1) \
-    X(IDX_OS_RADIUS, "radius", float,     1)
+#define SCHEMA_OVERLAP_SPHERE(X)                                               \
+  X(IDX_OS_CENTER, "center", PyObject *, 1)                                    \
+  X(IDX_OS_RADIUS, "radius", float, 1)
 
-#define SCHEMA_OVERLAP_AABB(X) \
-    X(IDX_OA_MIN, "min", PyObject*, 1) \
-    X(IDX_OA_MAX, "max", PyObject*, 1)
+#define SCHEMA_OVERLAP_AABB(X)                                                 \
+  X(IDX_OA_MIN, "min", PyObject *, 1)                                          \
+  X(IDX_OA_MAX, "max", PyObject *, 1)
+
+#define SCHEMA_SET_USER_DATA(X)                                                \
+  X(IDX_SUD_H, "handle", BodyHandle, 1)                                        \
+  X(IDX_SUD_D, "data", uint64_t, 1)
+
+#define SCHEMA_SET_MOTION(X) \
+    X(IDX_SM_H, "handle", BodyHandle, 1) \
+    X(IDX_SM_M, "motion", int,        1)
+
+#define SCHEMA_COL_FILTER(X) \
+    X(IDX_CF_H, "handle",   BodyHandle, 1) \
+    X(IDX_CF_C, "category", uint32_t,   1) \
+    X(IDX_CF_M, "mask",     uint32_t,   1)
+
+#define SCHEMA_REG_MAT(X) \
+    X(IDX_RM_ID,   "id",          uint32_t, 1) \
+    X(IDX_RM_FRIC, "friction",    float,    0) \
+    X(IDX_RM_REST, "restitution", float,    0)
+
+#define SCHEMA_SET_CONSTR_TARGET(X) \
+    X(IDX_SCT_H, "handle", uint64_t, 1) \
+    X(IDX_SCT_T, "target", float,    1)
+
+#define SCHEMA_HEIGHTFIELD(X) \
+    X(IDX_HF_POS,       "pos",         PyObject*, 1) \
+    X(IDX_HF_ROT,       "rot",         PyObject*, 1) \
+    X(IDX_HF_SCALE,     "scale",       PyObject*, 1) \
+    X(IDX_HF_HEIGHTS,   "heights",     PyObject*, 1) \
+    X(IDX_HF_GRID_SIZE, "grid_size",   int,       1) \
+    X(IDX_HF_USER_DATA, "user_data",   uint64_t,  0) \
+    X(IDX_HF_CAT,       "category",    uint32_t,  0) \
+    X(IDX_HF_MASK,      "mask",        uint32_t,  0) \
+    X(IDX_HF_MAT_ID,    "material_id", uint32_t,  0) \
+    X(IDX_HF_FRIC,      "friction",    float,     0) \
+    X(IDX_HF_REST,      "restitution", float,     0)
+    
+#define SCHEMA_DEBUG_DATA(X) \
+    X(IDX_DD_SHAPES,      "shapes",      bool, 0) \
+    X(IDX_DD_CONSTRAINTS, "constraints", bool, 0) \
+    X(IDX_DD_BBOX,        "bbox",        bool, 0) \
+    X(IDX_DD_CENTERS,     "centers",     bool, 0) \
+    X(IDX_DD_WIREFRAME,   "wireframe",   bool, 0)
+
+#define SCHEMA_CREATE_CONSTR(X) \
+    X(IDX_CC_TYPE,   "type",   int,        1) \
+    X(IDX_CC_BODY1,  "body1",  BodyHandle, 1) \
+    X(IDX_CC_BODY2,  "body2",  BodyHandle, 1) \
+    X(IDX_CC_PARAMS, "params", PyObject*,  0) \
+    X(IDX_CC_MOTOR,  "motor",  PyObject*,  0)
+
+#define SCHEMA_STEP(X) \
+    X(IDX_STEP_DT, "dt", float, 0) // Optional (0)
+
 
 /** --- THE GENERATOR ENGINE --- **/
 
@@ -229,6 +283,15 @@ DEFINE_INDEX_GROUP(RayBatch, SCHEMA_RAYCAST_BATCH)
 DEFINE_INDEX_GROUP(Shapecast, SCHEMA_SHAPECAST)
 DEFINE_INDEX_GROUP(OverlapSphere, SCHEMA_OVERLAP_SPHERE)
 DEFINE_INDEX_GROUP(OverlapAABB, SCHEMA_OVERLAP_AABB)
+DEFINE_INDEX_GROUP(SetUserData, SCHEMA_SET_USER_DATA)
+DEFINE_INDEX_GROUP(SetMotion, SCHEMA_SET_MOTION)
+DEFINE_INDEX_GROUP(ColFilter, SCHEMA_COL_FILTER)
+DEFINE_INDEX_GROUP(RegMat, SCHEMA_REG_MAT)
+DEFINE_INDEX_GROUP(SetConstr, SCHEMA_SET_CONSTR_TARGET)
+DEFINE_INDEX_GROUP(Heightfield, SCHEMA_HEIGHTFIELD)
+DEFINE_INDEX_GROUP(DebugData, SCHEMA_DEBUG_DATA)
+DEFINE_INDEX_GROUP(CreateConstr, SCHEMA_CREATE_CONSTR)
+DEFINE_INDEX_GROUP(Step, SCHEMA_STEP)
 
 // B. Declare the Parsers
 DECLARE_PARSER(Body, Body)
@@ -260,5 +323,17 @@ DECLARE_PARSER(RayBatch, RayBatch)
 DECLARE_PARSER(Shapecast, Shapecast)
 DECLARE_PARSER(OverlapSphere, OverlapSphere)
 DECLARE_PARSER(OverlapAABB, OverlapAABB)
+DECLARE_PARSER(SetUserData, SetUserData)
+DECLARE_PARSER(GetUserData, HOnly) // Reuses Handle-Only group
+DECLARE_PARSER(GetMotion, HOnly)     // Reuses Handle-Only group
+DECLARE_PARSER(SetMotion, SetMotion)
+DECLARE_PARSER(ColFilter, ColFilter)
+DECLARE_PARSER(RegMat, RegMat)
+DECLARE_PARSER(SetConstrTarget, SetConstr)
+DECLARE_PARSER(Heightfield, Heightfield)
+DECLARE_PARSER(DebugData, DebugData)
+DECLARE_PARSER(CreateConstr, CreateConstr)
+DECLARE_PARSER(DestroyConstr, HOnly)
+DECLARE_PARSER(Step, Step)
 
 void culverin_init_all_parsers(void);

@@ -1,6 +1,5 @@
 #include "culverin_arg_indices.h"
 
-
 // --- 1. THE SAFETY ENGINE ---
 
 // Helper macro to count schema entries at compile time
@@ -59,7 +58,18 @@ ALLOC_PARSER(RayBatch, RayBatch)
 ALLOC_PARSER(Shapecast, Shapecast)
 ALLOC_PARSER(OverlapSphere, OverlapSphere)
 ALLOC_PARSER(OverlapAABB, OverlapAABB)
-
+ALLOC_PARSER(SetUserData, SetUserData)
+ALLOC_PARSER(GetUserData, HOnly)
+ALLOC_PARSER(GetMotion, HOnly)
+ALLOC_PARSER(SetMotion, SetMotion)
+ALLOC_PARSER(ColFilter, ColFilter)
+ALLOC_PARSER(RegMat, RegMat)
+ALLOC_PARSER(SetConstrTarget, SetConstr)
+ALLOC_PARSER(Heightfield, Heightfield)
+ALLOC_PARSER(DebugData, DebugData)
+ALLOC_PARSER(CreateConstr, CreateConstr)
+ALLOC_PARSER(DestroyConstr, HOnly)
+ALLOC_PARSER(Step, Step)
 
 // --- 3. INITIALIZATION ---
 
@@ -100,4 +110,16 @@ void culverin_init_all_parsers(void) {
   INIT_PARSER(Shapecast, Shapecast, SCHEMA_SHAPECAST);
   INIT_PARSER(OverlapSphere, OverlapSphere, SCHEMA_OVERLAP_SPHERE);
   INIT_PARSER(OverlapAABB, OverlapAABB, SCHEMA_OVERLAP_AABB);
+  INIT_PARSER(SetUserData, SetUserData, SCHEMA_SET_USER_DATA);
+  INIT_PARSER(GetUserData, HOnly, SCHEMA_HANDLE_ONLY);
+  INIT_PARSER(GetMotion, HOnly, SCHEMA_HANDLE_ONLY);
+  INIT_PARSER(SetMotion, SetMotion, SCHEMA_SET_MOTION);
+  INIT_PARSER(ColFilter, ColFilter, SCHEMA_COL_FILTER);
+  INIT_PARSER(RegMat, RegMat, SCHEMA_REG_MAT);
+  INIT_PARSER(SetConstrTarget, SetConstr, SCHEMA_SET_CONSTR_TARGET);
+  INIT_PARSER(Heightfield, Heightfield, SCHEMA_HEIGHTFIELD);
+  INIT_PARSER(DebugData, DebugData, SCHEMA_DEBUG_DATA);
+  INIT_PARSER(CreateConstr, CreateConstr, SCHEMA_CREATE_CONSTR);
+  INIT_PARSER(DestroyConstr, HOnly, SCHEMA_HANDLE_ONLY);
+  INIT_PARSER(Step, Step, SCHEMA_STEP);
 }
