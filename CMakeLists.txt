@@ -81,18 +81,17 @@ endif()
 
 # Standards
 if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
-    # Satisfy CMake with a standard it definitely knows
+    # We set the base to 17 to keep CMake quiet
     set(CMAKE_C_STANDARD 17)
-    set(CMAKE_C_STANDARD_REQUIRED ON)
-
+    
     if(MSVC)
-        # Windows Clang-CL tunnel
+        # Windows/Clang-CL: Needs the /clang: prefix to see C23 auto/constexpr
         add_compile_options($<$<COMPILE_LANGUAGE:C>:/clang:-std=c23>)
     else()
-        # Linux/macOS: Force the flag manually to avoid "Dialect not supported" errors
+        # Linux/macOS: Try c23, but allow c2x as a fallback for Clang 15/16
+        # These flags are required for 'auto' and 'constexpr' in C
         add_compile_options($<$<COMPILE_LANGUAGE:C>:-std=c23>)
-        # Fallback for older Clang that only knows c2x
-        add_compile_options($<$<COMPILE_LANGUAGE:C>:-Wno-unknown-warning-option>) 
+        add_compile_options($<$<COMPILE_LANGUAGE:C>:-fms-extensions>) # Helps with some _Generic edge cases
     endif()
 endif()
 set(CMAKE_C_STANDARD_REQUIRED ON)
