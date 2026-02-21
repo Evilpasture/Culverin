@@ -16,6 +16,19 @@ bool fp_report_missing(const FastParser *fp, uint64_t provided_mask) {
   return false;
 }
 
+bool fp_report_multiple(const FastParser *fp, size_t index) {
+  PyErr_Format(PyExc_TypeError, "argument '%s' got multiple values",
+               fp->specs[index].name);
+  return false;
+}
+
+bool fp_report_too_many(const FastParser *fp, Py_ssize_t nargs) {
+  PyErr_Format(PyExc_TypeError,
+               "too many positional arguments (expected %zu, got %zd)",
+               fp->count, nargs);
+  return false;
+}
+
 /**
  * fp_init_impl
  * Initialization logic: intern strings and build O(1) lookup table.
@@ -75,62 +88,44 @@ bool fp_parse_legacy(PyObject *args, PyObject *kwargs, const FastParser *fp,
 
   if (args) {
     Py_ssize_t nargs = PyTuple_GET_SIZE(args);
-    size_t pos_limit = ((size_t)nargs < count) ? (size_t)nargs : count;
-    for (size_t i = 0; i < pos_limit; ++i) {
-      PyObject *item = PyTuple_GET_ITEM(args, i);
+    if (nargs > (Py_ssize_t)count)
+      return fp_report_too_many(fp, nargs);
+
+    for (Py_ssize_t i = 0; i < nargs; ++i) {
       provided_mask |= (1ULL << i);
-      if (item != Py_None) {
-        specs[i].convert(item, targets[i]);
-      } else if (specs[i].required) {
-        return fp_report_missing(fp, provided_mask & ~(1ULL << i));
-      }
+      specs[i].convert(PyTuple_GET_ITEM(args, i), targets[i]);
     }
   }
 
   if (kwargs) {
-    Py_ssize_t dict_size = PyDict_Size(kwargs);
-    if (dict_size > 0) {
-      Py_ssize_t matched = 0;
+    PyObject *key, *val;
+    Py_ssize_t pos = 0;
+    while (PyDict_Next(kwargs, &pos, &key, &val)) {
+      int idx = -1;
+      // Search for key
       for (size_t i = 0; i < count; ++i) {
-        PyObject *val = PyDict_GetItemWithError(kwargs, specs[i].interned);
-        if (val) {
-          matched++;
-          provided_mask |= (1ULL << i);
-          if (val != Py_None) {
-            specs[i].convert(val, targets[i]);
-          } else if (specs[i].required) {
-            return fp_report_missing(fp, provided_mask & ~(1ULL << i));
-          }
-        } else if (PyErr_Occurred()) {
-          return false;
+        if (key == specs[i].interned ||
+            PyUnicode_Compare(key, specs[i].interned) == 0) {
+          idx = (int)i;
+          break;
         }
       }
 
-      if (matched < dict_size) {
-        PyObject *key;
-        PyObject *value;
-        Py_ssize_t pos = 0;
-        while (PyDict_Next(kwargs, &pos, &key, &value)) {
-          bool found = false;
-          for (size_t j = 0; j < count; ++j) {
-            if (key == specs[j].interned ||
-                PyUnicode_Compare(key, specs[j].interned) == 0) {
-              found = true;
-              break;
-            }
-          }
-          if (!found) {
-            PyErr_Format(PyExc_TypeError, "unexpected keyword argument '%U'",
-                         key);
-            return false;
-          }
-        }
+      if (idx == -1) {
+        PyErr_Format(PyExc_TypeError, "unexpected keyword argument '%U'", key);
+        return false;
       }
+      if (provided_mask & (1ULL << idx)) {
+        return fp_report_multiple(fp, (size_t)idx);
+      }
+
+      provided_mask |= (1ULL << idx);
+      specs[idx].convert(val, targets[idx]);
     }
   }
 
   if (UNLIKELY((provided_mask & fp->required_mask) != fp->required_mask)) {
     return fp_report_missing(fp, provided_mask);
   }
-  return (!PyErr_Occurred()) != 0;
+  return (PyErr_Occurred() == NULL);
 }

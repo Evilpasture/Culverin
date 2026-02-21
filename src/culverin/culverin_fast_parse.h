@@ -155,6 +155,8 @@ static inline void fp_conv_pyobj(PyObject *o, void *t) { *(PyObject **)t = o; }
 /** --- 3. EXTERN DECLARATIONS (Cold Paths in .c) --- **/
 
 extern bool fp_report_missing(const FastParser *fp, uint64_t provided_mask);
+extern bool fp_report_multiple(const FastParser *fp, size_t index);
+extern bool fp_report_too_many(const FastParser *fp, Py_ssize_t nargs);
 extern void fp_init_impl(FastParser *fp, FastArgSpec *specs, size_t count);
 extern bool fp_parse_legacy(PyObject *args, PyObject *kwargs,
                             const FastParser *fp, void **targets, size_t dummy);
@@ -166,7 +168,7 @@ static inline size_t fp_hash_ptr(PyObject *ptr, size_t mask) {
   return ((v >> 4) ^ (v >> 10)) & mask;
 }
 
-[[nodiscard]]
+CULV_NODISCARD
 static inline bool fp_parse_vector(PyObject *const *args, Py_ssize_t nargs,
                                    PyObject *kwnames, const FastParser *fp,
                                    void **targets) {
@@ -174,66 +176,69 @@ static inline bool fp_parse_vector(PyObject *const *args, Py_ssize_t nargs,
   const size_t count = fp->count;
   const FastArgSpec *specs = fp->specs;
 
-  // Positional
-  size_t pos_limit = ((size_t)nargs < count) ? (size_t)nargs : count;
-  for (size_t i = 0; i < pos_limit; ++i) {
-    provided_mask |= (1ULL << i);
-    if (args[i] != Py_None) {
-      specs[i].convert(args[i], targets[i]);
-    } else if (specs[i].required) {
-      return fp_report_missing(fp, provided_mask & ~(1ULL << i));
-    }
+  // 1. Check if we have more positional args than the spec allows
+  if (UNLIKELY(nargs > (Py_ssize_t)count)) {
+    return fp_report_too_many(fp, nargs);
   }
 
-  // Keywords
+  // 2. Positional Logic
+  for (Py_ssize_t i = 0; i < nargs; ++i) {
+    provided_mask |= (1ULL << i);
+    // Removed Py_None check: Let the converter (e.g. PyFloat_AsDouble)
+    // handle None by raising a TypeError, matching standard Python behavior.
+    specs[i].convert(args[i], targets[i]);
+  }
+
+  // 3. Keywords Logic
   if (kwnames) {
     Py_ssize_t nkw = PyTuple_GET_SIZE(kwnames);
     PyObject *const *kw_vals = args + nargs;
     for (Py_ssize_t i = 0; i < nkw; ++i) {
       PyObject *key = PyTuple_GET_ITEM(kwnames, i);
+      size_t idx = FP_EMPTY_SLOT;
+
+      // Lookup logic (Table or Linear)
       if (fp->lookup_table) {
         size_t h = fp_hash_ptr(key, fp->table_mask);
         while (fp->lookup_table[h] != FP_EMPTY_SLOT) {
-          size_t idx = fp->lookup_table[h];
-          // FIX: Check pointer first (fast), then fall back to string compare
-          // (safe)
-          if (specs[idx].interned == key ||
-              PyUnicode_Compare(key, specs[idx].interned) == 0) {
-            provided_mask |= (1ULL << idx);
-            if (kw_vals[i] != Py_None) {
-              specs[idx].convert(kw_vals[i], targets[idx]);
-            } else if (specs[idx].required) {
-              return fp_report_missing(fp, provided_mask & ~(1ULL << idx));
-            }
-            goto next_kw;
+          size_t candidate = fp->lookup_table[h];
+          if (specs[candidate].interned == key ||
+              PyUnicode_Compare(key, specs[candidate].interned) == 0) {
+            idx = candidate;
+            break;
           }
           h = (h + 1) & fp->table_mask;
         }
       } else {
         for (size_t j = 0; j < count; ++j) {
-          // FIX: Fallback here too
           if (key == specs[j].interned ||
               PyUnicode_Compare(key, specs[j].interned) == 0) {
-            provided_mask |= (1ULL << j);
-            if (kw_vals[i] != Py_None) {
-              specs[j].convert(kw_vals[i], targets[j]);
-            } else if (specs[j].required) {
-              return fp_report_missing(fp, provided_mask & ~(1ULL << j));
-            }
-            goto next_kw;
+            idx = j;
+            break;
           }
         }
       }
-      PyErr_Format(PyExc_TypeError, "unexpected keyword argument '%U'", key);
-      return false;
-    next_kw:;
+
+      if (idx == FP_EMPTY_SLOT) {
+        PyErr_Format(PyExc_TypeError, "unexpected keyword argument '%U'", key);
+        return false;
+      }
+
+      // Robustness: Check if this keyword was already filled positionally
+      if (UNLIKELY(provided_mask & (1ULL << idx))) {
+        return fp_report_multiple(fp, idx);
+      }
+
+      provided_mask |= (1ULL << idx);
+      specs[idx].convert(kw_vals[i], targets[idx]);
     }
   }
 
+  // 4. Final Required Check
   if (UNLIKELY((provided_mask & fp->required_mask) != fp->required_mask)) {
     return fp_report_missing(fp, provided_mask);
   }
-  return true;
+  return (PyErr_Occurred() == NULL);
 }
 
 /** --- 5. PUBLIC MACROS --- **/
