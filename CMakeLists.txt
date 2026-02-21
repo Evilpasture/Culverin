@@ -115,16 +115,13 @@ if(MSVC)
         message(STATUS "Culverin: Detected Clang-CL (MSVC-like)")
         add_compile_options(/arch:AVX2) 
         
-        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /clang:-std=c23")
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /std:c++17")
+        # REMOVE the manual string appends for flags here. 
+        # We will handle standards in Section 5 only.
         
         set(RELEASE_FLAGS " \
             /clang:-O3 \
             /clang:-ffast-math \
-            /clang:-march=native \
-            /clang:-mavx2 \
             /clang:-fstrict-aliasing \
-            /clang:-mllvm /clang:-inline-threshold=1000 \
             /Ob2 /Oi /Ot \
         ")
     else()
@@ -302,9 +299,7 @@ else() # Vanilla Clang / GNU-like
     list(APPEND PERF_FLAGS 
         "-mllvm" "-unroll-threshold=1000"       # Default is usually ~150; 1000 is aggressive
         "-mllvm" "-unroll-allow-partial"      # Allows unrolling loops even if trip count isn't known
-        "-mllvm" "-vectorize-slp-aggressive"  # Better for your "Slam into Shadow" block
         "-mllvm" "-force-vector-width=8"      # Force AVX2 width if the compiler is hesitating
-        "-fslp-vectorize-aggressive"
     )
 
     # Use a list for cleaner appending
@@ -368,7 +363,6 @@ target_link_libraries(_culverin_c PRIVATE ${JOLTC_TARGET} Jolt)
 
 target_compile_options(_culverin_c PRIVATE 
     "-mllvm" "-inline-threshold=2000"  # Massive inlining to help it "see" JPH_Body_GetPosition
-    "-mllvm" "-unroll-max-percent-threshold-boost=200"
 )
 
 if(APPLE)
@@ -398,28 +392,20 @@ if(MSVC OR WIN32)
 endif()
 install(FILES src/culverin/__init__.py src/culverin/_culverin.py DESTINATION .)
 # ==============================================================================
-# 5. POST-DEFINITION FLAG INJECTION
+# 5. POST-DEFINITION FLAG INJECTION (FINAL RECONCILIATION)
 # ==============================================================================
-
-# Use a function or an explicit check to ensure targets exist
-if(TARGET joltc_double)
-    message(STATUS "Culverin: Applying C23 flags to joltc_double...")
-    
-    if(MSVC AND CMAKE_C_COMPILER_ID MATCHES "Clang")
-        # Apply C23 ONLY to C files within the target for Clang-CL
-        target_compile_options(joltc_double PRIVATE $<$<COMPILE_LANGUAGE:C>:/clang:-std=c23>)
-    else()
-        # Apply C23 ONLY to C files for vanilla Clang/GCC
-        target_compile_options(joltc_double PRIVATE $<$<COMPILE_LANGUAGE:C>:-std=c23>)
+foreach(t joltc_double _culverin_c)
+    if(TARGET ${t})
+        if(MSVC AND CMAKE_C_COMPILER_ID MATCHES "Clang")
+            message(STATUS "Culverin: Hammering C23 into ${t} (Clang-CL)...")
+            # We use the /clang: prefix to bypass the MSVC driver's ignorance
+            target_compile_options(${t} PRIVATE 
+                $<$<COMPILE_LANGUAGE:C>:/clang:-std=c23>
+                $<$<COMPILE_LANGUAGE:C>:/clang:-Wno-c23-extensions>
+            )
+        else()
+            message(STATUS "Culverin: Applying C23 to ${t} (Vanilla/Apple)...")
+            target_compile_options(${t} PRIVATE $<$<COMPILE_LANGUAGE:C>:-std=c23>)
+        endif()
     endif()
-endif()
-
-if(TARGET _culverin_c)
-    message(STATUS "Culverin: Applying C23 flags to _culverin_c...")
-    
-    if(MSVC AND CMAKE_C_COMPILER_ID MATCHES "Clang")
-        target_compile_options(_culverin_c PRIVATE $<$<COMPILE_LANGUAGE:C>:/clang:-std=c23>)
-    else()
-        target_compile_options(_culverin_c PRIVATE $<$<COMPILE_LANGUAGE:C>:-std=c23>)
-    endif()
-endif()
+endforeach()
