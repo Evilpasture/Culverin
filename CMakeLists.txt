@@ -234,6 +234,7 @@ python_add_library(_culverin_c MODULE
     src/culverin/culverin_constraint.c
     src/culverin/culverin_constraint_factory.c
     src/culverin/culverin_fast_parse.c
+    src/culverin/culverin_arg_indices.c
 )
 include(CheckIPOSupported)
 check_ipo_supported(RESULT ipo_supported OUTPUT error)

@@ -2,30 +2,42 @@
 #include "culverin_compiler_specifics.h"
 
 
-int parse_vec3_direct(PyObject *obj, JPH_Real *x, JPH_Real *y, JPH_Real *z) {
-    if (UNLIKELY(!obj || obj == Py_None)) return 1; // Keep defaults
-    
+int parse_vec3_r64(PyObject *obj, double *x, double *y, double *z) {
+    if (UNLIKELY(!obj || obj == Py_None)) return 1; 
     if (PyTuple_CheckExact(obj) && PyTuple_GET_SIZE(obj) == 3) {
-        *x = (JPH_Real)PyFloat_AsDouble(PyTuple_GET_ITEM(obj, 0));
-        *y = (JPH_Real)PyFloat_AsDouble(PyTuple_GET_ITEM(obj, 1));
-        *z = (JPH_Real)PyFloat_AsDouble(PyTuple_GET_ITEM(obj, 2));
-    } else if (PySequence_Check(obj) && PySequence_Size(obj) == 3) {
-        // Fallback for lists or other sequences
-        PyObject *i0 = PySequence_GetItem(obj, 0);
-        PyObject *i1 = PySequence_GetItem(obj, 1);
-        PyObject *i2 = PySequence_GetItem(obj, 2);
-        *x = (JPH_Real)PyFloat_AsDouble(i0);
-        *y = (JPH_Real)PyFloat_AsDouble(i1);
-        *z = (JPH_Real)PyFloat_AsDouble(i2);
-        Py_XDECREF(i0); Py_XDECREF(i1); Py_XDECREF(i2);
+        *x = PyFloat_AsDouble(PyTuple_GET_ITEM(obj, 0));
+        *y = PyFloat_AsDouble(PyTuple_GET_ITEM(obj, 1));
+        *z = PyFloat_AsDouble(PyTuple_GET_ITEM(obj, 2));
     } else {
-        PyErr_SetString(PyExc_TypeError, "Expected a sequence of 3 real numbers for position");
-        return 0;
+        // Fallback to slower sequence API
+        PyObject *seq = PySequence_Fast(obj, "Expected sequence of 3 numbers");
+        if (!seq) return 0;
+        *x = PyFloat_AsDouble(PySequence_Fast_GET_ITEM(seq, 0));
+        *y = PyFloat_AsDouble(PySequence_Fast_GET_ITEM(seq, 1));
+        *z = PyFloat_AsDouble(PySequence_Fast_GET_ITEM(seq, 2));
+        Py_DECREF(seq);
     }
     return !PyErr_Occurred();
 }
 
-int parse_quat_direct(PyObject *obj, float *x, float *y, float *z, float *w) {
+int parse_vec3_f32(PyObject *obj, float *x, float *y, float *z) {
+    if (UNLIKELY(!obj || obj == Py_None)) return 1;
+    if (PyTuple_CheckExact(obj) && PyTuple_GET_SIZE(obj) == 3) {
+        *x = (float)PyFloat_AsDouble(PyTuple_GET_ITEM(obj, 0));
+        *y = (float)PyFloat_AsDouble(PyTuple_GET_ITEM(obj, 1));
+        *z = (float)PyFloat_AsDouble(PyTuple_GET_ITEM(obj, 2));
+    } else {
+        PyObject *seq = PySequence_Fast(obj, "Expected sequence of 3 numbers");
+        if (!seq) return 0;
+        *x = (float)PyFloat_AsDouble(PySequence_Fast_GET_ITEM(seq, 0));
+        *y = (float)PyFloat_AsDouble(PySequence_Fast_GET_ITEM(seq, 1));
+        *z = (float)PyFloat_AsDouble(PySequence_Fast_GET_ITEM(seq, 2));
+        Py_DECREF(seq);
+    }
+    return !PyErr_Occurred();
+}
+
+int parse_quat_f32(PyObject *obj, float *x, float *y, float *z, float *w) {
     if (UNLIKELY(!obj || obj == Py_None)) return 1;
     
     if (PyTuple_CheckExact(obj) && PyTuple_GET_SIZE(obj) == 4) {

@@ -31,8 +31,17 @@ typedef struct {
 } ConstraintParams;
 
 // Direct variable extraction (Fast path)
-int parse_vec3_direct(PyObject *obj, JPH_Real *x, JPH_Real *y, JPH_Real *z);
-int parse_quat_direct(PyObject *obj, float *x, float *y, float *z, float *w);
+// Internal specialized versions
+int parse_vec3_f32(PyObject *obj, float *x, float *y, float *z);
+int parse_vec3_r64(PyObject *obj, double *x, double *y, double *z);
+
+// Type-safe dispatcher
+#define parse_vec3_direct(obj, x, y, z) _Generic((x), \
+    float*:  parse_vec3_f32, \
+    double*: parse_vec3_r64  \
+)(obj, x, y, z)
+int parse_quat_f32(PyObject *obj, float *x, float *y, float *z, float *w);
+#define parse_quat_direct(obj, x, y, z, w) parse_quat_f32(obj, x, y, z, w)
 
 // The global parser keys
 void init_body_parser(void);
