@@ -4,7 +4,6 @@ on:
   push:
     branches: 
       - master
-      - optimization-WIP
     tags: [ 'v*' ]
   pull_request:
     branches: 
