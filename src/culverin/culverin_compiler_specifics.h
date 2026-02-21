@@ -89,3 +89,13 @@ static inline uint64_t rdtsc() {
     #define CULV_PREFETCH(addr) ((void)0)
     #define CULV_PREFETCH_WRITE(addr) ((void)0)
 #endif
+
+#if defined(__has_c_attribute) && __has_c_attribute(nodiscard)
+#  define CULV_NODISCARD [[nodiscard]]
+#elif defined(_MSC_VER)
+#  define CULV_NODISCARD _Check_return_
+#elif defined(__GNUC__) || defined(__clang__)
+#  define CULV_NODISCARD __attribute__((warn_unused_result))
+#else
+#  define CULV_NODISCARD
+#endif
