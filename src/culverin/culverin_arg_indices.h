@@ -164,6 +164,9 @@
   X(IDX_SETROT_Z, "z", float, 1)                                               \
   X(IDX_SETROT_W, "w", float, 1)
 
+#define SCHEMA_RENDER(X) \
+    X(IDX_RND_ALPHA, "alpha", float, 1)
+
 /** --- THE GENERATOR ENGINE --- **/
 
 #define GEN_ENUM(ID, NAME, TYPE, REQ) ID,
@@ -193,6 +196,7 @@ DEFINE_INDEX_GROUP(HC, SCHEMA_HC_MASTER) // HC group defined ONLY once
 DEFINE_INDEX_GROUP(BatchCreate, SCHEMA_BATCH_CREATE)
 DEFINE_INDEX_GROUP(BatchDestroy, SCHEMA_BATCH_DESTROY)
 DEFINE_INDEX_GROUP(SetRot, SCHEMA_SET_ROT)
+DEFINE_INDEX_GROUP(Render, SCHEMA_RENDER)
 
 // B. Declare the Parsers
 DECLARE_PARSER(Body, Body)
@@ -218,5 +222,6 @@ DECLARE_PARSER(Compound, HC)
 DECLARE_PARSER(BatchCreate, BatchCreate)
 DECLARE_PARSER(BatchDestroy, BatchDestroy)
 DECLARE_PARSER(SetRot, SetRot)
+DECLARE_PARSER(Render, Render)
 
 void culverin_init_all_parsers(void);

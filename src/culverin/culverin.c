@@ -3076,11 +3076,17 @@ static PyObject *PhysicsWorld_get_active_indices(PhysicsWorldObject *self,
 }
 
 static PyObject *PhysicsWorld_get_render_state(PhysicsWorldObject *self,
-                                               PyObject *args) {
-  float alpha = 0.0f;
-  if (!PyArg_ParseTuple(args, "f", &alpha)) {
-    return NULL;
-  }
+                                               PyObject *const *args, size_t nargsf,
+                                               PyObject *kwnames) {
+    // 1. FAST PARSE
+    float alpha;
+    void *targets[Render_COUNT];
+    targets[IDX_RND_ALPHA] = &alpha;
+
+    auto nargs = PyVectorcall_NARGS(nargsf);
+    if (!FastParse_Unified(args, nargs, kwnames, &RenderParser, targets)) {
+        return NULL;
+    }
 
   // Clamp alpha to [0, 1]
   alpha = fmaxf(0.0f, fminf(1.0f, alpha));
@@ -3092,6 +3098,10 @@ static PyObject *PhysicsWorld_get_render_state(PhysicsWorldObject *self,
   BLOCK_UNTIL_NOT_STEPPING(self);
 
   size_t count = self->count;
+  if (UNLIKELY(count == 0)) {
+      SHADOW_UNLOCK(&self->shadow_lock);
+      return PyBytes_FromStringAndSize(NULL, 0);
+  }
   size_t total_bytes = count * 7 * sizeof(float);
 
   PyObject *bytes_obj =
@@ -3594,16 +3604,15 @@ static const PyMethodDef PhysicsWorld_methods[] = {
     {"get_active_indices", (PyCFunction)PhysicsWorld_get_active_indices,
      METH_NOARGS,
      "Returns a bytes object containing uint32 indices of all active bodies."},
-    {"get_render_state", (PyCFunction)PhysicsWorld_get_render_state,
-     METH_VARARGS,
-     "Returns a packed bytes object of interpolated positions and rotations "
-     "(3+4 floats per body)."},
+    {"get_render_state", (PyCFunction)(void(*)(void))PhysicsWorld_get_render_state, 
+    METH_FASTCALL | METH_KEYWORDS, 
+    "Returns packed bytes of interpolated positions and rotations (float32)."},
     {"get_debug_data", (PyCFunction)(void (*)(void))PhysicsWorld_get_debug_data,
      METH_VARARGS | METH_KEYWORDS,
      "Returns (lines_bytes, triangles_bytes). Each vertex is 16 bytes: [x, y, "
      "z, color_u32]."},
     {"get_body_stats", (PyCFunction)(void (*)(void))PhysicsWorld_get_body_stats,
-     METH_VARARGS | METH_KEYWORDS, NULL},
+     METH_FASTCALL | METH_KEYWORDS, NULL},
 
     // --- User Data ---
     {"get_user_data", (PyCFunction)(void (*)(void))PhysicsWorld_get_user_data,

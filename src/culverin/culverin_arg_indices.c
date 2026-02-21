@@ -53,6 +53,7 @@ ALLOC_PARSER(Compound, HC)
 ALLOC_PARSER(BatchCreate, BatchCreate)
 ALLOC_PARSER(BatchDestroy, BatchDestroy)
 ALLOC_PARSER(SetRot, SetRot)
+ALLOC_PARSER(Render, Render)
 
 // --- 3. INITIALIZATION ---
 
@@ -87,4 +88,5 @@ void culverin_init_all_parsers(void) {
   // Structural Overlays (Sharing HC index group)
   INIT_PARSER(ConvexHull, HC, SCHEMA_HC_HULL);
   INIT_PARSER(Compound, HC, SCHEMA_HC_COMP);
+  INIT_PARSER(Render, Render, SCHEMA_RENDER);
 }
