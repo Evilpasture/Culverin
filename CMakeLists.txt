@@ -68,6 +68,7 @@ set(USE_VULKAN OFF CACHE BOOL "" FORCE)
 set(FORCE_RTTI ON CACHE BOOL "Force RTTI on" FORCE)
 
 project(culverin LANGUAGES C CXX)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 enforce_modern_compiler()
 message(STATUS "--- COMPILER VERIFICATION ---")
 message(STATUS "C Compiler:   ${CMAKE_C_COMPILER}")
