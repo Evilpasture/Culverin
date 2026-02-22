@@ -257,13 +257,9 @@ fail:
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 static PyObject *PhysicsWorld_apply_impulse(PhysicsWorldObject *self, PyObject *const *args,
                                             size_t nargsf, PyObject *kwnames) {
-    // 1. FAST PARSE (Zero Lock Contention)
     BodyHandle handle_raw;
-    float x;
-    float y;
-    float z;
+    float x, y, z;
 
-    // We now use the shared Vec3 Group indices and count
     void *targets[Vec3_COUNT];
     targets[IDX_V3_H] = &handle_raw;
     targets[IDX_V3_X] = &x;
@@ -271,19 +267,18 @@ static PyObject *PhysicsWorld_apply_impulse(PhysicsWorldObject *self, PyObject *
     targets[IDX_V3_Z] = &z;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    // Use the ImpulseParser (initialized with SCHEMA_VEC3)
     if (!FastParse_Unified(args, nargs, kwnames, &ImpulseParser, targets)) {
         return NULL;
     }
 
-    // Finite check (Outside lock)
     if (UNLIKELY(!isfinite(x) || !isfinite(y) || !isfinite(z))) {
         PyErr_SetString(PyExc_ValueError, "Impulse components must be finite");
         return NULL;
     }
 
-    // 2. CRITICAL SECTION
     SHADOW_LOCK(&self->shadow_lock);
+
+    // Safety: Don't mutate state while Jolt is updating buffers
     BLOCK_UNTIL_NOT_STEPPING(self);
 
     uint32_t slot = 0;
@@ -293,35 +288,53 @@ static PyObject *PhysicsWorld_apply_impulse(PhysicsWorldObject *self, PyObject *
         return NULL;
     }
 
-    if (UNLIKELY(self->slot_states[slot] != SLOT_ALIVE)) {
+    uint8_t state = self->slot_states[slot];
+
+    // CASE 1: Body is already in Jolt (ALIVE)
+    if (state == SLOT_ALIVE) {
+        uint32_t dense_idx = self->slot_to_dense[slot];
+        JPH_BodyID bid     = self->body_ids[dense_idx];
+
+        // Release shadow lock, release GIL, and talk to Jolt immediately
         SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_ValueError, "Body is not yet active in simulation");
+        Py_BEGIN_ALLOW_THREADS JPH_Vec3 imp = {x, y, z};
+        JPH_BodyInterface_AddImpulse(self->body_interface, bid, &imp);
+        JPH_BodyInterface_ActivateBody(self->body_interface, bid);
+        Py_END_ALLOW_THREADS
+    }
+    // CASE 2: Body was just created but not yet stepped (PENDING_CREATE)
+    else if (state == SLOT_PENDING_CREATE) {
+        if (UNLIKELY(!ensure_command_capacity(self))) {
+            SHADOW_UNLOCK(&self->shadow_lock);
+            return PyErr_NoMemory();
+        }
+
+        // QUEUE IT: Since the command queue preserves order, this impulse will
+        // execute immediately after the creation command during the next step.
+        PhysicsCommand *cmd = &self->command_queue[self->command_count++];
+        cmd->header         = CMD_HEADER(CMD_APPLY_IMPULSE, slot);
+        cmd->vec3f.x        = x;
+        cmd->vec3f.y        = y;
+        cmd->vec3f.z        = z;
+
+        SHADOW_UNLOCK(&self->shadow_lock);
+    }
+    // CASE 3: Body is dead or being destroyed
+    else {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_SetString(PyExc_ValueError, "Body is dead or being destroyed");
         return NULL;
     }
 
-    uint32_t dense_idx = self->slot_to_dense[slot];
-    JPH_BodyID bid     = self->body_ids[dense_idx];
-
-    // 3. JOLT INTERACTION (No GIL)
-    Py_BEGIN_ALLOW_THREADS JPH_Vec3 imp = {x, y, z};
-    JPH_BodyInterface_AddImpulse(self->body_interface, bid, &imp);
-    JPH_BodyInterface_ActivateBody(self->body_interface, bid);
-    Py_END_ALLOW_THREADS
-
-        SHADOW_UNLOCK(&self->shadow_lock);
     Py_RETURN_NONE;
 }
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 static PyObject *PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self, PyObject *const *args,
                                                size_t nargsf, PyObject *kwnames) {
-    // 1. FAST PARSE (Zero Lock Contention)
     BodyHandle handle_raw;
-    float ix;
-    float iy;
-    float iz;
-    JPH_Real px;
-    JPH_Real py;
-    JPH_Real pz;
+    float ix, iy, iz;
+    JPH_Real px, py, pz;
 
     void *targets[ImpAt_COUNT];
     targets[IDX_IMPAT_H]  = (void *)&handle_raw;
@@ -337,10 +350,7 @@ static PyObject *PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self, PyObjec
         return NULL;
     }
 
-    // 2. CRITICAL SECTION
     SHADOW_LOCK(&self->shadow_lock);
-
-    // Immediate execution requires Jolt not to be stepping
     BLOCK_UNTIL_NOT_STEPPING(self);
 
     uint32_t slot = 0;
@@ -350,24 +360,42 @@ static PyObject *PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self, PyObjec
         return NULL;
     }
 
-    // Only SLOT_ALIVE bodies can receive immediate impulses
-    if (UNLIKELY(self->slot_states[slot] != SLOT_ALIVE)) {
+    uint8_t state = self->slot_states[slot];
+
+    // CASE 1: Immediate execution for active bodies
+    if (state == SLOT_ALIVE) {
+        JPH_BodyID bid = self->body_ids[self->slot_to_dense[slot]];
         SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_ValueError, "Body is not active in simulation");
+
+        Py_BEGIN_ALLOW_THREADS JPH_Vec3 imp = {ix, iy, iz};
+        JPH_RVec3 v_pos                     = {px, py, pz};
+        JPH_BodyInterface_AddImpulse2(self->body_interface, bid, &imp, &v_pos);
+        JPH_BodyInterface_ActivateBody(self->body_interface, bid);
+        Py_END_ALLOW_THREADS
+    }
+    // CASE 2: Deferred execution for pending bodies (Causal Consistency)
+    else if (state == SLOT_PENDING_CREATE) {
+        if (UNLIKELY(!ensure_command_capacity(self))) {
+            SHADOW_UNLOCK(&self->shadow_lock);
+            return PyErr_NoMemory();
+        }
+
+        PhysicsCommand *cmd = &self->command_queue[self->command_count++];
+        cmd->header         = CMD_HEADER(CMD_APPLY_IMPULSE_AT, slot);
+        cmd->impulse_at.ix  = ix;
+        cmd->impulse_at.iy  = iy;
+        cmd->impulse_at.iz  = iz;
+        cmd->impulse_at.px  = px;
+        cmd->impulse_at.py  = py;
+        cmd->impulse_at.pz  = pz;
+
+        SHADOW_UNLOCK(&self->shadow_lock);
+    } else {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_SetString(PyExc_ValueError, "Body is dead or being destroyed");
         return NULL;
     }
 
-    uint32_t dense_idx = self->slot_to_dense[slot];
-    JPH_BodyID bid     = self->body_ids[dense_idx];
-
-    // 3. JOLT INTERACTION (Release GIL)
-    Py_BEGIN_ALLOW_THREADS JPH_Vec3 imp = {ix, iy, iz};
-    JPH_RVec3 v_pos                     = {px, py, pz};
-    JPH_BodyInterface_AddImpulse2(self->body_interface, bid, &imp, &v_pos);
-    JPH_BodyInterface_ActivateBody(self->body_interface, bid);
-    Py_END_ALLOW_THREADS
-
-        SHADOW_UNLOCK(&self->shadow_lock);
     Py_RETURN_NONE;
 }
 
@@ -375,11 +403,8 @@ static PyObject *PhysicsWorld_apply_angular_impulse(PhysicsWorldObject *self, Py
                                                     size_t nargsf, PyObject *kwnames) {
     // 1. FAST PARSE (Zero-Allocation)
     BodyHandle handle_raw;
-    float x;
-    float y;
-    float z;
+    float x, y, z;
 
-    // Use the shared Vec3 index group
     void *targets[Vec3_COUNT];
     targets[IDX_V3_H] = (void *)&handle_raw;
     targets[IDX_V3_X] = (void *)&x;
@@ -387,41 +412,61 @@ static PyObject *PhysicsWorld_apply_angular_impulse(PhysicsWorldObject *self, Py
     targets[IDX_V3_Z] = (void *)&z;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    // Use the AngImpulseParser generated via the X-Macro
     if (!FastParse_Unified(args, nargs, kwnames, &AngImpulseParser, targets)) {
         return NULL;
     }
 
-    // 2. SAFETY CHECK (Finite validation)
+    // Finite validation (Outside lock)
     if (UNLIKELY(!isfinite(x) || !isfinite(y) || !isfinite(z))) {
         PyErr_SetString(PyExc_ValueError, "Angular impulse components must be finite");
         return NULL;
     }
 
-    // 3. CONCURRENCY & EXECUTION
+    // 2. CONCURRENCY & EXECUTION
     SHADOW_LOCK(&self->shadow_lock);
 
+    // Block only if a simulation step is currently swapping buffers
     BLOCK_UNTIL_NOT_STEPPING(self);
-    BLOCK_UNTIL_NOT_QUERYING(self);
 
     uint32_t slot = 0;
-    if (UNLIKELY(!unpack_handle(self, handle_raw, &slot) ||
-                 self->slot_states[slot] != SLOT_ALIVE)) {
+    if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
+        PyErr_SetString(PyExc_ValueError, "Invalid handle");
         return NULL;
     }
 
-    // Resolve dense index and Jolt ID while locked
-    JPH_BodyID bid = self->body_ids[self->slot_to_dense[slot]];
+    uint8_t state = self->slot_states[slot];
 
-    // 4. JOLT INTERACTION (Release GIL)
-    Py_BEGIN_ALLOW_THREADS JPH_Vec3 imp = {x, y, z};
-    JPH_BodyInterface_AddAngularImpulse(self->body_interface, bid, &imp);
-    JPH_BodyInterface_ActivateBody(self->body_interface, bid);
-    Py_END_ALLOW_THREADS
+    // CASE 1: Body is already active in Jolt
+    if (state == SLOT_ALIVE) {
+        JPH_BodyID bid = self->body_ids[self->slot_to_dense[slot]];
+        SHADOW_UNLOCK(&self->shadow_lock);
+
+        Py_BEGIN_ALLOW_THREADS JPH_Vec3 imp = {x, y, z};
+        JPH_BodyInterface_AddAngularImpulse(self->body_interface, bid, &imp);
+        JPH_BodyInterface_ActivateBody(self->body_interface, bid);
+        Py_END_ALLOW_THREADS
+    }
+    // CASE 2: Body is queued for creation (Causal Consistency)
+    else if (state == SLOT_PENDING_CREATE) {
+        if (UNLIKELY(!ensure_command_capacity(self))) {
+            SHADOW_UNLOCK(&self->shadow_lock);
+            return PyErr_NoMemory();
+        }
+
+        PhysicsCommand *cmd = &self->command_queue[self->command_count++];
+        cmd->header         = CMD_HEADER(CMD_APPLY_ANG_IMPULSE, slot);
+        cmd->vec3f.x        = x;
+        cmd->vec3f.y        = y;
+        cmd->vec3f.z        = z;
 
         SHADOW_UNLOCK(&self->shadow_lock);
+    } else {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_SetString(PyExc_ValueError, "Body is dead or being destroyed");
+        return NULL;
+    }
+
     Py_RETURN_NONE;
 }
 
@@ -429,11 +474,8 @@ static PyObject *PhysicsWorld_apply_force(PhysicsWorldObject *self, PyObject *co
                                           size_t nargsf, PyObject *kwnames) {
     // 1. FAST PARSE (Zero-Allocation)
     BodyHandle handle_raw;
-    float x;
-    float y;
-    float z;
+    float x, y, z;
 
-    // Use shared Vec3 Index Group
     void *targets[Vec3_COUNT];
     targets[IDX_V3_H] = (void *)&handle_raw;
     targets[IDX_V3_X] = (void *)&x;
@@ -445,52 +487,66 @@ static PyObject *PhysicsWorld_apply_force(PhysicsWorldObject *self, PyObject *co
         return NULL;
     }
 
-    // 2. SAFETY CHECK (Before acquiring locks)
     if (UNLIKELY(!isfinite(x) || !isfinite(y) || !isfinite(z))) {
         PyErr_SetString(PyExc_ValueError, "Force components must be finite");
         return NULL;
     }
 
-    // 3. CONCURRENCY & EXECUTION
+    // 2. CONCURRENCY & EXECUTION
     SHADOW_LOCK(&self->shadow_lock);
 
-    // Use priority-aware blocking pattern
+    // Only block if the world is currently updating its internal buffers
     BLOCK_UNTIL_NOT_STEPPING(self);
-    BLOCK_IF_STEP_PENDING(self);
-    BLOCK_UNTIL_NOT_QUERYING(self);
 
     uint32_t slot = 0;
-    if (UNLIKELY(!unpack_handle(self, handle_raw, &slot) ||
-                 self->slot_states[slot] != SLOT_ALIVE)) {
+    if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
+        PyErr_SetString(PyExc_ValueError, "Invalid handle");
         return NULL;
     }
 
-    // Resolve Jolt BodyID while holding shadow_lock
-    uint32_t dense_idx = self->slot_to_dense[slot];
-    JPH_BodyID bid     = self->body_ids[dense_idx];
+    uint8_t state = self->slot_states[slot];
 
-    // 4. JOLT INTERACTION (Release GIL)
-    Py_BEGIN_ALLOW_THREADS JPH_Vec3 force_vec = {x, y, z};
-    // Force is an accumulator, cleared inside Jolt after the next step().
-    JPH_BodyInterface_AddForce(self->body_interface, bid, &force_vec);
-    JPH_BodyInterface_ActivateBody(self->body_interface, bid);
-    Py_END_ALLOW_THREADS
+    // CASE 1: Body is already in Jolt
+    if (state == SLOT_ALIVE) {
+        JPH_BodyID bid = self->body_ids[self->slot_to_dense[slot]];
+        SHADOW_UNLOCK(&self->shadow_lock);
+
+        Py_BEGIN_ALLOW_THREADS JPH_Vec3 force_vec = {x, y, z};
+        // Jolt Force is an accumulator, safe to add outside the main step
+        JPH_BodyInterface_AddForce(self->body_interface, bid, &force_vec);
+        JPH_BodyInterface_ActivateBody(self->body_interface, bid);
+        Py_END_ALLOW_THREADS
+    }
+    // CASE 2: Body is queued for creation (Order-preserving)
+    else if (state == SLOT_PENDING_CREATE) {
+        if (UNLIKELY(!ensure_command_capacity(self))) {
+            SHADOW_UNLOCK(&self->shadow_lock);
+            return PyErr_NoMemory();
+        }
+
+        PhysicsCommand *cmd = &self->command_queue[self->command_count++];
+        cmd->header         = CMD_HEADER(CMD_APPLY_FORCE, slot);
+        cmd->vec3f.x        = x;
+        cmd->vec3f.y        = y;
+        cmd->vec3f.z        = z;
 
         SHADOW_UNLOCK(&self->shadow_lock);
+    } else {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_SetString(PyExc_ValueError, "Body is dead or being destroyed");
+        return NULL;
+    }
+
     Py_RETURN_NONE;
 }
 
 static PyObject *PhysicsWorld_apply_torque(PhysicsWorldObject *self, PyObject *const *args,
                                            size_t nargsf, PyObject *kwnames) {
-    // 1. FAST PARSE (Zero Allocation Extraction)
+    // 1. FAST PARSE (Zero Allocation)
     BodyHandle handle_raw;
-    float x;
-    float y;
-    float z;
+    float x, y, z;
 
-    // Use shared Vec3 Index Group indices and count
     void *targets[Vec3_COUNT];
     targets[IDX_V3_H] = (void *)&handle_raw;
     targets[IDX_V3_X] = (void *)&x;
@@ -502,38 +558,56 @@ static PyObject *PhysicsWorld_apply_torque(PhysicsWorldObject *self, PyObject *c
         return NULL;
     }
 
-    // 2. SAFETY CHECK (Finite validation)
     if (UNLIKELY(!isfinite(x) || !isfinite(y) || !isfinite(z))) {
         PyErr_SetString(PyExc_ValueError, "Torque components must be finite");
         return NULL;
     }
 
-    // 3. CONCURRENCY & EXECUTION
+    // 2. CONCURRENCY & EXECUTION
     SHADOW_LOCK(&self->shadow_lock);
 
-    // Use priority-aware blocking pattern
+    // Block if world is updating buffers, but allow parallel execution with Queries
     BLOCK_UNTIL_NOT_STEPPING(self);
-    BLOCK_IF_STEP_PENDING(self);
-    BLOCK_UNTIL_NOT_QUERYING(self);
 
     uint32_t slot = 0;
-    if (UNLIKELY(!unpack_handle(self, handle_raw, &slot) ||
-                 self->slot_states[slot] != SLOT_ALIVE)) {
+    if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
+        PyErr_SetString(PyExc_ValueError, "Invalid handle");
         return NULL;
     }
 
-    // Resolve dense ID while holding the lock
-    JPH_BodyID bid = self->body_ids[self->slot_to_dense[slot]];
+    uint8_t state = self->slot_states[slot];
 
-    // 4. JOLT INTERACTION (GIL Free)
-    Py_BEGIN_ALLOW_THREADS JPH_Vec3 torque_vec = {x, y, z};
-    JPH_BodyInterface_AddTorque(self->body_interface, bid, &torque_vec);
-    JPH_BodyInterface_ActivateBody(self->body_interface, bid);
-    Py_END_ALLOW_THREADS
+    // CASE 1: Body is active in Jolt
+    if (state == SLOT_ALIVE) {
+        JPH_BodyID bid = self->body_ids[self->slot_to_dense[slot]];
+        SHADOW_UNLOCK(&self->shadow_lock);
+
+        Py_BEGIN_ALLOW_THREADS JPH_Vec3 torque_vec = {x, y, z};
+        JPH_BodyInterface_AddTorque(self->body_interface, bid, &torque_vec);
+        JPH_BodyInterface_ActivateBody(self->body_interface, bid);
+        Py_END_ALLOW_THREADS
+    }
+    // CASE 2: Body is queued for creation
+    else if (state == SLOT_PENDING_CREATE) {
+        if (UNLIKELY(!ensure_command_capacity(self))) {
+            SHADOW_UNLOCK(&self->shadow_lock);
+            return PyErr_NoMemory();
+        }
+
+        PhysicsCommand *cmd = &self->command_queue[self->command_count++];
+        cmd->header         = CMD_HEADER(CMD_APPLY_TORQUE, slot);
+        cmd->vec3f.x        = x;
+        cmd->vec3f.y        = y;
+        cmd->vec3f.z        = z;
 
         SHADOW_UNLOCK(&self->shadow_lock);
+    } else {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_SetString(PyExc_ValueError, "Body is dead or being destroyed");
+        return NULL;
+    }
+
     Py_RETURN_NONE;
 }
 
@@ -3909,13 +3983,26 @@ static int init_constants(PyObject *m) {
     static const struct {
         const char *name;
         int value;
-    } consts[] = {{"SHAPE_BOX", 0},           {"SHAPE_SPHERE", 1},      {"SHAPE_CAPSULE", 2},
-                  {"SHAPE_CYLINDER", 3},      {"SHAPE_PLANE", 4},       {"SHAPE_MESH", 5},
-                  {"SHAPE_HEIGHTFIELD", 6},   {"SHAPE_CONVEX_HULL", 7}, {"MOTION_STATIC", 0},
-                  {"MOTION_KINEMATIC", 1},    {"MOTION_DYNAMIC", 2},    {"CONSTRAINT_FIXED", 0},
-                  {"CONSTRAINT_POINT", 1},    {"CONSTRAINT_HINGE", 2},  {"CONSTRAINT_SLIDER", 3},
-                  {"CONSTRAINT_DISTANCE", 4}, {"CONSTRAINT_CONE", 5},   {"EVENT_ADDED", 0},
-                  {"EVENT_PERSISTED", 1},     {"EVENT_REMOVED", 2}};
+    } consts[] = {{"SHAPE_BOX", CULV_SHAPE_BOX},
+                  {"SHAPE_SPHERE", CULV_SHAPE_SPHERE},
+                  {"SHAPE_CAPSULE", CULV_SHAPE_CAPSULE},
+                  {"SHAPE_CYLINDER", CULV_SHAPE_CYLINDER},
+                  {"SHAPE_PLANE", CULV_SHAPE_PLANE},
+                  {"SHAPE_MESH", CULV_SHAPE_MESH},
+                  {"SHAPE_HEIGHTFIELD", CULV_SHAPE_HEIGHTFIELD},
+                  {"SHAPE_CONVEX_HULL", CULV_SHAPE_CONVEX_HULL},
+                  {"MOTION_STATIC", 0},
+                  {"MOTION_KINEMATIC", 1},
+                  {"MOTION_DYNAMIC", 2},
+                  {"CONSTRAINT_FIXED", 0},
+                  {"CONSTRAINT_POINT", 1},
+                  {"CONSTRAINT_HINGE", 2},
+                  {"CONSTRAINT_SLIDER", 3},
+                  {"CONSTRAINT_DISTANCE", 4},
+                  {"CONSTRAINT_CONE", 5},
+                  {"EVENT_ADDED", 0},
+                  {"EVENT_PERSISTED", 1},
+                  {"EVENT_REMOVED", 2}};
     for (size_t i = 0; i < sizeof(consts) / sizeof(consts[0]); i++) {
         if (PyModule_AddIntConstant(m, consts[i].name, consts[i].value) < 0) {
             return -1;

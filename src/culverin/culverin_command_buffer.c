@@ -281,8 +281,42 @@ void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *queue, si
         case CMD_TELEPORT: {
             // TODO: add teleport method
         }
-        default:
+        case CMD_APPLY_IMPULSE: {
+            JPH_Vec3 v = {cmd->vec3f.x, cmd->vec3f.y, cmd->vec3f.z};
+            JPH_BodyInterface_AddImpulse(bi, bid, &v);
+            JPH_BodyInterface_ActivateBody(bi, bid);
             break;
+        }
+
+        case CMD_APPLY_FORCE: {
+            JPH_Vec3 v = {cmd->vec3f.x, cmd->vec3f.y, cmd->vec3f.z};
+            JPH_BodyInterface_AddForce(bi, bid, &v);
+            JPH_BodyInterface_ActivateBody(bi, bid);
+            break;
+        }
+
+        case CMD_APPLY_TORQUE: {
+            JPH_Vec3 v = {cmd->vec3f.x, cmd->vec3f.y, cmd->vec3f.z};
+            JPH_BodyInterface_AddTorque(bi, bid, &v);
+            JPH_BodyInterface_ActivateBody(bi, bid);
+            break;
+        }
+
+        case CMD_APPLY_ANG_IMPULSE: {
+            JPH_Vec3 v = {cmd->vec3f.x, cmd->vec3f.y, cmd->vec3f.z};
+            JPH_BodyInterface_AddAngularImpulse(bi, bid, &v);
+            JPH_BodyInterface_ActivateBody(bi, bid);
+            break;
+        }
+        case CMD_APPLY_IMPULSE_AT: {
+            JPH_Vec3 imp = {cmd->impulse_at.ix, cmd->impulse_at.iy, cmd->impulse_at.iz};
+            JPH_RVec3 pos = {cmd->impulse_at.px, cmd->impulse_at.py, cmd->impulse_at.pz};
+            JPH_BodyInterface_AddImpulse2(bi, bid, &imp, &pos);
+            JPH_BodyInterface_ActivateBody(bi, bid);
+            break;
+        }
+        default:
+            unreachable();
         }
     }
 
