@@ -36,32 +36,32 @@ JPH_Shape *find_or_create_shape_locked(PhysicsWorldObject *self, int type, const
   // 3. JOLT CREATION (Safe because Jolt Lock is held)
   JPH_Shape *shape = NULL;
   
-  if (type == 0) { // BOX
+  if (type == CULV_SHAPE_BOX) { // BOX
       JPH_Vec3 he = {p1, p2, p3};
       JPH_BoxShapeSettings *s = JPH_BoxShapeSettings_Create(&he, 0.05f);
       if (s) {
           shape = (JPH_Shape *)JPH_BoxShapeSettings_CreateShape(s);
           JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);
       }
-  } else if (type == 1) { // SPHERE
+  } else if (type == CULV_SHAPE_SPHERE) { // SPHERE
       JPH_SphereShapeSettings *s = JPH_SphereShapeSettings_Create(p1);
       if (s) {
           shape = (JPH_Shape *)JPH_SphereShapeSettings_CreateShape(s);
           JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);
       }
-  } else if (type == 2) { // CAPSULE
+  } else if (type == CULV_SHAPE_CAPSULE) { // CAPSULE
       JPH_CapsuleShapeSettings *s = JPH_CapsuleShapeSettings_Create(p1, p2);
       if (s) {
           shape = (JPH_Shape *)JPH_CapsuleShapeSettings_CreateShape(s);
           JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);
       }
-  } else if (type == 3) { // CYLINDER
+  } else if (type == CULV_SHAPE_CYLINDER) { // CYLINDER
       JPH_CylinderShapeSettings *s = JPH_CylinderShapeSettings_Create(p1, p2, 0.05f);
       if (s) {
           shape = (JPH_Shape *)JPH_CylinderShapeSettings_CreateShape(s);
           JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);
       }
-  } else if (type == 4) { // PLANE
+  } else if (type == CULV_SHAPE_PLANE) { // PLANE
       JPH_Plane p = {{p1, p2, p3}, p4};
       JPH_PlaneShapeSettings *s = JPH_PlaneShapeSettings_Create(&p, NULL, 1000.0f);
       if (s) {
