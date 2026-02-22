@@ -1,9 +1,9 @@
 #include "culverin_query_methods.h"
+#include "culverin_arg_indices.h"
 #include "culverin_compiler_specifics.h"
 #include "culverin_filters.h"
+#include "culverin_math.h"
 #include "culverin_parsers.h"
-#include "culverin_arg_indices.h"
-
 
 // --- Helper: Signal End of Query ---
 // This is crucial for the Condition Variable approach.
@@ -67,9 +67,7 @@ PyObject *PhysicsWorld_overlap_sphere(PhysicsWorldObject *self, PyObject *const 
     }
 
     // 3. VECTOR EXTRACTION (Outside Lock)
-    JPH_Real cx;
-    JPH_Real cy;
-    JPH_Real cz;
+    JPH_Real cx, cy, cz;
     if (!parse_vec3_direct(o_center, &cx, &cy, &cz)) {
         return NULL;
     }
@@ -82,45 +80,41 @@ PyObject *PhysicsWorld_overlap_sphere(PhysicsWorldObject *self, PyObject *const 
     JPH_ObjectLayerFilter *obj_filter    = NULL;
     JPH_BodyFilter *body_filter          = NULL;
 
-    // 4. PHASE GUARD
+    // 4. RESOURCE RESOLUTION (Shadow Lock)
     SHADOW_LOCK(&self->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
     BLOCK_IF_STEP_PENDING(self);
+
+    // OPTIMIZATION: Use the shape cache instead of creating a new shape every call
+    float s_params[4] = {radius, 0, 0, 0};
+    shape             = find_or_create_shape_locked(self, CULV_SHAPE_SPHERE, s_params);
+
+    if (!shape) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        return PyErr_Format(PyExc_RuntimeError, "Failed to resolve sphere shape");
+    }
+
+    // Mark query active
     atomic_fetch_add_explicit(&self->active_queries, 1, memory_order_acquire);
     SHADOW_UNLOCK(&self->shadow_lock);
 
-    // Shape Creation
-    JPH_SphereShapeSettings *ss = JPH_SphereShapeSettings_Create(radius);
-    if (!ss) {
-        PyErr_NoMemory();
-        goto query_cleanup;
-    }
-    shape = (JPH_Shape *)JPH_SphereShapeSettings_CreateShape(ss);
-    JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)ss);
+    // 5. EXECUTION (No GIL, No Trampoline Lock)
+    Py_BEGIN_ALLOW_THREADS
+        // REMOVED: NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
 
-    if (!shape) {
-        PyErr_SetString(PyExc_RuntimeError, "Failed to create sphere shape");
-        goto query_cleanup;
-    }
+        // Prepare Jolt Stack structures inside ALLOW_THREADS
+        JPH_RMat4 transform;
+    JPH_RVec3 v_pos = {cx, cy, cz};
+    JPH_Quat v_rot  = {0, 0, 0, 1};
+    JPH_RMat4_RotationTranslation(&transform, &v_rot, &v_pos);
 
-    // Prepare Jolt Math
-    JPH_STACK_ALLOC(JPH_RVec3, pos);
-    *pos = (JPH_RVec3){cx, cy, cz};
-    JPH_STACK_ALLOC(JPH_Quat, rot);
-    *rot = (JPH_Quat){0, 0, 0, 1};
-    JPH_STACK_ALLOC(JPH_RMat4, transform);
-    JPH_RMat4_RotationTranslation(transform, rot, pos);
-    JPH_STACK_ALLOC(JPH_Vec3, scale);
-    *scale = (JPH_Vec3){1.0f, 1.0f, 1.0f};
-    JPH_STACK_ALLOC(JPH_RVec3, base_offset);
-    *base_offset = (JPH_RVec3){0, 0, 0};
-    JPH_STACK_ALLOC(JPH_CollideShapeSettings, settings);
-    JPH_CollideShapeSettings_Init(settings);
+    JPH_Vec3 scale        = {1.0f, 1.0f, 1.0f};
+    JPH_RVec3 base_offset = {0, 0, 0};
 
-    // 5. EXECUTION (No GIL)
-    Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+    JPH_CollideShapeSettings settings;
+    JPH_CollideShapeSettings_Init(&settings);
 
-    // Filter setup (These could be cached, but creating them is relatively cheap)
+    // Filter setup
     JPH_BroadPhaseLayerFilter_Procs bp_p = {.ShouldCollide = filter_allow_all_bp};
     bp_filter                            = JPH_BroadPhaseLayerFilter_Create(NULL);
     JPH_BroadPhaseLayerFilter_SetProcs(&bp_p);
@@ -135,59 +129,48 @@ PyObject *PhysicsWorld_overlap_sphere(PhysicsWorldObject *self, PyObject *const 
 
     const JPH_NarrowPhaseQuery *nq = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
 
-    JPH_NarrowPhaseQuery_CollideShape(nq, shape, scale, transform, settings, base_offset,
+    JPH_NarrowPhaseQuery_CollideShape(nq, shape, &scale, &transform, &settings, &base_offset,
                                       OverlapCallback_Narrow, &ctx, bp_filter, obj_filter,
                                       body_filter, NULL);
 
-    NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
-    Py_END_ALLOW_THREADS
+    // REMOVED: NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
 
-        // 6. RESULT CONSTRUCTION (GIL Held)
-        ret_val = PyList_New(0);
-    if (!ret_val) {
-        goto query_cleanup;
-    }
-
-    SHADOW_LOCK(&self->shadow_lock);
-    for (size_t i = 0; i < ctx.count; i++) {
-        uint64_t h = ctx.hits[i];
-        uint32_t slot;
-        // Verify handle remains valid
-        if (unpack_handle(self, h, &slot) && self->slot_states[slot] == SLOT_ALIVE) {
-            PyObject *py_h = PyLong_FromUnsignedLongLong(h);
-            if (py_h) {
-                PyList_Append(ret_val, py_h);
-                Py_DECREF(py_h);
-            }
-        }
-    }
-    SHADOW_UNLOCK(&self->shadow_lock);
-
-query_cleanup:
-    // --- CRITICAL SIGNALING ---
-    // This ensures world.step() wakes up if it was waiting for this query.
+    // Signal end of query
     int prev = atomic_fetch_sub_explicit(&self->active_queries, 1, memory_order_release);
     if (prev == 1) {
         NATIVE_MUTEX_LOCK(self->step_sync.mutex);
         NATIVE_COND_BROADCAST(self->step_sync.cond);
         NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
     }
+    Py_END_ALLOW_THREADS
 
-    if (shape) {
-        JPH_Shape_Destroy(shape);
+        // 6. RESULT CONSTRUCTION (GIL Held)
+        ret_val = PyList_New(0);
+    if (ret_val) {
+        SHADOW_LOCK(&self->shadow_lock);
+        for (size_t i = 0; i < ctx.count; i++) {
+            uint64_t h = ctx.hits[i];
+            uint32_t slot;
+            if (unpack_handle(self, h, &slot) && self->slot_states[slot] == SLOT_ALIVE) {
+                PyObject *py_h = PyLong_FromUnsignedLongLong(h);
+                if (py_h) {
+                    PyList_Append(ret_val, py_h);
+                    Py_DECREF(py_h);
+                }
+            }
+        }
+        SHADOW_UNLOCK(&self->shadow_lock);
     }
-    if (bp_filter) {
+
+    // Cleanup resources
+    if (bp_filter)
         JPH_BroadPhaseLayerFilter_Destroy(bp_filter);
-    }
-    if (obj_filter) {
+    if (obj_filter)
         JPH_ObjectLayerFilter_Destroy(obj_filter);
-    }
-    if (body_filter) {
+    if (body_filter)
         JPH_BodyFilter_Destroy(body_filter);
-    }
-    if (ctx.hits) {
+    if (ctx.hits)
         PyMem_RawFree(ctx.hits);
-    }
 
     return ret_val;
 }
@@ -210,47 +193,39 @@ PyObject *PhysicsWorld_overlap_aabb(PhysicsWorldObject *self, PyObject *const *a
     }
 
     // 3. VECTOR EXTRACTION (Outside Lock)
-    // AABB coordinates in Jolt are typically floats, but we parse via JPH_Real
-    // for precision safety before assigning to the AABox struct.
-    JPH_Real mix;
-    JPH_Real miy;
-    JPH_Real miz;
-    JPH_Real max;
-    JPH_Real may;
-    JPH_Real maz;
-    if (!parse_vec3_direct(o_min, &mix, &miy, &miz)) {
+    JPH_Real mix, miy, miz, max, may, maz;
+    if (!parse_vec3_direct(o_min, &mix, &miy, &miz))
         return NULL;
-    }
-    if (!parse_vec3_direct(o_max, &max, &may, &maz)) {
+    if (!parse_vec3_direct(o_max, &max, &may, &maz))
         return NULL;
-    }
 
     PyObject *ret_val                    = NULL;
     OverlapContext ctx                   = {.world = self, .hits = NULL, .count = 0, .capacity = 0};
     JPH_BroadPhaseLayerFilter *bp_filter = NULL;
     JPH_ObjectLayerFilter *obj_filter    = NULL;
 
-    // 4. PHASE GUARD
+    // 4. PHASE GUARD (Shadow Lock)
     SHADOW_LOCK(&self->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
     BLOCK_IF_STEP_PENDING(self);
+
+    // Mark query active to prevent world mutation during execution
     atomic_fetch_add_explicit(&self->active_queries, 1, memory_order_acquire);
     SHADOW_UNLOCK(&self->shadow_lock);
 
     // Prepare Jolt AABox
     JPH_STACK_ALLOC(JPH_AABox, box);
-    box->min.x = (float)mix;
-    box->min.y = (float)miy;
-    box->min.z = (float)miz;
-    box->max.x = (float)max;
-    box->max.y = (float)may;
-    box->max.z = (float)maz;
+    box->min = (JPH_Vec3){(float)mix, (float)miy, (float)miz};
+    box->max = (JPH_Vec3){(float)max, (float)may, (float)maz};
 
-    // 5. EXECUTION (No GIL, Jolt Lock)
-    Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+    // 5. EXECUTION (No GIL, No Trampoline Lock)
+    Py_BEGIN_ALLOW_THREADS
+        // REMOVED: NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
 
-    JPH_BroadPhaseLayerFilter_Procs bp_p = {.ShouldCollide = filter_allow_all_bp};
-    bp_filter                            = JPH_BroadPhaseLayerFilter_Create(NULL);
+        // Note: Creating these filters is cheap, but can be moved outside if needed.
+        // However, they must be created/destroyed within the same thread context.
+        JPH_BroadPhaseLayerFilter_Procs bp_p = {.ShouldCollide = filter_allow_all_bp};
+    bp_filter                                = JPH_BroadPhaseLayerFilter_Create(NULL);
     JPH_BroadPhaseLayerFilter_SetProcs(&bp_p);
 
     JPH_ObjectLayerFilter_Procs obj_p = {.ShouldCollide = filter_allow_all_obj};
@@ -258,9 +233,19 @@ PyObject *PhysicsWorld_overlap_aabb(PhysicsWorldObject *self, PyObject *const *a
     JPH_ObjectLayerFilter_SetProcs(&obj_p);
 
     const JPH_BroadPhaseQuery *bq = JPH_PhysicsSystem_GetBroadPhaseQuery(self->system);
+
+    // Jolt Broadphase queries are thread-safe while the world is not stepping
     JPH_BroadPhaseQuery_CollideAABox(bq, box, OverlapCallback_Broad, &ctx, bp_filter, obj_filter);
 
-    NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+    // REMOVED: NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+
+    // Unmark query and signal the world.step() thread if it's waiting for us
+    int prev = atomic_fetch_sub_explicit(&self->active_queries, 1, memory_order_release);
+    if (prev == 1) {
+        NATIVE_MUTEX_LOCK(self->step_sync.mutex);
+        NATIVE_COND_BROADCAST(self->step_sync.cond);
+        NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
+    }
     Py_END_ALLOW_THREADS
 
         // 6. RESULT CONSTRUCTION (GIL Held)
@@ -273,6 +258,7 @@ PyObject *PhysicsWorld_overlap_aabb(PhysicsWorldObject *self, PyObject *const *a
     for (size_t i = 0; i < ctx.count; i++) {
         uint64_t h = ctx.hits[i];
         uint32_t slot;
+        // Verify handle remains valid in our shadow registry
         if (unpack_handle(self, h, &slot) && self->slot_states[slot] == SLOT_ALIVE) {
             PyObject *py_h = PyLong_FromUnsignedLongLong(h);
             if (py_h) {
@@ -284,21 +270,13 @@ PyObject *PhysicsWorld_overlap_aabb(PhysicsWorldObject *self, PyObject *const *a
     SHADOW_UNLOCK(&self->shadow_lock);
 
 query_cleanup:
-    // --- CRITICAL SIGNALING ---
-    // Signal that this query is done so world.step() can proceed
-    int prev = atomic_fetch_sub_explicit(&self->active_queries, 1, memory_order_release);
-    if (prev == 1) {
-        NATIVE_MUTEX_LOCK(self->step_sync.mutex);
-        NATIVE_COND_BROADCAST(self->step_sync.cond);
-        NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
-    }
-
-    if (bp_filter) {
+    // Filter cleanup
+    if (bp_filter)
         JPH_BroadPhaseLayerFilter_Destroy(bp_filter);
-    }
-    if (obj_filter) {
+    if (obj_filter)
         JPH_ObjectLayerFilter_Destroy(obj_filter);
-    }
+
+    // ctx.hits was allocated using PyMem_RawRealloc, which is GIL-safe
     if (ctx.hits) {
         PyMem_RawFree(ctx.hits);
     }
@@ -326,29 +304,27 @@ PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *const *args, 
         return NULL;
     }
 
-    // 3. VECTOR EXTRACTION (Precision Safe - Outside Lock)
-    JPH_Real sx;
-    JPH_Real sy;
-    JPH_Real sz; // World Pos (Double/Float)
-    float dx;
-    float dy;
-    float dz; // Direction (Float)
+    // 3. VECTOR EXTRACTION (Outside Lock)
+    JPH_Real sx, sy, sz;
+    float dx, dy, dz;
 
-    if (!parse_vec3_direct(o_start, &sx, &sy, &sz)) {
+    if (!parse_vec3_direct(o_start, &sx, &sy, &sz))
         return NULL;
-    }
-    if (!parse_vec3_direct(o_dir, &dx, &dy, &dz)) {
+    if (!parse_vec3_direct(o_dir, &dx, &dy, &dz))
         return NULL;
-    }
 
     float mag_sq = dx * dx + dy * dy + dz * dz;
-    if (UNLIKELY(mag_sq < 1e-9f)) {
+    if (UNLIKELY(mag_sq < 1e-12f)) {
         Py_RETURN_NONE;
     }
 
-    // Prepare Jolt Stack structures
-    float mag   = sqrtf(mag_sq);
-    float scale = max_dist / mag;
+    // MATH OPTIMIZATION: Avoid sqrtf/division for normalized vectors
+    float scale;
+    if (fabsf(mag_sq - 1.0f) < 1e-4f) {
+        scale = max_dist;
+    } else {
+        scale = max_dist * culverin_fast_rsqrt(mag_sq);
+    }
 
     JPH_STACK_ALLOC(JPH_RVec3, origin);
     *origin = (JPH_RVec3){sx, sy, sz};
@@ -363,8 +339,6 @@ PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *const *args, 
 
     // 4. RESOLUTION PHASE (Shadow Lock)
     SHADOW_LOCK(&self->shadow_lock);
-
-    // Priority Guard: Raycasts must wait if a Step is running or about to start
     BLOCK_UNTIL_NOT_STEPPING(self);
     BLOCK_IF_STEP_PENDING(self);
 
@@ -377,33 +351,49 @@ PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *const *args, 
         }
     }
 
-    // Mark query as active to prevent resize/dealloc during execution
     atomic_fetch_add_explicit(&self->active_queries, 1, memory_order_acquire);
-
-    // Release shadow lock early! Jolt core handles its own internal locking.
     SHADOW_UNLOCK(&self->shadow_lock);
 
-    // 5. EXECUTION PHASE (No GIL, Jolt Trampoline Lock)
+    // 5. EXECUTION PHASE (Completely Lockless)
     bool has_hit          = false;
     JPH_Vec3 normal       = {0, 0, 0};
     BodyHandle hit_handle = 0;
     float hit_fraction    = 0.0f;
 
-    Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+    Py_BEGIN_ALLOW_THREADS
+        // REMOVED: NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
 
-    has_hit = execute_raycast_query(self, ignore_bid, origin, direction, hit);
+        // 5a. Cast the ray
+        const JPH_NarrowPhaseQuery *query = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
+    // Use NULL for filters as we handle simple ignore logic via broadphase or specific ID
+    has_hit = JPH_NarrowPhaseQuery_CastRay(query, origin, direction, hit, NULL, NULL, NULL);
 
-    if (has_hit) {
-        extract_hit_normal(self, hit->bodyID, hit->subShapeID2, origin, direction, hit->fraction,
-                           &normal);
-        // Get our Python-side BodyHandle from Jolt's UserData
-        hit_handle   = (BodyHandle)JPH_BodyInterface_GetUserData(self->body_interface, hit->bodyID);
-        hit_fraction = hit->fraction;
+    // Filter the 'ignore_bid' manually if hit
+    if (has_hit && hit->bodyID == ignore_bid) {
+        has_hit = false; // Simple ignore logic
     }
 
-    NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+    if (has_hit) {
+        hit_handle   = (BodyHandle)JPH_BodyInterface_GetUserData(self->body_interface, hit->bodyID);
+        hit_fraction = hit->fraction;
 
-    // Unmark query
+        // 5b. Extract Normal using NoLock interface
+        const JPH_BodyLockInterface *li =
+            JPH_PhysicsSystem_GetBodyLockInterfaceNoLock(self->system);
+        JPH_BodyLockRead j_lock;
+        JPH_BodyLockInterface_LockRead(li, hit->bodyID, &j_lock);
+        if (j_lock.body) {
+            JPH_RVec3 hit_p = {origin->x + (double)direction->x * (double)hit->fraction,
+                               origin->y + (double)direction->y * (double)hit->fraction,
+                               origin->z + (double)direction->z * (double)hit->fraction};
+            JPH_Body_GetWorldSpaceSurfaceNormal(j_lock.body, hit->subShapeID2, &hit_p, &normal);
+        }
+        JPH_BodyLockInterface_UnlockRead(li, &j_lock);
+    }
+
+    // REMOVED: NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+
+    // Unmark query and signal stepper if necessary
     int prev = atomic_fetch_sub_explicit(&self->active_queries, 1, memory_order_release);
     if (prev == 1) {
         NATIVE_MUTEX_LOCK(self->step_sync.mutex);
@@ -413,7 +403,7 @@ PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *const *args, 
     Py_END_ALLOW_THREADS
 
         // 6. RESULT PHASE (Re-verify handle integrity)
-        if (!has_hit) {
+        if (!has_hit || hit_handle == 0) {
         Py_RETURN_NONE;
     }
 
@@ -423,15 +413,13 @@ PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *const *args, 
     uint32_t slot = (uint32_t)(hit_handle & 0xFFFFFFFF);
     uint32_t gen  = (uint32_t)(hit_handle >> 32);
 
-    // Final safety: Ensure the hit body wasn't recycled while we were building result
     if (slot < self->slot_capacity && self->generations[slot] == gen &&
         self->slot_states[slot] == SLOT_ALIVE) {
-
-        result = Py_BuildValue("Kf(fff)", hit_handle, hit_fraction, normal.x, normal.y, normal.z);
+        result = Py_BuildValue("Kf(fff)", hit_handle, (double)hit_fraction, (double)normal.x,
+                               (double)normal.y, (double)normal.z);
     }
 
     SHADOW_UNLOCK(&self->shadow_lock);
-
     return result ? result : Py_None;
 }
 
@@ -507,19 +495,26 @@ PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self, PyObject *const *
     atomic_fetch_add_explicit(&self->active_queries, 1, memory_order_acquire);
     SHADOW_UNLOCK(&self->shadow_lock);
 
-    // 5. EXECUTION PHASE (No GIL, Jolt Trampoline Lock)
+    // 5. EXECUTION PHASE (No GIL, completely lockless!)
     const float *CULV_RESTRICT f_starts = (const float *)b_starts.buf;
     const float *CULV_RESTRICT f_dirs   = (const float *)b_dirs.buf;
     RayCastBatchResult *CULV_RESTRICT results =
         (RayCastBatchResult *)PyBytes_AsString(result_bytes);
 
-    const JPH_NarrowPhaseQuery *query       = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
-    const JPH_BodyLockInterface *lock_iface = JPH_PhysicsSystem_GetBodyLockInterface(self->system);
-    JPH_BodyInterface *bi                   = self->body_interface;
+    const JPH_NarrowPhaseQuery *query = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
 
-    Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+    // OPTIMIZATION: Use the NoLock interface. Since we know the world isn't stepping,
+    // we don't need Jolt to perform atomic locks on individual bodies to read their normals.
+    const JPH_BodyLockInterface *lock_iface =
+        JPH_PhysicsSystem_GetBodyLockInterfaceNoLock(self->system);
 
-    for (size_t i = 0; i < count; i++) {
+    JPH_BodyInterface *bi = self->body_interface;
+
+    Py_BEGIN_ALLOW_THREADS
+
+        // REMOVED: NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+
+        for (size_t i = 0; i < count; i++) {
         size_t off        = i * 3;
         results[i].handle = 0; // Initialize as "no hit"
 
@@ -527,11 +522,24 @@ PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self, PyObject *const *
         float dy     = f_dirs[off + 1];
         float dz     = f_dirs[off + 2];
         float mag_sq = dx * dx + dy * dy + dz * dz;
+
         if (mag_sq < 1e-12f) {
             continue;
         }
 
-        float scale     = max_dist / sqrtf(mag_sq);
+        float scale;
+
+        // OPTIMIZATION 1: The Fast Path
+        // If the vector is already normalized (mag_sq is ~1.0), skip all complex math.
+        // fabsf is highly optimized by compilers (often a single bitwise AND instruction).
+        if (fabsf(mag_sq - 1.0f) < 1e-4f) {
+            scale = max_dist;
+        }
+        // OPTIMIZATION 2: Fast Inverse Square Root
+        else {
+            scale = max_dist * culverin_fast_rsqrt(mag_sq);
+        }
+
         JPH_Vec3 v_dir  = {dx * scale, dy * scale, dz * scale};
         JPH_RVec3 v_ori = {(double)f_starts[off], (double)f_starts[off + 1],
                            (double)f_starts[off + 2]};
@@ -549,7 +557,6 @@ PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self, PyObject *const *
                 res->fraction           = hit.fraction;
                 res->subShapeID         = hit.subShapeID2;
 
-                // Lookup Material ID from Shadow Buffer snapshot
                 uint32_t slot = (uint32_t)(h & 0xFFFFFFFF);
                 if (slot < slot_cap) {
                     uint32_t dense = s2d[slot];
@@ -558,7 +565,7 @@ PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self, PyObject *const *
                     }
                 }
 
-                // Normal & Position Extraction (Requires Body Lock)
+                // This is now virtually instantaneous (No atomics/mutexes inside)
                 JPH_BodyLockRead j_lock;
                 JPH_BodyLockInterface_LockRead(lock_iface, hit.bodyID, &j_lock);
                 if (j_lock.body) {
@@ -580,12 +587,13 @@ PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self, PyObject *const *
         }
     }
 
-    NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+    // REMOVED: NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+
     // Decrement and check if we were the last active query
     int prev_queries = atomic_fetch_sub_explicit(&self->active_queries, 1, memory_order_release);
 
     if (prev_queries == 1) {
-        // We were the last ones! We MUST wake up the world.step() thread.
+        // Wake up the world.step() thread if it was waiting
         NATIVE_MUTEX_LOCK(self->step_sync.mutex);
         NATIVE_COND_BROADCAST(self->step_sync.cond);
         NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
@@ -617,7 +625,7 @@ PyObject *PhysicsWorld_shapecast(PhysicsWorldObject *self, PyObject *const *args
     PyObject *o_size  = NULL;
     uint64_t ignore_h = 0;
 
-    // 2. FAST PARSE (Zero-Allocation)
+    // 2. FAST PARSE
     void *targets[Shapecast_COUNT];
     targets[IDX_SC_SHAPE]  = (void *)&shape_type;
     targets[IDX_SC_POS]    = (void *)&o_pos;
@@ -632,46 +640,34 @@ PyObject *PhysicsWorld_shapecast(PhysicsWorldObject *self, PyObject *const *args
     }
 
     // 3. EXTRACTION (Outside Lock)
-    JPH_Real px;
-    JPH_Real py;
-    JPH_Real pz;
-    float rx;
-    float ry;
-    float rz;
-    float rw;
-    float dx;
-    float dy;
-    float dz;
+    JPH_Real px, py, pz;
+    float rx, ry, rz, rw;
+    float dx, dy, dz;
     float s[4];
 
-    if (!parse_vec3_direct(o_pos, &px, &py, &pz)) {
+    if (!parse_vec3_direct(o_pos, &px, &py, &pz))
         return NULL;
-    }
-    if (!parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) {
+    if (!parse_quat_direct(o_rot, &rx, &ry, &rz, &rw))
         return NULL;
-    }
-    if (!parse_vec3_direct(o_dir, &dx, &dy, &dz)) {
+    if (!parse_vec3_direct(o_dir, &dx, &dy, &dz))
         return NULL;
-    }
     parse_body_size(o_size, s);
 
     float mag_sq = dx * dx + dy * dy + dz * dz;
-    if (UNLIKELY(mag_sq < 1e-9f)) {
+    if (UNLIKELY(mag_sq < 1e-12f)) {
         Py_RETURN_NONE;
     }
 
-    CastShapeContext ctx = {0};
-    uint64_t hit_handle  = 0;
-    bool has_valid_hit   = false;
-
-    // 4. JOLT RESOLUTION & EXECUTION (No GIL)
-    Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+    // 4. RESOURCE RESOLUTION (Shadow Lock)
     SHADOW_LOCK(&self->shadow_lock);
 
-    // Block if the world is currently stepping
+    // Safety: Wait if world is updating
     BLOCK_UNTIL_NOT_STEPPING(self);
+    BLOCK_IF_STEP_PENDING(self);
 
-    JPH_Shape *shape      = find_or_create_shape_locked(self, shape_type, s);
+    // Look up shape in our internal cache (needs shadow_lock)
+    JPH_Shape *shape = find_or_create_shape_locked(self, shape_type, s);
+
     JPH_BodyID ignore_bid = JPH_INVALID_BODY_ID;
     if (ignore_h) {
         uint32_t slot;
@@ -683,35 +679,39 @@ PyObject *PhysicsWorld_shapecast(PhysicsWorldObject *self, PyObject *const *args
 
     if (!shape) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
-        Py_BLOCK_THREADS; // Re-acquire GIL before returning error
-        return PyErr_Format(PyExc_RuntimeError, "Invalid shape parameters");
+        return PyErr_Format(PyExc_RuntimeError, "Invalid shape parameters or cache failure");
     }
 
-    // Mark query active to prevent world destruction/resize
+    // Mark query as active so the world doesn't change under us
     atomic_fetch_add_explicit(&self->active_queries, 1, memory_order_acquire);
     SHADOW_UNLOCK(&self->shadow_lock);
 
-    // Setup Sweep
-    JPH_RMat4 transform;
+    // 5. EXECUTION PHASE (No GIL, No Trampoline Lock)
+    CastShapeContext ctx = {0};
+    ctx.has_hit          = false;
+    ctx.hit.fraction     = 1.0f;
+    uint64_t hit_handle  = 0;
+
+    Py_BEGIN_ALLOW_THREADS
+        // REMOVED: NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+
+        JPH_RMat4 transform;
     JPH_RVec3 v_pos = {px, py, pz};
     JPH_Quat v_rot  = {rx, ry, rz, rw};
     JPH_RMat4_RotationTranslation(&transform, &v_rot, &v_pos);
     JPH_Vec3 sweep_dir = {dx, dy, dz};
 
-    ctx.has_hit      = false;
-    ctx.hit.fraction = 1.0f;
-
+    // Execute the sweep
     shapecast_execute_internal(self, shape, &transform, &sweep_dir, ignore_bid, &ctx);
 
     if (ctx.has_hit) {
-        hit_handle    = JPH_BodyInterface_GetUserData(self->body_interface, ctx.hit.bodyID2);
-        has_valid_hit = (hit_handle != 0);
+        // Jolt UserData access is thread-safe/atomic
+        hit_handle = JPH_BodyInterface_GetUserData(self->body_interface, ctx.hit.bodyID2);
     }
 
-    NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+    // REMOVED: NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
 
-    // Unmark query and signal end
+    // Signal end of query
     int prev = atomic_fetch_sub_explicit(&self->active_queries, 1, memory_order_release);
     if (prev == 1) {
         NATIVE_MUTEX_LOCK(self->step_sync.mutex);
@@ -720,43 +720,36 @@ PyObject *PhysicsWorld_shapecast(PhysicsWorldObject *self, PyObject *const *args
     }
     Py_END_ALLOW_THREADS
 
-        // 5. RESULT CONSTRUCTION (GIL Held)
-        if (!has_valid_hit) {
+        // 6. RESULT CONSTRUCTION
+        if (!ctx.has_hit || hit_handle == 0) {
         Py_RETURN_NONE;
     }
 
-    // Normal calculation (Geometric processing)
-    float nx    = -ctx.hit.penetrationAxis.x;
-    float ny    = -ctx.hit.penetrationAxis.y;
-    float nz    = -ctx.hit.penetrationAxis.z;
-    float n_len = sqrtf(nx * nx + ny * ny + nz * nz);
-    if (n_len > 1e-6f) {
-        float inv = 1.0f / n_len;
-        nx *= inv;
-        ny *= inv;
-        nz *= inv;
+    // Normal logic: Shapecast returns a penetration axis.
+    // We invert it to get the surface normal and normalize it.
+    float nx       = -ctx.hit.penetrationAxis.x;
+    float ny       = -ctx.hit.penetrationAxis.y;
+    float nz       = -ctx.hit.penetrationAxis.z;
+    float n_mag_sq = nx * nx + ny * ny + nz * nz;
+
+    if (n_mag_sq > 1e-12f) {
+        float inv_n = culverin_fast_rsqrt(n_mag_sq);
+        nx *= inv_n;
+        ny *= inv_n;
+        nz *= inv_n;
     }
 
     PyObject *result = NULL;
     SHADOW_LOCK(&self->shadow_lock);
 
-    auto slot = (uint32_t)(hit_handle & 0xFFFFFFFF);
-    auto gen  = (uint32_t)(hit_handle >> 32);
+    uint32_t slot = (uint32_t)(hit_handle & 0xFFFFFFFF);
+    uint32_t gen  = (uint32_t)(hit_handle >> 32);
 
-    // Verify handle is still valid in our shadow system
     if (slot < self->slot_capacity && self->generations[slot] == gen &&
         self->slot_states[slot] == SLOT_ALIVE) {
 
-        /**
-         * Py_BuildValue is much safer and faster than manual packing.
-         * Format:
-         * K: unsigned long long (handle)
-         * f: float (fraction)
-         * (fff): tuple of 3 floats (position)
-         * (fff): tuple of 3 floats (normal)
-         */
         result =
-            Py_BuildValue("Kf(fff)(fff)", hit_handle, (double)ctx.hit.fraction,
+            Py_BuildValue("Kd(ddd)(ddd)", hit_handle, (double)ctx.hit.fraction,
                           (double)ctx.hit.contactPointOn2.x, (double)ctx.hit.contactPointOn2.y,
                           (double)ctx.hit.contactPointOn2.z, (double)nx, (double)ny, (double)nz);
     }

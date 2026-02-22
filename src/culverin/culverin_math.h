@@ -2,6 +2,26 @@
 #include "culverin_compiler_specifics.h"
 #include "joltc.h"
 #include <math.h>
+#include <string.h>
+
+// Strict-aliasing safe Fast Inverse Square Root (approximate 1.0 / sqrt(x))
+// Extremely fast: bypasses hardware division and IEEE-754 sqrt overhead.
+static inline float culverin_fast_rsqrt(float number) {
+    constexpr float threehalfs = 1.5f;
+    float x2 = number * 0.5f;
+    float y = number;
+    
+    uint32_t i;
+    // memcpy is optimized away by modern compilers into a single register move
+    memcpy(&i, &y, sizeof(float)); 
+    i = 0x5f3759df - (i >> 1);
+    memcpy(&y, &i, sizeof(float));
+    
+    // One Newton-Raphson iteration for precision (accurate enough for raycasts)
+    y = y * (threehalfs - (x2 * y * y)); 
+    
+    return y;
+}
 
 // Helper to find an arbitrary vector perpendicular to 'in'
 static inline void vec3_get_perpendicular(const JPH_Vec3 *CULV_RESTRICT in,
