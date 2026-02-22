@@ -1,0 +1,30 @@
+---
+Language: Cpp
+BasedOnStyle: LLVM
+
+# 1. LAYOUT & INDENTATION
+IndentWidth: 4
+ColumnLimit: 100
+ContinuationIndentWidth: 4
+
+# 2. THE "DSL" SPECIALS
+# We've disabled AlignConsecutiveMacros to prevent the 100% CPU crash
+AlignConsecutiveMacros: false
+AlignConsecutiveAssignments: true
+AlignConsecutiveDeclarations: false
+
+# 3. INITIALIZER ELEGANCE
+AlignAfterOpenBracket: Align
+Cpp11BracedListStyle: true
+
+# 4. PREPROCESSOR SAFETY
+IndentPPDirectives: AfterHash
+AllowAllParametersOfDeclarationOnNextLine: true
+
+# 5. WHITESPACE & STYLE
+SpaceAfterCStyleCast: false
+SpaceBeforeParens: ControlStatements
+PointerAlignment: Right
+
+# 6. ATTRIBUTE HANDLING
+StatementAttributeLikeMacros: [CULV_MAYBE_UNUSED, CULV_NODISCARD]
