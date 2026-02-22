@@ -28,12 +28,19 @@ static void end_query_scope(PhysicsWorldObject *self) {
 // Unified hit collector for both Broad and Narrow phase overlaps
 static void overlap_record_hit(OverlapContext *ctx, JPH_BodyID bid) {
     if (ctx->count >= ctx->capacity) {
-        size_t new_cap    = (ctx->capacity == 0) ? 32 : ctx->capacity * 2;
-        uint64_t *new_ptr = PyMem_RawRealloc(ctx->hits, new_cap * sizeof(uint64_t));
-        if (!new_ptr) {
-            return;
+        size_t new_cap = ctx->capacity * 2;
+        uint64_t *new_ptr;
+        
+        if (ctx->is_on_stack) {
+            new_ptr = PyMem_RawMalloc(new_cap * sizeof(uint64_t));
+            if (new_ptr) memcpy(new_ptr, ctx->hits, ctx->count * sizeof(uint64_t));
+            ctx->is_on_stack = false;
+        } else {
+            new_ptr = PyMem_RawRealloc(ctx->hits, new_cap * sizeof(uint64_t));
         }
-        ctx->hits     = new_ptr;
+        
+        if (!new_ptr) return;
+        ctx->hits = new_ptr;
         ctx->capacity = new_cap;
     }
     ctx->hits[ctx->count++] = JPH_BodyInterface_GetUserData(ctx->world->body_interface, bid);
@@ -73,7 +80,14 @@ PyObject *PhysicsWorld_overlap_sphere(PhysicsWorldObject *self, PyObject *const 
     }
 
     PyObject *ret_val  = NULL;
-    OverlapContext ctx = {.world = self, .hits = NULL, .count = 0, .capacity = 0};
+    uint64_t small_hit_stack[STACK_ALLOCATE_HITS]; // Pre-allocate 64 hits on the stack
+    OverlapContext ctx = {
+        .world = self, 
+        .hits = small_hit_stack, 
+        .count = 0, 
+        .capacity = STACK_ALLOCATE_HITS,
+        .is_on_stack = true // Add this flag to your struct
+    };
 
     JPH_Shape *shape                     = NULL;
     JPH_BroadPhaseLayerFilter *bp_filter = NULL;
@@ -114,18 +128,11 @@ PyObject *PhysicsWorld_overlap_sphere(PhysicsWorldObject *self, PyObject *const 
     JPH_CollideShapeSettings settings;
     JPH_CollideShapeSettings_Init(&settings);
 
-    // Filter setup
-    JPH_BroadPhaseLayerFilter_Procs bp_p = {.ShouldCollide = filter_allow_all_bp};
-    bp_filter                            = JPH_BroadPhaseLayerFilter_Create(NULL);
-    JPH_BroadPhaseLayerFilter_SetProcs(&bp_p);
+    bp_filter = JPH_BroadPhaseLayerFilter_Create(NULL);
 
-    JPH_ObjectLayerFilter_Procs obj_p = {.ShouldCollide = filter_allow_all_obj};
-    obj_filter                        = JPH_ObjectLayerFilter_Create(NULL);
-    JPH_ObjectLayerFilter_SetProcs(&obj_p);
+    obj_filter = JPH_ObjectLayerFilter_Create(NULL);
 
-    JPH_BodyFilter_Procs bf_p = {.ShouldCollide = filter_true_body};
-    body_filter               = JPH_BodyFilter_Create(NULL);
-    JPH_BodyFilter_SetProcs(&bf_p);
+    body_filter = JPH_BodyFilter_Create(NULL);
 
     const JPH_NarrowPhaseQuery *nq = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
 
@@ -136,12 +143,7 @@ PyObject *PhysicsWorld_overlap_sphere(PhysicsWorldObject *self, PyObject *const 
     // REMOVED: NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
 
     // Signal end of query
-    int prev = atomic_fetch_sub_explicit(&self->active_queries, 1, memory_order_release);
-    if (prev == 1) {
-        NATIVE_MUTEX_LOCK(self->step_sync.mutex);
-        NATIVE_COND_BROADCAST(self->step_sync.cond);
-        NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
-    }
+    end_query_scope(self);
     Py_END_ALLOW_THREADS
 
         // 6. RESULT CONSTRUCTION (GIL Held)
@@ -169,8 +171,9 @@ PyObject *PhysicsWorld_overlap_sphere(PhysicsWorldObject *self, PyObject *const 
         JPH_ObjectLayerFilter_Destroy(obj_filter);
     if (body_filter)
         JPH_BodyFilter_Destroy(body_filter);
-    if (ctx.hits)
+    if (ctx.hits && !ctx.is_on_stack) {
         PyMem_RawFree(ctx.hits);
+    }
 
     return ret_val;
 }
@@ -200,7 +203,14 @@ PyObject *PhysicsWorld_overlap_aabb(PhysicsWorldObject *self, PyObject *const *a
         return NULL;
 
     PyObject *ret_val                    = NULL;
-    OverlapContext ctx                   = {.world = self, .hits = NULL, .count = 0, .capacity = 0};
+    uint64_t small_hit_stack[STACK_ALLOCATE_HITS]; // Pre-allocate 64 hits on the stack
+    OverlapContext ctx = {
+        .world = self, 
+        .hits = small_hit_stack, 
+        .count = 0, 
+        .capacity = STACK_ALLOCATE_HITS,
+        .is_on_stack = true // Add this flag to your struct
+    };
     JPH_BroadPhaseLayerFilter *bp_filter = NULL;
     JPH_ObjectLayerFilter *obj_filter    = NULL;
 
@@ -221,16 +231,9 @@ PyObject *PhysicsWorld_overlap_aabb(PhysicsWorldObject *self, PyObject *const *a
     // 5. EXECUTION (No GIL, No Trampoline Lock)
     Py_BEGIN_ALLOW_THREADS
         // REMOVED: NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+        bp_filter = JPH_BroadPhaseLayerFilter_Create(NULL);
 
-        // Note: Creating these filters is cheap, but can be moved outside if needed.
-        // However, they must be created/destroyed within the same thread context.
-        JPH_BroadPhaseLayerFilter_Procs bp_p = {.ShouldCollide = filter_allow_all_bp};
-    bp_filter                                = JPH_BroadPhaseLayerFilter_Create(NULL);
-    JPH_BroadPhaseLayerFilter_SetProcs(&bp_p);
-
-    JPH_ObjectLayerFilter_Procs obj_p = {.ShouldCollide = filter_allow_all_obj};
-    obj_filter                        = JPH_ObjectLayerFilter_Create(NULL);
-    JPH_ObjectLayerFilter_SetProcs(&obj_p);
+    obj_filter = JPH_ObjectLayerFilter_Create(NULL);
 
     const JPH_BroadPhaseQuery *bq = JPH_PhysicsSystem_GetBroadPhaseQuery(self->system);
 
@@ -240,12 +243,7 @@ PyObject *PhysicsWorld_overlap_aabb(PhysicsWorldObject *self, PyObject *const *a
     // REMOVED: NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
 
     // Unmark query and signal the world.step() thread if it's waiting for us
-    int prev = atomic_fetch_sub_explicit(&self->active_queries, 1, memory_order_release);
-    if (prev == 1) {
-        NATIVE_MUTEX_LOCK(self->step_sync.mutex);
-        NATIVE_COND_BROADCAST(self->step_sync.cond);
-        NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
-    }
+    end_query_scope(self);
     Py_END_ALLOW_THREADS
 
         // 6. RESULT CONSTRUCTION (GIL Held)
@@ -277,7 +275,7 @@ query_cleanup:
         JPH_ObjectLayerFilter_Destroy(obj_filter);
 
     // ctx.hits was allocated using PyMem_RawRealloc, which is GIL-safe
-    if (ctx.hits) {
+    if (ctx.hits && !ctx.is_on_stack) {
         PyMem_RawFree(ctx.hits);
     }
 
@@ -363,10 +361,17 @@ PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *const *args, 
     Py_BEGIN_ALLOW_THREADS
         // REMOVED: NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
 
+
+    JPH_BroadPhaseLayerFilter *bp_f = JPH_BroadPhaseLayerFilter_Create(NULL);
+    JPH_ObjectLayerFilter *obj_f = JPH_ObjectLayerFilter_Create(NULL);
+    CastShapeFilter filter_ctx = {.ignore_id = ignore_bid};
+    JPH_BodyFilter *bf = JPH_BodyFilter_Create(&filter_ctx);
+
+
         // 5a. Cast the ray
         const JPH_NarrowPhaseQuery *query = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
     // Use NULL for filters as we handle simple ignore logic via broadphase or specific ID
-    has_hit = JPH_NarrowPhaseQuery_CastRay(query, origin, direction, hit, NULL, NULL, NULL);
+    has_hit = JPH_NarrowPhaseQuery_CastRay(query, origin, direction, hit, bp_f, obj_f, bf);
 
     // Filter the 'ignore_bid' manually if hit
     if (has_hit && hit->bodyID == ignore_bid) {
@@ -391,15 +396,14 @@ PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *const *args, 
         JPH_BodyLockInterface_UnlockRead(li, &j_lock);
     }
 
+    JPH_BodyFilter_Destroy(bf);
+    JPH_BroadPhaseLayerFilter_Destroy(bp_f);
+    JPH_ObjectLayerFilter_Destroy(obj_f);
+
     // REMOVED: NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
 
     // Unmark query and signal stepper if necessary
-    int prev = atomic_fetch_sub_explicit(&self->active_queries, 1, memory_order_release);
-    if (prev == 1) {
-        NATIVE_MUTEX_LOCK(self->step_sync.mutex);
-        NATIVE_COND_BROADCAST(self->step_sync.cond);
-        NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
-    }
+    end_query_scope(self);
     Py_END_ALLOW_THREADS
 
         // 6. RESULT PHASE (Re-verify handle integrity)
@@ -590,14 +594,7 @@ PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self, PyObject *const *
     // REMOVED: NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
 
     // Decrement and check if we were the last active query
-    int prev_queries = atomic_fetch_sub_explicit(&self->active_queries, 1, memory_order_release);
-
-    if (prev_queries == 1) {
-        // Wake up the world.step() thread if it was waiting
-        NATIVE_MUTEX_LOCK(self->step_sync.mutex);
-        NATIVE_COND_BROADCAST(self->step_sync.cond);
-        NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
-    }
+    end_query_scope(self);
     Py_END_ALLOW_THREADS
 
         // 6. CLEANUP
@@ -712,12 +709,7 @@ PyObject *PhysicsWorld_shapecast(PhysicsWorldObject *self, PyObject *const *args
     // REMOVED: NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
 
     // Signal end of query
-    int prev = atomic_fetch_sub_explicit(&self->active_queries, 1, memory_order_release);
-    if (prev == 1) {
-        NATIVE_MUTEX_LOCK(self->step_sync.mutex);
-        NATIVE_COND_BROADCAST(self->step_sync.cond);
-        NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
-    }
+    end_query_scope(self);
     Py_END_ALLOW_THREADS
 
         // 6. RESULT CONSTRUCTION

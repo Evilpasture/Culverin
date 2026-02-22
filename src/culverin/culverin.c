@@ -12,6 +12,7 @@
 #include "culverin_ragdoll.h"
 #include "culverin_shadow_sync.h"
 #include "culverin_vehicle.h"
+#include "culverin_filters.h"
 
 // Global lock for JPH callbacks
 NativeMutex g_jph_trampoline_lock; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
@@ -4021,6 +4022,14 @@ static int culverin_exec(PyObject *m) {
     }
 
     culverin_init_all_parsers();
+
+    // REGISTER FILTERS ONCE HERE
+    // This connects the logic (filter_allow_all_bp, UnifiedBodyFilter, etc.) 
+    // to the JoltC filter objects globally.
+    JPH_BroadPhaseLayerFilter_SetProcs(&global_bp_procs);
+    JPH_ObjectLayerFilter_SetProcs(&global_obj_procs);
+    JPH_BodyFilter_SetProcs(&global_bf_procs);
+    JPH_ShapeFilter_SetProcs(&global_sf_procs);
 
     // Initialize the GLOBAL lock for Jolt trampolines
     INIT_NATIVE_MUTEX(g_jph_trampoline_lock);

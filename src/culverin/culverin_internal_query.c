@@ -114,18 +114,11 @@ bool execute_raycast_query(PhysicsWorldObject *self, JPH_BodyID ignore_bid,
                            const JPH_RVec3 *origin, const JPH_Vec3 *direction,
                            JPH_RayCastResult *hit) {
   // 1. Filter Setup (Safe, doesn't touch shared Jolt memory yet)
-  JPH_BroadPhaseLayerFilter_Procs bp_procs = {.ShouldCollide = filter_allow_all_bp};
   JPH_BroadPhaseLayerFilter *bp_f = JPH_BroadPhaseLayerFilter_Create(NULL);
-  JPH_BroadPhaseLayerFilter_SetProcs(&bp_procs);
-
-  JPH_ObjectLayerFilter_Procs obj_procs = {.ShouldCollide = filter_allow_all_obj};
   JPH_ObjectLayerFilter *obj_f = JPH_ObjectLayerFilter_Create(NULL);
-  JPH_ObjectLayerFilter_SetProcs(&obj_procs);
 
   CastShapeFilter filter_ctx = {.ignore_id = ignore_bid};
-  JPH_BodyFilter_Procs filter_procs = {.ShouldCollide = CastShape_BodyFilter};
   JPH_BodyFilter *bf = JPH_BodyFilter_Create(&filter_ctx);
-  JPH_BodyFilter_SetProcs(&filter_procs);
 
   // 2. Execution
   const JPH_NarrowPhaseQuery *query = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
@@ -170,18 +163,12 @@ void shapecast_execute_internal(PhysicsWorldObject *self,
                                 const JPH_RMat4 *transform,
                                 const JPH_Vec3 *sweep_dir,
                                 JPH_BodyID ignore_bid, CastShapeContext *ctx) {
-  JPH_BroadPhaseLayerFilter_Procs bp_p = {.ShouldCollide = filter_allow_all_bp};
   JPH_BroadPhaseLayerFilter *bp_f = JPH_BroadPhaseLayerFilter_Create(NULL);
-  JPH_BroadPhaseLayerFilter_SetProcs(&bp_p);
 
-  JPH_ObjectLayerFilter_Procs obj_p = {.ShouldCollide = filter_allow_all_obj};
   JPH_ObjectLayerFilter *obj_f = JPH_ObjectLayerFilter_Create(NULL);
-  JPH_ObjectLayerFilter_SetProcs(&obj_p);
 
   CastShapeFilter filter_ctx = {.ignore_id = ignore_bid};
-  JPH_BodyFilter_Procs bf_p = {.ShouldCollide = CastShape_BodyFilter};
   JPH_BodyFilter *bf = JPH_BodyFilter_Create(&filter_ctx);
-  JPH_BodyFilter_SetProcs(&bf_p);
 
   JPH_STACK_ALLOC(JPH_ShapeCastSettings, settings);
   JPH_ShapeCastSettings_Init(settings);

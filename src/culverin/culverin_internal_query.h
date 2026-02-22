@@ -57,8 +57,13 @@ static inline float CastShape_ClosestCollector(void *context, const JPH_ShapeCas
   return result->fraction;
 }
 
-static inline bool JPH_API_CALL CastShape_BodyFilter(void *userData,
-                                                     JPH_BodyID bodyID) {
-  CastShapeFilter *ctx = (CastShapeFilter *)userData;
-  return (bool)(ctx->ignore_id == 0 || bodyID != ctx->ignore_id);
+static inline bool JPH_API_CALL UnifiedBodyFilter(void *userData, JPH_BodyID bodyID) {
+    // If no context was provided (e.g. overlap_sphere), allow everything
+    if (userData == NULL) {
+        return true;
+    }
+    
+    // Otherwise, check the ignore_id
+    CastShapeFilter *ctx = (CastShapeFilter *)userData;
+    return (bool)(ctx->ignore_id == 0 || bodyID != ctx->ignore_id);
 }
