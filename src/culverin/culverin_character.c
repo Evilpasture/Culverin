@@ -10,627 +10,644 @@ static bool JPH_API_CALL
 char_on_contact_validate(void *userData, const JPH_CharacterVirtual *character,
                          // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
                          JPH_BodyID bodyID2, JPH_SubShapeID subShapeID2) {
-  return true; // Usually true, unless you want to walk through certain bodies
+    return true; // Usually true, unless you want to walk through certain bodies
 }
 
 static void record_character_contact(CharacterObject *self, JPH_BodyID bodyID2,
                                      const JPH_RVec3 *pos, const JPH_Vec3 *norm,
                                      ContactEventType type) {
-  auto *world = self->world;
-  uint32_t j_idx = JPH_ID_TO_INDEX(bodyID2);
-  BodyHandle h2 = 0;
+    auto *world    = self->world;
+    uint32_t j_idx = JPH_ID_TO_INDEX(bodyID2);
+    BodyHandle h2  = 0;
 
-  if (world->id_to_handle_map && j_idx < world->max_jolt_bodies) {
-    h2 = world->id_to_handle_map[j_idx];
-  }
-  if (h2 == 0) {
-    return; // Ignore unmapped bodies (like internal Jolt helpers)
-  }
-
-  BodyHandle h1 = self->handle;
-  size_t idx = atomic_fetch_add_explicit(&world->contact_atomic_idx, 1,
-                                         memory_order_relaxed);
-
-  if (idx < world->contact_max_capacity) {
-    ContactEvent *ev = &world->contact_buffer[idx];
-    ev->type = (uint32_t)type;
-
-    // Consistent ordering for Python set logic
-    if (h1 < h2) {
-      ev->body1 = h1;
-      ev->body2 = h2;
-    } else {
-      ev->body1 = h2;
-      ev->body2 = h1;
+    if (world->id_to_handle_map && j_idx < world->max_jolt_bodies) {
+        h2 = world->id_to_handle_map[j_idx];
     }
-    // hands are tied. precision is lost.
-    ev->px = (float)pos->x;
-    ev->py = (float)pos->y;
-    ev->pz = (float)pos->z;
-    ev->nx = norm->x;
-    ev->ny = norm->y;
-    ev->nz = norm->z;
-    ev->impulse = 1.0f; // Logical trigger strength
-    ev->sliding_speed_sq = 0.0f;
+    if (h2 == 0) {
+        return; // Ignore unmapped bodies (like internal Jolt helpers)
+    }
 
-    // Look up material of the object we hit
-    auto slot2 = (uint32_t)(h2 & 0xFFFFFFFF);
-    uint32_t dense2 = world->slot_to_dense[slot2];
-    ev->mat1 = 0; // Characters don't have materials yet
-    ev->mat2 = world->material_ids[dense2];
+    BodyHandle h1 = self->handle;
+    size_t idx    = atomic_fetch_add_explicit(&world->contact_atomic_idx, 1, memory_order_relaxed);
 
-    atomic_thread_fence(memory_order_release);
-  }
+    if (idx < world->contact_max_capacity) {
+        ContactEvent *ev = &world->contact_buffer[idx];
+        ev->type         = (uint32_t)type;
+
+        // Consistent ordering for Python set logic
+        if (h1 < h2) {
+            ev->body1 = h1;
+            ev->body2 = h2;
+        } else {
+            ev->body1 = h2;
+            ev->body2 = h1;
+        }
+        // hands are tied. precision is lost.
+        ev->px               = (float)pos->x;
+        ev->py               = (float)pos->y;
+        ev->pz               = (float)pos->z;
+        ev->nx               = norm->x;
+        ev->ny               = norm->y;
+        ev->nz               = norm->z;
+        ev->impulse          = 1.0f; // Logical trigger strength
+        ev->sliding_speed_sq = 0.0f;
+
+        // Look up material of the object we hit
+        auto slot2      = (uint32_t)(h2 & 0xFFFFFFFF);
+        uint32_t dense2 = world->slot_to_dense[slot2];
+        ev->mat1        = 0; // Characters don't have materials yet
+        ev->mat2        = world->material_ids[dense2];
+
+        atomic_thread_fence(memory_order_release);
+    }
 }
 
-static void report_char_vs_char(CharacterObject *self,
-                                const JPH_CharacterVirtual *other,
+static void report_char_vs_char(CharacterObject *self, const JPH_CharacterVirtual *other,
                                 const JPH_Vec3 *normal, const JPH_RVec3 *pos,
                                 ContactEventType type) {
-  auto *world = self->world;
-  BodyHandle h1 = self->handle;
+    auto *world   = self->world;
+    BodyHandle h1 = self->handle;
 
-  // 1. Get Inner Body ID
-  JPH_BodyID other_bid = JPH_CharacterVirtual_GetInnerBodyID(other);
+    // 1. Get Inner Body ID
+    JPH_BodyID other_bid = JPH_CharacterVirtual_GetInnerBodyID(other);
 
-  // 2. Direct Jolt Lookup (Bypasses our map, which might be too small for
-  // Virtual IDs)
-  uint64_t userdata =
-      JPH_BodyInterface_GetUserData(world->body_interface, other_bid);
-  auto h2 = (BodyHandle)userdata;
+    // 2. Direct Jolt Lookup (Bypasses our map, which might be too small for
+    // Virtual IDs)
+    uint64_t userdata = JPH_BodyInterface_GetUserData(world->body_interface, other_bid);
+    auto h2           = (BodyHandle)userdata;
 
-  if (h2 == 0) {
-    return; // Not a known Culverin object
-  }
-
-  size_t idx = atomic_fetch_add_explicit(&world->contact_atomic_idx, 1,
-                                         memory_order_relaxed);
-  if (idx < world->contact_max_capacity) {
-    ContactEvent *ev = &world->contact_buffer[idx];
-    ev->type = (uint32_t)type;
-
-    // Canonicalize Order
-    if (h1 < h2) {
-      ev->body1 = h1;
-      ev->body2 = h2;
-    } else {
-      ev->body1 = h2;
-      ev->body2 = h1;
+    if (h2 == 0) {
+        return; // Not a known Culverin object
     }
 
-    ev->sliding_speed_sq = 0.0f;
-    ev->nx = normal->x;
-    ev->ny = normal->y;
-    ev->nz = normal->z;
-    ev->px = (float)pos->x;
-    ev->py = (float)pos->y;
-    ev->pz = (float)pos->z;
-    ev->impulse = 1.0f;
-    ev->mat1 = 0;
-    ev->mat2 = 0;
+    size_t idx = atomic_fetch_add_explicit(&world->contact_atomic_idx, 1, memory_order_relaxed);
+    if (idx < world->contact_max_capacity) {
+        ContactEvent *ev = &world->contact_buffer[idx];
+        ev->type         = (uint32_t)type;
 
-    atomic_thread_fence(memory_order_release);
-  }
+        // Canonicalize Order
+        if (h1 < h2) {
+            ev->body1 = h1;
+            ev->body2 = h2;
+        } else {
+            ev->body1 = h2;
+            ev->body2 = h1;
+        }
+
+        ev->sliding_speed_sq = 0.0f;
+        ev->nx               = normal->x;
+        ev->ny               = normal->y;
+        ev->nz               = normal->z;
+        ev->px               = (float)pos->x;
+        ev->py               = (float)pos->y;
+        ev->pz               = (float)pos->z;
+        ev->impulse          = 1.0f;
+        ev->mat1             = 0;
+        ev->mat2             = 0;
+
+        atomic_thread_fence(memory_order_release);
+    }
 }
-static void JPH_API_CALL char_on_character_contact_added(
-    void *userData, const JPH_CharacterVirtual *character,
-    const JPH_CharacterVirtual *otherCharacter, JPH_SubShapeID subShapeID2,
-    const JPH_RVec3 *contactPosition, const JPH_Vec3 *contactNormal,
-    JPH_CharacterContactSettings *ioSettings) {
+static void JPH_API_CALL char_on_character_contact_added(void *userData,
+                                                         const JPH_CharacterVirtual *character,
+                                                         const JPH_CharacterVirtual *otherCharacter,
+                                                         JPH_SubShapeID subShapeID2,
+                                                         const JPH_RVec3 *contactPosition,
+                                                         const JPH_Vec3 *contactNormal,
+                                                         JPH_CharacterContactSettings *ioSettings) {
 
-  ioSettings->canPushCharacter = true;
-  ioSettings->canReceiveImpulses = true;
+    ioSettings->canPushCharacter   = true;
+    ioSettings->canReceiveImpulses = true;
 
-  auto *self = (CharacterObject *)userData;
-  if (!self || !self->world) {
-    return;
-  }
+    auto *self = (CharacterObject *)userData;
+    if (!self || !self->world) {
+        return;
+    }
 
-  report_char_vs_char(self, otherCharacter, contactNormal, contactPosition,
-                      EVENT_ADDED);
+    report_char_vs_char(self, otherCharacter, contactNormal, contactPosition, EVENT_ADDED);
 }
 
 static void apply_character_impulse(CharacterObject *self, JPH_BodyID bodyID2,
                                     const JPH_Vec3 *contactNormal) {
-  // 1. Thread-Safe Member Access
-  float vx = atomic_load_explicit((&self->last_vx), memory_order_relaxed);
-  float vy = atomic_load_explicit((&self->last_vy), memory_order_relaxed);
-  float vz = atomic_load_explicit((&self->last_vz), memory_order_relaxed);
-  float strength =
-      atomic_load_explicit((&self->push_strength), memory_order_relaxed);
+    // 1. Thread-Safe Member Access
+    float vx       = atomic_load_explicit((&self->last_vx), memory_order_relaxed);
+    float vy       = atomic_load_explicit((&self->last_vy), memory_order_relaxed);
+    float vz       = atomic_load_explicit((&self->last_vz), memory_order_relaxed);
+    float strength = atomic_load_explicit((&self->push_strength), memory_order_relaxed);
 
-  JPH_BodyInterface *bi = self->world->body_interface;
+    JPH_BodyInterface *bi = self->world->body_interface;
 
-  // 2. Ignore Sensors & Non-Dynamic Bodies
-  if (JPH_BodyInterface_IsSensor(bi, bodyID2) ||
-      JPH_BodyInterface_GetMotionType(bi, bodyID2) != JPH_MotionType_Dynamic) {
-    return;
-  }
-
-  // 3. Calculate Pushing Force
-  float dot =
-      vx * contactNormal->x + vy * contactNormal->y + vz * contactNormal->z;
-
-  if (dot > 0.1f) {
-    float factor = dot * strength;
-    const float max_impulse = 5000.0f;
-    if (factor > max_impulse) {
-      factor = max_impulse;
+    // 2. Ignore Sensors & Non-Dynamic Bodies
+    if (JPH_BodyInterface_IsSensor(bi, bodyID2) ||
+        JPH_BodyInterface_GetMotionType(bi, bodyID2) != JPH_MotionType_Dynamic) {
+        return;
     }
 
-    JPH_Vec3 impulse;
-    impulse.x = contactNormal->x * factor;
+    // 3. Calculate Pushing Force
+    float dot = vx * contactNormal->x + vy * contactNormal->y + vz * contactNormal->z;
 
-    // Flatten Y Response (allow kicking up, suppress crushing down)
-    float y_push = contactNormal->y * factor;
-    impulse.y = (y_push > 0.0f) ? y_push : 0.0f;
+    if (dot > 0.1f) {
+        float factor            = dot * strength;
+        const float max_impulse = 5000.0f;
+        if (factor > max_impulse) {
+            factor = max_impulse;
+        }
 
-    impulse.z = contactNormal->z * factor;
+        JPH_Vec3 impulse;
+        impulse.x = contactNormal->x * factor;
 
-    JPH_BodyInterface_AddImpulse(bi, bodyID2, &impulse);
-    JPH_BodyInterface_ActivateBody(bi, bodyID2);
-  }
+        // Flatten Y Response (allow kicking up, suppress crushing down)
+        float y_push = contactNormal->y * factor;
+        impulse.y    = (y_push > 0.0f) ? y_push : 0.0f;
+
+        impulse.z = contactNormal->z * factor;
+
+        JPH_BodyInterface_AddImpulse(bi, bodyID2, &impulse);
+        JPH_BodyInterface_ActivateBody(bi, bodyID2);
+    }
 }
 
 // --- Updated Added Callback ---
-static void JPH_API_CALL char_on_contact_added(
-    void *userData, const JPH_CharacterVirtual *character, JPH_BodyID bodyID2,
-    JPH_SubShapeID subShapeID2, const JPH_RVec3 *contactPosition,
-    const JPH_Vec3 *contactNormal, JPH_CharacterContactSettings *ioSettings) {
+static void JPH_API_CALL char_on_contact_added(void *userData,
+                                               const JPH_CharacterVirtual *character,
+                                               JPH_BodyID bodyID2, JPH_SubShapeID subShapeID2,
+                                               const JPH_RVec3 *contactPosition,
+                                               const JPH_Vec3 *contactNormal,
+                                               JPH_CharacterContactSettings *ioSettings) {
 
-  ioSettings->canPushCharacter = true;
-  ioSettings->canReceiveImpulses = true;
+    ioSettings->canPushCharacter   = true;
+    ioSettings->canReceiveImpulses = true;
 
-  auto *self = (CharacterObject *)userData;
-  if (!self) {
-    return;
-  }
+    auto *self = (CharacterObject *)userData;
+    if (!self) {
+        return;
+    }
 
-  // Record Event
-  record_character_contact(self, bodyID2, contactPosition, contactNormal,
-                           EVENT_ADDED);
+    // Record Event
+    record_character_contact(self, bodyID2, contactPosition, contactNormal, EVENT_ADDED);
 
-  // Apply Impulse
-  apply_character_impulse(self, bodyID2, contactNormal);
+    // Apply Impulse
+    apply_character_impulse(self, bodyID2, contactNormal);
 }
 
-static void JPH_API_CALL char_on_contact_persisted(
-    void *userData, const JPH_CharacterVirtual *character, JPH_BodyID bodyID2,
-    JPH_SubShapeID subShapeID2, const JPH_RVec3 *contactPosition,
-    const JPH_Vec3 *contactNormal, JPH_CharacterContactSettings *ioSettings) {
+static void JPH_API_CALL char_on_contact_persisted(void *userData,
+                                                   const JPH_CharacterVirtual *character,
+                                                   JPH_BodyID bodyID2, JPH_SubShapeID subShapeID2,
+                                                   const JPH_RVec3 *contactPosition,
+                                                   const JPH_Vec3 *contactNormal,
+                                                   JPH_CharacterContactSettings *ioSettings) {
 
-  ioSettings->canPushCharacter = true;
-  ioSettings->canReceiveImpulses = true;
+    ioSettings->canPushCharacter   = true;
+    ioSettings->canReceiveImpulses = true;
 
-  auto *self = (CharacterObject *)userData;
-  if (!self) {
-    return;
-  }
+    auto *self = (CharacterObject *)userData;
+    if (!self) {
+        return;
+    }
 
-  // Record Event
-  record_character_contact(self, bodyID2, contactPosition, contactNormal,
-                           EVENT_PERSISTED);
+    // Record Event
+    record_character_contact(self, bodyID2, contactPosition, contactNormal, EVENT_PERSISTED);
 
-  // Apply Impulse (CRITICAL FIX)
-  apply_character_impulse(self, bodyID2, contactNormal);
+    // Apply Impulse (CRITICAL FIX)
+    apply_character_impulse(self, bodyID2, contactNormal);
 }
 
-static void JPH_API_CALL
-char_on_contact_removed(void *userData, const JPH_CharacterVirtual *character,
-                        JPH_BodyID bodyID2, JPH_SubShapeID subShapeID2) {
-  auto *self = (CharacterObject *)userData;
-  if (!self || !self->world) {
-    return;
-  }
+static void JPH_API_CALL char_on_contact_removed(void *userData,
+                                                 const JPH_CharacterVirtual *Py_UNUSED(character),
+                                                 JPH_BodyID bodyID2, JPH_SubShapeID Py_UNUSED(subShapeID2)) {
+    auto *self = (CharacterObject *)userData;
+    if (!self || !self->world) {
+        return;
+    }
 
-  PhysicsWorldObject *world = self->world;
-  uint32_t j_idx = JPH_ID_TO_INDEX(bodyID2);
+    PhysicsWorldObject *world = self->world;
+    uint32_t j_idx            = JPH_ID_TO_INDEX(bodyID2);
 
-  auto h1 = self->handle;
-  BodyHandle h2 = 0;
-  if (world->id_to_handle_map && j_idx < world->max_jolt_bodies) {
-    h2 = world->id_to_handle_map[j_idx];
-  }
-  if (h2 == 0) {
-    return;
-  }
+    auto h1       = self->handle;
+    BodyHandle h2 = 0;
+    if (world->id_to_handle_map && j_idx < world->max_jolt_bodies) {
+        h2 = world->id_to_handle_map[j_idx];
+    }
+    if (h2 == 0) {
+        return;
+    }
 
-  size_t idx = atomic_fetch_add_explicit(&world->contact_atomic_idx, 1,
-                                         memory_order_relaxed);
-  if (idx < world->contact_max_capacity) {
-    ContactEvent *ev = &world->contact_buffer[idx];
-    ev->type = EVENT_REMOVED;
-    ev->body1 = (h1 < h2) ? h1 : h2;
-    ev->body2 = (h1 < h2) ? h2 : h1;
-    // Geometry is zeroed for removal
-    memset(&ev->px, 0, sizeof(float) * 8);
-    atomic_thread_fence(memory_order_release);
-  }
+    size_t idx = atomic_fetch_add_explicit(&world->contact_atomic_idx, 1, memory_order_relaxed);
+    if (idx < world->contact_max_capacity) {
+        ContactEvent *ev = &world->contact_buffer[idx];
+        ev->type         = EVENT_REMOVED;
+        ev->body1        = (h1 < h2) ? h1 : h2;
+        ev->body2        = (h1 < h2) ? h2 : h1;
+        // Geometry is zeroed for removal
+        memset(&ev->px, 0, sizeof(float) * 8);
+        atomic_thread_fence(memory_order_release);
+    }
 }
 
 static void JPH_API_CALL char_on_character_contact_persisted(
-    void *userData, const JPH_CharacterVirtual *character,
-    const JPH_CharacterVirtual *otherCharacter, JPH_SubShapeID subShapeID2,
+    void *userData, const JPH_CharacterVirtual *Py_UNUSED(character),
+    const JPH_CharacterVirtual *otherCharacter, JPH_SubShapeID Py_UNUSED(subShapeID2),
     const JPH_RVec3 *contactPosition, const JPH_Vec3 *contactNormal,
     JPH_CharacterContactSettings *ioSettings) {
 
-  ioSettings->canPushCharacter = true;
-  ioSettings->canReceiveImpulses = true;
+    ioSettings->canPushCharacter   = true;
+    ioSettings->canReceiveImpulses = true;
 
-  CharacterObject *self = (CharacterObject *)userData;
-  if (!self || !self->world) {
-    return;
-  }
+    CharacterObject *self = (CharacterObject *)userData;
+    if (!self || !self->world) {
+        return;
+    }
 
-  report_char_vs_char(self, otherCharacter, contactNormal, contactPosition,
-                      EVENT_PERSISTED);
+    report_char_vs_char(self, otherCharacter, contactNormal, contactPosition, EVENT_PERSISTED);
 }
 
-static void JPH_API_CALL char_on_character_contact_removed(
-    void *userData, const JPH_CharacterVirtual *character,
-    const JPH_CharacterID otherCharacterID, JPH_SubShapeID subShapeID2) {
-  auto *self = (CharacterObject *)userData;
-  auto *world = self->world;
+static void JPH_API_CALL char_on_character_contact_removed(void *userData,
+                                                           const JPH_CharacterVirtual *Py_UNUSED(character),
+                                                           const JPH_CharacterID otherCharacterID,
+                                                           JPH_SubShapeID Py_UNUSED(subShapeID2)) {
+    auto *self  = (CharacterObject *)userData;
+    auto *world = self->world;
 
-  BodyHandle h1 = self->handle;
-  // We have to use the CharacterID to find the handle.
-  // Jolt CharacterIDs usually map to the inner BodyID.
-  uint32_t j_idx = JPH_ID_TO_INDEX(otherCharacterID);
-  BodyHandle h2 = world->id_to_handle_map[j_idx];
+    BodyHandle h1 = self->handle;
+    // We have to use the CharacterID to find the handle.
+    // Jolt CharacterIDs usually map to the inner BodyID.
+    uint32_t j_idx = JPH_ID_TO_INDEX(otherCharacterID);
+    BodyHandle h2  = world->id_to_handle_map[j_idx];
 
-  size_t idx = atomic_fetch_add_explicit(&world->contact_atomic_idx, 1,
-                                         memory_order_relaxed);
-  if (idx < world->contact_max_capacity) {
-    ContactEvent *ev = &world->contact_buffer[idx];
-    ev->type = EVENT_REMOVED;
-    ev->body1 = (h1 < h2) ? h1 : h2;
-    ev->body2 = (h1 < h2) ? h2 : h1;
-    atomic_thread_fence(memory_order_release);
-  }
+    size_t idx = atomic_fetch_add_explicit(&world->contact_atomic_idx, 1, memory_order_relaxed);
+    if (idx < world->contact_max_capacity) {
+        ContactEvent *ev = &world->contact_buffer[idx];
+        ev->type         = EVENT_REMOVED;
+        ev->body1        = (h1 < h2) ? h1 : h2;
+        ev->body2        = (h1 < h2) ? h2 : h1;
+        atomic_thread_fence(memory_order_release);
+    }
 }
 
-static void JPH_API_CALL
-char_on_adjust_velocity(void *userData, const JPH_CharacterVirtual *character,
-                        const JPH_Body *body2, JPH_Vec3 *ioLinearVelocity,
-                        JPH_Vec3 *ioAngularVelocity) {
+static void JPH_API_CALL char_on_adjust_velocity(void *userData,
+                                                 const JPH_CharacterVirtual *character,
+                                                 const JPH_Body *body2, JPH_Vec3 *ioLinearVelocity,
+                                                 JPH_Vec3 *ioAngularVelocity) {
 
-  // Usually, we want the default behavior (character follows the body).
-  // TODO: add logic here if you want the character to "slip" on certain
-  // materials.
+    // Usually, we want the default behavior (character follows the body).
+    // TODO: add logic here if you want the character to "slip" on certain
+    // materials.
 }
 
 // Map the procs
 const JPH_CharacterContactListener_Procs char_listener_procs = {
-    .OnContactValidate = char_on_contact_validate,
-    .OnContactAdded = char_on_contact_added,
-    .OnAdjustBodyVelocity = char_on_adjust_velocity, // ADDED
-    .OnContactPersisted =
-        char_on_contact_persisted, // CHANGED from char_on_contact_added
-    .OnContactRemoved = char_on_contact_removed, // ADDED
-    .OnCharacterContactValidate = NULL,          // Default True is fine
-    .OnCharacterContactAdded = char_on_character_contact_added,
+    .OnContactValidate           = char_on_contact_validate,
+    .OnContactAdded              = char_on_contact_added,
+    .OnAdjustBodyVelocity        = char_on_adjust_velocity,   // ADDED
+    .OnContactPersisted          = char_on_contact_persisted, // CHANGED from char_on_contact_added
+    .OnContactRemoved            = char_on_contact_removed,   // ADDED
+    .OnCharacterContactValidate  = NULL,                      // Default True is fine
+    .OnCharacterContactAdded     = char_on_character_contact_added,
     .OnCharacterContactPersisted = char_on_character_contact_persisted, // ADDED
-    .OnCharacterContactRemoved = char_on_character_contact_removed,     // ADDED
-    .OnContactSolve = NULL // Advanced, keep NULL
+    .OnCharacterContactRemoved   = char_on_character_contact_removed,   // ADDED
+    .OnContactSolve              = NULL                                 // Advanced, keep NULL
 };
 
-PyObject *Character_move(CharacterObject *self, PyObject *args,
-                         PyObject *kwds) {
-  float vx = 0; float vy = 0; float vz = 0; float dt = 0;
-  static char *kwlist[] = {"velocity", "dt", NULL};
+PyObject *Character_move(CharacterObject *self, PyObject *args, PyObject *kwds) {
+    float vx              = 0;
+    float vy              = 0;
+    float vz              = 0;
+    float dt              = 0;
+    static char *kwlist[] = {"velocity", "dt", NULL};
 
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)f", kwlist, &vx, &vy, &vz, &dt)) {
-    return NULL;
-  }
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)f", kwlist, &vx, &vy, &vz, &dt)) {
+        return NULL;
+    }
 
-  // 1. PRE-MOVE GUARD (Shadow Lock)
-  SHADOW_LOCK(&self->world->shadow_lock);
-  BLOCK_UNTIL_NOT_STEPPING(self->world);
-  BLOCK_IF_STEP_PENDING(self->world); 
-  
-  atomic_store_explicit(&self->last_vx, vx, memory_order_relaxed);
-  atomic_store_explicit(&self->last_vy, vy, memory_order_relaxed);
-  atomic_store_explicit(&self->last_vz, vz, memory_order_relaxed);
+    // 1. PRE-MOVE GUARD (Shadow Lock)
+    SHADOW_LOCK(&self->world->shadow_lock);
+    BLOCK_UNTIL_NOT_STEPPING(self->world);
+    BLOCK_IF_STEP_PENDING(self->world);
 
-  uint32_t slot = (uint32_t)(self->handle & 0xFFFFFFFF);
-  uint32_t dense = self->world->slot_to_dense[slot];
+    atomic_store_explicit(&self->last_vx, vx, memory_order_relaxed);
+    atomic_store_explicit(&self->last_vy, vy, memory_order_relaxed);
+    atomic_store_explicit(&self->last_vz, vz, memory_order_relaxed);
 
-  // Cast World Shadow Buffers to Stride Structs
-  PosStride *shadow_pos  = (PosStride *)self->world->positions;
-  PosStride *shadow_ppos = (PosStride *)self->world->prev_positions;
-  AuxStride *shadow_rot  = (AuxStride *)self->world->rotations;
-  AuxStride *shadow_prot = (AuxStride *)self->world->prev_rotations;
+    auto slot  = (uint32_t)(self->handle & 0xFFFFFFFF);
+    uint32_t dense = self->world->slot_to_dense[slot];
 
-  // Sync "Previous" state for interpolation (Snapshot before movement)
-  shadow_ppos[dense] = shadow_pos[dense];
-  shadow_prot[dense] = shadow_rot[dense];
+    // Cast World Shadow Buffers to Stride Structs
+    auto *shadow_pos  = (PosStride *)self->world->positions;
+    auto *shadow_ppos = (PosStride *)self->world->prev_positions;
+    auto *shadow_rot  = (AuxStride *)self->world->rotations;
+    auto *shadow_prot = (AuxStride *)self->world->prev_rotations;
 
-  // Store internal float-based previous position for Character-specific logic
-  self->prev_px = (float)shadow_pos[dense].x;
-  self->prev_py = (float)shadow_pos[dense].y;
-  self->prev_pz = (float)shadow_pos[dense].z;
+    // Sync "Previous" state for interpolation (Snapshot before movement)
+    shadow_ppos[dense] = shadow_pos[dense];
+    shadow_prot[dense] = shadow_rot[dense];
 
-  SHADOW_UNLOCK(&self->world->shadow_lock);
+    // Store internal float-based previous position for Character-specific logic
+    self->prev_px = (float)shadow_pos[dense].x;
+    self->prev_py = (float)shadow_pos[dense].y;
+    self->prev_pz = (float)shadow_pos[dense].z;
 
-  // --- 2. JOLT EXECUTION ---
-  JPH_Vec3 v = {vx, vy, vz};
-  JPH_CharacterVirtual_SetLinearVelocity(self->character, &v);
+    SHADOW_UNLOCK(&self->world->shadow_lock);
 
-  JPH_STACK_ALLOC(JPH_ExtendedUpdateSettings, update_settings);
-  memset(update_settings, 0, sizeof(JPH_ExtendedUpdateSettings));
-  update_settings->stickToFloorStepDown.y = -0.5f;
-  update_settings->walkStairsStepUp.y = 0.4f;
-  update_settings->walkStairsMinStepForward = 0.02f;
-  update_settings->walkStairsStepForwardTest = 0.15f;
-  update_settings->walkStairsCosAngleForwardContact = 0.996f;
+    // --- 2. JOLT EXECUTION ---
+    JPH_Vec3 v = {vx, vy, vz};
+    JPH_CharacterVirtual_SetLinearVelocity(self->character, &v);
 
-  // LOCK NATIVE -> RELEASE GIL -> DO PHYSICS
-  NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
-  Py_BEGIN_ALLOW_THREADS
-  
-  JPH_CharacterVirtual_ExtendedUpdate(self->character, dt, update_settings, 1,
-                                      self->world->system, self->body_filter,
-                                      self->shape_filter);
+    JPH_STACK_ALLOC(JPH_ExtendedUpdateSettings, update_settings);
+    memset(update_settings, 0, sizeof(JPH_ExtendedUpdateSettings));
+    update_settings->stickToFloorStepDown.y           = -0.5f;
+    update_settings->walkStairsStepUp.y               = 0.4f;
+    update_settings->walkStairsMinStepForward         = 0.02f;
+    update_settings->walkStairsStepForwardTest        = 0.15f;
+    update_settings->walkStairsCosAngleForwardContact = 0.996f;
 
-  Py_END_ALLOW_THREADS
-  NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+    // LOCK NATIVE -> RELEASE GIL -> DO PHYSICS
+    NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+    Py_BEGIN_ALLOW_THREADS
 
-  // --- 3. POST-MOVE SYNC ---
-  SHADOW_LOCK(&self->world->shadow_lock);
-  
-  JPH_STACK_ALLOC(JPH_RVec3, current_pos);
-  JPH_STACK_ALLOC(JPH_Quat, current_rot);
-  JPH_CharacterVirtual_GetPosition(self->character, current_pos);
-  JPH_CharacterVirtual_GetRotation(self->character, current_rot);
+        JPH_CharacterVirtual_ExtendedUpdate(self->character, dt, update_settings, 1,
+                                            self->world->system, self->body_filter,
+                                            self->shape_filter);
 
-  // Update World Shadow using Structs (compiler handles stride 3 vs 4)
-  shadow_pos[dense] = (PosStride){current_pos->x, current_pos->y, current_pos->z};
-  shadow_rot[dense] = (AuxStride){current_rot->x, current_rot->y, current_rot->z, current_rot->w};
+    Py_END_ALLOW_THREADS NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
 
-  SHADOW_UNLOCK(&self->world->shadow_lock);
-  Py_RETURN_NONE;
+    // --- 3. POST-MOVE SYNC ---
+    SHADOW_LOCK(&self->world->shadow_lock);
+
+    JPH_STACK_ALLOC(JPH_RVec3, current_pos);
+    JPH_STACK_ALLOC(JPH_Quat, current_rot);
+    JPH_CharacterVirtual_GetPosition(self->character, current_pos);
+    JPH_CharacterVirtual_GetRotation(self->character, current_rot);
+
+    // Update World Shadow using Structs (compiler handles stride 3 vs 4)
+    shadow_pos[dense] = (PosStride){current_pos->x, current_pos->y, current_pos->z};
+    shadow_rot[dense] = (AuxStride){current_rot->x, current_rot->y, current_rot->z, current_rot->w};
+
+    SHADOW_UNLOCK(&self->world->shadow_lock);
+    Py_RETURN_NONE;
 }
 
-PyObject *Character_get_position(CharacterObject *self,
-                                 PyObject *Py_UNUSED(ignored)) {
-  // 1. Aligned stack storage for SIMD
-  JPH_STACK_ALLOC(JPH_RVec3, pos);
+PyObject *Character_get_position(CharacterObject *self, PyObject *Py_UNUSED(ignored)) {
+    // 1. Aligned stack storage for SIMD
+    JPH_STACK_ALLOC(JPH_RVec3, pos);
 
-  // 2. Lock for consistency (ensure we aren't reading mid-step)
-  SHADOW_LOCK(&self->world->shadow_lock);
-  JPH_CharacterVirtual_GetPosition(self->character, pos);
-  SHADOW_UNLOCK(&self->world->shadow_lock);
+    // 2. Lock for consistency (ensure we aren't reading mid-step)
+    SHADOW_LOCK(&self->world->shadow_lock);
+    JPH_CharacterVirtual_GetPosition(self->character, pos);
+    SHADOW_UNLOCK(&self->world->shadow_lock);
 
-  PyObject *ret = PyTuple_New(3);
-  if (!ret) {
-    return NULL;
-  }
+    PyObject *ret = PyTuple_New(3);
+    if (!ret) {
+        return NULL;
+    }
 
-  // Use the double precision provided by RVec3
-  PyTuple_SET_ITEM(ret, 0, PyFloat_FromDouble(pos->x));
-  PyTuple_SET_ITEM(ret, 1, PyFloat_FromDouble(pos->y));
-  PyTuple_SET_ITEM(ret, 2, PyFloat_FromDouble(pos->z));
+    // Use the double precision provided by RVec3
+    PyTuple_SET_ITEM(ret, 0, PyFloat_FromDouble(pos->x));
+    PyTuple_SET_ITEM(ret, 1, PyFloat_FromDouble(pos->y));
+    PyTuple_SET_ITEM(ret, 2, PyFloat_FromDouble(pos->z));
 
-  return ret;
+    return ret;
 }
 
-PyObject *Character_set_position(CharacterObject *self, PyObject *args,
-                                 PyObject *kwds) {
-  JPH_Real x = 0.0;
-  JPH_Real y = 0.0;
-  JPH_Real z = 0.0;
-  static char *kwlist[] = {"pos", NULL};
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "("JPH_REAL_STRING JPH_REAL_STRING JPH_REAL_STRING")", kwlist, &x, &y, &z)) {
-    return NULL;
-  }
+PyObject *Character_set_position(CharacterObject *self, PyObject *args, PyObject *kwds) {
+    JPH_Real x            = 0.0;
+    JPH_Real y            = 0.0;
+    JPH_Real z            = 0.0;
+    static char *kwlist[] = {"pos", NULL};
+    if (!PyArg_ParseTupleAndKeywords(args, kwds,
+                                     "(" JPH_REAL_STRING JPH_REAL_STRING JPH_REAL_STRING ")",
+                                     kwlist, &x, &y, &z)) {
+        return NULL;
+    }
 
-  SHADOW_LOCK(&self->world->shadow_lock);
-  BLOCK_UNTIL_NOT_STEPPING(self->world);
+    SHADOW_LOCK(&self->world->shadow_lock);
+    BLOCK_UNTIL_NOT_STEPPING(self->world);
 
-  // 1. Update Jolt (Aligned)
-  JPH_STACK_ALLOC(JPH_RVec3, pos);
-  pos->x = x;
-  pos->y = y;
-  pos->z = z;
-  JPH_CharacterVirtual_SetPosition(self->character, pos);
+    // 1. Update Jolt (Aligned)
+    JPH_STACK_ALLOC(JPH_RVec3, pos);
+    pos->x = x;
+    pos->y = y;
+    pos->z = z;
+    JPH_CharacterVirtual_SetPosition(self->character, pos);
 
-  // 2. Update Shadow Buffers (Reset Interpolation to prevent streaks)
-  auto slot = (uint32_t)(self->handle & 0xFFFFFFFF);
-  uint32_t dense_idx = self->world->slot_to_dense[slot];
-  size_t off = (size_t)dense_idx * 4;
+    // 2. Update Shadow Buffers (Reset Interpolation to prevent streaks)
+    auto slot          = (uint32_t)(self->handle & 0xFFFFFFFF);
+    uint32_t dense_idx = self->world->slot_to_dense[slot];
+    auto off         = (size_t)dense_idx * 4;
 
-  self->world->positions[off + 0] = x;
-  self->world->positions[off + 1] = y;
-  self->world->positions[off + 2] = z;
+    self->world->positions[off + 0] = x;
+    self->world->positions[off + 1] = y;
+    self->world->positions[off + 2] = z;
 
-  self->world->prev_positions[off + 0] = x;
-  self->world->prev_positions[off + 1] = y;
-  self->world->prev_positions[off + 2] = z;
+    self->world->prev_positions[off + 0] = x;
+    self->world->prev_positions[off + 1] = y;
+    self->world->prev_positions[off + 2] = z;
 
-  SHADOW_UNLOCK(&self->world->shadow_lock);
-  Py_RETURN_NONE;
+    SHADOW_UNLOCK(&self->world->shadow_lock);
+    Py_RETURN_NONE;
 }
 
-PyObject *Character_set_rotation(CharacterObject *self, PyObject *args,
-                                 PyObject *kwds) {
-  float x = 0.0f;
-  float y = 0.0f;
-  float z = 0.0f;
-  float w = 0.0f;
-  static char *const kwlist[] = {"rot", NULL};
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "(ffff)", kwlist, &x, &y, &z,
-                                   &w)) {
-    return NULL;
-  }
+PyObject *Character_set_rotation(CharacterObject *self, PyObject *args, PyObject *kwds) {
+    float x                     = 0.0f;
+    float y                     = 0.0f;
+    float z                     = 0.0f;
+    float w                     = 0.0f;
+    static char *const kwlist[] = {"rot", NULL};
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "(ffff)", kwlist, &x, &y, &z, &w)) {
+        return NULL;
+    }
 
-  SHADOW_LOCK(&self->world->shadow_lock);
-  BLOCK_UNTIL_NOT_STEPPING(self->world);
+    SHADOW_LOCK(&self->world->shadow_lock);
+    BLOCK_UNTIL_NOT_STEPPING(self->world);
 
-  // 1. Update Jolt
-  JPH_STACK_ALLOC(JPH_Quat, q);
-  q->x = x;
-  q->y = y;
-  q->z = z;
-  q->w = w;
-  JPH_CharacterVirtual_SetRotation(self->character, q);
+    // 1. Update Jolt
+    JPH_STACK_ALLOC(JPH_Quat, q);
+    q->x = x;
+    q->y = y;
+    q->z = z;
+    q->w = w;
+    JPH_CharacterVirtual_SetRotation(self->character, q);
 
-  // 2. Update Shadow Buffers
-  auto slot = (uint32_t)(self->handle & 0xFFFFFFFF);
-  uint32_t dense_idx = self->world->slot_to_dense[slot];
-  size_t off = (size_t)dense_idx * 4;
+    // 2. Update Shadow Buffers
+    auto slot          = (uint32_t)(self->handle & 0xFFFFFFFF);
+    uint32_t dense_idx = self->world->slot_to_dense[slot];
+    size_t off         = (size_t)dense_idx * 4;
 
-  memcpy(&self->world->rotations[off], q, 16);
-  memcpy(&self->world->prev_rotations[off], q, 16);
+    memcpy(&self->world->rotations[off], q, 16);
+    memcpy(&self->world->prev_rotations[off], q, 16);
 
-  SHADOW_UNLOCK(&self->world->shadow_lock);
-  Py_RETURN_NONE;
+    SHADOW_UNLOCK(&self->world->shadow_lock);
+    Py_RETURN_NONE;
 }
 
-PyObject *Character_is_grounded(CharacterObject *self, PyObject *args) {
-  SHADOW_LOCK(&self->world->shadow_lock);
-  // No need for GUARD_STEPPING here as it's a non-destructive status check,
-  // but holding the lock ensures the character hasn't been deallocated.
-  JPH_GroundState state =
-      JPH_CharacterBase_GetGroundState((JPH_CharacterBase *)self->character);
-  SHADOW_UNLOCK(&self->world->shadow_lock);
+PyObject *Character_is_grounded(CharacterObject *self, PyObject *Py_UNUSED(args)) {
+    SHADOW_LOCK(&self->world->shadow_lock);
+    // No need for GUARD_STEPPING here as it's a non-destructive status check,
+    // but holding the lock ensures the character hasn't been deallocated.
+    JPH_GroundState state = JPH_CharacterBase_GetGroundState((JPH_CharacterBase *)self->character);
+    SHADOW_UNLOCK(&self->world->shadow_lock);
 
-  if (state == JPH_GroundState_OnGround ||
-      state == JPH_GroundState_OnSteepGround) {
-    Py_RETURN_TRUE;
-  }
-  Py_RETURN_FALSE;
+    if (state == JPH_GroundState_OnGround || state == JPH_GroundState_OnSteepGround) {
+        Py_RETURN_TRUE;
+    }
+    Py_RETURN_FALSE;
 }
 
 PyObject *Character_set_strength(CharacterObject *self, PyObject *args) {
-  float strength = 0.0f;
-  if (!PyArg_ParseTuple(args, "f", &strength)) {
-    return NULL;
-  }
+    float strength = 0.0f;
+    if (!PyArg_ParseTuple(args, "f", &strength)) {
+        return NULL;
+    }
 
-  SHADOW_LOCK(&self->world->shadow_lock);
-  BLOCK_UNTIL_NOT_STEPPING(self->world);
-  BLOCK_UNTIL_NOT_QUERYING(self->world);
+    SHADOW_LOCK(&self->world->shadow_lock);
+    BLOCK_UNTIL_NOT_STEPPING(self->world);
+    BLOCK_UNTIL_NOT_QUERYING(self->world);
 
-  // 1. Update Atomic for Jolt worker threads
-  atomic_store_explicit(&self->push_strength, strength, memory_order_relaxed);
+    // 1. Update Atomic for Jolt worker threads
+    atomic_store_explicit(&self->push_strength, strength, memory_order_relaxed);
 
-  // 2. Update Jolt internal state
-  JPH_CharacterVirtual_SetMaxStrength(self->character, strength);
+    // 2. Update Jolt internal state
+    JPH_CharacterVirtual_SetMaxStrength(self->character, strength);
 
-  SHADOW_UNLOCK(&self->world->shadow_lock);
-  Py_RETURN_NONE;
+    SHADOW_UNLOCK(&self->world->shadow_lock);
+    Py_RETURN_NONE;
 }
 
 // Change signature to take PyObject* arg directly
 PyObject *Character_get_render_transform(CharacterObject *self, PyObject *arg) {
-  // --- 1. Fast Argument Parsing ---
-  double alpha_dbl = PyFloat_AsDouble(arg);
-  if (alpha_dbl == -1.0 && PyErr_Occurred()) {
-    return NULL;
-  }
+    // --- 1. Fast Argument Parsing ---
+    double alpha_dbl = PyFloat_AsDouble(arg);
+    if (alpha_dbl == -1.0 && PyErr_Occurred()) {
+        return NULL;
+    }
 
-  // Clamp alpha to [0.0, 1.0]
-  JPH_Real alpha = fmax(0.0, fmin(1.0, (JPH_Real)alpha_dbl));
+    // Clamp alpha to [0.0, 1.0]
+    JPH_Real alpha = fmax(0.0, fmin(1.0, (JPH_Real)alpha_dbl));
 
-  // --- 2. Snapshot State (Locked) ---
-  SHADOW_LOCK(&self->world->shadow_lock);
-  
-  // Consistency Guard: Ensure we aren't reading while the world is stepping/swapping
-  BLOCK_UNTIL_NOT_STEPPING(self->world);
+    // --- 2. Snapshot State (Locked) ---
+    SHADOW_LOCK(&self->world->shadow_lock);
 
-  auto slot = (uint32_t)(self->handle & 0xFFFFFFFF);
-  uint32_t dense = self->world->slot_to_dense[slot];
+    // Consistency Guard: Ensure we aren't reading while the world is stepping/swapping
+    BLOCK_UNTIL_NOT_STEPPING(self->world);
 
-  // Map world buffers using Strides
-  auto *shadow_ppos = (PosStride *)self->world->prev_positions;
-  auto *shadow_prot = (AuxStride *)self->world->prev_rotations;
+    auto slot      = (uint32_t)(self->handle & 0xFFFFFFFF);
+    uint32_t dense = self->world->slot_to_dense[slot];
 
-  // Capture High-Precision "Start" state from the shadow buffer
-  PosStride start_p = shadow_ppos[dense];
-  AuxStride start_r = shadow_prot[dense];
+    // Map world buffers using Strides
+    auto *shadow_ppos = (PosStride *)self->world->prev_positions;
+    auto *shadow_prot = (AuxStride *)self->world->prev_rotations;
 
-  // Capture High-Precision "End" state from Jolt
-  JPH_STACK_ALLOC(JPH_RVec3, end_p);
-  JPH_STACK_ALLOC(JPH_Quat, end_r);
-  JPH_CharacterVirtual_GetPosition(self->character, end_p);
-  JPH_CharacterVirtual_GetRotation(self->character, end_r);
+    // Capture High-Precision "Start" state from the shadow buffer
+    PosStride start_p = shadow_ppos[dense];
+    AuxStride start_r = shadow_prot[dense];
 
-  SHADOW_UNLOCK(&self->world->shadow_lock);
+    // Capture High-Precision "End" state from Jolt
+    JPH_STACK_ALLOC(JPH_RVec3, end_p);
+    JPH_STACK_ALLOC(JPH_Quat, end_r);
+    JPH_CharacterVirtual_GetPosition(self->character, end_p);
+    JPH_CharacterVirtual_GetRotation(self->character, end_r);
 
-  // --- 3. MATH (Unlocked) ---
+    SHADOW_UNLOCK(&self->world->shadow_lock);
 
-  // Position LERP (Performed in DOUBLE to prevent jitter far from origin)
-  JPH_Real px = start_p.x + (end_p->x - start_p.x) * alpha;
-  JPH_Real py = start_p.y + (end_p->y - start_p.y) * alpha;
-  JPH_Real pz = start_p.z + (end_p->z - start_p.z) * alpha;
+    // --- 3. MATH (Unlocked) ---
 
-  // Rotation NLERP (Performed in FLOAT)
-  float p_rx = start_r.x; float p_ry = start_r.y;
-  float p_rz = start_r.z; float p_rw = start_r.w;
+    // Position LERP (Performed in DOUBLE to prevent jitter far from origin)
+    JPH_Real px = start_p.x + (end_p->x - start_p.x) * alpha;
+    JPH_Real py = start_p.y + (end_p->y - start_p.y) * alpha;
+    JPH_Real pz = start_p.z + (end_p->z - start_p.z) * alpha;
 
-  float dot = p_rx * end_r->x + p_ry * end_r->y + p_rz * end_r->z + p_rw * end_r->w;
-  float q2x = end_r->x; float q2y = end_r->y; float q2z = end_r->z; float q2w = end_r->w;
+    // Rotation NLERP (Performed in FLOAT)
+    float p_rx = start_r.x;
+    float p_ry = start_r.y;
+    float p_rz = start_r.z;
+    float p_rw = start_r.w;
 
-  if (dot < 0.0f) {
-    q2x = -q2x; q2y = -q2y; q2z = -q2z; q2w = -q2w;
-  }
+    float dot = p_rx * end_r->x + p_ry * end_r->y + p_rz * end_r->z + p_rw * end_r->w;
+    float q2x = end_r->x;
+    float q2y = end_r->y;
+    float q2z = end_r->z;
+    float q2w = end_r->w;
 
-  float rx = p_rx + (q2x - p_rx) * (float)alpha;
-  float ry = p_ry + (q2y - p_ry) * (float)alpha;
-  float rz = p_rz + (q2z - p_rz) * (float)alpha;
-  float rw = p_rw + (q2w - p_rw) * (float)alpha;
+    if (dot < 0.0f) {
+        q2x = -q2x;
+        q2y = -q2y;
+        q2z = -q2z;
+        q2w = -q2w;
+    }
 
-  float mag_sq = rx * rx + ry * ry + rz * rz + rw * rw;
-  float inv_len = (mag_sq > 1e-9f) ? 1.0f / sqrtf(mag_sq) : 1.0f;
-  rx *= inv_len; ry *= inv_len; rz *= inv_len; rw *= inv_len;
+    float rx = p_rx + (q2x - p_rx) * (float)alpha;
+    float ry = p_ry + (q2y - p_ry) * (float)alpha;
+    float rz = p_rz + (q2z - p_rz) * (float)alpha;
+    float rw = p_rw + (q2w - p_rw) * (float)alpha;
 
-  // --- 4. Return to Python ---
-  // Python floats are doubles, so we pass the high-precision LERP results
-  return Py_BuildValue("(("JPH_REAL_STRING JPH_REAL_STRING JPH_REAL_STRING")(ffff))", px, py, pz, rx, ry, rz, rw);
+    float mag_sq  = rx * rx + ry * ry + rz * rz + rw * rw;
+    float inv_len = (mag_sq > 1e-9f) ? 1.0f / sqrtf(mag_sq) : 1.0f;
+    rx *= inv_len;
+    ry *= inv_len;
+    rz *= inv_len;
+    rw *= inv_len;
+
+    // --- 4. Return to Python ---
+    // Python floats are doubles, so we pass the high-precision LERP results
+    return Py_BuildValue("((" JPH_REAL_STRING JPH_REAL_STRING JPH_REAL_STRING ")(ffff))", px, py,
+                         pz, rx, ry, rz, rw);
 }
 
 // NEW: GC Traverse/Clear for Character
 int Character_traverse(CharacterObject *self, visitproc visit, void *arg) {
-  Py_VISIT(self->world);
-  return 0;
+    Py_VISIT(self->world);
+    return 0;
 }
 int Character_clear(CharacterObject *self) {
-  Py_CLEAR(self->world);
-  return 0;
+    Py_CLEAR(self->world);
+    return 0;
 }
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void Character_dealloc(CharacterObject *self) {
-  PyObject_GC_UnTrack(self);
-  if (!self->world) {goto finalize;}
+    PyObject_GC_UnTrack(self);
+    if (!self->world) {
+        goto finalize;
+    }
 
-  // 1. DRAIN (Wait for world to stop)
-  SHADOW_LOCK(&self->world->shadow_lock);
-  BLOCK_UNTIL_NOT_STEPPING(self->world);
-  BLOCK_UNTIL_NOT_QUERYING(self->world);
-  uint32_t slot = (uint32_t)(self->handle & 0xFFFFFFFF);
-  world_remove_body_slot(self->world, slot);
-  SHADOW_UNLOCK(&self->world->shadow_lock);
+    // 1. DRAIN (Wait for world to stop)
+    SHADOW_LOCK(&self->world->shadow_lock);
+    BLOCK_UNTIL_NOT_STEPPING(self->world);
+    BLOCK_UNTIL_NOT_QUERYING(self->world);
+    uint32_t slot = (uint32_t)(self->handle & 0xFFFFFFFF);
+    world_remove_body_slot(self->world, slot);
+    SHADOW_UNLOCK(&self->world->shadow_lock);
 
-  // 2. JOLT DESTRUCTION (Hard Serialized)
-  NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
-  
-  if (self->world->char_vs_char_manager && self->character) {
-    JPH_CharacterVsCharacterCollisionSimple_RemoveCharacter(
-        self->world->char_vs_char_manager, self->character);
-  }
+    // 2. JOLT DESTRUCTION (Hard Serialized)
+    NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
 
-  if (self->character) {JPH_CharacterBase_Destroy((JPH_CharacterBase *)self->character);}
-  if (self->listener) {JPH_CharacterContactListener_Destroy(self->listener);}
-  if (self->body_filter) {JPH_BodyFilter_Destroy(self->body_filter);}
-  if (self->shape_filter) {JPH_ShapeFilter_Destroy(self->shape_filter);}
-  if (self->bp_filter) {JPH_BroadPhaseLayerFilter_Destroy(self->bp_filter);}
-  if (self->obj_filter) {JPH_ObjectLayerFilter_Destroy(self->obj_filter);}
+    if (self->world->char_vs_char_manager && self->character) {
+        JPH_CharacterVsCharacterCollisionSimple_RemoveCharacter(self->world->char_vs_char_manager,
+                                                                self->character);
+    }
 
-  NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+    if (self->character) {
+        JPH_CharacterBase_Destroy((JPH_CharacterBase *)self->character);
+    }
+    if (self->listener) {
+        JPH_CharacterContactListener_Destroy(self->listener);
+    }
+    if (self->body_filter) {
+        JPH_BodyFilter_Destroy(self->body_filter);
+    }
+    if (self->shape_filter) {
+        JPH_ShapeFilter_Destroy(self->shape_filter);
+    }
+    if (self->bp_filter) {
+        JPH_BroadPhaseLayerFilter_Destroy(self->bp_filter);
+    }
+    if (self->obj_filter) {
+        JPH_ObjectLayerFilter_Destroy(self->obj_filter);
+    }
+
+    NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
 
 finalize:
-  Py_XDECREF(self->world);
-  Py_TYPE(self)->tp_free((PyObject *)self);
+    Py_XDECREF(self->world);
+    Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
 // Helper 1: Jolt-side allocation and Collision Manager linking
@@ -638,164 +655,158 @@ static JPH_CharacterVirtual *
 alloc_j_char(PhysicsWorldObject *self, PositionVector pos,
              CharacterParams params) { // Reduced to 2 conceptual arguments
 
-  // Position parameters are now accessed via pos.px, pos.py, pos.pz
-  // Size parameters are now accessed via params.height, params.radius, etc.
+    // Position parameters are now accessed via pos.px, pos.py, pos.pz
+    // Size parameters are now accessed via params.height, params.radius, etc.
 
-  float half_h = fmaxf((params.height - 2.0f * params.radius) * 0.5f, 0.1f);
-  JPH_CapsuleShapeSettings *ss =
-      JPH_CapsuleShapeSettings_Create(half_h, params.radius);
-  auto *shape = (JPH_Shape *)JPH_CapsuleShapeSettings_CreateShape(ss);
-  JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)ss);
-  if (!shape) {
-    return NULL;
-  }
+    float half_h                 = fmaxf((params.height - 2.0f * params.radius) * 0.5f, 0.1f);
+    JPH_CapsuleShapeSettings *ss = JPH_CapsuleShapeSettings_Create(half_h, params.radius);
+    auto *shape                  = (JPH_Shape *)JPH_CapsuleShapeSettings_CreateShape(ss);
+    JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)ss);
+    if (!shape) {
+        return NULL;
+    }
 
-  JPH_CharacterVirtualSettings settings;
-  JPH_CharacterVirtualSettings_Init(&settings);
-  settings.base.shape = shape;
-  settings.base.maxSlopeAngle = params.max_slope * (JPH_M_PI / 180.0f);
+    JPH_CharacterVirtualSettings settings;
+    JPH_CharacterVirtualSettings_Init(&settings);
+    settings.base.shape         = shape;
+    settings.base.maxSlopeAngle = params.max_slope * (JPH_M_PI / 180.0f);
 
-  JPH_CharacterVirtual *j_char = JPH_CharacterVirtual_Create(
-      &settings, &(JPH_RVec3){(double)pos.px, (double)pos.py, (double)pos.pz},
-      &(JPH_Quat){0, 0, 0, 1}, 1, self->system);
+    JPH_CharacterVirtual *j_char = JPH_CharacterVirtual_Create(
+        &settings, &(JPH_RVec3){(double)pos.px, (double)pos.py, (double)pos.pz},
+        &(JPH_Quat){0, 0, 0, 1}, 1, self->system);
 
-  JPH_Shape_Destroy(shape);
-  if (!j_char) {
-    return NULL;
-  }
+    JPH_Shape_Destroy(shape);
+    if (!j_char) {
+        return NULL;
+    }
 
-  if (self->char_vs_char_manager) {
-    JPH_CharacterVsCharacterCollisionSimple_AddCharacter(
-        self->char_vs_char_manager, j_char);
-    JPH_CharacterVirtual_SetCharacterVsCharacterCollision(
-        j_char, self->char_vs_char_manager);
-  }
-  return j_char;
+    if (self->char_vs_char_manager) {
+        JPH_CharacterVsCharacterCollisionSimple_AddCharacter(self->char_vs_char_manager, j_char);
+        JPH_CharacterVirtual_SetCharacterVsCharacterCollision(j_char, self->char_vs_char_manager);
+    }
+    return j_char;
 }
 
 // Helper 2: Shadow Buffer Registration (Atomic Commit)
 static void register_char(PhysicsWorldObject *self, CharacterObject *obj,
                           JPH_CharacterVirtual *j_char, uint32_t slot) {
-  SHADOW_LOCK(&self->shadow_lock);
+    SHADOW_LOCK(&self->shadow_lock);
 
-  BodyHandle h = make_handle(slot, self->generations[slot]);
-  obj->handle = h;
+    BodyHandle h = make_handle(slot, self->generations[slot]);
+    obj->handle  = h;
 
-  auto dense_idx = (uint32_t)self->count;
-  JPH_BodyID bid = JPH_CharacterVirtual_GetInnerBodyID(j_char);
-  uint32_t j_idx = JPH_ID_TO_INDEX(bid);
+    auto dense_idx = (uint32_t)self->count;
+    JPH_BodyID bid = JPH_CharacterVirtual_GetInnerBodyID(j_char);
+    uint32_t j_idx = JPH_ID_TO_INDEX(bid);
 
-  if (j_idx < self->max_jolt_bodies) {
-    self->id_to_handle_map[j_idx] = h;
-  }
+    if (j_idx < self->max_jolt_bodies) {
+        self->id_to_handle_map[j_idx] = h;
+    }
 
-  self->body_ids[dense_idx] = bid;
-  self->slot_to_dense[slot] = dense_idx;
-  self->dense_to_slot[dense_idx] = slot;
-  self->slot_states[slot] = SLOT_ALIVE;
-  self->user_data[dense_idx] = 0;
-  self->count++;
-  self->view_shape[0] = (Py_ssize_t)self->count;
+    self->body_ids[dense_idx]      = bid;
+    self->slot_to_dense[slot]      = dense_idx;
+    self->dense_to_slot[dense_idx] = slot;
+    self->slot_states[slot]        = SLOT_ALIVE;
+    self->user_data[dense_idx]     = 0;
+    self->count++;
+    self->view_shape[0] = (Py_ssize_t)self->count;
 
-  JPH_BodyInterface_SetUserData(self->body_interface, bid, (uint64_t)h);
-  SHADOW_UNLOCK(&self->shadow_lock);
+    JPH_BodyInterface_SetUserData(self->body_interface, bid, (uint64_t)h);
+    SHADOW_UNLOCK(&self->shadow_lock);
 }
 
 // Helper 3: Filter and Listener serialization (Trampoline Lock)
 static void setup_char_filters(CharacterObject *obj) {
-  NATIVE_MUTEX_LOCK(g_jph_trampoline_lock); // Fix: Use Native
-  JPH_CharacterContactListener_SetProcs(&char_listener_procs);
-  obj->listener = JPH_CharacterContactListener_Create(obj);
-  JPH_BodyFilter_SetProcs(&global_bf_procs);
-  obj->body_filter = JPH_BodyFilter_Create(NULL);
-  JPH_ShapeFilter_SetProcs(&global_sf_procs);
-  obj->shape_filter = JPH_ShapeFilter_Create(NULL);
-  NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+    NATIVE_MUTEX_LOCK(g_jph_trampoline_lock); // Fix: Use Native
+    JPH_CharacterContactListener_SetProcs(&char_listener_procs);
+    obj->listener = JPH_CharacterContactListener_Create(obj);
+    JPH_BodyFilter_SetProcs(&global_bf_procs);
+    obj->body_filter = JPH_BodyFilter_Create(NULL);
+    JPH_ShapeFilter_SetProcs(&global_sf_procs);
+    obj->shape_filter = JPH_ShapeFilter_Create(NULL);
+    NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
 
-  JPH_CharacterVirtual_SetListener(obj->character, obj->listener);
-  obj->bp_filter = JPH_BroadPhaseLayerFilter_Create(NULL);
-  obj->obj_filter = JPH_ObjectLayerFilter_Create(NULL);
+    JPH_CharacterVirtual_SetListener(obj->character, obj->listener);
+    obj->bp_filter  = JPH_BroadPhaseLayerFilter_Create(NULL);
+    obj->obj_filter = JPH_ObjectLayerFilter_Create(NULL);
 }
 
 // Main Orchestrator
-PyObject *PhysicsWorld_create_character(PhysicsWorldObject *self,
-                                        PyObject *args, PyObject *kwds) {
-  JPH_Real px = 0;
-  JPH_Real py = 0;
-  JPH_Real pz = 0;
-  float height = 1.8f;
-  float radius = 0.4f;
-  float step_h = 0.4f;
-  float slope = 45.0f;
-  static char *const kwlist[] = {"pos",         "height",    "radius",
-                           "step_height", "max_slope", NULL};
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "("JPH_REAL_STRING JPH_REAL_STRING JPH_REAL_STRING")|ffff", kwlist, &px, &py,
-                                   &pz, &height, &radius, &step_h, &slope)) {
-    return NULL;
-  }
+PyObject *PhysicsWorld_create_character(PhysicsWorldObject *self, PyObject *args, PyObject *kwds) {
+    JPH_Real px                 = 0;
+    JPH_Real py                 = 0;
+    JPH_Real pz                 = 0;
+    float height                = 1.8f;
+    float radius                = 0.4f;
+    float step_h                = 0.4f;
+    float slope                 = 45.0f;
+    static char *const kwlist[] = {"pos", "height", "radius", "step_height", "max_slope", NULL};
+    if (!PyArg_ParseTupleAndKeywords(args, kwds,
+                                     "(" JPH_REAL_STRING JPH_REAL_STRING JPH_REAL_STRING ")|ffff",
+                                     kwlist, &px, &py, &pz, &height, &radius, &step_h, &slope)) {
+        return NULL;
+    }
 
-  SHADOW_LOCK(&self->shadow_lock);
-  BLOCK_UNTIL_NOT_STEPPING(self);
-  BLOCK_UNTIL_NOT_QUERYING(self);
-  if (self->free_count == 0 &&
-      PhysicsWorld_resize(self, self->capacity * 2) < 0) {
+    SHADOW_LOCK(&self->shadow_lock);
+    BLOCK_UNTIL_NOT_STEPPING(self);
+    BLOCK_UNTIL_NOT_QUERYING(self);
+    if (self->free_count == 0 && PhysicsWorld_resize(self, self->capacity * 2) < 0) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        return NULL;
+    }
+    uint32_t char_slot           = self->free_slots[--self->free_count];
+    self->slot_states[char_slot] = SLOT_PENDING_CREATE;
     SHADOW_UNLOCK(&self->shadow_lock);
-    return NULL;
-  }
-  uint32_t char_slot = self->free_slots[--self->free_count];
-  self->slot_states[char_slot] = SLOT_PENDING_CREATE;
-  SHADOW_UNLOCK(&self->shadow_lock);
 
-  // 2. Resource Allocation
-  PositionVector pos_vec = {px, py, pz};
-  CharacterParams char_params = {height, radius, slope};
+    // 2. Resource Allocation
+    PositionVector pos_vec      = {px, py, pz};
+    CharacterParams char_params = {height, radius, slope};
 
-  JPH_CharacterVirtual *j_char = alloc_j_char(self, pos_vec, char_params);
-  if (!j_char) {
-    goto fail_jolt;
-  }
+    JPH_CharacterVirtual *j_char = alloc_j_char(self, pos_vec, char_params);
+    if (!j_char) {
+        goto fail_jolt;
+    }
 
-  auto *obj = (CharacterObject *)PyObject_GC_New(
-      CharacterObject,
-      (PyTypeObject *)get_culverin_state(PyType_GetModule(Py_TYPE(self)))
-          ->CharacterType);
-  if (!obj) {
-    goto fail_py;
-  }
+    auto *obj = (CharacterObject *)PyObject_GC_New(
+        CharacterObject,
+        (PyTypeObject *)get_culverin_state(PyType_GetModule(Py_TYPE(self)))->CharacterType);
+    if (!obj) {
+        goto fail_py;
+    }
 
-  // 3. Initialization
-  obj->world = (PhysicsWorldObject *)Py_NewRef(self);
-  obj->character = j_char;
-  atomic_store(&obj->push_strength, 200.0f);
-  atomic_store(&obj->last_vx, 0.0f);
-  atomic_store(&obj->last_vy, 0.0f);
-  atomic_store(&obj->last_vz, 0.0f);
-  obj->prev_px = px;
-  obj->prev_py = py;
-  obj->prev_pz = pz;
-  obj->prev_rx = 0.0f;
-  obj->prev_ry = 0.0f;
-  obj->prev_rz = 0.0f;
-  obj->prev_rw = 1.0f;
-  obj->listener = NULL;
-  obj->body_filter = NULL;
-  obj->shape_filter = NULL;
-  obj->bp_filter = NULL;
-  obj->obj_filter = NULL;
+    // 3. Initialization
+    obj->world     = (PhysicsWorldObject *)Py_NewRef(self);
+    obj->character = j_char;
+    atomic_store(&obj->push_strength, 200.0f);
+    atomic_store(&obj->last_vx, 0.0f);
+    atomic_store(&obj->last_vy, 0.0f);
+    atomic_store(&obj->last_vz, 0.0f);
+    obj->prev_px      = px;
+    obj->prev_py      = py;
+    obj->prev_pz      = pz;
+    obj->prev_rx      = 0.0f;
+    obj->prev_ry      = 0.0f;
+    obj->prev_rz      = 0.0f;
+    obj->prev_rw      = 1.0f;
+    obj->listener     = NULL;
+    obj->body_filter  = NULL;
+    obj->shape_filter = NULL;
+    obj->bp_filter    = NULL;
+    obj->obj_filter   = NULL;
 
-  // 4. Registration & Filter Setup
-  register_char(self, obj, j_char, char_slot);
-  setup_char_filters(obj);
+    // 4. Registration & Filter Setup
+    register_char(self, obj, j_char, char_slot);
+    setup_char_filters(obj);
 
-  PyObject_GC_Track((PyObject *)obj);
-  return (PyObject *)obj;
+    PyObject_GC_Track((PyObject *)obj);
+    return (PyObject *)obj;
 
 fail_py:
-  JPH_CharacterBase_Destroy((JPH_CharacterBase *)j_char);
+    JPH_CharacterBase_Destroy((JPH_CharacterBase *)j_char);
 fail_jolt:
-  SHADOW_LOCK(&self->shadow_lock);
-  self->slot_states[char_slot] = SLOT_EMPTY;
-  self->free_slots[self->free_count++] = char_slot;
-  SHADOW_UNLOCK(&self->shadow_lock);
-  return NULL;
+    SHADOW_LOCK(&self->shadow_lock);
+    self->slot_states[char_slot]         = SLOT_EMPTY;
+    self->free_slots[self->free_count++] = char_slot;
+    SHADOW_UNLOCK(&self->shadow_lock);
+    return NULL;
 }

@@ -98,7 +98,7 @@ static void process_contact_manifold(PhysicsWorldObject *self,
 static void JPH_API_CALL on_contact_added(void *userData, const JPH_Body *body1,
                                           const JPH_Body *body2,
                                           const JPH_ContactManifold *manifold,
-                                          JPH_ContactSettings *settings) {
+                                          JPH_ContactSettings *Py_UNUSED(settings)) {
   process_contact_manifold((PhysicsWorldObject *)userData, body1, body2,
                            manifold, EVENT_ADDED);
 }
@@ -106,7 +106,7 @@ static void JPH_API_CALL on_contact_added(void *userData, const JPH_Body *body1,
 // 2. PERSISTED (Uses same helper, different type ID)
 static void JPH_API_CALL on_contact_persisted(
     void *userData, const JPH_Body *body1, const JPH_Body *body2,
-    const JPH_ContactManifold *manifold, JPH_ContactSettings *settings) {
+    const JPH_ContactManifold *manifold, JPH_ContactSettings *Py_UNUSED(settings)) {
   process_contact_manifold((PhysicsWorldObject *)userData, body1, body2,
                            manifold, EVENT_PERSISTED);
 }
@@ -154,7 +154,7 @@ static void JPH_API_CALL on_contact_removed(void *userData,
 
 static JPH_ValidateResult JPH_API_CALL on_contact_validate(
     void *userData, const JPH_Body *body1, const JPH_Body *body2,
-    const JPH_RVec3 *baseOffset, const JPH_CollideShapeResult *result) {
+    const JPH_RVec3 *Py_UNUSED(baseOffset), const JPH_CollideShapeResult *Py_UNUSED(result)) {
   PhysicsWorldObject *self = (PhysicsWorldObject *)userData;
 
   // 1. Extract Slots
@@ -189,7 +189,7 @@ const JPH_ContactListener_Procs contact_procs = {
 
 // Fixed get_contact_events to be safer with locking
 PyObject *PhysicsWorld_get_contact_events(PhysicsWorldObject *self,
-                                          PyObject *args) {
+                                          PyObject *Py_UNUSED(args)) {
   // 1. Enter the lock to check the state machine
   SHADOW_LOCK(&self->shadow_lock);
 
@@ -255,7 +255,7 @@ PyObject *PhysicsWorld_get_contact_events(PhysicsWorldObject *self,
 }
 
 PyObject *PhysicsWorld_get_contact_events_ex(PhysicsWorldObject *self,
-                                             PyObject *args) {
+                                             PyObject *Py_UNUSED(args)) {
   // 1. Acquire Lock & Copy Data
   SHADOW_LOCK(&self->shadow_lock);
   BLOCK_UNTIL_NOT_STEPPING(self);
@@ -389,7 +389,7 @@ PyObject *PhysicsWorld_get_contact_events_ex(PhysicsWorldObject *self,
 // float32 nx, ny, nz
 // float32 impulse
 PyObject *PhysicsWorld_get_contact_events_raw(PhysicsWorldObject *self,
-                                              PyObject *args) {
+                                              PyObject *Py_UNUSED(args)) {
   // 1. Phase Guard
   SHADOW_LOCK(&self->shadow_lock);
   BLOCK_UNTIL_NOT_STEPPING(self);

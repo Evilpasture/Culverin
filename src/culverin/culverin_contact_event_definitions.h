@@ -15,6 +15,8 @@ typedef struct {
     #endif
 } ContactEventSlim; // Just a 64-byte data block now
 
+static_assert(sizeof(ContactEventSlim) == 64);
+
 // 2. The Tail (Already 64 bytes)
 typedef struct {
     // --- 8-byte Alignment Block (Offset 0 to 16) ---

@@ -59,7 +59,7 @@ static void JPH_API_CALL
 OnDebugDrawTriangle(void *userData, const JPH_RVec3 *v1, const JPH_RVec3 *v2,
                     // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
                     const JPH_RVec3 *v3, JPH_Color color,
-                    JPH_DebugRenderer_CastShadow castShadow) {
+                    JPH_DebugRenderer_CastShadow Py_UNUSED(castShadow)) {
   PhysicsWorldObject *self = (PhysicsWorldObject *)userData;
   debug_buffer_ensure(&self->debug_triangles, 3);
   debug_buffer_push(

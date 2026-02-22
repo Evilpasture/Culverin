@@ -1,5 +1,6 @@
 #include "culverin_constraint.h"
 #include "culverin_constraint_factory.h"
+#include "culverin_arg_indices.h"
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 PyObject *PhysicsWorld_create_constraint(PhysicsWorldObject *self,

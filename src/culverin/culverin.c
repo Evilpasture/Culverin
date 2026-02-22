@@ -11,6 +11,7 @@
 #include "culverin_ragdoll.h"
 #include "culverin_shadow_sync.h"
 #include "culverin_vehicle.h"
+#include "culverin_arg_indices.h"
 
 // Global lock for JPH callbacks
 NativeMutex
@@ -2078,7 +2079,7 @@ static PyObject *PhysicsWorld_create_bodies_batch(PhysicsWorldObject *self,
     }
 
     uint32_t slot = self->free_slots[--self->free_count];
-    uint32_t dense = (uint32_t)self->count++;
+    auto dense = (uint32_t)self->count++;
     BodyHandle handle = make_handle(slot, self->generations[slot]);
     JPH_BodyCreationSettings_SetUserData(settings_buf[i], (uint64_t)handle);
 
@@ -3559,7 +3560,7 @@ static PyObject *PhysicsWorld_create_heightfield(PhysicsWorldObject *self,
   }
 
   uint32_t slot = self->free_slots[--self->free_count];
-  uint32_t dense = (uint32_t)self->count++;
+  auto dense = (uint32_t)self->count++;
   BodyHandle handle = make_handle(slot, self->generations[slot]);
 
   // Update Shadow Buffers

@@ -124,7 +124,7 @@ _Static_assert(offsetof(PhysicsCommand, transform.px) == 8,
                "transform.px must start at offset 8");
 _Static_assert(offsetof(PhysicsCommand, create.settings) == 8,
                "create.settings must start at offset 8");
-_Static_assert(_Alignof(PhysicsCommand) == 8,
+_Static_assert(alignof(PhysicsCommand) == 8,
                "PhysicsCommand must be 8-byte aligned");
 _Static_assert(offsetof(PhysicsCommand, _cache_line_padding) == 0,
                "Padding must be in union");
