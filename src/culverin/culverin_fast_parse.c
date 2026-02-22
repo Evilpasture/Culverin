@@ -77,6 +77,7 @@ void fp_init_impl(FastParser *fp, FastArgSpec *specs, size_t count) {
  * Handle standard (PyObject *args, PyObject *kwargs) calling convention.
  * Updated to use O(1) hashing for keywords.
  */
+CULV_NODISCARD
 bool fp_parse_legacy(PyObject *args, PyObject *kwargs, const FastParser *fp, void **targets,
                      CULV_MAYBE_UNUSED size_t dummy) {
     uint64_t provided_mask   = 0;
