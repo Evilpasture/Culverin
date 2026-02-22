@@ -11,22 +11,22 @@
  * 2. Static Asserts that the count matches the GroupName_COUNT enum.
  * 3. Builds the spec array and initializes the parser.
  */
-#define INIT_PARSER(ParserName, GroupName, Schema)                             \
-  do {                                                                         \
-    /* Safety Check: Ensure Schema length matches Group Count */               \
-    static_assert((0 Schema(COUNT_X)) == GroupName##_COUNT,                    \
-                  "FastParse: Schema length mismatch for " #ParserName);       \
-                                                                               \
-    FastArgSpec temp[] = {Schema(GEN_SPEC)};                                   \
-    memcpy(ParserName##Specs, temp, sizeof(temp));                             \
-    fp_init_impl(&ParserName##Parser, ParserName##Specs, GroupName##_COUNT);   \
-  } while (0)
+#define INIT_PARSER(ParserName, GroupName, Schema)                                                 \
+    do {                                                                                           \
+        /* Safety Check: Ensure Schema length matches Group Count */                               \
+        static_assert((0 Schema(COUNT_X)) == GroupName##_COUNT,                                    \
+                      "FastParse: Schema length mismatch for " #ParserName);                       \
+                                                                                                   \
+        FastArgSpec temp[] = {Schema(GEN_SPEC)};                                                   \
+        memcpy(ParserName##Specs, temp, sizeof(temp));                                             \
+        fp_init_impl(&ParserName##Parser, ParserName##Specs, GroupName##_COUNT);                   \
+    } while (0)
 
 // --- 2. ALLOCATIONS ---
 
-#define ALLOC_PARSER(ParserName, GroupName)                                    \
-  static FastParser ParserName##Parser;                                               \
-  static FastArgSpec ParserName##Specs[GroupName##_COUNT];
+#define ALLOC_PARSER(ParserName, GroupName)                                                        \
+    static FastParser ParserName##Parser;                                                          \
+    static FastArgSpec ParserName##Specs[GroupName##_COUNT];
 
 // Signature-grouped allocations
 ALLOC_PARSER(Body, Body)
@@ -74,54 +74,52 @@ ALLOC_PARSER(CharMove, CharMove)
 
 // --- 3. INITIALIZATION ---
 
-#define GEN_SPEC(ID, NAME, TYPE, REQ)                                          \
-  [ID] = {.name = (NAME),                                                      \
-          .required = (bool)(REQ),                                             \
-          .convert = FP_GET_CONVERTER((TYPE){0})},
+#define GEN_SPEC(ID, NAME, TYPE, REQ)                                                              \
+    [ID] = {.name = (NAME), .required = (bool)(REQ), .convert = FP_GET_CONVERTER((TYPE){0})},
 
 void culverin_init_all_parsers(void) {
-  INIT_PARSER(Body, Body, SCHEMA_BODY);
-  INIT_PARSER(Impulse, Vec3, SCHEMA_VEC3);
-  INIT_PARSER(AngImpulse, Vec3, SCHEMA_VEC3);
-  INIT_PARSER(Force, Vec3, SCHEMA_VEC3);
-  INIT_PARSER(Torque, Vec3, SCHEMA_VEC3);
-  INIT_PARSER(SetLinVel, Vec3, SCHEMA_VEC3);
-  INIT_PARSER(SetAngVel, Vec3, SCHEMA_VEC3);
-  INIT_PARSER(ImpulseAt, ImpAt, SCHEMA_IMPULSE_AT);
-  INIT_PARSER(HOnly, HOnly, SCHEMA_HANDLE_ONLY);
-  INIT_PARSER(Destroy, HOnly, SCHEMA_HANDLE_ONLY);
-  INIT_PARSER(Activate, HOnly, SCHEMA_HANDLE_ONLY);
-  INIT_PARSER(Gravity, XYZ, SCHEMA_XYZ);
-  INIT_PARSER(SetPos, SetPos, SCHEMA_SET_POS);
-  INIT_PARSER(Buoy, Buoy, SCHEMA_BUOYANCY);
-  INIT_PARSER(BatchBuoy, BatchBuoy, SCHEMA_BATCH_BUOYANCY);
-  INIT_PARSER(Mesh, Mesh, SCHEMA_MESH);
-  INIT_PARSER(SetTrns, SetTrns, SCHEMA_SET_TRNS);
-  INIT_PARSER(CCD, CCD, SCHEMA_CCD);
-  INIT_PARSER(BatchCreate, BatchCreate, SCHEMA_BATCH_CREATE);
-  INIT_PARSER(BatchDestroy, BatchDestroy, SCHEMA_BATCH_DESTROY);
-  INIT_PARSER(SetRot, SetRot, SCHEMA_SET_ROT);
+    INIT_PARSER(Body, Body, SCHEMA_BODY);
+    INIT_PARSER(Impulse, Vec3, SCHEMA_VEC3);
+    INIT_PARSER(AngImpulse, Vec3, SCHEMA_VEC3);
+    INIT_PARSER(Force, Vec3, SCHEMA_VEC3);
+    INIT_PARSER(Torque, Vec3, SCHEMA_VEC3);
+    INIT_PARSER(SetLinVel, Vec3, SCHEMA_VEC3);
+    INIT_PARSER(SetAngVel, Vec3, SCHEMA_VEC3);
+    INIT_PARSER(ImpulseAt, ImpAt, SCHEMA_IMPULSE_AT);
+    INIT_PARSER(HOnly, HOnly, SCHEMA_HANDLE_ONLY);
+    INIT_PARSER(Destroy, HOnly, SCHEMA_HANDLE_ONLY);
+    INIT_PARSER(Activate, HOnly, SCHEMA_HANDLE_ONLY);
+    INIT_PARSER(Gravity, XYZ, SCHEMA_XYZ);
+    INIT_PARSER(SetPos, SetPos, SCHEMA_SET_POS);
+    INIT_PARSER(Buoy, Buoy, SCHEMA_BUOYANCY);
+    INIT_PARSER(BatchBuoy, BatchBuoy, SCHEMA_BATCH_BUOYANCY);
+    INIT_PARSER(Mesh, Mesh, SCHEMA_MESH);
+    INIT_PARSER(SetTrns, SetTrns, SCHEMA_SET_TRNS);
+    INIT_PARSER(CCD, CCD, SCHEMA_CCD);
+    INIT_PARSER(BatchCreate, BatchCreate, SCHEMA_BATCH_CREATE);
+    INIT_PARSER(BatchDestroy, BatchDestroy, SCHEMA_BATCH_DESTROY);
+    INIT_PARSER(SetRot, SetRot, SCHEMA_SET_ROT);
 
-  // Structural Overlays (Sharing HC index group)
-  INIT_PARSER(ConvexHull, HC, SCHEMA_HC_HULL);
-  INIT_PARSER(Compound, HC, SCHEMA_HC_COMP);
-  INIT_PARSER(Render, Render, SCHEMA_RENDER);
-  INIT_PARSER(Raycast, Raycast, SCHEMA_RAYCAST);
-  INIT_PARSER(RayBatch, RayBatch, SCHEMA_RAYCAST_BATCH);
-  INIT_PARSER(Shapecast, Shapecast, SCHEMA_SHAPECAST);
-  INIT_PARSER(OverlapSphere, OverlapSphere, SCHEMA_OVERLAP_SPHERE);
-  INIT_PARSER(OverlapAABB, OverlapAABB, SCHEMA_OVERLAP_AABB);
-  INIT_PARSER(SetUserData, SetUserData, SCHEMA_SET_USER_DATA);
-  INIT_PARSER(GetUserData, HOnly, SCHEMA_HANDLE_ONLY);
-  INIT_PARSER(GetMotion, HOnly, SCHEMA_HANDLE_ONLY);
-  INIT_PARSER(SetMotion, SetMotion, SCHEMA_SET_MOTION);
-  INIT_PARSER(ColFilter, ColFilter, SCHEMA_COL_FILTER);
-  INIT_PARSER(RegMat, RegMat, SCHEMA_REG_MAT);
-  INIT_PARSER(SetConstrTarget, SetConstr, SCHEMA_SET_CONSTR_TARGET);
-  INIT_PARSER(Heightfield, Heightfield, SCHEMA_HEIGHTFIELD);
-  INIT_PARSER(DebugData, DebugData, SCHEMA_DEBUG_DATA);
-  INIT_PARSER(CreateConstr, CreateConstr, SCHEMA_CREATE_CONSTR);
-  INIT_PARSER(DestroyConstr, HOnly, SCHEMA_HANDLE_ONLY);
-  INIT_PARSER(Step, Step, SCHEMA_STEP);
-  INIT_PARSER(CharMove, CharMove, SCHEMA_CHAR_MOVE);
+    // Structural Overlays (Sharing HC index group)
+    INIT_PARSER(ConvexHull, HC, SCHEMA_HC_HULL);
+    INIT_PARSER(Compound, HC, SCHEMA_HC_COMP);
+    INIT_PARSER(Render, Render, SCHEMA_RENDER);
+    INIT_PARSER(Raycast, Raycast, SCHEMA_RAYCAST);
+    INIT_PARSER(RayBatch, RayBatch, SCHEMA_RAYCAST_BATCH);
+    INIT_PARSER(Shapecast, Shapecast, SCHEMA_SHAPECAST);
+    INIT_PARSER(OverlapSphere, OverlapSphere, SCHEMA_OVERLAP_SPHERE);
+    INIT_PARSER(OverlapAABB, OverlapAABB, SCHEMA_OVERLAP_AABB);
+    INIT_PARSER(SetUserData, SetUserData, SCHEMA_SET_USER_DATA);
+    INIT_PARSER(GetUserData, HOnly, SCHEMA_HANDLE_ONLY);
+    INIT_PARSER(GetMotion, HOnly, SCHEMA_HANDLE_ONLY);
+    INIT_PARSER(SetMotion, SetMotion, SCHEMA_SET_MOTION);
+    INIT_PARSER(ColFilter, ColFilter, SCHEMA_COL_FILTER);
+    INIT_PARSER(RegMat, RegMat, SCHEMA_REG_MAT);
+    INIT_PARSER(SetConstrTarget, SetConstr, SCHEMA_SET_CONSTR_TARGET);
+    INIT_PARSER(Heightfield, Heightfield, SCHEMA_HEIGHTFIELD);
+    INIT_PARSER(DebugData, DebugData, SCHEMA_DEBUG_DATA);
+    INIT_PARSER(CreateConstr, CreateConstr, SCHEMA_CREATE_CONSTR);
+    INIT_PARSER(DestroyConstr, HOnly, SCHEMA_HANDLE_ONLY);
+    INIT_PARSER(Step, Step, SCHEMA_STEP);
+    INIT_PARSER(CharMove, CharMove, SCHEMA_CHAR_MOVE);
 }
