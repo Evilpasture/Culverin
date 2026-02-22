@@ -75,7 +75,7 @@ void fp_init_impl(FastParser *fp, FastArgSpec *specs, size_t count) {
 /**
  * fp_parse_legacy
  * Handle standard (PyObject *args, PyObject *kwargs) calling convention.
- * Not intended for hot loops, so we keep it out of the header.
+ * Updated to use O(1) hashing for keywords.
  */
 bool fp_parse_legacy(PyObject *args, PyObject *kwargs, const FastParser *fp, void **targets,
                      CULV_MAYBE_UNUSED size_t dummy) {
@@ -83,6 +83,7 @@ bool fp_parse_legacy(PyObject *args, PyObject *kwargs, const FastParser *fp, voi
     const size_t count       = fp->count;
     const FastArgSpec *specs = fp->specs;
 
+    // 1. Positional Logic
     if (args) {
         Py_ssize_t nargs = PyTuple_GET_SIZE(args);
         if (nargs > (Py_ssize_t)count) {
@@ -95,26 +96,44 @@ bool fp_parse_legacy(PyObject *args, PyObject *kwargs, const FastParser *fp, voi
         }
     }
 
+    // 2. Keywords Logic (O(1) Optimized)
     if (kwargs) {
         PyObject *key;
         PyObject *val;
         Py_ssize_t pos = 0;
         while (PyDict_Next(kwargs, &pos, &key, &val)) {
-            int idx = -1;
-            // Search for key
-            for (size_t i = 0; i < count; ++i) {
-                if (key == specs[i].interned || PyUnicode_Compare(key, specs[i].interned) == 0) {
-                    idx = (int)i;
-                    break;
+            size_t idx = FP_EMPTY_SLOT;
+
+            if (fp->lookup_table) {
+                // Hash table lookup path
+                size_t h = fp_hash_ptr(key, fp->table_mask);
+                while (fp->lookup_table[h] != FP_EMPTY_SLOT) {
+                    size_t candidate = fp->lookup_table[h];
+                    if (specs[candidate].interned == key ||
+                        PyUnicode_Compare(key, specs[candidate].interned) == 0) {
+                        idx = candidate;
+                        break;
+                    }
+                    h = (h + 1) & fp->table_mask;
+                }
+            } else {
+                // Linear search fallback path
+                for (size_t i = 0; i < count; ++i) {
+                    if (key == specs[i].interned ||
+                        PyUnicode_Compare(key, specs[i].interned) == 0) {
+                        idx = i;
+                        break;
+                    }
                 }
             }
 
-            if (idx == -1) {
+            if (idx == FP_EMPTY_SLOT) {
                 PyErr_Format(PyExc_TypeError, "unexpected keyword argument '%U'", key);
                 return false;
             }
-            if (provided_mask & (1ULL << idx)) {
-                return fp_report_multiple(fp, (size_t)idx);
+
+            if (UNLIKELY(provided_mask & (1ULL << idx))) {
+                return fp_report_multiple(fp, idx);
             }
 
             provided_mask |= (1ULL << idx);
@@ -122,8 +141,11 @@ bool fp_parse_legacy(PyObject *args, PyObject *kwargs, const FastParser *fp, voi
         }
     }
 
+    // 3. Final Required Check
     if (UNLIKELY((provided_mask & fp->required_mask) != fp->required_mask)) {
         return fp_report_missing(fp, provided_mask);
     }
+
     return (PyErr_Occurred() == NULL);
 }
+
