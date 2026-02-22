@@ -70,6 +70,7 @@ ALLOC_PARSER(DebugData, DebugData)
 ALLOC_PARSER(CreateConstr, CreateConstr)
 ALLOC_PARSER(DestroyConstr, HOnly)
 ALLOC_PARSER(Step, Step)
+ALLOC_PARSER(CharMove, CharMove)
 
 // --- 3. INITIALIZATION ---
 
@@ -122,4 +123,5 @@ void culverin_init_all_parsers(void) {
   INIT_PARSER(CreateConstr, CreateConstr, SCHEMA_CREATE_CONSTR);
   INIT_PARSER(DestroyConstr, HOnly, SCHEMA_HANDLE_ONLY);
   INIT_PARSER(Step, Step, SCHEMA_STEP);
+  INIT_PARSER(CharMove, CharMove, SCHEMA_CHAR_MOVE);
 }

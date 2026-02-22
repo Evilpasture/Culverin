@@ -246,6 +246,11 @@
 
 #define SCHEMA_STEP(X) X(IDX_STEP_DT, "dt", float, 0) // Optional (0)
 
+#define SCHEMA_CHAR_MOVE(X) \
+    X(IDX_CM_VEL, "velocity", PyObject*, 1) \
+    X(IDX_CM_DT,  "dt",       float,     1)
+
+
 /** --- THE GENERATOR ENGINE --- **/
 
 #define GEN_ENUM(ID, NAME, TYPE, REQ) ID,
@@ -290,6 +295,7 @@ DEFINE_INDEX_GROUP(Heightfield, SCHEMA_HEIGHTFIELD)
 DEFINE_INDEX_GROUP(DebugData, SCHEMA_DEBUG_DATA)
 DEFINE_INDEX_GROUP(CreateConstr, SCHEMA_CREATE_CONSTR)
 DEFINE_INDEX_GROUP(Step, SCHEMA_STEP)
+DEFINE_INDEX_GROUP(CharMove, SCHEMA_CHAR_MOVE)
 
 // B. Declare the Parsers
 DECLARE_PARSER(Body, Body)
@@ -333,5 +339,6 @@ DECLARE_PARSER(DebugData, DebugData)
 DECLARE_PARSER(CreateConstr, CreateConstr)
 DECLARE_PARSER(DestroyConstr, HOnly)
 DECLARE_PARSER(Step, Step)
+DECLARE_PARSER(CharMove, CharMove)
 
 void culverin_init_all_parsers(void);

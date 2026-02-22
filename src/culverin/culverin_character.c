@@ -2,6 +2,8 @@
 #include "culverin.h"
 #include "culverin_filters.h"
 #include "culverin_physics_world_internal.h"
+#include "culverin_arg_indices.h"
+#include "culverin_parsers.h"
 
 // Character helpers
 // Callback: Can the character collide with this object?
@@ -214,7 +216,8 @@ static void JPH_API_CALL char_on_contact_persisted(void *userData,
 
 static void JPH_API_CALL char_on_contact_removed(void *userData,
                                                  const JPH_CharacterVirtual *Py_UNUSED(character),
-                                                 JPH_BodyID bodyID2, JPH_SubShapeID Py_UNUSED(subShapeID2)) {
+                                                 JPH_BodyID bodyID2,
+                                                 JPH_SubShapeID Py_UNUSED(subShapeID2)) {
     auto *self = (CharacterObject *)userData;
     if (!self || !self->world) {
         return;
@@ -261,10 +264,9 @@ static void JPH_API_CALL char_on_character_contact_persisted(
     report_char_vs_char(self, otherCharacter, contactNormal, contactPosition, EVENT_PERSISTED);
 }
 
-static void JPH_API_CALL char_on_character_contact_removed(void *userData,
-                                                           const JPH_CharacterVirtual *Py_UNUSED(character),
-                                                           const JPH_CharacterID otherCharacterID,
-                                                           JPH_SubShapeID Py_UNUSED(subShapeID2)) {
+static void JPH_API_CALL char_on_character_contact_removed(
+    void *userData, const JPH_CharacterVirtual *Py_UNUSED(character),
+    const JPH_CharacterID otherCharacterID, JPH_SubShapeID Py_UNUSED(subShapeID2)) {
     auto *self  = (CharacterObject *)userData;
     auto *world = self->world;
 
@@ -308,18 +310,31 @@ const JPH_CharacterContactListener_Procs char_listener_procs = {
     .OnContactSolve              = NULL                                 // Advanced, keep NULL
 };
 
-PyObject *Character_move(CharacterObject *self, PyObject *args, PyObject *kwds) {
-    float vx              = 0;
-    float vy              = 0;
-    float vz              = 0;
-    float dt              = 0;
-    static char *kwlist[] = {"velocity", "dt", NULL};
+PyObject *Character_move(CharacterObject *self, PyObject *const *args, size_t nargsf,
+                         PyObject *kwnames) {
+    // 1. FAST PARSE (Zero-Allocation)
+    PyObject *o_velocity = NULL;
+    float dt;
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "(fff)f", kwlist, &vx, &vy, &vz, &dt)) {
+    void *targets[CharMove_COUNT];
+    targets[IDX_CM_VEL] = (void *)&o_velocity;
+    targets[IDX_CM_DT]  = (void *)&dt;
+
+    auto nargs = PyVectorcall_NARGS(nargsf);
+    if (!FastParse_Unified(args, nargs, kwnames, &CharMoveParser, targets)) {
         return NULL;
     }
 
-    // 1. PRE-MOVE GUARD (Shadow Lock)
+    // 2. VECTOR EXTRACTION (Outside Lock)
+    float vx;
+    float vy;
+    float vz;
+    if (!parse_vec3_direct(o_velocity, &vx, &vy, &vz)) {
+        return NULL; // TypeError set by parser helper
+    }
+
+    // 3. PRE-MOVE GUARD (Shadow Lock)
+    // Characters modify the world's dense arrays immediately, so we need full guards
     SHADOW_LOCK(&self->world->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self->world);
     BLOCK_IF_STEP_PENDING(self->world);
@@ -337,18 +352,17 @@ PyObject *Character_move(CharacterObject *self, PyObject *args, PyObject *kwds) 
     auto *shadow_rot  = (AuxStride *)self->world->rotations;
     auto *shadow_prot = (AuxStride *)self->world->prev_rotations;
 
-    // Sync "Previous" state for interpolation (Snapshot before movement)
+    // Snapshot before movement for interpolation
     shadow_ppos[dense] = shadow_pos[dense];
     shadow_prot[dense] = shadow_rot[dense];
 
-    // Store internal float-based previous position for Character-specific logic
     self->prev_px = (float)shadow_pos[dense].x;
     self->prev_py = (float)shadow_pos[dense].y;
     self->prev_pz = (float)shadow_pos[dense].z;
 
     SHADOW_UNLOCK(&self->world->shadow_lock);
 
-    // --- 2. JOLT EXECUTION ---
+    // 4. JOLT EXECUTION (No GIL)
     JPH_Vec3 v = {vx, vy, vz};
     JPH_CharacterVirtual_SetLinearVelocity(self->character, &v);
 
@@ -360,17 +374,13 @@ PyObject *Character_move(CharacterObject *self, PyObject *args, PyObject *kwds) 
     update_settings->walkStairsStepForwardTest        = 0.15f;
     update_settings->walkStairsCosAngleForwardContact = 0.996f;
 
-    // LOCK NATIVE -> RELEASE GIL -> DO PHYSICS
     NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
-    Py_BEGIN_ALLOW_THREADS
-
-        JPH_CharacterVirtual_ExtendedUpdate(self->character, dt, update_settings, 1,
-                                            self->world->system, self->body_filter,
-                                            self->shape_filter);
-
+    Py_BEGIN_ALLOW_THREADS JPH_CharacterVirtual_ExtendedUpdate(
+        self->character, dt, update_settings, 1, self->world->system, self->body_filter,
+        self->shape_filter);
     Py_END_ALLOW_THREADS NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
 
-    // --- 3. POST-MOVE SYNC ---
+    // 5. POST-MOVE SYNC
     SHADOW_LOCK(&self->world->shadow_lock);
 
     JPH_STACK_ALLOC(JPH_RVec3, current_pos);
@@ -378,7 +388,6 @@ PyObject *Character_move(CharacterObject *self, PyObject *args, PyObject *kwds) 
     JPH_CharacterVirtual_GetPosition(self->character, current_pos);
     JPH_CharacterVirtual_GetRotation(self->character, current_rot);
 
-    // Update World Shadow using Structs (compiler handles stride 3 vs 4)
     shadow_pos[dense] = (PosStride){current_pos->x, current_pos->y, current_pos->z};
     shadow_rot[dense] = (AuxStride){current_rot->x, current_rot->y, current_rot->z, current_rot->w};
 
@@ -432,7 +441,7 @@ PyObject *Character_set_position(CharacterObject *self, PyObject *args, PyObject
     // 2. Update Shadow Buffers (Reset Interpolation to prevent streaks)
     auto slot          = (uint32_t)(self->handle & 0xFFFFFFFF);
     uint32_t dense_idx = self->world->slot_to_dense[slot];
-    auto off         = (size_t)dense_idx * 4;
+    auto off           = (size_t)dense_idx * 4;
 
     self->world->positions[off + 0] = x;
     self->world->positions[off + 1] = y;

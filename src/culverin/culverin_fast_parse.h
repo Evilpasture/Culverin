@@ -234,9 +234,16 @@ static inline bool fp_parse_vector(PyObject *const *args, Py_ssize_t nargs, PyOb
 
 /** --- 5. PUBLIC MACROS --- **/
 
-#define FastParse_Unified(arg1, arg2, arg3, arg4, arg5)                                            \
-    _Generic((arg1), PyObject *const *: fp_parse_vector, PyObject *: fp_parse_legacy)(             \
-        arg1, arg2, arg3, arg4, arg5)
+// Declare (but never define) a function with a name that explains the error
+void ERROR_FastParse_First_Arg_Must_Be_PyObject_Ptr_Or_Vectorcall_Ptr(void);
+
+#define FastParse_Unified(arg1, arg2, arg3, arg4, arg5)            \
+    _Generic(&(arg1)[0],                                           \
+        PyObject *const *: fp_parse_vector,                        \
+        PyObject **:       fp_parse_vector,                        \
+        PyObject *:        fp_parse_legacy,                        \
+        default:           ERROR_FastParse_First_Arg_Must_Be_PyObject_Ptr_Or_Vectorcall_Ptr \
+    )(arg1, arg2, arg3, arg4, arg5)
 
 #define FastParse_Init(fp, specs, count)                                                           \
     do {                                                                                           \

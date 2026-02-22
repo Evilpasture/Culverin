@@ -45,7 +45,8 @@ typedef struct {
 */
 extern const JPH_CharacterContactListener_Procs char_listener_procs;
 
-PyObject *Character_move(CharacterObject *self, PyObject *args, PyObject *kwds);
+PyObject *Character_move(CharacterObject *self, PyObject *const *args, size_t nargsf,
+                         PyObject *kwnames);
 
 PyObject *Character_get_position(CharacterObject *self,
                                  PyObject *Py_UNUSED(ignored));
