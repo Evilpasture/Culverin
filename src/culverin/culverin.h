@@ -167,6 +167,17 @@ typedef struct {
     uint32_t vertex_count;
 } MeshBounds;
 
+// Temporary container for resize
+typedef struct {
+    JPH_Real *pos, *ppos;
+    float *rot, *prot, *lvel, *avel;
+    JPH_BodyID *bids;
+    uint64_t *udat;
+    uint32_t *gens, *s2d, *d2s, *free, *cats, *masks, *mats;
+    uint8_t *stat;
+} NewBuffers;
+
+
 // --- The Object Struct ---
 typedef struct PhysicsWorldObject {
     PyObject_HEAD // 16 bytes
@@ -232,6 +243,11 @@ typedef struct PhysicsWorldObject {
     size_t free_constraint_count;
     double time;
 
+    // --- DEFERRED GARBAGE COLLECTION ---
+    NewBuffers *trash_buffers;
+    size_t trash_count;
+    size_t trash_capacity;
+
     // --- BUCKET 2: 4-byte types (Packed 2-per-slot) ---
     // These three now share 12 bytes total + 4 bytes padding at the end
     // instead of creating holes between every pointer.
@@ -260,23 +276,14 @@ typedef struct PhysicsWorldObject {
     DebugBuffer debug_triangles;
 } PhysicsWorldObject;
 
-// Temporary container for resize
-typedef struct {
-    JPH_Real *pos, *ppos;
-    float *rot, *prot, *lvel, *avel;
-    JPH_BodyID *bids;
-    uint64_t *udat;
-    uint32_t *gens, *s2d, *d2s, *free, *cats, *masks, *mats;
-    uint8_t *stat;
-} NewBuffers;
 
 typedef enum {
-    CULV_SHAPE_BOX = 0,
-    CULV_SHAPE_SPHERE = 1,
-    CULV_SHAPE_CAPSULE = 2,
-    CULV_SHAPE_CYLINDER = 3,
-    CULV_SHAPE_PLANE = 4,
-    CULV_SHAPE_MESH = 5,
+    CULV_SHAPE_BOX         = 0,
+    CULV_SHAPE_SPHERE      = 1,
+    CULV_SHAPE_CAPSULE     = 2,
+    CULV_SHAPE_CYLINDER    = 3,
+    CULV_SHAPE_PLANE       = 4,
+    CULV_SHAPE_MESH        = 5,
     CULV_SHAPE_HEIGHTFIELD = 6,
     CULV_SHAPE_CONVEX_HULL = 7
 } CulvShapeType;

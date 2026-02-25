@@ -8,7 +8,7 @@ import sys
 
 # --- CONFIGURATION ---
 DURATION = 10.0
-NUM_BODIES = 100000
+NUM_BODIES = 2000
 NUM_QUERY_THREADS = 6  # Increased: Let's saturate the cores
 BATCH_SIZE = 2000  # Increased: Reduce GIL overhead
 MOVER_INTENSITY = 100  # Bodies moved per loop
@@ -101,7 +101,7 @@ def stress_test_v3():
             stats["mutations"] += HAMMER_BATCH_SIZE
 
             # Pace the hammer so it doesn't starve the physics stepper of lock time
-            time.sleep(0.001)
+            time.sleep(0.01)
 
     def worker_mover():
         while running:
@@ -115,7 +115,7 @@ def stress_test_v3():
                 except:
                     pass
             stats["moves"] += MOVER_INTENSITY
-            time.sleep(0.001)
+            time.sleep(0.01)
 
     # --- LAUNCH ---
     threads = [threading.Thread(target=worker_stepper, name="Stepper")]

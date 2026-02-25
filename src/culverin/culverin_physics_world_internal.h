@@ -22,6 +22,7 @@ int verify_abi_alignment(JPH_BodyInterface *bi);
 
 void PhysicsWorld_releasebuffer(PhysicsWorldObject *self, Py_buffer *view);
 
+void free_new_buffers(NewBuffers *nb);
 // --- Allocator wrappers ---
 
 // Helper to align a pointer to the next N-byte boundary

@@ -130,6 +130,8 @@ void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
 
   const JPH_BodyID *active_ids =
       JPH_PhysicsSystem_GetActiveBodiesUnsafe(sys, JPH_BodyType_Rigid);
+
+  SHADOW_LOCK(&self->shadow_lock);
   const uint32_t *CULV_RESTRICT s2d = self->slot_to_dense;
 
   // Stack allocated worklist (fits in L1 cache comfortably)
@@ -165,9 +167,7 @@ void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
 
       // --- HOT PATH TRIGGER ---
       if (work_ptr == BATCH_SIZE) {
-        SHADOW_LOCK(&self->shadow_lock);
         process_full_batch(self, worklist);
-        SHADOW_UNLOCK(&self->shadow_lock);
         work_ptr = 0;
       }
     }
@@ -175,10 +175,10 @@ void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
 
   // --- COLD PATH (REMAINDER) ---
   if (work_ptr > 0) {
-    SHADOW_LOCK(&self->shadow_lock);
     process_partial_batch(self, worklist, work_ptr);
-    SHADOW_UNLOCK(&self->shadow_lock);
   }
+
+  SHADOW_UNLOCK(&self->shadow_lock);
 
 #ifdef CULVERIN_PROFILE_SYNC
   uint64_t elapsed = rdtsc() - start;

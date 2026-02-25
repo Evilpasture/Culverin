@@ -5,6 +5,7 @@
 #include "culverin_constraint.h"
 #include "culverin_contact_listener.h"
 #include "culverin_fast_parse.h"
+#include "culverin_filters.h"
 #include "culverin_getters.h"
 #include "culverin_parsers.h"
 #include "culverin_physics_world_internal.h"
@@ -12,7 +13,6 @@
 #include "culverin_ragdoll.h"
 #include "culverin_shadow_sync.h"
 #include "culverin_vehicle.h"
-#include "culverin_filters.h"
 
 // Global lock for JPH callbacks
 NativeMutex g_jph_trampoline_lock; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
@@ -41,25 +41,27 @@ static void PhysicsWorld_free(void *obj) { CulvMem_RawFreeAligned(obj); }
 static void PhysicsWorld_dealloc(PhysicsWorldObject *self) {
     PyTypeObject *tp = Py_TYPE(self);
 
-    // 1. Notify Python's tracking system (if using GC)
-    PyObject_GC_UnTrack(self);
+    if (PyObject_GC_IsTracked((PyObject *)self)) {
+        PyObject_GC_UnTrack(self);
+    }
 
-    // 2. Clear weak references
-    // This MUST happen before we destroy the Jolt data,
-    // in case a callback tries to look at the world.
     if (self->weakreflist != NULL) {
         PyObject_ClearWeakRefs((PyObject *)self);
     }
 
-    // 3. Custom Cleanup: The "C" parts
-    // It is cleaner to put the Mutex/Cond frees INSIDE free_members
+    // Clean up Jolt and Mutexes while 'self' is still valid
     PhysicsWorld_free_members(self);
 
-    // 4. Free the memory using the slot we defined
-    // This calls your PhysicsWorld_free (CulvMem_RawFreeAligned)
-    tp->tp_free((PyObject *)self);
+    // TAKE THE FREE FUNCTION POINTER NOW
+    // Do not look at 'tp' or 'self' after the next line!
+    freefunc tf = tp->tp_free;
+    
+    // Release the object memory
+    tf((PyObject *)self);
 
-    // 5. Decrease refcount of the Heap Type itself
+    // FINALLY, decref the type. 
+    // This is often where it crashes if the type was defined in a module 
+    // that is also being unloaded.
     Py_DECREF(tp);
 }
 
@@ -221,20 +223,22 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args, PyObject 
     }
 
     // 4. Constraints & Data Loading
-    self->constraint_capacity = 256;
-    self->constraints         = (JPH_Constraint **)PyMem_RawCalloc(256, sizeof(JPH_Constraint *));
-    self->constraint_generations = PyMem_RawCalloc(256, sizeof(uint32_t));
-    self->free_constraint_slots  = PyMem_RawMalloc(256 * sizeof(uint32_t));
-    self->constraint_states      = PyMem_RawCalloc(256, sizeof(uint8_t));
+    constexpr uint32_t CONSTRAINT_INITIAL_CAPACITY = 256;
+    self->constraint_capacity                      = CONSTRAINT_INITIAL_CAPACITY;
+    self->constraints =
+        (JPH_Constraint **)PyMem_RawCalloc(CONSTRAINT_INITIAL_CAPACITY, sizeof(JPH_Constraint *));
+    self->constraint_generations = PyMem_RawCalloc(CONSTRAINT_INITIAL_CAPACITY, sizeof(uint32_t));
+    self->free_constraint_slots  = PyMem_RawMalloc(CONSTRAINT_INITIAL_CAPACITY * sizeof(uint32_t));
+    self->constraint_states      = PyMem_RawCalloc(CONSTRAINT_INITIAL_CAPACITY, sizeof(uint8_t));
     if (!self->constraints || !self->free_constraint_slots) {
         goto fail;
     }
 
-    for (uint32_t i = 0; i < 256; i++) {
+    for (uint32_t i = 0; i < CONSTRAINT_INITIAL_CAPACITY; i++) {
         self->constraint_generations[i] = 1;
         self->free_constraint_slots[i]  = i;
     }
-    self->free_constraint_count = 256;
+    self->free_constraint_count = CONSTRAINT_INITIAL_CAPACITY;
 
     if (baked && load_baked_scene(self, baked) < 0) {
         goto fail;
@@ -247,6 +251,9 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args, PyObject 
     }
 
     culverin_sync_shadow_buffers(self);
+    if (PyType_HasFeature(Py_TYPE(self), Py_TPFLAGS_HAVE_GC)) {
+    PyObject_GC_Track(self);
+}
     return 0;
 
 fail:
@@ -259,7 +266,9 @@ fail:
 static PyObject *PhysicsWorld_apply_impulse(PhysicsWorldObject *self, PyObject *const *args,
                                             size_t nargsf, PyObject *kwnames) {
     BodyHandle handle_raw;
-    float x, y, z;
+    float x;
+    float y;
+    float z;
 
     void *targets[Vec3_COUNT];
     targets[IDX_V3_H] = &handle_raw;
@@ -330,12 +339,15 @@ static PyObject *PhysicsWorld_apply_impulse(PhysicsWorldObject *self, PyObject *
     Py_RETURN_NONE;
 }
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 static PyObject *PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self, PyObject *const *args,
                                                size_t nargsf, PyObject *kwnames) {
     BodyHandle handle_raw;
-    float ix, iy, iz;
-    JPH_Real px, py, pz;
+    float ix;
+    float iy;
+    float iz;
+    JPH_Real px;
+    JPH_Real py;
+    JPH_Real pz;
 
     void *targets[ImpAt_COUNT];
     targets[IDX_IMPAT_H]  = (void *)&handle_raw;
@@ -404,7 +416,9 @@ static PyObject *PhysicsWorld_apply_angular_impulse(PhysicsWorldObject *self, Py
                                                     size_t nargsf, PyObject *kwnames) {
     // 1. FAST PARSE (Zero-Allocation)
     BodyHandle handle_raw;
-    float x, y, z;
+    float x;
+    float y;
+    float z;
 
     void *targets[Vec3_COUNT];
     targets[IDX_V3_H] = (void *)&handle_raw;
@@ -475,7 +489,9 @@ static PyObject *PhysicsWorld_apply_force(PhysicsWorldObject *self, PyObject *co
                                           size_t nargsf, PyObject *kwnames) {
     // 1. FAST PARSE (Zero-Allocation)
     BodyHandle handle_raw;
-    float x, y, z;
+    float x;
+    float y;
+    float z;
 
     void *targets[Vec3_COUNT];
     targets[IDX_V3_H] = (void *)&handle_raw;
@@ -546,7 +562,9 @@ static PyObject *PhysicsWorld_apply_torque(PhysicsWorldObject *self, PyObject *c
                                            size_t nargsf, PyObject *kwnames) {
     // 1. FAST PARSE (Zero Allocation)
     BodyHandle handle_raw;
-    float x, y, z;
+    float x;
+    float y;
+    float z;
 
     void *targets[Vec3_COUNT];
     targets[IDX_V3_H] = (void *)&handle_raw;
@@ -743,7 +761,6 @@ static PyObject *PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self, PyObject 
     // 3. RESOLUTION PHASE (Locked)
     SHADOW_LOCK(&self->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
-    BLOCK_UNTIL_NOT_QUERYING(self);
 
     uint32_t slot = 0;
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot) ||
@@ -849,7 +866,6 @@ static PyObject *PhysicsWorld_apply_buoyancy_batch(PhysicsWorldObject *self, PyO
 
     SHADOW_LOCK(&self->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
-    BLOCK_UNTIL_NOT_QUERYING(self);
 
     for (size_t i = 0; i < count; i++) {
         uint32_t slot = 0;
@@ -1145,36 +1161,45 @@ size_fail:
 
 static PyObject *PhysicsWorld_step(PhysicsWorldObject *self, PyObject *const *args, size_t nargsf,
                                    PyObject *kwnames) {
-    // 1. FAST PARSE (Zero-Allocation)
-    float dt = 1.0f / 60.0f; // Default value
-
+    float dt = 1.0f / 60.0f; 
     void *targets[Step_COUNT];
     targets[IDX_STEP_DT] = (void *)&dt;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    // FastParse_Unified won't touch 'dt' if it's not provided in args/kwargs
     if (!FastParse_Unified(args, nargs, kwnames, &StepParser, targets)) {
         return NULL;
     }
 
-    // 2. CRITICAL SECTION START
+    // --- PHASE 1: FENCE OFF NEW QUERIES & MUTATORS ---
     SHADOW_LOCK(&self->shadow_lock);
+    
+    // 1. Instantly block NEW Python mutators (Hammer, Mover)
+    atomic_store_explicit(&self->is_stepping, true, memory_order_relaxed);
+    // 2. Instantly block NEW queries (Raycasts)
     atomic_store_explicit(&self->step_requested, true, memory_order_relaxed);
+
+    // 3. Wait for in-flight queries to finish
+    if (atomic_load_explicit(&self->active_queries, memory_order_acquire) > 0) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        Py_BEGIN_ALLOW_THREADS 
+        NATIVE_MUTEX_LOCK(self->step_sync.mutex);
+        while (atomic_load_explicit(&self->active_queries, memory_order_relaxed) > 0) {
+            NATIVE_COND_WAIT(self->step_sync.cond, self->step_sync.mutex);
+        }
+        NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
+        Py_END_ALLOW_THREADS 
+        SHADOW_LOCK(&self->shadow_lock);
+    }
+    
     self->needs_optimization = false;
 
-    // Safety: Wait for raycasts and previous steps to finish
-    BLOCK_UNTIL_NOT_QUERYING(self);
-    BLOCK_UNTIL_NOT_STEPPING(self);
-    atomic_store_explicit(&self->is_stepping, true, memory_order_relaxed);
-
-    // Swap command queues (Double-Buffering)
+    // Swap command queues
     PhysicsCommand *captured_queue = self->command_queue;
     size_t captured_count          = self->command_count;
 
-    if (UNLIKELY(!self->command_queue_spare || self->command_capacity > self->spare_capacity)) {
-        PyMem_RawFree(self->command_queue_spare);
-        self->command_queue_spare =
-            (PhysicsCommand *)PyMem_RawMalloc(self->command_capacity * sizeof(PhysicsCommand));
+    if (UNLIKELY(self->command_capacity > self->spare_capacity)) {
+        self->command_queue_spare = (PhysicsCommand *)PyMem_RawRealloc(
+            self->command_queue_spare, self->command_capacity * sizeof(PhysicsCommand));
         self->spare_capacity = self->command_capacity;
     }
     self->command_queue       = self->command_queue_spare;
@@ -1184,13 +1209,21 @@ static PyObject *PhysicsWorld_step(PhysicsWorldObject *self, PyObject *const *ar
     atomic_store_explicit(&self->contact_atomic_idx, 0, memory_order_relaxed);
     SHADOW_UNLOCK(&self->shadow_lock);
 
-    // 3. HEAVY LIFTING (No GIL)
-    Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+    // --- PHASE 2: FLUSH COMMANDS (is_stepping == true) ---
+    Py_BEGIN_ALLOW_THREADS 
+    NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
 
     if (captured_count > 0) {
         flush_commands_internal(self, captured_queue, captured_count);
         self->needs_optimization = true;
     }
+
+    // --- PHASE 3: PHYSICS UPDATE (Queries & Mutators Unleashed!) ---
+    NATIVE_MUTEX_LOCK(self->step_sync.mutex);
+    atomic_store_explicit(&self->is_stepping, false, memory_order_release);
+    atomic_store_explicit(&self->step_requested, false, memory_order_release);
+    NATIVE_COND_BROADCAST(self->step_sync.cond); 
+    NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
 
     if (dt <= 0.0f) {
         JPH_PhysicsSystem_OptimizeBroadPhase(self->system);
@@ -1199,18 +1232,41 @@ static PyObject *PhysicsWorld_step(PhysicsWorldObject *self, PyObject *const *ar
         JPH_PhysicsSystem_Update(self->system, dt, 1, self->job_system);
     }
 
-    // Snapshot physics results back to Shadow Buffers
-    culverin_sync_shadow_buffers(self);
+    // --- PHASE 4: PRE-SYNC FENCE ---
+    NATIVE_MUTEX_LOCK(self->step_sync.mutex);
+    // Block NEW queries from starting
+    atomic_store_explicit(&self->step_requested, true, memory_order_relaxed);
+    
+    // Wait for in-flight queries from Phase 3 to finish
+    while (atomic_load_explicit(&self->active_queries, memory_order_acquire) > 0) {
+        NATIVE_COND_WAIT(self->step_sync.cond, self->step_sync.mutex);
+    }
+
+    // Lock out Mutators
+    atomic_store_explicit(&self->is_stepping, true, memory_order_relaxed);
+    NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
+
+    // --- PHASE 5: SHADOW SYNC ---
+    if (dt > 0.0f || captured_count > 0) {
+        culverin_sync_shadow_buffers(self);
+    }
 
     NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
     Py_END_ALLOW_THREADS
 
-        // 4. FINALIZATION
-        SHADOW_LOCK(&self->shadow_lock);
-    size_t c_idx        = atomic_load_explicit(&self->contact_atomic_idx, memory_order_acquire);
+    // --- PHASE 6: FINALIZATION ---
+    SHADOW_LOCK(&self->shadow_lock);
+    
+    if (self->trash_count > 0) {
+        for (size_t i = 0; i < self->trash_count; i++) {
+            free_new_buffers(&self->trash_buffers[i]);
+        }
+        self->trash_count = 0;
+    }
+
+    size_t c_idx = atomic_load_explicit(&self->contact_atomic_idx, memory_order_acquire);
     self->contact_count = (c_idx > self->contact_max_capacity) ? self->contact_max_capacity : c_idx;
 
-    // Signal that the step is finished
     NATIVE_MUTEX_LOCK(self->step_sync.mutex);
     atomic_store_explicit(&self->is_stepping, false, memory_order_release);
     atomic_store_explicit(&self->step_requested, false, memory_order_release);
@@ -1352,7 +1408,6 @@ static PyObject *PhysicsWorld_create_convex_hull(PhysicsWorldObject *self, PyObj
 
     // Protect against concurrent simulation or shadow buffer queries
     BLOCK_UNTIL_NOT_STEPPING(self);
-    BLOCK_UNTIL_NOT_QUERYING(self);
 
     if (UNLIKELY(self->free_count == 0 || self->count + 1 > self->capacity)) {
         if (PhysicsWorld_resize(self, (self->capacity == 0) ? 1024 : self->capacity * 2) < 0) {
@@ -1647,7 +1702,6 @@ static PyObject *PhysicsWorld_create_compound_body(PhysicsWorldObject *self, PyO
 
     // Critical: Block for both simulation and current queries (e.g. Raycasts)
     BLOCK_UNTIL_NOT_STEPPING(self);
-    BLOCK_UNTIL_NOT_QUERYING(self);
 
     // Check Capacity
     if (UNLIKELY(self->free_count == 0 || self->count + 1 > self->capacity)) {
@@ -1855,7 +1909,6 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self, PyObject *co
 
     // --- CRITICAL SECTION: JOLT PREP ---
     Py_BEGIN_ALLOW_THREADS;
-    NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
     SHADOW_LOCK(&self->shadow_lock);
 
     shape = find_or_create_shape_locked(self, shape_type, s);
@@ -1878,7 +1931,6 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self, PyObject *co
         }
     }
 
-    NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
     Py_END_ALLOW_THREADS;
 
     if (!shape) {
@@ -1892,7 +1944,6 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self, PyObject *co
     SHADOW_LOCK(&self->shadow_lock);
 
     BLOCK_UNTIL_NOT_STEPPING(self);
-    BLOCK_UNTIL_NOT_QUERYING(self);
 
     // Ensure Capacity
     if (UNLIKELY(self->free_count == 0 || self->count + 1 > self->capacity)) {
@@ -2024,8 +2075,7 @@ static PyObject *PhysicsWorld_create_bodies_batch(PhysicsWorldObject *self, PyOb
     }
 
     // 4. JOLT PREP (NO GIL)
-    Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
-    SHADOW_LOCK(&self->shadow_lock);
+    Py_BEGIN_ALLOW_THREADS SHADOW_LOCK(&self->shadow_lock);
 
     JPH_STACK_ALLOC(JPH_RVec3, j_pos);
     JPH_STACK_ALLOC(JPH_Quat, j_rot);
@@ -2040,11 +2090,12 @@ static PyObject *PhysicsWorld_create_bodies_batch(PhysicsWorldObject *self, PyOb
         }
     }
     SHADOW_UNLOCK(&self->shadow_lock);
-    NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
     Py_END_ALLOW_THREADS
 
         // 5. COMMIT PHASE (SHADOW LOCK)
         SHADOW_LOCK(&self->shadow_lock);
+
+    BLOCK_UNTIL_NOT_STEPPING(self);
 
     // Bulk capacity check for slots and dense buffers
     if (self->free_count < (size_t)batch_count || (self->count + batch_count) > self->capacity) {
@@ -2490,7 +2541,6 @@ static PyObject *PhysicsWorld_set_position(PhysicsWorldObject *self, PyObject *c
     SHADOW_LOCK(&self->shadow_lock);
 
     BLOCK_UNTIL_NOT_STEPPING(self);
-    BLOCK_UNTIL_NOT_QUERYING(self);
 
     uint32_t slot = 0;
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
@@ -2551,7 +2601,6 @@ static PyObject *PhysicsWorld_set_rotation(PhysicsWorldObject *self, PyObject *c
     SHADOW_LOCK(&self->shadow_lock);
 
     BLOCK_UNTIL_NOT_STEPPING(self);
-    BLOCK_UNTIL_NOT_QUERYING(self);
 
     uint32_t slot = 0;
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
@@ -2616,7 +2665,6 @@ static PyObject *PhysicsWorld_set_linear_velocity(PhysicsWorldObject *self, PyOb
     SHADOW_LOCK(&self->shadow_lock);
 
     BLOCK_UNTIL_NOT_STEPPING(self);
-    BLOCK_UNTIL_NOT_QUERYING(self);
 
     uint32_t slot = 0;
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
@@ -2679,7 +2727,6 @@ static PyObject *PhysicsWorld_set_angular_velocity(PhysicsWorldObject *self, PyO
     SHADOW_LOCK(&self->shadow_lock);
 
     BLOCK_UNTIL_NOT_STEPPING(self);
-    BLOCK_UNTIL_NOT_QUERYING(self);
 
     uint32_t slot = 0;
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
@@ -2775,7 +2822,6 @@ static PyObject *PhysicsWorld_set_motion_type(PhysicsWorldObject *self, PyObject
     // Structural changes (like motion type) should wait for both simulation and
     // queries
     BLOCK_UNTIL_NOT_STEPPING(self);
-    BLOCK_UNTIL_NOT_QUERYING(self);
 
     uint32_t slot = 0;
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
@@ -2823,7 +2869,6 @@ static PyObject *PhysicsWorld_set_user_data(PhysicsWorldObject *self, PyObject *
     // 2. CRITICAL SECTION
     SHADOW_LOCK(&self->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
-    BLOCK_UNTIL_NOT_QUERYING(self);
 
     uint32_t slot = 0;
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
@@ -2909,7 +2954,6 @@ static PyObject *PhysicsWorld_activate(PhysicsWorldObject *self, PyObject *const
 
     // Commands that modify Jolt state must wait for the simulation to be idle
     BLOCK_UNTIL_NOT_STEPPING(self);
-    BLOCK_UNTIL_NOT_QUERYING(self);
 
     uint32_t slot = 0;
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
@@ -2956,7 +3000,6 @@ static PyObject *PhysicsWorld_deactivate(PhysicsWorldObject *self, PyObject *con
 
     SHADOW_LOCK(&self->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
-    BLOCK_UNTIL_NOT_QUERYING(self);
 
     uint32_t slot = 0;
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
@@ -3015,7 +3058,6 @@ static PyObject *PhysicsWorld_set_transform(PhysicsWorldObject *self, PyObject *
     SHADOW_LOCK(&self->shadow_lock);
 
     BLOCK_UNTIL_NOT_STEPPING(self);
-    BLOCK_UNTIL_NOT_QUERYING(self);
 
     uint32_t slot = 0;
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
@@ -3080,7 +3122,6 @@ static PyObject *PhysicsWorld_set_ccd(PhysicsWorldObject *self, PyObject *const 
 
     // Modification of body properties requires idle physics
     BLOCK_UNTIL_NOT_STEPPING(self);
-    BLOCK_UNTIL_NOT_QUERYING(self);
 
     uint32_t slot = 0;
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
@@ -3345,7 +3386,6 @@ static PyObject *PhysicsWorld_set_collision_filter(PhysicsWorldObject *self, PyO
     // Structural changes (like collision filters) must block for both sim and
     // queries
     BLOCK_UNTIL_NOT_STEPPING(self);
-    BLOCK_UNTIL_NOT_QUERYING(self);
 
     uint32_t slot = 0;
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot) ||
@@ -3508,7 +3548,6 @@ static PyObject *PhysicsWorld_create_heightfield(PhysicsWorldObject *self, PyObj
     // 5. COMMIT PHASE (Shadow Lock)
     SHADOW_LOCK(&self->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
-    BLOCK_UNTIL_NOT_QUERYING(self);
 
     if (UNLIKELY(self->free_count == 0 || self->count + 1 > self->capacity)) {
         if (PhysicsWorld_resize(self, self->capacity + 1024) < 0) {
@@ -3653,6 +3692,9 @@ static const PyGetSetDef PhysicsWorld_getset[] = {
     {"time", (getter)get_time, NULL, NULL, NULL},
     {"user_data", (getter)get_user_data_buffer, NULL, NULL, NULL},
     {"shape_count", (getter)get_shape_count, NULL, "Number of unique shapes in cache", NULL},
+    {"get_is_step_pending", (getter)get_is_step_pending, NULL,
+     "Whether a physics step is currently in progress. If True, structural changes are blocked.",
+     NULL},
     {NULL, NULL, NULL, NULL, NULL}};
 
 static const PyGetSetDef Character_getset[] = {{"handle", (getter)Character_get_handle, NULL,
@@ -3801,7 +3843,7 @@ static const PyMethodDef PhysicsWorld_methods[] = {
     {NULL, NULL, 0, NULL}};
 
 static const PyMethodDef Character_methods[] = {
-    {"move", (PyCFunction)(void (*)(void))Character_move, METH_VARARGS | METH_KEYWORDS, NULL},
+    {"move", (PyCFunction)(void (*)(void))Character_move, METH_FASTCALL | METH_KEYWORDS, NULL},
     {"get_position", (PyCFunction)(void (*)(void))Character_get_position, METH_NOARGS, NULL},
     {"set_position", (PyCFunction)(void (*)(void))Character_set_position,
      METH_VARARGS | METH_KEYWORDS, NULL},
@@ -4024,7 +4066,7 @@ static int culverin_exec(PyObject *m) {
     culverin_init_all_parsers();
 
     // REGISTER FILTERS ONCE HERE
-    // This connects the logic (filter_allow_all_bp, UnifiedBodyFilter, etc.) 
+    // This connects the logic (filter_allow_all_bp, UnifiedBodyFilter, etc.)
     // to the JoltC filter objects globally.
     JPH_BroadPhaseLayerFilter_SetProcs(&global_bp_procs);
     JPH_ObjectLayerFilter_SetProcs(&global_obj_procs);

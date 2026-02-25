@@ -33,7 +33,7 @@ class StressTest:
         while self.running:
             self.world.step(1.0/60.0)
             self.stats["steps"] += 1
-            time.sleep(0.001)
+            # time.sleep(0.001)
 
     def spawner_loop(self):
         print("[Thread-Spawner] Started")
@@ -50,8 +50,8 @@ class StressTest:
                     self.stats["created"] += 1
                 except BufferError:
                     self.stats["buffer_locks_hit"] += 1
-                    time.sleep(0.001)
-            time.sleep(0.001)
+                    # time.sleep(0.001)
+            # time.sleep(0.001)
 
     def killer_loop(self):
         print("[Thread-Killer] Started")
@@ -68,7 +68,7 @@ class StressTest:
                     self.stats["destroyed"] += 1
                 except BufferError:
                     self.stats["buffer_locks_hit"] += 1
-            time.sleep(0.002)
+            # time.sleep(0.002)
 
     def mover_loop(self):
         print("[Thread-Mover] Started")
@@ -86,7 +86,7 @@ class StressTest:
                     self.stats["stale_access_caught"] += 1
                 except Exception:
                     pass
-            time.sleep(0.001)
+            # time.sleep(0.001)
 
     def reader_loop(self):
         print("[Thread-Reader] Started")
@@ -109,7 +109,7 @@ class StressTest:
                     del arr
                 if positions is not None:
                     del positions
-            time.sleep(0.001)
+            # time.sleep(0.001)
 
     def run(self):
         print(f"Stress Test: {self.duration} seconds, {self.num_threads} worker threads.")
@@ -159,5 +159,5 @@ class StressTest:
             print("FAILURE: Threads stalled.")
 
 if __name__ == "__main__":
-    test = StressTest(duration=30.0, target_bodies=2000, num_threads=4)
+    test = StressTest(duration=60.0, target_bodies=2000, num_threads=4)
     test.run()

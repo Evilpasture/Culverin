@@ -169,6 +169,30 @@ typedef pthread_cond_t NativeCond;
     }                                                                          \
   } while (0)
 
+#define BLOCK_UNTIL_CAN_QUERY(self)                                            \
+  do {                                                                         \
+    /* 1. Fast path: Check without lock */                                     \
+    if (atomic_load_explicit(&(self)->is_stepping, memory_order_relaxed) ||    \
+        atomic_load_explicit(&(self)->step_requested, memory_order_relaxed)) { \
+                                                                               \
+      SHADOW_UNLOCK(&(self)->shadow_lock);                                     \
+      Py_BEGIN_ALLOW_THREADS                                                   \
+      NATIVE_MUTEX_LOCK((self)->step_sync.mutex);                              \
+                                                                               \
+      /* 2. Stepper Priority: If a step is requested, Queries MUST wait */     \
+      while (atomic_load_explicit(&(self)->is_stepping,                        \
+                                  memory_order_relaxed) ||                     \
+             atomic_load_explicit(&(self)->step_requested,                     \
+                                  memory_order_relaxed)) {                     \
+        NATIVE_COND_WAIT((self)->step_sync.cond, (self)->step_sync.mutex);     \
+      }                                                                        \
+                                                                               \
+      NATIVE_MUTEX_UNLOCK((self)->step_sync.mutex);                            \
+      Py_END_ALLOW_THREADS                                                     \
+      SHADOW_LOCK(&(self)->shadow_lock);                                       \
+    }                                                                          \
+  } while (0)
+
 // A container to sync state changes (stepping finished, query finished)
 typedef struct {
   NativeMutex mutex;

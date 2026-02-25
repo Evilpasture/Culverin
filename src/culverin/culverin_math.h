@@ -17,8 +17,11 @@ static inline float culverin_fast_rsqrt(float number) {
     i = 0x5f3759df - (i >> 1);
     memcpy(&y, &i, sizeof(float));
     
-    // One Newton-Raphson iteration for precision (accurate enough for raycasts)
+    // Iteration 1: Takes error from ~3.4% to ~0.17%
     y = y * (threehalfs - (x2 * y * y)); 
+
+    // Iteration 2: Takes error from ~0.17% to ~0.00001% (basically float-perfect)
+    y = y * (threehalfs - (x2 * y * y));
     
     return y;
 }

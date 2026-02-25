@@ -28,7 +28,7 @@ static constexpr JPH_Real VERIFY_ABI_POS_Y   = 20.0;
 static constexpr JPH_Real VERIFY_ABI_POS_Z   = 30.0;
 static constexpr double VERIFY_ABI_TOLERANCE = 0.1;
 
-static void free_new_buffers(NewBuffers *nb) {
+void free_new_buffers(NewBuffers *nb) {
     if (!nb) {
         return;
     }
@@ -169,6 +169,10 @@ int allocate_buffers(PhysicsWorldObject *self, int max_bodies) {
         (PhysicsCommand *)PyMem_RawMalloc(COMMAND_QUEUE_INITIAL_CAPACITY * sizeof(PhysicsCommand));
     self->command_capacity = COMMAND_QUEUE_INITIAL_CAPACITY;
 
+    self->trash_capacity = 4;
+    self->trash_count = 0;
+    self->trash_buffers = (NewBuffers *)PyMem_RawCalloc(self->trash_capacity, sizeof(NewBuffers));
+
     if (!self->positions || !self->rotations || !self->id_to_handle_map || !self->command_queue ||
         !self->slot_states) {
         return -1;
@@ -210,41 +214,48 @@ int PhysicsWorld_resize(PhysicsWorldObject *self, size_t new_capacity) {
     // 3. Data Migration
     migrate_and_init(self, &nb, new_capacity);
 
-    // 4. Commit: Free OLD, assign NEW
-    // Aligned buffers (stride types) must use CulvMem_RawFreeAligned
-    CulvMem_RawFreeAligned(self->positions);
-    self->positions = nb.pos;
-    CulvMem_RawFreeAligned(self->prev_positions);
-    self->prev_positions = nb.ppos;
-    CulvMem_RawFreeAligned(self->rotations);
-    self->rotations = nb.rot;
-    CulvMem_RawFreeAligned(self->prev_rotations);
-    self->prev_rotations = nb.prot;
-    CulvMem_RawFreeAligned(self->linear_velocities);
-    self->linear_velocities = nb.lvel;
-    CulvMem_RawFreeAligned(self->angular_velocities);
-    self->angular_velocities = nb.avel;
+    // 4. Commit: Save OLD to Trash Bin, assign NEW
+    // If the trash is full, grow it
+    if (self->trash_count >= self->trash_capacity) {
+        size_t next_cap = (self->trash_capacity == 0) ? 4 : self->trash_capacity * 2;
+        void *new_trash = PyMem_RawRealloc(self->trash_buffers, next_cap * sizeof(NewBuffers));
+        if (!new_trash) {
+            free_new_buffers(&nb); // Rollback if we can't allocate trash space
+            return -1;
+        }
+        self->trash_buffers = (NewBuffers *)new_trash;
+        self->trash_capacity = next_cap;
+    }
 
-    // Regular buffers use PyMem_RawFree as before
-    PyMem_RawFree(self->body_ids);
+    // Package the current pointers into a struct and throw them in the trash
+    NewBuffers old_bufs = {
+        .pos = self->positions, .ppos = self->prev_positions, 
+        .rot = self->rotations, .prot = self->prev_rotations,
+        .lvel = self->linear_velocities, .avel = self->angular_velocities,
+        .bids = self->body_ids, .udat = self->user_data,
+        .gens = self->generations, .s2d = self->slot_to_dense,
+        .d2s = self->dense_to_slot, .stat = self->slot_states,
+        .free = self->free_slots, .cats = self->categories,
+        .masks = self->masks, .mats = self->material_ids
+    };
+    self->trash_buffers[self->trash_count++] = old_bufs;
+
+    // Assign NEW pointers
+    self->positions = nb.pos;
+    self->prev_positions = nb.ppos;
+    self->rotations = nb.rot;
+    self->prev_rotations = nb.prot;
+    self->linear_velocities = nb.lvel;
+    self->angular_velocities = nb.avel;
     self->body_ids = nb.bids;
-    PyMem_RawFree(self->user_data);
     self->user_data = nb.udat;
-    PyMem_RawFree(self->generations);
     self->generations = nb.gens;
-    PyMem_RawFree(self->slot_to_dense);
     self->slot_to_dense = nb.s2d;
-    PyMem_RawFree(self->dense_to_slot);
     self->dense_to_slot = nb.d2s;
-    PyMem_RawFree(self->slot_states);
     self->slot_states = nb.stat;
-    PyMem_RawFree(self->free_slots);
     self->free_slots = nb.free;
-    PyMem_RawFree(self->categories);
     self->categories = nb.cats;
-    PyMem_RawFree(self->masks);
     self->masks = nb.masks;
-    PyMem_RawFree(self->material_ids);
     self->material_ids = nb.mats;
 
     self->capacity      = new_capacity;
@@ -371,6 +382,14 @@ void PhysicsWorld_free_members(PhysicsWorldObject *self) {
     self->contact_buffer = NULL;
 
     // 6. Native Memory Buffers
+    if (self->trash_buffers) {
+        for (size_t i = 0; i < self->trash_count; i++) {
+            free_new_buffers(&self->trash_buffers[i]);
+        }
+        PyMem_RawFree(self->trash_buffers);
+        self->trash_buffers = NULL;
+        self->trash_count = 0;
+    }
     free_shadow_buffers(self);
 
     // 7. Cleanup remaining pointers

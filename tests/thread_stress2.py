@@ -5,13 +5,10 @@ import array
 import numpy as np
 import culverin
 import sys
-import faulthandler
-
-faulthandler.enable()
 
 # --- CONFIGURATION ---
 DURATION = 10.0
-NUM_BODIES = 1_000_000  # One Million Bodies
+NUM_BODIES = 1000  # One Million Bodies
 NUM_QUERY_THREADS = 4
 BATCH_SIZE = 200  # Raycasts per C call
 

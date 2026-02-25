@@ -30,17 +30,21 @@ static void overlap_record_hit(OverlapContext *ctx, JPH_BodyID bid) {
     if (ctx->count >= ctx->capacity) {
         size_t new_cap = ctx->capacity * 2;
         uint64_t *new_ptr;
-        
+
         if (ctx->is_on_stack) {
             new_ptr = PyMem_RawMalloc(new_cap * sizeof(uint64_t));
-            if (new_ptr) memcpy(new_ptr, ctx->hits, ctx->count * sizeof(uint64_t));
+            if (new_ptr) {
+                memcpy(new_ptr, ctx->hits, ctx->count * sizeof(uint64_t));
+            }
             ctx->is_on_stack = false;
         } else {
             new_ptr = PyMem_RawRealloc(ctx->hits, new_cap * sizeof(uint64_t));
         }
-        
-        if (!new_ptr) return;
-        ctx->hits = new_ptr;
+
+        if (!new_ptr) {
+            return;
+        }
+        ctx->hits     = new_ptr;
         ctx->capacity = new_cap;
     }
     ctx->hits[ctx->count++] = JPH_BodyInterface_GetUserData(ctx->world->body_interface, bid);
@@ -74,18 +78,20 @@ PyObject *PhysicsWorld_overlap_sphere(PhysicsWorldObject *self, PyObject *const 
     }
 
     // 3. VECTOR EXTRACTION (Outside Lock)
-    JPH_Real cx, cy, cz;
+    JPH_Real cx;
+    JPH_Real cy;
+    JPH_Real cz;
     if (!parse_vec3_direct(o_center, &cx, &cy, &cz)) {
         return NULL;
     }
 
-    PyObject *ret_val  = NULL;
+    PyObject *ret_val = NULL;
     uint64_t small_hit_stack[STACK_ALLOCATE_HITS]; // Pre-allocate 64 hits on the stack
     OverlapContext ctx = {
-        .world = self, 
-        .hits = small_hit_stack, 
-        .count = 0, 
-        .capacity = STACK_ALLOCATE_HITS,
+        .world       = self,
+        .hits        = small_hit_stack,
+        .count       = 0,
+        .capacity    = STACK_ALLOCATE_HITS,
         .is_on_stack = true // Add this flag to your struct
     };
 
@@ -96,8 +102,7 @@ PyObject *PhysicsWorld_overlap_sphere(PhysicsWorldObject *self, PyObject *const 
 
     // 4. RESOURCE RESOLUTION (Shadow Lock)
     SHADOW_LOCK(&self->shadow_lock);
-    BLOCK_UNTIL_NOT_STEPPING(self);
-    BLOCK_IF_STEP_PENDING(self);
+    BLOCK_UNTIL_CAN_QUERY(self);
 
     // OPTIMIZATION: Use the shape cache instead of creating a new shape every call
     float s_params[4] = {radius, 0, 0, 0};
@@ -153,7 +158,7 @@ PyObject *PhysicsWorld_overlap_sphere(PhysicsWorldObject *self, PyObject *const 
         for (size_t i = 0; i < ctx.count; i++) {
             uint64_t h = ctx.hits[i];
             uint32_t slot;
-            if (unpack_handle(self, h, &slot) && self->slot_states[slot] == SLOT_ALIVE) {
+            if ((int)unpack_handle(self, h, &slot) && self->slot_states[slot] == SLOT_ALIVE) {
                 PyObject *py_h = PyLong_FromUnsignedLongLong(h);
                 if (py_h) {
                     PyList_Append(ret_val, py_h);
@@ -165,12 +170,15 @@ PyObject *PhysicsWorld_overlap_sphere(PhysicsWorldObject *self, PyObject *const 
     }
 
     // Cleanup resources
-    if (bp_filter)
+    if (bp_filter) {
         JPH_BroadPhaseLayerFilter_Destroy(bp_filter);
-    if (obj_filter)
+    }
+    if (obj_filter) {
         JPH_ObjectLayerFilter_Destroy(obj_filter);
-    if (body_filter)
+    }
+    if (body_filter) {
         JPH_BodyFilter_Destroy(body_filter);
+    }
     if (ctx.hits && !ctx.is_on_stack) {
         PyMem_RawFree(ctx.hits);
     }
@@ -202,13 +210,13 @@ PyObject *PhysicsWorld_overlap_aabb(PhysicsWorldObject *self, PyObject *const *a
     if (!parse_vec3_direct(o_max, &max, &may, &maz))
         return NULL;
 
-    PyObject *ret_val                    = NULL;
+    PyObject *ret_val = NULL;
     uint64_t small_hit_stack[STACK_ALLOCATE_HITS]; // Pre-allocate 64 hits on the stack
     OverlapContext ctx = {
-        .world = self, 
-        .hits = small_hit_stack, 
-        .count = 0, 
-        .capacity = STACK_ALLOCATE_HITS,
+        .world       = self,
+        .hits        = small_hit_stack,
+        .count       = 0,
+        .capacity    = STACK_ALLOCATE_HITS,
         .is_on_stack = true // Add this flag to your struct
     };
     JPH_BroadPhaseLayerFilter *bp_filter = NULL;
@@ -216,8 +224,7 @@ PyObject *PhysicsWorld_overlap_aabb(PhysicsWorldObject *self, PyObject *const *a
 
     // 4. PHASE GUARD (Shadow Lock)
     SHADOW_LOCK(&self->shadow_lock);
-    BLOCK_UNTIL_NOT_STEPPING(self);
-    BLOCK_IF_STEP_PENDING(self);
+    BLOCK_UNTIL_CAN_QUERY(self);
 
     // Mark query active to prevent world mutation during execution
     atomic_fetch_add_explicit(&self->active_queries, 1, memory_order_acquire);
@@ -337,8 +344,7 @@ PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *const *args, 
 
     // 4. RESOLUTION PHASE (Shadow Lock)
     SHADOW_LOCK(&self->shadow_lock);
-    BLOCK_UNTIL_NOT_STEPPING(self);
-    BLOCK_IF_STEP_PENDING(self);
+    BLOCK_UNTIL_CAN_QUERY(self);
 
     JPH_BodyID ignore_bid = JPH_INVALID_BODY_ID;
     if (ignore_h != 0) {
@@ -361,15 +367,13 @@ PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *const *args, 
     Py_BEGIN_ALLOW_THREADS
         // REMOVED: NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
 
+        JPH_BroadPhaseLayerFilter *bp_f = JPH_BroadPhaseLayerFilter_Create(NULL);
+    JPH_ObjectLayerFilter *obj_f        = JPH_ObjectLayerFilter_Create(NULL);
+    CastShapeFilter filter_ctx          = {.ignore_id = ignore_bid};
+    JPH_BodyFilter *bf                  = JPH_BodyFilter_Create(&filter_ctx);
 
-    JPH_BroadPhaseLayerFilter *bp_f = JPH_BroadPhaseLayerFilter_Create(NULL);
-    JPH_ObjectLayerFilter *obj_f = JPH_ObjectLayerFilter_Create(NULL);
-    CastShapeFilter filter_ctx = {.ignore_id = ignore_bid};
-    JPH_BodyFilter *bf = JPH_BodyFilter_Create(&filter_ctx);
-
-
-        // 5a. Cast the ray
-        const JPH_NarrowPhaseQuery *query = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
+    // 5a. Cast the ray
+    const JPH_NarrowPhaseQuery *query = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
     // Use NULL for filters as we handle simple ignore logic via broadphase or specific ID
     has_hit = JPH_NarrowPhaseQuery_CastRay(query, origin, direction, hit, bp_f, obj_f, bf);
 
@@ -486,8 +490,7 @@ PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self, PyObject *const *
     SHADOW_LOCK(&self->shadow_lock);
 
     // Priority Guard: Wait if physics is stepping or about to step
-    BLOCK_UNTIL_NOT_STEPPING(self);
-    BLOCK_IF_STEP_PENDING(self);
+    BLOCK_UNTIL_CAN_QUERY(self);
 
     // Snapshot pointers for thread-safe narrow-phase lookup
     const uint32_t *CULV_RESTRICT s2d  = self->slot_to_dense;
@@ -659,8 +662,7 @@ PyObject *PhysicsWorld_shapecast(PhysicsWorldObject *self, PyObject *const *args
     SHADOW_LOCK(&self->shadow_lock);
 
     // Safety: Wait if world is updating
-    BLOCK_UNTIL_NOT_STEPPING(self);
-    BLOCK_IF_STEP_PENDING(self);
+    BLOCK_UNTIL_CAN_QUERY(self);
 
     // Look up shape in our internal cache (needs shadow_lock)
     JPH_Shape *shape = find_or_create_shape_locked(self, shape_type, s);
