@@ -14,13 +14,46 @@
 #include "culverin_shadow_sync.h"
 #include "culverin_vehicle.h"
 
+// ============================================================================
+// Semantic Constants - Magic Number Replacements
+// ============================================================================
+
+// Memory and Alignment
+static constexpr size_t MEMORY_ALIGNMENT_SIZE = 64;
+static constexpr size_t INITIAL_BODY_CAPACITY = 1024;
+static constexpr size_t BODY_ID_SIZE_BYTES = 8;
+
+// Physics Simulation
+static constexpr float DEFAULT_FRAME_TIME = 1.0f / 60.0f;
+static constexpr float DEFAULT_LINEAR_DRAG = 0.5f;
+static constexpr float DEFAULT_ANGULAR_DRAG = 0.5f;
+static constexpr float DEFAULT_FRICTION = 0.2f;
+static constexpr float CONVEX_HULL_TOLERANCE = 0.05f;
+
+// Collision Filtering
+static constexpr uint32_t COLLISION_FILTER_ALL_CATEGORIES = 0xFFFF;
+static constexpr uint32_t COLLISION_FILTER_ALL_MASKS = 0xFFFF;
+
+// Numerical Tolerances
+static constexpr float EPSILON_FLOAT = 1e-6f;
+static constexpr float EPSILON_QUATERNION_NORMALIZATION = 0.000001f;
+
+// Array Indices and Counts
+static constexpr int QUATERNION_INTERPOLATION_Z_INDEX = 5;
+static constexpr int QUATERNION_INTERPOLATION_W_INDEX = 6;
+static constexpr int INERTIA_MATRIX_COMPONENT_COUNT = 3;
+static constexpr size_t FLOATS_PER_INTERPOLATED_BODY = 7;  // 3 position + 4 quaternion
+static constexpr float RESTITUTION_BUFFER = 0.5f;           // Default restitution/bounce
+static constexpr size_t VERTEX_STRIDE_BYTES = 12;          // 3 floats (x, y, z) * 4 bytes
+static constexpr size_t INITIAL_MATERIAL_CAPACITY = 16;    // Initial material data capacity
+
 // Global lock for JPH callbacks
 NativeMutex g_jph_trampoline_lock; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 PyType_DeclareSlot_Object PhysicsWorld_alloc(PyTypeObject *tp, Py_ssize_t Py_UNUSED(nitems)) {
     size_t size = (size_t)tp->tp_basicsize;
 
     // Allocate 64-byte aligned memory to suppress UBSan alignas(64) warnings
-    auto *self = (PhysicsWorldObject *)CulvMem_RawMallocAligned(size, 64);
+    auto *self = (PhysicsWorldObject *)CulvMem_RawMallocAligned(size, MEMORY_ALIGNMENT_SIZE);
     if (!self) {
         return PyErr_NoMemory();
     }
@@ -725,9 +758,9 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self,
     BodyHandle handle_raw;
     double surface_y;
     float buoyancy  = 1.0f;
-    float lin_drag  = 0.5f;
-    float ang_drag  = 0.5f;
-    float dt        = 1.0f / 60.0f;
+    float lin_drag  = DEFAULT_LINEAR_DRAG;
+    float ang_drag  = DEFAULT_ANGULAR_DRAG;
+    float dt        = DEFAULT_FRAME_TIME;
     PyObject *o_vel = NULL;
 
     // 2. TARGET MAPPING (Using Buoy Group count and schema indices)
@@ -806,9 +839,9 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy_batch(PhysicsWorldObject *
     PyObject *o_handles = NULL;
     JPH_Real surface_y  = 0.0;
     float buoyancy      = 1.0f;
-    float lin_drag      = 0.5f;
-    float ang_drag      = 0.5f;
-    float dt            = 1.0f / 60.0f;
+    float lin_drag      = DEFAULT_LINEAR_DRAG;
+    float ang_drag      = DEFAULT_ANGULAR_DRAG;
+    float dt            = DEFAULT_FRAME_TIME;
     PyObject *o_vel     = NULL;
 
     // 2. FAST PARSE
@@ -848,7 +881,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy_batch(PhysicsWorldObject *
         }
     }
 
-    size_t count = (size_t)h_view.len / 8;
+    size_t count = (size_t)h_view.len / BODY_ID_SIZE_BYTES;
     if (count == 0) {
         PyBuffer_Release(&h_view);
         Py_RETURN_NONE;
@@ -1163,7 +1196,7 @@ size_fail:
 
 PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *const *args,
                                             size_t nargsf, PyObject *kwnames) {
-    float dt = 1.0f / 60.0f;
+    float dt = DEFAULT_FRAME_TIME;
     void *targets[Step_COUNT];
     targets[IDX_STEP_DT] = (void *)&dt;
 
@@ -1287,11 +1320,11 @@ PyCFunction_DeclareMethod PhysicsWorld_create_convex_hull(PhysicsWorldObject *se
     PyObject *o_points   = NULL;
     int motion_type      = 2;
     float mass           = -1.0f;
-    float friction       = 0.2f;
+    float friction       = DEFAULT_FRICTION;
     float restitution    = 0.0f;
     uint64_t user_data   = 0;
-    uint32_t category    = 0xFFFF;
-    uint32_t mask        = 0xFFFF;
+    uint32_t category    = COLLISION_FILTER_ALL_CATEGORIES;
+    uint32_t mask        = COLLISION_FILTER_ALL_MASKS;
     uint32_t material_id = 0;
     bool is_sensor       = false;
     bool use_ccd         = false;
@@ -1337,11 +1370,11 @@ PyCFunction_DeclareMethod PhysicsWorld_create_convex_hull(PhysicsWorldObject *se
         return NULL;
     }
 
-    if (UNLIKELY(points_view.len % 12 != 0)) {
+    if (UNLIKELY(points_view.len % VERTEX_STRIDE_BYTES != 0)) {
         PyBuffer_Release(&points_view);
         return PyErr_Format(PyExc_ValueError, "Points buffer must be 3 * float32");
     }
-    size_t num_points = points_view.len / 12;
+    size_t num_points = points_view.len / VERTEX_STRIDE_BYTES;
     if (UNLIKELY(num_points < 3)) {
         PyBuffer_Release(&points_view);
         return PyErr_Format(PyExc_ValueError, "Convex Hull requires at least 3 points");
@@ -1357,7 +1390,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_convex_hull(PhysicsWorldObject *se
     }
 
     JPH_ConvexHullShapeSettings *hull_settings =
-        JPH_ConvexHullShapeSettings_Create(jolt_points, (uint32_t)num_points, 0.05f);
+        JPH_ConvexHullShapeSettings_Create(jolt_points, (uint32_t)num_points, CONVEX_HULL_TOLERANCE);
     PyMem_RawFree(jolt_points);
 
     if (hull_settings) {
@@ -1384,7 +1417,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_convex_hull(PhysicsWorldObject *se
     if (mass > 0.0f) {
         JPH_MassProperties mp;
         JPH_Shape_GetMassProperties(shape, &mp);
-        float scale = mass / fmaxf(mp.mass, 1e-6f);
+        float scale = mass / fmaxf(mp.mass, EPSILON_FLOAT);
         mp.mass     = mass;
         for (int i = 0; i < 3; i++) {
             mp.inertia.column[i].x *= scale;
@@ -1410,7 +1443,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_convex_hull(PhysicsWorldObject *se
     BLOCK_UNTIL_NOT_STEPPING(self);
 
     if (UNLIKELY(self->free_count == 0 || self->count + 1 > self->capacity)) {
-        if (PhysicsWorld_resize(self, (self->capacity == 0) ? 1024 : self->capacity * 2) < 0) {
+        if (PhysicsWorld_resize(self, (self->capacity == 0) ? INITIAL_BODY_CAPACITY : self->capacity * 2) < 0) {
             SHADOW_UNLOCK(&self->shadow_lock);
             JPH_BodyCreationSettings_Destroy(settings);
             JPH_Shape_Destroy(shape);
@@ -1592,10 +1625,10 @@ static void apply_body_creation_props(JPH_BodyCreationSettings *settings, JPH_Sh
     if (props.mass > 0.0f) {
         JPH_MassProperties mp;
         JPH_Shape_GetMassProperties(shape, &mp);
-        if (mp.mass > 1e-6f) {
+        if (mp.mass > EPSILON_FLOAT) {
             float scale = props.mass / mp.mass;
             mp.mass     = props.mass;
-            for (int i = 0; i < 3; i++) {
+            for (int i = 0; i < INERTIA_MATRIX_COMPONENT_COUNT; i++) {
                 mp.inertia.column[i].x *= scale;
                 mp.inertia.column[i].y *= scale;
                 mp.inertia.column[i].z *= scale;
@@ -1628,11 +1661,11 @@ PyCFunction_DeclareMethod PhysicsWorld_create_compound_body(PhysicsWorldObject *
     PyObject *o_parts    = NULL;
     int motion_type      = 2;
     float mass           = -1.0f;
-    float friction       = 0.2f;
+    float friction       = DEFAULT_FRICTION;
     float restitution    = 0.0f;
     uint64_t user_data   = 0;
-    uint32_t category    = 0xFFFF;
-    uint32_t mask        = 0xFFFF;
+    uint32_t category    = COLLISION_FILTER_ALL_CATEGORIES;
+    uint32_t mask        = COLLISION_FILTER_ALL_MASKS;
     uint32_t material_id = 0;
     bool is_sensor       = false;
     bool use_ccd         = false;
@@ -1706,7 +1739,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_compound_body(PhysicsWorldObject *
 
     // Check Capacity
     if (UNLIKELY(self->free_count == 0 || self->count + 1 > self->capacity)) {
-        size_t needed = (self->capacity == 0) ? 1024 : self->capacity * 2;
+        size_t needed = (self->capacity == 0) ? INITIAL_BODY_CAPACITY : self->capacity * 2;
         if (PhysicsWorld_resize(self, needed) < 0) {
             SHADOW_UNLOCK(&self->shadow_lock);
             JPH_BodyCreationSettings_Destroy(settings);
@@ -1774,7 +1807,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_compound_body(PhysicsWorldObject *
 static MaterialSettings resolve_material_params(PhysicsWorldObject *self, uint32_t material_id,
                                                 MaterialSettings input) {
     // 1. Start with Jolt Defaults
-    float f = 0.2f;
+    float f = DEFAULT_FRICTION;
     float r = 0.0f;
 
     // 2. Lookup Registry Defaults
@@ -1821,7 +1854,7 @@ static void configure_body_settings(JPH_BodyCreationSettings *settings, JPH_Shap
     if (cfg.mass > 0.0f) {
         JPH_MassProperties mp;
         JPH_Shape_GetMassProperties(shape, &mp);
-        float scale = cfg.mass / fmaxf(mp.mass, 1e-6f);
+        float scale = cfg.mass / fmaxf(mp.mass, EPSILON_FLOAT);
         mp.mass     = cfg.mass;
         for (int i = 0; i < 3; i++) {
             mp.inertia.column[i].x *= scale;
@@ -1852,8 +1885,8 @@ PyCFunction_DeclareMethod PhysicsWorld_create_body(PhysicsWorldObject *self, PyO
     float restitution    = -1.0f;
     int shape_type       = 0;
     int motion_type      = 2;
-    uint32_t category    = 0xFFFF;
-    uint32_t mask        = 0xFFFF;
+    uint32_t category    = COLLISION_FILTER_ALL_CATEGORIES;
+    uint32_t mask        = COLLISION_FILTER_ALL_MASKS;
     uint32_t material_id = 0;
     uint64_t user_data   = 0;
     bool is_sensor       = false;
@@ -1948,7 +1981,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_body(PhysicsWorldObject *self, PyO
 
     // Ensure Capacity
     if (UNLIKELY(self->free_count == 0 || self->count + 1 > self->capacity)) {
-        size_t new_cap = (self->capacity == 0) ? 1024 : self->capacity * 2;
+        size_t new_cap = (self->capacity == 0) ? INITIAL_BODY_CAPACITY : self->capacity * 2;
         if (PhysicsWorld_resize(self, new_cap) < 0) {
             SHADOW_UNLOCK(&self->shadow_lock);
             JPH_BodyCreationSettings_Destroy(settings);
@@ -2101,7 +2134,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
 
     // Bulk capacity check for slots and dense buffers
     if (self->free_count < (size_t)batch_count || (self->count + batch_count) > self->capacity) {
-        size_t needed = self->count + batch_count + 1024;
+        size_t needed = self->count + batch_count + INITIAL_BODY_CAPACITY;
         if (PhysicsWorld_resize(self, needed) < 0) {
             SHADOW_UNLOCK(&self->shadow_lock);
             goto fail;
@@ -2260,8 +2293,8 @@ PyCFunction_DeclareMethod PhysicsWorld_create_mesh_body(PhysicsWorldObject *self
     PyObject *o_verts   = NULL;
     PyObject *o_indices = NULL;
     uint64_t user_data  = 0;
-    uint32_t cat        = 0xFFFF;
-    uint32_t mask       = 0xFFFF;
+    uint32_t cat        = COLLISION_FILTER_ALL_CATEGORIES;
+    uint32_t mask       = COLLISION_FILTER_ALL_MASKS;
 
     // 2. TARGET MAPPING (Using Mesh Group)
     void *targets[Mesh_COUNT]; // Mesh_COUNT generated by DEFINE_INDEX_GROUP
@@ -2305,12 +2338,12 @@ PyCFunction_DeclareMethod PhysicsWorld_create_mesh_body(PhysicsWorldObject *self
         return NULL;
     }
 
-    if (UNLIKELY(v_view.len % 12 != 0 || i_view.len % 12 != 0)) {
+    if (UNLIKELY(v_view.len % VERTEX_STRIDE_BYTES != 0 || i_view.len % VERTEX_STRIDE_BYTES != 0)) {
         PyErr_SetString(PyExc_ValueError, "Buffer size mismatch");
         goto buffer_fail;
     }
 
-    MeshBounds bounds = {(uint32_t)(i_view.len / 12), (uint32_t)(v_view.len / 12)};
+    MeshBounds bounds = {(uint32_t)(i_view.len / VERTEX_STRIDE_BYTES), (uint32_t)(v_view.len / VERTEX_STRIDE_BYTES)};
 
     // 3. Jolt Shape Build (No GIL)
     JPH_Shape *shape = NULL;
@@ -2345,7 +2378,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_mesh_body(PhysicsWorldObject *self
     BLOCK_UNTIL_NOT_STEPPING(self);
 
     if (UNLIKELY(self->free_count == 0 || self->count + 1 > self->capacity)) {
-        if (PhysicsWorld_resize(self, (self->capacity == 0) ? 1024 : self->capacity * 2) < 0) {
+        if (PhysicsWorld_resize(self, (self->capacity == 0) ? INITIAL_BODY_CAPACITY : self->capacity * 2) < 0) {
             goto commit_fail;
         }
     }
@@ -3297,7 +3330,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_render_state(PhysicsWorldObject *self
         SHADOW_UNLOCK(&self->shadow_lock);
         return PyBytes_FromStringAndSize(NULL, 0);
     }
-    size_t total_bytes = count * 7 * sizeof(float);
+    size_t total_bytes = count * FLOATS_PER_INTERPOLATED_BODY * sizeof(float);
 
     PyObject *bytes_obj = PyBytes_FromStringAndSize(NULL, (Py_ssize_t)total_bytes);
     if (!bytes_obj) {
@@ -3314,7 +3347,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_render_state(PhysicsWorldObject *self
     auto *prev_r = (AuxStride *)self->prev_rotations;
 
     for (size_t i = 0; i < count; i++) {
-        size_t dst = i * 7;
+        size_t dst = i * FLOATS_PER_INTERPOLATED_BODY;
 
         // --- 1. Position Lerp (Performed in DOUBLE) ---
         // This prevents jittering when far from the world origin.
@@ -3355,12 +3388,12 @@ PyCFunction_DeclareMethod PhysicsWorld_get_render_state(PhysicsWorldObject *self
 
         // Re-normalize to ensure it's a valid quaternion
         float mag_sq  = rx * rx + ry * ry + rz * rz + rw * rw;
-        float inv_len = (mag_sq > 0.000001f) ? 1.0f / sqrtf(mag_sq) : 1.0f;
+        float inv_len = (mag_sq > EPSILON_QUATERNION_NORMALIZATION) ? 1.0f / sqrtf(mag_sq) : 1.0f;
 
         out[dst + 3] = rx * inv_len;
         out[dst + 4] = ry * inv_len;
-        out[dst + 5] = rz * inv_len;
-        out[dst + 6] = rw * inv_len;
+        out[dst + QUATERNION_INTERPOLATION_Z_INDEX] = rz * inv_len;
+        out[dst + QUATERNION_INTERPOLATION_W_INDEX] = rw * inv_len;
     }
 
     SHADOW_UNLOCK(&self->shadow_lock);
@@ -3414,7 +3447,7 @@ PyCFunction_DeclareMethod PhysicsWorld_register_material(PhysicsWorldObject *sel
                                                 size_t nargsf, PyObject *kwnames) {
     // 1. DEFAULT VALUES
     uint32_t id;
-    float friction    = 0.5f;
+    float friction    = RESTITUTION_BUFFER;
     float restitution = 0.0f;
 
     // 2. FAST PARSE (Zero-Allocation)
@@ -3443,7 +3476,7 @@ PyCFunction_DeclareMethod PhysicsWorld_register_material(PhysicsWorldObject *sel
 
     // Grow capacity if needed
     if (self->material_count >= self->material_capacity) {
-        size_t new_cap = (self->material_capacity == 0) ? 16 : self->material_capacity * 2;
+        size_t new_cap = (self->material_capacity == 0) ? INITIAL_MATERIAL_CAPACITY : self->material_capacity * 2;
         auto *new_ptr =
             (MaterialData *)PyMem_RawRealloc(self->materials, new_cap * sizeof(MaterialData));
         if (UNLIKELY(!new_ptr)) {
@@ -3473,10 +3506,10 @@ PyCFunction_DeclareMethod PhysicsWorld_create_heightfield(PhysicsWorldObject *se
     PyObject *o_heights  = NULL;
     int grid_size        = 0;
     uint64_t user_data   = 0;
-    uint32_t category    = 0xFFFF;
-    uint32_t mask        = 0xFFFF;
+    uint32_t category    = COLLISION_FILTER_ALL_CATEGORIES;
+    uint32_t mask        = COLLISION_FILTER_ALL_MASKS;
     uint32_t material_id = 0;
-    float friction       = 0.2f;
+    float friction       = DEFAULT_FRICTION;
     float restitution    = 0.0f;
 
     // 2. FAST PARSE (Zero-Allocation)
@@ -3554,7 +3587,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_heightfield(PhysicsWorldObject *se
     BLOCK_UNTIL_NOT_STEPPING(self);
 
     if (UNLIKELY(self->free_count == 0 || self->count + 1 > self->capacity)) {
-        if (PhysicsWorld_resize(self, self->capacity + 1024) < 0) {
+        if (PhysicsWorld_resize(self, self->capacity + INITIAL_BODY_CAPACITY) < 0) {
             SHADOW_UNLOCK(&self->shadow_lock);
             JPH_Shape_Destroy(shape);
             return NULL;
@@ -3650,7 +3683,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_debug_data(PhysicsWorldObject *self, 
     settings.drawCenterOfMassTransform = draw_centers;
 
     // Draw Bodies into our internal DebugBuffers
-    if (draw_shapes || draw_bounding_box || draw_centers) {
+    if ((int)draw_shapes || (int)draw_bounding_box || (int)draw_centers) {
         JPH_PhysicsSystem_DrawBodies(self->system, &settings, self->debug_renderer, NULL);
     }
 

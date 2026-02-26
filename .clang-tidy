@@ -11,6 +11,7 @@ Checks: >
   -readability-identifier-length,
   -readability-uppercase-literal-suffix,
   -readability-math-missing-parentheses,
+  -readability-function-cognitive-complexity,
   performance-*,
   misc-*,
   -misc-unused-parameters,
