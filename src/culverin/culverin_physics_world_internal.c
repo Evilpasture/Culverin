@@ -55,7 +55,7 @@ void free_new_buffers(NewBuffers *nb) {
     // Defensive: Zero the struct so we don't accidentally Use-After-Free
     memset(nb, 0, sizeof(NewBuffers));
 }
-
+CULV_NODISCARD
 static int alloc_new_buffers(NewBuffers *nb, size_t cap) {
     memset(nb, 0, sizeof(NewBuffers));
 
@@ -127,6 +127,7 @@ static void migrate_and_init(PhysicsWorldObject *self, NewBuffers *nb, size_t ne
 }
 
 // helper: Allocate shadow buffers and indirection maps
+CULV_NODISCARD
 int allocate_buffers(PhysicsWorldObject *self, int max_bodies) {
     self->capacity = (size_t)max_bodies;
     if (self->capacity < self->count + SHADOW_CAPACITY_PADDING) {
@@ -192,7 +193,7 @@ int allocate_buffers(PhysicsWorldObject *self, int max_bodies) {
     }
     return 0;
 }
-
+CULV_NODISCARD
 int PhysicsWorld_resize(PhysicsWorldObject *self, size_t new_capacity) {
     // 1. Validation
     if (self->view_export_count > 0) {
@@ -405,6 +406,7 @@ void PhysicsWorld_free_members(PhysicsWorldObject *self) {
 }
 
 // helper: Initialize settings via Python helper
+CULV_NODISCARD
 int init_settings(PhysicsWorldObject *self, PyObject *settings_dict, float *gx, float *gy,
                   float *gz, int *max_bodies, int *max_pairs) {
     PyObject *st_module = PyType_GetModule(Py_TYPE(self));
@@ -428,6 +430,7 @@ int init_settings(PhysicsWorldObject *self, PyObject *settings_dict, float *gx, 
 }
 
 // helper: Initialize Jolt Core Systems
+CULV_NODISCARD
 int init_jolt_core(PhysicsWorldObject *self, WorldLimits limits, GravityVector gravity) {
     JobSystemThreadPoolConfig job_cfg = {
         .maxJobs = JOB_SYSTEM_MAX_JOBS, .maxBarriers = JOB_SYSTEM_MAX_BARRIERS, .numThreads = -1};
@@ -470,6 +473,7 @@ int init_jolt_core(PhysicsWorldObject *self, WorldLimits limits, GravityVector g
 }
 
 // helper: Iterate over baked Python data to create initial Jolt bodies
+CULV_NODISCARD
 int load_baked_scene(PhysicsWorldObject *self, PyObject *baked) {
     PyObject *pos_bytes_obj = PyTuple_GetItem(baked, BAKED_INDEX_POS);
     Py_ssize_t pos_len      = PyBytes_Size(pos_bytes_obj);
@@ -560,7 +564,7 @@ int load_baked_scene(PhysicsWorldObject *self, PyObject *baked) {
     SHADOW_UNLOCK(&self->shadow_lock);
     return result;
 }
-
+CULV_NODISCARD
 int verify_abi_alignment(JPH_BodyInterface *bi) {
     JPH_BoxShapeSettings *bs = JPH_BoxShapeSettings_Create(&(JPH_Vec3){1, 1, 1}, 0.0f);
     auto *shape              = (JPH_Shape *)JPH_BoxShapeSettings_CreateShape(bs);
@@ -594,7 +598,7 @@ int verify_abi_alignment(JPH_BodyInterface *bi) {
 }
 
 // Buffer Release Slot
-void PhysicsWorld_releasebuffer(PhysicsWorldObject *self, Py_buffer *Py_UNUSED(view)) {
+PyType_DeclareSlot_Void PhysicsWorld_releasebuffer(PhysicsWorldObject *self, Py_buffer *Py_UNUSED(view)) {
     SHADOW_LOCK(&self->shadow_lock);
     if (self->view_export_count > 0) {
         self->view_export_count--;

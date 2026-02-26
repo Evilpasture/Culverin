@@ -300,15 +300,17 @@ typedef struct {
 } CulverinState;
 
 // Helper to retrieve state from the module object
+CULV_NODISCARD
 static inline CulverinState *get_culverin_state(PyObject *module) {
     return (CulverinState *)PyModule_GetState(module);
 }
 
 // --- Handle Helper ---
+CULV_NODISCARD
 static inline BodyHandle make_handle(uint32_t slot, uint32_t gen) {
     return ((uint64_t)gen << 32) | (uint64_t)slot;
 }
-
+CULV_NODISCARD
 static inline bool unpack_handle(PhysicsWorldObject *self, BodyHandle h, uint32_t *slot) {
     *slot        = (uint32_t)(h & 0xFFFFFFFF);
     uint32_t gen = (uint32_t)(h >> 32);

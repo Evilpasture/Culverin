@@ -45,29 +45,29 @@ typedef struct {
 */
 extern const JPH_CharacterContactListener_Procs char_listener_procs;
 
-PyObject *Character_move(CharacterObject *self, PyObject *const *args, size_t nargsf,
+PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObject *const *args, size_t nargsf,
                          PyObject *kwnames);
 
-PyObject *Character_get_position(CharacterObject *self,
+PyCFunction_DeclareMethodFromModule Character_get_position(CharacterObject *self,
                                  PyObject *Py_UNUSED(ignored));
 
-PyObject *Character_set_position(CharacterObject *self, PyObject *args,
+PyCFunction_DeclareMethodFromModule Character_set_position(CharacterObject *self, PyObject *args,
                                  PyObject *kwds);
 
-PyObject *Character_set_rotation(CharacterObject *self, PyObject *args,
+PyCFunction_DeclareMethodFromModule Character_set_rotation(CharacterObject *self, PyObject *args,
                                  PyObject *kwds);
 
-PyObject *Character_is_grounded(CharacterObject *self, PyObject *args);
+PyCFunction_DeclareMethodFromModule Character_is_grounded(CharacterObject *self, PyObject *args);
 
-PyObject *Character_set_strength(CharacterObject *self, PyObject *args);
+PyCFunction_DeclareMethodFromModule Character_set_strength(CharacterObject *self, PyObject *args);
 
-PyObject *Character_get_render_transform(CharacterObject *self, PyObject *arg);
+PyCFunction_DeclareMethodFromModule Character_get_render_transform(CharacterObject *self, PyObject *arg);
 
-int Character_traverse(CharacterObject *self, visitproc visit, void *arg);
+PyType_DeclareSlot_StatusFromModule Character_traverse(CharacterObject *self, visitproc visit, void *arg);
 
-int Character_clear(CharacterObject *self);
+PyType_DeclareSlot_StatusFromModule Character_clear(CharacterObject *self);
 
-void Character_dealloc(CharacterObject *self);
+PyType_DeclareSlot_VoidFromModule Character_dealloc(CharacterObject *self);
 
-PyObject *PhysicsWorld_create_character(PhysicsWorldObject *self,
+PyCFunction_DeclareMethodFromModule PhysicsWorld_create_character(PhysicsWorldObject *self,
                                         PyObject *args, PyObject *kwds);

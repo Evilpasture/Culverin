@@ -7,17 +7,17 @@ struct PhysicsWorldObject;
 struct CharacterObject;
 struct VehicleObject;
 
-PyObject *get_is_step_pending(struct PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *closure);
-PyObject *get_positions(struct PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *c);
-PyObject *get_rotations(struct PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *c);
-PyObject *get_velocities(struct PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *c);
-PyObject *get_angular_velocities(struct PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *c);
-PyObject *get_count(struct PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *c);
-PyObject *get_time(struct PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *c);
-PyObject *get_user_data_buffer(struct PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *c);
+PyGetSet_DeclareGetter get_is_step_pending(struct PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *closure);
+PyGetSet_DeclareGetter get_positions(struct PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *c);
+PyGetSet_DeclareGetter get_rotations(struct PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *c);
+PyGetSet_DeclareGetter get_velocities(struct PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *c);
+PyGetSet_DeclareGetter get_angular_velocities(struct PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *c);
+PyGetSet_DeclareGetter get_count(struct PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *c);
+PyGetSet_DeclareGetter get_time(struct PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *c);
+PyGetSet_DeclareGetter get_user_data_buffer(struct PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *c);
 
-PyObject *Character_get_handle(struct CharacterObject *self, CULV_MAYBE_UNUSED void *closure);
+PyGetSet_DeclareGetter Character_get_handle(struct CharacterObject *self, CULV_MAYBE_UNUSED void *closure);
 
-PyObject *Vehicle_get_wheel_count(struct VehicleObject *self, CULV_MAYBE_UNUSED void *closure);
+PyGetSet_DeclareGetter Vehicle_get_wheel_count(struct VehicleObject *self, CULV_MAYBE_UNUSED void *closure);
 
-PyObject *get_shape_count(struct PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *closure);
+PyGetSet_DeclareGetter get_shape_count(struct PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *closure);

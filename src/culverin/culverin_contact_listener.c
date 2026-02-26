@@ -188,7 +188,7 @@ const JPH_ContactListener_Procs contact_procs = {
     .OnContactRemoved = on_contact_removed};
 
 // Fixed get_contact_events to be safer with locking
-PyObject *PhysicsWorld_get_contact_events(PhysicsWorldObject *self,
+PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events(PhysicsWorldObject *self,
                                           PyObject *Py_UNUSED(args)) {
   // 1. Enter the lock to check the state machine
   SHADOW_LOCK(&self->shadow_lock);
@@ -254,7 +254,7 @@ PyObject *PhysicsWorld_get_contact_events(PhysicsWorldObject *self,
   return list;
 }
 
-PyObject *PhysicsWorld_get_contact_events_ex(PhysicsWorldObject *self,
+PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events_ex(PhysicsWorldObject *self,
                                              PyObject *Py_UNUSED(args)) {
   // 1. Acquire Lock & Copy Data
   SHADOW_LOCK(&self->shadow_lock);
@@ -388,7 +388,7 @@ PyObject *PhysicsWorld_get_contact_events_ex(PhysicsWorldObject *self,
 // float32 px, py, pz
 // float32 nx, ny, nz
 // float32 impulse
-PyObject *PhysicsWorld_get_contact_events_raw(PhysicsWorldObject *self,
+PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events_raw(PhysicsWorldObject *self,
                                               PyObject *Py_UNUSED(args)) {
   // 1. Phase Guard
   SHADOW_LOCK(&self->shadow_lock);

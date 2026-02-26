@@ -3,7 +3,7 @@
 #include "culverin_arg_indices.h"
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-PyObject *PhysicsWorld_create_constraint(PhysicsWorldObject *self,
+PyCFunction_DeclareMethodFromModule PhysicsWorld_create_constraint(PhysicsWorldObject *self,
                                          PyObject *const *args, size_t nargsf,
                                          PyObject *kwnames) {
     // 1. FAST PARSE (Zero-Allocation)
@@ -122,7 +122,7 @@ PyObject *PhysicsWorld_create_constraint(PhysicsWorldObject *self,
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-PyObject *PhysicsWorld_destroy_constraint(PhysicsWorldObject *self,
+PyCFunction_DeclareMethodFromModule PhysicsWorld_destroy_constraint(PhysicsWorldObject *self,
                                           PyObject *const *args, size_t nargsf,
                                           PyObject *kwnames) {
     // 1. FAST PARSE (Zero-Allocation)
@@ -187,7 +187,7 @@ PyObject *PhysicsWorld_destroy_constraint(PhysicsWorldObject *self,
     Py_RETURN_NONE;
 }
 
-PyObject *PhysicsWorld_set_constraint_target(PhysicsWorldObject *self,
+PyCFunction_DeclareMethodFromModule PhysicsWorld_set_constraint_target(PhysicsWorldObject *self,
                                              PyObject *const *args, size_t nargsf,
                                              PyObject *kwnames) {
     // 1. FAST PARSE (Zero-Allocation)

@@ -258,7 +258,7 @@ static void configure_drivetrain(VehicleResources *r, PyObject *py_engine, PyObj
 
 // --- Main Function ---
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-PyObject *PhysicsWorld_create_vehicle(PhysicsWorldObject *self, PyObject *args, PyObject *kwds) {
+PyCFunction_DeclareMethodFromModule PhysicsWorld_create_vehicle(PhysicsWorldObject *self, PyObject *args, PyObject *kwds) {
     uint64_t chassis_h    = 0;
     PyObject *py_wheels   = NULL;
     PyObject *py_engine   = NULL;
@@ -415,7 +415,7 @@ python_fail:
 
 // --- Vehicles Methods ---
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-PyObject *Vehicle_set_input(VehicleObject *self, PyObject *args, PyObject *kwds) {
+PyCFunction_DeclareMethodFromModule Vehicle_set_input(VehicleObject *self, PyObject *args, PyObject *kwds) {
     float forward         = 0.0f;
     float right           = 0.0f;
     float brake           = 0.0f;
@@ -500,7 +500,7 @@ PyObject *Vehicle_set_input(VehicleObject *self, PyObject *args, PyObject *kwds)
     Py_RETURN_NONE;
 }
 
-PyObject *Vehicle_get_wheel_transform(VehicleObject *self, PyObject *args) {
+PyCFunction_DeclareMethodFromModule Vehicle_get_wheel_transform(VehicleObject *self, PyObject *args) {
     uint32_t index = 0;
     if (!PyArg_ParseTuple(args, "I", &index)) {
         return NULL;
@@ -561,7 +561,7 @@ PyObject *Vehicle_get_wheel_transform(VehicleObject *self, PyObject *args) {
     return result;
 }
 
-PyObject *Vehicle_get_wheel_local_transform(VehicleObject *self, PyObject *args) {
+PyCFunction_DeclareMethodFromModule Vehicle_get_wheel_local_transform(VehicleObject *self, PyObject *args) {
     uint32_t index = 0;
     if (!PyArg_ParseTuple(args, "I", &index)) {
         return NULL;
@@ -617,7 +617,7 @@ PyObject *Vehicle_get_wheel_local_transform(VehicleObject *self, PyObject *args)
     return result;
 }
 
-PyObject *Vehicle_get_debug_state(VehicleObject *self, PyObject *Py_UNUSED(ignored)) {
+PyCFunction_DeclareMethodFromModule Vehicle_get_debug_state(VehicleObject *self, PyObject *Py_UNUSED(ignored)) {
     // 1. LOCK AND GUARD
     // We need the world lock to ensure the vehicle pointer is stable
     // and the physics step isn't currently mutating these values.
@@ -691,21 +691,20 @@ PyObject *Vehicle_get_debug_state(VehicleObject *self, PyObject *Py_UNUSED(ignor
 }
 
 // --- Vehicle GC Support ---
-int Vehicle_traverse(VehicleObject *self, visitproc visit, void *arg) {
+PyType_DeclareSlot_StatusFromModule Vehicle_traverse(VehicleObject *self, visitproc visit, void *arg) {
     Py_VISIT(self->world);
     return 0;
 }
 
-int Vehicle_clear(VehicleObject *self) {
+PyType_DeclareSlot_StatusFromModule Vehicle_clear(VehicleObject *self) {
     Py_CLEAR(self->world);
     return 0;
 }
 
-// --- Explicit Destroy (Clean up Jolt resources) ---
-// NOLINTNEXTLINE(readability-function-cognitive-complexity)
-PyObject *Vehicle_destroy(VehicleObject *self, PyObject *Py_UNUSED(ignored)) {
+// --- Internal C Logic (No Python return value to ignore) ---
+static void Vehicle_internal_cleanup(VehicleObject *self) {
     if (!self->world) {
-        Py_RETURN_NONE;
+        return;
     }
 
     SHADOW_LOCK(&self->world->shadow_lock);
@@ -715,9 +714,10 @@ PyObject *Vehicle_destroy(VehicleObject *self, PyObject *Py_UNUSED(ignored)) {
 
     if (!self->vehicle) {
         SHADOW_UNLOCK(&self->world->shadow_lock);
-        Py_RETURN_NONE;
+        return;
     }
 
+    // Capture pointers and NULL the struct members immediately
     JPH_VehicleConstraint *j_veh             = self->vehicle;
     JPH_VehicleCollisionTester *tester       = self->tester;
     JPH_VehicleControllerSettings *v_ctrl    = self->controller_settings;
@@ -737,25 +737,17 @@ PyObject *Vehicle_destroy(VehicleObject *self, PyObject *Py_UNUSED(ignored)) {
 
     SHADOW_UNLOCK(&self->world->shadow_lock);
 
-    // Safe to destroy Jolt objects now that we are unlocked and removed from
-    // struct
+    // Safely destroy Jolt objects outside the lock
     if (j_veh) {
         JPH_PhysicsStepListener *step_listener = JPH_VehicleConstraint_AsPhysicsStepListener(j_veh);
         JPH_PhysicsSystem_RemoveStepListener(self->world->system, step_listener);
-
         JPH_PhysicsSystem_RemoveConstraint(self->world->system, (JPH_Constraint *)j_veh);
         JPH_Constraint_Destroy((JPH_Constraint *)j_veh);
     }
 
-    if (tester) {
-        JPH_VehicleCollisionTester_Destroy(tester);
-    }
-    if (v_ctrl) {
-        JPH_VehicleControllerSettings_Destroy(v_ctrl);
-    }
-    if (v_trans) {
-        JPH_VehicleTransmissionSettings_Destroy(v_trans);
-    }
+    if (tester) JPH_VehicleCollisionTester_Destroy(tester);
+    if (v_ctrl) JPH_VehicleControllerSettings_Destroy(v_ctrl);
+    if (v_trans) JPH_VehicleTransmissionSettings_Destroy(v_trans);
 
     if (wheels) {
         for (auto i = 0u; i < wheel_count; i++) {
@@ -766,26 +758,24 @@ PyObject *Vehicle_destroy(VehicleObject *self, PyObject *Py_UNUSED(ignored)) {
         PyMem_RawFree((void *)wheels);
     }
 
-    if (f_curve) {
-        JPH_LinearCurve_Destroy(f_curve);
-    }
-    if (t_curve) {
-        JPH_LinearCurve_Destroy(t_curve);
-    }
+    if (f_curve) JPH_LinearCurve_Destroy(f_curve);
+    if (t_curve) JPH_LinearCurve_Destroy(t_curve);
+}
 
+// --- Python Wrapper ---
+// Using [[nodiscard]] on this will now only affect Python callers
+PyCFunction_DeclareMethodFromModule Vehicle_destroy(VehicleObject *self, PyObject *Py_UNUSED(ignored)) {
+    Vehicle_internal_cleanup(self);
     Py_RETURN_NONE;
 }
 
-void Vehicle_dealloc(VehicleObject *self) {
+// --- Dealloc Slot ---
+PyType_DeclareSlot_VoidFromModule Vehicle_dealloc(VehicleObject *self) {
     PyObject_GC_UnTrack(self);
 
-    // Attempt to clean up. If the world is stepping, this might fail
-    // to remove the constraint from Jolt immediately.
-    // However, in standard cleanup paths, the world will be idle.
-    Vehicle_destroy(self, NULL);
-
-    // If destroy failed because the world was busy, the pointers
-    // are still in the struct. This is a leak, but a safe one (no crash).
+    // Call the internal C logic directly
+    // This avoids [[nodiscard]] warnings because the return is void
+    Vehicle_internal_cleanup(self);
 
     Py_XDECREF(self->world);
     Py_TYPE(self)->tp_free((PyObject *)self);

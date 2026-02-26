@@ -32,26 +32,26 @@ typedef struct VehicleObject {
   int current_gear;
 } VehicleObject;
 
-PyObject *PhysicsWorld_create_vehicle(struct PhysicsWorldObject *self,
+PyCFunction_DeclareMethodFromModule PhysicsWorld_create_vehicle(struct PhysicsWorldObject *self,
                                       PyObject *args, PyObject *kwds);
 void cleanup_vehicle_resources(VehicleResources *r, uint32_t num_wheels,
                                struct PhysicsWorldObject *self);
 
-PyObject *Vehicle_set_input(VehicleObject *self, PyObject *args,
+PyCFunction_DeclareMethodFromModule Vehicle_set_input(VehicleObject *self, PyObject *args,
                             PyObject *kwds);
 
-PyObject *Vehicle_get_wheel_transform(VehicleObject *self, PyObject *args);
+PyCFunction_DeclareMethodFromModule Vehicle_get_wheel_transform(VehicleObject *self, PyObject *args);
 
-PyObject *Vehicle_get_wheel_local_transform(VehicleObject *self,
+PyCFunction_DeclareMethodFromModule Vehicle_get_wheel_local_transform(VehicleObject *self,
                                             PyObject *args);
 
-PyObject *Vehicle_get_debug_state(VehicleObject *self,
+PyCFunction_DeclareMethodFromModule Vehicle_get_debug_state(VehicleObject *self,
                                   PyObject *Py_UNUSED(ignored));
 
-int Vehicle_traverse(VehicleObject *self, visitproc visit, void *arg);
+PyType_DeclareSlot_StatusFromModule Vehicle_traverse(VehicleObject *self, visitproc visit, void *arg);
 
-int Vehicle_clear(VehicleObject *self);
+PyType_DeclareSlot_StatusFromModule Vehicle_clear(VehicleObject *self);
 
-PyObject *Vehicle_destroy(VehicleObject *self, PyObject *Py_UNUSED(ignored));
+PyCFunction_DeclareMethodFromModule Vehicle_destroy(VehicleObject *self, PyObject *Py_UNUSED(ignored));
 
-void Vehicle_dealloc(VehicleObject *self);
+PyType_DeclareSlot_VoidFromModule Vehicle_dealloc(VehicleObject *self);

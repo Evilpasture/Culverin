@@ -102,7 +102,7 @@ init_tracked_controller_settings(TrackedEngineConfig config,
 }
 
 // Orchestrator
-PyObject *PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
+PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
                                               PyObject *args, PyObject *kwds) {
   uint64_t chassis_h = 0;
   PyObject *py_wheels = NULL;
@@ -257,7 +257,7 @@ python_fail:
 }
 
 // Helper: Set Tank Input
-PyObject *Vehicle_set_tank_input(VehicleObject *self, PyObject *args,
+PyCFunction_DeclareMethodFromModule Vehicle_set_tank_input(VehicleObject *self, PyObject *args,
                                  PyObject *kwds) {
   float left = 0.0f;
   float right = 0.0f;

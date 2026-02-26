@@ -16,8 +16,7 @@
 
 // Global lock for JPH callbacks
 NativeMutex g_jph_trampoline_lock; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
-
-static PyObject *PhysicsWorld_alloc(PyTypeObject *tp, Py_ssize_t Py_UNUSED(nitems)) {
+PyType_DeclareSlot_Object PhysicsWorld_alloc(PyTypeObject *tp, Py_ssize_t Py_UNUSED(nitems)) {
     size_t size = (size_t)tp->tp_basicsize;
 
     // Allocate 64-byte aligned memory to suppress UBSan alignas(64) warnings
@@ -35,10 +34,10 @@ static PyObject *PhysicsWorld_alloc(PyTypeObject *tp, Py_ssize_t Py_UNUSED(nitem
     return (PyObject *)self;
 }
 
-static void PhysicsWorld_free(void *obj) { CulvMem_RawFreeAligned(obj); }
+PyType_DeclareSlot_Void PhysicsWorld_free(void *obj) { CulvMem_RawFreeAligned(obj); }
 
 // --- Lifecycle: Deallocation ---
-static void PhysicsWorld_dealloc(PhysicsWorldObject *self) {
+PyType_DeclareSlot_Void PhysicsWorld_dealloc(PhysicsWorldObject *self) {
     PyTypeObject *tp = Py_TYPE(self);
 
     if (PyObject_GC_IsTracked((PyObject *)self)) {
@@ -55,12 +54,12 @@ static void PhysicsWorld_dealloc(PhysicsWorldObject *self) {
     // TAKE THE FREE FUNCTION POINTER NOW
     // Do not look at 'tp' or 'self' after the next line!
     freefunc tf = tp->tp_free;
-    
+
     // Release the object memory
     tf((PyObject *)self);
 
-    // FINALLY, decref the type. 
-    // This is often where it crashes if the type was defined in a module 
+    // FINALLY, decref the type.
+    // This is often where it crashes if the type was defined in a module
     // that is also being unloaded.
     Py_DECREF(tp);
 }
@@ -69,7 +68,8 @@ static void PhysicsWorld_dealloc(PhysicsWorldObject *self) {
 
 // Orchestrator function
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args, PyObject *kwds) {
+PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
+                                            PyObject *kwds) {
     if (self->system != NULL) {
         // Please don't call __init__() again.
         PyErr_SetString(PyExc_RuntimeError,
@@ -252,8 +252,8 @@ static int PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args, PyObject 
 
     culverin_sync_shadow_buffers(self);
     if (PyType_HasFeature(Py_TYPE(self), Py_TPFLAGS_HAVE_GC)) {
-    PyObject_GC_Track(self);
-}
+        PyObject_GC_Track(self);
+    }
     return 0;
 
 fail:
@@ -263,8 +263,9 @@ fail:
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-static PyObject *PhysicsWorld_apply_impulse(PhysicsWorldObject *self, PyObject *const *args,
-                                            size_t nargsf, PyObject *kwnames) {
+PyCFunction_DeclareMethod PhysicsWorld_apply_impulse(PhysicsWorldObject *self,
+                                                      PyObject *const *args, size_t nargsf,
+                                                      PyObject *kwnames) {
     BodyHandle handle_raw;
     float x;
     float y;
@@ -339,8 +340,9 @@ static PyObject *PhysicsWorld_apply_impulse(PhysicsWorldObject *self, PyObject *
     Py_RETURN_NONE;
 }
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-static PyObject *PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self, PyObject *const *args,
-                                               size_t nargsf, PyObject *kwnames) {
+PyCFunction_DeclareMethod PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self,
+                                                         PyObject *const *args, size_t nargsf,
+                                                         PyObject *kwnames) {
     BodyHandle handle_raw;
     float ix;
     float iy;
@@ -411,9 +413,9 @@ static PyObject *PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self, PyObjec
 
     Py_RETURN_NONE;
 }
-
-static PyObject *PhysicsWorld_apply_angular_impulse(PhysicsWorldObject *self, PyObject *const *args,
-                                                    size_t nargsf, PyObject *kwnames) {
+PyCFunction_DeclareMethod PhysicsWorld_apply_angular_impulse(PhysicsWorldObject *self,
+                                                             PyObject *const *args, size_t nargsf,
+                                                             PyObject *kwnames) {
     // 1. FAST PARSE (Zero-Allocation)
     BodyHandle handle_raw;
     float x;
@@ -484,9 +486,8 @@ static PyObject *PhysicsWorld_apply_angular_impulse(PhysicsWorldObject *self, Py
 
     Py_RETURN_NONE;
 }
-
-static PyObject *PhysicsWorld_apply_force(PhysicsWorldObject *self, PyObject *const *args,
-                                          size_t nargsf, PyObject *kwnames) {
+PyCFunction_DeclareMethod PhysicsWorld_apply_force(PhysicsWorldObject *self, PyObject *const *args,
+                                                   size_t nargsf, PyObject *kwnames) {
     // 1. FAST PARSE (Zero-Allocation)
     BodyHandle handle_raw;
     float x;
@@ -557,9 +558,8 @@ static PyObject *PhysicsWorld_apply_force(PhysicsWorldObject *self, PyObject *co
 
     Py_RETURN_NONE;
 }
-
-static PyObject *PhysicsWorld_apply_torque(PhysicsWorldObject *self, PyObject *const *args,
-                                           size_t nargsf, PyObject *kwnames) {
+PyCFunction_DeclareMethod PhysicsWorld_apply_torque(PhysicsWorldObject *self, PyObject *const *args,
+                                                    size_t nargsf, PyObject *kwnames) {
     // 1. FAST PARSE (Zero Allocation)
     BodyHandle handle_raw;
     float x;
@@ -629,9 +629,8 @@ static PyObject *PhysicsWorld_apply_torque(PhysicsWorldObject *self, PyObject *c
 
     Py_RETURN_NONE;
 }
-
-static PyObject *PhysicsWorld_set_gravity(PhysicsWorldObject *self, PyObject *const *args,
-                                          size_t nargsf, PyObject *kwnames) {
+PyCFunction_DeclareMethod PhysicsWorld_set_gravity(PhysicsWorldObject *self, PyObject *const *args,
+                                                   size_t nargsf, PyObject *kwnames) {
     // 1. FAST PARSE (Zero-Allocation)
     float x;
     float y;
@@ -674,9 +673,9 @@ static PyObject *PhysicsWorld_set_gravity(PhysicsWorldObject *self, PyObject *co
     SHADOW_UNLOCK(&self->shadow_lock);
     Py_RETURN_NONE;
 }
-
-static PyObject *PhysicsWorld_get_body_stats(PhysicsWorldObject *self, PyObject *const *args,
-                                             size_t nargsf, PyObject *kwnames) {
+PyCFunction_DeclareMethod PhysicsWorld_get_body_stats(PhysicsWorldObject *self,
+                                                      PyObject *const *args, size_t nargsf,
+                                                      PyObject *kwnames) {
     // 1. FAST PARSE (Zero-Allocation)
     BodyHandle handle_raw;
     void *targets[HOnly_COUNT];
@@ -719,9 +718,9 @@ static PyObject *PhysicsWorld_get_body_stats(PhysicsWorldObject *self, PyObject 
                          p.x, p.y, p.z, (double)r.x, (double)r.y, (double)r.z, (double)r.w,
                          (double)v.x, (double)v.y, (double)v.z);
 }
-
-static PyObject *PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self, PyObject *const *args,
-                                             size_t nargsf, PyObject *kwnames) {
+PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self,
+                                                      PyObject *const *args, size_t nargsf,
+                                                      PyObject *kwnames) {
     // 1. DEFAULT VALUES
     BodyHandle handle_raw;
     double surface_y;
@@ -800,8 +799,9 @@ static PyObject *PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self, PyObject 
         return PyBool_FromLong((int)submerged);
 }
 
-static PyObject *PhysicsWorld_apply_buoyancy_batch(PhysicsWorldObject *self, PyObject *const *args,
-                                                   size_t nargsf, PyObject *kwnames) {
+PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy_batch(PhysicsWorldObject *self,
+                                                            PyObject *const *args, size_t nargsf,
+                                                            PyObject *kwnames) {
     // 1. DEFAULT VALUES
     PyObject *o_handles = NULL;
     JPH_Real surface_y  = 0.0;
@@ -904,7 +904,8 @@ static PyObject *PhysicsWorld_apply_buoyancy_batch(PhysicsWorldObject *self, PyO
     Py_RETURN_NONE;
 }
 
-static PyObject *PhysicsWorld_save_state(PhysicsWorldObject *self, PyObject *Py_UNUSED(unused)) {
+PyCFunction_DeclareMethod PhysicsWorld_save_state(PhysicsWorldObject *self,
+                                                  PyObject *Py_UNUSED(unused)) {
     SHADOW_LOCK(&self->shadow_lock);
 
     BLOCK_UNTIL_NOT_STEPPING(self);
@@ -985,7 +986,8 @@ static PyObject *PhysicsWorld_save_state(PhysicsWorldObject *self, PyObject *Py_
     return bytes;
 }
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-static PyObject *PhysicsWorld_load_state(PhysicsWorldObject *self, PyObject *args, PyObject *kwds) {
+PyCFunction_DeclareMethod PhysicsWorld_load_state(PhysicsWorldObject *self, PyObject *args,
+                                                  PyObject *kwds) {
     Py_buffer view;
     static char *const kwlist[] = {"state", NULL};
     if (!PyArg_ParseTupleAndKeywords(args, kwds, "y*", kwlist, &view)) {
@@ -1159,9 +1161,9 @@ size_fail:
     return NULL;
 }
 
-static PyObject *PhysicsWorld_step(PhysicsWorldObject *self, PyObject *const *args, size_t nargsf,
-                                   PyObject *kwnames) {
-    float dt = 1.0f / 60.0f; 
+PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *const *args,
+                                            size_t nargsf, PyObject *kwnames) {
+    float dt = 1.0f / 60.0f;
     void *targets[Step_COUNT];
     targets[IDX_STEP_DT] = (void *)&dt;
 
@@ -1172,7 +1174,7 @@ static PyObject *PhysicsWorld_step(PhysicsWorldObject *self, PyObject *const *ar
 
     // --- PHASE 1: FENCE OFF NEW QUERIES & MUTATORS ---
     SHADOW_LOCK(&self->shadow_lock);
-    
+
     // 1. Instantly block NEW Python mutators (Hammer, Mover)
     atomic_store_explicit(&self->is_stepping, true, memory_order_relaxed);
     // 2. Instantly block NEW queries (Raycasts)
@@ -1181,16 +1183,14 @@ static PyObject *PhysicsWorld_step(PhysicsWorldObject *self, PyObject *const *ar
     // 3. Wait for in-flight queries to finish
     if (atomic_load_explicit(&self->active_queries, memory_order_acquire) > 0) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        Py_BEGIN_ALLOW_THREADS 
-        NATIVE_MUTEX_LOCK(self->step_sync.mutex);
+        Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(self->step_sync.mutex);
         while (atomic_load_explicit(&self->active_queries, memory_order_relaxed) > 0) {
             NATIVE_COND_WAIT(self->step_sync.cond, self->step_sync.mutex);
         }
         NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
-        Py_END_ALLOW_THREADS 
-        SHADOW_LOCK(&self->shadow_lock);
+        Py_END_ALLOW_THREADS SHADOW_LOCK(&self->shadow_lock);
     }
-    
+
     self->needs_optimization = false;
 
     // Swap command queues
@@ -1210,8 +1210,7 @@ static PyObject *PhysicsWorld_step(PhysicsWorldObject *self, PyObject *const *ar
     SHADOW_UNLOCK(&self->shadow_lock);
 
     // --- PHASE 2: FLUSH COMMANDS (is_stepping == true) ---
-    Py_BEGIN_ALLOW_THREADS 
-    NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+    Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
 
     if (captured_count > 0) {
         flush_commands_internal(self, captured_queue, captured_count);
@@ -1222,7 +1221,7 @@ static PyObject *PhysicsWorld_step(PhysicsWorldObject *self, PyObject *const *ar
     NATIVE_MUTEX_LOCK(self->step_sync.mutex);
     atomic_store_explicit(&self->is_stepping, false, memory_order_release);
     atomic_store_explicit(&self->step_requested, false, memory_order_release);
-    NATIVE_COND_BROADCAST(self->step_sync.cond); 
+    NATIVE_COND_BROADCAST(self->step_sync.cond);
     NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
 
     if (dt <= 0.0f) {
@@ -1236,7 +1235,7 @@ static PyObject *PhysicsWorld_step(PhysicsWorldObject *self, PyObject *const *ar
     NATIVE_MUTEX_LOCK(self->step_sync.mutex);
     // Block NEW queries from starting
     atomic_store_explicit(&self->step_requested, true, memory_order_relaxed);
-    
+
     // Wait for in-flight queries from Phase 3 to finish
     while (atomic_load_explicit(&self->active_queries, memory_order_acquire) > 0) {
         NATIVE_COND_WAIT(self->step_sync.cond, self->step_sync.mutex);
@@ -1254,9 +1253,9 @@ static PyObject *PhysicsWorld_step(PhysicsWorldObject *self, PyObject *const *ar
     NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
     Py_END_ALLOW_THREADS
 
-    // --- PHASE 6: FINALIZATION ---
-    SHADOW_LOCK(&self->shadow_lock);
-    
+        // --- PHASE 6: FINALIZATION ---
+        SHADOW_LOCK(&self->shadow_lock);
+
     if (self->trash_count > 0) {
         for (size_t i = 0; i < self->trash_count; i++) {
             free_new_buffers(&self->trash_buffers[i]);
@@ -1264,7 +1263,7 @@ static PyObject *PhysicsWorld_step(PhysicsWorldObject *self, PyObject *const *ar
         self->trash_count = 0;
     }
 
-    size_t c_idx = atomic_load_explicit(&self->contact_atomic_idx, memory_order_acquire);
+    size_t c_idx        = atomic_load_explicit(&self->contact_atomic_idx, memory_order_acquire);
     self->contact_count = (c_idx > self->contact_max_capacity) ? self->contact_max_capacity : c_idx;
 
     NATIVE_MUTEX_LOCK(self->step_sync.mutex);
@@ -1279,8 +1278,9 @@ static PyObject *PhysicsWorld_step(PhysicsWorldObject *self, PyObject *const *ar
     Py_RETURN_NONE;
 }
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-static PyObject *PhysicsWorld_create_convex_hull(PhysicsWorldObject *self, PyObject *const *args,
-                                                 size_t nargsf, PyObject *kwnames) {
+PyCFunction_DeclareMethod PhysicsWorld_create_convex_hull(PhysicsWorldObject *self,
+                                                          PyObject *const *args, size_t nargsf,
+                                                          PyObject *kwnames) {
     // 1. DEFAULT VALUES
     PyObject *o_pos      = NULL;
     PyObject *o_rot      = NULL;
@@ -1619,8 +1619,9 @@ static void apply_body_creation_props(JPH_BodyCreationSettings *settings, JPH_Sh
 }
 
 // Orchestrator
-static PyObject *PhysicsWorld_create_compound_body(PhysicsWorldObject *self, PyObject *const *args,
-                                                   size_t nargsf, PyObject *kwnames) {
+PyCFunction_DeclareMethod PhysicsWorld_create_compound_body(PhysicsWorldObject *self,
+                                                            PyObject *const *args, size_t nargsf,
+                                                            PyObject *kwnames) {
     // 1. DEFAULT VALUES
     PyObject *o_pos      = NULL;
     PyObject *o_rot      = NULL;
@@ -1834,8 +1835,8 @@ static void configure_body_settings(JPH_BodyCreationSettings *settings, JPH_Shap
 }
 
 // Main Orchestrator
-static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self, PyObject *const *args,
-                                          size_t nargsf, PyObject *kwnames) {
+PyCFunction_DeclareMethod PhysicsWorld_create_body(PhysicsWorldObject *self, PyObject *const *args,
+                                                   size_t nargsf, PyObject *kwnames) {
     auto nargs = PyVectorcall_NARGS(nargsf);
 
     // 1. DEFAULT VALUES
@@ -2023,8 +2024,9 @@ static PyObject *PhysicsWorld_create_body(PhysicsWorldObject *self, PyObject *co
     return PyLong_FromUnsignedLongLong(handle);
 }
 
-static PyObject *PhysicsWorld_create_bodies_batch(PhysicsWorldObject *self, PyObject *const *args,
-                                                  size_t nargsf, PyObject *kwnames) {
+PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *self,
+                                                           PyObject *const *args, size_t nargsf,
+                                                           PyObject *kwnames) {
     // 1. FAST PARSE (Zero Lock Contention)
     PyObject *py_positions = NULL;
     PyObject *py_sizes     = NULL;
@@ -2249,8 +2251,9 @@ static JPH_Shape *build_mesh_shape(const void *v_data, MeshBounds bounds,
  */
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-static PyObject *PhysicsWorld_create_mesh_body(PhysicsWorldObject *self, PyObject *const *args,
-                                               size_t nargsf, PyObject *kwnames) {
+PyCFunction_DeclareMethod PhysicsWorld_create_mesh_body(PhysicsWorldObject *self,
+                                                        PyObject *const *args, size_t nargsf,
+                                                        PyObject *kwnames) {
     // 1. DEFAULT VALUES
     PyObject *o_pos     = NULL;
     PyObject *o_rot     = NULL;
@@ -2394,8 +2397,8 @@ buffer_fail:
     return NULL;
 }
 
-static PyObject *PhysicsWorld_destroy_body(PhysicsWorldObject *self, PyObject *const *args,
-                                           size_t nargsf, PyObject *kwnames) {
+PyCFunction_DeclareMethod PhysicsWorld_destroy_body(PhysicsWorldObject *self, PyObject *const *args,
+                                                    size_t nargsf, PyObject *kwnames) {
     // 1. FAST PARSE (Zero-Allocation)
     BodyHandle handle_raw;
 
@@ -2445,8 +2448,9 @@ static PyObject *PhysicsWorld_destroy_body(PhysicsWorldObject *self, PyObject *c
     Py_RETURN_NONE;
 }
 
-static PyObject *PhysicsWorld_destroy_bodies_batch(PhysicsWorldObject *self, PyObject *const *args,
-                                                   size_t nargsf, PyObject *kwnames) {
+PyCFunction_DeclareMethod PhysicsWorld_destroy_bodies_batch(PhysicsWorldObject *self,
+                                                            PyObject *const *args, size_t nargsf,
+                                                            PyObject *kwnames) {
     // 1. FAST PARSE (Zero-Allocation)
     PyObject *py_handles_in = NULL;
 
@@ -2516,8 +2520,8 @@ static PyObject *PhysicsWorld_destroy_bodies_batch(PhysicsWorldObject *self, PyO
     Py_RETURN_NONE;
 }
 
-static PyObject *PhysicsWorld_set_position(PhysicsWorldObject *self, PyObject *const *args,
-                                           size_t nargsf, PyObject *kwnames) {
+PyCFunction_DeclareMethod PhysicsWorld_set_position(PhysicsWorldObject *self, PyObject *const *args,
+                                                    size_t nargsf, PyObject *kwnames) {
     // 1. FAST PARSE (Zero-Allocation)
     BodyHandle handle_raw;
     JPH_Real x;
@@ -2576,7 +2580,7 @@ static PyObject *PhysicsWorld_set_position(PhysicsWorldObject *self, PyObject *c
     Py_RETURN_NONE;
 }
 
-static PyObject *PhysicsWorld_set_rotation(PhysicsWorldObject *self, PyObject *const *args,
+PyCFunction_DeclareMethod PhysicsWorld_set_rotation(PhysicsWorldObject *self, PyObject *const *args,
                                            size_t nargsf, PyObject *kwnames) {
     // 1. FAST PARSE (Zero-Allocation)
     BodyHandle handle_raw;
@@ -2641,7 +2645,7 @@ static PyObject *PhysicsWorld_set_rotation(PhysicsWorldObject *self, PyObject *c
     Py_RETURN_NONE;
 }
 
-static PyObject *PhysicsWorld_set_linear_velocity(PhysicsWorldObject *self, PyObject *const *args,
+PyCFunction_DeclareMethod PhysicsWorld_set_linear_velocity(PhysicsWorldObject *self, PyObject *const *args,
                                                   size_t nargsf, PyObject *kwnames) {
     // 1. FAST PARSE (Zero-Allocation)
     BodyHandle handle_raw;
@@ -2703,7 +2707,7 @@ static PyObject *PhysicsWorld_set_linear_velocity(PhysicsWorldObject *self, PyOb
     Py_RETURN_NONE;
 }
 
-static PyObject *PhysicsWorld_set_angular_velocity(PhysicsWorldObject *self, PyObject *const *args,
+PyCFunction_DeclareMethod PhysicsWorld_set_angular_velocity(PhysicsWorldObject *self, PyObject *const *args,
                                                    size_t nargsf, PyObject *kwnames) {
     // 1. FAST PARSE (Zero-Allocation)
     BodyHandle handle_raw;
@@ -2765,7 +2769,7 @@ static PyObject *PhysicsWorld_set_angular_velocity(PhysicsWorldObject *self, PyO
     Py_RETURN_NONE;
 }
 
-static PyObject *PhysicsWorld_get_motion_type(PhysicsWorldObject *self, PyObject *const *args,
+PyCFunction_DeclareMethod PhysicsWorld_get_motion_type(PhysicsWorldObject *self, PyObject *const *args,
                                               size_t nargsf, PyObject *kwnames) {
     // 1. FAST PARSE
     BodyHandle handle_raw;
@@ -2801,7 +2805,7 @@ static PyObject *PhysicsWorld_get_motion_type(PhysicsWorldObject *self, PyObject
     return PyLong_FromLong((long)mt);
 }
 
-static PyObject *PhysicsWorld_set_motion_type(PhysicsWorldObject *self, PyObject *const *args,
+PyCFunction_DeclareMethod PhysicsWorld_set_motion_type(PhysicsWorldObject *self, PyObject *const *args,
                                               size_t nargsf, PyObject *kwnames) {
     // 1. FAST PARSE
     BodyHandle handle_raw;
@@ -2851,7 +2855,7 @@ static PyObject *PhysicsWorld_set_motion_type(PhysicsWorldObject *self, PyObject
     Py_RETURN_NONE;
 }
 
-static PyObject *PhysicsWorld_set_user_data(PhysicsWorldObject *self, PyObject *const *args,
+PyCFunction_DeclareMethod PhysicsWorld_set_user_data(PhysicsWorldObject *self, PyObject *const *args,
                                             size_t nargsf, PyObject *kwnames) {
     // 1. FAST PARSE (Zero-Allocation)
     BodyHandle handle_raw;
@@ -2903,7 +2907,7 @@ static PyObject *PhysicsWorld_set_user_data(PhysicsWorldObject *self, PyObject *
     Py_RETURN_NONE;
 }
 
-static PyObject *PhysicsWorld_get_user_data(PhysicsWorldObject *self, PyObject *const *args,
+PyCFunction_DeclareMethod PhysicsWorld_get_user_data(PhysicsWorldObject *self, PyObject *const *args,
                                             size_t nargsf, PyObject *kwnames) {
     // 1. FAST PARSE (Zero-Allocation)
     BodyHandle handle_raw;
@@ -2934,7 +2938,7 @@ static PyObject *PhysicsWorld_get_user_data(PhysicsWorldObject *self, PyObject *
     return PyLong_FromUnsignedLongLong(val);
 }
 
-static PyObject *PhysicsWorld_activate(PhysicsWorldObject *self, PyObject *const *args,
+PyCFunction_DeclareMethod PhysicsWorld_activate(PhysicsWorldObject *self, PyObject *const *args,
                                        size_t nargsf, PyObject *kwnames) {
     // 1. FAST PARSE (Zero-Allocation)
     BodyHandle handle_raw;
@@ -2983,7 +2987,7 @@ static PyObject *PhysicsWorld_activate(PhysicsWorldObject *self, PyObject *const
     Py_RETURN_NONE;
 }
 
-static PyObject *PhysicsWorld_deactivate(PhysicsWorldObject *self, PyObject *const *args,
+PyCFunction_DeclareMethod PhysicsWorld_deactivate(PhysicsWorldObject *self, PyObject *const *args,
                                          size_t nargsf, PyObject *kwnames) {
     // 1. FAST PARSE (Zero-Allocation)
     BodyHandle handle_raw;
@@ -3019,7 +3023,7 @@ static PyObject *PhysicsWorld_deactivate(PhysicsWorldObject *self, PyObject *con
     Py_RETURN_NONE;
 }
 
-static PyObject *PhysicsWorld_set_transform(PhysicsWorldObject *self, PyObject *const *args,
+PyCFunction_DeclareMethod PhysicsWorld_set_transform(PhysicsWorldObject *self, PyObject *const *args,
                                             size_t nargsf, PyObject *kwnames) {
     // 1. FAST PARSE (Zero-Allocation)
     BodyHandle handle_raw;
@@ -3100,7 +3104,7 @@ static PyObject *PhysicsWorld_set_transform(PhysicsWorldObject *self, PyObject *
     Py_RETURN_NONE;
 }
 
-static PyObject *PhysicsWorld_set_ccd(PhysicsWorldObject *self, PyObject *const *args,
+PyCFunction_DeclareMethod PhysicsWorld_set_ccd(PhysicsWorldObject *self, PyObject *const *args,
                                       size_t nargsf, PyObject *kwnames) {
     // 1. FAST PARSE (Zero-Allocation)
     BodyHandle handle_raw;
@@ -3155,7 +3159,7 @@ static PyObject *PhysicsWorld_set_ccd(PhysicsWorldObject *self, PyObject *const 
     Py_RETURN_NONE;
 }
 
-static PyObject *PhysicsWorld_get_index(PhysicsWorldObject *self, PyObject *const *args,
+PyCFunction_DeclareMethod PhysicsWorld_get_index(PhysicsWorldObject *self, PyObject *const *args,
                                         size_t nargsf, PyObject *kwnames) {
     // 1. FAST PARSE (Zero-Allocation)
     BodyHandle handle_raw;
@@ -3191,7 +3195,7 @@ static PyObject *PhysicsWorld_get_index(PhysicsWorldObject *self, PyObject *cons
     return PyLong_FromUnsignedLong(idx);
 }
 
-static PyObject *PhysicsWorld_is_alive(PhysicsWorldObject *self, PyObject *const *args,
+PyCFunction_DeclareMethod PhysicsWorld_is_alive(PhysicsWorldObject *self, PyObject *const *args,
                                        size_t nargsf, PyObject *kwnames) {
     // 1. FAST PARSE (Zero-Allocation)
     BodyHandle handle_raw;
@@ -3229,7 +3233,7 @@ static PyObject *PhysicsWorld_is_alive(PhysicsWorldObject *self, PyObject *const
     Py_RETURN_FALSE;
 }
 
-static PyObject *PhysicsWorld_get_active_indices(PhysicsWorldObject *self,
+PyCFunction_DeclareMethod PhysicsWorld_get_active_indices(PhysicsWorldObject *self,
                                                  PyObject *Py_UNUSED(args)) {
     SHADOW_LOCK(&self->shadow_lock);
     size_t count = self->count;
@@ -3267,7 +3271,7 @@ static PyObject *PhysicsWorld_get_active_indices(PhysicsWorldObject *self,
     return bytes_obj;
 }
 
-static PyObject *PhysicsWorld_get_render_state(PhysicsWorldObject *self, PyObject *const *args,
+PyCFunction_DeclareMethod PhysicsWorld_get_render_state(PhysicsWorldObject *self, PyObject *const *args,
                                                size_t nargsf, PyObject *kwnames) {
     // 1. FAST PARSE
     float alpha;
@@ -3363,7 +3367,7 @@ static PyObject *PhysicsWorld_get_render_state(PhysicsWorldObject *self, PyObjec
     return bytes_obj;
 }
 
-static PyObject *PhysicsWorld_set_collision_filter(PhysicsWorldObject *self, PyObject *const *args,
+PyCFunction_DeclareMethod PhysicsWorld_set_collision_filter(PhysicsWorldObject *self, PyObject *const *args,
                                                    size_t nargsf, PyObject *kwnames) {
     // 1. FAST PARSE (Zero-Allocation)
     BodyHandle handle_raw;
@@ -3406,7 +3410,7 @@ static PyObject *PhysicsWorld_set_collision_filter(PhysicsWorldObject *self, PyO
     Py_RETURN_NONE;
 }
 
-static PyObject *PhysicsWorld_register_material(PhysicsWorldObject *self, PyObject *const *args,
+PyCFunction_DeclareMethod PhysicsWorld_register_material(PhysicsWorldObject *self, PyObject *const *args,
                                                 size_t nargsf, PyObject *kwnames) {
     // 1. DEFAULT VALUES
     uint32_t id;
@@ -3460,7 +3464,7 @@ static PyObject *PhysicsWorld_register_material(PhysicsWorldObject *self, PyObje
     Py_RETURN_NONE;
 }
 
-static PyObject *PhysicsWorld_create_heightfield(PhysicsWorldObject *self, PyObject *const *args,
+PyCFunction_DeclareMethod PhysicsWorld_create_heightfield(PhysicsWorldObject *self, PyObject *const *args,
                                                  size_t nargsf, PyObject *kwnames) {
     // 1. DEFAULT VALUES
     PyObject *o_pos      = NULL;
@@ -3605,7 +3609,7 @@ static PyObject *PhysicsWorld_create_heightfield(PhysicsWorldObject *self, PyObj
     return PyLong_FromUnsignedLongLong(handle);
 }
 
-static PyObject *PhysicsWorld_get_debug_data(PhysicsWorldObject *self, PyObject *const *args,
+PyCFunction_DeclareMethod PhysicsWorld_get_debug_data(PhysicsWorldObject *self, PyObject *const *args,
                                              size_t nargsf, PyObject *kwnames) {
     // 1. DEFAULT VALUES
     bool draw_shapes       = true;

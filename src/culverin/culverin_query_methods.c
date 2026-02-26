@@ -61,7 +61,7 @@ static float OverlapCallback_Broad(void *context, const JPH_BodyID result_bid) {
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-PyObject *PhysicsWorld_overlap_sphere(PhysicsWorldObject *self, PyObject *const *args,
+PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_sphere(PhysicsWorldObject *self, PyObject *const *args,
                                       size_t nargsf, PyObject *kwnames) {
     // 1. DEFAULT VALUES
     PyObject *o_center = NULL;
@@ -187,7 +187,7 @@ PyObject *PhysicsWorld_overlap_sphere(PhysicsWorldObject *self, PyObject *const 
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-PyObject *PhysicsWorld_overlap_aabb(PhysicsWorldObject *self, PyObject *const *args, size_t nargsf,
+PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_aabb(PhysicsWorldObject *self, PyObject *const *args, size_t nargsf,
                                     PyObject *kwnames) {
     // 1. DEFAULT VALUES
     PyObject *o_min = NULL;
@@ -289,7 +289,7 @@ query_cleanup:
     return ret_val;
 }
 
-PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *const *args, size_t nargsf,
+PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *const *args, size_t nargsf,
                                PyObject *kwnames) {
     // 1. DEFAULT VALUES
     PyObject *o_start = NULL;
@@ -432,7 +432,7 @@ PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *const *args, 
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self, PyObject *const *args, size_t nargsf,
+PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast_batch(PhysicsWorldObject *self, PyObject *const *args, size_t nargsf,
                                      PyObject *kwnames) {
     // 1. DEFAULT VALUES
     PyObject *o_starts = NULL;
@@ -615,7 +615,7 @@ fail_buffers:
     return NULL;
 }
 
-PyObject *PhysicsWorld_shapecast(PhysicsWorldObject *self, PyObject *const *args, size_t nargsf,
+PyCFunction_DeclareMethodFromModule PhysicsWorld_shapecast(PhysicsWorldObject *self, PyObject *const *args, size_t nargsf,
                                  PyObject *kwnames) {
     // 1. DEFAULT VALUES
     int shape_type    = 0;

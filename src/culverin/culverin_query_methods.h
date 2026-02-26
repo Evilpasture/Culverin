@@ -12,17 +12,17 @@ typedef struct {
 
 constexpr int STACK_ALLOCATE_HITS = 64;
 
-PyObject *PhysicsWorld_overlap_sphere(PhysicsWorldObject *self, PyObject *const *args,
+PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_sphere(PhysicsWorldObject *self, PyObject *const *args,
                                       size_t nargsf, PyObject *kwnames);
 
-PyObject *PhysicsWorld_overlap_aabb(PhysicsWorldObject *self, PyObject *const *args, size_t nargsf,
+PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_aabb(PhysicsWorldObject *self, PyObject *const *args, size_t nargsf,
                                     PyObject *kwnames);
 
-PyObject *PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *const *args, size_t nargsf,
+PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *const *args, size_t nargsf,
                                PyObject *kwnames);
 
-PyObject *PhysicsWorld_raycast_batch(PhysicsWorldObject *self, PyObject *const *args, size_t nargsf,
+PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast_batch(PhysicsWorldObject *self, PyObject *const *args, size_t nargsf,
                                      PyObject *kwnames);
 
-PyObject *PhysicsWorld_shapecast(PhysicsWorldObject *self, PyObject *const *args, size_t nargsf,
+PyCFunction_DeclareMethodFromModule PhysicsWorld_shapecast(PhysicsWorldObject *self, PyObject *const *args, size_t nargsf,
                                  PyObject *kwnames);

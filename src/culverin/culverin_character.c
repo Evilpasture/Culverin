@@ -310,7 +310,7 @@ const JPH_CharacterContactListener_Procs char_listener_procs = {
     .OnContactSolve              = NULL                                 // Advanced, keep NULL
 };
 
-PyObject *Character_move(CharacterObject *self, PyObject *const *args, size_t nargsf,
+PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObject *const *args, size_t nargsf,
                          PyObject *kwnames) {
     // 1. FAST PARSE (Zero-Allocation)
     PyObject *o_velocity = NULL;
@@ -395,7 +395,7 @@ PyObject *Character_move(CharacterObject *self, PyObject *const *args, size_t na
     Py_RETURN_NONE;
 }
 
-PyObject *Character_get_position(CharacterObject *self, PyObject *Py_UNUSED(ignored)) {
+PyCFunction_DeclareMethodFromModule Character_get_position(CharacterObject *self, PyObject *Py_UNUSED(ignored)) {
     // 1. Aligned stack storage for SIMD
     JPH_STACK_ALLOC(JPH_RVec3, pos);
 
@@ -417,7 +417,7 @@ PyObject *Character_get_position(CharacterObject *self, PyObject *Py_UNUSED(igno
     return ret;
 }
 
-PyObject *Character_set_position(CharacterObject *self, PyObject *args, PyObject *kwds) {
+PyCFunction_DeclareMethodFromModule Character_set_position(CharacterObject *self, PyObject *args, PyObject *kwds) {
     JPH_Real x            = 0.0;
     JPH_Real y            = 0.0;
     JPH_Real z            = 0.0;
@@ -455,7 +455,7 @@ PyObject *Character_set_position(CharacterObject *self, PyObject *args, PyObject
     Py_RETURN_NONE;
 }
 
-PyObject *Character_set_rotation(CharacterObject *self, PyObject *args, PyObject *kwds) {
+PyCFunction_DeclareMethodFromModule Character_set_rotation(CharacterObject *self, PyObject *args, PyObject *kwds) {
     float x                     = 0.0f;
     float y                     = 0.0f;
     float z                     = 0.0f;
@@ -488,7 +488,7 @@ PyObject *Character_set_rotation(CharacterObject *self, PyObject *args, PyObject
     Py_RETURN_NONE;
 }
 
-PyObject *Character_is_grounded(CharacterObject *self, PyObject *Py_UNUSED(args)) {
+PyCFunction_DeclareMethodFromModule Character_is_grounded(CharacterObject *self, PyObject *Py_UNUSED(args)) {
     SHADOW_LOCK(&self->world->shadow_lock);
     // No need for GUARD_STEPPING here as it's a non-destructive status check,
     // but holding the lock ensures the character hasn't been deallocated.
@@ -501,7 +501,7 @@ PyObject *Character_is_grounded(CharacterObject *self, PyObject *Py_UNUSED(args)
     Py_RETURN_FALSE;
 }
 
-PyObject *Character_set_strength(CharacterObject *self, PyObject *args) {
+PyCFunction_DeclareMethodFromModule Character_set_strength(CharacterObject *self, PyObject *args) {
     float strength = 0.0f;
     if (!PyArg_ParseTuple(args, "f", &strength)) {
         return NULL;
@@ -522,7 +522,7 @@ PyObject *Character_set_strength(CharacterObject *self, PyObject *args) {
 }
 
 // Change signature to take PyObject* arg directly
-PyObject *Character_get_render_transform(CharacterObject *self, PyObject *arg) {
+PyCFunction_DeclareMethodFromModule Character_get_render_transform(CharacterObject *self, PyObject *arg) {
     // --- 1. Fast Argument Parsing ---
     double alpha_dbl = PyFloat_AsDouble(arg);
     if (alpha_dbl == -1.0 && PyErr_Occurred()) {
@@ -602,16 +602,16 @@ PyObject *Character_get_render_transform(CharacterObject *self, PyObject *arg) {
 }
 
 // NEW: GC Traverse/Clear for Character
-int Character_traverse(CharacterObject *self, visitproc visit, void *arg) {
+PyType_DeclareSlot_Status Character_traverse(CharacterObject *self, visitproc visit, void *arg) {
     Py_VISIT(self->world);
     return 0;
 }
-int Character_clear(CharacterObject *self) {
+PyType_DeclareSlot_Status Character_clear(CharacterObject *self) {
     Py_CLEAR(self->world);
     return 0;
 }
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-void Character_dealloc(CharacterObject *self) {
+PyType_DeclareSlot_Void Character_dealloc(CharacterObject *self) {
     PyObject_GC_UnTrack(self);
     if (!self->world) {
         goto finalize;
@@ -741,7 +741,7 @@ static void setup_char_filters(CharacterObject *obj) {
 }
 
 // Main Orchestrator
-PyObject *PhysicsWorld_create_character(PhysicsWorldObject *self, PyObject *args, PyObject *kwds) {
+PyCFunction_DeclareMethodFromModule PhysicsWorld_create_character(PhysicsWorldObject *self, PyObject *args, PyObject *kwds) {
     JPH_Real px                 = 0;
     JPH_Real py                 = 0;
     JPH_Real pz                 = 0;

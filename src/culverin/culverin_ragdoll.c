@@ -18,7 +18,7 @@ static constexpr size_t RAGDOLL_BODY_BUFFER_INCREMENT = 1024;
 // JPH_Mat4 size in bytes (16 floats)
 static constexpr size_t JPH_MAT4_SIZE_BYTES = 64;
 
-PyObject *Skeleton_add_joint(SkeletonObject *self, PyObject *args) {
+PyCFunction_DeclareMethodFromModule Skeleton_add_joint(SkeletonObject *self, PyObject *args) {
   const char *name = NULL;
   int parent_idx = -1; // Default to root
   if (!PyArg_ParseTuple(args, "s|i", &name, &parent_idx)) {
@@ -29,7 +29,7 @@ PyObject *Skeleton_add_joint(SkeletonObject *self, PyObject *args) {
   return PyLong_FromLong(idx);
 }
 
-PyObject *Skeleton_get_joint_index(SkeletonObject *self, PyObject *args) {
+PyCFunction_DeclareMethod Skeleton_get_joint_index(SkeletonObject *self, PyObject *args) {
   const char *name = NULL;
   if (!PyArg_ParseTuple(args, "s", &name)) {
     return NULL;
@@ -38,7 +38,7 @@ PyObject *Skeleton_get_joint_index(SkeletonObject *self, PyObject *args) {
   return PyLong_FromLong(idx);
 }
 
-PyObject *Skeleton_finalize(SkeletonObject *self, PyObject *Py_UNUSED(args)) {
+PyCFunction_DeclareMethodFromModule Skeleton_finalize(SkeletonObject *self, PyObject *Py_UNUSED(args)) {
   JPH_Skeleton_CalculateParentJointIndices(self->skeleton);
   if (!JPH_Skeleton_AreJointsCorrectlyOrdered(self->skeleton)) {
     PyErr_SetString(
@@ -51,7 +51,7 @@ PyObject *Skeleton_finalize(SkeletonObject *self, PyObject *Py_UNUSED(args)) {
 
 // --- Ragdoll Settings Implementation ---
 
-PyObject *PhysicsWorld_create_ragdoll_settings(PhysicsWorldObject *self,
+PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll_settings(PhysicsWorldObject *self,
                                                PyObject *args) {
   SkeletonObject *py_skel = NULL;
   if (!PyArg_ParseTuple(
@@ -79,7 +79,7 @@ PyObject *PhysicsWorld_create_ragdoll_settings(PhysicsWorldObject *self,
   return (PyObject *)obj;
 }
 
-PyObject *RagdollSettings_add_part(RagdollSettingsObject *self, PyObject *args,
+PyCFunction_DeclareMethodFromModule RagdollSettings_add_part(RagdollSettingsObject *self, PyObject *args,
                                    PyObject *kwds) {
   // 1. ARGUMENT PARSING
   int joint_idx = 0;
@@ -196,7 +196,7 @@ PyObject *RagdollSettings_add_part(RagdollSettingsObject *self, PyObject *args,
   Py_RETURN_NONE;
 }
 
-PyObject *RagdollSettings_stabilize(RagdollSettingsObject *self,
+PyCFunction_DeclareMethodFromModule RagdollSettings_stabilize(RagdollSettingsObject *self,
                                     PyObject *Py_UNUSED(args)) {
   if (JPH_RagdollSettings_Stabilize(self->settings)) {
     Py_RETURN_TRUE;
@@ -204,7 +204,7 @@ PyObject *RagdollSettings_stabilize(RagdollSettingsObject *self,
   Py_RETURN_FALSE;
 }
 
-PyObject *PhysicsWorld_create_ragdoll(PhysicsWorldObject *self, PyObject *args,
+PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll(PhysicsWorldObject *self, PyObject *args,
                                       PyObject *kwds) {
   RagdollSettingsObject *py_settings = NULL;
   JPH_Real px;
@@ -376,7 +376,7 @@ PyObject *PhysicsWorld_create_ragdoll(PhysicsWorldObject *self, PyObject *args,
   return (PyObject *)obj;
 }
 
-PyObject *Ragdoll_drive_to_pose(RagdollObject *self, PyObject *args,
+PyCFunction_DeclareMethodFromModule Ragdoll_drive_to_pose(RagdollObject *self, PyObject *args,
                                 PyObject *kwds) {
   JPH_Real root_x = 0.0f;
   JPH_Real root_y = 0.0f;
@@ -451,7 +451,7 @@ PyObject *Ragdoll_drive_to_pose(RagdollObject *self, PyObject *args,
   Py_RETURN_NONE;
 }
 
-PyObject *Ragdoll_get_body_ids(RagdollObject *self, PyObject *Py_UNUSED(args)) {
+PyCFunction_DeclareMethodFromModule Ragdoll_get_body_ids(RagdollObject *self, PyObject *Py_UNUSED(args)) {
   // Helper to get the Body Handles of the parts so users can manipulate
   // specific limbs
   PyObject *list = PyList_New((Py_ssize_t)self->body_count);
@@ -471,7 +471,7 @@ PyObject *Ragdoll_get_body_ids(RagdollObject *self, PyObject *Py_UNUSED(args)) {
   return list;
 }
 
-PyObject *Ragdoll_get_debug_info(RagdollObject *self,
+PyCFunction_DeclareMethodFromModule Ragdoll_get_debug_info(RagdollObject *self,
                                  PyObject *Py_UNUSED(ignored)) {
   if (!self->ragdoll || !self->world) {
     Py_RETURN_NONE;
@@ -508,14 +508,14 @@ PyObject *Ragdoll_get_debug_info(RagdollObject *self,
   return list;
 }
 
-void Skeleton_dealloc(SkeletonObject *self) {
+PyType_DeclareSlot_VoidFromModule Skeleton_dealloc(SkeletonObject *self) {
   if (self->skeleton) {
     JPH_Skeleton_Destroy(self->skeleton);
   }
   Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
-PyObject *Skeleton_new(PyTypeObject *type, PyObject *Py_UNUSED(args), PyObject *Py_UNUSED(kwds)) {
+PyType_DeclareSlot_ObjectFromModule Skeleton_new(PyTypeObject *type, PyObject *Py_UNUSED(args), PyObject *Py_UNUSED(kwds)) {
   auto *self = (SkeletonObject *)type->tp_alloc(type, 0);
   if (self) {
     self->skeleton = JPH_Skeleton_Create();
@@ -527,7 +527,7 @@ PyObject *Skeleton_new(PyTypeObject *type, PyObject *Py_UNUSED(args), PyObject *
   return (PyObject *)self;
 }
 
-void RagdollSettings_dealloc(RagdollSettingsObject *self) {
+PyType_DeclareSlot_VoidFromModule RagdollSettings_dealloc(RagdollSettingsObject *self) {
   if (self->settings) {
     JPH_RagdollSettings_Destroy(self->settings);
   }
@@ -537,7 +537,7 @@ void RagdollSettings_dealloc(RagdollSettingsObject *self) {
 
 // --- Ragdoll Instance Implementation ---
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-void Ragdoll_dealloc(RagdollObject *self) {
+PyType_DeclareSlot_VoidFromModule Ragdoll_dealloc(RagdollObject *self) {
   if (self->world && self->ragdoll) {
     SHADOW_LOCK(&self->world->shadow_lock);
 
