@@ -1,336 +1,89 @@
-"""
-Culverin Physics Engine
-High-performance Python bindings for Jolt Physics using Shadow Buffers and Generational Handles.
-"""
+from typing import Any, List, Tuple, Sequence, Dict
 
-from __future__ import annotations
-from typing import TypedDict, Any, Sequence, Iterable
+# 1. Import Pure Python Helpers
+# (We assume _culverin.py has type hints inline or inferred)
+from ._culverin import (
+    Engine,
+    Transmission,
+    Automatic,
+    Manual,
+    validate_constraint,
+    validate_settings,
+    bake_scene
+)
 
-# --- Semantic Type Aliases ---
-# Using native tuples for performance, but annotated for clarity
-Vec3 = tuple[float, float, float]
-Quat = tuple[float, float, float, float]
-Handle = int 
-HandleBuffer = bytes | memoryview | Sequence[int]
+# 2. Import C-Extension Symbols (from _culverin_c.pyi)
+from ._culverin_c import (
+    # Core Classes
+    PhysicsWorld,
+    Character,
+    Vehicle,
+    Ragdoll,
+    RagdollSettings,
+    Skeleton,
 
-# --- Constants ---
-SHAPE_BOX: int = ...
-SHAPE_SPHERE: int = ...
-SHAPE_CAPSULE: int = ...
-SHAPE_CYLINDER: int = ...
-SHAPE_PLANE: int = ...
-SHAPE_MESH: int = ...
-SHAPE_HEIGHTFIELD: int = ...
-SHAPE_CONVEX_HULL: int = ...
+    # Shape Constants
+    SHAPE_BOX,
+    SHAPE_SPHERE,
+    SHAPE_CAPSULE,
+    SHAPE_CYLINDER,
+    SHAPE_PLANE,
+    SHAPE_MESH,
+    SHAPE_HEIGHTFIELD,
+    SHAPE_CONVEX_HULL,
 
-MOTION_STATIC: int = ...
-MOTION_KINEMATIC: int = ...
-MOTION_DYNAMIC: int = ...
+    # Motion Constants
+    MOTION_STATIC,
+    MOTION_KINEMATIC,
+    MOTION_DYNAMIC,
 
-CONSTRAINT_FIXED: int = ...
-CONSTRAINT_POINT: int = ...
-CONSTRAINT_HINGE: int = ...
-CONSTRAINT_SLIDER: int = ...
-CONSTRAINT_DISTANCE: int = ...
-CONSTRAINT_CONE: int = ...
+    # Constraint Constants
+    CONSTRAINT_FIXED,
+    CONSTRAINT_POINT,
+    CONSTRAINT_HINGE,
+    CONSTRAINT_SLIDER,
+    CONSTRAINT_DISTANCE,
+    CONSTRAINT_CONE,
 
-EVENT_ADDED: int = ...
-EVENT_PERSISTED: int = ...
-EVENT_REMOVED: int = ...
+    # Event Constants
+    EVENT_ADDED,
+    EVENT_PERSISTED,
+    EVENT_REMOVED,
+)
 
-# --- Helper Configuration Dicts ---
-
-class BodyConfig(TypedDict, total=False):
-    pos: Vec3
-    rot: Quat
-    shape: int
-    size: float | tuple[float, ...]
-    mass: float
-    user_data: int
-    motion: int
-    is_sensor: bool
-    ccd: bool
-
-class WorldSettings(TypedDict, total=False):
-    gravity: Vec3
-    penetration_slop: float
-    max_bodies: int
-    max_pairs: int
-
-class WheelConfig(TypedDict):
-    pos: Vec3
-    radius: float
-    width: float
-
-class TrackConfig(TypedDict):
-    indices: list[int]
-    driven_wheel: int
-
-# --- Helper Classes ---
-
-class Engine:
-    """Engine configuration for wheeled and tracked vehicles."""
-    def __init__(self, max_torque: float = 500.0, max_rpm: float = 7000.0, min_rpm: float = 1000.0, inertia: float = 0.5): ...
-
-class Automatic:
-    """Automatic transmission configuration."""
-    def __init__(self, gears: int | list[float] = 5, clutch_strength: float = 2000.0, 
-                 shift_up_rpm: float = 5000.0, shift_down_rpm: float = 2000.0, differential_ratio: float = 3.42): ...
-
-class Manual:
-    """Manual transmission configuration."""
-    def __init__(self, gears: int | list[float] = 5, clutch_strength: float = 5000.0, differential_ratio: float = 3.42): ...
-
-# --- Main Classes ---
-
-class Character:
-    @property
-    def handle(self) -> Handle: ...
-    
-    def move(self, velocity: Vec3, dt: float) -> None:
-        """Move the character, resolving collisions and stair climbing."""
-        ...
-    def get_position(self) -> Vec3: ...
-    def set_position(self, pos: Vec3) -> None: ...
-    def set_rotation(self, rot: Quat) -> None: ...
-    def is_grounded(self) -> bool: ...
-    def set_strength(self, strength: float) -> None: ...
-    def get_render_transform(self, alpha: float) -> tuple[Vec3, Quat]:
-        """Returns interpolated (pos, rot) for rendering."""
-        ...
-
-class Skeleton:
-    def add_joint(self, name: str, parent_index: int = -1) -> int: ...
-    def finalize(self) -> None: ...
-
-class RagdollSettings:
-    def add_part(
-        self, joint_index: int, shape_type: int, size: Any, mass: float, parent_index: int, 
-        twist_min: float = -0.1, twist_max: float = 0.1, cone_angle: float = 0.0, 
-        axis: Vec3 = (1,0,0), normal: Vec3 = (0,1,0), pos: Vec3 = (0,0,0)
-    ) -> None: ...
-    def stabilize(self) -> bool: ...
-
-class Ragdoll:
-    def drive_to_pose(self, root_pos: Vec3, root_rot: Quat, matrices: bytes) -> None: ...
-    def get_body_handles(self) -> list[Handle]: ...
-    def get_debug_info(self) -> list[dict[str, Any]]: ...
-
-class Vehicle:
-    @property
-    def wheel_count(self) -> int: ...
-    
-    def set_input(self, forward: float = 0.0, right: float = 0.0, brake: float = 0.0, handbrake: float = 0.0) -> None: ...
-    def set_tank_input(self, left: float, right: float, brake: float = 0.0) -> None: ...
-    def get_wheel_transform(self, index: int) -> tuple[Vec3, Quat]: ...
-    def get_wheel_local_transform(self, index: int) -> tuple[Vec3, Quat]: ...
-    def get_debug_state(self) -> None: ...
-    def destroy(self) -> None: ...
-
-class PhysicsWorld:
-    def __init__(self, settings: WorldSettings | None = None, bodies: list[BodyConfig] | None = None) -> None: ...
-    
-    def step(self, dt: float = 1.0/60.0) -> None:
-        """Advance simulation and sync shadow buffers."""
-        ...
-
-    # --- Creation ---
-
-    def create_body(
-        self, 
-        pos: Vec3 | None = None, 
-        rot: Quat | None = None, 
-        size: float | Vec3 | None = None, 
-        shape: int = 0, 
-        motion: int = 2, 
-        user_data: int = 0, 
-        is_sensor: bool = False, 
-        mass: float = -1.0, 
-        category: int = 0xFFFF, 
-        mask: int = 0xFFFF, 
-        friction: float = 0.2, 
-        restitution: float = 0.0, 
-        material_id: int = 0, 
-        ccd: bool = False
-    ) -> Handle: ...
-
-    def create_bodies_batch(
-        self, 
-        positions: list[Vec3], 
-        sizes: list[Vec3], 
-        shape_type: int = 0, 
-        motion_type: int = 2
-    ) -> list[Handle | None]:
-        """Create multiple bodies in one go. Returns list of handles (or None on failure)."""
-        ...
-
-    def create_mesh_body(
-        self, 
-        pos: Vec3, 
-        rot: Quat, 
-        vertices: bytes, 
-        indices: bytes, 
-        user_data: int = 0, 
-        category: int = 0xFFFF, 
-        mask: int = 0xFFFF
-    ) -> Handle: ...
-
-    def create_convex_hull(
-        self, 
-        pos: Vec3, 
-        rot: Quat, 
-        points: bytes, 
-        motion: int = 2, 
-        mass: float = -1.0, 
-        user_data: int = 0, 
-        is_sensor: bool = False, 
-        category: int = 0xFFFF, 
-        mask: int = 0xFFFF, 
-        material_id: int = 0, 
-        friction: float = 0.2, 
-        restitution: float = 0.0, 
-        ccd: bool = False
-    ) -> Handle: ...
-
-    def create_compound_body(
-        self, 
-        pos: Vec3, 
-        rot: Quat, 
-        parts: list[tuple[Vec3, Quat, int, Any]], 
-        motion: int = 2, 
-        mass: float = -1.0, 
-        user_data: int = 0, 
-        is_sensor: bool = False, 
-        category: int = 0xFFFF, 
-        mask: int = 0xFFFF, 
-        material_id: int = 0, 
-        friction: float = 0.2, 
-        restitution: float = 0.0, 
-        ccd: bool = False
-    ) -> Handle: ...
-
-    def create_heightfield(
-        self, 
-        pos: Vec3, 
-        rot: Quat, 
-        scale: Vec3, 
-        heights: bytes, 
-        grid_size: int, 
-        user_data: int = 0, 
-        category: int = 0xFFFF, 
-        mask: int = 0xFFFF, 
-        material_id: int = 0, 
-        friction: float = 0.5, 
-        restitution: float = 0.0
-    ) -> Handle: ...
-
-    def create_character(self, pos: Vec3, **kwargs) -> Character: ...
-    
-    def create_vehicle(
-        self, chassis: Handle, wheels: Sequence[WheelConfig], drive: str = "RWD", 
-        engine: Engine | None = None, transmission: Automatic | Manual | None = None
-    ) -> Vehicle: ...
-    
-    def create_tracked_vehicle(
-        self, chassis: Handle, wheels: Sequence[WheelConfig], tracks: Sequence[TrackConfig], 
-        max_torque: float = 5000.0, max_rpm: float = 6000.0
-    ) -> Vehicle: ...
-
-    def create_ragdoll(self, settings: RagdollSettings, pos: Vec3, **kwargs) -> Ragdoll: ...
-    def create_ragdoll_settings(self, skeleton: Skeleton) -> RagdollSettings: ...
-
-    # --- Destruction ---
-
-    def destroy_body(self, handle: Handle) -> None: ...
-    def destroy_bodies_batch(self, handles: Sequence[Handle]) -> None: ...
-    
-    # --- Constraints ---
-
-    def create_constraint(self, type: int, body1: Handle, body2: Handle, params: Any = None, motor: Any = None) -> Handle: ...
-    def destroy_constraint(self, handle: Handle) -> None: ...
-    def set_constraint_target(self, handle: Handle, target: float) -> None: ...
-
-    # --- Interaction (Forces & Impulses) ---
-
-    def apply_impulse(self, handle: Handle, x: float, y: float, z: float) -> None: ...
-    def apply_impulse_at(self, handle: Handle, ix: float, iy: float, iz: float, px: float, py: float, pz: float) -> None: ...
-    def apply_force(self, handle: Handle, x: float, y: float, z: float) -> None: ...
-    def apply_torque(self, handle: Handle, x: float, y: float, z: float) -> None: ...
-    def apply_angular_impulse(self, handle: Handle, x: float, y: float, z: float) -> None: ...
-    
-    def apply_buoyancy(
-        self, handle: Handle, surface_y: float, buoyancy: float = 1.0, 
-        linear_drag: float = 0.5, angular_drag: float = 0.5, dt: float = 1.0/60.0, 
-        fluid_velocity: Vec3 = (0,0,0)
-    ) -> bool: ...
-    
-    def apply_buoyancy_batch(
-        self, handles: HandleBuffer, surface_y: float = 0.0, buoyancy: float = 1.0, 
-        linear_drag: float = 0.5, angular_drag: float = 0.5, dt: float = 1.0/60.0, 
-        fluid_velocity: Vec3 = (0,0,0)
-    ) -> None: ...
-
-    # --- Setters ---
-
-    def set_position(self, handle: Handle, x: float, y: float, z: float) -> None: ...
-    def set_rotation(self, handle: Handle, x: float, y: float, z: float, w: float) -> None: ...
-    def set_transform(self, handle: Handle, pos: Vec3, rot: Quat) -> None: ...
-    def set_linear_velocity(self, handle: Handle, x: float, y: float, z: float) -> None: ...
-    def set_angular_velocity(self, handle: Handle, x: float, y: float, z: float) -> None: ...
-    def set_gravity(self, x: float, y: float, z: float) -> None: ...
-    def set_ccd(self, handle: Handle, enabled: bool) -> None: ...
-    def set_motion_type(self, handle: Handle, motion: int) -> None: ...
-    def set_collision_filter(self, handle: Handle, category: int, mask: int) -> None: ...
-    def set_user_data(self, handle: Handle, data: int) -> None: ...
-    def register_material(self, id: int, friction: float = 0.5, restitution: float = 0.0) -> None: ...
-    
-    def activate(self, handle: Handle) -> None: ...
-    def deactivate(self, handle: Handle) -> None: ...
-
-    # --- Getters & Queries ---
-
-    def get_body_stats(self, handle: Handle) -> tuple[Vec3, Quat, Vec3] | None: ...
-    def get_index(self, handle: Handle) -> int: ...
-    def is_alive(self, handle: Handle) -> bool: ...
-    def get_motion_type(self, handle: Handle) -> int: ...
-    def get_user_data(self, handle: Handle) -> int: ...
-    
-    def raycast(self, start: Vec3, direction: Vec3, max_dist: float = 1000.0, ignore: int = 0) -> tuple[Handle, float, Vec3] | None: ...
-    def raycast_batch(self, starts: bytes, directions: bytes, max_dist: float = 1000.0) -> bytes: ...
-    def shapecast(self, shape: int, pos: Vec3, rot: Quat, dir: Vec3, size: Any = None, ignore: int = 0) -> tuple[Handle, float, Vec3, Vec3] | None: ...
-    def overlap_sphere(self, center: Vec3, radius: float) -> list[Handle]: ...
-    def overlap_aabb(self, min: Vec3, max: Vec3) -> list[Handle]: ...
-
-    # --- State & Debug ---
-
-    def save_state(self) -> bytes: ...
-    def load_state(self, state: bytes) -> None: ...
-    def get_render_state(self, alpha: float) -> bytes: ...
-    
-    def get_contact_events(self) -> list[tuple[Handle, Handle]]: ...
-    def get_contact_events_ex(self) -> list[dict[str, Any]]: ...
-    def get_contact_events_raw(self) -> memoryview: ...
-    
-    def get_debug_data(self, shapes: bool = True, constraints: bool = True, bbox: bool = False, centers: bool = False, wireframe: bool = True) -> tuple[bytes, bytes]: ...
-    def get_active_indices(self) -> bytes: ...
-
-    # --- Properties (ReadOnly MemoryViews) ---
-    
-    @property
-    def positions(self) -> memoryview: ...
-    @property
-    def rotations(self) -> memoryview: ...
-    @property
-    def velocities(self) -> memoryview: ...
-    @property
-    def angular_velocities(self) -> memoryview: ...
-    @property
-    def user_data(self) -> memoryview: ...
-    @property
-    def count(self) -> int: ...
-    @property
-    def time(self) -> float: ...
-    @property
-    def shape_count(self) -> int: ...
-    @property
-    def is_step_pending(self) -> bool: ...
+# 3. Define the Public API
+__all__ = [
+    "PhysicsWorld",
+    "Character",
+    "Vehicle",
+    "Ragdoll",
+    "RagdollSettings",
+    "Skeleton",
+    "Engine",
+    "Transmission",
+    "Automatic",
+    "Manual",
+    "SHAPE_BOX",
+    "SHAPE_SPHERE",
+    "SHAPE_CAPSULE",
+    "SHAPE_CYLINDER",
+    "SHAPE_PLANE",
+    "SHAPE_MESH",
+    "SHAPE_HEIGHTFIELD",
+    "SHAPE_CONVEX_HULL",
+    "MOTION_STATIC",
+    "MOTION_KINEMATIC",
+    "MOTION_DYNAMIC",
+    "CONSTRAINT_FIXED",
+    "CONSTRAINT_POINT",
+    "CONSTRAINT_HINGE",
+    "CONSTRAINT_SLIDER",
+    "CONSTRAINT_DISTANCE",
+    "CONSTRAINT_CONE",
+    "EVENT_ADDED",
+    "EVENT_PERSISTED",
+    "EVENT_REMOVED",
+    "validate_constraint",
+    "validate_settings",
+    "bake_scene",
+]

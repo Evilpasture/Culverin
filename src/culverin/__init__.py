@@ -1,59 +1,37 @@
-from ._culverin_c import (
-    PhysicsWorld,
-    Character,
-    Vehicle,
-    Skeleton,
-    RagdollSettings,
-    Ragdoll,
-    # Shapes
-    SHAPE_BOX,
-    SHAPE_SPHERE,
-    SHAPE_CAPSULE,
-    SHAPE_CYLINDER,
-    SHAPE_PLANE,
-    SHAPE_MESH,
-    SHAPE_HEIGHTFIELD,
-    SHAPE_CONVEX_HULL,
-    # Motions
-    MOTION_STATIC,
-    MOTION_KINEMATIC,
-    MOTION_DYNAMIC,
-    # Constraints
-    CONSTRAINT_FIXED,
-    CONSTRAINT_POINT,
-    CONSTRAINT_HINGE,
-    CONSTRAINT_SLIDER,
-    CONSTRAINT_DISTANCE,
-    CONSTRAINT_CONE,
-    # Contact Events
-    EVENT_ADDED,
-    EVENT_PERSISTED,
-    EVENT_REMOVED
-)
-
-# Import Python helpers from _culverin.py
+# 1. Load Pure Python Helpers
 from ._culverin import (
-    Engine,
-    Transmission,
-    Automatic,
-    Manual
+    Engine, Transmission, Automatic, Manual,
+    validate_constraint, validate_settings, bake_scene
 )
 
+# 2. Load Compiled Extension
+# The C extension defines the heavy lifting classes and constants
+from ._culverin_c import *
+
+# 3. Explicit Export List
 __all__ = [
+    # Core Classes (C Extension)
     "PhysicsWorld", 
     "Character", 
     "Vehicle", 
-    "Skeleton", 
+    "Ragdoll", 
     "RagdollSettings", 
-    "Ragdoll",
+    "Skeleton",
+    
+    # Helper Classes (Python)
     "Engine", 
     "Transmission", 
     "Automatic", 
     "Manual",
-    "SHAPE_BOX", "SHAPE_SPHERE", "SHAPE_CAPSULE", 
-    "SHAPE_CYLINDER", "SHAPE_PLANE", "SHAPE_MESH", "SHAPE_HEIGHTFIELD", "SHAPE_CONVEX_HULL",
+    
+    # Constants (C Extension + Python Mirror)
     "MOTION_STATIC", "MOTION_KINEMATIC", "MOTION_DYNAMIC",
-    "CONSTRAINT_FIXED", "CONSTRAINT_POINT", "CONSTRAINT_HINGE",
-    "CONSTRAINT_SLIDER", "CONSTRAINT_DISTANCE", "CONSTRAINT_CONE",
+    "SHAPE_BOX", "SHAPE_SPHERE", "SHAPE_CAPSULE", "SHAPE_CYLINDER", "SHAPE_PLANE", 
+    "SHAPE_MESH", "SHAPE_HEIGHTFIELD", "SHAPE_CONVEX_HULL",
+    "CONSTRAINT_FIXED", "CONSTRAINT_POINT", "CONSTRAINT_HINGE", "CONSTRAINT_SLIDER", 
+    "CONSTRAINT_DISTANCE", "CONSTRAINT_CONE", 
     "EVENT_ADDED", "EVENT_PERSISTED", "EVENT_REMOVED",
+    
+    # Internal Helpers
+    "validate_constraint", "validate_settings", "bake_scene"
 ]
