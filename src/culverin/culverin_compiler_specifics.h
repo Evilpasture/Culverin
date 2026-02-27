@@ -52,7 +52,7 @@
 #    endif
 #endif
 
-#define CULVERIN_PROFILE_SYNC
+// #define CULVERIN_PROFILE_SYNC
 
 #ifdef CULVERIN_PROFILE_SYNC
 #    include <stdio.h>
