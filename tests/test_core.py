@@ -210,5 +210,55 @@ class TestThreadSafety(CulverinTestCase):
             
         self.assertGreater(success, 0, "Mutations should block and succeed")
 
+class TestEdgeCases(CulverinTestCase):
+    def test_numerical_stability(self):
+        """Test how the engine handles non-finite inputs."""
+        # 1. NaN Position (In create_body)
+        # Note: We use a float('nan') directly to ensure it hits C
+        with self.assertRaises(ValueError):
+            self.world.create_body(pos=(float('nan'), 0.0, 0.0))
+        
+        # 2. Infinite Impulse (In apply_impulse)
+        h = self.world.create_body(pos=(0, 0, 0))
+        self.world.step(0)
+        with self.assertRaises(ValueError):
+            self.world.apply_impulse(h, x=float('inf'), y=0.0, z=0.0)
+
+    def test_handle_invalidation_chain(self):
+        """Test 'Immediate Invalidation': deleting a body renders handle stale instantly."""
+        h = self.world.create_body(pos=(0, 10, 0))
+        self.world.destroy_body(h)
+        
+        # 1. Mutators MUST raise ValueError for PENDING_DESTROY bodies
+        with self.assertRaises(ValueError):
+            self.world.set_position(h, 0, 5, 0) 
+        
+        # 2. Getters MUST return False/None, NOT raise
+        self.assertFalse(self.world.is_alive(h), "is_alive should return False for destroyed body")
+        self.assertEqual(self.world.get_index(h), None, "get_index should return None for destroyed body")
+
+    def test_empty_batch_inputs(self):
+        """Ensure batch methods don't segfault on empty data."""
+        # 1. Empty raycast
+        res = self.world.raycast_batch(b"", b"", max_dist=10.0)
+        self.assertEqual(len(res), 0)
+        
+        # 2. Empty body creation
+        handles = self.world.create_bodies_batch([], [])
+        self.assertEqual(len(handles), 0)
+
+    def test_zero_scale_shapes(self):
+        """Jolt usually dislikes zero-volume shapes. We should handle it gracefully."""
+        # This should either raise a Python error or be clamped in C
+        h = self.world.create_body(pos=(0, 0, 0), shape=culverin.SHAPE_BOX, size=(0, 0, 0))
+        self.world.step(0.016)
+        self.assertTrue(self.world.is_alive(h))
+
+    def test_extreme_mass_ratios(self):
+        """Test 1mg vs 1,000,000kg to see if the solver explodes."""
+        heavy = self.world.create_body(pos=(0, 0, 0), mass=1e6, motion=culverin.MOTION_DYNAMIC)
+        light = self.world.create_body(pos=(0, 1, 0), mass=1e-3, motion=culverin.MOTION_DYNAMIC)
+        self.world.step(0.1) # Just check it doesn't crash
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
