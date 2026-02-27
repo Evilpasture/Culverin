@@ -2,7 +2,7 @@ name: Build Culverin Wheels
 
 on:
   push:
-    branches: [ master ]
+    branches: [ master, more-optimization-WIP ]
     tags: [ 'v*' ]
   pull_request:
     branches: [ master ]
