@@ -2,12 +2,10 @@ name: Build Culverin Wheels
 
 on:
   push:
-    branches: 
-      - master
+    branches: [ master ]
     tags: [ 'v*' ]
   pull_request:
-    branches: 
-      - master
+    branches: [ master ]
 
 jobs:
   build_wheels:
@@ -16,7 +14,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # We use these three to cover all major platforms
         os: [windows-latest, ubuntu-latest, macos-latest]
 
     steps:
@@ -30,34 +27,42 @@ jobs:
         with:
           python-version: '3.13'
 
-      - name: Verify Clang
-        run: clang --version
+      - name: Install Build Dependencies
+        run: python -m pip install scikit-build-core ninja
 
-      - name: Build wheels
+      - name: Build and Test Wheels
         uses: pypa/cibuildwheel@v2.22.0
         env:
+          # --- 1. Python Target Configuration ---
           CIBW_FREE_THREADED_SUPPORT: 1
-          # Focus only on 64-bit architectures
-          CIBW_BUILD: "cp313t-manylinux_x86_64 cp313t-win_amd64 cp313t-macosx_*"
+          # Target 3.13t and 3.14t (when available in cibuildwheel)
+          CIBW_BUILD: "cp313t-*"
+          CIBW_ARCHS: "x86_64 arm64" # arm64 for Apple Silicon support
           
-          # Linux 64-bit setup
-          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+          # --- 2. Build Environment (Clang Enforcer) ---
+          CIBW_ENVIRONMENT: >
+            CC=clang 
+            CXX=clang++ 
+            CMAKE_GENERATOR=Ninja
+            CMAKE_ARGS="-DDOUBLE_PRECISION=ON -DJPH_DOUBLE_PRECISION=ON"
+
+          # Linux Specific: Use dnf/yum for Manylinux images
           CIBW_BEFORE_ALL_LINUX: >
-            yum install -y clang llvm && 
-            clang --version
-          CIBW_ENVIRONMENT_LINUX: "CC=clang CXX=clang++ Py_GIL_DISABLED=1"
+            dnf install -y clang llvm ninja-build || apt-get install -y clang llvm ninja-build
 
-          # Windows 64-bit setup
+          # Windows Specific: cibuildwheel handles LLVM setup on windows-latest
           CIBW_ENVIRONMENT_WINDOWS: >
-            CMAKE_GENERATOR="Ninja" 
-            CC="clang" 
-            CXX="clang++" 
-            Py_GIL_DISABLED=1
+            CC=clang-cl 
+            CXX=clang-cl 
+            CMAKE_GENERATOR=Ninja
+            CMAKE_ARGS="-DDOUBLE_PRECISION=ON -DJPH_DOUBLE_PRECISION=ON"
 
-          # MacOS: Already works, don't touch it!
-          MACOSX_DEPLOYMENT_TARGET: "13.0"
-          
-          CIBW_TEST_SKIP: "*"
+          # --- 3. THE TEST SUITE INTEGRATION ---
+          # cibuildwheel installs the wheel in a virtual env and runs these
+          CIBW_TEST_REQUIRES: numpy psutil
+          CIBW_TEST_COMMAND: >
+            python {project}/tests/test_core.py && 
+            python {project}/tests/benchmark.py --leak
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
@@ -87,10 +92,11 @@ jobs:
           body: |
             Culverin Physics Release ${{ github.ref_name }}
             
-            Optimized for:
+            Verified via Unit Test Suite and Memory Leak Diagnostics.
+            
+            Targets:
             - Python 3.13t (Free-Threaded)
-            - Python 3.14t (Free-Threaded Alpha)
-            - High-performance AVX2 SIMD (x86_64)
+            - SIMD: AVX2 (x86_64), NEON (ARM64)
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
