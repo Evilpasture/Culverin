@@ -218,6 +218,11 @@ int PhysicsWorld_resize(PhysicsWorldObject *self, size_t new_capacity) {
     BLOCK_UNTIL_NOT_STEPPING(self);
     BLOCK_UNTIL_NOT_QUERYING(self);
 
+    // CAP: Never exceed the Jolt limit established at init
+    if (new_capacity > self->max_jolt_bodies) {
+        new_capacity = self->max_jolt_bodies;
+    }
+
     if (new_capacity <= self->capacity) {
         return 0;
     }
@@ -372,16 +377,28 @@ void free_shadow_buffers(PhysicsWorldObject *self) {
 // - Must not be called from a Jolt callback
 // - Must not race with Python memoryview access
 void PhysicsWorld_free_members(PhysicsWorldObject *self) {
-    // Clear pending commands
-    clear_command_queue(self);
-    CULV_RAW_FREE(self->command_queue);
-    self->command_queue = NULL;
-    CULV_RAW_FREE(self->command_queue_spare);
-    self->command_queue_spare = NULL;
-    // 1. Constraints (Must go before PhysicsSystem)
+    // 1. Clear and free the ACTIVE command queue
+    // This one definitely contains live Jolt pointers from create_body calls
+    // made since the last world.step().
+    if (self->command_queue) {
+        clear_command_queue(self); 
+        CULV_RAW_FREE(self->command_queue);
+        self->command_queue = NULL;
+    }
+
+    // 2. Free the SPARE command queue
+    // Note: We don't call clear_command_queue here because flush_commands_internal
+    // already destroyed the settings pointers in this buffer during the last step.
+    // We just release the raw memory block.
+    if (self->command_queue_spare) {
+        CULV_RAW_FREE(self->command_queue_spare);
+        self->command_queue_spare = NULL;
+    }
+
+    // 3. Constraints (Must go before PhysicsSystem)
     free_constraints(self);
 
-    // 2. Jolt Core Systems
+    // 4. Jolt Core Systems
     if (self->system) {
         JPH_PhysicsSystem_Destroy(self->system);
         self->system = NULL;
@@ -395,7 +412,7 @@ void PhysicsWorld_free_members(PhysicsWorldObject *self) {
         self->job_system = NULL;
     }
 
-    // 3. Debug Utilities
+    // 5. Debug Utilities
     if (self->debug_renderer) {
         JPH_DebugRenderer_Destroy(self->debug_renderer);
         self->debug_renderer = NULL;
@@ -403,10 +420,10 @@ void PhysicsWorld_free_members(PhysicsWorldObject *self) {
     debug_buffer_free(&self->debug_lines);
     debug_buffer_free(&self->debug_triangles);
 
-    // 4. Shape Cache
+    // 6. Shape Cache (THE BIG ONE)
     free_shape_cache(self);
 
-    // 5. Contact Listener & Buffers
+    // 7. Contact Listener & Buffers
     if (self->contact_listener) {
         JPH_ContactListener_Destroy(self->contact_listener);
         self->contact_listener = NULL;
@@ -414,7 +431,7 @@ void PhysicsWorld_free_members(PhysicsWorldObject *self) {
     CULV_RAW_FREE(self->contact_buffer);
     self->contact_buffer = NULL;
 
-    // 6. Native Memory Buffers
+    // 8. Deferred Trash Cleanup
     if (self->trash_buffers) {
         for (size_t i = 0; i < self->trash_count; i++) {
             free_new_buffers(&self->trash_buffers[i]);
@@ -423,15 +440,15 @@ void PhysicsWorld_free_members(PhysicsWorldObject *self) {
         self->trash_buffers = NULL;
         self->trash_count   = 0;
     }
+
+    // 9. Dense/Shadow Buffers
     free_shadow_buffers(self);
 
-    // 7. Cleanup remaining pointers
-    self->bp_interface = NULL;
-    self->pair_filter  = NULL;
-    self->bp_filter    = NULL;
+    // 10. Handle Mapping
     CULV_RAW_FREE(self->id_to_handle_map);
     self->id_to_handle_map = NULL;
 
+    // 11. Threading Primitives
     FREE_LOCK(self->shadow_lock);
     FREE_NATIVE_MUTEX(self->step_sync.mutex);
     FREE_NATIVE_COND(self->step_sync.cond);

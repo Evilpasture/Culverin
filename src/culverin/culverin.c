@@ -1199,29 +1199,20 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
     /* Validate timestep */
     VALIDATE_FINITE_FLOAT(dt, "dt");
 
-    // --- PHASE 0: RE-ENTRANCY GUARD (Fast Path) ---
-    // If another thread is stepping, reject immediately.
+    // --- PHASE 0: RE-ENTRANCY GUARD ---
     if (atomic_load_explicit(&self->is_stepping, memory_order_acquire)) {
         PyErr_SetString(PyExc_RuntimeError, "Concurrent step detected.");
         return NULL;
     }
 
-    // --- PHASE 1: FENCE OFF NEW QUERIES & MUTATORS ---
+    // --- PHASE 1: SHADOW STATE LOCK-DOWN ---
     SHADOW_LOCK(&self->shadow_lock);
 
-    // Double-check inside the lock to absolutely prevent queue corruption
-    if (atomic_load_explicit(&self->is_stepping, memory_order_relaxed)) {
-        SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_RuntimeError, "Concurrent step detected.");
-        return NULL;
-    }
+    // Block ALL Python mutators and Raycasts
+    atomic_store_explicit(&self->is_stepping, true, memory_order_relaxed);
+    atomic_store_explicit(&self->step_requested, true, memory_order_relaxed);
 
-    // 1. Instantly block NEW Python mutators (Hammer, Mover)
-    atomic_store_explicit(&self->is_stepping, true, memory_order_release);
-    // 2. Instantly block NEW queries (Raycasts)
-    atomic_store_explicit(&self->step_requested, true, memory_order_release);
-
-    // 3. Wait for in-flight queries to finish
+    // Wait for in-flight queries to finish
     if (atomic_load_explicit(&self->active_queries, memory_order_acquire) > 0) {
         SHADOW_UNLOCK(&self->shadow_lock);
         Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(self->step_sync.mutex);
@@ -1232,9 +1223,7 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
         Py_END_ALLOW_THREADS SHADOW_LOCK(&self->shadow_lock);
     }
 
-    self->needs_optimization = false;
-
-    // Swap command queues safely
+    // Command Queue Swap
     PhysicsCommand *captured_queue = self->command_queue;
     size_t captured_count          = self->command_count;
 
@@ -1250,53 +1239,34 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
     atomic_store_explicit(&self->contact_atomic_idx, 0, memory_order_relaxed);
     SHADOW_UNLOCK(&self->shadow_lock);
 
-    // --- PHASE 2: FLUSH COMMANDS (is_stepping == true) ---
-    Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+    // --- PHASE 2: JOLT CRUNCH (GIL Released) ---
+    Py_BEGIN_ALLOW_THREADS 
+    NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
 
+    // 1. Process Batch Mutations (Shadow-to-Jolt)
     if (captured_count > 0) {
         flush_commands_internal(self, captured_queue, captured_count);
-        self->needs_optimization = true;
     }
 
-    // --- PHASE 3: PHYSICS UPDATE (Queries & Mutators Unleashed!) ---
-    NATIVE_MUTEX_LOCK(self->step_sync.mutex);
-    atomic_store_explicit(&self->is_stepping, false, memory_order_release);
-    atomic_store_explicit(&self->step_requested, false, memory_order_release);
-    NATIVE_COND_BROADCAST(self->step_sync.cond);
-    NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
-
+    // 2. Advance Simulation
     if (dt <= 0.0f) {
         JPH_PhysicsSystem_OptimizeBroadPhase(self->system);
-        self->needs_optimization = false;
     } else {
         JPH_PhysicsSystem_Update(self->system, dt, 1, self->job_system);
     }
 
-    // --- PHASE 4: PRE-SYNC FENCE ---
-    NATIVE_MUTEX_LOCK(self->step_sync.mutex);
-    // Block NEW queries from starting
-    atomic_store_explicit(&self->step_requested, true, memory_order_release);
-
-    // Wait for in-flight queries from Phase 3 to finish
-    while (atomic_load_explicit(&self->active_queries, memory_order_acquire) > 0) {
-        NATIVE_COND_WAIT(self->step_sync.cond, self->step_sync.mutex);
-    }
-
-    // Lock out Mutators
-    atomic_store_explicit(&self->is_stepping, true, memory_order_release);
-    NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
-
-    // --- PHASE 5: SHADOW SYNC ---
-    if (dt > 0.0f || captured_count > 0) {
-        culverin_sync_shadow_buffers(self);
-    }
+    // 3. Sync Buffer Results (Jolt-to-Shadow)
+    // is_stepping is STILL TRUE here, so Python mutators are still waiting.
+    // This is the CRITICAL FIX for the stale handle race.
+    culverin_sync_shadow_buffers(self);
 
     NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
     Py_END_ALLOW_THREADS
 
-    // --- PHASE 6: FINALIZATION ---
+    // --- PHASE 3: FINALIZATION & RELEASE ---
     SHADOW_LOCK(&self->shadow_lock);
-
+    
+    // Clear Trash
     if (self->trash_count > 0) {
         for (size_t i = 0; i < self->trash_count; i++) {
             free_new_buffers(&self->trash_buffers[i]);
@@ -1304,16 +1274,19 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
         self->trash_count = 0;
     }
 
-    size_t c_idx        = atomic_load_explicit(&self->contact_atomic_idx, memory_order_acquire);
+    // Finalize Metadata
+    size_t c_idx = atomic_load_explicit(&self->contact_atomic_idx, memory_order_acquire);
     self->contact_count = (c_idx > self->contact_max_capacity) ? self->contact_max_capacity : c_idx;
+    self->time += (double)dt;
 
-    NATIVE_MUTEX_LOCK(self->step_sync.mutex);
+    // RELEASE THE FENCE: Python threads can now enter safely
     atomic_store_explicit(&self->is_stepping, false, memory_order_release);
     atomic_store_explicit(&self->step_requested, false, memory_order_release);
+
+    NATIVE_MUTEX_LOCK(self->step_sync.mutex);
     NATIVE_COND_BROADCAST(self->step_sync.cond);
     NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
 
-    self->time += (double)dt;
     SHADOW_UNLOCK(&self->shadow_lock);
 
     Py_RETURN_NONE;
@@ -1963,7 +1936,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_body(PhysicsWorldObject *self, PyO
     // Handle Material & Size
     MaterialSettings mat_in = {friction, restitution};
     MaterialSettings mat    = resolve_material_params(self, material_id, mat_in);
-    float s[4];
+    float s[4] = {0.5f, 0.5f, 0.5f, 0.0f}; // <--- Initialize with defaults
     parse_body_size(o_size, s); 
     // New Guard for Size components
     VALIDATE_FINITE_VEC4(s[0], s[1], s[2], s[3], "Shape size");
@@ -2009,10 +1982,21 @@ PyCFunction_DeclareMethod PhysicsWorld_create_body(PhysicsWorldObject *self, PyO
 
     BLOCK_UNTIL_NOT_STEPPING(self);
 
-    // Ensure Capacity
+    // CRITICAL: Check Jolt limits before assigning a handle
+    if (UNLIKELY(self->count >= self->max_jolt_bodies)) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_Format(PyExc_RuntimeError, 
+                     "PhysicsWorld limit reached: %u/%u bodies. Increase 'max_bodies' in settings.", 
+                     (uint32_t)self->count, self->max_jolt_bodies);
+        return NULL;
+    }
+
+    // Ensure Shadow Buffer Capacity (but cap it at max_jolt_bodies)
     if (UNLIKELY(self->free_count == 0 || self->count + 1 > self->capacity)) {
-        size_t new_cap = (self->capacity == 0) ? INITIAL_BODY_CAPACITY : self->capacity * 2;
-        if (PhysicsWorld_resize(self, new_cap) < 0) {
+        size_t next_cap = (self->capacity == 0) ? INITIAL_BODY_CAPACITY : self->capacity * 2;
+        if (next_cap > self->max_jolt_bodies) next_cap = self->max_jolt_bodies;
+        
+        if (PhysicsWorld_resize(self, next_cap) < 0) {
             SHADOW_UNLOCK(&self->shadow_lock);
             JPH_BodyCreationSettings_Destroy(settings);
             return NULL;
@@ -2115,6 +2099,11 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
     Py_ssize_t batch_count = PyList_GET_SIZE(py_positions);
     if (PyList_GET_SIZE(py_sizes) != batch_count) {
         return PyErr_Format(PyExc_ValueError, "List length mismatch");
+    }
+
+    if (UNLIKELY(self->count + batch_count > self->max_jolt_bodies)) {
+        PyErr_Format(PyExc_RuntimeError, "Batch would exceed Jolt body limit (%u)", self->max_jolt_bodies);
+        goto fail;
     }
 
     // 2. TEMP ALLOCATION
@@ -3769,9 +3758,11 @@ static const PyGetSetDef PhysicsWorld_getset[] = {
     {"time", (getter)get_time, NULL, NULL, NULL},
     {"user_data", (getter)get_user_data_buffer, NULL, NULL, NULL},
     {"shape_count", (getter)get_shape_count, NULL, "Number of unique shapes in cache", NULL},
-    {"get_is_step_pending", (getter)get_is_step_pending, NULL,
+    {"is_step_pending", (getter)get_is_step_pending, NULL,
      "Whether a physics step is currently in progress. If True, structural changes are blocked.",
      NULL},
+     {"max_bodies", (getter)PhysicsWorld_get_max_bodies, NULL, "The hard limit of bodies set at init.", NULL},
+    {"remaining_capacity", (getter)PhysicsWorld_get_remaining_capacity, NULL, "Number of slots available before world.step() is required.", NULL},
     {NULL, NULL, NULL, NULL, NULL}};
 
 static const PyGetSetDef Character_getset[] = {{"handle", (getter)Character_get_handle, NULL,

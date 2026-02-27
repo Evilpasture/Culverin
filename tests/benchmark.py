@@ -120,36 +120,67 @@ def run_threading_benchmark(duration=5.0, num_bodies=5000):
 
 def run_churn_test(duration=10.0):
     print("\n=== CULVERIN FRAGMENTATION (CHURN) TEST ===")
-    # Small capacity to force frequent re-ordering
-    world = culverin.PhysicsWorld(settings={"max_bodies": 1000})
+    
+    # Start with a world limited to 2000 bodies to force frequent re-use
+    MAX_LIMIT = 2000
+    world = culverin.PhysicsWorld(settings={"max_bodies": MAX_LIMIT})
     handles = []
     
-    # Fill world to 50%
-    for i in range(500):
-        handles.append(world.create_body(pos=(i, 0, 0)))
+    # Initial population: Fill to 50%
+    print(f"-> Initializing world to 50% capacity...")
+    for i in range(MAX_LIMIT // 2):
+        handles.append(world.create_body(pos=(random.random()*10, 0, random.random()*10)))
     world.step(0)
 
     start_t = time.time()
     ops = 0
-    while time.time() - start_t < duration:
-        # 1. Randomly destroy 50 bodies
-        for _ in range(50):
-            if not handles: break
-            idx = random.randrange(len(handles))
-            world.destroy_body(handles.pop(idx))
-        
-        # 2. Step to trigger Swap-and-Pop in C
-        world.step(0.016)
-        
-        # 3. Randomly create 50 new bodies
-        for _ in range(50):
-            handles.append(world.create_body(pos=(random.random(), 0, 0)))
-        
-        ops += 100
-        if ops % 1000 == 0:
-            print(f"  Processed {ops} lifecycle events... Buffer Count: {world.count}")
+    skipped = 0
 
-    print(f"✅ CHURN COMPLETE: {ops} bodies swapped. No segfaults.")
+    print(f"-> Starting Churn for {duration}s...")
+    try:
+        while time.time() - start_t < duration:
+            # 1. RANDOM DESTRUCTION (50 bodies)
+            # These slots become PENDING_DESTROY (still taking space)
+            num_to_kill = min(len(handles), 50)
+            for _ in range(num_to_kill):
+                idx = random.randrange(len(handles))
+                world.destroy_body(handles.pop(idx))
+
+            # 2. THE PURGE
+            # This flushes the command queue and actually frees the slots
+            world.step(0.016)
+
+            # 3. GRACEFUL SPAWNING
+            # We look before we leap using your new getter
+            available = world.remaining_capacity
+            num_to_spawn = min(available, 50)
+
+            for _ in range(num_to_spawn):
+                h = world.create_body(pos=(random.random()*10, 10, random.random()*10))
+                handles.append(h)
+                ops += 1
+
+            if num_to_spawn < 50:
+                skipped += (50 - num_to_spawn)
+
+            if ops % 1000 == 0 and ops > 0:
+                # Telemetry
+                print(f"  Cycle: {ops:6} ops | "
+                      f"Active: {world.count:4}/{world.max_bodies} | "
+                      f"RAM: {get_ram_mb():.2f}MB")
+            # Add a tiny sleep to allow the OS to reclaim memory and 
+            # let Jolt threads finish their work.
+            time.sleep(0.001)
+
+    except KeyboardInterrupt:
+        print("\nStopping churn test...")
+
+    end_t = time.time()
+    print(f"\n✅ CHURN COMPLETE")
+    print(f" - Duration:      {end_t - start_t:.2f}s")
+    print(f" - Total Created: {ops}")
+    print(f" - Load Shedding: {skipped} spawns rejected gracefully (at limit)")
+    print(f" - Final RAM:     {get_ram_mb():.2f}MB")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Culverin Diagnostic Tools")
