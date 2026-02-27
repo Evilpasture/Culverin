@@ -1246,13 +1246,19 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
     // 1. Process Batch Mutations (Shadow-to-Jolt)
     if (captured_count > 0) {
         flush_commands_internal(self, captured_queue, captured_count);
+        self->needs_optimization = true; 
     }
 
     // 2. Advance Simulation
     if (dt <= 0.0f) {
         JPH_PhysicsSystem_OptimizeBroadPhase(self->system);
+        self->needs_optimization = false; 
     } else {
         JPH_PhysicsSystem_Update(self->system, dt, 1, self->job_system);
+        if (self->needs_optimization) {
+            JPH_PhysicsSystem_OptimizeBroadPhase(self->system);
+            self->needs_optimization = false;
+        }
     }
 
     // 3. Sync Buffer Results (Jolt-to-Shadow)
