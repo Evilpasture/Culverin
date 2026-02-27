@@ -88,6 +88,7 @@ class TestQueries(CulverinTestCase):
     def test_raycast(self):
         res = self.world.raycast(start=(0, 5, 0), direction=(0, -1, 0), max_dist=10.0)
         self.assertIsNotNone(res)
+        assert res is not None 
         handle, fraction, normal = res
         self.assertEqual(handle, self.floor)
         self.assertAlmostEqual(fraction, 0.5, places=3)
@@ -114,6 +115,7 @@ class TestQueries(CulverinTestCase):
         
         hit = self.world.shapecast(shape=culverin.SHAPE_SPHERE, pos=(0, 5, 0), rot=(0,0,0,1), dir=(20, 0, 0), size=(0.5,))
         self.assertIsNotNone(hit)
+        assert hit is not None
         self.assertEqual(hit[0], target)
         self.assertAlmostEqual(hit[3][0], -1.0, places=3) # Normal faces -X
 
