@@ -118,10 +118,44 @@ def run_threading_benchmark(duration=5.0, num_bodies=5000):
         
     print(f"✅ STRESS TEST COMPLETE: {stats['steps']} steps, {stats['queries']} rays.")
 
+def run_churn_test(duration=10.0):
+    print("\n=== CULVERIN FRAGMENTATION (CHURN) TEST ===")
+    # Small capacity to force frequent re-ordering
+    world = culverin.PhysicsWorld(settings={"max_bodies": 1000})
+    handles = []
+    
+    # Fill world to 50%
+    for i in range(500):
+        handles.append(world.create_body(pos=(i, 0, 0)))
+    world.step(0)
+
+    start_t = time.time()
+    ops = 0
+    while time.time() - start_t < duration:
+        # 1. Randomly destroy 50 bodies
+        for _ in range(50):
+            if not handles: break
+            idx = random.randrange(len(handles))
+            world.destroy_body(handles.pop(idx))
+        
+        # 2. Step to trigger Swap-and-Pop in C
+        world.step(0.016)
+        
+        # 3. Randomly create 50 new bodies
+        for _ in range(50):
+            handles.append(world.create_body(pos=(random.random(), 0, 0)))
+        
+        ops += 100
+        if ops % 1000 == 0:
+            print(f"  Processed {ops} lifecycle events... Buffer Count: {world.count}")
+
+    print(f"✅ CHURN COMPLETE: {ops} bodies swapped. No segfaults.")
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Culverin Diagnostic Tools")
     parser.add_argument('--leak', action='store_true', help="Run the memory leak test")
     parser.add_argument('--stress', action='store_true', help="Run the multi-threaded stress test")
+    parser.add_argument('--churn', action='store_true', help="Run the fragmentation churn test")
     
     args = parser.parse_args()
     
@@ -129,5 +163,7 @@ if __name__ == "__main__":
         run_leak_test()
     elif args.stress:
         run_threading_benchmark()
+    elif args.churn:
+        run_churn_test()
     else:
-        print("Please specify a test to run: --leak or --stress")
+        print("Please specify a test to run: --leak or --stress or --churn")
