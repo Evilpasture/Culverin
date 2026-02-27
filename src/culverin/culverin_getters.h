@@ -21,3 +21,6 @@ PyGetSet_DeclareGetter Character_get_handle(struct CharacterObject *self, CULV_M
 PyGetSet_DeclareGetter Vehicle_get_wheel_count(struct VehicleObject *self, CULV_MAYBE_UNUSED void *closure);
 
 PyGetSet_DeclareGetter get_shape_count(struct PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *closure);
+
+PyGetSet_DeclareGetter PhysicsWorld_get_max_bodies(struct PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *closure);
+PyGetSet_DeclareGetter PhysicsWorld_get_remaining_capacity(struct PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *closure);

@@ -109,3 +109,15 @@ PyGetSet_DeclareGetter get_shape_count(PhysicsWorldObject *self, CULV_MAYBE_UNUS
     SHADOW_UNLOCK(&self->shadow_lock);
     return PyLong_FromSize_t(count);
 }
+
+PyGetSet_DeclareGetter PhysicsWorld_get_max_bodies(PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *closure) {
+    return PyLong_FromUnsignedLong(self->max_jolt_bodies);
+}
+
+PyGetSet_DeclareGetter PhysicsWorld_get_remaining_capacity(PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *closure) {
+    SHADOW_LOCK(&self->shadow_lock);
+    // Note: count includes bodies pending creation
+    size_t rem = (self->count >= self->max_jolt_bodies) ? 0 : (self->max_jolt_bodies - self->count);
+    SHADOW_UNLOCK(&self->shadow_lock);
+    return PyLong_FromSize_t(rem);
+}
