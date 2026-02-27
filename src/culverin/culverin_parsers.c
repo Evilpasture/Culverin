@@ -9,9 +9,13 @@ int parse_vec3_r64(PyObject *obj, double *x, double *y, double *z) {
         *y = PyFloat_AsDouble(PyTuple_GET_ITEM(obj, 1));
         *z = PyFloat_AsDouble(PyTuple_GET_ITEM(obj, 2));
     } else {
-        // Fallback to slower sequence API
-        PyObject *seq = PySequence_Fast(obj, "Expected sequence of 3 numbers");
+        PyObject *seq = PySequence_Fast(obj, "Expected sequence of 3 numbers for position/vector");
         if (!seq) return 0;
+        if (UNLIKELY(PySequence_Fast_GET_SIZE(seq) != 3)) {
+            PyErr_SetString(PyExc_TypeError, "Vector must have exactly 3 components");
+            Py_DECREF(seq);
+            return 0;
+        }
         *x = PyFloat_AsDouble(PySequence_Fast_GET_ITEM(seq, 0));
         *y = PyFloat_AsDouble(PySequence_Fast_GET_ITEM(seq, 1));
         *z = PyFloat_AsDouble(PySequence_Fast_GET_ITEM(seq, 2));
@@ -29,6 +33,11 @@ int parse_vec3_f32(PyObject *obj, float *x, float *y, float *z) {
     } else {
         PyObject *seq = PySequence_Fast(obj, "Expected sequence of 3 numbers");
         if (!seq) return 0;
+        if (UNLIKELY(PySequence_Fast_GET_SIZE(seq) != 3)) {
+            PyErr_SetString(PyExc_TypeError, "Vector must have exactly 3 components");
+            Py_DECREF(seq);
+            return 0;
+        }
         *x = (float)PyFloat_AsDouble(PySequence_Fast_GET_ITEM(seq, 0));
         *y = (float)PyFloat_AsDouble(PySequence_Fast_GET_ITEM(seq, 1));
         *z = (float)PyFloat_AsDouble(PySequence_Fast_GET_ITEM(seq, 2));
@@ -45,19 +54,20 @@ int parse_quat_f32(PyObject *obj, float *x, float *y, float *z, float *w) {
         *y = (float)PyFloat_AsDouble(PyTuple_GET_ITEM(obj, 1));
         *z = (float)PyFloat_AsDouble(PyTuple_GET_ITEM(obj, 2));
         *w = (float)PyFloat_AsDouble(PyTuple_GET_ITEM(obj, 3));
-    } else if (PySequence_Check(obj) && PySequence_Size(obj) == 4) {
-        PyObject *i0 = PySequence_GetItem(obj, 0);
-        PyObject *i1 = PySequence_GetItem(obj, 1);
-        PyObject *i2 = PySequence_GetItem(obj, 2);
-        PyObject *i3 = PySequence_GetItem(obj, 3);
-        *x = (float)PyFloat_AsDouble(i0);
-        *y = (float)PyFloat_AsDouble(i1);
-        *z = (float)PyFloat_AsDouble(i2);
-        *w = (float)PyFloat_AsDouble(i3);
-        Py_XDECREF(i0); Py_XDECREF(i1); Py_XDECREF(i2); Py_XDECREF(i3);
     } else {
-        PyErr_SetString(PyExc_TypeError, "Expected a sequence of 4 floats for rotation");
-        return 0;
+        // Optimized fallback using PySequence_Fast instead of individual GetItem calls
+        PyObject *seq = PySequence_Fast(obj, "Expected sequence of 4 floats for rotation");
+        if (!seq) return 0;
+        if (UNLIKELY(PySequence_Fast_GET_SIZE(seq) != 4)) {
+            PyErr_SetString(PyExc_TypeError, "Rotation must have exactly 4 components (x, y, z, w)");
+            Py_DECREF(seq);
+            return 0;
+        }
+        *x = (float)PyFloat_AsDouble(PySequence_Fast_GET_ITEM(seq, 0));
+        *y = (float)PyFloat_AsDouble(PySequence_Fast_GET_ITEM(seq, 1));
+        *z = (float)PyFloat_AsDouble(PySequence_Fast_GET_ITEM(seq, 2));
+        *w = (float)PyFloat_AsDouble(PySequence_Fast_GET_ITEM(seq, 3));
+        Py_DECREF(seq);
     }
     return !PyErr_Occurred();
 }
