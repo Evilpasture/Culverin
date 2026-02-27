@@ -39,8 +39,10 @@ def build_extension():
     
     config = {
         "cmake.define.DOUBLE_PRECISION": "ON",
-        "build.tool-args": [f"-j{cpu_count}"], # This passes -j12 directly to Ninja/Make
         "cmake.define.JPH_DOUBLE_PRECISION": "ON",
+        "cmake.define.CMAKE_C_COMPILER": "clang",
+        "cmake.define.CMAKE_CXX_COMPILER": "clang++",
+        "build.tool-args": [f"-j{cpu_count}"],
         "build-dir": str(BUILD_DIR),
     }
 
