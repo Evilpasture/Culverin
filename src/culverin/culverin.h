@@ -97,9 +97,9 @@ typedef struct ContactEvent {
     uint32_t _pad;
 } ContactEvent;
 
-_Static_assert(sizeof(ContactEvent) == 64, "ContactEvent must be 64 bytes for performance");
+_Static_assert(sizeof(ContactEvent) == MEMORY_ALIGNMENT_SIZE, "ContactEvent must be 64 bytes for performance");
 
-constexpr int CONTACT_MAX_CAPACITY = 64 * 8 << 5;
+CULV_MAYBE_UNUSED static constexpr int CONTACT_MAX_CAPACITY = 64 * 8 << 5;
 
 // --- Raycast Batch Result (Aligned to 16-bytes, Total 48-bytes) ---
 #ifdef _MSC_VER
@@ -212,7 +212,7 @@ typedef struct PhysicsWorldObject {
     JPH_ContactListener *contact_listener;
 
     // --- HOT SYNC BLOCK: Kept together for L1d Locality ---
-    alignas(64) JPH_Real *positions;
+    alignas(MEMORY_ALIGNMENT_SIZE) JPH_Real *positions;
     JPH_Real *prev_positions;
     float *rotations;
     float *prev_rotations;
@@ -319,16 +319,19 @@ typedef struct {
 
 // Helper to retrieve state from the module object
 CULV_NODISCARD
+CULV_MAYBE_UNUSED
 static inline CulverinState *get_culverin_state(PyObject *module) {
     return (CulverinState *)PyModule_GetState(module);
 }
 
 // --- Handle Helper ---
 CULV_NODISCARD
+CULV_MAYBE_UNUSED
 static inline BodyHandle make_handle(uint32_t slot, uint32_t gen) {
     return ((uint64_t)gen << 32) | (uint64_t)slot;
 }
 CULV_NODISCARD
+CULV_MAYBE_UNUSED
 static inline bool unpack_handle(PhysicsWorldObject *self, BodyHandle h, uint32_t *slot) {
     *slot        = (uint32_t)(h & 0xFFFFFFFF);
     uint32_t gen = (uint32_t)(h >> 32);

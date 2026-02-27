@@ -19,7 +19,6 @@
 // ============================================================================
 
 // Memory and Alignment
-static constexpr size_t MEMORY_ALIGNMENT_SIZE = 64;
 static constexpr size_t INITIAL_BODY_CAPACITY = 1024;
 static constexpr size_t BODY_ID_SIZE_BYTES = 8;
 

@@ -92,6 +92,17 @@ CULV_MAYBE_UNUSED static inline void culverin_yield() {
 #endif
 }
 
+// --- Threading Primitives (Python 3.14t support) ---
+#if PY_VERSION_HEX >= 0x030D0000
+typedef PyMutex ShadowMutex;
+#define SHADOW_LOCK(m) PyMutex_Lock(m)
+#define SHADOW_UNLOCK(m) PyMutex_Unlock(m)
+#else
+typedef PyThread_type_lock ShadowMutex;
+#define SHADOW_LOCK(m) PyThread_acquire_lock(m, 1)
+#define SHADOW_UNLOCK(m) PyThread_release_lock(m)
+#endif
+
 // --- Native Condition Variable Support ---
 
 #ifdef _WIN32
@@ -199,17 +210,6 @@ typedef struct {
   NativeMutex mutex;
   NativeCond cond;
 } ShadowSync;
-
-// --- Threading Primitives (Python 3.14t support) ---
-#if PY_VERSION_HEX >= 0x030D0000
-typedef PyMutex ShadowMutex;
-#define SHADOW_LOCK(m) PyMutex_Lock(m)
-#define SHADOW_UNLOCK(m) PyMutex_Unlock(m)
-#else
-typedef PyThread_type_lock ShadowMutex;
-#define SHADOW_LOCK(m) PyThread_acquire_lock(m, 1)
-#define SHADOW_UNLOCK(m) PyThread_release_lock(m)
-#endif
 
 #if PY_VERSION_HEX >= 0x030D0000
 // Python 3.13+ uses PyMutex (no allocation needed, just zero init)

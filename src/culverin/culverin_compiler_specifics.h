@@ -106,22 +106,39 @@ static inline uint64_t rdtsc() {
 #endif
 
 
-
+// NOLINTNEXTLINE(readability-identifier-naming)
 #define PyCFunction_DeclareMethod CULV_NODISCARD static PyObject *
+// NOLINTNEXTLINE(readability-identifier-naming)
 #define PyCFunction_DeclareMethodFromModule CULV_NODISCARD extern PyObject *
-
+// NOLINTNEXTLINE(readability-identifier-naming)
 #define PyGetSet_DeclareGetter CULV_NODISCARD extern PyObject *
-
+// NOLINTNEXTLINE(readability-identifier-naming)
 #define PyGetSet_DeclareSetter CULV_NODISCARD extern PyObject *
 
 // For tp_alloc and factory-style slots
+// NOLINTNEXTLINE(readability-identifier-naming)
 #define PyType_DeclareSlot_Object CULV_NODISCARD static PyObject *
+// NOLINTNEXTLINE(readability-identifier-naming)
 #define PyType_DeclareSlot_ObjectFromModule CULV_NODISCARD extern PyObject *
 
 // For tp_init and status-returning slots
+// NOLINTNEXTLINE(readability-identifier-naming)
 #define PyType_DeclareSlot_Status CULV_NODISCARD static int
+// NOLINTNEXTLINE(readability-identifier-naming)
 #define PyType_DeclareSlot_StatusFromModule CULV_NODISCARD extern int
 
 // For tp_dealloc (Cannot be nodiscard because it returns void)
+// NOLINTNEXTLINE(readability-identifier-naming)
 #define PyType_DeclareSlot_Void static void
+// NOLINTNEXTLINE(readability-identifier-naming)
 #define PyType_DeclareSlot_VoidFromModule extern void
+
+CULV_MAYBE_UNUSED static constexpr size_t MEMORY_ALIGNMENT_SIZE = 64;
+
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L
+#   define CULV_REPRODUCIBLE [[reproducible]]
+#   define CULV_UNSEQUENCED [[unsequenced]]
+#else
+#   define CULV_REPRODUCIBLE 
+#   define CULV_UNSEQUENCED 
+#endif

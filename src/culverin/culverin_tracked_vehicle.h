@@ -2,9 +2,9 @@
 #include "culverin.h"
 #include "culverin_vehicle.h"
 
-constexpr uint32_t TRACKED_LAYER_MOVING = 0;
-constexpr uint32_t TRACKED_LAYER_STATIC = 1;
-constexpr uint32_t TRACKED_LAYER_DRIVABLE  = 2;
+CULV_MAYBE_UNUSED static constexpr uint32_t TRACKED_LAYER_MOVING = 0;
+CULV_MAYBE_UNUSED static constexpr uint32_t TRACKED_LAYER_STATIC = 1;
+CULV_MAYBE_UNUSED static constexpr uint32_t TRACKED_LAYER_DRIVABLE  = 2;
 
 struct PhysicsWorldObject;
 typedef struct PhysicsWorldObject PhysicsWorldObject;
