@@ -150,6 +150,7 @@ extern bool fp_report_missing(const FastParser *fp, uint64_t provided_mask);
 extern bool fp_report_multiple(const FastParser *fp, size_t index);
 extern bool fp_report_too_many(const FastParser *fp, Py_ssize_t nargs);
 extern void fp_init_impl(FastParser *fp, FastArgSpec *specs, size_t count);
+extern void fp_deinit(FastParser *fp);
 extern bool fp_parse_legacy(PyObject *args, PyObject *kwargs, const FastParser *fp, void **targets,
                             size_t dummy);
 

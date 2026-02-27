@@ -32,13 +32,13 @@ static void overlap_record_hit(OverlapContext *ctx, JPH_BodyID bid) {
         uint64_t *new_ptr;
 
         if (ctx->is_on_stack) {
-            new_ptr = PyMem_RawMalloc(new_cap * sizeof(uint64_t));
+            new_ptr = CULV_RAW_MALLOC(new_cap * sizeof(uint64_t));
             if (new_ptr) {
                 memcpy(new_ptr, ctx->hits, ctx->count * sizeof(uint64_t));
             }
             ctx->is_on_stack = false;
         } else {
-            new_ptr = PyMem_RawRealloc(ctx->hits, new_cap * sizeof(uint64_t));
+            new_ptr = CULV_RAW_REALLOC(ctx->hits, new_cap * sizeof(uint64_t));
         }
 
         if (!new_ptr) {
@@ -180,7 +180,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_sphere(PhysicsWorldObje
         JPH_BodyFilter_Destroy(body_filter);
     }
     if (ctx.hits && !ctx.is_on_stack) {
-        PyMem_RawFree(ctx.hits);
+        CULV_RAW_FREE(ctx.hits);
     }
 
     return ret_val;
@@ -281,9 +281,9 @@ query_cleanup:
     if (obj_filter)
         JPH_ObjectLayerFilter_Destroy(obj_filter);
 
-    // ctx.hits was allocated using PyMem_RawRealloc, which is GIL-safe
+    // ctx.hits was allocated using CULV_RAW_REALLOC, which is GIL-safe
     if (ctx.hits && !ctx.is_on_stack) {
-        PyMem_RawFree(ctx.hits);
+        CULV_RAW_FREE(ctx.hits);
     }
 
     return ret_val;

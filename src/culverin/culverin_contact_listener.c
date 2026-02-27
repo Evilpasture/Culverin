@@ -209,7 +209,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events(PhysicsWorld
   }
 
   // 3. Fast Copy (Hold lock for the shortest possible time)
-  ContactEvent *scratch = PyMem_RawMalloc(count * sizeof(ContactEvent));
+  ContactEvent *scratch = CULV_RAW_MALLOC(count * sizeof(ContactEvent));
   if (!scratch) {
     SHADOW_UNLOCK(&self->shadow_lock);
     return PyErr_NoMemory();
@@ -227,7 +227,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events(PhysicsWorld
   // 5. Slow Python Work (Done while the next physics step can run in parallel!)
   PyObject *list = PyList_New((Py_ssize_t)count);
   if (!list) {
-    PyMem_RawFree(scratch);
+    CULV_RAW_FREE(scratch);
     return NULL;
   }
 
@@ -236,7 +236,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events(PhysicsWorld
     PyObject *item = PyTuple_New(4);
     if (!item) {
       Py_DECREF(list);
-      PyMem_RawFree(scratch);
+      CULV_RAW_FREE(scratch);
       return NULL;
     }
 
@@ -250,7 +250,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events(PhysicsWorld
     PyList_SET_ITEM(list, (Py_ssize_t)i, item);
   }
 
-  PyMem_RawFree(scratch);
+  CULV_RAW_FREE(scratch);
   return list;
 }
 
@@ -273,7 +273,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events_ex(PhysicsWo
   }
 
   // Allocate scratch buffer
-  ContactEvent *scratch = PyMem_RawMalloc(count * sizeof(ContactEvent));
+  ContactEvent *scratch = CULV_RAW_MALLOC(count * sizeof(ContactEvent));
   if (!scratch) {
     SHADOW_UNLOCK(&self->shadow_lock);
     return PyErr_NoMemory();
@@ -307,7 +307,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events_ex(PhysicsWo
     // Paranoid check: if any failed during init, clean up and fail
     if (!k_bodies || !k_pos || !k_norm || !k_str || !k_slide || !k_mat ||
         !k_type) {
-      PyMem_RawFree(scratch);
+      CULV_RAW_FREE(scratch);
       return PyErr_NoMemory();
     }
   }
@@ -315,7 +315,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events_ex(PhysicsWo
   // 3. Build Python List
   PyObject *list = PyList_New((Py_ssize_t)count);
   if (!list) {
-    PyMem_RawFree(scratch);
+    CULV_RAW_FREE(scratch);
     return NULL;
   }
 
@@ -380,7 +380,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events_ex(PhysicsWo
 
   // REMOVED: Py_DECREF(keys) - we keep them alive statically now.
 
-  PyMem_RawFree(scratch);
+  CULV_RAW_FREE(scratch);
   return list;
 }
 // ContactEvent layout (packed, little-endian):

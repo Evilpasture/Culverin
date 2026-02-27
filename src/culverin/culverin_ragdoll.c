@@ -253,7 +253,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll(PhysicsWorldObje
 
   // 1. Get Bind Pose (Model Space)
   auto joint_count = (size_t)JPH_Skeleton_GetJointCount(JPH_RagdollSettings_GetSkeleton(py_settings->settings));
-  neutral_matrices = (JPH_Mat4 *)PyMem_RawMalloc(joint_count * sizeof(JPH_Mat4));
+  neutral_matrices = (JPH_Mat4 *)CULV_RAW_MALLOC(joint_count * sizeof(JPH_Mat4));
   
   JPH_RVec3 zero_root = {0, 0, 0};
   JPH_Ragdoll_GetPose2(j_rag, &zero_root, neutral_matrices, true);
@@ -293,7 +293,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll(PhysicsWorldObje
     JPH_Ragdoll_Destroy(j_rag);
     NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
     Py_END_ALLOW_THREADS
-    PyMem_RawFree(neutral_matrices);
+    CULV_RAW_FREE(neutral_matrices);
     return NULL;
   }
 
@@ -301,7 +301,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll(PhysicsWorldObje
   obj->world = self;
   Py_INCREF(self);
   obj->body_count = body_count;
-  obj->body_slots = (uint32_t *)PyMem_RawMalloc(body_count * sizeof(uint32_t));
+  obj->body_slots = (uint32_t *)CULV_RAW_MALLOC(body_count * sizeof(uint32_t));
 
   // 3. Shadow Buffer "Warm-up" (Sync Jolt -> CPU)
   SHADOW_LOCK(&self->shadow_lock);
@@ -310,7 +310,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll(PhysicsWorldObje
     if (PhysicsWorld_resize(self, self->capacity + body_count + RAGDOLL_BODY_BUFFER_INCREMENT) < 0) {
       SHADOW_UNLOCK(&self->shadow_lock);
       JPH_Ragdoll_Destroy(j_rag);
-      PyMem_RawFree(neutral_matrices);
+      CULV_RAW_FREE(neutral_matrices);
       Py_DECREF(obj);
       return NULL;
     }
@@ -372,7 +372,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll(PhysicsWorldObje
   self->view_shape[0] = (Py_ssize_t)self->count;
   SHADOW_UNLOCK(&self->shadow_lock);
 
-  PyMem_RawFree(neutral_matrices);
+  CULV_RAW_FREE(neutral_matrices);
   return (PyObject *)obj;
 }
 
@@ -569,7 +569,7 @@ PyType_DeclareSlot_VoidFromModule Ragdoll_dealloc(RagdollObject *self) {
     JPH_Ragdoll_Destroy(self->ragdoll);
   }
   if (self->body_slots) {
-    PyMem_RawFree(self->body_slots);
+    CULV_RAW_FREE(self->body_slots);
     self->body_slots = NULL; // Prevent double-free in weird recursion cases
   }
 

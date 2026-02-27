@@ -1,5 +1,6 @@
 #include "culverin_physics_world_internal.h"
 #include "culverin_compiler_specifics.h"
+#include "culverin_threading.h"
 
 // Constants for buffer alignment, capacity growth and defaults
 static constexpr size_t AVX_ALIGNMENT                  = 32; // 32-byte alignment for AVX-256
@@ -41,16 +42,16 @@ void free_new_buffers(NewBuffers *nb) {
     CulvMem_RawFreeAligned(nb->lvel);
     CulvMem_RawFreeAligned(nb->avel);
 
-    PyMem_RawFree(nb->bids);
-    PyMem_RawFree(nb->udat);
-    PyMem_RawFree(nb->gens);
-    PyMem_RawFree(nb->s2d);
-    PyMem_RawFree(nb->d2s);
-    PyMem_RawFree(nb->stat);
-    PyMem_RawFree(nb->free);
-    PyMem_RawFree(nb->cats);
-    PyMem_RawFree(nb->masks);
-    PyMem_RawFree(nb->mats);
+    CULV_RAW_FREE(nb->bids);
+    CULV_RAW_FREE(nb->udat);
+    CULV_RAW_FREE(nb->gens);
+    CULV_RAW_FREE(nb->s2d);
+    CULV_RAW_FREE(nb->d2s);
+    CULV_RAW_FREE(nb->stat);
+    CULV_RAW_FREE(nb->free);
+    CULV_RAW_FREE(nb->cats);
+    CULV_RAW_FREE(nb->masks);
+    CULV_RAW_FREE(nb->mats);
 
     // Defensive: Zero the struct so we don't accidentally Use-After-Free
     memset(nb, 0, sizeof(NewBuffers));
@@ -68,16 +69,16 @@ static int alloc_new_buffers(NewBuffers *nb, size_t cap) {
     nb->avel = (float *)CulvMem_RawMallocAligned(cap * sizeof(AuxStride), AVX_ALIGNMENT);
 
     // Standard Data Buffers: no special alignment needed
-    nb->bids  = (JPH_BodyID *)PyMem_RawMalloc(cap * sizeof(JPH_BodyID));
-    nb->udat  = (uint64_t *)PyMem_RawCalloc(cap, sizeof(uint64_t));
-    nb->gens  = (uint32_t *)PyMem_RawCalloc(cap, sizeof(uint32_t));
-    nb->s2d   = (uint32_t *)PyMem_RawMalloc(cap * sizeof(uint32_t));
-    nb->d2s   = (uint32_t *)PyMem_RawMalloc(cap * sizeof(uint32_t));
-    nb->stat  = (uint8_t *)PyMem_RawCalloc(cap, sizeof(uint8_t));
-    nb->free  = (uint32_t *)PyMem_RawMalloc(cap * sizeof(uint32_t));
-    nb->cats  = (uint32_t *)PyMem_RawMalloc(cap * sizeof(uint32_t));
-    nb->masks = (uint32_t *)PyMem_RawMalloc(cap * sizeof(uint32_t));
-    nb->mats  = (uint32_t *)PyMem_RawCalloc(cap, sizeof(uint32_t));
+    nb->bids  = (JPH_BodyID *)CULV_RAW_MALLOC(cap * sizeof(JPH_BodyID));
+    nb->udat  = (uint64_t *)CULV_RAW_CALLOC(cap, sizeof(uint64_t));
+    nb->gens  = (uint32_t *)CULV_RAW_CALLOC(cap, sizeof(uint32_t));
+    nb->s2d   = (uint32_t *)CULV_RAW_MALLOC(cap * sizeof(uint32_t));
+    nb->d2s   = (uint32_t *)CULV_RAW_MALLOC(cap * sizeof(uint32_t));
+    nb->stat  = (uint8_t *)CULV_RAW_CALLOC(cap, sizeof(uint8_t));
+    nb->free  = (uint32_t *)CULV_RAW_MALLOC(cap * sizeof(uint32_t));
+    nb->cats  = (uint32_t *)CULV_RAW_MALLOC(cap * sizeof(uint32_t));
+    nb->masks = (uint32_t *)CULV_RAW_MALLOC(cap * sizeof(uint32_t));
+    nb->mats  = (uint32_t *)CULV_RAW_CALLOC(cap, sizeof(uint32_t));
 
     if (!nb->pos || !nb->rot || !nb->ppos || !nb->prot || !nb->lvel || !nb->avel || !nb->bids ||
         !nb->udat || !nb->gens || !nb->s2d || !nb->d2s || !nb->stat || !nb->free || !nb->cats ||
@@ -88,42 +89,53 @@ static int alloc_new_buffers(NewBuffers *nb, size_t cap) {
     return 0;
 }
 
-static void migrate_and_init(PhysicsWorldObject *self, NewBuffers *nb, size_t new_cap) {
+static size_t migrate_and_init(PhysicsWorldObject *self, NewBuffers *nb, size_t new_cap) {
+    // 1. Copy Active Dense Data (The bodies currently in simulation)
     if (self->count > 0) {
-        // Copy using Stride sizes
-        size_t copy_size_pos = self->count * sizeof(PosStride);
-        memcpy(nb->pos, self->positions, copy_size_pos);
-        memcpy(nb->ppos, self->prev_positions, copy_size_pos);
+        // Positions use Stride 4 (32 bytes in Double Precision)
+        size_t pos_bytes = self->count * sizeof(PosStride);
+        memcpy(nb->pos, self->positions, pos_bytes);
+        memcpy(nb->ppos, self->prev_positions, pos_bytes);
 
-        size_t copy_size_aux = self->count * sizeof(AuxStride);
-        memcpy(nb->rot, self->rotations, copy_size_aux);
-        memcpy(nb->prot, self->prev_rotations, copy_size_aux);
-        memcpy(nb->lvel, self->linear_velocities, copy_size_aux);
-        memcpy(nb->avel, self->angular_velocities, copy_size_aux);
+        // Rotations/Velocities use Stride 4 (16 bytes)
+        size_t aux_bytes = self->count * sizeof(AuxStride);
+        memcpy(nb->rot, self->rotations, aux_bytes);
+        memcpy(nb->prot, self->prev_rotations, aux_bytes);
+        memcpy(nb->lvel, self->linear_velocities, aux_bytes);
+        memcpy(nb->avel, self->angular_velocities, aux_bytes);
 
-        // Copy other arrays (Stride 1)
+        // Metadata (BodyIDs, UserData, Masks, etc.)
         memcpy(nb->bids, self->body_ids, self->count * sizeof(JPH_BodyID));
         memcpy(nb->udat, self->user_data, self->count * sizeof(uint64_t));
         memcpy(nb->cats, self->categories, self->count * sizeof(uint32_t));
         memcpy(nb->masks, self->masks, self->count * sizeof(uint32_t));
         memcpy(nb->mats, self->material_ids, self->count * sizeof(uint32_t));
+
+        // Dense-to-Slot mapping
+        memcpy(nb->d2s, self->dense_to_slot, self->count * sizeof(uint32_t));
     }
 
-    // Copy mapping tables
-    memcpy(nb->gens, self->generations, self->slot_capacity * sizeof(uint32_t));
-    memcpy(nb->s2d, self->slot_to_dense, self->slot_capacity * sizeof(uint32_t));
-    memcpy(nb->d2s, self->dense_to_slot, self->slot_capacity * sizeof(uint32_t));
-    memcpy(nb->stat, self->slot_states, self->slot_capacity * sizeof(uint8_t));
-    memcpy(nb->free, self->free_slots, self->free_count * sizeof(uint32_t));
+    // 2. Copy Mapping Tables (The Slot-based indirection)
+    if (self->slot_capacity > 0) {
+        size_t slot_bytes_u32 = self->slot_capacity * sizeof(uint32_t);
+        memcpy(nb->gens, self->generations, slot_bytes_u32);
+        memcpy(nb->s2d, self->slot_to_dense, slot_bytes_u32);
+        memcpy(nb->stat, self->slot_states, self->slot_capacity * sizeof(uint8_t));
 
-    // Initialize new slots
-    size_t updated_free_count = self->free_count;
+        // Copy the current free list
+        memcpy(nb->free, self->free_slots, self->free_count * sizeof(uint32_t));
+    }
+
+    // 3. Initialize Expanded Slots
+    // We calculate the new free count locally
+    size_t local_free_count = self->free_count;
     for (size_t i = self->slot_capacity; i < new_cap; i++) {
-        nb->gens[i]                    = 1;
-        nb->stat[i]                    = SLOT_EMPTY;
-        nb->free[updated_free_count++] = (uint32_t)i;
+        nb->gens[i]                  = 1; // Starting generation
+        nb->stat[i]                  = SLOT_EMPTY;
+        nb->free[local_free_count++] = (uint32_t)i; // Add to free list
     }
-    self->free_count = updated_free_count;
+
+    return local_free_count;
 }
 
 // helper: Allocate shadow buffers and indirection maps
@@ -151,28 +163,28 @@ int allocate_buffers(PhysicsWorldObject *self, int max_bodies) {
     self->angular_velocities =
         (float *)CulvMem_RawMallocAligned(self->capacity * sizeof(AuxStride), AVX_ALIGNMENT);
 
-    self->body_ids     = (JPH_BodyID *)PyMem_RawMalloc(self->capacity * sizeof(JPH_BodyID));
-    self->user_data    = (uint64_t *)PyMem_RawCalloc(self->capacity, sizeof(uint64_t));
-    self->categories   = (uint32_t *)PyMem_RawMalloc(self->capacity * sizeof(uint32_t));
-    self->masks        = (uint32_t *)PyMem_RawMalloc(self->capacity * sizeof(uint32_t));
-    self->material_ids = (uint32_t *)PyMem_RawCalloc(self->capacity, sizeof(uint32_t));
+    self->body_ids     = (JPH_BodyID *)CULV_RAW_MALLOC(self->capacity * sizeof(JPH_BodyID));
+    self->user_data    = (uint64_t *)CULV_RAW_CALLOC(self->capacity, sizeof(uint64_t));
+    self->categories   = (uint32_t *)CULV_RAW_MALLOC(self->capacity * sizeof(uint32_t));
+    self->masks        = (uint32_t *)CULV_RAW_MALLOC(self->capacity * sizeof(uint32_t));
+    self->material_ids = (uint32_t *)CULV_RAW_CALLOC(self->capacity, sizeof(uint32_t));
 
     self->id_to_handle_map =
-        (BodyHandle *)PyMem_RawCalloc(self->max_jolt_bodies, sizeof(BodyHandle));
+        (BodyHandle *)CULV_RAW_CALLOC(self->max_jolt_bodies, sizeof(BodyHandle));
 
-    self->generations   = (uint32_t *)PyMem_RawCalloc(self->slot_capacity, sizeof(uint32_t));
-    self->slot_to_dense = (uint32_t *)PyMem_RawMalloc(self->slot_capacity * sizeof(uint32_t));
-    self->dense_to_slot = (uint32_t *)PyMem_RawMalloc(self->slot_capacity * sizeof(uint32_t));
-    self->free_slots    = (uint32_t *)PyMem_RawMalloc(self->slot_capacity * sizeof(uint32_t));
-    self->slot_states   = (uint8_t *)PyMem_RawCalloc(self->slot_capacity, sizeof(uint8_t));
+    self->generations   = (uint32_t *)CULV_RAW_CALLOC(self->slot_capacity, sizeof(uint32_t));
+    self->slot_to_dense = (uint32_t *)CULV_RAW_MALLOC(self->slot_capacity * sizeof(uint32_t));
+    self->dense_to_slot = (uint32_t *)CULV_RAW_MALLOC(self->slot_capacity * sizeof(uint32_t));
+    self->free_slots    = (uint32_t *)CULV_RAW_MALLOC(self->slot_capacity * sizeof(uint32_t));
+    self->slot_states   = (uint8_t *)CULV_RAW_CALLOC(self->slot_capacity, sizeof(uint8_t));
 
     self->command_queue =
-        (PhysicsCommand *)PyMem_RawMalloc(COMMAND_QUEUE_INITIAL_CAPACITY * sizeof(PhysicsCommand));
+        (PhysicsCommand *)CULV_RAW_MALLOC(COMMAND_QUEUE_INITIAL_CAPACITY * sizeof(PhysicsCommand));
     self->command_capacity = COMMAND_QUEUE_INITIAL_CAPACITY;
 
     self->trash_capacity = 4;
-    self->trash_count = 0;
-    self->trash_buffers = (NewBuffers *)PyMem_RawCalloc(self->trash_capacity, sizeof(NewBuffers));
+    self->trash_count    = 0;
+    self->trash_buffers  = (NewBuffers *)CULV_RAW_CALLOC(self->trash_capacity, sizeof(NewBuffers));
 
     if (!self->positions || !self->rotations || !self->id_to_handle_map || !self->command_queue ||
         !self->slot_states) {
@@ -195,72 +207,92 @@ int allocate_buffers(PhysicsWorldObject *self, int max_bodies) {
 }
 CULV_NODISCARD
 int PhysicsWorld_resize(PhysicsWorldObject *self, size_t new_capacity) {
-    // 1. Validation
+    // 1. Buffer View Guard
     if (self->view_export_count > 0) {
-        PyErr_SetString(PyExc_BufferError, "Cannot resize while views are exported.");
+        PyErr_SetString(PyExc_BufferError, "Cannot resize while memoryview is active.");
         return -1;
     }
+
+    // 2. Concurrency Guard: Wait for Step Thread to finish Phase 5 (Sync)
+    // and wait for any active Raycast/Query to finish.
+    BLOCK_UNTIL_NOT_STEPPING(self);
     BLOCK_UNTIL_NOT_QUERYING(self);
+
     if (new_capacity <= self->capacity) {
         return 0;
     }
 
-    // 2. Transactional Allocation
+    // 3. Prepare New Buffers (Transactional)
     NewBuffers nb;
     if (alloc_new_buffers(&nb, new_capacity) < 0) {
         PyErr_NoMemory();
         return -1;
     }
 
-    // 3. Data Migration
-    migrate_and_init(self, &nb, new_capacity);
+    // 4. Migrate Data
+    size_t final_free_count = migrate_and_init(self, &nb, new_capacity);
 
-    // 4. Commit: Save OLD to Trash Bin, assign NEW
-    // If the trash is full, grow it
+    // 5. Expand Trash Bin if needed
     if (self->trash_count >= self->trash_capacity) {
         size_t next_cap = (self->trash_capacity == 0) ? 4 : self->trash_capacity * 2;
-        void *new_trash = PyMem_RawRealloc(self->trash_buffers, next_cap * sizeof(NewBuffers));
+        void *new_trash = CULV_RAW_REALLOC(self->trash_buffers, next_cap * sizeof(NewBuffers));
         if (!new_trash) {
-            free_new_buffers(&nb); // Rollback if we can't allocate trash space
+            free_new_buffers(&nb);
             return -1;
         }
-        self->trash_buffers = (NewBuffers *)new_trash;
+
+        // Zero-init the NEW portion of the trash array to prevent double-frees
+        size_t added_elements = next_cap - self->trash_capacity;
+        memset((NewBuffers *)new_trash + self->trash_capacity, 0,
+               added_elements * sizeof(NewBuffers));
+
+        self->trash_buffers  = (NewBuffers *)new_trash;
         self->trash_capacity = next_cap;
     }
 
-    // Package the current pointers into a struct and throw them in the trash
-    NewBuffers old_bufs = {
-        .pos = self->positions, .ppos = self->prev_positions, 
-        .rot = self->rotations, .prot = self->prev_rotations,
-        .lvel = self->linear_velocities, .avel = self->angular_velocities,
-        .bids = self->body_ids, .udat = self->user_data,
-        .gens = self->generations, .s2d = self->slot_to_dense,
-        .d2s = self->dense_to_slot, .stat = self->slot_states,
-        .free = self->free_slots, .cats = self->categories,
-        .masks = self->masks, .mats = self->material_ids
-    };
+    // 6. THE COMMIT (Critical Section)
+    // Package current pointers to be freed later by the Stepper
+    NewBuffers old_bufs                      = {.pos   = self->positions,
+                                                .ppos  = self->prev_positions,
+                                                .rot   = self->rotations,
+                                                .prot  = self->prev_rotations,
+                                                .lvel  = self->linear_velocities,
+                                                .avel  = self->angular_velocities,
+                                                .bids  = self->body_ids,
+                                                .udat  = self->user_data,
+                                                .gens  = self->generations,
+                                                .s2d   = self->slot_to_dense,
+                                                .d2s   = self->dense_to_slot,
+                                                .stat  = self->slot_states,
+                                                .free  = self->free_slots,
+                                                .cats  = self->categories,
+                                                .masks = self->masks,
+                                                .mats  = self->material_ids};
     self->trash_buffers[self->trash_count++] = old_bufs;
 
-    // Assign NEW pointers
-    self->positions = nb.pos;
-    self->prev_positions = nb.ppos;
-    self->rotations = nb.rot;
-    self->prev_rotations = nb.prot;
-    self->linear_velocities = nb.lvel;
+    // Swap pointers to the new, larger arrays
+    self->positions          = nb.pos;
+    self->prev_positions     = nb.ppos;
+    self->rotations          = nb.rot;
+    self->prev_rotations     = nb.prot;
+    self->linear_velocities  = nb.lvel;
     self->angular_velocities = nb.avel;
-    self->body_ids = nb.bids;
-    self->user_data = nb.udat;
-    self->generations = nb.gens;
-    self->slot_to_dense = nb.s2d;
-    self->dense_to_slot = nb.d2s;
-    self->slot_states = nb.stat;
-    self->free_slots = nb.free;
-    self->categories = nb.cats;
-    self->masks = nb.masks;
-    self->material_ids = nb.mats;
+    self->body_ids           = nb.bids;
+    self->user_data          = nb.udat;
+    self->generations        = nb.gens;
+    self->slot_to_dense      = nb.s2d;
+    self->dense_to_slot      = nb.d2s;
+    self->slot_states        = nb.stat;
+    self->free_slots         = nb.free;
+    self->categories         = nb.cats;
+    self->masks              = nb.masks;
+    self->material_ids       = nb.mats;
 
+    // Update metadata
+    self->free_count    = final_free_count;
     self->capacity      = new_capacity;
     self->slot_capacity = new_capacity;
+
     return 0;
 }
 
@@ -281,14 +313,14 @@ void free_constraints(PhysicsWorldObject *self) {
             }
             self->constraints[i] = NULL;
         }
-        PyMem_RawFree((void *)self->constraints);
+        CULV_RAW_FREE((void *)self->constraints);
         self->constraints = NULL;
     }
-    PyMem_RawFree(self->constraint_generations);
+    CULV_RAW_FREE(self->constraint_generations);
     self->constraint_generations = NULL;
-    PyMem_RawFree(self->free_constraint_slots);
+    CULV_RAW_FREE(self->free_constraint_slots);
     self->free_constraint_slots = NULL;
-    PyMem_RawFree(self->constraint_states);
+    CULV_RAW_FREE(self->constraint_states);
     self->constraint_states = NULL;
 }
 
@@ -308,29 +340,29 @@ void free_shadow_buffers(PhysicsWorldObject *self) {
     self->angular_velocities = NULL;
 
     // Regular buffers
-    PyMem_RawFree(self->body_ids);
+    CULV_RAW_FREE(self->body_ids);
     self->body_ids = NULL;
-    PyMem_RawFree(self->generations);
+    CULV_RAW_FREE(self->generations);
     self->generations = NULL;
-    PyMem_RawFree(self->slot_to_dense);
+    CULV_RAW_FREE(self->slot_to_dense);
     self->slot_to_dense = NULL;
-    PyMem_RawFree(self->dense_to_slot);
+    CULV_RAW_FREE(self->dense_to_slot);
     self->dense_to_slot = NULL;
-    PyMem_RawFree(self->free_slots);
+    CULV_RAW_FREE(self->free_slots);
     self->free_slots = NULL;
-    PyMem_RawFree(self->slot_states);
+    CULV_RAW_FREE(self->slot_states);
     self->slot_states = NULL;
-    PyMem_RawFree(self->command_queue);
+    CULV_RAW_FREE(self->command_queue);
     self->command_queue = NULL;
-    PyMem_RawFree(self->user_data);
+    CULV_RAW_FREE(self->user_data);
     self->user_data = NULL;
-    PyMem_RawFree(self->categories);
+    CULV_RAW_FREE(self->categories);
     self->categories = NULL;
-    PyMem_RawFree(self->masks);
+    CULV_RAW_FREE(self->masks);
     self->masks = NULL;
-    PyMem_RawFree(self->material_ids);
+    CULV_RAW_FREE(self->material_ids);
     self->material_ids = NULL;
-    PyMem_RawFree(self->materials);
+    CULV_RAW_FREE(self->materials);
     self->materials = NULL;
 }
 
@@ -342,9 +374,9 @@ void free_shadow_buffers(PhysicsWorldObject *self) {
 void PhysicsWorld_free_members(PhysicsWorldObject *self) {
     // Clear pending commands
     clear_command_queue(self);
-    PyMem_RawFree(self->command_queue);
+    CULV_RAW_FREE(self->command_queue);
     self->command_queue = NULL;
-    PyMem_RawFree(self->command_queue_spare);
+    CULV_RAW_FREE(self->command_queue_spare);
     self->command_queue_spare = NULL;
     // 1. Constraints (Must go before PhysicsSystem)
     free_constraints(self);
@@ -379,7 +411,7 @@ void PhysicsWorld_free_members(PhysicsWorldObject *self) {
         JPH_ContactListener_Destroy(self->contact_listener);
         self->contact_listener = NULL;
     }
-    PyMem_RawFree(self->contact_buffer);
+    CULV_RAW_FREE(self->contact_buffer);
     self->contact_buffer = NULL;
 
     // 6. Native Memory Buffers
@@ -387,9 +419,9 @@ void PhysicsWorld_free_members(PhysicsWorldObject *self) {
         for (size_t i = 0; i < self->trash_count; i++) {
             free_new_buffers(&self->trash_buffers[i]);
         }
-        PyMem_RawFree(self->trash_buffers);
+        CULV_RAW_FREE(self->trash_buffers);
         self->trash_buffers = NULL;
-        self->trash_count = 0;
+        self->trash_count   = 0;
     }
     free_shadow_buffers(self);
 
@@ -397,7 +429,7 @@ void PhysicsWorld_free_members(PhysicsWorldObject *self) {
     self->bp_interface = NULL;
     self->pair_filter  = NULL;
     self->bp_filter    = NULL;
-    PyMem_RawFree(self->id_to_handle_map);
+    CULV_RAW_FREE(self->id_to_handle_map);
     self->id_to_handle_map = NULL;
 
     FREE_LOCK(self->shadow_lock);
@@ -598,7 +630,8 @@ int verify_abi_alignment(JPH_BodyInterface *bi) {
 }
 
 // Buffer Release Slot
-PyType_DeclareSlot_Void PhysicsWorld_releasebuffer(PhysicsWorldObject *self, Py_buffer *Py_UNUSED(view)) {
+PyType_DeclareSlot_Void PhysicsWorld_releasebuffer(PhysicsWorldObject *self,
+                                                   Py_buffer *Py_UNUSED(view)) {
     SHADOW_LOCK(&self->shadow_lock);
     if (self->view_export_count > 0) {
         self->view_export_count--;

@@ -49,54 +49,47 @@ static constexpr size_t INITIAL_MATERIAL_CAPACITY = 16;    // Initial material d
 
 // Global lock for JPH callbacks
 NativeMutex g_jph_trampoline_lock; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
-PyType_DeclareSlot_Object PhysicsWorld_alloc(PyTypeObject *tp, Py_ssize_t Py_UNUSED(nitems)) {
-    size_t size = (size_t)tp->tp_basicsize;
-
-    // Allocate 64-byte aligned memory to suppress UBSan alignas(64) warnings
-    auto *self = (PhysicsWorldObject *)CulvMem_RawMallocAligned(size, MEMORY_ALIGNMENT_SIZE);
-    if (!self) {
-        return PyErr_NoMemory();
-    }
-
-    // tp_alloc is expected to return zero-initialized memory
-    memset(self, 0, size);
-
-    // Initialize PyObject fields (refcnt, ob_type)
-    PyObject_Init((PyObject *)self, tp);
-
-    return (PyObject *)self;
-}
-
-PyType_DeclareSlot_Void PhysicsWorld_free(void *obj) { CulvMem_RawFreeAligned(obj); }
 
 // --- Lifecycle: Deallocation ---
+PyType_DeclareSlot_Status PhysicsWorld_traverse(PhysicsWorldObject *self, visitproc visit, void *arg) {
+    // 1. Visit the type itself (Required for all heap types)
+    Py_VISIT(Py_TYPE(self));
+
+    // 2. If you add any other PyObject* members to your struct in the future, 
+    // you MUST visit them here.
+    
+    return 0;
+}
+
+PyType_DeclareSlot_Status PhysicsWorld_clear(CULV_MAYBE_UNUSED PhysicsWorldObject *self) {
+    // Currently nothing to clear.
+    return 0;
+}
+
 PyType_DeclareSlot_Void PhysicsWorld_dealloc(PhysicsWorldObject *self) {
     PyTypeObject *tp = Py_TYPE(self);
 
+    // 1. The GC "Safety Shield"
+    // Use the check-then-untrack to avoid the 'already untracked' abort
     if (PyObject_GC_IsTracked((PyObject *)self)) {
         PyObject_GC_UnTrack(self);
     }
 
+    // 2. Weakref cleanup
     if (self->weakreflist != NULL) {
         PyObject_ClearWeakRefs((PyObject *)self);
     }
 
-    // Clean up Jolt and Mutexes while 'self' is still valid
+    // 3. The "Manual" work
     PhysicsWorld_free_members(self);
 
-    // TAKE THE FREE FUNCTION POINTER NOW
-    // Do not look at 'tp' or 'self' after the next line!
-    freefunc tf = tp->tp_free;
+    // 4. Final destruction
+    // For Heap Types, we use the type's free function
+    tp->tp_free((PyObject *)self);
 
-    // Release the object memory
-    tf((PyObject *)self);
-
-    // FINALLY, decref the type.
-    // This is often where it crashes if the type was defined in a module
-    // that is also being unloaded.
+    // 5. Release the type itself
     Py_DECREF(tp);
 }
-
 // --- Lifecycle: Initialization ---
 
 // Orchestrator function
@@ -233,7 +226,7 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
     }
 
     self->contact_max_capacity = CONTACT_MAX_CAPACITY;
-    self->contact_buffer       = PyMem_RawMalloc(CONTACT_MAX_CAPACITY * sizeof(ContactEvent));
+    self->contact_buffer       = CULV_RAW_MALLOC(CONTACT_MAX_CAPACITY * sizeof(ContactEvent));
     atomic_init(&self->contact_atomic_idx, 0);
     JPH_ContactListener_SetProcs(&contact_procs);
     self->contact_listener = JPH_ContactListener_Create(self);
@@ -259,10 +252,10 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
     constexpr uint32_t CONSTRAINT_INITIAL_CAPACITY = 256;
     self->constraint_capacity                      = CONSTRAINT_INITIAL_CAPACITY;
     self->constraints =
-        (JPH_Constraint **)PyMem_RawCalloc(CONSTRAINT_INITIAL_CAPACITY, sizeof(JPH_Constraint *));
-    self->constraint_generations = PyMem_RawCalloc(CONSTRAINT_INITIAL_CAPACITY, sizeof(uint32_t));
-    self->free_constraint_slots  = PyMem_RawMalloc(CONSTRAINT_INITIAL_CAPACITY * sizeof(uint32_t));
-    self->constraint_states      = PyMem_RawCalloc(CONSTRAINT_INITIAL_CAPACITY, sizeof(uint8_t));
+        (JPH_Constraint **)CULV_RAW_CALLOC(CONSTRAINT_INITIAL_CAPACITY, sizeof(JPH_Constraint *));
+    self->constraint_generations = CULV_RAW_CALLOC(CONSTRAINT_INITIAL_CAPACITY, sizeof(uint32_t));
+    self->free_constraint_slots  = CULV_RAW_MALLOC(CONSTRAINT_INITIAL_CAPACITY * sizeof(uint32_t));
+    self->constraint_states      = CULV_RAW_CALLOC(CONSTRAINT_INITIAL_CAPACITY, sizeof(uint8_t));
     if (!self->constraints || !self->free_constraint_slots) {
         goto fail;
     }
@@ -284,9 +277,6 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
     }
 
     culverin_sync_shadow_buffers(self);
-    if (PyType_HasFeature(Py_TYPE(self), Py_TPFLAGS_HAVE_GC)) {
-        PyObject_GC_Track(self);
-    }
     return 0;
 
 fail:
@@ -888,7 +878,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy_batch(PhysicsWorldObject *
     }
 
     // 4. TEMP ID RESOLUTION (Locked)
-    JPH_BodyID *ids = (JPH_BodyID *)PyMem_RawMalloc(count * sizeof(JPH_BodyID));
+    JPH_BodyID *ids = (JPH_BodyID *)CULV_RAW_MALLOC(count * sizeof(JPH_BodyID));
     if (!ids) {
         PyBuffer_Release(&h_view);
         return PyErr_NoMemory();
@@ -933,7 +923,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy_batch(PhysicsWorldObject *
         Py_END_ALLOW_THREADS
     }
 
-    PyMem_RawFree(ids);
+    CULV_RAW_FREE(ids);
     Py_RETURN_NONE;
 }
 
@@ -1030,7 +1020,7 @@ PyCFunction_DeclareMethod PhysicsWorld_load_state(PhysicsWorldObject *self, PyOb
     // 1. IMMEDIATE SNAPSHOT (GIL held)
     // Copy to local heap so we can release the Python buffer before
     // yielding/waiting.
-    void *local_state_copy = PyMem_RawMalloc(view.len);
+    void *local_state_copy = CULV_RAW_MALLOC(view.len);
     if (!local_state_copy) {
         PyBuffer_Release(&view);
         return PyErr_NoMemory();
@@ -1074,7 +1064,7 @@ PyCFunction_DeclareMethod PhysicsWorld_load_state(PhysicsWorldObject *self, PyOb
     // CRITICAL: Slot capacity must match exactly
     if (saved_slot_cap != self->slot_capacity) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        PyMem_RawFree(local_state_copy);
+        CULV_RAW_FREE(local_state_copy);
         PyErr_Format(PyExc_ValueError, "Capacity mismatch: World is %zu, Snapshot is %zu",
                      self->slot_capacity, saved_slot_cap);
         return NULL;
@@ -1184,12 +1174,12 @@ PyCFunction_DeclareMethod PhysicsWorld_load_state(PhysicsWorldObject *self, PyOb
         }
     }
 
-    PyMem_RawFree(local_state_copy);
+    CULV_RAW_FREE(local_state_copy);
     Py_RETURN_NONE;
 
 size_fail:
     SHADOW_UNLOCK(&self->shadow_lock);
-    PyMem_RawFree(local_state_copy);
+    CULV_RAW_FREE(local_state_copy);
     PyErr_SetString(PyExc_ValueError, "Snapshot buffer truncated or stride mismatch");
     return NULL;
 }
@@ -1205,13 +1195,27 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
         return NULL;
     }
 
+    // --- PHASE 0: RE-ENTRANCY GUARD (Fast Path) ---
+    // If another thread is stepping, reject immediately.
+    if (atomic_load_explicit(&self->is_stepping, memory_order_acquire)) {
+        PyErr_SetString(PyExc_RuntimeError, "Concurrent step detected.");
+        return NULL;
+    }
+
     // --- PHASE 1: FENCE OFF NEW QUERIES & MUTATORS ---
     SHADOW_LOCK(&self->shadow_lock);
 
+    // Double-check inside the lock to absolutely prevent queue corruption
+    if (atomic_load_explicit(&self->is_stepping, memory_order_relaxed)) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_SetString(PyExc_RuntimeError, "Concurrent step detected.");
+        return NULL;
+    }
+
     // 1. Instantly block NEW Python mutators (Hammer, Mover)
-    atomic_store_explicit(&self->is_stepping, true, memory_order_relaxed);
+    atomic_store_explicit(&self->is_stepping, true, memory_order_release);
     // 2. Instantly block NEW queries (Raycasts)
-    atomic_store_explicit(&self->step_requested, true, memory_order_relaxed);
+    atomic_store_explicit(&self->step_requested, true, memory_order_release);
 
     // 3. Wait for in-flight queries to finish
     if (atomic_load_explicit(&self->active_queries, memory_order_acquire) > 0) {
@@ -1226,12 +1230,12 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
 
     self->needs_optimization = false;
 
-    // Swap command queues
+    // Swap command queues safely
     PhysicsCommand *captured_queue = self->command_queue;
     size_t captured_count          = self->command_count;
 
     if (UNLIKELY(self->command_capacity > self->spare_capacity)) {
-        self->command_queue_spare = (PhysicsCommand *)PyMem_RawRealloc(
+        self->command_queue_spare = (PhysicsCommand *)CULV_RAW_REALLOC(
             self->command_queue_spare, self->command_capacity * sizeof(PhysicsCommand));
         self->spare_capacity = self->command_capacity;
     }
@@ -1267,7 +1271,7 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
     // --- PHASE 4: PRE-SYNC FENCE ---
     NATIVE_MUTEX_LOCK(self->step_sync.mutex);
     // Block NEW queries from starting
-    atomic_store_explicit(&self->step_requested, true, memory_order_relaxed);
+    atomic_store_explicit(&self->step_requested, true, memory_order_release);
 
     // Wait for in-flight queries from Phase 3 to finish
     while (atomic_load_explicit(&self->active_queries, memory_order_acquire) > 0) {
@@ -1275,7 +1279,7 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
     }
 
     // Lock out Mutators
-    atomic_store_explicit(&self->is_stepping, true, memory_order_relaxed);
+    atomic_store_explicit(&self->is_stepping, true, memory_order_release);
     NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
 
     // --- PHASE 5: SHADOW SYNC ---
@@ -1286,8 +1290,8 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
     NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
     Py_END_ALLOW_THREADS
 
-        // --- PHASE 6: FINALIZATION ---
-        SHADOW_LOCK(&self->shadow_lock);
+    // --- PHASE 6: FINALIZATION ---
+    SHADOW_LOCK(&self->shadow_lock);
 
     if (self->trash_count > 0) {
         for (size_t i = 0; i < self->trash_count; i++) {
@@ -1383,7 +1387,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_convex_hull(PhysicsWorldObject *se
     // 4. SHAPE CREATION (No GIL, No Shadow Lock)
     JPH_Shape *shape = NULL;
     Py_BEGIN_ALLOW_THREADS auto *jolt_points =
-        (JPH_Vec3 *)PyMem_RawMalloc(num_points * sizeof(JPH_Vec3));
+        (JPH_Vec3 *)CULV_RAW_MALLOC(num_points * sizeof(JPH_Vec3));
     float *raw = (float *)points_view.buf;
     for (size_t i = 0; i < num_points; i++) {
         jolt_points[i] = (JPH_Vec3){raw[i * 3], raw[i * 3 + 1], raw[i * 3 + 2]};
@@ -1391,7 +1395,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_convex_hull(PhysicsWorldObject *se
 
     JPH_ConvexHullShapeSettings *hull_settings =
         JPH_ConvexHullShapeSettings_Create(jolt_points, (uint32_t)num_points, CONVEX_HULL_TOLERANCE);
-    PyMem_RawFree(jolt_points);
+    CULV_RAW_FREE(jolt_points);
 
     if (hull_settings) {
         shape = (JPH_Shape *)JPH_ConvexHullShapeSettings_CreateShape(hull_settings);
@@ -1517,7 +1521,7 @@ static JPH_Shape *init_compound_shape(PhysicsWorldObject *self, PyObject *parts)
 
     // --- 1. PARSE PHASE (GIL Held) ---
     // Allocate temp buffer to store parsed data so we can release GIL later
-    CompoundPart *buffer = PyMem_RawMalloc(sizeof(CompoundPart) * num_parts);
+    CompoundPart *buffer = CULV_RAW_MALLOC(sizeof(CompoundPart) * num_parts);
     if (!buffer) {
         PyErr_NoMemory();
         return NULL;
@@ -1527,7 +1531,7 @@ static JPH_Shape *init_compound_shape(PhysicsWorldObject *self, PyObject *parts)
         PyObject *item = PyList_GetItem(parts, i);
         // Expecting tuple: (pos, rot, type, size_params)
         if (!PyTuple_Check(item) || PyTuple_Size(item) < 4) {
-            PyMem_RawFree(buffer);
+            CULV_RAW_FREE(buffer);
             PyErr_Format(PyExc_ValueError, "Part %zd must be a tuple(pos, rot, type, size)", i);
             return NULL;
         }
@@ -1538,7 +1542,7 @@ static JPH_Shape *init_compound_shape(PhysicsWorldObject *self, PyObject *parts)
         PyObject *p_size = PyTuple_GetItem(item, 3);
 
         if (PyErr_Occurred()) {
-            PyMem_RawFree(buffer);
+            CULV_RAW_FREE(buffer);
             return NULL;
         }
 
@@ -1576,7 +1580,7 @@ static JPH_Shape *init_compound_shape(PhysicsWorldObject *self, PyObject *parts)
     }
 
     if (PyErr_Occurred()) {
-        PyMem_RawFree(buffer);
+        CULV_RAW_FREE(buffer);
         return NULL;
     }
 
@@ -1609,7 +1613,7 @@ static JPH_Shape *init_compound_shape(PhysicsWorldObject *self, PyObject *parts)
     Py_END_ALLOW_THREADS
 
         // --- 3. CLEANUP ---
-        PyMem_RawFree(buffer);
+        CULV_RAW_FREE(buffer);
 
     if (!final_shape) {
         PyErr_SetString(PyExc_RuntimeError, "Failed to create compound shape");
@@ -2088,15 +2092,15 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
     }
 
     // 2. TEMP ALLOCATION
-    PosStride *pos_buf    = PyMem_RawMalloc(batch_count * sizeof(PosStride));
-    ShapeParams *size_buf = PyMem_RawMalloc(batch_count * sizeof(ShapeParams));
-    auto **settings_buf   = (JPH_BodyCreationSettings **)PyMem_RawCalloc(
+    PosStride *pos_buf    = CULV_RAW_MALLOC(batch_count * sizeof(PosStride));
+    ShapeParams *size_buf = CULV_RAW_MALLOC(batch_count * sizeof(ShapeParams));
+    auto **settings_buf   = (JPH_BodyCreationSettings **)CULV_RAW_CALLOC(
         batch_count, sizeof(JPH_BodyCreationSettings *));
 
     if (!pos_buf || !size_buf || !settings_buf) {
-        PyMem_RawFree(pos_buf);
-        PyMem_RawFree(size_buf);
-        PyMem_RawFree((void *)settings_buf);
+        CULV_RAW_FREE(pos_buf);
+        CULV_RAW_FREE(size_buf);
+        CULV_RAW_FREE((void *)settings_buf);
         return PyErr_NoMemory();
     }
 
@@ -2144,7 +2148,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
     // Bulk capacity check for command queue
     size_t needed_cmds = self->command_count + batch_count;
     if (self->command_capacity < needed_cmds) {
-        void *new_q = PyMem_RawRealloc(self->command_queue, needed_cmds * sizeof(PhysicsCommand));
+        void *new_q = CULV_RAW_REALLOC(self->command_queue, needed_cmds * sizeof(PhysicsCommand));
         if (!new_q) {
             SHADOW_UNLOCK(&self->shadow_lock);
             goto fail;
@@ -2208,9 +2212,9 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
     self->view_shape[0] = (Py_ssize_t)self->count;
     SHADOW_UNLOCK(&self->shadow_lock);
 
-    PyMem_RawFree(pos_buf);
-    PyMem_RawFree(size_buf);
-    PyMem_RawFree((void *)settings_buf);
+    CULV_RAW_FREE(pos_buf);
+    CULV_RAW_FREE(size_buf);
+    CULV_RAW_FREE((void *)settings_buf);
     return result_list;
 
 fail:
@@ -2219,9 +2223,9 @@ fail:
             JPH_BodyCreationSettings_Destroy(settings_buf[i]);
         }
     }
-    PyMem_RawFree(pos_buf);
-    PyMem_RawFree(size_buf);
-    PyMem_RawFree((void *)settings_buf);
+    CULV_RAW_FREE(pos_buf);
+    CULV_RAW_FREE(size_buf);
+    CULV_RAW_FREE((void *)settings_buf);
     return NULL;
 }
 
@@ -2230,7 +2234,7 @@ fail:
  */
 static JPH_IndexedTriangle *build_mesh_triangles(const uint32_t *raw, MeshBounds bounds) {
     auto *jolt_tris =
-        (JPH_IndexedTriangle *)PyMem_RawMalloc(bounds.tri_count * sizeof(JPH_IndexedTriangle));
+        (JPH_IndexedTriangle *)CULV_RAW_MALLOC(bounds.tri_count * sizeof(JPH_IndexedTriangle));
     if (!jolt_tris) {
         PyErr_NoMemory();
         return NULL;
@@ -2242,7 +2246,7 @@ static JPH_IndexedTriangle *build_mesh_triangles(const uint32_t *raw, MeshBounds
         uint32_t i3 = raw[t * 3 + 2];
 
         if (i1 >= bounds.vertex_count || i2 >= bounds.vertex_count || i3 >= bounds.vertex_count) {
-            PyMem_RawFree(jolt_tris);
+            CULV_RAW_FREE(jolt_tris);
             PyErr_Format(PyExc_ValueError, "Mesh index out of range: %u/%u/%u >= %u", i1, i2, i3,
                          bounds.vertex_count);
             return NULL;
@@ -2351,7 +2355,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_mesh_body(PhysicsWorldObject *self
         build_mesh_triangles((uint32_t *)i_view.buf, bounds);
     if (tris) {
         shape = build_mesh_shape(v_view.buf, bounds, tris);
-        PyMem_RawFree(tris);
+        CULV_RAW_FREE(tris);
     }
     Py_END_ALLOW_THREADS
 
@@ -2960,7 +2964,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_user_data(PhysicsWorldObject *self, P
 
     uint32_t slot = 0;
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot) ||
-                 self->slot_states[slot] != SLOT_ALIVE)) {
+                 (self->slot_states[slot] != SLOT_ALIVE && self->slot_states[slot] != SLOT_CHARACTER))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         Py_RETURN_NONE;
     }
@@ -3217,7 +3221,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_index(PhysicsWorldObject *self, PyObj
 
     uint32_t slot = 0;
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot) ||
-                 self->slot_states[slot] != SLOT_ALIVE)) {
+                 (self->slot_states[slot] != SLOT_ALIVE && self->slot_states[slot] != SLOT_CHARACTER))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         Py_RETURN_NONE;
     }
@@ -3251,9 +3255,8 @@ PyCFunction_DeclareMethod PhysicsWorld_is_alive(PhysicsWorldObject *self, PyObje
 
     if (unpack_handle(self, handle_raw, &slot)) {
         uint8_t state = self->slot_states[slot];
-        // A body is "alive" if it's currently in Jolt (ALIVE)
-        // or if it was created this frame (PENDING_CREATE).
-        if (state == SLOT_ALIVE || state == SLOT_PENDING_CREATE) {
+        // Now recognizing SLOT_CHARACTER as a valid alive state
+        if (state == SLOT_ALIVE || state == SLOT_PENDING_CREATE || state == SLOT_CHARACTER) {
             alive = true;
         }
     }
@@ -3276,7 +3279,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_active_indices(PhysicsWorldObject *se
     }
 
     // 1. Snapshot the BodyIDs while locked (Fast)
-    auto *id_scratch = (JPH_BodyID *)PyMem_RawMalloc(count * sizeof(JPH_BodyID));
+    auto *id_scratch = (JPH_BodyID *)CULV_RAW_MALLOC(count * sizeof(JPH_BodyID));
     if (!id_scratch) {
         SHADOW_UNLOCK(&self->shadow_lock);
         return PyErr_NoMemory();
@@ -3285,7 +3288,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_active_indices(PhysicsWorldObject *se
     SHADOW_UNLOCK(&self->shadow_lock);
 
     // 2. Query activity state WHILE UNLOCKED (Deadlock safe)
-    auto *results         = (uint32_t *)PyMem_RawMalloc(count * sizeof(uint32_t));
+    auto *results         = (uint32_t *)CULV_RAW_MALLOC(count * sizeof(uint32_t));
     size_t active_count   = 0;
     JPH_BodyInterface *bi = self->body_interface;
 
@@ -3299,8 +3302,8 @@ PyCFunction_DeclareMethod PhysicsWorld_get_active_indices(PhysicsWorldObject *se
     // 3. Construct Python object and cleanup
     PyObject *bytes_obj =
         PyBytes_FromStringAndSize((char *)results, (Py_ssize_t)(active_count * sizeof(uint32_t)));
-    PyMem_RawFree(id_scratch);
-    PyMem_RawFree(results);
+    CULV_RAW_FREE(id_scratch);
+    CULV_RAW_FREE(results);
     return bytes_obj;
 }
 
@@ -3478,7 +3481,7 @@ PyCFunction_DeclareMethod PhysicsWorld_register_material(PhysicsWorldObject *sel
     if (self->material_count >= self->material_capacity) {
         size_t new_cap = (self->material_capacity == 0) ? INITIAL_MATERIAL_CAPACITY : self->material_capacity * 2;
         auto *new_ptr =
-            (MaterialData *)PyMem_RawRealloc(self->materials, new_cap * sizeof(MaterialData));
+            (MaterialData *)CULV_RAW_REALLOC(self->materials, new_cap * sizeof(MaterialData));
         if (UNLIKELY(!new_ptr)) {
             SHADOW_UNLOCK(&self->shadow_lock);
             return PyErr_NoMemory();
@@ -3938,13 +3941,13 @@ static PyMemberDef PhysicsWorld_members[] = {{"__weaklistoffset__", Py_T_PYSSIZE
 static const PyType_Slot PhysicsWorld_slots[] = {
     {Py_tp_new, PyType_GenericNew},
     {Py_tp_init, PhysicsWorld_init},
-    {Py_tp_alloc, PhysicsWorld_alloc},
-    {Py_tp_free, PhysicsWorld_free},
     {Py_tp_dealloc, PhysicsWorld_dealloc},
     {Py_tp_methods, (PyMethodDef *)PhysicsWorld_methods},
     {Py_tp_members, (PyMemberDef *)PhysicsWorld_members},
     {Py_tp_getset, (PyGetSetDef *)PhysicsWorld_getset},
     {Py_bf_releasebuffer, PhysicsWorld_releasebuffer},
+    {Py_tp_traverse, PhysicsWorld_traverse},
+    {Py_tp_clear, PhysicsWorld_clear},
     {0, NULL},
 };
 
@@ -3989,7 +3992,7 @@ static const PyType_Slot RagdollSettings_slots[] = {
 static const PyType_Spec PhysicsWorld_spec = {
     .name      = "culverin._culverin_c.PhysicsWorld",
     .basicsize = sizeof(PhysicsWorldObject),
-    .flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
+    .flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC,
     .slots     = (PyType_Slot *)PhysicsWorld_slots,
 };
 
@@ -4155,6 +4158,7 @@ static int culverin_clear(PyObject *m) {
     Py_CLEAR(st->RagdollSettingsType);
     Py_CLEAR(st->RagdollType);
     Py_CLEAR(st->SkeletonType);
+    culverin_free_all_parsers();
     return 0;
 }
 

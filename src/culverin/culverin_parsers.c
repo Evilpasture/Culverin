@@ -323,7 +323,7 @@ void parse_tracks_to_c(PyObject *py_tracks, TrackData *out_data, int *num_out) {
 
         if (py_idxs && PyList_Check(py_idxs)) {
             out_data[t].count = (uint32_t)PyList_Size(py_idxs);
-            out_data[t].indices = PyMem_RawMalloc(out_data[t].count * sizeof(uint32_t));
+            out_data[t].indices = CULV_RAW_MALLOC(out_data[t].count * sizeof(uint32_t));
             for (uint32_t k = 0; k < out_data[t].count; k++) {
                 out_data[t].indices[k] = (uint32_t)PyLong_AsLong(PyList_GetItem(py_idxs, k));
             }

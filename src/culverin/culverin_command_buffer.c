@@ -61,6 +61,7 @@ void world_remove_body_slot(PhysicsWorldObject *self, uint32_t slot) {
 }
 
 // Helper to grow queue
+CULV_NODISCARD
 bool ensure_command_capacity(PhysicsWorldObject *self) {
     if (self->command_count >= self->command_capacity) {
         // Defensive: handle zero or uninitialized capacity
@@ -71,7 +72,7 @@ bool ensure_command_capacity(PhysicsWorldObject *self) {
             return false;
         }
 
-        void *new_ptr = PyMem_RawRealloc(self->command_queue, new_cap * sizeof(PhysicsCommand));
+        void *new_ptr = CULV_RAW_REALLOC(self->command_queue, new_cap * sizeof(PhysicsCommand));
         if (!new_ptr) {
             return false;
         }
@@ -262,7 +263,7 @@ void sync_and_flush_internal(PhysicsWorldObject *self) {
     NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
 
     flush_commands_internal(self, captured_queue, captured_count);
-    PyMem_RawFree(captured_queue);
+    CULV_RAW_FREE(captured_queue);
 
     NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
     Py_END_ALLOW_THREADS

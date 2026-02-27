@@ -75,7 +75,7 @@ JPH_Shape *find_or_create_shape_locked(PhysicsWorldObject *self, int type, const
   // 4. CACHE STORAGE (Safe realloc because SHADOW_LOCK is held)
   if (self->shape_cache_count >= self->shape_cache_capacity) {
     size_t new_cap = (self->shape_cache_capacity == 0) ? 16 : self->shape_cache_capacity * 2;
-    void *new_ptr = PyMem_RawRealloc(self->shape_cache, new_cap * sizeof(ShapeEntry));
+    void *new_ptr = CULV_RAW_REALLOC(self->shape_cache, new_cap * sizeof(ShapeEntry));
     if (!new_ptr) {
       JPH_Shape_Destroy(shape);
       // Do not set PyErr_NoMemory here if we are released GIL. 
@@ -103,7 +103,7 @@ void free_shape_cache(PhysicsWorldObject *self) {
       JPH_Shape_Destroy(self->shape_cache[i].shape);
     }
   }
-  PyMem_RawFree(self->shape_cache);
+  CULV_RAW_FREE(self->shape_cache);
   self->shape_cache = NULL;
   self->shape_cache_count = 0;
 }

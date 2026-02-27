@@ -143,7 +143,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
   JPH_LinearCurve_AddPoint(r.f_curve, 0.0f, 1.0f);
   JPH_LinearCurve_AddPoint(r.f_curve, 1.0f, 1.0f);
 
-  r.w_settings = (JPH_WheelSettings **)PyMem_RawCalloc(num_wheels, sizeof(JPH_WheelSettings *));
+  r.w_settings = (JPH_WheelSettings **)CULV_RAW_CALLOC(num_wheels, sizeof(JPH_WheelSettings *));
   for (uint32_t i = 0; i < num_wheels; i++) {
     // CRITICAL: Call this while GIL is held
     r.w_settings[i] = create_track_wheel(PyList_GetItem(py_wheels, i));
@@ -212,7 +212,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
 
   // --- 4. CLEANUP & WRAP ---
   // Free the temp index arrays from parsing
-  for (int t = 0; t < num_tracks; t++) { PyMem_RawFree(tracks[t].indices);
+  for (int t = 0; t < num_tracks; t++) { CULV_RAW_FREE(tracks[t].indices);
 }
 
   auto *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
@@ -246,7 +246,7 @@ jolt_fail:
 
 python_fail:
   // If num_tracks was 0 because we jumped here early, this loop does nothing (safe)
-  for (int t = 0; t < num_tracks; t++) { if(tracks[t].indices) { PyMem_RawFree(tracks[t].indices);
+  for (int t = 0; t < num_tracks; t++) { if(tracks[t].indices) { CULV_RAW_FREE(tracks[t].indices);
 }
 }
   

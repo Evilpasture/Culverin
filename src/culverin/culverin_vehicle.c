@@ -151,7 +151,7 @@ void cleanup_vehicle_resources(VehicleResources *r, uint32_t num_wheels, Physics
                 JPH_WheelSettings_Destroy(r->w_settings[i]);
             }
         }
-        PyMem_RawFree((void *)r->w_settings);
+        CULV_RAW_FREE((void *)r->w_settings);
     }
 
     if (r->f_curve) {
@@ -204,13 +204,13 @@ static void setup_transmission(JPH_WheeledVehicleControllerSettings *v_ctrl,
         PyObject *py_ratios = PyObject_GetAttrString(py_trans, "ratios");
         if (py_ratios && PyList_Check(py_ratios)) {
             Py_ssize_t n = PyList_Size(py_ratios);
-            float *r     = PyMem_RawMalloc((size_t)n * sizeof(float));
+            float *r     = CULV_RAW_MALLOC((size_t)n * sizeof(float));
             if (r) {
                 for (Py_ssize_t i = 0; i < n; i++) {
                     r[i] = (float)PyFloat_AsDouble(PyList_GetItem(py_ratios, i));
                 }
                 JPH_VehicleTransmissionSettings_SetGearRatios(v_trans_set, r, (uint32_t)n);
-                PyMem_RawFree(r);
+                CULV_RAW_FREE(r);
             }
         }
         Py_XDECREF(py_ratios);
@@ -303,7 +303,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_vehicle(PhysicsWorldObje
     JPH_LinearCurve_AddPoint(r.t_curve, 0.0f, 1.0f);
     JPH_LinearCurve_AddPoint(r.t_curve, 1.0f, 1.0f);
 
-    r.w_settings  = (JPH_WheelSettings **)PyMem_RawCalloc(num_wheels, sizeof(JPH_WheelSettings *));
+    r.w_settings  = (JPH_WheelSettings **)CULV_RAW_CALLOC(num_wheels, sizeof(JPH_WheelSettings *));
     r.v_ctrl      = JPH_WheeledVehicleControllerSettings_Create();
     r.v_trans_set = JPH_VehicleTransmissionSettings_Create();
 
@@ -745,9 +745,12 @@ static void Vehicle_internal_cleanup(VehicleObject *self) {
         JPH_Constraint_Destroy((JPH_Constraint *)j_veh);
     }
 
-    if (tester) JPH_VehicleCollisionTester_Destroy(tester);
-    if (v_ctrl) JPH_VehicleControllerSettings_Destroy(v_ctrl);
-    if (v_trans) JPH_VehicleTransmissionSettings_Destroy(v_trans);
+    if (tester) { JPH_VehicleCollisionTester_Destroy(tester);
+}
+    if (v_ctrl) { JPH_VehicleControllerSettings_Destroy(v_ctrl);
+}
+    if (v_trans) { JPH_VehicleTransmissionSettings_Destroy(v_trans);
+}
 
     if (wheels) {
         for (auto i = 0u; i < wheel_count; i++) {
@@ -755,11 +758,13 @@ static void Vehicle_internal_cleanup(VehicleObject *self) {
                 JPH_WheelSettings_Destroy(wheels[i]);
             }
         }
-        PyMem_RawFree((void *)wheels);
+        CULV_RAW_FREE((void *)wheels);
     }
 
-    if (f_curve) JPH_LinearCurve_Destroy(f_curve);
-    if (t_curve) JPH_LinearCurve_Destroy(t_curve);
+    if (f_curve) { JPH_LinearCurve_Destroy(f_curve);
+}
+    if (t_curve) { JPH_LinearCurve_Destroy(t_curve);
+}
 }
 
 // --- Python Wrapper ---

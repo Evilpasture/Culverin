@@ -1,3 +1,4 @@
+#include "culverin.h" // For CULV_RAW_FREE
 #include "culverin_fast_parse.h"
 #include "culverin_compiler_specifics.h"
 #include "culverin_default_config.h"
@@ -56,7 +57,7 @@ void fp_init_impl(FastParser *fp, FastArgSpec *specs, size_t count) {
             table_size <<= 1;
         }
         fp->table_mask   = table_size - 1;
-        fp->lookup_table = (uint16_t *)PyMem_RawMalloc(table_size * sizeof(uint16_t));
+        fp->lookup_table = (uint16_t *)CULV_RAW_MALLOC(table_size * sizeof(uint16_t));
 
         for (size_t i = 0; i < table_size; i++) {
             fp->lookup_table[i] = FP_EMPTY_SLOT;
@@ -69,6 +70,24 @@ void fp_init_impl(FastParser *fp, FastArgSpec *specs, size_t count) {
             }
             fp->lookup_table[h] = (uint16_t)i;
         }
+    }
+}
+
+void fp_deinit(FastParser *fp) {
+    if (!fp) return;
+
+    // 1. Release interned strings
+    if (fp->specs) {
+        for (size_t i = 0; i < fp->count; i++) {
+            Py_XDECREF(fp->specs[i].interned);
+            fp->specs[i].interned = NULL;
+        }
+    }
+
+    // 2. Free the O(1) table
+    if (fp->lookup_table) {
+        CULV_RAW_FREE(fp->lookup_table);
+        fp->lookup_table = NULL;
     }
 }
 

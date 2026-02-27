@@ -342,3 +342,4 @@ DECLARE_PARSER(Step, Step)
 DECLARE_PARSER(CharMove, CharMove)
 
 void culverin_init_all_parsers(void);
+void culverin_free_all_parsers(void);

@@ -342,22 +342,22 @@ if(WIN32)
     target_link_libraries(_culverin_c PRIVATE Winmm.lib)
 endif()
 target_compile_definitions(_culverin_c PRIVATE JPH_DEBUG_RENDERER)
-if(Python_VERSION VERSION_GREATER_EQUAL "3.13")
-    # Only disable the GIL if the current interpreter actually supports it
-    execute_process(
-        COMMAND ${Python_EXECUTABLE} -c "import sys; print(int(bool(sys._get_gil_config().get('enabled', True) == False)))"
-        OUTPUT_VARIABLE PYTHON_IS_FREE_THREADED
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-        ERROR_QUIET
-    )
+# if(Python_VERSION VERSION_GREATER_EQUAL "3.13")
+#     # Only disable the GIL if the current interpreter actually supports it
+#     execute_process(
+#         COMMAND ${Python_EXECUTABLE} -c "import sys; print(int(bool(sys._get_gil_config().get('enabled', True) == False)))"
+#         OUTPUT_VARIABLE PYTHON_IS_FREE_THREADED
+#         OUTPUT_STRIP_TRAILING_WHITESPACE
+#         ERROR_QUIET
+#     )
 
-   if(Python_ABI_FLAGS MATCHES "t")
-        message(STATUS "Culverin: Free-threading (3.13t) detected via ABI flags.")
-        target_compile_definitions(_culverin_c PRIVATE Py_GIL_DISABLED=1)
-    else()
-        message(STATUS "Culverin: Standard Python detected.")
-    endif()
-endif()
+#    if(Python_ABI_FLAGS MATCHES "t")
+#         message(STATUS "Culverin: Free-threading (3.13t) detected via ABI flags.")
+#         target_compile_definitions(_culverin_c PRIVATE Py_GIL_DISABLED=1)
+#     else()
+#         message(STATUS "Culverin: Standard Python detected.")
+#     endif()
+# endif()
 
 target_link_libraries(_culverin_c PRIVATE ${JOLTC_TARGET} Jolt)
 

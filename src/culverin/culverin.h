@@ -4,6 +4,24 @@
 #include "joltc.h" // Amer Koleci's JoltC binder.
 #include <Python.h>
 
+// =========================================================================
+// ASAN COMPATIBILITY ALLOCATORS
+// =========================================================================
+#ifdef ENABLE_SANITIZER
+    // Bypass mimalloc entirely so ASan can catch buffer overflows
+    #define CULV_RAW_MALLOC(sz) malloc(sz)
+    #define CULV_RAW_CALLOC(n, sz) calloc(n, sz)
+    #define CULV_RAW_REALLOC(ptr, sz) realloc(ptr, sz)
+    #define CULV_RAW_FREE(ptr) free(ptr)
+#else
+    // Use Python's ultra-fast mimalloc for Release builds
+    #define CULV_RAW_MALLOC(sz) PyMem_RawMalloc(sz)
+    #define CULV_RAW_CALLOC(n, sz) PyMem_RawCalloc(n, sz)
+    #define CULV_RAW_REALLOC(ptr, sz) PyMem_RawRealloc(ptr, sz)
+    #define CULV_RAW_FREE(ptr) PyMem_RawFree(ptr)
+#endif
+// =========================================================================
+
 #include "culverin_command_buffer.h"
 #include "culverin_compiler_specifics.h"
 #include "culverin_debug_render.h"

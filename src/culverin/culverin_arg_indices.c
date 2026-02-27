@@ -123,3 +123,51 @@ void culverin_init_all_parsers(void) {
     INIT_PARSER(Step, Step, SCHEMA_STEP);
     INIT_PARSER(CharMove, CharMove, SCHEMA_CHAR_MOVE);
 }
+
+#define DEINIT_PARSER(ParserName, GroupName) \
+    fp_deinit(&ParserName##Parser);
+
+void culverin_free_all_parsers(void) {
+    DEINIT_PARSER(Body, Body)
+    DEINIT_PARSER(Impulse, Vec3)
+    DEINIT_PARSER(AngImpulse, Vec3)
+    DEINIT_PARSER(Force, Vec3)
+    DEINIT_PARSER(Torque, Vec3)
+    DEINIT_PARSER(SetLinVel, Vec3)
+    DEINIT_PARSER(SetAngVel, Vec3)
+    DEINIT_PARSER(ImpulseAt, ImpAt)
+    DEINIT_PARSER(HOnly, HOnly)
+    DEINIT_PARSER(Destroy, HOnly)
+    DEINIT_PARSER(Activate, HOnly)
+    DEINIT_PARSER(Gravity, XYZ)
+    DEINIT_PARSER(SetPos, SetPos)
+    DEINIT_PARSER(Buoy, Buoy)
+    DEINIT_PARSER(BatchBuoy, BatchBuoy)
+    DEINIT_PARSER(Mesh, Mesh)
+    DEINIT_PARSER(SetTrns, SetTrns)
+    DEINIT_PARSER(CCD, CCD)
+    DEINIT_PARSER(ConvexHull, HC)
+    DEINIT_PARSER(Compound, HC)
+    DEINIT_PARSER(BatchCreate, BatchCreate)
+    DEINIT_PARSER(BatchDestroy, BatchDestroy)
+    DEINIT_PARSER(SetRot, SetRot)
+    DEINIT_PARSER(Render, Render)
+    DEINIT_PARSER(Raycast, Raycast)
+    DEINIT_PARSER(RayBatch, RayBatch)
+    DEINIT_PARSER(Shapecast, Shapecast)
+    DEINIT_PARSER(OverlapSphere, OverlapSphere)
+    DEINIT_PARSER(OverlapAABB, OverlapAABB)
+    DEINIT_PARSER(SetUserData, SetUserData)
+    DEINIT_PARSER(GetUserData, HOnly)
+    DEINIT_PARSER(GetMotion, HOnly)
+    DEINIT_PARSER(SetMotion, SetMotion)
+    DEINIT_PARSER(ColFilter, ColFilter)
+    DEINIT_PARSER(RegMat, RegMat)
+    DEINIT_PARSER(SetConstrTarget, SetConstr)
+    DEINIT_PARSER(Heightfield, Heightfield)
+    DEINIT_PARSER(DebugData, DebugData)
+    DEINIT_PARSER(CreateConstr, CreateConstr)
+    DEINIT_PARSER(DestroyConstr, HOnly)
+    DEINIT_PARSER(Step, Step)
+    DEINIT_PARSER(CharMove, CharMove)
+}

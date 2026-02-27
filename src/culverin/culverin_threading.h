@@ -1,4 +1,5 @@
 #pragma once
+#include "culverin_compiler_specifics.h"
 #include <Python.h>
 #include <stdatomic.h>
 
@@ -68,7 +69,7 @@ static inline void culverin_cpu_relax() {
 #endif
 }
 
-static inline void culverin_yield() {
+CULV_MAYBE_UNUSED static inline void culverin_yield() {
   // 1. Give the CPU a break (Hardware level)
   culverin_cpu_relax();
 

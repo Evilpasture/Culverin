@@ -10,7 +10,7 @@ void debug_buffer_ensure(DebugBuffer *buf, size_t count_needed) {
             new_cap *= 2;
         }
 
-        void *new_ptr = PyMem_RawRealloc(buf->data, new_cap * sizeof(DebugVertex));
+        void *new_ptr = CULV_RAW_REALLOC(buf->data, new_cap * sizeof(DebugVertex));
         if (!new_ptr) {
             return; // Silent fail on OOM for debug info
         }
@@ -33,7 +33,7 @@ void debug_buffer_push(DebugBuffer *buf, DebugCoordinates pos, uint32_t color) {
 
 void debug_buffer_free(DebugBuffer *buf) {
     if (buf->data) {
-        PyMem_RawFree(buf->data);
+        CULV_RAW_FREE(buf->data);
     }
     buf->data     = NULL;
     buf->count    = 0;

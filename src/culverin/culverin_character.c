@@ -715,7 +715,7 @@ static void register_char(PhysicsWorldObject *self, CharacterObject *obj,
     self->body_ids[dense_idx]      = bid;
     self->slot_to_dense[slot]      = dense_idx;
     self->dense_to_slot[dense_idx] = slot;
-    self->slot_states[slot]        = SLOT_ALIVE;
+    self->slot_states[slot]        = SLOT_CHARACTER;
     self->user_data[dense_idx]     = 0;
     self->count++;
     self->view_shape[0] = (Py_ssize_t)self->count;
