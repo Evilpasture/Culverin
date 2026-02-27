@@ -333,6 +333,10 @@ PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObje
         return NULL; // TypeError set by parser helper
     }
 
+    /* Validate inputs */
+    VALIDATE_FINITE_VEC3(vx, vy, vz, "Character velocity");
+    VALIDATE_FINITE_FLOAT(dt, "dt");
+
     // 3. PRE-MOVE GUARD (Shadow Lock)
     // Characters modify the world's dense arrays immediately, so we need full guards
     SHADOW_LOCK(&self->world->shadow_lock);

@@ -304,10 +304,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_impulse(PhysicsWorldObject *self,
         return NULL;
     }
 
-    if (UNLIKELY(!isfinite(x) || !isfinite(y) || !isfinite(z))) {
-        PyErr_SetString(PyExc_ValueError, "Impulse components must be finite");
-        return NULL;
-    }
+    VALIDATE_FINITE_VEC3(x, y, z, "Impulse");
 
     SHADOW_LOCK(&self->shadow_lock);
 
@@ -387,6 +384,10 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self
         return NULL;
     }
 
+    /* Validate parsed vectors before entering critical sections */
+    VALIDATE_FINITE_VEC3(ix, iy, iz, "Impulse");
+    VALIDATE_FINITE_VEC3(px, py, pz, "Impulse position");
+
     SHADOW_LOCK(&self->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
 
@@ -456,10 +457,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_angular_impulse(PhysicsWorldObject 
     }
 
     // Finite validation (Outside lock)
-    if (UNLIKELY(!isfinite(x) || !isfinite(y) || !isfinite(z))) {
-        PyErr_SetString(PyExc_ValueError, "Angular impulse components must be finite");
-        return NULL;
-    }
+    VALIDATE_FINITE_VEC3(x, y, z, "Angular impulse");
 
     // 2. CONCURRENCY & EXECUTION
     SHADOW_LOCK(&self->shadow_lock);
@@ -527,10 +525,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_force(PhysicsWorldObject *self, PyO
         return NULL;
     }
 
-    if (UNLIKELY(!isfinite(x) || !isfinite(y) || !isfinite(z))) {
-        PyErr_SetString(PyExc_ValueError, "Force components must be finite");
-        return NULL;
-    }
+    VALIDATE_FINITE_VEC3(x, y, z, "Force");
 
     // 2. CONCURRENCY & EXECUTION
     SHADOW_LOCK(&self->shadow_lock);
@@ -599,10 +594,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_torque(PhysicsWorldObject *self, Py
         return NULL;
     }
 
-    if (UNLIKELY(!isfinite(x) || !isfinite(y) || !isfinite(z))) {
-        PyErr_SetString(PyExc_ValueError, "Torque components must be finite");
-        return NULL;
-    }
+    VALIDATE_FINITE_VEC3(x, y, z, "Torque");
 
     // 2. CONCURRENCY & EXECUTION
     SHADOW_LOCK(&self->shadow_lock);
@@ -668,6 +660,9 @@ PyCFunction_DeclareMethod PhysicsWorld_set_gravity(PhysicsWorldObject *self, PyO
     if (!FastParse_Unified(args, nargs, kwnames, &GravityParser, targets)) {
         return NULL;
     }
+
+    // Validate gravity vector before touching global state
+    VALIDATE_FINITE_VEC3(x, y, z, "Gravity");
 
     // 2. CRITICAL SECTION
     SHADOW_LOCK(&self->shadow_lock);
@@ -768,6 +763,12 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self,
         return NULL;
     }
 
+    /* Validate numeric inputs */
+    VALIDATE_FINITE_FLOAT(buoyancy, "buoyancy");
+    VALIDATE_FINITE_FLOAT(lin_drag, "linear drag");
+    VALIDATE_FINITE_FLOAT(ang_drag, "angular drag");
+    VALIDATE_FINITE_FLOAT(dt, "dt");
+
     // Parse fluid velocity tuple if provided (Outside Lock)
     float vx = 0;
     float vy = 0;
@@ -777,6 +778,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self,
         if (!parse_vec3_direct(o_vel, &vx, &vy, &vz)) {
             return NULL;
         }
+        VALIDATE_FINITE_VEC3(vx, vy, vz, "fluid velocity");
     }
 
     // 3. RESOLUTION PHASE (Locked)
@@ -1194,6 +1196,9 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
         return NULL;
     }
 
+    /* Validate timestep */
+    VALIDATE_FINITE_FLOAT(dt, "dt");
+
     // --- PHASE 0: RE-ENTRANCY GUARD (Fast Path) ---
     // If another thread is stepping, reject immediately.
     if (atomic_load_explicit(&self->is_stepping, memory_order_acquire)) {
@@ -1365,6 +1370,13 @@ PyCFunction_DeclareMethod PhysicsWorld_create_convex_hull(PhysicsWorldObject *se
         return NULL;
     }
     if (!parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) {
+        return NULL;
+    }
+
+    /* Validate position and rotation components */
+    VALIDATE_FINITE_VEC3(px, py, pz, "SetTransform position");
+    if (UNLIKELY(!isfinite(rx) || !isfinite(ry) || !isfinite(rz) || !isfinite(rw))) {
+        PyErr_SetString(PyExc_ValueError, "Numerical Error: Rotation components must be finite");
         return NULL;
     }
 
@@ -1922,12 +1934,20 @@ PyCFunction_DeclareMethod PhysicsWorld_create_body(PhysicsWorldObject *self, PyO
         return nullptr;
     }
 
-    // 4. CONVERT COMPLEX TYPES (Post-parse logic)
-    if (o_pos && !parse_vec3_direct(o_pos, &px, &py, &pz)) {
-        return nullptr;
+    // 4. CONVERT COMPLEX TYPES
+    if (o_pos && o_pos != Py_None) {
+        if (!parse_vec3_direct(o_pos, &px, &py, &pz)) {
+            return nullptr; // PyErr already set
+        }
+        // GUARD: This is the exact point test_numerical_stability checks
+        VALIDATE_FINITE_VEC3(px, py, pz, "Position");
     }
-    if (o_rot && !parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) {
-        return nullptr;
+
+    if (o_rot && o_rot != Py_None) {
+        if (!parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) {
+            return nullptr;
+        }
+        VALIDATE_FINITE_QUAT(rx, ry, rz, rw, "Rotation");
     }
 
     // Validation
@@ -1935,14 +1955,21 @@ PyCFunction_DeclareMethod PhysicsWorld_create_body(PhysicsWorldObject *self, PyO
         return PyErr_Format(PyExc_ValueError, "SHAPE_PLANE must be MOTION_STATIC");
     }
 
+    // GUARD: Floats (Only check if they aren't the 'unset' -1.0 default)
+    if (mass != -1.0f) { VALIDATE_FINITE_FLOAT(mass, "mass"); }
+    if (friction != -1.0f) { VALIDATE_FINITE_FLOAT(friction, "friction"); }
+    if (restitution != -1.0f) { VALIDATE_FINITE_FLOAT(restitution, "restitution"); }
+
     // Handle Material & Size
     MaterialSettings mat_in = {friction, restitution};
     MaterialSettings mat    = resolve_material_params(self, material_id, mat_in);
     float s[4];
-    parse_body_size(o_size, s); // Uses existing helper
+    parse_body_size(o_size, s); 
+    // New Guard for Size components
+    VALIDATE_FINITE_VEC4(s[0], s[1], s[2], s[3], "Shape size");
 
-    JPH_Shape *shape                   = NULL;
-    JPH_BodyCreationSettings *settings = NULL;
+    JPH_Shape *shape                   = nullptr;
+    JPH_BodyCreationSettings *settings = nullptr;
 
     // --- CRITICAL SECTION: JOLT PREP ---
     Py_BEGIN_ALLOW_THREADS;
@@ -2109,7 +2136,10 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
         if (!parse_py_vec3(PyList_GET_ITEM(py_positions, i), &pos_buf[i])) {
             pos_buf[i] = (PosStride){.x = 0, .y = 0, .z = 0};
         }
+        VALIDATE_FINITE_VEC3(pos_buf[i].x, pos_buf[i].y, pos_buf[i].z, "Batch Position");
+
         parse_body_size(PyList_GET_ITEM(py_sizes, i), size_buf[i].p);
+        VALIDATE_FINITE_VEC4(size_buf[i].p[0], size_buf[i].p[1], size_buf[i].p[2], size_buf[i].p[3], "Batch Size");
     }
 
     // 4. JOLT PREP (NO GIL)
@@ -2577,6 +2607,8 @@ PyCFunction_DeclareMethod PhysicsWorld_set_position(PhysicsWorldObject *self, Py
         return NULL;
     }
 
+    VALIDATE_FINITE_VEC3(x, y, z, "SetPosition");
+
     // 2. CRITICAL SECTION
     SHADOW_LOCK(&self->shadow_lock);
 
@@ -2636,6 +2668,8 @@ PyCFunction_DeclareMethod PhysicsWorld_set_rotation(PhysicsWorldObject *self, Py
     if (!FastParse_Unified(args, nargs, kwnames, &SetRotParser, targets)) {
         return NULL;
     }
+
+    VALIDATE_FINITE_QUAT(x, y, z, w, "SetRotation");
 
     // 2. CRITICAL SECTION
     SHADOW_LOCK(&self->shadow_lock);
@@ -2701,6 +2735,8 @@ PyCFunction_DeclareMethod PhysicsWorld_set_linear_velocity(PhysicsWorldObject *s
         return NULL;
     }
 
+    VALIDATE_FINITE_VEC3(x, y, z, "LinearVelocity");
+
     // 2. CRITICAL SECTION
     SHADOW_LOCK(&self->shadow_lock);
 
@@ -2762,6 +2798,8 @@ PyCFunction_DeclareMethod PhysicsWorld_set_angular_velocity(PhysicsWorldObject *
     if (!FastParse_Unified(args, nargs, kwnames, &SetAngVelParser, targets)) {
         return NULL;
     }
+
+    VALIDATE_FINITE_VEC3(x, y, z, "AngularVelocity");
 
     // 2. CRITICAL SECTION
     SHADOW_LOCK(&self->shadow_lock);

@@ -1,5 +1,9 @@
 #pragma once
 
+#ifndef JPH_DOUBLE_PRECISION
+#    define JPH_DOUBLE_PRECISION 1
+#endif
+
 #define PY_SSIZE_T_CLEAN
 #include "joltc.h" // Amer Koleci's JoltC binder.
 #include <Python.h>
@@ -51,10 +55,6 @@
 // Jolt BodyID layout: [8 bits sequence | 24 bits index]
 #ifndef JPH_BODY_ID_INDEX_MASK
 #    define JPH_BODY_ID_INDEX_MASK 0x00FFFFFF
-#endif
-
-#ifndef JPH_DOUBLE_PRECISION
-#    define JPH_DOUBLE_PRECISION 1
 #endif
 
 // Mask for the raw array index (Stripping the 24th bit used for Static flags)
@@ -341,3 +341,73 @@ static inline bool unpack_handle(PhysicsWorldObject *self, BodyHandle h, uint32_
     }
     return self->generations[*slot] == gen;
 }
+
+// 32-bit Float Exponent Mask
+// Sign: 0 | Exponent: 11111111 | Mantissa: 000...
+CULV_MAYBE_UNUSED
+static constexpr uint32_t IEEE754_FLOAT_NONFINITE_MASK = 0x7F800000U;
+
+// 64-bit Double Exponent Mask
+// Sign: 0 | Exponent: 11111111111 | Mantissa: 000...
+CULV_MAYBE_UNUSED
+static constexpr uint64_t IEEE754_DOUBLE_NONFINITE_MASK = 0x7FF0000000000000ULL;
+
+
+// --- Bit-Level Numerical Guards (Optimizer-Proof) ---
+CULV_MAYBE_UNUSED CULV_NODISCARD
+static inline bool culv_is_finite_f(float f) {
+    uint32_t i;
+    // Use volatile to prevent the compiler from "seeing through" the cast
+    memcpy(&i, &f, sizeof(uint32_t));
+    volatile uint32_t vi = i; 
+    return (vi & IEEE754_FLOAT_NONFINITE_MASK) != IEEE754_FLOAT_NONFINITE_MASK;
+}
+
+CULV_MAYBE_UNUSED CULV_NODISCARD
+static inline bool culv_is_finite_d(double d) {
+    uint64_t i;
+    memcpy(&i, &d, sizeof(uint64_t));
+    volatile uint64_t vi = i;
+    return (vi & IEEE754_DOUBLE_NONFINITE_MASK) != IEEE754_DOUBLE_NONFINITE_MASK;
+}
+
+// C-Type Generic Dispatcher
+#define CULV_IS_FINITE(val) _Generic((val), \
+    float:  culv_is_finite_f(val),          \
+    double: culv_is_finite_d(val)           \
+)
+
+#define VALIDATE_FINITE_FLOAT(val, name)                                                           \
+    if (UNLIKELY(!CULV_IS_FINITE(val))) {                                                          \
+        PyErr_Format(PyExc_ValueError, "Numerical Error: '%s' must be finite", name);              \
+        return NULL;                                                                               \
+    }
+
+#define VALIDATE_FINITE_VEC3(x, y, z, msg)                                                         \
+    if (UNLIKELY(!CULV_IS_FINITE(x) || !CULV_IS_FINITE(y) || !CULV_IS_FINITE(z))) {                \
+        char buf[256];                                                                             \
+        PyOS_snprintf(buf, sizeof(buf), "Numerical Error: %s must be finite (got [%f, %f, %f])",   \
+                     msg, (double)(x), (double)(y), (double)(z));                                  \
+        PyErr_SetString(PyExc_ValueError, buf);                                                    \
+        return NULL;                                                                               \
+    }
+
+#define VALIDATE_FINITE_QUAT(x, y, z, w, msg)                                                      \
+    if (UNLIKELY(!CULV_IS_FINITE(x) || !CULV_IS_FINITE(y) ||                                       \
+                 !CULV_IS_FINITE(z) || !CULV_IS_FINITE(w))) {                                      \
+        char buf[256];                                                                             \
+        PyOS_snprintf(buf, sizeof(buf), "Numerical Error: %s must be finite (got [%f, %f, %f, %f])", \
+                     msg, (double)(x), (double)(y), (double)(z), (double)(w));                     \
+        PyErr_SetString(PyExc_ValueError, buf);                                                    \
+        return NULL;                                                                               \
+    }
+
+#define VALIDATE_FINITE_VEC4(x, y, z, w, msg)                                                      \
+    if (UNLIKELY(!CULV_IS_FINITE(x) || !CULV_IS_FINITE(y) ||                                       \
+                 !CULV_IS_FINITE(z) || !CULV_IS_FINITE(w))) {                                      \
+        char buf[256];                                                                             \
+        PyOS_snprintf(buf, sizeof(buf), "Numerical Error: %s components must be finite (got [%f, %f, %f, %f])", \
+                     msg, (double)(x), (double)(y), (double)(z), (double)(w));                             \
+        PyErr_SetString(PyExc_ValueError, buf);                                                    \
+        return NULL;                                                                               \
+    }
