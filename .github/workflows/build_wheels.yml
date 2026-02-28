@@ -33,32 +33,34 @@ jobs:
       - name: Build and Test Wheels
         uses: pypa/cibuildwheel@v2.22.0
         env:
-          # --- 1. Python Target Configuration ---
           CIBW_FREE_THREADED_SUPPORT: 1
-          # Target 3.13t and 3.14t (when available in cibuildwheel)
           CIBW_BUILD: "cp313t-*"
-          CIBW_ARCHS: "x86_64 arm64" # arm64 for Apple Silicon support
           
-          # --- 2. Build Environment (Clang Enforcer) ---
+          # Use 'auto64' to automatically pick x86_64 and arm64/aarch64/AMD64 
+          # based on the runner OS
+          CIBW_ARCHS: "auto64" 
+
+          # --- macOS Fix ---
+          # Tells the compiler and repair tool that we require macOS 13+
+          MACOSX_DEPLOYMENT_TARGET: "13.0"
+
+          # --- Environment Logic ---
           CIBW_ENVIRONMENT: >
             CC=clang 
             CXX=clang++ 
             CMAKE_GENERATOR=Ninja
             CMAKE_ARGS="-DDOUBLE_PRECISION=ON -DJPH_DOUBLE_PRECISION=ON"
 
-          # Linux Specific: Use dnf/yum for Manylinux images
-          CIBW_BEFORE_ALL_LINUX: >
-            dnf install -y clang llvm ninja-build || apt-get install -y clang llvm ninja-build
-
-          # Windows Specific: cibuildwheel handles LLVM setup on windows-latest
           CIBW_ENVIRONMENT_WINDOWS: >
             CC=clang-cl 
             CXX=clang-cl 
             CMAKE_GENERATOR=Ninja
             CMAKE_ARGS="-DDOUBLE_PRECISION=ON -DJPH_DOUBLE_PRECISION=ON"
 
-          # --- 3. THE TEST SUITE INTEGRATION ---
-          # cibuildwheel installs the wheel in a virtual env and runs these
+          # Linux setup
+          CIBW_BEFORE_ALL_LINUX: >
+            dnf install -y clang llvm ninja-build || apt-get install -y clang llvm ninja-build
+
           CIBW_TEST_REQUIRES: numpy psutil
           CIBW_TEST_COMMAND: >
             python {project}/tests/test_core.py && 
