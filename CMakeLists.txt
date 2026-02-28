@@ -396,8 +396,8 @@ foreach(t joltc_double _culverin_c)
         if(MSVC AND CMAKE_C_COMPILER_ID MATCHES "Clang")
             message(STATUS "Culverin: Hammering C23 into ${t} via Clang-CL Shell")
             target_compile_options(${t} PRIVATE 
-                $<$<COMPILE_LANGUAGE:C>:"/clang:-std=c23">
-                $<$<COMPILE_LANGUAGE:C>:"/clang:-Wno-c23-extensions">
+                $<$<COMPILE_LANGUAGE:C>:/clang:-std=c23>
+                $<$<COMPILE_LANGUAGE:C>:/clang:-Wno-c23-extensions>
             )
         else()
             target_compile_options(${t} PRIVATE $<$<COMPILE_LANGUAGE:C>:-std=c23>)
