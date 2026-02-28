@@ -257,7 +257,11 @@ if(MSVC)
 else() # Vanilla Clang / GNU-like
     message(STATUS "Culverin: Enforcing Strict Physics-Migration Flags")
 
-    add_definitions(-D_POSIX_C_SOURCE=200809L)
+    if(UNIX AND NOT APPLE)
+        # This is for Linux only! 
+        # It fixes the posix_memalign error in strict C23 mode.
+        add_definitions(-D_POSIX_C_SOURCE=200809L)
+    endif()
 
     # 1. SETUP DEBUG/PDB FLAGS
     # Use -g and -gcodeview for Windows PDB compatibility
