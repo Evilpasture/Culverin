@@ -43,10 +43,10 @@ jobs:
           CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
 
           # 2. Updated Linux setup for AlmaLinux 8 (dnf is native here)
+          CIBW_ENVIRONMENT_LINUX: CC=clang CXX=clang++
           CIBW_BEFORE_ALL_LINUX: >
-            (dnf install -y clang llvm ninja-build || 
-            apk add --no-cache clang18 llvm18-dev ninja || 
-            apt-get install -y clang llvm ninja-build)
+            apk add --no-cache clang llvm-dev ninja build-base || 
+            dnf install -y clang llvm ninja-build
 
           # 3. Force the C standard in CMAKE_ARGS if not in your CMakeLists.txt
           CIBW_ENVIRONMENT: >
