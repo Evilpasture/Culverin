@@ -51,7 +51,7 @@ cmake.args = [
     "-GNinja",
     "-DCMAKE_C_COMPILER=clang",
     "-DCMAKE_CXX_COMPILER=clang++",
-    "-DCMAKE_C_FLAGS=-std=c23",
+    "-DCMAKE_C_FLAGS=-std=c2x",
     "-DDOUBLE_PRECISION=ON",
     "-DGENERATE_SAMPLES=OFF",
     "-DGENERATE_UNIT_TESTS=OFF",
