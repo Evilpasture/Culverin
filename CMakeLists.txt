@@ -257,6 +257,8 @@ if(MSVC)
 else() # Vanilla Clang / GNU-like
     message(STATUS "Culverin: Enforcing Strict Physics-Migration Flags")
 
+    add_definitions(-D_POSIX_C_SOURCE=200809L)
+
     # 1. SETUP DEBUG/PDB FLAGS
     # Use -g and -gcodeview for Windows PDB compatibility
     set(DEBUG_FLAGS "-g" "-gcodeview")

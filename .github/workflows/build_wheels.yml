@@ -35,6 +35,7 @@ jobs:
         env:
           CIBW_FREE_THREADED_SUPPORT: 1
           CIBW_BUILD: "cp313t-*"
+          PYTHONUTF8: 1
           CIBW_ARCHS: "auto64"
 
           # 1. Upgrade the Linux Image to support modern C23 toolchains
