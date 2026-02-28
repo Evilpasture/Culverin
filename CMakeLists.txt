@@ -99,6 +99,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(CMAKE_C_EXTENSIONS OFF)
 
 add_definitions(-DJPH_DOUBLE_PRECISION)
 add_definitions(-DJPH_OBJECT_LAYER_BITS=32)
@@ -278,7 +279,7 @@ else() # Vanilla Clang / GNU-like
     target_compile_options(_culverin_c PRIVATE 
         ${DEBUG_FLAGS} 
         ${SAN_FLAGS}
-        "-std=c2x"
+        "-std=c23"
     )
 
     # 4. THE LINKER IS THE KEY
