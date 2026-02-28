@@ -1956,8 +1956,12 @@ PyCFunction_DeclareMethod PhysicsWorld_create_body(PhysicsWorldObject *self, PyO
     SHADOW_UNLOCK(&self->shadow_lock);
 
     if (LIKELY(shape)) {
+        // Force local variables instead of compound literals in the function call
+        JPH_RVec3 j_pos = {.x = px, .y = py, .z = pz};
+        JPH_Quat j_rot  = {.x = rx, .y = ry, .z = rz, .w = rw};
+
         settings = JPH_BodyCreationSettings_Create3(
-            shape, &(JPH_RVec3){px, py, pz}, &(JPH_Quat){rx, ry, rz, rw},
+            shape, &j_pos, &j_rot,
             (JPH_MotionType)motion_type, (motion_type == 0) ? 0 : 1);
 
         if (settings) {
