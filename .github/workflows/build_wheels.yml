@@ -57,9 +57,8 @@ jobs:
             CC=clang-cl
             CXX=clang-cl
             CMAKE_GENERATOR=Ninja
-            CMAKE_ARGS="-DDOUBLE_PRECISION=ON -DJPH_DOUBLE_PRECISION=ON"
-            CFLAGS=/clang:-std=c23 -D_CRT_DECLARE_NONSTDC_NAMES=1
-            CXXFLAGS=/clang:-std=c++20 -D_CRT_DECLARE_NONSTDC_NAMES=1
+            CFLAGS=/clang:-std=c23 /clang:-Wno-c23-extensions -D_CRT_DECLARE_NONSTDC_NAMES=1
+            CXXFLAGS=/clang:-std=c++20
 
           CIBW_TEST_REQUIRES: numpy psutil
           CIBW_TEST_COMMAND: >
