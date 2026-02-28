@@ -120,10 +120,10 @@ if(MSVC)
         # We will handle standards in Section 5 only.
         
         set(RELEASE_FLAGS 
-            /clang:-O3 
+            "/clang:-O3 
             /clang:-ffast-math 
             /clang:-fstrict-aliasing 
-            /Ob2 /Oi /Ot 
+            /Ob2 /Oi /Ot "
         )
     else()
         message(STATUS "Culverin: Detected Pure MSVC")
