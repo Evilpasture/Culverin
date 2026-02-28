@@ -121,6 +121,7 @@ class TestQueries(CulverinTestCase):
 
 
 class TestCollisionsAndEvents(CulverinTestCase):
+    # test_collision_filtering can segfault in musllinux with Clang 19 and above...
     def test_collision_filtering(self):
         floor = self.world.create_body(pos=(0, 5, 0), size=(10, 0.1, 10), motion=culverin.MOTION_STATIC, category=1, mask=0xFFFF)
         
