@@ -35,31 +35,29 @@ jobs:
         env:
           CIBW_FREE_THREADED_SUPPORT: 1
           CIBW_BUILD: "cp313t-*"
-          
-          # Use 'auto64' to automatically pick x86_64 and arm64/aarch64/AMD64 
-          # based on the runner OS
-          CIBW_ARCHS: "auto64" 
+          CIBW_ARCHS: "auto64"
 
-          # --- macOS Fix ---
-          # Tells the compiler and repair tool that we require macOS 13+
-          MACOSX_DEPLOYMENT_TARGET: "13.0"
+          # 1. Upgrade the Linux Image to support modern C23 toolchains
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+          CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
 
-          # --- Environment Logic ---
+          # 2. Updated Linux setup for AlmaLinux 8 (dnf is native here)
+          CIBW_BEFORE_ALL_LINUX: >
+            dnf install -y clang llvm ninja-build
+
+          # 3. Force the C standard in CMAKE_ARGS if not in your CMakeLists.txt
           CIBW_ENVIRONMENT: >
             CC=clang 
             CXX=clang++ 
             CMAKE_GENERATOR=Ninja
-            CMAKE_ARGS="-DDOUBLE_PRECISION=ON -DJPH_DOUBLE_PRECISION=ON"
+            CMAKE_ARGS="-DDOUBLE_PRECISION=ON -DJPH_DOUBLE_PRECISION=ON -DCMAKE_C_STANDARD=23"
+            MACOSX_DEPLOYMENT_TARGET=13.0
 
           CIBW_ENVIRONMENT_WINDOWS: >
             CC=clang-cl 
             CXX=clang-cl 
             CMAKE_GENERATOR=Ninja
-            CMAKE_ARGS="-DDOUBLE_PRECISION=ON -DJPH_DOUBLE_PRECISION=ON"
-
-          # Linux setup
-          CIBW_BEFORE_ALL_LINUX: >
-            dnf install -y clang llvm ninja-build || apt-get install -y clang llvm ninja-build
+            CMAKE_ARGS="-DDOUBLE_PRECISION=ON -DJPH_DOUBLE_PRECISION=ON -DCMAKE_C_STANDARD=23"
 
           CIBW_TEST_REQUIRES: numpy psutil
           CIBW_TEST_COMMAND: >
