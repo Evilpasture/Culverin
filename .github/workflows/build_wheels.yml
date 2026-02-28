@@ -53,12 +53,12 @@ jobs:
             CMAKE_ARGS="-DDOUBLE_PRECISION=ON -DJPH_DOUBLE_PRECISION=ON -DCMAKE_C_STANDARD=23"
             MACOSX_DEPLOYMENT_TARGET=13.0
 
-          CIBW_ENVIRONMENT_WINDOWS: >
+          CIBW_ENVIRONMENT_WINDOWS: |
             CC=clang-cl
             CXX=clang-cl
             CMAKE_GENERATOR=Ninja
             CMAKE_ARGS="-DDOUBLE_PRECISION=ON -DJPH_DOUBLE_PRECISION=ON"
-            CFLAGS=/clang:-std=c23 /clang:-Wno-c23-extensions -D_CRT_DECLARE_NONSTDC_NAMES=1
+            CFLAGS="/clang:-std=c23 /clang:-Wno-c23-extensions -D_CRT_DECLARE_NONSTDC_NAMES=1"
 
           CIBW_TEST_REQUIRES: numpy psutil
           CIBW_TEST_COMMAND: >
