@@ -91,7 +91,7 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     else()
         # Linux/macOS: Try c23, but allow c2x as a fallback for Clang 15/16
         # These flags are required for 'auto' and 'constexpr' in C
-        add_compile_options($<$<COMPILE_LANGUAGE:C>:-std=c23>)
+        add_compile_options($<$<COMPILE_LANGUAGE:C>:-std=c2x>)
         add_compile_options($<$<COMPILE_LANGUAGE:C>:-fms-extensions>) # Helps with some _Generic edge cases
     endif()
 endif()
@@ -279,7 +279,7 @@ else() # Vanilla Clang / GNU-like
     target_compile_options(_culverin_c PRIVATE 
         ${DEBUG_FLAGS} 
         ${SAN_FLAGS}
-        "-std=c23"
+        "-std=c2x"
     )
 
     # 4. THE LINKER IS THE KEY
@@ -407,7 +407,7 @@ foreach(t joltc_double _culverin_c)
                 $<$<COMPILE_LANGUAGE:C>:/clang:-Wno-c23-extensions>
             )
         else()
-            target_compile_options(${t} PRIVATE $<$<COMPILE_LANGUAGE:C>:-std=c23>)
+            target_compile_options(${t} PRIVATE $<$<COMPILE_LANGUAGE:C>:-std=c2x>)
         endif()
     endif()
 endforeach()
