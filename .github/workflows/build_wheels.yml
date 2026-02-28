@@ -33,6 +33,7 @@ jobs:
       - name: Build and Test Wheels
         uses: pypa/cibuildwheel@v2.22.0
         env:
+          CIBW_SKIP: "*-musllinux_*"
           CIBW_FREE_THREADED_SUPPORT: 1
           CIBW_BUILD: "cp313t-*"
           PYTHONUTF8: 1
