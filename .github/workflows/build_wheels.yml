@@ -41,6 +41,7 @@ jobs:
           # 1. Upgrade the Linux Image to support modern C23 toolchains
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
+          CIBW_MUSLLINUX_X86_64_IMAGE: quay.io/pypa/musllinux_1_2_x86_64
 
           # 2. Updated Linux setup for AlmaLinux 8 (dnf is native here)
           CIBW_ENVIRONMENT_LINUX: CC=clang CXX=clang++
