@@ -1354,10 +1354,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_convex_hull(PhysicsWorldObject *se
 
     /* Validate position and rotation components */
     VALIDATE_FINITE_VEC3(px, py, pz, "SetTransform position");
-    if (UNLIKELY(!isfinite(rx) || !isfinite(ry) || !isfinite(rz) || !isfinite(rw))) {
-        PyErr_SetString(PyExc_ValueError, "Numerical Error: Rotation components must be finite");
-        return NULL;
-    }
+    VALIDATE_FINITE_QUAT(rx, ry, rz, rw, "SetTransform rotation");
 
     Py_buffer points_view;
     if (PyObject_GetBuffer(o_points, &points_view, PyBUF_SIMPLE) != 0) {
