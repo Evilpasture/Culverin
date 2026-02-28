@@ -71,6 +71,22 @@ ALLOC_PARSER(CreateConstr, CreateConstr)
 ALLOC_PARSER(DestroyConstr, HOnly)
 ALLOC_PARSER(Step, Step)
 ALLOC_PARSER(CharMove, CharMove)
+ALLOC_PARSER(LoadState, LoadState)
+ALLOC_PARSER(CreateChar, CreateChar)
+ALLOC_PARSER(SetPosChar, SetPosChar)
+ALLOC_PARSER(SetRotChar, SetRotChar)
+ALLOC_PARSER(SetStrengthChar, SetStrengthChar)
+ALLOC_PARSER(VehicleInput, VehicleInput)
+ALLOC_PARSER(WheelIdx, WheelIdx)
+ALLOC_PARSER(TankInput, TankInput)
+ALLOC_PARSER(CreateVehicle, CreateVehicle)
+ALLOC_PARSER(CreateTracked, CreateTracked)
+ALLOC_PARSER(CreateRagdoll, CreateRagdoll)
+ALLOC_PARSER(RagdollSettings, RagdollSettings)
+ALLOC_PARSER(RagdollAddPart, RagdollAddPart)
+ALLOC_PARSER(AddJoint, AddJoint)
+ALLOC_PARSER(GetJointIdx, GetJointIdx)
+ALLOC_PARSER(RagdollDrive, RagdollDrive)
 
 // --- 3. INITIALIZATION ---
 
@@ -80,6 +96,7 @@ ALLOC_PARSER(CharMove, CharMove)
 void culverin_init_all_parsers(void) {
     INIT_PARSER(Body, Body, SCHEMA_BODY);
     INIT_PARSER(Impulse, Vec3, SCHEMA_VEC3);
+    INIT_PARSER(WheelIdx, WheelIdx, SCHEMA_WHEEL_IDX);
     INIT_PARSER(AngImpulse, Vec3, SCHEMA_VEC3);
     INIT_PARSER(Force, Vec3, SCHEMA_VEC3);
     INIT_PARSER(Torque, Vec3, SCHEMA_VEC3);
@@ -122,6 +139,21 @@ void culverin_init_all_parsers(void) {
     INIT_PARSER(DestroyConstr, HOnly, SCHEMA_HANDLE_ONLY);
     INIT_PARSER(Step, Step, SCHEMA_STEP);
     INIT_PARSER(CharMove, CharMove, SCHEMA_CHAR_MOVE);
+    INIT_PARSER(LoadState, LoadState, SCHEMA_LOAD_STATE);
+    INIT_PARSER(CreateChar, CreateChar, SCHEMA_CREATE_CHAR);
+    INIT_PARSER(SetPosChar, SetPosChar, SCHEMA_SET_POS_CHAR);
+    INIT_PARSER(SetRotChar, SetRotChar, SCHEMA_SET_ROT_CHAR);
+    INIT_PARSER(SetStrengthChar, SetStrengthChar, SCHEMA_SET_STRENGTH_CHAR);
+    INIT_PARSER(VehicleInput, VehicleInput, SCHEMA_VEHICLE_INPUT);
+    INIT_PARSER(TankInput, TankInput, SCHEMA_TANK_INPUT);
+    INIT_PARSER(CreateVehicle, CreateVehicle, SCHEMA_CREATE_VEHICLE);
+    INIT_PARSER(CreateTracked, CreateTracked, SCHEMA_CREATE_TRACKED);
+    INIT_PARSER(CreateRagdoll, CreateRagdoll, SCHEMA_CREATE_RAGDOLL);
+    INIT_PARSER(RagdollSettings, RagdollSettings, SCHEMA_RAGDOLL_SETTINGS);
+    INIT_PARSER(RagdollAddPart, RagdollAddPart, SCHEMA_RAGDOLL_ADD_PART);
+    INIT_PARSER(AddJoint, AddJoint, SCHEMA_ADD_JOINT);
+    INIT_PARSER(GetJointIdx, GetJointIdx, SCHEMA_GET_JOINT_IDX);
+    INIT_PARSER(RagdollDrive, RagdollDrive, SCHEMA_RAGDOLL_DRIVE);
 }
 
 #define DEINIT_PARSER(ParserName, GroupName) \
@@ -170,4 +202,20 @@ void culverin_free_all_parsers(void) {
     DEINIT_PARSER(DestroyConstr, HOnly)
     DEINIT_PARSER(Step, Step)
     DEINIT_PARSER(CharMove, CharMove)
+    DEINIT_PARSER(LoadState, LoadState)
+    DEINIT_PARSER(CreateChar, CreateChar)
+    DEINIT_PARSER(SetPosChar, SetPosChar)
+    DEINIT_PARSER(SetRotChar, SetRotChar)
+    DEINIT_PARSER(SetStrengthChar, SetStrengthChar)
+    DEINIT_PARSER(VehicleInput, VehicleInput)
+    DEINIT_PARSER(WheelIdx, WheelIdx)
+    DEINIT_PARSER(TankInput, TankInput)
+    DEINIT_PARSER(CreateVehicle, CreateVehicle)
+    DEINIT_PARSER(CreateTracked, CreateTracked)
+    DEINIT_PARSER(CreateRagdoll, CreateRagdoll)
+    DEINIT_PARSER(RagdollSettings, RagdollSettings)
+    DEINIT_PARSER(RagdollAddPart, RagdollAddPart)
+    DEINIT_PARSER(AddJoint, AddJoint)   
+    DEINIT_PARSER(GetJointIdx, GetJointIdx)
+    DEINIT_PARSER(RagdollDrive, RagdollDrive)
 }

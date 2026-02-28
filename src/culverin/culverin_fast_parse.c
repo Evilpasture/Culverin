@@ -1,7 +1,8 @@
-#include "culverin.h" // For CULV_RAW_FREE
 #include "culverin_fast_parse.h"
+#include "culverin.h" // For CULV_RAW_FREE
 #include "culverin_compiler_specifics.h"
 #include "culverin_default_config.h"
+
 
 /**
  * fp_report_missing
@@ -74,7 +75,9 @@ void fp_init_impl(FastParser *fp, FastArgSpec *specs, size_t count) {
 }
 
 void fp_deinit(FastParser *fp) {
-    if (!fp) return;
+    if (!fp) {
+        return;
+    }
 
     // 1. Release interned strings
     if (fp->specs) {
@@ -97,8 +100,8 @@ void fp_deinit(FastParser *fp) {
  * Updated to use O(1) hashing for keywords.
  */
 CULV_NODISCARD
-bool fp_parse_legacy(PyObject *args, PyObject *kwargs, const FastParser *fp, void **targets,
-                     CULV_MAYBE_UNUSED size_t dummy) {
+bool fp_parse_legacy(PyObject *args, PyObject *kwargs, CULV_MAYBE_UNUSED PyObject *unused, 
+                     const FastParser *fp, void **targets) {
     uint64_t provided_mask   = 0;
     const size_t count       = fp->count;
     const FastArgSpec *specs = fp->specs;
@@ -168,4 +171,3 @@ bool fp_parse_legacy(PyObject *args, PyObject *kwargs, const FastParser *fp, voi
 
     return (PyErr_Occurred() == NULL);
 }
-

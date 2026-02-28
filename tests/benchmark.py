@@ -119,6 +119,7 @@ def run_threading_benchmark(duration=5.0, num_bodies=5000):
     print(f"✅ STRESS TEST COMPLETE: {stats['steps']} steps, {stats['queries']} rays.")
 
 def run_churn_test(duration=10.0):
+    # There is a known memory issue. will investigate...
     print("\n=== CULVERIN FRAGMENTATION (CHURN) TEST ===")
     
     # Start with a world limited to 2000 bodies to force frequent re-use

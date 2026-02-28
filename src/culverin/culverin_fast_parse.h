@@ -1,6 +1,7 @@
 #pragma once
 
 #include "culverin_compiler_specifics.h"
+#include "culverin_parsers.h"
 #include <Python.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -97,6 +98,24 @@
 
 constexpr int FP_EMPTY_SLOT = 0xFFFF;
 
+CULV_MAYBE_UNUSED
+static inline void fp_conv_vec3f(PyObject *o, void *t) {
+    Vec3f *v = (Vec3f *)t;
+    parse_vec3_f32(o, &v->x, &v->y, &v->z);
+}
+CULV_MAYBE_UNUSED
+static inline void fp_conv_pos_stride(PyObject *o, void *t) {
+    PosStride *v = (PosStride *)t;
+    // Uses your r64 (double) parser
+    parse_vec3_r64(o, &v->x, &v->y, &v->z);
+}
+CULV_MAYBE_UNUSED
+static inline void fp_conv_aux_stride(PyObject *o, void *t) {
+    AuxStride *v = (AuxStride *)t;
+    // Quaternions or generic 4-float vectors
+    parse_quat_f32(o, &v->x, &v->y, &v->z, &v->w);
+}
+
 /** --- 1. TYPES & STRUCTS --- **/
 
 typedef struct {
@@ -136,7 +155,11 @@ static inline void fp_conv_pyobj(PyObject *o, void *t) { *(PyObject **)t = o; }
         uint32_t: fp_conv_u32,                                                                     \
         uint64_t: fp_conv_u64,                                                                     \
         bool: fp_conv_bool,                                                                        \
-        PyObject *: fp_conv_pyobj)
+        PyObject *: fp_conv_pyobj,                                                                 \
+        Vec3f: fp_conv_vec3f,        /* New */                                                     \
+        PosStride: fp_conv_pos_stride, /* New */                                                   \
+        AuxStride: fp_conv_aux_stride  /* New */                                                   \
+    )
 
 #define FP_ARG(name_str, var)                                                                      \
     {.name = (name_str), .convert = FP_GET_CONVERTER((typeof_unqual(var)){0}), .required = false}
@@ -151,8 +174,8 @@ extern bool fp_report_multiple(const FastParser *fp, size_t index);
 extern bool fp_report_too_many(const FastParser *fp, Py_ssize_t nargs);
 extern void fp_init_impl(FastParser *fp, FastArgSpec *specs, size_t count);
 extern void fp_deinit(FastParser *fp);
-extern bool fp_parse_legacy(PyObject *args, PyObject *kwargs, const FastParser *fp, void **targets,
-                            size_t dummy);
+extern bool fp_parse_legacy(PyObject *args, PyObject *kwargs, PyObject *unused, 
+                            const FastParser *fp, void **targets);
 
 /** --- 4. THE HOT PATH (Inlined Vectorcall Engine) --- **/
 
@@ -239,12 +262,12 @@ static inline bool fp_parse_vector(PyObject *const *args, Py_ssize_t nargs, PyOb
 void ERROR_FastParse_First_Arg_Must_Be_PyObject_Ptr_Or_Vectorcall_Ptr(void);
 
 #define FastParse_Unified(arg1, arg2, arg3, arg4, arg5)            \
-    _Generic(&(arg1)[0],                                           \
+    _Generic((arg1),                                               \
         PyObject *const *: fp_parse_vector,                        \
         PyObject **:       fp_parse_vector,                        \
         PyObject *:        fp_parse_legacy,                        \
         default:           ERROR_FastParse_First_Arg_Must_Be_PyObject_Ptr_Or_Vectorcall_Ptr \
-    )(arg1, arg2, arg3, arg4, arg5)
+    )((arg1), (arg2), (arg3), (arg4), (arg5))
 
 #define FastParse_Init(fp, specs, count)                                                           \
     do {                                                                                           \

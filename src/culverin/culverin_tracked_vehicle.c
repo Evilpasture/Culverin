@@ -1,4 +1,5 @@
 #include "culverin_tracked_vehicle.h"
+#include "culverin_arg_indices.h"
 #include "culverin_parsers.h"
 #include "culverin_compiler_specifics.h"
 
@@ -103,23 +104,27 @@ init_tracked_controller_settings(TrackedEngineConfig config,
 
 // Orchestrator
 PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
-                                              PyObject *args, PyObject *kwds) {
+                                              PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames) {
+  // --- 1. FAST ARGUMENT PARSING ---
   uint64_t chassis_h = 0;
   PyObject *py_wheels = NULL;
   PyObject *py_tracks = NULL;
-  float max_rpm = TRACKED_ENGINE_MAX_RPM_DEFAULT;
-  float min_rpm = TRACKED_ENGINE_MIN_RPM_DEFAULT;
   float max_torque = TRACKED_ENGINE_MAX_TORQUE_DEFAULT;
-  static char *const kwlist[] = {"chassis", "wheels", "tracks", "max_torque", "max_rpm", NULL};
+  float max_rpm    = TRACKED_ENGINE_MAX_RPM_DEFAULT;
+  float min_rpm    = TRACKED_ENGINE_MIN_RPM_DEFAULT;
 
-  PyThreadState *_save = NULL; 
+  void *targets[CreateTracked_COUNT];
+  targets[IDX_CT_CHASSIS] = &chassis_h;
+  targets[IDX_CT_WHEELS]  = &py_wheels;
+  targets[IDX_CT_TRACKS]  = &py_tracks;
+  targets[IDX_CT_TORQUE]  = &max_torque;
+  targets[IDX_CT_RPM]     = &max_rpm;
 
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "KOO|ff", kwlist, &chassis_h,
-                                   &py_wheels, &py_tracks, &max_torque, &max_rpm)) {
+  if (!FastParse_Unified(args, nargs, kwnames, &CreateTrackedParser, targets)) {
     return NULL;
   }
 
-  // --- 1. RESOLVE CHASSIS (Requires GIL & Shadow Lock) ---
+  // --- 2. RESOLVE CHASSIS (Requires GIL & Shadow Lock) ---
   SHADOW_LOCK(&self->shadow_lock);
   sync_and_flush_internal(self);
   uint32_t slot = 0;
@@ -130,11 +135,10 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
   JPH_BodyID chassis_bid = self->body_ids[self->slot_to_dense[slot]];
   SHADOW_UNLOCK(&self->shadow_lock);
 
-  // --- 2. PRE-JOLT RESOURCE ALLOCATION (GIL HELD) ---
-  VehicleResources r = {};
+  // --- 3. PRE-JOLT RESOURCE ALLOCATION (GIL HELD) ---
+  VehicleResources r = {0};
   auto num_wheels = (uint32_t)PyList_Size(py_wheels);
   
-  // FIX: Declare and initialize tracks BEFORE any goto that might jump to cleanup
   TrackData tracks[2];
   memset(tracks, 0, sizeof(tracks));
   int num_tracks = 0;
@@ -145,17 +149,15 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
 
   r.w_settings = (JPH_WheelSettings **)CULV_RAW_CALLOC(num_wheels, sizeof(JPH_WheelSettings *));
   for (uint32_t i = 0; i < num_wheels; i++) {
-    // CRITICAL: Call this while GIL is held
     r.w_settings[i] = create_track_wheel(PyList_GetItem(py_wheels, i));
-    if (!r.w_settings[i]) { goto python_fail;
-}
+    if (!r.w_settings[i]) goto python_fail;
   }
 
-  // Parse Track Config into C structs while GIL is held
   parse_tracks_to_c(py_tracks, tracks, &num_tracks);
 
-  // --- 3. JOLT COMMIT (No GIL) ---
+  // --- 4. JOLT COMMIT (No GIL) ---
   bool jolt_locked = false;
+  PyThreadState *_save = NULL; 
   Py_UNBLOCK_THREADS;
 
   NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
@@ -165,17 +167,14 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
   JPH_BodyLockWrite lock = {0};
   JPH_BodyLockInterface_LockWrite(lock_iface, chassis_bid, &lock);
 
-  if (UNLIKELY(!lock.body)) { goto jolt_fail;
-}
+  if (UNLIKELY(!lock.body)) goto jolt_fail;
 
-  // Setup Controller
   TrackedEngineConfig eng_cfg = {.torque = max_torque, .max_rpm = max_rpm, .min_rpm = min_rpm};
   JPH_VehicleTransmissionSettings *v_trans = NULL;
   JPH_TrackedVehicleControllerSettings *t_ctrl = init_tracked_controller_settings(eng_cfg, &v_trans);
   r.v_ctrl = (JPH_WheeledVehicleControllerSettings *)t_ctrl;
   r.v_trans_set = v_trans;
 
-  // Apply Track Data to Jolt Controller
   for (int t = 0; t < num_tracks; t++) {
     JPH_VehicleTrackSettings track_set;
     JPH_VehicleTrackSettings_Init(&track_set);
@@ -185,7 +184,6 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
     JPH_TrackedVehicleControllerSettings_SetTrack(t_ctrl, (uint32_t)t, &track_set);
   }
 
-  // Assembly
   JPH_VehicleConstraintSettings v_set;
   JPH_VehicleConstraintSettings_Init(&v_set);
   v_set.wheelsCount = num_wheels;
@@ -193,12 +191,10 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
   v_set.controller = (JPH_VehicleControllerSettings *)t_ctrl;
 
   r.j_veh = JPH_VehicleConstraint_Create(lock.body, &v_set);
-  if (!r.j_veh) { goto jolt_fail;
-}
+  if (!r.j_veh) goto jolt_fail;
 
   r.tester = JPH_VehicleCollisionTesterRay_Create(TRACKED_LAYER_DRIVABLE, &(JPH_Vec3){0, 1.0f, 0}, TRACKED_COLLISION_TESTER_SCALE);
-  if (!r.tester) { goto jolt_fail;
-}
+  if (!r.tester) goto jolt_fail;
 
   JPH_VehicleConstraint_SetVehicleCollisionTester(r.j_veh, (JPH_VehicleCollisionTester *)r.tester);
   JPH_PhysicsSystem_AddConstraint(self->system, (JPH_Constraint *)r.j_veh);
@@ -210,10 +206,10 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
   jolt_locked = false;
   Py_BLOCK_THREADS;
 
-  // --- 4. CLEANUP & WRAP ---
-  // Free the temp index arrays from parsing
-  for (int t = 0; t < num_tracks; t++) { CULV_RAW_FREE(tracks[t].indices);
-}
+  // --- 5. CLEANUP & WRAP ---
+  for (int t = 0; t < num_tracks; t++) { 
+    CULV_RAW_FREE(tracks[t].indices);
+  }
 
   auto *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
   auto *obj = (VehicleObject *)PyObject_New(VehicleObject, (PyTypeObject *)st->VehicleType);
@@ -238,17 +234,14 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
   return (PyObject *)obj;
 
 jolt_fail:
-  if (lock.body) { JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
-}
-  if (jolt_locked) { NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
-}
+  if (lock.body) JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
+  if (jolt_locked) NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
   Py_BLOCK_THREADS;
 
 python_fail:
-  // If num_tracks was 0 because we jumped here early, this loop does nothing (safe)
-  for (int t = 0; t < num_tracks; t++) { if(tracks[t].indices) { CULV_RAW_FREE(tracks[t].indices);
-}
-}
+  for (int t = 0; t < num_tracks; t++) { 
+    if(tracks[t].indices) CULV_RAW_FREE(tracks[t].indices);
+  }
   
   SHADOW_LOCK(&self->shadow_lock);
   cleanup_vehicle_resources(&r, num_wheels, self);
@@ -257,53 +250,62 @@ python_fail:
 }
 
 // Helper: Set Tank Input
-PyCFunction_DeclareMethodFromModule Vehicle_set_tank_input(VehicleObject *self, PyObject *args,
-                                 PyObject *kwds) {
-  float left = 0.0f;
-  float right = 0.0f;
-  float brake = 0.0f;
-  static char *kwlist[] = {"left", "right", "brake", NULL};
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "ff|f", kwlist, &left, &right,
-                                   &brake)) {
-    return NULL;
-  }
+PyCFunction_DeclareMethodFromModule Vehicle_set_tank_input(VehicleObject *self, 
+                                                 PyObject *const *args, 
+                                                 Py_ssize_t nargs, 
+                                                 PyObject *kwnames) 
+{
+    // 1. FAST PARSE (Zero-Allocation)
+    float left  = 0.0f;
+    float right = 0.0f;
+    float brake = 0.0f;
 
-  if (!self->vehicle || !self->world) {
+    void *targets[TankInput_COUNT];
+    targets[IDX_TI_LEFT]  = &left;
+    targets[IDX_TI_RIGHT] = &right;
+    targets[IDX_TI_BRAKE] = &brake;
+
+    if (!FastParse_Unified(args, nargs, kwnames, &TankInputParser, targets)) {
+        return NULL;
+    }
+
+    // Safety check outside lock
+    if (UNLIKELY(!self->vehicle || !self->world)) {
+        Py_RETURN_NONE;
+    }
+
+    // 2. STATE SNAPSHOT & JOLT ACTIVATION
+    SHADOW_LOCK(&self->world->shadow_lock);
+    BLOCK_UNTIL_NOT_STEPPING(self->world);
+
+    auto *t_ctrl = (JPH_TrackedVehicleController *)JPH_VehicleConstraint_GetController(self->vehicle);
+    JPH_BodyID bid = JPH_Body_GetID(JPH_VehicleConstraint_GetVehicleBody(self->vehicle));
+    
+    // Wake up the tank to process inputs
+    JPH_BodyInterface_ActivateBody(self->world->body_interface, bid);
+
+    auto *trans = (JPH_VehicleTransmission *)JPH_TrackedVehicleController_GetTransmission(t_ctrl);
+    int gear = JPH_VehicleTransmission_GetCurrentGear(trans);
+
+    // 3. TANK DRIVE LOGIC
+    // Throttle for a tracked vehicle is typically the max absolute power requested from either side
+    float throttle = fmaxf(fabsf(left), fabsf(right));
+
+    // Simple Kickstart Logic: Auto-shift from Neutral to Gear 1 when throttle is applied
+    if (throttle > TRACKED_THROTTLE_KICKSTART_THRESHOLD) {
+        if (gear == 0) {
+            JPH_VehicleTransmission_Set(trans, 1, 1.0f); 
+        }
+    } else {
+        // Force Neutral when no input is detected to prevent "crawling"
+        if (gear != 0) {
+            JPH_VehicleTransmission_Set(trans, 0, 0.0f); 
+        }
+    }
+
+    // 4. Final Application
+    JPH_TrackedVehicleController_SetDriverInput(t_ctrl, throttle, left, right, brake);
+
+    SHADOW_UNLOCK(&self->world->shadow_lock);
     Py_RETURN_NONE;
-  }
-
-  SHADOW_LOCK(&self->world->shadow_lock);
-  BLOCK_UNTIL_NOT_STEPPING(self->world);
-
-  auto *t_ctrl =
-      (JPH_TrackedVehicleController *)JPH_VehicleConstraint_GetController(
-          self->vehicle);
-  JPH_BodyID bid =
-      JPH_Body_GetID(JPH_VehicleConstraint_GetVehicleBody(self->vehicle));
-  JPH_BodyInterface_ActivateBody(self->world->body_interface, bid);
-
-  auto *trans =
-      (JPH_VehicleTransmission *)JPH_TrackedVehicleController_GetTransmission(
-          t_ctrl);
-  int gear = JPH_VehicleTransmission_GetCurrentGear(trans);
-
-  // Throttle is the max power requested by either track
-  float throttle = fmaxf(fabsf(left), fabsf(right));
-
-  // Kickstart/Neutral logic
-  if (throttle > TRACKED_THROTTLE_KICKSTART_THRESHOLD) {
-    if (gear == 0) {
-      JPH_VehicleTransmission_Set(trans, 1, 1.0f); // Shift to 1
-    }
-  } else {
-    if (gear != 0) {
-      JPH_VehicleTransmission_Set(trans, 0, 0.0f); // Force Neutral
-    }
-  }
-
-  JPH_TrackedVehicleController_SetDriverInput(t_ctrl, throttle, left, right,
-                                              brake);
-
-  SHADOW_UNLOCK(&self->world->shadow_lock);
-  Py_RETURN_NONE;
 }

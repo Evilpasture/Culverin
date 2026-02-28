@@ -25,8 +25,10 @@ typedef struct {
     uint32_t driven_idx;
 } TrackData;
 
-PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(struct PhysicsWorldObject *self,
-                                              PyObject *args, PyObject *kwds);
+PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
+                                              PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames);
 
-PyCFunction_DeclareMethodFromModule Vehicle_set_tank_input(struct VehicleObject *self, PyObject *args,
-                                 PyObject *kwds);
+PyCFunction_DeclareMethodFromModule Vehicle_set_tank_input(VehicleObject *self, 
+                                                 PyObject *const *args, 
+                                                 Py_ssize_t nargs, 
+                                                 PyObject *kwnames);

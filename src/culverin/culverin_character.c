@@ -1,9 +1,9 @@
 #include "culverin_character.h"
 #include "culverin.h"
-#include "culverin_filters.h"
-#include "culverin_physics_world_internal.h"
 #include "culverin_arg_indices.h"
+#include "culverin_filters.h"
 #include "culverin_parsers.h"
+#include "culverin_physics_world_internal.h"
 
 // Character helpers
 // Callback: Can the character collide with this object?
@@ -310,96 +310,86 @@ const JPH_CharacterContactListener_Procs char_listener_procs = {
     .OnContactSolve              = NULL                                 // Advanced, keep NULL
 };
 
-PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObject *const *args, size_t nargsf,
-                         PyObject *kwnames) {
-    // 1. FAST PARSE (Zero-Allocation)
-    PyObject *o_velocity = NULL;
-    float dt;
+PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObject *const *args,
+                                                   size_t nargsf, PyObject *kwnames) {
+    // 1. INTEGRATED FAST PARSE
+    // The parser now writes directly into the Vec3f struct using your parse_vec3_f32 logic.
+    Vec3f v_in = {.x = 0.0f, .y = 0.0f, .z = 0.0f};
+    float dt   = 0.0f;
 
     void *targets[CharMove_COUNT];
-    targets[IDX_CM_VEL] = (void *)&o_velocity;
-    targets[IDX_CM_DT]  = (void *)&dt;
+    targets[IDX_CM_VEL] = &v_in;
+    targets[IDX_CM_DT]  = &dt;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &CharMoveParser, targets)) {
         return NULL;
     }
 
-    // 2. VECTOR EXTRACTION (Outside Lock)
-    float vx;
-    float vy;
-    float vz;
-    if (!parse_vec3_direct(o_velocity, &vx, &vy, &vz)) {
-        return NULL; // TypeError set by parser helper
-    }
+    // Validation (Inline macros/checks)
+    VALIDATE_FINITE_VEC3(v_in.x, v_in.y, v_in.z, "Character velocity");
 
-    /* Validate inputs */
-    VALIDATE_FINITE_VEC3(vx, vy, vz, "Character velocity");
-    VALIDATE_FINITE_FLOAT(dt, "dt");
-
-    // 3. PRE-MOVE GUARD (Shadow Lock)
-    // Characters modify the world's dense arrays immediately, so we need full guards
+    // 2. SNAPSHOT (Shadow Lock)
     SHADOW_LOCK(&self->world->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self->world);
-    BLOCK_IF_STEP_PENDING(self->world);
 
-    atomic_store_explicit(&self->last_vx, vx, memory_order_relaxed);
-    atomic_store_explicit(&self->last_vy, vy, memory_order_relaxed);
-    atomic_store_explicit(&self->last_vz, vz, memory_order_relaxed);
+    // Atomic stores for worker threads
+    atomic_store_explicit(&self->last_vx, v_in.x, memory_order_relaxed);
+    atomic_store_explicit(&self->last_vy, v_in.y, memory_order_relaxed);
+    atomic_store_explicit(&self->last_vz, v_in.z, memory_order_relaxed);
 
-    auto slot  = (uint32_t)(self->handle & 0xFFFFFFFF);
+    auto slot      = (uint32_t)(self->handle & 0xFFFFFFFF);
     uint32_t dense = self->world->slot_to_dense[slot];
 
-    // Cast World Shadow Buffers to Stride Structs
+    // Snapshot: Copy Current to Prev to provide a clean state for interpolation
+    // We do this inside the lock to ensure rendering threads don't see half-updated strides.
     auto *shadow_pos  = (PosStride *)self->world->positions;
     auto *shadow_ppos = (PosStride *)self->world->prev_positions;
     auto *shadow_rot  = (AuxStride *)self->world->rotations;
     auto *shadow_prot = (AuxStride *)self->world->prev_rotations;
 
-    // Snapshot before movement for interpolation
     shadow_ppos[dense] = shadow_pos[dense];
     shadow_prot[dense] = shadow_rot[dense];
 
-    self->prev_px = (float)shadow_pos[dense].x;
-    self->prev_py = (float)shadow_pos[dense].y;
-    self->prev_pz = (float)shadow_pos[dense].z;
-
     SHADOW_UNLOCK(&self->world->shadow_lock);
 
-    // 4. JOLT EXECUTION (No GIL)
-    JPH_Vec3 v = {vx, vy, vz};
-    JPH_CharacterVirtual_SetLinearVelocity(self->character, &v);
+    // 3. JOLT EXECUTION (No GIL, No Shadow Lock)
+    JPH_Vec3 j_v = {v_in.x, v_in.y, v_in.z};
+    JPH_CharacterVirtual_SetLinearVelocity(self->character, &j_v);
 
-    JPH_STACK_ALLOC(JPH_ExtendedUpdateSettings, update_settings);
-    memset(update_settings, 0, sizeof(JPH_ExtendedUpdateSettings));
-    update_settings->stickToFloorStepDown.y           = -0.5f;
-    update_settings->walkStairsStepUp.y               = 0.4f;
-    update_settings->walkStairsMinStepForward         = 0.02f;
-    update_settings->walkStairsStepForwardTest        = 0.15f;
-    update_settings->walkStairsCosAngleForwardContact = 0.996f;
+    // Optimized settings: Initialized once
+    static const JPH_ExtendedUpdateSettings update_settings = {
+        .stickToFloorStepDown             = {0.0f, -0.5f, 0.0f},
+        .walkStairsStepUp                 = {0.0f, 0.4f, 0.0f},
+        .walkStairsMinStepForward         = 0.02f,
+        .walkStairsStepForwardTest        = 0.15f,
+        .walkStairsCosAngleForwardContact = 0.996f};
 
+    // The trampoline lock protects Jolt's non-thread-safe internal Virtual Character callbacks
     NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
     Py_BEGIN_ALLOW_THREADS JPH_CharacterVirtual_ExtendedUpdate(
-        self->character, dt, update_settings, 1, self->world->system, self->body_filter,
+        self->character, dt, &update_settings, 1, self->world->system, self->body_filter,
         self->shape_filter);
     Py_END_ALLOW_THREADS NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
 
-    // 5. POST-MOVE SYNC
+    // 4. POST-MOVE SYNC
     SHADOW_LOCK(&self->world->shadow_lock);
 
-    JPH_STACK_ALLOC(JPH_RVec3, current_pos);
-    JPH_STACK_ALLOC(JPH_Quat, current_rot);
-    JPH_CharacterVirtual_GetPosition(self->character, current_pos);
-    JPH_CharacterVirtual_GetRotation(self->character, current_rot);
+    JPH_STACK_ALLOC(JPH_RVec3, current_p);
+    JPH_STACK_ALLOC(JPH_Quat, current_r);
+    JPH_CharacterVirtual_GetPosition(self->character, current_p);
+    JPH_CharacterVirtual_GetRotation(self->character, current_r);
 
-    shadow_pos[dense] = (PosStride){current_pos->x, current_pos->y, current_pos->z};
-    shadow_rot[dense] = (AuxStride){current_rot->x, current_rot->y, current_rot->z, current_rot->w};
+    // Update the World Shadow Buffers so the GPU sees the new position next frame
+    shadow_pos[dense] = (PosStride){current_p->x, current_p->y, current_p->z};
+    shadow_rot[dense] = (AuxStride){current_r->x, current_r->y, current_r->z, current_r->w};
 
     SHADOW_UNLOCK(&self->world->shadow_lock);
     Py_RETURN_NONE;
 }
 
-PyCFunction_DeclareMethodFromModule Character_get_position(CharacterObject *self, PyObject *Py_UNUSED(ignored)) {
+PyCFunction_DeclareMethodFromModule Character_get_position(CharacterObject *self,
+                                                           PyObject *Py_UNUSED(ignored)) {
     // 1. Aligned stack storage for SIMD
     JPH_STACK_ALLOC(JPH_RVec3, pos);
 
@@ -421,104 +411,109 @@ PyCFunction_DeclareMethodFromModule Character_get_position(CharacterObject *self
     return ret;
 }
 
-PyCFunction_DeclareMethodFromModule Character_set_position(CharacterObject *self, PyObject *args, PyObject *kwds) {
-    JPH_Real x            = 0.0;
-    JPH_Real y            = 0.0;
-    JPH_Real z            = 0.0;
-    static char *kwlist[] = {"pos", NULL};
-    if (!PyArg_ParseTupleAndKeywords(args, kwds,
-                                     "(" JPH_REAL_STRING JPH_REAL_STRING JPH_REAL_STRING ")",
-                                     kwlist, &x, &y, &z)) {
+PyCFunction_DeclareMethodFromModule Character_set_position(CharacterObject *self,
+                                                           PyObject *const *args, Py_ssize_t nargs,
+                                                           PyObject *kwnames) {
+    // 1. Stack Allocation and Parser Targets
+    PosStride pos = {};
+    void *targets[SetPosChar_COUNT];
+    targets[IDX_SPC_POS] = &pos; // The converter calls parse_vec3_r64 internally
+
+    // 2. High Speed Parse
+    if (!FastParse_Unified(args, nargs, kwnames, &SetPosCharParser, targets)) {
         return NULL;
     }
 
+    // --- PHYSICS LOGIC ---
     SHADOW_LOCK(&self->world->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self->world);
 
-    // 1. Update Jolt (Aligned)
-    JPH_STACK_ALLOC(JPH_RVec3, pos);
-    pos->x = x;
-    pos->y = y;
-    pos->z = z;
-    JPH_CharacterVirtual_SetPosition(self->character, pos);
+    // 3. Update Jolt
+    // (Note: Using your existing stack allocation or direct struct pass)
+    JPH_RVec3 j_pos = {pos.x, pos.y, pos.z};
+    JPH_CharacterVirtual_SetPosition(self->character, &j_pos);
 
-    // 2. Update Shadow Buffers (Reset Interpolation to prevent streaks)
+    // 4. Update Shadow Buffers
+    // We update both current and prev to prevent "teleport streaks" (interpolation artifacts)
     auto slot          = (uint32_t)(self->handle & 0xFFFFFFFF);
     uint32_t dense_idx = self->world->slot_to_dense[slot];
-    auto off           = (size_t)dense_idx * 4;
+    auto off           = (size_t)dense_idx * 4; // Assuming 4-float alignment/stride
 
-    self->world->positions[off + 0] = x;
-    self->world->positions[off + 1] = y;
-    self->world->positions[off + 2] = z;
+    // Update Current
+    self->world->positions[off + 0] = pos.x;
+    self->world->positions[off + 1] = pos.y;
+    self->world->positions[off + 2] = pos.z;
 
-    self->world->prev_positions[off + 0] = x;
-    self->world->prev_positions[off + 1] = y;
-    self->world->prev_positions[off + 2] = z;
+    // Update Previous
+    self->world->prev_positions[off + 0] = pos.x;
+    self->world->prev_positions[off + 1] = pos.y;
+    self->world->prev_positions[off + 2] = pos.z;
 
     SHADOW_UNLOCK(&self->world->shadow_lock);
     Py_RETURN_NONE;
 }
 
-PyCFunction_DeclareMethodFromModule Character_set_rotation(CharacterObject *self, PyObject *args, PyObject *kwds) {
-    float x                     = 0.0f;
-    float y                     = 0.0f;
-    float z                     = 0.0f;
-    float w                     = 0.0f;
-    static char *const kwlist[] = {"rot", NULL};
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "(ffff)", kwlist, &x, &y, &z, &w)) {
+PyCFunction_DeclareMethodFromModule Character_set_rotation(CharacterObject *self,
+                                                           PyObject *const *args, Py_ssize_t nargs,
+                                                           PyObject *kwnames) {
+    // 1. Explicitly initialized stack target
+    AuxStride rot = {.x = 0.0f, .y = 0.0f, .z = 0.0f, .w = 1.0f};
+
+    void *targets[SetRotChar_COUNT];
+    targets[IDX_SRC_ROT] = &rot; // Parser triggers your parse_quat_f32 logic
+
+    // 2. High Speed Parse
+    if (!FastParse_Unified(args, nargs, kwnames, &SetRotCharParser, targets)) {
         return NULL;
     }
 
+    // --- PHYSICS LOGIC ---
     SHADOW_LOCK(&self->world->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self->world);
 
-    // 1. Update Jolt
-    JPH_STACK_ALLOC(JPH_Quat, q);
-    q->x = x;
-    q->y = y;
-    q->z = z;
-    q->w = w;
-    JPH_CharacterVirtual_SetRotation(self->character, q);
+    // 3. Update Jolt
+    // We can cast our AuxStride directly to JPH_Quat if they are layout-compatible
+    // or just initialize a temporary.
+    JPH_Quat q = {.x = rot.x, .y = rot.y, .z = rot.z, .w = rot.w};
+    JPH_CharacterVirtual_SetRotation(self->character, &q);
 
-    // 2. Update Shadow Buffers
+    // 4. Update Shadow Buffers (Zero-Streak Reset)
     auto slot          = (uint32_t)(self->handle & 0xFFFFFFFF);
     uint32_t dense_idx = self->world->slot_to_dense[slot];
     size_t off         = (size_t)dense_idx * 4;
 
-    memcpy(&self->world->rotations[off], q, 16);
-    memcpy(&self->world->prev_rotations[off], q, 16);
+    // Direct 16-byte copies to update current and previous states
+    memcpy(&self->world->rotations[off], &q, 16);
+    memcpy(&self->world->prev_rotations[off], &q, 16);
 
     SHADOW_UNLOCK(&self->world->shadow_lock);
     Py_RETURN_NONE;
 }
 
-PyCFunction_DeclareMethodFromModule Character_is_grounded(CharacterObject *self, PyObject *Py_UNUSED(args)) {
-    SHADOW_LOCK(&self->world->shadow_lock);
-    // No need for GUARD_STEPPING here as it's a non-destructive status check,
-    // but holding the lock ensures the character hasn't been deallocated.
-    JPH_GroundState state = JPH_CharacterBase_GetGroundState((JPH_CharacterBase *)self->character);
-    SHADOW_UNLOCK(&self->world->shadow_lock);
-
-    if (state == JPH_GroundState_OnGround || state == JPH_GroundState_OnSteepGround) {
-        Py_RETURN_TRUE;
-    }
-    Py_RETURN_FALSE;
-}
-
-PyCFunction_DeclareMethodFromModule Character_set_strength(CharacterObject *self, PyObject *args) {
+PyCFunction_DeclareMethodFromModule Character_set_strength(CharacterObject *self,
+                                                           PyObject *const *args, Py_ssize_t nargs,
+                                                           PyObject *kwnames) {
+    // 1. Explicitly initialized target
     float strength = 0.0f;
-    if (!PyArg_ParseTuple(args, "f", &strength)) {
+
+    void *targets[SetStrengthChar_COUNT];
+    targets[IDX_SSC_STRENGTH] = &strength;
+
+    // 2. High Speed Parse (Handles both world.set_strength(200.0) and
+    // world.set_strength(strength=200.0))
+    if (!FastParse_Unified(args, nargs, kwnames, &SetStrengthCharParser, targets)) {
         return NULL;
     }
 
+    // --- CONCURRENCY & LOCKING ---
     SHADOW_LOCK(&self->world->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self->world);
     BLOCK_UNTIL_NOT_QUERYING(self->world);
 
-    // 1. Update Atomic for Jolt worker threads
+    // 3. Update Atomic for Jolt worker threads (Physics side)
     atomic_store_explicit(&self->push_strength, strength, memory_order_relaxed);
 
-    // 2. Update Jolt internal state
+    // 4. Update Jolt internal state (Direct state change)
     JPH_CharacterVirtual_SetMaxStrength(self->character, strength);
 
     SHADOW_UNLOCK(&self->world->shadow_lock);
@@ -526,7 +521,8 @@ PyCFunction_DeclareMethodFromModule Character_set_strength(CharacterObject *self
 }
 
 // Change signature to take PyObject* arg directly
-PyCFunction_DeclareMethodFromModule Character_get_render_transform(CharacterObject *self, PyObject *arg) {
+PyCFunction_DeclareMethodFromModule Character_get_render_transform(CharacterObject *self,
+                                                                   PyObject *arg) {
     // --- 1. Fast Argument Parsing ---
     double alpha_dbl = PyFloat_AsDouble(arg);
     if (alpha_dbl == -1.0 && PyErr_Occurred()) {
@@ -599,10 +595,41 @@ PyCFunction_DeclareMethodFromModule Character_get_render_transform(CharacterObje
     rz *= inv_len;
     rw *= inv_len;
 
-    // --- 4. Return to Python ---
-    // Python floats are doubles, so we pass the high-precision LERP results
-    return Py_BuildValue("((" JPH_REAL_STRING JPH_REAL_STRING JPH_REAL_STRING ")(ffff))", px, py,
-                         pz, rx, ry, rz, rw);
+    // --- 4. Optimized Return (Manual Tuple Creation) ---
+    // Instead of Py_BuildValue, we manually build the nested tuples.
+    // This is significantly faster as it avoids format string parsing.
+    PyObject *pos_tuple =
+        PyTuple_Pack(3, PyFloat_FromDouble(px), PyFloat_FromDouble(py), PyFloat_FromDouble(pz));
+    PyObject *rot_tuple = PyTuple_Pack(4, PyFloat_FromDouble(rx), PyFloat_FromDouble(ry),
+                                       PyFloat_FromDouble(rz), PyFloat_FromDouble(rw));
+
+    PyObject *result = PyTuple_Pack(2, pos_tuple, rot_tuple);
+
+    // PyTuple_Pack increments refs for items, but the PyFloat_FromDouble
+    // calls created new refs. We must decref the temporaries.
+    Py_DECREF(pos_tuple);
+    Py_DECREF(rot_tuple);
+
+    return result;
+}
+
+PyCFunction_DeclareMethodFromModule Character_is_grounded(CharacterObject *self,
+                                                          PyObject *Py_UNUSED(ignored)) {
+    SHADOW_LOCK(&self->world->shadow_lock);
+
+    /*
+       Jolt C-API: CharacterVirtual is a subclass of CharacterBase.
+       We cast the virtual instance to the base pointer to check the ground state.
+    */
+    JPH_GroundState state = JPH_CharacterBase_GetGroundState((JPH_CharacterBase *)self->character);
+
+    SHADOW_UNLOCK(&self->world->shadow_lock);
+
+    // Return True only if supported by walkable ground
+    if (state == JPH_GroundState_OnGround) {
+        Py_RETURN_TRUE;
+    }
+    Py_RETURN_FALSE;
 }
 
 // NEW: GC Traverse/Clear for Character
@@ -745,69 +772,66 @@ static void setup_char_filters(CharacterObject *obj) {
 }
 
 // Main Orchestrator
-PyCFunction_DeclareMethodFromModule PhysicsWorld_create_character(PhysicsWorldObject *self, PyObject *args, PyObject *kwds) {
-    JPH_Real px                 = 0;
-    JPH_Real py                 = 0;
-    JPH_Real pz                 = 0;
-    float height                = 1.8f;
-    float radius                = 0.4f;
-    float step_h                = 0.4f;
-    float slope                 = 45.0f;
-    static char *const kwlist[] = {"pos", "height", "radius", "step_height", "max_slope", NULL};
-    if (!PyArg_ParseTupleAndKeywords(args, kwds,
-                                     "(" JPH_REAL_STRING JPH_REAL_STRING JPH_REAL_STRING ")|ffff",
-                                     kwlist, &px, &py, &pz, &height, &radius, &step_h, &slope)) {
+PyCFunction_DeclareMethodFromModule PhysicsWorld_create_character(PhysicsWorldObject *self,
+                                                                  PyObject *const *args,
+                                                                  Py_ssize_t nargs,
+                                                                  PyObject *kwnames) {
+    // 1. Setup Targets with Default Values
+    // Note: Your parse_vec3 functions handle Py_None by doing nothing,
+    // so we can initialize 'pos' to a default here.
+    PosStride pos = {.x = 0, .y = 0, .z = 0};
+    float height  = 1.8f;
+    float radius  = 0.4f;
+    float step_h  = 0.4f;
+    float slope   = 45.0f;
+
+    void *targets[CreateChar_COUNT];
+    targets[IDX_CCHAR_POS]   = &pos;    // Parser calls parse_vec3_r64
+    targets[IDX_CCHAR_H]     = &height; // Parser calls fp_conv_float
+    targets[IDX_CCHAR_R]     = &radius;
+    targets[IDX_CCHAR_STEP]  = &step_h;
+    targets[IDX_CCHAR_SLOPE] = &slope;
+
+    // 2. High Speed Parse (Handles positional, keywords, and vec3 unpacking)
+    if (!FastParse_Unified(args, nargs, kwnames, &CreateCharParser, targets)) {
         return NULL;
     }
 
+    // --- WORLD LOGIC ---
     SHADOW_LOCK(&self->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
     BLOCK_UNTIL_NOT_QUERYING(self);
+
     if (self->free_count == 0 && PhysicsWorld_resize(self, self->capacity * 2) < 0) {
         SHADOW_UNLOCK(&self->shadow_lock);
         return NULL;
     }
+
     uint32_t char_slot           = self->free_slots[--self->free_count];
     self->slot_states[char_slot] = SLOT_PENDING_CREATE;
     SHADOW_UNLOCK(&self->shadow_lock);
 
-    // 2. Resource Allocation
-    PositionVector pos_vec      = {px, py, pz};
+    // 3. Resource Allocation
+    PositionVector pos_vec      = {pos.x, pos.y, pos.z};
     CharacterParams char_params = {height, radius, slope};
 
     JPH_CharacterVirtual *j_char = alloc_j_char(self, pos_vec, char_params);
-    if (!j_char) {
+    if (!j_char)
         goto fail_jolt;
-    }
 
     auto *obj = (CharacterObject *)PyObject_GC_New(
         CharacterObject,
         (PyTypeObject *)get_culverin_state(PyType_GetModule(Py_TYPE(self)))->CharacterType);
-    if (!obj) {
+    if (!obj)
         goto fail_py;
-    }
 
-    // 3. Initialization
+    // ... (rest of initialization remains the same) ...
     obj->world     = (PhysicsWorldObject *)Py_NewRef(self);
     obj->character = j_char;
-    atomic_store(&obj->push_strength, 200.0f);
-    atomic_store(&obj->last_vx, 0.0f);
-    atomic_store(&obj->last_vy, 0.0f);
-    atomic_store(&obj->last_vz, 0.0f);
-    obj->prev_px      = px;
-    obj->prev_py      = py;
-    obj->prev_pz      = pz;
-    obj->prev_rx      = 0.0f;
-    obj->prev_ry      = 0.0f;
-    obj->prev_rz      = 0.0f;
-    obj->prev_rw      = 1.0f;
-    obj->listener     = NULL;
-    obj->body_filter  = NULL;
-    obj->shape_filter = NULL;
-    obj->bp_filter    = NULL;
-    obj->obj_filter   = NULL;
+    obj->prev_px   = pos.x;
+    obj->prev_py   = pos.y;
+    obj->prev_pz   = pos.z;
 
-    // 4. Registration & Filter Setup
     register_char(self, obj, j_char, char_slot);
     setup_char_filters(obj);
 
