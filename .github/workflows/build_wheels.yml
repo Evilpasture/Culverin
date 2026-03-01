@@ -76,6 +76,7 @@ jobs:
           CIBW_FREE_THREADED_SUPPORT: 1
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           
+          # Install Clang 20 and its matching runtime libraries
           CIBW_BEFORE_ALL_LINUX: "dnf install -y clang llvm compiler-rt libasan libubsan && pip install ninja"
           
           CIBW_ENVIRONMENT: >
@@ -87,14 +88,18 @@ jobs:
             CMAKE_ARGS="-DENABLE_SANITIZER=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo -DDOUBLE_PRECISION=ON -DCMAKE_C_STANDARD=23"
           
           CIBW_TEST_REQUIRES: numpy psutil
-          # THE ROBUST SYMBOL RESOLVER:
-          # 1. Finds all instances of ASan and UBSan shared libraries (both Clang-RT and GCC versions).
-          # 2. Aggregates them into a single space-separated LD_PRELOAD string.
-          # 3. Executes tests.
+          # THE DEFINITIVE SOLUTION:
+          # 1. Use clang -print-resource-dir to find the root of the Clang 20 library tree.
+          # 2. Construct the absolute paths to the ASan and UBSan standalone shared objects.
+          # 3. Preload them. This ensures modern symbols like 'alignment_assumption' are found.
           CIBW_TEST_COMMAND: >
-            PRELOAD_LIBS=$(find /usr/lib64 -name "libclang_rt.asan-x86_64.so" -o -name "libclang_rt.ubsan_standalone-x86_64.so" -o -name "libasan.so.*" -o -name "libubsan.so.*" | tr '\n' ' ') &&
-            echo "Preloading libraries: $PRELOAD_LIBS" &&
-            export LD_PRELOAD=$PRELOAD_LIBS &&
+            RT_DIR=$(clang -print-resource-dir)/lib/linux &&
+            if [ ! -d "$RT_DIR" ]; then RT_DIR=$(find /usr/lib64/clang -name "linux" -type d | head -n 1); fi &&
+            ASAN_RT=$RT_DIR/libclang_rt.asan-x86_64.so &&
+            UBSAN_RT=$RT_DIR/libclang_rt.ubsan_standalone-x86_64.so &&
+            echo "Preloading Clang-20 ASan: $ASAN_RT" &&
+            echo "Preloading Clang-20 UBSan: $UBSAN_RT" &&
+            export LD_PRELOAD="$ASAN_RT $UBSAN_RT" &&
             python {project}/tests/test_core.py && 
             python {project}/tests/benchmark.py --leak
 
