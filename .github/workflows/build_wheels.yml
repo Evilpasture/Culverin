@@ -56,7 +56,7 @@ jobs:
           name: culverin-release-${{ matrix.os }}
           path: ./wheelhouse/*.whl
 
-  # ===========================================================================
+# ===========================================================================
   # JOB 2: SANITIZER VALIDATION (ASan/UBSan Check)
   # ===========================================================================
   check_sanitizers:
@@ -76,8 +76,7 @@ jobs:
           CIBW_FREE_THREADED_SUPPORT: 1
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           
-          # CRITICAL: Added compiler-rt which contains the ASan runtime libraries
-          CIBW_BEFORE_ALL_LINUX: "dnf install -y clang llvm compiler-rt && pip install ninja"
+          CIBW_BEFORE_ALL_LINUX: "dnf install -y clang llvm compiler-rt libasan libubsan && pip install ninja"
           
           CIBW_ENVIRONMENT: >
             CC=clang 
@@ -88,9 +87,10 @@ jobs:
             CMAKE_ARGS="-DENABLE_SANITIZER=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo -DDOUBLE_PRECISION=ON -DCMAKE_C_STANDARD=23"
           
           CIBW_TEST_REQUIRES: numpy psutil
-          # IMPROVED: Broad find starting at /usr to find the ASan runtime provided by compiler-rt
           CIBW_TEST_COMMAND: >
-            ASAN_PATH=$(find /usr -name "libclang_rt.asan-x86_64.so" 2>/dev/null | head -n 1) &&
+            export RESOURCE_DIR=$(clang -print-resource-dir) &&
+            export ASAN_PATH=$(find $RESOURCE_DIR /usr/lib64/clang /usr/lib/clang -name "libclang_rt.asan-x86_64.so" 2>/dev/null | head -n 1) &&
+            if [ -z "$ASAN_PATH" ]; then export ASAN_PATH=$(find /usr/lib64 -name "libasan.so.*" | head -n 1); fi &&
             if [ -z "$ASAN_PATH" ]; then echo "CRITICAL: ASan library not found!"; exit 1; fi &&
             echo "Preloading ASan from: $ASAN_PATH" &&
             LD_PRELOAD=$ASAN_PATH python {project}/tests/test_core.py && 
