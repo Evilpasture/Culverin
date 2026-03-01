@@ -25,16 +25,10 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Install Build Dependencies
-        # sudo is required to use --system on the managed runner
-        run: sudo uv pip install --system --break-system-packages scikit-build-core ninja numpy psutil
-
       - name: Build Wheels
         uses: pypa/cibuildwheel@v2.22.0
         env:
+          # isolage 64-bit and modern Python only
           CIBW_SKIP: "*-musllinux_* *-win32"
           CIBW_BUILD: "cp313-* cp314-*"
           CIBW_FREE_THREADED_SUPPORT: 1
@@ -94,15 +88,18 @@ jobs:
             CMAKE_ARGS="-DENABLE_SANITIZER=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo -DDOUBLE_PRECISION=ON -DCMAKE_C_STANDARD=23"
           
           CIBW_TEST_REQUIRES: numpy psutil
-          # THE FIX: We find libasan/libclang_rt and preload it into the Python interpreter 
-          # so the symbols are available when Culverin is imported.
+          # THE ULTIMATE FIX: 
+          # 1. We use clang -print-resource-dir to find the compiler's private lib folder.
+          # 2. We use find to locate the exact absolute path of the asan .so.
+          # 3. We LD_PRELOAD that absolute path.
           CIBW_TEST_COMMAND: >
-            ASAN_LIB=$(clang -print-file-name=libclang_rt.asan-x86_64.so) &&
-            LD_PRELOAD=$ASAN_LIB python {project}/tests/test_core.py && 
-            LD_PRELOAD=$ASAN_LIB python {project}/tests/benchmark.py --leak
+            ASAN_PATH=$(find $(clang -print-resource-dir) -name "libclang_rt.asan-x86_64.so" | head -n 1) &&
+            echo "Preloading ASan from: $ASAN_PATH" &&
+            LD_PRELOAD=$ASAN_PATH python {project}/tests/test_core.py && 
+            LD_PRELOAD=$ASAN_PATH python {project}/tests/benchmark.py --leak
 
   # ===========================================================================
-  # JOB 3: PUBLISH
+  # JOB 3: PUBLISH (Wait for Job 1 AND Job 2)
   # ===========================================================================
   github-release:
     name: Create GitHub Release
@@ -113,11 +110,13 @@ jobs:
       contents: write
     steps:
       - name: Download Artifacts
+        # FIX: Changed from upload-artifact to download-artifact
         uses: actions/download-artifact@v4
         with:
           path: wheelhouse
           pattern: culverin-release-*
           merge-multiple: true
+
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -137,10 +136,14 @@ jobs:
       id-token: write
     steps:
       - name: Download Artifacts
+        # FIX: Changed from upload-artifact to download-artifact
         uses: actions/download-artifact@v4
         with:
           path: dist
           pattern: culverin-release-*
           merge-multiple: true
+
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
