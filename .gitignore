@@ -27,3 +27,6 @@ compile_commands.json
 .idea/
 .DS_Store
 .cache/
+
+# Local development files and directories
+messy/
