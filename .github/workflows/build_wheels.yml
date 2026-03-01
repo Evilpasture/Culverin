@@ -29,13 +29,12 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: Install Build Dependencies
-        # Added --break-system-packages to allow uv to work on managed runner environments
-        run: uv pip install --system --break-system-packages scikit-build-core ninja numpy psutil
+        # sudo is required to use --system on the managed runner
+        run: sudo uv pip install --system --break-system-packages scikit-build-core ninja numpy psutil
 
       - name: Build Wheels
         uses: pypa/cibuildwheel@v2.22.0
         env:
-          # SKIP 32-bit Windows (win32) and Musl (Alpine)
           CIBW_SKIP: "*-musllinux_* *-win32"
           CIBW_BUILD: "cp313-* cp314-*"
           CIBW_FREE_THREADED_SUPPORT: 1
@@ -50,11 +49,13 @@ jobs:
           
           CIBW_ENVIRONMENT_WINDOWS: "CC=clang-cl CXX=clang-cl CMAKE_GENERATOR=Ninja"
           
-          # Use a more robust installer check for Linux containers
           CIBW_BEFORE_ALL_LINUX: >
             (command -v dnf && dnf install -y clang llvm ninja-build) || 
             (command -v yum && yum install -y clang llvm ninja-build) || 
             (apk add --no-cache clang llvm-dev ninja build-base)
+
+          CIBW_TEST_REQUIRES: numpy psutil
+          CIBW_TEST_COMMAND: "python {project}/tests/test_core.py"
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
@@ -93,9 +94,12 @@ jobs:
             CMAKE_ARGS="-DENABLE_SANITIZER=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo -DDOUBLE_PRECISION=ON -DCMAKE_C_STANDARD=23"
           
           CIBW_TEST_REQUIRES: numpy psutil
+          # THE FIX: We find libasan/libclang_rt and preload it into the Python interpreter 
+          # so the symbols are available when Culverin is imported.
           CIBW_TEST_COMMAND: >
-            python {project}/tests/test_core.py && 
-            python {project}/tests/benchmark.py --leak
+            ASAN_LIB=$(clang -print-file-name=libclang_rt.asan-x86_64.so) &&
+            LD_PRELOAD=$ASAN_LIB python {project}/tests/test_core.py && 
+            LD_PRELOAD=$ASAN_LIB python {project}/tests/benchmark.py --leak
 
   # ===========================================================================
   # JOB 3: PUBLISH
