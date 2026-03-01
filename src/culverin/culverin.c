@@ -1115,12 +1115,7 @@ PyCFunction_DeclareMethod PhysicsWorld_load_state(PhysicsWorldObject *self, PyOb
     memcpy(self->slot_states, ptr, state_sz);
     ptr += state_sz;
 
-    // 6. HANDLE INVALIDATION
-    for (auto i = 0u; i < self->slot_capacity; i++) {
-        self->generations[i]++;
-    }
-
-    // 7. REBUILD FREE LIST
+    // 6. REBUILD FREE LIST
     self->free_count = 0;
     for (auto i = 0u; i < (uint32_t)self->slot_capacity; i++) {
         if (self->slot_states[i] == SLOT_EMPTY) {
@@ -1133,7 +1128,7 @@ PyCFunction_DeclareMethod PhysicsWorld_load_state(PhysicsWorldObject *self, PyOb
     auto *shadow_lvel = (AuxStride *)self->linear_velocities;
     auto *shadow_avel = (AuxStride *)self->angular_velocities;
 
-    // 8. JOLT SYNC
+    // 7. JOLT SYNC
     JPH_BodyID *bids      = self->body_ids;
     JPH_BodyInterface *bi = self->body_interface;
     SHADOW_UNLOCK(&self->shadow_lock);
