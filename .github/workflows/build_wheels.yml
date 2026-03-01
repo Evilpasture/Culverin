@@ -30,7 +30,8 @@ jobs:
         env:
           CIBW_SKIP: "*-musllinux_* *-win32 *_i686"
           CIBW_BUILD: "cp313-* cp314-*"
-          CIBW_FREE_THREADED_SUPPORT: 1
+          # Modern syntax for 3.13t free-threading support
+          CIBW_ENABLE: "cpython-freethreading"
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
           
@@ -73,14 +74,17 @@ jobs:
         env:
           CIBW_SKIP: "*-musllinux_* *-win32 *_i686"
           CIBW_BUILD: "cp313-manylinux_x86_64"
-          CIBW_FREE_THREADED_SUPPORT: 1
+          CIBW_ENABLE: "cpython-freethreading"
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           
           CIBW_BEFORE_ALL_LINUX: "dnf install -y clang llvm compiler-rt libasan libubsan && pip install ninja"
           
+          # THE SURGICAL FIX: 
+          # -fno-sanitize=alignment tells Clang not to emit the specific UBSan check 
+          # that the system's GCC libubsan.so doesn't understand.
           CIBW_ENVIRONMENT: >
-            CC=clang 
-            CXX=clang++ 
+            CC="clang -fno-sanitize=alignment" 
+            CXX="clang++ -fno-sanitize=alignment" 
             CMAKE_GENERATOR=Ninja
             ASAN_OPTIONS="detect_leaks=0:detect_odr_violation=0:halt_on_error=1"
             UBSAN_OPTIONS="print_stacktrace=1:halt_on_error=1"
@@ -88,10 +92,8 @@ jobs:
           
           CIBW_TEST_REQUIRES: numpy psutil
           CIBW_TEST_COMMAND: >
-            ASAN_RT=$(find /usr -name "libclang_rt.asan-x86_64.so" 2>/dev/null | head -n 1) ;
-            UBSAN_RT=$(find /usr -name "libclang_rt.ubsan_standalone-x86_64.so" 2>/dev/null | head -n 1) ;
-            [ -z "$ASAN_RT" ] && ASAN_RT=$(find /usr -name "libasan.so.*" 2>/dev/null | head -n 1) ;
-            [ -z "$UBSAN_RT" ] && UBSAN_RT=$(find /usr -name "libubsan.so.*" 2>/dev/null | head -n 1) ;
+            ASAN_RT=$(find /usr -name "libasan.so.*" 2>/dev/null | head -n 1) ;
+            UBSAN_RT=$(find /usr -name "libubsan.so.*" 2>/dev/null | head -n 1) ;
             echo "ASan found: ${ASAN_RT:-NOT FOUND}" ;
             echo "UBSan found: ${UBSAN_RT:-NOT FOUND}" ;
             if [ -n "$ASAN_RT" ] || [ -n "$UBSAN_RT" ]; then export LD_PRELOAD="$ASAN_RT $UBSAN_RT"; fi ;
