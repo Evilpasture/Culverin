@@ -28,15 +28,16 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: Microsoft :: Windows",
     "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Implementation :: CPython", # Added
     "Programming Language :: C",
     "Programming Language :: C++",
     "Topic :: Games/Entertainment",
-    "Topic :: Multimedia :: Graphics :: 3D Rendering",
     "Topic :: Scientific/Engineering :: Physics",
 ]
-# Install your own NumPy.
+# Install your own NumPy, in case users want to use a different version for other dependencies, like Numba.
 dependencies = []
 
 [project.urls]
@@ -49,9 +50,6 @@ Repository = "https://github.com/Evilpasture/culverin.git"
 cmake.build-type = "Release"
 cmake.args = [
     "-GNinja",
-    "-DCMAKE_C_COMPILER=clang",
-    "-DCMAKE_CXX_COMPILER=clang++",
-    "-DCMAKE_C_FLAGS=-std=c2x",
     "-DDOUBLE_PRECISION=ON",
     "-DGENERATE_SAMPLES=OFF",
     "-DGENERATE_UNIT_TESTS=OFF",
@@ -72,6 +70,9 @@ wheel.exclude = [
     "**/*.obj",
     "**/*.a",
     "**/*.lib",
+    "**/*.pdb"
 ]
 
-sdist.include = ["culverin/*.pyi"]
+[tool.scikit-build.sdist]
+include = ["culverin/*.pyi", "extern/**", "src/**"]
+exclude = ["build/**", "dist/**"]
