@@ -23,11 +23,6 @@ typedef struct CharacterObject {
 
     // Non-atomic: Used by main thread only for rendering
     // AVOID FALSE SHARING.
-#if defined(_MSC_VER)
-    __declspec(align(64))
-#else
-    _Alignas(64)
-#endif
     JPH_Real prev_px,
         prev_py, prev_pz;
     float prev_rx, prev_ry, prev_rz, prev_rw;

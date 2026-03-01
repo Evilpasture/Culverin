@@ -212,7 +212,7 @@ typedef struct PhysicsWorldObject {
     JPH_ContactListener *contact_listener;
 
     // --- HOT SYNC BLOCK: Kept together for L1d Locality ---
-    alignas(MEMORY_ALIGNMENT_SIZE) JPH_Real *positions;
+    JPH_Real *positions;
     JPH_Real *prev_positions;
     float *rotations;
     float *prev_rotations;

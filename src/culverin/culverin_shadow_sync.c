@@ -5,7 +5,6 @@
 
 static_assert(sizeof(PosStride) == sizeof(JPH_Real) * 4);
 static_assert(sizeof(AuxStride) == sizeof(float) * 4);
-static_assert(alignof(PhysicsWorldObject) >= MEMORY_ALIGNMENT_SIZE);
 
 static constexpr int BATCH_SIZE = 32;
 
