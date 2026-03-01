@@ -28,10 +28,12 @@ jobs:
       - name: Build Wheels
         uses: pypa/cibuildwheel@v2.22.0
         env:
-          CIBW_SKIP: "*-musllinux_* *-win32"
+          # CRITICAL: Added *_i686 to skip 32-bit Linux
+          CIBW_SKIP: "*-musllinux_* *-win32 *_i686"
           CIBW_BUILD: "cp313-* cp314-*"
           CIBW_FREE_THREADED_SUPPORT: 1
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+          CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
           
           CIBW_ENVIRONMENT: >
             CC=clang 
@@ -42,11 +44,9 @@ jobs:
           
           CIBW_ENVIRONMENT_WINDOWS: "CC=clang-cl CXX=clang-cl CMAKE_GENERATOR=Ninja"
           
-          # Fix: Install ninja via pip to avoid repo issues, use epel for clang on yum systems
+          # Force Ninja via pip to avoid repo headaches
           CIBW_BEFORE_ALL_LINUX: >
-            (command -v dnf && dnf install -y clang llvm) || 
-            (yum install -y epel-release && yum install -y clang llvm) || 
-            (apk add --no-cache clang llvm-dev build-base) &&
+            (dnf install -y clang llvm || yum install -y clang llvm || apk add --no-cache clang llvm-dev) &&
             pip install ninja
 
           CIBW_TEST_REQUIRES: numpy psutil
@@ -73,14 +73,12 @@ jobs:
       - name: Build and Test with ASan/UBSan
         uses: pypa/cibuildwheel@v2.22.0
         env:
-          CIBW_SKIP: "*-musllinux_* *-win32"
+          CIBW_SKIP: "*-musllinux_* *-win32 *_i686"
           CIBW_BUILD: "cp313-manylinux_x86_64"
           CIBW_FREE_THREADED_SUPPORT: 1
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           
-          CIBW_BEFORE_ALL_LINUX: >
-            (dnf install -y clang llvm || (yum install -y epel-release && yum install -y clang llvm)) && 
-            pip install ninja
+          CIBW_BEFORE_ALL_LINUX: "dnf install -y clang llvm && pip install ninja"
           
           CIBW_ENVIRONMENT: >
             CC=clang 
@@ -91,10 +89,10 @@ jobs:
             CMAKE_ARGS="-DENABLE_SANITIZER=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo -DDOUBLE_PRECISION=ON -DCMAKE_C_STANDARD=23"
           
           CIBW_TEST_REQUIRES: numpy psutil
-          # Fix: Exhaustive search for the ASan library path
+          # THE NUCLEAR SEARCH: Find the asan .so anywhere in /usr/lib
           CIBW_TEST_COMMAND: >
-            ASAN_PATH=$(find /usr/lib/llvm* /usr/lib64/clang* -name "libclang_rt.asan-x86_64.so" | head -n 1) &&
-            echo "Detected ASan at: $ASAN_PATH" &&
+            ASAN_PATH=$(find /usr/lib* -name "libclang_rt.asan-x86_64.so" 2>/dev/null | head -n 1) &&
+            echo "Found ASan at: $ASAN_PATH" &&
             LD_PRELOAD=$ASAN_PATH python {project}/tests/test_core.py && 
             LD_PRELOAD=$ASAN_PATH python {project}/tests/benchmark.py --leak
 
