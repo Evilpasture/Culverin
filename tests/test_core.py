@@ -118,6 +118,22 @@ class TestQueries(CulverinTestCase):
         assert hit is not None
         self.assertEqual(hit[0], target)
         self.assertAlmostEqual(hit[3][0], -1.0, places=3) # Normal faces -X
+        
+    def test_overlap_sphere(self):
+        b1 = self.world.create_body(pos=(5, 0, 0), size=(1, 1, 1))
+        b2 = self.world.create_body(pos=(-5, 0, 0), size=(1, 1, 1))
+        self.world.step(0)
+        
+        hits = self.world.overlap_sphere(center=(4.5, 0, 0), radius=2.0)
+        self.assertIn(b1, hits)
+        self.assertNotIn(b2, hits)
+
+    def test_overlap_aabb(self):
+        b1 = self.world.create_body(pos=(0, 5, 0), size=(1, 1, 1))
+        self.world.step(0)
+        
+        hits = self.world.overlap_aabb(min=(-2, 3, -2), max=(2, 7, 2))
+        self.assertIn(b1, hits)
 
 
 class TestCollisionsAndEvents(CulverinTestCase):
@@ -177,6 +193,27 @@ class TestCharactersAndVehicles(CulverinTestCase):
         
         self.assertGreater(self.get_vel(chassis)[2], 1.0)
         self.assertEqual(car.wheel_count, 4)
+        
+    def test_tracked_vehicle(self):
+        # Floor for tracks
+        self.world.create_body(pos=(0, -1, 0), size=(100, 1, 100), motion=culverin.MOTION_STATIC, friction=1.0)
+        
+        chassis = self.world.create_body(pos=(0, 2, 0), size=(2, 1, 3), mass=5000.0)
+        wheels = [{"pos": (x, -1.0, z), "radius": 0.5} for x in [-1.5, 1.5] for z in [2.0, 0.0, -2.0]]
+        
+        # Track 0 (Left): indices 0, 2, 4. Track 1 (Right): indices 1, 3, 5
+        tracks = [
+            {"indices": [0, 2, 4], "driven_wheel": 0},
+            {"indices": [1, 3, 5], "driven_wheel": 1}
+        ]
+        
+        tank = self.world.create_tracked_vehicle(chassis=chassis, wheels=wheels, tracks=tracks)
+        self.world.step(0)
+        
+        tank.set_tank_input(left=1.0, right=1.0)
+        for _ in range(60): self.world.step(1/60)
+        
+        self.assertGreater(self.get_vel(chassis)[2], 0.5) # Tank should move forward
 
 
 class TestThreadSafety(CulverinTestCase):
@@ -260,6 +297,103 @@ class TestEdgeCases(CulverinTestCase):
         heavy = self.world.create_body(pos=(0, 0, 0), mass=1e6, motion=culverin.MOTION_DYNAMIC)
         light = self.world.create_body(pos=(0, 1, 0), mass=1e-3, motion=culverin.MOTION_DYNAMIC)
         self.world.step(0.1) # Just check it doesn't crash
+
+
+class TestComplexShapes(CulverinTestCase):
+    def test_compound_body(self):
+        parts = [
+            ((0, 0, 0), (0, 0, 0, 1), culverin.SHAPE_BOX, (1, 1, 1)),
+            ((0, 2, 0), (0, 0, 0, 1), culverin.SHAPE_SPHERE, (1,))
+        ]
+        cb = self.world.create_compound_body(pos=(0, 10, 0), rot=(0, 0, 0, 1), parts=parts)
+        self.world.step(0)
+        self.assertTrue(self.world.is_alive(cb))
+        
+    def test_convex_hull(self):
+        # Convert the list of points to a flat float32 bytes buffer
+        points = np.array([
+            [1, 1, 1], [-1, 1, 1], [1, -1, 1], [-1, -1, 1],
+            [0, 0, -2] # Pyramid tip
+        ], dtype=np.float32).tobytes()
+        
+        hull = self.world.create_convex_hull(pos=(0, 10, 0), rot=(0, 0, 0, 1), points=points, mass=5.0)
+        self.world.step(0)
+        self.assertTrue(self.world.is_alive(hull))
+
+
+class TestConstraints(CulverinTestCase):
+    def test_hinge_constraint(self):
+        b1 = self.world.create_body(pos=(0, 5, 0), motion=culverin.MOTION_STATIC)
+        b2 = self.world.create_body(pos=(2, 5, 0), motion=culverin.MOTION_DYNAMIC)
+        self.world.step(0)
+        
+        # Hinge params: (pivot_x, pivot_y, pivot_z), (axis_x, axis_y, axis_z), min_limit, max_limit
+        c_handle = self.world.create_constraint(
+            culverin.CONSTRAINT_HINGE, b1, b2, 
+            params=((0, 5, 0), (0, 0, 1), -math.pi, math.pi)
+        )
+        self.assertIsNotNone(c_handle)
+        
+        # Test destruction
+        self.world.destroy_constraint(c_handle)
+
+
+class TestRagdollsAndSkeletons(CulverinTestCase):
+    def test_skeleton_and_ragdoll_creation(self):
+        import culverin
+        skel = culverin.Skeleton()
+        root = skel.add_joint(name="pelvis", parent_index=-1)
+        spine = skel.add_joint(name="spine", parent_index=root)
+        skel.finalize()
+        
+        settings = self.world.create_ragdoll_settings(skeleton=skel)
+        settings.add_part(joint_index=root, shape_type=culverin.SHAPE_BOX, size=(0.3, 0.2, 0.2))
+        settings.add_part(joint_index=spine, shape_type=culverin.SHAPE_BOX, size=(0.3, 0.4, 0.2), parent_index=root)
+        
+        ragdoll = self.world.create_ragdoll(settings=settings, pos=(0, 10, 0))
+        self.assertIsNotNone(ragdoll)
+        
+        handles = ragdoll.get_body_handles()
+        self.assertEqual(len(handles), 2)
+        
+        self.world.step(0)
+        # Apply motor drive (Physical Animation)
+        matrices = np.eye(4, dtype=np.float32)
+        mats_buffer = np.stack([matrices, matrices]).tobytes() # 2 joints
+        ragdoll.drive_to_pose(root_pos=(0, 5, 0), root_rot=(0,0,0,1), matrices=mats_buffer)
+
+
+class TestStateManagement(CulverinTestCase):
+    def test_save_and_load_state(self):
+        b = self.world.create_body(pos=(0, 10, 0), motion=culverin.MOTION_DYNAMIC)
+        self.world.step(0)
+        
+        # Capture state at Y=10
+        state = self.world.save_state()
+        self.assertIsInstance(state, bytes)
+        self.assertGreater(len(state), 0)
+        
+        # Let it fall
+        for _ in range(10): self.world.step(1/60)
+        self.assertLess(self.get_pos(b)[1], 10.0)
+        
+        # Restore state
+        self.world.load_state(state=state)
+        # Load state requires shadow buffer sync for python to see it immediately
+        self.world.step(0) 
+        self.assertEqual(self.get_pos(b)[1], 10.0)
+
+
+class TestUserData(CulverinTestCase):
+    def test_user_data_rw(self):
+        h = self.world.create_body(pos=(0, 0, 0), user_data=42)
+        self.world.step(0)
+        self.assertEqual(self.world.get_user_data(h), 42)
+        
+        self.world.set_user_data(h, 999)
+        self.world.step(0)
+        self.assertEqual(self.world.get_user_data(h), 999)
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
