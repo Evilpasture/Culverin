@@ -5,7 +5,7 @@
 
 static_assert(sizeof(PosStride) == sizeof(JPH_Real) * 4);
 static_assert(sizeof(AuxStride) == sizeof(float) * 4);
-static_assert(alignof(PhysicsWorldObject) >= 64);
+static_assert(alignof(PhysicsWorldObject) >= MEMORY_ALIGNMENT_SIZE);
 
 static constexpr int BATCH_SIZE = 32;
 
@@ -135,7 +135,7 @@ void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
   const uint32_t *CULV_RESTRICT s2d = self->slot_to_dense;
 
   // Stack allocated worklist (fits in L1 cache comfortably)
-  alignas(64) SyncWorkItem worklist[BATCH_SIZE];
+  alignas(MEMORY_ALIGNMENT_SIZE) SyncWorkItem worklist[BATCH_SIZE];
   uint32_t work_ptr = 0;
 
   for (uint32_t i = 0; i < active_count; i++) {
