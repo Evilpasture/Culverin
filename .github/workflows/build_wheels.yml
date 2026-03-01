@@ -56,7 +56,7 @@ jobs:
           name: culverin-release-${{ matrix.os }}
           path: ./wheelhouse/*.whl
 
-# ===========================================================================
+  # ===========================================================================
   # JOB 2: SANITIZER VALIDATION (ASan/UBSan Check)
   # ===========================================================================
   check_sanitizers:
@@ -87,14 +87,22 @@ jobs:
             CMAKE_ARGS="-DENABLE_SANITIZER=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo -DDOUBLE_PRECISION=ON -DCMAKE_C_STANDARD=23"
           
           CIBW_TEST_REQUIRES: numpy psutil
+          # THE COMPILER-DRIVEN SOLUTION:
+          # 1. Ask clang for the filename of the ASan and UBSan runtimes.
+          # 2. Use readlink to ensure we have the absolute path.
+          # 3. LD_PRELOAD the absolute paths.
           CIBW_TEST_COMMAND: >
-            export RESOURCE_DIR=$(clang -print-resource-dir) &&
-            export ASAN_PATH=$(find $RESOURCE_DIR /usr/lib64/clang /usr/lib/clang -name "libclang_rt.asan-x86_64.so" 2>/dev/null | head -n 1) &&
-            if [ -z "$ASAN_PATH" ]; then export ASAN_PATH=$(find /usr/lib64 -name "libasan.so.*" | head -n 1); fi &&
-            if [ -z "$ASAN_PATH" ]; then echo "CRITICAL: ASan library not found!"; exit 1; fi &&
-            echo "Preloading ASan from: $ASAN_PATH" &&
-            LD_PRELOAD=$ASAN_PATH python {project}/tests/test_core.py && 
-            LD_PRELOAD=$ASAN_PATH python {project}/tests/benchmark.py --leak
+            ASAN_FILE=$(clang -print-file-name=libclang_rt.asan-x86_64.so) &&
+            UBSAN_FILE=$(clang -print-file-name=libclang_rt.ubsan_standalone-x86_64.so) &&
+            ASAN_RT=$(readlink -f $ASAN_FILE) &&
+            UBSAN_RT=$(readlink -f $UBSAN_FILE) &&
+            if [ ! -f "$ASAN_RT" ]; then ASAN_RT=$(find /usr -name "libclang_rt.asan-x86_64.so" | head -n 1); fi &&
+            if [ ! -f "$UBSAN_RT" ]; then UBSAN_RT=$(find /usr -name "libclang_rt.ubsan_standalone-x86_64.so" | head -n 1); fi &&
+            echo "Resolved ASan: $ASAN_RT" &&
+            echo "Resolved UBSan: $UBSAN_RT" &&
+            export LD_PRELOAD="$ASAN_RT $UBSAN_RT" &&
+            python {project}/tests/test_core.py && 
+            python {project}/tests/benchmark.py --leak
 
   # ===========================================================================
   # JOB 3: PUBLISH
