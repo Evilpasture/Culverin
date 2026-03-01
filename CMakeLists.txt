@@ -140,7 +140,7 @@ else()
     if(ENABLE_SANITIZER)
         # Choose ONE: -fsanitize=address OR -fsanitize=thread
         # You generally cannot run ASan and TSan at the same time.
-        set(SAN_FLAGS "-fsanitize=address -fno-omit-frame-pointer -fsanitize=undefined")
+        set(SAN_FLAGS "-fsanitize=address" "-fsanitize=undefined" "-fno-omit-frame-pointer" "-fno-sanitize=alignment")
         message(STATUS "Culverin: SANITIZERS ENABLED: ${SAN_FLAGS}")
     endif()
     
@@ -271,7 +271,7 @@ else() # Vanilla Clang / GNU-like
     # 2. SETUP SANITIZER FLAGS (If enabled)
     set(SAN_FLAGS "")
     if(ENABLE_SANITIZER)
-        set(SAN_FLAGS "-fsanitize=address" "-fsanitize=undefined" "-fno-omit-frame-pointer")
+        set(SAN_FLAGS "-fsanitize=address" "-fsanitize=undefined" "-fno-omit-frame-pointer" "-fno-sanitize=alignment")
     endif()
 
     # 3. APPLY TO TARGET
