@@ -28,7 +28,6 @@ jobs:
       - name: Build Wheels
         uses: pypa/cibuildwheel@v2.22.0
         env:
-          # isolage 64-bit and modern Python only
           CIBW_SKIP: "*-musllinux_* *-win32"
           CIBW_BUILD: "cp313-* cp314-*"
           CIBW_FREE_THREADED_SUPPORT: 1
@@ -43,10 +42,12 @@ jobs:
           
           CIBW_ENVIRONMENT_WINDOWS: "CC=clang-cl CXX=clang-cl CMAKE_GENERATOR=Ninja"
           
+          # Fix: Install ninja via pip to avoid repo issues, use epel for clang on yum systems
           CIBW_BEFORE_ALL_LINUX: >
-            (command -v dnf && dnf install -y clang llvm ninja-build) || 
-            (command -v yum && yum install -y clang llvm ninja-build) || 
-            (apk add --no-cache clang llvm-dev ninja build-base)
+            (command -v dnf && dnf install -y clang llvm) || 
+            (yum install -y epel-release && yum install -y clang llvm) || 
+            (apk add --no-cache clang llvm-dev build-base) &&
+            pip install ninja
 
           CIBW_TEST_REQUIRES: numpy psutil
           CIBW_TEST_COMMAND: "python {project}/tests/test_core.py"
@@ -77,7 +78,9 @@ jobs:
           CIBW_FREE_THREADED_SUPPORT: 1
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           
-          CIBW_BEFORE_ALL_LINUX: "dnf install -y clang llvm ninja-build || yum install -y clang llvm ninja-build"
+          CIBW_BEFORE_ALL_LINUX: >
+            (dnf install -y clang llvm || (yum install -y epel-release && yum install -y clang llvm)) && 
+            pip install ninja
           
           CIBW_ENVIRONMENT: >
             CC=clang 
@@ -88,18 +91,15 @@ jobs:
             CMAKE_ARGS="-DENABLE_SANITIZER=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo -DDOUBLE_PRECISION=ON -DCMAKE_C_STANDARD=23"
           
           CIBW_TEST_REQUIRES: numpy psutil
-          # THE ULTIMATE FIX: 
-          # 1. We use clang -print-resource-dir to find the compiler's private lib folder.
-          # 2. We use find to locate the exact absolute path of the asan .so.
-          # 3. We LD_PRELOAD that absolute path.
+          # Fix: Exhaustive search for the ASan library path
           CIBW_TEST_COMMAND: >
-            ASAN_PATH=$(find $(clang -print-resource-dir) -name "libclang_rt.asan-x86_64.so" | head -n 1) &&
-            echo "Preloading ASan from: $ASAN_PATH" &&
+            ASAN_PATH=$(find /usr/lib/llvm* /usr/lib64/clang* -name "libclang_rt.asan-x86_64.so" | head -n 1) &&
+            echo "Detected ASan at: $ASAN_PATH" &&
             LD_PRELOAD=$ASAN_PATH python {project}/tests/test_core.py && 
             LD_PRELOAD=$ASAN_PATH python {project}/tests/benchmark.py --leak
 
   # ===========================================================================
-  # JOB 3: PUBLISH (Wait for Job 1 AND Job 2)
+  # JOB 3: PUBLISH
   # ===========================================================================
   github-release:
     name: Create GitHub Release
@@ -110,7 +110,6 @@ jobs:
       contents: write
     steps:
       - name: Download Artifacts
-        # FIX: Changed from upload-artifact to download-artifact
         uses: actions/download-artifact@v4
         with:
           path: wheelhouse
@@ -136,7 +135,6 @@ jobs:
       id-token: write
     steps:
       - name: Download Artifacts
-        # FIX: Changed from upload-artifact to download-artifact
         uses: actions/download-artifact@v4
         with:
           path: dist
