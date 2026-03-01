@@ -212,7 +212,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
   }
 
   auto *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
-  auto *obj = (VehicleObject *)PyObject_New(VehicleObject, (PyTypeObject *)st->VehicleType);
+  auto *obj = (VehicleObject *)PyObject_GC_New(VehicleObject, (PyTypeObject *)st->VehicleType);
   if (!obj) {
     SHADOW_LOCK(&self->shadow_lock);
     cleanup_vehicle_resources(&r, num_wheels, self);
@@ -222,7 +222,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
 
   obj->vehicle = r.j_veh;
   obj->tester = (JPH_VehicleCollisionTester *)r.tester;
-  obj->world = self;
+  obj->world = (PhysicsWorldObject *)Py_NewRef(self);
   obj->num_wheels = num_wheels;
   obj->wheel_settings = r.w_settings;
   obj->controller_settings = (JPH_VehicleControllerSettings *)t_ctrl;
@@ -231,6 +231,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
   obj->torque_curve = NULL;
 
   Py_INCREF(self);
+  PyObject_GC_Track((PyObject *)obj);
   return (PyObject *)obj;
 
 jolt_fail:
