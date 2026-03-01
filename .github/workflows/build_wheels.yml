@@ -55,6 +55,9 @@ jobs:
           CIBW_ENVIRONMENT: >
             CC=clang 
             CXX=clang++ 
+            CMAKE_ARGS="-DENABLE_SANITIZER=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo"
+            ASAN_OPTIONS="detect_leaks=0:detect_odr_violation=0"
+            LSAN_OPTIONS="exitcode=0"
             CMAKE_GENERATOR=Ninja
             CMAKE_ARGS="-DDOUBLE_PRECISION=ON -DJPH_DOUBLE_PRECISION=ON -DCMAKE_C_STANDARD=23"
             MACOSX_DEPLOYMENT_TARGET=13.0
