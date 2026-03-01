@@ -71,55 +71,43 @@ jobs:
           name: culverin-wheels-${{ matrix.os }}
           path: ./wheelhouse/*.whl
 
-  release:
-    name: Release Wheels
+  github-release:
+    name: Create GitHub Release
     needs: [build_wheels]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Download all artifacts
+      - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
           path: wheelhouse
           pattern: culverin-wheels-*
           merge-multiple: true
-
-      - name: Create GitHub Release
+      - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: wheelhouse/*.whl
           body: |
             Culverin Physics Release ${{ github.ref_name }}
-            
-            Verified via Unit Test Suite and Memory Leak Diagnostics.
-            
-            Targets:
-            - Python 3.13t (Free-Threaded)
-            - SIMD: AVX2 (x86_64), NEON (ARM64)
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            Targets: Python 3.13t (Free-Threaded)
+          prerelease: true # Since it's a beta
 
   pypi-publish:
     name: Upload to PyPI
     needs: [build_wheels]
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    environment:
-      name: pypi
-      url: https://pypi.org/p/Culverin
+    environment: pypi
     permissions:
-      id-token: write  # MANDATORY for Trusted Publishing
+      id-token: write
     steps:
-      - name: Download all artifacts
+      - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist
           pattern: culverin-wheels-*
           merge-multiple: true
-
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: dist/
