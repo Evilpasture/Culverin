@@ -29,23 +29,32 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: Install Build Dependencies
-        run: uv pip install --system scikit-build-core ninja numpy psutil
+        # Added --break-system-packages to allow uv to work on managed runner environments
+        run: uv pip install --system --break-system-packages scikit-build-core ninja numpy psutil
 
       - name: Build Wheels
         uses: pypa/cibuildwheel@v2.22.0
         env:
-          CIBW_SKIP: "*-musllinux_*"
+          # SKIP 32-bit Windows (win32) and Musl (Alpine)
+          CIBW_SKIP: "*-musllinux_* *-win32"
           CIBW_BUILD: "cp313-* cp314-*"
           CIBW_FREE_THREADED_SUPPORT: 1
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+          
           CIBW_ENVIRONMENT: >
             CC=clang 
             CXX=clang++ 
             CMAKE_GENERATOR=Ninja
             MACOSX_DEPLOYMENT_TARGET=13.0
             CMAKE_ARGS="-DENABLE_SANITIZER=OFF -DCMAKE_BUILD_TYPE=Release -DDOUBLE_PRECISION=ON -DJPH_DOUBLE_PRECISION=ON -DCMAKE_C_STANDARD=23"
+          
           CIBW_ENVIRONMENT_WINDOWS: "CC=clang-cl CXX=clang-cl CMAKE_GENERATOR=Ninja"
-          CIBW_BEFORE_ALL_LINUX: "dnf install -y clang llvm ninja-build"
-          # No tests here to keep the release pipeline fast and clean
+          
+          # Use a more robust installer check for Linux containers
+          CIBW_BEFORE_ALL_LINUX: >
+            (command -v dnf && dnf install -y clang llvm ninja-build) || 
+            (command -v yum && yum install -y clang llvm ninja-build) || 
+            (apk add --no-cache clang llvm-dev ninja build-base)
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
@@ -68,26 +77,28 @@ jobs:
       - name: Build and Test with ASan/UBSan
         uses: pypa/cibuildwheel@v2.22.0
         env:
-          CIBW_SKIP: "*-musllinux_*"
+          CIBW_SKIP: "*-musllinux_* *-win32"
           CIBW_BUILD: "cp313-manylinux_x86_64"
           CIBW_FREE_THREADED_SUPPORT: 1
-          CIBW_BEFORE_ALL_LINUX: "dnf install -y clang llvm ninja-build"
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+          
+          CIBW_BEFORE_ALL_LINUX: "dnf install -y clang llvm ninja-build || yum install -y clang llvm ninja-build"
+          
           CIBW_ENVIRONMENT: >
             CC=clang 
             CXX=clang++ 
             CMAKE_GENERATOR=Ninja
-            ENABLE_SANITIZER=ON
             ASAN_OPTIONS="detect_leaks=0:detect_odr_violation=0:halt_on_error=1"
             UBSAN_OPTIONS="print_stacktrace=1:halt_on_error=1"
             CMAKE_ARGS="-DENABLE_SANITIZER=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo -DDOUBLE_PRECISION=ON -DCMAKE_C_STANDARD=23"
+          
           CIBW_TEST_REQUIRES: numpy psutil
           CIBW_TEST_COMMAND: >
             python {project}/tests/test_core.py && 
             python {project}/tests/benchmark.py --leak
-      # We do NOT upload wheels from this job. They are for validation only.
 
   # ===========================================================================
-  # JOB 3: PUBLISH (Only if RELEASE and SANITIZER jobs pass)
+  # JOB 3: PUBLISH
   # ===========================================================================
   github-release:
     name: Create GitHub Release
