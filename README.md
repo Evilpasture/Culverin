@@ -1,5 +1,8 @@
 # Culverin Physics
 
+[![PyPI - Version](https://img.shields.io/pypi/v/culverin)](https://pypi.org/project/culverin/)
+[![Python Version](https://img.shields.io/pypi/pyversions/culverin)](https://pypi.org/project/culverin/)
+
 Culverin is a Python wrapper for the **Jolt Physics** engine. It is designed for 3D games and simulations that require high performance and multi-threaded execution.
 
 ### Key Concepts
