@@ -115,11 +115,11 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
     float min_rpm       = TRACKED_ENGINE_MIN_RPM_DEFAULT;
 
     void *targets[CreateTracked_COUNT];
-    targets[IDX_CT_CHASSIS] = &chassis_h;
-    targets[IDX_CT_WHEELS]  = &py_wheels;
-    targets[IDX_CT_TRACKS]  = &py_tracks;
-    targets[IDX_CT_TORQUE]  = &max_torque;
-    targets[IDX_CT_RPM]     = &max_rpm;
+    targets[IDX_CT_CHASSIS] = (void *)&chassis_h;
+    targets[IDX_CT_WHEELS]  = (void *)&py_wheels;
+    targets[IDX_CT_TRACKS]  = (void *)&py_tracks;
+    targets[IDX_CT_TORQUE]  = (void *)&max_torque;
+    targets[IDX_CT_RPM]     = (void *)&max_rpm;
 
     if (!FastParse_Unified(args, nargs, kwnames, &CreateTrackedParser, targets)) {
         return NULL;
@@ -151,11 +151,14 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
     r.w_settings = (JPH_WheelSettings **)CULV_RAW_CALLOC(num_wheels, sizeof(JPH_WheelSettings *));
     for (uint32_t i = 0; i < num_wheels; i++) {
         r.w_settings[i] = create_track_wheel(PyList_GetItem(py_wheels, i));
-        if (!r.w_settings[i])
+        if (!r.w_settings[i]) {
             goto python_fail;
+        }
     }
 
-    parse_tracks_to_c(py_tracks, tracks, &num_tracks);
+    if (!parse_tracks_to_c(py_tracks, tracks, &num_tracks)) {
+        goto python_fail;
+    }
 
     // --- 4. JOLT COMMIT (No GIL) ---
     bool jolt_locked     = false;
@@ -169,8 +172,9 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
     JPH_BodyLockWrite lock                  = {0};
     JPH_BodyLockInterface_LockWrite(lock_iface, chassis_bid, &lock);
 
-    if (UNLIKELY(!lock.body))
+    if (UNLIKELY(!lock.body)) {
         goto jolt_fail;
+    }
 
     TrackedEngineConfig eng_cfg = {.torque = max_torque, .max_rpm = max_rpm, .min_rpm = min_rpm};
     JPH_VehicleTransmissionSettings *v_trans = NULL;
@@ -195,13 +199,15 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
     v_set.controller  = (JPH_VehicleControllerSettings *)t_ctrl;
 
     r.j_veh = JPH_VehicleConstraint_Create(lock.body, &v_set);
-    if (!r.j_veh)
+    if (!r.j_veh) {
         goto jolt_fail;
+    }
 
     r.tester = JPH_VehicleCollisionTesterRay_Create(TRACKED_LAYER_DRIVABLE, &(JPH_Vec3){0, 1.0f, 0},
                                                     TRACKED_COLLISION_TESTER_SCALE);
-    if (!r.tester)
+    if (!r.tester) {
         goto jolt_fail;
+    }
 
     JPH_VehicleConstraint_SetVehicleCollisionTester(r.j_veh,
                                                     (JPH_VehicleCollisionTester *)r.tester);
@@ -244,16 +250,19 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
     return (PyObject *)obj;
 
 jolt_fail:
-    if (lock.body)
+    if (lock.body) {
         JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
-    if (jolt_locked)
+    }
+    if (jolt_locked) {
         NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+    }
     Py_BLOCK_THREADS;
 
 python_fail:
     for (int t = 0; t < num_tracks; t++) {
-        if (tracks[t].indices)
+        if (tracks[t].indices) {
             CULV_RAW_FREE(tracks[t].indices);
+        }
     }
 
     SHADOW_LOCK(&self->shadow_lock);
