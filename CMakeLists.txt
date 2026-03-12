@@ -150,7 +150,15 @@ else()
 
     set(FLAGS_STRICT "-Wall" "-Wextra" "-Wno-sign-conversion" "-Wno-shorten-64-to-32" "-Wno-double-promotion")
 
-    list(APPEND CULVERIN_COMPILE_FLAGS ${FLAGS_DEBUG} ${FLAGS_PERF} ${FLAGS_STRICT} "-std=c2x" "-fcolor-diagnostics" "-fdiagnostics-color=always")
+    # Base flags
+    list(APPEND CULVERIN_COMPILE_FLAGS ${FLAGS_DEBUG} ${FLAGS_PERF} ${FLAGS_STRICT} "-std=c2x")
+
+    # Compiler-specific color flags
+    if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+        list(APPEND CULVERIN_COMPILE_FLAGS "-fcolor-diagnostics")
+    else()
+        list(APPEND CULVERIN_COMPILE_FLAGS "-fdiagnostics-color=always")
+    endif()
 
     if(ENABLE_SANITIZER)
         list(APPEND CULVERIN_COMPILE_FLAGS "-fsanitize=address" "-fsanitize=undefined" "-fno-sanitize=alignment")
