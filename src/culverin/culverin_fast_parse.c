@@ -3,7 +3,6 @@
 #include "culverin_compiler_specifics.h"
 #include "culverin_default_config.h"
 
-
 /**
  * fp_report_missing
  * Cold path: generates the Python TypeError for missing required arguments.
@@ -100,7 +99,7 @@ void fp_deinit(FastParser *fp) {
  * Updated to use O(1) hashing for keywords.
  */
 CULV_NODISCARD
-bool fp_parse_legacy(PyObject *args, PyObject *kwargs, CULV_MAYBE_UNUSED PyObject *unused, 
+bool fp_parse_legacy(PyObject *args, PyObject *kwargs, CULV_MAYBE_UNUSED PyObject *unused,
                      const FastParser *fp, void **targets) {
     uint64_t provided_mask   = 0;
     const size_t count       = fp->count;

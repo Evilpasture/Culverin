@@ -23,8 +23,7 @@ typedef struct CharacterObject {
 
     // Non-atomic: Used by main thread only for rendering
     // AVOID FALSE SHARING.
-    JPH_Real prev_px,
-        prev_py, prev_pz;
+    JPH_Real prev_px, prev_py, prev_pz;
     float prev_rx, prev_ry, prev_rz, prev_rw;
 } CharacterObject;
 
@@ -53,8 +52,8 @@ PyCFunction_DeclareMethodFromModule Character_set_rotation(CharacterObject *self
                                                            PyObject *const *args, Py_ssize_t nargs,
                                                            PyObject *kwnames);
 
-PyCFunction_DeclareMethodFromModule Character_is_grounded(CharacterObject *self, 
-                                                         PyObject *Py_UNUSED(ignored));
+PyCFunction_DeclareMethodFromModule Character_is_grounded(CharacterObject *self,
+                                                          PyObject *Py_UNUSED(ignored));
 
 PyCFunction_DeclareMethodFromModule Character_set_strength(CharacterObject *self,
                                                            PyObject *const *args, Py_ssize_t nargs,

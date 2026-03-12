@@ -12,17 +12,17 @@
 // ASAN COMPATIBILITY ALLOCATORS
 // =========================================================================
 #ifdef ENABLE_SANITIZER
-    // Bypass mimalloc entirely so ASan can catch buffer overflows
-    #define CULV_RAW_MALLOC(sz) malloc(sz)
-    #define CULV_RAW_CALLOC(n, sz) calloc(n, sz)
-    #define CULV_RAW_REALLOC(ptr, sz) realloc(ptr, sz)
-    #define CULV_RAW_FREE(ptr) free(ptr)
+// Bypass mimalloc entirely so ASan can catch buffer overflows
+#    define CULV_RAW_MALLOC(sz) malloc(sz)
+#    define CULV_RAW_CALLOC(n, sz) calloc(n, sz)
+#    define CULV_RAW_REALLOC(ptr, sz) realloc(ptr, sz)
+#    define CULV_RAW_FREE(ptr) free(ptr)
 #else
-    // Use Python's ultra-fast mimalloc for Release builds
-    #define CULV_RAW_MALLOC(sz) PyMem_RawMalloc(sz)
-    #define CULV_RAW_CALLOC(n, sz) PyMem_RawCalloc(n, sz)
-    #define CULV_RAW_REALLOC(ptr, sz) PyMem_RawRealloc(ptr, sz)
-    #define CULV_RAW_FREE(ptr) PyMem_RawFree(ptr)
+// Use Python's ultra-fast mimalloc for Release builds
+#    define CULV_RAW_MALLOC(sz) PyMem_RawMalloc(sz)
+#    define CULV_RAW_CALLOC(n, sz) PyMem_RawCalloc(n, sz)
+#    define CULV_RAW_REALLOC(ptr, sz) PyMem_RawRealloc(ptr, sz)
+#    define CULV_RAW_FREE(ptr) PyMem_RawFree(ptr)
 #endif
 // =========================================================================
 
@@ -97,7 +97,8 @@ typedef struct ContactEvent {
     uint32_t _pad;
 } ContactEvent;
 
-_Static_assert(sizeof(ContactEvent) == MEMORY_ALIGNMENT_SIZE, "ContactEvent must be 64 bytes for performance");
+_Static_assert(sizeof(ContactEvent) == MEMORY_ALIGNMENT_SIZE,
+               "ContactEvent must be 64 bytes for performance");
 
 CULV_MAYBE_UNUSED static constexpr int CONTACT_MAX_CAPACITY = 64 * 8 << 5;
 
@@ -194,7 +195,6 @@ typedef struct {
     uint32_t *gens, *s2d, *d2s, *free, *cats, *masks, *mats;
     uint8_t *stat;
 } NewBuffers;
-
 
 // --- The Object Struct ---
 typedef struct PhysicsWorldObject {
@@ -294,7 +294,6 @@ typedef struct PhysicsWorldObject {
     DebugBuffer debug_triangles;
 } PhysicsWorldObject;
 
-
 typedef enum {
     CULV_SHAPE_BOX         = 0,
     CULV_SHAPE_SPHERE      = 1,
@@ -352,19 +351,16 @@ static constexpr uint32_t IEEE754_FLOAT_NONFINITE_MASK = 0x7F800000U;
 CULV_MAYBE_UNUSED
 static constexpr uint64_t IEEE754_DOUBLE_NONFINITE_MASK = 0x7FF0000000000000ULL;
 
-
 // --- Bit-Level Numerical Guards (Optimizer-Proof) ---
-CULV_MAYBE_UNUSED CULV_NODISCARD
-static inline bool culv_is_finite_f(float f) {
+CULV_MAYBE_UNUSED CULV_NODISCARD static inline bool culv_is_finite_f(float f) {
     uint32_t i;
     // Use volatile to prevent the compiler from "seeing through" the cast
     memcpy(&i, &f, sizeof(uint32_t));
-    volatile uint32_t vi = i; 
+    volatile uint32_t vi = i;
     return (vi & IEEE754_FLOAT_NONFINITE_MASK) != IEEE754_FLOAT_NONFINITE_MASK;
 }
 
-CULV_MAYBE_UNUSED CULV_NODISCARD
-static inline bool culv_is_finite_d(double d) {
+CULV_MAYBE_UNUSED CULV_NODISCARD static inline bool culv_is_finite_d(double d) {
     uint64_t i;
     memcpy(&i, &d, sizeof(uint64_t));
     volatile uint64_t vi = i;
@@ -372,10 +368,8 @@ static inline bool culv_is_finite_d(double d) {
 }
 
 // C-Type Generic Dispatcher
-#define CULV_IS_FINITE(val) _Generic((val), \
-    float:  culv_is_finite_f(val),          \
-    double: culv_is_finite_d(val)           \
-)
+#define CULV_IS_FINITE(val)                                                                        \
+    _Generic((val), float: culv_is_finite_f(val), double: culv_is_finite_d(val))
 
 #define VALIDATE_FINITE_FLOAT(val, name)                                                           \
     if (UNLIKELY(!CULV_IS_FINITE(val))) {                                                          \
@@ -387,27 +381,29 @@ static inline bool culv_is_finite_d(double d) {
     if (UNLIKELY(!CULV_IS_FINITE(x) || !CULV_IS_FINITE(y) || !CULV_IS_FINITE(z))) {                \
         char buf[256];                                                                             \
         PyOS_snprintf(buf, sizeof(buf), "Numerical Error: %s must be finite (got [%f, %f, %f])",   \
-                     msg, (double)(x), (double)(y), (double)(z));                                  \
+                      msg, (double)(x), (double)(y), (double)(z));                                 \
         PyErr_SetString(PyExc_ValueError, buf);                                                    \
         return NULL;                                                                               \
     }
 
 #define VALIDATE_FINITE_QUAT(x, y, z, w, msg)                                                      \
-    if (UNLIKELY(!CULV_IS_FINITE(x) || !CULV_IS_FINITE(y) ||                                       \
-                 !CULV_IS_FINITE(z) || !CULV_IS_FINITE(w))) {                                      \
+    if (UNLIKELY(!CULV_IS_FINITE(x) || !CULV_IS_FINITE(y) || !CULV_IS_FINITE(z) ||                 \
+                 !CULV_IS_FINITE(w))) {                                                            \
         char buf[256];                                                                             \
-        PyOS_snprintf(buf, sizeof(buf), "Numerical Error: %s must be finite (got [%f, %f, %f, %f])", \
-                     msg, (double)(x), (double)(y), (double)(z), (double)(w));                     \
+        PyOS_snprintf(buf, sizeof(buf),                                                            \
+                      "Numerical Error: %s must be finite (got [%f, %f, %f, %f])", msg,            \
+                      (double)(x), (double)(y), (double)(z), (double)(w));                         \
         PyErr_SetString(PyExc_ValueError, buf);                                                    \
         return NULL;                                                                               \
     }
 
 #define VALIDATE_FINITE_VEC4(x, y, z, w, msg)                                                      \
-    if (UNLIKELY(!CULV_IS_FINITE(x) || !CULV_IS_FINITE(y) ||                                       \
-                 !CULV_IS_FINITE(z) || !CULV_IS_FINITE(w))) {                                      \
+    if (UNLIKELY(!CULV_IS_FINITE(x) || !CULV_IS_FINITE(y) || !CULV_IS_FINITE(z) ||                 \
+                 !CULV_IS_FINITE(w))) {                                                            \
         char buf[256];                                                                             \
-        PyOS_snprintf(buf, sizeof(buf), "Numerical Error: %s components must be finite (got [%f, %f, %f, %f])", \
-                     msg, (double)(x), (double)(y), (double)(z), (double)(w));                             \
+        PyOS_snprintf(buf, sizeof(buf),                                                            \
+                      "Numerical Error: %s components must be finite (got [%f, %f, %f, %f])", msg, \
+                      (double)(x), (double)(y), (double)(z), (double)(w));                         \
         PyErr_SetString(PyExc_ValueError, buf);                                                    \
         return NULL;                                                                               \
     }

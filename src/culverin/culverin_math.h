@@ -8,21 +8,21 @@
 // Extremely fast: bypasses hardware division and IEEE-754 sqrt overhead.
 static inline float culverin_fast_rsqrt(float number) {
     constexpr float threehalfs = 1.5f;
-    float x2 = number * 0.5f;
-    float y = number;
-    
+    float x2                   = number * 0.5f;
+    float y                    = number;
+
     uint32_t i;
     // memcpy is optimized away by modern compilers into a single register move
-    memcpy(&i, &y, sizeof(float)); 
+    memcpy(&i, &y, sizeof(float));
     i = 0x5f3759df - (i >> 1);
     memcpy(&y, &i, sizeof(float));
-    
+
     // Iteration 1: Takes error from ~3.4% to ~0.17%
-    y = y * (threehalfs - (x2 * y * y)); 
+    y = y * (threehalfs - (x2 * y * y));
 
     // Iteration 2: Takes error from ~0.17% to ~0.00001% (basically float-perfect)
     y = y * (threehalfs - (x2 * y * y));
-    
+
     return y;
 }
 

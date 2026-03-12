@@ -156,8 +156,7 @@ void culverin_init_all_parsers(void) {
     INIT_PARSER(RagdollDrive, RagdollDrive, SCHEMA_RAGDOLL_DRIVE);
 }
 
-#define DEINIT_PARSER(ParserName, GroupName) \
-    fp_deinit(&ParserName##Parser);
+#define DEINIT_PARSER(ParserName, GroupName) fp_deinit(&ParserName##Parser);
 
 void culverin_free_all_parsers(void) {
     DEINIT_PARSER(Body, Body)
@@ -215,7 +214,7 @@ void culverin_free_all_parsers(void) {
     DEINIT_PARSER(CreateRagdoll, CreateRagdoll)
     DEINIT_PARSER(RagdollSettings, RagdollSettings)
     DEINIT_PARSER(RagdollAddPart, RagdollAddPart)
-    DEINIT_PARSER(AddJoint, AddJoint)   
+    DEINIT_PARSER(AddJoint, AddJoint)
     DEINIT_PARSER(GetJointIdx, GetJointIdx)
     DEINIT_PARSER(RagdollDrive, RagdollDrive)
 }

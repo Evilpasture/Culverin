@@ -140,7 +140,7 @@ static void apply_character_impulse(CharacterObject *self, JPH_BodyID bodyID2,
     JPH_BodyInterface *bi = self->world->body_interface;
 
     // 2. Ignore Sensors & Non-Dynamic Bodies
-    if (JPH_BodyInterface_IsSensor(bi, bodyID2) ||
+    if ((int)JPH_BodyInterface_IsSensor(bi, bodyID2) ||
         JPH_BodyInterface_GetMotionType(bi, bodyID2) != JPH_MotionType_Dynamic) {
         return;
     }
@@ -381,7 +381,7 @@ PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObje
     JPH_CharacterVirtual_GetRotation(self->character, current_r);
 
     // Update the World Shadow Buffers so the GPU sees the new position next frame
-    shadow_pos[dense] = (PosStride){current_p->x, current_p->y, current_p->z};
+    shadow_pos[dense] = (PosStride){current_p->x, current_p->y, current_p->z, 0.0};
     shadow_rot[dense] = (AuxStride){current_r->x, current_r->y, current_r->z, current_r->w};
 
     SHADOW_UNLOCK(&self->world->shadow_lock);
@@ -816,14 +816,16 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_character(PhysicsWorldOb
     CharacterParams char_params = {height, radius, slope};
 
     JPH_CharacterVirtual *j_char = alloc_j_char(self, pos_vec, char_params);
-    if (!j_char)
+    if (!j_char) {
         goto fail_jolt;
+    }
 
     auto *obj = (CharacterObject *)PyObject_GC_New(
         CharacterObject,
         (PyTypeObject *)get_culverin_state(PyType_GetModule(Py_TYPE(self)))->CharacterType);
-    if (!obj)
+    if (!obj) {
         goto fail_py;
+    }
 
     // ... (rest of initialization remains the same) ...
     obj->world     = (PhysicsWorldObject *)Py_NewRef(self);

@@ -195,8 +195,8 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_aabb(PhysicsWorldObject
 
     // 2. FAST PARSE (Zero-Allocation)
     void *targets[OverlapAABB_COUNT];
-    targets[IDX_OA_MIN] = &o_min;
-    targets[IDX_OA_MAX] = &o_max;
+    targets[IDX_OA_MIN] = (void *)&o_min;
+    targets[IDX_OA_MAX] = (void *)&o_max;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &OverlapAABBParser, targets)) {
@@ -204,11 +204,18 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_aabb(PhysicsWorldObject
     }
 
     // 3. VECTOR EXTRACTION (Outside Lock)
-    JPH_Real mix, miy, miz, max, may, maz;
-    if (!parse_vec3_direct(o_min, &mix, &miy, &miz))
+    JPH_Real mix;
+    JPH_Real miy;
+    JPH_Real miz;
+    JPH_Real max;
+    JPH_Real may;
+    JPH_Real maz;
+    if (!parse_vec3_direct(o_min, &mix, &miy, &miz)) {
         return NULL;
-    if (!parse_vec3_direct(o_max, &max, &may, &maz))
+}
+    if (!parse_vec3_direct(o_max, &max, &may, &maz)) {
         return NULL;
+}
 
     PyObject *ret_val = NULL;
     uint64_t small_hit_stack[STACK_ALLOCATE_HITS]; // Pre-allocate 64 hits on the stack
@@ -264,7 +271,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_aabb(PhysicsWorldObject
         uint64_t h = ctx.hits[i];
         uint32_t slot;
         // Verify handle remains valid in our shadow registry
-        if (unpack_handle(self, h, &slot) && self->slot_states[slot] == SLOT_ALIVE) {
+        if ((int)unpack_handle(self, h, &slot) && self->slot_states[slot] == SLOT_ALIVE) {
             PyObject *py_h = PyLong_FromUnsignedLongLong(h);
             if (py_h) {
                 PyList_Append(ret_val, py_h);
@@ -276,10 +283,12 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_aabb(PhysicsWorldObject
 
 query_cleanup:
     // Filter cleanup
-    if (bp_filter)
+    if (bp_filter) {
         JPH_BroadPhaseLayerFilter_Destroy(bp_filter);
-    if (obj_filter)
+}
+    if (obj_filter) {
         JPH_ObjectLayerFilter_Destroy(obj_filter);
+}
 
     // ctx.hits was allocated using CULV_RAW_REALLOC, which is GIL-safe
     if (ctx.hits && !ctx.is_on_stack) {
@@ -310,13 +319,19 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast(PhysicsWorldObject *sel
     }
 
     // 3. VECTOR EXTRACTION (Outside Lock)
-    JPH_Real sx, sy, sz;
-    float dx, dy, dz;
+    JPH_Real sx;
+    JPH_Real sy;
+    JPH_Real sz;
+    float dx;
+    float dy;
+    float dz;
 
-    if (!parse_vec3_direct(o_start, &sx, &sy, &sz))
+    if (!parse_vec3_direct(o_start, &sx, &sy, &sz)) {
         return NULL;
-    if (!parse_vec3_direct(o_dir, &dx, &dy, &dz))
+}
+    if (!parse_vec3_direct(o_dir, &dx, &dy, &dz)) {
         return NULL;
+}
 
     float mag_sq = dx * dx + dy * dy + dz * dz;
     if (UNLIKELY(mag_sq < 1e-12f)) {
@@ -349,7 +364,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast(PhysicsWorldObject *sel
     JPH_BodyID ignore_bid = JPH_INVALID_BODY_ID;
     if (ignore_h != 0) {
         uint32_t ignore_slot;
-        if (unpack_handle(self, (BodyHandle)ignore_h, &ignore_slot) &&
+        if ((int)unpack_handle(self, (BodyHandle)ignore_h, &ignore_slot) &&
             self->slot_states[ignore_slot] == SLOT_ALIVE) {
             ignore_bid = self->body_ids[self->slot_to_dense[ignore_slot]];
         }
@@ -378,7 +393,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast(PhysicsWorldObject *sel
     has_hit = JPH_NarrowPhaseQuery_CastRay(query, origin, direction, hit, bp_f, obj_f, bf);
 
     // Filter the 'ignore_bid' manually if hit
-    if (has_hit && hit->bodyID == ignore_bid) {
+    if ((int)has_hit && hit->bodyID == ignore_bid) {
         has_hit = false; // Simple ignore logic
     }
 
@@ -451,8 +466,8 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast_batch(PhysicsWorldObjec
     }
 
     // 3. BUFFER EXTRACTION & VALIDATION (Outside Lock)
-    Py_buffer b_starts = {0};
-    Py_buffer b_dirs   = {0};
+    Py_buffer b_starts = {};
+    Py_buffer b_dirs   = {};
 
     if (UNLIKELY(PyObject_GetBuffer(o_starts, &b_starts, PyBUF_SIMPLE) < 0)) {
         return NULL;

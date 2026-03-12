@@ -85,8 +85,10 @@ bool ensure_command_capacity(PhysicsWorldObject *self) {
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *queue, size_t count) {
-    if (count == 0) return;
-    
+    if (count == 0) {
+        return;
+    }
+
     JPH_BodyInterface *bi = self->body_interface;
 
     for (size_t i = 0; i < count; i++) {
@@ -105,7 +107,9 @@ void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *queue, si
             bid   = self->body_ids[dense];
         }
 
-        if (type != CMD_CREATE_BODY && bid == JPH_INVALID_BODY_ID) continue;
+        if (type != CMD_CREATE_BODY && bid == JPH_INVALID_BODY_ID) {
+            continue;
+        }
 
         switch (type) {
         case CMD_CREATE_BODY: {
@@ -117,7 +121,7 @@ void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *queue, si
                 world_remove_body_slot(self, slot);
             } else {
                 self->body_ids[self->slot_to_dense[slot]] = new_bid;
-                uint32_t j_idx = JPH_ID_TO_INDEX(new_bid);
+                uint32_t j_idx                            = JPH_ID_TO_INDEX(new_bid);
                 if (self->id_to_handle_map && j_idx < self->max_jolt_bodies) {
                     self->id_to_handle_map[j_idx] = make_handle(slot, self->generations[slot]);
                 }
@@ -137,27 +141,38 @@ void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *queue, si
             // OPTIMIZATION: Use the non-activating version if the body is already active
             // or just use the raw interface to avoid Jolt's internal lock overhead
             JPH_STACK_ALLOC(JPH_RVec3, p);
-            p->x = cmd->pos.x; p->y = cmd->pos.y; p->z = cmd->pos.z;
-            
+            p->x = cmd->pos.x;
+            p->y = cmd->pos.y;
+            p->z = cmd->pos.z;
+
             // Activate ONLY if the body is currently asleep.
             // This prevents "Lock Thrashing" in Jolt's island manager.
             bool active = JPH_BodyInterface_IsActive(bi, bid);
-            JPH_BodyInterface_SetPosition(bi, bid, p, active ? JPH_Activation_DontActivate : JPH_Activation_Activate);
+            JPH_BodyInterface_SetPosition(
+                bi, bid, p, active ? JPH_Activation_DontActivate : JPH_Activation_Activate);
             break;
         }
 
         case CMD_SET_ROT: {
             JPH_STACK_ALLOC(JPH_Quat, q);
-            q->x = cmd->quat.x; q->y = cmd->quat.y; q->z = cmd->quat.z; q->w = cmd->quat.w;
+            q->x = cmd->quat.x;
+            q->y = cmd->quat.y;
+            q->z = cmd->quat.z;
+            q->w = cmd->quat.w;
             JPH_BodyInterface_SetRotation(bi, bid, q, JPH_Activation_Activate);
             break;
         }
 
         case CMD_SET_TRNS: {
             JPH_STACK_ALLOC(JPH_RVec3, p);
-            p->x = cmd->transform.px; p->y = cmd->transform.py; p->z = cmd->transform.pz;
+            p->x = cmd->transform.px;
+            p->y = cmd->transform.py;
+            p->z = cmd->transform.pz;
             JPH_STACK_ALLOC(JPH_Quat, q);
-            q->x = cmd->transform.rx; q->y = cmd->transform.ry; q->z = cmd->transform.rz; q->w = cmd->transform.rw;
+            q->x = cmd->transform.rx;
+            q->y = cmd->transform.ry;
+            q->z = cmd->transform.rz;
+            q->w = cmd->transform.rw;
             JPH_BodyInterface_SetPositionAndRotation(bi, bid, p, q, JPH_Activation_Activate);
             break;
         }
@@ -175,7 +190,8 @@ void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *queue, si
         }
 
         case CMD_SET_MOTION: {
-            JPH_BodyInterface_SetMotionType(bi, bid, (JPH_MotionType)cmd->motion.motion_type, JPH_Activation_Activate);
+            JPH_BodyInterface_SetMotionType(bi, bid, (JPH_MotionType)cmd->motion.motion_type,
+                                            JPH_Activation_Activate);
             uint32_t layer = (cmd->motion.motion_type == 0) ? 0 : 1;
             JPH_BodyInterface_SetObjectLayer(bi, bid, (JPH_ObjectLayer)layer);
             break;
@@ -193,7 +209,8 @@ void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *queue, si
             break;
 
         case CMD_SET_CCD: {
-            JPH_MotionQuality qual = cmd->motion.motion_type ? JPH_MotionQuality_LinearCast : JPH_MotionQuality_Discrete;
+            JPH_MotionQuality qual =
+                cmd->motion.motion_type ? JPH_MotionQuality_LinearCast : JPH_MotionQuality_Discrete;
             JPH_BodyInterface_SetMotionQuality(bi, bid, qual);
             break;
         }
@@ -226,7 +243,7 @@ void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *queue, si
             break;
         }
         case CMD_APPLY_IMPULSE_AT: {
-            JPH_Vec3 imp = {cmd->impulse_at.ix, cmd->impulse_at.iy, cmd->impulse_at.iz};
+            JPH_Vec3 imp  = {cmd->impulse_at.ix, cmd->impulse_at.iy, cmd->impulse_at.iz};
             JPH_RVec3 pos = {cmd->impulse_at.px, cmd->impulse_at.py, cmd->impulse_at.pz};
             JPH_BodyInterface_AddImpulse2(bi, bid, &imp, &pos);
             JPH_BodyInterface_ActivateBody(bi, bid);
@@ -246,7 +263,9 @@ void sync_and_flush_internal(PhysicsWorldObject *self) {
     BLOCK_UNTIL_NOT_STEPPING(self);
     BLOCK_UNTIL_NOT_QUERYING(self);
 
-    if (self->command_count == 0) return;
+    if (self->command_count == 0) {
+        return;
+    }
 
     // Safety constraint since flush_commands_internal no longer acquires SHADOW_LOCK
     atomic_store_explicit(&self->is_stepping, true, memory_order_relaxed);
@@ -259,8 +278,7 @@ void sync_and_flush_internal(PhysicsWorldObject *self) {
 
     SHADOW_UNLOCK(&self->shadow_lock);
 
-    Py_BEGIN_ALLOW_THREADS 
-    NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+    Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
 
     flush_commands_internal(self, captured_queue, captured_count);
     CULV_RAW_FREE(captured_queue);
@@ -268,8 +286,8 @@ void sync_and_flush_internal(PhysicsWorldObject *self) {
     NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
     Py_END_ALLOW_THREADS
 
-    SHADOW_LOCK(&self->shadow_lock);
-    
+        SHADOW_LOCK(&self->shadow_lock);
+
     // Unlock Python threads safely
     NATIVE_MUTEX_LOCK(self->step_sync.mutex);
     atomic_store_explicit(&self->is_stepping, false, memory_order_release);

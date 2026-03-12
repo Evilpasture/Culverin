@@ -156,7 +156,7 @@ static inline void fp_conv_pyobj(PyObject *o, void *t) { *(PyObject **)t = o; }
         uint64_t: fp_conv_u64,                                                                     \
         bool: fp_conv_bool,                                                                        \
         PyObject *: fp_conv_pyobj,                                                                 \
-        Vec3f: fp_conv_vec3f,        /* New */                                                     \
+        Vec3f: fp_conv_vec3f,          /* New */                                                   \
         PosStride: fp_conv_pos_stride, /* New */                                                   \
         AuxStride: fp_conv_aux_stride  /* New */                                                   \
     )
@@ -174,7 +174,7 @@ extern bool fp_report_multiple(const FastParser *fp, size_t index);
 extern bool fp_report_too_many(const FastParser *fp, Py_ssize_t nargs);
 extern void fp_init_impl(FastParser *fp, FastArgSpec *specs, size_t count);
 extern void fp_deinit(FastParser *fp);
-extern bool fp_parse_legacy(PyObject *args, PyObject *kwargs, PyObject *unused, 
+extern bool fp_parse_legacy(PyObject *args, PyObject *kwargs, PyObject *unused,
                             const FastParser *fp, void **targets);
 
 /** --- 4. THE HOT PATH (Inlined Vectorcall Engine) --- **/
@@ -261,13 +261,13 @@ static inline bool fp_parse_vector(PyObject *const *args, Py_ssize_t nargs, PyOb
 // Declare (but never define) a function with a name that explains the error
 void ERROR_FastParse_First_Arg_Must_Be_PyObject_Ptr_Or_Vectorcall_Ptr(void);
 
-#define FastParse_Unified(arg1, arg2, arg3, arg4, arg5)            \
-    _Generic((arg1),                                               \
-        PyObject *const *: fp_parse_vector,                        \
-        PyObject **:       fp_parse_vector,                        \
-        PyObject *:        fp_parse_legacy,                        \
-        default:           ERROR_FastParse_First_Arg_Must_Be_PyObject_Ptr_Or_Vectorcall_Ptr \
-    )((arg1), (arg2), (arg3), (arg4), (arg5))
+#define FastParse_Unified(arg1, arg2, arg3, arg4, arg5)                                            \
+    _Generic((arg1),                                                                               \
+        PyObject *const *: fp_parse_vector,                                                        \
+        PyObject **: fp_parse_vector,                                                              \
+        PyObject *: fp_parse_legacy,                                                               \
+        default: ERROR_FastParse_First_Arg_Must_Be_PyObject_Ptr_Or_Vectorcall_Ptr)(                \
+        (arg1), (arg2), (arg3), (arg4), (arg5))
 
 #define FastParse_Init(fp, specs, count)                                                           \
     do {                                                                                           \

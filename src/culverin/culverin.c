@@ -1016,7 +1016,7 @@ PyCFunction_DeclareMethod PhysicsWorld_load_state(PhysicsWorldObject *self, PyOb
                                                   Py_ssize_t nargs, PyObject *kwnames) {
     PyObject *state_obj = NULL;
     void *targets[LoadState_COUNT];
-    targets[IDX_LS_STATE] = &state_obj;
+    targets[IDX_LS_STATE] = (void *)&state_obj;
 
     if (!FastParse_Unified(args, nargs, kwnames, &LoadStateParser, targets)) {
         return NULL;
@@ -1135,8 +1135,9 @@ PyCFunction_DeclareMethod PhysicsWorld_load_state(PhysicsWorldObject *self, PyOb
 
     for (size_t i = 0; i < saved_count; i++) {
         JPH_BodyID bid = bids[i];
-        if (bid == JPH_INVALID_BODY_ID)
+        if (bid == JPH_INVALID_BODY_ID) {
             continue;
+        }
 
         JPH_RVec3 p = {shadow_pos[i].x, shadow_pos[i].y, shadow_pos[i].z};
         JPH_Quat q  = {shadow_rot[i].x, shadow_rot[i].y, shadow_rot[i].z, shadow_rot[i].w};

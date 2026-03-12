@@ -271,11 +271,11 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_vehicle(PhysicsWorldObje
     const char *drive_str = "RWD";
 
     void *targets[CreateVehicle_COUNT];
-    targets[IDX_CV_CHASSIS] = &chassis_h;
-    targets[IDX_CV_WHEELS]  = &py_wheels;
-    targets[IDX_CV_DRIVE]   = &py_drive;
-    targets[IDX_CV_ENGINE]  = &py_engine;
-    targets[IDX_CV_TRANS]   = &py_trans;
+    targets[IDX_CV_CHASSIS] = (void *)&chassis_h;
+    targets[IDX_CV_WHEELS]  = (void *)&py_wheels;
+    targets[IDX_CV_DRIVE]   = (void *)&py_drive;
+    targets[IDX_CV_ENGINE]  = (void *)&py_engine;
+    targets[IDX_CV_TRANS]   = (void *)&py_trans;
 
     if (!FastParse_Unified(args, nargs, kwnames, &CreateVehicleParser, targets)) {
         return NULL;
@@ -287,7 +287,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_vehicle(PhysicsWorldObje
     }
 
     // --- LOGIC PRESERVATION START ---
-    
+
     if (!PyList_Check(py_wheels) || PyList_Size(py_wheels) < 2) {
         return PyErr_Format(PyExc_ValueError, "Wheels must be a list of at least 2 dictionaries");
     }
@@ -325,7 +325,9 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_vehicle(PhysicsWorldObje
 
     for (auto i = 0u; i < num_wheels; i++) {
         r.w_settings[i] = create_single_wheel(PyList_GetItem(py_wheels, i), r.f_curve);
-        if (!r.w_settings[i]) goto python_fail;
+        if (!r.w_settings[i]) {
+            goto python_fail;
+        }
     }
 
     configure_drivetrain(&r, py_engine, py_trans, drive_str, num_wheels);
@@ -341,7 +343,9 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_vehicle(PhysicsWorldObje
     JPH_BodyLockWrite lock                  = {0};
     JPH_BodyLockInterface_LockWrite(lock_iface, chassis_bid, &lock);
 
-    if (UNLIKELY(!lock.body)) goto jolt_fail;
+    if (UNLIKELY(!lock.body)) {
+        goto jolt_fail;
+    }
 
     JPH_VehicleConstraintSettings v_set;
     JPH_VehicleConstraintSettings_Init(&v_set);
@@ -350,11 +354,15 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_vehicle(PhysicsWorldObje
     v_set.controller  = (JPH_VehicleControllerSettings *)r.v_ctrl;
 
     r.j_veh = JPH_VehicleConstraint_Create(lock.body, &v_set);
-    if (!r.j_veh) goto jolt_fail;
+    if (!r.j_veh) {
+        goto jolt_fail;
+    }
 
     r.tester = JPH_VehicleCollisionTesterRay_Create(LAYER_DYNAMIC, &(JPH_Vec3){0, 1.0f, 0},
                                                     VEHICLE_COLLISION_TESTER_SCALE);
-    if (!r.tester) goto jolt_fail;
+    if (!r.tester) {
+        goto jolt_fail;
+    }
 
     JPH_VehicleConstraint_SetVehicleCollisionTester(r.j_veh,
                                                     (JPH_VehicleCollisionTester *)r.tester);
@@ -393,12 +401,16 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_vehicle(PhysicsWorldObje
     obj->torque_curve          = r.t_curve;
 
     Py_INCREF(self);
-    PyObject_GC_Track((PyObject *)obj); 
+    PyObject_GC_Track((PyObject *)obj);
     return (PyObject *)obj;
 
 jolt_fail:
-    if (lock.body) JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
-    if (jolt_locked) NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+    if (lock.body) {
+        JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
+    }
+    if (jolt_locked) {
+        NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+    }
     Py_BLOCK_THREADS;
 
 python_fail:
@@ -423,10 +435,10 @@ PyCFunction_DeclareMethodFromModule Vehicle_set_input(VehicleObject *self, PyObj
     float handbrake = 0.0f;
 
     void *targets[VehicleInput_COUNT];
-    targets[IDX_VI_FWD]   = &forward;
-    targets[IDX_VI_RIGHT] = &right;
-    targets[IDX_VI_BRAKE] = &brake;
-    targets[IDX_VI_HAND]  = &handbrake;
+    targets[IDX_VI_FWD]   = (void *)&forward;
+    targets[IDX_VI_RIGHT] = (void *)&right;
+    targets[IDX_VI_BRAKE] = (void *)&brake;
+    targets[IDX_VI_HAND]  = (void *)&handbrake;
 
     if (!FastParse_Unified(args, nargs, kwnames, &VehicleInputParser, targets)) {
         return NULL;
@@ -456,7 +468,7 @@ PyCFunction_DeclareMethodFromModule Vehicle_set_input(VehicleObject *self, PyObj
     JPH_BodyInterface_GetRotation(bi, chassis_id, chassis_q);
 
     // Calculate forward speed via dot product (Project velocity onto chassis forward vector)
-    JPH_Vec3 world_fwd;
+    JPH_Vec3 world_fwd = {};
     manual_vec3_rotate_by_quat(&(JPH_Vec3){0, 0, 1.0f}, chassis_q, &world_fwd);
     float speed = (linear_vel->x * world_fwd.x) + (linear_vel->y * world_fwd.y) +
                   (linear_vel->z * world_fwd.z);
@@ -476,8 +488,9 @@ PyCFunction_DeclareMethodFromModule Vehicle_set_input(VehicleObject *self, PyObj
             JPH_VehicleTransmission_Set(trans, 1, 1.0f);
         }
         // Arcade Brake: Apply brakes if we are still moving backwards
-        if (speed < -SPEED_MIN_THRESHOLD)
+        if (speed < -SPEED_MIN_THRESHOLD) {
             input_brake = 1.0f;
+        }
 
     } else if (forward < -THROTTLE_INPUT_THRESHOLD) {
         // REVERSE DRIVE
@@ -486,8 +499,9 @@ PyCFunction_DeclareMethodFromModule Vehicle_set_input(VehicleObject *self, PyObj
             JPH_VehicleTransmission_Set(trans, -1, 1.0f);
         }
         // Arcade Brake: Apply brakes if we are still moving forwards
-        if (speed > SPEED_MIN_THRESHOLD)
+        if (speed > SPEED_MIN_THRESHOLD) {
             input_brake = 1.0f;
+        }
 
     } else {
         // NEUTRAL / COASTING
@@ -531,8 +545,9 @@ PyCFunction_DeclareMethodFromModule Vehicle_get_wheel_transform(VehicleObject *s
     void *targets[WheelIdx_COUNT];
     targets[IDX_WH_INDEX] = &index;
 
-    if (!FastParse_Unified(args, nargs, kwnames, &WheelIdxParser, targets))
+    if (!FastParse_Unified(args, nargs, kwnames, &WheelIdxParser, targets)) {
         return NULL;
+    }
 
     SHADOW_LOCK(&self->world->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self->world);
@@ -543,7 +558,8 @@ PyCFunction_DeclareMethodFromModule Vehicle_get_wheel_transform(VehicleObject *s
     }
 
     JPH_STACK_ALLOC(JPH_RMat4, transform);
-    JPH_Vec3 right = {1.0f, 0.0f, 0.0f}, up = {0.0f, 1.0f, 0.0f};
+    JPH_Vec3 right = {1.0f, 0.0f, 0.0f};
+    JPH_Vec3 up    = {0.0f, 1.0f, 0.0f};
     JPH_VehicleConstraint_GetWheelWorldTransform(self->vehicle, index, &right, &up, transform);
 
     // Extraction logic remains the same (Correct RMat44 mapping)
@@ -572,8 +588,9 @@ PyCFunction_DeclareMethodFromModule Vehicle_get_wheel_local_transform(VehicleObj
     void *targets[WheelIdx_COUNT];
     targets[IDX_WH_INDEX] = &index;
 
-    if (!FastParse_Unified(args, nargs, kwnames, &WheelIdxParser, targets))
+    if (!FastParse_Unified(args, nargs, kwnames, &WheelIdxParser, targets)) {
         return NULL;
+    }
 
     SHADOW_LOCK(&self->world->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self->world);

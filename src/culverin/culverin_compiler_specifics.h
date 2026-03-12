@@ -105,7 +105,6 @@ static inline uint64_t rdtsc() {
 #    define CULV_MAYBE_UNUSED
 #endif
 
-
 // NOLINTNEXTLINE(readability-identifier-naming)
 #define PyCFunction_DeclareMethod CULV_NODISCARD static PyObject *
 // NOLINTNEXTLINE(readability-identifier-naming)
@@ -136,9 +135,9 @@ static inline uint64_t rdtsc() {
 CULV_MAYBE_UNUSED static constexpr size_t MEMORY_ALIGNMENT_SIZE = 64;
 
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L
-#   define CULV_REPRODUCIBLE [[reproducible]]
-#   define CULV_UNSEQUENCED [[unsequenced]]
+#    define CULV_REPRODUCIBLE [[reproducible]]
+#    define CULV_UNSEQUENCED [[unsequenced]]
 #else
-#   define CULV_REPRODUCIBLE 
-#   define CULV_UNSEQUENCED 
+#    define CULV_REPRODUCIBLE
+#    define CULV_UNSEQUENCED
 #endif

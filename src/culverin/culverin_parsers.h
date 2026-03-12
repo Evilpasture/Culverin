@@ -3,7 +3,6 @@
 #include <Python.h>
 #include <stdbool.h>
 
-
 typedef struct {
     float x;
     float y;

@@ -2,7 +2,7 @@
 #include "culverin.h"
 #include <stdlib.h>
 #ifdef _WIN32
-#include <malloc.h>
+#    include <malloc.h>
 #endif
 
 int PhysicsWorld_resize(struct PhysicsWorldObject *self, size_t new_capacity);
@@ -40,10 +40,10 @@ static inline void *culv_align_ptr(void *ptr, size_t alignment) {
         return ptr; // Or handle error
     }
 
-    uintptr_t addr = (uintptr_t)ptr;
-    uintptr_t mask = alignment - 1;
+    uintptr_t addr         = (uintptr_t)ptr;
+    uintptr_t mask         = alignment - 1;
     uintptr_t aligned_addr = (addr + mask) & ~mask;
-    
+
     size_t offset = (size_t)(aligned_addr - addr);
     return (unsigned char *)ptr + offset;
 }
@@ -53,9 +53,11 @@ static inline void *culv_align_ptr(void *ptr, size_t alignment) {
 CULV_NODISCARD
 CULV_MAYBE_UNUSED
 static inline void *CulvMem_RawMallocAligned(size_t size, size_t alignment) {
-    // Basic sanity: posix_memalign requires alignment to be a 
+    // Basic sanity: posix_memalign requires alignment to be a
     // multiple of sizeof(void*) and a power of two.
-    if (alignment < sizeof(void*)) { alignment = sizeof(void*); }
+    if (alignment < sizeof(void *)) {
+        alignment = sizeof(void *);
+    }
 
 #if defined(_WIN32)
     return _aligned_malloc(size, alignment);

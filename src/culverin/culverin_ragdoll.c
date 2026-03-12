@@ -26,8 +26,8 @@ PyCFunction_DeclareMethodFromModule Skeleton_add_joint(SkeletonObject *self, PyO
     int parent_idx     = -1; // Default to root
 
     void *targets[AddJoint_COUNT];
-    targets[IDX_AJ_NAME]   = &name_obj;
-    targets[IDX_AJ_PARENT] = &parent_idx;
+    targets[IDX_AJ_NAME]   = (void *)&name_obj;
+    targets[IDX_AJ_PARENT] = (void *)&parent_idx;
 
     // 2. High Speed Parse
     if (!FastParse_Unified(args, nargs, kwnames, &AddJointParser, targets)) {
@@ -37,7 +37,7 @@ PyCFunction_DeclareMethodFromModule Skeleton_add_joint(SkeletonObject *self, PyO
     // 3. Logic
     const char *name = PyUnicode_AsUTF8(name_obj);
     if (!name)
-        return NULL;
+        {return NULL;}
 
     int idx = (int)JPH_Skeleton_AddJoint2(self->skeleton, name, parent_idx);
     return PyLong_FromLong(idx);
@@ -49,7 +49,7 @@ PyCFunction_DeclareMethodFromModule Skeleton_get_joint_index(SkeletonObject *sel
     // 1. Setup Targets
     PyObject *name_obj = NULL;
     void *targets[GetJointIdx_COUNT];
-    targets[IDX_GJI_NAME] = &name_obj;
+    targets[IDX_GJI_NAME] = (void *)&name_obj;
 
     // 2. High Speed Parse
     if (!FastParse_Unified(args, nargs, kwnames, &GetJointIdxParser, targets)) {
@@ -59,7 +59,7 @@ PyCFunction_DeclareMethodFromModule Skeleton_get_joint_index(SkeletonObject *sel
     // 3. Logic
     const char *name = PyUnicode_AsUTF8(name_obj);
     if (!name)
-        return NULL;
+        {return NULL;}
 
     int idx = JPH_Skeleton_GetJointIndex(self->skeleton, name);
     return PyLong_FromLong(idx);
@@ -85,7 +85,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll_settings(Physics
     // --- 1. FAST ARGUMENT PARSING ---
     PyObject *py_skel_obj = NULL;
     void *targets[RagdollSettings_COUNT];
-    targets[IDX_RS_SKELETON] = &py_skel_obj;
+    targets[IDX_RS_SKELETON] = (void *)&py_skel_obj;
 
     if (!FastParse_Unified(args, nargs, kwnames, &RagdollSettingsParser, targets)) {
         return NULL;
@@ -138,17 +138,17 @@ PyCFunction_DeclareMethodFromModule RagdollSettings_add_part(RagdollSettingsObje
     Vec3f normal = {.x = 0.0f, .y = 1.0f, .z = 0.0f};
 
     void *targets[RagdollAddPart_COUNT];
-    targets[IDX_RAP_JOINT]     = &joint_idx;
-    targets[IDX_RAP_SHAPE]     = &shape_type;
-    targets[IDX_RAP_SIZE]      = &py_size;
-    targets[IDX_RAP_MASS]      = &mass;
-    targets[IDX_RAP_PARENT]    = &parent_idx;
-    targets[IDX_RAP_TWIST_MIN] = &twist_min;
-    targets[IDX_RAP_TWIST_MAX] = &twist_max;
-    targets[IDX_RAP_CONE]      = &cone_angle;
-    targets[IDX_RAP_AXIS]      = &axis;   // Converter calls parse_vec3_f32
-    targets[IDX_RAP_NORMAL]    = &normal; // Converter calls parse_vec3_f32
-    targets[IDX_RAP_POS]       = &py_pos;
+    targets[IDX_RAP_JOINT]     = (void *)&joint_idx;
+    targets[IDX_RAP_SHAPE]     = (void *)&shape_type;
+    targets[IDX_RAP_SIZE]      = (void *)&py_size;
+    targets[IDX_RAP_MASS]      = (void *)&mass;
+    targets[IDX_RAP_PARENT]    = (void *)&parent_idx;
+    targets[IDX_RAP_TWIST_MIN] = (void *)&twist_min;
+    targets[IDX_RAP_TWIST_MAX] = (void *)&twist_max;
+    targets[IDX_RAP_CONE]      = (void *)&cone_angle;
+    targets[IDX_RAP_AXIS]      = (void *)&axis;   // Converter calls parse_vec3_f32
+    targets[IDX_RAP_NORMAL]    = (void *)&normal; // Converter calls parse_vec3_f32
+    targets[IDX_RAP_POS]       = (void *)&py_pos;
 
     // 2. High Speed Parse
     if (!FastParse_Unified(args, nargs, kwnames, &RagdollAddPartParser, targets)) {
@@ -168,7 +168,7 @@ PyCFunction_DeclareMethodFromModule RagdollSettings_add_part(RagdollSettingsObje
     Py_END_ALLOW_THREADS;
 
     if (!shape)
-        return PyErr_Format(PyExc_ValueError, "Invalid shape configuration");
+        {return PyErr_Format(PyExc_ValueError, "Invalid shape configuration");}
 
     // 4. Validation & Resizing
     JPH_Skeleton *skel = (JPH_Skeleton *)JPH_RagdollSettings_GetSkeleton(self->settings);
@@ -244,13 +244,13 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll(PhysicsWorldObje
     uint32_t material_id   = 0;
 
     void *targets[CreateRagdoll_COUNT];
-    targets[IDX_CR_SETTINGS] = &settings_obj;
-    targets[IDX_CR_POS]      = &pos;
-    targets[IDX_CR_ROT]      = &rot;
-    targets[IDX_CR_USER]     = &user_data;
-    targets[IDX_CR_CAT]      = &category;
-    targets[IDX_CR_MASK]     = &mask;
-    targets[IDX_CR_MAT]      = &material_id;
+    targets[IDX_CR_SETTINGS] = (void *)&settings_obj;
+    targets[IDX_CR_POS]      = (void *)&pos;
+    targets[IDX_CR_ROT]      = (void *)&rot;
+    targets[IDX_CR_USER]     = (void *)&user_data;
+    targets[IDX_CR_CAT]      = (void *)&category;
+    targets[IDX_CR_MASK]     = (void *)&mask;
+    targets[IDX_CR_MAT]      = (void *)&material_id;
 
     if (!FastParse_Unified(args, nargs, kwnames, &CreateRagdollParser, targets)) {
         return NULL;
@@ -398,9 +398,9 @@ PyCFunction_DeclareMethodFromModule Ragdoll_drive_to_pose(RagdollObject *self,
     PyObject *py_matrices = NULL;
 
     void *targets[RagdollDrive_COUNT];
-    targets[IDX_RD_POS]  = &root_p;
-    targets[IDX_RD_ROT]  = &root_q;
-    targets[IDX_RD_MATS] = &py_matrices;
+    targets[IDX_RD_POS]  = (void *)&root_p;
+    targets[IDX_RD_ROT]  = (void *)&root_q;
+    targets[IDX_RD_MATS] = (void *)&py_matrices;
 
     if (!FastParse_Unified(args, nargs, kwnames, &RagdollDriveParser, targets)) {
         return NULL;

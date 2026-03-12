@@ -246,9 +246,9 @@
 
 #define SCHEMA_STEP(X) X(IDX_STEP_DT, "dt", float, 0) // Optional (0)
 
-#define SCHEMA_CHAR_MOVE(X) \
-    X(IDX_CM_VEL, "velocity", Vec3f, 1) \
-    X(IDX_CM_DT,  "dt",       float, 1)
+#define SCHEMA_CHAR_MOVE(X)                                                                        \
+    X(IDX_CM_VEL, "velocity", Vec3f, 1)                                                            \
+    X(IDX_CM_DT, "dt", float, 1)
 
 #define SCHEMA_LOAD_STATE(X) X(IDX_LS_STATE, "state", PyObject *, 1)
 
@@ -265,70 +265,67 @@
 
 #define SCHEMA_SET_STRENGTH_CHAR(X) X(IDX_SSC_STRENGTH, "strength", float, 1)
 
-#define SCHEMA_VEHICLE_INPUT(X) \
-    X(IDX_VI_FWD,   "forward",   float, 0) \
-    X(IDX_VI_RIGHT, "right",     float, 0) \
-    X(IDX_VI_BRAKE, "brake",     float, 0) \
-    X(IDX_VI_HAND,  "handbrake", float, 0)
+#define SCHEMA_VEHICLE_INPUT(X)                                                                    \
+    X(IDX_VI_FWD, "forward", float, 0)                                                             \
+    X(IDX_VI_RIGHT, "right", float, 0)                                                             \
+    X(IDX_VI_BRAKE, "brake", float, 0)                                                             \
+    X(IDX_VI_HAND, "handbrake", float, 0)
 
-#define SCHEMA_WHEEL_IDX(X) \
-    X(IDX_WH_INDEX, "index", uint32_t, 1)
+#define SCHEMA_WHEEL_IDX(X) X(IDX_WH_INDEX, "index", uint32_t, 1)
 
-#define SCHEMA_TANK_INPUT(X) \
-    X(IDX_TI_LEFT,  "left",  float, 1) \
-    X(IDX_TI_RIGHT, "right", float, 1) \
+#define SCHEMA_TANK_INPUT(X)                                                                       \
+    X(IDX_TI_LEFT, "left", float, 1)                                                               \
+    X(IDX_TI_RIGHT, "right", float, 1)                                                             \
     X(IDX_TI_BRAKE, "brake", float, 0)
 
-#define SCHEMA_CREATE_VEHICLE(X) \
-    X(IDX_CV_CHASSIS, "chassis",      uint64_t,   1) \
-    X(IDX_CV_WHEELS,  "wheels",       PyObject *, 1) \
-    X(IDX_CV_DRIVE,   "drive",        PyObject *, 0) \
-    X(IDX_CV_ENGINE,  "engine",       PyObject *, 0) \
-    X(IDX_CV_TRANS,   "transmission", PyObject *, 0)
+#define SCHEMA_CREATE_VEHICLE(X)                                                                   \
+    X(IDX_CV_CHASSIS, "chassis", uint64_t, 1)                                                      \
+    X(IDX_CV_WHEELS, "wheels", PyObject *, 1)                                                      \
+    X(IDX_CV_DRIVE, "drive", PyObject *, 0)                                                        \
+    X(IDX_CV_ENGINE, "engine", PyObject *, 0)                                                      \
+    X(IDX_CV_TRANS, "transmission", PyObject *, 0)
 
-#define SCHEMA_CREATE_TRACKED(X) \
-  X(IDX_CT_CHASSIS, "chassis",    uint64_t,   1) \
-  X(IDX_CT_WHEELS,  "wheels",     PyObject *, 1) \
-  X(IDX_CT_TRACKS,  "tracks",     PyObject *, 1) \
-  X(IDX_CT_TORQUE,  "max_torque", float,      0) \
-  X(IDX_CT_RPM,     "max_rpm",    float,      0)
+#define SCHEMA_CREATE_TRACKED(X)                                                                   \
+    X(IDX_CT_CHASSIS, "chassis", uint64_t, 1)                                                      \
+    X(IDX_CT_WHEELS, "wheels", PyObject *, 1)                                                      \
+    X(IDX_CT_TRACKS, "tracks", PyObject *, 1)                                                      \
+    X(IDX_CT_TORQUE, "max_torque", float, 0)                                                       \
+    X(IDX_CT_RPM, "max_rpm", float, 0)
 
-#define SCHEMA_CREATE_RAGDOLL(X) \
-  X(IDX_CR_SETTINGS, "settings",    PyObject *, 1) \
-  X(IDX_CR_POS,      "pos",         PosStride,  1) \
-  X(IDX_CR_ROT,      "rot",         AuxStride,  0) \
-  X(IDX_CR_USER,     "user_data",   uint64_t,   0) \
-  X(IDX_CR_CAT,      "category",    uint32_t,   0) \
-  X(IDX_CR_MASK,     "mask",        uint32_t,   0) \
-  X(IDX_CR_MAT,      "material_id", uint32_t,   0)
+#define SCHEMA_CREATE_RAGDOLL(X)                                                                   \
+    X(IDX_CR_SETTINGS, "settings", PyObject *, 1)                                                  \
+    X(IDX_CR_POS, "pos", PosStride, 1)                                                             \
+    X(IDX_CR_ROT, "rot", AuxStride, 0)                                                             \
+    X(IDX_CR_USER, "user_data", uint64_t, 0)                                                       \
+    X(IDX_CR_CAT, "category", uint32_t, 0)                                                         \
+    X(IDX_CR_MASK, "mask", uint32_t, 0)                                                            \
+    X(IDX_CR_MAT, "material_id", uint32_t, 0)
 
-#define SCHEMA_RAGDOLL_SETTINGS(X) \
-  X(IDX_RS_SKELETON, "skeleton", PyObject *, 1)
+#define SCHEMA_RAGDOLL_SETTINGS(X) X(IDX_RS_SKELETON, "skeleton", PyObject *, 1)
 
-#define SCHEMA_RAGDOLL_ADD_PART(X) \
-    X(IDX_RAP_JOINT,     "joint_index",  int,       1) \
-    X(IDX_RAP_SHAPE,     "shape_type",   int,       1) \
-    X(IDX_RAP_SIZE,      "size",         PyObject*, 1) \
-    X(IDX_RAP_MASS,      "mass",         float,     0) \
-    X(IDX_RAP_PARENT,    "parent_index", int,       0) \
-    X(IDX_RAP_TWIST_MIN, "twist_min",    float,     0) \
-    X(IDX_RAP_TWIST_MAX, "twist_max",    float,     0) \
-    X(IDX_RAP_CONE,      "cone_angle",   float,     0) \
-    X(IDX_RAP_AXIS,      "axis",         Vec3f,     0) \
-    X(IDX_RAP_NORMAL,    "normal",       Vec3f,     0) \
-    X(IDX_RAP_POS,       "pos",          PyObject*, 0)
+#define SCHEMA_RAGDOLL_ADD_PART(X)                                                                 \
+    X(IDX_RAP_JOINT, "joint_index", int, 1)                                                        \
+    X(IDX_RAP_SHAPE, "shape_type", int, 1)                                                         \
+    X(IDX_RAP_SIZE, "size", PyObject *, 1)                                                         \
+    X(IDX_RAP_MASS, "mass", float, 0)                                                              \
+    X(IDX_RAP_PARENT, "parent_index", int, 0)                                                      \
+    X(IDX_RAP_TWIST_MIN, "twist_min", float, 0)                                                    \
+    X(IDX_RAP_TWIST_MAX, "twist_max", float, 0)                                                    \
+    X(IDX_RAP_CONE, "cone_angle", float, 0)                                                        \
+    X(IDX_RAP_AXIS, "axis", Vec3f, 0)                                                              \
+    X(IDX_RAP_NORMAL, "normal", Vec3f, 0)                                                          \
+    X(IDX_RAP_POS, "pos", PyObject *, 0)
 
-#define SCHEMA_ADD_JOINT(X) \
-    X(IDX_AJ_NAME,   "name",         PyObject *, 1) \
-    X(IDX_AJ_PARENT, "parent_index", int,        0)
+#define SCHEMA_ADD_JOINT(X)                                                                        \
+    X(IDX_AJ_NAME, "name", PyObject *, 1)                                                          \
+    X(IDX_AJ_PARENT, "parent_index", int, 0)
 
-#define SCHEMA_GET_JOINT_IDX(X) \
-    X(IDX_GJI_NAME,  "name",         PyObject *, 1)
+#define SCHEMA_GET_JOINT_IDX(X) X(IDX_GJI_NAME, "name", PyObject *, 1)
 
-#define SCHEMA_RAGDOLL_DRIVE(X) \
-  X(IDX_RD_POS,  "root_pos", PosStride, 1) \
-  X(IDX_RD_ROT,  "root_rot", AuxStride, 1) \
-  X(IDX_RD_MATS, "matrices", PyObject *, 1)
+#define SCHEMA_RAGDOLL_DRIVE(X)                                                                    \
+    X(IDX_RD_POS, "root_pos", PosStride, 1)                                                        \
+    X(IDX_RD_ROT, "root_rot", AuxStride, 1)                                                        \
+    X(IDX_RD_MATS, "matrices", PyObject *, 1)
 
 /** --- THE GENERATOR ENGINE --- **/
 

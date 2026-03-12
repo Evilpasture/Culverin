@@ -381,7 +381,7 @@ void PhysicsWorld_free_members(PhysicsWorldObject *self) {
     // This one definitely contains live Jolt pointers from create_body calls
     // made since the last world.step().
     if (self->command_queue) {
-        clear_command_queue(self); 
+        clear_command_queue(self);
         CULV_RAW_FREE(self->command_queue);
         self->command_queue = NULL;
     }
