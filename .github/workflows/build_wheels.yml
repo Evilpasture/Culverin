@@ -30,19 +30,25 @@ jobs:
         env:
           CIBW_SKIP: "*-musllinux_* *-win32 *_i686"
           CIBW_BUILD: "cp313-* cp314-*"
-          # Modern syntax for 3.13t free-threading support
           CIBW_ENABLE: "cpython-freethreading"
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
           
-          CIBW_ENVIRONMENT: >
+          # Force Clang explicitly for the Linux container
+          CIBW_ENVIRONMENT_LINUX: >
+            CC=clang
+            CXX=clang++
+            CMAKE_GENERATOR=Ninja
+            CMAKE_ARGS="-DENABLE_SANITIZER=OFF -DCMAKE_BUILD_TYPE=Release -DDOUBLE_PRECISION=ON -DJPH_DOUBLE_PRECISION=ON -DCMAKE_C_STANDARD=23"
+
+          CIBW_ENVIRONMENT_WINDOWS: "CC=clang-cl CXX=clang-cl CMAKE_GENERATOR=Ninja"
+          
+          CIBW_ENVIRONMENT_MACOS: >
             CC=clang 
             CXX=clang++ 
             CMAKE_GENERATOR=Ninja
             MACOSX_DEPLOYMENT_TARGET=13.0
             CMAKE_ARGS="-DENABLE_SANITIZER=OFF -DCMAKE_BUILD_TYPE=Release -DDOUBLE_PRECISION=ON -DJPH_DOUBLE_PRECISION=ON -DCMAKE_C_STANDARD=23"
-          
-          CIBW_ENVIRONMENT_WINDOWS: "CC=clang-cl CXX=clang-cl CMAKE_GENERATOR=Ninja"
           
           CIBW_BEFORE_ALL_LINUX: >
             (dnf install -y clang llvm || yum install -y clang llvm || apk add --no-cache clang llvm-dev) &&
