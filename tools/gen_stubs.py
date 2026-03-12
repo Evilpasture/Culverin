@@ -1,18 +1,34 @@
+import os
 import re
+import json
+import sys
+import subprocess
 from pathlib import Path
 from dataclasses import dataclass
 
 # --- CONFIGURATION ---
-SCRIPT_DIR = Path(__file__).parent
-SOURCE_ROOT = SCRIPT_DIR.parent / "src" / "culverin"
-SCHEMA_HEADER_NAME = "culverin_arg_indices.h"
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR.parent
+SOURCE_ROOT = PROJECT_ROOT / "src" / "culverin"
 
+# We force the C code to execute inside SOURCE_ROOT, so it dumps here
+SCHEMA_JSON_PATH = SOURCE_ROOT / "culverin_schema.json"
+STUB_OUTPUT_PATH = SOURCE_ROOT / "_culverin_c.pyi"
+
+# Exact C-Type to Python Type mapping
 TYPE_MAP = {
-    "PyObject *": "Any", "PyObject*": "Any", 
-    "float": "float", "double": "float", "JPH_Real": "float",
-    "int": "int", "uint32_t": "int", "uint64_t": "int", "int64_t": "int",
-    "BodyHandle": "int", "ConstraintHandle": "int", 
-    "bool": "bool", "char *": "str", "const char *": "str",
+    "float": "float", 
+    "double": "float", 
+    "JPH_Real": "float",
+    "int": "int", 
+    "uint32_t": "int", 
+    "uint64_t": "int", 
+    "int64_t": "int",
+    "BodyHandle": "int", 
+    "ConstraintHandle": "int", 
+    "bool": "bool", 
+    "char *": "str", 
+    "const char *": "str",
     "PosStride": "tuple[float, float, float] | list[float]",
     "AuxStride": "tuple[float, float, float, float] | list[float]",
     "Vec3f": "tuple[float, float, float] | list[float]"
@@ -49,81 +65,82 @@ ARG_HINTS = {
     "Vehicle.get_wheel_transform": "index: int",
     "Vehicle.get_wheel_local_transform": "index: int",
     "PhysicsWorld.get_body_stats": "handle: int",
-    "PhysicsWorld.get_user_data": "int",
-    "PhysicsWorld.get_motion_type": "int",
+    "PhysicsWorld.get_user_data": "handle: int",
+    "PhysicsWorld.get_motion_type": "handle: int",
     "PhysicsWorld.activate": "handle: int",
     "PhysicsWorld.deactivate": "handle: int",
     "PhysicsWorld.destroy_body": "handle: int",
     "PhysicsWorld.destroy_constraint": "handle: int",
     "PhysicsWorld.set_collision_filter": "handle: int, category: int, mask: int",
-    "RagdollSettings.stabilize": "None",
-    "Skeleton.finalize": "None",
+    "RagdollSettings.stabilize": "",  # Empty string means no extra args (just 'self')
+    "Skeleton.finalize": "",          # Fixed syntax error
 }
 
-CLASS_METHOD_TO_SCHEMA = {
-    "PhysicsWorld.create_body": "SCHEMA_BODY",
-    "PhysicsWorld.apply_impulse": "SCHEMA_VEC3",
-    "PhysicsWorld.apply_angular_impulse": "SCHEMA_VEC3",
-    "PhysicsWorld.apply_force": "SCHEMA_VEC3",
-    "PhysicsWorld.apply_torque": "SCHEMA_VEC3",
-    "PhysicsWorld.set_linear_velocity": "SCHEMA_VEC3",
-    "PhysicsWorld.set_angular_velocity": "SCHEMA_VEC3",
-    "PhysicsWorld.set_position": "SCHEMA_SET_POS",
-    "PhysicsWorld.set_rotation": "SCHEMA_SET_ROT",
-    "PhysicsWorld.activate": "SCHEMA_HANDLE_ONLY",
-    "PhysicsWorld.deactivate": "SCHEMA_HANDLE_ONLY",
-    "PhysicsWorld.destroy_body": "SCHEMA_HANDLE_ONLY",
-    "PhysicsWorld.get_user_data": "SCHEMA_HANDLE_ONLY",
-    "PhysicsWorld.get_index": "SCHEMA_HANDLE_ONLY",
-    "PhysicsWorld.is_alive": "SCHEMA_HANDLE_ONLY",
-    "PhysicsWorld.destroy_constraint": "SCHEMA_HANDLE_ONLY",
-    "PhysicsWorld.get_motion_type": "SCHEMA_HANDLE_ONLY",
-    "PhysicsWorld.create_convex_hull": "SCHEMA_HC_HULL",
-    "PhysicsWorld.create_compound_body": "SCHEMA_HC_COMP",
-    "PhysicsWorld.create_mesh_body": "SCHEMA_MESH",
-    "PhysicsWorld.set_transform": "SCHEMA_SET_TRNS",
-    "PhysicsWorld.set_ccd": "SCHEMA_CCD",
-    "PhysicsWorld.set_gravity": "SCHEMA_XYZ",
-    "PhysicsWorld.raycast": "SCHEMA_RAYCAST",
-    "PhysicsWorld.raycast_batch": "SCHEMA_RAYCAST_BATCH",
-    "PhysicsWorld.shapecast": "SCHEMA_SHAPECAST",
-    "PhysicsWorld.overlap_sphere": "SCHEMA_OVERLAP_SPHERE",
-    "PhysicsWorld.overlap_aabb": "SCHEMA_OVERLAP_AABB",
-    "PhysicsWorld.register_material": "SCHEMA_REG_MAT",
-    "PhysicsWorld.set_constraint_target": "SCHEMA_SET_CONSTR_TARGET",
-    "PhysicsWorld.step": "SCHEMA_STEP",
-    "PhysicsWorld.create_bodies_batch": "SCHEMA_BATCH_CREATE",
-    "PhysicsWorld.destroy_bodies_batch": "SCHEMA_BATCH_DESTROY",
-    "PhysicsWorld.apply_buoyancy": "SCHEMA_BUOYANCY",
-    "PhysicsWorld.apply_buoyancy_batch": "SCHEMA_BATCH_BUOYANCY",
-    "PhysicsWorld.set_motion_type": "SCHEMA_SET_MOTION",
-    "PhysicsWorld.set_collision_filter": "SCHEMA_COL_FILTER",
-    "PhysicsWorld.create_constraint": "SCHEMA_CREATE_CONSTR",
-    "PhysicsWorld.apply_impulse_at": "SCHEMA_IMPULSE_AT",
-    "PhysicsWorld.set_user_data": "SCHEMA_SET_USER_DATA",
-    "PhysicsWorld.create_heightfield": "SCHEMA_HEIGHTFIELD",
-    "PhysicsWorld.load_state": "SCHEMA_LOAD_STATE",
-    "PhysicsWorld.create_character": "SCHEMA_CREATE_CHAR",
-    "PhysicsWorld.create_vehicle": "SCHEMA_CREATE_VEHICLE",
-    "PhysicsWorld.create_tracked_vehicle": "SCHEMA_CREATE_TRACKED",
-    "PhysicsWorld.create_ragdoll": "SCHEMA_CREATE_RAGDOLL",
-    "PhysicsWorld.create_ragdoll_settings": "SCHEMA_RAGDOLL_SETTINGS",
+# Maps Python method names to the C `FastParser` registry name
+CLASS_METHOD_TO_PARSER = {
+    "PhysicsWorld.create_body": "Body",
+    "PhysicsWorld.apply_impulse": "Impulse",
+    "PhysicsWorld.apply_angular_impulse": "AngImpulse",
+    "PhysicsWorld.apply_force": "Force",
+    "PhysicsWorld.apply_torque": "Torque",
+    "PhysicsWorld.set_linear_velocity": "SetLinVel",
+    "PhysicsWorld.set_angular_velocity": "SetAngVel",
+    "PhysicsWorld.set_position": "SetPos",
+    "PhysicsWorld.set_rotation": "SetRot",
+    "PhysicsWorld.activate": "Activate",
+    "PhysicsWorld.deactivate": "Activate",
+    "PhysicsWorld.destroy_body": "Destroy",
+    "PhysicsWorld.get_user_data": "GetUserData",
+    "PhysicsWorld.get_index": "Activate", # Reuses Activate parser (handle only)
+    "PhysicsWorld.is_alive": "Activate",
+    "PhysicsWorld.destroy_constraint": "DestroyConstr",
+    "PhysicsWorld.get_motion_type": "GetMotion",
+    "PhysicsWorld.create_convex_hull": "ConvexHull",
+    "PhysicsWorld.create_compound_body": "Compound",
+    "PhysicsWorld.create_mesh_body": "Mesh",
+    "PhysicsWorld.set_transform": "SetTrns",
+    "PhysicsWorld.set_ccd": "CCD",
+    "PhysicsWorld.set_gravity": "Gravity",
+    "PhysicsWorld.raycast": "Raycast",
+    "PhysicsWorld.raycast_batch": "RayBatch",
+    "PhysicsWorld.shapecast": "Shapecast",
+    "PhysicsWorld.overlap_sphere": "OverlapSphere",
+    "PhysicsWorld.overlap_aabb": "OverlapAABB",
+    "PhysicsWorld.register_material": "RegMat",
+    "PhysicsWorld.set_constraint_target": "SetConstrTarget",
+    "PhysicsWorld.step": "Step",
+    "PhysicsWorld.create_bodies_batch": "BatchCreate",
+    "PhysicsWorld.destroy_bodies_batch": "BatchDestroy",
+    "PhysicsWorld.apply_buoyancy": "Buoy",
+    "PhysicsWorld.apply_buoyancy_batch": "BatchBuoy",
+    "PhysicsWorld.set_motion_type": "SetMotion",
+    "PhysicsWorld.set_collision_filter": "ColFilter",
+    "PhysicsWorld.create_constraint": "CreateConstr",
+    "PhysicsWorld.apply_impulse_at": "ImpulseAt",
+    "PhysicsWorld.set_user_data": "SetUserData",
+    "PhysicsWorld.create_heightfield": "Heightfield",
+    "PhysicsWorld.load_state": "LoadState",
+    "PhysicsWorld.create_character": "CreateChar",
+    "PhysicsWorld.create_vehicle": "CreateVehicle",
+    "PhysicsWorld.create_tracked_vehicle": "CreateTracked",
+    "PhysicsWorld.create_ragdoll": "CreateRagdoll",
+    "PhysicsWorld.create_ragdoll_settings": "RagdollSettings",
 
-    "Character.move": "SCHEMA_CHAR_MOVE",
-    "Character.set_position": "SCHEMA_SET_POS_CHAR",
-    "Character.set_rotation": "SCHEMA_SET_ROT_CHAR",
-    "Character.set_strength": "SCHEMA_SET_STRENGTH_CHAR",
+    "Character.move": "CharMove",
+    "Character.set_position": "SetPosChar",
+    "Character.set_rotation": "SetRotChar",
+    "Character.set_strength": "SetStrengthChar",
 
-    "Vehicle.set_input": "SCHEMA_VEHICLE_INPUT",
-    "Vehicle.set_tank_input": "SCHEMA_TANK_INPUT",
-    "Vehicle.get_wheel_transform": "SCHEMA_WHEEL_IDX",
-    "Vehicle.get_wheel_local_transform": "SCHEMA_WHEEL_IDX",
+    "Vehicle.set_input": "VehicleInput",
+    "Vehicle.set_tank_input": "TankInput",
+    "Vehicle.get_wheel_transform": "WheelIdx",
+    "Vehicle.get_wheel_local_transform": "WheelIdx",
 
-    "Skeleton.add_joint": "SCHEMA_ADD_JOINT",
-    "Skeleton.get_joint_index": "SCHEMA_GET_JOINT_IDX",
+    "Skeleton.add_joint": "AddJoint",
+    "Skeleton.get_joint_index": "GetJointIdx",
 
-    "RagdollSettings.add_part": "SCHEMA_RAGDOLL_ADD_PART",
-    "Ragdoll.drive_to_pose": "SCHEMA_RAGDOLL_DRIVE"
+    "RagdollSettings.add_part": "RagdollAddPart",
+    "Ragdoll.drive_to_pose": "RagdollDrive"
 }
 
 @dataclass
@@ -136,12 +153,61 @@ class MethodInfo:
 class StubGenerator:
     def __init__(self, root: Path):
         self.root = root
-        self.schemas = self._parse_schemas()
+        self._generate_json_schema()
+        self.schemas = self._load_schemas()
+
+    def _generate_json_schema(self):
+        """Runs the compiled C extension briefly to dump the internal JSON schema."""
+        print(f"Generating C Schema JSON at {SOURCE_ROOT}...")
+        
+        env = os.environ.copy()
+        # Ensure 'src' is in PYTHONPATH so we find the local culverin package
+        src_dir = str(PROJECT_ROOT / "src")
+        env["PYTHONPATH"] = src_dir + os.pathsep + env.get("PYTHONPATH", "")
+        
+        script = "import culverin._culverin_c as c; c._dump_schema_json()"
+        
+        try:
+            subprocess.run(
+                [sys.executable, "-c", script], 
+                check=True, 
+                env=env,
+                cwd=str(SOURCE_ROOT) # Forces C code to dump the file here
+            )
+        except subprocess.CalledProcessError as e:
+            print(f"WARNING: C extension failed to dump schema. Return code: {e.returncode}")
+            if not SCHEMA_JSON_PATH.exists():
+                raise RuntimeError(f"No schema JSON found at {SCHEMA_JSON_PATH}, cannot proceed.")
+
+    def _load_schemas(self) -> dict[str, str]:
+        if not SCHEMA_JSON_PATH.exists():
+            print(f"Warning: {SCHEMA_JSON_PATH} not found.")
+            return {}
+            
+        with open(SCHEMA_JSON_PATH, "r") as f:
+            raw_schemas = json.load(f)
+            
+        parsed = {}
+        for parser_name, args_list in raw_schemas.items():
+            py_args = []
+            for arg in args_list:
+                c_type = arg["type"].strip()
+                t = TYPE_MAP.get(c_type, "Any")
+                t = self._improve_arg_type(arg["name"], t)
+                
+                if arg["required"]:
+                    py_args.append(f"{arg['name']}: {t}")
+                else:
+                    suffix = " | None = None" if "Any" not in t and "bytes" not in t else " = None"
+                    py_args.append(f"{arg['name']}: {t}{suffix}")
+            parsed[parser_name] = ", ".join(py_args)
+            
+        return parsed
 
     def _improve_arg_type(self, arg_name: str, current_type: str) -> str:
-        """Heuristics to upgrade 'Any' based on argument name."""
+        """Heuristics to upgrade 'PyObject*' (Any) based on argument name."""
         if current_type != "Any": return current_type
-        if arg_name in ("pos", "root_pos", "center", "dir", "direction", "scale"):
+        if arg_name in ("pos", "root_pos", "center", "dir", "direction", "scale", "velocity"):
             return "tuple[float, float, float] | list[float]"
         if arg_name in ("rot", "root_rot"):
             return "tuple[float, float, float, float] | list[float]"
@@ -149,34 +215,11 @@ class StubGenerator:
             return "tuple[float, ...] | list[float] | float"
         if arg_name in ("name", "drive"):
             return "str"
-        if arg_name in ("handles", "vertices", "indices", "heights", "points", "matrices", "state"):
-            return "bytes | bytearray | memoryview"
+        if arg_name in ("handles", "vertices", "indices", "heights", "points", "parts", "matrices", "state"):
+            return "bytes | bytearray | memoryview | list"
+        if arg_name in ("wheels", "tracks", "settings", "skeleton", "params", "motor"):
+            return "list | dict | Any"
         return "Any"
-
-    def _parse_schemas(self) -> dict[str, str]:
-        header_path = next(self.root.rglob(SCHEMA_HEADER_NAME), None)
-        if not header_path: return {}
-        content = header_path.read_text()
-        
-        content = re.sub(r'//.*', '', content)
-        content = re.sub(r'/\*.*?\*/', '', content, flags=re.DOTALL)
-        blocks = re.findall(r'#define\s+(SCHEMA_\w+)\(X\)(.*?)(?=\n#define|\Z)', content, flags=re.DOTALL)
-        
-        parsed = {}
-        for name, block in blocks:
-            entries = re.findall(r'X\s*\(\s*[^,]+\s*,\s*"([^"]+)"\s*,\s*([^,]+)\s*,\s*(\d)\s*\)', block)
-            py_args = []
-            for arg_name, c_type, required in entries:
-                t = TYPE_MAP.get(c_type.strip(), "Any")
-                t = self._improve_arg_type(arg_name, t)
-                
-                if required == "1":
-                    py_args.append(f"{arg_name}: {t}")
-                else:
-                    suffix = " | None = None" if "Any" not in t and "bytes" not in t else " = None"
-                    py_args.append(f"{arg_name}: {t}{suffix}")
-            parsed[name] = ", ".join(py_args)
-        return parsed
 
     def _infer_return_type(self, method_name: str) -> str:
         m = method_name.lower()
@@ -202,7 +245,7 @@ class StubGenerator:
         for c_file in self.root.rglob("*.c"):
             text = c_file.read_text()
             
-            # Scrape Methods
+            # 1. Scrape Methods
             for class_name, block in method_pattern.findall(text):
                 if class_name not in results: results[class_name] = []
                 for m_name in re.findall(r'\{\s*"(\w+)"', block):
@@ -211,25 +254,33 @@ class StubGenerator:
                     full_key = f"{class_name}.{m_name}"
                     info = MethodInfo(name=m_name)
                     
-                    # 1. Base Args (Schema fallback to kwargs)
-                    if full_key in CLASS_METHOD_TO_SCHEMA:
-                        schema = CLASS_METHOD_TO_SCHEMA[full_key]
-                        args = self.schemas.get(schema, "")
-                        info.args = f"self, {args}" if args else "self"
+                    # A. Map via JSON Schema
+                    if full_key in CLASS_METHOD_TO_PARSER:
+                        parser_name = CLASS_METHOD_TO_PARSER[full_key]
+                        args_str = self.schemas.get(parser_name, "")
+                        
+                        if args_str:
+                            info.args = f"self, {args_str}"
+                        else:
+                            # Fallback if schema lookup failed
+                            info.args = "self, *args, **kwargs"
                     else:
                         info.args = "self, *args, **kwargs"
                     
-                    # 2. Argument Override
+                    # B. Manual Override (For simple functions without a parser)
                     if full_key in ARG_HINTS:
                         hint = ARG_HINTS[full_key]
-                        info.args = f"self, {hint}" if hint else "self"
+                        if hint:
+                            info.args = f"self, {hint}"
+                        else:
+                            info.args = "self" # Handles "" (no extra args)
                         
-                    # 3. Return Type
+                    # C. Infer Return Type
                     info.return_type = RETURN_HINTS.get(full_key, self._infer_return_type(m_name))
                     
                     results[class_name].append(info)
                     
-            # Scrape Properties
+            # 2. Scrape Properties
             for class_name, block in getset_pattern.findall(text):
                 if class_name not in results: results[class_name] = []
                 for prop_name in re.findall(r'\{\s*"(\w+)"', block):
@@ -250,7 +301,8 @@ class StubGenerator:
             ""
         ]
         
-        for basic in ("Skeleton",):
+        # Ensure base classes exist even if empty
+        for basic in ("Skeleton", "Character", "Vehicle", "RagdollSettings", "Ragdoll"):
             if basic not in class_data:
                 class_data[basic] = []
                 
@@ -276,4 +328,10 @@ class StubGenerator:
         return "\n".join(lines)
 
 if __name__ == "__main__":
-    print(StubGenerator(SOURCE_ROOT).generate_stub())
+    generator = StubGenerator(SOURCE_ROOT)
+    stub_content = generator.generate_stub()
+    
+    with open(STUB_OUTPUT_PATH, "w") as f:
+        f.write(stub_content)
+        
+    print(f"Successfully generated stubs at: {STUB_OUTPUT_PATH.name}")
