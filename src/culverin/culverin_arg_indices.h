@@ -448,6 +448,6 @@ DECLARE_PARSER(RagdollAddPart, RagdollAddPart)
 DECLARE_PARSER(AddJoint, AddJoint)
 DECLARE_PARSER(GetJointIdx, GetJointIdx)
 DECLARE_PARSER(RagdollDrive, RagdollDrive)
-
+void fp_dump_schemas_json(FILE *out);
 void culverin_init_all_parsers(void);
 void culverin_free_all_parsers(void);

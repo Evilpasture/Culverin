@@ -91,69 +91,155 @@ ALLOC_PARSER(RagdollDrive, RagdollDrive)
 // --- 3. INITIALIZATION ---
 
 #define GEN_SPEC(ID, NAME, TYPE, REQ)                                                              \
-    [ID] = {.name = (NAME), .required = (bool)(REQ), .convert = FP_GET_CONVERTER((TYPE){0})},
+    [ID] = {.name      = (NAME),                                                                   \
+            .type_name = #TYPE, /* Stringify the C type (e.g., "JPH_Real") */                      \
+            .required  = (bool)(REQ),                                                              \
+            .convert   = FP_GET_CONVERTER((TYPE){0})},
+
+// We'll keep a list of all parsers we want to export to Python stubs
+CULV_MAYBE_UNUSED
+static FastParser *parser_registry[128];
+CULV_MAYBE_UNUSED
+static int parser_registry_count = 0;
+
+#define REGISTER_PARSER(ParserName)                                                                \
+    ParserName##Parser.parser_name           = #ParserName;                                        \
+    parser_registry[parser_registry_count++] = &ParserName##Parser;
 
 void culverin_init_all_parsers(void) {
     INIT_PARSER(Body, Body, SCHEMA_BODY);
+    REGISTER_PARSER(Body);
     INIT_PARSER(Impulse, Vec3, SCHEMA_VEC3);
+    REGISTER_PARSER(Impulse);
     INIT_PARSER(WheelIdx, WheelIdx, SCHEMA_WHEEL_IDX);
+    REGISTER_PARSER(WheelIdx);
     INIT_PARSER(AngImpulse, Vec3, SCHEMA_VEC3);
+    REGISTER_PARSER(AngImpulse);
     INIT_PARSER(Force, Vec3, SCHEMA_VEC3);
+    REGISTER_PARSER(Force);
     INIT_PARSER(Torque, Vec3, SCHEMA_VEC3);
+    REGISTER_PARSER(Torque);
     INIT_PARSER(SetLinVel, Vec3, SCHEMA_VEC3);
+    REGISTER_PARSER(SetLinVel);
     INIT_PARSER(SetAngVel, Vec3, SCHEMA_VEC3);
+    REGISTER_PARSER(SetAngVel);
     INIT_PARSER(ImpulseAt, ImpAt, SCHEMA_IMPULSE_AT);
+    REGISTER_PARSER(ImpulseAt);
     INIT_PARSER(HOnly, HOnly, SCHEMA_HANDLE_ONLY);
+    REGISTER_PARSER(HOnly);
     INIT_PARSER(Destroy, HOnly, SCHEMA_HANDLE_ONLY);
+    REGISTER_PARSER(Destroy);
     INIT_PARSER(Activate, HOnly, SCHEMA_HANDLE_ONLY);
+    REGISTER_PARSER(Activate);
     INIT_PARSER(Gravity, XYZ, SCHEMA_XYZ);
+    REGISTER_PARSER(Gravity);
     INIT_PARSER(SetPos, SetPos, SCHEMA_SET_POS);
+    REGISTER_PARSER(SetPos);
     INIT_PARSER(Buoy, Buoy, SCHEMA_BUOYANCY);
+    REGISTER_PARSER(Buoy);
     INIT_PARSER(BatchBuoy, BatchBuoy, SCHEMA_BATCH_BUOYANCY);
+    REGISTER_PARSER(BatchBuoy);
     INIT_PARSER(Mesh, Mesh, SCHEMA_MESH);
+    REGISTER_PARSER(Mesh);
     INIT_PARSER(SetTrns, SetTrns, SCHEMA_SET_TRNS);
+    REGISTER_PARSER(SetTrns);
     INIT_PARSER(CCD, CCD, SCHEMA_CCD);
+    REGISTER_PARSER(CCD);
     INIT_PARSER(BatchCreate, BatchCreate, SCHEMA_BATCH_CREATE);
+    REGISTER_PARSER(BatchCreate);
     INIT_PARSER(BatchDestroy, BatchDestroy, SCHEMA_BATCH_DESTROY);
+    REGISTER_PARSER(BatchDestroy);
     INIT_PARSER(SetRot, SetRot, SCHEMA_SET_ROT);
+    REGISTER_PARSER(SetRot);
 
     // Structural Overlays (Sharing HC index group)
     INIT_PARSER(ConvexHull, HC, SCHEMA_HC_HULL);
+    REGISTER_PARSER(ConvexHull);
     INIT_PARSER(Compound, HC, SCHEMA_HC_COMP);
+    REGISTER_PARSER(Compound);
     INIT_PARSER(Render, Render, SCHEMA_RENDER);
+    REGISTER_PARSER(Render);
     INIT_PARSER(Raycast, Raycast, SCHEMA_RAYCAST);
+    REGISTER_PARSER(Raycast);
     INIT_PARSER(RayBatch, RayBatch, SCHEMA_RAYCAST_BATCH);
+    REGISTER_PARSER(RayBatch);
     INIT_PARSER(Shapecast, Shapecast, SCHEMA_SHAPECAST);
+    REGISTER_PARSER(Shapecast);
     INIT_PARSER(OverlapSphere, OverlapSphere, SCHEMA_OVERLAP_SPHERE);
+    REGISTER_PARSER(OverlapSphere);
     INIT_PARSER(OverlapAABB, OverlapAABB, SCHEMA_OVERLAP_AABB);
+    REGISTER_PARSER(OverlapAABB);
     INIT_PARSER(SetUserData, SetUserData, SCHEMA_SET_USER_DATA);
+    REGISTER_PARSER(SetUserData);
     INIT_PARSER(GetUserData, HOnly, SCHEMA_HANDLE_ONLY);
+    REGISTER_PARSER(GetUserData);
     INIT_PARSER(GetMotion, HOnly, SCHEMA_HANDLE_ONLY);
+    REGISTER_PARSER(GetMotion);
     INIT_PARSER(SetMotion, SetMotion, SCHEMA_SET_MOTION);
+    REGISTER_PARSER(SetMotion);
     INIT_PARSER(ColFilter, ColFilter, SCHEMA_COL_FILTER);
+    REGISTER_PARSER(ColFilter);
     INIT_PARSER(RegMat, RegMat, SCHEMA_REG_MAT);
+    REGISTER_PARSER(RegMat);
     INIT_PARSER(SetConstrTarget, SetConstr, SCHEMA_SET_CONSTR_TARGET);
+    REGISTER_PARSER(SetConstrTarget);
     INIT_PARSER(Heightfield, Heightfield, SCHEMA_HEIGHTFIELD);
+    REGISTER_PARSER(Heightfield);
     INIT_PARSER(DebugData, DebugData, SCHEMA_DEBUG_DATA);
+    REGISTER_PARSER(DebugData);
     INIT_PARSER(CreateConstr, CreateConstr, SCHEMA_CREATE_CONSTR);
+    REGISTER_PARSER(CreateConstr);
     INIT_PARSER(DestroyConstr, HOnly, SCHEMA_HANDLE_ONLY);
+    REGISTER_PARSER(DestroyConstr);
     INIT_PARSER(Step, Step, SCHEMA_STEP);
+    REGISTER_PARSER(Step);
     INIT_PARSER(CharMove, CharMove, SCHEMA_CHAR_MOVE);
+    REGISTER_PARSER(CharMove);
     INIT_PARSER(LoadState, LoadState, SCHEMA_LOAD_STATE);
+    REGISTER_PARSER(LoadState);
     INIT_PARSER(CreateChar, CreateChar, SCHEMA_CREATE_CHAR);
+    REGISTER_PARSER(CreateChar);
     INIT_PARSER(SetPosChar, SetPosChar, SCHEMA_SET_POS_CHAR);
+    REGISTER_PARSER(SetPosChar);
     INIT_PARSER(SetRotChar, SetRotChar, SCHEMA_SET_ROT_CHAR);
+    REGISTER_PARSER(SetRotChar);
     INIT_PARSER(SetStrengthChar, SetStrengthChar, SCHEMA_SET_STRENGTH_CHAR);
+    REGISTER_PARSER(SetStrengthChar);
     INIT_PARSER(VehicleInput, VehicleInput, SCHEMA_VEHICLE_INPUT);
+    REGISTER_PARSER(VehicleInput);
     INIT_PARSER(TankInput, TankInput, SCHEMA_TANK_INPUT);
+    REGISTER_PARSER(TankInput);
     INIT_PARSER(CreateVehicle, CreateVehicle, SCHEMA_CREATE_VEHICLE);
+    REGISTER_PARSER(CreateVehicle);
     INIT_PARSER(CreateTracked, CreateTracked, SCHEMA_CREATE_TRACKED);
+    REGISTER_PARSER(CreateTracked);
     INIT_PARSER(CreateRagdoll, CreateRagdoll, SCHEMA_CREATE_RAGDOLL);
+    REGISTER_PARSER(CreateRagdoll);
     INIT_PARSER(RagdollSettings, RagdollSettings, SCHEMA_RAGDOLL_SETTINGS);
+    REGISTER_PARSER(RagdollSettings);
     INIT_PARSER(RagdollAddPart, RagdollAddPart, SCHEMA_RAGDOLL_ADD_PART);
+    REGISTER_PARSER(RagdollAddPart);
     INIT_PARSER(AddJoint, AddJoint, SCHEMA_ADD_JOINT);
+    REGISTER_PARSER(AddJoint);
     INIT_PARSER(GetJointIdx, GetJointIdx, SCHEMA_GET_JOINT_IDX);
+    REGISTER_PARSER(GetJointIdx);
     INIT_PARSER(RagdollDrive, RagdollDrive, SCHEMA_RAGDOLL_DRIVE);
+    REGISTER_PARSER(RagdollDrive);
+}
+
+void fp_dump_schemas_json(FILE *out) {
+    fprintf(out, "{\n");
+    for (int i = 0; i < parser_registry_count; i++) {
+        FastParser *fp = parser_registry[i];
+        fprintf(out, "  \"%s\": [\n", fp->parser_name);
+        for (size_t j = 0; j < fp->count; j++) {
+            fprintf(out, "    {\"name\": \"%s\", \"type\": \"%s\", \"required\": %s}%s\n",
+                    fp->specs[j].name, fp->specs[j].type_name,
+                    (int)fp->specs[j].required ? "true" : "false", (j == fp->count - 1) ? "" : ",");
+        }
+        fprintf(out, "  ]%s\n", (i == parser_registry_count - 1) ? "" : ",");
+    }
+    fprintf(out, "}\n");
 }
 
 #define DEINIT_PARSER(ParserName, GroupName) fp_deinit(&ParserName##Parser);
