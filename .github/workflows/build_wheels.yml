@@ -147,3 +147,42 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
+
+# ===========================================================================
+  # JOB 4: PERFORMANCE REGRESSION
+  # ===========================================================================
+  performance_regression:
+    name: Performance Regression Benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: |
+          pip install numpy psutil ninja uv
+          # Build the extension in place so we can run tests against it
+          pip install .
+
+      - name: Run Performance Suite
+        shell: bash
+        run: |
+          echo "## Performance Benchmark Results" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          
+          echo "Running test_perf.py..."
+          uv run tests/test_perf.py >> $GITHUB_STEP_SUMMARY
+          
+          echo -e "\nRunning benchmark.py..."
+          uv run benchmark.py --leak >> $GITHUB_STEP_SUMMARY
+          uv run benchmark.py --churn >> $GITHUB_STEP_SUMMARY
+          
+          echo '```' >> $GITHUB_STEP_SUMMARY
+        continue-on-error: false # Fail the job if perf tests fail
