@@ -105,24 +105,18 @@ add_definitions(-DJPH_DOUBLE_PRECISION)
 add_definitions(-DJPH_OBJECT_LAYER_BITS=32)
 
 # ==============================================================================
-# 2. COMPILER SPECIFIC FLAGS
+# 2. COMPILER SPECIFIC FLAGS (Gathering only)
 # ==============================================================================
-# 1. Check if we are using the MSVC-like driver (clang-cl) or pure MSVC
+set(CULVERIN_COMPILE_FLAGS "")
+set(CULVERIN_LINK_FLAGS "")
+
 if(MSVC)
-    # --- Windows logic (Clang-CL / MSVC) ---
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
     
-    # Check if this is Clang-CL specifically
     if(CMAKE_C_COMPILER_ID MATCHES "Clang")
         message(STATUS "Culverin: Detected Clang-CL (MSVC-like)")
         add_compile_options(/arch:AVX2) 
-        
-        # REMOVE the manual string appends for flags here. 
-        # We will handle standards in Section 5 only.
-        
-        set(RELEASE_FLAGS 
-            "/clang:-O3 /clang:-ffast-math /clang:-fstrict-aliasing /Ob2 /Oi /Ot"
-        )
+        set(RELEASE_FLAGS "/clang:-O3 /clang:-ffast-math /clang:-fstrict-aliasing /Ob2 /Oi /Ot")
     else()
         message(STATUS "Culverin: Detected Pure MSVC")
         set(RELEASE_FLAGS "/Ox /Ot /Ob2 /Oi")
@@ -131,31 +125,37 @@ if(MSVC)
     set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} ${RELEASE_FLAGS}")
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} ${RELEASE_FLAGS}")
 
-# 2. Handle vanilla Clang (clang.exe) on Windows or Linux/macOS
-else()
-    # --- GNU-like Logic (Vanilla Clang or GCC) ---
-    message(STATUS "Culverin: Using GNU-like flags (-O3, etc.)")
-
-    set(SAN_FLAGS "")
-    if(ENABLE_SANITIZER)
-        # Choose ONE: -fsanitize=address OR -fsanitize=thread
-        # You generally cannot run ASan and TSan at the same time.
-        set(SAN_FLAGS "-fsanitize=address" "-fsanitize=undefined" "-fno-omit-frame-pointer" "-fno-sanitize=alignment")
-        message(STATUS "Culverin: SANITIZERS ENABLED: ${SAN_FLAGS}")
+else() 
+    message(STATUS "Culverin: Configuring GNU-like flags...")
+    
+    set(FLAGS_DEBUG "-g")
+    if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+        list(APPEND FLAGS_DEBUG "-gcodeview")
     endif()
     
-    set(UNIX_RELEASE_FLAGS "-O3 -Wall -Wextra -Wconversion -Wdouble-promotion -Wpadded -ffast-math -fomit-frame-pointer")
-
+    set(FLAGS_PERF "-O3" "-ffast-math" "-fomit-frame-pointer")
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
-        set(UNIX_RELEASE_FLAGS "${UNIX_RELEASE_FLAGS} -mavx2 -mfma -march=native")
+        list(APPEND FLAGS_PERF "-mavx2" "-mfma" "-march=native")
     endif()
 
-    # Ensure C23/C++17 for vanilla clang
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c2x") # or c23 depending on clang version
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -frtti")
+    if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+        # FIXED: Use SHELL: to prevent CMake from stripping duplicate -mllvm flags
+        list(APPEND FLAGS_PERF 
+            "SHELL:-mllvm -unroll-threshold=1000" 
+            "SHELL:-mllvm -inline-threshold=2000"
+            "SHELL:-mllvm -unroll-allow-partial"
+            "SHELL:-mllvm -force-vector-width=8"
+        )
+    endif()
 
-    set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} ${UNIX_RELEASE_FLAGS}")
-    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} ${UNIX_RELEASE_FLAGS}")
+    set(FLAGS_STRICT "-Wall" "-Wextra" "-Wno-sign-conversion" "-Wno-shorten-64-to-32" "-Wno-double-promotion")
+
+    list(APPEND CULVERIN_COMPILE_FLAGS ${FLAGS_DEBUG} ${FLAGS_PERF} ${FLAGS_STRICT} "-std=c2x" "-fcolor-diagnostics" "-fdiagnostics-color=always")
+
+    if(ENABLE_SANITIZER)
+        list(APPEND CULVERIN_COMPILE_FLAGS "-fsanitize=address" "-fsanitize=undefined" "-fno-sanitize=alignment")
+        list(APPEND CULVERIN_LINK_FLAGS "-fsanitize=address" "-fsanitize=undefined")
+    endif()
 endif()
 
 
@@ -202,16 +202,16 @@ add_library(${JOLTC_TARGET} STATIC
     "extern/JoltC/src/joltc.c"
 )
 if(MSVC)
-    # If using clang-cl or MSVC, tell it to be quiet
     target_compile_options(${JOLTC_TARGET} PRIVATE /W0)
 else()
-    # If using vanilla clang/gcc, use the "shut up" flag
     target_compile_options(${JOLTC_TARGET} PRIVATE -w)
 endif()
 target_include_directories(${JOLTC_TARGET} PUBLIC "extern/JoltC/include" "${JOLT_DIR}")
 target_link_libraries(${JOLTC_TARGET} PRIVATE Jolt)
 
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
+
+# CREATE THE TARGET FIRST
 python_add_library(_culverin_c MODULE 
     src/culverin/culverin.c 
     src/culverin/culverin_shadow_sync.c
@@ -232,6 +232,7 @@ python_add_library(_culverin_c MODULE
     src/culverin/culverin_fast_parse.c
     src/culverin/culverin_arg_indices.c
 )
+
 include(CheckIPOSupported)
 check_ipo_supported(RESULT ipo_supported OUTPUT error)
 
@@ -243,98 +244,28 @@ if(ipo_supported)
 else()
     message(WARNING "Culverin: LTO/IPO not supported: ${error}")
 endif()
+
 add_custom_command(TARGET _culverin_c POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E echo "Extension built at: $<TARGET_FILE:_culverin_c>"
 )
+
+# NOW APPLY THE FLAGS WE GATHERED IN SECTION 2
 if(MSVC)
-    # 1. Add /Zi to generate debug info (symbols) even in Release builds
-    # 2. Add /DEBUG to the linker to create the .pdb file
-    # 3. Add /OPT:REF /OPT:ICF to ensure the Release build remains optimized and small
     target_compile_options(_culverin_c PRIVATE /Zi /fp:fast)
     target_link_options(_culverin_c PRIVATE /DEBUG /OPT:REF /OPT:ICF)
-    
-    # Fix for some MSVC headers being stubborn about standards
     target_compile_definitions(_culverin_c PRIVATE _CRT_DECLARE_NONSTDC_NAMES=1)
-else() # Vanilla Clang / GNU-like
-    message(STATUS "Culverin: Enforcing Strict Physics-Migration Flags")
-
-    if(UNIX AND NOT APPLE)
-        # This is for Linux only! 
-        # It fixes the posix_memalign error in strict C23 mode.
-        add_definitions(-D_POSIX_C_SOURCE=200809L)
-    endif()
-
-    # 1. SETUP DEBUG/PDB FLAGS
-    # Use -g and -gcodeview for Windows PDB compatibility
-    set(DEBUG_FLAGS "-g" "-gcodeview")
+else()
+    target_compile_options(_culverin_c PRIVATE ${CULVERIN_COMPILE_FLAGS})
     
-    # 2. SETUP SANITIZER FLAGS (If enabled)
-    set(SAN_FLAGS "")
-    if(ENABLE_SANITIZER)
-        set(SAN_FLAGS "-fsanitize=address" "-fsanitize=undefined" "-fno-omit-frame-pointer" "-fno-sanitize=alignment")
-    endif()
-
-    # 3. APPLY TO TARGET
-    # We add these directly to the target to ensure they aren't overridden by global options
-    target_compile_options(_culverin_c PRIVATE 
-        ${DEBUG_FLAGS} 
-        ${SAN_FLAGS}
-        "-std=c2x"
-    )
-
-    # 4. THE LINKER IS THE KEY
     if(WIN32)
-        target_link_options(_culverin_c PRIVATE 
-            "-Wl,-debug"           
-            "-Wl,-nodefaultlib:libcmt" 
-            ${SAN_FLAGS}           
-        )
+        target_link_options(_culverin_c PRIVATE "-Wl,-debug" "-Wl,-nodefaultlib:libcmt" ${CULVERIN_LINK_FLAGS})
     else()
-        # Mac/Linux don't need those Windows flags!
-        target_link_options(_culverin_c PRIVATE ${SAN_FLAGS})
+        target_link_options(_culverin_c PRIVATE ${CULVERIN_LINK_FLAGS})
     endif()
-
-    # Performance flags
-    set(PERF_FLAGS "-O3" "-ffast-math" "-fomit-frame-pointer")
-    if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
-        list(APPEND PERF_FLAGS "-mavx2" "-mfma" "-march=native")
-    endif()
-
-    list(APPEND PERF_FLAGS 
-        "-mllvm" "-unroll-threshold=1000"       # Default is usually ~150; 1000 is aggressive
-        "-mllvm" "-unroll-allow-partial"      # Allows unrolling loops even if trip count isn't known
-        "-mllvm" "-force-vector-width=8"      # Force AVX2 width if the compiler is hesitating
-    )
-
-    # Use a list for cleaner appending
-    set(STRICT_FLAGS 
-        "-Wall" 
-        "-Wextra" 
-        # "-Wconversion"              # Turns EVERYTHING on (including signs)
-        "-Wno-sign-conversion"       # Specifically turns signs OFF
-        "-Wno-shorten-64-to-32"      # Turns off the size_t -> uint32_t nag
-        "-Wno-double-promotion"      # Since you're sick of the Python "f" noise
-        # "-Werror=conversion"         # Treat what's LEFT of conversion as an error
-        # "-fmax-errors=5"
-    )
-
-    # Apply PERF flags to the whole project
-    add_compile_options("${PERF_FLAGS}")
-    add_compile_options(-fcolor-diagnostics)
-    add_compile_options(-fdiagnostics-color=always)
-
-    # FORCE the strict flags onto your specific module
-    # We use BEFORE to ensure they are evaluated early, or 
-    # simply ensure no other target_compile_options calls follow this.
-    target_compile_options(_culverin_c PRIVATE ${STRICT_FLAGS})
-
-    # Ensure Jolt is treated as SYSTEM to prevent its internal 
-    # promotions from triggering your new Werror
-    target_include_directories(_culverin_c SYSTEM PRIVATE 
-        "extern/JoltC/include" 
-        "${JOLT_DIR}"
-    )
+    
+    target_include_directories(_culverin_c SYSTEM PRIVATE "extern/JoltC/include" "${JOLT_DIR}")
 endif()
+
 target_include_directories(_culverin_c PRIVATE 
     "src/culverin"
     SYSTEM "extern/JoltC/include" 
@@ -346,43 +277,16 @@ if(WIN32)
     target_link_libraries(_culverin_c PRIVATE Winmm.lib)
 endif()
 target_compile_definitions(_culverin_c PRIVATE JPH_DEBUG_RENDERER)
-# if(Python_VERSION VERSION_GREATER_EQUAL "3.13")
-#     # Only disable the GIL if the current interpreter actually supports it
-#     execute_process(
-#         COMMAND ${Python_EXECUTABLE} -c "import sys; print(int(bool(sys._get_gil_config().get('enabled', True) == False)))"
-#         OUTPUT_VARIABLE PYTHON_IS_FREE_THREADED
-#         OUTPUT_STRIP_TRAILING_WHITESPACE
-#         ERROR_QUIET
-#     )
-
-#    if(Python_ABI_FLAGS MATCHES "t")
-#         message(STATUS "Culverin: Free-threading (3.13t) detected via ABI flags.")
-#         target_compile_definitions(_culverin_c PRIVATE Py_GIL_DISABLED=1)
-#     else()
-#         message(STATUS "Culverin: Standard Python detected.")
-#     endif()
-# endif()
 
 target_link_libraries(_culverin_c PRIVATE ${JOLTC_TARGET} Jolt)
 
-target_compile_options(_culverin_c PRIVATE 
-    "-mllvm" "-inline-threshold=2000"  # Massive inlining to help it "see" JPH_Body_GetPosition
-)
-
 if(APPLE)
     message(STATUS "Culverin: Enforcing Strong Symbol Export")
-
-    # Force RTTI ON for the wrapper so it can see Jolt's RTTI
     target_compile_options(${JOLTC_TARGET} PRIVATE "-frtti")
     target_compile_options(_culverin_c PRIVATE "-frtti")
-
-
-    target_link_options(_culverin_c PRIVATE 
-        "-Wl,-all_load"
-        "-Wl,-export_dynamic"
-        "-Wl,-flat_namespace" 
-    )
+    target_link_options(_culverin_c PRIVATE "-Wl,-all_load" "-Wl,-export_dynamic" "-Wl,-flat_namespace")
 endif()
+
 set_target_properties(_culverin_c PROPERTIES OUTPUT_NAME "_culverin_c" PREFIX "")
 
 # Final sanity check: ensure our own targets are also /MD
@@ -391,7 +295,6 @@ set_property(TARGET _culverin_c PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<
 
 install(TARGETS _culverin_c DESTINATION .)
 if(MSVC OR WIN32)
-    # We use a Generator Expression to find the exact PDB location
     install(FILES $<TARGET_PDB_FILE:_culverin_c> DESTINATION . OPTIONAL)
 endif()
 install(FILES src/culverin/__init__.py src/culverin/_culverin.py DESTINATION .)
