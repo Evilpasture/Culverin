@@ -1,3 +1,4 @@
+#define _CRT_SECURE_NO_WARNINGS
 #include "culverin.h"
 #include "culverin_arg_indices.h"
 #include "culverin_character.h"
@@ -3764,7 +3765,24 @@ PyCFunction_DeclareMethod PhysicsWorld_get_debug_data(PhysicsWorldObject *self,
     return ret;
 }
 
+PyCFunction_DeclareMethod culv_dump_schema(CULV_MAYBE_UNUSED PyObject *self,
+                                       PyObject *Py_UNUSED(args)) {
+    const char* filename = "culverin_schema.json";
+    FILE *f              = fopen(filename, "w");
+    if (!f) return PyErr_SetFromErrno(PyExc_IOError);
+
+    fp_dump_schemas_json(f);
+    fclose(f);
+
+    Py_RETURN_NONE;
+}
+
 // --- Type Definition ---
+
+static PyMethodDef module_methods[] = {
+    {"_dump_schema_json", culv_dump_schema, METH_NOARGS, "Internal: Dumps schema to culverin_schema.json"},
+    {NULL, NULL, 0, NULL}
+};
 
 static const PyGetSetDef PhysicsWorld_getset[] = {
     {"positions", (getter)get_positions, NULL, NULL, NULL},
@@ -4225,6 +4243,7 @@ static PyModuleDef culverin_module = {
     .m_name     = "_culverin_c",
     .m_doc      = "Culverin Physics Engine Core",
     .m_size     = sizeof(CulverinState),
+    .m_methods  = module_methods,
     .m_slots    = (PyModuleDef_Slot *)culverin_slots,
     .m_traverse = culverin_traverse,
     .m_clear    = culverin_clear,
