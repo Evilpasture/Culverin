@@ -1,3 +1,19 @@
+import os
+import sys
+
+# Windows DLL Resolution Fix
+if sys.platform == "win32":
+    # 1. Check if we provided a path via environment variable
+    clang_path = os.environ.get("CLANG_BIN_PATH")
+    if clang_path and os.path.exists(clang_path):
+        os.add_dll_directory(clang_path)
+    
+    # 2. Try to find LLVM via PATH as a fallback
+    import shutil
+    clang_bin = shutil.which("clang")
+    if clang_bin:
+        os.add_dll_directory(os.path.dirname(clang_bin))
+
 # 1. Load Pure Python Helpers
 from ._culverin import (
     Engine, Transmission, Automatic, Manual,
