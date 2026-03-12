@@ -98,34 +98,31 @@
 
 constexpr int FP_EMPTY_SLOT = 0xFFFF;
 
-CULV_MAYBE_UNUSED
-static inline void fp_conv_vec3f(PyObject *o, void *t) {
+CULV_MAYBE_UNUSED CULV_NODISCARD static inline bool fp_conv_vec3f(PyObject *o, void *t) {
     Vec3f *v = (Vec3f *)t;
-    parse_vec3_f32(o, &v->x, &v->y, &v->z);
+    return parse_vec3_f32(o, &v->x, &v->y, &v->z) != 0;
 }
-CULV_MAYBE_UNUSED
-static inline void fp_conv_pos_stride(PyObject *o, void *t) {
+CULV_MAYBE_UNUSED CULV_NODISCARD static inline bool fp_conv_pos_stride(PyObject *o, void *t) {
     PosStride *v = (PosStride *)t;
-    // Uses your r64 (double) parser
-    parse_vec3_r64(o, &v->x, &v->y, &v->z);
+    return parse_vec3_r64(o, &v->x, &v->y, &v->z) != 0;
 }
-CULV_MAYBE_UNUSED
-static inline void fp_conv_aux_stride(PyObject *o, void *t) {
+CULV_MAYBE_UNUSED CULV_NODISCARD static inline bool fp_conv_aux_stride(PyObject *o, void *t) {
     AuxStride *v = (AuxStride *)t;
-    // Quaternions or generic 4-float vectors
-    parse_quat_f32(o, &v->x, &v->y, &v->z, &v->w);
+    return parse_quat_f32(o, &v->x, &v->y, &v->z, &v->w) != 0;
 }
 
 /** --- 1. TYPES & STRUCTS --- **/
 
 typedef struct {
     const char *name;
+    const char *type_name;
     PyObject *interned;
-    void (*convert)(PyObject *, void *);
+    bool (*convert)(PyObject *, void *);
     bool required;
 } FastArgSpec;
 
 typedef struct {
+    const char* parser_name;
     FastArgSpec *specs;
     uint16_t *lookup_table;
     size_t count;
@@ -134,18 +131,66 @@ typedef struct {
 } FastParser;
 
 /** --- 2. CONVERTER DISPATCH (Header-only for Inlining) --- **/
-
-static inline void fp_conv_float(PyObject *o, void *t) { *(float *)t = (float)PyFloat_AsDouble(o); }
-static inline void fp_conv_double(PyObject *o, void *t) { *(double *)t = PyFloat_AsDouble(o); }
-static inline void fp_conv_int(PyObject *o, void *t) { *(int *)t = (int)PyLong_AsLong(o); }
-static inline void fp_conv_u32(PyObject *o, void *t) {
-    *(uint32_t *)t = (uint32_t)PyLong_AsUnsignedLongMask(o);
+CULV_MAYBE_UNUSED CULV_NODISCARD static inline bool fp_conv_float(PyObject *o, void *t) {
+    if (UNLIKELY(o == Py_None)) {
+        PyErr_SetString(PyExc_TypeError, "float argument cannot be None");
+        return false;
+    }
+    double v = PyFloat_AsDouble(o);
+    if (UNLIKELY(v == -1.0 && PyErr_Occurred())) {
+        return false;
+    }
+    *(float *)t = (float)v;
+    return true;
 }
-static inline void fp_conv_u64(PyObject *o, void *t) {
-    *(uint64_t *)t = PyLong_AsUnsignedLongLong(o);
+CULV_MAYBE_UNUSED CULV_NODISCARD static inline bool fp_conv_double(PyObject *o, void *t) {
+    if (UNLIKELY(o == Py_None)) {
+        PyErr_SetString(PyExc_TypeError, "double argument cannot be None");
+        return false;
+    }
+    double v = PyFloat_AsDouble(o);
+    if (UNLIKELY(v == -1.0 && PyErr_Occurred())) {
+        return false;
+    }
+    *(double *)t = v;
+    return true;
 }
-static inline void fp_conv_bool(PyObject *o, void *t) { *(bool *)t = (bool)PyObject_IsTrue(o); }
-static inline void fp_conv_pyobj(PyObject *o, void *t) { *(PyObject **)t = o; }
+CULV_MAYBE_UNUSED CULV_NODISCARD static inline bool fp_conv_int(PyObject *o, void *t) {
+    long v = PyLong_AsLong(o);
+    if (UNLIKELY(v == -1 && PyErr_Occurred())) {
+        return false;
+    }
+    *(int *)t = (int)v;
+    return true;
+}
+CULV_MAYBE_UNUSED CULV_NODISCARD static inline bool fp_conv_u32(PyObject *o, void *t) {
+    unsigned long v = PyLong_AsUnsignedLongMask(o);
+    if (UNLIKELY(PyErr_Occurred())) {
+        return false;
+    }
+    *(uint32_t *)t = (uint32_t)v;
+    return true;
+}
+CULV_MAYBE_UNUSED CULV_NODISCARD static inline bool fp_conv_u64(PyObject *o, void *t) {
+    unsigned long long v = PyLong_AsUnsignedLongLong(o);
+    if (UNLIKELY(PyErr_Occurred())) {
+        return false;
+    }
+    *(uint64_t *)t = (uint64_t)v;
+    return true;
+}
+CULV_MAYBE_UNUSED CULV_NODISCARD static inline bool fp_conv_bool(PyObject *o, void *t) {
+    int v = PyObject_IsTrue(o);
+    if (UNLIKELY(v == -1)) {
+        return false;
+    }
+    *(bool *)t = (bool)v;
+    return true;
+}
+CULV_MAYBE_UNUSED CULV_NODISCARD static inline bool fp_conv_pyobj(PyObject *o, void *t) {
+    *(PyObject **)t = o;
+    return true;
+}
 
 #define FP_GET_CONVERTER(T)                                                                        \
     _Generic((T),                                                                                  \
@@ -199,9 +244,9 @@ static inline bool fp_parse_vector(PyObject *const *args, Py_ssize_t nargs, PyOb
     // 2. Positional Logic
     for (Py_ssize_t i = 0; i < nargs; ++i) {
         provided_mask |= (1ULL << i);
-        // Removed Py_None check: Let the converter (e.g. PyFloat_AsDouble)
-        // handle None by raising a TypeError, matching standard Python behavior.
-        specs[i].convert(args[i], targets[i]);
+        if (UNLIKELY(!specs[i].convert(args[i], targets[i]))) {
+            return false; // Exit early on type error
+        }
     }
 
     // 3. Keywords Logic
@@ -245,7 +290,9 @@ static inline bool fp_parse_vector(PyObject *const *args, Py_ssize_t nargs, PyOb
             }
 
             provided_mask |= (1ULL << idx);
-            specs[idx].convert(kw_vals[i], targets[idx]);
+            if (UNLIKELY(!specs[idx].convert(kw_vals[i], targets[idx]))) {
+                return false;
+            }
         }
     }
 

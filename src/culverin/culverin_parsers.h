@@ -75,13 +75,14 @@ int parse_cone_params(PyObject *args, ConstraintParams *p);
 int parse_distance_params(PyObject *args, ConstraintParams *p);
 
 void parse_body_size(PyObject *py_size, float s[4]);
-
-void parse_tracks_to_c(PyObject *py_tracks, TrackData *out_data, int *num_out);
+CULV_NODISCARD
+int parse_tracks_to_c(PyObject *py_tracks, TrackData *out_data, int *num_out);
 
 static inline PyObject *find_arg(Py_ssize_t pos_idx, PyObject *target_key, PyObject *const *args,
                                  Py_ssize_t nargs, PyObject *kwnames) {
-    if (pos_idx < nargs)
+    if (pos_idx < nargs) {
         return args[pos_idx];
+    }
     if (kwnames) {
         Py_ssize_t nkw = PyTuple_GET_SIZE(kwnames);
         for (Py_ssize_t i = 0; i < nkw; i++) {

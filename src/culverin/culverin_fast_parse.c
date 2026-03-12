@@ -114,7 +114,9 @@ bool fp_parse_legacy(PyObject *args, PyObject *kwargs, CULV_MAYBE_UNUSED PyObjec
 
         for (Py_ssize_t i = 0; i < nargs; ++i) {
             provided_mask |= (1ULL << i);
-            specs[i].convert(PyTuple_GET_ITEM(args, i), targets[i]);
+            if (UNLIKELY(!specs[i].convert(PyTuple_GET_ITEM(args, i), targets[i]))) {
+                return false;
+            }
         }
     }
 
@@ -159,7 +161,9 @@ bool fp_parse_legacy(PyObject *args, PyObject *kwargs, CULV_MAYBE_UNUSED PyObjec
             }
 
             provided_mask |= (1ULL << idx);
-            specs[idx].convert(val, targets[idx]);
+            if (UNLIKELY(!specs[idx].convert(val, targets[idx]))) {
+                return false;
+            }
         }
     }
 
