@@ -26,7 +26,7 @@ jobs:
           submodules: recursive
 
       - name: Build Wheels
-        uses: pypa/cibuildwheel@v3.3.1
+        uses: pypa/cibuildwheel@v3.4.0
         env:
           CIBW_SKIP: "*-musllinux_* *-win32 *_i686"
           CIBW_BUILD: "cp313-* cp314-*"
@@ -70,7 +70,7 @@ jobs:
           submodules: recursive
 
       - name: Build and Test with ASan/UBSan
-        uses: pypa/cibuildwheel@v3.3.1
+        uses: pypa/cibuildwheel@v3.4.0
         env:
           CIBW_SKIP: "*-musllinux_* *-win32 *_i686"
           CIBW_BUILD: "cp313-manylinux_x86_64"
