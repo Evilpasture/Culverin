@@ -91,7 +91,7 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     else()
         # Linux/macOS: Try c23, but allow c2x as a fallback for Clang 15/16
         # These flags are required for 'auto' and 'constexpr' in C
-        add_compile_options($<$<COMPILE_LANGUAGE:C>:-std=c2x>)
+        add_compile_options($<$<COMPILE_LANGUAGE:C>:-std=c23>)
         add_compile_options($<$<COMPILE_LANGUAGE:C>:-fms-extensions>) # Helps with some _Generic edge cases
     endif()
 endif()
@@ -151,7 +151,7 @@ else()
     set(FLAGS_STRICT "-Wall" "-Wextra" "-Wno-sign-conversion" "-Wno-shorten-64-to-32" "-Wno-double-promotion")
 
     # Base flags
-    list(APPEND CULVERIN_COMPILE_FLAGS ${FLAGS_DEBUG} ${FLAGS_PERF} ${FLAGS_STRICT} "-std=c2x")
+    list(APPEND CULVERIN_COMPILE_FLAGS ${FLAGS_DEBUG} ${FLAGS_PERF} ${FLAGS_STRICT} "-std=c23")
 
     # Compiler-specific color flags
     if(CMAKE_C_COMPILER_ID MATCHES "Clang")
@@ -322,7 +322,7 @@ foreach(t joltc_double _culverin_c)
                 $<$<COMPILE_LANGUAGE:C>:/clang:-Wno-c23-extensions>
             )
         else()
-            target_compile_options(${t} PRIVATE $<$<COMPILE_LANGUAGE:C>:-std=c2x>)
+            target_compile_options(${t} PRIVATE $<$<COMPILE_LANGUAGE:C>:-std=c23>)
         endif()
     endif()
 endforeach()
