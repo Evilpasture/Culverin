@@ -89,9 +89,6 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     if(MSVC)
         # Windows/Clang-CL: Needs the /clang: prefix to see C23 auto/constexpr
         # add_compile_options($<$<COMPILE_LANGUAGE:C>:/clang:-std=c23>)
-    else()
-        # Linux/macOS: Try c23, but allow c2x as a fallback for Clang 15/16
-        # These flags are required for 'auto' and 'constexpr' in C
         add_compile_options($<$<COMPILE_LANGUAGE:C>:-fms-extensions>) # Helps with some _Generic edge cases
     endif()
 endif()
@@ -320,8 +317,6 @@ foreach(t joltc_double _culverin_c)
                 $<$<COMPILE_LANGUAGE:C>:/clang:-std=c23>
                 $<$<COMPILE_LANGUAGE:C>:/clang:-Wno-c23-extensions>
             )
-        else()
-            target_compile_options(${t} PRIVATE $<$<COMPILE_LANGUAGE:C>:-std=c23>)
         endif()
     endif()
 endforeach()
