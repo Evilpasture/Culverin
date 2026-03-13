@@ -4,17 +4,10 @@ cmake_minimum_required(VERSION 3.16)
 # 0. THE COMPILER ENFORCER
 # ==============================================================================
 function(enforce_modern_compiler)
-    # CMAKE_C_COMPILER_ID is only available AFTER project() or enable_language()
-    # So we check the environment or the forced variables
-    
-    # If the compiler is NOT Clang and NOT GNU, then we trigger the guard
     if(CMAKE_C_COMPILER_ID AND NOT CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
-        
         message(STATUS "Detected Compiler ID: ${CMAKE_C_COMPILER_ID}")
-        
         message(STATUS "Culverin: MSVC detected. Searching for alternatives...")
 
-        # 2. Try to find Clang or GCC in the system PATH
         find_program(CLANG_PATH NAMES clang clang-cl)
         find_program(GCC_PATH NAMES gcc)
 
@@ -46,12 +39,10 @@ endfunction()
 
 
 # 1. THE NUCLEAR INITIALIZATION
-# CMP0091 allows us to use CMAKE_MSVC_RUNTIME_LIBRARY
 cmake_policy(SET CMP0091 NEW)
 
 option(ENABLE_SANITIZER "Enable Clang Sanitizers (ASan/TSan/UBSan)" OFF)
 
-# Force Jolt settings into the CACHE so they can't be overridden
 set(DOUBLE_PRECISION ON CACHE BOOL "Use double precision math" FORCE)
 set(GENERATE_SAMPLES OFF CACHE BOOL "" FORCE)
 set(GENERATE_UNIT_TESTS OFF CACHE BOOL "" FORCE)
@@ -59,12 +50,6 @@ set(USE_STATIC_MSVC_RUNTIME OFF CACHE BOOL "" FORCE)
 set(FORCE_MT_RUNTIME OFF CACHE BOOL "" FORCE)
 set(USE_VULKAN OFF CACHE BOOL "" FORCE)
 
-# Force RTTI ON for the entire build tree before Jolt is processed
-# if(NOT DEFINED -D_HAS_STATIC_RTTI)
-#     add_definitions(-D_HAS_STATIC_RTTI=1)
-# endif()
-
-# Ensure Jolt doesn't override it internally
 set(FORCE_RTTI ON CACHE BOOL "Force RTTI on" FORCE)
 
 project(culverin LANGUAGES C CXX)
@@ -80,11 +65,8 @@ if(NOT MSVC)
     add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-frtti>")
 endif()
 
-# Standards
-# Do NOT use CMAKE_C_STANDARD 23 - CMake doesn't know the clang-cl flag for it
-# and it conflicts with manual -std= flags on Linux. We inject it manually below.
-set(CMAKE_C_STANDARD 17)        # keeps CMake's feature detection quiet
-set(CMAKE_C_STANDARD_REQUIRED OFF) # OFF so CMake doesn't error if it can't map 23
+set(CMAKE_C_STANDARD 17)        
+set(CMAKE_C_STANDARD_REQUIRED OFF) 
 set(CMAKE_C_EXTENSIONS OFF)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -94,7 +76,7 @@ add_definitions(-DJPH_DOUBLE_PRECISION)
 add_definitions(-DJPH_OBJECT_LAYER_BITS=32)
 
 # ==============================================================================
-# 2. COMPILER SPECIFIC FLAGS (Gathering only)
+# 2. COMPILER SPECIFIC FLAGS
 # ==============================================================================
 set(CULVERIN_COMPILE_FLAGS "")
 set(CULVERIN_LINK_FLAGS "")
@@ -124,11 +106,11 @@ else()
     
     set(FLAGS_PERF "-O3" "-ffast-math" "-fomit-frame-pointer")
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
-        list(APPEND FLAGS_PERF "-mavx2" "-mfma" "-march=native")
+        # Removed -march=native so built binaries are portable
+        list(APPEND FLAGS_PERF "-mavx2" "-mfma")
     endif()
 
     if(CMAKE_C_COMPILER_ID MATCHES "Clang")
-        # FIXED: Use SHELL: to prevent CMake from stripping duplicate -mllvm flags
         list(APPEND FLAGS_PERF 
             "SHELL:-mllvm -unroll-threshold=1000" 
             "SHELL:-mllvm -inline-threshold=2000"
@@ -139,12 +121,11 @@ else()
 
     set(FLAGS_STRICT "-Wall" "-Wextra" "-Wno-sign-conversion" "-Wno-shorten-64-to-32" "-Wno-double-promotion")
 
-    # Inject C23 standard manually - gnu23 gives C23 + GNU extensions (POSIX visible, no fms-extensions needed)
-    set(FLAGS_STD "-std=gnu23")  # plain string, no generator expression
+    # Use gnu2x instead of gnu23 to support Clang 15-17 prevalent in CI runners
+    set(FLAGS_STD "-std=gnu2x")
 
     list(APPEND CULVERIN_COMPILE_FLAGS ${FLAGS_STD} ${FLAGS_DEBUG} ${FLAGS_PERF} ${FLAGS_STRICT})
 
-    # Compiler-specific color flags
     if(CMAKE_C_COMPILER_ID MATCHES "Clang")
         list(APPEND CULVERIN_COMPILE_FLAGS "-fcolor-diagnostics")
     else()
@@ -162,14 +143,10 @@ endif()
 # 3. BUILD JOLT PHYSICS
 # ==============================================================================
 get_filename_component(JOLT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/extern/JoltPhysics" ABSOLUTE)
-# 1. Add this globally before add_subdirectory(Jolt)
 add_definitions(-DJPH_DEBUG_RENDERER)
-
-# 2. CRITICAL: Jolt's CMake has a toggle for this. Force it:
 set(DEBUG_RENDERER_IN_DEBUG_AND_RELEASE ON CACHE BOOL "" FORCE)
 add_subdirectory("${JOLT_DIR}/Build" jolt_physics_build)
 
-# THE CRITICAL STEP: Align all Jolt targets to /MD
 if(MSVC OR (WIN32 AND CMAKE_C_COMPILER_ID MATCHES "Clang"))
     foreach(t Jolt)
         if(TARGET ${t})
@@ -177,13 +154,9 @@ if(MSVC OR (WIN32 AND CMAKE_C_COMPILER_ID MATCHES "Clang"))
             
             if(CMAKE_C_COMPILER_ID MATCHES "Clang")
                 set_property(TARGET ${t} PROPERTY COMPILE_OPTIONS "")
-                
                 if(MSVC)
-                    # For clang-cl.exe
                     target_compile_options(${t} PRIVATE /arch:AVX2 /std:c++17)
                 else()
-                    # For vanilla clang.exe (What you are currently using)
-                    # We add -mfma and -mf16c to satisfy the intrinsic requirements
                     target_compile_options(${t} PRIVATE -mavx2 -mlzcnt -mfma -mf16c -std=c++17)
                 endif()
             endif()
@@ -210,7 +183,6 @@ target_link_libraries(${JOLTC_TARGET} PRIVATE Jolt)
 
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 
-# CREATE THE TARGET FIRST
 python_add_library(_culverin_c MODULE 
     src/culverin/culverin.c 
     src/culverin/culverin_shadow_sync.c
@@ -234,7 +206,6 @@ python_add_library(_culverin_c MODULE
 
 include(CheckIPOSupported)
 check_ipo_supported(RESULT ipo_supported OUTPUT error)
-
 if(ipo_supported)
     message(STATUS "Culverin: LTO/IPO is supported and ENABLED")
     set_property(TARGET _culverin_c PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
@@ -248,7 +219,6 @@ add_custom_command(TARGET _culverin_c POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E echo "Extension built at: $<TARGET_FILE:_culverin_c>"
 )
 
-# NOW APPLY THE FLAGS WE GATHERED IN SECTION 2
 if(MSVC)
     target_compile_options(_culverin_c PRIVATE /Zi /fp:fast)
     target_link_options(_culverin_c PRIVATE /DEBUG /OPT:REF /OPT:ICF)
@@ -258,7 +228,7 @@ else()
     
     if(WIN32)
         target_link_options(_culverin_c PRIVATE "-Wl,-debug" "-Wl,-nodefaultlib:libcmt" ${CULVERIN_LINK_FLAGS})
-    else()
+    elseif(CULVERIN_LINK_FLAGS)
         target_link_options(_culverin_c PRIVATE ${CULVERIN_LINK_FLAGS})
     endif()
     
@@ -280,19 +250,18 @@ if(WIN32)
     target_link_libraries(_culverin_c PRIVATE Winmm.lib)
 endif()
 target_compile_definitions(_culverin_c PRIVATE JPH_DEBUG_RENDERER)
-
 target_link_libraries(_culverin_c PRIVATE ${JOLTC_TARGET} Jolt)
 
 if(APPLE)
     message(STATUS "Culverin: Enforcing Strong Symbol Export")
     target_compile_options(${JOLTC_TARGET} PRIVATE "-frtti")
     target_compile_options(_culverin_c PRIVATE "-frtti")
-    target_link_options(_culverin_c PRIVATE "-Wl,-all_load" "-Wl,-export_dynamic" "-Wl,-flat_namespace")
+    # Removed -export_dynamic (causes ld crash) and -flat_namespace
+    target_link_options(_culverin_c PRIVATE "-Wl,-all_load")
 endif()
 
 set_target_properties(_culverin_c PROPERTIES OUTPUT_NAME "_culverin_c" PREFIX "")
 
-# Final sanity check: ensure our own targets are also /MD
 set_property(TARGET ${JOLTC_TARGET} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 set_property(TARGET _culverin_c PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 
@@ -301,25 +270,21 @@ if(MSVC OR WIN32)
     install(FILES $<TARGET_PDB_FILE:_culverin_c> DESTINATION . OPTIONAL)
 endif()
 install(FILES src/culverin/__init__.py src/culverin/_culverin.py DESTINATION .)
+
 # ==============================================================================
 # 5. THE TRINITY OF GREEN: C23 ENFORCEMENT
 # ==============================================================================
 foreach(t joltc_double _culverin_c)
     if(TARGET ${t})
         if(MSVC AND CMAKE_C_COMPILER_ID MATCHES "Clang")
-            # clang-cl requires /clang:-std=c23 to enable C23 keywords
-            message(STATUS "Culverin: Hammering C23 into ${t} via Clang-CL Shell")
+            message(STATUS "Culverin: Hammering C2x into ${t} via Clang-CL Shell")
             target_compile_options(${t} PRIVATE 
-                $<$<COMPILE_LANGUAGE:C>:/clang:-std=c23>
-                $<$<COMPILE_LANGUAGE:C>:/clang:-Wno-c23-extensions>
+                $<$<COMPILE_LANGUAGE:C>:/clang:-std=c2x>
+                $<$<COMPILE_LANGUAGE:C>:/clang:-Wno-c2x-extensions>
             )
         endif()
-        # Linux/macOS: already handled by -std=gnu23 in CULVERIN_COMPILE_FLAGS
-        # joltc_double only has .cpp and .c files; the -std=gnu23 in CULVERIN_COMPILE_FLAGS
-        # is applied via target_compile_options below for _culverin_c.
-        # For joltc_double, we need to apply it too:
         if(NOT MSVC)
-            target_compile_options(${t} PRIVATE $<$<COMPILE_LANGUAGE:C>:-std=gnu23>)
+            target_compile_options(${t} PRIVATE $<$<COMPILE_LANGUAGE:C>:-std=gnu2x>)
         endif()
     endif()
 endforeach()

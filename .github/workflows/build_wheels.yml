@@ -34,12 +34,15 @@ jobs:
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
           
-          # Force Clang explicitly for the Linux container
+          # Utilizing uv frontend as highlighted in v3.4.0
+          CIBW_BUILD_FRONTEND: "uv"
+          
+          # Removed -DCMAKE_C_STANDARD=23 so it doesn't crash old CI CMake versions
           CIBW_ENVIRONMENT_LINUX: >
             CC=clang
             CXX=clang++
             CMAKE_GENERATOR=Ninja
-            CMAKE_ARGS="-DENABLE_SANITIZER=OFF -DCMAKE_BUILD_TYPE=Release -DDOUBLE_PRECISION=ON -DJPH_DOUBLE_PRECISION=ON -DCMAKE_C_STANDARD=23"
+            CMAKE_ARGS="-DENABLE_SANITIZER=OFF -DCMAKE_BUILD_TYPE=Release -DDOUBLE_PRECISION=ON -DJPH_DOUBLE_PRECISION=ON"
 
           CIBW_ENVIRONMENT_WINDOWS: "CC=clang-cl CXX=clang-cl CMAKE_GENERATOR=Ninja"
           
@@ -48,7 +51,7 @@ jobs:
             CXX=clang++ 
             CMAKE_GENERATOR=Ninja
             MACOSX_DEPLOYMENT_TARGET=13.0
-            CMAKE_ARGS="-DENABLE_SANITIZER=OFF -DCMAKE_BUILD_TYPE=Release -DDOUBLE_PRECISION=ON -DJPH_DOUBLE_PRECISION=ON -DCMAKE_C_STANDARD=23"
+            CMAKE_ARGS="-DENABLE_SANITIZER=OFF -DCMAKE_BUILD_TYPE=Release -DDOUBLE_PRECISION=ON -DJPH_DOUBLE_PRECISION=ON"
           
           CIBW_BEFORE_ALL_LINUX: >
             (dnf install -y clang llvm || yum install -y clang llvm || apk add --no-cache clang llvm-dev) &&
@@ -82,19 +85,17 @@ jobs:
           CIBW_BUILD: "cp313-manylinux_x86_64"
           CIBW_ENABLE: "cpython-freethreading"
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+          CIBW_BUILD_FRONTEND: "uv"
           
           CIBW_BEFORE_ALL_LINUX: "dnf install -y clang llvm compiler-rt libasan libubsan && pip install ninja"
           
-          # THE SURGICAL FIX: 
-          # -fno-sanitize=alignment tells Clang not to emit the specific UBSan check 
-          # that the system's GCC libubsan.so doesn't understand.
           CIBW_ENVIRONMENT: >
             CC="clang -fno-sanitize=alignment" 
             CXX="clang++ -fno-sanitize=alignment" 
             CMAKE_GENERATOR=Ninja
             ASAN_OPTIONS="detect_leaks=0:detect_odr_violation=0:halt_on_error=1"
             UBSAN_OPTIONS="print_stacktrace=1:halt_on_error=1"
-            CMAKE_ARGS="-DENABLE_SANITIZER=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo -DDOUBLE_PRECISION=ON -DCMAKE_C_STANDARD=23"
+            CMAKE_ARGS="-DENABLE_SANITIZER=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo -DDOUBLE_PRECISION=ON"
           
           CIBW_TEST_REQUIRES: numpy psutil
           CIBW_TEST_COMMAND: >
@@ -154,7 +155,7 @@ jobs:
         with:
           packages-dir: dist/
 
-# ===========================================================================
+  # ===========================================================================
   # JOB 4: PERFORMANCE REGRESSION
   # ===========================================================================
   performance_regression:
@@ -163,7 +164,7 @@ jobs:
     env:
       CC: clang
       CXX: clang++
-      CMAKE_ARGS: "-DENABLE_SANITIZER=OFF -DCMAKE_BUILD_TYPE=Release -DDOUBLE_PRECISION=ON -DJPH_DOUBLE_PRECISION=ON -DCMAKE_C_STANDARD=23"
+      CMAKE_ARGS: "-DENABLE_SANITIZER=OFF -DCMAKE_BUILD_TYPE=Release -DDOUBLE_PRECISION=ON -DJPH_DOUBLE_PRECISION=ON"
     steps:
       - name: Install Clang
         run: sudo apt-get install -y clang
