@@ -647,7 +647,7 @@ int verify_abi_alignment(JPH_BodyInterface *bi) {
 }
 
 // Buffer Release Slot
-PyType_DeclareSlot_Void PhysicsWorld_releasebuffer(PhysicsWorldObject *self,
+PyType_DeclareSlot_VoidFromModule PhysicsWorld_releasebuffer(PhysicsWorldObject *self,
                                                    Py_buffer *Py_UNUSED(view)) {
     SHADOW_LOCK(&self->shadow_lock);
     if (self->view_export_count > 0) {
