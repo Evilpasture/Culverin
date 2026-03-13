@@ -90,16 +90,6 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Patch C23 Source Code Typo (Temporary)
-        shell: python
-        run: |
-          import os
-          path = 'src/culverin/culverin_physics_world_internal.c'
-          if os.path.exists(path):
-              with open(path, 'r') as f: data = f.read()
-              data = data.replace('PyType_DeclareSlot_Void PhysicsWorld_releasebuffer', 'PyType_DeclareSlot_VoidFromModule PhysicsWorld_releasebuffer')
-              with open(path, 'w') as f: f.write(data)
-
       - name: Build and Test with ASan/UBSan
         uses: pypa/cibuildwheel@v3.4.0
         env:
@@ -182,7 +172,7 @@ jobs:
   # ===========================================================================
   performance_regression:
     name: Performance Regression Benchmarks
-    needs: [build_wheels]  # Wait for the Linux wheel to finish building
+    needs: [build_wheels]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -208,7 +198,6 @@ jobs:
       - name: Install dependencies and Pre-built Wheel
         run: |
           uv pip install --system numpy psutil
-          # Bypass local compilation and directly install the binary we just built
           WHEEL=$(ls dist/culverin-*cp313-cp313-manylinux*.whl | head -n 1)
           uv pip install --system "$WHEEL"
 
@@ -218,12 +207,13 @@ jobs:
           echo "## Performance Benchmark Results" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           
+          # Fix: Explicitly point to the tests/ directory
           echo "Running test_perf.py..."
           python tests/test_perf.py >> $GITHUB_STEP_SUMMARY
           
           echo -e "\nRunning benchmark.py..."
-          python benchmark.py --leak >> $GITHUB_STEP_SUMMARY
-          python benchmark.py --churn >> $GITHUB_STEP_SUMMARY
+          python tests/benchmark.py --leak >> $GITHUB_STEP_SUMMARY
+          python tests/benchmark.py --churn >> $GITHUB_STEP_SUMMARY
           
           echo '```' >> $GITHUB_STEP_SUMMARY
         continue-on-error: false
