@@ -81,18 +81,11 @@ if(NOT MSVC)
 endif()
 
 # Standards
-if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
-    # We set the base to 17 to keep CMake quiet
-    set(CMAKE_C_STANDARD 23)
-    set(CMAKE_C_EXTENSIONS ON)
-    
-    if(MSVC)
-        # Windows/Clang-CL: Needs the /clang: prefix to see C23 auto/constexpr
-        # add_compile_options($<$<COMPILE_LANGUAGE:C>:/clang:-std=c23>)
-        add_compile_options($<$<COMPILE_LANGUAGE:C>:-fms-extensions>) # Helps with some _Generic edge cases
-    endif()
-endif()
-set(CMAKE_C_STANDARD_REQUIRED ON)
+# Do NOT use CMAKE_C_STANDARD 23 - CMake doesn't know the clang-cl flag for it
+# and it conflicts with manual -std= flags on Linux. We inject it manually below.
+set(CMAKE_C_STANDARD 17)        # keeps CMake's feature detection quiet
+set(CMAKE_C_STANDARD_REQUIRED OFF) # OFF so CMake doesn't error if it can't map 23
+set(CMAKE_C_EXTENSIONS ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -146,8 +139,11 @@ else()
 
     set(FLAGS_STRICT "-Wall" "-Wextra" "-Wno-sign-conversion" "-Wno-shorten-64-to-32" "-Wno-double-promotion")
 
+    # Inject C23 standard manually - gnu23 gives C23 + GNU extensions (POSIX visible, no fms-extensions needed)
+    set(FLAGS_STD "$<$<COMPILE_LANGUAGE:C>:-std=gnu23>")
+
     # Base flags
-    list(APPEND CULVERIN_COMPILE_FLAGS ${FLAGS_DEBUG} ${FLAGS_PERF} ${FLAGS_STRICT})
+    list(APPEND CULVERIN_COMPILE_FLAGS ${FLAGS_STD} ${FLAGS_DEBUG} ${FLAGS_PERF} ${FLAGS_STRICT})
 
     # Compiler-specific color flags
     if(CMAKE_C_COMPILER_ID MATCHES "Clang")
@@ -312,11 +308,19 @@ install(FILES src/culverin/__init__.py src/culverin/_culverin.py DESTINATION .)
 foreach(t joltc_double _culverin_c)
     if(TARGET ${t})
         if(MSVC AND CMAKE_C_COMPILER_ID MATCHES "Clang")
+            # clang-cl requires /clang:-std=c23 to enable C23 keywords
             message(STATUS "Culverin: Hammering C23 into ${t} via Clang-CL Shell")
             target_compile_options(${t} PRIVATE 
                 $<$<COMPILE_LANGUAGE:C>:/clang:-std=c23>
                 $<$<COMPILE_LANGUAGE:C>:/clang:-Wno-c23-extensions>
             )
+        endif()
+        # Linux/macOS: already handled by -std=gnu23 in CULVERIN_COMPILE_FLAGS
+        # joltc_double only has .cpp and .c files; the -std=gnu23 in CULVERIN_COMPILE_FLAGS
+        # is applied via target_compile_options below for _culverin_c.
+        # For joltc_double, we need to apply it too:
+        if(NOT MSVC)
+            target_compile_options(${t} PRIVATE $<$<COMPILE_LANGUAGE:C>:-std=gnu23>)
         endif()
     endif()
 endforeach()
