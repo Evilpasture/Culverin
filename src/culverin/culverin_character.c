@@ -633,16 +633,16 @@ PyCFunction_DeclareMethodFromModule Character_is_grounded(CharacterObject *self,
 }
 
 // NEW: GC Traverse/Clear for Character
-PyType_DeclareSlot_Status Character_traverse(CharacterObject *self, visitproc visit, void *arg) {
+PyType_DeclareSlot_StatusFromModule Character_traverse(CharacterObject *self, visitproc visit, void *arg) {
     Py_VISIT(self->world);
     return 0;
 }
-PyType_DeclareSlot_Status Character_clear(CharacterObject *self) {
+PyType_DeclareSlot_StatusFromModule Character_clear(CharacterObject *self) {
     Py_CLEAR(self->world);
     return 0;
 }
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-PyType_DeclareSlot_Void Character_dealloc(CharacterObject *self) {
+PyType_DeclareSlot_VoidFromModule Character_dealloc(CharacterObject *self) {
     PyObject_GC_UnTrack(self);
     if (!self->world) {
         goto finalize;
