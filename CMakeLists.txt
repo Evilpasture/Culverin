@@ -85,7 +85,7 @@ endif()
 # and it conflicts with manual -std= flags on Linux. We inject it manually below.
 set(CMAKE_C_STANDARD 17)        # keeps CMake's feature detection quiet
 set(CMAKE_C_STANDARD_REQUIRED OFF) # OFF so CMake doesn't error if it can't map 23
-set(CMAKE_C_EXTENSIONS ON)
+set(CMAKE_C_EXTENSIONS OFF)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -140,9 +140,8 @@ else()
     set(FLAGS_STRICT "-Wall" "-Wextra" "-Wno-sign-conversion" "-Wno-shorten-64-to-32" "-Wno-double-promotion")
 
     # Inject C23 standard manually - gnu23 gives C23 + GNU extensions (POSIX visible, no fms-extensions needed)
-    set(FLAGS_STD "$<$<COMPILE_LANGUAGE:C>:-std=gnu23>")
+    set(FLAGS_STD "-std=gnu23")  # plain string, no generator expression
 
-    # Base flags
     list(APPEND CULVERIN_COMPILE_FLAGS ${FLAGS_STD} ${FLAGS_DEBUG} ${FLAGS_PERF} ${FLAGS_STRICT})
 
     # Compiler-specific color flags
