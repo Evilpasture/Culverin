@@ -83,7 +83,8 @@ endif()
 # Standards
 if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     # We set the base to 17 to keep CMake quiet
-    set(CMAKE_C_STANDARD 17)
+    set(CMAKE_C_STANDARD 23)
+    set(CMAKE_C_EXTENSIONS ON)
     
     if(MSVC)
         # Windows/Clang-CL: Needs the /clang: prefix to see C23 auto/constexpr
@@ -91,7 +92,6 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     else()
         # Linux/macOS: Try c23, but allow c2x as a fallback for Clang 15/16
         # These flags are required for 'auto' and 'constexpr' in C
-        add_compile_options($<$<COMPILE_LANGUAGE:C>:-std=c23>)
         add_compile_options($<$<COMPILE_LANGUAGE:C>:-fms-extensions>) # Helps with some _Generic edge cases
     endif()
 endif()
@@ -99,7 +99,6 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-set(CMAKE_C_EXTENSIONS OFF)
 
 add_definitions(-DJPH_DOUBLE_PRECISION)
 add_definitions(-DJPH_OBJECT_LAYER_BITS=32)
@@ -151,7 +150,7 @@ else()
     set(FLAGS_STRICT "-Wall" "-Wextra" "-Wno-sign-conversion" "-Wno-shorten-64-to-32" "-Wno-double-promotion")
 
     # Base flags
-    list(APPEND CULVERIN_COMPILE_FLAGS ${FLAGS_DEBUG} ${FLAGS_PERF} ${FLAGS_STRICT} "-std=c23")
+    list(APPEND CULVERIN_COMPILE_FLAGS ${FLAGS_DEBUG} ${FLAGS_PERF} ${FLAGS_STRICT})
 
     # Compiler-specific color flags
     if(CMAKE_C_COMPILER_ID MATCHES "Clang")
