@@ -25,8 +25,8 @@
 // --- 2. ALLOCATIONS ---
 
 #define ALLOC_PARSER(ParserName, GroupName)                                                        \
-    static FastParser ParserName##Parser;                                                          \
-    static FastArgSpec ParserName##Specs[GroupName##_COUNT];
+    FastParser ParserName##Parser;                                                          \
+    FastArgSpec ParserName##Specs[GroupName##_COUNT];
 
 // Signature-grouped allocations
 ALLOC_PARSER(Body, Body)
