@@ -166,10 +166,6 @@ else()
     endif()
 endif()
 
-target_compile_definitions(_culverin_c PRIVATE 
-    $<$<NOT:$<BOOL:${MSVC}>>:_GNU_SOURCE>
-)
-
 
 # ==============================================================================
 # 3. BUILD JOLT PHYSICS
@@ -277,6 +273,10 @@ else()
     
     target_include_directories(_culverin_c SYSTEM PRIVATE "extern/JoltC/include" "${JOLT_DIR}")
 endif()
+
+target_compile_definitions(_culverin_c PRIVATE 
+    $<$<NOT:$<BOOL:${MSVC}>>:_GNU_SOURCE>
+)
 
 target_include_directories(_culverin_c PRIVATE 
     "src/culverin"
