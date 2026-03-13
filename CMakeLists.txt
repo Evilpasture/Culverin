@@ -166,6 +166,10 @@ else()
     endif()
 endif()
 
+target_compile_definitions(_culverin_c PRIVATE 
+    $<$<NOT:$<BOOL:${MSVC}>>:_GNU_SOURCE>
+)
+
 
 # ==============================================================================
 # 3. BUILD JOLT PHYSICS

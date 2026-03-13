@@ -160,7 +160,13 @@ jobs:
   performance_regression:
     name: Performance Regression Benchmarks
     runs-on: ubuntu-latest
+    env:
+      CC: clang
+      CXX: clang++
+      CMAKE_ARGS: "-DENABLE_SANITIZER=OFF -DCMAKE_BUILD_TYPE=Release -DDOUBLE_PRECISION=ON -DJPH_DOUBLE_PRECISION=ON -DCMAKE_C_STANDARD=23"
     steps:
+      - name: Install Clang
+        run: sudo apt-get install -y clang
       - name: Checkout code
         uses: actions/checkout@v6
         with:
