@@ -17,6 +17,20 @@ bool fp_report_missing(const FastParser *fp, uint64_t provided_mask) {
     return false;
 }
 
+bool fp_report_type_error(const FastParser *fp, size_t index, PyObject *val) {
+    const FastArgSpec *spec = &fp->specs[index];
+    
+    // Fallback to getting the type name directly from the type_guard
+    const char *expected_type = spec->type_name ? spec->type_name : spec->type_guard->tp_name;
+    
+    PyErr_Format(PyExc_TypeError, 
+                 "argument '%s' must be %s, not %.200s",
+                 spec->name, 
+                 expected_type, 
+                 Py_TYPE(val)->tp_name);
+    return false;
+}
+
 bool fp_report_multiple(const FastParser *fp, size_t index) {
     PyErr_Format(PyExc_TypeError, "argument '%s' got multiple values", fp->specs[index].name);
     return false;
