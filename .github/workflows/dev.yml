@@ -58,25 +58,29 @@ jobs:
         with:
           python-version: "3.13t" # Installs the free-threaded version natively
 
-      - name: Build and Scan with TSan
+      - name: Build and Scan with TSan (Python 3.14t)
         env:
           CC: "/usr/bin/clang-22"
           CXX: "/usr/bin/clang++-22"
-          # Use -O0 for maximum trace clarity
           CFLAGS: "-fsanitize=thread -g -O0 -fno-omit-frame-pointer"
           LDFLAGS: "-fsanitize=thread"
-          # FORCE Debug build in CMake
           CMAKE_ARGS: "-DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_STANDARD=23 -DCMAKE_C_STANDARD_REQUIRED=ON -DENABLE_THREAD_SANITIZER=ON"
         run: |
+          # Ensure uv is using the absolute latest 3.14 free-threaded build
+          uv python install 3.14t
+          
+          # Re-initialize the venv with 3.14t
+          uv venv --python 3.14t
+          
+          # Build Culverin
           uv pip install scikit-build-core numpy psutil pytest
           uv pip install -e . --no-build-isolation
           
+          export TSAN_SYMBOLIZER_PATH=/usr/bin/llvm-symbolizer-22
           TSAN_LIB=$(find /usr/lib/llvm-22 -name "libclang_rt.tsan-x86_64.so" | head -n 1)
           
-          # Point TSan to the symbolizer so we get line numbers
-          export ASAN_SYMBOLIZER_PATH=/usr/bin/llvm-symbolizer-22
-          
-          # Run python directly from the venv to avoid 'uv' wrapper noise in logs
+          # Run benchmark
           LD_PRELOAD=$TSAN_LIB \
           TSAN_OPTIONS="second_deadlock_stack=1 halt_on_error=1 symbolize=1" \
           ./.venv/bin/python tests/benchmark.py --stress
+
