@@ -1,17 +1,13 @@
-name: Remote Dev Fast-Track
+name: Remote Dev Fast-Track (M-Series Bleeding Edge)
 
 on:
   push:
     branches: [ remote-dev ]
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  fast_dev_check:
-    name: Rapid Build & Test (C23 - 3.13t)
-    runs-on: ubuntu-latest
+  fast_dev_check_macos:
+    name: M-Series C23 (Clang Latest)
+    runs-on: macos-latest
     
     steps:
       - name: Checkout code
@@ -24,32 +20,27 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Build and Test (Isolated Container)
+      - name: Install Latest Upstream LLVM
+        run: |
+          brew install llvm ninja
+          echo "/opt/homebrew/opt/llvm/bin" >> $GITHUB_PATH
+
+      - name: Build and Test
         uses: pypa/cibuildwheel@v3.4.0
         env:
-          # Only build freethreaded 3.13 for the quickest validation
-          CIBW_BUILD: "cp313t-manylinux_x86_64"
+          CIBW_BUILD: "cp313t-macosx_arm64"
           CIBW_ENABLE: "cpython-freethreading"
-          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
-          
           CIBW_BUILD_FRONTEND: "uv"
 
-          # Force C23 inside the build environment
-          CIBW_ENVIRONMENT: >
-            CC=clang
-            CXX=clang++
+          # Use the absolute path to ensure we aren't using AppleClang
+          CIBW_ENVIRONMENT_MACOS: >
+            CC="/opt/homebrew/opt/llvm/bin/clang"
+            CXX="/opt/homebrew/opt/llvm/bin/clang++"
+            LDFLAGS="-L/opt/homebrew/opt/llvm/lib -Wl,-rpath,/opt/homebrew/opt/llvm/lib"
+            CPPFLAGS="-I/opt/homebrew/opt/llvm/include"
             CMAKE_GENERATOR=Ninja
+            MACOSX_DEPLOYMENT_TARGET=14.0
             CMAKE_ARGS="-DCMAKE_C_STANDARD=23 -DCMAKE_C_STANDARD_REQUIRED=ON -DENABLE_SANITIZER=OFF -DCMAKE_BUILD_TYPE=Release -DDOUBLE_PRECISION=ON"
-
-          CIBW_BEFORE_ALL_LINUX: >
-            dnf install -y clang llvm &&
-            pip install ninja
 
           CIBW_TEST_REQUIRES: numpy psutil
           CIBW_TEST_COMMAND: "python {project}/tests/test_core.py"
-
-      - name: Upload Dev Wheel
-        uses: actions/upload-artifact@v7
-        with:
-          name: culverin-dev-wheel
-          path: ./wheelhouse/*.whl
