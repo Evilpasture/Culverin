@@ -54,6 +54,10 @@ jobs:
         with:
           submodules: recursive
 
+      # Added this step to fix the "uv not found" error
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
       - name: Install Toolchain
         run: |
           brew install llvm ninja
@@ -74,8 +78,6 @@ jobs:
             CMAKE_ARGS="-DCMAKE_C_STANDARD=23 -DENABLE_SANITIZER=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo"
 
           CIBW_TEST_REQUIRES: numpy psutil pytest
-          # Note: We do NOT use -n auto here because TSan is heavy and 
-          # sequential runs give clearer race logs.
           CIBW_TEST_COMMAND: >
             export TSAN_OPTIONS="second_deadlock_stack=1 halt_on_error=1" &&
             python {project}/tests/benchmark.py --stress
