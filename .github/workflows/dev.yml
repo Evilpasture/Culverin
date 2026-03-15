@@ -82,10 +82,10 @@ jobs:
             CMAKE_ARGS="-DCMAKE_C_STANDARD=23 -DENABLE_SANITIZER=OFF -DENABLE_THREAD_SANITIZER=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo"
 
           CIBW_TEST_REQUIRES: numpy psutil
-          # CRITICAL: We find the TSan dylib inside the installed package and force-load it
+          # We use a robust python-based discovery to find the library path inside site-packages
           CIBW_TEST_COMMAND: >
-            TSAN_LIB=$(find {project} -name "libclang_rt.tsan_osx_dynamic.dylib" | head -n 1) &&
-            export DYLD_INSERT_LIBRARIES="$TSAN_LIB" &&
+            TSAN_LIB_PATH=$(python -c "import os, culverin; print(os.path.join(os.path.dirname(culverin.__file__), '.dylibs', 'libclang_rt.tsan_osx_dynamic.dylib'))") &&
+            export DYLD_INSERT_LIBRARIES="$TSAN_LIB_PATH" &&
             export TSAN_OPTIONS="second_deadlock_stack=1 halt_on_error=1" &&
             python {project}/tests/benchmark.py --stress
 
