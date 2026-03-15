@@ -4,9 +4,14 @@ on:
   push:
     branches: [ remote-dev ]
 
+# Automatically cancel old builds if you push again quickly
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   fast_dev_check:
-    name: Quick Build & Test (Ubuntu)
+    name: Quick Build & Test (C23/Clang)
     runs-on: ubuntu-latest
     
     steps:
@@ -19,28 +24,34 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-          python-version: "3.13t" # 't' for free-threading if you're testing that!
+          python-version: "3.13t"
 
       - name: Install System Build Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang llvm ninja-build
+          sudo apt-get install -y clang llvm ninja-build libvulkan-dev
 
       - name: Build & Install Project
-        # We drop --system. uv will create a managed venv automatically.
-        # This installs deps + your C++ extension in one go.
+        env:
+          CC: clang
+          CXX: clang++
+          # Force C23 standard and your required precision flags
+          CMAKE_ARGS: >-
+            -DCMAKE_C_STANDARD=23
+            -DENABLE_SANITIZER=OFF
+            -DCMAKE_BUILD_TYPE=Release
+            -DDOUBLE_PRECISION=ON
         run: |
           uv pip install numpy psutil
-          uv pip install .
+          uv pip install -v . 
 
       - name: Run Core Tests
-        # Use 'uv run' to ensure we use the environment we just built
         run: |
           uv run python tests/test_core.py
           
       - name: Quick Benchmarks
         run: |
-          echo "## Dev Benchmarks" >> $GITHUB_STEP_SUMMARY
+          echo "## Dev Benchmarks ($(date +'%H:%M'))" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           uv run python tests/benchmark.py --leak >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
