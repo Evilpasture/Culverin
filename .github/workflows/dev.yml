@@ -66,22 +66,26 @@ jobs:
           LDFLAGS: "-fsanitize=thread"
           CMAKE_ARGS: "-DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_STANDARD=23 -DCMAKE_C_STANDARD_REQUIRED=ON -DENABLE_THREAD_SANITIZER=ON"
         run: |
-          # Ensure uv has 3.14t available
-          uv python install 3.14t
+          # 1. Force environment variables to clear so they don't conflict with 3.14t
+          unset UV_PYTHON
+          unset VIRTUAL_ENV
           
-          # Force clear the old 3.13t venv and set up 3.14t
+          # 2. Install and Setup 3.14t
+          uv python install 3.14t
           uv venv --python 3.14t --clear
           
-          # Re-install dependencies in the new venv
-          uv pip install scikit-build-core numpy psutil pytest
-          uv pip install -e . --no-build-isolation
+          # 3. Use the venv's python directly for installs to be safe
+          ./.venv/bin/python -m uv pip install scikit-build-core numpy psutil pytest
+          ./.venv/bin/python -m uv pip install -e . --no-build-isolation
           
+          # 4. Symbolizer and Library setup
           export TSAN_SYMBOLIZER_PATH=/usr/bin/llvm-symbolizer-22
           TSAN_LIB=$(find /usr/lib/llvm-22 -name "libclang_rt.tsan-x86_64.so" | head -n 1)
           
-          # Execute the stress test
+          # 5. Execute
           LD_PRELOAD=$TSAN_LIB \
           TSAN_OPTIONS="second_deadlock_stack=1 halt_on_error=1 symbolize=1" \
           ./.venv/bin/python tests/benchmark.py --stress
+
 
 
