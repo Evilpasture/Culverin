@@ -8,7 +8,7 @@ on:
 
 jobs:
   # ------------------------------------------------------------------
-  # JOB 1: THE RELEASE RUNNER (macOS ARM64)
+  # JOB 1: THE RELEASE RUNNER (macOS ARM64) - This one is working!
   # ------------------------------------------------------------------
   macos_release:
     name: M-Series C23 Release (Clang 22)
@@ -24,7 +24,6 @@ jobs:
           CIBW_BUILD: "cp313t-macosx_arm64"
           CIBW_ENABLE: "cpython-freethreading"
           CIBW_BUILD_FRONTEND: "uv"
-          # Fixed: Deployment target matches binary requirements
           MACOSX_DEPLOYMENT_TARGET: "13.0"
           CIBW_BEFORE_ALL: brew install llvm@22
           CIBW_ENVIRONMENT: >
@@ -33,47 +32,45 @@ jobs:
             LDFLAGS="-L$(brew --prefix llvm@22)/lib -Wl,-rpath,$(brew --prefix llvm@22)/lib"
             CPPFLAGS="-I$(brew --prefix llvm@22)/include"
             CMAKE_ARGS="-DCMAKE_C_STANDARD=23 -DCMAKE_C_STANDARD_REQUIRED=ON -DCMAKE_BUILD_TYPE=Release -DJPH_USE_MTL=OFF"
-          # Fixed: Added missing dependencies for benchmark.py
           CIBW_TEST_REQUIRES: numpy psutil pytest
           CIBW_TEST_COMMAND: "python {project}/tests/benchmark.py --stress"
 
   # ------------------------------------------------------------------
-  # JOB 2: THE SAFETY RUNNER (Linux x86_64)
+  # JOB 2: THE SAFETY RUNNER (Linux x86_64) - Fixed with Ubuntu Container
   # ------------------------------------------------------------------
   linux_tsan:
     name: TSan C23 Deep Scan (Clang 22)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    container: ubuntu:24.04 # Use a native Ubuntu container for apt-get support
     steps:
+      - name: Install System Dependencies
+        run: |
+          apt-get update && apt-get install -y wget lsb-release software-properties-common gnupg build-essential python3-pip
       - uses: actions/checkout@v4
         with:
           submodules: recursive
       - uses: astral-sh/setup-uv@v5
-      - name: Build with TSan
+      - name: Install Clang 22
+        run: |
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          ./llvm.sh 22
+      - name: Build and Scan
         uses: pypa/cibuildwheel@v3.4.0
         env:
-          # Using modern Ubuntu-based image for native apt/Clang support
-          CIBW_MANYLINUX_X86_64_IMAGE: "quay.io/pypa/manylinux_2_34_x86_64"
+          # Use "skip" for any build that isn't our TSan target
           CIBW_BUILD: "cp313t-manylinux_x86_64"
           CIBW_ENABLE: "cpython-freethreading"
           CIBW_BUILD_FRONTEND: "uv"
-          
-          # Explicitly install Clang 22 via official LLVM script
-          CIBW_BEFORE_ALL_LINUX: >
-            apt-get update && apt-get install -y wget lsb-release software-properties-common gnupg &&
-            wget https://apt.llvm.org/llvm.sh &&
-            chmod +x llvm.sh &&
-            ./llvm.sh 22
-          
-          # Fixed: Use absolute paths to ensure CMake finds the 22-specific binaries
+          # Since we are in an Ubuntu container, we tell cibuildwheel not to spin up another docker
+          CIBW_CONTAINER_ENGINE: "dummy" 
           CIBW_ENVIRONMENT: >
             CC="/usr/bin/clang-22"
             CXX="/usr/bin/clang++-22"
             CFLAGS="-fsanitize=thread -g -O1 -fno-omit-frame-pointer"
             LDFLAGS="-fsanitize=thread -Wl,--allow-shlib-undefined"
             CMAKE_ARGS="-DCMAKE_C_STANDARD=23 -DCMAKE_C_STANDARD_REQUIRED=ON -DENABLE_THREAD_SANITIZER=ON"
-
           CIBW_TEST_REQUIRES: numpy psutil pytest
-          # Fixed: Targeted find path to catch the specific TSan runtime for LLVM 22
           CIBW_TEST_COMMAND: >
             TSAN_LIB=$(find /usr/lib/llvm-22 -name "libclang_rt.tsan-x86_64.so" | head -n 1) &&
             LD_PRELOAD=$TSAN_LIB 
