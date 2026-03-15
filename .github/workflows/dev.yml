@@ -6,12 +6,12 @@ on:
 
 jobs:
   fast_dev_check_macos:
-    name: M-Series C23 (Clang Latest)
+    name: M-Series C23 (Full Suite)
     runs-on: macos-latest
     
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           submodules: recursive
 
@@ -26,13 +26,12 @@ jobs:
           echo "/opt/homebrew/opt/llvm/bin" >> $GITHUB_PATH
 
       - name: Build and Test
-        uses: pypa/cibuildwheel@v3.4.0
+        uses: pypa/cibuildwheel@v2.22.0
         env:
           CIBW_BUILD: "cp313t-macosx_arm64"
           CIBW_ENABLE: "cpython-freethreading"
           CIBW_BUILD_FRONTEND: "uv"
 
-          # Use the absolute path to ensure we aren't using AppleClang
           CIBW_ENVIRONMENT_MACOS: >
             CC="/opt/homebrew/opt/llvm/bin/clang"
             CXX="/opt/homebrew/opt/llvm/bin/clang++"
@@ -42,5 +41,24 @@ jobs:
             MACOSX_DEPLOYMENT_TARGET=14.0
             CMAKE_ARGS="-DCMAKE_C_STANDARD=23 -DCMAKE_C_STANDARD_REQUIRED=ON -DENABLE_SANITIZER=OFF -DCMAKE_BUILD_TYPE=Release -DDOUBLE_PRECISION=ON"
 
-          CIBW_TEST_REQUIRES: numpy psutil
-          CIBW_TEST_COMMAND: "python {project}/tests/test_core.py"
+          # 1. Install all dependencies including psutil for the benchmark
+          CIBW_TEST_REQUIRES: numpy psutil pytest pytest-xdist
+          
+          # 2. The Command Chain:
+          #    - Run all unittests in parallel (-n auto)
+          #    - Run Leak Test
+          #    - Run Thread Stress Test
+          #    - Run Fragmentation Churn
+          CIBW_TEST_COMMAND: >
+            pytest -n auto -v {project}/tests/test_core.py {project}/tests/test_perf.py &&
+            python {project}/tests/benchmark.py --leak &&
+            python {project}/tests/benchmark.py --stress &&
+            python {project}/tests/benchmark.py --churn
+
+      - name: Generate Performance Report
+        if: always()
+        run: |
+          echo "### Culverin CI Report 🎯" >> $GITHUB_STEP_SUMMARY
+          echo "* **Platform:** macOS Arm64 (M-Series)" >> $GITHUB_STEP_SUMMARY
+          echo "* **Standard:** C23 / Clang Upstream" >> $GITHUB_STEP_SUMMARY
+          echo "* **Test Result:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
