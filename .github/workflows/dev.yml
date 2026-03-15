@@ -30,7 +30,7 @@ jobs:
         env:
           CIBW_BUILD: "cp313t-macosx_arm64"
           CIBW_ENABLE: "cpython-freethreading"
-          CIBW_BUILD_FRONTEND: "uv" # <--- Native support in v3.4.0
+          CIBW_BUILD_FRONTEND: "uv"
 
           CIBW_ENVIRONMENT_MACOS: >
             CC="/opt/homebrew/opt/llvm/bin/clang"
@@ -43,16 +43,18 @@ jobs:
 
           CIBW_TEST_REQUIRES: numpy psutil pytest pytest-xdist
           
-          # Running your specific core and performance unittests plus the benchmark script
+          # We tell pytest to look in {project}/tests/ specifically.
+          # Since benchmark.py is in tests/, we call it via that path.
           CIBW_TEST_COMMAND: >
-            pytest -n auto -v {project}/test_core.py {project}/test_perf.py &&
-            python {project}/benchmark.py --leak &&
-            python {project}/benchmark.py --stress &&
-            python {project}/benchmark.py --churn
+            pytest -n auto -v {project}/tests/test_core.py {project}/tests/test_perf.py &&
+            python {project}/tests/benchmark.py --leak &&
+            python {project}/tests/benchmark.py --stress &&
+            python {project}/tests/benchmark.py --churn
 
       - name: Generate Summary
         if: always()
         run: |
-          echo "### Culverin CI Finalized 🎯" >> $GITHUB_STEP_SUMMARY
-          echo "* **Frontend:** uv (Native v3.4.0 support)" >> $GITHUB_STEP_SUMMARY
-          echo "* **Runtime:** CPython 3.13t (Free-threaded)" >> $GITHUB_STEP_SUMMARY
+          echo "### Culverin CI: Build Verified 🛡️" >> $GITHUB_STEP_SUMMARY
+          echo "* **Arch:** M-Series (Apple Silicon)" >> $GITHUB_STEP_SUMMARY
+          echo "* **Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "* **Tests:** Core, Perf, Leak, Stress, Churn" >> $GITHUB_STEP_SUMMARY
