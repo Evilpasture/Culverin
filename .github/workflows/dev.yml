@@ -40,7 +40,10 @@ jobs:
         env:
           CC: clang
           CXX: clang++
-          # We explicitly disable Debug Renderer and anything Vulkan-related
+          # Force C23 at the environment level
+          CFLAGS: "-std=c23"
+          # Tell scikit-build specifically what we want
+          SKBUILD_CMAKE_ARGS: "-DCMAKE_C_STANDARD=23;-DCMAKE_CXX_STANDARD=20"
           CMAKE_ARGS: >-
             -DCMAKE_C_STANDARD=23
             -DCMAKE_C_COMPILER_LAUNCHER=ccache
@@ -58,10 +61,3 @@ jobs:
       - name: Run Core Tests
         run: |
           uv run python tests/test_core.py
-          
-      - name: Quick Benchmarks
-        run: |
-          echo "## Math & Physics Benchmarks" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          uv run python tests/benchmark.py --leak >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
