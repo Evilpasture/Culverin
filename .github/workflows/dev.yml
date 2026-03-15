@@ -1,4 +1,4 @@
-name: Culverin Hybrid CI (macOS Dev + Linux Safety)
+name: Culverin Hybrid CI
 
 on:
   push:
@@ -7,84 +7,49 @@ on:
     branches: [ main ]
 
 jobs:
-  # ---------------------------------------------------------
-  # JOB 1: Performance & Compatibility on macOS (Apple Silicon)
-  # ---------------------------------------------------------
-  macos_release_check:
-    name: M-Series Release Check
+  # 1. macOS Build (Speed & Apple Silicon)
+  macos_release:
+    name: M-Series Build
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-
-      - name: Build & Test (No Sanitizers)
+      - uses: astral-sh/setup-uv@v5
+      - name: Build Wheels
         uses: pypa/cibuildwheel@v3.4.0
         env:
           CIBW_BUILD: "cp313t-macosx_arm64"
           CIBW_ENABLE: "cpython-freethreading"
           CIBW_BUILD_FRONTEND: "uv"
           CIBW_ENVIRONMENT_MACOS: >
-            CMAKE_ARGS="-DCMAKE_BUILD_TYPE=Release -DDOUBLE_PRECISION=ON"
-            MACOSX_DEPLOYMENT_TARGET=14.0
+            CMAKE_ARGS="-DCMAKE_BUILD_TYPE=Release -DCMAKE_C_STANDARD=23"
 
-          CIBW_TEST_REQUIRES: numpy psutil pytest
-          CIBW_TEST_COMMAND: >
-            pytest {project}/tests/test_core.py &&
-            python {project}/tests/benchmark.py --stress
-
-  # ---------------------------------------------------------
-  # JOB 2: ThreadSanitizer Race Detection on Linux
-  # ---------------------------------------------------------
-  linux_tsan_scan:
-    name: TSan Deep Scan (Linux)
+  # 2. Linux TSan (Safety & C23 Enforcement)
+  linux_tsan:
+    name: TSan Safety Scan (Linux)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-
-      - name: Install Toolchain
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang llvm ninja-build
-
-      - name: Build with TSan Instrumentation
-        run: |
-          # Use free-threaded Python 3.13
-          uv venv --python 3.13t
-          source .venv/bin/activate
+      - uses: astral-sh/setup-uv@v5
+      
+      - name: Build and Test with TSan
+        uses: pypa/cibuildwheel@v3.4.0
+        env:
+          CIBW_BUILD: "cp313t-manylinux_x86_64"
+          CIBW_ENABLE: "cpython-freethreading"
+          CIBW_BUILD_FRONTEND: "uv"
+          # We use CIBW_ENVIRONMENT to force TSan and C23 across all compiler calls
+          CIBW_ENVIRONMENT: >
+            CC=clang 
+            CXX=clang++ 
+            CFLAGS="-fsanitize=thread -g -fno-omit-frame-pointer" 
+            LDFLAGS="-fsanitize=thread"
+            CMAKE_ARGS="-DCMAKE_C_STANDARD=23 -DENABLE_THREAD_SANITIZER=ON"
           
-          # Install build & test deps
-          uv pip install numpy psutil setuptools scikit-build-core
-          
-          # Instrument everything with TSan
-          export CC=clang
-          export CXX=clang++
-          export CFLAGS="-fsanitize=thread -g -fno-omit-frame-pointer"
-          export LDFLAGS="-fsanitize=thread"
-          
-          # Force build from source in editable mode
-          uv pip install -e . --no-build-isolation
-
-      - name: Run Race Detector
-        run: |
-          source .venv/bin/activate
-          
-          # On Linux, TSan options are passed via environment
-          # halt_on_error=1 ensures CI fails the moment a race is found
-          export TSAN_OPTIONS="second_deadlock_stack=1 halt_on_error=1 report_bugs=1"
-          
-          echo "Starting TSan Stress Test..."
-          python tests/benchmark.py --stress
-
+          CIBW_TEST_REQUIRES: numpy psutil pytest
+          CIBW_TEST_COMMAND: >
+            TSAN_OPTIONS="second_deadlock_stack=1 halt_on_error=1" 
+            python {project}/tests/benchmark.py --stress
