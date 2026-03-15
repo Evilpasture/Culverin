@@ -1,0 +1,5 @@
+race:brc.c
+race:obmalloc.c
+race:object_stack.c
+race:pycore_object_stack.h
+race:pycore_freelist.h
