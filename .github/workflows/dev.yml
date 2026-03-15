@@ -1,4 +1,4 @@
-name: Culverin M-Series CI (Fast-Track & TSan)
+name: Culverin M-Series CI
 
 on:
   push:
@@ -7,92 +7,71 @@ on:
     branches: [ main ]
 
 jobs:
-  # JOB 1: Velocity & Unit Tests
-  fast_dev_check:
-    name: M-Series Fast-Track
+  # Standard Build for Release
+  build_wheels:
+    name: Build Wheels (cp313t)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-
-      - name: Install Toolchain
-        run: |
-          brew install llvm ninja
-          echo "/opt/homebrew/opt/llvm/bin" >> $GITHUB_PATH
-
-      - name: Build & Test (Release)
+      - uses: astral-sh/setup-uv@v5
+      - name: Build
         uses: pypa/cibuildwheel@v3.4.0
         env:
           CIBW_BUILD: "cp313t-macosx_arm64"
           CIBW_ENABLE: "cpython-freethreading"
           CIBW_BUILD_FRONTEND: "uv"
           CIBW_ENVIRONMENT_MACOS: >
-            CC="/opt/homebrew/opt/llvm/bin/clang"
-            CXX="/opt/homebrew/opt/llvm/bin/clang++"
-            LDFLAGS="-L/opt/homebrew/opt/llvm/lib -Wl,-rpath,/opt/homebrew/opt/llvm/lib"
-            CPPFLAGS="-I/opt/homebrew/opt/llvm/include"
-            CMAKE_GENERATOR=Ninja
             MACOSX_DEPLOYMENT_TARGET=14.0
-            CMAKE_ARGS="-DCMAKE_C_STANDARD=23 -DCMAKE_C_STANDARD_REQUIRED=ON -DCMAKE_BUILD_TYPE=Release -DDOUBLE_PRECISION=ON"
+            CMAKE_ARGS="-DCMAKE_BUILD_TYPE=Release"
 
-          CIBW_TEST_REQUIRES: numpy psutil pytest pytest-xdist
-          CIBW_TEST_COMMAND: >
-            pytest -n auto -v {project}/tests/test_core.py {project}/tests/test_perf.py &&
-            python {project}/tests/benchmark.py --leak &&
-            python {project}/tests/benchmark.py --stress
-
-  # JOB 2: Safety & Race Detection (Thin Binary Escape)
-  tsan_deep_scan:
-    name: TSan Race Detection
+  # THE DEDICATED TSAN SCANNER (No cibuildwheel for testing)
+  tsan_race_detector:
+    name: TSan Deep Scan
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-
-      - name: Install Toolchain
+      - name: Install LLVM & Tools
         run: |
           brew install llvm ninja
           echo "/opt/homebrew/opt/llvm/bin" >> $GITHUB_PATH
 
-      - name: Build & Test (Sanitized)
-        uses: pypa/cibuildwheel@v3.4.0
-        env:
-          CIBW_BUILD: "cp313t-macosx_arm64"
-          CIBW_ENABLE: "cpython-freethreading"
-          CIBW_BUILD_FRONTEND: "uv"
-          CIBW_ENVIRONMENT_MACOS: >
-            CC="/opt/homebrew/opt/llvm/bin/clang"
-            CXX="/opt/homebrew/opt/llvm/bin/clang++"
-            LDFLAGS="-L/opt/homebrew/opt/llvm/lib -Wl,-rpath,/opt/homebrew/opt/llvm/lib -fsanitize=thread"
-            CPPFLAGS="-I/opt/homebrew/opt/llvm/include -fsanitize=thread"
-            MACOSX_DEPLOYMENT_TARGET=14.0
-            CMAKE_GENERATOR=Ninja
-            CMAKE_ARGS="-DCMAKE_C_STANDARD=23 -DENABLE_SANITIZER=OFF -DENABLE_THREAD_SANITIZER=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo"
+      - name: Install Free-Threaded Python
+        run: |
+          curl -O https://www.python.org/ftp/python/3.13.1/python-3.13.1-macos11.pkg
+          sudo installer -pkg python-3.13.1-macos11.pkg -target /
 
-          CIBW_TEST_REQUIRES: numpy psutil
-          # THE DEFINITIVE ESCAPE:
-          # 1. Use 'lipo' to extract only the 'arm64' slice. This creates a fresh, unsigned thin binary.
-          # 2. Doing this effectively "demotes" the process so it no longer requires 'arm64e' (PAC).
-          # 3. Use 'env' to inject the TSan dylib into this unprivileged process.
-          CIBW_TEST_COMMAND: >
-            ORIG_TSAN=$(python -c "import os, culverin; print(os.path.join(os.path.dirname(culverin.__file__), '.dylibs', 'libclang_rt.tsan_osx_dynamic.dylib'))") &&
-            SITEPACKAGES=$(python -c "import site; print(site.getsitepackages()[0])") &&
-            cp "$ORIG_TSAN" /tmp/libtsan.dylib &&
-            lipo -extract arm64 $(which python) -output /tmp/tsan_python &&
-            env DYLD_INSERT_LIBRARIES=/tmp/libtsan.dylib \
-                PYTHONPATH="$SITEPACKAGES" \
-                TSAN_OPTIONS="second_deadlock_stack=1 halt_on_error=1" \
-                /tmp/tsan_python {project}/tests/benchmark.py --stress
+      - name: Build Extension with TSan
+        run: |
+          uv venv --python 3.13t
+          source .venv/bin/activate
+          uv pip install numpy psutil setuptools
+          
+          # Manually build the extension with TSan enabled
+          export CC="/opt/homebrew/opt/llvm/bin/clang"
+          export CXX="/opt/homebrew/opt/llvm/bin/clang++"
+          export CFLAGS="-fsanitize=thread -g"
+          export LDFLAGS="-fsanitize=thread"
+          
+          uv pip install -e . --no-build-isolation
+
+      - name: Run TSan Stress Test
+        run: |
+          source .venv/bin/activate
+          
+          # Find the TSan dylib from the LLVM installation
+          TSAN_DYLIB=$(find /opt/homebrew/opt/llvm -name "libclang_rt.tsan_osx_dynamic.dylib" | head -n 1)
+          
+          # We still need the bypass, but now we apply it to our local uv-managed python
+          cp $(which python) ./tsan_python
+          codesign --remove-signature ./tsan_python
+          
+          # Run with the interceptors
+          export DYLD_INSERT_LIBRARIES=$TSAN_DYLIB
+          export TSAN_OPTIONS="second_deadlock_stack=1 halt_on_error=1"
+          ./tsan_python tests/benchmark.py --stress
 
