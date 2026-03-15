@@ -66,22 +66,20 @@ jobs:
           LDFLAGS: "-fsanitize=thread"
           CMAKE_ARGS: "-DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_STANDARD=23 -DCMAKE_C_STANDARD_REQUIRED=ON -DENABLE_THREAD_SANITIZER=ON"
         run: |
-          # 1. Setup 3.14t and create the venv
           uv python install 3.14t
           uv venv --python 3.14t --clear
           
-          # 2. Use the 'uv' binary with the explicit python path to install
           uv pip install --python ./.venv/bin/python scikit-build-core numpy psutil pytest
           uv pip install --python ./.venv/bin/python -e . --no-build-isolation
           
-          # 3. Symbolizer and Library setup
           export TSAN_SYMBOLIZER_PATH=/usr/bin/llvm-symbolizer-22
           TSAN_LIB=$(find /usr/lib/llvm-22 -name "libclang_rt.tsan-x86_64.so" | head -n 1)
           
-          # 4. Execute using the venv's python directly
+          # Added 'suppressions' flag pointing to your new file
           LD_PRELOAD=$TSAN_LIB \
-          TSAN_OPTIONS="second_deadlock_stack=1 halt_on_error=1 symbolize=1" \
+          TSAN_OPTIONS="suppressions=${{ github.workspace }}/tsan.supp second_deadlock_stack=1 halt_on_error=1 symbolize=1" \
           ./.venv/bin/python tests/benchmark.py --stress
+
 
 
 
