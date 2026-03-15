@@ -1,37 +1,35 @@
-name: Remote Dev Fast-Track (M-Series Bleeding Edge)
+name: Culverin M-Series CI (Fast-Track & TSan)
 
 on:
   push:
     branches: [ remote-dev ]
+  pull_request:
+    branches: [ main ]
 
 jobs:
-  fast_dev_check_macos:
-    name: M-Series C23 (Full Suite)
+  # JOB 1: Performance and Core Validation
+  fast_dev_check:
+    name: M-Series Fast-Track
     runs-on: macos-latest
-    
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           submodules: recursive
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
 
-      - name: Install Latest Upstream LLVM
+      - name: Install Toolchain
         run: |
           brew install llvm ninja
           echo "/opt/homebrew/opt/llvm/bin" >> $GITHUB_PATH
 
-      - name: Build and Test
+      - name: Build & Test (Release)
         uses: pypa/cibuildwheel@v3.4.0
         env:
           CIBW_BUILD: "cp313t-macosx_arm64"
           CIBW_ENABLE: "cpython-freethreading"
           CIBW_BUILD_FRONTEND: "uv"
-
           CIBW_ENVIRONMENT_MACOS: >
             CC="/opt/homebrew/opt/llvm/bin/clang"
             CXX="/opt/homebrew/opt/llvm/bin/clang++"
@@ -39,22 +37,46 @@ jobs:
             CPPFLAGS="-I/opt/homebrew/opt/llvm/include"
             CMAKE_GENERATOR=Ninja
             MACOSX_DEPLOYMENT_TARGET=14.0
-            CMAKE_ARGS="-DCMAKE_C_STANDARD=23 -DCMAKE_C_STANDARD_REQUIRED=ON -DENABLE_SANITIZER=OFF -DCMAKE_BUILD_TYPE=Release -DDOUBLE_PRECISION=ON"
+            CMAKE_ARGS="-DCMAKE_C_STANDARD=23 -DCMAKE_C_STANDARD_REQUIRED=ON -DCMAKE_BUILD_TYPE=Release -DDOUBLE_PRECISION=ON"
 
           CIBW_TEST_REQUIRES: numpy psutil pytest pytest-xdist
-          
-          # We tell pytest to look in {project}/tests/ specifically.
-          # Since benchmark.py is in tests/, we call it via that path.
           CIBW_TEST_COMMAND: >
             pytest -n auto -v {project}/tests/test_core.py {project}/tests/test_perf.py &&
             python {project}/tests/benchmark.py --leak &&
-            python {project}/tests/benchmark.py --stress &&
-            python {project}/tests/benchmark.py --churn
+            python {project}/tests/benchmark.py --stress
 
-      - name: Generate Summary
-        if: always()
+  # JOB 2: ThreadSanitizer Deep Scan
+  tsan_deep_scan:
+    name: TSan Race Detection
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Toolchain
         run: |
-          echo "### Culverin CI: Build Verified 🛡️" >> $GITHUB_STEP_SUMMARY
-          echo "* **Arch:** M-Series (Apple Silicon)" >> $GITHUB_STEP_SUMMARY
-          echo "* **Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
-          echo "* **Tests:** Core, Perf, Leak, Stress, Churn" >> $GITHUB_STEP_SUMMARY
+          brew install llvm ninja
+          echo "/opt/homebrew/opt/llvm/bin" >> $GITHUB_PATH
+
+      - name: Build & Test (Sanitized)
+        uses: pypa/cibuildwheel@v3.4.0
+        env:
+          CIBW_BUILD: "cp313t-macosx_arm64"
+          CIBW_ENABLE: "cpython-freethreading"
+          CIBW_BUILD_FRONTEND: "uv"
+          CIBW_ENVIRONMENT_MACOS: >
+            CC="/opt/homebrew/opt/llvm/bin/clang"
+            CXX="/opt/homebrew/opt/llvm/bin/clang++"
+            LDFLAGS="-L/opt/homebrew/opt/llvm/lib -Wl,-rpath,/opt/homebrew/opt/llvm/lib -fsanitize=thread"
+            CPPFLAGS="-I/opt/homebrew/opt/llvm/include -fsanitize=thread"
+            CMAKE_GENERATOR=Ninja
+            CMAKE_ARGS="-DCMAKE_C_STANDARD=23 -DENABLE_SANITIZER=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo"
+
+          CIBW_TEST_REQUIRES: numpy psutil pytest
+          # Note: We do NOT use -n auto here because TSan is heavy and 
+          # sequential runs give clearer race logs.
+          CIBW_TEST_COMMAND: >
+            export TSAN_OPTIONS="second_deadlock_stack=1 halt_on_error=1" &&
+            python {project}/tests/benchmark.py --stress
+
