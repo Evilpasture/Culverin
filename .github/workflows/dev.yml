@@ -26,7 +26,7 @@ jobs:
             MACOSX_DEPLOYMENT_TARGET=14.0
             CMAKE_ARGS="-DCMAKE_BUILD_TYPE=Release"
 
-  # THE DEDICATED TSAN SCANNER (No cibuildwheel for testing)
+  # THE DEDICATED TSAN SCANNER
   tsan_race_detector:
     name: TSan Deep Scan
     runs-on: macos-latest
@@ -50,39 +50,43 @@ jobs:
           curl -O https://www.python.org/ftp/python/3.13.1/python-3.13.1-macos11.pkg
           sudo installer -pkg python-3.13.1-macos11.pkg -target /
 
-      # Manual Build Phase
       - name: Build Extension with TSan
         run: |
           uv venv --python 3.13t
           source .venv/bin/activate
-          
-          # Install build-time and run-time dependencies manually
-          # We need scikit-build-core to handle the CMake build in --no-build-isolation mode
           uv pip install numpy psutil setuptools scikit-build-core
           
-          # Manually build the extension with TSan enabled
           export CC="/opt/homebrew/opt/llvm/bin/clang"
           export CXX="/opt/homebrew/opt/llvm/bin/clang++"
           export CFLAGS="-fsanitize=thread -g -fno-omit-frame-pointer"
           export LDFLAGS="-fsanitize=thread"
           
-          # Editable install without isolation so it uses our sanitized environment
           uv pip install -e . --no-build-isolation
 
       - name: Run TSan Stress Test
         run: |
           source .venv/bin/activate
           
-          # Find the TSan dylib from the LLVM installation
-          TSAN_DYLIB=$(find /opt/homebrew/opt/llvm -name "libclang_rt.tsan_osx_dynamic.dylib" | head -n 1)
+          # 1. Targeted find for the TSan dylib
+          TSAN_DYLIB=$(find /opt/homebrew/opt/llvm/lib/clang -name "libclang_rt.tsan_osx_dynamic.dylib" | head -n 1)
+          if [ -z "$TSAN_DYLIB" ]; then echo "TSan dylib NOT found"; exit 1; fi
           echo "Using TSan Dylib: $TSAN_DYLIB"
           
-          # Create an unprivileged runner to bypass SIP/PAC constraints
-          cp $(which python) /tmp/tsan_python
+          # 2. Use the REAL Python binary, not the uv shim
+          # The framework install puts the real binary here:
+          REAL_PYTHON="/Library/Frameworks/PythonT.framework/Versions/3.13/bin/python3.13t"
+          PYTHON_LIB_DIR="/Library/Frameworks/PythonT.framework/Versions/3.13/lib"
+          
+          cp "$REAL_PYTHON" /tmp/tsan_python
+          
+          # 3. Fix @rpath so the binary can find libpython3.13t.dylib from /tmp
+          install_name_tool -add_rpath "$PYTHON_LIB_DIR" /tmp/tsan_python
+          
+          # 4. Remove signature to allow DYLD_INSERT_LIBRARIES
           codesign --remove-signature /tmp/tsan_python
           chmod +x /tmp/tsan_python
           
-          # Run the benchmark
+          # 5. Execute
           export DYLD_INSERT_LIBRARIES=$TSAN_DYLIB
           export TSAN_OPTIONS="second_deadlock_stack=1 halt_on_error=1"
           /tmp/tsan_python tests/benchmark.py --stress
