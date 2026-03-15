@@ -40,12 +40,13 @@ jobs:
         env:
           CC: clang
           CXX: clang++
-          # Force C23 at the environment level
+          # Setting standard via env as a fallback
           CFLAGS: "-std=c23"
-          # Tell scikit-build specifically what we want
-          SKBUILD_CMAKE_ARGS: "-DCMAKE_C_STANDARD=23;-DCMAKE_CXX_STANDARD=20"
+          # The 'Force Multiplier' - putting it in CMAKE_ARGS and CMAKE_C_FLAGS
           CMAKE_ARGS: >-
             -DCMAKE_C_STANDARD=23
+            -DCMAKE_C_STANDARD_REQUIRED=ON
+            -DCMAKE_C_FLAGS="-std=c23"
             -DCMAKE_C_COMPILER_LAUNCHER=ccache
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
             -DENABLE_SANITIZER=OFF
@@ -55,8 +56,15 @@ jobs:
             -DUSE_VULKAN=OFF
             -G Ninja
         run: |
+          # 1. Bruteforce patch any hardcoded standards in submodules
+          echo "Scanning for hardcoded standards..."
+          find . -name "CMakeLists.txt" -exec sed -i 's/CMAKE_C_STANDARD 1[17]/CMAKE_C_STANDARD 23/g' {} +
+          
+          # 2. Install dependencies
           uv pip install numpy psutil
-          uv pip install . 
+          
+          # 3. Build with -v so we can see the final flag order in the logs
+          uv pip install -v . 
 
       - name: Run Core Tests
         run: |
