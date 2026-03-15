@@ -4,14 +4,13 @@ on:
   push:
     branches: [ remote-dev ]
 
-# Automatically cancel old builds if you push again quickly
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   fast_dev_check:
-    name: Quick Build & Test (C23/Clang)
+    name: Quick Build & Test (C23)
     runs-on: ubuntu-latest
     
     steps:
@@ -29,21 +28,24 @@ jobs:
       - name: Install System Build Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang llvm ninja-build libvulkan-dev
+          # added shaderc for glslc (shader compiler)
+          sudo apt-get install -y clang llvm ninja-build libvulkan-dev shaderc
 
       - name: Build & Install Project
         env:
           CC: clang
           CXX: clang++
-          # Force C23 standard and your required precision flags
+          # We pass CMAKE_C_STANDARD=23 to handle 'auto'
+          # We also explicitly tell scikit-build to use Ninja
           CMAKE_ARGS: >-
             -DCMAKE_C_STANDARD=23
             -DENABLE_SANITIZER=OFF
             -DCMAKE_BUILD_TYPE=Release
             -DDOUBLE_PRECISION=ON
+            -G Ninja
         run: |
           uv pip install numpy psutil
-          uv pip install -v . 
+          uv pip install . 
 
       - name: Run Core Tests
         run: |
