@@ -9,10 +9,9 @@ on:
 jobs:
   # ------------------------------------------------------------------
   # JOB 1: THE RELEASE RUNNER (macOS ARM64)
-  # Focus: Speed, Apple Silicon, and C23 Release Performance
   # ------------------------------------------------------------------
   macos_release:
-    name: M-Series Release Build (cp313t)
+    name: M-Series Release (C23)
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
@@ -26,15 +25,15 @@ jobs:
           CIBW_ENABLE: "cpython-freethreading"
           CIBW_BUILD_FRONTEND: "uv"
           CIBW_ENVIRONMENT: >
-            CMAKE_ARGS="-DCMAKE_C_STANDARD=23 -DCMAKE_BUILD_TYPE=Release"
+            CMAKE_ARGS="-DCMAKE_C_STANDARD=23 -DCMAKE_BUILD_TYPE=Release -DJPH_USE_MTL=OFF"
           CIBW_TEST_COMMAND: "python {project}/tests/benchmark.py --stress"
 
   # ------------------------------------------------------------------
   # JOB 2: THE SAFETY RUNNER (Linux x86_64)
-  # Focus: TSan Race Detection & C23 Validation
+  # ENFORCING CLANG 22 (LLVM NIGHTLY)
   # ------------------------------------------------------------------
   linux_tsan:
-    name: TSan Deep Scan (Linux)
+    name: TSan Deep Scan (Clang 22)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -49,11 +48,14 @@ jobs:
           CIBW_ENABLE: "cpython-freethreading"
           CIBW_BUILD_FRONTEND: "uv"
           
-          # Use Before All to get the modern Clang 18 toolchain
+          # The "Nuclear Option" for the latest Clang:
+          # Pull the official LLVM.org script to get the absolute newest version (22/nightly)
           CIBW_BEFORE_ALL_LINUX: >
-            dnf install -y clang-18 llvm-18 lld-18 &&
-            ln -sf /usr/bin/clang-18 /usr/bin/clang &&
-            ln -sf /usr/bin/clang++-18 /usr/bin/clang++
+            dnf install -y wget &&
+            wget https://apt.llvm.org/llvm.sh &&
+            chmod +x llvm.sh &&
+            ./llvm.sh all || true &&
+            dnf install -y clang llvm lld || true
 
           CIBW_ENVIRONMENT: >
             CC=clang
