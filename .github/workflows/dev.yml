@@ -1,34 +1,17 @@
-name: Culverin M-Series CI
+name: Culverin Hybrid CI (macOS Dev + Linux Safety)
 
 on:
   push:
-    branches: [ remote-dev ]
+    branches: [ remote-dev, main ]
   pull_request:
     branches: [ main ]
 
 jobs:
-  # Standard Build for Release
-  build_wheels:
-    name: Build Wheels (cp313t)
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - uses: astral-sh/setup-uv@v5
-      - name: Build
-        uses: pypa/cibuildwheel@v3.4.0
-        env:
-          CIBW_BUILD: "cp313t-macosx_arm64"
-          CIBW_ENABLE: "cpython-freethreading"
-          CIBW_BUILD_FRONTEND: "uv"
-          CIBW_ENVIRONMENT_MACOS: >
-            MACOSX_DEPLOYMENT_TARGET=14.0
-            CMAKE_ARGS="-DCMAKE_BUILD_TYPE=Release"
-
-  # THE DEDICATED TSAN SCANNER
-  tsan_race_detector:
-    name: TSan Deep Scan
+  # ---------------------------------------------------------
+  # JOB 1: Performance & Compatibility on macOS (Apple Silicon)
+  # ---------------------------------------------------------
+  macos_release_check:
+    name: M-Series Release Check
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -40,56 +23,68 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Install LLVM & Tools
-        run: |
-          brew install llvm ninja
-          echo "/opt/homebrew/opt/llvm/bin" >> $GITHUB_PATH
+      - name: Build & Test (No Sanitizers)
+        uses: pypa/cibuildwheel@v3.4.0
+        env:
+          CIBW_BUILD: "cp313t-macosx_arm64"
+          CIBW_ENABLE: "cpython-freethreading"
+          CIBW_BUILD_FRONTEND: "uv"
+          CIBW_ENVIRONMENT_MACOS: >
+            CMAKE_ARGS="-DCMAKE_BUILD_TYPE=Release -DDOUBLE_PRECISION=ON"
+            MACOSX_DEPLOYMENT_TARGET=14.0
 
-      - name: Build Extension with TSan
+          CIBW_TEST_REQUIRES: numpy psutil pytest
+          CIBW_TEST_COMMAND: >
+            pytest {project}/tests/test_core.py &&
+            python {project}/tests/benchmark.py --stress
+
+  # ---------------------------------------------------------
+  # JOB 2: ThreadSanitizer Race Detection on Linux
+  # ---------------------------------------------------------
+  linux_tsan_scan:
+    name: TSan Deep Scan (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Toolchain
         run: |
-          # Use the uv-provided 3.13t
+          sudo apt-get update
+          sudo apt-get install -y clang llvm ninja-build
+
+      - name: Build with TSan Instrumentation
+        run: |
+          # Use free-threaded Python 3.13
           uv venv --python 3.13t
           source .venv/bin/activate
+          
+          # Install build & test deps
           uv pip install numpy psutil setuptools scikit-build-core
           
-          export CC="/opt/homebrew/opt/llvm/bin/clang"
-          export CXX="/opt/homebrew/opt/llvm/bin/clang++"
+          # Instrument everything with TSan
+          export CC=clang
+          export CXX=clang++
           export CFLAGS="-fsanitize=thread -g -fno-omit-frame-pointer"
           export LDFLAGS="-fsanitize=thread"
           
+          # Force build from source in editable mode
           uv pip install -e . --no-build-isolation
 
-      - name: Run TSan Stress Test
+      - name: Run Race Detector
         run: |
           source .venv/bin/activate
           
-          # 1. Improved TSan dylib discovery
-          TSAN_DYLIB=$(find /opt/homebrew/opt/llvm -name "libclang_rt.tsan_osx_dynamic.dylib" | head -n 1)
-          if [ -z "$TSAN_DYLIB" ]; then
-            # Fallback to standard xcode path if brew find fails
-            TSAN_DYLIB="/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang/$(ls /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang | head -1)/lib/darwin/libclang_rt.tsan_osx_dynamic.dylib"
-          fi
-          echo "Using TSan Dylib: $TSAN_DYLIB"
+          # On Linux, TSan options are passed via environment
+          # halt_on_error=1 ensures CI fails the moment a race is found
+          export TSAN_OPTIONS="second_deadlock_stack=1 halt_on_error=1 report_bugs=1"
           
-          # 2. Extract paths
-          REAL_PYTHON_PATH=$(python -c "import sys, os; print(os.path.realpath(sys.executable))")
-          PYTHON_LIB_DIR=$(python -c "import sysconfig; print(sysconfig.get_config_var('LIBDIR'))")
-          
-          # 3. Create a thin binary in /tmp
-          # lipo -extract often "repairs" or cleans up Mach-O headers, 
-          # but more importantly, we'll avoid install_name_tool and use DYLD_LIBRARY_PATH
-          lipo -extract arm64 "$REAL_PYTHON_PATH" -output /tmp/tsan_python
-          
-          # 4. Strip signature
-          codesign --remove-signature /tmp/tsan_python
-          chmod +x /tmp/tsan_python
-          
-          # 5. Run with environment-based library resolution
-          # DYLD_LIBRARY_PATH tells the loader where to find libpython3.13t.dylib
-          # DYLD_INSERT_LIBRARIES injects the TSan runtime
-          export DYLD_LIBRARY_PATH="$PYTHON_LIB_DIR"
-          export DYLD_INSERT_LIBRARIES="$TSAN_DYLIB"
-          export TSAN_OPTIONS="second_deadlock_stack=1 halt_on_error=1"
-          
-          arch -arm64 /tmp/tsan_python tests/benchmark.py --stress
+          echo "Starting TSan Stress Test..."
+          python tests/benchmark.py --stress
 
