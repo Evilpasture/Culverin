@@ -28,24 +28,31 @@ jobs:
       - name: Install System Build Tools
         run: |
           sudo apt-get update
-          # added shaderc for glslc (shader compiler)
-          sudo apt-get install -y clang llvm ninja-build libvulkan-dev shaderc
+          sudo apt-get install -y clang llvm ninja-build libvulkan-dev google-shaderc ccache
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ runner.os }}-ccache-culverin
+          restore-keys: ${{ runner.os }}-ccache-
 
       - name: Build & Install Project
         env:
           CC: clang
           CXX: clang++
-          # We pass CMAKE_C_STANDARD=23 to handle 'auto'
-          # We also explicitly tell scikit-build to use Ninja
+          # C23 Standard + ccache launchers + Culverin flags
           CMAKE_ARGS: >-
             -DCMAKE_C_STANDARD=23
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
             -DENABLE_SANITIZER=OFF
             -DCMAKE_BUILD_TYPE=Release
             -DDOUBLE_PRECISION=ON
             -G Ninja
         run: |
           uv pip install numpy psutil
-          uv pip install . 
+          # -v helps us see if ccache is actually being used in the logs
+          uv pip install -v . 
 
       - name: Run Core Tests
         run: |
