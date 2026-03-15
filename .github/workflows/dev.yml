@@ -24,7 +24,7 @@ jobs:
           CIBW_BUILD: "cp313t-macosx_arm64"
           CIBW_ENABLE: "cpython-freethreading"
           CIBW_BUILD_FRONTEND: "uv"
-          # Fix for the DelocationError
+          # Standardize to macOS 13+ for LLVM 22 features
           MACOSX_DEPLOYMENT_TARGET: "13.0" 
           CIBW_BEFORE_ALL: brew install llvm@22
           CIBW_ENVIRONMENT: >
@@ -36,7 +36,7 @@ jobs:
           CIBW_TEST_COMMAND: "python {project}/tests/benchmark.py --stress"
 
   # ------------------------------------------------------------------
-  # JOB 2: THE SAFETY RUNNER (Linux x86_64)
+  # JOB 2: THE SAFETY RUNNER (Linux x86_64) - UPGRADED TO UBUNTU BASE
   # ------------------------------------------------------------------
   linux_tsan:
     name: TSan C23 Deep Scan (Clang 22)
@@ -49,17 +49,18 @@ jobs:
       - name: Build with TSan
         uses: pypa/cibuildwheel@v3.4.0
         env:
+          # Use manylinux_2_34 to get a Debian-based (Ubuntu) environment
+          CIBW_MANYLINUX_X86_64_IMAGE: "quay.io/pypa/manylinux_2_34_x86_64"
           CIBW_BUILD: "cp313t-manylinux_x86_64"
           CIBW_ENABLE: "cpython-freethreading"
           CIBW_BUILD_FRONTEND: "uv"
-          # manylinux_2_28 uses dnf/yum. We must install LLVM 22 via a compatible method.
-          # Note: If LLVM 22 isn't in the default dnf repos, we use the script approach 
-          # but we must install 'sudo' and 'lsb-release' first if the image lacks them.
+          
+          # Now apt-get works natively!
           CIBW_BEFORE_ALL_LINUX: >
-            dnf install -y wget xz &&
+            apt-get update && apt-get install -y wget lsb-release software-properties-common gnupg &&
             wget https://apt.llvm.org/llvm.sh &&
             chmod +x llvm.sh &&
-            ./llvm.sh 22 || true
+            ./llvm.sh 22
           
           CIBW_ENVIRONMENT: >
             CC=clang-22
