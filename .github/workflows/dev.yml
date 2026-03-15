@@ -7,7 +7,7 @@ on:
     branches: [ main ]
 
 jobs:
-  # JOB 1: Performance and Core Validation (Clean Build)
+  # JOB 1: Velocity & Unit Tests (The "Release" Runner)
   fast_dev_check:
     name: M-Series Fast-Track
     runs-on: macos-latest
@@ -18,6 +18,8 @@ jobs:
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
 
       - name: Install Toolchain
         run: |
@@ -37,7 +39,7 @@ jobs:
             CPPFLAGS="-I/opt/homebrew/opt/llvm/include"
             CMAKE_GENERATOR=Ninja
             MACOSX_DEPLOYMENT_TARGET=14.0
-            CMAKE_ARGS="-DCMAKE_C_STANDARD=23 -DCMAKE_BUILD_TYPE=Release -DDOUBLE_PRECISION=ON"
+            CMAKE_ARGS="-DCMAKE_C_STANDARD=23 -DCMAKE_C_STANDARD_REQUIRED=ON -DCMAKE_BUILD_TYPE=Release -DDOUBLE_PRECISION=ON"
 
           CIBW_TEST_REQUIRES: numpy psutil pytest pytest-xdist
           CIBW_TEST_COMMAND: >
@@ -45,7 +47,7 @@ jobs:
             python {project}/tests/benchmark.py --leak &&
             python {project}/tests/benchmark.py --stress
 
-  # JOB 2: ThreadSanitizer Deep Scan (Mutually Exclusive from ASan)
+  # JOB 2: Safety & Race Detection (The "Deep Scan" Runner)
   tsan_deep_scan:
     name: TSan Race Detection
     runs-on: macos-latest
@@ -56,13 +58,15 @@ jobs:
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
 
       - name: Install Toolchain
         run: |
           brew install llvm ninja
           echo "/opt/homebrew/opt/llvm/bin" >> $GITHUB_PATH
 
-      - name: Build & Test (TSan Only)
+      - name: Build & Test (Sanitized)
         uses: pypa/cibuildwheel@v3.4.0
         env:
           CIBW_BUILD: "cp313t-macosx_arm64"
@@ -73,11 +77,12 @@ jobs:
             CXX="/opt/homebrew/opt/llvm/bin/clang++"
             LDFLAGS="-L/opt/homebrew/opt/llvm/lib -Wl,-rpath,/opt/homebrew/opt/llvm/lib -fsanitize=thread"
             CPPFLAGS="-I/opt/homebrew/opt/llvm/include -fsanitize=thread"
+            MACOSX_DEPLOYMENT_TARGET=14.0
             CMAKE_GENERATOR=Ninja
-            CMAKE_ARGS="-DCMAKE_C_STANDARD=23 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DENABLE_SANITIZER=OFF -DENABLE_THREAD_SANITIZER=ON"
+            CMAKE_ARGS="-DCMAKE_C_STANDARD=23 -DENABLE_SANITIZER=OFF -DENABLE_THREAD_SANITIZER=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo"
 
-          CIBW_TEST_REQUIRES: numpy psutil pytest
+          CIBW_TEST_REQUIRES: numpy psutil
+          # Sequential stress test for clear TSan reports
           CIBW_TEST_COMMAND: >
             export TSAN_OPTIONS="second_deadlock_stack=1 halt_on_error=1" &&
             python {project}/tests/benchmark.py --stress
-
