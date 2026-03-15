@@ -35,6 +35,11 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
       - name: Install LLVM & Tools
         run: |
           brew install llvm ninja
@@ -47,6 +52,7 @@ jobs:
 
       - name: Build Extension with TSan
         run: |
+          # Ensure we use the 3.13t we just installed
           uv venv --python 3.13t
           source .venv/bin/activate
           uv pip install numpy psutil setuptools
@@ -54,7 +60,8 @@ jobs:
           # Manually build the extension with TSan enabled
           export CC="/opt/homebrew/opt/llvm/bin/clang"
           export CXX="/opt/homebrew/opt/llvm/bin/clang++"
-          export CFLAGS="-fsanitize=thread -g"
+          # -fno-omit-frame-pointer is essential for TSan stack traces
+          export CFLAGS="-fsanitize=thread -g -fno-omit-frame-pointer"
           export LDFLAGS="-fsanitize=thread"
           
           uv pip install -e . --no-build-isolation
@@ -65,13 +72,16 @@ jobs:
           
           # Find the TSan dylib from the LLVM installation
           TSAN_DYLIB=$(find /opt/homebrew/opt/llvm -name "libclang_rt.tsan_osx_dynamic.dylib" | head -n 1)
+          echo "Using TSan Dylib: $TSAN_DYLIB"
           
           # We still need the bypass, but now we apply it to our local uv-managed python
-          cp $(which python) ./tsan_python
-          codesign --remove-signature ./tsan_python
+          # We use /tmp to avoid any potential SIP/Sandbox restrictions in the workspace
+          cp $(which python) /tmp/tsan_python
+          codesign --remove-signature /tmp/tsan_python
+          chmod +x /tmp/tsan_python
           
           # Run with the interceptors
           export DYLD_INSERT_LIBRARIES=$TSAN_DYLIB
           export TSAN_OPTIONS="second_deadlock_stack=1 halt_on_error=1"
-          ./tsan_python tests/benchmark.py --stress
+          /tmp/tsan_python tests/benchmark.py --stress
 
