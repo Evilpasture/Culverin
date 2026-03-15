@@ -10,7 +10,7 @@ concurrency:
 
 jobs:
   fast_dev_check:
-    name: Quick Build & Test (C23)
+    name: Quick Build & Test (C23 - Math Only)
     runs-on: ubuntu-latest
     
     steps:
@@ -28,19 +28,19 @@ jobs:
       - name: Install System Build Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang llvm ninja-build libvulkan-dev google-shaderc ccache
+          sudo apt-get install -y clang llvm ninja-build ccache
 
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1.2
         with:
-          key: ${{ runner.os }}-ccache-culverin
+          key: ${{ runner.os }}-ccache-math-only
           restore-keys: ${{ runner.os }}-ccache-
 
       - name: Build & Install Project
         env:
           CC: clang
           CXX: clang++
-          # C23 Standard + ccache launchers + Culverin flags
+          # We explicitly disable Debug Renderer and anything Vulkan-related
           CMAKE_ARGS: >-
             -DCMAKE_C_STANDARD=23
             -DCMAKE_C_COMPILER_LAUNCHER=ccache
@@ -48,11 +48,12 @@ jobs:
             -DENABLE_SANITIZER=OFF
             -DCMAKE_BUILD_TYPE=Release
             -DDOUBLE_PRECISION=ON
+            -DENABLE_DEBUG_RENDERER=OFF
+            -DUSE_VULKAN=OFF
             -G Ninja
         run: |
           uv pip install numpy psutil
-          # -v helps us see if ccache is actually being used in the logs
-          uv pip install -v . 
+          uv pip install . 
 
       - name: Run Core Tests
         run: |
@@ -60,7 +61,7 @@ jobs:
           
       - name: Quick Benchmarks
         run: |
-          echo "## Dev Benchmarks ($(date +'%H:%M'))" >> $GITHUB_STEP_SUMMARY
+          echo "## Math & Physics Benchmarks" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           uv run python tests/benchmark.py --leak >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
