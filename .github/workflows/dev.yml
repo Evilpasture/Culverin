@@ -62,27 +62,21 @@ jobs:
         env:
           CC: "/usr/bin/clang-22"
           CXX: "/usr/bin/clang++-22"
-          CFLAGS: "-fsanitize=thread -g -O1 -fno-omit-frame-pointer"
-          LDFLAGS: "-fsanitize=thread -Wl,--allow-shlib-undefined"
-          # C23 is the goal, performance is the game
-          CMAKE_ARGS: "-DCMAKE_C_STANDARD=23 -DCMAKE_C_STANDARD_REQUIRED=ON -DENABLE_THREAD_SANITIZER=ON"
+          # Use -O0 for maximum trace clarity
+          CFLAGS: "-fsanitize=thread -g -O0 -fno-omit-frame-pointer"
+          LDFLAGS: "-fsanitize=thread"
+          # FORCE Debug build in CMake
+          CMAKE_ARGS: "-DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_STANDARD=23 -DCMAKE_C_STANDARD_REQUIRED=ON -DENABLE_THREAD_SANITIZER=ON"
         run: |
-          # Only install the essential build backend and test requirements
           uv pip install scikit-build-core numpy psutil pytest
-          
-          # Build Culverin in-place using our environment-defined Clang 22
           uv pip install -e . --no-build-isolation
           
-          # Verify TSan library location
           TSAN_LIB=$(find /usr/lib/llvm-22 -name "libclang_rt.tsan-x86_64.so" | head -n 1)
-          if [ -z "$TSAN_LIB" ]; then
-            echo "Error: TSan runtime not found!"
-            exit 1
-          fi
-          echo "TSan Runtime: $TSAN_LIB"
           
-          # Execution with Preload
+          # Point TSan to the symbolizer so we get line numbers
+          export ASAN_SYMBOLIZER_PATH=/usr/bin/llvm-symbolizer-22
+          
+          # Run python directly from the venv to avoid 'uv' wrapper noise in logs
           LD_PRELOAD=$TSAN_LIB \
-          TSAN_OPTIONS="second_deadlock_stack=1 halt_on_error=1" \
-          uv run python tests/benchmark.py --stress
-
+          TSAN_OPTIONS="second_deadlock_stack=1 halt_on_error=1 symbolize=1" \
+          ./.venv/bin/python tests/benchmark.py --stress
