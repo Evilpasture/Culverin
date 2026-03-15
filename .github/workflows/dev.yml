@@ -2,7 +2,7 @@ name: Remote Dev Fast-Track
 
 on:
   push:
-    branches: [ remote-dev ] # Only runs when you push from your phone
+    branches: [ remote-dev ]
 
 jobs:
   fast_dev_check:
@@ -19,26 +19,28 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          python-version: "3.13t" # 't' for free-threading if you're testing that!
 
-      - name: Install System Dependencies
+      - name: Install System Build Tools
         run: |
           sudo apt-get update
           sudo apt-get install -y clang llvm ninja-build
 
-      - name: Install & Build Local (Fast)
-        # Instead of building wheels for every Python version, 
-        # we just install the current source into the runner environment.
+      - name: Build & Install Project
+        # We drop --system. uv will create a managed venv automatically.
+        # This installs deps + your C++ extension in one go.
         run: |
-          uv pip install --system numpy psutil
-          uv pip install --system . 
+          uv pip install numpy psutil
+          uv pip install .
 
       - name: Run Core Tests
+        # Use 'uv run' to ensure we use the environment we just built
         run: |
-          python tests/test_core.py
+          uv run python tests/test_core.py
           
       - name: Quick Benchmarks
         run: |
           echo "## Dev Benchmarks" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          python tests/benchmark.py --leak >> $GITHUB_STEP_SUMMARY
+          uv run python tests/benchmark.py --leak >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
