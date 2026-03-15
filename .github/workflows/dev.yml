@@ -1,4 +1,4 @@
-name: Culverin Hybrid CI
+name: Culverin Multi-Platform CI
 
 on:
   push:
@@ -7,49 +7,59 @@ on:
     branches: [ main ]
 
 jobs:
-  # 1. macOS Build (Speed & Apple Silicon)
-  macos_release:
-    name: M-Series Build
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - uses: astral-sh/setup-uv@v5
-      - name: Build Wheels
-        uses: pypa/cibuildwheel@v3.4.0
-        env:
-          CIBW_BUILD: "cp313t-macosx_arm64"
-          CIBW_ENABLE: "cpython-freethreading"
-          CIBW_BUILD_FRONTEND: "uv"
-          CIBW_ENVIRONMENT_MACOS: >
-            CMAKE_ARGS="-DCMAKE_BUILD_TYPE=Release -DCMAKE_C_STANDARD=23"
+  build_wheels:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: TSan Safety (Linux x86_64)
+            os: ubuntu-latest
+            artifact: linux
+            # Manylinux 2.28 uses DNF
+            before_all: >
+              dnf install -y clang-18 llvm-18 lld-18 &&
+              ln -sf /usr/bin/clang-18 /usr/bin/clang &&
+              ln -sf /usr/bin/clang++-18 /usr/bin/clang++
 
-  # 2. Linux TSan (Safety & C23 Enforcement)
-  linux_tsan:
-    name: TSan Safety Scan (Linux)
-    runs-on: ubuntu-latest
+          - name: TSan Safety (macOS arm64)
+            os: macos-14  # Apple Silicon M1/M2/M3
+            artifact: macos
+            # Brew is the way for macOS
+            before_all: >
+              brew install llvm@18 &&
+              echo "CC=$(brew --prefix llvm@18)/bin/clang" >> $GITHUB_ENV &&
+              echo "CXX=$(brew --prefix llvm@18)/bin/clang++" >> $GITHUB_ENV
+
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+
       - uses: astral-sh/setup-uv@v5
-      
-      - name: Build and Test with TSan
+        with:
+          enable-cache: true
+
+      - name: Build and Test
         uses: pypa/cibuildwheel@v3.4.0
         env:
-          CIBW_BUILD: "cp313t-manylinux_x86_64"
+          CIBW_BUILD: "cp313t-*"
           CIBW_ENABLE: "cpython-freethreading"
           CIBW_BUILD_FRONTEND: "uv"
-          # We use CIBW_ENVIRONMENT to force TSan and C23 across all compiler calls
-          CIBW_ENVIRONMENT: >
-            CC=clang 
-            CXX=clang++ 
-            CFLAGS="-fsanitize=thread -g -fno-omit-frame-pointer" 
-            LDFLAGS="-fsanitize=thread"
-            CMAKE_ARGS="-DCMAKE_C_STANDARD=23 -DENABLE_THREAD_SANITIZER=ON"
           
+          # Use matrix-specific installation
+          CIBW_BEFORE_ALL: ${{ matrix.before_all }}
+
+          CIBW_ENVIRONMENT: >
+            CC=clang
+            CXX=clang++
+            CFLAGS="-fsanitize=thread -g -fno-omit-frame-pointer"
+            LDFLAGS="-fsanitize=thread"
+            CMAKE_ARGS="-DCMAKE_C_STANDARD=23 -DCMAKE_C_STANDARD_REQUIRED=ON -DENABLE_THREAD_SANITIZER=ON"
+
           CIBW_TEST_REQUIRES: numpy psutil pytest
           CIBW_TEST_COMMAND: >
-            TSAN_OPTIONS="second_deadlock_stack=1 halt_on_error=1" 
+            TSAN_OPTIONS="second_deadlock_stack=1 halt_on_error=1 history_size=7" 
             python {project}/tests/benchmark.py --stress
+
