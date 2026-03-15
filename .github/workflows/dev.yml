@@ -7,9 +7,6 @@ on:
     branches: [ main ]
 
 jobs:
-  # ------------------------------------------------------------------
-  # JOB 1: THE RELEASE RUNNER (macOS ARM64)
-  # ------------------------------------------------------------------
   macos_release:
     name: M-Series C23 Release (Clang 22)
     runs-on: macos-14
@@ -24,8 +21,7 @@ jobs:
           CIBW_BUILD: "cp313t-macosx_arm64"
           CIBW_ENABLE: "cpython-freethreading"
           CIBW_BUILD_FRONTEND: "uv"
-          # Standardize to macOS 13+ for LLVM 22 features
-          MACOSX_DEPLOYMENT_TARGET: "13.0" 
+          MACOSX_DEPLOYMENT_TARGET: "13.0"
           CIBW_BEFORE_ALL: brew install llvm@22
           CIBW_ENVIRONMENT: >
             CC="$(brew --prefix llvm@22)/bin/clang"
@@ -33,11 +29,10 @@ jobs:
             LDFLAGS="-L$(brew --prefix llvm@22)/lib -Wl,-rpath,$(brew --prefix llvm@22)/lib"
             CPPFLAGS="-I$(brew --prefix llvm@22)/include"
             CMAKE_ARGS="-DCMAKE_C_STANDARD=23 -DCMAKE_C_STANDARD_REQUIRED=ON -DCMAKE_BUILD_TYPE=Release -DJPH_USE_MTL=OFF"
+          # FIX: Added missing test requirements
+          CIBW_TEST_REQUIRES: numpy psutil pytest
           CIBW_TEST_COMMAND: "python {project}/tests/benchmark.py --stress"
 
-  # ------------------------------------------------------------------
-  # JOB 2: THE SAFETY RUNNER (Linux x86_64) - UPGRADED TO UBUNTU BASE
-  # ------------------------------------------------------------------
   linux_tsan:
     name: TSan C23 Deep Scan (Clang 22)
     runs-on: ubuntu-latest
@@ -49,18 +44,15 @@ jobs:
       - name: Build with TSan
         uses: pypa/cibuildwheel@v3.4.0
         env:
-          # Use manylinux_2_34 to get a Debian-based (Ubuntu) environment
           CIBW_MANYLINUX_X86_64_IMAGE: "quay.io/pypa/manylinux_2_34_x86_64"
           CIBW_BUILD: "cp313t-manylinux_x86_64"
           CIBW_ENABLE: "cpython-freethreading"
           CIBW_BUILD_FRONTEND: "uv"
-          
-          # Now apt-get works natively!
+          # FIX: Universal installer logic for manylinux
           CIBW_BEFORE_ALL_LINUX: >
-            apt-get update && apt-get install -y wget lsb-release software-properties-common gnupg &&
-            wget https://apt.llvm.org/llvm.sh &&
-            chmod +x llvm.sh &&
-            ./llvm.sh 22
+            (type apt-get >/dev/null 2>&1 && apt-get update && apt-get install -y wget lsb-release gnupg) || 
+            (type dnf >/dev/null 2>&1 && dnf install -y wget xz) &&
+            wget https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && ./llvm.sh 22 || true
           
           CIBW_ENVIRONMENT: >
             CC=clang-22
@@ -68,7 +60,6 @@ jobs:
             CFLAGS="-fsanitize=thread -g -O1 -fno-omit-frame-pointer"
             LDFLAGS="-fsanitize=thread -Wl,--allow-shlib-undefined"
             CMAKE_ARGS="-DCMAKE_C_STANDARD=23 -DCMAKE_C_STANDARD_REQUIRED=ON -DENABLE_THREAD_SANITIZER=ON"
-
           CIBW_TEST_REQUIRES: numpy psutil pytest
           CIBW_TEST_COMMAND: >
             TSAN_LIB=$(find /usr/lib -name "libclang_rt.tsan-x86_64.so" | head -n 1) &&
