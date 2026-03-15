@@ -1,0 +1,44 @@
+name: Remote Dev Fast-Track
+
+on:
+  push:
+    branches: [ remote-dev ] # Only runs when you push from your phone
+
+jobs:
+  fast_dev_check:
+    name: Quick Build & Test (Ubuntu)
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang llvm ninja-build
+
+      - name: Install & Build Local (Fast)
+        # Instead of building wheels for every Python version, 
+        # we just install the current source into the runner environment.
+        run: |
+          uv pip install --system numpy psutil
+          uv pip install --system . 
+
+      - name: Run Core Tests
+        run: |
+          python tests/test_core.py
+          
+      - name: Quick Benchmarks
+        run: |
+          echo "## Dev Benchmarks" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          python tests/benchmark.py --leak >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
