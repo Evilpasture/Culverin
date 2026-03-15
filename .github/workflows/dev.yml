@@ -62,19 +62,26 @@ jobs:
         env:
           CC: "/usr/bin/clang-22"
           CXX: "/usr/bin/clang++-22"
-          # Standard CFLAGS for TSan
           CFLAGS: "-fsanitize=thread -g -O1 -fno-omit-frame-pointer"
           LDFLAGS: "-fsanitize=thread -Wl,--allow-shlib-undefined"
-          # Pass TSan flag to CMake
+          # C23 is the goal, performance is the game
           CMAKE_ARGS: "-DCMAKE_C_STANDARD=23 -DCMAKE_C_STANDARD_REQUIRED=ON -DENABLE_THREAD_SANITIZER=ON"
         run: |
-          uv pip install numpy psutil pytest
+          # Only install the essential build backend and test requirements
+          uv pip install scikit-build-core numpy psutil pytest
+          
+          # Build Culverin in-place using our environment-defined Clang 22
           uv pip install -e . --no-build-isolation
           
-          # Locate the TSan runtime for preloading
+          # Verify TSan library location
           TSAN_LIB=$(find /usr/lib/llvm-22 -name "libclang_rt.tsan-x86_64.so" | head -n 1)
-          echo "Using TSAN_LIB: $TSAN_LIB"
+          if [ -z "$TSAN_LIB" ]; then
+            echo "Error: TSan runtime not found!"
+            exit 1
+          fi
+          echo "TSan Runtime: $TSAN_LIB"
           
+          # Execution with Preload
           LD_PRELOAD=$TSAN_LIB \
           TSAN_OPTIONS="second_deadlock_stack=1 halt_on_error=1" \
           uv run python tests/benchmark.py --stress
