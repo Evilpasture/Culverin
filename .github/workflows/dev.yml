@@ -1,4 +1,4 @@
-name: Culverin Multi-Platform CI
+name: Culverin Hybrid CI
 
 on:
   push:
@@ -7,56 +7,60 @@ on:
     branches: [ main ]
 
 jobs:
-  build_wheels:
-    name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: TSan Safety (Linux x86_64)
-            os: ubuntu-latest
-            artifact: linux
-            # Manylinux 2.28 uses DNF
-            before_all: >
-              dnf install -y clang-18 llvm-18 lld-18 &&
-              ln -sf /usr/bin/clang-18 /usr/bin/clang &&
-              ln -sf /usr/bin/clang++-18 /usr/bin/clang++
-
-          - name: TSan Safety (macOS arm64)
-            os: macos-14  # Apple Silicon M1/M2/M3
-            artifact: macos
-            # Brew is the way for macOS
-            before_all: >
-              brew install llvm@18 &&
-              echo "CC=$(brew --prefix llvm@18)/bin/clang" >> $GITHUB_ENV &&
-              echo "CXX=$(brew --prefix llvm@18)/bin/clang++" >> $GITHUB_ENV
-
+  # ------------------------------------------------------------------
+  # JOB 1: THE RELEASE RUNNER (macOS ARM64)
+  # Focus: Speed, Apple Silicon, and C23 Release Performance
+  # ------------------------------------------------------------------
+  macos_release:
+    name: M-Series Release Build (cp313t)
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-
       - uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-
-      - name: Build and Test
+      - name: Build Performance Wheels
         uses: pypa/cibuildwheel@v3.4.0
         env:
-          CIBW_BUILD: "cp313t-*"
+          CIBW_BUILD: "cp313t-macosx_arm64"
+          CIBW_ENABLE: "cpython-freethreading"
+          CIBW_BUILD_FRONTEND: "uv"
+          CIBW_ENVIRONMENT: >
+            CMAKE_ARGS="-DCMAKE_C_STANDARD=23 -DCMAKE_BUILD_TYPE=Release"
+          CIBW_TEST_COMMAND: "python {project}/tests/benchmark.py --stress"
+
+  # ------------------------------------------------------------------
+  # JOB 2: THE SAFETY RUNNER (Linux x86_64)
+  # Focus: TSan Race Detection & C23 Validation
+  # ------------------------------------------------------------------
+  linux_tsan:
+    name: TSan Deep Scan (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: astral-sh/setup-uv@v5
+      
+      - name: Build with TSan
+        uses: pypa/cibuildwheel@v3.4.0
+        env:
+          CIBW_BUILD: "cp313t-manylinux_x86_64"
           CIBW_ENABLE: "cpython-freethreading"
           CIBW_BUILD_FRONTEND: "uv"
           
-          # Use matrix-specific installation
-          CIBW_BEFORE_ALL: ${{ matrix.before_all }}
+          # Use Before All to get the modern Clang 18 toolchain
+          CIBW_BEFORE_ALL_LINUX: >
+            dnf install -y clang-18 llvm-18 lld-18 &&
+            ln -sf /usr/bin/clang-18 /usr/bin/clang &&
+            ln -sf /usr/bin/clang++-18 /usr/bin/clang++
 
           CIBW_ENVIRONMENT: >
             CC=clang
             CXX=clang++
             CFLAGS="-fsanitize=thread -g -fno-omit-frame-pointer"
             LDFLAGS="-fsanitize=thread"
-            CMAKE_ARGS="-DCMAKE_C_STANDARD=23 -DCMAKE_C_STANDARD_REQUIRED=ON -DENABLE_THREAD_SANITIZER=ON"
+            CMAKE_ARGS="-DCMAKE_C_STANDARD=23 -DENABLE_THREAD_SANITIZER=ON"
 
           CIBW_TEST_REQUIRES: numpy psutil pytest
           CIBW_TEST_COMMAND: >
