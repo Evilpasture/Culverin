@@ -47,7 +47,7 @@ jobs:
             python {project}/tests/benchmark.py --leak &&
             python {project}/tests/benchmark.py --stress
 
-  # JOB 2: Safety & Race Detection (The Definitive TSan Runner)
+  # JOB 2: Safety & Race Detection (The Final Stand)
   tsan_deep_scan:
     name: TSan Race Detection
     runs-on: macos-latest
@@ -82,14 +82,17 @@ jobs:
             CMAKE_ARGS="-DCMAKE_C_STANDARD=23 -DENABLE_SANITIZER=OFF -DENABLE_THREAD_SANITIZER=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo"
 
           CIBW_TEST_REQUIRES: numpy psutil
-          # THE DEFINITIVE BYPASS:
-          # 1. Capture paths into variables.
-          # 2. Copy and Unsign the binary (Removes 'Restricted' status).
-          # 3. Use 'env' to pass everything in one clean shot.
+          # THE FINAL STAND:
+          # 1. Copy to /tmp to escape the build/venv folder restrictions.
+          # 2. Unsign.
+          # 3. Use 'arch -arm64' to force a clean process execution environment.
           CIBW_TEST_COMMAND: >
-            TSAN_LIB_PATH=$(python -c "import os, culverin; print(os.path.join(os.path.dirname(culverin.__file__), '.dylibs', 'libclang_rt.tsan_osx_dynamic.dylib'))") &&
+            TSAN_LIB_PATH=$(python -c "import os, culverin; print(os.path.normpath(os.path.join(os.path.dirname(culverin.__file__), '.dylibs', 'libclang_rt.tsan_osx_dynamic.dylib')))") &&
             SITEPACKAGES=$(python -c "import site; print(site.getsitepackages()[0])") &&
-            cp $(which python) ./tsan_runner &&
-            codesign --remove-signature ./tsan_runner &&
-            env DYLD_INSERT_LIBRARIES="$TSAN_LIB_PATH" PYTHONPATH="$SITEPACKAGES" TSAN_OPTIONS="second_deadlock_stack=1 halt_on_error=1" ./tsan_runner {project}/tests/benchmark.py --stress
+            cp $(which python) /tmp/tsan_python &&
+            codesign --remove-signature /tmp/tsan_python &&
+            env DYLD_INSERT_LIBRARIES="$TSAN_LIB_PATH" \
+                PYTHONPATH="$SITEPACKAGES" \
+                TSAN_OPTIONS="second_deadlock_stack=1 halt_on_error=1" \
+                arch -arm64 /tmp/tsan_python {project}/tests/benchmark.py --stress
 
