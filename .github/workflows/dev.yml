@@ -82,13 +82,15 @@ jobs:
             CMAKE_ARGS="-DCMAKE_C_STANDARD=23 -DENABLE_SANITIZER=OFF -DENABLE_THREAD_SANITIZER=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo"
 
           CIBW_TEST_REQUIRES: numpy psutil
-          # THE SIP BYPASS:
-          # 1. Locate the TSan dylib.
-          # 2. Copy the Python binary to an 'unrestricted' name/location.
-          # 3. Run the copy with DYLD_INSERT_LIBRARIES.
+          # THE SIP BYPASS + PATH FIX:
+          # 1. Capture the library path and the site-packages path.
+          # 2. Copy python to an unrestricted location.
+          # 3. Explicitly set PYTHONPATH so the clone can find numpy/culverin.
           CIBW_TEST_COMMAND: >
             TSAN_LIB_PATH=$(python -c "import os, culverin; print(os.path.join(os.path.dirname(culverin.__file__), '.dylibs', 'libclang_rt.tsan_osx_dynamic.dylib'))") &&
+            SITEPACKAGES=$(python -c "import site; print(site.getsitepackages()[0])") &&
             cp $(which python) ./python_tsan &&
+            export PYTHONPATH="$SITEPACKAGES" &&
             export DYLD_INSERT_LIBRARIES="$TSAN_LIB_PATH" &&
             export TSAN_OPTIONS="second_deadlock_stack=1 halt_on_error=1" &&
             ./python_tsan {project}/tests/benchmark.py --stress
