@@ -45,14 +45,9 @@ jobs:
           brew install llvm ninja
           echo "/opt/homebrew/opt/llvm/bin" >> $GITHUB_PATH
 
-      - name: Install Free-Threaded Python
-        run: |
-          curl -O https://www.python.org/ftp/python/3.13.1/python-3.13.1-macos11.pkg
-          sudo installer -pkg python-3.13.1-macos11.pkg -target /
-
       - name: Build Extension with TSan
         run: |
-          # Use the installed 3.13t
+          # Use the uv-provided 3.13t
           uv venv --python 3.13t
           source .venv/bin/activate
           uv pip install numpy psutil setuptools scikit-build-core
@@ -68,32 +63,33 @@ jobs:
         run: |
           source .venv/bin/activate
           
-          # 1. Locate the TSan dylib
+          # 1. Improved TSan dylib discovery
           TSAN_DYLIB=$(find /opt/homebrew/opt/llvm -name "libclang_rt.tsan_osx_dynamic.dylib" | head -n 1)
+          if [ -z "$TSAN_DYLIB" ]; then
+            # Fallback to standard xcode path if brew find fails
+            TSAN_DYLIB="/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang/$(ls /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang | head -1)/lib/darwin/libclang_rt.tsan_osx_dynamic.dylib"
+          fi
           echo "Using TSan Dylib: $TSAN_DYLIB"
           
-          # 2. Programmatically find the REAL Python executable and Library directory
-          # We resolve the symlink of sys.executable to get the actual Mach-O binary
+          # 2. Extract paths
           REAL_PYTHON_PATH=$(python -c "import sys, os; print(os.path.realpath(sys.executable))")
           PYTHON_LIB_DIR=$(python -c "import sysconfig; print(sysconfig.get_config_var('LIBDIR'))")
           
-          echo "Detected Real Python: $REAL_PYTHON_PATH"
-          echo "Detected Lib Dir: $PYTHON_LIB_DIR"
+          # 3. Create a thin binary in /tmp
+          # lipo -extract often "repairs" or cleans up Mach-O headers, 
+          # but more importantly, we'll avoid install_name_tool and use DYLD_LIBRARY_PATH
+          lipo -extract arm64 "$REAL_PYTHON_PATH" -output /tmp/tsan_python
           
-          # 3. Copy to /tmp to escape SIP/Sandbox
-          cp "$REAL_PYTHON_PATH" /tmp/tsan_python
-          
-          # 4. Fix RPATH so it finds the Python framework libraries from its new home
-          install_name_tool -add_rpath "$PYTHON_LIB_DIR" /tmp/tsan_python
-          
-          # 5. Remove signature for DYLD_INSERT_LIBRARIES support
+          # 4. Strip signature
           codesign --remove-signature /tmp/tsan_python
           chmod +x /tmp/tsan_python
           
-          # 6. Run the race detector
-          export DYLD_INSERT_LIBRARIES=$TSAN_DYLIB
+          # 5. Run with environment-based library resolution
+          # DYLD_LIBRARY_PATH tells the loader where to find libpython3.13t.dylib
+          # DYLD_INSERT_LIBRARIES injects the TSan runtime
+          export DYLD_LIBRARY_PATH="$PYTHON_LIB_DIR"
+          export DYLD_INSERT_LIBRARIES="$TSAN_DYLIB"
           export TSAN_OPTIONS="second_deadlock_stack=1 halt_on_error=1"
           
-          # Use arch -arm64 to ensure we don't accidentally trigger arm64e PAC requirements
           arch -arm64 /tmp/tsan_python tests/benchmark.py --stress
 
