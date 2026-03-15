@@ -40,39 +40,42 @@ jobs:
   # ------------------------------------------------------------------
   linux_tsan:
     name: TSan C23 Deep Scan (Clang 22)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - uses: astral-sh/setup-uv@v5
-      - name: Build with TSan
-        uses: pypa/cibuildwheel@v3.4.0
-        env:
-          # Use a standard Ubuntu image where apt-get and llvm.sh work natively
-          CIBW_CONTAINER_ENGINE: docker
-          CIBW_MANYLINUX_X86_64_IMAGE: "ubuntu:24.04" 
-          CIBW_BUILD: "cp313t-*"
-          CIBW_ENABLE: "cpython-freethreading"
-          CIBW_BUILD_FRONTEND: "uv"
-          
-          # This runs inside the ubuntu:24.04 container
-          CIBW_BEFORE_ALL_LINUX: >
-            apt-get update && apt-get install -y wget lsb-release software-properties-common gnupg &&
-            wget https://apt.llvm.org/llvm.sh &&
-            chmod +x llvm.sh &&
-            ./llvm.sh 22
-          
-          CIBW_ENVIRONMENT: >
-            CC="/usr/bin/clang-22"
-            CXX="/usr/bin/clang++-22"
-            CFLAGS="-fsanitize=thread -g -O1 -fno-omit-frame-pointer"
-            LDFLAGS="-fsanitize=thread -Wl,--allow-shlib-undefined"
-            CMAKE_ARGS="-DCMAKE_C_STANDARD=23 -DCMAKE_C_STANDARD_REQUIRED=ON -DENABLE_THREAD_SANITIZER=ON"
 
-          CIBW_TEST_REQUIRES: numpy psutil pytest
-          CIBW_TEST_COMMAND: >
-            TSAN_LIB=$(find /usr/lib/llvm-22 -name "libclang_rt.tsan-x86_64.so" | head -n 1) &&
-            LD_PRELOAD=$TSAN_LIB 
-            TSAN_OPTIONS="second_deadlock_stack=1 halt_on_error=1" 
-            python {project}/tests/benchmark.py --stress
+      - name: Install LLVM 22
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget lsb-release software-properties-common gnupg
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 22
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13t" # Installs the free-threaded version natively
+
+      - name: Build and Scan with TSan
+        env:
+          CC: "/usr/bin/clang-22"
+          CXX: "/usr/bin/clang++-22"
+          # Standard CFLAGS for TSan
+          CFLAGS: "-fsanitize=thread -g -O1 -fno-omit-frame-pointer"
+          LDFLAGS: "-fsanitize=thread -Wl,--allow-shlib-undefined"
+          # Pass TSan flag to CMake
+          CMAKE_ARGS: "-DCMAKE_C_STANDARD=23 -DCMAKE_C_STANDARD_REQUIRED=ON -DENABLE_THREAD_SANITIZER=ON"
+        run: |
+          uv pip install numpy psutil pytest
+          uv pip install -e . --no-build-isolation
+          
+          # Locate the TSan runtime for preloading
+          TSAN_LIB=$(find /usr/lib/llvm-22 -name "libclang_rt.tsan-x86_64.so" | head -n 1)
+          echo "Using TSAN_LIB: $TSAN_LIB"
+          
+          LD_PRELOAD=$TSAN_LIB \
+          TSAN_OPTIONS="second_deadlock_stack=1 halt_on_error=1" \
+          uv run python tests/benchmark.py --stress
+
