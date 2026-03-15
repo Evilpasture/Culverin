@@ -7,7 +7,7 @@ on:
     branches: [ main ]
 
 jobs:
-  # JOB 1: Velocity & Unit Tests
+  # JOB 1: Velocity & Unit Tests (Standard Runner)
   fast_dev_check:
     name: M-Series Fast-Track
     runs-on: macos-latest
@@ -47,7 +47,7 @@ jobs:
             python {project}/tests/benchmark.py --leak &&
             python {project}/tests/benchmark.py --stress
 
-  # JOB 2: Safety & Race Detection
+  # JOB 2: Safety & Race Detection (The SIP-Bypass Runner)
   tsan_deep_scan:
     name: TSan Race Detection
     runs-on: macos-latest
@@ -82,10 +82,14 @@ jobs:
             CMAKE_ARGS="-DCMAKE_C_STANDARD=23 -DENABLE_SANITIZER=OFF -DENABLE_THREAD_SANITIZER=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo"
 
           CIBW_TEST_REQUIRES: numpy psutil
-          # We use a robust python-based discovery to find the library path inside site-packages
+          # THE SIP BYPASS:
+          # 1. Locate the TSan dylib.
+          # 2. Copy the Python binary to an 'unrestricted' name/location.
+          # 3. Run the copy with DYLD_INSERT_LIBRARIES.
           CIBW_TEST_COMMAND: >
             TSAN_LIB_PATH=$(python -c "import os, culverin; print(os.path.join(os.path.dirname(culverin.__file__), '.dylibs', 'libclang_rt.tsan_osx_dynamic.dylib'))") &&
+            cp $(which python) ./python_tsan &&
             export DYLD_INSERT_LIBRARIES="$TSAN_LIB_PATH" &&
             export TSAN_OPTIONS="second_deadlock_stack=1 halt_on_error=1" &&
-            python {project}/tests/benchmark.py --stress
+            ./python_tsan {project}/tests/benchmark.py --stress
 
