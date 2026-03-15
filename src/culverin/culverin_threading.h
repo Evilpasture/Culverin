@@ -136,7 +136,7 @@ typedef pthread_cond_t NativeCond;
 // Must be called while holding SHADOW_LOCK. Re-acquires it before returning.
 #define BLOCK_UNTIL_NOT_STEPPING(self)                                                             \
     do {                                                                                           \
-        if (atomic_load_explicit(&(self)->is_stepping, memory_order_relaxed)) {                    \
+        while (atomic_load_explicit(&(self)->is_stepping, memory_order_relaxed)) {                    \
             SHADOW_UNLOCK(&(self)->shadow_lock);                                                   \
             Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK((self)->step_sync.mutex);                     \
             /* The Double Check: check again after acquiring native lock */                        \
@@ -150,7 +150,7 @@ typedef pthread_cond_t NativeCond;
 
 #define BLOCK_UNTIL_NOT_QUERYING(self)                                                             \
     do {                                                                                           \
-        if (atomic_load_explicit(&(self)->active_queries, memory_order_acquire) > 0) {             \
+        while (atomic_load_explicit(&(self)->active_queries, memory_order_acquire) > 0) {             \
             SHADOW_UNLOCK(&(self)->shadow_lock);                                                   \
             Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK((self)->step_sync.mutex);                     \
             /* The Double Check */                                                                 \
@@ -165,7 +165,7 @@ typedef pthread_cond_t NativeCond;
 // Queries use this to wait if a Step is about to happen
 #define BLOCK_IF_STEP_PENDING(self)                                                                \
     do {                                                                                           \
-        if (atomic_load_explicit(&(self)->step_requested, memory_order_relaxed)) {                 \
+        while (atomic_load_explicit(&(self)->step_requested, memory_order_relaxed)) {                 \
             SHADOW_UNLOCK(&(self)->shadow_lock);                                                   \
             Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK((self)->step_sync.mutex);                     \
             while (atomic_load_explicit(&(self)->step_requested, memory_order_relaxed)) {          \
@@ -179,7 +179,7 @@ typedef pthread_cond_t NativeCond;
 #define BLOCK_UNTIL_CAN_QUERY(self)                                                                \
     do {                                                                                           \
         /* 1. Fast path: Check without lock */                                                     \
-        if (atomic_load_explicit(&(self)->is_stepping, memory_order_relaxed) ||                    \
+        while (atomic_load_explicit(&(self)->is_stepping, memory_order_relaxed) ||                    \
             atomic_load_explicit(&(self)->step_requested, memory_order_relaxed)) {                 \
                                                                                                    \
             SHADOW_UNLOCK(&(self)->shadow_lock);                                                   \
