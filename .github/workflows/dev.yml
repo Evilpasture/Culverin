@@ -52,6 +52,7 @@ jobs:
 
       - name: Build Extension with TSan
         run: |
+          # Use the installed 3.13t
           uv venv --python 3.13t
           source .venv/bin/activate
           uv pip install numpy psutil setuptools scikit-build-core
@@ -67,27 +68,32 @@ jobs:
         run: |
           source .venv/bin/activate
           
-          # 1. Targeted find for the TSan dylib
-          TSAN_DYLIB=$(find /opt/homebrew/opt/llvm/lib/clang -name "libclang_rt.tsan_osx_dynamic.dylib" | head -n 1)
-          if [ -z "$TSAN_DYLIB" ]; then echo "TSan dylib NOT found"; exit 1; fi
+          # 1. Locate the TSan dylib
+          TSAN_DYLIB=$(find /opt/homebrew/opt/llvm -name "libclang_rt.tsan_osx_dynamic.dylib" | head -n 1)
           echo "Using TSan Dylib: $TSAN_DYLIB"
           
-          # 2. Use the REAL Python binary, not the uv shim
-          # The framework install puts the real binary here:
-          REAL_PYTHON="/Library/Frameworks/PythonT.framework/Versions/3.13/bin/python3.13t"
-          PYTHON_LIB_DIR="/Library/Frameworks/PythonT.framework/Versions/3.13/lib"
+          # 2. Programmatically find the REAL Python executable and Library directory
+          # We resolve the symlink of sys.executable to get the actual Mach-O binary
+          REAL_PYTHON_PATH=$(python -c "import sys, os; print(os.path.realpath(sys.executable))")
+          PYTHON_LIB_DIR=$(python -c "import sysconfig; print(sysconfig.get_config_var('LIBDIR'))")
           
-          cp "$REAL_PYTHON" /tmp/tsan_python
+          echo "Detected Real Python: $REAL_PYTHON_PATH"
+          echo "Detected Lib Dir: $PYTHON_LIB_DIR"
           
-          # 3. Fix @rpath so the binary can find libpython3.13t.dylib from /tmp
+          # 3. Copy to /tmp to escape SIP/Sandbox
+          cp "$REAL_PYTHON_PATH" /tmp/tsan_python
+          
+          # 4. Fix RPATH so it finds the Python framework libraries from its new home
           install_name_tool -add_rpath "$PYTHON_LIB_DIR" /tmp/tsan_python
           
-          # 4. Remove signature to allow DYLD_INSERT_LIBRARIES
+          # 5. Remove signature for DYLD_INSERT_LIBRARIES support
           codesign --remove-signature /tmp/tsan_python
           chmod +x /tmp/tsan_python
           
-          # 5. Execute
+          # 6. Run the race detector
           export DYLD_INSERT_LIBRARIES=$TSAN_DYLIB
           export TSAN_OPTIONS="second_deadlock_stack=1 halt_on_error=1"
-          /tmp/tsan_python tests/benchmark.py --stress
+          
+          # Use arch -arm64 to ensure we don't accidentally trigger arm64e PAC requirements
+          arch -arm64 /tmp/tsan_python tests/benchmark.py --stress
 
