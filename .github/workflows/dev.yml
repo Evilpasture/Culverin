@@ -47,7 +47,7 @@ jobs:
             python {project}/tests/benchmark.py --leak &&
             python {project}/tests/benchmark.py --stress
 
-  # JOB 2: Safety & Race Detection (The Final Stand)
+  # JOB 2: Safety & Race Detection (The arm64e Escape)
   tsan_deep_scan:
     name: TSan Race Detection
     runs-on: macos-latest
@@ -82,16 +82,18 @@ jobs:
             CMAKE_ARGS="-DCMAKE_C_STANDARD=23 -DENABLE_SANITIZER=OFF -DENABLE_THREAD_SANITIZER=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo"
 
           CIBW_TEST_REQUIRES: numpy psutil
-          # THE FINAL STAND:
-          # 1. Copy to /tmp to escape the build/venv folder restrictions.
-          # 2. Unsign.
-          # 3. Use 'arch -arm64' to force a clean process execution environment.
+          # THE DEFINITIVE SOLUTION:
+          # 1. Escape the dylib and binary to /tmp to avoid SIP path protections.
+          # 2. Unsign BOTH to ensure they are seen as simple third-party code.
+          # 3. Use 'arch -arm64' to prevent the kernel from demanding 'arm64e' (PAC).
           CIBW_TEST_COMMAND: >
-            TSAN_LIB_PATH=$(python -c "import os, culverin; print(os.path.normpath(os.path.join(os.path.dirname(culverin.__file__), '.dylibs', 'libclang_rt.tsan_osx_dynamic.dylib')))") &&
+            ORIG_TSAN=$(python -c "import os, culverin; print(os.path.join(os.path.dirname(culverin.__file__), '.dylibs', 'libclang_rt.tsan_osx_dynamic.dylib'))") &&
             SITEPACKAGES=$(python -c "import site; print(site.getsitepackages()[0])") &&
+            cp "$ORIG_TSAN" /tmp/libtsan.dylib &&
             cp $(which python) /tmp/tsan_python &&
+            codesign --remove-signature /tmp/libtsan.dylib &&
             codesign --remove-signature /tmp/tsan_python &&
-            env DYLD_INSERT_LIBRARIES="$TSAN_LIB_PATH" \
+            env DYLD_INSERT_LIBRARIES=/tmp/libtsan.dylib \
                 PYTHONPATH="$SITEPACKAGES" \
                 TSAN_OPTIONS="second_deadlock_stack=1 halt_on_error=1" \
                 arch -arm64 /tmp/tsan_python {project}/tests/benchmark.py --stress
