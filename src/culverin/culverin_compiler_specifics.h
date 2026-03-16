@@ -31,25 +31,18 @@
 #endif
 
 #if defined(CULVERIN_DEBUG)
-// Debug/Development: Deterministic Panic
-[[noreturn]] static inline void culv_panic(const char *msg, const char *file, int line) {
-    fprintf(stderr, "PANIC: %s at %s:%d\n", msg, file, line);
-    abort(); // Or __builtin_trap() for a debugger break
-}
-#    undef unreachable
-// NOLINTNEXTLINE(readability-identifier-naming)
-#    define unreachable()                                                                          \
-        do {                                                                                       \
-            printf("Unreachable hit at %s:%d\n", __FILE__, __LINE__);                              \
-            abort();                                                                               \
-        } while (0)
+    [[noreturn]] static inline void culv_panic(const char *msg, const char *file, int line) {
+        fprintf(stderr, "PANIC: %s at %s:%d\n", msg, file, line);
+        abort(); 
+    }
+#undef unreachable()
+    #define unreachable() culv_panic("Unreachable", __FILE__, __LINE__)
 #else
-// Release/Production: Pure Optimization Hint
-#    if defined(_MSC_VER)
-#        define unreachable() __assume(0)
-#    else
-#        define unreachable() __builtin_unreachable()
-#    endif
+    #if defined(_MSC_VER)
+        #define unreachable() __assume(0)
+    #else
+        #define unreachable() __builtin_unreachable()
+    #endif
 #endif
 
 // #define CULVERIN_PROFILE_SYNC
