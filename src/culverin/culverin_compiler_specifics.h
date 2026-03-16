@@ -91,9 +91,15 @@ static inline uint64_t rdtsc() {
 #    define CULV_PREFETCH_WRITE(addr) ((void)0)
 #endif
 
-#if defined(__has_c_attribute) && __has_c_attribute(nodiscard)
-#    define CULV_NODISCARD [[nodiscard]]
-#    define CULV_MAYBE_UNUSED [[maybe_unused]]
+// Use a nested check to avoid the "macro not defined" evaluation error
+#if defined(__has_c_attribute)
+#    if __has_c_attribute(nodiscard)
+#        define CULV_NODISCARD [[nodiscard]]
+#        define CULV_MAYBE_UNUSED [[maybe_unused]]
+#    else
+#        define CULV_NODISCARD
+#        define CULV_MAYBE_UNUSED
+#    endif
 #elif defined(_MSC_VER)
 #    define CULV_NODISCARD _Check_return_
 #    define CULV_MAYBE_UNUSED
