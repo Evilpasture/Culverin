@@ -39,35 +39,37 @@
 #ifdef __cplusplus
 #include <atomic>
 
-// Provide Type-Safe C++ Overloads instead of destructive Macros
 template <typename T>
-inline T atomic_load(std::atomic<T>* ptr) { 
+static inline T atomic_load(std::atomic<T>* ptr) { 
     return ptr->load(std::memory_order_relaxed); 
 }
 
 template <typename T>
-inline void atomic_store(std::atomic<T>* ptr, T val) { 
+static inline void atomic_store(std::atomic<T>* ptr, T val) { 
     ptr->store(val, std::memory_order_relaxed); 
 }
 
 template <typename T>
-inline T atomic_fetch_add(std::atomic<T>* ptr, T val) { 
+static inline T atomic_fetch_add(std::atomic<T>* ptr, T val) { 
     return ptr->fetch_add(val, std::memory_order_relaxed); 
 }
 
-// Keep explicit versions if needed
 template <typename T>
-inline T atomic_load_explicit(std::atomic<T>* ptr, std::memory_order order) { 
+static inline T atomic_load_explicit(std::atomic<T>* ptr, std::memory_order order) { 
     return ptr->load(order); 
 }
 
-// Map the C types to std::atomic
-using atomic_size_t = std::atomic<size_t>;
-using atomic_bool   = std::atomic<bool>;
-using atomic_int    = std::atomic<int>;
+typedef std::atomic<size_t> atomic_size_t;
+typedef std::atomic<bool>   atomic_bool;
+typedef std::atomic<int>    atomic_int;
 
 #else
     #include <stdatomic.h>
+    // C-mode keeps the original macros
+    #define atomic_load(ptr) atomic_load(ptr)
+    #define atomic_store(ptr, val) atomic_store(ptr, val)
+    #define atomic_fetch_add(ptr, val) atomic_fetch_add(ptr, val)
+    #define atomic_load_explicit(ptr, order) atomic_load_explicit(ptr, order)
 #endif
 #include <stddef.h>
 #include <string.h>
