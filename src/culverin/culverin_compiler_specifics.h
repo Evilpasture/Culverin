@@ -30,20 +30,17 @@
 #    define CULV_FORCE_INLINE inline __attribute__((always_inline))
 #endif
 
+// Use a real function instead of a macro to prevent C++ Standard Library collisions
+[[noreturn]] static inline void unreachable(void) {
 #if defined(CULVERIN_DEBUG)
-    [[noreturn]] static inline void culv_panic(const char *msg, const char *file, int line) {
-        fprintf(stderr, "PANIC: %s at %s:%d\n", msg, file, line);
-        abort(); 
-    }
-#undef unreachable
-    #define unreachable() culv_panic("Unreachable", __FILE__, __LINE__)
+    fprintf(stderr, "Unreachable hit at %s:%d\n", __FILE__, __LINE__);
+    abort();
+#elif defined(_MSC_VER)
+    __assume(0);
 #else
-    #if defined(_MSC_VER)
-        #define unreachable() __assume(0)
-    #else
-        #define unreachable() __builtin_unreachable()
-    #endif
+    __builtin_unreachable();
 #endif
+}
 
 // #define CULVERIN_PROFILE_SYNC
 
