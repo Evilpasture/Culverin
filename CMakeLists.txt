@@ -121,10 +121,7 @@ else()
 
     set(FLAGS_STRICT "-Wall" "-Wextra" "-Wno-sign-conversion" "-Wno-shorten-64-to-32" "-Wno-double-promotion")
 
-    # Use gnu2x instead of gnu23 to support Clang 15-17 prevalent in CI runners
-    set(FLAGS_STD "-std=gnu2x")
-
-    list(APPEND CULVERIN_COMPILE_FLAGS ${FLAGS_STD} ${FLAGS_DEBUG} ${FLAGS_PERF} ${FLAGS_STRICT})
+    list(APPEND CULVERIN_COMPILE_FLAGS ${FLAGS_DEBUG} ${FLAGS_PERF} ${FLAGS_STRICT})
 
     if(CMAKE_C_COMPILER_ID MATCHES "Clang")
         list(APPEND CULVERIN_COMPILE_FLAGS "-fcolor-diagnostics")
