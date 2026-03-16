@@ -37,13 +37,18 @@
 #include <float.h>
 #include <math.h>
 #ifdef __cplusplus
-#include <atomic>
-// Bridge C-style atomic types to C++ std::atomic
-typedef std::atomic<size_t> atomic_size_t;
-typedef std::atomic<bool>   atomic_bool;
-typedef std::atomic<int>    atomic_int;
+    #include <atomic>
+    // Create bridge macros so your C++ code can still use C-style atomic calls
+    #define atomic_load(ptr) ((ptr)->load(std::memory_order_relaxed))
+    #define atomic_store(ptr, val) ((ptr)->store(val, std::memory_order_relaxed))
+    #define atomic_fetch_add(ptr, val) ((ptr)->fetch_add(val, std::memory_order_relaxed))
+    #define atomic_load_explicit(ptr, order) ((ptr)->load(order))
+    
+    using atomic_size_t = std::atomic<size_t>;
+    using atomic_bool   = std::atomic<bool>;
+    using atomic_int    = std::atomic<int>;
 #else
-#include <stdatomic.h>
+    #include <stdatomic.h>
 #endif
 #include <stddef.h>
 #include <string.h>
