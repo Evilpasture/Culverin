@@ -35,7 +35,7 @@
         fprintf(stderr, "PANIC: %s at %s:%d\n", msg, file, line);
         abort(); 
     }
-#undef unreachable()
+#undef unreachable
     #define unreachable() culv_panic("Unreachable", __FILE__, __LINE__)
 #else
     #if defined(_MSC_VER)
