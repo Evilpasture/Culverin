@@ -2,9 +2,9 @@ name: Culverin Hybrid CI
 
 on:
   push:
-    branches: [ remote-dev, main ]
+    branches: [ master ]
   pull_request:
-    branches: [ main ]
+    branches: [ master ]
 
 jobs:
   # ------------------------------------------------------------------
