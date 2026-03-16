@@ -37,16 +37,35 @@
 #include <float.h>
 #include <math.h>
 #ifdef __cplusplus
-    #include <atomic>
-    // Create bridge macros so your C++ code can still use C-style atomic calls
-    #define atomic_load(ptr) ((ptr)->load(std::memory_order_relaxed))
-    #define atomic_store(ptr, val) ((ptr)->store(val, std::memory_order_relaxed))
-    #define atomic_fetch_add(ptr, val) ((ptr)->fetch_add(val, std::memory_order_relaxed))
-    #define atomic_load_explicit(ptr, order) ((ptr)->load(order))
-    
-    using atomic_size_t = std::atomic<size_t>;
-    using atomic_bool   = std::atomic<bool>;
-    using atomic_int    = std::atomic<int>;
+#include <atomic>
+
+// Provide Type-Safe C++ Overloads instead of destructive Macros
+template <typename T>
+inline T atomic_load(std::atomic<T>* ptr) { 
+    return ptr->load(std::memory_order_relaxed); 
+}
+
+template <typename T>
+inline void atomic_store(std::atomic<T>* ptr, T val) { 
+    ptr->store(val, std::memory_order_relaxed); 
+}
+
+template <typename T>
+inline T atomic_fetch_add(std::atomic<T>* ptr, T val) { 
+    return ptr->fetch_add(val, std::memory_order_relaxed); 
+}
+
+// Keep explicit versions if needed
+template <typename T>
+inline T atomic_load_explicit(std::atomic<T>* ptr, std::memory_order order) { 
+    return ptr->load(order); 
+}
+
+// Map the C types to std::atomic
+using atomic_size_t = std::atomic<size_t>;
+using atomic_bool   = std::atomic<bool>;
+using atomic_int    = std::atomic<int>;
+
 #else
     #include <stdatomic.h>
 #endif
