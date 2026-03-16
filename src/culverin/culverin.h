@@ -36,7 +36,15 @@
 #include "culverin_types.h"
 #include <float.h>
 #include <math.h>
+#ifdef __cplusplus
+#include <atomic>
+// Bridge C-style atomic types to C++ std::atomic
+typedef std::atomic<size_t> atomic_size_t;
+typedef std::atomic<bool>   atomic_bool;
+typedef std::atomic<int>    atomic_int;
+#else
 #include <stdatomic.h>
+#endif
 #include <stddef.h>
 #include <string.h>
 
