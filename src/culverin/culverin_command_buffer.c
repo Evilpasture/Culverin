@@ -250,7 +250,7 @@ void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *queue, si
             break;
         }
         default:
-            unreachable();
+            culv_unreachable();
         }
     }
 }
