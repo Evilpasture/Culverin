@@ -277,8 +277,9 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
         self->generations[i]                 = 1;
         self->free_slots[self->free_count++] = i;
     }
-
+    SHADOW_LOCK(&self->shadow_lock);
     culverin_sync_shadow_buffers(self);
+    SHADOW_UNLOCK(&self->shadow_lock);
     return 0;
 
 fail:
