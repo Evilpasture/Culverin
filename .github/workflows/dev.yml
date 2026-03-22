@@ -75,10 +75,14 @@ jobs:
           export TSAN_SYMBOLIZER_PATH=/usr/bin/llvm-symbolizer-22
           TSAN_LIB=$(find /usr/lib/llvm-22 -name "libclang_rt.tsan-x86_64.so" | head -n 1)
           
-          # Added 'suppressions' flag pointing to your new file
-          LD_PRELOAD=$TSAN_LIB \
-          TSAN_OPTIONS="suppressions=${{ github.workspace }}/tsan.supp second_deadlock_stack=1 halt_on_error=1 symbolize=1" \
-          ./.venv/bin/python tests/benchmark.py --stress \
+          # Use a single env export or separate the lines properly
+          export LD_PRELOAD=$TSAN_LIB
+          export TSAN_OPTIONS="suppressions=${{ github.workspace }}/tsan.supp second_deadlock_stack=1 halt_on_error=1 symbolize=1"
+          
+          # Run benchmark first
+          ./.venv/bin/python tests/benchmark.py --stress
+          
+          # Then run the actual test suite
           ./.venv/bin/python tests/test_core.py
  
 
