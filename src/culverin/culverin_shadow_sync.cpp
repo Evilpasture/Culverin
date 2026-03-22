@@ -129,20 +129,25 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
     uint64_t start = rdtsc();
 #endif
 
-    const auto *sys_c = self->system;
-    uint32_t active_count = JPH_PhysicsSystem_GetNumActiveBodies(sys_c, JPH_BodyType_Rigid);
-
-    if (UNLIKELY(active_count == 0 || !self->positions)) {
+    // 1. ThreadSanitizer & Null-Safety Guard
+    if (UNLIKELY(!self || !self->system || !self->positions)) {
         return;
     }
 
-    // Cast the opaque system pointer to the native C++ System
-    JPH::PhysicsSystem *native_sys = static_cast<JPH::PhysicsSystem *>(static_cast<void *>(const_cast<JPH_PhysicsSystem *>(sys_c)));
+    const auto *sys_c = self->system;
+    uint32_t active_count = JPH_PhysicsSystem_GetNumActiveBodies(sys_c, JPH_BodyType_Rigid);
+
+    if (UNLIKELY(active_count == 0)) {
+        return;
+    }
+
+    // 2. Safely cast the system pointer. The "void*" bounce bypasses all incomplete type errors.
+    const auto *native_sys = static_cast<const JPH::PhysicsSystem *>(static_cast<const void *>(sys_c));
     
     // Use Jolt's native BodyLockInterface for guaranteed memory safety
     const JPH::BodyLockInterfaceNoLock &bli = native_sys->GetBodyLockInterfaceNoLock();
 
-    // Still use the fast, zero-allocation array from JoltC
+    // Fast, zero-allocation array from JoltC
     const JPH_BodyID *active_ids = JPH_PhysicsSystem_GetActiveBodiesUnsafe(sys_c, JPH_BodyType_Rigid);
 
     SHADOW_LOCK(&self->shadow_lock);
@@ -153,37 +158,33 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
     uint32_t work_ptr = 0;
 
     for (uint32_t i = 0; i < active_count; i++) {
-        // 1. Prefetch Logic (Lookahead)
+        // Prefetch Logic (Lookahead)
         if (i + 4 < active_count) {
             const void *next_id_ptr = &active_ids[i + 4];
             CULV_PREFETCH(next_id_ptr);
         }
 
-        // 2. Safely look up the Native Body
-        // TryGetBody returns nullptr if the ID is invalid or destroyed, preventing SEGVs.
-        JPH::BodyID native_id(active_ids[i]);
-        const JPH::Body *b = bli.TryGetBody(native_id);
+        // 3. TSan Safe Lookup: TryGetBody returns nullptr if body was destroyed concurrently
+        const JPH::Body *b = bli.TryGetBody(JPH::BodyID(active_ids[i]));
 
-        if (UNLIKELY(!b)) {
-            continue;
-        }
+        if (LIKELY(b != nullptr)) {
+            // Filter & Validate (Inline C++)
+            uint64_t handle = b->GetUserData();
+            auto slot       = (uint32_t)(handle & 0xFFFFFFFF);
+            auto gen        = (uint32_t)(handle >> 32);
 
-        // 3. Filter & Validate (Inline C++)
-        uint64_t handle = b->GetUserData();
-        auto slot       = (uint32_t)(handle & 0xFFFFFFFF);
-        auto gen        = (uint32_t)(handle >> 32);
+            if (LIKELY(slot < self->slot_capacity && self->generations[slot] == gen &&
+                       self->slot_states[slot] == SLOT_ALIVE)) {
 
-        if (LIKELY(slot < self->slot_capacity && self->generations[slot] == gen &&
-                   self->slot_states[slot] == SLOT_ALIVE)) {
+                worklist[work_ptr].body      = b;
+                worklist[work_ptr].dense_idx = s2d[slot];
+                work_ptr++;
 
-            worklist[work_ptr].body      = b;
-            worklist[work_ptr].dense_idx = s2d[slot];
-            work_ptr++;
-
-            // --- HOT PATH TRIGGER ---
-            if (work_ptr == BATCH_SIZE) {
-                process_full_batch(self, worklist);
-                work_ptr = 0;
+                // --- HOT PATH TRIGGER ---
+                if (work_ptr == BATCH_SIZE) {
+                    process_full_batch(self, worklist);
+                    work_ptr = 0;
+                }
             }
         }
     }
