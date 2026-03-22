@@ -78,8 +78,9 @@ jobs:
           # Added 'suppressions' flag pointing to your new file
           LD_PRELOAD=$TSAN_LIB \
           TSAN_OPTIONS="suppressions=${{ github.workspace }}/tsan.supp second_deadlock_stack=1 halt_on_error=1 symbolize=1" \
-          ./.venv/bin/python tests/benchmark.py --stress
-
+          ./.venv/bin/python tests/benchmark.py --stress \
+          ./.venv/bin/python tests/test_core.py
+ 
 
 
 
