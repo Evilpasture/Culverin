@@ -137,7 +137,7 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
     }
 
     // Cast the opaque system pointer to the native C++ System
-    auto *native_sys = reinterpret_cast<JPH::PhysicsSystem *>(sys_c);
+    const auto *native_sys = reinterpret_cast<JPH::PhysicsSystem *>(sys_c);
     
     // Use Jolt's native BodyLockInterface for guaranteed memory safety
     const JPH::BodyLockInterfaceNoLock &bli = native_sys->GetBodyLockInterfaceNoLock();
