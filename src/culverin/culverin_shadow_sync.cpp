@@ -143,10 +143,8 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
         return; 
     }
 
-    SHADOW_LOCK(&self->shadow_lock);
 
     if (UNLIKELY(!self->positions || !self->slot_to_dense || !self->generations || !self->slot_states)) {
-        SHADOW_UNLOCK(&self->shadow_lock);
         return;
     }
 
@@ -195,8 +193,6 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
     if (work_ptr > 0) {
         process_partial_batch(self, worklist, work_ptr);
     }
-
-    SHADOW_UNLOCK(&self->shadow_lock);
 
 #ifdef CULVERIN_PROFILE_SYNC
     uint64_t elapsed = rdtsc() - start;
