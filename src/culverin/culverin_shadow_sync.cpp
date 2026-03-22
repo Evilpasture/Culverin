@@ -5,9 +5,7 @@
 
 // Include native Jolt headers
 #include <Jolt/Jolt.h>
-#include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/Physics/Body/Body.h>
-#include <Jolt/Physics/Body/BodyLockInterface.h>
 
 static_assert(sizeof(PosStride) == sizeof(JPH_Real) * 4, "PosStride size mismatch");
 static_assert(sizeof(AuxStride) == sizeof(float) * 4, "AuxStride size mismatch");
@@ -142,23 +140,12 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
 
     const JPH_BodyID *active_ids = JPH_PhysicsSystem_GetActiveBodiesUnsafe(sys_c, JPH_BodyType_Rigid);
     if (UNLIKELY(!active_ids)) {
-        return; // Jolt returned a null array (possible mid-teardown race)
+        return; 
     }
-
-    // Safely cast the system pointer. The "void*" bounce bypasses all incomplete type errors.
-    const auto *native_sys = static_cast<const JPH::PhysicsSystem *>(static_cast<const void *>(sys_c));
-    const JPH::BodyLockInterfaceNoLock &bli = native_sys->GetBodyLockInterfaceNoLock();
 
     SHADOW_LOCK(&self->shadow_lock);
 
-    // =========================================================================
-    // CRITICAL TSan NULL SAFETY GUARD
-    // If a concurrent thread is reallocating the arrays, we must ensure they 
-    // are all fully initialized before we sync.
-    // =========================================================================
-    if (UNLIKELY(!self->positions || !self->prev_positions || !self->rotations || 
-                 !self->prev_rotations || !self->linear_velocities || !self->angular_velocities ||
-                 !self->slot_to_dense || !self->generations || !self->slot_states)) {
+    if (UNLIKELY(!self->positions || !self->slot_to_dense || !self->generations || !self->slot_states)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         return;
     }
@@ -170,16 +157,19 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
     uint32_t work_ptr = 0;
 
     for (uint32_t i = 0; i < active_count; i++) {
-        // Prefetch Logic (Lookahead)
         if (i + 4 < active_count) {
             const void *next_id_ptr = &active_ids[i + 4];
             CULV_PREFETCH(next_id_ptr);
         }
 
-        // TSan Safe Lookup: TryGetBody returns nullptr if body was destroyed concurrently
-        const JPH::Body *b = bli.TryGetBody(JPH::BodyID(active_ids[i]));
+        // [THE FIX] We use the C-API to safely navigate the hidden struct and Jolt's Read Locks.
+        const JPH_Body *opaque_body = JPH_PhysicsSystem_GetBodyPtr(sys_c, active_ids[i]);
 
-        if (LIKELY(b != nullptr)) {
+        if (LIKELY(opaque_body != nullptr)) {
+            
+            // Now we cast back to the native C++ class so we get ultra-fast SIMD extraction
+            const JPH::Body *b = reinterpret_cast<const JPH::Body *>(opaque_body);
+
             // Filter & Validate
             uint64_t handle = b->GetUserData();
             auto slot       = (uint32_t)(handle & 0xFFFFFFFF);
