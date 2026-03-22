@@ -1,12 +1,6 @@
 // --- START OF FILE culverin_shadow_sync.cpp ---
 
 #include "culverin_shadow_sync.h"
-// Force the compiler to forget any macro definitions of these names
-#undef atomic_load
-#undef atomic_store
-#undef atomic_load_explicit
-#undef atomic_fetch_add
-#undef unreachable
 #include "culverin_compiler_specifics.h"
 
 // 1. Bypass JoltC boundary by including native Jolt headers
