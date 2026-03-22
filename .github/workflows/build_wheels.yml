@@ -2,7 +2,7 @@ name: Build Culverin Wheels
 
 on:
   push:
-    branches: [ master, remote-dev ]
+    branches: [ master ]
     tags: [ 'v*' ]
   pull_request:
     branches: [ master ]
