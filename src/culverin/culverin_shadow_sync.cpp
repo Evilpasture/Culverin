@@ -3,7 +3,7 @@
 #include "culverin_shadow_sync.h"
 #include "culverin_compiler_specifics.h"
 
-// 2. Include native Jolt headers
+// Include native Jolt headers
 #include <Jolt/Jolt.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/Physics/Body/Body.h>
@@ -129,8 +129,7 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
     uint64_t start = rdtsc();
 #endif
 
-    // 1. ThreadSanitizer & Null-Safety Guard
-    if (UNLIKELY(!self || !self->system || !self->positions)) {
+    if (UNLIKELY(!self || !self->system)) {
         return;
     }
 
@@ -141,16 +140,29 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
         return;
     }
 
-    // 2. Safely cast the system pointer. The "void*" bounce bypasses all incomplete type errors.
+    const JPH_BodyID *active_ids = JPH_PhysicsSystem_GetActiveBodiesUnsafe(sys_c, JPH_BodyType_Rigid);
+    if (UNLIKELY(!active_ids)) {
+        return; // Jolt returned a null array (possible mid-teardown race)
+    }
+
+    // Safely cast the system pointer. The "void*" bounce bypasses all incomplete type errors.
     const auto *native_sys = static_cast<const JPH::PhysicsSystem *>(static_cast<const void *>(sys_c));
-    
-    // Use Jolt's native BodyLockInterface for guaranteed memory safety
     const JPH::BodyLockInterfaceNoLock &bli = native_sys->GetBodyLockInterfaceNoLock();
 
-    // Fast, zero-allocation array from JoltC
-    const JPH_BodyID *active_ids = JPH_PhysicsSystem_GetActiveBodiesUnsafe(sys_c, JPH_BodyType_Rigid);
-
     SHADOW_LOCK(&self->shadow_lock);
+
+    // =========================================================================
+    // CRITICAL TSan NULL SAFETY GUARD
+    // If a concurrent thread is reallocating the arrays, we must ensure they 
+    // are all fully initialized before we sync.
+    // =========================================================================
+    if (UNLIKELY(!self->positions || !self->prev_positions || !self->rotations || 
+                 !self->prev_rotations || !self->linear_velocities || !self->angular_velocities ||
+                 !self->slot_to_dense || !self->generations || !self->slot_states)) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        return;
+    }
+
     const uint32_t *CULV_RESTRICT s2d = self->slot_to_dense;
 
     // Stack allocated worklist (fits in L1 cache comfortably)
@@ -164,11 +176,11 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
             CULV_PREFETCH(next_id_ptr);
         }
 
-        // 3. TSan Safe Lookup: TryGetBody returns nullptr if body was destroyed concurrently
+        // TSan Safe Lookup: TryGetBody returns nullptr if body was destroyed concurrently
         const JPH::Body *b = bli.TryGetBody(JPH::BodyID(active_ids[i]));
 
         if (LIKELY(b != nullptr)) {
-            // Filter & Validate (Inline C++)
+            // Filter & Validate
             uint64_t handle = b->GetUserData();
             auto slot       = (uint32_t)(handle & 0xFFFFFFFF);
             auto gen        = (uint32_t)(handle >> 32);
