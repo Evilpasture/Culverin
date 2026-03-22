@@ -65,11 +65,6 @@ typedef std::atomic<int>    atomic_int;
 
 #else
     #include <stdatomic.h>
-    // C-mode keeps the original macros
-    #define atomic_load(ptr) atomic_load(ptr)
-    #define atomic_store(ptr, val) atomic_store(ptr, val)
-    #define atomic_fetch_add(ptr, val) atomic_fetch_add(ptr, val)
-    #define atomic_load_explicit(ptr, order) atomic_load_explicit(ptr, order)
 #endif
 #include <stddef.h>
 #include <string.h>
