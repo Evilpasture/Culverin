@@ -3,20 +3,28 @@
 #include "culverin_shadow_sync.h"
 #include "culverin_compiler_specifics.h"
 
-// 1. Bypass JoltC boundary by including native Jolt headers
+// 2. Include native Jolt headers
 #include <Jolt/Jolt.h>
+#include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/Physics/Body/Body.h>
+#include <Jolt/Physics/Body/BodyLockInterface.h>
 
 static_assert(sizeof(PosStride) == sizeof(JPH_Real) * 4, "PosStride size mismatch");
 static_assert(sizeof(AuxStride) == sizeof(float) * 4, "AuxStride size mismatch");
 
 static constexpr int BATCH_SIZE = 32;
 
+// Safe C++ wrapper for our worklist so we don't use opaque C pointers internally
+struct CppSyncWorkItem {
+    const JPH::Body *body;
+    uint32_t dense_idx;
+};
+
 // =================================================================================================
 // HOT PATH: Fully Unrolled, C++ Inlined, SIMD Vectorized Stores
 // =================================================================================================
 static CULV_FORCE_INLINE void process_full_batch(PhysicsWorldObject *self,
-                                                 const SyncWorkItem *worklist) {
+                                                 const CppSyncWorkItem *worklist) {
     auto *CULV_RESTRICT s_pos  = (PosStride *)CULV_ASSUME_ALIGNED(self->positions, 32);
     auto *CULV_RESTRICT s_ppos = (PosStride *)CULV_ASSUME_ALIGNED(self->prev_positions, 32);
     auto *CULV_RESTRICT s_rot  = (AuxStride *)CULV_ASSUME_ALIGNED(self->rotations, 16);
@@ -28,29 +36,28 @@ static CULV_FORCE_INLINE void process_full_batch(PhysicsWorldObject *self,
     for (uint32_t j = 0; j < BATCH_SIZE; j++) {
         uint32_t D = worklist[j].dense_idx;
 
-        // 2. Cast opaque C pointer back to native Jolt C++ Object
-        const JPH::Body *b = reinterpret_cast<const JPH::Body *>(worklist[j].body);
+        // Native C++ Pointer - GUARANTEED SAFE
+        const JPH::Body *b = worklist[j].body;
 
-        // 3. Snapshot (Always safe)
+        // Snapshot previous state
         s_ppos[D] = s_pos[D];
         s_prot[D] = s_rot[D];
 
-        // 4. Position (DVec3 / RVec3)
-        // C++ Inline: Compiler translates this directly to AVX/SSE loads & stores
+        // Positions
         JPH::RVec3 p = b->GetPosition();
         s_pos[D].x = p.GetX();
         s_pos[D].y = p.GetY();
         s_pos[D].z = p.GetZ();
         s_pos[D].w = 0.0;
 
-        // 5. Rotation (Quat)
+        // Rotations
         JPH::Quat q = b->GetRotation();
         s_rot[D].x = q.GetX();
         s_rot[D].y = q.GetY();
         s_rot[D].z = q.GetZ();
         s_rot[D].w = q.GetW();
 
-        // 6. Velocities (Vec3)
+        // Velocities
         JPH::Vec3 lv = b->GetLinearVelocity();
         JPH::Vec3 av = b->GetAngularVelocity();
         s_lvel[D].x = lv.GetX();
@@ -68,7 +75,7 @@ static CULV_FORCE_INLINE void process_full_batch(PhysicsWorldObject *self,
 // =================================================================================================
 // COLD PATH: Remainder Handling (0 to 31 items)
 // =================================================================================================
-static void process_partial_batch(PhysicsWorldObject *self, const SyncWorkItem *worklist,
+static void process_partial_batch(PhysicsWorldObject *self, const CppSyncWorkItem *worklist,
                                   uint32_t count) {
     if (count == 0) {
         return;
@@ -83,7 +90,7 @@ static void process_partial_batch(PhysicsWorldObject *self, const SyncWorkItem *
 
     for (uint32_t j = 0; j < count; j++) {
         uint32_t D = worklist[j].dense_idx;
-        const JPH::Body *b = reinterpret_cast<const JPH::Body *>(worklist[j].body);
+        const JPH::Body *b = worklist[j].body;
 
         s_ppos[D] = s_pos[D];
         s_prot[D] = s_rot[D];
@@ -122,20 +129,27 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
     uint64_t start = rdtsc();
 #endif
 
-    const auto *sys       = self->system;
-    uint32_t active_count = JPH_PhysicsSystem_GetNumActiveBodies(sys, JPH_BodyType_Rigid);
+    const auto *sys_c = self->system;
+    uint32_t active_count = JPH_PhysicsSystem_GetNumActiveBodies(sys_c, JPH_BodyType_Rigid);
 
     if (UNLIKELY(active_count == 0 || !self->positions)) {
         return;
     }
 
-    const JPH_BodyID *active_ids = JPH_PhysicsSystem_GetActiveBodiesUnsafe(sys, JPH_BodyType_Rigid);
+    // Cast the opaque system pointer to the native C++ System
+    auto *native_sys = reinterpret_cast<JPH::PhysicsSystem *>(sys_c);
+    
+    // Use Jolt's native BodyLockInterface for guaranteed memory safety
+    const JPH::BodyLockInterfaceNoLock &bli = native_sys->GetBodyLockInterfaceNoLock();
+
+    // Still use the fast, zero-allocation array from JoltC
+    const JPH_BodyID *active_ids = JPH_PhysicsSystem_GetActiveBodiesUnsafe(sys_c, JPH_BodyType_Rigid);
 
     SHADOW_LOCK(&self->shadow_lock);
     const uint32_t *CULV_RESTRICT s2d = self->slot_to_dense;
 
     // Stack allocated worklist (fits in L1 cache comfortably)
-    alignas(MEMORY_ALIGNMENT_SIZE) SyncWorkItem worklist[BATCH_SIZE];
+    alignas(MEMORY_ALIGNMENT_SIZE) CppSyncWorkItem worklist[BATCH_SIZE];
     uint32_t work_ptr = 0;
 
     for (uint32_t i = 0; i < active_count; i++) {
@@ -145,16 +159,16 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
             CULV_PREFETCH(next_id_ptr);
         }
 
-        // 2. Load Body using C++ interface bypass
-        const JPH::Body *b = reinterpret_cast<const JPH::Body *>(
-            JPH_PhysicsSystem_GetBodyPtr(sys, active_ids[i])
-        );
+        // 2. Safely look up the Native Body
+        // TryGetBody returns nullptr if the ID is invalid or destroyed, preventing SEGVs.
+        JPH::BodyID native_id(active_ids[i]);
+        const JPH::Body *b = bli.TryGetBody(native_id);
 
         if (UNLIKELY(!b)) {
             continue;
         }
 
-        // 3. Filter & Validate (Also perfectly inlined via C++ bypass!)
+        // 3. Filter & Validate (Inline C++)
         uint64_t handle = b->GetUserData();
         auto slot       = (uint32_t)(handle & 0xFFFFFFFF);
         auto gen        = (uint32_t)(handle >> 32);
@@ -162,8 +176,7 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
         if (LIKELY(slot < self->slot_capacity && self->generations[slot] == gen &&
                    self->slot_states[slot] == SLOT_ALIVE)) {
 
-            // Re-cast back to the opaque type to store in our C-struct worklist
-            worklist[work_ptr].body      = reinterpret_cast<const JPH_Body *>(b);
+            worklist[work_ptr].body      = b;
             worklist[work_ptr].dense_idx = s2d[slot];
             work_ptr++;
 
