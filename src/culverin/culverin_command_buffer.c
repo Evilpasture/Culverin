@@ -84,175 +84,281 @@ bool ensure_command_capacity(PhysicsWorldObject *self) {
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *queue, size_t count) {
-    if (count == 0) {
+void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand * CULV_RESTRICT queue, size_t count) {
+    if (UNLIKELY(count == 0)) {
         return;
     }
 
-    JPH_BodyInterface *bi = self->body_interface;
+    // Tell Clang's vectorizer the data is safely aligned
+    queue = CULV_ASSUME_ALIGNED(queue, 8);
+    JPH_BodyInterface * CULV_RESTRICT bi = self->body_interface;
 
-    for (size_t i = 0; i < count; i++) {
-        PhysicsCommand *cmd = &queue[i];
-        uint32_t header     = cmd->header;
-        CommandType type    = CMD_GET_TYPE(header);
-        uint32_t slot       = CMD_GET_SLOT(header);
+    // The Native Computed Goto Table
+    static const void* const dispatch_table[] = {
+        [CMD_CREATE_BODY]       = &&op_CREATE_BODY,
+        [CMD_DESTROY_BODY]      = &&op_DESTROY_BODY,
+        [CMD_SET_POS]           = &&op_SET_POS,
+        [CMD_SET_ROT]           = &&op_SET_ROT,
+        [CMD_SET_TRNS]          = &&op_SET_TRNS,
+        [CMD_SET_LINVEL]        = &&op_SET_LINVEL,
+        [CMD_SET_ANGVEL]        = &&op_SET_ANGVEL,
+        [CMD_SET_MOTION]        = &&op_SET_MOTION,
+        [CMD_ACTIVATE]          = &&op_ACTIVATE,
+        [CMD_DEACTIVATE]        = &&op_DEACTIVATE,
+        [CMD_SET_USER_DATA]     = &&op_SET_USER_DATA,
+        [CMD_SET_CCD]           = &&op_SET_CCD,
+        [CMD_TELEPORT]          = &&op_TELEPORT,
+        [CMD_APPLY_IMPULSE]     = &&op_APPLY_IMPULSE,
+        [CMD_APPLY_FORCE]       = &&op_APPLY_FORCE,
+        [CMD_APPLY_TORQUE]      = &&op_APPLY_TORQUE,
+        [CMD_APPLY_ANG_IMPULSE] = &&op_APPLY_ANG_IMPULSE,
+        [CMD_APPLY_IMPULSE_AT]  = &&op_APPLY_IMPULSE_AT
+    };
 
-        // LOCKLESS READ (Guaranteed safe by is_stepping == true)
-        SlotState state = self->slot_states[slot];
-        JPH_BodyID bid  = JPH_INVALID_BODY_ID;
-        uint32_t dense  = 0;
+    size_t i = 0;
+    PhysicsCommand *cmd;
+    uint32_t header, slot, dense;
+    CommandType type;
+    SlotState state;
+    JPH_BodyID bid;
 
-        if (state == SLOT_ALIVE || state == SLOT_PENDING_CREATE) {
-            dense = self->slot_to_dense[slot];
-            bid   = self->body_ids[dense];
-        }
-
-        if (type != CMD_CREATE_BODY && bid == JPH_INVALID_BODY_ID) {
-            continue;
-        }
-
-        switch (type) {
-        case CMD_CREATE_BODY: {
-            JPH_BodyCreationSettings *s = cmd->create.settings;
-            JPH_BodyID new_bid = JPH_BodyInterface_CreateAndAddBody(bi, s, JPH_Activation_Activate);
-            JPH_BodyCreationSettings_Destroy(s);
-
-            if (UNLIKELY(new_bid == JPH_INVALID_BODY_ID)) {
-                world_remove_body_slot(self, slot);
-            } else {
-                self->body_ids[self->slot_to_dense[slot]] = new_bid;
-                uint32_t j_idx                            = JPH_ID_TO_INDEX(new_bid);
-                if (self->id_to_handle_map && j_idx < self->max_jolt_bodies) {
-                    self->id_to_handle_map[j_idx] = make_handle(slot, self->generations[slot]);
-                }
-                self->slot_states[slot] = SLOT_ALIVE;
-            }
-            break;
-        }
-
-        case CMD_DESTROY_BODY: {
-            JPH_BodyInterface_RemoveBody(bi, bid);
-            JPH_BodyInterface_DestroyBody(bi, bid);
-            world_remove_body_slot(self, slot);
-            break;
-        }
-
-        case CMD_SET_POS: {
-            // OPTIMIZATION: Use the non-activating version if the body is already active
-            // or just use the raw interface to avoid Jolt's internal lock overhead
-            JPH_STACK_ALLOC(JPH_RVec3, p);
-            p->x = cmd->pos.x;
-            p->y = cmd->pos.y;
-            p->z = cmd->pos.z;
-
-            // Activate ONLY if the body is currently asleep.
-            // This prevents "Lock Thrashing" in Jolt's island manager.
-            bool active = JPH_BodyInterface_IsActive(bi, bid);
-            JPH_BodyInterface_SetPosition(
-                bi, bid, p, active ? JPH_Activation_DontActivate : JPH_Activation_Activate);
-            break;
-        }
-
-        case CMD_SET_ROT: {
-            JPH_STACK_ALLOC(JPH_Quat, q);
-            q->x = cmd->quat.x;
-            q->y = cmd->quat.y;
-            q->z = cmd->quat.z;
-            q->w = cmd->quat.w;
-            JPH_BodyInterface_SetRotation(bi, bid, q, JPH_Activation_Activate);
-            break;
-        }
-
-        case CMD_SET_TRNS: {
-            JPH_STACK_ALLOC(JPH_RVec3, p);
-            p->x = cmd->transform.px;
-            p->y = cmd->transform.py;
-            p->z = cmd->transform.pz;
-            JPH_STACK_ALLOC(JPH_Quat, q);
-            q->x = cmd->transform.rx;
-            q->y = cmd->transform.ry;
-            q->z = cmd->transform.rz;
-            q->w = cmd->transform.rw;
-            JPH_BodyInterface_SetPositionAndRotation(bi, bid, p, q, JPH_Activation_Activate);
-            break;
-        }
-
-        case CMD_SET_LINVEL: {
-            JPH_Vec3 v = {cmd->vec3f.x, cmd->vec3f.y, cmd->vec3f.z};
-            JPH_BodyInterface_SetLinearVelocity(bi, bid, &v);
-            break;
-        }
-
-        case CMD_SET_ANGVEL: {
-            JPH_Vec3 v = {cmd->vec3f.x, cmd->vec3f.y, cmd->vec3f.z};
-            JPH_BodyInterface_SetAngularVelocity(bi, bid, &v);
-            break;
-        }
-
-        case CMD_SET_MOTION: {
-            JPH_BodyInterface_SetMotionType(bi, bid, (JPH_MotionType)cmd->motion.motion_type,
-                                            JPH_Activation_Activate);
-            uint32_t layer = (cmd->motion.motion_type == 0) ? 0 : 1;
-            JPH_BodyInterface_SetObjectLayer(bi, bid, (JPH_ObjectLayer)layer);
-            break;
-        }
-
-        case CMD_ACTIVATE:
-            JPH_BodyInterface_ActivateBody(bi, bid);
-            break;
-        case CMD_DEACTIVATE:
-            JPH_BodyInterface_DeactivateBody(bi, bid);
-            break;
-
-        case CMD_SET_USER_DATA:
-            // Python setter already updated the shadow buffer. We just do Jolt here if needed.
-            break;
-
-        case CMD_SET_CCD: {
-            JPH_MotionQuality qual =
-                cmd->motion.motion_type ? JPH_MotionQuality_LinearCast : JPH_MotionQuality_Discrete;
-            JPH_BodyInterface_SetMotionQuality(bi, bid, qual);
-            break;
-        }
-
-        case CMD_APPLY_IMPULSE: {
-            JPH_Vec3 v = {cmd->vec3f.x, cmd->vec3f.y, cmd->vec3f.z};
-            JPH_BodyInterface_AddImpulse(bi, bid, &v);
-            JPH_BodyInterface_ActivateBody(bi, bid);
-            break;
-        }
-
-        case CMD_APPLY_FORCE: {
-            JPH_Vec3 v = {cmd->vec3f.x, cmd->vec3f.y, cmd->vec3f.z};
-            JPH_BodyInterface_AddForce(bi, bid, &v);
-            JPH_BodyInterface_ActivateBody(bi, bid);
-            break;
-        }
-
-        case CMD_APPLY_TORQUE: {
-            JPH_Vec3 v = {cmd->vec3f.x, cmd->vec3f.y, cmd->vec3f.z};
-            JPH_BodyInterface_AddTorque(bi, bid, &v);
-            JPH_BodyInterface_ActivateBody(bi, bid);
-            break;
-        }
-
-        case CMD_APPLY_ANG_IMPULSE: {
-            JPH_Vec3 v = {cmd->vec3f.x, cmd->vec3f.y, cmd->vec3f.z};
-            JPH_BodyInterface_AddAngularImpulse(bi, bid, &v);
-            JPH_BodyInterface_ActivateBody(bi, bid);
-            break;
-        }
-        case CMD_APPLY_IMPULSE_AT: {
-            JPH_Vec3 imp  = {cmd->impulse_at.ix, cmd->impulse_at.iy, cmd->impulse_at.iz};
-            JPH_RVec3 pos = {cmd->impulse_at.px, cmd->impulse_at.py, cmd->impulse_at.pz};
-            JPH_BodyInterface_AddImpulse2(bi, bid, &imp, &pos);
-            JPH_BodyInterface_ActivateBody(bi, bid);
-            break;
-        }
-        default:
-            culv_unreachable();
-        }
+    // --- BOOTSTRAP THE FIRST INSTRUCTION ---
+    cmd = &queue[0];
+    header = cmd->header;
+    type = CMD_GET_TYPE(header);
+    slot = CMD_GET_SLOT(header);
+    state = self->slot_states[slot];
+    bid = JPH_INVALID_BODY_ID;
+    if (LIKELY(state == SLOT_ALIVE || state == SLOT_PENDING_CREATE)) {
+        bid = self->body_ids[self->slot_to_dense[slot]];
     }
+    if (UNLIKELY(type != CMD_CREATE_BODY && bid == JPH_INVALID_BODY_ID)) {
+        goto op_SKIP;
+    }
+    goto *dispatch_table[type];
+
+    // --- SKIP DEAD BODIES (Centralized to keep macros tiny) ---
+op_SKIP:
+    if (UNLIKELY(++i == count)) return;
+    cmd = &queue[i];
+    header = cmd->header;
+    type = CMD_GET_TYPE(header);
+    slot = CMD_GET_SLOT(header);
+    state = self->slot_states[slot];
+    bid = JPH_INVALID_BODY_ID;
+    if (LIKELY(state == SLOT_ALIVE || state == SLOT_PENDING_CREATE)) {
+        bid = self->body_ids[self->slot_to_dense[slot]];
+    }
+    if (UNLIKELY(type != CMD_CREATE_BODY && bid == JPH_INVALID_BODY_ID)) {
+        goto op_SKIP;
+    }
+    goto *dispatch_table[type];
+
+    // ========================================================================
+    // RUN-LENGTH DISPATCH MACROS
+    // ========================================================================
+
+    // Start a continuous block
+    #define OP_BEGIN(op_name) \
+    op_##op_name: \
+        do { \
+            CULV_PREFETCH(&queue[i + 4]); /* Hide memory latency for long batches */
+
+    // The magic: If the next instruction is the same, just "continue" the do-while loop!
+    #define OP_END(op_name) \
+            if (UNLIKELY(++i == count)) return; \
+            cmd = &queue[i]; \
+            header = cmd->header; \
+            type = CMD_GET_TYPE(header); \
+            /* THE FAST PATH (INLINE CACHE): Clang unrolls this into pure ASM */ \
+            if (LIKELY(type == CMD_##op_name)) { \
+                slot = CMD_GET_SLOT(header); \
+                state = self->slot_states[slot]; \
+                if (LIKELY(state == SLOT_ALIVE || state == SLOT_PENDING_CREATE)) { \
+                    bid = self->body_ids[self->slot_to_dense[slot]]; \
+                    if (LIKELY(bid != JPH_INVALID_BODY_ID)) continue; \
+                } \
+            } \
+            /* THE SLOW PATH: Decode and jump */ \
+            slot = CMD_GET_SLOT(header); \
+            state = self->slot_states[slot]; \
+            bid = JPH_INVALID_BODY_ID; \
+            if (LIKELY(state == SLOT_ALIVE || state == SLOT_PENDING_CREATE)) { \
+                bid = self->body_ids[self->slot_to_dense[slot]]; \
+            } \
+            if (UNLIKELY(type != CMD_CREATE_BODY && bid == JPH_INVALID_BODY_ID)) { \
+                goto op_SKIP; \
+            } \
+            goto *dispatch_table[type]; \
+        } while (true);
+
+    // CREATE_BODY doesn't care if bid is INVALID initially.
+    #define OP_END_CREATE(op_name) \
+            if (UNLIKELY(++i == count)) return; \
+            cmd = &queue[i]; \
+            header = cmd->header; \
+            type = CMD_GET_TYPE(header); \
+            if (LIKELY(type == CMD_##op_name)) { \
+                slot = CMD_GET_SLOT(header); \
+                state = self->slot_states[slot]; \
+                if (LIKELY(state == SLOT_ALIVE || state == SLOT_PENDING_CREATE)) { \
+                    continue; \
+                } \
+            } \
+            slot = CMD_GET_SLOT(header); \
+            state = self->slot_states[slot]; \
+            bid = JPH_INVALID_BODY_ID; \
+            if (LIKELY(state == SLOT_ALIVE || state == SLOT_PENDING_CREATE)) { \
+                bid = self->body_ids[self->slot_to_dense[slot]]; \
+            } \
+            if (UNLIKELY(type != CMD_CREATE_BODY && bid == JPH_INVALID_BODY_ID)) goto op_SKIP; \
+            goto *dispatch_table[type]; \
+        } while (true);
+
+
+    // ========================================================================
+    // INSTRUCTION WORKLOADS (Each is now its own native do-while loop)
+    // ========================================================================
+
+    OP_BEGIN(CREATE_BODY)
+        JPH_BodyCreationSettings *s = cmd->create.settings;
+        JPH_BodyID new_bid = JPH_BodyInterface_CreateAndAddBody(bi, s, JPH_Activation_Activate);
+        JPH_BodyCreationSettings_Destroy(s);
+
+        if (UNLIKELY(new_bid == JPH_INVALID_BODY_ID)) {
+            world_remove_body_slot(self, slot);
+        } else {
+            self->body_ids[self->slot_to_dense[slot]] = new_bid;
+            uint32_t j_idx = JPH_ID_TO_INDEX(new_bid);
+            if (self->id_to_handle_map && j_idx < self->max_jolt_bodies) {
+                self->id_to_handle_map[j_idx] = make_handle(slot, self->generations[slot]);
+            }
+            self->slot_states[slot] = SLOT_ALIVE;
+        }
+    OP_END_CREATE(CREATE_BODY)
+
+
+    OP_BEGIN(DESTROY_BODY)
+        JPH_BodyInterface_RemoveBody(bi, bid);
+        JPH_BodyInterface_DestroyBody(bi, bid);
+        world_remove_body_slot(self, slot);
+    OP_END(DESTROY_BODY)
+
+
+    OP_BEGIN(SET_POS)
+        JPH_STACK_ALLOC(JPH_RVec3, p);
+        p->x = cmd->pos.x;
+        p->y = cmd->pos.y;
+        p->z = cmd->pos.z;
+        bool active = JPH_BodyInterface_IsActive(bi, bid);
+        JPH_BodyInterface_SetPosition(
+            bi, bid, p, active ? JPH_Activation_DontActivate : JPH_Activation_Activate);
+    OP_END(SET_POS)
+
+
+    OP_BEGIN(SET_ROT)
+        JPH_STACK_ALLOC(JPH_Quat, q);
+        q->x = cmd->quat.x;
+        q->y = cmd->quat.y;
+        q->z = cmd->quat.z;
+        q->w = cmd->quat.w;
+        JPH_BodyInterface_SetRotation(bi, bid, q, JPH_Activation_Activate);
+    OP_END(SET_ROT)
+
+
+    OP_BEGIN(SET_TRNS)
+        JPH_STACK_ALLOC(JPH_RVec3, p);
+        p->x = cmd->transform.px;
+        p->y = cmd->transform.py;
+        p->z = cmd->transform.pz;
+        JPH_STACK_ALLOC(JPH_Quat, q);
+        q->x = cmd->transform.rx;
+        q->y = cmd->transform.ry;
+        q->z = cmd->transform.rz;
+        q->w = cmd->transform.rw;
+        JPH_BodyInterface_SetPositionAndRotation(bi, bid, p, q, JPH_Activation_Activate);
+    OP_END(SET_TRNS)
+
+
+    OP_BEGIN(SET_LINVEL)
+        JPH_Vec3 v = {cmd->vec3f.x, cmd->vec3f.y, cmd->vec3f.z};
+        JPH_BodyInterface_SetLinearVelocity(bi, bid, &v);
+    OP_END(SET_LINVEL)
+
+
+    OP_BEGIN(SET_ANGVEL)
+        JPH_Vec3 v = {cmd->vec3f.x, cmd->vec3f.y, cmd->vec3f.z};
+        JPH_BodyInterface_SetAngularVelocity(bi, bid, &v);
+    OP_END(SET_ANGVEL)
+
+
+    OP_BEGIN(SET_MOTION)
+        JPH_BodyInterface_SetMotionType(bi, bid, (JPH_MotionType)cmd->motion.motion_type,
+                                        JPH_Activation_Activate);
+        uint32_t layer = (cmd->motion.motion_type == 0) ? 0 : 1;
+        JPH_BodyInterface_SetObjectLayer(bi, bid, (JPH_ObjectLayer)layer);
+    OP_END(SET_MOTION)
+
+
+    OP_BEGIN(ACTIVATE)
+        JPH_BodyInterface_ActivateBody(bi, bid);
+    OP_END(ACTIVATE)
+
+
+    OP_BEGIN(DEACTIVATE)
+        JPH_BodyInterface_DeactivateBody(bi, bid);
+    OP_END(DEACTIVATE)
+
+
+    OP_BEGIN(SET_USER_DATA)
+    OP_END(SET_USER_DATA)
+
+
+    OP_BEGIN(SET_CCD)
+        JPH_MotionQuality qual =
+            cmd->motion.motion_type ? JPH_MotionQuality_LinearCast : JPH_MotionQuality_Discrete;
+        JPH_BodyInterface_SetMotionQuality(bi, bid, qual);
+    OP_END(SET_CCD)
+
+
+    OP_BEGIN(TELEPORT)
+    OP_END(TELEPORT)
+
+
+    OP_BEGIN(APPLY_IMPULSE)
+        JPH_Vec3 v = {cmd->vec3f.x, cmd->vec3f.y, cmd->vec3f.z};
+        JPH_BodyInterface_AddImpulse(bi, bid, &v);
+        JPH_BodyInterface_ActivateBody(bi, bid);
+    OP_END(APPLY_IMPULSE)
+
+
+    OP_BEGIN(APPLY_FORCE)
+        JPH_Vec3 v = {cmd->vec3f.x, cmd->vec3f.y, cmd->vec3f.z};
+        JPH_BodyInterface_AddForce(bi, bid, &v);
+        JPH_BodyInterface_ActivateBody(bi, bid);
+    OP_END(APPLY_FORCE)
+
+
+    OP_BEGIN(APPLY_TORQUE)
+        JPH_Vec3 v = {cmd->vec3f.x, cmd->vec3f.y, cmd->vec3f.z};
+        JPH_BodyInterface_AddTorque(bi, bid, &v);
+        JPH_BodyInterface_ActivateBody(bi, bid);
+    OP_END(APPLY_TORQUE)
+
+
+    OP_BEGIN(APPLY_ANG_IMPULSE)
+        JPH_Vec3 v = {cmd->vec3f.x, cmd->vec3f.y, cmd->vec3f.z};
+        JPH_BodyInterface_AddAngularImpulse(bi, bid, &v);
+        JPH_BodyInterface_ActivateBody(bi, bid);
+    OP_END(APPLY_ANG_IMPULSE)
+
+
+    OP_BEGIN(APPLY_IMPULSE_AT)
+        JPH_Vec3 imp  = {cmd->impulse_at.ix, cmd->impulse_at.iy, cmd->impulse_at.iz};
+        JPH_RVec3 pos = {cmd->impulse_at.px, cmd->impulse_at.py, cmd->impulse_at.pz};
+        JPH_BodyInterface_AddImpulse2(bi, bid, &imp, &pos);
+        JPH_BodyInterface_ActivateBody(bi, bid);
+    OP_END(APPLY_IMPULSE_AT)
 }
 
 /**
