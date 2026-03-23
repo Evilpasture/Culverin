@@ -375,10 +375,10 @@ void sync_and_flush_internal(PhysicsWorldObject *self) {
 
     atomic_store_explicit(&self->is_stepping, true, memory_order_relaxed);
 
+    // --- Double Buffer Swap (Zero Allocations) ---
     PhysicsCommand *captured_queue = self->command_queue;
     size_t captured_count          = self->command_count;
 
-    // Double Buffer Swap (Matches PhysicsWorld_step)
     if (UNLIKELY(self->command_capacity > self->spare_capacity)) {
         self->command_queue_spare = (PhysicsCommand *)CULV_RAW_REALLOC(
             self->command_queue_spare, self->command_capacity * sizeof(PhysicsCommand));
@@ -387,6 +387,7 @@ void sync_and_flush_internal(PhysicsWorldObject *self) {
     self->command_queue       = self->command_queue_spare;
     self->command_queue_spare = captured_queue;
     self->command_count       = 0;
+    // -------------------------------------------------------
 
     SHADOW_UNLOCK(&self->shadow_lock);
 
@@ -394,16 +395,16 @@ void sync_and_flush_internal(PhysicsWorldObject *self) {
     NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
 
     flush_commands_internal(self, captured_queue, captured_count);
-    self->needs_optimization = true;
+    
+    // NO CULV_RAW_FREE HERE! We keep it allocated in 'spare' for the next queue loop.
 
     NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
     Py_END_ALLOW_THREADS
 
     SHADOW_LOCK(&self->shadow_lock);
 
-    // Unlock Python threads safely
-    NATIVE_MUTEX_LOCK(self->step_sync.mutex);
     atomic_store_explicit(&self->is_stepping, false, memory_order_release);
+    NATIVE_MUTEX_LOCK(self->step_sync.mutex);
     NATIVE_COND_BROADCAST(self->step_sync.cond);
     NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
 }
