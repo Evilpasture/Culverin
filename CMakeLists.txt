@@ -104,7 +104,7 @@ else()
         list(APPEND FLAGS_DEBUG "-gcodeview")
     endif()
     
-    set(FLAGS_PERF "-O1" "-fno-omit-frame-pointer")
+    set(FLAGS_PERF "-O3" "-ffast-math" "-fomit-frame-pointer")
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
         # Removed -march=native so built binaries are portable
         list(APPEND FLAGS_PERF "-mavx2" "-mfma")
