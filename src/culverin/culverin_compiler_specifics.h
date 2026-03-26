@@ -102,6 +102,19 @@ static inline uint64_t rdtsc() {
 #    define CULV_MAYBE_UNUSED
 #endif
 
+// Force TSan to ignore a specific function
+#if defined(__has_feature)
+#  if __has_feature(thread_sanitizer)
+#    define CULV_NO_TSAN __attribute__((no_sanitize("thread")))
+#  else
+#    define CULV_NO_TSAN
+#  endif
+#elif defined(__SANITIZE_THREAD__)
+#  define CULV_NO_TSAN __attribute__((no_sanitize("thread")))
+#else
+#  define CULV_NO_TSAN
+#endif
+
 // NOLINTNEXTLINE(readability-identifier-naming)
 #define PyCFunction_DeclareMethod CULV_NODISCARD static PyObject *
 // NOLINTNEXTLINE(readability-identifier-naming)
