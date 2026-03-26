@@ -3,4 +3,7 @@ race:obmalloc.c
 race:object_stack.c
 race:pycore_object_stack.h
 race:pycore_freelist.h
+race:_Py_brc_merge_refcounts
+race:_Py_brc_queue_object
+race:_Py_brc_*
 race:^JPH::
