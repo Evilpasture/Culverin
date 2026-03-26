@@ -2,7 +2,7 @@ name: Culverin Hybrid CI
 
 on:
   push:
-    branches: [ remote-dev, master ]
+    branches: [ remote-dev ]
   pull_request:
     branches: [ master ]
 
