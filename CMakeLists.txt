@@ -62,13 +62,22 @@ if(NOT MSVC)
     add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-frtti>")
 endif()
 
-# NATIVE C23 AND C++23 SUPPORT
-set(CMAKE_C_STANDARD 23)        
-set(CMAKE_C_STANDARD_REQUIRED ON) 
-set(CMAKE_C_EXTENSIONS ON) # Leave ON to naturally output -std=gnu2x / -std=gnu23
+# NATIVE C++23 SUPPORT
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+# NATIVE C23 SUPPORT
+if(MSVC AND CMAKE_C_COMPILER_ID MATCHES "Clang")
+    # THE CLANG-CL PROBLEM: MSVC doesn't have a /std:c23 flag, so CMake lacks the mapping 
+    # for Clang-CL. We must bypass CMake's checking here and manually inject it below.
+    message(STATUS "Culverin: Bypassing native C_STANDARD detection for Clang-CL (Missing CMake mapping)")
+else()
+    # The normal human being way for GCC and standard Clang (Linux/Mac/MinGW)
+    set(CMAKE_C_STANDARD 23)        
+    set(CMAKE_C_STANDARD_REQUIRED ON) 
+    set(CMAKE_C_EXTENSIONS ON)
+endif()
 
 add_definitions(-DJPH_DOUBLE_PRECISION)
 add_definitions(-DJPH_OBJECT_LAYER_BITS=32)
@@ -84,7 +93,15 @@ if(MSVC)
 
     if(CMAKE_C_COMPILER_ID MATCHES "Clang")
         message(STATUS "Culverin: Detected Clang-CL (MSVC-like)")
-        add_compile_options(/arch:AVX2 $<$<COMPILE_LANGUAGE:C>:-Wno-c2x-extensions>) 
+        
+        # Inject C23 directly to the LLVM frontend behind MSVC's back
+        add_compile_options(
+            "$<$<COMPILE_LANGUAGE:C>:/clang:-std=gnu23>"
+            "$<$<COMPILE_LANGUAGE:C>:-Wno-c23-extensions>"
+            "$<$<COMPILE_LANGUAGE:C>:-Wno-c2x-extensions>"
+        )
+
+        add_compile_options(/arch:AVX2) 
         set(RELEASE_FLAGS "/clang:-O3 /clang:-ffast-math /clang:-fstrict-aliasing /Ob2 /Oi /Ot")
     else()
         message(STATUS "Culverin: Detected Pure MSVC")
@@ -104,7 +121,6 @@ else()
 
     set(FLAGS_PERF "-O3" "-ffast-math" "-fomit-frame-pointer")
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
-        # Removed -march=native so built binaries are portable
         list(APPEND FLAGS_PERF "-mavx2" "-mfma")
     endif()
 
@@ -115,8 +131,7 @@ else()
             "SHELL:-mllvm -unroll-allow-partial"
             "SHELL:-mllvm -force-vector-width=8"
         )
-        # Suppress warnings for C23 extensions that Clang might emit
-        list(APPEND FLAGS_STRICT "-Wno-c2x-extensions" "-Wno-c23-extensions")
+        list(APPEND FLAGS_STRICT "-Wno-c23-extensions" "-Wno-c2x-extensions")
     endif()
 
     set(FLAGS_STRICT "-Wall" "-Wextra" "-Wno-sign-conversion" "-Wno-shorten-64-to-32" "-Wno-double-promotion")
@@ -254,7 +269,6 @@ if(APPLE)
     message(STATUS "Culverin: Enforcing Strong Symbol Export")
     target_compile_options(${JOLTC_TARGET} PRIVATE "-frtti")
     target_compile_options(_culverin_c PRIVATE "-frtti")
-    # Removed -export_dynamic (causes ld crash) and -flat_namespace
     target_link_options(_culverin_c PRIVATE "-Wl,-all_load")
 endif()
 
