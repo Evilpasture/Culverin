@@ -9,3 +9,4 @@ race:_Py_brc_*
 race:^JPH::
 race:JPH::PhysicsSystem::Update
 race:JPH::JobSystemThreadPool
+race:JPH::ContactConstraintManager
