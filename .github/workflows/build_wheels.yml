@@ -144,6 +144,7 @@ jobs:
           CC: "/usr/bin/clang-22"
           CXX: "/usr/bin/clang++-22"
           CFLAGS: "-fsanitize=thread -g -O0 -fno-omit-frame-pointer"
+          CXXFLAGS: "-fsanitize=thread -g -O0 -fno-omit-frame-pointer -DENABLE_SANITIZER -D__SANITIZE_THREAD__"
           LDFLAGS: "-fsanitize=thread"
           CMAKE_ARGS: "-DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_STANDARD=23 -DCMAKE_C_STANDARD_REQUIRED=ON -DENABLE_THREAD_SANITIZER=ON"
         run: |
