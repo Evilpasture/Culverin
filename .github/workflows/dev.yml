@@ -14,7 +14,7 @@ jobs:
     name: M-Series C23 Release (Clang 22)
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
       - uses: astral-sh/setup-uv@v5
@@ -42,7 +42,7 @@ jobs:
     name: TSan C23 Deep Scan (Clang 22)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
 
