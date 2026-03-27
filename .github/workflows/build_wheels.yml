@@ -26,7 +26,7 @@ jobs:
           submodules: recursive
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
 
@@ -86,7 +86,7 @@ jobs:
           submodules: recursive
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
 
@@ -131,7 +131,7 @@ jobs:
       contents: write
     steps:
       - name: Download Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: wheelhouse
           pattern: culverin-release-*
@@ -156,7 +156,7 @@ jobs:
       id-token: write
     steps:
       - name: Download Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist
           pattern: culverin-release-*
@@ -181,15 +181,15 @@ jobs:
           submodules: recursive
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.13'
 
       - name: Download Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: culverin-release-ubuntu-latest
           path: dist
