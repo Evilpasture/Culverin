@@ -207,6 +207,8 @@ int allocate_buffers(PhysicsWorldObject *self, int max_bodies) {
 }
 CULV_NODISCARD
 int PhysicsWorld_resize(PhysicsWorldObject *self, size_t new_capacity) {
+    // Set flag to signal the start of resize
+    atomic_store_explicit(&self->is_resizing, true, memory_order_seq_cst);
     // 1. Buffer View Guard
     if (self->view_export_count > 0) {
         PyErr_SetString(PyExc_BufferError, "Cannot resize while memoryview is active.");
@@ -297,6 +299,9 @@ int PhysicsWorld_resize(PhysicsWorldObject *self, size_t new_capacity) {
     self->free_count    = final_free_count;
     self->capacity      = new_capacity;
     self->slot_capacity = new_capacity;
+
+    // Signal end
+    atomic_store_explicit(&self->is_resizing, false, memory_order_release);
 
     return 0;
 }
@@ -481,8 +486,17 @@ int init_settings(PhysicsWorldObject *self, PyObject *settings_dict, float *gx, 
 // helper: Initialize Jolt Core Systems
 CULV_NODISCARD
 int init_jolt_core(PhysicsWorldObject *self, WorldLimits limits, GravityVector gravity) {
+#if defined(__SANITIZE_THREAD__) || defined(ENABLE_SANITIZER)
+    // When running ThreadSanitizer, disable Jolt's background workers.
+    // TSan cannot understand Jolt's highly-optimized C++ lock-free job queues
+    // and will generate false positives. Running Jolt synchronously allows TSan
+    // to focus exclusively on finding real concurrency bugs in the Culverin/Python layer.
+    constexpr int num_workers = 0;
+#else
+    constexpr int num_workers = -1;
+#endif
     JobSystemThreadPoolConfig job_cfg = {
-        .maxJobs = JOB_SYSTEM_MAX_JOBS, .maxBarriers = JOB_SYSTEM_MAX_BARRIERS, .numThreads = -1};
+        .maxJobs = JOB_SYSTEM_MAX_JOBS, .maxBarriers = JOB_SYSTEM_MAX_BARRIERS, .numThreads = num_workers};
     self->job_system = JPH_JobSystemThreadPool_Create(&job_cfg);
 
     // --- 3 LAYERS: 0=Static, 1=Dynamic, 2=VehicleRay ---

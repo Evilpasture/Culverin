@@ -118,6 +118,7 @@ typedef struct {
     const char *type_name;
     PyObject *interned;
     bool (*convert)(PyObject *, void *);
+    PyTypeObject *type_guard;
     bool required;
 } FastArgSpec;
 
@@ -214,6 +215,7 @@ CULV_MAYBE_UNUSED CULV_NODISCARD static inline bool fp_conv_pyobj(PyObject *o, v
 
 /** --- 3. EXTERN DECLARATIONS (Cold Paths in .c) --- **/
 
+extern bool fp_report_type_error(const FastParser *fp, size_t index, PyObject *val);
 extern bool fp_report_missing(const FastParser *fp, uint64_t provided_mask);
 extern bool fp_report_multiple(const FastParser *fp, size_t index);
 extern bool fp_report_too_many(const FastParser *fp, Py_ssize_t nargs);
@@ -236,42 +238,57 @@ static inline bool fp_parse_vector(PyObject *const *args, Py_ssize_t nargs, PyOb
     const size_t count       = fp->count;
     const FastArgSpec *specs = fp->specs;
 
-    // 1. Check if we have more positional args than the spec allows
+    // 1. Validate Positional Count
     if (UNLIKELY(nargs > (Py_ssize_t)count)) {
         return fp_report_too_many(fp, nargs);
     }
 
     // 2. Positional Logic
     for (Py_ssize_t i = 0; i < nargs; ++i) {
-        provided_mask |= (1ULL << i);
-        if (UNLIKELY(!specs[i].convert(args[i], targets[i]))) {
-            return false; // Exit early on type error
+        PyObject *val = args[i];
+        const FastArgSpec *spec = &specs[i];
+
+        // Type Guard: Fast exact match first, then Subclass check
+        if (spec->type_guard) {
+            if (UNLIKELY(!Py_IS_TYPE(val, spec->type_guard) && 
+                         !PyObject_TypeCheck(val, spec->type_guard))) {
+                return fp_report_type_error(fp, i, val);
+            }
         }
+
+        if (UNLIKELY(!spec->convert(val, targets[i]))) {
+            return false; // Convert sets its own ValueError if needed
+        }
+        provided_mask |= (1ULL << i);
     }
 
     // 3. Keywords Logic
     if (kwnames) {
         Py_ssize_t nkw           = PyTuple_GET_SIZE(kwnames);
         PyObject *const *kw_vals = args + nargs;
+
         for (Py_ssize_t i = 0; i < nkw; ++i) {
             PyObject *key = PyTuple_GET_ITEM(kwnames, i);
             size_t idx    = FP_EMPTY_SLOT;
 
-            // Lookup logic (Table or Linear)
+            // Fast Path: O(1) Hash Table Lookup
             if (fp->lookup_table) {
                 size_t h = fp_hash_ptr(key, fp->table_mask);
                 while (fp->lookup_table[h] != FP_EMPTY_SLOT) {
                     size_t candidate = fp->lookup_table[h];
-                    if (specs[candidate].interned == key ||
-                        PyUnicode_Compare(key, specs[candidate].interned) == 0) {
+                    // Pointer comparison only (assumes interned strings)
+                    if (LIKELY(specs[candidate].interned == key)) {
                         idx = candidate;
                         break;
                     }
                     h = (h + 1) & fp->table_mask;
                 }
-            } else {
+            }
+
+            // Slow Path: Linear fallback for small schemas OR un-interned string keys
+            if (UNLIKELY(idx == FP_EMPTY_SLOT)) {
                 for (size_t j = 0; j < count; ++j) {
-                    if (key == specs[j].interned ||
+                    if (specs[j].interned == key || 
                         PyUnicode_Compare(key, specs[j].interned) == 0) {
                         idx = j;
                         break;
@@ -279,20 +296,31 @@ static inline bool fp_parse_vector(PyObject *const *args, Py_ssize_t nargs, PyOb
                 }
             }
 
-            if (idx == FP_EMPTY_SLOT) {
+            // Keyword Validation
+            if (UNLIKELY(idx == FP_EMPTY_SLOT)) {
                 PyErr_Format(PyExc_TypeError, "unexpected keyword argument '%U'", key);
                 return false;
             }
 
-            // Robustness: Check if this keyword was already filled positionally
             if (UNLIKELY(provided_mask & (1ULL << idx))) {
                 return fp_report_multiple(fp, idx);
             }
 
-            provided_mask |= (1ULL << idx);
-            if (UNLIKELY(!specs[idx].convert(kw_vals[i], targets[idx]))) {
+            // Type Guard & Conversion
+            PyObject *val = kw_vals[i];
+            const FastArgSpec *spec = &specs[idx];
+
+            if (spec->type_guard) {
+                if (UNLIKELY(!Py_IS_TYPE(val, spec->type_guard) && 
+                             !PyObject_TypeCheck(val, spec->type_guard))) {
+                    return fp_report_type_error(fp, idx, val);
+                }
+            }
+
+            if (UNLIKELY(!spec->convert(val, targets[idx]))) {
                 return false;
             }
+            provided_mask |= (1ULL << idx);
         }
     }
 
@@ -300,7 +328,9 @@ static inline bool fp_parse_vector(PyObject *const *args, Py_ssize_t nargs, PyOb
     if (UNLIKELY((provided_mask & fp->required_mask) != fp->required_mask)) {
         return fp_report_missing(fp, provided_mask);
     }
-    return (PyErr_Occurred() == NULL);
+
+    // We trust our internal boolean returns. No need for the expensive TLS PyErr_Occurred()
+    return true; 
 }
 
 /** --- 5. PUBLIC MACROS --- **/

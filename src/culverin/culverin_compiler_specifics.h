@@ -30,27 +30,18 @@
 #    define CULV_FORCE_INLINE inline __attribute__((always_inline))
 #endif
 
+// Use a prefixed function to avoid collision
+[[noreturn]]
+static inline void culv_unreachable(void) {
 #if defined(CULVERIN_DEBUG)
-// Debug/Development: Deterministic Panic
-[[noreturn]] static inline void culv_panic(const char *msg, const char *file, int line) {
-    fprintf(stderr, "PANIC: %s at %s:%d\n", msg, file, line);
-    abort(); // Or __builtin_trap() for a debugger break
-}
-#    undef unreachable
-// NOLINTNEXTLINE(readability-identifier-naming)
-#    define unreachable()                                                                          \
-        do {                                                                                       \
-            printf("Unreachable hit at %s:%d\n", __FILE__, __LINE__);                              \
-            abort();                                                                               \
-        } while (0)
+    fprintf(stderr, "Unreachable hit at %s:%d\n", __FILE__, __LINE__);
+    abort();
+#elif defined(_MSC_VER)
+    __assume(0);
 #else
-// Release/Production: Pure Optimization Hint
-#    if defined(_MSC_VER)
-#        define unreachable() __assume(0)
-#    else
-#        define unreachable() __builtin_unreachable()
-#    endif
+    __builtin_unreachable();
 #endif
+}
 
 // #define CULVERIN_PROFILE_SYNC
 
@@ -91,9 +82,15 @@ static inline uint64_t rdtsc() {
 #    define CULV_PREFETCH_WRITE(addr) ((void)0)
 #endif
 
-#if defined(__has_c_attribute) && __has_c_attribute(nodiscard)
-#    define CULV_NODISCARD [[nodiscard]]
-#    define CULV_MAYBE_UNUSED [[maybe_unused]]
+// Use a nested check to avoid the "macro not defined" evaluation error
+#if defined(__has_c_attribute)
+#    if __has_c_attribute(nodiscard)
+#        define CULV_NODISCARD [[nodiscard]]
+#        define CULV_MAYBE_UNUSED [[maybe_unused]]
+#    else
+#        define CULV_NODISCARD
+#        define CULV_MAYBE_UNUSED
+#    endif
 #elif defined(_MSC_VER)
 #    define CULV_NODISCARD _Check_return_
 #    define CULV_MAYBE_UNUSED
@@ -103,6 +100,19 @@ static inline uint64_t rdtsc() {
 #else
 #    define CULV_NODISCARD
 #    define CULV_MAYBE_UNUSED
+#endif
+
+// Force TSan to ignore a specific function
+#if defined(__has_feature)
+#  if __has_feature(thread_sanitizer)
+#    define CULV_NO_TSAN __attribute__((no_sanitize("thread")))
+#  else
+#    define CULV_NO_TSAN
+#  endif
+#elif defined(__SANITIZE_THREAD__)
+#  define CULV_NO_TSAN __attribute__((no_sanitize("thread")))
+#else
+#  define CULV_NO_TSAN
 #endif
 
 // NOLINTNEXTLINE(readability-identifier-naming)

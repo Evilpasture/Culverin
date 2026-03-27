@@ -36,7 +36,36 @@
 #include "culverin_types.h"
 #include <float.h>
 #include <math.h>
-#include <stdatomic.h>
+#ifdef __cplusplus
+#include <atomic>
+
+template <typename T>
+static inline T atomic_load(std::atomic<T>* ptr) { 
+    return ptr->load(std::memory_order_relaxed); 
+}
+
+template <typename T>
+static inline void atomic_store(std::atomic<T>* ptr, T val) { 
+    ptr->store(val, std::memory_order_relaxed); 
+}
+
+template <typename T>
+static inline T atomic_fetch_add(std::atomic<T>* ptr, T val) { 
+    return ptr->fetch_add(val, std::memory_order_relaxed); 
+}
+
+template <typename T>
+static inline T atomic_load_explicit(std::atomic<T>* ptr, std::memory_order order) { 
+    return ptr->load(order); 
+}
+
+typedef std::atomic<size_t> atomic_size_t;
+typedef std::atomic<bool>   atomic_bool;
+typedef std::atomic<int>    atomic_int;
+
+#else
+    #include <stdatomic.h>
+#endif
 #include <stddef.h>
 #include <string.h>
 
@@ -272,6 +301,7 @@ typedef struct PhysicsWorldObject {
     uint32_t max_jolt_bodies;
     atomic_int active_queries;
     int view_export_count;
+    atomic_int waiting_threads; // Anti-starvation counter
 
     // --- BUCKET 3: Structs & Complex Types ---
     ShadowSync step_sync;    // 16 bytes (Internal 8-byte alignment)
@@ -283,6 +313,7 @@ typedef struct PhysicsWorldObject {
     atomic_bool step_requested;
     atomic_bool is_stepping;
     bool needs_optimization;
+    atomic_bool is_resizing;
 
     // --- Large Tail Arrays ---
     Py_ssize_t view_shape[2];

@@ -1,0 +1,26 @@
+{
+    "name": "Culverin-Remote",
+    "image": "mcr.microsoft.com/devcontainers/base:debian-12",
+    "features": {
+        "ghcr.io/devcontainers/features/python:1": {
+            "version": "3.14",
+            "installTools": false
+        }
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "llvm-vs-code-extensions.vscode-clangd",
+                "ms-python.python"
+            ],
+            "settings": {
+                "python.defaultInterpreterPath": "/usr/local/bin/python3.14",
+                "clangd.path": "/usr/bin/clangd",
+                "clangd.fallbackFlags": [ "-I${workspaceFolder}", "-I/usr/include/python3.14" ]
+            }
+        }
+    },
+    // This installs the specific headers needed for JoltC/Python binders
+    "postCreateCommand": "sudo apt-get update && sudo apt-get install -y clangd clang-format clang-tidy libpython3.14-dev",
+    "remoteUser": "vscode"
+}

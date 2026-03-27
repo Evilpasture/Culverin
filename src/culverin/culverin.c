@@ -187,6 +187,7 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
     self->max_jolt_bodies = 0;
     atomic_init(&self->active_queries, 0);
     self->view_export_count = 0;
+    atomic_init(&self->waiting_threads, 0);
     atomic_init(&self->step_requested, false);
     atomic_init(&self->is_stepping, false);
     self->needs_optimization = false;
@@ -277,8 +278,9 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
         self->generations[i]                 = 1;
         self->free_slots[self->free_count++] = i;
     }
-
+    SHADOW_LOCK(&self->shadow_lock);
     culverin_sync_shadow_buffers(self);
+    SHADOW_UNLOCK(&self->shadow_lock);
     return 0;
 
 fail:
@@ -1191,6 +1193,15 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
 
     // --- PHASE 1: SHADOW STATE LOCK-DOWN ---
     SHADOW_LOCK(&self->shadow_lock);
+
+    // ANTI-STARVATION HANDOFF: Yield priority to Python threads waiting to read/mutate
+    while (atomic_load_explicit(&self->waiting_threads, memory_order_acquire) > 0) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        Py_BEGIN_ALLOW_THREADS 
+        culverin_yield(); // HW & OS level yield (Releases GIL safely)
+        Py_END_ALLOW_THREADS 
+        SHADOW_LOCK(&self->shadow_lock);
+    }
 
     // Block ALL Python mutators and Raycasts
     atomic_store_explicit(&self->is_stepping, true, memory_order_relaxed);

@@ -92,17 +92,6 @@ CULV_MAYBE_UNUSED static inline void culverin_yield() {
 #endif
 }
 
-// --- Threading Primitives (Python 3.14t support) ---
-#if PY_VERSION_HEX >= 0x030D0000
-typedef PyMutex ShadowMutex;
-#    define SHADOW_LOCK(m) PyMutex_Lock(m)
-#    define SHADOW_UNLOCK(m) PyMutex_Unlock(m)
-#else
-typedef PyThread_type_lock ShadowMutex;
-#    define SHADOW_LOCK(m) PyThread_acquire_lock(m, 1)
-#    define SHADOW_UNLOCK(m) PyThread_release_lock(m)
-#endif
-
 // --- Native Condition Variable Support ---
 
 #ifdef _WIN32
@@ -132,25 +121,62 @@ typedef pthread_cond_t NativeCond;
 #    define NATIVE_COND_BROADCAST(c) pthread_cond_broadcast(&(c))
 #endif
 
+// --- Threading Primitives (ShadowMutex Shim) ---
+
+#if defined(__SANITIZE_THREAD__) || defined(ENABLE_SANITIZER)
+// 1. TSan Fallback: TSan cannot see inside PyMutex's inline atomics, leading to false positives.
+// Fallback to interceptable OS native mutexes during TSan builds.
+typedef NativeMutex ShadowMutex;
+#    define SHADOW_LOCK(m) NATIVE_MUTEX_LOCK(*(m))
+#    define SHADOW_UNLOCK(m) NATIVE_MUTEX_UNLOCK(*(m))
+#    define INIT_LOCK(m) INIT_NATIVE_MUTEX(m)
+#    define FREE_LOCK(m) FREE_NATIVE_MUTEX(m)
+
+#elif PY_VERSION_HEX >= 0x030D0000
+// 2. Python 3.13+ Production: Use the ultra-fast, 1-byte PyMutex
+typedef PyMutex ShadowMutex;
+#    define SHADOW_LOCK(m) PyMutex_Lock(m)
+#    define SHADOW_UNLOCK(m) PyMutex_Unlock(m)
+#    define INIT_LOCK(m) memset(&(m), 0, sizeof(ShadowMutex))
+#    define FREE_LOCK(m)
+
+#else
+// 3. Legacy CPython 3.12 and older
+typedef PyThread_type_lock ShadowMutex;
+#    define SHADOW_LOCK(m) PyThread_acquire_lock(*(m), 1)
+#    define SHADOW_UNLOCK(m) PyThread_release_lock(*(m))
+#    define INIT_LOCK(m) (m) = PyThread_allocate_lock()
+#    define FREE_LOCK(m)                                                                           \
+        do {                                                                                       \
+            if (m)                                                                                 \
+                PyThread_free_lock(m);                                                             \
+            (m) = NULL;                                                                            \
+        } while (0)
+#endif
+
+
 // Blocks until the world is not mid-step.
 // Must be called while holding SHADOW_LOCK. Re-acquires it before returning.
 #define BLOCK_UNTIL_NOT_STEPPING(self)                                                             \
     do {                                                                                           \
         if (atomic_load_explicit(&(self)->is_stepping, memory_order_relaxed)) {                    \
-            SHADOW_UNLOCK(&(self)->shadow_lock);                                                   \
-            Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK((self)->step_sync.mutex);                     \
-            /* The Double Check: check again after acquiring native lock */                        \
+            atomic_fetch_add_explicit(&(self)->waiting_threads, 1, memory_order_relaxed);          \
             while (atomic_load_explicit(&(self)->is_stepping, memory_order_relaxed)) {             \
-                NATIVE_COND_WAIT((self)->step_sync.cond, (self)->step_sync.mutex);                 \
+                SHADOW_UNLOCK(&(self)->shadow_lock);                                               \
+                Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK((self)->step_sync.mutex);                 \
+                while (atomic_load_explicit(&(self)->is_stepping, memory_order_relaxed)) {         \
+                    NATIVE_COND_WAIT((self)->step_sync.cond, (self)->step_sync.mutex);             \
+                }                                                                                  \
+                NATIVE_MUTEX_UNLOCK((self)->step_sync.mutex);                                      \
+                Py_END_ALLOW_THREADS SHADOW_LOCK(&(self)->shadow_lock);                            \
             }                                                                                      \
-            NATIVE_MUTEX_UNLOCK((self)->step_sync.mutex);                                          \
-            Py_END_ALLOW_THREADS SHADOW_LOCK(&(self)->shadow_lock);                                \
+            atomic_fetch_sub_explicit(&(self)->waiting_threads, 1, memory_order_relaxed);          \
         }                                                                                          \
     } while (0)
 
 #define BLOCK_UNTIL_NOT_QUERYING(self)                                                             \
     do {                                                                                           \
-        if (atomic_load_explicit(&(self)->active_queries, memory_order_acquire) > 0) {             \
+        while (atomic_load_explicit(&(self)->active_queries, memory_order_acquire) > 0) {          \
             SHADOW_UNLOCK(&(self)->shadow_lock);                                                   \
             Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK((self)->step_sync.mutex);                     \
             /* The Double Check */                                                                 \
@@ -166,33 +192,37 @@ typedef pthread_cond_t NativeCond;
 #define BLOCK_IF_STEP_PENDING(self)                                                                \
     do {                                                                                           \
         if (atomic_load_explicit(&(self)->step_requested, memory_order_relaxed)) {                 \
-            SHADOW_UNLOCK(&(self)->shadow_lock);                                                   \
-            Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK((self)->step_sync.mutex);                     \
+            atomic_fetch_add_explicit(&(self)->waiting_threads, 1, memory_order_relaxed);          \
             while (atomic_load_explicit(&(self)->step_requested, memory_order_relaxed)) {          \
-                NATIVE_COND_WAIT((self)->step_sync.cond, (self)->step_sync.mutex);                 \
+                SHADOW_UNLOCK(&(self)->shadow_lock);                                               \
+                Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK((self)->step_sync.mutex);                 \
+                while (atomic_load_explicit(&(self)->step_requested, memory_order_relaxed)) {      \
+                    NATIVE_COND_WAIT((self)->step_sync.cond, (self)->step_sync.mutex);             \
+                }                                                                                  \
+                NATIVE_MUTEX_UNLOCK((self)->step_sync.mutex);                                      \
+                Py_END_ALLOW_THREADS SHADOW_LOCK(&(self)->shadow_lock);                            \
             }                                                                                      \
-            NATIVE_MUTEX_UNLOCK((self)->step_sync.mutex);                                          \
-            Py_END_ALLOW_THREADS SHADOW_LOCK(&(self)->shadow_lock);                                \
+            atomic_fetch_sub_explicit(&(self)->waiting_threads, 1, memory_order_relaxed);          \
         }                                                                                          \
     } while (0)
 
 #define BLOCK_UNTIL_CAN_QUERY(self)                                                                \
     do {                                                                                           \
-        /* 1. Fast path: Check without lock */                                                     \
         if (atomic_load_explicit(&(self)->is_stepping, memory_order_relaxed) ||                    \
             atomic_load_explicit(&(self)->step_requested, memory_order_relaxed)) {                 \
-                                                                                                   \
-            SHADOW_UNLOCK(&(self)->shadow_lock);                                                   \
-            Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK((self)->step_sync.mutex);                     \
-                                                                                                   \
-            /* 2. Stepper Priority: If a step is requested, Queries MUST wait */                   \
+            atomic_fetch_add_explicit(&(self)->waiting_threads, 1, memory_order_relaxed);          \
             while (atomic_load_explicit(&(self)->is_stepping, memory_order_relaxed) ||             \
                    atomic_load_explicit(&(self)->step_requested, memory_order_relaxed)) {          \
-                NATIVE_COND_WAIT((self)->step_sync.cond, (self)->step_sync.mutex);                 \
+                SHADOW_UNLOCK(&(self)->shadow_lock);                                               \
+                Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK((self)->step_sync.mutex);                 \
+                while (atomic_load_explicit(&(self)->is_stepping, memory_order_relaxed) ||         \
+                       atomic_load_explicit(&(self)->step_requested, memory_order_relaxed)) {      \
+                    NATIVE_COND_WAIT((self)->step_sync.cond, (self)->step_sync.mutex);             \
+                }                                                                                  \
+                NATIVE_MUTEX_UNLOCK((self)->step_sync.mutex);                                      \
+                Py_END_ALLOW_THREADS SHADOW_LOCK(&(self)->shadow_lock);                            \
             }                                                                                      \
-                                                                                                   \
-            NATIVE_MUTEX_UNLOCK((self)->step_sync.mutex);                                          \
-            Py_END_ALLOW_THREADS SHADOW_LOCK(&(self)->shadow_lock);                                \
+            atomic_fetch_sub_explicit(&(self)->waiting_threads, 1, memory_order_relaxed);          \
         }                                                                                          \
     } while (0)
 
@@ -201,20 +231,5 @@ typedef struct {
     NativeMutex mutex;
     NativeCond cond;
 } ShadowSync;
-
-#if PY_VERSION_HEX >= 0x030D0000
-// Python 3.13+ uses PyMutex (no allocation needed, just zero init)
-#    define INIT_LOCK(m) memset(&(m), 0, sizeof(ShadowMutex))
-#    define FREE_LOCK(m)
-#else
-// Older Python versions use PyThread_type_lock (requires allocation)
-#    define INIT_LOCK(m) (m) = PyThread_allocate_lock()
-#    define FREE_LOCK(m)                                                                           \
-        do {                                                                                       \
-            if (m)                                                                                 \
-                PyThread_free_lock(m);                                                             \
-            (m) = NULL;                                                                            \
-        } while (0)
-#endif
 
 extern NativeMutex g_jph_trampoline_lock;

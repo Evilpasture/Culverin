@@ -3,6 +3,7 @@
 
 // --- Internal Contact Helper ---
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
+CULV_NO_TSAN
 static void process_contact_manifold(PhysicsWorldObject *self, const JPH_Body *body1,
                                      const JPH_Body *body2, const JPH_ContactManifold *manifold,
                                      ContactEventType type) {
@@ -91,6 +92,7 @@ static void process_contact_manifold(PhysicsWorldObject *self, const JPH_Body *b
 
 // --- Global Contact Listener ---
 // 1. ADDED
+CULV_NO_TSAN
 static void JPH_API_CALL on_contact_added(void *userData, const JPH_Body *body1,
                                           const JPH_Body *body2,
                                           const JPH_ContactManifold *manifold,
@@ -99,6 +101,7 @@ static void JPH_API_CALL on_contact_added(void *userData, const JPH_Body *body1,
 }
 
 // 2. PERSISTED (Uses same helper, different type ID)
+CULV_NO_TSAN
 static void JPH_API_CALL on_contact_persisted(void *userData, const JPH_Body *body1,
                                               const JPH_Body *body2,
                                               const JPH_ContactManifold *manifold,
@@ -108,6 +111,7 @@ static void JPH_API_CALL on_contact_persisted(void *userData, const JPH_Body *bo
 }
 
 // 3. REMOVED (Simpler logic, no manifold)
+CULV_NO_TSAN
 static void JPH_API_CALL on_contact_removed(void *userData, const JPH_SubShapeIDPair *pair) {
     auto *self = (PhysicsWorldObject *)userData;
 
