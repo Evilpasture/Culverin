@@ -74,7 +74,7 @@ jobs:
           path: ./wheelhouse/*.whl
 
   # ===========================================================================
-  # JOB 2: SANITIZER VALIDATION (ASan/UBSan Check)
+  # JOB 2 & 3: SANITIZER VALIDATION (ASan/UBSan/TSan Check)
   # ===========================================================================
   check_sanitizers:
     name: Sanitizer Validation (Ubuntu)
@@ -118,9 +118,56 @@ jobs:
             if [ -n "$ASAN_RT" ] || [ -n "$UBSAN_RT" ]; then export LD_PRELOAD="$ASAN_RT $UBSAN_RT"; fi ;
             python {project}/tests/test_core.py && 
             python {project}/tests/benchmark.py --leak
+    # Thread sanitizer
+    linux_tsan:
+    name: TSan C23 Deep Scan (Clang 22)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install LLVM 22
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget lsb-release software-properties-common gnupg
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 22
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13t" # Installs the free-threaded version natively
+
+      - name: Build and Scan with TSan (Python 3.14t)
+        env:
+          CC: "/usr/bin/clang-22"
+          CXX: "/usr/bin/clang++-22"
+          CFLAGS: "-fsanitize=thread -g -O0 -fno-omit-frame-pointer"
+          LDFLAGS: "-fsanitize=thread"
+          CMAKE_ARGS: "-DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_STANDARD=23 -DCMAKE_C_STANDARD_REQUIRED=ON -DENABLE_THREAD_SANITIZER=ON"
+        run: |
+          uv python install 3.14t
+          uv venv --python 3.14t --clear
+          
+          uv pip install --python ./.venv/bin/python scikit-build-core numpy psutil pytest
+          uv pip install --python ./.venv/bin/python -e . --no-build-isolation
+          
+          export TSAN_SYMBOLIZER_PATH=/usr/bin/llvm-symbolizer-22
+          TSAN_LIB=$(find /usr/lib/llvm-22 -name "libclang_rt.tsan-x86_64.so" | head -n 1)
+          
+          # Use a single env export or separate the lines properly
+          export LD_PRELOAD=$TSAN_LIB
+          export TSAN_OPTIONS="suppressions=${{ github.workspace }}/tsan.supp second_deadlock_stack=1 halt_on_error=1 symbolize=1"
+          
+          # Run benchmark first
+          ./.venv/bin/python tests/benchmark.py --stress
+          
+          # Then run the actual test suite
+          ./.venv/bin/python tests/test_core.py
 
   # ===========================================================================
-  # JOB 3: PUBLISH
+  # JOB 4: PUBLISH
   # ===========================================================================
   github-release:
     name: Create GitHub Release
@@ -168,7 +215,7 @@ jobs:
           packages-dir: dist/
 
   # ===========================================================================
-  # JOB 4: PERFORMANCE REGRESSION
+  # JOB 5: PERFORMANCE REGRESSION
   # ===========================================================================
   performance_regression:
     name: Performance Regression Benchmarks
