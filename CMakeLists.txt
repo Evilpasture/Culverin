@@ -4,6 +4,27 @@ cmake_minimum_required(VERSION 3.21)
 # 0. THE COMPILER ENFORCER
 # ==============================================================================
 function(enforce_modern_compiler)
+    # --- ANTI-MSBUILD / ANTI-VS GENERATOR GUARD ---
+    # MSBuild is the bane of build systems. We need a modern/reliable generator (Ninja/Make).
+    if (CMAKE_GENERATOR MATCHES "Visual Studio")
+        message(FATAL_ERROR 
+            "\n ################################################################\n"
+            "  GENERATOR ERROR - HALTED: Visual Studio / MSBuild detected.\n"
+            " ################################################################\n"
+            "  Culverin's build system is incompatible with the \n"
+            "  Visual Studio project system's rigid toolchain handling.\n"
+            "  - The reason being: The MSBuild generator will default to cl.exe, \n"
+            "  which is currently forbidden from compiling this project. \n"
+            "\n"
+            "  I DEMAND you to use the 'Ninja' generator for Clang to work correctly.\n"
+            "\n"
+            "  Instruction:\n"
+            "  1. Install Ninja (pip install ninja or winget install ninja)\n"
+            "  2. Wipe your 'build' folder.\n"
+            "  3. Run: cmake -G \"Ninja\" -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ ..\n"
+            " ################################################################\n"
+        )
+    endif()
     if(CMAKE_C_COMPILER_ID AND NOT CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
         message(STATUS "Detected Compiler ID: ${CMAKE_C_COMPILER_ID}")
         message(STATUS "Culverin: MSVC detected. Searching for alternatives...")
