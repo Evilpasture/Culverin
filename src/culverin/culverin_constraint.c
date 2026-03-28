@@ -1,6 +1,9 @@
 #include "culverin_constraint.h"
 #include "culverin_arg_indices.h"
 #include "culverin_constraint_factory.h"
+#include "culverin_types.h"
+
+
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 PyCFunction_DeclareMethodFromModule PhysicsWorld_create_constraint(PhysicsWorldObject *self,
@@ -15,11 +18,11 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_constraint(PhysicsWorldO
     PyObject *o_motor  = NULL;
 
     void *targets[CreateConstr_COUNT];
-    targets[IDX_CC_TYPE]   = &type;
-    targets[IDX_CC_BODY1]  = &h1;
-    targets[IDX_CC_BODY2]  = &h2;
-    targets[IDX_CC_PARAMS] = &o_params;
-    targets[IDX_CC_MOTOR]  = &o_motor;
+    targets[IDX_CC_TYPE]   = (void *)&type;
+    targets[IDX_CC_BODY1]  = (void *)&h1;
+    targets[IDX_CC_BODY2]  = (void *)&h2;
+    targets[IDX_CC_PARAMS] = (void *)&o_params;
+    targets[IDX_CC_MOTOR]  = (void *)&o_motor;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &CreateConstrParser, targets)) {
@@ -128,6 +131,8 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_constraint(PhysicsWorldO
         case CONSTRAINT_DISTANCE:
             constraint = create_distance(&p, b1, b2);
             break;
+        default:
+            culv_unreachable();
         }
     }
 
@@ -149,7 +154,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_constraint(PhysicsWorldO
     self->constraints[c_slot]       = constraint;
     self->constraint_states[c_slot] = SLOT_ALIVE;
     uint32_t gen                    = self->constraint_generations[c_slot];
-    ConstraintHandle handle         = ((uint64_t)gen << 32) | c_slot;
+    ConstraintHandle handle         = ((uint64_t)gen << HANDLE_INDEX_BITS) | c_slot;
     SHADOW_UNLOCK(&self->shadow_lock);
 
     return PyLong_FromUnsignedLongLong(handle);
@@ -161,9 +166,9 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_destroy_constraint(PhysicsWorld
                                                                     size_t nargsf,
                                                                     PyObject *kwnames) {
     // 1. FAST PARSE (Zero-Allocation)
-    uint64_t handle_raw;
+    BodyHandle handle_raw;
     void *targets[HOnly_COUNT];
-    targets[IDX_H_H] = &handle_raw;
+    targets[IDX_H_H] = (void *)&handle_raw;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &DestroyConstrParser, targets)) {
@@ -179,8 +184,8 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_destroy_constraint(PhysicsWorld
     BLOCK_UNTIL_NOT_STEPPING(self);
     BLOCK_UNTIL_NOT_QUERYING(self);
 
-    auto slot = (uint32_t)(handle_raw & 0xFFFFFFFF);
-    auto gen  = (uint32_t)(handle_raw >> 32);
+    auto slot = (uint32_t)(handle_raw & HANDLE_INDEX_MASK);
+    auto gen  = (uint32_t)(handle_raw >> HANDLE_INDEX_BITS);
 
     // Validate identity and state
     if (slot >= self->constraint_capacity || self->constraint_generations[slot] != gen ||
@@ -234,8 +239,8 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_set_constraint_target(PhysicsWo
     float target;
 
     void *targets[SetConstr_COUNT];
-    targets[IDX_SCT_H] = &handle_raw;
-    targets[IDX_SCT_T] = &target;
+    targets[IDX_SCT_H] = (void *)&handle_raw;
+    targets[IDX_SCT_T] = (void *)&target;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &SetConstrTargetParser, targets)) {

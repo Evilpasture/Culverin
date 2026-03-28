@@ -55,3 +55,6 @@ typedef enum ContactEventType : uint8_t {
     EVENT_PERSISTED = 1,
     EVENT_REMOVED   = 2
 } ContactEventType;
+
+static constexpr uint32_t HANDLE_INDEX_BITS = 32;
+static constexpr uint64_t HANDLE_INDEX_MASK = 0xFFFFFFFF;
