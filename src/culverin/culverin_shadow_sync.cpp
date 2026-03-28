@@ -2,10 +2,12 @@
 
 #include "culverin_shadow_sync.h"
 #include "culverin_compiler_specifics.h"
+#include "culverin_types.h"
 
-// Include native Jolt headers
+// Include native Jolt headers for ultra-fast C++ bypass
 #include <Jolt/Jolt.h>
 #include <Jolt/Physics/Body/Body.h>
+#include <Jolt/Physics/PhysicsSystem.h>
 
 static_assert(sizeof(PosStride) == sizeof(JPH_Real) * 4, "PosStride size mismatch");
 static_assert(sizeof(AuxStride) == sizeof(float) * 4, "AuxStride size mismatch");
@@ -13,16 +15,18 @@ static_assert(sizeof(AuxStride) == sizeof(float) * 4, "AuxStride size mismatch")
 static constexpr int BATCH_SIZE = 32;
 
 // Safe C++ wrapper for our worklist so we don't use opaque C pointers internally
+namespace {
 struct CppSyncWorkItem {
     const JPH::Body *body;
     uint32_t dense_idx;
 };
 
 // =================================================================================================
-// HOT PATH: Fully Unrolled, C++ Inlined, SIMD Vectorized Stores
+// HOT PATH: Unrolled, Prefetched, and SIMD Vectorized Stores
 // =================================================================================================
-static CULV_FORCE_INLINE void process_full_batch(PhysicsWorldObject *self,
-                                                 const CppSyncWorkItem *worklist) {
+
+CULV_FORCE_INLINE void process_full_batch(PhysicsWorldObject *self,
+                                          const CppSyncWorkItem *worklist) {
     auto *CULV_RESTRICT s_pos  = (PosStride *)CULV_ASSUME_ALIGNED(self->positions, 32);
     auto *CULV_RESTRICT s_ppos = (PosStride *)CULV_ASSUME_ALIGNED(self->prev_positions, 32);
     auto *CULV_RESTRICT s_rot  = (AuxStride *)CULV_ASSUME_ALIGNED(self->rotations, 16);
@@ -30,51 +34,55 @@ static CULV_FORCE_INLINE void process_full_batch(PhysicsWorldObject *self,
     auto *CULV_RESTRICT s_lvel = (AuxStride *)CULV_ASSUME_ALIGNED(self->linear_velocities, 16);
     auto *CULV_RESTRICT s_avel = (AuxStride *)CULV_ASSUME_ALIGNED(self->angular_velocities, 16);
 
-#pragma clang loop unroll(full)
+// Prevent I-Cache bloat and register spilling by limiting unroll count
+#if defined(__clang__)
+#    pragma clang loop unroll_count(4)
+#elif defined(__GNUC__)
+#    pragma GCC unroll 4
+#endif
     for (uint32_t j = 0; j < BATCH_SIZE; j++) {
+        // [OPTIMIZATION]: Lookahead prefetch destination addresses for scatter-writes.
+        // Mitigates L1/L2 cache misses when dense_idx is highly randomized.
+        if (j + 4 < BATCH_SIZE) {
+            uint32_t future_D = worklist[j + 4].dense_idx;
+            CULV_PREFETCH_WRITE(&s_pos[future_D]);
+            CULV_PREFETCH_WRITE(&s_ppos[future_D]);
+            CULV_PREFETCH_WRITE(&s_rot[future_D]);
+            CULV_PREFETCH_WRITE(&s_prot[future_D]);
+        }
+
         uint32_t D = worklist[j].dense_idx;
 
         // Native C++ Pointer - GUARANTEED SAFE
         const JPH::Body *b = worklist[j].body;
 
-        // Snapshot previous state
+        // Snapshot previous state (Wide 128/256-bit copy)
         s_ppos[D] = s_pos[D];
         s_prot[D] = s_rot[D];
 
-        // Positions
+        // Positions: Safe scalar fallback due to JPH_DOUBLE_PRECISION toggles.
         JPH::RVec3 p = b->GetPosition();
-        s_pos[D].x = p.GetX();
-        s_pos[D].y = p.GetY();
-        s_pos[D].z = p.GetZ();
-        s_pos[D].w = 0.0;
+        s_pos[D].x   = p.GetX();
+        s_pos[D].y   = p.GetY();
+        s_pos[D].z   = p.GetZ();
+        s_pos[D].w   = 0.0;
 
-        // Rotations
-        JPH::Quat q = b->GetRotation();
-        s_rot[D].x = q.GetX();
-        s_rot[D].y = q.GetY();
-        s_rot[D].z = q.GetZ();
-        s_rot[D].w = q.GetW();
+        // [OPTIMIZATION]: 128-bit SIMD Store Rotations (X, Y, Z, W)
+        b->GetRotation().GetXYZW().StoreFloat4(reinterpret_cast<JPH::Float4 *>(&s_rot[D]));
 
-        // Velocities
-        JPH::Vec3 lv = b->GetLinearVelocity();
-        JPH::Vec3 av = b->GetAngularVelocity();
-        s_lvel[D].x = lv.GetX();
-        s_lvel[D].y = lv.GetY();
-        s_lvel[D].z = lv.GetZ();
-        s_lvel[D].w = 0.0f;
-
-        s_avel[D].x = av.GetX();
-        s_avel[D].y = av.GetY();
-        s_avel[D].z = av.GetZ();
-        s_avel[D].w = 0.0f;
+        // [OPTIMIZATION]: 128-bit SIMD Store Velocities (Forces W to 0.0f safely)
+        JPH::Vec4(b->GetLinearVelocity(), 0.0f)
+            .StoreFloat4(reinterpret_cast<JPH::Float4 *>(&s_lvel[D]));
+        JPH::Vec4(b->GetAngularVelocity(), 0.0f)
+            .StoreFloat4(reinterpret_cast<JPH::Float4 *>(&s_avel[D]));
     }
 }
 
 // =================================================================================================
 // COLD PATH: Remainder Handling (0 to 31 items)
 // =================================================================================================
-static void process_partial_batch(PhysicsWorldObject *self, const CppSyncWorkItem *worklist,
-                                  uint32_t count) {
+void process_partial_batch(PhysicsWorldObject *self, const CppSyncWorkItem *worklist,
+                           uint32_t count) {
     if (count == 0) {
         return;
     }
@@ -87,37 +95,34 @@ static void process_partial_batch(PhysicsWorldObject *self, const CppSyncWorkIte
     auto *CULV_RESTRICT s_avel = (AuxStride *)CULV_ASSUME_ALIGNED(self->angular_velocities, 16);
 
     for (uint32_t j = 0; j < count; j++) {
-        uint32_t D = worklist[j].dense_idx;
+        // Minor prefetch for the remainder loop
+        if (j + 2 < count) {
+            uint32_t future_D = worklist[j + 2].dense_idx;
+            CULV_PREFETCH_WRITE(&s_pos[future_D]);
+            CULV_PREFETCH_WRITE(&s_rot[future_D]);
+        }
+
+        uint32_t D         = worklist[j].dense_idx;
         const JPH::Body *b = worklist[j].body;
 
         s_ppos[D] = s_pos[D];
         s_prot[D] = s_rot[D];
 
         JPH::RVec3 p = b->GetPosition();
-        s_pos[D].x = p.GetX();
-        s_pos[D].y = p.GetY();
-        s_pos[D].z = p.GetZ();
-        s_pos[D].w = 0.0;
+        s_pos[D].x   = p.GetX();
+        s_pos[D].y   = p.GetY();
+        s_pos[D].z   = p.GetZ();
+        s_pos[D].w   = 0.0;
 
-        JPH::Quat q = b->GetRotation();
-        s_rot[D].x = q.GetX();
-        s_rot[D].y = q.GetY();
-        s_rot[D].z = q.GetZ();
-        s_rot[D].w = q.GetW();
+        b->GetRotation().GetXYZW().StoreFloat4(reinterpret_cast<JPH::Float4 *>(&s_rot[D]));
 
-        JPH::Vec3 lv = b->GetLinearVelocity();
-        JPH::Vec3 av = b->GetAngularVelocity();
-        s_lvel[D].x = lv.GetX();
-        s_lvel[D].y = lv.GetY();
-        s_lvel[D].z = lv.GetZ();
-        s_lvel[D].w = 0.0f;
-
-        s_avel[D].x = av.GetX();
-        s_avel[D].y = av.GetY();
-        s_avel[D].z = av.GetZ();
-        s_avel[D].w = 0.0f;
+        JPH::Vec4(b->GetLinearVelocity(), 0.0f)
+            .StoreFloat4(reinterpret_cast<JPH::Float4 *>(&s_lvel[D]));
+        JPH::Vec4(b->GetAngularVelocity(), 0.0f)
+            .StoreFloat4(reinterpret_cast<JPH::Float4 *>(&s_avel[D]));
     }
 }
+} // namespace
 
 // =================================================================================================
 // MAIN SYNC ROUTINE
@@ -129,32 +134,53 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
 
     // If the Main Thread is reallocating, DO NOT touch the pointers.
     // The main thread is holding the shadow_lock or about to move buffers.
-    if (UNLIKELY(atomic_load_explicit(&self->is_resizing, memory_order_acquire))) {
-        return; 
-    }
-
-    if (UNLIKELY(!self || !self->system)) {
+    if (UNLIKELY(atomic_load_explicit(&self->is_resizing, std::memory_order_acquire))) {
         return;
     }
 
-    const auto *sys_c = self->system;
+    if (UNLIKELY(!self)) {
+        return;
+    }
+
+    if (UNLIKELY(!self->system)) {
+        return;
+    }
+
+    const auto *sys_c     = self->system;
     uint32_t active_count = JPH_PhysicsSystem_GetNumActiveBodies(sys_c, JPH_BodyType_Rigid);
 
     if (UNLIKELY(active_count == 0)) {
         return;
     }
 
-    const JPH_BodyID *active_ids = JPH_PhysicsSystem_GetActiveBodiesUnsafe(sys_c, JPH_BodyType_Rigid);
+    const JPH_BodyID *active_ids =
+        JPH_PhysicsSystem_GetActiveBodiesUnsafe(sys_c, JPH_BodyType_Rigid);
     if (UNLIKELY(!active_ids)) {
-        return; 
-    }
-
-
-    if (UNLIKELY(!self->positions || !self->slot_to_dense || !self->generations || !self->slot_states)) {
         return;
     }
 
-    const uint32_t *CULV_RESTRICT s2d = self->slot_to_dense;
+    if (UNLIKELY(!self->positions)) {
+        return;
+    }
+    if (UNLIKELY(!self->slot_to_dense)) {
+        return;
+    }
+    if (UNLIKELY(!self->generations)) {
+        return;
+    }
+    if (UNLIKELY(!self->slot_states)) {
+        return;
+    }
+
+    // [OPTIMIZATION]: Bypass C-API and its function call overhead entirely.
+    const auto *sys_cpp = reinterpret_cast<const JPH::PhysicsSystem *>(sys_c);
+    const JPH::BodyLockInterfaceNoLock &lock_interface = sys_cpp->GetBodyLockInterfaceNoLock();
+
+    // [OPTIMIZATION]: Hoist variables to prevent loop-aliasing concerns
+    const uint32_t capacity             = self->slot_capacity;
+    const uint32_t *CULV_RESTRICT s2d   = self->slot_to_dense;
+    const uint32_t *CULV_RESTRICT gens  = self->generations;
+    const uint8_t *CULV_RESTRICT states = self->slot_states;
 
     // Stack allocated worklist (fits in L1 cache comfortably)
     alignas(MEMORY_ALIGNMENT_SIZE) CppSyncWorkItem worklist[BATCH_SIZE];
@@ -162,36 +188,43 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
 
     for (uint32_t i = 0; i < active_count; i++) {
         if (i + 4 < active_count) {
-            const void *next_id_ptr = &active_ids[i + 4];
-            CULV_PREFETCH(next_id_ptr);
+            CULV_PREFETCH(&active_ids[i + 4]);
         }
 
-        // [THE FIX] We use the C-API to safely navigate the hidden struct and Jolt's Read Locks.
-        const JPH_Body *opaque_body = JPH_PhysicsSystem_GetBodyPtr(sys_c, active_ids[i]);
+        // Extremely fast inlined lookup. No locks, no extern "C" barriers.
+        const JPH::Body *b = lock_interface.TryGetBody(JPH::BodyID(active_ids[i]));
 
-        if (LIKELY(opaque_body != nullptr)) {
-            
-            // Now we cast back to the native C++ class so we get ultra-fast SIMD extraction
-            const JPH::Body *b = reinterpret_cast<const JPH::Body *>(opaque_body);
+        if (UNLIKELY(b == nullptr)) {
+            continue;
+        }
 
-            // Filter & Validate
-            uint64_t handle = b->GetUserData();
-            auto slot       = (uint32_t)(handle & 0xFFFFFFFF);
-            auto gen        = (uint32_t)(handle >> 32);
+        // Filter & Validate
+        uint64_t handle = b->GetUserData();
+        auto slot       = (uint32_t)(handle & HANDLE_INDEX_MASK);
+        auto gen        = (uint32_t)(handle >> HANDLE_INDEX_BITS);
 
-            if (LIKELY(slot < self->slot_capacity && self->generations[slot] == gen &&
-                       self->slot_states[slot] == SLOT_ALIVE)) {
+        // [OPTIMIZATION]: Coalesced conditionals to reduce branching overhead.
+        // 1. Check bounds first (The 'Invalid' state)
+        if (UNLIKELY(slot >= capacity)) {
+            continue;
+        }
 
-                worklist[work_ptr].body      = b;
-                worklist[work_ptr].dense_idx = s2d[slot];
-                work_ptr++;
+        // This hint tells the compiler: "Trust me, slot is < capacity, no range checking needed here"
+        CULV_ASSUME(slot < capacity);
 
-                // --- HOT PATH TRIGGER ---
-                if (work_ptr == BATCH_SIZE) {
-                    process_full_batch(self, worklist);
-                    work_ptr = 0;
-                }
-            }
+        // 2. Check conditions (The 'Wrong' state)
+        if (gens[slot] != gen || states[slot] != SLOT_ALIVE) {
+            continue;
+        }
+
+        // 3. The Hot Path is now flat and "un-nested"
+        worklist[work_ptr].body      = b;
+        worklist[work_ptr].dense_idx = s2d[slot];
+        work_ptr++;
+
+        if (work_ptr == BATCH_SIZE) {
+            process_full_batch(self, worklist);
+            work_ptr = 0;
         }
     }
 
