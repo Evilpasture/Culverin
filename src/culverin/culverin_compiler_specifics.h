@@ -102,6 +102,17 @@ static inline uint64_t rdtsc() {
 #    define CULV_MAYBE_UNUSED
 #endif
 
+// --- Compiler Assume Hint ---
+// Tells the compiler an expression is guaranteed to be true, allowing it to
+// optimize away range checks and improve loop unrolling.
+#if defined(__clang__) || defined(__GNUC__)
+#   define CULV_ASSUME(x) do { if (!(x)) __builtin_unreachable(); } while (0)
+#elif defined(_MSC_VER)
+#   define CULV_ASSUME(x) __assume(x)
+#else
+#   define CULV_ASSUME(x) ((void)0)
+#endif
+
 // Force TSan to ignore a specific function
 #if defined(__has_feature)
 #  if __has_feature(thread_sanitizer)
