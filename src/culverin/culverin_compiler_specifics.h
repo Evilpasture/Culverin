@@ -4,7 +4,7 @@
 #include <stdlib.h>
 
 // Comment this line out to disable all debug prints
-#define CULVERIN_DEBUG
+// #define CULVERIN_DEBUG
 
 // --- Compiler Hints ---
 #if defined(__GNUC__) || defined(__clang__)
@@ -37,7 +37,7 @@ static inline void culv_unreachable(void) {
     fprintf(stderr, "Unreachable hit at %s:%d\n", __FILE__, __LINE__);
     abort();
 #elif defined(_MSC_VER)
-    __assume(0);
+    __assume(false);
 #else
     __builtin_unreachable();
 #endif
@@ -105,12 +105,16 @@ static inline uint64_t rdtsc() {
 // --- Compiler Assume Hint ---
 // Tells the compiler an expression is guaranteed to be true, allowing it to
 // optimize away range checks and improve loop unrolling.
-#if defined(__clang__) || defined(__GNUC__)
-#   define CULV_ASSUME(x) do { if (!(x)) __builtin_unreachable(); } while (0)
+#if defined(CULVERIN_DEBUG)
+#  define CULV_ASSUME(x) do { if (!(x)) { \
+       fprintf(stderr, "Assumption failed: %s at %s:%d\n", #x, __FILE__, __LINE__); \
+       abort(); } } while(0)
+#elif defined(__clang__) || defined(__GNUC__)
+#  define CULV_ASSUME(x) do { if (!(x)) __builtin_unreachable(); } while (0)
 #elif defined(_MSC_VER)
-#   define CULV_ASSUME(x) __assume(x)
+#  define CULV_ASSUME(x) __assume(x)
 #else
-#   define CULV_ASSUME(x) ((void)0)
+#  define CULV_ASSUME(x) ((void)0)
 #endif
 
 // Force TSan to ignore a specific function
