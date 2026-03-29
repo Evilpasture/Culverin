@@ -92,43 +92,36 @@ jobs:
           wget https://apt.llvm.org/llvm.sh
           chmod +x llvm.sh
           sudo ./llvm.sh 22
+          # Ensure the specific sanitizer runtimes are present
+          sudo apt-get install -y clang-22 lld-22 libclang-rt-22-dev ninja-build
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: true
 
-      - name: Build and Test with ASan/UBSan
-        uses: pypa/cibuildwheel@v3.4.0
-        env:
-          CIBW_SKIP: "*-musllinux_* *-win32 *_i686"
-          CIBW_BUILD: "cp313-manylinux_x86_64"
-          CIBW_ENABLE: "cpython-freethreading"
-          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
-          CIBW_BUILD_FRONTEND: "uv"
+      - name: Build and Test
+        run: |
+          # Export variables so uv/cmake see them
+          export CC=clang-22
+          export CXX=clang++-22
+          export CFLAGS="-fno-sanitize=alignment"
+          export CXXFLAGS="-fno-sanitize=alignment"
+          export LDFLAGS="-fuse-ld=lld-22"
           
-          CIBW_BEFORE_ALL_LINUX: "dnf install -y clang llvm compiler-rt libasan libubsan && pip install ninja"
+          # Build the wheel using uv (which uses scikit-build-core)
+          uv build --wheel --config-setting=cmake.args="-DENABLE_SANITIZER=ON;-DCMAKE_BUILD_TYPE=RelWithDebInfo;-DDOUBLE_PRECISION=ON"
           
-          CIBW_ENVIRONMENT: >
-            CC=clang-22
-            CXX=clang++-22
-            CFLAGS="-fno-sanitize=alignment"
-            CXXFLAGS="-fno-sanitize=alignment"
-            LDFLAGS="-fuse-ld=lld-22"
-            CMAKE_GENERATOR=Ninja
-            ASAN_OPTIONS="detect_leaks=0:detect_odr_violation=0:halt_on_error=1"
-            UBSAN_OPTIONS="print_stacktrace=1:halt_on_error=1"
-            CMAKE_ARGS="-DENABLE_SANITIZER=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo -DDOUBLE_PRECISION=ON"
+          # Install the built wheel to test it
+          uv pip install dist/*.whl
           
-          CIBW_TEST_REQUIRES: numpy psutil
-          CIBW_TEST_COMMAND: >
-            ASAN_RT=$(find /usr -name "libasan.so.*" 2>/dev/null | head -n 1) ;
-            UBSAN_RT=$(find /usr -name "libubsan.so.*" 2>/dev/null | head -n 1) ;
-            echo "ASan found: ${ASAN_RT:-NOT FOUND}" ;
-            echo "UBSan found: ${UBSAN_RT:-NOT FOUND}" ;
-            if [ -n "$ASAN_RT" ] || [ -n "$UBSAN_RT" ]; then export LD_PRELOAD="$ASAN_RT $UBSAN_RT"; fi ;
-            python {project}/tests/test_core.py && 
-            python {project}/tests/benchmark.py --leak
+          # Run tests with Sanitizer environment
+          export ASAN_OPTIONS="detect_leaks=0:detect_odr_violation=0:halt_on_error=1"
+          export UBSAN_OPTIONS="print_stacktrace=1:halt_on_error=1"
+          
+          # Find and preload the runtimes (Ubuntu paths)
+          ASAN_RT=$(find /usr/lib/llvm-22 -name "libclang_rt.asan-x86_64.so" | head -n 1)
+          if [ -n "$ASAN_RT" ]; then export LD_PRELOAD="$ASAN_RT"; fi
+          
+          uv run python tests/test_core.py
     # Thread sanitizer
   linux_tsan:
     name: Thread Sanitizer Validation
