@@ -59,7 +59,7 @@ function(enforce_modern_compiler)
 endfunction()
 
 # 1. THE NUCLEAR INITIALIZATION
-option(ENABLE_SANITIZER "Enable Clang Sanitizers (ASan/TSan/UBSan)" ON)
+option(ENABLE_SANITIZER "Enable Clang Sanitizers (ASan/TSan/UBSan)" OFF)
 
 set(DOUBLE_PRECISION ON CACHE BOOL "Use double precision math" FORCE)
 set(GENERATE_SAMPLES OFF CACHE BOOL "" FORCE)
