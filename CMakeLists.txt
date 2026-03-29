@@ -281,8 +281,6 @@ if(ipo_supported AND NOT ENABLE_SANITIZER)
     set_property(TARGET ${JOLTC_TARGET} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
     set_property(TARGET Jolt PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
 else()
-    message(STATUS "Culverin: LTO/IPO DISABLED (Sanitizers active or unsupported)")
-endif()
     message(WARNING "Culverin: LTO/IPO not supported: ${error}")
 endif()
 
