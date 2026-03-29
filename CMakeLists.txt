@@ -59,7 +59,7 @@ function(enforce_modern_compiler)
 endfunction()
 
 # 1. THE NUCLEAR INITIALIZATION
-option(ENABLE_SANITIZER "Enable Clang Sanitizers (ASan/TSan/UBSan)" OFF)
+option(ENABLE_SANITIZER "Enable Clang Sanitizers (ASan/TSan/UBSan)" ON)
 
 set(DOUBLE_PRECISION ON CACHE BOOL "Use double precision math" FORCE)
 set(GENERATE_SAMPLES OFF CACHE BOOL "" FORCE)
@@ -71,6 +71,33 @@ set(USE_VULKAN OFF CACHE BOOL "" FORCE)
 set(FORCE_RTTI ON CACHE BOOL "Force RTTI on" FORCE)
 
 project(culverin LANGUAGES C CXX)
+# 1.1 FORCE BUILD TYPE (RelWithDebInfo is the sweet spot for ASan)
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    message(STATUS "Culverin: Setting build type to 'RelWithDebInfo' as none was specified.")
+    set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Choose the type of build." FORCE)
+endif()
+
+# 1.2 ENSURE PDBs ARE GENERATED FOR CLANG-CL/MSVC
+if(MSVC OR (WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang"))
+    # This ensures .pdb files are created even in Release/RelWithDebInfo
+    set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "ProgramDatabase" CACHE STRING "" FORCE)
+endif()
+if(ENABLE_SANITIZER)
+    message(STATUS "Culverin: FORCING Global Sanitizers for all targets")
+    
+    # 1. Standard approach (works for most)
+    add_compile_options("-fsanitize=address" "-fsanitize=undefined")
+    add_link_options("-fsanitize=address" "-fsanitize=undefined")
+
+    # 2. The Sledgehammer (Force it into the global CXX flags for subdirectories)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -fsanitize=undefined")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address -fsanitize=undefined")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address -fsanitize=undefined")
+    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fsanitize=address -fsanitize=undefined")
+
+    # 3. Specifically tell Jolt to use them if it has its own toggle
+    set(JPH_ADDRESS_SANITIZER ON CACHE BOOL "" FORCE)
+endif()
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 enforce_modern_compiler()
 message(STATUS "--- COMPILER VERIFICATION ---")
@@ -135,7 +162,7 @@ if(MSVC)
 else() 
     message(STATUS "Culverin: Configuring GNU-like flags...")
 
-    set(FLAGS_DEBUG "-g")
+    set(FLAGS_DEBUG "-g" "-gcodeview")
     if(CMAKE_C_COMPILER_ID MATCHES "Clang")
         list(APPEND FLAGS_DEBUG "-gcodeview")
     endif()
@@ -164,11 +191,6 @@ else()
     else()
         list(APPEND CULVERIN_COMPILE_FLAGS "-fdiagnostics-color=always")
     endif()
-
-    if(ENABLE_SANITIZER)
-        list(APPEND CULVERIN_COMPILE_FLAGS "-fsanitize=address" "-fsanitize=undefined" "-fno-sanitize=alignment")
-        list(APPEND CULVERIN_LINK_FLAGS "-fsanitize=address" "-fsanitize=undefined")
-    endif()
 endif()
 
 # ==============================================================================
@@ -177,6 +199,11 @@ endif()
 get_filename_component(JOLT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/extern/JoltPhysics" ABSOLUTE)
 add_definitions(-DJPH_DEBUG_RENDERER)
 set(DEBUG_RENDERER_IN_DEBUG_AND_RELEASE ON CACHE BOOL "" FORCE)
+
+# Force standard globally BEFORE add_subdirectory
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 add_subdirectory("${JOLT_DIR}/Build" jolt_physics_build)
 
 if(MSVC OR (WIN32 AND CMAKE_C_COMPILER_ID MATCHES "Clang"))
@@ -184,12 +211,19 @@ if(MSVC OR (WIN32 AND CMAKE_C_COMPILER_ID MATCHES "Clang"))
         if(TARGET ${t})
             set_property(TARGET ${t} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 
+            # Force the Jolt target to inherit C++23 settings
+            set_target_properties(${t} PROPERTIES
+                CXX_STANDARD 23
+                CXX_STANDARD_REQUIRED ON
+                CXX_EXTENSIONS OFF
+            )
+
             if(CMAKE_C_COMPILER_ID MATCHES "Clang")
                 set_property(TARGET ${t} PROPERTY COMPILE_OPTIONS "")
                 if(MSVC)
-                    target_compile_options(${t} PRIVATE /arch:AVX2 /std:c++23)
+                    target_compile_options(${t} PRIVATE /arch:AVX2)
                 else()
-                    target_compile_options(${t} PRIVATE -mavx2 -mlzcnt -mfma -mf16c -std=c++23)
+                    target_compile_options(${t} PRIVATE -mavx2 -mlzcnt -mfma -mf16c)
                 endif()
             endif()
         endif()

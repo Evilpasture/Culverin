@@ -84,62 +84,64 @@ bool ensure_command_capacity(PhysicsWorldObject *self) {
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand * CULV_RESTRICT queue, size_t count) {
-    if (UNLIKELY(count == 0)) return;
+void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *CULV_RESTRICT queue,
+                             size_t count) {
+    if (UNLIKELY(count == 0)) {
+        return;
+    }
 
     // Tell Clang vectorizer that memory is aligned and safe
-    queue = CULV_ASSUME_ALIGNED(queue, 8);
-    JPH_BodyInterface * CULV_RESTRICT bi = self->body_interface;
+    queue                               = CULV_ASSUME_ALIGNED(queue, 8);
+    JPH_BodyInterface *CULV_RESTRICT bi = self->body_interface;
 
-    static const void* const dispatch_table[] = {
-        [CMD_CREATE_BODY]       = &&op_CREATE_BODY,
-        [CMD_DESTROY_BODY]      = &&op_DESTROY_BODY,
-        [CMD_SET_POS]           = &&op_SET_POS,
-        [CMD_SET_ROT]           = &&op_SET_ROT,
-        [CMD_SET_TRNS]          = &&op_SET_TRNS,
-        [CMD_SET_LINVEL]        = &&op_SET_LINVEL,
-        [CMD_SET_ANGVEL]        = &&op_SET_ANGVEL,
-        [CMD_SET_MOTION]        = &&op_SET_MOTION,
-        [CMD_ACTIVATE]          = &&op_ACTIVATE,
-        [CMD_DEACTIVATE]        = &&op_DEACTIVATE,
-        [CMD_SET_USER_DATA]     = &&op_SET_USER_DATA,
-        [CMD_SET_CCD]           = &&op_SET_CCD,
-        [CMD_TELEPORT]          = &&op_TELEPORT,
-        [CMD_APPLY_IMPULSE]     = &&op_APPLY_IMPULSE,
-        [CMD_APPLY_FORCE]       = &&op_APPLY_FORCE,
-        [CMD_APPLY_TORQUE]      = &&op_APPLY_TORQUE,
-        [CMD_APPLY_ANG_IMPULSE] = &&op_APPLY_ANG_IMPULSE,
-        [CMD_APPLY_IMPULSE_AT]  = &&op_APPLY_IMPULSE_AT
-    };
+    static const void *const dispatch_table[] = {[CMD_CREATE_BODY]       = &&op_CREATE_BODY,
+                                                 [CMD_DESTROY_BODY]      = &&op_DESTROY_BODY,
+                                                 [CMD_SET_POS]           = &&op_SET_POS,
+                                                 [CMD_SET_ROT]           = &&op_SET_ROT,
+                                                 [CMD_SET_TRNS]          = &&op_SET_TRNS,
+                                                 [CMD_SET_LINVEL]        = &&op_SET_LINVEL,
+                                                 [CMD_SET_ANGVEL]        = &&op_SET_ANGVEL,
+                                                 [CMD_SET_MOTION]        = &&op_SET_MOTION,
+                                                 [CMD_ACTIVATE]          = &&op_ACTIVATE,
+                                                 [CMD_DEACTIVATE]        = &&op_DEACTIVATE,
+                                                 [CMD_SET_USER_DATA]     = &&op_SET_USER_DATA,
+                                                 [CMD_SET_CCD]           = &&op_SET_CCD,
+                                                 [CMD_TELEPORT]          = &&op_TELEPORT,
+                                                 [CMD_APPLY_IMPULSE]     = &&op_APPLY_IMPULSE,
+                                                 [CMD_APPLY_FORCE]       = &&op_APPLY_FORCE,
+                                                 [CMD_APPLY_TORQUE]      = &&op_APPLY_TORQUE,
+                                                 [CMD_APPLY_ANG_IMPULSE] = &&op_APPLY_ANG_IMPULSE,
+                                                 [CMD_APPLY_IMPULSE_AT]  = &&op_APPLY_IMPULSE_AT};
 
     size_t i = 0;
     PhysicsCommand *cmd;
-    uint32_t header, slot, dense;
+    uint32_t header;
+    uint32_t slot;
+    CULV_MAYBE_UNUSED uint32_t dense;
     CommandType type;
     SlotState state;
     JPH_BodyID bid;
 
-    // The entire "VM" fetch-decode loop in one perfectly inlined macro
-    #define NEXT_CMD()                                                      \
-        while (i < count) {                                                 \
-            cmd = &queue[i++];                                              \
-            header = cmd->header;                                           \
-            type = CMD_GET_TYPE(header);                                    \
-            slot = CMD_GET_SLOT(header);                                    \
-            state = self->slot_states[slot];                                \
-            bid = JPH_INVALID_BODY_ID;                                      \
-            if (LIKELY(state == SLOT_ALIVE || state == SLOT_PENDING_CREATE)) { \
-                bid = self->body_ids[self->slot_to_dense[slot]];            \
-            }                                                               \
-            if (LIKELY(type == CMD_CREATE_BODY || bid != JPH_INVALID_BODY_ID)) { \
-                goto *dispatch_table[type];                                 \
-            }                                                               \
-        }                                                                   \
-        return;
+// The entire "VM" fetch-decode loop in one perfectly inlined macro
+#define NEXT_CMD()                                                                                 \
+    while (i < count) {                                                                            \
+        cmd    = &queue[i++];                                                                      \
+        header = cmd->header;                                                                      \
+        type   = CMD_GET_TYPE(header);                                                             \
+        slot   = CMD_GET_SLOT(header);                                                             \
+        state  = self->slot_states[slot];                                                          \
+        bid    = JPH_INVALID_BODY_ID;                                                              \
+        if (LIKELY(state == SLOT_ALIVE || state == SLOT_PENDING_CREATE)) {                         \
+            bid = self->body_ids[self->slot_to_dense[slot]];                                       \
+        }                                                                                          \
+        if (LIKELY(type == CMD_CREATE_BODY || bid != JPH_INVALID_BODY_ID)) {                       \
+            goto *dispatch_table[type];                                                            \
+        }                                                                                          \
+    }                                                                                              \
+    return;
 
     // Kick off execution
     NEXT_CMD()
-
 
 op_CREATE_BODY: {
     JPH_BodyCreationSettings *s = cmd->create.settings;
@@ -150,7 +152,7 @@ op_CREATE_BODY: {
         world_remove_body_slot(self, slot);
     } else {
         self->body_ids[self->slot_to_dense[slot]] = new_bid;
-        uint32_t j_idx = JPH_ID_TO_INDEX(new_bid);
+        uint32_t j_idx                            = JPH_ID_TO_INDEX(new_bid);
         if (self->id_to_handle_map && j_idx < self->max_jolt_bodies) {
             self->id_to_handle_map[j_idx] = make_handle(slot, self->generations[slot]);
         }
@@ -168,12 +170,12 @@ op_DESTROY_BODY: {
 
 op_SET_POS: {
     JPH_STACK_ALLOC(JPH_RVec3, p);
-    p->x = cmd->pos.x;
-    p->y = cmd->pos.y;
-    p->z = cmd->pos.z;
+    p->x        = cmd->pos.x;
+    p->y        = cmd->pos.y;
+    p->z        = cmd->pos.z;
     bool active = JPH_BodyInterface_IsActive(bi, bid);
     JPH_BodyInterface_SetPosition(
-        bi, bid, p, active ? JPH_Activation_DontActivate : JPH_Activation_Activate);
+        bi, bid, p, (int)active ? JPH_Activation_DontActivate : JPH_Activation_Activate);
     NEXT_CMD()
 }
 
@@ -231,9 +233,7 @@ op_DEACTIVATE: {
     NEXT_CMD()
 }
 
-op_SET_USER_DATA: {
-    NEXT_CMD()
-}
+op_SET_USER_DATA: { NEXT_CMD() }
 
 op_SET_CCD: {
     JPH_MotionQuality qual =
@@ -242,9 +242,7 @@ op_SET_CCD: {
     NEXT_CMD()
 }
 
-op_TELEPORT: {
-    NEXT_CMD()
-}
+op_TELEPORT: { NEXT_CMD() }
 
 op_APPLY_IMPULSE: {
     JPH_Vec3 v = {cmd->vec3f.x, cmd->vec3f.y, cmd->vec3f.z};
@@ -281,7 +279,6 @@ op_APPLY_IMPULSE_AT: {
     JPH_BodyInterface_ActivateBody(bi, bid);
     NEXT_CMD()
 }
-
 }
 
 /**
@@ -314,17 +311,16 @@ void sync_and_flush_internal(PhysicsWorldObject *self) {
 
     SHADOW_UNLOCK(&self->shadow_lock);
 
-    Py_BEGIN_ALLOW_THREADS 
-    NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+    Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
 
     flush_commands_internal(self, captured_queue, captured_count);
-    
+
     // NO CULV_RAW_FREE HERE! We keep it allocated in 'spare' for the next queue loop.
 
     NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
     Py_END_ALLOW_THREADS
 
-    SHADOW_LOCK(&self->shadow_lock);
+        SHADOW_LOCK(&self->shadow_lock);
 
     atomic_store_explicit(&self->is_stepping, false, memory_order_release);
     NATIVE_MUTEX_LOCK(self->step_sync.mutex);

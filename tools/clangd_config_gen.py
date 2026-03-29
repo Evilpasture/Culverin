@@ -6,7 +6,7 @@ import sysconfig
 def generate_clangd():
     # 1. Anchor to project root
     script_path = Path(__file__).resolve()
-    project_root = script_path.parent
+    project_root = script_path.parent.parent if script_path.parent.name == "tools" else script_path.parent
 
     # 2. Build Python Path (Absolute)
     include_path = Path(sysconfig.get_path("include"))
