@@ -1,5 +1,3 @@
-// --- START OF FILE culverin_shadow_sync.cpp ---
-
 #include "culverin_shadow_sync.h"
 #include "culverin_compiler_specifics.h"
 #include "culverin_types.h"
@@ -57,16 +55,22 @@ CULV_FORCE_INLINE void process_full_batch(PhysicsWorldObject *self,
         const JPH::Body *b = worklist[j].body;
 
         // Snapshot previous state (Wide 128/256-bit copy)
-        s_ppos[D] = s_pos[D];
-        s_prot[D] = s_rot[D];
+        PosStride old_pos = s_pos[D]; // pulled into registers
+        AuxStride old_rot = s_rot[D];
+        s_ppos[D]         = old_pos;
+        s_prot[D]         = old_rot;
 
         // Positions: Safe scalar fallback due to JPH_DOUBLE_PRECISION toggles.
-        JPH::RVec3 p = b->GetPosition();
+#ifndef JPH_DOUBLE_PRECISION
+        JPH::Vec4(b->GetCenterOfMassPosition(), 0.0f).StoreFloat4(reinterpret_cast<JPH::Float4 *>(&s_pos[D]));
+#else
+        // Keep scalar path for double precision
+        JPH::RVec3 p = b->GetCenterOfMassPosition();
         s_pos[D].x   = p.GetX();
         s_pos[D].y   = p.GetY();
         s_pos[D].z   = p.GetZ();
         s_pos[D].w   = 0.0;
-
+#endif
         // [OPTIMIZATION]: 128-bit SIMD Store Rotations (X, Y, Z, W)
         b->GetRotation().GetXYZW().StoreFloat4(reinterpret_cast<JPH::Float4 *>(&s_rot[D]));
 
@@ -81,7 +85,7 @@ CULV_FORCE_INLINE void process_full_batch(PhysicsWorldObject *self,
 // =================================================================================================
 // COLD PATH: Remainder Handling (0 to 31 items)
 // =================================================================================================
-void process_partial_batch(PhysicsWorldObject *self, const CppSyncWorkItem *worklist,
+CULV_FORCE_INLINE void process_partial_batch(PhysicsWorldObject *self, const CppSyncWorkItem *worklist,
                            uint32_t count) {
     if (count == 0) {
         return;
@@ -105,14 +109,21 @@ void process_partial_batch(PhysicsWorldObject *self, const CppSyncWorkItem *work
         uint32_t D         = worklist[j].dense_idx;
         const JPH::Body *b = worklist[j].body;
 
-        s_ppos[D] = s_pos[D];
-        s_prot[D] = s_rot[D];
+        PosStride old_pos = s_pos[D];
+        AuxStride old_rot = s_rot[D];
+        s_ppos[D]         = old_pos;
+        s_prot[D]         = old_rot;
 
-        JPH::RVec3 p = b->GetPosition();
+#ifndef JPH_DOUBLE_PRECISION
+        JPH::Vec4(b->GetCenterOfMassPosition(), 0.0f).StoreFloat4(reinterpret_cast<JPH::Float4 *>(&s_pos[D]));
+#else
+        // Keep scalar path for double precision
+        JPH::RVec3 p = b->GetCenterOfMassPosition();
         s_pos[D].x   = p.GetX();
         s_pos[D].y   = p.GetY();
         s_pos[D].z   = p.GetZ();
         s_pos[D].w   = 0.0;
+#endif
 
         b->GetRotation().GetXYZW().StoreFloat4(reinterpret_cast<JPH::Float4 *>(&s_rot[D]));
 
@@ -200,13 +211,16 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
         // 1. Calculate the bounds check (0 if in bounds, non-zero if out)
         auto out_of_bounds = (uint32_t)(slot >= self->slot_capacity);
 
-        // 2. Bitwise OR the conditions
-        // If any condition is true (non-zero), the result is non-zero.
-        if (UNLIKELY(out_of_bounds | (self->generations[slot] ^ gen) |
-                     (self->slot_states[slot] ^ SLOT_ALIVE))) {
-            return;
+        if (UNLIKELY(out_of_bounds)) {
+            continue;
         }
+        // 2. Bitwise OR the conditions
+        if (UNLIKELY((self->generations[slot] ^ gen) | (self->slot_states[slot] ^ SLOT_ALIVE))) {
+            continue;
+        }
+
         // Now the "Hot Path" is flat and easy to read
+        CULV_ASSUME(work_ptr < BATCH_SIZE);
         worklist[work_ptr].body      = b;
         worklist[work_ptr].dense_idx = s2d[slot];
         work_ptr++;
