@@ -112,9 +112,9 @@ jobs:
       - name: Install and Test
         run: |
           uv venv --python 3.14
-          # Use --no-deps if you've already handled requirements, 
-          # but the key is installing the WHL directly.
-          uv pip install dist/*.whl
+          
+          # Install the wheel AND the test dependencies
+          uv pip install dist/*.whl numpy psutil
           
           ASAN_RT=$(find /usr/lib/llvm-22 -name "libclang_rt.asan-x86_64.so" | head -n 1)
           echo "ASan Runtime: ${ASAN_RT}"
@@ -124,8 +124,7 @@ jobs:
           
           if [ -n "$ASAN_RT" ]; then export LD_PRELOAD="$ASAN_RT"; fi
           
-          # IMPORTANT: Use 'uv run --no-project' to stop uv from trying to 
-          # build/install the local source directory.
+          # Use --no-project so it doesn't try to re-build that editable install
           uv run --no-project python tests/test_core.py
           uv run --no-project python tests/benchmark.py --leak
     # Thread sanitizer
