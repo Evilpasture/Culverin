@@ -75,17 +75,14 @@ static JPH_WheelSettings *create_track_wheel(PyObject *w_dict) {
 static JPH_TrackedVehicleControllerSettings *
 init_tracked_controller_settings(TrackedEngineConfig config,
                                  JPH_VehicleTransmissionSettings **out_trans) {
-
     auto *t_ctrl = JPH_TrackedVehicleControllerSettings_Create();
 
-    // JoltC ABI workaround: The C struct is smaller than the internal C++ class.
-    // Allocate a large padded buffer to prevent placement-new stack overflows.
-    uint8_t eng_buf[256];
-    memset(eng_buf, 0, sizeof(eng_buf));
-    JPH_VehicleEngineSettings *eng = (JPH_VehicleEngineSettings *)eng_buf;
+    // JoltC ABI workaround: Allocate a zero-initialized buffer on the heap.
+    // This prevents C++ constructors from interpreting garbage stack data as valid pointers.
+    size_t eng_size = sizeof(JPH_VehicleEngineSettings) * 2; // Safe padding
+    JPH_VehicleEngineSettings *eng = (JPH_VehicleEngineSettings *)CULV_RAW_CALLOC(1, eng_size);
     
     JPH_VehicleEngineSettings_Init(eng);
-
     eng->maxTorque = config.torque;
     eng->maxRPM    = config.max_rpm;
     eng->minRPM    = config.min_rpm;
@@ -93,19 +90,18 @@ init_tracked_controller_settings(TrackedEngineConfig config,
     // This COPIES the engine settings into the controller
     JPH_TrackedVehicleControllerSettings_SetEngine(t_ctrl, eng); 
 
-    // YOU MUST FREE THE ALLOCATED CURVE NOW! The controller made its own copy.
+    // Clean up the curve created by the init call (the controller now owns its copy)
     if (eng->normalizedTorque) {
         JPH_LinearCurve_Destroy((JPH_LinearCurve *)eng->normalizedTorque);
     }
+    CULV_RAW_FREE(eng);
 
     auto *trans = JPH_VehicleTransmissionSettings_Create();
     JPH_VehicleTransmissionSettings_SetMode(trans, JPH_TransmissionMode_Auto);
 
-    float gears[] = {TRACKED_GEAR_RATIO_1, TRACKED_GEAR_RATIO_2, TRACKED_GEAR_RATIO_3,
-                     TRACKED_GEAR_RATIO_4};
+    float gears[] = {2.0f, 1.4f, 1.0f, 0.7f};
     JPH_VehicleTransmissionSettings_SetGearRatios(trans, gears, 4);
-    
-    float reverse[] = {TRACKED_REVERSE_GEAR_RATIO};
+    float reverse[] = {-1.5f};
     JPH_VehicleTransmissionSettings_SetReverseGearRatios(trans, reverse, 1);
 
     JPH_TrackedVehicleControllerSettings_SetTransmission(t_ctrl, trans);
@@ -140,7 +136,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
 
     // --- 2. RESOLVE CHASSIS (Requires GIL & Shadow Lock) ---
     SHADOW_LOCK(&self->shadow_lock);
-    sync_and_flush_internal(self);
+    BLOCK_UNTIL_NOT_STEPPING(self);
     uint32_t slot = 0;
     if (!unpack_handle(self, chassis_h, &slot) || self->slot_states[slot] != SLOT_ALIVE) {
         SHADOW_UNLOCK(&self->shadow_lock);
