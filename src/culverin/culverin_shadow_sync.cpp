@@ -132,13 +132,13 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
     uint64_t start = rdtsc();
 #endif
 
-    // If the Main Thread is reallocating, DO NOT touch the pointers.
-    // The main thread is holding the shadow_lock or about to move buffers.
-    if (UNLIKELY(atomic_load_explicit(&self->is_resizing, std::memory_order_acquire))) {
+    if (UNLIKELY(!self)) {
         return;
     }
 
-    if (UNLIKELY(!self)) {
+    // If the Main Thread is reallocating, DO NOT touch the pointers.
+    // The main thread is holding the shadow_lock or about to move buffers.
+    if (UNLIKELY(atomic_load_explicit(&self->is_resizing, std::memory_order_acquire))) {
         return;
     }
 
