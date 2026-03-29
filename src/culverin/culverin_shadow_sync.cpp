@@ -132,30 +132,43 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
     uint64_t start = rdtsc();
 #endif
 
-    if (UNLIKELY(!self || !self->system)) {
+    if (UNLIKELY(!self)) {
+        return;
+    }
+
+    if (UNLIKELY(!self->system)) {
         return;
     }
 
     // If the Main Thread is reallocating, DO NOT touch the pointers.
     // The main thread is holding the shadow_lock or about to move buffers.
     if (UNLIKELY(atomic_load_explicit(&self->is_resizing, std::memory_order_acquire))) {
-        return; 
+        return;
     }
 
-    const auto *sys_c = self->system;
+    const auto *sys_c     = self->system;
     uint32_t active_count = JPH_PhysicsSystem_GetNumActiveBodies(sys_c, JPH_BodyType_Rigid);
 
     if (UNLIKELY(active_count == 0)) {
         return;
     }
 
-    const JPH_BodyID *active_ids = JPH_PhysicsSystem_GetActiveBodiesUnsafe(sys_c, JPH_BodyType_Rigid);
+    const JPH_BodyID *active_ids =
+        JPH_PhysicsSystem_GetActiveBodiesUnsafe(sys_c, JPH_BodyType_Rigid);
     if (UNLIKELY(!active_ids)) {
-        return; 
+        return;
     }
 
-
-    if (UNLIKELY(!self->positions || !self->slot_to_dense || !self->generations || !self->slot_states)) {
+    if (UNLIKELY(!self->positions)) {
+        return;
+    }
+    if (UNLIKELY(!self->slot_to_dense)) {
+        return;
+    }
+    if (UNLIKELY(!self->generations)) {
+        return;
+    }
+    if (UNLIKELY(!self->slot_states)) {
         return;
     }
 
@@ -174,29 +187,33 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
         // [THE FIX] We use the C-API to safely navigate the hidden struct and Jolt's Read Locks.
         const JPH_Body *opaque_body = JPH_PhysicsSystem_GetBodyPtr(sys_c, active_ids[i]);
 
-        if (LIKELY(opaque_body != nullptr)) {
-            
-            // Now we cast back to the native C++ class so we get ultra-fast SIMD extraction
-            const JPH::Body *b = reinterpret_cast<const JPH::Body *>(opaque_body);
+        if (UNLIKELY(opaque_body == nullptr)) {
+            continue;
+        }
 
-            // Filter & Validate
-            uint64_t handle = b->GetUserData();
-            auto slot       = (uint32_t)(handle & HANDLE_INDEX_MASK);
-            auto gen        = (uint32_t)(handle >> HANDLE_INDEX_BITS);
+        const JPH::Body *b = reinterpret_cast<const JPH::Body *>(opaque_body);
 
-            if (LIKELY(slot < self->slot_capacity && self->generations[slot] == gen &&
-                       self->slot_states[slot] == SLOT_ALIVE)) {
+        uint64_t handle = b->GetUserData();
+        auto slot       = (uint32_t)(handle & HANDLE_INDEX_MASK);
+        auto gen        = (uint32_t)(handle >> HANDLE_INDEX_BITS);
 
-                worklist[work_ptr].body      = b;
-                worklist[work_ptr].dense_idx = s2d[slot];
-                work_ptr++;
+        // 1. Calculate the bounds check (0 if in bounds, non-zero if out)
+        auto out_of_bounds = (uint32_t)(slot >= self->slot_capacity);
 
-                // --- HOT PATH TRIGGER ---
-                if (work_ptr == BATCH_SIZE) {
-                    process_full_batch(self, worklist);
-                    work_ptr = 0;
-                }
-            }
+        // 2. Bitwise OR the conditions
+        // If any condition is true (non-zero), the result is non-zero.
+        if (UNLIKELY(out_of_bounds | (self->generations[slot] ^ gen) |
+                     (self->slot_states[slot] ^ SLOT_ALIVE))) {
+            return;
+        }
+        // Now the "Hot Path" is flat and easy to read
+        worklist[work_ptr].body      = b;
+        worklist[work_ptr].dense_idx = s2d[slot];
+        work_ptr++;
+
+        if (work_ptr == BATCH_SIZE) {
+            process_full_batch(self, worklist);
+            work_ptr = 0;
         }
     }
 
