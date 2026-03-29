@@ -62,7 +62,8 @@ CULV_FORCE_INLINE void process_full_batch(PhysicsWorldObject *self,
 
         // Positions: Safe scalar fallback due to JPH_DOUBLE_PRECISION toggles.
 #ifndef JPH_DOUBLE_PRECISION
-        JPH::Vec4(b->GetCenterOfMassPosition(), 0.0f).StoreFloat4(reinterpret_cast<JPH::Float4 *>(&s_pos[D]));
+        JPH::Vec4(b->GetCenterOfMassPosition(), 0.0f)
+            .StoreFloat4(reinterpret_cast<JPH::Float4 *>(&s_pos[D]));
 #else
         // Keep scalar path for double precision
         JPH::RVec3 p = b->GetCenterOfMassPosition();
@@ -85,8 +86,8 @@ CULV_FORCE_INLINE void process_full_batch(PhysicsWorldObject *self,
 // =================================================================================================
 // COLD PATH: Remainder Handling (0 to 31 items)
 // =================================================================================================
-CULV_FORCE_INLINE void process_partial_batch(PhysicsWorldObject *self, const CppSyncWorkItem *worklist,
-                           uint32_t count) {
+CULV_FORCE_INLINE void process_partial_batch(PhysicsWorldObject *self,
+                                             const CppSyncWorkItem *worklist, uint32_t count) {
     if (count == 0) {
         return;
     }
@@ -115,7 +116,8 @@ CULV_FORCE_INLINE void process_partial_batch(PhysicsWorldObject *self, const Cpp
         s_prot[D]         = old_rot;
 
 #ifndef JPH_DOUBLE_PRECISION
-        JPH::Vec4(b->GetCenterOfMassPosition(), 0.0f).StoreFloat4(reinterpret_cast<JPH::Float4 *>(&s_pos[D]));
+        JPH::Vec4(b->GetCenterOfMassPosition(), 0.0f)
+            .StoreFloat4(reinterpret_cast<JPH::Float4 *>(&s_pos[D]));
 #else
         // Keep scalar path for double precision
         JPH::RVec3 p = b->GetCenterOfMassPosition();
@@ -189,20 +191,21 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
     alignas(MEMORY_ALIGNMENT_SIZE) CppSyncWorkItem worklist[BATCH_SIZE];
     uint32_t work_ptr = 0;
 
+    const JPH::BodyLockInterfaceNoLock *lock_iface =
+        reinterpret_cast<const JPH::BodyLockInterfaceNoLock *>(
+            JPH_PhysicsSystem_GetBodyLockInterfaceNoLock(sys_c));
+
     for (uint32_t i = 0; i < active_count; i++) {
         if (i + 4 < active_count) {
             const void *next_id_ptr = &active_ids[i + 4];
             CULV_PREFETCH(next_id_ptr);
         }
-
-        // [THE FIX] We use the C-API to safely navigate the hidden struct and Jolt's Read Locks.
-        const JPH_Body *opaque_body = JPH_PhysicsSystem_GetBodyPtr(sys_c, active_ids[i]);
-
-        if (UNLIKELY(opaque_body == nullptr)) {
+        // Post-step, no Jolt jobs running — NoLock interface is safe and eliminates
+        // per-body call overhead. Lock interface hoisted once above the loop.
+        const JPH::Body *b = lock_iface->TryGetBody(JPH::BodyID(active_ids[i]));
+        if (UNLIKELY(b == nullptr)) {
             continue;
         }
-
-        const JPH::Body *b = reinterpret_cast<const JPH::Body *>(opaque_body);
 
         uint64_t handle = b->GetUserData();
         auto slot       = (uint32_t)(handle & HANDLE_INDEX_MASK);
