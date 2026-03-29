@@ -78,20 +78,24 @@ init_tracked_controller_settings(TrackedEngineConfig config,
 
     auto *t_ctrl = JPH_TrackedVehicleControllerSettings_Create();
 
-    JPH_VehicleEngineSettings eng;
-    memset(&eng, 0, sizeof(eng));
-    JPH_VehicleEngineSettings_Init(&eng);
+    // JoltC ABI workaround: The C struct is smaller than the internal C++ class.
+    // Allocate a large padded buffer to prevent placement-new stack overflows.
+    uint8_t eng_buf[256];
+    memset(eng_buf, 0, sizeof(eng_buf));
+    JPH_VehicleEngineSettings *eng = (JPH_VehicleEngineSettings *)eng_buf;
+    
+    JPH_VehicleEngineSettings_Init(eng);
 
-    eng.maxTorque = config.torque;
-    eng.maxRPM    = config.max_rpm;
-    eng.minRPM    = config.min_rpm;
+    eng->maxTorque = config.torque;
+    eng->maxRPM    = config.max_rpm;
+    eng->minRPM    = config.min_rpm;
 
     // This COPIES the engine settings into the controller
-    JPH_TrackedVehicleControllerSettings_SetEngine(t_ctrl, &eng); 
+    JPH_TrackedVehicleControllerSettings_SetEngine(t_ctrl, eng); 
 
-    // YOU MUST FREE THE ALLOCATED CURVE NOW!
-    if (eng.normalizedTorque) {
-        JPH_LinearCurve_Destroy((JPH_LinearCurve *)eng.normalizedTorque);
+    // YOU MUST FREE THE ALLOCATED CURVE NOW! The controller made its own copy.
+    if (eng->normalizedTorque) {
+        JPH_LinearCurve_Destroy((JPH_LinearCurve *)eng->normalizedTorque);
     }
 
     auto *trans = JPH_VehicleTransmissionSettings_Create();
@@ -100,11 +104,13 @@ init_tracked_controller_settings(TrackedEngineConfig config,
     float gears[] = {TRACKED_GEAR_RATIO_1, TRACKED_GEAR_RATIO_2, TRACKED_GEAR_RATIO_3,
                      TRACKED_GEAR_RATIO_4};
     JPH_VehicleTransmissionSettings_SetGearRatios(trans, gears, 4);
+    
     float reverse[] = {TRACKED_REVERSE_GEAR_RATIO};
     JPH_VehicleTransmissionSettings_SetReverseGearRatios(trans, reverse, 1);
 
     JPH_TrackedVehicleControllerSettings_SetTransmission(t_ctrl, trans);
     *out_trans = trans;
+    
     return t_ctrl;
 }
 
@@ -185,29 +191,37 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
 
     TrackedEngineConfig eng_cfg = {.torque = max_torque, .max_rpm = max_rpm, .min_rpm = min_rpm};
     JPH_VehicleTransmissionSettings *v_trans = NULL;
+    
     JPH_TrackedVehicleControllerSettings *t_ctrl =
         init_tracked_controller_settings(eng_cfg, &v_trans);
+        
     r.v_ctrl      = (JPH_WheeledVehicleControllerSettings *)t_ctrl;
     r.v_trans_set = v_trans;
 
     for (int t = 0; t < num_tracks; t++) {
-        JPH_VehicleTrackSettings track_set;
-        memset(&track_set, 0, sizeof(track_set));
-        JPH_VehicleTrackSettings_Init(&track_set);
-        track_set.wheels      = tracks[t].indices;
-        track_set.wheelsCount = tracks[t].count;
-        track_set.drivenWheel = tracks[t].driven_idx;
-        JPH_TrackedVehicleControllerSettings_SetTrack(t_ctrl, (uint32_t)t, &track_set);
+        // JoltC ABI Stack Padding
+        uint8_t track_buf[256];
+        memset(track_buf, 0, sizeof(track_buf));
+        JPH_VehicleTrackSettings *track_set = (JPH_VehicleTrackSettings *)track_buf;
+        
+        JPH_VehicleTrackSettings_Init(track_set);
+        track_set->wheels      = tracks[t].indices;
+        track_set->wheelsCount = tracks[t].count;
+        track_set->drivenWheel = tracks[t].driven_idx;
+        JPH_TrackedVehicleControllerSettings_SetTrack(t_ctrl, (uint32_t)t, track_set);
     }
 
-    JPH_VehicleConstraintSettings v_set;
-    memset(&v_set, 0, sizeof(v_set));
-    JPH_VehicleConstraintSettings_Init(&v_set);
-    v_set.wheelsCount = num_wheels;
-    v_set.wheels      = r.w_settings;
-    v_set.controller  = (JPH_VehicleControllerSettings *)t_ctrl;
+    // JoltC ABI Stack Padding for Constraint Settings
+    uint8_t v_set_buf[512];
+    memset(v_set_buf, 0, sizeof(v_set_buf));
+    JPH_VehicleConstraintSettings *v_set = (JPH_VehicleConstraintSettings *)v_set_buf;
+    
+    JPH_VehicleConstraintSettings_Init(v_set);
+    v_set->wheelsCount = num_wheels;
+    v_set->wheels      = r.w_settings;
+    v_set->controller  = (JPH_VehicleControllerSettings *)t_ctrl;
 
-    r.j_veh = JPH_VehicleConstraint_Create(lock.body, &v_set);
+    r.j_veh = JPH_VehicleConstraint_Create(lock.body, v_set);
     if (!r.j_veh) {
         goto jolt_fail;
     }
@@ -290,9 +304,9 @@ PyCFunction_DeclareMethodFromModule Vehicle_set_tank_input(VehicleObject *self,
     float brake = 0.0f;
 
     void *targets[TankInput_COUNT];
-    targets[IDX_TI_LEFT]  = &left;
-    targets[IDX_TI_RIGHT] = &right;
-    targets[IDX_TI_BRAKE] = &brake;
+    targets[IDX_TI_LEFT]  = (void *)&left;
+    targets[IDX_TI_RIGHT] = (void *)&right;
+    targets[IDX_TI_BRAKE] = (void *)&brake;
 
     if (!FastParse_Unified(args, nargs, kwnames, &TankInputParser, targets)) {
         return NULL;
