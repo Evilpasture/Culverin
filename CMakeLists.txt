@@ -275,7 +275,7 @@ python_add_library(_culverin_c MODULE
 include(CheckIPOSupported)
 check_ipo_supported(RESULT ipo_supported OUTPUT error)
 # TURN OFF LTO IF SANITIZERS ARE ON to prevent GitHub Actions OOM / Compiler Segfaults
-if(ipo_supported AND NOT ENABLE_SANITIZER)
+if(ipo_supported)
     message(STATUS "Culverin: LTO/IPO is supported and ENABLED")
     set_property(TARGET _culverin_c PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
     set_property(TARGET ${JOLTC_TARGET} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
