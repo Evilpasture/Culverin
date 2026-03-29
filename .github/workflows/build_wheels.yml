@@ -110,8 +110,8 @@ jobs:
           CIBW_BEFORE_ALL_LINUX: "dnf install -y clang llvm compiler-rt libasan libubsan && pip install ninja"
           
           CIBW_ENVIRONMENT: >
-            CC="clang -fno-sanitize=alignment" 
-            CXX="clang++ -fno-sanitize=alignment" 
+            CC="clang-22 -fno-sanitize=alignment" 
+            CXX="clang++-22 -fno-sanitize=alignment" 
             CMAKE_GENERATOR=Ninja
             ASAN_OPTIONS="detect_leaks=0:detect_odr_violation=0:halt_on_error=1"
             UBSAN_OPTIONS="print_stacktrace=1:halt_on_error=1"
