@@ -358,13 +358,13 @@ static inline CulverinState *get_culverin_state(PyObject *module) {
 CULV_NODISCARD
 CULV_MAYBE_UNUSED
 static inline BodyHandle make_handle(uint32_t slot, uint32_t gen) {
-    return ((uint64_t)gen << 32) | (uint64_t)slot;
+    return ((uint64_t)gen << HANDLE_INDEX_BITS) | (uint64_t)slot;
 }
 CULV_NODISCARD
 CULV_MAYBE_UNUSED
 static inline bool unpack_handle(PhysicsWorldObject *self, BodyHandle h, uint32_t *slot) {
-    *slot        = (uint32_t)(h & 0xFFFFFFFF);
-    uint32_t gen = (uint32_t)(h >> 32);
+    *slot        = (uint32_t)(h & HANDLE_INDEX_MASK);
+    uint32_t gen = (uint32_t)(h >> HANDLE_INDEX_BITS);
 
     if (*slot >= self->slot_capacity || self->slot_capacity == 0) {
         return false;
