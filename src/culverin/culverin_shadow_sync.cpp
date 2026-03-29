@@ -132,55 +132,34 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
     uint64_t start = rdtsc();
 #endif
 
-    if (UNLIKELY(!self)) {
+    if (UNLIKELY(!self || !self->system)) {
         return;
     }
 
     // If the Main Thread is reallocating, DO NOT touch the pointers.
     // The main thread is holding the shadow_lock or about to move buffers.
     if (UNLIKELY(atomic_load_explicit(&self->is_resizing, std::memory_order_acquire))) {
-        return;
+        return; 
     }
 
-    if (UNLIKELY(!self->system)) {
-        return;
-    }
-
-    const auto *sys_c     = self->system;
+    const auto *sys_c = self->system;
     uint32_t active_count = JPH_PhysicsSystem_GetNumActiveBodies(sys_c, JPH_BodyType_Rigid);
 
     if (UNLIKELY(active_count == 0)) {
         return;
     }
 
-    const JPH_BodyID *active_ids =
-        JPH_PhysicsSystem_GetActiveBodiesUnsafe(sys_c, JPH_BodyType_Rigid);
+    const JPH_BodyID *active_ids = JPH_PhysicsSystem_GetActiveBodiesUnsafe(sys_c, JPH_BodyType_Rigid);
     if (UNLIKELY(!active_ids)) {
+        return; 
+    }
+
+
+    if (UNLIKELY(!self->positions || !self->slot_to_dense || !self->generations || !self->slot_states)) {
         return;
     }
 
-    if (UNLIKELY(!self->positions)) {
-        return;
-    }
-    if (UNLIKELY(!self->slot_to_dense)) {
-        return;
-    }
-    if (UNLIKELY(!self->generations)) {
-        return;
-    }
-    if (UNLIKELY(!self->slot_states)) {
-        return;
-    }
-
-    // [OPTIMIZATION]: Bypass C-API and its function call overhead entirely.
-    const auto *sys_cpp = reinterpret_cast<const JPH::PhysicsSystem *>(sys_c);
-    const JPH::BodyLockInterfaceNoLock &lock_interface = sys_cpp->GetBodyLockInterfaceNoLock();
-
-    // [OPTIMIZATION]: Hoist variables to prevent loop-aliasing concerns
-    const uint32_t capacity             = self->slot_capacity;
-    const uint32_t *CULV_RESTRICT s2d   = self->slot_to_dense;
-    const uint32_t *CULV_RESTRICT gens  = self->generations;
-    const uint8_t *CULV_RESTRICT states = self->slot_states;
+    const uint32_t *CULV_RESTRICT s2d = self->slot_to_dense;
 
     // Stack allocated worklist (fits in L1 cache comfortably)
     alignas(MEMORY_ALIGNMENT_SIZE) CppSyncWorkItem worklist[BATCH_SIZE];
@@ -188,43 +167,36 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
 
     for (uint32_t i = 0; i < active_count; i++) {
         if (i + 4 < active_count) {
-            CULV_PREFETCH(&active_ids[i + 4]);
+            const void *next_id_ptr = &active_ids[i + 4];
+            CULV_PREFETCH(next_id_ptr);
         }
 
-        // Extremely fast inlined lookup. No locks, no extern "C" barriers.
-        const JPH::Body *b = lock_interface.TryGetBody(JPH::BodyID(active_ids[i]));
+        // [THE FIX] We use the C-API to safely navigate the hidden struct and Jolt's Read Locks.
+        const JPH_Body *opaque_body = JPH_PhysicsSystem_GetBodyPtr(sys_c, active_ids[i]);
 
-        if (UNLIKELY(b == nullptr)) {
-            continue;
-        }
+        if (LIKELY(opaque_body != nullptr)) {
+            
+            // Now we cast back to the native C++ class so we get ultra-fast SIMD extraction
+            const JPH::Body *b = reinterpret_cast<const JPH::Body *>(opaque_body);
 
-        // Filter & Validate
-        uint64_t handle = b->GetUserData();
-        auto slot       = (uint32_t)(handle & HANDLE_INDEX_MASK);
-        auto gen        = (uint32_t)(handle >> HANDLE_INDEX_BITS);
+            // Filter & Validate
+            uint64_t handle = b->GetUserData();
+            auto slot       = (uint32_t)(handle & HANDLE_INDEX_MASK);
+            auto gen        = (uint32_t)(handle >> HANDLE_INDEX_BITS);
 
-        // [OPTIMIZATION]: Coalesced conditionals to reduce branching overhead.
-        // 1. Check bounds first (The 'Invalid' state)
-        if (UNLIKELY(slot >= capacity)) {
-            continue;
-        }
+            if (LIKELY(slot < self->slot_capacity && self->generations[slot] == gen &&
+                       self->slot_states[slot] == SLOT_ALIVE)) {
 
-        // This hint tells the compiler: "Trust me, slot is < capacity, no range checking needed here"
-        CULV_ASSUME(slot < capacity);
+                worklist[work_ptr].body      = b;
+                worklist[work_ptr].dense_idx = s2d[slot];
+                work_ptr++;
 
-        // 2. Check conditions (The 'Wrong' state)
-        if (gens[slot] != gen || states[slot] != SLOT_ALIVE) {
-            continue;
-        }
-
-        // 3. The Hot Path is now flat and "un-nested"
-        worklist[work_ptr].body      = b;
-        worklist[work_ptr].dense_idx = s2d[slot];
-        work_ptr++;
-
-        if (work_ptr == BATCH_SIZE) {
-            process_full_batch(self, worklist);
-            work_ptr = 0;
+                // --- HOT PATH TRIGGER ---
+                if (work_ptr == BATCH_SIZE) {
+                    process_full_batch(self, worklist);
+                    work_ptr = 0;
+                }
+            }
         }
     }
 
