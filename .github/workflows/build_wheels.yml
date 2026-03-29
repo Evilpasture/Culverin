@@ -98,7 +98,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
 
-      - name: Build and Test
+      - name: Build Wheels with Sanitizers
         run: |
           # Export variables so uv/cmake see them
           export CC=clang-22
@@ -109,19 +109,27 @@ jobs:
           
           # Build the wheel using uv (which uses scikit-build-core)
           uv build --wheel --config-setting=cmake.args="-DENABLE_SANITIZER=ON;-DCMAKE_BUILD_TYPE=RelWithDebInfo;-DDOUBLE_PRECISION=ON"
+      - name: Install and Test
+        run: |
+          # Install the wheel into the system environment (it's a runner, it's fine)
+          uv pip install dist/*.whl --system
           
-          # Install the built wheel to test it
-          uv pip install dist/*.whl
+          # Find the sanitizer library path for LLVM 22
+          # (Standard path for the Clang 22 ASan runtime on Ubuntu)
+          ASAN_RT=$(find /usr/lib/llvm-22 -name "libclang_rt.asan-x86_64.so" | head -n 1)
+          echo "Using ASan Runtime: $ASAN_RT"
           
-          # Run tests with Sanitizer environment
+          # Run tests with the preload
           export ASAN_OPTIONS="detect_leaks=0:detect_odr_violation=0:halt_on_error=1"
           export UBSAN_OPTIONS="print_stacktrace=1:halt_on_error=1"
           
-          # Find and preload the runtimes (Ubuntu paths)
-          ASAN_RT=$(find /usr/lib/llvm-22 -name "libclang_rt.asan-x86_64.so" | head -n 1)
-          if [ -n "$ASAN_RT" ]; then export LD_PRELOAD="$ASAN_RT"; fi
+          if [ -n "$ASAN_RT" ]; then 
+            export LD_PRELOAD="$ASAN_RT"
+          fi
           
-          uv run python tests/test_core.py
+          # Use --system to run against the installed wheel
+          python3 tests/test_core.py
+          python3 tests/benchmark.py --leak
     # Thread sanitizer
   linux_tsan:
     name: Thread Sanitizer Validation
