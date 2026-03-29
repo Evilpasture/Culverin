@@ -79,13 +79,20 @@ init_tracked_controller_settings(TrackedEngineConfig config,
     auto *t_ctrl = JPH_TrackedVehicleControllerSettings_Create();
 
     JPH_VehicleEngineSettings eng;
+    memset(&eng, 0, sizeof(eng));
     JPH_VehicleEngineSettings_Init(&eng);
 
     eng.maxTorque = config.torque;
     eng.maxRPM    = config.max_rpm;
     eng.minRPM    = config.min_rpm;
 
-    JPH_TrackedVehicleControllerSettings_SetEngine(t_ctrl, &eng);
+    // This COPIES the engine settings into the controller
+    JPH_TrackedVehicleControllerSettings_SetEngine(t_ctrl, &eng); 
+
+    // YOU MUST FREE THE ALLOCATED CURVE NOW!
+    if (eng.normalizedTorque) {
+        JPH_LinearCurve_Destroy((JPH_LinearCurve *)eng.normalizedTorque);
+    }
 
     auto *trans = JPH_VehicleTransmissionSettings_Create();
     JPH_VehicleTransmissionSettings_SetMode(trans, JPH_TransmissionMode_Auto);
@@ -185,6 +192,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
 
     for (int t = 0; t < num_tracks; t++) {
         JPH_VehicleTrackSettings track_set;
+        memset(&track_set, 0, sizeof(track_set));
         JPH_VehicleTrackSettings_Init(&track_set);
         track_set.wheels      = tracks[t].indices;
         track_set.wheelsCount = tracks[t].count;
@@ -193,6 +201,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
     }
 
     JPH_VehicleConstraintSettings v_set;
+    memset(&v_set, 0, sizeof(v_set));
     JPH_VehicleConstraintSettings_Init(&v_set);
     v_set.wheelsCount = num_wheels;
     v_set.wheels      = r.w_settings;
