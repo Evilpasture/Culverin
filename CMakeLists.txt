@@ -183,7 +183,7 @@ if(MSVC)
 else() 
     message(STATUS "Culverin: Configuring GNU-like flags...")
 
-    set(FLAGS_DEBUG "-g")
+    set(FLAGS_DEBUG "-g -gcodeview")
     if(CMAKE_C_COMPILER_ID MATCHES "Clang")
         list(APPEND FLAGS_DEBUG "-gcodeview")
     endif()
