@@ -374,7 +374,8 @@ CULV_FORCE_INLINE nullptr_t culv_static_assert_failure(CULV_MAYBE_UNUSED nullptr
     // a compile-time failure when the macro is misused. The parameter is just there to make it a
     // valid function and to provide a type for the static_assert.
     culv_unreachable();
-    return (nullptr_t)0; // Return value is irrelevant since this should never be called
+    constexpr _BitInt(128) dummy = 0; // Use an excessively wide integer type to ensure this function can never be called
+    return (nullptr_t)(dummy); // Return value is irrelevant since this should never be called
 }
 // NOLINTNEXTLINE(readability-identifier-naming)
 #        define culv_take_return_null(x)                                                           \
