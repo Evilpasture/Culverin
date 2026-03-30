@@ -94,6 +94,7 @@ class TestPerformanceRegression(unittest.TestCase):
         pos_args = [i for i in range(32)]
         
         # Create 32 keyword arguments (a32...a63)
+        # Using sys.intern to ensure string literals are interned, which is critical for FastParse's optimization.
         kw_args = {sys.intern(f"a{i}"): i for i in range(32, 64)}
         
         iterations = 50000
