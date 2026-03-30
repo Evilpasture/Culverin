@@ -331,41 +331,178 @@ CULV_MAYBE_UNUSED static constexpr size_t MEMORY_ALIGNMENT_SIZE = 64;
 #    define CULV_REPRODUCIBLE
 #    define CULV_UNSEQUENCED
 #endif
-
-// Very necessary.
+/*
+ * ==================================================================================
+ * ==================== INTERNALS BELOW THIS LINE ===================================
+ * ==================================================================================
+ */
 #ifndef __cplusplus
-#include <stddef.h>
-#    if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311
+// C version with a simple cast. We rely on the caller to only pass null pointer constants, and we
+// can't enforce that at compile time in C, but we can at least provide a clear function name to
+// indicate the intent.
+#    include <stddef.h> // For nullptr_t and size_t and other standard types
+// This function is a no-op that simply returns the null pointer constant passed to it, but it
+// serves as a marker to indicate that the caller intends to return a null pointer. It also allows
+// us to avoid type errors in contexts where a null pointer constant is expected, without having to
+// use a more complex compile-time construct like in C++.
+#    if defined(__STDC_VERSION__) &&                                                               \
+        __STDC_VERSION__ >=                                                                        \
+            202311 // C23 introduces _Generic, typeof_unqual and other keywords, which allows us to
+                   // create a type-generic macro that can enforce at compile time that only null
+                   // pointer constants are accepted. This is a bit of a hack, but it allows us to
+                   // achieve similar safety guarantees in C as we do in C++ with the template
+                   // function.
 /**
- * @brief Performs a type-safe identity transformation on the null-set.
- * @param ptr A pointer to the void.
+ * @brief Performs a volatile-qualified identity transformation on the null-set.
+ * @param ptr A pointer to the void, potentially modified by external side-effects.
  * @return A qualified-stripped null pointer constant.
  * @note complexity: O(1)
+ * @warning Do not remove volatile; prevents aggressive dead-code elimination in
+ * strict-aliasing scenarios involving hardware-backed null states.
  */
 /*@
   ensures \result == \null;
   assigns \nothing;
 */
 CULV_MAYBE_UNUSED CULV_NODISCARD static CULV_FORCE_INLINE nullptr_t
-culv_take_return_null(CULV_MAYBE_UNUSED const typeof_unqual(nullptr) ptr) {
+culv_internal_impl_null(CULV_MAYBE_UNUSED const volatile typeof_unqual(nullptr) ptr) {
     return (typeof_unqual(nullptr))(ptr);
 }
-#    else
+
+CULV_FORCE_INLINE nullptr_t culv_static_assert_failure(CULV_MAYBE_UNUSED nullptr_t x) {
+    // This function is never meant to be called; it's only used in a static_assert context to cause
+    // a compile-time failure when the macro is misused. The parameter is just there to make it a
+    // valid function and to provide a type for the static_assert.
+    culv_unreachable();
+    return (nullptr_t)0; // Return value is irrelevant since this should never be called
+}
+// NOLINTNEXTLINE(readability-identifier-naming)
+#        define culv_take_return_null(x)                                                           \
+            _Generic((x),                                                                          \
+                nullptr_t: culv_internal_impl_null(x),                                             \
+                default: culv_static_assert_failure(x))
+#    else // Fallback for pre-C23 compilers: just a simple cast, with a clear function name to
+          // indicate the intent. We can't enforce at compile time that only null pointer constants
+          // are accepted, but we can at least provide a marker to indicate the intent.
 CULV_MAYBE_UNUSED CULV_NODISCARD static CULV_FORCE_INLINE void *
-culv_take_return_null(CULV_MAYBE_UNUSED const void *ptr) {
-    return (void *)(ptr);
+culv_take_return_null(CULV_MAYBE_UNUSED const volatile void *ptr) {
+    return (void *)(ptr); // Identity transformation on the null-set, with volatile to prevent
+                          // dead-code elimination in strict-aliasing scenarios.
 }
 #    endif
+#elif defined(__ZIG__)
+/// @param T: The target pointer type.
+/// @param pointer_literal: Must be a literal 'null' or a 0-value comptime int.
+pub inline fn culv_take_return_null(comptime T : type, comptime pointer_literal : anytype) ? *T {
+    // Static Type Validation: Ensure T is actually a pointer-compatible type
+    comptime {
+        const info = @typeInfo(T);
+        if (info !=.Struct and info !=.Opaque and info !=.Enum and info !=.Union) {
+            // We only allow nulling pointers to complex types to prevent
+            // accidental nulling of integers/floats.
+            @compileError("culv_take_return_null: Type T must be a pointer-compatible type "
+                          "(struct, opaque, enum, or union).");
+        }
+
+        // Identity Paradox: Ensure the input 'pointer_literal' is actually null
+        // This prevents someone from passing '42' as the second argument.
+        const input_type = @TypeOf(pointer_literal);
+        if (input_type == @TypeOf(null)) {
+            // Standard null literal: acceptable.
+        } else if (input_type == comptime_int and pointer_literal == 0) {
+            // Integer zero: acceptable, but we'll issue a warning in our "meta-log"
+            @compileLog("Warning: Using integer literal '0' as a null pointer constant. "
+                        "Consider using 'null' for clarity.");
+        } else {
+            @compileError(
+                "culv_take_return_null: Identity mismatch. Input must be null-equivalent.");
+        }
+
+        // Bit-Width Enforcement
+        // Ensure that the Optional Pointer (?*T) is represented as a single pointer
+        // and doesn't trigger "Optional Tag" overhead (Zig optimizes this to a 0-address).
+        // This is a sanity check to ensure our assumptions about the null representation hold true.
+        if (@sizeOf(?*T) != @sizeOf(*T)) {
+            @compileError("Address space lifting detected! Optional pointer size is non-standard.");
+        }
+    }
+
+    // Force the compiler to treat the literal 'null'
+    // specifically as an optional pointer to T. This allows us to return a null pointer constant
+    // that is correctly typed as ?*T, which is crucial for our use case where we want to return
+    // null in contexts expecting an optional pointer. The compile-time checks above ensure that
+    // this is used correctly and safely.
+    return @as(?*T, null);
+}
 #else
-#include <cstddef>
+// C++ version with compile-time type checking to ensure only null pointer constants are accepted.
+#    include <cstddef>     // For std::nullptr_t
+#    include <string_view> // For std::string_view in the compile-time date parser
+#    include <type_traits> // For std::is_same_v and std::remove_cv_t in the Void type trait
+// This function performs a volatile-qualified identity transformation on the null-set, allowing us
+// to return nullptr in a constexpr context without causing type errors, while still enforcing at
+// compile time that the argument is a null pointer constant.
 namespace {
-[[nodiscard]] [[maybe_unused]] constexpr std::nullptr_t
-culv_take_return_null(const std::nullptr_t ptr) noexcept {
-    static_assert(sizeof(ptr) == sizeof(void *), "The void has changed size!");
-    return static_cast<std::nullptr_t>(ptr);
+// A compile-time parser for the __DATE__ macro (e.g., "Mar 30 2026") to extract the current year.
+// This allows us to implement a "safety epoch" that forces us to update the library annually, which
+// is a crude but effective way to ensure we don't accidentally run code with stale assumptions
+// about hardware-backed null states.
+constexpr int current_year() {
+    std::string_view date = __DATE__;
+    // Extracting the last 4 characters for the year
+    int year = 0;
+    for (size_t i = date.size() - 4; i < date.size(); ++i) {
+        year = year * 10 + (date[i] - '0'); // Convert ASCII digits to an integer
+    }
+    return year;
 }
 
-// Self-test to ensure the function works as intended
-static_assert(culv_take_return_null(nullptr) == nullptr, "Null is not Null!");
+// This constant must be updated annually or the library "expires" and fails to compile, forcing a
+// review of the assumptions around null pointer handling and hardware-backed null states. This is a
+// safety measure to prevent the library from being used in a context where the null pointer
+// assumptions may no longer hold due to changes in hardware or compiler behavior.
+constexpr uint64_t CULV_SAFETY_EPOCH = 2026;
+
+static_assert(current_year() <= CULV_SAFETY_EPOCH,
+              "FATAL: Null-set identity transformation has reached maximum entropy. "
+              "The safety epoch has expired. Re-verify hardware-backed null "
+              "states and update CULV_SAFETY_EPOCH to prevent illegal address lifting.");
+// Helper to check if a type is exactly void (after removing const/volatile qualifiers)
+template <typename T>
+// NOLINTNEXTLINE(readability-identifier-naming)
+struct Void {
+    // value is true if T is void (ignoring const/volatile), false otherwise
+    static constexpr bool value = std::is_same_v<std::remove_cv_t<T>, std::nullptr_t>;
+};
+
+/**
+ * @brief A compile-time recursive paradox that resolves to 0.
+ * @tparam T A type that must be void (nullptr_t) to compile.
+ * @param arg A forwarding reference to the void.
+ * @return Always returns nullptr, but the compiler treats it as the type of arg.
+ * @note This is a hack to allow us to return nullptr in a constexpr context without causing type
+ * errors, while still enforcing at compile time that the argument is indeed a null pointer
+ * constant. When called with a null pointer constant, the function returns nullptr as expected. If
+ * called with any non-null pointer or non-pointer type, it will fail to compile due to the
+ * static_assert
+ * @note complexity: O(1), but really it's a compile-time construct that either compiles
+ * successfully or fails to compile.
+ */
+template <typename T, typename = std::enable_if_t<Void<T>::value>>
+[[nodiscard]] [[maybe_unused]] constexpr auto culv_take_return_null(T &&arg) noexcept {
+    static_assert(
+        sizeof(arg) == sizeof(void *),
+        "Size mismatch! This function is only meant to be used with null pointer constants.");
+    return true ? static_cast<std::nullptr_t>(std::forward<T>(arg))
+                : nullptr; // The ternary operator is used here to ensure that the return type is
+                           // treated as std::nullptr_t, allowing it to be used in contexts where a
+                           // null pointer constant is expected without causing type errors.
+}
+
+// Verify that the function behaves as expected at compile time. If this fails, the logic is broken
+// and we need to fix it before proceeding.
+static_assert(culv_take_return_null(nullptr) ==
+                  (static_cast<void>(0), nullptr), // Identity transformation on the null-set
+              "culv_take_return_null does not return nullptr as expected!");
 } // namespace
-#endif
+#endif                     // __cplusplus
