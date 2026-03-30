@@ -2087,6 +2087,11 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
     int shape_type         = 0;
     int motion_type        = 2;
 
+    // DECLARE AND INITIALIZE AT THE TOP
+    PosStride *pos_buf                      = nullptr;
+    ShapeParams *size_buf                   = nullptr;
+    JPH_BodyCreationSettings **settings_buf = nullptr;
+
     // Use BatchCreate Group count and schema IDs
     void *targets[BatchCreate_COUNT];
     targets[IDX_BC_POSITIONS] = (void *)&py_positions;
@@ -2115,16 +2120,13 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
     }
 
     // 2. TEMP ALLOCATION
-    PosStride *pos_buf    = CULV_RAW_MALLOC(batch_count * sizeof(PosStride));
-    ShapeParams *size_buf = CULV_RAW_MALLOC(batch_count * sizeof(ShapeParams));
-    auto **settings_buf   = (JPH_BodyCreationSettings **)CULV_RAW_CALLOC(
+    pos_buf      = (PosStride *)CULV_RAW_MALLOC(batch_count * sizeof(PosStride));
+    size_buf     = (ShapeParams *)CULV_RAW_MALLOC(batch_count * sizeof(ShapeParams));
+    settings_buf = (JPH_BodyCreationSettings **)CULV_RAW_CALLOC(
         batch_count, sizeof(JPH_BodyCreationSettings *));
 
     if (!pos_buf || !size_buf || !settings_buf) {
-        CULV_RAW_FREE(pos_buf);
-        CULV_RAW_FREE(size_buf);
-        CULV_RAW_FREE((void *)settings_buf);
-        return PyErr_NoMemory();
+        goto fail_oom;
     }
 
     // 3. PARSE INTO C BUFFERS (GIL HELD)
@@ -2158,8 +2160,8 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
     SHADOW_UNLOCK(&self->shadow_lock);
     Py_END_ALLOW_THREADS
 
-        // 5. COMMIT PHASE (SHADOW LOCK)
-        SHADOW_LOCK(&self->shadow_lock);
+    // 5. COMMIT PHASE (SHADOW LOCK)
+    SHADOW_LOCK(&self->shadow_lock);
 
     BLOCK_UNTIL_NOT_STEPPING(self);
 
@@ -2178,7 +2180,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
         void *new_q = CULV_RAW_REALLOC(self->command_queue, needed_cmds * sizeof(PhysicsCommand));
         if (!new_q) {
             SHADOW_UNLOCK(&self->shadow_lock);
-            goto fail;
+            goto fail_oom;
         }
         self->command_queue    = (PhysicsCommand *)new_q;
         self->command_capacity = (uint32_t)needed_cmds;
@@ -2244,15 +2246,23 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
     CULV_RAW_FREE((void *)settings_buf);
     return result_list;
 
+fail_oom:
+    PyErr_NoMemory();
 fail:
-    for (Py_ssize_t i = 0; i < batch_count; i++) {
-        if (settings_buf[i]) {
-            JPH_BodyCreationSettings_Destroy(settings_buf[i]);
+    if (settings_buf) {
+        for (Py_ssize_t i = 0; i < batch_count; i++) {
+            if (settings_buf[i]) {
+                JPH_BodyCreationSettings_Destroy(settings_buf[i]);
+            }
         }
+        CULV_RAW_FREE((void *)settings_buf);
     }
-    CULV_RAW_FREE(pos_buf);
-    CULV_RAW_FREE(size_buf);
-    CULV_RAW_FREE((void *)settings_buf);
+    if (pos_buf) {
+        CULV_RAW_FREE(pos_buf);
+    }
+    if (size_buf) {
+        CULV_RAW_FREE(size_buf);
+    }
     return nullptr;
 }
 
