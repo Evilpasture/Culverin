@@ -252,7 +252,6 @@ static inline bool fp_parse_vector(PyObject *const *CULV_RESTRICT args, Py_ssize
 
         // O(1) Bitwise check. If tg_mask is 0, this is naturally skipped.
         if (UNLIKELY(tg_mask & (1ULL << i))) {
-            const FastArgSpec *spec = &specs[i];
             if (UNLIKELY(!Py_IS_TYPE(val, spec->type_guard) && 
                          !PyObject_TypeCheck(val, spec->type_guard))) {
                 return fp_report_type_error(fp, i, val);
@@ -315,7 +314,6 @@ static inline bool fp_parse_vector(PyObject *const *CULV_RESTRICT args, Py_ssize
 
             // Type Guard Validation
             if (UNLIKELY(tg_mask & (1ULL << idx))) {
-                const FastArgSpec *spec = &specs[idx];
                 if (UNLIKELY(!Py_IS_TYPE(val, spec->type_guard) && 
                              !PyObject_TypeCheck(val, spec->type_guard))) {
                     return fp_report_type_error(fp, idx, val);
