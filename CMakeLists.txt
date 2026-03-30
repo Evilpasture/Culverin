@@ -314,9 +314,12 @@ if(MSVC)
     if (CMAKE_C_COMPILER_ID MATCHES "Clang")
         # --- LTO LOGIC ---
         if (NOT ENABLE_SANITIZER AND NOT ENABLE_THREAD_SANITIZER)
-            # Use the direct linker flag for lld-link
+            # The compiler still wants -flto=thin
             set(LTO_COMPILE_FLAG "-flto=thin")
-            set(LTO_LINK_FLAG "/opt:lldlto=thin")
+            
+            # The linker (lld-link) wants level 2 for ThinLTO
+            # Instead of /opt:lldlto=thin, use:
+            set(LTO_LINK_FLAG "/opt:lldlto=2")
 
             target_compile_options(_culverin_c PRIVATE ${LTO_COMPILE_FLAG})
             target_link_options(_culverin_c PRIVATE ${LTO_LINK_FLAG})
