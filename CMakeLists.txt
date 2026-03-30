@@ -314,10 +314,14 @@ if(MSVC)
     if (CMAKE_C_COMPILER_ID MATCHES "Clang")
         # --- LTO LOGIC ---
         if (NOT ENABLE_SANITIZER AND NOT ENABLE_THREAD_SANITIZER)
-            set(LTO_FLAG "/clang:-flto=thin")
-            target_compile_options(_culverin_c PRIVATE ${LTO_FLAG})
-            target_link_options(_culverin_c PRIVATE ${LTO_FLAG})
-            target_compile_options(${JOLTC_TARGET} PRIVATE ${LTO_FLAG})
+            # Use the direct linker flag for lld-link
+            set(LTO_COMPILE_FLAG "/clang:-flto=thin")
+            set(LTO_LINK_FLAG "/lldlto:thin")
+
+            target_compile_options(_culverin_c PRIVATE ${LTO_COMPILE_FLAG})
+            target_link_options(_culverin_c PRIVATE ${LTO_LINK_FLAG})
+            
+            target_compile_options(${JOLTC_TARGET} PRIVATE ${LTO_COMPILE_FLAG})
         endif()
     endif()
 
