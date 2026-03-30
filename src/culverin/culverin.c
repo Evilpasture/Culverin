@@ -14,6 +14,7 @@
 #include "culverin_ragdoll.h"
 #include "culverin_shadow_sync.h"
 #include "culverin_vehicle.h"
+#include "culverin_fast_build.h"
 
 // ============================================================================
 // Semantic Constants - Magic Number Replacements
@@ -731,14 +732,12 @@ PyCFunction_DeclareMethod PhysicsWorld_get_body_stats(PhysicsWorldObject *self,
     SHADOW_UNLOCK(&self->shadow_lock);
 
     // 3. RESULT CONSTRUCTION
-    // Use Py_BuildValue to create the nested structure ((x,y,z), (x,y,z,w),
-    // (vx,vy,vz)) JPH_REAL_STRING is "d" or "f" depending on double-precision
-    // builds
-    return Py_BuildValue("( " JPH_REAL_STRING JPH_REAL_STRING JPH_REAL_STRING ") " // Position
-                         "(dddd) "                                                 // Rotation
-                         "(ddd)",                                                  // Velocity
-                         p.x, p.y, p.z, (double)r.x, (double)r.y, (double)r.z, (double)r.w,
-                         (double)v.x, (double)v.y, (double)v.z);
+    
+    return FastBuild_Tuple(
+        FastBuild_Tuple(p.x, p.y, p.z),
+        FastBuild_Tuple(r.x, r.y, r.z, r.w),
+        FastBuild_Tuple(v.x, v.y, v.z)
+    );
 }
 PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self,
                                                       PyObject *const *args, size_t nargsf,
