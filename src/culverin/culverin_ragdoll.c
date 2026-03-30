@@ -1,5 +1,6 @@
 #include "culverin_ragdoll.h"
 #include "culverin_arg_indices.h"
+#include "culverin_fast_build.h"
 #include "culverin_math.h"
 #include "culverin_physics_world_internal.h"
 
@@ -36,8 +37,9 @@ PyCFunction_DeclareMethodFromModule Skeleton_add_joint(SkeletonObject *self, PyO
 
     // 3. Logic
     const char *name = PyUnicode_AsUTF8(name_obj);
-    if (!name)
-        {return nullptr;}
+    if (!name) {
+        return nullptr;
+    }
 
     int idx = (int)JPH_Skeleton_AddJoint2(self->skeleton, name, parent_idx);
     return PyLong_FromLong(idx);
@@ -58,8 +60,9 @@ PyCFunction_DeclareMethodFromModule Skeleton_get_joint_index(SkeletonObject *sel
 
     // 3. Logic
     const char *name = PyUnicode_AsUTF8(name_obj);
-    if (!name)
-        {return nullptr;}
+    if (!name) {
+        return nullptr;
+    }
 
     int idx = JPH_Skeleton_GetJointIndex(self->skeleton, name);
     return PyLong_FromLong(idx);
@@ -167,8 +170,9 @@ PyCFunction_DeclareMethodFromModule RagdollSettings_add_part(RagdollSettingsObje
     NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
     Py_END_ALLOW_THREADS;
 
-    if (!shape)
-        {return PyErr_Format(PyExc_ValueError, "Invalid shape configuration");}
+    if (!shape) {
+        return PyErr_Format(PyExc_ValueError, "Invalid shape configuration");
+    }
 
     // 4. Validation & Resizing
     JPH_Skeleton *skel = (JPH_Skeleton *)JPH_RagdollSettings_GetSkeleton(self->settings);
@@ -489,6 +493,9 @@ PyCFunction_DeclareMethodFromModule Ragdoll_get_debug_info(RagdollObject *self,
 
     int body_count = JPH_Ragdoll_GetBodyCount(self->ragdoll);
     PyObject *list = PyList_New(body_count);
+    if (!list) {
+        return nullptr;
+    }
 
     JPH_BodyInterface *bi = self->world->body_interface;
 
@@ -504,11 +511,16 @@ PyCFunction_DeclareMethodFromModule Ragdoll_get_debug_info(RagdollObject *self,
         JPH_BodyInterface_GetRotation(bi, bid, rot);
         JPH_BodyInterface_GetLinearVelocity(bi, bid, vel);
 
-        PyObject *dict = PyDict_New();
-        PyDict_SetItemString(dict, "index", PyLong_FromLong(i));
-        PyDict_SetItemString(dict, "pos", Py_BuildValue("(ddd)", pos->x, pos->y, pos->z));
-        PyDict_SetItemString(
-            dict, "vel", Py_BuildValue("(ddd)", (double)vel->x, (double)vel->y, (double)vel->z));
+        // Build the dictionary using FastBuild
+        // Format: "index", i, "pos", (x,y,z), "vel", (vx,vy,vz)
+        PyObject *dict = FastBuild_Dict("index", i, "pos", FastBuild_Tuple(pos->x, pos->y, pos->z),
+                                        "vel", FastBuild_Tuple(vel->x, vel->y, vel->z));
+
+        if (!dict) {
+            Py_DECREF(list);
+            SHADOW_UNLOCK(&self->world->shadow_lock);
+            return nullptr;
+        }
 
         PyList_SET_ITEM(list, i, dict);
     }

@@ -1,6 +1,7 @@
 #include "culverin_character.h"
 #include "culverin.h"
 #include "culverin_arg_indices.h"
+#include "culverin_fast_build.h"
 #include "culverin_filters.h"
 #include "culverin_parsers.h"
 #include "culverin_physics_world_internal.h"
@@ -600,22 +601,13 @@ PyCFunction_DeclareMethodFromModule Character_get_render_transform(CharacterObje
     rz *= inv_len;
     rw *= inv_len;
 
-    // --- 4. Optimized Return (Manual Tuple Creation) ---
-    // Instead of Py_BuildValue, we manually build the nested tuples.
-    // This is significantly faster as it avoids format string parsing.
-    PyObject *pos_tuple =
-        PyTuple_Pack(3, PyFloat_FromDouble(px), PyFloat_FromDouble(py), PyFloat_FromDouble(pz));
-    PyObject *rot_tuple = PyTuple_Pack(4, PyFloat_FromDouble(rx), PyFloat_FromDouble(ry),
-                                       PyFloat_FromDouble(rz), PyFloat_FromDouble(rw));
-
-    PyObject *result = PyTuple_Pack(2, pos_tuple, rot_tuple);
-
-    // PyTuple_Pack increments refs for items, but the PyFloat_FromDouble
-    // calls created new refs. We must decref the temporaries.
-    Py_DECREF(pos_tuple);
-    Py_DECREF(rot_tuple);
-
-    return result;
+    // --- 4. Optimized Return (Using FastBuild) ---
+    // The macro handles the creation of the underlying PyFloat objects 
+    // and the packing into tuples automatically.
+    return FastBuild_Tuple(
+        FastBuild_Tuple(px, py, pz),
+        FastBuild_Tuple(rx, ry, rz, rw)
+    );
 }
 
 PyCFunction_DeclareMethodFromModule Character_is_grounded(CharacterObject *self,

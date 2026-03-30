@@ -1,6 +1,7 @@
 #include "culverin_query_methods.h"
 #include "culverin_arg_indices.h"
 #include "culverin_compiler_specifics.h"
+#include "culverin_fast_build.h"
 #include "culverin_math.h"
 #include "culverin_parsers.h"
 
@@ -440,12 +441,20 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast(PhysicsWorldObject *sel
 
     if (slot < self->slot_capacity && self->generations[slot] == gen &&
         self->slot_states[slot] == SLOT_ALIVE) {
-        result = Py_BuildValue("Kf(fff)", hit_handle, (double)hit_fraction, (double)normal.x,
-                               (double)normal.y, (double)normal.z);
+
+        // Use FastBuild to construct the tuple (handle, fraction, (nx, ny, nz))
+        result = FastBuild_Tuple(hit_handle, hit_fraction,
+                                 FastBuild_Tuple(normal.x, normal.y, normal.z));
     }
 
     SHADOW_UNLOCK(&self->shadow_lock);
-    return result ? result : Py_None;
+
+    // result will be nullptr if the tuple allocation failed (Python exception set),
+    // or a valid tuple if successful. If the handle check failed, result remains nullptr.
+    if (!result) {
+        return PyErr_Occurred() ? nullptr : Py_None;
+    }
+    return result;
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
@@ -743,7 +752,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_shapecast(PhysicsWorldObject *s
     end_query_scope(self);
     Py_END_ALLOW_THREADS
 
-        // 6. RESULT CONSTRUCTION
+        // 6. RESULT CONSTRUCTION (Refactored to FastBuild)
         if (!ctx.has_hit || hit_handle == 0) {
         Py_RETURN_NONE;
     }
@@ -771,12 +780,21 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_shapecast(PhysicsWorldObject *s
     if (slot < self->slot_capacity && self->generations[slot] == gen &&
         self->slot_states[slot] == SLOT_ALIVE) {
 
+        // Construct the tuple (handle, fraction, (px, py, pz), (nx, ny, nz))
+        // FastBuild automatically handles the sub-tuple nesting and
+        // type dispatching for the float/uint64 values.
         result =
-            Py_BuildValue("Kd(ddd)(ddd)", hit_handle, (double)ctx.hit.fraction,
-                          (double)ctx.hit.contactPointOn2.x, (double)ctx.hit.contactPointOn2.y,
-                          (double)ctx.hit.contactPointOn2.z, (double)nx, (double)ny, (double)nz);
+            FastBuild_Tuple(hit_handle, ctx.hit.fraction,
+                            FastBuild_Tuple(ctx.hit.contactPointOn2.x, ctx.hit.contactPointOn2.y,
+                                            ctx.hit.contactPointOn2.z),
+                            FastBuild_Tuple(nx, ny, nz));
     }
 
     SHADOW_UNLOCK(&self->shadow_lock);
-    return result ? result : Py_None;
+
+    // result will be nullptr if allocation failed, or a valid tuple object.
+    if (!result) {
+        return PyErr_Occurred() ? nullptr : Py_None;
+    }
+    return result;
 }
