@@ -110,12 +110,12 @@ typedef CONDITION_VARIABLE NativeCond;
 #    include <pthread.h>
 typedef pthread_mutex_t NativeMutex;
 typedef pthread_cond_t NativeCond;
-#    define INIT_NATIVE_MUTEX(m) pthread_mutex_init(&(m), NULL)
+#    define INIT_NATIVE_MUTEX(m) pthread_mutex_init(&(m), nullptr)
 #    define FREE_NATIVE_MUTEX(m) pthread_mutex_destroy(&(m))
 #    define NATIVE_MUTEX_LOCK(m) pthread_mutex_lock(&(m))
 #    define NATIVE_MUTEX_UNLOCK(m) pthread_mutex_unlock(&(m))
 
-#    define INIT_NATIVE_COND(c) pthread_cond_init(&(c), NULL)
+#    define INIT_NATIVE_COND(c) pthread_cond_init(&(c), nullptr)
 #    define FREE_NATIVE_COND(c) pthread_cond_destroy(&(c))
 #    define NATIVE_COND_WAIT(c, m) pthread_cond_wait(&(c), &(m))
 #    define NATIVE_COND_BROADCAST(c) pthread_cond_broadcast(&(c))
@@ -150,7 +150,7 @@ typedef PyThread_type_lock ShadowMutex;
         do {                                                                                       \
             if (m)                                                                                 \
                 PyThread_free_lock(m);                                                             \
-            (m) = NULL;                                                                            \
+            (m) = nullptr;                                                                            \
         } while (0)
 #endif
 

@@ -129,6 +129,7 @@ typedef struct {
     size_t count;
     size_t table_mask;
     uint64_t required_mask;
+    uint64_t type_guard_mask;
 } FastParser;
 
 /** --- 2. CONVERTER DISPATCH (Header-only for Inlining) --- **/
@@ -232,9 +233,10 @@ static inline size_t fp_hash_ptr(PyObject *ptr, size_t mask) {
 }
 
 CULV_NODISCARD
-static inline bool fp_parse_vector(PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames,
-                                   const FastParser *fp, void **targets) {
+static inline bool fp_parse_vector(PyObject *const *CULV_RESTRICT args, Py_ssize_t nargs, PyObject *CULV_RESTRICT kwnames,
+                                   const FastParser *CULV_RESTRICT fp, void *CULV_RESTRICT *CULV_RESTRICT targets) {
     uint64_t provided_mask   = 0;
+    const uint64_t tg_mask   = fp->type_guard_mask; // Load once to register
     const size_t count       = fp->count;
     const FastArgSpec *specs = fp->specs;
 
@@ -248,8 +250,9 @@ static inline bool fp_parse_vector(PyObject *const *args, Py_ssize_t nargs, PyOb
         PyObject *val = args[i];
         const FastArgSpec *spec = &specs[i];
 
-        // Type Guard: Fast exact match first, then Subclass check
-        if (spec->type_guard) {
+        // O(1) Bitwise check. If tg_mask is 0, this is naturally skipped.
+        if (UNLIKELY(tg_mask & (1ULL << i))) {
+            const FastArgSpec *spec = &specs[i];
             if (UNLIKELY(!Py_IS_TYPE(val, spec->type_guard) && 
                          !PyObject_TypeCheck(val, spec->type_guard))) {
                 return fp_report_type_error(fp, i, val);
@@ -310,7 +313,9 @@ static inline bool fp_parse_vector(PyObject *const *args, Py_ssize_t nargs, PyOb
             PyObject *val = kw_vals[i];
             const FastArgSpec *spec = &specs[idx];
 
-            if (spec->type_guard) {
+            // Type Guard Validation
+            if (UNLIKELY(tg_mask & (1ULL << idx))) {
+                const FastArgSpec *spec = &specs[idx];
                 if (UNLIKELY(!Py_IS_TYPE(val, spec->type_guard) && 
                              !PyObject_TypeCheck(val, spec->type_guard))) {
                     return fp_report_type_error(fp, idx, val);

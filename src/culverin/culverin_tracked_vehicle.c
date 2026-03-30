@@ -40,7 +40,7 @@ static constexpr float TRACKED_THROTTLE_KICKSTART_THRESHOLD = 0.01f;
 static JPH_WheelSettings *create_track_wheel(PyObject *w_dict) {
     Vec3f pos;
     if (!parse_py_vec3(PyDict_GetItemString(w_dict, "pos"), &pos)) {
-        return NULL;
+        return nullptr;
     }
 
     float radius = get_py_float_attr(w_dict, "radius", TRACKED_WHEEL_RADIUS_DEFAULT);
@@ -108,8 +108,8 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
                                                                         PyObject *kwnames) {
     // --- 1. FAST ARGUMENT PARSING ---
     uint64_t chassis_h  = 0;
-    PyObject *py_wheels = NULL;
-    PyObject *py_tracks = NULL;
+    PyObject *py_wheels = nullptr;
+    PyObject *py_tracks = nullptr;
     float max_torque    = TRACKED_ENGINE_MAX_TORQUE_DEFAULT;
     float max_rpm       = TRACKED_ENGINE_MAX_RPM_DEFAULT;
     float min_rpm       = TRACKED_ENGINE_MIN_RPM_DEFAULT;
@@ -122,7 +122,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
     targets[IDX_CT_RPM]     = (void *)&max_rpm;
 
     if (!FastParse_Unified(args, nargs, kwnames, &CreateTrackedParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // --- 2. RESOLVE CHASSIS (Requires GIL & Shadow Lock) ---
@@ -162,7 +162,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
 
     // --- 4. JOLT COMMIT (No GIL) ---
     bool jolt_locked     = false;
-    PyThreadState *_save = NULL;
+    PyThreadState *_save = nullptr;
     Py_UNBLOCK_THREADS;
 
     NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
@@ -177,7 +177,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
     }
 
     TrackedEngineConfig eng_cfg = {.torque = max_torque, .max_rpm = max_rpm, .min_rpm = min_rpm};
-    JPH_VehicleTransmissionSettings *v_trans = NULL;
+    JPH_VehicleTransmissionSettings *v_trans = nullptr;
     JPH_TrackedVehicleControllerSettings *t_ctrl =
         init_tracked_controller_settings(eng_cfg, &v_trans);
     r.v_ctrl      = (JPH_WheeledVehicleControllerSettings *)t_ctrl;
@@ -232,7 +232,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
         SHADOW_LOCK(&self->shadow_lock);
         cleanup_vehicle_resources(&r, num_wheels, self);
         SHADOW_UNLOCK(&self->shadow_lock);
-        return NULL;
+        return nullptr;
     }
 
     obj->vehicle               = r.j_veh;
@@ -243,7 +243,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
     obj->controller_settings   = (JPH_VehicleControllerSettings *)t_ctrl;
     obj->transmission_settings = r.v_trans_set;
     obj->friction_curve        = r.f_curve;
-    obj->torque_curve          = NULL;
+    obj->torque_curve          = nullptr;
 
     Py_INCREF(self);
     PyObject_GC_Track((PyObject *)obj);
@@ -286,7 +286,7 @@ PyCFunction_DeclareMethodFromModule Vehicle_set_tank_input(VehicleObject *self,
     targets[IDX_TI_BRAKE] = (void *)&brake;
 
     if (!FastParse_Unified(args, nargs, kwnames, &TankInputParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // Safety check outside lock

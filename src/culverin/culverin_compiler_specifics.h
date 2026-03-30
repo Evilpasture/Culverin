@@ -3,7 +3,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-// Comment this line out to disable all debug prints
 // #define CULVERIN_DEBUG
 
 // --- Compiler Hints ---
@@ -43,12 +42,12 @@ static inline void culv_unreachable(void) {
 #endif
 }
 
-#define CULVERIN_PROFILE_SYNC
+// #define CULVERIN_PROFILE_SYNC
 
 #ifdef CULVERIN_PROFILE_SYNC
-#   include <stdio.h>
-#   include <stdint.h>
-#   include <inttypes.h>
+#    include <inttypes.h>
+#    include <stdint.h>
+#    include <stdio.h>
 
 /* ── Platform counter ───────────────────────────────────────────────────────
  *
@@ -64,12 +63,13 @@ static inline void culv_unreachable(void) {
  * MSVC/x86: __rdtsc() + _mm_lfence() standing in for cpuid.
  * ────────────────────────────────────────────────────────────────────────── */
 
-#if defined(__aarch64__) || defined(__arm64__)
+#    if defined(__aarch64__) || defined(__arm64__)
 
 static int culv_use_pmccntr = -1; /* -1 = uninitialised */
 
 static inline void culv_probe_pmu(void) {
-    if (culv_use_pmccntr != -1) return;
+    if (culv_use_pmccntr != -1)
+        return;
     uint64_t val = 0;
     /* PMUSERENR_EL0 bit 0 grants user access; a SIGILL here means denied */
     __asm__ __volatile__("mrs %0, pmccntr_el0" : "=r"(val));
@@ -77,15 +77,20 @@ static inline void culv_probe_pmu(void) {
 }
 
 /* Call once before profiling; installs SIGILL handler to detect PMU access */
-#   include <signal.h>
-#   include <setjmp.h>
+#        include <setjmp.h>
+#        include <signal.h>
+
 static volatile sig_atomic_t culv_pmu_fault;
 static jmp_buf culv_pmu_jmp;
-static void culv_pmu_sigill(int sig) { (void)sig; culv_pmu_fault = 1; longjmp(culv_pmu_jmp, 1); }
+static void culv_pmu_sigill(int sig) {
+    (void)sig;
+    culv_pmu_fault = 1;
+    longjmp(culv_pmu_jmp, 1);
+}
 
 static inline void culv_init_counters(void) {
     struct sigaction sa = {0}, old;
-    sa.sa_handler = culv_pmu_sigill;
+    sa.sa_handler       = culv_pmu_sigill;
     sigaction(SIGILL, &sa, &old);
     culv_pmu_fault = 0;
     if (setjmp(culv_pmu_jmp) == 0) {
@@ -103,15 +108,13 @@ static inline void culv_init_counters(void) {
 static inline uint64_t culv_read_start(void) {
     uint64_t val;
     if (culv_use_pmccntr) {
-        __asm__ __volatile__(
-            "isb\n\t"
-            "mrs %0, pmccntr_el0"
-            : "=r"(val) :: "memory");
+        __asm__ __volatile__("isb\n\t"
+                             "mrs %0, pmccntr_el0"
+                             : "=r"(val)::"memory");
     } else {
-        __asm__ __volatile__(
-            "isb\n\t"
-            "mrs %0, cntvct_el0"
-            : "=r"(val) :: "memory");
+        __asm__ __volatile__("isb\n\t"
+                             "mrs %0, cntvct_el0"
+                             : "=r"(val)::"memory");
     }
     return val;
 }
@@ -119,24 +122,22 @@ static inline uint64_t culv_read_start(void) {
 static inline uint64_t culv_read_end(void) {
     uint64_t val;
     if (culv_use_pmccntr) {
-        __asm__ __volatile__(
-            "mrs %0, pmccntr_el0\n\t"
-            "isb"
-            : "=r"(val) :: "memory");
+        __asm__ __volatile__("mrs %0, pmccntr_el0\n\t"
+                             "isb"
+                             : "=r"(val)::"memory");
     } else {
-        __asm__ __volatile__(
-            "mrs %0, cntvct_el0\n\t"
-            "isb"
-            : "=r"(val) :: "memory");
+        __asm__ __volatile__("mrs %0, cntvct_el0\n\t"
+                             "isb"
+                             : "=r"(val)::"memory");
     }
     return val;
 }
 
-#   define CULV_INIT_PROFILER() culv_init_counters()
+#        define CULV_INIT_PROFILER() culv_init_counters()
 
-#elif defined(_MSC_VER)
+#    elif defined(_MSC_VER)
 
-#   include <intrin.h>
+#        include <intrin.h>
 
 static inline uint64_t culv_read_start(void) {
     _mm_lfence();
@@ -150,39 +151,37 @@ static inline uint64_t culv_read_end(void) {
     _mm_lfence();
     return v;
 }
-#   define CULV_INIT_PROFILER() ((void)0)
+#        define CULV_INIT_PROFILER() ((void)0)
 
-#else /* GCC/Clang x86-64 */
+#    else /* GCC/Clang x86-64 */
 
 static inline uint64_t culv_read_start(void) {
     uint32_t lo, hi;
     /* cpuid is the only reliable full serialising instruction on x86 */
-    __asm__ __volatile__(
-        "cpuid\n\t"
-        "rdtsc"
-        : "=a"(lo), "=d"(hi)
-        : "a"(0)
-        : "%rbx", "%rcx", "memory");
+    __asm__ __volatile__("cpuid\n\t"
+                         "rdtsc"
+                         : "=a"(lo), "=d"(hi)
+                         : "a"(0)
+                         : "%rbx", "%rcx", "memory");
     return ((uint64_t)hi << 32) | lo;
 }
 
 static inline uint64_t culv_read_end(void) {
     uint32_t lo, hi;
     uint32_t aux; /* rdtscp writes TSC_AUX (CPU id) into ecx — must consume it */
-    __asm__ __volatile__(
-        "rdtscp\n\t"
-        "mov %%eax, %0\n\t"
-        "mov %%edx, %1\n\t"
-        "mov %%ecx, %2\n\t"
-        "cpuid"                       /* fence: stops the block after leaking in */
-        : "=r"(lo), "=r"(hi), "=r"(aux)
-        :
-        : "%rax", "%rbx", "%rcx", "%rdx", "memory");
+    __asm__ __volatile__("rdtscp\n\t"
+                         "mov %%eax, %0\n\t"
+                         "mov %%edx, %1\n\t"
+                         "mov %%ecx, %2\n\t"
+                         "cpuid" /* fence: stops the block after leaking in */
+                         : "=r"(lo), "=r"(hi), "=r"(aux)
+                         :
+                         : "%rax", "%rbx", "%rcx", "%rdx", "memory");
     return ((uint64_t)hi << 32) | lo;
 }
-#   define CULV_INIT_PROFILER() ((void)0)
+#        define CULV_INIT_PROFILER() ((void)0)
 
-#endif /* platform */
+#    endif /* platform */
 
 /* ── Public macros ──────────────────────────────────────────────────────────
  *
@@ -197,30 +196,28 @@ static inline uint64_t culv_read_end(void) {
  * `count` is the body/item count for cyc/body output; pass 0 to suppress.
  * ────────────────────────────────────────────────────────────────────────── */
 
-#   define CULV_PROFILE_BEGIN(tag) \
-        uint64_t _culv_start_##tag = culv_read_start()
+#    define CULV_PROFILE_BEGIN(tag) uint64_t _culv_start_##tag = culv_read_start()
 
-#   define CULV_PROFILE_END(tag, label, count) \
-        do { \
-            uint64_t _culv_end = culv_read_end(); \
-            uint64_t _culv_elapsed = _culv_end - _culv_start_##tag; \
-            unsigned int _culv_c = (unsigned int)(count); \
-            if (_culv_c > 0) { \
-                fprintf(stderr, "[culverin] %s: %" PRIu64 " cycles for %u items" \
-                                " (%.1f cyc/item)\n", \
-                        label, _culv_elapsed, _culv_c, \
-                        (double)_culv_elapsed / _culv_c); \
-            } else { \
-                fprintf(stderr, "[culverin] %s: %" PRIu64 " cycles\n", \
-                        label, _culv_elapsed); \
-            } \
+#    define CULV_PROFILE_END(tag, label, count)                                                    \
+        do {                                                                                       \
+            uint64_t _culv_end     = culv_read_end();                                              \
+            uint64_t _culv_elapsed = _culv_end - _culv_start_##tag;                                \
+            unsigned int _culv_c   = (unsigned int)(count);                                        \
+            if (_culv_c > 0) {                                                                     \
+                fprintf(stderr,                                                                    \
+                        "[culverin] %s: %" PRIu64 " cycles for %u items"                           \
+                        " (%.1f cyc/item)\n",                                                      \
+                        label, _culv_elapsed, _culv_c, (double)_culv_elapsed / _culv_c);           \
+            } else {                                                                               \
+                fprintf(stderr, "[culverin] %s: %" PRIu64 " cycles\n", label, _culv_elapsed);      \
+            }                                                                                      \
         } while (0)
 
 #else /* CULVERIN_PROFILE_SYNC not defined */
 
-#   define CULV_INIT_PROFILER()           ((void)0)
-#   define CULV_PROFILE_BEGIN(tag)        ((void)0)
-#   define CULV_PROFILE_END(tag, label, count) ((void)0)
+#    define CULV_INIT_PROFILER() ((void)0)
+#    define CULV_PROFILE_BEGIN(tag) ((void)0)
+#    define CULV_PROFILE_END(tag, label, count) ((void)0)
 
 #endif /* CULVERIN_PROFILE_SYNC */
 
@@ -266,28 +263,36 @@ static inline uint64_t culv_read_end(void) {
 // Tells the compiler an expression is guaranteed to be true, allowing it to
 // optimize away range checks and improve loop unrolling.
 #if defined(CULVERIN_DEBUG)
-#  define CULV_ASSUME(x) do { if (!(x)) { \
-       fprintf(stderr, "Assumption failed: %s at %s:%d\n", #x, __FILE__, __LINE__); \
-       abort(); } } while(0)
+#    define CULV_ASSUME(x)                                                                         \
+        do {                                                                                       \
+            if (!(x)) {                                                                            \
+                fprintf(stderr, "Assumption failed: %s at %s:%d\n", #x, __FILE__, __LINE__);       \
+                abort();                                                                           \
+            }                                                                                      \
+        } while (0)
 #elif defined(__clang__) || defined(__GNUC__)
-#  define CULV_ASSUME(x) do { if (!(x)) __builtin_unreachable(); } while (0)
+#    define CULV_ASSUME(x)                                                                         \
+        do {                                                                                       \
+            if (!(x))                                                                              \
+                __builtin_unreachable();                                                           \
+        } while (0)
 #elif defined(_MSC_VER)
-#  define CULV_ASSUME(x) __assume(x)
+#    define CULV_ASSUME(x) __assume(x)
 #else
-#  define CULV_ASSUME(x) ((void)0)
+#    define CULV_ASSUME(x) ((void)0)
 #endif
 
 // Force TSan to ignore a specific function
 #if defined(__has_feature)
-#  if __has_feature(thread_sanitizer)
-#    define CULV_NO_TSAN __attribute__((no_sanitize("thread")))
-#  else
-#    define CULV_NO_TSAN
-#  endif
+#    if __has_feature(thread_sanitizer)
+#        define CULV_NO_TSAN __attribute__((no_sanitize("thread")))
+#    else
+#        define CULV_NO_TSAN
+#    endif
 #elif defined(__SANITIZE_THREAD__)
-#  define CULV_NO_TSAN __attribute__((no_sanitize("thread")))
+#    define CULV_NO_TSAN __attribute__((no_sanitize("thread")))
 #else
-#  define CULV_NO_TSAN
+#    define CULV_NO_TSAN
 #endif
 
 // NOLINTNEXTLINE(readability-identifier-naming)
@@ -325,4 +330,40 @@ CULV_MAYBE_UNUSED static constexpr size_t MEMORY_ALIGNMENT_SIZE = 64;
 #else
 #    define CULV_REPRODUCIBLE
 #    define CULV_UNSEQUENCED
+#endif
+
+// Very necessary.
+#ifndef __cplusplus
+#    if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311
+/**
+ * @brief Performs a type-safe identity transformation on the null-set.
+ * @param ptr A pointer to the void.
+ * @return A qualified-stripped null pointer constant.
+ * @note complexity: O(1)
+ */
+/*@
+  ensures \result == \null;
+  assigns \nothing;
+*/
+CULV_MAYBE_UNUSED CULV_NODISCARD static CULV_FORCE_INLINE nullptr_t
+culv_take_return_null(CULV_MAYBE_UNUSED const typeof_unqual(nullptr) ptr) {
+    return (typeof_unqual(nullptr))(ptr);
+}
+#    else
+CULV_MAYBE_UNUSED CULV_NODISCARD static CULV_FORCE_INLINE void *
+culv_take_return_null(CULV_MAYBE_UNUSED const void *ptr) {
+    return (void *)(ptr);
+}
+#    endif
+#else
+namespace {
+[[nodiscard]] [[maybe_unused]] constexpr std::nullptr_t
+culv_take_return_null(const std::nullptr_t ptr) noexcept {
+    static_assert(sizeof(ptr) == sizeof(void *), "The void has changed size!");
+    return static_cast<std::nullptr_t>(ptr);
+}
+
+// Self-test to ensure the function works as intended
+static_assert(culv_take_return_null(nullptr) == nullptr, "Null is not Null!");
+} // namespace
 #endif

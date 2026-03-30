@@ -12,8 +12,8 @@ static void process_contact_manifold(PhysicsWorldObject *self, const JPH_Body *b
     auto h1 = (BodyHandle)JPH_Body_GetUserData((JPH_Body *)body1);
     auto h2 = (BodyHandle)JPH_Body_GetUserData((JPH_Body *)body2);
 
-    auto slot1 = (uint32_t)(h1 & 0xFFFFFFFF);
-    auto slot2 = (uint32_t)(h2 & 0xFFFFFFFF);
+    auto slot1 = (uint32_t)(h1 & HANDLE_INDEX_MASK);
+    auto slot2 = (uint32_t)(h2 & HANDLE_INDEX_MASK);
 
     // Safety: Ensure slot is within our shadow buffer range
     if (slot1 >= self->slot_capacity || slot2 >= self->slot_capacity) {
@@ -158,8 +158,8 @@ static JPH_ValidateResult JPH_API_CALL on_contact_validate(
     // 1. Extract Slots
     auto h1    = (BodyHandle)JPH_Body_GetUserData((JPH_Body *)body1);
     auto h2    = (BodyHandle)JPH_Body_GetUserData((JPH_Body *)body2);
-    auto slot1 = (uint32_t)(h1 & 0xFFFFFFFF);
-    auto slot2 = (uint32_t)(h2 & 0xFFFFFFFF);
+    auto slot1 = (uint32_t)(h1 & HANDLE_INDEX_MASK);
+    auto slot2 = (uint32_t)(h2 & HANDLE_INDEX_MASK);
 
     // 2. Bitmask Filter
     uint32_t idx1 = self->slot_to_dense[slot1];
@@ -224,7 +224,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events(PhysicsWorld
     PyObject *list = PyList_New((Py_ssize_t)count);
     if (!list) {
         CULV_RAW_FREE(scratch);
-        return NULL;
+        return nullptr;
     }
 
     for (size_t i = 0; i < count; i++) {
@@ -233,7 +233,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events(PhysicsWorld
         if (!item) {
             Py_DECREF(list);
             CULV_RAW_FREE(scratch);
-            return NULL;
+            return nullptr;
         }
 
         // PyTuple_SET_ITEM "steals" the reference, so no extra DECREF needed on
@@ -282,13 +282,13 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events_ex(PhysicsWo
     // 2. Static Keys (Allocated ONCE)
     // We intentionally "leak" these references for the lifetime of the app.
     // This provides a massive speedup and stability fix.
-    static PyObject *k_bodies = NULL;
-    static PyObject *k_pos    = NULL;
-    static PyObject *k_norm   = NULL;
-    static PyObject *k_str    = NULL;
-    static PyObject *k_slide  = NULL;
-    static PyObject *k_mat    = NULL;
-    static PyObject *k_type   = NULL;
+    static PyObject *k_bodies = nullptr;
+    static PyObject *k_pos    = nullptr;
+    static PyObject *k_norm   = nullptr;
+    static PyObject *k_str    = nullptr;
+    static PyObject *k_slide  = nullptr;
+    static PyObject *k_mat    = nullptr;
+    static PyObject *k_type   = nullptr;
 
     if (!k_bodies) {
         k_bodies = PyUnicode_InternFromString("bodies");
@@ -310,7 +310,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events_ex(PhysicsWo
     PyObject *list = PyList_New((Py_ssize_t)count);
     if (!list) {
         CULV_RAW_FREE(scratch);
-        return NULL;
+        return nullptr;
     }
 
     for (size_t i = 0; i < count; i++) {
@@ -418,7 +418,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events_raw(PhysicsW
     SHADOW_UNLOCK(&self->shadow_lock);
 
     if (!raw_bytes) {
-        return NULL;
+        return nullptr;
     }
 
     // 5. Wrap in MemoryView

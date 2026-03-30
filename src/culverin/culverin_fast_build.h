@@ -76,7 +76,7 @@ CULV_FORCE_INLINE CULV_NODISCARD static PyObject* fb_pack_tuple(size_t n, PyObje
 
 error:
     for (size_t i = 0; i < n; i++) Py_XDECREF(arr[i]);
-    return NULL;
+    return nullptr;
 }
 
 CULV_FORCE_INLINE CULV_NODISCARD static PyObject* fb_pack_list(size_t n, PyObject **arr) {
@@ -92,7 +92,7 @@ CULV_FORCE_INLINE CULV_NODISCARD static PyObject* fb_pack_list(size_t n, PyObjec
 
 error:
     for (size_t i = 0; i < n; i++) Py_XDECREF(arr[i]);
-    return NULL;
+    return nullptr;
 }
 
 CULV_FORCE_INLINE CULV_NODISCARD static PyObject* fb_pack_dict(size_t n, PyObject **arr) {
@@ -121,7 +121,7 @@ CULV_FORCE_INLINE CULV_NODISCARD static PyObject* fb_pack_dict(size_t n, PyObjec
 error:
     // Safe sweep: Py_XDECREF ignores NULLs
     for (size_t i = 0; i < n; i++) Py_XDECREF(arr[i]);
-    return NULL;
+    return nullptr;
 }
 
 /* --- 4. PREPROCESSOR MAPPING (Up to 16 Args / 8 KV Pairs) --- */

@@ -54,7 +54,8 @@ void fp_init_impl(FastParser *fp, FastArgSpec *specs, size_t count) {
     fp->specs         = specs;
     fp->count         = count;
     fp->required_mask = 0;
-    fp->lookup_table  = NULL;
+    fp->type_guard_mask = 0;
+    fp->lookup_table  = nullptr;
 
     for (size_t i = 0; i < count; i++) {
         if (specs[i].name) {
@@ -62,6 +63,10 @@ void fp_init_impl(FastParser *fp, FastArgSpec *specs, size_t count) {
         }
         if (specs[i].required) {
             fp->required_mask |= (1ULL << i);
+        }
+        // Populate type guard mask
+        if (specs[i].type_guard) {
+            fp->type_guard_mask |= (1ULL << i);
         }
     }
 
@@ -96,14 +101,14 @@ void fp_deinit(FastParser *fp) {
     if (fp->specs) {
         for (size_t i = 0; i < fp->count; i++) {
             Py_XDECREF(fp->specs[i].interned);
-            fp->specs[i].interned = NULL;
+            fp->specs[i].interned = nullptr;
         }
     }
 
     // 2. Free the O(1) table
     if (fp->lookup_table) {
         CULV_RAW_FREE(fp->lookup_table);
-        fp->lookup_table = NULL;
+        fp->lookup_table = nullptr;
     }
 }
 
@@ -186,5 +191,5 @@ bool fp_parse_legacy(PyObject *args, PyObject *kwargs, CULV_MAYBE_UNUSED PyObjec
         return fp_report_missing(fp, provided_mask);
     }
 
-    return (PyErr_Occurred() == NULL);
+    return (PyErr_Occurred() == nullptr);
 }

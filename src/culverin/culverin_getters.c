@@ -47,7 +47,7 @@ static PyObject *make_view(PhysicsWorldObject *self, void *ptr, const char *form
     PyObject *mv = PyMemoryView_FromBuffer(&buf);
     if (!mv) {
         Py_DECREF(self);
-        return NULL;
+        return nullptr;
     }
     return mv;
 }

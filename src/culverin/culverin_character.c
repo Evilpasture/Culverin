@@ -308,11 +308,11 @@ const JPH_CharacterContactListener_Procs char_listener_procs = {
     .OnAdjustBodyVelocity        = char_on_adjust_velocity,   // ADDED
     .OnContactPersisted          = char_on_contact_persisted, // CHANGED from char_on_contact_added
     .OnContactRemoved            = char_on_contact_removed,   // ADDED
-    .OnCharacterContactValidate  = NULL,                      // Default True is fine
+    .OnCharacterContactValidate  = nullptr,                      // Default True is fine
     .OnCharacterContactAdded     = char_on_character_contact_added,
     .OnCharacterContactPersisted = char_on_character_contact_persisted, // ADDED
     .OnCharacterContactRemoved   = char_on_character_contact_removed,   // ADDED
-    .OnContactSolve              = NULL                                 // Advanced, keep NULL
+    .OnContactSolve              = nullptr                                 // Advanced, keep nullptr
 };
 
 PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObject *const *args,
@@ -328,7 +328,7 @@ PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObje
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &CharMoveParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // Validation (Inline macros/checks)
@@ -405,7 +405,7 @@ PyCFunction_DeclareMethodFromModule Character_get_position(CharacterObject *self
 
     PyObject *ret = PyTuple_New(3);
     if (!ret) {
-        return NULL;
+        return nullptr;
     }
 
     // Use the double precision provided by RVec3
@@ -426,7 +426,7 @@ PyCFunction_DeclareMethodFromModule Character_set_position(CharacterObject *self
 
     // 2. High Speed Parse
     if (!FastParse_Unified(args, nargs, kwnames, &SetPosCharParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // --- PHYSICS LOGIC ---
@@ -469,7 +469,7 @@ PyCFunction_DeclareMethodFromModule Character_set_rotation(CharacterObject *self
 
     // 2. High Speed Parse
     if (!FastParse_Unified(args, nargs, kwnames, &SetRotCharParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // --- PHYSICS LOGIC ---
@@ -507,7 +507,7 @@ PyCFunction_DeclareMethodFromModule Character_set_strength(CharacterObject *self
     // 2. High Speed Parse (Handles both world.set_strength(200.0) and
     // world.set_strength(strength=200.0))
     if (!FastParse_Unified(args, nargs, kwnames, &SetStrengthCharParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // --- CONCURRENCY & LOCKING ---
@@ -531,7 +531,7 @@ PyCFunction_DeclareMethodFromModule Character_get_render_transform(CharacterObje
     // --- 1. Fast Argument Parsing ---
     double alpha_dbl = PyFloat_AsDouble(arg);
     if (alpha_dbl == -1.0 && PyErr_Occurred()) {
-        return NULL;
+        return nullptr;
     }
 
     // Clamp alpha to [0.0, 1.0]
@@ -708,7 +708,7 @@ alloc_j_char(PhysicsWorldObject *self, PositionVector pos,
     auto *shape                  = (JPH_Shape *)JPH_CapsuleShapeSettings_CreateShape(ss);
     JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)ss);
     if (!shape) {
-        return NULL;
+        return nullptr;
     }
 
     JPH_CharacterVirtualSettings settings;
@@ -722,7 +722,7 @@ alloc_j_char(PhysicsWorldObject *self, PositionVector pos,
 
     JPH_Shape_Destroy(shape);
     if (!j_char) {
-        return NULL;
+        return nullptr;
     }
 
     if (self->char_vs_char_manager) {
@@ -766,14 +766,14 @@ static void setup_char_filters(CharacterObject *obj) {
     JPH_CharacterContactListener_SetProcs(&char_listener_procs);
     obj->listener = JPH_CharacterContactListener_Create(obj);
     JPH_BodyFilter_SetProcs(&global_bf_procs);
-    obj->body_filter = JPH_BodyFilter_Create(NULL);
+    obj->body_filter = JPH_BodyFilter_Create(nullptr);
     JPH_ShapeFilter_SetProcs(&global_sf_procs);
-    obj->shape_filter = JPH_ShapeFilter_Create(NULL);
+    obj->shape_filter = JPH_ShapeFilter_Create(nullptr);
     NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
 
     JPH_CharacterVirtual_SetListener(obj->character, obj->listener);
-    obj->bp_filter  = JPH_BroadPhaseLayerFilter_Create(NULL);
-    obj->obj_filter = JPH_ObjectLayerFilter_Create(NULL);
+    obj->bp_filter  = JPH_BroadPhaseLayerFilter_Create(nullptr);
+    obj->obj_filter = JPH_ObjectLayerFilter_Create(nullptr);
 }
 
 // Main Orchestrator
@@ -799,7 +799,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_character(PhysicsWorldOb
 
     // 2. High Speed Parse (Handles positional, keywords, and vec3 unpacking)
     if (!FastParse_Unified(args, nargs, kwnames, &CreateCharParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // --- WORLD LOGIC ---
@@ -809,7 +809,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_character(PhysicsWorldOb
 
     if (self->free_count == 0 && PhysicsWorld_resize(self, self->capacity * 2) < 0) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        return NULL;
+        return nullptr;
     }
 
     uint32_t char_slot           = self->free_slots[--self->free_count];
@@ -851,5 +851,5 @@ fail_jolt:
     self->slot_states[char_slot]         = SLOT_EMPTY;
     self->free_slots[self->free_count++] = char_slot;
     SHADOW_UNLOCK(&self->shadow_lock);
-    return NULL;
+    return nullptr;
 }

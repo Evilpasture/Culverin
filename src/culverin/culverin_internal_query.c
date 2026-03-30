@@ -1,5 +1,4 @@
 #include "culverin_internal_query.h"
-#include "culverin_filters.h"
 
 // --- Helper: Shape Caching (Internal) ---
 // This is called during creation (e.g. create_body).
@@ -33,7 +32,7 @@ JPH_Shape *find_or_create_shape_locked(PhysicsWorldObject *self, int type, const
     }
 
     // 3. JOLT CREATION (Safe because Jolt Lock is held)
-    JPH_Shape *shape = NULL;
+    JPH_Shape *shape = nullptr;
 
     if (type == CULV_SHAPE_BOX) { // BOX
         JPH_Vec3 he             = {p1, p2, p3};
@@ -62,7 +61,7 @@ JPH_Shape *find_or_create_shape_locked(PhysicsWorldObject *self, int type, const
         }
     } else if (type == CULV_SHAPE_PLANE) { // PLANE
         JPH_Plane p               = {{p1, p2, p3}, p4};
-        JPH_PlaneShapeSettings *s = JPH_PlaneShapeSettings_Create(&p, NULL, 1000.0f);
+        JPH_PlaneShapeSettings *s = JPH_PlaneShapeSettings_Create(&p, nullptr, 1000.0f);
         if (s) {
             shape = (JPH_Shape *)JPH_PlaneShapeSettings_CreateShape(s);
             JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);
@@ -70,7 +69,7 @@ JPH_Shape *find_or_create_shape_locked(PhysicsWorldObject *self, int type, const
     }
 
     if (!shape) {
-        return NULL;
+        return nullptr;
     }
 
     // 4. CACHE STORAGE (Safe realloc because SHADOW_LOCK is held)
@@ -80,8 +79,8 @@ JPH_Shape *find_or_create_shape_locked(PhysicsWorldObject *self, int type, const
         if (!new_ptr) {
             JPH_Shape_Destroy(shape);
             // Do not set PyErr_NoMemory here if we are released GIL.
-            // Just return NULL and let caller handle it.
-            return NULL;
+            // Just return nullptr and let caller handle it.
+            return nullptr;
         }
         self->shape_cache          = (ShapeEntry *)new_ptr;
         self->shape_cache_capacity = new_cap;
@@ -105,7 +104,7 @@ void free_shape_cache(PhysicsWorldObject *self) {
         }
     }
     CULV_RAW_FREE(self->shape_cache);
-    self->shape_cache       = NULL;
+    self->shape_cache       = nullptr;
     self->shape_cache_count = 0;
 }
 
@@ -114,8 +113,8 @@ void free_shape_cache(PhysicsWorldObject *self) {
 bool execute_raycast_query(PhysicsWorldObject *self, JPH_BodyID ignore_bid, const JPH_RVec3 *origin,
                            const JPH_Vec3 *direction, JPH_RayCastResult *hit) {
     // 1. Filter Setup (Safe, doesn't touch shared Jolt memory yet)
-    JPH_BroadPhaseLayerFilter *bp_f = JPH_BroadPhaseLayerFilter_Create(NULL);
-    JPH_ObjectLayerFilter *obj_f    = JPH_ObjectLayerFilter_Create(NULL);
+    JPH_BroadPhaseLayerFilter *bp_f = JPH_BroadPhaseLayerFilter_Create(nullptr);
+    JPH_ObjectLayerFilter *obj_f    = JPH_ObjectLayerFilter_Create(nullptr);
 
     CastShapeFilter filter_ctx = {.ignore_id = ignore_bid};
     JPH_BodyFilter *bf         = JPH_BodyFilter_Create(&filter_ctx);
@@ -158,9 +157,9 @@ void extract_hit_normal(PhysicsWorldObject *self, JPH_BodyID bodyID, JPH_SubShap
 void shapecast_execute_internal(PhysicsWorldObject *self, const JPH_Shape *shape,
                                 const JPH_RMat4 *transform, const JPH_Vec3 *sweep_dir,
                                 JPH_BodyID ignore_bid, CastShapeContext *ctx) {
-    JPH_BroadPhaseLayerFilter *bp_f = JPH_BroadPhaseLayerFilter_Create(NULL);
+    JPH_BroadPhaseLayerFilter *bp_f = JPH_BroadPhaseLayerFilter_Create(nullptr);
 
-    JPH_ObjectLayerFilter *obj_f = JPH_ObjectLayerFilter_Create(NULL);
+    JPH_ObjectLayerFilter *obj_f = JPH_ObjectLayerFilter_Create(nullptr);
 
     CastShapeFilter filter_ctx = {.ignore_id = ignore_bid};
     JPH_BodyFilter *bf         = JPH_BodyFilter_Create(&filter_ctx);
@@ -174,7 +173,7 @@ void shapecast_execute_internal(PhysicsWorldObject *self, const JPH_Shape *shape
     const JPH_NarrowPhaseQuery *nq = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
 
     JPH_NarrowPhaseQuery_CastShape(nq, shape, transform, sweep_dir, settings, &base_offset,
-                                   CastShape_ClosestCollector, ctx, bp_f, obj_f, bf, NULL);
+                                   CastShape_ClosestCollector, ctx, bp_f, obj_f, bf, nullptr);
 
     JPH_BodyFilter_Destroy(bf);
     JPH_BroadPhaseLayerFilter_Destroy(bp_f);

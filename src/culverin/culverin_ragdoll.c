@@ -22,7 +22,7 @@ static constexpr size_t JPH_MAT4_SIZE_BYTES = 64;
 PyCFunction_DeclareMethodFromModule Skeleton_add_joint(SkeletonObject *self, PyObject *const *args,
                                                        Py_ssize_t nargs, PyObject *kwnames) {
     // 1. Setup Targets
-    PyObject *name_obj = NULL;
+    PyObject *name_obj = nullptr;
     int parent_idx     = -1; // Default to root
 
     void *targets[AddJoint_COUNT];
@@ -31,13 +31,13 @@ PyCFunction_DeclareMethodFromModule Skeleton_add_joint(SkeletonObject *self, PyO
 
     // 2. High Speed Parse
     if (!FastParse_Unified(args, nargs, kwnames, &AddJointParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // 3. Logic
     const char *name = PyUnicode_AsUTF8(name_obj);
     if (!name)
-        {return NULL;}
+        {return nullptr;}
 
     int idx = (int)JPH_Skeleton_AddJoint2(self->skeleton, name, parent_idx);
     return PyLong_FromLong(idx);
@@ -47,19 +47,19 @@ PyCFunction_DeclareMethodFromModule Skeleton_get_joint_index(SkeletonObject *sel
                                                              PyObject *const *args,
                                                              Py_ssize_t nargs, PyObject *kwnames) {
     // 1. Setup Targets
-    PyObject *name_obj = NULL;
+    PyObject *name_obj = nullptr;
     void *targets[GetJointIdx_COUNT];
     targets[IDX_GJI_NAME] = (void *)&name_obj;
 
     // 2. High Speed Parse
     if (!FastParse_Unified(args, nargs, kwnames, &GetJointIdxParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // 3. Logic
     const char *name = PyUnicode_AsUTF8(name_obj);
     if (!name)
-        {return NULL;}
+        {return nullptr;}
 
     int idx = JPH_Skeleton_GetJointIndex(self->skeleton, name);
     return PyLong_FromLong(idx);
@@ -71,7 +71,7 @@ PyCFunction_DeclareMethodFromModule Skeleton_finalize(SkeletonObject *self,
     if (!JPH_Skeleton_AreJointsCorrectlyOrdered(self->skeleton)) {
         PyErr_SetString(PyExc_RuntimeError,
                         "Skeleton joints are out of order (parent must be added before child)");
-        return NULL;
+        return nullptr;
     }
     Py_RETURN_NONE;
 }
@@ -83,12 +83,12 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll_settings(Physics
                                                                          Py_ssize_t nargs,
                                                                          PyObject *kwnames) {
     // --- 1. FAST ARGUMENT PARSING ---
-    PyObject *py_skel_obj = NULL;
+    PyObject *py_skel_obj = nullptr;
     void *targets[RagdollSettings_COUNT];
     targets[IDX_RS_SKELETON] = (void *)&py_skel_obj;
 
     if (!FastParse_Unified(args, nargs, kwnames, &RagdollSettingsParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // --- 2. TYPE VALIDATION ---
@@ -98,7 +98,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll_settings(Physics
     // Manual type check (replaces O! format string)
     if (!PyObject_TypeCheck(py_skel_obj, (PyTypeObject *)st->SkeletonType)) {
         PyErr_SetString(PyExc_TypeError, "skeleton must be a Skeleton object");
-        return NULL;
+        return nullptr;
     }
     SkeletonObject *py_skel = (SkeletonObject *)py_skel_obj;
 
@@ -106,7 +106,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll_settings(Physics
     RagdollSettingsObject *obj = (RagdollSettingsObject *)PyObject_New(
         RagdollSettingsObject, (PyTypeObject *)st->RagdollSettingsType);
     if (!obj) {
-        return NULL;
+        return nullptr;
     }
 
     // Initialize Jolt settings and link skeleton
@@ -127,8 +127,8 @@ PyCFunction_DeclareMethodFromModule RagdollSettings_add_part(RagdollSettingsObje
     int parent_idx    = -1;
     int shape_type    = 0;
     float mass        = RAGDOLL_DEFAULT_PART_MASS;
-    PyObject *py_size = NULL;
-    PyObject *py_pos  = NULL;
+    PyObject *py_size = nullptr;
+    PyObject *py_pos  = nullptr;
     float twist_min   = RAGDOLL_DEFAULT_TWIST_MIN;
     float twist_max   = RAGDOLL_DEFAULT_TWIST_MAX;
     float cone_angle  = 0.0f;
@@ -152,14 +152,14 @@ PyCFunction_DeclareMethodFromModule RagdollSettings_add_part(RagdollSettingsObje
 
     // 2. High Speed Parse
     if (!FastParse_Unified(args, nargs, kwnames, &RagdollAddPartParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // 3. Shape Acquisition (Using your existing helper)
     float s[4];
     parse_body_size(py_size, s); // From culverin_parsers.c
 
-    JPH_Shape *shape = NULL;
+    JPH_Shape *shape = nullptr;
     Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
     SHADOW_LOCK(&self->world->shadow_lock);
     shape = find_or_create_shape_locked(self->world, shape_type, s);
@@ -235,7 +235,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll(PhysicsWorldObje
                                                                 Py_ssize_t nargs,
                                                                 PyObject *kwnames) {
     // --- 1. FAST ARGUMENT PARSING ---
-    PyObject *settings_obj = NULL;
+    PyObject *settings_obj = nullptr;
     PosStride pos          = {.x = 0, .y = 0, .z = 0};
     AuxStride rot          = {.x = 0, .y = 0, .z = 0, .w = 1.0f};
     uint64_t user_data     = 0;
@@ -253,20 +253,20 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll(PhysicsWorldObje
     targets[IDX_CR_MAT]      = (void *)&material_id;
 
     if (!FastParse_Unified(args, nargs, kwnames, &CreateRagdollParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // Type Safety Check (Replaces original O! logic)
     CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     if (!PyObject_TypeCheck(settings_obj, (PyTypeObject *)st->RagdollSettingsType)) {
         PyErr_SetString(PyExc_TypeError, "settings must be a RagdollSettings object");
-        return NULL;
+        return nullptr;
     }
     auto *py_settings = (RagdollSettingsObject *)settings_obj;
 
     // --- 2. JOLT PREPARATION (Logic Preserved) ---
-    JPH_Ragdoll *j_rag         = NULL;
-    JPH_Mat4 *neutral_matrices = NULL;
+    JPH_Ragdoll *j_rag         = nullptr;
+    JPH_Mat4 *neutral_matrices = nullptr;
     size_t body_count          = 0;
 
     Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
@@ -314,7 +314,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll(PhysicsWorldObje
         JPH_Ragdoll_Destroy(j_rag);
         NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
         Py_END_ALLOW_THREADS CULV_RAW_FREE(neutral_matrices);
-        return NULL;
+        return nullptr;
     }
 
     obj->ragdoll = j_rag;
@@ -332,7 +332,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll(PhysicsWorldObje
             JPH_Ragdoll_Destroy(j_rag);
             CULV_RAW_FREE(neutral_matrices);
             Py_DECREF(obj);
-            return NULL;
+            return nullptr;
         }
     }
 
@@ -395,7 +395,7 @@ PyCFunction_DeclareMethodFromModule Ragdoll_drive_to_pose(RagdollObject *self,
     // 1. FAST ARGUMENT PARSING
     PosStride root_p      = {.x = 0, .y = 0, .z = 0};
     AuxStride root_q      = {.x = 0, .y = 0, .z = 0, .w = 1.0f};
-    PyObject *py_matrices = NULL;
+    PyObject *py_matrices = nullptr;
 
     void *targets[RagdollDrive_COUNT];
     targets[IDX_RD_POS]  = (void *)&root_p;
@@ -403,7 +403,7 @@ PyCFunction_DeclareMethodFromModule Ragdoll_drive_to_pose(RagdollObject *self,
     targets[IDX_RD_MATS] = (void *)&py_matrices;
 
     if (!FastParse_Unified(args, nargs, kwnames, &RagdollDriveParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     if (UNLIKELY(!self->ragdoll || !self->world)) {
@@ -418,7 +418,7 @@ PyCFunction_DeclareMethodFromModule Ragdoll_drive_to_pose(RagdollObject *self,
     // Validate Buffer Size
     Py_buffer view;
     if (PyObject_GetBuffer(py_matrices, &view, PyBUF_SIMPLE) < 0) {
-        return NULL;
+        return nullptr;
     }
 
     size_t required_size = (size_t)joint_count * JPH_MAT4_SIZE_BYTES;
@@ -580,7 +580,7 @@ PyType_DeclareSlot_VoidFromModule Ragdoll_dealloc(RagdollObject *self) {
     }
     if (self->body_slots) {
         CULV_RAW_FREE(self->body_slots);
-        self->body_slots = NULL; // Prevent double-free in weird recursion cases
+        self->body_slots = nullptr; // Prevent double-free in weird recursion cases
     }
 
     Py_XDECREF(self->world);
