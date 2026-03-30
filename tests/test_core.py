@@ -135,6 +135,51 @@ class TestQueries(CulverinTestCase):
         hits = self.world.overlap_aabb(min=(-2, 3, -2), max=(2, 7, 2))
         self.assertIn(b1, hits)
 
+    def test_get_body_stats(self):
+        # 1. Test Valid Body
+        pos = (5.0, 10.0, -2.0)
+        rot = (0.0, 0.7071, 0.0, 0.7071) # 90 degree rotation around Y
+        h = self.world.create_body(pos=pos, rot=rot, motion=culverin.MOTION_DYNAMIC)
+        self.world.step(0)
+
+        stats = self.world.get_body_stats(h)
+        self.assertIsNotNone(stats)
+        assert stats is not None
+        
+        # Unpack: ((x,y,z), (x,y,z,w), (vx,vy,vz))
+        got_pos, got_rot, got_vel = stats
+        
+        self.assertAlmostEqual(got_pos[0], pos[0], places=3)
+        self.assertAlmostEqual(got_pos[1], pos[1], places=3)
+        self.assertAlmostEqual(got_pos[2], pos[2], places=3)
+        
+        self.assertAlmostEqual(got_rot[1], rot[1], places=3)
+        self.assertAlmostEqual(got_rot[3], rot[3], places=3)
+        
+        # Verify initial velocity is zero
+        self.assertEqual(got_vel, (0.0, 0.0, 0.0))
+
+        # 2. Test Invalid/Destroyed Body
+        self.world.destroy_body(h)
+        self.world.step(0)
+        
+        # Ensure it returns None instead of crashing or raising
+        self.assertIsNone(self.world.get_body_stats(h))
+
+    def test_get_body_stats_dynamic(self):
+        # Test that velocity updates
+        # Ensure it's spawned higher than the floor instantiated by TestQueries.setUp(),
+        # and explicitly give it a light mass so that 100 Ns easily overcomes gravity
+        h = self.world.create_body(pos=(0, 5, 0), motion=culverin.MOTION_DYNAMIC, mass=1.0)
+        self.world.apply_impulse(h, 0, 100, 0)
+        self.world.step(1/60.0)
+        
+        stats = self.world.get_body_stats(h)
+        self.assertIsNotNone(stats)
+        assert stats is not None
+        _, _, vel = stats
+        self.assertGreater(vel[1], 0.0, "Velocity should be updated")
+
 
 class TestCollisionsAndEvents(CulverinTestCase):
     # test_collision_filtering can segfault in musllinux with Clang 19 and above...
@@ -362,6 +407,41 @@ class TestRagdollsAndSkeletons(CulverinTestCase):
         mats_buffer = np.stack([matrices, matrices]).tobytes() # 2 joints
         ragdoll.drive_to_pose(root_pos=(0, 5, 0), root_rot=(0,0,0,1), matrices=mats_buffer)
 
+    def test_ragdoll_get_debug_info(self):
+        import culverin
+        # 1. Setup
+        skel = culverin.Skeleton()
+        root = skel.add_joint(name="pelvis", parent_index=-1)
+        skel.finalize()
+        
+        settings = self.world.create_ragdoll_settings(skeleton=skel)
+        settings.add_part(joint_index=root, shape_type=culverin.SHAPE_BOX, size=(0.3, 0.2, 0.2))
+        
+        ragdoll = self.world.create_ragdoll(settings=settings, pos=(0, 10, 0))
+        
+        # 2. Physics Step required to initialize the bodies in the Jolt interface
+        self.world.step(1/60.0)
+        
+        # 3. Call method under test
+        debug_info = ragdoll.get_debug_info()
+        
+        # 4. Assertions
+        self.assertIsInstance(debug_info, list, "get_debug_info should return a list")
+        self.assertEqual(len(debug_info), 1, "Should have 1 body part")
+        
+        part = debug_info[0]
+        self.assertIn("index", part)
+        self.assertIn("pos", part)
+        self.assertIn("vel", part)
+        
+        self.assertIsInstance(part["index"], int)
+        self.assertIsInstance(part["pos"], tuple)
+        self.assertIsInstance(part["vel"], tuple)
+        self.assertEqual(len(part["pos"]), 3)
+        
+        # Verify valid values (pos should be near 0,10,0)
+        self.assertAlmostEqual(part["pos"][1], 10.0, delta=1.0)
+
 
 class TestStateManagement(CulverinTestCase):
     def test_save_and_load_state(self):
@@ -393,6 +473,46 @@ class TestUserData(CulverinTestCase):
         self.world.set_user_data(h, 999)
         self.world.step(0)
         self.assertEqual(self.world.get_user_data(h), 999)
+
+class TestProfilerScenario(CulverinTestCase):
+    """
+    This test suite is designed for third-party profilers (VizTracer, py-spy, cProfile).
+    The methods below exercise every 'hot path' in the engine:
+    Memory Allocation -> Simulation -> Batch Queries -> Interpolation -> Data Sync.
+    """
+
+    def test_full_stress_profile_cycle(self):
+        """
+        Target this test with: viztracer --run test_core.py TestProfilerScenario.test_full_stress_profile_cycle
+        It provides enough data density to visualize Jolt vs. Python transitions.
+        """
+        body_count = 5000
+        # 1. Heavy Memory Path
+        positions = np.random.uniform(-100, 100, (body_count, 3)).astype(np.float32).tolist()
+        sizes = [[1.0, 1.0, 1.0]] * body_count
+        
+        # 2. Heavy Allocation/Command Queue Path
+        self.world.create_bodies_batch(positions, sizes, culverin.SHAPE_BOX, culverin.MOTION_DYNAMIC)
+        
+        # 3. Profiling Loop
+        # We run 200 steps. This provides a clear 'sawtooth' pattern in 
+        # visualization tools, showing the Step -> Sync -> Copy loop.
+        for i in range(200):
+            self.world.step(1/60.0)
+            
+            # 4. Heavy Query Path (Batch raycast every 10 frames)
+            if i % 10 == 0:
+                starts = np.zeros((1000, 3), dtype=np.float32).tobytes()
+                dirs = np.zeros((1000, 3), dtype=np.float32).tobytes()
+                self.world.raycast_batch(starts, dirs, max_dist=100.0)
+            
+            # 5. Heavy Interpolation Path (Render State)
+            # This triggers the float-lerping in C
+            self.world.get_render_state(alpha=0.5)
+
+        # 6. Final State Management Path
+        state = self.world.save_state()
+        self.world.load_state(state=state)
 
 
 if __name__ == '__main__':
