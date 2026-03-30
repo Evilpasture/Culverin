@@ -141,9 +141,6 @@ CULV_FORCE_INLINE void process_partial_batch(PhysicsWorldObject *self,
 // MAIN SYNC ROUTINE
 // =================================================================================================
 extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
-#ifdef CULVERIN_PROFILE_SYNC
-    uint64_t start = rdtsc();
-#endif
 
     if (UNLIKELY(!self)) {
         return;
@@ -161,6 +158,7 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
 
     const auto *sys_c     = self->system;
     uint32_t active_count = JPH_PhysicsSystem_GetNumActiveBodies(sys_c, JPH_BodyType_Rigid);
+    CULV_MAYBE_UNUSED uint32_t synced_count = 0;
 
     if (UNLIKELY(active_count == 0)) {
         return;
@@ -184,6 +182,8 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
     if (UNLIKELY(!self->slot_states)) {
         return;
     }
+
+    CULV_PROFILE_BEGIN(sync);
 
     const uint32_t *CULV_RESTRICT s2d = self->slot_to_dense;
 
@@ -227,6 +227,7 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
         worklist[work_ptr].body      = b;
         worklist[work_ptr].dense_idx = s2d[slot];
         work_ptr++;
+        synced_count++;
 
         if (work_ptr == BATCH_SIZE) {
             process_full_batch(self, worklist);
@@ -238,12 +239,5 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
     if (work_ptr > 0) {
         process_partial_batch(self, worklist, work_ptr);
     }
-
-#ifdef CULVERIN_PROFILE_SYNC
-    uint64_t elapsed = rdtsc() - start;
-    if (active_count > 0) {
-        fprintf(stderr, "Sync: %llu cycles for %u bodies (%.1f cyc/body)\n", elapsed, active_count,
-                (double)elapsed / active_count);
-    }
-#endif
+    CULV_PROFILE_END(sync, "Sync", synced_count);
 }
