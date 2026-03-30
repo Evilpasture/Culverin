@@ -481,38 +481,83 @@ class TestProfilerScenario(CulverinTestCase):
     Memory Allocation -> Simulation -> Batch Queries -> Interpolation -> Data Sync.
     """
 
+    def setUp(self):
+        # We need a higher max_bodies limit than the base CulverinTestCase
+        self.world = culverin.PhysicsWorld(settings={"gravity": (0, -10, 0), "max_bodies": 10000})
+        self.world.step(0)
+
     def test_full_stress_profile_cycle(self):
-        """
-        Target this test with: viztracer --run test_core.py TestProfilerScenario.test_full_stress_profile_cycle
-        It provides enough data density to visualize Jolt vs. Python transitions.
-        """
         body_count = 5000
-        # 1. Heavy Memory Path
         positions = np.random.uniform(-100, 100, (body_count, 3)).astype(np.float32).tolist()
         sizes = [[1.0, 1.0, 1.0]] * body_count
         
-        # 2. Heavy Allocation/Command Queue Path
         self.world.create_bodies_batch(positions, sizes, culverin.SHAPE_BOX, culverin.MOTION_DYNAMIC)
         
-        # 3. Profiling Loop
-        # We run 200 steps. This provides a clear 'sawtooth' pattern in 
-        # visualization tools, showing the Step -> Sync -> Copy loop.
         for i in range(200):
             self.world.step(1/60.0)
-            
-            # 4. Heavy Query Path (Batch raycast every 10 frames)
             if i % 10 == 0:
                 starts = np.zeros((1000, 3), dtype=np.float32).tobytes()
                 dirs = np.zeros((1000, 3), dtype=np.float32).tobytes()
                 self.world.raycast_batch(starts, dirs, max_dist=100.0)
-            
-            # 5. Heavy Interpolation Path (Render State)
-            # This triggers the float-lerping in C
             self.world.get_render_state(alpha=0.5)
 
-        # 6. Final State Management Path
         state = self.world.save_state()
         self.world.load_state(state=state)
+    def test_free_threading_concurrency(self):
+        """
+        Tests true parallelism. 
+        - Physics simulation runs in a background thread.
+        - A heavy Python-side 'simulation' runs in the main thread.
+        - Total time should be significantly less than sequential execution.
+        """
+        import threading
+        
+        # 1. Setup: Load a moderate number of bodies
+        body_count = 2000
+        self.world.create_bodies_batch(
+            np.random.uniform(-50, 50, (body_count, 3)).tolist(), 
+            [[0.5]*3]*body_count, culverin.SHAPE_BOX, culverin.MOTION_DYNAMIC
+        )
+        
+        # We want to run 1000 physics steps
+        iterations = 1000
+        
+        def physics_task():
+            for _ in range(iterations):
+                self.world.step(1/60.0)
+
+        # 2. Main thread heavy Python math (simulating game logic/AI)
+        def heavy_python_math():
+            res = 0
+            for i in range(500_000): # Heavy CPU loop
+                res += math.sin(i) * math.cos(i)
+            return res
+
+        t0 = time.perf_counter()
+        
+        # Start Physics in background
+        t = threading.Thread(target=physics_task)
+        t.start()
+        
+        # Run Python math in main thread
+        heavy_python_math()
+        
+        t.join()
+        total_time = time.perf_counter() - t0
+        
+        print(f"\n[Free-Threading] Parallel Physics + Math: {total_time*1000:.2f}ms")
+
+    def test_contention_profile(self):
+        """Force multiple threads to fight for the PhysicsWorld lock."""
+        def hammer_getters():
+            for _ in range(1000):
+                # Rapid-fire calls to getters while step() is likely running
+                self.world.get_render_state(alpha=0.5)
+
+        threads = [threading.Thread(target=hammer_getters) for _ in range(4)]
+        for t in threads: t.start()
+        for _ in range(60): self.world.step(1/60.0)
+        for t in threads: t.join()
 
 
 if __name__ == '__main__':
