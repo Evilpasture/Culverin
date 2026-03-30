@@ -334,6 +334,7 @@ CULV_MAYBE_UNUSED static constexpr size_t MEMORY_ALIGNMENT_SIZE = 64;
 
 // Very necessary.
 #ifndef __cplusplus
+#include <stddef.h>
 #    if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311
 /**
  * @brief Performs a type-safe identity transformation on the null-set.
@@ -356,6 +357,7 @@ culv_take_return_null(CULV_MAYBE_UNUSED const void *ptr) {
 }
 #    endif
 #else
+#include <cstddef>
 namespace {
 [[nodiscard]] [[maybe_unused]] constexpr std::nullptr_t
 culv_take_return_null(const std::nullptr_t ptr) noexcept {
