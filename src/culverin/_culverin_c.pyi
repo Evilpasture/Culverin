@@ -53,9 +53,18 @@ class Skeleton:
     def get_joint_index(self, name: str) -> int: ...
 
 class RagdollSettings:
-    def add_part(self, joint_index: int, shape_type: int, size: Any, mass: float, parent_index: int, 
-                 twist_min: float = -0.1, twist_max: float = 0.1, cone_angle: float = 0.0, 
-                 axis: Vec3 = (1,0,0), normal: Vec3 = (0,1,0), pos: Vec3 = (0,0,0)) -> None: ...
+    def add_part(self, 
+                 joint_index: int, 
+                 shape_type: int, 
+                 size: Any, 
+                 mass: float = 10.0, 
+                 parent_index: int = -1, 
+                 twist_min: float = -0.1, 
+                 twist_max: float = 0.1, 
+                 cone_angle: float = 0.0, 
+                 axis: Vec3 = (1.0, 0.0, 0.0), 
+                 normal: Vec3 = (0.0, 1.0, 0.0), 
+                 pos: Vec3 = (0.0, 0.0, 0.0)) -> None: ...
     def stabilize(self) -> bool: ...
 
 class Ragdoll:
