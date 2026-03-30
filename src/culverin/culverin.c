@@ -78,7 +78,7 @@ PyType_DeclareSlot_Void PhysicsWorld_dealloc(PhysicsWorldObject *self) {
     }
 
     // 2. Weakref cleanup
-    if (self->weakreflist != NULL) {
+    if (self->weakreflist != nullptr) {
         PyObject_ClearWeakRefs((PyObject *)self);
     }
 
@@ -98,23 +98,23 @@ PyType_DeclareSlot_Void PhysicsWorld_dealloc(PhysicsWorldObject *self) {
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
                                             PyObject *kwds) {
-    if (self->system != NULL) {
+    if (self->system != nullptr) {
         // Please don't call __init__() again.
         PyErr_SetString(PyExc_RuntimeError,
                         "PhysicsWorld instance has already been initialized and "
                         "cannot be re-initialized.");
         return -1;
     }
-    PyObject *settings_dict = NULL;
-    PyObject *bodies_list   = NULL;
-    PyObject *baked         = NULL;
+    PyObject *settings_dict = nullptr;
+    PyObject *bodies_list   = nullptr;
+    PyObject *baked         = nullptr;
     float gx;
     float gy;
     float gz;
     int max_bodies;
     int max_pairs;
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "|OO", (char *[]){"settings", "bodies", NULL},
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "|OO", (char *[]){"settings", "bodies", nullptr},
                                      &settings_dict, &bodies_list)) {
         return -1;
     }
@@ -239,7 +239,7 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
     if (bodies_list && bodies_list != Py_None) {
         PyObject *st_helper = get_culverin_state(PyType_GetModule(Py_TYPE(self)))->helper;
         PyObject *bake_func = PyObject_GetAttrString(st_helper, "bake_scene");
-        baked               = PyObject_CallFunctionObjArgs(bake_func, bodies_list, NULL);
+        baked               = PyObject_CallFunctionObjArgs(bake_func, bodies_list, nullptr);
         Py_XDECREF(bake_func);
         if (!baked) {
             goto fail;
@@ -306,7 +306,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_impulse(PhysicsWorldObject *self,
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &ImpulseParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     VALIDATE_FINITE_VEC3(x, y, z, "Impulse");
@@ -320,7 +320,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_impulse(PhysicsWorldObject *self,
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Invalid handle");
-        return NULL;
+        return nullptr;
     }
 
     uint8_t state = self->slot_states[slot];
@@ -358,7 +358,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_impulse(PhysicsWorldObject *self,
     else {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Body is dead or being destroyed");
-        return NULL;
+        return nullptr;
     }
 
     Py_RETURN_NONE;
@@ -386,7 +386,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &ImpulseAtParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     /* Validate parsed vectors before entering critical sections */
@@ -400,7 +400,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Invalid handle");
-        return NULL;
+        return nullptr;
     }
 
     uint8_t state = self->slot_states[slot];
@@ -436,7 +436,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self
     } else {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Body is dead or being destroyed");
-        return NULL;
+        return nullptr;
     }
 
     Py_RETURN_NONE;
@@ -458,7 +458,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_angular_impulse(PhysicsWorldObject 
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &AngImpulseParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // Finite validation (Outside lock)
@@ -474,7 +474,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_angular_impulse(PhysicsWorldObject 
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Invalid handle");
-        return NULL;
+        return nullptr;
     }
 
     uint8_t state = self->slot_states[slot];
@@ -506,7 +506,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_angular_impulse(PhysicsWorldObject 
     } else {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Body is dead or being destroyed");
-        return NULL;
+        return nullptr;
     }
 
     Py_RETURN_NONE;
@@ -527,7 +527,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_force(PhysicsWorldObject *self, PyO
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &ForceParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     VALIDATE_FINITE_VEC3(x, y, z, "Force");
@@ -542,7 +542,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_force(PhysicsWorldObject *self, PyO
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Invalid handle");
-        return NULL;
+        return nullptr;
     }
 
     uint8_t state = self->slot_states[slot];
@@ -575,7 +575,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_force(PhysicsWorldObject *self, PyO
     } else {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Body is dead or being destroyed");
-        return NULL;
+        return nullptr;
     }
 
     Py_RETURN_NONE;
@@ -596,7 +596,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_torque(PhysicsWorldObject *self, Py
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &TorqueParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     VALIDATE_FINITE_VEC3(x, y, z, "Torque");
@@ -611,7 +611,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_torque(PhysicsWorldObject *self, Py
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Invalid handle");
-        return NULL;
+        return nullptr;
     }
 
     uint8_t state = self->slot_states[slot];
@@ -643,7 +643,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_torque(PhysicsWorldObject *self, Py
     } else {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Body is dead or being destroyed");
-        return NULL;
+        return nullptr;
     }
 
     Py_RETURN_NONE;
@@ -663,7 +663,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_gravity(PhysicsWorldObject *self, PyO
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &GravityParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // Validate gravity vector before touching global state
@@ -683,7 +683,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_gravity(PhysicsWorldObject *self, PyO
     if (UNLIKELY(self->count > UINT32_MAX)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_OverflowError, "Body count exceeds Jolt limit");
-        return NULL;
+        return nullptr;
     }
 
     // Immediate reaction: Wake up all bodies so they fall in the new direction
@@ -705,7 +705,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_body_stats(PhysicsWorldObject *self,
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &HOnlyParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // 2. CRITICAL SECTION
@@ -750,7 +750,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self,
     float lin_drag  = DEFAULT_LINEAR_DRAG;
     float ang_drag  = DEFAULT_ANGULAR_DRAG;
     float dt        = DEFAULT_FRAME_TIME;
-    PyObject *o_vel = NULL;
+    PyObject *o_vel = nullptr;
 
     // 2. TARGET MAPPING (Using Buoy Group count and schema indices)
     void *targets[Buoy_COUNT];
@@ -765,7 +765,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self,
     auto nargs = PyVectorcall_NARGS(nargsf);
     // Use the BuoyParser generated via the X-Macro
     if (!FastParse_Unified(args, nargs, kwnames, &BuoyParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     /* Validate numeric inputs */
@@ -781,7 +781,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self,
     if (o_vel && o_vel != Py_None) {
         // Generic dispatcher handles JPH_Real vs float automatically
         if (!parse_vec3_direct(o_vel, &vx, &vy, &vz)) {
-            return NULL;
+            return nullptr;
         }
         VALIDATE_FINITE_VEC3(vx, vy, vz, "fluid velocity");
     }
@@ -832,13 +832,13 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy_batch(PhysicsWorldObject *
                                                             PyObject *const *args, size_t nargsf,
                                                             PyObject *kwnames) {
     // 1. DEFAULT VALUES
-    PyObject *o_handles = NULL;
+    PyObject *o_handles = nullptr;
     JPH_Real surface_y  = 0.0;
     float buoyancy      = 1.0f;
     float lin_drag      = DEFAULT_LINEAR_DRAG;
     float ang_drag      = DEFAULT_ANGULAR_DRAG;
     float dt            = DEFAULT_FRAME_TIME;
-    PyObject *o_vel     = NULL;
+    PyObject *o_vel     = nullptr;
 
     // 2. FAST PARSE
     void *targets[BatchBuoy_COUNT];
@@ -852,19 +852,19 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy_batch(PhysicsWorldObject *
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &BatchBuoyParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // 3. BUFFER & VELOCITY EXTRACTION
     Py_buffer h_view;
     if (PyObject_GetBuffer(o_handles, &h_view, PyBUF_SIMPLE) != 0) {
-        return NULL; // PyObject_GetBuffer sets the error
+        return nullptr; // PyObject_GetBuffer sets the error
     }
 
     if (UNLIKELY(h_view.itemsize != 8 && h_view.len % 8 != 0)) {
         PyBuffer_Release(&h_view);
         PyErr_SetString(PyExc_ValueError, "Handle buffer must be uint64");
-        return NULL;
+        return nullptr;
     }
 
     float vx = 0;
@@ -873,7 +873,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy_batch(PhysicsWorldObject *
     if (o_vel && o_vel != Py_None) {
         if (!parse_vec3_direct(o_vel, &vx, &vy, &vz)) {
             PyBuffer_Release(&h_view);
-            return NULL;
+            return nullptr;
         }
     }
 
@@ -957,10 +957,10 @@ PyCFunction_DeclareMethod PhysicsWorld_save_state(PhysicsWorldObject *self,
     // Total = Header + (1 * PosStride) + (3 * AuxStride) + Mapping
     size_t total_size = HEADER_SIZE + pos_size_total + (3 * aux_size_total) + mapping_size;
 
-    PyObject *bytes = PyBytes_FromStringAndSize(NULL, (Py_ssize_t)total_size);
+    PyObject *bytes = PyBytes_FromStringAndSize(nullptr, (Py_ssize_t)total_size);
     if (!bytes) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        return NULL;
+        return nullptr;
     }
 
     char *ptr = PyBytes_AsString(bytes);
@@ -1017,17 +1017,17 @@ PyCFunction_DeclareMethod PhysicsWorld_save_state(PhysicsWorldObject *self,
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 PyCFunction_DeclareMethod PhysicsWorld_load_state(PhysicsWorldObject *self, PyObject *const *args,
                                                   Py_ssize_t nargs, PyObject *kwnames) {
-    PyObject *state_obj = NULL;
+    PyObject *state_obj = nullptr;
     void *targets[LoadState_COUNT];
     targets[IDX_LS_STATE] = (void *)&state_obj;
 
     if (!FastParse_Unified(args, nargs, kwnames, &LoadStateParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     Py_buffer view;
     if (PyObject_GetBuffer(state_obj, &view, PyBUF_SIMPLE) != 0) {
-        return NULL; // PyObject_GetBuffer sets the TypeError for us
+        return nullptr; // PyObject_GetBuffer sets the TypeError for us
     }
     // -------------------------
 
@@ -1072,7 +1072,7 @@ PyCFunction_DeclareMethod PhysicsWorld_load_state(PhysicsWorldObject *self, PyOb
         CULV_RAW_FREE(local_state_copy);
         PyErr_Format(PyExc_ValueError, "Capacity mismatch: World is %zu, Snapshot is %zu",
                      self->slot_capacity, saved_slot_cap);
-        return NULL;
+        return nullptr;
     }
 
     // 4. FULL SIZE VALIDATION
@@ -1168,7 +1168,7 @@ size_fail:
     SHADOW_UNLOCK(&self->shadow_lock);
     CULV_RAW_FREE(local_state_copy);
     PyErr_SetString(PyExc_ValueError, "Snapshot buffer truncated or stride mismatch");
-    return NULL;
+    return nullptr;
 }
 
 PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *const *args,
@@ -1179,7 +1179,7 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &StepParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     /* Validate timestep */
@@ -1188,7 +1188,7 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
     // --- PHASE 0: RE-ENTRANCY GUARD ---
     if (atomic_load_explicit(&self->is_stepping, memory_order_acquire)) {
         PyErr_SetString(PyExc_RuntimeError, "Concurrent step detected.");
-        return NULL;
+        return nullptr;
     }
 
     // --- PHASE 1: SHADOW STATE LOCK-DOWN ---
@@ -1197,10 +1197,8 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
     // ANTI-STARVATION HANDOFF: Yield priority to Python threads waiting to read/mutate
     while (atomic_load_explicit(&self->waiting_threads, memory_order_acquire) > 0) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        Py_BEGIN_ALLOW_THREADS 
-        culverin_yield(); // HW & OS level yield (Releases GIL safely)
-        Py_END_ALLOW_THREADS 
-        SHADOW_LOCK(&self->shadow_lock);
+        Py_BEGIN_ALLOW_THREADS culverin_yield(); // HW & OS level yield (Releases GIL safely)
+        Py_END_ALLOW_THREADS SHADOW_LOCK(&self->shadow_lock);
     }
 
     // Block ALL Python mutators and Raycasts
@@ -1296,9 +1294,9 @@ PyCFunction_DeclareMethod PhysicsWorld_create_convex_hull(PhysicsWorldObject *se
                                                           PyObject *const *args, size_t nargsf,
                                                           PyObject *kwnames) {
     // 1. DEFAULT VALUES
-    PyObject *o_pos      = NULL;
-    PyObject *o_rot      = NULL;
-    PyObject *o_points   = NULL;
+    PyObject *o_pos      = nullptr;
+    PyObject *o_rot      = nullptr;
+    PyObject *o_points   = nullptr;
     int motion_type      = 2;
     float mass           = -1.0f;
     float friction       = DEFAULT_FRICTION;
@@ -1328,7 +1326,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_convex_hull(PhysicsWorldObject *se
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &ConvexHullParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // 3. COMPLEX TYPE EXTRACTION
@@ -1340,10 +1338,10 @@ PyCFunction_DeclareMethod PhysicsWorld_create_convex_hull(PhysicsWorldObject *se
     float rz;
     float rw;
     if (!parse_vec3_direct(o_pos, &px, &py, &pz)) {
-        return NULL;
+        return nullptr;
     }
     if (!parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) {
-        return NULL;
+        return nullptr;
     }
 
     /* Validate position and rotation components */
@@ -1352,7 +1350,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_convex_hull(PhysicsWorldObject *se
 
     Py_buffer points_view;
     if (PyObject_GetBuffer(o_points, &points_view, PyBUF_SIMPLE) != 0) {
-        return NULL;
+        return nullptr;
     }
 
     if (UNLIKELY(points_view.len % VERTEX_STRIDE_BYTES != 0)) {
@@ -1366,7 +1364,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_convex_hull(PhysicsWorldObject *se
     }
 
     // 4. SHAPE CREATION (No GIL, No Shadow Lock)
-    JPH_Shape *shape = NULL;
+    JPH_Shape *shape = nullptr;
     Py_BEGIN_ALLOW_THREADS auto *jolt_points =
         (JPH_Vec3 *)CULV_RAW_MALLOC(num_points * sizeof(JPH_Vec3));
     float *raw = (float *)points_view.buf;
@@ -1433,7 +1431,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_convex_hull(PhysicsWorldObject *se
             SHADOW_UNLOCK(&self->shadow_lock);
             JPH_BodyCreationSettings_Destroy(settings);
             JPH_Shape_Destroy(shape);
-            return NULL;
+            return nullptr;
         }
     }
 
@@ -1492,13 +1490,13 @@ PyCFunction_DeclareMethod PhysicsWorld_create_convex_hull(PhysicsWorldObject *se
 static JPH_Shape *init_compound_shape(PhysicsWorldObject *self, PyObject *parts) {
     if (!PyList_Check(parts)) {
         PyErr_SetString(PyExc_TypeError, "Compound parts must be a list");
-        return NULL;
+        return nullptr;
     }
 
     Py_ssize_t num_parts = PyList_Size(parts);
     if (num_parts == 0) {
         PyErr_SetString(PyExc_ValueError, "Compound shape must have at least one part");
-        return NULL;
+        return nullptr;
     }
 
     // --- 1. PARSE PHASE (GIL Held) ---
@@ -1506,7 +1504,7 @@ static JPH_Shape *init_compound_shape(PhysicsWorldObject *self, PyObject *parts)
     CompoundPart *buffer = CULV_RAW_MALLOC(sizeof(CompoundPart) * num_parts);
     if (!buffer) {
         PyErr_NoMemory();
-        return NULL;
+        return nullptr;
     }
 
     for (Py_ssize_t i = 0; i < num_parts; i++) {
@@ -1515,7 +1513,7 @@ static JPH_Shape *init_compound_shape(PhysicsWorldObject *self, PyObject *parts)
         if (!PyTuple_Check(item) || PyTuple_Size(item) < 4) {
             CULV_RAW_FREE(buffer);
             PyErr_Format(PyExc_ValueError, "Part %zd must be a tuple(pos, rot, type, size)", i);
-            return NULL;
+            return nullptr;
         }
 
         PyObject *p_pos  = PyTuple_GetItem(item, 0);
@@ -1525,7 +1523,7 @@ static JPH_Shape *init_compound_shape(PhysicsWorldObject *self, PyObject *parts)
 
         if (PyErr_Occurred()) {
             CULV_RAW_FREE(buffer);
-            return NULL;
+            return nullptr;
         }
 
         buffer[i].type = (int)type_l;
@@ -1563,11 +1561,11 @@ static JPH_Shape *init_compound_shape(PhysicsWorldObject *self, PyObject *parts)
 
     if (PyErr_Occurred()) {
         CULV_RAW_FREE(buffer);
-        return NULL;
+        return nullptr;
     }
 
     // --- 2. JOLT EXECUTION PHASE (Release GIL, Acquire Jolt Lock) ---
-    JPH_Shape *final_shape = NULL;
+    JPH_Shape *final_shape = nullptr;
     Py_BEGIN_ALLOW_THREADS
 
         NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
@@ -1599,7 +1597,7 @@ static JPH_Shape *init_compound_shape(PhysicsWorldObject *self, PyObject *parts)
 
     if (!final_shape) {
         PyErr_SetString(PyExc_RuntimeError, "Failed to create compound shape");
-        return NULL;
+        return nullptr;
     }
 
     return final_shape;
@@ -1642,9 +1640,9 @@ PyCFunction_DeclareMethod PhysicsWorld_create_compound_body(PhysicsWorldObject *
                                                             PyObject *const *args, size_t nargsf,
                                                             PyObject *kwnames) {
     // 1. DEFAULT VALUES
-    PyObject *o_pos      = NULL;
-    PyObject *o_rot      = NULL;
-    PyObject *o_parts    = NULL;
+    PyObject *o_pos      = nullptr;
+    PyObject *o_rot      = nullptr;
+    PyObject *o_parts    = nullptr;
     int motion_type      = 2;
     float mass           = -1.0f;
     float friction       = DEFAULT_FRICTION;
@@ -1675,7 +1673,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_compound_body(PhysicsWorldObject *
     auto nargs = PyVectorcall_NARGS(nargsf);
     // Use the HullCompParser initialized via X-Macro
     if (!FastParse_Unified(args, nargs, kwnames, &CompoundParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // 3. COMPLEX TYPE EXTRACTION (Outside Shadow Lock)
@@ -1687,22 +1685,22 @@ PyCFunction_DeclareMethod PhysicsWorld_create_compound_body(PhysicsWorldObject *
     float rz;
     float rw;
     if (!parse_vec3_direct(o_pos, &px, &py, &pz)) {
-        return NULL;
+        return nullptr;
     }
     if (!parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) {
-        return NULL;
+        return nullptr;
     }
 
     // SCHEMA defines IDX_HC_DATA as required, but we verify it's a list here
     if (UNLIKELY(!PyList_Check(o_parts))) {
         PyErr_SetString(PyExc_TypeError, "'parts' must be a list of tuples");
-        return NULL;
+        return nullptr;
     }
 
     // 4. SHAPE BUILD (Heavy lifting - released GIL internally)
     JPH_Shape *final_shape = init_compound_shape(self, o_parts);
     if (!final_shape) {
-        return NULL;
+        return nullptr;
     }
 
     // 5. JOLT PREP
@@ -1730,7 +1728,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_compound_body(PhysicsWorldObject *
             SHADOW_UNLOCK(&self->shadow_lock);
             JPH_BodyCreationSettings_Destroy(settings);
             JPH_Shape_Destroy(final_shape);
-            return NULL;
+            return nullptr;
         }
     }
 
@@ -1996,7 +1994,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_body(PhysicsWorldObject *self, PyO
         PyErr_Format(PyExc_RuntimeError,
                      "PhysicsWorld limit reached: %u/%u bodies. Increase 'max_bodies' in settings.",
                      (uint32_t)self->count, self->max_jolt_bodies);
-        return NULL;
+        return nullptr;
     }
 
     // Ensure Shadow Buffer Capacity (but cap it at max_jolt_bodies)
@@ -2009,7 +2007,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_body(PhysicsWorldObject *self, PyO
         if (PhysicsWorld_resize(self, next_cap) < 0) {
             SHADOW_UNLOCK(&self->shadow_lock);
             JPH_BodyCreationSettings_Destroy(settings);
-            return NULL;
+            return nullptr;
         }
     }
 
@@ -2085,8 +2083,8 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
                                                            PyObject *const *args, size_t nargsf,
                                                            PyObject *kwnames) {
     // 1. FAST PARSE (Zero Lock Contention)
-    PyObject *py_positions = NULL;
-    PyObject *py_sizes     = NULL;
+    PyObject *py_positions = nullptr;
+    PyObject *py_sizes     = nullptr;
     int shape_type         = 0;
     int motion_type        = 2;
 
@@ -2099,7 +2097,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &BatchCreateParser, targets)) {
-        return NULL;
+        return nullptr;
     }
     // Initial Validation
     if (!PyList_Check(py_positions) || !PyList_Check(py_sizes)) {
@@ -2256,7 +2254,7 @@ fail:
     CULV_RAW_FREE(pos_buf);
     CULV_RAW_FREE(size_buf);
     CULV_RAW_FREE((void *)settings_buf);
-    return NULL;
+    return nullptr;
 }
 
 /**
@@ -2267,7 +2265,7 @@ static JPH_IndexedTriangle *build_mesh_triangles(const uint32_t *raw, MeshBounds
         (JPH_IndexedTriangle *)CULV_RAW_MALLOC(bounds.tri_count * sizeof(JPH_IndexedTriangle));
     if (!jolt_tris) {
         PyErr_NoMemory();
-        return NULL;
+        return nullptr;
     }
 
     for (uint32_t t = 0; t < bounds.tri_count; t++) {
@@ -2279,7 +2277,7 @@ static JPH_IndexedTriangle *build_mesh_triangles(const uint32_t *raw, MeshBounds
             CULV_RAW_FREE(jolt_tris);
             PyErr_Format(PyExc_ValueError, "Mesh index out of range: %u/%u/%u >= %u", i1, i2, i3,
                          bounds.vertex_count);
-            return NULL;
+            return nullptr;
         }
 
         jolt_tris[t].i1            = i1;
@@ -2300,7 +2298,7 @@ static JPH_Shape *build_mesh_shape(const void *v_data, MeshBounds bounds,
         (JPH_Vec3 *)v_data, bounds.vertex_count, tris, bounds.tri_count);
     if (!mss) {
         PyErr_SetString(PyExc_RuntimeError, "Jolt MeshSettings allocation failed");
-        return NULL;
+        return nullptr;
     }
 
     JPH_Shape *shape = (JPH_Shape *)JPH_MeshShapeSettings_CreateShape(mss);
@@ -2322,10 +2320,10 @@ PyCFunction_DeclareMethod PhysicsWorld_create_mesh_body(PhysicsWorldObject *self
                                                         PyObject *const *args, size_t nargsf,
                                                         PyObject *kwnames) {
     // 1. DEFAULT VALUES
-    PyObject *o_pos     = NULL;
-    PyObject *o_rot     = NULL;
-    PyObject *o_verts   = NULL;
-    PyObject *o_indices = NULL;
+    PyObject *o_pos     = nullptr;
+    PyObject *o_rot     = nullptr;
+    PyObject *o_verts   = nullptr;
+    PyObject *o_indices = nullptr;
     uint64_t user_data  = 0;
     uint32_t cat        = COLLISION_FILTER_ALL_CATEGORIES;
     uint32_t mask       = COLLISION_FILTER_ALL_MASKS;
@@ -2343,7 +2341,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_mesh_body(PhysicsWorldObject *self
     auto nargs = PyVectorcall_NARGS(nargsf);
     // Use MeshParser initialized via SCHEMA_MESH
     if (!FastParse_Unified(args, nargs, kwnames, &MeshParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // 3. VECTOR/QUAT EXTRACTION (Precision Safe)
@@ -2355,21 +2353,21 @@ PyCFunction_DeclareMethod PhysicsWorld_create_mesh_body(PhysicsWorldObject *self
     float rz;
     float rw;
     if (!parse_vec3_direct(o_pos, &px, &py, &pz)) {
-        return NULL;
+        return nullptr;
     }
     if (!parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) {
-        return NULL;
+        return nullptr;
     }
 
     // 2. Buffer Acquisition
     Py_buffer v_view = {0};
     Py_buffer i_view = {0};
     if (PyObject_GetBuffer(o_verts, &v_view, PyBUF_SIMPLE) != 0) {
-        return NULL;
+        return nullptr;
     }
     if (PyObject_GetBuffer(o_indices, &i_view, PyBUF_SIMPLE) != 0) {
         PyBuffer_Release(&v_view);
-        return NULL;
+        return nullptr;
     }
 
     if (UNLIKELY(v_view.len % VERTEX_STRIDE_BYTES != 0 || i_view.len % VERTEX_STRIDE_BYTES != 0)) {
@@ -2381,7 +2379,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_mesh_body(PhysicsWorldObject *self
                          (uint32_t)(v_view.len / VERTEX_STRIDE_BYTES)};
 
     // 3. Jolt Shape Build (No GIL)
-    JPH_Shape *shape = NULL;
+    JPH_Shape *shape = nullptr;
     Py_BEGIN_ALLOW_THREADS JPH_IndexedTriangle *tris =
         build_mesh_triangles((uint32_t *)i_view.buf, bounds);
     if (tris) {
@@ -2396,7 +2394,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_mesh_body(PhysicsWorldObject *self
     PyBuffer_Release(&i_view);
 
     if (!shape) {
-        return NULL; // build_mesh_shape set the error
+        return nullptr; // build_mesh_shape set the error
     }
 
     // 4. Creation Settings
@@ -2458,12 +2456,12 @@ commit_fail:
     SHADOW_UNLOCK(&self->shadow_lock);
     JPH_BodyCreationSettings_Destroy(settings);
     JPH_Shape_Destroy(shape);
-    return (PyErr_Occurred()) ? NULL : PyErr_NoMemory();
+    return (PyErr_Occurred()) ? nullptr : PyErr_NoMemory();
 
 buffer_fail:
     PyBuffer_Release(&v_view);
     PyBuffer_Release(&i_view);
-    return NULL;
+    return nullptr;
 }
 
 PyCFunction_DeclareMethod PhysicsWorld_destroy_body(PhysicsWorldObject *self, PyObject *const *args,
@@ -2478,7 +2476,7 @@ PyCFunction_DeclareMethod PhysicsWorld_destroy_body(PhysicsWorldObject *self, Py
     auto nargs = PyVectorcall_NARGS(nargsf);
     // Uses the DestroyParser (which points to the HOnly group)
     if (!FastParse_Unified(args, nargs, kwnames, &DestroyParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // 2. CRITICAL SECTION
@@ -2493,7 +2491,7 @@ PyCFunction_DeclareMethod PhysicsWorld_destroy_body(PhysicsWorldObject *self, Py
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
-        return NULL;
+        return nullptr;
     }
 
     // 3. MARK FOR DEFERRED DELETION
@@ -2521,20 +2519,20 @@ PyCFunction_DeclareMethod PhysicsWorld_destroy_bodies_batch(PhysicsWorldObject *
                                                             PyObject *const *args, size_t nargsf,
                                                             PyObject *kwnames) {
     // 1. FAST PARSE (Zero-Allocation)
-    PyObject *py_handles_in = NULL;
+    PyObject *py_handles_in = nullptr;
 
     void *targets[BatchDestroy_COUNT];
     targets[IDX_BD_HANDLES] = (void *)&py_handles_in;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &BatchDestroyParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // Now it is safe to call PySequence_Fast
     PyObject *py_handles = PySequence_Fast(py_handles_in, "handles must be a sequence");
     if (UNLIKELY(!py_handles)) {
-        return NULL;
+        return nullptr;
     }
 
     Py_ssize_t batch_count = PySequence_Fast_GET_SIZE(py_handles);
@@ -2607,7 +2605,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_position(PhysicsWorldObject *self, Py
     auto nargs = PyVectorcall_NARGS(nargsf);
     // Use SetPosParser initialized via SCHEMA_SET_POS
     if (!FastParse_Unified(args, nargs, kwnames, &SetPosParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     VALIDATE_FINITE_VEC3(x, y, z, "SetPosition");
@@ -2621,14 +2619,14 @@ PyCFunction_DeclareMethod PhysicsWorld_set_position(PhysicsWorldObject *self, Py
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Invalid handle");
-        return NULL;
+        return nullptr;
     }
 
     uint8_t state = self->slot_states[slot];
     if (UNLIKELY(state != SLOT_ALIVE && state != SLOT_PENDING_CREATE)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Stale handle");
-        return NULL;
+        return nullptr;
     }
 
     // 3. COMMAND COMMIT
@@ -2669,7 +2667,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_rotation(PhysicsWorldObject *self, Py
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &SetRotParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     VALIDATE_FINITE_QUAT(x, y, z, w, "SetRotation");
@@ -2683,14 +2681,14 @@ PyCFunction_DeclareMethod PhysicsWorld_set_rotation(PhysicsWorldObject *self, Py
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Invalid handle");
-        return NULL;
+        return nullptr;
     }
 
     uint8_t state = self->slot_states[slot];
     if (UNLIKELY(state != SLOT_ALIVE && state != SLOT_PENDING_CREATE)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Stale handle or body being destroyed");
-        return NULL;
+        return nullptr;
     }
 
     // 3. COMMAND COMMIT
@@ -2736,7 +2734,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_linear_velocity(PhysicsWorldObject *s
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &SetLinVelParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     VALIDATE_FINITE_VEC3(x, y, z, "LinearVelocity");
@@ -2750,14 +2748,14 @@ PyCFunction_DeclareMethod PhysicsWorld_set_linear_velocity(PhysicsWorldObject *s
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Invalid handle");
-        return NULL;
+        return nullptr;
     }
 
     uint8_t state = self->slot_states[slot];
     if (UNLIKELY(state != SLOT_ALIVE && state != SLOT_PENDING_CREATE)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Stale handle or body being destroyed");
-        return NULL;
+        return nullptr;
     }
 
     // 3. COMMAND COMMIT
@@ -2801,7 +2799,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_angular_velocity(PhysicsWorldObject *
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &SetAngVelParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     VALIDATE_FINITE_VEC3(x, y, z, "AngularVelocity");
@@ -2815,7 +2813,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_angular_velocity(PhysicsWorldObject *
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Invalid handle");
-        return NULL;
+        return nullptr;
     }
 
     // Check state: allow if alive or newly created
@@ -2823,7 +2821,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_angular_velocity(PhysicsWorldObject *
     if (UNLIKELY(state != SLOT_ALIVE && state != SLOT_PENDING_CREATE)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Stale handle or body being destroyed");
-        return NULL;
+        return nullptr;
     }
 
     // 3. COMMAND COMMIT
@@ -2858,7 +2856,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_motion_type(PhysicsWorldObject *self,
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &GetMotionParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // 2. CRITICAL SECTION
@@ -2870,7 +2868,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_motion_type(PhysicsWorldObject *self,
                  self->slot_states[slot] != SLOT_ALIVE)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
-        return NULL;
+        return nullptr;
     }
 
     JPH_BodyID bid        = self->body_ids[self->slot_to_dense[slot]];
@@ -2898,7 +2896,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_motion_type(PhysicsWorldObject *self,
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &SetMotionParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // 2. CRITICAL SECTION
@@ -2912,14 +2910,14 @@ PyCFunction_DeclareMethod PhysicsWorld_set_motion_type(PhysicsWorldObject *self,
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Invalid handle");
-        return NULL;
+        return nullptr;
     }
 
     uint8_t state = self->slot_states[slot];
     if (UNLIKELY(state != SLOT_ALIVE && state != SLOT_PENDING_CREATE)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Handle is stale or body is being destroyed");
-        return NULL;
+        return nullptr;
     }
 
     // 3. COMMAND COMMIT
@@ -2949,7 +2947,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_user_data(PhysicsWorldObject *self,
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &SetUserDataParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // 2. CRITICAL SECTION
@@ -2960,14 +2958,14 @@ PyCFunction_DeclareMethod PhysicsWorld_set_user_data(PhysicsWorldObject *self,
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
-        return NULL;
+        return nullptr;
     }
 
     uint8_t state = self->slot_states[slot];
     if (UNLIKELY(state != SLOT_ALIVE && state != SLOT_PENDING_CREATE)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Body is not in a valid state");
-        return NULL;
+        return nullptr;
     }
 
     // 3. COMMAND & MIRROR
@@ -2999,7 +2997,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_user_data(PhysicsWorldObject *self,
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &GetUserDataParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // 2. CRITICAL SECTION
@@ -3034,7 +3032,7 @@ PyCFunction_DeclareMethod PhysicsWorld_activate(PhysicsWorldObject *self, PyObje
     auto nargs = PyVectorcall_NARGS(nargsf);
     // Use the specific ActivateParser pointing to the HOnly layout
     if (!FastParse_Unified(args, nargs, kwnames, &ActivateParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // 2. CRITICAL SECTION
@@ -3047,7 +3045,7 @@ PyCFunction_DeclareMethod PhysicsWorld_activate(PhysicsWorldObject *self, PyObje
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
-        return NULL;
+        return nullptr;
     }
 
     // Verify state: Only alive or pending bodies can be activated
@@ -3055,7 +3053,7 @@ PyCFunction_DeclareMethod PhysicsWorld_activate(PhysicsWorldObject *self, PyObje
     if (UNLIKELY(state != SLOT_ALIVE && state != SLOT_PENDING_CREATE)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Body is not in a valid state for activation");
-        return NULL;
+        return nullptr;
     }
 
     // 3. COMMAND COMMIT
@@ -3083,7 +3081,7 @@ PyCFunction_DeclareMethod PhysicsWorld_deactivate(PhysicsWorldObject *self, PyOb
     auto nargs = PyVectorcall_NARGS(nargsf);
     // Use the specific ActivateParser pointing to the HOnly layout
     if (!FastParse_Unified(args, nargs, kwnames, &ActivateParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     SHADOW_LOCK(&self->shadow_lock);
@@ -3093,7 +3091,7 @@ PyCFunction_DeclareMethod PhysicsWorld_deactivate(PhysicsWorldObject *self, PyOb
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Invalid handle");
-        return NULL;
+        return nullptr;
     }
 
     if (self->slot_states[slot] == SLOT_ALIVE || self->slot_states[slot] == SLOT_PENDING_CREATE) {
@@ -3112,8 +3110,8 @@ PyCFunction_DeclareMethod PhysicsWorld_set_transform(PhysicsWorldObject *self,
                                                      PyObject *kwnames) {
     // 1. FAST PARSE (Zero-Allocation)
     BodyHandle handle_raw;
-    PyObject *o_pos = NULL;
-    PyObject *o_rot = NULL;
+    PyObject *o_pos = nullptr;
+    PyObject *o_rot = nullptr;
 
     // Use auto-generated Group Count and Index IDs (IDX_ST_...)
     void *targets[SetTrns_COUNT];
@@ -3124,7 +3122,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_transform(PhysicsWorldObject *self,
     auto nargs = PyVectorcall_NARGS(nargsf);
     // Use the SetTrnsParser defined via X-Macro
     if (!FastParse_Unified(args, nargs, kwnames, &SetTrnsParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // 2. VECTOR EXTRACTION (Outside of Lock)
@@ -3137,10 +3135,10 @@ PyCFunction_DeclareMethod PhysicsWorld_set_transform(PhysicsWorldObject *self,
     float rw;
     // Uses your generic dispatchers for precision-safe parsing
     if (!parse_vec3_direct(o_pos, &px, &py, &pz)) {
-        return NULL;
+        return nullptr;
     }
     if (!parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) {
-        return NULL;
+        return nullptr;
     }
 
     // 3. CRITICAL SECTION
@@ -3152,14 +3150,14 @@ PyCFunction_DeclareMethod PhysicsWorld_set_transform(PhysicsWorldObject *self,
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
-        return NULL;
+        return nullptr;
     }
 
     uint8_t state = self->slot_states[slot];
     if (UNLIKELY(state != SLOT_ALIVE && state != SLOT_PENDING_CREATE)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Body is not in a valid state for transform update");
-        return NULL;
+        return nullptr;
     }
 
     // 4. COMMAND COMMIT
@@ -3203,7 +3201,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_ccd(PhysicsWorldObject *self, PyObjec
     auto nargs = PyVectorcall_NARGS(nargsf);
     // Use the CCDParser initialized via SCHEMA_CCD
     if (!FastParse_Unified(args, nargs, kwnames, &CCDParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // 2. CRITICAL SECTION
@@ -3216,7 +3214,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_ccd(PhysicsWorldObject *self, PyObjec
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
-        return NULL;
+        return nullptr;
     }
 
     // Check if the body exists
@@ -3224,7 +3222,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_ccd(PhysicsWorldObject *self, PyObjec
                  self->slot_states[slot] != SLOT_PENDING_CREATE)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Body is not in a valid state for CCD update");
-        return NULL;
+        return nullptr;
     }
 
     // 3. COMMAND COMMIT
@@ -3256,7 +3254,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_index(PhysicsWorldObject *self, PyObj
     auto nargs = PyVectorcall_NARGS(nargsf);
     // Use the specific ActivateParser pointing to the HOnly layout
     if (!FastParse_Unified(args, nargs, kwnames, &ActivateParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // 2. CRITICAL SECTION
@@ -3293,7 +3291,7 @@ PyCFunction_DeclareMethod PhysicsWorld_is_alive(PhysicsWorldObject *self, PyObje
     auto nargs = PyVectorcall_NARGS(nargsf);
     // Use the specific ActivateParser pointing to the HOnly layout
     if (!FastParse_Unified(args, nargs, kwnames, &ActivateParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // 2. CRITICAL SECTION
@@ -3324,7 +3322,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_active_indices(PhysicsWorldObject *se
     size_t count = self->count;
     if (count == 0) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        return PyBytes_FromStringAndSize(NULL, 0);
+        return PyBytes_FromStringAndSize(nullptr, 0);
     }
 
     // 1. Snapshot the BodyIDs while locked (Fast)
@@ -3366,7 +3364,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_render_state(PhysicsWorldObject *self
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &RenderParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // Clamp alpha to [0, 1]
@@ -3381,11 +3379,11 @@ PyCFunction_DeclareMethod PhysicsWorld_get_render_state(PhysicsWorldObject *self
     size_t count = self->count;
     if (UNLIKELY(count == 0)) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        return PyBytes_FromStringAndSize(NULL, 0);
+        return PyBytes_FromStringAndSize(nullptr, 0);
     }
     size_t total_bytes = count * FLOATS_PER_INTERPOLATED_BODY * sizeof(float);
 
-    PyObject *bytes_obj = PyBytes_FromStringAndSize(NULL, (Py_ssize_t)total_bytes);
+    PyObject *bytes_obj = PyBytes_FromStringAndSize(nullptr, (Py_ssize_t)total_bytes);
     if (!bytes_obj) {
         SHADOW_UNLOCK(&self->shadow_lock);
         return PyErr_NoMemory();
@@ -3468,7 +3466,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_collision_filter(PhysicsWorldObject *
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &ColFilterParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // 2. CRITICAL SECTION
@@ -3483,7 +3481,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_collision_filter(PhysicsWorldObject *
                  self->slot_states[slot] != SLOT_ALIVE)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
-        return NULL;
+        return nullptr;
     }
 
     // 3. IMMEDIATE WRITE
@@ -3513,7 +3511,7 @@ PyCFunction_DeclareMethod PhysicsWorld_register_material(PhysicsWorldObject *sel
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &RegMatParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // 3. CRITICAL SECTION
@@ -3557,10 +3555,10 @@ PyCFunction_DeclareMethod PhysicsWorld_create_heightfield(PhysicsWorldObject *se
                                                           PyObject *const *args, size_t nargsf,
                                                           PyObject *kwnames) {
     // 1. DEFAULT VALUES
-    PyObject *o_pos      = NULL;
-    PyObject *o_rot      = NULL;
-    PyObject *o_scale    = NULL;
-    PyObject *o_heights  = NULL;
+    PyObject *o_pos      = nullptr;
+    PyObject *o_rot      = nullptr;
+    PyObject *o_scale    = nullptr;
+    PyObject *o_heights  = nullptr;
     int grid_size        = 0;
     uint64_t user_data   = 0;
     uint32_t category    = COLLISION_FILTER_ALL_CATEGORIES;
@@ -3585,7 +3583,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_heightfield(PhysicsWorldObject *se
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &HeightfieldParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // 3. EXTRACTION (Outside Lock)
@@ -3600,18 +3598,18 @@ PyCFunction_DeclareMethod PhysicsWorld_create_heightfield(PhysicsWorldObject *se
     float sy;
     float sz;
     if (!parse_vec3_direct(o_pos, &px, &py, &pz)) {
-        return NULL;
+        return nullptr;
     }
     if (!parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) {
-        return NULL;
+        return nullptr;
     }
     if (!parse_vec3_direct(o_scale, &sx, &sy, &sz)) {
-        return NULL;
+        return nullptr;
     }
 
     Py_buffer h_view;
     if (PyObject_GetBuffer(o_heights, &h_view, PyBUF_SIMPLE) != 0) {
-        return NULL;
+        return nullptr;
     }
 
     // Validation
@@ -3622,12 +3620,12 @@ PyCFunction_DeclareMethod PhysicsWorld_create_heightfield(PhysicsWorldObject *se
     }
 
     // 4. SHAPE CREATION (No GIL)
-    JPH_Shape *shape                       = NULL;
+    JPH_Shape *shape                       = nullptr;
     Py_BEGIN_ALLOW_THREADS JPH_Vec3 offset = {0, 0, 0};
     JPH_Vec3 scale                         = {sx, sy, sz};
 
     JPH_HeightFieldShapeSettings *hf_settings = JPH_HeightFieldShapeSettings_Create(
-        (float *)h_view.buf, &offset, &scale, (uint32_t)grid_size, NULL);
+        (float *)h_view.buf, &offset, &scale, (uint32_t)grid_size, nullptr);
 
     if (hf_settings) {
         shape = (JPH_Shape *)JPH_HeightFieldShapeSettings_CreateShape(hf_settings);
@@ -3647,7 +3645,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_heightfield(PhysicsWorldObject *se
         if (PhysicsWorld_resize(self, self->capacity + INITIAL_BODY_CAPACITY) < 0) {
             SHADOW_UNLOCK(&self->shadow_lock);
             JPH_Shape_Destroy(shape);
-            return NULL;
+            return nullptr;
         }
     }
 
@@ -3719,7 +3717,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_debug_data(PhysicsWorldObject *self,
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &DebugDataParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // 3. CRITICAL SECTION
@@ -3742,7 +3740,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_debug_data(PhysicsWorldObject *self,
 
     // Draw Bodies into our internal DebugBuffers
     if ((int)draw_shapes || (int)draw_bounding_box || (int)draw_centers) {
-        JPH_PhysicsSystem_DrawBodies(self->system, &settings, self->debug_renderer, NULL);
+        JPH_PhysicsSystem_DrawBodies(self->system, &settings, self->debug_renderer, nullptr);
     }
 
     // Draw Constraints
@@ -3777,10 +3775,11 @@ PyCFunction_DeclareMethod PhysicsWorld_get_debug_data(PhysicsWorldObject *self,
 }
 
 PyCFunction_DeclareMethod culv_dump_schema(CULV_MAYBE_UNUSED PyObject *self,
-                                       PyObject *Py_UNUSED(args)) {
-    const char* filename = "culverin_schema.json";
+                                           PyObject *Py_UNUSED(args)) {
+    const char *filename = "culverin_schema.json";
     FILE *f              = fopen(filename, "w");
-    if (!f) return PyErr_SetFromErrno(PyExc_IOError);
+    if (!f)
+        return PyErr_SetFromErrno(PyExc_IOError);
 
     fp_dump_schemas_json(f);
     fclose(f);
@@ -3788,53 +3787,74 @@ PyCFunction_DeclareMethod culv_dump_schema(CULV_MAYBE_UNUSED PyObject *self,
     Py_RETURN_NONE;
 }
 
+PyCFunction_DeclareMethod PhysicsWorld_benchmark_parse(PhysicsWorldObject *self,
+                                                       PyObject *const *args, size_t nargsf,
+                                                       PyObject *kwnames) {
+    constexpr size_t NUM_ARGS = 64;
+    uint64_t values[NUM_ARGS] = {};
+    void *targets[NUM_ARGS];
+
+    // Map targets to values array (Loop is efficient here, unrolled by compiler)
+    for (size_t i = 0; i < NUM_ARGS; ++i) {
+        targets[i] = &values[i];
+    }
+
+    auto nargs = PyVectorcall_NARGS(nargsf);
+    if (UNLIKELY(!FastParse_Unified(args, nargs, kwnames, &StressTestParser, targets))) {
+        return nullptr;
+    }
+
+    Py_RETURN_NONE;
+}
+
 // --- Type Definition ---
 
-static PyMethodDef module_methods[] = {
-    {"_dump_schema_json", culv_dump_schema, METH_NOARGS, "Internal: Dumps schema to culverin_schema.json"},
-    {NULL, NULL, 0, NULL}
-};
+static PyMethodDef module_methods[] = {{"_dump_schema_json", culv_dump_schema, METH_NOARGS,
+                                        "Internal: Dumps schema to culverin_schema.json"},
+                                       {nullptr, nullptr, 0, nullptr}};
 
 static const PyGetSetDef PhysicsWorld_getset[] = {
-    {"positions", (getter)get_positions, NULL, NULL, NULL},
-    {"rotations", (getter)get_rotations, NULL, NULL, NULL},
-    {"velocities", (getter)get_velocities, NULL, NULL, NULL},
-    {"angular_velocities", (getter)get_angular_velocities, NULL, NULL, NULL},
-    {"count", (getter)get_count, NULL, NULL, NULL},
-    {"time", (getter)get_time, NULL, NULL, NULL},
-    {"user_data", (getter)get_user_data_buffer, NULL, NULL, NULL},
-    {"shape_count", (getter)get_shape_count, NULL, "Number of unique shapes in cache", NULL},
-    {"is_step_pending", (getter)get_is_step_pending, NULL,
+    {"positions", (getter)get_positions, nullptr, nullptr, nullptr},
+    {"rotations", (getter)get_rotations, nullptr, nullptr, nullptr},
+    {"velocities", (getter)get_velocities, nullptr, nullptr, nullptr},
+    {"angular_velocities", (getter)get_angular_velocities, nullptr, nullptr, nullptr},
+    {"count", (getter)get_count, nullptr, nullptr, nullptr},
+    {"time", (getter)get_time, nullptr, nullptr, nullptr},
+    {"user_data", (getter)get_user_data_buffer, nullptr, nullptr, nullptr},
+    {"shape_count", (getter)get_shape_count, nullptr, "Number of unique shapes in cache", nullptr},
+    {"is_step_pending", (getter)get_is_step_pending, nullptr,
      "Whether a physics step is currently in progress. If True, structural changes are blocked.",
-     NULL},
-    {"max_bodies", (getter)PhysicsWorld_get_max_bodies, NULL,
-     "The hard limit of bodies set at init.", NULL},
-    {"remaining_capacity", (getter)PhysicsWorld_get_remaining_capacity, NULL,
-     "Number of slots available before world.step() is required.", NULL},
-    {NULL, NULL, NULL, NULL, NULL}};
+     nullptr},
+    {"max_bodies", (getter)PhysicsWorld_get_max_bodies, nullptr,
+     "The hard limit of bodies set at init.", nullptr},
+    {"remaining_capacity", (getter)PhysicsWorld_get_remaining_capacity, nullptr,
+     "Number of slots available before world.step() is required.", nullptr},
+    {nullptr, nullptr, nullptr, nullptr, nullptr}};
 
-static const PyGetSetDef Character_getset[] = {{"handle", (getter)Character_get_handle, NULL,
+static const PyGetSetDef Character_getset[] = {{"handle", (getter)Character_get_handle, nullptr,
                                                 "The unique physics handle for this character.",
-                                                NULL},
-                                               {NULL, NULL, NULL, NULL, NULL}};
+                                                nullptr},
+                                               {nullptr, nullptr, nullptr, nullptr, nullptr}};
 
-static const PyGetSetDef Vehicle_getset[] = {{"wheel_count", (getter)Vehicle_get_wheel_count, NULL,
-                                              "Number of wheels attached to this vehicle.", NULL},
-                                             {NULL, NULL, NULL, NULL, NULL}};
+static const PyGetSetDef Vehicle_getset[] = {{"wheel_count", (getter)Vehicle_get_wheel_count,
+                                              nullptr, "Number of wheels attached to this vehicle.",
+                                              nullptr},
+                                             {nullptr, nullptr, nullptr, nullptr, nullptr}};
 
 static const PyMethodDef PhysicsWorld_methods[] = {
     // --- Lifecycle ---
-    {"step", (PyCFunction)(void (*)(void))PhysicsWorld_step, METH_FASTCALL | METH_KEYWORDS, NULL},
+    {"step", (PyCFunction)(void (*)(void))PhysicsWorld_step, METH_FASTCALL | METH_KEYWORDS,
+     nullptr},
     {"create_body", (PyCFunction)(void (*)(void))PhysicsWorld_create_body,
-     METH_FASTCALL | METH_KEYWORDS, NULL},
+     METH_FASTCALL | METH_KEYWORDS, nullptr},
     {"create_bodies_batch", (PyCFunction)(void (*)(void))PhysicsWorld_create_bodies_batch,
-     METH_FASTCALL | METH_KEYWORDS, NULL},
+     METH_FASTCALL | METH_KEYWORDS, nullptr},
     {"destroy_body", (PyCFunction)(void (*)(void))PhysicsWorld_destroy_body,
-     METH_FASTCALL | METH_KEYWORDS, NULL},
+     METH_FASTCALL | METH_KEYWORDS, nullptr},
     {"destroy_bodies_batch", (PyCFunction)(void (*)(void))PhysicsWorld_destroy_bodies_batch,
-     METH_FASTCALL | METH_KEYWORDS, NULL},
+     METH_FASTCALL | METH_KEYWORDS, nullptr},
     {"create_mesh_body", (PyCFunction)(void (*)(void))PhysicsWorld_create_mesh_body,
-     METH_FASTCALL | METH_KEYWORDS, NULL},
+     METH_FASTCALL | METH_KEYWORDS, nullptr},
     {"create_constraint", (PyCFunction)(void (*)(void))PhysicsWorld_create_constraint,
      METH_FASTCALL | METH_KEYWORDS,
      "Create a constraint between two bodies. Params depend on type."},
@@ -3860,15 +3880,15 @@ static const PyMethodDef PhysicsWorld_methods[] = {
 
     // --- Interaction ---
     {"apply_impulse", (PyCFunction)(void (*)(void))PhysicsWorld_apply_impulse,
-     METH_FASTCALL | METH_KEYWORDS, NULL},
+     METH_FASTCALL | METH_KEYWORDS, nullptr},
     {"apply_angular_impulse", (PyCFunction)(void (*)(void))PhysicsWorld_apply_angular_impulse,
      METH_FASTCALL | METH_KEYWORDS, "Apply rotational momentum."},
     {"apply_impulse_at", (PyCFunction)(void (*)(void))PhysicsWorld_apply_impulse_at,
      METH_FASTCALL | METH_KEYWORDS, "Apply impulse at world position."},
     {"apply_force", (PyCFunction)(void (*)(void))PhysicsWorld_apply_force,
-     METH_FASTCALL | METH_KEYWORDS, NULL},
+     METH_FASTCALL | METH_KEYWORDS, nullptr},
     {"apply_torque", (PyCFunction)(void (*)(void))PhysicsWorld_apply_torque,
-     METH_FASTCALL | METH_KEYWORDS, NULL},
+     METH_FASTCALL | METH_KEYWORDS, nullptr},
     {"set_gravity", (PyCFunction)(void (*)(void))PhysicsWorld_set_gravity,
      METH_FASTCALL | METH_KEYWORDS, "Set the world gravity vector (x, y, z)."},
     {"apply_buoyancy", (PyCFunction)(void (*)(void))PhysicsWorld_apply_buoyancy,
@@ -3877,37 +3897,37 @@ static const PyMethodDef PhysicsWorld_methods[] = {
      METH_FASTCALL | METH_KEYWORDS,
      "Apply buoyancy to a list of bodies. handles must be a buffer of uint64."},
     {"set_position", (PyCFunction)(void (*)(void))PhysicsWorld_set_position,
-     METH_FASTCALL | METH_KEYWORDS, NULL},
+     METH_FASTCALL | METH_KEYWORDS, nullptr},
     {"set_rotation", (PyCFunction)(void (*)(void))PhysicsWorld_set_rotation,
-     METH_FASTCALL | METH_KEYWORDS, NULL},
+     METH_FASTCALL | METH_KEYWORDS, nullptr},
     {"set_linear_velocity", (PyCFunction)(void (*)(void))PhysicsWorld_set_linear_velocity,
-     METH_FASTCALL | METH_KEYWORDS, NULL},
+     METH_FASTCALL | METH_KEYWORDS, nullptr},
     {"set_angular_velocity", (PyCFunction)(void (*)(void))PhysicsWorld_set_angular_velocity,
-     METH_FASTCALL | METH_KEYWORDS, NULL},
+     METH_FASTCALL | METH_KEYWORDS, nullptr},
     {"set_transform", (PyCFunction)(void (*)(void))PhysicsWorld_set_transform,
-     METH_FASTCALL | METH_KEYWORDS, NULL},
+     METH_FASTCALL | METH_KEYWORDS, nullptr},
     {"set_collision_filter", (PyCFunction)(void (*)(void))PhysicsWorld_set_collision_filter,
      METH_FASTCALL | METH_KEYWORDS, "Dynamically update collision bitmasks."},
     {"register_material", (PyCFunction)(void (*)(void))PhysicsWorld_register_material,
      METH_FASTCALL | METH_KEYWORDS, "Define properties for a material ID."},
     {"set_constraint_target", (PyCFunction)(void (*)(void))PhysicsWorld_set_constraint_target,
-     METH_FASTCALL | METH_KEYWORDS, NULL},
+     METH_FASTCALL | METH_KEYWORDS, nullptr},
 
     // --- Motion Control ---
     {"get_motion_type", (PyCFunction)(void (*)(void))PhysicsWorld_get_motion_type,
-     METH_FASTCALL | METH_KEYWORDS, NULL},
+     METH_FASTCALL | METH_KEYWORDS, nullptr},
     {"set_motion_type", (PyCFunction)(void (*)(void))PhysicsWorld_set_motion_type,
-     METH_FASTCALL | METH_KEYWORDS, NULL},
+     METH_FASTCALL | METH_KEYWORDS, nullptr},
     {"activate", (PyCFunction)(void (*)(void))PhysicsWorld_activate, METH_FASTCALL | METH_KEYWORDS,
-     NULL},
+     nullptr},
     {"deactivate", (PyCFunction)(void (*)(void))PhysicsWorld_deactivate,
-     METH_FASTCALL | METH_KEYWORDS, NULL},
+     METH_FASTCALL | METH_KEYWORDS, nullptr},
     {"set_ccd", (PyCFunction)(void (*)(void))PhysicsWorld_set_ccd, METH_FASTCALL | METH_KEYWORDS,
      "Enable/Disable Continuous Collision Detection."},
 
     // --- Queries ---
     {"raycast", (PyCFunction)(void (*)(void))PhysicsWorld_raycast, METH_FASTCALL | METH_KEYWORDS,
-     NULL},
+     nullptr},
     {"raycast_batch", (PyCFunction)(void (*)(void))PhysicsWorld_raycast_batch,
      METH_FASTCALL | METH_KEYWORDS, "Execute multiple raycasts efficiently."},
     {"shapecast", (PyCFunction)(void (*)(void))PhysicsWorld_shapecast,
@@ -3915,15 +3935,15 @@ static const PyMethodDef PhysicsWorld_methods[] = {
      "Sweeps a shape along a direction vector. Returns (Handle, Fraction, "
      "ContactPoint, Normal) or None."},
     {"overlap_sphere", (PyCFunction)(void (*)(void))PhysicsWorld_overlap_sphere,
-     METH_FASTCALL | METH_KEYWORDS, NULL},
+     METH_FASTCALL | METH_KEYWORDS, nullptr},
     {"overlap_aabb", (PyCFunction)(void (*)(void))PhysicsWorld_overlap_aabb,
-     METH_FASTCALL | METH_KEYWORDS, NULL},
+     METH_FASTCALL | METH_KEYWORDS, nullptr},
 
     // --- Utilities ---
     {"get_index", (PyCFunction)(void (*)(void))PhysicsWorld_get_index,
-     METH_FASTCALL | METH_KEYWORDS, NULL},
+     METH_FASTCALL | METH_KEYWORDS, nullptr},
     {"is_alive", (PyCFunction)(void (*)(void))PhysicsWorld_is_alive, METH_FASTCALL | METH_KEYWORDS,
-     NULL},
+     nullptr},
     {"get_active_indices", (PyCFunction)PhysicsWorld_get_active_indices, METH_NOARGS,
      "Returns a bytes object containing uint32 indices of all active bodies."},
     {"get_render_state", (PyCFunction)(void (*)(void))PhysicsWorld_get_render_state,
@@ -3934,43 +3954,48 @@ static const PyMethodDef PhysicsWorld_methods[] = {
      "Returns (lines_bytes, triangles_bytes). Each vertex is 16 bytes: [x, y, "
      "z, color_u32]."},
     {"get_body_stats", (PyCFunction)(void (*)(void))PhysicsWorld_get_body_stats,
-     METH_FASTCALL | METH_KEYWORDS, NULL},
+     METH_FASTCALL | METH_KEYWORDS, nullptr},
 
     // --- User Data ---
     {"get_user_data", (PyCFunction)(void (*)(void))PhysicsWorld_get_user_data,
-     METH_FASTCALL | METH_KEYWORDS, NULL},
+     METH_FASTCALL | METH_KEYWORDS, nullptr},
     {"set_user_data", (PyCFunction)(void (*)(void))PhysicsWorld_set_user_data,
-     METH_FASTCALL | METH_KEYWORDS, NULL},
+     METH_FASTCALL | METH_KEYWORDS, nullptr},
 
     // -- Event Logic ---
-    {"get_contact_events", (PyCFunction)PhysicsWorld_get_contact_events, METH_NOARGS, NULL},
+    {"get_contact_events", (PyCFunction)PhysicsWorld_get_contact_events, METH_NOARGS, nullptr},
     {"get_contact_events_ex", (PyCFunction)PhysicsWorld_get_contact_events_ex, METH_NOARGS,
      "Get rich collision data as dicts"},
     {"get_contact_events_raw", (PyCFunction)PhysicsWorld_get_contact_events_raw, METH_NOARGS,
      "Get raw collision buffer as memoryview"},
 
     // --- State & Advanced ---
-    {"save_state", (PyCFunction)PhysicsWorld_save_state, METH_NOARGS, NULL},
+    {"save_state", (PyCFunction)PhysicsWorld_save_state, METH_NOARGS, nullptr},
     {"load_state", (PyCFunction)(void (*)(void))PhysicsWorld_load_state,
      METH_FASTCALL | METH_KEYWORDS, "Load world state snapshot"},
     {"create_character", (PyCFunction)(void (*)(void))PhysicsWorld_create_character,
      METH_FASTCALL | METH_KEYWORDS, "Create a virtual character"},
 
-    {NULL, NULL, 0, NULL}};
+    // --- Internal/Debug ---
+    {"_benchmark_parse", (PyCFunction)(void (*)(void))PhysicsWorld_benchmark_parse,
+     METH_FASTCALL | METH_KEYWORDS,
+     "Benchmark the argument parsing of a complex function. Up to 64 arguments."},
+
+    {nullptr, nullptr, 0, nullptr}};
 
 static const PyMethodDef Character_methods[] = {
-    {"move", (PyCFunction)(void (*)(void))Character_move, METH_FASTCALL | METH_KEYWORDS, NULL},
-    {"get_position", (PyCFunction)(void (*)(void))Character_get_position, METH_NOARGS, NULL},
+    {"move", (PyCFunction)(void (*)(void))Character_move, METH_FASTCALL | METH_KEYWORDS, nullptr},
+    {"get_position", (PyCFunction)(void (*)(void))Character_get_position, METH_NOARGS, nullptr},
     {"set_position", (PyCFunction)(void (*)(void))Character_set_position,
      METH_FASTCALL | METH_KEYWORDS, "Teleport the character to a new position"},
     {"set_rotation", (PyCFunction)(void (*)(void))Character_set_rotation,
      METH_FASTCALL | METH_KEYWORDS, "Set the character's rotation quaternion (x, y, z, w)"},
-    {"is_grounded", (PyCFunction)Character_is_grounded, METH_NOARGS, NULL},
+    {"is_grounded", (PyCFunction)Character_is_grounded, METH_NOARGS, nullptr},
     {"set_strength", (PyCFunction)(void (*)(void))Character_set_strength,
      METH_FASTCALL | METH_KEYWORDS, "Set the character's maximum pushing strength"},
     {"get_render_transform", (PyCFunction)Character_get_render_transform, METH_O,
      "Returns interpolated ((x,y,z), (rx,ry,rz,rw)) based on alpha [0-1]."},
-    {NULL, NULL, 0, NULL}};
+    {nullptr, nullptr, 0, nullptr}};
 
 static const PyMethodDef Vehicle_methods[] = {
     {"set_input", (PyCFunction)(void (*)(void))Vehicle_set_input, METH_FASTCALL | METH_KEYWORDS,
@@ -3985,7 +4010,7 @@ static const PyMethodDef Vehicle_methods[] = {
      "Manually remove the vehicle from physics."},
     {"get_debug_state", (PyCFunction)Vehicle_get_debug_state, METH_NOARGS,
      "Print drivetrain and wheel status to stderr"},
-    {NULL, NULL, 0, NULL}};
+    {nullptr, nullptr, 0, nullptr}};
 
 static const PyMethodDef Skeleton_methods[] = {
     {"add_joint", (PyCFunction)(void (*)(void))Skeleton_add_joint, METH_FASTCALL | METH_KEYWORDS,
@@ -3993,7 +4018,7 @@ static const PyMethodDef Skeleton_methods[] = {
     {"get_joint_index", (PyCFunction)(void (*)(void))Skeleton_get_joint_index,
      METH_FASTCALL | METH_KEYWORDS, "Find the index of a joint by name"},
     {"finalize", (PyCFunction)Skeleton_finalize, METH_NOARGS, "Bake skeleton hierarchy"},
-    {NULL, NULL, 0, NULL}};
+    {nullptr, nullptr, 0, nullptr}};
 
 static const PyMethodDef Ragdoll_methods[] = {
     {"drive_to_pose", (PyCFunction)(void (*)(void))Ragdoll_drive_to_pose,
@@ -4002,19 +4027,19 @@ static const PyMethodDef Ragdoll_methods[] = {
      "Get list of body handles"},
     {"get_debug_info", (PyCFunction)Ragdoll_get_debug_info, METH_NOARGS,
      "Returns list of dicts for each part"},
-    {NULL, NULL, 0, NULL}};
+    {nullptr, nullptr, 0, nullptr}};
 
 static const PyMethodDef RagdollSettings_methods[] = {
     {"add_part", (PyCFunction)(void (*)(void))RagdollSettings_add_part,
      METH_FASTCALL | METH_KEYWORDS,
      "Add a body part and its parent constraint to the ragdoll settings"},
     {"stabilize", (PyCFunction)RagdollSettings_stabilize, METH_NOARGS, "Auto-detect collisions"},
-    {NULL, NULL, 0, NULL}};
+    {nullptr, nullptr, 0, nullptr}};
 
 static PyMemberDef PhysicsWorld_members[] = {{"__weaklistoffset__", Py_T_PYSSIZET,
                                               offsetof(PhysicsWorldObject, weakreflist),
-                                              Py_READONLY, NULL},
-                                             {NULL, 0, 0, 0, NULL}};
+                                              Py_READONLY, nullptr},
+                                             {nullptr, 0, 0, 0, nullptr}};
 
 static const PyType_Slot PhysicsWorld_slots[] = {
     {Py_tp_new, PyType_GenericNew},
@@ -4026,7 +4051,7 @@ static const PyType_Slot PhysicsWorld_slots[] = {
     {Py_bf_releasebuffer, PhysicsWorld_releasebuffer},
     {Py_tp_traverse, PhysicsWorld_traverse},
     {Py_tp_clear, PhysicsWorld_clear},
-    {0, NULL},
+    {0, nullptr},
 };
 
 static const PyType_Slot Character_slots[] = {
@@ -4035,7 +4060,7 @@ static const PyType_Slot Character_slots[] = {
     {Py_tp_clear, Character_clear},
     {Py_tp_methods, (PyMethodDef *)Character_methods},
     {Py_tp_getset, (PyGetSetDef *)Character_getset},
-    {0, NULL},
+    {0, nullptr},
 };
 
 static const PyType_Slot Vehicle_slots[] = {
@@ -4044,14 +4069,14 @@ static const PyType_Slot Vehicle_slots[] = {
     {Py_tp_clear, Vehicle_clear},
     {Py_tp_methods, (PyMethodDef *)Vehicle_methods},
     {Py_tp_getset, (PyGetSetDef *)Vehicle_getset},
-    {0, NULL},
+    {0, nullptr},
 };
 
 static const PyType_Slot Skeleton_slots[] = {
     {Py_tp_new, Skeleton_new}, // We defined this
     {Py_tp_dealloc, Skeleton_dealloc},
     {Py_tp_methods, (PyMethodDef *)Skeleton_methods},
-    {0, NULL},
+    {0, nullptr},
 };
 
 static const PyType_Spec Skeleton_spec = {
@@ -4064,7 +4089,7 @@ static const PyType_Spec Skeleton_spec = {
 static const PyType_Slot RagdollSettings_slots[] = {
     {Py_tp_dealloc, RagdollSettings_dealloc},
     {Py_tp_methods, (PyMethodDef *)RagdollSettings_methods},
-    {0, NULL},
+    {0, nullptr},
 };
 
 static const PyType_Spec PhysicsWorld_spec = {
@@ -4098,7 +4123,7 @@ static const PyType_Spec RagdollSettings_spec = {
 static const PyType_Slot Ragdoll_slots[] = {
     {Py_tp_dealloc, Ragdoll_dealloc},
     {Py_tp_methods, (PyMethodDef *)Ragdoll_methods},
-    {0, NULL},
+    {0, nullptr},
 };
 
 static const PyType_Spec Ragdoll_spec = {
@@ -4125,7 +4150,7 @@ static int init_types(PyObject *m, CulverinState *st) {
         {(PyType_Spec *)&Skeleton_spec, &st->SkeletonType, "Skeleton"}};
 
     for (size_t i = 0; i < sizeof(types) / sizeof(types[0]); i++) {
-        PyObject *type = PyType_FromModuleAndSpec(m, types[i].spec, NULL);
+        PyObject *type = PyType_FromModuleAndSpec(m, types[i].spec, nullptr);
         if (!type) {
             return -1;
         }
@@ -4246,7 +4271,7 @@ static const PyModuleDef_Slot culverin_slots[] = {
     {Py_mod_gil, Py_MOD_GIL_NOT_USED},
 #endif
     {Py_mod_multiple_interpreters, Py_MOD_MULTIPLE_INTERPRETERS_SUPPORTED},
-    {0, NULL}};
+    {0, nullptr}};
 
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 static PyModuleDef culverin_module = {
