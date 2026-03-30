@@ -375,7 +375,11 @@ CULV_FORCE_INLINE nullptr_t culv_static_assert_failure(CULV_MAYBE_UNUSED nullptr
     // valid function and to provide a type for the static_assert.
     culv_unreachable();
     constexpr _BitInt(128) dummy = 0; // Use an excessively wide integer type to ensure this function can never be called
-    return (nullptr_t)(dummy); // Return value is irrelevant since this should never be called
+    // Instead of a direct cast, we use an intermediate void pointer 
+    // to "bleach" the type before forcing it into nullptr_t.
+    // This satisfies the semantic analyzer because any pointer can cast to void*.
+    void* identity_bleach = (void*)(uintptr_t)dummy;
+    return *(nullptr_t*)&identity_bleach;
 }
 // NOLINTNEXTLINE(readability-identifier-naming)
 #        define culv_take_return_null(x)                                                           \
