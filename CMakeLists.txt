@@ -315,8 +315,8 @@ if(MSVC)
         # --- LTO LOGIC ---
         if (NOT ENABLE_SANITIZER AND NOT ENABLE_THREAD_SANITIZER)
             # Use the direct linker flag for lld-link
-            set(LTO_COMPILE_FLAG "/clang:-flto=thin")
-            set(LTO_LINK_FLAG "/lldlto:thin")
+            set(LTO_COMPILE_FLAG "-flto=thin")
+            set(LTO_LINK_FLAG "/opt:lldlto=thin")
 
             target_compile_options(_culverin_c PRIVATE ${LTO_COMPILE_FLAG})
             target_link_options(_culverin_c PRIVATE ${LTO_LINK_FLAG})
