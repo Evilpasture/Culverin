@@ -10,7 +10,7 @@
 static_assert(sizeof(PosStride) == sizeof(JPH_Real) * 4, "PosStride size mismatch");
 static_assert(sizeof(AuxStride) == sizeof(float) * 4, "AuxStride size mismatch");
 
-static constexpr int BATCH_SIZE = 32;
+static constexpr int BATCH_SIZE = 128;
 
 // Safe C++ wrapper for our worklist so we don't use opaque C pointers internally
 namespace {
@@ -39,16 +39,6 @@ CULV_FORCE_INLINE void process_full_batch(PhysicsWorldObject *self,
 #    pragma GCC unroll 4
 #endif
     for (uint32_t j = 0; j < BATCH_SIZE; j++) {
-        // [OPTIMIZATION]: Lookahead prefetch destination addresses for scatter-writes.
-        // Mitigates L1/L2 cache misses when dense_idx is highly randomized.
-        if (j + 4 < BATCH_SIZE) {
-            uint32_t future_D = worklist[j + 4].dense_idx;
-            CULV_PREFETCH_WRITE(&s_pos[future_D]);
-            CULV_PREFETCH_WRITE(&s_ppos[future_D]);
-            CULV_PREFETCH_WRITE(&s_rot[future_D]);
-            CULV_PREFETCH_WRITE(&s_prot[future_D]);
-        }
-
         uint32_t D = worklist[j].dense_idx;
 
         // Native C++ Pointer - GUARANTEED SAFE
@@ -183,11 +173,15 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
         return;
     }
 
+    // Static variables persist in memory across function calls
+    CULV_MAYBE_UNUSED static CulvStat sync_stats = { .total_cycles = 0, .min_cycles = 0xFFFFFFFFFFFFFFFFULL, .max_cycles = 0, .count = 0 };
+
     CULV_PROFILE_BEGIN(sync);
 
     const uint32_t *CULV_RESTRICT s2d = self->slot_to_dense;
+    auto *CULV_RESTRICT s_pos = (PosStride *)self->positions;
+    auto *CULV_RESTRICT s_rot = (AuxStride *)self->rotations;
 
-    // Stack allocated worklist (fits in L1 cache comfortably)
     alignas(MEMORY_ALIGNMENT_SIZE) CppSyncWorkItem worklist[BATCH_SIZE];
     uint32_t work_ptr = 0;
 
@@ -196,12 +190,7 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
             JPH_PhysicsSystem_GetBodyLockInterfaceNoLock(sys_c));
 
     for (uint32_t i = 0; i < active_count; i++) {
-        if (i + 4 < active_count) {
-            const void *next_id_ptr = &active_ids[i + 4];
-            CULV_PREFETCH(next_id_ptr);
-        }
-        // Post-step, no Jolt jobs running — NoLock interface is safe and eliminates
-        // per-body call overhead. Lock interface hoisted once above the loop.
+        // Post-step, no Jolt jobs running — NoLock interface is safe
         const JPH::Body *b = lock_iface->TryGetBody(JPH::BodyID(active_ids[i]));
         if (UNLIKELY(b == nullptr)) {
             continue;
@@ -211,23 +200,31 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
         auto slot       = (uint32_t)(handle & HANDLE_INDEX_MASK);
         auto gen        = (uint32_t)(handle >> HANDLE_INDEX_BITS);
 
-        // 1. Calculate the bounds check (0 if in bounds, non-zero if out)
-        auto out_of_bounds = (uint32_t)(slot >= self->slot_capacity);
+        // --- BRANCHLESS VALIDATION ---
+        // Force the slot into a safe range to prevent segfaults on read
+        uint32_t safe_slot = (slot < self->slot_capacity) ? slot : 0;
+        
+        // Bitwise OR all failure conditions. If 'bad' is > 0, the body is invalid.
+        uint32_t bad = static_cast<uint32_t>(slot >= self->slot_capacity) | 
+                       (self->generations[safe_slot] ^ gen) | 
+                       (self->slot_states[safe_slot] ^ SLOT_ALIVE);
 
-        if (UNLIKELY(out_of_bounds)) {
-            continue;
-        }
-        // 2. Bitwise OR the conditions
-        if (UNLIKELY((self->generations[slot] ^ gen) | (self->slot_states[slot] ^ SLOT_ALIVE))) {
-            continue;
-        }
+        // Fetch dense index safely
+        uint32_t d_idx = s2d[safe_slot];
 
-        // Now the "Hot Path" is flat and easy to read
+        // --- DEEP PREFETCHING ---
+        // Ask the CPU to fetch the destination memory NOW. 
+        // By the time 'process_full_batch' is called, this memory will be waiting in L1 cache.
+        CULV_PREFETCH_WRITE(&s_pos[d_idx]);
+        CULV_PREFETCH_WRITE(&s_rot[d_idx]);
+
+        // Always write to the worklist (safe because it's local stack memory)
         CULV_ASSUME(work_ptr < BATCH_SIZE);
-        worklist[work_ptr].body      = b;
-        worklist[work_ptr].dense_idx = s2d[slot];
-        work_ptr++;
-        synced_count++;
+        uint32_t is_valid = static_cast<uint32_t>(bad == 0);
+        worklist[work_ptr].body      = (is_valid != 0u) ? b : worklist[work_ptr].body;
+        worklist[work_ptr].dense_idx = (is_valid != 0u) ? d_idx : worklist[work_ptr].dense_idx;
+        work_ptr += is_valid;
+        synced_count += is_valid;
 
         if (work_ptr == BATCH_SIZE) {
             process_full_batch(self, worklist);
@@ -239,5 +236,15 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
     if (work_ptr > 0) {
         process_partial_batch(self, worklist, work_ptr);
     }
-    CULV_PROFILE_END(sync, "Sync", synced_count);
+    CULV_PROFILE_ACCUMULATE(sync, &sync_stats);
+    #ifdef CULVERIN_PROFILE_SYNC
+    if (sync_stats.count >= 50) {
+        fprintf(stderr, "[culverin] Sync Stat Avg: %" PRIu64 " | Max: %" PRIu64 "\n", 
+                sync_stats.total_cycles / sync_stats.count, 
+                sync_stats.max_cycles);
+        
+        // Reset
+        sync_stats = (CulvStat){0, 0xFFFFFFFFFFFFFFFFULL, 0, 0};
+    }
+    #endif
 }
