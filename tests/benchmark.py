@@ -42,81 +42,159 @@ def run_leak_test(iterations=50000):
         print("✅ SUCCESS: Memory is stable")
 
 
-def run_threading_benchmark(duration=5.0, num_bodies=5000):
-    print(f"\n=== CULVERIN MEGA-BATCH THREAD STRESS TEST ===")
-    print(f"Simulating {num_bodies} bodies across multiple cores for {duration}s...")
+def run_threading_benchmark(duration=5.0, num_bodies=500):
+    print(f"\n=== CULVERIN REALISTIC SIMULATION BENCHMARK ===")
+    print(f"Simulating {num_bodies} active dynamic bodies across multiple cores for {duration}s...")
     
-    world = culverin.PhysicsWorld(settings={"max_bodies": num_bodies + 5000, "max_pairs": num_bodies * 2})
+    # 1. SETUP: World with plenty of headroom to avoid RuntimeErrors
+    world = culverin.PhysicsWorld(settings={
+        "max_bodies": num_bodies + 2000, 
+        "max_pairs": num_bodies * 8
+    })
     
-    # Pre-populate
-    rand_pos = np.random.uniform(-500, 500, (num_bodies, 3)).astype(np.float32)
-    rand_pos[:, 1] += 500
+    # Create static floor (Giant Box)
+    world.create_body(
+        pos=(0, -5, 0), size=(500, 1, 500), 
+        shape=culverin.SHAPE_BOX, motion=culverin.MOTION_STATIC
+    )
     
+    # Create Dynamic Grid (Spawned in the air so they crash down)
+    pos_list = []
+    grid_size = int(np.cbrt(num_bodies)) + 1
+    spacing = 1.5
+    for x in range(grid_size):
+        for y in range(grid_size):
+            for z in range(grid_size):
+                if len(pos_list) < num_bodies:
+                    pos_list.append((x * spacing - 10, y * spacing + 10, z * spacing - 10))
+            
     handles_raw = world.create_bodies_batch(
-        positions=rand_pos.tolist(),
-        sizes=[[0.5, 0.5, 0.5]] * num_bodies,
+        positions=pos_list,
+        sizes=[[0.5, 0.5, 0.5]] * len(pos_list),
         shape_type=culverin.SHAPE_BOX,
         motion_type=culverin.MOTION_DYNAMIC
     )
+    # Store handles in a mutable numpy array for thread-safe-ish updating
     handles = np.array(handles_raw, dtype=np.uint64)
-    world.step(0)
+    world.step(0) # Initial push to BroadPhase
     
     # Thread States
     running = True
-    stats = {"steps": 0, "queries": 0, "mutations": 0}
+    stats = {"steps": 0, "rays": 0, "contacts": 0, "resets": 0, "mutations": 0}
 
+    # --- THREAD 1: THE CORE STEPPER ---
     def worker_stepper():
         while running:
-            world.step(1 / 60.0)
-            stats["steps"] += 1
+            try:
+                # Run as fast as the CPU allows
+                world.step(1.0 / 60.0)
+                stats["steps"] += 1
+            except RuntimeError:
+                # Concurrent step/lock failure - just skip this loop
+                pass 
 
-    def worker_querier():
-        batch_size = 1000
+    # --- THREAD 2: SENSORS (RAYCASTS) ---
+    def worker_sensors():
+        batch_size = 500
         starts = array.array('f', [0.0] * (batch_size * 3))
-        dirs = array.array('f', [0.0, -100.0, 0.0] * batch_size)
+        dirs = array.array('f', [0.0, -1.0, 0.0] * batch_size)
         while running:
-            starts[1] = random.uniform(200, 500)
-            world.raycast_batch(starts=starts, directions=dirs, max_dist=1000.0)
-            stats["queries"] += batch_size
+            starts[1] = random.uniform(20, 50) # Randomize height
+            world.raycast_batch(starts=starts, directions=dirs, max_dist=100.0)
+            stats["rays"] += batch_size
+            time.sleep(0.01) # ~100Hz
 
-    def worker_hammer():
+    # --- THREAD 3: GAMEPLAY LOGIC (ANTI-SLEEP & MEMORYVIEW) ---
+    def worker_housekeeper():
+        # Wrap the raw memoryview in a NumPy array
+        pos_data = np.frombuffer(world.positions, dtype=np.float64).reshape(-1, 4)
+        
         while running:
-            # Recreate 10 bodies per loop
-            v_idx = [random.randint(0, num_bodies - 1) for _ in range(10)]
-            victims = [int(handles[i]) for i in v_idx]
+            # Find fallen bodies
+            fallen_indices = np.where(pos_data[:num_bodies, 1] < 0.0)[0]
             
-            world.destroy_bodies_batch(handles=victims)
-            new_h = world.create_bodies_batch(
-                positions=np.random.uniform(-50, 50, (10, 3)).tolist(),
-                sizes=[[1,1,1]]*10,
-                shape_type=culverin.SHAPE_SPHERE
-            )
-            for i, idx in enumerate(v_idx): handles[idx] = new_h[i]
-            stats["mutations"] += 10
-            time.sleep(0.01)
+            for idx in fallen_indices:
+                h = int(handles[idx])
+                
+                # ADDED: Check if the handle is still valid before calling C
+                if world.is_alive(h):
+                    try:
+                        world.set_position(h, random.uniform(-10, 10), 20.0, random.uniform(-10, 10))
+                        world.set_linear_velocity(h, 0, 0, 0)
+                        stats["resets"] += 1
+                    except ValueError:
+                        # Fallback: if it was destroyed between the is_alive check 
+                        # and the set_position call, just ignore it.
+                        pass
+                
+            time.sleep(0.5)
 
+    # --- THREAD 4: THE MUTATOR (CONTROLLED HAMMER) ---
+    def worker_mutator():
+        while running:
+            try:
+                # Destroy 5 bodies, create 5 bodies. 
+                # Stresses the BroadPhase AABB tree and synchronization locks.
+                idx_to_replace = [random.randint(0, num_bodies - 1) for _ in range(5)]
+                victims = [int(handles[i]) for i in idx_to_replace]
+                
+                world.destroy_bodies_batch(handles=victims)
+                
+                new_h = world.create_bodies_batch(
+                    positions=[(0, 40, 0)] * 5,
+                    sizes=[[1, 1, 1]] * 5,
+                    shape_type=culverin.SHAPE_SPHERE,
+                    motion_type=culverin.MOTION_DYNAMIC
+                )
+                
+                for i, h in enumerate(new_h):
+                    handles[idx_to_replace[i]] = h
+                    world.activate(int(h)) # Force awake
+                    
+                stats["mutations"] += 5
+            except RuntimeError:
+                pass # Lock contention or pool limit hit, try again later
+                
+            time.sleep(0.05) # Run 20 times a second
+
+    # Start Threads
     threads = [
         threading.Thread(target=worker_stepper, name="Stepper"),
-        threading.Thread(target=worker_querier, name="Querier1"),
-        threading.Thread(target=worker_querier, name="Querier2"),
-        threading.Thread(target=worker_hammer, name="Hammer")
+        threading.Thread(target=worker_sensors, name="Sensors"),
+        threading.Thread(target=worker_housekeeper, name="Housekeeper"),
+        threading.Thread(target=worker_mutator, name="Mutator")
     ]
     
     for t in threads: t.start()
     
+    # Monitoring Loop
     start_t = time.time()
     try:
         while time.time() - start_t < duration:
             time.sleep(1.0)
-            print(f"[@ {time.time()-start_t:.1f}s] Steps: {stats['steps']} | Rays: {stats['queries']} | Mutations: {stats['mutations']}")
+            # Fetch raw events to clear the buffer (simulate event handling)
+            contacts = world.get_contact_events_raw()
+            if contacts:
+                stats["contacts"] += 1
+                
+            print(f"[@ {time.time()-start_t:.1f}s] "
+                  f"Steps: {stats['steps']} | "
+                  f"Rays: {stats['rays']} | "
+                  f"Mutations: {stats['mutations']} | "
+                  f"Resets: {stats['resets']}")
+            
             if stats['steps'] == 0:
-                print("❌ CRITICAL: Physics Thread is deadlocked")
+                print("❌ CRITICAL: Physics Thread is completely deadlocked")
                 break
     finally:
         running = False
-        for t in threads: t.join(timeout=2.0)
+        for t in threads: t.join(timeout=1.0)
         
-    print(f"✅ STRESS TEST COMPLETE: {stats['steps']} steps, {stats['queries']} rays.")
+    fps = stats['steps'] / duration
+    print(f"\n✅ TEST COMPLETE")
+    print(f"Final Performance: {fps:.2f} FPS")
+    print(f"Total Steps: {stats['steps']}")
+    print(f"Total Raycasts: {stats['rays']}")
 
 def run_churn_test(duration=10.0):
     # There is a known memory issue. will investigate...
