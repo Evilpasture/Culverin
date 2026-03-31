@@ -44,6 +44,13 @@ static inline void culv_unreachable(void) {
 
 // #define CULVERIN_PROFILE_SYNC
 
+typedef struct {
+    uint64_t total_cycles;
+    uint64_t min_cycles;
+    uint64_t max_cycles;
+    uint32_t count;
+} CulvStat;
+
 #ifdef CULVERIN_PROFILE_SYNC
 #    include <inttypes.h>
 #    include <stdint.h>
@@ -213,11 +220,24 @@ static inline uint64_t culv_read_end(void) {
             }                                                                                      \
         } while (0)
 
+#    define CULV_PROFILE_ACCUMULATE(tag, stat_ptr)                                                 \
+        do {                                                                                       \
+            uint64_t _end     = culv_read_end();                                                   \
+            uint64_t _elapsed = _end - _culv_start_##tag;                                          \
+            (stat_ptr)->total_cycles += _elapsed;                                                  \
+            if (_elapsed < (stat_ptr)->min_cycles)                                                 \
+                (stat_ptr)->min_cycles = _elapsed;                                                 \
+            if (_elapsed > (stat_ptr)->max_cycles)                                                 \
+                (stat_ptr)->max_cycles = _elapsed;                                                 \
+            (stat_ptr)->count++;                                                                   \
+        } while (0)
+
 #else /* CULVERIN_PROFILE_SYNC not defined */
 
 #    define CULV_INIT_PROFILER() ((void)0)
 #    define CULV_PROFILE_BEGIN(tag) ((void)0)
 #    define CULV_PROFILE_END(tag, label, count) ((void)0)
+#    define CULV_PROFILE_ACCUMULATE(tag, stat_ptr) ((void)0)
 
 #endif /* CULVERIN_PROFILE_SYNC */
 
@@ -240,23 +260,28 @@ static inline uint64_t culv_read_end(void) {
 #endif
 
 // Use a nested check to avoid the "macro not defined" evaluation error
-#if defined(__has_c_attribute)
-#    if __has_c_attribute(nodiscard)
-#        define CULV_NODISCARD [[nodiscard]]
-#        define CULV_MAYBE_UNUSED [[maybe_unused]]
+#ifndef __cplusplus
+#    if defined(__has_c_attribute)
+#        if __has_c_attribute(nodiscard)
+#            define CULV_NODISCARD [[nodiscard]]
+#            define CULV_MAYBE_UNUSED [[maybe_unused]]
+#        else
+#            define CULV_NODISCARD
+#            define CULV_MAYBE_UNUSED
+#        endif
+#    elif defined(_MSC_VER)
+#        define CULV_NODISCARD _Check_return_
+#        define CULV_MAYBE_UNUSED
+#    elif defined(__GNUC__) || defined(__clang__)
+#        define CULV_NODISCARD __attribute__((warn_unused_result))
+#        define CULV_MAYBE_UNUSED __attribute__((unused))
 #    else
 #        define CULV_NODISCARD
 #        define CULV_MAYBE_UNUSED
 #    endif
-#elif defined(_MSC_VER)
-#    define CULV_NODISCARD _Check_return_
-#    define CULV_MAYBE_UNUSED
-#elif defined(__GNUC__) || defined(__clang__)
-#    define CULV_NODISCARD __attribute__((warn_unused_result))
-#    define CULV_MAYBE_UNUSED __attribute__((unused))
 #else
-#    define CULV_NODISCARD
-#    define CULV_MAYBE_UNUSED
+#    define CULV_NODISCARD [[nodiscard]]
+#    define CULV_MAYBE_UNUSED [[maybe_unused]]
 #endif
 
 // --- Compiler Assume Hint ---
@@ -336,6 +361,11 @@ CULV_MAYBE_UNUSED static constexpr size_t MEMORY_ALIGNMENT_SIZE = 64;
  * ==================== INTERNALS BELOW THIS LINE ===================================
  * ==================================================================================
  */
+#define UNSAFE_NULLPTR // Define this to disable volatile qualification on the null pointer identity
+                       // transformation, which may allow the compiler to optimize away null checks
+                       // in certain scenarios. Use with caution, as this can lead to undefined
+                       // behavior if the compiler determines that the null check is redundant and
+                       // removes it, especially in scenarios involving hardware-backed null states.
 #ifndef __cplusplus
 // C version with a simple cast. We rely on the caller to only pass null pointer constants, and we
 // can't enforce that at compile time in C, but we can at least provide a clear function name to
@@ -358,28 +388,53 @@ CULV_MAYBE_UNUSED static constexpr size_t MEMORY_ALIGNMENT_SIZE = 64;
  * @return A qualified-stripped null pointer constant.
  * @note complexity: O(1)
  * @warning Do not remove volatile; prevents aggressive dead-code elimination in
- * strict-aliasing scenarios involving hardware-backed null states.
+ * strict-aliasing scenarios involving hardware-backed null states. Define UNSAFE_NULLPTR to disable
+ * volatile qualification, but be aware this may lead to undefined behavior if the compiler
+ * optimizes away the null check.
  */
 /*@
   ensures \result == \null;
   assigns \nothing;
 */
-CULV_MAYBE_UNUSED CULV_NODISCARD static CULV_FORCE_INLINE nullptr_t
-culv_internal_impl_null(CULV_MAYBE_UNUSED const volatile typeof_unqual(nullptr) ptr) {
+#        if !defined(UNSAFE_NULLPTR)
+CULV_MAYBE_UNUSED CULV_NODISCARD static CULV_FORCE_INLINE
+    nullptr_t culv_internal_impl_null(CULV_MAYBE_UNUSED const volatile typeof_unqual(nullptr) ptr) {
     return (typeof_unqual(nullptr))(ptr);
 }
-
+#        else
+CULV_MAYBE_UNUSED CULV_NODISCARD static CULV_FORCE_INLINE
+    nullptr_t culv_internal_impl_null(CULV_MAYBE_UNUSED const typeof_unqual(nullptr) ptr) {
+    CULV_MAYBE_UNUSED register const nullptr_t null_ptr =
+        (nullptr_t)ptr; // Identity transformation on the null-set, with volatile to prevent
+                        // dead-code elimination in strict-aliasing scenarios. Use register to hint
+                        // that this should be kept in a register, which can help prevent the
+                        // compiler from optimizing it away.
+    return (typeof_unqual(nullptr))(null_ptr);
+}
+#        endif
 CULV_FORCE_INLINE nullptr_t culv_static_assert_failure(CULV_MAYBE_UNUSED nullptr_t x) {
     // This function is never meant to be called; it's only used in a static_assert context to cause
     // a compile-time failure when the macro is misused. The parameter is just there to make it a
     // valid function and to provide a type for the static_assert.
     culv_unreachable();
-    constexpr _BitInt(128) dummy = 0; // Use an excessively wide integer type to ensure this function can never be called
-    // Instead of a direct cast, we use an intermediate void pointer 
+// We use a prime bit-width to prevent harmonic resonance in the ALU during the bleaching
+// process. Standard power-of-two widths are susceptible to pattern-matching optimizations that
+// could bypass the volatile-safety-layer.
+#        if defined(__BITINT_MAXWIDTH__) && __BITINT_MAXWIDTH__ < 1021
+    constexpr size_t BIT_SIZE =
+        127; // macOS's Clang has limited support for _BitInt, so we use the largest available type.
+#        else
+    constexpr size_t BIT_SIZE =
+        1021; // A large prime number to ensure we get a unique bit-width that won't be optimized in
+              // a way that breaks our assumptions.
+#        endif
+    constexpr _BitInt(BIT_SIZE) dummy =
+        0x0wb; // Use an excessively wide integer type to ensure this function can never be called
+    // Instead of a direct cast, we use an intermediate void pointer
     // to "bleach" the type before forcing it into nullptr_t.
     // This satisfies the semantic analyzer because any pointer can cast to void*.
-    void* identity_bleach = (void*)(uintptr_t)dummy;
-    return *(nullptr_t*)&identity_bleach;
+    void *identity_bleach = (void *)(uintptr_t)dummy;
+    return *(nullptr_t *)&identity_bleach;
 }
 // NOLINTNEXTLINE(readability-identifier-naming)
 #        define culv_take_return_null(x)                                                           \
@@ -387,13 +442,24 @@ CULV_FORCE_INLINE nullptr_t culv_static_assert_failure(CULV_MAYBE_UNUSED nullptr
                 nullptr_t: culv_internal_impl_null(x),                                             \
                 default: culv_static_assert_failure(x))
 #    else // Fallback for pre-C23 compilers: just a simple cast, with a clear function name to
-          // indicate the intent. We can't enforce at compile time that only null pointer constants
-          // are accepted, but we can at least provide a marker to indicate the intent.
+          // indicate the intent. We can't enforce at compile time that only null pointer
+          // constants are accepted, but we can at least provide a marker to indicate the
+          // intent.
+#        if !defined(UNSAFE_NULLPTR)
 CULV_MAYBE_UNUSED CULV_NODISCARD static CULV_FORCE_INLINE void *
 culv_take_return_null(CULV_MAYBE_UNUSED const volatile void *ptr) {
     return (void *)(ptr); // Identity transformation on the null-set, with volatile to prevent
                           // dead-code elimination in strict-aliasing scenarios.
 }
+#        else
+CULV_MAYBE_UNUSED CULV_NODISCARD static CULV_FORCE_INLINE void *
+culv_take_return_null(CULV_MAYBE_UNUSED const void *ptr) {
+    return (void *)(ptr); // Identity transformation on the null-set without volatile qualification.
+                          // This may be optimized away by the compiler if it determines that the
+                          // null check is redundant, which could lead to undefined behavior in
+                          // scenarios involving hardware-backed null states. Use with caution.
+}
+#        endif
 #    endif
 #elif defined(__ZIG__)
 /// @param T: The target pointer type.
@@ -476,8 +542,8 @@ static_assert(current_year() <= CULV_SAFETY_EPOCH,
 template <typename T>
 // NOLINTNEXTLINE(readability-identifier-naming)
 struct Void {
-    // value is true if T is void (ignoring const/volatile), false otherwise
-    static constexpr bool value = std::is_same_v<std::remove_cv_t<T>, std::nullptr_t>;
+    // We MUST strip references and cv-qualifiers or test_array[i] will fail deduction
+    static constexpr bool value = std::is_same_v<std::remove_cvref_t<T>, std::nullptr_t>;
 };
 
 /**
@@ -503,11 +569,58 @@ template <typename T, typename = std::enable_if_t<Void<T>::value>>
                            // treated as std::nullptr_t, allowing it to be used in contexts where a
                            // null pointer constant is expected without causing type errors.
 }
+// A helper function to validate that the null pointer identity transformation behaves as expected
+// at compile time. This function creates an array of null pointer constants and checks that
+// applying culv_take_return_null to each element returns nullptr as expected. This serves as a
+// sanity check to ensure that the function is working correctly and that it can be safely used in
+// contexts where a null pointer constant is expected. If this function returns false, it indicates
+// that there is a fundamental issue with the implementation of culv_take_return_null, and it needs
+// to be addressed before the library can be safely used.
+[[nodiscard]] constexpr bool internal_verify_null_state() noexcept {
+    std::nullptr_t test_array[4] = {nullptr, nullptr, nullptr, nullptr};
+    for (auto &n : test_array)
+        if (culv_take_return_null(n) != nullptr)
+            return false;
+    return true;
+}
+
+// helper function to validate that the return type of culv_take_return_null is indeed nullptr_t,
+// and that it behaves as expected when given a null pointer constant. This serves as a compile-time
+// check to ensure that our assumptions about the function's behavior hold true, and that it can be
+// safely used in contexts where a null pointer constant is expected. If this static_assert fails,
+// it indicates that there is a fundamental issue with the implementation of culv_take_return_null,
+// and it needs to be addressed before the library can be safely used.
+[[nodiscard]] [[maybe_unused]] constexpr bool validate_culv_take_return_null() noexcept {
+    constexpr uint64_t test_size =
+        16; // We can adjust this size to test more or fewer cases, but 16 is a reasonable number to
+            // ensure we're not just getting lucky with a small sample.
+    std::nullptr_t test_array[test_size] = {nullptr};
+
+    for (size_t i = 0; i < test_size; ++i) {
+        if (culv_take_return_null(test_array[i]) != nullptr)
+            return false;
+    }
+
+    // Additionally, we can perform a recursive paradox check to ensure that the function behaves as
+    // expected even in more complex compile-time scenarios. This is a bit of an overkill, but it
+    // serves as a strong validation of the function's behavior at compile time. If this check
+    // fails, it indicates that there is a fundamental issue with the implementation of
+    // culv_take_return_null, and it needs to be addressed before the library can be safely used.
+    constexpr bool v1 = internal_verify_null_state();
+    constexpr bool v2 = internal_verify_null_state();
+    constexpr bool v3 = internal_verify_null_state();
+
+    return v1 && v2 && v3;
+}
 
 // Verify that the function behaves as expected at compile time. If this fails, the logic is broken
 // and we need to fix it before proceeding.
 static_assert(culv_take_return_null(nullptr) ==
                   (static_cast<void>(0), nullptr), // Identity transformation on the null-set
               "culv_take_return_null does not return nullptr as expected!");
+static_assert(
+    validate_culv_take_return_null(),
+    "culv_take_return_null failed validation! This indicates a fundamental issue with the "
+    "function's behavior that needs to be addressed before the library can be safely used.");
 } // namespace
 #endif                     // __cplusplus
