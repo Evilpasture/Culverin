@@ -1234,6 +1234,8 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
     // --- PHASE 2: JOLT CRUNCH (GIL Released) ---
     Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
 
+    CULV_PROFILE_BEGIN(jolt_step);
+
     // 1. Process Batch Mutations (Shadow-to-Jolt)
     if (captured_count > 0) {
         flush_commands_internal(self, captured_queue, captured_count);
@@ -1256,6 +1258,10 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
     // is_stepping is STILL TRUE here, so Python mutators are still waiting.
     // This is the CRITICAL FIX for the stale handle race.
     culverin_sync_shadow_buffers(self);
+
+    // We use captured_count as the unit, but use 1 if captured_count is 0 
+    // to avoid division by zero or empty reporting.
+    CULV_PROFILE_END(jolt_step, "Jolt Physics Crunch", (captured_count > 0 ? (unsigned int)captured_count : 1));
 
     NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
     Py_END_ALLOW_THREADS
@@ -4216,6 +4222,8 @@ static int culverin_exec(PyObject *m) {
     }
 
     culverin_init_all_parsers();
+
+    CULV_INIT_PROFILER();
 
     // REGISTER FILTERS ONCE HERE
     // This connects the logic (filter_allow_all_bp, UnifiedBodyFilter, etc.)
