@@ -119,12 +119,21 @@ CULV_FORCE_INLINE void process_partial_batch(PhysicsWorldObject *self,
         JPH::Vec4(b->GetCenterOfMassPosition(), 0.0f)
             .StoreFloat4(reinterpret_cast<JPH::Float4 *>(&s_pos[D]));
 #else
-        // Keep scalar path for double precision
-        JPH::RVec3 p = b->GetCenterOfMassPosition();
-        s_pos[D].x   = p.GetX();
-        s_pos[D].y   = p.GetY();
-        s_pos[D].z   = p.GetZ();
-        s_pos[D].w   = 0.0;
+    JPH::RVec3 p = b->GetCenterOfMassPosition();
+    #if defined(JPH_USE_AVX)
+        __m256d v = _mm256_set_pd(0.0, p.GetZ(), p.GetY(), p.GetX());
+        _mm256_store_pd(reinterpret_cast<double*>(&s_pos[D]), v);
+    #elif defined(JPH_USE_NEON)
+        float64x2_t lo = vsetq_lane_f64(p.GetY(), vdupq_n_f64(p.GetX()), 1);
+        float64x2_t hi = vsetq_lane_f64(0.0,      vdupq_n_f64(p.GetZ()), 1);
+        vst1q_f64(reinterpret_cast<double*>(&s_pos[D]),     lo);
+        vst1q_f64(reinterpret_cast<double*>(&s_pos[D]) + 2, hi);
+    #else
+        s_pos[D].x = p.GetX();
+        s_pos[D].y = p.GetY();
+        s_pos[D].z = p.GetZ();
+        s_pos[D].w = 0.0;
+    #endif
 #endif
 
         b->GetRotation().GetXYZW().StoreFloat4(reinterpret_cast<JPH::Float4 *>(&s_rot[D]));
