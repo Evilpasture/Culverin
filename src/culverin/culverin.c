@@ -4226,13 +4226,10 @@ static int culverin_exec(PyObject *m) {
     JPH_ShapeFilter_SetProcs(&global_sf_procs);
 
     // Initialize the GLOBAL lock for Jolt trampolines
-    INIT_NATIVE_MUTEX(g_jph_trampoline_lock);
-#if PY_VERSION_HEX < 0x030D0000
-    if (!g_jph_trampoline_lock) {
-        PyErr_NoMemory();
+    if (INIT_NATIVE_MUTEX(g_jph_trampoline_lock) != 0) {
+        PyErr_SetString(PyExc_RuntimeError, "Failed to initialize global JPH trampoline lock");
         return -1;
     }
-#endif
 
     st->helper = PyImport_ImportModule("culverin._culverin");
     if (!st->helper) {
