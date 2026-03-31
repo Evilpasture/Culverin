@@ -53,7 +53,7 @@ static JPH_WheelSettings *create_single_wheel(PyObject *w_dict, JPH_LinearCurve 
     // 1. Parse Position using helper
     if (!parse_py_vec3(PyDict_GetItemString(w_dict, "pos"), &pos)) {
         PyErr_SetString(PyExc_ValueError, "Wheel 'pos' must be a sequence of 3 real numbers");
-        return NULL;
+        return nullptr;
     }
 
     // 2. Parse Float Attributes using consistent helper
@@ -264,10 +264,10 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_vehicle(PhysicsWorldObje
                                                                 PyObject *kwnames) {
     // --- 1. FAST ARGUMENT PARSING ---
     uint64_t chassis_h    = 0;
-    PyObject *py_wheels   = NULL;
-    PyObject *py_drive    = NULL; // Wrapper for drive_str
-    PyObject *py_engine   = NULL;
-    PyObject *py_trans    = NULL;
+    PyObject *py_wheels   = nullptr;
+    PyObject *py_drive    = nullptr; // Wrapper for drive_str
+    PyObject *py_engine   = nullptr;
+    PyObject *py_trans    = nullptr;
     const char *drive_str = "RWD";
 
     void *targets[CreateVehicle_COUNT];
@@ -278,7 +278,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_vehicle(PhysicsWorldObje
     targets[IDX_CV_TRANS]   = (void *)&py_trans;
 
     if (!FastParse_Unified(args, nargs, kwnames, &CreateVehicleParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // Handle string conversion for the drivetrain
@@ -294,7 +294,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_vehicle(PhysicsWorldObje
     uint32_t num_wheels = (uint32_t)PyList_Size(py_wheels);
 
     // Necessary for Py_UNBLOCK_THREADS / Py_BLOCK_THREADS
-    PyThreadState *_save = NULL;
+    PyThreadState *_save = nullptr;
 
     // --- RESOLVE CHASSIS (Shadow Lock + Command Sync) ---
     SHADOW_LOCK(&self->shadow_lock);
@@ -386,7 +386,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_vehicle(PhysicsWorldObje
         SHADOW_LOCK(&self->shadow_lock);
         cleanup_vehicle_resources(&r, num_wheels, self);
         SHADOW_UNLOCK(&self->shadow_lock);
-        return NULL;
+        return nullptr;
     }
 
     obj->vehicle               = r.j_veh;
@@ -421,7 +421,7 @@ python_fail:
     if (!PyErr_Occurred()) {
         PyErr_SetString(PyExc_RuntimeError, "Jolt vehicle creation failed");
     }
-    return NULL;
+    return nullptr;
 }
 
 // --- Vehicles Methods ---
@@ -441,7 +441,7 @@ PyCFunction_DeclareMethodFromModule Vehicle_set_input(VehicleObject *self, PyObj
     targets[IDX_VI_HAND]  = (void *)&handbrake;
 
     if (!FastParse_Unified(args, nargs, kwnames, &VehicleInputParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // 2. STATE MACHINE & JOLT SYNC
@@ -546,7 +546,7 @@ PyCFunction_DeclareMethodFromModule Vehicle_get_wheel_transform(VehicleObject *s
     targets[IDX_WH_INDEX] = &index;
 
     if (!FastParse_Unified(args, nargs, kwnames, &WheelIdxParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     SHADOW_LOCK(&self->world->shadow_lock);
@@ -589,7 +589,7 @@ PyCFunction_DeclareMethodFromModule Vehicle_get_wheel_local_transform(VehicleObj
     targets[IDX_WH_INDEX] = &index;
 
     if (!FastParse_Unified(args, nargs, kwnames, &WheelIdxParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     SHADOW_LOCK(&self->world->shadow_lock);
@@ -623,8 +623,11 @@ PyCFunction_DeclareMethodFromModule Vehicle_get_wheel_local_transform(VehicleObj
     return pack_transform(lx, ly, lz, q->x, q->y, q->z, q->w);
 }
 
-PyCFunction_DeclareMethodFromModule Vehicle_get_debug_state(VehicleObject *self,
+PyCFunction_DeclareMethodFromModule Vehicle_get_debug_state(CULV_MAYBE_UNUSED VehicleObject *self,
                                                             PyObject *Py_UNUSED(ignored)) {
+    #ifndef CULVERIN_DEBUG
+    Py_RETURN_NONE;
+    #else                                                            
     // 1. LOCK AND GUARD
     // We need the world lock to ensure the vehicle pointer is stable
     // and the physics step isn't currently mutating these values.
@@ -656,14 +659,14 @@ PyCFunction_DeclareMethodFromModule Vehicle_get_debug_state(VehicleObject *self,
     const auto *trans  = JPH_WheeledVehicleController_GetTransmission(controller);
 
     // 3. CAPTURE INPUTS
-    float in_fwd = JPH_WheeledVehicleController_GetForwardInput(controller);
-    float in_brk = JPH_WheeledVehicleController_GetBrakeInput(controller);
+    CULV_MAYBE_UNUSED float in_fwd = JPH_WheeledVehicleController_GetForwardInput(controller);
+    CULV_MAYBE_UNUSED float in_brk = JPH_WheeledVehicleController_GetBrakeInput(controller);
 
     // 4. CAPTURE DRIVETRAIN
-    float rpm           = JPH_VehicleEngine_GetCurrentRPM(engine);
-    float engine_torque = JPH_VehicleEngine_GetTorque(engine, in_fwd);
-    int gear            = JPH_VehicleTransmission_GetCurrentGear(trans);
-    float clutch        = JPH_VehicleTransmission_GetClutchFriction(trans);
+    CULV_MAYBE_UNUSED float rpm           = JPH_VehicleEngine_GetCurrentRPM(engine);
+    CULV_MAYBE_UNUSED float engine_torque = JPH_VehicleEngine_GetTorque(engine, in_fwd);
+    CULV_MAYBE_UNUSED int gear            = JPH_VehicleTransmission_GetCurrentGear(trans);
+    CULV_MAYBE_UNUSED float clutch        = JPH_VehicleTransmission_GetClutchFriction(trans);
 
     DEBUG_LOG("=== VEHICLE DEBUG STATE ===");
     DEBUG_LOG("  Inputs: Fwd=%.2f | Brk=%.2f", in_fwd, in_brk);
@@ -675,14 +678,14 @@ PyCFunction_DeclareMethodFromModule Vehicle_get_debug_state(VehicleObject *self,
         const JPH_Wheel *w          = JPH_VehicleConstraint_GetWheel(self->vehicle, i);
         const JPH_WheelSettings *ws = JPH_Wheel_GetSettings(w);
 
-        bool contact   = JPH_Wheel_HasContact(w);
-        float susp_len = JPH_Wheel_GetSuspensionLength(w);
-        float ang_vel  = JPH_Wheel_GetAngularVelocity(w);
-        float radius   = JPH_WheelSettings_GetRadius(ws);
+        CULV_MAYBE_UNUSED bool contact   = JPH_Wheel_HasContact(w);
+        CULV_MAYBE_UNUSED float susp_len = JPH_Wheel_GetSuspensionLength(w);
+        CULV_MAYBE_UNUSED float ang_vel  = JPH_Wheel_GetAngularVelocity(w);
+        CULV_MAYBE_UNUSED float radius   = JPH_WheelSettings_GetRadius(ws);
 
-        float tire_speed  = ang_vel * radius;
-        float long_lambda = JPH_Wheel_GetLongitudinalLambda(w);
-        float lat_lambda  = JPH_Wheel_GetLateralLambda(w);
+        CULV_MAYBE_UNUSED float tire_speed  = ang_vel * radius;
+        CULV_MAYBE_UNUSED float long_lambda = JPH_Wheel_GetLongitudinalLambda(w);
+        CULV_MAYBE_UNUSED float lat_lambda  = JPH_Wheel_GetLateralLambda(w);
 
         DEBUG_LOG("  Wheel %u: %s", i, contact ? "GROUND" : "AIR   ");
         DEBUG_LOG("    Susp: %.3fm | AngVel: %.2f rad/s | SurfSpd: %.2f m/s", susp_len, ang_vel,
@@ -695,6 +698,7 @@ PyCFunction_DeclareMethodFromModule Vehicle_get_debug_state(VehicleObject *self,
     SHADOW_UNLOCK(&self->world->shadow_lock);
 
     Py_RETURN_NONE;
+    #endif
 }
 
 // --- Vehicle GC Support ---
@@ -725,7 +729,7 @@ static void Vehicle_internal_cleanup(VehicleObject *self) {
         return;
     }
 
-    // Capture pointers and NULL the struct members immediately
+    // Capture pointers and nullptr the struct members immediately
     JPH_VehicleConstraint *j_veh             = self->vehicle;
     JPH_VehicleCollisionTester *tester       = self->tester;
     JPH_VehicleControllerSettings *v_ctrl    = self->controller_settings;
@@ -735,13 +739,13 @@ static void Vehicle_internal_cleanup(VehicleObject *self) {
     JPH_LinearCurve *t_curve                 = self->torque_curve;
     auto wheel_count                         = self->num_wheels;
 
-    self->vehicle               = NULL;
-    self->tester                = NULL;
-    self->controller_settings   = NULL;
-    self->transmission_settings = NULL;
-    self->wheel_settings        = NULL;
-    self->friction_curve        = NULL;
-    self->torque_curve          = NULL;
+    self->vehicle               = nullptr;
+    self->tester                = nullptr;
+    self->controller_settings   = nullptr;
+    self->transmission_settings = nullptr;
+    self->wheel_settings        = nullptr;
+    self->friction_curve        = nullptr;
+    self->torque_curve          = nullptr;
 
     SHADOW_UNLOCK(&self->world->shadow_lock);
 

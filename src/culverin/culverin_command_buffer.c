@@ -1,17 +1,11 @@
 #include "culverin_command_buffer.h"
 #include "culverin_compiler_specifics.h"
 
-/**
- * Internal helper to remove a body from the dense arrays.
- * Maintains a packed, contiguous array by swapping the last body into the hole.
- * MUST be called while holding SHADOW_LOCK.
- */
 void world_remove_body_slot(PhysicsWorldObject *self, uint32_t slot) {
     uint32_t dense_idx = self->slot_to_dense[slot];
     auto last_dense    = (uint32_t)self->count - 1;
     JPH_BodyID bid     = self->body_ids[dense_idx];
 
-    // 1. Cleanup Jolt Mapping
     if (bid != JPH_INVALID_BODY_ID) {
         uint32_t j_idx = JPH_ID_TO_INDEX(bid);
         if (self->id_to_handle_map && j_idx < self->max_jolt_bodies) {
@@ -19,18 +13,14 @@ void world_remove_body_slot(PhysicsWorldObject *self, uint32_t slot) {
         }
     }
 
-    // 2. Swap-and-Pop
     if (dense_idx != last_dense) {
-        // Type-safe Casts
         auto *pos      = (PosStride *)self->positions;
         auto *prev_pos = (PosStride *)self->prev_positions;
-
         auto *rot      = (AuxStride *)self->rotations;
         auto *prev_rot = (AuxStride *)self->prev_rotations;
         auto *lvel     = (AuxStride *)self->linear_velocities;
         auto *avel     = (AuxStride *)self->angular_velocities;
 
-        // Struct Copy (Compiler handles size/alignment)
         pos[dense_idx]      = pos[last_dense];
         prev_pos[dense_idx] = prev_pos[last_dense];
 
@@ -39,20 +29,17 @@ void world_remove_body_slot(PhysicsWorldObject *self, uint32_t slot) {
         lvel[dense_idx]     = lvel[last_dense];
         avel[dense_idx]     = avel[last_dense];
 
-        // Metadata Copy
         self->body_ids[dense_idx]     = self->body_ids[last_dense];
         self->user_data[dense_idx]    = self->user_data[last_dense];
         self->categories[dense_idx]   = self->categories[last_dense];
         self->masks[dense_idx]        = self->masks[last_dense];
         self->material_ids[dense_idx] = self->material_ids[last_dense];
 
-        // Fix Indirection
         uint32_t mover_slot             = self->dense_to_slot[last_dense];
         self->slot_to_dense[mover_slot] = dense_idx;
         self->dense_to_slot[dense_idx]  = mover_slot;
     }
 
-    // 3. Finalize
     self->generations[slot]++;
     self->free_slots[self->free_count++] = slot;
     self->slot_states[slot]              = SLOT_EMPTY;
@@ -60,15 +47,11 @@ void world_remove_body_slot(PhysicsWorldObject *self, uint32_t slot) {
     self->view_shape[0] = (Py_ssize_t)self->count;
 }
 
-// Helper to grow queue
 CULV_NODISCARD
 bool ensure_command_capacity(PhysicsWorldObject *self) {
-    if (self->command_count >= self->command_capacity) {
-        // Defensive: handle zero or uninitialized capacity
+    if (UNLIKELY(self->command_count >= self->command_capacity)) {
         size_t new_cap = (self->command_capacity == 0) ? 64 : self->command_capacity * 2;
-
-        // Safety check: Prevent overflow on extreme counts
-        if (new_cap > (SIZE_MAX / sizeof(PhysicsCommand))) {
+        if (UNLIKELY(new_cap > (SIZE_MAX / sizeof(PhysicsCommand)))) {
             return false;
         }
 
@@ -84,14 +67,16 @@ bool ensure_command_capacity(PhysicsWorldObject *self) {
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand * CULV_RESTRICT queue, size_t count) {
-    if (UNLIKELY(count == 0)) return;
+void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *CULV_RESTRICT queue,
+                             size_t count) {
+    if (UNLIKELY(count == 0)) {
+        return;
+    }
 
-    // Tell Clang vectorizer that memory is aligned and safe
-    queue = CULV_ASSUME_ALIGNED(queue, 8);
-    JPH_BodyInterface * CULV_RESTRICT bi = self->body_interface;
+    queue = CULV_ASSUME_ALIGNED(queue, 64);
+    JPH_BodyInterface *CULV_RESTRICT bi = self->body_interface;
 
-    static const void* const dispatch_table[] = {
+    static const void *const dispatch_table[] = {
         [CMD_CREATE_BODY]       = &&op_CREATE_BODY,
         [CMD_DESTROY_BODY]      = &&op_DESTROY_BODY,
         [CMD_SET_POS]           = &&op_SET_POS,
@@ -114,56 +99,68 @@ void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand * CULV_RES
 
     size_t i = 0;
     PhysicsCommand *cmd;
-    uint32_t header, slot, dense;
+    uint32_t header;
+    uint32_t slot;
+    CULV_MAYBE_UNUSED uint32_t dense;
     CommandType type;
     SlotState state;
     JPH_BodyID bid;
 
-    // The entire "VM" fetch-decode loop in one perfectly inlined macro
-    #define NEXT_CMD()                                                      \
-        while (i < count) {                                                 \
-            cmd = &queue[i++];                                              \
-            header = cmd->header;                                           \
-            type = CMD_GET_TYPE(header);                                    \
-            slot = CMD_GET_SLOT(header);                                    \
-            state = self->slot_states[slot];                                \
-            bid = JPH_INVALID_BODY_ID;                                      \
-            if (LIKELY(state == SLOT_ALIVE || state == SLOT_PENDING_CREATE)) { \
-                bid = self->body_ids[self->slot_to_dense[slot]];            \
-            }                                                               \
-            if (LIKELY(type == CMD_CREATE_BODY || bid != JPH_INVALID_BODY_ID)) { \
-                goto *dispatch_table[type];                                 \
-            }                                                               \
-        }                                                                   \
-        return;
+// True Direct Threading: Evaluates the next command without returning to a while loop.
+// Includes aggressive software prefetching for indirect lookups.
+#define DISPATCH()                                                                                 \
+    do {                                                                                           \
+        if (UNLIKELY(i >= count)) return;                                                          \
+        cmd    = &queue[i++];                                                                      \
+        header = cmd->header;                                                                      \
+        type   = CMD_GET_TYPE(header);                                                             \
+        slot   = CMD_GET_SLOT(header);                                                             \
+        /* Aggressive Prefetching of the NEXT loop's data dependencies */                          \
+        if (LIKELY(i < count)) {                                                                   \
+            CULV_PREFETCH(&queue[i]);                                                              \
+            uint32_t next_slot = CMD_GET_SLOT(queue[i].header);                                    \
+            CULV_PREFETCH(&self->slot_states[next_slot]);                                          \
+            CULV_PREFETCH(&self->slot_to_dense[next_slot]);                                        \
+        }                                                                                          \
+        state  = self->slot_states[slot];                                                          \
+        bid    = JPH_INVALID_BODY_ID;                                                              \
+        if (LIKELY(state == SLOT_ALIVE || state == SLOT_PENDING_CREATE)) {                         \
+            bid = self->body_ids[self->slot_to_dense[slot]];                                       \
+        }                                                                                          \
+        if (LIKELY(type == CMD_CREATE_BODY || bid != JPH_INVALID_BODY_ID)) {                       \
+            goto *dispatch_table[type];                                                            \
+        }                                                                                          \
+        goto op_NEXT;                                                                              \
+    } while (0)
 
-    // Kick off execution
-    NEXT_CMD()
-
+op_NEXT:
+    DISPATCH();
 
 op_CREATE_BODY: {
     JPH_BodyCreationSettings *s = cmd->create.settings;
     JPH_BodyID new_bid = JPH_BodyInterface_CreateAndAddBody(bi, s, JPH_Activation_Activate);
+    
+    // Future Optimization: Replace with an arena allocator to avoid cross-thread malloc locks
     JPH_BodyCreationSettings_Destroy(s);
 
     if (UNLIKELY(new_bid == JPH_INVALID_BODY_ID)) {
         world_remove_body_slot(self, slot);
     } else {
         self->body_ids[self->slot_to_dense[slot]] = new_bid;
-        uint32_t j_idx = JPH_ID_TO_INDEX(new_bid);
+        uint32_t j_idx                            = JPH_ID_TO_INDEX(new_bid);
         if (self->id_to_handle_map && j_idx < self->max_jolt_bodies) {
             self->id_to_handle_map[j_idx] = make_handle(slot, self->generations[slot]);
         }
         self->slot_states[slot] = SLOT_ALIVE;
     }
-    NEXT_CMD()
+    DISPATCH();
 }
 
 op_DESTROY_BODY: {
     JPH_BodyInterface_RemoveBody(bi, bid);
     JPH_BodyInterface_DestroyBody(bi, bid);
     world_remove_body_slot(self, slot);
-    NEXT_CMD()
+    DISPATCH();
 }
 
 op_SET_POS: {
@@ -174,7 +171,7 @@ op_SET_POS: {
     bool active = JPH_BodyInterface_IsActive(bi, bid);
     JPH_BodyInterface_SetPosition(
         bi, bid, p, active ? JPH_Activation_DontActivate : JPH_Activation_Activate);
-    NEXT_CMD()
+    DISPATCH();
 }
 
 op_SET_ROT: {
@@ -184,7 +181,7 @@ op_SET_ROT: {
     q->z = cmd->quat.z;
     q->w = cmd->quat.w;
     JPH_BodyInterface_SetRotation(bi, bid, q, JPH_Activation_Activate);
-    NEXT_CMD()
+    DISPATCH();
 }
 
 op_SET_TRNS: {
@@ -192,25 +189,33 @@ op_SET_TRNS: {
     p->x = cmd->transform.px;
     p->y = cmd->transform.py;
     p->z = cmd->transform.pz;
+    
     JPH_STACK_ALLOC(JPH_Quat, q);
     q->x = cmd->transform.rx;
     q->y = cmd->transform.ry;
     q->z = cmd->transform.rz;
     q->w = cmd->transform.rw;
+    
     JPH_BodyInterface_SetPositionAndRotation(bi, bid, p, q, JPH_Activation_Activate);
-    NEXT_CMD()
+    DISPATCH();
 }
 
 op_SET_LINVEL: {
-    JPH_Vec3 v = {cmd->vec3f.x, cmd->vec3f.y, cmd->vec3f.z};
-    JPH_BodyInterface_SetLinearVelocity(bi, bid, &v);
-    NEXT_CMD()
+    JPH_STACK_ALLOC(JPH_Vec3, v);
+    v->x = cmd->vec3f.x;
+    v->y = cmd->vec3f.y;
+    v->z = cmd->vec3f.z;
+    JPH_BodyInterface_SetLinearVelocity(bi, bid, v);
+    DISPATCH();
 }
 
 op_SET_ANGVEL: {
-    JPH_Vec3 v = {cmd->vec3f.x, cmd->vec3f.y, cmd->vec3f.z};
-    JPH_BodyInterface_SetAngularVelocity(bi, bid, &v);
-    NEXT_CMD()
+    JPH_STACK_ALLOC(JPH_Vec3, v);
+    v->x = cmd->vec3f.x;
+    v->y = cmd->vec3f.y;
+    v->z = cmd->vec3f.z;
+    JPH_BodyInterface_SetAngularVelocity(bi, bid, v);
+    DISPATCH();
 }
 
 op_SET_MOTION: {
@@ -218,76 +223,91 @@ op_SET_MOTION: {
                                     JPH_Activation_Activate);
     uint32_t layer = (cmd->motion.motion_type == 0) ? 0 : 1;
     JPH_BodyInterface_SetObjectLayer(bi, bid, (JPH_ObjectLayer)layer);
-    NEXT_CMD()
+    DISPATCH();
 }
 
 op_ACTIVATE: {
     JPH_BodyInterface_ActivateBody(bi, bid);
-    NEXT_CMD()
+    DISPATCH();
 }
 
 op_DEACTIVATE: {
     JPH_BodyInterface_DeactivateBody(bi, bid);
-    NEXT_CMD()
+    DISPATCH();
 }
 
-op_SET_USER_DATA: {
-    NEXT_CMD()
+op_SET_USER_DATA: { 
+    DISPATCH(); 
 }
 
 op_SET_CCD: {
     JPH_MotionQuality qual =
         cmd->motion.motion_type ? JPH_MotionQuality_LinearCast : JPH_MotionQuality_Discrete;
     JPH_BodyInterface_SetMotionQuality(bi, bid, qual);
-    NEXT_CMD()
+    DISPATCH();
 }
 
-op_TELEPORT: {
-    NEXT_CMD()
+op_TELEPORT: { 
+    DISPATCH(); 
 }
 
 op_APPLY_IMPULSE: {
-    JPH_Vec3 v = {cmd->vec3f.x, cmd->vec3f.y, cmd->vec3f.z};
-    JPH_BodyInterface_AddImpulse(bi, bid, &v);
+    JPH_STACK_ALLOC(JPH_Vec3, v);
+    v->x = cmd->vec3f.x;
+    v->y = cmd->vec3f.y;
+    v->z = cmd->vec3f.z;
+    JPH_BodyInterface_AddImpulse(bi, bid, v);
     JPH_BodyInterface_ActivateBody(bi, bid);
-    NEXT_CMD()
+    DISPATCH();
 }
 
 op_APPLY_FORCE: {
-    JPH_Vec3 v = {cmd->vec3f.x, cmd->vec3f.y, cmd->vec3f.z};
-    JPH_BodyInterface_AddForce(bi, bid, &v);
+    JPH_STACK_ALLOC(JPH_Vec3, v);
+    v->x = cmd->vec3f.x;
+    v->y = cmd->vec3f.y;
+    v->z = cmd->vec3f.z;
+    JPH_BodyInterface_AddForce(bi, bid, v);
     JPH_BodyInterface_ActivateBody(bi, bid);
-    NEXT_CMD()
+    DISPATCH();
 }
 
 op_APPLY_TORQUE: {
-    JPH_Vec3 v = {cmd->vec3f.x, cmd->vec3f.y, cmd->vec3f.z};
-    JPH_BodyInterface_AddTorque(bi, bid, &v);
+    JPH_STACK_ALLOC(JPH_Vec3, v);
+    v->x = cmd->vec3f.x;
+    v->y = cmd->vec3f.y;
+    v->z = cmd->vec3f.z;
+    JPH_BodyInterface_AddTorque(bi, bid, v);
     JPH_BodyInterface_ActivateBody(bi, bid);
-    NEXT_CMD()
+    DISPATCH();
 }
 
 op_APPLY_ANG_IMPULSE: {
-    JPH_Vec3 v = {cmd->vec3f.x, cmd->vec3f.y, cmd->vec3f.z};
-    JPH_BodyInterface_AddAngularImpulse(bi, bid, &v);
+    JPH_STACK_ALLOC(JPH_Vec3, v);
+    v->x = cmd->vec3f.x;
+    v->y = cmd->vec3f.y;
+    v->z = cmd->vec3f.z;
+    JPH_BodyInterface_AddAngularImpulse(bi, bid, v);
     JPH_BodyInterface_ActivateBody(bi, bid);
-    NEXT_CMD()
+    DISPATCH();
 }
 
 op_APPLY_IMPULSE_AT: {
-    JPH_Vec3 imp  = {cmd->impulse_at.ix, cmd->impulse_at.iy, cmd->impulse_at.iz};
-    JPH_RVec3 pos = {cmd->impulse_at.px, cmd->impulse_at.py, cmd->impulse_at.pz};
-    JPH_BodyInterface_AddImpulse2(bi, bid, &imp, &pos);
+    JPH_STACK_ALLOC(JPH_Vec3, imp);
+    imp->x = cmd->impulse_at.ix;
+    imp->y = cmd->impulse_at.iy;
+    imp->z = cmd->impulse_at.iz;
+    
+    JPH_STACK_ALLOC(JPH_RVec3, pos);
+    pos->x = cmd->impulse_at.px;
+    pos->y = cmd->impulse_at.py;
+    pos->z = cmd->impulse_at.pz;
+    
+    JPH_BodyInterface_AddImpulse2(bi, bid, imp, pos);
     JPH_BodyInterface_ActivateBody(bi, bid);
-    NEXT_CMD()
+    DISPATCH();
+}
 }
 
-}
-
-/**
- * Helper: Flushes pending commands while releasing shadow_lock to
- * avoid stalling the world during heavy Jolt operations.
- */
 void sync_and_flush_internal(PhysicsWorldObject *self) {
     BLOCK_UNTIL_NOT_STEPPING(self);
     BLOCK_UNTIL_NOT_QUERYING(self);
@@ -298,7 +318,6 @@ void sync_and_flush_internal(PhysicsWorldObject *self) {
 
     atomic_store_explicit(&self->is_stepping, true, memory_order_relaxed);
 
-    // --- Double Buffer Swap (Zero Allocations) ---
     PhysicsCommand *captured_queue = self->command_queue;
     size_t captured_count          = self->command_count;
 
@@ -310,16 +329,12 @@ void sync_and_flush_internal(PhysicsWorldObject *self) {
     self->command_queue       = self->command_queue_spare;
     self->command_queue_spare = captured_queue;
     self->command_count       = 0;
-    // -------------------------------------------------------
 
     SHADOW_UNLOCK(&self->shadow_lock);
 
-    Py_BEGIN_ALLOW_THREADS 
-    NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+    Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
 
     flush_commands_internal(self, captured_queue, captured_count);
-    
-    // NO CULV_RAW_FREE HERE! We keep it allocated in 'spare' for the next queue loop.
 
     NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
     Py_END_ALLOW_THREADS
@@ -340,7 +355,6 @@ void clear_command_queue(PhysicsWorldObject *self) {
     for (size_t i = 0; i < self->command_count; i++) {
         PhysicsCommand *cmd = &self->command_queue[i];
         if (CMD_GET_TYPE(cmd->header) == CMD_CREATE_BODY) {
-            // We own this pointer until it's consumed by Jolt
             if (cmd->create.settings) {
                 JPH_BodyCreationSettings_Destroy(cmd->create.settings);
             }

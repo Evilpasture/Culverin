@@ -1,3 +1,4 @@
+import sys
 import unittest
 import time
 import array
@@ -83,27 +84,36 @@ class TestPerformanceRegression(unittest.TestCase):
         # We set threshold to 25ms to account for slow CI runners.
         self.assertLess(avg_ms, 25.0, "Simulation step time degraded significantly.")
 
-    def test_fastparse_keyword_overhead(self):
+    def test_fastparse_stress_limit(self):
         """
-        Tests the O(1) pointer hashing in `FastParse`.
-        If Python dictionary allocations are accidentally re-introduced, this will fail.
+        Tests the FastParse engine at its architectural limit (64 arguments).
+        Parses 32 positional and 32 keyword arguments to verify bitmask 
+        integrity and O(1) hash table stability.
         """
-        h = self.world.create_body(pos=(0,0,0))
-        self.world.step(0)
-
+        # Create 32 positional arguments (a0...a31)
+        pos_args = [i for i in range(32)]
+        
+        # Create 32 keyword arguments (a32...a63)
+        # Using sys.intern to ensure string literals are interned, which is critical for FastParse's optimization.
+        kw_args = {sys.intern(f"a{i}"): i for i in range(32, 64)}
+        
         iterations = 50000
+        
+        # Warmup (optional, but ensures JIT or cache warming)
+        self.world._benchmark_parse(*pos_args, **kw_args)
         
         t0 = time.perf_counter()
         for _ in range(iterations):
-            # Using keyword arguments specifically stresses the keyword hashing engine
-            self.world.set_position(handle=h, x=1.0, y=2.0, z=3.0)
+            self.world._benchmark_parse(*pos_args, **kw_args)
         total_time = time.perf_counter() - t0
-
+        
         calls_per_sec = iterations / total_time
-        print(f"\n[Perf] FastParse Keywords -> {calls_per_sec:,.0f} calls/sec ({total_time*1000:.2f}ms total)")
-
-        # In a zero-allocation C extension, 50k calls should take well under 100ms.
-        self.assertLess(total_time, 0.250, "FastParse keyword resolution has regressed (exceeded 250ms for 50k calls)")
+        print(f"\n[Perf] FastParse Stress Limit (64 args) -> {calls_per_sec:,.0f} calls/sec ({total_time*1000:.2f}ms total)")
+        
+        # This is a rigorous test. 50k calls to a 64-arg parser involves massive
+        # bitwise operations and dictionary lookups per iteration. 
+        # 250ms is a safe threshold for modern CPUs on CI runners.
+        self.assertLess(total_time, 0.250, "FastParse stress limit (64 args) has regressed.")
 
     def test_raycast_batch_speed(self):
         """Ensure the GIL-released batch raycast remains heavily optimized."""

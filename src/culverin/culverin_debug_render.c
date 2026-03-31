@@ -35,7 +35,7 @@ void debug_buffer_free(DebugBuffer *buf) {
     if (buf->data) {
         CULV_RAW_FREE(buf->data);
     }
-    buf->data     = NULL;
+    buf->data     = nullptr;
     buf->count    = 0;
     buf->capacity = 0;
 }

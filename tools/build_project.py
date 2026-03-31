@@ -42,6 +42,7 @@ def build_extension():
         "cmake.define.JPH_DOUBLE_PRECISION": "ON",
         "cmake.define.CMAKE_C_COMPILER": "clang",
         "cmake.define.CMAKE_CXX_COMPILER": "clang++",
+        "cmake.define.ENABLE_SANITIZER": "ON",
         "build.tool-args": [f"-j{cpu_count}"],
         "build-dir": str(BUILD_DIR),
     }

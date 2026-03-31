@@ -60,6 +60,7 @@ endfunction()
 
 # 1. THE NUCLEAR INITIALIZATION
 option(ENABLE_SANITIZER "Enable Clang Sanitizers (ASan/TSan/UBSan)" OFF)
+option(ENABLE_THREAD_SANITIZER "Enable Thread Sanitizer (TSan)" OFF)
 
 set(DOUBLE_PRECISION ON CACHE BOOL "Use double precision math" FORCE)
 set(GENERATE_SAMPLES OFF CACHE BOOL "" FORCE)
@@ -71,6 +72,53 @@ set(USE_VULKAN OFF CACHE BOOL "" FORCE)
 set(FORCE_RTTI ON CACHE BOOL "Force RTTI on" FORCE)
 
 project(culverin LANGUAGES C CXX)
+# 1.1 FORCE BUILD TYPE (RelWithDebInfo is the sweet spot for ASan)
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES AND ENABLE_SANITIZER)
+    message(STATUS "Culverin: Setting build type to 'RelWithDebInfo' as none was specified.")
+    set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Choose the type of build." FORCE)
+endif()
+
+# 1.2 ENSURE PDBs ARE GENERATED FOR CLANG-CL/MSVC
+if(MSVC OR (WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang"))
+    # This ensures .pdb files are created even in Release/RelWithDebInfo
+    if (ENABLE_SANITIZER OR ENABLE_THREAD_SANITIZER)
+        message(STATUS "Culverin: Enabling debug information for sanitizers (PDB generation)")
+        set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "ProgramDatabase" CACHE STRING "" FORCE)
+    endif()
+endif()
+if(ENABLE_SANITIZER)
+    message(STATUS "Culverin: FORCING Global Sanitizers for all targets")
+    
+    # 1. Standard approach (works for most)
+    add_compile_options("-fsanitize=address" "-fsanitize=undefined")
+    add_link_options("-fsanitize=address" "-fsanitize=undefined")
+
+    # 2. The Sledgehammer (Force it into the global CXX flags for subdirectories)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -fsanitize=undefined")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address -fsanitize=undefined")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address -fsanitize=undefined")
+    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fsanitize=address -fsanitize=undefined")
+
+    # 3. Specifically tell Jolt to use them if it has its own toggle
+    set(JPH_ADDRESS_SANITIZER ON CACHE BOOL "" FORCE)
+endif()
+if(ENABLE_THREAD_SANITIZER)
+    message(STATUS "Culverin: FORCING Thread Sanitizer for all targets")
+
+    # 1. Standard approach (works for most)
+    add_compile_options("-fsanitize=thread")
+    add_link_options("-fsanitize=thread")
+
+    # 2. The Sledgehammer (Force it into the global CXX flags for subdirectories)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=thread")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=thread")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=thread")
+    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fsanitize=thread")
+
+    # 3. Specifically tell Jolt to use them if it has its own toggle
+    set(JPH_THREAD_SANITIZER ON CACHE BOOL "" FORCE)
+endif()
+
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 enforce_modern_compiler()
 message(STATUS "--- COMPILER VERIFICATION ---")
@@ -135,7 +183,7 @@ if(MSVC)
 else() 
     message(STATUS "Culverin: Configuring GNU-like flags...")
 
-    set(FLAGS_DEBUG "-g")
+    set(FLAGS_DEBUG "-g -gcodeview")
     if(CMAKE_C_COMPILER_ID MATCHES "Clang")
         list(APPEND FLAGS_DEBUG "-gcodeview")
     endif()
@@ -164,11 +212,6 @@ else()
     else()
         list(APPEND CULVERIN_COMPILE_FLAGS "-fdiagnostics-color=always")
     endif()
-
-    if(ENABLE_SANITIZER)
-        list(APPEND CULVERIN_COMPILE_FLAGS "-fsanitize=address" "-fsanitize=undefined" "-fno-sanitize=alignment")
-        list(APPEND CULVERIN_LINK_FLAGS "-fsanitize=address" "-fsanitize=undefined")
-    endif()
 endif()
 
 # ==============================================================================
@@ -177,6 +220,11 @@ endif()
 get_filename_component(JOLT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/extern/JoltPhysics" ABSOLUTE)
 add_definitions(-DJPH_DEBUG_RENDERER)
 set(DEBUG_RENDERER_IN_DEBUG_AND_RELEASE ON CACHE BOOL "" FORCE)
+
+# Force standard globally BEFORE add_subdirectory
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 add_subdirectory("${JOLT_DIR}/Build" jolt_physics_build)
 
 if(MSVC OR (WIN32 AND CMAKE_C_COMPILER_ID MATCHES "Clang"))
@@ -184,12 +232,21 @@ if(MSVC OR (WIN32 AND CMAKE_C_COMPILER_ID MATCHES "Clang"))
         if(TARGET ${t})
             set_property(TARGET ${t} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 
+            # Force the Jolt target to inherit C++23 settings
+            set_target_properties(${t} PROPERTIES
+                CXX_STANDARD 23
+                CXX_STANDARD_REQUIRED ON
+                CXX_EXTENSIONS OFF
+            )
+
             if(CMAKE_C_COMPILER_ID MATCHES "Clang")
                 set_property(TARGET ${t} PROPERTY COMPILE_OPTIONS "")
                 if(MSVC)
-                    target_compile_options(${t} PRIVATE /arch:AVX2 /std:c++23)
+                    # For Clang-CL/MSVC
+                    target_compile_options(${t} PRIVATE /arch:AVX2 /fp:fast)
                 else()
-                    target_compile_options(${t} PRIVATE -mavx2 -mlzcnt -mfma -mf16c -std=c++23)
+                    # For GCC/Clang
+                    target_compile_options(${t} PRIVATE -march=x86-64-v3 -ffast-math -fomit-frame-pointer)
                 endif()
             endif()
         endif()
@@ -254,19 +311,56 @@ add_custom_command(TARGET _culverin_c POST_BUILD
 )
 
 if(MSVC)
+    if (CMAKE_C_COMPILER_ID MATCHES "Clang")
+        # --- LTO LOGIC ---
+        if (NOT ENABLE_SANITIZER AND NOT ENABLE_THREAD_SANITIZER)
+            # The compiler still wants -flto=thin
+            set(LTO_COMPILE_FLAG "-flto=thin")
+            
+            # The linker (lld-link) wants level 2 for ThinLTO
+            # Instead of /opt:lldlto=thin, use:
+            set(LTO_LINK_FLAG "/opt:lldlto=2")
+
+            target_compile_options(_culverin_c PRIVATE ${LTO_COMPILE_FLAG})
+            target_link_options(_culverin_c PRIVATE ${LTO_LINK_FLAG})
+            
+            target_compile_options(${JOLTC_TARGET} PRIVATE ${LTO_COMPILE_FLAG})
+        endif()
+    endif()
+
+    # --- PERFORMANCE & DEBUG FLAGS ---
     target_compile_options(_culverin_c PRIVATE /Zi /fp:fast)
     target_link_options(_culverin_c PRIVATE /DEBUG /OPT:REF /OPT:ICF)
     target_compile_definitions(_culverin_c PRIVATE _CRT_DECLARE_NONSTDC_NAMES=1)
-else()
-    target_compile_options(_culverin_c PRIVATE ${CULVERIN_COMPILE_FLAGS})
+
+    # --- THE MISSING INCLUDES ---
+    # We use SYSTEM for Jolt because we don't want to see C++ warnings in our C23 build
+    target_include_directories(_culverin_c SYSTEM PRIVATE "extern/JoltC/include" "${JOLT_DIR}")
+    target_include_directories(${JOLTC_TARGET} SYSTEM PRIVATE "extern/JoltC/include" "${JOLT_DIR}")
+
+else() 
+    # GCC / Standard Clang (Linux/MinGW)
+    if (NOT ENABLE_SANITIZER AND NOT ENABLE_THREAD_SANITIZER)
+        target_compile_options(_culverin_c PRIVATE -flto=thin)
+        target_compile_options(${JOLTC_TARGET} PRIVATE -flto=thin)
+    endif()
 
     if(WIN32)
-        target_link_options(_culverin_c PRIVATE "-Wl,-debug" "-Wl,-nodefaultlib:libcmt" ${CULVERIN_LINK_FLAGS})
-    elseif(CULVERIN_LINK_FLAGS)
-        target_link_options(_culverin_c PRIVATE ${CULVERIN_LINK_FLAGS})
+        set(WIN_LINK_FLAGS "-Wl,-nodefaultlib:libcmt") # CRITICAL: Prevents 3.14 Heap Crashes
+        
+        if (ENABLE_SANITIZER OR ENABLE_THREAD_SANITIZER)
+            list(APPEND WIN_LINK_FLAGS "-Wl,-debug")
+        endif()
+
+        if (NOT ENABLE_SANITIZER AND NOT ENABLE_THREAD_SANITIZER)
+            list(APPEND WIN_LINK_FLAGS "-flto=thin")
+        endif()
+
+        target_link_options(_culverin_c PRIVATE ${WIN_LINK_FLAGS} ${CULVERIN_LINK_FLAGS})
     endif()
 
     target_include_directories(_culverin_c SYSTEM PRIVATE "extern/JoltC/include" "${JOLT_DIR}")
+    target_include_directories(${JOLTC_TARGET} SYSTEM PRIVATE "extern/JoltC/include" "${JOLT_DIR}")
 endif()
 
 target_compile_definitions(_culverin_c PRIVATE 

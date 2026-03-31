@@ -321,59 +321,59 @@ void free_constraints(PhysicsWorldObject *self) {
                 }
                 JPH_Constraint_Destroy(self->constraints[i]);
             }
-            self->constraints[i] = NULL;
+            self->constraints[i] = nullptr;
         }
         CULV_RAW_FREE((void *)self->constraints);
-        self->constraints = NULL;
+        self->constraints = nullptr;
     }
     CULV_RAW_FREE(self->constraint_generations);
-    self->constraint_generations = NULL;
+    self->constraint_generations = nullptr;
     CULV_RAW_FREE(self->free_constraint_slots);
-    self->free_constraint_slots = NULL;
+    self->free_constraint_slots = nullptr;
     CULV_RAW_FREE(self->constraint_states);
-    self->constraint_states = NULL;
+    self->constraint_states = nullptr;
 }
 
 void free_shadow_buffers(PhysicsWorldObject *self) {
     // Aligned buffers (stride types) must use CulvMem_RawFreeAligned
     CulvMem_RawFreeAligned(self->positions);
-    self->positions = NULL;
+    self->positions = nullptr;
     CulvMem_RawFreeAligned(self->prev_positions);
-    self->prev_positions = NULL;
+    self->prev_positions = nullptr;
     CulvMem_RawFreeAligned(self->rotations);
-    self->rotations = NULL;
+    self->rotations = nullptr;
     CulvMem_RawFreeAligned(self->prev_rotations);
-    self->prev_rotations = NULL;
+    self->prev_rotations = nullptr;
     CulvMem_RawFreeAligned(self->linear_velocities);
-    self->linear_velocities = NULL;
+    self->linear_velocities = nullptr;
     CulvMem_RawFreeAligned(self->angular_velocities);
-    self->angular_velocities = NULL;
+    self->angular_velocities = nullptr;
 
     // Regular buffers
     CULV_RAW_FREE(self->body_ids);
-    self->body_ids = NULL;
+    self->body_ids = nullptr;
     CULV_RAW_FREE(self->generations);
-    self->generations = NULL;
+    self->generations = nullptr;
     CULV_RAW_FREE(self->slot_to_dense);
-    self->slot_to_dense = NULL;
+    self->slot_to_dense = nullptr;
     CULV_RAW_FREE(self->dense_to_slot);
-    self->dense_to_slot = NULL;
+    self->dense_to_slot = nullptr;
     CULV_RAW_FREE(self->free_slots);
-    self->free_slots = NULL;
+    self->free_slots = nullptr;
     CULV_RAW_FREE(self->slot_states);
-    self->slot_states = NULL;
+    self->slot_states = nullptr;
     CULV_RAW_FREE(self->command_queue);
-    self->command_queue = NULL;
+    self->command_queue = nullptr;
     CULV_RAW_FREE(self->user_data);
-    self->user_data = NULL;
+    self->user_data = nullptr;
     CULV_RAW_FREE(self->categories);
-    self->categories = NULL;
+    self->categories = nullptr;
     CULV_RAW_FREE(self->masks);
-    self->masks = NULL;
+    self->masks = nullptr;
     CULV_RAW_FREE(self->material_ids);
-    self->material_ids = NULL;
+    self->material_ids = nullptr;
     CULV_RAW_FREE(self->materials);
-    self->materials = NULL;
+    self->materials = nullptr;
 }
 
 // --- Helper: Resource Cleanup (Idempotent) ---
@@ -388,7 +388,7 @@ void PhysicsWorld_free_members(PhysicsWorldObject *self) {
     if (self->command_queue) {
         clear_command_queue(self);
         CULV_RAW_FREE(self->command_queue);
-        self->command_queue = NULL;
+        self->command_queue = nullptr;
     }
 
     // 2. Free the SPARE command queue
@@ -397,7 +397,7 @@ void PhysicsWorld_free_members(PhysicsWorldObject *self) {
     // We just release the raw memory block.
     if (self->command_queue_spare) {
         CULV_RAW_FREE(self->command_queue_spare);
-        self->command_queue_spare = NULL;
+        self->command_queue_spare = nullptr;
     }
 
     // 3. Constraints (Must go before PhysicsSystem)
@@ -406,21 +406,21 @@ void PhysicsWorld_free_members(PhysicsWorldObject *self) {
     // 4. Jolt Core Systems
     if (self->system) {
         JPH_PhysicsSystem_Destroy(self->system);
-        self->system = NULL;
+        self->system = nullptr;
     }
     if (self->char_vs_char_manager) {
         JPH_CharacterVsCharacterCollision_Destroy(self->char_vs_char_manager);
-        self->char_vs_char_manager = NULL;
+        self->char_vs_char_manager = nullptr;
     }
     if (self->job_system) {
         JPH_JobSystem_Destroy(self->job_system);
-        self->job_system = NULL;
+        self->job_system = nullptr;
     }
 
     // 5. Debug Utilities
     if (self->debug_renderer) {
         JPH_DebugRenderer_Destroy(self->debug_renderer);
-        self->debug_renderer = NULL;
+        self->debug_renderer = nullptr;
     }
     debug_buffer_free(&self->debug_lines);
     debug_buffer_free(&self->debug_triangles);
@@ -431,10 +431,10 @@ void PhysicsWorld_free_members(PhysicsWorldObject *self) {
     // 7. Contact Listener & Buffers
     if (self->contact_listener) {
         JPH_ContactListener_Destroy(self->contact_listener);
-        self->contact_listener = NULL;
+        self->contact_listener = nullptr;
     }
     CULV_RAW_FREE(self->contact_buffer);
-    self->contact_buffer = NULL;
+    self->contact_buffer = nullptr;
 
     // 8. Deferred Trash Cleanup
     if (self->trash_buffers) {
@@ -442,7 +442,7 @@ void PhysicsWorld_free_members(PhysicsWorldObject *self) {
             free_new_buffers(&self->trash_buffers[i]);
         }
         CULV_RAW_FREE(self->trash_buffers);
-        self->trash_buffers = NULL;
+        self->trash_buffers = nullptr;
         self->trash_count   = 0;
     }
 
@@ -451,7 +451,7 @@ void PhysicsWorld_free_members(PhysicsWorldObject *self) {
 
     // 10. Handle Mapping
     CULV_RAW_FREE(self->id_to_handle_map);
-    self->id_to_handle_map = NULL;
+    self->id_to_handle_map = nullptr;
 
     // 11. Threading Primitives
     FREE_LOCK(self->shadow_lock);
@@ -471,7 +471,7 @@ int init_settings(PhysicsWorldObject *self, PyObject *settings_dict, float *gx, 
     }
 
     PyObject *norm =
-        PyObject_CallFunctionObjArgs(val_func, settings_dict ? settings_dict : Py_None, NULL);
+        PyObject_CallFunctionObjArgs(val_func, settings_dict ? settings_dict : Py_None, nullptr);
     Py_DECREF(val_func);
     if (!norm) {
         return -1;

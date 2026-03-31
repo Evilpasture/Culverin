@@ -6,7 +6,7 @@ import sysconfig
 def generate_clangd():
     # 1. Anchor to project root
     script_path = Path(__file__).resolve()
-    project_root = script_path.parent
+    project_root = script_path.parent.parent if script_path.parent.name == "tools" else script_path.parent
 
     # 2. Build Python Path (Absolute)
     include_path = Path(sysconfig.get_path("include"))
@@ -44,28 +44,37 @@ def generate_clangd():
 
     # 4. Using rf"" (Raw f-string) to prevent escape sequence errors
     config = rf"""# GENERATED FOR FREETHREADED PYTHON 3.14
-# This file is machine-generated.
-
 CompileFlags:
   Add: [
-      {formatted_flags}
+      {formatted_flags},
+      "-ferror-limit=0",
+      "-fms-compatibility",
+      "-fms-extensions"
   ]
-  CompilationDatabase: "."
-
-Index:
-  Background: Skip
+  # This helps clangd find the compile_commands.json if you generate one
+  CompilationDatabase: "build" 
 
 ---
+# 1. THE C23 BLOCK
 If:
-  PathMatch: .*\.c
+  PathMatch: [.*\.c, .*/extern/JoltC/.*\.h] # Force JoltC headers to be parsed as C
 CompileFlags:
-  Add: ["-std=c23"]
+  Add: [
+      "-std=c23",
+      "-Wno-c23-extensions", # Matches your CMake 
+      "-Wno-c2x-extensions"  # Matches your CMake 
+  ]
 
 ---
+# 2. THE C++23 BLOCK
 If:
-  PathMatch: [.*\.cpp, .*\.hpp, .*\.cc, .*\.h]
+  PathMatch: [.*\.cpp, .*\.hpp, .*\.cc]
 CompileFlags:
-  Add: ["-std=c++20", "-fno-exceptions", "-fno-rtti"]
+  Add: [
+      "-std=c++23", # Match your project standard
+      "-DJPH_DOUBLE_PRECISION", # Required for Jolt interop
+      "-fno-exceptions"
+  ]
 """
 
     with open(project_root / ".clangd", "w") as f:

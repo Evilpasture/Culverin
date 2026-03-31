@@ -7,7 +7,7 @@ name = "culverin"
 version = "0.3.1b1"
 description = "High-performance Jolt Physics bindings for Python featuring Shadow Buffers and Free-Threading support."
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 authors = [
     {name = "Mai Huy Hiếu"}
 ]
@@ -42,7 +42,6 @@ Repository = "https://github.com/Evilpasture/culverin.git"
 cmake.build-type = "Release"
 cmake.args = [
     "-GNinja",
-    # REMOVED: CMAKE_C_COMPILER/CXX_COMPILER (Handled by CI env)
     "-DDOUBLE_PRECISION=ON",
     "-DGENERATE_SAMPLES=OFF",
     "-DGENERATE_UNIT_TESTS=OFF",

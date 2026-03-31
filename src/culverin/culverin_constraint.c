@@ -14,8 +14,8 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_constraint(PhysicsWorldO
     int type           = 0;
     uint64_t h1        = 0;
     uint64_t h2        = 0;
-    PyObject *o_params = NULL;
-    PyObject *o_motor  = NULL;
+    PyObject *o_params = nullptr;
+    PyObject *o_motor  = nullptr;
 
     void *targets[CreateConstr_COUNT];
     targets[IDX_CC_TYPE]   = (void *)&type;
@@ -26,12 +26,12 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_constraint(PhysicsWorldO
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &CreateConstrParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     if (UNLIKELY(h1 == h2)) {
         PyErr_SetString(PyExc_ValueError, "Cannot create a constraint between a body and itself");
-        return NULL;
+        return nullptr;
     }
 
     // 2. PARAMS EXTRACTION (Outside Lock)
@@ -59,11 +59,11 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_constraint(PhysicsWorldO
         break;
     default:
         PyErr_SetString(PyExc_ValueError, "Unknown constraint type");
-        return NULL;
+        return nullptr;
     }
 
     if (!parse_ok) {
-        return NULL;
+        return nullptr;
     }
     if (o_motor) {
         parse_motor_config(o_motor, &p);
@@ -80,7 +80,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_constraint(PhysicsWorldO
         !unpack_handle(self, h2, &s2) || self->slot_states[s2] != SLOT_ALIVE) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Invalid or stale body handles");
-        return NULL;
+        return nullptr;
     }
 
     JPH_BodyID bid1 = self->body_ids[self->slot_to_dense[s1]];
@@ -107,7 +107,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_constraint(PhysicsWorldO
         JPH_BodyLockInterface_LockWrite(lock_iface, bid1, &lock1);
     }
 
-    JPH_Constraint *constraint = NULL;
+    JPH_Constraint *constraint = nullptr;
     if (lock1.body && lock2.body) {
         JPH_Body *b1 = (JPH_Body_GetID(lock1.body) == bid1) ? lock1.body : lock2.body;
         JPH_Body *b2 = (JPH_Body_GetID(lock1.body) == bid2) ? lock1.body : lock2.body;
@@ -172,10 +172,10 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_destroy_constraint(PhysicsWorld
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &DestroyConstrParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
-    JPH_Constraint *c_to_destroy = NULL;
+    JPH_Constraint *c_to_destroy = nullptr;
 
     // 2. RESOLUTION PHASE (Inside Shadow Lock)
     SHADOW_LOCK(&self->shadow_lock);
@@ -192,13 +192,13 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_destroy_constraint(PhysicsWorld
         self->constraint_states[slot] != SLOT_ALIVE) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Invalid or stale constraint handle");
-        return NULL;
+        return nullptr;
     }
 
     // Capture pointer and IMMEDIATELY invalidate the slot
     c_to_destroy = self->constraints[slot];
 
-    self->constraints[slot]       = NULL;
+    self->constraints[slot]       = nullptr;
     self->constraint_states[slot] = SLOT_EMPTY;
     self->constraint_generations[slot]++; // Invalidate future use of this handle
     self->free_constraint_slots[self->free_constraint_count++] = slot;
@@ -244,7 +244,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_set_constraint_target(PhysicsWo
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &SetConstrTargetParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // 2. CRITICAL SECTION
@@ -259,7 +259,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_set_constraint_target(PhysicsWo
                  self->constraint_states[slot] != SLOT_ALIVE)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Invalid or stale constraint handle");
-        return NULL;
+        return nullptr;
     }
 
     JPH_Constraint *c         = self->constraints[slot];

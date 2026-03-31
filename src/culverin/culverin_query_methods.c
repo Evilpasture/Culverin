@@ -1,7 +1,7 @@
 #include "culverin_query_methods.h"
 #include "culverin_arg_indices.h"
 #include "culverin_compiler_specifics.h"
-#include "culverin_filters.h"
+#include "culverin_fast_build.h"
 #include "culverin_math.h"
 #include "culverin_parsers.h"
 
@@ -61,10 +61,11 @@ static float OverlapCallback_Broad(void *context, const JPH_BodyID result_bid) {
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_sphere(PhysicsWorldObject *self, PyObject *const *args,
-                                      size_t nargsf, PyObject *kwnames) {
+PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_sphere(PhysicsWorldObject *self,
+                                                                PyObject *const *args,
+                                                                size_t nargsf, PyObject *kwnames) {
     // 1. DEFAULT VALUES
-    PyObject *o_center = NULL;
+    PyObject *o_center = nullptr;
     float radius       = 1.0f;
 
     // 2. FAST PARSE (Zero-Allocation)
@@ -74,7 +75,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_sphere(PhysicsWorldObje
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &OverlapSphereParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // 3. VECTOR EXTRACTION (Outside Lock)
@@ -82,10 +83,10 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_sphere(PhysicsWorldObje
     JPH_Real cy;
     JPH_Real cz;
     if (!parse_vec3_direct(o_center, &cx, &cy, &cz)) {
-        return NULL;
+        return nullptr;
     }
 
-    PyObject *ret_val = NULL;
+    PyObject *ret_val = nullptr;
     uint64_t small_hit_stack[STACK_ALLOCATE_HITS]; // Pre-allocate 64 hits on the stack
     OverlapContext ctx = {
         .world       = self,
@@ -95,10 +96,10 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_sphere(PhysicsWorldObje
         .is_on_stack = true // Add this flag to your struct
     };
 
-    JPH_Shape *shape                     = NULL;
-    JPH_BroadPhaseLayerFilter *bp_filter = NULL;
-    JPH_ObjectLayerFilter *obj_filter    = NULL;
-    JPH_BodyFilter *body_filter          = NULL;
+    JPH_Shape *shape                     = nullptr;
+    JPH_BroadPhaseLayerFilter *bp_filter = nullptr;
+    JPH_ObjectLayerFilter *obj_filter    = nullptr;
+    JPH_BodyFilter *body_filter          = nullptr;
 
     // 4. RESOURCE RESOLUTION (Shadow Lock)
     SHADOW_LOCK(&self->shadow_lock);
@@ -133,17 +134,17 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_sphere(PhysicsWorldObje
     JPH_CollideShapeSettings settings;
     JPH_CollideShapeSettings_Init(&settings);
 
-    bp_filter = JPH_BroadPhaseLayerFilter_Create(NULL);
+    bp_filter = JPH_BroadPhaseLayerFilter_Create(nullptr);
 
-    obj_filter = JPH_ObjectLayerFilter_Create(NULL);
+    obj_filter = JPH_ObjectLayerFilter_Create(nullptr);
 
-    body_filter = JPH_BodyFilter_Create(NULL);
+    body_filter = JPH_BodyFilter_Create(nullptr);
 
     const JPH_NarrowPhaseQuery *nq = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
 
     JPH_NarrowPhaseQuery_CollideShape(nq, shape, &scale, &transform, &settings, &base_offset,
                                       OverlapCallback_Narrow, &ctx, bp_filter, obj_filter,
-                                      body_filter, NULL);
+                                      body_filter, nullptr);
 
     // REMOVED: NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
 
@@ -187,11 +188,12 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_sphere(PhysicsWorldObje
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_aabb(PhysicsWorldObject *self, PyObject *const *args, size_t nargsf,
-                                    PyObject *kwnames) {
+PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_aabb(PhysicsWorldObject *self,
+                                                              PyObject *const *args, size_t nargsf,
+                                                              PyObject *kwnames) {
     // 1. DEFAULT VALUES
-    PyObject *o_min = NULL;
-    PyObject *o_max = NULL;
+    PyObject *o_min = nullptr;
+    PyObject *o_max = nullptr;
 
     // 2. FAST PARSE (Zero-Allocation)
     void *targets[OverlapAABB_COUNT];
@@ -200,7 +202,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_aabb(PhysicsWorldObject
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &OverlapAABBParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // 3. VECTOR EXTRACTION (Outside Lock)
@@ -211,13 +213,13 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_aabb(PhysicsWorldObject
     JPH_Real may;
     JPH_Real maz;
     if (!parse_vec3_direct(o_min, &mix, &miy, &miz)) {
-        return NULL;
-}
+        return nullptr;
+    }
     if (!parse_vec3_direct(o_max, &max, &may, &maz)) {
-        return NULL;
-}
+        return nullptr;
+    }
 
-    PyObject *ret_val = NULL;
+    PyObject *ret_val = nullptr;
     uint64_t small_hit_stack[STACK_ALLOCATE_HITS]; // Pre-allocate 64 hits on the stack
     OverlapContext ctx = {
         .world       = self,
@@ -226,8 +228,8 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_aabb(PhysicsWorldObject
         .capacity    = STACK_ALLOCATE_HITS,
         .is_on_stack = true // Add this flag to your struct
     };
-    JPH_BroadPhaseLayerFilter *bp_filter = NULL;
-    JPH_ObjectLayerFilter *obj_filter    = NULL;
+    JPH_BroadPhaseLayerFilter *bp_filter = nullptr;
+    JPH_ObjectLayerFilter *obj_filter    = nullptr;
 
     // 4. PHASE GUARD (Shadow Lock)
     SHADOW_LOCK(&self->shadow_lock);
@@ -245,9 +247,9 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_aabb(PhysicsWorldObject
     // 5. EXECUTION (No GIL, No Trampoline Lock)
     Py_BEGIN_ALLOW_THREADS
         // REMOVED: NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
-        bp_filter = JPH_BroadPhaseLayerFilter_Create(NULL);
+        bp_filter = JPH_BroadPhaseLayerFilter_Create(nullptr);
 
-    obj_filter = JPH_ObjectLayerFilter_Create(NULL);
+    obj_filter = JPH_ObjectLayerFilter_Create(nullptr);
 
     const JPH_BroadPhaseQuery *bq = JPH_PhysicsSystem_GetBroadPhaseQuery(self->system);
 
@@ -285,10 +287,10 @@ query_cleanup:
     // Filter cleanup
     if (bp_filter) {
         JPH_BroadPhaseLayerFilter_Destroy(bp_filter);
-}
+    }
     if (obj_filter) {
         JPH_ObjectLayerFilter_Destroy(obj_filter);
-}
+    }
 
     // ctx.hits was allocated using CULV_RAW_REALLOC, which is GIL-safe
     if (ctx.hits && !ctx.is_on_stack) {
@@ -298,11 +300,12 @@ query_cleanup:
     return ret_val;
 }
 
-PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast(PhysicsWorldObject *self, PyObject *const *args, size_t nargsf,
-                               PyObject *kwnames) {
+PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast(PhysicsWorldObject *self,
+                                                         PyObject *const *args, size_t nargsf,
+                                                         PyObject *kwnames) {
     // 1. DEFAULT VALUES
-    PyObject *o_start = NULL;
-    PyObject *o_dir   = NULL;
+    PyObject *o_start = nullptr;
+    PyObject *o_dir   = nullptr;
     float max_dist    = 1000.0f;
     uint64_t ignore_h = 0;
 
@@ -315,7 +318,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast(PhysicsWorldObject *sel
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &RaycastParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // 3. VECTOR EXTRACTION (Outside Lock)
@@ -327,11 +330,11 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast(PhysicsWorldObject *sel
     float dz;
 
     if (!parse_vec3_direct(o_start, &sx, &sy, &sz)) {
-        return NULL;
-}
+        return nullptr;
+    }
     if (!parse_vec3_direct(o_dir, &dx, &dy, &dz)) {
-        return NULL;
-}
+        return nullptr;
+    }
 
     float mag_sq = dx * dx + dy * dy + dz * dz;
     if (UNLIKELY(mag_sq < 1e-12f)) {
@@ -382,14 +385,14 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast(PhysicsWorldObject *sel
     Py_BEGIN_ALLOW_THREADS
         // REMOVED: NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
 
-        JPH_BroadPhaseLayerFilter *bp_f = JPH_BroadPhaseLayerFilter_Create(NULL);
-    JPH_ObjectLayerFilter *obj_f        = JPH_ObjectLayerFilter_Create(NULL);
+        JPH_BroadPhaseLayerFilter *bp_f = JPH_BroadPhaseLayerFilter_Create(nullptr);
+    JPH_ObjectLayerFilter *obj_f        = JPH_ObjectLayerFilter_Create(nullptr);
     CastShapeFilter filter_ctx          = {.ignore_id = ignore_bid};
     JPH_BodyFilter *bf                  = JPH_BodyFilter_Create(&filter_ctx);
 
     // 5a. Cast the ray
     const JPH_NarrowPhaseQuery *query = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
-    // Use NULL for filters as we handle simple ignore logic via broadphase or specific ID
+    // Use nullptr for filters as we handle simple ignore logic via broadphase or specific ID
     has_hit = JPH_NarrowPhaseQuery_CastRay(query, origin, direction, hit, bp_f, obj_f, bf);
 
     // Filter the 'ignore_bid' manually if hit
@@ -430,28 +433,37 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast(PhysicsWorldObject *sel
         Py_RETURN_NONE;
     }
 
-    PyObject *result = NULL;
+    PyObject *result = nullptr;
     SHADOW_LOCK(&self->shadow_lock);
 
-    uint32_t slot = (uint32_t)(hit_handle & 0xFFFFFFFF);
-    uint32_t gen  = (uint32_t)(hit_handle >> 32);
+    uint32_t slot = (uint32_t)(hit_handle & HANDLE_INDEX_MASK);
+    uint32_t gen  = (uint32_t)(hit_handle >> HANDLE_INDEX_BITS);
 
     if (slot < self->slot_capacity && self->generations[slot] == gen &&
         self->slot_states[slot] == SLOT_ALIVE) {
-        result = Py_BuildValue("Kf(fff)", hit_handle, (double)hit_fraction, (double)normal.x,
-                               (double)normal.y, (double)normal.z);
+
+        // Use FastBuild to construct the tuple (handle, fraction, (nx, ny, nz))
+        result = FastBuild_Tuple(hit_handle, hit_fraction,
+                                 FastBuild_Tuple(normal.x, normal.y, normal.z));
     }
 
     SHADOW_UNLOCK(&self->shadow_lock);
-    return result ? result : Py_None;
+
+    // result will be nullptr if the tuple allocation failed (Python exception set),
+    // or a valid tuple if successful. If the handle check failed, result remains nullptr.
+    if (!result) {
+        return PyErr_Occurred() ? nullptr : Py_None;
+    }
+    return result;
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast_batch(PhysicsWorldObject *self, PyObject *const *args, size_t nargsf,
-                                     PyObject *kwnames) {
+PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast_batch(PhysicsWorldObject *self,
+                                                               PyObject *const *args, size_t nargsf,
+                                                               PyObject *kwnames) {
     // 1. DEFAULT VALUES
-    PyObject *o_starts = NULL;
-    PyObject *o_dirs   = NULL;
+    PyObject *o_starts = nullptr;
+    PyObject *o_dirs   = nullptr;
     float max_dist     = 1000.0f;
 
     // 2. FAST PARSE (Zero-Allocation)
@@ -462,7 +474,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast_batch(PhysicsWorldObjec
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &RayBatchParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // 3. BUFFER EXTRACTION & VALIDATION (Outside Lock)
@@ -470,11 +482,11 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast_batch(PhysicsWorldObjec
     Py_buffer b_dirs   = {};
 
     if (UNLIKELY(PyObject_GetBuffer(o_starts, &b_starts, PyBUF_SIMPLE) < 0)) {
-        return NULL;
+        return nullptr;
     }
     if (UNLIKELY(PyObject_GetBuffer(o_dirs, &b_dirs, PyBUF_SIMPLE) < 0)) {
         PyBuffer_Release(&b_starts);
-        return NULL;
+        return nullptr;
     }
 
     if (UNLIKELY(b_starts.len != b_dirs.len || (b_starts.len % 12 != 0))) {
@@ -487,7 +499,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast_batch(PhysicsWorldObjec
     if (count == 0) {
         PyBuffer_Release(&b_starts);
         PyBuffer_Release(&b_dirs);
-        return PyBytes_FromStringAndSize(NULL, 0);
+        return PyBytes_FromStringAndSize(nullptr, 0);
     }
 
     if (UNLIKELY(count > 10000000)) { // 10M Limit
@@ -496,7 +508,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast_batch(PhysicsWorldObjec
     }
 
     PyObject *result_bytes =
-        PyBytes_FromStringAndSize(NULL, (Py_ssize_t)(count * sizeof(RayCastBatchResult)));
+        PyBytes_FromStringAndSize(nullptr, (Py_ssize_t)(count * sizeof(RayCastBatchResult)));
     if (UNLIKELY(!result_bytes)) {
         goto fail_buffers;
     }
@@ -571,7 +583,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast_batch(PhysicsWorldObjec
         hit.fraction    = 1.0f;
         hit.subShapeID2 = 0;
 
-        if (JPH_NarrowPhaseQuery_CastRay(query, &v_ori, &v_dir, &hit, NULL, NULL, NULL)) {
+        if (JPH_NarrowPhaseQuery_CastRay(query, &v_ori, &v_dir, &hit, nullptr, nullptr, nullptr)) {
             uint64_t h = JPH_BodyInterface_GetUserData(bi, hit.bodyID);
             if (h != 0) {
                 RayCastBatchResult *res = &results[i];
@@ -579,7 +591,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast_batch(PhysicsWorldObjec
                 res->fraction           = hit.fraction;
                 res->subShapeID         = hit.subShapeID2;
 
-                uint32_t slot = (uint32_t)(h & 0xFFFFFFFF);
+                uint32_t slot = (uint32_t)(h & HANDLE_INDEX_MASK);
                 if (slot < slot_cap) {
                     uint32_t dense = s2d[slot];
                     if (dense < body_cap && mats) {
@@ -627,17 +639,18 @@ fail_buffers:
     if (b_dirs.obj) {
         PyBuffer_Release(&b_dirs);
     }
-    return NULL;
+    return nullptr;
 }
 
-PyCFunction_DeclareMethodFromModule PhysicsWorld_shapecast(PhysicsWorldObject *self, PyObject *const *args, size_t nargsf,
-                                 PyObject *kwnames) {
+PyCFunction_DeclareMethodFromModule PhysicsWorld_shapecast(PhysicsWorldObject *self,
+                                                           PyObject *const *args, size_t nargsf,
+                                                           PyObject *kwnames) {
     // 1. DEFAULT VALUES
     int shape_type    = 0;
-    PyObject *o_pos   = NULL;
-    PyObject *o_rot   = NULL;
-    PyObject *o_dir   = NULL;
-    PyObject *o_size  = NULL;
+    PyObject *o_pos   = nullptr;
+    PyObject *o_rot   = nullptr;
+    PyObject *o_dir   = nullptr;
+    PyObject *o_size  = nullptr;
     uint64_t ignore_h = 0;
 
     // 2. FAST PARSE
@@ -651,21 +664,31 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_shapecast(PhysicsWorldObject *s
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &ShapecastParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // 3. EXTRACTION (Outside Lock)
-    JPH_Real px, py, pz;
-    float rx, ry, rz, rw;
-    float dx, dy, dz;
+    JPH_Real px;
+    JPH_Real py;
+    JPH_Real pz;
+    float rx;
+    float ry;
+    float rz;
+    float rw;
+    float dx;
+    float dy;
+    float dz;
     float s[4];
 
-    if (!parse_vec3_direct(o_pos, &px, &py, &pz))
-        return NULL;
-    if (!parse_quat_direct(o_rot, &rx, &ry, &rz, &rw))
-        return NULL;
-    if (!parse_vec3_direct(o_dir, &dx, &dy, &dz))
-        return NULL;
+    if (!parse_vec3_direct(o_pos, &px, &py, &pz)) {
+        return nullptr;
+    }
+    if (!parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) {
+        return nullptr;
+    }
+    if (!parse_vec3_direct(o_dir, &dx, &dy, &dz)) {
+        return nullptr;
+    }
     parse_body_size(o_size, s);
 
     float mag_sq = dx * dx + dy * dy + dz * dz;
@@ -685,7 +708,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_shapecast(PhysicsWorldObject *s
     JPH_BodyID ignore_bid = JPH_INVALID_BODY_ID;
     if (ignore_h) {
         uint32_t slot;
-        if (unpack_handle(self, (BodyHandle)ignore_h, &slot) &&
+        if ((int)unpack_handle(self, (BodyHandle)ignore_h, &slot) &&
             self->slot_states[slot] == SLOT_ALIVE) {
             ignore_bid = self->body_ids[self->slot_to_dense[slot]];
         }
@@ -729,7 +752,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_shapecast(PhysicsWorldObject *s
     end_query_scope(self);
     Py_END_ALLOW_THREADS
 
-        // 6. RESULT CONSTRUCTION
+        // 6. RESULT CONSTRUCTION (Refactored to FastBuild)
         if (!ctx.has_hit || hit_handle == 0) {
         Py_RETURN_NONE;
     }
@@ -748,21 +771,30 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_shapecast(PhysicsWorldObject *s
         nz *= inv_n;
     }
 
-    PyObject *result = NULL;
+    PyObject *result = nullptr;
     SHADOW_LOCK(&self->shadow_lock);
 
-    uint32_t slot = (uint32_t)(hit_handle & 0xFFFFFFFF);
-    uint32_t gen  = (uint32_t)(hit_handle >> 32);
+    uint32_t slot = (uint32_t)(hit_handle & HANDLE_INDEX_MASK);
+    uint32_t gen  = (uint32_t)(hit_handle >> HANDLE_INDEX_BITS);
 
     if (slot < self->slot_capacity && self->generations[slot] == gen &&
         self->slot_states[slot] == SLOT_ALIVE) {
 
+        // Construct the tuple (handle, fraction, (px, py, pz), (nx, ny, nz))
+        // FastBuild automatically handles the sub-tuple nesting and
+        // type dispatching for the float/uint64 values.
         result =
-            Py_BuildValue("Kd(ddd)(ddd)", hit_handle, (double)ctx.hit.fraction,
-                          (double)ctx.hit.contactPointOn2.x, (double)ctx.hit.contactPointOn2.y,
-                          (double)ctx.hit.contactPointOn2.z, (double)nx, (double)ny, (double)nz);
+            FastBuild_Tuple(hit_handle, ctx.hit.fraction,
+                            FastBuild_Tuple(ctx.hit.contactPointOn2.x, ctx.hit.contactPointOn2.y,
+                                            ctx.hit.contactPointOn2.z),
+                            FastBuild_Tuple(nx, ny, nz));
     }
 
     SHADOW_UNLOCK(&self->shadow_lock);
-    return result ? result : Py_None;
+
+    // result will be nullptr if allocation failed, or a valid tuple object.
+    if (!result) {
+        return PyErr_Occurred() ? nullptr : Py_None;
+    }
+    return result;
 }

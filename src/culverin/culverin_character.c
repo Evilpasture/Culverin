@@ -1,17 +1,20 @@
 #include "culverin_character.h"
 #include "culverin.h"
 #include "culverin_arg_indices.h"
+#include "culverin_fast_build.h"
 #include "culverin_filters.h"
 #include "culverin_parsers.h"
 #include "culverin_physics_world_internal.h"
+#include "culverin_types.h"
 
 // Character helpers
 // Callback: Can the character collide with this object?
 
 static bool JPH_API_CALL
-char_on_contact_validate(void *userData, const JPH_CharacterVirtual *character,
+char_on_contact_validate(CULV_MAYBE_UNUSED void *userData, 
+                         CULV_MAYBE_UNUSED const JPH_CharacterVirtual *character,
                          // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-                         JPH_BodyID bodyID2, JPH_SubShapeID subShapeID2) {
+                         CULV_MAYBE_UNUSED JPH_BodyID bodyID2, CULV_MAYBE_UNUSED JPH_SubShapeID subShapeID2) {
     return true; // Usually true, unless you want to walk through certain bodies
 }
 
@@ -55,7 +58,7 @@ static void record_character_contact(CharacterObject *self, JPH_BodyID bodyID2,
         ev->sliding_speed_sq = 0.0f;
 
         // Look up material of the object we hit
-        auto slot2      = (uint32_t)(h2 & 0xFFFFFFFF);
+        auto slot2      = (uint32_t)(h2 & HANDLE_INDEX_MASK);
         uint32_t dense2 = world->slot_to_dense[slot2];
         ev->mat1        = 0; // Characters don't have materials yet
         ev->mat2        = world->material_ids[dense2];
@@ -111,9 +114,9 @@ static void report_char_vs_char(CharacterObject *self, const JPH_CharacterVirtua
     }
 }
 static void JPH_API_CALL char_on_character_contact_added(void *userData,
-                                                         const JPH_CharacterVirtual *character,
+                                                         CULV_MAYBE_UNUSED const JPH_CharacterVirtual *character,
                                                          const JPH_CharacterVirtual *otherCharacter,
-                                                         JPH_SubShapeID subShapeID2,
+                                                         CULV_MAYBE_UNUSED JPH_SubShapeID subShapeID2,
                                                          const JPH_RVec3 *contactPosition,
                                                          const JPH_Vec3 *contactNormal,
                                                          JPH_CharacterContactSettings *ioSettings) {
@@ -171,8 +174,9 @@ static void apply_character_impulse(CharacterObject *self, JPH_BodyID bodyID2,
 
 // --- Updated Added Callback ---
 static void JPH_API_CALL char_on_contact_added(void *userData,
-                                               const JPH_CharacterVirtual *character,
-                                               JPH_BodyID bodyID2, JPH_SubShapeID subShapeID2,
+                                               CULV_MAYBE_UNUSED const JPH_CharacterVirtual *character,
+                                               JPH_BodyID bodyID2, 
+                                               CULV_MAYBE_UNUSED JPH_SubShapeID subShapeID2,
                                                const JPH_RVec3 *contactPosition,
                                                const JPH_Vec3 *contactNormal,
                                                JPH_CharacterContactSettings *ioSettings) {
@@ -193,8 +197,9 @@ static void JPH_API_CALL char_on_contact_added(void *userData,
 }
 
 static void JPH_API_CALL char_on_contact_persisted(void *userData,
-                                                   const JPH_CharacterVirtual *character,
-                                                   JPH_BodyID bodyID2, JPH_SubShapeID subShapeID2,
+                                                   CULV_MAYBE_UNUSED const JPH_CharacterVirtual *character,
+                                                   JPH_BodyID bodyID2, 
+                                                   CULV_MAYBE_UNUSED JPH_SubShapeID subShapeID2,
                                                    const JPH_RVec3 *contactPosition,
                                                    const JPH_Vec3 *contactNormal,
                                                    JPH_CharacterContactSettings *ioSettings) {
@@ -286,10 +291,11 @@ static void JPH_API_CALL char_on_character_contact_removed(
     }
 }
 
-static void JPH_API_CALL char_on_adjust_velocity(void *userData,
-                                                 const JPH_CharacterVirtual *character,
-                                                 const JPH_Body *body2, JPH_Vec3 *ioLinearVelocity,
-                                                 JPH_Vec3 *ioAngularVelocity) {
+static void JPH_API_CALL char_on_adjust_velocity(CULV_MAYBE_UNUSED void * userData,
+                                                 CULV_MAYBE_UNUSED const JPH_CharacterVirtual *character,
+                                                 CULV_MAYBE_UNUSED const JPH_Body *body2, 
+                                                 CULV_MAYBE_UNUSED JPH_Vec3 *ioLinearVelocity,
+                                                 CULV_MAYBE_UNUSED JPH_Vec3 *ioAngularVelocity) {
 
     // Usually, we want the default behavior (character follows the body).
     // TODO: add logic here if you want the character to "slip" on certain
@@ -303,11 +309,11 @@ const JPH_CharacterContactListener_Procs char_listener_procs = {
     .OnAdjustBodyVelocity        = char_on_adjust_velocity,   // ADDED
     .OnContactPersisted          = char_on_contact_persisted, // CHANGED from char_on_contact_added
     .OnContactRemoved            = char_on_contact_removed,   // ADDED
-    .OnCharacterContactValidate  = NULL,                      // Default True is fine
+    .OnCharacterContactValidate  = nullptr,                      // Default True is fine
     .OnCharacterContactAdded     = char_on_character_contact_added,
     .OnCharacterContactPersisted = char_on_character_contact_persisted, // ADDED
     .OnCharacterContactRemoved   = char_on_character_contact_removed,   // ADDED
-    .OnContactSolve              = NULL                                 // Advanced, keep NULL
+    .OnContactSolve              = nullptr                                 // Advanced, keep nullptr
 };
 
 PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObject *const *args,
@@ -323,7 +329,7 @@ PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObje
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &CharMoveParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // Validation (Inline macros/checks)
@@ -338,7 +344,7 @@ PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObje
     atomic_store_explicit(&self->last_vy, v_in.y, memory_order_relaxed);
     atomic_store_explicit(&self->last_vz, v_in.z, memory_order_relaxed);
 
-    auto slot      = (uint32_t)(self->handle & 0xFFFFFFFF);
+    auto slot      = (uint32_t)(self->handle & HANDLE_INDEX_MASK);
     uint32_t dense = self->world->slot_to_dense[slot];
 
     // Snapshot: Copy Current to Prev to provide a clean state for interpolation
@@ -400,7 +406,7 @@ PyCFunction_DeclareMethodFromModule Character_get_position(CharacterObject *self
 
     PyObject *ret = PyTuple_New(3);
     if (!ret) {
-        return NULL;
+        return nullptr;
     }
 
     // Use the double precision provided by RVec3
@@ -421,7 +427,7 @@ PyCFunction_DeclareMethodFromModule Character_set_position(CharacterObject *self
 
     // 2. High Speed Parse
     if (!FastParse_Unified(args, nargs, kwnames, &SetPosCharParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // --- PHYSICS LOGIC ---
@@ -435,7 +441,7 @@ PyCFunction_DeclareMethodFromModule Character_set_position(CharacterObject *self
 
     // 4. Update Shadow Buffers
     // We update both current and prev to prevent "teleport streaks" (interpolation artifacts)
-    auto slot          = (uint32_t)(self->handle & 0xFFFFFFFF);
+    auto slot          = (uint32_t)(self->handle & HANDLE_INDEX_MASK);
     uint32_t dense_idx = self->world->slot_to_dense[slot];
     auto off           = (size_t)dense_idx * 4; // Assuming 4-float alignment/stride
 
@@ -464,7 +470,7 @@ PyCFunction_DeclareMethodFromModule Character_set_rotation(CharacterObject *self
 
     // 2. High Speed Parse
     if (!FastParse_Unified(args, nargs, kwnames, &SetRotCharParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // --- PHYSICS LOGIC ---
@@ -478,7 +484,7 @@ PyCFunction_DeclareMethodFromModule Character_set_rotation(CharacterObject *self
     JPH_CharacterVirtual_SetRotation(self->character, &q);
 
     // 4. Update Shadow Buffers (Zero-Streak Reset)
-    auto slot          = (uint32_t)(self->handle & 0xFFFFFFFF);
+    auto slot          = (uint32_t)(self->handle & HANDLE_INDEX_MASK);
     uint32_t dense_idx = self->world->slot_to_dense[slot];
     size_t off         = (size_t)dense_idx * 4;
 
@@ -502,7 +508,7 @@ PyCFunction_DeclareMethodFromModule Character_set_strength(CharacterObject *self
     // 2. High Speed Parse (Handles both world.set_strength(200.0) and
     // world.set_strength(strength=200.0))
     if (!FastParse_Unified(args, nargs, kwnames, &SetStrengthCharParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // --- CONCURRENCY & LOCKING ---
@@ -526,7 +532,7 @@ PyCFunction_DeclareMethodFromModule Character_get_render_transform(CharacterObje
     // --- 1. Fast Argument Parsing ---
     double alpha_dbl = PyFloat_AsDouble(arg);
     if (alpha_dbl == -1.0 && PyErr_Occurred()) {
-        return NULL;
+        return nullptr;
     }
 
     // Clamp alpha to [0.0, 1.0]
@@ -538,7 +544,7 @@ PyCFunction_DeclareMethodFromModule Character_get_render_transform(CharacterObje
     // Consistency Guard: Ensure we aren't reading while the world is stepping/swapping
     BLOCK_UNTIL_NOT_STEPPING(self->world);
 
-    auto slot      = (uint32_t)(self->handle & 0xFFFFFFFF);
+    auto slot      = (uint32_t)(self->handle & HANDLE_INDEX_MASK);
     uint32_t dense = self->world->slot_to_dense[slot];
 
     // Map world buffers using Strides
@@ -595,22 +601,13 @@ PyCFunction_DeclareMethodFromModule Character_get_render_transform(CharacterObje
     rz *= inv_len;
     rw *= inv_len;
 
-    // --- 4. Optimized Return (Manual Tuple Creation) ---
-    // Instead of Py_BuildValue, we manually build the nested tuples.
-    // This is significantly faster as it avoids format string parsing.
-    PyObject *pos_tuple =
-        PyTuple_Pack(3, PyFloat_FromDouble(px), PyFloat_FromDouble(py), PyFloat_FromDouble(pz));
-    PyObject *rot_tuple = PyTuple_Pack(4, PyFloat_FromDouble(rx), PyFloat_FromDouble(ry),
-                                       PyFloat_FromDouble(rz), PyFloat_FromDouble(rw));
-
-    PyObject *result = PyTuple_Pack(2, pos_tuple, rot_tuple);
-
-    // PyTuple_Pack increments refs for items, but the PyFloat_FromDouble
-    // calls created new refs. We must decref the temporaries.
-    Py_DECREF(pos_tuple);
-    Py_DECREF(rot_tuple);
-
-    return result;
+    // --- 4. Optimized Return (Using FastBuild) ---
+    // The macro handles the creation of the underlying PyFloat objects 
+    // and the packing into tuples automatically.
+    return FastBuild_Tuple(
+        FastBuild_Tuple(px, py, pz),
+        FastBuild_Tuple(rx, ry, rz, rw)
+    );
 }
 
 PyCFunction_DeclareMethodFromModule Character_is_grounded(CharacterObject *self,
@@ -652,7 +649,7 @@ PyType_DeclareSlot_VoidFromModule Character_dealloc(CharacterObject *self) {
     SHADOW_LOCK(&self->world->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self->world);
     BLOCK_UNTIL_NOT_QUERYING(self->world);
-    uint32_t slot = (uint32_t)(self->handle & 0xFFFFFFFF);
+    auto slot = (uint32_t)(self->handle & HANDLE_INDEX_MASK);
     world_remove_body_slot(self->world, slot);
     SHADOW_UNLOCK(&self->world->shadow_lock);
 
@@ -703,7 +700,7 @@ alloc_j_char(PhysicsWorldObject *self, PositionVector pos,
     auto *shape                  = (JPH_Shape *)JPH_CapsuleShapeSettings_CreateShape(ss);
     JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)ss);
     if (!shape) {
-        return NULL;
+        return nullptr;
     }
 
     JPH_CharacterVirtualSettings settings;
@@ -717,7 +714,7 @@ alloc_j_char(PhysicsWorldObject *self, PositionVector pos,
 
     JPH_Shape_Destroy(shape);
     if (!j_char) {
-        return NULL;
+        return nullptr;
     }
 
     if (self->char_vs_char_manager) {
@@ -761,14 +758,14 @@ static void setup_char_filters(CharacterObject *obj) {
     JPH_CharacterContactListener_SetProcs(&char_listener_procs);
     obj->listener = JPH_CharacterContactListener_Create(obj);
     JPH_BodyFilter_SetProcs(&global_bf_procs);
-    obj->body_filter = JPH_BodyFilter_Create(NULL);
+    obj->body_filter = JPH_BodyFilter_Create(nullptr);
     JPH_ShapeFilter_SetProcs(&global_sf_procs);
-    obj->shape_filter = JPH_ShapeFilter_Create(NULL);
+    obj->shape_filter = JPH_ShapeFilter_Create(nullptr);
     NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
 
     JPH_CharacterVirtual_SetListener(obj->character, obj->listener);
-    obj->bp_filter  = JPH_BroadPhaseLayerFilter_Create(NULL);
-    obj->obj_filter = JPH_ObjectLayerFilter_Create(NULL);
+    obj->bp_filter  = JPH_BroadPhaseLayerFilter_Create(nullptr);
+    obj->obj_filter = JPH_ObjectLayerFilter_Create(nullptr);
 }
 
 // Main Orchestrator
@@ -786,15 +783,15 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_character(PhysicsWorldOb
     float slope   = 45.0f;
 
     void *targets[CreateChar_COUNT];
-    targets[IDX_CCHAR_POS]   = &pos;    // Parser calls parse_vec3_r64
-    targets[IDX_CCHAR_H]     = &height; // Parser calls fp_conv_float
-    targets[IDX_CCHAR_R]     = &radius;
-    targets[IDX_CCHAR_STEP]  = &step_h;
-    targets[IDX_CCHAR_SLOPE] = &slope;
+    targets[IDX_CCHAR_POS]   = (void *)&pos;    // Parser calls parse_vec3_r64
+    targets[IDX_CCHAR_H]     = (void *)&height; // Parser calls fp_conv_float
+    targets[IDX_CCHAR_R]     = (void *)&radius;
+    targets[IDX_CCHAR_STEP]  = (void *)&step_h;
+    targets[IDX_CCHAR_SLOPE] = (void *)&slope;
 
     // 2. High Speed Parse (Handles positional, keywords, and vec3 unpacking)
     if (!FastParse_Unified(args, nargs, kwnames, &CreateCharParser, targets)) {
-        return NULL;
+        return nullptr;
     }
 
     // --- WORLD LOGIC ---
@@ -804,7 +801,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_character(PhysicsWorldOb
 
     if (self->free_count == 0 && PhysicsWorld_resize(self, self->capacity * 2) < 0) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        return NULL;
+        return nullptr;
     }
 
     uint32_t char_slot           = self->free_slots[--self->free_count];
@@ -827,7 +824,6 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_character(PhysicsWorldOb
         goto fail_py;
     }
 
-    // ... (rest of initialization remains the same) ...
     obj->world     = (PhysicsWorldObject *)Py_NewRef(self);
     obj->character = j_char;
     obj->prev_px   = pos.x;
@@ -847,5 +843,5 @@ fail_jolt:
     self->slot_states[char_slot]         = SLOT_EMPTY;
     self->free_slots[self->free_count++] = char_slot;
     SHADOW_UNLOCK(&self->shadow_lock);
-    return NULL;
+    return nullptr;
 }

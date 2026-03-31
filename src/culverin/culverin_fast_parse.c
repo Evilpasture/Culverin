@@ -19,14 +19,11 @@ bool fp_report_missing(const FastParser *fp, uint64_t provided_mask) {
 
 bool fp_report_type_error(const FastParser *fp, size_t index, PyObject *val) {
     const FastArgSpec *spec = &fp->specs[index];
-    
+
     // Fallback to getting the type name directly from the type_guard
     const char *expected_type = spec->type_name ? spec->type_name : spec->type_guard->tp_name;
-    
-    PyErr_Format(PyExc_TypeError, 
-                 "argument '%s' must be %s, not %.200s",
-                 spec->name, 
-                 expected_type, 
+
+    PyErr_Format(PyExc_TypeError, "argument '%s' must be %s, not %.200s", spec->name, expected_type,
                  Py_TYPE(val)->tp_name);
     return false;
 }
@@ -51,10 +48,11 @@ void fp_init_impl(FastParser *fp, FastArgSpec *specs, size_t count) {
         Py_FatalError("FastParse: Argument count exceeds bitmask limit of 64.");
     }
 
-    fp->specs         = specs;
-    fp->count         = count;
-    fp->required_mask = 0;
-    fp->lookup_table  = NULL;
+    fp->specs           = specs;
+    fp->count           = count;
+    fp->required_mask   = 0;
+    fp->type_guard_mask = 0;
+    fp->lookup_table    = nullptr;
 
     for (size_t i = 0; i < count; i++) {
         if (specs[i].name) {
@@ -62,6 +60,10 @@ void fp_init_impl(FastParser *fp, FastArgSpec *specs, size_t count) {
         }
         if (specs[i].required) {
             fp->required_mask |= (1ULL << i);
+        }
+        // Populate type guard mask
+        if (specs[i].type_guard) {
+            fp->type_guard_mask |= (1ULL << i);
         }
     }
 
@@ -72,6 +74,10 @@ void fp_init_impl(FastParser *fp, FastArgSpec *specs, size_t count) {
         }
         fp->table_mask   = table_size - 1;
         fp->lookup_table = (uint16_t *)CULV_RAW_MALLOC(table_size * sizeof(uint16_t));
+
+        if (!fp->lookup_table) {
+            Py_FatalError("FastParse: Failed to allocate lookup table.");
+        }
 
         for (size_t i = 0; i < table_size; i++) {
             fp->lookup_table[i] = FP_EMPTY_SLOT;
@@ -96,14 +102,14 @@ void fp_deinit(FastParser *fp) {
     if (fp->specs) {
         for (size_t i = 0; i < fp->count; i++) {
             Py_XDECREF(fp->specs[i].interned);
-            fp->specs[i].interned = NULL;
+            fp->specs[i].interned = nullptr;
         }
     }
 
     // 2. Free the O(1) table
     if (fp->lookup_table) {
         CULV_RAW_FREE(fp->lookup_table);
-        fp->lookup_table = NULL;
+        fp->lookup_table = nullptr;
     }
 }
 
@@ -143,21 +149,23 @@ bool fp_parse_legacy(PyObject *args, PyObject *kwargs, CULV_MAYBE_UNUSED PyObjec
             size_t idx = FP_EMPTY_SLOT;
 
             if (fp->lookup_table) {
-                // Hash table lookup path
                 size_t h = fp_hash_ptr(key, fp->table_mask);
                 while (fp->lookup_table[h] != FP_EMPTY_SLOT) {
                     size_t candidate = fp->lookup_table[h];
-                    if (specs[candidate].interned == key ||
-                        PyUnicode_Compare(key, specs[candidate].interned) == 0) {
+                    // Pointer comparison only!
+                    if (specs[candidate].interned == key) {
                         idx = candidate;
                         break;
                     }
                     h = (h + 1) & fp->table_mask;
                 }
-            } else {
-                // Linear search fallback path
+            }
+
+            // ALWAYS run fallback if idx is not found (handles un-interned strings)
+            // if **kwargs is passed, we accept the performance devastation
+            if (UNLIKELY(idx == FP_EMPTY_SLOT)) {
                 for (size_t i = 0; i < count; ++i) {
-                    if (key == specs[i].interned ||
+                    if (specs[i].interned == key ||
                         PyUnicode_Compare(key, specs[i].interned) == 0) {
                         idx = i;
                         break;
@@ -186,5 +194,5 @@ bool fp_parse_legacy(PyObject *args, PyObject *kwargs, CULV_MAYBE_UNUSED PyObjec
         return fp_report_missing(fp, provided_mask);
     }
 
-    return (PyErr_Occurred() == NULL);
+    return (PyErr_Occurred() == nullptr);
 }

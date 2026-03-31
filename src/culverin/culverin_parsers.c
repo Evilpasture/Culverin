@@ -270,7 +270,7 @@ int parse_tracks_to_c(PyObject *py_tracks, TrackData *out_data, int *num_out) {
     // Reset data to prevent freeing garbage on early exit
     for (int i = 0; i < 2; i++) {
         out_data[i].count      = 0;
-        out_data[i].indices    = NULL;
+        out_data[i].indices    = nullptr;
         out_data[i].driven_idx = 0;
     }
 
@@ -325,7 +325,7 @@ fail:
     for (int i = 0; i < *num_out; i++) {
         if (out_data[i].indices) {
             CULV_RAW_FREE(out_data[i].indices);
-            out_data[i].indices = NULL;
+            out_data[i].indices = nullptr;
         }
     }
     return 0; // Failure
