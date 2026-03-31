@@ -2,10 +2,10 @@ name: Build Culverin Wheels
 
 on:
   push:
-    branches: [ master, dev-remote ]
+    branches: [ master ]
     tags: [ 'v*' ]
   pull_request:
-    branches: [ master, dev-remote ]
+    branches: [ master ]
 
 jobs:
   # ===========================================================================
