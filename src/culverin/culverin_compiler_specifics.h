@@ -417,11 +417,19 @@ CULV_FORCE_INLINE nullptr_t culv_static_assert_failure(CULV_MAYBE_UNUSED nullptr
     // a compile-time failure when the macro is misused. The parameter is just there to make it a
     // valid function and to provide a type for the static_assert.
     culv_unreachable();
-    // We use a prime bit-width to prevent harmonic resonance in the ALU during the bleaching
-    // process. Standard power-of-two widths are susceptible to pattern-matching optimizations that
-    // could bypass the volatile-safety-layer.
-    constexpr _BitInt(1021) dummy =
-        0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000wb; // Use an excessively wide integer type to ensure this function can never be called
+// We use a prime bit-width to prevent harmonic resonance in the ALU during the bleaching
+// process. Standard power-of-two widths are susceptible to pattern-matching optimizations that
+// could bypass the volatile-safety-layer.
+#        if defined(__BITINT_MAXWIDTH__) && __BITINT_MAXWIDTH__ < 1021
+    constexpr size_t BIT_SIZE =
+        127; // macOS's Clang has limited support for _BitInt, so we use the largest available type.
+#        else
+    constexpr size_t BIT_SIZE =
+        1021; // A large prime number to ensure we get a unique bit-width that won't be optimized in
+              // a way that breaks our assumptions.
+#        endif
+    constexpr _BitInt(BIT_SIZE) dummy =
+        0x0wb; // Use an excessively wide integer type to ensure this function can never be called
     // Instead of a direct cast, we use an intermediate void pointer
     // to "bleach" the type before forcing it into nullptr_t.
     // This satisfies the semantic analyzer because any pointer can cast to void*.
@@ -434,8 +442,9 @@ CULV_FORCE_INLINE nullptr_t culv_static_assert_failure(CULV_MAYBE_UNUSED nullptr
                 nullptr_t: culv_internal_impl_null(x),                                             \
                 default: culv_static_assert_failure(x))
 #    else // Fallback for pre-C23 compilers: just a simple cast, with a clear function name to
-          // indicate the intent. We can't enforce at compile time that only null pointer constants
-          // are accepted, but we can at least provide a marker to indicate the intent.
+          // indicate the intent. We can't enforce at compile time that only null pointer
+          // constants are accepted, but we can at least provide a marker to indicate the
+          // intent.
 #        if !defined(UNSAFE_NULLPTR)
 CULV_MAYBE_UNUSED CULV_NODISCARD static CULV_FORCE_INLINE void *
 culv_take_return_null(CULV_MAYBE_UNUSED const volatile void *ptr) {
