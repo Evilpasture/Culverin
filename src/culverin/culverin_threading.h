@@ -97,12 +97,12 @@ CULV_MAYBE_UNUSED static inline void culverin_yield() {
 #ifdef _WIN32
 typedef SRWLOCK NativeMutex;
 typedef CONDITION_VARIABLE NativeCond;
-#    define INIT_NATIVE_MUTEX(m) InitializeSRWLock(&(m))
+#    define INIT_NATIVE_MUTEX(m) (InitializeSRWLock(&(m)), 0)
 #    define FREE_NATIVE_MUTEX(m) (void)(m) // No cleanup needed for SRWLock
 #    define NATIVE_MUTEX_LOCK(m) AcquireSRWLockExclusive(&(m))
 #    define NATIVE_MUTEX_UNLOCK(m) ReleaseSRWLockExclusive(&(m))
 
-#    define INIT_NATIVE_COND(c) InitializeConditionVariable(&(c))
+#    define INIT_NATIVE_COND(c) (InitializeConditionVariable(&(c)), 0)
 #    define FREE_NATIVE_COND(c) (void)(c) // No cleanup needed
 #    define NATIVE_COND_WAIT(c, m) SleepConditionVariableSRW(&(c), &(m), INFINITE, 0)
 #    define NATIVE_COND_BROADCAST(c) WakeAllConditionVariable(&(c))
@@ -150,10 +150,9 @@ typedef PyThread_type_lock ShadowMutex;
         do {                                                                                       \
             if (m)                                                                                 \
                 PyThread_free_lock(m);                                                             \
-            (m) = nullptr;                                                                            \
+            (m) = nullptr;                                                                         \
         } while (0)
 #endif
-
 
 // Blocks until the world is not mid-step.
 // Must be called while holding SHADOW_LOCK. Re-acquires it before returning.
