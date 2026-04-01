@@ -79,6 +79,10 @@ jobs:
           cmake --build jolt-build --parallel
           cmake --install jolt-build
 
+      - name: Inspect Jolt artifact
+        run: |
+          find jolt-install -type f | sort
+
       - name: Upload Jolt artifact
         uses: actions/upload-artifact@v7
         with:
