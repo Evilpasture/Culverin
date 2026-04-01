@@ -17,6 +17,7 @@ from ._culverin_c import (
 # Re-export from the Python helper
 from ._culverin import (
     Engine, Transmission, Automatic, Manual,
+    WheelConfig, TrackConfig,
     validate_constraint, validate_settings, bake_scene
 )
 

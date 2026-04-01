@@ -17,6 +17,7 @@ if sys.platform == "win32":
 # 1. Load Pure Python Helpers
 from ._culverin import (
     Engine, Transmission, Automatic, Manual,
+    WheelConfig, TrackConfig,
     validate_constraint, validate_settings, bake_scene
 )
 
@@ -39,6 +40,8 @@ __all__ = [
     "Transmission", 
     "Automatic", 
     "Manual",
+        "WheelConfig",
+        "TrackConfig",
     
     # Constants (C Extension + Python Mirror)
     "MOTION_STATIC", "MOTION_KINEMATIC", "MOTION_DYNAMIC",

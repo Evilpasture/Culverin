@@ -1,6 +1,5 @@
-import math
 import array
-from typing import List, Tuple, Dict, Any
+from typing import TypedDict
 
 __all__ = [
     # Constants
@@ -14,10 +13,19 @@ __all__ = [
     
     # Config Classes
     "Engine", "Transmission", "Automatic", "Manual",
+    "WheelConfig", "TrackConfig",
     
     # Internal Helpers
     "validate_constraint", "validate_settings", "bake_scene"
 ]
+
+class WheelConfig(TypedDict):
+    pos: tuple[float, float, float]
+    radius: float
+
+class TrackConfig(TypedDict):
+    indices: list[int]      # The indices of the wheels this track wraps
+    driven_wheel: int       # The index of the wheel providing torque
 
 # --- Constants (Mirrored from C for offline baking support) ---
 MOTION_STATIC = 0
