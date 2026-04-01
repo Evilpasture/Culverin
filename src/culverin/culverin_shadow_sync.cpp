@@ -23,8 +23,8 @@ struct CppSyncWorkItem {
 // HOT PATH: Unrolled, Prefetched, and SIMD Vectorized Stores
 // =================================================================================================
 
-CULV_FORCE_INLINE void process_full_batch(PhysicsWorldObject *self,
-                                          const CppSyncWorkItem *worklist) {
+CULV_FORCE_INLINE void process_full_batch(PhysicsWorldObject *const CULV_RESTRICT self,
+                                          const CppSyncWorkItem *const CULV_RESTRICT worklist) {
     auto *CULV_RESTRICT s_pos  = (PosStride *)CULV_ASSUME_ALIGNED(self->positions, 32);
     auto *CULV_RESTRICT s_ppos = (PosStride *)CULV_ASSUME_ALIGNED(self->prev_positions, 32);
     auto *CULV_RESTRICT s_rot  = (AuxStride *)CULV_ASSUME_ALIGNED(self->rotations, 16);
@@ -39,22 +39,23 @@ CULV_FORCE_INLINE void process_full_batch(PhysicsWorldObject *self,
 #    pragma GCC unroll 4
 #endif
     for (uint32_t j = 0; j < BATCH_SIZE; j++) {
-        uint32_t D = worklist[j].dense_idx;
+        const uint32_t D = worklist[j].dense_idx;
 
         // Native C++ Pointer - GUARANTEED SAFE
         const JPH::Body *b = worklist[j].body;
 
         // Snapshot previous state (Wide 128/256-bit copy)
-        PosStride old_pos = s_pos[D]; // pulled into registers
-        AuxStride old_rot = s_rot[D];
-        s_ppos[D]         = old_pos;
-        s_prot[D]         = old_rot;
+        const PosStride old_pos = s_pos[D]; // pulled into registers
+        const AuxStride old_rot = s_rot[D];
+        s_ppos[D]               = old_pos;
+        s_prot[D]               = old_rot;
 
         // Positions: Safe scalar fallback due to JPH_DOUBLE_PRECISION toggles.
 #ifndef JPH_DOUBLE_PRECISION
         JPH::Vec4(b->GetCenterOfMassPosition(), 0.0f)
             .StoreFloat4(reinterpret_cast<JPH::Float4 *>(&s_pos[D]));
 #else
+        // Use the new double3 store intrinsic upstream
         b->GetCenterOfMassPosition().StoreDouble3(reinterpret_cast<JPH::Double3 *>(&s_pos[D]));
         s_pos[D].w = 0.0;
 #endif
@@ -72,8 +73,9 @@ CULV_FORCE_INLINE void process_full_batch(PhysicsWorldObject *self,
 // =================================================================================================
 // COLD PATH: Remainder Handling (0 to 31 items)
 // =================================================================================================
-CULV_FORCE_INLINE void process_partial_batch(PhysicsWorldObject *self,
-                                             const CppSyncWorkItem *worklist, uint32_t count) {
+CULV_FORCE_INLINE void process_partial_batch(PhysicsWorldObject *const CULV_RESTRICT self,
+                                             const CppSyncWorkItem *const CULV_RESTRICT worklist,
+                                             const uint32_t count) {
     if (count == 0) {
         return;
     }
@@ -88,18 +90,18 @@ CULV_FORCE_INLINE void process_partial_batch(PhysicsWorldObject *self,
     for (uint32_t j = 0; j < count; j++) {
         // Minor prefetch for the remainder loop
         if (j + 2 < count) {
-            uint32_t future_D = worklist[j + 2].dense_idx;
+            const uint32_t future_D = worklist[j + 2].dense_idx;
             CULV_PREFETCH_WRITE(&s_pos[future_D]);
             CULV_PREFETCH_WRITE(&s_rot[future_D]);
         }
 
-        uint32_t D         = worklist[j].dense_idx;
+        const uint32_t D   = worklist[j].dense_idx;
         const JPH::Body *b = worklist[j].body;
 
-        PosStride old_pos = s_pos[D];
-        AuxStride old_rot = s_rot[D];
-        s_ppos[D]         = old_pos;
-        s_prot[D]         = old_rot;
+        const PosStride old_pos = s_pos[D];
+        const AuxStride old_rot = s_rot[D];
+        s_ppos[D]               = old_pos;
+        s_prot[D]               = old_rot;
 
 #ifndef JPH_DOUBLE_PRECISION
         JPH::Vec4(b->GetCenterOfMassPosition(), 0.0f)
@@ -144,8 +146,8 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
         return;
     }
 
-    const auto *sys_c     = self->system;
-    uint32_t active_count = JPH_PhysicsSystem_GetNumActiveBodies(sys_c, JPH_BodyType_Rigid);
+    const auto *sys_c           = self->system;
+    const uint32_t active_count = JPH_PhysicsSystem_GetNumActiveBodies(sys_c, JPH_BodyType_Rigid);
     CULV_MAYBE_UNUSED uint32_t synced_count = 0;
 
     if (UNLIKELY(active_count == 0)) {
@@ -172,14 +174,15 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
     }
 
     // Static variables persist in memory across function calls
+    static constexpr size_t MIN_CYCLES           = 0xFFFFFFFFFFFFFFFFULL;
     CULV_MAYBE_UNUSED static CulvStat sync_stats = {
-        .total_cycles = 0, .min_cycles = 0xFFFFFFFFFFFFFFFFULL, .max_cycles = 0, .count = 0};
+        .total_cycles = 0, .min_cycles = MIN_CYCLES, .max_cycles = 0, .count = 0};
 
     CULV_PROFILE_BEGIN(sync);
 
     const uint32_t *CULV_RESTRICT s2d = self->slot_to_dense;
-    auto *CULV_RESTRICT s_pos         = (PosStride *)self->positions;
-    auto *CULV_RESTRICT s_rot         = (AuxStride *)self->rotations;
+    const auto *CULV_RESTRICT s_pos   = (PosStride *)self->positions;
+    const auto *CULV_RESTRICT s_rot   = (AuxStride *)self->rotations;
 
     alignas(MEMORY_ALIGNMENT_SIZE) CppSyncWorkItem worklist[BATCH_SIZE];
     uint32_t work_ptr = 0;
@@ -195,22 +198,22 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
             continue;
         }
 
-        uint64_t handle = b->GetUserData();
-        auto slot       = (uint32_t)(handle & HANDLE_INDEX_MASK);
-        auto gen        = (uint32_t)(handle >> HANDLE_INDEX_BITS);
+        const uint64_t handle = b->GetUserData();
+        const auto slot       = (uint32_t)(handle & HANDLE_INDEX_MASK);
+        const auto gen        = (uint32_t)(handle >> HANDLE_INDEX_BITS);
 
         // --- BRANCHLESS VALIDATION ---
         // Force the slot into a safe range to prevent segfaults on read
-        uint32_t safe_slot = (slot < self->slot_capacity) ? slot : 0;
+        const uint32_t safe_slot = (slot < self->slot_capacity) ? slot : 0;
 
         // Bitwise OR all failure conditions. If 'bad' is > 0, the body is invalid.
-        uint8_t state      = self->slot_states[safe_slot];
-        uint32_t state_bad = (state == SLOT_ALIVE || state == SLOT_CHARACTER) ? 0 : 1;
-        uint32_t bad       = static_cast<uint32_t>(slot >= self->slot_capacity) |
-                       (self->generations[safe_slot] ^ gen) | state_bad;
+        const uint8_t state      = self->slot_states[safe_slot];
+        const uint32_t state_bad = (state == SLOT_ALIVE || state == SLOT_CHARACTER) ? 0 : 1;
+        const uint32_t bad       = static_cast<uint32_t>(slot >= self->slot_capacity) |
+                                   (self->generations[safe_slot] ^ gen) | state_bad;
 
         // Fetch dense index safely
-        uint32_t d_idx = s2d[safe_slot];
+        const uint32_t d_idx = s2d[safe_slot];
 
         // --- DEEP PREFETCHING ---
         // Ask the CPU to fetch the destination memory NOW.
@@ -220,7 +223,7 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
 
         // Always write to the worklist (safe because it's local stack memory)
         CULV_ASSUME(work_ptr < BATCH_SIZE);
-        uint32_t is_valid            = static_cast<uint32_t>(bad == 0);
+        const uint32_t is_valid      = static_cast<uint32_t>(bad == 0);
         worklist[work_ptr].body      = (is_valid != 0u) ? b : worklist[work_ptr].body;
         worklist[work_ptr].dense_idx = (is_valid != 0u) ? d_idx : worklist[work_ptr].dense_idx;
         work_ptr += is_valid;
