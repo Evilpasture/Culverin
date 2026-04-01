@@ -204,6 +204,8 @@ def run_churn_test(duration=10.0):
     MAX_LIMIT = 2000
     world = culverin.PhysicsWorld(settings={"max_bodies": MAX_LIMIT})
     handles = []
+
+    world.create_body(pos=(0, -5, 0), size=(500, 1, 500), shape=culverin.SHAPE_BOX, motion=culverin.MOTION_STATIC)
     
     # Initial population: Fill to 50%
     print(f"-> Initializing world to 50% capacity...")
@@ -253,6 +255,13 @@ def run_churn_test(duration=10.0):
 
     except KeyboardInterrupt:
         print("\nStopping churn test...")
+    finally:
+        print("-> Churn finished. Waiting for cleanup...")
+        handles.clear()
+        for _ in range(10):
+            world.step(0.1) # Force multiple steps to flush buffers
+            time.sleep(0.5)
+            print(f"Post-Cleanup RAM: {get_ram_mb():.2f}MB")
 
     end_t = time.time()
     print(f"\n✅ CHURN COMPLETE")
