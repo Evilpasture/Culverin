@@ -32,7 +32,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: jolt-install
-          key: jolt-${{ matrix.os }}-${{ steps.jolt_hash.outputs.hash }}-v11
+          key: jolt-${{ matrix.os }}-${{ steps.jolt_hash.outputs.hash }}-v12
 
       - name: Install deps (Linux)
         if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Linux'
@@ -50,14 +50,28 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true'
         shell: bash
         run: |
+          # 1. Physically patch Jolt's hardcoded flags out of existence
+          python - << 'EOF'
+          import os
+          path = 'extern/JoltPhysics/Build/CMakeLists.txt'
+          with open(path, 'r') as f: text = f.read()
+          
+          # Force RTTI enabled natively
+          text = text.replace('-fno-rtti', '-frtti')
+          text = text.replace('/GR-', '/GR')
+          
+          # Force MSVC Dynamic Runtime (DLL)
+          text = text.replace('MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"', 'MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL"')
+          
+          with open(path, 'w') as f: f.write(text)
+          EOF
+
+          # 2. Configure CMake normally
           COMMON_CMAKE_ARGS=(
             "-G" "Ninja"
             "-DCMAKE_BUILD_TYPE=Release"
             "-DDOUBLE_PRECISION=ON"
-            "-DUSE_RTTI=ON"                                      # NATIVE JOLT: Stops Jolt from injecting -fno-rtti
-            "-DDEBUG_RENDERER_IN_DEBUG_AND_RELEASE=ON"           # NATIVE JOLT: Safely defines JPH_DEBUG_RENDERER
-            "-DUSE_STATIC_MSVC_RUNTIME=OFF"                      # NATIVE JOLT: Stops Jolt from forcing MT
-            "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL"      # CMAKE: Forces MD dynamically matching Culverin
+            "-DDEBUG_RENDERER_IN_DEBUG_AND_RELEASE=ON"
             "-DCMAKE_CXX_STANDARD=23"
             "-DCMAKE_INSTALL_PREFIX=$PWD/jolt-install"
             "-DBUILD_SHARED_LIBS=OFF"
