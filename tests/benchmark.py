@@ -263,17 +263,19 @@ def run_churn_test(duration=10.0):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Culverin Diagnostic Tools")
-    parser.add_argument('--leak', action='store_true', help="Run the memory leak test")
-    parser.add_argument('--stress', action='store_true', help="Run the multi-threaded stress test")
-    parser.add_argument('--churn', action='store_true', help="Run the fragmentation churn test")
+    parser.add_argument('--leak', action='store_true')
+    parser.add_argument('--stress', action='store_true')
+    parser.add_argument('--churn', action='store_true')
+    parser.add_argument('--all', action='store_true', help="Run all tests")
     
     args = parser.parse_args()
     
-    if args.leak:
+    if args.all or args.leak:
         run_leak_test()
-    elif args.stress:
+    if args.all or args.stress:
         run_threading_benchmark()
-    elif args.churn:
+    if args.all or args.churn:
         run_churn_test()
-    else:
-        print("Please specify a test to run: --leak or --stress or --churn")
+        
+    if not any([args.all, args.leak, args.stress, args.churn]):
+        print("Please specify a test...")
