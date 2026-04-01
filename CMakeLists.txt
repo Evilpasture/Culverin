@@ -299,6 +299,11 @@ python_add_library(_culverin_c MODULE
     src/culverin/culverin_arg_indices.c
 )
 
+target_sources(_culverin_c PRIVATE src/culverin/culverin_jph_rtti_shim.cpp)
+set_source_files_properties(src/culverin/culverin_jph_rtti_shim.cpp
+  PROPERTIES COMPILE_OPTIONS "-frtti"
+)
+
 include(CheckIPOSupported)
 check_ipo_supported(RESULT ipo_supported OUTPUT error)
 if(ipo_supported)
