@@ -106,33 +106,6 @@ void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *CULV_REST
     SlotState state;
     JPH_BodyID bid;
 
-// True Direct Threading: Evaluates the next command without returning to a while loop.
-// Includes aggressive software prefetching for indirect lookups.
-#define DISPATCH()                                                                                 \
-    do {                                                                                           \
-        if (UNLIKELY(i >= count)) return;                                                          \
-        cmd    = &queue[i++];                                                                      \
-        header = cmd->header;                                                                      \
-        type   = CMD_GET_TYPE(header);                                                             \
-        slot   = CMD_GET_SLOT(header);                                                             \
-        /* Aggressive Prefetching of the NEXT loop's data dependencies */                          \
-        if (LIKELY(i < count)) {                                                                   \
-            CULV_PREFETCH(&queue[i]);                                                              \
-            uint32_t next_slot = CMD_GET_SLOT(queue[i].header);                                    \
-            CULV_PREFETCH(&self->slot_states[next_slot]);                                          \
-            CULV_PREFETCH(&self->slot_to_dense[next_slot]);                                        \
-        }                                                                                          \
-        state  = self->slot_states[slot];                                                          \
-        bid    = JPH_INVALID_BODY_ID;                                                              \
-        if (LIKELY(state == SLOT_ALIVE || state == SLOT_PENDING_CREATE)) {                         \
-            bid = self->body_ids[self->slot_to_dense[slot]];                                       \
-        }                                                                                          \
-        if (LIKELY(type == CMD_CREATE_BODY || bid != JPH_INVALID_BODY_ID)) {                       \
-            goto *dispatch_table[type];                                                            \
-        }                                                                                          \
-        goto op_NEXT;                                                                              \
-    } while (0)
-
 op_NEXT:
     DISPATCH();
 
@@ -322,9 +295,16 @@ void sync_and_flush_internal(PhysicsWorldObject *self) {
     size_t captured_count          = self->command_count;
 
     if (UNLIKELY(self->command_capacity > self->spare_capacity)) {
-        self->command_queue_spare = (PhysicsCommand *)CULV_RAW_REALLOC(
+        void *new_spare = CULV_RAW_REALLOC(
             self->command_queue_spare, self->command_capacity * sizeof(PhysicsCommand));
-        self->spare_capacity = self->command_capacity;
+        if (new_spare) {
+            self->command_queue_spare = (PhysicsCommand *)new_spare;
+            self->spare_capacity = self->command_capacity;
+        } else {
+            size_t temp = self->command_capacity;
+            self->command_capacity = self->spare_capacity;
+            self->spare_capacity = temp;
+        }
     }
     self->command_queue       = self->command_queue_spare;
     self->command_queue_spare = captured_queue;

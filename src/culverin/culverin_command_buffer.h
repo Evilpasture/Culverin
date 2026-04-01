@@ -153,3 +153,32 @@ bool ensure_command_capacity(struct PhysicsWorldObject *self);
 void flush_commands_internal(struct PhysicsWorldObject *self, PhysicsCommand *queue, size_t count);
 void sync_and_flush_internal(struct PhysicsWorldObject *self);
 void clear_command_queue(struct PhysicsWorldObject *self);
+
+// True Direct Threading: Evaluates the next command without returning to a while loop.
+// Includes aggressive software prefetching for indirect lookups.
+#define DISPATCH()                                                                                 \
+    do {                                                                                           \
+        if (UNLIKELY(i >= count))                                                                  \
+            return;                                                                                \
+        cmd    = &queue[i++];                                                                      \
+        header = cmd->header;                                                                      \
+        type   = CMD_GET_TYPE(header);                                                             \
+        slot   = CMD_GET_SLOT(header);                                                             \
+        /* Aggressive Prefetching of the NEXT loop's data dependencies */                          \
+        if (LIKELY(i < count)) {                                                                   \
+            CULV_PREFETCH(&queue[i]);                                                              \
+            uint32_t next_slot = CMD_GET_SLOT(queue[i].header);                                    \
+            CULV_PREFETCH(&self->slot_states[next_slot]);                                          \
+            CULV_PREFETCH(&self->slot_to_dense[next_slot]);                                        \
+        }                                                                                          \
+        state = self->slot_states[slot];                                                           \
+        bid   = JPH_INVALID_BODY_ID;                                                               \
+        if (LIKELY(state == SLOT_ALIVE || state == SLOT_PENDING_CREATE ||                          \
+                   state == SLOT_PENDING_DESTROY || state == SLOT_CHARACTER)) {                    \
+            bid = self->body_ids[self->slot_to_dense[slot]];                                       \
+        }                                                                                          \
+        if (LIKELY(type == CMD_CREATE_BODY || bid != JPH_INVALID_BODY_ID)) {                       \
+            goto *dispatch_table[type];                                                            \
+        }                                                                                          \
+        goto op_NEXT;                                                                              \
+    } while (0)
