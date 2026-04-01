@@ -57,6 +57,11 @@ void fp_init_impl(FastParser *fp, FastArgSpec *specs, size_t count) {
     for (size_t i = 0; i < count; i++) {
         if (specs[i].name) {
             specs[i].interned = PyUnicode_InternFromString(specs[i].name);
+
+            /* Force UTF-8 encoding on the main thread now.
+            This populates the internal 'utf8' cache pointer so
+            threads never race to do it later. */
+            CULV_MAYBE_UNUSED auto cache = PyUnicode_AsUTF8(specs[i].interned);
         }
         if (specs[i].required) {
             fp->required_mask |= (1ULL << i);
