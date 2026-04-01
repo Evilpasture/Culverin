@@ -507,9 +507,11 @@ pub inline fn culv_take_return_null(comptime T : type, comptime pointer_literal 
 }
 #else
 // C++ version with compile-time type checking to ensure only null pointer constants are accepted.
+#    include <algorithm>   // For std::ranges::all_of in the internal_verify_null_state function
 #    include <cstddef>     // For std::nullptr_t
 #    include <string_view> // For std::string_view in the compile-time date parser
 #    include <type_traits> // For std::is_same_v and std::remove_cv_t in the Void type trait
+
 // This function performs a volatile-qualified identity transformation on the null-set, allowing us
 // to return nullptr in a constexpr context without causing type errors, while still enforcing at
 // compile time that the argument is a null pointer constant.
@@ -578,10 +580,9 @@ template <typename T, typename = std::enable_if_t<Void<T>::value>>
 // to be addressed before the library can be safely used.
 [[nodiscard]] constexpr bool internal_verify_null_state() noexcept {
     std::nullptr_t test_array[4] = {nullptr, nullptr, nullptr, nullptr};
-    for (auto &n : test_array)
-        if (culv_take_return_null(n) != nullptr)
-            return false;
-    return true;
+
+    return std::ranges::all_of(test_array,
+                               [](auto &n) { return culv_take_return_null(n) == nullptr; });
 }
 
 // helper function to validate that the return type of culv_take_return_null is indeed nullptr_t,
@@ -595,10 +596,16 @@ template <typename T, typename = std::enable_if_t<Void<T>::value>>
         16; // We can adjust this size to test more or fewer cases, but 16 is a reasonable number to
             // ensure we're not just getting lucky with a small sample.
     std::nullptr_t test_array[test_size] = {nullptr};
-
-    for (size_t i = 0; i < test_size; ++i) {
-        if (culv_take_return_null(test_array[i]) != nullptr)
-            return false;
+    // Fill the test array with null pointer constants. This is a sanity check to ensure that we're
+    // actually testing the function with valid null pointer constants, and not just relying on a
+    // single test case. If the function is implemented correctly, all elements of the test array
+    // should be treated as null pointer constants, and the function should return nullptr for each
+    // of them. If any element fails this test, it indicates that there is a fundamental issue with
+    // the implementation of culv_take_return_null, and it needs to be addressed before the library
+    // can be safely used.
+    if (!std::ranges::all_of(test_array,
+                             [](auto &n) { return culv_take_return_null(n) == nullptr; })) {
+        return false;
     }
 
     // Additionally, we can perform a recursive paradox check to ensure that the function behaves as
