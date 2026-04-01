@@ -221,36 +221,36 @@ get_filename_component(JOLT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/extern/JoltPhysics"
 add_definitions(-DJPH_DEBUG_RENDERER)
 set(DEBUG_RENDERER_IN_DEBUG_AND_RELEASE ON CACHE BOOL "" FORCE)
 
-# Force standard globally BEFORE add_subdirectory
-set(CMAKE_CXX_STANDARD 23)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+if(DEFINED JOLT_PREBUILT_DIR)
+  # Use prebuilt Jolt from CI artifact — skip recompilation
+  find_package(Jolt REQUIRED CONFIG PATHS "${JOLT_PREBUILT_DIR}" NO_DEFAULT_PATH)
+else()
+  # Force standard globally BEFORE add_subdirectory
+  set(CMAKE_CXX_STANDARD 23)
+  set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-add_subdirectory("${JOLT_DIR}/Build" jolt_physics_build)
+  add_subdirectory("${JOLT_DIR}/Build" jolt_physics_build)
 
-if(MSVC OR (WIN32 AND CMAKE_C_COMPILER_ID MATCHES "Clang"))
+  if(MSVC OR (WIN32 AND CMAKE_C_COMPILER_ID MATCHES "Clang"))
     foreach(t Jolt)
-        if(TARGET ${t})
-            set_property(TARGET ${t} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
-
-            # Force the Jolt target to inherit C++23 settings
-            set_target_properties(${t} PROPERTIES
-                CXX_STANDARD 23
-                CXX_STANDARD_REQUIRED ON
-                CXX_EXTENSIONS OFF
-            )
-
-            if(CMAKE_C_COMPILER_ID MATCHES "Clang")
-                set_property(TARGET ${t} PROPERTY COMPILE_OPTIONS "")
-                if(MSVC)
-                    # For Clang-CL/MSVC
-                    target_compile_options(${t} PRIVATE /arch:AVX2 /fp:fast)
-                else()
-                    # For GCC/Clang
-                    target_compile_options(${t} PRIVATE -march=x86-64-v3 -ffast-math -fomit-frame-pointer)
-                endif()
-            endif()
+      if(TARGET ${t})
+        set_property(TARGET ${t} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+        set_target_properties(${t} PROPERTIES
+            CXX_STANDARD 23
+            CXX_STANDARD_REQUIRED ON
+            CXX_EXTENSIONS OFF
+        )
+        if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+          set_property(TARGET ${t} PROPERTY COMPILE_OPTIONS "")
+          if(MSVC)
+            target_compile_options(${t} PRIVATE /arch:AVX2 /fp:fast)
+          else()
+            target_compile_options(${t} PRIVATE -march=x86-64-v3 -ffast-math -fomit-frame-pointer)
+          endif()
         endif()
+      endif()
     endforeach()
+  endif()
 endif()
 
 # ==============================================================================

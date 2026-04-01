@@ -8,11 +8,79 @@ on:
     branches: [ master ]
 
 jobs:
+  # build Jolt once per platform
+  build_jolt:
+    name: Build Jolt (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    outputs:
+      jolt-hash: ${{ steps.jolt_hash.outputs.hash }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Get submodule hash
+        id: jolt_hash
+        shell: bash
+        run: echo "hash=$(git rev-parse HEAD:extern/JoltPhysics)" >> $GITHUB_OUTPUT
+
+      - name: Cache Jolt static lib
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: jolt-install
+          key: jolt-${{ matrix.os }}-${{ steps.jolt_hash.outputs.hash }}
+
+      - name: Install deps (Linux)
+        if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Linux'
+        run: sudo apt-get install -y clang lld ninja-build
+
+      - name: Install LLVM (macOS)
+        if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'macOS'
+        run: brew install llvm ninja
+
+      - name: Install ninja (Windows)
+        if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Windows'
+        run: choco install ninja
+
+      - name: Build Jolt
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          # Pick compiler per platform
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            EXTRA="-DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_CXX_FLAGS='/arch:AVX2 /fp:fast'"
+          elif [ "$RUNNER_OS" == "macOS" ]; then
+            EXTRA="-DCMAKE_C_COMPILER=/opt/homebrew/opt/llvm/bin/clang -DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm/bin/clang++ -DCMAKE_CXX_FLAGS='-march=x86-64-v3 -ffast-math'"
+          else
+            EXTRA="-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_CXX_FLAGS='-march=x86-64-v3 -ffast-math -fomit-frame-pointer'"
+          fi
+          cmake -S extern/JoltPhysics/Build -B jolt-build \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDOUBLE_PRECISION=ON \
+            -DCMAKE_INSTALL_PREFIX=$PWD/jolt-install \
+            -DBUILD_SHARED_LIBS=OFF \
+            $EXTRA
+          cmake --build jolt-build --parallel
+          cmake --install jolt-build
+
+      - name: Upload Jolt artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: jolt-prebuilt-${{ matrix.os }}
+          path: jolt-install/
+          retention-days: 3
+          
   # ===========================================================================
   # JOB 1: PRODUCTION RELEASE (Clean Binaries)
   # ===========================================================================
   build_wheels:
     name: Release Build (${{ matrix.os }})
+    needs: [build_jolt]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -30,9 +98,15 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Install Upstream LLVM (macOS)
-        if: runner.os == 'macOS'
-        run: brew install llvm
+      - name: Download prebuilt Jolt
+        uses: actions/download-artifact@v8
+        with:
+          name: jolt-prebuilt-${{ matrix.os }}
+          path: jolt-install
+
+      - name: Set Jolt CMake dir
+        shell: bash
+        run: echo "JOLT_CMAKE_DIR=$(pwd)/jolt-install/lib/cmake/Jolt" >> $GITHUB_ENV
 
       - name: Build Wheels
         uses: pypa/cibuildwheel@v3.4.0
@@ -44,21 +118,26 @@ jobs:
           CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
           
           CIBW_BUILD_FRONTEND: "uv"
+
+          CIBW_ENVIRONMENT_PASS: JOLT_CMAKE_DIR
           
           CIBW_ENVIRONMENT_LINUX: >
-            CC=clang
-            CXX=clang++
+            CC=clang 
+            CXX=clang++ 
             CMAKE_GENERATOR=Ninja
-            CMAKE_ARGS="-DENABLE_SANITIZER=OFF -DCMAKE_BUILD_TYPE=Release -DDOUBLE_PRECISION=ON"
+            CMAKE_ARGS="-DENABLE_SANITIZER=OFF -DCMAKE_BUILD_TYPE=Release -DDOUBLE_PRECISION=ON -DJolt_DIR=/project/jolt-install/lib/cmake/Jolt"
 
-          CIBW_ENVIRONMENT_WINDOWS: "CC=clang-cl CXX=clang-cl CMAKE_GENERATOR=Ninja"
-          
           CIBW_ENVIRONMENT_MACOS: >
             CC=/opt/homebrew/opt/llvm/bin/clang
             CXX=/opt/homebrew/opt/llvm/bin/clang++
+            CMAKE_GENERATOR=Ninja MACOSX_DEPLOYMENT_TARGET=13.0
+            CMAKE_ARGS="-DENABLE_SANITIZER=OFF -DCMAKE_BUILD_TYPE=Release -DDOUBLE_PRECISION=ON -DJolt_DIR=$JOLT_CMAKE_DIR"
+
+          CIBW_ENVIRONMENT_WINDOWS: >
+            CC=clang-cl 
+            CXX=clang-cl 
             CMAKE_GENERATOR=Ninja
-            MACOSX_DEPLOYMENT_TARGET=13.0
-            CMAKE_ARGS="-DENABLE_SANITIZER=OFF -DCMAKE_BUILD_TYPE=Release -DDOUBLE_PRECISION=ON"
+            CMAKE_ARGS="-DENABLE_SANITIZER=OFF -DCMAKE_BUILD_TYPE=Release -DDOUBLE_PRECISION=ON -DJolt_DIR=$JOLT_CMAKE_DIR"
           
           CIBW_BEFORE_ALL_LINUX: >
             (dnf install -y clang llvm || yum install -y clang llvm || apk add --no-cache clang llvm-dev) &&
