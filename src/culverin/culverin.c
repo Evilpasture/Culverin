@@ -3835,6 +3835,44 @@ PyCFunction_DeclareMethod PhysicsWorld_benchmark_parse(CULV_MAYBE_UNUSED Physics
     Py_RETURN_NONE;
 }
 
+/**
+ * Benchmark for FastBuild_Tuple using METH_NOARGS.
+ * This eliminates all argument parsing overhead to isolate the
+ * performance of the Culverin Fast Build engine.
+ */
+PyObject *PhysicsWorld_benchmark_build(CULV_MAYBE_UNUSED PyObject *self,
+                                       CULV_MAYBE_UNUSED PyObject *args) {
+    // 1. Define dummy C data to be "built" into Python
+    int i_val    = 42;
+    float f_val  = 3.14f;
+    double d_val = 2.718281828;
+    const char *s_val =
+        "Pater noster qui es in caelis, sanctificetur nomen tuum. Adveniat regnum tuum. Fiat "
+        "voluntas tua, sicut in caelo et in terra. Panem nostrum quotidianum da nobis hodie, et "
+        "dimitte nobis debita nostra sicut et nos dimittimus debitoribus nostris. Et ne nos "
+        "inducas in tentationem, sed libera nos a malo. Amen.";
+    bool b_val = true;
+
+    // 2. Execute the Build
+    // FastBuild_Tuple uses FB_VAL to route types at compile-time.
+    // It then uses fb_pack_tuple to perform O(1) allocation and
+    // O(N) reference stealing.
+    PyObject *result =
+        FastBuild_Tuple(i_val, f_val, d_val, s_val, b_val, (int)100, (float)200.0f,
+                        "Lorem ipsum dolor sit amet consectetur adipiscing elit, sed do eiusmod "
+                        "tempor incididunt ut labore et dolore magna aliqua.",
+                        false);
+
+    // 3. Error handling
+    if (UNLIKELY(!result)) {
+        // fb_pack_tuple handles internal cleanup on failure
+        return nullptr;
+    }
+
+    // Return the new reference to the caller
+    return result;
+}
+
 // --- Type Definition ---
 
 // Centralize the cast to keep the specific macros clean
@@ -3980,8 +4018,12 @@ static const PyMethodDef PhysicsWorld_methods[] = {
     PW_FASTCALL(create_character, "Create a virtual character"),
 
     // --- Internal/Debug ---
+    // Not for public use, therefore can't use macros
     {"_benchmark_parse", CULV_CAST(PhysicsWorld_benchmark_parse), METH_FASTCALL | METH_KEYWORDS,
      "Benchmark the argument parsing of a complex function. Up to 64 arguments."},
+
+     {"_benchmark_build", CULV_CAST(PhysicsWorld_benchmark_build), METH_NOARGS,
+      "Benchmark the FastBuild_Tuple function with a complex set of arguments."},
 
     {nullptr, nullptr, 0, nullptr}};
 

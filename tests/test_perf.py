@@ -115,6 +115,32 @@ class TestPerformanceRegression(unittest.TestCase):
         # 250ms is a safe threshold for modern CPUs on CI runners.
         self.assertLess(total_time, 0.250, "FastParse stress limit (64 args) has regressed.")
 
+    def test_fastbuild_engine_overhead(self):
+        """
+        Tests the FastBuild engine (C23 _Generic dispatcher).
+        Measures the raw speed of creating Python Tuples from C primitives
+        without any format string parsing (Py_BuildValue).
+        """
+        iterations = 100000 # 100k iterations because this is lightning fast
+        
+        # Warmup
+        self.world._benchmark_build()
+        
+        t0 = time.perf_counter()
+        for _ in range(iterations):
+            # This calls the METH_NOARGS C function we wrote
+            _obj = self.world._benchmark_build()
+        total_time = time.perf_counter() - t0
+        
+        calls_per_sec = iterations / total_time
+        print(f"\n[Perf] FastBuild Engine -> {calls_per_sec:,.0f} builds/sec ({total_time*1000:.2f}ms total)")
+        
+        # FastBuild should easily exceed 1 million builds per second on modern hardware.
+        # We'll set a conservative regression threshold of 200ms for 100k calls.
+        self.assertLess(total_time, 0.200, "FastBuild engine construction speed has regressed.")
+        
+        # Safety check: ensure
+
     def test_raycast_batch_speed(self):
         """Ensure the GIL-released batch raycast remains heavily optimized."""
         # Create a floor to hit
