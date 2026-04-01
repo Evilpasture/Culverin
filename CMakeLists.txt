@@ -224,6 +224,8 @@ set(DEBUG_RENDERER_IN_DEBUG_AND_RELEASE ON CACHE BOOL "" FORCE)
 if(DEFINED JOLT_PREBUILT_DIR)
   # Use prebuilt Jolt from CI artifact — skip recompilation
   find_package(Jolt REQUIRED CONFIG PATHS "${JOLT_PREBUILT_DIR}" NO_DEFAULT_PATH)
+  get_target_property(_jolt_loc Jolt::Jolt IMPORTED_LOCATION)
+  message(STATUS "Jolt imported from: ${_jolt_loc}")
 else()
   # Force standard globally BEFORE add_subdirectory
   set(CMAKE_CXX_STANDARD 23)
