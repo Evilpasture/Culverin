@@ -5,14 +5,13 @@ import array
 import numpy as np
 import culverin
 import argparse
-import sys
 import psutil
 import os
 
 def get_ram_mb():
     return psutil.Process(os.getpid()).memory_info().rss / 1024 / 1024
 
-def run_leak_test(iterations=50000):
+def run_leak_test(iterations: int = 50000):
     print("\n=== CULVERIN MEMORY LEAK TEST ===")
     world = culverin.PhysicsWorld(settings={"max_bodies": 10000})
     verts = array.array('f', [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0]).tobytes()
@@ -42,7 +41,7 @@ def run_leak_test(iterations=50000):
         print("✅ SUCCESS: Memory is stable")
 
 
-def run_threading_benchmark(duration=5.0, num_bodies=500):
+def run_threading_benchmark(duration: float = 5.0, num_bodies: int = 500):
     print(f"\n=== CULVERIN REALISTIC SIMULATION BENCHMARK ===")
     print(f"Simulating {num_bodies} active dynamic bodies across multiple cores for {duration}s...")
     
@@ -59,7 +58,7 @@ def run_threading_benchmark(duration=5.0, num_bodies=500):
     )
     
     # Create Dynamic Grid (Spawned in the air so they crash down)
-    pos_list = []
+    pos_list: list[tuple[float, float, float]] = []
     grid_size = int(np.cbrt(num_bodies)) + 1
     spacing = 1.5
     for x in range(grid_size):
@@ -196,20 +195,20 @@ def run_threading_benchmark(duration=5.0, num_bodies=500):
     print(f"Total Steps: {stats['steps']}")
     print(f"Total Raycasts: {stats['rays']}")
 
-def run_churn_test(duration=10.0):
+def run_churn_test(duration: float = 10.0):
     # There is a known memory issue. will investigate...
     print("\n=== CULVERIN FRAGMENTATION (CHURN) TEST ===")
     
     # Start with a world limited to 2000 bodies to force frequent re-use
     MAX_LIMIT = 2000
     world = culverin.PhysicsWorld(settings={"max_bodies": MAX_LIMIT})
-    handles = []
+    handles: list[int] = []
 
     world.create_body(pos=(0, -5, 0), size=(500, 1, 500), shape=culverin.SHAPE_BOX, motion=culverin.MOTION_STATIC)
     
     # Initial population: Fill to 50%
     print(f"-> Initializing world to 50% capacity...")
-    for i in range(MAX_LIMIT // 2):
+    for _ in range(MAX_LIMIT // 2):
         handles.append(world.create_body(pos=(random.random()*10, 0, random.random()*10)))
     world.step(0)
 

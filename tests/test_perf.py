@@ -1,7 +1,6 @@
 import sys
 import unittest
 import time
-import array
 import numpy as np
 import culverin
 
@@ -36,7 +35,7 @@ class TestPerformanceRegression(unittest.TestCase):
 
         # 1. Iterative Creation
         t0 = time.perf_counter()
-        loop_handles = []
+        loop_handles: list[int] = []
         for p in positions:
             loop_handles.append(self.world.create_body(pos=p, shape=culverin.SHAPE_BOX, motion=culverin.MOTION_DYNAMIC))
         loop_time = time.perf_counter() - t0

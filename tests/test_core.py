@@ -1,11 +1,11 @@
 import unittest
 import math
 import time
-import struct
 import threading
-import array
 import numpy as np
 import culverin
+from culverin import WheelConfig
+from culverin import TrackConfig
 
 class CulverinTestCase(unittest.TestCase):
     """Base class providing helper methods for interacting with Culverin buffers."""
@@ -13,11 +13,11 @@ class CulverinTestCase(unittest.TestCase):
         self.world = culverin.PhysicsWorld(settings={"gravity": (0, -10, 0), "max_bodies": 2048})
         self.world.step(0) # Flush initial state
 
-    def get_pos(self, handle):
+    def get_pos(self, handle: int):
         idx = self.world.get_index(handle)
         return self.world.positions[idx * 4 : idx * 4 + 3]
 
-    def get_vel(self, handle):
+    def get_vel(self, handle: int):
         idx = self.world.get_index(handle)
         return self.world.velocities[idx * 4 : idx * 4 + 3]
 
@@ -184,7 +184,7 @@ class TestQueries(CulverinTestCase):
 class TestCollisionsAndEvents(CulverinTestCase):
     # test_collision_filtering can segfault in musllinux with Clang 19 and above...
     def test_collision_filtering(self):
-        floor = self.world.create_body(pos=(0, 5, 0), size=(10, 0.1, 10), motion=culverin.MOTION_STATIC, category=1, mask=0xFFFF)
+        _floor = self.world.create_body(pos=(0, 5, 0), size=(10, 0.1, 10), motion=culverin.MOTION_STATIC, category=1, mask=0xFFFF)
         
         # Added the size=(0.5, 0.5, 0.5) arguments back
         player = self.world.create_body(pos=(2, 10, 0), size=(0.5, 0.5, 0.5), category=2, mask=1|4) 
@@ -218,7 +218,7 @@ class TestCharactersAndVehicles(CulverinTestCase):
         self.assertGreater(char.get_position()[0], 0.0)
         
         # Test get_render_transform interpolation
-        r_pos, r_rot = char.get_render_transform(0.5)
+        r_pos, _r_rot = char.get_render_transform(0.5)
         self.assertGreater(r_pos[0], 0.0)
 
     def test_wheeled_vehicle(self):
@@ -226,7 +226,7 @@ class TestCharactersAndVehicles(CulverinTestCase):
         self.world.create_body(pos=(0, -1, 0), size=(100, 1, 100), motion=culverin.MOTION_STATIC, friction=1.0)
         
         chassis = self.world.create_body(pos=(0, 2, 0), size=(1, 0.5, 2), mass=1500.0)
-        wheels = [{"pos": (x, -0.5, z), "radius": 0.4} for x in [-0.8, 0.8] for z in [1.2, -1.2]]
+        wheels: list[WheelConfig] = [{"pos": (x, -0.5, z), "radius": 0.4} for x in [-0.8, 0.8] for z in [1.2, -1.2]]
         car = self.world.create_vehicle(chassis=chassis, wheels=wheels, drive="AWD")
         self.world.step(0)
         
@@ -244,10 +244,10 @@ class TestCharactersAndVehicles(CulverinTestCase):
         self.world.create_body(pos=(0, -1, 0), size=(100, 1, 100), motion=culverin.MOTION_STATIC, friction=1.0)
         
         chassis = self.world.create_body(pos=(0, 2, 0), size=(2, 1, 3), mass=5000.0)
-        wheels = [{"pos": (x, -1.0, z), "radius": 0.5} for x in [-1.5, 1.5] for z in [2.0, 0.0, -2.0]]
+        wheels: list[WheelConfig] = [{"pos": (x, -1.0, z), "radius": 0.5} for x in [-1.5, 1.5] for z in [2.0, 0.0, -2.0]]
         
         # Track 0 (Left): indices 0, 2, 4. Track 1 (Right): indices 1, 3, 5
-        tracks = [
+        tracks: list[TrackConfig] = [
             {"indices": [0, 2, 4], "driven_wheel": 0},
             {"indices": [1, 3, 5], "driven_wheel": 1}
         ]
@@ -339,14 +339,14 @@ class TestEdgeCases(CulverinTestCase):
 
     def test_extreme_mass_ratios(self):
         """Test 1mg vs 1,000,000kg to see if the solver explodes."""
-        heavy = self.world.create_body(pos=(0, 0, 0), mass=1e6, motion=culverin.MOTION_DYNAMIC)
-        light = self.world.create_body(pos=(0, 1, 0), mass=1e-3, motion=culverin.MOTION_DYNAMIC)
+        _heavy = self.world.create_body(pos=(0, 0, 0), mass=1e6, motion=culverin.MOTION_DYNAMIC)
+        _light = self.world.create_body(pos=(0, 1, 0), mass=1e-3, motion=culverin.MOTION_DYNAMIC)
         self.world.step(0.1) # Just check it doesn't crash
 
 
 class TestComplexShapes(CulverinTestCase):
     def test_compound_body(self):
-        parts = [
+        parts: list[tuple[tuple[int, int, int], tuple[int, int, int, int], int, tuple[int, int, int]] | tuple[tuple[int, int, int], tuple[int, int, int, int], int, tuple[int]]] = [
             ((0, 0, 0), (0, 0, 0, 1), culverin.SHAPE_BOX, (1, 1, 1)),
             ((0, 2, 0), (0, 0, 0, 1), culverin.SHAPE_SPHERE, (1,))
         ]
