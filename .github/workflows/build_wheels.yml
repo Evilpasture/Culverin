@@ -54,18 +54,20 @@ jobs:
             C_COMPILER="clang-cl"
             CXX_COMPILER="clang-cl"
             CXX_FLAGS="/arch:AVX2 /fp:fast"
-            EXTRA_ARGS="-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL"
+            MSVC_RUNTIME="MultiThreadedDLL"
+            LINUX_TARGET=""
           elif [ "$RUNNER_OS" == "macOS" ]; then
             C_COMPILER="/opt/homebrew/opt/llvm/bin/clang"
             CXX_COMPILER="/opt/homebrew/opt/llvm/bin/clang++"
             CXX_FLAGS="-mcpu=apple-m1 -frtti"
-            EXTRA_ARGS=""
+            MSVC_RUNTIME=""
+            LINUX_TARGET=""
           else
             C_COMPILER="clang"
             CXX_COMPILER="clang++"
-            # --target= matches the manylinux container's triple to avoid LTO triple mismatch warnings
-            CXX_FLAGS="-march=x86-64-v3 -ffast-math -fomit-frame-pointer -fPIC --target=x86_64-redhat-linux-gnu"
-            EXTRA_ARGS="-DCMAKE_C_FLAGS='-fPIC --target=x86_64-redhat-linux-gnu'"
+            CXX_FLAGS="-march=x86-64-v3 -ffast-math -fomit-frame-pointer -fPIC"
+            MSVC_RUNTIME=""
+            LINUX_TARGET="x86_64-redhat-linux-gnu"
           fi
           cmake -S extern/JoltPhysics/Build -B jolt-build \
             -G Ninja \
@@ -80,7 +82,8 @@ jobs:
             -DCMAKE_C_COMPILER="$C_COMPILER" \
             -DCMAKE_CXX_COMPILER="$CXX_COMPILER" \
             ${CXX_FLAGS:+-DCMAKE_CXX_FLAGS="$CXX_FLAGS"} \
-            ${EXTRA_ARGS}
+            ${MSVC_RUNTIME:+-DCMAKE_MSVC_RUNTIME_LIBRARY="$MSVC_RUNTIME"} \
+            ${LINUX_TARGET:+-DCMAKE_C_FLAGS="--target=$LINUX_TARGET" -DCMAKE_CXX_FLAGS="$CXX_FLAGS --target=$LINUX_TARGET"}
           cmake --build jolt-build --parallel
           cmake --install jolt-build
 
