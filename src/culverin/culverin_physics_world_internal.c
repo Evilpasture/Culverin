@@ -383,8 +383,6 @@ void free_shadow_buffers(PhysicsWorldObject *self) {
 // - Must not race with Python memoryview access
 void PhysicsWorld_free_members(PhysicsWorldObject *self) {
     // 1. Clear and free the ACTIVE command queue
-    // This one definitely contains live Jolt pointers from create_body calls
-    // made since the last world.step().
     if (self->command_queue) {
         clear_command_queue(self);
         CULV_RAW_FREE(self->command_queue);
@@ -392,9 +390,6 @@ void PhysicsWorld_free_members(PhysicsWorldObject *self) {
     }
 
     // 2. Free the SPARE command queue
-    // Note: We don't call clear_command_queue here because flush_commands_internal
-    // already destroyed the settings pointers in this buffer during the last step.
-    // We just release the raw memory block.
     if (self->command_queue_spare) {
         CULV_RAW_FREE(self->command_queue_spare);
         self->command_queue_spare = nullptr;

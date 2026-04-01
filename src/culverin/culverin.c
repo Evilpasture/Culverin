@@ -16,7 +16,6 @@
 #include "culverin_shadow_sync.h"
 #include "culverin_vehicle.h"
 
-
 // ============================================================================
 // Semantic Constants - Magic Number Replacements
 // ============================================================================
@@ -72,6 +71,8 @@ PyType_DeclareSlot_Status PhysicsWorld_clear(CULV_MAYBE_UNUSED PhysicsWorldObjec
 
 PyType_DeclareSlot_Void PhysicsWorld_dealloc(PhysicsWorldObject *self) {
     PyTypeObject *tp = Py_TYPE(self);
+
+    atomic_store_explicit(&self->is_deallocating, true, memory_order_release);
 
     // 1. The GC "Safety Shield"
     // Use the check-then-untrack to avoid the 'already untracked' abort
@@ -1182,6 +1183,11 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
     /* Validate timestep */
     VALIDATE_FINITE_FLOAT(dt, "dt");
 
+    if (atomic_load_explicit(&self->is_deallocating, memory_order_acquire)) {
+        PyErr_SetString(PyExc_RuntimeError, "Cannot step: World is deallocating");
+        return nullptr; // World is dying, step is impossible
+    }
+
     // --- PHASE 0: RE-ENTRANCY GUARD ---
     if (atomic_load_explicit(&self->is_stepping, memory_order_acquire)) {
         PyErr_SetString(PyExc_RuntimeError, "Concurrent step detected.");
@@ -1218,9 +1224,14 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
     size_t captured_count          = self->command_count;
 
     if (UNLIKELY(self->command_capacity > self->spare_capacity)) {
-        self->command_queue_spare = (PhysicsCommand *)CULV_RAW_REALLOC(
-            self->command_queue_spare, self->command_capacity * sizeof(PhysicsCommand));
-        self->spare_capacity = self->command_capacity;
+        void *new_spare = CULV_RAW_REALLOC(self->command_queue_spare,
+                                           self->command_capacity * sizeof(PhysicsCommand));
+        if (UNLIKELY(!new_spare)) {
+            SHADOW_UNLOCK(&self->shadow_lock);
+            return PyErr_NoMemory();
+        }
+        self->command_queue_spare = (PhysicsCommand *)new_spare;
+        self->spare_capacity      = self->command_capacity;
     }
     self->command_queue       = self->command_queue_spare;
     self->command_queue_spare = captured_queue;
@@ -2510,7 +2521,7 @@ PyCFunction_DeclareMethod PhysicsWorld_destroy_body(PhysicsWorldObject *self, Py
 
     // 3. MARK FOR DEFERRED DELETION
     uint8_t state = self->slot_states[slot];
-    if (state == SLOT_ALIVE || state == SLOT_PENDING_CREATE) {
+    if (state == SLOT_ALIVE || state == SLOT_PENDING_CREATE || state == SLOT_CHARACTER) {
 
         if (UNLIKELY(!ensure_command_capacity(self))) {
             SHADOW_UNLOCK(&self->shadow_lock);
@@ -2578,7 +2589,7 @@ PyCFunction_DeclareMethod PhysicsWorld_destroy_bodies_batch(PhysicsWorldObject *
         if (unpack_handle(self, h_raw, &slot)) {
             uint8_t state = self->slot_states[slot];
 
-            if (state == SLOT_ALIVE || state == SLOT_PENDING_CREATE) {
+            if (state == SLOT_ALIVE || state == SLOT_PENDING_CREATE || state == SLOT_CHARACTER) {
                 if (UNLIKELY(!ensure_command_capacity(self))) {
                     SHADOW_UNLOCK(&self->shadow_lock);
                     Py_DECREF(py_handles);

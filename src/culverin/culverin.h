@@ -314,6 +314,7 @@ typedef struct PhysicsWorldObject {
     atomic_bool is_stepping;
     bool needs_optimization;
     atomic_bool is_resizing;
+    atomic_bool is_deallocating;
 
     // --- Large Tail Arrays ---
     Py_ssize_t view_shape[2];

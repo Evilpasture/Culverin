@@ -155,6 +155,12 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
         return;
     }
 
+    // Check the death flag! If the main thread is deallocating, we must not touch any pointers or
+    // issue Jolt calls.
+    if (UNLIKELY(atomic_load_explicit(&self->is_deallocating, std::memory_order_acquire))) {
+        return;
+    }
+
     // If the Main Thread is reallocating, DO NOT touch the pointers.
     // The main thread is holding the shadow_lock or about to move buffers.
     if (UNLIKELY(atomic_load_explicit(&self->is_resizing, std::memory_order_acquire))) {
@@ -221,9 +227,10 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
         uint32_t safe_slot = (slot < self->slot_capacity) ? slot : 0;
 
         // Bitwise OR all failure conditions. If 'bad' is > 0, the body is invalid.
-        uint32_t bad = static_cast<uint32_t>(slot >= self->slot_capacity) |
-                       (self->generations[safe_slot] ^ gen) |
-                       (self->slot_states[safe_slot] ^ SLOT_ALIVE);
+        uint8_t state      = self->slot_states[safe_slot];
+        uint32_t state_bad = (state == SLOT_ALIVE || state == SLOT_CHARACTER) ? 0 : 1;
+        uint32_t bad       = static_cast<uint32_t>(slot >= self->slot_capacity) |
+                       (self->generations[safe_slot] ^ gen) | state_bad;
 
         // Fetch dense index safely
         uint32_t d_idx = s2d[safe_slot];
