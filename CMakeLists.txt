@@ -222,10 +222,12 @@ add_definitions(-DJPH_DEBUG_RENDERER)
 set(DEBUG_RENDERER_IN_DEBUG_AND_RELEASE ON CACHE BOOL "" FORCE)
 
 if(DEFINED JOLT_PREBUILT_DIR)
-  # Use prebuilt Jolt from CI artifact — skip recompilation
   find_package(Jolt REQUIRED CONFIG PATHS "${JOLT_PREBUILT_DIR}" NO_DEFAULT_PATH)
-  get_target_property(_jolt_loc Jolt::Jolt IMPORTED_LOCATION)
-  message(STATUS "Jolt imported from: ${_jolt_loc}")
+  # IMPORTED_LOCATION_RELEASE only matches config "Release" exactly.
+  # scikit-build-core may use a different config name, so set it unconditionally.
+  set_target_properties(Jolt::Jolt PROPERTIES
+    IMPORTED_LOCATION "${JOLT_PREBUILT_DIR}/../../../lib/libJolt.a"
+  )
 else()
   # Force standard globally BEFORE add_subdirectory
   set(CMAKE_CXX_STANDARD 23)
@@ -272,7 +274,7 @@ else()
 endif()
 
 target_include_directories(${JOLTC_TARGET} PUBLIC "extern/JoltC/include" "${JOLT_DIR}")
-target_link_libraries(${JOLTC_TARGET} PRIVATE Jolt)
+target_link_libraries(${JOLTC_TARGET} PRIVATE Jolt::Jolt)
 
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 
@@ -382,7 +384,7 @@ if(WIN32)
     target_link_libraries(_culverin_c PRIVATE Winmm.lib)
 endif()
 target_compile_definitions(_culverin_c PRIVATE JPH_DEBUG_RENDERER)
-target_link_libraries(_culverin_c PRIVATE ${JOLTC_TARGET} Jolt)
+target_link_libraries(_culverin_c PRIVATE ${JOLTC_TARGET} Jolt::Jolt)
 
 if(APPLE)
     message(STATUS "Culverin: Enforcing Strong Symbol Export")
