@@ -139,7 +139,10 @@ class TestPerformanceRegression(unittest.TestCase):
         # We'll set a conservative regression threshold of 200ms for 100k calls.
         self.assertLess(total_time, 0.200, "FastBuild engine construction speed has regressed.")
         
-        # Safety check: ensure
+        # Safety check: ensure it's returning the expected object type
+        res = self.world._benchmark_build()
+        self.assertIsInstance(res, tuple)
+        self.assertEqual(len(res), 9)
 
     def test_raycast_batch_speed(self):
         """Ensure the GIL-released batch raycast remains heavily optimized."""
