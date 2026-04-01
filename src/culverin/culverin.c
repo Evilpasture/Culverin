@@ -1,4 +1,6 @@
-#define _CRT_SECURE_NO_WARNINGS
+#if !defined(_CRT_SECURE_NO_WARNINGS)
+#    define _CRT_SECURE_NO_WARNINGS
+#endif
 #include "culverin.h"
 #include "culverin_arg_indices.h"
 #include "culverin_character.h"
@@ -2684,11 +2686,11 @@ PyCFunction_DeclareMethod PhysicsWorld_set_rotation(PhysicsWorldObject *self, Py
     float w;
 
     void *targets[SetRot_COUNT];
-    targets[IDX_SETROT_H] = &handle_raw;
-    targets[IDX_SETROT_X] = &x;
-    targets[IDX_SETROT_Y] = &y;
-    targets[IDX_SETROT_Z] = &z;
-    targets[IDX_SETROT_W] = &w;
+    targets[IDX_SETROT_H] = (void *)&handle_raw;
+    targets[IDX_SETROT_X] = (void *)&x;
+    targets[IDX_SETROT_Y] = (void *)&y;
+    targets[IDX_SETROT_Z] = (void *)&z;
+    targets[IDX_SETROT_W] = (void *)&w;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &SetRotParser, targets)) {
@@ -2752,10 +2754,10 @@ PyCFunction_DeclareMethod PhysicsWorld_set_linear_velocity(PhysicsWorldObject *s
 
     // Use shared Vec3 Group count and IDs
     void *targets[Vec3_COUNT];
-    targets[IDX_V3_H] = &handle_raw;
-    targets[IDX_V3_X] = &x;
-    targets[IDX_V3_Y] = &y;
-    targets[IDX_V3_Z] = &z;
+    targets[IDX_V3_H] = (void *)&handle_raw;
+    targets[IDX_V3_X] = (void *)&x;
+    targets[IDX_V3_Y] = (void *)&y;
+    targets[IDX_V3_Z] = (void *)&z;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &SetLinVelParser, targets)) {
@@ -3803,8 +3805,9 @@ PyCFunction_DeclareMethod culv_dump_schema(CULV_MAYBE_UNUSED PyObject *self,
                                            PyObject *Py_UNUSED(args)) {
     const char *filename = "culverin_schema.json";
     FILE *f              = fopen(filename, "w");
-    if (!f)
+    if (!f) {
         return PyErr_SetFromErrno(PyExc_IOError);
+    }
 
     fp_dump_schemas_json(f);
     fclose(f);
@@ -3812,7 +3815,7 @@ PyCFunction_DeclareMethod culv_dump_schema(CULV_MAYBE_UNUSED PyObject *self,
     Py_RETURN_NONE;
 }
 
-PyCFunction_DeclareMethod PhysicsWorld_benchmark_parse(PhysicsWorldObject *self,
+PyCFunction_DeclareMethod PhysicsWorld_benchmark_parse(CULV_MAYBE_UNUSED PhysicsWorldObject *self,
                                                        PyObject *const *args, size_t nargsf,
                                                        PyObject *kwnames) {
     constexpr size_t NUM_ARGS = 64;

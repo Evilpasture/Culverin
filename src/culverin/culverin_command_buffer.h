@@ -1,4 +1,5 @@
 #pragma once
+#include "culverin_compiler_specifics.h"
 #include "culverin_types.h"
 #include "joltc.h"
 #include <stddef.h>
@@ -15,9 +16,9 @@ typedef struct PhysicsWorldObject PhysicsWorldObject;
 #define CMD_GET_SLOT(header) ((header) >> 8)
 
 #if defined(JPH_DOUBLE_PRECISION)
-static constexpr int16_t CMD_ALIGN = 16;
+CULV_MAYBE_UNUSED static constexpr int16_t CMD_ALIGN = 16;
 #else
-static constexpr int16_t CMD_ALIGN = 8;
+CULV_MAYBE_UNUSED static constexpr int16_t CMD_ALIGN = 8;
 #endif
 
 // --- Slot State Machine ---
@@ -63,7 +64,7 @@ typedef struct {
 #if defined(_MSC_VER)
 __declspec(align(64))
 #else
-__attribute__((aligned(64)))
+__attribute__((aligned(MEMORY_ALIGNMENT_SIZE)))
 #endif
 typedef union {
     uint32_t header;
@@ -134,16 +135,16 @@ typedef union {
     } impulse_at;
 
     // Forces the entire union to be exactly 64 bytes
-    uint8_t _cache_pad[64];
+    uint8_t _cache_pad[MEMORY_ALIGNMENT_SIZE];
 
 } PhysicsCommand;
 
 // C23 native static_assert
-static_assert(sizeof(PhysicsCommand) == 64, "PhysicsCommand MUST be exactly 64 bytes for cache alignment");
+static_assert(sizeof(PhysicsCommand) == MEMORY_ALIGNMENT_SIZE, "PhysicsCommand MUST be exactly 64 bytes for cache alignment");
 static_assert(offsetof(PhysicsCommand, vec3f.x) == 8, "vec3f.x must start at offset 8");
 static_assert(offsetof(PhysicsCommand, transform.px) == 8, "transform.px must start at offset 8");
 static_assert(offsetof(PhysicsCommand, create.settings) == 8, "create.settings must start at offset 8");
-static_assert(alignof(PhysicsCommand) == 64, "PhysicsCommand must be 64-byte aligned");
+static_assert(alignof(PhysicsCommand) == MEMORY_ALIGNMENT_SIZE, "PhysicsCommand must be 64-byte aligned");
 
 // INCLUDE AFTER PHYSICSCOMMAND!
 #include "culverin.h"

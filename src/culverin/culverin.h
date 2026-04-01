@@ -29,13 +29,11 @@
 #include "culverin_command_buffer.h"
 #include "culverin_compiler_specifics.h"
 #include "culverin_debug_render.h"
-#include "culverin_default_config.h"
 #include "culverin_internal_query.h"
 #include "culverin_threading.h"
 #include "culverin_tracked_vehicle.h"
 #include "culverin_types.h"
 #include <float.h>
-#include <math.h>
 #ifdef __cplusplus
 #include <atomic>
 

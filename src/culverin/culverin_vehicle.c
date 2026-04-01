@@ -188,7 +188,7 @@ static void setup_transmission(JPH_WheeledVehicleControllerSettings *v_ctrl,
     if (py_trans && py_trans != Py_None) {
         PyObject *o_mode = PyObject_GetAttrString(py_trans, "mode");
         if (o_mode) {
-            t_mode = PyLong_AsLong(o_mode);
+            t_mode = (int)PyLong_AsLong(o_mode);
             Py_DECREF(o_mode);
         }
         PyErr_Clear();

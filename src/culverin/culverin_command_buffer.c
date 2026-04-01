@@ -148,7 +148,7 @@ op_SET_POS: {
     p->z = cmd->pos.z;
     bool active = JPH_BodyInterface_IsActive(bi, bid);
     JPH_BodyInterface_SetPosition(
-        bi, bid, p, active ? JPH_Activation_DontActivate : JPH_Activation_Activate);
+        bi, bid, p, (int)active ? JPH_Activation_DontActivate : JPH_Activation_Activate);
     DISPATCH();
 }
 
