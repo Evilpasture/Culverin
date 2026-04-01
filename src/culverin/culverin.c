@@ -5,6 +5,7 @@
 #include "culverin_compiler_specifics.h"
 #include "culverin_constraint.h"
 #include "culverin_contact_listener.h"
+#include "culverin_fast_build.h"
 #include "culverin_fast_parse.h"
 #include "culverin_filters.h"
 #include "culverin_getters.h"
@@ -14,7 +15,7 @@
 #include "culverin_ragdoll.h"
 #include "culverin_shadow_sync.h"
 #include "culverin_vehicle.h"
-#include "culverin_fast_build.h"
+
 
 // ============================================================================
 // Semantic Constants - Magic Number Replacements
@@ -732,12 +733,9 @@ PyCFunction_DeclareMethod PhysicsWorld_get_body_stats(PhysicsWorldObject *self,
     SHADOW_UNLOCK(&self->shadow_lock);
 
     // 3. RESULT CONSTRUCTION
-    
-    return FastBuild_Tuple(
-        FastBuild_Tuple(p.x, p.y, p.z),
-        FastBuild_Tuple(r.x, r.y, r.z, r.w),
-        FastBuild_Tuple(v.x, v.y, v.z)
-    );
+
+    return FastBuild_Tuple(FastBuild_Tuple(p.x, p.y, p.z), FastBuild_Tuple(r.x, r.y, r.z, r.w),
+                           FastBuild_Tuple(v.x, v.y, v.z));
 }
 PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self,
                                                       PyObject *const *args, size_t nargsf,
@@ -1259,9 +1257,10 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
     // This is the CRITICAL FIX for the stale handle race.
     culverin_sync_shadow_buffers(self);
 
-    // We use captured_count as the unit, but use 1 if captured_count is 0 
+    // We use captured_count as the unit, but use 1 if captured_count is 0
     // to avoid division by zero or empty reporting.
-    CULV_PROFILE_END(jolt_step, "Jolt Physics Crunch", (captured_count > 0 ? (unsigned int)captured_count : 1));
+    CULV_PROFILE_END(jolt_step, "Jolt Physics Crunch",
+                     (captured_count > 0 ? (unsigned int)captured_count : 1));
 
     NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
     Py_END_ALLOW_THREADS
@@ -2128,8 +2127,8 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
     // 2. TEMP ALLOCATION
     pos_buf      = (PosStride *)CULV_RAW_MALLOC(batch_count * sizeof(PosStride));
     size_buf     = (ShapeParams *)CULV_RAW_MALLOC(batch_count * sizeof(ShapeParams));
-    settings_buf = (JPH_BodyCreationSettings **)CULV_RAW_CALLOC(
-        batch_count, sizeof(JPH_BodyCreationSettings *));
+    settings_buf = (JPH_BodyCreationSettings **)CULV_RAW_CALLOC(batch_count,
+                                                                sizeof(JPH_BodyCreationSettings *));
 
     if (!pos_buf || !size_buf || !settings_buf) {
         goto fail_oom;
@@ -2166,8 +2165,8 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
     SHADOW_UNLOCK(&self->shadow_lock);
     Py_END_ALLOW_THREADS
 
-    // 5. COMMIT PHASE (SHADOW LOCK)
-    SHADOW_LOCK(&self->shadow_lock);
+        // 5. COMMIT PHASE (SHADOW LOCK)
+        SHADOW_LOCK(&self->shadow_lock);
 
     BLOCK_UNTIL_NOT_STEPPING(self);
 
@@ -3824,7 +3823,36 @@ PyCFunction_DeclareMethod PhysicsWorld_benchmark_parse(PhysicsWorldObject *self,
 
 // --- Type Definition ---
 
-static PyMethodDef module_methods[] = {{"_dump_schema_json", culv_dump_schema, METH_NOARGS,
+// Centralize the cast to keep the specific macros clean
+#define CULV_CAST(m) (PyCFunction)(void (*)(void))(m)
+
+// Internal helper to handle the common prefix
+#define CULV_FEAT(prefix, name, method_type, doc)                                                  \
+    {#name, CULV_CAST(prefix##_##name), method_type, doc}
+
+// User-facing macros for context methods
+#define PW_FASTCALL(name, doc) CULV_FEAT(PhysicsWorld, name, METH_FASTCALL | METH_KEYWORDS, doc)
+#define PW_NOARGS(name, doc) CULV_FEAT(PhysicsWorld, name, METH_NOARGS, doc)
+#define PW_O(name, doc) CULV_FEAT(PhysicsWorld, name, METH_O, doc)
+
+#define CHAR_FASTCALL(name, doc) CULV_FEAT(Character, name, METH_FASTCALL | METH_KEYWORDS, doc)
+#define CHAR_NOARGS(name, doc) CULV_FEAT(Character, name, METH_NOARGS, doc)
+#define CHAR_O(name, doc) CULV_FEAT(Character, name, METH_O, doc)
+
+#define VEH_FASTCALL(name, doc) CULV_FEAT(Vehicle, name, METH_FASTCALL | METH_KEYWORDS, doc)
+#define VEH_NOARGS(name, doc) CULV_FEAT(Vehicle, name, METH_NOARGS, doc)
+
+#define SKEL_FASTCALL(name, doc) CULV_FEAT(Skeleton, name, METH_FASTCALL | METH_KEYWORDS, doc)
+#define SKEL_NOARGS(name, doc) CULV_FEAT(Skeleton, name, METH_NOARGS, doc)
+
+#define RD_FASTCALL(name, doc) CULV_FEAT(Ragdoll, name, METH_FASTCALL | METH_KEYWORDS, doc)
+#define RD_NOARGS(name, doc) CULV_FEAT(Ragdoll, name, METH_NOARGS, doc)
+
+#define RDS_FASTCALL(name, doc) CULV_FEAT(RagdollSettings, name, METH_FASTCALL | METH_KEYWORDS, doc)
+#define RDS_NOARGS(name, doc) CULV_FEAT(RagdollSettings, name, METH_NOARGS, doc)
+
+static PyMethodDef module_methods[] = {{"_dump_schema_json", CULV_CAST(culv_dump_schema),
+                                        METH_NOARGS,
                                         "Internal: Dumps schema to culverin_schema.json"},
                                        {nullptr, nullptr, 0, nullptr}};
 
@@ -3858,203 +3886,132 @@ static const PyGetSetDef Vehicle_getset[] = {{"wheel_count", (getter)Vehicle_get
 
 static const PyMethodDef PhysicsWorld_methods[] = {
     // --- Lifecycle ---
-    {"step", (PyCFunction)(void (*)(void))PhysicsWorld_step, METH_FASTCALL | METH_KEYWORDS,
-     nullptr},
-    {"create_body", (PyCFunction)(void (*)(void))PhysicsWorld_create_body,
-     METH_FASTCALL | METH_KEYWORDS, nullptr},
-    {"create_bodies_batch", (PyCFunction)(void (*)(void))PhysicsWorld_create_bodies_batch,
-     METH_FASTCALL | METH_KEYWORDS, nullptr},
-    {"destroy_body", (PyCFunction)(void (*)(void))PhysicsWorld_destroy_body,
-     METH_FASTCALL | METH_KEYWORDS, nullptr},
-    {"destroy_bodies_batch", (PyCFunction)(void (*)(void))PhysicsWorld_destroy_bodies_batch,
-     METH_FASTCALL | METH_KEYWORDS, nullptr},
-    {"create_mesh_body", (PyCFunction)(void (*)(void))PhysicsWorld_create_mesh_body,
-     METH_FASTCALL | METH_KEYWORDS, nullptr},
-    {"create_constraint", (PyCFunction)(void (*)(void))PhysicsWorld_create_constraint,
-     METH_FASTCALL | METH_KEYWORDS,
-     "Create a constraint between two bodies. Params depend on type."},
-    {"destroy_constraint", (PyCFunction)(void (*)(void))PhysicsWorld_destroy_constraint,
-     METH_FASTCALL | METH_KEYWORDS, "Remove and destroy a constraint by handle."},
-    {"create_vehicle", (PyCFunction)(void (*)(void))PhysicsWorld_create_vehicle,
-     METH_FASTCALL | METH_KEYWORDS, "Create a wheeled vehicle constraint"},
-    {"create_tracked_vehicle", (PyCFunction)(void (*)(void))PhysicsWorld_create_tracked_vehicle,
-     METH_FASTCALL | METH_KEYWORDS, "Create a tracked vehicle constraint (tanks, etc.)"},
-    {"create_ragdoll_settings", (PyCFunction)(void (*)(void))PhysicsWorld_create_ragdoll_settings,
-     METH_FASTCALL | METH_KEYWORDS, "Create settings for a ragdoll from a skeleton"},
-    {"create_ragdoll", (PyCFunction)(void (*)(void))PhysicsWorld_create_ragdoll,
-     METH_FASTCALL | METH_KEYWORDS, "Create a multi-body ragdoll from settings"},
-    {"create_heightfield", (PyCFunction)(void (*)(void))PhysicsWorld_create_heightfield,
-     METH_FASTCALL | METH_KEYWORDS, "Create a static terrain from a height grid."},
-    {"create_convex_hull", (PyCFunction)(void (*)(void))PhysicsWorld_create_convex_hull,
-     METH_FASTCALL | METH_KEYWORDS,
-     "Create a body from a point cloud. Points are wrapped in a convex shell."},
-    {"create_compound_body", (PyCFunction)(void (*)(void))PhysicsWorld_create_compound_body,
-     METH_FASTCALL | METH_KEYWORDS,
-     "Create a body made of multiple primitives. parts=[((x,y,z), "
-     "(rx,ry,rz,rw), type, size), ...]"},
+    PW_FASTCALL(step, nullptr),
+    PW_FASTCALL(create_body, nullptr),
+    PW_FASTCALL(create_bodies_batch, nullptr),
+    PW_FASTCALL(destroy_body, nullptr),
+    PW_FASTCALL(destroy_bodies_batch, nullptr),
+    PW_FASTCALL(create_mesh_body, nullptr),
+    PW_FASTCALL(create_constraint,
+                "Create a constraint between two bodies. Params depend on type."),
+    PW_FASTCALL(destroy_constraint, "Remove and destroy a constraint by handle."),
+    PW_FASTCALL(create_vehicle, "Create a wheeled vehicle constraint"),
+    PW_FASTCALL(create_tracked_vehicle, "Create a tracked vehicle constraint (tanks, etc.)"),
+    PW_FASTCALL(create_ragdoll_settings, "Create settings for a ragdoll from a skeleton"),
+    PW_FASTCALL(create_ragdoll, "Create a multi-body ragdoll from settings"),
+    PW_FASTCALL(create_heightfield, "Create a static terrain from a height grid."),
+    PW_FASTCALL(create_convex_hull,
+                "Create a body from a point cloud. Points are wrapped in a convex shell."),
+    PW_FASTCALL(create_compound_body, "Create a body made of multiple primitives. parts=[((x,y,z), "
+                                      "(rx,ry,rz,rw), type, size), ...]"),
 
     // --- Interaction ---
-    {"apply_impulse", (PyCFunction)(void (*)(void))PhysicsWorld_apply_impulse,
-     METH_FASTCALL | METH_KEYWORDS, nullptr},
-    {"apply_angular_impulse", (PyCFunction)(void (*)(void))PhysicsWorld_apply_angular_impulse,
-     METH_FASTCALL | METH_KEYWORDS, "Apply rotational momentum."},
-    {"apply_impulse_at", (PyCFunction)(void (*)(void))PhysicsWorld_apply_impulse_at,
-     METH_FASTCALL | METH_KEYWORDS, "Apply impulse at world position."},
-    {"apply_force", (PyCFunction)(void (*)(void))PhysicsWorld_apply_force,
-     METH_FASTCALL | METH_KEYWORDS, nullptr},
-    {"apply_torque", (PyCFunction)(void (*)(void))PhysicsWorld_apply_torque,
-     METH_FASTCALL | METH_KEYWORDS, nullptr},
-    {"set_gravity", (PyCFunction)(void (*)(void))PhysicsWorld_set_gravity,
-     METH_FASTCALL | METH_KEYWORDS, "Set the world gravity vector (x, y, z)."},
-    {"apply_buoyancy", (PyCFunction)(void (*)(void))PhysicsWorld_apply_buoyancy,
-     METH_FASTCALL | METH_KEYWORDS, "Apply fluid forces to a body."},
-    {"apply_buoyancy_batch", (PyCFunction)(void (*)(void))PhysicsWorld_apply_buoyancy_batch,
-     METH_FASTCALL | METH_KEYWORDS,
-     "Apply buoyancy to a list of bodies. handles must be a buffer of uint64."},
-    {"set_position", (PyCFunction)(void (*)(void))PhysicsWorld_set_position,
-     METH_FASTCALL | METH_KEYWORDS, nullptr},
-    {"set_rotation", (PyCFunction)(void (*)(void))PhysicsWorld_set_rotation,
-     METH_FASTCALL | METH_KEYWORDS, nullptr},
-    {"set_linear_velocity", (PyCFunction)(void (*)(void))PhysicsWorld_set_linear_velocity,
-     METH_FASTCALL | METH_KEYWORDS, nullptr},
-    {"set_angular_velocity", (PyCFunction)(void (*)(void))PhysicsWorld_set_angular_velocity,
-     METH_FASTCALL | METH_KEYWORDS, nullptr},
-    {"set_transform", (PyCFunction)(void (*)(void))PhysicsWorld_set_transform,
-     METH_FASTCALL | METH_KEYWORDS, nullptr},
-    {"set_collision_filter", (PyCFunction)(void (*)(void))PhysicsWorld_set_collision_filter,
-     METH_FASTCALL | METH_KEYWORDS, "Dynamically update collision bitmasks."},
-    {"register_material", (PyCFunction)(void (*)(void))PhysicsWorld_register_material,
-     METH_FASTCALL | METH_KEYWORDS, "Define properties for a material ID."},
-    {"set_constraint_target", (PyCFunction)(void (*)(void))PhysicsWorld_set_constraint_target,
-     METH_FASTCALL | METH_KEYWORDS, nullptr},
+    PW_FASTCALL(apply_impulse, nullptr),
+    PW_FASTCALL(apply_angular_impulse, "Apply rotational momentum."),
+    PW_FASTCALL(apply_impulse_at, "Apply impulse at world position."),
+    PW_FASTCALL(apply_force, nullptr),
+    PW_FASTCALL(apply_torque, nullptr),
+    PW_FASTCALL(set_gravity, "Set the world gravity vector (x, y, z)."),
+    PW_FASTCALL(apply_buoyancy, "Apply fluid forces to a body."),
+    PW_FASTCALL(apply_buoyancy_batch,
+                "Apply buoyancy to a list of bodies. handles must be a buffer of uint64."),
+    PW_FASTCALL(set_position, nullptr),
+    PW_FASTCALL(set_rotation, nullptr),
+    PW_FASTCALL(set_linear_velocity, nullptr),
+    PW_FASTCALL(set_angular_velocity, nullptr),
+    PW_FASTCALL(set_transform, nullptr),
+    PW_FASTCALL(set_collision_filter, "Dynamically update collision bitmasks."),
+    PW_FASTCALL(register_material, "Define properties for a material ID."),
+    PW_FASTCALL(set_constraint_target, nullptr),
 
     // --- Motion Control ---
-    {"get_motion_type", (PyCFunction)(void (*)(void))PhysicsWorld_get_motion_type,
-     METH_FASTCALL | METH_KEYWORDS, nullptr},
-    {"set_motion_type", (PyCFunction)(void (*)(void))PhysicsWorld_set_motion_type,
-     METH_FASTCALL | METH_KEYWORDS, nullptr},
-    {"activate", (PyCFunction)(void (*)(void))PhysicsWorld_activate, METH_FASTCALL | METH_KEYWORDS,
-     nullptr},
-    {"deactivate", (PyCFunction)(void (*)(void))PhysicsWorld_deactivate,
-     METH_FASTCALL | METH_KEYWORDS, nullptr},
-    {"set_ccd", (PyCFunction)(void (*)(void))PhysicsWorld_set_ccd, METH_FASTCALL | METH_KEYWORDS,
-     "Enable/Disable Continuous Collision Detection."},
+    PW_FASTCALL(get_motion_type, nullptr),
+    PW_FASTCALL(set_motion_type, nullptr),
+    PW_FASTCALL(activate, nullptr),
+    PW_FASTCALL(deactivate, nullptr),
+    PW_FASTCALL(set_ccd, "Enable/Disable Continuous Collision Detection."),
 
     // --- Queries ---
-    {"raycast", (PyCFunction)(void (*)(void))PhysicsWorld_raycast, METH_FASTCALL | METH_KEYWORDS,
-     nullptr},
-    {"raycast_batch", (PyCFunction)(void (*)(void))PhysicsWorld_raycast_batch,
-     METH_FASTCALL | METH_KEYWORDS, "Execute multiple raycasts efficiently."},
-    {"shapecast", (PyCFunction)(void (*)(void))PhysicsWorld_shapecast,
-     METH_FASTCALL | METH_KEYWORDS,
-     "Sweeps a shape along a direction vector. Returns (Handle, Fraction, "
-     "ContactPoint, Normal) or None."},
-    {"overlap_sphere", (PyCFunction)(void (*)(void))PhysicsWorld_overlap_sphere,
-     METH_FASTCALL | METH_KEYWORDS, nullptr},
-    {"overlap_aabb", (PyCFunction)(void (*)(void))PhysicsWorld_overlap_aabb,
-     METH_FASTCALL | METH_KEYWORDS, nullptr},
+    PW_FASTCALL(raycast, nullptr),
+    PW_FASTCALL(raycast_batch, "Execute multiple raycasts efficiently."),
+    PW_FASTCALL(shapecast, "Sweeps a shape along a direction vector. Returns (Handle, Fraction, "
+                           "ContactPoint, Normal) or None."),
+    PW_FASTCALL(overlap_sphere, nullptr),
+    PW_FASTCALL(overlap_aabb, nullptr),
 
     // --- Utilities ---
-    {"get_index", (PyCFunction)(void (*)(void))PhysicsWorld_get_index,
-     METH_FASTCALL | METH_KEYWORDS, nullptr},
-    {"is_alive", (PyCFunction)(void (*)(void))PhysicsWorld_is_alive, METH_FASTCALL | METH_KEYWORDS,
-     nullptr},
-    {"get_active_indices", (PyCFunction)PhysicsWorld_get_active_indices, METH_NOARGS,
-     "Returns a bytes object containing uint32 indices of all active bodies."},
-    {"get_render_state", (PyCFunction)(void (*)(void))PhysicsWorld_get_render_state,
-     METH_FASTCALL | METH_KEYWORDS,
-     "Returns packed bytes of interpolated positions and rotations (float32)."},
-    {"get_debug_data", (PyCFunction)(void (*)(void))PhysicsWorld_get_debug_data,
-     METH_FASTCALL | METH_KEYWORDS,
-     "Returns (lines_bytes, triangles_bytes). Each vertex is 16 bytes: [x, y, "
-     "z, color_u32]."},
-    {"get_body_stats", (PyCFunction)(void (*)(void))PhysicsWorld_get_body_stats,
-     METH_FASTCALL | METH_KEYWORDS, nullptr},
+    PW_FASTCALL(get_index, nullptr),
+    PW_FASTCALL(is_alive, nullptr),
+    PW_NOARGS(get_active_indices,
+              "Returns a bytes object containing uint32 indices of all active bodies."),
+    PW_FASTCALL(get_render_state,
+                "Returns packed bytes of interpolated positions and rotations (float32)."),
+    PW_FASTCALL(
+        get_debug_data,
+        "Returns (lines_bytes, triangles_bytes). Each vertex is 16 bytes: [x, y, z, color_u32]."),
+    PW_FASTCALL(get_body_stats, nullptr),
 
     // --- User Data ---
-    {"get_user_data", (PyCFunction)(void (*)(void))PhysicsWorld_get_user_data,
-     METH_FASTCALL | METH_KEYWORDS, nullptr},
-    {"set_user_data", (PyCFunction)(void (*)(void))PhysicsWorld_set_user_data,
-     METH_FASTCALL | METH_KEYWORDS, nullptr},
+    PW_FASTCALL(get_user_data, nullptr),
+    PW_FASTCALL(set_user_data, nullptr),
 
     // -- Event Logic ---
-    {"get_contact_events", (PyCFunction)PhysicsWorld_get_contact_events, METH_NOARGS, nullptr},
-    {"get_contact_events_ex", (PyCFunction)PhysicsWorld_get_contact_events_ex, METH_NOARGS,
-     "Get rich collision data as dicts"},
-    {"get_contact_events_raw", (PyCFunction)PhysicsWorld_get_contact_events_raw, METH_NOARGS,
-     "Get raw collision buffer as memoryview"},
+    PW_NOARGS(get_contact_events, nullptr),
+    PW_NOARGS(get_contact_events_ex, "Get rich collision data as dicts"),
+    PW_NOARGS(get_contact_events_raw, "Get raw collision buffer as memoryview"),
 
     // --- State & Advanced ---
-    {"save_state", (PyCFunction)PhysicsWorld_save_state, METH_NOARGS, nullptr},
-    {"load_state", (PyCFunction)(void (*)(void))PhysicsWorld_load_state,
-     METH_FASTCALL | METH_KEYWORDS, "Load world state snapshot"},
-    {"create_character", (PyCFunction)(void (*)(void))PhysicsWorld_create_character,
-     METH_FASTCALL | METH_KEYWORDS, "Create a virtual character"},
+    PW_NOARGS(save_state, nullptr),
+    PW_FASTCALL(load_state, "Load world state snapshot"),
+    PW_FASTCALL(create_character, "Create a virtual character"),
 
     // --- Internal/Debug ---
-    {"_benchmark_parse", (PyCFunction)(void (*)(void))PhysicsWorld_benchmark_parse,
-     METH_FASTCALL | METH_KEYWORDS,
+    {"_benchmark_parse", CULV_CAST(PhysicsWorld_benchmark_parse), METH_FASTCALL | METH_KEYWORDS,
      "Benchmark the argument parsing of a complex function. Up to 64 arguments."},
 
     {nullptr, nullptr, 0, nullptr}};
 
 static const PyMethodDef Character_methods[] = {
-    {"move", (PyCFunction)(void (*)(void))Character_move, METH_FASTCALL | METH_KEYWORDS, nullptr},
-    {"get_position", (PyCFunction)(void (*)(void))Character_get_position, METH_NOARGS, nullptr},
-    {"set_position", (PyCFunction)(void (*)(void))Character_set_position,
-     METH_FASTCALL | METH_KEYWORDS, "Teleport the character to a new position"},
-    {"set_rotation", (PyCFunction)(void (*)(void))Character_set_rotation,
-     METH_FASTCALL | METH_KEYWORDS, "Set the character's rotation quaternion (x, y, z, w)"},
-    {"is_grounded", (PyCFunction)Character_is_grounded, METH_NOARGS, nullptr},
-    {"set_strength", (PyCFunction)(void (*)(void))Character_set_strength,
-     METH_FASTCALL | METH_KEYWORDS, "Set the character's maximum pushing strength"},
-    {"get_render_transform", (PyCFunction)Character_get_render_transform, METH_O,
-     "Returns interpolated ((x,y,z), (rx,ry,rz,rw)) based on alpha [0-1]."},
+    CHAR_FASTCALL(move, nullptr),
+    CHAR_NOARGS(get_position, nullptr),
+    CHAR_FASTCALL(set_position, "Teleport the character to a new position"),
+    CHAR_FASTCALL(set_rotation, "Set the character's rotation quaternion (x, y, z, w)"),
+    CHAR_NOARGS(is_grounded, nullptr),
+    CHAR_FASTCALL(set_strength, "Set the character's maximum pushing strength"),
+    CHAR_O(get_render_transform,
+           "Returns interpolated ((x,y,z), (rx,ry,rz,rw)) based on alpha [0-1]."),
     {nullptr, nullptr, 0, nullptr}};
 
 static const PyMethodDef Vehicle_methods[] = {
-    {"set_input", (PyCFunction)(void (*)(void))Vehicle_set_input, METH_FASTCALL | METH_KEYWORDS,
-     "Set vehicle driver inputs (forward, right, brake, handbrake)"},
-    {"set_tank_input", (PyCFunction)(void (*)(void))Vehicle_set_tank_input,
-     METH_FASTCALL | METH_KEYWORDS, "Set inputs for a tracked vehicle (left, right, brake)"},
-    {"get_wheel_transform", (PyCFunction)(void (*)(void))Vehicle_get_wheel_transform,
-     METH_FASTCALL | METH_KEYWORDS, "Get wheel transform in world space"},
-    {"get_wheel_local_transform", (PyCFunction)(void (*)(void))Vehicle_get_wheel_local_transform,
-     METH_FASTCALL | METH_KEYWORDS, "Get wheel transform in local chassis space"},
-    {"destroy", (PyCFunction)Vehicle_destroy, METH_NOARGS,
-     "Manually remove the vehicle from physics."},
-    {"get_debug_state", (PyCFunction)Vehicle_get_debug_state, METH_NOARGS,
-     "Print drivetrain and wheel status to stderr"},
+    VEH_FASTCALL(set_input, "Set vehicle driver inputs (forward, right, brake, handbrake)"),
+    VEH_FASTCALL(set_tank_input, "Set inputs for a tracked vehicle (left, right, brake)"),
+    VEH_FASTCALL(get_wheel_transform, "Get wheel transform in world space"),
+    VEH_FASTCALL(get_wheel_local_transform, "Get wheel transform in local chassis space"),
+    VEH_NOARGS(destroy, "Manually remove the vehicle from physics."),
+    VEH_NOARGS(get_debug_state, "Print drivetrain and wheel status to stderr"),
     {nullptr, nullptr, 0, nullptr}};
 
 static const PyMethodDef Skeleton_methods[] = {
-    {"add_joint", (PyCFunction)(void (*)(void))Skeleton_add_joint, METH_FASTCALL | METH_KEYWORDS,
-     "Add a joint to the skeleton"},
-    {"get_joint_index", (PyCFunction)(void (*)(void))Skeleton_get_joint_index,
-     METH_FASTCALL | METH_KEYWORDS, "Find the index of a joint by name"},
-    {"finalize", (PyCFunction)Skeleton_finalize, METH_NOARGS, "Bake skeleton hierarchy"},
+    SKEL_FASTCALL(add_joint, "Add a joint to the skeleton"),
+    SKEL_FASTCALL(get_joint_index, "Find the index of a joint by name"),
+    SKEL_NOARGS(finalize, "Bake skeleton hierarchy"),
     {nullptr, nullptr, 0, nullptr}};
 
 static const PyMethodDef Ragdoll_methods[] = {
-    {"drive_to_pose", (PyCFunction)(void (*)(void))Ragdoll_drive_to_pose,
-     METH_FASTCALL | METH_KEYWORDS, "Drive ragdoll motors to follow a specific pose"},
-    {"get_body_handles", (PyCFunction)Ragdoll_get_body_ids, METH_NOARGS,
-     "Get list of body handles"},
-    {"get_debug_info", (PyCFunction)Ragdoll_get_debug_info, METH_NOARGS,
-     "Returns list of dicts for each part"},
+    RD_FASTCALL(drive_to_pose, "Drive ragdoll motors to follow a specific pose"),
+    {"get_body_handles", CULV_CAST(Ragdoll_get_body_ids), METH_NOARGS, "Get list of body handles"},
+    RD_NOARGS(get_debug_info, "Returns list of dicts for each part"),
     {nullptr, nullptr, 0, nullptr}};
 
 static const PyMethodDef RagdollSettings_methods[] = {
-    {"add_part", (PyCFunction)(void (*)(void))RagdollSettings_add_part,
-     METH_FASTCALL | METH_KEYWORDS,
-     "Add a body part and its parent constraint to the ragdoll settings"},
-    {"stabilize", (PyCFunction)RagdollSettings_stabilize, METH_NOARGS, "Auto-detect collisions"},
+    RDS_FASTCALL(add_part, "Add a body part and its parent constraint to the ragdoll settings"),
+    RDS_NOARGS(stabilize, "Auto-detect collisions"),
     {nullptr, nullptr, 0, nullptr}};
 
-static PyMemberDef PhysicsWorld_members[] = {{"__weaklistoffset__", Py_T_PYSSIZET,
-                                              offsetof(PhysicsWorldObject, weakreflist),
-                                              Py_READONLY, nullptr},
-                                             {nullptr, 0, 0, 0, nullptr}};
+static const PyMemberDef PhysicsWorld_members[] = {{"__weaklistoffset__", Py_T_PYSSIZET,
+                                                    offsetof(PhysicsWorldObject, weakreflist),
+                                                    Py_READONLY, nullptr},
+                                                   {nullptr, 0, 0, 0, nullptr}};
 
 static const PyType_Slot PhysicsWorld_slots[] = {
     {Py_tp_new, PyType_GenericNew},
@@ -4088,7 +4045,7 @@ static const PyType_Slot Vehicle_slots[] = {
 };
 
 static const PyType_Slot Skeleton_slots[] = {
-    {Py_tp_new, Skeleton_new}, // We defined this
+    {Py_tp_new, Skeleton_new},
     {Py_tp_dealloc, Skeleton_dealloc},
     {Py_tp_methods, (PyMethodDef *)Skeleton_methods},
     {0, nullptr},
@@ -4150,7 +4107,6 @@ static const PyType_Spec Ragdoll_spec = {
 
 // --- Module Initialization ---
 
-// 1. Logic for registering types (from the previous refactor)
 static int init_types(PyObject *m, CulverinState *st) {
     struct {
         PyType_Spec *spec;
@@ -4179,7 +4135,6 @@ static int init_types(PyObject *m, CulverinState *st) {
     return 0;
 }
 
-// 2. Logic for constants
 static int init_constants(PyObject *m) {
     static const struct {
         const char *name;
@@ -4204,6 +4159,7 @@ static int init_constants(PyObject *m) {
                   {"EVENT_ADDED", 0},
                   {"EVENT_PERSISTED", 1},
                   {"EVENT_REMOVED", 2}};
+
     for (size_t i = 0; i < sizeof(consts) / sizeof(consts[0]); i++) {
         if (PyModule_AddIntConstant(m, consts[i].name, consts[i].value) < 0) {
             return -1;
@@ -4212,8 +4168,7 @@ static int init_constants(PyObject *m) {
     return 0;
 }
 
-// 3. Main Entry (Complexity: ~5)
-static int culverin_exec(PyObject *m) {
+PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
     CulverinState *st = get_culverin_state(m);
 
     if (!JPH_Init()) {
@@ -4225,15 +4180,11 @@ static int culverin_exec(PyObject *m) {
 
     CULV_INIT_PROFILER();
 
-    // REGISTER FILTERS ONCE HERE
-    // This connects the logic (filter_allow_all_bp, UnifiedBodyFilter, etc.)
-    // to the JoltC filter objects globally.
     JPH_BroadPhaseLayerFilter_SetProcs(&global_bp_procs);
     JPH_ObjectLayerFilter_SetProcs(&global_obj_procs);
     JPH_BodyFilter_SetProcs(&global_bf_procs);
     JPH_ShapeFilter_SetProcs(&global_sf_procs);
 
-    // Initialize the GLOBAL lock for Jolt trampolines
     if (INIT_NATIVE_MUTEX(g_jph_trampoline_lock) != 0) {
         PyErr_SetString(PyExc_RuntimeError, "Failed to initialize global JPH trampoline lock");
         return -1;
@@ -4253,8 +4204,9 @@ static int culverin_exec(PyObject *m) {
 
     return 0;
 }
+
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-static int culverin_traverse(PyObject *m, visitproc visit, void *arg) {
+PyType_DeclareSlot_Status culverin_traverse(PyObject *m, visitproc visit, void *arg) {
     CulverinState *st = get_culverin_state(m);
     Py_VISIT(st->helper);
     Py_VISIT(st->PhysicsWorldType);
@@ -4265,8 +4217,9 @@ static int culverin_traverse(PyObject *m, visitproc visit, void *arg) {
     Py_VISIT(st->SkeletonType);
     return 0;
 }
+
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-static int culverin_clear(PyObject *m) {
+PyType_DeclareSlot_Status culverin_clear(PyObject *m) {
     CulverinState *st = get_culverin_state(m);
     Py_CLEAR(st->helper);
     Py_CLEAR(st->PhysicsWorldType);
