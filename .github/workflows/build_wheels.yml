@@ -82,6 +82,9 @@ jobs:
       - name: Inspect JoltConfig
         run: cat jolt-install/lib/cmake/Jolt/JoltConfig-release.cmake
 
+      - name: Inspect JoltConfig.cmake
+        run: cat jolt-install/lib/cmake/Jolt/JoltConfig.cmake
+
       - name: Upload Jolt artifact
         uses: actions/upload-artifact@v7
         with:
