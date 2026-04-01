@@ -300,9 +300,15 @@ python_add_library(_culverin_c MODULE
 )
 
 target_sources(_culverin_c PRIVATE src/culverin/culverin_jph_rtti_shim.cpp)
-set_source_files_properties(src/culverin/culverin_jph_rtti_shim.cpp
-  PROPERTIES COMPILE_OPTIONS "-frtti"
-)
+if(MSVC)
+    set_source_files_properties(src/culverin/culverin_jph_rtti_shim.cpp
+      PROPERTIES COMPILE_OPTIONS "/GR"
+    )
+else()
+    set_source_files_properties(src/culverin/culverin_jph_rtti_shim.cpp
+      PROPERTIES COMPILE_OPTIONS "-frtti"
+    )
+endif()
 
 include(CheckIPOSupported)
 check_ipo_supported(RESULT ipo_supported OUTPUT error)
