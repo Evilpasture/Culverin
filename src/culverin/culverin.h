@@ -35,34 +35,31 @@
 #include "culverin_types.h"
 #include <float.h>
 #ifdef __cplusplus
-#include <atomic>
+#    include <atomic>
 
-template <typename T>
-static inline T atomic_load(std::atomic<T>* ptr) { 
-    return ptr->load(std::memory_order_relaxed); 
+template <typename T> static inline T atomic_load(std::atomic<T> *ptr) {
+    return ptr->load(std::memory_order_relaxed);
+}
+
+template <typename T> static inline void atomic_store(std::atomic<T> *ptr, T val) {
+    ptr->store(val, std::memory_order_relaxed);
+}
+
+template <typename T> static inline T atomic_fetch_add(std::atomic<T> *ptr, T val) {
+    return ptr->fetch_add(val, std::memory_order_relaxed);
 }
 
 template <typename T>
-static inline void atomic_store(std::atomic<T>* ptr, T val) { 
-    ptr->store(val, std::memory_order_relaxed); 
-}
-
-template <typename T>
-static inline T atomic_fetch_add(std::atomic<T>* ptr, T val) { 
-    return ptr->fetch_add(val, std::memory_order_relaxed); 
-}
-
-template <typename T>
-static inline T atomic_load_explicit(std::atomic<T>* ptr, std::memory_order order) { 
-    return ptr->load(order); 
+static inline T atomic_load_explicit(std::atomic<T> *ptr, std::memory_order order) {
+    return ptr->load(order);
 }
 
 typedef std::atomic<size_t> atomic_size_t;
-typedef std::atomic<bool>   atomic_bool;
-typedef std::atomic<int>    atomic_int;
+typedef std::atomic<bool> atomic_bool;
+typedef std::atomic<int> atomic_int;
 
 #else
-    #include <stdatomic.h>
+#    include <stdatomic.h>
 #endif
 #include <stddef.h>
 #include <string.h>
@@ -76,12 +73,12 @@ typedef std::atomic<int>    atomic_int;
 #endif
 
 #ifndef JPH_INVALID_BODY_ID
-#    define JPH_INVALID_BODY_ID 0xFFFFFFFF
+CULV_MAYBE_UNUSED static constexpr size_t JPH_INVALID_BODY_ID = 0xFFFFFFFF;
 #endif
 
 // Jolt BodyID layout: [8 bits sequence | 24 bits index]
 #ifndef JPH_BODY_ID_INDEX_MASK
-#    define JPH_BODY_ID_INDEX_MASK 0x00FFFFFF
+CULV_MAYBE_UNUSED static constexpr size_t JPH_BODY_ID_INDEX_MASK = 0x00FFFFFF;
 #endif
 
 // Mask for the raw array index (Stripping the 24th bit used for Static flags)
@@ -124,8 +121,7 @@ typedef struct ContactEvent {
     uint32_t _pad;
 } ContactEvent;
 
-_Static_assert(sizeof(ContactEvent) == MEMORY_ALIGNMENT_SIZE,
-               "ContactEvent must be 64 bytes for performance");
+static_assert(sizeof(ContactEvent) == MEMORY_ALIGNMENT_SIZE);
 
 CULV_MAYBE_UNUSED static constexpr int CONTACT_MAX_CAPACITY = 64 * 8 << 5;
 
@@ -150,7 +146,7 @@ typedef struct
 #    pragma pack(pop)
 #endif
 
-_Static_assert(sizeof(RayCastBatchResult) == 48, "RayCastBatchResult size mismatch");
+static_assert(sizeof(RayCastBatchResult) == 48);
 
 // --- Material Registry ---
 typedef struct {
