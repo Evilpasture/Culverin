@@ -116,6 +116,8 @@ op_CREATE_BODY: {
     // Future Optimization: Replace with an arena allocator to avoid cross-thread malloc locks
     JPH_BodyCreationSettings_Destroy(s);
 
+    SHADOW_LOCK(&self->shadow_lock);
+
     if (UNLIKELY(new_bid == JPH_INVALID_BODY_ID)) {
         world_remove_body_slot(self, slot);
     } else {
@@ -126,6 +128,9 @@ op_CREATE_BODY: {
         }
         self->slot_states[slot] = SLOT_ALIVE;
     }
+
+    SHADOW_UNLOCK(&self->shadow_lock);
+    
     DISPATCH();
 }
 
