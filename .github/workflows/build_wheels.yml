@@ -57,7 +57,7 @@ jobs:
           elif [ "$RUNNER_OS" == "macOS" ]; then
             C_COMPILER="/opt/homebrew/opt/llvm/bin/clang"
             CXX_COMPILER="/opt/homebrew/opt/llvm/bin/clang++"
-            CXX_FLAGS="-march=x86-64-v3 -ffast-math"
+            CXX_FLAGS="-mcpu=apple-m1 -ffast-math"
           else
             C_COMPILER="clang"
             CXX_COMPILER="clang++"
