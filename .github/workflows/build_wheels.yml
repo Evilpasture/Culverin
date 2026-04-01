@@ -119,9 +119,12 @@ jobs:
           name: jolt-prebuilt-${{ matrix.os }}
           path: jolt-install
 
-      - name: Set Jolt CMake dir
-        shell: bash
-        run: echo "JOLT_CMAKE_DIR=$(pwd)/jolt-install/lib/cmake/Jolt" >> $GITHUB_ENV
+      - name: Set Jolt CMake dir (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dir = (Resolve-Path "jolt-install/lib/cmake/Jolt").Path.Replace('\', '/')
+          echo "JOLT_CMAKE_DIR=$dir" >> $env:GITHUB_ENV
 
       - name: Build Wheels
         uses: pypa/cibuildwheel@v3.4.0
