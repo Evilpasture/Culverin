@@ -55,22 +55,20 @@ CULV_FORCE_INLINE void process_full_batch(PhysicsWorldObject *self,
         JPH::Vec4(b->GetCenterOfMassPosition(), 0.0f)
             .StoreFloat4(reinterpret_cast<JPH::Float4 *>(&s_pos[D]));
 #else
-    JPH::RVec3 p = b->GetCenterOfMassPosition();
-    #if defined(JPH_USE_AVX)
+        JPH::RVec3 p = b->GetCenterOfMassPosition();
+#    if defined(JPH_USE_AVX)
         __m256d v = _mm256_set_pd(0.0, p.GetZ(), p.GetY(), p.GetX());
-        _mm256_store_pd(reinterpret_cast<double*>(&s_pos[D]), v);
-    #elif defined(JPH_USE_NEON)
+        _mm256_store_pd(reinterpret_cast<double *>(&s_pos[D]), v);
+#    elif defined(JPH_USE_NEON)
         // NEON is 128-bit only, so two 64-bit stores
         float64x2_t lo = vsetq_lane_f64(p.GetY(), vdupq_n_f64(p.GetX()), 1);
-        float64x2_t hi = vsetq_lane_f64(0.0,      vdupq_n_f64(p.GetZ()), 1);
-        vst1q_f64(reinterpret_cast<double*>(&s_pos[D]),     lo);
-        vst1q_f64(reinterpret_cast<double*>(&s_pos[D]) + 2, hi);
-    #else
-        s_pos[D].x = p.GetX();
-        s_pos[D].y = p.GetY();
-        s_pos[D].z = p.GetZ();
+        float64x2_t hi = vsetq_lane_f64(0.0, vdupq_n_f64(p.GetZ()), 1);
+        vst1q_f64(reinterpret_cast<double *>(&s_pos[D]), lo);
+        vst1q_f64(reinterpret_cast<double *>(&s_pos[D]) + 2, hi);
+#    else
+        b->GetCenterOfMassPosition().StoreDouble3(reinterpret_cast<JPH::Double3 *>(&s_pos[D]));
         s_pos[D].w = 0.0;
-    #endif
+#    endif
 #endif
         // [OPTIMIZATION]: 128-bit SIMD Store Rotations (X, Y, Z, W)
         b->GetRotation().GetXYZW().StoreFloat4(reinterpret_cast<JPH::Float4 *>(&s_rot[D]));
@@ -119,21 +117,19 @@ CULV_FORCE_INLINE void process_partial_batch(PhysicsWorldObject *self,
         JPH::Vec4(b->GetCenterOfMassPosition(), 0.0f)
             .StoreFloat4(reinterpret_cast<JPH::Float4 *>(&s_pos[D]));
 #else
-    JPH::RVec3 p = b->GetCenterOfMassPosition();
-    #if defined(JPH_USE_AVX)
+        JPH::RVec3 p = b->GetCenterOfMassPosition();
+#    if defined(JPH_USE_AVX)
         __m256d v = _mm256_set_pd(0.0, p.GetZ(), p.GetY(), p.GetX());
-        _mm256_store_pd(reinterpret_cast<double*>(&s_pos[D]), v);
-    #elif defined(JPH_USE_NEON)
+        _mm256_store_pd(reinterpret_cast<double *>(&s_pos[D]), v);
+#    elif defined(JPH_USE_NEON)
         float64x2_t lo = vsetq_lane_f64(p.GetY(), vdupq_n_f64(p.GetX()), 1);
-        float64x2_t hi = vsetq_lane_f64(0.0,      vdupq_n_f64(p.GetZ()), 1);
-        vst1q_f64(reinterpret_cast<double*>(&s_pos[D]),     lo);
-        vst1q_f64(reinterpret_cast<double*>(&s_pos[D]) + 2, hi);
-    #else
-        s_pos[D].x = p.GetX();
-        s_pos[D].y = p.GetY();
-        s_pos[D].z = p.GetZ();
+        float64x2_t hi = vsetq_lane_f64(0.0, vdupq_n_f64(p.GetZ()), 1);
+        vst1q_f64(reinterpret_cast<double *>(&s_pos[D]), lo);
+        vst1q_f64(reinterpret_cast<double *>(&s_pos[D]) + 2, hi);
+#    else
+        b->GetCenterOfMassPosition().StoreDouble3(reinterpret_cast<JPH::Double3 *>(&s_pos[D]));
         s_pos[D].w = 0.0;
-    #endif
+#    endif
 #endif
 
         b->GetRotation().GetXYZW().StoreFloat4(reinterpret_cast<JPH::Float4 *>(&s_rot[D]));
@@ -193,13 +189,14 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
     }
 
     // Static variables persist in memory across function calls
-    CULV_MAYBE_UNUSED static CulvStat sync_stats = { .total_cycles = 0, .min_cycles = 0xFFFFFFFFFFFFFFFFULL, .max_cycles = 0, .count = 0 };
+    CULV_MAYBE_UNUSED static CulvStat sync_stats = {
+        .total_cycles = 0, .min_cycles = 0xFFFFFFFFFFFFFFFFULL, .max_cycles = 0, .count = 0};
 
     CULV_PROFILE_BEGIN(sync);
 
     const uint32_t *CULV_RESTRICT s2d = self->slot_to_dense;
-    auto *CULV_RESTRICT s_pos = (PosStride *)self->positions;
-    auto *CULV_RESTRICT s_rot = (AuxStride *)self->rotations;
+    auto *CULV_RESTRICT s_pos         = (PosStride *)self->positions;
+    auto *CULV_RESTRICT s_rot         = (AuxStride *)self->rotations;
 
     alignas(MEMORY_ALIGNMENT_SIZE) CppSyncWorkItem worklist[BATCH_SIZE];
     uint32_t work_ptr = 0;
@@ -222,24 +219,24 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
         // --- BRANCHLESS VALIDATION ---
         // Force the slot into a safe range to prevent segfaults on read
         uint32_t safe_slot = (slot < self->slot_capacity) ? slot : 0;
-        
+
         // Bitwise OR all failure conditions. If 'bad' is > 0, the body is invalid.
-        uint32_t bad = static_cast<uint32_t>(slot >= self->slot_capacity) | 
-                       (self->generations[safe_slot] ^ gen) | 
+        uint32_t bad = static_cast<uint32_t>(slot >= self->slot_capacity) |
+                       (self->generations[safe_slot] ^ gen) |
                        (self->slot_states[safe_slot] ^ SLOT_ALIVE);
 
         // Fetch dense index safely
         uint32_t d_idx = s2d[safe_slot];
 
         // --- DEEP PREFETCHING ---
-        // Ask the CPU to fetch the destination memory NOW. 
+        // Ask the CPU to fetch the destination memory NOW.
         // By the time 'process_full_batch' is called, this memory will be waiting in L1 cache.
         CULV_PREFETCH_WRITE(&s_pos[d_idx]);
         CULV_PREFETCH_WRITE(&s_rot[d_idx]);
 
         // Always write to the worklist (safe because it's local stack memory)
         CULV_ASSUME(work_ptr < BATCH_SIZE);
-        uint32_t is_valid = static_cast<uint32_t>(bad == 0);
+        uint32_t is_valid            = static_cast<uint32_t>(bad == 0);
         worklist[work_ptr].body      = (is_valid != 0u) ? b : worklist[work_ptr].body;
         worklist[work_ptr].dense_idx = (is_valid != 0u) ? d_idx : worklist[work_ptr].dense_idx;
         work_ptr += is_valid;
@@ -256,14 +253,13 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
         process_partial_batch(self, worklist, work_ptr);
     }
     CULV_PROFILE_ACCUMULATE(sync, &sync_stats);
-    #ifdef CULVERIN_PROFILE_SYNC
+#ifdef CULVERIN_PROFILE_SYNC
     if (sync_stats.count >= 50) {
-        fprintf(stderr, "[culverin] Sync Stat Avg: %" PRIu64 " | Max: %" PRIu64 "\n", 
-                sync_stats.total_cycles / sync_stats.count, 
-                sync_stats.max_cycles);
-        
+        fprintf(stderr, "[culverin] Sync Stat Avg: %" PRIu64 " | Max: %" PRIu64 "\n",
+                sync_stats.total_cycles / sync_stats.count, sync_stats.max_cycles);
+
         // Reset
         sync_stats = (CulvStat){0, 0xFFFFFFFFFFFFFFFFULL, 0, 0};
     }
-    #endif
+#endif
 }
