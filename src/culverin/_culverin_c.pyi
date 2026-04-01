@@ -4,7 +4,7 @@ Using Python built-in generics for modern DX.
 """
 
 from __future__ import annotations
-from typing import Any
+from typing import Any, Literal
 
 # --- Constants ---
 SHAPE_BOX: int = 0
@@ -201,6 +201,8 @@ class PhysicsWorld:
 
     # --- Internal / Benchmarking ---
     def _benchmark_parse(self, *args: Any, **kwargs: Any) -> None: ...
+
+    def _benchmark_build(self) -> tuple[int, float, float, str, bool, Literal[100], float, Literal["Lorem ipsum dolor sit amet consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua."], Literal[False]]: ...
 
 def _dump_schema_json() -> None:
     """
