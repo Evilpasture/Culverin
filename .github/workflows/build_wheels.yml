@@ -32,7 +32,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: jolt-install
-          key: jolt-${{ matrix.os }}-${{ steps.jolt_hash.outputs.hash }}
+          key: jolt-${{ matrix.os }}-${{ steps.jolt_hash.outputs.hash }}-v4
 
       - name: Install deps (Linux)
         if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Linux'
@@ -54,14 +54,18 @@ jobs:
             C_COMPILER="clang-cl"
             CXX_COMPILER="clang-cl"
             CXX_FLAGS="/arch:AVX2 /fp:fast"
+            EXTRA_ARGS="-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL"
           elif [ "$RUNNER_OS" == "macOS" ]; then
             C_COMPILER="/opt/homebrew/opt/llvm/bin/clang"
             CXX_COMPILER="/opt/homebrew/opt/llvm/bin/clang++"
-            CXX_FLAGS="-mcpu=apple-m1"
+            CXX_FLAGS="-mcpu=apple-m1 -frtti"
+            EXTRA_ARGS=""
           else
             C_COMPILER="clang"
             CXX_COMPILER="clang++"
-            CXX_FLAGS="-march=x86-64-v3 -ffast-math -fomit-frame-pointer"
+            # --target= matches the manylinux container's triple to avoid LTO triple mismatch warnings
+            CXX_FLAGS="-march=x86-64-v3 -ffast-math -fomit-frame-pointer -fPIC --target=x86_64-redhat-linux-gnu"
+            EXTRA_ARGS="-DCMAKE_C_FLAGS='-fPIC --target=x86_64-redhat-linux-gnu'"
           fi
           cmake -S extern/JoltPhysics/Build -B jolt-build \
             -G Ninja \
@@ -75,15 +79,10 @@ jobs:
             -DTARGET_VIEWER=OFF \
             -DCMAKE_C_COMPILER="$C_COMPILER" \
             -DCMAKE_CXX_COMPILER="$CXX_COMPILER" \
-            ${CXX_FLAGS:+-DCMAKE_CXX_FLAGS="$CXX_FLAGS"}
+            ${CXX_FLAGS:+-DCMAKE_CXX_FLAGS="$CXX_FLAGS"} \
+            ${EXTRA_ARGS}
           cmake --build jolt-build --parallel
           cmake --install jolt-build
-
-      - name: Inspect JoltConfig
-        run: cat jolt-install/lib/cmake/Jolt/JoltConfig-release.cmake
-
-      - name: Inspect JoltConfig.cmake
-        run: cat jolt-install/lib/cmake/Jolt/JoltConfig.cmake
 
       - name: Upload Jolt artifact
         uses: actions/upload-artifact@v7
