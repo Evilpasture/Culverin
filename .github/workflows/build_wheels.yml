@@ -32,7 +32,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: jolt-install
-          key: jolt-${{ matrix.os }}-${{ steps.jolt_hash.outputs.hash }}-v10
+          key: jolt-${{ matrix.os }}-${{ steps.jolt_hash.outputs.hash }}-v11
 
       - name: Install deps (Linux)
         if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Linux'
@@ -54,6 +54,10 @@ jobs:
             "-G" "Ninja"
             "-DCMAKE_BUILD_TYPE=Release"
             "-DDOUBLE_PRECISION=ON"
+            "-DUSE_RTTI=ON"                                      # NATIVE JOLT: Stops Jolt from injecting -fno-rtti
+            "-DDEBUG_RENDERER_IN_DEBUG_AND_RELEASE=ON"           # NATIVE JOLT: Safely defines JPH_DEBUG_RENDERER
+            "-DUSE_STATIC_MSVC_RUNTIME=OFF"                      # NATIVE JOLT: Stops Jolt from forcing MT
+            "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL"      # CMAKE: Forces MD dynamically matching Culverin
             "-DCMAKE_CXX_STANDARD=23"
             "-DCMAKE_INSTALL_PREFIX=$PWD/jolt-install"
             "-DBUILD_SHARED_LIBS=OFF"
@@ -66,10 +70,9 @@ jobs:
           if [ "$RUNNER_OS" == "Windows" ]; then
             cmake -S extern/JoltPhysics/Build -B jolt-build \
               "${COMMON_CMAKE_ARGS[@]}" \
-              -DUSE_STATIC_MSVC_RUNTIME=OFF \
               -DCMAKE_C_COMPILER="clang-cl" \
               -DCMAKE_CXX_COMPILER="clang-cl" \
-              -DCMAKE_CXX_FLAGS="/arch:AVX2 /fp:fast /GR -DJPH_OBJECT_LAYER_BITS=32 -DJPH_DEBUG_RENDERER"
+              -DCMAKE_CXX_FLAGS="/arch:AVX2 /fp:fast -DJPH_OBJECT_LAYER_BITS=32"
               
           elif [ "$RUNNER_OS" == "macOS" ]; then
             export MACOSX_DEPLOYMENT_TARGET=13.0
@@ -77,7 +80,7 @@ jobs:
               "${COMMON_CMAKE_ARGS[@]}" \
               -DCMAKE_C_COMPILER="/opt/homebrew/opt/llvm/bin/clang" \
               -DCMAKE_CXX_COMPILER="/opt/homebrew/opt/llvm/bin/clang++" \
-              -DCMAKE_CXX_FLAGS="-mcpu=apple-m1 -mmacosx-version-min=13.0 -frtti -DJPH_OBJECT_LAYER_BITS=32 -DJPH_DEBUG_RENDERER"
+              -DCMAKE_CXX_FLAGS="-mcpu=apple-m1 -mmacosx-version-min=13.0 -DJPH_OBJECT_LAYER_BITS=32"
 
           else
             cmake -S extern/JoltPhysics/Build -B jolt-build \
@@ -85,7 +88,7 @@ jobs:
               -DCMAKE_C_COMPILER="clang" \
               -DCMAKE_CXX_COMPILER="clang++" \
               -DCMAKE_C_FLAGS="-fPIC" \
-              -DCMAKE_CXX_FLAGS="-march=x86-64-v3 -ffast-math -fomit-frame-pointer -fPIC -frtti -DJPH_OBJECT_LAYER_BITS=32 -DJPH_DEBUG_RENDERER"
+              -DCMAKE_CXX_FLAGS="-march=x86-64-v3 -ffast-math -fomit-frame-pointer -fPIC -DJPH_OBJECT_LAYER_BITS=32"
           fi
 
           cmake --build jolt-build --parallel
