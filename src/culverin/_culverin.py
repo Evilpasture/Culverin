@@ -1,5 +1,7 @@
 import array
-from typing import Any, TypedDict, cast
+from typing import Any, TypedDict, cast, Callable
+import math
+import xml.etree.ElementTree as ET
 
 __all__ = [
     "MOTION_STATIC", "MOTION_KINEMATIC", "MOTION_DYNAMIC",
@@ -11,7 +13,7 @@ __all__ = [
     "EVENT_ADDED", "EVENT_PERSISTED", "EVENT_REMOVED",
     "Engine", "Transmission", "Automatic", "Manual",
     "WheelConfig", "TrackConfig",
-    "validate_constraint", "validate_settings", "bake_scene"
+    "validate_constraint", "validate_settings", "bake_scene", "load_urdf", "euler_to_quat"
 ]
 
 class WheelConfig(TypedDict):
@@ -224,3 +226,99 @@ def bake_scene(bodies: list[dict[str, Any]] | tuple[dict[str, Any], ...]) -> tup
         arr_usr.append(int(b.get("user_data", 0)))
         
     return count, arr_pos.tobytes(), arr_rot.tobytes(), arr_shape.tobytes(), arr_mot.tobytes(), arr_layer.tobytes(), arr_usr.tobytes()
+
+TrigFunc = Callable[[float], float]
+
+def euler_to_quat(
+    r: float, 
+    p: float, 
+    y: float, 
+    _cos: TrigFunc = math.cos, 
+    _sin: TrigFunc = math.sin
+) -> tuple[float, float, float, float]:
+    """
+    Converts Roll-Pitch-Yaw (RPY) to Quaternion (x, y, z, w).
+    Optimized via local variable caching of trig functions.
+    """
+    r *= 0.5
+    p *= 0.5
+    y *= 0.5
+    
+    cr, sr = _cos(r), _sin(r)
+    cp, sp = _cos(p), _sin(p)
+    cy, sy = _cos(y), _sin(y)
+    
+    return (
+        sr * cp * cy - cr * sp * sy, # x
+        cr * sp * cy + sr * cp * sy, # y
+        cr * cp * sy - sr * sp * cy, # z
+        cr * cp * cy + sr * sp * sy  # w
+    )
+
+def _parse_vec(text: str) -> tuple[float, float, float]:
+    return tuple(map(float, text.split())) # type: ignore
+
+def load_urdf(path: str):
+    """
+    Parses a URDF file and returns the baked scene tuple 
+    ready to be loaded by PhysicsWorld_init.
+    """
+    tree = ET.parse(path)
+    root = tree.getroot()
+    bodies: list[dict[str, tuple[float, float, float] | tuple[float, float, float, float] | str | int | float]] = []
+
+    for link in root.findall('link'):
+        body: dict[str, tuple[float, float, float] | tuple[float, float, float, float] | str | int | float] = {
+            'pos': (0.0, 0.0, 0.0),
+            'rot': (0.0, 0.0, 0.0, 1.0),
+            'shape': 'box',
+            'size': (1.0, 1.0, 1.0),
+            'motion': MOTION_DYNAMIC,
+            'mass': 1.0
+        }
+
+        # Visual geometry
+        visual = link.find('visual')
+        if visual is not None:
+            origin = visual.find('origin')
+            if origin is not None:
+                if 'xyz' in origin.attrib:
+                    body['pos'] = _parse_vec(origin.attrib['xyz'])
+                if 'rpy' in origin.attrib:
+                    r, p, y = _parse_vec(origin.attrib['rpy'])
+                    body['rot'] = euler_to_quat(r, p, y)
+            
+            geom = visual.find('geometry')
+            if geom is not None:
+                # 1. Box Logic
+                box_node = geom.find('box')
+                if box_node is not None:
+                    body['shape'] = SHAPE_BOX
+                    body['size'] = _parse_vec(box_node.attrib['size'])
+                
+                # 2. Sphere Logic
+                sphere_node = geom.find('sphere')
+                if sphere_node is not None:
+                    body['shape'] = SHAPE_SPHERE
+                    # Use a float directly, or a 3-tuple to satisfy the checker
+                    radius = float(sphere_node.attrib['radius'])
+                    body['size'] = (radius, 0.0, 0.0) 
+
+                # 3. Capsule/Cylinder Logic
+                capsule_node = geom.find('capsule') or geom.find('cylinder')
+                if capsule_node is not None:
+                    body['shape'] = SHAPE_CAPSULE if capsule_node.tag == 'capsule' else SHAPE_CYLINDER
+                    r = float(capsule_node.attrib['radius'])
+                    l = float(capsule_node.attrib['length'])
+                    body['size'] = (r, l, 0.0)
+        
+        # Inertial mass
+        inertial = link.find('inertial')
+        if inertial is not None:
+            mass_node = inertial.find('mass')
+            if mass_node is not None:
+                body['mass'] = float(mass_node.attrib['value'])
+        
+        bodies.append(body)
+
+    return bake_scene(bodies)
