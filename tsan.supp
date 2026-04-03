@@ -10,3 +10,6 @@ race:^JPH::
 race:JPH::PhysicsSystem::Update
 race:JPH::JobSystemThreadPool
 race:JPH::ContactConstraintManager
+race:dictresize
+race:PyDict_SetItem
+race:type_get_doc
