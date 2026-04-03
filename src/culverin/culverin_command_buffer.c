@@ -3,19 +3,10 @@
 #include "culverin_threading.h"
 
 void world_remove_body_slot(PhysicsWorldObject *self, uint32_t slot) {
-    // 1. FAST PATH: Check bounds outside the lock if possible, 
-    // but we need the lock to protect the 'count' and 'slot_states'.
-    SHADOW_LOCK(&self->shadow_lock);
-
-    if (UNLIKELY(self->count == 0 || self->slot_states[slot] == SLOT_EMPTY)) {
-        SHADOW_UNLOCK(&self->shadow_lock);
-        return;
-    }
-
     const uint32_t dense_idx = self->slot_to_dense[slot];
     const uint32_t last_dense  = (uint32_t)self->count - 1;
 
-    // 2. THE SWAP-TO-DELETE (Dense Pack)
+    // THE SWAP-TO-DELETE (Dense Pack)
     // If we aren't removing the very last element, we must migrate the "Mover"
     if (dense_idx != last_dense) {
         // PREFETCH: Tell the CPU to grab the 'Mover' body's data now.
@@ -48,7 +39,7 @@ void world_remove_body_slot(PhysicsWorldObject *self, uint32_t slot) {
         self->dense_to_slot[dense_idx]   = mover_slot;
     }
 
-    // 3. HOUSEKEEPING (The "Debt" Payment)
+    // HOUSEKEEPING
     // We increment the generation to invalidate all existing Python handles.
     self->generations[slot]++;
     
@@ -59,8 +50,6 @@ void world_remove_body_slot(PhysicsWorldObject *self, uint32_t slot) {
     // Atomic-style update for the count to ensure 'view_shape' is consistent
     self->count--;
     self->view_shape[0] = (Py_ssize_t)self->count;
-
-    SHADOW_UNLOCK(&self->shadow_lock);
 }
 
 CULV_NODISCARD
@@ -153,7 +142,9 @@ op_CREATE_BODY: {
 op_DESTROY_BODY: {
     JPH_BodyInterface_RemoveBody(bi, bid);
     JPH_BodyInterface_DestroyBody(bi, bid);
+    SHADOW_LOCK(&self->shadow_lock);
     world_remove_body_slot(self, slot);
+    SHADOW_UNLOCK(&self->shadow_lock);
     DISPATCH();
 }
 
