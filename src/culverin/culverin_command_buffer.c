@@ -49,7 +49,6 @@ void world_remove_body_slot(PhysicsWorldObject *self, uint32_t slot) {
     
     // Atomic-style update for the count to ensure 'view_shape' is consistent
     self->count--;
-    self->view_shape[0] = (Py_ssize_t)self->count;
 }
 
 CULV_NODISCARD
