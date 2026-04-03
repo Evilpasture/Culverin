@@ -1,8 +1,7 @@
 import array
-from typing import TypedDict
+from typing import Any, TypedDict, cast
 
 __all__ = [
-    # Constants
     "MOTION_STATIC", "MOTION_KINEMATIC", "MOTION_DYNAMIC",
     "SHAPE_BOX", "SHAPE_SPHERE", "SHAPE_CAPSULE", "SHAPE_CYLINDER", "SHAPE_PLANE", 
     "SHAPE_MESH", "SHAPE_HEIGHTFIELD", "SHAPE_CONVEX_HULL",
@@ -10,12 +9,8 @@ __all__ = [
     "CONSTRAINT_FIXED", "CONSTRAINT_POINT", "CONSTRAINT_HINGE", "CONSTRAINT_SLIDER", 
     "CONSTRAINT_DISTANCE", "CONSTRAINT_CONE", 
     "EVENT_ADDED", "EVENT_PERSISTED", "EVENT_REMOVED",
-    
-    # Config Classes
     "Engine", "Transmission", "Automatic", "Manual",
     "WheelConfig", "TrackConfig",
-    
-    # Internal Helpers
     "validate_constraint", "validate_settings", "bake_scene"
 ]
 
@@ -24,10 +19,10 @@ class WheelConfig(TypedDict):
     radius: float
 
 class TrackConfig(TypedDict):
-    indices: list[int]      # The indices of the wheels this track wraps
-    driven_wheel: int       # The index of the wheel providing torque
+    indices: list[int]
+    driven_wheel: int
 
-# --- Constants (Mirrored from C for offline baking support) ---
+# --- Constants ---
 MOTION_STATIC = 0
 MOTION_KINEMATIC = 1
 MOTION_DYNAMIC = 2
@@ -58,14 +53,24 @@ EVENT_REMOVED = 2
 # --- Configuration Objects ---
 
 class Engine:
-    def __init__(self, max_torque=500.0, max_rpm=7000.0, min_rpm=1000.0, inertia=0.5):
+    max_torque: float
+    max_rpm: float
+    min_rpm: float
+    inertia: float
+
+    def __init__(self, max_torque: float = 500.0, max_rpm: float = 7000.0, min_rpm: float = 1000.0, inertia: float = 0.5):
         self.max_torque = float(max_torque)
         self.max_rpm = float(max_rpm)
         self.min_rpm = float(min_rpm)
         self.inertia = float(inertia)
 
 class Transmission:
-    def __init__(self, gears=5, clutch_strength=2000.0, differential_ratio=3.42):
+    clutch_strength: float
+    differential_ratio: float
+    ratios: list[float]
+    reverse_ratios: list[float]
+
+    def __init__(self, gears: int = 5, clutch_strength: float = 2000.0, differential_ratio: float = 3.42):
         self.clutch_strength = float(clutch_strength)
         self.differential_ratio = float(differential_ratio)
         presets = [2.66, 1.78, 1.30, 1.0, 0.74, 0.50]
@@ -73,21 +78,47 @@ class Transmission:
         self.reverse_ratios = [-2.90]
 
 class Automatic(Transmission):
-    def __init__(self, gears=5, clutch_strength=2000.0, differential_ratio=3.42, 
-                 shift_up_rpm=5000.0, shift_down_rpm=2000.0):
+    mode: int
+    shift_up_rpm: float
+    shift_down_rpm: float
+
+    def __init__(self, gears: int = 5, clutch_strength: float = 2000.0, differential_ratio: float = 3.42, 
+                 shift_up_rpm: float = 5000.0, shift_down_rpm: float = 2000.0):
         super().__init__(gears, clutch_strength, differential_ratio)
-        self.mode = 0 # Auto
+        self.mode = 0
         self.shift_up_rpm = float(shift_up_rpm)
         self.shift_down_rpm = float(shift_down_rpm)
 
 class Manual(Transmission):
-    def __init__(self, gears=5, clutch_strength=5000.0, differential_ratio=3.42):
+    mode: int
+
+    def __init__(self, gears: int = 5, clutch_strength: float = 5000.0, differential_ratio: float = 3.42):
         super().__init__(gears, clutch_strength, differential_ratio)
-        self.mode = 1 # Manual
+        self.mode = 1
 
 # --- Validation Logic ---
 
-def validate_constraint(type_id, body1, body2, params):
+def _force_float(val: Any, name: str) -> float:
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        raise TypeError(f"'{name}' must be a number")
+
+def _validate_vec3(v: float | int | tuple[float, float, float], name: str) -> tuple[float, float, float]:
+    if isinstance(v, (int, float)): # type: ignore
+        f = float(v)
+        return (f, f, f)
+    if not isinstance(v, (tuple, list)) or len(v) != 3: # type: ignore
+        raise ValueError(f"'{name}' must be a sequence of length 3")
+    return (float(v[0]), float(v[1]), float(v[2]))
+
+def _validate_quat(q: tuple[int | float] | list[int | float] | tuple[float, float, float, float], name: str) -> tuple[float, float, float, float]:
+    if not isinstance(q, (tuple, list)) or len(q) != 4: # type: ignore
+        raise ValueError(f"'{name}' must be a sequence of length 4")
+    return (float(q[0]), float(q[1]), float(q[2]), float(q[3]))
+
+def validate_constraint(type_id: int, body1: Any, body2: Any, params: int | float | tuple[int | float]) -> Any:
+    # Use Any for body1/body2 so linter doesn't complain about "redundant" isinstance checks
     if not isinstance(body1, int) or not isinstance(body2, int):
         raise TypeError("Constraint bodies must be integer handles")
     
@@ -95,7 +126,8 @@ def validate_constraint(type_id, body1, body2, params):
         return None
 
     if type_id == CONSTRAINT_POINT:
-        return _validate_vec3(params, "point.pivot")
+        if not isinstance(params, (tuple, list)):
+            return _validate_vec3(params, "point.pivot")
 
     if type_id == CONSTRAINT_DISTANCE:
         if not isinstance(params, (tuple, list)) or len(params) != 2:
@@ -118,44 +150,49 @@ def validate_constraint(type_id, body1, body2, params):
 
     raise ValueError(f"Unknown constraint type: {type_id}")
 
-def _force_float(val, name):
-    try:
-        return float(val)
-    except:
-        raise TypeError(f"'{name}' must be a number")
+def validate_settings(s: dict[str, Any] | None) -> tuple[float, float, float, float, int, int]:
+    settings = s or {}
+    
+    # Cast the result of .get() specifically to the type _validate_vec3 expects
+    raw_gravity = cast(tuple[float, float, float], settings.get("gravity", (0.0, -9.81, 0.0)))
+    grav = _validate_vec3(raw_gravity, "gravity")
+    
+    return (
+        grav[0], grav[1], grav[2], 
+        float(settings.get("penetration_slop", 0.02)), 
+        int(settings.get("max_bodies", 10240)), 
+        int(settings.get("max_pairs", 65536))
+    )
 
-def _validate_vec3(v, name):
-    if len(v) != 3: raise ValueError(f"'{name}' must be len 3")
-    return (float(v[0]), float(v[1]), float(v[2]))
-
-def _validate_quat(q, name):
-    if len(q) != 4: raise ValueError(f"'{name}' must be len 4")
-    return (float(q[0]), float(q[1]), float(q[2]), float(q[3]))
-
-def validate_settings(s):
-    s = s or {}
-    grav = _validate_vec3(s.get("gravity", (0.0, -9.81, 0.0)), "gravity")
-    return (grav[0], grav[1], grav[2], float(s.get("penetration_slop", 0.02)), int(s.get("max_bodies", 10240)), int(s.get("max_pairs", 65536)))
-
-def validate_body_params(shape_type, pos, rot, size, motion_type):
-    p = _validate_vec3(pos, "pos")
-    r = _validate_quat(rot, "rot")
+def validate_body_params(
+    shape_type: int, 
+    pos: list[float] | tuple[float, ...], 
+    rot: list[float] | tuple[float, ...], 
+    size: float | int | tuple[float, float, float] | tuple[float, float, float, float], 
+    motion_type: int
+) -> tuple[tuple[float, float, float], tuple[float, float, float, float], tuple[float, float, float, float]]:
+    p = _validate_vec3(cast(tuple[float, float, float], pos), "pos")
+    r = _validate_quat(cast(tuple[float, float, float, float], rot), "rot")
     s = [0.0, 0.0, 0.0, 0.0]
     
     if shape_type == SHAPE_BOX:
-        sz = _validate_vec3(size, "size")
-        s[0], s[1], s[2] = sz
+        if not isinstance(size, (tuple)):
+            sz = _validate_vec3(size, "size")
+            s[0], s[1], s[2] = sz
     elif shape_type == SHAPE_SPHERE:
         s[0] = float(size[0] if isinstance(size, (list, tuple)) else size)
     elif shape_type in (SHAPE_CAPSULE, SHAPE_CYLINDER):
-        s[0], s[1] = float(size[0]), float(size[1])
+        if isinstance(size, (list, tuple)):
+            s[0], s[1] = float(size[0]), float(size[1])
     elif shape_type == SHAPE_PLANE:
-        n = _validate_vec3(size[:3], "normal")
-        s[0], s[1], s[2], s[3] = n[0], n[1], n[2], float(size[3])
+        # Use a local variable to help the linter understand size has 4 elements
+        if not isinstance(size, (list, tuple)) or len(size) != 4:
+             raise ValueError("SHAPE_PLANE size must be (nx, ny, nz, constant)")
+        s[0], s[1], s[2], s[3] = float(size[0]), float(size[1]), float(size[2]), float(size[3])
     
-    return p, r, tuple(s)
+    return p, r, (s[0], s[1], s[2], s[3])
 
-def bake_scene(bodies):
+def bake_scene(bodies: list[dict[str, Any]] | tuple[dict[str, Any], ...]) -> tuple[int, bytes, bytes, bytes, bytes, bytes, bytes]:
     if not bodies: return 0, b"", b"", b"", b"", b"", b""
     
     arr_pos = array.array('d')
@@ -165,16 +202,25 @@ def bake_scene(bodies):
     arr_layer = array.array('B')
     arr_usr = array.array('Q')
     
+    count = 0
     for b in bodies:
-        motion = b.get("motion", MOTION_DYNAMIC if b.get("mass", 1.0) > 0 else MOTION_STATIC)
-        p, r, s = validate_body_params(b.get("shape", SHAPE_BOX), b.get("pos", (0,0,0)), b.get("rot", (0,0,0,1)), b.get("size", (0,0,0,0)), motion)
+        count += 1
+        # Extract data safely from Any-typed dict
+        shape_type = int(b.get("shape", SHAPE_BOX))
+        pos_raw = b.get("pos", (0.0, 0.0, 0.0))
+        rot_raw = b.get("rot", (0.0, 0.0, 0.0, 1.0))
+        size_raw = b.get("size", (0.0, 0.0, 0.0, 0.0))
+        mass = float(b.get("mass", 1.0))
+        motion = int(b.get("motion", MOTION_DYNAMIC if mass > 0 else MOTION_STATIC))
+        
+        p, r, s = validate_body_params(shape_type, pos_raw, rot_raw, size_raw, motion)
         
         arr_pos.extend((p[0], p[1], p[2], 0.0))
         arr_rot.extend(r)
-        arr_shape.append(float(b.get("shape", SHAPE_BOX)))
+        arr_shape.append(float(shape_type))
         arr_shape.extend(s)
         arr_mot.append(motion)
         arr_layer.append(LAYER_MOVING if motion != MOTION_STATIC else LAYER_NON_MOVING)
         arr_usr.append(int(b.get("user_data", 0)))
         
-    return len(bodies), arr_pos.tobytes(), arr_rot.tobytes(), arr_shape.tobytes(), arr_mot.tobytes(), arr_layer.tobytes(), arr_usr.tobytes()
+    return count, arr_pos.tobytes(), arr_rot.tobytes(), arr_shape.tobytes(), arr_mot.tobytes(), arr_layer.tobytes(), arr_usr.tobytes()

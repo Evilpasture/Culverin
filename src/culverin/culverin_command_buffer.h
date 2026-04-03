@@ -58,8 +58,8 @@ typedef struct {
     bool is_alive;
 } ResolvedCmd;
 
-// Force exactly 64-byte alignment and sizing. 
-// This ensures exactly ONE command per CPU Cache Line, preventing false-sharing 
+// Force exactly 64-byte alignment and sizing.
+// This ensures exactly ONE command per CPU Cache Line, preventing false-sharing
 // and cache-straddling across thread boundaries.
 #if defined(_MSC_VER)
 __declspec(align(64))
@@ -139,12 +139,19 @@ typedef union {
 
 } PhysicsCommand;
 
+static constexpr size_t OFFSET_START =
+    8; // The offset where the actual command data starts (after the header and padding)
+
 // C23 native static_assert
-static_assert(sizeof(PhysicsCommand) == MEMORY_ALIGNMENT_SIZE, "PhysicsCommand MUST be exactly 64 bytes for cache alignment");
-static_assert(offsetof(PhysicsCommand, vec3f.x) == 8, "vec3f.x must start at offset 8");
-static_assert(offsetof(PhysicsCommand, transform.px) == 8, "transform.px must start at offset 8");
-static_assert(offsetof(PhysicsCommand, create.settings) == 8, "create.settings must start at offset 8");
-static_assert(alignof(PhysicsCommand) == MEMORY_ALIGNMENT_SIZE, "PhysicsCommand must be 64-byte aligned");
+static_assert(sizeof(PhysicsCommand) == MEMORY_ALIGNMENT_SIZE,
+              "PhysicsCommand MUST be exactly 64 bytes for cache alignment");
+static_assert(offsetof(PhysicsCommand, vec3f.x) == OFFSET_START, "vec3f.x must start at offset 8");
+static_assert(offsetof(PhysicsCommand, transform.px) == OFFSET_START,
+              "transform.px must start at offset 8");
+static_assert(offsetof(PhysicsCommand, create.settings) == OFFSET_START,
+              "create.settings must start at offset 8");
+static_assert(alignof(PhysicsCommand) == MEMORY_ALIGNMENT_SIZE,
+              "PhysicsCommand must be 64-byte aligned");
 
 // INCLUDE AFTER PHYSICSCOMMAND!
 #include "culverin.h"
@@ -159,8 +166,9 @@ void clear_command_queue(struct PhysicsWorldObject *self);
 // Includes aggressive software prefetching for indirect lookups.
 #define DISPATCH()                                                                                 \
     do {                                                                                           \
-        if (UNLIKELY(i >= count))                                                                  \
+        if (UNLIKELY(i >= count)) {                                                                \
             return;                                                                                \
+        }                                                                                          \
         cmd    = &queue[i++];                                                                      \
         header = cmd->header;                                                                      \
         type   = CMD_GET_TYPE(header);                                                             \

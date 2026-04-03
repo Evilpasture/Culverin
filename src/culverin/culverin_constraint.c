@@ -150,6 +150,10 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_constraint(PhysicsWorldO
 
     JPH_PhysicsSystem_AddConstraint(self->system, constraint);
 
+    // FIX: Explicitly wake up the bodies so the motor begins simulating immediately
+    JPH_BodyInterface_ActivateBody(self->body_interface, bid1);
+    JPH_BodyInterface_ActivateBody(self->body_interface, bid2);
+
     SHADOW_LOCK(&self->shadow_lock);
     self->constraints[c_slot]       = constraint;
     self->constraint_states[c_slot] = SLOT_ALIVE;
@@ -249,13 +253,14 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_set_constraint_target(PhysicsWo
 
     // 2. CRITICAL SECTION
     SHADOW_LOCK(&self->shadow_lock);
-
-    // Modification of constraints requires simulation idle
     BLOCK_UNTIL_NOT_STEPPING(self);
 
-    uint32_t slot = 0;
-    // Note: We reuse unpack_handle logic for constraints as the bit-layout is identical
-    if (UNLIKELY(!unpack_handle(self, (BodyHandle)handle_raw, &slot) ||
+    // FIX: Manually unpack constraint handle (do not use body unpack_handle)
+    uint32_t slot = (uint32_t)(handle_raw & HANDLE_INDEX_MASK);
+    uint32_t gen  = (uint32_t)(handle_raw >> HANDLE_INDEX_BITS);
+
+    if (UNLIKELY(slot >= self->constraint_capacity || 
+                 self->constraint_generations[slot] != gen || 
                  self->constraint_states[slot] != SLOT_ALIVE)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Invalid or stale constraint handle");
@@ -265,24 +270,29 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_set_constraint_target(PhysicsWo
     JPH_Constraint *c         = self->constraints[slot];
     JPH_ConstraintSubType sub = JPH_Constraint_GetSubType(c);
 
-    // 3. JPH EXECUTION (Release GIL potentially, but these setters are very fast)
+    // 3. JPH EXECUTION 
     // HINGE
     if (sub == JPH_ConstraintSubType_Hinge) {
-        auto *hc             = (JPH_HingeConstraint *)c;
-        JPH_MotorState state = JPH_HingeConstraint_GetMotorState(hc);
-        if (state == JPH_MotorState_Velocity) {
-            JPH_HingeConstraint_SetTargetAngularVelocity(hc, target);
-        } else if (state == JPH_MotorState_Position) {
-            JPH_HingeConstraint_SetTargetAngle(hc, target);
-        }
+        auto *hc = (JPH_HingeConstraint *)c;
+        
+        JPH_HingeConstraint_SetMotorState(hc, JPH_MotorState_Position);
+        
+        JPH_HingeConstraint_SetTargetAngle(hc, target);
     }
     // SLIDER
     else if (sub == JPH_ConstraintSubType_Slider) {
-        auto *sc             = (JPH_SliderConstraint *)c;
+        auto *sc = (JPH_SliderConstraint *)c;
         JPH_MotorState state = JPH_SliderConstraint_GetMotorState(sc);
+        
+        // FIX: If motor is OFF, default to Position mode
+        if (state == JPH_MotorState_Off) {
+            state = JPH_MotorState_Position;
+            JPH_SliderConstraint_SetMotorState(sc, state);
+        }
+
         if (state == JPH_MotorState_Velocity) {
             JPH_SliderConstraint_SetTargetVelocity(sc, target);
-        } else if (state == JPH_MotorState_Position) {
+        } else {
             JPH_SliderConstraint_SetTargetPosition(sc, target);
         }
     }
@@ -300,4 +310,45 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_set_constraint_target(PhysicsWo
 
     SHADOW_UNLOCK(&self->shadow_lock);
     Py_RETURN_NONE;
+}
+
+PyCFunction_DeclareMethodFromModule PhysicsWorld_get_constraint_type(PhysicsWorldObject *self,
+                                                                     PyObject *const *args,
+                                                                     size_t nargsf,
+                                                                     PyObject *kwnames) {
+    // 1. FAST PARSE (Zero-Allocation)
+    // Using the generic Handle-Only group defined in culverin_arg_indices
+    uint64_t handle_raw;
+    void *targets[HOnly_COUNT];
+    targets[IDX_H_H] = (void *)&handle_raw;
+
+    auto nargs = PyVectorcall_NARGS(nargsf);
+    if (!FastParse_Unified(args, nargs, kwnames, &HOnlyParser, targets)) {
+        return nullptr;
+    }
+
+    // 2. RESOLUTION PHASE 
+    SHADOW_LOCK(&self->shadow_lock);
+    BLOCK_UNTIL_NOT_STEPPING(self);
+
+    // Unpack constraint handle bits
+    uint32_t slot = (uint32_t)(handle_raw & HANDLE_INDEX_MASK);
+    uint32_t gen  = (uint32_t)(handle_raw >> HANDLE_INDEX_BITS);
+
+    // Validate slot range, generation, and liveness
+    if (slot >= self->constraint_capacity || 
+        self->constraint_generations[slot] != gen ||
+        self->constraint_states[slot] != SLOT_ALIVE) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        PyErr_SetString(PyExc_ValueError, "Invalid or stale constraint handle");
+        return nullptr;
+    }
+
+    // Extract subtype (Hinge, Slider, etc.)
+    JPH_Constraint *c = self->constraints[slot];
+    JPH_ConstraintSubType sub = JPH_Constraint_GetSubType(c);
+
+    SHADOW_UNLOCK(&self->shadow_lock);
+
+    return PyLong_FromLong((long)sub);
 }

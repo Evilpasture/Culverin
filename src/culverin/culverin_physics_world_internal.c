@@ -146,7 +146,11 @@ int allocate_buffers(PhysicsWorldObject *self, int max_bodies) {
         self->capacity = self->count + SHADOW_CAPACITY_GROW;
     }
     self->max_jolt_bodies = (uint32_t)max_bodies;
-    self->slot_capacity   = self->capacity;
+    // Start with a small internal capacity (e.g., 64) 
+    // This forces the growth logic to run when the 65th body is added.
+    size_t initial_cap = (max_bodies < 64) ? (size_t)max_bodies : 64;
+    self->capacity = initial_cap;
+    self->slot_capacity = initial_cap;
 
     // Fix: Allocate with proper alignment for SIMD operations
     self->positions =
@@ -169,8 +173,8 @@ int allocate_buffers(PhysicsWorldObject *self, int max_bodies) {
     self->masks        = (uint32_t *)CULV_RAW_MALLOC(self->capacity * sizeof(uint32_t));
     self->material_ids = (uint32_t *)CULV_RAW_CALLOC(self->capacity, sizeof(uint32_t));
 
-    self->id_to_handle_map =
-        (BodyHandle *)CULV_RAW_CALLOC(self->max_jolt_bodies, sizeof(BodyHandle));
+    // Allocate +1 to accommodate Jolt's 1-based indexing up to max_jolt_bodies
+    self->id_to_handle_map = (BodyHandle *)CULV_RAW_CALLOC(self->max_jolt_bodies + 1, sizeof(BodyHandle));
 
     self->generations   = (uint32_t *)CULV_RAW_CALLOC(self->slot_capacity, sizeof(uint32_t));
     self->slot_to_dense = (uint32_t *)CULV_RAW_MALLOC(self->slot_capacity * sizeof(uint32_t));
@@ -652,6 +656,28 @@ int verify_abi_alignment(JPH_BodyInterface *bi) {
         PyErr_SetString(PyExc_RuntimeError, "JoltC ABI Mismatch: Precision issue.");
         return -1;
     }
+    return 0;
+}
+
+PyType_DeclareSlot_StatusFromModule PhysicsWorld_getbuffer(PhysicsWorldObject *self, 
+                                                           Py_buffer *view, CULV_MAYBE_UNUSED int flags) {
+    SHADOW_LOCK(&self->shadow_lock);
+    
+    // We export the positions buffer as the default buffer for the object
+    view->buf = self->positions;
+    view->len = (Py_ssize_t)(self->count * sizeof(PosStride));
+    view->readonly = 0;
+    view->itemsize = sizeof(JPH_Real);
+    view->format = (sizeof(JPH_Real) == sizeof(double)) ? "d" : "f";
+    view->ndim = 2;
+    view->shape = self->view_shape;
+    view->strides = self->view_strides;
+    view->suboffsets = NULL;
+    view->internal = NULL;
+
+    self->view_export_count++;
+    
+    SHADOW_UNLOCK(&self->shadow_lock);
     return 0;
 }
 

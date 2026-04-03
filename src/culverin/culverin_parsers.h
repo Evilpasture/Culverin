@@ -28,6 +28,7 @@ typedef struct {
     float max_torque;   // Max Force/Torque
     float frequency;    // Spring stiffness (0 = stiff)
     float damping;      // Spring damping
+    float max_force;    // For sliders, max linear force
 } ConstraintParams;
 
 // Direct variable extraction (Fast path)
@@ -36,9 +37,11 @@ int parse_vec3_f32(PyObject *obj, float *x, float *y, float *z);
 int parse_vec3_r64(PyObject *obj, double *x, double *y, double *z);
 
 // Type-safe dispatcher
+//NOLINTNEXTLINE(readability-identifier-naming)
 #define parse_vec3_direct(obj, x, y, z)                                                            \
     _Generic((x), float *: parse_vec3_f32, double *: parse_vec3_r64)(obj, x, y, z)
 int parse_quat_f32(PyObject *obj, float *x, float *y, float *z, float *w);
+//NOLINTNEXTLINE(readability-identifier-naming)
 #define parse_quat_direct(obj, x, y, z, w) parse_quat_f32(obj, x, y, z, w)
 
 // The global parser keys
@@ -78,7 +81,7 @@ void parse_body_size(PyObject *py_size, float s[4]);
 CULV_NODISCARD
 int parse_tracks_to_c(PyObject *py_tracks, TrackData *out_data, int *num_out);
 
-static inline PyObject *find_arg(Py_ssize_t pos_idx, PyObject *target_key, PyObject *const *args,
+CULV_MAYBE_UNUSED static inline PyObject *find_arg(Py_ssize_t pos_idx, PyObject *target_key, PyObject *const *args,
                                  Py_ssize_t nargs, PyObject *kwnames) {
     if (pos_idx < nargs) {
         return args[pos_idx];

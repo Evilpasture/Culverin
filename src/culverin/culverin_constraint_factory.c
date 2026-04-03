@@ -2,16 +2,26 @@
 #include "culverin_math.h"
 #include <float.h>
 
+// Named constants to avoid magic numbers
+static constexpr float CCF_DEFAULT_FREQUENCY = 20.0f;
+static constexpr float CCF_DEFAULT_DAMPING = 1.0f;
+static constexpr float CCF_MAX_TORQUE = 1e6f;
+static constexpr float CCF_MAX_FORCE = 1e6f;
+static constexpr float CCF_EPSILON = 1e-6f;
+static constexpr float CCF_TINY_EPSILON = 1e-9f;
+
 // Constraints
 
 // Initialize defaults to avoid garbage data
 void params_init(ConstraintParams *p) {
-    memset(p, 0, sizeof(ConstraintParams)); // Zero everything first
-    p->ay        = 1;                       // Default Up
-    p->limit_min = -FLT_MAX;
-    p->limit_max = FLT_MAX;
-    p->frequency = 20.0f; // Default decent stiffness
-    p->damping   = 1.0f;
+    memset(p, 0, sizeof(ConstraintParams));
+    p->ay         = 1.0f;
+    p->limit_min  = -FLT_MAX;
+    p->limit_max  = FLT_MAX;
+    p->frequency  = CCF_DEFAULT_FREQUENCY; // Sane default for motors (20Hz)
+    p->damping    = CCF_DEFAULT_DAMPING;  // Critical damping
+    p->max_torque = CCF_MAX_TORQUE;       // 1,000,000 Nm - enough to move heavy crates
+    p->max_force  = CCF_MAX_FORCE;        // For sliders
 }
 
 // --- Jolt Creator Helpers ---
@@ -48,17 +58,37 @@ JPH_Constraint *create_hinge(const ConstraintParams *p, JPH_Body *b1, JPH_Body *
     s.point2   = s.point1;
 
     JPH_Vec3 axis = {p->ax, p->ay, p->az};
-    float len_sq  = axis.x * axis.x + axis.y * axis.y + axis.z * axis.z;
-    if (len_sq > 1e-9f) {
-        JPH_Vec3_Normalize(&axis, &axis);
-    } else {
-        axis.x = 0;
-        axis.y = 1;
-        axis.z = 0;
+    if (axis.x * axis.x + axis.y * axis.y + axis.z * axis.z < CCF_EPSILON) {
+        axis.y = 1.0f;
     }
+    JPH_Vec3_Normalize(&axis, &axis);
 
+    // Compute normal from pivot-to-b2 projected onto the hinge plane,
+    // so that angle=0 means "b2 at its initial position" and SetTargetAngle
+    // is meaningful without the caller needing to know the reference frame.
     JPH_Vec3 norm;
-    vec3_get_perpendicular(&axis, &norm);
+    JPH_RVec3 b2pos;
+    JPH_Body_GetPosition(b2, &b2pos);
+    JPH_Vec3 pivot_to_b2 = {
+        (float)b2pos.x - p->px,
+        (float)b2pos.y - p->py,
+        (float)b2pos.z - p->pz,
+    };
+    float dot = pivot_to_b2.x * axis.x + pivot_to_b2.y * axis.y + pivot_to_b2.z * axis.z;
+    pivot_to_b2.x -= dot * axis.x;
+    pivot_to_b2.y -= dot * axis.y;
+    pivot_to_b2.z -= dot * axis.z;
+    float len = sqrtf(pivot_to_b2.x * pivot_to_b2.x + pivot_to_b2.y * pivot_to_b2.y +
+                      pivot_to_b2.z * pivot_to_b2.z);
+    if (len > CCF_EPSILON) {
+        float inv = 1.0f / len;
+        norm.x    = pivot_to_b2.x * inv;
+        norm.y    = pivot_to_b2.y * inv;
+        norm.z    = pivot_to_b2.z * inv;
+    } else {
+        // b2 is on the hinge axis itself — fall back to arbitrary perpendicular
+        vec3_get_perpendicular(&axis, &norm);
+    }
 
     s.hingeAxis1  = axis;
     s.hingeAxis2  = axis;
@@ -67,21 +97,15 @@ JPH_Constraint *create_hinge(const ConstraintParams *p, JPH_Body *b1, JPH_Body *
     s.limitsMin   = p->limit_min;
     s.limitsMax   = p->limit_max;
 
-    // --- MOTOR CONFIG ---
-    if (p->has_motor) {
-        s.motorSettings.springSettings.mode = (p->frequency > 0)
-                                                  ? JPH_SpringMode_FrequencyAndDamping
-                                                  : JPH_SpringMode_StiffnessAndDamping;
-        s.motorSettings.springSettings.frequencyOrStiffness = p->frequency;
-        s.motorSettings.springSettings.damping              = p->damping;
-        s.motorSettings.maxTorqueLimit                      = p->max_torque;
-        s.motorSettings.minTorqueLimit                      = -p->max_torque;
-    }
+    s.motorSettings.springSettings.mode                 = JPH_SpringMode_FrequencyAndDamping;
+    s.motorSettings.springSettings.frequencyOrStiffness = p->frequency > 0 ? p->frequency : CCF_DEFAULT_FREQUENCY;
+    s.motorSettings.springSettings.damping              = p->damping > 0 ? p->damping : CCF_DEFAULT_DAMPING;
+    s.motorSettings.maxTorqueLimit                      = CCF_MAX_TORQUE;
+    s.motorSettings.minTorqueLimit                      = -CCF_MAX_TORQUE;
 
     JPH_HingeConstraint *c = JPH_HingeConstraint_Create(&s, b1, b2);
 
-    // Apply Runtime State immediately
-    if (c && (int)p->has_motor && p->motor_type > 0) {
+    if (c && p->has_motor && p->motor_type > 0) {
         JPH_HingeConstraint_SetMotorState(c, (JPH_MotorState)p->motor_type);
         if (p->motor_type == 1) {
             JPH_HingeConstraint_SetTargetAngularVelocity(c, p->motor_target);
@@ -97,9 +121,8 @@ JPH_Constraint *create_hinge(const ConstraintParams *p, JPH_Body *b1, JPH_Body *
 JPH_Constraint *create_slider(const ConstraintParams *p, JPH_Body *b1, JPH_Body *b2) {
     JPH_SliderConstraintSettings s;
     JPH_SliderConstraintSettings_Init(&s);
-    s.base.enabled    = true;
-    s.space           = JPH_ConstraintSpace_WorldSpace;
-    s.autoDetectPoint = false;
+    s.base.enabled = true;
+    s.space        = JPH_ConstraintSpace_WorldSpace;
 
     s.point1.x = p->px;
     s.point1.y = p->py;
@@ -107,16 +130,10 @@ JPH_Constraint *create_slider(const ConstraintParams *p, JPH_Body *b1, JPH_Body 
     s.point2   = s.point1;
 
     JPH_Vec3 axis = {p->ax, p->ay, p->az};
-    float len_sq  = axis.x * axis.x + axis.y * axis.y + axis.z * axis.z;
-
-    // SAFETY: If axis is zero, default to "UP" to prevent NaN explosion
-    if (len_sq < 1e-9f) {
-        axis.x = 0.0f;
-        axis.y = 1.0f;
-        axis.z = 0.0f;
-    } else {
-        JPH_Vec3_Normalize(&axis, &axis);
+    if (axis.x * axis.x + axis.y * axis.y + axis.z * axis.z < CCF_EPSILON) {
+        axis.x = 1.0f;
     }
+    JPH_Vec3_Normalize(&axis, &axis);
 
     JPH_Vec3 norm;
     vec3_get_perpendicular(&axis, &norm);
@@ -127,6 +144,13 @@ JPH_Constraint *create_slider(const ConstraintParams *p, JPH_Body *b1, JPH_Body 
     s.normalAxis2 = norm;
     s.limitsMin   = p->limit_min;
     s.limitsMax   = p->limit_max;
+
+    // --- Motor Support ---
+    s.motorSettings.springSettings.mode                 = JPH_SpringMode_FrequencyAndDamping;
+    s.motorSettings.springSettings.frequencyOrStiffness = p->frequency;
+    s.motorSettings.springSettings.damping              = p->damping;
+    s.motorSettings.maxForceLimit                       = p->max_force;
+    s.motorSettings.minForceLimit                       = -p->max_force;
 
     return (JPH_Constraint *)JPH_SliderConstraint_Create(&s, b1, b2);
 }
@@ -146,7 +170,7 @@ JPH_Constraint *create_cone(const ConstraintParams *p, JPH_Body *b1, JPH_Body *b
     float len_sq  = axis.x * axis.x + axis.y * axis.y + axis.z * axis.z;
 
     // SAFETY: If axis is zero, default to "UP" to prevent NaN explosion
-    if (len_sq < 1e-9f) {
+    if (len_sq < CCF_TINY_EPSILON) {
         axis.x = 0.0f;
         axis.y = 1.0f;
         axis.z = 0.0f;
@@ -168,7 +192,7 @@ JPH_Constraint *create_distance(const ConstraintParams *p, JPH_Body *b1, JPH_Bod
     s.space        = JPH_ConstraintSpace_WorldSpace;
 
     // Check if the user provided a specific pivot point
-    if (fabsf(p->px) > 1e-6f || fabsf(p->py) > 1e-6f || fabsf(p->pz) > 1e-6f) {
+    if (fabsf(p->px) > CCF_EPSILON || fabsf(p->py) > CCF_EPSILON || fabsf(p->pz) > CCF_EPSILON) {
         s.point1.x = p->px;
         s.point1.y = p->py;
         s.point1.z = p->pz;

@@ -2656,7 +2656,19 @@ PyCFunction_DeclareMethod PhysicsWorld_set_position(PhysicsWorldObject *self, Py
         return nullptr;
     }
 
-    // 3. COMMAND COMMIT
+    // 3. SHADOW BUFFER MIRROR (Prevent interpolation streaks)
+    uint32_t dense = self->slot_to_dense[slot];
+    PosStride p = {x, y, z, 0.0};
+
+    // Update CURRENT position buffer
+    ((PosStride *)self->positions)[dense] = p;
+
+    // Update PREVIOUS position buffer 
+    // This is the critical fix: by setting both to the same value, 
+    // lerp(prev, curr, alpha) will return exactly 'p' regardless of alpha.
+    ((PosStride *)self->prev_positions)[dense] = p;
+
+    // 4. COMMAND COMMIT (For Jolt)
     if (UNLIKELY(!ensure_command_capacity(self))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         return PyErr_NoMemory();
@@ -2667,10 +2679,6 @@ PyCFunction_DeclareMethod PhysicsWorld_set_position(PhysicsWorldObject *self, Py
     cmd->pos.x          = x;
     cmd->pos.y          = y;
     cmd->pos.z          = z;
-
-    // Mirror to shadow buffer for immediate read-back
-    auto *shadow_pos                      = (PosStride *)self->positions;
-    shadow_pos[self->slot_to_dense[slot]] = (PosStride){x, y, z, 0};
 
     SHADOW_UNLOCK(&self->shadow_lock);
     Py_RETURN_NONE;
@@ -2718,7 +2726,19 @@ PyCFunction_DeclareMethod PhysicsWorld_set_rotation(PhysicsWorldObject *self, Py
         return nullptr;
     }
 
-    // 3. COMMAND COMMIT
+    // 3. SHADOW BUFFER MIRROR (Zero-Streak Reset)
+    uint32_t dense = self->slot_to_dense[slot];
+    AuxStride rot_val = {x, y, z, w};
+
+    // Update CURRENT rotation
+    ((AuxStride *)self->rotations)[dense] = rot_val;
+
+    // Update PREVIOUS rotation (The Fix)
+    // This forces the interpolation formula: NLERP(prev, curr, alpha) 
+    // to return exactly 'rot_val' for any alpha.
+    ((AuxStride *)self->prev_rotations)[dense] = rot_val;
+
+    // 4. COMMAND COMMIT
     if (UNLIKELY(!ensure_command_capacity(self))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         return PyErr_NoMemory();
@@ -2730,14 +2750,6 @@ PyCFunction_DeclareMethod PhysicsWorld_set_rotation(PhysicsWorldObject *self, Py
     cmd->quat.y         = y;
     cmd->quat.z         = z;
     cmd->quat.w         = w;
-
-    // --- CAUSAL CONSISTENCY ---
-    // Mirror the new rotation to the shadow buffer immediately.
-    // This ensures that Python-side get_rotation() calls return
-    // the value just set, even before Jolt processes the command.
-    uint32_t dense    = self->slot_to_dense[slot];
-    auto *shadow_rot  = (AuxStride *)self->rotations;
-    shadow_rot[dense] = (AuxStride){x, y, z, w};
 
     SHADOW_UNLOCK(&self->shadow_lock);
     Py_RETURN_NONE;
@@ -3187,7 +3199,22 @@ PyCFunction_DeclareMethod PhysicsWorld_set_transform(PhysicsWorldObject *self,
         return nullptr;
     }
 
-    // 4. COMMAND COMMIT
+    // 4. SHADOW BUFFER MIRROR (Snap state for all 4 buffers)
+    uint32_t dense = self->slot_to_dense[slot];
+    
+    // Prepare Stride Structs
+    PosStride p_val = {px, py, pz, 0.0};
+    AuxStride r_val = {rx, ry, rz, rw};
+
+    // Synchronize Position (Current + Previous)
+    ((PosStride *)self->positions)[dense]      = p_val;
+    ((PosStride *)self->prev_positions)[dense] = p_val;
+
+    // Synchronize Rotation (Current + Previous)
+    ((AuxStride *)self->rotations)[dense]      = r_val;
+    ((AuxStride *)self->prev_rotations)[dense] = r_val;
+
+    // 5. COMMAND COMMIT (Deferred Jolt Update)
     if (UNLIKELY(!ensure_command_capacity(self))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         return PyErr_NoMemory();
@@ -3202,13 +3229,6 @@ PyCFunction_DeclareMethod PhysicsWorld_set_transform(PhysicsWorldObject *self,
     cmd->transform.ry   = ry;
     cmd->transform.rz   = rz;
     cmd->transform.rw   = rw;
-
-    // --- CAUSAL CONSISTENCY MIRROR ---
-    // Update shadow buffers immediately so immediate read-backs
-    // from Python reflect the new state.
-    uint32_t dense                        = self->slot_to_dense[slot];
-    ((PosStride *)self->positions)[dense] = (PosStride){px, py, pz, 0};
-    ((AuxStride *)self->rotations)[dense] = (AuxStride){rx, ry, rz, rw};
 
     SHADOW_UNLOCK(&self->shadow_lock);
     Py_RETURN_NONE;
@@ -3947,6 +3967,7 @@ static const PyMethodDef PhysicsWorld_methods[] = {
     PW_FASTCALL(create_constraint,
                 "Create a constraint between two bodies. Params depend on type."),
     PW_FASTCALL(destroy_constraint, "Remove and destroy a constraint by handle."),
+    PW_FASTCALL(get_constraint_type, "Returns the subtype (Hinge, Slider, etc) of the constraint."),
     PW_FASTCALL(create_vehicle, "Create a wheeled vehicle constraint"),
     PW_FASTCALL(create_tracked_vehicle, "Create a tracked vehicle constraint (tanks, etc.)"),
     PW_FASTCALL(create_ragdoll_settings, "Create settings for a ragdoll from a skeleton"),
@@ -4076,6 +4097,7 @@ static const PyType_Slot PhysicsWorld_slots[] = {
     {Py_tp_methods, (PyMethodDef *)PhysicsWorld_methods},
     {Py_tp_members, (PyMemberDef *)PhysicsWorld_members},
     {Py_tp_getset, (PyGetSetDef *)PhysicsWorld_getset},
+    {Py_bf_getbuffer, PhysicsWorld_getbuffer},
     {Py_bf_releasebuffer, PhysicsWorld_releasebuffer},
     {Py_tp_traverse, PhysicsWorld_traverse},
     {Py_tp_clear, PhysicsWorld_clear},
@@ -4123,7 +4145,7 @@ static const PyType_Slot RagdollSettings_slots[] = {
 static const PyType_Spec PhysicsWorld_spec = {
     .name      = "culverin._culverin_c.PhysicsWorld",
     .basicsize = sizeof(PhysicsWorldObject),
-    .flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC,
+    .flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC | Py_TPFLAGS_MANAGED_DICT,
     .slots     = (PyType_Slot *)PhysicsWorld_slots,
 };
 

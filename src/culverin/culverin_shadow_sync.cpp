@@ -25,19 +25,21 @@ struct CppSyncWorkItem {
 
 CULV_FORCE_INLINE void process_full_batch(PhysicsWorldObject *const CULV_RESTRICT self,
                                           const CppSyncWorkItem *const CULV_RESTRICT worklist) {
-    auto *CULV_RESTRICT s_pos  = (PosStride *)CULV_ASSUME_ALIGNED(self->positions, 32);
-    auto *CULV_RESTRICT s_ppos = (PosStride *)CULV_ASSUME_ALIGNED(self->prev_positions, 32);
-    auto *CULV_RESTRICT s_rot  = (AuxStride *)CULV_ASSUME_ALIGNED(self->rotations, 16);
-    auto *CULV_RESTRICT s_prot = (AuxStride *)CULV_ASSUME_ALIGNED(self->prev_rotations, 16);
-    auto *CULV_RESTRICT s_lvel = (AuxStride *)CULV_ASSUME_ALIGNED(self->linear_velocities, 16);
-    auto *CULV_RESTRICT s_avel = (AuxStride *)CULV_ASSUME_ALIGNED(self->angular_velocities, 16);
+    auto *CULV_RESTRICT s_pos =
+        (PosStride *)CULV_ASSUME_ALIGNED(self->positions, sizeof(PosStride));
+    auto *CULV_RESTRICT s_ppos =
+        (PosStride *)CULV_ASSUME_ALIGNED(self->prev_positions, sizeof(PosStride));
+    auto *CULV_RESTRICT s_rot =
+        (AuxStride *)CULV_ASSUME_ALIGNED(self->rotations, sizeof(AuxStride));
+    auto *CULV_RESTRICT s_prot =
+        (AuxStride *)CULV_ASSUME_ALIGNED(self->prev_rotations, sizeof(AuxStride));
+    auto *CULV_RESTRICT s_lvel =
+        (AuxStride *)CULV_ASSUME_ALIGNED(self->linear_velocities, sizeof(AuxStride));
+    auto *CULV_RESTRICT s_avel =
+        (AuxStride *)CULV_ASSUME_ALIGNED(self->angular_velocities, sizeof(AuxStride));
 
-// Prevent I-Cache bloat and register spilling by limiting unroll count
-#if defined(__clang__)
-#    pragma clang loop unroll_count(4)
-#elif defined(__GNUC__)
-#    pragma GCC unroll 4
-#endif
+// Prevent I-Cache bloat and register spilling by limiting unroll count 
+    CULV_UNROLL_LOOP(4)
     for (uint32_t j = 0; j < BATCH_SIZE; j++) {
         const uint32_t D = worklist[j].dense_idx;
 
@@ -80,12 +82,18 @@ CULV_FORCE_INLINE void process_partial_batch(PhysicsWorldObject *const CULV_REST
         return;
     }
 
-    auto *CULV_RESTRICT s_pos  = (PosStride *)CULV_ASSUME_ALIGNED(self->positions, 32);
-    auto *CULV_RESTRICT s_ppos = (PosStride *)CULV_ASSUME_ALIGNED(self->prev_positions, 32);
-    auto *CULV_RESTRICT s_rot  = (AuxStride *)CULV_ASSUME_ALIGNED(self->rotations, 16);
-    auto *CULV_RESTRICT s_prot = (AuxStride *)CULV_ASSUME_ALIGNED(self->prev_rotations, 16);
-    auto *CULV_RESTRICT s_lvel = (AuxStride *)CULV_ASSUME_ALIGNED(self->linear_velocities, 16);
-    auto *CULV_RESTRICT s_avel = (AuxStride *)CULV_ASSUME_ALIGNED(self->angular_velocities, 16);
+    auto *CULV_RESTRICT s_pos =
+        (PosStride *)CULV_ASSUME_ALIGNED(self->positions, sizeof(PosStride));
+    auto *CULV_RESTRICT s_ppos =
+        (PosStride *)CULV_ASSUME_ALIGNED(self->prev_positions, sizeof(PosStride));
+    auto *CULV_RESTRICT s_rot =
+        (AuxStride *)CULV_ASSUME_ALIGNED(self->rotations, sizeof(AuxStride));
+    auto *CULV_RESTRICT s_prot =
+        (AuxStride *)CULV_ASSUME_ALIGNED(self->prev_rotations, sizeof(AuxStride));
+    auto *CULV_RESTRICT s_lvel =
+        (AuxStride *)CULV_ASSUME_ALIGNED(self->linear_velocities, sizeof(AuxStride));
+    auto *CULV_RESTRICT s_avel =
+        (AuxStride *)CULV_ASSUME_ALIGNED(self->angular_velocities, sizeof(AuxStride));
 
     for (uint32_t j = 0; j < count; j++) {
         // Minor prefetch for the remainder loop
@@ -246,7 +254,7 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
                 sync_stats.total_cycles / sync_stats.count, sync_stats.max_cycles);
 
         // Reset
-        sync_stats = (CulvStat){0, 0xFFFFFFFFFFFFFFFFULL, 0, 0};
+        sync_stats = (CulvStat){0, MIN_CYCLES, 0, 0};
     }
 #endif
 }

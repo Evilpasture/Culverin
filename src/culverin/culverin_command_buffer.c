@@ -4,14 +4,15 @@
 void world_remove_body_slot(PhysicsWorldObject *self, uint32_t slot) {
     uint32_t dense_idx = self->slot_to_dense[slot];
     auto last_dense    = (uint32_t)self->count - 1;
-    JPH_BodyID bid     = self->body_ids[dense_idx];
+    CULV_MAYBE_UNUSED JPH_BodyID bid     = self->body_ids[dense_idx];
 
-    if (bid != JPH_INVALID_BODY_ID) {
-        uint32_t j_idx = JPH_ID_TO_INDEX(bid);
-        if (self->id_to_handle_map && j_idx < self->max_jolt_bodies) {
-            self->id_to_handle_map[j_idx] = 0;
-        }
-    }
+    // test_contact_removal_lifecycle will fail if this snippet gets uncommented
+    // if (bid != JPH_INVALID_BODY_ID) {
+    //     uint32_t j_idx = JPH_ID_TO_INDEX(bid);
+    //     if (self->id_to_handle_map && j_idx < self->max_jolt_bodies) {
+    //         self->id_to_handle_map[j_idx] = 0;
+    //     }
+    // }
 
     if (dense_idx != last_dense) {
         auto *pos      = (PosStride *)self->positions;

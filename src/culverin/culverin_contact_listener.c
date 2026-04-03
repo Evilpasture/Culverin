@@ -113,25 +113,29 @@ static void JPH_API_CALL on_contact_persisted(void *userData, const JPH_Body *bo
 // 3. REMOVED (Simpler logic, no manifold)
 CULV_NO_TSAN
 static void JPH_API_CALL on_contact_removed(void *userData, const JPH_SubShapeIDPair *pair) {
-    auto *self = (PhysicsWorldObject *)userData;
+    PhysicsWorldObject *self = (PhysicsWorldObject *)userData;
 
-    // Use indices from BodyIDs to look up handles in our private map
+    // SAFETY: Never call JPH_BodyInterface_... here.
+    // It will deadlock because Jolt is holding internal locks.
+
     uint32_t i1 = JPH_ID_TO_INDEX(pair->Body1ID);
     uint32_t i2 = JPH_ID_TO_INDEX(pair->Body2ID);
 
     BodyHandle h1 = 0;
     BodyHandle h2 = 0;
-    if (self->id_to_handle_map) {
-        if (i1 < self->max_jolt_bodies) {
+
+    if (LIKELY(self->id_to_handle_map)) {
+        // Change < to <= to include the max_jolt_bodies index
+        if (i1 <= self->max_jolt_bodies) {
             h1 = self->id_to_handle_map[i1];
         }
-        if (i2 < self->max_jolt_bodies) {
+        if (i2 <= self->max_jolt_bodies) {
             h2 = self->id_to_handle_map[i2];
         }
     }
 
     if (h1 == 0 || h2 == 0) {
-        return; // Ignore unmapped bodies
+        return;
     }
 
     size_t idx = atomic_fetch_add_explicit(&self->contact_atomic_idx, 1, memory_order_relaxed);
@@ -144,9 +148,7 @@ static void JPH_API_CALL on_contact_removed(void *userData, const JPH_SubShapeID
     ev->body1        = (h1 < h2) ? h1 : h2;
     ev->body2        = (h1 < h2) ? h2 : h1;
 
-    // Zero geometry for removal
     memset(&ev->px, 0, sizeof(float) * 8);
-
     atomic_thread_fence(memory_order_release);
 }
 

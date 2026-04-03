@@ -356,6 +356,18 @@ CULV_MAYBE_UNUSED static constexpr size_t MEMORY_ALIGNMENT_SIZE = 64;
 #    define CULV_REPRODUCIBLE
 #    define CULV_UNSEQUENCED
 #endif
+
+#define CULV_STR_HELPER(x) #x
+#define CULV_STR(x) CULV_STR_HELPER(x)
+
+#if defined(__clang__)
+#    define CULV_UNROLL_LOOP(n) _Pragma(CULV_STR(clang loop unroll_count(n)))
+#elif defined(__GNUC__)
+#    define CULV_UNROLL_LOOP(x) _Pragma(CULV_STR(GCC unroll (x)))
+#else
+#    define CULV_UNROLL_LOOP(x)
+#endif
+
 /*
  * ==================================================================================
  * ==================== INTERNALS BELOW THIS LINE ===================================

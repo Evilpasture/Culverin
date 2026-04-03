@@ -82,7 +82,10 @@ CULV_MAYBE_UNUSED static constexpr size_t JPH_BODY_ID_INDEX_MASK = 0x00FFFFFF;
 #endif
 
 // Mask for the raw array index (Stripping the 24th bit used for Static flags)
-#define JPH_ID_TO_INDEX(id) ((id) & 0x7FFFFF)
+static constexpr unsigned _BitInt(24) ID_TO_INDEX_MASK = 0x7FFFFF; 
+static_assert(ID_TO_INDEX_MASK == 0x7FFFFF);
+
+#define JPH_ID_TO_INDEX(id) ((uint32_t)((id) & ID_TO_INDEX_MASK))
 
 // Allocate 'Type' on the stack with guaranteed 32-byte alignment.
 // USAGE: JPH_STACK_ALLOC(JPH_RVec3, my_vec);
@@ -98,6 +101,7 @@ CULV_MAYBE_UNUSED static constexpr size_t JPH_BODY_ID_INDEX_MASK = 0x00FFFFFF;
 
 #define JPH_STACK_ALLOC(Type, Name)                                                                \
     JPH_ALIGNED_STORAGE(Type, Name##_storage, 32);                                                 \
+    /*NOLINTNEXTLINE(bugprone-macro-parentheses)*/                                                 \
     Type *Name = &Name##_storage
 
 #ifdef CULVERIN_DEBUG
@@ -146,7 +150,9 @@ typedef struct
 #    pragma pack(pop)
 #endif
 
-static_assert(sizeof(RayCastBatchResult) == 48);
+static constexpr size_t RAYCAST_RESULT_SIZE = 48;
+
+static_assert(sizeof(RayCastBatchResult) == RAYCAST_RESULT_SIZE);
 
 // --- Material Registry ---
 typedef struct {

@@ -10,11 +10,10 @@
 // Character helpers
 // Callback: Can the character collide with this object?
 
-static bool JPH_API_CALL
-char_on_contact_validate(CULV_MAYBE_UNUSED void *userData, 
-                         CULV_MAYBE_UNUSED const JPH_CharacterVirtual *character,
-                         // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-                         CULV_MAYBE_UNUSED JPH_BodyID bodyID2, CULV_MAYBE_UNUSED JPH_SubShapeID subShapeID2) {
+static bool JPH_API_CALL char_on_contact_validate(
+    CULV_MAYBE_UNUSED void *userData, CULV_MAYBE_UNUSED const JPH_CharacterVirtual *character,
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+    CULV_MAYBE_UNUSED JPH_BodyID bodyID2, CULV_MAYBE_UNUSED JPH_SubShapeID subShapeID2) {
     return true; // Usually true, unless you want to walk through certain bodies
 }
 
@@ -113,13 +112,11 @@ static void report_char_vs_char(CharacterObject *self, const JPH_CharacterVirtua
         atomic_thread_fence(memory_order_release);
     }
 }
-static void JPH_API_CALL char_on_character_contact_added(void *userData,
-                                                         CULV_MAYBE_UNUSED const JPH_CharacterVirtual *character,
-                                                         const JPH_CharacterVirtual *otherCharacter,
-                                                         CULV_MAYBE_UNUSED JPH_SubShapeID subShapeID2,
-                                                         const JPH_RVec3 *contactPosition,
-                                                         const JPH_Vec3 *contactNormal,
-                                                         JPH_CharacterContactSettings *ioSettings) {
+static void JPH_API_CALL char_on_character_contact_added(
+    void *userData, CULV_MAYBE_UNUSED const JPH_CharacterVirtual *character,
+    const JPH_CharacterVirtual *otherCharacter, CULV_MAYBE_UNUSED JPH_SubShapeID subShapeID2,
+    const JPH_RVec3 *contactPosition, const JPH_Vec3 *contactNormal,
+    JPH_CharacterContactSettings *ioSettings) {
 
     ioSettings->canPushCharacter   = true;
     ioSettings->canReceiveImpulses = true;
@@ -151,21 +148,20 @@ static void apply_character_impulse(CharacterObject *self, JPH_BodyID bodyID2,
     // 3. Calculate Pushing Force
     float dot = vx * contactNormal->x + vy * contactNormal->y + vz * contactNormal->z;
 
-    if (dot > 0.1f) {
-        float factor            = dot * strength;
-        const float max_impulse = 5000.0f;
+    // Normal points TOWARDS character, so dot is negative when colliding
+    if (dot < -0.01f) {
+        float factor            = -dot * strength; // Negate to get positive push force
+        const float max_impulse = 50000.0f;
         if (factor > max_impulse) {
             factor = max_impulse;
         }
 
         JPH_Vec3 impulse;
-        impulse.x = contactNormal->x * factor;
-
-        // Flatten Y Response (allow kicking up, suppress crushing down)
-        float y_push = contactNormal->y * factor;
+        // Flip the normal to push the OBJECT away from the character
+        impulse.x    = -contactNormal->x * factor;
+        float y_push = -contactNormal->y * factor;
         impulse.y    = (y_push > 0.0f) ? y_push : 0.0f;
-
-        impulse.z = contactNormal->z * factor;
+        impulse.z    = -contactNormal->z * factor;
 
         JPH_BodyInterface_AddImpulse(bi, bodyID2, &impulse);
         JPH_BodyInterface_ActivateBody(bi, bodyID2);
@@ -173,13 +169,10 @@ static void apply_character_impulse(CharacterObject *self, JPH_BodyID bodyID2,
 }
 
 // --- Updated Added Callback ---
-static void JPH_API_CALL char_on_contact_added(void *userData,
-                                               CULV_MAYBE_UNUSED const JPH_CharacterVirtual *character,
-                                               JPH_BodyID bodyID2, 
-                                               CULV_MAYBE_UNUSED JPH_SubShapeID subShapeID2,
-                                               const JPH_RVec3 *contactPosition,
-                                               const JPH_Vec3 *contactNormal,
-                                               JPH_CharacterContactSettings *ioSettings) {
+static void JPH_API_CALL char_on_contact_added(
+    void *userData, CULV_MAYBE_UNUSED const JPH_CharacterVirtual *character, JPH_BodyID bodyID2,
+    CULV_MAYBE_UNUSED JPH_SubShapeID subShapeID2, const JPH_RVec3 *contactPosition,
+    const JPH_Vec3 *contactNormal, JPH_CharacterContactSettings *ioSettings) {
 
     ioSettings->canPushCharacter   = true;
     ioSettings->canReceiveImpulses = true;
@@ -196,13 +189,10 @@ static void JPH_API_CALL char_on_contact_added(void *userData,
     apply_character_impulse(self, bodyID2, contactNormal);
 }
 
-static void JPH_API_CALL char_on_contact_persisted(void *userData,
-                                                   CULV_MAYBE_UNUSED const JPH_CharacterVirtual *character,
-                                                   JPH_BodyID bodyID2, 
-                                                   CULV_MAYBE_UNUSED JPH_SubShapeID subShapeID2,
-                                                   const JPH_RVec3 *contactPosition,
-                                                   const JPH_Vec3 *contactNormal,
-                                                   JPH_CharacterContactSettings *ioSettings) {
+static void JPH_API_CALL char_on_contact_persisted(
+    void *userData, CULV_MAYBE_UNUSED const JPH_CharacterVirtual *character, JPH_BodyID bodyID2,
+    CULV_MAYBE_UNUSED JPH_SubShapeID subShapeID2, const JPH_RVec3 *contactPosition,
+    const JPH_Vec3 *contactNormal, JPH_CharacterContactSettings *ioSettings) {
 
     ioSettings->canPushCharacter   = true;
     ioSettings->canReceiveImpulses = true;
@@ -291,11 +281,10 @@ static void JPH_API_CALL char_on_character_contact_removed(
     }
 }
 
-static void JPH_API_CALL char_on_adjust_velocity(CULV_MAYBE_UNUSED void * userData,
-                                                 CULV_MAYBE_UNUSED const JPH_CharacterVirtual *character,
-                                                 CULV_MAYBE_UNUSED const JPH_Body *body2, 
-                                                 CULV_MAYBE_UNUSED JPH_Vec3 *ioLinearVelocity,
-                                                 CULV_MAYBE_UNUSED JPH_Vec3 *ioAngularVelocity) {
+static void JPH_API_CALL char_on_adjust_velocity(
+    CULV_MAYBE_UNUSED void *userData, CULV_MAYBE_UNUSED const JPH_CharacterVirtual *character,
+    CULV_MAYBE_UNUSED const JPH_Body *body2, CULV_MAYBE_UNUSED JPH_Vec3 *ioLinearVelocity,
+    CULV_MAYBE_UNUSED JPH_Vec3 *ioAngularVelocity) {
 
     // Usually, we want the default behavior (character follows the body).
     // TODO: add logic here if you want the character to "slip" on certain
@@ -309,11 +298,11 @@ const JPH_CharacterContactListener_Procs char_listener_procs = {
     .OnAdjustBodyVelocity        = char_on_adjust_velocity,   // ADDED
     .OnContactPersisted          = char_on_contact_persisted, // CHANGED from char_on_contact_added
     .OnContactRemoved            = char_on_contact_removed,   // ADDED
-    .OnCharacterContactValidate  = nullptr,                      // Default True is fine
+    .OnCharacterContactValidate  = nullptr,                   // Default True is fine
     .OnCharacterContactAdded     = char_on_character_contact_added,
     .OnCharacterContactPersisted = char_on_character_contact_persisted, // ADDED
     .OnCharacterContactRemoved   = char_on_character_contact_removed,   // ADDED
-    .OnContactSolve              = nullptr                                 // Advanced, keep nullptr
+    .OnContactSolve              = nullptr                              // Advanced, keep nullptr
 };
 
 PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObject *const *args,
@@ -602,12 +591,9 @@ PyCFunction_DeclareMethodFromModule Character_get_render_transform(CharacterObje
     rw *= inv_len;
 
     // --- 4. Optimized Return (Using FastBuild) ---
-    // The macro handles the creation of the underlying PyFloat objects 
+    // The macro handles the creation of the underlying PyFloat objects
     // and the packing into tuples automatically.
-    return FastBuild_Tuple(
-        FastBuild_Tuple(px, py, pz),
-        FastBuild_Tuple(rx, ry, rz, rw)
-    );
+    return FastBuild_Tuple(FastBuild_Tuple(px, py, pz), FastBuild_Tuple(rx, ry, rz, rw));
 }
 
 PyCFunction_DeclareMethodFromModule Character_is_grounded(CharacterObject *self,
@@ -630,7 +616,8 @@ PyCFunction_DeclareMethodFromModule Character_is_grounded(CharacterObject *self,
 }
 
 // NEW: GC Traverse/Clear for Character
-PyType_DeclareSlot_StatusFromModule Character_traverse(CharacterObject *self, visitproc visit, void *arg) {
+PyType_DeclareSlot_StatusFromModule Character_traverse(CharacterObject *self, visitproc visit,
+                                                       void *arg) {
     Py_VISIT(self->world);
     return 0;
 }

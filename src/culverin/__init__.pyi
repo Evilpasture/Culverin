@@ -18,7 +18,6 @@ from ._culverin_c import (
 from ._culverin import (
     Engine, Transmission, Automatic, Manual,
     WheelConfig, TrackConfig,
-    validate_constraint, validate_settings, bake_scene
 )
 
 __all__ = [
@@ -29,5 +28,4 @@ __all__ = [
     "MOTION_STATIC", "MOTION_KINEMATIC", "MOTION_DYNAMIC",
     "CONSTRAINT_FIXED", "CONSTRAINT_POINT", "CONSTRAINT_HINGE", "CONSTRAINT_SLIDER", "CONSTRAINT_DISTANCE", "CONSTRAINT_CONE",
     "EVENT_ADDED", "EVENT_PERSISTED", "EVENT_REMOVED",
-    "validate_constraint", "validate_settings", "bake_scene",
 ]
