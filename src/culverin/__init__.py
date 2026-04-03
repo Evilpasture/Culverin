@@ -35,7 +35,6 @@ def get_velocity(self: "_culverin_c.PhysicsWorld", handle: int) -> tuple[float, 
     return stats[2] if stats else None
 
 def world_repr(self: "_culverin_c.PhysicsWorld") -> str:
-    # The linter now knows 'self' has '.count' and '.time'
     return f"<culverin.PhysicsWorld bodies={self.count} time={self.time:.2f}>"
 
 # 3. ATTACH HELPERS

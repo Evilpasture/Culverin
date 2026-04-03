@@ -3289,10 +3289,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_index(PhysicsWorldObject *self, PyObj
     // 2. CRITICAL SECTION
     SHADOW_LOCK(&self->shadow_lock);
 
-    // We don't necessarily need to block for STEPPING here because
-    // we are reading the mapping table, which is stable during a step.
-    // However, it's safer to block if you expect the index to change
-    // mid-step due to a resize.
+    BLOCK_UNTIL_NOT_STEPPING(self);
 
     uint32_t slot = 0;
     if (UNLIKELY(
@@ -3326,6 +3323,8 @@ PyCFunction_DeclareMethod PhysicsWorld_is_alive(PhysicsWorldObject *self, PyObje
     // 2. CRITICAL SECTION
     SHADOW_LOCK(&self->shadow_lock);
 
+    BLOCK_UNTIL_NOT_STEPPING(self);
+
     uint32_t slot = 0;
     bool alive    = false;
 
@@ -3348,6 +3347,7 @@ PyCFunction_DeclareMethod PhysicsWorld_is_alive(PhysicsWorldObject *self, PyObje
 PyCFunction_DeclareMethod PhysicsWorld_get_active_indices(PhysicsWorldObject *self,
                                                           PyObject *Py_UNUSED(args)) {
     SHADOW_LOCK(&self->shadow_lock);
+    BLOCK_UNTIL_NOT_STEPPING(self);
     size_t count = self->count;
     if (count == 0) {
         SHADOW_UNLOCK(&self->shadow_lock);
