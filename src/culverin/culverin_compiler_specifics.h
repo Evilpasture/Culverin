@@ -242,20 +242,16 @@ static inline uint64_t culv_read_end(void) {
 #endif /* CULVERIN_PROFILE_SYNC */
 
 #if defined(__clang__) || defined(__GNUC__)
-// __builtin_prefetch(addr, rw, locality)
-// rw: 0 = read, 1 = write
-// locality: 0 = none, 3 = high (keep in L1)
-#    define CULV_PREFETCH(addr) __builtin_prefetch((const void *)(addr), 0, 3)
+// rw: 0 = read, 1 = write | locality: 3 = high (keep in L1)
+#    define CULV_PREFETCH_READ(addr)  __builtin_prefetch((const void *)(addr), 0, 3)
 #    define CULV_PREFETCH_WRITE(addr) __builtin_prefetch((const void *)(addr), 1, 3)
 #elif defined(_MSC_VER)
 #    include <mmintrin.h>
-// _mm_prefetch(addr, hint)
-// _MM_HINT_T0 = Prefetch into all cache levels (L1, L2, L3)
-#    define CULV_PREFETCH(addr) _mm_prefetch((const char *)(addr), _MM_HINT_T0)
+// MSVC uses hints: _MM_HINT_T0 = all cache levels
+#    define CULV_PREFETCH_READ(addr)  _mm_prefetch((const char *)(addr), _MM_HINT_T0)
 #    define CULV_PREFETCH_WRITE(addr) _mm_prefetch((const char *)(addr), _MM_HINT_T0)
 #else
-// Fallback for compilers that don't support prefetching
-#    define CULV_PREFETCH(addr) ((void)0)
+#    define CULV_PREFETCH_READ(addr)  ((void)0)
 #    define CULV_PREFETCH_WRITE(addr) ((void)0)
 #endif
 

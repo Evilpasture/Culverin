@@ -1,51 +1,66 @@
 #include "culverin_command_buffer.h"
 #include "culverin_compiler_specifics.h"
+#include "culverin_threading.h"
 
 void world_remove_body_slot(PhysicsWorldObject *self, uint32_t slot) {
-    uint32_t dense_idx = self->slot_to_dense[slot];
-    auto last_dense    = (uint32_t)self->count - 1;
-    CULV_MAYBE_UNUSED JPH_BodyID bid     = self->body_ids[dense_idx];
+    // 1. FAST PATH: Check bounds outside the lock if possible, 
+    // but we need the lock to protect the 'count' and 'slot_states'.
+    SHADOW_LOCK(&self->shadow_lock);
 
-    // test_contact_removal_lifecycle will fail if this snippet gets uncommented
-    // if (bid != JPH_INVALID_BODY_ID) {
-    //     uint32_t j_idx = JPH_ID_TO_INDEX(bid);
-    //     if (self->id_to_handle_map && j_idx < self->max_jolt_bodies) {
-    //         self->id_to_handle_map[j_idx] = 0;
-    //     }
-    // }
+    if (UNLIKELY(self->count == 0 || self->slot_states[slot] == SLOT_EMPTY)) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        return;
+    }
 
+    const uint32_t dense_idx = self->slot_to_dense[slot];
+    const uint32_t last_dense  = (uint32_t)self->count - 1;
+
+    // 2. THE SWAP-TO-DELETE (Dense Pack)
+    // If we aren't removing the very last element, we must migrate the "Mover"
     if (dense_idx != last_dense) {
-        auto *pos      = (PosStride *)self->positions;
-        auto *prev_pos = (PosStride *)self->prev_positions;
-        auto *rot      = (AuxStride *)self->rotations;
-        auto *prev_rot = (AuxStride *)self->prev_rotations;
-        auto *lvel     = (AuxStride *)self->linear_velocities;
-        auto *avel     = (AuxStride *)self->angular_velocities;
+        // PREFETCH: Tell the CPU to grab the 'Mover' body's data now.
+        // We prefetch both the source (last) and destination (current).
+        CULV_PREFETCH_READ(&self->positions[last_dense]);
+        CULV_PREFETCH_WRITE(&self->positions[dense_idx]);
 
-        pos[dense_idx]      = pos[last_dense];
-        prev_pos[dense_idx] = prev_pos[last_dense];
+        // --- GROUP 1: PHYSICS STATE (High-Precision Strides) ---
+        // We treat these as raw 128-bit blocks to trigger SIMD instructions.
+        ((PosStride*)self->positions)[dense_idx]      = ((PosStride*)self->positions)[last_dense];
+        ((PosStride*)self->prev_positions)[dense_idx] = ((PosStride*)self->prev_positions)[last_dense];
+        
+        ((AuxStride*)self->rotations)[dense_idx]      = ((AuxStride*)self->rotations)[last_dense];
+        ((AuxStride*)self->prev_rotations)[dense_idx] = ((AuxStride*)self->prev_rotations)[last_dense];
+        
+        ((AuxStride*)self->linear_velocities)[dense_idx]  = ((AuxStride*)self->linear_velocities)[last_dense];
+        ((AuxStride*)self->angular_velocities)[dense_idx] = ((AuxStride*)self->angular_velocities)[last_dense];
 
-        rot[dense_idx]      = rot[last_dense];
-        prev_rot[dense_idx] = prev_rot[last_dense];
-        lvel[dense_idx]     = lvel[last_dense];
-        avel[dense_idx]     = avel[last_dense];
-
+        // --- GROUP 2: METADATA (Dword/Qword Blocks) ---
+        // The compiler can optimize these into a single 'rep movsq' or wide vector move.
         self->body_ids[dense_idx]     = self->body_ids[last_dense];
         self->user_data[dense_idx]    = self->user_data[last_dense];
         self->categories[dense_idx]   = self->categories[last_dense];
         self->masks[dense_idx]        = self->masks[last_dense];
         self->material_ids[dense_idx] = self->material_ids[last_dense];
 
-        uint32_t mover_slot             = self->dense_to_slot[last_dense];
-        self->slot_to_dense[mover_slot] = dense_idx;
-        self->dense_to_slot[dense_idx]  = mover_slot;
+        // --- GROUP 3: THE MAP REWIRE ---
+        const uint32_t mover_slot        = self->dense_to_slot[last_dense];
+        self->slot_to_dense[mover_slot]  = dense_idx;
+        self->dense_to_slot[dense_idx]   = mover_slot;
     }
 
+    // 3. HOUSEKEEPING (The "Debt" Payment)
+    // We increment the generation to invalidate all existing Python handles.
     self->generations[slot]++;
+    
+    // Push to free stack
     self->free_slots[self->free_count++] = slot;
     self->slot_states[slot]              = SLOT_EMPTY;
+    
+    // Atomic-style update for the count to ensure 'view_shape' is consistent
     self->count--;
     self->view_shape[0] = (Py_ssize_t)self->count;
+
+    SHADOW_UNLOCK(&self->shadow_lock);
 }
 
 CULV_NODISCARD

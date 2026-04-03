@@ -175,10 +175,10 @@ void clear_command_queue(struct PhysicsWorldObject *self);
         slot   = CMD_GET_SLOT(header);                                                             \
         /* Aggressive Prefetching of the NEXT loop's data dependencies */                          \
         if (LIKELY(i < count)) {                                                                   \
-            CULV_PREFETCH(&queue[i]);                                                              \
+            CULV_PREFETCH_READ(&queue[i]);                                                              \
             uint32_t next_slot = CMD_GET_SLOT(queue[i].header);                                    \
-            CULV_PREFETCH(&self->slot_states[next_slot]);                                          \
-            CULV_PREFETCH(&self->slot_to_dense[next_slot]);                                        \
+            CULV_PREFETCH_READ(&self->slot_states[next_slot]);                                          \
+            CULV_PREFETCH_READ(&self->slot_to_dense[next_slot]);                                        \
         }                                                                                          \
         state = self->slot_states[slot];                                                           \
         bid   = JPH_INVALID_BODY_ID;                                                               \
