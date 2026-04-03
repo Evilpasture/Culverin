@@ -21,21 +21,18 @@ from ._culverin import (
 # 2. DEFINE HELPER FUNCTIONS
 # We type-hint 'self' as the C class. 
 # We use a string "_culverin_c.PhysicsWorld" to avoid runtime issues.
-def get_position(self: "_culverin_c.PhysicsWorld", handle: int) -> tuple[float, float, float]:
-    # The linter now knows 'self' has '.get_body_stats' because it checks _culverin_c.pyi
+def get_position(self: "_culverin_c.PhysicsWorld", handle: int) -> tuple[float, float, float] | None:
     stats = self.get_body_stats(handle)
-    if stats: return stats[0]
-    raise ValueError(f"Invalid or stale handle: {handle}")
+    # If stats is None, this returns None naturally
+    return stats[0] if stats else None
 
-def get_rotation(self: "_culverin_c.PhysicsWorld", handle: int) -> tuple[float, float, float, float]:
+def get_rotation(self: "_culverin_c.PhysicsWorld", handle: int) -> tuple[float, float, float, float] | None:
     stats = self.get_body_stats(handle)
-    if stats: return stats[1]
-    raise ValueError(f"Invalid or stale handle: {handle}")
+    return stats[1] if stats else None
 
-def get_velocity(self: "_culverin_c.PhysicsWorld", handle: int) -> tuple[float, float, float]:
+def get_velocity(self: "_culverin_c.PhysicsWorld", handle: int) -> tuple[float, float, float] | None:
     stats = self.get_body_stats(handle)
-    if stats: return stats[2]
-    raise ValueError(f"Invalid or stale handle: {handle}")
+    return stats[2] if stats else None
 
 def world_repr(self: "_culverin_c.PhysicsWorld") -> str:
     # The linter now knows 'self' has '.count' and '.time'

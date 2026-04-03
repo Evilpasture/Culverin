@@ -397,17 +397,28 @@ class TestEdgeCases(CulverinTestCase):
             self.world.apply_impulse(h, x=float('inf'), y=0.0, z=0.0)
 
     def test_handle_invalidation_chain(self):
-        """Test 'Immediate Invalidation': deleting a body renders handle stale instantly."""
+        """Test 'Silent Invalidation': deleted bodies return None for all operations."""
         h = self.world.create_body(pos=(0, 10, 0))
+        
+        # Verify it works initially
+        self.assertTrue(self.world.is_alive(h))
+        
+        # Kill the body
         self.world.destroy_body(h)
         
-        # 1. Mutators MUST raise ValueError for PENDING_DESTROY bodies
-        with self.assertRaises(ValueError):
-            self.world.set_position(h, 0, 5, 0) 
+        # 1. Mutators: Instead of raising, they now return None (Silent Fail)
+        # This proves the C-layer caught the SLOT_PENDING_DESTROY state.
+        res = self.world.set_position(h, 0, 5, 0)
+        self.assertIsNone(res, "set_position should return None for stale handles")
         
-        # 2. Getters MUST return False/None, NOT raise
-        self.assertFalse(self.world.is_alive(h), "is_alive should return False for destroyed body")
-        self.assertEqual(self.world.get_index(h), None, "get_index should return None for destroyed body")
+        # 2. Getters: Consistent return of None
+        self.assertFalse(self.world.is_alive(h), "is_alive must be False")
+        self.assertIsNone(self.world.get_index(h), "get_index must be None")
+        self.assertIsNone(self.world.get_position(h), "get_position must be None")
+        
+        # 3. Double-Delete Safety (Idempotency)
+        # Ensure calling destroy again doesn't crash the engine
+        self.world.destroy_body(h)
 
     def test_empty_batch_inputs(self):
         """Ensure batch methods don't segfault on empty data."""
