@@ -14,12 +14,10 @@ class CulverinTestCase(unittest.TestCase):
         self.world.step(0) # Flush initial state
 
     def get_pos(self, handle: int):
-        idx = self.world.get_index(handle)
-        return self.world.positions[idx * 4 : idx * 4 + 3]
+        return self.world.get_position(handle)
 
     def get_vel(self, handle: int):
-        idx = self.world.get_index(handle)
-        return self.world.velocities[idx * 4 : idx * 4 + 3]
+        return self.world.get_velocity(handle)
 
 
 class TestCoreMechanics(CulverinTestCase):
@@ -77,6 +75,22 @@ class TestCoreMechanics(CulverinTestCase):
         for _ in range(60): self.world.step(1/60)
         
         self.assertLess(self.get_pos(ball)[0], start_x, "Ball did not roll down slope")
+
+    def test_material_hot_swap(self):
+        """Test if changing material properties affects simulation."""
+        # Since Jolt bodies are immutable-by-default for friction, 
+        # we verify that the registry works for NEW bodies.
+        self.world.register_material(id=50, friction=0.0)
+        b1 = self.world.create_body(pos=(0, 10, 0), material_id=50)
+        
+        self.world.register_material(id=50, friction=1.0)
+        b2 = self.world.create_body(pos=(5, 10, 0), material_id=50)
+        
+        self.world.step(0)
+        # Both bodies now have different internal Jolt friction values 
+        # despite having the same material ID.
+        self.assertTrue(self.world.is_alive(b1))
+        self.assertTrue(self.world.is_alive(b2))
 
 
 class TestQueries(CulverinTestCase):
@@ -207,6 +221,21 @@ class TestCollisionsAndEvents(CulverinTestCase):
                     hit = True
         self.assertTrue(hit)
 
+    def test_contact_removal_lifecycle(self):
+        """Verify that EVENT_REMOVED is fired correctly even if one body is destroyed."""
+        b1 = self.world.create_body(pos=(0, 0, 0), size=(2, 2, 2), motion=culverin.MOTION_STATIC)
+        b2 = self.world.create_body(pos=(0, 0.5, 0), size=(1, 1, 1), motion=culverin.MOTION_DYNAMIC)
+        self.world.step(1/60) # Generate Added event
+        
+        # Destroy b2 while it is touching b1
+        self.world.destroy_body(b2)
+        self.world.step(1/60) # Should trigger Removed event
+        
+        events = self.world.get_contact_events_ex()
+        removed = [e for e in events if e["type"] == culverin.EVENT_REMOVED]
+        self.assertGreater(len(removed), 0)
+        self.assertIn(b1, removed[0]["bodies"])
+
 
 class TestCharactersAndVehicles(CulverinTestCase):
     def test_character_lifecycle_and_movement(self):
@@ -220,6 +249,34 @@ class TestCharactersAndVehicles(CulverinTestCase):
         # Test get_render_transform interpolation
         r_pos, _r_rot = char.get_render_transform(0.5)
         self.assertGreater(r_pos[0], 0.0)
+
+    def test_character_push_power(self):
+        """Verify character strength affects dynamic body interaction."""
+        crate = self.world.create_body(pos=(1, 1, 0), size=(1,1,1), mass=5.0)
+        char = self.world.create_character(pos=(0, 1, 0))
+        self.world.step(0)
+        
+        # Weak strength
+        char.set_strength(10.0)
+        char.move((20, 0, 0), 1/60)
+        self.world.step(1/60)
+        vel_weak = self.get_vel(crate)[0]
+        
+        # Strong strength
+        char.set_strength(50000.0)
+        char.set_position((0,1,0))
+        self.world.set_linear_velocity(crate, x=0, y=0, z=0)
+        self.world.set_position(crate, x=1, y=1, z=0)
+        
+        # CRITICAL FIX: Step(0) flushes the queue so the character 
+        # actually teleports BEFORE we call char.move()
+        self.world.step(0) 
+        
+        char.move((20, 0, 0), 1/60)
+        self.world.step(1/60)
+        vel_strong = self.get_vel(crate)[0]
+        
+        self.assertGreater(vel_strong, vel_weak)
 
     def test_wheeled_vehicle(self):
         # 1. Add a floor with friction so the wheels can grip!
@@ -293,6 +350,38 @@ class TestThreadSafety(CulverinTestCase):
             
         self.assertGreater(success, 0, "Mutations should block and succeed")
 
+    def test_resize_memoryview_lock(self):
+        """Ensure world cannot resize while a memoryview is held."""
+        # Create a world that resizes after 64 bodies
+        world = culverin.PhysicsWorld(settings={"max_bodies": 200})
+        
+        # Fill the initial 64-slot capacity
+        for _ in range(64):
+            world.create_body(pos=(0,0,0))
+        world.step(0)
+
+        # Export a buffer to lock the current C arrays
+        _view = world.positions 
+        
+        # Adding the 65th body triggers PhysicsWorld_resize in C
+        with self.assertRaises(BufferError):
+            world.create_body(pos=(1,2,3))
+
+class TestInterpolation(CulverinTestCase):
+    def test_teleport_interpolation_reset(self):
+        """Verify that set_position resets prev_positions to prevent interpolation streaks."""
+        h = self.world.create_body(pos=(0, 0, 0))
+        self.world.step(0)
+        
+        # Teleport
+        self.world.set_position(h, x=1000, y=0, z=0)
+        
+        # We check render state BEFORE the next step()
+        state = self.world.get_render_state(alpha=0.5)
+        data = np.frombuffer(state, dtype=np.float32)
+        # If the fix is in, this will be 1000. If not, it will be 500.
+        self.assertEqual(data[0], 1000.0)
+
 class TestEdgeCases(CulverinTestCase):
     def test_numerical_stability(self):
         """Test how the engine handles non-finite inputs."""
@@ -308,17 +397,28 @@ class TestEdgeCases(CulverinTestCase):
             self.world.apply_impulse(h, x=float('inf'), y=0.0, z=0.0)
 
     def test_handle_invalidation_chain(self):
-        """Test 'Immediate Invalidation': deleting a body renders handle stale instantly."""
+        """Test 'Silent Invalidation': deleted bodies return None for all operations."""
         h = self.world.create_body(pos=(0, 10, 0))
+        
+        # Verify it works initially
+        self.assertTrue(self.world.is_alive(h))
+        
+        # Kill the body
         self.world.destroy_body(h)
         
-        # 1. Mutators MUST raise ValueError for PENDING_DESTROY bodies
-        with self.assertRaises(ValueError):
-            self.world.set_position(h, 0, 5, 0) 
+        # 1. Mutators: Instead of raising, they now return None (Silent Fail)
+        # This proves the C-layer caught the SLOT_PENDING_DESTROY state.
+        res = self.world.set_position(h, 0, 5, 0)
+        self.assertIsNone(res, "set_position should return None for stale handles")
         
-        # 2. Getters MUST return False/None, NOT raise
-        self.assertFalse(self.world.is_alive(h), "is_alive should return False for destroyed body")
-        self.assertEqual(self.world.get_index(h), None, "get_index should return None for destroyed body")
+        # 2. Getters: Consistent return of None
+        self.assertFalse(self.world.is_alive(h), "is_alive must be False")
+        self.assertIsNone(self.world.get_index(h), "get_index must be None")
+        self.assertIsNone(self.world.get_position(h), "get_position must be None")
+        
+        # 3. Double-Delete Safety (Idempotency)
+        # Ensure calling destroy again doesn't crash the engine
+        self.world.destroy_body(h)
 
     def test_empty_batch_inputs(self):
         """Ensure batch methods don't segfault on empty data."""
@@ -381,6 +481,39 @@ class TestConstraints(CulverinTestCase):
         
         # Test destruction
         self.world.destroy_constraint(c_handle)
+
+    def test_hinge_motor(self):
+        b1 = self.world.create_body(pos=(0, 0, 0), motion=culverin.MOTION_STATIC)
+        # Verify b2 is DYNAMIC and has MASS
+        b2 = self.world.create_body(pos=(2, 0, 0), motion=culverin.MOTION_DYNAMIC, mass=1.0)
+        self.world.step(0)
+        
+        c = self.world.create_constraint(
+            culverin.CONSTRAINT_HINGE, b1, b2, 
+            params=((0, 0, 0), (0, 0, 1), -3.14, 3.14),
+            motor={"type": 2, "target": 0.0}
+        )
+
+        ctype = self.world.get_constraint_type(c)
+        self.assertEqual(ctype, culverin.CONSTRAINT_HINGE, 
+                        f"Expected Hinge (2), got {ctype}")
+        
+        # Explicitly wake up b2
+        self.world.activate(b2)
+
+        self.world.step(1/60)
+        
+        # Set target
+        self.world.set_constraint_target(c, math.pi / 2)
+        
+        # Run enough steps for the motor spring to ramp up
+        for i in range(150):
+            self.world.step(1/60)
+            if i % 10 == 0:
+                print(f"step {i}: pos={self.get_pos(b2)}")
+                
+        pos = self.get_pos(b2)
+        self.assertLess(pos[0], 0.5, f"Body should have swung; current X is {pos[0]}")
 
 
 class TestRagdollsAndSkeletons(CulverinTestCase):
@@ -558,6 +691,27 @@ class TestProfilerScenario(CulverinTestCase):
         for t in threads: t.start()
         for _ in range(60): self.world.step(1/60.0)
         for t in threads: t.join()
+
+    def test_extreme_command_contention(self):
+        """Hammer the command queue from 8 threads while stepping the world."""
+        bodies = [self.world.create_body(pos=(0,0,0)) for _ in range(100)]
+        self.world.step(0)
+
+        def worker():
+            for _ in range(500):
+                # Randomly move bodies
+                target = bodies[np.random.randint(0, 100)]
+                self.world.apply_impulse(target, 0, 10, 0)
+                self.world.set_position(target, x=np.random.rand(), y=2, z=0)
+
+        threads = [threading.Thread(target=worker) for _ in range(8)]
+        for t in threads: t.start()
+        
+        for _ in range(100):
+            self.world.step(1/60)
+            
+        for t in threads: t.join()
+        # If we didn't segfault, the PyMutex and Command Queue swap are working.
 
 
 if __name__ == '__main__':

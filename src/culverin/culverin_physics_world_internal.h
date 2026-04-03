@@ -24,6 +24,9 @@ int load_baked_scene(PhysicsWorldObject *self, PyObject *baked);
 
 int verify_abi_alignment(JPH_BodyInterface *bi);
 
+PyType_DeclareSlot_StatusFromModule PhysicsWorld_getbuffer(PhysicsWorldObject *self,
+                                                           Py_buffer *view, CULV_MAYBE_UNUSED int flags);
+
 PyType_DeclareSlot_VoidFromModule PhysicsWorld_releasebuffer(PhysicsWorldObject *self,
                                                              Py_buffer *view);
 

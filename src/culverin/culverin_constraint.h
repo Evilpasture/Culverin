@@ -15,3 +15,8 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_set_constraint_target(PhysicsWo
                                                                        PyObject *const *args,
                                                                        size_t nargsf,
                                                                        PyObject *kwnames);
+                                                                       
+PyCFunction_DeclareMethodFromModule PhysicsWorld_get_constraint_type(PhysicsWorldObject *self,
+                                                                     PyObject *const *args,
+                                                                     size_t nargsf,
+                                                                     PyObject *kwnames);

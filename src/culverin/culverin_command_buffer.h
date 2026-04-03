@@ -58,8 +58,8 @@ typedef struct {
     bool is_alive;
 } ResolvedCmd;
 
-// Force exactly 64-byte alignment and sizing. 
-// This ensures exactly ONE command per CPU Cache Line, preventing false-sharing 
+// Force exactly 64-byte alignment and sizing.
+// This ensures exactly ONE command per CPU Cache Line, preventing false-sharing
 // and cache-straddling across thread boundaries.
 #if defined(_MSC_VER)
 __declspec(align(64))
@@ -139,12 +139,19 @@ typedef union {
 
 } PhysicsCommand;
 
+static constexpr size_t OFFSET_START =
+    8; // The offset where the actual command data starts (after the header and padding)
+
 // C23 native static_assert
-static_assert(sizeof(PhysicsCommand) == MEMORY_ALIGNMENT_SIZE, "PhysicsCommand MUST be exactly 64 bytes for cache alignment");
-static_assert(offsetof(PhysicsCommand, vec3f.x) == 8, "vec3f.x must start at offset 8");
-static_assert(offsetof(PhysicsCommand, transform.px) == 8, "transform.px must start at offset 8");
-static_assert(offsetof(PhysicsCommand, create.settings) == 8, "create.settings must start at offset 8");
-static_assert(alignof(PhysicsCommand) == MEMORY_ALIGNMENT_SIZE, "PhysicsCommand must be 64-byte aligned");
+static_assert(sizeof(PhysicsCommand) == MEMORY_ALIGNMENT_SIZE,
+              "PhysicsCommand MUST be exactly 64 bytes for cache alignment");
+static_assert(offsetof(PhysicsCommand, vec3f.x) == OFFSET_START, "vec3f.x must start at offset 8");
+static_assert(offsetof(PhysicsCommand, transform.px) == OFFSET_START,
+              "transform.px must start at offset 8");
+static_assert(offsetof(PhysicsCommand, create.settings) == OFFSET_START,
+              "create.settings must start at offset 8");
+static_assert(alignof(PhysicsCommand) == MEMORY_ALIGNMENT_SIZE,
+              "PhysicsCommand must be 64-byte aligned");
 
 // INCLUDE AFTER PHYSICSCOMMAND!
 #include "culverin.h"
@@ -159,20 +166,23 @@ void clear_command_queue(struct PhysicsWorldObject *self);
 // Includes aggressive software prefetching for indirect lookups.
 #define DISPATCH()                                                                                 \
     do {                                                                                           \
-        if (UNLIKELY(i >= count))                                                                  \
+        if (UNLIKELY(i >= count)) {                                                                \
             return;                                                                                \
+        }                                                                                          \
         cmd    = &queue[i++];                                                                      \
         header = cmd->header;                                                                      \
         type   = CMD_GET_TYPE(header);                                                             \
         slot   = CMD_GET_SLOT(header);                                                             \
         /* Aggressive Prefetching of the NEXT loop's data dependencies */                          \
         if (LIKELY(i < count)) {                                                                   \
-            CULV_PREFETCH(&queue[i]);                                                              \
+            CULV_PREFETCH_READ(&queue[i]);                                                         \
             uint32_t next_slot = CMD_GET_SLOT(queue[i].header);                                    \
-            CULV_PREFETCH(&self->slot_states[next_slot]);                                          \
-            CULV_PREFETCH(&self->slot_to_dense[next_slot]);                                        \
+            /* Hardware prefetchers handle atomic addresses the same as regular ones */            \
+            CULV_PREFETCH_READ(&self->slot_states[next_slot]);                                     \
+            CULV_PREFETCH_READ(&self->slot_to_dense[next_slot]);                                   \
         }                                                                                          \
-        state = self->slot_states[slot];                                                           \
+        /* TSan Fix: Atomic load ensures we see all data populated by the queuing thread */        \
+        state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);              \
         bid   = JPH_INVALID_BODY_ID;                                                               \
         if (LIKELY(state == SLOT_ALIVE || state == SLOT_PENDING_CREATE ||                          \
                    state == SLOT_PENDING_DESTROY || state == SLOT_CHARACTER)) {                    \
