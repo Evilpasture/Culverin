@@ -4,18 +4,16 @@
 
 void world_remove_body_slot(PhysicsWorldObject *self, uint32_t slot) {
     const uint32_t dense_idx = self->slot_to_dense[slot];
-    const uint32_t last_dense  = (uint32_t)self->count - 1;
+    
+    // TSan Fix: Load count atomically to determine the last index
+    const uint32_t last_dense = (uint32_t)atomic_load_explicit(&self->count, memory_order_acquire) - 1;
 
     // THE SWAP-TO-DELETE (Dense Pack)
-    // If we aren't removing the very last element, we must migrate the "Mover"
     if (dense_idx != last_dense) {
-        // PREFETCH: Tell the CPU to grab the 'Mover' body's data now.
-        // We prefetch both the source (last) and destination (current).
         CULV_PREFETCH_READ(&self->positions[last_dense]);
         CULV_PREFETCH_WRITE(&self->positions[dense_idx]);
 
-        // --- GROUP 1: PHYSICS STATE (High-Precision Strides) ---
-        // We treat these as raw 128-bit blocks to trigger SIMD instructions.
+        // --- GROUP 1: PHYSICS STATE (Non-atomic) ---
         ((PosStride*)self->positions)[dense_idx]      = ((PosStride*)self->positions)[last_dense];
         ((PosStride*)self->prev_positions)[dense_idx] = ((PosStride*)self->prev_positions)[last_dense];
         
@@ -25,8 +23,7 @@ void world_remove_body_slot(PhysicsWorldObject *self, uint32_t slot) {
         ((AuxStride*)self->linear_velocities)[dense_idx]  = ((AuxStride*)self->linear_velocities)[last_dense];
         ((AuxStride*)self->angular_velocities)[dense_idx] = ((AuxStride*)self->angular_velocities)[last_dense];
 
-        // --- GROUP 2: METADATA (Dword/Qword Blocks) ---
-        // The compiler can optimize these into a single 'rep movsq' or wide vector move.
+        // --- GROUP 2: METADATA (Non-atomic) ---
         self->body_ids[dense_idx]     = self->body_ids[last_dense];
         self->user_data[dense_idx]    = self->user_data[last_dense];
         self->categories[dense_idx]   = self->categories[last_dense];
@@ -40,15 +37,22 @@ void world_remove_body_slot(PhysicsWorldObject *self, uint32_t slot) {
     }
 
     // HOUSEKEEPING
-    // We increment the generation to invalidate all existing Python handles.
-    self->generations[slot]++;
     
-    // Push to free stack
-    self->free_slots[self->free_count++] = slot;
-    self->slot_states[slot]              = SLOT_EMPTY;
+    // 1. Invalidate all existing Python handles by incrementing generation
+    atomic_fetch_add_explicit(&self->generations[slot], 1, memory_order_relaxed);
     
-    // Atomic-style update for the count to ensure 'view_shape' is consistent
-    self->count--;
+    // 2. Mark the slot as empty atomically
+    atomic_store_explicit(&self->slot_states[slot], SLOT_EMPTY, memory_order_relaxed);
+    
+    // 3. Push to free stack atomically
+    // We fetch the current count, use it as index, and increment
+    size_t f_idx = atomic_fetch_add_explicit(&self->free_count, 1, memory_order_relaxed);
+    self->free_slots[f_idx] = slot;
+    
+    // 4. Update the total world count atomically
+    // We use memory_order_release to ensure all memory moves above are visible 
+    // to any thread reading the count (like the renderer).
+    atomic_fetch_sub_explicit(&self->count, 1, memory_order_release);
 }
 
 CULV_NODISCARD
@@ -117,20 +121,37 @@ op_CREATE_BODY: {
     JPH_BodyCreationSettings *s = cmd->create.settings;
     JPH_BodyID new_bid = JPH_BodyInterface_CreateAndAddBody(bi, s, JPH_Activation_Activate);
     
-    // Future Optimization: Replace with an arena allocator to avoid cross-thread malloc locks
     JPH_BodyCreationSettings_Destroy(s);
 
     SHADOW_LOCK(&self->shadow_lock);
 
     if (UNLIKELY(new_bid == JPH_INVALID_BODY_ID)) {
+        // world_remove_body_slot handles atomic count/state updates internally
         world_remove_body_slot(self, slot);
     } else {
+        // body_ids is non-atomic; protected by shadow_lock and the 'is_stepping' phase
         self->body_ids[self->slot_to_dense[slot]] = new_bid;
-        uint32_t j_idx                            = JPH_ID_TO_INDEX(new_bid);
-        if (self->id_to_handle_map && j_idx < self->max_jolt_bodies) {
-            self->id_to_handle_map[j_idx] = make_handle(slot, self->generations[slot]);
+        
+        uint32_t j_idx = JPH_ID_TO_INDEX(new_bid);
+        if (self->id_to_handle_map && j_idx <= self->max_jolt_bodies) {
+            // TSan Fix: Load generation atomically
+            uint32_t gen = atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
+            
+            // BodyHandle is _Atomic uint64_t
+            BodyHandle h = make_handle(slot, gen);
+            
+            // TSan Fix: Extract raw uint64_t to avoid implicit seq_cst load overhead
+            uint64_t raw_h = atomic_load_explicit(&h, memory_order_relaxed);
+
+            // TSan Fix: Publish the new handle to the shared map atomically.
+            // Release ensures the body_ids update above is visible to Query threads.
+            atomic_store_explicit(&self->id_to_handle_map[j_idx], raw_h, memory_order_release);
         }
-        self->slot_states[slot] = SLOT_ALIVE;
+
+        // TSan Fix: Mark the body as ALIVE atomically.
+        // Release creates a barrier: any thread that sees SLOT_ALIVE is guaranteed 
+        // to see the correctly initialized body_ids and id_to_handle_map data.
+        atomic_store_explicit(&self->slot_states[slot], SLOT_ALIVE, memory_order_release);
     }
 
     SHADOW_UNLOCK(&self->shadow_lock);

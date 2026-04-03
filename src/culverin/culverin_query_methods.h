@@ -12,6 +12,8 @@ typedef struct {
 
 constexpr int STACK_ALLOCATE_HITS = 64;
 
+void end_query_scope(PhysicsWorldObject *self);
+
 PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_sphere(PhysicsWorldObject *self,
                                                                 PyObject *const *args,
                                                                 size_t nargsf, PyObject *kwnames);

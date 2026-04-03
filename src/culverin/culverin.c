@@ -1,4 +1,5 @@
 #include "joltc.h"
+#include <stdatomic.h>
 #if !defined(_CRT_SECURE_NO_WARNINGS)
 #    define _CRT_SECURE_NO_WARNINGS
 #endif
@@ -173,16 +174,16 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
     self->contact_max_capacity = 0;
     atomic_init(&self->contact_atomic_idx, 0);
 
-    self->material_count        = 0;
-    self->material_capacity     = 0;
-    self->free_count            = 0;
-    self->slot_capacity         = 0;
-    self->command_count         = 0;
-    self->command_capacity      = 0;
-    self->spare_capacity        = 0;
-    self->shape_cache_count     = 0;
-    self->shape_cache_capacity  = 0;
-    self->count                 = 0;
+    self->material_count    = 0;
+    self->material_capacity = 0;
+    atomic_init(&self->free_count, 0);
+    self->slot_capacity        = 0;
+    self->command_count        = 0;
+    self->command_capacity     = 0;
+    self->spare_capacity       = 0;
+    self->shape_cache_count    = 0;
+    self->shape_cache_capacity = 0;
+    atomic_init(&self->count, 0);
     self->capacity              = 0;
     self->constraint_count      = 0;
     self->constraint_capacity   = 0;
@@ -250,7 +251,8 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
         if (!baked) {
             goto fail;
         }
-        self->count = PyLong_AsSize_t(PyTuple_GetItem(baked, 0));
+        atomic_store_explicit(&self->count, PyLong_AsSize_t(PyTuple_GetItem(baked, 0)),
+                              memory_order_relaxed);
     }
 
     if (allocate_buffers(self, max_bodies) < 0) {
@@ -280,9 +282,16 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
     }
     Py_XDECREF(baked);
 
-    for (auto i = (uint32_t)self->count; i < (uint32_t)self->slot_capacity; i++) {
-        self->generations[i]                 = 1;
-        self->free_slots[self->free_count++] = i;
+    // 1. Load the current count (from baked scene or 0)
+    size_t start_idx = atomic_load_explicit(&self->count, memory_order_relaxed);
+
+    for (uint32_t i = (uint32_t)start_idx; i < (uint32_t)self->slot_capacity; i++) {
+        // 2. Initialize the atomic generation for this slot
+        atomic_init(&self->generations[i], 1);
+
+        // 3. Atomically increment free_count and get the index to store the slot
+        size_t f_idx = atomic_fetch_add_explicit(&self->free_count, 1, memory_order_relaxed);
+        self->free_slots[f_idx] = i;
     }
     SHADOW_LOCK(&self->shadow_lock);
     culverin_sync_shadow_buffers(self);
@@ -299,13 +308,15 @@ fail:
 PyCFunction_DeclareMethod PhysicsWorld_apply_impulse(PhysicsWorldObject *self,
                                                      PyObject *const *args, size_t nargsf,
                                                      PyObject *kwnames) {
-    BodyHandle handle_raw;
+    // 1. FAST PARSE
+    // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
+    uint64_t h_raw;
     float x;
     float y;
     float z;
 
     void *targets[Vec3_COUNT];
-    targets[IDX_V3_H] = &handle_raw;
+    targets[IDX_V3_H] = &h_raw;
     targets[IDX_V3_X] = &x;
     targets[IDX_V3_Y] = &y;
     targets[IDX_V3_Z] = &z;
@@ -317,40 +328,42 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_impulse(PhysicsWorldObject *self,
 
     VALIDATE_FINITE_VEC3(x, y, z, "Impulse");
 
+    // 2. CONCURRENCY & RESOLUTION
     SHADOW_LOCK(&self->shadow_lock);
 
-    // Safety: Don't mutate state while Jolt is updating buffers
+    // Wait for structural updates or buffer swaps
     BLOCK_UNTIL_NOT_STEPPING(self);
 
     uint32_t slot = 0;
-    if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
+    // TSan Fix: Cast to BodyHandle for atomic parameter unpacking
+    if (UNLIKELY(!unpack_handle(self, (BodyHandle)h_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         RAISE_STALE_HANDLE();
     }
 
-    uint8_t state = self->slot_states[slot];
+    // TSan Fix: Atomic load of state (Acquire ensures visibility of the creation data)
+    uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
 
-    // CASE 1: Body is already in Jolt (ALIVE)
-    if (state == SLOT_ALIVE) {
+    // CASE 1: Body is already in Jolt (ALIVE or CHARACTER)
+    if (state == SLOT_ALIVE || state == SLOT_CHARACTER) {
         uint32_t dense_idx = self->slot_to_dense[slot];
         JPH_BodyID bid     = self->body_ids[dense_idx];
 
-        // Release shadow lock, release GIL, and talk to Jolt immediately
         SHADOW_UNLOCK(&self->shadow_lock);
+
         Py_BEGIN_ALLOW_THREADS JPH_Vec3 imp = {x, y, z};
         JPH_BodyInterface_AddImpulse(self->body_interface, bid, &imp);
         JPH_BodyInterface_ActivateBody(self->body_interface, bid);
         Py_END_ALLOW_THREADS
     }
-    // CASE 2: Body was just created but not yet stepped (PENDING_CREATE)
+    // CASE 2: Body is queued but not yet flushed (PENDING_CREATE)
     else if (state == SLOT_PENDING_CREATE) {
         if (UNLIKELY(!ensure_command_capacity(self))) {
             SHADOW_UNLOCK(&self->shadow_lock);
             return PyErr_NoMemory();
         }
 
-        // QUEUE IT: Since the command queue preserves order, this impulse will
-        // execute immediately after the creation command during the next step.
+        // Command queue is non-atomic; protected by SHADOW_LOCK and BLOCK_UNTIL_NOT_STEPPING
         PhysicsCommand *cmd = &self->command_queue[self->command_count++];
         cmd->header         = CMD_HEADER(CMD_APPLY_IMPULSE, slot);
         cmd->vec3f.x        = x;
@@ -358,9 +371,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_impulse(PhysicsWorldObject *self,
         cmd->vec3f.z        = z;
 
         SHADOW_UNLOCK(&self->shadow_lock);
-    }
-    // CASE 3: Body is dead or being destroyed
-    else {
+    } else {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Body is dead or being destroyed");
         return nullptr;
@@ -372,7 +383,9 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_impulse(PhysicsWorldObject *self,
 PyCFunction_DeclareMethod PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self,
                                                         PyObject *const *args, size_t nargsf,
                                                         PyObject *kwnames) {
-    BodyHandle handle_raw;
+    // 1. FAST PARSE
+    // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
+    uint64_t h_raw;
     float ix;
     float iy;
     float iz;
@@ -381,7 +394,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self
     JPH_Real pz;
 
     void *targets[ImpAt_COUNT];
-    targets[IDX_IMPAT_H]  = (void *)&handle_raw;
+    targets[IDX_IMPAT_H]  = (void *)&h_raw;
     targets[IDX_IMPAT_IX] = (void *)&ix;
     targets[IDX_IMPAT_IY] = (void *)&iy;
     targets[IDX_IMPAT_IZ] = (void *)&iz;
@@ -394,23 +407,25 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self
         return nullptr;
     }
 
-    /* Validate parsed vectors before entering critical sections */
     VALIDATE_FINITE_VEC3(ix, iy, iz, "Impulse");
     VALIDATE_FINITE_VEC3(px, py, pz, "Impulse position");
 
+    // 2. CONCURRENCY & RESOLUTION
     SHADOW_LOCK(&self->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
 
     uint32_t slot = 0;
-    if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
+    // TSan Fix: Cast to atomic type for helper unpacking
+    if (UNLIKELY(!unpack_handle(self, (BodyHandle)h_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         RAISE_STALE_HANDLE();
     }
 
-    uint8_t state = self->slot_states[slot];
+    // TSan Fix: Atomic load of state (Acquire ensures creator writes are visible)
+    uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
 
-    // CASE 1: Immediate execution for active bodies
-    if (state == SLOT_ALIVE) {
+    // CASE 1: Immediate execution for active bodies or characters
+    if (state == SLOT_ALIVE || state == SLOT_CHARACTER) {
         JPH_BodyID bid = self->body_ids[self->slot_to_dense[slot]];
         SHADOW_UNLOCK(&self->shadow_lock);
 
@@ -420,7 +435,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self
         JPH_BodyInterface_ActivateBody(self->body_interface, bid);
         Py_END_ALLOW_THREADS
     }
-    // CASE 2: Deferred execution for pending bodies (Causal Consistency)
+    // CASE 2: Deferred execution for pending bodies
     else if (state == SLOT_PENDING_CREATE) {
         if (UNLIKELY(!ensure_command_capacity(self))) {
             SHADOW_UNLOCK(&self->shadow_lock);
@@ -448,14 +463,15 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self
 PyCFunction_DeclareMethod PhysicsWorld_apply_angular_impulse(PhysicsWorldObject *self,
                                                              PyObject *const *args, size_t nargsf,
                                                              PyObject *kwnames) {
-    // 1. FAST PARSE (Zero-Allocation)
-    BodyHandle handle_raw;
+    // 1. FAST PARSE
+    // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
+    uint64_t h_raw;
     float x;
     float y;
     float z;
 
     void *targets[Vec3_COUNT];
-    targets[IDX_V3_H] = (void *)&handle_raw;
+    targets[IDX_V3_H] = (void *)&h_raw;
     targets[IDX_V3_X] = (void *)&x;
     targets[IDX_V3_Y] = (void *)&y;
     targets[IDX_V3_Z] = (void *)&z;
@@ -465,22 +481,23 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_angular_impulse(PhysicsWorldObject 
         return nullptr;
     }
 
-    // Finite validation (Outside lock)
     VALIDATE_FINITE_VEC3(x, y, z, "Angular impulse");
 
-    // 2. CONCURRENCY & EXECUTION
+    // 2. CONCURRENCY & RESOLUTION
     SHADOW_LOCK(&self->shadow_lock);
 
     // Block only if a simulation step is currently swapping buffers
     BLOCK_UNTIL_NOT_STEPPING(self);
 
     uint32_t slot = 0;
-    if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
+    // TSan Fix: Cast to atomic type for helper unpacking
+    if (UNLIKELY(!unpack_handle(self, (BodyHandle)h_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         RAISE_STALE_HANDLE();
     }
 
-    uint8_t state = self->slot_states[slot];
+    // TSan Fix: Atomic load of state (Acquire ensures creator writes are visible)
+    uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
 
     // CASE 1: Body is already active in Jolt
     if (state == SLOT_ALIVE) {
@@ -499,6 +516,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_angular_impulse(PhysicsWorldObject 
             return PyErr_NoMemory();
         }
 
+        // Standard write to non-atomic command queue
         PhysicsCommand *cmd = &self->command_queue[self->command_count++];
         cmd->header         = CMD_HEADER(CMD_APPLY_ANG_IMPULSE, slot);
         cmd->vec3f.x        = x;
@@ -514,19 +532,21 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_angular_impulse(PhysicsWorldObject 
 
     Py_RETURN_NONE;
 }
+
 PyCFunction_DeclareMethod PhysicsWorld_apply_force(PhysicsWorldObject *self, PyObject *const *args,
                                                    size_t nargsf, PyObject *kwnames) {
-    // 1. FAST PARSE (Zero-Allocation)
-    BodyHandle handle_raw;
+    // 1. FAST PARSE
+    // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
+    uint64_t h_raw;
     float x;
     float y;
     float z;
 
     void *targets[Vec3_COUNT];
-    targets[IDX_V3_H] = (void *)&handle_raw;
-    targets[IDX_V3_X] = (void *)&x;
-    targets[IDX_V3_Y] = (void *)&y;
-    targets[IDX_V3_Z] = (void *)&z;
+    targets[IDX_V3_H] = &h_raw;
+    targets[IDX_V3_X] = &x;
+    targets[IDX_V3_Y] = &y;
+    targets[IDX_V3_Z] = &z;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &ForceParser, targets)) {
@@ -535,32 +555,36 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_force(PhysicsWorldObject *self, PyO
 
     VALIDATE_FINITE_VEC3(x, y, z, "Force");
 
-    // 2. CONCURRENCY & EXECUTION
+    // 2. CONCURRENCY & RESOLUTION
     SHADOW_LOCK(&self->shadow_lock);
 
-    // Only block if the world is currently updating its internal buffers
+    // Ensure we aren't mutating while buffers are being swapped
     BLOCK_UNTIL_NOT_STEPPING(self);
 
     uint32_t slot = 0;
-    if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
+    // TSan Fix: Cast raw uint64 to atomic BodyHandle for verification
+    if (UNLIKELY(!unpack_handle(self, (BodyHandle)h_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         RAISE_STALE_HANDLE();
     }
 
-    uint8_t state = self->slot_states[slot];
+    // TSan Fix: Atomic load of state (Acquire ensures visibility of the creation/sync data)
+    uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
 
-    // CASE 1: Body is already in Jolt
-    if (state == SLOT_ALIVE) {
-        JPH_BodyID bid = self->body_ids[self->slot_to_dense[slot]];
+    // CASE 1: Body is active in simulation
+    if (state == SLOT_ALIVE || state == SLOT_CHARACTER) {
+        uint32_t dense_idx = self->slot_to_dense[slot];
+        JPH_BodyID bid     = self->body_ids[dense_idx];
+
         SHADOW_UNLOCK(&self->shadow_lock);
 
         Py_BEGIN_ALLOW_THREADS JPH_Vec3 force_vec = {x, y, z};
-        // Jolt Force is an accumulator, safe to add outside the main step
+        // Jolt forces are thread-safe accumulators
         JPH_BodyInterface_AddForce(self->body_interface, bid, &force_vec);
         JPH_BodyInterface_ActivateBody(self->body_interface, bid);
         Py_END_ALLOW_THREADS
     }
-    // CASE 2: Body is queued for creation (Order-preserving)
+    // CASE 2: Body is queued but not yet in Jolt (Order-preserving)
     else if (state == SLOT_PENDING_CREATE) {
         if (UNLIKELY(!ensure_command_capacity(self))) {
             SHADOW_UNLOCK(&self->shadow_lock);
@@ -582,19 +606,21 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_force(PhysicsWorldObject *self, PyO
 
     Py_RETURN_NONE;
 }
+
 PyCFunction_DeclareMethod PhysicsWorld_apply_torque(PhysicsWorldObject *self, PyObject *const *args,
                                                     size_t nargsf, PyObject *kwnames) {
-    // 1. FAST PARSE (Zero Allocation)
-    BodyHandle handle_raw;
+    // 1. FAST PARSE
+    // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
+    uint64_t h_raw;
     float x;
     float y;
     float z;
 
     void *targets[Vec3_COUNT];
-    targets[IDX_V3_H] = (void *)&handle_raw;
-    targets[IDX_V3_X] = (void *)&x;
-    targets[IDX_V3_Y] = (void *)&y;
-    targets[IDX_V3_Z] = (void *)&z;
+    targets[IDX_V3_H] = &h_raw;
+    targets[IDX_V3_X] = &x;
+    targets[IDX_V3_Y] = &y;
+    targets[IDX_V3_Z] = &z;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &TorqueParser, targets)) {
@@ -603,23 +629,27 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_torque(PhysicsWorldObject *self, Py
 
     VALIDATE_FINITE_VEC3(x, y, z, "Torque");
 
-    // 2. CONCURRENCY & EXECUTION
+    // 2. CONCURRENCY & RESOLUTION
     SHADOW_LOCK(&self->shadow_lock);
 
-    // Block if world is updating buffers, but allow parallel execution with Queries
+    // Block if world is currently swapping buffers
     BLOCK_UNTIL_NOT_STEPPING(self);
 
     uint32_t slot = 0;
-    if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
+    // TSan Fix: Cast to atomic type for helper unpacking
+    if (UNLIKELY(!unpack_handle(self, (BodyHandle)h_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         RAISE_STALE_HANDLE();
     }
 
-    uint8_t state = self->slot_states[slot];
+    // TSan Fix: Atomic load of state (Acquire ensures visibility of the creation data)
+    uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
 
-    // CASE 1: Body is active in Jolt
+    // CASE 1: Body is already in Jolt
     if (state == SLOT_ALIVE) {
-        JPH_BodyID bid = self->body_ids[self->slot_to_dense[slot]];
+        uint32_t dense_idx = self->slot_to_dense[slot];
+        JPH_BodyID bid     = self->body_ids[dense_idx];
+
         SHADOW_UNLOCK(&self->shadow_lock);
 
         Py_BEGIN_ALLOW_THREADS JPH_Vec3 torque_vec = {x, y, z};
@@ -627,13 +657,14 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_torque(PhysicsWorldObject *self, Py
         JPH_BodyInterface_ActivateBody(self->body_interface, bid);
         Py_END_ALLOW_THREADS
     }
-    // CASE 2: Body is queued for creation
+    // CASE 2: Body was just created and not yet flushed
     else if (state == SLOT_PENDING_CREATE) {
         if (UNLIKELY(!ensure_command_capacity(self))) {
             SHADOW_UNLOCK(&self->shadow_lock);
             return PyErr_NoMemory();
         }
 
+        // Standard write to non-atomic command queue
         PhysicsCommand *cmd = &self->command_queue[self->command_count++];
         cmd->header         = CMD_HEADER(CMD_APPLY_TORQUE, slot);
         cmd->vec3f.x        = x;
@@ -649,14 +680,14 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_torque(PhysicsWorldObject *self, Py
 
     Py_RETURN_NONE;
 }
+
 PyCFunction_DeclareMethod PhysicsWorld_set_gravity(PhysicsWorldObject *self, PyObject *const *args,
                                                    size_t nargsf, PyObject *kwnames) {
-    // 1. FAST PARSE (Zero-Allocation)
+    // 1. FAST PARSE (Unchanged)
     float x;
     float y;
     float z;
 
-    // Uses the shared XYZ group count and indices
     void *targets[XYZ_COUNT];
     targets[IDX_XYZ_X] = &x;
     targets[IDX_XYZ_Y] = &y;
@@ -667,42 +698,48 @@ PyCFunction_DeclareMethod PhysicsWorld_set_gravity(PhysicsWorldObject *self, PyO
         return nullptr;
     }
 
-    // Validate gravity vector before touching global state
     VALIDATE_FINITE_VEC3(x, y, z, "Gravity");
 
-    // 2. CRITICAL SECTION
+    // 2. CRITICAL SECTION (ATOMIC REFACTOR)
     SHADOW_LOCK(&self->shadow_lock);
 
-    // Modification of global world properties requires the engine to be idle
+    // Global properties require the engine to be idle
     BLOCK_UNTIL_NOT_STEPPING(self);
 
-    // Jolt Interaction (JPH_Vec3 uses floats)
+    // TSan Fix: Load atomic count safely.
+    // Acquire ensures we see the final state of all shadow buffer mappings.
+    size_t current_count = atomic_load_explicit(&self->count, memory_order_acquire);
+
+    // Jolt Interaction
     JPH_Vec3 g = {x, y, z};
     JPH_PhysicsSystem_SetGravity(self->system, &g);
 
-    // Safety check for body count overflow (Jolt limit)
-    if (UNLIKELY(self->count > UINT32_MAX)) {
+    // Safety check for body count overflow using atomic snapshot
+    if (UNLIKELY(current_count > UINT32_MAX)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_OverflowError, "Body count exceeds Jolt limit");
         return nullptr;
     }
 
-    // Immediate reaction: Wake up all bodies so they fall in the new direction
-    if (self->count > 0) {
+    // Immediate reaction: Wake up all bodies so they react to new gravity direction.
+    // We use the snapshot count to ensure we don't read out-of-bounds of body_ids.
+    if (current_count > 0) {
         JPH_BodyInterface_ActivateBodies(self->body_interface, self->body_ids,
-                                         (uint32_t)self->count);
+                                         (uint32_t)current_count);
     }
 
     SHADOW_UNLOCK(&self->shadow_lock);
     Py_RETURN_NONE;
 }
+
 PyCFunction_DeclareMethod PhysicsWorld_get_body_stats(PhysicsWorldObject *self,
                                                       PyObject *const *args, size_t nargsf,
                                                       PyObject *kwnames) {
-    // 1. FAST PARSE (Zero-Allocation)
-    BodyHandle handle_raw;
+    // 1. FAST PARSE
+    // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
+    uint64_t h_raw;
     void *targets[HOnly_COUNT];
-    targets[IDX_H_H] = (void *)&handle_raw;
+    targets[IDX_H_H] = (void *)&h_raw;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &HOnlyParser, targets)) {
@@ -716,8 +753,17 @@ PyCFunction_DeclareMethod PhysicsWorld_get_body_stats(PhysicsWorldObject *self,
     BLOCK_UNTIL_NOT_STEPPING(self);
 
     uint32_t slot = 0;
-    if (UNLIKELY(!unpack_handle(self, handle_raw, &slot) ||
-                 self->slot_states[slot] != SLOT_ALIVE)) {
+    // TSan Fix: Cast raw uint64 to atomic BodyHandle for verification
+    if (UNLIKELY(!unpack_handle(self, (BodyHandle)h_raw, &slot))) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        RAISE_STALE_HANDLE();
+    }
+
+    // TSan Fix: Atomic load of state (Acquire ensures visibility of creator writes)
+    uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
+
+    // We now allow CHARACTER stats retrieval as they occupy the same shadow buffer layout
+    if (UNLIKELY(state != SLOT_ALIVE && state != SLOT_CHARACTER)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         RAISE_STALE_HANDLE();
     }
@@ -725,14 +771,15 @@ PyCFunction_DeclareMethod PhysicsWorld_get_body_stats(PhysicsWorldObject *self,
     uint32_t i = self->slot_to_dense[slot];
 
     // Snapshot values while holding the lock
-    auto p = ((PosStride *)self->positions)[i];
-    auto r = ((AuxStride *)self->rotations)[i];
-    auto v = ((AuxStride *)self->linear_velocities)[i];
+    // Shadow buffers are non-atomic; protected by SHADOW_LOCK + BLOCK_UNTIL_NOT_STEPPING
+    PosStride p = ((PosStride *)self->positions)[i];
+    AuxStride r = ((AuxStride *)self->rotations)[i];
+    AuxStride v = ((AuxStride *)self->linear_velocities)[i];
 
     SHADOW_UNLOCK(&self->shadow_lock);
 
     // 3. RESULT CONSTRUCTION
-
+    // Nested tuples: ((px, py, pz), (rx, ry, rz, rw), (vx, vy, vz))
     return FastBuild_Tuple(FastBuild_Tuple(p.x, p.y, p.z), FastBuild_Tuple(r.x, r.y, r.z, r.w),
                            FastBuild_Tuple(v.x, v.y, v.z));
 }
@@ -740,7 +787,8 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self,
                                                       PyObject *const *args, size_t nargsf,
                                                       PyObject *kwnames) {
     // 1. DEFAULT VALUES
-    BodyHandle handle_raw;
+    // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
+    uint64_t h_raw;
     double surface_y;
     float buoyancy  = 1.0f;
     float lin_drag  = DEFAULT_LINEAR_DRAG;
@@ -748,9 +796,9 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self,
     float dt        = DEFAULT_FRAME_TIME;
     PyObject *o_vel = nullptr;
 
-    // 2. TARGET MAPPING (Using Buoy Group count and schema indices)
+    // 2. FAST PARSE (Unchanged)
     void *targets[Buoy_COUNT];
-    targets[IDX_BUOY_HANDLE]    = (void *)&handle_raw;
+    targets[IDX_BUOY_HANDLE]    = (void *)&h_raw;
     targets[IDX_BUOY_SURFACE_Y] = (void *)&surface_y;
     targets[IDX_BUOY_BUOYANCY]  = (void *)&buoyancy;
     targets[IDX_BUOY_LIN_DRAG]  = (void *)&lin_drag;
@@ -759,36 +807,39 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self,
     targets[IDX_BUOY_VEL]       = (void *)&o_vel;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    // Use the BuoyParser generated via the X-Macro
     if (!FastParse_Unified(args, nargs, kwnames, &BuoyParser, targets)) {
         return nullptr;
     }
 
-    /* Validate numeric inputs */
     VALIDATE_FINITE_FLOAT(buoyancy, "buoyancy");
     VALIDATE_FINITE_FLOAT(lin_drag, "linear drag");
     VALIDATE_FINITE_FLOAT(ang_drag, "angular drag");
     VALIDATE_FINITE_FLOAT(dt, "dt");
 
-    // Parse fluid velocity tuple if provided (Outside Lock)
     float vx = 0;
     float vy = 0;
     float vz = 0;
     if (o_vel && o_vel != Py_None) {
-        // Generic dispatcher handles JPH_Real vs float automatically
         if (!parse_vec3_direct(o_vel, &vx, &vy, &vz)) {
             return nullptr;
-        }
+}
         VALIDATE_FINITE_VEC3(vx, vy, vz, "fluid velocity");
     }
 
-    // 3. RESOLUTION PHASE (Locked)
+    // 3. RESOLUTION PHASE (ATOMIC REFACTOR)
     SHADOW_LOCK(&self->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
 
     uint32_t slot = 0;
-    if (UNLIKELY(!unpack_handle(self, handle_raw, &slot) ||
-                 self->slot_states[slot] != SLOT_ALIVE)) {
+    // TSan Fix: Cast to BodyHandle for atomic parameter unpacking
+    if (UNLIKELY(!unpack_handle(self, (BodyHandle)h_raw, &slot))) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        Py_RETURN_FALSE;
+    }
+
+    // TSan Fix: Atomic load of state (Acquire ensures sync with Stepper thread)
+    uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
+    if (state != SLOT_ALIVE) {
         SHADOW_UNLOCK(&self->shadow_lock);
         Py_RETURN_FALSE;
     }
@@ -797,7 +848,10 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self,
     JPH_BodyInterface *bi     = self->body_interface;
     JPH_PhysicsSystem *system = self->system;
 
-    // Release lock early to keep Shadow Buffers accessible during math
+    // TSan Fix: Register this as an active query so the Stepper thread
+    // waits for us to finish before executing destruction commands.
+    atomic_fetch_add_explicit(&self->active_queries, 1, memory_order_acquire);
+
     SHADOW_UNLOCK(&self->shadow_lock);
 
     // 4. EXECUTION PHASE (Unlocked & GIL-Friendly)
@@ -807,18 +861,18 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self,
     JPH_Vec3 gravity;
     JPH_PhysicsSystem_GetGravity(system, &gravity);
 
-    // Stack allocate Jolt structures with alignment
     JPH_STACK_ALLOC(JPH_RVec3, surf_pos);
     *surf_pos = (JPH_RVec3){0, (JPH_Real)surface_y, 0};
-
     JPH_STACK_ALLOC(JPH_Vec3, surf_norm);
     *surf_norm = (JPH_Vec3){0, 1.0f, 0};
-
     JPH_STACK_ALLOC(JPH_Vec3, fluid_vel);
     *fluid_vel = (JPH_Vec3){vx, vy, vz};
 
     submerged = JPH_BodyInterface_ApplyBuoyancyImpulse(bi, bid, surf_pos, surf_norm, buoyancy,
                                                        lin_drag, ang_drag, fluid_vel, &gravity, dt);
+
+    // TSan Fix: Signal completion to the Stepper thread
+    end_query_scope(self);
     Py_END_ALLOW_THREADS
 
         return PyBool_FromLong((int)submerged);
@@ -827,7 +881,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self,
 PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy_batch(PhysicsWorldObject *self,
                                                             PyObject *const *args, size_t nargsf,
                                                             PyObject *kwnames) {
-    // 1. DEFAULT VALUES
+    // 1. DEFAULT VALUES (Unchanged)
     PyObject *o_handles = nullptr;
     JPH_Real surface_y  = 0.0;
     float buoyancy      = 1.0f;
@@ -836,7 +890,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy_batch(PhysicsWorldObject *
     float dt            = DEFAULT_FRAME_TIME;
     PyObject *o_vel     = nullptr;
 
-    // 2. FAST PARSE
+    // 2. FAST PARSE (Unchanged)
     void *targets[BatchBuoy_COUNT];
     targets[IDX_BBUOY_HANDLES]   = (void *)&o_handles;
     targets[IDX_BBUOY_SURFACE_Y] = &surface_y;
@@ -851,11 +905,11 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy_batch(PhysicsWorldObject *
         return nullptr;
     }
 
-    // 3. BUFFER & VELOCITY EXTRACTION
+    // 3. BUFFER & VELOCITY EXTRACTION (Unchanged)
     Py_buffer h_view;
     if (PyObject_GetBuffer(o_handles, &h_view, PyBUF_SIMPLE) != 0) {
-        return nullptr; // PyObject_GetBuffer sets the error
-    }
+        return nullptr;
+}
 
     if (UNLIKELY(h_view.itemsize != 8 && h_view.len % 8 != 0)) {
         PyBuffer_Release(&h_view);
@@ -879,41 +933,49 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy_batch(PhysicsWorldObject *
         Py_RETURN_NONE;
     }
 
-    // 4. TEMP ID RESOLUTION (Locked)
+    // 4. TEMP ID RESOLUTION (ATOMIC REFACTOR)
     JPH_BodyID *ids = (JPH_BodyID *)CULV_RAW_MALLOC(count * sizeof(JPH_BodyID));
     if (!ids) {
         PyBuffer_Release(&h_view);
         return PyErr_NoMemory();
     }
 
-    uint64_t *handles  = (uint64_t *)h_view.buf;
-    size_t valid_count = 0;
+    uint64_t *handles_raw = (uint64_t *)h_view.buf;
+    size_t valid_count    = 0;
 
     SHADOW_LOCK(&self->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
 
     for (size_t i = 0; i < count; i++) {
         uint32_t slot = 0;
-        if ((int)unpack_handle(self, handles[i], &slot) && self->slot_states[slot] == SLOT_ALIVE) {
-            ids[valid_count++] = self->body_ids[self->slot_to_dense[slot]];
+        // TSan Fix: Cast raw uint64 to atomic BodyHandle for verification
+        if (unpack_handle(self, (BodyHandle)handles_raw[i], &slot)) {
+            // TSan Fix: Atomic acquire load to synchronize with Stepper thread
+            uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
+            if (state == SLOT_ALIVE) {
+                ids[valid_count++] = self->body_ids[self->slot_to_dense[slot]];
+            }
         }
     }
+
+    if (valid_count > 0) {
+        // TSan Fix: Register active query so Stepper thread waits for batch completion
+        atomic_fetch_add_explicit(&self->active_queries, 1, memory_order_acquire);
+    }
+
     SHADOW_UNLOCK(&self->shadow_lock);
     PyBuffer_Release(&h_view);
 
-    // 5. BATCH EXECUTION (No GIL, No Shadow Lock)
+    // 5. BATCH EXECUTION (Lockless)
     if (valid_count > 0) {
         Py_BEGIN_ALLOW_THREADS JPH_BodyInterface *bi = self->body_interface;
-
         JPH_Vec3 gravity;
         JPH_PhysicsSystem_GetGravity(self->system, &gravity);
 
         JPH_STACK_ALLOC(JPH_RVec3, surf_pos);
         *surf_pos = (JPH_RVec3){0, surface_y, 0};
-
         JPH_STACK_ALLOC(JPH_Vec3, surf_norm);
         *surf_norm = (JPH_Vec3){0, 1.0f, 0};
-
         JPH_STACK_ALLOC(JPH_Vec3, fluid_vel);
         *fluid_vel = (JPH_Vec3){vx, vy, vz};
 
@@ -922,6 +984,9 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy_batch(PhysicsWorldObject *
             JPH_BodyInterface_ApplyBuoyancyImpulse(bi, ids[i], surf_pos, surf_norm, buoyancy,
                                                    lin_drag, ang_drag, fluid_vel, &gravity, dt);
         }
+
+        // TSan Fix: Notify Stepper thread
+        end_query_scope(self);
         Py_END_ALLOW_THREADS
     }
 
@@ -933,24 +998,24 @@ PyCFunction_DeclareMethod PhysicsWorld_save_state(PhysicsWorldObject *self,
                                                   PyObject *Py_UNUSED(unused)) {
     SHADOW_LOCK(&self->shadow_lock);
 
+    // Ensure state is static
     BLOCK_UNTIL_NOT_STEPPING(self);
     BLOCK_UNTIL_NOT_QUERYING(self);
 
-    // 1. Unambiguous Size Calculation using Stride Structs
-    // Create a compile-time constant for the header size
-    constexpr size_t HEADER_SIZE =
-        sizeof(self->count) + sizeof(self->slot_capacity) + sizeof(self->time);
+    // TSan Fix: Load atomic count and snapshot for consistent size calculation
+    size_t current_count = atomic_load_explicit(&self->count, memory_order_acquire);
+    size_t slot_cap      = self->slot_capacity;
+    double current_time  = self->time;
 
-    // Stride 3 for Positions, Stride 4 for Rot/Vel/AngVel
-    size_t pos_size_total = self->count * sizeof(PosStride);
-    size_t aux_size_total = self->count * sizeof(AuxStride);
+    // 1. Size Calculation
+    constexpr size_t HEADER_SIZE = sizeof(size_t) + sizeof(double) + sizeof(size_t);
 
-    size_t mapping_size =
-        self->slot_capacity *
-        (sizeof(typeof(*self->generations)) + sizeof(typeof(*self->slot_to_dense)) +
-         sizeof(typeof(*self->dense_to_slot)) + sizeof(typeof(*self->slot_states)));
+    size_t pos_size_total = current_count * sizeof(PosStride);
+    size_t aux_size_total = current_count * sizeof(AuxStride);
 
-    // Total = Header + (1 * PosStride) + (3 * AuxStride) + Mapping
+    // Mappings: gen(u32), s2d(u32), d2s(u32), state(u8)
+    size_t mapping_size = slot_cap * (sizeof(uint32_t) * 3 + sizeof(uint8_t));
+
     size_t total_size = HEADER_SIZE + pos_size_total + (3 * aux_size_total) + mapping_size;
 
     PyObject *bytes = PyBytes_FromStringAndSize(nullptr, (Py_ssize_t)total_size);
@@ -961,51 +1026,50 @@ PyCFunction_DeclareMethod PhysicsWorld_save_state(PhysicsWorldObject *self,
 
     char *ptr = PyBytes_AsString(bytes);
 
-    // 2. Encode Header
-    memcpy(ptr, &self->count, sizeof(typeof(self->count)));
-    ptr += sizeof(typeof(self->count));
-    memcpy(ptr, &self->time, sizeof(typeof(self->time)));
-    ptr += sizeof(typeof(self->time));
-    memcpy(ptr, &self->slot_capacity, sizeof(typeof(self->slot_capacity)));
-    ptr += sizeof(typeof(self->slot_capacity));
+    // 2. Encode Header (Using snapshot values)
+    memcpy(ptr, &current_count, sizeof(size_t));
+    ptr += sizeof(size_t);
+    memcpy(ptr, &current_time, sizeof(double));
+    ptr += sizeof(double);
+    memcpy(ptr, &slot_cap, sizeof(size_t));
+    ptr += sizeof(size_t);
 
-    // 3. Encode Dense Buffers (Stride Sensitive)
-    // Position (Stride 3 + 1 _pad)
+    // 3. Encode Dense Buffers (Non-atomic, safe to memcpy under lock)
     memcpy(ptr, self->positions, pos_size_total);
     ptr += pos_size_total;
 
-    // Rotation (Stride 4)
     memcpy(ptr, self->rotations, aux_size_total);
     ptr += aux_size_total;
 
-    // Linear Velocity (Stride 4)
     memcpy(ptr, self->linear_velocities, aux_size_total);
     ptr += aux_size_total;
 
-    // Angular Velocity (Stride 4)
     memcpy(ptr, self->angular_velocities, aux_size_total);
     ptr += aux_size_total;
 
-    // 4. Encode Mapping Tables (Source -> Destination)
-    // generations
-    size_t gen_sz = self->slot_capacity * sizeof(*self->generations);
-    memcpy(ptr, self->generations, gen_sz);
-    ptr += gen_sz;
+    // 4. Encode Mapping Tables (ATOMIC REFACTOR)
 
-    // slot_to_dense
-    size_t s2d_sz = self->slot_capacity * sizeof(*self->slot_to_dense);
-    memcpy(ptr, self->slot_to_dense, s2d_sz);
-    ptr += s2d_sz;
+    // Generations (Atomic uint32_t)
+    uint32_t *out_gens = (uint32_t *)ptr;
+    for (size_t i = 0; i < slot_cap; i++) {
+        out_gens[i] = atomic_load_explicit(&self->generations[i], memory_order_relaxed);
+    }
+    ptr += (slot_cap * sizeof(uint32_t));
 
-    // dense_to_slot
-    size_t d2s_sz = self->slot_capacity * sizeof(*self->dense_to_slot);
-    memcpy(ptr, self->dense_to_slot, d2s_sz);
-    ptr += d2s_sz;
+    // slot_to_dense (Non-atomic)
+    memcpy(ptr, self->slot_to_dense, slot_cap * sizeof(uint32_t));
+    ptr += (slot_cap * sizeof(uint32_t));
 
-    // slot_states
-    size_t state_sz = self->slot_capacity * sizeof(*self->slot_states);
-    memcpy(ptr, self->slot_states, state_sz);
-    ptr += state_sz;
+    // dense_to_slot (Non-atomic)
+    memcpy(ptr, self->dense_to_slot, slot_cap * sizeof(uint32_t));
+    ptr += (slot_cap * sizeof(uint32_t));
+
+    // slot_states (Atomic uint8_t)
+    uint8_t *out_stats = (uint8_t *)ptr;
+    for (size_t i = 0; i < slot_cap; i++) {
+        out_stats[i] = atomic_load_explicit(&self->slot_states[i], memory_order_relaxed);
+    }
+    // ptr increment not needed for the last block
 
     SHADOW_UNLOCK(&self->shadow_lock);
     return bytes;
@@ -1023,72 +1087,67 @@ PyCFunction_DeclareMethod PhysicsWorld_load_state(PhysicsWorldObject *self, PyOb
 
     Py_buffer view;
     if (PyObject_GetBuffer(state_obj, &view, PyBUF_SIMPLE) != 0) {
-        return nullptr; // PyObject_GetBuffer sets the TypeError for us
+        return nullptr;
     }
-    // -------------------------
 
-    // 1. IMMEDIATE SNAPSHOT (GIL held)
+    // 1. Snapshot raw buffer (GIL held)
     void *local_state_copy = CULV_RAW_MALLOC(view.len);
     if (!local_state_copy) {
         PyBuffer_Release(&view);
         return PyErr_NoMemory();
     }
     memcpy(local_state_copy, view.buf, view.len);
-    auto total_len = (size_t)view.len;
+    size_t total_len = (size_t)view.len;
     PyBuffer_Release(&view);
 
     SHADOW_LOCK(&self->shadow_lock);
 
-    // 2. CONCURRENCY GUARD
+    // 2. Concurrency Guard
     BLOCK_UNTIL_NOT_STEPPING(self);
     BLOCK_UNTIL_NOT_QUERYING(self);
 
-    // 3. HEADER EXTRACTION
-    auto *ptr = (char *)local_state_copy;
-    constexpr size_t HEADER_SIZE =
-        sizeof(self->count) + sizeof(self->slot_capacity) + sizeof(self->time);
+    // 3. Header Extraction (Using standard types, matching save_state format)
+    char *ptr                    = (char *)local_state_copy;
+    constexpr size_t HEADER_SIZE = sizeof(size_t) + sizeof(double) + sizeof(size_t);
 
     if (total_len < HEADER_SIZE) {
         goto size_fail;
     }
 
-    auto saved_count    = (typeof(self->count))0;
-    auto saved_slot_cap = (typeof(self->slot_capacity))0;
-    auto saved_time     = (typeof(self->time))0.0;
+    size_t saved_count = 0;
+    double saved_time  = 0.0;
+    size_t saved_cap   = 0;
 
-    memcpy(&saved_count, ptr, sizeof(saved_count));
-    ptr += sizeof(saved_count);
-    memcpy(&saved_time, ptr, sizeof(saved_time));
-    ptr += sizeof(saved_time);
-    memcpy(&saved_slot_cap, ptr, sizeof(saved_slot_cap));
-    ptr += sizeof(saved_slot_cap);
+    memcpy(&saved_count, ptr, sizeof(size_t));
+    ptr += sizeof(size_t);
+    memcpy(&saved_time, ptr, sizeof(double));
+    ptr += sizeof(double);
+    memcpy(&saved_cap, ptr, sizeof(size_t));
+    ptr += sizeof(size_t);
 
-    if (saved_slot_cap != self->slot_capacity) {
+    if (saved_cap != self->slot_capacity) {
         SHADOW_UNLOCK(&self->shadow_lock);
         CULV_RAW_FREE(local_state_copy);
         PyErr_Format(PyExc_ValueError, "Capacity mismatch: World is %zu, Snapshot is %zu",
-                     self->slot_capacity, saved_slot_cap);
+                     self->slot_capacity, saved_cap);
         return nullptr;
     }
 
-    // 4. FULL SIZE VALIDATION
-    size_t pos_bytes = saved_count * sizeof(PosStride);
-    size_t aux_bytes = saved_count * sizeof(AuxStride);
-    size_t mapping_bytes =
-        saved_slot_cap *
-        (sizeof(typeof(*self->generations)) + sizeof(typeof(*self->slot_to_dense)) +
-         sizeof(typeof(*self->dense_to_slot)) + sizeof(typeof(*self->slot_states)));
+    // 4. Size Validation
+    size_t pos_bytes     = saved_count * sizeof(PosStride);
+    size_t aux_bytes     = saved_count * sizeof(AuxStride);
+    size_t mapping_bytes = saved_cap * (sizeof(uint32_t) * 3 + sizeof(uint8_t));
 
-    size_t expected = HEADER_SIZE + pos_bytes + (aux_bytes * 3) + mapping_bytes;
-    if (UNLIKELY(total_len != expected)) {
+    if (UNLIKELY(total_len != (HEADER_SIZE + pos_bytes + (aux_bytes * 3) + mapping_bytes))) {
         goto size_fail;
     }
 
-    // 5. RESTORE SHADOW STATE
-    self->count         = saved_count;
+    // 5. Restore World Context
+    atomic_store_explicit(&self->count, saved_count, memory_order_relaxed);
     self->time          = saved_time;
-    self->view_shape[0] = (Py_ssize_t)self->count;
+    self->view_shape[0] = (Py_ssize_t)saved_count;
 
+    // 6. Restore Shadow Buffers (Non-atomic, safe to memcpy under lock)
     memcpy(self->positions, ptr, pos_bytes);
     ptr += pos_bytes;
     memcpy(self->rotations, ptr, aux_bytes);
@@ -1098,38 +1157,40 @@ PyCFunction_DeclareMethod PhysicsWorld_load_state(PhysicsWorldObject *self, PyOb
     memcpy(self->angular_velocities, ptr, aux_bytes);
     ptr += aux_bytes;
 
-    size_t gen_sz = self->slot_capacity * sizeof(*self->generations);
-    memcpy(self->generations, ptr, gen_sz);
-    ptr += gen_sz;
+    // 7. Restore Atomic Mappings (Loop required)
+    uint32_t *in_gens = (uint32_t *)ptr;
+    for (size_t i = 0; i < saved_cap; i++) {
+        atomic_store_explicit(&self->generations[i], in_gens[i], memory_order_relaxed);
+    }
+    ptr += (saved_cap * sizeof(uint32_t));
 
-    size_t s2d_sz = self->slot_capacity * sizeof(*self->slot_to_dense);
-    memcpy(self->slot_to_dense, ptr, s2d_sz);
-    ptr += s2d_sz;
+    memcpy(self->slot_to_dense, ptr, saved_cap * sizeof(uint32_t));
+    ptr += (saved_cap * sizeof(uint32_t));
+    memcpy(self->dense_to_slot, ptr, saved_cap * sizeof(uint32_t));
+    ptr += (saved_cap * sizeof(uint32_t));
 
-    size_t d2s_sz = self->slot_capacity * sizeof(*self->dense_to_slot);
-    memcpy(self->dense_to_slot, ptr, d2s_sz);
-    ptr += d2s_sz;
-
-    size_t state_sz = self->slot_capacity * sizeof(*self->slot_states);
-    memcpy(self->slot_states, ptr, state_sz);
-    ptr += state_sz;
-
-    // 6. REBUILD FREE LIST
-    self->free_count = 0;
-    for (auto i = 0u; i < (uint32_t)self->slot_capacity; i++) {
-        if (self->slot_states[i] == SLOT_EMPTY) {
-            self->free_slots[self->free_count++] = i;
-        }
+    uint8_t *in_stats = (uint8_t *)ptr;
+    for (size_t i = 0; i < saved_cap; i++) {
+        atomic_store_explicit(&self->slot_states[i], in_stats[i], memory_order_relaxed);
     }
 
-    auto *shadow_pos  = (PosStride *)self->positions;
-    auto *shadow_rot  = (AuxStride *)self->rotations;
-    auto *shadow_lvel = (AuxStride *)self->linear_velocities;
-    auto *shadow_avel = (AuxStride *)self->angular_velocities;
+    // 8. Rebuild Free List
+    size_t local_free_count = 0;
+    for (uint32_t i = 0; i < saved_cap; i++) {
+        if (atomic_load_explicit(&self->slot_states[i], memory_order_relaxed) == SLOT_EMPTY) {
+            self->free_slots[local_free_count++] = i;
+        }
+    }
+    atomic_store_explicit(&self->free_count, local_free_count, memory_order_release);
 
-    // 7. JOLT SYNC
+    // 9. JPH SYNC (Bridges Shadow to C++)
     JPH_BodyID *bids      = self->body_ids;
     JPH_BodyInterface *bi = self->body_interface;
+    auto *shadow_pos      = (PosStride *)self->positions;
+    auto *shadow_rot      = (AuxStride *)self->rotations;
+    auto *shadow_lvel     = (AuxStride *)self->linear_velocities;
+    auto *shadow_avel     = (AuxStride *)self->angular_velocities;
+
     SHADOW_UNLOCK(&self->shadow_lock);
 
     for (size_t i = 0; i < saved_count; i++) {
@@ -1147,13 +1208,16 @@ PyCFunction_DeclareMethod PhysicsWorld_load_state(PhysicsWorldObject *self, PyOb
         JPH_BodyInterface_SetLinearVelocity(bi, bid, &lv);
         JPH_BodyInterface_SetAngularVelocity(bi, bid, &av);
 
-        uint32_t slot    = self->dense_to_slot[i];
-        BodyHandle new_h = make_handle(slot, self->generations[slot]);
-        JPH_BodyInterface_SetUserData(bi, bid, (uint64_t)new_h);
+        uint32_t slot = self->dense_to_slot[i];
+        uint32_t gen  = atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
 
+        BodyHandle h   = make_handle(slot, gen);
+        uint64_t raw_h = atomic_load_explicit(&h, memory_order_relaxed);
+
+        JPH_BodyInterface_SetUserData(bi, bid, raw_h);
         uint32_t j_idx = JPH_ID_TO_INDEX(bid);
-        if (self->id_to_handle_map && j_idx < self->max_jolt_bodies) {
-            self->id_to_handle_map[j_idx] = new_h;
+        if (self->id_to_handle_map && j_idx <= self->max_jolt_bodies) {
+            atomic_store_explicit(&self->id_to_handle_map[j_idx], raw_h, memory_order_relaxed);
         }
     }
 
@@ -1178,12 +1242,12 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
         return nullptr;
     }
 
-    /* Validate timestep */
     VALIDATE_FINITE_FLOAT(dt, "dt");
 
+    // Check death flag
     if (atomic_load_explicit(&self->is_deallocating, memory_order_acquire)) {
         PyErr_SetString(PyExc_RuntimeError, "Cannot step: World is deallocating");
-        return nullptr; // World is dying, step is impossible
+        return nullptr;
     }
 
     // --- PHASE 0: RE-ENTRANCY GUARD ---
@@ -1195,18 +1259,18 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
     // --- PHASE 1: SHADOW STATE LOCK-DOWN ---
     SHADOW_LOCK(&self->shadow_lock);
 
-    // ANTI-STARVATION HANDOFF: Yield priority to Python threads waiting to read/mutate
+    // ANTI-STARVATION: Yield to waiting Python threads (Getters/Mutators)
     while (atomic_load_explicit(&self->waiting_threads, memory_order_acquire) > 0) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        Py_BEGIN_ALLOW_THREADS culverin_yield(); // HW & OS level yield (Releases GIL safely)
+        Py_BEGIN_ALLOW_THREADS culverin_yield();
         Py_END_ALLOW_THREADS SHADOW_LOCK(&self->shadow_lock);
     }
 
-    // Block ALL Python mutators and Raycasts
+    // Raise flags
     atomic_store_explicit(&self->is_stepping, true, memory_order_relaxed);
     atomic_store_explicit(&self->step_requested, true, memory_order_relaxed);
 
-    // Wait for in-flight queries to finish
+    // Drain in-flight queries
     if (atomic_load_explicit(&self->active_queries, memory_order_acquire) > 0) {
         SHADOW_UNLOCK(&self->shadow_lock);
         Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(self->step_sync.mutex);
@@ -1217,7 +1281,7 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
         Py_END_ALLOW_THREADS SHADOW_LOCK(&self->shadow_lock);
     }
 
-    // Command Queue Swap
+    // Command Queue Swap (Safe non-atomic logic under SHADOW_LOCK)
     PhysicsCommand *captured_queue = self->command_queue;
     size_t captured_count          = self->command_count;
 
@@ -1225,6 +1289,9 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
         void *new_spare = CULV_RAW_REALLOC(self->command_queue_spare,
                                            self->command_capacity * sizeof(PhysicsCommand));
         if (UNLIKELY(!new_spare)) {
+            // Rollback flags on OOM
+            atomic_store_explicit(&self->is_stepping, false, memory_order_relaxed);
+            atomic_store_explicit(&self->step_requested, false, memory_order_relaxed);
             SHADOW_UNLOCK(&self->shadow_lock);
             return PyErr_NoMemory();
         }
@@ -1249,7 +1316,7 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
         self->needs_optimization = true;
     }
 
-    // 2. Advance Simulation
+    // 2. Simulation Step
     if (dt <= 0.0f) {
         JPH_PhysicsSystem_OptimizeBroadPhase(self->system);
         self->needs_optimization = false;
@@ -1261,23 +1328,18 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
         }
     }
 
-    // 3. Sync Buffer Results (Jolt-to-Shadow)
-    // is_stepping is STILL TRUE here, so Python mutators are still waiting.
-    // This is the CRITICAL FIX for the stale handle race.
+    // 3. Jolt-to-Shadow Buffer Sync
     culverin_sync_shadow_buffers(self);
 
-    // We use captured_count as the unit, but use 1 if captured_count is 0
-    // to avoid division by zero or empty reporting.
-    CULV_PROFILE_END(jolt_step, "Jolt Physics Crunch",
-                     (captured_count > 0 ? (unsigned int)captured_count : 1));
+    CULV_PROFILE_END(jolt_step, "Jolt Physics Crunch", (unsigned int)captured_count);
 
     NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
     Py_END_ALLOW_THREADS
 
-        // --- PHASE 3: FINALIZATION & RELEASE ---
+        // --- PHASE 3: FINALIZATION ---
         SHADOW_LOCK(&self->shadow_lock);
 
-    // Clear Trash
+    // 1. Cleanup retired buffers (Atomic gens/stats handled in free_new_buffers)
     if (self->trash_count > 0) {
         for (size_t i = 0; i < self->trash_count; i++) {
             free_new_buffers(&self->trash_buffers[i]);
@@ -1285,12 +1347,17 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
         self->trash_count = 0;
     }
 
-    // Finalize Metadata
+    // 2. Metadata Updates
     size_t c_idx        = atomic_load_explicit(&self->contact_atomic_idx, memory_order_acquire);
     self->contact_count = (c_idx > self->contact_max_capacity) ? self->contact_max_capacity : c_idx;
+
+    // TSan Fix: Snapshot final atomic body count to update Python memoryview layout
+    size_t final_count  = atomic_load_explicit(&self->count, memory_order_acquire);
+    self->view_shape[0] = (Py_ssize_t)final_count;
+
     self->time += (double)dt;
 
-    // RELEASE THE FENCE: Python threads can now enter safely
+    // 3. Fence Release
     atomic_store_explicit(&self->is_stepping, false, memory_order_release);
     atomic_store_explicit(&self->step_requested, false, memory_order_release);
 
@@ -1432,56 +1499,68 @@ PyCFunction_DeclareMethod PhysicsWorld_create_convex_hull(PhysicsWorldObject *se
         JPH_BodyCreationSettings_SetMotionQuality(settings, JPH_MotionQuality_LinearCast);
     }
 
-    // 6. COMMIT PHASE (Critical Section)
+    // 6. COMMIT PHASE (ATOMIC REFACTOR)
     SHADOW_LOCK(&self->shadow_lock);
-
-    // Protect against concurrent simulation or shadow buffer queries
     BLOCK_UNTIL_NOT_STEPPING(self);
 
-    if (UNLIKELY(self->free_count == 0 || self->count + 1 > self->capacity)) {
-        if (PhysicsWorld_resize(self, (self->capacity == 0) ? INITIAL_BODY_CAPACITY
-                                                            : self->capacity * 2) < 0) {
+    // TSan Fix: Read counts atomically
+    size_t available     = atomic_load_explicit(&self->free_count, memory_order_acquire);
+    size_t current_count = atomic_load_explicit(&self->count, memory_order_acquire);
+
+    if (UNLIKELY(available == 0 || current_count + 1 > self->capacity)) {
+        if (PhysicsWorld_resize(self, (self->capacity == 0) ? INITIAL_BODY_CAPACITY : self->capacity * 2) < 0) {
             SHADOW_UNLOCK(&self->shadow_lock);
             JPH_BodyCreationSettings_Destroy(settings);
             JPH_Shape_Destroy(shape);
             return nullptr;
         }
+        available = atomic_load_explicit(&self->free_count, memory_order_acquire);
     }
 
-    uint32_t slot     = self->free_slots[--self->free_count];
-    uint32_t dense    = (uint32_t)self->count++;
-    BodyHandle handle = make_handle(slot, self->generations[slot]);
-    JPH_BodyCreationSettings_SetUserData(settings, (uint64_t)handle);
+    // Pop from free stack atomically
+    uint32_t slot = self->free_slots[available - 1];
+    atomic_store_explicit(&self->free_count, available - 1, memory_order_release);
 
-    // Update Shadow Buffers
-    ((PosStride *)self->positions)[dense]         = (PosStride){.x = px, .y = py, .z = pz};
-    ((AuxStride *)self->rotations)[dense]         = (AuxStride){.x = rx, .y = ry, .z = rz, .w = rw};
-    ((AuxStride *)self->linear_velocities)[dense] = (AuxStride){};
+    // Increment total count atomically
+    uint32_t dense = (uint32_t)atomic_fetch_add_explicit(&self->count, 1, memory_order_relaxed);
+
+    // Prepare Handle
+    uint32_t gen      = atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
+    BodyHandle handle = make_handle(slot, gen);
+    uint64_t raw_h    = atomic_load_explicit(&handle, memory_order_relaxed);
+    JPH_BodyCreationSettings_SetUserData(settings, raw_h);
+
+    // Update Shadow Buffers (Non-atomic)
+    ((PosStride *)self->positions)[dense]          = (PosStride){px, py, pz, 0.0};
+    ((AuxStride *)self->rotations)[dense]          = (AuxStride){rx, ry, rz, rw};
+    ((AuxStride *)self->linear_velocities)[dense]  = (AuxStride){};
     ((AuxStride *)self->angular_velocities)[dense] = (AuxStride){};
 
-    self->categories[dense]   = category;
-    self->masks[dense]        = mask;
-    self->material_ids[dense] = material_id;
-    self->user_data[dense]    = user_data;
-    self->body_ids[dense]     = JPH_INVALID_BODY_ID;
-
+    self->categories[dense]    = category;
+    self->masks[dense]         = mask;
+    self->material_ids[dense]  = material_id;
+    self->user_data[dense]     = user_data;
+    self->body_ids[dense]      = JPH_INVALID_BODY_ID;
     self->slot_to_dense[slot]  = dense;
     self->dense_to_slot[dense] = slot;
-    self->slot_states[slot]    = SLOT_PENDING_CREATE;
-    self->view_shape[0]        = (Py_ssize_t)self->count;
+
+    // TSan Fix: Publish state atomically (Release creates synchronization boundary)
+    atomic_store_explicit(&self->slot_states[slot], SLOT_PENDING_CREATE, memory_order_release);
+    self->view_shape[0] = (Py_ssize_t)atomic_load_explicit(&self->count, memory_order_relaxed);
 
     if (UNLIKELY(!ensure_command_capacity(self))) {
-        // Rollback structural changes
-        self->count--;
-        self->free_slots[self->free_count++] = slot;
-        self->slot_states[slot]              = SLOT_EMPTY;
+        // Atomic Rollback
+        atomic_fetch_sub_explicit(&self->count, 1, memory_order_relaxed);
+        size_t r_idx = atomic_fetch_add_explicit(&self->free_count, 1, memory_order_relaxed);
+        self->free_slots[r_idx] = slot;
+        atomic_store_explicit(&self->slot_states[slot], SLOT_EMPTY, memory_order_relaxed);
+
         SHADOW_UNLOCK(&self->shadow_lock);
         JPH_BodyCreationSettings_Destroy(settings);
         JPH_Shape_Destroy(shape);
         return PyErr_NoMemory();
     }
 
-    // Queue Creation Command
     PhysicsCommand *cmd     = &self->command_queue[self->command_count++];
     cmd->header             = CMD_HEADER(CMD_CREATE_BODY, slot);
     cmd->create.settings    = settings;
@@ -1491,11 +1570,9 @@ PyCFunction_DeclareMethod PhysicsWorld_create_convex_hull(PhysicsWorldObject *se
     cmd->create.material_id = material_id;
 
     SHADOW_UNLOCK(&self->shadow_lock);
-
-    // BodySettings/Jolt now owns the shape ref; destroy local handle
     JPH_Shape_Destroy(shape);
 
-    return PyLong_FromUnsignedLongLong(handle);
+    return PyLong_FromUnsignedLongLong(raw_h);
 }
 
 // Helper 1: Build the Jolt Compound Shape from the Python parts list
@@ -1728,14 +1805,15 @@ PyCFunction_DeclareMethod PhysicsWorld_create_compound_body(PhysicsWorldObject *
                                .use_ccd     = (int)use_ccd};
     apply_body_creation_props(settings, final_shape, props);
 
-    // 6. COMMIT PHASE (Shadow Lock)
+    // 6. COMMIT PHASE (ATOMIC REFACTOR)
     SHADOW_LOCK(&self->shadow_lock);
-
-    // Critical: Block for both simulation and current queries (e.g. Raycasts)
     BLOCK_UNTIL_NOT_STEPPING(self);
 
-    // Check Capacity
-    if (UNLIKELY(self->free_count == 0 || self->count + 1 > self->capacity)) {
+    // TSan Fix: Load counters atomically
+    size_t available     = atomic_load_explicit(&self->free_count, memory_order_acquire);
+    size_t current_count = atomic_load_explicit(&self->count, memory_order_acquire);
+
+    if (UNLIKELY(available == 0 || current_count + 1 > self->capacity)) {
         size_t needed = (self->capacity == 0) ? INITIAL_BODY_CAPACITY : self->capacity * 2;
         if (PhysicsWorld_resize(self, needed) < 0) {
             SHADOW_UNLOCK(&self->shadow_lock);
@@ -1743,42 +1821,54 @@ PyCFunction_DeclareMethod PhysicsWorld_create_compound_body(PhysicsWorldObject *
             JPH_Shape_Destroy(final_shape);
             return nullptr;
         }
+        available = atomic_load_explicit(&self->free_count, memory_order_acquire);
     }
 
-    uint32_t slot     = self->free_slots[--self->free_count];
-    uint32_t dense    = (uint32_t)self->count++;
-    BodyHandle handle = make_handle(slot, self->generations[slot]);
-    JPH_BodyCreationSettings_SetUserData(settings, (uint64_t)handle);
+    // Atomic Pop from free stack
+    uint32_t slot = self->free_slots[available - 1];
+    atomic_store_explicit(&self->free_count, available - 1, memory_order_release);
 
-    // --- IMMEDIATE SHADOW WRITE ---
-    PosStride p                                = {.x = px, .y = py, .z = pz};
-    ((PosStride *)self->positions)[dense]      = p;
-    ((PosStride *)self->prev_positions)[dense] = p;
+    // Atomic dense index increment
+    uint32_t dense = (uint32_t)atomic_fetch_add_explicit(&self->count, 1, memory_order_relaxed);
 
-    AuxStride q                                = {.x = rx, .y = ry, .z = rz, .w = rw};
-    ((AuxStride *)self->rotations)[dense]      = q;
-    ((AuxStride *)self->prev_rotations)[dense] = q;
+    // Prepare handle using explicit relaxed load to avoid implicit seq_cst
+    uint32_t gen      = atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
+    BodyHandle handle = make_handle(slot, gen);
+    uint64_t raw_h    = atomic_load_explicit(&handle, memory_order_relaxed);
+    JPH_BodyCreationSettings_SetUserData(settings, raw_h);
+
+    // Update non-atomic Shadow Buffers
+    PosStride p_val                            = {.x = px, .y = py, .z = pz, .w = 0.0};
+    ((PosStride *)self->positions)[dense]      = p_val;
+    ((PosStride *)self->prev_positions)[dense] = p_val;
+
+    AuxStride q_val                            = {.x = rx, .y = ry, .z = rz, .w = rw};
+    ((AuxStride *)self->rotations)[dense]      = q_val;
+    ((AuxStride *)self->prev_rotations)[dense] = q_val;
 
     ((AuxStride *)self->linear_velocities)[dense]  = (AuxStride){};
     ((AuxStride *)self->angular_velocities)[dense] = (AuxStride){};
 
-    self->categories[dense]   = category;
-    self->masks[dense]        = mask;
-    self->material_ids[dense] = material_id;
-    self->user_data[dense]    = user_data;
-    self->body_ids[dense]     = JPH_INVALID_BODY_ID;
-
+    self->categories[dense]    = category;
+    self->masks[dense]         = mask;
+    self->material_ids[dense]  = material_id;
+    self->user_data[dense]     = user_data;
+    self->body_ids[dense]      = JPH_INVALID_BODY_ID;
     self->slot_to_dense[slot]  = dense;
     self->dense_to_slot[dense] = slot;
-    self->slot_states[slot]    = SLOT_PENDING_CREATE;
-    self->view_shape[0]        = (Py_ssize_t)self->count;
+
+    // TSan Fix: Publish state and update view atomically
+    atomic_store_explicit(&self->slot_states[slot], SLOT_PENDING_CREATE, memory_order_release);
+    self->view_shape[0] = (Py_ssize_t)atomic_load_explicit(&self->count, memory_order_relaxed);
 
     // 7. QUEUE COMMAND
     if (UNLIKELY(!ensure_command_capacity(self))) {
-        // Rollback structural changes on failure
-        self->count--;
-        self->free_slots[self->free_count++] = slot;
-        self->slot_states[slot]              = SLOT_EMPTY;
+        // Atomic Rollback
+        atomic_fetch_sub_explicit(&self->count, 1, memory_order_relaxed);
+        size_t r_idx = atomic_fetch_add_explicit(&self->free_count, 1, memory_order_relaxed);
+        self->free_slots[r_idx] = slot;
+        atomic_store_explicit(&self->slot_states[slot], SLOT_EMPTY, memory_order_relaxed);
+
         SHADOW_UNLOCK(&self->shadow_lock);
         JPH_BodyCreationSettings_Destroy(settings);
         JPH_Shape_Destroy(final_shape);
@@ -1794,10 +1884,8 @@ PyCFunction_DeclareMethod PhysicsWorld_create_compound_body(PhysicsWorldObject *
     cmd->create.material_id = material_id;
 
     SHADOW_UNLOCK(&self->shadow_lock);
-
-    // Local ref destroyed; Jolt Settings and the Body now own the shape ref.
     JPH_Shape_Destroy(final_shape);
-    return PyLong_FromUnsignedLongLong(handle);
+    return PyLong_FromUnsignedLongLong(raw_h);
 }
 
 // Helper 1: Resolve material properties based on ID and explicit overrides
@@ -1996,84 +2084,78 @@ PyCFunction_DeclareMethod PhysicsWorld_create_body(PhysicsWorldObject *self, PyO
         return PyErr_Format(PyExc_RuntimeError, "Failed to create BodySettings");
     }
 
-    // --- COMMIT PHASE: SHADOW BUFFER UPDATE ---
+    // --- COMMIT PHASE: SHADOW BUFFER UPDATE (ATOMIC REFACTOR) ---
     SHADOW_LOCK(&self->shadow_lock);
-
     BLOCK_UNTIL_NOT_STEPPING(self);
 
-    // CRITICAL: Check Jolt limits before assigning a handle
-    if (UNLIKELY(self->count >= self->max_jolt_bodies)) {
+    // TSan Fix: Load counts atomically to check Jolt and shadow limits
+    size_t current_count = atomic_load_explicit(&self->count, memory_order_acquire);
+    size_t available     = atomic_load_explicit(&self->free_count, memory_order_acquire);
+
+    if (UNLIKELY(current_count >= self->max_jolt_bodies)) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_Format(PyExc_RuntimeError,
-                     "PhysicsWorld limit reached: %u/%u bodies. Increase 'max_bodies' in settings.",
-                     (uint32_t)self->count, self->max_jolt_bodies);
-        return nullptr;
+        JPH_BodyCreationSettings_Destroy(settings);
+        return PyErr_Format(PyExc_RuntimeError, "PhysicsWorld limit reached: %zu bodies",
+                            self->max_jolt_bodies);
     }
 
-    // Ensure Shadow Buffer Capacity (but cap it at max_jolt_bodies)
-    if (UNLIKELY(self->free_count == 0 || self->count + 1 > self->capacity)) {
+    if (UNLIKELY(available == 0 || current_count + 1 > self->capacity)) {
         size_t next_cap = (self->capacity == 0) ? INITIAL_BODY_CAPACITY : self->capacity * 2;
         if (next_cap > self->max_jolt_bodies) {
             next_cap = self->max_jolt_bodies;
         }
-
         if (PhysicsWorld_resize(self, next_cap) < 0) {
             SHADOW_UNLOCK(&self->shadow_lock);
             JPH_BodyCreationSettings_Destroy(settings);
             return nullptr;
         }
+        available = atomic_load_explicit(&self->free_count, memory_order_acquire);
     }
 
-    uint32_t slot     = self->free_slots[--self->free_count];
-    auto dense        = (uint32_t)self->count++;
-    BodyHandle handle = make_handle(slot, self->generations[slot]);
+    // Atomic Pop: Update free stack head
+    uint32_t slot = self->free_slots[available - 1];
+    atomic_store_explicit(&self->free_count, available - 1, memory_order_release);
 
-    JPH_BodyCreationSettings_SetUserData(settings, (uint64_t)handle);
+    // Atomic Increment: Assign dense index
+    uint32_t dense = (uint32_t)atomic_fetch_add_explicit(&self->count, 1, memory_order_relaxed);
 
-    // Typed Pointers for clean struct assignment
-    auto *shadow_pos  = (PosStride *)self->positions;
-    auto *shadow_ppos = (PosStride *)self->prev_positions;
-    auto *shadow_rot  = (AuxStride *)self->rotations;
-    auto *shadow_prot = (AuxStride *)self->prev_rotations;
-    auto *shadow_lvel = (AuxStride *)self->linear_velocities;
-    auto *shadow_avel = (AuxStride *)self->angular_velocities;
+    // Resolve handle metadata atomically
+    uint32_t gen      = atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
+    BodyHandle handle = make_handle(slot, gen);
+    uint64_t raw_h    = atomic_load_explicit(&handle, memory_order_relaxed);
+    JPH_BodyCreationSettings_SetUserData(settings, raw_h);
 
-    // 1. Position Commit (Stride 4)
-    PosStride p        = {};
-    p.x                = px;
-    p.y                = py;
-    p.z                = pz;
-    shadow_pos[dense]  = p;
-    shadow_ppos[dense] = p;
+    // Update non-atomic shadow buffers (Safe under shadow_lock + block_stepping)
+    PosStride p_val                            = {px, py, pz, 0.0};
+    ((PosStride *)self->positions)[dense]      = p_val;
+    ((PosStride *)self->prev_positions)[dense] = p_val;
 
-    // 2. Rotation Commit (Stride 4)
-    AuxStride q        = {rx, ry, rz, rw};
-    shadow_rot[dense]  = q;
-    shadow_prot[dense] = q;
+    AuxStride q_val                            = {rx, ry, rz, rw};
+    ((AuxStride *)self->rotations)[dense]      = q_val;
+    ((AuxStride *)self->prev_rotations)[dense] = q_val;
 
-    // 3. Aux Data Commit (Stride 4 / Stride 1)
-    AuxStride zero     = {};
-    shadow_lvel[dense] = zero;
-    shadow_avel[dense] = zero;
+    ((AuxStride *)self->linear_velocities)[dense]  = (AuxStride){};
+    ((AuxStride *)self->angular_velocities)[dense] = (AuxStride){};
 
-    self->categories[dense]   = category;
-    self->masks[dense]        = mask;
-    self->material_ids[dense] = material_id;
-    self->user_data[dense]    = user_data;
-
-    // 4. Indirection Commit
+    self->categories[dense]    = category;
+    self->masks[dense]         = mask;
+    self->material_ids[dense]  = material_id;
+    self->user_data[dense]     = user_data;
+    self->body_ids[dense]      = JPH_INVALID_BODY_ID;
     self->slot_to_dense[slot]  = dense;
     self->dense_to_slot[dense] = slot;
-    self->slot_states[slot]    = SLOT_PENDING_CREATE;
 
-    self->view_shape[0] = (Py_ssize_t)self->count;
+    // TSan Fix: Publish slot state and sync metadata atomically
+    atomic_store_explicit(&self->slot_states[slot], SLOT_PENDING_CREATE, memory_order_release);
+    self->view_shape[0] = (Py_ssize_t)atomic_load_explicit(&self->count, memory_order_relaxed);
 
-    // 5. Command Buffer Commit
     if (UNLIKELY(!ensure_command_capacity(self))) {
-        // Rollback
-        self->count--;
-        self->free_slots[self->free_count++] = slot;
-        self->slot_states[slot]              = SLOT_EMPTY;
+        // Atomic Rollback
+        atomic_fetch_sub_explicit(&self->count, 1, memory_order_relaxed);
+        size_t r_idx = atomic_fetch_add_explicit(&self->free_count, 1, memory_order_relaxed);
+        self->free_slots[r_idx] = slot;
+        atomic_store_explicit(&self->slot_states[slot], SLOT_EMPTY, memory_order_relaxed);
+
         SHADOW_UNLOCK(&self->shadow_lock);
         JPH_BodyCreationSettings_Destroy(settings);
         return PyErr_NoMemory();
@@ -2089,7 +2171,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_body(PhysicsWorldObject *self, PyO
 
     SHADOW_UNLOCK(&self->shadow_lock);
 
-    return PyLong_FromUnsignedLongLong(handle);
+    return PyLong_FromUnsignedLongLong(raw_h);
 }
 
 PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *self,
@@ -2127,10 +2209,11 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
         return PyErr_Format(PyExc_ValueError, "List length mismatch");
     }
 
-    if (UNLIKELY(self->count + batch_count > self->max_jolt_bodies)) {
-        PyErr_Format(PyExc_RuntimeError, "Batch would exceed Jolt body limit (%u)",
-                     self->max_jolt_bodies);
-        goto fail;
+    // TSan Fix: Atomic load of current count for limit check
+    if (UNLIKELY(atomic_load_explicit(&self->count, memory_order_acquire) + batch_count >
+                 self->max_jolt_bodies)) {
+        return PyErr_Format(PyExc_RuntimeError, "Batch would exceed Jolt body limit (%u)",
+                            self->max_jolt_bodies);
     }
 
     // 2. TEMP ALLOCATION
@@ -2174,21 +2257,25 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
     SHADOW_UNLOCK(&self->shadow_lock);
     Py_END_ALLOW_THREADS
 
-        // 5. COMMIT PHASE (SHADOW LOCK)
+        // 5. COMMIT PHASE (ATOMIC REFACTOR)
         SHADOW_LOCK(&self->shadow_lock);
-
     BLOCK_UNTIL_NOT_STEPPING(self);
 
-    // Bulk capacity check for slots and dense buffers
-    if (self->free_count < (size_t)batch_count || (self->count + batch_count) > self->capacity) {
-        size_t needed = self->count + batch_count + INITIAL_BODY_CAPACITY;
-        if (PhysicsWorld_resize(self, needed) < 0) {
+    // TSan Fix: Check atomic counts for structural availability
+    size_t available     = atomic_load_explicit(&self->free_count, memory_order_acquire);
+    size_t current_count = atomic_load_explicit(&self->count, memory_order_acquire);
+
+    if (available < (size_t)batch_count || (current_count + batch_count) > self->capacity) {
+        size_t needed = current_count + batch_count + INITIAL_BODY_CAPACITY;
+        if (PhysicsWorld_resize(self, (needed > self->max_jolt_bodies) ? self->max_jolt_bodies
+                                                                       : needed) < 0) {
             SHADOW_UNLOCK(&self->shadow_lock);
             goto fail;
         }
+        available = atomic_load_explicit(&self->free_count, memory_order_acquire);
     }
 
-    // Bulk capacity check for command queue
+    // Check command capacity in one block
     size_t needed_cmds = self->command_count + batch_count;
     if (self->command_capacity < needed_cmds) {
         void *new_q = CULV_RAW_REALLOC(self->command_queue, needed_cmds * sizeof(PhysicsCommand));
@@ -2210,8 +2297,6 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
     auto *shadow_ppos = (PosStride *)self->prev_positions;
     auto *shadow_rot  = (AuxStride *)self->rotations;
     auto *shadow_prot = (AuxStride *)self->prev_rotations;
-    auto *shadow_lvel = (AuxStride *)self->linear_velocities;
-    auto *shadow_avel = (AuxStride *)self->angular_velocities;
 
     for (Py_ssize_t i = 0; i < batch_count; i++) {
         if (!settings_buf[i]) {
@@ -2220,39 +2305,41 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
             continue;
         }
 
-        uint32_t slot     = self->free_slots[--self->free_count];
-        auto dense        = (uint32_t)self->count++;
-        BodyHandle handle = make_handle(slot, self->generations[slot]);
-        JPH_BodyCreationSettings_SetUserData(settings_buf[i], (uint64_t)handle);
+        // TSan Fix: Atomic Pop and Increment
+        size_t f_idx  = atomic_fetch_sub_explicit(&self->free_count, 1, memory_order_relaxed) - 1;
+        uint32_t slot = self->free_slots[f_idx];
+        auto dense    = (uint32_t)atomic_fetch_add_explicit(&self->count, 1, memory_order_relaxed);
 
-        // Immediate Shadow Buffer Update
-        PosStride p        = {.x = pos_buf[i].x, .y = pos_buf[i].y, .z = pos_buf[i].z};
-        shadow_pos[dense]  = p;
-        shadow_ppos[dense] = p;
+        uint32_t gen      = atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
+        BodyHandle handle = make_handle(slot, gen);
+        uint64_t raw_h    = atomic_load_explicit(&handle, memory_order_relaxed);
+        JPH_BodyCreationSettings_SetUserData(settings_buf[i], raw_h);
 
+        // Update non-atomic shadow buffers
+        PosStride p          = {.x = pos_buf[i].x, .y = pos_buf[i].y, .z = pos_buf[i].z, .w = 0.0};
+        shadow_pos[dense]    = p;
+        shadow_ppos[dense]   = p;
         AuxStride identity_q = {.x = 0.0f, .y = 0.0f, .z = 0.0f, .w = 1.0f};
         shadow_rot[dense]    = identity_q;
         shadow_prot[dense]   = identity_q;
 
-        shadow_lvel[dense] = (AuxStride){};
-        shadow_avel[dense] = (AuxStride){};
-
-        // Indirection Mapping
         self->body_ids[dense]      = JPH_INVALID_BODY_ID;
         self->slot_to_dense[slot]  = dense;
         self->dense_to_slot[dense] = slot;
-        self->slot_states[slot]    = SLOT_PENDING_CREATE;
 
-        // Queue Creation Command
+        // TSan Fix: Publish state atomically
+        atomic_store_explicit(&self->slot_states[slot], SLOT_PENDING_CREATE, memory_order_release);
+
+        // Queue Command
         PhysicsCommand *cmd  = &self->command_queue[self->command_count++];
         cmd->header          = CMD_HEADER(CMD_CREATE_BODY, slot);
         cmd->create.settings = settings_buf[i];
 
-        // Store result handle
-        PyList_SET_ITEM(result_list, i, PyLong_FromUnsignedLongLong(handle));
+        PyList_SET_ITEM(result_list, i, PyLong_FromUnsignedLongLong(raw_h));
     }
 
-    self->view_shape[0] = (Py_ssize_t)self->count;
+    // Synchronize metadata for Python
+    self->view_shape[0] = (Py_ssize_t)atomic_load_explicit(&self->count, memory_order_relaxed);
     SHADOW_UNLOCK(&self->shadow_lock);
 
     CULV_RAW_FREE(pos_buf);
@@ -2429,38 +2516,51 @@ PyCFunction_DeclareMethod PhysicsWorld_create_mesh_body(PhysicsWorldObject *self
         return PyErr_NoMemory();
     }
 
-    // 5. COMMIT PHASE
+    // 5. COMMIT PHASE (ATOMIC REFACTOR)
     SHADOW_LOCK(&self->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
 
-    if (UNLIKELY(self->free_count == 0 || self->count + 1 > self->capacity)) {
-        if (PhysicsWorld_resize(self, (self->capacity == 0) ? INITIAL_BODY_CAPACITY
-                                                            : self->capacity * 2) < 0) {
+    // TSan Fix: Read atomic counts
+    size_t available     = atomic_load_explicit(&self->free_count, memory_order_acquire);
+    size_t current_count = atomic_load_explicit(&self->count, memory_order_acquire);
+
+    if (UNLIKELY(available == 0 || current_count + 1 > self->capacity)) {
+        if (PhysicsWorld_resize(self, (self->capacity == 0) ? INITIAL_BODY_CAPACITY : self->capacity * 2) < 0) {
             goto commit_fail;
         }
+        available = atomic_load_explicit(&self->free_count, memory_order_acquire);
     }
 
-    uint32_t slot = self->free_slots[--self->free_count];
-    auto dense    = (uint32_t)self->count++;
-    auto handle   = make_handle(slot, self->generations[slot]);
-    JPH_BodyCreationSettings_SetUserData(settings, handle);
+    // Atomic Pop and Increment
+    uint32_t slot = self->free_slots[available - 1];
+    atomic_store_explicit(&self->free_count, available - 1, memory_order_release);
+    auto dense = (uint32_t)atomic_fetch_add_explicit(&self->count, 1, memory_order_relaxed);
 
-    // Shadow Write
-    ((PosStride *)self->positions)[dense] = (PosStride){.x = px, .y = py, .z = pz};
-    ((AuxStride *)self->rotations)[dense] = (AuxStride){.x = rx, .y = ry, .z = rz, .w = rw};
+    uint32_t gen      = atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
+    BodyHandle handle = make_handle(slot, gen);
+    uint64_t raw_h    = atomic_load_explicit(&handle, memory_order_relaxed);
+    JPH_BodyCreationSettings_SetUserData(settings, raw_h);
+
+    // Update non-atomic shadow buffers
+    ((PosStride *)self->positions)[dense] = (PosStride){px, py, pz, 0.0};
+    ((AuxStride *)self->rotations)[dense] = (AuxStride){rx, ry, rz, rw};
     self->slot_to_dense[slot]             = dense;
     self->dense_to_slot[dense]            = slot;
-    self->slot_states[slot]               = SLOT_PENDING_CREATE;
     self->user_data[dense]                = user_data;
     self->categories[dense]               = cat;
     self->masks[dense]                    = mask;
     self->body_ids[dense]                 = JPH_INVALID_BODY_ID;
-    self->view_shape[0]                   = (Py_ssize_t)self->count;
+
+    // TSan Fix: Publish state and view length atomically
+    atomic_store_explicit(&self->slot_states[slot], SLOT_PENDING_CREATE, memory_order_release);
+    self->view_shape[0] = (Py_ssize_t)atomic_load_explicit(&self->count, memory_order_relaxed);
 
     if (UNLIKELY(!ensure_command_capacity(self))) {
-        self->count--;
-        self->free_slots[self->free_count++] = slot;
-        self->slot_states[slot]              = SLOT_EMPTY;
+        // Atomic Rollback
+        atomic_fetch_sub_explicit(&self->count, 1, memory_order_relaxed);
+        size_t r_idx = atomic_fetch_add_explicit(&self->free_count, 1, memory_order_relaxed);
+        self->free_slots[r_idx] = slot;
+        atomic_store_explicit(&self->slot_states[slot], SLOT_EMPTY, memory_order_relaxed);
         goto commit_fail;
     }
 
@@ -2473,7 +2573,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_mesh_body(PhysicsWorldObject *self
 
     SHADOW_UNLOCK(&self->shadow_lock);
     JPH_Shape_Destroy(shape);
-    return PyLong_FromUnsignedLongLong(handle);
+    return PyLong_FromUnsignedLongLong(raw_h);
 
 commit_fail:
     SHADOW_UNLOCK(&self->shadow_lock);
@@ -2489,15 +2589,14 @@ buffer_fail:
 
 PyCFunction_DeclareMethod PhysicsWorld_destroy_body(PhysicsWorldObject *self, PyObject *const *args,
                                                     size_t nargsf, PyObject *kwnames) {
-    // 1. FAST PARSE (Zero-Allocation)
-    BodyHandle handle_raw;
+    // 1. FAST PARSE
+    // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
+    uint64_t h_raw;
 
-    // Group name is HOnly, Index ID is IDX_H_H
     void *targets[HOnly_COUNT];
-    targets[IDX_H_H] = &handle_raw;
+    targets[IDX_H_H] = &h_raw;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    // Uses the DestroyParser (which points to the HOnly group)
     if (!FastParse_Unified(args, nargs, kwnames, &DestroyParser, targets)) {
         return nullptr;
     }
@@ -2505,19 +2604,21 @@ PyCFunction_DeclareMethod PhysicsWorld_destroy_body(PhysicsWorldObject *self, Py
     // 2. CRITICAL SECTION
     SHADOW_LOCK(&self->shadow_lock);
 
-    // We only block for STEPPING.
-    // Destroying a body is a "Deferred" command, so it doesn't
-    // invalidate memory until the next flush_commands() call.
+    // Structural changes must wait for structural consistency
     BLOCK_UNTIL_NOT_STEPPING(self);
 
     uint32_t slot = 0;
-    if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
+    // TSan Fix: Cast raw uint64 to atomic BodyHandle for verification
+    if (UNLIKELY(!unpack_handle(self, (BodyHandle)h_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         RAISE_STALE_HANDLE();
     }
 
-    // 3. MARK FOR DEFERRED DELETION
-    uint8_t state = self->slot_states[slot];
+    // 3. MARK FOR DEFERRED DELETION (ATOMIC REFACTOR)
+
+    // TSan Fix: Atomic load of state (Acquire ensures sync with creator thread)
+    uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
+
     if (state == SLOT_ALIVE || state == SLOT_PENDING_CREATE || state == SLOT_CHARACTER) {
 
         if (UNLIKELY(!ensure_command_capacity(self))) {
@@ -2525,12 +2626,14 @@ PyCFunction_DeclareMethod PhysicsWorld_destroy_body(PhysicsWorldObject *self, Py
             return PyErr_NoMemory();
         }
 
+        // Non-atomic command queue update (Exclusive ownership held via SHADOW_LOCK)
         PhysicsCommand *cmd = &self->command_queue[self->command_count++];
         cmd->header         = CMD_HEADER(CMD_DESTROY_BODY, slot);
 
-        // Transition the state so that other Python threads immediately
-        // see the body as gone, even before Jolt processes the removal.
-        self->slot_states[slot] = SLOT_PENDING_DESTROY;
+        // TSan Fix: Atomic store to transition state.
+        // Release creates a boundary: any thread that sees SLOT_PENDING_DESTROY
+        // is guaranteed not to attempt any further Jolt or shadow buffer reads.
+        atomic_store_explicit(&self->slot_states[slot], SLOT_PENDING_DESTROY, memory_order_release);
     }
 
     SHADOW_UNLOCK(&self->shadow_lock);
@@ -2540,9 +2643,8 @@ PyCFunction_DeclareMethod PhysicsWorld_destroy_body(PhysicsWorldObject *self, Py
 PyCFunction_DeclareMethod PhysicsWorld_destroy_bodies_batch(PhysicsWorldObject *self,
                                                             PyObject *const *args, size_t nargsf,
                                                             PyObject *kwnames) {
-    // 1. FAST PARSE (Zero-Allocation)
+    // 1. FAST PARSE (Unchanged)
     PyObject *py_handles_in = nullptr;
-
     void *targets[BatchDestroy_COUNT];
     targets[IDX_BD_HANDLES] = (void *)&py_handles_in;
 
@@ -2551,7 +2653,6 @@ PyCFunction_DeclareMethod PhysicsWorld_destroy_bodies_batch(PhysicsWorldObject *
         return nullptr;
     }
 
-    // Now it is safe to call PySequence_Fast
     PyObject *py_handles = PySequence_Fast(py_handles_in, "handles must be a sequence");
     if (UNLIKELY(!py_handles)) {
         return nullptr;
@@ -2565,26 +2666,26 @@ PyCFunction_DeclareMethod PhysicsWorld_destroy_bodies_batch(PhysicsWorldObject *
         Py_RETURN_NONE;
     }
 
-    // --- LOCK SECTION ---
+    // 2. CRITICAL SECTION (ATOMIC REFACTOR)
     SHADOW_LOCK(&self->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
-
-    CULV_MAYBE_UNUSED int actual_destroyed = 0;
 
     for (Py_ssize_t i = 0; i < batch_count; i++) {
         PyObject *item = items[i];
 
-        // This converts to int. In 3.14t, this is thread-safe on interned longs.
-        BodyHandle h_raw = PyLong_AsUnsignedLongLong(item);
-
+        // TSan Fix: Extract value to standard register to avoid implicit atomic load overhead
+        uint64_t h_val = PyLong_AsUnsignedLongLong(item);
         if (UNLIKELY(PyErr_Occurred())) {
             PyErr_Clear();
             continue;
         }
 
         uint32_t slot = 0;
-        if (unpack_handle(self, h_raw, &slot)) {
-            uint8_t state = self->slot_states[slot];
+        // TSan Fix: Cast to BodyHandle for atomic parameter validation
+        if (unpack_handle(self, (BodyHandle)h_val, &slot)) {
+
+            // TSan Fix: Atomic load of state (Acquire ensures creator writes are visible)
+            uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
 
             if (state == SLOT_ALIVE || state == SLOT_PENDING_CREATE || state == SLOT_CHARACTER) {
                 if (UNLIKELY(!ensure_command_capacity(self))) {
@@ -2596,14 +2697,14 @@ PyCFunction_DeclareMethod PhysicsWorld_destroy_bodies_batch(PhysicsWorldObject *
                 PhysicsCommand *cmd = &self->command_queue[self->command_count++];
                 cmd->header         = CMD_HEADER(CMD_DESTROY_BODY, slot);
 
-                self->slot_states[slot] = SLOT_PENDING_DESTROY;
-                actual_destroyed++;
+                // TSan Fix: Atomic store to transition state (Release ensures immediate visibility)
+                atomic_store_explicit(&self->slot_states[slot], SLOT_PENDING_DESTROY,
+                                      memory_order_release);
             }
         }
     }
 
     SHADOW_UNLOCK(&self->shadow_lock);
-    // --- UNLOCK SECTION ---
 
     Py_DECREF(py_handles);
     Py_RETURN_NONE;
@@ -2611,21 +2712,20 @@ PyCFunction_DeclareMethod PhysicsWorld_destroy_bodies_batch(PhysicsWorldObject *
 
 PyCFunction_DeclareMethod PhysicsWorld_set_position(PhysicsWorldObject *self, PyObject *const *args,
                                                     size_t nargsf, PyObject *kwnames) {
-    // 1. FAST PARSE (Zero-Allocation)
-    BodyHandle handle_raw;
+    // 1. FAST PARSE
+    // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
+    uint64_t h_raw;
     JPH_Real x;
     JPH_Real y;
     JPH_Real z;
 
-    // Use auto-generated Group Count and Index IDs
     void *targets[SetPos_COUNT];
-    targets[IDX_SETPOS_HANDLE] = &handle_raw;
+    targets[IDX_SETPOS_HANDLE] = &h_raw;
     targets[IDX_SETPOS_X]      = &x;
     targets[IDX_SETPOS_Y]      = &y;
     targets[IDX_SETPOS_Z]      = &z;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    // Use SetPosParser initialized via SCHEMA_SET_POS
     if (!FastParse_Unified(args, nargs, kwnames, &SetPosParser, targets)) {
         return nullptr;
     }
@@ -2635,31 +2735,33 @@ PyCFunction_DeclareMethod PhysicsWorld_set_position(PhysicsWorldObject *self, Py
     // 2. CRITICAL SECTION
     SHADOW_LOCK(&self->shadow_lock);
 
+    // Wait for buffer consistency
     BLOCK_UNTIL_NOT_STEPPING(self);
 
     uint32_t slot = 0;
-    if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
+    // TSan Fix: Cast to atomic type for helper unpacking
+    if (UNLIKELY(!unpack_handle(self, (BodyHandle)h_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         RAISE_STALE_HANDLE();
     }
 
-    uint8_t state = self->slot_states[slot];
-    if (UNLIKELY(state != SLOT_ALIVE && state != SLOT_PENDING_CREATE)) {
+    // TSan Fix: Atomic load of state (Acquire ensures sync with creator/sync thread)
+    uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
+    
+    // Support rigid bodies and virtual characters
+    if (UNLIKELY(state != SLOT_ALIVE && state != SLOT_PENDING_CREATE && state != SLOT_CHARACTER)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         RAISE_STALE_HANDLE();
     }
 
-    // 3. SHADOW BUFFER MIRROR (Prevent interpolation streaks)
+    // 3. SHADOW BUFFER MIRROR (Zero-Streak Reset)
     uint32_t dense = self->slot_to_dense[slot];
-    PosStride p    = {x, y, z, 0.0};
+    PosStride p_val = {x, y, z, 0.0};
 
-    // Update CURRENT position buffer
-    ((PosStride *)self->positions)[dense] = p;
-
-    // Update PREVIOUS position buffer
-    // This is the critical fix: by setting both to the same value,
-    // lerp(prev, curr, alpha) will return exactly 'p' regardless of alpha.
-    ((PosStride *)self->prev_positions)[dense] = p;
+    // Update both CURRENT and PREVIOUS position buffers.
+    // This forces LERP(prev, curr, alpha) to return exactly 'p_val' regardless of alpha.
+    ((PosStride *)self->positions)[dense]      = p_val;
+    ((PosStride *)self->prev_positions)[dense] = p_val;
 
     // 4. COMMAND COMMIT (For Jolt)
     if (UNLIKELY(!ensure_command_capacity(self))) {
@@ -2679,15 +2781,16 @@ PyCFunction_DeclareMethod PhysicsWorld_set_position(PhysicsWorldObject *self, Py
 
 PyCFunction_DeclareMethod PhysicsWorld_set_rotation(PhysicsWorldObject *self, PyObject *const *args,
                                                     size_t nargsf, PyObject *kwnames) {
-    // 1. FAST PARSE (Zero-Allocation)
-    BodyHandle handle_raw;
+    // 1. FAST PARSE
+    // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
+    uint64_t h_raw;
     float x;
     float y;
     float z;
     float w;
 
     void *targets[SetRot_COUNT];
-    targets[IDX_SETROT_H] = (void *)&handle_raw;
+    targets[IDX_SETROT_H] = (void *)&h_raw;
     targets[IDX_SETROT_X] = (void *)&x;
     targets[IDX_SETROT_Y] = (void *)&y;
     targets[IDX_SETROT_Z] = (void *)&z;
@@ -2703,19 +2806,23 @@ PyCFunction_DeclareMethod PhysicsWorld_set_rotation(PhysicsWorldObject *self, Py
     // 2. CRITICAL SECTION
     SHADOW_LOCK(&self->shadow_lock);
 
+    // Wait for buffer consistency
     BLOCK_UNTIL_NOT_STEPPING(self);
 
     uint32_t slot = 0;
-    if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
+    // TSan Fix: Cast to BodyHandle for atomic parameter validation
+    if (UNLIKELY(!unpack_handle(self, (BodyHandle)h_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         RAISE_STALE_HANDLE();
     }
 
-    uint8_t state = self->slot_states[slot];
-    if (UNLIKELY(state != SLOT_ALIVE && state != SLOT_PENDING_CREATE)) {
+    // TSan Fix: Atomic load of state (Acquire ensures creator writes are visible)
+    uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
+    
+    // Support both rigid bodies and characters
+    if (UNLIKELY(state != SLOT_ALIVE && state != SLOT_PENDING_CREATE && state != SLOT_CHARACTER)) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_ValueError, "Body being destroyed");
-        return nullptr;
+        RAISE_STALE_HANDLE();
     }
 
     // 3. SHADOW BUFFER MIRROR (Zero-Streak Reset)
@@ -2750,18 +2857,18 @@ PyCFunction_DeclareMethod PhysicsWorld_set_rotation(PhysicsWorldObject *self, Py
 PyCFunction_DeclareMethod PhysicsWorld_set_linear_velocity(PhysicsWorldObject *self,
                                                            PyObject *const *args, size_t nargsf,
                                                            PyObject *kwnames) {
-    // 1. FAST PARSE (Zero-Allocation)
-    BodyHandle handle_raw;
+    // 1. FAST PARSE
+    // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
+    uint64_t h_raw;
     float x;
     float y;
     float z;
 
-    // Use shared Vec3 Group count and IDs
     void *targets[Vec3_COUNT];
-    targets[IDX_V3_H] = (void *)&handle_raw;
-    targets[IDX_V3_X] = (void *)&x;
-    targets[IDX_V3_Y] = (void *)&y;
-    targets[IDX_V3_Z] = (void *)&z;
+    targets[IDX_V3_H] = &h_raw;
+    targets[IDX_V3_X] = &x;
+    targets[IDX_V3_Y] = &y;
+    targets[IDX_V3_Z] = &z;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &SetLinVelParser, targets)) {
@@ -2773,22 +2880,27 @@ PyCFunction_DeclareMethod PhysicsWorld_set_linear_velocity(PhysicsWorldObject *s
     // 2. CRITICAL SECTION
     SHADOW_LOCK(&self->shadow_lock);
 
+    // Wait for buffer consistency
     BLOCK_UNTIL_NOT_STEPPING(self);
 
     uint32_t slot = 0;
-    if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
+    // TSan Fix: Cast to atomic BodyHandle for helper unpacking
+    if (UNLIKELY(!unpack_handle(self, (BodyHandle)h_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         RAISE_STALE_HANDLE();
     }
 
-    uint8_t state = self->slot_states[slot];
-    if (UNLIKELY(state != SLOT_ALIVE && state != SLOT_PENDING_CREATE)) {
+    // TSan Fix: Atomic load of state (Acquire ensures sync with creator/sync thread)
+    uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
+    
+    // Support rigid bodies and virtual characters
+    if (UNLIKELY(state != SLOT_ALIVE && state != SLOT_PENDING_CREATE && state != SLOT_CHARACTER)) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_ValueError, "Body being destroyed");
+        PyErr_SetString(PyExc_ValueError, "Body is not in a valid state for velocity update");
         return nullptr;
     }
 
-    // 3. COMMAND COMMIT
+    // 3. COMMAND COMMIT (For Jolt)
     if (UNLIKELY(!ensure_command_capacity(self))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         return PyErr_NoMemory();
@@ -2800,11 +2912,13 @@ PyCFunction_DeclareMethod PhysicsWorld_set_linear_velocity(PhysicsWorldObject *s
     cmd->vec3f.y        = y;
     cmd->vec3f.z        = z;
 
-    // --- CAUSAL CONSISTENCY ---
-    // Update the linear_velocities shadow buffer immediately.
-    // This allows immediate read-back of the value in Python.
+    // 4. CAUSAL CONSISTENCY MIRROR
+    // We update the shadow buffer immediately. This allows Python code 
+    // to read back the velocity in the same frame before Jolt has stepped.
     uint32_t dense     = self->slot_to_dense[slot];
     auto *shadow_lvel  = (AuxStride *)self->linear_velocities;
+    
+    // Non-atomic stride update (Safe under shadow_lock + block_stepping)
     shadow_lvel[dense] = (AuxStride){x, y, z, 0.0f};
 
     SHADOW_UNLOCK(&self->shadow_lock);
@@ -2814,18 +2928,18 @@ PyCFunction_DeclareMethod PhysicsWorld_set_linear_velocity(PhysicsWorldObject *s
 PyCFunction_DeclareMethod PhysicsWorld_set_angular_velocity(PhysicsWorldObject *self,
                                                             PyObject *const *args, size_t nargsf,
                                                             PyObject *kwnames) {
-    // 1. FAST PARSE (Zero-Allocation)
-    BodyHandle handle_raw;
+    // 1. FAST PARSE
+    // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
+    uint64_t h_raw;
     float x;
     float y;
     float z;
 
-    // Use shared Vec3 Group count and IDs
     void *targets[Vec3_COUNT];
-    targets[IDX_V3_H] = (void *)&handle_raw;
-    targets[IDX_V3_X] = (void *)&x;
-    targets[IDX_V3_Y] = (void *)&y;
-    targets[IDX_V3_Z] = (void *)&z;
+    targets[IDX_V3_H] = &h_raw;
+    targets[IDX_V3_X] = &x;
+    targets[IDX_V3_Y] = &y;
+    targets[IDX_V3_Z] = &z;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &SetAngVelParser, targets)) {
@@ -2837,19 +2951,24 @@ PyCFunction_DeclareMethod PhysicsWorld_set_angular_velocity(PhysicsWorldObject *
     // 2. CRITICAL SECTION
     SHADOW_LOCK(&self->shadow_lock);
 
+    // Wait for buffer consistency
     BLOCK_UNTIL_NOT_STEPPING(self);
 
     uint32_t slot = 0;
-    if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
+    // TSan Fix: Cast to atomic type for helper unpacking
+    if (UNLIKELY(!unpack_handle(self, (BodyHandle)h_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         RAISE_STALE_HANDLE();
     }
 
-    // Check state: allow if alive or newly created
-    uint8_t state = self->slot_states[slot];
+    // TSan Fix: Atomic load of state (Acquire ensures creator writes are visible)
+    uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
+    
+    // Support rigid bodies and newly created ones. 
+    // Characters are usually upright-constrained and ignore angular velocity.
     if (UNLIKELY(state != SLOT_ALIVE && state != SLOT_PENDING_CREATE)) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_ValueError, "Body being destroyed");
+        PyErr_SetString(PyExc_ValueError, "Body is not in a valid state for angular velocity update");
         return nullptr;
     }
 
@@ -2865,8 +2984,8 @@ PyCFunction_DeclareMethod PhysicsWorld_set_angular_velocity(PhysicsWorldObject *
     cmd->vec3f.y        = y;
     cmd->vec3f.z        = z;
 
-    // --- CAUSAL CONSISTENCY MIRROR ---
-    // Update the angular_velocities shadow buffer immediately.
+    // 4. CAUSAL CONSISTENCY MIRROR
+    // Update the shadow buffer immediately so getters see the new value in the same frame.
     uint32_t dense     = self->slot_to_dense[slot];
     auto *shadow_avel  = (AuxStride *)self->angular_velocities;
     shadow_avel[dense] = (AuxStride){x, y, z, 0.0f};
@@ -2879,9 +2998,10 @@ PyCFunction_DeclareMethod PhysicsWorld_get_motion_type(PhysicsWorldObject *self,
                                                        PyObject *const *args, size_t nargsf,
                                                        PyObject *kwnames) {
     // 1. FAST PARSE
-    BodyHandle handle_raw;
+    // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
+    uint64_t h_raw;
     void *targets[HOnly_COUNT];
-    targets[IDX_H_H] = (void *)&handle_raw;
+    targets[IDX_H_H] = &h_raw;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &GetMotionParser, targets)) {
@@ -2890,11 +3010,22 @@ PyCFunction_DeclareMethod PhysicsWorld_get_motion_type(PhysicsWorldObject *self,
 
     // 2. CRITICAL SECTION
     SHADOW_LOCK(&self->shadow_lock);
+    
+    // Ensure indices are stable
     BLOCK_UNTIL_NOT_STEPPING(self);
 
     uint32_t slot = 0;
-    if (UNLIKELY(!unpack_handle(self, handle_raw, &slot) ||
-                 self->slot_states[slot] != SLOT_ALIVE)) {
+    // TSan Fix: Cast raw uint64 to atomic BodyHandle for verification
+    if (UNLIKELY(!unpack_handle(self, (BodyHandle)h_raw, &slot))) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        RAISE_STALE_HANDLE();
+    }
+
+    // TSan Fix: Atomic load of state (Acquire ensures creator writes are visible)
+    uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
+
+    // Characters are supported as they wrap an inner body with a motion type
+    if (UNLIKELY(state != SLOT_ALIVE && state != SLOT_CHARACTER)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         RAISE_STALE_HANDLE();
     }
@@ -2902,9 +3033,9 @@ PyCFunction_DeclareMethod PhysicsWorld_get_motion_type(PhysicsWorldObject *self,
     JPH_BodyID bid        = self->body_ids[self->slot_to_dense[slot]];
     JPH_BodyInterface *bi = self->body_interface;
 
-    // 3. JOLT INTERACTION (Release GIL)
-    JPH_MotionType mt;
-    mt = JPH_BodyInterface_GetMotionType(bi, bid);
+    // 3. JOLT INTERACTION
+    // Native Jolt interaction remains safe inside shadow_lock once stepping is blocked
+    JPH_MotionType mt = JPH_BodyInterface_GetMotionType(bi, bid);
 
     SHADOW_UNLOCK(&self->shadow_lock);
     return PyLong_FromLong((long)mt);
@@ -2914,11 +3045,12 @@ PyCFunction_DeclareMethod PhysicsWorld_set_motion_type(PhysicsWorldObject *self,
                                                        PyObject *const *args, size_t nargsf,
                                                        PyObject *kwnames) {
     // 1. FAST PARSE
-    BodyHandle handle_raw;
+    // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
+    uint64_t h_raw;
     int motion_type;
 
     void *targets[SetMotion_COUNT];
-    targets[IDX_SM_H] = (void *)&handle_raw;
+    targets[IDX_SM_H] = (void *)&h_raw;
     targets[IDX_SM_M] = (void *)&motion_type;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
@@ -2929,17 +3061,20 @@ PyCFunction_DeclareMethod PhysicsWorld_set_motion_type(PhysicsWorldObject *self,
     // 2. CRITICAL SECTION
     SHADOW_LOCK(&self->shadow_lock);
 
-    // Structural changes (like motion type) should wait for both simulation and
-    // queries
+    // Ensure we aren't mutating while buffers are being rearranged
     BLOCK_UNTIL_NOT_STEPPING(self);
 
     uint32_t slot = 0;
-    if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
+    // TSan Fix: Cast raw uint64 to atomic BodyHandle for verification
+    if (UNLIKELY(!unpack_handle(self, (BodyHandle)h_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         RAISE_STALE_HANDLE();
     }
 
-    uint8_t state = self->slot_states[slot];
+    // TSan Fix: Atomic load of state (Acquire ensures sync with creators)
+    uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
+
+    // Motion types are only valid for rigid bodies (ALIVE or PENDING)
     if (UNLIKELY(state != SLOT_ALIVE && state != SLOT_PENDING_CREATE)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Handle is stale or body is being destroyed");
@@ -2952,6 +3087,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_motion_type(PhysicsWorldObject *self,
         return PyErr_NoMemory();
     }
 
+    // Command queue is non-atomic; protected by shadow_lock + block_stepping
     PhysicsCommand *cmd     = &self->command_queue[self->command_count++];
     cmd->header             = CMD_HEADER(CMD_SET_MOTION, slot);
     cmd->motion.motion_type = motion_type;
@@ -2963,12 +3099,13 @@ PyCFunction_DeclareMethod PhysicsWorld_set_motion_type(PhysicsWorldObject *self,
 PyCFunction_DeclareMethod PhysicsWorld_set_user_data(PhysicsWorldObject *self,
                                                      PyObject *const *args, size_t nargsf,
                                                      PyObject *kwnames) {
-    // 1. FAST PARSE (Zero-Allocation)
-    BodyHandle handle_raw;
+    // 1. FAST PARSE
+    // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
+    uint64_t h_raw;
     uint64_t data_raw;
 
     void *targets[SetUserData_COUNT];
-    targets[IDX_SUD_H] = (void *)&handle_raw;
+    targets[IDX_SUD_H] = (void *)&h_raw;
     targets[IDX_SUD_D] = (void *)&data_raw;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
@@ -2981,15 +3118,19 @@ PyCFunction_DeclareMethod PhysicsWorld_set_user_data(PhysicsWorldObject *self,
     BLOCK_UNTIL_NOT_STEPPING(self);
 
     uint32_t slot = 0;
-    if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
+    // TSan Fix: Cast raw uint64 to atomic BodyHandle for verification
+    if (UNLIKELY(!unpack_handle(self, (BodyHandle)h_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         RAISE_STALE_HANDLE();
     }
 
-    uint8_t state = self->slot_states[slot];
-    if (UNLIKELY(state != SLOT_ALIVE && state != SLOT_PENDING_CREATE)) {
+    // TSan Fix: Atomic load of state (Acquire ensures creator writes are visible)
+    uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
+
+    // Support rigid bodies (ALIVE/PENDING) and virtual characters
+    if (UNLIKELY(state != SLOT_ALIVE && state != SLOT_PENDING_CREATE && state != SLOT_CHARACTER)) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_ValueError, "Body is not in a valid state");
+        PyErr_SetString(PyExc_ValueError, "Body is not in a valid state for UserData update");
         return nullptr;
     }
 
@@ -2999,7 +3140,8 @@ PyCFunction_DeclareMethod PhysicsWorld_set_user_data(PhysicsWorldObject *self,
         return PyErr_NoMemory();
     }
 
-    // MIRROR: Update the shadow buffer immediately so getters see the new value
+    // MIRROR: Update the shadow buffer immediately so getters see the new value.
+    // Non-atomic store is safe here as we hold the shadow_lock and verified no stepping.
     uint32_t dense         = self->slot_to_dense[slot];
     self->user_data[dense] = data_raw;
 
@@ -3015,10 +3157,11 @@ PyCFunction_DeclareMethod PhysicsWorld_set_user_data(PhysicsWorldObject *self,
 PyCFunction_DeclareMethod PhysicsWorld_get_user_data(PhysicsWorldObject *self,
                                                      PyObject *const *args, size_t nargsf,
                                                      PyObject *kwnames) {
-    // 1. FAST PARSE (Zero-Allocation)
-    BodyHandle handle_raw;
+    // 1. FAST PARSE
+    // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
+    uint64_t h_raw;
     void *targets[HOnly_COUNT];
-    targets[IDX_H_H] = (void *)&handle_raw;
+    targets[IDX_H_H] = (void *)&h_raw;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &GetUserDataParser, targets)) {
@@ -3028,17 +3171,26 @@ PyCFunction_DeclareMethod PhysicsWorld_get_user_data(PhysicsWorldObject *self,
     // 2. CRITICAL SECTION
     SHADOW_LOCK(&self->shadow_lock);
 
-    // Safety: Ensure indices aren't shifting while we read
+    // Safety: Wait for buffer consistency (Stepper thread performs swaps outside this lock)
     BLOCK_UNTIL_NOT_STEPPING(self);
 
     uint32_t slot = 0;
-    if (UNLIKELY(
-            !unpack_handle(self, handle_raw, &slot) ||
-            (self->slot_states[slot] != SLOT_ALIVE && self->slot_states[slot] != SLOT_CHARACTER))) {
+    // TSan Fix: Cast raw uint64 to atomic BodyHandle for verification
+    if (UNLIKELY(!unpack_handle(self, (BodyHandle)h_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         RAISE_STALE_HANDLE();
     }
 
+    // TSan Fix: Atomic load of state (Acquire ensures creator writes are visible)
+    uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
+
+    // Check liveness: ALIVE, CHARACTER, or PENDING_CREATE
+    if (UNLIKELY(state != SLOT_ALIVE && state != SLOT_CHARACTER && state != SLOT_PENDING_CREATE)) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        RAISE_STALE_HANDLE();
+    }
+
+    // Shadow buffers are non-atomic; safe to access while holding shadow_lock + block_stepping
     uint64_t val = self->user_data[self->slot_to_dense[slot]];
 
     SHADOW_UNLOCK(&self->shadow_lock);
@@ -3047,15 +3199,14 @@ PyCFunction_DeclareMethod PhysicsWorld_get_user_data(PhysicsWorldObject *self,
 
 PyCFunction_DeclareMethod PhysicsWorld_activate(PhysicsWorldObject *self, PyObject *const *args,
                                                 size_t nargsf, PyObject *kwnames) {
-    // 1. FAST PARSE (Zero-Allocation)
-    BodyHandle handle_raw;
+    // 1. FAST PARSE
+    // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
+    uint64_t h_raw;
 
-    // Group Name: HOnly, Index ID: IDX_H_H
     void *targets[HOnly_COUNT];
-    targets[IDX_H_H] = (void *)&handle_raw;
+    targets[IDX_H_H] = &h_raw;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    // Use the specific ActivateParser pointing to the HOnly layout
     if (!FastParse_Unified(args, nargs, kwnames, &ActivateParser, targets)) {
         return nullptr;
     }
@@ -3063,18 +3214,21 @@ PyCFunction_DeclareMethod PhysicsWorld_activate(PhysicsWorldObject *self, PyObje
     // 2. CRITICAL SECTION
     SHADOW_LOCK(&self->shadow_lock);
 
-    // Commands that modify Jolt state must wait for the simulation to be idle
+    // Structural changes (like waking bodies) must wait for physics to be idle
     BLOCK_UNTIL_NOT_STEPPING(self);
 
     uint32_t slot = 0;
-    if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
+    // TSan Fix: Cast raw uint64 to atomic BodyHandle for verification
+    if (UNLIKELY(!unpack_handle(self, (BodyHandle)h_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         RAISE_STALE_HANDLE();
     }
 
-    // Verify state: Only alive or pending bodies can be activated
-    uint8_t state = self->slot_states[slot];
-    if (UNLIKELY(state != SLOT_ALIVE && state != SLOT_PENDING_CREATE)) {
+    // TSan Fix: Atomic load of state (Acquire ensures creator writes are visible)
+    uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
+
+    // Support rigid bodies and virtual characters
+    if (UNLIKELY(state != SLOT_ALIVE && state != SLOT_PENDING_CREATE && state != SLOT_CHARACTER)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Body is not in a valid state for activation");
         return nullptr;
@@ -3086,6 +3240,7 @@ PyCFunction_DeclareMethod PhysicsWorld_activate(PhysicsWorldObject *self, PyObje
         return PyErr_NoMemory();
     }
 
+    // Command queue is non-atomic; protected by shadow_lock + block_stepping
     PhysicsCommand *cmd = &self->command_queue[self->command_count++];
     cmd->header         = CMD_HEADER(CMD_ACTIVATE, slot);
 
@@ -3095,30 +3250,38 @@ PyCFunction_DeclareMethod PhysicsWorld_activate(PhysicsWorldObject *self, PyObje
 
 PyCFunction_DeclareMethod PhysicsWorld_deactivate(PhysicsWorldObject *self, PyObject *const *args,
                                                   size_t nargsf, PyObject *kwnames) {
-    // 1. FAST PARSE (Zero-Allocation)
-    BodyHandle handle_raw;
+    // 1. FAST PARSE
+    // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
+    uint64_t h_raw;
 
-    // Group Name: HOnly, Index ID: IDX_H_H
     void *targets[HOnly_COUNT];
-    targets[IDX_H_H] = (void *)&handle_raw;
+    targets[IDX_H_H] = (void *)&h_raw;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    // Use the specific ActivateParser pointing to the HOnly layout
     if (!FastParse_Unified(args, nargs, kwnames, &ActivateParser, targets)) {
         return nullptr;
     }
 
+    // 2. CRITICAL SECTION
     SHADOW_LOCK(&self->shadow_lock);
+
+    // Ensure we aren't mutating while buffers are being swapped
     BLOCK_UNTIL_NOT_STEPPING(self);
 
     uint32_t slot = 0;
-    if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
+    // TSan Fix: Cast to atomic BodyHandle for helper unpacking
+    if (UNLIKELY(!unpack_handle(self, (BodyHandle)h_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         RAISE_STALE_HANDLE();
     }
 
-    if (self->slot_states[slot] == SLOT_ALIVE || self->slot_states[slot] == SLOT_PENDING_CREATE) {
+    // TSan Fix: Atomic load of state (Acquire ensures sync with creator/sync thread)
+    uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
+
+    // Support rigid bodies and virtual characters
+    if (state == SLOT_ALIVE || state == SLOT_PENDING_CREATE || state == SLOT_CHARACTER) {
         if (ensure_command_capacity(self)) {
+            // Command queue is non-atomic; protected by shadow_lock + block_stepping
             PhysicsCommand *cmd = &self->command_queue[self->command_count++];
             cmd->header         = CMD_HEADER(CMD_DEACTIVATE, slot);
         }
@@ -3131,73 +3294,71 @@ PyCFunction_DeclareMethod PhysicsWorld_deactivate(PhysicsWorldObject *self, PyOb
 PyCFunction_DeclareMethod PhysicsWorld_set_transform(PhysicsWorldObject *self,
                                                      PyObject *const *args, size_t nargsf,
                                                      PyObject *kwnames) {
-    // 1. FAST PARSE (Zero-Allocation)
-    BodyHandle handle_raw;
+    // 1. FAST PARSE
+    // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
+    uint64_t h_raw;
     PyObject *o_pos = nullptr;
     PyObject *o_rot = nullptr;
 
-    // Use auto-generated Group Count and Index IDs (IDX_ST_...)
     void *targets[SetTrns_COUNT];
-    targets[IDX_ST_HANDLE] = (void *)&handle_raw;
+    targets[IDX_ST_HANDLE] = (void *)&h_raw;
     targets[IDX_ST_POS]    = (void *)&o_pos;
     targets[IDX_ST_ROT]    = (void *)&o_rot;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    // Use the SetTrnsParser defined via X-Macro
     if (!FastParse_Unified(args, nargs, kwnames, &SetTrnsParser, targets)) {
         return nullptr;
     }
 
-    // 2. VECTOR EXTRACTION (Outside of Lock)
+    // 2. VECTOR EXTRACTION (Outside Lock)
     JPH_Real px;
     JPH_Real py;
-    JPH_Real pz;
-    float rx;
+    JPH_Real pz; float rx;
     float ry;
     float rz;
     float rw;
-    // Uses your generic dispatchers for precision-safe parsing
-    if (!parse_vec3_direct(o_pos, &px, &py, &pz)) {
-        return nullptr;
-    }
-    if (!parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) {
-        return nullptr;
-    }
+    if (!parse_vec3_direct(o_pos, &px, &py, &pz)) { return nullptr;
+}
+    if (!parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) { return nullptr;
+}
+
+    VALIDATE_FINITE_VEC3(px, py, pz, "SetTransform position");
+    VALIDATE_FINITE_QUAT(rx, ry, rz, rw, "SetTransform rotation");
 
     // 3. CRITICAL SECTION
     SHADOW_LOCK(&self->shadow_lock);
-
     BLOCK_UNTIL_NOT_STEPPING(self);
 
     uint32_t slot = 0;
-    if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
+    // TSan Fix: Cast to atomic BodyHandle for verification
+    if (UNLIKELY(!unpack_handle(self, (BodyHandle)h_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         RAISE_STALE_HANDLE();
     }
 
-    uint8_t state = self->slot_states[slot];
-    if (UNLIKELY(state != SLOT_ALIVE && state != SLOT_PENDING_CREATE)) {
+    // TSan Fix: Atomic load of state (Acquire ensures creator writes are visible)
+    uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
+    
+    // Support rigid bodies and virtual characters
+    if (UNLIKELY(state != SLOT_ALIVE && state != SLOT_PENDING_CREATE && state != SLOT_CHARACTER)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Body is not in a valid state for transform update");
         return nullptr;
     }
 
-    // 4. SHADOW BUFFER MIRROR (Snap state for all 4 buffers)
+    // 4. SHADOW BUFFER MIRROR (Zero-Streak Reset)
     uint32_t dense = self->slot_to_dense[slot];
-
-    // Prepare Stride Structs
     PosStride p_val = {px, py, pz, 0.0};
     AuxStride r_val = {rx, ry, rz, rw};
 
-    // Synchronize Position (Current + Previous)
-    ((PosStride *)self->positions)[dense]      = p_val;
-    ((PosStride *)self->prev_positions)[dense] = p_val;
+    // Update CURRENT and PREVIOUS position/rotation buffers.
+    // This forces LERP/NLERP to return the exact 'p_val' and 'r_val' for any alpha.
+    ((PosStride *)self->positions)[dense]         = p_val;
+    ((PosStride *)self->prev_positions)[dense]    = p_val;
+    ((AuxStride *)self->rotations)[dense]         = r_val;
+    ((AuxStride *)self->prev_rotations)[dense]    = r_val;
 
-    // Synchronize Rotation (Current + Previous)
-    ((AuxStride *)self->rotations)[dense]      = r_val;
-    ((AuxStride *)self->prev_rotations)[dense] = r_val;
-
-    // 5. COMMAND COMMIT (Deferred Jolt Update)
+    // 5. COMMAND COMMIT
     if (UNLIKELY(!ensure_command_capacity(self))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         return PyErr_NoMemory();
@@ -3220,16 +3381,15 @@ PyCFunction_DeclareMethod PhysicsWorld_set_transform(PhysicsWorldObject *self,
 PyCFunction_DeclareMethod PhysicsWorld_set_ccd(PhysicsWorldObject *self, PyObject *const *args,
                                                size_t nargsf, PyObject *kwnames) {
     // 1. FAST PARSE (Zero-Allocation)
-    BodyHandle handle_raw;
+    // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
+    uint64_t h_raw;
     bool enabled;
 
-    // Use auto-generated Group Count (CCD_COUNT) and IDs (IDX_CCD_H, IDX_CCD_E)
     void *targets[CCD_COUNT];
-    targets[IDX_CCD_H] = (void *)&handle_raw;
+    targets[IDX_CCD_H] = (void *)&h_raw;
     targets[IDX_CCD_E] = (void *)&enabled;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    // Use the CCDParser initialized via SCHEMA_CCD
     if (!FastParse_Unified(args, nargs, kwnames, &CCDParser, targets)) {
         return nullptr;
     }
@@ -3241,14 +3401,17 @@ PyCFunction_DeclareMethod PhysicsWorld_set_ccd(PhysicsWorldObject *self, PyObjec
     BLOCK_UNTIL_NOT_STEPPING(self);
 
     uint32_t slot = 0;
-    if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
+    // TSan Fix: Cast to atomic BodyHandle for verification
+    if (UNLIKELY(!unpack_handle(self, (BodyHandle)h_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         RAISE_STALE_HANDLE();
     }
 
-    // Check if the body exists
-    if (UNLIKELY(self->slot_states[slot] != SLOT_ALIVE &&
-                 self->slot_states[slot] != SLOT_PENDING_CREATE)) {
+    // TSan Fix: Atomic load of state (Acquire ensures creator writes are visible)
+    uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
+
+    // Check if the body exists (Support rigid bodies and virtual characters)
+    if (UNLIKELY(state != SLOT_ALIVE && state != SLOT_PENDING_CREATE && state != SLOT_CHARACTER)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Body is not in a valid state for CCD update");
         return nullptr;
@@ -3273,32 +3436,38 @@ PyCFunction_DeclareMethod PhysicsWorld_set_ccd(PhysicsWorldObject *self, PyObjec
 
 PyCFunction_DeclareMethod PhysicsWorld_get_index(PhysicsWorldObject *self, PyObject *const *args,
                                                  size_t nargsf, PyObject *kwnames) {
-    // 1. FAST PARSE (Zero-Allocation)
-    BodyHandle handle_raw;
-
-    // Group Name: HOnly, Index ID: IDX_H_H
+    // 1. FAST PARSE
+    // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
+    uint64_t h_raw;
     void *targets[HOnly_COUNT];
-    targets[IDX_H_H] = (void *)&handle_raw;
+    targets[IDX_H_H] = (void *)&h_raw;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    // Use the specific ActivateParser pointing to the HOnly layout
     if (!FastParse_Unified(args, nargs, kwnames, &ActivateParser, targets)) {
         return nullptr;
     }
 
     // 2. CRITICAL SECTION
     SHADOW_LOCK(&self->shadow_lock);
-
     BLOCK_UNTIL_NOT_STEPPING(self);
 
     uint32_t slot = 0;
-    if (UNLIKELY(
-            !unpack_handle(self, handle_raw, &slot) ||
-            (self->slot_states[slot] != SLOT_ALIVE && self->slot_states[slot] != SLOT_CHARACTER))) {
+    // TSan Fix: Cast raw uint64 to atomic BodyHandle for verification
+    if (UNLIKELY(!unpack_handle(self, (BodyHandle)h_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
         RAISE_STALE_HANDLE();
     }
 
+    // TSan Fix: Atomic load of state (Acquire ensures sync with the world state)
+    uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
+
+    // Verify handle is still valid
+    if (UNLIKELY(state != SLOT_ALIVE && state != SLOT_CHARACTER)) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        RAISE_STALE_HANDLE();
+    }
+
+    // Shadow buffers are stable here (protected by SHADOW_LOCK + BLOCK_UNTIL_NOT_STEPPING)
     uint32_t idx = self->slot_to_dense[slot];
 
     SHADOW_UNLOCK(&self->shadow_lock);
@@ -3307,15 +3476,15 @@ PyCFunction_DeclareMethod PhysicsWorld_get_index(PhysicsWorldObject *self, PyObj
 
 PyCFunction_DeclareMethod PhysicsWorld_is_alive(PhysicsWorldObject *self, PyObject *const *args,
                                                 size_t nargsf, PyObject *kwnames) {
-    // 1. FAST PARSE (Zero-Allocation)
-    BodyHandle handle_raw;
+    // 1. FAST PARSE
+    // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
+    uint64_t h_raw;
 
     // Group Name: HOnly, Index ID: IDX_H_H
     void *targets[HOnly_COUNT];
-    targets[IDX_H_H] = (void *)&handle_raw;
+    targets[IDX_H_H] = (void *)&h_raw;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    // Use the specific ActivateParser pointing to the HOnly layout
     if (!FastParse_Unified(args, nargs, kwnames, &ActivateParser, targets)) {
         return nullptr;
     }
@@ -3328,8 +3497,11 @@ PyCFunction_DeclareMethod PhysicsWorld_is_alive(PhysicsWorldObject *self, PyObje
     uint32_t slot = 0;
     bool alive    = false;
 
-    if (unpack_handle(self, handle_raw, &slot)) {
-        uint8_t state = self->slot_states[slot];
+    // TSan Fix: Cast to atomic BodyHandle for verification
+    if (unpack_handle(self, (BodyHandle)h_raw, &slot)) {
+        // TSan Fix: Atomic load of state (Acquire ensures sync with the world state)
+        uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
+        
         // Now recognizing SLOT_CHARACTER as a valid alive state
         if (state == SLOT_ALIVE || state == SLOT_PENDING_CREATE || state == SLOT_CHARACTER) {
             alive = true;
@@ -3348,14 +3520,19 @@ PyCFunction_DeclareMethod PhysicsWorld_get_active_indices(PhysicsWorldObject *se
                                                           PyObject *Py_UNUSED(args)) {
     SHADOW_LOCK(&self->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
-    size_t count = self->count;
+    
+    // TSan Fix: Load count atomically to guarantee consistency with the Stepper thread.
+    size_t count = atomic_load_explicit(&self->count, memory_order_acquire);
+    
     if (count == 0) {
         SHADOW_UNLOCK(&self->shadow_lock);
         return PyBytes_FromStringAndSize(nullptr, 0);
     }
 
     // 1. Snapshot the BodyIDs while locked (Fast)
-    auto *id_scratch = (JPH_BodyID *)CULV_RAW_MALLOC(count * sizeof(JPH_BodyID));
+    // We only access self->body_ids while holding the SHADOW_LOCK and 
+    // after BLOCK_UNTIL_NOT_STEPPING, ensuring the Stepper thread is idle.
+    JPH_BodyID *id_scratch = (JPH_BodyID *)CULV_RAW_MALLOC(count * sizeof(JPH_BodyID));
     if (!id_scratch) {
         SHADOW_UNLOCK(&self->shadow_lock);
         return PyErr_NoMemory();
@@ -3364,7 +3541,13 @@ PyCFunction_DeclareMethod PhysicsWorld_get_active_indices(PhysicsWorldObject *se
     SHADOW_UNLOCK(&self->shadow_lock);
 
     // 2. Query activity state WHILE UNLOCKED (Deadlock safe)
+    // Jolt's IsActive check is thread-safe for reading.
     auto *results         = (uint32_t *)CULV_RAW_MALLOC(count * sizeof(uint32_t));
+    if (!results) {
+        CULV_RAW_FREE(id_scratch);
+        return PyErr_NoMemory();
+    }
+
     size_t active_count   = 0;
     JPH_BodyInterface *bi = self->body_interface;
 
@@ -3386,7 +3569,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_active_indices(PhysicsWorldObject *se
 PyCFunction_DeclareMethod PhysicsWorld_get_render_state(PhysicsWorldObject *self,
                                                         PyObject *const *args, size_t nargsf,
                                                         PyObject *kwnames) {
-    // 1. FAST PARSE
+    // 1. FAST PARSE (Unchanged)
     float alpha;
     void *targets[Render_COUNT];
     targets[IDX_RND_ALPHA] = (void *)&alpha;
@@ -3396,22 +3579,21 @@ PyCFunction_DeclareMethod PhysicsWorld_get_render_state(PhysicsWorldObject *self
         return nullptr;
     }
 
-    // Clamp alpha to [0, 1]
     alpha        = fmaxf(0.0f, fminf(1.0f, alpha));
-    auto d_alpha = (double)alpha; // Use double for position math
+    auto d_alpha = (double)alpha;
 
     SHADOW_LOCK(&self->shadow_lock);
-
-    // Consistency: Ensure we aren't reading while a Step is finishing
     BLOCK_UNTIL_NOT_STEPPING(self);
 
-    size_t count = self->count;
+    // TSan Fix: Atomic load of count to ensure consistent loop bounds
+    size_t count = atomic_load_explicit(&self->count, memory_order_acquire);
+    
     if (UNLIKELY(count == 0)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         return PyBytes_FromStringAndSize(nullptr, 0);
     }
-    size_t total_bytes = count * FLOATS_PER_INTERPOLATED_BODY * sizeof(float);
 
+    size_t total_bytes = count * FLOATS_PER_INTERPOLATED_BODY * sizeof(float);
     PyObject *bytes_obj = PyBytes_FromStringAndSize(nullptr, (Py_ssize_t)total_bytes);
     if (!bytes_obj) {
         SHADOW_UNLOCK(&self->shadow_lock);
@@ -3420,17 +3602,17 @@ PyCFunction_DeclareMethod PhysicsWorld_get_render_state(PhysicsWorldObject *self
 
     float *out = (float *)PyBytes_AsString(bytes_obj);
 
-    // Map shadow buffers to Stride Structs
+    // Map shadow buffers (These are stable while holding SHADOW_LOCK + BLOCK_UNTIL_NOT_STEPPING)
     auto *curr_p = (PosStride *)self->positions;
     auto *prev_p = (PosStride *)self->prev_positions;
     auto *curr_r = (AuxStride *)self->rotations;
     auto *prev_r = (AuxStride *)self->prev_rotations;
 
+    // 2. MATH & INTERPOLATION
     for (size_t i = 0; i < count; i++) {
         size_t dst = i * FLOATS_PER_INTERPOLATED_BODY;
 
-        // --- 1. Position Lerp (Performed in DOUBLE) ---
-        // This prevents jittering when far from the world origin.
+        // Position Lerp (Double precision)
         JPH_Real px = prev_p[i].x + (curr_p[i].x - prev_p[i].x) * d_alpha;
         JPH_Real py = prev_p[i].y + (curr_p[i].y - prev_p[i].y) * d_alpha;
         JPH_Real pz = prev_p[i].z + (curr_p[i].z - prev_p[i].z) * d_alpha;
@@ -3439,39 +3621,29 @@ PyCFunction_DeclareMethod PhysicsWorld_get_render_state(PhysicsWorldObject *self
         out[dst + 1] = (float)py;
         out[dst + 2] = (float)pz;
 
-        // --- 2. Rotation NLerp (Performed in FLOAT) ---
-        // Rotations don't suffer from "large coordinate" precision loss,
-        // so float is perfect here.
+        // Rotation NLerp (Float precision)
         float q1x = prev_r[i].x;
         float q1y = prev_r[i].y;
         float q1z = prev_r[i].z;
         float q1w = prev_r[i].w;
-
         float q2x = curr_r[i].x;
         float q2y = curr_r[i].y;
         float q2z = curr_r[i].z;
         float q2w = curr_r[i].w;
 
-        // Shortest path correction
         float dot = q1x * q2x + q1y * q2y + q1z * q2z + q1w * q2w;
-        if (dot < 0.0f) {
-            q2x = -q2x;
-            q2y = -q2y;
-            q2z = -q2z;
-            q2w = -q2w;
-        }
+        if (dot < 0.0f) { q2x = -q2x; q2y = -q2y; q2z = -q2z; q2w = -q2w; }
 
         float rx = q1x + (q2x - q1x) * alpha;
         float ry = q1y + (q2y - q1y) * alpha;
         float rz = q1z + (q2z - q1z) * alpha;
         float rw = q1w + (q2w - q1w) * alpha;
 
-        // Re-normalize to ensure it's a valid quaternion
         float mag_sq  = rx * rx + ry * ry + rz * rz + rw * rw;
         float inv_len = (mag_sq > EPSILON_QUATERNION_NORMALIZATION) ? 1.0f / sqrtf(mag_sq) : 1.0f;
 
-        out[dst + 3]                                = rx * inv_len;
-        out[dst + 4]                                = ry * inv_len;
+        out[dst + 3] = rx * inv_len;
+        out[dst + 4] = ry * inv_len;
         out[dst + QUATERNION_INTERPOLATION_Z_INDEX] = rz * inv_len;
         out[dst + QUATERNION_INTERPOLATION_W_INDEX] = rw * inv_len;
     }
@@ -3484,12 +3656,13 @@ PyCFunction_DeclareMethod PhysicsWorld_set_collision_filter(PhysicsWorldObject *
                                                             PyObject *const *args, size_t nargsf,
                                                             PyObject *kwnames) {
     // 1. FAST PARSE (Zero-Allocation)
-    BodyHandle handle_raw;
+    // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
+    uint64_t h_raw;
     uint32_t category;
     uint32_t mask;
 
     void *targets[ColFilter_COUNT];
-    targets[IDX_CF_H] = (void *)&handle_raw;
+    targets[IDX_CF_H] = (void *)&h_raw;
     targets[IDX_CF_C] = (void *)&category;
     targets[IDX_CF_M] = (void *)&mask;
 
@@ -3501,20 +3674,28 @@ PyCFunction_DeclareMethod PhysicsWorld_set_collision_filter(PhysicsWorldObject *
     // 2. CRITICAL SECTION
     SHADOW_LOCK(&self->shadow_lock);
 
-    // Structural changes (like collision filters) must block for both sim and
-    // queries
+    // Structural changes (like collision filters) must block for both sim and queries
     BLOCK_UNTIL_NOT_STEPPING(self);
+    BLOCK_UNTIL_NOT_QUERYING(self);
 
     uint32_t slot = 0;
-    if (UNLIKELY(!unpack_handle(self, handle_raw, &slot) ||
-                 self->slot_states[slot] != SLOT_ALIVE)) {
+    // TSan Fix: Cast to atomic BodyHandle for verification
+    if (UNLIKELY(!unpack_handle(self, (BodyHandle)h_raw, &slot))) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        RAISE_STALE_HANDLE();
+    }
+
+    // TSan Fix: Atomic load of state (Acquire ensures sync with the world state)
+    uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
+
+    if (UNLIKELY(state != SLOT_ALIVE && state != SLOT_CHARACTER)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         RAISE_STALE_HANDLE();
     }
 
     // 3. IMMEDIATE WRITE
-    // We update the dense buffers directly. Since we hold the shadow_lock
-    // and verified we aren't stepping/querying, this is thread-safe.
+    // Since we hold the SHADOW_LOCK and the simulation is idle (via BLOCK), 
+    // these arrays are stable and non-atomic writes are safe here.
     uint32_t dense          = self->slot_to_dense[slot];
     self->categories[dense] = category;
     self->masks[dense]      = mask;
@@ -3545,7 +3726,12 @@ PyCFunction_DeclareMethod PhysicsWorld_register_material(PhysicsWorldObject *sel
     // 3. CRITICAL SECTION
     SHADOW_LOCK(&self->shadow_lock);
 
+    // Structural changes (registry expansion) require global world idleness
+    BLOCK_UNTIL_NOT_STEPPING(self);
+    BLOCK_UNTIL_NOT_QUERYING(self);
+
     // Update existing material if ID is already registered
+    // Safe: SHADOW_LOCK + BLOCK_UNTIL_NOT_QUERYING ensures no callbacks are iterating this
     for (size_t i = 0; i < self->material_count; i++) {
         if (self->materials[i].id == id) {
             self->materials[i].friction    = friction;
@@ -3665,47 +3851,61 @@ PyCFunction_DeclareMethod PhysicsWorld_create_heightfield(PhysicsWorldObject *se
         return PyErr_Format(PyExc_RuntimeError, "Failed to create HeightField shape");
     }
 
-    // 5. COMMIT PHASE (Shadow Lock)
+    // 4. COMMIT PHASE (ATOMIC REFACTOR)
     SHADOW_LOCK(&self->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
 
-    if (UNLIKELY(self->free_count == 0 || self->count + 1 > self->capacity)) {
+    // TSan Fix: Load counts atomically
+    size_t available = atomic_load_explicit(&self->free_count, memory_order_acquire);
+    size_t current_count = atomic_load_explicit(&self->count, memory_order_acquire);
+
+    if (UNLIKELY(available == 0 || current_count + 1 > self->capacity)) {
         if (PhysicsWorld_resize(self, self->capacity + INITIAL_BODY_CAPACITY) < 0) {
             SHADOW_UNLOCK(&self->shadow_lock);
-            JPH_Shape_Destroy(shape);
-            return nullptr;
+            JPH_Shape_Destroy(shape); return nullptr;
         }
+        available = atomic_load_explicit(&self->free_count, memory_order_acquire);
     }
 
-    uint32_t slot     = self->free_slots[--self->free_count];
-    auto dense        = (uint32_t)self->count++;
-    BodyHandle handle = make_handle(slot, self->generations[slot]);
+    // Atomic Pop and Increment
+    uint32_t slot = self->free_slots[available - 1];
+    atomic_store_explicit(&self->free_count, available - 1, memory_order_release);
+    auto dense = (uint32_t)atomic_fetch_add_explicit(&self->count, 1, memory_order_relaxed);
 
-    // Update Shadow Buffers
-    ((PosStride *)self->positions)[dense] = (PosStride){px, py, pz, 0.0};
-    ((AuxStride *)self->rotations)[dense] = (AuxStride){rx, ry, rz, rw};
-    self->slot_to_dense[slot]             = dense;
-    self->dense_to_slot[dense]            = slot;
-    self->slot_states[slot]               = SLOT_PENDING_CREATE;
-    self->user_data[dense]                = user_data;
-    self->categories[dense]               = category;
-    self->masks[dense]                    = mask;
-    self->material_ids[dense]             = material_id;
-    self->body_ids[dense]                 = JPH_INVALID_BODY_ID;
-    self->view_shape[0]                   = (Py_ssize_t)self->count;
+    uint32_t gen = atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
+    BodyHandle handle = make_handle(slot, gen);
+    uint64_t raw_h = atomic_load_explicit(&handle, memory_order_relaxed);
 
-    // 6. COMMAND PREP
+    // Shadow Write (Non-atomic)
+    ((PosStride *)self->positions)[dense]         = (PosStride){px, py, pz, 0.0};
+    ((AuxStride *)self->rotations)[dense]         = (AuxStride){rx, ry, rz, rw};
+    self->slot_to_dense[slot]                     = dense;
+    self->dense_to_slot[dense]                    = slot;
+    self->user_data[dense]                        = user_data;
+    self->categories[dense]                       = category;
+    self->masks[dense]                            = mask;
+    self->material_ids[dense]                     = material_id;
+    self->body_ids[dense]                         = JPH_INVALID_BODY_ID;
+
+    // TSan Fix: Publish state and view length atomically
+    atomic_store_explicit(&self->slot_states[slot], SLOT_PENDING_CREATE, memory_order_release);
+    self->view_shape[0] = (Py_ssize_t)atomic_load_explicit(&self->count, memory_order_relaxed);
+
+    // 5. COMMAND PREP
     JPH_BodyCreationSettings *settings = JPH_BodyCreationSettings_Create3(
         shape, &(JPH_RVec3){px, py, pz}, &(JPH_Quat){rx, ry, rz, rw}, JPH_MotionType_Static, 0);
 
     JPH_BodyCreationSettings_SetFriction(settings, friction);
     JPH_BodyCreationSettings_SetRestitution(settings, restitution);
-    JPH_BodyCreationSettings_SetUserData(settings, (uint64_t)handle);
+    JPH_BodyCreationSettings_SetUserData(settings, raw_h);
 
     if (UNLIKELY(!ensure_command_capacity(self))) {
-        self->count--;
-        self->free_slots[self->free_count++] = slot;
-        self->slot_states[slot]              = SLOT_EMPTY;
+        // Atomic Rollback
+        atomic_fetch_sub_explicit(&self->count, 1, memory_order_relaxed);
+        size_t r_idx = atomic_fetch_add_explicit(&self->free_count, 1, memory_order_relaxed);
+        self->free_slots[r_idx] = slot;
+        atomic_store_explicit(&self->slot_states[slot], SLOT_EMPTY, memory_order_relaxed);
+        
         SHADOW_UNLOCK(&self->shadow_lock);
         JPH_BodyCreationSettings_Destroy(settings);
         JPH_Shape_Destroy(shape);
@@ -3722,7 +3922,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_heightfield(PhysicsWorldObject *se
 
     SHADOW_UNLOCK(&self->shadow_lock);
     JPH_Shape_Destroy(shape);
-    return PyLong_FromUnsignedLongLong(handle);
+    return PyLong_FromUnsignedLongLong(raw_h);
 }
 
 PyCFunction_DeclareMethod PhysicsWorld_get_debug_data(PhysicsWorldObject *self,
@@ -3841,7 +4041,7 @@ PyCFunction_DeclareMethod PhysicsWorld_benchmark_parse(CULV_MAYBE_UNUSED Physics
  * This eliminates all argument parsing overhead to isolate the
  * performance of the Culverin Fast Build engine.
  */
-PyObject *PhysicsWorld_benchmark_build(CULV_MAYBE_UNUSED PyObject *self,
+PyCFunction_DeclareMethod PhysicsWorld_benchmark_build(CULV_MAYBE_UNUSED PyObject *self,
                                        CULV_MAYBE_UNUSED PyObject *args) {
     // 1. Define dummy C data to be "built" into Python
     int i_val    = 42;

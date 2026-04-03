@@ -175,12 +175,14 @@ void clear_command_queue(struct PhysicsWorldObject *self);
         slot   = CMD_GET_SLOT(header);                                                             \
         /* Aggressive Prefetching of the NEXT loop's data dependencies */                          \
         if (LIKELY(i < count)) {                                                                   \
-            CULV_PREFETCH_READ(&queue[i]);                                                              \
+            CULV_PREFETCH_READ(&queue[i]);                                                         \
             uint32_t next_slot = CMD_GET_SLOT(queue[i].header);                                    \
-            CULV_PREFETCH_READ(&self->slot_states[next_slot]);                                          \
-            CULV_PREFETCH_READ(&self->slot_to_dense[next_slot]);                                        \
+            /* Hardware prefetchers handle atomic addresses the same as regular ones */            \
+            CULV_PREFETCH_READ(&self->slot_states[next_slot]);                                     \
+            CULV_PREFETCH_READ(&self->slot_to_dense[next_slot]);                                   \
         }                                                                                          \
-        state = self->slot_states[slot];                                                           \
+        /* TSan Fix: Atomic load ensures we see all data populated by the queuing thread */        \
+        state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);              \
         bid   = JPH_INVALID_BODY_ID;                                                               \
         if (LIKELY(state == SLOT_ALIVE || state == SLOT_PENDING_CREATE ||                          \
                    state == SLOT_PENDING_DESTROY || state == SLOT_CHARACTER)) {                    \

@@ -36,28 +36,6 @@
 #include <float.h>
 #ifdef __cplusplus
 #    include <atomic>
-
-template <typename T> static inline T atomic_load(std::atomic<T> *ptr) {
-    return ptr->load(std::memory_order_relaxed);
-}
-
-template <typename T> static inline void atomic_store(std::atomic<T> *ptr, T val) {
-    ptr->store(val, std::memory_order_relaxed);
-}
-
-template <typename T> static inline T atomic_fetch_add(std::atomic<T> *ptr, T val) {
-    return ptr->fetch_add(val, std::memory_order_relaxed);
-}
-
-template <typename T>
-static inline T atomic_load_explicit(std::atomic<T> *ptr, std::memory_order order) {
-    return ptr->load(order);
-}
-
-typedef std::atomic<size_t> atomic_size_t;
-typedef std::atomic<bool> atomic_bool;
-typedef std::atomic<int> atomic_int;
-
 #else
 #    include <stdatomic.h>
 #endif
@@ -221,8 +199,9 @@ typedef struct {
     float *rot, *prot, *lvel, *avel;
     JPH_BodyID *bids;
     uint64_t *udat;
-    uint32_t *gens, *s2d, *d2s, *free, *cats, *masks, *mats;
-    uint8_t *stat;
+    _Atomic uint32_t *gens; // Updated to Atomic
+    uint32_t *s2d, *d2s, *free, *cats, *masks, *mats;
+    _Atomic uint8_t *stat; // Updated to Atomic
 } NewBuffers;
 
 // --- The Object Struct ---
@@ -262,7 +241,7 @@ typedef struct PhysicsWorldObject {
     JPH_Constraint **constraints;
     uint32_t *categories;
     uint32_t *masks;
-    uint32_t *generations;
+    _Atomic uint32_t *generations;
     uint32_t *slot_to_dense;
     uint32_t *dense_to_slot;
     uint32_t *free_slots;
@@ -276,14 +255,14 @@ typedef struct PhysicsWorldObject {
     atomic_size_t contact_atomic_idx;
     size_t material_count;
     size_t material_capacity;
-    size_t free_count;
+    atomic_size_t free_count;
     size_t slot_capacity;
     size_t command_count;
     size_t command_capacity;
     size_t spare_capacity;
     size_t shape_cache_count;
     size_t shape_cache_capacity;
-    size_t count;
+    atomic_size_t count;
     size_t capacity;
     size_t constraint_count;
     size_t constraint_capacity;
@@ -308,7 +287,7 @@ typedef struct PhysicsWorldObject {
     ShadowMutex shadow_lock; // PyMutex (usually 1-4 bytes)
 
     // --- BUCKET 4: Small types (Packed at the tail) ---
-    uint8_t *slot_states;
+    _Atomic uint8_t *slot_states;
     uint8_t *constraint_states;
     atomic_bool step_requested;
     atomic_bool is_stepping;
@@ -356,17 +335,44 @@ static inline CulverinState *get_culverin_state(PyObject *module) {
 }
 
 // --- Handle Helper ---
+
 CULV_NODISCARD
 CULV_MAYBE_UNUSED
 static inline BodyHandle make_handle(uint32_t slot, uint32_t gen) {
-    return ((uint64_t)gen << HANDLE_INDEX_BITS) | (uint64_t)slot;
+    uint64_t val = ((uint64_t)gen << HANDLE_INDEX_BITS) | (uint64_t)slot;
+    BodyHandle h;
+#ifdef __cplusplus
+    reinterpret_cast<std::atomic<uint64_t> *>(&h)->store(val, std::memory_order_relaxed);
+#else
+    atomic_init(&h, val);
+#endif
+    return h;
 }
+
 CULV_NODISCARD
 CULV_MAYBE_UNUSED
 static inline bool unpack_handle(PhysicsWorldObject *self, BodyHandle h, uint32_t *slot) {
-    *slot        = (uint32_t)(h & HANDLE_INDEX_MASK);
-    uint32_t gen = (uint32_t)(h >> HANDLE_INDEX_BITS);
-    return (bool)(*slot < self->slot_capacity && self->generations[*slot] == gen);
+#ifdef __cplusplus
+    uint64_t h_val = reinterpret_cast<std::atomic<uint64_t> *>(&h)->load(std::memory_order_relaxed);
+#else
+    uint64_t h_val = atomic_load_explicit(&h, memory_order_relaxed);
+#endif
+
+    *slot        = (uint32_t)(h_val & HANDLE_INDEX_MASK);
+    uint32_t gen = (uint32_t)(h_val >> HANDLE_INDEX_BITS);
+
+    if (UNLIKELY(*slot >= self->slot_capacity)) {
+        return false;
+    }
+
+#ifdef __cplusplus
+    uint32_t current_gen = __atomic_load_n((uint32_t *)&self->generations[*slot], __ATOMIC_ACQUIRE);
+#else
+    // C23 handles _Atomic pointers natively with atomic_load_explicit
+    uint32_t current_gen = atomic_load_explicit(&self->generations[*slot], memory_order_acquire);
+#endif
+
+    return (bool)(current_gen == gen);
 }
 
 // 32-bit Float Exponent Mask
