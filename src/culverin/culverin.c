@@ -1,3 +1,4 @@
+#include "joltc.h"
 #if !defined(_CRT_SECURE_NO_WARNINGS)
 #    define _CRT_SECURE_NO_WARNINGS
 #endif
@@ -324,8 +325,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_impulse(PhysicsWorldObject *self,
     uint32_t slot = 0;
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_ValueError, "Invalid handle");
-        return nullptr;
+        RAISE_STALE_HANDLE();
     }
 
     uint8_t state = self->slot_states[slot];
@@ -404,8 +404,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self
     uint32_t slot = 0;
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_ValueError, "Invalid handle");
-        return nullptr;
+        RAISE_STALE_HANDLE();
     }
 
     uint8_t state = self->slot_states[slot];
@@ -478,8 +477,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_angular_impulse(PhysicsWorldObject 
     uint32_t slot = 0;
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_ValueError, "Invalid handle");
-        return nullptr;
+        RAISE_STALE_HANDLE();
     }
 
     uint8_t state = self->slot_states[slot];
@@ -546,8 +544,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_force(PhysicsWorldObject *self, PyO
     uint32_t slot = 0;
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_ValueError, "Invalid handle");
-        return nullptr;
+        RAISE_STALE_HANDLE();
     }
 
     uint8_t state = self->slot_states[slot];
@@ -615,8 +612,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_torque(PhysicsWorldObject *self, Py
     uint32_t slot = 0;
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_ValueError, "Invalid handle");
-        return nullptr;
+        RAISE_STALE_HANDLE();
     }
 
     uint8_t state = self->slot_states[slot];
@@ -723,7 +719,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_body_stats(PhysicsWorldObject *self,
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot) ||
                  self->slot_states[slot] != SLOT_ALIVE)) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        Py_RETURN_NONE;
+        RAISE_STALE_HANDLE();
     }
 
     uint32_t i = self->slot_to_dense[slot];
@@ -2517,8 +2513,7 @@ PyCFunction_DeclareMethod PhysicsWorld_destroy_body(PhysicsWorldObject *self, Py
     uint32_t slot = 0;
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
-        return nullptr;
+        RAISE_STALE_HANDLE();
     }
 
     // 3. MARK FOR DEFERRED DELETION
@@ -2645,26 +2640,24 @@ PyCFunction_DeclareMethod PhysicsWorld_set_position(PhysicsWorldObject *self, Py
     uint32_t slot = 0;
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_ValueError, "Invalid handle");
-        return nullptr;
+        RAISE_STALE_HANDLE();
     }
 
     uint8_t state = self->slot_states[slot];
     if (UNLIKELY(state != SLOT_ALIVE && state != SLOT_PENDING_CREATE)) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_ValueError, "Stale handle");
-        return nullptr;
+        RAISE_STALE_HANDLE();
     }
 
     // 3. SHADOW BUFFER MIRROR (Prevent interpolation streaks)
     uint32_t dense = self->slot_to_dense[slot];
-    PosStride p = {x, y, z, 0.0};
+    PosStride p    = {x, y, z, 0.0};
 
     // Update CURRENT position buffer
     ((PosStride *)self->positions)[dense] = p;
 
-    // Update PREVIOUS position buffer 
-    // This is the critical fix: by setting both to the same value, 
+    // Update PREVIOUS position buffer
+    // This is the critical fix: by setting both to the same value,
     // lerp(prev, curr, alpha) will return exactly 'p' regardless of alpha.
     ((PosStride *)self->prev_positions)[dense] = p;
 
@@ -2715,26 +2708,25 @@ PyCFunction_DeclareMethod PhysicsWorld_set_rotation(PhysicsWorldObject *self, Py
     uint32_t slot = 0;
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_ValueError, "Invalid handle");
-        return nullptr;
+        RAISE_STALE_HANDLE();
     }
 
     uint8_t state = self->slot_states[slot];
     if (UNLIKELY(state != SLOT_ALIVE && state != SLOT_PENDING_CREATE)) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_ValueError, "Stale handle or body being destroyed");
+        PyErr_SetString(PyExc_ValueError, "Body being destroyed");
         return nullptr;
     }
 
     // 3. SHADOW BUFFER MIRROR (Zero-Streak Reset)
-    uint32_t dense = self->slot_to_dense[slot];
+    uint32_t dense    = self->slot_to_dense[slot];
     AuxStride rot_val = {x, y, z, w};
 
     // Update CURRENT rotation
     ((AuxStride *)self->rotations)[dense] = rot_val;
 
     // Update PREVIOUS rotation (The Fix)
-    // This forces the interpolation formula: NLERP(prev, curr, alpha) 
+    // This forces the interpolation formula: NLERP(prev, curr, alpha)
     // to return exactly 'rot_val' for any alpha.
     ((AuxStride *)self->prev_rotations)[dense] = rot_val;
 
@@ -2786,14 +2778,13 @@ PyCFunction_DeclareMethod PhysicsWorld_set_linear_velocity(PhysicsWorldObject *s
     uint32_t slot = 0;
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_ValueError, "Invalid handle");
-        return nullptr;
+        RAISE_STALE_HANDLE();
     }
 
     uint8_t state = self->slot_states[slot];
     if (UNLIKELY(state != SLOT_ALIVE && state != SLOT_PENDING_CREATE)) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_ValueError, "Stale handle or body being destroyed");
+        PyErr_SetString(PyExc_ValueError, "Body being destroyed");
         return nullptr;
     }
 
@@ -2851,15 +2842,14 @@ PyCFunction_DeclareMethod PhysicsWorld_set_angular_velocity(PhysicsWorldObject *
     uint32_t slot = 0;
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_ValueError, "Invalid handle");
-        return nullptr;
+        RAISE_STALE_HANDLE();
     }
 
     // Check state: allow if alive or newly created
     uint8_t state = self->slot_states[slot];
     if (UNLIKELY(state != SLOT_ALIVE && state != SLOT_PENDING_CREATE)) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_ValueError, "Stale handle or body being destroyed");
+        PyErr_SetString(PyExc_ValueError, "Body being destroyed");
         return nullptr;
     }
 
@@ -2906,19 +2896,17 @@ PyCFunction_DeclareMethod PhysicsWorld_get_motion_type(PhysicsWorldObject *self,
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot) ||
                  self->slot_states[slot] != SLOT_ALIVE)) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
-        return nullptr;
+        RAISE_STALE_HANDLE();
     }
 
     JPH_BodyID bid        = self->body_ids[self->slot_to_dense[slot]];
     JPH_BodyInterface *bi = self->body_interface;
 
     // 3. JOLT INTERACTION (Release GIL)
-    int mt;
-    Py_BEGIN_ALLOW_THREADS mt = (int)JPH_BodyInterface_GetMotionType(bi, bid);
-    Py_END_ALLOW_THREADS
+    JPH_MotionType mt;
+    mt = JPH_BodyInterface_GetMotionType(bi, bid);
 
-        SHADOW_UNLOCK(&self->shadow_lock);
+    SHADOW_UNLOCK(&self->shadow_lock);
     return PyLong_FromLong((long)mt);
 }
 
@@ -2948,8 +2936,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_motion_type(PhysicsWorldObject *self,
     uint32_t slot = 0;
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_ValueError, "Invalid handle");
-        return nullptr;
+        RAISE_STALE_HANDLE();
     }
 
     uint8_t state = self->slot_states[slot];
@@ -2996,8 +2983,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_user_data(PhysicsWorldObject *self,
     uint32_t slot = 0;
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
-        return nullptr;
+        RAISE_STALE_HANDLE();
     }
 
     uint8_t state = self->slot_states[slot];
@@ -3050,7 +3036,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_user_data(PhysicsWorldObject *self,
             !unpack_handle(self, handle_raw, &slot) ||
             (self->slot_states[slot] != SLOT_ALIVE && self->slot_states[slot] != SLOT_CHARACTER))) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        Py_RETURN_NONE;
+        RAISE_STALE_HANDLE();
     }
 
     uint64_t val = self->user_data[self->slot_to_dense[slot]];
@@ -3083,8 +3069,7 @@ PyCFunction_DeclareMethod PhysicsWorld_activate(PhysicsWorldObject *self, PyObje
     uint32_t slot = 0;
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
-        return nullptr;
+        RAISE_STALE_HANDLE();
     }
 
     // Verify state: Only alive or pending bodies can be activated
@@ -3129,8 +3114,7 @@ PyCFunction_DeclareMethod PhysicsWorld_deactivate(PhysicsWorldObject *self, PyOb
     uint32_t slot = 0;
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_ValueError, "Invalid handle");
-        return nullptr;
+        RAISE_STALE_HANDLE();
     }
 
     if (self->slot_states[slot] == SLOT_ALIVE || self->slot_states[slot] == SLOT_PENDING_CREATE) {
@@ -3188,8 +3172,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_transform(PhysicsWorldObject *self,
     uint32_t slot = 0;
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
-        return nullptr;
+        RAISE_STALE_HANDLE();
     }
 
     uint8_t state = self->slot_states[slot];
@@ -3201,7 +3184,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_transform(PhysicsWorldObject *self,
 
     // 4. SHADOW BUFFER MIRROR (Snap state for all 4 buffers)
     uint32_t dense = self->slot_to_dense[slot];
-    
+
     // Prepare Stride Structs
     PosStride p_val = {px, py, pz, 0.0};
     AuxStride r_val = {rx, ry, rz, rw};
@@ -3260,8 +3243,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_ccd(PhysicsWorldObject *self, PyObjec
     uint32_t slot = 0;
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot))) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
-        return nullptr;
+        RAISE_STALE_HANDLE();
     }
 
     // Check if the body exists
@@ -3317,7 +3299,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_index(PhysicsWorldObject *self, PyObj
             !unpack_handle(self, handle_raw, &slot) ||
             (self->slot_states[slot] != SLOT_ALIVE && self->slot_states[slot] != SLOT_CHARACTER))) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        Py_RETURN_NONE;
+        RAISE_STALE_HANDLE();
     }
 
     uint32_t idx = self->slot_to_dense[slot];
@@ -3527,8 +3509,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_collision_filter(PhysicsWorldObject *
     if (UNLIKELY(!unpack_handle(self, handle_raw, &slot) ||
                  self->slot_states[slot] != SLOT_ALIVE)) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
-        return nullptr;
+        RAISE_STALE_HANDLE();
     }
 
     // 3. IMMEDIATE WRITE
@@ -4043,8 +4024,8 @@ static const PyMethodDef PhysicsWorld_methods[] = {
     {"_benchmark_parse", CULV_CAST(PhysicsWorld_benchmark_parse), METH_FASTCALL | METH_KEYWORDS,
      "Benchmark the argument parsing of a complex function. Up to 64 arguments."},
 
-     {"_benchmark_build", CULV_CAST(PhysicsWorld_benchmark_build), METH_NOARGS,
-      "Benchmark the FastBuild_Tuple function with a complex set of arguments."},
+    {"_benchmark_build", CULV_CAST(PhysicsWorld_benchmark_build), METH_NOARGS,
+     "Benchmark the FastBuild_Tuple function with a complex set of arguments."},
 
     {nullptr, nullptr, 0, nullptr}};
 
@@ -4145,8 +4126,9 @@ static const PyType_Slot RagdollSettings_slots[] = {
 static const PyType_Spec PhysicsWorld_spec = {
     .name      = "culverin._culverin_c.PhysicsWorld",
     .basicsize = sizeof(PhysicsWorldObject),
-    .flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC | Py_TPFLAGS_MANAGED_DICT,
-    .slots     = (PyType_Slot *)PhysicsWorld_slots,
+    .flags =
+        Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC | Py_TPFLAGS_MANAGED_DICT,
+    .slots = (PyType_Slot *)PhysicsWorld_slots,
 };
 
 static const PyType_Spec Character_spec = {

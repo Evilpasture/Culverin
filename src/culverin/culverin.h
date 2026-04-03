@@ -82,7 +82,7 @@ CULV_MAYBE_UNUSED static constexpr size_t JPH_BODY_ID_INDEX_MASK = 0x00FFFFFF;
 #endif
 
 // Mask for the raw array index (Stripping the 24th bit used for Static flags)
-static constexpr unsigned _BitInt(24) ID_TO_INDEX_MASK = 0x7FFFFF; 
+static constexpr unsigned _BitInt(24) ID_TO_INDEX_MASK = 0x7FFFFF;
 static_assert(ID_TO_INDEX_MASK == 0x7FFFFF);
 
 #define JPH_ID_TO_INDEX(id) ((uint32_t)((id) & ID_TO_INDEX_MASK))
@@ -366,11 +366,7 @@ CULV_MAYBE_UNUSED
 static inline bool unpack_handle(PhysicsWorldObject *self, BodyHandle h, uint32_t *slot) {
     *slot        = (uint32_t)(h & HANDLE_INDEX_MASK);
     uint32_t gen = (uint32_t)(h >> HANDLE_INDEX_BITS);
-
-    if (*slot >= self->slot_capacity || self->slot_capacity == 0) {
-        return false;
-    }
-    return self->generations[*slot] == gen;
+    return (bool)(*slot < self->slot_capacity && self->generations[*slot] == gen);
 }
 
 // 32-bit Float Exponent Mask
@@ -439,3 +435,17 @@ CULV_MAYBE_UNUSED CULV_NODISCARD static inline bool culv_is_finite_d(double d) {
         PyErr_SetString(PyExc_ValueError, buf);                                                    \
         return NULL;                                                                               \
     }
+
+// DOESN'T DO THE UNLOCKING FOR YOU. REMEMBER!
+#if defined(STRICT_HANDLE_ENABLED)
+#    define RAISE_STALE_HANDLE()                                                                   \
+        do {                                                                                       \
+            PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");                          \
+            return nullptr;                                                                        \
+        } while (false)
+#else
+#    define RAISE_STALE_HANDLE()                                                                   \
+        do {                                                                                       \
+            Py_RETURN_NONE;                                                                        \
+        } while (false)
+#endif
