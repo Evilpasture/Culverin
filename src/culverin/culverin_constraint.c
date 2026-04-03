@@ -3,24 +3,22 @@
 #include "culverin_constraint_factory.h"
 #include "culverin_types.h"
 
-
-
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 PyCFunction_DeclareMethodFromModule PhysicsWorld_create_constraint(PhysicsWorldObject *self,
                                                                    PyObject *const *args,
                                                                    size_t nargsf,
                                                                    PyObject *kwnames) {
-    // 1. FAST PARSE (Zero-Allocation)
+    // 1. FAST PARSE (Unchanged)
     int type           = 0;
-    uint64_t h1        = 0;
-    uint64_t h2        = 0;
+    uint64_t h1_raw    = 0;
+    uint64_t h2_raw    = 0;
     PyObject *o_params = nullptr;
     PyObject *o_motor  = nullptr;
 
     void *targets[CreateConstr_COUNT];
     targets[IDX_CC_TYPE]   = (void *)&type;
-    targets[IDX_CC_BODY1]  = (void *)&h1;
-    targets[IDX_CC_BODY2]  = (void *)&h2;
+    targets[IDX_CC_BODY1]  = (void *)&h1_raw;
+    targets[IDX_CC_BODY2]  = (void *)&h2_raw;
     targets[IDX_CC_PARAMS] = (void *)&o_params;
     targets[IDX_CC_MOTOR]  = (void *)&o_motor;
 
@@ -29,14 +27,14 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_constraint(PhysicsWorldO
         return nullptr;
     }
 
-    if (UNLIKELY(h1 == h2)) {
+    if (UNLIKELY(h1_raw == h2_raw)) {
         PyErr_SetString(PyExc_ValueError, "Cannot create a constraint between a body and itself");
         return nullptr;
     }
 
-    // 2. PARAMS EXTRACTION (Outside Lock)
+    // 2. PARAMS EXTRACTION (Unchanged)
     ConstraintParams p;
-    params_init(&p); // Assuming this zeros the struct
+    params_init(&p);
     int parse_ok = 1;
 
     switch (type) {
@@ -76,8 +74,18 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_constraint(PhysicsWorldO
 
     uint32_t s1 = 0;
     uint32_t s2 = 0;
-    if (!unpack_handle(self, h1, &s1) || self->slot_states[s1] != SLOT_ALIVE ||
-        !unpack_handle(self, h2, &s2) || self->slot_states[s2] != SLOT_ALIVE) {
+
+    // TSan Fix: unpack_handle now takes BodyHandle (atomic uint64_t)
+    // and slot_states are atomic loads.
+    bool valid_b1 =
+        (unpack_handle(self, (BodyHandle)h1_raw, &s1) &&
+         atomic_load_explicit(&self->slot_states[s1], memory_order_acquire) == SLOT_ALIVE) != 0;
+
+    bool valid_b2 =
+        (unpack_handle(self, (BodyHandle)h2_raw, &s2) &&
+         atomic_load_explicit(&self->slot_states[s2], memory_order_acquire) == SLOT_ALIVE) != 0;
+
+    if (!valid_b1 || !valid_b2) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Invalid or stale body handles");
         return nullptr;
@@ -94,7 +102,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_constraint(PhysicsWorldO
     uint32_t c_slot = self->free_constraint_slots[--self->free_constraint_count];
     SHADOW_UNLOCK(&self->shadow_lock);
 
-    // 4. JOLT EXECUTION (Sorted Locking for Deadlock Prevention)
+    // 4. JOLT EXECUTION (Lock Interface - Unchanged)
     const JPH_BodyLockInterface *lock_iface = JPH_PhysicsSystem_GetBodyLockInterface(self->system);
     JPH_BodyLockWrite lock1;
     JPH_BodyLockWrite lock2;
@@ -144,13 +152,10 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_constraint(PhysicsWorldO
         SHADOW_LOCK(&self->shadow_lock);
         self->free_constraint_slots[self->free_constraint_count++] = c_slot;
         SHADOW_UNLOCK(&self->shadow_lock);
-        return PyErr_Format(PyExc_RuntimeError, "Jolt failed to instantiate constraint type %d",
-                            type);
+        return PyErr_Format(PyExc_RuntimeError, "Jolt failed to instantiate constraint");
     }
 
     JPH_PhysicsSystem_AddConstraint(self->system, constraint);
-
-    // FIX: Explicitly wake up the bodies so the motor begins simulating immediately
     JPH_BodyInterface_ActivateBody(self->body_interface, bid1);
     JPH_BodyInterface_ActivateBody(self->body_interface, bid2);
 
@@ -169,10 +174,11 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_destroy_constraint(PhysicsWorld
                                                                     PyObject *const *args,
                                                                     size_t nargsf,
                                                                     PyObject *kwnames) {
-    // 1. FAST PARSE (Zero-Allocation)
-    BodyHandle handle_raw;
+    // 1. FAST PARSE
+    // TSan Fix: Use raw uint64 for the parser target to avoid atomic init overhead
+    uint64_t h_raw;
     void *targets[HOnly_COUNT];
-    targets[IDX_H_H] = (void *)&handle_raw;
+    targets[IDX_H_H] = (void *)&h_raw;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &DestroyConstrParser, targets)) {
@@ -184,12 +190,12 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_destroy_constraint(PhysicsWorld
     // 2. RESOLUTION PHASE (Inside Shadow Lock)
     SHADOW_LOCK(&self->shadow_lock);
 
-    // Guard against Physics Step AND active Queries (Raycasts/etc might touch constraints)
     BLOCK_UNTIL_NOT_STEPPING(self);
     BLOCK_UNTIL_NOT_QUERYING(self);
 
-    auto slot = (uint32_t)(handle_raw & HANDLE_INDEX_MASK);
-    auto gen  = (uint32_t)(handle_raw >> HANDLE_INDEX_BITS);
+    // Manually unpack the constraint-specific handle bitmask
+    uint32_t slot = (uint32_t)(h_raw & HANDLE_INDEX_MASK);
+    uint32_t gen  = (uint32_t)(h_raw >> HANDLE_INDEX_BITS);
 
     // Validate identity and state
     if (slot >= self->constraint_capacity || self->constraint_generations[slot] != gen ||
@@ -199,25 +205,25 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_destroy_constraint(PhysicsWorld
         return nullptr;
     }
 
-    // Capture pointer and IMMEDIATELY invalidate the slot
+    // Snapshot pointer and invalidate the slot
     c_to_destroy = self->constraints[slot];
 
     self->constraints[slot]       = nullptr;
     self->constraint_states[slot] = SLOT_EMPTY;
-    self->constraint_generations[slot]++; // Invalidate future use of this handle
+    self->constraint_generations[slot]++; // Increment generation to kill existing handles
     self->free_constraint_slots[self->free_constraint_count++] = slot;
 
     SHADOW_UNLOCK(&self->shadow_lock);
 
     // 3. JOLT DESTRUCTION PHASE (Outside Shadow Lock)
     if (c_to_destroy) {
-        // Automatic Body Wake-up: Prevents bodies from floating if their joint is deleted
+        // Automatic Body Wake-up: Prevents bodies from floating if their joint is deleted.
+        // ActivateBody is thread-safe in Jolt.
         if (JPH_Constraint_GetType(c_to_destroy) == JPH_ConstraintType_TwoBodyConstraint) {
             auto *tbc    = (JPH_TwoBodyConstraint *)c_to_destroy;
             JPH_Body *b1 = JPH_TwoBodyConstraint_GetBody1(tbc);
             JPH_Body *b2 = JPH_TwoBodyConstraint_GetBody2(tbc);
 
-            // ActivateBody is thread-safe in Jolt
             if (b1) {
                 JPH_BodyInterface_ActivateBody(self->body_interface, JPH_Body_GetID(b1));
             }
@@ -226,7 +232,6 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_destroy_constraint(PhysicsWorld
             }
         }
 
-        // Remove from Physics System and release C++ memory
         JPH_PhysicsSystem_RemoveConstraint(self->system, c_to_destroy);
         JPH_Constraint_Destroy(c_to_destroy);
     }
@@ -238,12 +243,12 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_set_constraint_target(PhysicsWo
                                                                        PyObject *const *args,
                                                                        size_t nargsf,
                                                                        PyObject *kwnames) {
-    // 1. FAST PARSE (Zero-Allocation)
-    uint64_t handle_raw;
+    // 1. FAST PARSE (Unchanged)
+    uint64_t h_raw;
     float target;
 
     void *targets[SetConstr_COUNT];
-    targets[IDX_SCT_H] = (void *)&handle_raw;
+    targets[IDX_SCT_H] = (void *)&h_raw;
     targets[IDX_SCT_T] = (void *)&target;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
@@ -255,12 +260,10 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_set_constraint_target(PhysicsWo
     SHADOW_LOCK(&self->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
 
-    // FIX: Manually unpack constraint handle (do not use body unpack_handle)
-    uint32_t slot = (uint32_t)(handle_raw & HANDLE_INDEX_MASK);
-    uint32_t gen  = (uint32_t)(handle_raw >> HANDLE_INDEX_BITS);
+    uint32_t slot = (uint32_t)(h_raw & HANDLE_INDEX_MASK);
+    uint32_t gen  = (uint32_t)(h_raw >> HANDLE_INDEX_BITS);
 
-    if (UNLIKELY(slot >= self->constraint_capacity || 
-                 self->constraint_generations[slot] != gen || 
+    if (UNLIKELY(slot >= self->constraint_capacity || self->constraint_generations[slot] != gen ||
                  self->constraint_states[slot] != SLOT_ALIVE)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Invalid or stale constraint handle");
@@ -270,21 +273,15 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_set_constraint_target(PhysicsWo
     JPH_Constraint *c         = self->constraints[slot];
     JPH_ConstraintSubType sub = JPH_Constraint_GetSubType(c);
 
-    // 3. JPH EXECUTION 
-    // HINGE
+    // 3. JPH EXECUTION
     if (sub == JPH_ConstraintSubType_Hinge) {
         auto *hc = (JPH_HingeConstraint *)c;
-        
         JPH_HingeConstraint_SetMotorState(hc, JPH_MotorState_Position);
-        
         JPH_HingeConstraint_SetTargetAngle(hc, target);
-    }
-    // SLIDER
-    else if (sub == JPH_ConstraintSubType_Slider) {
-        auto *sc = (JPH_SliderConstraint *)c;
+    } else if (sub == JPH_ConstraintSubType_Slider) {
+        auto *sc             = (JPH_SliderConstraint *)c;
         JPH_MotorState state = JPH_SliderConstraint_GetMotorState(sc);
-        
-        // FIX: If motor is OFF, default to Position mode
+
         if (state == JPH_MotorState_Off) {
             state = JPH_MotorState_Position;
             JPH_SliderConstraint_SetMotorState(sc, state);
@@ -297,15 +294,18 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_set_constraint_target(PhysicsWo
         }
     }
 
-    // 4. WAKE UP BODIES
-    // If the constraint targets change, the bodies must wake up to react.
+    // 4. WAKE UP BODIES (Locked sequence)
     JPH_ConstraintType type = JPH_Constraint_GetType(c);
     if (type == JPH_ConstraintType_TwoBodyConstraint) {
         JPH_Body *b1 = JPH_TwoBodyConstraint_GetBody1((JPH_TwoBodyConstraint *)c);
         JPH_Body *b2 = JPH_TwoBodyConstraint_GetBody2((JPH_TwoBodyConstraint *)c);
 
-        JPH_BodyInterface_ActivateBody(self->body_interface, JPH_Body_GetID(b1));
-        JPH_BodyInterface_ActivateBody(self->body_interface, JPH_Body_GetID(b2));
+        if (b1) {
+            JPH_BodyInterface_ActivateBody(self->body_interface, JPH_Body_GetID(b1));
+        }
+        if (b2) {
+            JPH_BodyInterface_ActivateBody(self->body_interface, JPH_Body_GetID(b2));
+        }
     }
 
     SHADOW_UNLOCK(&self->shadow_lock);
@@ -327,7 +327,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_constraint_type(PhysicsWorl
         return nullptr;
     }
 
-    // 2. RESOLUTION PHASE 
+    // 2. RESOLUTION PHASE
     SHADOW_LOCK(&self->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
 
@@ -336,8 +336,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_constraint_type(PhysicsWorl
     uint32_t gen  = (uint32_t)(handle_raw >> HANDLE_INDEX_BITS);
 
     // Validate slot range, generation, and liveness
-    if (slot >= self->constraint_capacity || 
-        self->constraint_generations[slot] != gen ||
+    if (slot >= self->constraint_capacity || self->constraint_generations[slot] != gen ||
         self->constraint_states[slot] != SLOT_ALIVE) {
         SHADOW_UNLOCK(&self->shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Invalid or stale constraint handle");
@@ -345,7 +344,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_constraint_type(PhysicsWorl
     }
 
     // Extract subtype (Hinge, Slider, etc.)
-    JPH_Constraint *c = self->constraints[slot];
+    JPH_Constraint *c         = self->constraints[slot];
     JPH_ConstraintSubType sub = JPH_Constraint_GetSubType(c);
 
     SHADOW_UNLOCK(&self->shadow_lock);

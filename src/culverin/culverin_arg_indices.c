@@ -110,7 +110,8 @@ ALLOC_PARSER(StressTest, StressTest)
             .required  = (bool)(REQ),                                                              \
             .convert   = FP_GET_CONVERTER((TYPE){0})},
 
-CULV_MAYBE_UNUSED static FastParser *parser_registry[128];
+static constexpr size_t PARSER_REGISTRY_SIZE = 128;
+CULV_MAYBE_UNUSED static FastParser *parser_registry[PARSER_REGISTRY_SIZE];
 CULV_MAYBE_UNUSED static int parser_registry_count = 0;
 
 void culverin_init_all_parsers(void) {

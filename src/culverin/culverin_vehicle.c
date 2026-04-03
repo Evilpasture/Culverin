@@ -262,16 +262,16 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_vehicle(PhysicsWorldObje
                                                                 PyObject *const *args,
                                                                 Py_ssize_t nargs,
                                                                 PyObject *kwnames) {
-    // --- 1. FAST ARGUMENT PARSING ---
-    uint64_t chassis_h    = 0;
-    PyObject *py_wheels   = nullptr;
-    PyObject *py_drive    = nullptr; // Wrapper for drive_str
-    PyObject *py_engine   = nullptr;
-    PyObject *py_trans    = nullptr;
-    const char *drive_str = "RWD";
+    // --- 1. FAST ARGUMENT PARSING (Unchanged) ---
+    uint64_t chassis_h_raw = 0;
+    PyObject *py_wheels    = nullptr;
+    PyObject *py_drive     = nullptr;
+    PyObject *py_engine    = nullptr;
+    PyObject *py_trans     = nullptr;
+    const char *drive_str  = "RWD";
 
     void *targets[CreateVehicle_COUNT];
-    targets[IDX_CV_CHASSIS] = (void *)&chassis_h;
+    targets[IDX_CV_CHASSIS] = (void *)&chassis_h_raw;
     targets[IDX_CV_WHEELS]  = (void *)&py_wheels;
     targets[IDX_CV_DRIVE]   = (void *)&py_drive;
     targets[IDX_CV_ENGINE]  = (void *)&py_engine;
@@ -281,34 +281,41 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_vehicle(PhysicsWorldObje
         return nullptr;
     }
 
-    // Handle string conversion for the drivetrain
     if (py_drive && PyUnicode_Check(py_drive)) {
         drive_str = PyUnicode_AsUTF8(py_drive);
     }
-
-    // --- LOGIC PRESERVATION START ---
 
     if (!PyList_Check(py_wheels) || PyList_Size(py_wheels) < 2) {
         return PyErr_Format(PyExc_ValueError, "Wheels must be a list of at least 2 dictionaries");
     }
     uint32_t num_wheels = (uint32_t)PyList_Size(py_wheels);
 
-    // Necessary for Py_UNBLOCK_THREADS / Py_BLOCK_THREADS
     PyThreadState *_save = nullptr;
 
-    // --- RESOLVE CHASSIS (Shadow Lock + Command Sync) ---
+    // --- 2. RESOLVE CHASSIS (ATOMIC REFACTOR) ---
     SHADOW_LOCK(&self->shadow_lock);
+
+    // Ensure all body creation commands are processed before linking
     sync_and_flush_internal(self);
 
     uint32_t slot = 0;
-    if (!unpack_handle(self, chassis_h, &slot) || self->slot_states[slot] != SLOT_ALIVE) {
+    // TSan Fix: Cast to atomic type for handle verification
+    bool handle_valid = unpack_handle(self, (BodyHandle)chassis_h_raw, &slot);
+
+    // TSan Fix: Atomic load of state (Acquire ensures visibility of the chassis initialization)
+    uint8_t state = (int)handle_valid
+                        ? atomic_load_explicit(&self->slot_states[slot], memory_order_acquire)
+                        : SLOT_EMPTY;
+
+    if (!handle_valid || state != SLOT_ALIVE) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        return PyErr_Format(PyExc_ValueError, "Invalid or stale chassis handle");
+        return PyErr_Format(PyExc_ValueError, "Invalid chassis handle (Body is dead or pending)");
     }
+
     JPH_BodyID chassis_bid = self->body_ids[self->slot_to_dense[slot]];
     SHADOW_UNLOCK(&self->shadow_lock);
 
-    // --- PRE-JOLT RESOURCE ALLOCATION (GIL Held) ---
+    // --- 3. PRE-JOLT RESOURCE ALLOCATION (Unchanged) ---
     VehicleResources r = {0};
     r.f_curve          = JPH_LinearCurve_Create();
     JPH_LinearCurve_AddPoint(r.f_curve, 0.0f, 1.0f);
@@ -332,7 +339,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_vehicle(PhysicsWorldObje
 
     configure_drivetrain(&r, py_engine, py_trans, drive_str, num_wheels);
 
-    // --- JOLT COMMIT (Release GIL, Lock Jolt) ---
+    // --- 4. JOLT COMMIT (No GIL - Unchanged) ---
     bool jolt_locked = false;
     Py_UNBLOCK_THREADS;
 
@@ -366,7 +373,6 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_vehicle(PhysicsWorldObje
 
     JPH_VehicleConstraint_SetVehicleCollisionTester(r.j_veh,
                                                     (JPH_VehicleCollisionTester *)r.tester);
-
     JPH_PhysicsSystem_AddConstraint(self->system, (JPH_Constraint *)r.j_veh);
     JPH_PhysicsSystem_AddStepListener(self->system,
                                       JPH_VehicleConstraint_AsPhysicsStepListener(r.j_veh));
@@ -375,10 +381,9 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_vehicle(PhysicsWorldObje
     JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
     NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
     jolt_locked = false;
-
     Py_BLOCK_THREADS;
 
-    // --- PYTHON WRAPPER ---
+    // --- 5. PYTHON WRAPPER (Unchanged) ---
     auto *st  = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     auto *obj = (VehicleObject *)PyObject_GC_New(VehicleObject, (PyTypeObject *)st->VehicleType);
 
@@ -391,7 +396,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_vehicle(PhysicsWorldObje
 
     obj->vehicle               = r.j_veh;
     obj->tester                = (JPH_VehicleCollisionTester *)r.tester;
-    obj->world                 = (PhysicsWorldObject *)Py_NewRef(self); // Use NewRef for GC safety
+    obj->world                 = (PhysicsWorldObject *)Py_NewRef(self);
     obj->num_wheels            = num_wheels;
     obj->current_gear          = 0;
     obj->wheel_settings        = r.w_settings;
@@ -428,7 +433,7 @@ python_fail:
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 PyCFunction_DeclareMethodFromModule Vehicle_set_input(VehicleObject *self, PyObject *const *args,
                                                       Py_ssize_t nargs, PyObject *kwnames) {
-    // 1. FAST PARSE (Zero-Allocation)
+    // 1. FAST PARSE (Unchanged)
     float forward   = 0.0f;
     float right     = 0.0f;
     float brake     = 0.0f;
@@ -447,8 +452,12 @@ PyCFunction_DeclareMethodFromModule Vehicle_set_input(VehicleObject *self, PyObj
     // 2. STATE MACHINE & JOLT SYNC
     SHADOW_LOCK(&self->world->shadow_lock);
 
-    // Guard against mid-step access or destroyed vehicles
-    if (UNLIKELY(self->world->is_stepping || !self->vehicle)) {
+    // TSan Fix: Explicit relaxed load of is_stepping flag.
+    // Since we hold the SHADOW_LOCK, we only need to verify if the Stepper
+    // thread has raised the flag to begin a buffer swap.
+    bool stepping = atomic_load_explicit(&self->world->is_stepping, memory_order_relaxed);
+
+    if (UNLIKELY(stepping || !self->vehicle)) {
         SHADOW_UNLOCK(&self->world->shadow_lock);
         Py_RETURN_NONE;
     }
@@ -467,7 +476,7 @@ PyCFunction_DeclareMethodFromModule Vehicle_set_input(VehicleObject *self, PyObj
     JPH_BodyInterface_GetLinearVelocity(bi, chassis_id, linear_vel);
     JPH_BodyInterface_GetRotation(bi, chassis_id, chassis_q);
 
-    // Calculate forward speed via dot product (Project velocity onto chassis forward vector)
+    // Calculate forward speed via dot product
     JPH_Vec3 world_fwd = {};
     manual_vec3_rotate_by_quat(&(JPH_Vec3){0, 0, 1.0f}, chassis_q, &world_fwd);
     float speed = (linear_vel->x * world_fwd.x) + (linear_vel->y * world_fwd.y) +
@@ -482,35 +491,29 @@ PyCFunction_DeclareMethodFromModule Vehicle_set_input(VehicleObject *self, PyObj
 
     // 3. DRIVE LOGIC (Arcade Style State Machine)
     if (forward > THROTTLE_INPUT_THRESHOLD) {
-        // FORWARD DRIVE
         JPH_VehicleTransmission_SetMode(trans, JPH_TransmissionMode_Auto);
         if (cur_gear <= 0 && speed > -SPEED_DIRECTION_THRESHOLD) {
             JPH_VehicleTransmission_Set(trans, 1, 1.0f);
         }
-        // Arcade Brake: Apply brakes if we are still moving backwards
         if (speed < -SPEED_MIN_THRESHOLD) {
             input_brake = 1.0f;
         }
 
     } else if (forward < -THROTTLE_INPUT_THRESHOLD) {
-        // REVERSE DRIVE
         JPH_VehicleTransmission_SetMode(trans, JPH_TransmissionMode_Manual);
         if (cur_gear != -1 && speed < SPEED_DIRECTION_THRESHOLD) {
             JPH_VehicleTransmission_Set(trans, -1, 1.0f);
         }
-        // Arcade Brake: Apply brakes if we are still moving forwards
         if (speed > SPEED_MIN_THRESHOLD) {
             input_brake = 1.0f;
         }
 
     } else {
-        // NEUTRAL / COASTING
         input_throttle = 0.0f;
         JPH_VehicleTransmission_SetMode(trans, JPH_TransmissionMode_Manual);
         if (cur_gear != 0) {
-            JPH_VehicleTransmission_Set(trans, 0, 0.0f); // Clutch out
+            JPH_VehicleTransmission_Set(trans, 0, 0.0f);
         }
-        // Rolling Resistance: Stop slow idle creep
         if (fabsf(speed) > SPEED_MIN_THRESHOLD) {
             input_brake = fmaxf(input_brake, ROLLING_RESISTANCE_COASTING);
         }
@@ -625,9 +628,9 @@ PyCFunction_DeclareMethodFromModule Vehicle_get_wheel_local_transform(VehicleObj
 
 PyCFunction_DeclareMethodFromModule Vehicle_get_debug_state(CULV_MAYBE_UNUSED VehicleObject *self,
                                                             PyObject *Py_UNUSED(ignored)) {
-    #ifndef CULVERIN_DEBUG
+#ifndef CULVERIN_DEBUG
     Py_RETURN_NONE;
-    #else                                                            
+#else
     // 1. LOCK AND GUARD
     // We need the world lock to ensure the vehicle pointer is stable
     // and the physics step isn't currently mutating these values.
@@ -698,7 +701,7 @@ PyCFunction_DeclareMethodFromModule Vehicle_get_debug_state(CULV_MAYBE_UNUSED Ve
     SHADOW_UNLOCK(&self->world->shadow_lock);
 
     Py_RETURN_NONE;
-    #endif
+#endif
 }
 
 // --- Vehicle GC Support ---

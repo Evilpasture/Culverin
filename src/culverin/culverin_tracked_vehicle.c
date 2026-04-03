@@ -106,16 +106,16 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
                                                                         PyObject *const *args,
                                                                         Py_ssize_t nargs,
                                                                         PyObject *kwnames) {
-    // --- 1. FAST ARGUMENT PARSING ---
-    uint64_t chassis_h  = 0;
-    PyObject *py_wheels = nullptr;
-    PyObject *py_tracks = nullptr;
-    float max_torque    = TRACKED_ENGINE_MAX_TORQUE_DEFAULT;
-    float max_rpm       = TRACKED_ENGINE_MAX_RPM_DEFAULT;
-    float min_rpm       = TRACKED_ENGINE_MIN_RPM_DEFAULT;
+    // --- 1. FAST ARGUMENT PARSING (Unchanged) ---
+    uint64_t chassis_h_raw = 0;
+    PyObject *py_wheels    = nullptr;
+    PyObject *py_tracks    = nullptr;
+    float max_torque       = TRACKED_ENGINE_MAX_TORQUE_DEFAULT;
+    float max_rpm          = TRACKED_ENGINE_MAX_RPM_DEFAULT;
+    float min_rpm          = TRACKED_ENGINE_MIN_RPM_DEFAULT;
 
     void *targets[CreateTracked_COUNT];
-    targets[IDX_CT_CHASSIS] = (void *)&chassis_h;
+    targets[IDX_CT_CHASSIS] = (void *)&chassis_h_raw;
     targets[IDX_CT_WHEELS]  = (void *)&py_wheels;
     targets[IDX_CT_TRACKS]  = (void *)&py_tracks;
     targets[IDX_CT_TORQUE]  = (void *)&max_torque;
@@ -125,21 +125,33 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
         return nullptr;
     }
 
-    // --- 2. RESOLVE CHASSIS (Requires GIL & Shadow Lock) ---
+    // --- 2. RESOLVE CHASSIS (ATOMIC REFACTOR) ---
     SHADOW_LOCK(&self->shadow_lock);
+
+    // Ensure all pending creation commands are flushed before we try to link a constraint
     sync_and_flush_internal(self);
+
     uint32_t slot = 0;
-    if (!unpack_handle(self, chassis_h, &slot) || self->slot_states[slot] != SLOT_ALIVE) {
+    // TSan Fix: Cast raw uint64 to atomic BodyHandle for verification
+    bool handle_valid = unpack_handle(self, (BodyHandle)chassis_h_raw, &slot);
+
+    // TSan Fix: Atomic load of the slot state (Acquire ensures chassis data is visible)
+    uint8_t state = (int)handle_valid
+                        ? atomic_load_explicit(&self->slot_states[slot], memory_order_acquire)
+                        : SLOT_EMPTY;
+
+    if (!handle_valid || state != SLOT_ALIVE) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        return PyErr_Format(PyExc_ValueError, "Invalid chassis handle");
+        return PyErr_Format(PyExc_ValueError, "Invalid chassis handle (Body is dead or pending)");
     }
+
+    // Access non-atomic dense buffer while holding shadow_lock
     JPH_BodyID chassis_bid = self->body_ids[self->slot_to_dense[slot]];
     SHADOW_UNLOCK(&self->shadow_lock);
 
-    // --- 3. PRE-JOLT RESOURCE ALLOCATION (GIL HELD) ---
+    // --- 3. PRE-JOLT RESOURCE ALLOCATION (Unchanged) ---
     VehicleResources r = {0};
     auto num_wheels    = (uint32_t)PyList_Size(py_wheels);
-
     TrackData tracks[2];
     memset(tracks, 0, sizeof(tracks));
     int num_tracks = 0;
@@ -160,7 +172,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
         goto python_fail;
     }
 
-    // --- 4. JOLT COMMIT (No GIL) ---
+    // --- 4. JOLT COMMIT (No GIL - Unchanged) ---
     bool jolt_locked     = false;
     PyThreadState *_save = nullptr;
     Py_UNBLOCK_THREADS;
@@ -221,7 +233,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
     jolt_locked = false;
     Py_BLOCK_THREADS;
 
-    // --- 5. CLEANUP & WRAP ---
+    // --- 5. CLEANUP & WRAP (Unchanged) ---
     for (int t = 0; t < num_tracks; t++) {
         CULV_RAW_FREE(tracks[t].indices);
     }
@@ -245,7 +257,6 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
     obj->friction_curve        = r.f_curve;
     obj->torque_curve          = nullptr;
 
-    Py_INCREF(self);
     PyObject_GC_Track((PyObject *)obj);
     return (PyObject *)obj;
 
@@ -264,7 +275,6 @@ python_fail:
             CULV_RAW_FREE(tracks[t].indices);
         }
     }
-
     SHADOW_LOCK(&self->shadow_lock);
     cleanup_vehicle_resources(&r, num_wheels, self);
     SHADOW_UNLOCK(&self->shadow_lock);

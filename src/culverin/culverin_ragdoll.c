@@ -175,7 +175,7 @@ PyCFunction_DeclareMethodFromModule RagdollSettings_add_part(RagdollSettingsObje
     }
 
     // 4. Validation & Resizing
-    JPH_Skeleton *skel = (JPH_Skeleton *)JPH_RagdollSettings_GetSkeleton(self->settings);
+    auto *skel = JPH_RagdollSettings_GetSkeleton(self->settings);
     int skel_count     = JPH_Skeleton_GetJointCount(skel);
     if (joint_idx < 0 || joint_idx >= skel_count) {
         return PyErr_Format(PyExc_IndexError, "Joint index %d out of bounds", joint_idx);
@@ -329,9 +329,9 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll(PhysicsWorldObje
 
     // --- 4. SHADOW BUFFER WARM-UP ---
     SHADOW_LOCK(&self->shadow_lock);
-    if (self->free_count < body_count) {
-        if (PhysicsWorld_resize(self, self->capacity + body_count + RAGDOLL_BODY_BUFFER_INCREMENT) <
-            0) {
+    if (atomic_load_explicit(&self->free_count, memory_order_acquire) < body_count) {
+        if (PhysicsWorld_resize(self, self->capacity + body_count + RAGDOLL_BODY_BUFFER_INCREMENT) < 0) {
+            SHADOW_UNLOCK(&self->shadow_lock);
             SHADOW_UNLOCK(&self->shadow_lock);
             JPH_Ragdoll_Destroy(j_rag);
             CULV_RAW_FREE(neutral_matrices);
@@ -349,44 +349,54 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll(PhysicsWorldObje
     auto *shadow_avel     = (AuxStride *)self->angular_velocities;
 
     for (size_t i = 0; i < body_count; i++) {
-        JPH_BodyID bid     = JPH_Ragdoll_GetBodyID(j_rag, (int)i);
-        uint32_t slot      = self->free_slots[--self->free_count];
+        JPH_BodyID bid = JPH_Ragdoll_GetBodyID(j_rag, (int)i);
+        
+        // TSan Fix: Pop from free stack atomically
+        size_t f_idx = atomic_fetch_sub_explicit(&self->free_count, 1, memory_order_relaxed) - 1;
+        uint32_t slot = self->free_slots[f_idx];
         obj->body_slots[i] = slot;
-        auto dense         = (uint32_t)self->count++;
+        
+        // TSan Fix: Increment dense count atomically
+        auto dense = (uint32_t)atomic_fetch_add_explicit(&self->count, 1, memory_order_relaxed);
 
-        JPH_RVec3 world_p;
-        JPH_Quat world_q;
+        JPH_RVec3 world_p; JPH_Quat world_q;
         JPH_BodyInterface_GetPosition(bi, bid, &world_p);
         JPH_BodyInterface_GetRotation(bi, bid, &world_q);
 
-        shadow_pos[dense]  = (PosStride){.x = world_p.x, .y = world_p.y, .z = world_p.z};
+        shadow_pos[dense]  = (PosStride){world_p.x, world_p.y, world_p.z, 0.0};
         shadow_ppos[dense] = shadow_pos[dense];
-
-        shadow_rot[dense] =
-            (AuxStride){.x = world_q.x, .y = world_q.y, .z = world_q.z, .w = world_q.w};
+        shadow_rot[dense]  = (AuxStride){world_q.x, world_q.y, world_q.z, world_q.w};
         shadow_prot[dense] = shadow_rot[dense];
-
         shadow_lvel[dense] = (AuxStride){};
         shadow_avel[dense] = (AuxStride){};
 
-        self->body_ids[dense]      = bid;
-        self->slot_to_dense[slot]  = dense;
-        self->dense_to_slot[dense] = slot;
-        self->slot_states[slot]    = SLOT_ALIVE;
-        self->user_data[dense]     = user_data;
-        self->categories[dense]    = category;
-        self->masks[dense]         = mask;
-        self->material_ids[dense]  = material_id;
+        self->body_ids[dense]     = bid;
+        self->slot_to_dense[slot] = dense;
+        self->dense_to_slot[dense]= slot;
+        
+        // TSan Fix: Fetch generation atomically
+        uint32_t gen = atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
+        BodyHandle h = make_handle(slot, gen);
+        uint64_t raw_h = atomic_load_explicit(&h, memory_order_relaxed);
 
         uint32_t j_idx = JPH_ID_TO_INDEX(bid);
         if (self->id_to_handle_map && j_idx < self->max_jolt_bodies) {
-            self->id_to_handle_map[j_idx] = make_handle(slot, self->generations[slot]);
+            // TSan Fix: Store handle to shared map atomically (Release ensures shadow writes are visible)
+            atomic_store_explicit(&self->id_to_handle_map[j_idx], raw_h, memory_order_release);
         }
-        JPH_BodyInterface_SetUserData(bi, bid,
-                                      (uint64_t)make_handle(slot, self->generations[slot]));
+        JPH_BodyInterface_SetUserData(bi, bid, raw_h);
+
+        // TSan Fix: Publish body as ALIVE atomically
+        atomic_store_explicit(&self->slot_states[slot], SLOT_ALIVE, memory_order_release);
+
+        self->user_data[dense]    = user_data;
+        self->categories[dense]   = category;
+        self->masks[dense]        = mask;
+        self->material_ids[dense] = material_id;
     }
 
-    self->view_shape[0] = (Py_ssize_t)self->count;
+    // TSan Fix: Update view shape with atomic count
+    self->view_shape[0] = (Py_ssize_t)atomic_load_explicit(&self->count, memory_order_relaxed);
     SHADOW_UNLOCK(&self->shadow_lock);
 
     CULV_RAW_FREE(neutral_matrices);
@@ -416,7 +426,7 @@ PyCFunction_DeclareMethodFromModule Ragdoll_drive_to_pose(RagdollObject *self,
 
     // 2. RESOURCE ACQUISITION
     const JPH_RagdollSettings *settings = JPH_Ragdoll_GetRagdollSettings(self->ragdoll);
-    JPH_Skeleton *skel                  = (JPH_Skeleton *)JPH_RagdollSettings_GetSkeleton(settings);
+    auto *skel                  = JPH_RagdollSettings_GetSkeleton(settings);
     int joint_count                     = JPH_Skeleton_GetJointCount(skel);
 
     // Validate Buffer Size
@@ -470,17 +480,32 @@ PyCFunction_DeclareMethodFromModule Ragdoll_get_body_ids(RagdollObject *self,
     // Helper to get the Body Handles of the parts so users can manipulate
     // specific limbs
     PyObject *list = PyList_New((Py_ssize_t)self->body_count);
+    if (!list) { return nullptr;
+}
+
     SHADOW_LOCK(&self->world->shadow_lock);
+    
     for (size_t i = 0; i < self->body_count; i++) {
         uint32_t slot = self->body_slots[i];
-        if (self->world->slot_states[slot] == SLOT_ALIVE) {
-            uint32_t gen = self->world->generations[slot];
-            PyList_SET_ITEM(list, i, PyLong_FromUnsignedLongLong(make_handle(slot, gen)));
+        
+        // TSan Fix: Atomic load of the slot state
+        uint8_t state = atomic_load_explicit(&self->world->slot_states[slot], memory_order_acquire);
+        
+        if (state == SLOT_ALIVE) {
+            // TSan Fix: Atomic load of the generation
+            uint32_t gen = atomic_load_explicit(&self->world->generations[slot], memory_order_relaxed);
+            
+            BodyHandle h = make_handle(slot, gen);
+            
+            // Extract raw uint64 from the atomic BodyHandle for Python
+            uint64_t raw_h = atomic_load_explicit(&h, memory_order_relaxed);
+            PyList_SET_ITEM(list, i, PyLong_FromUnsignedLongLong(raw_h));
         } else {
             Py_INCREF(Py_None);
             PyList_SET_ITEM(list, i, Py_None);
         }
     }
+    
     SHADOW_UNLOCK(&self->world->shadow_lock);
     return list;
 }
@@ -563,24 +588,30 @@ PyType_DeclareSlot_VoidFromModule Ragdoll_dealloc(RagdollObject *self) {
     if (self->world && self->ragdoll) {
         SHADOW_LOCK(&self->world->shadow_lock);
 
+        // Guard against simulation or in-flight queries
         BLOCK_UNTIL_NOT_STEPPING(self->world);
         BLOCK_UNTIL_NOT_QUERYING(self->world);
 
         JPH_Ragdoll_RemoveFromPhysicsSystem(self->ragdoll, true);
 
-        // Validate pointers before iteration to prevent corruption
         if (self->body_slots && self->world->slot_states) {
             for (size_t i = 0; i < self->body_count; i++) {
                 uint32_t slot = self->body_slots[i];
 
-                // Boundary check
                 if (slot >= self->world->slot_capacity) {
                     continue;
                 }
 
-                if (self->world->slot_states[slot] != SLOT_ALIVE) {
+                // TSan Fix: Atomic load of slot state.
+                // Acquire ensures we see all initialization data before calling remove.
+                uint8_t state = atomic_load_explicit(&self->world->slot_states[slot], memory_order_acquire);
+
+                if (state != SLOT_ALIVE) {
                     continue;
                 }
+
+                // Note: world_remove_body_slot has been refactored 
+                // to handle atomic count/generation/state updates.
                 world_remove_body_slot(self->world, slot);
             }
         }
@@ -588,11 +619,14 @@ PyType_DeclareSlot_VoidFromModule Ragdoll_dealloc(RagdollObject *self) {
     }
 
     if (self->ragdoll) {
+        // Jolt Destruction must happen outside the Shadow Lock to prevent deadlock 
+        // with Jolt internal pool managers.
         JPH_Ragdoll_Destroy(self->ragdoll);
     }
+    
     if (self->body_slots) {
         CULV_RAW_FREE(self->body_slots);
-        self->body_slots = nullptr; // Prevent double-free in weird recursion cases
+        self->body_slots = nullptr; 
     }
 
     Py_XDECREF(self->world);

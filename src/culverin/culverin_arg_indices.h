@@ -3,6 +3,8 @@
 #include "culverin_fast_parse.h"
 #include "culverin_types.h"
 
+typedef uint64_t ParseBodyHandle;
+
 /**
  * SCHEMA DEFINITIONS
  * Format: X(IndexName, PythonName, C-Type, IsRequired)
@@ -25,20 +27,20 @@
     X(IDX_CCD, "ccd", bool, 0)
 
 #define SCHEMA_SET_POS(X)                                                                          \
-    X(IDX_SETPOS_HANDLE, "handle", BodyHandle, 1)                                                  \
+    X(IDX_SETPOS_HANDLE, "handle", ParseBodyHandle, 1)                                             \
     X(IDX_SETPOS_X, "x", JPH_Real, 1)                                                              \
     X(IDX_SETPOS_Y, "y", JPH_Real, 1)                                                              \
     X(IDX_SETPOS_Z, "z", JPH_Real, 1)
 
 // Shared by Impulse, AngImpulse, Force, and Torque
 #define SCHEMA_VEC3(X)                                                                             \
-    X(IDX_V3_H, "handle", BodyHandle, 1)                                                           \
+    X(IDX_V3_H, "handle", ParseBodyHandle, 1)                                                      \
     X(IDX_V3_X, "x", float, 1)                                                                     \
     X(IDX_V3_Y, "y", float, 1)                                                                     \
     X(IDX_V3_Z, "z", float, 1)
 
 #define SCHEMA_IMPULSE_AT(X)                                                                       \
-    X(IDX_IMPAT_H, "handle", BodyHandle, 1)                                                        \
+    X(IDX_IMPAT_H, "handle", ParseBodyHandle, 1)                                                   \
     X(IDX_IMPAT_IX, "ix", float, 1)                                                                \
     X(IDX_IMPAT_IY, "iy", float, 1)                                                                \
     X(IDX_IMPAT_IZ, "iz", float, 1)                                                                \
@@ -47,7 +49,7 @@
     X(IDX_IMPAT_PZ, "pz", JPH_Real, 1)
 
 #define SCHEMA_BUOYANCY(X)                                                                         \
-    X(IDX_BUOY_HANDLE, "handle", BodyHandle, 1)                                                    \
+    X(IDX_BUOY_HANDLE, "handle", ParseBodyHandle, 1)                                               \
     X(IDX_BUOY_SURFACE_Y, "surface_y", double, 1)                                                  \
     X(IDX_BUOY_BUOYANCY, "buoyancy", float, 0)                                                     \
     X(IDX_BUOY_LIN_DRAG, "linear_drag", float, 0)                                                  \
@@ -79,15 +81,15 @@
     X(IDX_MSH_CAT, "category", uint32_t, 0)                                                        \
     X(IDX_MSH_MASK, "mask", uint32_t, 0)
 
-#define SCHEMA_HANDLE_ONLY(X) X(IDX_H_H, "handle", BodyHandle, 1)
+#define SCHEMA_HANDLE_ONLY(X) X(IDX_H_H, "handle", ParseBodyHandle, 1)
 
 #define SCHEMA_SET_TRNS(X)                                                                         \
-    X(IDX_ST_HANDLE, "handle", BodyHandle, 1)                                                      \
+    X(IDX_ST_HANDLE, "handle", ParseBodyHandle, 1)                                                 \
     X(IDX_ST_POS, "pos", PyObject *, 1)                                                            \
     X(IDX_ST_ROT, "rot", PyObject *, 1)
 
 #define SCHEMA_CCD(X)                                                                              \
-    X(IDX_CCD_H, "handle", BodyHandle, 1)                                                          \
+    X(IDX_CCD_H, "handle", ParseBodyHandle, 1)                                                     \
     X(IDX_CCD_E, "enabled", bool, 1)
 
 #define SCHEMA_XYZ(X)                                                                              \
@@ -160,7 +162,7 @@
 #define SCHEMA_BATCH_DESTROY(X) X(IDX_BD_HANDLES, "handles", PyObject *, 1)
 
 #define SCHEMA_SET_ROT(X)                                                                          \
-    X(IDX_SETROT_H, "handle", BodyHandle, 1)                                                       \
+    X(IDX_SETROT_H, "handle", ParseBodyHandle, 1)                                                  \
     X(IDX_SETROT_X, "x", float, 1)                                                                 \
     X(IDX_SETROT_Y, "y", float, 1)                                                                 \
     X(IDX_SETROT_Z, "z", float, 1)                                                                 \
@@ -172,7 +174,7 @@
     X(IDX_RAY_START, "start", PyObject *, 1)                                                       \
     X(IDX_RAY_DIR, "direction", PyObject *, 1)                                                     \
     X(IDX_RAY_DIST, "max_dist", float, 0)                                                          \
-    X(IDX_RAY_IGN, "ignore", BodyHandle, 0)
+    X(IDX_RAY_IGN, "ignore", ParseBodyHandle, 0)
 
 #define SCHEMA_RAYCAST_BATCH(X)                                                                    \
     X(IDX_RB_STARTS, "starts", PyObject *, 1)                                                      \
@@ -185,7 +187,7 @@
     X(IDX_SC_ROT, "rot", PyObject *, 1)                                                            \
     X(IDX_SC_DIR, "dir", PyObject *, 1)                                                            \
     X(IDX_SC_SIZE, "size", PyObject *, 0)                                                          \
-    X(IDX_SC_IGNORE, "ignore", BodyHandle, 0)
+    X(IDX_SC_IGNORE, "ignore", ParseBodyHandle, 0)
 
 #define SCHEMA_OVERLAP_SPHERE(X)                                                                   \
     X(IDX_OS_CENTER, "center", PyObject *, 1)                                                      \
@@ -196,15 +198,15 @@
     X(IDX_OA_MAX, "max", PyObject *, 1)
 
 #define SCHEMA_SET_USER_DATA(X)                                                                    \
-    X(IDX_SUD_H, "handle", BodyHandle, 1)                                                          \
+    X(IDX_SUD_H, "handle", ParseBodyHandle, 1)                                                     \
     X(IDX_SUD_D, "data", uint64_t, 1)
 
 #define SCHEMA_SET_MOTION(X)                                                                       \
-    X(IDX_SM_H, "handle", BodyHandle, 1)                                                           \
+    X(IDX_SM_H, "handle", ParseBodyHandle, 1)                                                      \
     X(IDX_SM_M, "motion", int, 1)
 
 #define SCHEMA_COL_FILTER(X)                                                                       \
-    X(IDX_CF_H, "handle", BodyHandle, 1)                                                           \
+    X(IDX_CF_H, "handle", ParseBodyHandle, 1)                                                      \
     X(IDX_CF_C, "category", uint32_t, 1)                                                           \
     X(IDX_CF_M, "mask", uint32_t, 1)
 
@@ -239,8 +241,8 @@
 
 #define SCHEMA_CREATE_CONSTR(X)                                                                    \
     X(IDX_CC_TYPE, "type", int, 1)                                                                 \
-    X(IDX_CC_BODY1, "body1", BodyHandle, 1)                                                        \
-    X(IDX_CC_BODY2, "body2", BodyHandle, 1)                                                        \
+    X(IDX_CC_BODY1, "body1", ParseBodyHandle, 1)                                                   \
+    X(IDX_CC_BODY2, "body2", ParseBodyHandle, 1)                                                   \
     X(IDX_CC_PARAMS, "params", PyObject *, 0)                                                      \
     X(IDX_CC_MOTOR, "motor", PyObject *, 0)
 
@@ -329,63 +331,60 @@
 
 #define SCHEMA_STRESS_TEST(X)                                                                      \
     X(IDX_0, "a0", uint64_t, 0)                                                                    \
-    X(IDX_1, "a1", uint64_t, 0) X(IDX_2, "a2", uint64_t, 0) X(IDX_3, "a3", uint64_t, 0)            \
-        X(IDX_4, "a4", uint64_t, 0) X(IDX_5, "a5", uint64_t, 0) X(IDX_6, "a6", uint64_t, 0)        \
-            X(IDX_7, "a7", uint64_t, 0) X(IDX_8, "a8", uint64_t, 0) X(IDX_9, "a9", uint64_t, 0)    \
-                X(IDX_10, "a10", uint64_t, 0) X(IDX_11, "a11", uint64_t, 0)                        \
-                    X(IDX_12, "a12", uint64_t, 0) X(IDX_13, "a13", uint64_t, 0)                    \
-                        X(IDX_14, "a14", uint64_t, 0) X(IDX_15, "a15", uint64_t, 0)                \
-                            X(IDX_16, "a16", uint64_t, 0) X(IDX_17, "a17", uint64_t, 0) X(         \
-                                IDX_18, "a18", uint64_t, 0) X(IDX_19, "a19", uint64_t, 0)          \
-                                X(IDX_20, "a20", uint64_t, 0) X(IDX_21, "a21", uint64_t, 0) X(     \
-                                    IDX_22, "a22", uint64_t, 0) X(IDX_23, "a23", uint64_t, 0)      \
-                                    X(IDX_24, "a24", uint64_t, 0) X(IDX_25, "a25", uint64_t, 0) X( \
-                                        IDX_26, "a26", uint64_t, 0) X(IDX_27, "a27", uint64_t, 0)  \
-                                        X(IDX_28, "a28", uint64_t,                                 \
-                                          0) X(IDX_29, "a29", uint64_t,                            \
-                                               0) X(IDX_30, "a30", uint64_t,                       \
-                                                    0) X(IDX_31, "a31", uint64_t,                  \
-                                                         0) X(IDX_32, "a32", uint64_t, 0)          \
-                                            X(IDX_33, "a33", uint64_t,                             \
-                                              0) X(IDX_34, "a34", uint64_t,                        \
-                                                   0) X(IDX_35, "a35", uint64_t,                   \
-                                                        0) X(IDX_36, "a36", uint64_t,              \
-                                                             0) X(IDX_37, "a37", uint64_t, 0)      \
-                                                X(IDX_38, "a38", uint64_t,                         \
-                                                  0) X(IDX_39, "a39", uint64_t,                    \
-                                                       0) X(IDX_40, "a40", uint64_t,               \
-                                                            0) X(IDX_41, "a41", uint64_t,          \
-                                                                 0) X(IDX_42, "a42", uint64_t, 0)  \
-                                                    X(IDX_43, "a43", uint64_t,                     \
-                                                      0) X(IDX_44, "a44", uint64_t,                \
-                                                           0) X(IDX_45, "a45", uint64_t, 0)        \
-                                                        X(IDX_46, "a46", uint64_t,                 \
-                                                          0) X(IDX_47, "a47", uint64_t,            \
-                                                               0) X(IDX_48, "a48", uint64_t, 0)    \
-                                                            X(IDX_49, "a49", uint64_t,             \
-                                                              0) X(IDX_50, "a50", uint64_t, 0)     \
-                                                                X(IDX_51, "a51", uint64_t,         \
-                                                                  0) X(IDX_52, "a52", uint64_t, 0) \
-                                                                    X(IDX_53, "a53", uint64_t,     \
-                                                                      0) X(IDX_54, "a54",          \
+    X(IDX_1, "a1", uint64_t, 0)                                                                    \
+    X(IDX_2, "a2", uint64_t, 0) X(IDX_3, "a3", uint64_t, 0) X(IDX_4, "a4", uint64_t, 0)            \
+        X(IDX_5, "a5", uint64_t, 0) X(IDX_6, "a6", uint64_t, 0) X(IDX_7, "a7", uint64_t, 0)        \
+            X(IDX_8, "a8", uint64_t, 0) X(IDX_9, "a9", uint64_t, 0) X(IDX_10, "a10", uint64_t, 0)  \
+                X(IDX_11, "a11", uint64_t, 0) X(IDX_12, "a12", uint64_t, 0)                        \
+                    X(IDX_13, "a13", uint64_t, 0) X(IDX_14, "a14", uint64_t, 0)                    \
+                        X(IDX_15, "a15", uint64_t, 0) X(IDX_16, "a16", uint64_t, 0)                \
+                            X(IDX_17, "a17", uint64_t, 0) X(IDX_18, "a18", uint64_t, 0) X(         \
+                                IDX_19, "a19", uint64_t, 0) X(IDX_20, "a20", uint64_t, 0)          \
+                                X(IDX_21, "a21", uint64_t, 0) X(IDX_22, "a22", uint64_t, 0) X(     \
+                                    IDX_23, "a23", uint64_t, 0) X(IDX_24, "a24", uint64_t, 0)      \
+                                    X(IDX_25, "a25", uint64_t, 0) X(IDX_26, "a26", uint64_t, 0) X( \
+                                        IDX_27, "a27", uint64_t, 0) X(IDX_28, "a28", uint64_t, 0)  \
+                                        X(IDX_29, "a29", uint64_t,                                 \
+                                          0) X(IDX_30, "a30", uint64_t,                            \
+                                               0) X(IDX_31, "a31", uint64_t,                       \
+                                                    0) X(IDX_32, "a32", uint64_t,                  \
+                                                         0) X(IDX_33, "a33", uint64_t, 0)          \
+                                            X(IDX_34, "a34", uint64_t,                             \
+                                              0) X(IDX_35, "a35", uint64_t,                        \
+                                                   0) X(IDX_36, "a36", uint64_t,                   \
+                                                        0) X(IDX_37, "a37", uint64_t,              \
+                                                             0) X(IDX_38, "a38", uint64_t, 0)      \
+                                                X(IDX_39, "a39", uint64_t,                         \
+                                                  0) X(IDX_40, "a40", uint64_t,                    \
+                                                       0) X(IDX_41, "a41", uint64_t,               \
+                                                            0) X(IDX_42, "a42", uint64_t,          \
+                                                                 0) X(IDX_43, "a43", uint64_t, 0)  \
+                                                    X(IDX_44, "a44", uint64_t,                     \
+                                                      0) X(IDX_45, "a45", uint64_t,                \
+                                                           0) X(IDX_46, "a46", uint64_t, 0)        \
+                                                        X(IDX_47, "a47", uint64_t,                 \
+                                                          0) X(IDX_48, "a48", uint64_t,            \
+                                                               0) X(IDX_49, "a49", uint64_t, 0)    \
+                                                            X(IDX_50, "a50", uint64_t,             \
+                                                              0) X(IDX_51, "a51", uint64_t, 0)     \
+                                                                X(IDX_52, "a52", uint64_t,         \
+                                                                  0) X(IDX_53, "a53", uint64_t, 0) \
+                                                                    X(IDX_54, "a54", uint64_t,     \
+                                                                      0) X(IDX_55, "a55",          \
                                                                            uint64_t,               \
-                                                                           0) X(IDX_55, "a55",     \
+                                                                           0) X(IDX_56, "a56",     \
                                                                                 uint64_t, 0)       \
-                                                                        X(IDX_56, "a56", uint64_t, \
-                                                                          0) X(IDX_57, "a57",      \
+                                                                        X(IDX_57, "a57", uint64_t, \
+                                                                          0) X(IDX_58, "a58",      \
                                                                                uint64_t,           \
-                                                                               0) X(IDX_58, "a58", \
+                                                                               0) X(IDX_59, "a59", \
                                                                                     uint64_t, 0)   \
-                                                                            X(IDX_59, "a59",       \
+                                                                            X(IDX_60, "a60",       \
                                                                               uint64_t,            \
-                                                                              0) X(IDX_60, "a60",  \
+                                                                              0) X(IDX_61, "a61",  \
                                                                                    uint64_t, 0)    \
-                                                                                X(IDX_61, "a61",   \
-                                                                                  uint64_t,        \
-                                                                                  0) X(IDX_62,     \
-                                                                                       "a62",      \
-                                                                                       uint64_t,   \
-                                                                                       0)          \
+                                                                                X(IDX_62, "a62",   \
+                                                                                  uint64_t, 0)     \
                                                                                     X(IDX_63,      \
                                                                                       "a63",       \
                                                                                       uint64_t, 0)

@@ -20,12 +20,18 @@ static PyObject *make_view(PhysicsWorldObject *self, void *ptr, const char *form
     }
 
     SHADOW_LOCK(&self->shadow_lock);
-    size_t current_count = self->count;
+    
+    // TSan Fix: Read the atomic count safely. 
+    // Acquire ensures we see the finished state of any preceding world_remove_body_slot.
+    size_t current_count = atomic_load_explicit(&self->count, memory_order_acquire);
+    
+    // view_export_count is a standard int protected by shadow_lock
     self->view_export_count++;
 
-    // Update persistent storage in the object
+    // Update persistent storage in the object (used by Py_buffer pointers)
     self->view_shape[0]   = (Py_ssize_t)(current_count * stride);
     self->view_strides[0] = (Py_ssize_t)itemsize;
+    
     SHADOW_UNLOCK(&self->shadow_lock);
 
     Py_buffer buf;
@@ -34,18 +40,24 @@ static PyObject *make_view(PhysicsWorldObject *self, void *ptr, const char *form
     buf.obj = (PyObject *)self;
     Py_INCREF(self);
 
+    // Calculate total length based on the snapshot we took inside the lock
     buf.len      = self->view_shape[0] * self->view_strides[0];
     buf.readonly = 1;
     buf.itemsize = (Py_ssize_t)itemsize;
     buf.format   = (char *)format;
     buf.ndim     = 1;
 
-    // CRITICAL: Ensure these pointers are not to the stack!
+    // These pointers point to persistent fields in the PhysicsWorldObject struct,
+    // which remain valid even after this stack frame is destroyed.
     buf.shape   = self->view_shape;
     buf.strides = self->view_strides;
 
     PyObject *mv = PyMemoryView_FromBuffer(&buf);
     if (!mv) {
+        // Cleanup if memoryview allocation fails
+        SHADOW_LOCK(&self->shadow_lock);
+        self->view_export_count--;
+        SHADOW_UNLOCK(&self->shadow_lock);
         Py_DECREF(self);
         return nullptr;
     }
@@ -61,8 +73,10 @@ PyGetSet_DeclareGetter Vehicle_get_wheel_count(VehicleObject *self,
 
 PyGetSet_DeclareGetter Character_get_handle(CharacterObject *self,
                                             CULV_MAYBE_UNUSED void *closure) {
-    // handle is immutable for the life of this Character instance
-    return PyLong_FromUnsignedLongLong(self->handle);
+    // TSan Fix: Atomic load of the character handle.
+    // Relaxed is sufficient because the handle is set during creation and never changes.
+    uint64_t raw_h = atomic_load_explicit(&self->handle, memory_order_relaxed);
+    return PyLong_FromUnsignedLongLong(raw_h);
 }
 
 /* --- Shadow Buffer Getters (Safe via hardened make_view) --- */
@@ -89,9 +103,9 @@ PyGetSet_DeclareGetter get_angular_velocities(PhysicsWorldObject *self, CULV_MAY
 /* --- Mutable Metadata Getters (Hardened with Locks) --- */
 
 PyGetSet_DeclareGetter get_count(PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *c) {
-    SHADOW_LOCK(&self->shadow_lock);
-    size_t val = self->count;
-    SHADOW_UNLOCK(&self->shadow_lock);
+    // TSan Fix: Lock-free atomic read.
+    // Acquire ensures we see the final state of any bodies recently added/removed.
+    size_t val = atomic_load_explicit(&self->count, memory_order_acquire);
     return PyLong_FromSize_t(val);
 }
 
@@ -122,9 +136,12 @@ PyGetSet_DeclareGetter PhysicsWorld_get_max_bodies(PhysicsWorldObject *self,
 
 PyGetSet_DeclareGetter PhysicsWorld_get_remaining_capacity(PhysicsWorldObject *self,
                                                            CULV_MAYBE_UNUSED void *closure) {
-    SHADOW_LOCK(&self->shadow_lock);
-    // Note: count includes bodies pending creation
-    size_t rem = (self->count >= self->max_jolt_bodies) ? 0 : (self->max_jolt_bodies - self->count);
-    SHADOW_UNLOCK(&self->shadow_lock);
+    // TSan Fix: Lock-free calculation using atomic count.
+    size_t current = atomic_load_explicit(&self->count, memory_order_acquire);
+    
+    // max_jolt_bodies is immutable after world initialization
+    size_t limit = self->max_jolt_bodies;
+    size_t rem = (current >= limit) ? 0 : (limit - current);
+    
     return PyLong_FromSize_t(rem);
 }
