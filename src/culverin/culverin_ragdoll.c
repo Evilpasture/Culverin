@@ -22,6 +22,7 @@ static constexpr size_t JPH_MAT4_SIZE_BYTES = 64;
 
 PyCFunction_DeclareMethodFromModule Skeleton_add_joint(SkeletonObject *self, PyObject *const *args,
                                                        Py_ssize_t nargs, PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. Setup Targets
     PyObject *name_obj = nullptr;
     int parent_idx     = -1; // Default to root
@@ -31,7 +32,7 @@ PyCFunction_DeclareMethodFromModule Skeleton_add_joint(SkeletonObject *self, PyO
     targets[IDX_AJ_PARENT] = (void *)&parent_idx;
 
     // 2. High Speed Parse
-    if (!FastParse_Unified(args, nargs, kwnames, &AddJointParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.AddJointParser, targets)) {
         return nullptr;
     }
 
@@ -48,13 +49,14 @@ PyCFunction_DeclareMethodFromModule Skeleton_add_joint(SkeletonObject *self, PyO
 PyCFunction_DeclareMethodFromModule Skeleton_get_joint_index(SkeletonObject *self,
                                                              PyObject *const *args,
                                                              Py_ssize_t nargs, PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. Setup Targets
     PyObject *name_obj = nullptr;
     void *targets[GetJointIdx_COUNT];
     targets[IDX_GJI_NAME] = (void *)&name_obj;
 
     // 2. High Speed Parse
-    if (!FastParse_Unified(args, nargs, kwnames, &GetJointIdxParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.GetJointIdxParser, targets)) {
         return nullptr;
     }
 
@@ -85,18 +87,18 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll_settings(Physics
                                                                          PyObject *const *args,
                                                                          Py_ssize_t nargs,
                                                                          PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // --- 1. FAST ARGUMENT PARSING ---
     PyObject *py_skel_obj = nullptr;
     void *targets[RagdollSettings_COUNT];
     targets[IDX_RS_SKELETON] = (void *)&py_skel_obj;
 
-    if (!FastParse_Unified(args, nargs, kwnames, &RagdollSettingsParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.RagdollSettingsParser, targets)) {
         return nullptr;
     }
 
     // --- 2. TYPE VALIDATION ---
     PyObject *module  = PyType_GetModule(Py_TYPE(self));
-    CulverinState *st = get_culverin_state(module);
 
     // Manual type check (replaces O! format string)
     if (!PyObject_TypeCheck(py_skel_obj, (PyTypeObject *)st->SkeletonType)) {
@@ -125,6 +127,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll_settings(Physics
 PyCFunction_DeclareMethodFromModule RagdollSettings_add_part(RagdollSettingsObject *self,
                                                              PyObject *const *args,
                                                              Py_ssize_t nargs, PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. Setup Defaults
     int joint_idx     = 0;
     int parent_idx    = -1;
@@ -154,7 +157,7 @@ PyCFunction_DeclareMethodFromModule RagdollSettings_add_part(RagdollSettingsObje
     targets[IDX_RAP_POS]       = (void *)&py_pos;
 
     // 2. High Speed Parse
-    if (!FastParse_Unified(args, nargs, kwnames, &RagdollAddPartParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.RagdollAddPartParser, targets)) {
         return nullptr;
     }
 
@@ -238,6 +241,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll(PhysicsWorldObje
                                                                 PyObject *const *args,
                                                                 Py_ssize_t nargs,
                                                                 PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // --- 1. FAST ARGUMENT PARSING ---
     PyObject *settings_obj = nullptr;
     PosStride pos          = {.x = 0, .y = 0, .z = 0};
@@ -256,12 +260,11 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll(PhysicsWorldObje
     targets[IDX_CR_MASK]     = (void *)&mask;
     targets[IDX_CR_MAT]      = (void *)&material_id;
 
-    if (!FastParse_Unified(args, nargs, kwnames, &CreateRagdollParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.CreateRagdollParser, targets)) {
         return nullptr;
     }
 
     // Type Safety Check (Replaces original O! logic)
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     if (!PyObject_TypeCheck(settings_obj, (PyTypeObject *)st->RagdollSettingsType)) {
         PyErr_SetString(PyExc_TypeError, "settings must be a RagdollSettings object");
         return nullptr;
@@ -406,6 +409,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll(PhysicsWorldObje
 PyCFunction_DeclareMethodFromModule Ragdoll_drive_to_pose(RagdollObject *self,
                                                           PyObject *const *args, Py_ssize_t nargs,
                                                           PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. FAST ARGUMENT PARSING
     PosStride root_p      = {.x = 0, .y = 0, .z = 0};
     AuxStride root_q      = {.x = 0, .y = 0, .z = 0, .w = 1.0f};
@@ -416,7 +420,7 @@ PyCFunction_DeclareMethodFromModule Ragdoll_drive_to_pose(RagdollObject *self,
     targets[IDX_RD_ROT]  = (void *)&root_q;
     targets[IDX_RD_MATS] = (void *)&py_matrices;
 
-    if (!FastParse_Unified(args, nargs, kwnames, &RagdollDriveParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.RagdollDriveParser, targets)) {
         return nullptr;
     }
 

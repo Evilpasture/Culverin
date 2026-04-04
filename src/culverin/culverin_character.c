@@ -362,6 +362,7 @@ const JPH_CharacterContactListener_Procs char_listener_procs = {
 
 PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObject *const *args,
                                                    size_t nargsf, PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. INTEGRATED FAST PARSE (Unchanged)
     Vec3f v_in = {.x = 0.0f, .y = 0.0f, .z = 0.0f};
     float dt   = 0.0f;
@@ -371,7 +372,7 @@ PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObje
     targets[IDX_CM_DT]  = &dt;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &CharMoveParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.CharMoveParser, targets)) {
         return nullptr;
     }
 
@@ -461,13 +462,14 @@ PyCFunction_DeclareMethodFromModule Character_get_position(CharacterObject *self
 PyCFunction_DeclareMethodFromModule Character_set_position(CharacterObject *self,
                                                            PyObject *const *args, Py_ssize_t nargs,
                                                            PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. Stack Allocation and Parser Targets (Unchanged)
     PosStride pos = {};
     void *targets[SetPosChar_COUNT];
     targets[IDX_SPC_POS] = &pos;
 
     // 2. High Speed Parse (Unchanged)
-    if (!FastParse_Unified(args, nargs, kwnames, &SetPosCharParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.SetPosCharParser, targets)) {
         return nullptr;
     }
 
@@ -503,6 +505,7 @@ PyCFunction_DeclareMethodFromModule Character_set_position(CharacterObject *self
 PyCFunction_DeclareMethodFromModule Character_set_rotation(CharacterObject *self,
                                                            PyObject *const *args, Py_ssize_t nargs,
                                                            PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. Explicitly initialized stack target
     AuxStride rot = {.x = 0.0f, .y = 0.0f, .z = 0.0f, .w = 1.0f};
 
@@ -510,7 +513,7 @@ PyCFunction_DeclareMethodFromModule Character_set_rotation(CharacterObject *self
     targets[IDX_SRC_ROT] = &rot; // Parser triggers your parse_quat_f32 logic
 
     // 2. High Speed Parse
-    if (!FastParse_Unified(args, nargs, kwnames, &SetRotCharParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.SetRotCharParser, targets)) {
         return nullptr;
     }
 
@@ -540,6 +543,7 @@ PyCFunction_DeclareMethodFromModule Character_set_rotation(CharacterObject *self
 PyCFunction_DeclareMethodFromModule Character_set_strength(CharacterObject *self,
                                                            PyObject *const *args, Py_ssize_t nargs,
                                                            PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. Explicitly initialized target
     float strength = 0.0f;
 
@@ -548,7 +552,7 @@ PyCFunction_DeclareMethodFromModule Character_set_strength(CharacterObject *self
 
     // 2. High Speed Parse (Handles both world.set_strength(200.0) and
     // world.set_strength(strength=200.0))
-    if (!FastParse_Unified(args, nargs, kwnames, &SetStrengthCharParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.SetStrengthCharParser, targets)) {
         return nullptr;
     }
 
@@ -846,6 +850,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_character(PhysicsWorldOb
                                                                   PyObject *const *args,
                                                                   Py_ssize_t nargs,
                                                                   PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. Setup Targets (Unchanged)
     PosStride pos = {.x = 0, .y = 0, .z = 0};
     float height  = 1.8f;
@@ -860,7 +865,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_character(PhysicsWorldOb
     targets[IDX_CCHAR_STEP]  = (void *)&step_h;
     targets[IDX_CCHAR_SLOPE] = (void *)&slope;
 
-    if (!FastParse_Unified(args, nargs, kwnames, &CreateCharParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.CreateCharParser, targets)) {
         return nullptr;
     }
 

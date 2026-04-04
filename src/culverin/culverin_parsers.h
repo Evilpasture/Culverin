@@ -1,17 +1,18 @@
 #pragma once
-#include "culverin_tracked_vehicle.h"
+#include "culverin_types.h"
 #include <Python.h>
 #include <stdbool.h>
 
 typedef struct {
-    float x;
-    float y;
-    float z;
-} Vec3f; // General Vec3f
-
-typedef struct {
     float p[4];
 } ShapeParams; // 4 floats to prevent over-read
+
+// Helper: Only parse Python data into C structs (Must hold GIL)
+typedef struct {
+    uint32_t *indices;
+    uint32_t count;
+    uint32_t driven_idx;
+} TrackData;
 
 // --- Unified Parameter Struct ---
 typedef struct {

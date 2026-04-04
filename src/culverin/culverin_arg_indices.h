@@ -4,6 +4,7 @@
 #include "culverin_types.h"
 
 typedef uint64_t ParseBodyHandle;
+static constexpr size_t PARSER_REGISTRY_SIZE = 128;
 
 /**
  * SCHEMA DEFINITIONS
@@ -399,8 +400,8 @@ typedef uint64_t ParseBodyHandle;
 
 // Declares a specific parser that uses an Index Group
 #define DECLARE_PARSER(ParserName, GroupName)                                                      \
-    extern FastParser ParserName##Parser;                                                          \
-    extern FastArgSpec ParserName##Specs[GroupName##_COUNT];
+    FastParser ParserName##Parser;                                                          \
+    FastArgSpec ParserName##Specs[GroupName##_COUNT]; 
 
 // A. Define the Index Groups (One per unique signature)
 DEFINE_INDEX_GROUP(Body, SCHEMA_BODY)
@@ -452,66 +453,75 @@ DEFINE_INDEX_GROUP(GetJointIdx, SCHEMA_GET_JOINT_IDX)
 DEFINE_INDEX_GROUP(RagdollDrive, SCHEMA_RAGDOLL_DRIVE)
 DEFINE_INDEX_GROUP(StressTest, SCHEMA_STRESS_TEST)
 
+#define FOR_ALL_PARSERS(X) \
+    X(Body, Body, SCHEMA_BODY) \
+    X(Impulse, Vec3, SCHEMA_VEC3) \
+    X(WheelIdx, WheelIdx, SCHEMA_WHEEL_IDX) \
+    X(AngImpulse, Vec3, SCHEMA_VEC3) \
+    X(Force, Vec3, SCHEMA_VEC3) \
+    X(Torque, Vec3, SCHEMA_VEC3) \
+    X(SetLinVel, Vec3, SCHEMA_VEC3) \
+    X(SetAngVel, Vec3, SCHEMA_VEC3) \
+    X(ImpulseAt, ImpAt, SCHEMA_IMPULSE_AT) \
+    X(HOnly, HOnly, SCHEMA_HANDLE_ONLY) \
+    X(Destroy, HOnly, SCHEMA_HANDLE_ONLY) \
+    X(Activate, HOnly, SCHEMA_HANDLE_ONLY) \
+    X(Gravity, XYZ, SCHEMA_XYZ) \
+    X(SetPos, SetPos, SCHEMA_SET_POS) \
+    X(Buoy, Buoy, SCHEMA_BUOYANCY) \
+    X(BatchBuoy, BatchBuoy, SCHEMA_BATCH_BUOYANCY) \
+    X(Mesh, Mesh, SCHEMA_MESH) \
+    X(SetTrns, SetTrns, SCHEMA_SET_TRNS) \
+    X(CCD, CCD, SCHEMA_CCD) \
+    X(ConvexHull, HC, SCHEMA_HC_HULL) \
+    X(Compound, HC, SCHEMA_HC_COMP) \
+    X(BatchCreate, BatchCreate, SCHEMA_BATCH_CREATE) \
+    X(BatchDestroy, BatchDestroy, SCHEMA_BATCH_DESTROY) \
+    X(SetRot, SetRot, SCHEMA_SET_ROT) \
+    X(Render, Render, SCHEMA_RENDER) \
+    X(Raycast, Raycast, SCHEMA_RAYCAST) \
+    X(RayBatch, RayBatch, SCHEMA_RAYCAST_BATCH) \
+    X(Shapecast, Shapecast, SCHEMA_SHAPECAST) \
+    X(OverlapSphere, OverlapSphere, SCHEMA_OVERLAP_SPHERE) \
+    X(OverlapAABB, OverlapAABB, SCHEMA_OVERLAP_AABB) \
+    X(SetUserData, SetUserData, SCHEMA_SET_USER_DATA) \
+    X(GetUserData, HOnly, SCHEMA_HANDLE_ONLY) \
+    X(GetMotion, HOnly, SCHEMA_HANDLE_ONLY) \
+    X(SetMotion, SetMotion, SCHEMA_SET_MOTION) \
+    X(ColFilter, ColFilter, SCHEMA_COL_FILTER) \
+    X(RegMat, RegMat, SCHEMA_REG_MAT) \
+    X(SetConstrTarget, SetConstr, SCHEMA_SET_CONSTR_TARGET) \
+    X(Heightfield, Heightfield, SCHEMA_HEIGHTFIELD) \
+    X(DebugData, DebugData, SCHEMA_DEBUG_DATA) \
+    X(CreateConstr, CreateConstr, SCHEMA_CREATE_CONSTR) \
+    X(DestroyConstr, HOnly, SCHEMA_HANDLE_ONLY) \
+    X(Step, Step, SCHEMA_STEP) \
+    X(CharMove, CharMove, SCHEMA_CHAR_MOVE) \
+    X(LoadState, LoadState, SCHEMA_LOAD_STATE) \
+    X(CreateChar, CreateChar, SCHEMA_CREATE_CHAR) \
+    X(SetPosChar, SetPosChar, SCHEMA_SET_POS_CHAR) \
+    X(SetRotChar, SetRotChar, SCHEMA_SET_ROT_CHAR) \
+    X(SetStrengthChar, SetStrengthChar, SCHEMA_SET_STRENGTH_CHAR) \
+    X(VehicleInput, VehicleInput, SCHEMA_VEHICLE_INPUT) \
+    X(TankInput, TankInput, SCHEMA_TANK_INPUT) \
+    X(CreateVehicle, CreateVehicle, SCHEMA_CREATE_VEHICLE) \
+    X(CreateTracked, CreateTracked, SCHEMA_CREATE_TRACKED) \
+    X(CreateRagdoll, CreateRagdoll, SCHEMA_CREATE_RAGDOLL) \
+    X(RagdollSettings, RagdollSettings, SCHEMA_RAGDOLL_SETTINGS) \
+    X(RagdollAddPart, RagdollAddPart, SCHEMA_RAGDOLL_ADD_PART) \
+    X(AddJoint, AddJoint, SCHEMA_ADD_JOINT) \
+    X(GetJointIdx, GetJointIdx, SCHEMA_GET_JOINT_IDX) \
+    X(RagdollDrive, RagdollDrive, SCHEMA_RAGDOLL_DRIVE) \
+    X(StressTest, StressTest, SCHEMA_STRESS_TEST)
+
+#define MAP_TO_DECLARE(P, G, S) DECLARE_PARSER(P, G)
+
 // B. Declare the Parsers
-DECLARE_PARSER(Body, Body)
-DECLARE_PARSER(Impulse, Vec3)
-DECLARE_PARSER(AngImpulse, Vec3)
-DECLARE_PARSER(Force, Vec3)
-DECLARE_PARSER(Torque, Vec3)
-DECLARE_PARSER(SetLinVel, Vec3)
-DECLARE_PARSER(SetAngVel, Vec3)
-DECLARE_PARSER(ImpulseAt, ImpAt)
-DECLARE_PARSER(HOnly, HOnly)
-DECLARE_PARSER(Destroy, HOnly)
-DECLARE_PARSER(Activate, HOnly)
-DECLARE_PARSER(Gravity, XYZ)
-DECLARE_PARSER(SetPos, SetPos)
-DECLARE_PARSER(Buoy, Buoy)
-DECLARE_PARSER(BatchBuoy, BatchBuoy)
-DECLARE_PARSER(Mesh, Mesh)
-DECLARE_PARSER(SetTrns, SetTrns)
-DECLARE_PARSER(CCD, CCD)
-DECLARE_PARSER(ConvexHull, HC)
-DECLARE_PARSER(Compound, HC)
-DECLARE_PARSER(BatchCreate, BatchCreate)
-DECLARE_PARSER(BatchDestroy, BatchDestroy)
-DECLARE_PARSER(SetRot, SetRot)
-DECLARE_PARSER(Render, Render)
-DECLARE_PARSER(Raycast, Raycast)
-DECLARE_PARSER(RayBatch, RayBatch)
-DECLARE_PARSER(Shapecast, Shapecast)
-DECLARE_PARSER(OverlapSphere, OverlapSphere)
-DECLARE_PARSER(OverlapAABB, OverlapAABB)
-DECLARE_PARSER(SetUserData, SetUserData)
-DECLARE_PARSER(GetUserData, HOnly) // Reuses Handle-Only group
-DECLARE_PARSER(GetMotion, HOnly)   // Reuses Handle-Only group
-DECLARE_PARSER(SetMotion, SetMotion)
-DECLARE_PARSER(ColFilter, ColFilter)
-DECLARE_PARSER(RegMat, RegMat)
-DECLARE_PARSER(SetConstrTarget, SetConstr)
-DECLARE_PARSER(Heightfield, Heightfield)
-DECLARE_PARSER(DebugData, DebugData)
-DECLARE_PARSER(CreateConstr, CreateConstr)
-DECLARE_PARSER(DestroyConstr, HOnly)
-DECLARE_PARSER(Step, Step)
-DECLARE_PARSER(CharMove, CharMove)
-DECLARE_PARSER(LoadState, LoadState)
-DECLARE_PARSER(CreateChar, CreateChar)
-DECLARE_PARSER(SetPosChar, SetPosChar)
-DECLARE_PARSER(SetRotChar, SetRotChar)
-DECLARE_PARSER(SetStrengthChar, SetStrengthChar)
-DECLARE_PARSER(VehicleInput, VehicleInput)
-DECLARE_PARSER(WheelIdx, WheelIdx)
-DECLARE_PARSER(TankInput, TankInput)
-DECLARE_PARSER(CreateVehicle, CreateVehicle)
-DECLARE_PARSER(CreateTracked, CreateTracked)
-DECLARE_PARSER(CreateRagdoll, CreateRagdoll)
-DECLARE_PARSER(RagdollSettings, RagdollSettings)
-DECLARE_PARSER(RagdollAddPart, RagdollAddPart)
-DECLARE_PARSER(AddJoint, AddJoint)
-DECLARE_PARSER(GetJointIdx, GetJointIdx)
-DECLARE_PARSER(RagdollDrive, RagdollDrive)
-DECLARE_PARSER(StressTest, StressTest)
-void fp_dump_schemas_json(FILE *out);
-void culverin_init_all_parsers(void);
-void culverin_free_all_parsers(void);
+typedef struct CulverinParsers {
+    FOR_ALL_PARSERS(MAP_TO_DECLARE)
+    FastParser *registry[PARSER_REGISTRY_SIZE];
+    size_t registry_count;
+} CulverinParsers;
+void fp_dump_schemas_json(CulverinParsers *cp, FILE *out);
+void culverin_init_all_parsers(CulverinParsers *cp);
+void culverin_free_all_parsers(CulverinParsers *cp);

@@ -106,6 +106,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
                                                                         PyObject *const *args,
                                                                         Py_ssize_t nargs,
                                                                         PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // --- 1. FAST ARGUMENT PARSING (Unchanged) ---
     uint64_t chassis_h_raw = 0;
     PyObject *py_wheels    = nullptr;
@@ -121,7 +122,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
     targets[IDX_CT_TORQUE]  = (void *)&max_torque;
     targets[IDX_CT_RPM]     = (void *)&max_rpm;
 
-    if (!FastParse_Unified(args, nargs, kwnames, &CreateTrackedParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.CreateTrackedParser, targets)) {
         return nullptr;
     }
 
@@ -238,7 +239,6 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
         CULV_RAW_FREE(tracks[t].indices);
     }
 
-    auto *st  = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     auto *obj = (VehicleObject *)PyObject_GC_New(VehicleObject, (PyTypeObject *)st->VehicleType);
     if (!obj) {
         SHADOW_LOCK(&self->shadow_lock);
@@ -285,6 +285,7 @@ python_fail:
 PyCFunction_DeclareMethodFromModule Vehicle_set_tank_input(VehicleObject *self,
                                                            PyObject *const *args, Py_ssize_t nargs,
                                                            PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. FAST PARSE (Zero-Allocation)
     float left  = 0.0f;
     float right = 0.0f;
@@ -295,7 +296,7 @@ PyCFunction_DeclareMethodFromModule Vehicle_set_tank_input(VehicleObject *self,
     targets[IDX_TI_RIGHT] = (void *)&right;
     targets[IDX_TI_BRAKE] = (void *)&brake;
 
-    if (!FastParse_Unified(args, nargs, kwnames, &TankInputParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.TankInputParser, targets)) {
         return nullptr;
     }
 

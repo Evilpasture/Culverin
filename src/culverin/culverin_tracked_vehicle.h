@@ -18,13 +18,6 @@ typedef struct {
     float min_rpm;
 } TrackedEngineConfig;
 
-// Helper: Only parse Python data into C structs (Must hold GIL)
-typedef struct {
-    uint32_t *indices;
-    uint32_t count;
-    uint32_t driven_idx;
-} TrackData;
-
 PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
                                                                         PyObject *const *args,
                                                                         Py_ssize_t nargs,

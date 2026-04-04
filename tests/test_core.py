@@ -1,4 +1,6 @@
 import unittest
+import _interpreters as interpreters
+import textwrap
 import math
 import time
 import threading
@@ -776,6 +778,64 @@ class TestSleepingStates(CulverinTestCase):
         pos = self.get_pos(box)
         self.assertGreater(pos[1], 0.51, "Body woke up but didn't respond to the impulse velocity")
 
+class TestSubinterpreterIsolation(unittest.TestCase):
+    def test_parser_isolation_across_interpreters(self):
+        """
+        Spawns a subinterpreter to ensure keywords like 'handle' 
+        don't leak or become 'garbage' pointers between instances.
+        """
+        # 1. Initialize culverin in the MAIN interpreter
+        world = culverin.PhysicsWorld()
+        h = world.create_body(pos=(0, 10, 0))
+        world.set_rotation(handle=h, x=0, y=0, z=0, w=1)
+        
+        # 2. Spawn a SUB-INTERPRETER
+        interp = interpreters.create()
+        
+        # This code runs in a separate memory space for PyObjects, 
+        # but shares the same C global variables.
+        code = textwrap.dedent("""
+            import culverin
+            import math
+            
+            # If the C-extension uses global parsers, this will either:
+            # A) Fail to find 'handle' (Unexpected keyword)
+            # B) Segfault (Accessing pointer from another interpreter)
+            world = culverin.PhysicsWorld()
+            h = world.create_body(pos=(0, 5, 0))
+            
+            # Test the most sensitive mutators
+            world.set_position(handle=h, x=1, y=2, z=3)
+            world.set_rotation(handle=h, x=0, y=0, z=math.sin(0.5), w=math.cos(0.5))
+            world.apply_impulse(handle=h, x=0, y=10, z=0)
+            
+            # Test the creation bitmasks
+            world.create_body(pos=(0,0,0), mass=10.0, friction=0.5, is_sensor=True)
+            
+            print("Subinterpreter SUCCESS")
+        """)
+        
+        try:
+            interp.run(code)
+        except Exception as e:
+            self.fail(f"Subinterpreter failed! Likely global state contamination: {e}")
+
+    def test_parallel_init_contention(self):
+        """Force multiple interpreters to init Culverin simultaneously."""
+        import _interpreters as interpreters
+
+        def run_interp():
+            # interp is an INT
+            interp = interpreters.create()
+            try:
+                # Use run_string(id, script)
+                interpreters.run_string(interp, "import culverin; culverin.PhysicsWorld()")
+            finally:
+                interpreters.destroy(interp)
+
+        threads = [threading.Thread(target=run_interp) for _ in range(4)]
+        for t in threads: t.start()
+        for t in threads: t.join()
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

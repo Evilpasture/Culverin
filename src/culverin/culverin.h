@@ -317,6 +317,7 @@ typedef enum : uint8_t {
 } CulvShapeType;
 
 // --- Module State (PEP 489) ---
+#include "culverin_arg_indices.h"
 typedef struct {
     PyObject *helper;           // Reference to culverin._culverin module
     PyObject *PhysicsWorldType; // Reference to the class
@@ -325,6 +326,7 @@ typedef struct {
     PyObject *SkeletonType;
     PyObject *RagdollSettingsType;
     PyObject *RagdollType;
+    CulverinParsers parsers;
 } CulverinState;
 
 // Helper to retrieve state from the module object
