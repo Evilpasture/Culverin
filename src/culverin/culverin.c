@@ -4638,11 +4638,23 @@ PyType_DeclareSlot_Status culverin_clear(PyObject *m) {
 
 static const PyModuleDef_Slot culverin_slots[] = {
     {Py_mod_exec, culverin_exec},
-#if PY_VERSION_HEX >= 0x030D0000
+
+    // 1. Handle the Free-threaded (No GIL) declaration (3.13+)
+#if defined(Py_MOD_GIL_NOT_USED)
     {Py_mod_gil, Py_MOD_GIL_NOT_USED},
 #endif
-    {Py_mod_multiple_interpreters, Py_MOD_MULTIPLE_INTERPRETERS_SUPPORTED},
-    {0, nullptr}};
+
+    // 2. Handle Subinterpreter support
+    {Py_mod_multiple_interpreters, 
+#if PY_VERSION_HEX >= 0x030D0000 
+        Py_MOD_MULTIPLE_INTERPRETERS_SUPPORTED 
+#else
+        Py_MOD_PER_INTERPRETER_GIL_SUPPORTED
+#endif
+    },
+    
+    {0, nullptr}
+};
 
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 static PyModuleDef culverin_module = {
