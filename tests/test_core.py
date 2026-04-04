@@ -858,7 +858,13 @@ class TestSubinterpreterIsolation(unittest.TestCase):
         finally:
             interpreters.destroy(interp_id)
 
+    import sys
+
     @unittest.skipUnless(HAS_INTERPRETERS, "Subinterpreters module not available")
+    @unittest.skipIf(
+        getattr(sys, "_is_gil_enabled", lambda: True)() == False,
+        "CPython 3.14t TSan false positive in PyDict_SetDefaultRef (not Culverin's bug)"
+    )
     def test_parallel_init_contention(self):
         def run_interp():
             assert interpreters is not None
@@ -871,6 +877,36 @@ class TestSubinterpreterIsolation(unittest.TestCase):
         threads = [threading.Thread(target=run_interp) for _ in range(4)]
         for t in threads: t.start()
         for t in threads: t.join()
+
+class TestCPython314tRace(unittest.TestCase):
+    def test_concurrent_fs_decode_race(self):
+        """
+        Minimal reproducer for CPython 3.14t data race between
+        PyDict_SetDefaultRef and PyUnicode_DecodeFSDefaultAndSize
+        during concurrent thread startup.
+
+        Run with: TSAN_OPTIONS=... python -m pytest test_cpython_race.py
+        """
+        errors: list[Exception] = []
+
+        def worker():
+            try:
+                import os
+                # Force PyUnicode_DecodeFSDefaultAndSize via os.fsencode/fsdecode
+                # which hits the filesystem codec dict — same path as the race
+                for _ in range(100):
+                    os.fsdecode(b"hello")
+                    os.fsencode("hello")
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=worker) for _ in range(16)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        self.assertFalse(errors)
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
