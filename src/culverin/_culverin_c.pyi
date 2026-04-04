@@ -9,6 +9,19 @@ from __future__ import annotations
 from typing import Any, Sequence, TypedDict
 from typing import Any, Literal
 
+class ContactEvent(TypedDict):
+    """
+    Schema for individual collision events.
+    Matches the C-extension implementation keys.
+    """
+    bodies: tuple[int, int]
+    position: tuple[float, float, float]
+    normal: tuple[float, float, float]
+    impulse: float
+    slide_sq: float
+    materials: tuple[int, int]
+    type: int
+
 # --- Constants ---
 SHAPE_BOX: int = 0
 SHAPE_SPHERE: int = 1
@@ -210,20 +223,39 @@ class PhysicsWorld:
 
     # --- Events and Debug ---
     def get_contact_events(self) -> list[tuple[int, int]]: ...
-    def get_contact_events_ex(self) -> list[dict[str, Any]]: ...
+    def get_contact_events_ex(self) -> list[ContactEvent]:
+        """
+        Retrieves a list of collision events for the current frame.
+        
+        Performance Note: 
+        This method is O(N) where N is the number of contacts. It allocates 
+        Python dictionaries. For high-frequency ML training loops (10k+ bodies), 
+        prefer `get_contact_events_raw()` with a NumPy structured array to 
+        avoid allocation overhead.
+        
+        Returns:
+            list[ContactEvent]: A list of dictionary objects detailing contact dynamics.
+        """
+        ...
     def get_contact_events_raw(self) -> memoryview: 
         """
-        Returns a raw memoryview of contact events in the format defined by CONTACT_DTYPE.
-        Each event is a struct containing:
-        - body1 (uint64): Handle of the first body
-        - body2 (uint64): Handle of the second body
-        - px, py, pz (float32): Contact point position
-        - nx, ny, nz (float32): Contact normal
-        - impulse (float32): Contact impulse magnitude
-        - sliding_speed_sq (float32): Squared sliding speed at contact
-        - mat1, mat2 (uint32): Material IDs of the two bodies
-        - type (uint32): Event type (added/persisted/removed)
-        - _pad (uint32): Padding for alignment
+        Returns a read-only memoryview of the contact buffer snapshot.
+        
+        The returned memoryview contains an array of structs. Each struct is 
+        64 bytes. You can interpret this data using the `struct` module 
+        or by casting the memoryview.
+        
+        Binary Layout (Format: "{<QQfffffffffIIII}"):
+        - body1 (uint64)
+        - body2 (uint64)
+        - px, py, pz (float32)
+        - nx, ny, nz (float32)
+        - impulse (float32)
+        - sliding_speed_sq (float32)
+        - mat1 (uint32)
+        - mat2 (uint32)
+        - type (uint32)
+        - _pad (uint32)
         """
         ...
     def get_debug_data(self, shapes: bool = True, constraints: bool = True, bbox: bool = False, centers: bool = False, wireframe: bool = True) -> tuple[bytes, bytes]: ...

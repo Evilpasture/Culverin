@@ -52,13 +52,19 @@ static void process_contact_manifold(PhysicsWorldObject *self, const JPH_Body *b
     } else {
         atomic_store_explicit(&ev->body1, r2, memory_order_relaxed);
         atomic_store_explicit(&ev->body2, r1, memory_order_relaxed);
-        n->x = -n->x; n->y = -n->y; n->z = -n->z;
+        n->x = -n->x;
+        n->y = -n->y;
+        n->z = -n->z;
     }
-    ev->nx = n->x; ev->ny = n->y; ev->nz = n->z;
+    ev->nx = n->x;
+    ev->ny = n->y;
+    ev->nz = n->z;
 
     JPH_STACK_ALLOC(JPH_RVec3, p);
     JPH_ContactManifold_GetWorldSpaceContactPointOn1(manifold, 0, p);
-    ev->px = (float)p->x; ev->py = (float)p->y; ev->pz = (float)p->z;
+    ev->px = (float)p->x;
+    ev->py = (float)p->y;
+    ev->pz = (float)p->z;
 
     // 6. Impulse Math
     if ((int)JPH_Body_IsSensor(body1) || (int)JPH_Body_IsSensor(body2)) {
@@ -160,7 +166,7 @@ static void JPH_API_CALL on_contact_removed(void *userData, const JPH_SubShapeID
 
     // Zero out geometry (Not used for removal events)
     memset(&ev->px, 0, sizeof(float) * 8);
-    
+
     // Release creates a fence: Python sees the full event when it checks the atomic index
     atomic_thread_fence(memory_order_release);
 }
@@ -196,7 +202,7 @@ static JPH_ValidateResult JPH_API_CALL on_contact_validate(
     // 4. Logic: Bidirectional Rejection
     // If either body does not want to collide with the other's category, reject.
     if (!(cat1 & mask2) || !(cat2 & mask1)) {
-        return JPH_ValidateResult_RejectContact; 
+        return JPH_ValidateResult_RejectContact;
     }
 
     return JPH_ValidateResult_AcceptContact;
@@ -218,7 +224,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events(PhysicsWorld
 
     // Load atomic index (Acquire ensures we see all Listener stores)
     size_t count = atomic_load_explicit(&self->contact_atomic_idx, memory_order_acquire);
-    
+
     if (count == 0) {
         SHADOW_UNLOCK(&self->shadow_lock);
         return PyList_New(0);
@@ -261,12 +267,8 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events(PhysicsWorld
          * 2. fb_from_float converts impulse and sliding_speed_sq
          * 3. fb_pack_tuple performs a single O(1) allocation
          */
-        PyObject *item = FastBuild_Tuple(
-            b1_raw, 
-            b2_raw, 
-            scratch[i].impulse, 
-            scratch[i].sliding_speed_sq
-        );
+        PyObject *item =
+            FastBuild_Tuple(b1_raw, b2_raw, scratch[i].impulse, scratch[i].sliding_speed_sq);
 
         if (UNLIKELY(!item)) {
             Py_DECREF(list);
@@ -321,7 +323,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events_ex(PhysicsWo
         k_bodies = PyUnicode_InternFromString("bodies");
         k_pos    = PyUnicode_InternFromString("position");
         k_norm   = PyUnicode_InternFromString("normal");
-        k_str    = PyUnicode_InternFromString("strength");
+        k_str    = PyUnicode_InternFromString("impulse");
         k_slide  = PyUnicode_InternFromString("slide_sq");
         k_mat    = PyUnicode_InternFromString("materials");
         k_type   = PyUnicode_InternFromString("type");
@@ -343,18 +345,13 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events_ex(PhysicsWo
 
         /**
          * OPTIMIZATION: FastBuild_Dict
-         * We compose the nested tuples (pos, normal, bodies, mats) 
+         * We compose the nested tuples (pos, normal, bodies, mats)
          * and the dictionary in a single, readable expression.
          */
         PyObject *dict = FastBuild_Dict(
-            k_bodies, FastBuild_Tuple(b1, b2),
-            k_pos,    FastBuild_Tuple(e->px, e->py, e->pz),
-            k_norm,   FastBuild_Tuple(e->nx, e->ny, e->nz),
-            k_mat,    FastBuild_Tuple(e->mat1, e->mat2),
-            k_str,    e->impulse,
-            k_slide,  e->sliding_speed_sq,
-            k_type,   (unsigned int)e->type
-        );
+            k_bodies, FastBuild_Tuple(b1, b2), k_pos, FastBuild_Tuple(e->px, e->py, e->pz), k_norm,
+            FastBuild_Tuple(e->nx, e->ny, e->nz), k_mat, FastBuild_Tuple(e->mat1, e->mat2), k_str,
+            e->impulse, k_slide, e->sliding_speed_sq, k_type, e->type);
 
         if (UNLIKELY(!dict)) {
             Py_INCREF(Py_None);
@@ -370,10 +367,16 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events_ex(PhysicsWo
     return list;
 }
 // ContactEvent layout (packed, little-endian):
-// uint64 body1, uint64 body2
-// float32 px, py, pz
-// float32 nx, ny, nz
-// float32 impulse
+// - body1 (uint64)
+// - body2 (uint64)
+// - px, py, pz (float32)
+// - nx, ny, nz (float32)
+// - impulse (float32)
+// - sliding_speed_sq (float32)
+// - mat1 (uint32)
+// - mat2 (uint32)
+// - type (uint32)
+// - _pad (uint32)
 PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events_raw(PhysicsWorldObject *self,
                                                                         PyObject *Py_UNUSED(args)) {
     // 1. Phase Guard
