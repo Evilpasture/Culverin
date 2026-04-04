@@ -15,7 +15,7 @@ typedef struct {
     #endif
 } ContactEventSlim; // Just a 64-byte data block now
 
-static_assert(sizeof(ContactEventSlim) == 64);
+static_assert(sizeof(ContactEventSlim) == MEMORY_ALIGNMENT_SIZE);
 
 // 2. The Tail (Already 64 bytes)
 typedef struct {
@@ -37,17 +37,17 @@ typedef struct {
     uint32_t padding[3];        // 12 (Total 64!)
 } ContactEventFatExt;
 
-static_assert(sizeof(ContactEventFatExt) == 64);
+static_assert(sizeof(ContactEventFatExt) == MEMORY_ALIGNMENT_SIZE);
 
 // 3. The Outer Container (Where the alignment lives)
 typedef struct ContactEvent_ {
-    alignas(64)
+    alignas(MEMORY_ALIGNMENT_SIZE)
     ContactEventSlim slim;   // Offset 0
     ContactEventFatExt fat;  // Offset 64
 } ContactEvent_;
 
-static_assert(sizeof(ContactEvent_) == 128);
-static_assert(offsetof(ContactEvent_, fat) == 64);
+static_assert(sizeof(ContactEvent_) == MEMORY_ALIGNMENT_SIZE * 2);
+static_assert(offsetof(ContactEvent_, fat) == MEMORY_ALIGNMENT_SIZE);
 
 static inline ContactEvent_* GetEventAt(void* buffer, size_t index) {
     // Standard pointer arithmetic on ContactEvent* handles the 128-byte stride
