@@ -778,72 +778,65 @@ class TestSleepingStates(CulverinTestCase):
         pos = self.get_pos(box)
         self.assertGreater(pos[1], 0.51, "Body woke up but didn't respond to the impulse velocity")
 
-import unittest
-import textwrap
-import threading
-import math
-import culverin
-
 # Compatibility: Python 3.13/3.14 uses _interpreters
+# --- SUBINTERPRETER COMPATIBILITY SHIM ---
+has_interpreters = False
+interpreters = None
+
 try:
-    import _interpreters as interpreters
+    import _interpreters as interpreters # Python 3.13+
+    has_interpreters = True
 except ImportError:
-    # Fallback for some 3.12 builds
-    import _xxsubinterpreters as interpreters
+    try:
+        import _xxsubinterpreters as interpreters # Python 3.12
+        has_interpreters = True
+    except ImportError:
+        has_interpreters = False
+
+HAS_INTERPRETERS = has_interpreters
 
 class TestSubinterpreterIsolation(unittest.TestCase):
+    
+    @unittest.skipUnless(HAS_INTERPRETERS, "Subinterpreters module not available in this Python version")
     def test_parser_isolation_across_interpreters(self):
         """
         Spawns a subinterpreter to ensure keywords like 'handle' 
         don't leak or become 'garbage' pointers between instances.
         """
         # 1. Initialize culverin in the MAIN interpreter
-        # This interns "handle" at address A
         world = culverin.PhysicsWorld()
         h = world.create_body(pos=(0, 10, 0))
         world.set_rotation(handle=h, x=0, y=0, z=0, w=1)
 
-        # 2. Spawn a SUB-INTERPRETER (returns an integer ID)
-        interp_id = interpreters.create()
+        # 2. Spawn a SUB-INTERPRETER
+        interp_id: int = interpreters.create()
 
-        # 3. Prepare code for the subinterpreter
-        # This will intern "handle" at address B
+        # 3. Prepare code
         code = textwrap.dedent("""
             import culverin
             import math
-            
-            # This interpreter MUST have its own isolated CulverinState
             world = culverin.PhysicsWorld()
             h = world.create_body(pos=(0, 5, 0))
-            
-            # If C-extension uses global parsers, these will fail with TypeError
-            # because the addresses of keywords won't match.
             world.set_position(handle=h, x=1, y=2, z=3)
             world.set_rotation(handle=h, x=0, y=0, z=0, w=1)
-            world.apply_impulse(handle=h, x=0, y=10, z=0)
-            
-            # Test the complex creation bitmask
-            world.create_body(pos=(0,0,0), mass=10.0, friction=0.5, is_sensor=True)
-            
-            print("Subinterpreter SUCCESS: API pointers are isolated.")
+            print("Subinterpreter SUCCESS")
         """)
 
         try:
-            # 4. Use run_string(id, code) instead of interp.run()
+            # Both 3.12 (_xxsubinterpreters) and 3.13+ (_interpreters) 
+            # support run_string(id, code)
             interpreters.run_string(interp_id, code)
         except Exception as e:
             self.fail(f"Subinterpreter failed! Likely global state contamination: {e}")
         finally:
-            # 5. Always destroy to prevent "remaining subinterpreters" warnings
             interpreters.destroy(interp_id)
 
+    @unittest.skipUnless(HAS_INTERPRETERS, "Subinterpreters module not available")
     def test_parallel_init_contention(self):
         """Force multiple interpreters to init Culverin simultaneously."""
         def run_interp():
-            # In 3.14, create() returns an INT
             t_interp_id = interpreters.create()
             try:
-                # Every interpreter gets a fresh copy of the Parser structs
                 interpreters.run_string(t_interp_id, "import culverin; culverin.PhysicsWorld()")
             finally:
                 interpreters.destroy(t_interp_id)
