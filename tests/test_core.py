@@ -1,5 +1,4 @@
 import unittest
-import _interpreters as interpreters
 import textwrap
 import math
 import time
