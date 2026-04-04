@@ -208,6 +208,17 @@ class PhysicsWorld:
         ...
     def get_index(self, handle: int) -> int | None: ...
     def is_alive(self, handle: int) -> bool: ...
+    def is_active(self, handle: int) -> bool:
+        """
+        Check if a body is currently active (simulating) or sleeping.
+        
+        Args:
+            body_handle: The unique handle of the body to check.
+            
+        Returns:
+            True if the body is active, False if it is sleeping or invalid.
+        """
+        ...
     def get_motion_type(self, handle: int) -> int | None:
         """Returns None when handle is stale. Exception when compiled with STRICT_HANDLE_ENABLED"""
         ...

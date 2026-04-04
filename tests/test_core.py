@@ -713,6 +713,69 @@ class TestProfilerScenario(CulverinTestCase):
         for t in threads: t.join()
         # If we didn't segfault, the PyMutex and Command Queue swap are working.
 
+class TestSleepingStates(CulverinTestCase):
+    def setUp(self):
+        super().setUp()
+        # Add a static floor so bodies have a surface to rest on
+        self.floor = self.world.create_body(
+            pos=(0, -1, 0), 
+            size=(100, 1, 100), 
+            motion=culverin.MOTION_STATIC
+        )
+        self.world.step(0)
+
+    def test_body_goes_to_sleep(self):
+        """Ensure a dynamic body falls asleep after coming to rest to save CPU."""
+        # Place a box just above the floor (using a Box so it doesn't roll infinitely)
+        box = self.world.create_body(
+            pos=(0, 0.5, 0), 
+            shape=culverin.SHAPE_BOX, 
+            size=(1, 1, 1), 
+            motion=culverin.MOTION_DYNAMIC
+        )
+        self.world.step(0)
+        
+        # Initially, it should be active as it falls
+        self.assertTrue(self.world.is_active(box), "Body should be active upon creation")
+        
+        # Step the simulation enough times for the body to hit the floor, settle, and sleep.
+        # Jolt's default sleep timer is usually around 0.5 seconds of inactivity.
+        # We step for 2 seconds (120 frames) to be absolutely sure.
+        for _ in range(120): 
+            self.world.step(1/60.0)
+            
+        self.assertFalse(self.world.is_active(box), "Body did not go to sleep after resting on the floor")
+
+    def test_impulse_wakes_body(self):
+        """Ensure a sleeping body automatically wakes up when acted upon."""
+        box = self.world.create_body(
+            pos=(0, 0.5, 0), 
+            shape=culverin.SHAPE_BOX, 
+            size=(1, 1, 1), 
+            motion=culverin.MOTION_DYNAMIC,
+            mass=1.0
+        )
+        
+        # Let it settle and fall asleep
+        for _ in range(120):
+            self.world.step(1/60.0)
+            
+        # Pre-condition check
+        self.assertFalse(self.world.is_active(box), "Pre-condition failed: Body never fell asleep")
+        
+        # Apply a physical force (this should queue an activation command in the C layer)
+        self.world.apply_impulse(box, 0, 100, 0)
+        
+        # Step once to process the command queue and advance physics
+        self.world.step(1/60.0)
+        
+        # 1. Verify the engine flagged it as active again
+        self.assertTrue(self.world.is_active(box), "Applying an impulse did not wake the sleeping body")
+        
+        # 2. Verify it actually moved upward away from its resting state
+        pos = self.get_pos(box)
+        self.assertGreater(pos[1], 0.51, "Body woke up but didn't respond to the impulse velocity")
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
