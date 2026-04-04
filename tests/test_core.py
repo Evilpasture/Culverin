@@ -778,6 +778,19 @@ class TestSleepingStates(CulverinTestCase):
         pos = self.get_pos(box)
         self.assertGreater(pos[1], 0.51, "Body woke up but didn't respond to the impulse velocity")
 
+import unittest
+import textwrap
+import threading
+import math
+import culverin
+
+# Compatibility: Python 3.13/3.14 uses _interpreters
+try:
+    import _interpreters as interpreters
+except ImportError:
+    # Fallback for some 3.12 builds
+    import _xxsubinterpreters as interpreters
+
 class TestSubinterpreterIsolation(unittest.TestCase):
     def test_parser_isolation_across_interpreters(self):
         """
@@ -785,57 +798,62 @@ class TestSubinterpreterIsolation(unittest.TestCase):
         don't leak or become 'garbage' pointers between instances.
         """
         # 1. Initialize culverin in the MAIN interpreter
+        # This interns "handle" at address A
         world = culverin.PhysicsWorld()
         h = world.create_body(pos=(0, 10, 0))
         world.set_rotation(handle=h, x=0, y=0, z=0, w=1)
-        
-        # 2. Spawn a SUB-INTERPRETER
-        interp = interpreters.create()
-        
-        # This code runs in a separate memory space for PyObjects, 
-        # but shares the same C global variables.
+
+        # 2. Spawn a SUB-INTERPRETER (returns an integer ID)
+        interp_id = interpreters.create()
+
+        # 3. Prepare code for the subinterpreter
+        # This will intern "handle" at address B
         code = textwrap.dedent("""
             import culverin
             import math
             
-            # If the C-extension uses global parsers, this will either:
-            # A) Fail to find 'handle' (Unexpected keyword)
-            # B) Segfault (Accessing pointer from another interpreter)
+            # This interpreter MUST have its own isolated CulverinState
             world = culverin.PhysicsWorld()
             h = world.create_body(pos=(0, 5, 0))
             
-            # Test the most sensitive mutators
+            # If C-extension uses global parsers, these will fail with TypeError
+            # because the addresses of keywords won't match.
             world.set_position(handle=h, x=1, y=2, z=3)
-            world.set_rotation(handle=h, x=0, y=0, z=math.sin(0.5), w=math.cos(0.5))
+            world.set_rotation(handle=h, x=0, y=0, z=0, w=1)
             world.apply_impulse(handle=h, x=0, y=10, z=0)
             
-            # Test the creation bitmasks
+            # Test the complex creation bitmask
             world.create_body(pos=(0,0,0), mass=10.0, friction=0.5, is_sensor=True)
             
-            print("Subinterpreter SUCCESS")
+            print("Subinterpreter SUCCESS: API pointers are isolated.")
         """)
-        
+
         try:
-            interp.run(code)
+            # 4. Use run_string(id, code) instead of interp.run()
+            interpreters.run_string(interp_id, code)
         except Exception as e:
             self.fail(f"Subinterpreter failed! Likely global state contamination: {e}")
+        finally:
+            # 5. Always destroy to prevent "remaining subinterpreters" warnings
+            interpreters.destroy(interp_id)
 
     def test_parallel_init_contention(self):
         """Force multiple interpreters to init Culverin simultaneously."""
-        import _interpreters as interpreters
-
         def run_interp():
-            # interp is an INT
-            interp = interpreters.create()
+            # In 3.14, create() returns an INT
+            t_interp_id = interpreters.create()
             try:
-                # Use run_string(id, script)
-                interpreters.run_string(interp, "import culverin; culverin.PhysicsWorld()")
+                # Every interpreter gets a fresh copy of the Parser structs
+                interpreters.run_string(t_interp_id, "import culverin; culverin.PhysicsWorld()")
             finally:
-                interpreters.destroy(interp)
+                interpreters.destroy(t_interp_id)
 
         threads = [threading.Thread(target=run_interp) for _ in range(4)]
         for t in threads: t.start()
         for t in threads: t.join()
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
