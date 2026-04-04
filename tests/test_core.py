@@ -7,6 +7,33 @@ import numpy as np
 import culverin
 from culverin import WheelConfig
 from culverin import TrackConfig
+from typing import Protocol, Literal
+from types import CodeType, SimpleNamespace
+from collections.abc import Callable
+
+class InterpretersProtocol(Protocol):
+    def create(
+        self, 
+        config: SimpleNamespace | Literal['default', 'isolated', 'legacy', 'empty', ''] | None = "isolated", 
+        *, 
+        reqrefs: bool = False
+    ) -> int: ...
+    
+    def run_string(
+        self, 
+        id: int, 
+        script: str | CodeType | Callable[[], object], 
+        shared: dict[str, object] = {}, 
+        *, 
+        restrict: bool = False
+    ) -> None: ...
+    
+    def destroy(
+        self, 
+        id: int, 
+        *, 
+        restrict: bool = False
+    ) -> None: ...
 
 class CulverinTestCase(unittest.TestCase):
     """Base class providing helper methods for interacting with Culverin buffers."""
@@ -780,14 +807,14 @@ class TestSleepingStates(CulverinTestCase):
 # Compatibility: Python 3.13/3.14 uses _interpreters
 # --- SUBINTERPRETER COMPATIBILITY SHIM ---
 has_interpreters = False
-interpreters = None
+interpreters: InterpretersProtocol | None = None
 
 try:
-    import _interpreters as interpreters # Python 3.13+
+    import _interpreters as interpreters # type: ignore
     has_interpreters = True
 except ImportError:
     try:
-        import _xxsubinterpreters as interpreters # Python 3.12
+        import _xxsubinterpreters as interpreters # type: ignore
         has_interpreters = True
     except ImportError:
         has_interpreters = False
@@ -802,6 +829,7 @@ class TestSubinterpreterIsolation(unittest.TestCase):
         Spawns a subinterpreter to ensure keywords like 'handle' 
         don't leak or become 'garbage' pointers between instances.
         """
+        assert interpreters is not None  # For type checker
         # 1. Initialize culverin in the MAIN interpreter
         world = culverin.PhysicsWorld()
         h = world.create_body(pos=(0, 10, 0))
@@ -832,9 +860,9 @@ class TestSubinterpreterIsolation(unittest.TestCase):
 
     @unittest.skipUnless(HAS_INTERPRETERS, "Subinterpreters module not available")
     def test_parallel_init_contention(self):
-        """Force multiple interpreters to init Culverin simultaneously."""
         def run_interp():
-            t_interp_id = interpreters.create()
+            assert interpreters is not None
+            t_interp_id: int = interpreters.create()
             try:
                 interpreters.run_string(t_interp_id, "import culverin; culverin.PhysicsWorld()")
             finally:
