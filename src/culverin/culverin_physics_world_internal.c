@@ -257,7 +257,7 @@ int allocate_buffers(PhysicsWorldObject *self, int max_bodies) {
 CULV_NODISCARD
 int PhysicsWorld_resize(PhysicsWorldObject *self, size_t new_capacity) {
     // 1. Signal Start
-    atomic_store_explicit(&self->is_resizing, true, memory_order_seq_cst);
+    atomic_store_explicit(&self->is_resizing, true, memory_order_release);
 
     if (self->view_export_count > 0) {
         atomic_store_explicit(&self->is_resizing, false, memory_order_relaxed);
