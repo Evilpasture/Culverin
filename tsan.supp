@@ -13,3 +13,6 @@ race:JPH::ContactConstraintManager
 race:dictresize
 race:PyDict_SetItem
 race:type_get_doc
+# So fast that CPython is struggling!
+race:PyDict_SetDefaultRef
+race:PyUnicode_DecodeFSDefaultAndSize
