@@ -229,31 +229,139 @@ def bake_scene(bodies: list[dict[str, Any]] | tuple[dict[str, Any], ...]) -> tup
 
 TrigFunc = Callable[[float], float]
 
-def euler_to_quat(
-    r: float, 
-    p: float, 
-    y: float, 
-    _cos: TrigFunc = math.cos, 
-    _sin: TrigFunc = math.sin
-) -> tuple[float, float, float, float]:
-    """
-    Converts Roll-Pitch-Yaw (RPY) to Quaternion (x, y, z, w).
-    Optimized via local variable caching of trig functions.
-    """
-    r *= 0.5
-    p *= 0.5
-    y *= 0.5
-    
-    cr, sr = _cos(r), _sin(r)
-    cp, sp = _cos(p), _sin(p)
-    cy, sy = _cos(y), _sin(y)
-    
-    return (
-        sr * cp * cy - cr * sp * sy, # x
-        cr * sp * cy + sr * cp * sy, # y
-        cr * cp * sy - sr * sp * cy, # z
-        cr * cp * cy + sr * sp * sy  # w
+import types
+import opcode
+
+def _assemble_euler_to_quat() -> types.FunctionType:
+    # Opcodes
+    RESUME       = opcode.opmap['RESUME']
+    LOAD_FAST    = opcode.opmap['LOAD_FAST']
+    LOAD_CONST   = opcode.opmap['LOAD_CONST']
+    STORE_FAST   = opcode.opmap['STORE_FAST']
+    PUSH_NULL    = opcode.opmap['PUSH_NULL']
+    CALL         = opcode.opmap['CALL']
+    BINARY_OP    = opcode.opmap['BINARY_OP']
+    BUILD_TUPLE  = opcode.opmap['BUILD_TUPLE']
+    RETURN_VALUE = opcode.opmap['RETURN_VALUE']
+
+    # BINARY_OP selectors
+    OP_ADD  = 0
+    OP_MUL  = 5
+    OP_SUB  = 10
+    OP_IMUL = 18  # *=
+
+    # Inline cache padding (3.12+): CALL needs 3 entries, BINARY_OP needs 1
+    # Each entry = 2 zero bytes
+    CALL_CACHE  = [0, 0, 0, 0, 0, 0]
+    BINOP_CACHE = [0, 0]
+
+    # varname indices
+    R, P, Y, SIN, COS = 0, 1, 2, 3, 4
+    SR, CR, SP, CP, SY, CY = 5, 6, 7, 8, 9, 10
+    SRCP, CRSP, CRCP, SRSP = 11, 12, 13, 14
+    SRCP_CY, SRCP_SY, CRSP_CY, CRSP_SY = 15, 16, 17, 18
+
+    def lf(v):    return [LOAD_FAST,  v]
+    def sf(v):    return [STORE_FAST, v]
+    def lc(i):    return [LOAD_CONST, i]
+    def binop(op):return [BINARY_OP,  op] + BINOP_CACHE
+    def call(fn, arg):
+        return [PUSH_NULL, 0, LOAD_FAST, fn, LOAD_FAST, arg, CALL, 1] + CALL_CACHE
+
+    bc = []
+    def emit(*parts):
+        for p in parts: bc.extend(p)
+
+    emit(
+        [RESUME, 0],
+
+        # r *= 0.5; p *= 0.5; y *= 0.5
+        lf(R), lc(1), binop(OP_IMUL), sf(R),
+        lf(P), lc(1), binop(OP_IMUL), sf(P),
+        lf(Y), lc(1), binop(OP_IMUL), sf(Y),
+
+        # sr,cr,sp,cp,sy,cy
+        call(SIN, R), sf(SR),
+        call(COS, R), sf(CR),
+        call(SIN, P), sf(SP),
+        call(COS, P), sf(CP),
+        call(SIN, Y), sf(SY),
+        call(COS, Y), sf(CY),
+
+        # intermediate products
+        lf(SR), lf(CP), binop(OP_MUL), sf(SRCP),
+        lf(CR), lf(SP), binop(OP_MUL), sf(CRSP),
+        lf(CR), lf(CP), binop(OP_MUL), sf(CRCP),
+        lf(SR), lf(SP), binop(OP_MUL), sf(SRSP),
+
+        lf(SRCP), lf(CY), binop(OP_MUL), sf(SRCP_CY),
+        lf(SRCP), lf(SY), binop(OP_MUL), sf(SRCP_SY),
+        lf(CRSP), lf(CY), binop(OP_MUL), sf(CRSP_CY),
+        lf(CRSP), lf(SY), binop(OP_MUL), sf(CRSP_SY),
+
+        # x, y, z, w — left on stack for BUILD_TUPLE
+        lf(SRCP_CY), lf(CRSP_SY), binop(OP_SUB),
+        lf(CRSP_CY), lf(SRCP_SY), binop(OP_ADD),
+        lf(CRCP), lf(SY), binop(OP_MUL),
+        lf(SRSP), lf(CY), binop(OP_MUL), binop(OP_SUB),
+        lf(CRCP), lf(CY), binop(OP_MUL),
+        lf(SRSP), lf(SY), binop(OP_MUL), binop(OP_ADD),
+
+        [BUILD_TUPLE, 4],
+        [RETURN_VALUE, 0],
     )
+
+    varnames = (
+        'r', 'p', 'y', '_sin', '_cos',
+        'sr', 'cr', 'sp', 'cp', 'sy', 'cy',
+        'srcp', 'crsp', 'crcp', 'srsp',
+        'srcp_cy', 'srcp_sy', 'crsp_cy', 'crsp_sy',
+    )
+
+    # Steal linetable + exceptiontable from compiler output of
+    # structurally identical source — avoids hand-encoding the 3.12
+    # location table format (which is non-trivial and version-specific)
+    _ref_src = '''
+import math
+def _f(r, p, y, _sin=math.sin, _cos=math.cos):
+    r *= 0.5; p *= 0.5; y *= 0.5
+    sr = _sin(r); cr = _cos(r)
+    sp = _sin(p); cp = _cos(p)
+    sy = _sin(y); cy = _cos(y)
+    srcp = sr * cp; crsp = cr * sp; crcp = cr * cp; srsp = sr * sp
+    srcp_cy = srcp * cy; srcp_sy = srcp * sy
+    crsp_cy = crsp * cy; crsp_sy = crsp * sy
+    return (srcp_cy - crsp_sy, crsp_cy + srcp_sy, crcp*sy - srsp*cy, crcp*cy + srsp*sy)
+'''
+    _ref_mod = compile(_ref_src, '<string>', 'exec')
+    _ref = next(c for c in _ref_mod.co_consts if isinstance(c, types.CodeType))
+
+    code_obj = types.CodeType(
+        5,                    # argcount: r, p, y, _sin, _cos
+        0,                    # posonlyargcount
+        0,                    # kwonlyargcount
+        len(varnames),        # nlocals
+        _ref.co_stacksize,    # stacksize — verified by compiler
+        0x3,                  # CO_OPTIMIZED | CO_NEWLOCALS
+        bytes(bc),
+        (None, 0.5),          # consts[0]=None (implicit), consts[1]=0.5
+        (),                   # names (no globals)
+        varnames,
+        __file__,
+        'euler_to_quat',
+        'euler_to_quat',
+        1,
+        _ref.co_linetable,
+        _ref.co_exceptiontable,
+    )
+
+    return types.FunctionType(
+        code_obj,
+        {'__builtins__': __builtins__},
+        argdefs=(math.sin, math.cos),  # defaults for _sin, _cos
+    )
+
+euler_to_quat = _assemble_euler_to_quat()
 
 def _parse_vec(text: str) -> tuple[float, float, float]:
     return tuple(map(float, text.split())) # type: ignore
