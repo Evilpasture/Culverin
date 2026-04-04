@@ -305,7 +305,7 @@ typedef struct PhysicsWorldObject {
     DebugBuffer debug_triangles;
 } PhysicsWorldObject;
 
-typedef enum {
+typedef enum : uint8_t {
     CULV_SHAPE_BOX         = 0,
     CULV_SHAPE_SPHERE      = 1,
     CULV_SHAPE_CAPSULE     = 2,
@@ -375,74 +375,64 @@ static inline bool unpack_handle(PhysicsWorldObject *self, BodyHandle h, uint32_
     return (bool)(current_gen == gen);
 }
 
-// 32-bit Float Exponent Mask
-// Sign: 0 | Exponent: 11111111 | Mantissa: 000...
-CULV_MAYBE_UNUSED
-static constexpr uint32_t IEEE754_FLOAT_NONFINITE_MASK = 0x7F800000U;
+// --- Bit-Level Constants ---
+static constexpr uint32_t MASK_F32 = 0x7F800000U;
+static constexpr uint64_t MASK_F64 = 0x7FF0000000000000ULL;
 
-// 64-bit Double Exponent Mask
-// Sign: 0 | Exponent: 11111111111 | Mantissa: 000...
-CULV_MAYBE_UNUSED
-static constexpr uint64_t IEEE754_DOUBLE_NONFINITE_MASK = 0x7FF0000000000000ULL;
+static_assert(sizeof(MASK_F32 + 0) == sizeof(uint32_t));
+static_assert(sizeof(MASK_F64 + 0) == sizeof(uint64_t));
 
-// --- Bit-Level Numerical Guards (Optimizer-Proof) ---
-CULV_MAYBE_UNUSED CULV_NODISCARD static inline bool culv_is_finite_f(float f) {
-    uint32_t i;
-    // Use volatile to prevent the compiler from "seeing through" the cast
-    memcpy(&i, &f, sizeof(uint32_t));
-    volatile uint32_t vi = i;
-    return (vi & IEEE754_FLOAT_NONFINITE_MASK) != IEEE754_FLOAT_NONFINITE_MASK;
+// --- Hardened Checkers (No Casts) ---
+CULV_NODISCARD
+static inline bool culv_is_finite_f(float f) {
+    uint32_t i; memcpy(&i, &f, 4);
+    volatile uint32_t vi = i; 
+    return (vi & MASK_F32) != MASK_F32;
 }
 
-CULV_MAYBE_UNUSED CULV_NODISCARD static inline bool culv_is_finite_d(double d) {
-    uint64_t i;
-    memcpy(&i, &d, sizeof(uint64_t));
+CULV_NODISCARD
+static inline bool culv_is_finite_d(double d) {
+    uint64_t i; memcpy(&i, &d, 8);
     volatile uint64_t vi = i;
-    return (vi & IEEE754_DOUBLE_NONFINITE_MASK) != IEEE754_DOUBLE_NONFINITE_MASK;
+    return (vi & MASK_F64) != MASK_F64;
 }
 
-// C-Type Generic Dispatcher
-#define CULV_IS_FINITE(val)                                                                        \
-    _Generic((val), float: culv_is_finite_f(val), double: culv_is_finite_d(val))
+// --- The Generic Dispatcher (Preserves Types) ---
+#define IS_FINITE(x) _Generic((x), \
+    float:  culv_is_finite_f(x), \
+    double: culv_is_finite_d(x), \
+    default: culv_is_finite_d((double)(x)))
 
-#define VALIDATE_FINITE_FLOAT(val, name)                                                           \
-    if (UNLIKELY(!CULV_IS_FINITE(val))) {                                                          \
-        PyErr_Format(PyExc_ValueError, "Numerical Error: '%s' must be finite", name);              \
-        return NULL;                                                                               \
-    }
+// --- Error Reporting (One instance, no bloat) ---
+static PyObject* culv_raise_finite_err(const char* msg) {
+    PyErr_Format(PyExc_ValueError, "Numerical Error: '%s' must be finite", msg);
+    return nullptr;
+}
 
-#define VALIDATE_FINITE_VEC3(x, y, z, msg)                                                         \
-    if (UNLIKELY(!CULV_IS_FINITE(x) || !CULV_IS_FINITE(y) || !CULV_IS_FINITE(z))) {                \
-        char buf[256];                                                                             \
-        PyOS_snprintf(buf, sizeof(buf), "Numerical Error: %s must be finite (got [%f, %f, %f])",   \
-                      msg, (double)(x), (double)(y), (double)(z));                                 \
-        PyErr_SetString(PyExc_ValueError, buf);                                                    \
-        return NULL;                                                                               \
-    }
+// --- The Macro Engine (Variadic Expansion) ---
+// This expands into individual checks without creating arrays or casting types.
+#define VALIDATE_FINITE_CORE(msg, ...) \
+    CULV_EXPAND(CULV_CONCAT(CULV_VAL_ARGS_, CULV_NARGS(__VA_ARGS__)) (msg, __VA_ARGS__))
 
-#define VALIDATE_FINITE_QUAT(x, y, z, w, msg)                                                      \
-    if (UNLIKELY(!CULV_IS_FINITE(x) || !CULV_IS_FINITE(y) || !CULV_IS_FINITE(z) ||                 \
-                 !CULV_IS_FINITE(w))) {                                                            \
-        char buf[256];                                                                             \
-        PyOS_snprintf(buf, sizeof(buf),                                                            \
-                      "Numerical Error: %s must be finite (got [%f, %f, %f, %f])", msg,            \
-                      (double)(x), (double)(y), (double)(z), (double)(w));                         \
-        PyErr_SetString(PyExc_ValueError, buf);                                                    \
-        return NULL;                                                                               \
-    }
+#define CULV_VAL_ARGS_1(m, x) do { if(UNLIKELY(!IS_FINITE(x))) return culv_raise_finite_err(m); } while(0)
+#define CULV_VAL_ARGS_2(m, x, ...) CULV_VAL_ARGS_1(m, x); CULV_VAL_ARGS_1(m, __VA_ARGS__)
+#define CULV_VAL_ARGS_3(m, x, ...) CULV_VAL_ARGS_1(m, x); CULV_VAL_ARGS_2(m, __VA_ARGS__)
+#define CULV_VAL_ARGS_4(m, x, ...) CULV_VAL_ARGS_1(m, x); CULV_VAL_ARGS_3(m, __VA_ARGS__)
 
-#define VALIDATE_FINITE_VEC4(x, y, z, w, msg)                                                      \
-    if (UNLIKELY(!CULV_IS_FINITE(x) || !CULV_IS_FINITE(y) || !CULV_IS_FINITE(z) ||                 \
-                 !CULV_IS_FINITE(w))) {                                                            \
-        char buf[256];                                                                             \
-        PyOS_snprintf(buf, sizeof(buf),                                                            \
-                      "Numerical Error: %s components must be finite (got [%f, %f, %f, %f])", msg, \
-                      (double)(x), (double)(y), (double)(z), (double)(w));                         \
-        PyErr_SetString(PyExc_ValueError, buf);                                                    \
-        return NULL;                                                                               \
-    }
+#define CULV_NARGS(...) CULV_NARGS_IMP(__VA_ARGS__, 4, 3, 2, 1)
+#define CULV_NARGS_IMP(_1, _2, _3, _4, N, ...) N
+#define CULV_GLUE(a, b) a##b
+#define CULV_CONCAT(a, b) CULV_GLUE(a, b)
+#define CULV_EXPAND(x) x
 
-// DOESN'T DO THE UNLOCKING FOR YOU. REMEMBER!
+// --- User API (Zero cost wrappers) ---
+#define VALIDATE_FINITE_FLOAT(val, name)       VALIDATE_FINITE_CORE(name, val)
+#define VALIDATE_FINITE_VEC3(x, y, z, name)    VALIDATE_FINITE_CORE(name, x, y, z)
+#define VALIDATE_FINITE_QUAT(x, y, z, w, name) VALIDATE_FINITE_CORE(name, x, y, z, w)
+#define VALIDATE_FINITE_VEC4(x, y, z, w, name) VALIDATE_FINITE_CORE(name, x, y, z, w)
+
+// DOESN'T DO THE SHADOW UNLOCKING FOR YOU. REMEMBER!
+// DEFINE STRICT_HANDLE_ENABLED IN THE BUILD IF YOU WANT IT TO FAIL FAST
 #if defined(STRICT_HANDLE_ENABLED)
 #    define RAISE_STALE_HANDLE()                                                                   \
         do {                                                                                       \
