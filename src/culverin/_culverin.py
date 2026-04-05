@@ -95,6 +95,7 @@ class Engine:
         inertia (float): Rotational mass of the engine. Higher values cause
             the RPM to climb and fall more slowly.
     """
+
     max_torque: float
     max_rpm: float
     min_rpm: float
@@ -115,17 +116,18 @@ class Engine:
 
 class Transmission:
     """
-    Base configuration for vehicle gearboxes. 
+    Base configuration for vehicle gearboxes.
     Defines mechanical advantage and clutch properties.
 
     Attributes:
-        clutch_strength (float): Maximum torque the clutch can transmit before 
+        clutch_strength (float): Maximum torque the clutch can transmit before
             slipping. Higher values provide snappier shifts.
-        differential_ratio (float): The final drive ratio (e.g., 3.42). Multiplies 
+        differential_ratio (float): The final drive ratio (e.g., 3.42). Multiplies
             torque sent to the wheels.
         ratios (list[float]): Stack of forward gear ratios.
         reverse_ratios (list[float]): Stack of reverse gear ratios.
     """
+
     clutch_strength: float
     differential_ratio: float
     ratios: list[float]
@@ -143,16 +145,17 @@ class Transmission:
 
 class Automatic(Transmission):
     """
-    An automated gearbox configuration. 
+    An automated gearbox configuration.
     Automatically handles gear transitions based on engine RPM.
 
     Attributes:
-        shift_up_rpm (float): The RPM threshold at which the transmission 
+        shift_up_rpm (float): The RPM threshold at which the transmission
             upshifts to the next gear.
-        shift_down_rpm (float): The RPM threshold at which the transmission 
+        shift_down_rpm (float): The RPM threshold at which the transmission
             downshifts to a lower gear.
         mode (int): Internal identifier for Automatic mode (0).
     """
+
     mode: int
     shift_up_rpm: float
     shift_down_rpm: float
@@ -173,12 +176,13 @@ class Automatic(Transmission):
 
 class Manual(Transmission):
     """
-    A manual gearbox configuration. 
+    A manual gearbox configuration.
     Shifts are controlled either by user input or high-level logic scripts.
 
     Attributes:
         mode (int): Internal identifier for Manual mode (1).
     """
+
     mode: int
 
     def __init__(
