@@ -4633,6 +4633,7 @@ static int init_types(PyObject *m, CulverinState *st) {
         if (!type) {
             return -1;
         }
+        PyObject_SetAttrString(type, "__module__", PyUnicode_FromString("culverin"));
         if (PyModule_AddObject(m, types[i].name, type) < 0) {
             Py_DECREF(type);
             return -1;

@@ -1,6 +1,7 @@
 import os
 import sys
 from pathlib import Path
+from typing import TypedDict
 
 from . import _culverin_c
 
@@ -22,14 +23,20 @@ from ._culverin import (
     Automatic,
     Engine,
     Manual,
-    TrackConfig,
     Transmission,
-    WheelConfig,
     euler_to_quat,
     load_urdf,
     parse_urdf,
 )
 
+class WheelConfig(TypedDict):
+    pos: tuple[float, float, float]
+    radius: float
+
+
+class TrackConfig(TypedDict):
+    indices: list[int]
+    driven_wheel: int
 
 # 2. DEFINE HELPER FUNCTIONS
 # We type-hint 'self' as the C class.
@@ -129,10 +136,8 @@ __all__ = [
     "Ragdoll",
     "RagdollSettings",
     "Skeleton",
-    "TrackConfig",
     "Transmission",
     "Vehicle",
-    "WheelConfig",
     "euler_to_quat",
     "load_urdf",
     "parse_urdf",

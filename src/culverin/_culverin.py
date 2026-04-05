@@ -3,7 +3,7 @@ import math
 import opcode
 import types
 from collections.abc import Callable
-from typing import Any, Literal, TypedDict, cast, overload
+from typing import Any, Literal, cast, overload
 
 __all__ = [
     "CONSTRAINT_CONE",
@@ -31,9 +31,7 @@ __all__ = [
     "Automatic",
     "Engine",
     "Manual",
-    "TrackConfig",
     "Transmission",
-    "WheelConfig",
     "bake_scene",
     "euler_to_quat",
     "load_urdf",
@@ -41,15 +39,6 @@ __all__ = [
     "validate_settings",
 ]
 
-
-class WheelConfig(TypedDict):
-    pos: tuple[float, float, float]
-    radius: float
-
-
-class TrackConfig(TypedDict):
-    indices: list[int]
-    driven_wheel: int
 
 
 # --- Constants ---
@@ -96,6 +85,8 @@ class Engine:
             the RPM to climb and fall more slowly.
     """
 
+    __module__ = "culverin"
+
     max_torque: float
     max_rpm: float
     min_rpm: float
@@ -128,6 +119,8 @@ class Transmission:
         reverse_ratios (list[float]): Stack of reverse gear ratios.
     """
 
+    __module__ = "culverin"
+
     clutch_strength: float
     differential_ratio: float
     ratios: list[float]
@@ -156,6 +149,8 @@ class Automatic(Transmission):
         mode (int): Internal identifier for Automatic mode (0).
     """
 
+    __module__ = "culverin"
+
     mode: int
     shift_up_rpm: float
     shift_down_rpm: float
@@ -182,6 +177,8 @@ class Manual(Transmission):
     Attributes:
         mode (int): Internal identifier for Manual mode (1).
     """
+
+    __module__ = "culverin"
 
     mode: int
 
