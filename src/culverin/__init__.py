@@ -33,6 +33,7 @@ from ._culverin import (
 # We type-hint 'self' as the C class.
 # We use a string "_culverin_c.PhysicsWorld" to avoid runtime issues.
 def get_position(self: _culverin_c.PhysicsWorld, handle: int) -> tuple[float, float, float] | None:
+    """Returns the world position of a body as (x, y, z), or None if the handle is invalid."""
     stats = self.get_body_stats(handle)
     # If stats is None, this returns None naturally
     return stats[0] if stats else None
@@ -41,11 +42,13 @@ def get_position(self: _culverin_c.PhysicsWorld, handle: int) -> tuple[float, fl
 def get_rotation(
     self: _culverin_c.PhysicsWorld, handle: int
 ) -> tuple[float, float, float, float] | None:
+    """Returns the world rotation of a body as (x, y, z, w), or None if the handle is invalid."""
     stats = self.get_body_stats(handle)
     return stats[1] if stats else None
 
 
 def get_velocity(self: _culverin_c.PhysicsWorld, handle: int) -> tuple[float, float, float] | None:
+    """Returns the world velocity of a body as (x, y, z), or None if the handle is invalid."""
     stats = self.get_body_stats(handle)
     return stats[2] if stats else None
 

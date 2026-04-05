@@ -4185,8 +4185,10 @@ PyCFunction_DeclareMethod PhysicsWorld_benchmark_build(CULV_MAYBE_UNUSED PyObjec
 // Embed the markdown documentation. Note: Not 'const' because we will tokenize it.
 static char ALL_DOCS[] = {
 // NOLINTNEXTLINE(readability-magic-numbers)
-#embed CULVERIN_DOCS_PATH
-    , 0};
+#embed CULVERIN_DOCS_PATH suffix(, 0)
+};
+
+static_assert(_Generic((ALL_DOCS), char *: true, default: false));
 
 // Global flag to ensure we only stitch once (important for subinterpreters)
 static atomic_bool docs_stitched = false;
@@ -4228,6 +4230,50 @@ static void stitch_docs(PyMethodDef *methods, const char *prefix) {
 
                 m->ml_doc = doc_start;
                 break; // Found the docstring for this method, move to next method
+            }
+
+            // This is a substring match, keep searching
+            search_start = found + 1;
+        }
+    }
+}
+
+// Pass 1b: Stitch docstrings into PyGetSetDef getters
+static void stitch_docs_getset(PyGetSetDef *getset, const char *prefix) {
+    if (getset == nullptr) {
+        return;
+    }
+
+    for (PyGetSetDef *g = getset; g->name != nullptr; g++) {
+        // Skip if it already has a docstring
+        if (g->doc != nullptr) {
+            continue;
+        }
+
+        // Search for markdown header: "## Prefix_name"
+        static constexpr size_t KEY_BUFFER_SIZE = 128;
+        char key[KEY_BUFFER_SIZE];
+        snprintf(key, sizeof(key), "## %s_%s", prefix, g->name);
+
+        // Search for a complete match, skipping any substring matches
+        auto search_start = ALL_DOCS;
+        char *found       = nullptr;
+        while ((found = strstr(search_start, key)) != nullptr) {
+            // Verify we have a complete match (not substring of longer name)
+            char *after_key = found + strlen(key);
+            if (*after_key == '\0' || *after_key == '\r' || *after_key == '\n' ||
+                *after_key == ' ' || *after_key == '\t') {
+                // Complete match found!
+                // Move past the header and any newlines
+                char *doc_start = after_key;
+
+                // Skip the newline(s) after the header
+                while (*doc_start == '\r' || *doc_start == '\n') {
+                    doc_start++;
+                }
+
+                g->doc = doc_start;
+                break; // Found the docstring for this getter, move to next
             }
 
             // This is a substring match, keep searching
@@ -4300,6 +4346,14 @@ static void finalize_docs() {
 #define RDS_FASTCALL(name) CULV_FEAT(RagdollSettings, name, METH_FASTCALL | METH_KEYWORDS)
 #define RDS_NOARGS(name) CULV_FEAT(RagdollSettings, name, METH_NOARGS)
 
+// Getter/Property macro - concise initialization
+#define GETSET(name_str, getter_func)                                                              \
+    {.name    = (name_str),                                                                        \
+     .get     = (getter)(getter_func),                                                             \
+     .set     = nullptr,                                                                           \
+     .doc     = nullptr,                                                                           \
+     .closure = nullptr}
+
 static PyMethodDef module_methods[] = {
     {.ml_name  = "_dump_schema_json",
      .ml_meth  = CULV_CAST(culv_dump_schema),
@@ -4307,66 +4361,25 @@ static PyMethodDef module_methods[] = {
      .ml_doc   = "Internal: Dumps schema to culverin_schema.json"},
     {.ml_name = nullptr, .ml_meth = nullptr, .ml_flags = 0, .ml_doc = nullptr}};
 
-static const PyGetSetDef PhysicsWorld_getset[] = {
-    {.name    = "positions",
-     .get     = (getter)get_positions,
-     .set     = nullptr,
-     .doc     = nullptr,
-     .closure = nullptr},
-    {.name    = "rotations",
-     .get     = (getter)get_rotations,
-     .set     = nullptr,
-     .doc     = nullptr,
-     .closure = nullptr},
-    {.name    = "velocities",
-     .get     = (getter)get_velocities,
-     .set     = nullptr,
-     .doc     = nullptr,
-     .closure = nullptr},
-    {.name    = "angular_velocities",
-     .get     = (getter)get_angular_velocities,
-     .set     = nullptr,
-     .doc     = nullptr,
-     .closure = nullptr},
-    {.name = "count", .get = (getter)get_count, .set = nullptr, .doc = nullptr, .closure = nullptr},
-    {.name = "time", .get = (getter)get_time, .set = nullptr, .doc = nullptr, .closure = nullptr},
-    {.name    = "user_data",
-     .get     = (getter)get_user_data_buffer,
-     .set     = nullptr,
-     .doc     = nullptr,
-     .closure = nullptr},
-    {.name    = "shape_count",
-     .get     = (getter)get_shape_count,
-     .set     = nullptr,
-     .doc     = "Number of unique shapes in cache",
-     .closure = nullptr},
-    {.name    = "is_step_pending",
-     .get     = (getter)get_is_step_pending,
-     .set     = nullptr,
-     .doc     = "Whether a physics step is currently in progress. If True, structural changes are "
-                "blocked.",
-     .closure = nullptr},
-    {.name    = "max_bodies",
-     .get     = (getter)PhysicsWorld_get_max_bodies,
-     .set     = nullptr,
-     .doc     = "The hard limit of bodies set at init.",
-     .closure = nullptr},
-    {.name    = "remaining_capacity",
-     .get     = (getter)PhysicsWorld_get_remaining_capacity,
-     .set     = nullptr,
-     .doc     = "Number of slots available before world.step() is required.",
-     .closure = nullptr},
+static PyGetSetDef PhysicsWorld_getset[] = {
+    GETSET("positions", get_positions),
+    GETSET("rotations", get_rotations),
+    GETSET("velocities", get_velocities),
+    GETSET("angular_velocities", get_angular_velocities),
+    GETSET("count", get_count),
+    GETSET("time", get_time),
+    GETSET("user_data", get_user_data_buffer),
+    GETSET("shape_count", get_shape_count),
+    GETSET("is_step_pending", get_is_step_pending),
+    GETSET("max_bodies", PhysicsWorld_get_max_bodies),
+    GETSET("remaining_capacity", PhysicsWorld_get_remaining_capacity),
     {.name = nullptr, .get = nullptr, .set = nullptr, .doc = nullptr, .closure = nullptr}};
 
-static const PyGetSetDef Character_getset[] = {{"handle", (getter)Character_get_handle, nullptr,
-                                                "The unique physics handle for this character.",
-                                                nullptr},
-                                               {nullptr, nullptr, nullptr, nullptr, nullptr}};
+static PyGetSetDef Character_getset[] = {GETSET("handle", Character_get_handle),
+                                         {nullptr, nullptr, nullptr, nullptr, nullptr}};
 
-static const PyGetSetDef Vehicle_getset[] = {{"wheel_count", (getter)Vehicle_get_wheel_count,
-                                              nullptr, "Number of wheels attached to this vehicle.",
-                                              nullptr},
-                                             {nullptr, nullptr, nullptr, nullptr, nullptr}};
+static PyGetSetDef Vehicle_getset[] = {GETSET("wheel_count", Vehicle_get_wheel_count),
+                                       {nullptr, nullptr, nullptr, nullptr, nullptr}};
 
 // --- Method Definitions ---
 // IMPORTANT: REMOVE 'const' so the memory is writable!
@@ -4656,6 +4669,11 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
         stitch_docs(Skeleton_methods, "Skeleton");
         stitch_docs(Ragdoll_methods, "Ragdoll");
         stitch_docs(RagdollSettings_methods, "RagdollSettings");
+
+        // Stitch docstrings into getsets
+        stitch_docs_getset(PhysicsWorld_getset, "PhysicsWorld");
+        stitch_docs_getset(Character_getset, "Character");
+        stitch_docs_getset(Vehicle_getset, "Vehicle");
 
         finalize_docs(); // Now safe to terminate strings
     }

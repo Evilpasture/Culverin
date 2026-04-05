@@ -267,7 +267,59 @@ Checks if a body is currently active (awake) in the solver.
 
 ## PhysicsWorld_get_active_indices
 
-Returns a packed bytes object of uint32 indices for all currently active bodies.
+Returns a bytes object of active body indices.
+
+## PhysicsWorld_shape_count
+
+Number of unique shapes in cache.
+
+## PhysicsWorld_is_step_pending
+
+Whether a physics step is currently in progress. If True, structural changes are blocked.
+
+## PhysicsWorld_max_bodies
+
+The hard limit of bodies set at init.
+
+## PhysicsWorld_remaining_capacity
+
+Number of slots available before world.step() is required.
+
+## PhysicsWorld_positions
+
+Raw float64 positions buffer for all bodies (memoryview compatible).
+
+## PhysicsWorld_rotations
+
+Raw float32 quaternion rotations buffer for all bodies (memoryview compatible).
+
+## PhysicsWorld_velocities
+
+Raw float64 linear velocities buffer for all bodies (memoryview compatible).
+
+## PhysicsWorld_angular_velocities
+
+Raw float64 angular velocities buffer for all bodies (memoryview compatible).
+
+## PhysicsWorld_count
+
+Current number of bodies in the simulation.
+
+## PhysicsWorld_time
+
+Total simulation time elapsed (in seconds).
+
+## PhysicsWorld_user_data
+
+Raw uint64 user data buffer for all bodies (memoryview compatible).
+
+## Character_handle
+
+The unique physics handle for this character.
+
+## Vehicle_wheel_count
+
+Number of wheels attached to this vehicle.
 
 ## PhysicsWorld_get_render_state
 
