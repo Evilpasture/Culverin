@@ -1093,83 +1093,138 @@ class TestURDFLoader(CulverinTestCase):
         self.assertEqual(bodies[0]["shape"], SHAPE_BOX)
         self.assertEqual(bodies[1]["shape"], SHAPE_CYLINDER)
 
-class TestDocumentation(CulverinTestCase):
-    """Verifies that the compiled docstrings match the source DOCS.md file."""
+class TestDocumentation(unittest.TestCase):
+    """
+    Validation suite for the Culverin Documentation Engine.
+    Ensures that the C-embedded DOCS.md correctly populates runtime docstrings.
+    """
 
     @classmethod
-    def get_docs_map(cls) -> dict[str, str]:
-        """Parses hierarchical DOCS.md into: { 'ClassName.method_name': 'Text' }"""
-        docs_path = Path(__file__).parent.parent / "docs" / "DOCS.md"
+    def setUpClass(cls):
+        # Path relative to this test file
+        cls.docs_path = Path(__file__).parent.parent / "docs" / "DOCS.md"
         
-        with open(docs_path, "r", encoding="utf-8") as f:
-            content = f.read()
+        if not cls.docs_path.exists():
+            raise FileNotFoundError(f"DOCS.md not found at {cls.docs_path}")
 
-        # 1. Remove HTML comments
+        with open(cls.docs_path, "r", encoding="utf-8") as f:
+            cls.raw_content = f.read()
+
+        cls.expected_map = cls.parse_markdown(cls.raw_content)
+
+    @staticmethod
+    def parse_markdown(content: str) -> dict[str, str]:
+        """
+        Parses DOCS.md into a map: { 'ClassName.member_name': 'Normalized Documentation Text' }
+        """
+        # 1. Clean HTML comments (these are skipped by the C parser)
         content = re.sub(r"<!--.*?-->", "", content, flags=re.DOTALL)
 
-        # 2. Split by Class sections
-        class_sections = re.split(r"^## class ", content, flags=re.MULTILINE)
+        # 2. Extract Class Sections
+        # We split by '## class ' but keep the classes
+        class_splits = re.split(r"^## class ", content, flags=re.MULTILINE)
         
-        docs: dict[str, str] = {}
+        docs_map: dict[str, str] = {}
         
-        for class_section in class_sections[1:]: 
-            if not class_section.strip():
-                continue
-                
-            class_lines = class_section.splitlines()
-            class_name = class_lines[0].strip()
+        for section in class_splits[1:]:
+            lines = section.splitlines()
+            if not lines: continue
             
-            # 3. Split the class section into methods
-            method_sections = re.split(r"^### ", class_section, flags=re.MULTILINE)
+            class_name = lines[0].strip()
             
-            for method_section in method_sections[1:]:
-                if not method_section.strip():
-                    continue
-                    
-                method_lines = method_section.splitlines()
-                # Parse "step(...)" into just "step"
-                method_header = method_lines[0].strip()
-                method_name = method_header.split('(')[0].strip()
+            # 3. Extract Members (Methods or Properties)
+            # Members start with '### '
+            member_splits = re.split(r"^### ", section, flags=re.MULTILINE)
+            
+            for member_block in member_splits[1:]:
+                m_lines = member_block.splitlines()
+                if not m_lines: continue
                 
-                text = '\n'.join(method_lines[1:]).strip()
-                docs[f"{class_name}.{method_name}"] = text
+                # Header parsing: "step(...)" or "positions (property)" -> "step", "positions"
+                header = m_lines[0].strip()
+                member_name = re.split(r'[\(\s]', header)[0].strip()
                 
-        return docs
+                # Content: Join the rest, strip leading/trailing whitespace
+                # This matches the 'allocate_docstring' logic in culverin.c
+                doc_text = "\n".join(m_lines[1:]).strip()
+                
+                docs_map[f"{class_name}.{member_name}"] = doc_text
+                
+        return docs_map
 
-    def test_dynamic_doc_stitching(self):
-        """Automatically verifies every key in DOCS.md against the module methods."""
-        expected_docs = self.get_docs_map()
-        
-        for key, expected_text in expected_docs.items():
-            # key looks like 'PhysicsWorld_step'
-            class_name, method_name = key.split(".", 1)
-            
-            # Access the class and method dynamically
-            cls = getattr(culverin, class_name)
-            method = getattr(cls, method_name)
-            
-            # Assert doc exists
-            self.assertIsNotNone(method.__doc__, f"Docstring for {key} is missing")
-            
-            # Verify the content
-            # We strip() to ignore minor whitespace differences in line endings.
-            self.assertIn(
-                expected_text.splitlines()[0].strip(),
-                method.__doc__.strip(),
-                f"Docstring for {key} does not match DOCS.md"
-            )
+    def normalize(self, text: str) -> str:
+        """Standardizes docstrings for comparison by removing carriage returns and extra padding."""
+        if not text: return ""
+        # Remove \r, strip whitespace from every line, and trim the block
+        return "\n".join(line.strip() for line in text.splitlines() if line.strip()).strip()
 
-    def test_class_docstring(self):
-        """Verifies the module-level documentation."""
+    def test_metadata_consistency(self):
+        """Verify version and module-level docs which are handled separately in culverin_exec."""
         import culverin._culverin_c as core
         self.assertEqual(core.__doc__, "Culverin Physics Engine Core")
+        self.assertTrue(hasattr(culverin, "__version__"))
+        self.assertNotEqual(culverin.__version__, "0.0.0-unknown")
 
-    def test_property_docstrings(self):
-        """Verifies hardcoded docstrings on GetSet descriptors."""
-        doc_pending = culverin.PhysicsWorld.is_step_pending.__doc__
-        self.assertIsNotNone(doc_pending)
-        assert doc_pending is not None
-        self.assertIn("blocked", doc_pending)
+    def test_comprehensive_stitching(self):
+        """
+        Iterates through every entry in DOCS.md and verifies its presence 
+        and accuracy in the live Culverin objects.
+        """
+        failed_keys: list[object] = []
+
+        for key, expected_body in self.expected_map.items():
+            class_name, member_name = key.split(".")
+            
+            try:
+                # 1. Resolve Class
+                cls = getattr(culverin, class_name)
+                
+                # 2. Resolve Member (Method or Property)
+                # Some properties are defined via PyGetSetDef, others as methods
+                member = getattr(cls, member_name)
+                
+                # 3. Extract Docstring
+                actual_doc = member.__doc__
+                
+                self.assertIsNotNone(
+                    actual_doc, 
+                    f"STITCHING FAILURE: {key} exists in DOCS.md but has no runtime __doc__"
+                )
+
+                # 4. Content Match
+                norm_expected = self.normalize(expected_body)
+                norm_actual = self.normalize(actual_doc)
+
+                # We use 'assertIn' because the C-parser might include the header params 
+                # depending on how you've handled the pointer arithmetic. 
+                # But since you've used a clean skip-to-newline, we check the body.
+                self.assertIn(
+                    norm_expected[:50], # Check first 50 chars for high-confidence match
+                    norm_actual,
+                    f"CONTENT MISMATCH: {key} docstring body doesn't match DOCS.md"
+                )
+
+            except AttributeError:
+                failed_keys.append(key)
+
+        self.assertEqual(
+            failed_keys, [], 
+            f"API GAP: These members are documented in DOCS.md but missing from code: {failed_keys}"
+        )
+
+    def test_property_specifics(self):
+        """Targeted check for high-performance properties (memoryviews)."""
+        props = ['positions', 'rotations', 'velocities', 'user_data']
+        for p in props:
+            doc = getattr(culverin.PhysicsWorld, p).__doc__
+            self.assertIsNotNone(doc)
+            self.assertIn("memoryview", doc.lower())
+
+    def test_character_controller_docs(self):
+        """Ensure the Character class (created via world) correctly carries docs."""
+        self.assertIsNotNone(culverin.Character.move.__doc__)
+        assert culverin.Character.move.__doc__ is not None
+        self.assertIn("Sweep and Slide", culverin.Character.move.__doc__)
 
 
 if __name__ == "__main__":
