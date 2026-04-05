@@ -84,6 +84,17 @@ EVENT_REMOVED = 2
 
 
 class Engine:
+    """
+    Defines the physical properties of a simulated internal combustion engine.
+    Used to configure the power delivery for vehicles.
+
+    Attributes:
+        max_torque (float): Peak torque output in Newton-meters (Nm).
+        max_rpm (float): The engine's "redline" or maximum rotational speed.
+        min_rpm (float): The "idle" speed; the engine cannot stall below this.
+        inertia (float): Rotational mass of the engine. Higher values cause
+            the RPM to climb and fall more slowly.
+    """
     max_torque: float
     max_rpm: float
     min_rpm: float
@@ -103,6 +114,18 @@ class Engine:
 
 
 class Transmission:
+    """
+    Base configuration for vehicle gearboxes. 
+    Defines mechanical advantage and clutch properties.
+
+    Attributes:
+        clutch_strength (float): Maximum torque the clutch can transmit before 
+            slipping. Higher values provide snappier shifts.
+        differential_ratio (float): The final drive ratio (e.g., 3.42). Multiplies 
+            torque sent to the wheels.
+        ratios (list[float]): Stack of forward gear ratios.
+        reverse_ratios (list[float]): Stack of reverse gear ratios.
+    """
     clutch_strength: float
     differential_ratio: float
     ratios: list[float]
@@ -119,6 +142,17 @@ class Transmission:
 
 
 class Automatic(Transmission):
+    """
+    An automated gearbox configuration. 
+    Automatically handles gear transitions based on engine RPM.
+
+    Attributes:
+        shift_up_rpm (float): The RPM threshold at which the transmission 
+            upshifts to the next gear.
+        shift_down_rpm (float): The RPM threshold at which the transmission 
+            downshifts to a lower gear.
+        mode (int): Internal identifier for Automatic mode (0).
+    """
     mode: int
     shift_up_rpm: float
     shift_down_rpm: float
@@ -138,6 +172,13 @@ class Automatic(Transmission):
 
 
 class Manual(Transmission):
+    """
+    A manual gearbox configuration. 
+    Shifts are controlled either by user input or high-level logic scripts.
+
+    Attributes:
+        mode (int): Internal identifier for Manual mode (1).
+    """
     mode: int
 
     def __init__(
@@ -218,6 +259,7 @@ def validate_constraint(
     | tuple[tuple[float, float, float], tuple[float, float, float], float]
     | None
 ):
+    """Constraint validation for constraint creation."""
 
     # 1. Handle Validation
     if not isinstance(body1, int) or not isinstance(body2, int):
@@ -290,6 +332,7 @@ def validate_constraint(
 
 
 def validate_settings(s: dict[str, Any] | None) -> tuple[float, float, float, float, int, int]:
+    """Settings validation for physics world."""
     settings = s or {}
 
     # Cast the result of .get() specifically to the type _validate_vec3 expects
@@ -315,6 +358,7 @@ def validate_body_params(
 ) -> tuple[
     tuple[float, float, float], tuple[float, float, float, float], tuple[float, float, float, float]
 ]:
+    """Body parameter validation function. Validates the body parameters."""
     p = _validate_vec3(cast(tuple[float, float, float], pos), "pos")
     r = _validate_quat(cast(tuple[float, float, float, float], rot), "rot")
     s = [0.0, 0.0, 0.0, 0.0]
@@ -340,6 +384,7 @@ def validate_body_params(
 def bake_scene(
     bodies: list[dict[str, Any]] | tuple[dict[str, Any], ...],
 ) -> tuple[int, bytes, bytes, bytes, bytes, bytes, bytes]:
+    """Send pure bytes to C, or Python."""
     if not bodies:
         return 0, b"", b"", b"", b"", b"", b""
 
@@ -386,6 +431,7 @@ TrigFunc = Callable[[float], float]
 
 
 def _assemble_euler_to_quat() -> types.FunctionType:
+    """This is overengineering."""
     import dis
     import sys
 
@@ -623,6 +669,7 @@ def _parse_vec(text: str) -> tuple[float, float, float]:
 
 
 def parse_urdf(path: str) -> list[dict[str, Any]]:
+    """Simple URDF parser that works, probably."""
     import xml.etree.ElementTree as ET
 
     tree = ET.parse(path)
