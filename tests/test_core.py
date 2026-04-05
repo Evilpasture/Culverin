@@ -10,6 +10,7 @@ import numpy as np
 
 import culverin
 from culverin import TrackConfig, WheelConfig
+import re
 from pathlib import Path
 
 class CulverinTestCase(unittest.TestCase):
@@ -24,7 +25,11 @@ class CulverinTestCase(unittest.TestCase):
 
     def get_vel(self, handle: int):
         return self.world.get_velocity(handle)
-
+    
+class TestPrintVersion(CulverinTestCase):
+    def test_print_version(self):
+        self.assertHasAttr(culverin, "__version__", "Check version...")
+        print(f"Version: {culverin.__version__}")
 
 class TestCoreMechanics(CulverinTestCase):
     def test_activation_and_gravity(self):
@@ -949,7 +954,7 @@ except ImportError:
 HAS_INTERPRETERS = has_interpreters
 
 
-class TestSubinterpreterIsolation(unittest.TestCase):
+class TestSubinterpreterIsolation(CulverinTestCase):
     @unittest.skipUnless(
         HAS_INTERPRETERS, "Subinterpreters module not available in this Python version"
     )
@@ -1003,7 +1008,7 @@ class TestSubinterpreterIsolation(unittest.TestCase):
         for t in threads:
             t.join()
 
-class TestURDFLoader(unittest.TestCase):
+class TestURDFLoader(CulverinTestCase):
     def test_urdf_parsing_and_initialization(self):
         import os
         # 1. Define the path to your sample
@@ -1076,52 +1081,56 @@ class TestURDFLoader(unittest.TestCase):
         self.assertEqual(bodies[0]["shape"], SHAPE_BOX)
         self.assertEqual(bodies[1]["shape"], SHAPE_CYLINDER)
 
-class TestDocumentation(unittest.TestCase):
-    """Verifies that the compiled docstrings match the source docs.txt file."""
+class TestDocumentation(CulverinTestCase):
+    """Verifies that the compiled docstrings match the source DOCS.md file."""
 
     @classmethod
     def get_docs_map(cls) -> dict[str, str]:
-        """Parses DOCS.md into a dictionary: { 'ClassName_MethodName': 'The text content' }"""
+        """Parses hierarchical DOCS.md into: { 'ClassName.method_name': 'Text' }"""
         docs_path = Path(__file__).parent.parent / "docs" / "DOCS.md"
         
         with open(docs_path, "r", encoding="utf-8") as f:
             content = f.read()
 
-        # Split by markdown headers (## ClassName_method_name)
-        lines = content.split('\n')
+        # 1. Remove HTML comments
+        content = re.sub(r"<!--.*?-->", "", content, flags=re.DOTALL)
+
+        # 2. Split by Class sections
+        class_sections = re.split(r"^## class ", content, flags=re.MULTILINE)
         
         docs: dict[str, str] = {}
-        current_key = None
-        current_content: list[str] = []
         
-        for line in lines:
-            # Check if this is a markdown header
-            if line.startswith("## "):
-                # Save the previous entry if it exists
-                if current_key is not None and current_content:
-                    docs[current_key] = '\n'.join(current_content).strip()
+        for class_section in class_sections[1:]: 
+            if not class_section.strip():
+                continue
                 
-                # Extract the key from the header (e.g., "## PhysicsWorld_step" -> "PhysicsWorld_step")
-                current_key = line[3:].strip()
-                current_content = []
-            elif current_key is not None:
-                # Accumulate content lines, skipping empty lines at the start
-                if line.strip() or current_content:  # Skip leading empty lines
-                    current_content.append(line)
-        
-        # Save the last entry
-        if current_key is not None and current_content:
-            docs[current_key] = '\n'.join(current_content).strip()
-        
+            class_lines = class_section.splitlines()
+            class_name = class_lines[0].strip()
+            
+            # 3. Split the class section into methods
+            method_sections = re.split(r"^### ", class_section, flags=re.MULTILINE)
+            
+            for method_section in method_sections[1:]:
+                if not method_section.strip():
+                    continue
+                    
+                method_lines = method_section.splitlines()
+                # Parse "step(...)" into just "step"
+                method_header = method_lines[0].strip()
+                method_name = method_header.split('(')[0].strip()
+                
+                text = '\n'.join(method_lines[1:]).strip()
+                docs[f"{class_name}.{method_name}"] = text
+                
         return docs
 
     def test_dynamic_doc_stitching(self):
-        """Automatically verifies every key in docs.txt against the module methods."""
+        """Automatically verifies every key in DOCS.md against the module methods."""
         expected_docs = self.get_docs_map()
         
         for key, expected_text in expected_docs.items():
             # key looks like 'PhysicsWorld_step'
-            class_name, method_name = key.split("_", 1)
+            class_name, method_name = key.split(".", 1)
             
             # Access the class and method dynamically
             cls = getattr(culverin, class_name)
@@ -1130,10 +1139,10 @@ class TestDocumentation(unittest.TestCase):
             # Assert doc exists
             self.assertIsNotNone(method.__doc__, f"Docstring for {key} is missing")
             
-            # Use 'in' to check for the presence of the doc string.
+            # Verify the content
             # We strip() to ignore minor whitespace differences in line endings.
             self.assertIn(
-                expected_text.splitlines()[0].strip(), # Check at least the first line
+                expected_text.splitlines()[0].strip(),
                 method.__doc__.strip(),
                 f"Docstring for {key} does not match DOCS.md"
             )

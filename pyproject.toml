@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "culverin"
-version = "0.4.0"
+version = "0.5.0"
 description = "High-performance Jolt Physics bindings for Python featuring Shadow Buffers and Free-Threading support."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -34,7 +34,7 @@ dependencies = []
 
 [project.urls]
 Homepage = "https://github.com/Evilpasture/culverin"
-Documentation = "https://github.com/Evilpasture/culverin/tree/master/docs"
+Documentation = "https://evilpasture.github.io/Culverin/"
 Repository = "https://github.com/Evilpasture/culverin.git"
 "Bug Tracker" = "https://github.com/Evilpasture/culverin/issues"
 
@@ -103,5 +103,4 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-# Ensure your core C-extension 'culverin' is treated as first-party
 known-first-party = ["culverin"]

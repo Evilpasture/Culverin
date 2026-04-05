@@ -20,6 +20,7 @@
 #include "culverin_vehicle.h"
 #include "joltc.h"
 #include <stdatomic.h>
+#include <string.h>
 
 // ============================================================================
 // Semantic Constants - Magic Number Replacements
@@ -1241,7 +1242,7 @@ size_fail:
     PyErr_SetString(PyExc_ValueError, "Snapshot buffer truncated or stride mismatch");
     return nullptr;
 }
-
+[[gnu::flatten]]
 PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *const *args,
                                             size_t nargsf, PyObject *kwnames) {
     CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
@@ -4179,137 +4180,118 @@ PyCFunction_DeclareMethod PhysicsWorld_benchmark_build(CULV_MAYBE_UNUSED PyObjec
 // --- The Documentation System ---
 
 #ifndef CULVERIN_DOCS_PATH
-#    define CULVERIN_DOCS_PATH "docs/DOCS.md"
+#    define CULVERIN_DOCS_PATH "../../docs/DOCS.md"
 #endif
 
-// Embed the markdown documentation. Note: Not 'const' because we will tokenize it.
-static char ALL_DOCS[] = {
+static const char ALL_DOCS[] = {
 // NOLINTNEXTLINE(readability-magic-numbers)
 #embed CULVERIN_DOCS_PATH suffix(, 0)
 };
 
-static_assert(_Generic((ALL_DOCS), char *: true, default: false));
-
 // Global flag to ensure we only stitch once (important for subinterpreters)
 static atomic_bool docs_stitched = false;
 
-static void stitch_docs(PyMethodDef *methods, const char *prefix) {
-    if (methods == nullptr) {
-        return;
+static const char *COMMENT_MARKER = "<!--";
+
+static char *allocate_docstring(const char *start, size_t length) {
+    char *doc = (char *)PyMem_RawMalloc(length + 1);
+    if (doc == nullptr) {
+        return nullptr;
+    }
+    memcpy(doc, start, length);
+    doc[length] = '\0';
+    return doc;
+}
+
+// Master Docstring Extractor (Handles Nested ## class -> ### method)
+static char *extract_docstring(const char *class_name, const char *method_name) {
+    char class_key[128];
+    snprintf(class_key, sizeof(class_key), "## class %s", class_name);
+
+    // 1. Find the Class boundary
+    char *class_start = strstr(ALL_DOCS, class_key);
+    if (!class_start) {
+        return nullptr;
+    }
+    
+    // The scope of this class ends when the next class begins
+    char *class_end = strstr(class_start + 1, "## class ");
+
+    // 2. Find the Method boundary within this class
+    char method_key[128];
+    snprintf(method_key, sizeof(method_key), "### %s", method_name);
+
+    char *method_start = strstr(class_start, method_key);
+    
+    // Ensure we found it AND it belongs to THIS class AND isn't a substring (like finding "step_up" for "step")
+    while (method_start && (class_end == nullptr || method_start < class_end)) {
+        char c = *(method_start + strlen(method_key));
+        // We allow '(', '\r', '\n', ' ', or '\0' after the method name
+        if (c == '(' || c == '\r' || c == '\n' || c == ' ' || c == '\0') {
+            break; // Valid match
+        }
+        method_start = strstr(method_start + 1, method_key); // Keep searching
     }
 
+    if (!method_start || (class_end != nullptr && method_start >= class_end)) {
+        return nullptr;
+    }
+
+    // 3. Move past the "### method(...)\n" header
+    char *doc_start = method_start;
+    while (*doc_start != '\0' && *doc_start != '\n' && *doc_start != '\r') doc_start++;
+    while (*doc_start == '\n' || *doc_start == '\r') doc_start++;
+
+    // 4. Skip HTML Comments if present
+    if (strncmp(doc_start, COMMENT_MARKER, 4) == 0) {
+        char *comment_end = strstr(doc_start, "-->");
+        if (comment_end) {
+            doc_start = comment_end + 3; // Skip "-->"
+            while (*doc_start == '\n' || *doc_start == '\r' || *doc_start == ' ') doc_start++;
+        }
+    }
+
+    // 5. Find the end of this method's docs (next ### or ##)
+    char *doc_end = doc_start;
+    while (*doc_end != '\0') {
+        if (strncmp(doc_end, "### ", 4) == 0 || strncmp(doc_end, "## ", 3) == 0) {
+            break;
+        }
+        doc_end++;
+    }
+
+    // 6. Trim trailing whitespace
+    if (doc_end > doc_start) {
+        doc_end--;
+        while (doc_end > doc_start && (*doc_end == '\n' || *doc_end == '\r' || *doc_end == ' ' || *doc_end == '\t')) {
+            doc_end--;
+        }
+    }
+
+    if (doc_end >= doc_start) {
+        return allocate_docstring(doc_start, (size_t)(doc_end - doc_start + 1));
+    }
+    
+    return nullptr;
+}
+
+// Pass 1: Stitch docstrings to PyMethodDefs
+static void stitch_docs(PyMethodDef *methods, const char *class_name) {
+    if (methods == nullptr) return;
     for (PyMethodDef *m = methods; m->ml_name != nullptr; m++) {
-        // Skip if it already has a docstring (like internal benchmarks)
-        if (m->ml_doc != nullptr) {
-            continue;
-        }
-
-        // Search for markdown header: "## Prefix_method_name"
-        static constexpr size_t KEY_BUFFER_SIZE = 128;
-        char key[KEY_BUFFER_SIZE];
-        snprintf(key, sizeof(key), "## %s_%s", prefix, m->ml_name);
-
-        // Search for a complete match, skipping any substring matches
-        auto search_start = ALL_DOCS;
-        char *found       = nullptr;
-        while ((found = strstr(search_start, key)) != nullptr) {
-            // Verify we have a complete match (not substring of longer name)
-            // The character after the key should be whitespace or newline, not alphanumeric or
-            // underscore
-            char *after_key = found + strlen(key);
-            if (*after_key == '\0' || *after_key == '\r' || *after_key == '\n' ||
-                *after_key == ' ' || *after_key == '\t') {
-                // Complete match found!
-                // Move past the header and any newlines
-                char *doc_start = after_key;
-
-                // Skip the newline(s) after the header
-                while (*doc_start == '\r' || *doc_start == '\n') {
-                    doc_start++;
-                }
-
-                m->ml_doc = doc_start;
-                break; // Found the docstring for this method, move to next method
-            }
-
-            // This is a substring match, keep searching
-            search_start = found + 1;
+        if (m->ml_doc == nullptr) {
+            m->ml_doc = extract_docstring(class_name, m->ml_name);
         }
     }
 }
 
-// Pass 1b: Stitch docstrings into PyGetSetDef getters
-static void stitch_docs_getset(PyGetSetDef *getset, const char *prefix) {
-    if (getset == nullptr) {
-        return;
-    }
-
+// Pass 2: Stitch docstrings into PyGetSetDef getters
+static void stitch_docs_getset(PyGetSetDef *getset, const char *class_name) {
+    if (getset == nullptr) return;
     for (PyGetSetDef *g = getset; g->name != nullptr; g++) {
-        // Skip if it already has a docstring
-        if (g->doc != nullptr) {
-            continue;
+        if (g->doc == nullptr) {
+            g->doc = extract_docstring(class_name, g->name);
         }
-
-        // Search for markdown header: "## Prefix_name"
-        static constexpr size_t KEY_BUFFER_SIZE = 128;
-        char key[KEY_BUFFER_SIZE];
-        snprintf(key, sizeof(key), "## %s_%s", prefix, g->name);
-
-        // Search for a complete match, skipping any substring matches
-        auto search_start = ALL_DOCS;
-        char *found       = nullptr;
-        while ((found = strstr(search_start, key)) != nullptr) {
-            // Verify we have a complete match (not substring of longer name)
-            char *after_key = found + strlen(key);
-            if (*after_key == '\0' || *after_key == '\r' || *after_key == '\n' ||
-                *after_key == ' ' || *after_key == '\t') {
-                // Complete match found!
-                // Move past the header and any newlines
-                char *doc_start = after_key;
-
-                // Skip the newline(s) after the header
-                while (*doc_start == '\r' || *doc_start == '\n') {
-                    doc_start++;
-                }
-
-                g->doc = doc_start;
-                break; // Found the docstring for this getter, move to next
-            }
-
-            // This is a substring match, keep searching
-            search_start = found + 1;
-        }
-    }
-}
-
-// Pass 2: Null-terminate docstrings at markdown headers (## )
-static void finalize_docs() {
-    if (ALL_DOCS[0] == '\0') {
-        return; // Empty docs, nothing to do
-    }
-
-    auto p = ALL_DOCS;
-    while ((p = strstr(p, "## ")) != nullptr) {
-        // Back up to find the newline before this header
-        if (p > ALL_DOCS) {
-            auto term_point = p - 1;
-
-            // Skip back over spaces but stop at the first newline
-            while (term_point > ALL_DOCS && *term_point != '\n' && *term_point != '\0') {
-                if (*term_point != ' ' && *term_point != '\r') {
-                    break;
-                }
-                term_point--;
-            }
-
-            // If we found a newline, null-terminate right after it
-            if (term_point > ALL_DOCS && *term_point == '\n') {
-                *term_point = '\0';
-            }
-        }
-
-        // Move forward to next header search
-        p += 3; // Skip "## "
     }
 }
 
@@ -4501,42 +4483,42 @@ static const PyMemberDef PhysicsWorld_members[] = {
     {.name = nullptr, .type = 0, .offset = 0, .flags = 0, .doc = nullptr}};
 
 static const PyType_Slot PhysicsWorld_slots[] = {
-    {Py_tp_new, PyType_GenericNew},
-    {Py_tp_init, PhysicsWorld_init},
-    {Py_tp_dealloc, PhysicsWorld_dealloc},
-    {Py_tp_methods, (PyMethodDef *)PhysicsWorld_methods},
-    {Py_tp_members, (PyMemberDef *)PhysicsWorld_members},
-    {Py_tp_getset, (PyGetSetDef *)PhysicsWorld_getset},
-    {Py_bf_getbuffer, PhysicsWorld_getbuffer},
-    {Py_bf_releasebuffer, PhysicsWorld_releasebuffer},
-    {Py_tp_traverse, PhysicsWorld_traverse},
-    {Py_tp_clear, PhysicsWorld_clear},
-    {0, nullptr},
+    {.slot = Py_tp_new, .pfunc = PyType_GenericNew},
+    {.slot = Py_tp_init, .pfunc = PhysicsWorld_init},
+    {.slot = Py_tp_dealloc, .pfunc = PhysicsWorld_dealloc},
+    {.slot = Py_tp_methods, .pfunc = (PyMethodDef *)PhysicsWorld_methods},
+    {.slot = Py_tp_members, .pfunc = (PyMemberDef *)PhysicsWorld_members},
+    {.slot = Py_tp_getset, .pfunc = (PyGetSetDef *)PhysicsWorld_getset},
+    {.slot = Py_bf_getbuffer, .pfunc = PhysicsWorld_getbuffer},
+    {.slot = Py_bf_releasebuffer, .pfunc = PhysicsWorld_releasebuffer},
+    {.slot = Py_tp_traverse, .pfunc = PhysicsWorld_traverse},
+    {.slot = Py_tp_clear, .pfunc = PhysicsWorld_clear},
+    {.slot = 0, .pfunc = nullptr},
 };
 
 static const PyType_Slot Character_slots[] = {
-    {Py_tp_dealloc, Character_dealloc},
-    {Py_tp_traverse, Character_traverse},
-    {Py_tp_clear, Character_clear},
-    {Py_tp_methods, (PyMethodDef *)Character_methods},
-    {Py_tp_getset, (PyGetSetDef *)Character_getset},
-    {0, nullptr},
+    {.slot = Py_tp_dealloc, .pfunc = Character_dealloc},
+    {.slot = Py_tp_traverse, .pfunc = Character_traverse},
+    {.slot = Py_tp_clear, .pfunc = Character_clear},
+    {.slot = Py_tp_methods, .pfunc = (PyMethodDef *)Character_methods},
+    {.slot = Py_tp_getset, .pfunc = (PyGetSetDef *)Character_getset},
+    {.slot = 0, .pfunc = nullptr},
 };
 
 static const PyType_Slot Vehicle_slots[] = {
-    {Py_tp_dealloc, Vehicle_dealloc},
-    {Py_tp_traverse, Vehicle_traverse},
-    {Py_tp_clear, Vehicle_clear},
-    {Py_tp_methods, (PyMethodDef *)Vehicle_methods},
-    {Py_tp_getset, (PyGetSetDef *)Vehicle_getset},
-    {0, nullptr},
+    {.slot = Py_tp_dealloc, .pfunc = Vehicle_dealloc},
+    {.slot = Py_tp_traverse, .pfunc = Vehicle_traverse},
+    {.slot = Py_tp_clear, .pfunc = Vehicle_clear},
+    {.slot = Py_tp_methods, .pfunc = (PyMethodDef *)Vehicle_methods},
+    {.slot = Py_tp_getset, .pfunc = (PyGetSetDef *)Vehicle_getset},
+    {.slot = 0, .pfunc = nullptr},
 };
 
 static const PyType_Slot Skeleton_slots[] = {
-    {Py_tp_new, Skeleton_new},
-    {Py_tp_dealloc, Skeleton_dealloc},
-    {Py_tp_methods, (PyMethodDef *)Skeleton_methods},
-    {0, nullptr},
+    {.slot = Py_tp_new, .pfunc = Skeleton_new},
+    {.slot = Py_tp_dealloc, .pfunc = Skeleton_dealloc},
+    {.slot = Py_tp_methods, .pfunc = (PyMethodDef *)Skeleton_methods},
+    {.slot = 0, .pfunc = nullptr},
 };
 
 static const PyType_Spec Skeleton_spec = {
@@ -4547,9 +4529,9 @@ static const PyType_Spec Skeleton_spec = {
 };
 
 static const PyType_Slot RagdollSettings_slots[] = {
-    {Py_tp_dealloc, RagdollSettings_dealloc},
-    {Py_tp_methods, (PyMethodDef *)RagdollSettings_methods},
-    {0, nullptr},
+    {.slot = Py_tp_dealloc, .pfunc = RagdollSettings_dealloc},
+    {.slot = Py_tp_methods, .pfunc = (PyMethodDef *)RagdollSettings_methods},
+    {.slot = 0, nullptr},
 };
 
 static const PyType_Spec PhysicsWorld_spec = {
@@ -4582,9 +4564,9 @@ static const PyType_Spec RagdollSettings_spec = {
 };
 
 static const PyType_Slot Ragdoll_slots[] = {
-    {Py_tp_dealloc, Ragdoll_dealloc},
-    {Py_tp_methods, (PyMethodDef *)Ragdoll_methods},
-    {0, nullptr},
+    {.slot = Py_tp_dealloc, .pfunc = Ragdoll_dealloc},
+    {.slot = Py_tp_methods, .pfunc = (PyMethodDef *)Ragdoll_methods},
+    {.slot = 0, .pfunc = nullptr},
 };
 
 static const PyType_Spec Ragdoll_spec = {
@@ -4595,6 +4577,43 @@ static const PyType_Spec Ragdoll_spec = {
 };
 
 // --- Module Initialization ---
+
+// Embed the entire TOML file as a static string
+static const char PYPROJECT_TOML[] = {
+#embed "../../pyproject.toml" suffix(, 0)
+};
+
+// Helper function to extract the version string at runtime
+static const char *extract_version_from_toml(void) {
+    // Look for the specific pattern 'version = "'
+    const char *key   = "version = \"";
+    const char *start = strstr(PYPROJECT_TOML, key);
+
+    if (!start) {
+        return "0.0.0-unknown";
+    }
+
+    start += strlen(key); // Move pointer to the start of the actual version number
+
+    // Find the closing quote
+    const char *end = strchr(start, '\"');
+    if (!end) {
+        return "0.0.0-malformed";
+    }
+
+    // Create a static buffer to hold the version (e.g., "0.4.0")
+    static constexpr size_t VERSION_BUFFER = 32;
+    static char version_buffer[VERSION_BUFFER];
+    size_t len = end - start;
+    if (len >= sizeof(version_buffer)) {
+        len = sizeof(version_buffer) - 1;
+    }
+
+    strncpy(version_buffer, start, len);
+    version_buffer[len] = '\0';
+
+    return version_buffer;
+}
 
 static int init_types(PyObject *m, CulverinState *st) {
     struct {
@@ -4628,26 +4647,26 @@ static int init_constants(PyObject *m) {
     static const struct {
         const char *name;
         int value;
-    } consts[] = {{"SHAPE_BOX", CULV_SHAPE_BOX},
-                  {"SHAPE_SPHERE", CULV_SHAPE_SPHERE},
-                  {"SHAPE_CAPSULE", CULV_SHAPE_CAPSULE},
-                  {"SHAPE_CYLINDER", CULV_SHAPE_CYLINDER},
-                  {"SHAPE_PLANE", CULV_SHAPE_PLANE},
-                  {"SHAPE_MESH", CULV_SHAPE_MESH},
-                  {"SHAPE_HEIGHTFIELD", CULV_SHAPE_HEIGHTFIELD},
-                  {"SHAPE_CONVEX_HULL", CULV_SHAPE_CONVEX_HULL},
-                  {"MOTION_STATIC", 0},
-                  {"MOTION_KINEMATIC", 1},
-                  {"MOTION_DYNAMIC", 2},
-                  {"CONSTRAINT_FIXED", 0},
-                  {"CONSTRAINT_POINT", 1},
-                  {"CONSTRAINT_HINGE", 2},
-                  {"CONSTRAINT_SLIDER", 3},
-                  {"CONSTRAINT_DISTANCE", 4},
-                  {"CONSTRAINT_CONE", 5},
-                  {"EVENT_ADDED", 0},
-                  {"EVENT_PERSISTED", 1},
-                  {"EVENT_REMOVED", 2}};
+    } consts[] = {{.name = "SHAPE_BOX", .value = CULV_SHAPE_BOX},
+                  {.name = "SHAPE_SPHERE", .value = CULV_SHAPE_SPHERE},
+                  {.name = "SHAPE_CAPSULE", .value = CULV_SHAPE_CAPSULE},
+                  {.name = "SHAPE_CYLINDER", .value = CULV_SHAPE_CYLINDER},
+                  {.name = "SHAPE_PLANE", .value = CULV_SHAPE_PLANE},
+                  {.name = "SHAPE_MESH", .value = CULV_SHAPE_MESH},
+                  {.name = "SHAPE_HEIGHTFIELD", .value = CULV_SHAPE_HEIGHTFIELD},
+                  {.name = "SHAPE_CONVEX_HULL", .value = CULV_SHAPE_CONVEX_HULL},
+                  {.name = "MOTION_STATIC", .value = 0},
+                  {.name = "MOTION_KINEMATIC", .value = 1},
+                  {.name = "MOTION_DYNAMIC", .value = 2},
+                  {.name = "CONSTRAINT_FIXED", .value = 0},
+                  {.name = "CONSTRAINT_POINT", .value = 1},
+                  {.name = "CONSTRAINT_HINGE", .value = 2},
+                  {.name = "CONSTRAINT_SLIDER", .value = 3},
+                  {.name = "CONSTRAINT_DISTANCE", .value = 4},
+                  {.name = "CONSTRAINT_CONE", .value = 5},
+                  {.name = "EVENT_ADDED", .value = 0},
+                  {.name = "EVENT_PERSISTED", .value = 1},
+                  {.name = "EVENT_REMOVED", .value = 2}};
 
     for (size_t i = 0; i < sizeof(consts) / sizeof(consts[0]); i++) {
         if (PyModule_AddIntConstant(m, consts[i].name, consts[i].value) < 0) {
@@ -4659,6 +4678,11 @@ static int init_constants(PyObject *m) {
 
 PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
     CulverinState *st = get_culverin_state(m);
+
+    auto ver = extract_version_from_toml();
+    if (PyModule_AddStringConstant(m, "__version__", ver) < 0) {
+        return -1;
+    }
 
     // Atomic "test and set" to ensure only one thread ever runs the stitcher
     bool expected = false;
@@ -4675,7 +4699,7 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
         stitch_docs_getset(Character_getset, "Character");
         stitch_docs_getset(Vehicle_getset, "Vehicle");
 
-        finalize_docs(); // Now safe to terminate strings
+        // finalize_docs(); // No longer needed - termination happens during stitching
     }
 
     if (!JPH_Init()) {
@@ -4740,27 +4764,28 @@ PyType_DeclareSlot_Status culverin_clear(PyObject *m) {
     return 0;
 }
 
-static const PyModuleDef_Slot culverin_slots[] = {{Py_mod_exec, culverin_exec},
+static const PyModuleDef_Slot culverin_slots[] = {
+    {.slot = Py_mod_exec, .value = culverin_exec},
 
 // 1. Handle the Free-threaded (No GIL) declaration (3.13+)
 #if defined(Py_MOD_GIL_NOT_USED)
-                                                  {Py_mod_gil, Py_MOD_GIL_NOT_USED},
+    {.slot = Py_mod_gil, .value = Py_MOD_GIL_NOT_USED},
 #endif
 
-                                                  // 2. Handle Subinterpreter support
-                                                  {Py_mod_multiple_interpreters,
+    // 2. Handle Subinterpreter support
+    {.slot = Py_mod_multiple_interpreters,
 #if PY_VERSION_HEX >= 0x030D0000
-                                                   Py_MOD_MULTIPLE_INTERPRETERS_SUPPORTED
+     .value = Py_MOD_MULTIPLE_INTERPRETERS_SUPPORTED
 #else
-                                                   Py_MOD_PER_INTERPRETER_GIL_SUPPORTED
+     .value = Py_MOD_PER_INTERPRETER_GIL_SUPPORTED
 #endif
-                                                  },
+    },
 
-                                                  {0, nullptr}};
+    {.slot = 0, .value = nullptr}};
 
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 static PyModuleDef culverin_module = {
-    PyModuleDef_HEAD_INIT,
+    .m_base     = PyModuleDef_HEAD_INIT,
     .m_name     = "_culverin_c",
     .m_doc      = "Culverin Physics Engine Core",
     .m_size     = sizeof(CulverinState),

@@ -2,29 +2,38 @@
 #include "culverin_compiler_specifics.h"
 #include "joltc.h"
 #include <math.h>
-#include <string.h>
 
-// Strict-aliasing safe Fast Inverse Square Root (approximate 1.0 / sqrt(x))
-// Extremely fast: bypasses hardware division and IEEE-754 sqrt overhead.
-static inline float culverin_fast_rsqrt(float number) {
-    constexpr float threehalfs = 1.5f;
-    float x2                   = number * 0.5f;
-    float y                    = number;
-
-    uint32_t i;
-    // memcpy is optimized away by modern compilers into a single register move
-    memcpy(&i, &y, sizeof(float));
-    i = 0x5f3759df - (i >> 1);
-    memcpy(&y, &i, sizeof(float));
-
-    // Iteration 1: Takes error from ~3.4% to ~0.17%
-    y = y * (threehalfs - (x2 * y * y));
-
-    // Iteration 2: Takes error from ~0.17% to ~0.00001% (basically float-perfect)
-    y = y * (threehalfs - (x2 * y * y));
-
-    return y;
+// --- Double Precision Refinement ---
+CULV_MAYBE_UNUSED
+static inline double newton_raphson_iterate_d(double number) {
+    constexpr double threehalfs = 1.5;
+    const double half_number = number * 0.5;
+    return number * (threehalfs - (half_number * number * number));
 }
+
+static inline double culverin_fast_rsqrt_d(double number) {
+    // Clang will likely emit RSQRTD (if available) or SQRTD + DIVD
+    return 1.0 / sqrt(number);
+}
+
+// --- Float Precision Refinement ---
+CULV_MAYBE_UNUSED
+static inline float newton_raphson_iterate_f(float number) {
+    constexpr float threehalfs = 1.5f;
+    const float half_number = number * 0.5f;
+    return number * (threehalfs - (half_number * number * number));
+}
+
+static inline float culverin_fast_rsqrt_f(float number) {
+    return 1.0f / sqrtf(number);
+}
+
+// --- The Type-Generic Interface ---
+// NOLINTNEXTLINE(readability-identifier-naming)
+#define culverin_fast_rsqrt(x) _Generic((x), \
+    float:  culverin_fast_rsqrt_f,            \
+    double: culverin_fast_rsqrt_d             \
+)(x)
 
 // Helper to find an arbitrary vector perpendicular to 'in'
 static inline void vec3_get_perpendicular(const JPH_Vec3 *CULV_RESTRICT in,

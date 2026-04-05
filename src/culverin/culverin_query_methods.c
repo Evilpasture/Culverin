@@ -6,9 +6,9 @@
 #include "culverin_parsers.h"
 
 static constexpr float CQM_DEFAULT_MAX_DIST = 1000.0f;
-static constexpr float CQM_EPSILON_SMALL = 1e-12f;
+static constexpr float CQM_EPSILON_SMALL    = 1e-12f;
 static constexpr float CQM_EPSILON_RELATIVE = 1e-4f;
-static constexpr int CQM_VEC3_STRIDE = 12; // bytes for 3 floats
+static constexpr int CQM_VEC3_STRIDE        = 12; // bytes for 3 floats
 
 // --- Helper: Signal End of Query ---
 // This is crucial for the Condition Variable approach.
@@ -343,8 +343,9 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast(PhysicsWorldObject *sel
         Py_RETURN_NONE;
     }
 
-    float scale = (fabsf(mag_sq - 1.0f) < CQM_EPSILON_RELATIVE) ? max_dist
-                                                                 : max_dist * culverin_fast_rsqrt(mag_sq);
+    float scale = (fabsf(mag_sq - 1.0f) < CQM_EPSILON_RELATIVE)
+                      ? max_dist
+                      : max_dist * culverin_fast_rsqrt(mag_sq);
 
     JPH_STACK_ALLOC(JPH_RVec3, origin);
     *origin = (JPH_RVec3){sx, sy, sz};
@@ -535,8 +536,9 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast_batch(PhysicsWorldObjec
             continue;
         }
 
-        float scale = (fabsf(mag_sq - 1.0f) < CQM_EPSILON_RELATIVE) ? max_dist
-                                                                      : max_dist * culverin_fast_rsqrt(mag_sq);
+        float scale = (fabsf(mag_sq - 1.0f) < CQM_EPSILON_RELATIVE)
+                          ? max_dist
+                          : max_dist * culverin_fast_rsqrt(mag_sq);
 
         JPH_Vec3 v_dir  = {dx * scale, dy * scale, dz * scale};
         JPH_RVec3 v_ori = {(double)f_starts[off], (double)f_starts[off + 1],
@@ -756,8 +758,11 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_shapecast(PhysicsWorldObject *s
 
     SHADOW_UNLOCK(&self->shadow_lock);
 
-    if (!result) {
-        return PyErr_Occurred() ? nullptr : Py_None;
+    if (result == nullptr) {
+        if (PyErr_Occurred()) {
+            return nullptr;
+        }
+        Py_RETURN_NONE; // Correctly increments Py_None refcount
     }
     return result;
 }
