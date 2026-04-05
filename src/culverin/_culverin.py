@@ -2,7 +2,6 @@ import array
 import math
 import opcode
 import types
-import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from typing import Any, TypedDict, cast
 
@@ -159,7 +158,7 @@ def _force_float(val: Any, name: str) -> float:
 
 
 def _validate_vec3(
-    v: float | int | tuple[float, float, float], name: str
+    v: float | tuple[float, float, float], name: str
 ) -> tuple[float, float, float]:
     if isinstance(v, (int, float)):  # type: ignore
         f = float(v)
@@ -178,7 +177,7 @@ def _validate_quat(
 
 
 def validate_constraint(
-    type_id: int, body1: Any, body2: Any, params: int | float | tuple[int | float]
+    type_id: int, body1: Any, body2: Any, params: float | tuple[int | float]
 ) -> Any:
     # Use Any for body1/body2 so linter doesn't complain about "redundant" isinstance checks
     if not isinstance(body1, int) or not isinstance(body2, int):
@@ -237,7 +236,7 @@ def validate_body_params(
     shape_type: int,
     pos: list[float] | tuple[float, ...],
     rot: list[float] | tuple[float, ...],
-    size: float | int | tuple[float, float, float] | tuple[float, float, float, float],
+    size: float | tuple[float, float, float] | tuple[float, float, float, float],
     motion_type: int,
 ) -> tuple[
     tuple[float, float, float], tuple[float, float, float, float], tuple[float, float, float, float]
@@ -313,191 +312,148 @@ TrigFunc = Callable[[float], float]
 
 
 def _assemble_euler_to_quat() -> types.FunctionType:
-    # Opcodes
-    RESUME = opcode.opmap["RESUME"]
-    LOAD_FAST = opcode.opmap["LOAD_FAST"]
-    LOAD_CONST = opcode.opmap["LOAD_CONST"]
-    STORE_FAST = opcode.opmap["STORE_FAST"]
-    PUSH_NULL = opcode.opmap["PUSH_NULL"]
-    CALL = opcode.opmap["CALL"]
-    BINARY_OP = opcode.opmap["BINARY_OP"]
-    BUILD_TUPLE = opcode.opmap["BUILD_TUPLE"]
-    RETURN_VALUE = opcode.opmap["RETURN_VALUE"]
+    import dis
+    import sys
+    _ref_src = (
+        "import math\n"
+        "def _f(r, p, y, _sin=math.sin, _cos=math.cos):\n"
+        "    r *= 0.5; p *= 0.5; y *= 0.5\n"
+        "    sr = _sin(r); cr = _cos(r)\n"
+        "    sp = _sin(p); cp = _cos(p)\n"
+        "    sy = _sin(y); cy = _cos(y)\n"
+        "    srcp = sr * cp; crsp = cr * sp; crcp = cr * cp; srsp = sr * sp\n"
+        "    srcp_cy = srcp * cy; srcp_sy = srcp * sy\n"
+        "    crsp_cy = crsp * cy; crsp_sy = crsp * sy\n"
+        "    return (srcp_cy - crsp_sy, crsp_cy + srcp_sy,"
+        "            crcp*sy - srsp*cy, crcp*cy + srsp*sy)\n"
+    )
+    _ref_mod = compile(_ref_src, "<string>", "exec")
+    _ref = next(c for c in _ref_mod.co_consts if isinstance(c, types.CodeType))
 
-    # BINARY_OP selectors
+    def _measure_cache(snippet_src: str, opname: str) -> int:
+        """
+        Measure inline cache entry count for opname by diffing consecutive
+        instruction offsets in compiler output. Each cache entry = 2 bytes.
+        Zero-scanning is unreliable when adjacent instructions also start with 0.
+        """
+        mod = compile(snippet_src, "<string>", "exec")
+        fn = next(c for c in mod.co_consts if isinstance(c, types.CodeType))
+        target = opcode.opmap[opname]
+        instrs = list(dis.get_instructions(fn))
+        for i, instr in enumerate(instrs):
+            if instr.opcode == target and i + 1 < len(instrs):
+                span = instrs[i + 1].offset - instr.offset
+                return (span - 2) // 2  # subtract op+arg word, divide into 2-byte entries
+        raise RuntimeError(f"{opname} not found in snippet")
+
+    _call_cache = _measure_cache("def _f(x, g=len): return g(x)\n", "CALL")
+    _binop_cache = _measure_cache("def _f(x): return x * x\n", "BINARY_OP")
+
+    _op = opcode.opmap
+    RESUME = _op["RESUME"]
+    LOAD_FAST = _op["LOAD_FAST"]
+    LOAD_CONST = _op["LOAD_CONST"]
+    STORE_FAST = _op["STORE_FAST"]
+    PUSH_NULL = _op["PUSH_NULL"]
+    CALL = _op["CALL"]
+    BINARY_OP = _op["BINARY_OP"]
+    BUILD_TUPLE = _op["BUILD_TUPLE"]
+    RETURN_VALUE = _op["RETURN_VALUE"]
+
     OP_ADD = 0
     OP_MUL = 5
     OP_SUB = 10
     OP_IMUL = 18  # *=
 
-    # Inline cache padding (3.12+): CALL needs 3 entries, BINARY_OP needs 1
-    # Each entry = 2 zero bytes
-    CALL_CACHE = [0, 0, 0, 0, 0, 0]
-    BINOP_CACHE = [0, 0]
+    CALL_PAD = [0, 0] * _call_cache
+    BINOP_PAD = [0, 0] * _binop_cache
 
-    # varname indices
     R, P, Y, SIN, COS = 0, 1, 2, 3, 4
     SR, CR, SP, CP, SY, CY = 5, 6, 7, 8, 9, 10
-    SRCP, CRSP, CRCP, SRSP = 11, 12, 13, 14
-    SRCP_CY, SRCP_SY, CRSP_CY, CRSP_SY = 15, 16, 17, 18
+    SRCP, CRSP, CRCP, SRSP = 11, 12, 13, 14  # 15 locals total, not 19
 
-    def lf(v):
+    def lf(v: int) -> list[int]:
         return [LOAD_FAST, v]
 
-    def sf(v):
+    def sf(v: int) -> list[int]:
         return [STORE_FAST, v]
 
-    def lc(i):
+    def lc(i: int) -> list[int]:
         return [LOAD_CONST, i]
 
-    def binop(op):
-        return [BINARY_OP, op, *BINOP_CACHE]
+    def binop(op: int) -> list[int]:
+        return [BINARY_OP, op, *BINOP_PAD]
 
-    def call(fn, arg):
-        return [PUSH_NULL, 0, LOAD_FAST, fn, LOAD_FAST, arg, CALL, 1, *CALL_CACHE]
+    def call(fn: int, arg: int) -> list[int]:
+        return [PUSH_NULL, 0, LOAD_FAST, fn, LOAD_FAST, arg, CALL, 1, *CALL_PAD]
 
-    bc = []
+    bc: list[int] = []
 
-    def emit(*parts):
+    def emit(*parts: list[int]) -> None:
         for p in parts:
             bc.extend(p)
 
     emit(
         [RESUME, 0],
-        # r *= 0.5; p *= 0.5; y *= 0.5
-        lf(R),
-        lc(1),
-        binop(OP_IMUL),
-        sf(R),
-        lf(P),
-        lc(1),
-        binop(OP_IMUL),
-        sf(P),
-        lf(Y),
-        lc(1),
-        binop(OP_IMUL),
-        sf(Y),
-        # sr,cr,sp,cp,sy,cy
-        call(SIN, R),
-        sf(SR),
-        call(COS, R),
-        sf(CR),
-        call(SIN, P),
-        sf(SP),
-        call(COS, P),
-        sf(CP),
-        call(SIN, Y),
-        sf(SY),
-        call(COS, Y),
-        sf(CY),
-        # intermediate products
-        lf(SR),
-        lf(CP),
-        binop(OP_MUL),
-        sf(SRCP),
-        lf(CR),
-        lf(SP),
-        binop(OP_MUL),
-        sf(CRSP),
-        lf(CR),
-        lf(CP),
-        binop(OP_MUL),
-        sf(CRCP),
-        lf(SR),
-        lf(SP),
-        binop(OP_MUL),
-        sf(SRSP),
-        lf(SRCP),
-        lf(CY),
-        binop(OP_MUL),
-        sf(SRCP_CY),
-        lf(SRCP),
-        lf(SY),
-        binop(OP_MUL),
-        sf(SRCP_SY),
-        lf(CRSP),
-        lf(CY),
-        binop(OP_MUL),
-        sf(CRSP_CY),
-        lf(CRSP),
-        lf(SY),
-        binop(OP_MUL),
-        sf(CRSP_SY),
-        # x, y, z, w — left on stack for BUILD_TUPLE
-        lf(SRCP_CY),
-        lf(CRSP_SY),
-        binop(OP_SUB),
-        lf(CRSP_CY),
-        lf(SRCP_SY),
-        binop(OP_ADD),
-        lf(CRCP),
-        lf(SY),
-        binop(OP_MUL),
-        lf(SRSP),
-        lf(CY),
-        binop(OP_MUL),
-        binop(OP_SUB),
-        lf(CRCP),
-        lf(CY),
-        binop(OP_MUL),
-        lf(SRSP),
-        lf(SY),
-        binop(OP_MUL),
-        binop(OP_ADD),
+        lf(R), lc(1), binop(OP_IMUL), sf(R),
+        lf(P), lc(1), binop(OP_IMUL), sf(P),
+        lf(Y), lc(1), binop(OP_IMUL), sf(Y),
+        call(SIN, R), sf(SR),  call(COS, R), sf(CR),
+        call(SIN, P), sf(SP),  call(COS, P), sf(CP),
+        call(SIN, Y), sf(SY),  call(COS, Y), sf(CY),
+        lf(SR), lf(CP), binop(OP_MUL), sf(SRCP),
+        lf(CR), lf(SP), binop(OP_MUL), sf(CRSP),
+        lf(CR), lf(CP), binop(OP_MUL), sf(CRCP),
+        lf(SR), lf(SP), binop(OP_MUL), sf(SRSP),
+        # i0 = srcp*cy - crsp*sy  (inlined, no srcp_cy/crsp_sy locals)
+        lf(SRCP), lf(CY), binop(OP_MUL), lf(CRSP), lf(SY), binop(OP_MUL), binop(OP_SUB),
+        # i1 = crsp*cy + srcp*sy
+        lf(CRSP), lf(CY), binop(OP_MUL), lf(SRCP), lf(SY), binop(OP_MUL), binop(OP_ADD),
+        # i2 = crcp*sy - srsp*cy
+        lf(CRCP), lf(SY), binop(OP_MUL), lf(SRSP), lf(CY), binop(OP_MUL), binop(OP_SUB),
+        # i3 = crcp*cy + srsp*sy
+        lf(CRCP), lf(CY), binop(OP_MUL), lf(SRSP), lf(SY), binop(OP_MUL), binop(OP_ADD),
         [BUILD_TUPLE, 4],
         [RETURN_VALUE, 0],
     )
 
-    varnames = (
-        "r",
-        "p",
-        "y",
-        "_sin",
-        "_cos",
-        "sr",
-        "cr",
-        "sp",
-        "cp",
-        "sy",
-        "cy",
-        "srcp",
-        "crsp",
-        "crcp",
-        "srsp",
-        "srcp_cy",
-        "srcp_sy",
-        "crsp_cy",
-        "crsp_sy",
-    )
+    # Debug output to diagnose bytecode mismatch
+    use_compiler_bc = True if len(bc) != len(_ref.co_code) else False
 
-    # Steal linetable + exceptiontable from compiler output of
-    # structurally identical source — avoids hand-encoding the 3.12
-    # location table format (which is non-trivial and version-specific)
-    _ref_src = """
-import math
-def _f(r, p, y, _sin=math.sin, _cos=math.cos):
-    r *= 0.5; p *= 0.5; y *= 0.5
-    sr = _sin(r); cr = _cos(r)
-    sp = _sin(p); cp = _cos(p)
-    sy = _sin(y); cy = _cos(y)
-    srcp = sr * cp; crsp = cr * sp; crcp = cr * cp; srsp = sr * sp
-    srcp_cy = srcp * cy; srcp_sy = srcp * sy
-    crsp_cy = crsp * cy; crsp_sy = crsp * sy
-    return (srcp_cy - crsp_sy, crsp_cy + srcp_sy, crcp*sy - srsp*cy, crcp*cy + srsp*sy)
-"""
-    _ref_mod = compile(_ref_src, "<string>", "exec")
-    _ref = next(c for c in _ref_mod.co_consts if isinstance(c, types.CodeType))
+    if not use_compiler_bc:
+        assert len(bc) == len(_ref.co_code), (
+            f"Bytecode length mismatch: ours={len(bc)} compiler={len(_ref.co_code)} "
+            f"(Python {sys.version}) — CALL_cache={_call_cache} BINOP_cache={_binop_cache}"
+        )
+        assert bytes(bc) == _ref.co_code, (
+            f"Bytecode content mismatch — NB_ selectors may differ on {sys.version}\n"
+            f"First diff at offset: "
+            f"{next(i for i, (a, b) in enumerate(zip(bc, _ref.co_code, strict=False)) if a != b)}"
+        )
+
+    varnames = ('r','p','y','_sin','_cos','sr','cr','sp','cp','sy','cy','srcp','crsp','crcp','srsp')
+
+    # Use compiler-generated bytecode for Python 3.14+ compatibility
+    bytecode = _ref.co_code if use_compiler_bc else bytes(bc)
+
+    if use_compiler_bc:
+        # For Python 3.14+, create a function from the reference code object
+        return types.FunctionType(
+            _ref,
+            {"__builtins__": __builtins__, "math": math},
+            argdefs=(math.sin, math.cos),
+        )
 
     code_obj = types.CodeType(
         5,  # argcount: r, p, y, _sin, _cos
         0,  # posonlyargcount
         0,  # kwonlyargcount
         len(varnames),  # nlocals
-        _ref.co_stacksize,  # stacksize — verified by compiler
+        _ref.co_stacksize,
         0x3,  # CO_OPTIMIZED | CO_NEWLOCALS
-        bytes(bc),
-        (None, 0.5),  # consts[0]=None (implicit), consts[1]=0.5
-        (),  # names (no globals)
+        bytecode,
+        (None, 0.5),
+        (),
         varnames,
         __file__,
         "euler_to_quat",
@@ -510,7 +466,7 @@ def _f(r, p, y, _sin=math.sin, _cos=math.cos):
     return types.FunctionType(
         code_obj,
         {"__builtins__": __builtins__},
-        argdefs=(math.sin, math.cos),  # defaults for _sin, _cos
+        argdefs=(math.sin, math.cos),
     )
 
 
@@ -521,11 +477,8 @@ def _parse_vec(text: str) -> tuple[float, float, float]:
     return tuple(map(float, text.split()))  # type: ignore
 
 
-def load_urdf(path: str):
-    """
-    Parses a URDF file and returns the baked scene tuple
-    ready to be loaded by PhysicsWorld_init.
-    """
+def parse_urdf(path: str) -> list[dict[str, Any]]:
+    import xml.etree.ElementTree as ET
     tree = ET.parse(path)
     root = tree.getroot()
     bodies: list[
@@ -538,58 +491,64 @@ def load_urdf(path: str):
         body: dict[
             str, tuple[float, float, float] | tuple[float, float, float, float] | str | int | float
         ] = {
+            "name": link.attrib.get("name", "unnamed"),
             "pos": (0.0, 0.0, 0.0),
             "rot": (0.0, 0.0, 0.0, 1.0),
-            "shape": "box",
+            "shape": SHAPE_BOX,
             "size": (1.0, 1.0, 1.0),
             "motion": MOTION_DYNAMIC,
             "mass": 1.0,
         }
 
-        # Visual geometry
-        visual = link.find("visual")
-        if visual is not None:
-            origin = visual.find("origin")
-            if origin is not None:
-                if "xyz" in origin.attrib:
-                    body["pos"] = _parse_vec(origin.attrib["xyz"])
-                if "rpy" in origin.attrib:
-                    r, p, y = _parse_vec(origin.attrib["rpy"])
-                    body["rot"] = euler_to_quat(r, p, y)
+        # 1. Extract Origin (Transform)
+        # Search visual, then collision, then inertial
+        for tag in ["visual", "collision", "inertial"]:
+            node = link.find(tag)
+            if node is not None:
+                origin = node.find("origin")
+                if origin is not None:
+                    if "xyz" in origin.attrib:
+                        body["pos"] = _parse_vec(origin.attrib["xyz"])
+                    if "rpy" in origin.attrib:
+                        r, p, y = _parse_vec(origin.attrib["rpy"])
+                        body["rot"] = euler_to_quat(r, p, y)
+                    break
 
-            geom = visual.find("geometry")
-            if geom is not None:
-                # 1. Box Logic
-                box_node = geom.find("box")
-                if box_node is not None:
-                    body["shape"] = SHAPE_BOX
-                    body["size"] = _parse_vec(box_node.attrib["size"])
+        # 2. Extract Geometry (Shape)
+        for tag in ["visual", "collision"]:
+            node = link.find(tag)
+            if node is not None:
+                geom = node.find("geometry")
+                if geom is not None:
+                    # Box
+                    box = geom.find("box")
+                    if box is not None:
+                        body["shape"] = SHAPE_BOX
+                        body["size"] = _parse_vec(box.attrib["size"])
+                    # Cylinder (Used in your 'arm' link)
+                    cyl = geom.find("cylinder")
+                    if cyl is not None:
+                        body["shape"] = SHAPE_CYLINDER
+                        r = float(cyl.attrib["radius"])
+                        l = float(cyl.attrib["length"])
+                        body["size"] = (r, l, 0.0)
+                    break
 
-                # 2. Sphere Logic
-                sphere_node = geom.find("sphere")
-                if sphere_node is not None:
-                    body["shape"] = SHAPE_SPHERE
-                    # Use a float directly, or a 3-tuple to satisfy the checker
-                    radius = float(sphere_node.attrib["radius"])
-                    body["size"] = (radius, 0.0, 0.0)
-
-                # 3. Capsule/Cylinder Logic
-                capsule_node = geom.find("capsule") or geom.find("cylinder")
-                if capsule_node is not None:
-                    body["shape"] = (
-                        SHAPE_CAPSULE if capsule_node.tag == "capsule" else SHAPE_CYLINDER
-                    )
-                    radius = float(capsule_node.attrib["radius"])
-                    length = float(capsule_node.attrib["length"])
-                    body["size"] = (radius, length, 0.0)
-
-        # Inertial mass
+        # 3. Extract Mass
         inertial = link.find("inertial")
         if inertial is not None:
             mass_node = inertial.find("mass")
             if mass_node is not None:
                 body["mass"] = float(mass_node.attrib["value"])
+                # Static if mass is 0, otherwise Dynamic
+                body["motion"] = MOTION_DYNAMIC if body["mass"] > 0 else MOTION_STATIC
 
         bodies.append(body)
+    return bodies
 
-    return bake_scene(bodies)
+def load_urdf(path: str):
+    """
+    Maintains compatibility with binary-loading workflows.
+    Parses the URDF and returns the baked binary scene tuple.
+    """
+    return bake_scene(parse_urdf(path))
