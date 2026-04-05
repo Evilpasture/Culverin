@@ -479,7 +479,7 @@ PyCFunction_DeclareMethodFromModule Ragdoll_drive_to_pose(RagdollObject *self,
     Py_RETURN_NONE;
 }
 
-PyCFunction_DeclareMethodFromModule Ragdoll_get_body_ids(RagdollObject *self,
+PyCFunction_DeclareMethodFromModule Ragdoll_get_body_handles(RagdollObject *self,
                                                          PyObject *Py_UNUSED(args)) {
     // Helper to get the Body Handles of the parts so users can manipulate
     // specific limbs
