@@ -1,3 +1,4 @@
+from typing import TypedDict
 __version__: str
 # Re-export from the Python helper
 from ._culverin import (
@@ -42,6 +43,15 @@ from ._culverin_c import (
     Vehicle,
 )
 
+class WheelConfig(TypedDict):
+    pos: tuple[float, float, float]
+    radius: float
+
+
+class TrackConfig(TypedDict):
+    indices: list[int]
+    driven_wheel: int
+
 __all__ = [
     "CONSTRAINT_CONE",
     "CONSTRAINT_DISTANCE",
@@ -76,4 +86,6 @@ __all__ = [
     "euler_to_quat",
     "load_urdf",
     "parse_urdf",
+    "WheelConfig",
+    "TrackConfig",
 ]
