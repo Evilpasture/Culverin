@@ -3,7 +3,7 @@ import math
 import opcode
 import types
 from collections.abc import Callable
-from typing import Any, TypedDict, cast
+from typing import Any, Literal, TypedDict, cast, overload
 
 __all__ = [
     "CONSTRAINT_CONE",
@@ -95,7 +95,7 @@ class Engine:
         max_rpm: float = 7000.0,
         min_rpm: float = 1000.0,
         inertia: float = 0.5,
-    ):
+    ) -> None:
         self.max_torque = float(max_torque)
         self.max_rpm = float(max_rpm)
         self.min_rpm = float(min_rpm)
@@ -110,7 +110,7 @@ class Transmission:
 
     def __init__(
         self, gears: int = 5, clutch_strength: float = 2000.0, differential_ratio: float = 3.42
-    ):
+    ) -> None:
         self.clutch_strength = float(clutch_strength)
         self.differential_ratio = float(differential_ratio)
         presets = [2.66, 1.78, 1.30, 1.0, 0.74, 0.50]
@@ -130,7 +130,7 @@ class Automatic(Transmission):
         differential_ratio: float = 3.42,
         shift_up_rpm: float = 5000.0,
         shift_down_rpm: float = 2000.0,
-    ):
+    ) -> None:
         super().__init__(gears, clutch_strength, differential_ratio)
         self.mode = 0
         self.shift_up_rpm = float(shift_up_rpm)
@@ -142,7 +142,7 @@ class Manual(Transmission):
 
     def __init__(
         self, gears: int = 5, clutch_strength: float = 5000.0, differential_ratio: float = 3.42
-    ):
+    ) -> None:
         super().__init__(gears, clutch_strength, differential_ratio)
         self.mode = 1
 
@@ -150,16 +150,22 @@ class Manual(Transmission):
 # --- Validation Logic ---
 
 
-def _force_float(val: Any, name: str) -> float:
+ConvertibleToFloat = int | float | str | bytes | bytearray
+
+
+def _force_float(val: ConvertibleToFloat, name: str) -> float:
     try:
         return float(val)
     except (TypeError, ValueError) as err:
         raise TypeError(f"'{name}' must be a number") from err
 
 
-def _validate_vec3(
-    v: float | tuple[float, float, float], name: str
-) -> tuple[float, float, float]:
+Vec3Param = float | tuple[float, float, float] | list[float]
+Vec4Param = tuple[float, float, float, float] | list[float]
+ConstraintParams = tuple[object, ...] | list[object]
+
+
+def _validate_vec3(v: Vec3Param, name: str) -> tuple[float, float, float]:
     if isinstance(v, (int, float)):  # type: ignore
         f = float(v)
         return (f, f, f)
@@ -169,47 +175,115 @@ def _validate_vec3(
 
 
 def _validate_quat(
-    q: tuple[int | float] | list[int | float] | tuple[float, float, float, float], name: str
+    q: Vec4Param | tuple[int | float, int | float, int | float, int | float] | list[int | float],
+    name: str,
 ) -> tuple[float, float, float, float]:
     if not isinstance(q, (tuple, list)) or len(q) != 4:  # type: ignore
         raise ValueError(f"'{name}' must be a sequence of length 4")
     return (float(q[0]), float(q[1]), float(q[2]), float(q[3]))
 
 
+@overload
 def validate_constraint(
-    type_id: int, body1: Any, body2: Any, params: float | tuple[int | float]
-) -> Any:
-    # Use Any for body1/body2 so linter doesn't complain about "redundant" isinstance checks
+    type_id: Literal[1], body1: object, body2: object, params: object
+) -> None: ...
+@overload
+def validate_constraint(
+    type_id: Literal[2], body1: object, body2: object, params: object
+) -> tuple[float, float, float]: ...
+@overload
+def validate_constraint(
+    type_id: Literal[3], body1: object, body2: object, params: object
+) -> tuple[float, float]: ...
+@overload
+def validate_constraint(
+    type_id: Literal[4, 5], body1: object, body2: object, params: object
+) -> (
+    tuple[tuple[float, float, float], tuple[float, float, float]]
+    | tuple[tuple[float, float, float], tuple[float, float, float], float, float]
+): ...
+@overload
+def validate_constraint(
+    type_id: Literal[6], body1: object, body2: object, params: object
+) -> tuple[tuple[float, float, float], tuple[float, float, float], float]: ...
+
+
+def validate_constraint(
+    type_id: int, body1: object, body2: object, params: object
+) -> (
+    tuple[float, float, float]
+    | tuple[float, float]
+    | tuple[tuple[float, float, float], tuple[float, float, float]]
+    | tuple[tuple[float, float, float], tuple[float, float, float], float, float]
+    | tuple[tuple[float, float, float], tuple[float, float, float], float]
+    | None
+):
+
+    # 1. Handle Validation
     if not isinstance(body1, int) or not isinstance(body2, int):
         raise TypeError("Constraint bodies must be integer handles")
 
-    if type_id == CONSTRAINT_FIXED:
+    # 2. Dispatch Logic
+    if type_id == CONSTRAINT_FIXED:  # Literal 1
         return None
 
-    if type_id == CONSTRAINT_POINT and not isinstance(params, (tuple, list)):
-        return _validate_vec3(params, "point.pivot")
+    if type_id == CONSTRAINT_POINT:  # Literal 2
+        if not isinstance(params, (tuple, list)):
+            raise ValueError("PointConstraint requires a Vec3 sequence")
+        params2 = cast(Vec3Param, params)
+        return _validate_vec3(params2, "point.pivot")
 
-    if type_id == CONSTRAINT_DISTANCE:
-        if not isinstance(params, (tuple, list)) or len(params) != 2:
+    if type_id == CONSTRAINT_DISTANCE:  # Literal 3
+        if not isinstance(params, (tuple, list)):
             raise ValueError("DistanceConstraint requires (min_dist, max_dist)")
-        return (_force_float(params[0], "min"), _force_float(params[1], "max"))
+        params2 = cast(ConstraintParams, params)
+        if len(params2) != 2:
+            raise ValueError("DistanceConstraint requires (min_dist, max_dist)")
+        return (
+            _force_float(cast(ConvertibleToFloat, params2[0]), "min"),
+            _force_float(cast(ConvertibleToFloat, params2[1]), "max"),
+        )
 
-    if type_id in (CONSTRAINT_HINGE, CONSTRAINT_SLIDER):
-        if not isinstance(params, (tuple, list)) or len(params) < 2:
+    if type_id in (CONSTRAINT_HINGE, CONSTRAINT_SLIDER):  # Literals 4, 5
+        if not isinstance(params, (tuple, list)):
             raise ValueError("Hinge/Slider requires ((pivot), (axis), [limits])")
-        pivot = _validate_vec3(params[0], "pivot")
-        axis = _validate_vec3(params[1], "axis")
-        if len(params) == 4:
-            return (pivot, axis, _force_float(params[2], "min"), _force_float(params[3], "max"))
+        params2 = cast(ConstraintParams, params)
+        if len(params2) < 2:
+            raise ValueError("Hinge/Slider requires ((pivot), (axis), [limits])")
+
+        p0 = cast(Vec3Param, params2[0])
+        a1 = cast(Vec3Param, params2[1])
+        if not isinstance(p0, (tuple, list)) or not isinstance(a1, (tuple, list)):
+            raise ValueError("Pivot and Axis must be sequences")
+
+        pivot = _validate_vec3(p0, "pivot")
+        axis = _validate_vec3(a1, "axis")
+
+        if len(params2) == 4:
+            return (
+                pivot,
+                axis,
+                _force_float(cast(ConvertibleToFloat, params2[2]), "min"),
+                _force_float(cast(ConvertibleToFloat, params2[3]), "max"),
+            )
         return (pivot, axis)
 
-    if type_id == CONSTRAINT_CONE:
-        if not isinstance(params, (tuple, list)) or len(params) != 3:
+    if type_id == CONSTRAINT_CONE:  # Literal 6
+        if not isinstance(params, (tuple, list)):
             raise ValueError("ConeConstraint requires ((pivot), (axis), half_angle)")
+        params2 = cast(ConstraintParams, params)
+        if len(params2) != 3:
+            raise ValueError("ConeConstraint requires ((pivot), (axis), half_angle)")
+
+        p0 = cast(Vec3Param, params2[0])
+        a1 = cast(Vec3Param, params2[1])
+        if not isinstance(p0, (tuple, list)) or not isinstance(a1, (tuple, list)):
+            raise ValueError("Pivot and Axis must be sequences")
+
         return (
-            _validate_vec3(params[0], "pivot"),
-            _validate_vec3(params[1], "axis"),
-            _force_float(params[2], "angle"),
+            _validate_vec3(p0, "pivot"),
+            _validate_vec3(a1, "axis"),
+            _force_float(cast(ConvertibleToFloat, params2[2]), "angle"),
         )
 
     raise ValueError(f"Unknown constraint type: {type_id}")
@@ -236,7 +310,7 @@ def validate_body_params(
     shape_type: int,
     pos: list[float] | tuple[float, ...],
     rot: list[float] | tuple[float, ...],
-    size: float | tuple[float, float, float] | tuple[float, float, float, float],
+    size: float | tuple[float, float, float] | tuple[float, float, float, float] | list[float],
     motion_type: int,
 ) -> tuple[
     tuple[float, float, float], tuple[float, float, float, float], tuple[float, float, float, float]
@@ -314,6 +388,7 @@ TrigFunc = Callable[[float], float]
 def _assemble_euler_to_quat() -> types.FunctionType:
     import dis
     import sys
+
     _ref_src = (
         "import math\n"
         "def _f(r, p, y, _sin=math.sin, _cos=math.cos):\n"
@@ -395,30 +470,84 @@ def _assemble_euler_to_quat() -> types.FunctionType:
 
     emit(
         [RESUME, 0],
-        lf(R), lc(1), binop(OP_IMUL), sf(R),
-        lf(P), lc(1), binop(OP_IMUL), sf(P),
-        lf(Y), lc(1), binop(OP_IMUL), sf(Y),
-        call(SIN, R), sf(SR),  call(COS, R), sf(CR),
-        call(SIN, P), sf(SP),  call(COS, P), sf(CP),
-        call(SIN, Y), sf(SY),  call(COS, Y), sf(CY),
-        lf(SR), lf(CP), binop(OP_MUL), sf(SRCP),
-        lf(CR), lf(SP), binop(OP_MUL), sf(CRSP),
-        lf(CR), lf(CP), binop(OP_MUL), sf(CRCP),
-        lf(SR), lf(SP), binop(OP_MUL), sf(SRSP),
+        lf(R),
+        lc(1),
+        binop(OP_IMUL),
+        sf(R),
+        lf(P),
+        lc(1),
+        binop(OP_IMUL),
+        sf(P),
+        lf(Y),
+        lc(1),
+        binop(OP_IMUL),
+        sf(Y),
+        call(SIN, R),
+        sf(SR),
+        call(COS, R),
+        sf(CR),
+        call(SIN, P),
+        sf(SP),
+        call(COS, P),
+        sf(CP),
+        call(SIN, Y),
+        sf(SY),
+        call(COS, Y),
+        sf(CY),
+        lf(SR),
+        lf(CP),
+        binop(OP_MUL),
+        sf(SRCP),
+        lf(CR),
+        lf(SP),
+        binop(OP_MUL),
+        sf(CRSP),
+        lf(CR),
+        lf(CP),
+        binop(OP_MUL),
+        sf(CRCP),
+        lf(SR),
+        lf(SP),
+        binop(OP_MUL),
+        sf(SRSP),
         # i0 = srcp*cy - crsp*sy  (inlined, no srcp_cy/crsp_sy locals)
-        lf(SRCP), lf(CY), binop(OP_MUL), lf(CRSP), lf(SY), binop(OP_MUL), binop(OP_SUB),
+        lf(SRCP),
+        lf(CY),
+        binop(OP_MUL),
+        lf(CRSP),
+        lf(SY),
+        binop(OP_MUL),
+        binop(OP_SUB),
         # i1 = crsp*cy + srcp*sy
-        lf(CRSP), lf(CY), binop(OP_MUL), lf(SRCP), lf(SY), binop(OP_MUL), binop(OP_ADD),
+        lf(CRSP),
+        lf(CY),
+        binop(OP_MUL),
+        lf(SRCP),
+        lf(SY),
+        binop(OP_MUL),
+        binop(OP_ADD),
         # i2 = crcp*sy - srsp*cy
-        lf(CRCP), lf(SY), binop(OP_MUL), lf(SRSP), lf(CY), binop(OP_MUL), binop(OP_SUB),
+        lf(CRCP),
+        lf(SY),
+        binop(OP_MUL),
+        lf(SRSP),
+        lf(CY),
+        binop(OP_MUL),
+        binop(OP_SUB),
         # i3 = crcp*cy + srsp*sy
-        lf(CRCP), lf(CY), binop(OP_MUL), lf(SRSP), lf(SY), binop(OP_MUL), binop(OP_ADD),
+        lf(CRCP),
+        lf(CY),
+        binop(OP_MUL),
+        lf(SRSP),
+        lf(SY),
+        binop(OP_MUL),
+        binop(OP_ADD),
         [BUILD_TUPLE, 4],
         [RETURN_VALUE, 0],
     )
 
     # Debug output to diagnose bytecode mismatch
-    use_compiler_bc = True if len(bc) != len(_ref.co_code) else False
+    use_compiler_bc = len(bc) != len(_ref.co_code)
 
     if not use_compiler_bc:
         assert len(bc) == len(_ref.co_code), (
@@ -431,7 +560,23 @@ def _assemble_euler_to_quat() -> types.FunctionType:
             f"{next(i for i, (a, b) in enumerate(zip(bc, _ref.co_code, strict=False)) if a != b)}"
         )
 
-    varnames = ('r','p','y','_sin','_cos','sr','cr','sp','cp','sy','cy','srcp','crsp','crcp','srsp')
+    varnames = (
+        "r",
+        "p",
+        "y",
+        "_sin",
+        "_cos",
+        "sr",
+        "cr",
+        "sp",
+        "cp",
+        "sy",
+        "cy",
+        "srcp",
+        "crsp",
+        "crcp",
+        "srsp",
+    )
 
     # Use compiler-generated bytecode for Python 3.14+ compatibility
     bytecode = _ref.co_code if use_compiler_bc else bytes(bc)
@@ -479,6 +624,7 @@ def _parse_vec(text: str) -> tuple[float, float, float]:
 
 def parse_urdf(path: str) -> list[dict[str, Any]]:
     import xml.etree.ElementTree as ET
+
     tree = ET.parse(path)
     root = tree.getroot()
     bodies: list[
@@ -529,9 +675,9 @@ def parse_urdf(path: str) -> list[dict[str, Any]]:
                     cyl = geom.find("cylinder")
                     if cyl is not None:
                         body["shape"] = SHAPE_CYLINDER
-                        r = float(cyl.attrib["radius"])
-                        l = float(cyl.attrib["length"])
-                        body["size"] = (r, l, 0.0)
+                        radius = float(cyl.attrib["radius"])
+                        length = float(cyl.attrib["length"])
+                        body["size"] = (radius, length, 0.0)
                     break
 
         # 3. Extract Mass
@@ -546,7 +692,8 @@ def parse_urdf(path: str) -> list[dict[str, Any]]:
         bodies.append(body)
     return bodies
 
-def load_urdf(path: str):
+
+def load_urdf(path: str) -> tuple[int, bytes, bytes, bytes, bytes, bytes, bytes]:
     """
     Maintains compatibility with binary-loading workflows.
     Parses the URDF and returns the baked binary scene tuple.
