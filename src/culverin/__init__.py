@@ -141,4 +141,6 @@ __all__ = [
     "euler_to_quat",
     "load_urdf",
     "parse_urdf",
+    "WheelConfig",
+    "TrackConfig",
 ]
