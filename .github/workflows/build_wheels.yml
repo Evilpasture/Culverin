@@ -160,11 +160,10 @@ jobs:
           echo "JOLT_CMAKE_DIR=$dir" >> $env:GITHUB_ENV
 
       - name: Build Wheels
-        uses: pypa/cibuildwheel@v3.4.0
+        uses: pypa/cibuildwheel@v3.4.1
         env:
           CIBW_SKIP: "*-musllinux_* *-win32 *_i686"
-          CIBW_BUILD: "cp312-* cp313-* cp313t-* cp314-* cp314t-*"
-          CIBW_ENABLE: "cpython-freethreading"
+          CIBW_BUILD: "cp312-* cp313-* cp314-*"
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
           
