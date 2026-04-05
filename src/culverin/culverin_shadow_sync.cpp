@@ -144,13 +144,13 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
 
     // Check the death flag! If the main thread is deallocating, we must not touch any pointers or
     // issue Jolt calls.
-    if (UNLIKELY(atomic_load_explicit(&self->is_deallocating, memory_order_acquire))) {
+    if (UNLIKELY(atomic_load_explicit(&self->is_deallocating, JPH::memory_order_acquire))) {
         return;
     }
 
     // If the Main Thread is reallocating, DO NOT touch the pointers.
     // The main thread is holding the shadow_lock or about to move buffers.
-    if (UNLIKELY(atomic_load_explicit(&self->is_resizing, memory_order_acquire))) {
+    if (UNLIKELY(atomic_load_explicit(&self->is_resizing, JPH::memory_order_acquire))) {
         return;
     }
 
