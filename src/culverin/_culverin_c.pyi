@@ -1,20 +1,14 @@
-"""
-Type Stubs for the Culverin C-Extension (_culverin_c).
-Using Python built-in generics for modern DX.
-"""
+# Type Stubs for the Culverin C-Extension (_culverin_c).
+# Using Python built-in generics for modern DX.
 
 # Note: Some methods compiled with STRICT_HANDLE_ENABLED will crash with ValueError. Otherwise, returns None or silent.
 
-
-from collections.abc import Sequence
+from collections.abc import Buffer, Sequence
 from typing import Any, Literal, TypedDict
 
-class ContactEvent(TypedDict):
-    """
-    Schema for individual collision events.
-    Matches the C-extension implementation keys.
-    """
+__version__: str
 
+class ContactEvent(TypedDict):
     bodies: tuple[int, int]
     position: tuple[float, float, float]
     normal: tuple[float, float, float]
@@ -22,6 +16,26 @@ class ContactEvent(TypedDict):
     slide_sq: float
     materials: tuple[int, int]
     type: int
+
+class Engine:
+    max_torque: float
+    max_rpm: float
+    min_rpm: float
+    inertia: float
+
+class Transmission:
+    clutch_strength: float
+    differential_ratio: float
+    ratios: list[float]
+    reverse_ratios: list[float]
+
+class Automatic(Transmission):
+    mode: int
+    shift_up_rpm: float
+    shift_down_rpm: float
+
+class Manual(Transmission):
+    mode: int
 
 # --- Constants ---
 SHAPE_BOX: int = 0
@@ -60,6 +74,8 @@ class TrackConfig(TypedDict):
     indices: list[int]  # The indices of the wheels this track wraps
     driven_wheel: int  # The index of the wheel providing torque
 
+type ShapeSize = Buffer | Sequence[float] | None
+
 class Character:
     @property
     def handle(self) -> int: ...
@@ -82,7 +98,7 @@ class RagdollSettings:
         self,
         joint_index: int,
         shape_type: int,
-        size: Any,
+        size: float | Sequence[float],
         mass: float = 10.0,
         parent_index: int = -1,
         twist_min: float = -0.1,
@@ -95,7 +111,7 @@ class RagdollSettings:
     def stabilize(self) -> bool: ...
 
 class Ragdoll:
-    def drive_to_pose(self, root_pos: Vec3, root_rot: Quat, matrices: Any) -> None: ...
+    def drive_to_pose(self, root_pos: Vec3, root_rot: Quat, matrices: Buffer) -> None: ...
     def get_body_handles(self) -> list[int]: ...
     def get_debug_info(self) -> list[dict[str, Any]]: ...
 
@@ -137,27 +153,22 @@ class PhysicsWorld:
     def remaining_capacity(self) -> int: ...
 
     # High-level Python helpers
-    def get_position(self, handle: int) -> Vec3:
-        ...
-
-    def get_rotation(self, handle: int) -> Quat:
-        ...
-
-    def get_velocity(self, handle: int) -> Vec3:
-        ...
+    def get_position(self, handle: int) -> Vec3: ...
+    def get_rotation(self, handle: int) -> Quat: ...
+    def get_velocity(self, handle: int) -> Vec3: ...
 
     # --- Lifecycle ---
     def __init__(
         self, settings: dict[str, Any] | None = None, bodies: list[dict[str, Any]] | None = None
     ) -> None: ...
-    def step(self, dt: float = 1.0 / 60.0) -> None: ...
+    def step(self, dt: float = ...) -> None: ...
 
     # --- Creation ---
     def create_body(
         self,
         pos: Vec3 | None = None,
         rot: Quat | None = None,
-        size: Any = None,
+        size: float | Sequence[float] | None = None,
         shape: int = 0,
         motion: int = 2,
         user_data: int = 0,
@@ -177,8 +188,8 @@ class PhysicsWorld:
         self,
         pos: Vec3,
         rot: Quat,
-        vertices: Any,
-        indices: Any,
+        vertices: Buffer,
+        indices: Buffer,
         user_data: int = 0,
         category: int = 0xFFFF,
         mask: int = 0xFFFF,
@@ -187,7 +198,7 @@ class PhysicsWorld:
         self,
         pos: Vec3,
         rot: Quat,
-        points: Any,
+        points: Buffer,
         motion: int = 2,
         mass: float = -1.0,
         user_data: int = 0,
@@ -220,7 +231,7 @@ class PhysicsWorld:
         pos: Vec3,
         rot: Quat,
         scale: Vec3,
-        heights: Any,
+        heights: Buffer,
         grid_size: int,
         user_data: int = 0,
         category: int = 0xFFFF,
@@ -242,8 +253,8 @@ class PhysicsWorld:
         chassis: int,
         wheels: list[WheelConfig],
         drive: str = "RWD",
-        engine: Any = None,
-        transmission: Any = None,
+        engine: Engine | None = None,
+        transmission: Transmission | None = None,
     ) -> Vehicle: ...
     def create_tracked_vehicle(
         self,
@@ -260,11 +271,16 @@ class PhysicsWorld:
 
     # --- Destruction ---
     def destroy_body(self, handle: int) -> None: ...
-    def destroy_bodies_batch(self, handles: Any) -> None: ...
+    def destroy_bodies_batch(self, handles: Buffer | list[int]) -> None: ...
 
     # --- Constraints ---
     def create_constraint(
-        self, type: int, body1: int, body2: int, params: Any = None, motor: Any = None
+        self,
+        type: int,
+        body1: int,
+        body2: int,
+        params: float | Sequence[float] | Sequence[float | Sequence[float]] | None = None,
+        motor: dict[str, float | int] | None = None,
     ) -> int: ...
     def destroy_constraint(self, handle: int) -> None: ...
     def set_constraint_target(self, handle: int, target: float) -> None: ...
@@ -285,18 +301,17 @@ class PhysicsWorld:
         buoyancy: float = 1.0,
         linear_drag: float = 0.5,
         angular_drag: float = 0.5,
-        dt: float = 1.0 / 60.0,
+        dt: float = ...,
         fluid_velocity: Vec3 = (0, 0, 0),
-    ) -> bool:
-        ...
+    ) -> bool: ...
     def apply_buoyancy_batch(
         self,
-        handles: Any,
+        handles: Buffer | list[int],
         surface_y: float = 0.0,
         buoyancy: float = 1.0,
         linear_drag: float = 0.5,
         angular_drag: float = 0.5,
-        dt: float = 1.0 / 60.0,
+        dt: float = ...,
         fluid_velocity: Vec3 = (0, 0, 0),
     ) -> None: ...
 
@@ -318,33 +333,28 @@ class PhysicsWorld:
     def deactivate(self, handle: int) -> None: ...
 
     # --- Getters & Queries ---
-    def get_body_stats(self, handle: int) -> tuple[Vec3, Quat, Vec3] | None:
-        ...
+    def get_body_stats(self, handle: int) -> tuple[Vec3, Quat, Vec3] | None: ...
     def get_index(self, handle: int) -> int | None: ...
     def is_alive(self, handle: int) -> bool: ...
-    def is_active(self, handle: int) -> bool:
-        ...
-    def get_motion_type(self, handle: int) -> int | None:
-        ...
-    def get_user_data(self, handle: int) -> int | None:
-        ...
-
+    def is_active(self, handle: int) -> bool: ...
+    def get_motion_type(self, handle: int) -> int | None: ...
+    def get_user_data(self, handle: int) -> int | None: ...
     def raycast(
         self, start: Vec3, direction: Vec3, max_dist: float = 1000.0, ignore: int = 0
     ) -> tuple[int, float, Vec3] | None: ...
-    def raycast_batch(self, starts: Any, directions: Any, max_dist: float = 1000.0) -> bytes: ...
+    def raycast_batch(
+        self, starts: Buffer, directions: Buffer, max_dist: float = 1000.0
+    ) -> bytes: ...
     def shapecast(
-        self, shape: int, pos: Vec3, rot: Quat, dir: Vec3, size: Any = None, ignore: int = 0
+        self, shape: int, pos: Vec3, rot: Quat, dir: Vec3, size: ShapeSize = None, ignore: int = 0
     ) -> tuple[int, float, Vec3, Vec3] | None: ...
     def overlap_sphere(self, center: Vec3, radius: float) -> list[int]: ...
     def overlap_aabb(self, min: Vec3, max: Vec3) -> list[int]: ...
 
     # --- Events and Debug ---
     def get_contact_events(self) -> list[tuple[int, int]]: ...
-    def get_contact_events_ex(self) -> list[ContactEvent]:
-        ...
-    def get_contact_events_raw(self) -> memoryview:
-        ...
+    def get_contact_events_ex(self) -> list[ContactEvent]: ...
+    def get_contact_events_raw(self) -> memoryview: ...
     def get_debug_data(
         self,
         shapes: bool = True,
@@ -359,7 +369,7 @@ class PhysicsWorld:
     def load_state(self, state: bytes) -> None: ...
 
     # --- Internal / Benchmarking ---
-    def _benchmark_parse(self, *args: Any, **kwargs: Any) -> None: ...
+    def _benchmark_parse(self, *args: object, **kwargs: object) -> None: ...
     def _benchmark_build(
         self,
     ) -> tuple[
@@ -376,5 +386,4 @@ class PhysicsWorld:
         Literal[False],
     ]: ...
 
-def _dump_schema_json() -> None:
-    ...
+def _dump_schema_json() -> None: ...

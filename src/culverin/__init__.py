@@ -4,6 +4,8 @@ from pathlib import Path
 
 from . import _culverin_c
 
+__version__ = _culverin_c.__version__
+
 # --- Windows DLL Resolution Fix ---
 if sys.platform == "win32":
     clang_path = os.environ.get("CLANG_BIN_PATH")
@@ -64,6 +66,7 @@ _culverin_c.PhysicsWorld.get_position = get_position  # type: ignore
 _culverin_c.PhysicsWorld.get_rotation = get_rotation  # type: ignore
 _culverin_c.PhysicsWorld.get_velocity = get_velocity  # type: ignore
 _culverin_c.PhysicsWorld.__repr__ = world_repr  # type: ignore
+
 
 # 4. EXPOSE THE C CLASS
 PhysicsWorld = _culverin_c.PhysicsWorld

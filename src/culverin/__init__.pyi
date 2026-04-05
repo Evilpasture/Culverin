@@ -1,4 +1,4 @@
-
+__version__: str
 # Re-export from the Python helper
 from ._culverin import (
     Automatic,
