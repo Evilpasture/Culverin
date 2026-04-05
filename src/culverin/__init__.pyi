@@ -1,31 +1,83 @@
-from __future__ import annotations
-
-# Re-export from the compiled artifact
-from ._culverin_c import (
-    # Core Classes
-    PhysicsWorld, Character, Vehicle, Ragdoll, RagdollSettings, Skeleton,
-
-    WheelConfig, TrackConfig,
-    
-    # Constants
-    SHAPE_BOX, SHAPE_SPHERE, SHAPE_CAPSULE, SHAPE_CYLINDER, SHAPE_PLANE, SHAPE_MESH, SHAPE_HEIGHTFIELD, SHAPE_CONVEX_HULL,
-    MOTION_STATIC, MOTION_KINEMATIC, MOTION_DYNAMIC,
-    CONSTRAINT_FIXED, CONSTRAINT_POINT, CONSTRAINT_HINGE, CONSTRAINT_SLIDER, CONSTRAINT_DISTANCE, CONSTRAINT_CONE,
-    EVENT_ADDED, EVENT_PERSISTED, EVENT_REMOVED,
-)
 
 # Re-export from the Python helper
 from ._culverin import (
-    Engine, Transmission, Automatic, Manual,
-    WheelConfig, TrackConfig,
+    Automatic,
+    Engine,
+    Manual,
+    TrackConfig,
+    Transmission,
+    WheelConfig,
+    euler_to_quat,
+    load_urdf,
+    parse_urdf,
+)
+
+# Re-export from the compiled artifact
+from ._culverin_c import (
+    CONSTRAINT_CONE,
+    CONSTRAINT_DISTANCE,
+    CONSTRAINT_FIXED,
+    CONSTRAINT_HINGE,
+    CONSTRAINT_POINT,
+    CONSTRAINT_SLIDER,
+    EVENT_ADDED,
+    EVENT_PERSISTED,
+    EVENT_REMOVED,
+    MOTION_DYNAMIC,
+    MOTION_KINEMATIC,
+    MOTION_STATIC,
+    # Constants
+    SHAPE_BOX,
+    SHAPE_CAPSULE,
+    SHAPE_CONVEX_HULL,
+    SHAPE_CYLINDER,
+    SHAPE_HEIGHTFIELD,
+    SHAPE_MESH,
+    SHAPE_PLANE,
+    SHAPE_SPHERE,
+    Character,
+    # Core Classes
+    PhysicsWorld,
+    Ragdoll,
+    RagdollSettings,
+    Skeleton,
+    Vehicle,
 )
 
 __all__ = [
-    "PhysicsWorld", "Character", "Vehicle", "Ragdoll", "RagdollSettings", "Skeleton",
-    "Engine", "Transmission", "Automatic", "Manual",
-    "WheelConfig", "TrackConfig",
-    "SHAPE_BOX", "SHAPE_SPHERE", "SHAPE_CAPSULE", "SHAPE_CYLINDER", "SHAPE_PLANE", "SHAPE_MESH", "SHAPE_HEIGHTFIELD", "SHAPE_CONVEX_HULL",
-    "MOTION_STATIC", "MOTION_KINEMATIC", "MOTION_DYNAMIC",
-    "CONSTRAINT_FIXED", "CONSTRAINT_POINT", "CONSTRAINT_HINGE", "CONSTRAINT_SLIDER", "CONSTRAINT_DISTANCE", "CONSTRAINT_CONE",
-    "EVENT_ADDED", "EVENT_PERSISTED", "EVENT_REMOVED",
+    "CONSTRAINT_CONE",
+    "CONSTRAINT_DISTANCE",
+    "CONSTRAINT_FIXED",
+    "CONSTRAINT_HINGE",
+    "CONSTRAINT_POINT",
+    "CONSTRAINT_SLIDER",
+    "EVENT_ADDED",
+    "EVENT_PERSISTED",
+    "EVENT_REMOVED",
+    "MOTION_DYNAMIC",
+    "MOTION_KINEMATIC",
+    "MOTION_STATIC",
+    "SHAPE_BOX",
+    "SHAPE_CAPSULE",
+    "SHAPE_CONVEX_HULL",
+    "SHAPE_CYLINDER",
+    "SHAPE_HEIGHTFIELD",
+    "SHAPE_MESH",
+    "SHAPE_PLANE",
+    "SHAPE_SPHERE",
+    "Automatic",
+    "Character",
+    "Engine",
+    "Manual",
+    "PhysicsWorld",
+    "Ragdoll",
+    "RagdollSettings",
+    "Skeleton",
+    "TrackConfig",
+    "Transmission",
+    "Vehicle",
+    "WheelConfig",
+    "euler_to_quat",
+    "load_urdf",
+    "parse_urdf",
 ]

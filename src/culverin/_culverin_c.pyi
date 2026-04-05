@@ -5,15 +5,16 @@ Using Python built-in generics for modern DX.
 
 # Note: Some methods compiled with STRICT_HANDLE_ENABLED will crash with ValueError. Otherwise, returns None or silent.
 
-from __future__ import annotations
-from typing import Any, Sequence, TypedDict
-from typing import Any, Literal
+
+from collections.abc import Sequence
+from typing import Any, Literal, TypedDict
 
 class ContactEvent(TypedDict):
     """
     Schema for individual collision events.
     Matches the C-extension implementation keys.
     """
+
     bodies: tuple[int, int]
     position: tuple[float, float, float]
     normal: tuple[float, float, float]
@@ -48,16 +49,16 @@ EVENT_PERSISTED: int = 1
 EVENT_REMOVED: int = 2
 
 # --- Type Aliases ---
-Vec3 = tuple[float, float, float]
-Quat = tuple[float, float, float, float]
+type Vec3 = tuple[float, float, float]
+type Quat = tuple[float, float, float, float]
 
 class WheelConfig(TypedDict):
     pos: tuple[float, float, float]
     radius: float
 
 class TrackConfig(TypedDict):
-    indices: list[int]      # The indices of the wheels this track wraps
-    driven_wheel: int       # The index of the wheel providing torque
+    indices: list[int]  # The indices of the wheels this track wraps
+    driven_wheel: int  # The index of the wheel providing torque
 
 class Character:
     @property
@@ -77,18 +78,20 @@ class Skeleton:
     def get_joint_index(self, name: str) -> int: ...
 
 class RagdollSettings:
-    def add_part(self, 
-                 joint_index: int, 
-                 shape_type: int, 
-                 size: Any, 
-                 mass: float = 10.0, 
-                 parent_index: int = -1, 
-                 twist_min: float = -0.1, 
-                 twist_max: float = 0.1, 
-                 cone_angle: float = 0.0, 
-                 axis: Vec3 = (1.0, 0.0, 0.0), 
-                 normal: Vec3 = (0.0, 1.0, 0.0), 
-                 pos: Vec3 = (0.0, 0.0, 0.0)) -> None: ...
+    def add_part(
+        self,
+        joint_index: int,
+        shape_type: int,
+        size: Any,
+        mass: float = 10.0,
+        parent_index: int = -1,
+        twist_min: float = -0.1,
+        twist_max: float = 0.1,
+        cone_angle: float = 0.0,
+        axis: Vec3 = (1.0, 0.0, 0.0),
+        normal: Vec3 = (0.0, 1.0, 0.0),
+        pos: Vec3 = (0.0, 0.0, 0.0),
+    ) -> None: ...
     def stabilize(self) -> bool: ...
 
 class Ragdoll:
@@ -103,7 +106,9 @@ class Vehicle:
     def get_debug_state(self) -> None: ...
     def get_wheel_local_transform(self, index: int) -> tuple[Vec3, Quat]: ...
     def get_wheel_transform(self, index: int) -> tuple[Vec3, Quat]: ...
-    def set_input(self, forward: float = 0.0, right: float = 0.0, brake: float = 0.0, handbrake: float = 0.0) -> None: ...
+    def set_input(
+        self, forward: float = 0.0, right: float = 0.0, brake: float = 0.0, handbrake: float = 0.0
+    ) -> None: ...
     def set_tank_input(self, left: float, right: float, brake: float = 0.0) -> None: ...
 
 class PhysicsWorld:
@@ -132,38 +137,125 @@ class PhysicsWorld:
     def remaining_capacity(self) -> int: ...
 
     # High-level Python helpers
-    def get_position(self, handle: int) -> Vec3: 
-        """Returns the world position of the body as (x, y, z)."""
+    def get_position(self, handle: int) -> Vec3:
         ...
-        
-    def get_rotation(self, handle: int) -> Quat: 
-        """Returns the world rotation as a quaternion (x, y, z, w)."""
+
+    def get_rotation(self, handle: int) -> Quat:
         ...
-        
-    def get_velocity(self, handle: int) -> Vec3: 
-        """Returns the linear velocity as (vx, vy, vz)."""
+
+    def get_velocity(self, handle: int) -> Vec3:
         ...
 
     # --- Lifecycle ---
-    def __init__(self, settings: dict[str, Any] | None = None, bodies: list[dict[str, Any]] | None = None) -> None: ...
-    def step(self, dt: float = 1.0/60.0) -> None: ...
+    def __init__(
+        self, settings: dict[str, Any] | None = None, bodies: list[dict[str, Any]] | None = None
+    ) -> None: ...
+    def step(self, dt: float = 1.0 / 60.0) -> None: ...
 
     # --- Creation ---
-    def create_body(self, pos: Vec3 | None = None, rot: Quat | None = None, size: Any = None, 
-                    shape: int = 0, motion: int = 2, user_data: int = 0, is_sensor: bool = False, 
-                    mass: float = -1.0, category: int = 0xFFFF, mask: int = 0xFFFF, 
-                    friction: float = 0.2, restitution: float = 0.0, material_id: int = 0, 
-                    ccd: bool = False) -> int: ...
-
-    def create_bodies_batch(self, positions: list[Vec3], sizes: list[Any], shape_type: int = 0, motion_type: int = 2) -> list[int]: ...
-    def create_mesh_body(self, pos: Vec3, rot: Quat, vertices: Any, indices: Any, user_data: int = 0, category: int = 0xFFFF, mask: int = 0xFFFF) -> int: ...
-    def create_convex_hull(self, pos: Vec3, rot: Quat, points: Any, motion: int = 2, mass: float = -1.0, user_data: int = 0, is_sensor: bool = False, category: int = 0xFFFF, mask: int = 0xFFFF, material_id: int = 0, friction: float = 0.2, restitution: float = 0.0, ccd: bool = False) -> int: ...
-    def create_compound_body(self, pos: Vec3, rot: Quat, parts: Sequence[tuple[Vec3, Quat, int, Any]], motion: int = 2, mass: float = -1.0, user_data: int = 0, is_sensor: bool = False, category: int = 0xFFFF, mask: int = 0xFFFF, material_id: int = 0, friction: float = 0.2, restitution: float = 0.0, ccd: bool = False) -> int: ...
-    def create_heightfield(self, pos: Vec3, rot: Quat, scale: Vec3, heights: Any, grid_size: int, user_data: int = 0, category: int = 0xFFFF, mask: int = 0xFFFF, material_id: int = 0, friction: float = 0.5, restitution: float = 0.0) -> int: ...
-    def create_character(self, pos: Vec3, height: float=1.8, radius: float=0.4, step_height: float=0.4, max_slope: float=45.0) -> Character: ...
-    def create_vehicle(self, chassis: int, wheels: list[WheelConfig], drive: str = "RWD", engine: Any = None, transmission: Any = None) -> Vehicle: ...
-    def create_tracked_vehicle(self, chassis: int, wheels: list[WheelConfig], tracks: list[TrackConfig], max_torque: float = 5000.0, max_rpm: float = 6000.0) -> Vehicle: ...
-    def create_ragdoll(self, settings: RagdollSettings, pos: Vec3, rot: Quat = (0,0,0,1)) -> Ragdoll: ...
+    def create_body(
+        self,
+        pos: Vec3 | None = None,
+        rot: Quat | None = None,
+        size: Any = None,
+        shape: int = 0,
+        motion: int = 2,
+        user_data: int = 0,
+        is_sensor: bool = False,
+        mass: float = -1.0,
+        category: int = 0xFFFF,
+        mask: int = 0xFFFF,
+        friction: float = 0.2,
+        restitution: float = 0.0,
+        material_id: int = 0,
+        ccd: bool = False,
+    ) -> int: ...
+    def create_bodies_batch(
+        self, positions: list[Vec3], sizes: list[Any], shape_type: int = 0, motion_type: int = 2
+    ) -> list[int]: ...
+    def create_mesh_body(
+        self,
+        pos: Vec3,
+        rot: Quat,
+        vertices: Any,
+        indices: Any,
+        user_data: int = 0,
+        category: int = 0xFFFF,
+        mask: int = 0xFFFF,
+    ) -> int: ...
+    def create_convex_hull(
+        self,
+        pos: Vec3,
+        rot: Quat,
+        points: Any,
+        motion: int = 2,
+        mass: float = -1.0,
+        user_data: int = 0,
+        is_sensor: bool = False,
+        category: int = 0xFFFF,
+        mask: int = 0xFFFF,
+        material_id: int = 0,
+        friction: float = 0.2,
+        restitution: float = 0.0,
+        ccd: bool = False,
+    ) -> int: ...
+    def create_compound_body(
+        self,
+        pos: Vec3,
+        rot: Quat,
+        parts: Sequence[tuple[Vec3, Quat, int, Any]],
+        motion: int = 2,
+        mass: float = -1.0,
+        user_data: int = 0,
+        is_sensor: bool = False,
+        category: int = 0xFFFF,
+        mask: int = 0xFFFF,
+        material_id: int = 0,
+        friction: float = 0.2,
+        restitution: float = 0.0,
+        ccd: bool = False,
+    ) -> int: ...
+    def create_heightfield(
+        self,
+        pos: Vec3,
+        rot: Quat,
+        scale: Vec3,
+        heights: Any,
+        grid_size: int,
+        user_data: int = 0,
+        category: int = 0xFFFF,
+        mask: int = 0xFFFF,
+        material_id: int = 0,
+        friction: float = 0.5,
+        restitution: float = 0.0,
+    ) -> int: ...
+    def create_character(
+        self,
+        pos: Vec3,
+        height: float = 1.8,
+        radius: float = 0.4,
+        step_height: float = 0.4,
+        max_slope: float = 45.0,
+    ) -> Character: ...
+    def create_vehicle(
+        self,
+        chassis: int,
+        wheels: list[WheelConfig],
+        drive: str = "RWD",
+        engine: Any = None,
+        transmission: Any = None,
+    ) -> Vehicle: ...
+    def create_tracked_vehicle(
+        self,
+        chassis: int,
+        wheels: list[WheelConfig],
+        tracks: list[TrackConfig],
+        max_torque: float = 5000.0,
+        max_rpm: float = 6000.0,
+    ) -> Vehicle: ...
+    def create_ragdoll(
+        self, settings: RagdollSettings, pos: Vec3, rot: Quat = (0, 0, 0, 1)
+    ) -> Ragdoll: ...
     def create_ragdoll_settings(self, skeleton: Skeleton) -> RagdollSettings: ...
 
     # --- Destruction ---
@@ -171,21 +263,42 @@ class PhysicsWorld:
     def destroy_bodies_batch(self, handles: Any) -> None: ...
 
     # --- Constraints ---
-    def create_constraint(self, type: int, body1: int, body2: int, params: Any = None, motor: Any = None) -> int: ...
+    def create_constraint(
+        self, type: int, body1: int, body2: int, params: Any = None, motor: Any = None
+    ) -> int: ...
     def destroy_constraint(self, handle: int) -> None: ...
     def set_constraint_target(self, handle: int, target: float) -> None: ...
     def get_constraint_type(self, handle: int) -> int: ...
 
     # --- Forces ---
     def apply_impulse(self, handle: int, x: float, y: float, z: float) -> None: ...
-    def apply_impulse_at(self, handle: int, ix: float, iy: float, iz: float, px: float, py: float, pz: float) -> None: ...
+    def apply_impulse_at(
+        self, handle: int, ix: float, iy: float, iz: float, px: float, py: float, pz: float
+    ) -> None: ...
     def apply_force(self, handle: int, x: float, y: float, z: float) -> None: ...
     def apply_torque(self, handle: int, x: float, y: float, z: float) -> None: ...
     def apply_angular_impulse(self, handle: int, x: float, y: float, z: float) -> None: ...
-    def apply_buoyancy(self, handle: int, surface_y: float, buoyancy: float = 1.0, linear_drag: float = 0.5, angular_drag: float = 0.5, dt: float = 1.0/60.0, fluid_velocity: Vec3 = (0,0,0)) -> bool: 
-        """Returns False if handle is stale."""
+    def apply_buoyancy(
+        self,
+        handle: int,
+        surface_y: float,
+        buoyancy: float = 1.0,
+        linear_drag: float = 0.5,
+        angular_drag: float = 0.5,
+        dt: float = 1.0 / 60.0,
+        fluid_velocity: Vec3 = (0, 0, 0),
+    ) -> bool:
         ...
-    def apply_buoyancy_batch(self, handles: Any, surface_y: float = 0.0, buoyancy: float = 1.0, linear_drag: float = 0.5, angular_drag: float = 0.5, dt: float = 1.0/60.0, fluid_velocity: Vec3 = (0,0,0)) -> None: ...
+    def apply_buoyancy_batch(
+        self,
+        handles: Any,
+        surface_y: float = 0.0,
+        buoyancy: float = 1.0,
+        linear_drag: float = 0.5,
+        angular_drag: float = 0.5,
+        dt: float = 1.0 / 60.0,
+        fluid_velocity: Vec3 = (0, 0, 0),
+    ) -> None: ...
 
     # --- Setters ---
     def set_position(self, handle: int, x: float, y: float, z: float) -> None: ...
@@ -198,78 +311,48 @@ class PhysicsWorld:
     def set_motion_type(self, handle: int, motion: int) -> None: ...
     def set_collision_filter(self, handle: int, category: int, mask: int) -> None: ...
     def set_user_data(self, handle: int, data: int) -> None: ...
-    def register_material(self, id: int, friction: float = 0.5, restitution: float = 0.0) -> None: ...
+    def register_material(
+        self, id: int, friction: float = 0.5, restitution: float = 0.0
+    ) -> None: ...
     def activate(self, handle: int) -> None: ...
     def deactivate(self, handle: int) -> None: ...
 
     # --- Getters & Queries ---
     def get_body_stats(self, handle: int) -> tuple[Vec3, Quat, Vec3] | None:
-        """Returns None when handle is stale. Exception when compiled with STRICT_HANDLE_ENABLED"""
         ...
     def get_index(self, handle: int) -> int | None: ...
     def is_alive(self, handle: int) -> bool: ...
     def is_active(self, handle: int) -> bool:
-        """
-        Check if a body is currently active (simulating) or sleeping.
-        
-        Args:
-            body_handle: The unique handle of the body to check.
-            
-        Returns:
-            True if the body is active, False if it is sleeping or invalid.
-        """
         ...
     def get_motion_type(self, handle: int) -> int | None:
-        """Returns None when handle is stale. Exception when compiled with STRICT_HANDLE_ENABLED"""
         ...
-    def get_user_data(self, handle: int) -> int | None: 
-        """Returns None when handle is stale. Exception when compiled with STRICT_HANDLE_ENABLED"""
+    def get_user_data(self, handle: int) -> int | None:
         ...
 
-    def raycast(self, start: Vec3, direction: Vec3, max_dist: float = 1000.0, ignore: int = 0) -> tuple[int, float, Vec3] | None: ...
+    def raycast(
+        self, start: Vec3, direction: Vec3, max_dist: float = 1000.0, ignore: int = 0
+    ) -> tuple[int, float, Vec3] | None: ...
     def raycast_batch(self, starts: Any, directions: Any, max_dist: float = 1000.0) -> bytes: ...
-    def shapecast(self, shape: int, pos: Vec3, rot: Quat, dir: Vec3, size: Any = None, ignore: int = 0) -> tuple[int, float, Vec3, Vec3] | None: ...
+    def shapecast(
+        self, shape: int, pos: Vec3, rot: Quat, dir: Vec3, size: Any = None, ignore: int = 0
+    ) -> tuple[int, float, Vec3, Vec3] | None: ...
     def overlap_sphere(self, center: Vec3, radius: float) -> list[int]: ...
     def overlap_aabb(self, min: Vec3, max: Vec3) -> list[int]: ...
 
     # --- Events and Debug ---
     def get_contact_events(self) -> list[tuple[int, int]]: ...
     def get_contact_events_ex(self) -> list[ContactEvent]:
-        """
-        Retrieves a list of collision events for the current frame.
-        
-        Performance Note: 
-        This method is O(N) where N is the number of contacts. It allocates 
-        Python dictionaries. For high-frequency ML training loops (10k+ bodies), 
-        prefer `get_contact_events_raw()` with a NumPy structured array to 
-        avoid allocation overhead.
-        
-        Returns:
-            list[ContactEvent]: A list of dictionary objects detailing contact dynamics.
-        """
         ...
-    def get_contact_events_raw(self) -> memoryview: 
-        """
-        Returns a read-only memoryview of the contact buffer snapshot.
-        
-        The returned memoryview contains an array of structs. Each struct is 
-        64 bytes. You can interpret this data using the `struct` module 
-        or by casting the memoryview.
-        
-        Binary Layout (Format: "{<QQfffffffffIIII}"):
-        - body1 (uint64)
-        - body2 (uint64)
-        - px, py, pz (float32)
-        - nx, ny, nz (float32)
-        - impulse (float32)
-        - sliding_speed_sq (float32)
-        - mat1 (uint32)
-        - mat2 (uint32)
-        - type (uint32)
-        - _pad (uint32)
-        """
+    def get_contact_events_raw(self) -> memoryview:
         ...
-    def get_debug_data(self, shapes: bool = True, constraints: bool = True, bbox: bool = False, centers: bool = False, wireframe: bool = True) -> tuple[bytes, bytes]: ...
+    def get_debug_data(
+        self,
+        shapes: bool = True,
+        constraints: bool = True,
+        bbox: bool = False,
+        centers: bool = False,
+        wireframe: bool = True,
+    ) -> tuple[bytes, bytes]: ...
     def get_active_indices(self) -> bytes: ...
     def get_render_state(self, alpha: float) -> bytes: ...
     def save_state(self) -> bytes: ...
@@ -277,14 +360,21 @@ class PhysicsWorld:
 
     # --- Internal / Benchmarking ---
     def _benchmark_parse(self, *args: Any, **kwargs: Any) -> None: ...
-
-    def _benchmark_build(self) -> tuple[int, float, float, str, bool, Literal[100], float, Literal["Lorem ipsum dolor sit amet consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua."], Literal[False]]: ...
+    def _benchmark_build(
+        self,
+    ) -> tuple[
+        int,
+        float,
+        float,
+        str,
+        bool,
+        Literal[100],
+        float,
+        Literal[
+            "Lorem ipsum dolor sit amet consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua."
+        ],
+        Literal[False],
+    ]: ...
 
 def _dump_schema_json() -> None:
-    """
-    Internal: Dumps schema to culverin_schema.json
-    
-    This is a low-level C extension method. It performs file I/O 
-    directly and may raise OSError if the file cannot be opened.
-    """
     ...

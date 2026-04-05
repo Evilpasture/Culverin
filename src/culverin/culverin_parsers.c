@@ -1,5 +1,6 @@
 #include "culverin_parsers.h"
 #include "culverin_compiler_specifics.h"
+#include "culverin.h"
 
 /**
  * INTERNAL HELPER: parse_sequence_to_floats

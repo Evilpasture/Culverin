@@ -53,7 +53,7 @@ PyCFunction_DeclareMethodFromModule Ragdoll_drive_to_pose(RagdollObject *self,
                                                           PyObject *const *args, Py_ssize_t nargs,
                                                           PyObject *kwnames);
 
-PyCFunction_DeclareMethodFromModule Ragdoll_get_body_ids(RagdollObject *self, PyObject *args);
+PyCFunction_DeclareMethodFromModule Ragdoll_get_body_handles(RagdollObject *self, PyObject *args);
 
 PyCFunction_DeclareMethodFromModule Ragdoll_get_debug_info(RagdollObject *self,
                                                            PyObject *Py_UNUSED(ignored));

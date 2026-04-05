@@ -29,6 +29,12 @@ typedef struct {
     float x, y, z, w;
 } AuxStride;
 
+typedef struct {
+    float x;
+    float y;
+    float z;
+} Vec3f; // General Vec3f
+
 // Sanity check sizes
 static_assert(sizeof(PosStride) == sizeof(JPH_Real) * 4);
 static_assert(sizeof(AuxStride) == sizeof(float) * 4);

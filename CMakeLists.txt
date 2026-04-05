@@ -385,10 +385,15 @@ target_compile_definitions(_culverin_c PRIVATE
 )
 
 target_include_directories(_culverin_c PRIVATE 
+    "${CMAKE_CURRENT_SOURCE_DIR}"
     "src/culverin"
     SYSTEM "extern/JoltC/include" 
     SYSTEM "${JOLT_DIR}" 
     ${Python_INCLUDE_DIRS}
+)
+
+target_compile_definitions(_culverin_c PRIVATE 
+    CULVERIN_DOCS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/docs/DOCS.md"
 )
 
 if(WIN32)

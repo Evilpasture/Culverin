@@ -2,8 +2,6 @@
 #    define _CRT_SECURE_NO_WARNINGS
 #endif
 
-#include "joltc.h"
-#include <stdatomic.h>
 #include "culverin.h"
 #include "culverin_arg_indices.h"
 #include "culverin_character.h"
@@ -20,6 +18,8 @@
 #include "culverin_ragdoll.h"
 #include "culverin_shadow_sync.h"
 #include "culverin_vehicle.h"
+#include "joltc.h"
+#include <stdatomic.h>
 
 // ============================================================================
 // Semantic Constants - Magic Number Replacements
@@ -309,6 +309,7 @@ fail:
 PyCFunction_DeclareMethod PhysicsWorld_apply_impulse(PhysicsWorldObject *self,
                                                      PyObject *const *args, size_t nargsf,
                                                      PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. FAST PARSE
     // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
     uint64_t h_raw;
@@ -323,7 +324,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_impulse(PhysicsWorldObject *self,
     targets[IDX_V3_Z] = &z;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &ImpulseParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.ImpulseParser, targets)) {
         return nullptr;
     }
 
@@ -384,6 +385,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_impulse(PhysicsWorldObject *self,
 PyCFunction_DeclareMethod PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self,
                                                         PyObject *const *args, size_t nargsf,
                                                         PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. FAST PARSE
     // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
     uint64_t h_raw;
@@ -404,7 +406,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self
     targets[IDX_IMPAT_PZ] = (void *)&pz;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &ImpulseAtParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.ImpulseAtParser, targets)) {
         return nullptr;
     }
 
@@ -464,6 +466,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self
 PyCFunction_DeclareMethod PhysicsWorld_apply_angular_impulse(PhysicsWorldObject *self,
                                                              PyObject *const *args, size_t nargsf,
                                                              PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. FAST PARSE
     // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
     uint64_t h_raw;
@@ -478,7 +481,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_angular_impulse(PhysicsWorldObject 
     targets[IDX_V3_Z] = (void *)&z;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &AngImpulseParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.AngImpulseParser, targets)) {
         return nullptr;
     }
 
@@ -536,6 +539,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_angular_impulse(PhysicsWorldObject 
 
 PyCFunction_DeclareMethod PhysicsWorld_apply_force(PhysicsWorldObject *self, PyObject *const *args,
                                                    size_t nargsf, PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. FAST PARSE
     // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
     uint64_t h_raw;
@@ -550,7 +554,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_force(PhysicsWorldObject *self, PyO
     targets[IDX_V3_Z] = &z;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &ForceParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.ForceParser, targets)) {
         return nullptr;
     }
 
@@ -610,6 +614,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_force(PhysicsWorldObject *self, PyO
 
 PyCFunction_DeclareMethod PhysicsWorld_apply_torque(PhysicsWorldObject *self, PyObject *const *args,
                                                     size_t nargsf, PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. FAST PARSE
     // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
     uint64_t h_raw;
@@ -624,7 +629,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_torque(PhysicsWorldObject *self, Py
     targets[IDX_V3_Z] = &z;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &TorqueParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.TorqueParser, targets)) {
         return nullptr;
     }
 
@@ -684,6 +689,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_torque(PhysicsWorldObject *self, Py
 
 PyCFunction_DeclareMethod PhysicsWorld_set_gravity(PhysicsWorldObject *self, PyObject *const *args,
                                                    size_t nargsf, PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. FAST PARSE (Unchanged)
     float x;
     float y;
@@ -695,7 +701,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_gravity(PhysicsWorldObject *self, PyO
     targets[IDX_XYZ_Z] = &z;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &GravityParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.GravityParser, targets)) {
         return nullptr;
     }
 
@@ -736,6 +742,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_gravity(PhysicsWorldObject *self, PyO
 PyCFunction_DeclareMethod PhysicsWorld_get_body_stats(PhysicsWorldObject *self,
                                                       PyObject *const *args, size_t nargsf,
                                                       PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. FAST PARSE
     // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
     uint64_t h_raw;
@@ -743,7 +750,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_body_stats(PhysicsWorldObject *self,
     targets[IDX_H_H] = (void *)&h_raw;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &HOnlyParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.HOnlyParser, targets)) {
         return nullptr;
     }
 
@@ -787,6 +794,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_body_stats(PhysicsWorldObject *self,
 PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self,
                                                       PyObject *const *args, size_t nargsf,
                                                       PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. DEFAULT VALUES
     // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
     uint64_t h_raw;
@@ -808,7 +816,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self,
     targets[IDX_BUOY_VEL]       = (void *)&o_vel;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &BuoyParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.BuoyParser, targets)) {
         return nullptr;
     }
 
@@ -882,6 +890,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self,
 PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy_batch(PhysicsWorldObject *self,
                                                             PyObject *const *args, size_t nargsf,
                                                             PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. DEFAULT VALUES (Unchanged)
     PyObject *o_handles = nullptr;
     JPH_Real surface_y  = 0.0;
@@ -902,7 +911,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy_batch(PhysicsWorldObject *
     targets[IDX_BBUOY_VEL]       = (void *)&o_vel;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &BatchBuoyParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.BatchBuoyParser, targets)) {
         return nullptr;
     }
 
@@ -1078,11 +1087,12 @@ PyCFunction_DeclareMethod PhysicsWorld_save_state(PhysicsWorldObject *self,
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 PyCFunction_DeclareMethod PhysicsWorld_load_state(PhysicsWorldObject *self, PyObject *const *args,
                                                   Py_ssize_t nargs, PyObject *kwnames) {
+    CulverinState *st   = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     PyObject *state_obj = nullptr;
     void *targets[LoadState_COUNT];
     targets[IDX_LS_STATE] = (void *)&state_obj;
 
-    if (!FastParse_Unified(args, nargs, kwnames, &LoadStateParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.LoadStateParser, targets)) {
         return nullptr;
     }
 
@@ -1234,12 +1244,13 @@ size_fail:
 
 PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *const *args,
                                             size_t nargsf, PyObject *kwnames) {
-    float dt = DEFAULT_FRAME_TIME;
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+    float dt          = DEFAULT_FRAME_TIME;
     void *targets[Step_COUNT];
     targets[IDX_STEP_DT] = (void *)&dt;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &StepParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.StepParser, targets)) {
         return nullptr;
     }
 
@@ -1374,6 +1385,7 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
 PyCFunction_DeclareMethod PhysicsWorld_create_convex_hull(PhysicsWorldObject *self,
                                                           PyObject *const *args, size_t nargsf,
                                                           PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. DEFAULT VALUES
     PyObject *o_pos      = nullptr;
     PyObject *o_rot      = nullptr;
@@ -1406,7 +1418,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_convex_hull(PhysicsWorldObject *se
     targets[IDX_HC_CCD]       = (void *)&use_ccd;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &ConvexHullParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.ConvexHullParser, targets)) {
         return nullptr;
     }
 
@@ -1731,6 +1743,7 @@ static void apply_body_creation_props(JPH_BodyCreationSettings *settings, JPH_Sh
 PyCFunction_DeclareMethod PhysicsWorld_create_compound_body(PhysicsWorldObject *self,
                                                             PyObject *const *args, size_t nargsf,
                                                             PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. DEFAULT VALUES
     PyObject *o_pos      = nullptr;
     PyObject *o_rot      = nullptr;
@@ -1764,7 +1777,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_compound_body(PhysicsWorldObject *
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     // Use the HullCompParser initialized via X-Macro
-    if (!FastParse_Unified(args, nargs, kwnames, &CompoundParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.CompoundParser, targets)) {
         return nullptr;
     }
 
@@ -1957,7 +1970,8 @@ static void configure_body_settings(JPH_BodyCreationSettings *settings, JPH_Shap
 // Main Orchestrator
 PyCFunction_DeclareMethod PhysicsWorld_create_body(PhysicsWorldObject *self, PyObject *const *args,
                                                    size_t nargsf, PyObject *kwnames) {
-    auto nargs = PyVectorcall_NARGS(nargsf);
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+    auto nargs        = PyVectorcall_NARGS(nargsf);
 
     // 1. DEFAULT VALUES
     JPH_Real px          = 0.0;
@@ -2002,7 +2016,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_body(PhysicsWorldObject *self, PyO
 
     // 3. THE FAST PARSE
     // We pass the global 'BodyParser' defined in the God Init helper
-    if (!FastParse_Unified(args, nargs, kwnames, &BodyParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.BodyParser, targets)) {
         return nullptr;
     }
 
@@ -2179,6 +2193,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_body(PhysicsWorldObject *self, PyO
 PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *self,
                                                            PyObject *const *args, size_t nargsf,
                                                            PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. FAST PARSE (Zero Lock Contention)
     PyObject *py_positions = nullptr;
     PyObject *py_sizes     = nullptr;
@@ -2198,7 +2213,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
     targets[IDX_BC_MOTION]    = (void *)&motion_type;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &BatchCreateParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.BatchCreateParser, targets)) {
         return nullptr;
     }
     // Initial Validation
@@ -2431,6 +2446,7 @@ static JPH_Shape *build_mesh_shape(const void *v_data, MeshBounds bounds,
 PyCFunction_DeclareMethod PhysicsWorld_create_mesh_body(PhysicsWorldObject *self,
                                                         PyObject *const *args, size_t nargsf,
                                                         PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. DEFAULT VALUES
     PyObject *o_pos     = nullptr;
     PyObject *o_rot     = nullptr;
@@ -2452,7 +2468,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_mesh_body(PhysicsWorldObject *self
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     // Use MeshParser initialized via SCHEMA_MESH
-    if (!FastParse_Unified(args, nargs, kwnames, &MeshParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.MeshParser, targets)) {
         return nullptr;
     }
 
@@ -2592,6 +2608,7 @@ buffer_fail:
 
 PyCFunction_DeclareMethod PhysicsWorld_destroy_body(PhysicsWorldObject *self, PyObject *const *args,
                                                     size_t nargsf, PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. FAST PARSE
     // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
     uint64_t h_raw;
@@ -2600,7 +2617,7 @@ PyCFunction_DeclareMethod PhysicsWorld_destroy_body(PhysicsWorldObject *self, Py
     targets[IDX_H_H] = &h_raw;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &DestroyParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.DestroyParser, targets)) {
         return nullptr;
     }
 
@@ -2646,13 +2663,14 @@ PyCFunction_DeclareMethod PhysicsWorld_destroy_body(PhysicsWorldObject *self, Py
 PyCFunction_DeclareMethod PhysicsWorld_destroy_bodies_batch(PhysicsWorldObject *self,
                                                             PyObject *const *args, size_t nargsf,
                                                             PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. FAST PARSE (Unchanged)
     PyObject *py_handles_in = nullptr;
     void *targets[BatchDestroy_COUNT];
     targets[IDX_BD_HANDLES] = (void *)&py_handles_in;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &BatchDestroyParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.BatchDestroyParser, targets)) {
         return nullptr;
     }
 
@@ -2715,6 +2733,7 @@ PyCFunction_DeclareMethod PhysicsWorld_destroy_bodies_batch(PhysicsWorldObject *
 
 PyCFunction_DeclareMethod PhysicsWorld_set_position(PhysicsWorldObject *self, PyObject *const *args,
                                                     size_t nargsf, PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. FAST PARSE
     // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
     uint64_t h_raw;
@@ -2729,7 +2748,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_position(PhysicsWorldObject *self, Py
     targets[IDX_SETPOS_Z]      = &z;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &SetPosParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.SetPosParser, targets)) {
         return nullptr;
     }
 
@@ -2784,6 +2803,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_position(PhysicsWorldObject *self, Py
 
 PyCFunction_DeclareMethod PhysicsWorld_set_rotation(PhysicsWorldObject *self, PyObject *const *args,
                                                     size_t nargsf, PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. FAST PARSE
     // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
     uint64_t h_raw;
@@ -2800,7 +2820,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_rotation(PhysicsWorldObject *self, Py
     targets[IDX_SETROT_W] = (void *)&w;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &SetRotParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.SetRotParser, targets)) {
         return nullptr;
     }
 
@@ -2860,6 +2880,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_rotation(PhysicsWorldObject *self, Py
 PyCFunction_DeclareMethod PhysicsWorld_set_linear_velocity(PhysicsWorldObject *self,
                                                            PyObject *const *args, size_t nargsf,
                                                            PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. FAST PARSE
     // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
     uint64_t h_raw;
@@ -2874,7 +2895,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_linear_velocity(PhysicsWorldObject *s
     targets[IDX_V3_Z] = &z;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &SetLinVelParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.SetLinVelParser, targets)) {
         return nullptr;
     }
 
@@ -2931,6 +2952,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_linear_velocity(PhysicsWorldObject *s
 PyCFunction_DeclareMethod PhysicsWorld_set_angular_velocity(PhysicsWorldObject *self,
                                                             PyObject *const *args, size_t nargsf,
                                                             PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. FAST PARSE
     // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
     uint64_t h_raw;
@@ -2945,7 +2967,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_angular_velocity(PhysicsWorldObject *
     targets[IDX_V3_Z] = &z;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &SetAngVelParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.SetAngVelParser, targets)) {
         return nullptr;
     }
 
@@ -3001,6 +3023,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_angular_velocity(PhysicsWorldObject *
 PyCFunction_DeclareMethod PhysicsWorld_get_motion_type(PhysicsWorldObject *self,
                                                        PyObject *const *args, size_t nargsf,
                                                        PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. FAST PARSE
     // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
     uint64_t h_raw;
@@ -3008,7 +3031,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_motion_type(PhysicsWorldObject *self,
     targets[IDX_H_H] = &h_raw;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &GetMotionParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.GetMotionParser, targets)) {
         return nullptr;
     }
 
@@ -3048,6 +3071,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_motion_type(PhysicsWorldObject *self,
 PyCFunction_DeclareMethod PhysicsWorld_set_motion_type(PhysicsWorldObject *self,
                                                        PyObject *const *args, size_t nargsf,
                                                        PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. FAST PARSE
     // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
     uint64_t h_raw;
@@ -3058,7 +3082,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_motion_type(PhysicsWorldObject *self,
     targets[IDX_SM_M] = (void *)&motion_type;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &SetMotionParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.SetMotionParser, targets)) {
         return nullptr;
     }
 
@@ -3103,6 +3127,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_motion_type(PhysicsWorldObject *self,
 PyCFunction_DeclareMethod PhysicsWorld_set_user_data(PhysicsWorldObject *self,
                                                      PyObject *const *args, size_t nargsf,
                                                      PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. FAST PARSE
     // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
     uint64_t h_raw;
@@ -3113,7 +3138,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_user_data(PhysicsWorldObject *self,
     targets[IDX_SUD_D] = (void *)&data_raw;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &SetUserDataParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.SetUserDataParser, targets)) {
         return nullptr;
     }
 
@@ -3161,6 +3186,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_user_data(PhysicsWorldObject *self,
 PyCFunction_DeclareMethod PhysicsWorld_get_user_data(PhysicsWorldObject *self,
                                                      PyObject *const *args, size_t nargsf,
                                                      PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. FAST PARSE
     // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
     uint64_t h_raw;
@@ -3168,7 +3194,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_user_data(PhysicsWorldObject *self,
     targets[IDX_H_H] = (void *)&h_raw;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &GetUserDataParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.GetUserDataParser, targets)) {
         return nullptr;
     }
 
@@ -3203,6 +3229,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_user_data(PhysicsWorldObject *self,
 
 PyCFunction_DeclareMethod PhysicsWorld_activate(PhysicsWorldObject *self, PyObject *const *args,
                                                 size_t nargsf, PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. FAST PARSE
     // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
     uint64_t h_raw;
@@ -3211,7 +3238,7 @@ PyCFunction_DeclareMethod PhysicsWorld_activate(PhysicsWorldObject *self, PyObje
     targets[IDX_H_H] = &h_raw;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &ActivateParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.ActivateParser, targets)) {
         return nullptr;
     }
 
@@ -3254,6 +3281,7 @@ PyCFunction_DeclareMethod PhysicsWorld_activate(PhysicsWorldObject *self, PyObje
 
 PyCFunction_DeclareMethod PhysicsWorld_deactivate(PhysicsWorldObject *self, PyObject *const *args,
                                                   size_t nargsf, PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. FAST PARSE
     // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
     uint64_t h_raw;
@@ -3262,7 +3290,7 @@ PyCFunction_DeclareMethod PhysicsWorld_deactivate(PhysicsWorldObject *self, PyOb
     targets[IDX_H_H] = (void *)&h_raw;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &ActivateParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.ActivateParser, targets)) {
         return nullptr;
     }
 
@@ -3298,6 +3326,7 @@ PyCFunction_DeclareMethod PhysicsWorld_deactivate(PhysicsWorldObject *self, PyOb
 PyCFunction_DeclareMethod PhysicsWorld_set_transform(PhysicsWorldObject *self,
                                                      PyObject *const *args, size_t nargsf,
                                                      PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. FAST PARSE
     // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
     uint64_t h_raw;
@@ -3310,7 +3339,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_transform(PhysicsWorldObject *self,
     targets[IDX_ST_ROT]    = (void *)&o_rot;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &SetTrnsParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.SetTrnsParser, targets)) {
         return nullptr;
     }
 
@@ -3387,6 +3416,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_transform(PhysicsWorldObject *self,
 
 PyCFunction_DeclareMethod PhysicsWorld_set_ccd(PhysicsWorldObject *self, PyObject *const *args,
                                                size_t nargsf, PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. FAST PARSE (Zero-Allocation)
     // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
     uint64_t h_raw;
@@ -3397,7 +3427,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_ccd(PhysicsWorldObject *self, PyObjec
     targets[IDX_CCD_E] = (void *)&enabled;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &CCDParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.CCDParser, targets)) {
         return nullptr;
     }
 
@@ -3443,6 +3473,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_ccd(PhysicsWorldObject *self, PyObjec
 
 PyCFunction_DeclareMethod PhysicsWorld_get_index(PhysicsWorldObject *self, PyObject *const *args,
                                                  size_t nargsf, PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. FAST PARSE
     // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
     uint64_t h_raw;
@@ -3450,7 +3481,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_index(PhysicsWorldObject *self, PyObj
     targets[IDX_H_H] = (void *)&h_raw;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &ActivateParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.ActivateParser, targets)) {
         return nullptr;
     }
 
@@ -3483,6 +3514,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_index(PhysicsWorldObject *self, PyObj
 
 PyCFunction_DeclareMethod PhysicsWorld_is_alive(PhysicsWorldObject *self, PyObject *const *args,
                                                 size_t nargsf, PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. FAST PARSE
     // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
     uint64_t h_raw;
@@ -3492,7 +3524,7 @@ PyCFunction_DeclareMethod PhysicsWorld_is_alive(PhysicsWorldObject *self, PyObje
     targets[IDX_H_H] = (void *)&h_raw;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &ActivateParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.ActivateParser, targets)) {
         return nullptr;
     }
 
@@ -3525,13 +3557,14 @@ PyCFunction_DeclareMethod PhysicsWorld_is_alive(PhysicsWorldObject *self, PyObje
 
 PyCFunction_DeclareMethod PhysicsWorld_is_active(PhysicsWorldObject *self, PyObject *const *args,
                                                  size_t nargsf, PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     uint64_t h_raw;
     void *targets[HOnly_COUNT];
     targets[IDX_H_H] = (void *)&h_raw;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     // Reuse ActivateParser or similar that only expects a handle
-    if (!FastParse_Unified(args, nargs, kwnames, &ActivateParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.ActivateParser, targets)) {
         return nullptr;
     }
 
@@ -3618,13 +3651,14 @@ PyCFunction_DeclareMethod PhysicsWorld_get_active_indices(PhysicsWorldObject *se
 PyCFunction_DeclareMethod PhysicsWorld_get_render_state(PhysicsWorldObject *self,
                                                         PyObject *const *args, size_t nargsf,
                                                         PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. FAST PARSE (Unchanged)
     float alpha;
     void *targets[Render_COUNT];
     targets[IDX_RND_ALPHA] = (void *)&alpha;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &RenderParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.RenderParser, targets)) {
         return nullptr;
     }
 
@@ -3709,6 +3743,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_render_state(PhysicsWorldObject *self
 PyCFunction_DeclareMethod PhysicsWorld_set_collision_filter(PhysicsWorldObject *self,
                                                             PyObject *const *args, size_t nargsf,
                                                             PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. FAST PARSE (Zero-Allocation)
     // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
     uint64_t h_raw;
@@ -3721,7 +3756,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_collision_filter(PhysicsWorldObject *
     targets[IDX_CF_M] = (void *)&mask;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &ColFilterParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.ColFilterParser, targets)) {
         return nullptr;
     }
 
@@ -3761,6 +3796,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_collision_filter(PhysicsWorldObject *
 PyCFunction_DeclareMethod PhysicsWorld_register_material(PhysicsWorldObject *self,
                                                          PyObject *const *args, size_t nargsf,
                                                          PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. DEFAULT VALUES
     uint32_t id;
     float friction    = RESTITUTION_BUFFER;
@@ -3773,7 +3809,7 @@ PyCFunction_DeclareMethod PhysicsWorld_register_material(PhysicsWorldObject *sel
     targets[IDX_RM_REST] = (void *)&restitution;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &RegMatParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.RegMatParser, targets)) {
         return nullptr;
     }
 
@@ -3822,6 +3858,7 @@ PyCFunction_DeclareMethod PhysicsWorld_register_material(PhysicsWorldObject *sel
 PyCFunction_DeclareMethod PhysicsWorld_create_heightfield(PhysicsWorldObject *self,
                                                           PyObject *const *args, size_t nargsf,
                                                           PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. DEFAULT VALUES
     PyObject *o_pos      = nullptr;
     PyObject *o_rot      = nullptr;
@@ -3850,7 +3887,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_heightfield(PhysicsWorldObject *se
     targets[IDX_HF_REST]      = (void *)&restitution;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &HeightfieldParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.HeightfieldParser, targets)) {
         return nullptr;
     }
 
@@ -3983,6 +4020,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_heightfield(PhysicsWorldObject *se
 PyCFunction_DeclareMethod PhysicsWorld_get_debug_data(PhysicsWorldObject *self,
                                                       PyObject *const *args, size_t nargsf,
                                                       PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. DEFAULT VALUES
     bool draw_shapes       = true;
     bool draw_constraints  = true;
@@ -3999,7 +4037,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_debug_data(PhysicsWorldObject *self,
     targets[IDX_DD_WIREFRAME]   = (void *)&wireframe;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &DebugDataParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.DebugDataParser, targets)) {
         return nullptr;
     }
 
@@ -4057,23 +4095,27 @@ PyCFunction_DeclareMethod PhysicsWorld_get_debug_data(PhysicsWorldObject *self,
     return ret;
 }
 
-PyCFunction_DeclareMethod culv_dump_schema(CULV_MAYBE_UNUSED PyObject *self,
-                                           PyObject *Py_UNUSED(args)) {
+PyCFunction_DeclareMethod culv_dump_schema(PyObject *self, PyObject *Py_UNUSED(args)) {
+    // self is the module object
+    CulverinState *st = get_culverin_state(self);
+
     const char *filename = "culverin_schema.json";
     FILE *f              = fopen(filename, "w");
     if (!f) {
         return PyErr_SetFromErrno(PyExc_IOError);
     }
 
-    fp_dump_schemas_json(f);
-    fclose(f);
+    // Pass the pointer to the parser struct and the file handle
+    fp_dump_schemas_json(&st->parsers, f);
 
+    fclose(f);
     Py_RETURN_NONE;
 }
 
 PyCFunction_DeclareMethod PhysicsWorld_benchmark_parse(CULV_MAYBE_UNUSED PhysicsWorldObject *self,
                                                        PyObject *const *args, size_t nargsf,
                                                        PyObject *kwnames) {
+    CulverinState *st         = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     constexpr size_t NUM_ARGS = 64;
     uint64_t values[NUM_ARGS] = {};
     void *targets[NUM_ARGS];
@@ -4084,7 +4126,8 @@ PyCFunction_DeclareMethod PhysicsWorld_benchmark_parse(CULV_MAYBE_UNUSED Physics
     }
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (UNLIKELY(!FastParse_Unified(args, nargs, kwnames, &StressTestParser, targets))) {
+    if (UNLIKELY(
+            !FastParse_Unified(args, nargs, kwnames, &st->parsers.StressTestParser, targets))) {
         return nullptr;
     }
 
@@ -4133,38 +4176,129 @@ PyCFunction_DeclareMethod PhysicsWorld_benchmark_build(CULV_MAYBE_UNUSED PyObjec
     return result;
 }
 
-// --- Type Definition ---
+// --- The Documentation System ---
 
-// Centralize the cast to keep the specific macros clean
+#ifndef CULVERIN_DOCS_PATH
+#    define CULVERIN_DOCS_PATH "docs/DOCS.md"
+#endif
+
+// Embed the markdown documentation. Note: Not 'const' because we will tokenize it.
+static char ALL_DOCS[] = {
+// NOLINTNEXTLINE(readability-magic-numbers)
+#embed CULVERIN_DOCS_PATH
+    , 0};
+
+// Global flag to ensure we only stitch once (important for subinterpreters)
+static atomic_bool docs_stitched = false;
+
+static void stitch_docs(PyMethodDef *methods, const char *prefix) {
+    if (methods == nullptr) {
+        return;
+    }
+
+    for (PyMethodDef *m = methods; m->ml_name != nullptr; m++) {
+        // Skip if it already has a docstring (like internal benchmarks)
+        if (m->ml_doc != nullptr) {
+            continue;
+        }
+
+        // Search for markdown header: "## Prefix_method_name"
+        static constexpr size_t KEY_BUFFER_SIZE = 128;
+        char key[KEY_BUFFER_SIZE];
+        snprintf(key, sizeof(key), "## %s_%s", prefix, m->ml_name);
+
+        // Search for a complete match, skipping any substring matches
+        auto search_start = ALL_DOCS;
+        char *found       = nullptr;
+        while ((found = strstr(search_start, key)) != nullptr) {
+            // Verify we have a complete match (not substring of longer name)
+            // The character after the key should be whitespace or newline, not alphanumeric or
+            // underscore
+            char *after_key = found + strlen(key);
+            if (*after_key == '\0' || *after_key == '\r' || *after_key == '\n' ||
+                *after_key == ' ' || *after_key == '\t') {
+                // Complete match found!
+                // Move past the header and any newlines
+                char *doc_start = after_key;
+
+                // Skip the newline(s) after the header
+                while (*doc_start == '\r' || *doc_start == '\n') {
+                    doc_start++;
+                }
+
+                m->ml_doc = doc_start;
+                break; // Found the docstring for this method, move to next method
+            }
+
+            // This is a substring match, keep searching
+            search_start = found + 1;
+        }
+    }
+}
+
+// Pass 2: Null-terminate docstrings at markdown headers (## )
+static void finalize_docs() {
+    if (ALL_DOCS[0] == '\0') {
+        return; // Empty docs, nothing to do
+    }
+
+    auto p = ALL_DOCS;
+    while ((p = strstr(p, "## ")) != nullptr) {
+        // Back up to find the newline before this header
+        if (p > ALL_DOCS) {
+            auto term_point = p - 1;
+
+            // Skip back over spaces but stop at the first newline
+            while (term_point > ALL_DOCS && *term_point != '\n' && *term_point != '\0') {
+                if (*term_point != ' ' && *term_point != '\r') {
+                    break;
+                }
+                term_point--;
+            }
+
+            // If we found a newline, null-terminate right after it
+            if (term_point > ALL_DOCS && *term_point == '\n') {
+                *term_point = '\0';
+            }
+        }
+
+        // Move forward to next header search
+        p += 3; // Skip "## "
+    }
+}
+
+// =============================================================================================
+
+// --- Macros ---
+
 #define CULV_CAST(m) (PyCFunction)(void (*)(void))(m)
 
-// Internal helper to handle the common prefix
-#define CULV_FEAT(prefix, name, method_type, doc)                                                  \
+#define CULV_FEAT(prefix, name, method_type)                                                       \
     {.ml_name  = #name,                                                                            \
      .ml_meth  = CULV_CAST(prefix##_##name),                                                       \
      .ml_flags = (method_type),                                                                    \
-     .ml_doc   = (doc)}
+     .ml_doc   = nullptr} // Initialized to nullptr to be filled by stitcher
 
 // User-facing macros for context methods
-#define PW_FASTCALL(name, doc) CULV_FEAT(PhysicsWorld, name, METH_FASTCALL | METH_KEYWORDS, doc)
-#define PW_NOARGS(name, doc) CULV_FEAT(PhysicsWorld, name, METH_NOARGS, doc)
-#define PW_O(name, doc) CULV_FEAT(PhysicsWorld, name, METH_O, doc)
+#define PW_FASTCALL(name) CULV_FEAT(PhysicsWorld, name, METH_FASTCALL | METH_KEYWORDS)
+#define PW_NOARGS(name) CULV_FEAT(PhysicsWorld, name, METH_NOARGS)
+#define PW_O(name) CULV_FEAT(PhysicsWorld, name, METH_O)
 
-#define CHAR_FASTCALL(name, doc) CULV_FEAT(Character, name, METH_FASTCALL | METH_KEYWORDS, doc)
-#define CHAR_NOARGS(name, doc) CULV_FEAT(Character, name, METH_NOARGS, doc)
-#define CHAR_O(name, doc) CULV_FEAT(Character, name, METH_O, doc)
+#define CHAR_FASTCALL(name) CULV_FEAT(Character, name, METH_FASTCALL | METH_KEYWORDS)
+#define CHAR_NOARGS(name) CULV_FEAT(Character, name, METH_NOARGS)
+#define CHAR_O(name) CULV_FEAT(Character, name, METH_O)
 
-#define VEH_FASTCALL(name, doc) CULV_FEAT(Vehicle, name, METH_FASTCALL | METH_KEYWORDS, doc)
-#define VEH_NOARGS(name, doc) CULV_FEAT(Vehicle, name, METH_NOARGS, doc)
+#define VEH_FASTCALL(name) CULV_FEAT(Vehicle, name, METH_FASTCALL | METH_KEYWORDS)
+#define VEH_NOARGS(name) CULV_FEAT(Vehicle, name, METH_NOARGS)
 
-#define SKEL_FASTCALL(name, doc) CULV_FEAT(Skeleton, name, METH_FASTCALL | METH_KEYWORDS, doc)
-#define SKEL_NOARGS(name, doc) CULV_FEAT(Skeleton, name, METH_NOARGS, doc)
+#define SKEL_FASTCALL(name) CULV_FEAT(Skeleton, name, METH_FASTCALL | METH_KEYWORDS)
+#define SKEL_NOARGS(name) CULV_FEAT(Skeleton, name, METH_NOARGS)
 
-#define RD_FASTCALL(name, doc) CULV_FEAT(Ragdoll, name, METH_FASTCALL | METH_KEYWORDS, doc)
-#define RD_NOARGS(name, doc) CULV_FEAT(Ragdoll, name, METH_NOARGS, doc)
+#define RD_FASTCALL(name) CULV_FEAT(Ragdoll, name, METH_FASTCALL | METH_KEYWORDS)
+#define RD_NOARGS(name) CULV_FEAT(Ragdoll, name, METH_NOARGS)
 
-#define RDS_FASTCALL(name, doc) CULV_FEAT(RagdollSettings, name, METH_FASTCALL | METH_KEYWORDS, doc)
-#define RDS_NOARGS(name, doc) CULV_FEAT(RagdollSettings, name, METH_NOARGS, doc)
+#define RDS_FASTCALL(name) CULV_FEAT(RagdollSettings, name, METH_FASTCALL | METH_KEYWORDS)
+#define RDS_NOARGS(name) CULV_FEAT(RagdollSettings, name, METH_NOARGS)
 
 static PyMethodDef module_methods[] = {
     {.ml_name  = "_dump_schema_json",
@@ -4234,140 +4368,124 @@ static const PyGetSetDef Vehicle_getset[] = {{"wheel_count", (getter)Vehicle_get
                                               nullptr},
                                              {nullptr, nullptr, nullptr, nullptr, nullptr}};
 
-static const PyMethodDef PhysicsWorld_methods[] = {
+// --- Method Definitions ---
+// IMPORTANT: REMOVE 'const' so the memory is writable!
+static PyMethodDef PhysicsWorld_methods[] = {
     // --- Lifecycle ---
-    PW_FASTCALL(step, nullptr),
-    PW_FASTCALL(create_body, nullptr),
-    PW_FASTCALL(create_bodies_batch, nullptr),
-    PW_FASTCALL(destroy_body, nullptr),
-    PW_FASTCALL(destroy_bodies_batch, nullptr),
-    PW_FASTCALL(create_mesh_body, nullptr),
-    PW_FASTCALL(create_constraint,
-                "Create a constraint between two bodies. Params depend on type."),
-    PW_FASTCALL(destroy_constraint, "Remove and destroy a constraint by handle."),
-    PW_FASTCALL(get_constraint_type, "Returns the subtype (Hinge, Slider, etc) of the constraint."),
-    PW_FASTCALL(create_vehicle, "Create a wheeled vehicle constraint"),
-    PW_FASTCALL(create_tracked_vehicle, "Create a tracked vehicle constraint (tanks, etc.)"),
-    PW_FASTCALL(create_ragdoll_settings, "Create settings for a ragdoll from a skeleton"),
-    PW_FASTCALL(create_ragdoll, "Create a multi-body ragdoll from settings"),
-    PW_FASTCALL(create_heightfield, "Create a static terrain from a height grid."),
-    PW_FASTCALL(create_convex_hull,
-                "Create a body from a point cloud. Points are wrapped in a convex shell."),
-    PW_FASTCALL(create_compound_body, "Create a body made of multiple primitives. parts=[((x,y,z), "
-                                      "(rx,ry,rz,rw), type, size), ...]"),
+    PW_FASTCALL(step),
+    PW_FASTCALL(create_body),
+    PW_FASTCALL(create_bodies_batch),
+    PW_FASTCALL(destroy_body),
+    PW_FASTCALL(destroy_bodies_batch),
+    PW_FASTCALL(create_mesh_body),
+    PW_FASTCALL(create_constraint),
+    PW_FASTCALL(destroy_constraint),
+    PW_FASTCALL(get_constraint_type),
+    PW_FASTCALL(create_vehicle),
+    PW_FASTCALL(create_tracked_vehicle),
+    PW_FASTCALL(create_ragdoll_settings),
+    PW_FASTCALL(create_ragdoll),
+    PW_FASTCALL(create_heightfield),
+    PW_FASTCALL(create_convex_hull),
+    PW_FASTCALL(create_compound_body),
 
     // --- Interaction ---
-    PW_FASTCALL(apply_impulse, nullptr),
-    PW_FASTCALL(apply_angular_impulse, "Apply rotational momentum."),
-    PW_FASTCALL(apply_impulse_at, "Apply impulse at world position."),
-    PW_FASTCALL(apply_force, nullptr),
-    PW_FASTCALL(apply_torque, nullptr),
-    PW_FASTCALL(set_gravity, "Set the world gravity vector (x, y, z)."),
-    PW_FASTCALL(apply_buoyancy, "Apply fluid forces to a body."),
-    PW_FASTCALL(apply_buoyancy_batch,
-                "Apply buoyancy to a list of bodies. handles must be a buffer of uint64."),
-    PW_FASTCALL(set_position, nullptr),
-    PW_FASTCALL(set_rotation, nullptr),
-    PW_FASTCALL(set_linear_velocity, nullptr),
-    PW_FASTCALL(set_angular_velocity, nullptr),
-    PW_FASTCALL(set_transform, nullptr),
-    PW_FASTCALL(set_collision_filter, "Dynamically update collision bitmasks."),
-    PW_FASTCALL(register_material, "Define properties for a material ID."),
-    PW_FASTCALL(set_constraint_target, nullptr),
+    PW_FASTCALL(apply_impulse),
+    PW_FASTCALL(apply_angular_impulse),
+    PW_FASTCALL(apply_impulse_at),
+    PW_FASTCALL(apply_force),
+    PW_FASTCALL(apply_torque),
+    PW_FASTCALL(set_gravity),
+    PW_FASTCALL(apply_buoyancy),
+    PW_FASTCALL(apply_buoyancy_batch),
+    PW_FASTCALL(set_position),
+    PW_FASTCALL(set_rotation),
+    PW_FASTCALL(set_linear_velocity),
+    PW_FASTCALL(set_angular_velocity),
+    PW_FASTCALL(set_transform),
+    PW_FASTCALL(set_collision_filter),
+    PW_FASTCALL(register_material),
+    PW_FASTCALL(set_constraint_target),
 
     // --- Motion Control ---
-    PW_FASTCALL(get_motion_type, nullptr),
-    PW_FASTCALL(set_motion_type, nullptr),
-    PW_FASTCALL(activate, nullptr),
-    PW_FASTCALL(deactivate, nullptr),
-    PW_FASTCALL(set_ccd, "Enable/Disable Continuous Collision Detection."),
+    PW_FASTCALL(get_motion_type),
+    PW_FASTCALL(set_motion_type),
+    PW_FASTCALL(activate),
+    PW_FASTCALL(deactivate),
+    PW_FASTCALL(set_ccd),
 
     // --- Queries ---
-    PW_FASTCALL(raycast, nullptr),
-    PW_FASTCALL(raycast_batch, "Execute multiple raycasts efficiently."),
-    PW_FASTCALL(shapecast, "Sweeps a shape along a direction vector. Returns (Handle, Fraction, "
-                           "ContactPoint, Normal) or None."),
-    PW_FASTCALL(overlap_sphere, nullptr),
-    PW_FASTCALL(overlap_aabb, nullptr),
+    PW_FASTCALL(raycast),
+    PW_FASTCALL(raycast_batch),
+    PW_FASTCALL(shapecast),
+    PW_FASTCALL(overlap_sphere),
+    PW_FASTCALL(overlap_aabb),
 
     // --- Utilities ---
-    PW_FASTCALL(get_index, nullptr),
-    PW_FASTCALL(is_alive, nullptr),
-    PW_FASTCALL(is_active, "Check if a body is currently active (not sleeping)."),
-    PW_NOARGS(get_active_indices,
-              "Returns a bytes object containing uint32 indices of all active bodies."),
-    PW_FASTCALL(get_render_state,
-                "Returns packed bytes of interpolated positions and rotations (float32)."),
-    PW_FASTCALL(
-        get_debug_data,
-        "Returns (lines_bytes, triangles_bytes). Each vertex is 16 bytes: [x, y, z, color_u32]."),
-    PW_FASTCALL(get_body_stats, nullptr),
+    PW_FASTCALL(get_index),
+    PW_FASTCALL(is_alive),
+    PW_FASTCALL(is_active),
+    PW_NOARGS(get_active_indices),
+    PW_FASTCALL(get_render_state),
+    PW_FASTCALL(get_debug_data),
+    PW_FASTCALL(get_body_stats),
 
     // --- User Data ---
-    PW_FASTCALL(get_user_data, nullptr),
-    PW_FASTCALL(set_user_data, nullptr),
+    PW_FASTCALL(get_user_data),
+    PW_FASTCALL(set_user_data),
 
     // -- Event Logic ---
-    PW_NOARGS(get_contact_events, nullptr),
-    PW_NOARGS(get_contact_events_ex, "Get rich collision data as dicts"),
-    PW_NOARGS(get_contact_events_raw, "Get raw collision buffer as memoryview"),
+    PW_NOARGS(get_contact_events),
+    PW_NOARGS(get_contact_events_ex),
+    PW_NOARGS(get_contact_events_raw),
 
     // --- State & Advanced ---
-    PW_NOARGS(save_state, nullptr),
-    PW_FASTCALL(load_state, "Load world state snapshot"),
-    PW_FASTCALL(create_character, "Create a virtual character"),
+    PW_NOARGS(save_state),
+    PW_FASTCALL(load_state),
+    PW_FASTCALL(create_character),
 
     // --- Internal/Debug ---
     // Not for public use, therefore can't use macros
     {"_benchmark_parse", CULV_CAST(PhysicsWorld_benchmark_parse), METH_FASTCALL | METH_KEYWORDS,
-     "Benchmark the argument parsing of a complex function. Up to 64 arguments."},
+     nullptr},
 
-    {"_benchmark_build", CULV_CAST(PhysicsWorld_benchmark_build), METH_NOARGS,
-     "Benchmark the FastBuild_Tuple function with a complex set of arguments."},
+    {"_benchmark_build", CULV_CAST(PhysicsWorld_benchmark_build), METH_NOARGS, nullptr},
 
     {nullptr, nullptr, 0, nullptr}};
 
-static const PyMethodDef Character_methods[] = {
-    CHAR_FASTCALL(move, nullptr),
-    CHAR_NOARGS(get_position, nullptr),
-    CHAR_FASTCALL(set_position, "Teleport the character to a new position"),
-    CHAR_FASTCALL(set_rotation, "Set the character's rotation quaternion (x, y, z, w)"),
-    CHAR_NOARGS(is_grounded, nullptr),
-    CHAR_FASTCALL(set_strength, "Set the character's maximum pushing strength"),
-    CHAR_O(get_render_transform,
-           "Returns interpolated ((x,y,z), (rx,ry,rz,rw)) based on alpha [0-1]."),
-    {nullptr, nullptr, 0, nullptr}};
+static PyMethodDef Character_methods[] = {
+    CHAR_FASTCALL(move),          CHAR_NOARGS(get_position),     CHAR_FASTCALL(set_position),
+    CHAR_FASTCALL(set_rotation),  CHAR_NOARGS(is_grounded),      CHAR_FASTCALL(set_strength),
+    CHAR_O(get_render_transform), {nullptr, nullptr, 0, nullptr}};
 
-static const PyMethodDef Vehicle_methods[] = {
-    VEH_FASTCALL(set_input, "Set vehicle driver inputs (forward, right, brake, handbrake)"),
-    VEH_FASTCALL(set_tank_input, "Set inputs for a tracked vehicle (left, right, brake)"),
-    VEH_FASTCALL(get_wheel_transform, "Get wheel transform in world space"),
-    VEH_FASTCALL(get_wheel_local_transform, "Get wheel transform in local chassis space"),
-    VEH_NOARGS(destroy, "Manually remove the vehicle from physics."),
-    VEH_NOARGS(get_debug_state, "Print drivetrain and wheel status to stderr"),
-    {nullptr, nullptr, 0, nullptr}};
+static PyMethodDef Vehicle_methods[] = {VEH_FASTCALL(set_input),
+                                        VEH_FASTCALL(set_tank_input),
+                                        VEH_FASTCALL(get_wheel_transform),
+                                        VEH_FASTCALL(get_wheel_local_transform),
+                                        VEH_NOARGS(destroy),
+                                        VEH_NOARGS(get_debug_state),
+                                        {nullptr, nullptr, 0, nullptr}};
 
-static const PyMethodDef Skeleton_methods[] = {
-    SKEL_FASTCALL(add_joint, "Add a joint to the skeleton"),
-    SKEL_FASTCALL(get_joint_index, "Find the index of a joint by name"),
-    SKEL_NOARGS(finalize, "Bake skeleton hierarchy"),
-    {nullptr, nullptr, 0, nullptr}};
+static PyMethodDef Skeleton_methods[] = {SKEL_FASTCALL(add_joint),
+                                         SKEL_FASTCALL(get_joint_index),
+                                         SKEL_NOARGS(finalize),
+                                         {nullptr, nullptr, 0, nullptr}};
 
-static const PyMethodDef Ragdoll_methods[] = {
-    RD_FASTCALL(drive_to_pose, "Drive ragdoll motors to follow a specific pose"),
-    {"get_body_handles", CULV_CAST(Ragdoll_get_body_ids), METH_NOARGS, "Get list of body handles"},
-    RD_NOARGS(get_debug_info, "Returns list of dicts for each part"),
-    {nullptr, nullptr, 0, nullptr}};
+static PyMethodDef Ragdoll_methods[] = {RD_FASTCALL(drive_to_pose),
+                                        RD_NOARGS(get_body_handles),
+                                        RD_NOARGS(get_debug_info),
+                                        {nullptr, nullptr, 0, nullptr}};
 
-static const PyMethodDef RagdollSettings_methods[] = {
-    RDS_FASTCALL(add_part, "Add a body part and its parent constraint to the ragdoll settings"),
-    RDS_NOARGS(stabilize, "Auto-detect collisions"),
-    {nullptr, nullptr, 0, nullptr}};
+static PyMethodDef RagdollSettings_methods[] = {
+    RDS_FASTCALL(add_part), RDS_NOARGS(stabilize), {nullptr, nullptr, 0, nullptr}};
 
-static const PyMemberDef PhysicsWorld_members[] = {{"__weaklistoffset__", Py_T_PYSSIZET,
-                                                    offsetof(PhysicsWorldObject, weakreflist),
-                                                    Py_READONLY, nullptr},
-                                                   {nullptr, 0, 0, 0, nullptr}};
+static const PyMemberDef PhysicsWorld_members[] = {
+    {.name   = "__weaklistoffset__",
+     .type   = Py_T_PYSSIZET,
+     .offset = offsetof(PhysicsWorldObject, weakreflist),
+     .flags  = Py_READONLY,
+     .doc    = nullptr},
+    {.name = nullptr, .type = 0, .offset = 0, .flags = 0, .doc = nullptr}};
 
 static const PyType_Slot PhysicsWorld_slots[] = {
     {Py_tp_new, PyType_GenericNew},
@@ -4529,12 +4647,25 @@ static int init_constants(PyObject *m) {
 PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
     CulverinState *st = get_culverin_state(m);
 
+    // Atomic "test and set" to ensure only one thread ever runs the stitcher
+    bool expected = false;
+    if (atomic_compare_exchange_strong(&docs_stitched, &expected, true)) {
+        stitch_docs(PhysicsWorld_methods, "PhysicsWorld");
+        stitch_docs(Character_methods, "Character");
+        stitch_docs(Vehicle_methods, "Vehicle");
+        stitch_docs(Skeleton_methods, "Skeleton");
+        stitch_docs(Ragdoll_methods, "Ragdoll");
+        stitch_docs(RagdollSettings_methods, "RagdollSettings");
+
+        finalize_docs(); // Now safe to terminate strings
+    }
+
     if (!JPH_Init()) {
         PyErr_SetString(PyExc_RuntimeError, "Jolt initialization failed");
         return -1;
     }
 
-    culverin_init_all_parsers();
+    culverin_init_all_parsers(&st->parsers);
 
     CULV_INIT_PROFILER();
 
@@ -4586,17 +4717,28 @@ PyType_DeclareSlot_Status culverin_clear(PyObject *m) {
     Py_CLEAR(st->RagdollSettingsType);
     Py_CLEAR(st->RagdollType);
     Py_CLEAR(st->SkeletonType);
-    culverin_free_all_parsers();
+    // Clean up the parsers for this interpreter
+    culverin_free_all_parsers(&st->parsers);
     return 0;
 }
 
-static const PyModuleDef_Slot culverin_slots[] = {
-    {Py_mod_exec, culverin_exec},
-#if PY_VERSION_HEX >= 0x030D0000
-    {Py_mod_gil, Py_MOD_GIL_NOT_USED},
+static const PyModuleDef_Slot culverin_slots[] = {{Py_mod_exec, culverin_exec},
+
+// 1. Handle the Free-threaded (No GIL) declaration (3.13+)
+#if defined(Py_MOD_GIL_NOT_USED)
+                                                  {Py_mod_gil, Py_MOD_GIL_NOT_USED},
 #endif
-    {Py_mod_multiple_interpreters, Py_MOD_MULTIPLE_INTERPRETERS_SUPPORTED},
-    {0, nullptr}};
+
+                                                  // 2. Handle Subinterpreter support
+                                                  {Py_mod_multiple_interpreters,
+#if PY_VERSION_HEX >= 0x030D0000
+                                                   Py_MOD_MULTIPLE_INTERPRETERS_SUPPORTED
+#else
+                                                   Py_MOD_PER_INTERPRETER_GIL_SUPPORTED
+#endif
+                                                  },
+
+                                                  {0, nullptr}};
 
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 static PyModuleDef culverin_module = {
