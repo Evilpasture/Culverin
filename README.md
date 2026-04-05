@@ -31,6 +31,12 @@ Culverin is a Python wrapper for the **Jolt Physics** engine. It is designed for
 pip install culverin
 ```
 
+### 📚 Documentation
+
+Detailed API references for every class and method are available:
+*   **Online Docs:** [View the Interactive API Reference](https://evilpasture.github.io/Culverin/)
+*   **In-Engine:** Use the standard Python `help()` system: `help(culverin.PhysicsWorld.create_body)` or `help(culverin)`
+
 ### Quick Start
 
 ```python
@@ -53,13 +59,14 @@ handle = world.create_body(
 for _ in range(1000):
     world.step(1/60)
     
-    # Access position directly from the shadow buffer (Strid of 4 Float64s)
-    idx = world.get_index(handle)
+    # Zero-Copy Data Access
+    # Wrap the internal engine memory in NumPy without copying a single byte.
+    # This gives you O(1) access to all 1,000+ bodies at once.
+    positions = np.frombuffer(world.positions, dtype=np.float64).reshape(-1, 4)
     
-    # Using raw memoryview
-    pos_view = world.positions
-    # NOTE: positions are Float64 (8 bytes each). x, y, z are the first 3.
-    # If using NumPy, ensure you use np.float64!
+    # Print the Y position of our box
+    idx = world.get_index(handle)
+    print(f"Box Height: {positions[idx, 1]:.2f}m")
 ```
 
 ### Technical Specifications
