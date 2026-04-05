@@ -98,7 +98,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll_settings(Physics
     }
 
     // --- 2. TYPE VALIDATION ---
-    PyObject *module  = PyType_GetModule(Py_TYPE(self));
+    PyObject *module = PyType_GetModule(Py_TYPE(self));
 
     // Manual type check (replaces O! format string)
     if (!PyObject_TypeCheck(py_skel_obj, (PyTypeObject *)st->SkeletonType)) {
@@ -178,8 +178,8 @@ PyCFunction_DeclareMethodFromModule RagdollSettings_add_part(RagdollSettingsObje
     }
 
     // 4. Validation & Resizing
-    auto *skel = JPH_RagdollSettings_GetSkeleton(self->settings);
-    int skel_count     = JPH_Skeleton_GetJointCount(skel);
+    auto *skel     = JPH_RagdollSettings_GetSkeleton(self->settings);
+    int skel_count = JPH_Skeleton_GetJointCount(skel);
     if (joint_idx < 0 || joint_idx >= skel_count) {
         return PyErr_Format(PyExc_IndexError, "Joint index %d out of bounds", joint_idx);
     }
@@ -333,7 +333,8 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll(PhysicsWorldObje
     // --- 4. SHADOW BUFFER WARM-UP ---
     SHADOW_LOCK(&self->shadow_lock);
     if (atomic_load_explicit(&self->free_count, memory_order_acquire) < body_count) {
-        if (PhysicsWorld_resize(self, self->capacity + body_count + RAGDOLL_BODY_BUFFER_INCREMENT) < 0) {
+        if (PhysicsWorld_resize(self, self->capacity + body_count + RAGDOLL_BODY_BUFFER_INCREMENT) <
+            0) {
             SHADOW_UNLOCK(&self->shadow_lock);
             SHADOW_UNLOCK(&self->shadow_lock);
             JPH_Ragdoll_Destroy(j_rag);
@@ -353,16 +354,17 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll(PhysicsWorldObje
 
     for (size_t i = 0; i < body_count; i++) {
         JPH_BodyID bid = JPH_Ragdoll_GetBodyID(j_rag, (int)i);
-        
+
         // TSan Fix: Pop from free stack atomically
-        size_t f_idx = atomic_fetch_sub_explicit(&self->free_count, 1, memory_order_relaxed) - 1;
+        size_t f_idx  = atomic_fetch_sub_explicit(&self->free_count, 1, memory_order_relaxed) - 1;
         uint32_t slot = self->free_slots[f_idx];
         obj->body_slots[i] = slot;
-        
+
         // TSan Fix: Increment dense count atomically
         auto dense = (uint32_t)atomic_fetch_add_explicit(&self->count, 1, memory_order_relaxed);
 
-        JPH_RVec3 world_p; JPH_Quat world_q;
+        JPH_RVec3 world_p;
+        JPH_Quat world_q;
         JPH_BodyInterface_GetPosition(bi, bid, &world_p);
         JPH_BodyInterface_GetRotation(bi, bid, &world_q);
 
@@ -373,18 +375,19 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll(PhysicsWorldObje
         shadow_lvel[dense] = (AuxStride){};
         shadow_avel[dense] = (AuxStride){};
 
-        self->body_ids[dense]     = bid;
-        self->slot_to_dense[slot] = dense;
-        self->dense_to_slot[dense]= slot;
-        
+        self->body_ids[dense]      = bid;
+        self->slot_to_dense[slot]  = dense;
+        self->dense_to_slot[dense] = slot;
+
         // TSan Fix: Fetch generation atomically
-        uint32_t gen = atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
-        BodyHandle h = make_handle(slot, gen);
+        uint32_t gen   = atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
+        BodyHandle h   = make_handle(slot, gen);
         uint64_t raw_h = atomic_load_explicit(&h, memory_order_relaxed);
 
         uint32_t j_idx = JPH_ID_TO_INDEX(bid);
         if (self->id_to_handle_map && j_idx < self->max_jolt_bodies) {
-            // TSan Fix: Store handle to shared map atomically (Release ensures shadow writes are visible)
+            // TSan Fix: Store handle to shared map atomically (Release ensures shadow writes are
+            // visible)
             atomic_store_explicit(&self->id_to_handle_map[j_idx], raw_h, memory_order_release);
         }
         JPH_BodyInterface_SetUserData(bi, bid, raw_h);
@@ -430,7 +433,7 @@ PyCFunction_DeclareMethodFromModule Ragdoll_drive_to_pose(RagdollObject *self,
 
     // 2. RESOURCE ACQUISITION
     const JPH_RagdollSettings *settings = JPH_Ragdoll_GetRagdollSettings(self->ragdoll);
-    auto *skel                  = JPH_RagdollSettings_GetSkeleton(settings);
+    auto *skel                          = JPH_RagdollSettings_GetSkeleton(settings);
     int joint_count                     = JPH_Skeleton_GetJointCount(skel);
 
     // Validate Buffer Size
@@ -480,27 +483,29 @@ PyCFunction_DeclareMethodFromModule Ragdoll_drive_to_pose(RagdollObject *self,
 }
 
 PyCFunction_DeclareMethodFromModule Ragdoll_get_body_handles(RagdollObject *self,
-                                                         PyObject *Py_UNUSED(args)) {
+                                                             PyObject *Py_UNUSED(args)) {
     // Helper to get the Body Handles of the parts so users can manipulate
     // specific limbs
     PyObject *list = PyList_New((Py_ssize_t)self->body_count);
-    if (!list) { return nullptr;
-}
+    if (!list) {
+        return nullptr;
+    }
 
     SHADOW_LOCK(&self->world->shadow_lock);
-    
+
     for (size_t i = 0; i < self->body_count; i++) {
         uint32_t slot = self->body_slots[i];
-        
+
         // TSan Fix: Atomic load of the slot state
         uint8_t state = atomic_load_explicit(&self->world->slot_states[slot], memory_order_acquire);
-        
+
         if (state == SLOT_ALIVE) {
             // TSan Fix: Atomic load of the generation
-            uint32_t gen = atomic_load_explicit(&self->world->generations[slot], memory_order_relaxed);
-            
+            uint32_t gen =
+                atomic_load_explicit(&self->world->generations[slot], memory_order_relaxed);
+
             BodyHandle h = make_handle(slot, gen);
-            
+
             // Extract raw uint64 from the atomic BodyHandle for Python
             uint64_t raw_h = atomic_load_explicit(&h, memory_order_relaxed);
             PyList_SET_ITEM(list, i, PyLong_FromUnsignedLongLong(raw_h));
@@ -509,7 +514,7 @@ PyCFunction_DeclareMethodFromModule Ragdoll_get_body_handles(RagdollObject *self
             PyList_SET_ITEM(list, i, Py_None);
         }
     }
-    
+
     SHADOW_UNLOCK(&self->world->shadow_lock);
     return list;
 }
@@ -608,13 +613,14 @@ PyType_DeclareSlot_VoidFromModule Ragdoll_dealloc(RagdollObject *self) {
 
                 // TSan Fix: Atomic load of slot state.
                 // Acquire ensures we see all initialization data before calling remove.
-                uint8_t state = atomic_load_explicit(&self->world->slot_states[slot], memory_order_acquire);
+                uint8_t state =
+                    atomic_load_explicit(&self->world->slot_states[slot], memory_order_acquire);
 
                 if (state != SLOT_ALIVE) {
                     continue;
                 }
 
-                // Note: world_remove_body_slot has been refactored 
+                // Note: world_remove_body_slot has been refactored
                 // to handle atomic count/generation/state updates.
                 world_remove_body_slot(self->world, slot);
             }
@@ -623,14 +629,14 @@ PyType_DeclareSlot_VoidFromModule Ragdoll_dealloc(RagdollObject *self) {
     }
 
     if (self->ragdoll) {
-        // Jolt Destruction must happen outside the Shadow Lock to prevent deadlock 
+        // Jolt Destruction must happen outside the Shadow Lock to prevent deadlock
         // with Jolt internal pool managers.
         JPH_Ragdoll_Destroy(self->ragdoll);
     }
-    
+
     if (self->body_slots) {
         CULV_RAW_FREE(self->body_slots);
-        self->body_slots = nullptr; 
+        self->body_slots = nullptr;
     }
 
     Py_XDECREF(self->world);
