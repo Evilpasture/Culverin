@@ -6,13 +6,14 @@ race:pycore_freelist.h
 race:_Py_brc_merge_refcounts
 race:_Py_brc_queue_object
 race:_Py_brc_*
-race:^JPH::
-race:JPH::PhysicsSystem::Update
-race:JPH::JobSystemThreadPool
-race:JPH::ContactConstraintManager
+race:^JPH::*
 race:dictresize
 race:PyDict_SetItem
 race:type_get_doc
 # So fast that CPython is struggling!
 race:PyDict_SetDefaultRef
 race:PyUnicode_DecodeFSDefaultAndSize
+# Internal CPython 3.14t race in filesystem codec initialization
+# Triggered by concurrent calls to os.fsdecode/os.fsencode
+# See on CPython Issue #128137, #128013, #128021
+race:PyUnicode_DecodeUTF8Stateful
