@@ -1,3 +1,4 @@
+<!-- START OF FILE docs/index.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -7,37 +8,182 @@
   <meta name="description" content="High-performance Jolt-powered Physics for Python">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0">
   
-  <!-- Modern Themes -->
+  <!-- Favicon -->
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💣</text></svg>">
-  <link rel="stylesheet" href="//cdn.jsdelivr.net/npm/docsify/themes/pure.css">
+  
+  <!-- Fonts: Inter (UI) and JetBrains Mono (Code) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+  <!-- Core Theme & Dark/Light Toggle -->
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/npm/docsify/lib/themes/vue.css">
   <link rel="stylesheet" href="//cdn.jsdelivr.net/npm/docsify-darklight-theme@latest/dist/style.min.css">
 
   <style>
+    /* --- CULVERIN CUSTOM THEME ("RICING") --- */
+    
     :root {
-      --docsifytabs-border-color: #ededed;
-      --docsifytabs-tab-highlight-color: #42b983;
+      /* Base Theme Colors (Cannonball Orange / Electric Amber) */
+      --theme-color: #ff5500;
+      --theme-color-glow: rgba(255, 85, 0, 0.4);
+      --code-font: 'JetBrains Mono', 'Fira Code', monospace;
+      --ui-font: 'Inter', -apple-system, sans-serif;
     }
-    /* Make the sidebar headers look cleaner */
+
+    /* Dark Mode Overrides for Docsify Darklight Theme */
+    .dark {
+      --background-color: #121214;
+      --textColor: #d4d4d8;
+      --heading-color: #ffffff;
+      --codeBackgroundColor: #18181b;
+      --sidebar-background: #0d0d0f;
+      --blockquote-background: #1f1f22;
+      --blockquote-border-color: var(--theme-color);
+    }
+
+    body {
+      font-family: var(--ui-font);
+      letter-spacing: -0.01em;
+    }
+
+    /* Typography Polish */
+    h1, h2, h3, h4, h5 {
+      font-weight: 800;
+      letter-spacing: -0.03em;
+    }
+    
+    h2 { border-bottom: 1px solid rgba(255, 85, 0, 0.2); padding-bottom: 8px; }
+
+    /* Code Blocks */
+    code, pre {
+      font-family: var(--code-font) !important;
+      font-size: 0.85rem !important;
+    }
+    
+    .markdown-section pre {
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+      border: 1px solid rgba(255,255,255,0.05);
+    }
+
+    /* Sidebar Ricing */
+    .sidebar {
+      border-right: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    
+    .sidebar > h1 {
+      font-weight: 800;
+      font-size: 1.5rem;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      background: -webkit-linear-gradient(45deg, #ff5500, #ffaa00);
+      background: linear-gradient(45deg, #ff5500, #ffaa00);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      color: transparent; /* Standard fallback for text-fill-color */
+    }
+
     .sidebar-nav strong {
-      color: #2c3e50;
-      font-size: 1.1rem;
+      color: var(--heading-color);
+      font-size: 1.05rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-top: 1.5rem;
+      display: block;
     }
-    /* Indent methods under classes in the jump table */
-    .sidebar-nav ul ul {
-      margin-left: 15px;
-    }
+
     .sidebar-nav li > a {
-      font-family: 'Fira Code', 'JetBrains Mono', monospace; /* Very on-brand for your toolchain */
-      font-size: 14px;
+      font-family: var(--code-font);
+      font-size: 13px;
+      transition: all 0.2s ease;
+      border-left: 2px solid transparent;
+      padding-left: 10px;
+    }
+
+    .sidebar-nav li > a:hover {
+      color: var(--theme-color);
+      border-left: 2px solid var(--theme-color);
+      background: linear-gradient(90deg, var(--theme-color-glow) 0%, transparent 100%);
+    }
+
+    .sidebar-nav li.active > a {
+      color: var(--theme-color);
+      border-left: 2px solid var(--theme-color);
+      font-weight: 700;
+    }
+
+    /* Custom Cyberpunk Scrollbar */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: var(--background-color);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #333;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--theme-color);
+      box-shadow: 0 0 10px var(--theme-color);
+    }
+
+    /* Copy Code Button Polish */
+    .docsify-copy-code-button {
+      background: var(--theme-color) !important;
+      color: #fff !important;
+      border-radius: 4px !important;
+      font-family: var(--ui-font);
+      font-weight: 600;
+    }
+    
+    /* Coverpage Overrides */
+    section.cover.show {
+        background: linear-gradient(135deg, #0d0d0f 0%, #1a1a1e 100%);
+    }
+    section.cover h1 {
+        font-family: var(--ui-font);
+        font-weight: 800;
+        background: -webkit-linear-gradient(45deg, #ff5500, #ffaa00);
+        background: linear-gradient(45deg, #ff5500, #ffaa00);
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+        color: transparent;
+        font-size: 4rem;
+    }
+    section.cover .cover-main > p:last-child a {
+        border-color: var(--theme-color);
+        color: var(--theme-color);
+        border-radius: 8px;
+        transition: all 0.2s ease;
+        font-family: var(--code-font);
+        font-weight: bold;
+    }
+    section.cover .cover-main > p:last-child a:last-child {
+        background-color: var(--theme-color);
+        color: #fff;
+    }
+    section.cover .cover-main > p:last-child a:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 15px var(--theme-color-glow);
     }
   </style>
 </head>
 <body>
-  <div id="app">Loading Culverin Docs...</div>
+  <div id="app">Loading High-Performance Physics...</div>
   <script>
     window.$docsify = {
-      name: 'Culverin Physics',
+      name: '💣 Culverin',
       repo: 'Evilpasture/Culverin',
+      themeColor: '#ff5500',
+      
+      // Coverpage Setup
+      coverpage: true,
+      onlyCover: false, // Set to true if you want the cover to hide the sidebar until scrolled
       
       // Sidebar Configuration
       loadSidebar: true, 
@@ -53,16 +199,24 @@
       search: {
         maxAge: 86400000,
         paths: 'auto',
-        placeholder: 'Search API...',
+        placeholder: '🔍 Search API...',
         noData: 'No Results Found',
         depth: 6
       },
 
       // Copy Code Plugin
       copyCode: {
-        buttonText: 'Copy',
-        errorText: 'Error',
-        successText: 'Copied'
+        buttonText: 'COPY',
+        errorText: 'ERROR',
+        successText: 'COPIED!'
+      },
+
+      // Pagination Plugin
+      pagination: {
+        previousText: 'PREVIOUS',
+        nextText: 'NEXT',
+        crossChapter: true,
+        crossChapterText: true,
       }
     }
   </script>
@@ -74,10 +228,15 @@
   <script src="//cdn.jsdelivr.net/npm/docsify/lib/plugins/search.min.js"></script>
   <script src="//cdn.jsdelivr.net/npm/docsify-copy-code/dist/docsify-copy-code.min.js"></script>
   <script src="//cdn.jsdelivr.net/npm/docsify/lib/plugins/zoom-image.min.js"></script>
+  <script src="//cdn.jsdelivr.net/npm/docsify-pagination/dist/docsify-pagination.min.js"></script>
+  
+  <!-- Syntax Highlighting -->
   <script src="//cdn.jsdelivr.net/npm/prismjs@1/components/prism-python.min.js"></script>
   <script src="//cdn.jsdelivr.net/npm/prismjs@1/components/prism-c.min.js"></script>
+  <script src="//cdn.jsdelivr.net/npm/prismjs@1/components/prism-cpp.min.js"></script>
   
   <!-- Dark Mode Toggle -->
   <script src="//cdn.jsdelivr.net/npm/docsify-darklight-theme@latest/dist/index.min.js"></script>
 </body>
 </html>
+<!-- END OF FILE docs/index.html -->
