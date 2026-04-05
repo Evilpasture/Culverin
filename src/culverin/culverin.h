@@ -88,6 +88,10 @@ static_assert(ID_TO_INDEX_MASK == 0x7FFFFF);
 #    define DEBUG_LOG(fmt, ...)
 #endif
 
+#if defined(__cplusplus)
+using namespace std;
+#endif
+
 // --- Callback Logic ---
 // Old ContactEvent for compatibility
 typedef struct ContactEvent {
