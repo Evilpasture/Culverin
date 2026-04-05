@@ -10,7 +10,7 @@ import numpy as np
 
 import culverin
 from culverin import TrackConfig, WheelConfig
-
+from pathlib import Path
 
 class CulverinTestCase(unittest.TestCase):
     """Base class providing helper methods for interacting with Culverin buffers."""
@@ -1002,6 +1002,153 @@ class TestSubinterpreterIsolation(unittest.TestCase):
             t.start()
         for t in threads:
             t.join()
+
+class TestURDFLoader(unittest.TestCase):
+    def test_urdf_parsing_and_initialization(self):
+        import os
+        # 1. Define the path to your sample
+        # Assuming execution from project root
+        urdf_path = "tests/samples/urdf_sample.xml"
+        
+        if not os.path.exists(urdf_path):
+            self.skipTest(f"URDF sample not found at {urdf_path}")
+
+        # 2. Use the loader to get the baked scene tuple
+        # Returns: (count, pos_bytes, rot_bytes, shape_bytes, mot_bytes, layer_bytes, usr_bytes)
+        baked_data = culverin.load_urdf(urdf_path)
+        
+        count = baked_data[0]
+        self.assertGreater(count, 0, "URDF loader should have found at least one link")
+        
+        # 3. To actually get these into a world, since the current C __init__ 
+        # expects a list, we can verify the data by initializing a world 
+        # with the count and then loading the state, OR we can modify 
+        # load_urdf locally for the test to return the list.
+        
+        # Validation: check if the byte lengths match the count
+        # (Positions are 4 * double per body = 32 bytes)
+        self.assertEqual(len(baked_data[1]), count * 32)
+        
+    def test_urdf_to_physics_world(self):
+        import os
+        from culverin import parse_urdf, SHAPE_BOX, SHAPE_CYLINDER
+        
+        urdf_path = "tests/samples/urdf_sample.xml"
+        if not os.path.exists(urdf_path):
+            self.skipTest("URDF sample missing")
+
+        # 1. Parse the URDF
+        bodies = parse_urdf(urdf_path)
+        
+        # 2. Setup World
+        world = culverin.PhysicsWorld()
+        
+        # 3. Create bodies manually to track handles
+        # (We iterate to ensure we match names to handles)
+        link_handles: dict[str, int] = {}
+        for b in bodies:
+            h = world.create_body(
+                pos=b["pos"],
+                rot=b["rot"],
+                shape=b["shape"],
+                size=b["size"],
+                mass=b["mass"],
+                motion=b["motion"]
+            )
+            link_handles[b["name"]] = h
+        
+        world.step(0) # Synchronize
+
+        # --- VALIDATION BASED ON YOUR XML ---
+
+        # Check Base Link
+        base_pos = world.get_position(link_handles["base_link"])
+        self.assertEqual(base_pos, (0.0, 0.0, 0.0))
+        # Mass was 10.0 in XML, verify it didn't fall (much) if gravity is on
+        self.assertEqual(bodies[0]["mass"], 10.0) 
+
+        # Check Arm Link
+        arm_pos = world.get_position(link_handles["arm"])
+        # XML says: <origin xyz="0 0 -0.5"/>
+        self.assertAlmostEqual(arm_pos[2], -0.5) 
+        
+        # Verify Shape Types
+        self.assertEqual(bodies[0]["shape"], SHAPE_BOX)
+        self.assertEqual(bodies[1]["shape"], SHAPE_CYLINDER)
+
+class TestDocumentation(unittest.TestCase):
+    """Verifies that the compiled docstrings match the source docs.txt file."""
+
+    @classmethod
+    def get_docs_map(cls) -> dict[str, str]:
+        """Parses DOCS.md into a dictionary: { 'ClassName_MethodName': 'The text content' }"""
+        docs_path = Path(__file__).parent.parent / "docs" / "DOCS.md"
+        
+        with open(docs_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # Split by markdown headers (## ClassName_method_name)
+        lines = content.split('\n')
+        
+        docs: dict[str, str] = {}
+        current_key = None
+        current_content: list[str] = []
+        
+        for line in lines:
+            # Check if this is a markdown header
+            if line.startswith("## "):
+                # Save the previous entry if it exists
+                if current_key is not None and current_content:
+                    docs[current_key] = '\n'.join(current_content).strip()
+                
+                # Extract the key from the header (e.g., "## PhysicsWorld_step" -> "PhysicsWorld_step")
+                current_key = line[3:].strip()
+                current_content = []
+            elif current_key is not None:
+                # Accumulate content lines, skipping empty lines at the start
+                if line.strip() or current_content:  # Skip leading empty lines
+                    current_content.append(line)
+        
+        # Save the last entry
+        if current_key is not None and current_content:
+            docs[current_key] = '\n'.join(current_content).strip()
+        
+        return docs
+
+    def test_dynamic_doc_stitching(self):
+        """Automatically verifies every key in docs.txt against the module methods."""
+        expected_docs = self.get_docs_map()
+        
+        for key, expected_text in expected_docs.items():
+            # key looks like 'PhysicsWorld_step'
+            class_name, method_name = key.split("_", 1)
+            
+            # Access the class and method dynamically
+            cls = getattr(culverin, class_name)
+            method = getattr(cls, method_name)
+            
+            # Assert doc exists
+            self.assertIsNotNone(method.__doc__, f"Docstring for {key} is missing")
+            
+            # Use 'in' to check for the presence of the doc string.
+            # We strip() to ignore minor whitespace differences in line endings.
+            self.assertIn(
+                expected_text.splitlines()[0].strip(), # Check at least the first line
+                method.__doc__.strip(),
+                f"Docstring for {key} does not match DOCS.md"
+            )
+
+    def test_class_docstring(self):
+        """Verifies the module-level documentation."""
+        import culverin._culverin_c as core
+        self.assertEqual(core.__doc__, "Culverin Physics Engine Core")
+
+    def test_property_docstrings(self):
+        """Verifies hardcoded docstrings on GetSet descriptors."""
+        doc_pending = culverin.PhysicsWorld.is_step_pending.__doc__
+        self.assertIsNotNone(doc_pending)
+        assert doc_pending is not None
+        self.assertIn("blocked", doc_pending)
 
 
 if __name__ == "__main__":
