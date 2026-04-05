@@ -5,7 +5,6 @@ Using Python built-in generics for modern DX.
 
 # Note: Some methods compiled with STRICT_HANDLE_ENABLED will crash with ValueError. Otherwise, returns None or silent.
 
-from __future__ import annotations
 
 from collections.abc import Sequence
 from typing import Any, Literal, TypedDict
@@ -50,8 +49,8 @@ EVENT_PERSISTED: int = 1
 EVENT_REMOVED: int = 2
 
 # --- Type Aliases ---
-Vec3 = tuple[float, float, float]
-Quat = tuple[float, float, float, float]
+type Vec3 = tuple[float, float, float]
+type Quat = tuple[float, float, float, float]
 
 class WheelConfig(TypedDict):
     pos: tuple[float, float, float]
@@ -139,15 +138,12 @@ class PhysicsWorld:
 
     # High-level Python helpers
     def get_position(self, handle: int) -> Vec3:
-        """Returns the world position of the body as (x, y, z)."""
         ...
 
     def get_rotation(self, handle: int) -> Quat:
-        """Returns the world rotation as a quaternion (x, y, z, w)."""
         ...
 
     def get_velocity(self, handle: int) -> Vec3:
-        """Returns the linear velocity as (vx, vy, vz)."""
         ...
 
     # --- Lifecycle ---
@@ -292,7 +288,6 @@ class PhysicsWorld:
         dt: float = 1.0 / 60.0,
         fluid_velocity: Vec3 = (0, 0, 0),
     ) -> bool:
-        """Returns False if handle is stale."""
         ...
     def apply_buoyancy_batch(
         self,
@@ -324,26 +319,14 @@ class PhysicsWorld:
 
     # --- Getters & Queries ---
     def get_body_stats(self, handle: int) -> tuple[Vec3, Quat, Vec3] | None:
-        """Returns None when handle is stale. Exception when compiled with STRICT_HANDLE_ENABLED"""
         ...
     def get_index(self, handle: int) -> int | None: ...
     def is_alive(self, handle: int) -> bool: ...
     def is_active(self, handle: int) -> bool:
-        """
-        Check if a body is currently active (simulating) or sleeping.
-
-        Args:
-            body_handle: The unique handle of the body to check.
-
-        Returns:
-            True if the body is active, False if it is sleeping or invalid.
-        """
         ...
     def get_motion_type(self, handle: int) -> int | None:
-        """Returns None when handle is stale. Exception when compiled with STRICT_HANDLE_ENABLED"""
         ...
     def get_user_data(self, handle: int) -> int | None:
-        """Returns None when handle is stale. Exception when compiled with STRICT_HANDLE_ENABLED"""
         ...
 
     def raycast(
@@ -359,39 +342,8 @@ class PhysicsWorld:
     # --- Events and Debug ---
     def get_contact_events(self) -> list[tuple[int, int]]: ...
     def get_contact_events_ex(self) -> list[ContactEvent]:
-        """
-        Retrieves a list of collision events for the current frame.
-
-        Performance Note:
-        This method is O(N) where N is the number of contacts. It allocates
-        Python dictionaries. For high-frequency ML training loops (10k+ bodies),
-        prefer `get_contact_events_raw()` with a NumPy structured array to
-        avoid allocation overhead.
-
-        Returns:
-            list[ContactEvent]: A list of dictionary objects detailing contact dynamics.
-        """
         ...
     def get_contact_events_raw(self) -> memoryview:
-        """
-        Returns a read-only memoryview of the contact buffer snapshot.
-
-        The returned memoryview contains an array of structs. Each struct is
-        64 bytes. You can interpret this data using the `struct` module
-        or by casting the memoryview.
-
-        Binary Layout (Format: "{<QQfffffffffIIII}"):
-        - body1 (uint64)
-        - body2 (uint64)
-        - px, py, pz (float32)
-        - nx, ny, nz (float32)
-        - impulse (float32)
-        - sliding_speed_sq (float32)
-        - mat1 (uint32)
-        - mat2 (uint32)
-        - type (uint32)
-        - _pad (uint32)
-        """
         ...
     def get_debug_data(
         self,
@@ -425,10 +377,4 @@ class PhysicsWorld:
     ]: ...
 
 def _dump_schema_json() -> None:
-    """
-    Internal: Dumps schema to culverin_schema.json
-
-    This is a low-level C extension method. It performs file I/O
-    directly and may raise OSError if the file cannot be opened.
-    """
     ...
