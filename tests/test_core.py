@@ -26,16 +26,17 @@ class CulverinTestCase(unittest.TestCase):
 
     def get_vel(self, handle: int):
         return self.world.get_velocity(handle)
-    # Well, my computer has assertHasAttr, but GitHub Actions don't, so I'm adding one myself.
-    def assertHasAttr(self, obj: object, name: str, msg: str | None = None):
-        if not hasattr(obj, name):
-            if isinstance(obj, types.ModuleType):
-                standardMsg = f'module {obj.__name__!r} has no attribute {name!r}'
-            elif isinstance(obj, type):
-                standardMsg = f'type object {obj.__name__!r} has no attribute {name!r}'
-            else:
-                standardMsg = f'{type(obj).__name__!r} object has no attribute {name!r}'
-            self.fail(self._formatMessage(msg, standardMsg))
+    # Well, my computer has assertHasAttr, but GitHub Actions don't, so I'm adding one myself.'
+    if not hasattr(unittest.TestCase, "assertHasAttr"):
+        def assertHasAttr(self, obj: object, name: str, msg: str | None = None):
+            if not hasattr(obj, name):
+                if isinstance(obj, types.ModuleType):
+                    standardMsg = f'module {obj.__name__!r} has no attribute {name!r}'
+                elif isinstance(obj, type):
+                    standardMsg = f'type object {obj.__name__!r} has no attribute {name!r}'
+                else:
+                    standardMsg = f'{type(obj).__name__!r} object has no attribute {name!r}'
+                self.fail(self._formatMessage(msg, standardMsg))
 
 class TestPrintVersion(CulverinTestCase):
     def test_print_version(self):
