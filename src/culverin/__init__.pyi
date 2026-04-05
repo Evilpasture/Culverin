@@ -1,4 +1,3 @@
-from __future__ import annotations
 
 # Re-export from the Python helper
 from ._culverin import (
@@ -8,6 +7,9 @@ from ._culverin import (
     TrackConfig,
     Transmission,
     WheelConfig,
+    euler_to_quat,
+    load_urdf,
+    parse_urdf,
 )
 
 # Re-export from the compiled artifact
@@ -75,4 +77,7 @@ __all__ = [
     "Transmission",
     "Vehicle",
     "WheelConfig",
+    "euler_to_quat",
+    "load_urdf",
+    "parse_urdf",
 ]

@@ -23,6 +23,9 @@ from ._culverin import (
     TrackConfig,
     Transmission,
     WheelConfig,
+    euler_to_quat,
+    load_urdf,
+    parse_urdf,
 )
 
 
@@ -124,4 +127,7 @@ __all__ = [
     "Transmission",
     "Vehicle",
     "WheelConfig",
+    "euler_to_quat",
+    "load_urdf",
+    "parse_urdf",
 ]
