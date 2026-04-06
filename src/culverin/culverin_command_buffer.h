@@ -8,13 +8,6 @@
 struct PhysicsWorldObject;
 typedef struct PhysicsWorldObject PhysicsWorldObject;
 
-// --- Command Buffer Optimized Layout (64 Bytes per Cache Line) ---
-
-// Bit-packing helper macros
-#define CMD_HEADER(type, slot) ((uint32_t)((type) & 0xFF) | ((slot) << 8))
-#define CMD_GET_TYPE(header) ((CommandType)((header) & 0xFF))
-#define CMD_GET_SLOT(header) ((header) >> 8)
-
 #if defined(JPH_DOUBLE_PRECISION)
 CULV_MAYBE_UNUSED static constexpr int16_t CMD_ALIGN = 16;
 #else
@@ -50,6 +43,34 @@ typedef enum CommandType : uint8_t {
     CMD_APPLY_ANG_IMPULSE,
     CMD_APPLY_IMPULSE_AT
 } CommandType;
+
+/**
+ * Packs a CommandType and a Slot ID into a single U32 header.
+ * Layout: [ Slot (24 bits) | Type (8 bits) ]
+ */
+CULV_NODISCARD [[gnu::const]]
+static inline uint32_t CMD_HEADER(CommandType type, uint32_t slot) {
+    static constexpr uint8_t CMD_TYPE_BITS  = 8;
+    static constexpr uint8_t CMD_TYPE_MASK  = ((1u << CMD_TYPE_BITS) - 1);
+    static constexpr uint8_t CMD_SLOT_SHIFT = CMD_TYPE_BITS;
+    return ((uint32_t)type & CMD_TYPE_MASK) | (slot << CMD_SLOT_SHIFT);
+}
+
+/** Extracts the CommandType (lowest 8 bits) */
+CULV_NODISCARD [[gnu::const]]
+static inline CommandType CMD_GET_TYPE(uint32_t header) {
+    static constexpr uint8_t CMD_TYPE_BITS = 8;
+    static constexpr uint8_t CMD_TYPE_MASK = ((1u << CMD_TYPE_BITS) - 1);
+    return (CommandType)(header & CMD_TYPE_MASK);
+}
+
+/** Extracts the Slot ID (upper 24 bits) */
+CULV_NODISCARD [[gnu::const]]
+static inline uint32_t CMD_GET_SLOT(uint32_t header) {
+    static constexpr uint8_t CMD_TYPE_BITS  = 8;
+    static constexpr uint8_t CMD_SLOT_SHIFT = CMD_TYPE_BITS;
+    return header >> CMD_SLOT_SHIFT;
+}
 
 // Internal helper to resolve slots to Jolt IDs safely
 typedef struct {
@@ -164,6 +185,8 @@ void clear_command_queue(struct PhysicsWorldObject *self);
 
 // True Direct Threading: Evaluates the next command without returning to a while loop.
 // Includes aggressive software prefetching for indirect lookups.
+static constexpr uint32_t VALID_BID_MASK = (1u << SLOT_ALIVE) | (1u << SLOT_PENDING_CREATE) |
+                                           (1u << SLOT_PENDING_DESTROY) | (1u << SLOT_CHARACTER);
 #define DISPATCH()                                                                                 \
     do {                                                                                           \
         if (UNLIKELY(i >= count)) {                                                                \
@@ -173,23 +196,29 @@ void clear_command_queue(struct PhysicsWorldObject *self);
         header = cmd->header;                                                                      \
         type   = CMD_GET_TYPE(header);                                                             \
         slot   = CMD_GET_SLOT(header);                                                             \
-        /* Aggressive Prefetching of the NEXT loop's data dependencies */                          \
+                                                                                                   \
         if (LIKELY(i < count)) {                                                                   \
             CULV_PREFETCH_READ(&queue[i]);                                                         \
             uint32_t next_slot = CMD_GET_SLOT(queue[i].header);                                    \
-            /* Hardware prefetchers handle atomic addresses the same as regular ones */            \
             CULV_PREFETCH_READ(&self->slot_states[next_slot]);                                     \
             CULV_PREFETCH_READ(&self->slot_to_dense[next_slot]);                                   \
         }                                                                                          \
-        /* TSan Fix: Atomic load ensures we see all data populated by the queuing thread */        \
+                                                                                                   \
         state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);              \
-        bid   = JPH_INVALID_BODY_ID;                                                               \
-        if (LIKELY(state == SLOT_ALIVE || state == SLOT_PENDING_CREATE ||                          \
-                   state == SLOT_PENDING_DESTROY || state == SLOT_CHARACTER)) {                    \
-            bid = self->body_ids[self->slot_to_dense[slot]];                                       \
-        }                                                                                          \
-        if (LIKELY(type == CMD_CREATE_BODY || bid != JPH_INVALID_BODY_ID)) {                       \
-            goto *dispatch_table[type];                                                            \
-        }                                                                                          \
-        goto op_NEXT;                                                                              \
+                                                                                                   \
+        /* Branchless State Validation (Guarded against UB shift) */                               \
+        /* If state > 31, (state < 32) evaluates to 0, masking the entire result to 0 */           \
+        uint32_t is_valid = (state < 32) & ((VALID_BID_MASK >> (state & 31)) & 1);                 \
+                                                                                                   \
+        /* Unconditional Read: dense_idx and bid are always within allocated bounds */             \
+        uint32_t dense_idx = self->slot_to_dense[slot];                                            \
+        bid                = self->body_ids[dense_idx];                                            \
+                                                                                                   \
+        /* Branchless Condition: Is it CREATE, or does it have a valid BID? */                     \
+        uint32_t is_executable =                                                                   \
+            is_valid & ((type == CMD_CREATE_BODY) | (bid != JPH_INVALID_BODY_ID));                 \
+                                                                                                   \
+        /* Branchless Target Selection via Ternary (Compiles to CMOV / CSEL) */                    \
+        const void *target = is_executable ? dispatch_table[type] : &&op_NOP;                      \
+        goto *target;                                                                              \
     } while (0)

@@ -114,7 +114,8 @@ void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *CULV_REST
     SlotState state;
     JPH_BodyID bid;
 
-op_NEXT:
+
+op_NOP:
     DISPATCH();
 
 op_CREATE_BODY: {
