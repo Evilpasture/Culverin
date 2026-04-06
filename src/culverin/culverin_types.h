@@ -42,7 +42,7 @@ static_assert(sizeof(AuxStride) == sizeof(float) * 4);
 // Minimal Handle Helper
 // Python handles will be 64-bit integers: (Generation << 32) | SlotIndex
 typedef _Atomic uint64_t BodyHandle;
- 
+
 // Constraint Types
 typedef enum ConstraintType : uint8_t {
     CONSTRAINT_FIXED    = 0,
@@ -62,6 +62,12 @@ typedef enum ContactEventType : uint8_t {
     EVENT_PERSISTED = 1,
     EVENT_REMOVED   = 2
 } ContactEventType;
+
+typedef enum MotionType : uint8_t {
+    MOTION_STATIC,
+    MOTION_KINEMATIC,
+    MOTION_DYNAMIC,
+} MotionType;
 
 CULV_MAYBE_UNUSED static constexpr uint32_t HANDLE_INDEX_BITS = 32;
 CULV_MAYBE_UNUSED static constexpr uint64_t HANDLE_INDEX_MASK = 0xFFFFFFFF;
