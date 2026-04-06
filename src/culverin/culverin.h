@@ -389,7 +389,11 @@ static inline bool culv_is_finite_f(float f) {
     static constexpr uint32_t MASK_F32 = 0x7F800000U;
     static_assert(sizeof(MASK_F32 + 0) == sizeof(uint32_t));
     uint32_t i; memcpy(&i, &f, sizeof(float));
-    uint32_t vi = i; 
+    #if defined(__clang__) && defined(_MSC_VER)
+    volatile uint32_t vi = i; 
+    #else 
+    uint32_t vi = i;
+    #endif
     return (vi & MASK_F32) != MASK_F32;
 }
 
