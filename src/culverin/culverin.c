@@ -2568,7 +2568,8 @@ PyCFunction_DeclareMethod PhysicsWorld_destroy_body(PhysicsWorldObject *self, Py
     const uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
 
     // Predicate: Can we destroy this?
-    const uint32_t is_destructible = !!((1u << (state & 7)) & MASK_DESTRUCTIBLE);
+    static constexpr uint8_t BITMASK_CLAMP = 7;
+    const uint32_t is_destructible = !!((1u << (state & BITMASK_CLAMP)) & MASK_DESTRUCTIBLE);
 
     if (UNLIKELY(!ensure_command_capacity(self))) {
         SHADOW_UNLOCK(&self->shadow_lock);
@@ -2639,7 +2640,8 @@ PyCFunction_DeclareMethod PhysicsWorld_destroy_bodies_batch(PhysicsWorldObject *
                 atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
 
             // Branchless validity check
-            const uint32_t is_destructible = !!((1u << (state & 7)) & MASK_DESTRUCTIBLE);
+            static constexpr uint8_t BITMASK_CLAMP = 7;
+            const uint32_t is_destructible = !!((1u << (state & BITMASK_CLAMP)) & MASK_DESTRUCTIBLE);
 
             // Speculative command queue write
             PhysicsCommand *cmd = &self->command_queue[self->command_count];
