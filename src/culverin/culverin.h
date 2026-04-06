@@ -388,9 +388,11 @@ CULV_NODISCARD
 static inline bool culv_is_finite_f(float f) {
     static constexpr uint32_t MASK_F32 = 0x7F800000U;
     static_assert(sizeof(MASK_F32 + 0) == sizeof(uint32_t));
-    uint32_t i; memcpy(&i, &f, sizeof(float));
+    uint32_t i;
+    memcpy(&i, &f, sizeof(float));
     volatile uint32_t vi = i;
-    static_assert(sizeof(typeof(vi)) == sizeof(uint32_t) && sizeof(typeof(vi)) == sizeof(float));
+    static_assert(sizeof(CULV_TYPE_OF(vi)) == sizeof(uint32_t) &&
+                  sizeof(CULV_TYPE_OF(vi)) == sizeof(float));
     return (vi & MASK_F32) != MASK_F32;
 }
 
@@ -398,33 +400,46 @@ CULV_NODISCARD
 static inline bool culv_is_finite_d(double d) {
     static constexpr uint64_t MASK_F64 = 0x7FF0000000000000ULL;
     static_assert(sizeof(MASK_F64 + 0) == sizeof(uint64_t));
-    uint64_t i; memcpy(&i, &d, sizeof(double));
+    uint64_t i;
+    memcpy(&i, &d, sizeof(double));
     volatile uint64_t vi = i;
-    static_assert(sizeof(typeof(vi)) == sizeof(uint64_t) && sizeof(typeof(vi)) == sizeof(double));
+    static_assert(sizeof(CULV_TYPE_OF(vi)) == sizeof(uint64_t) &&
+                  sizeof(CULV_TYPE_OF(vi)) == sizeof(double));
     return (vi & MASK_F64) != MASK_F64;
 }
 
 // --- The Generic Dispatcher (Preserves Types) ---
-#define IS_FINITE(x) _Generic((x), \
-    float:  culv_is_finite_f(x), \
-    double: culv_is_finite_d(x), \
-    default: culv_is_finite_d((double)(x)))
+#define IS_FINITE(x)                                                                               \
+    _Generic((x),                                                                                  \
+        float: culv_is_finite_f(x),                                                                \
+        double: culv_is_finite_d(x),                                                               \
+        default: culv_is_finite_d((double)(x)))
 
 // --- Error Reporting (One instance, no bloat) ---
-static PyObject* culv_raise_finite_err(const char* msg) {
+static PyObject *culv_raise_finite_err(const char *msg) {
     PyErr_Format(PyExc_ValueError, "Numerical Error: '%s' must be finite", msg);
     return nullptr;
 }
 
 // --- The Macro Engine (Variadic Expansion) ---
 // This expands into individual checks without creating arrays or casting types.
-#define VALIDATE_FINITE_CORE(msg, ...) \
-    CULV_EXPAND(CULV_CONCAT(CULV_VAL_ARGS_, CULV_NARGS(__VA_ARGS__)) (msg, __VA_ARGS__))
+#define VALIDATE_FINITE_CORE(msg, ...)                                                             \
+    CULV_EXPAND(CULV_CONCAT(CULV_VAL_ARGS_, CULV_NARGS(__VA_ARGS__))(msg, __VA_ARGS__))
 
-#define CULV_VAL_ARGS_1(m, x) do { if(UNLIKELY(!IS_FINITE(x))) return culv_raise_finite_err(m); } while(0)
-#define CULV_VAL_ARGS_2(m, x, ...) CULV_VAL_ARGS_1(m, x); CULV_VAL_ARGS_1(m, __VA_ARGS__)
-#define CULV_VAL_ARGS_3(m, x, ...) CULV_VAL_ARGS_1(m, x); CULV_VAL_ARGS_2(m, __VA_ARGS__)
-#define CULV_VAL_ARGS_4(m, x, ...) CULV_VAL_ARGS_1(m, x); CULV_VAL_ARGS_3(m, __VA_ARGS__)
+#define CULV_VAL_ARGS_1(m, x)                                                                      \
+    do {                                                                                           \
+        if (UNLIKELY(!IS_FINITE(x)))                                                               \
+            return culv_raise_finite_err(m);                                                       \
+    } while (0)
+#define CULV_VAL_ARGS_2(m, x, ...)                                                                 \
+    CULV_VAL_ARGS_1(m, x);                                                                         \
+    CULV_VAL_ARGS_1(m, __VA_ARGS__)
+#define CULV_VAL_ARGS_3(m, x, ...)                                                                 \
+    CULV_VAL_ARGS_1(m, x);                                                                         \
+    CULV_VAL_ARGS_2(m, __VA_ARGS__)
+#define CULV_VAL_ARGS_4(m, x, ...)                                                                 \
+    CULV_VAL_ARGS_1(m, x);                                                                         \
+    CULV_VAL_ARGS_3(m, __VA_ARGS__)
 
 #define CULV_NARGS(...) CULV_NARGS_IMP(__VA_ARGS__, 4, 3, 2, 1)
 #define CULV_NARGS_IMP(_1, _2, _3, _4, N, ...) N
@@ -433,8 +448,8 @@ static PyObject* culv_raise_finite_err(const char* msg) {
 #define CULV_EXPAND(x) x
 
 // --- User API (Zero cost wrappers) ---
-#define VALIDATE_FINITE_FLOAT(val, name)       VALIDATE_FINITE_CORE(name, val)
-#define VALIDATE_FINITE_VEC3(x, y, z, name)    VALIDATE_FINITE_CORE(name, x, y, z)
+#define VALIDATE_FINITE_FLOAT(val, name) VALIDATE_FINITE_CORE(name, val)
+#define VALIDATE_FINITE_VEC3(x, y, z, name) VALIDATE_FINITE_CORE(name, x, y, z)
 #define VALIDATE_FINITE_QUAT(x, y, z, w, name) VALIDATE_FINITE_CORE(name, x, y, z, w)
 #define VALIDATE_FINITE_VEC4(x, y, z, w, name) VALIDATE_FINITE_CORE(name, x, y, z, w)
 
@@ -452,3 +467,57 @@ static PyObject* culv_raise_finite_err(const char* msg) {
             Py_RETURN_NONE;                                                                        \
         } while (false)
 #endif
+
+CULV_NODISCARD [[gnu::const]]
+static inline bool is_state_valid(uint8_t state, uint8_t mask) {
+    return (bool)((1U << state) & mask);
+}
+
+#define CHECK_HANDLE(h_raw, slot_out)                                                              \
+    do {                                                                                           \
+        static_assert(sizeof(CULV_TYPE_OF(h_raw)) == sizeof(uint64_t));                            \
+        static_assert(sizeof(CULV_TYPE_OF(slot_out)) == sizeof(uint32_t));                         \
+        if (UNLIKELY(!unpack_handle(self, (BodyHandle)(h_raw), &(slot_out)))) {                    \
+            SHADOW_UNLOCK(&self->shadow_lock);                                                     \
+            RAISE_STALE_HANDLE();                                                                  \
+        }                                                                                          \
+    } while (false)
+
+#define CHECK_STATE(state_val, slot_mask)                                                          \
+    do {                                                                                           \
+        static_assert(sizeof(state_val) == sizeof(slot_mask));                                     \
+        if (UNLIKELY(!is_state_valid((state_val), (slot_mask)))) {                                 \
+            SHADOW_UNLOCK(&self->shadow_lock);                                                     \
+            RAISE_STALE_HANDLE();                                                                  \
+        }                                                                                          \
+    } while (false)
+
+typedef struct {
+    uint32_t is_immediate  : 1;
+    uint32_t is_deferred   : 1;
+    uint32_t is_executable : 1;
+    uint32_t _unused       : 29; 
+} SlotPredicate;
+
+// Standard masks for reuse
+static constexpr uint32_t MASK_IMM_STANDARD = (1u << SLOT_ALIVE) | (1u << SLOT_CHARACTER);
+static constexpr uint32_t MASK_IMM_STRICT   = (1u << SLOT_ALIVE);
+static constexpr uint32_t MASK_DEFERRED     = (1u << SLOT_PENDING_CREATE);
+// Define the mask for states that can be destroyed
+static constexpr uint32_t MASK_DESTRUCTIBLE = (1u << SLOT_ALIVE) | 
+                                               (1u << SLOT_PENDING_CREATE) | 
+                                               (1u << SLOT_CHARACTER);
+
+CULV_FORCE_INLINE static SlotPredicate get_slot_predicate(uint8_t state, uint32_t imm_mask) {
+    const uint32_t state_bit = 1u << (state & 7);
+    
+    uint32_t imm = (uint32_t)!!(bool)(state_bit & imm_mask);
+    uint32_t def = (uint32_t)!!(bool)(state_bit & MASK_DEFERRED);
+    
+    return (SlotPredicate){
+        .is_immediate  = imm,
+        .is_deferred   = def,
+        .is_executable = imm | def,
+        ._unused = {}
+    };
+}
