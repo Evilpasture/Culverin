@@ -244,7 +244,7 @@ jobs:
           uv venv --python 3.14
           
           # Install the wheel AND the test dependencies
-          uv pip install dist/*.whl numpy psutil
+          uv pip install dist/*.whl numpy psutil pytest
           
           ASAN_RT=$(find /usr/lib/llvm-22 -name "libclang_rt.asan-x86_64.so" | head -n 1)
           echo "ASan Runtime: ${ASAN_RT}"
@@ -255,8 +255,8 @@ jobs:
           if [ -n "$ASAN_RT" ]; then export LD_PRELOAD="$ASAN_RT"; fi
           
           # Use --no-project so it doesn't try to re-build that editable install
-          uv run --no-project python tests/test_core.py
-          uv run --no-project python tests/benchmark.py --leak
+          uv run --no-project pytest tests/test_core.py
+          uv run --no-project pytest tests/benchmark.py --leak
     # Thread sanitizer
   linux_tsan:
     name: Thread Sanitizer Validation
@@ -282,8 +282,8 @@ jobs:
         env:
           CC: "/usr/bin/clang-22"
           CXX: "/usr/bin/clang++-22"
-          CFLAGS: "-fsanitize=thread -g -O1 -fno-omit-frame-pointer"
-          CXXFLAGS: "-fsanitize=thread -g -O1 -fno-omit-frame-pointer -DENABLE_SANITIZER -D__SANITIZE_THREAD__"
+          CFLAGS: "-fsanitize=thread -g -O1 -fno-omit-frame-pointer -fno-optimize-sibling-calls"
+          CXXFLAGS: "-fsanitize=thread -g -O1 -fno-omit-frame-pointer -fno-optimize-sibling-calls -DENABLE_SANITIZER -D__SANITIZE_THREAD__"
           LDFLAGS: "-fsanitize=thread"
           CMAKE_ARGS: "-DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_STANDARD=23 -DCMAKE_C_STANDARD_REQUIRED=ON -DENABLE_THREAD_SANITIZER=ON"
         run: |
@@ -304,7 +304,7 @@ jobs:
           ./.venv/bin/python tests/benchmark.py --stress
           
           # Then run the actual test suite
-          ./.venv/bin/python tests/test_core.py
+          ./.venv/bin/python -m pytest tests/test_core.py
 
   # ===========================================================================
   # JOB 3.5: SANITY CHECKS
