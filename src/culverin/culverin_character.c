@@ -527,8 +527,12 @@ PyCFunction_DeclareMethodFromModule Character_set_rotation(CharacterObject *self
     JPH_Quat q = {.x = rot.x, .y = rot.y, .z = rot.z, .w = rot.w};
     JPH_CharacterVirtual_SetRotation(self->character, &q);
 
+    uint64_t raw_h;
+
+    uint64_t h_raw = atomic_load_explicit(&self->handle, memory_order_relaxed);
+
     // 4. Update Shadow Buffers (Zero-Streak Reset)
-    auto slot          = (uint32_t)(self->handle & HANDLE_INDEX_MASK);
+    auto slot          = (uint32_t)(raw_h & HANDLE_INDEX_MASK);
     uint32_t dense_idx = self->world->slot_to_dense[slot];
     size_t off         = (size_t)dense_idx * 4;
 
