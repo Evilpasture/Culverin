@@ -109,13 +109,9 @@ static inline void shadow_free_native_mutex(NativeMutex *m) {
     (void)m; // SRWLock requires no explicit cleanup
 }
 
-static inline void shadow_native_mutex_lock(NativeMutex *m) {
-    AcquireSRWLockExclusive(m);
-}
+static inline void shadow_native_mutex_lock(NativeMutex *m) { AcquireSRWLockExclusive(m); }
 
-static inline void shadow_native_mutex_unlock(NativeMutex *m) {
-    ReleaseSRWLockExclusive(m);
-}
+static inline void shadow_native_mutex_unlock(NativeMutex *m) { ReleaseSRWLockExclusive(m); }
 
 // --- Native Condition Variable Inlines ---
 
@@ -129,26 +125,24 @@ static inline void shadow_free_native_cond(NativeCond *c) {
 }
 
 static inline void shadow_native_cond_wait(NativeCond *c, NativeMutex *m) {
-    // Windows returns a BOOL, but since you use INFINITE, it only 
+    // Windows returns a BOOL, but since you use INFINITE, it only
     // returns once the lock is re-acquired.
     SleepConditionVariableSRW(c, m, INFINITE, 0);
 }
 
-static inline void shadow_native_cond_broadcast(NativeCond *c) {
-    WakeAllConditionVariable(c);
-}
+static inline void shadow_native_cond_broadcast(NativeCond *c) { WakeAllConditionVariable(c); }
 
 // --- Macro Wrappers ---
 
-#    define INIT_NATIVE_MUTEX(m)      shadow_init_native_mutex(&(m))
-#    define FREE_NATIVE_MUTEX(m)      shadow_free_native_mutex(&(m))
-#    define NATIVE_MUTEX_LOCK(m)      shadow_native_mutex_lock(&(m))
-#    define NATIVE_MUTEX_UNLOCK(m)    shadow_native_mutex_unlock(&(m))
+#    define INIT_NATIVE_MUTEX(m) shadow_init_native_mutex(&(m))
+#    define FREE_NATIVE_MUTEX(m) shadow_free_native_mutex(&(m))
+#    define NATIVE_MUTEX_LOCK(m) shadow_native_mutex_lock(&(m))
+#    define NATIVE_MUTEX_UNLOCK(m) shadow_native_mutex_unlock(&(m))
 
-#    define INIT_NATIVE_COND(c)       shadow_init_native_cond(&(c))
-#    define FREE_NATIVE_COND(c)       shadow_free_native_cond(&(c))
-#    define NATIVE_COND_WAIT(c, m)    shadow_native_cond_wait(&(c), &(m))
-#    define NATIVE_COND_BROADCAST(c)  shadow_native_cond_broadcast(&(c))
+#    define INIT_NATIVE_COND(c) shadow_init_native_cond(&(c))
+#    define FREE_NATIVE_COND(c) shadow_free_native_cond(&(c))
+#    define NATIVE_COND_WAIT(c, m) shadow_native_cond_wait(&(c), &(m))
+#    define NATIVE_COND_BROADCAST(c) shadow_native_cond_broadcast(&(c))
 
 #else
 #    include <pthread.h>
@@ -162,47 +156,35 @@ static inline int shadow_init_native_mutex(NativeMutex *m) {
     return pthread_mutex_init(m, nullptr);
 }
 
-static inline int shadow_free_native_mutex(NativeMutex *m) {
-    return pthread_mutex_destroy(m);
-}
+static inline int shadow_free_native_mutex(NativeMutex *m) { return pthread_mutex_destroy(m); }
 
-static inline void shadow_native_mutex_lock(NativeMutex *m) {
-    pthread_mutex_lock(m);
-}
+static inline void shadow_native_mutex_lock(NativeMutex *m) { pthread_mutex_lock(m); }
 
-static inline void shadow_native_mutex_unlock(NativeMutex *m) {
-    pthread_mutex_unlock(m);
-}
+static inline void shadow_native_mutex_unlock(NativeMutex *m) { pthread_mutex_unlock(m); }
 
 // --- Native Condition Variable Inlines ---
 
-static inline int shadow_init_native_cond(NativeCond *c) {
-    return pthread_cond_init(c, nullptr);
-}
+static inline int shadow_init_native_cond(NativeCond *c) { return pthread_cond_init(c, nullptr); }
 
-static inline int shadow_free_native_cond(NativeCond *c) {
-    return pthread_cond_destroy(c);
-}
+static inline int shadow_free_native_cond(NativeCond *c) { return pthread_cond_destroy(c); }
 
 static inline void shadow_native_cond_wait(NativeCond *c, NativeMutex *m) {
     pthread_cond_wait(c, m);
 }
 
-static inline void shadow_native_cond_broadcast(NativeCond *c) {
-    pthread_cond_broadcast(c);
-}
+static inline void shadow_native_cond_broadcast(NativeCond *c) { pthread_cond_broadcast(c); }
 
 // --- Macro Wrappers (Automatic Address-of) ---
 
-#    define INIT_NATIVE_MUTEX(m)      shadow_init_native_mutex(&(m))
-#    define FREE_NATIVE_MUTEX(m)      shadow_free_native_mutex(&(m))
-#    define NATIVE_MUTEX_LOCK(m)      shadow_native_mutex_lock(&(m))
-#    define NATIVE_MUTEX_UNLOCK(m)    shadow_native_mutex_unlock(&(m))
+#    define INIT_NATIVE_MUTEX(m) shadow_init_native_mutex(&(m))
+#    define FREE_NATIVE_MUTEX(m) shadow_free_native_mutex(&(m))
+#    define NATIVE_MUTEX_LOCK(m) shadow_native_mutex_lock(&(m))
+#    define NATIVE_MUTEX_UNLOCK(m) shadow_native_mutex_unlock(&(m))
 
-#    define INIT_NATIVE_COND(c)       shadow_init_native_cond(&(c))
-#    define FREE_NATIVE_COND(c)       shadow_free_native_cond(&(c))
-#    define NATIVE_COND_WAIT(c, m)    shadow_native_cond_wait(&(c), &(m))
-#    define NATIVE_COND_BROADCAST(c)  shadow_native_cond_broadcast(&(c))
+#    define INIT_NATIVE_COND(c) shadow_init_native_cond(&(c))
+#    define FREE_NATIVE_COND(c) shadow_free_native_cond(&(c))
+#    define NATIVE_COND_WAIT(c, m) shadow_native_cond_wait(&(c), &(m))
+#    define NATIVE_COND_BROADCAST(c) shadow_native_cond_broadcast(&(c))
 
 #endif
 
@@ -228,10 +210,16 @@ typedef NativeMutex ShadowMutex;
         } while (false)
 
 #    define INIT_LOCK(m)                                                                           \
-        (static_assert(_Generic((m), NativeMutex: 1, default: 0)), INIT_NATIVE_MUTEX(m))
+        do {                                                                                       \
+            static_assert(_Generic((m), NativeMutex: 1, default: 0), "m must be NativeMutex");     \
+            INIT_NATIVE_MUTEX(m);                                                                  \
+        } while (false)
 
 #    define FREE_LOCK(m)                                                                           \
-        (static_assert(_Generic((m), NativeMutex: 1, default: 0)), FREE_NATIVE_MUTEX(m))
+        do {                                                                                       \
+            static_assert(_Generic((m), NativeMutex: 1, default: 0), "m must be NativeMutex");     \
+            FREE_NATIVE_MUTEX(m);                                                                  \
+        } while (false)
 
 #elif PY_VERSION_HEX >= 0x030D0000
 /**
