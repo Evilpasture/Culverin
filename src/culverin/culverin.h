@@ -402,7 +402,11 @@ static inline bool culv_is_finite_d(double d) {
     static constexpr uint64_t MASK_F64 = 0x7FF0000000000000ULL;
     static_assert(sizeof(MASK_F64 + 0) == sizeof(uint64_t));
     uint64_t i; memcpy(&i, &d, sizeof(double));
-    uint64_t vi = i;
+    #if defined(__clang__) && defined(_MSC_VER)
+    volatile uint32_t vi = i; 
+    #else 
+    uint32_t vi = i;
+    #endif
     return (vi & MASK_F64) != MASK_F64;
 }
 
