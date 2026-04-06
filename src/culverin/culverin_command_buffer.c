@@ -74,6 +74,33 @@ bool ensure_command_capacity(PhysicsWorldObject *self) {
     return true;
 }
 
+CULV_NODISCARD
+bool ensure_command_bulk_capacity(PhysicsWorldObject *self, size_t batch_size) {
+    size_t required = self->command_count + batch_size;
+    
+    if (UNLIKELY(required > self->command_capacity)) {
+        size_t new_cap = (self->command_capacity == 0) ? 64 : self->command_capacity * 2;
+        
+        // Ensure the new capacity is actually large enough for the entire batch
+        while (new_cap < required) {
+            new_cap *= 2;
+        }
+
+        if (UNLIKELY(new_cap > (SIZE_MAX / sizeof(PhysicsCommand)))) {
+            return false;
+        }
+
+        void *new_ptr = CULV_RAW_REALLOC(self->command_queue, new_cap * sizeof(PhysicsCommand));
+        if (!new_ptr) {
+            return false;
+        }
+
+        self->command_queue    = (PhysicsCommand *)new_ptr;
+        self->command_capacity = new_cap;
+    }
+    return true;
+}
+
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *CULV_RESTRICT queue,
                              size_t count) {
