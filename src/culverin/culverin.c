@@ -1,3 +1,4 @@
+#include "culverin_types.h"
 #if !defined(_CRT_SECURE_NO_WARNINGS)
 #    define _CRT_SECURE_NO_WARNINGS
 #endif
@@ -4205,7 +4206,8 @@ static char *allocate_docstring(const char *start, size_t length) {
 
 // Master Docstring Extractor (Handles Nested ## class -> ### method)
 static char *extract_docstring(const char *class_name, const char *method_name) {
-    char class_key[128];
+    static constexpr size_t DOC_BUFFER = 128;
+    char class_key[DOC_BUFFER];
     snprintf(class_key, sizeof(class_key), "## class %s", class_name);
 
     // 1. Find the Class boundary
@@ -4213,17 +4215,18 @@ static char *extract_docstring(const char *class_name, const char *method_name) 
     if (!class_start) {
         return nullptr;
     }
-    
+
     // The scope of this class ends when the next class begins
     char *class_end = strstr(class_start + 1, "## class ");
 
     // 2. Find the Method boundary within this class
-    char method_key[128];
+    char method_key[DOC_BUFFER];
     snprintf(method_key, sizeof(method_key), "### %s", method_name);
 
     char *method_start = strstr(class_start, method_key);
-    
-    // Ensure we found it AND it belongs to THIS class AND isn't a substring (like finding "step_up" for "step")
+
+    // Ensure we found it AND it belongs to THIS class AND isn't a substring (like finding "step_up"
+    // for "step")
     while (method_start && (class_end == nullptr || method_start < class_end)) {
         char c = *(method_start + strlen(method_key));
         // We allow '(', '\r', '\n', ' ', or '\0' after the method name
@@ -4239,15 +4242,21 @@ static char *extract_docstring(const char *class_name, const char *method_name) 
 
     // 3. Move past the "### method(...)\n" header
     char *doc_start = method_start;
-    while (*doc_start != '\0' && *doc_start != '\n' && *doc_start != '\r') doc_start++;
-    while (*doc_start == '\n' || *doc_start == '\r') doc_start++;
+    while (*doc_start != '\0' && *doc_start != '\n' && *doc_start != '\r') {
+        doc_start++;
+    }
+    while (*doc_start == '\n' || *doc_start == '\r') {
+        doc_start++;
+    }
 
     // 4. Skip HTML Comments if present
     if (strncmp(doc_start, COMMENT_MARKER, 4) == 0) {
         char *comment_end = strstr(doc_start, "-->");
         if (comment_end) {
             doc_start = comment_end + 3; // Skip "-->"
-            while (*doc_start == '\n' || *doc_start == '\r' || *doc_start == ' ') doc_start++;
+            while (*doc_start == '\n' || *doc_start == '\r' || *doc_start == ' ') {
+                doc_start++;
+            }
         }
     }
 
@@ -4263,7 +4272,8 @@ static char *extract_docstring(const char *class_name, const char *method_name) 
     // 6. Trim trailing whitespace
     if (doc_end > doc_start) {
         doc_end--;
-        while (doc_end > doc_start && (*doc_end == '\n' || *doc_end == '\r' || *doc_end == ' ' || *doc_end == '\t')) {
+        while (doc_end > doc_start &&
+               (*doc_end == '\n' || *doc_end == '\r' || *doc_end == ' ' || *doc_end == '\t')) {
             doc_end--;
         }
     }
@@ -4271,13 +4281,15 @@ static char *extract_docstring(const char *class_name, const char *method_name) 
     if (doc_end >= doc_start) {
         return allocate_docstring(doc_start, (size_t)(doc_end - doc_start + 1));
     }
-    
+
     return nullptr;
 }
 
 // Pass 1: Stitch docstrings to PyMethodDefs
 static void stitch_docs(PyMethodDef *methods, const char *class_name) {
-    if (methods == nullptr) return;
+    if (methods == nullptr) {
+        return;
+    }
     for (PyMethodDef *m = methods; m->ml_name != nullptr; m++) {
         if (m->ml_doc == nullptr) {
             m->ml_doc = extract_docstring(class_name, m->ml_name);
@@ -4287,7 +4299,9 @@ static void stitch_docs(PyMethodDef *methods, const char *class_name) {
 
 // Pass 2: Stitch docstrings into PyGetSetDef getters
 static void stitch_docs_getset(PyGetSetDef *getset, const char *class_name) {
-    if (getset == nullptr) return;
+    if (getset == nullptr) {
+        return;
+    }
     for (PyGetSetDef *g = getset; g->name != nullptr; g++) {
         if (g->doc == nullptr) {
             g->doc = extract_docstring(class_name, g->name);
@@ -4579,15 +4593,16 @@ static const PyType_Spec Ragdoll_spec = {
 // --- Module Initialization ---
 
 // Embed the entire TOML file as a static string
-static const char PYPROJECT_TOML[] = {
+static constexpr char PYPROJECT_TOML[] = {
+// NOLINTNEXTLINE(readability-magic-numbers)
 #embed "../../pyproject.toml" suffix(, 0)
 };
 
 // Helper function to extract the version string at runtime
 static const char *extract_version_from_toml(void) {
     // Look for the specific pattern 'version = "'
-    const char *key   = "version = \"";
-    const char *start = strstr(PYPROJECT_TOML, key);
+    const char *key = "version = \"";
+    auto start      = strstr((char *)PYPROJECT_TOML, key);
 
     if (!start) {
         return "0.0.0-unknown";
@@ -4617,28 +4632,32 @@ static const char *extract_version_from_toml(void) {
 
 static int init_types(PyObject *m, CulverinState *st) {
     struct {
-        PyType_Spec *spec;
+        const PyType_Spec *spec;
         PyObject **slot;
         const char *name;
-    } types[] = {
-        {(PyType_Spec *)&PhysicsWorld_spec, &st->PhysicsWorldType, "PhysicsWorld"},
-        {(PyType_Spec *)&Character_spec, &st->CharacterType, "Character"},
-        {(PyType_Spec *)&Vehicle_spec, &st->VehicleType, "Vehicle"},
-        {(PyType_Spec *)&RagdollSettings_spec, &st->RagdollSettingsType, "RagdollSettings"},
-        {(PyType_Spec *)&Ragdoll_spec, &st->RagdollType, "Ragdoll"},
-        {(PyType_Spec *)&Skeleton_spec, &st->SkeletonType, "Skeleton"}};
+    } types[] = {{(&PhysicsWorld_spec), &st->PhysicsWorldType, "PhysicsWorld"},
+                 {(&Character_spec), &st->CharacterType, "Character"},
+                 {(&Vehicle_spec), &st->VehicleType, "Vehicle"},
+                 {(&RagdollSettings_spec), &st->RagdollSettingsType, "RagdollSettings"},
+                 {(&Ragdoll_spec), &st->RagdollType, "Ragdoll"},
+                 {(&Skeleton_spec), &st->SkeletonType, "Skeleton"}};
 
     for (size_t i = 0; i < sizeof(types) / sizeof(types[0]); i++) {
-        PyObject *type = PyType_FromModuleAndSpec(m, types[i].spec, nullptr);
+        auto type = PyType_FromModuleAndSpec(m, (PyType_Spec *)types[i].spec, nullptr);
         if (!type) {
             return -1;
         }
-        PyObject_SetAttrString(type, "__module__", PyUnicode_FromString("culverin"));
+        auto mod_name = PyUnicode_FromString("culverin");
+        if (!mod_name) {
+            Py_DECREF(type);
+            return -1;
+        }
+        PyObject_SetAttrString(type, "__module__", mod_name);
         if (PyModule_AddObject(m, types[i].name, type) < 0) {
             Py_DECREF(type);
             return -1;
         }
-        Py_INCREF(type);
+        Py_DECREF(mod_name);
         *types[i].slot = type;
     }
     return 0;
@@ -4656,18 +4675,18 @@ static int init_constants(PyObject *m) {
                   {.name = "SHAPE_MESH", .value = CULV_SHAPE_MESH},
                   {.name = "SHAPE_HEIGHTFIELD", .value = CULV_SHAPE_HEIGHTFIELD},
                   {.name = "SHAPE_CONVEX_HULL", .value = CULV_SHAPE_CONVEX_HULL},
-                  {.name = "MOTION_STATIC", .value = 0},
-                  {.name = "MOTION_KINEMATIC", .value = 1},
-                  {.name = "MOTION_DYNAMIC", .value = 2},
-                  {.name = "CONSTRAINT_FIXED", .value = 0},
-                  {.name = "CONSTRAINT_POINT", .value = 1},
-                  {.name = "CONSTRAINT_HINGE", .value = 2},
-                  {.name = "CONSTRAINT_SLIDER", .value = 3},
-                  {.name = "CONSTRAINT_DISTANCE", .value = 4},
-                  {.name = "CONSTRAINT_CONE", .value = 5},
-                  {.name = "EVENT_ADDED", .value = 0},
-                  {.name = "EVENT_PERSISTED", .value = 1},
-                  {.name = "EVENT_REMOVED", .value = 2}};
+                  {.name = "MOTION_STATIC", .value = MOTION_STATIC},
+                  {.name = "MOTION_KINEMATIC", .value = MOTION_KINEMATIC},
+                  {.name = "MOTION_DYNAMIC", .value = MOTION_DYNAMIC},
+                  {.name = "CONSTRAINT_FIXED", .value = CONSTRAINT_FIXED},
+                  {.name = "CONSTRAINT_POINT", .value = CONSTRAINT_POINT},
+                  {.name = "CONSTRAINT_HINGE", .value = CONSTRAINT_HINGE},
+                  {.name = "CONSTRAINT_SLIDER", .value = CONSTRAINT_SLIDER},
+                  {.name = "CONSTRAINT_DISTANCE", .value = CONSTRAINT_DISTANCE},
+                  {.name = "CONSTRAINT_CONE", .value = CONSTRAINT_CONE},
+                  {.name = "EVENT_ADDED", .value = EVENT_ADDED},
+                  {.name = "EVENT_PERSISTED", .value = EVENT_PERSISTED},
+                  {.name = "EVENT_REMOVED", .value = EVENT_REMOVED}};
 
     for (size_t i = 0; i < sizeof(consts) / sizeof(consts[0]); i++) {
         if (PyModule_AddIntConstant(m, consts[i].name, consts[i].value) < 0) {
