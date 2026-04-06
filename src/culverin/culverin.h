@@ -59,11 +59,13 @@ CULV_MAYBE_UNUSED static constexpr size_t JPH_INVALID_BODY_ID = 0xFFFFFFFF;
 CULV_MAYBE_UNUSED static constexpr size_t JPH_BODY_ID_INDEX_MASK = 0x00FFFFFF;
 #endif
 
-// Mask for the raw array index (Stripping the 24th bit used for Static flags)
-static constexpr unsigned _BitInt(24) ID_TO_INDEX_MASK = 0x7FFFFF;
-static_assert(ID_TO_INDEX_MASK == 0x7FFFFF);
-
-#define JPH_ID_TO_INDEX(id) ((uint32_t)((id) & ID_TO_INDEX_MASK))
+CULV_NODISCARD [[gnu::const]]
+static inline uint32_t JPH_ID_TO_INDEX(uint32_t id) {
+    // Mask for the raw array index (Stripping the 24th bit used for Static flags)
+    static constexpr unsigned _BitInt(24) ID_TO_INDEX_MASK = 0x7FFFFF;
+    static_assert(ID_TO_INDEX_MASK == 0x7FFFFF);
+    return id & ID_TO_INDEX_MASK;
+}
 
 // Allocate 'Type' on the stack with guaranteed 32-byte alignment.
 // USAGE: JPH_STACK_ALLOC(JPH_RVec3, my_vec);
@@ -109,7 +111,7 @@ typedef struct ContactEvent {
 
 static_assert(sizeof(ContactEvent) == MEMORY_ALIGNMENT_SIZE);
 
-CULV_MAYBE_UNUSED static constexpr int CONTACT_MAX_CAPACITY = 64 * 8 << 5;
+CULV_MAYBE_UNUSED static constexpr int CONTACT_MAX_CAPACITY = sizeof(ContactEvent) * 8 << 5;
 
 // --- Raycast Batch Result (Aligned to 16-bytes, Total 48-bytes) ---
 #ifdef _MSC_VER
@@ -381,25 +383,22 @@ static inline bool unpack_handle(PhysicsWorldObject *self, BodyHandle h, uint32_
     return (bool)(current_gen == gen);
 }
 
-// --- Bit-Level Constants ---
-static constexpr uint32_t MASK_F32 = 0x7F800000U;
-static constexpr uint64_t MASK_F64 = 0x7FF0000000000000ULL;
-
-static_assert(sizeof(MASK_F32 + 0) == sizeof(uint32_t));
-static_assert(sizeof(MASK_F64 + 0) == sizeof(uint64_t));
-
 // --- Hardened Checkers (No Casts) ---
 CULV_NODISCARD
 static inline bool culv_is_finite_f(float f) {
-    uint32_t i; memcpy(&i, &f, 4);
-    volatile uint32_t vi = i; 
+    static constexpr uint32_t MASK_F32 = 0x7F800000U;
+    static_assert(sizeof(MASK_F32 + 0) == sizeof(uint32_t));
+    uint32_t i; memcpy(&i, &f, sizeof(float));
+    uint32_t vi = i; 
     return (vi & MASK_F32) != MASK_F32;
 }
 
 CULV_NODISCARD
 static inline bool culv_is_finite_d(double d) {
-    uint64_t i; memcpy(&i, &d, 8);
-    volatile uint64_t vi = i;
+    static constexpr uint64_t MASK_F64 = 0x7FF0000000000000ULL;
+    static_assert(sizeof(MASK_F64 + 0) == sizeof(uint64_t));
+    uint64_t i; memcpy(&i, &d, sizeof(double));
+    uint64_t vi = i;
     return (vi & MASK_F64) != MASK_F64;
 }
 

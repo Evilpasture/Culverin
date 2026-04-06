@@ -317,7 +317,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_vehicle(PhysicsWorldObje
     SHADOW_UNLOCK(&self->shadow_lock);
 
     // --- 3. PRE-JOLT RESOURCE ALLOCATION (Unchanged) ---
-    VehicleResources r = {0};
+    VehicleResources r = {};
     r.f_curve          = JPH_LinearCurve_Create();
     JPH_LinearCurve_AddPoint(r.f_curve, 0.0f, 1.0f);
     JPH_LinearCurve_AddPoint(r.f_curve, FRICTION_CURVE_X1, FRICTION_CURVE_Y1);
@@ -548,7 +548,7 @@ PyCFunction_DeclareMethodFromModule Vehicle_get_wheel_transform(VehicleObject *s
     CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     uint32_t index = 0;
     void *targets[WheelIdx_COUNT];
-    targets[IDX_WH_INDEX] = &index;
+    targets[IDX_WH_INDEX] = (void *)&index;
 
     if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.WheelIdxParser, targets)) {
         return nullptr;
@@ -592,7 +592,7 @@ PyCFunction_DeclareMethodFromModule Vehicle_get_wheel_local_transform(VehicleObj
     CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     uint32_t index = 0;
     void *targets[WheelIdx_COUNT];
-    targets[IDX_WH_INDEX] = &index;
+    targets[IDX_WH_INDEX] = (void *)&index;
 
     if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.WheelIdxParser, targets)) {
         return nullptr;
