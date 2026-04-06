@@ -218,13 +218,21 @@ int parse_cone_params(PyObject *args, ConstraintParams *p) {
 }
 
 int parse_distance_params(PyObject *args, ConstraintParams *p) {
-    p->limit_min = 0.0f;
-    p->limit_max = 10.0f;
-    if (!args) {
+    // Default: -1.0 can be used as a sentinel in your create_distance 
+    // logic to say "calculate distance from current positions"
+    p->limit_min = -1.0f;
+    p->limit_max = -1.0f;
+
+    if (!args || args == Py_None) {
         return 1;
     }
-    // Min, Max
-    return PyArg_ParseTuple(args, "ff", &p->limit_min, &p->limit_max);
+
+    // Pattern: (Pivot1_xyz), (Pivot2_xyz), [optional min_dist, optional max_dist]
+    // This now matches the format used by Hinge and Slider.
+    return PyArg_ParseTuple(args, "(fff)(fff)|ff", 
+                            &p->px, &p->py, &p->pz, 
+                            &p->ax, &p->ay, &p->az, 
+                            &p->limit_min, &p->limit_max);
 }
 
 // Helper 2: Parse the size object (tuple or float) into a 4-float array
