@@ -1226,6 +1226,201 @@ class TestDocumentation(unittest.TestCase):
         assert culverin.Character.move.__doc__ is not None
         self.assertIn("Sweep and Slide", culverin.Character.move.__doc__)
 
+class TestKinematics(CulverinTestCase):
+    def test_kinematic_gravity_resistance(self):
+        """Kinematic bodies should ignore gravity and stay pinned in space."""
+        # Dynamic body (will fall)
+        h_dyn = self.world.create_body(pos=(0, 10, 0), motion=culverin.MOTION_DYNAMIC)
+        # Kinematic body (should stay)
+        h_kin = self.world.create_body(pos=(5, 10, 0), motion=culverin.MOTION_KINEMATIC)
+        
+        self.world.step(0)
+        for _ in range(10):
+            self.world.step(1/60.0)
+            
+        self.assertLess(self.get_pos(h_dyn)[1], 10.0, "Dynamic body failed to fall")
+        self.assertEqual(self.get_pos(h_kin)[1], 10.0, "Kinematic body moved under gravity")
+
+    def test_kinematic_velocity_drive(self):
+        """Setting linear velocity on a kinematic body should move it predictably."""
+        h = self.world.create_body(pos=(0, 0, 0), motion=culverin.MOTION_KINEMATIC)
+        self.world.set_linear_velocity(h, x=10.0, y=0, z=0)
+        
+        # Step 0.1 seconds
+        for _ in range(6):
+            self.world.step(1/60.0)
+            
+        pos = self.get_pos(h)
+        # Should be roughly at X=1.0 (10 units/sec * 0.1 sec)
+        self.assertAlmostEqual(pos[0], 1.0, places=2)
+        self.assertEqual(pos[1], 0.0)
+
+    def test_kinematic_pushing_dynamic(self):
+        """Kinematic bodies should act as 'unstoppable forces' pushing dynamic objects."""
+        # A dynamic crate sitting in the way
+        crate = self.world.create_body(pos=(2, 0.5, 0), size=(1, 1, 1), mass=10.0)
+        # A kinematic 'bulldozer' 
+        dozer = self.world.create_body(pos=(0, 0.5, 0), size=(1, 1, 1), motion=culverin.MOTION_KINEMATIC)
+        
+        self.world.step(0)
+        self.world.set_linear_velocity(dozer, x=10.0, y=0, z=0)
+        
+        # Step until they collide and the dozer passes through the original spot
+        for _ in range(20):
+            self.world.step(1/60.0)
+            
+        crate_pos = self.get_pos(crate)
+        dozer_pos = self.get_pos(dozer)
+        
+        # The dozer should have pushed the crate forward
+        self.assertGreater(dozer_pos[0], 1.0)
+        self.assertGreater(crate_pos[0], dozer_pos[0], "Crate should be in front of the kinematic dozer")
+
+    def test_motion_type_hotswap(self):
+        """Test switching a body from Kinematic to Dynamic mid-simulation."""
+        h = self.world.create_body(pos=(0, 10, 0), motion=culverin.MOTION_KINEMATIC)
+        self.world.step(1/60.0)
+        self.assertEqual(self.get_pos(h)[1], 10.0)
+        
+        # Switch to dynamic
+        self.world.set_motion_type(h, culverin.MOTION_DYNAMIC)
+        self.world.activate(h) # Force wake up
+        
+        # Give it a few frames to start falling
+        for _ in range(5):
+            self.world.step(1/60.0)
+            
+        self.assertLess(self.get_pos(h)[1], 10.0, "Body did not start falling after switching to dynamic")
+
+    def test_kinematic_rotation_interaction(self):
+        """Kinematic rotation should apply tangential velocity to dynamic objects."""
+        # A flat kinematic 'spinner' platform
+        spinner = self.world.create_body(
+            pos=(0, 0, 0), 
+            size=(5, 0.2, 5), 
+            motion=culverin.MOTION_KINEMATIC,
+            friction=1.0
+        )
+        # A dynamic ball sitting on the edge of the spinner
+        ball = self.world.create_body(
+            pos=(2, 0.5, 0), 
+            shape=culverin.SHAPE_SPHERE, 
+            size=0.2, 
+            mass=1.0
+        )
+        
+        self.world.step(0)
+        # Rotate the kinematic platform around Y axis (10 radians/sec)
+        self.world.set_angular_velocity(spinner, x=0, y=10.0, z=0)
+        
+        # Step and check if the ball gains velocity from the friction/rotation
+        for _ in range(10):
+            self.world.step(1/60.0)
+            
+        vel = self.get_vel(ball)
+        # The ball should have been 'thrown' or moved by the rotation
+        speed_sq = vel[0]**2 + vel[2]**2
+        self.assertGreater(speed_sq, 0.1, "Ball stayed static despite kinematic platform rotating")
+
+    def test_kinematic_teleport_stability(self):
+        """Directly setting position (teleporting) should still result in collision resolution."""
+        # Static wall
+        self.world.create_body(pos=(10, 0, 0), size=(1, 10, 10), motion=culverin.MOTION_STATIC)
+        # Kinematic body
+        k = self.world.create_body(pos=(0, 0, 0), motion=culverin.MOTION_KINEMATIC)
+        
+        self.world.step(0)
+        
+        # Teleport kinematic body directly into/past the wall
+        self.world.set_position(k, x=15, y=0, z=0)
+        self.world.step(1/60.0)
+        
+        self.assertEqual(self.get_pos(k)[0], 15.0, "Kinematic teleport was blocked (should be unstoppable)")
+
+class TestAdvancedPhysics(CulverinTestCase):
+    def test_ccd_tunneling_prevention(self):
+        """
+        Verify that CCD prevents a high-speed projectile from tunneling.
+        Note: Jolt's default max velocity is 500m/s.
+        """
+        # 1. Create a very thin static wall at X=2
+        self.world.create_body(
+            pos=(2, 0, 0), 
+            size=(0.1, 10, 10), 
+            motion=culverin.MOTION_STATIC
+        )
+        
+        # 2. Create high-speed projectiles
+        bullet = self.world.create_body(
+            pos=(0, 0, 0), 
+            size=(0.2, 0.2, 0.2), 
+            motion=culverin.MOTION_DYNAMIC,
+            ccd=True
+        )
+        
+        ghost = self.world.create_body(
+            pos=(0, 2, 0), 
+            size=(0.2, 0.2, 0.2), 
+            motion=culverin.MOTION_DYNAMIC,
+            ccd=False
+        )
+        
+        self.world.step(0) # Flush creation
+        
+        # 3. Launch at 400 m/s (below the 500m/s default cap)
+        # In 1/60s, they travel ~6.6m. The wall is at X=2.
+        self.world.set_linear_velocity(bullet, x=400.0, y=0, z=0)
+        self.world.set_linear_velocity(ghost, x=400.0, y=0, z=0)
+        
+        self.world.step(0)     # Flush velocity commands
+        self.world.step(1/60.0) # Simulate 1 frame
+        
+        pos_bullet = self.get_pos(bullet)
+        pos_ghost = self.get_pos(ghost)
+        
+        # CCD bullet should be stopped by the wall (stopped near X=2)
+        self.assertLess(pos_bullet[0], 2.2, "CCD Bullet tunneled through wall")
+        
+        # Non-CCD bullet (ghost) should have tunneled (ended up near X=6.6)
+        self.assertGreater(pos_ghost[0], 4.0, "Non-CCD Bullet was unexpectedly stopped")
+
+    def test_linear_and_angular_damping(self):
+        """Verify that damping slows down bodies over time in a vacuum."""
+        h = self.world.create_body(pos=(0, 0, 0), motion=culverin.MOTION_DYNAMIC)
+        self.world.set_gravity(0, 0, 0)
+        self.world.step(0)
+        
+        self.world.set_linear_velocity(h, 10, 0, 0)
+        self.world.set_angular_velocity(h, 10, 0, 0)
+        
+        for _ in range(60):
+            self.world.step(1/60.0)
+            
+        vel = self.world.get_velocity(h)
+        self.assertLess(vel[0], 10.0, "Linear velocity did not damp")
+
+    def test_slider_constraint(self):
+        """Test a Slider (Prismatic) constraint for elevators or pistons."""
+        b1 = self.world.create_body(pos=(0, 0, 0), motion=culverin.MOTION_STATIC)
+        b2 = self.world.create_body(pos=(0, 2, 0), motion=culverin.MOTION_DYNAMIC)
+        
+        self.world.step(0)
+        
+        c = self.world.create_constraint(
+            culverin.CONSTRAINT_SLIDER,
+            b1, b2,
+            params=((0, 0, 0), (0, 1, 0), 1.0, 5.0)
+        )
+        self.assertIsNotNone(c)
+        
+        self.world.apply_impulse(b2, 0, 1000, 0)
+        
+        for _ in range(30):
+            self.world.step(1/60.0)
+            
+        pos = self.get_pos(b2)
+        self.assertLessEqual(pos[1], 5.2)
+        self.assertGreaterEqual(pos[1], 0.8)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
