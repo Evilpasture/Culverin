@@ -8,91 +8,89 @@
 
 /**
  * ============================================================================
- * CULVERIN FAST PARSE ENGINE (C23 "O(1)" EDITION)
+ * CULVERIN FAST PARSE ENGINE (C23 "O(1)" / MULTI-INTERPRETER EDITION)
  * ============================================================================
  *
  * A high-performance, zero-allocation argument parsing system for Python C
- * extensions. Replaces PyArg_ParseTupleAndKeywords with a hybrid system using
- * X-Macro Schemas for "Lazy" maintenance and Pointer Hashing for O(1) lookups.
+ * extensions. Optimized for PEP 703 (Free-threading) and PEP 489 (Multi-phase
+ * initialization).
+ *
+ * This version uses "Module State Isolation" to remain safe for multiple
+ * subinterpreters. All parser metadata and interned keyword pointers are 
+ * stored within the interpreter-specific CulverinState.
  *
  * ----------------------------------------------------------------------------
- * 1. THE SETUP (Lazy Schema Definition)
+ * 1. THE SETUP (Isolated Schema Bundling)
  * ----------------------------------------------------------------------------
- * Define your API once in culverin_arg_indices.h using X-Macros.
+ * Define your API in culverin_arg_indices.h using X-Macros. All parsers
+ * are bundled into a struct instead of global variables.
  *
- *   #define SCHEMA_VEC3(X) \
- *       X(IDX_V3_H, "handle", uint64_t, 1) \  // REQUIRED (1)
- *       X(IDX_V3_X, "x",      float,    1) \
- *       X(IDX_V3_Y, "y",      float,    1) \
- *       X(IDX_V3_Z, "z",      float,    1)
+ *   #define FOR_ALL_PARSERS(X) \
+ *       X(Force, Vec3, SCHEMA_VEC3) \
+ *       X(Torque, Vec3, SCHEMA_VEC3)
  *
- *   // Generate Enum (IDX_V3_H...) and Count (Vec3_COUNT)
- *   DEFINE_INDEX_GROUP(Vec3, SCHEMA_VEC3)
- *
- *   // Declare specific Parser objects
- *   DECLARE_PARSER(Force, Vec3)
- *   DECLARE_PARSER(Torque, Vec3)
+ *   typedef struct {
+ *       FOR_ALL_PARSERS(DECLARE_PARSER) // Expands to FastParser members
+ *   } CulverinParsers;
  *
  * ----------------------------------------------------------------------------
- * 2. INITIALIZATION (Module Level)
+ * 2. INITIALIZATION (Interpreter Local)
  * ----------------------------------------------------------------------------
- * In culverin_arg_indices.c, allocate and initialize with one line:
+ * In your module's exec slot (Py_mod_exec), initialize the parsers for the
+ * current interpreter instance:
  *
- *   ALLOC_PARSER(Force, Vec3)
- *
- *   void culverin_init_all_parsers() {
- *       INIT_PARSER(Force, Vec3, SCHEMA_VEC3);
+ *   PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
+ *       CulverinState *st = get_culverin_state(m);
+ *       culverin_init_all_parsers(&st->parsers); 
+ *       return 0;
  *   }
  *
  * ----------------------------------------------------------------------------
- * 3. THE USAGE (Function Level)
+ * 3. THE USAGE (Safe Function Level)
  * ----------------------------------------------------------------------------
- * Use the FastParse_Unified macro. It branches between Vectorcall and Legacy.
+ * Retrieve the state from the module and use the local parser struct.
  *
  *   static PyObject* my_func(PyObject* self, PyObject* const* args,
  *                            size_t nargsf, PyObject* kwnames) {
+ *       // Fetch state specific to THIS interpreter
+ *       CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+ *       
  *       uint64_t h; float x, y, z;
- *
- *       // Target Array - Explicitly mapped using Schema IDs
  *       void *targets[Vec3_COUNT];
  *       targets[IDX_V3_H] = &h;
- *       targets[IDX_V3_X] = &x;
- *       targets[IDX_V3_Y] = &y;
- *       targets[IDX_V3_Z] = &z;
+ *       // ... map targets ...
  *
+ *       // Pass the interpreter-local parser address
  *       if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
- *                              &ForceParser, targets))
+ *                              &st->parsers.ForceParser, targets))
  *           return nullptr;
- *
- *       // ... physics logic ...
  *   }
  *
  * ----------------------------------------------------------------------------
  * 4. CRITICAL INVARIANTS (The "Don't Crash" Rules)
  * ----------------------------------------------------------------------------
  *
- * INVARIANT A: SCHEMA INTEGRITY
- * The ID used in the 'targets' array (e.g., IDX_V3_X) MUST match the schema
- * used to initialize the parser. The X-Macro ensures this by generating the
- * Enum and Parser Specs from the same source.
+ * INVARIANT A: POINTER ISOLATION
+ * PyObject* addresses for interned keywords (e.g., "handle") are ONLY valid
+ * in the interpreter that created them. NEVER share a FastParser struct 
+ * globally across C-memory.
  *
- * INVARIANT B: PRECISION SAFETY
- * Using 'JPH_Real' in the Schema allows the engine to automatically dispatch
- * to either 'float' or 'double' converters based on your Jolt build,
- * preventing stack corruption.
+ * INVARIANT B: SCHEMA INTEGRITY
+ * Target array indices must match the schema used for initialization. 
+ * Managed via the GroupName##_Idx enums in culverin_arg_indices.h.
  *
- * INVARIANT C: INITIALIZATION
- * culverin_init_all_parsers() MUST be called in the module exec phase.
- * If interned pointers are uninitialized, O(1) address-hashing will fail.
+ * INVARIANT C: PRECISION SAFETY
+ * Using 'JPH_Real' automatically selects float or double based on the
+ * Jolt Physics build, preventing memory corruption in shadow buffers.
  *
  * ----------------------------------------------------------------------------
  * 5. PERFORMANCE CHARACTERISTICS
  * ----------------------------------------------------------------------------
- * - Zero Allocation: No Python tuples/dicts created during the hot path.
- * - Pointer Hashing: Hashes interned string addresses (extremely fast O(1)).
- * - C23 Dispatch: Uses 'typeof_unqual' to select type-correct converters.
- * - Bitmask Validation: 'Required' args checked via 1 instruction (AND/CMP).
- * - Multi-Signature Reuse: One Schema can power many functions (Force/Torque).
+ * - Zero Allocation: No temporary Python objects created on the hot path.
+ * - Pointer Hashing: O(1) comparison of interned keyword addresses.
+ * - Vectorcall Native: Directly supports PEP 590 fast-calling convention.
+ * - Subinterpreter Friendly: Fully isolated; safe for concurrent interpreter 
+ *   initialization in Python 3.12+.
  * ============================================================================
  */
 
