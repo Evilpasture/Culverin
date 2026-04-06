@@ -9,22 +9,22 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_constraint(PhysicsWorldO
                                                                    size_t nargsf,
                                                                    PyObject *kwnames) {
     CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
-    // 1. FAST PARSE (Unchanged)
+
+    // 1. FAST PARSE
     int type           = 0;
     uint64_t h1_raw    = 0;
     uint64_t h2_raw    = 0;
     PyObject *o_params = nullptr;
     PyObject *o_motor  = nullptr;
 
-    void *targets[CreateConstr_COUNT];
-    targets[IDX_CC_TYPE]   = (void *)&type;
-    targets[IDX_CC_BODY1]  = (void *)&h1_raw;
-    targets[IDX_CC_BODY2]  = (void *)&h2_raw;
-    targets[IDX_CC_PARAMS] = (void *)&o_params;
-    targets[IDX_CC_MOTOR]  = (void *)&o_motor;
+    void *targets[CreateConstr_COUNT] = {[IDX_CC_TYPE]   = (void *)&type,
+                                         [IDX_CC_BODY1]  = (void *)&h1_raw,
+                                         [IDX_CC_BODY2]  = (void *)&h2_raw,
+                                         [IDX_CC_PARAMS] = (void *)&o_params,
+                                         [IDX_CC_MOTOR]  = (void *)&o_motor};
 
-    auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.CreateConstrParser, targets)) {
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+                           &st->parsers.CreateConstrParser, targets)) {
         return nullptr;
     }
 
@@ -33,7 +33,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_constraint(PhysicsWorldO
         return nullptr;
     }
 
-    // 2. PARAMS EXTRACTION (Unchanged)
+    // 2. PARAMS EXTRACTION
     ConstraintParams p;
     params_init(&p);
     int parse_ok = 1;
@@ -62,7 +62,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_constraint(PhysicsWorldO
     }
 
     if (!parse_ok) {
-        return nullptr;
+        return nullptr; // PyErr set by helpers
     }
     if (o_motor) {
         parse_motor_config(o_motor, &p);
@@ -75,23 +75,34 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_constraint(PhysicsWorldO
 
     uint32_t s1 = 0;
     uint32_t s2 = 0;
-
-    // TSan Fix: unpack_handle now takes BodyHandle (atomic uint64_t)
-    // and slot_states are atomic loads.
-    bool valid_b1 =
-        (unpack_handle(self, (BodyHandle)h1_raw, &s1) &&
-         atomic_load_explicit(&self->slot_states[s1], memory_order_acquire) == SLOT_ALIVE) != 0;
-
-    bool valid_b2 =
-        (unpack_handle(self, (BodyHandle)h2_raw, &s2) &&
-         atomic_load_explicit(&self->slot_states[s2], memory_order_acquire) == SLOT_ALIVE) != 0;
-
-    if (!valid_b1 || !valid_b2) {
+    if (!unpack_handle(self, (BodyHandle)h1_raw, &s1) ||
+        !unpack_handle(self, (BodyHandle)h2_raw, &s2)) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_ValueError, "Invalid or stale body handles");
-        return nullptr;
+        RAISE_STALE_HANDLE();
     }
 
+    uint8_t state1 = atomic_load_explicit(&self->slot_states[s1], memory_order_acquire);
+    uint8_t state2 = atomic_load_explicit(&self->slot_states[s2], memory_order_acquire);
+
+    // Predicate: Are these bodies either Alive or about to be?
+    const SlotPredicate pred1 = get_slot_predicate(state1, MASK_IMM_STANDARD);
+    const SlotPredicate pred2 = get_slot_predicate(state2, MASK_IMM_STANDARD);
+
+    if (!pred1.is_executable || !pred2.is_executable) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        RAISE_STALE_HANDLE();
+    }
+
+    // LAZY FLUSH: If either body is PENDING_CREATE, we must flush now.
+    // Jolt requires valid JPH_BodyID/Pointers to instantiate a constraint.
+    if (pred1.is_deferred || pred2.is_deferred) {
+        sync_and_flush_internal(self);
+        // Re-verify states after flush
+        state1 = atomic_load_explicit(&self->slot_states[s1], memory_order_acquire);
+        state2 = atomic_load_explicit(&self->slot_states[s2], memory_order_acquire);
+    }
+
+    // At this point, both must be SLOT_ALIVE or SLOT_CHARACTER
     JPH_BodyID bid1 = self->body_ids[self->slot_to_dense[s1]];
     JPH_BodyID bid2 = self->body_ids[self->slot_to_dense[s2]];
 
@@ -103,11 +114,12 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_constraint(PhysicsWorldO
     uint32_t c_slot = self->free_constraint_slots[--self->free_constraint_count];
     SHADOW_UNLOCK(&self->shadow_lock);
 
-    // 4. JOLT EXECUTION (Lock Interface - Unchanged)
+    // 4. JOLT EXECUTION (Lock-safe body pointer retrieval)
     const JPH_BodyLockInterface *lock_iface = JPH_PhysicsSystem_GetBodyLockInterface(self->system);
     JPH_BodyLockWrite lock1;
     JPH_BodyLockWrite lock2;
 
+    // Lock bodies in consistent ID order to prevent deadlocks
     if (bid1 < bid2) {
         JPH_BodyLockInterface_LockWrite(lock_iface, bid1, &lock1);
         JPH_BodyLockInterface_LockWrite(lock_iface, bid2, &lock2);
@@ -320,14 +332,13 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_constraint_type(PhysicsWorl
                                                                      size_t nargsf,
                                                                      PyObject *kwnames) {
     CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
-    // 1. FAST PARSE (Zero-Allocation)
-    // Using the generic Handle-Only group defined in culverin_arg_indices
-    uint64_t handle_raw;
-    void *targets[HOnly_COUNT];
-    targets[IDX_H_H] = (void *)&handle_raw;
 
-    auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.HOnlyParser, targets)) {
+    // 1. FAST PARSE (Zero-Allocation)
+    uint64_t handle_raw;
+    void *targets[HOnly_COUNT] = {[IDX_H_H] = &handle_raw};
+
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.HOnlyParser,
+                           targets)) {
         return nullptr;
     }
 
@@ -340,14 +351,17 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_constraint_type(PhysicsWorl
     uint32_t gen  = (uint32_t)(handle_raw >> HANDLE_INDEX_BITS);
 
     // Validate slot range, generation, and liveness
-    if (slot >= self->constraint_capacity || self->constraint_generations[slot] != gen ||
-        self->constraint_states[slot] != SLOT_ALIVE) {
+    if (UNLIKELY(slot >= self->constraint_capacity || self->constraint_generations[slot] != gen ||
+                 self->constraint_states[slot] != SLOT_ALIVE)) {
+
         SHADOW_UNLOCK(&self->shadow_lock);
-        PyErr_SetString(PyExc_ValueError, "Invalid or stale constraint handle");
-        return nullptr;
+
+        // POLICY FIX: Use the shim macro to either return None (Silent) or raise ValueError
+        // (Strict)
+        RAISE_STALE_HANDLE();
     }
 
-    // Extract subtype (Hinge, Slider, etc.)
+    // Extract subtype (Hinge, Slider, etc.) from Jolt
     JPH_Constraint *c         = self->constraints[slot];
     JPH_ConstraintSubType sub = JPH_Constraint_GetSubType(c);
 
