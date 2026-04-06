@@ -256,7 +256,7 @@ jobs:
           
           # Use --no-project so it doesn't try to re-build that editable install
           uv run --no-project pytest tests/test_core.py
-          uv run --no-project pytest tests/benchmark.py --leak
+          uv run --no-project tests/benchmark.py --leak
     # Thread sanitizer
   linux_tsan:
     name: Thread Sanitizer Validation
