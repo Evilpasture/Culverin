@@ -1007,6 +1007,8 @@ Generates high-performance geometric data representing the current state of all 
 
 **Binary Vertex Format (16 bytes per vertex):**
 
+---
+
 | Offset | Type | Description |
 | :--- | :--- | :--- |
 | `0` | `float32` | Position X |
@@ -1141,6 +1143,8 @@ Returns a zero-copy `memoryview` providing direct access to the engine's interna
 - **`buffer` (memoryview):** A contiguous binary view of the contact events. Each event is a **64-byte structured record**.
 
 **Record Format (`<QQfffffffffIIII`):**
+
+---
 
 | Byte Offset | Type | Member | Description |
 | :--- | :--- | :--- | :--- |
