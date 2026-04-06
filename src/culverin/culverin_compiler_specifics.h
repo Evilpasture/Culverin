@@ -639,3 +639,18 @@ static_assert(
     "function's behavior that needs to be addressed before the library can be safely used.");
 } // namespace
 #endif                     // __cplusplus
+
+
+#ifdef __cplusplus
+    // In C++, use the standard decltype
+    #include <type_traits>
+    #define CULV_TYPE_OF(x) decltype(x)
+#else
+    // In C, use C23 typeof or the GCC/Clang extension
+    #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L
+        #define CULV_TYPE_OF(x) typeof(x)
+    #else
+        // Fallback for older C or compilers with extensions
+        #define CULV_TYPE_OF(x) __typeof__(x)
+    #endif
+#endif
