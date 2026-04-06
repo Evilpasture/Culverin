@@ -1422,5 +1422,70 @@ class TestAdvancedPhysics(CulverinTestCase):
         self.assertLessEqual(pos[1], 5.2)
         self.assertGreaterEqual(pos[1], 0.8)
 
+class TestKinematicsAdvanced(CulverinTestCase):
+    def test_kinematic_compound_movement(self):
+        """Verify that compound kinematic bodies respond to velocity (The Basket Test)."""
+        parts = [
+            ((0, 0, 0), (0,0,0,1), culverin.SHAPE_BOX, (1, 1, 1)),
+            ((2, 0, 0), (0,0,0,1), culverin.SHAPE_BOX, (1, 1, 1)),
+        ]
+        h = self.world.create_compound_body(
+            pos=(0, 0, 0), 
+            rot=(0, 0, 0, 1), 
+            parts=parts, 
+            motion=culverin.MOTION_KINEMATIC
+        )
+        self.world.step(0)
+        
+        # Set velocity
+        self.world.activate(h)
+        self.world.set_linear_velocity(h, x=10.0, y=0, z=0)
+        
+        # Step for 0.5 seconds
+        for _ in range(30):
+            self.world.step(1/60.0)
+            
+        pos = self.get_pos(h)
+        self.assertGreater(pos[0], 4.5, "Kinematic compound body failed to move")
+
+    def test_kinematic_restitution_transfer(self):
+        """Kinematic bodies should 'bounce' dynamic ones away based on their own velocity."""
+        # Static floor
+        self.world.create_body(pos=(0, -1, 0), size=(10, 1, 10), motion=culverin.MOTION_STATIC)
+        
+        # Kinematic 'Bat' moving upward
+        bat = self.world.create_body(pos=(0, 0, 0), size=(2, 0.2, 2), motion=culverin.MOTION_KINEMATIC)
+        
+        # Dynamic ball falling onto the bat
+        ball = self.world.create_body(pos=(0, 2, 0), shape=culverin.SHAPE_SPHERE, size=0.5)
+        
+        self.world.step(0)
+        self.world.set_linear_velocity(bat, 0, 20.0, 0)
+        
+        # Simulate collision
+        for _ in range(10):
+            self.world.step(1/60.0)
+            
+        ball_vel = self.get_vel(ball)
+        self.assertGreater(ball_vel[1], 15.0, "Kinematic velocity was not transferred to dynamic body")
+
+    def test_kinematic_to_static_interaction(self):
+        """Kinematic bodies should NOT be blocked by static bodies (Ghosting)."""
+        # Static wall
+        self.world.create_body(pos=(5, 0, 0), size=(1, 5, 5), motion=culverin.MOTION_STATIC)
+        
+        # Kinematic body moving through wall
+        k = self.world.create_body(pos=(0, 0, 0), motion=culverin.MOTION_KINEMATIC)
+        
+        self.world.step(0)
+        self.world.set_linear_velocity(k, 60.0, 0, 0)
+        
+        # Step 1/6th of a second (should be at X=10)
+        for _ in range(10):
+            self.world.step(1/60.0)
+            
+        pos = self.get_pos(k)
+        self.assertGreater(pos[0], 9.0, "Kinematic body was blocked by a static object")
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
