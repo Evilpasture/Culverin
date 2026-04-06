@@ -390,6 +390,7 @@ static inline bool culv_is_finite_f(float f) {
     static_assert(sizeof(MASK_F32 + 0) == sizeof(uint32_t));
     uint32_t i; memcpy(&i, &f, sizeof(float));
     volatile uint32_t vi = i;
+    static_assert(sizeof(typeof(vi)) == sizeof(uint32_t) && sizeof(typeof(vi)) == sizeof(float));
     return (vi & MASK_F32) != MASK_F32;
 }
 
@@ -399,6 +400,7 @@ static inline bool culv_is_finite_d(double d) {
     static_assert(sizeof(MASK_F64 + 0) == sizeof(uint64_t));
     uint64_t i; memcpy(&i, &d, sizeof(double));
     volatile uint64_t vi = i;
+    static_assert(sizeof(typeof(vi)) == sizeof(uint64_t) && sizeof(typeof(vi)) == sizeof(double));
     return (vi & MASK_F64) != MASK_F64;
 }
 
