@@ -361,8 +361,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_impulse(PhysicsWorldObject *self,
         Py_RETURN_NONE;
     }
 
-    PyErr_SetString(PyExc_ValueError, "Body is dead or invalid");
-    return nullptr;
+    RAISE_STALE_HANDLE();
 }
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 PyCFunction_DeclareMethod PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self,
@@ -430,8 +429,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self
         Py_RETURN_NONE;
     }
 
-    PyErr_SetString(PyExc_ValueError, "Body is dead or invalid");
-    return nullptr;
+    RAISE_STALE_HANDLE();
 }
 PyCFunction_DeclareMethod PhysicsWorld_apply_angular_impulse(PhysicsWorldObject *self,
                                                              PyObject *const *args, size_t nargsf,
@@ -490,8 +488,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_angular_impulse(PhysicsWorldObject 
         Py_RETURN_NONE;
     }
 
-    PyErr_SetString(PyExc_ValueError, "Body is dead or being destroyed");
-    return nullptr;
+    RAISE_STALE_HANDLE();
 }
 
 PyCFunction_DeclareMethod PhysicsWorld_apply_force(PhysicsWorldObject *self, PyObject *const *args,
@@ -558,8 +555,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_force(PhysicsWorldObject *self, PyO
         Py_RETURN_NONE;
     }
 
-    PyErr_SetString(PyExc_ValueError, "Body is dead or invalid");
-    return nullptr;
+    RAISE_STALE_HANDLE();
 }
 
 PyCFunction_DeclareMethod PhysicsWorld_apply_torque(PhysicsWorldObject *self, PyObject *const *args,
@@ -630,8 +626,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_torque(PhysicsWorldObject *self, Py
         Py_RETURN_NONE;
     }
 
-    PyErr_SetString(PyExc_ValueError, "Body is dead or invalid");
-    return nullptr;
+    RAISE_STALE_HANDLE();
 }
 
 PyCFunction_DeclareMethod PhysicsWorld_set_gravity(PhysicsWorldObject *self, PyObject *const *args,
@@ -2734,8 +2729,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_position(PhysicsWorldObject *self, Py
         Py_RETURN_NONE;
     }
 
-    PyErr_SetString(PyExc_ValueError, "Body is dead or invalid");
-    return nullptr;
+    RAISE_STALE_HANDLE();
 }
 PyCFunction_DeclareMethod PhysicsWorld_set_rotation(PhysicsWorldObject *self, PyObject *const *args,
                                                     size_t nargsf, PyObject *kwnames) {
@@ -2806,8 +2800,9 @@ PyCFunction_DeclareMethod PhysicsWorld_set_rotation(PhysicsWorldObject *self, Py
         Py_RETURN_NONE;
     }
 
-    PyErr_SetString(PyExc_ValueError, "Body is dead or invalid");
-    return nullptr;
+    // If NOT executable (e.g. PENDING_DESTROY), use the shim macro.
+    // This will return None in release mode, or raise ValueError in strict mode.
+    RAISE_STALE_HANDLE();
 }
 
 PyCFunction_DeclareMethod PhysicsWorld_set_linear_velocity(PhysicsWorldObject *self,
@@ -2871,8 +2866,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_linear_velocity(PhysicsWorldObject *s
         Py_RETURN_NONE;
     }
 
-    PyErr_SetString(PyExc_ValueError, "Body is dead or invalid");
-    return nullptr;
+    RAISE_STALE_HANDLE();
 }
 
 PyCFunction_DeclareMethod PhysicsWorld_set_angular_velocity(PhysicsWorldObject *self,
@@ -2937,8 +2931,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_angular_velocity(PhysicsWorldObject *
         Py_RETURN_NONE;
     }
 
-    PyErr_SetString(PyExc_ValueError, "Body is not in a valid state for angular velocity update");
-    return nullptr;
+    RAISE_STALE_HANDLE();
 }
 
 PyCFunction_DeclareMethod PhysicsWorld_get_motion_type(PhysicsWorldObject *self,
@@ -3041,8 +3034,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_motion_type(PhysicsWorldObject *self,
         Py_RETURN_NONE;
     }
 
-    PyErr_SetString(PyExc_ValueError, "Body is not in a valid state for motion type update");
-    return nullptr;
+    RAISE_STALE_HANDLE();
 }
 
 PyCFunction_DeclareMethod PhysicsWorld_set_user_data(PhysicsWorldObject *self,
@@ -3101,8 +3093,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_user_data(PhysicsWorldObject *self,
         Py_RETURN_NONE;
     }
 
-    PyErr_SetString(PyExc_ValueError, "Body is not in a valid state for UserData update");
-    return nullptr;
+    RAISE_STALE_HANDLE();
 }
 
 PyCFunction_DeclareMethod PhysicsWorld_get_user_data(PhysicsWorldObject *self,
@@ -3191,8 +3182,7 @@ PyCFunction_DeclareMethod PhysicsWorld_activate(PhysicsWorldObject *self, PyObje
         Py_RETURN_NONE;
     }
 
-    PyErr_SetString(PyExc_ValueError, "Body is not in a valid state for activation");
-    return nullptr;
+    RAISE_STALE_HANDLE();
 }
 
 PyCFunction_DeclareMethod PhysicsWorld_deactivate(PhysicsWorldObject *self, PyObject *const *args,
@@ -3242,8 +3232,7 @@ PyCFunction_DeclareMethod PhysicsWorld_deactivate(PhysicsWorldObject *self, PyOb
         Py_RETURN_NONE;
     }
 
-    PyErr_SetString(PyExc_ValueError, "Body is not in a valid state for deactivation");
-    return nullptr;
+    RAISE_STALE_HANDLE();
 }
 
 PyCFunction_DeclareMethod PhysicsWorld_set_transform(PhysicsWorldObject *self,
@@ -3334,8 +3323,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_transform(PhysicsWorldObject *self,
         Py_RETURN_NONE;
     }
 
-    PyErr_SetString(PyExc_ValueError, "Body is not in a valid state for transform update");
-    return nullptr;
+    RAISE_STALE_HANDLE();
 }
 
 PyCFunction_DeclareMethod PhysicsWorld_set_ccd(PhysicsWorldObject *self, PyObject *const *args,
@@ -3387,8 +3375,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_ccd(PhysicsWorldObject *self, PyObjec
         Py_RETURN_NONE;
     }
 
-    PyErr_SetString(PyExc_ValueError, "Body is not in a valid state for CCD update");
-    return nullptr;
+    RAISE_STALE_HANDLE();
 }
 
 PyCFunction_DeclareMethod PhysicsWorld_get_index(PhysicsWorldObject *self, PyObject *const *args,
