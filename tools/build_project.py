@@ -50,7 +50,7 @@ def update_dev_tooling():
     else:
         print("Warning: compile_commands.json not found in build directory.")
 
-def alert(success=True):
+def alert(success: bool=True):
     """Audio cues for headless building."""
     if IS_CI: return 
     if success:
@@ -103,20 +103,20 @@ def build_extension():
 
     print(f"--- CULVERIN ONE-CLICK BUILD (Python {sys.version.split()[0]}) ---")
     
-    config = {
+    config: dict[str, str | list[str]] = {
         "cmake.define.DOUBLE_PRECISION": "ON",
         "cmake.define.JPH_DOUBLE_PRECISION": "ON",
         "cmake.define.CMAKE_C_COMPILER": "clang",
         "cmake.define.CMAKE_CXX_COMPILER": "clang++",
         "cmake.define.ENABLE_SANITIZER": "OFF",
-        "cmake.define.CMAKE_EXPORT_COMPILE_COMMANDS": "ON", # Explicitly ensure this is ON
+        "cmake.define.CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
         "build.tool-args": [f"-j{cpu_count}"],
         "build-dir": str(BUILD_DIR),
     }
 
     LOG_FILE = PROJECT_ROOT / "build_log.txt"
 
-    def log_event(msg):
+    def log_event(msg: str):
         timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
         with open(LOG_FILE, "a") as f:
             f.write(f"[{timestamp}] {msg}\n")
