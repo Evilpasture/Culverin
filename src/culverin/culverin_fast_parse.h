@@ -228,14 +228,15 @@ extern bool fp_parse_legacy(PyObject *args, PyObject *kwargs, PyObject *unused,
 
 static inline size_t fp_hash_ptr(PyObject *ptr, size_t mask) {
     auto v = (uintptr_t)ptr;
-    return ((v >> 4) ^ (v >> 10)) & mask;
+    // Golden ratio multiplier spreads pointer bits more effectively than shifts alone
+    return ((v * 11400714819323198485ULL) >> 32) & mask;
 }
 
 CULV_NODISCARD
 static inline bool fp_parse_vector(PyObject *const *CULV_RESTRICT args, Py_ssize_t nargs, PyObject *CULV_RESTRICT kwnames,
                                    const FastParser *CULV_RESTRICT fp, void *CULV_RESTRICT *CULV_RESTRICT targets) {
     uint64_t provided_mask   = 0;
-    const uint64_t tg_mask   = fp->type_guard_mask; // Load once to register
+    const uint64_t tg_mask   = fp->type_guard_mask;
     const size_t count       = fp->count;
     const FastArgSpec *specs = fp->specs;
 
@@ -244,51 +245,61 @@ static inline bool fp_parse_vector(PyObject *const *CULV_RESTRICT args, Py_ssize
         return fp_report_too_many(fp, nargs);
     }
 
-    // 2. Positional Logic
+    // 2. Speculative Positional Logic
     for (Py_ssize_t i = 0; i < nargs; ++i) {
         PyObject *val = args[i];
-        const FastArgSpec *spec = &specs[i];
 
-        // O(1) Bitwise check. If tg_mask is 0, this is naturally skipped.
         if (UNLIKELY(tg_mask & (1ULL << i))) {
-            if (UNLIKELY(!Py_IS_TYPE(val, spec->type_guard) && 
-                         !PyObject_TypeCheck(val, spec->type_guard))) {
-                return fp_report_type_error(fp, i, val);
+            if (UNLIKELY(!Py_IS_TYPE(val, specs[i].type_guard))) {
+                if (!PyObject_TypeCheck(val, specs[i].type_guard)) {
+                    return fp_report_type_error(fp, i, val);
+                }
             }
         }
 
-        if (UNLIKELY(!spec->convert(val, targets[i]))) {
-            return false; // Convert sets its own ValueError if needed
+        if (UNLIKELY(!specs[i].convert(val, targets[i]))) {
+            return false; 
         }
-        provided_mask |= (1ULL << i);
     }
+    
+    // Bulk bitmask generation for positional arguments
+    provided_mask = (nargs >= 64) ? ~(uint64_t)0 : ((1ULL << (nargs & 63)) - 1);
 
-    // 3. Keywords Logic
+    // 3. Speculative Keywords Logic
     if (kwnames) {
-        Py_ssize_t nkw           = PyTuple_GET_SIZE(kwnames);
+        const Py_ssize_t nkw     = PyTuple_GET_SIZE(kwnames);
         PyObject *const *kw_vals = args + nargs;
+        const uint16_t *ltable   = fp->lookup_table;
+        const size_t t_mask      = fp->table_mask;
 
         for (Py_ssize_t i = 0; i < nkw; ++i) {
             PyObject *key = PyTuple_GET_ITEM(kwnames, i);
             size_t idx    = FP_EMPTY_SLOT;
 
-            // Fast Path: O(1) Hash Table Lookup
-            if (fp->lookup_table) {
-                size_t h = fp_hash_ptr(key, fp->table_mask);
-                while (fp->lookup_table[h] != FP_EMPTY_SLOT) {
-                    size_t candidate = fp->lookup_table[h];
-                    // Pointer comparison only (assumes interned strings)
-                    if (LIKELY(specs[candidate].interned == key)) {
-                        idx = candidate;
-                        break;
+            // BRANCH 1: Fast Path (Hash Table exists)
+            if (ltable) {
+                size_t h         = fp_hash_ptr(key, t_mask);
+                size_t candidate = ltable[h];
+
+                if (LIKELY(candidate != FP_EMPTY_SLOT && specs[candidate].interned == key)) {
+                    idx = candidate;
+                } else {
+                    // Collision resolution
+                    while (ltable[h] != FP_EMPTY_SLOT) {
+                        if (specs[ltable[h]].interned == key) {
+                            idx = ltable[h];
+                            break;
+                        }
+                        h = (h + 1) & t_mask;
                     }
-                    h = (h + 1) & fp->table_mask;
                 }
             }
 
-            // Slow Path: Linear fallback for small schemas OR un-interned string keys
+            // BRANCH 2: Fallback (No table OR hash miss/un-interned key)
             if (UNLIKELY(idx == FP_EMPTY_SLOT)) {
                 for (size_t j = 0; j < count; ++j) {
+                    // Check positional-only boundary if you have them, 
+                    // otherwise linear scan all interned pointers.
                     if (specs[j].interned == key || 
                         PyUnicode_Compare(key, specs[j].interned) == 0) {
                         idx = j;
@@ -297,7 +308,7 @@ static inline bool fp_parse_vector(PyObject *const *CULV_RESTRICT args, Py_ssize
                 }
             }
 
-            // Keyword Validation
+            // Validation logic
             if (UNLIKELY(idx == FP_EMPTY_SLOT)) {
                 PyErr_Format(PyExc_TypeError, "unexpected keyword argument '%U'", key);
                 return false;
@@ -307,19 +318,17 @@ static inline bool fp_parse_vector(PyObject *const *CULV_RESTRICT args, Py_ssize
                 return fp_report_multiple(fp, idx);
             }
 
-            // Type Guard & Conversion
             PyObject *val = kw_vals[i];
-            const FastArgSpec *spec = &specs[idx];
-
-            // Type Guard Validation
+            
             if (UNLIKELY(tg_mask & (1ULL << idx))) {
-                if (UNLIKELY(!Py_IS_TYPE(val, spec->type_guard) && 
-                             !PyObject_TypeCheck(val, spec->type_guard))) {
-                    return fp_report_type_error(fp, idx, val);
+                if (UNLIKELY(!Py_IS_TYPE(val, specs[idx].type_guard))) {
+                    if (!PyObject_TypeCheck(val, specs[idx].type_guard)) {
+                        return fp_report_type_error(fp, idx, val);
+                    }
                 }
             }
 
-            if (UNLIKELY(!spec->convert(val, targets[idx]))) {
+            if (UNLIKELY(!specs[idx].convert(val, targets[idx]))) {
                 return false;
             }
             provided_mask |= (1ULL << idx);
@@ -331,7 +340,6 @@ static inline bool fp_parse_vector(PyObject *const *CULV_RESTRICT args, Py_ssize
         return fp_report_missing(fp, provided_mask);
     }
 
-    // We trust our internal boolean returns. No need for the expensive TLS PyErr_Occurred()
     return true; 
 }
 
