@@ -1,6 +1,7 @@
 #include "culverin_contact_listener.h"
 #include "culverin.h"
 #include "culverin_fast_build.h"
+#include "culverin_physics_sync.h"
 
 // --- Internal Contact Helper ---
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)

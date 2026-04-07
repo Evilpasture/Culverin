@@ -3,6 +3,7 @@
 #include "culverin_arg_indices.h"
 #include "culverin_fast_build.h"
 #include "culverin_filters.h"
+#include "culverin_physics_sync.h"
 #include "culverin_physics_world_internal.h"
 #include "culverin_types.h"
 

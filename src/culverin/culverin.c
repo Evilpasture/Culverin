@@ -1,3 +1,4 @@
+#include "culverin_physics_sync.h"
 #if !defined(_CRT_SECURE_NO_WARNINGS)
 #    define _CRT_SECURE_NO_WARNINGS
 #endif
@@ -792,48 +793,52 @@ PyCFunction_DeclareMethod PhysicsWorld_get_body_stats(PhysicsWorldObject *self,
                                                       PyObject *const *args, size_t nargsf,
                                                       PyObject *kwnames) {
     CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
-    // 1. FAST PARSE
-    // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
-    uint64_t h_raw;
-    void *targets[HOnly_COUNT] = {
-        [IDX_H_H] = (void *)&h_raw,
-    };
 
-    auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.HOnlyParser, targets)) {
+    // 1. FAST PARSE & VALIDATION
+    uint64_t h_raw;
+    void *targets[HOnly_COUNT] = { [IDX_H_H] = &h_raw };
+
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.HOnlyParser, targets)) {
         return nullptr;
     }
 
-    // 2. CRITICAL SECTION
+    // 2. CONCURRENCY CONTROL
     SHADOW_LOCK(&self->shadow_lock);
-
-    // Safety: Don't read while buffers are being swapped/cleared
     BLOCK_UNTIL_NOT_STEPPING(self);
 
+    // 3. RESOLUTION & PREDICATE CALCULATION
     uint32_t slot = 0;
     CHECK_HANDLE(h_raw, slot);
 
-    // TSan Fix: Atomic load of state (Acquire ensures visibility of creator writes)
-    uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
+    const uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
+    
+    // Stats are only valid for bodies in simulation (Alive or Character).
+    // MASK_IMM_STANDARD is perfect for this.
+    const SlotPredicate pred = get_slot_predicate(state, MASK_IMM_STANDARD);
 
-    static constexpr uint8_t VALID_SLOT_MASK = (1ULL << SLOT_ALIVE) | (1ULL << SLOT_CHARACTER);
+    if (pred.is_immediate) {
+        // Shadow buffers are stable here (protected by SHADOW_LOCK + BLOCK_UNTIL_NOT_STEPPING)
+        uint32_t i = self->slot_to_dense[slot];
 
-    CHECK_STATE(state, VALID_SLOT_MASK);
+        // Snapshot values while holding the lock
+        PosStride p = ((PosStride *)self->positions)[i];
+        AuxStride r = ((AuxStride *)self->rotations)[i];
+        AuxStride v = ((AuxStride *)self->linear_velocities)[i];
 
-    uint32_t i = self->slot_to_dense[slot];
+        SHADOW_UNLOCK(&self->shadow_lock);
 
-    // Snapshot values while holding the lock
-    // Shadow buffers are non-atomic; protected by SHADOW_LOCK + BLOCK_UNTIL_NOT_STEPPING
-    PosStride p = ((PosStride *)self->positions)[i];
-    AuxStride r = ((AuxStride *)self->rotations)[i];
-    AuxStride v = ((AuxStride *)self->linear_velocities)[i];
+        // 4. RESULT CONSTRUCTION
+        // Nested tuples: ((px, py, pz), (rx, ry, rz, rw), (vx, vy, vz))
+        return FastBuild_Tuple(
+            FastBuild_Tuple(p.x, p.y, p.z), 
+            FastBuild_Tuple(r.x, r.y, r.z, r.w),
+            FastBuild_Tuple(v.x, v.y, v.z)
+        );
+    }
 
+    // 5. ERROR FALLBACK
     SHADOW_UNLOCK(&self->shadow_lock);
-
-    // 3. RESULT CONSTRUCTION
-    // Nested tuples: ((px, py, pz), (rx, ry, rz, rw), (vx, vy, vz))
-    return FastBuild_Tuple(FastBuild_Tuple(p.x, p.y, p.z), FastBuild_Tuple(r.x, r.y, r.z, r.w),
-                           FastBuild_Tuple(v.x, v.y, v.z));
+    RAISE_STALE_HANDLE();
 }
 PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self,
                                                       PyObject *const *args, size_t nargsf,

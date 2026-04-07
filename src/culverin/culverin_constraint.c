@@ -1,6 +1,7 @@
 #include "culverin_constraint.h"
 #include "culverin_arg_indices.h"
 #include "culverin_constraint_factory.h"
+#include "culverin_physics_sync.h"
 #include "culverin_types.h"
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)

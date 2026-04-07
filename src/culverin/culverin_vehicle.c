@@ -1,8 +1,8 @@
 #include "culverin_vehicle.h"
 #include "culverin_arg_indices.h"
 #include "culverin_compiler_specifics.h"
-#include "culverin_math.h"
 #include "culverin_parsers.h"
+#include "culverin_physics_sync.h"
 
 // --- Wheel Configuration Defaults ---
 static constexpr float WHEEL_RADIUS_DEFAULT           = 0.4f;
@@ -272,8 +272,9 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_vehicle(PhysicsWorldObje
     const char *drive_str  = "RWD";
 
     void *targets[CreateVehicle_COUNT] = {
-        [IDX_CV_CHASSIS] = &chassis_h_raw, [IDX_CV_WHEELS] = &py_wheels, [IDX_CV_DRIVE] = &py_drive,
-        [IDX_CV_ENGINE] = &py_engine,      [IDX_CV_TRANS] = &py_trans,
+        [IDX_CV_CHASSIS] = (void *)&chassis_h_raw, [IDX_CV_WHEELS] = (void *)&py_wheels,
+        [IDX_CV_DRIVE] = (void *)&py_drive,        [IDX_CV_ENGINE] = (void *)&py_engine,
+        [IDX_CV_TRANS] = (void *)&py_trans,
     };
 
     if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.CreateVehicleParser, targets)) {

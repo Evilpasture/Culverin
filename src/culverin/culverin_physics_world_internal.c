@@ -1,5 +1,6 @@
 #include "culverin_physics_world_internal.h"
 #include "culverin_compiler_specifics.h"
+#include "culverin_physics_sync.h"
 #include "culverin_threading.h"
 
 // Constants for buffer alignment, capacity growth and defaults

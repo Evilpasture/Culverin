@@ -1,12 +1,14 @@
 #include "culverin_command_buffer.h"
 #include "culverin_compiler_specifics.h"
+#include "culverin_physics_sync.h"
 #include "culverin_threading.h"
 
 void world_remove_body_slot(PhysicsWorldObject *self, uint32_t slot) {
     const uint32_t dense_idx = self->slot_to_dense[slot];
-    
+
     // TSan Fix: Load count atomically to determine the last index
-    const uint32_t last_dense = (uint32_t)atomic_load_explicit(&self->count, memory_order_acquire) - 1;
+    const uint32_t last_dense =
+        (uint32_t)atomic_load_explicit(&self->count, memory_order_acquire) - 1;
 
     // THE SWAP-TO-DELETE (Dense Pack)
     if (dense_idx != last_dense) {
@@ -14,14 +16,18 @@ void world_remove_body_slot(PhysicsWorldObject *self, uint32_t slot) {
         CULV_PREFETCH_WRITE(&self->positions[dense_idx]);
 
         // --- GROUP 1: PHYSICS STATE (Non-atomic) ---
-        ((PosStride*)self->positions)[dense_idx]      = ((PosStride*)self->positions)[last_dense];
-        ((PosStride*)self->prev_positions)[dense_idx] = ((PosStride*)self->prev_positions)[last_dense];
-        
-        ((AuxStride*)self->rotations)[dense_idx]      = ((AuxStride*)self->rotations)[last_dense];
-        ((AuxStride*)self->prev_rotations)[dense_idx] = ((AuxStride*)self->prev_rotations)[last_dense];
-        
-        ((AuxStride*)self->linear_velocities)[dense_idx]  = ((AuxStride*)self->linear_velocities)[last_dense];
-        ((AuxStride*)self->angular_velocities)[dense_idx] = ((AuxStride*)self->angular_velocities)[last_dense];
+        ((PosStride *)self->positions)[dense_idx] = ((PosStride *)self->positions)[last_dense];
+        ((PosStride *)self->prev_positions)[dense_idx] =
+            ((PosStride *)self->prev_positions)[last_dense];
+
+        ((AuxStride *)self->rotations)[dense_idx] = ((AuxStride *)self->rotations)[last_dense];
+        ((AuxStride *)self->prev_rotations)[dense_idx] =
+            ((AuxStride *)self->prev_rotations)[last_dense];
+
+        ((AuxStride *)self->linear_velocities)[dense_idx] =
+            ((AuxStride *)self->linear_velocities)[last_dense];
+        ((AuxStride *)self->angular_velocities)[dense_idx] =
+            ((AuxStride *)self->angular_velocities)[last_dense];
 
         // --- GROUP 2: METADATA (Non-atomic) ---
         self->body_ids[dense_idx]     = self->body_ids[last_dense];
@@ -31,26 +37,26 @@ void world_remove_body_slot(PhysicsWorldObject *self, uint32_t slot) {
         self->material_ids[dense_idx] = self->material_ids[last_dense];
 
         // --- GROUP 3: THE MAP REWIRE ---
-        const uint32_t mover_slot        = self->dense_to_slot[last_dense];
-        self->slot_to_dense[mover_slot]  = dense_idx;
-        self->dense_to_slot[dense_idx]   = mover_slot;
+        const uint32_t mover_slot       = self->dense_to_slot[last_dense];
+        self->slot_to_dense[mover_slot] = dense_idx;
+        self->dense_to_slot[dense_idx]  = mover_slot;
     }
 
     // HOUSEKEEPING
-    
+
     // 1. Invalidate all existing Python handles by incrementing generation
     atomic_fetch_add_explicit(&self->generations[slot], 1, memory_order_relaxed);
-    
+
     // 2. Mark the slot as empty atomically
     atomic_store_explicit(&self->slot_states[slot], SLOT_EMPTY, memory_order_relaxed);
-    
+
     // 3. Push to free stack atomically
     // We fetch the current count, use it as index, and increment
-    size_t f_idx = atomic_fetch_add_explicit(&self->free_count, 1, memory_order_relaxed);
+    size_t f_idx            = atomic_fetch_add_explicit(&self->free_count, 1, memory_order_relaxed);
     self->free_slots[f_idx] = slot;
-    
+
     // 4. Update the total world count atomically
-    // We use memory_order_release to ensure all memory moves above are visible 
+    // We use memory_order_release to ensure all memory moves above are visible
     // to any thread reading the count (like the renderer).
     atomic_fetch_sub_explicit(&self->count, 1, memory_order_release);
 }
@@ -58,7 +64,8 @@ void world_remove_body_slot(PhysicsWorldObject *self, uint32_t slot) {
 CULV_NODISCARD
 bool ensure_command_capacity(PhysicsWorldObject *self) {
     if (UNLIKELY(self->command_count >= self->command_capacity)) {
-        size_t new_cap = (self->command_capacity == 0) ? 64 : self->command_capacity * 2;
+        size_t new_cap =
+            (self->command_capacity == 0) ? MEMORY_ALIGNMENT_SIZE : self->command_capacity * 2;
         if (UNLIKELY(new_cap > (SIZE_MAX / sizeof(PhysicsCommand)))) {
             return false;
         }
@@ -77,10 +84,11 @@ bool ensure_command_capacity(PhysicsWorldObject *self) {
 CULV_NODISCARD
 bool ensure_command_bulk_capacity(PhysicsWorldObject *self, size_t batch_size) {
     size_t required = self->command_count + batch_size;
-    
+
     if (UNLIKELY(required > self->command_capacity)) {
-        size_t new_cap = (self->command_capacity == 0) ? 64 : self->command_capacity * 2;
-        
+        size_t new_cap =
+            (self->command_capacity == 0) ? MEMORY_ALIGNMENT_SIZE : self->command_capacity * 2;
+
         // Ensure the new capacity is actually large enough for the entire batch
         while (new_cap < required) {
             new_cap *= 2;
@@ -108,29 +116,27 @@ void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *CULV_REST
         return;
     }
 
-    queue = CULV_ASSUME_ALIGNED(queue, 64);
+    queue                               = CULV_ASSUME_ALIGNED(queue, 64);
     JPH_BodyInterface *CULV_RESTRICT bi = self->body_interface;
 
-    static const void *const dispatch_table[] = {
-        [CMD_CREATE_BODY]       = &&op_CREATE_BODY,
-        [CMD_DESTROY_BODY]      = &&op_DESTROY_BODY,
-        [CMD_SET_POS]           = &&op_SET_POS,
-        [CMD_SET_ROT]           = &&op_SET_ROT,
-        [CMD_SET_TRNS]          = &&op_SET_TRNS,
-        [CMD_SET_LINVEL]        = &&op_SET_LINVEL,
-        [CMD_SET_ANGVEL]        = &&op_SET_ANGVEL,
-        [CMD_SET_MOTION]        = &&op_SET_MOTION,
-        [CMD_ACTIVATE]          = &&op_ACTIVATE,
-        [CMD_DEACTIVATE]        = &&op_DEACTIVATE,
-        [CMD_SET_USER_DATA]     = &&op_SET_USER_DATA,
-        [CMD_SET_CCD]           = &&op_SET_CCD,
-        [CMD_TELEPORT]          = &&op_TELEPORT,
-        [CMD_APPLY_IMPULSE]     = &&op_APPLY_IMPULSE,
-        [CMD_APPLY_FORCE]       = &&op_APPLY_FORCE,
-        [CMD_APPLY_TORQUE]      = &&op_APPLY_TORQUE,
-        [CMD_APPLY_ANG_IMPULSE] = &&op_APPLY_ANG_IMPULSE,
-        [CMD_APPLY_IMPULSE_AT]  = &&op_APPLY_IMPULSE_AT
-    };
+    static const void *const dispatch_table[] = {[CMD_CREATE_BODY]       = &&op_CREATE_BODY,
+                                                 [CMD_DESTROY_BODY]      = &&op_DESTROY_BODY,
+                                                 [CMD_SET_POS]           = &&op_SET_POS,
+                                                 [CMD_SET_ROT]           = &&op_SET_ROT,
+                                                 [CMD_SET_TRNS]          = &&op_SET_TRNS,
+                                                 [CMD_SET_LINVEL]        = &&op_SET_LINVEL,
+                                                 [CMD_SET_ANGVEL]        = &&op_SET_ANGVEL,
+                                                 [CMD_SET_MOTION]        = &&op_SET_MOTION,
+                                                 [CMD_ACTIVATE]          = &&op_ACTIVATE,
+                                                 [CMD_DEACTIVATE]        = &&op_DEACTIVATE,
+                                                 [CMD_SET_USER_DATA]     = &&op_SET_USER_DATA,
+                                                 [CMD_SET_CCD]           = &&op_SET_CCD,
+                                                 [CMD_TELEPORT]          = &&op_TELEPORT,
+                                                 [CMD_APPLY_IMPULSE]     = &&op_APPLY_IMPULSE,
+                                                 [CMD_APPLY_FORCE]       = &&op_APPLY_FORCE,
+                                                 [CMD_APPLY_TORQUE]      = &&op_APPLY_TORQUE,
+                                                 [CMD_APPLY_ANG_IMPULSE] = &&op_APPLY_ANG_IMPULSE,
+                                                 [CMD_APPLY_IMPULSE_AT]  = &&op_APPLY_IMPULSE_AT};
 
     size_t i = 0;
     PhysicsCommand *cmd;
@@ -141,14 +147,13 @@ void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *CULV_REST
     SlotState state;
     JPH_BodyID bid;
 
-
 op_NOP:
     DISPATCH();
 
 op_CREATE_BODY: {
     JPH_BodyCreationSettings *s = cmd->create.settings;
     JPH_BodyID new_bid = JPH_BodyInterface_CreateAndAddBody(bi, s, JPH_Activation_Activate);
-    
+
     JPH_BodyCreationSettings_Destroy(s);
 
     SHADOW_LOCK(&self->shadow_lock);
@@ -159,15 +164,15 @@ op_CREATE_BODY: {
     } else {
         // body_ids is non-atomic; protected by shadow_lock and the 'is_stepping' phase
         self->body_ids[self->slot_to_dense[slot]] = new_bid;
-        
+
         uint32_t j_idx = JPH_ID_TO_INDEX(new_bid);
         if (self->id_to_handle_map && j_idx <= self->max_jolt_bodies) {
             // TSan Fix: Load generation atomically
             uint32_t gen = atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
-            
+
             // BodyHandle is _Atomic uint64_t
             BodyHandle h = make_handle(slot, gen);
-            
+
             // TSan Fix: Extract raw uint64_t to avoid implicit seq_cst load overhead
             uint64_t raw_h = atomic_load_explicit(&h, memory_order_relaxed);
 
@@ -177,13 +182,13 @@ op_CREATE_BODY: {
         }
 
         // TSan Fix: Mark the body as ALIVE atomically.
-        // Release creates a barrier: any thread that sees SLOT_ALIVE is guaranteed 
+        // Release creates a barrier: any thread that sees SLOT_ALIVE is guaranteed
         // to see the correctly initialized body_ids and id_to_handle_map data.
         atomic_store_explicit(&self->slot_states[slot], SLOT_ALIVE, memory_order_release);
     }
 
     SHADOW_UNLOCK(&self->shadow_lock);
-    
+
     DISPATCH();
 }
 
@@ -198,9 +203,9 @@ op_DESTROY_BODY: {
 
 op_SET_POS: {
     JPH_STACK_ALLOC(JPH_RVec3, p);
-    p->x = cmd->pos.x;
-    p->y = cmd->pos.y;
-    p->z = cmd->pos.z;
+    p->x        = cmd->pos.x;
+    p->y        = cmd->pos.y;
+    p->z        = cmd->pos.z;
     bool active = JPH_BodyInterface_IsActive(bi, bid);
     JPH_BodyInterface_SetPosition(
         bi, bid, p, (int)active ? JPH_Activation_DontActivate : JPH_Activation_Activate);
@@ -222,13 +227,13 @@ op_SET_TRNS: {
     p->x = cmd->transform.px;
     p->y = cmd->transform.py;
     p->z = cmd->transform.pz;
-    
+
     JPH_STACK_ALLOC(JPH_Quat, q);
     q->x = cmd->transform.rx;
     q->y = cmd->transform.ry;
     q->z = cmd->transform.rz;
     q->w = cmd->transform.rw;
-    
+
     JPH_BodyInterface_SetPositionAndRotation(bi, bid, p, q, JPH_Activation_Activate);
     DISPATCH();
 }
@@ -269,9 +274,7 @@ op_DEACTIVATE: {
     DISPATCH();
 }
 
-op_SET_USER_DATA: { 
-    DISPATCH(); 
-}
+op_SET_USER_DATA: { DISPATCH(); }
 
 op_SET_CCD: {
     JPH_MotionQuality qual =
@@ -280,9 +283,7 @@ op_SET_CCD: {
     DISPATCH();
 }
 
-op_TELEPORT: { 
-    DISPATCH(); 
-}
+op_TELEPORT: { DISPATCH(); }
 
 op_APPLY_IMPULSE: {
     JPH_STACK_ALLOC(JPH_Vec3, v);
@@ -329,12 +330,12 @@ op_APPLY_IMPULSE_AT: {
     imp->x = cmd->impulse_at.ix;
     imp->y = cmd->impulse_at.iy;
     imp->z = cmd->impulse_at.iz;
-    
+
     JPH_STACK_ALLOC(JPH_RVec3, pos);
     pos->x = cmd->impulse_at.px;
     pos->y = cmd->impulse_at.py;
     pos->z = cmd->impulse_at.pz;
-    
+
     JPH_BodyInterface_AddImpulse2(bi, bid, imp, pos);
     JPH_BodyInterface_ActivateBody(bi, bid);
     DISPATCH();
@@ -355,15 +356,15 @@ void sync_and_flush_internal(PhysicsWorldObject *self) {
     size_t captured_count          = self->command_count;
 
     if (UNLIKELY(self->command_capacity > self->spare_capacity)) {
-        void *new_spare = CULV_RAW_REALLOC(
-            self->command_queue_spare, self->command_capacity * sizeof(PhysicsCommand));
+        void *new_spare = CULV_RAW_REALLOC(self->command_queue_spare,
+                                           self->command_capacity * sizeof(PhysicsCommand));
         if (new_spare) {
             self->command_queue_spare = (PhysicsCommand *)new_spare;
-            self->spare_capacity = self->command_capacity;
+            self->spare_capacity      = self->command_capacity;
         } else {
-            size_t temp = self->command_capacity;
+            size_t temp            = self->command_capacity;
             self->command_capacity = self->spare_capacity;
-            self->spare_capacity = temp;
+            self->spare_capacity   = temp;
         }
     }
     self->command_queue       = self->command_queue_spare;
@@ -379,7 +380,7 @@ void sync_and_flush_internal(PhysicsWorldObject *self) {
     NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
     Py_END_ALLOW_THREADS
 
-    SHADOW_LOCK(&self->shadow_lock);
+        SHADOW_LOCK(&self->shadow_lock);
 
     atomic_store_explicit(&self->is_stepping, false, memory_order_release);
     NATIVE_MUTEX_LOCK(self->step_sync.mutex);
