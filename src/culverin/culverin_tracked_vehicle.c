@@ -115,12 +115,11 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
     float max_rpm          = TRACKED_ENGINE_MAX_RPM_DEFAULT;
     float min_rpm          = TRACKED_ENGINE_MIN_RPM_DEFAULT;
 
-    void *targets[CreateTracked_COUNT];
-    targets[IDX_CT_CHASSIS] = (void *)&chassis_h_raw;
-    targets[IDX_CT_WHEELS]  = (void *)&py_wheels;
-    targets[IDX_CT_TRACKS]  = (void *)&py_tracks;
-    targets[IDX_CT_TORQUE]  = (void *)&max_torque;
-    targets[IDX_CT_RPM]     = (void *)&max_rpm;
+    void *targets[CreateTracked_COUNT] = {
+        [IDX_CT_CHASSIS] = (void *)&chassis_h_raw, [IDX_CT_WHEELS] = (void *)&py_wheels,
+        [IDX_CT_TRACKS] = (void *)&py_tracks,      [IDX_CT_TORQUE] = (void *)&max_torque,
+        [IDX_CT_RPM] = (void *)&max_rpm,
+    };
 
     if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.CreateTrackedParser, targets)) {
         return nullptr;
@@ -291,10 +290,11 @@ PyCFunction_DeclareMethodFromModule Vehicle_set_tank_input(VehicleObject *self,
     float right = 0.0f;
     float brake = 0.0f;
 
-    void *targets[TankInput_COUNT];
-    targets[IDX_TI_LEFT]  = (void *)&left;
-    targets[IDX_TI_RIGHT] = (void *)&right;
-    targets[IDX_TI_BRAKE] = (void *)&brake;
+    void *targets[TankInput_COUNT] = {
+        [IDX_TI_LEFT]  = (void *)&left,
+        [IDX_TI_RIGHT] = (void *)&right,
+        [IDX_TI_BRAKE] = (void *)&brake,
+    };
 
     if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.TankInputParser, targets)) {
         return nullptr;
