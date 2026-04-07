@@ -16,7 +16,7 @@
  * initialization).
  *
  * This version uses "Module State Isolation" to remain safe for multiple
- * subinterpreters. All parser metadata and interned keyword pointers are 
+ * subinterpreters. All parser metadata and interned keyword pointers are
  * stored within the interpreter-specific CulverinState.
  *
  * ----------------------------------------------------------------------------
@@ -41,7 +41,7 @@
  *
  *   PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
  *       CulverinState *st = get_culverin_state(m);
- *       culverin_init_all_parsers(&st->parsers); 
+ *       culverin_init_all_parsers(&st->parsers);
  *       return 0;
  *   }
  *
@@ -54,7 +54,7 @@
  *                            size_t nargsf, PyObject* kwnames) {
  *       // Fetch state specific to THIS interpreter
  *       CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
- *       
+ *
  *       uint64_t h; float x, y, z;
  *       void *targets[Vec3_COUNT];
  *       targets[IDX_V3_H] = &h;
@@ -72,11 +72,11 @@
  *
  * INVARIANT A: POINTER ISOLATION
  * PyObject* addresses for interned keywords (e.g., "handle") are ONLY valid
- * in the interpreter that created them. NEVER share a FastParser struct 
+ * in the interpreter that created them. NEVER share a FastParser struct
  * globally across C-memory.
  *
  * INVARIANT B: SCHEMA INTEGRITY
- * Target array indices must match the schema used for initialization. 
+ * Target array indices must match the schema used for initialization.
  * Managed via the GroupName##_Idx enums in culverin_arg_indices.h.
  *
  * INVARIANT C: PRECISION SAFETY
@@ -89,7 +89,7 @@
  * - Zero Allocation: No temporary Python objects created on the hot path.
  * - Pointer Hashing: O(1) comparison of interned keyword addresses.
  * - Vectorcall Native: Directly supports PEP 590 fast-calling convention.
- * - Subinterpreter Friendly: Fully isolated; safe for concurrent interpreter 
+ * - Subinterpreter Friendly: Fully isolated; safe for concurrent interpreter
  *   initialization in Python 3.12+.
  * ============================================================================
  */
@@ -107,15 +107,91 @@ typedef struct {
     bool required;
 } FastArgSpec;
 
-typedef struct {
-    const char* parser_name;
+// 1. Forward declare the struct tag and the typedef simultaneously
+typedef struct FastParser FastParser;
+
+// 2. Now the compiler knows 'FastParser' is a valid type name.
+// Even though it doesn't know the size of the struct yet,
+// it knows how to handle a POINTER to it.
+typedef bool (*FastParseFunc)(PyObject *const *CULV_RESTRICT args, Py_ssize_t nargs,
+                              PyObject *CULV_RESTRICT kwnames, const FastParser *CULV_RESTRICT fp,
+                              void *CULV_RESTRICT *CULV_RESTRICT targets);
+
+// 3. Define the actual body
+struct FastParser {
+    const char *parser_name;
     FastArgSpec *specs;
     uint16_t *lookup_table;
+    FastParseFunc hot_path; // Validated: FastParseFunc is known
     size_t count;
     size_t table_mask;
     uint64_t required_mask;
     uint64_t type_guard_mask;
-} FastParser;
+};
+
+// 1. Forward declaration of the generic fallback
+CULV_NODISCARD
+static inline bool fp_parse_vector(PyObject *const *CULV_RESTRICT args, Py_ssize_t nargs,
+                                   PyObject *CULV_RESTRICT kwnames,
+                                   const FastParser *CULV_RESTRICT fp,
+                                   void *CULV_RESTRICT *CULV_RESTRICT targets);
+
+// 2. The Speculative Stubs
+CULV_NODISCARD static inline bool fp_speculate_p0(PyObject *const *CULV_RESTRICT args,
+                                                  Py_ssize_t nargs, PyObject *CULV_RESTRICT kwnames,
+                                                  const FastParser *CULV_RESTRICT fp,
+                                                  void *CULV_RESTRICT *CULV_RESTRICT targets) {
+    if (LIKELY(nargs == 0 && kwnames == nullptr)) {
+        return true;
+    }
+    return fp_parse_vector(args, nargs, kwnames, fp, targets);
+}
+
+CULV_NODISCARD static inline bool
+fp_speculate_p1_naked(PyObject *const *CULV_RESTRICT args, Py_ssize_t nargs,
+                      PyObject *CULV_RESTRICT kwnames, const FastParser *CULV_RESTRICT fp,
+                      void *CULV_RESTRICT *CULV_RESTRICT targets) {
+    if (LIKELY(nargs == 1 && kwnames == nullptr)) {
+        return fp->specs[0].convert(args[0], targets[0]);
+    }
+    return fp_parse_vector(args, nargs, kwnames, fp, targets);
+}
+
+CULV_NODISCARD static inline bool
+fp_speculate_p2_naked(PyObject *const *CULV_RESTRICT args, Py_ssize_t nargs,
+                      PyObject *CULV_RESTRICT kwnames, const FastParser *CULV_RESTRICT fp,
+                      void *CULV_RESTRICT *CULV_RESTRICT targets) {
+    if (LIKELY(nargs == 2 && kwnames == nullptr)) {
+        return (fp->specs[0].convert(args[0], targets[0]) &&
+                fp->specs[1].convert(args[1], targets[1])) != 0;
+    }
+    return fp_parse_vector(args, nargs, kwnames, fp, targets);
+}
+
+CULV_NODISCARD static inline bool
+fp_speculate_p3_naked(PyObject *const *CULV_RESTRICT args, Py_ssize_t nargs,
+                      PyObject *CULV_RESTRICT kwnames, const FastParser *CULV_RESTRICT fp,
+                      void *CULV_RESTRICT *CULV_RESTRICT targets) {
+    if (LIKELY(nargs == 3 && kwnames == nullptr)) {
+        return (fp->specs[0].convert(args[0], targets[0]) &&
+                fp->specs[1].convert(args[1], targets[1]) &&
+                fp->specs[2].convert(args[2], targets[2])) != 0;
+    }
+    return fp_parse_vector(args, nargs, kwnames, fp, targets);
+}
+
+CULV_NODISCARD static inline bool
+fp_speculate_p4_naked(PyObject *const *CULV_RESTRICT args, Py_ssize_t nargs,
+                      PyObject *CULV_RESTRICT kwnames, const FastParser *CULV_RESTRICT fp,
+                      void *CULV_RESTRICT *CULV_RESTRICT targets) {
+    if (LIKELY(nargs == 4 && kwnames == nullptr)) {
+        return (fp->specs[0].convert(args[0], targets[0]) &&
+                fp->specs[1].convert(args[1], targets[1]) &&
+                fp->specs[2].convert(args[2], targets[2]) &&
+                fp->specs[3].convert(args[3], targets[3])) != 0;
+    }
+    return fp_parse_vector(args, nargs, kwnames, fp, targets);
+}
 
 #include "culverin_parsers.h"
 CULV_MAYBE_UNUSED CULV_NODISCARD static inline bool fp_conv_vec3f(PyObject *o, void *t) {
@@ -233,8 +309,10 @@ static inline size_t fp_hash_ptr(PyObject *ptr, size_t mask) {
 }
 
 CULV_NODISCARD
-static inline bool fp_parse_vector(PyObject *const *CULV_RESTRICT args, Py_ssize_t nargs, PyObject *CULV_RESTRICT kwnames,
-                                   const FastParser *CULV_RESTRICT fp, void *CULV_RESTRICT *CULV_RESTRICT targets) {
+static inline bool fp_parse_vector(PyObject *const *CULV_RESTRICT args, Py_ssize_t nargs,
+                                   PyObject *CULV_RESTRICT kwnames,
+                                   const FastParser *CULV_RESTRICT fp,
+                                   void *CULV_RESTRICT *CULV_RESTRICT targets) {
     uint64_t provided_mask   = 0;
     const uint64_t tg_mask   = fp->type_guard_mask;
     const size_t count       = fp->count;
@@ -258,10 +336,10 @@ static inline bool fp_parse_vector(PyObject *const *CULV_RESTRICT args, Py_ssize
         }
 
         if (UNLIKELY(!specs[i].convert(val, targets[i]))) {
-            return false; 
+            return false;
         }
     }
-    
+
     // Bulk bitmask generation for positional arguments
     provided_mask = (nargs >= 64) ? ~(uint64_t)0 : ((1ULL << (nargs & 63)) - 1);
 
@@ -298,9 +376,9 @@ static inline bool fp_parse_vector(PyObject *const *CULV_RESTRICT args, Py_ssize
             // BRANCH 2: Fallback (No table OR hash miss/un-interned key)
             if (UNLIKELY(idx == FP_EMPTY_SLOT)) {
                 for (size_t j = 0; j < count; ++j) {
-                    // Check positional-only boundary if you have them, 
+                    // Check positional-only boundary if you have them,
                     // otherwise linear scan all interned pointers.
-                    if (specs[j].interned == key || 
+                    if (specs[j].interned == key ||
                         PyUnicode_Compare(key, specs[j].interned) == 0) {
                         idx = j;
                         break;
@@ -319,7 +397,7 @@ static inline bool fp_parse_vector(PyObject *const *CULV_RESTRICT args, Py_ssize
             }
 
             PyObject *val = kw_vals[i];
-            
+
             if (UNLIKELY(tg_mask & (1ULL << idx))) {
                 if (UNLIKELY(!Py_IS_TYPE(val, specs[idx].type_guard))) {
                     if (!PyObject_TypeCheck(val, specs[idx].type_guard)) {
@@ -340,7 +418,7 @@ static inline bool fp_parse_vector(PyObject *const *CULV_RESTRICT args, Py_ssize
         return fp_report_missing(fp, provided_mask);
     }
 
-    return true; 
+    return true;
 }
 
 /** --- 5. PUBLIC MACROS --- **/
@@ -350,8 +428,8 @@ void ERROR_FastParse_First_Arg_Must_Be_PyObject_Ptr_Or_Vectorcall_Ptr(void);
 
 #define FastParse_Unified(arg1, arg2, arg3, arg4, arg5)                                            \
     _Generic((arg1),                                                                               \
-        PyObject *const *: fp_parse_vector,                                                        \
-        PyObject **: fp_parse_vector,                                                              \
+        PyObject *const *: (arg4)->hot_path,                                                       \
+        PyObject **: (arg4)->hot_path,                                                             \
         PyObject *: fp_parse_legacy,                                                               \
         default: ERROR_FastParse_First_Arg_Must_Be_PyObject_Ptr_Or_Vectorcall_Ptr)(                \
         (arg1), (arg2), (arg3), (arg4), (arg5))

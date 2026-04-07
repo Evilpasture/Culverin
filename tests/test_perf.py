@@ -225,6 +225,71 @@ class TestPerformanceRegression(unittest.TestCase):
             load_time, 0.05, "load_state() is too slow, ensure Jolt syncing is optimized."
         )
 
+    def test_bulk_mutation_throughput(self):
+        """
+        Stress test for the Command Queue.
+        Applies a force to 5,000 bodies every frame. 
+        This tests the O(1) command queue write path and command capacity reallocs.
+        """
+        body_count = 5000
+        # 1. Setup: Bulk Create
+        handles = self.world.create_bodies_batch(
+            np.random.uniform(-50, 50, (body_count, 3)).tolist(),
+            [[0.5] * 3] * body_count,
+            culverin.SHAPE_BOX,
+            culverin.MOTION_DYNAMIC
+        )
+        self.world.step(0)
+
+        # 2. Stress Loop: Apply 5,000 forces per frame for 100 frames
+        # This will trigger command_queue capacity expansions repeatedly
+        t0 = time.perf_counter()
+        for _ in range(100):
+            for h in handles:
+                self.world.apply_force(h, 0, 10, 0)
+            
+            # Step triggers the flush of these 5,000 commands
+            self.world.step(1/60.0)
+        
+        total_time = time.perf_counter() - t0
+        avg_ms = (total_time / 100.0) * 1000.0
+        
+        print(f"\n[Perf] Bulk Mutation (5k forces/frame) -> Avg: {avg_ms:.2f} ms/frame")
+        
+        # 3. Assertions
+        # 5k forces is a lot of memory traffic (5k * sizeof(PhysicsCommand)).
+        # If this is > 50ms, the engine is bottlenecked on reallocs or command flushing.
+        self.assertLess(avg_ms, 50.0, "Bulk mutation overhead (Command Queue) is too high.")
+
+    def test_fastparse_morphism_overhead(self):
+        """
+        Benchmark the Monomorphic stubs (Speculative) vs the Generic parser (Fallback).
+        - Positional: Hits the 'fp_speculate_p4_naked' stub (O(1) direct call).
+        - Keywords: Bails to 'fp_parse_vector' (Generic loop).
+        """
+        h = self.world.create_body(pos=(0, 0, 0))
+        iterations = 1_000_000 # Higher iter for micro-benchmark
+
+        # 1. Hot Path: Pure Positional arguments
+        # This bypasses all loops and bitmasks, landing directly in fp_speculate_p4_naked
+        t0 = time.perf_counter()
+        for _ in range(iterations):
+            self.world.set_linear_velocity(h, 1.0, 2.0, 3.0)
+        t_pos = time.perf_counter() - t0
+
+        # 2. Fallback Path: Mixed Keyword arguments
+        # This triggers the fallback logic inside the stub and runs the generic loop
+        t0 = time.perf_counter()
+        for _ in range(iterations):
+            self.world.set_linear_velocity(h, x=1.0, y=2.0, z=3.0)
+        t_kw = time.perf_counter() - t0
+
+        print(f"\n[Perf] FastParse Morphism -> Positional (Hot): {t_pos*1000:.2f}ms | Keywords (Cold): {t_kw*1000:.2f}ms")
+        
+        # Analysis
+        self.assertLess(t_pos, t_kw, "Speculative stubs should outperform generic keyword parsing")
+        print(f"       Speedup Ratio: {t_kw/t_pos:.2f}x")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
