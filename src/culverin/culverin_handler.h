@@ -1,3 +1,6 @@
+#pragma once
+#include <stdint.h>
+
 // 1. Give the struct a name based on the type (e.g., struct Maybe_int)
 #define Maybe(T)                                                                                   \
     struct Maybe_##T {                                                                             \
@@ -47,3 +50,6 @@ int main() {
 }
 
 */
+
+void culv_jph_trace(const char *inString);
+bool culv_jph_assert(const char *inExpression, const char *inMessage, const char *inFile, uint32_t inLine);

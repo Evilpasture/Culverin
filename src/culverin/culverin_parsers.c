@@ -1,6 +1,6 @@
 #include "culverin_parsers.h"
-#include "culverin_compiler_specifics.h"
 #include "culverin.h"
+#include "culverin_compiler_specifics.h"
 
 /**
  * INTERNAL HELPER: parse_sequence_to_floats
@@ -183,9 +183,10 @@ void parse_motor_config(PyObject *motor_dict, ConstraintParams *p) {
 
 int parse_point_params(PyObject *args, ConstraintParams *p) {
     if (!args || args == Py_None) {
-        return 1; // Use defaults (0,0,0)
+        return 1;
     }
-    return PyArg_ParseTuple(args, "fff", &p->px, &p->py, &p->pz);
+    // Expecting a single vector in a tuple: params=((x, y, z),)
+    return PyArg_ParseTuple(args, "(fff)", &p->px, &p->py, &p->pz);
 }
 
 int parse_hinge_params(PyObject *args, ConstraintParams *p) {
@@ -218,13 +219,19 @@ int parse_cone_params(PyObject *args, ConstraintParams *p) {
 }
 
 int parse_distance_params(PyObject *args, ConstraintParams *p) {
-    p->limit_min = 0.0f;
-    p->limit_max = 10.0f;
-    if (!args) {
+    // Default: -1.0 can be used as a sentinel in your create_distance
+    // logic to say "calculate distance from current positions"
+    p->limit_min = -1.0f;
+    p->limit_max = -1.0f;
+
+    if (!args || args == Py_None) {
         return 1;
     }
-    // Min, Max
-    return PyArg_ParseTuple(args, "ff", &p->limit_min, &p->limit_max);
+
+    // Pattern: (Pivot1_xyz), (Pivot2_xyz), [optional min_dist, optional max_dist]
+    // This now matches the format used by Hinge and Slider.
+    return PyArg_ParseTuple(args, "(fff)(fff)|ff", &p->px, &p->py, &p->pz, &p->ax, &p->ay, &p->az,
+                            &p->limit_min, &p->limit_max);
 }
 
 // Helper 2: Parse the size object (tuple or float) into a 4-float array

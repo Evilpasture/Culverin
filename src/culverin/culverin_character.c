@@ -3,7 +3,6 @@
 #include "culverin_arg_indices.h"
 #include "culverin_fast_build.h"
 #include "culverin_filters.h"
-#include "culverin_parsers.h"
 #include "culverin_physics_world_internal.h"
 #include "culverin_types.h"
 
@@ -367,9 +366,7 @@ PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObje
     Vec3f v_in = {.x = 0.0f, .y = 0.0f, .z = 0.0f};
     float dt   = 0.0f;
 
-    void *targets[CharMove_COUNT];
-    targets[IDX_CM_VEL] = &v_in;
-    targets[IDX_CM_DT]  = &dt;
+    void *targets[CharMove_COUNT] = {[IDX_CM_VEL] = &v_in, [IDX_CM_DT] = &dt};
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.CharMoveParser, targets)) {
@@ -464,9 +461,10 @@ PyCFunction_DeclareMethodFromModule Character_set_position(CharacterObject *self
                                                            PyObject *kwnames) {
     CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. Stack Allocation and Parser Targets (Unchanged)
-    PosStride pos = {};
-    void *targets[SetPosChar_COUNT];
-    targets[IDX_SPC_POS] = &pos;
+    PosStride pos                   = {};
+    void *targets[SetPosChar_COUNT] = {
+        [IDX_SPC_POS] = (void *)&pos,
+    };
 
     // 2. High Speed Parse (Unchanged)
     if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.SetPosCharParser, targets)) {
@@ -509,8 +507,9 @@ PyCFunction_DeclareMethodFromModule Character_set_rotation(CharacterObject *self
     // 1. Explicitly initialized stack target
     AuxStride rot = {.x = 0.0f, .y = 0.0f, .z = 0.0f, .w = 1.0f};
 
-    void *targets[SetRotChar_COUNT];
-    targets[IDX_SRC_ROT] = &rot; // Parser triggers your parse_quat_f32 logic
+    void *targets[SetRotChar_COUNT] = {
+        [IDX_SRC_ROT] = (void *)&rot,
+    };
 
     // 2. High Speed Parse
     if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.SetRotCharParser, targets)) {
@@ -527,9 +526,7 @@ PyCFunction_DeclareMethodFromModule Character_set_rotation(CharacterObject *self
     JPH_Quat q = {.x = rot.x, .y = rot.y, .z = rot.z, .w = rot.w};
     JPH_CharacterVirtual_SetRotation(self->character, &q);
 
-    uint64_t raw_h;
-
-    uint64_t h_raw = atomic_load_explicit(&self->handle, memory_order_relaxed);
+    uint64_t raw_h = atomic_load_explicit(&self->handle, memory_order_relaxed);
 
     // 4. Update Shadow Buffers (Zero-Streak Reset)
     auto slot          = (uint32_t)(raw_h & HANDLE_INDEX_MASK);
@@ -551,8 +548,9 @@ PyCFunction_DeclareMethodFromModule Character_set_strength(CharacterObject *self
     // 1. Explicitly initialized target
     float strength = 0.0f;
 
-    void *targets[SetStrengthChar_COUNT];
-    targets[IDX_SSC_STRENGTH] = &strength;
+    void *targets[SetStrengthChar_COUNT] = {
+        [IDX_SSC_STRENGTH] = (void *)&strength,
+    };
 
     // 2. High Speed Parse (Handles both world.set_strength(200.0) and
     // world.set_strength(strength=200.0))
@@ -862,12 +860,11 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_character(PhysicsWorldOb
     float step_h  = 0.4f;
     float slope   = 45.0f;
 
-    void *targets[CreateChar_COUNT];
-    targets[IDX_CCHAR_POS]   = (void *)&pos;
-    targets[IDX_CCHAR_H]     = (void *)&height;
-    targets[IDX_CCHAR_R]     = (void *)&radius;
-    targets[IDX_CCHAR_STEP]  = (void *)&step_h;
-    targets[IDX_CCHAR_SLOPE] = (void *)&slope;
+    void *targets[CreateChar_COUNT] = {[IDX_CCHAR_POS]   = (void *)&pos,
+                                       [IDX_CCHAR_H]     = (void *)&height,
+                                       [IDX_CCHAR_R]     = (void *)&radius,
+                                       [IDX_CCHAR_STEP]  = (void *)&step_h,
+                                       [IDX_CCHAR_SLOPE] = (void *)&slope};
 
     if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.CreateCharParser, targets)) {
         return nullptr;

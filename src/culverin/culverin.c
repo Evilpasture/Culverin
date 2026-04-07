@@ -18,6 +18,7 @@
 #include "culverin_ragdoll.h"
 #include "culverin_shadow_sync.h"
 #include "culverin_vehicle.h"
+#include "culverin_handler.h"
 #include "joltc.h"
 #include <stdatomic.h>
 #include <string.h>
@@ -304,6 +305,111 @@ fail:
     Py_XDECREF(baked);
     PhysicsWorld_free_members(self);
     return -1;
+}
+
+/**
+ * HELPER: physics_world_commit_create_locked
+ * Encapsulates slot acquisition, handle generation, and command queuing.
+ */
+static uint64_t physics_world_commit_create_locked(PhysicsWorldObject *self,
+                                                   JPH_BodyCreationSettings *settings,
+                                                   uint32_t slot_state) {
+    size_t current_count = atomic_load_explicit(&self->count, memory_order_acquire);
+    size_t available     = atomic_load_explicit(&self->free_count, memory_order_acquire);
+
+    // 1. Boundary Check: Hard Jolt Limit
+    if (UNLIKELY(current_count >= self->max_jolt_bodies)) {
+        PyErr_Format(PyExc_RuntimeError, "PhysicsWorld limit reached: %u bodies",
+                     self->max_jolt_bodies);
+        return 0;
+    }
+
+    // 2. Resource Management: Resize if empty
+    if (UNLIKELY(available == 0 || current_count + 1 > self->capacity)) {
+        size_t next_cap = (self->capacity == 0) ? INITIAL_BODY_CAPACITY : self->capacity * 2;
+        if (next_cap > self->max_jolt_bodies) {
+            next_cap = self->max_jolt_bodies;
+        }
+
+        // PhysicsWorld_resize returns -1 if someone is holding a memoryview (BufferError)
+        if (PhysicsWorld_resize(self, next_cap) < 0) {
+            return 0;
+        }
+
+        // Re-fetch counts after potentially successful resize
+        available = atomic_load_explicit(&self->free_count, memory_order_acquire);
+
+        // CRITICAL FIX: If we still have no slots after resize attempt, we are at the limit
+        if (UNLIKELY(available == 0)) {
+            PyErr_SetString(PyExc_RuntimeError, "World is at maximum capacity (Limit hit)");
+            return 0;
+        }
+    }
+
+    // 3. Command Buffer Capacity
+    if (UNLIKELY(!ensure_command_capacity(self))) {
+        return 0;
+    }
+
+    // 4. Atomic Popping from Free Stack
+    // We now know available > 0
+    uint32_t slot  = self->free_slots[--available];
+    uint32_t dense = (uint32_t)atomic_fetch_add_explicit(&self->count, 1, memory_order_relaxed);
+
+    // Commit the new free count
+    atomic_store_explicit(&self->free_count, available, memory_order_release);
+
+    // 5. Handle and Metadata Mappings
+    uint32_t gen      = atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
+    BodyHandle handle = make_handle(slot, gen);
+    uint64_t raw_h    = atomic_load_explicit(&handle, memory_order_relaxed);
+
+    JPH_BodyCreationSettings_SetUserData(settings, raw_h);
+
+    self->slot_to_dense[slot]  = dense;
+    self->dense_to_slot[dense] = slot;
+    self->body_ids[dense]      = JPH_INVALID_BODY_ID;
+
+    // 6. Slot State Publishing
+    atomic_store_explicit(&self->slot_states[slot], slot_state, memory_order_release);
+
+    return raw_h;
+}
+
+// Helper: Apply mass, sensor, CCD, and sleeping settings to the creation
+// struct
+static void configure_body_settings(JPH_BodyCreationSettings *settings, JPH_Shape *shape,
+                                    BodyConfig cfg) {
+    // Use the members of the struct instead of loose variables
+    if (cfg.is_sensor) {
+        JPH_BodyCreationSettings_SetIsSensor(settings, true);
+    }
+
+    if (cfg.use_ccd) {
+        JPH_BodyCreationSettings_SetMotionQuality(settings, JPH_MotionQuality_LinearCast);
+    }
+
+    if (cfg.motion_type == 2) { // MOTION_DYNAMIC
+        JPH_BodyCreationSettings_SetAllowSleeping(settings, true);
+    }
+
+    JPH_BodyCreationSettings_SetFriction(settings, cfg.friction);
+    JPH_BodyCreationSettings_SetRestitution(settings, cfg.restitution);
+
+    if (cfg.mass > 0.0f) {
+        JPH_MassProperties mp;
+        JPH_Shape_GetMassProperties(shape, &mp);
+        float scale = cfg.mass / fmaxf(mp.mass, EPSILON_FLOAT);
+        mp.mass     = cfg.mass;
+        for (int i = 0; i < 3; i++) {
+            mp.inertia.column[i].x *= scale;
+            mp.inertia.column[i].y *= scale;
+            mp.inertia.column[i].z *= scale;
+        }
+        JPH_BodyCreationSettings_SetMassPropertiesOverride(settings, &mp);
+        JPH_BodyCreationSettings_SetOverrideMassProperties(
+            settings, JPH_OverrideMassProperties_CalculateInertia);
+    }
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
@@ -637,10 +743,11 @@ PyCFunction_DeclareMethod PhysicsWorld_set_gravity(PhysicsWorldObject *self, PyO
     float y;
     float z;
 
-    void *targets[XYZ_COUNT];
-    targets[IDX_XYZ_X] = &x;
-    targets[IDX_XYZ_Y] = &y;
-    targets[IDX_XYZ_Z] = &z;
+    void *targets[XYZ_COUNT] = {
+        [IDX_XYZ_X] = (void *)&x,
+        [IDX_XYZ_Y] = (void *)&y,
+        [IDX_XYZ_Z] = (void *)&z,
+    };
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.GravityParser, targets)) {
@@ -688,8 +795,9 @@ PyCFunction_DeclareMethod PhysicsWorld_get_body_stats(PhysicsWorldObject *self,
     // 1. FAST PARSE
     // TSan Fix: Use standard uint64_t for parsing to avoid implicit seq_cst overhead
     uint64_t h_raw;
-    void *targets[HOnly_COUNT];
-    targets[IDX_H_H] = (void *)&h_raw;
+    void *targets[HOnly_COUNT] = {
+        [IDX_H_H] = (void *)&h_raw,
+    };
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.HOnlyParser, targets)) {
@@ -1027,10 +1135,11 @@ PyCFunction_DeclareMethod PhysicsWorld_save_state(PhysicsWorldObject *self,
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 PyCFunction_DeclareMethod PhysicsWorld_load_state(PhysicsWorldObject *self, PyObject *const *args,
                                                   Py_ssize_t nargs, PyObject *kwnames) {
-    CulverinState *st   = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
-    PyObject *state_obj = nullptr;
-    void *targets[LoadState_COUNT];
-    targets[IDX_LS_STATE] = (void *)&state_obj;
+    CulverinState *st              = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+    PyObject *state_obj            = nullptr;
+    void *targets[LoadState_COUNT] = {
+        [IDX_LS_STATE] = (void *)&state_obj,
+    };
 
     if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.LoadStateParser, targets)) {
         return nullptr;
@@ -1184,10 +1293,11 @@ size_fail:
 [[gnu::flatten]]
 PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *const *args,
                                             size_t nargsf, PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
-    float dt          = DEFAULT_FRAME_TIME;
-    void *targets[Step_COUNT];
-    targets[IDX_STEP_DT] = (void *)&dt;
+    CulverinState *st         = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+    float dt                  = DEFAULT_FRAME_TIME;
+    void *targets[Step_COUNT] = {
+        [IDX_STEP_DT] = (void *)&dt,
+    };
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.StepParser, targets)) {
@@ -1326,7 +1436,8 @@ PyCFunction_DeclareMethod PhysicsWorld_create_convex_hull(PhysicsWorldObject *se
                                                           PyObject *const *args, size_t nargsf,
                                                           PyObject *kwnames) {
     CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
-    // 1. DEFAULT VALUES
+
+    // 1. FAST PARSE
     PyObject *o_pos      = nullptr;
     PyObject *o_rot      = nullptr;
     PyObject *o_points   = nullptr;
@@ -1341,28 +1452,21 @@ PyCFunction_DeclareMethod PhysicsWorld_create_convex_hull(PhysicsWorldObject *se
     bool is_sensor       = false;
     bool use_ccd         = false;
 
-    // 2. FAST PARSE (Using Unified HC Group)
-    void *targets[HC_COUNT];
-    targets[IDX_HC_POS]       = (void *)&o_pos;
-    targets[IDX_HC_ROT]       = (void *)&o_rot;
-    targets[IDX_HC_DATA]      = (void *)&o_points; // Schema Overlay interns this as "points"
-    targets[IDX_HC_MOTION]    = (void *)&motion_type;
-    targets[IDX_HC_MASS]      = (void *)&mass;
-    targets[IDX_HC_USER_DATA] = (void *)&user_data;
-    targets[IDX_HC_SENSOR]    = (void *)&is_sensor;
-    targets[IDX_HC_CAT]       = (void *)&category;
-    targets[IDX_HC_MASK]      = (void *)&mask;
-    targets[IDX_HC_MAT_ID]    = (void *)&material_id;
-    targets[IDX_HC_FRIC]      = (void *)&friction;
-    targets[IDX_HC_REST]      = (void *)&restitution;
-    targets[IDX_HC_CCD]       = (void *)&use_ccd;
+    void *targets[HC_COUNT] = {
+        [IDX_HC_POS] = (void *)&o_pos,        [IDX_HC_ROT] = (void *)&o_rot,
+        [IDX_HC_DATA] = (void *)&o_points,    [IDX_HC_MOTION] = (void *)&motion_type,
+        [IDX_HC_MASS] = (void *)&mass,        [IDX_HC_USER_DATA] = (void *)&user_data,
+        [IDX_HC_SENSOR] = (void *)&is_sensor, [IDX_HC_CAT] = (void *)&category,
+        [IDX_HC_MASK] = (void *)&mask,        [IDX_HC_MAT_ID] = (void *)&material_id,
+        [IDX_HC_FRIC] = (void *)&friction,    [IDX_HC_REST] = (void *)&restitution,
+        [IDX_HC_CCD] = (void *)&use_ccd};
 
-    auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.ConvexHullParser, targets)) {
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.ConvexHullParser,
+                           targets)) {
         return nullptr;
     }
 
-    // 3. COMPLEX TYPE EXTRACTION
+    // 2. VECTOR/POINT EXTRACTION
     JPH_Real px;
     JPH_Real py;
     JPH_Real pz;
@@ -1370,151 +1474,78 @@ PyCFunction_DeclareMethod PhysicsWorld_create_convex_hull(PhysicsWorldObject *se
     float ry;
     float rz;
     float rw;
-    if (!parse_vec3_direct(o_pos, &px, &py, &pz)) {
-        return nullptr;
-    }
-    if (!parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) {
+    if (!parse_vec3_direct(o_pos, &px, &py, &pz) || !parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) {
         return nullptr;
     }
 
-    /* Validate position and rotation components */
-    VALIDATE_FINITE_VEC3(px, py, pz, "SetTransform position");
-    VALIDATE_FINITE_QUAT(rx, ry, rz, rw, "SetTransform rotation");
+    VALIDATE_FINITE_VEC3(px, py, pz, "Position");
+    VALIDATE_FINITE_QUAT(rx, ry, rz, rw, "Rotation");
 
     Py_buffer points_view;
     if (PyObject_GetBuffer(o_points, &points_view, PyBUF_SIMPLE) != 0) {
         return nullptr;
     }
-
-    if (UNLIKELY(points_view.len % VERTEX_STRIDE_BYTES != 0)) {
-        PyBuffer_Release(&points_view);
-        return PyErr_Format(PyExc_ValueError, "Points buffer must be 3 * float32");
-    }
     size_t num_points = points_view.len / VERTEX_STRIDE_BYTES;
     if (UNLIKELY(num_points < 3)) {
         PyBuffer_Release(&points_view);
-        return PyErr_Format(PyExc_ValueError, "Convex Hull requires at least 3 points");
+        return PyErr_Format(PyExc_ValueError, "Need >= 3 points");
     }
 
-    // 4. SHAPE CREATION (No GIL, No Shadow Lock)
+    // 3. JOLT SHAPE BUILD (No GIL)
     JPH_Shape *shape = nullptr;
-    Py_BEGIN_ALLOW_THREADS auto *jolt_points =
-        (JPH_Vec3 *)CULV_RAW_MALLOC(num_points * sizeof(JPH_Vec3));
-    float *raw = (float *)points_view.buf;
+    Py_BEGIN_ALLOW_THREADS;
+    auto *jolt_points = (JPH_Vec3 *)CULV_RAW_MALLOC(num_points * sizeof(JPH_Vec3));
+    float *raw        = (float *)points_view.buf;
     for (size_t i = 0; i < num_points; i++) {
         jolt_points[i] = (JPH_Vec3){raw[i * 3], raw[i * 3 + 1], raw[i * 3 + 2]};
     }
 
-    JPH_ConvexHullShapeSettings *hull_settings = JPH_ConvexHullShapeSettings_Create(
-        jolt_points, (uint32_t)num_points, CONVEX_HULL_TOLERANCE);
+    auto *hull_settings = JPH_ConvexHullShapeSettings_Create(jolt_points, (uint32_t)num_points,
+                                                             CONVEX_HULL_TOLERANCE);
     CULV_RAW_FREE(jolt_points);
-
     if (hull_settings) {
         shape = (JPH_Shape *)JPH_ConvexHullShapeSettings_CreateShape(hull_settings);
         JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)hull_settings);
     }
-    Py_END_ALLOW_THREADS PyBuffer_Release(&points_view);
+    Py_END_ALLOW_THREADS;
+    PyBuffer_Release(&points_view);
 
     if (!shape) {
-        return PyErr_Format(PyExc_RuntimeError, "Jolt Convex Hull build failed");
+        return PyErr_Format(PyExc_RuntimeError, "Convex Hull build failed");
     }
 
-    // 5. BODY SETTINGS PREP
+    // 4. SETTINGS PREP
     JPH_BodyCreationSettings *settings = JPH_BodyCreationSettings_Create3(
         shape, &(JPH_RVec3){px, py, pz}, &(JPH_Quat){rx, ry, rz, rw}, (JPH_MotionType)motion_type,
-        (motion_type == 0) ? 0 : 1);
+        (motion_type == 0 ? 0 : 1));
 
-    // Apply is_sensor
-    if (is_sensor) {
-        JPH_BodyCreationSettings_SetIsSensor(settings, true);
-    }
+    BodyConfig config = {mass, friction, restitution, (int)is_sensor, (int)use_ccd, motion_type};
+    configure_body_settings(settings, shape, config);
 
-    // Apply Mass/Friction/Restitution logic
-    if (mass > 0.0f) {
-        JPH_MassProperties mp;
-        JPH_Shape_GetMassProperties(shape, &mp);
-        float scale = mass / fmaxf(mp.mass, EPSILON_FLOAT);
-        mp.mass     = mass;
-        for (int i = 0; i < 3; i++) {
-            mp.inertia.column[i].x *= scale;
-            mp.inertia.column[i].y *= scale;
-            mp.inertia.column[i].z *= scale;
-        }
-        JPH_BodyCreationSettings_SetMassPropertiesOverride(settings, &mp);
-        JPH_BodyCreationSettings_SetOverrideMassProperties(
-            settings, JPH_OverrideMassProperties_CalculateInertia);
-    }
-
-    JPH_BodyCreationSettings_SetFriction(settings, friction);
-    JPH_BodyCreationSettings_SetRestitution(settings, restitution);
-
-    if (use_ccd) {
-        JPH_BodyCreationSettings_SetMotionQuality(settings, JPH_MotionQuality_LinearCast);
-    }
-
-    // 6. COMMIT PHASE (ATOMIC REFACTOR)
+    // 5. COMMIT PHASE
     SHADOW_LOCK(&self->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
 
-    // TSan Fix: Read counts atomically
-    size_t available     = atomic_load_explicit(&self->free_count, memory_order_acquire);
-    size_t current_count = atomic_load_explicit(&self->count, memory_order_acquire);
+    uint64_t raw_h = physics_world_commit_create_locked(self, settings, SLOT_PENDING_CREATE);
 
-    if (UNLIKELY(available == 0 || current_count + 1 > self->capacity)) {
-        if (PhysicsWorld_resize(self, (self->capacity == 0) ? INITIAL_BODY_CAPACITY
-                                                            : self->capacity * 2) < 0) {
-            SHADOW_UNLOCK(&self->shadow_lock);
-            JPH_BodyCreationSettings_Destroy(settings);
-            JPH_Shape_Destroy(shape);
-            return nullptr;
-        }
-        available = atomic_load_explicit(&self->free_count, memory_order_acquire);
-    }
-
-    // Pop from free stack atomically
-    uint32_t slot = self->free_slots[available - 1];
-    atomic_store_explicit(&self->free_count, available - 1, memory_order_release);
-
-    // Increment total count atomically
-    uint32_t dense = (uint32_t)atomic_fetch_add_explicit(&self->count, 1, memory_order_relaxed);
-
-    // Prepare Handle
-    uint32_t gen      = atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
-    BodyHandle handle = make_handle(slot, gen);
-    uint64_t raw_h    = atomic_load_explicit(&handle, memory_order_relaxed);
-    JPH_BodyCreationSettings_SetUserData(settings, raw_h);
-
-    // Update Shadow Buffers (Non-atomic)
-    ((PosStride *)self->positions)[dense]          = (PosStride){px, py, pz, 0.0};
-    ((AuxStride *)self->rotations)[dense]          = (AuxStride){rx, ry, rz, rw};
-    ((AuxStride *)self->linear_velocities)[dense]  = (AuxStride){};
-    ((AuxStride *)self->angular_velocities)[dense] = (AuxStride){};
-
-    self->categories[dense]    = category;
-    self->masks[dense]         = mask;
-    self->material_ids[dense]  = material_id;
-    self->user_data[dense]     = user_data;
-    self->body_ids[dense]      = JPH_INVALID_BODY_ID;
-    self->slot_to_dense[slot]  = dense;
-    self->dense_to_slot[dense] = slot;
-
-    // TSan Fix: Publish state atomically (Release creates synchronization boundary)
-    atomic_store_explicit(&self->slot_states[slot], SLOT_PENDING_CREATE, memory_order_release);
-    self->view_shape[0] = (Py_ssize_t)atomic_load_explicit(&self->count, memory_order_relaxed);
-
-    if (UNLIKELY(!ensure_command_capacity(self))) {
-        // Atomic Rollback
-        atomic_fetch_sub_explicit(&self->count, 1, memory_order_relaxed);
-        size_t r_idx = atomic_fetch_add_explicit(&self->free_count, 1, memory_order_relaxed);
-        self->free_slots[r_idx] = slot;
-        atomic_store_explicit(&self->slot_states[slot], SLOT_EMPTY, memory_order_relaxed);
-
+    if (UNLIKELY(!raw_h)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         JPH_BodyCreationSettings_Destroy(settings);
         JPH_Shape_Destroy(shape);
-        return PyErr_NoMemory();
+        return (PyErr_Occurred()) ? nullptr : PyErr_NoMemory();
     }
 
+    // 6. SHADOW BUFFER UPDATE
+    uint32_t slot  = (uint32_t)(raw_h & HANDLE_INDEX_MASK);
+    uint32_t dense = self->slot_to_dense[slot];
+
+    ((PosStride *)self->positions)[dense] = (PosStride){px, py, pz, 0.0};
+    ((AuxStride *)self->rotations)[dense] = (AuxStride){rx, ry, rz, rw};
+    self->categories[dense]               = category;
+    self->masks[dense]                    = mask;
+    self->material_ids[dense]             = material_id;
+
+    // 7. QUEUE COMMAND
     PhysicsCommand *cmd     = &self->command_queue[self->command_count++];
     cmd->header             = CMD_HEADER(CMD_CREATE_BODY, slot);
     cmd->create.settings    = settings;
@@ -1686,7 +1717,8 @@ PyCFunction_DeclareMethod PhysicsWorld_create_compound_body(PhysicsWorldObject *
                                                             PyObject *const *args, size_t nargsf,
                                                             PyObject *kwnames) {
     CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
-    // 1. DEFAULT VALUES
+
+    // 1. FAST PARSE & VALIDATION
     PyObject *o_pos      = nullptr;
     PyObject *o_rot      = nullptr;
     PyObject *o_parts    = nullptr;
@@ -1701,29 +1733,21 @@ PyCFunction_DeclareMethod PhysicsWorld_create_compound_body(PhysicsWorldObject *
     bool is_sensor       = false;
     bool use_ccd         = false;
 
-    // 2. TARGET MAPPING (Using the shared HullComp Index Group)
-    void *targets[HC_COUNT];
-    targets[IDX_HC_POS]       = (void *)&o_pos;
-    targets[IDX_HC_ROT]       = (void *)&o_rot;
-    targets[IDX_HC_DATA]      = (void *)&o_parts;
-    targets[IDX_HC_MOTION]    = (void *)&motion_type;
-    targets[IDX_HC_MASS]      = (void *)&mass;
-    targets[IDX_HC_USER_DATA] = (void *)&user_data;
-    targets[IDX_HC_SENSOR]    = (void *)&is_sensor;
-    targets[IDX_HC_CAT]       = (void *)&category;
-    targets[IDX_HC_MASK]      = (void *)&mask;
-    targets[IDX_HC_MAT_ID]    = (void *)&material_id;
-    targets[IDX_HC_FRIC]      = (void *)&friction;
-    targets[IDX_HC_REST]      = (void *)&restitution;
-    targets[IDX_HC_CCD]       = (void *)&use_ccd;
+    void *targets[HC_COUNT] = {
+        [IDX_HC_POS] = (void *)&o_pos,        [IDX_HC_ROT] = (void *)&o_rot,
+        [IDX_HC_DATA] = (void *)&o_parts,     [IDX_HC_MOTION] = (void *)&motion_type,
+        [IDX_HC_MASS] = (void *)&mass,        [IDX_HC_USER_DATA] = (void *)&user_data,
+        [IDX_HC_SENSOR] = (void *)&is_sensor, [IDX_HC_CAT] = (void *)&category,
+        [IDX_HC_MASK] = (void *)&mask,        [IDX_HC_MAT_ID] = (void *)&material_id,
+        [IDX_HC_FRIC] = (void *)&friction,    [IDX_HC_REST] = (void *)&restitution,
+        [IDX_HC_CCD] = (void *)&use_ccd};
 
-    auto nargs = PyVectorcall_NARGS(nargsf);
-    // Use the HullCompParser initialized via X-Macro
-    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.CompoundParser, targets)) {
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.CompoundParser,
+                           targets)) {
         return nullptr;
     }
 
-    // 3. COMPLEX TYPE EXTRACTION (Outside Shadow Lock)
+    // 2. EXTRACTION
     JPH_Real px;
     JPH_Real py;
     JPH_Real pz;
@@ -1731,107 +1755,58 @@ PyCFunction_DeclareMethod PhysicsWorld_create_compound_body(PhysicsWorldObject *
     float ry;
     float rz;
     float rw;
-    if (!parse_vec3_direct(o_pos, &px, &py, &pz)) {
+    if (!parse_vec3_direct(o_pos, &px, &py, &pz) || !parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) {
         return nullptr;
     }
-    if (!parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) {
-        return nullptr;
-    }
-
-    // SCHEMA defines IDX_HC_DATA as required, but we verify it's a list here
     if (UNLIKELY(!PyList_Check(o_parts))) {
-        PyErr_SetString(PyExc_TypeError, "'parts' must be a list of tuples");
+        PyErr_SetString(PyExc_TypeError, "'parts' must be list");
         return nullptr;
     }
 
-    // 4. SHAPE BUILD (Heavy lifting - released GIL internally)
+    // 3. SHAPE BUILD (Heavy lifting)
     JPH_Shape *final_shape = init_compound_shape(self, o_parts);
     if (!final_shape) {
         return nullptr;
     }
 
-    // 5. JOLT PREP
+    // 4. JOLT PREP
     JPH_BodyCreationSettings *settings = JPH_BodyCreationSettings_Create3(
         final_shape, &(JPH_RVec3){px, py, pz}, &(JPH_Quat){rx, ry, rz, rw},
-        (JPH_MotionType)motion_type, (motion_type == 0) ? 0 : 1);
+        (JPH_MotionType)motion_type, (motion_type == 0 ? 0 : 1));
 
-    BodyCreationProps props = {.mass        = mass,
-                               .friction    = friction,
-                               .restitution = restitution,
-                               .is_sensor   = (int)is_sensor,
-                               .use_ccd     = (int)use_ccd};
+    BodyCreationProps props = {mass, friction, restitution, (int)is_sensor, (int)use_ccd};
     apply_body_creation_props(settings, final_shape, props);
 
-    // 6. COMMIT PHASE (ATOMIC REFACTOR)
+    // 5. COMMIT PHASE
     SHADOW_LOCK(&self->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
 
-    // TSan Fix: Load counters atomically
-    size_t available     = atomic_load_explicit(&self->free_count, memory_order_acquire);
-    size_t current_count = atomic_load_explicit(&self->count, memory_order_acquire);
+    uint64_t raw_h = physics_world_commit_create_locked(self, settings, SLOT_PENDING_CREATE);
 
-    if (UNLIKELY(available == 0 || current_count + 1 > self->capacity)) {
-        size_t needed = (self->capacity == 0) ? INITIAL_BODY_CAPACITY : self->capacity * 2;
-        if (PhysicsWorld_resize(self, needed) < 0) {
-            SHADOW_UNLOCK(&self->shadow_lock);
-            JPH_BodyCreationSettings_Destroy(settings);
-            JPH_Shape_Destroy(final_shape);
-            return nullptr;
-        }
-        available = atomic_load_explicit(&self->free_count, memory_order_acquire);
-    }
-
-    // Atomic Pop from free stack
-    uint32_t slot = self->free_slots[available - 1];
-    atomic_store_explicit(&self->free_count, available - 1, memory_order_release);
-
-    // Atomic dense index increment
-    uint32_t dense = (uint32_t)atomic_fetch_add_explicit(&self->count, 1, memory_order_relaxed);
-
-    // Prepare handle using explicit relaxed load to avoid implicit seq_cst
-    uint32_t gen      = atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
-    BodyHandle handle = make_handle(slot, gen);
-    uint64_t raw_h    = atomic_load_explicit(&handle, memory_order_relaxed);
-    JPH_BodyCreationSettings_SetUserData(settings, raw_h);
-
-    // Update non-atomic Shadow Buffers
-    PosStride p_val                            = {.x = px, .y = py, .z = pz, .w = 0.0};
-    ((PosStride *)self->positions)[dense]      = p_val;
-    ((PosStride *)self->prev_positions)[dense] = p_val;
-
-    AuxStride q_val                            = {.x = rx, .y = ry, .z = rz, .w = rw};
-    ((AuxStride *)self->rotations)[dense]      = q_val;
-    ((AuxStride *)self->prev_rotations)[dense] = q_val;
-
-    ((AuxStride *)self->linear_velocities)[dense]  = (AuxStride){};
-    ((AuxStride *)self->angular_velocities)[dense] = (AuxStride){};
-
-    self->categories[dense]    = category;
-    self->masks[dense]         = mask;
-    self->material_ids[dense]  = material_id;
-    self->user_data[dense]     = user_data;
-    self->body_ids[dense]      = JPH_INVALID_BODY_ID;
-    self->slot_to_dense[slot]  = dense;
-    self->dense_to_slot[dense] = slot;
-
-    // TSan Fix: Publish state and update view atomically
-    atomic_store_explicit(&self->slot_states[slot], SLOT_PENDING_CREATE, memory_order_release);
-    self->view_shape[0] = (Py_ssize_t)atomic_load_explicit(&self->count, memory_order_relaxed);
-
-    // 7. QUEUE COMMAND
-    if (UNLIKELY(!ensure_command_capacity(self))) {
-        // Atomic Rollback
-        atomic_fetch_sub_explicit(&self->count, 1, memory_order_relaxed);
-        size_t r_idx = atomic_fetch_add_explicit(&self->free_count, 1, memory_order_relaxed);
-        self->free_slots[r_idx] = slot;
-        atomic_store_explicit(&self->slot_states[slot], SLOT_EMPTY, memory_order_relaxed);
-
+    if (UNLIKELY(!raw_h)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         JPH_BodyCreationSettings_Destroy(settings);
         JPH_Shape_Destroy(final_shape);
-        return PyErr_NoMemory();
+        return (PyErr_Occurred()) ? nullptr : PyErr_NoMemory();
     }
 
+    // 6. SHADOW BUFFER UPDATE
+    uint32_t slot  = (uint32_t)(raw_h & HANDLE_INDEX_MASK);
+    uint32_t dense = self->slot_to_dense[slot];
+
+    ((PosStride *)self->positions)[dense]          = (PosStride){px, py, pz, 0.0};
+    ((PosStride *)self->prev_positions)[dense]     = (PosStride){px, py, pz, 0.0};
+    ((AuxStride *)self->rotations)[dense]          = (AuxStride){rx, ry, rz, rw};
+    ((AuxStride *)self->prev_rotations)[dense]     = (AuxStride){rx, ry, rz, rw};
+    ((AuxStride *)self->linear_velocities)[dense]  = (AuxStride){0};
+    ((AuxStride *)self->angular_velocities)[dense] = (AuxStride){0};
+
+    self->categories[dense]   = category;
+    self->masks[dense]        = mask;
+    self->material_ids[dense] = material_id;
+    self->user_data[dense]    = user_data;
+
+    // 7. QUEUE COMMAND
     PhysicsCommand *cmd     = &self->command_queue[self->command_count++];
     cmd->header             = CMD_HEADER(CMD_CREATE_BODY, slot);
     cmd->create.settings    = settings;
@@ -1842,6 +1817,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_compound_body(PhysicsWorldObject *
 
     SHADOW_UNLOCK(&self->shadow_lock);
     JPH_Shape_Destroy(final_shape);
+
     return PyLong_FromUnsignedLongLong(raw_h);
 }
 
@@ -1871,42 +1847,6 @@ static MaterialSettings resolve_material_params(PhysicsWorldObject *self, uint32
     resolved.restitution = (input.restitution >= 0.0f) ? input.restitution : r;
 
     return resolved;
-}
-
-// Helper 3: Apply mass, sensor, CCD, and sleeping settings to the creation
-// struct
-static void configure_body_settings(JPH_BodyCreationSettings *settings, JPH_Shape *shape,
-                                    BodyConfig cfg) {
-    // Use the members of the struct instead of loose variables
-    if (cfg.is_sensor) {
-        JPH_BodyCreationSettings_SetIsSensor(settings, true);
-    }
-
-    if (cfg.use_ccd) {
-        JPH_BodyCreationSettings_SetMotionQuality(settings, JPH_MotionQuality_LinearCast);
-    }
-
-    if (cfg.motion_type == 2) { // MOTION_DYNAMIC
-        JPH_BodyCreationSettings_SetAllowSleeping(settings, true);
-    }
-
-    JPH_BodyCreationSettings_SetFriction(settings, cfg.friction);
-    JPH_BodyCreationSettings_SetRestitution(settings, cfg.restitution);
-
-    if (cfg.mass > 0.0f) {
-        JPH_MassProperties mp;
-        JPH_Shape_GetMassProperties(shape, &mp);
-        float scale = cfg.mass / fmaxf(mp.mass, EPSILON_FLOAT);
-        mp.mass     = cfg.mass;
-        for (int i = 0; i < 3; i++) {
-            mp.inertia.column[i].x *= scale;
-            mp.inertia.column[i].y *= scale;
-            mp.inertia.column[i].z *= scale;
-        }
-        JPH_BodyCreationSettings_SetMassPropertiesOverride(settings, &mp);
-        JPH_BodyCreationSettings_SetOverrideMassProperties(
-            settings, JPH_OverrideMassProperties_CalculateInertia);
-    }
 }
 
 // Main Orchestrator
@@ -1940,21 +1880,15 @@ PyCFunction_DeclareMethod PhysicsWorld_create_body(PhysicsWorldObject *self, PyO
 
     // 2. TARGET MAPPING (Explicitly mapped via Enum)
     // Using explicit indices [IDX_...] makes this reorder-proof.
-    void *targets[Body_COUNT];
-    targets[IDX_POS]       = (void *)&o_pos;
-    targets[IDX_ROT]       = (void *)&o_rot;
-    targets[IDX_SIZE]      = (void *)&o_size;
-    targets[IDX_SHAPE]     = (void *)&shape_type;
-    targets[IDX_MOTION]    = (void *)&motion_type;
-    targets[IDX_USER_DATA] = (void *)&user_data;
-    targets[IDX_SENSOR]    = (void *)&is_sensor;
-    targets[IDX_MASS]      = (void *)&mass;
-    targets[IDX_CAT]       = (void *)&category;
-    targets[IDX_MASK]      = (void *)&mask;
-    targets[IDX_FRIC]      = (void *)&friction;
-    targets[IDX_REST]      = (void *)&restitution;
-    targets[IDX_MAT]       = (void *)&material_id;
-    targets[IDX_CCD]       = (void *)&use_ccd;
+    void *targets[Body_COUNT] = {
+        [IDX_POS] = (void *)&o_pos,          [IDX_ROT] = (void *)&o_rot,
+        [IDX_SIZE] = (void *)&o_size,        [IDX_SHAPE] = (void *)&shape_type,
+        [IDX_MOTION] = (void *)&motion_type, [IDX_USER_DATA] = (void *)&user_data,
+        [IDX_SENSOR] = (void *)&is_sensor,   [IDX_MASS] = (void *)&mass,
+        [IDX_CAT] = (void *)&category,       [IDX_MASK] = (void *)&mask,
+        [IDX_FRIC] = (void *)&friction,      [IDX_REST] = (void *)&restitution,
+        [IDX_MAT] = (void *)&material_id,    [IDX_CCD] = (void *)&use_ccd,
+    };
 
     // 3. THE FAST PARSE
     // We pass the global 'BodyParser' defined in the God Init helper
@@ -2003,122 +1937,65 @@ PyCFunction_DeclareMethod PhysicsWorld_create_body(PhysicsWorldObject *self, PyO
     // New Guard for Size components
     VALIDATE_FINITE_VEC4(s[0], s[1], s[2], s[3], "Shape size");
 
+    // JOLT PREP (GIL RELEASED)
     JPH_Shape *shape                   = nullptr;
     JPH_BodyCreationSettings *settings = nullptr;
 
-    // --- CRITICAL SECTION: JOLT PREP ---
     Py_BEGIN_ALLOW_THREADS;
     SHADOW_LOCK(&self->shadow_lock);
-
     shape = find_or_create_shape_locked(self, shape_type, s);
-
     SHADOW_UNLOCK(&self->shadow_lock);
 
-    if (LIKELY(shape)) {
-        // Force local variables instead of compound literals in the function call
-        JPH_RVec3 j_pos = {.x = px, .y = py, .z = pz};
-        JPH_Quat j_rot  = {.x = rx, .y = ry, .z = rz, .w = rw};
-
-        settings = JPH_BodyCreationSettings_Create3(
+    if (shape) {
+        JPH_RVec3 j_pos = {px, py, pz};
+        JPH_Quat j_rot  = {rx, ry, rz, rw};
+        settings        = JPH_BodyCreationSettings_Create3(
             shape, &j_pos, &j_rot, (JPH_MotionType)motion_type, (motion_type == 0) ? 0 : 1);
-
         if (settings) {
-            BodyConfig config = {.mass        = mass,
-                                 .friction    = mat.friction,
-                                 .restitution = mat.restitution,
-                                 .is_sensor   = (int)is_sensor,
-                                 .use_ccd     = (int)use_ccd,
-                                 .motion_type = motion_type};
+            BodyConfig config = {mass,           mat.friction, mat.restitution,
+                                 (int)is_sensor, (int)use_ccd, motion_type};
             configure_body_settings(settings, shape, config);
         }
     }
-
     Py_END_ALLOW_THREADS;
 
-    if (!shape) {
-        return PyErr_Format(PyExc_RuntimeError, "Failed to create/find Shape");
-    }
     if (!settings) {
         return PyErr_Format(PyExc_RuntimeError, "Failed to create BodySettings");
     }
 
-    // --- COMMIT PHASE: SHADOW BUFFER UPDATE (ATOMIC REFACTOR) ---
+    // COMMIT PHASE (Inside Shadow Lock)
     SHADOW_LOCK(&self->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
 
-    // TSan Fix: Load counts atomically to check Jolt and shadow limits
-    size_t current_count = atomic_load_explicit(&self->count, memory_order_acquire);
-    size_t available     = atomic_load_explicit(&self->free_count, memory_order_acquire);
+    uint64_t raw_h = physics_world_commit_create_locked(self, settings, SLOT_PENDING_CREATE);
 
-    if (UNLIKELY(current_count >= self->max_jolt_bodies)) {
+    if (UNLIKELY(!raw_h)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         JPH_BodyCreationSettings_Destroy(settings);
-        return PyErr_Format(PyExc_RuntimeError, "PhysicsWorld limit reached: %zu bodies",
-                            self->max_jolt_bodies);
+        return (PyErr_Occurred()) ? nullptr : PyErr_NoMemory();
     }
 
-    if (UNLIKELY(available == 0 || current_count + 1 > self->capacity)) {
-        size_t next_cap = (self->capacity == 0) ? INITIAL_BODY_CAPACITY : self->capacity * 2;
-        if (next_cap > self->max_jolt_bodies) {
-            next_cap = self->max_jolt_bodies;
-        }
-        if (PhysicsWorld_resize(self, next_cap) < 0) {
-            SHADOW_UNLOCK(&self->shadow_lock);
-            JPH_BodyCreationSettings_Destroy(settings);
-            return nullptr;
-        }
-        available = atomic_load_explicit(&self->free_count, memory_order_acquire);
-    }
+    // SHADOW BUFFER INITIALIZATION
+    uint32_t slot  = (uint32_t)(raw_h & HANDLE_INDEX_MASK);
+    uint32_t dense = self->slot_to_dense[slot];
 
-    // Atomic Pop: Update free stack head
-    uint32_t slot = self->free_slots[available - 1];
-    atomic_store_explicit(&self->free_count, available - 1, memory_order_release);
+    ((PosStride *)self->positions)[dense]          = (PosStride){px, py, pz, 0.0};
+    ((PosStride *)self->prev_positions)[dense]     = (PosStride){px, py, pz, 0.0};
+    ((AuxStride *)self->rotations)[dense]          = (AuxStride){rx, ry, rz, rw};
+    ((AuxStride *)self->prev_rotations)[dense]     = (AuxStride){rx, ry, rz, rw};
+    ((AuxStride *)self->linear_velocities)[dense]  = (AuxStride){0};
+    ((AuxStride *)self->angular_velocities)[dense] = (AuxStride){0};
 
-    // Atomic Increment: Assign dense index
-    uint32_t dense = (uint32_t)atomic_fetch_add_explicit(&self->count, 1, memory_order_relaxed);
+    self->categories[dense]   = category;
+    self->masks[dense]        = mask;
+    self->material_ids[dense] = material_id;
+    self->user_data[dense]    = user_data;
 
-    // Resolve handle metadata atomically
-    uint32_t gen      = atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
-    BodyHandle handle = make_handle(slot, gen);
-    uint64_t raw_h    = atomic_load_explicit(&handle, memory_order_relaxed);
-    JPH_BodyCreationSettings_SetUserData(settings, raw_h);
-
-    // Update non-atomic shadow buffers (Safe under shadow_lock + block_stepping)
-    PosStride p_val                            = {px, py, pz, 0.0};
-    ((PosStride *)self->positions)[dense]      = p_val;
-    ((PosStride *)self->prev_positions)[dense] = p_val;
-
-    AuxStride q_val                            = {rx, ry, rz, rw};
-    ((AuxStride *)self->rotations)[dense]      = q_val;
-    ((AuxStride *)self->prev_rotations)[dense] = q_val;
-
-    ((AuxStride *)self->linear_velocities)[dense]  = (AuxStride){};
-    ((AuxStride *)self->angular_velocities)[dense] = (AuxStride){};
-
-    self->categories[dense]    = category;
-    self->masks[dense]         = mask;
-    self->material_ids[dense]  = material_id;
-    self->user_data[dense]     = user_data;
-    self->body_ids[dense]      = JPH_INVALID_BODY_ID;
-    self->slot_to_dense[slot]  = dense;
-    self->dense_to_slot[dense] = slot;
-
-    // TSan Fix: Publish slot state and sync metadata atomically
-    atomic_store_explicit(&self->slot_states[slot], SLOT_PENDING_CREATE, memory_order_release);
+    // FINALIZE VISIBILITY
+    // Update view shape only AFTER all buffer data is stable
     self->view_shape[0] = (Py_ssize_t)atomic_load_explicit(&self->count, memory_order_relaxed);
 
-    if (UNLIKELY(!ensure_command_capacity(self))) {
-        // Atomic Rollback
-        atomic_fetch_sub_explicit(&self->count, 1, memory_order_relaxed);
-        size_t r_idx = atomic_fetch_add_explicit(&self->free_count, 1, memory_order_relaxed);
-        self->free_slots[r_idx] = slot;
-        atomic_store_explicit(&self->slot_states[slot], SLOT_EMPTY, memory_order_relaxed);
-
-        SHADOW_UNLOCK(&self->shadow_lock);
-        JPH_BodyCreationSettings_Destroy(settings);
-        return PyErr_NoMemory();
-    }
-
+    // QUEUE COMMAND
     PhysicsCommand *cmd     = &self->command_queue[self->command_count++];
     cmd->header             = CMD_HEADER(CMD_CREATE_BODY, slot);
     cmd->create.settings    = settings;
@@ -2128,7 +2005,6 @@ PyCFunction_DeclareMethod PhysicsWorld_create_body(PhysicsWorldObject *self, PyO
     cmd->create.material_id = material_id;
 
     SHADOW_UNLOCK(&self->shadow_lock);
-
     return PyLong_FromUnsignedLongLong(raw_h);
 }
 
@@ -2136,194 +2012,161 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
                                                            PyObject *const *args, size_t nargsf,
                                                            PyObject *kwnames) {
     CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+
     // 1. FAST PARSE (Zero Lock Contention)
-    PyObject *py_positions = nullptr;
-    PyObject *py_sizes     = nullptr;
-    int shape_type         = 0;
-    int motion_type        = 2;
+    PyObject *py_pos                 = nullptr;
+    PyObject *py_sizes               = nullptr;
+    PyObject *res_list               = nullptr;
+    int shape_type                   = 0;
+    int motion_type                  = 2;
+    void *targets[BatchCreate_COUNT] = {[IDX_BC_POSITIONS] = (void *)&py_pos,
+                                        [IDX_BC_SIZES]     = (void *)&py_sizes,
+                                        [IDX_BC_SHAPE]     = (void *)&shape_type,
+                                        [IDX_BC_MOTION]    = (void *)&motion_type};
 
-    // DECLARE AND INITIALIZE AT THE TOP
-    PosStride *pos_buf                      = nullptr;
-    ShapeParams *size_buf                   = nullptr;
-    JPH_BodyCreationSettings **settings_buf = nullptr;
-
-    // Use BatchCreate Group count and schema IDs
-    void *targets[BatchCreate_COUNT];
-    targets[IDX_BC_POSITIONS] = (void *)&py_positions;
-    targets[IDX_BC_SIZES]     = (void *)&py_sizes;
-    targets[IDX_BC_SHAPE]     = (void *)&shape_type;
-    targets[IDX_BC_MOTION]    = (void *)&motion_type;
-
-    auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.BatchCreateParser, targets)) {
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+                           &st->parsers.BatchCreateParser, targets)) {
         return nullptr;
     }
-    // Initial Validation
-    if (!PyList_Check(py_positions) || !PyList_Check(py_sizes)) {
-        return PyErr_Format(PyExc_TypeError, "positions and sizes must be lists");
-    }
 
-    Py_ssize_t batch_count = PyList_GET_SIZE(py_positions);
+    if (!PyList_Check(py_pos) || !PyList_Check(py_sizes)) {
+        return PyErr_Format(PyExc_TypeError, "Inputs must be lists");
+    }
+    const Py_ssize_t batch_count = PyList_GET_SIZE(py_pos);
     if (PyList_GET_SIZE(py_sizes) != batch_count) {
         return PyErr_Format(PyExc_ValueError, "List length mismatch");
     }
-
-    // TSan Fix: Atomic load of current count for limit check
-    if (UNLIKELY(atomic_load_explicit(&self->count, memory_order_acquire) + batch_count >
-                 self->max_jolt_bodies)) {
-        return PyErr_Format(PyExc_RuntimeError, "Batch would exceed Jolt body limit (%u)",
-                            self->max_jolt_bodies);
+    if (batch_count == 0) {
+        return PyList_New(0);
     }
 
-    // 2. TEMP ALLOCATION
-    pos_buf      = (PosStride *)CULV_RAW_MALLOC(batch_count * sizeof(PosStride));
-    size_buf     = (ShapeParams *)CULV_RAW_MALLOC(batch_count * sizeof(ShapeParams));
-    settings_buf = (JPH_BodyCreationSettings **)CULV_RAW_CALLOC(batch_count,
-                                                                sizeof(JPH_BodyCreationSettings *));
+    // 2. PRE-COMMIT ALLOCATIONS (Allocate everything BEFORE touching world state)
+    auto *pos_buf       = (PosStride *)CULV_RAW_MALLOC(batch_count * sizeof(PosStride));
+    auto *size_buf      = (ShapeParams *)CULV_RAW_MALLOC(batch_count * sizeof(ShapeParams));
+    auto **settings_buf = (JPH_BodyCreationSettings **)CULV_RAW_CALLOC(batch_count, sizeof(void *));
+    res_list            = PyList_New(batch_count); // Allocate early!
 
-    if (!pos_buf || !size_buf || !settings_buf) {
-        goto fail_oom;
+    if (!pos_buf || !size_buf || !settings_buf || !res_list) {
+        Py_XDECREF(res_list);
+        CULV_RAW_FREE(pos_buf);
+        CULV_RAW_FREE(size_buf);
+        CULV_RAW_FREE((void *)settings_buf);
+        return PyErr_NoMemory();
     }
 
-    // 3. PARSE INTO C BUFFERS (GIL HELD)
     for (Py_ssize_t i = 0; i < batch_count; i++) {
-        // Using GET_ITEM is safe here because we verified types/lengths above
-        if (!parse_py_vec3(PyList_GET_ITEM(py_positions, i), &pos_buf[i])) {
-            pos_buf[i] = (PosStride){.x = 0, .y = 0, .z = 0};
-        }
-        VALIDATE_FINITE_VEC3(pos_buf[i].x, pos_buf[i].y, pos_buf[i].z, "Batch Position");
-
+        parse_py_vec3(PyList_GET_ITEM(py_pos, i), &pos_buf[i]);
         parse_body_size(PyList_GET_ITEM(py_sizes, i), size_buf[i].p);
-        VALIDATE_FINITE_VEC4(size_buf[i].p[0], size_buf[i].p[1], size_buf[i].p[2], size_buf[i].p[3],
-                             "Batch Size");
     }
 
-    // 4. JOLT PREP (NO GIL)
-    Py_BEGIN_ALLOW_THREADS SHADOW_LOCK(&self->shadow_lock);
-
-    JPH_STACK_ALLOC(JPH_RVec3, j_pos);
-    JPH_STACK_ALLOC(JPH_Quat, j_rot);
-    *j_rot = (JPH_Quat){0.0f, 0.0f, 0.0f, 1.0f};
-
+    // 3. JOLT PREP (No GIL)
+    Py_BEGIN_ALLOW_THREADS;
+    SHADOW_LOCK(&self->shadow_lock);
     for (Py_ssize_t i = 0; i < batch_count; i++) {
         JPH_Shape *shape = find_or_create_shape_locked(self, shape_type, size_buf[i].p);
         if (shape) {
-            *j_pos          = (JPH_RVec3){pos_buf[i].x, pos_buf[i].y, pos_buf[i].z};
+            JPH_RVec3 j_p   = {pos_buf[i].x, pos_buf[i].y, pos_buf[i].z};
+            JPH_Quat j_r    = {0, 0, 0, 1};
             settings_buf[i] = JPH_BodyCreationSettings_Create3(
-                shape, j_pos, j_rot, (JPH_MotionType)motion_type, (motion_type == 0 ? 0 : 1));
+                shape, &j_p, &j_r, (JPH_MotionType)motion_type, (motion_type == 0 ? 0 : 1));
         }
     }
     SHADOW_UNLOCK(&self->shadow_lock);
-    Py_END_ALLOW_THREADS
+    Py_END_ALLOW_THREADS;
 
-        // 5. COMMIT PHASE (ATOMIC REFACTOR)
-        SHADOW_LOCK(&self->shadow_lock);
+    // 4. BULK COMMIT PHASE (Critical Section)
+    SHADOW_LOCK(&self->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
 
-    // TSan Fix: Check atomic counts for structural availability
-    size_t available     = atomic_load_explicit(&self->free_count, memory_order_acquire);
     size_t current_count = atomic_load_explicit(&self->count, memory_order_acquire);
+    size_t available     = atomic_load_explicit(&self->free_count, memory_order_acquire);
 
+    // Bulk Capacity Check
     if (available < (size_t)batch_count || (current_count + batch_count) > self->capacity) {
         size_t needed = current_count + batch_count + INITIAL_BODY_CAPACITY;
-        if (PhysicsWorld_resize(self, (needed > self->max_jolt_bodies) ? self->max_jolt_bodies
-                                                                       : needed) < 0) {
-            SHADOW_UNLOCK(&self->shadow_lock);
-            goto fail;
+        if (needed > self->max_jolt_bodies) {
+            needed = self->max_jolt_bodies;
+        }
+        if (PhysicsWorld_resize(self, needed) < 0) {
+            goto fail_locked;
         }
         available = atomic_load_explicit(&self->free_count, memory_order_acquire);
     }
 
-    // Check command capacity in one block
-    size_t needed_cmds = self->command_count + batch_count;
-    if (self->command_capacity < needed_cmds) {
-        void *new_q = CULV_RAW_REALLOC(self->command_queue, needed_cmds * sizeof(PhysicsCommand));
-        if (!new_q) {
-            SHADOW_UNLOCK(&self->shadow_lock);
-            goto fail_oom;
+    // Hard limit check
+    if (current_count + batch_count > self->max_jolt_bodies) {
+        PyErr_Format(PyExc_RuntimeError, "Batch exceeds world limit");
+        goto fail_locked;
+    }
+
+    // Ensure Command Queue has room for N items
+    if (UNLIKELY(self->command_count + batch_count > self->command_capacity)) {
+        if (!ensure_command_bulk_capacity(self, (size_t)batch_count)) {
+            goto fail_locked;
         }
-        self->command_queue    = (PhysicsCommand *)new_q;
-        self->command_capacity = (uint32_t)needed_cmds;
     }
 
-    PyObject *result_list = PyList_New(batch_count);
-    if (!result_list) {
-        SHADOW_UNLOCK(&self->shadow_lock);
-        goto fail;
-    }
+    // --- BULK RESOURCE ACQUISITION ---
+    // Instead of looping atomics, we do one add and one subtract.
+    uint32_t base_dense =
+        (uint32_t)atomic_fetch_add_explicit(&self->count, batch_count, memory_order_relaxed);
+    size_t free_head = available - batch_count;
+    atomic_store_explicit(&self->free_count, free_head, memory_order_release);
 
-    auto *shadow_pos  = (PosStride *)self->positions;
-    auto *shadow_ppos = (PosStride *)self->prev_positions;
-    auto *shadow_rot  = (AuxStride *)self->rotations;
-    auto *shadow_prot = (AuxStride *)self->prev_rotations;
-
+    // Population Loop (Now purely local memory ops, very fast)
     for (Py_ssize_t i = 0; i < batch_count; i++) {
         if (!settings_buf[i]) {
-            Py_INCREF(Py_None);
-            PyList_SET_ITEM(result_list, i, Py_None);
             continue;
         }
 
-        // TSan Fix: Atomic Pop and Increment
-        size_t f_idx  = atomic_fetch_sub_explicit(&self->free_count, 1, memory_order_relaxed) - 1;
-        uint32_t slot = self->free_slots[f_idx];
-        auto dense    = (uint32_t)atomic_fetch_add_explicit(&self->count, 1, memory_order_relaxed);
+        uint32_t slot  = self->free_slots[free_head + i];
+        uint32_t dense = base_dense + (uint32_t)i;
 
-        uint32_t gen      = atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
-        BodyHandle handle = make_handle(slot, gen);
-        uint64_t raw_h    = atomic_load_explicit(&handle, memory_order_relaxed);
+        uint32_t gen   = atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
+        uint64_t raw_h = ((uint64_t)gen << HANDLE_INDEX_BITS) | slot;
         JPH_BodyCreationSettings_SetUserData(settings_buf[i], raw_h);
 
-        // Update non-atomic shadow buffers
-        PosStride p          = {.x = pos_buf[i].x, .y = pos_buf[i].y, .z = pos_buf[i].z, .w = 0.0};
-        shadow_pos[dense]    = p;
-        shadow_ppos[dense]   = p;
-        AuxStride identity_q = {.x = 0.0f, .y = 0.0f, .z = 0.0f, .w = 1.0f};
-        shadow_rot[dense]    = identity_q;
-        shadow_prot[dense]   = identity_q;
-
-        self->body_ids[dense]      = JPH_INVALID_BODY_ID;
+        // Map
         self->slot_to_dense[slot]  = dense;
         self->dense_to_slot[dense] = slot;
+        self->body_ids[dense]      = JPH_INVALID_BODY_ID;
 
-        // TSan Fix: Publish state atomically
+        // Shadow Buffers
+        PosStride p                           = {pos_buf[i].x, pos_buf[i].y, pos_buf[i].z, 0.0};
+        ((PosStride *)self->positions)[dense] = p;
+        ((PosStride *)self->prev_positions)[dense] = p;
+        ((AuxStride *)self->rotations)[dense]      = (AuxStride){0, 0, 0, 1};
+        ((AuxStride *)self->prev_rotations)[dense] = (AuxStride){0, 0, 0, 1};
+
+        // State & Command
         atomic_store_explicit(&self->slot_states[slot], SLOT_PENDING_CREATE, memory_order_release);
-
-        // Queue Command
         PhysicsCommand *cmd  = &self->command_queue[self->command_count++];
         cmd->header          = CMD_HEADER(CMD_CREATE_BODY, slot);
         cmd->create.settings = settings_buf[i];
 
-        PyList_SET_ITEM(result_list, i, PyLong_FromUnsignedLongLong(raw_h));
+        PyList_SET_ITEM(res_list, i, PyLong_FromUnsignedLongLong(raw_h));
     }
 
-    // Synchronize metadata for Python
     self->view_shape[0] = (Py_ssize_t)atomic_load_explicit(&self->count, memory_order_relaxed);
     SHADOW_UNLOCK(&self->shadow_lock);
 
     CULV_RAW_FREE(pos_buf);
     CULV_RAW_FREE(size_buf);
     CULV_RAW_FREE((void *)settings_buf);
-    return result_list;
+    return res_list;
 
-fail_oom:
-    PyErr_NoMemory();
-fail:
-    if (settings_buf) {
-        for (Py_ssize_t i = 0; i < batch_count; i++) {
-            if (settings_buf[i]) {
-                JPH_BodyCreationSettings_Destroy(settings_buf[i]);
-            }
+fail_locked:
+    SHADOW_UNLOCK(&self->shadow_lock);
+    Py_XDECREF(res_list);
+    for (Py_ssize_t i = 0; i < batch_count; i++) {
+        if (settings_buf[i]) {
+            JPH_BodyCreationSettings_Destroy(settings_buf[i]);
         }
-        CULV_RAW_FREE((void *)settings_buf);
     }
-    if (pos_buf) {
-        CULV_RAW_FREE(pos_buf);
-    }
-    if (size_buf) {
-        CULV_RAW_FREE(size_buf);
-    }
-    return nullptr;
+    CULV_RAW_FREE(pos_buf);
+    CULV_RAW_FREE(size_buf);
+    CULV_RAW_FREE((void *)settings_buf);
+    return (PyErr_Occurred()) ? nullptr : PyErr_NoMemory();
 }
 
 /**
@@ -2389,7 +2232,8 @@ PyCFunction_DeclareMethod PhysicsWorld_create_mesh_body(PhysicsWorldObject *self
                                                         PyObject *const *args, size_t nargsf,
                                                         PyObject *kwnames) {
     CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
-    // 1. DEFAULT VALUES
+
+    // 1. FAST PARSE
     PyObject *o_pos     = nullptr;
     PyObject *o_rot     = nullptr;
     PyObject *o_verts   = nullptr;
@@ -2398,23 +2242,20 @@ PyCFunction_DeclareMethod PhysicsWorld_create_mesh_body(PhysicsWorldObject *self
     uint32_t cat        = COLLISION_FILTER_ALL_CATEGORIES;
     uint32_t mask       = COLLISION_FILTER_ALL_MASKS;
 
-    // 2. TARGET MAPPING (Using Mesh Group)
-    void *targets[Mesh_COUNT]; // Mesh_COUNT generated by DEFINE_INDEX_GROUP
-    targets[IDX_MSH_POS]       = (void *)&o_pos;
-    targets[IDX_MSH_ROT]       = (void *)&o_rot;
-    targets[IDX_MSH_VERTS]     = (void *)&o_verts;
-    targets[IDX_MSH_INDICES]   = (void *)&o_indices;
-    targets[IDX_MSH_USER_DATA] = (void *)&user_data;
-    targets[IDX_MSH_CAT]       = (void *)&cat;
-    targets[IDX_MSH_MASK]      = (void *)&mask;
+    void *targets[Mesh_COUNT] = {[IDX_MSH_POS]       = (void *)&o_pos,
+                                 [IDX_MSH_ROT]       = (void *)&o_rot,
+                                 [IDX_MSH_VERTS]     = (void *)&o_verts,
+                                 [IDX_MSH_INDICES]   = (void *)&o_indices,
+                                 [IDX_MSH_USER_DATA] = (void *)&user_data,
+                                 [IDX_MSH_CAT]       = (void *)&cat,
+                                 [IDX_MSH_MASK]      = (void *)&mask};
 
-    auto nargs = PyVectorcall_NARGS(nargsf);
-    // Use MeshParser initialized via SCHEMA_MESH
-    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.MeshParser, targets)) {
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.MeshParser,
+                           targets)) {
         return nullptr;
     }
 
-    // 3. VECTOR/QUAT EXTRACTION (Precision Safe)
+    // 2. VECTOR/QUAT EXTRACTION
     JPH_Real px;
     JPH_Real py;
     JPH_Real pz;
@@ -2422,52 +2263,47 @@ PyCFunction_DeclareMethod PhysicsWorld_create_mesh_body(PhysicsWorldObject *self
     float ry;
     float rz;
     float rw;
-    if (!parse_vec3_direct(o_pos, &px, &py, &pz)) {
-        return nullptr;
-    }
-    if (!parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) {
+    if (!parse_vec3_direct(o_pos, &px, &py, &pz) || !parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) {
         return nullptr;
     }
 
-    // 2. Buffer Acquisition
-    Py_buffer v_view = {0};
-    Py_buffer i_view = {0};
-    if (PyObject_GetBuffer(o_verts, &v_view, PyBUF_SIMPLE) != 0) {
-        return nullptr;
-    }
-    if (PyObject_GetBuffer(o_indices, &i_view, PyBUF_SIMPLE) != 0) {
-        PyBuffer_Release(&v_view);
+    Py_buffer v_view;
+    Py_buffer i_view;
+    if (PyObject_GetBuffer(o_verts, &v_view, PyBUF_SIMPLE) != 0 ||
+        PyObject_GetBuffer(o_indices, &i_view, PyBUF_SIMPLE) != 0) {
+        if (v_view.buf) {
+            PyBuffer_Release(&v_view);
+        }
         return nullptr;
     }
 
     if (UNLIKELY(v_view.len % VERTEX_STRIDE_BYTES != 0 || i_view.len % VERTEX_STRIDE_BYTES != 0)) {
+        PyBuffer_Release(&v_view);
+        PyBuffer_Release(&i_view);
         PyErr_SetString(PyExc_ValueError, "Buffer size mismatch");
-        goto buffer_fail;
+        return nullptr;
     }
 
+    // 3. JOLT SHAPE BUILD (No GIL)
+    JPH_Shape *shape  = nullptr;
     MeshBounds bounds = {(uint32_t)(i_view.len / VERTEX_STRIDE_BYTES),
                          (uint32_t)(v_view.len / VERTEX_STRIDE_BYTES)};
 
-    // 3. Jolt Shape Build (No GIL)
-    JPH_Shape *shape = nullptr;
-    Py_BEGIN_ALLOW_THREADS JPH_IndexedTriangle *tris =
-        build_mesh_triangles((uint32_t *)i_view.buf, bounds);
+    Py_BEGIN_ALLOW_THREADS;
+    JPH_IndexedTriangle *tris = build_mesh_triangles((uint32_t *)i_view.buf, bounds);
     if (tris) {
         shape = build_mesh_shape(v_view.buf, bounds, tris);
         CULV_RAW_FREE(tris);
     }
-    Py_END_ALLOW_THREADS
+    Py_END_ALLOW_THREADS;
 
-        // Release Python buffers IMMEDIATELY after copying data to Jolt.
-        // This minimizes time holding Python references.
-        PyBuffer_Release(&v_view);
+    PyBuffer_Release(&v_view);
     PyBuffer_Release(&i_view);
-
     if (!shape) {
-        return nullptr; // build_mesh_shape set the error
+        return nullptr;
     }
 
-    // 4. Creation Settings
+    // 4. SETTINGS PREP
     JPH_BodyCreationSettings *settings = JPH_BodyCreationSettings_Create3(
         shape, &(JPH_RVec3){px, py, pz}, &(JPH_Quat){rx, ry, rz, rw}, JPH_MotionType_Static, 0);
 
@@ -2476,55 +2312,30 @@ PyCFunction_DeclareMethod PhysicsWorld_create_mesh_body(PhysicsWorldObject *self
         return PyErr_NoMemory();
     }
 
-    // 5. COMMIT PHASE (ATOMIC REFACTOR)
+    // 5. COMMIT PHASE
     SHADOW_LOCK(&self->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
 
-    // TSan Fix: Read atomic counts
-    size_t available     = atomic_load_explicit(&self->free_count, memory_order_acquire);
-    size_t current_count = atomic_load_explicit(&self->count, memory_order_acquire);
+    uint64_t raw_h = physics_world_commit_create_locked(self, settings, SLOT_PENDING_CREATE);
 
-    if (UNLIKELY(available == 0 || current_count + 1 > self->capacity)) {
-        if (PhysicsWorld_resize(self, (self->capacity == 0) ? INITIAL_BODY_CAPACITY
-                                                            : self->capacity * 2) < 0) {
-            goto commit_fail;
-        }
-        available = atomic_load_explicit(&self->free_count, memory_order_acquire);
+    if (UNLIKELY(!raw_h)) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        JPH_BodyCreationSettings_Destroy(settings);
+        JPH_Shape_Destroy(shape);
+        return (PyErr_Occurred()) ? nullptr : PyErr_NoMemory();
     }
 
-    // Atomic Pop and Increment
-    uint32_t slot = self->free_slots[available - 1];
-    atomic_store_explicit(&self->free_count, available - 1, memory_order_release);
-    auto dense = (uint32_t)atomic_fetch_add_explicit(&self->count, 1, memory_order_relaxed);
+    // 6. SHADOW BUFFER UPDATE
+    uint32_t slot  = (uint32_t)(raw_h & HANDLE_INDEX_MASK);
+    uint32_t dense = self->slot_to_dense[slot];
 
-    uint32_t gen      = atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
-    BodyHandle handle = make_handle(slot, gen);
-    uint64_t raw_h    = atomic_load_explicit(&handle, memory_order_relaxed);
-    JPH_BodyCreationSettings_SetUserData(settings, raw_h);
-
-    // Update non-atomic shadow buffers
     ((PosStride *)self->positions)[dense] = (PosStride){px, py, pz, 0.0};
     ((AuxStride *)self->rotations)[dense] = (AuxStride){rx, ry, rz, rw};
-    self->slot_to_dense[slot]             = dense;
-    self->dense_to_slot[dense]            = slot;
-    self->user_data[dense]                = user_data;
     self->categories[dense]               = cat;
     self->masks[dense]                    = mask;
-    self->body_ids[dense]                 = JPH_INVALID_BODY_ID;
+    self->user_data[dense]                = user_data;
 
-    // TSan Fix: Publish state and view length atomically
-    atomic_store_explicit(&self->slot_states[slot], SLOT_PENDING_CREATE, memory_order_release);
-    self->view_shape[0] = (Py_ssize_t)atomic_load_explicit(&self->count, memory_order_relaxed);
-
-    if (UNLIKELY(!ensure_command_capacity(self))) {
-        // Atomic Rollback
-        atomic_fetch_sub_explicit(&self->count, 1, memory_order_relaxed);
-        size_t r_idx = atomic_fetch_add_explicit(&self->free_count, 1, memory_order_relaxed);
-        self->free_slots[r_idx] = slot;
-        atomic_store_explicit(&self->slot_states[slot], SLOT_EMPTY, memory_order_relaxed);
-        goto commit_fail;
-    }
-
+    // 7. QUEUE COMMAND
     PhysicsCommand *cmd   = &self->command_queue[self->command_count++];
     cmd->header           = CMD_HEADER(CMD_CREATE_BODY, slot);
     cmd->create.settings  = settings;
@@ -2535,17 +2346,6 @@ PyCFunction_DeclareMethod PhysicsWorld_create_mesh_body(PhysicsWorldObject *self
     SHADOW_UNLOCK(&self->shadow_lock);
     JPH_Shape_Destroy(shape);
     return PyLong_FromUnsignedLongLong(raw_h);
-
-commit_fail:
-    SHADOW_UNLOCK(&self->shadow_lock);
-    JPH_BodyCreationSettings_Destroy(settings);
-    JPH_Shape_Destroy(shape);
-    return (PyErr_Occurred()) ? nullptr : PyErr_NoMemory();
-
-buffer_fail:
-    PyBuffer_Release(&v_view);
-    PyBuffer_Release(&i_view);
-    return nullptr;
 }
 
 PyCFunction_DeclareMethod PhysicsWorld_destroy_body(PhysicsWorldObject *self, PyObject *const *args,
@@ -2568,7 +2368,8 @@ PyCFunction_DeclareMethod PhysicsWorld_destroy_body(PhysicsWorldObject *self, Py
     const uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
 
     // Predicate: Can we destroy this?
-    const uint32_t is_destructible = !!((1u << (state & 7)) & MASK_DESTRUCTIBLE);
+    static constexpr uint8_t BITMASK_CLAMP = 7;
+    const uint32_t is_destructible = !!((1u << (state & BITMASK_CLAMP)) & MASK_DESTRUCTIBLE);
 
     if (UNLIKELY(!ensure_command_capacity(self))) {
         SHADOW_UNLOCK(&self->shadow_lock);
@@ -2639,7 +2440,9 @@ PyCFunction_DeclareMethod PhysicsWorld_destroy_bodies_batch(PhysicsWorldObject *
                 atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
 
             // Branchless validity check
-            const uint32_t is_destructible = !!((1u << (state & 7)) & MASK_DESTRUCTIBLE);
+            static constexpr uint8_t BITMASK_CLAMP = 7;
+            const uint32_t is_destructible =
+                !!((1u << (state & BITMASK_CLAMP)) & MASK_DESTRUCTIBLE);
 
             // Speculative command queue write
             PhysicsCommand *cmd = &self->command_queue[self->command_count];
@@ -3559,8 +3362,9 @@ PyCFunction_DeclareMethod PhysicsWorld_get_render_state(PhysicsWorldObject *self
     CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. FAST PARSE (Unchanged)
     float alpha;
-    void *targets[Render_COUNT];
-    targets[IDX_RND_ALPHA] = (void *)&alpha;
+    void *targets[Render_COUNT] = {
+        [IDX_RND_ALPHA] = (void *)&alpha,
+    };
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.RenderParser, targets)) {
@@ -3715,10 +3519,11 @@ PyCFunction_DeclareMethod PhysicsWorld_register_material(PhysicsWorldObject *sel
     float restitution = 0.0f;
 
     // 2. FAST PARSE (Zero-Allocation)
-    void *targets[RegMat_COUNT];
-    targets[IDX_RM_ID]   = (void *)&id;
-    targets[IDX_RM_FRIC] = (void *)&friction;
-    targets[IDX_RM_REST] = (void *)&restitution;
+    void *targets[RegMat_COUNT] = {
+        [IDX_RM_ID]   = (void *)&id,
+        [IDX_RM_FRIC] = (void *)&friction,
+        [IDX_RM_REST] = (void *)&restitution,
+    };
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.RegMatParser, targets)) {
@@ -3771,7 +3576,8 @@ PyCFunction_DeclareMethod PhysicsWorld_create_heightfield(PhysicsWorldObject *se
                                                           PyObject *const *args, size_t nargsf,
                                                           PyObject *kwnames) {
     CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
-    // 1. DEFAULT VALUES
+
+    // 1. FAST PARSE & VALIDATION
     PyObject *o_pos      = nullptr;
     PyObject *o_rot      = nullptr;
     PyObject *o_scale    = nullptr;
@@ -3784,26 +3590,19 @@ PyCFunction_DeclareMethod PhysicsWorld_create_heightfield(PhysicsWorldObject *se
     float friction       = DEFAULT_FRICTION;
     float restitution    = 0.0f;
 
-    // 2. FAST PARSE (Zero-Allocation)
-    void *targets[Heightfield_COUNT];
-    targets[IDX_HF_POS]       = (void *)&o_pos;
-    targets[IDX_HF_ROT]       = (void *)&o_rot;
-    targets[IDX_HF_SCALE]     = (void *)&o_scale;
-    targets[IDX_HF_HEIGHTS]   = (void *)&o_heights;
-    targets[IDX_HF_GRID_SIZE] = (void *)&grid_size;
-    targets[IDX_HF_USER_DATA] = (void *)&user_data;
-    targets[IDX_HF_CAT]       = (void *)&category;
-    targets[IDX_HF_MASK]      = (void *)&mask;
-    targets[IDX_HF_MAT_ID]    = (void *)&material_id;
-    targets[IDX_HF_FRIC]      = (void *)&friction;
-    targets[IDX_HF_REST]      = (void *)&restitution;
+    void *targets[Heightfield_COUNT] = {
+        [IDX_HF_POS] = (void *)&o_pos,           [IDX_HF_ROT] = (void *)&o_rot,
+        [IDX_HF_SCALE] = (void *)&o_scale,       [IDX_HF_HEIGHTS] = (void *)&o_heights,
+        [IDX_HF_GRID_SIZE] = (void *)&grid_size, [IDX_HF_USER_DATA] = (void *)&user_data,
+        [IDX_HF_CAT] = (void *)&category,        [IDX_HF_MASK] = (void *)&mask,
+        [IDX_HF_MAT_ID] = (void *)&material_id,  [IDX_HF_FRIC] = (void *)&friction,
+        [IDX_HF_REST] = (void *)&restitution};
 
-    auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.HeightfieldParser, targets)) {
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+                           &st->parsers.HeightfieldParser, targets)) {
         return nullptr;
     }
 
-    // 3. EXTRACTION (Outside Lock)
     JPH_Real px;
     JPH_Real py;
     JPH_Real pz;
@@ -3814,13 +3613,8 @@ PyCFunction_DeclareMethod PhysicsWorld_create_heightfield(PhysicsWorldObject *se
     float sx;
     float sy;
     float sz;
-    if (!parse_vec3_direct(o_pos, &px, &py, &pz)) {
-        return nullptr;
-    }
-    if (!parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) {
-        return nullptr;
-    }
-    if (!parse_vec3_direct(o_scale, &sx, &sy, &sz)) {
+    if (!parse_vec3_direct(o_pos, &px, &py, &pz) || !parse_quat_direct(o_rot, &rx, &ry, &rz, &rw) ||
+        !parse_vec3_direct(o_scale, &sx, &sy, &sz)) {
         return nullptr;
     }
 
@@ -3828,94 +3622,61 @@ PyCFunction_DeclareMethod PhysicsWorld_create_heightfield(PhysicsWorldObject *se
     if (PyObject_GetBuffer(o_heights, &h_view, PyBUF_SIMPLE) != 0) {
         return nullptr;
     }
-
-    // Validation
     if (UNLIKELY(h_view.len != (Py_ssize_t)((Py_ssize_t)grid_size * grid_size * sizeof(float)))) {
         PyBuffer_Release(&h_view);
-        return PyErr_Format(PyExc_ValueError, "Height buffer size mismatch. Expected %d floats.",
-                            grid_size * grid_size);
+        return PyErr_Format(PyExc_ValueError, "Height buffer size mismatch");
     }
 
-    // 4. SHAPE CREATION (No GIL)
-    JPH_Shape *shape                       = nullptr;
-    Py_BEGIN_ALLOW_THREADS JPH_Vec3 offset = {0, 0, 0};
-    JPH_Vec3 scale                         = {sx, sy, sz};
-
-    JPH_HeightFieldShapeSettings *hf_settings = JPH_HeightFieldShapeSettings_Create(
+    // 2. SHAPE CREATION (No GIL)
+    JPH_Shape *shape = nullptr;
+    Py_BEGIN_ALLOW_THREADS;
+    JPH_Vec3 offset                  = {};
+    JPH_Vec3 scale                   = {sx, sy, sz};
+    JPH_HeightFieldShapeSettings *hf = JPH_HeightFieldShapeSettings_Create(
         (float *)h_view.buf, &offset, &scale, (uint32_t)grid_size, nullptr);
-
-    if (hf_settings) {
-        shape = (JPH_Shape *)JPH_HeightFieldShapeSettings_CreateShape(hf_settings);
-        JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)hf_settings);
+    if (hf) {
+        shape = (JPH_Shape *)JPH_HeightFieldShapeSettings_CreateShape(hf);
+        JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)hf);
     }
-    Py_END_ALLOW_THREADS PyBuffer_Release(&h_view);
-
+    Py_END_ALLOW_THREADS;
+    PyBuffer_Release(&h_view);
     if (!shape) {
-        return PyErr_Format(PyExc_RuntimeError, "Failed to create HeightField shape");
+        return PyErr_Format(PyExc_RuntimeError, "HeightField build failed");
     }
 
-    // 4. COMMIT PHASE (ATOMIC REFACTOR)
+    // 3. SETTINGS PREP
+    JPH_BodyCreationSettings *settings = JPH_BodyCreationSettings_Create3(
+        shape, &(JPH_RVec3){px, py, pz}, &(JPH_Quat){rx, ry, rz, rw}, JPH_MotionType_Static, 0);
+    JPH_BodyCreationSettings_SetFriction(settings, friction);
+    JPH_BodyCreationSettings_SetRestitution(settings, restitution);
+
+    // 4. COMMIT PHASE
     SHADOW_LOCK(&self->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
 
-    // TSan Fix: Load counts atomically
-    size_t available     = atomic_load_explicit(&self->free_count, memory_order_acquire);
-    size_t current_count = atomic_load_explicit(&self->count, memory_order_acquire);
+    uint64_t raw_h = physics_world_commit_create_locked(self, settings, SLOT_PENDING_CREATE);
 
-    if (UNLIKELY(available == 0 || current_count + 1 > self->capacity)) {
-        if (PhysicsWorld_resize(self, self->capacity + INITIAL_BODY_CAPACITY) < 0) {
-            SHADOW_UNLOCK(&self->shadow_lock);
-            JPH_Shape_Destroy(shape);
-            return nullptr;
-        }
-        available = atomic_load_explicit(&self->free_count, memory_order_acquire);
-    }
-
-    // Atomic Pop and Increment
-    uint32_t slot = self->free_slots[available - 1];
-    atomic_store_explicit(&self->free_count, available - 1, memory_order_release);
-    auto dense = (uint32_t)atomic_fetch_add_explicit(&self->count, 1, memory_order_relaxed);
-
-    uint32_t gen      = atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
-    BodyHandle handle = make_handle(slot, gen);
-    uint64_t raw_h    = atomic_load_explicit(&handle, memory_order_relaxed);
-
-    // Shadow Write (Non-atomic)
-    ((PosStride *)self->positions)[dense] = (PosStride){px, py, pz, 0.0};
-    ((AuxStride *)self->rotations)[dense] = (AuxStride){rx, ry, rz, rw};
-    self->slot_to_dense[slot]             = dense;
-    self->dense_to_slot[dense]            = slot;
-    self->user_data[dense]                = user_data;
-    self->categories[dense]               = category;
-    self->masks[dense]                    = mask;
-    self->material_ids[dense]             = material_id;
-    self->body_ids[dense]                 = JPH_INVALID_BODY_ID;
-
-    // TSan Fix: Publish state and view length atomically
-    atomic_store_explicit(&self->slot_states[slot], SLOT_PENDING_CREATE, memory_order_release);
-    self->view_shape[0] = (Py_ssize_t)atomic_load_explicit(&self->count, memory_order_relaxed);
-
-    // 5. COMMAND PREP
-    JPH_BodyCreationSettings *settings = JPH_BodyCreationSettings_Create3(
-        shape, &(JPH_RVec3){px, py, pz}, &(JPH_Quat){rx, ry, rz, rw}, JPH_MotionType_Static, 0);
-
-    JPH_BodyCreationSettings_SetFriction(settings, friction);
-    JPH_BodyCreationSettings_SetRestitution(settings, restitution);
-    JPH_BodyCreationSettings_SetUserData(settings, raw_h);
-
-    if (UNLIKELY(!ensure_command_capacity(self))) {
-        // Atomic Rollback
-        atomic_fetch_sub_explicit(&self->count, 1, memory_order_relaxed);
-        size_t r_idx = atomic_fetch_add_explicit(&self->free_count, 1, memory_order_relaxed);
-        self->free_slots[r_idx] = slot;
-        atomic_store_explicit(&self->slot_states[slot], SLOT_EMPTY, memory_order_relaxed);
-
+    if (UNLIKELY(!raw_h)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         JPH_BodyCreationSettings_Destroy(settings);
         JPH_Shape_Destroy(shape);
-        return PyErr_NoMemory();
+        return (PyErr_Occurred()) ? nullptr : PyErr_NoMemory();
     }
 
+    // 5. SHADOW BUFFER UPDATE
+    uint32_t slot  = (uint32_t)(raw_h & HANDLE_INDEX_MASK);
+    uint32_t dense = self->slot_to_dense[slot];
+
+    ((PosStride *)self->positions)[dense]      = (PosStride){px, py, pz, 0.0};
+    ((PosStride *)self->prev_positions)[dense] = (PosStride){px, py, pz, 0.0};
+    ((AuxStride *)self->rotations)[dense]      = (AuxStride){rx, ry, rz, rw};
+    ((AuxStride *)self->prev_rotations)[dense] = (AuxStride){rx, ry, rz, rw};
+    self->categories[dense]                    = category;
+    self->masks[dense]                         = mask;
+    self->material_ids[dense]                  = material_id;
+    self->user_data[dense]                     = user_data;
+
+    // 6. QUEUE COMMAND
     PhysicsCommand *cmd     = &self->command_queue[self->command_count++];
     cmd->header             = CMD_HEADER(CMD_CREATE_BODY, slot);
     cmd->create.settings    = settings;
@@ -3941,12 +3702,13 @@ PyCFunction_DeclareMethod PhysicsWorld_get_debug_data(PhysicsWorldObject *self,
     bool wireframe         = true;
 
     // 2. FAST PARSE (Zero-Allocation)
-    void *targets[DebugData_COUNT];
-    targets[IDX_DD_SHAPES]      = (void *)&draw_shapes;
-    targets[IDX_DD_CONSTRAINTS] = (void *)&draw_constraints;
-    targets[IDX_DD_BBOX]        = (void *)&draw_bounding_box;
-    targets[IDX_DD_CENTERS]     = (void *)&draw_centers;
-    targets[IDX_DD_WIREFRAME]   = (void *)&wireframe;
+    void *targets[DebugData_COUNT] = {
+        [IDX_DD_SHAPES]      = (void *)&draw_shapes,
+        [IDX_DD_CONSTRAINTS] = (void *)&draw_constraints,
+        [IDX_DD_BBOX]        = (void *)&draw_bounding_box,
+        [IDX_DD_CENTERS]     = (void *)&draw_centers,
+        [IDX_DD_WIREFRAME]   = (void *)&wireframe,
+    };
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.DebugDataParser, targets)) {
@@ -4631,6 +4393,10 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
 
         // finalize_docs(); // No longer needed - termination happens during stitching
     }
+
+    // Register handlers
+    JPH_SetTraceHandler(culv_jph_trace);
+    JPH_SetAssertFailureHandler(culv_jph_assert);
 
     if (!JPH_Init()) {
         PyErr_SetString(PyExc_RuntimeError, "Jolt initialization failed");

@@ -75,9 +75,10 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_sphere(PhysicsWorldObje
     float radius       = 1.0f;
 
     // 2. FAST PARSE (Unchanged)
-    void *targets[OverlapSphere_COUNT];
-    targets[IDX_OS_CENTER] = (void *)&o_center;
-    targets[IDX_OS_RADIUS] = (void *)&radius;
+    void *targets[OverlapSphere_COUNT] = {
+        [IDX_OS_CENTER] = (void *)&o_center,
+        [IDX_OS_RADIUS] = (void *)&radius,
+    };
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.OverlapSphereParser, targets)) {
@@ -202,9 +203,10 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_aabb(PhysicsWorldObject
     PyObject *o_max = nullptr;
 
     // 2. FAST PARSE (Unchanged)
-    void *targets[OverlapAABB_COUNT];
-    targets[IDX_OA_MIN] = (void *)&o_min;
-    targets[IDX_OA_MAX] = (void *)&o_max;
+    void *targets[OverlapAABB_COUNT] = {
+        [IDX_OA_MIN] = (void *)&o_min,
+        [IDX_OA_MAX] = (void *)&o_max,
+    };
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.OverlapAABBParser, targets)) {
@@ -313,11 +315,12 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast(PhysicsWorldObject *sel
     uint64_t ignore_h_raw = 0;
 
     // 2. FAST PARSE (Unchanged)
-    void *targets[Raycast_COUNT];
-    targets[IDX_RAY_START] = (void *)&o_start;
-    targets[IDX_RAY_DIR]   = (void *)&o_dir;
-    targets[IDX_RAY_DIST]  = (void *)&max_dist;
-    targets[IDX_RAY_IGN]   = (void *)&ignore_h_raw;
+    void *targets[Raycast_COUNT] = {
+        [IDX_RAY_START] = (void *)&o_start,
+        [IDX_RAY_DIR]   = (void *)&o_dir,
+        [IDX_RAY_DIST]  = (void *)&max_dist,
+        [IDX_RAY_IGN]   = (void *)&ignore_h_raw,
+    };
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.RaycastParser, targets)) {
@@ -459,10 +462,11 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast_batch(PhysicsWorldObjec
     float max_dist     = CQM_DEFAULT_MAX_DIST;
 
     // 2. FAST PARSE (Unchanged)
-    void *targets[RayBatch_COUNT];
-    targets[IDX_RB_STARTS] = (void *)&o_starts;
-    targets[IDX_RB_DIRS]   = (void *)&o_dirs;
-    targets[IDX_RB_DIST]   = (void *)&max_dist;
+    void *targets[RayBatch_COUNT] = {
+        [IDX_RB_STARTS] = (void *)&o_starts,
+        [IDX_RB_DIRS]   = (void *)&o_dirs,
+        [IDX_RB_DIST]   = (void *)&max_dist,
+    };
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.RayBatchParser, targets)) {
@@ -627,13 +631,11 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_shapecast(PhysicsWorldObject *s
     uint64_t ignore_h_raw = 0;
 
     // 2. FAST PARSE (Unchanged)
-    void *targets[Shapecast_COUNT];
-    targets[IDX_SC_SHAPE]  = (void *)&shape_type;
-    targets[IDX_SC_POS]    = (void *)&o_pos;
-    targets[IDX_SC_ROT]    = (void *)&o_rot;
-    targets[IDX_SC_DIR]    = (void *)&o_dir;
-    targets[IDX_SC_SIZE]   = (void *)&o_size;
-    targets[IDX_SC_IGNORE] = (void *)&ignore_h_raw;
+    void *targets[Shapecast_COUNT] = {
+        [IDX_SC_SHAPE] = (void *)&shape_type, [IDX_SC_POS] = (void *)&o_pos,
+        [IDX_SC_ROT] = (void *)&o_rot,        [IDX_SC_DIR] = (void *)&o_dir,
+        [IDX_SC_SIZE] = (void *)&o_size,      [IDX_SC_IGNORE] = (void *)&ignore_h_raw,
+    };
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.ShapecastParser, targets)) {
