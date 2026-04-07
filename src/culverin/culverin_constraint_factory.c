@@ -87,7 +87,7 @@ JPH_Constraint *create_hinge(const ConstraintParams *p, JPH_Body *b1, JPH_Body *
         norm.z    = pivot_to_b2.z * inv;
     } else {
         // b2 is on the hinge axis itself — fall back to arbitrary perpendicular
-        vec3_get_perpendicular(&axis, &norm);
+        JPH_Vec3_GetNormalizedPerpendicular(&axis, &norm);
     }
 
     s.hingeAxis1  = axis;
@@ -136,7 +136,7 @@ JPH_Constraint *create_slider(const ConstraintParams *p, JPH_Body *b1, JPH_Body 
     JPH_Vec3_Normalize(&axis, &axis);
 
     JPH_Vec3 norm;
-    vec3_get_perpendicular(&axis, &norm);
+    JPH_Vec3_GetNormalizedPerpendicular(&axis, &norm);
 
     s.sliderAxis1 = axis;
     s.sliderAxis2 = axis;
