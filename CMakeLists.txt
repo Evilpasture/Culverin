@@ -406,6 +406,7 @@ python_add_library(
     src/culverin/culverin_constraint_factory.c
     src/culverin/culverin_fast_parse.c
     src/culverin/culverin_arg_indices.c
+    src/culverin/culverin_handler.c
 )
 
 target_sources(_culverin_c PRIVATE src/culverin/culverin_jph_rtti_shim.cpp)
