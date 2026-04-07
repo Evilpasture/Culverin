@@ -191,8 +191,9 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_destroy_constraint(PhysicsWorld
     // 1. FAST PARSE
     // TSan Fix: Use raw uint64 for the parser target to avoid atomic init overhead
     uint64_t h_raw;
-    void *targets[HOnly_COUNT];
-    targets[IDX_H_H] = (void *)&h_raw;
+    void *targets[HOnly_COUNT] = {
+        [IDX_H_H] = (void *)&h_raw,
+    };
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.DestroyConstrParser, targets)) {
@@ -262,9 +263,10 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_set_constraint_target(PhysicsWo
     uint64_t h_raw;
     float target;
 
-    void *targets[SetConstr_COUNT];
-    targets[IDX_SCT_H] = (void *)&h_raw;
-    targets[IDX_SCT_T] = (void *)&target;
+    void *targets[SetConstr_COUNT] = {
+        [IDX_SCT_H] = (void *)&h_raw,
+        [IDX_SCT_T] = (void *)&target,
+    };
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.SetConstrTargetParser, targets)) {
