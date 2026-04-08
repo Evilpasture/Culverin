@@ -3855,10 +3855,10 @@ PyCFunction_DeclareMethod PhysicsWorld_benchmark_build(CULV_MAYBE_UNUSED PyObjec
 
 PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, PyObject *const *args,
                                             Py_ssize_t nargsf) {
-    Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
+    auto nargs = PyVectorcall_NARGS(nargsf);
     // args: target, index, new_val, registry (optional), key (optional)
-    constexpr int MIN_ARGS = 3;
-    constexpr int MAX_ARGS = 5;
+    constexpr auto MIN_ARGS = 3;
+    constexpr auto MAX_ARGS = 5;
     if (nargs != MIN_ARGS && nargs != MAX_ARGS) {
         PyErr_Format(PyExc_TypeError, "mutate_tuple() takes 3 or 5 arguments (%zd given)", nargs);
         return nullptr;
@@ -3873,12 +3873,12 @@ PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, Py
     }
 
     PyErr_Clear();
-    Py_ssize_t index = PyLong_AsSsize_t(args[1]);
+    auto index = PyLong_AsSsize_t(args[1]);
     if (index == -1 && PyErr_Occurred()) {
         return nullptr;
     }
 
-    Py_ssize_t tuple_len = Py_SIZE(target);
+    auto tuple_len = Py_SIZE(target);
     if (index < 0) {
         index += tuple_len;
     }
@@ -3907,7 +3907,7 @@ PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, Py
 
         // Verify the stored value IS our target, otherwise the caller
         // passed a mismatched key — silent corruption would follow.
-        PyObject *stored = PyDict_GetItemWithError(registry, key);
+        auto stored = PyDict_GetItemWithError(registry, key);
         if (stored == nullptr) {
             // nullptr + no exception  => KeyError
             // nullptr + exception set => propagate
@@ -4520,8 +4520,6 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
         stitch_docs_getset(PhysicsWorld_getset, "PhysicsWorld");
         stitch_docs_getset(Character_getset, "Character");
         stitch_docs_getset(Vehicle_getset, "Vehicle");
-
-        // finalize_docs(); // No longer needed - termination happens during stitching
     }
 
     // Register handlers
