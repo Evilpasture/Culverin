@@ -4,3 +4,6 @@
 [submodule "extern/JoltC"]
 	path = extern/JoltC
 	url = https://github.com/Evilpasture/JoltC.git
+[submodule "extern/mag-mutex"]
+	path = extern/mag-mutex
+	url = https://github.com/Evilpasture/mag-mutex.git
