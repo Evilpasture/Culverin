@@ -41,6 +41,7 @@ from ._culverin_c import (
     RagdollSettings,
     Skeleton,
     Vehicle,
+    mutate_tuple
 )
 
 class WheelConfig(TypedDict):
@@ -88,4 +89,5 @@ __all__ = [
     "parse_urdf",
     "WheelConfig",
     "TrackConfig",
+    "mutate_tuple",
 ]

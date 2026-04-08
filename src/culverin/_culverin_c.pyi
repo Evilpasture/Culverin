@@ -4,7 +4,7 @@
 # Note: Some methods compiled with STRICT_HANDLE_ENABLED will crash with ValueError. Otherwise, returns None or silent.
 
 from collections.abc import Buffer, Sequence
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, TypedDict, overload, TypeVar
 
 __version__: str
 
@@ -387,3 +387,51 @@ class PhysicsWorld:
     ]: ...
 
 def _dump_schema_json() -> None: ...
+
+# We use a TypeVar to indicate that the returned hash is an int, 
+# but also to hint that the 'target' tuple remains the same object.
+T = TypeVar("T", bound=tuple)
+
+@overload
+def mutate_tuple(target: T, index: int, value: Any) -> int:
+    """
+    Mutates a tuple in-place by swapping a pointer in RAM.
+    
+    Args:
+        target: The tuple to mutate.
+        index: The index to overwrite (supports negative indexing).
+        value: The new object to place at the index.
+        
+    Returns:
+        int: The newly recomputed hash of the tuple.
+        
+    Note:
+        WARNING: If this tuple is currently a key in a dictionary, that 
+        dictionary will become corrupted (the key becomes a 'ghost').
+    """
+    ...
+
+@overload
+def mutate_tuple(target: T, index: int, value: Any, registry: dict[Any, T], key: Any) -> int:
+    """
+    Mutates a tuple in-place and atomically re-indexes it in a dictionary.
+    
+    This is the high-performance 'Atomic Migration' mode. It performs 
+    pop -> mutate -> rehash -> re-insert entirely in C.
+    
+    Args:
+        target: The tuple to mutate.
+        index: The index to overwrite.
+        value: The new value for the index.
+        registry: The dictionary where this tuple is stored as a value.
+        key: The key associated with this tuple in the registry.
+        
+    Returns:
+        int: The newly recomputed hash of the tuple.
+        
+    Raises:
+        KeyError: If the key is not found in the registry.
+        ValueError: If registry[key] is not exactly the same object as target.
+        TypeError: If the target or registry types are incorrect.
+    """
+    ...

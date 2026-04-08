@@ -391,7 +391,7 @@ static inline bool culv_is_finite_f(float f) {
     memcpy(&i, &f, sizeof(float));
     volatile uint32_t vi = i;
     static_assert((sizeof(CULV_TYPE_OF(vi)) == sizeof(uint32_t) &&
-                  sizeof(CULV_TYPE_OF(vi)) == sizeof(float)) != 0);
+                   sizeof(CULV_TYPE_OF(vi)) == sizeof(float)) != 0);
     return (vi & MASK_F32) != MASK_F32;
 }
 
@@ -403,7 +403,7 @@ static inline bool culv_is_finite_d(double d) {
     memcpy(&i, &d, sizeof(double));
     volatile uint64_t vi = i;
     static_assert((sizeof(CULV_TYPE_OF(vi)) == sizeof(uint64_t) &&
-                  sizeof(CULV_TYPE_OF(vi)) == sizeof(double)) != 0);
+                   sizeof(CULV_TYPE_OF(vi)) == sizeof(double)) != 0);
     return (vi & MASK_F64) != MASK_F64;
 }
 
@@ -492,32 +492,29 @@ static inline bool is_state_valid(uint8_t state, uint8_t mask) {
     } while (false)
 
 typedef struct {
-    uint32_t is_immediate  : 1;
-    uint32_t is_deferred   : 1;
-    uint32_t is_executable : 1;
-    uint32_t _unused       : 29; 
+    unsigned _BitInt(1) is_immediate : 1;
+    unsigned _BitInt(1) is_deferred : 1;
+    unsigned _BitInt(1) is_executable : 1;
+    unsigned _BitInt(5) _unused : 5;
 } SlotPredicate;
+
+static_assert(sizeof(SlotPredicate) == sizeof(uint8_t));
 
 // Standard masks for reuse
 static constexpr uint32_t MASK_IMM_STANDARD = (1u << SLOT_ALIVE) | (1u << SLOT_CHARACTER);
 static constexpr uint32_t MASK_IMM_STRICT   = (1u << SLOT_ALIVE);
 static constexpr uint32_t MASK_DEFERRED     = (1u << SLOT_PENDING_CREATE);
 // Define the mask for states that can be destroyed
-static constexpr uint32_t MASK_DESTRUCTIBLE = (1u << SLOT_ALIVE) | 
-                                               (1u << SLOT_PENDING_CREATE) | 
-                                               (1u << SLOT_CHARACTER);
+static constexpr uint32_t MASK_DESTRUCTIBLE =
+    (1u << SLOT_ALIVE) | (1u << SLOT_PENDING_CREATE) | (1u << SLOT_CHARACTER);
 
-[[gnu::const]] CULV_NODISCARD
-static CULV_FORCE_INLINE SlotPredicate get_slot_predicate(uint8_t state, uint32_t imm_mask) {
+[[gnu::const]] CULV_NODISCARD static CULV_FORCE_INLINE SlotPredicate
+get_slot_predicate(uint8_t state, uint32_t imm_mask) {
     const uint32_t state_bit = 1u << (state & 7);
-    
-    uint32_t imm = (uint32_t)!!(bool)(state_bit & imm_mask);
-    uint32_t def = (uint32_t)!!(bool)(state_bit & MASK_DEFERRED);
-    
+
+    auto imm = (unsigned _BitInt(1)) !!(bool)(state_bit & imm_mask);
+    auto def = (unsigned _BitInt(1)) !!(bool)(state_bit & MASK_DEFERRED);
+
     return (SlotPredicate){
-        .is_immediate  = imm,
-        .is_deferred   = def,
-        .is_executable = imm | def,
-        ._unused = {}
-    };
+        .is_immediate = imm, .is_deferred = def, .is_executable = imm | def, ._unused = {}};
 }

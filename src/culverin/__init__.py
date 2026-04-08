@@ -105,6 +105,7 @@ from ._culverin_c import (  # noqa: E402
     RagdollSettings,
     Skeleton,
     Vehicle,
+    mutate_tuple,
 )
 
 __all__ = [
@@ -143,4 +144,5 @@ __all__ = [
     "parse_urdf",
     "WheelConfig",
     "TrackConfig",
+    "mutate_tuple",
 ]

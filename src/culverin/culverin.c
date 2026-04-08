@@ -13,13 +13,13 @@
 #include "culverin_fast_parse.h"
 #include "culverin_filters.h"
 #include "culverin_getters.h"
+#include "culverin_handler.h"
 #include "culverin_parsers.h"
 #include "culverin_physics_world_internal.h"
 #include "culverin_query_methods.h"
 #include "culverin_ragdoll.h"
 #include "culverin_shadow_sync.h"
 #include "culverin_vehicle.h"
-#include "culverin_handler.h"
 #include "joltc.h"
 #include <stdatomic.h>
 #include <string.h>
@@ -796,9 +796,10 @@ PyCFunction_DeclareMethod PhysicsWorld_get_body_stats(PhysicsWorldObject *self,
 
     // 1. FAST PARSE & VALIDATION
     uint64_t h_raw;
-    void *targets[HOnly_COUNT] = { [IDX_H_H] = &h_raw };
+    void *targets[HOnly_COUNT] = {[IDX_H_H] = &h_raw};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.HOnlyParser, targets)) {
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.HOnlyParser,
+                           targets)) {
         return nullptr;
     }
 
@@ -811,7 +812,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_body_stats(PhysicsWorldObject *self,
     CHECK_HANDLE(h_raw, slot);
 
     const uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
-    
+
     // Stats are only valid for bodies in simulation (Alive or Character).
     // MASK_IMM_STANDARD is perfect for this.
     const SlotPredicate pred = get_slot_predicate(state, MASK_IMM_STANDARD);
@@ -829,11 +830,8 @@ PyCFunction_DeclareMethod PhysicsWorld_get_body_stats(PhysicsWorldObject *self,
 
         // 4. RESULT CONSTRUCTION
         // Nested tuples: ((px, py, pz), (rx, ry, rz, rw), (vx, vy, vz))
-        return FastBuild_Tuple(
-            FastBuild_Tuple(p.x, p.y, p.z), 
-            FastBuild_Tuple(r.x, r.y, r.z, r.w),
-            FastBuild_Tuple(v.x, v.y, v.z)
-        );
+        return FastBuild_Tuple(FastBuild_Tuple(p.x, p.y, p.z), FastBuild_Tuple(r.x, r.y, r.z, r.w),
+                               FastBuild_Tuple(v.x, v.y, v.z));
     }
 
     // 5. ERROR FALLBACK
@@ -3855,6 +3853,129 @@ PyCFunction_DeclareMethod PhysicsWorld_benchmark_build(CULV_MAYBE_UNUSED PyObjec
     return result;
 }
 
+PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, PyObject *const *args,
+                                            Py_ssize_t nargsf) {
+    Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
+    // args: target, index, new_val, registry (optional), key (optional)
+    constexpr int MIN_ARGS = 3;
+    constexpr int MAX_ARGS = 5;
+    if (nargs != MIN_ARGS && nargs != MAX_ARGS) {
+        PyErr_Format(PyExc_TypeError, "mutate_tuple() takes 3 or 5 arguments (%zd given)", nargs);
+        return nullptr;
+    }
+
+    PyObject *target  = args[0];
+    PyObject *new_val = args[2];
+
+    if (!PyTuple_Check(target)) {
+        PyErr_SetString(PyExc_TypeError, "arg 0 must be a tuple");
+        return nullptr;
+    }
+
+    PyErr_Clear();
+    Py_ssize_t index = PyLong_AsSsize_t(args[1]);
+    if (index == -1 && PyErr_Occurred()) {
+        return nullptr;
+    }
+
+    Py_ssize_t tuple_len = Py_SIZE(target);
+    if (index < 0) {
+        index += tuple_len;
+    }
+    if (index < 0 || index >= tuple_len) {
+        PyErr_Format(PyExc_IndexError, "tuple index %zd out of range [0, %zd)", index, tuple_len);
+        return nullptr;
+    }
+
+    // --- PART 1: DICT POP (if registry provided) ---
+    //
+    // PyDict_GetItemWithError does NOT steal a reference, returns borrowed.
+    // We need ownership before we yank it out, so INCREF before PyDict_DelItem.
+    // PyDict_GetItemWithError (not PyDict_GetItem) propagates KeyError properly.
+
+    PyObject *registry = nullptr;
+    PyObject *key      = nullptr;
+
+    if (nargs == MAX_ARGS) {
+        registry = args[3];
+        key      = args[4];
+
+        if (!PyDict_Check(registry)) {
+            PyErr_SetString(PyExc_TypeError, "arg 3 must be a dict");
+            return nullptr;
+        }
+
+        // Verify the stored value IS our target, otherwise the caller
+        // passed a mismatched key — silent corruption would follow.
+        PyObject *stored = PyDict_GetItemWithError(registry, key);
+        if (stored == nullptr) {
+            // nullptr + no exception  => KeyError
+            // nullptr + exception set => propagate
+            if (!PyErr_Occurred()) {
+                PyErr_SetObject(PyExc_KeyError, key);
+            }
+            return nullptr;
+        }
+        if (stored != target) {
+            PyErr_SetString(PyExc_ValueError, "registry[key] is not the same object as target");
+            return nullptr;
+        }
+
+        Py_INCREF(target); // hold a ref across the del
+        if (PyDict_DelItem(registry, key) < 0) {
+            Py_DECREF(target);
+            return nullptr;
+        }
+        // target refcount: our INCREF above keeps it alive. The dict slot
+        // is now empty; the old hash bucket in ma_keys is invalidated.
+    }
+
+    // --- PART 2: THE MEMORY SWAP ---
+
+    PyObject **ob_item = (PyObject **)((uint8_t *)target + sizeof(PyVarObject));
+
+    Py_INCREF(new_val);
+    PyObject *old_val = ob_item[index];
+    ob_item[index]    = new_val;
+    Py_XDECREF(old_val);
+
+    // --- PART 3: REHASH ---
+
+    hashfunc h_func = Py_TYPE(target)->tp_hash;
+    if (UNLIKELY(h_func == nullptr)) {
+        PyErr_SetString(PyExc_TypeError, "target type is unhashable");
+        if (registry) {
+            Py_DECREF(target);
+        }
+        return nullptr;
+    }
+
+    PyErr_Clear();
+    Py_hash_t new_hash = h_func(target);
+    if (UNLIKELY(new_hash == -1)) {
+        if (registry) {
+            Py_DECREF(target);
+        }
+        return nullptr;
+    }
+
+    // --- PART 4: DICT REINSERT ---
+    //
+    // PyDict_SetItem does NOT steal a reference to target or key.
+    // It computes tp_hash(target) internally as part of the bucket placement,
+    // which is exactly the freshly-recomputed hash we just forced above.
+
+    if (registry) {
+        int rc = PyDict_SetItem(registry, key, target);
+        Py_DECREF(target); // release our hold; dict now owns its ref
+        if (rc < 0) {
+            return nullptr;
+        }
+    }
+
+    return PyLong_FromSsize_t(new_hash);
+}
+
 // --- The Documentation System ---
 
 #ifndef CULVERIN_DOCS_PATH
@@ -4032,6 +4153,10 @@ static PyMethodDef module_methods[] = {
      .ml_meth  = CULV_CAST(culv_dump_schema),
      .ml_flags = METH_NOARGS,
      .ml_doc   = "Internal: Dumps schema to culverin_schema.json"},
+    {.ml_name  = "mutate_tuple",
+     .ml_meth  = (PyCFunction)(void (*)(void))culv_mutate_tuple,
+     .ml_flags = METH_FASTCALL,
+     .ml_doc   = "Bypasses Python immutability to modify a tuple index in-place. Use at own risk."},
     {.ml_name = nullptr, .ml_meth = nullptr, .ml_flags = 0, .ml_doc = nullptr}};
 
 static PyGetSetDef PhysicsWorld_getset[] = {
