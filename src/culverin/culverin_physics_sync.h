@@ -16,13 +16,13 @@ static inline void internal_sync_wait_loop(PhysicsWorldObject *self,
     Py_BEGIN_ALLOW_THREADS
     NATIVE_MUTEX_LOCK(self->step_sync.mutex);
     
-    // Re-check the specific condition while holding the native mutex
     if (is_bool) {
-        while (atomic_load_explicit(bool_cond, memory_order_relaxed)) {
+        // Optimization: Single check before loop
+        if (atomic_load_explicit(bool_cond, memory_order_relaxed)) {
             NATIVE_COND_WAIT(self->step_sync.cond, self->step_sync.mutex);
         }
     } else {
-        while (atomic_load_explicit(int_cond, memory_order_relaxed) > 0) {
+        if (atomic_load_explicit(int_cond, memory_order_relaxed) > 0) {
             NATIVE_COND_WAIT(self->step_sync.cond, self->step_sync.mutex);
         }
     }
