@@ -360,7 +360,7 @@ else()
 endif()
 
 # ==============================================================================
-# 4. BUILD JOLTC & EXTENSION
+# 4. BUILD JOLTC, MAG-MUTEX & EXTENSION
 # ==============================================================================
 set(JOLTC_TARGET joltc_double)
 add_library(
@@ -384,6 +384,24 @@ target_include_directories(
 target_link_libraries(${JOLTC_TARGET} PRIVATE Jolt::Jolt)
 
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
+
+set(MAG_MUTEX_TARGET mag_mutex)
+add_library(
+    ${MAG_MUTEX_TARGET}
+    STATIC
+    "extern/mag-mutex/src/mag_mutex.c"
+)
+
+if(MSVC)
+    target_compile_options(${MAG_MUTEX_TARGET} PRIVATE /W0)
+else()
+    target_compile_options(${MAG_MUTEX_TARGET} PRIVATE -w)
+endif()
+
+target_include_directories(
+    ${MAG_MUTEX_TARGET}
+    PUBLIC "extern/mag-mutex/include" 
+)
 
 python_add_library(
     _culverin_c
@@ -524,10 +542,11 @@ target_compile_definitions(
 
 target_include_directories(
     _culverin_c
-    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "src/culverin"
-    SYSTEM
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" 
+    "src/culverin"
+    "extern/mag-mutex/include"
+    SYSTEM PRIVATE
     "extern/JoltC/include"
-    SYSTEM
     "${JOLT_DIR}"
     ${Python_INCLUDE_DIRS}
 )
@@ -541,7 +560,7 @@ if(WIN32)
     target_link_libraries(_culverin_c PRIVATE Winmm.lib)
 endif()
 target_compile_definitions(_culverin_c PRIVATE JPH_DEBUG_RENDERER)
-target_link_libraries(_culverin_c PRIVATE ${JOLTC_TARGET} Jolt::Jolt)
+target_link_libraries(_culverin_c PRIVATE ${MAG_MUTEX_TARGET} ${JOLTC_TARGET} Jolt::Jolt)
 
 if(APPLE)
     message(STATUS "Culverin: Enforcing Strong Symbol Export")

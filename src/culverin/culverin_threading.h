@@ -2,6 +2,8 @@
 #include "culverin_compiler_specifics.h"
 #include <Python.h>
 #include <stdatomic.h>
+// This is a custom Mutex I made. 1 byte!
+#include "mag_mutex.h"
 
 /**
  * Culverin Threading Invariants & Lock Hierarchy
@@ -92,84 +94,87 @@ CULV_MAYBE_UNUSED static inline void culverin_yield() {
 #endif
 }
 
-#ifdef _WIN32
-#    include <windows.h>
-typedef SRWLOCK NativeMutex;
-typedef CONDITION_VARIABLE NativeCond;
+/**
+ * MagMutex & MagCond Abstraction Layer
+ * Replaces SRWLOCK/CONDITION_VARIABLE (Win) and pthread_mutex/cond (POSIX)
+ */
+
+
+typedef MagMutex NativeMutex;
+typedef MagCond NativeCond;
+
+// --- Mutex Operations ---
 
 static inline int internal_native_mutex_init(NativeMutex *m) {
-    InitializeSRWLock(m);
+    // MagMutex is safe to zero-initialize, but atomic_init is more explicit
+#ifdef __cplusplus
+    m->bits.store(MAG_UNLOCKED, std::memory_order_relaxed);
+#else
+    atomic_init(&m->bits, MAG_UNLOCKED);
+#endif
     return 0;
 }
-static inline void internal_native_mutex_lock(NativeMutex *m) { AcquireSRWLockExclusive(m); }
-static inline void internal_native_mutex_unlock(NativeMutex *m) { ReleaseSRWLockExclusive(m); }
+
+static inline void internal_native_mutex_lock(NativeMutex *m) {
+    MagMutex_Lock(m);
+}
+
+static inline void internal_native_mutex_unlock(NativeMutex *m) {
+    MagMutex_Unlock(m);
+}
+
+static inline int internal_native_mutex_free(NativeMutex *m) {
+    (void)m; // MagMutex is a 1-byte value type; no OS resources to free.
+    return 0;
+}
+
+// --- Condition Variable Operations ---
 
 static inline int internal_native_cond_init(NativeCond *c) {
-    InitializeConditionVariable(c);
+    MagCond_Init(c);
     return 0;
 }
+
 static inline void internal_native_cond_wait(NativeCond *c, NativeMutex *m) {
-    SleepConditionVariableSRW(c, m, INFINITE, 0);
+    MagCond_Wait(c, m);
 }
-static inline void internal_native_cond_broadcast(NativeCond *c) { WakeAllConditionVariable(c); }
 
-static inline int internal_native_mutex_free(CULV_MAYBE_UNUSED NativeMutex *m) { return 0; }
-static inline int internal_native_cond_free(CULV_MAYBE_UNUSED NativeCond *c) { return 0; }
-#else
-#    include <pthread.h>
-typedef pthread_mutex_t NativeMutex;
-typedef pthread_cond_t NativeCond;
-
-static inline int internal_native_mutex_init(NativeMutex *m) { return pthread_mutex_init(m, NULL); }
-static inline void internal_native_mutex_lock(NativeMutex *m) { pthread_mutex_lock(m); }
-static inline void internal_native_mutex_unlock(NativeMutex *m) { pthread_mutex_unlock(m); }
-static inline int internal_native_mutex_free(NativeMutex *m) { return pthread_mutex_destroy(m); }
-
-static inline int internal_native_cond_init(NativeCond *c) { return pthread_cond_init(c, NULL); }
-static inline void internal_native_cond_wait(NativeCond *c, NativeMutex *m) {
-    pthread_cond_wait(c, m);
+static inline void internal_native_cond_broadcast(NativeCond *c) {
+    MagCond_Broadcast(c);
 }
-static inline void internal_native_cond_broadcast(NativeCond *c) { pthread_cond_broadcast(c); }
-static inline int internal_native_cond_free(NativeCond *c) { return pthread_cond_destroy(c); }
-#endif
+
+static inline int internal_native_cond_free(NativeCond *c) {
+    (void)c; // MagCond is a 1-byte value type; no OS resources to free.
+    return 0;
+}
 
 /* ============================================================================
  * 2. SHADOW MUTEX IMPLEMENTATIONS
  * ============================================================================ */
 
-#if defined(__SANITIZE_THREAD__) || defined(ENABLE_SANITIZER)
+/**
+ * We use NativeMutex (MagMutex) for everything. 
+ * Even on Python 3.13+, MagMutex has shown better contention scaling than PyMutex 
+ * in our benchmarks, and on 3.12 it is infinitely faster than PyThread_type_lock.
+ */
 typedef NativeMutex ShadowMutex;
-static inline int internal_shadow_init(ShadowMutex *m) { return internal_native_mutex_init(m); }
-static inline void internal_shadow_lock(ShadowMutex *m) { internal_native_mutex_lock(m); }
-static inline void internal_shadow_unlock(ShadowMutex *m) { internal_native_mutex_unlock(m); }
-static inline int internal_shadow_free(ShadowMutex *m) { return internal_native_mutex_free(m); }
 
-#elif PY_VERSION_HEX >= 0x030D0000
-typedef PyMutex ShadowMutex;
-static inline int internal_shadow_init(ShadowMutex *m) {
-    memset(m, 0, sizeof(PyMutex));
-    return 0;
+static inline int internal_shadow_init(ShadowMutex *m) { 
+    return internal_native_mutex_init(m); 
 }
-static inline void internal_shadow_lock(ShadowMutex *m) { PyMutex_Lock(m); }
-static inline void internal_shadow_unlock(ShadowMutex *m) { PyMutex_Unlock(m); }
-static inline int internal_shadow_free(CULV_MAYBE_UNUSED ShadowMutex *m) { return 0; }
 
-#else
-typedef PyThread_type_lock ShadowMutex;
-static inline int internal_shadow_init(ShadowMutex *m) {
-    *m = PyThread_allocate_lock();
-    return (*m == NULL) ? -1 : 0;
+static inline void internal_shadow_lock(ShadowMutex *m) { 
+    internal_native_mutex_lock(m); 
 }
-static inline void internal_shadow_lock(ShadowMutex *m) { PyThread_acquire_lock(*m, 1); }
-static inline void internal_shadow_unlock(ShadowMutex *m) { PyThread_release_lock(*m); }
-static inline int internal_shadow_free(ShadowMutex *m) {
-    if (*m) {
-        PyThread_free_lock(*m);
-    }
-    *m = NULL;
-    return 0;
+
+static inline void internal_shadow_unlock(ShadowMutex *m) { 
+    internal_native_mutex_unlock(m); 
 }
-#endif
+
+static inline int internal_shadow_free(ShadowMutex *m) { 
+    return internal_native_mutex_free(m); 
+}
+
 
 /* ============================================================================
  * 3. PUBLIC API MACROS
@@ -196,9 +201,25 @@ static inline int internal_shadow_free(ShadowMutex *m) {
  * 4. STRUCTURES
  * ============================================================================ */
 
+
+// Use a standard constant for cache line width
+static constexpr auto CACHE_LINE_SIZE = 64;
+
+/* A helper macro to calculate remaining space in a cache line */
+#define CACHE_ISOLATE_PAD(current_size) (CACHE_LINE_SIZE - ((current_size) % CACHE_LINE_SIZE))
+
 typedef struct {
+    // 1. Isolate from the main PhysicsWorld fields (like active_queries)
+    uint8_t _pad_before[CACHE_LINE_SIZE];
+
+    // 2. The actual synchronization primitives (2 bytes)
     NativeMutex mutex;
     NativeCond cond;
+
+    // 3. Isolate from trailing fields (like shadow_lock)
+    // We use a calculated constant so if you change Mutex size, 
+    // the padding adjusts automatically.
+    uint8_t _pad_after[CACHE_ISOLATE_PAD(sizeof(NativeMutex) + sizeof(NativeCond)) + CACHE_LINE_SIZE];
 } ShadowSync;
 
 extern NativeMutex g_jph_trampoline_lock;
