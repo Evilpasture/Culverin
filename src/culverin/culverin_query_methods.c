@@ -4,6 +4,7 @@
 #include "culverin_fast_build.h"
 #include "culverin_math.h"
 #include "culverin_parsers.h"
+#include "culverin_physics_sync.h"
 
 static constexpr float CQM_DEFAULT_MAX_DIST = 1000.0f;
 static constexpr float CQM_EPSILON_SMALL    = 1e-12f;

@@ -92,266 +92,110 @@ CULV_MAYBE_UNUSED static inline void culverin_yield() {
 #endif
 }
 
-// --- Native Condition Variable Support ---
-
 #ifdef _WIN32
+#    include <windows.h>
 typedef SRWLOCK NativeMutex;
 typedef CONDITION_VARIABLE NativeCond;
 
-// --- Native Mutex Inlines ---
-
-static inline int shadow_init_native_mutex(NativeMutex *m) {
+static inline int internal_native_mutex_init(NativeMutex *m) {
     InitializeSRWLock(m);
-    return 0; // SRWLock init always succeeds and returns void
+    return 0;
 }
+static inline void internal_native_mutex_lock(NativeMutex *m) { AcquireSRWLockExclusive(m); }
+static inline void internal_native_mutex_unlock(NativeMutex *m) { ReleaseSRWLockExclusive(m); }
 
-static inline void shadow_free_native_mutex(NativeMutex *m) {
-    (void)m; // SRWLock requires no explicit cleanup
-}
-
-static inline void shadow_native_mutex_lock(NativeMutex *m) { AcquireSRWLockExclusive(m); }
-
-static inline void shadow_native_mutex_unlock(NativeMutex *m) { ReleaseSRWLockExclusive(m); }
-
-// --- Native Condition Variable Inlines ---
-
-static inline int shadow_init_native_cond(NativeCond *c) {
+static inline int internal_native_cond_init(NativeCond *c) {
     InitializeConditionVariable(c);
-    return 0; // ConditionVariable init always succeeds and returns void
+    return 0;
 }
-
-static inline void shadow_free_native_cond(NativeCond *c) {
-    (void)c; // No explicit cleanup needed
-}
-
-static inline void shadow_native_cond_wait(NativeCond *c, NativeMutex *m) {
-    // Windows returns a BOOL, but since you use INFINITE, it only
-    // returns once the lock is re-acquired.
+static inline void internal_native_cond_wait(NativeCond *c, NativeMutex *m) {
     SleepConditionVariableSRW(c, m, INFINITE, 0);
 }
+static inline void internal_native_cond_broadcast(NativeCond *c) { WakeAllConditionVariable(c); }
 
-static inline void shadow_native_cond_broadcast(NativeCond *c) { WakeAllConditionVariable(c); }
-
-// --- Macro Wrappers ---
-
-#    define INIT_NATIVE_MUTEX(m) shadow_init_native_mutex(&(m))
-#    define FREE_NATIVE_MUTEX(m) shadow_free_native_mutex(&(m))
-#    define NATIVE_MUTEX_LOCK(m) shadow_native_mutex_lock(&(m))
-#    define NATIVE_MUTEX_UNLOCK(m) shadow_native_mutex_unlock(&(m))
-
-#    define INIT_NATIVE_COND(c) shadow_init_native_cond(&(c))
-#    define FREE_NATIVE_COND(c) shadow_free_native_cond(&(c))
-#    define NATIVE_COND_WAIT(c, m) shadow_native_cond_wait(&(c), &(m))
-#    define NATIVE_COND_BROADCAST(c) shadow_native_cond_broadcast(&(c))
-
+static inline int internal_native_mutex_free(CULV_MAYBE_UNUSED NativeMutex *m) { return 0; }
+static inline int internal_native_cond_free(CULV_MAYBE_UNUSED NativeCond *c) { return 0; }
 #else
 #    include <pthread.h>
-
 typedef pthread_mutex_t NativeMutex;
 typedef pthread_cond_t NativeCond;
 
-// --- Native Mutex Inlines ---
+static inline int internal_native_mutex_init(NativeMutex *m) { return pthread_mutex_init(m, NULL); }
+static inline void internal_native_mutex_lock(NativeMutex *m) { pthread_mutex_lock(m); }
+static inline void internal_native_mutex_unlock(NativeMutex *m) { pthread_mutex_unlock(m); }
+static inline int internal_native_mutex_free(NativeMutex *m) { return pthread_mutex_destroy(m); }
 
-static inline int shadow_init_native_mutex(NativeMutex *m) {
-    return pthread_mutex_init(m, nullptr);
-}
-
-static inline int shadow_free_native_mutex(NativeMutex *m) { return pthread_mutex_destroy(m); }
-
-static inline void shadow_native_mutex_lock(NativeMutex *m) { pthread_mutex_lock(m); }
-
-static inline void shadow_native_mutex_unlock(NativeMutex *m) { pthread_mutex_unlock(m); }
-
-// --- Native Condition Variable Inlines ---
-
-static inline int shadow_init_native_cond(NativeCond *c) { return pthread_cond_init(c, nullptr); }
-
-static inline int shadow_free_native_cond(NativeCond *c) { return pthread_cond_destroy(c); }
-
-static inline void shadow_native_cond_wait(NativeCond *c, NativeMutex *m) {
+static inline int internal_native_cond_init(NativeCond *c) { return pthread_cond_init(c, NULL); }
+static inline void internal_native_cond_wait(NativeCond *c, NativeMutex *m) {
     pthread_cond_wait(c, m);
 }
-
-static inline void shadow_native_cond_broadcast(NativeCond *c) { pthread_cond_broadcast(c); }
-
-// --- Macro Wrappers (Automatic Address-of) ---
-
-#    define INIT_NATIVE_MUTEX(m) shadow_init_native_mutex(&(m))
-#    define FREE_NATIVE_MUTEX(m) shadow_free_native_mutex(&(m))
-#    define NATIVE_MUTEX_LOCK(m) shadow_native_mutex_lock(&(m))
-#    define NATIVE_MUTEX_UNLOCK(m) shadow_native_mutex_unlock(&(m))
-
-#    define INIT_NATIVE_COND(c) shadow_init_native_cond(&(c))
-#    define FREE_NATIVE_COND(c) shadow_free_native_cond(&(c))
-#    define NATIVE_COND_WAIT(c, m) shadow_native_cond_wait(&(c), &(m))
-#    define NATIVE_COND_BROADCAST(c) shadow_native_cond_broadcast(&(c))
-
+static inline void internal_native_cond_broadcast(NativeCond *c) { pthread_cond_broadcast(c); }
+static inline int internal_native_cond_free(NativeCond *c) { return pthread_cond_destroy(c); }
 #endif
 
-// --- Threading Primitives (ShadowMutex Shim) ---
+/* ============================================================================
+ * 2. SHADOW MUTEX IMPLEMENTATIONS
+ * ============================================================================ */
 
 #if defined(__SANITIZE_THREAD__) || defined(ENABLE_SANITIZER)
-/**
- * 1. TSan Fallback: Map ShadowMutex to NativeMutex (struct-based).
- * We treat m as a pointer to the NativeMutex instance.
- */
 typedef NativeMutex ShadowMutex;
-
-#    define SHADOW_LOCK(m)                                                                         \
-        do {                                                                                       \
-            static_assert(_Generic((m), NativeMutex *: 1, default: 0));                            \
-            NATIVE_MUTEX_LOCK(*(m));                                                               \
-        } while (false)
-
-#    define SHADOW_UNLOCK(m)                                                                       \
-        do {                                                                                       \
-            static_assert(_Generic((m), NativeMutex *: 1, default: 0));                            \
-            NATIVE_MUTEX_UNLOCK(*(m));                                                             \
-        } while (false)
-
-#    define INIT_LOCK(m)                                                                           \
-        do {                                                                                       \
-            static_assert(_Generic((m), NativeMutex: 1, default: 0), "m must be NativeMutex");     \
-            INIT_NATIVE_MUTEX(m);                                                                  \
-        } while (false)
-
-#    define FREE_LOCK(m)                                                                           \
-        do {                                                                                       \
-            static_assert(_Generic((m), NativeMutex: 1, default: 0), "m must be NativeMutex");     \
-            FREE_NATIVE_MUTEX(m);                                                                  \
-        } while (false)
+static inline int internal_shadow_init(ShadowMutex *m) { return internal_native_mutex_init(m); }
+static inline void internal_shadow_lock(ShadowMutex *m) { internal_native_mutex_lock(m); }
+static inline void internal_shadow_unlock(ShadowMutex *m) { internal_native_mutex_unlock(m); }
+static inline int internal_shadow_free(ShadowMutex *m) { return internal_native_mutex_free(m); }
 
 #elif PY_VERSION_HEX >= 0x030D0000
-/**
- * 1. Python 3.13+ Production: PyMutex (1-byte, stack/struct allocated)
- */
 typedef PyMutex ShadowMutex;
-
-#    define SHADOW_LOCK(m)                                                                         \
-        do {                                                                                       \
-            static_assert(_Generic((m), PyMutex *: 1, default: 0));                                \
-            PyMutex_Lock(m);                                                                       \
-        } while (false)
-
-#    define SHADOW_UNLOCK(m)                                                                       \
-        do {                                                                                       \
-            static_assert(_Generic((m), PyMutex *: 1, default: 0));                                \
-            PyMutex_Unlock(m);                                                                     \
-        } while (false)
-
-#    define INIT_LOCK(m)                                                                           \
-        do {                                                                                       \
-            static_assert(_Generic((m), PyMutex: 1, default: 0));                                  \
-            memset(&(m), 0, sizeof(PyMutex));                                                      \
-        } while (false)
-
-#    define FREE_LOCK(m) /* No-op for PyMutex */
+static inline int internal_shadow_init(ShadowMutex *m) {
+    memset(m, 0, sizeof(PyMutex));
+    return 0;
+}
+static inline void internal_shadow_lock(ShadowMutex *m) { PyMutex_Lock(m); }
+static inline void internal_shadow_unlock(ShadowMutex *m) { PyMutex_Unlock(m); }
+static inline int internal_shadow_free(CULV_MAYBE_UNUSED ShadowMutex *m) { return 0; }
 
 #else
-/**
- * 2. Legacy CPython 3.12 and older: PyThread_type_lock (void* handle)
- */
 typedef PyThread_type_lock ShadowMutex;
-
-#    define SHADOW_LOCK(m)                                                                         \
-        do {                                                                                       \
-            static_assert(_Generic((m), PyThread_type_lock *: 1, default: 0));                     \
-            PyThread_acquire_lock(*(m), 1);                                                        \
-        } while (false)
-
-#    define SHADOW_UNLOCK(m)                                                                       \
-        do {                                                                                       \
-            static_assert(_Generic((m), PyThread_type_lock *: 1, default: 0));                     \
-            PyThread_release_lock(*(m));                                                           \
-        } while (false)
-
-#    define INIT_LOCK(m)                                                                           \
-        do {                                                                                       \
-            static_assert(_Generic((m), PyThread_type_lock: 1, default: 0));                       \
-            (m) = PyThread_allocate_lock();                                                        \
-        } while (false)
-
-#    define FREE_LOCK(m)                                                                           \
-        do {                                                                                       \
-            static_assert(_Generic((m), PyThread_type_lock: 1, default: 0));                       \
-            if ((m))                                                                               \
-                PyThread_free_lock((m));                                                           \
-            (m) = nullptr;                                                                         \
-        } while (false)
+static inline int internal_shadow_init(ShadowMutex *m) {
+    *m = PyThread_allocate_lock();
+    return (*m == NULL) ? -1 : 0;
+}
+static inline void internal_shadow_lock(ShadowMutex *m) { PyThread_acquire_lock(*m, 1); }
+static inline void internal_shadow_unlock(ShadowMutex *m) { PyThread_release_lock(*m); }
+static inline int internal_shadow_free(ShadowMutex *m) {
+    if (*m) {
+        PyThread_free_lock(*m);
+    }
+    *m = NULL;
+    return 0;
+}
 #endif
 
-// Blocks until the world is not mid-step.
-// Must be called while holding SHADOW_LOCK. Re-acquires it before returning.
-#define BLOCK_UNTIL_NOT_STEPPING(self)                                                             \
-    do {                                                                                           \
-        if (atomic_load_explicit(&(self)->is_stepping, memory_order_relaxed)) {                    \
-            atomic_fetch_add_explicit(&(self)->waiting_threads, 1, memory_order_relaxed);          \
-            while (atomic_load_explicit(&(self)->is_stepping, memory_order_relaxed)) {             \
-                SHADOW_UNLOCK(&(self)->shadow_lock);                                               \
-                Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK((self)->step_sync.mutex);                 \
-                while (atomic_load_explicit(&(self)->is_stepping, memory_order_relaxed)) {         \
-                    NATIVE_COND_WAIT((self)->step_sync.cond, (self)->step_sync.mutex);             \
-                }                                                                                  \
-                NATIVE_MUTEX_UNLOCK((self)->step_sync.mutex);                                      \
-                Py_END_ALLOW_THREADS SHADOW_LOCK(&(self)->shadow_lock);                            \
-            }                                                                                      \
-            atomic_fetch_sub_explicit(&(self)->waiting_threads, 1, memory_order_relaxed);          \
-        }                                                                                          \
-    } while (0)
+/* ============================================================================
+ * 3. PUBLIC API MACROS
+ * ============================================================================ */
 
-#define BLOCK_UNTIL_NOT_QUERYING(self)                                                             \
-    do {                                                                                           \
-        while (atomic_load_explicit(&(self)->active_queries, memory_order_acquire) > 0) {          \
-            SHADOW_UNLOCK(&(self)->shadow_lock);                                                   \
-            Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK((self)->step_sync.mutex);                     \
-            /* The Double Check */                                                                 \
-            while (atomic_load_explicit(&(self)->active_queries, memory_order_relaxed) > 0) {      \
-                NATIVE_COND_WAIT((self)->step_sync.cond, (self)->step_sync.mutex);                 \
-            }                                                                                      \
-            NATIVE_MUTEX_UNLOCK((self)->step_sync.mutex);                                          \
-            Py_END_ALLOW_THREADS SHADOW_LOCK(&(self)->shadow_lock);                                \
-        }                                                                                          \
-    } while (0)
+#define INIT_NATIVE_MUTEX(m) internal_native_mutex_init(&(m))
+#define FREE_NATIVE_MUTEX(m) internal_native_mutex_free(&(m))
+#define NATIVE_MUTEX_LOCK(m) internal_native_mutex_lock(&(m))
+#define NATIVE_MUTEX_UNLOCK(m) internal_native_mutex_unlock(&(m))
 
-// Queries use this to wait if a Step is about to happen
-#define BLOCK_IF_STEP_PENDING(self)                                                                \
-    do {                                                                                           \
-        if (atomic_load_explicit(&(self)->step_requested, memory_order_relaxed)) {                 \
-            atomic_fetch_add_explicit(&(self)->waiting_threads, 1, memory_order_relaxed);          \
-            while (atomic_load_explicit(&(self)->step_requested, memory_order_relaxed)) {          \
-                SHADOW_UNLOCK(&(self)->shadow_lock);                                               \
-                Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK((self)->step_sync.mutex);                 \
-                while (atomic_load_explicit(&(self)->step_requested, memory_order_relaxed)) {      \
-                    NATIVE_COND_WAIT((self)->step_sync.cond, (self)->step_sync.mutex);             \
-                }                                                                                  \
-                NATIVE_MUTEX_UNLOCK((self)->step_sync.mutex);                                      \
-                Py_END_ALLOW_THREADS SHADOW_LOCK(&(self)->shadow_lock);                            \
-            }                                                                                      \
-            atomic_fetch_sub_explicit(&(self)->waiting_threads, 1, memory_order_relaxed);          \
-        }                                                                                          \
-    } while (0)
+#define INIT_NATIVE_COND(c) internal_native_cond_init(&(c))
+#define FREE_NATIVE_COND(c) internal_native_cond_free(&(c))
+#define NATIVE_COND_WAIT(c, m) internal_native_cond_wait(&(c), &(m))
+#define NATIVE_COND_BROADCAST(c) internal_native_cond_broadcast(&(c))
 
-#define BLOCK_UNTIL_CAN_QUERY(self)                                                                \
-    do {                                                                                           \
-        if (atomic_load_explicit(&(self)->is_stepping, memory_order_relaxed) ||                    \
-            atomic_load_explicit(&(self)->step_requested, memory_order_relaxed)) {                 \
-            atomic_fetch_add_explicit(&(self)->waiting_threads, 1, memory_order_relaxed);          \
-            while (atomic_load_explicit(&(self)->is_stepping, memory_order_relaxed) ||             \
-                   atomic_load_explicit(&(self)->step_requested, memory_order_relaxed)) {          \
-                SHADOW_UNLOCK(&(self)->shadow_lock);                                               \
-                Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK((self)->step_sync.mutex);                 \
-                while (atomic_load_explicit(&(self)->is_stepping, memory_order_relaxed) ||         \
-                       atomic_load_explicit(&(self)->step_requested, memory_order_relaxed)) {      \
-                    NATIVE_COND_WAIT((self)->step_sync.cond, (self)->step_sync.mutex);             \
-                }                                                                                  \
-                NATIVE_MUTEX_UNLOCK((self)->step_sync.mutex);                                      \
-                Py_END_ALLOW_THREADS SHADOW_LOCK(&(self)->shadow_lock);                            \
-            }                                                                                      \
-            atomic_fetch_sub_explicit(&(self)->waiting_threads, 1, memory_order_relaxed);          \
-        }                                                                                          \
-    } while (0)
+#define INIT_LOCK(m) internal_shadow_init(&(m))
+#define FREE_LOCK(m) internal_shadow_free(&(m))
 
-// A container to sync state changes (stepping finished, query finished)
+/* These two accept the pointer directly as per culverin.c usage */
+#define SHADOW_LOCK(m) internal_shadow_lock(m)
+#define SHADOW_UNLOCK(m) internal_shadow_unlock(m)
+
+/* ============================================================================
+ * 4. STRUCTURES
+ * ============================================================================ */
+
 typedef struct {
     NativeMutex mutex;
     NativeCond cond;
