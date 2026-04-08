@@ -17,12 +17,11 @@ static inline void internal_sync_wait_loop(PhysicsWorldObject *self,
     NATIVE_MUTEX_LOCK(self->step_sync.mutex);
     
     if (is_bool) {
-        // Optimization: Single check before loop
-        if (atomic_load_explicit(bool_cond, memory_order_relaxed)) {
+        while (atomic_load_explicit(bool_cond, memory_order_relaxed)) {
             NATIVE_COND_WAIT(self->step_sync.cond, self->step_sync.mutex);
         }
     } else {
-        if (atomic_load_explicit(int_cond, memory_order_relaxed) > 0) {
+        while (atomic_load_explicit(int_cond, memory_order_relaxed) > 0) {
             NATIVE_COND_WAIT(self->step_sync.cond, self->step_sync.mutex);
         }
     }
