@@ -99,6 +99,7 @@ CULV_MAYBE_UNUSED static inline void culverin_yield() {
  * Replaces SRWLOCK/CONDITION_VARIABLE (Win) and pthread_mutex/cond (POSIX)
  */
 
+
 typedef MagMutex NativeMutex;
 typedef MagCond NativeCond;
 
@@ -151,28 +152,39 @@ static inline int internal_native_cond_free(NativeCond *c) {
  * 2. SHADOW MUTEX IMPLEMENTATIONS
  * ============================================================================ */
 
-/**
- * We use NativeMutex (MagMutex) for everything. 
- * Even on Python 3.13+, MagMutex has shown better contention scaling than PyMutex 
- * in our benchmarks, and on 3.12 it is infinitely faster than PyThread_type_lock.
- */
+#if defined(__SANITIZE_THREAD__) || defined(ENABLE_SANITIZER)
 typedef NativeMutex ShadowMutex;
+static inline int internal_shadow_init(ShadowMutex *m) { return internal_native_mutex_init(m); }
+static inline void internal_shadow_lock(ShadowMutex *m) { internal_native_mutex_lock(m); }
+static inline void internal_shadow_unlock(ShadowMutex *m) { internal_native_mutex_unlock(m); }
+static inline int internal_shadow_free(ShadowMutex *m) { return internal_native_mutex_free(m); }
 
-static inline int internal_shadow_init(ShadowMutex *m) { 
-    return internal_native_mutex_init(m); 
+#elif PY_VERSION_HEX >= 0x030D0000
+typedef PyMutex ShadowMutex;
+static inline int internal_shadow_init(ShadowMutex *m) {
+    memset(m, 0, sizeof(PyMutex));
+    return 0;
 }
+static inline void internal_shadow_lock(ShadowMutex *m) { PyMutex_Lock(m); }
+static inline void internal_shadow_unlock(ShadowMutex *m) { PyMutex_Unlock(m); }
+static inline int internal_shadow_free(CULV_MAYBE_UNUSED ShadowMutex *m) { return 0; }
 
-static inline void internal_shadow_lock(ShadowMutex *m) { 
-    internal_native_mutex_lock(m); 
+#else
+typedef PyThread_type_lock ShadowMutex;
+static inline int internal_shadow_init(ShadowMutex *m) {
+    *m = PyThread_allocate_lock();
+    return (*m == NULL) ? -1 : 0;
 }
-
-static inline void internal_shadow_unlock(ShadowMutex *m) { 
-    internal_native_mutex_unlock(m); 
+static inline void internal_shadow_lock(ShadowMutex *m) { PyThread_acquire_lock(*m, 1); }
+static inline void internal_shadow_unlock(ShadowMutex *m) { PyThread_release_lock(*m); }
+static inline int internal_shadow_free(ShadowMutex *m) {
+    if (*m) {
+        PyThread_free_lock(*m);
+    }
+    *m = NULL;
+    return 0;
 }
-
-static inline int internal_shadow_free(ShadowMutex *m) { 
-    return internal_native_mutex_free(m); 
-}
+#endif
 
 /* ============================================================================
  * 3. PUBLIC API MACROS
@@ -200,12 +212,14 @@ static inline int internal_shadow_free(ShadowMutex *m) {
  * ============================================================================ */
 
 typedef struct {
-    alignas(64) NativeMutex mutex; // Force onto its own cache line
+    uint8_t _pre_pad[64];  // Isolate from the preceding fields (waiting_threads)
+    NativeMutex mutex;
     NativeCond cond;
-    uint8_t _pad[62];             // Ensure no data follows it in the same line
+    uint8_t _post_pad[62]; // Isolate from the succeeding fields (shadow_lock)
 } ShadowSync;
 
-// The struct is now exactly 64 bytes (one cache line)
-static_assert(sizeof(ShadowSync) == 64);
+// Total size is 128 bytes. The compiler only requires 1-byte alignment,
+// but the padding guarantees 'mutex' is on its own cache line!
+static_assert(sizeof(ShadowSync) == 128);
 
 extern NativeMutex g_jph_trampoline_lock;
