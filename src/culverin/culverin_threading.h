@@ -201,15 +201,11 @@ static inline int internal_shadow_free(ShadowMutex *m) {
  * 4. STRUCTURES
  * ============================================================================ */
 
+
 typedef struct {
-    uint8_t _pre_pad[64];  // Isolate from the preceding fields (waiting_threads)
+    [[gnu::aligned(64)]]
     NativeMutex mutex;
     NativeCond cond;
-    uint8_t _post_pad[62]; // Isolate from the succeeding fields (shadow_lock)
 } ShadowSync;
-
-// Total size is 128 bytes. The compiler only requires 1-byte alignment,
-// but the padding guarantees 'mutex' is on its own cache line!
-static_assert(sizeof(ShadowSync) == 128);
 
 extern NativeMutex g_jph_trampoline_lock;
