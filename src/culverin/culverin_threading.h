@@ -202,10 +202,24 @@ static inline int internal_shadow_free(ShadowMutex *m) {
  * ============================================================================ */
 
 
+// Use a standard constant for cache line width
+static constexpr auto CACHE_LINE_SIZE = 64;
+
+/* A helper macro to calculate remaining space in a cache line */
+#define CACHE_ISOLATE_PAD(current_size) (CACHE_LINE_SIZE - ((current_size) % CACHE_LINE_SIZE))
+
 typedef struct {
-    [[gnu::aligned(64)]]
+    // 1. Isolate from the main PhysicsWorld fields (like active_queries)
+    uint8_t _pad_before[CACHE_LINE_SIZE];
+
+    // 2. The actual synchronization primitives (2 bytes)
     NativeMutex mutex;
     NativeCond cond;
+
+    // 3. Isolate from trailing fields (like shadow_lock)
+    // We use a calculated constant so if you change Mutex size, 
+    // the padding adjusts automatically.
+    uint8_t _pad_after[CACHE_ISOLATE_PAD(sizeof(NativeMutex) + sizeof(NativeCond)) + CACHE_LINE_SIZE];
 } ShadowSync;
 
 extern NativeMutex g_jph_trampoline_lock;

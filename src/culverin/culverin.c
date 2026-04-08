@@ -59,31 +59,6 @@ static constexpr float DEFAULT_BODY_SIZE              = 0.5f;
 // Global lock for JPH callbacks
 NativeMutex g_jph_trampoline_lock; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
-// Custom Aligned Allocator
-static PyObject* PhysicsWorld_alloc(PyTypeObject *type, Py_ssize_t nitems) {
-    // 1. Calculate the exact size needed for this object type
-    // PhysicsWorld is not a var-sized type, so nitems is usually ignored.
-    size_t size = _PyObject_SIZE(type);
-
-    // 2. Allocate 64-byte aligned memory for the whole struct
-    void* mem = CulvMem_RawMallocAligned(size, 64);
-    if (UNLIKELY(!mem)) {
-        return PyErr_NoMemory();
-    }
-
-    // 3. Mandatory: Python expects new objects to be zeroed
-    memset(mem, 0, size);
-
-    // 4. Initialize Python's internal head (refcounts, type pointer)
-    return PyObject_Init((PyObject *)mem, type);
-}
-
-// Custom Aligned Deallocator
-static void PhysicsWorld_free(void *self) {
-    // self is the pointer to the PhysicsWorldObject
-    CulvMem_RawFreeAligned(self);
-}
-
 // --- Lifecycle: Deallocation ---
 PyType_DeclareSlot_Status PhysicsWorld_traverse(PhysicsWorldObject *self, visitproc visit,
                                                 void *arg) {
@@ -4324,8 +4299,6 @@ static const PyMemberDef PhysicsWorld_members[] = {
 
 static const PyType_Slot PhysicsWorld_slots[] = {
     {.slot = Py_tp_new, .pfunc = PyType_GenericNew},
-    {.slot = Py_tp_alloc, .pfunc = PhysicsWorld_alloc},
-    {.slot = Py_tp_free, .pfunc = PhysicsWorld_free},
     {.slot = Py_tp_init, .pfunc = PhysicsWorld_init},
     {.slot = Py_tp_dealloc, .pfunc = PhysicsWorld_dealloc},
     {.slot = Py_tp_methods, .pfunc = (PyMethodDef *)PhysicsWorld_methods},
