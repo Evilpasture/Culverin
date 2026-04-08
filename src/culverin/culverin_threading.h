@@ -152,39 +152,29 @@ static inline int internal_native_cond_free(NativeCond *c) {
  * 2. SHADOW MUTEX IMPLEMENTATIONS
  * ============================================================================ */
 
-#if defined(__SANITIZE_THREAD__) || defined(ENABLE_SANITIZER)
+/**
+ * We use NativeMutex (MagMutex) for everything. 
+ * Even on Python 3.13+, MagMutex has shown better contention scaling than PyMutex 
+ * in our benchmarks, and on 3.12 it is infinitely faster than PyThread_type_lock.
+ */
 typedef NativeMutex ShadowMutex;
-static inline int internal_shadow_init(ShadowMutex *m) { return internal_native_mutex_init(m); }
-static inline void internal_shadow_lock(ShadowMutex *m) { internal_native_mutex_lock(m); }
-static inline void internal_shadow_unlock(ShadowMutex *m) { internal_native_mutex_unlock(m); }
-static inline int internal_shadow_free(ShadowMutex *m) { return internal_native_mutex_free(m); }
 
-#elif PY_VERSION_HEX >= 0x030D0000
-typedef PyMutex ShadowMutex;
-static inline int internal_shadow_init(ShadowMutex *m) {
-    memset(m, 0, sizeof(PyMutex));
-    return 0;
+static inline int internal_shadow_init(ShadowMutex *m) { 
+    return internal_native_mutex_init(m); 
 }
-static inline void internal_shadow_lock(ShadowMutex *m) { PyMutex_Lock(m); }
-static inline void internal_shadow_unlock(ShadowMutex *m) { PyMutex_Unlock(m); }
-static inline int internal_shadow_free(CULV_MAYBE_UNUSED ShadowMutex *m) { return 0; }
 
-#else
-typedef PyThread_type_lock ShadowMutex;
-static inline int internal_shadow_init(ShadowMutex *m) {
-    *m = PyThread_allocate_lock();
-    return (*m == NULL) ? -1 : 0;
+static inline void internal_shadow_lock(ShadowMutex *m) { 
+    internal_native_mutex_lock(m); 
 }
-static inline void internal_shadow_lock(ShadowMutex *m) { PyThread_acquire_lock(*m, 1); }
-static inline void internal_shadow_unlock(ShadowMutex *m) { PyThread_release_lock(*m); }
-static inline int internal_shadow_free(ShadowMutex *m) {
-    if (*m) {
-        PyThread_free_lock(*m);
-    }
-    *m = NULL;
-    return 0;
+
+static inline void internal_shadow_unlock(ShadowMutex *m) { 
+    internal_native_mutex_unlock(m); 
 }
-#endif
+
+static inline int internal_shadow_free(ShadowMutex *m) { 
+    return internal_native_mutex_free(m); 
+}
+
 
 /* ============================================================================
  * 3. PUBLIC API MACROS
