@@ -1,8 +1,7 @@
-#include "culverin_physics_sync.h"
 #if !defined(_CRT_SECURE_NO_WARNINGS)
 #    define _CRT_SECURE_NO_WARNINGS
 #endif
-
+#include "culverin_physics_sync.h"
 #include "culverin.h"
 #include "culverin_arg_indices.h"
 #include "culverin_character.h"
