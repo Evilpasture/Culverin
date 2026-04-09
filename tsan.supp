@@ -17,3 +17,21 @@ race:PyUnicode_DecodeFSDefaultAndSize
 # Triggered by concurrent calls to os.fsdecode/os.fsencode
 # See on CPython Issue #128137, #128013, #128021
 race:PyUnicode_DecodeUTF8Stateful
+# CPython Internal: Generic Attribute Setting (JIT/Warmup noise)
+race:PyObject_GenericSetAttr
+race:PyObject_GenericSetAttr.warm
+
+# CPython Internal: String/Unicode Interning and Comparison
+race:unicode_eq
+race:PyUnicode_FromString
+race:PyUnicode_New
+race:bcmp
+
+# CPython Internal: Object Initialization & Type Setup
+race:PyObject_GC_Del
+race:_PyExc_InitTypes
+race:_PyTypes_Init
+
+# CPython Internal: Threading & Lifecycle
+race:do_start_joinable_thread
+race:PyEval_EvalFrameDefault
