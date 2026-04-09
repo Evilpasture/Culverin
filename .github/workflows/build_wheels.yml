@@ -197,6 +197,47 @@ jobs:
           CIBW_TEST_REQUIRES: numpy psutil
           CIBW_TEST_COMMAND: "python {project}/tests/test_core.py"
 
+      - name: Build Experimental Wheels (3.15)
+        shell: bash
+        run: |
+          # 1. Setup Platform-Specific Compilers
+          if [[ "${{ runner.os }}" == "Linux" ]]; then
+            echo "Configuring LLVM 22 for Linux..."
+            wget https://apt.llvm.org/llvm.sh
+            chmod +x llvm.sh
+            sudo ./llvm.sh 22
+            export CC=clang-22
+            export CXX=clang++-22
+          elif [[ "${{ runner.os }}" == "macOS" ]]; then
+            echo "Configuring for macOS..."
+            export CC=clang
+            export CXX=clang++
+          else
+            echo "Configuring for Windows..."
+            # On Windows, 'uv' usually finds MSVC automatically, 
+            # but we set standard flags if needed.
+            export CC=clang
+            export CXX=clang++
+          fi
+
+          # 2. Install the alpha versions
+          uv python install 3.15 3.15t
+          
+          # 3. Common Build Arguments
+          # We store these in a variable to avoid repetition
+          CMAKE_FLAGS="-GNinja;-DENABLE_SANITIZER=OFF;-DCMAKE_BUILD_TYPE=Release;-DDOUBLE_PRECISION=ON"
+          CXX_FLAGS="-Wno-overriding-option"
+
+          # 4. Build Standard 3.15
+          uv build --wheel --python 3.15 --out-dir wheelhouse/ \
+            --config-setting=cmake.args="$CMAKE_FLAGS" \
+            --config-setting=cmake.define.CMAKE_CXX_FLAGS="$CXX_FLAGS"
+          
+          # 5. Build Free-Threaded 3.15t
+          uv build --wheel --python 3.15t --out-dir wheelhouse/ \
+            --config-setting=cmake.args="$CMAKE_FLAGS" \
+            --config-setting=cmake.define.CMAKE_CXX_FLAGS="$CXX_FLAGS"
+
       - name: Upload Artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -236,12 +277,12 @@ jobs:
           export CXXFLAGS="-fno-sanitize=alignment"
           export LDFLAGS="-fuse-ld=lld-22"
           
-          # Force uv to use Python 3.14
-          uv build --wheel --python 3.14 \
+          # Force uv to use Python 3.15
+          uv build --wheel --python 3.15 \
             --config-setting=cmake.args="-DENABLE_SANITIZER=ON;-DCMAKE_BUILD_TYPE=RelWithDebInfo;-DDOUBLE_PRECISION=ON"
       - name: Install and Test
         run: |
-          uv venv --python 3.14
+          uv venv --python 3.15
           
           # Install the wheel AND the test dependencies
           uv pip install dist/*.whl numpy psutil pytest
@@ -338,11 +379,11 @@ jobs:
             fi
           done
 
-      - name: "2. Verify Wheel Count (Expected: 15)"
+      - name: "2. Verify Wheel Count (Expected: 21)"
         shell: bash
         run: |
           # More robust file counting using find
-          EXPECTED=15
+          EXPECTED=21
           ACTUAL=$(find dist -name '*.whl' | wc -l)
           if [ "$ACTUAL" -ne "$EXPECTED" ]; then
             echo "::error::Wheel count mismatch! Expected $EXPECTED, found $ACTUAL."
