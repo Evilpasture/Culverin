@@ -327,6 +327,10 @@ jobs:
           CXXFLAGS: "-fsanitize=thread -g -O1 -fno-omit-frame-pointer -fno-optimize-sibling-calls -DENABLE_SANITIZER -D__SANITIZE_THREAD__"
           LDFLAGS: "-fsanitize=thread"
           CMAKE_ARGS: "-DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_STANDARD=23 -DCMAKE_C_STANDARD_REQUIRED=ON -DENABLE_THREAD_SANITIZER=ON"
+          # Force TSan to flush to stdout and don't exit silently
+          TSAN_OPTIONS: "halt_on_error=1:log_path=stdout"
+          # Disable pytest output capturing so TSan can write directly to the console
+          PYTEST_ADDOPTS: "-s"
         run: |
           uv python install 3.14t
           uv venv --python 3.14t --clear
