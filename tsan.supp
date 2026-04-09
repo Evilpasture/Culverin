@@ -21,6 +21,12 @@ race:PyUnicode_DecodeUTF8Stateful
 race:PyObject_GenericSetAttr
 race:PyObject_GenericSetAttr.warm
 
+# CPython Internal: String/Unicode Interning and Comparison
+race:unicode_eq
+race:PyUnicode_FromString
+race:PyUnicode_New
+race:bcmp
+
 # CPython Internal: Object Initialization & Type Setup
 race:PyObject_GC_Del
 race:_PyExc_InitTypes
