@@ -153,9 +153,9 @@ static inline int internal_native_cond_free(NativeCond *c) {
  * ============================================================================ */
 
 /**
- * We use NativeMutex (MagMutex) for everything. 
- * Even on Python 3.13+, MagMutex has shown better contention scaling than PyMutex 
- * in our benchmarks, and on 3.12 it is infinitely faster than PyThread_type_lock.
+ * SHIM LOGIC: 
+ * On Python 3.13+ (Free-threaded), we call MagMutex directly.
+ * On Python 3.12, we wrap MagMutex in Allow/End macros to prevent GIL deadlocks.
  */
 typedef NativeMutex ShadowMutex;
 
@@ -164,10 +164,21 @@ static inline int internal_shadow_init(ShadowMutex *m) {
 }
 
 static inline void internal_shadow_lock(ShadowMutex *m) { 
+#if PY_VERSION_HEX < 0x030D0000
+    /* Python 3.12 shim: Release GIL so the thread can 'park' in C 
+       without blocking the interpreter or signals like Ctrl+C. */
+    Py_BEGIN_ALLOW_THREADS
     internal_native_mutex_lock(m); 
+    Py_END_ALLOW_THREADS
+#else
+    /* Python 3.13+: Direct call. The runtime is parallel-friendly. */
+    internal_native_mutex_lock(m); 
+#endif
 }
 
 static inline void internal_shadow_unlock(ShadowMutex *m) { 
+    /* Unlock is usually fast enough to keep the GIL, but 3.12 
+       sometimes needs the same 'blink' if there's heavy contention. */
     internal_native_mutex_unlock(m); 
 }
 
