@@ -196,6 +196,9 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
     self->max_jolt_bodies = 0;
     atomic_init(&self->active_queries, 0);
     self->view_export_count = 0;
+    #if PY_VERSION_HEX < 0x030D0000
+    atomic_init(&self->waiting_threads, 0);
+    #endif
     atomic_init(&self->step_requested, false);
     atomic_init(&self->is_stepping, false);
     self->needs_optimization = false;
@@ -1320,6 +1323,22 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
 
     // --- PHASE 1: SHADOW STATE LOCK-DOWN ---
     SHADOW_LOCK(&self->shadow_lock);
+    
+    #if PY_VERSION_HEX < 0x030D0000
+    // ANTI-STARVATION: Yield to waiting Python threads
+    // We use a member-variable counter to avoid the 'static' variable race.
+    while (atomic_load_explicit(&self->waiting_threads, memory_order_acquire) > 0) {
+        if (++self->yield_blink_count % 64 == 0) {
+            SHADOW_UNLOCK(&self->shadow_lock);
+            Py_BEGIN_ALLOW_THREADS 
+            culverin_yield(); 
+            Py_END_ALLOW_THREADS 
+            SHADOW_LOCK(&self->shadow_lock);
+        } else {
+            culverin_cpu_relax();
+        }
+    }
+    #endif
 
     // Raise flags
     atomic_store_explicit(&self->is_stepping, true, memory_order_relaxed);

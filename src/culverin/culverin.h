@@ -285,6 +285,10 @@ typedef struct PhysicsWorldObject {
     uint32_t max_jolt_bodies;
     atomic_int active_queries;
     int view_export_count;
+    #if PY_VERSION_HEX < 0x030D0000
+    atomic_int waiting_threads;
+    uint32_t yield_blink_count;
+    #endif
 
     // --- BUCKET 3: Structs & Complex Types ---
     ShadowSync step_sync;    // 16 bytes (Internal 8-byte alignment)
