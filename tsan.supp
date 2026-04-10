@@ -35,3 +35,13 @@ race:_PyTypes_Init
 # CPython Internal: Threading & Lifecycle
 race:do_start_joinable_thread
 race:PyEval_EvalFrameDefault
+
+# Ignore CPython 3.12 internal qsort/sorting race
+race:^qsort$
+race:^qsort_r$
+race:python3.12
+
+# Ignore known false positives in Python's object allocation
+race:PyObject_GC_Del
+race:PyObject_GC_Track
+race:PyGC_Collect
