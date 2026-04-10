@@ -298,7 +298,21 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
         self->free_slots[f_idx] = i;
     }
     SHADOW_LOCK(&self->shadow_lock);
-    culverin_sync_shadow_buffers(self);
+
+    // Copy front to back for init sync
+    size_t init_count = atomic_load_explicit(&self->count, memory_order_acquire);
+    if (init_count > 0) {
+        memcpy(self->positions_back, self->positions, init_count * sizeof(PosStride));
+        memcpy(self->rotations_back, self->rotations, init_count * sizeof(AuxStride));
+        memcpy(self->linear_velocities_back, self->linear_velocities,
+               init_count * sizeof(AuxStride));
+        memcpy(self->angular_velocities_back, self->angular_velocities,
+               init_count * sizeof(AuxStride));
+    }
+
+    culverin_sync_shadow_buffers(self); // C++ reads/writes back buffer
+    swap_shadow_buffers(self);          // Expose populated back buffer to Python
+
     SHADOW_UNLOCK(&self->shadow_lock);
     return 0;
 
@@ -1324,7 +1338,8 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
     // --- PHASE 1: SHADOW STATE LOCK-DOWN ---
     SHADOW_LOCK(&self->shadow_lock);
 
-    // I have no idea why I should even need this, but the GIL is giving me trouble, so this will do.
+    // I have no idea why I should even need this, but the GIL is giving me trouble, so this will
+    // do.
     // TODO: investigate how the hell does this work
 #if !defined(Py_GIL_DISABLED)
     // ANTI-STARVATION: Yield to waiting Python threads (Getters/Mutators)
@@ -1373,6 +1388,18 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
     self->command_count       = 0;
 
     atomic_store_explicit(&self->contact_atomic_idx, 0, memory_order_relaxed);
+
+    // --- DOUBLE BUFFERING PREP ---
+    size_t active_copy_count = atomic_load_explicit(&self->count, memory_order_acquire);
+    if (active_copy_count > 0) {
+        memcpy(self->positions_back, self->positions, active_copy_count * sizeof(PosStride));
+        memcpy(self->rotations_back, self->rotations, active_copy_count * sizeof(AuxStride));
+        memcpy(self->linear_velocities_back, self->linear_velocities,
+               active_copy_count * sizeof(AuxStride));
+        memcpy(self->angular_velocities_back, self->angular_velocities,
+               active_copy_count * sizeof(AuxStride));
+    }
+
     SHADOW_UNLOCK(&self->shadow_lock);
 
     // --- PHASE 2: JOLT CRUNCH (GIL Released) ---
@@ -1408,6 +1435,9 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
 
         // --- PHASE 3: FINALIZATION ---
         SHADOW_LOCK(&self->shadow_lock);
+
+    // Commit Jolt's work to the Python-facing front buffer
+    swap_shadow_buffers(self);
 
     // 1. Cleanup retired buffers (Atomic gens/stats handled in free_new_buffers)
     if (self->trash_count > 0) {
