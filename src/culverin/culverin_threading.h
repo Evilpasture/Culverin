@@ -152,49 +152,23 @@ static inline int internal_native_cond_free(NativeCond *c) {
  * 2. SHADOW MUTEX IMPLEMENTATIONS
  * ============================================================================ */
 
-#if PY_VERSION_HEX < 0x030D0000
-    /* Python 3.12: Use the interpreter's native locking. 
-       Slow, but Python-aware and stable. */
-    typedef PyThread_type_lock ShadowMutex;
+typedef NativeMutex ShadowMutex;
 
-    static inline int internal_shadow_init(ShadowMutex *m) { 
-        *m = PyThread_allocate_lock();
-        return (*m != NULL) ? 0 : -1;
-    }
+static inline int internal_shadow_init(ShadowMutex *m) { 
+    return internal_native_mutex_init(m); 
+}
 
-    static inline void internal_shadow_lock(ShadowMutex *m) { 
-        /* PyThread_acquire_lock handles the GIL 'blink' internally 
-           if waitflag is set to 1. */
-        PyThread_acquire_lock(*m, 1); 
-    }
+static inline void internal_shadow_lock(ShadowMutex *m) { 
+    internal_native_mutex_lock(m); 
+}
 
-    static inline void internal_shadow_unlock(ShadowMutex *m) { 
-        PyThread_release_lock(*m); 
-    }
+static inline void internal_shadow_unlock(ShadowMutex *m) { 
+    internal_native_mutex_unlock(m); 
+}
 
-    static inline int internal_shadow_free(ShadowMutex *m) { 
-        PyThread_free_lock(*m);
-        return 0;
-    }
-#else
-    typedef NativeMutex ShadowMutex;
-
-    static inline int internal_shadow_init(ShadowMutex *m) { 
-        return internal_native_mutex_init(m); 
-    }
-
-    static inline void internal_shadow_lock(ShadowMutex *m) { 
-        internal_native_mutex_lock(m); 
-    }
-
-    static inline void internal_shadow_unlock(ShadowMutex *m) { 
-        internal_native_mutex_unlock(m); 
-    }
-
-    static inline int internal_shadow_free(ShadowMutex *m) { 
-        return internal_native_mutex_free(m); 
-    }
-#endif
+static inline int internal_shadow_free(ShadowMutex *m) { 
+    return internal_native_mutex_free(m); 
+}
 
 
 /* ============================================================================
