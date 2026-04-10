@@ -152,39 +152,49 @@ static inline int internal_native_cond_free(NativeCond *c) {
  * 2. SHADOW MUTEX IMPLEMENTATIONS
  * ============================================================================ */
 
-/**
- * SHIM LOGIC: 
- * On Python 3.13+ (Free-threaded), we call MagMutex directly.
- * On Python 3.12, we wrap MagMutex in Allow/End macros to prevent GIL deadlocks.
- */
-typedef NativeMutex ShadowMutex;
-
-static inline int internal_shadow_init(ShadowMutex *m) { 
-    return internal_native_mutex_init(m); 
-}
-
-static inline void internal_shadow_lock(ShadowMutex *m) { 
 #if PY_VERSION_HEX < 0x030D0000
-    /* Python 3.12 shim: Release GIL so the thread can 'park' in C 
-       without blocking the interpreter or signals like Ctrl+C. */
-    Py_BEGIN_ALLOW_THREADS
-    internal_native_mutex_lock(m); 
-    Py_END_ALLOW_THREADS
+    /* Python 3.12: Use the interpreter's native locking. 
+       Slow, but Python-aware and stable. */
+    typedef PyThread_type_lock ShadowMutex;
+
+    static inline int internal_shadow_init(ShadowMutex *m) { 
+        *m = PyThread_allocate_lock();
+        return (*m != NULL) ? 0 : -1;
+    }
+
+    static inline void internal_shadow_lock(ShadowMutex *m) { 
+        /* PyThread_acquire_lock handles the GIL 'blink' internally 
+           if waitflag is set to 1. */
+        PyThread_acquire_lock(*m, 1); 
+    }
+
+    static inline void internal_shadow_unlock(ShadowMutex *m) { 
+        PyThread_release_lock(*m); 
+    }
+
+    static inline int internal_shadow_free(ShadowMutex *m) { 
+        PyThread_free_lock(*m);
+        return 0;
+    }
 #else
-    /* Python 3.13+: Direct call. The runtime is parallel-friendly. */
-    internal_native_mutex_lock(m); 
+    typedef NativeMutex ShadowMutex;
+
+    static inline int internal_shadow_init(ShadowMutex *m) { 
+        return internal_native_mutex_init(m); 
+    }
+
+    static inline void internal_shadow_lock(ShadowMutex *m) { 
+        internal_native_mutex_lock(m); 
+    }
+
+    static inline void internal_shadow_unlock(ShadowMutex *m) { 
+        internal_native_mutex_unlock(m); 
+    }
+
+    static inline int internal_shadow_free(ShadowMutex *m) { 
+        return internal_native_mutex_free(m); 
+    }
 #endif
-}
-
-static inline void internal_shadow_unlock(ShadowMutex *m) { 
-    /* Unlock is usually fast enough to keep the GIL, but 3.12 
-       sometimes needs the same 'blink' if there's heavy contention. */
-    internal_native_mutex_unlock(m); 
-}
-
-static inline int internal_shadow_free(ShadowMutex *m) { 
-    return internal_native_mutex_free(m); 
-}
 
 
 /* ============================================================================
