@@ -317,7 +317,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@v7
         with:
-          python-version: "3.13t" # Installs the free-threaded version natively
+          python-version: "3.14t" # Installs the free-threaded version natively
 
       - name: Build and Scan with TSan (Python 3.14t)
         env:

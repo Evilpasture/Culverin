@@ -152,11 +152,6 @@ static inline int internal_native_cond_free(NativeCond *c) {
  * 2. SHADOW MUTEX IMPLEMENTATIONS
  * ============================================================================ */
 
-/**
- * We use NativeMutex (MagMutex) for everything. 
- * Even on Python 3.13+, MagMutex has shown better contention scaling than PyMutex 
- * in our benchmarks, and on 3.12 it is infinitely faster than PyThread_type_lock.
- */
 typedef NativeMutex ShadowMutex;
 
 static inline int internal_shadow_init(ShadowMutex *m) { 
