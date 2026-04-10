@@ -29,7 +29,6 @@
 
 // Memory and Alignment
 static constexpr size_t INITIAL_BODY_CAPACITY = 1024;
-static constexpr size_t BODY_ID_SIZE_BYTES    = 8;
 
 // Physics Simulation
 static constexpr float DEFAULT_FRAME_TIME    = 1.0f / 60.0f;
@@ -197,7 +196,6 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
     self->max_jolt_bodies = 0;
     atomic_init(&self->active_queries, 0);
     self->view_export_count = 0;
-    atomic_init(&self->waiting_threads, 0);
     atomic_init(&self->step_requested, false);
     atomic_init(&self->is_stepping, false);
     self->needs_optimization = false;
@@ -1322,13 +1320,6 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
 
     // --- PHASE 1: SHADOW STATE LOCK-DOWN ---
     SHADOW_LOCK(&self->shadow_lock);
-
-    // ANTI-STARVATION: Yield to waiting Python threads (Getters/Mutators)
-    while (atomic_load_explicit(&self->waiting_threads, memory_order_acquire) > 0) {
-        SHADOW_UNLOCK(&self->shadow_lock);
-        Py_BEGIN_ALLOW_THREADS culverin_yield();
-        Py_END_ALLOW_THREADS SHADOW_LOCK(&self->shadow_lock);
-    }
 
     // Raise flags
     atomic_store_explicit(&self->is_stepping, true, memory_order_relaxed);

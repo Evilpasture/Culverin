@@ -285,7 +285,6 @@ typedef struct PhysicsWorldObject {
     uint32_t max_jolt_bodies;
     atomic_int active_queries;
     int view_export_count;
-    atomic_int waiting_threads; // Anti-starvation counter
 
     // --- BUCKET 3: Structs & Complex Types ---
     ShadowSync step_sync;    // 16 bytes (Internal 8-byte alignment)
@@ -415,6 +414,7 @@ static inline bool culv_is_finite_d(double d) {
         default: culv_is_finite_d((double)(x)))
 
 // --- Error Reporting (One instance, no bloat) ---
+CULV_MAYBE_UNUSED
 static PyObject *culv_raise_finite_err(const char *msg) {
     PyErr_Format(PyExc_ValueError, "Numerical Error: '%s' must be finite", msg);
     return nullptr;
