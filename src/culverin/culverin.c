@@ -196,7 +196,7 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
     self->max_jolt_bodies = 0;
     atomic_init(&self->active_queries, 0);
     self->view_export_count = 0;
-#if PY_VERSION_HEX < 0x030D0000
+#if !defined(Py_GIL_DISABLED)
     atomic_init(&self->waiting_threads, 0);
 #endif
     atomic_init(&self->step_requested, false);
@@ -1324,19 +1324,16 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
     // --- PHASE 1: SHADOW STATE LOCK-DOWN ---
     SHADOW_LOCK(&self->shadow_lock);
 
-#if PY_VERSION_HEX < 0x030D0000
-
+    // I have no idea why I should even need this, but the GIL is giving me trouble, so this will do.
+    // TODO: investigate how the hell does this work
+#if !defined(Py_GIL_DISABLED)
     // ANTI-STARVATION: Yield to waiting Python threads (Getters/Mutators)
 
     while (atomic_load_explicit(&self->waiting_threads, memory_order_acquire) > 0) {
-
         SHADOW_UNLOCK(&self->shadow_lock);
-
         Py_BEGIN_ALLOW_THREADS culverin_yield();
-
         Py_END_ALLOW_THREADS SHADOW_LOCK(&self->shadow_lock);
     }
-
 #endif
 
     // Raise flags

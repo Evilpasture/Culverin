@@ -285,7 +285,7 @@ typedef struct PhysicsWorldObject {
     uint32_t max_jolt_bodies;
     atomic_int active_queries;
     int view_export_count;
-    #if PY_VERSION_HEX < 0x030D0000
+    #if !defined(Py_GIL_DISABLED)
     atomic_int waiting_threads;
     #endif
 

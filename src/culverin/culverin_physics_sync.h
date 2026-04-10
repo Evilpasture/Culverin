@@ -39,14 +39,14 @@ static inline void internal_sync_wait_loop(PhysicsWorldObject *self,
 
 static inline void internal_block_until_not_stepping(PhysicsWorldObject *self) {
     if (atomic_load_explicit(&self->is_stepping, memory_order_relaxed)) {
-        #if PY_VERSION_HEX < 0x030D0000
+        #if !defined(Py_GIL_DISABLED)
         atomic_fetch_add_explicit(&self->waiting_threads, 1, memory_order_relaxed);
         #endif
         
         while (atomic_load_explicit(&self->is_stepping, memory_order_relaxed)) {
             internal_sync_wait_loop(self, &self->is_stepping, NULL, true);
         }
-        #if PY_VERSION_HEX < 0x030D0000
+        #if !defined(Py_GIL_DISABLED)
         atomic_fetch_sub_explicit(&self->waiting_threads, 1, memory_order_relaxed);
         #endif
     }
@@ -61,13 +61,13 @@ static inline void internal_block_until_not_querying(PhysicsWorldObject *self) {
 
 static inline void internal_block_if_step_pending(PhysicsWorldObject *self) {
     if (atomic_load_explicit(&self->step_requested, memory_order_relaxed)) {
-        #if PY_VERSION_HEX < 0x030D0000
+        #if !defined(Py_GIL_DISABLED)
         atomic_fetch_add_explicit(&self->waiting_threads, 1, memory_order_relaxed);
         #endif
         while (atomic_load_explicit(&self->step_requested, memory_order_relaxed)) {
             internal_sync_wait_loop(self, &self->step_requested, NULL, true);
         }
-        #if PY_VERSION_HEX < 0x030D0000
+        #if !defined(Py_GIL_DISABLED)
         atomic_fetch_sub_explicit(&self->waiting_threads, 1, memory_order_relaxed);
         #endif
     }
@@ -77,7 +77,7 @@ static inline void internal_block_until_can_query(PhysicsWorldObject *self) {
     if (atomic_load_explicit(&self->is_stepping, memory_order_relaxed) || 
         atomic_load_explicit(&self->step_requested, memory_order_relaxed)) {
 
-        #if PY_VERSION_HEX < 0x030D0000
+        #if !defined(Py_GIL_DISABLED)
         atomic_fetch_add_explicit(&self->waiting_threads, 1, memory_order_relaxed);
         #endif
         
@@ -96,7 +96,7 @@ static inline void internal_block_until_can_query(PhysicsWorldObject *self) {
             Py_END_ALLOW_THREADS
             SHADOW_LOCK(&self->shadow_lock);
         }
-        #if PY_VERSION_HEX < 0x030D0000
+        #if !defined(Py_GIL_DISABLED)
         atomic_fetch_sub_explicit(&self->waiting_threads, 1, memory_order_relaxed);
         #endif
     }
