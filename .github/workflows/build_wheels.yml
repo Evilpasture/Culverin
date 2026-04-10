@@ -319,7 +319,7 @@ jobs:
         with:
           python-version: "3.14t" # Installs the free-threaded version natively
 
-      - name: Build and Scan with TSan (Python 3.12)
+      - name: Build and Scan with TSan (Python 3.14t)
         env:
           CC: "/usr/bin/clang-22"
           CXX: "/usr/bin/clang++-22"
@@ -332,8 +332,8 @@ jobs:
           # Disable pytest output capturing so TSan can write directly to the console
           PYTEST_ADDOPTS: "-s"
         run: |
-          uv python install 3.12
-          uv venv --python 3.12 --clear
+          uv python install 3.14t
+          uv venv --python 3.14t --clear
           
           uv pip install --python ./.venv/bin/python scikit-build-core numpy psutil pytest
           uv pip install --python ./.venv/bin/python -e . --no-build-isolation
