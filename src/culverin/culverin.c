@@ -1,7 +1,6 @@
 #if !defined(_CRT_SECURE_NO_WARNINGS)
 #    define _CRT_SECURE_NO_WARNINGS
 #endif
-#include "culverin_physics_sync.h"
 #include "culverin.h"
 #include "culverin_arg_indices.h"
 #include "culverin_character.h"
@@ -14,6 +13,7 @@
 #include "culverin_getters.h"
 #include "culverin_handler.h"
 #include "culverin_parsers.h"
+#include "culverin_physics_sync.h"
 #include "culverin_physics_world_internal.h"
 #include "culverin_query_methods.h"
 #include "culverin_ragdoll.h"
@@ -196,9 +196,9 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
     self->max_jolt_bodies = 0;
     atomic_init(&self->active_queries, 0);
     self->view_export_count = 0;
-    #if PY_VERSION_HEX < 0x030D0000
+#if PY_VERSION_HEX < 0x030D0000
     atomic_init(&self->waiting_threads, 0);
-    #endif
+#endif
     atomic_init(&self->step_requested, false);
     atomic_init(&self->is_stepping, false);
     self->needs_optimization = false;
@@ -1323,22 +1323,21 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
 
     // --- PHASE 1: SHADOW STATE LOCK-DOWN ---
     SHADOW_LOCK(&self->shadow_lock);
-    
-    #if PY_VERSION_HEX < 0x030D0000
-    // ANTI-STARVATION: Yield to waiting Python threads
-    // We use a member-variable counter to avoid the 'static' variable race.
+
+#if PY_VERSION_HEX < 0x030D0000
+
+    // ANTI-STARVATION: Yield to waiting Python threads (Getters/Mutators)
+
     while (atomic_load_explicit(&self->waiting_threads, memory_order_acquire) > 0) {
-        if (++self->yield_blink_count % 64 == 0) {
-            SHADOW_UNLOCK(&self->shadow_lock);
-            Py_BEGIN_ALLOW_THREADS 
-            culverin_yield(); 
-            Py_END_ALLOW_THREADS 
-            SHADOW_LOCK(&self->shadow_lock);
-        } else {
-            culverin_cpu_relax();
-        }
+
+        SHADOW_UNLOCK(&self->shadow_lock);
+
+        Py_BEGIN_ALLOW_THREADS culverin_yield();
+
+        Py_END_ALLOW_THREADS SHADOW_LOCK(&self->shadow_lock);
     }
-    #endif
+
+#endif
 
     // Raise flags
     atomic_store_explicit(&self->is_stepping, true, memory_order_relaxed);

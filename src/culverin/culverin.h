@@ -287,7 +287,6 @@ typedef struct PhysicsWorldObject {
     int view_export_count;
     #if PY_VERSION_HEX < 0x030D0000
     atomic_int waiting_threads;
-    uint32_t yield_blink_count;
     #endif
 
     // --- BUCKET 3: Structs & Complex Types ---
