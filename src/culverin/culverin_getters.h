@@ -12,7 +12,8 @@ typedef enum {
     PROXY_ROTATIONS,
     PROXY_LINEAR_VELOCITIES,
     PROXY_ANGULAR_VELOCITIES,
-    PROXY_USER_DATA
+    PROXY_USER_DATA,
+    PROXY_DYNAMIC
 } ProxyBufferType;
 
 typedef struct {
@@ -20,6 +21,7 @@ typedef struct {
     struct PhysicsWorldObject *world;
     ProxyBufferType buf_type;
     const char *format;
+    void *dynamic_ptr;
     size_t itemsize;
     int stride;
     // Buffer protocol metadata storage
@@ -55,3 +57,4 @@ PyGetSet_DeclareGetter PhysicsWorld_get_max_bodies(struct PhysicsWorldObject *se
                                                    CULV_MAYBE_UNUSED void *closure);
 PyGetSet_DeclareGetter PhysicsWorld_get_remaining_capacity(struct PhysicsWorldObject *self,
                                                            CULV_MAYBE_UNUSED void *closure);
+PyCFunction_DeclareMethodFromModule PhysicsWorld_get_soft_body_vertices(struct PhysicsWorldObject *self, PyObject *const *args, size_t nargsf, PyObject *kwnames);

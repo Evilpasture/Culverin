@@ -92,6 +92,7 @@ static int alloc_new_buffers(NewBuffers *nb, size_t cap) {
     nb->cats  = (uint32_t *)CULV_RAW_MALLOC(cap * sizeof(uint32_t));
     nb->masks = (uint32_t *)CULV_RAW_MALLOC(cap * sizeof(uint32_t));
     nb->mats  = (uint32_t *)CULV_RAW_CALLOC(cap, sizeof(uint32_t));
+    nb->softs = (SoftBodyShadow *)CULV_RAW_CALLOC(cap, sizeof(SoftBodyShadow));
 
     // Validation
     if (!nb->pos || !nb->rot || !nb->ppos || !nb->prot || !nb->lvel || !nb->avel || 
@@ -129,6 +130,10 @@ static size_t migrate_and_init(PhysicsWorldObject *self, NewBuffers *nb, size_t 
         memcpy(nb->cats, self->categories, current_count * sizeof(uint32_t));
         memcpy(nb->masks, self->masks, current_count * sizeof(uint32_t));
         memcpy(nb->mats, self->material_ids, current_count * sizeof(uint32_t));
+
+        if (self->soft_shadows) {
+            memcpy(nb->softs, self->soft_shadows, current_count * sizeof(SoftBodyShadow));
+        }
 
         // Dense-to-Slot mapping
         memcpy(nb->d2s, self->dense_to_slot, current_count * sizeof(uint32_t));
@@ -203,9 +208,11 @@ int allocate_buffers(PhysicsWorldObject *self, int max_bodies) {
     self->masks        = (uint32_t *)CULV_RAW_MALLOC(self->capacity * sizeof(uint32_t));
     self->material_ids = (uint32_t *)CULV_RAW_CALLOC(self->capacity, sizeof(uint32_t));
 
+    self->soft_shadows = (SoftBodyShadow *)CULV_RAW_CALLOC(self->capacity, sizeof(SoftBodyShadow));
+
     // ATOMIC BUFFER ALLOCATIONS
-    // id_to_handle_map is _Atomic BodyHandle*
-    self->id_to_handle_map = (_Atomic BodyHandle *)CULV_RAW_MALLOC((self->max_jolt_bodies + 1) * sizeof(BodyHandle));
+    // id_to_handle_map is BodyHandle*
+    self->id_to_handle_map = (BodyHandle *)CULV_RAW_MALLOC((self->max_jolt_bodies + 1) * sizeof(BodyHandle));
     
     // generations is _Atomic uint32_t*
     self->generations   = (_Atomic uint32_t *)CULV_RAW_MALLOC(self->slot_capacity * sizeof(_Atomic uint32_t));
@@ -291,7 +298,7 @@ int PhysicsWorld_resize(PhysicsWorldObject *self, size_t new_capacity) {
     size_t final_free_count = migrate_and_init(self, &nb, new_capacity);
 
     // 5. Expand Trash Bin
-    if (self->trash_count >= self->trash_capacity) {
+    if (UNLIKELY(self->trash_count >= self->trash_capacity)) {
         size_t next_cap = (self->trash_capacity == 0) ? 4 : self->trash_capacity * 2;
         void *new_trash = CULV_RAW_REALLOC(self->trash_buffers, next_cap * sizeof(NewBuffers));
         if (!new_trash) {
@@ -315,6 +322,7 @@ int PhysicsWorld_resize(PhysicsWorldObject *self, size_t new_capacity) {
         .avel  = self->angular_velocities,
         .bids  = self->body_ids,
         .udat  = self->user_data,
+        .softs = self->soft_shadows,
         .gens  = self->generations, // Atomic pointer swap
         .s2d   = self->slot_to_dense,
         .d2s   = self->dense_to_slot,
@@ -334,6 +342,7 @@ int PhysicsWorld_resize(PhysicsWorldObject *self, size_t new_capacity) {
     self->angular_velocities = nb.avel;
     self->body_ids           = nb.bids;
     self->user_data          = nb.udat;
+    self->soft_shadows       = nb.softs;
     self->generations        = nb.gens; // Pointer to new atomic array
     self->slot_to_dense      = nb.s2d;
     self->dense_to_slot      = nb.d2s;
@@ -419,6 +428,17 @@ void free_shadow_buffers(PhysicsWorldObject *self) {
     CULV_RAW_FREE(self->user_data);
     self->user_data = nullptr;
     CULV_RAW_FREE(self->categories);
+
+    if (self->soft_shadows) {
+        for (size_t i = 0; i < self->capacity; i++) {
+            if (self->soft_shadows[i].vertices) {
+                CulvMem_RawFreeAligned(self->soft_shadows[i].vertices);
+            }
+        }
+        CULV_RAW_FREE(self->soft_shadows);
+        self->soft_shadows = nullptr;
+    }
+
     self->categories = nullptr;
     CULV_RAW_FREE(self->masks);
     self->masks = nullptr;

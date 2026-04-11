@@ -104,6 +104,7 @@ def build_extension():
     print(f"--- CULVERIN ONE-CLICK BUILD (Python {sys.version.split()[0]}) ---")
     
     config: dict[str, str | list[str]] = {
+        "cmake.define.CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "cmake.define.DOUBLE_PRECISION": "ON",
         "cmake.define.JPH_DOUBLE_PRECISION": "ON",
         "cmake.define.CMAKE_C_COMPILER": "clang",
@@ -130,13 +131,20 @@ def build_extension():
 
         # DEPLOY BINARIES
         extension = ".pyd" if sys.platform == "win32" else ".so"
+        # Find .pyd/.so AND .pdb files
         binary_files = [f for f in BUILD_DIR.glob(f"**/*{extension}") if "CMakeFiles" not in str(f)]
+        symbol_files = [f for f in BUILD_DIR.glob("**/*.pdb") if "CMakeFiles" not in str(f)]
         
         if not binary_files:
             raise FileNotFoundError("Build finished but no binary found.")
 
         for pyd in binary_files:
             shutil.copy2(pyd, TARGET_DIR / pyd.name)
+
+        # Copy the symbols (the .pdb map)
+        for pdb in symbol_files:
+            shutil.copy2(pdb, TARGET_DIR / pdb.name)
+            print(f">>> Deployed symbols: {pdb.name}")
         
         # --- NEW STEPS ---
         update_dev_tooling()

@@ -1,5 +1,6 @@
 #pragma once
 #include "culverin_compiler_specifics.h"
+#include <joltc.h>
 #include <stdint.h>
 
 // --- Jolt Precision Compatibility ---
@@ -64,10 +65,16 @@ typedef enum ContactEventType : uint8_t {
 } ContactEventType;
 
 typedef enum MotionType : uint8_t {
-    MOTION_STATIC,
-    MOTION_KINEMATIC,
-    MOTION_DYNAMIC,
+    MOTION_STATIC = JPH_MotionType_Static,
+    MOTION_KINEMATIC = JPH_MotionType_Kinematic,
+    MOTION_DYNAMIC = JPH_MotionType_Dynamic,
 } MotionType;
+
+typedef enum ObjectLayer : uint32_t {
+    OBJECT_LAYER_STATIC  = 0,
+    OBJECT_LAYER_DYNAMIC = 1,
+    OBJECT_LAYER_VEHICLE = 2  // For raycasts/sensors that shouldn't hit the vehicle itself
+} ObjectLayer;
 
 CULV_MAYBE_UNUSED static constexpr uint32_t HANDLE_INDEX_BITS = 32;
 CULV_MAYBE_UNUSED static constexpr uint64_t HANDLE_INDEX_MASK = 0xFFFFFFFF;

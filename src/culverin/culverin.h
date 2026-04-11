@@ -199,15 +199,23 @@ typedef struct {
     uint32_t vertex_count;
 } MeshBounds;
 
+typedef struct {
+    JPH_Real *vertices;    // Shadow buffer for positions (Vec3/Vec4)
+    float *normals;        // Optional shadow buffer for normals
+    float *velocities;     // Optional
+    uint32_t num_vertices;
+} SoftBodyShadow;
+
 // Temporary container for resize
 typedef struct {
     JPH_Real *pos, *ppos;
     float *rot, *prot, *lvel, *avel;
     JPH_BodyID *bids;
     uint64_t *udat;
-    _Atomic uint32_t *gens; // Updated to Atomic
+    _Atomic uint32_t *gens;
     uint32_t *s2d, *d2s, *free, *cats, *masks, *mats;
-    _Atomic uint8_t *stat; // Updated to Atomic
+    _Atomic uint8_t *stat;
+    SoftBodyShadow *softs;
 } NewBuffers;
 
 // --- The Object Struct ---
@@ -235,6 +243,10 @@ typedef struct PhysicsWorldObject {
     JPH_BodyID *body_ids;
     uint64_t *user_data;
     uint32_t *material_ids;
+
+    // Array of SoftBodyShadow structs, parallel to body_ids.
+    // If dense_idx is a rigid body, soft_shadows[dense_idx].vertices == nullptr
+    SoftBodyShadow *soft_shadows; 
 
     // --- Data Buffers ---
     ContactEvent *contact_events;
@@ -291,8 +303,8 @@ typedef struct PhysicsWorldObject {
     #endif
 
     // --- BUCKET 3: Structs & Complex Types ---
-    ShadowSync step_sync;    // 16 bytes (Internal 8-byte alignment)
-    ShadowMutex shadow_lock; // PyMutex (usually 1-4 bytes)
+    ShadowSync step_sync;    // 16 bytes (Internal 2-byte alignment)
+    ShadowMutex shadow_lock; // MagMutex (usually 1 bytes)
 
     // --- BUCKET 4: Small types (Packed at the tail) ---
     _Atomic uint8_t *slot_states;
@@ -333,6 +345,7 @@ typedef struct {
     PyObject *VehicleType;      // Reference to the vehicle class
     PyObject *SkeletonType;
     PyObject *RagdollSettingsType;
+    PyObject *SoftBodySharedSettingsType;
     PyObject *RagdollType;
     PyObject *BufferProxyType;
     CulverinParsers parsers;
@@ -506,12 +519,12 @@ typedef struct {
 static_assert(sizeof(SlotPredicate) == sizeof(uint8_t));
 
 // Standard masks for reuse
-static constexpr uint32_t MASK_IMM_STANDARD = (1u << SLOT_ALIVE) | (1u << SLOT_CHARACTER);
-static constexpr uint32_t MASK_IMM_STRICT   = (1u << SLOT_ALIVE);
+static constexpr uint32_t MASK_IMM_STANDARD = (1u << SLOT_ALIVE) | (1u << SLOT_CHARACTER) | (1u << SLOT_SOFT_BODY);
+static constexpr uint32_t MASK_IMM_STRICT   = (1u << SLOT_ALIVE) | (1u << SLOT_SOFT_BODY);
 static constexpr uint32_t MASK_DEFERRED     = (1u << SLOT_PENDING_CREATE);
 // Define the mask for states that can be destroyed
 static constexpr uint32_t MASK_DESTRUCTIBLE =
-    (1u << SLOT_ALIVE) | (1u << SLOT_PENDING_CREATE) | (1u << SLOT_CHARACTER);
+    (1u << SLOT_ALIVE) | (1u << SLOT_PENDING_CREATE) | (1u << SLOT_CHARACTER) | (1u << SLOT_SOFT_BODY);
 
 [[gnu::const]] CULV_NODISCARD static CULV_FORCE_INLINE SlotPredicate
 get_slot_predicate(uint8_t state, uint32_t imm_mask) {

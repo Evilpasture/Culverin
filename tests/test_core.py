@@ -1642,5 +1642,146 @@ class TestRobustness(CulverinTestCase):
         pos = char.get_position()
         self.assertAlmostEqual(pos[0], 20.0)
 
+class TestSoftBodies(CulverinTestCase):
+    def create_cube_settings(self, size: float=1.0):
+        """Helper to build a simple optimized soft-body cube."""
+        settings = culverin.SoftBodySharedSettings()
+        
+        # 8 Vertices
+        s = size / 2.0
+        verts = [
+            (-s, -s, -s), (s, -s, -s), (s, s, -s), (-s, s, -s),
+            (-s, -s, s), (s, -s, s), (s, s, s), (-s, s, s)
+        ]
+        for v in verts:
+            # Use FastParse keywords to test the new SBSS logic
+            settings.add_vertex(pos=v, inv_mass=1.0)
+            
+        # 12 Faces (2 per cube side)
+        faces = [
+            (0, 2, 1), (0, 3, 2), (4, 5, 6), (4, 6, 7), # Front/Back
+            (0, 1, 5), (0, 5, 4), (2, 3, 7), (2, 7, 6), # Bottom/Top
+            (0, 4, 7), (0, 7, 3), (1, 2, 6), (1, 6, 5)  # Left/Right
+        ]
+        for f in faces:
+            settings.add_face(v1=f[0], v2=f[1], v3=f[2])
+            
+        settings.optimize()
+        return settings
+
+    def test_soft_body_lifecycle(self):
+        """Verify creation, handle validity, and destruction of soft bodies."""
+        settings = self.create_cube_settings()
+        
+        h = self.world.create_soft_body(
+            shared_settings=settings,
+            pos=(0, 10, 0),
+            rot=(0, 0, 0, 1)
+        )
+        
+        self.world.step(0)
+        self.assertTrue(self.world.is_alive(h))
+        
+        # Verify it falls
+        self.world.step(1/60.0)
+        pos = self.get_pos(h)
+        self.assertLess(pos[1], 10.0, "Soft body center-of-mass did not fall")
+        
+        self.world.destroy_body(h)
+        self.world.step(0)
+        self.assertFalse(self.world.is_alive(h))
+
+    def test_soft_body_vertex_sync(self):
+        """Verify zero-copy vertex synchronization into NumPy buffers."""
+        settings = self.create_cube_settings()
+        h = self.world.create_soft_body(settings, pos=(0, 5, 0), rot=(0,0,0,1))
+        self.world.step(0)
+        
+        # Get the buffer proxy
+        view = self.world.get_soft_body_vertices(h)
+        self.assertIsNotNone(view)
+        
+        # Detect precision from the engine metadata
+        dtype = np.float64 if culverin.USE_DOUBLE_PRECISION else np.float32
+        
+        # Convert to numpy (Zero-copy)
+        verts = np.frombuffer(view, dtype=dtype).reshape(-1, 4)
+        
+        self.assertEqual(len(verts), 8, f"Soft body should have 8 vertices (detected {dtype})")
+        # Check initial world-space position of one vertex
+        # Vertex 0 was (-0.5, -0.5, -0.5) local, CoM is (0, 5, 0)
+        self.assertAlmostEqual(verts[0, 1], 4.5, places=3)
+        
+        # Step simulation
+        for _ in range(10):
+            self.world.step(1/60.0)
+            
+        # Verify the same numpy array has updated data (proving zero-copy sync)
+        self.assertLess(verts[0, 1], 4.5, "Vertices in NumPy buffer did not update after step")
+
+    def test_soft_body_collision(self):
+        """Test if a soft body deforms/stops when hitting the floor."""
+        import numpy as np
+        # Create a floor at Y=0
+        self.world.create_body(pos=(0, -1, 0), size=(100, 1, 100), motion=culverin.MOTION_STATIC)
+        
+        settings = self.create_cube_settings()
+        # Spawn cube so its botto]m vertices are at Y=0.5
+        h = self.world.create_soft_body(settings, pos=(0, 1, 0), rot=(0,0,0,1))
+        self.world.step(0)
+        
+        view = self.world.get_soft_body_vertices(h)
+        dtype = np.float64 if culverin.USE_DOUBLE_PRECISION else np.float32
+        verts = np.frombuffer(view, dtype=dtype).reshape(-1, 4)
+        
+        # Simulate landing and squishing
+        for _ in range(60):
+            self.world.step(1/60.0)
+            
+        # Bottom vertices should be near the floor top.
+        # Floor is at -1.0 with size 1.0 (assuming half-extents, top is at -0.5)
+        # If size is full-extents, top is at -0.5.
+        bottom_y = verts[[0, 1, 4, 5], 1]
+        for y in bottom_y:
+            self.assertGreater(y, -1.1, "Soft body fell through the floor")
+
+    def test_invalid_handle_error(self):
+        """Ensure get_soft_body_vertices fails correctly on rigid bodies."""
+        h_rigid = self.world.create_body(pos=(0, 0, 0))
+        self.world.step(0)
+        
+        with self.assertRaisesRegex(TypeError, "Handle does not belong to a soft body"):
+            self.world.get_soft_body_vertices(h_rigid)
+
+    def test_shared_settings_reuse(self):
+        """Ensure multiple soft bodies can share the same topology settings."""
+        settings = self.create_cube_settings()
+        
+        h1 = self.world.create_soft_body(settings, pos=(-5, 10, 0), rot=(0,0,0,1))
+        h2 = self.world.create_soft_body(settings, pos=(5, 10, 0), rot=(0,0,0,1))
+        
+        self.world.step(0)
+        self.assertTrue(self.world.is_alive(h1))
+        self.assertTrue(self.world.is_alive(h2))
+        
+        v1 = np.frombuffer(self.world.get_soft_body_vertices(h1), dtype=np.float32)
+        v2 = np.frombuffer(self.world.get_soft_body_vertices(h2), dtype=np.float32)
+        
+        self.assertFalse(np.allclose(v1, v2), "Vertices should be in different world-space positions")
+
+    def test_soft_body_save_load(self):
+        """Test if soft bodies survive world state serialization."""
+        settings = self.create_cube_settings()
+        h = self.world.create_soft_body(settings, pos=(0, 10, 0), rot=(0,0,0,1))
+        self.world.step(0)
+        
+        state = self.world.save_state()
+        self.world.load_state(state=state)
+        self.world.step(0)
+        
+        # Verify handle is still valid and CoM position is restored
+        self.assertTrue(self.world.is_alive(h))
+        self.assertAlmostEqual(self.get_pos(h)[1], 10.0, places=3)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
