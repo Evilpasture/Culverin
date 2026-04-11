@@ -88,9 +88,9 @@ typedef struct {
 __declspec(align(MEMORY_ALIGNMENT_SIZE))
 #endif
 typedef union {
-    #if !defined(_MSC_VER)
+#if !defined(_MSC_VER)
     [[gnu::aligned(MEMORY_ALIGNMENT_SIZE)]]
-    #endif
+#endif
     uint32_t header;
 
     // 1. Create Body (Matches current logic)
@@ -234,7 +234,8 @@ static constexpr uint32_t VALID_BID_MASK = (1u << SLOT_ALIVE) | (1u << SLOT_PEND
                                                                                                    \
         /* Branchless Condition: Is it CREATE, or does it have a valid BID? */                     \
         uint32_t is_executable =                                                                   \
-            is_valid & ((type == CMD_CREATE_BODY) | (bid != JPH_INVALID_BODY_ID));                 \
+            is_valid & ((type == CMD_CREATE_BODY) | (type == CMD_CREATE_SOFT_BODY) |               \
+                        (bid != JPH_INVALID_BODY_ID));                                             \
                                                                                                    \
         /* Branchless Target Selection via Ternary (Compiles to CMOV / CSEL) */                    \
         const void *target = is_executable ? dispatch_table[type] : &&op_NOP;                      \

@@ -523,12 +523,12 @@ typedef struct {
 static_assert(sizeof(SlotPredicate) == sizeof(uint8_t));
 
 // Standard masks for reuse
-static constexpr uint32_t MASK_IMM_STANDARD = (1u << SLOT_ALIVE) | (1u << SLOT_CHARACTER);
-static constexpr uint32_t MASK_IMM_STRICT   = (1u << SLOT_ALIVE);
+static constexpr uint32_t MASK_IMM_STANDARD = (1u << SLOT_ALIVE) | (1u << SLOT_CHARACTER) | (1u << SLOT_SOFT_BODY);
+static constexpr uint32_t MASK_IMM_STRICT   = (1u << SLOT_ALIVE) | (1u << SLOT_SOFT_BODY);
 static constexpr uint32_t MASK_DEFERRED     = (1u << SLOT_PENDING_CREATE);
 // Define the mask for states that can be destroyed
 static constexpr uint32_t MASK_DESTRUCTIBLE =
-    (1u << SLOT_ALIVE) | (1u << SLOT_PENDING_CREATE) | (1u << SLOT_CHARACTER);
+    (1u << SLOT_ALIVE) | (1u << SLOT_PENDING_CREATE) | (1u << SLOT_CHARACTER) | (1u << SLOT_SOFT_BODY);
 
 [[gnu::const]] CULV_NODISCARD static CULV_FORCE_INLINE SlotPredicate
 get_slot_predicate(uint8_t state, uint32_t imm_mask) {

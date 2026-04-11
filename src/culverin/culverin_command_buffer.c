@@ -452,6 +452,10 @@ void clear_command_queue(PhysicsWorldObject *self) {
             if (cmd->create.settings) {
                 JPH_BodyCreationSettings_Destroy(cmd->create.settings);
             }
+        } else if (CMD_GET_TYPE(cmd->header) == CMD_CREATE_SOFT_BODY) {
+            if (cmd->create_soft.settings) {
+                JPH_SoftBodyCreationSettings_Destroy(cmd->create_soft.settings);
+            }
         }
     }
     self->command_count = 0;
