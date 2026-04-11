@@ -1,7 +1,6 @@
 #include "culverin_ragdoll.h"
 #include "culverin_arg_indices.h"
 #include "culverin_fast_build.h"
-#include "culverin_math.h"
 #include "culverin_physics_sync.h"
 #include "culverin_physics_world_internal.h"
 
@@ -102,7 +101,6 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll_settings(Physics
     }
 
     // --- 2. TYPE VALIDATION ---
-    PyObject *module = PyType_GetModule(Py_TYPE(self));
 
     // Manual type check (replaces O! format string)
     if (!PyObject_TypeCheck(py_skel_obj, (PyTypeObject *)st->SkeletonType)) {
