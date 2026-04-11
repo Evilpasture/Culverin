@@ -4563,58 +4563,64 @@ static int init_constants(PyObject *m) {
 PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
     CulverinState *st = get_culverin_state(m);
 
-    auto ver = extract_version_from_toml();
-    if (PyModule_AddStringConstant(m, "__version__", ver) < 0) {
-        return -1;
-    }
-
-    // Atomic "test and set" to ensure only one thread ever runs the stitcher
+    // 1. THE MASTER GATE: Protects all shared global memory
     int expected = 0;
-    if (atomic_compare_exchange_strong(&docs_status, &expected, true)) {
+    if (atomic_compare_exchange_strong(&docs_status, &expected, 1)) {
+        // --- THE WINNER: Initializes Global State ---
+
+        // Stashing version in a global or local is fine,
+        // but let's keep the stitching inside the winner-take-all block
         stitch_docs(PhysicsWorld_methods, "PhysicsWorld");
         stitch_docs(Character_methods, "Character");
         stitch_docs(Vehicle_methods, "Vehicle");
         stitch_docs(Skeleton_methods, "Skeleton");
         stitch_docs(Ragdoll_methods, "Ragdoll");
         stitch_docs(RagdollSettings_methods, "RagdollSettings");
-
-        // Stitch docstrings into getsets
         stitch_docs_getset(PhysicsWorld_getset, "PhysicsWorld");
         stitch_docs_getset(Character_getset, "Character");
         stitch_docs_getset(Vehicle_getset, "Vehicle");
-        // ATOMIC RELEASE: Signal we are totally finished.
-        // Release ensure all previous string writes are visible to other CPUs.
+
+        JPH_SetTraceHandler(culv_jph_trace);
+        JPH_SetAssertFailureHandler(culv_jph_assert);
+
+        if (!JPH_Init()) {
+            PyErr_SetString(PyExc_RuntimeError, "Jolt initialization failed");
+            atomic_store_explicit(&docs_status, 0, memory_order_relaxed); // Reset on fail
+            return -1;
+        }
+
+        // Initialize Global Filters (Shared across all instances)
+        JPH_BroadPhaseLayerFilter_SetProcs(&global_bp_procs);
+        JPH_ObjectLayerFilter_SetProcs(&global_obj_procs);
+        JPH_BodyFilter_SetProcs(&global_bf_procs);
+        JPH_ShapeFilter_SetProcs(&global_sf_procs);
+
+        // Initialize Global Mutex (Shared across all instances)
+        if (INIT_NATIVE_MUTEX(g_jph_trampoline_lock) != 0) {
+            PyErr_SetString(PyExc_RuntimeError, "Failed to initialize global JPH lock");
+            return -1;
+        }
+
+        // SIGNAL FINISHED: All global memory is now stable
         atomic_store_explicit(&docs_status, 2, memory_order_release);
+
     } else {
-        // LOSER: Wait for the winner to hit state '2'
-        // Acquire ensures we see the strings written by the winner.
+        // --- THE LOSERS: Spin-wait until state 2 ---
         while (atomic_load_explicit(&docs_status, memory_order_acquire) != 2) {
-            culverin_yield(); // Give the CPU a break
+            culverin_yield();
         }
     }
 
-    // Register handlers
-    JPH_SetTraceHandler(culv_jph_trace);
-    JPH_SetAssertFailureHandler(culv_jph_assert);
+    // --- PER-INTERPRETER SETUP (Must happen for every thread/module) ---
 
-    if (!JPH_Init()) {
-        PyErr_SetString(PyExc_RuntimeError, "Jolt initialization failed");
+    // Add version to THIS specific module object
+    auto ver = extract_version_from_toml();
+    if (PyModule_AddStringConstant(m, "__version__", ver) < 0) {
         return -1;
     }
 
     culverin_init_all_parsers(&st->parsers);
-
     CULV_INIT_PROFILER();
-
-    JPH_BroadPhaseLayerFilter_SetProcs(&global_bp_procs);
-    JPH_ObjectLayerFilter_SetProcs(&global_obj_procs);
-    JPH_BodyFilter_SetProcs(&global_bf_procs);
-    JPH_ShapeFilter_SetProcs(&global_sf_procs);
-
-    if (INIT_NATIVE_MUTEX(g_jph_trampoline_lock) != 0) {
-        PyErr_SetString(PyExc_RuntimeError, "Failed to initialize global JPH trampoline lock");
-        return -1;
-    }
 
     st->helper = PyImport_ImportModule("culverin._culverin");
     if (!st->helper) {
