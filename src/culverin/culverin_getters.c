@@ -37,11 +37,6 @@ PyType_DeclareSlot_Status BufferProxy_getbuffer(BufferProxyObject *self, Py_buff
     SHADOW_LOCK(&world->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(world);
 
-    // Increment while STILL HOLDING the shadow_lock
-    // This ensures the Stepper cannot set is_stepping=true and 
-    // check queries=0 until we are finished here.
-    atomic_fetch_add_explicit(&world->active_queries, 1, memory_order_relaxed);
-
     size_t count = atomic_load_explicit(&world->count, memory_order_acquire);
 
     // 2. Enum-based Dispatch (No stale raw pointers)
@@ -94,6 +89,8 @@ PyType_DeclareSlot_Status BufferProxy_getbuffer(BufferProxyObject *self, Py_buff
 }
 
 PyType_DeclareSlot_Void BufferProxy_releasebuffer(BufferProxyObject *self, Py_buffer *view) {
+    // Let NumPy hold the world buffer permanently.
+    #if defined(STRICT_THREAD_SAFETY)
     PhysicsWorldObject *world = self->world;
 
     // 4. Mark query finished
@@ -106,6 +103,7 @@ PyType_DeclareSlot_Void BufferProxy_releasebuffer(BufferProxyObject *self, Py_bu
         NATIVE_COND_BROADCAST(world->step_sync.cond);
         NATIVE_MUTEX_UNLOCK(world->step_sync.mutex);
     }
+    #endif
 }
 
 // --- Heap Type Specification ---

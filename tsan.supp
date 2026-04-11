@@ -60,3 +60,7 @@ race:do_start_joinable_thread
 # race:python3.13t
 # race:python3.14t
 # race:python3.15t
+
+# We intentionally allow dirty reads on physics buffers for performance
+race:run_binary_simd_less_f64
+race:numpy.core.*
