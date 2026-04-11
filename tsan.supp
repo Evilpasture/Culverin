@@ -64,3 +64,5 @@ race:do_start_joinable_thread
 # We intentionally allow dirty reads on physics buffers for performance
 race:run_binary_simd_less_f64
 race:numpy.core.*
+race:numpy._core.src.multiarray
+race:_multiarray_umath
