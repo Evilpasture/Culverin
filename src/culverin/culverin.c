@@ -4569,9 +4569,9 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
     // 1. THE MASTER GATE
     int expected = 0;
     if (atomic_compare_exchange_strong(&docs_status, &expected, 1)) {
-        
+
         // --- THE WINNER: Calculates Global State ---
-        
+
         // 1A. Extract version ONCE and store in the shared buffer
         const char *ver_temp = extract_version_from_toml();
         strncpy(shared_version, ver_temp, MAGIC_BUFFER - 1);
@@ -4628,13 +4628,16 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
     CULV_INIT_PROFILER();
 
     st->helper = PyImport_ImportModule("culverin._culverin");
-    if (!st->helper) { return -1;
-}
+    if (!st->helper) {
+        return -1;
+    }
 
-    if (init_types(m, st) < 0) { return -1;
-}
-    if (init_constants(m) < 0) { return -1;
-}
+    if (init_types(m, st) < 0) {
+        return -1;
+    }
+    if (init_constants(m) < 0) {
+        return -1;
+    }
 
     return 0;
 }
