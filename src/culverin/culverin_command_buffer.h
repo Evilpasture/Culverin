@@ -83,11 +83,12 @@ typedef struct {
 // This ensures exactly ONE command per CPU Cache Line, preventing false-sharing
 // and cache-straddling across thread boundaries.
 #if defined(_MSC_VER)
-__declspec(align(64))
-#else
-__attribute__((aligned(MEMORY_ALIGNMENT_SIZE)))
+__declspec(align(MEMORY_ALIGNMENT_SIZE))
 #endif
 typedef union {
+    #if !defined(_MSC_VER)
+    [[gnu::aligned(MEMORY_ALIGNMENT_SIZE)]]
+    #endif
     uint32_t header;
 
     // 1. Create Body (Matches current logic)

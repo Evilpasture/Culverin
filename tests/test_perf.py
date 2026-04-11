@@ -1,5 +1,6 @@
 import sys
 import time
+import threading
 import unittest
 
 import numpy as np
@@ -7,14 +8,39 @@ import numpy as np
 import culverin
 
 
+# ==============================================================================
+# PERFORMANCE THRESHOLDS CONFIGURATION
+# ==============================================================================
+# Adjust these values to tune the strictness of the CI performance pipeline.
+# Time values are in seconds unless specified as _MS (milliseconds).
+class THRESHOLDS:
+    # Creation & Lifecycle
+    BATCH_CREATE_RATIO = 0.5        # Batch must take < 50% the time of a Python loop
+    BATCH_CREATE_MAX_S_5K = 0.05    # Max time (s) to batch create 5,000 bodies
+
+    # Core Simulation
+    SIM_STEP_MAX_MS_10K = 12.0      # Max time (ms) per frame for 10,000 free-falling bodies
+    BULK_MUTATION_MAX_MS = 50.0     # Max time (ms) per frame with 5,000 queued forces
+    CONTENTION_STEP_MAX_MS = 15.0   # Max time (ms) per frame when fighting Numpy for locks
+
+    # C-API Bindings (FastParse & FastBuild)
+    FASTPARSE_MAX_S_50K = 0.100     # Max time (s) for 50,000 calls parsing 64 arguments
+    FASTBUILD_MAX_S_100K = 0.060    # Max time (s) for 100,000 Tuple builds
+
+    # Queries
+    RAYCAST_MAX_S_50K = 0.080       # Max time (s) for 50,000 batch raycasts
+
+    # State Management
+    STATE_SAVE_MAX_S = 0.05         # Max time (s) to save 10,000 bodies
+    STATE_LOAD_MAX_S = 0.05         # Max time (s) to load 10,000 bodies
+# ==============================================================================
+
+
 class TestPerformanceRegression(unittest.TestCase):
     """
     Performance Regression Suite.
     These tests ensure that core optimizations (like FastParse, Batching, and Memory Views)
     do not regress in future updates.
-
-    Note: Thresholds are intentionally generous to prevent flaky CI failures on
-    shared runners, but strict enough to catch O(N^2) bugs or accidental Python allocations.
     """
 
     def setUp(self):
@@ -50,7 +76,9 @@ class TestPerformanceRegression(unittest.TestCase):
         self.world.destroy_bodies_batch(loop_handles)
         self.world.step(0)
 
-        # 2. Batch Creation
+        # 2. Batch Creation (Tiny warmup)
+        self.world.create_bodies_batch(positions[:10], sizes[:10], culverin.SHAPE_BOX, culverin.MOTION_DYNAMIC)
+        
         t0 = time.perf_counter()
         batch_handles = self.world.create_bodies_batch(
             positions=positions,
@@ -67,10 +95,12 @@ class TestPerformanceRegression(unittest.TestCase):
         # Assertions
         self.assertEqual(len(batch_handles), body_count)
         self.assertLess(
-            batch_time, loop_time * 0.8, "Batch creation should be measurably faster than looping"
+            batch_time, loop_time * THRESHOLDS.BATCH_CREATE_RATIO, 
+            "Batch creation should be measurably faster than looping"
         )
         self.assertLess(
-            batch_time, 0.05, "Batch creation of 5k bodies took over 50ms (Major Regression)"
+            batch_time, THRESHOLDS.BATCH_CREATE_MAX_S_5K, 
+            "Batch creation of 5k bodies took too long (Major Regression)"
         )
 
     def test_simulation_step_overhead(self):
@@ -93,9 +123,10 @@ class TestPerformanceRegression(unittest.TestCase):
 
         print(f"\n[Perf] 10k Body Sim Step -> Avg: {avg_ms:.2f} ms/frame")
 
-        # Jolt is fast. 10k free-falling bodies should easily process in under 16ms (60fps)
-        # We set threshold to 25ms to account for slow CI runners.
-        self.assertLess(avg_ms, 25.0, "Simulation step time degraded significantly.")
+        self.assertLess(
+            avg_ms, THRESHOLDS.SIM_STEP_MAX_MS_10K, 
+            "Simulation step time degraded significantly."
+        )
 
     def test_fastparse_stress_limit(self):
         """
@@ -107,7 +138,7 @@ class TestPerformanceRegression(unittest.TestCase):
         pos_args = list(range(32))
 
         # Create 32 keyword arguments (a32...a63)
-        # Using sys.intern to ensure string literals are interned, which is critical for FastParse's optimization.
+        # Using sys.intern to ensure string literals are interned.
         kw_args = {sys.intern(f"a{i}"): i for i in range(32, 64)}
 
         iterations = 50000
@@ -125,10 +156,10 @@ class TestPerformanceRegression(unittest.TestCase):
             f"\n[Perf] FastParse Stress Limit (64 args) -> {calls_per_sec:,.0f} calls/sec ({total_time * 1000:.2f}ms total)"
         )
 
-        # This is a rigorous test. 50k calls to a 64-arg parser involves massive
-        # bitwise operations and dictionary lookups per iteration.
-        # 250ms is a safe threshold for modern CPUs on CI runners.
-        self.assertLess(total_time, 0.250, "FastParse stress limit (64 args) has regressed.")
+        self.assertLess(
+            total_time, THRESHOLDS.FASTPARSE_MAX_S_50K, 
+            "FastParse stress limit (64 args) has regressed."
+        )
 
     def test_fastbuild_engine_overhead(self):
         """
@@ -152,9 +183,10 @@ class TestPerformanceRegression(unittest.TestCase):
             f"\n[Perf] FastBuild Engine -> {calls_per_sec:,.0f} builds/sec ({total_time * 1000:.2f}ms total)"
         )
 
-        # FastBuild should easily exceed 1 million builds per second on modern hardware.
-        # We'll set a conservative regression threshold of 200ms for 100k calls.
-        self.assertLess(total_time, 0.200, "FastBuild engine construction speed has regressed.")
+        self.assertLess(
+            total_time, THRESHOLDS.FASTBUILD_MAX_S_100K, 
+            "FastBuild engine construction speed has regressed."
+        )
 
         # Safety check: ensure it's returning the expected object type
         res = self.world._benchmark_build()
@@ -184,10 +216,8 @@ class TestPerformanceRegression(unittest.TestCase):
 
         self.assertIsNotNone(res)
         self.assertGreater(len(res), 0)
-        # 50k parallel raycasts against a single broadphase object should be near instant (< 50ms)
         self.assertLess(
-            total_time,
-            0.150,
+            total_time, THRESHOLDS.RAYCAST_MAX_S_50K,
             "Batch raycasting took too long. Check Jolt threads or memory view overhead.",
         )
 
@@ -217,13 +247,8 @@ class TestPerformanceRegression(unittest.TestCase):
         )
         print(f"[Perf] State Payload Size -> {len(state_bytes) / 1024 / 1024:.2f} MB")
 
-        # memcpy of ~2-3 MB of shadow buffers should take less than 5ms
-        self.assertLess(
-            save_time, 0.05, "save_state() is too slow, ensure no Python loops are used."
-        )
-        self.assertLess(
-            load_time, 0.05, "load_state() is too slow, ensure Jolt syncing is optimized."
-        )
+        self.assertLess(save_time, THRESHOLDS.STATE_SAVE_MAX_S, "save_state() is too slow.")
+        self.assertLess(load_time, THRESHOLDS.STATE_LOAD_MAX_S, "load_state() is too slow.")
 
     def test_bulk_mutation_throughput(self):
         """
@@ -242,7 +267,6 @@ class TestPerformanceRegression(unittest.TestCase):
         self.world.step(0)
 
         # 2. Stress Loop: Apply 5,000 forces per frame for 100 frames
-        # This will trigger command_queue capacity expansions repeatedly
         t0 = time.perf_counter()
         for _ in range(100):
             for h in handles:
@@ -256,10 +280,10 @@ class TestPerformanceRegression(unittest.TestCase):
         
         print(f"\n[Perf] Bulk Mutation (5k forces/frame) -> Avg: {avg_ms:.2f} ms/frame")
         
-        # 3. Assertions
-        # 5k forces is a lot of memory traffic (5k * sizeof(PhysicsCommand)).
-        # If this is > 50ms, the engine is bottlenecked on reallocs or command flushing.
-        self.assertLess(avg_ms, 50.0, "Bulk mutation overhead (Command Queue) is too high.")
+        self.assertLess(
+            avg_ms, THRESHOLDS.BULK_MUTATION_MAX_MS, 
+            "Bulk mutation overhead (Command Queue) is too high."
+        )
 
     def test_fastparse_morphism_overhead(self):
         """
@@ -271,14 +295,12 @@ class TestPerformanceRegression(unittest.TestCase):
         iterations = 1_000_000 # Higher iter for micro-benchmark
 
         # 1. Hot Path: Pure Positional arguments
-        # This bypasses all loops and bitmasks, landing directly in fp_speculate_p4_naked
         t0 = time.perf_counter()
         for _ in range(iterations):
             self.world.set_linear_velocity(h, 1.0, 2.0, 3.0)
         t_pos = time.perf_counter() - t0
 
         # 2. Fallback Path: Mixed Keyword arguments
-        # This triggers the fallback logic inside the stub and runs the generic loop
         t0 = time.perf_counter()
         for _ in range(iterations):
             self.world.set_linear_velocity(h, x=1.0, y=2.0, z=3.0)
@@ -289,6 +311,44 @@ class TestPerformanceRegression(unittest.TestCase):
         # Analysis
         self.assertLess(t_pos, t_kw, "Speculative stubs should outperform generic keyword parsing")
         print(f"       Speedup Ratio: {t_kw/t_pos:.2f}x")
+
+    def test_contention_efficiency(self):
+        """
+        Ensure the Lock-Free Handover (BufferProxy) allows parallel execution
+        without causing the Physics Thread to stall.
+        """
+        body_count = 5000
+        self.world.create_bodies_batch(
+            np.random.uniform(-50, 50, (body_count, 3)).tolist(),
+            [[0.5]*3]*body_count, culverin.SHAPE_BOX, culverin.MOTION_DYNAMIC
+        )
+        self.world.step(0)
+
+        def worker_math():
+            # Continuously read from the proxy (simulates heavy Numpy/AI work)
+            # This tests if releasebuffer/getbuffer/CV overhead is low.
+            for _ in range(500):
+                with memoryview(self.world.positions) as mv:
+                    _ = np.frombuffer(mv, dtype=np.float64).sum()
+
+        t0 = time.perf_counter()
+        math_thread = threading.Thread(target=worker_math)
+        math_thread.start()
+
+        # Run 100 physics steps in parallel with the math thread
+        for _ in range(100):
+            self.world.step(1/60.0)
+
+        math_thread.join()
+        total_time = time.perf_counter() - t0
+        avg_ms = (total_time / 100.0) * 1000.0
+
+        print(f"\n[Perf] Contention (Step + Proxy Read) -> {avg_ms:.2f} ms/frame")
+        
+        self.assertLess(
+            avg_ms, THRESHOLDS.CONTENTION_STEP_MAX_MS, 
+            "Stepper is stalling due to Proxy contention."
+        )
 
 
 if __name__ == "__main__":

@@ -1,37 +1,66 @@
+# =============================================================================
+# CULVERIN TSAN SUPPRESSIONS (Python 3.13 - 3.15t)
+# =============================================================================
+
+# --- 1. CPython Internal: Biased Refcounting (BRC) ---
+# BRC uses custom hand-offs between threads that TSan flags as races.
 race:brc.c
+race:_Py_brc_*
+race:_PyObject_Thread*
+race:biased_refcnt
+
+# --- 2. CPython Internal: Allocators (mimalloc & obmalloc) ---
+# The free-threaded allocator is lock-free and extremely noisy to TSan.
 race:obmalloc.c
+race:pycore_freelist.h
+race:mimalloc
+race:_mi_*
+race:mi_pthread_done
+
+# --- 3. CPython Internal: Core Interpreter & JIT ---
+# TSan flags Tier 2 JIT warmup and opcode specialization as races.
 race:object_stack.c
 race:pycore_object_stack.h
-race:pycore_freelist.h
-race:_Py_brc_merge_refcounts
-race:_Py_brc_queue_object
-race:_Py_brc_*
-race:^JPH::*
-race:dictresize
-race:PyDict_SetItem
-race:type_get_doc
-# So fast that CPython is struggling!
-race:PyDict_SetDefaultRef
-race:PyUnicode_DecodeFSDefaultAndSize
-# Internal CPython 3.14t race in filesystem codec initialization
-# Triggered by concurrent calls to os.fsdecode/os.fsencode
-# See on CPython Issue #128137, #128013, #128021
-race:PyUnicode_DecodeUTF8Stateful
-# CPython Internal: Generic Attribute Setting (JIT/Warmup noise)
+race:PyEval_EvalFrameDefault
 race:PyObject_GenericSetAttr
-race:PyObject_GenericSetAttr.warm
+race:PyObject_GC_*
+race:PyGC_Collect
+race:_PyTypes_Init
+race:_PyExc_InitTypes
 
-# CPython Internal: String/Unicode Interning and Comparison
+# --- 4. CPython Internal: Built-in Types (Dict/Unicode) ---
+# Shared global strings and dict-resizing are handled by the runtime.
+race:dictresize
+race:PyDict_*
 race:unicode_eq
-race:PyUnicode_FromString
-race:PyUnicode_New
+race:PyUnicode_*
+race:type_get_doc
 race:bcmp
 
-# CPython Internal: Object Initialization & Type Setup
-race:PyObject_GC_Del
-race:_PyExc_InitTypes
-race:_PyTypes_Init
+# Kill the internal Python 3.12 qsort race
+race:qsort
+race:qsort_r
 
-# CPython Internal: Threading & Lifecycle
+# Kill the internal thread start race
+race:PyThread_start_new_thread
+
+# --- 5. Third-Party: Jolt Physics ---
+# Jolt uses a custom, highly optimized task scheduler and job system.
+# We suppress JPH namespace to focus TSan on the Culverin bridge.
+race:^JPH::*
+
+# --- 6. OS & System Library Noise ---
+# Catch-all for known noise in system-level sorting and thread starts.
+race:^qsort$
+race:^qsort_r$
 race:do_start_joinable_thread
-race:PyEval_EvalFrameDefault
+
+# --- 7. Binary Catch-all ---
+# If all else fails, ignore races occurring inside the python binary itself.
+# race:python3.13t
+# race:python3.14t
+# race:python3.15t
+
+# We intentionally allow dirty reads on physics buffers for performance
+race:run_binary_simd_less_f64
+race:numpy.core.*

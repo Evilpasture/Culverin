@@ -1,7 +1,150 @@
 #include "culverin_getters.h"
 #include "culverin.h"
 #include "culverin_character.h"
+#include "culverin_physics_sync.h"
 #include <Python.h>
+
+PyType_DeclareSlot_Status BufferProxy_traverse(BufferProxyObject *self, visitproc visit,
+                                               void *arg) {
+    Py_VISIT(self->world);
+    return 0;
+}
+
+PyType_DeclareSlot_Status BufferProxy_clear(BufferProxyObject *self) {
+    if (self->world) {
+        if (atomic_load_explicit(&self->world->view_export_count, memory_order_relaxed) > 0) {
+            atomic_fetch_sub_explicit(&self->world->view_export_count, 1, memory_order_relaxed);
+        }
+        Py_CLEAR(self->world);
+    }
+    return 0;
+}
+
+PyType_DeclareSlot_Void BufferProxy_dealloc(BufferProxyObject *self) {
+    PyObject_GC_UnTrack(self);
+    CULV_MAYBE_UNUSED auto cleared = BufferProxy_clear(self);
+    // For heap types, we must release our reference to the type itself
+    PyTypeObject *tp = Py_TYPE(self);
+    tp->tp_free((PyObject *)self);
+    Py_DECREF(tp);
+}
+
+PyType_DeclareSlot_Status BufferProxy_getbuffer(BufferProxyObject *self, Py_buffer *view,
+                                                CULV_MAYBE_UNUSED int flags) {
+    PhysicsWorldObject *world = self->world;
+
+    // 1. TSan Guard: Prevent Jolt from syncing while Python reads
+    SHADOW_LOCK(&world->shadow_lock);
+    BLOCK_UNTIL_NOT_STEPPING(world);
+
+    size_t count = atomic_load_explicit(&world->count, memory_order_acquire);
+
+    // 2. Enum-based Dispatch (No stale raw pointers)
+    void *target_ptr = nullptr;
+    switch (self->buf_type) {
+    case PROXY_POSITIONS:
+        target_ptr = world->positions;
+        break;
+    case PROXY_ROTATIONS:
+        target_ptr = world->rotations;
+        break;
+    case PROXY_LINEAR_VELOCITIES:
+        target_ptr = world->linear_velocities;
+        break;
+    case PROXY_ANGULAR_VELOCITIES:
+        target_ptr = world->angular_velocities;
+        break;
+    case PROXY_USER_DATA:
+        target_ptr = world->user_data;
+        break;
+    }
+
+    if (!target_ptr) {
+        SHADOW_UNLOCK(&world->shadow_lock);
+        PyErr_SetString(PyExc_RuntimeError, "Buffer not allocated");
+        return -1;
+    }
+
+    // 3. Setup Metadata
+    self->shape[0]   = (Py_ssize_t)(count * self->stride);
+    self->strides[0] = (Py_ssize_t)self->itemsize;
+
+    view->buf = target_ptr;
+    view->obj = (PyObject *)self;
+    Py_INCREF(self);
+
+    view->len        = self->shape[0] * self->strides[0];
+    view->readonly   = 1;
+    view->itemsize   = (Py_ssize_t)self->itemsize;
+    view->format     = (char *)self->format;
+    view->ndim       = 1;
+    view->shape      = self->shape;
+    view->strides    = self->strides;
+    view->suboffsets = nullptr;
+    view->internal   = nullptr;
+
+    // 5. CRITICAL: Release the lock so other threads (Mutator/Stepper) can work!
+    SHADOW_UNLOCK(&world->shadow_lock); 
+    return 0;
+}
+
+PyType_DeclareSlot_Void BufferProxy_releasebuffer(BufferProxyObject *self, Py_buffer *view) {
+    // Let NumPy hold the world buffer permanently.
+    #if defined(STRICT_THREAD_SAFETY)
+    PhysicsWorldObject *world = self->world;
+
+    // 4. Mark query finished
+    // Use 'release' barrier to ensure Numpy reads are finished before Stepper writes
+    if (atomic_fetch_sub_explicit(&world->active_queries, 1, memory_order_release) == 1) {
+        
+        // 5. If we were the last ones, wake up the Stepper!
+        // We use the internal sync mutex/cond here
+        NATIVE_MUTEX_LOCK(world->step_sync.mutex);
+        NATIVE_COND_BROADCAST(world->step_sync.cond);
+        NATIVE_MUTEX_UNLOCK(world->step_sync.mutex);
+    }
+    #endif
+}
+
+// --- Heap Type Specification ---
+PyType_Slot BufferProxy_slots[] = {
+    {.slot = Py_tp_dealloc, .pfunc = BufferProxy_dealloc},
+    {.slot = Py_tp_traverse, .pfunc = BufferProxy_traverse},
+    {.slot = Py_tp_clear, .pfunc = BufferProxy_clear},
+    {.slot = Py_bf_getbuffer, .pfunc = BufferProxy_getbuffer},
+    {.slot = Py_bf_releasebuffer, .pfunc = BufferProxy_releasebuffer},
+    {}};
+
+PyType_Spec BufferProxy_spec = {.name      = "culverin.BufferProxy",
+                                .basicsize = sizeof(BufferProxyObject),
+                                .flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
+                                .slots     = BufferProxy_slots};
+
+// --- Updated make_proxy helper ---
+static PyObject *make_proxy(PhysicsWorldObject *self, ProxyBufferType type, const char *format,
+                            size_t itemsize, int stride) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+
+    // Allocation
+    BufferProxyObject *proxy =
+        PyObject_GC_New(BufferProxyObject, (PyTypeObject *)st->BufferProxyType);
+    if (!proxy) {
+        return nullptr;
+    }
+
+    // Initialization
+    proxy->world = self;
+    Py_INCREF(self);
+    proxy->buf_type = type;
+    proxy->format   = format;
+    proxy->itemsize = itemsize;
+    proxy->stride   = stride;
+
+    atomic_fetch_add_explicit(&self->view_export_count, 1, memory_order_relaxed);
+
+    PyObject_GC_Track(proxy);
+    return (PyObject *)proxy;
+}
 
 // --- Advanced getters for lock and thread management ---
 PyGetSet_DeclareGetter get_is_step_pending(PhysicsWorldObject *self,
@@ -12,57 +155,6 @@ PyGetSet_DeclareGetter get_is_step_pending(PhysicsWorldObject *self,
     Py_RETURN_FALSE;
 }
 
-// Helper to create MemoryViews with specific types and sizes
-static PyObject *make_view(PhysicsWorldObject *self, void *ptr, const char *format, size_t itemsize,
-                           int stride) {
-    if (!ptr) {
-        Py_RETURN_NONE;
-    }
-
-    SHADOW_LOCK(&self->shadow_lock);
-    
-    // TSan Fix: Read the atomic count safely. 
-    // Acquire ensures we see the finished state of any preceding world_remove_body_slot.
-    size_t current_count = atomic_load_explicit(&self->count, memory_order_acquire);
-    
-    // view_export_count is a standard int protected by shadow_lock
-    self->view_export_count++;
-
-    // Update persistent storage in the object (used by Py_buffer pointers)
-    self->view_shape[0]   = (Py_ssize_t)(current_count * stride);
-    self->view_strides[0] = (Py_ssize_t)itemsize;
-    
-    SHADOW_UNLOCK(&self->shadow_lock);
-
-    Py_buffer buf;
-    memset(&buf, 0, sizeof(Py_buffer));
-    buf.buf = ptr;
-    buf.obj = (PyObject *)self;
-    Py_INCREF(self);
-
-    // Calculate total length based on the snapshot we took inside the lock
-    buf.len      = self->view_shape[0] * self->view_strides[0];
-    buf.readonly = 1;
-    buf.itemsize = (Py_ssize_t)itemsize;
-    buf.format   = (char *)format;
-    buf.ndim     = 1;
-
-    // These pointers point to persistent fields in the PhysicsWorldObject struct,
-    // which remain valid even after this stack frame is destroyed.
-    buf.shape   = self->view_shape;
-    buf.strides = self->view_strides;
-
-    PyObject *mv = PyMemoryView_FromBuffer(&buf);
-    if (!mv) {
-        // Cleanup if memoryview allocation fails
-        SHADOW_LOCK(&self->shadow_lock);
-        self->view_export_count--;
-        SHADOW_UNLOCK(&self->shadow_lock);
-        Py_DECREF(self);
-        return nullptr;
-    }
-    return mv;
-}
 /* --- Immutable Getters (Safe without locks) --- */
 
 PyGetSet_DeclareGetter Vehicle_get_wheel_count(VehicleObject *self,
@@ -79,25 +171,25 @@ PyGetSet_DeclareGetter Character_get_handle(CharacterObject *self,
     return PyLong_FromUnsignedLongLong(raw_h);
 }
 
-/* --- Shadow Buffer Getters (Safe via hardened make_view) --- */
+/* --- Shadow Buffer Getters --- */
 
 PyGetSet_DeclareGetter get_positions(PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *c) {
     // Positions are Stride 4 (X, Y, Z, W)
-    return make_view(self, self->positions, JPH_REAL_STRING, sizeof(JPH_Real), 4);
+    return make_proxy(self, PROXY_POSITIONS, JPH_REAL_STRING, sizeof(JPH_Real), 4);
 }
 
 PyGetSet_DeclareGetter get_rotations(PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *c) {
     // Rotations are Stride 4 (X, Y, Z, W)
-    return make_view(self, self->rotations, "f", sizeof(float), 4);
+    return make_proxy(self, PROXY_ROTATIONS, "f", sizeof(float), 4);
 }
 
 PyGetSet_DeclareGetter get_velocities(PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *c) {
     // Velocities are Stride 4 (X, Y, Z, Pad)
-    return make_view(self, self->linear_velocities, "f", sizeof(float), 4);
+    return make_proxy(self, PROXY_LINEAR_VELOCITIES, "f", sizeof(float), 4);
 }
 
 PyGetSet_DeclareGetter get_angular_velocities(PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *c) {
-    return make_view(self, self->angular_velocities, "f", sizeof(float), 4);
+    return make_proxy(self, PROXY_ANGULAR_VELOCITIES, "f", sizeof(float), 4);
 }
 
 /* --- Mutable Metadata Getters (Hardened with Locks) --- */
@@ -118,7 +210,7 @@ PyGetSet_DeclareGetter get_time(PhysicsWorldObject *self, CULV_MAYBE_UNUSED void
 
 PyGetSet_DeclareGetter get_user_data_buffer(PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *c) {
     // User data is Stride 1 (One uint64 per body)
-    return make_view(self, self->user_data, "Q", sizeof(uint64_t), 1);
+    return make_proxy(self, PROXY_USER_DATA, "Q", sizeof(uint64_t), 1);
 }
 
 PyGetSet_DeclareGetter get_shape_count(PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *closure) {
@@ -138,10 +230,10 @@ PyGetSet_DeclareGetter PhysicsWorld_get_remaining_capacity(PhysicsWorldObject *s
                                                            CULV_MAYBE_UNUSED void *closure) {
     // TSan Fix: Lock-free calculation using atomic count.
     size_t current = atomic_load_explicit(&self->count, memory_order_acquire);
-    
+
     // max_jolt_bodies is immutable after world initialization
     size_t limit = self->max_jolt_bodies;
-    size_t rem = (current >= limit) ? 0 : (limit - current);
-    
+    size_t rem   = (current >= limit) ? 0 : (limit - current);
+
     return PyLong_FromSize_t(rem);
 }

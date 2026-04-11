@@ -830,15 +830,17 @@ class TestProfilerScenario(CulverinTestCase):
 
     def test_extreme_command_contention(self):
         """Hammer the command queue from 8 threads while stepping the world."""
+        import random # Use the stdlib random, not numpy.random
+        
         bodies = [self.world.create_body(pos=(0, 0, 0)) for _ in range(100)]
         self.world.step(0)
 
         def worker():
             for _ in range(500):
-                # Randomly move bodies
-                target = bodies[np.random.randint(0, 100)]
+                # random.randint and random.random are thread-safe in Python
+                target = bodies[random.randint(0, 99)]
                 self.world.apply_impulse(target, 0, 10, 0)
-                self.world.set_position(target, x=np.random.rand(), y=2, z=0)
+                self.world.set_position(target, x=random.random(), y=2, z=0)
 
         threads = [threading.Thread(target=worker) for _ in range(8)]
         for t in threads:

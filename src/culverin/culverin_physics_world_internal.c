@@ -260,7 +260,7 @@ int PhysicsWorld_resize(PhysicsWorldObject *self, size_t new_capacity) {
     // 1. Signal Start
     atomic_store_explicit(&self->is_resizing, true, memory_order_release);
 
-    if (self->view_export_count > 0) {
+    if (atomic_load_explicit(&self->view_export_count, memory_order_relaxed) > 0) {
         atomic_store_explicit(&self->is_resizing, false, memory_order_relaxed);
         PyErr_SetString(PyExc_BufferError, "Cannot resize while memoryview is active.");
         return -1;
@@ -549,6 +549,10 @@ int init_jolt_core(PhysicsWorldObject *self, WorldLimits limits, GravityVector g
 #endif
     JobSystemThreadPoolConfig job_cfg = {
         .maxJobs = JOB_SYSTEM_MAX_JOBS, .maxBarriers = JOB_SYSTEM_MAX_BARRIERS, .numThreads = num_workers};
+
+    // TSan Fix: Serialize the first PhysicsSystem creation. 
+    // This allows Jolt's internal lazy-statics to initialize safely.
+    NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
     self->job_system = JPH_JobSystemThreadPool_Create(&job_cfg);
 
     // --- 3 LAYERS: 0=Static, 1=Dynamic, 2=VehicleRay ---
@@ -581,6 +585,7 @@ int init_jolt_core(PhysicsWorldObject *self, WorldLimits limits, GravityVector g
                                                .objectVsBroadPhaseLayerFilter = self->bp_filter};
 
     self->system               = JPH_PhysicsSystem_Create(&phys_settings);
+    NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
     self->char_vs_char_manager = JPH_CharacterVsCharacterCollision_CreateSimple();
     JPH_PhysicsSystem_SetGravity(self->system, &(JPH_Vec3){gravity.gx, gravity.gy, gravity.gz});
     self->body_interface = JPH_PhysicsSystem_GetBodyInterface(self->system);
@@ -742,7 +747,7 @@ PyType_DeclareSlot_StatusFromModule PhysicsWorld_getbuffer(PhysicsWorldObject *s
     view->internal = NULL;
 
     // view_export_count is a standard int protected by shadow_lock
-    self->view_export_count++;
+    atomic_fetch_add_explicit(&self->view_export_count, 1, memory_order_relaxed);
     
     SHADOW_UNLOCK(&self->shadow_lock);
     return 0;
@@ -754,8 +759,8 @@ PyType_DeclareSlot_VoidFromModule PhysicsWorld_releasebuffer(PhysicsWorldObject 
     SHADOW_LOCK(&self->shadow_lock);
     
     // Release logic remains simple as no atomic counters are mutated here
-    if (self->view_export_count > 0) {
-        self->view_export_count--;
+    if (atomic_load_explicit(&self->view_export_count, memory_order_relaxed) > 0) {
+        atomic_fetch_sub_explicit(&self->view_export_count, 1, memory_order_relaxed);
     }
     
     SHADOW_UNLOCK(&self->shadow_lock);

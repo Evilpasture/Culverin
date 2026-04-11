@@ -62,7 +62,8 @@ CULV_NODISCARD [[gnu::const]]
 static inline uint32_t JPH_ID_TO_INDEX(uint32_t id) {
     // Mask for the raw array index (Stripping the 24th bit used for Static flags)
     static constexpr unsigned _BitInt(24) ID_TO_INDEX_MASK = 0x7FFFFF;
-    static_assert(ID_TO_INDEX_MASK == 0x7FFFFF);
+    constexpr auto stfu = 0x7FFFFF;
+    static_assert(ID_TO_INDEX_MASK == stfu);
     return id & ID_TO_INDEX_MASK;
 }
 
@@ -284,7 +285,7 @@ typedef struct PhysicsWorldObject {
     // instead of creating holes between every pointer.
     uint32_t max_jolt_bodies;
     atomic_int active_queries;
-    int view_export_count;
+    atomic_int view_export_count;
     #if !defined(Py_GIL_DISABLED)
     atomic_int waiting_threads;
     #endif
@@ -333,6 +334,7 @@ typedef struct {
     PyObject *SkeletonType;
     PyObject *RagdollSettingsType;
     PyObject *RagdollType;
+    PyObject *BufferProxyType;
     CulverinParsers parsers;
 } CulverinState;
 
