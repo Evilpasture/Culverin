@@ -201,7 +201,7 @@ jobs:
       - name: Build Experimental Wheels (3.15)
         shell: bash
         run: |
-          # 1. Setup Platform-Specific Compilers
+          # 1. Setup Platform-Specific Compilers to match Jolt Build
           if [[ "${{ runner.os }}" == "Linux" ]]; then
             echo "Configuring LLVM 22 for Linux..."
             wget https://apt.llvm.org/llvm.sh
@@ -209,22 +209,26 @@ jobs:
             sudo ./llvm.sh 22
             export CC=clang-22
             export CXX=clang++-22
+            export LDFLAGS="-fuse-ld=lld-22"
           elif [[ "${{ runner.os }}" == "macOS" ]]; then
-            echo "Configuring for macOS..."
-            export CC=clang
-            export CXX=clang++
+            echo "Configuring Homebrew LLVM for macOS..."
+            # Match the paths used in the build_jolt job exactly
+            export CC="/opt/homebrew/opt/llvm/bin/clang"
+            export CXX="/opt/homebrew/opt/llvm/bin/clang++"
+            export LDFLAGS="-L/opt/homebrew/opt/llvm/lib"
+            export CPPFLAGS="-I/opt/homebrew/opt/llvm/include"
+            export PATH="/opt/homebrew/opt/llvm/bin:$PATH"
           else
-            echo "Configuring for Windows..."
-            # On Windows, 'uv' usually finds MSVC automatically, 
-            # but we set standard flags if needed.
-            export CC=clang
-            export CXX=clang++
+            echo "Configuring clang-cl for Windows..."
+            export CC=clang-cl
+            export CXX=clang-cl
           fi
 
           # 2. Install the alpha versions
           uv python install 3.15 3.15t
           
-          # 3. Common Build Arguments (Now injecting the prebuilt Jolt Cache path)
+          # 3. Build Arguments (Using the Jolt Cache)
+          # We use the $JOLT_CMAKE_DIR established in the "Set Jolt CMake dir" step
           CMAKE_FLAGS="-GNinja;-DENABLE_SANITIZER=OFF;-DCMAKE_BUILD_TYPE=Release;-DDOUBLE_PRECISION=ON;-DJOLT_PREBUILT_DIR=${JOLT_CMAKE_DIR}"
           CXX_FLAGS="-Wno-overriding-option"
 
@@ -244,15 +248,15 @@ jobs:
             sudo apt-get update -y && sudo apt-get install -y patchelf
 
             echo "Repairing Linux wheels..."
-            for whl in wheelhouse/*linux_*.whl; do
-              # uvx seamlessly pulls and runs the latest auditwheel
-              uvx auditwheel repair "$whl" -w wheelhouse/repaired/
+            mkdir -p wheelhouse/repaired
+            for whl in wheelhouse/*linux_x86_64.whl; do
+              # We use --plat manylinux_2_28 to match your CIBW settings
+              uvx auditwheel repair "$whl" --plat manylinux_2_28 -w wheelhouse/repaired/
             done
 
-            # Replace raw linux_x86_64 wheels with manylinux compliant ones
-            rm wheelhouse/*linux_*.whl
+            # Replace original wheels with repaired ones
+            rm wheelhouse/*linux_x86_64.whl
             mv wheelhouse/repaired/*.whl wheelhouse/
-            rmdir wheelhouse/repaired/
           fi
 
 
