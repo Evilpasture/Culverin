@@ -1,7 +1,10 @@
 #include "culverin_command_buffer.h"
 #include "culverin_compiler_specifics.h"
 #include "culverin_physics_sync.h"
+#include "culverin_physics_world_internal.h"
 #include "culverin_threading.h"
+
+static constexpr size_t AVX_ALIGNMENT = 32;
 
 void world_remove_body_slot(PhysicsWorldObject *self, uint32_t slot) {
     const uint32_t dense_idx = self->slot_to_dense[slot];
@@ -9,6 +12,12 @@ void world_remove_body_slot(PhysicsWorldObject *self, uint32_t slot) {
     // TSan Fix: Load count atomically to determine the last index
     const uint32_t last_dense =
         (uint32_t)atomic_load_explicit(&self->count, memory_order_acquire) - 1;
+
+    if (self->soft_shadows && self->soft_shadows[dense_idx].vertices) {
+        CulvMem_RawFreeAligned(self->soft_shadows[dense_idx].vertices);
+        self->soft_shadows[dense_idx].vertices = nullptr;
+        self->soft_shadows[dense_idx].num_vertices = 0;
+    }
 
     // THE SWAP-TO-DELETE (Dense Pack)
     if (dense_idx != last_dense) {
@@ -40,6 +49,13 @@ void world_remove_body_slot(PhysicsWorldObject *self, uint32_t slot) {
         const uint32_t mover_slot       = self->dense_to_slot[last_dense];
         self->slot_to_dense[mover_slot] = dense_idx;
         self->dense_to_slot[dense_idx]  = mover_slot;
+
+        if (self->soft_shadows) {
+            self->soft_shadows[dense_idx] = self->soft_shadows[last_dense];
+            // Clear the old tail so we don't double-free later
+            self->soft_shadows[last_dense].vertices = nullptr;
+            self->soft_shadows[last_dense].num_vertices = 0;
+        }
     }
 
     // HOUSEKEEPING
@@ -136,7 +152,8 @@ void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *CULV_REST
                                                  [CMD_APPLY_FORCE]       = &&op_APPLY_FORCE,
                                                  [CMD_APPLY_TORQUE]      = &&op_APPLY_TORQUE,
                                                  [CMD_APPLY_ANG_IMPULSE] = &&op_APPLY_ANG_IMPULSE,
-                                                 [CMD_APPLY_IMPULSE_AT]  = &&op_APPLY_IMPULSE_AT};
+                                                 [CMD_APPLY_IMPULSE_AT]  = &&op_APPLY_IMPULSE_AT,
+                                                 [CMD_CREATE_SOFT_BODY]  = &&op_CREATE_SOFT_BODY};
 
     size_t i = 0;
     PhysicsCommand *cmd;
@@ -189,6 +206,42 @@ op_CREATE_BODY: {
 
     SHADOW_UNLOCK(&self->shadow_lock);
 
+    DISPATCH();
+}
+
+op_CREATE_SOFT_BODY: {
+    JPH_SoftBodyCreationSettings *s = cmd->create_soft.settings;
+    uint32_t num_verts              = cmd->create_soft.num_vertices; // O(1) Cache-local read!
+
+    JPH_BodyID new_bid = JPH_BodyInterface_CreateAndAddSoftBody(bi, s, JPH_Activation_Activate);
+
+    SHADOW_LOCK(&self->shadow_lock);
+
+    if (UNLIKELY(new_bid == JPH_INVALID_BODY_ID)) {
+        world_remove_body_slot(self, slot);
+    } else {
+        uint32_t dense_idx        = self->slot_to_dense[slot];
+        self->body_ids[dense_idx] = new_bid;
+
+        // --- ALLOCATE SHADOW VERTEX BUFFER ---
+        self->soft_shadows[dense_idx].num_vertices = num_verts;
+        self->soft_shadows[dense_idx].vertices =
+            (JPH_Real *)CulvMem_RawMallocAligned(num_verts * sizeof(PosStride), AVX_ALIGNMENT);
+
+        // Populate standard handles
+        uint32_t j_idx = JPH_ID_TO_INDEX(new_bid);
+        if (self->id_to_handle_map && j_idx <= self->max_jolt_bodies) {
+            uint32_t gen   = atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
+            BodyHandle h   = make_handle(slot, gen);
+            uint64_t raw_h = atomic_load_explicit(&h, memory_order_relaxed);
+            atomic_store_explicit(&self->id_to_handle_map[j_idx], raw_h, memory_order_release);
+        }
+
+        atomic_store_explicit(&self->slot_states[slot], SLOT_SOFT_BODY, memory_order_release);
+    }
+
+    JPH_SoftBodyCreationSettings_Destroy(s); // Cleanup
+    SHADOW_UNLOCK(&self->shadow_lock);
     DISPATCH();
 }
 

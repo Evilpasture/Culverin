@@ -33,13 +33,10 @@ PyType_DeclareSlot_Status BufferProxy_getbuffer(BufferProxyObject *self, Py_buff
                                                 CULV_MAYBE_UNUSED int flags) {
     PhysicsWorldObject *world = self->world;
 
-    // 1. TSan Guard: Prevent Jolt from syncing while Python reads
     SHADOW_LOCK(&world->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(world);
 
-    size_t count = atomic_load_explicit(&world->count, memory_order_acquire);
-
-    // 2. Enum-based Dispatch (No stale raw pointers)
+    // 1. Add PROXY_DYNAMIC to the switch statement
     void *target_ptr = nullptr;
     switch (self->buf_type) {
     case PROXY_POSITIONS:
@@ -57,6 +54,9 @@ PyType_DeclareSlot_Status BufferProxy_getbuffer(BufferProxyObject *self, Py_buff
     case PROXY_USER_DATA:
         target_ptr = world->user_data;
         break;
+    case PROXY_DYNAMIC:
+        target_ptr = self->dynamic_ptr;
+        break; // <-- ADD THIS
     }
 
     if (!target_ptr) {
@@ -65,8 +65,12 @@ PyType_DeclareSlot_Status BufferProxy_getbuffer(BufferProxyObject *self, Py_buff
         return -1;
     }
 
-    // 3. Setup Metadata
-    self->shape[0]   = (Py_ssize_t)(count * self->stride);
+    // 2. Prevent dynamic shapes from being overwritten by rigid body count!
+    if (self->buf_type != PROXY_DYNAMIC) {
+        size_t count   = atomic_load_explicit(&world->count, memory_order_acquire);
+        self->shape[0] = (Py_ssize_t)(count * self->stride);
+    }
+
     self->strides[0] = (Py_ssize_t)self->itemsize;
 
     view->buf = target_ptr;
@@ -84,26 +88,26 @@ PyType_DeclareSlot_Status BufferProxy_getbuffer(BufferProxyObject *self, Py_buff
     view->internal   = nullptr;
 
     // 5. CRITICAL: Release the lock so other threads (Mutator/Stepper) can work!
-    SHADOW_UNLOCK(&world->shadow_lock); 
+    SHADOW_UNLOCK(&world->shadow_lock);
     return 0;
 }
 
 PyType_DeclareSlot_Void BufferProxy_releasebuffer(BufferProxyObject *self, Py_buffer *view) {
-    // Let NumPy hold the world buffer permanently.
-    #if defined(STRICT_THREAD_SAFETY)
+// Let NumPy hold the world buffer permanently.
+#if defined(STRICT_THREAD_SAFETY)
     PhysicsWorldObject *world = self->world;
 
     // 4. Mark query finished
     // Use 'release' barrier to ensure Numpy reads are finished before Stepper writes
     if (atomic_fetch_sub_explicit(&world->active_queries, 1, memory_order_release) == 1) {
-        
+
         // 5. If we were the last ones, wake up the Stepper!
         // We use the internal sync mutex/cond here
         NATIVE_MUTEX_LOCK(world->step_sync.mutex);
         NATIVE_COND_BROADCAST(world->step_sync.cond);
         NATIVE_MUTEX_UNLOCK(world->step_sync.mutex);
     }
-    #endif
+#endif
 }
 
 // --- Heap Type Specification ---
@@ -236,4 +240,58 @@ PyGetSet_DeclareGetter PhysicsWorld_get_remaining_capacity(PhysicsWorldObject *s
     size_t rem   = (current >= limit) ? 0 : (limit - current);
 
     return PyLong_FromSize_t(rem);
+}
+
+PyCFunction_DeclareMethodFromModule PhysicsWorld_get_soft_body_vertices(PhysicsWorldObject *self,
+                                                              PyObject *const *args, size_t nargsf,
+                                                              PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+
+    uint64_t h_raw;
+    void *targets[HOnly_COUNT] = {[IDX_H_H] = &h_raw};
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.HOnlyParser,
+                           targets)) {
+        return nullptr;
+    }
+
+    SHADOW_LOCK(&self->shadow_lock);
+    BLOCK_UNTIL_NOT_STEPPING(self);
+
+    uint32_t slot = 0;
+    CHECK_HANDLE(h_raw, slot);
+
+    const uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
+    if (state != SLOT_SOFT_BODY) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        return PyErr_Format(PyExc_TypeError, "Handle does not belong to a soft body");
+    }
+
+    uint32_t dense_idx     = self->slot_to_dense[slot];
+    SoftBodyShadow *shadow = &self->soft_shadows[dense_idx];
+
+    if (!shadow->vertices) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        return PyErr_Format(PyExc_RuntimeError, "Soft body shadow buffer missing");
+    }
+
+    // We can reuse BufferProxyObject, but we need to tell it to use THIS specific pointer
+    // and THIS specific length, rather than the global positions array.
+    BufferProxyObject *proxy =
+        PyObject_GC_New(BufferProxyObject, (PyTypeObject *)st->BufferProxyType);
+    proxy->world = self;
+    Py_INCREF(self);
+
+    proxy->buf_type    = PROXY_DYNAMIC;
+    proxy->dynamic_ptr = shadow->vertices;
+    proxy->format      = JPH_REAL_STRING;
+    proxy->itemsize    = sizeof(JPH_Real);
+    proxy->stride      = 4; // PosStride
+    proxy->shape[0] = (Py_ssize_t)shadow->num_vertices * 4;
+
+    atomic_fetch_add_explicit(&self->view_export_count, 1, memory_order_relaxed);
+
+    SHADOW_UNLOCK(&self->shadow_lock);
+
+    PyObject_GC_Track(proxy);
+    return (PyObject *)proxy;
 }

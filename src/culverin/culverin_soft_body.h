@@ -1,0 +1,25 @@
+#pragma once
+#include "culverin.h"
+
+typedef struct {
+    PyObject_HEAD JPH_SoftBodySharedSettings *settings;
+    uint32_t num_vertices;
+} SoftBodySharedSettingsObject;
+
+PyType_DeclareSlot_StatusFromModule SoftBodySharedSettings_init(SoftBodySharedSettingsObject *self,
+                                                                PyObject *args, PyObject *kwds);
+
+PyType_DeclareSlot_VoidFromModule
+SoftBodySharedSettings_dealloc(SoftBodySharedSettingsObject *self);
+PyCFunction_DeclareMethodFromModule
+SoftBodySharedSettings_add_vertex(SoftBodySharedSettingsObject *self, PyObject *const *args,
+                                  Py_ssize_t nargs, PyObject *kwnames);
+PyCFunction_DeclareMethodFromModule
+SoftBodySharedSettings_add_face(SoftBodySharedSettingsObject *self, PyObject *const *args,
+                                Py_ssize_t nargs, PyObject *kwnames);
+PyCFunction_DeclareMethodFromModule
+SoftBodySharedSettings_optimize(SoftBodySharedSettingsObject *self, PyObject *Py_UNUSED(args));
+
+PyCFunction_DeclareMethodFromModule PhysicsWorld_create_soft_body(PhysicsWorldObject *self,
+                                                                  PyObject *const *args,
+                                                                  size_t nargsf, PyObject *kwnames);

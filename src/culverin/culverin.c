@@ -18,10 +18,10 @@
 #include "culverin_query_methods.h"
 #include "culverin_ragdoll.h"
 #include "culverin_shadow_sync.h"
+#include "culverin_soft_body.h"
 #include "culverin_vehicle.h"
 #include "joltc.h"
 #include <stdatomic.h>
-#include <string.h>
 
 // ============================================================================
 // Semantic Constants - Magic Number Replacements
@@ -148,6 +148,7 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
     self->angular_velocities = nullptr;
     self->body_ids           = nullptr;
     self->user_data          = nullptr;
+    self->soft_shadows       = nullptr;
     self->material_ids       = nullptr;
 
     // 1.3. Data Buffers & Mapping Tables
@@ -310,9 +311,9 @@ fail:
  * HELPER: physics_world_commit_create_locked
  * Encapsulates slot acquisition, handle generation, and command queuing.
  */
-static uint64_t physics_world_commit_create_locked(PhysicsWorldObject *self,
-                                                   JPH_BodyCreationSettings *settings,
-                                                   uint32_t slot_state) {
+uint64_t physics_world_commit_create_locked(PhysicsWorldObject *self,
+                                            JPH_BodyCreationSettings *settings,
+                                            uint32_t slot_state) {
     size_t current_count = atomic_load_explicit(&self->count, memory_order_acquire);
     size_t available     = atomic_load_explicit(&self->free_count, memory_order_acquire);
 
@@ -480,10 +481,10 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self
     JPH_Real px;
     JPH_Real py;
     JPH_Real pz;
-    void *targets[ImpAt_COUNT] = {[IDX_IMPAT_H] = (void *)&h_raw, [IDX_IMPAT_IX] = (void *)&ix,
-                                  [IDX_IMPAT_IY] = (void *)&iy,   [IDX_IMPAT_IZ] = (void *)&iz,
-                                  [IDX_IMPAT_PX] = (void *)&px,   [IDX_IMPAT_PY] = (void *)&py,
-                                  [IDX_IMPAT_PZ] = (void *)&pz};
+    void *targets[ImpAt_COUNT] = {
+        [IDX_IMPAT_H] = (void *)&h_raw, [IDX_IMPAT_IX] = (void *)&ix, [IDX_IMPAT_IY] = (void *)&iy,
+        [IDX_IMPAT_IZ] = (void *)&iz,   [IDX_IMPAT_PX] = (void *)&px, [IDX_IMPAT_PY] = (void *)&py,
+        [IDX_IMPAT_PZ] = (void *)&pz};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.ImpulseAtParser,
                            targets)) {
@@ -4199,6 +4200,9 @@ static void stitch_docs_getset(PyGetSetDef *getset, const char *class_name) {
 #define RDS_FASTCALL(name) CULV_FEAT(RagdollSettings, name, METH_FASTCALL | METH_KEYWORDS)
 #define RDS_NOARGS(name) CULV_FEAT(RagdollSettings, name, METH_NOARGS)
 
+#define SBSS_FASTCALL(name) CULV_FEAT(SoftBodySharedSettings, name, METH_FASTCALL | METH_KEYWORDS)
+#define SBSS_NOARGS(name) CULV_FEAT(SoftBodySharedSettings, name, METH_NOARGS)
+
 // Getter/Property macro - concise initialization
 #define GETSET(name_str, getter_func)                                                              \
     {.name    = (name_str),                                                                        \
@@ -4258,6 +4262,7 @@ static PyMethodDef PhysicsWorld_methods[] = {
     PW_FASTCALL(create_heightfield),
     PW_FASTCALL(create_convex_hull),
     PW_FASTCALL(create_compound_body),
+    PW_FASTCALL(create_soft_body),
 
     // --- Interaction ---
     PW_FASTCALL(apply_impulse),
@@ -4285,6 +4290,7 @@ static PyMethodDef PhysicsWorld_methods[] = {
     PW_FASTCALL(set_ccd),
 
     // --- Queries ---
+    PW_FASTCALL(get_soft_body_vertices),
     PW_FASTCALL(raycast),
     PW_FASTCALL(raycast_batch),
     PW_FASTCALL(shapecast),
@@ -4348,6 +4354,11 @@ static PyMethodDef Ragdoll_methods[] = {RD_FASTCALL(drive_to_pose),
 
 static PyMethodDef RagdollSettings_methods[] = {
     RDS_FASTCALL(add_part), RDS_NOARGS(stabilize), {nullptr, nullptr, 0, nullptr}};
+
+static PyMethodDef SoftBodySharedSettings_methods[] = {SBSS_FASTCALL(add_vertex),
+                                                       SBSS_FASTCALL(add_face),
+                                                       SBSS_NOARGS(optimize),
+                                                       {nullptr, nullptr, 0, nullptr}};
 
 static const PyMemberDef PhysicsWorld_members[] = {
     {.name   = "__weaklistoffset__",
@@ -4438,6 +4449,21 @@ static const PyType_Spec RagdollSettings_spec = {
     .slots     = (PyType_Slot *)RagdollSettings_slots,
 };
 
+// Update the SoftBodySharedSettings_slots array
+static const PyType_Slot SoftBodySharedSettings_slots[] = {
+    {.slot = Py_tp_new, .pfunc = PyType_GenericNew},
+    {.slot = Py_tp_init, .pfunc = SoftBodySharedSettings_init},
+    {.slot = Py_tp_dealloc, .pfunc = SoftBodySharedSettings_dealloc},
+    {.slot = Py_tp_methods, .pfunc = (PyMethodDef *)SoftBodySharedSettings_methods},
+    {.slot = 0, nullptr},
+};
+
+static const PyType_Spec SoftBodySharedSettings_spec = {
+    .name      = "culverin._culverin_c.SoftBodySharedSettingsObject",
+    .basicsize = sizeof(SoftBodySharedSettingsObject),
+    .flags     = Py_TPFLAGS_DEFAULT,
+    .slots     = (PyType_Slot *)SoftBodySharedSettings_slots};
+
 static const PyType_Slot Ragdoll_slots[] = {
     {.slot = Py_tp_dealloc, .pfunc = Ragdoll_dealloc},
     {.slot = Py_tp_methods, .pfunc = (PyMethodDef *)Ragdoll_methods},
@@ -4502,7 +4528,9 @@ static int init_types(PyObject *m, CulverinState *st) {
                  {(&RagdollSettings_spec), &st->RagdollSettingsType, "RagdollSettings"},
                  {(&Ragdoll_spec), &st->RagdollType, "Ragdoll"},
                  {(&Skeleton_spec), &st->SkeletonType, "Skeleton"},
-                 {(&BufferProxy_spec), &st->BufferProxyType, "BufferProxyObject"}};
+                 {(&BufferProxy_spec), &st->BufferProxyType, "BufferProxyObject"},
+                 {(&SoftBodySharedSettings_spec), &st->SoftBodySharedSettingsType,
+                  "SoftBodySharedSettings"}};
 
     for (size_t i = 0; i < sizeof(types) / sizeof(types[0]); i++) {
         auto type = PyType_FromModuleAndSpec(m, (PyType_Spec *)types[i].spec, nullptr);
@@ -4612,7 +4640,7 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
                     "release";
 #endif
         // Determine Compiler ID
-        const char *compiler_id = 
+        const char *compiler_id =
 #if defined(__clang__)
             "Clang " __clang_version__;
 #elif defined(__GNUC__)
@@ -4620,12 +4648,12 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
 #elif defined(_MSC_VER)
             "MSVC " _CRT_STRINGIZE(_MSC_VER);
 #else
-            "Unknown Compiler";
+                "Unknown Compiler";
 #endif
 
         // Result: e.g. "0.6.0 (free-threaded, double-precision, release, Clang 22.1.0)"
-        snprintf(shared_version, MAGIC_BUFFER, "%s (%s, %s, %s, %s)", 
-                 ver_temp, gil_status, precision, build_type, compiler_id);
+        snprintf(shared_version, MAGIC_BUFFER, "%s (%s, %s, %s, %s)", ver_temp, gil_status,
+                 precision, build_type, compiler_id);
 
         // --- THE WINNER: Run exactly once per process life ---
 
@@ -4635,6 +4663,7 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
         stitch_docs(Skeleton_methods, "Skeleton");
         stitch_docs(Ragdoll_methods, "Ragdoll");
         stitch_docs(RagdollSettings_methods, "RagdollSettings");
+        stitch_docs(SoftBodySharedSettings_methods, "SoftBodySharedSettings");
         stitch_docs_getset(PhysicsWorld_getset, "PhysicsWorld");
         stitch_docs_getset(Character_getset, "Character");
         stitch_docs_getset(Vehicle_getset, "Vehicle");

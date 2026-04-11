@@ -39,6 +39,7 @@ from ._culverin_c import (
     PhysicsWorld,
     Ragdoll,
     RagdollSettings,
+    SoftBodySharedSettings,
     Skeleton,
     Vehicle,
     mutate_tuple
@@ -81,6 +82,7 @@ __all__ = [
     "PhysicsWorld",
     "Ragdoll",
     "RagdollSettings",
+    "SoftBodySharedSettings",
     "Skeleton",
     "Transmission",
     "Vehicle",

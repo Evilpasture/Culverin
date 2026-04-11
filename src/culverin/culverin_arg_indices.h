@@ -330,65 +330,77 @@ static constexpr size_t PARSER_REGISTRY_SIZE = 128;
     X(IDX_RD_ROT, "root_rot", AuxStride, 1)                                                        \
     X(IDX_RD_MATS, "matrices", PyObject *, 1)
 
+#define SCHEMA_CREATE_SOFT_BODY(X)                                                                 \
+    X(IDX_CSB_SHARED, "shared_settings", PyObject *, 1)                                            \
+    X(IDX_CSB_POS, "pos", PyObject *, 1)                                                           \
+    X(IDX_CSB_ROT, "rot", PyObject *, 1)                                                           \
+    X(IDX_CSB_USER_DATA, "user_data", uint64_t, 0)                                                 \
+    X(IDX_CSB_CAT, "category", uint32_t, 0)                                                        \
+    X(IDX_CSB_MASK, "mask", uint32_t, 0)
+
+#define SCHEMA_SBSS_ADD_VERTEX(X)                                                                  \
+    X(IDX_SAV_POS, "pos", PyObject *, 1)                                                           \
+    X(IDX_SAV_MASS, "inv_mass", float, 1)
+
+#define SCHEMA_SBSS_ADD_FACE(X)                                                                    \
+    X(IDX_SAF_V1, "v1", uint32_t, 1)                                                               \
+    X(IDX_SAF_V2, "v2", uint32_t, 1)                                                               \
+    X(IDX_SAF_V3, "v3", uint32_t, 1)
+
 #define SCHEMA_STRESS_TEST(X)                                                                      \
     X(IDX_0, "a0", uint64_t, 0)                                                                    \
     X(IDX_1, "a1", uint64_t, 0)                                                                    \
-    X(IDX_2, "a2", uint64_t, 0) X(IDX_3, "a3", uint64_t, 0) X(IDX_4, "a4", uint64_t, 0)            \
-        X(IDX_5, "a5", uint64_t, 0) X(IDX_6, "a6", uint64_t, 0) X(IDX_7, "a7", uint64_t, 0)        \
-            X(IDX_8, "a8", uint64_t, 0) X(IDX_9, "a9", uint64_t, 0) X(IDX_10, "a10", uint64_t, 0)  \
-                X(IDX_11, "a11", uint64_t, 0) X(IDX_12, "a12", uint64_t, 0)                        \
-                    X(IDX_13, "a13", uint64_t, 0) X(IDX_14, "a14", uint64_t, 0)                    \
-                        X(IDX_15, "a15", uint64_t, 0) X(IDX_16, "a16", uint64_t, 0)                \
-                            X(IDX_17, "a17", uint64_t, 0) X(IDX_18, "a18", uint64_t, 0) X(         \
-                                IDX_19, "a19", uint64_t, 0) X(IDX_20, "a20", uint64_t, 0)          \
-                                X(IDX_21, "a21", uint64_t, 0) X(IDX_22, "a22", uint64_t, 0) X(     \
-                                    IDX_23, "a23", uint64_t, 0) X(IDX_24, "a24", uint64_t, 0)      \
-                                    X(IDX_25, "a25", uint64_t, 0) X(IDX_26, "a26", uint64_t, 0) X( \
-                                        IDX_27, "a27", uint64_t, 0) X(IDX_28, "a28", uint64_t, 0)  \
-                                        X(IDX_29, "a29", uint64_t,                                 \
-                                          0) X(IDX_30, "a30", uint64_t,                            \
-                                               0) X(IDX_31, "a31", uint64_t,                       \
-                                                    0) X(IDX_32, "a32", uint64_t,                  \
-                                                         0) X(IDX_33, "a33", uint64_t, 0)          \
-                                            X(IDX_34, "a34", uint64_t,                             \
-                                              0) X(IDX_35, "a35", uint64_t,                        \
-                                                   0) X(IDX_36, "a36", uint64_t,                   \
-                                                        0) X(IDX_37, "a37", uint64_t,              \
-                                                             0) X(IDX_38, "a38", uint64_t, 0)      \
-                                                X(IDX_39, "a39", uint64_t,                         \
-                                                  0) X(IDX_40, "a40", uint64_t,                    \
-                                                       0) X(IDX_41, "a41", uint64_t,               \
-                                                            0) X(IDX_42, "a42", uint64_t,          \
-                                                                 0) X(IDX_43, "a43", uint64_t, 0)  \
-                                                    X(IDX_44, "a44", uint64_t,                     \
-                                                      0) X(IDX_45, "a45", uint64_t,                \
-                                                           0) X(IDX_46, "a46", uint64_t, 0)        \
-                                                        X(IDX_47, "a47", uint64_t,                 \
-                                                          0) X(IDX_48, "a48", uint64_t,            \
-                                                               0) X(IDX_49, "a49", uint64_t, 0)    \
-                                                            X(IDX_50, "a50", uint64_t,             \
-                                                              0) X(IDX_51, "a51", uint64_t, 0)     \
-                                                                X(IDX_52, "a52", uint64_t,         \
-                                                                  0) X(IDX_53, "a53", uint64_t, 0) \
-                                                                    X(IDX_54, "a54", uint64_t,     \
-                                                                      0) X(IDX_55, "a55",          \
-                                                                           uint64_t,               \
-                                                                           0) X(IDX_56, "a56",     \
-                                                                                uint64_t, 0)       \
-                                                                        X(IDX_57, "a57", uint64_t, \
-                                                                          0) X(IDX_58, "a58",      \
+    X(IDX_2, "a2", uint64_t, 0)                                                                    \
+    X(IDX_3, "a3", uint64_t, 0) X(IDX_4, "a4", uint64_t, 0) X(IDX_5, "a5", uint64_t, 0)            \
+        X(IDX_6, "a6", uint64_t, 0) X(IDX_7, "a7", uint64_t, 0) X(IDX_8, "a8", uint64_t, 0) X(     \
+            IDX_9, "a9", uint64_t, 0) X(IDX_10, "a10", uint64_t, 0) X(IDX_11, "a11", uint64_t, 0)  \
+            X(IDX_12, "a12", uint64_t, 0) X(IDX_13, "a13", uint64_t, 0)                            \
+                X(IDX_14, "a14", uint64_t, 0) X(IDX_15, "a15", uint64_t, 0)                        \
+                    X(IDX_16, "a16", uint64_t, 0) X(IDX_17, "a17", uint64_t, 0)                    \
+                        X(IDX_18, "a18", uint64_t, 0) X(IDX_19, "a19", uint64_t, 0)                \
+                            X(IDX_20, "a20", uint64_t, 0) X(IDX_21, "a21", uint64_t, 0) X(         \
+                                IDX_22, "a22", uint64_t, 0) X(IDX_23, "a23", uint64_t, 0)          \
+                                X(IDX_24, "a24", uint64_t, 0) X(IDX_25, "a25", uint64_t, 0) X(     \
+                                    IDX_26, "a26", uint64_t, 0) X(IDX_27, "a27", uint64_t, 0)      \
+                                    X(IDX_28, "a28", uint64_t, 0) X(IDX_29, "a29", uint64_t, 0) X( \
+                                        IDX_30, "a30", uint64_t, 0) X(IDX_31, "a31", uint64_t, 0)  \
+                                        X(IDX_32, "a32", uint64_t,                                 \
+                                          0) X(IDX_33, "a33", uint64_t,                            \
+                                               0) X(IDX_34, "a34", uint64_t,                       \
+                                                    0) X(IDX_35, "a35", uint64_t,                  \
+                                                         0) X(IDX_36, "a36", uint64_t, 0)          \
+                                            X(IDX_37, "a37", uint64_t,                             \
+                                              0) X(IDX_38, "a38", uint64_t,                        \
+                                                   0) X(IDX_39, "a39", uint64_t,                   \
+                                                        0) X(IDX_40, "a40", uint64_t,              \
+                                                             0) X(IDX_41, "a41", uint64_t, 0)      \
+                                                X(IDX_42, "a42", uint64_t,                         \
+                                                  0) X(IDX_43, "a43", uint64_t,                    \
+                                                       0) X(IDX_44, "a44", uint64_t,               \
+                                                            0) X(IDX_45, "a45", uint64_t,          \
+                                                                 0) X(IDX_46, "a46", uint64_t, 0)  \
+                                                    X(IDX_47, "a47", uint64_t,                     \
+                                                      0) X(IDX_48, "a48", uint64_t,                \
+                                                           0) X(IDX_49, "a49", uint64_t, 0)        \
+                                                        X(IDX_50, "a50", uint64_t,                 \
+                                                          0) X(IDX_51, "a51", uint64_t,            \
+                                                               0) X(IDX_52, "a52", uint64_t, 0)    \
+                                                            X(IDX_53, "a53", uint64_t,             \
+                                                              0) X(IDX_54, "a54", uint64_t, 0)     \
+                                                                X(IDX_55, "a55", uint64_t,         \
+                                                                  0) X(IDX_56, "a56", uint64_t, 0) \
+                                                                    X(IDX_57, "a57", uint64_t, 0)  \
+                                                                        X(IDX_58, "a58", uint64_t, \
+                                                                          0) X(IDX_59, "a59",      \
                                                                                uint64_t,           \
-                                                                               0) X(IDX_59, "a59", \
+                                                                               0) X(IDX_60, "a60", \
                                                                                     uint64_t, 0)   \
-                                                                            X(IDX_60, "a60",       \
+                                                                            X(IDX_61, "a61",       \
                                                                               uint64_t,            \
-                                                                              0) X(IDX_61, "a61",  \
+                                                                              0) X(IDX_62, "a62",  \
                                                                                    uint64_t, 0)    \
-                                                                                X(IDX_62, "a62",   \
-                                                                                  uint64_t, 0)     \
-                                                                                    X(IDX_63,      \
-                                                                                      "a63",       \
-                                                                                      uint64_t, 0)
+                                                                                X(IDX_63, "a63",   \
+                                                                                  uint64_t, 0)
 
 /** --- THE GENERATOR ENGINE --- **/
 
@@ -400,8 +412,8 @@ static constexpr size_t PARSER_REGISTRY_SIZE = 128;
 
 // Declares a specific parser that uses an Index Group
 #define DECLARE_PARSER(ParserName, GroupName)                                                      \
-    FastParser ParserName##Parser;                                                          \
-    FastArgSpec ParserName##Specs[GroupName##_COUNT]; 
+    FastParser ParserName##Parser;                                                                 \
+    FastArgSpec ParserName##Specs[GroupName##_COUNT];
 
 // A. Define the Index Groups (One per unique signature)
 DEFINE_INDEX_GROUP(Body, SCHEMA_BODY)
@@ -451,67 +463,73 @@ DEFINE_INDEX_GROUP(RagdollAddPart, SCHEMA_RAGDOLL_ADD_PART)
 DEFINE_INDEX_GROUP(AddJoint, SCHEMA_ADD_JOINT)
 DEFINE_INDEX_GROUP(GetJointIdx, SCHEMA_GET_JOINT_IDX)
 DEFINE_INDEX_GROUP(RagdollDrive, SCHEMA_RAGDOLL_DRIVE)
+DEFINE_INDEX_GROUP(CreateSoftBody, SCHEMA_CREATE_SOFT_BODY)
+DEFINE_INDEX_GROUP(SbssAddVertex, SCHEMA_SBSS_ADD_VERTEX)
+DEFINE_INDEX_GROUP(SbssAddFace, SCHEMA_SBSS_ADD_FACE)
 DEFINE_INDEX_GROUP(StressTest, SCHEMA_STRESS_TEST)
 
-#define FOR_ALL_PARSERS(X) \
-    X(Body, Body, SCHEMA_BODY) \
-    X(Impulse, Vec3, SCHEMA_VEC3) \
-    X(WheelIdx, WheelIdx, SCHEMA_WHEEL_IDX) \
-    X(AngImpulse, Vec3, SCHEMA_VEC3) \
-    X(Force, Vec3, SCHEMA_VEC3) \
-    X(Torque, Vec3, SCHEMA_VEC3) \
-    X(SetLinVel, Vec3, SCHEMA_VEC3) \
-    X(SetAngVel, Vec3, SCHEMA_VEC3) \
-    X(ImpulseAt, ImpAt, SCHEMA_IMPULSE_AT) \
-    X(HOnly, HOnly, SCHEMA_HANDLE_ONLY) \
-    X(Destroy, HOnly, SCHEMA_HANDLE_ONLY) \
-    X(Activate, HOnly, SCHEMA_HANDLE_ONLY) \
-    X(Gravity, XYZ, SCHEMA_XYZ) \
-    X(SetPos, SetPos, SCHEMA_SET_POS) \
-    X(Buoy, Buoy, SCHEMA_BUOYANCY) \
-    X(BatchBuoy, BatchBuoy, SCHEMA_BATCH_BUOYANCY) \
-    X(Mesh, Mesh, SCHEMA_MESH) \
-    X(SetTrns, SetTrns, SCHEMA_SET_TRNS) \
-    X(CCD, CCD, SCHEMA_CCD) \
-    X(ConvexHull, HC, SCHEMA_HC_HULL) \
-    X(Compound, HC, SCHEMA_HC_COMP) \
-    X(BatchCreate, BatchCreate, SCHEMA_BATCH_CREATE) \
-    X(BatchDestroy, BatchDestroy, SCHEMA_BATCH_DESTROY) \
-    X(SetRot, SetRot, SCHEMA_SET_ROT) \
-    X(Render, Render, SCHEMA_RENDER) \
-    X(Raycast, Raycast, SCHEMA_RAYCAST) \
-    X(RayBatch, RayBatch, SCHEMA_RAYCAST_BATCH) \
-    X(Shapecast, Shapecast, SCHEMA_SHAPECAST) \
-    X(OverlapSphere, OverlapSphere, SCHEMA_OVERLAP_SPHERE) \
-    X(OverlapAABB, OverlapAABB, SCHEMA_OVERLAP_AABB) \
-    X(SetUserData, SetUserData, SCHEMA_SET_USER_DATA) \
-    X(GetUserData, HOnly, SCHEMA_HANDLE_ONLY) \
-    X(GetMotion, HOnly, SCHEMA_HANDLE_ONLY) \
-    X(SetMotion, SetMotion, SCHEMA_SET_MOTION) \
-    X(ColFilter, ColFilter, SCHEMA_COL_FILTER) \
-    X(RegMat, RegMat, SCHEMA_REG_MAT) \
-    X(SetConstrTarget, SetConstr, SCHEMA_SET_CONSTR_TARGET) \
-    X(Heightfield, Heightfield, SCHEMA_HEIGHTFIELD) \
-    X(DebugData, DebugData, SCHEMA_DEBUG_DATA) \
-    X(CreateConstr, CreateConstr, SCHEMA_CREATE_CONSTR) \
-    X(DestroyConstr, HOnly, SCHEMA_HANDLE_ONLY) \
-    X(Step, Step, SCHEMA_STEP) \
-    X(CharMove, CharMove, SCHEMA_CHAR_MOVE) \
-    X(LoadState, LoadState, SCHEMA_LOAD_STATE) \
-    X(CreateChar, CreateChar, SCHEMA_CREATE_CHAR) \
-    X(SetPosChar, SetPosChar, SCHEMA_SET_POS_CHAR) \
-    X(SetRotChar, SetRotChar, SCHEMA_SET_ROT_CHAR) \
-    X(SetStrengthChar, SetStrengthChar, SCHEMA_SET_STRENGTH_CHAR) \
-    X(VehicleInput, VehicleInput, SCHEMA_VEHICLE_INPUT) \
-    X(TankInput, TankInput, SCHEMA_TANK_INPUT) \
-    X(CreateVehicle, CreateVehicle, SCHEMA_CREATE_VEHICLE) \
-    X(CreateTracked, CreateTracked, SCHEMA_CREATE_TRACKED) \
-    X(CreateRagdoll, CreateRagdoll, SCHEMA_CREATE_RAGDOLL) \
-    X(RagdollSettings, RagdollSettings, SCHEMA_RAGDOLL_SETTINGS) \
-    X(RagdollAddPart, RagdollAddPart, SCHEMA_RAGDOLL_ADD_PART) \
-    X(AddJoint, AddJoint, SCHEMA_ADD_JOINT) \
-    X(GetJointIdx, GetJointIdx, SCHEMA_GET_JOINT_IDX) \
-    X(RagdollDrive, RagdollDrive, SCHEMA_RAGDOLL_DRIVE) \
+#define FOR_ALL_PARSERS(X)                                                                         \
+    X(Body, Body, SCHEMA_BODY)                                                                     \
+    X(Impulse, Vec3, SCHEMA_VEC3)                                                                  \
+    X(WheelIdx, WheelIdx, SCHEMA_WHEEL_IDX)                                                        \
+    X(AngImpulse, Vec3, SCHEMA_VEC3)                                                               \
+    X(Force, Vec3, SCHEMA_VEC3)                                                                    \
+    X(Torque, Vec3, SCHEMA_VEC3)                                                                   \
+    X(SetLinVel, Vec3, SCHEMA_VEC3)                                                                \
+    X(SetAngVel, Vec3, SCHEMA_VEC3)                                                                \
+    X(ImpulseAt, ImpAt, SCHEMA_IMPULSE_AT)                                                         \
+    X(HOnly, HOnly, SCHEMA_HANDLE_ONLY)                                                            \
+    X(Destroy, HOnly, SCHEMA_HANDLE_ONLY)                                                          \
+    X(Activate, HOnly, SCHEMA_HANDLE_ONLY)                                                         \
+    X(Gravity, XYZ, SCHEMA_XYZ)                                                                    \
+    X(SetPos, SetPos, SCHEMA_SET_POS)                                                              \
+    X(Buoy, Buoy, SCHEMA_BUOYANCY)                                                                 \
+    X(BatchBuoy, BatchBuoy, SCHEMA_BATCH_BUOYANCY)                                                 \
+    X(Mesh, Mesh, SCHEMA_MESH)                                                                     \
+    X(SetTrns, SetTrns, SCHEMA_SET_TRNS)                                                           \
+    X(CCD, CCD, SCHEMA_CCD)                                                                        \
+    X(ConvexHull, HC, SCHEMA_HC_HULL)                                                              \
+    X(Compound, HC, SCHEMA_HC_COMP)                                                                \
+    X(BatchCreate, BatchCreate, SCHEMA_BATCH_CREATE)                                               \
+    X(BatchDestroy, BatchDestroy, SCHEMA_BATCH_DESTROY)                                            \
+    X(SetRot, SetRot, SCHEMA_SET_ROT)                                                              \
+    X(Render, Render, SCHEMA_RENDER)                                                               \
+    X(Raycast, Raycast, SCHEMA_RAYCAST)                                                            \
+    X(RayBatch, RayBatch, SCHEMA_RAYCAST_BATCH)                                                    \
+    X(Shapecast, Shapecast, SCHEMA_SHAPECAST)                                                      \
+    X(OverlapSphere, OverlapSphere, SCHEMA_OVERLAP_SPHERE)                                         \
+    X(OverlapAABB, OverlapAABB, SCHEMA_OVERLAP_AABB)                                               \
+    X(SetUserData, SetUserData, SCHEMA_SET_USER_DATA)                                              \
+    X(GetUserData, HOnly, SCHEMA_HANDLE_ONLY)                                                      \
+    X(GetMotion, HOnly, SCHEMA_HANDLE_ONLY)                                                        \
+    X(SetMotion, SetMotion, SCHEMA_SET_MOTION)                                                     \
+    X(ColFilter, ColFilter, SCHEMA_COL_FILTER)                                                     \
+    X(RegMat, RegMat, SCHEMA_REG_MAT)                                                              \
+    X(SetConstrTarget, SetConstr, SCHEMA_SET_CONSTR_TARGET)                                        \
+    X(Heightfield, Heightfield, SCHEMA_HEIGHTFIELD)                                                \
+    X(DebugData, DebugData, SCHEMA_DEBUG_DATA)                                                     \
+    X(CreateConstr, CreateConstr, SCHEMA_CREATE_CONSTR)                                            \
+    X(DestroyConstr, HOnly, SCHEMA_HANDLE_ONLY)                                                    \
+    X(Step, Step, SCHEMA_STEP)                                                                     \
+    X(CharMove, CharMove, SCHEMA_CHAR_MOVE)                                                        \
+    X(LoadState, LoadState, SCHEMA_LOAD_STATE)                                                     \
+    X(CreateChar, CreateChar, SCHEMA_CREATE_CHAR)                                                  \
+    X(SetPosChar, SetPosChar, SCHEMA_SET_POS_CHAR)                                                 \
+    X(SetRotChar, SetRotChar, SCHEMA_SET_ROT_CHAR)                                                 \
+    X(SetStrengthChar, SetStrengthChar, SCHEMA_SET_STRENGTH_CHAR)                                  \
+    X(VehicleInput, VehicleInput, SCHEMA_VEHICLE_INPUT)                                            \
+    X(TankInput, TankInput, SCHEMA_TANK_INPUT)                                                     \
+    X(CreateVehicle, CreateVehicle, SCHEMA_CREATE_VEHICLE)                                         \
+    X(CreateTracked, CreateTracked, SCHEMA_CREATE_TRACKED)                                         \
+    X(CreateRagdoll, CreateRagdoll, SCHEMA_CREATE_RAGDOLL)                                         \
+    X(RagdollSettings, RagdollSettings, SCHEMA_RAGDOLL_SETTINGS)                                   \
+    X(RagdollAddPart, RagdollAddPart, SCHEMA_RAGDOLL_ADD_PART)                                     \
+    X(AddJoint, AddJoint, SCHEMA_ADD_JOINT)                                                        \
+    X(GetJointIdx, GetJointIdx, SCHEMA_GET_JOINT_IDX)                                              \
+    X(RagdollDrive, RagdollDrive, SCHEMA_RAGDOLL_DRIVE)                                            \
+    X(CreateSoftBody, CreateSoftBody, SCHEMA_CREATE_SOFT_BODY)                                     \
+    X(SbssAddVertex, SbssAddVertex, SCHEMA_SBSS_ADD_VERTEX)                                        \
+    X(SbssAddFace, SbssAddFace, SCHEMA_SBSS_ADD_FACE)                                              \
     X(StressTest, StressTest, SCHEMA_STRESS_TEST)
 
 #define MAP_TO_DECLARE(P, G, S) DECLARE_PARSER(P, G)

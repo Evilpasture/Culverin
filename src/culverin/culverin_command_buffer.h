@@ -20,11 +20,13 @@ typedef enum SlotState : uint8_t {
     SLOT_PENDING_CREATE  = 1,
     SLOT_ALIVE           = 2,
     SLOT_PENDING_DESTROY = 3,
-    SLOT_CHARACTER       = 4
+    SLOT_CHARACTER       = 4,
+    SLOT_SOFT_BODY       = 5
 } SlotState;
 
 typedef enum CommandType : uint8_t {
     CMD_CREATE_BODY,
+    CMD_CREATE_SOFT_BODY,
     CMD_DESTROY_BODY,
     CMD_SET_POS,
     CMD_SET_ROT,
@@ -156,6 +158,16 @@ typedef union {
         float ix, iy, iz;    // Force vector follows at offset 32
     } impulse_at;
 
+    struct {
+        uint32_t header;
+        uint32_t category;
+        JPH_SoftBodyCreationSettings *settings;
+        uint64_t user_data;
+        uint32_t mask;
+        uint32_t material_id;
+        uint32_t num_vertices;
+    } create_soft;
+
     // Forces the entire union to be exactly 64 bytes
     uint8_t _cache_pad[MEMORY_ALIGNMENT_SIZE];
 
@@ -174,6 +186,7 @@ static_assert(offsetof(PhysicsCommand, create.settings) == OFFSET_START,
               "create.settings must start at offset 8");
 static_assert(alignof(PhysicsCommand) == MEMORY_ALIGNMENT_SIZE,
               "PhysicsCommand must be 64-byte aligned");
+static_assert(offsetof(PhysicsCommand, create_soft.settings) == OFFSET_START);
 
 // INCLUDE AFTER PHYSICSCOMMAND!
 #include "culverin.h"
@@ -190,7 +203,8 @@ void clear_command_queue(struct PhysicsWorldObject *self);
 // True Direct Threading: Evaluates the next command without returning to a while loop.
 // Includes aggressive software prefetching for indirect lookups.
 static constexpr uint32_t VALID_BID_MASK = (1u << SLOT_ALIVE) | (1u << SLOT_PENDING_CREATE) |
-                                           (1u << SLOT_PENDING_DESTROY) | (1u << SLOT_CHARACTER);
+                                           (1u << SLOT_PENDING_DESTROY) |
+                                           (1u << SLOT_CHARACTER | (1u << SLOT_SOFT_BODY));
 #define DISPATCH()                                                                                 \
     do {                                                                                           \
         if (UNLIKELY(i >= count)) {                                                                \
