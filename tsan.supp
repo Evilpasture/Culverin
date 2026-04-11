@@ -45,3 +45,8 @@ race:python3.12
 race:PyObject_GC_Del
 race:PyObject_GC_Track
 race:PyGC_Collect
+
+# Ignore internal mimalloc races in the Python interpreter
+race:mimalloc
+race:_mi_heap_init
+race:mi_pthread_done
