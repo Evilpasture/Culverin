@@ -6,6 +6,7 @@ on:
     tags: [ 'v*' ]
   pull_request:
     branches: [ master ]
+  workflow_dispatch: #
 
 jobs:
   # build Jolt once per platform
@@ -223,9 +224,8 @@ jobs:
           # 2. Install the alpha versions
           uv python install 3.15 3.15t
           
-          # 3. Common Build Arguments
-          # We store these in a variable to avoid repetition
-          CMAKE_FLAGS="-GNinja;-DENABLE_SANITIZER=OFF;-DCMAKE_BUILD_TYPE=Release;-DDOUBLE_PRECISION=ON"
+          # 3. Common Build Arguments (Now injecting the prebuilt Jolt Cache path)
+          CMAKE_FLAGS="-GNinja;-DENABLE_SANITIZER=OFF;-DCMAKE_BUILD_TYPE=Release;-DDOUBLE_PRECISION=ON;-DJOLT_PREBUILT_DIR=${JOLT_CMAKE_DIR}"
           CXX_FLAGS="-Wno-overriding-option"
 
           # 4. Build Standard 3.15
@@ -238,11 +238,23 @@ jobs:
             --config-setting=cmake.args="$CMAKE_FLAGS" \
             --config-setting=cmake.define.CMAKE_CXX_FLAGS="$CXX_FLAGS"
 
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: culverin-release-${{ matrix.os }}
-          path: ./wheelhouse/*.whl
+          # 6. Repair and Tag Linux Wheels for PyPI
+          if [[ "${{ runner.os }}" == "Linux" ]]; then
+            echo "Installing patchelf for auditwheel..."
+            sudo apt-get update -y && sudo apt-get install -y patchelf
+
+            echo "Repairing Linux wheels..."
+            for whl in wheelhouse/*linux_*.whl; do
+              # uvx seamlessly pulls and runs the latest auditwheel
+              uvx auditwheel repair "$whl" -w wheelhouse/repaired/
+            done
+
+            # Replace raw linux_x86_64 wheels with manylinux compliant ones
+            rm wheelhouse/*linux_*.whl
+            mv wheelhouse/repaired/*.whl wheelhouse/
+            rmdir wheelhouse/repaired/
+          fi
+
 
   # ===========================================================================
   # JOB 2 & 3: SANITIZER VALIDATION (ASan/UBSan/TSan Check)
@@ -534,5 +546,6 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
+          skip-existing: true
 
   
