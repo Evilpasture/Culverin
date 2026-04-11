@@ -4548,7 +4548,25 @@ static int init_constants(PyObject *m) {
                   {.name = "CONSTRAINT_CONE", .value = CONSTRAINT_CONE},
                   {.name = "EVENT_ADDED", .value = EVENT_ADDED},
                   {.name = "EVENT_PERSISTED", .value = EVENT_PERSISTED},
-                  {.name = "EVENT_REMOVED", .value = EVENT_REMOVED}};
+                  {.name = "EVENT_REMOVED", .value = EVENT_REMOVED},
+                  // Build Metadata
+                  {.name = "JPH_DOUBLE_PRECISION", .value = JPH_DOUBLE_PRECISION},
+                  {.name = "FREE_THREADED",
+                   .value =
+#if defined(Py_GIL_DISABLED) && Py_GIL_DISABLED
+                       1
+#else
+                       0
+#endif
+                  },
+                  {.name = "DEBUG_BUILD",
+                   .value =
+#if defined(CULVERIN_DEBUG)
+                       1
+#else
+                       0
+#endif
+                  }};
 
     for (size_t i = 0; i < sizeof(consts) / sizeof(consts[0]); i++) {
         if (PyModule_AddIntConstant(m, consts[i].name, consts[i].value) < 0) {
@@ -4558,7 +4576,7 @@ static int init_constants(PyObject *m) {
     return 0;
 }
 
-static constexpr auto MAGIC_BUFFER = 32;
+static constexpr auto MAGIC_BUFFER = 128;
 static char shared_version[MAGIC_BUFFER];
 
 PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
@@ -4568,11 +4586,37 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
     int expected = 0;
     if (atomic_compare_exchange_strong(&docs_status, &expected, 1)) {
 
-        // --- THE WINNER: Run exactly once per process life ---
-
+        // --- 1A. VERSION & BUILD METADATA ---
         const char *ver_temp = extract_version_from_toml();
-        strncpy(shared_version, ver_temp, MAGIC_BUFFER - 1);
-        shared_version[MAGIC_BUFFER - 1] = '\0';
+
+        const char *gil_status =
+#if defined(Py_GIL_DISABLED) && Py_GIL_DISABLED
+            "free-threaded";
+#else
+            "gil-enabled";
+#endif
+
+        const char *precision =
+#if JPH_DOUBLE_PRECISION
+            "double-precision";
+#else
+            "single-precision";
+#endif
+
+        const char *build_type =
+#if defined(ENABLE_SANITIZER) || defined(__SANITIZE_THREAD__)
+            "sanitized";
+#elif defined(CULVERIN_DEBUG)
+            "debug";
+#else
+                    "release";
+#endif
+
+        // Result: "0.5.0 (free-threaded, double-precision, release)"
+        snprintf(shared_version, MAGIC_BUFFER, "%s (%s, %s, %s)", ver_temp, gil_status, precision,
+                 build_type);
+
+        // --- THE WINNER: Run exactly once per process life ---
 
         stitch_docs(PhysicsWorld_methods, "PhysicsWorld");
         stitch_docs(Character_methods, "Character");
