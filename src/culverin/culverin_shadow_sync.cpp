@@ -26,17 +26,17 @@ struct CppSyncWorkItem {
 CULV_FORCE_INLINE void process_full_batch(PhysicsWorldObject *const CULV_RESTRICT self,
                                           const CppSyncWorkItem *const CULV_RESTRICT worklist) {
     auto *CULV_RESTRICT s_pos =
-        (PosStride *)CULV_ASSUME_ALIGNED(self->positions_back, sizeof(PosStride));
-    auto *CULV_RESTRICT s_rot =
-        (AuxStride *)CULV_ASSUME_ALIGNED(self->rotations_back, sizeof(AuxStride));
-    auto *CULV_RESTRICT s_lvel =
-        (AuxStride *)CULV_ASSUME_ALIGNED(self->linear_velocities_back, sizeof(AuxStride));
-    auto *CULV_RESTRICT s_avel =
-        (AuxStride *)CULV_ASSUME_ALIGNED(self->angular_velocities_back, sizeof(AuxStride));
+        (PosStride *)CULV_ASSUME_ALIGNED(self->positions, sizeof(PosStride));
     auto *CULV_RESTRICT s_ppos =
         (PosStride *)CULV_ASSUME_ALIGNED(self->prev_positions, sizeof(PosStride));
+    auto *CULV_RESTRICT s_rot =
+        (AuxStride *)CULV_ASSUME_ALIGNED(self->rotations, sizeof(AuxStride));
     auto *CULV_RESTRICT s_prot =
         (AuxStride *)CULV_ASSUME_ALIGNED(self->prev_rotations, sizeof(AuxStride));
+    auto *CULV_RESTRICT s_lvel =
+        (AuxStride *)CULV_ASSUME_ALIGNED(self->linear_velocities, sizeof(AuxStride));
+    auto *CULV_RESTRICT s_avel =
+        (AuxStride *)CULV_ASSUME_ALIGNED(self->angular_velocities, sizeof(AuxStride));
 
     // Prevent I-Cache bloat and register spilling by limiting unroll count
     CULV_UNROLL_LOOP(4)

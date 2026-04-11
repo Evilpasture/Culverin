@@ -200,8 +200,8 @@ typedef struct {
 
 // Temporary container for resize
 typedef struct {
-    JPH_Real *pos, *ppos, *pos_back;
-    float *rot, *rot_back, *prot, *lvel, *lvel_back, *avel, *avel_back;
+    JPH_Real *pos, *ppos;
+    float *rot, *prot, *lvel, *avel;
     JPH_BodyID *bids;
     uint64_t *udat;
     _Atomic uint32_t *gens; // Updated to Atomic
@@ -227,14 +227,10 @@ typedef struct PhysicsWorldObject {
     // --- HOT SYNC BLOCK: Kept together for L1d Locality ---
     JPH_Real *positions;
     JPH_Real *prev_positions;
-    JPH_Real *positions_back;
     float *rotations;
     float *prev_rotations;
-    float *rotations_back;
     float *linear_velocities;
-    float *linear_velocities_back;
     float *angular_velocities;
-    float *angular_velocities_back;
     JPH_BodyID *body_ids;
     uint64_t *user_data;
     uint32_t *material_ids;

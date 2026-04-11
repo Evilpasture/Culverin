@@ -80,22 +80,3 @@ static inline void CulvMem_RawFreeAligned(void *aligned) {
     free(aligned);
 #endif
 }
-
-[[gnu::always_inline]]
-static inline void swap_shadow_buffers(PhysicsWorldObject *self) {
-    JPH_Real *tmp_pos = self->positions; 
-    self->positions = self->positions_back; 
-    self->positions_back = tmp_pos;
-
-    float *tmp_rot = self->rotations; 
-    self->rotations = self->rotations_back; 
-    self->rotations_back = tmp_rot;
-
-    float *tmp_lvel = self->linear_velocities; 
-    self->linear_velocities = self->linear_velocities_back; 
-    self->linear_velocities_back = tmp_lvel;
-
-    float *tmp_avel = self->angular_velocities; 
-    self->angular_velocities = self->angular_velocities_back; 
-    self->angular_velocities_back = tmp_avel;
-}
