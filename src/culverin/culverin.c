@@ -1399,8 +1399,17 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
         }
     }
 
+    // SYNC HANDOVER: Wait for Numpy/Proxies to finish
+    // Note: We use the dedicated step_sync.mutex, NOT the shadow_lock
+    NATIVE_MUTEX_LOCK(self->step_sync.mutex);
+    while (atomic_load_explicit(&self->active_queries, memory_order_relaxed) > 0) {
+        NATIVE_COND_WAIT(self->step_sync.cond, self->step_sync.mutex);
+    }
+
     // 3. Jolt-to-Shadow Buffer Sync
     culverin_sync_shadow_buffers(self);
+
+    NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
 
     CULV_PROFILE_END(jolt_step, "Jolt Physics Crunch", (unsigned int)captured_count);
 
