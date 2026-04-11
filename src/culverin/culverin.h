@@ -285,7 +285,7 @@ typedef struct PhysicsWorldObject {
     // instead of creating holes between every pointer.
     uint32_t max_jolt_bodies;
     atomic_int active_queries;
-    int view_export_count;
+    atomic_int view_export_count;
     #if !defined(Py_GIL_DISABLED)
     atomic_int waiting_threads;
     #endif

@@ -12,8 +12,8 @@ PyType_DeclareSlot_Status BufferProxy_traverse(BufferProxyObject *self, visitpro
 
 PyType_DeclareSlot_Status BufferProxy_clear(BufferProxyObject *self) {
     if (self->world) {
-        if (self->world->view_export_count > 0) {
-            self->world->view_export_count--;
+        if (atomic_load_explicit(&self->world->view_export_count, memory_order_relaxed) > 0) {
+            atomic_fetch_sub_explicit(&self->world->view_export_count, 1, memory_order_relaxed);
         }
         Py_CLEAR(self->world);
     }
@@ -83,14 +83,24 @@ PyType_DeclareSlot_Status BufferProxy_getbuffer(BufferProxyObject *self, Py_buff
     view->suboffsets = nullptr;
     view->internal   = nullptr;
 
-    // We do NOT unlock here. bf_releasebuffer will handle it.
+    // 5. CRITICAL: Release the lock so other threads (Mutator/Stepper) can work!
+    SHADOW_UNLOCK(&world->shadow_lock); 
     return 0;
 }
 
-PyType_DeclareSlot_Void BufferProxy_releasebuffer(BufferProxyObject *self,
-                                                  CULV_MAYBE_UNUSED Py_buffer *view) {
-    // 4. Signal Numpy is done reading, Stepper thread can proceed
-    SHADOW_UNLOCK(&self->world->shadow_lock);
+PyType_DeclareSlot_Void BufferProxy_releasebuffer(BufferProxyObject *self, Py_buffer *view) {
+    PhysicsWorldObject *world = self->world;
+
+    // 4. Mark query finished
+    // Use 'release' barrier to ensure Numpy reads are finished before Stepper writes
+    if (atomic_fetch_sub_explicit(&world->active_queries, 1, memory_order_release) == 1) {
+        
+        // 5. If we were the last ones, wake up the Stepper!
+        // We use the internal sync mutex/cond here
+        NATIVE_MUTEX_LOCK(world->step_sync.mutex);
+        NATIVE_COND_BROADCAST(world->step_sync.cond);
+        NATIVE_MUTEX_UNLOCK(world->step_sync.mutex);
+    }
 }
 
 // --- Heap Type Specification ---
@@ -127,7 +137,7 @@ static PyObject *make_proxy(PhysicsWorldObject *self, ProxyBufferType type, cons
     proxy->itemsize = itemsize;
     proxy->stride   = stride;
 
-    self->view_export_count++;
+    atomic_fetch_add_explicit(&self->view_export_count, 1, memory_order_relaxed);
 
     PyObject_GC_Track(proxy);
     return (PyObject *)proxy;

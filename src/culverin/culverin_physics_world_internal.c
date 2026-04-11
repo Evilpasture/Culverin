@@ -260,7 +260,7 @@ int PhysicsWorld_resize(PhysicsWorldObject *self, size_t new_capacity) {
     // 1. Signal Start
     atomic_store_explicit(&self->is_resizing, true, memory_order_release);
 
-    if (self->view_export_count > 0) {
+    if (atomic_load_explicit(&self->view_export_count, memory_order_relaxed) > 0) {
         atomic_store_explicit(&self->is_resizing, false, memory_order_relaxed);
         PyErr_SetString(PyExc_BufferError, "Cannot resize while memoryview is active.");
         return -1;
@@ -742,7 +742,7 @@ PyType_DeclareSlot_StatusFromModule PhysicsWorld_getbuffer(PhysicsWorldObject *s
     view->internal = NULL;
 
     // view_export_count is a standard int protected by shadow_lock
-    self->view_export_count++;
+    atomic_fetch_add_explicit(&self->view_export_count, 1, memory_order_relaxed);
     
     SHADOW_UNLOCK(&self->shadow_lock);
     return 0;
@@ -754,8 +754,8 @@ PyType_DeclareSlot_VoidFromModule PhysicsWorld_releasebuffer(PhysicsWorldObject 
     SHADOW_LOCK(&self->shadow_lock);
     
     // Release logic remains simple as no atomic counters are mutated here
-    if (self->view_export_count > 0) {
-        self->view_export_count--;
+    if (atomic_load_explicit(&self->view_export_count, memory_order_relaxed) > 0) {
+        atomic_fetch_sub_explicit(&self->view_export_count, 1, memory_order_relaxed);
     }
     
     SHADOW_UNLOCK(&self->shadow_lock);
