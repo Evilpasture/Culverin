@@ -1324,7 +1324,8 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
     // --- PHASE 1: SHADOW STATE LOCK-DOWN ---
     SHADOW_LOCK(&self->shadow_lock);
 
-    // I have no idea why I should even need this, but the GIL is giving me trouble, so this will do.
+    // I have no idea why I should even need this, but the GIL is giving me trouble, so this will
+    // do.
     // TODO: investigate how the hell does this work
 #if !defined(Py_GIL_DISABLED)
     // ANTI-STARVATION: Yield to waiting Python threads (Getters/Mutators)
@@ -4447,7 +4448,8 @@ static int init_types(PyObject *m, CulverinState *st) {
                  {(&Vehicle_spec), &st->VehicleType, "Vehicle"},
                  {(&RagdollSettings_spec), &st->RagdollSettingsType, "RagdollSettings"},
                  {(&Ragdoll_spec), &st->RagdollType, "Ragdoll"},
-                 {(&Skeleton_spec), &st->SkeletonType, "Skeleton"}};
+                 {(&Skeleton_spec), &st->SkeletonType, "Skeleton"},
+                 {(&BufferProxy_spec), &st->BufferProxyType, "BufferProxyObject"}};
 
     for (size_t i = 0; i < sizeof(types) / sizeof(types[0]); i++) {
         auto type = PyType_FromModuleAndSpec(m, (PyType_Spec *)types[i].spec, nullptr);
