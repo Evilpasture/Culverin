@@ -4560,23 +4560,21 @@ static int init_constants(PyObject *m) {
 }
 
 static constexpr auto MAGIC_BUFFER = 32;
-static char shared_version[MAGIC_BUFFER]; // Permanent storage for the version string
+static char shared_version[MAGIC_BUFFER];
 
 PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
     CulverinState *st = get_culverin_state(m);
 
-    // 1. THE MASTER GATE
+    // 1. THE MASTER GATE: Protects all static global memory in the process
     int expected = 0;
     if (atomic_compare_exchange_strong(&docs_status, &expected, 1)) {
 
-        // --- THE WINNER: Initializes Global State ---
+        // --- THE WINNER: Run exactly once per process life ---
 
-        // 1A. Version extraction
         const char *ver_temp = extract_version_from_toml();
         strncpy(shared_version, ver_temp, MAGIC_BUFFER - 1);
         shared_version[MAGIC_BUFFER - 1] = '\0';
 
-        // 1B. Doc stitching
         stitch_docs(PhysicsWorld_methods, "PhysicsWorld");
         stitch_docs(Character_methods, "Character");
         stitch_docs(Vehicle_methods, "Vehicle");
@@ -4587,40 +4585,18 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
         stitch_docs_getset(Character_getset, "Character");
         stitch_docs_getset(Vehicle_getset, "Vehicle");
 
-        // --- 1C. REGISTER HANDLERS (Missing Piece) ---
-        // These write to global pointers in the JPH binary. Must be gated.
+        // Gated Handler Registration
         JPH_SetTraceHandler(culv_jph_trace);
         JPH_SetAssertFailureHandler(culv_jph_assert);
 
-        // 1D. Jolt Base Init
         if (!JPH_Init()) {
             PyErr_SetString(PyExc_RuntimeError, "Jolt initialization failed");
             atomic_store_explicit(&docs_status, 0, memory_order_relaxed);
             return -1;
         }
 
-        // 1E. THE WARMUP (Force lazy statics to initialize)
-        JPH_JobSystem *w_job               = JPH_JobSystemThreadPool_Create(NULL);
-        JPH_BroadPhaseLayerInterface *w_bp = JPH_BroadPhaseLayerInterfaceTable_Create(1, 1);
-        JPH_ObjectLayerPairFilter *w_ol    = JPH_ObjectLayerPairFilterTable_Create(1);
-        JPH_ObjectVsBroadPhaseLayerFilter *w_ovb =
-            JPH_ObjectVsBroadPhaseLayerFilterTable_Create(w_bp, 1, w_ol, 1);
-
-        JPH_PhysicsSystemSettings w_settings = {.maxBodies                     = 1,
-                                                .maxBodyPairs                  = 1,
-                                                .maxContactConstraints         = 1,
-                                                .broadPhaseLayerInterface      = w_bp,
-                                                .objectLayerPairFilter         = w_ol,
-                                                .objectVsBroadPhaseLayerFilter = w_ovb};
-        JPH_PhysicsSystem *w_sys             = JPH_PhysicsSystem_Create(&w_settings);
-
-        JPH_PhysicsSystem_Destroy(w_sys);
-        JPH_ObjectVsBroadPhaseLayerFilterTable_Destroy(w_ovb);
-        JPH_ObjectLayerPairFilterTable_Destroy(w_ol);
-        JPH_BroadPhaseLayerInterfaceTable_Destroy(w_bp);
-        JPH_JobSystem_Destroy(w_job);
-
-        // 1F. Global Procedure Tables
+        // Gated Procedure Table Assignments
+        // (Fixes the race on ManagedDebugRendererSimple::s_Procs)
         JPH_BroadPhaseLayerFilter_SetProcs(&global_bp_procs);
         JPH_ObjectLayerFilter_SetProcs(&global_obj_procs);
         JPH_BodyFilter_SetProcs(&global_bf_procs);
@@ -4628,21 +4604,23 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
         JPH_DebugRenderer_SetProcs(&debug_procs);
         JPH_ContactListener_SetProcs(&contact_procs);
 
-        // 1G. Global Mutex
+        // Gated Mutex Initialization
+        // (Fixes the race on g_jph_trampoline_lock write)
         if (INIT_NATIVE_MUTEX(g_jph_trampoline_lock) != 0) {
-            PyErr_SetString(PyExc_RuntimeError, "Failed to initialize global JPH lock");
+            PyErr_SetString(PyExc_RuntimeError, "Failed to initialize global lock");
             return -1;
         }
 
         atomic_store_explicit(&docs_status, 2, memory_order_release);
 
     } else {
+        // --- THE LOSERS: Wait for the Winner to finish ---
         while (atomic_load_explicit(&docs_status, memory_order_acquire) != 2) {
             culverin_yield();
         }
     }
 
-    // --- 2. PER-MODULE SETUP (Everyone runs this) ---
+    // --- 2. PER-INTERPRETER SETUP (Runs for every import) ---
     if (PyModule_AddStringConstant(m, "__version__", shared_version) < 0) {
         return -1;
     }
