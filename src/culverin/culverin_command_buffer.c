@@ -213,6 +213,8 @@ op_CREATE_SOFT_BODY: {
     JPH_SoftBodyCreationSettings *s = cmd->create_soft.settings;
     uint32_t num_verts              = cmd->create_soft.num_vertices; // O(1) Cache-local read!
 
+    PyObject *py_shared             = (PyObject *)(uintptr_t)cmd->create_soft.user_data;
+
     JPH_BodyID new_bid = JPH_BodyInterface_CreateAndAddSoftBody(bi, s, JPH_Activation_Activate);
 
     SHADOW_LOCK(&self->shadow_lock);
@@ -241,6 +243,11 @@ op_CREATE_SOFT_BODY: {
     }
 
     JPH_SoftBodyCreationSettings_Destroy(s); // Cleanup
+
+    // --- RELEASE PROTECTION ---
+    // The creation is finished; Python can now safely delete the shared settings if it wants.
+    Py_DECREF(py_shared); 
+
     SHADOW_UNLOCK(&self->shadow_lock);
     DISPATCH();
 }

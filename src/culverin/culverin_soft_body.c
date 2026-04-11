@@ -129,13 +129,23 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_soft_body(PhysicsWorldOb
 
     // Extract C-struct from Python Wrapper (assuming you named it SoftBodySharedSettingsObject)
     auto *py_shared = (SoftBodySharedSettingsObject *)o_shared;
+
+    // --- LIFETIME PROTECTION ---
+    // We increase the Python refcount because the PhysicsCommand queue 
+    // now effectively "owns" a piece of this object until the next step().
+    Py_INCREF(o_shared); 
+
     JPH_SoftBodyCreationSettings_SetSharedSettings(settings, py_shared->settings);
+    JPH_SoftBodyCreationSettings_SetVertexRadius(settings, 0.05f);
 
     // SoftBodyCreationSettings inherits from BodyCreationSettings, safe to cast
     JPH_RVec3 j_pos = {px, py, pz};
     JPH_Quat j_rot  = {rx, ry, rz, rw};
     JPH_BodyCreationSettings_SetPosition((JPH_BodyCreationSettings *)settings, &j_pos);
     JPH_BodyCreationSettings_SetRotation((JPH_BodyCreationSettings *)settings, &j_rot);
+
+    // Set explicit Soft Body properties
+    JPH_SoftBodyCreationSettings_SetUserData(settings, 0); // Will be set to handle below
     
     // --- Set Object Layer and Motion Type ---
     JPH_BodyCreationSettings_SetObjectLayer((JPH_BodyCreationSettings *)settings, OBJECT_LAYER_DYNAMIC);
@@ -154,8 +164,12 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_soft_body(PhysicsWorldOb
     if (UNLIKELY(!raw_h)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         JPH_SoftBodyCreationSettings_Destroy(settings);
+        Py_DECREF(o_shared); // Release protection
         return (PyErr_Occurred()) ? nullptr : PyErr_NoMemory();
     }
+
+    // Overwrite UserData in the actual SoftBody settings with the final generational handle
+    JPH_SoftBodyCreationSettings_SetUserData(settings, raw_h);
 
     // 5. SHADOW BUFFER UPDATE (For Center of Mass)
     uint32_t slot  = (uint32_t)(raw_h & HANDLE_INDEX_MASK);
@@ -178,9 +192,9 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_soft_body(PhysicsWorldOb
     cmd->create_soft.settings  = settings;
     cmd->create_soft.category  = category;
     cmd->create_soft.mask      = mask;
-    cmd->create_soft.user_data = user_data;
-
-    // Pass vertex count directly into the command so the Flush thread doesn't pointer chase!
+    // Store the Python object pointer in the padding of the command so we can DECREF it later!
+    // Since create_soft.user_data is uint64_t, we can use it to store the PyObject*
+    cmd->create_soft.user_data  = (uintptr_t)o_shared; 
     cmd->create_soft.num_vertices = py_shared->num_vertices;
 
     SHADOW_UNLOCK(&self->shadow_lock);
