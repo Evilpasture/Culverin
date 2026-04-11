@@ -219,7 +219,6 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
     memset(&self->debug_triangles, 0, sizeof(DebugBuffer));
     INIT_LOCK(self->shadow_lock);
     self->debug_renderer = JPH_DebugRenderer_Create(self);
-    JPH_DebugRenderer_SetProcs(&debug_procs);
     atomic_init(&self->is_stepping, false);
 
     INIT_NATIVE_MUTEX(self->step_sync.mutex);
@@ -4601,6 +4600,10 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
         JPH_ObjectLayerFilter_SetProcs(&global_obj_procs);
         JPH_BodyFilter_SetProcs(&global_bf_procs);
         JPH_ShapeFilter_SetProcs(&global_sf_procs);
+
+        // Initialize the Debug Renderer global procedure table once.
+        // This is a global write, so it must be gated.
+        JPH_DebugRenderer_SetProcs(&debug_procs);
 
         if (INIT_NATIVE_MUTEX(g_jph_trampoline_lock) != 0) {
             PyErr_SetString(PyExc_RuntimeError, "Failed to initialize global JPH lock");
