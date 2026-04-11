@@ -136,6 +136,11 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_soft_body(PhysicsWorldOb
     JPH_Quat j_rot  = {rx, ry, rz, rw};
     JPH_BodyCreationSettings_SetPosition((JPH_BodyCreationSettings *)settings, &j_pos);
     JPH_BodyCreationSettings_SetRotation((JPH_BodyCreationSettings *)settings, &j_rot);
+    
+    // --- Set Object Layer and Motion Type ---
+    JPH_BodyCreationSettings_SetObjectLayer((JPH_BodyCreationSettings *)settings, OBJECT_LAYER_DYNAMIC);
+    JPH_BodyCreationSettings_SetMotionType((JPH_BodyCreationSettings *)settings, JPH_MotionType_Dynamic);
+    JPH_BodyCreationSettings_SetAllowSleeping((JPH_BodyCreationSettings *)settings, true);
 
     // 4. COMMIT PHASE
     SHADOW_LOCK(&self->shadow_lock);
