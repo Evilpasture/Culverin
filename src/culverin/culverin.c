@@ -1534,7 +1534,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_convex_hull(PhysicsWorldObject *se
     // 4. SETTINGS PREP
     JPH_BodyCreationSettings *settings = JPH_BodyCreationSettings_Create3(
         shape, &(JPH_RVec3){px, py, pz}, &(JPH_Quat){rx, ry, rz, rw}, (JPH_MotionType)motion_type,
-        (motion_type == 0 ? 0 : 1));
+        (motion_type == MOTION_STATIC ? OBJECT_LAYER_STATIC : OBJECT_LAYER_DYNAMIC));
 
     BodyConfig config = {mass, friction, restitution, (int)is_sensor, (int)use_ccd, motion_type};
     configure_body_settings(settings, shape, config);
@@ -1789,7 +1789,8 @@ PyCFunction_DeclareMethod PhysicsWorld_create_compound_body(PhysicsWorldObject *
     // 4. JOLT PREP
     JPH_BodyCreationSettings *settings = JPH_BodyCreationSettings_Create3(
         final_shape, &(JPH_RVec3){px, py, pz}, &(JPH_Quat){rx, ry, rz, rw},
-        (JPH_MotionType)motion_type, (motion_type == 0 ? 0 : 1));
+        (JPH_MotionType)motion_type,
+        (motion_type == MOTION_STATIC) ? OBJECT_LAYER_STATIC : OBJECT_LAYER_DYNAMIC);
 
     BodyCreationProps props = {mass, friction, restitution, (int)is_sensor, (int)use_ccd};
     apply_body_creation_props(settings, final_shape, props);
@@ -1967,7 +1968,8 @@ PyCFunction_DeclareMethod PhysicsWorld_create_body(PhysicsWorldObject *self, PyO
         JPH_RVec3 j_pos = {px, py, pz};
         JPH_Quat j_rot  = {rx, ry, rz, rw};
         settings        = JPH_BodyCreationSettings_Create3(
-            shape, &j_pos, &j_rot, (JPH_MotionType)motion_type, (motion_type == 0) ? 0 : 1);
+            shape, &j_pos, &j_rot, (JPH_MotionType)motion_type,
+            (motion_type == MOTION_STATIC) ? OBJECT_LAYER_STATIC : OBJECT_LAYER_DYNAMIC);
         if (settings) {
             BodyConfig config = {mass,           mat.friction, mat.restitution,
                                  (int)is_sensor, (int)use_ccd, motion_type};
@@ -2101,7 +2103,8 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
             JPH_RVec3 j_p   = {pos_buf[i].x, pos_buf[i].y, pos_buf[i].z};
             JPH_Quat j_r    = {0, 0, 0, 1};
             settings_buf[i] = JPH_BodyCreationSettings_Create3(
-                shape, &j_p, &j_r, (JPH_MotionType)motion_type, (motion_type == 0 ? 0 : 1));
+                shape, &j_p, &j_r, (JPH_MotionType)motion_type,
+                (motion_type == MOTION_STATIC) ? OBJECT_LAYER_STATIC : OBJECT_LAYER_DYNAMIC);
         }
     }
     SHADOW_UNLOCK(&self->shadow_lock);
@@ -2368,7 +2371,8 @@ PyCFunction_DeclareMethod PhysicsWorld_create_mesh_body(PhysicsWorldObject *self
 
     // 4. SETTINGS PREP
     JPH_BodyCreationSettings *settings = JPH_BodyCreationSettings_Create3(
-        shape, &(JPH_RVec3){px, py, pz}, &(JPH_Quat){rx, ry, rz, rw}, JPH_MotionType_Static, 0);
+        shape, &(JPH_RVec3){px, py, pz}, &(JPH_Quat){rx, ry, rz, rw}, JPH_MotionType_Static,
+        OBJECT_LAYER_STATIC);
 
     if (!settings) {
         JPH_Shape_Destroy(shape);
@@ -3709,7 +3713,8 @@ PyCFunction_DeclareMethod PhysicsWorld_create_heightfield(PhysicsWorldObject *se
 
     // 3. SETTINGS PREP
     JPH_BodyCreationSettings *settings = JPH_BodyCreationSettings_Create3(
-        shape, &(JPH_RVec3){px, py, pz}, &(JPH_Quat){rx, ry, rz, rw}, JPH_MotionType_Static, 0);
+        shape, &(JPH_RVec3){px, py, pz}, &(JPH_Quat){rx, ry, rz, rw}, JPH_MotionType_Static,
+        OBJECT_LAYER_STATIC);
     JPH_BodyCreationSettings_SetFriction(settings, friction);
     JPH_BodyCreationSettings_SetRestitution(settings, restitution);
 
