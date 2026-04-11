@@ -37,6 +37,13 @@ race:PyUnicode_*
 race:type_get_doc
 race:bcmp
 
+# Kill the internal Python 3.12 qsort race
+race:qsort
+race:qsort_r
+
+# Kill the internal thread start race
+race:PyThread_start_new_thread
+
 # --- 5. Third-Party: Jolt Physics ---
 # Jolt uses a custom, highly optimized task scheduler and job system.
 # We suppress JPH namespace to focus TSan on the Culverin bridge.
