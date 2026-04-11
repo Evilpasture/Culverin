@@ -834,11 +834,14 @@ class TestProfilerScenario(CulverinTestCase):
         self.world.step(0)
 
         def worker():
+            # Create a local generator for THIS thread
+            rng = np.random.default_rng() 
             for _ in range(500):
-                # Randomly move bodies
-                target = bodies[np.random.randint(0, 100)]
+                # Use rng instead of np.random
+                target = bodies[rng.integers(0, 100)]
                 self.world.apply_impulse(target, 0, 10, 0)
-                self.world.set_position(target, x=np.random.rand(), y=2, z=0)
+                self.world.set_position(target, x=rng.random(), y=2, z=0)
+
 
         threads = [threading.Thread(target=worker) for _ in range(8)]
         for t in threads:
