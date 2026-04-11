@@ -4611,10 +4611,21 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
 #else
                     "release";
 #endif
+        // Determine Compiler ID
+        const char *compiler_id = 
+#if defined(__clang__)
+            "Clang " __clang_version__;
+#elif defined(__GNUC__)
+            "GCC " __VERSION__;
+#elif defined(_MSC_VER)
+            "MSVC " _CRT_STRINGIZE(_MSC_VER);
+#else
+            "Unknown Compiler";
+#endif
 
-        // Result: "0.5.0 (free-threaded, double-precision, release)"
-        snprintf(shared_version, MAGIC_BUFFER, "%s (%s, %s, %s)", ver_temp, gil_status, precision,
-                 build_type);
+        // Result: e.g. "0.6.0 (free-threaded, double-precision, release, Clang 22.1.0)"
+        snprintf(shared_version, MAGIC_BUFFER, "%s (%s, %s, %s, %s)", 
+                 ver_temp, gil_status, precision, build_type, compiler_id);
 
         // --- THE WINNER: Run exactly once per process life ---
 
