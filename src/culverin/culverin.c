@@ -241,7 +241,6 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
     self->contact_max_capacity = CONTACT_MAX_CAPACITY;
     self->contact_buffer       = CULV_RAW_MALLOC(CONTACT_MAX_CAPACITY * sizeof(ContactEvent));
     atomic_init(&self->contact_atomic_idx, 0);
-    JPH_ContactListener_SetProcs(&contact_procs);
     self->contact_listener = JPH_ContactListener_Create(self);
     JPH_PhysicsSystem_SetContactListener(self->system, self->contact_listener);
 
