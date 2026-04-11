@@ -1,18 +1,21 @@
 version: 2
 updates:
-  # Keep GitHub Actions up to date
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "weekly"
+      interval: "daily" # Faster updates to stay ahead
+    groups:
+      actions:
+        patterns: ["*"]
 
-  # Keep Python dependencies up to date
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
-      interval: "weekly"
+      interval: "daily"
+    groups:
+      python-deps:
+        patterns: ["*"]
 
-  # Keep Git submodules up to date
   - package-ecosystem: "gitsubmodule"
     directory: "/"
     schedule:
