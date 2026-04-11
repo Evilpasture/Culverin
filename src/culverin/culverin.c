@@ -4049,7 +4049,7 @@ static const char ALL_DOCS[] = {
 };
 
 // Global flag to ensure we only stitch once (important for subinterpreters)
-static atomic_bool docs_stitched = false;
+static atomic_int docs_status = 0;
 
 static const char *COMMENT_MARKER = "<!--";
 
@@ -4569,8 +4569,8 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
     }
 
     // Atomic "test and set" to ensure only one thread ever runs the stitcher
-    bool expected = false;
-    if (atomic_compare_exchange_strong(&docs_stitched, &expected, true)) {
+    int expected = 0;
+    if (atomic_compare_exchange_strong(&docs_status, &expected, true)) {
         stitch_docs(PhysicsWorld_methods, "PhysicsWorld");
         stitch_docs(Character_methods, "Character");
         stitch_docs(Vehicle_methods, "Vehicle");
@@ -4582,6 +4582,15 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
         stitch_docs_getset(PhysicsWorld_getset, "PhysicsWorld");
         stitch_docs_getset(Character_getset, "Character");
         stitch_docs_getset(Vehicle_getset, "Vehicle");
+        // ATOMIC RELEASE: Signal we are totally finished.
+        // Release ensure all previous string writes are visible to other CPUs.
+        atomic_store_explicit(&docs_status, 2, memory_order_release);
+    } else {
+        // LOSER: Wait for the winner to hit state '2'
+        // Acquire ensures we see the strings written by the winner.
+        while (atomic_load_explicit(&docs_status, memory_order_acquire) != 2) {
+            culverin_yield(); // Give the CPU a break
+        }
     }
 
     // Register handlers
