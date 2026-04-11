@@ -337,6 +337,45 @@ Creates a single rigid body composed of multiple distinct sub-shapes. This is id
 - **Shape Cache Integration:** Culverin's C-level **Shape Cache** identifies identical sub-shapes across different compound bodies. If you create 100 identical chairs, the underlying Jolt geometry is shared in memory, drastically reducing the cache footprint.
 - **Performance:** Compound bodies are significantly faster than creating multiple bodies and joining them with `FixedConstraints`. Use this method whenever parts of an object never move relative to each other.
 
+### create_soft_body(...)
+
+Creates a physically simulated soft body (deformable mesh) in the world. 
+
+Unlike rigid bodies, soft bodies do not have a fixed shape; they are composed of vertices and constraints (edges/springs) that allow the mesh to squish, stretch, and jiggle upon impact.
+
+**Returns:**
+- **`handle` (int):** A unique 64-bit generational handle. This handle allows you to apply forces to the body as a whole or retrieve its vertex data via `get_soft_body_vertices`.
+
+**Arguments:**
+- **`shared_settings` (SoftBodySharedSettings):** The topological blueprint defining the mesh, vertex mass, and constraints.
+- **`pos` (tuple):** Initial `(x, y, z)` world position of the body's center of mass.
+- **`rot` (tuple):** Initial `(x, y, z, w)` orientation.
+- **`user_data` (int):** Optional 64-bit integer.
+- **`category` / `mask` (int):** Bitmasks for collision filtering.
+
+**Operational Mechanics:**
+- **Two-Tier Tracking:** Culverin tracks the soft body in two ways. The "Center of Mass" is synchronized with the standard `positions` and `rotations` buffers (allowing basic proximity checks), while individual vertices are synchronized into a specialized per-body buffer.
+- **Performance:** Creating a soft body automatically allocates a dedicated shadow buffer for its vertices. This buffer is sized exactly to the mesh defined in `shared_settings`.
+- **Thread Safety:** If the settings were created in the same frame, Culverin handles the structural hand-off to Jolt during the next `world.step()`.
+
+### get_soft_body_vertices(...)
+
+Returns a zero-copy `memoryview` pointing to the real-time, world-space positions of every vertex in a soft body.
+
+**Returns:**
+- **`view` (memoryview):** A contiguous buffer of vertices.
+- **Format:** `float32` (or `float64` if using double precision).
+- **Stride:** 4 (X, Y, Z, W). The `W` component is used for alignment and contains undefined data.
+- **NumPy Usage:** `verts = np.frombuffer(world.get_soft_body_vertices(h), dtype=np.float32).reshape(-1, 4)[:, :3]`
+
+**Arguments:**
+- **`handle` (int):** The 64-bit handle of the soft body.
+
+**Key Features:**
+- **World-Space Sync:** Culverin's C++ sync loop automatically transforms every vertex from Jolt's internal local space into World Space before writing to this buffer. This allows you to pass the buffer directly to a shader or rendering engine without manual matrix multiplication in Python.
+- **SIMD Optimized:** The vertex transfer uses unrolled loops and pre-fetched memory writes to ensure the sync phase does not become a bottleneck for complex meshes.
+- **Validation:** Raises a `TypeError` if the handle provided belongs to a rigid body or a character rather than a soft body.
+
 
 ### apply_impulse(...)
 
@@ -1646,3 +1685,43 @@ Performs an automated structural analysis of the ragdoll hierarchy to ensure phy
 - **Jitter Prevention:** In complex ragdolls, limbs often overlap at the joints. Without stabilization, the physics engine would constantly try to "push" the connected limbs apart, causing the character to shake or vibrate.
 - **Automated Collision Filtering:** This method automatically identifies connected limbs and disables collisions between them. It also adjusts joint positions to perfectly match the skeletal bind pose.
 - **Workflow Tip:** Always call `stabilize()` after you have finished adding all parts but **before** you call `world.create_ragdoll()`.
+
+
+## class SoftBodySharedSettings
+
+Defines the topology, physical mass distribution, and internal constraints of a soft body. This is a non-simulated "blueprint" object; it defines *how* a soft body behaves before it is added to the world.
+
+### add_vertex(...)
+
+Adds a single vertex (node) to the soft body definition.
+
+**Arguments:**
+- **`pos` (tuple):** The `(x, y, z)` local-space coordinate of the vertex.
+- **`inv_mass` (float):** The inverse mass of this specific vertex ($1/m$).
+    - A value of `1.0` represents a 1kg vertex.
+    - A value of `0.0` makes the vertex **kinematically pinned** (immovable), useful for attaching capes to characters or flags to poles.
+
+**Performance:**
+- Culverin tracks the total number of vertices added and packs this count into the creation command to ensure the world's shadow buffers are pre-allocated at the correct size.
+
+
+### add_face(...)
+
+Defines a triangular surface on the soft body mesh by linking three existing vertices.
+
+**Arguments:**
+- **`v1`, `v2`, `v3` (int):** The indices of the vertices (in the order they were added via `add_vertex`) that form the triangle.
+
+**Operational Details:**
+- **Collision Logic:** Faces are used by the Jolt solver to handle collisions against other shapes and to calculate volume-keeping constraints.
+- **Winding Order:** Standard counter-clockwise winding is recommended for correct normal calculation.
+
+
+### optimize()
+
+Bakes the raw vertex and face data into an optimized structural format required for simulation.
+
+**Operational Mechanics:**
+- **Constraint Generation:** This method automatically calculates the edge constraints (distance springs) between connected vertices and generates bending constraints to help the mesh maintain its shape.
+- **Normals Calculation:** Pre-calculates the initial surface normals used for lighting and collision response.
+- **Workflow Requirement:** You **must** call `optimize()` after adding all vertices and faces. Attempting to create a soft body with un-optimized settings will result in a physics crash or undefined behavior.
