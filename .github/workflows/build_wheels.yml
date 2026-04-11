@@ -392,6 +392,12 @@ jobs:
           python tests/benchmark.py --stress
           python -m pytest tests/test_core.py
 
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: culverin-release-${{ matrix.os }}
+          path: ./wheelhouse/*.whl
+
   # ===========================================================================
   # JOB 3.5: SANITY CHECKS
   # ===========================================================================
