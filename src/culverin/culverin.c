@@ -311,7 +311,7 @@ fail:
  * HELPER: physics_world_commit_create_locked
  * Encapsulates slot acquisition, handle generation, and command queuing.
  */
-uint64_t physics_world_commit_create_locked(PhysicsWorldObject *self,
+static uint64_t physics_world_commit_create_locked(PhysicsWorldObject *self,
                                             JPH_BodyCreationSettings *settings,
                                             uint32_t slot_state) {
     size_t current_count = atomic_load_explicit(&self->count, memory_order_acquire);
@@ -4583,7 +4583,11 @@ static int init_constants(PyObject *m) {
                   {.name = "EVENT_PERSISTED", .value = EVENT_PERSISTED},
                   {.name = "EVENT_REMOVED", .value = EVENT_REMOVED},
                   // Build Metadata
-                  {.name = "JPH_DOUBLE_PRECISION", .value = JPH_DOUBLE_PRECISION},
+                  #if defined(JPH_DOUBLE_PRECISION)
+                  {.name = "USE_DOUBLE_PRECISION", .value = 1},
+                  #else
+                  {.name = "USE_DOUBLE_PRECISION", .value = 0},
+                  #endif
                   {.name = "FREE_THREADED",
                    .value =
 #if defined(Py_GIL_DISABLED) && Py_GIL_DISABLED

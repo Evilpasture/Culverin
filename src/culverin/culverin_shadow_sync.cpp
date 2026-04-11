@@ -217,7 +217,7 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
 
                 const uint32_t state_bad = (state == SLOT_ALIVE || state == SLOT_CHARACTER) ? 0 : 1;
                 const uint32_t bad       = static_cast<uint32_t>(slot >= self->slot_capacity) |
-                                     (current_gen ^ gen) | state_bad;
+                                           (current_gen ^ gen) | state_bad;
 
                 const uint32_t d_idx = s2d[safe_slot];
 
@@ -256,7 +256,7 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
 
             for (uint32_t i = 0; i < active_soft_count; i++) {
                 const JPH::Body *b = lock_iface->TryGetBody(JPH::BodyID(active_soft_ids[i]));
-                if (UNLIKELY(b == nullptr)) {
+                if (UNLIKELY(!(b && b->IsSoftBody()))) {
                     continue;
                 }
 

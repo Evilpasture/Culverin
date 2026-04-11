@@ -1,8 +1,57 @@
 #include "culverin_soft_body.h"
 #include "culverin_physics_sync.h"
+#include "culverin_physics_world_internal.h"
 
 static constexpr uint32_t COLLISION_FILTER_ALL_CATEGORIES = 0xFFFF;
 static constexpr uint32_t COLLISION_FILTER_ALL_MASKS      = 0xFFFF;
+
+static uint64_t physics_world_commit_create_soft_locked(PhysicsWorldObject *self,
+                                                        JPH_SoftBodyCreationSettings *settings,
+                                                        uint32_t slot_state) {
+    size_t current_count = atomic_load_explicit(&self->count, memory_order_acquire);
+    size_t available     = atomic_load_explicit(&self->free_count, memory_order_acquire);
+
+    if (UNLIKELY(current_count >= self->max_jolt_bodies)) {
+        PyErr_Format(PyExc_RuntimeError, "PhysicsWorld limit reached: %u bodies",
+                     self->max_jolt_bodies);
+        return 0;
+    }
+
+    constexpr auto INITIAL_BODY_CAPACITY = 1024;
+
+    if (UNLIKELY(available == 0 || current_count + 1 > self->capacity)) {
+        size_t next_cap = (self->capacity == 0) ? INITIAL_BODY_CAPACITY : self->capacity * 2;
+        if (next_cap > self->max_jolt_bodies) {
+            next_cap = self->max_jolt_bodies;
+        }
+        if (PhysicsWorld_resize(self, next_cap) < 0) {
+            return 0;
+        }
+        available = atomic_load_explicit(&self->free_count, memory_order_acquire);
+    }
+
+    if (UNLIKELY(!ensure_command_capacity(self))) {
+        return 0;
+    }
+
+    uint32_t slot  = self->free_slots[--available];
+    uint32_t dense = (uint32_t)atomic_fetch_add_explicit(&self->count, 1, memory_order_relaxed);
+    atomic_store_explicit(&self->free_count, available, memory_order_release);
+
+    uint32_t gen      = atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
+    BodyHandle handle = make_handle(slot, gen);
+    uint64_t raw_h    = atomic_load_explicit(&handle, memory_order_relaxed);
+
+    // CRITICAL FIX: Use the SoftBody specific setter
+    JPH_SoftBodyCreationSettings_SetUserData(settings, raw_h);
+
+    self->slot_to_dense[slot]  = dense;
+    self->dense_to_slot[dense] = slot;
+    self->body_ids[dense]      = JPH_INVALID_BODY_ID;
+    atomic_store_explicit(&self->slot_states[slot], slot_state, memory_order_release);
+
+    return raw_h;
+}
 
 PyType_DeclareSlot_StatusFromModule SoftBodySharedSettings_init(SoftBodySharedSettingsObject *self,
                                                                 CULV_MAYBE_UNUSED PyObject *args,
@@ -39,8 +88,8 @@ SoftBodySharedSettings_add_vertex(SoftBodySharedSettingsObject *self, PyObject *
     PyObject *o_pos = nullptr;
     float inv_mass  = 1.0f;
 
-    void *targets[SbssAddVertex_COUNT] = {
-        [IDX_SAV_POS] = (void *)&o_pos, [IDX_SAV_MASS] = (void *)&inv_mass};
+    void *targets[SbssAddVertex_COUNT] = {[IDX_SAV_POS]  = (void *)&o_pos,
+                                          [IDX_SAV_MASS] = (void *)&inv_mass};
 
     if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.SbssAddVertexParser, targets)) {
         return nullptr;
@@ -126,45 +175,33 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_soft_body(PhysicsWorldOb
 
     // 3. JOLT PREP
     JPH_SoftBodyCreationSettings *settings = JPH_SoftBodyCreationSettings_Create();
-
-    // Extract C-struct from Python Wrapper (assuming you named it SoftBodySharedSettingsObject)
     auto *py_shared = (SoftBodySharedSettingsObject *)o_shared;
-
-    // --- LIFETIME PROTECTION ---
-    // We increase the Python refcount because the PhysicsCommand queue 
-    // now effectively "owns" a piece of this object until the next step().
     Py_INCREF(o_shared); 
 
-    JPH_SoftBodyCreationSettings_SetSharedSettings(settings, py_shared->settings);
-    JPH_SoftBodyCreationSettings_SetVertexRadius(settings, 0.05f);
+    constexpr auto VERTEX_RADIUS = 0.05f;
 
-    // SoftBodyCreationSettings inherits from BodyCreationSettings, safe to cast
+    JPH_SoftBodyCreationSettings_SetSharedSettings(settings, py_shared->settings);
+    JPH_SoftBodyCreationSettings_SetVertexRadius(settings, VERTEX_RADIUS);
+
     JPH_RVec3 j_pos = {px, py, pz};
     JPH_Quat j_rot  = {rx, ry, rz, rw};
-    JPH_BodyCreationSettings_SetPosition((JPH_BodyCreationSettings *)settings, &j_pos);
-    JPH_BodyCreationSettings_SetRotation((JPH_BodyCreationSettings *)settings, &j_rot);
-
-    // Set explicit Soft Body properties
-    JPH_SoftBodyCreationSettings_SetUserData(settings, 0); // Will be set to handle below
     
-    // --- Set Object Layer and Motion Type ---
-    JPH_BodyCreationSettings_SetObjectLayer((JPH_BodyCreationSettings *)settings, OBJECT_LAYER_DYNAMIC);
-    JPH_BodyCreationSettings_SetMotionType((JPH_BodyCreationSettings *)settings, JPH_MotionType_Dynamic);
-    JPH_BodyCreationSettings_SetAllowSleeping((JPH_BodyCreationSettings *)settings, true);
+    // CRITICAL: Use SoftBody specific setters, NOT BodyCreationSettings_Set...
+    JPH_SoftBodyCreationSettings_SetPosition(settings, &j_pos);
+    JPH_SoftBodyCreationSettings_SetRotation(settings, &j_rot);
+    JPH_SoftBodyCreationSettings_SetObjectLayer(settings, OBJECT_LAYER_DYNAMIC);
+    JPH_SoftBodyCreationSettings_SetAllowSleeping(settings, true);
 
-    // 4. COMMIT PHASE
     SHADOW_LOCK(&self->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
 
-    // Commit slot (SLOT_PENDING_CREATE will be upgraded to SLOT_SOFT_BODY in
-    // flush_commands_internal)
-    uint64_t raw_h = physics_world_commit_create_locked(self, (JPH_BodyCreationSettings *)settings,
-                                                        SLOT_PENDING_CREATE);
+    // Use the NEW dedicated helper
+    uint64_t raw_h = physics_world_commit_create_soft_locked(self, settings, SLOT_PENDING_CREATE);
 
     if (UNLIKELY(!raw_h)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         JPH_SoftBodyCreationSettings_Destroy(settings);
-        Py_DECREF(o_shared); // Release protection
+        Py_DECREF(o_shared);
         return (PyErr_Occurred()) ? nullptr : PyErr_NoMemory();
     }
 
@@ -187,14 +224,14 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_soft_body(PhysicsWorldOb
     self->view_shape[0] = (Py_ssize_t)atomic_load_explicit(&self->count, memory_order_relaxed);
 
     // 6. QUEUE COMMAND
-    PhysicsCommand *cmd        = &self->command_queue[self->command_count++];
-    cmd->header                = CMD_HEADER(CMD_CREATE_SOFT_BODY, slot);
-    cmd->create_soft.settings  = settings;
-    cmd->create_soft.category  = category;
-    cmd->create_soft.mask      = mask;
+    PhysicsCommand *cmd       = &self->command_queue[self->command_count++];
+    cmd->header               = CMD_HEADER(CMD_CREATE_SOFT_BODY, slot);
+    cmd->create_soft.settings = settings;
+    cmd->create_soft.category = category;
+    cmd->create_soft.mask     = mask;
     // Store the Python object pointer in the padding of the command so we can DECREF it later!
     // Since create_soft.user_data is uint64_t, we can use it to store the PyObject*
-    cmd->create_soft.user_data  = (uintptr_t)o_shared; 
+    cmd->create_soft.user_data    = (uintptr_t)o_shared;
     cmd->create_soft.num_vertices = py_shared->num_vertices;
 
     SHADOW_UNLOCK(&self->shadow_lock);

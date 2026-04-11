@@ -62,6 +62,8 @@ EVENT_ADDED: int = 0
 EVENT_PERSISTED: int = 1
 EVENT_REMOVED: int = 2
 
+USE_DOUBLE_PRECISION: Literal[0, 1]
+
 # --- Type Aliases ---
 type Vec3 = tuple[float, float, float]
 type Quat = tuple[float, float, float, float]

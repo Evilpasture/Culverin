@@ -399,10 +399,6 @@ static inline bool unpack_handle(PhysicsWorldObject *self, BodyHandle h, uint32_
     return (bool)(current_gen == gen);
 }
 
-uint64_t physics_world_commit_create_locked(PhysicsWorldObject *self,
-                                                   JPH_BodyCreationSettings *settings,
-                                                   uint32_t slot_state);
-
 // --- Hardened Checkers (No Casts) ---
 CULV_NODISCARD
 static inline bool culv_is_finite_f(float f) {

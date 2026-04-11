@@ -34,6 +34,7 @@ from ._culverin_c import (
     SHAPE_MESH,
     SHAPE_PLANE,
     SHAPE_SPHERE,
+    USE_DOUBLE_PRECISION,
     Character,
     # Core Classes
     PhysicsWorld,
@@ -75,6 +76,7 @@ __all__ = [
     "SHAPE_MESH",
     "SHAPE_PLANE",
     "SHAPE_SPHERE",
+    "USE_DOUBLE_PRECISION",
     "Automatic",
     "Character",
     "Engine",
