@@ -249,14 +249,22 @@ jobs:
 
             echo "Repairing Linux wheels..."
             mkdir -p wheelhouse/repaired
+            
+            # Find only the newly built linux wheels
             for whl in wheelhouse/*linux_x86_64.whl; do
-              # We use --plat manylinux_2_28 to match your CIBW settings
-              uvx auditwheel repair "$whl" --plat manylinux_2_28 -w wheelhouse/repaired/
+              if [ -f "$whl" ]; then
+                echo "Repairing $whl..."
+                # Use --plat auto to avoid string mismatch errors
+                uvx auditwheel repair "$whl" --plat auto -w wheelhouse/repaired/
+              fi
             done
 
-            # Replace original wheels with repaired ones
-            rm wheelhouse/*linux_x86_64.whl
-            mv wheelhouse/repaired/*.whl wheelhouse/
+            # Replace raw linux_x86_64 wheels with manylinux compliant ones
+            if [ "$(ls -A wheelhouse/repaired/)" ]; then
+              rm wheelhouse/*linux_x86_64.whl
+              mv wheelhouse/repaired/*.whl wheelhouse/
+            fi
+            rmdir wheelhouse/repaired/
           fi
 
 
