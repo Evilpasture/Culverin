@@ -1,5 +1,19 @@
 # Culverin Physics Engine - Method Documentation
 
+## class Module
+
+### _dump_schema_json(...)
+Internal: Dumps the current FastParse schema registry to `culverin_schema.json`. 
+Used primarily for generating type stubs or debugging parser configurations.
+
+### mutate_tuple(...)
+Bypasses Python's immutability to modify a tuple index in-place.
+**Arguments:**
+- **target, index, value, [registry, key]**
+- If 3 arguments: Swaps the pointer at `index` and recomputes the hash.
+- If 5 arguments: Atomically pops from `registry`, mutates, and re-inserts to ensure dict integrity.
+**Warning:** High-performance tool. Improper use can corrupt dictionary keys.
+
 ## class PhysicsWorld
 
 ### step(...)
@@ -1757,3 +1771,50 @@ This must be the **final call** on a settings object. Once optimized, you should
 
 **Arguments:**
 - **`index` (int):** The vertex index to query.
+
+### add_vertices(...)
+
+Massively parallelized addition of vertices to the soft body blueprint. This is the recommended method for creating complex meshes (e.g., loading from an OBJ file or generating via NumPy).
+
+**Arguments:**
+- **`positions` (Buffer):** A flat, contiguous array of `float32` values representing `(x, y, z)` coordinates.
+- **`inv_masses` (Buffer, optional):** A flat array of `float32` values defining the inverse mass for each vertex. 
+    - If provided, the length must exactly match the number of vertices in the `positions` buffer.
+    - If `None` (default), all vertices in this batch are assigned a mass of 1.0kg.
+
+**Performance & Memory:**
+- **Single Allocation:** Unlike calling `add_vertex` in a loop, this method performs exactly one heap allocation by pre-reserving memory for the entire batch.
+- **SIMD Optimized:** The underlying C++ loop is designed to be auto-vectorized by the compiler for high-speed coordinate conversion.
+- **NumPy Integration:** Designed to ingest NumPy arrays directly:
+  ```python
+  positions = np.random.uniform(-1, 1, (1000, 3)).astype(np.float32)
+  settings.add_vertices(positions.tobytes())
+  ```
+
+**Constraints:**
+- Raises `ValueError` if the buffer size is not a multiple of 12 bytes (3x float32).
+- Raises `RuntimeError` if called after `optimize()`.
+
+
+### add_faces(...)
+
+High-speed batch definition of the soft body's surface triangles.
+
+**Arguments:**
+- **`indices` (Buffer):** A flat, contiguous array of `uint32` values representing vertex indices. Every 3 values define one triangular face.
+
+**Operational Details:**
+- **Safety Validation:** Culverin performs a C-native bounds check on every index provided. If an index points to a non-existent vertex, the method raises an `IndexError` before any data is sent to Jolt.
+- **Winding Order:** Standard counter-clockwise winding is expected for correct surface normal generation.
+- **Edge Generation:** The edges defined by these faces will be automatically converted into physical distance springs when `create_constraints()` is called.
+
+**Usage Example:**
+```python
+# Create a single triangle connecting vertices 0, 1, and 2
+indices = np.array([0, 1, 2], dtype=np.uint32)
+settings.add_faces(indices.tobytes())
+```
+
+**Constraints:**
+- Raises `ValueError` if the buffer size is not a multiple of 12 bytes (3x uint32).
+- Raises `RuntimeError` if called after `optimize()`.
