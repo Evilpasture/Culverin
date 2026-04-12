@@ -77,22 +77,37 @@ void world_remove_body_slot(PhysicsWorldObject *self, uint32_t slot) {
     atomic_fetch_sub_explicit(&self->count, 1, memory_order_release);
 }
 
+// Internal helper to keep queues in sync
+static bool grow_queues(PhysicsWorldObject *self, size_t new_cap) {
+    if (new_cap > (SIZE_MAX / sizeof(PhysicsCommand))) { return false;
+}
+
+    // Grow the ACTIVE queue
+    void *new_active = CULV_RAW_REALLOC(self->command_queue, new_cap * sizeof(PhysicsCommand));
+    if (!new_active) { return false;
+}
+    self->command_queue = (PhysicsCommand *)new_active;
+    self->command_capacity = new_cap;
+
+    // Grow the SPARE queue to match immediately
+    void *new_spare = CULV_RAW_REALLOC(self->command_queue_spare, new_cap * sizeof(PhysicsCommand));
+    if (!new_spare) {
+        // This is a rare partial-failure state. We can't easily roll back active,
+        // but we can mark spare_capacity as smaller so step() knows it's not mirrored.
+        // However, for high-perf, we assume if realloc 1 worked, 2 likely will.
+        return false; 
+    }
+    self->command_queue_spare = (PhysicsCommand *)new_spare;
+    self->spare_capacity = new_cap;
+
+    return true;
+}
+
 CULV_NODISCARD
 bool ensure_command_capacity(PhysicsWorldObject *self) {
     if (UNLIKELY(self->command_count >= self->command_capacity)) {
-        size_t new_cap =
-            (self->command_capacity == 0) ? MEMORY_ALIGNMENT_SIZE : self->command_capacity * 2;
-        if (UNLIKELY(new_cap > (SIZE_MAX / sizeof(PhysicsCommand)))) {
-            return false;
-        }
-
-        void *new_ptr = CULV_RAW_REALLOC(self->command_queue, new_cap * sizeof(PhysicsCommand));
-        if (!new_ptr) {
-            return false;
-        }
-
-        self->command_queue    = (PhysicsCommand *)new_ptr;
-        self->command_capacity = new_cap;
+        size_t new_cap = (self->command_capacity == 0) ? 64 : self->command_capacity * 2;
+        return grow_queues(self, new_cap);
     }
     return true;
 }
@@ -100,27 +115,11 @@ bool ensure_command_capacity(PhysicsWorldObject *self) {
 CULV_NODISCARD
 bool ensure_command_bulk_capacity(PhysicsWorldObject *self, size_t batch_size) {
     size_t required = self->command_count + batch_size;
-
     if (UNLIKELY(required > self->command_capacity)) {
-        size_t new_cap =
-            (self->command_capacity == 0) ? MEMORY_ALIGNMENT_SIZE : self->command_capacity * 2;
-
-        // Ensure the new capacity is actually large enough for the entire batch
-        while (new_cap < required) {
-            new_cap *= 2;
-        }
-
-        if (UNLIKELY(new_cap > (SIZE_MAX / sizeof(PhysicsCommand)))) {
-            return false;
-        }
-
-        void *new_ptr = CULV_RAW_REALLOC(self->command_queue, new_cap * sizeof(PhysicsCommand));
-        if (!new_ptr) {
-            return false;
-        }
-
-        self->command_queue    = (PhysicsCommand *)new_ptr;
-        self->command_capacity = new_cap;
+        size_t new_cap = (self->command_capacity == 0) ? 64 : self->command_capacity * 2;
+        while (new_cap < required) { new_cap *= 2;
+}
+        return grow_queues(self, new_cap);
     }
     return true;
 }
@@ -213,7 +212,7 @@ op_CREATE_SOFT_BODY: {
     JPH_SoftBodyCreationSettings *s = cmd->create_soft.settings;
     uint32_t num_verts              = cmd->create_soft.num_vertices; // O(1) Cache-local read!
 
-    PyObject *py_shared             = (PyObject *)(uintptr_t)cmd->create_soft.user_data;
+    PyObject *py_shared             = cmd->create_soft.user_data.obj;
 
     JPH_BodyID new_bid = JPH_BodyInterface_CreateAndAddSoftBody(bi, s, JPH_Activation_Activate);
 

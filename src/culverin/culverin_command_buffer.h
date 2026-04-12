@@ -2,6 +2,7 @@
 #include "culverin_compiler_specifics.h"
 #include "culverin_types.h"
 #include "joltc.h"
+#include <Python.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -162,7 +163,11 @@ typedef union {
         uint32_t header;
         uint32_t category;
         JPH_SoftBodyCreationSettings *settings;
-        uint64_t user_data;
+        union {
+            uint64_t u64;
+            PyObject *obj;
+            void *ptr;
+        } user_data; // Still 8 bytes
         uint32_t mask;
         uint32_t material_id;
         uint32_t num_vertices;
