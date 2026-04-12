@@ -45,7 +45,7 @@ CULV_NODISCARD CULV_FORCE_INLINE static PyObject *fb_from_str(const char *v) {
 }
 
 CULV_NODISCARD CULV_FORCE_INLINE static PyObject *fb_from_bool(bool v) {
-    PyObject *res = v ? Py_True : Py_False;
+    PyObject *res = (int)v ? Py_True : Py_False;
     Py_INCREF(res); // Must return a new reference
     return res;
 }
