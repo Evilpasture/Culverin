@@ -83,19 +83,14 @@ static void report_char_vs_char(CharacterObject *self, const JPH_CharacterVirtua
                                 const JPH_Vec3 *normal, const JPH_RVec3 *pos,
                                 ContactEventType type) {
     auto *world = self->world;
+    uint64_t h1_raw = atomic_load_explicit(&self->handle, memory_order_relaxed);
 
-    // TSan Fix: Atomic load of the character's own handle
-    BodyHandle h1   = self->handle;
-    uint64_t h1_raw = atomic_load_explicit(&h1, memory_order_relaxed);
-
-    // 1. Get Inner Body ID
-    JPH_BodyID other_bid = JPH_CharacterVirtual_GetInnerBodyID(other);
-
-    // 2. Direct Jolt Lookup (Bypasses our map, which might be too small for Virtual IDs)
-    uint64_t h2_raw = JPH_BodyInterface_GetUserData(world->body_interface, other_bid);
+    // FIX: Retrieve the handle directly from the other character's UserData.
+    // This is 100% reliable and avoids map boundary checks.
+    uint64_t h2_raw = JPH_CharacterVirtual_GetUserData(other);
 
     if (h2_raw == 0) {
-        return; // Not a known Culverin object
+        return; // Still 0? Probably a Jolt internal body.
     }
 
     // Initialize atomic local handle for the other character
@@ -828,6 +823,7 @@ static void register_char(PhysicsWorldObject *self, CharacterObject *obj,
 
     // 5. Jolt Sync
     JPH_BodyInterface_SetUserData(self->body_interface, bid, raw_h);
+    JPH_CharacterVirtual_SetUserData(j_char, raw_h); 
 
     SHADOW_UNLOCK(&self->shadow_lock);
 }
