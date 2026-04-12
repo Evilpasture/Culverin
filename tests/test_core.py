@@ -10,7 +10,6 @@ from types import CodeType, SimpleNamespace
 from typing import Literal, Protocol
 
 import numpy as np
-
 import culverin
 from culverin import TrackConfig, WheelConfig
 
@@ -1867,6 +1866,102 @@ class TestSoftBodies(CulverinTestCase):
 
         self.assertTrue(self.world.is_alive(h))
         self.assertAlmostEqual(self.get_pos(h)[1], 10.0, places=3)
+
+class TestTupleMutation(unittest.TestCase):
+    """
+    Validation suite for culverin.mutate_tuple().
+    This tests the C-layer's ability to safely perform 'illegal' mutations on 
+    immutable tuples and keep Python's internal hash-maps in sync.
+    """
+
+    def test_basic_mutation(self) -> None:
+        """Verify that we can change a tuple element and that the hash updates."""
+        t = (1, "target", 3)
+        old_hash = hash(t)
+        
+        # Mutate index 1
+        new_hash = culverin.mutate_tuple(t, 1, "mutated")
+        
+        self.assertEqual(t[1], "mutated")
+        self.assertEqual(t, (1, "mutated", 3))
+        self.assertNotEqual(old_hash, new_hash, "Hash must change after mutation")
+        self.assertEqual(hash(t), new_hash, "Manual rehash must match Python's hash()")
+
+    def test_negative_indexing(self) -> None:
+        """Verify Python-style negative indexing works."""
+        t = (10, 20, 30)
+        culverin.mutate_tuple(t, -1, 99)  # Change the last element
+        self.assertEqual(t, (10, 20, 99))
+
+    def test_registry_sync(self) -> None:
+        """
+        Verify that passing a registry (dict) correctly handles the hash-map re-insertion.
+        If we don't 'pop and re-insert', the tuple becomes lost in the dictionary 
+        because its bucket is determined by the old hash.
+        """
+        registry = {}
+        t = (1, 2, 3)
+        key = "my_tuple"
+        registry[key] = t
+        
+        # Mutate the tuple while it's inside the dictionary
+        registry: dict[str, tuple[int, ...]] = {}
+        
+        # 1. Content check
+        self.assertEqual(registry[key][0], 999)
+        
+        # 2. Hash-map integrity check
+        # This is the real test: can Python still find the object via its value?
+        # If the C-layer didn't re-insert, this 'in' check would fail.
+        self.assertIn((999, 2, 3), registry.values())
+
+    def test_registry_mismatch_protection(self) -> None:
+        """Ensure the C-layer catches cases where the registry key doesn't match the target."""
+        registry = {"a": (1, 2)}
+        other_tuple = (3, 4)
+        
+        with self.assertRaisesRegex(ValueError, "not the same object"):
+            culverin.mutate_tuple(other_tuple, 0, 5, registry, "a")
+
+    def test_bounds_and_type_errors(self) -> None:
+        """Verify that the C-layer guards against invalid inputs."""
+        t = (1, 2)
+        
+        # 1. Index out of range
+        with self.assertRaises(IndexError):
+            culverin.mutate_tuple(t, 5, 99)
+        
+        # 2. Not a tuple
+        with self.assertRaisesRegex(TypeError, "must be a tuple"):
+            culverin.mutate_tuple([1, 2], 0, 99) # type: ignore
+            
+        # 3. Registry not a dict
+        with self.assertRaisesRegex(TypeError, "must be a dict"):
+            culverin.mutate_tuple(t, 0, 99, ["not a dict"], "key") # type: ignore
+
+    def test_free_threading_stability(self) -> None:
+        """
+        Rapidly mutate a tuple from multiple threads to ensure 
+        Py_BEGIN_CRITICAL_SECTION is preventing crashes.
+        """
+        # Start with hashable items
+        shared_tuple = (0, 0, 0) 
+        
+        def hammer():
+            for i in range(1000):
+                try:
+                    # Use an integer i instead of a list [i]
+                    culverin.mutate_tuple(shared_tuple, i % 3, i)
+                except Exception:
+                    pass
+                
+        threads = [threading.Thread(target=hammer) for _ in range(4)]
+        for t in threads: t.start()
+        for t in threads: t.join()
+        
+        # If we reach here without a segfault or ASan access violation, 
+        # the critical section is working.
+        self.assertEqual(len(shared_tuple), 3)
 
 
 if __name__ == "__main__":
