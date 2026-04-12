@@ -2038,5 +2038,76 @@ class TestCharacterInteractions(CulverinTestCase):
         events = self.world.get_contact_events_ex()
         self.assertTrue(any(e["type"] == culverin.EVENT_REMOVED and wall in e["bodies"] for e in events))
 
+    def test_character_collision_filtering(self) -> None:
+        """Verify that character-vs-character contact can be filtered via bitmasks."""
+        # 1. Setup two characters on 'Team A'
+        # Category 2, Mask 1 (Collide with world, but not with other Category 2s)
+        char1 = self.world.create_character(pos=(0, 0.5, 0))
+        char2 = self.world.create_character(pos=(1.2, 0.5, 0))
+        
+        self.world.step(0) # Flush
+        
+        # Set filters: Both are category 2, and both only look for category 1
+        self.world.set_collision_filter(char1.handle, category=2, mask=1)
+        self.world.set_collision_filter(char2.handle, category=2, mask=1)
+        
+        # 2. Attempt to move char1 THROUGH char2
+        # If filtering works, char1 should move freely to X=2.0
+        # and NO contact events should be generated.
+        char1.move((120, 0, 0), 1/60)
+        
+        events = self.world.get_contact_events_ex()
+        char_hits = [e for e in events if char1.handle in e["bodies"] and char2.handle in e["bodies"]]
+        
+        self.assertEqual(len(char_hits), 0, "Characters collided despite filtering masks")
+        
+        # Verify char1 actually moved past char2 (didn't get stuck)
+        self.assertGreater(char1.get_position()[0], 1.5)
+
+        # 3. Change filter to allow collision
+        # Mask 3 = (1 | 2), so it now sees category 2
+        self.world.set_collision_filter(char1.handle, category=2, mask=3)
+        self.world.set_collision_filter(char2.handle, category=2, mask=3)
+        
+        char1.set_position((0, 0.5, 0))
+        char1.move((120, 0, 0), 1/60)
+        
+        events = self.world.get_contact_events_ex()
+        char_hits = [e for e in events if char1.handle in e["bodies"] and char2.handle in e["bodies"]]
+        self.assertGreater(len(char_hits), 0, "Characters failed to collide after mask update")
+
+    def test_character_slippery_platform(self) -> None:
+        """Verify character orbits with sticky platform."""
+        self.world.register_material(id=10, friction=1.0) 
+        self.world.register_material(id=11, friction=0.0) 
+
+        # Platforms
+        sticky_plat = self.world.create_body(pos=(0, 0, 0), size=(5, 0.2, 5),
+                                           motion=culverin.MOTION_KINEMATIC, material_id=10)
+        
+        # Start character offset from center to experience rotation
+        char_sticky = self.world.create_character(pos=(2, 0.5, 0))
+        self.world.step(0)
+
+        # Spin platform (2 rad/s)
+        self.world.set_angular_velocity(sticky_plat, x=0, y=2.0, z=0)
+
+        # 4. Simulation Loop (60 frames to give enough time to orbit)
+        for _ in range(60):
+            # Move (0,0,0) so the callback handles velocity, not the move() velocity
+            char_sticky.move((0, 0, 0), 1/60)
+            self.world.step(1/60)
+
+        pos = char_sticky.get_position()
+        
+        # Calculate displacement from start (2, 0)
+        # Final position should be different because it orbited.
+        displacement_sq = (pos[0] - 2.0)**2 + (pos[2] - 0.0)**2
+        
+        # 60 frames @ 2rad/s = 120 degrees of rotation.
+        # It MUST have moved significantly.
+        self.assertGreater(displacement_sq, 0.5, 
+            f"Sticky character failed to orbit! Start(2,0), Current({pos[0]:.2f}, {pos[2]:.2f})")
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

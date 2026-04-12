@@ -82,7 +82,7 @@ static void record_character_contact(CharacterObject *self, JPH_BodyID bodyID2,
 static void report_char_vs_char(CharacterObject *self, const JPH_CharacterVirtual *other,
                                 const JPH_Vec3 *normal, const JPH_RVec3 *pos,
                                 ContactEventType type) {
-    auto *world = self->world;
+    auto *world     = self->world;
     uint64_t h1_raw = atomic_load_explicit(&self->handle, memory_order_relaxed);
 
     // FIX: Retrieve the handle directly from the other character's UserData.
@@ -167,8 +167,8 @@ static void apply_character_impulse(CharacterObject *self, JPH_BodyID bodyID2,
 
     // Normal points TOWARDS character, so dot is negative when colliding
     if (dot < -0.01f) {
-        float factor            = -dot * strength; // Negate to get positive push force
-        const float max_impulse = 50000.0f;
+        float factor                = -dot * strength; // Negate to get positive push force
+        constexpr float max_impulse = 50000.0f;
         if (factor > max_impulse) {
             factor = max_impulse;
         }
@@ -332,27 +332,115 @@ static void JPH_API_CALL char_on_character_contact_removed(
 }
 
 static void JPH_API_CALL char_on_adjust_velocity(
-    CULV_MAYBE_UNUSED void *userData, CULV_MAYBE_UNUSED const JPH_CharacterVirtual *character,
-    CULV_MAYBE_UNUSED const JPH_Body *body2, CULV_MAYBE_UNUSED JPH_Vec3 *ioLinearVelocity,
-    CULV_MAYBE_UNUSED JPH_Vec3 *ioAngularVelocity) {
+    void *userData, CULV_MAYBE_UNUSED const JPH_CharacterVirtual *character,
+    const JPH_Body *body2, JPH_Vec3 *ioLinearVelocity,
+    JPH_Vec3 *ioAngularVelocity) {
 
-    // Usually, we want the default behavior (character follows the body).
-    // TODO: add logic here if you want the character to "slip" on certain
-    // materials.
+    CharacterObject *self = (CharacterObject *)userData;
+    if (!self || !self->world) return;
+
+    // 1. Resolve Platform Data
+    uint64_t h2_raw = JPH_Body_GetUserData((JPH_Body *)body2);
+    if (h2_raw == 0) return;
+
+    // 2. Resolve Friction
+    float friction = 1.0f;
+    uint32_t slot2 = (uint32_t)(h2_raw & HANDLE_INDEX_MASK);
+    if (slot2 < self->world->slot_capacity) {
+        uint32_t dense2 = self->world->slot_to_dense[slot2];
+        uint32_t mat_id = self->world->material_ids[dense2];
+        for (size_t i = 0; i < self->world->material_count; i++) {
+            if (self->world->materials[i].id == mat_id) {
+                friction = self->world->materials[i].friction;
+                break;
+            }
+        }
+    }
+
+    // 2. Calculate Tangential Velocity (v = omega x r)
+    JPH_Vec3 omega;
+    JPH_Body_GetAngularVelocity((JPH_Body*)body2, &omega);
+    
+    JPH_RVec3 char_pos;
+    JPH_CharacterVirtual_GetPosition(character, &char_pos);
+    
+    JPH_RVec3 platform_pos;
+    JPH_Body_GetPosition((JPH_Body*)body2, &platform_pos);
+
+    float rx = (float)(char_pos.x - platform_pos.x);
+    float rz = (float)(char_pos.z - platform_pos.z);
+
+    // Tangential vector = (omega_y * rz, 0, -omega_y * rx)
+    float target_vt_x = omega.y * rz;
+    float target_vt_z = -omega.y * rx;
+
+    // 3. APPLY: Only modify the X/Z plane. 
+    // DO NOT touch Y, as the character controller needs it for gravity/climbing.
+    float factor = (friction > 0.2f) ? 1.0f : (friction / 0.2f);
+    
+    // Smoothly apply
+    ioLinearVelocity->x = (ioLinearVelocity->x * 0.5f) + (target_vt_x * factor * 0.5f);
+    ioLinearVelocity->z = (ioLinearVelocity->z * 0.5f) + (target_vt_z * factor * 0.5f);
+    
+    // Angular inheritance
+    ioAngularVelocity->y = omega.y * factor;
+}
+
+static bool JPH_API_CALL char_on_character_contact_validate(
+    void *userData, CULV_MAYBE_UNUSED const JPH_CharacterVirtual *character,
+    const JPH_CharacterVirtual *otherCharacter, CULV_MAYBE_UNUSED JPH_SubShapeID subShapeID2) {
+
+    CharacterObject *self = (CharacterObject *)userData;
+    if (!self || !self->world) {
+        return true;
+    }
+
+    PhysicsWorldObject *world = self->world;
+
+    // 1. Get Culverin Handles
+    // h1: self (stored on the CharacterObject)
+    // h2: other (stored in JPH UserData, which we set in register_char)
+    uint64_t h1_raw = atomic_load_explicit(&self->handle, memory_order_relaxed);
+    uint64_t h2_raw = JPH_CharacterVirtual_GetUserData(otherCharacter);
+
+    if (h2_raw == 0) {
+        return true; // Collide by default if handle is missing
+    }
+
+    // 2. Resolve Dense Indices for filter lookup
+    uint32_t slot1 = (uint32_t)(h1_raw & HANDLE_INDEX_MASK);
+    uint32_t slot2 = (uint32_t)(h2_raw & HANDLE_INDEX_MASK);
+
+    // Safety check for array bounds
+    if (slot1 >= world->slot_capacity || slot2 >= world->slot_capacity) {
+        return true;
+    }
+
+    uint32_t idx1 = world->slot_to_dense[slot1];
+    uint32_t idx2 = world->slot_to_dense[slot2];
+
+    // 3. Perform Bitmask Filtering
+    uint32_t cat1  = world->categories[idx1];
+    uint32_t mask1 = world->masks[idx1];
+    uint32_t cat2  = world->categories[idx2];
+    uint32_t mask2 = world->masks[idx2];
+
+    // Reject if either mask blocks the other's category
+    return ((cat1 & mask2) && (cat2 & mask1)) != 0;
 }
 
 // Map the procs
 const JPH_CharacterContactListener_Procs char_listener_procs = {
     .OnContactValidate           = char_on_contact_validate,
     .OnContactAdded              = char_on_contact_added,
-    .OnAdjustBodyVelocity        = char_on_adjust_velocity,   // ADDED
-    .OnContactPersisted          = char_on_contact_persisted, // CHANGED from char_on_contact_added
-    .OnContactRemoved            = char_on_contact_removed,   // ADDED
-    .OnCharacterContactValidate  = nullptr,                   // Default True is fine
+    .OnAdjustBodyVelocity        = char_on_adjust_velocity,
+    .OnContactPersisted          = char_on_contact_persisted,
+    .OnContactRemoved            = char_on_contact_removed,
+    .OnCharacterContactValidate  = char_on_character_contact_validate,
     .OnCharacterContactAdded     = char_on_character_contact_added,
-    .OnCharacterContactPersisted = char_on_character_contact_persisted, // ADDED
-    .OnCharacterContactRemoved   = char_on_character_contact_removed,   // ADDED
-    .OnContactSolve              = nullptr                              // Advanced, keep nullptr
+    .OnCharacterContactPersisted = char_on_character_contact_persisted,
+    .OnCharacterContactRemoved   = char_on_character_contact_removed,
+    .OnContactSolve              = nullptr // Advanced, keep nullptr
 };
 
 PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObject *const *args,
@@ -823,7 +911,7 @@ static void register_char(PhysicsWorldObject *self, CharacterObject *obj,
 
     // 5. Jolt Sync
     JPH_BodyInterface_SetUserData(self->body_interface, bid, raw_h);
-    JPH_CharacterVirtual_SetUserData(j_char, raw_h); 
+    JPH_CharacterVirtual_SetUserData(j_char, raw_h);
 
     SHADOW_UNLOCK(&self->shadow_lock);
 }
