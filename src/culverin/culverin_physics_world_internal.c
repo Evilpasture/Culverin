@@ -183,7 +183,9 @@ int allocate_buffers(PhysicsWorldObject *self, int max_bodies) {
     }
     self->max_jolt_bodies = (uint32_t)max_bodies;
 
-    size_t initial_cap = (max_bodies < 64) ? (size_t)max_bodies : 64;
+    constexpr auto INITIAL_BODY_CAPACITY = 64;
+
+    size_t initial_cap = (max_bodies < INITIAL_BODY_CAPACITY) ? (size_t)max_bodies : INITIAL_BODY_CAPACITY;
     self->capacity = initial_cap;
     self->slot_capacity = initial_cap;
 
@@ -227,7 +229,9 @@ int allocate_buffers(PhysicsWorldObject *self, int max_bodies) {
 
     self->command_queue =
         (PhysicsCommand *)CULV_RAW_MALLOC(COMMAND_QUEUE_INITIAL_CAPACITY * sizeof(PhysicsCommand));
+    self->command_queue_spare = (PhysicsCommand *)CULV_RAW_MALLOC(COMMAND_QUEUE_INITIAL_CAPACITY * sizeof(PhysicsCommand));
     self->command_capacity = COMMAND_QUEUE_INITIAL_CAPACITY;
+    self->spare_capacity = COMMAND_QUEUE_INITIAL_CAPACITY;
 
     self->trash_capacity = 4;
     self->trash_count    = 0;
@@ -276,6 +280,16 @@ int PhysicsWorld_resize(PhysicsWorldObject *self, size_t new_capacity) {
     // 2. Concurrency Guard
     BLOCK_UNTIL_NOT_STEPPING(self);
     BLOCK_UNTIL_NOT_QUERYING(self);
+
+    // --- VACUUM OLD TRASH ---
+    // We do the deallocation here, in the mutator thread, 
+    // before we allocate new memory.
+    if (self->trash_count > 0) {
+        for (size_t i = 0; i < self->trash_count; i++) {
+            free_new_buffers(&self->trash_buffers[i]);
+        }
+        self->trash_count = 0;
+    }
 
     if (new_capacity > self->max_jolt_bodies) {
         new_capacity = self->max_jolt_bodies;

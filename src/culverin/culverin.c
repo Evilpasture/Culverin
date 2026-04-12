@@ -1355,19 +1355,6 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
     PhysicsCommand *captured_queue = self->command_queue;
     size_t captured_count          = self->command_count;
 
-    if (UNLIKELY(self->command_capacity > self->spare_capacity)) {
-        void *new_spare = CULV_RAW_REALLOC(self->command_queue_spare,
-                                           self->command_capacity * sizeof(PhysicsCommand));
-        if (UNLIKELY(!new_spare)) {
-            // Rollback flags on OOM
-            atomic_store_explicit(&self->is_stepping, false, memory_order_relaxed);
-            atomic_store_explicit(&self->step_requested, false, memory_order_relaxed);
-            SHADOW_UNLOCK(&self->shadow_lock);
-            return PyErr_NoMemory();
-        }
-        self->command_queue_spare = (PhysicsCommand *)new_spare;
-        self->spare_capacity      = self->command_capacity;
-    }
     self->command_queue       = self->command_queue_spare;
     self->command_queue_spare = captured_queue;
     self->command_count       = 0;
@@ -1418,15 +1405,9 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
         // --- PHASE 3: FINALIZATION ---
         SHADOW_LOCK(&self->shadow_lock);
 
-    // 1. Cleanup retired buffers (Atomic gens/stats handled in free_new_buffers)
-    if (self->trash_count > 0) {
-        for (size_t i = 0; i < self->trash_count; i++) {
-            free_new_buffers(&self->trash_buffers[i]);
-        }
-        self->trash_count = 0;
-    }
+    // We no longer need to cleanup buffer. The internal lifecycle handles it.
 
-    // 2. Metadata Updates
+    // Metadata Updates
     size_t c_idx        = atomic_load_explicit(&self->contact_atomic_idx, memory_order_acquire);
     self->contact_count = (c_idx > self->contact_max_capacity) ? self->contact_max_capacity : c_idx;
 
@@ -1436,7 +1417,7 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
 
     self->time += (double)dt;
 
-    // 3. Fence Release
+    // Fence Release
     atomic_store_explicit(&self->is_stepping, false, memory_order_release);
     atomic_store_explicit(&self->step_requested, false, memory_order_release);
 
@@ -2033,10 +2014,11 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
     CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
 
     // 1. FAST PARSE (Zero Lock Contention)
-    PyObject *py_pos                 = nullptr;
-    PyObject *py_sizes               = nullptr;
-    int shape_type                   = 0;
-    int motion_type                  = 2;
+    PyObject *py_pos   = nullptr;
+    PyObject *py_sizes = nullptr;
+    int shape_type     = 0;
+    int motion_type    = 2;
+
     void *targets[BatchCreate_COUNT] = {[IDX_BC_POSITIONS] = (void *)&py_pos,
                                         [IDX_BC_SIZES]     = (void *)&py_sizes,
                                         [IDX_BC_SHAPE]     = (void *)&shape_type,
@@ -2050,6 +2032,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
     if (!PyList_Check(py_pos) || !PyList_Check(py_sizes)) {
         return PyErr_Format(PyExc_TypeError, "Inputs must be lists");
     }
+
     const Py_ssize_t batch_count = PyList_GET_SIZE(py_pos);
     if (PyList_GET_SIZE(py_sizes) != batch_count) {
         return PyErr_Format(PyExc_ValueError, "List length mismatch");
@@ -2058,10 +2041,12 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
         return PyList_New(0);
     }
 
-    // 2. ARENA ALLOCATION (1 Malloc for all Temp Data -> Zero Fragmentation)
-    size_t arena_size = batch_count * (sizeof(PosStride) + sizeof(ShapeParams) +
-                                       sizeof(JPH_BodyCreationSettings *) + sizeof(uint64_t));
-    void *arena       = CULV_RAW_MALLOC(arena_size);
+    // 2. ARENA ALLOCATION (Include space for PyObject* pointers)
+    // We allocate: PosStride + ShapeParams + SettingsPtr + HandleUint64 + ResultPyObjectPtr
+    size_t arena_size =
+        batch_count * (sizeof(PosStride) + sizeof(ShapeParams) +
+                       sizeof(JPH_BodyCreationSettings *) + sizeof(uint64_t) + sizeof(PyObject *));
+    void *arena = CULV_RAW_MALLOC(arena_size);
     if (UNLIKELY(!arena)) {
         return PyErr_NoMemory();
     }
@@ -2070,6 +2055,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
     auto *size_buf      = (ShapeParams *)(pos_buf + batch_count);
     auto **settings_buf = (JPH_BodyCreationSettings **)(size_buf + batch_count);
     auto *handles_out   = (uint64_t *)(settings_buf + batch_count);
+    auto **py_results   = (PyObject **)(handles_out + batch_count);
 
     memset((void *)settings_buf, 0, batch_count * sizeof(void *));
 
@@ -2081,22 +2067,23 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
     // 3. JOLT PREP (No GIL, Inline Shape Caching)
     Py_BEGIN_ALLOW_THREADS;
     SHADOW_LOCK(&self->shadow_lock);
-
     JPH_Shape *last_shape = nullptr;
-    ShapeParams last_size = {-1.0f, -1.0f, -1.0f, -1.0f}; // Impossible baseline
+    ShapeParams last_size = {-1.0f, -1.0f, -1.0f, -1.0f};
 
     for (Py_ssize_t i = 0; i < batch_count; i++) {
         JPH_Shape *shape    = last_shape;
         const float *curr_p = size_buf[i].p;
         const float *last_p = last_size.p;
 
-        // OPTIMIZATION: 99% of batches use the same size.
-        // Manual comparison avoids padding-bit warnings and is easily vectorized by the compiler.
+        // Manual logical comparison: Correct float semantics and better optimization
         if (curr_p[0] != last_p[0] || curr_p[1] != last_p[1] || curr_p[2] != last_p[2] ||
             curr_p[3] != last_p[3]) {
+
             shape      = find_or_create_shape_locked(self, shape_type, curr_p);
             last_shape = shape;
-            last_size  = size_buf[i]; // Struct copy is fine here
+
+            // Struct assignment is faster and safer than memcpy in C23
+            last_size = size_buf[i];
         }
 
         if (shape) {
@@ -2110,14 +2097,14 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
     SHADOW_UNLOCK(&self->shadow_lock);
     Py_END_ALLOW_THREADS;
 
-    // 4. BULK COMMIT PHASE (Ultra-Tight Critical Section)
+    // 4. BULK COMMIT PHASE (Inside Shadow Lock)
     SHADOW_LOCK(&self->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
 
     size_t current_count = atomic_load_explicit(&self->count, memory_order_acquire);
     size_t available     = atomic_load_explicit(&self->free_count, memory_order_acquire);
 
-    // Bulk Capacity Check
+    // Expand if necessary
     if (UNLIKELY(available < (size_t)batch_count ||
                  (current_count + batch_count) > self->capacity)) {
         size_t needed = current_count + batch_count + INITIAL_BODY_CAPACITY;
@@ -2135,91 +2122,66 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
         goto fail_locked;
     }
 
-    if (UNLIKELY(self->command_count + batch_count > self->command_capacity)) {
-        if (!ensure_command_bulk_capacity(self, (size_t)batch_count)) {
-            goto fail_locked;
-        }
+    if (UNLIKELY(!ensure_command_bulk_capacity(self, (size_t)batch_count))) {
+        // If we can't grow the command queue, we can't proceed.
+        // Jump to cleanup to destroy JPH settings and free the arena.
+        goto fail_locked;
     }
 
-    // --- BULK RESOURCE ACQUISITION ---
     uint32_t base_dense =
         (uint32_t)atomic_fetch_add_explicit(&self->count, batch_count, memory_order_relaxed);
     size_t free_head = available - batch_count;
     atomic_store_explicit(&self->free_count, free_head, memory_order_release);
 
-    // Pointer Hoisting: Prevents repeated self-> dereferencing in the loop
-    PosStride *pos_shadow  = (PosStride *)self->positions;
-    PosStride *ppos_shadow = (PosStride *)self->prev_positions;
-    AuxStride *rot_shadow  = (AuxStride *)self->rotations;
-    AuxStride *prot_shadow = (AuxStride *)self->prev_rotations;
-    AuxStride *lvel_shadow = (AuxStride *)self->linear_velocities;
-    AuxStride *avel_shadow = (AuxStride *)self->angular_velocities;
-
-    uint32_t *s2d           = self->slot_to_dense;
-    uint32_t *d2s           = self->dense_to_slot;
-    JPH_BodyID *bids        = self->body_ids;
-    _Atomic uint8_t *states = self->slot_states;
-    PhysicsCommand *cmd_q   = self->command_queue;
-    size_t cmd_idx          = self->command_count;
-
-    // Population Loop (Pure sequential C array writes)
     for (Py_ssize_t i = 0; i < batch_count; i++) {
         if (UNLIKELY(!settings_buf[i])) {
+            handles_out[i] = 0;
             continue;
         }
 
         uint32_t slot  = self->free_slots[free_head + i];
         uint32_t dense = base_dense + (uint32_t)i;
-
         uint32_t gen   = atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
         uint64_t raw_h = ((uint64_t)gen << HANDLE_INDEX_BITS) | slot;
+
         JPH_BodyCreationSettings_SetUserData(settings_buf[i], raw_h);
 
-        s2d[slot]   = dense;
-        d2s[dense]  = slot;
-        bids[dense] = JPH_INVALID_BODY_ID;
+        self->slot_to_dense[slot]  = dense;
+        self->dense_to_slot[dense] = slot;
+        self->body_ids[dense]      = JPH_INVALID_BODY_ID;
 
-        PosStride p        = pos_buf[i];
-        p.w                = 0.0;
-        pos_shadow[dense]  = p;
-        ppos_shadow[dense] = p;
-        rot_shadow[dense]  = (AuxStride){0, 0, 0, 1};
-        prot_shadow[dense] = (AuxStride){0, 0, 0, 1};
-        lvel_shadow[dense] = (AuxStride){0, 0, 0, 0};
-        avel_shadow[dense] = (AuxStride){0, 0, 0, 0};
+        PosStride p                                = pos_buf[i];
+        p.w                                        = 0.0;
+        ((PosStride *)self->positions)[dense]      = p;
+        ((PosStride *)self->prev_positions)[dense] = p;
+        ((AuxStride *)self->rotations)[dense]      = (AuxStride){0, 0, 0, 1};
+        ((AuxStride *)self->prev_rotations)[dense] = (AuxStride){0, 0, 0, 1};
 
-        atomic_store_explicit(&states[slot], SLOT_PENDING_CREATE, memory_order_release);
+        atomic_store_explicit(&self->slot_states[slot], SLOT_PENDING_CREATE, memory_order_release);
 
-        PhysicsCommand *cmd  = &cmd_q[cmd_idx++];
+        PhysicsCommand *cmd  = &self->command_queue[self->command_count++];
         cmd->header          = CMD_HEADER(CMD_CREATE_BODY, slot);
         cmd->create.settings = settings_buf[i];
 
         handles_out[i] = raw_h;
     }
-
-    self->command_count = cmd_idx;
     self->view_shape[0] = (Py_ssize_t)atomic_load_explicit(&self->count, memory_order_relaxed);
-
     SHADOW_UNLOCK(&self->shadow_lock);
 
-    // 5. PYTHON LIST BUILD (Lock-Free)
-    // We construct the heavy Python objects outside the lock so we don't stall the physics engine.
-    PyObject *res_list = PyList_New(batch_count);
-    if (LIKELY(res_list)) {
-        for (Py_ssize_t i = 0; i < batch_count; i++) {
-            if (LIKELY(settings_buf[i])) {
-                PyObject *py_h = PyLong_FromUnsignedLongLong(handles_out[i]);
-                if (UNLIKELY(!py_h)) {
-                    py_h = Py_None;
-                    Py_INCREF(Py_None);
-                }
-                PyList_SET_ITEM(res_list, i, py_h);
-            } else {
-                Py_INCREF(Py_None);
-                PyList_SET_ITEM(res_list, i, Py_None);
-            }
+    // 5. FAST BUILD PHASE (Outside Lock)
+    for (Py_ssize_t i = 0; i < batch_count; i++) {
+        if (handles_out[i] != 0) {
+            // Converts uint64_t to PyLong object
+            py_results[i] = FastBuild_Value(handles_out[i]);
+        } else {
+            // Correctly handles Py_None as a "failure to create" entry
+            py_results[i] = FastBuild_Value(nullptr);
         }
     }
+
+    // Pack the pointer array into a Python List
+    // This function handles cleanup/decref internally if any py_results[i] is NULL
+    PyObject *res_list = fb_pack_list((size_t)batch_count, py_results);
 
     CULV_RAW_FREE(arena);
     return res_list;
@@ -2471,63 +2433,83 @@ PyCFunction_DeclareMethod PhysicsWorld_destroy_bodies_batch(PhysicsWorldObject *
         return nullptr;
     }
 
-    PyObject *py_handles = PySequence_Fast(py_handles_in, "handles must be a sequence");
-    if (UNLIKELY(!py_handles)) {
+    PyObject *py_seq = PySequence_Fast(py_handles_in, "handles must be a sequence");
+    if (UNLIKELY(!py_seq)) {
         return nullptr;
     }
 
-    const Py_ssize_t batch_count = PySequence_Fast_GET_SIZE(py_handles);
-    PyObject **items             = PySequence_Fast_ITEMS(py_handles);
-
+    const Py_ssize_t batch_count = PySequence_Fast_GET_SIZE(py_seq);
     if (batch_count <= 0) {
-        Py_DECREF(py_handles);
+        Py_DECREF(py_seq);
         Py_RETURN_NONE;
     }
 
-    SHADOW_LOCK(&self->shadow_lock);
-    BLOCK_UNTIL_NOT_STEPPING(self);
-
-    // 1. ONE-TIME BULK CAPACITY CHECK
-    if (UNLIKELY(!ensure_command_bulk_capacity(self, (size_t)batch_count))) {
-        SHADOW_UNLOCK(&self->shadow_lock);
-        Py_DECREF(py_handles);
+    // 1. EXTRACTION PHASE (Outside Lock)
+    // Extract Python handles into a raw C array while we don't care about the physics lock.
+    uint64_t *handle_cache = (uint64_t *)CULV_RAW_MALLOC(batch_count * sizeof(uint64_t));
+    if (UNLIKELY(!handle_cache)) {
+        Py_DECREF(py_seq);
         return PyErr_NoMemory();
     }
 
+    PyObject **items         = PySequence_Fast_ITEMS(py_seq);
+    size_t actual_work_count = 0;
+
     for (Py_ssize_t i = 0; i < batch_count; i++) {
-        uint64_t h_val = PyLong_AsUnsignedLongLong(items[i]);
+        uint64_t h = PyLong_AsUnsignedLongLong(items[i]);
         if (UNLIKELY(PyErr_Occurred())) {
             PyErr_Clear();
-            continue;
+            continue; // Skip invalid handles
         }
+        handle_cache[actual_work_count++] = h;
+    }
+    Py_DECREF(py_seq);
 
+    if (actual_work_count == 0) {
+        CULV_RAW_FREE(handle_cache);
+        Py_RETURN_NONE;
+    }
+
+    // 2. COMMIT PHASE (Inside Lock - Ultra Fast)
+    SHADOW_LOCK(&self->shadow_lock);
+    BLOCK_UNTIL_NOT_STEPPING(self);
+
+    if (UNLIKELY(!ensure_command_bulk_capacity(self, actual_work_count))) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        CULV_RAW_FREE(handle_cache);
+        return PyErr_NoMemory();
+    }
+
+    // Hoist pointers for maximum loop speed
+    PhysicsCommand *cmd_q   = self->command_queue;
+    size_t cmd_idx          = self->command_count;
+    _Atomic uint8_t *states = self->slot_states;
+
+    for (size_t i = 0; i < actual_work_count; i++) {
         uint32_t slot = 0;
-        if (unpack_handle(self, (BodyHandle)h_val, &slot)) {
-            const uint8_t state =
-                atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
+        if (unpack_handle(self, (BodyHandle)handle_cache[i], &slot)) {
+            const uint8_t state = atomic_load_explicit(&states[slot], memory_order_acquire);
 
-            // Branchless validity check
+            // Branchless liveness check using the mask
             static constexpr uint8_t BITMASK_CLAMP = 7;
             const uint32_t is_destructible =
                 !!((1u << (state & BITMASK_CLAMP)) & MASK_DESTRUCTIBLE);
 
-            // Speculative command queue write
-            PhysicsCommand *cmd = &self->command_queue[self->command_count];
-            cmd->header         = CMD_HEADER(CMD_DESTROY_BODY, slot);
-
-            // Only advance the count if valid; otherwise, next loop overwrites this slot
-            self->command_count += is_destructible;
+            // Commit command
+            cmd_q[cmd_idx].header = CMD_HEADER(CMD_DESTROY_BODY, slot);
+            cmd_idx += is_destructible;
 
             if (is_destructible) {
-                // Lock the slot immediately so other threads stop using it
-                atomic_store_explicit(&self->slot_states[slot], SLOT_PENDING_DESTROY,
-                                      memory_order_release);
+                // Immediate transition blocks other mutators from using this slot
+                atomic_store_explicit(&states[slot], SLOT_PENDING_DESTROY, memory_order_release);
             }
         }
     }
 
+    self->command_count = cmd_idx;
     SHADOW_UNLOCK(&self->shadow_lock);
-    Py_DECREF(py_handles);
+
+    CULV_RAW_FREE(handle_cache);
     Py_RETURN_NONE;
 }
 
@@ -3918,127 +3900,146 @@ PyCFunction_DeclareMethod PhysicsWorld_benchmark_build(CULV_MAYBE_UNUSED PyObjec
     return result;
 }
 
+#include <stdatomic.h>
+#include <tupleobject.h>
+
 PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, PyObject *const *args,
                                             Py_ssize_t nargsf) {
-    auto nargs = PyVectorcall_NARGS(nargsf);
-    // args: target, index, new_val, registry (optional), key (optional)
+    // --- 1. DECLARATIONS (C++ / goto safety) ---
+    auto nargs              = PyVectorcall_NARGS(nargsf);
     constexpr auto MIN_ARGS = 3;
     constexpr auto MAX_ARGS = 5;
+
+    PyObject *target   = nullptr;
+    PyObject *new_val  = nullptr;
+    PyObject *registry = nullptr;
+    PyObject *key      = nullptr;
+    PyObject *old_val  = nullptr;
+    PyObject *stored   = nullptr;
+
+    Py_ssize_t index     = 0;
+    Py_hash_t final_hash = -1;
+    int success          = 0;
+
+    // --- 2. PRE-FLIGHT CHECKS ---
     if (nargs != MIN_ARGS && nargs != MAX_ARGS) {
         PyErr_Format(PyExc_TypeError, "mutate_tuple() takes 3 or 5 arguments (%zd given)", nargs);
         return nullptr;
     }
 
-    PyObject *target  = args[0];
-    PyObject *new_val = args[2];
-
+    target  = args[0];
+    new_val = args[2];
     if (!PyTuple_Check(target)) {
         PyErr_SetString(PyExc_TypeError, "arg 0 must be a tuple");
         return nullptr;
     }
 
-    PyErr_Clear();
-    auto index = PyLong_AsSsize_t(args[1]);
+    index = PyLong_AsSsize_t(args[1]);
     if (index == -1 && PyErr_Occurred()) {
         return nullptr;
     }
 
-    auto tuple_len = Py_SIZE(target);
+    Py_ssize_t tuple_len = Py_SIZE(target);
     if (index < 0) {
         index += tuple_len;
     }
     if (index < 0 || index >= tuple_len) {
-        PyErr_Format(PyExc_IndexError, "tuple index %zd out of range [0, %zd)", index, tuple_len);
+        PyErr_Format(PyExc_IndexError, "tuple index %zd out of range", index);
         return nullptr;
     }
-
-    // --- PART 1: DICT POP (if registry provided) ---
-    //
-    // PyDict_GetItemWithError does NOT steal a reference, returns borrowed.
-    // We need ownership before we yank it out, so INCREF before PyDict_DelItem.
-    // PyDict_GetItemWithError (not PyDict_GetItem) propagates KeyError properly.
-
-    PyObject *registry = nullptr;
-    PyObject *key      = nullptr;
 
     if (nargs == MAX_ARGS) {
         registry = args[3];
         key      = args[4];
-
         if (!PyDict_Check(registry)) {
             PyErr_SetString(PyExc_TypeError, "arg 3 must be a dict");
             return nullptr;
         }
+    }
 
-        // Verify the stored value IS our target, otherwise the caller
-        // passed a mismatched key — silent corruption would follow.
-        auto stored = PyDict_GetItemWithError(registry, key);
-        if (stored == nullptr) {
-            // nullptr + no exception  => KeyError
-            // nullptr + exception set => propagate
+    // --- 3. CRITICAL SECTION ---
+#if defined(Py_BEGIN_CRITICAL_SECTION)
+    Py_BEGIN_CRITICAL_SECTION(target);
+#endif
+
+    // Step A: Registry Removal
+    if (registry) {
+        stored = PyDict_GetItemWithError(registry, key);
+        if (!stored) {
             if (!PyErr_Occurred()) {
                 PyErr_SetObject(PyExc_KeyError, key);
             }
-            return nullptr;
+            goto exit_critical;
         }
         if (stored != target) {
             PyErr_SetString(PyExc_ValueError, "registry[key] is not the same object as target");
-            return nullptr;
+            goto exit_critical;
         }
-
-        Py_INCREF(target); // hold a ref across the del
+        Py_INCREF(target);
         if (PyDict_DelItem(registry, key) < 0) {
             Py_DECREF(target);
-            return nullptr;
+            goto exit_critical;
         }
-        // target refcount: our INCREF above keeps it alive. The dict slot
-        // is now empty; the old hash bucket in ma_keys is invalidated.
     }
 
-    // --- PART 2: THE MEMORY SWAP ---
+    // Step B: The Mutation (Atomic Swap)
+    {
+        PyTupleObject *t = (PyTupleObject *)target;
+        Py_INCREF(new_val);
 
-    PyObject **ob_item = (PyObject **)((uint8_t *)target + sizeof(PyVarObject));
+        // Cast the item slot to an atomic pointer.
+        // This prevents TSan "Data Race" warnings and ensures memory visibility.
+        _Atomic(PyObject *) *atomic_slot = (_Atomic(PyObject *) *)&(t->ob_item[index]);
+        old_val = atomic_exchange_explicit(atomic_slot, new_val, memory_order_acq_rel);
 
-    Py_INCREF(new_val);
-    PyObject *old_val = ob_item[index];
-    ob_item[index]    = new_val;
-    Py_XDECREF(old_val);
+        // Step C: Rehash Cache Bust (Atomic)
+#if PY_VERSION_HEX >= 0x030E0000
+        _Atomic(Py_hash_t) *atomic_hash = (_Atomic(Py_hash_t) *)&(t->ob_hash);
+        atomic_store_explicit(atomic_hash, -1, memory_order_relaxed);
+#endif
+    }
 
-    // --- PART 3: REHASH ---
+    final_hash = PyObject_Hash(target);
 
-    hashfunc h_func = Py_TYPE(target)->tp_hash;
-    if (UNLIKELY(h_func == nullptr)) {
-        PyErr_SetString(PyExc_TypeError, "target type is unhashable");
+    if (final_hash == -1) {
+        // Rollback (Atomic)
+        _Atomic(PyObject *) *atomic_slot =
+            (_Atomic(PyObject *) *)&((PyTupleObject *)target)->ob_item[index];
+        atomic_store_explicit(atomic_slot, old_val, memory_order_relaxed);
+        Py_DECREF(new_val);
         if (registry) {
             Py_DECREF(target);
         }
-        return nullptr;
+        goto exit_critical;
     }
 
-    PyErr_Clear();
-    Py_hash_t new_hash = h_func(target);
-    if (UNLIKELY(new_hash == -1)) {
-        if (registry) {
-            Py_DECREF(target);
-        }
-        return nullptr;
-    }
-
-    // --- PART 4: DICT REINSERT ---
-    //
-    // PyDict_SetItem does NOT steal a reference to target or key.
-    // It computes tp_hash(target) internally as part of the bucket placement,
-    // which is exactly the freshly-recomputed hash we just forced above.
-
+    // Step D: Registry Re-insertion
     if (registry) {
-        int rc = PyDict_SetItem(registry, key, target);
-        Py_DECREF(target); // release our hold; dict now owns its ref
-        if (rc < 0) {
-            return nullptr;
+        if (PyDict_SetItem(registry, key, target) < 0) {
+            // Rollback (Atomic)
+            _Atomic(PyObject *) *atomic_slot =
+                (_Atomic(PyObject *) *)&((PyTupleObject *)target)->ob_item[index];
+            atomic_store_explicit(atomic_slot, old_val, memory_order_relaxed);
+            Py_DECREF(new_val);
+            Py_DECREF(target);
+            final_hash = -1;
+            goto exit_critical;
         }
+        Py_DECREF(target);
     }
 
-    return PyLong_FromSsize_t(new_hash);
+    Py_DECREF(old_val);
+    success = 1;
+
+exit_critical:
+#if defined(Py_BEGIN_CRITICAL_SECTION)
+    Py_END_CRITICAL_SECTION();
+#endif
+
+    if (!success) {
+        return nullptr;
+    }
+    return PyLong_FromSsize_t(final_hash);
 }
 
 // --- The Documentation System ---
@@ -4184,11 +4185,11 @@ static void stitch_docs_getset(PyGetSetDef *getset, const char *class_name) {
      .ml_flags = (method_type),                                                                    \
      .ml_doc   = nullptr} // Initialized to nullptr to be filled by stitcher
 
-#define CULV_FEAT_INTERNAL(prefix, name, method_type) \
-    {.ml_name  = "_" #name,                           \
-     .ml_meth  = (PyCFunction)prefix##_##name,        \
-     .ml_flags = (method_type),                       \
-     .ml_doc   = NULL}
+#define CULV_FEAT_INTERNAL(prefix, name, method_type)                                              \
+    {.ml_name  = "_" #name,                                                                        \
+     .ml_meth  = (PyCFunction)prefix##_##name,                                                     \
+     .ml_flags = (method_type),                                                                    \
+     .ml_doc   = nullptr}
 
 // User-facing macros for context methods
 #define PW_FASTCALL(name) CULV_FEAT(PhysicsWorld, name, METH_FASTCALL | METH_KEYWORDS)

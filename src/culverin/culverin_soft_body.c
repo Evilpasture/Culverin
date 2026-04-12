@@ -457,13 +457,13 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_soft_body(PhysicsWorldOb
     self->view_shape[0] = (Py_ssize_t)atomic_load_explicit(&self->count, memory_order_relaxed);
 
     // 6. QUEUE COMMAND
-    PhysicsCommand *cmd           = &self->command_queue[self->command_count++];
-    cmd->header                   = CMD_HEADER(CMD_CREATE_SOFT_BODY, slot);
-    cmd->create_soft.settings     = settings;
-    cmd->create_soft.category     = category;
-    cmd->create_soft.mask         = mask;
-    cmd->create_soft.user_data    = (uintptr_t)o_shared;
-    cmd->create_soft.num_vertices = py_shared->num_vertices;
+    PhysicsCommand *cmd            = &self->command_queue[self->command_count++];
+    cmd->header                    = CMD_HEADER(CMD_CREATE_SOFT_BODY, slot);
+    cmd->create_soft.settings      = settings;
+    cmd->create_soft.category      = category;
+    cmd->create_soft.mask          = mask;
+    cmd->create_soft.user_data.ptr = o_shared;
+    cmd->create_soft.num_vertices  = py_shared->num_vertices;
 
     SHADOW_UNLOCK(&self->shadow_lock);
     return PyLong_FromUnsignedLongLong(raw_h);

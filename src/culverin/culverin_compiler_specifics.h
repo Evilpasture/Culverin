@@ -387,6 +387,14 @@ CULV_MAYBE_UNUSED static constexpr size_t MEMORY_ALIGNMENT_SIZE = 64;
 // serves as a marker to indicate that the caller intends to return a null pointer. It also allows
 // us to avoid type errors in contexts where a null pointer constant is expected, without having to
 // use a more complex compile-time construct like in C++.
+// If the ancient header didn't give us nullptr_t, we define it ourselves
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L
+    // C23 compiler will handle this, but if headers are stale:
+    #ifndef __nullptr_t_defined
+        typedef typeof(nullptr) nullptr_t;
+        #define __nullptr_t_defined
+    #endif
+#endif
 #    if defined(__STDC_VERSION__) &&                                                               \
         __STDC_VERSION__ >=                                                                        \
             202311 // C23 introduces _Generic, typeof_unqual and other keywords, which allows us to

@@ -3,6 +3,7 @@
 #include "culverin_compiler_specifics.h"
 #include "culverin_parsers.h"
 #include "culverin_physics_sync.h"
+#include "culverin_python.h"
 
 // --- Wheel Configuration Defaults ---
 static constexpr float WHEEL_RADIUS_DEFAULT           = 0.4f;
@@ -57,13 +58,13 @@ static JPH_WheelSettings *create_single_wheel(PyObject *w_dict, JPH_LinearCurve 
     }
 
     // 2. Parse Float Attributes using consistent helper
-    float radius    = get_py_float_attr(w_dict, "radius", WHEEL_RADIUS_DEFAULT);
-    float width     = get_py_float_attr(w_dict, "width", WHEEL_WIDTH_DEFAULT);
-    float brake     = get_py_float_attr(w_dict, "brake_torque", WHEEL_BRAKE_TORQUE_DEFAULT);
-    float handbrake = get_py_float_attr(w_dict, "handbrake_torque", WHEEL_HANDBRAKE_TORQUE_DEFAULT);
-    float susp_max  = get_py_float_attr(w_dict, "suspension", WHEEL_SUSPENSION_MAX_DEFAULT);
-    float freq      = get_py_float_attr(w_dict, "spring_freq", WHEEL_SPRING_FREQ_DEFAULT);
-    float damp      = get_py_float_attr(w_dict, "spring_damp", WHEEL_SPRING_DAMP_DEFAULT);
+    float radius    = get_py_attr(w_dict, "radius", WHEEL_RADIUS_DEFAULT);
+    float width     = get_py_attr(w_dict, "width", WHEEL_WIDTH_DEFAULT);
+    float brake     = get_py_attr(w_dict, "brake_torque", WHEEL_BRAKE_TORQUE_DEFAULT);
+    float handbrake = get_py_attr(w_dict, "handbrake_torque", WHEEL_HANDBRAKE_TORQUE_DEFAULT);
+    float susp_max  = get_py_attr(w_dict, "suspension", WHEEL_SUSPENSION_MAX_DEFAULT);
+    float freq      = get_py_attr(w_dict, "spring_freq", WHEEL_SPRING_FREQ_DEFAULT);
+    float damp      = get_py_attr(w_dict, "spring_damp", WHEEL_SPRING_DAMP_DEFAULT);
 
     // 3. Jolt Object Setup
     JPH_WheelSettingsWV *w = JPH_WheelSettingsWV_Create();
@@ -169,10 +170,10 @@ static void setup_engine(JPH_WheeledVehicleControllerSettings *v_ctrl, JPH_Linea
     JPH_VehicleEngineSettings_Init(&eng_set);
 
     // Flat execution: no nesting, no hidden macro branches
-    eng_set.maxTorque = get_py_float_attr(py_engine, "max_torque", ENGINE_MAX_TORQUE_DEFAULT);
-    eng_set.maxRPM    = get_py_float_attr(py_engine, "max_rpm", ENGINE_MAX_RPM_DEFAULT);
-    eng_set.minRPM    = get_py_float_attr(py_engine, "min_rpm", ENGINE_MIN_RPM_DEFAULT);
-    eng_set.inertia   = get_py_float_attr(py_engine, "inertia", ENGINE_INERTIA_DEFAULT);
+    eng_set.maxTorque = get_py_attr(py_engine, "max_torque", ENGINE_MAX_TORQUE_DEFAULT);
+    eng_set.maxRPM    = get_py_attr(py_engine, "max_rpm", ENGINE_MAX_RPM_DEFAULT);
+    eng_set.minRPM    = get_py_attr(py_engine, "min_rpm", ENGINE_MIN_RPM_DEFAULT);
+    eng_set.inertia   = get_py_attr(py_engine, "inertia", ENGINE_INERTIA_DEFAULT);
 
     eng_set.normalizedTorque = t_curve;
 
@@ -197,7 +198,7 @@ static void setup_transmission(JPH_WheeledVehicleControllerSettings *v_ctrl,
     JPH_VehicleTransmissionSettings_SetMode(v_trans_set, (JPH_TransmissionMode)t_mode);
     JPH_VehicleTransmissionSettings_SetClutchStrength(
         v_trans_set,
-        get_py_float_attr(py_trans, "clutch_strength", TRANSMISSION_CLUTCH_STRENGTH_DEFAULT));
+        get_py_attr(py_trans, "clutch_strength", TRANSMISSION_CLUTCH_STRENGTH_DEFAULT));
 
     // Extract Gear Ratios from Python list
     if (py_trans && py_trans != Py_None) {
@@ -227,7 +228,7 @@ static void setup_transmission(JPH_WheeledVehicleControllerSettings *v_ctrl,
 
     // Apply Differential Ratio from Python Transmission object
     float diff_ratio =
-        get_py_float_attr(py_trans, "differential_ratio", DIFFERENTIAL_RATIO_DEFAULT);
+        get_py_attr(py_trans, "differential_ratio", DIFFERENTIAL_RATIO_DEFAULT);
     uint32_t num_diffs = JPH_WheeledVehicleControllerSettings_GetDifferentialsCount(v_ctrl);
     for (uint32_t d = 0; d < num_diffs; d++) {
         JPH_VehicleDifferentialSettings ds;
