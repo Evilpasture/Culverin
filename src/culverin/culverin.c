@@ -3900,11 +3900,12 @@ PyCFunction_DeclareMethod PhysicsWorld_benchmark_build(CULV_MAYBE_UNUSED PyObjec
     return result;
 }
 
+#include <stdatomic.h>
 #include <tupleobject.h>
 
 PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, PyObject *const *args,
                                             Py_ssize_t nargsf) {
-    // --- 1. DECLARATIONS ---
+    // --- 1. DECLARATIONS (C++ / goto safety) ---
     auto nargs              = PyVectorcall_NARGS(nargsf);
     constexpr auto MIN_ARGS = 3;
     constexpr auto MAX_ARGS = 5;
@@ -3913,15 +3914,16 @@ PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, Py
     PyObject *new_val  = nullptr;
     PyObject *registry = nullptr;
     PyObject *key      = nullptr;
-    PyObject *old_val  = nullptr; // Owned after exchange
-    PyObject *stored   = nullptr; // Owned after GetItemRef
+    PyObject *old_val  = nullptr;
+    PyObject *stored   = nullptr;
 
+    Py_ssize_t index     = 0;
     Py_hash_t final_hash = -1;
     int success          = 0;
 
     // --- 2. PRE-FLIGHT CHECKS ---
     if (nargs != MIN_ARGS && nargs != MAX_ARGS) {
-        PyErr_Format(PyExc_TypeError, "mutate_tuple() takes 3 or 5 arguments");
+        PyErr_Format(PyExc_TypeError, "mutate_tuple() takes 3 or 5 arguments (%zd given)", nargs);
         return nullptr;
     }
 
@@ -3932,15 +3934,16 @@ PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, Py
         return nullptr;
     }
 
-    Py_ssize_t index = PyLong_AsSsize_t(args[1]);
+    index = PyLong_AsSsize_t(args[1]);
     if (index == -1 && PyErr_Occurred()) {
         return nullptr;
     }
 
+    Py_ssize_t tuple_len = Py_SIZE(target);
     if (index < 0) {
-        index += Py_SIZE(target);
+        index += tuple_len;
     }
-    if (index < 0 || index >= Py_SIZE(target)) {
+    if (index < 0 || index >= tuple_len) {
         PyErr_Format(PyExc_IndexError, "tuple index %zd out of range", index);
         return nullptr;
     }
@@ -3961,9 +3964,9 @@ PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, Py
 
     // Step A: Registry Removal
     if (registry) {
-        int res = PyDict_GetItemRef(registry, key, &stored);
-        if (res <= 0) {
-            if (res == 0) {
+        stored = PyDict_GetItemWithError(registry, key);
+        if (!stored) {
+            if (!PyErr_Occurred()) {
                 PyErr_SetObject(PyExc_KeyError, key);
             }
             goto exit_critical;
@@ -3972,51 +3975,60 @@ PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, Py
             PyErr_SetString(PyExc_ValueError, "registry[key] is not the same object as target");
             goto exit_critical;
         }
+        Py_INCREF(target);
         if (PyDict_DelItem(registry, key) < 0) {
+            Py_DECREF(target);
             goto exit_critical;
         }
     }
 
     // Step B: The Mutation (Atomic Swap)
     {
-        PyTupleObject *t = _PyTuple_CAST(target);
+        PyTupleObject *t = (PyTupleObject *)target;
         Py_INCREF(new_val);
 
+        // Cast the item slot to an atomic pointer.
+        // This prevents TSan "Data Race" warnings and ensures memory visibility.
         _Atomic(PyObject *) *atomic_slot = (_Atomic(PyObject *) *)&(t->ob_item[index]);
-        // old_val now owned by this C function
         old_val = atomic_exchange_explicit(atomic_slot, new_val, memory_order_acq_rel);
 
+        // Step C: Rehash Cache Bust (Atomic)
 #if PY_VERSION_HEX >= 0x030E0000
         _Atomic(Py_hash_t) *atomic_hash = (_Atomic(Py_hash_t) *)&(t->ob_hash);
         atomic_store_explicit(atomic_hash, -1, memory_order_relaxed);
-        Py_XDECREF(old_val);
 #endif
     }
 
     final_hash = PyObject_Hash(target);
 
     if (final_hash == -1) {
-        // Rollback Mutation: Tuple re-takes ownership of the reference
+        // Rollback (Atomic)
         _Atomic(PyObject *) *atomic_slot =
-            (_Atomic(PyObject *) *)&(_PyTuple_CAST(target)->ob_item[index]);
+            (_Atomic(PyObject *) *)&((PyTupleObject *)target)->ob_item[index];
         atomic_store_explicit(atomic_slot, old_val, memory_order_relaxed);
         Py_DECREF(new_val);
+        if (registry) {
+            Py_DECREF(target);
+        }
         goto exit_critical;
     }
 
     // Step D: Registry Re-insertion
     if (registry) {
         if (PyDict_SetItem(registry, key, target) < 0) {
-            // Rollback Mutation: Tuple re-takes ownership of the reference
+            // Rollback (Atomic)
             _Atomic(PyObject *) *atomic_slot =
-                (_Atomic(PyObject *) *)&(_PyTuple_CAST(target)->ob_item[index]);
+                (_Atomic(PyObject *) *)&((PyTupleObject *)target)->ob_item[index];
             atomic_store_explicit(atomic_slot, old_val, memory_order_relaxed);
             Py_DECREF(new_val);
+            Py_DECREF(target);
             final_hash = -1;
             goto exit_critical;
         }
+        Py_DECREF(target);
     }
 
+    Py_DECREF(old_val);
     success = 1;
 
 exit_critical:
@@ -4024,22 +4036,10 @@ exit_critical:
     Py_END_CRITICAL_SECTION();
 #endif
 
-    // --- 4. UNCONDITIONAL CLEANUP ---
-
-    // 1. Release the reference from GetItemRef (always held if Step A reached)
-    Py_XDECREF(stored);
-
-    // 2. Release the reference from the Atomic Exchange.
-    // If SUCCESS: This frees the float/object the tuple dropped.
-    // If ROLLBACK: This drops the temporary 'owned' handle we got during exchange,
-    // since the tuple now owns the object again via the atomic_store.
-    Py_XDECREF(old_val);
-
-    if (success) {
-        return PyLong_FromSsize_t(final_hash);
+    if (!success) {
+        return nullptr;
     }
-
-    return nullptr;
+    return PyLong_FromSsize_t(final_hash);
 }
 
 // --- The Documentation System ---
