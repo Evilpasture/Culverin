@@ -3900,6 +3900,20 @@ PyCFunction_DeclareMethod PhysicsWorld_benchmark_build(CULV_MAYBE_UNUSED PyObjec
     return result;
 }
 
+/**
+ * --- TUPLE LAYOUT SHIM ---
+ * In some Python versions (3.12, 3.13), PyTupleObject is opaque.
+ * We define a local equivalent using VAR_HEAD to access internal fields
+ * safely across all versions and build configurations (including free-threaded).
+ */
+typedef struct {
+    PyObject_VAR_HEAD Py_hash_t ob_hash;
+    PyObject *ob_item[1];
+} CulverinTupleShim;
+
+// Pointer-cast macro to ensure we mutate heap memory, not a stack copy
+static inline CulverinTupleShim *as_shim(PyObject *op) { return (CulverinTupleShim *)(op); }
+
 PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, PyObject *const *args,
                                             Py_ssize_t nargsf) {
     // --- 1. DECLARATIONS (C++ / goto safety) ---
@@ -3915,7 +3929,6 @@ PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, Py
     PyObject *stored   = nullptr;
 
     Py_ssize_t index     = 0;
-    Py_ssize_t tuple_len = 0;
     Py_hash_t final_hash = -1;
     int success          = 0;
 
@@ -3938,7 +3951,7 @@ PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, Py
         return nullptr;
     }
 
-    tuple_len = Py_SIZE(target);
+    Py_ssize_t tuple_len = Py_SIZE(target);
     if (index < 0) {
         index += tuple_len;
     }
@@ -3956,9 +3969,7 @@ PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, Py
         }
     }
 
-    // --- 3. CRITICAL SECTION (Target Only) ---
-    // dictionary (registry) operations are internally thread-safe in 3.13-t.
-    // We only need to lock the tuple to prevent concurrent reads/hashes.
+    // --- 3. CRITICAL SECTION ---
 #if defined(Py_BEGIN_CRITICAL_SECTION)
     Py_BEGIN_CRITICAL_SECTION(target);
 #endif
@@ -3984,28 +3995,21 @@ PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, Py
         }
     }
 
-    // Step B: The Mutation (Illegal Swap)
-    Py_INCREF(new_val);
-    old_val                                   = ((PyTupleObject *)target)->ob_item[index];
-    ((PyTupleObject *)target)->ob_item[index] = new_val;
+    // Step B: The Mutation (Using pointer cast to the shim)
+    {
+        Py_INCREF(new_val);
+        old_val                         = as_shim(target)->ob_item[index];
+        as_shim(target)->ob_item[index] = new_val;
 
-// Step C: Rehash
-#if PY_VERSION_HEX >= 0x030d0000 // 3.13 and above
-    ((PyTupleObject *)target)->ob_hash = -1;
-#else
-    // In 3.12, tuples are strictly immutable and the header
-    // doesn't expose ob_hash directly in the same way.
-    // We have to reach into the generic object or use the pointer offset.
-    // Note: This is still "dark magic".
-    ((PyObject *)target)->hash = -1;
-    // Or more commonly in 3.12 extensions:
-    _Py_HashSecret_t *dummy; // Some devs use internal headers here
-#endif
+        // Step C: Rehash (Busting the cache via shim offset)
+        as_shim(target)->ob_hash = -1;
+    }
+
     final_hash = PyObject_Hash(target);
 
     if (final_hash == -1) {
         // Rollback
-        ((PyTupleObject *)target)->ob_item[index] = old_val;
+        as_shim(target)->ob_item[index] = old_val;
         Py_DECREF(new_val);
         if (registry) {
             Py_DECREF(target);
@@ -4017,7 +4021,7 @@ PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, Py
     if (registry) {
         if (PyDict_SetItem(registry, key, target) < 0) {
             // Rollback
-            ((PyTupleObject *)target)->ob_item[index] = old_val;
+            as_shim(target)->ob_item[index] = old_val;
             Py_DECREF(new_val);
             Py_DECREF(target);
             final_hash = -1;
