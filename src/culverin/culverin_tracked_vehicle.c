@@ -3,6 +3,7 @@
 #include "culverin_compiler_specifics.h"
 #include "culverin_parsers.h"
 #include "culverin_physics_sync.h"
+#include "culverin_python.h"
 
 // --- Tracked Vehicle Constants ---
 
@@ -44,15 +45,15 @@ static JPH_WheelSettings *create_track_wheel(PyObject *w_dict) {
         return nullptr;
     }
 
-    float radius = get_py_float_attr(w_dict, "radius", TRACKED_WHEEL_RADIUS_DEFAULT);
-    float width  = get_py_float_attr(w_dict, "width", TRACKED_WHEEL_WIDTH_DEFAULT);
+    float radius = get_py_attr(w_dict, "radius", TRACKED_WHEEL_RADIUS_DEFAULT);
+    float width  = get_py_attr(w_dict, "width", TRACKED_WHEEL_WIDTH_DEFAULT);
     float suspension_len =
-        get_py_float_attr(w_dict, "suspension", TRACKED_WHEEL_SUSPENSION_DEFAULT);
-    float friction = get_py_float_attr(w_dict, "friction", 1.0f);
+        get_py_attr(w_dict, "suspension", TRACKED_WHEEL_SUSPENSION_DEFAULT);
+    float friction = get_py_attr(w_dict, "friction", 1.0f);
 
     // Suspension Spring Properties
-    float freq = get_py_float_attr(w_dict, "spring_freq", TRACKED_SPRING_FREQ_DEFAULT);
-    float damp = get_py_float_attr(w_dict, "spring_damp", TRACKED_SPRING_DAMP_DEFAULT);
+    float freq = get_py_attr(w_dict, "spring_freq", TRACKED_SPRING_FREQ_DEFAULT);
+    float damp = get_py_attr(w_dict, "spring_damp", TRACKED_SPRING_DAMP_DEFAULT);
 
     JPH_WheelSettingsTV *w = JPH_WheelSettingsTV_Create();
 
