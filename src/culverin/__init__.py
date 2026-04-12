@@ -112,7 +112,7 @@ from ._culverin_c import (  # noqa: E402
     Skeleton,
     SoftBodySharedSettings,
     Vehicle,
-    _dump_schema_json,
+    _dump_schema_json, # type: ignore
     mutate_tuple,
 )
 
