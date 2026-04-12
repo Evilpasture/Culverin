@@ -357,6 +357,9 @@ CULV_MAYBE_UNUSED static constexpr size_t MEMORY_ALIGNMENT_SIZE = 64;
 #define CULV_STR_HELPER(x) #x
 #define CULV_STR(x) CULV_STR_HELPER(x)
 
+#define CULV_JOIN_HELPER(x, y) x##y
+#define CULV_JOIN(x, y) CULV_JOIN_HELPER(x, y)
+
 #if defined(__clang__)
 #    define CULV_UNROLL_LOOP(n) _Pragma(CULV_STR(clang loop unroll_count(n)))
 #elif defined(__GNUC__)

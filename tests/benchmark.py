@@ -10,12 +10,14 @@ import psutil
 
 import culverin
 
+from collections import deque
 
-def get_ram_mb():
+
+def get_ram_mb() -> float:
     return psutil.Process(os.getpid()).memory_info().rss / 1024 / 1024
 
 
-def run_leak_test(iterations: int = 50000):
+def run_leak_test(iterations: int = 50000) -> None:
     print("\n=== CULVERIN MEMORY LEAK TEST ===")
     world = culverin.PhysicsWorld(settings={"max_bodies": 10000})
     verts = array.array("f", [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0]).tobytes()
@@ -45,7 +47,7 @@ def run_leak_test(iterations: int = 50000):
         print("✅ SUCCESS: Memory is stable")
 
 
-def run_threading_benchmark(duration: float = 5.0, num_bodies: int = 500):
+def run_threading_benchmark(duration: float = 5.0, num_bodies: int = 500) -> None:
     print("\n=== CULVERIN REALISTIC SIMULATION BENCHMARK ===")
     print(f"Simulating {num_bodies} active dynamic bodies across multiple cores for {duration}s...")
 
@@ -84,7 +86,7 @@ def run_threading_benchmark(duration: float = 5.0, num_bodies: int = 500):
     stats = {"steps": 0, "rays": 0, "contacts": 0, "resets": 0, "mutations": 0}
 
     # --- THREAD 1: THE CORE STEPPER ---
-    def worker_stepper():
+    def worker_stepper() -> None:
         while running:
             try:
                 # Run as fast as the CPU allows
@@ -95,7 +97,7 @@ def run_threading_benchmark(duration: float = 5.0, num_bodies: int = 500):
                 pass
 
     # --- THREAD 2: SENSORS (RAYCASTS) ---
-    def worker_sensors():
+    def worker_sensors() -> None:
         batch_size = 500
         starts = array.array("f", [0.0] * (batch_size * 3))
         dirs = array.array("f", [0.0, -1.0, 0.0] * batch_size)
@@ -106,7 +108,7 @@ def run_threading_benchmark(duration: float = 5.0, num_bodies: int = 500):
             time.sleep(0.01)  # ~100Hz
 
     # --- THREAD 3: GAMEPLAY LOGIC (ANTI-SLEEP & MEMORYVIEW) ---
-    def worker_housekeeper():
+    def worker_housekeeper() -> None:
         # Wrap the raw memoryview in a NumPy array
         pos_data = np.frombuffer(world.positions, dtype=np.float64).reshape(-1, 4)
 
@@ -133,7 +135,7 @@ def run_threading_benchmark(duration: float = 5.0, num_bodies: int = 500):
             time.sleep(0.5)
 
     # --- THREAD 4: THE MUTATOR (CONTROLLED HAMMER) ---
-    def worker_mutator():
+    def worker_mutator() -> None:
         while running:
             try:
                 # Destroy 5 bodies, create 5 bodies.
@@ -204,8 +206,9 @@ def run_threading_benchmark(duration: float = 5.0, num_bodies: int = 500):
     print(f"Total Raycasts: {stats['rays']}")
 
 
-def run_churn_test(duration: float = 10.0):
+def run_churn_test(duration: float = 10.0) -> None:
     # There is a known memory issue. will investigate...
+    # With an educated guess, it's probably Python holding onto memory instead of immediately releasing to the OS.
     print("\n=== CULVERIN FRAGMENTATION (CHURN) TEST ===")
 
     # Start with a world limited to 2000 bodies to force frequent re-use
@@ -285,11 +288,109 @@ def run_churn_test(duration: float = 10.0):
     print(f" - Final RAM:     {get_ram_mb():.2f}MB")
 
 
+def run_soft_body_benchmark(duration: float = 10.0, num_bodies: int = 100, segments: int = 10) -> None:
+    import gc
+    print("\n=== CULVERIN SOFT BODY STRESS TEST ===")
+    print(f"Goal: Simulate {num_bodies} jelly cubes ({segments}^3 vertices each) for {duration}s")
+
+    # 1. Setup World & Topology
+    world = culverin.PhysicsWorld(settings={"max_bodies": 5000})
+    world.create_body(pos=(0, -2, 0), size=(100, 1, 100), motion=culverin.MOTION_STATIC)
+
+    settings = culverin.SoftBodySharedSettings()
+    grid = np.mgrid[-1:1:complex(segments), -1:1:complex(segments), -1:1:complex(segments)]
+    grid = grid.reshape(3, -1).T.astype(np.float32)
+    v_count = len(grid)
+    settings.add_vertices(grid.tobytes())
+    settings.add_faces(np.arange((v_count // 3) * 3, dtype=np.uint32).tobytes())
+    settings.create_constraints(compliance=0.0001, bend_type=culverin.BEND_DISTANCE)
+    settings.optimize()
+
+    # 2. Cache Data Structures with explicit typing for Pylance
+    active_handles: deque[int] = deque()
+    active_data: deque[np.ndarray] = deque()
+    pending_spawn: list[int] = [] 
+
+    # 3. Cache ALL Methods (Absolute minimal overhead)
+    w_step = world.step
+    w_create = world.create_soft_body
+    w_get_verts = world.get_soft_body_vertices
+    w_destroy_batch = world.destroy_bodies_batch 
+    # Removed unused w_is_alive
+    np_frombuf = np.frombuffer
+    
+    ah_append = active_handles.append
+    ah_popleft = active_handles.popleft
+    ad_append = active_data.append
+    ad_popleft = active_data.popleft
+    ps_append = pending_spawn.append
+
+    # 4. Pre-generate Constants
+    dtype = np.float64 if culverin.USE_DOUBLE_PRECISION else np.float32
+    spawn_pool = np.random.uniform(-15, 15, (10000, 3)).tolist()
+    spawn_idx = 0
+    steps = 0
+    verts_synced = 0
+    
+    print("-> Suppressing Python GC for the duration of the test...")
+    gc.collect() 
+    gc.disable() 
+    
+    start_ram = get_ram_mb()
+    start_t = time.perf_counter() 
+
+    try:
+        while (time.perf_counter() - start_t) < duration:
+            # A. Population Control
+            needed = num_bodies - (len(active_handles) + len(pending_spawn))
+            if needed > 0:
+                for _ in range(needed):
+                    h = w_create(settings, spawn_pool[spawn_idx % 10000], (0,0,0,1), num_iterations=20)
+                    ps_append(h)
+                    spawn_idx += 1
+
+            # B. Physics Step (Release GIL)
+            w_step(1/60.0)
+            steps += 1
+
+            # C. One-Time Mapping
+            if pending_spawn:
+                for h in pending_spawn:
+                    ah_append(h)
+                    ad_append(np_frombuf(w_get_verts(h), dtype=dtype))
+                pending_spawn.clear()
+
+            # D. The Work Loop: Minimal memory touch
+            [d[0] for d in active_data]
+            verts_synced += (len(active_data) * v_count)
+
+            # E. Churn (Batch Destruction)
+            if steps % 10 == 0:
+                victims: list[int] = []
+                for _ in range(5):
+                    if active_handles:
+                        victims.append(ah_popleft())
+                        ad_popleft()
+                if victims:
+                    w_destroy_batch(victims)
+
+    finally:
+        gc.enable() 
+        gc.collect()
+
+    total_time = time.perf_counter() - start_t
+    print("\n✅ FINAL RESULTS")
+    print(f" - Performance:   {steps / total_time:.2f} FPS")
+    print(f" - Vertex Access: {verts_synced / total_time / 1e6:.2f} Million Verts/sec")
+    print(f" - RAM Delta:     {get_ram_mb() - start_ram:+.2f} MB")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Culverin Diagnostic Tools")
     parser.add_argument("--leak", action="store_true")
     parser.add_argument("--stress", action="store_true")
     parser.add_argument("--churn", action="store_true")
+    parser.add_argument("--soft", action="store_true", help="Run Soft Body Benchmark")
     parser.add_argument("--all", action="store_true", help="Run all tests")
 
     args = parser.parse_args()
@@ -300,6 +401,8 @@ if __name__ == "__main__":
         run_threading_benchmark()
     if args.all or args.churn:
         run_churn_test()
+    if args.all or args.soft:
+        run_soft_body_benchmark()
 
-    if not any([args.all, args.leak, args.stress, args.churn]):
+    if not any([args.all, args.leak, args.stress, args.churn, args.soft]):
         print("Please specify a test...")

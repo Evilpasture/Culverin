@@ -29,6 +29,7 @@ from ._culverin import (
     parse_urdf,
 )
 
+
 class WheelConfig(TypedDict):
     pos: tuple[float, float, float]
     radius: float
@@ -37,6 +38,7 @@ class WheelConfig(TypedDict):
 class TrackConfig(TypedDict):
     indices: list[int]
     driven_wheel: int
+
 
 # 2. DEFINE HELPER FUNCTIONS
 # We type-hint 'self' as the C class.
@@ -80,6 +82,9 @@ PhysicsWorld = _culverin_c.PhysicsWorld
 
 # 5. Export Constants and other classes
 from ._culverin_c import (  # noqa: E402
+    BEND_DIHEDRAL,
+    BEND_DISTANCE,
+    BEND_NONE,
     CONSTRAINT_CONE,
     CONSTRAINT_DISTANCE,
     CONSTRAINT_FIXED,
@@ -104,13 +109,17 @@ from ._culverin_c import (  # noqa: E402
     Character,
     Ragdoll,
     RagdollSettings,
-    SoftBodySharedSettings,
     Skeleton,
+    SoftBodySharedSettings,
     Vehicle,
+    _dump_schema_json, # type: ignore
     mutate_tuple,
 )
 
 __all__ = [
+    "BEND_DIHEDRAL",
+    "BEND_DISTANCE",
+    "BEND_NONE",
     "CONSTRAINT_CONE",
     "CONSTRAINT_DISTANCE",
     "CONSTRAINT_FIXED",
@@ -139,14 +148,15 @@ __all__ = [
     "PhysicsWorld",
     "Ragdoll",
     "RagdollSettings",
-    "SoftBodySharedSettings",
     "Skeleton",
+    "SoftBodySharedSettings",
+    "TrackConfig",
     "Transmission",
     "Vehicle",
+    "WheelConfig",
     "euler_to_quat",
     "load_urdf",
-    "parse_urdf",
-    "WheelConfig",
-    "TrackConfig",
+    "_dump_schema_json",
     "mutate_tuple",
+    "parse_urdf",
 ]

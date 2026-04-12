@@ -3,15 +3,15 @@
 [![PyPI - Version](https://img.shields.io/pypi/v/culverin)](https://pypi.org/project/culverin/)
 [![Python Version](https://img.shields.io/pypi/pyversions/culverin)](https://pypi.org/project/culverin/)
 
-Culverin is a Python wrapper for the **Jolt Physics** engine. It is designed for 3D games and simulations that require high performance and multi-threaded execution.
+Culverin is a middleware bridge between the **Jolt Physics** engine and the Python Virtual Machine. It is designed for 3D games and simulations that require high performance and multi-threaded execution, for the Python game engine developers.
 
 ### Key Concepts
 
 *   **Free-Threading Support:** Designed for Python 3.13t and 3.14t. The engine releases the Global Interpreter Lock (GIL) during physics updates and raycast batches.
-*   **Shadow Buffers:** All body positions, rotations, and velocities are stored in contiguous C-arrays. You can access this data via `memoryview` or `numpy` without the overhead of creating Python objects for every body.
+*   **Shadow Buffers:** All body positions, rotations, and velocities are stored in contiguous C-arrays. You can access this data via `memoryview`, `NumPy` or any dependency that supports the buffer protocol without the overhead of creating Python objects for every body.
 *   **Thread-Safe API:** The engine uses a priority-based locking system. Simulation steps, state mutations, and queries can run on different threads without causing deadlocks or memory corruption.
 *   **Generational Handles:** Bodies are referenced by 64-bit handles rather than pointers. This ensures that using a handle for a deleted object will not crash the program.
-*   **Double-Precision Positions:** Uses double-precision floats (`float64`) for world positions to prevent physics jitter in massive open worlds, while using `float32` for rotations and velocities to save memory.
+*   **Double-Precision Positions:** Uses double-precision floats (`float64`) for world positions to prevent physics jitter in massive open worlds, while using `float32` for rotations and velocities to save memory and computing resources.
 
 ### Features
 
@@ -24,6 +24,7 @@ Culverin is a Python wrapper for the **Jolt Physics** engine. It is designed for
 *   **Constraints:** Fixed, Point, Hinge, Slider, Distance, Swing-Twist, and Cone constraints.
 *   **Queries:** Efficient single and batch Raycasting, Shapecasting (sweeps), and Overlap queries.
 *   **Collision Events:** Native event buffer for contact added, persisted, and removed events.
+*   **Soft Bodies:** Support for soft bodies from Jolt Physics, with fine-grained configurations.
 
 ### Installation
 

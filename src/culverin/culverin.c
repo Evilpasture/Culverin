@@ -312,8 +312,8 @@ fail:
  * Encapsulates slot acquisition, handle generation, and command queuing.
  */
 static uint64_t physics_world_commit_create_locked(PhysicsWorldObject *self,
-                                            JPH_BodyCreationSettings *settings,
-                                            uint32_t slot_state) {
+                                                   JPH_BodyCreationSettings *settings,
+                                                   uint32_t slot_state) {
     size_t current_count = atomic_load_explicit(&self->count, memory_order_acquire);
     size_t available     = atomic_load_explicit(&self->free_count, memory_order_acquire);
 
@@ -481,10 +481,10 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self
     JPH_Real px;
     JPH_Real py;
     JPH_Real pz;
-    void *targets[ImpAt_COUNT] = {
-        [IDX_IMPAT_H] = (void *)&h_raw, [IDX_IMPAT_IX] = (void *)&ix, [IDX_IMPAT_IY] = (void *)&iy,
-        [IDX_IMPAT_IZ] = (void *)&iz,   [IDX_IMPAT_PX] = (void *)&px, [IDX_IMPAT_PY] = (void *)&py,
-        [IDX_IMPAT_PZ] = (void *)&pz};
+    void *targets[ImpAt_COUNT] = {[IDX_IMPAT_H] = (void *)&h_raw, [IDX_IMPAT_IX] = (void *)&ix,
+                                  [IDX_IMPAT_IY] = (void *)&iy,   [IDX_IMPAT_IZ] = (void *)&iz,
+                                  [IDX_IMPAT_PX] = (void *)&px,   [IDX_IMPAT_PY] = (void *)&py,
+                                  [IDX_IMPAT_PZ] = (void *)&pz};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.ImpulseAtParser,
                            targets)) {
@@ -3837,7 +3837,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_debug_data(PhysicsWorldObject *self,
     return ret;
 }
 
-PyCFunction_DeclareMethod culv_dump_schema(PyObject *self, PyObject *Py_UNUSED(args)) {
+PyCFunction_DeclareMethod culv_dump_schema_json(PyObject *self, PyObject *Py_UNUSED(args)) {
     // self is the module object
     CulverinState *st = get_culverin_state(self);
 
@@ -4184,6 +4184,12 @@ static void stitch_docs_getset(PyGetSetDef *getset, const char *class_name) {
      .ml_flags = (method_type),                                                                    \
      .ml_doc   = nullptr} // Initialized to nullptr to be filled by stitcher
 
+#define CULV_FEAT_INTERNAL(prefix, name, method_type) \
+    {.ml_name  = "_" #name,                           \
+     .ml_meth  = (PyCFunction)prefix##_##name,        \
+     .ml_flags = (method_type),                       \
+     .ml_doc   = NULL}
+
 // User-facing macros for context methods
 #define PW_FASTCALL(name) CULV_FEAT(PhysicsWorld, name, METH_FASTCALL | METH_KEYWORDS)
 #define PW_NOARGS(name) CULV_FEAT(PhysicsWorld, name, METH_NOARGS)
@@ -4207,6 +4213,7 @@ static void stitch_docs_getset(PyGetSetDef *getset, const char *class_name) {
 
 #define SBSS_FASTCALL(name) CULV_FEAT(SoftBodySharedSettings, name, METH_FASTCALL | METH_KEYWORDS)
 #define SBSS_NOARGS(name) CULV_FEAT(SoftBodySharedSettings, name, METH_NOARGS)
+#define SBSS_O(name) CULV_FEAT(SoftBodySharedSettings, name, METH_O)
 
 // Getter/Property macro - concise initialization
 #define GETSET(name_str, getter_func)                                                              \
@@ -4216,16 +4223,17 @@ static void stitch_docs_getset(PyGetSetDef *getset, const char *class_name) {
      .doc     = nullptr,                                                                           \
      .closure = nullptr}
 
+// User-facing macros for module-level methods
+#define MOD_FASTCALL(name) CULV_FEAT(culv, name, METH_FASTCALL | METH_KEYWORDS)
+#define MOD_NOARGS(name) CULV_FEAT(culv, name, METH_NOARGS)
+
+#define MOD_NOARGS_INTERNAL(name) CULV_FEAT_INTERNAL(culv, name, METH_NOARGS)
+
+// --- Module Method Definitions ---
 static PyMethodDef module_methods[] = {
-    {.ml_name  = "_dump_schema_json",
-     .ml_meth  = CULV_CAST(culv_dump_schema),
-     .ml_flags = METH_NOARGS,
-     .ml_doc   = "Internal: Dumps schema to culverin_schema.json"},
-    {.ml_name  = "mutate_tuple",
-     .ml_meth  = (PyCFunction)(void (*)(void))culv_mutate_tuple,
-     .ml_flags = METH_FASTCALL,
-     .ml_doc   = "Bypasses Python immutability to modify a tuple index in-place. Use at own risk."},
-    {.ml_name = nullptr, .ml_meth = nullptr, .ml_flags = 0, .ml_doc = nullptr}};
+    MOD_NOARGS_INTERNAL(dump_schema_json), // Stitches from ### dump_schema in ## class Module
+    MOD_FASTCALL(mutate_tuple),            // Stitches from ### mutate_tuple in ## class Module
+    {nullptr, nullptr, 0, nullptr}};
 
 static PyGetSetDef PhysicsWorld_getset[] = {
     GETSET("positions", get_positions),
@@ -4360,10 +4368,10 @@ static PyMethodDef Ragdoll_methods[] = {RD_FASTCALL(drive_to_pose),
 static PyMethodDef RagdollSettings_methods[] = {
     RDS_FASTCALL(add_part), RDS_NOARGS(stabilize), {nullptr, nullptr, 0, nullptr}};
 
-static PyMethodDef SoftBodySharedSettings_methods[] = {SBSS_FASTCALL(add_vertex),
-                                                       SBSS_FASTCALL(add_face),
-                                                       SBSS_NOARGS(optimize),
-                                                       {nullptr, nullptr, 0, nullptr}};
+static PyMethodDef SoftBodySharedSettings_methods[] = {
+    SBSS_FASTCALL(add_vertex),         SBSS_FASTCALL(add_vertices), SBSS_O(add_pinned_vertex),
+    SBSS_O(get_vertex_position),       SBSS_FASTCALL(add_face),     SBSS_FASTCALL(add_faces),
+    SBSS_FASTCALL(create_constraints), SBSS_NOARGS(optimize),       {nullptr, nullptr, 0, nullptr}};
 
 static const PyMemberDef PhysicsWorld_members[] = {
     {.name   = "__weaklistoffset__",
@@ -4582,12 +4590,12 @@ static int init_constants(PyObject *m) {
                   {.name = "EVENT_ADDED", .value = EVENT_ADDED},
                   {.name = "EVENT_PERSISTED", .value = EVENT_PERSISTED},
                   {.name = "EVENT_REMOVED", .value = EVENT_REMOVED},
-                  // Build Metadata
-                  #if defined(JPH_DOUBLE_PRECISION)
+// Build Metadata
+#if defined(JPH_DOUBLE_PRECISION)
                   {.name = "USE_DOUBLE_PRECISION", .value = 1},
-                  #else
+#else
                   {.name = "USE_DOUBLE_PRECISION", .value = 0},
-                  #endif
+#endif
                   {.name = "FREE_THREADED",
                    .value =
 #if defined(Py_GIL_DISABLED) && Py_GIL_DISABLED
@@ -4603,7 +4611,10 @@ static int init_constants(PyObject *m) {
 #else
                        0
 #endif
-                  }};
+                  },
+                  {.name = "BEND_DIHEDRAL", .value = JPH_SoftBodyBendType_Dihedral},
+                  {.name = "BEND_DISTANCE", .value = JPH_SoftBodyBendType_Distance},
+                  {.name = "BEND_NONE", .value = JPH_SoftBodyBendType_None}};
 
     for (size_t i = 0; i < sizeof(consts) / sizeof(consts[0]); i++) {
         if (PyModule_AddIntConstant(m, consts[i].name, consts[i].value) < 0) {
@@ -4665,7 +4676,7 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
                  precision, build_type, compiler_id);
 
         // --- THE WINNER: Run exactly once per process life ---
-
+        stitch_docs(module_methods, "Module");
         stitch_docs(PhysicsWorld_methods, "PhysicsWorld");
         stitch_docs(Character_methods, "Character");
         stitch_docs(Vehicle_methods, "Vehicle");

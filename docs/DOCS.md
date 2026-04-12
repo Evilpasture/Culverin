@@ -1,5 +1,19 @@
 # Culverin Physics Engine - Method Documentation
 
+## class Module
+
+### _dump_schema_json(...)
+Internal: Dumps the current FastParse schema registry to `culverin_schema.json`. 
+Used primarily for generating type stubs or debugging parser configurations.
+
+### mutate_tuple(...)
+Bypasses Python's immutability to modify a tuple index in-place.
+**Arguments:**
+- **target, index, value, [registry, key]**
+- If 3 arguments: Swaps the pointer at `index` and recomputes the hash.
+- If 5 arguments: Atomically pops from `registry`, mutates, and re-inserts to ensure dict integrity.
+**Warning:** High-performance tool. Improper use can corrupt dictionary keys.
+
 ## class PhysicsWorld
 
 ### step(...)
@@ -339,42 +353,44 @@ Creates a single rigid body composed of multiple distinct sub-shapes. This is id
 
 ### create_soft_body(...)
 
-Creates a physically simulated soft body (deformable mesh) in the world. 
+Instantiates a physically simulated soft body (deformable mesh) into the world. 
 
-Unlike rigid bodies, soft bodies do not have a fixed shape; they are composed of vertices and constraints (edges/springs) that allow the mesh to squish, stretch, and jiggle upon impact.
+Unlike rigid bodies, soft bodies do not have a fixed shape; they are composed of vertices and constraints (edges/springs) that allow the mesh to squish, stretch, and jiggle.
 
 **Returns:**
-- **`handle` (int):** A unique 64-bit generational handle. This handle allows you to apply forces to the body as a whole or retrieve its vertex data via `get_soft_body_vertices`.
+- **`handle` (int):** A unique 64-bit generational handle. Use this to apply forces or retrieve vertex data via `get_soft_body_vertices`.
 
 **Arguments:**
-- **`shared_settings` (SoftBodySharedSettings):** The topological blueprint defining the mesh, vertex mass, and constraints.
-- **`pos` (tuple):** Initial `(x, y, z)` world position of the body's center of mass.
-- **`rot` (tuple):** Initial `(x, y, z, w)` orientation.
-- **`user_data` (int):** Optional 64-bit integer.
-- **`category` / `mask` (int):** Bitmasks for collision filtering.
+- **`shared_settings` (SoftBodySharedSettings):** The topological blueprint defining the mesh and constraints.
+- **`pos` / `rot` (tuple):** Initial world-space transform of the body's center of mass.
+- **`pressure` (float):** Internal gas pressure (default: `0.0`). High values (e.g., `500.0+`) make the body behave like an inflated balloon.
+- **`vertex_radius` (float):** The physical thickness of the vertices for collision (default: `0.05`).
+- **`linear_damping` (float):** Resistance to motion (default: `0.1`). Vital for stopping "numerical explosions" in high-energy jelly.
+- **`num_iterations` (int):** Solver quality (default: `10`). Increase to `20-30` for stiffer, more structurally sound objects.
+- **`max_linear_velocity` (float):** Hard safety cap (default: `500.0`). Prevents vertices from teleporting off-screen if the math destabilizes.
+- **`gravity_factor` (float):** Multiplier for global gravity. Use `0.0` for weightless cloth or `0.5` for "moon-jelly."
+- **`friction` / `restitution` (float):** Surface properties for collisions.
+- **`make_rotation_identity` (bool):** If `True`, the initial rotation provided is "baked" into the vertices, and the body's transform rotation is reset to identity.
 
 **Operational Mechanics:**
-- **Two-Tier Tracking:** Culverin tracks the soft body in two ways. The "Center of Mass" is synchronized with the standard `positions` and `rotations` buffers (allowing basic proximity checks), while individual vertices are synchronized into a specialized per-body buffer.
-- **Performance:** Creating a soft body automatically allocates a dedicated shadow buffer for its vertices. This buffer is sized exactly to the mesh defined in `shared_settings`.
-- **Thread Safety:** If the settings were created in the same frame, Culverin handles the structural hand-off to Jolt during the next `world.step()`.
+- **Two-Tier Tracking:** Culverin tracks the Center of Mass in the global `positions` buffer, while individual vertices are synced to a specialized shadow buffer.
+- **Structural Integrity:** Soft bodies are numerically sensitive. For high-speed collisions, it is recommended to use sub-stepping (e.g., calling `world.step()` 4 times per frame with `dt/4`).
 
 ### get_soft_body_vertices(...)
 
-Returns a zero-copy `memoryview` pointing to the real-time, world-space positions of every vertex in a soft body.
+Returns a zero-copy `memoryview` pointing to the real-time, world-space positions of every vertex in a simulated soft body.
 
 **Returns:**
 - **`view` (memoryview):** A contiguous buffer of vertices.
-- **Format:** `float32` (or `float64` if using double precision).
-- **Stride:** 4 (X, Y, Z, W). The `W` component is used for alignment and contains undefined data.
-- **NumPy Usage:** `verts = np.frombuffer(world.get_soft_body_vertices(h), dtype=np.float32).reshape(-1, 4)[:, :3]`
+- **Format:** `float32` (or `float64` if using double precision build).
+- **Stride:** 4 (X, Y, Z, W). The `W` component is purely for SIMD alignment.
+- **NumPy Usage:** `verts = np.frombuffer(world.get_soft_body_vertices(h), dtype=np.float32).reshape(-1, 4)`
 
 **Arguments:**
 - **`handle` (int):** The 64-bit handle of the soft body.
 
-**Key Features:**
-- **World-Space Sync:** Culverin's C++ sync loop automatically transforms every vertex from Jolt's internal local space into World Space before writing to this buffer. This allows you to pass the buffer directly to a shader or rendering engine without manual matrix multiplication in Python.
-- **SIMD Optimized:** The vertex transfer uses unrolled loops and pre-fetched memory writes to ensure the sync phase does not become a bottleneck for complex meshes.
-- **Validation:** Raises a `TypeError` if the handle provided belongs to a rigid body or a character rather than a soft body.
+**Performance:**
+- Culverin's C++ sync loop performs the local-to-world transformation for every vertex at the end of every `world.step()`, ensuring the buffer is display-ready with zero Python overhead.
 
 
 ### apply_impulse(...)
@@ -1689,7 +1705,7 @@ Performs an automated structural analysis of the ragdoll hierarchy to ensure phy
 
 ## class SoftBodySharedSettings
 
-Defines the topology, physical mass distribution, and internal constraints of a soft body. This is a non-simulated "blueprint" object; it defines *how* a soft body behaves before it is added to the world.
+Defines the topology, physical mass distribution, and internal constraints of a soft body. This is a non-simulated "blueprint" object.
 
 ### add_vertex(...)
 
@@ -1697,31 +1713,108 @@ Adds a single vertex (node) to the soft body definition.
 
 **Arguments:**
 - **`pos` (tuple):** The `(x, y, z)` local-space coordinate of the vertex.
-- **`inv_mass` (float):** The inverse mass of this specific vertex ($1/m$).
-    - A value of `1.0` represents a 1kg vertex.
-    - A value of `0.0` makes the vertex **kinematically pinned** (immovable), useful for attaching capes to characters or flags to poles.
-
-**Performance:**
-- Culverin tracks the total number of vertices added and packs this count into the creation command to ensure the world's shadow buffers are pre-allocated at the correct size.
+- **`inv_mass` (float):** The inverse mass ($1/m$). 
+    - `1.0`: 1kg vertex. 
+    - `0.0`: Technically pins the vertex (though `add_pinned_vertex` is the preferred API).
 
 
 ### add_face(...)
 
-Defines a triangular surface on the soft body mesh by linking three existing vertices.
+Defines a triangular surface on the mesh by linking three vertex indices. Edges of these faces automatically become distance springs when `create_constraints` is called.
 
 **Arguments:**
-- **`v1`, `v2`, `v3` (int):** The indices of the vertices (in the order they were added via `add_vertex`) that form the triangle.
+- **`v1`, `v2`, `v3` (int):** Vertex indices in the order they were added.
 
-**Operational Details:**
-- **Collision Logic:** Faces are used by the Jolt solver to handle collisions against other shapes and to calculate volume-keeping constraints.
-- **Winding Order:** Standard counter-clockwise winding is recommended for correct normal calculation.
+
+### add_pinned_vertex(...)
+
+[Positional Only] Marks a specific vertex as **Pinned**. Pinned vertices have zero inverse mass and are fixed in world-space (relative to the body's center of mass).
+
+**Arguments:**
+- **`index` (int):** The vertex index to anchor.
+
+**IMPORTANT:** Must be called **BEFORE** `create_constraints()` to ensure the structural springs correctly account for the anchored point.
+
+
+### create_constraints(...)
+
+Generates the internal physical structure (the "bones") of the soft body.
+
+**Arguments:**
+- **`compliance` (float):** The inverse of stiffness. 
+    - `0.0`: Perfectly rigid.
+    - `0.0001`: Stiff Jelly/Rubber.
+    - `0.01`: Floppy Paper/Cloth.
+- **`bend_type` (int):** How the mesh resists folding.
+    - `culverin.BEND_NONE` (0): No bending resistance.
+    - `culverin.BEND_DISTANCE` (1): Standard "internal struts" (Best for cubes/blobs).
+    - `culverin.BEND_DIHEDRAL` (2): Resists changes in triangle angles (Best for cloth/capes).
+
+**Technical Feature:**
+This method automatically applies the provided compliance to both the **Edge Constraints** and the **Shear Constraints**, providing significantly higher integrity than simple distance springs alone.
 
 
 ### optimize()
 
-Bakes the raw vertex and face data into an optimized structural format required for simulation.
+[No Arguments] Finalizes the blueprint and builds the spatial acceleration structures (BVH) required for high-performance collision detection.
 
-**Operational Mechanics:**
-- **Constraint Generation:** This method automatically calculates the edge constraints (distance springs) between connected vertices and generates bending constraints to help the mesh maintain its shape.
-- **Normals Calculation:** Pre-calculates the initial surface normals used for lighting and collision response.
-- **Workflow Requirement:** You **must** call `optimize()` after adding all vertices and faces. Attempting to create a soft body with un-optimized settings will result in a physics crash or undefined behavior.
+**Workflow Requirement:**
+This must be the **final call** on a settings object. Once optimized, you should not add more vertices or faces.
+
+
+### get_vertex_position(...)
+
+[Positional Only] Retrieves the **Rest Pose** position of a vertex from the shared settings.
+
+**Returns:**
+- **`pos` (tuple):** The `(x, y, z)` local coordinates of the vertex as originally defined.
+
+**Arguments:**
+- **`index` (int):** The vertex index to query.
+
+### add_vertices(...)
+
+Massively parallelized addition of vertices to the soft body blueprint. This is the recommended method for creating complex meshes (e.g., loading from an OBJ file or generating via NumPy).
+
+**Arguments:**
+- **`positions` (Buffer):** A flat, contiguous array of `float32` values representing `(x, y, z)` coordinates.
+- **`inv_masses` (Buffer, optional):** A flat array of `float32` values defining the inverse mass for each vertex. 
+    - If provided, the length must exactly match the number of vertices in the `positions` buffer.
+    - If `None` (default), all vertices in this batch are assigned a mass of 1.0kg.
+
+**Performance & Memory:**
+- **Single Allocation:** Unlike calling `add_vertex` in a loop, this method performs exactly one heap allocation by pre-reserving memory for the entire batch.
+- **SIMD Optimized:** The underlying C++ loop is designed to be auto-vectorized by the compiler for high-speed coordinate conversion.
+- **NumPy Integration:** Designed to ingest NumPy arrays directly:
+  ```python
+  positions = np.random.uniform(-1, 1, (1000, 3)).astype(np.float32)
+  settings.add_vertices(positions.tobytes())
+  ```
+
+**Constraints:**
+- Raises `ValueError` if the buffer size is not a multiple of 12 bytes (3x float32).
+- Raises `RuntimeError` if called after `optimize()`.
+
+
+### add_faces(...)
+
+High-speed batch definition of the soft body's surface triangles.
+
+**Arguments:**
+- **`indices` (Buffer):** A flat, contiguous array of `uint32` values representing vertex indices. Every 3 values define one triangular face.
+
+**Operational Details:**
+- **Safety Validation:** Culverin performs a C-native bounds check on every index provided. If an index points to a non-existent vertex, the method raises an `IndexError` before any data is sent to Jolt.
+- **Winding Order:** Standard counter-clockwise winding is expected for correct surface normal generation.
+- **Edge Generation:** The edges defined by these faces will be automatically converted into physical distance springs when `create_constraints()` is called.
+
+**Usage Example:**
+```python
+# Create a single triangle connecting vertices 0, 1, and 2
+indices = np.array([0, 1, 2], dtype=np.uint32)
+settings.add_faces(indices.tobytes())
+```
+
+**Constraints:**
+- Raises `ValueError` if the buffer size is not a multiple of 12 bytes (3x uint32).
+- Raises `RuntimeError` if called after `optimize()`.

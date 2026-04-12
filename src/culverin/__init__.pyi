@@ -1,4 +1,5 @@
 from typing import TypedDict
+
 __version__: str
 # Re-export from the Python helper
 from ._culverin import (
@@ -13,6 +14,9 @@ from ._culverin import (
 
 # Re-export from the compiled artifact
 from ._culverin_c import (
+    BEND_DIHEDRAL,
+    BEND_DISTANCE,
+    BEND_NONE,
     CONSTRAINT_CONE,
     CONSTRAINT_DISTANCE,
     CONSTRAINT_FIXED,
@@ -40,22 +44,25 @@ from ._culverin_c import (
     PhysicsWorld,
     Ragdoll,
     RagdollSettings,
-    SoftBodySharedSettings,
     Skeleton,
+    SoftBodySharedSettings,
     Vehicle,
-    mutate_tuple
+    _dump_schema_json, # type: ignore
+    mutate_tuple,
 )
 
 class WheelConfig(TypedDict):
     pos: tuple[float, float, float]
     radius: float
 
-
 class TrackConfig(TypedDict):
     indices: list[int]
     driven_wheel: int
 
 __all__ = [
+    "BEND_DIHEDRAL",
+    "BEND_DISTANCE",
+    "BEND_NONE",
     "CONSTRAINT_CONE",
     "CONSTRAINT_DISTANCE",
     "CONSTRAINT_FIXED",
@@ -84,14 +91,15 @@ __all__ = [
     "PhysicsWorld",
     "Ragdoll",
     "RagdollSettings",
-    "SoftBodySharedSettings",
     "Skeleton",
+    "SoftBodySharedSettings",
+    "TrackConfig",
     "Transmission",
     "Vehicle",
+    "WheelConfig",
     "euler_to_quat",
     "load_urdf",
-    "parse_urdf",
-    "WheelConfig",
-    "TrackConfig",
+    "_dump_schema_json",
     "mutate_tuple",
+    "parse_urdf",
 ]

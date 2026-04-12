@@ -55,19 +55,16 @@ def generate_clangd():
 
     config = rf"""# GENERATED FOR CULVERIN ENGINE CONCURRENCY ANALYSIS
 CompileFlags:
+  CompilationDatabase: "{(project_root / "build").as_posix()}"
   Add: [
       {formatted_flags},
       "-ferror-limit=0"
   ]
-  CompilationDatabase: "build"
 
 Diagnostics:
   # This makes the implicit seq_cst warnings show up as errors in your editor
   # to ensure you never accidentally use the slowest memory barrier.
   UnusedIncludes: Strict
-  CheckOptions:
-    bugprone-assignment-in-if-condition: true
-    bugprone-suspicious-include: true
 
 ---
 # 1. THE C23 BLOCK

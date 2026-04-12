@@ -1,10 +1,15 @@
 #include "culverin_soft_body.h"
+#include "culverin_fast_build.h"
 #include "culverin_physics_sync.h"
 #include "culverin_physics_world_internal.h"
 
 static constexpr uint32_t COLLISION_FILTER_ALL_CATEGORIES = 0xFFFF;
 static constexpr uint32_t COLLISION_FILTER_ALL_MASKS      = 0xFFFF;
 
+/**
+ * HELPER: physics_world_commit_create_soft_locked
+ * Separate path for soft bodies to avoid binary-incompatibility with Rigid Body settings.
+ */
 static uint64_t physics_world_commit_create_soft_locked(PhysicsWorldObject *self,
                                                         JPH_SoftBodyCreationSettings *settings,
                                                         uint32_t slot_state) {
@@ -42,7 +47,7 @@ static uint64_t physics_world_commit_create_soft_locked(PhysicsWorldObject *self
     BodyHandle handle = make_handle(slot, gen);
     uint64_t raw_h    = atomic_load_explicit(&handle, memory_order_relaxed);
 
-    // CRITICAL FIX: Use the SoftBody specific setter
+    // CRITICAL: Use the SoftBody specific setter (Binder ensures correct memory offset)
     JPH_SoftBodyCreationSettings_SetUserData(settings, raw_h);
 
     self->slot_to_dense[slot]  = dense;
@@ -53,18 +58,20 @@ static uint64_t physics_world_commit_create_soft_locked(PhysicsWorldObject *self
     return raw_h;
 }
 
+// --- SharedSettings Lifecycle ---
+
 PyType_DeclareSlot_StatusFromModule SoftBodySharedSettings_init(SoftBodySharedSettingsObject *self,
                                                                 CULV_MAYBE_UNUSED PyObject *args,
                                                                 CULV_MAYBE_UNUSED PyObject *kwds) {
-    // 1. Create the native Jolt object
-    self->settings     = JPH_SoftBodySharedSettings_Create();
-    self->num_vertices = 0;
+    self->settings            = JPH_SoftBodySharedSettings_Create();
+    self->num_vertices        = 0;
+    self->constraints_created = false;
+    self->optimized           = false;
 
     if (!self->settings) {
         PyErr_SetString(PyExc_RuntimeError, "Failed to create Jolt SoftBodySharedSettings");
         return -1;
     }
-
     return 0;
 }
 
@@ -74,28 +81,30 @@ SoftBodySharedSettings_dealloc(SoftBodySharedSettingsObject *self) {
         JPH_SoftBodySharedSettings_Destroy(self->settings);
         self->settings = nullptr;
     }
-
     PyTypeObject *tp = Py_TYPE(self);
     tp->tp_free((PyObject *)self);
     Py_DECREF(tp);
 }
 
+// --- SharedSettings Topology Methods ---
+
 PyCFunction_DeclareMethodFromModule
 SoftBodySharedSettings_add_vertex(SoftBodySharedSettingsObject *self, PyObject *const *args,
                                   Py_ssize_t nargs, PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
-
-    PyObject *o_pos = nullptr;
-    float inv_mass  = 1.0f;
-
+    CulverinState *st                  = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+    PyObject *o_pos                    = nullptr;
+    float inv_mass                     = 1.0f;
     void *targets[SbssAddVertex_COUNT] = {[IDX_SAV_POS]  = (void *)&o_pos,
                                           [IDX_SAV_MASS] = (void *)&inv_mass};
 
     if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.SbssAddVertexParser, targets)) {
         return nullptr;
     }
+    if (self->optimized) {
+        PyErr_SetString(PyExc_RuntimeError, "Cannot modify settings after optimize()");
+        return nullptr;
+    }
 
-    // Extraction from the PyObject* captured by FastParse
     JPH_Vec3 pos;
     if (!parse_vec3_direct(o_pos, &pos.x, &pos.y, &pos.z)) {
         return nullptr;
@@ -103,6 +112,65 @@ SoftBodySharedSettings_add_vertex(SoftBodySharedSettingsObject *self, PyObject *
 
     JPH_SoftBodySharedSettings_AddVertex(self->settings, &pos, inv_mass);
     self->num_vertices++;
+    Py_RETURN_NONE;
+}
+
+PyCFunction_DeclareMethodFromModule
+SoftBodySharedSettings_add_vertices(SoftBodySharedSettingsObject *self, PyObject *const *args,
+                                    Py_ssize_t nargs, PyObject *kwnames) {
+    CulverinState *st                    = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+    PyObject *o_pos                      = nullptr;
+    PyObject *o_mass                     = nullptr;
+    void *targets[SbssAddVertices_COUNT] = {[IDX_SAVS_POS]  = (void *)&o_pos,
+                                            [IDX_SAVS_MASS] = (void *)&o_mass};
+
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.SbssAddVerticesParser, targets)) {
+        return nullptr;
+    }
+    if (self->optimized) {
+        PyErr_SetString(PyExc_RuntimeError, "Cannot modify settings after optimize()");
+        return nullptr;
+    }
+
+    Py_buffer pos_view;
+    if (PyObject_GetBuffer(o_pos, &pos_view, PyBUF_SIMPLE) != 0) {
+        return nullptr;
+    }
+
+    // Must be flat float32 triplets
+    if (pos_view.len % (3 * sizeof(float)) != 0) {
+        PyBuffer_Release(&pos_view);
+        PyErr_SetString(PyExc_ValueError,
+                        "positions buffer must be a flat array of float32 triplets");
+        return nullptr;
+    }
+
+    uint32_t count = (uint32_t)(pos_view.len / (3 * sizeof(float)));
+
+    Py_buffer mass_view = {};
+    float *masses       = nullptr;
+    if (o_mass && o_mass != Py_None) {
+        if (PyObject_GetBuffer(o_mass, &mass_view, PyBUF_SIMPLE) != 0) {
+            PyBuffer_Release(&pos_view);
+            return nullptr;
+        }
+        if (mass_view.len / sizeof(float) != count) {
+            PyBuffer_Release(&pos_view);
+            PyBuffer_Release(&mass_view);
+            PyErr_SetString(PyExc_ValueError, "inv_masses buffer length must match vertex count");
+            return nullptr;
+        }
+        masses = (float *)mass_view.buf;
+    }
+
+    JPH_SoftBodySharedSettings_AddVertices(self->settings, (const JPH_Vec3 *)pos_view.buf, masses,
+                                           count);
+    self->num_vertices += count;
+
+    PyBuffer_Release(&pos_view);
+    if (o_mass && o_mass != Py_None) {
+        PyBuffer_Release(&mass_view);
+    }
 
     Py_RETURN_NONE;
 }
@@ -111,7 +179,6 @@ PyCFunction_DeclareMethodFromModule
 SoftBodySharedSettings_add_face(SoftBodySharedSettingsObject *self, PyObject *const *args,
                                 Py_ssize_t nargs, PyObject *kwnames) {
     CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
-
     uint32_t v1;
     uint32_t v2;
     uint32_t v3;
@@ -121,18 +188,165 @@ SoftBodySharedSettings_add_face(SoftBodySharedSettingsObject *self, PyObject *co
     if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.SbssAddFaceParser, targets)) {
         return nullptr;
     }
+    if (self->optimized) {
+        PyErr_SetString(PyExc_RuntimeError, "Cannot modify settings after optimize()");
+        return nullptr;
+    }
+
+    if (v1 == v2 || v2 == v3 || v1 == v3) {
+        PyErr_SetString(PyExc_ValueError, "Face must have 3 distinct vertex indices");
+        return nullptr;
+    }
+
+    if (v1 >= self->num_vertices || v2 >= self->num_vertices || v3 >= self->num_vertices) {
+        PyErr_Format(PyExc_IndexError, "Face vertex index out of range (have %u vertices)",
+                     self->num_vertices);
+        return nullptr;
+    }
 
     JPH_SoftBodySharedSettings_AddFace(self->settings, v1, v2, v3);
     Py_RETURN_NONE;
 }
 
-// Method: optimize()
-// Crucial: This calculates the edge constraints and bending constraints.
 PyCFunction_DeclareMethodFromModule
-SoftBodySharedSettings_optimize(SoftBodySharedSettingsObject *self, PyObject *Py_UNUSED(args)) {
-    JPH_SoftBodySharedSettings_Optimize(self->settings);
+SoftBodySharedSettings_add_faces(SoftBodySharedSettingsObject *self, PyObject *const *args,
+                                 Py_ssize_t nargs, PyObject *kwnames) {
+    CulverinState *st                 = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+    PyObject *o_ind                   = nullptr;
+    void *targets[SbssAddFaces_COUNT] = {[IDX_SAFS_IND] = (void *)&o_ind};
+
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.SbssAddFacesParser, targets)) {
+        return nullptr;
+    }
+    if (self->optimized) {
+        PyErr_SetString(PyExc_RuntimeError, "Cannot modify settings after optimize()");
+        return nullptr;
+    }
+
+    Py_buffer ind_view;
+    if (PyObject_GetBuffer(o_ind, &ind_view, PyBUF_SIMPLE) != 0) {
+        return nullptr;
+    }
+
+    // Must be flat uint32 triplets
+    if (ind_view.len % (3 * sizeof(uint32_t)) != 0) {
+        PyBuffer_Release(&ind_view);
+        PyErr_SetString(PyExc_ValueError, "indices buffer must be a flat array of uint32 triplets");
+        return nullptr;
+    }
+
+    uint32_t face_count  = (uint32_t)(ind_view.len / (3 * sizeof(uint32_t)));
+    const uint32_t *inds = (const uint32_t *)ind_view.buf;
+
+    // Validate indices against total vertices to prevent Jolt crashes
+    for (uint32_t i = 0; i < face_count * 3; i++) {
+        if (inds[i] >= self->num_vertices) {
+            PyBuffer_Release(&ind_view);
+            PyErr_Format(PyExc_IndexError, "Face vertex index %u out of range (have %u vertices)",
+                         inds[i], self->num_vertices);
+            return nullptr;
+        }
+    }
+
+    JPH_SoftBodySharedSettings_AddFaces(self->settings, inds, face_count);
+
+    PyBuffer_Release(&ind_view);
     Py_RETURN_NONE;
 }
+
+// Method: settings.add_pinned_vertex(index) (METH_O)
+PyCFunction_DeclareMethodFromModule
+SoftBodySharedSettings_add_pinned_vertex(SoftBodySharedSettingsObject *self, PyObject *arg) {
+    long index = PyLong_AsLong(arg);
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
+
+    if (self->optimized) {
+        PyErr_SetString(PyExc_RuntimeError, "Cannot modify settings after optimize()");
+        return nullptr;
+    }
+    if (index < 0 || (uint32_t)index >= self->num_vertices) {
+        PyErr_SetString(PyExc_IndexError, "Vertex index out of range");
+        return nullptr;
+    }
+
+    // Logic: Must be called BEFORE CreateConstraints
+    JPH_SoftBodySharedSettings_AddPinnedVertex(self->settings, (uint32_t)index);
+    Py_RETURN_NONE;
+}
+
+static inline bool inCasePythonUsers_PassStupidInts(int val, int max) {
+    return (bool)((val) >= 0 && (val) < (max));
+}
+
+// Method: settings.create_constraints(compliance, bend_type=1)
+PyCFunction_DeclareMethodFromModule
+SoftBodySharedSettings_create_constraints(SoftBodySharedSettingsObject *self, PyObject *const *args,
+                                          Py_ssize_t nargs, PyObject *kwnames) {
+    CulverinState *st              = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+    float compliance               = 0.0001f;
+    JPH_SoftBodyBendType bend_type = JPH_SoftBodyBendType_Distance; // Default: Distance
+
+    void *targets[2] = {&compliance, &bend_type};
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.SbssCreateConstraintsParser,
+                           targets)) {
+        return nullptr;
+    }
+    if (!inCasePythonUsers_PassStupidInts(bend_type, 3)) {
+        PyErr_Format(PyExc_ValueError,
+                     "bend_type must be 0 (None), 1 (Distance), or 2 (Dihedral), got %d",
+                     bend_type);
+        return nullptr;
+    }
+    if (self->constraints_created) {
+        PyErr_SetString(PyExc_RuntimeError, "create_constraints already called");
+        return nullptr;
+    }
+    self->constraints_created = true;
+
+    // Binder handles both Edge compliance and Shear compliance
+    JPH_SoftBodySharedSettings_CreateConstraints(self->settings, compliance, bend_type);
+    Py_RETURN_NONE;
+}
+
+// Method: settings.optimize() (METH_NOARGS)
+PyCFunction_DeclareMethodFromModule
+SoftBodySharedSettings_optimize(SoftBodySharedSettingsObject *self,
+                                CULV_MAYBE_UNUSED PyObject *args) {
+    if (!self->constraints_created) {
+        PyErr_SetString(PyExc_RuntimeError, "create_constraints must be called before optimize");
+        return nullptr;
+    }
+    JPH_SoftBodySharedSettings_Optimize(self->settings);
+    self->optimized = true;
+    Py_RETURN_NONE;
+}
+
+// Method: settings.get_vertex_position(index) (METH_O) - Returns REST pose
+PyCFunction_DeclareMethodFromModule
+SoftBodySharedSettings_get_vertex_position(SoftBodySharedSettingsObject *self, PyObject *arg) {
+    long index = PyLong_AsLong(arg);
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
+
+    if (self->num_vertices == 0) {
+        PyErr_SetString(PyExc_RuntimeError, "No vertices added");
+        return nullptr;
+    }
+
+    if (index < 0 || (uint32_t)index >= self->num_vertices) {
+        PyErr_SetString(PyExc_IndexError, "Vertex index out of range");
+        return nullptr;
+    }
+
+    JPH_Vec3 pos;
+    JPH_SoftBodySharedSettings_GetVertexPosition(self->settings, (uint32_t)index, &pos);
+    return FastBuild_Tuple(pos.x, pos.y, pos.z);
+}
+
+// --- PhysicsWorld Methods ---
 
 PyCFunction_DeclareMethodFromModule PhysicsWorld_create_soft_body(PhysicsWorldObject *self,
                                                                   PyObject *const *args,
@@ -141,17 +355,37 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_soft_body(PhysicsWorldOb
     CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
 
     // 1. FAST PARSE
-    PyObject *o_shared = nullptr;
-    PyObject *o_pos    = nullptr;
-    PyObject *o_rot    = nullptr;
-    uint64_t user_data = 0;
-    uint32_t category  = COLLISION_FILTER_ALL_CATEGORIES;
-    uint32_t mask      = COLLISION_FILTER_ALL_MASKS;
+    PyObject *o_shared        = nullptr;
+    PyObject *o_pos           = nullptr;
+    PyObject *o_rot           = nullptr;
+    uint64_t user_data        = 0;
+    uint32_t category         = COLLISION_FILTER_ALL_CATEGORIES;
+    uint32_t mask             = COLLISION_FILTER_ALL_MASKS;
+    float pressure            = 0.0f;
+    float vertex_radius       = 0.05f;
+    float linear_damping      = 0.1f;
+    uint32_t num_iterations   = 10;
+    float max_linear_velocity = 500.0f;
+    float gravity_factor      = 1.0f;
+    float friction            = 0.2f;
+    float restitution         = 0.0f;
+    bool make_rot_identity    = false;
 
-    void *targets[CreateSoftBody_COUNT] = {
-        [IDX_CSB_SHARED] = (void *)&o_shared, [IDX_CSB_POS] = (void *)&o_pos,
-        [IDX_CSB_ROT] = (void *)&o_rot,       [IDX_CSB_USER_DATA] = (void *)&user_data,
-        [IDX_CSB_CAT] = (void *)&category,    [IDX_CSB_MASK] = (void *)&mask};
+    void *targets[CreateSoftBody_COUNT] = {[IDX_CSB_SHARED]    = (void *)&o_shared,
+                                           [IDX_CSB_POS]       = (void *)&o_pos,
+                                           [IDX_CSB_ROT]       = (void *)&o_rot,
+                                           [IDX_CSB_USER_DATA] = (void *)&user_data,
+                                           [IDX_CSB_CAT]       = (void *)&category,
+                                           [IDX_CSB_MASK]      = (void *)&mask,
+                                           [IDX_CSB_PRESSURE]  = (void *)&pressure,
+                                           [IDX_CSB_V_RADIUS]  = (void *)&vertex_radius,
+                                           [IDX_CSB_LIN_DAMP]  = (void *)&linear_damping,
+                                           [IDX_CSB_ITER]      = (void *)&num_iterations,
+                                           [IDX_CSB_MAX_VEL]   = (void *)&max_linear_velocity,
+                                           [IDX_CSB_GRAV]      = (void *)&gravity_factor,
+                                           [IDX_CSB_FRIC]      = (void *)&friction,
+                                           [IDX_CSB_REST]      = (void *)&restitution,
+                                           [IDX_CSB_ROT_ID]    = (void *)&make_rot_identity};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &st->parsers.CreateSoftBodyParser, targets)) {
@@ -175,40 +409,41 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_soft_body(PhysicsWorldOb
 
     // 3. JOLT PREP
     JPH_SoftBodyCreationSettings *settings = JPH_SoftBodyCreationSettings_Create();
-    auto *py_shared = (SoftBodySharedSettingsObject *)o_shared;
-    Py_INCREF(o_shared); 
-
-    constexpr auto VERTEX_RADIUS = 0.05f;
+    auto *py_shared                        = (SoftBodySharedSettingsObject *)o_shared;
+    Py_INCREF(o_shared); // Ownership transfer to command queue
 
     JPH_SoftBodyCreationSettings_SetSharedSettings(settings, py_shared->settings);
-    JPH_SoftBodyCreationSettings_SetVertexRadius(settings, VERTEX_RADIUS);
+    JPH_SoftBodyCreationSettings_SetPressure(settings, pressure);
+    JPH_SoftBodyCreationSettings_SetVertexRadius(settings, vertex_radius);
+    JPH_SoftBodyCreationSettings_SetLinearDamping(settings, linear_damping);
+    JPH_SoftBodyCreationSettings_SetNumIterations(settings, num_iterations);
+    JPH_SoftBodyCreationSettings_SetMaxLinearVelocity(settings, max_linear_velocity);
+    JPH_SoftBodyCreationSettings_SetGravityFactor(settings, gravity_factor);
+    JPH_SoftBodyCreationSettings_SetFriction(settings, friction);
+    JPH_SoftBodyCreationSettings_SetRestitution(settings, restitution);
+    JPH_SoftBodyCreationSettings_SetMakeRotationIdentity(settings, make_rot_identity);
 
     JPH_RVec3 j_pos = {px, py, pz};
     JPH_Quat j_rot  = {rx, ry, rz, rw};
-    
-    // CRITICAL: Use SoftBody specific setters, NOT BodyCreationSettings_Set...
     JPH_SoftBodyCreationSettings_SetPosition(settings, &j_pos);
     JPH_SoftBodyCreationSettings_SetRotation(settings, &j_rot);
     JPH_SoftBodyCreationSettings_SetObjectLayer(settings, OBJECT_LAYER_DYNAMIC);
     JPH_SoftBodyCreationSettings_SetAllowSleeping(settings, true);
 
+    // 4. COMMIT
     SHADOW_LOCK(&self->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
 
-    // Use the NEW dedicated helper
     uint64_t raw_h = physics_world_commit_create_soft_locked(self, settings, SLOT_PENDING_CREATE);
 
     if (UNLIKELY(!raw_h)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         JPH_SoftBodyCreationSettings_Destroy(settings);
         Py_DECREF(o_shared);
-        return (PyErr_Occurred()) ? nullptr : PyErr_NoMemory();
+        return nullptr;
     }
 
-    // Overwrite UserData in the actual SoftBody settings with the final generational handle
-    JPH_SoftBodyCreationSettings_SetUserData(settings, raw_h);
-
-    // 5. SHADOW BUFFER UPDATE (For Center of Mass)
+    // 5. SHADOW UPDATE
     uint32_t slot  = (uint32_t)(raw_h & HANDLE_INDEX_MASK);
     uint32_t dense = self->slot_to_dense[slot];
 
@@ -216,21 +451,17 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_soft_body(PhysicsWorldOb
     ((PosStride *)self->prev_positions)[dense] = (PosStride){px, py, pz, 0.0};
     ((AuxStride *)self->rotations)[dense]      = (AuxStride){rx, ry, rz, rw};
     ((AuxStride *)self->prev_rotations)[dense] = (AuxStride){rx, ry, rz, rw};
-
-    self->categories[dense] = category;
-    self->masks[dense]      = mask;
-    self->user_data[dense]  = user_data;
-
+    self->categories[dense]                    = category;
+    self->masks[dense]                         = mask;
+    self->user_data[dense]                     = user_data;
     self->view_shape[0] = (Py_ssize_t)atomic_load_explicit(&self->count, memory_order_relaxed);
 
     // 6. QUEUE COMMAND
-    PhysicsCommand *cmd       = &self->command_queue[self->command_count++];
-    cmd->header               = CMD_HEADER(CMD_CREATE_SOFT_BODY, slot);
-    cmd->create_soft.settings = settings;
-    cmd->create_soft.category = category;
-    cmd->create_soft.mask     = mask;
-    // Store the Python object pointer in the padding of the command so we can DECREF it later!
-    // Since create_soft.user_data is uint64_t, we can use it to store the PyObject*
+    PhysicsCommand *cmd           = &self->command_queue[self->command_count++];
+    cmd->header                   = CMD_HEADER(CMD_CREATE_SOFT_BODY, slot);
+    cmd->create_soft.settings     = settings;
+    cmd->create_soft.category     = category;
+    cmd->create_soft.mask         = mask;
     cmd->create_soft.user_data    = (uintptr_t)o_shared;
     cmd->create_soft.num_vertices = py_shared->num_vertices;
 
