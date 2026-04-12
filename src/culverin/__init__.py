@@ -2,21 +2,48 @@ import os
 import sys
 from pathlib import Path
 from typing import TypedDict
+import shutil
+
+def setup_runtime_dlls():
+    if sys.platform != "win32":
+        return
+
+    # Priority 1: Explicitly defined runtime directory
+    # Good for dev environments where you want to point to a specific build
+    env_runtime = os.environ.get("CULVERIN_ASAN_LIB_PATH")
+    if env_runtime and Path(env_runtime).exists():
+        os.add_dll_directory(env_runtime)
+        return
+
+    # Priority 2: Derived from LLVM_INSTALL_DIR
+    llvm_root = os.environ.get("LLVM_INSTALL_DIR")
+    
+    # Priority 3: Auto-discovery via PATH (find clang, then infer lib path)
+    if not llvm_root:
+        clang_bin = shutil.which("clang")
+        if clang_bin:
+            llvm_root = Path(clang_bin).parent.parent
+
+    if llvm_root:
+        llvm_root = Path(llvm_root)
+        # Check both modern and legacy LLVM layout structures
+        potential_paths = [
+            llvm_root / "lib" / "clang" / "23" / "lib" / "x86_64-pc-windows-msvc",
+            llvm_root / "lib" / "windows"
+        ]
+        
+        for p in potential_paths:
+            if p.exists():
+                os.add_dll_directory(str(p))
+                return
+
+setup_runtime_dlls()
 
 from . import _culverin_c
 
 __version__ = _culverin_c.__version__
 
-# --- Windows DLL Resolution Fix ---
-if sys.platform == "win32":
-    clang_path = os.environ.get("CLANG_BIN_PATH")
-    if clang_path and Path(clang_path).exists():
-        os.add_dll_directory(str(Path(clang_path)))
-    import shutil
 
-    clang_bin = shutil.which("clang")
-    if clang_bin:
-        os.add_dll_directory(str(Path(clang_bin).parent))
 
 # 1. Load Pure Python Configs
 from ._culverin import (
