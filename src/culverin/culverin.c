@@ -4170,7 +4170,7 @@ static void stitch_docs_getset(PyGetSetDef *getset, const char *class_name) {
     {.ml_name  = "_" #name,                                                                        \
      .ml_meth  = (PyCFunction)prefix##_##name,                                                     \
      .ml_flags = (method_type),                                                                    \
-     .ml_doc   = NULL}
+     .ml_doc   = nullptr}
 
 // User-facing macros for context methods
 #define PW_FASTCALL(name) CULV_FEAT(PhysicsWorld, name, METH_FASTCALL | METH_KEYWORDS)
