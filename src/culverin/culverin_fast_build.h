@@ -3,6 +3,7 @@
 #include "culverin_compiler_specifics.h"
 #include <Python.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 /**
@@ -55,6 +56,15 @@ CULV_NODISCARD CULV_FORCE_INLINE static PyObject *fb_incref(PyObject *v) {
     return v;
 }
 
+/**
+ * C23 nullptr_t handler.
+ * Returns a new reference to Py_None.
+ */
+CULV_NODISCARD CULV_FORCE_INLINE static PyObject *fb_from_none(nullptr_t v) {
+    (void)v;
+    Py_RETURN_NONE;
+}
+
 /* --- 2. THE C23 COMPILE-TIME ROUTER --- */
 
 // Deliberately undefined function to trigger a clear error message
@@ -73,6 +83,7 @@ extern PyObject *CULVERIN_UNSUPPORTED_TYPE_PASSED_TO_FASTBUILD(void);
         bool: fb_from_bool,                                                                        \
         char *: fb_from_str,                                                                       \
         const char *: fb_from_str,                                                                 \
+        nullptr_t: fb_from_none,                                                                   \
         PyObject *: fb_incref,                                                                     \
         default: CULVERIN_UNSUPPORTED_TYPE_PASSED_TO_FASTBUILD)(x)
 
