@@ -332,16 +332,17 @@ static void JPH_API_CALL char_on_character_contact_removed(
 }
 
 static void JPH_API_CALL char_on_adjust_velocity(
-    void *userData, CULV_MAYBE_UNUSED const JPH_CharacterVirtual *character,
-    const JPH_Body *body2, JPH_Vec3 *ioLinearVelocity,
-    JPH_Vec3 *ioAngularVelocity) {
+    void *userData, CULV_MAYBE_UNUSED const JPH_CharacterVirtual *character, const JPH_Body *body2,
+    JPH_Vec3 *ioLinearVelocity, JPH_Vec3 *ioAngularVelocity) {
 
     CharacterObject *self = (CharacterObject *)userData;
-    if (!self || !self->world) return;
+    if (!self || !self->world)
+        return;
 
     // 1. Resolve Platform Data
     uint64_t h2_raw = JPH_Body_GetUserData((JPH_Body *)body2);
-    if (h2_raw == 0) return;
+    if (h2_raw == 0)
+        return;
 
     // 2. Resolve Friction
     float friction = 1.0f;
@@ -359,13 +360,13 @@ static void JPH_API_CALL char_on_adjust_velocity(
 
     // 2. Calculate Tangential Velocity (v = omega x r)
     JPH_Vec3 omega;
-    JPH_Body_GetAngularVelocity((JPH_Body*)body2, &omega);
-    
+    JPH_Body_GetAngularVelocity((JPH_Body *)body2, &omega);
+
     JPH_RVec3 char_pos;
     JPH_CharacterVirtual_GetPosition(character, &char_pos);
-    
+
     JPH_RVec3 platform_pos;
-    JPH_Body_GetPosition((JPH_Body*)body2, &platform_pos);
+    JPH_Body_GetPosition((JPH_Body *)body2, &platform_pos);
 
     float rx = (float)(char_pos.x - platform_pos.x);
     float rz = (float)(char_pos.z - platform_pos.z);
@@ -374,14 +375,14 @@ static void JPH_API_CALL char_on_adjust_velocity(
     float target_vt_x = omega.y * rz;
     float target_vt_z = -omega.y * rx;
 
-    // 3. APPLY: Only modify the X/Z plane. 
+    // 3. APPLY: Only modify the X/Z plane.
     // DO NOT touch Y, as the character controller needs it for gravity/climbing.
     float factor = (friction > 0.2f) ? 1.0f : (friction / 0.2f);
-    
+
     // Smoothly apply
     ioLinearVelocity->x = (ioLinearVelocity->x * 0.5f) + (target_vt_x * factor * 0.5f);
     ioLinearVelocity->z = (ioLinearVelocity->z * 0.5f) + (target_vt_z * factor * 0.5f);
-    
+
     // Angular inheritance
     ioAngularVelocity->y = omega.y * factor;
 }
@@ -429,18 +430,35 @@ static bool JPH_API_CALL char_on_character_contact_validate(
     return ((cat1 & mask2) && (cat2 & mask1)) != 0;
 }
 
+// High-frequency callback: DO NOT allocate memory or lock.
+CULV_NO_TSAN CULV_MAYBE_UNUSED static void JPH_API_CALL char_on_contact_solve(
+    CULV_MAYBE_UNUSED void *userData, CULV_MAYBE_UNUSED const JPH_Body *body1,
+    CULV_MAYBE_UNUSED const JPH_Body *body2, CULV_MAYBE_UNUSED const JPH_ContactManifold *manifold,
+    CULV_MAYBE_UNUSED JPH_ContactSettings *settings) {
+    // 1. You can access userData (PhysicsWorldObject*) here if you need
+    // to look up global world parameters.
+
+    // 2. You can override friction/restitution dynamically.
+    // Example: If you wanted to make a contact "slippery" based on its depth
+    // float depth = JPH_ContactManifold_GetContactPointOn1(manifold, 0, ...) -> Z
+    // if (depth < -0.1f) settings->mFriction = 0.0f;
+
+    // 3. For now, leave it empty or add logging/metrics if needed.
+}
+
 // Map the procs
 const JPH_CharacterContactListener_Procs char_listener_procs = {
-    .OnContactValidate           = char_on_contact_validate,
-    .OnContactAdded              = char_on_contact_added,
     .OnAdjustBodyVelocity        = char_on_adjust_velocity,
+    .OnContactValidate           = char_on_contact_validate,
+    .OnCharacterContactValidate  = char_on_character_contact_validate,
+    .OnContactAdded              = char_on_contact_added,
     .OnContactPersisted          = char_on_contact_persisted,
     .OnContactRemoved            = char_on_contact_removed,
-    .OnCharacterContactValidate  = char_on_character_contact_validate,
     .OnCharacterContactAdded     = char_on_character_contact_added,
     .OnCharacterContactPersisted = char_on_character_contact_persisted,
     .OnCharacterContactRemoved   = char_on_character_contact_removed,
-    .OnContactSolve              = nullptr // Advanced, keep nullptr
+    .OnContactSolve              = nullptr, // Advanced solver override
+    .OnCharacterContactSolve     = nullptr  // Advanced solver override
 };
 
 PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObject *const *args,
