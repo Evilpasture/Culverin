@@ -3902,125 +3902,132 @@ PyCFunction_DeclareMethod PhysicsWorld_benchmark_build(CULV_MAYBE_UNUSED PyObjec
 
 PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, PyObject *const *args,
                                             Py_ssize_t nargsf) {
-    auto nargs = PyVectorcall_NARGS(nargsf);
-    // args: target, index, new_val, registry (optional), key (optional)
+    // --- 1. DECLARATIONS (C++ / goto safety) ---
+    auto nargs              = PyVectorcall_NARGS(nargsf);
     constexpr auto MIN_ARGS = 3;
     constexpr auto MAX_ARGS = 5;
+
+    PyObject *target   = nullptr;
+    PyObject *new_val  = nullptr;
+    PyObject *registry = nullptr;
+    PyObject *key      = nullptr;
+    PyObject *old_val  = nullptr;
+    PyObject *stored   = nullptr;
+
+    Py_ssize_t index     = 0;
+    Py_ssize_t tuple_len = 0;
+    Py_hash_t final_hash = -1;
+    int success          = 0;
+
+    // --- 2. PRE-FLIGHT CHECKS ---
     if (nargs != MIN_ARGS && nargs != MAX_ARGS) {
         PyErr_Format(PyExc_TypeError, "mutate_tuple() takes 3 or 5 arguments (%zd given)", nargs);
         return nullptr;
     }
 
-    PyObject *target  = args[0];
-    PyObject *new_val = args[2];
+    target  = args[0];
+    new_val = args[2];
 
     if (!PyTuple_Check(target)) {
         PyErr_SetString(PyExc_TypeError, "arg 0 must be a tuple");
         return nullptr;
     }
 
-    PyErr_Clear();
-    auto index = PyLong_AsSsize_t(args[1]);
+    index = PyLong_AsSsize_t(args[1]);
     if (index == -1 && PyErr_Occurred()) {
         return nullptr;
     }
 
-    auto tuple_len = Py_SIZE(target);
+    tuple_len = Py_SIZE(target);
     if (index < 0) {
         index += tuple_len;
     }
     if (index < 0 || index >= tuple_len) {
-        PyErr_Format(PyExc_IndexError, "tuple index %zd out of range [0, %zd)", index, tuple_len);
+        PyErr_Format(PyExc_IndexError, "tuple index %zd out of range", index);
         return nullptr;
     }
-
-    // --- PART 1: DICT POP (if registry provided) ---
-    //
-    // PyDict_GetItemWithError does NOT steal a reference, returns borrowed.
-    // We need ownership before we yank it out, so INCREF before PyDict_DelItem.
-    // PyDict_GetItemWithError (not PyDict_GetItem) propagates KeyError properly.
-
-    PyObject *registry = nullptr;
-    PyObject *key      = nullptr;
 
     if (nargs == MAX_ARGS) {
         registry = args[3];
         key      = args[4];
-
         if (!PyDict_Check(registry)) {
             PyErr_SetString(PyExc_TypeError, "arg 3 must be a dict");
             return nullptr;
         }
+    }
 
-        // Verify the stored value IS our target, otherwise the caller
-        // passed a mismatched key — silent corruption would follow.
-        auto stored = PyDict_GetItemWithError(registry, key);
-        if (stored == nullptr) {
-            // nullptr + no exception  => KeyError
-            // nullptr + exception set => propagate
+    // --- 3. CRITICAL SECTION (Target Only) ---
+    // dictionary (registry) operations are internally thread-safe in 3.13-t.
+    // We only need to lock the tuple to prevent concurrent reads/hashes.
+#if defined(Py_BEGIN_CRITICAL_SECTION)
+    Py_BEGIN_CRITICAL_SECTION(target);
+#endif
+
+    // Step A: Registry Removal
+    if (registry) {
+        stored = PyDict_GetItemWithError(registry, key);
+        if (!stored) {
             if (!PyErr_Occurred()) {
                 PyErr_SetObject(PyExc_KeyError, key);
             }
-            return nullptr;
+            goto exit_critical;
         }
         if (stored != target) {
             PyErr_SetString(PyExc_ValueError, "registry[key] is not the same object as target");
-            return nullptr;
+            goto exit_critical;
         }
 
-        Py_INCREF(target); // hold a ref across the del
+        Py_INCREF(target);
         if (PyDict_DelItem(registry, key) < 0) {
             Py_DECREF(target);
-            return nullptr;
+            goto exit_critical;
         }
-        // target refcount: our INCREF above keeps it alive. The dict slot
-        // is now empty; the old hash bucket in ma_keys is invalidated.
     }
 
-    // --- PART 2: THE MEMORY SWAP ---
-
-    PyObject **ob_item = (PyObject **)((uint8_t *)target + sizeof(PyVarObject));
-
+    // Step B: The Mutation (Illegal Swap)
     Py_INCREF(new_val);
-    PyObject *old_val = ob_item[index];
-    ob_item[index]    = new_val;
-    Py_XDECREF(old_val);
+    old_val                                   = ((PyTupleObject *)target)->ob_item[index];
+    ((PyTupleObject *)target)->ob_item[index] = new_val;
 
-    // --- PART 3: REHASH ---
+    // Step C: Rehash
+    ((PyTupleObject *)target)->ob_hash = -1;
+    final_hash                         = PyObject_Hash(target);
 
-    hashfunc h_func = Py_TYPE(target)->tp_hash;
-    if (UNLIKELY(h_func == nullptr)) {
-        PyErr_SetString(PyExc_TypeError, "target type is unhashable");
+    if (final_hash == -1) {
+        // Rollback
+        ((PyTupleObject *)target)->ob_item[index] = old_val;
+        Py_DECREF(new_val);
         if (registry) {
             Py_DECREF(target);
         }
-        return nullptr;
+        goto exit_critical;
     }
 
-    PyErr_Clear();
-    Py_hash_t new_hash = h_func(target);
-    if (UNLIKELY(new_hash == -1)) {
-        if (registry) {
-            Py_DECREF(target);
-        }
-        return nullptr;
-    }
-
-    // --- PART 4: DICT REINSERT ---
-    //
-    // PyDict_SetItem does NOT steal a reference to target or key.
-    // It computes tp_hash(target) internally as part of the bucket placement,
-    // which is exactly the freshly-recomputed hash we just forced above.
-
+    // Step D: Registry Re-insertion
     if (registry) {
-        int rc = PyDict_SetItem(registry, key, target);
-        Py_DECREF(target); // release our hold; dict now owns its ref
-        if (rc < 0) {
-            return nullptr;
+        if (PyDict_SetItem(registry, key, target) < 0) {
+            // Rollback
+            ((PyTupleObject *)target)->ob_item[index] = old_val;
+            Py_DECREF(new_val);
+            Py_DECREF(target);
+            final_hash = -1;
+            goto exit_critical;
         }
+        Py_DECREF(target);
     }
 
-    return PyLong_FromSsize_t(new_hash);
+    Py_DECREF(old_val);
+    success = 1;
+
+exit_critical:
+#if defined(Py_BEGIN_CRITICAL_SECTION)
+    Py_END_CRITICAL_SECTION();
+#endif
+
+    if (!success) {
+        return nullptr;
+    }
+    return PyLong_FromSsize_t(final_hash);
 }
 
 // --- The Documentation System ---
