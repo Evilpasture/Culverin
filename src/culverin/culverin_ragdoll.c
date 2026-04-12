@@ -336,7 +336,6 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll(PhysicsWorldObje
         if (PhysicsWorld_resize(self, self->capacity + body_count + RAGDOLL_BODY_BUFFER_INCREMENT) <
             0) {
             SHADOW_UNLOCK(&self->shadow_lock);
-            SHADOW_UNLOCK(&self->shadow_lock);
             JPH_Ragdoll_Destroy(j_rag);
             CULV_RAW_FREE(neutral_matrices);
             Py_DECREF(obj);
