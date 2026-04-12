@@ -40,7 +40,6 @@ __all__ = [
 ]
 
 
-
 # --- Constants ---
 MOTION_STATIC = 0
 MOTION_KINEMATIC = 1

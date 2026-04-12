@@ -1,4 +1,5 @@
 from typing import TypedDict
+
 __version__: str
 # Re-export from the Python helper
 from ._culverin import (
@@ -35,6 +36,9 @@ from ._culverin_c import (
     SHAPE_PLANE,
     SHAPE_SPHERE,
     USE_DOUBLE_PRECISION,
+    BEND_DIHEDRAL,
+    BEND_DISTANCE,
+    BEND_NONE,
     Character,
     # Core Classes
     PhysicsWorld,
@@ -43,13 +47,12 @@ from ._culverin_c import (
     SoftBodySharedSettings,
     Skeleton,
     Vehicle,
-    mutate_tuple
+    mutate_tuple,
 )
 
 class WheelConfig(TypedDict):
     pos: tuple[float, float, float]
     radius: float
-
 
 class TrackConfig(TypedDict):
     indices: list[int]
@@ -77,6 +80,9 @@ __all__ = [
     "SHAPE_PLANE",
     "SHAPE_SPHERE",
     "USE_DOUBLE_PRECISION",
+    "BEND_DIHEDRAL",
+    "BEND_DISTANCE",
+    "BEND_NONE",
     "Automatic",
     "Character",
     "Engine",

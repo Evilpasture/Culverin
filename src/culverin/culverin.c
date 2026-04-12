@@ -312,8 +312,8 @@ fail:
  * Encapsulates slot acquisition, handle generation, and command queuing.
  */
 static uint64_t physics_world_commit_create_locked(PhysicsWorldObject *self,
-                                            JPH_BodyCreationSettings *settings,
-                                            uint32_t slot_state) {
+                                                   JPH_BodyCreationSettings *settings,
+                                                   uint32_t slot_state) {
     size_t current_count = atomic_load_explicit(&self->count, memory_order_acquire);
     size_t available     = atomic_load_explicit(&self->free_count, memory_order_acquire);
 
@@ -481,10 +481,10 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self
     JPH_Real px;
     JPH_Real py;
     JPH_Real pz;
-    void *targets[ImpAt_COUNT] = {
-        [IDX_IMPAT_H] = (void *)&h_raw, [IDX_IMPAT_IX] = (void *)&ix, [IDX_IMPAT_IY] = (void *)&iy,
-        [IDX_IMPAT_IZ] = (void *)&iz,   [IDX_IMPAT_PX] = (void *)&px, [IDX_IMPAT_PY] = (void *)&py,
-        [IDX_IMPAT_PZ] = (void *)&pz};
+    void *targets[ImpAt_COUNT] = {[IDX_IMPAT_H] = (void *)&h_raw, [IDX_IMPAT_IX] = (void *)&ix,
+                                  [IDX_IMPAT_IY] = (void *)&iy,   [IDX_IMPAT_IZ] = (void *)&iz,
+                                  [IDX_IMPAT_PX] = (void *)&px,   [IDX_IMPAT_PY] = (void *)&py,
+                                  [IDX_IMPAT_PZ] = (void *)&pz};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.ImpulseAtParser,
                            targets)) {
@@ -4207,6 +4207,7 @@ static void stitch_docs_getset(PyGetSetDef *getset, const char *class_name) {
 
 #define SBSS_FASTCALL(name) CULV_FEAT(SoftBodySharedSettings, name, METH_FASTCALL | METH_KEYWORDS)
 #define SBSS_NOARGS(name) CULV_FEAT(SoftBodySharedSettings, name, METH_NOARGS)
+#define SBSS_O(name) CULV_FEAT(SoftBodySharedSettings, name, METH_O)
 
 // Getter/Property macro - concise initialization
 #define GETSET(name_str, getter_func)                                                              \
@@ -4360,10 +4361,10 @@ static PyMethodDef Ragdoll_methods[] = {RD_FASTCALL(drive_to_pose),
 static PyMethodDef RagdollSettings_methods[] = {
     RDS_FASTCALL(add_part), RDS_NOARGS(stabilize), {nullptr, nullptr, 0, nullptr}};
 
-static PyMethodDef SoftBodySharedSettings_methods[] = {SBSS_FASTCALL(add_vertex),
-                                                       SBSS_FASTCALL(add_face),
-                                                       SBSS_NOARGS(optimize),
-                                                       {nullptr, nullptr, 0, nullptr}};
+static PyMethodDef SoftBodySharedSettings_methods[] = {
+    SBSS_FASTCALL(add_vertex),     SBSS_O(add_pinned_vertex),         SBSS_O(get_vertex_position),
+    SBSS_FASTCALL(add_face),       SBSS_FASTCALL(create_constraints), SBSS_NOARGS(optimize),
+    {nullptr, nullptr, 0, nullptr}};
 
 static const PyMemberDef PhysicsWorld_members[] = {
     {.name   = "__weaklistoffset__",
@@ -4582,12 +4583,12 @@ static int init_constants(PyObject *m) {
                   {.name = "EVENT_ADDED", .value = EVENT_ADDED},
                   {.name = "EVENT_PERSISTED", .value = EVENT_PERSISTED},
                   {.name = "EVENT_REMOVED", .value = EVENT_REMOVED},
-                  // Build Metadata
-                  #if defined(JPH_DOUBLE_PRECISION)
+// Build Metadata
+#if defined(JPH_DOUBLE_PRECISION)
                   {.name = "USE_DOUBLE_PRECISION", .value = 1},
-                  #else
+#else
                   {.name = "USE_DOUBLE_PRECISION", .value = 0},
-                  #endif
+#endif
                   {.name = "FREE_THREADED",
                    .value =
 #if defined(Py_GIL_DISABLED) && Py_GIL_DISABLED
@@ -4603,7 +4604,10 @@ static int init_constants(PyObject *m) {
 #else
                        0
 #endif
-                  }};
+                  },
+                  {.name = "BEND_DIHEDRAL", .value = JPH_SoftBodyBendType_Dihedral},
+                  {.name = "BEND_DISTANCE", .value = JPH_SoftBodyBendType_Distance},
+                  {.name = "BEND_NONE", .value = JPH_SoftBodyBendType_None}};
 
     for (size_t i = 0; i < sizeof(consts) / sizeof(consts[0]); i++) {
         if (PyModule_AddIntConstant(m, consts[i].name, consts[i].value) < 0) {

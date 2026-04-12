@@ -64,6 +64,10 @@ EVENT_REMOVED: int = 2
 
 USE_DOUBLE_PRECISION: Literal[0, 1]
 
+BEND_NONE: int = 0
+BEND_DISTANCE: int = 1
+BEND_DIHEDRAL: int = 2
+
 # --- Type Aliases ---
 type Vec3 = tuple[float, float, float]
 type Quat = tuple[float, float, float, float]
@@ -119,9 +123,12 @@ class Ragdoll:
 
 class SoftBodySharedSettings:
     def __init__(self) -> None: ...
-    def add_vertex(self, pos: Vec3, inv_mass: float = 1.0) -> None: ...
+    def add_vertex(self, pos: Vec3, inv_mass: float) -> None: ...
     def add_face(self, v1: int, v2: int, v3: int) -> None: ...
+    def add_pinned_vertex(self, index: int, /) -> None: ...
+    def create_constraints(self, compliance: float, bend_type: int = 1) -> None: ...
     def optimize(self) -> None: ...
+    def get_vertex_position(self, index: int, /) -> Vec3: ...
 
 class Vehicle:
     @property
@@ -256,6 +263,15 @@ class PhysicsWorld:
         user_data: int = 0,
         category: int = 0xFFFF,
         mask: int = 0xFFFF,
+        pressure: float = 0.0,
+        vertex_radius: float = 0.05,
+        linear_damping: float = 0.1,
+        num_iterations: int = 10,
+        max_linear_velocity: float = 500.0,
+        gravity_factor: float = 1.0,
+        friction: float = 0.2,
+        restitution: float = 0.0,
+        make_rotation_identity: bool = False,
     ) -> int: ...
     def create_character(
         self,
@@ -406,7 +422,7 @@ class PhysicsWorld:
 
 def _dump_schema_json() -> None: ...
 
-# We use a TypeVar to indicate that the returned hash is an int, 
+# We use a TypeVar to indicate that the returned hash is an int,
 # but also to hint that the 'target' tuple remains the same object.
 T = TypeVar("T", bound=tuple)
 
@@ -414,17 +430,17 @@ T = TypeVar("T", bound=tuple)
 def mutate_tuple(target: T, index: int, value: Any) -> int:
     """
     Mutates a tuple in-place by swapping a pointer in RAM.
-    
+
     Args:
         target: The tuple to mutate.
         index: The index to overwrite (supports negative indexing).
         value: The new object to place at the index.
-        
+
     Returns:
         int: The newly recomputed hash of the tuple.
-        
+
     Note:
-        WARNING: If this tuple is currently a key in a dictionary, that 
+        WARNING: If this tuple is currently a key in a dictionary, that
         dictionary will become corrupted (the key becomes a 'ghost').
     """
     ...
@@ -433,20 +449,20 @@ def mutate_tuple(target: T, index: int, value: Any) -> int:
 def mutate_tuple(target: T, index: int, value: Any, registry: dict[Any, T], key: Any) -> int:
     """
     Mutates a tuple in-place and atomically re-indexes it in a dictionary.
-    
-    This is the high-performance 'Atomic Migration' mode. It performs 
+
+    This is the high-performance 'Atomic Migration' mode. It performs
     pop -> mutate -> rehash -> re-insert entirely in C.
-    
+
     Args:
         target: The tuple to mutate.
         index: The index to overwrite.
         value: The new value for the index.
         registry: The dictionary where this tuple is stored as a value.
         key: The key associated with this tuple in the registry.
-        
+
     Returns:
         int: The newly recomputed hash of the tuple.
-        
+
     Raises:
         KeyError: If the key is not found in the registry.
         ValueError: If registry[key] is not exactly the same object as target.

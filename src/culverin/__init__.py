@@ -29,6 +29,7 @@ from ._culverin import (
     parse_urdf,
 )
 
+
 class WheelConfig(TypedDict):
     pos: tuple[float, float, float]
     radius: float
@@ -37,6 +38,7 @@ class WheelConfig(TypedDict):
 class TrackConfig(TypedDict):
     indices: list[int]
     driven_wheel: int
+
 
 # 2. DEFINE HELPER FUNCTIONS
 # We type-hint 'self' as the C class.
@@ -101,6 +103,9 @@ from ._culverin_c import (  # noqa: E402
     SHAPE_PLANE,
     SHAPE_SPHERE,
     USE_DOUBLE_PRECISION,
+    BEND_DIHEDRAL,
+    BEND_DISTANCE,
+    BEND_NONE,
     Character,
     Ragdoll,
     RagdollSettings,
@@ -132,6 +137,9 @@ __all__ = [
     "SHAPE_PLANE",
     "SHAPE_SPHERE",
     "USE_DOUBLE_PRECISION",
+    "BEND_DIHEDRAL",
+    "BEND_DISTANCE",
+    "BEND_NONE",
     "Automatic",
     "Character",
     "Engine",
