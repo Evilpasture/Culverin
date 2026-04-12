@@ -1956,6 +1956,87 @@ class TestTupleMutation(unittest.TestCase):
         # the critical section is working.
         self.assertEqual(len(shared_tuple), 3)
 
+class TestCharacterInteractions(CulverinTestCase):
+    def test_character_pushing_box(self) -> None:
+        """Verify that characters can physically move dynamic bodies."""
+        # 1. Place a light box at X=1.1
+        box = self.world.create_body(pos=(1.1, 0.5, 0), size=(1, 1, 1), mass=1.0)
+        
+        # 2. Place character at X=0
+        char = self.world.create_character(pos=(0, 0.5, 0))
+        char.set_strength(5000.0)
+        self.world.step(0)
+
+        # 3. Move character into the box
+        # 20m/s * 1/60s = 0.33m. Radius 0.4. Reach = 0.73. 
+        # Box edge is at 1.1 - 0.5 = 0.6. Collision is guaranteed.
+        char.move((20, 0, 0), 1/60)
+        
+        # Check that a contact event was recorded
+        events = self.world.get_contact_events_ex()
+        self.assertTrue(any(box in e["bodies"] for e in events), "Box contact not recorded")
+
+        # 4. Step the world to allow the impulse to translate into movement
+        self.world.step(1/60)
+        
+        # The box should have gained velocity from the character's 'apply_character_impulse'
+        vel = self.world.get_velocity(box)
+        self.assertGreater(vel[0], 0.5, "Character failed to push the dynamic box")
+
+    def test_character_vs_character_collision(self) -> None:
+        """Verify the special callback path for virtual character collisions."""
+        # RADIUS 0.4. Sum of radii 0.8.
+        # Place centers at 0.0 and 1.2. Gap is 0.4 units.
+        char1 = self.world.create_character(pos=(0, 0.5, 0))
+        char2 = self.world.create_character(pos=(1.2, 0.5, 0))
+        
+        # Step 0 to flush registration commands
+        self.world.step(0)
+
+        # Move char2 slightly just to ensure it is fully "woken up" in the 
+        # CharacterVsCharacterCollision manager's broadphase.
+        char2.move((0.01, 0, 0), 1/60)
+
+        # Move char1 significantly into char2.
+        # Speed 120m/s * 1/60s = 2.0 units movement. 
+        # Range: X 0.0 -> 2.0. Intersection with char2 at 1.2 is guaranteed.
+        char1.move((120, 0, 0), 1/60)
+
+        # Capture events immediately after the move() call
+        events = self.world.get_contact_events_ex()
+        char_hits = [e for e in events if char1.handle in e["bodies"] and char2.handle in e["bodies"]]
+        
+        self.assertGreater(len(char_hits), 0, 
+            f"No character contact detected. Total events captured: {len(events)}. "
+            "Check if JPH_CharacterVirtual_Set/GetUserData is working in C.")
+        
+        # Verify it's an Added or Persisted event
+        self.assertIn(char_hits[0]["type"], [culverin.EVENT_ADDED, culverin.EVENT_PERSISTED])
+
+    def test_character_contact_lifecycle(self) -> None:
+        """Test Added -> Persisted -> Removed lifecycle against a static wall."""
+        wall = self.world.create_body(pos=(1.0, 0.5, 0), size=(1, 1, 1), motion=culverin.MOTION_STATIC)
+        char = self.world.create_character(pos=(0, 0.5, 0))
+        self.world.step(0)
+
+        # 1. ADDED
+        char.move((10, 0, 0), 1/60)
+        events = self.world.get_contact_events_ex()
+        self.assertTrue(any(e["type"] == culverin.EVENT_ADDED and wall in e["bodies"] for e in events))
+
+        # 2. PERSISTED
+        # We must step once to transition the Jolt listener's state
+        self.world.step(1/60)
+        char.move((10, 0, 0), 1/60)
+        events = self.world.get_contact_events_ex()
+        self.assertTrue(any(e["type"] == culverin.EVENT_PERSISTED and wall in e["bodies"] for e in events))
+
+        # 3. REMOVED
+        char.set_position((-5, 0.5, 0))
+        # ExtendedUpdate must run while NOT touching to fire Removed callback
+        char.move((0, 0, 0), 1/60)
+        events = self.world.get_contact_events_ex()
+        self.assertTrue(any(e["type"] == culverin.EVENT_REMOVED and wall in e["bodies"] for e in events))
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
