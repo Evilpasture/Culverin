@@ -3900,23 +3900,9 @@ PyCFunction_DeclareMethod PhysicsWorld_benchmark_build(CULV_MAYBE_UNUSED PyObjec
     return result;
 }
 
-/**
- * --- TUPLE LAYOUT SHIM ---
- * In some Python versions (3.12, 3.13), PyTupleObject is opaque.
- * We define a local equivalent using VAR_HEAD to access internal fields
- * safely across all versions and build configurations (including free-threaded).
- */
-typedef struct {
-    PyObject_VAR_HEAD Py_hash_t ob_hash;
-    PyObject *ob_item[1];
-} CulverinTupleShim;
-
-// Pointer-cast macro to ensure we mutate heap memory, not a stack copy
-static inline CulverinTupleShim *as_shim(PyObject *op) { return (CulverinTupleShim *)(op); }
-
 PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, PyObject *const *args,
                                             Py_ssize_t nargsf) {
-    // --- 1. DECLARATIONS (C++ / goto safety) ---
+    // --- 1. DECLARATIONS ---
     auto nargs              = PyVectorcall_NARGS(nargsf);
     constexpr auto MIN_ARGS = 3;
     constexpr auto MAX_ARGS = 5;
@@ -3926,7 +3912,6 @@ PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, Py
     PyObject *registry = nullptr;
     PyObject *key      = nullptr;
     PyObject *old_val  = nullptr;
-    PyObject *stored   = nullptr;
 
     Py_ssize_t index     = 0;
     Py_hash_t final_hash = -1;
@@ -3940,7 +3925,6 @@ PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, Py
 
     target  = args[0];
     new_val = args[2];
-
     if (!PyTuple_Check(target)) {
         PyErr_SetString(PyExc_TypeError, "arg 0 must be a tuple");
         return nullptr;
@@ -3963,20 +3947,27 @@ PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, Py
     if (nargs == MAX_ARGS) {
         registry = args[3];
         key      = args[4];
+        // CRITICAL FIX: Explicit type check to satisfy test_bounds_and_type_errors
         if (!PyDict_Check(registry)) {
             PyErr_SetString(PyExc_TypeError, "arg 3 must be a dict");
             return nullptr;
         }
     }
 
-    // --- 3. CRITICAL SECTION ---
+    // --- 3. ADDRESS RESOLUTION (Layout Safe) ---
+    // Use the address of the first item to find the items array.
+    PyObject **items_base = (PyObject **)&PyTuple_GET_ITEM(target, 0);
+    // Hash is always stored exactly one Py_hash_t width before the items.
+    Py_hash_t *hash_ptr = (Py_hash_t *)((char *)items_base - sizeof(Py_hash_t));
+
+    // --- 4. CRITICAL SECTION ---
 #if defined(Py_BEGIN_CRITICAL_SECTION)
     Py_BEGIN_CRITICAL_SECTION(target);
 #endif
 
     // Step A: Registry Removal
     if (registry) {
-        stored = PyDict_GetItemWithError(registry, key);
+        PyObject *stored = PyDict_GetItemWithError(registry, key);
         if (!stored) {
             if (!PyErr_Occurred()) {
                 PyErr_SetObject(PyExc_KeyError, key);
@@ -3987,7 +3978,6 @@ PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, Py
             PyErr_SetString(PyExc_ValueError, "registry[key] is not the same object as target");
             goto exit_critical;
         }
-
         Py_INCREF(target);
         if (PyDict_DelItem(registry, key) < 0) {
             Py_DECREF(target);
@@ -3995,21 +3985,22 @@ PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, Py
         }
     }
 
-    // Step B: The Mutation (Using pointer cast to the shim)
+    // Step B: The Mutation (Atomic Swap)
     {
         Py_INCREF(new_val);
-        old_val                         = as_shim(target)->ob_item[index];
-        as_shim(target)->ob_item[index] = new_val;
+        _Atomic(PyObject *) *atomic_slot = (_Atomic(PyObject *) *)&items_base[index];
+        old_val = atomic_exchange_explicit(atomic_slot, new_val, memory_order_relaxed);
 
-        // Step C: Rehash (Busting the cache via shim offset)
-        as_shim(target)->ob_hash = -1;
+        // Step C: Rehash (Busting the cache)
+        *hash_ptr = -1;
     }
 
     final_hash = PyObject_Hash(target);
 
     if (final_hash == -1) {
         // Rollback
-        as_shim(target)->ob_item[index] = old_val;
+        _Atomic(PyObject *) *atomic_slot = (_Atomic(PyObject *) *)&items_base[index];
+        atomic_store_explicit(atomic_slot, old_val, memory_order_relaxed);
         Py_DECREF(new_val);
         if (registry) {
             Py_DECREF(target);
@@ -4021,7 +4012,8 @@ PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, Py
     if (registry) {
         if (PyDict_SetItem(registry, key, target) < 0) {
             // Rollback
-            as_shim(target)->ob_item[index] = old_val;
+            _Atomic(PyObject *) *atomic_slot = (_Atomic(PyObject *) *)&items_base[index];
+            atomic_store_explicit(atomic_slot, old_val, memory_order_relaxed);
             Py_DECREF(new_val);
             Py_DECREF(target);
             final_hash = -1;
