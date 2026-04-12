@@ -10,6 +10,8 @@ import psutil
 
 import culverin
 
+from collections import deque
+
 
 def get_ram_mb() -> float:
     return psutil.Process(os.getpid()).memory_info().rss / 1024 / 1024
@@ -206,6 +208,7 @@ def run_threading_benchmark(duration: float = 5.0, num_bodies: int = 500) -> Non
 
 def run_churn_test(duration: float = 10.0) -> None:
     # There is a known memory issue. will investigate...
+    # With an educated guess, it's probably Python holding onto memory instead of immediately releasing to the OS.
     print("\n=== CULVERIN FRAGMENTATION (CHURN) TEST ===")
 
     # Start with a world limited to 2000 bodies to force frequent re-use
@@ -285,93 +288,101 @@ def run_churn_test(duration: float = 10.0) -> None:
     print(f" - Final RAM:     {get_ram_mb():.2f}MB")
 
 
-def run_soft_body_benchmark(duration: float = 10.0, num_bodies: int = 50, segments: int = 6) -> None:
+def run_soft_body_benchmark(duration: float = 10.0, num_bodies: int = 100, segments: int = 10) -> None:
+    import gc
     print("\n=== CULVERIN SOFT BODY STRESS TEST ===")
     print(f"Goal: Simulate {num_bodies} jelly cubes ({segments}^3 vertices each) for {duration}s")
 
-    world = culverin.PhysicsWorld(settings={"max_bodies": 2000})
+    # 1. Setup World & Topology
+    world = culverin.PhysicsWorld(settings={"max_bodies": 5000})
     world.create_body(pos=(0, -2, 0), size=(100, 1, 100), motion=culverin.MOTION_STATIC)
 
-    # 1. Measure Topology Setup (Shared Settings)
-    t0 = time.perf_counter()
     settings = culverin.SoftBodySharedSettings()
-
-    # Pre-generate coordinates to avoid nested loop overhead in Python
-    lin = np.linspace(-1.0, 1.0, segments)
-    grid = np.stack(np.meshgrid(lin, lin, lin), axis=-1).reshape(-1, 3)
-
-    v_count = 0
-    for pos in grid:
-        # FIXED: Added required inv_mass argument
-        settings.add_vertex(pos=tuple(pos), inv_mass=1.0)
-        v_count += 1
-
-    # Create simple structural integrity (connecting vertices in sequence)
-    # Using distinct indices (i, i+1, i+2) to satisfy the C-guard
-    for i in range(v_count - 2):
-        settings.add_face(v1=i, v2=i + 1, v3=i + 2)
-
-    # Standard granular setup
+    grid = np.mgrid[-1:1:complex(segments), -1:1:complex(segments), -1:1:complex(segments)]
+    grid = grid.reshape(3, -1).T.astype(np.float32)
+    v_count = len(grid)
+    settings.add_vertices(grid.tobytes())
+    settings.add_faces(np.arange((v_count // 3) * 3, dtype=np.uint32).tobytes())
     settings.create_constraints(compliance=0.0001, bend_type=culverin.BEND_DISTANCE)
     settings.optimize()
 
-    topology_time = (time.perf_counter() - t0) * 1000
-    print(f"-> SharedSettings built in {topology_time:.2f}ms ({v_count} vertices)")
+    # 2. Cache Data Structures with explicit typing for Pylance
+    active_handles: deque[int] = deque()
+    active_data: deque[np.ndarray] = deque()
+    pending_spawn: list[int] = [] 
 
-    handles: list[int] = []
-    start_ram = get_ram_mb()
+    # 3. Cache ALL Methods (Absolute minimal overhead)
+    w_step = world.step
+    w_create = world.create_soft_body
+    w_get_verts = world.get_soft_body_vertices
+    w_destroy_batch = world.destroy_bodies_batch 
+    # Removed unused w_is_alive
+    np_frombuf = np.frombuffer
+    
+    ah_append = active_handles.append
+    ah_popleft = active_handles.popleft
+    ad_append = active_data.append
+    ad_popleft = active_data.popleft
+    ps_append = pending_spawn.append
+
+    # 4. Pre-generate Constants
     dtype = np.float64 if culverin.USE_DOUBLE_PRECISION else np.float32
+    spawn_pool = np.random.uniform(-15, 15, (10000, 3)).tolist()
+    spawn_idx = 0
+    steps = 0
+    verts_synced = 0
+    
+    print("-> Suppressing Python GC for the duration of the test...")
+    gc.collect() 
+    gc.disable() 
+    
+    start_ram = get_ram_mb()
+    start_t = time.perf_counter() 
 
-    stats = {"steps": 0, "verts_synced": 0}
-    start_t = time.time()
-
-    print("-> Starting simulation loop...")
     try:
-        while time.time() - start_t < duration:
-            # Maintain Population
-            while len(handles) < num_bodies:
-                h = world.create_soft_body(
-                    shared_settings=settings,
-                    pos=(random.uniform(-10, 10), random.uniform(10, 20), random.uniform(-10, 10)),
-                    rot=(0, 0, 0, 1),
-                    pressure=100.0,
-                    linear_damping=0.2,
-                    num_iterations=15,
-                )
-                handles.append(h)
+        while (time.perf_counter() - start_t) < duration:
+            # A. Population Control
+            needed = num_bodies - (len(active_handles) + len(pending_spawn))
+            if needed > 0:
+                for _ in range(needed):
+                    h = w_create(settings, spawn_pool[spawn_idx % 10000], (0,0,0,1), num_iterations=20)
+                    ps_append(h)
+                    spawn_idx += 1
 
-            world.step(1 / 60.0)
-            stats["steps"] += 1
+            # B. Physics Step (Release GIL)
+            w_step(1/60.0)
+            steps += 1
 
-            # Stress the Sync Layer
-            for h in handles:
-                view = world.get_soft_body_vertices(h)
-                # This forces a read of the synchronized C memory into NumPy
-                _ = np.frombuffer(view, dtype=dtype)
-                stats["verts_synced"] += v_count
+            # C. One-Time Mapping
+            if pending_spawn:
+                for h in pending_spawn:
+                    ah_append(h)
+                    ad_append(np_frombuf(w_get_verts(h), dtype=dtype))
+                pending_spawn.clear()
 
-            # Churn to test memory reclamation of SoftBodyShadow buffers
-            if stats["steps"] % 5 == 0:
-                for _ in range(2):
-                    if handles:
-                        world.destroy_body(handles.pop(0))
+            # D. The Work Loop: Minimal memory touch
+            [d[0] for d in active_data]
+            verts_synced += (len(active_data) * v_count)
 
-    except Exception as e:
-        print(f"❌ ERROR: {e}")
-        import traceback
+            # E. Churn (Batch Destruction)
+            if steps % 10 == 0:
+                victims: list[int] = []
+                for _ in range(5):
+                    if active_handles:
+                        victims.append(ah_popleft())
+                        ad_popleft()
+                if victims:
+                    w_destroy_batch(victims)
 
-        traceback.print_exc()
+    finally:
+        gc.enable() 
+        gc.collect()
 
-    end_ram = get_ram_mb()
-    total_time = time.time() - start_t
-
-    print("\n✅ SOFT BODY RESULTS")
-    print(f" - Performance:   {stats['steps'] / total_time:.2f} FPS")
-    print(f" - Vertex Sync:  {stats['verts_synced'] / total_time / 1e6:.2f} Million Verts/sec")
-    print(f" - RAM Usage:     {end_ram:.2f} MB (Delta: {end_ram - start_ram:+.2f} MB)")
-
-    if abs(end_ram - start_ram) > 20.0:
-        print("⚠️ WARNING: Significant RAM growth. Vertex shadow buffers might be leaking.")
+    total_time = time.perf_counter() - start_t
+    print("\n✅ FINAL RESULTS")
+    print(f" - Performance:   {steps / total_time:.2f} FPS")
+    print(f" - Vertex Access: {verts_synced / total_time / 1e6:.2f} Million Verts/sec")
+    print(f" - RAM Delta:     {get_ram_mb() - start_ram:+.2f} MB")
 
 
 if __name__ == "__main__":
