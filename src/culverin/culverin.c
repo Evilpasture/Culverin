@@ -3900,11 +3900,12 @@ PyCFunction_DeclareMethod PhysicsWorld_benchmark_build(CULV_MAYBE_UNUSED PyObjec
     return result;
 }
 
+#include <stdatomic.h>
 #include <tupleobject.h>
 
 PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, PyObject *const *args,
                                             Py_ssize_t nargsf) {
-    // --- 1. DECLARATIONS (Must be at top for C++ / goto safety) ---
+    // --- 1. DECLARATIONS (C++ / goto safety) ---
     auto nargs              = PyVectorcall_NARGS(nargsf);
     constexpr auto MIN_ARGS = 3;
     constexpr auto MAX_ARGS = 5;
@@ -3957,8 +3958,6 @@ PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, Py
     }
 
     // --- 3. CRITICAL SECTION ---
-    // We lock the tuple to prevent concurrent reads/hashes.
-    // This macro opens a new scope '{'. No if/else allowed here.
 #if defined(Py_BEGIN_CRITICAL_SECTION)
     Py_BEGIN_CRITICAL_SECTION(target);
 #endif
@@ -3976,7 +3975,6 @@ PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, Py
             PyErr_SetString(PyExc_ValueError, "registry[key] is not the same object as target");
             goto exit_critical;
         }
-
         Py_INCREF(target);
         if (PyDict_DelItem(registry, key) < 0) {
             Py_DECREF(target);
@@ -3984,26 +3982,30 @@ PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, Py
         }
     }
 
-    // Step B: The Mutation (Using official struct pointer)
+    // Step B: The Mutation (Atomic Swap)
     {
         PyTupleObject *t = (PyTupleObject *)target;
         Py_INCREF(new_val);
-        old_val           = t->ob_item[index];
-        t->ob_item[index] = new_val;
 
-        // Step C: Rehash Cache Bust (Version-Aware)
+        // Cast the item slot to an atomic pointer.
+        // This prevents TSan "Data Race" warnings and ensures memory visibility.
+        _Atomic(PyObject *) *atomic_slot = (_Atomic(PyObject *) *)&(t->ob_item[index]);
+        old_val = atomic_exchange_explicit(atomic_slot, new_val, memory_order_acq_rel);
+
+        // Step C: Rehash Cache Bust (Atomic)
 #if PY_VERSION_HEX >= 0x030E0000
-        // ob_hash was restored in 3.14 for free-threading; we must reset it.
-        t->ob_hash = -1;
+        _Atomic(Py_hash_t) *atomic_hash = (_Atomic(Py_hash_t) *)&(t->ob_hash);
+        atomic_store_explicit(atomic_hash, -1, memory_order_relaxed);
 #endif
-        // In 3.11-3.13, ob_hash field doesn't exist; hashes are recomputed.
     }
 
     final_hash = PyObject_Hash(target);
 
     if (final_hash == -1) {
-        // Rollback
-        ((PyTupleObject *)target)->ob_item[index] = old_val;
+        // Rollback (Atomic)
+        _Atomic(PyObject *) *atomic_slot =
+            (_Atomic(PyObject *) *)&((PyTupleObject *)target)->ob_item[index];
+        atomic_store_explicit(atomic_slot, old_val, memory_order_relaxed);
         Py_DECREF(new_val);
         if (registry) {
             Py_DECREF(target);
@@ -4014,8 +4016,10 @@ PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, Py
     // Step D: Registry Re-insertion
     if (registry) {
         if (PyDict_SetItem(registry, key, target) < 0) {
-            // Rollback
-            ((PyTupleObject *)target)->ob_item[index] = old_val;
+            // Rollback (Atomic)
+            _Atomic(PyObject *) *atomic_slot =
+                (_Atomic(PyObject *) *)&((PyTupleObject *)target)->ob_item[index];
+            atomic_store_explicit(atomic_slot, old_val, memory_order_relaxed);
             Py_DECREF(new_val);
             Py_DECREF(target);
             final_hash = -1;
@@ -4028,7 +4032,6 @@ PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, Py
     success = 1;
 
 exit_critical:
-    // This macro closes the scope '}'.
 #if defined(Py_BEGIN_CRITICAL_SECTION)
     Py_END_CRITICAL_SECTION();
 #endif
