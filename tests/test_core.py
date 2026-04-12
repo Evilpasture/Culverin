@@ -1894,25 +1894,18 @@ class TestTupleMutation(unittest.TestCase):
         self.assertEqual(t, (10, 20, 99))
 
     def test_registry_sync(self) -> None:
-        """
-        Verify that passing a registry (dict) correctly handles the hash-map re-insertion.
-        If we don't 'pop and re-insert', the tuple becomes lost in the dictionary 
-        because its bucket is determined by the old hash.
-        """
-        registry = {}
+        registry: dict[str, tuple[int, ...]] = {} # Type hint here is fine
         t = (1, 2, 3)
         key = "my_tuple"
         registry[key] = t
         
-        # Mutate the tuple while it's inside the dictionary
-        registry: dict[str, tuple[int, ...]] = {}
+        # ACTUAL call to your C function
+        culverin.mutate_tuple(t, 0, 999, registry, key)
         
-        # 1. Content check
+        # 1. Content check (Now registry actually has the data)
         self.assertEqual(registry[key][0], 999)
         
         # 2. Hash-map integrity check
-        # This is the real test: can Python still find the object via its value?
-        # If the C-layer didn't re-insert, this 'in' check would fail.
         self.assertIn((999, 2, 3), registry.values())
 
     def test_registry_mismatch_protection(self) -> None:
