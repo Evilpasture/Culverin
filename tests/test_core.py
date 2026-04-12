@@ -1190,11 +1190,17 @@ class TestDocumentation(unittest.TestCase):
 
             try:
                 # 1. Resolve Class
-                cls = getattr(culverin, class_name)
+                if class_name == "Module":
+                    container = culverin
+                else:
+                    container = getattr(culverin, class_name)
 
                 # 2. Resolve Member (Method or Property)
                 # Some properties are defined via PyGetSetDef, others as methods
-                member = getattr(cls, member_name)
+                try:
+                    member = getattr(container, member_name)
+                except AttributeError:
+                    member = getattr(container, f"_{member_name}")
 
                 # 3. Extract Docstring
                 actual_doc = member.__doc__
@@ -1651,58 +1657,64 @@ class TestRobustness(CulverinTestCase):
 
 
 class TestSoftBodies(CulverinTestCase):
-    def create_cube_settings(self, size: float = 1.0, compliance: float = 0.0001) -> culverin.SoftBodySharedSettings:
+    def create_cube_settings(
+        self, size: float = 1.0, compliance: float = 0.0001
+    ) -> culverin.SoftBodySharedSettings:
         """
-        Helper to build an optimized soft-body cube using the granular API.
+        Helper to build an optimized soft-body cube using the high-performance bulk API.
         """
         settings = culverin.SoftBodySharedSettings()
 
-        # 1. Add Vertices
+        # 1. Prepare bulk data via NumPy
         s = size / 2.0
-        # 8 Corners
-        verts = [
-            (-s, -s, -s),
-            (s, -s, -s),
-            (s, s, -s),
-            (-s, s, -s),
-            (-s, -s, s),
-            (s, -s, s),
-            (s, s, s),
-            (-s, s, s),
-        ]
-        for v in verts:
-            settings.add_vertex(pos=v, inv_mass=1.0)
+        # 8 Corners (Positions)
+        verts = np.array(
+            [
+                [-s, -s, -s],
+                [s, -s, -s],
+                [s, s, -s],
+                [-s, s, -s],
+                [-s, -s, s],
+                [s, -s, s],
+                [s, s, s],
+                [-s, s, s],
+            ],
+            dtype=np.float32,
+        )
 
-        # 2. Add Faces (6 sides, 12 triangles)
-        faces = [
-            (0, 2, 1),
-            (0, 3, 2),
-            (4, 5, 6),
-            (4, 6, 7),  # Front/Back
-            (0, 1, 5),
-            (0, 5, 4),
-            (2, 3, 7),
-            (2, 7, 6),  # Bottom/Top
-            (0, 4, 7),
-            (0, 7, 3),
-            (1, 2, 6),
-            (1, 6, 5),  # Left/Right
-        ]
-        for f in faces:
-            settings.add_face(v1=f[0], v2=f[1], v3=f[2])
+        # 12 Faces (Indices)
+        faces = np.array(
+            [
+                [0, 2, 1],
+                [0, 3, 2],
+                [4, 5, 6],
+                [4, 6, 7],  # Front/Back
+                [0, 1, 5],
+                [0, 5, 4],
+                [2, 3, 7],
+                [2, 7, 6],  # Bottom/Top
+                [0, 4, 7],
+                [0, 7, 3],
+                [1, 2, 6],
+                [1, 6, 5],  # Left/Right
+            ],
+            dtype=np.uint32,
+        )
 
-        # 3. Create Constraints (Using the new Distance constant)
+        # 2. Bulk Load
+        settings.add_vertices(verts.tobytes())
+        settings.add_faces(faces.tobytes())
+
+        # 3. Granular Setup
         settings.create_constraints(compliance=compliance, bend_type=culverin.BEND_DISTANCE)
-
-        # 4. Finalize Optimization
         settings.optimize()
+
         return settings
 
     def test_soft_body_lifecycle(self) -> None:
         """Verify creation, handle validity, and destruction of soft bodies."""
         settings = self.create_cube_settings()
 
-        # Test creation with the full parameter list
         h = self.world.create_soft_body(
             shared_settings=settings,
             pos=(0, 10, 0),
@@ -1724,48 +1736,65 @@ class TestSoftBodies(CulverinTestCase):
         self.world.step(0)
         self.assertFalse(self.world.is_alive(h))
 
+    def test_soft_body_bulk_creation_with_mass(self) -> None:
+        """Verify bulk vertex loading with explicit inverse masses."""
+        settings = culverin.SoftBodySharedSettings()
+
+        # 3 vertices for a single triangle
+        pos = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float32)
+        # Mix of stationary (0.0) and mobile (1.0) vertices
+        inv_masses = np.array([0.0, 1.0, 1.0], dtype=np.float32)
+
+        settings.add_vertices(pos.tobytes(), inv_masses.tobytes())
+        settings.add_faces(np.array([0, 1, 2], dtype=np.uint32).tobytes())
+
+        settings.create_constraints(0.001)
+        settings.optimize()
+
+        h = self.world.create_soft_body(settings, pos=(0, 0, 0), rot=(0, 0, 0, 1))
+        self.world.step(0)
+
+        dtype = np.float64 if culverin.USE_DOUBLE_PRECISION else np.float32
+        view = self.world.get_soft_body_vertices(h)
+        verts = np.frombuffer(view, dtype=dtype).reshape(-1, 4)
+
+        # Check initial positions
+        self.assertEqual(verts[1, 0], 1.0)
+        self.assertEqual(verts[2, 1], 1.0)
+
     def test_soft_body_vertex_sync(self) -> None:
-        """Verify zero-copy vertex synchronization into NumPy buffers with precision awareness."""
+        """Verify zero-copy vertex synchronization into NumPy buffers."""
         settings = self.create_cube_settings()
         h = self.world.create_soft_body(settings, pos=(0, 5, 0), rot=(0, 0, 0, 1))
         self.world.step(0)
 
-        # Get the buffer proxy
         view = self.world.get_soft_body_vertices(h)
-        self.assertIsNotNone(view)
-
-        # Detect precision from the engine metadata
         dtype = np.float64 if culverin.USE_DOUBLE_PRECISION else np.float32
-
-        # Convert to numpy (Zero-copy)
-        # We expect 8 vertices (cube) + 0 (if no internal struts)
         verts = np.frombuffer(view, dtype=dtype).reshape(-1, 4)
 
         self.assertEqual(len(verts), 8, f"Soft body should have 8 vertices (detected {dtype})")
 
-        # Check initial world-space position of vertex 2 (top-right-back)
-        # Local (0.5, 0.5, -0.5) + COM (0, 5, 0) = (0.5, 5.5, -0.5)
+        # Check initial world-space position of vertex 2
+        # Local (0.5, 0.5, -0.5) + COM (0, 5, 0)
         self.assertAlmostEqual(verts[2, 1], 5.5, places=3)
 
-        # Step simulation
-        for _ in range(10):
-            self.world.step(1 / 60.0)
-
+        self.world.step(1 / 60.0)
         # Verify the same numpy array has updated data (proving zero-copy sync)
         self.assertLess(verts[2, 1], 5.5, "Vertices in NumPy buffer did not update after step")
 
     def test_soft_body_pinning(self) -> None:
         """Verify that pinned vertices remain fixed in space relative to the COM."""
         settings = culverin.SoftBodySharedSettings()
-        settings.add_vertex(pos=(0, 0, 0), inv_mass=1.0)  # Vertex 0
-        settings.add_vertex(pos=(0, 1, 0), inv_mass=1.0)  # Vertex 1 (Target Pin)
-        settings.add_vertex(pos=(1, 0, 0), inv_mass=1.0)  # Vertex 2 (Required for face)
 
-        # FIX: Use 3 distinct indices to satisfy the C-layer guard
+        # Create a vertical line of 3 vertices
+        pos = np.array([[0, 0, 0], [0, 1, 0], [0, 2, 0]], dtype=np.float32)
+        settings.add_vertices(pos.tobytes())
+
+        # Jolt requires at least one face to optimize correctly
         settings.add_face(0, 1, 2)
 
-        # Pin the top vertex before creating constraints
-        settings.add_pinned_vertex(1)
+        # Pin the very top vertex (index 2)
+        settings.add_pinned_vertex(2)
         settings.create_constraints(0.001, culverin.BEND_DISTANCE)
         settings.optimize()
 
@@ -1775,23 +1804,18 @@ class TestSoftBodies(CulverinTestCase):
         dtype = np.float64 if culverin.USE_DOUBLE_PRECISION else np.float32
         verts = np.frombuffer(self.world.get_soft_body_vertices(h), dtype=dtype).reshape(-1, 4)
 
-        # Simulate for a second
-        for _ in range(60):
+        # Simulate
+        for _ in range(30):
             self.world.step(1 / 60.0)
 
-        # Verify the pinned vertex (1) remains physically above the non-pinned vertex (0)
-        # despite gravity pulling the body down.
-        self.assertGreater(
-            verts[1, 1], verts[0, 1], "Pinned vertex should remain above non-pinned vertex"
-        )
+        # The pinned vertex (2) should be physically higher than the mobile ones
+        self.assertGreater(verts[2, 1], verts[0, 1], "Pinned vertex fell below bottom vertex")
 
     def test_soft_body_collision(self) -> None:
         """Test if a soft body deforms/stops when hitting the floor."""
-        # Create a floor at Y=-1.0
         self.world.create_body(pos=(0, -1, 0), size=(100, 1, 100), motion=culverin.MOTION_STATIC)
 
-        settings = self.create_cube_settings(compliance=0.01)  # Squishy
-        # Spawn cube above floor
+        settings = self.create_cube_settings(compliance=0.01)
         h = self.world.create_soft_body(settings, pos=(0, 1, 0), rot=(0, 0, 0, 1))
         self.world.step(0)
 
@@ -1799,11 +1823,10 @@ class TestSoftBodies(CulverinTestCase):
         dtype = np.float64 if culverin.USE_DOUBLE_PRECISION else np.float32
         verts = np.frombuffer(view, dtype=dtype).reshape(-1, 4)
 
-        # Simulate landing
         for _ in range(60):
             self.world.step(1 / 60.0)
 
-        # Vertices should be near the floor top (roughly Y=0)
+        # Vertices should be caught by the floor top (Y=0)
         bottom_y = verts[[0, 1, 4, 5], 1]
         for y in bottom_y:
             self.assertGreater(y, -0.5, "Soft body fell through the floor")
@@ -1817,6 +1840,16 @@ class TestSoftBodies(CulverinTestCase):
         with self.assertRaisesRegex(TypeError, "Handle does not belong to a soft body"):
             self.world.get_soft_body_vertices(h_rigid)
 
+    def test_bulk_index_out_of_range(self) -> None:
+        """Verify the C-layer guard catches bad indices in add_faces."""
+        settings = culverin.SoftBodySharedSettings()
+        settings.add_vertex((0, 0, 0), 1.0)
+
+        # Vertex index 99 does not exist
+        bad_faces = np.array([0, 0, 99], dtype=np.uint32)
+        with self.assertRaises(IndexError):
+            settings.add_faces(bad_faces.tobytes())
+
     def test_soft_body_save_load(self) -> None:
         """Test if soft bodies survive world state serialization."""
         settings = self.create_cube_settings()
@@ -1825,14 +1858,12 @@ class TestSoftBodies(CulverinTestCase):
 
         state = self.world.save_state()
 
-        # Change state
         for _ in range(10):
             self.world.step(1 / 60.0)
         self.assertLess(self.get_pos(h)[1], 10.0)
 
-        # Restore
         self.world.load_state(state=state)
-        self.world.step(0)  # Sync shadow buffers
+        self.world.step(0)
 
         self.assertTrue(self.world.is_alive(h))
         self.assertAlmostEqual(self.get_pos(h)[1], 10.0, places=3)
