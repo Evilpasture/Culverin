@@ -3989,9 +3989,19 @@ PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, Py
     old_val                                   = ((PyTupleObject *)target)->ob_item[index];
     ((PyTupleObject *)target)->ob_item[index] = new_val;
 
-    // Step C: Rehash
+// Step C: Rehash
+#if PY_VERSION_HEX >= 0x030d0000 // 3.13 and above
     ((PyTupleObject *)target)->ob_hash = -1;
-    final_hash                         = PyObject_Hash(target);
+#else
+    // In 3.12, tuples are strictly immutable and the header
+    // doesn't expose ob_hash directly in the same way.
+    // We have to reach into the generic object or use the pointer offset.
+    // Note: This is still "dark magic".
+    ((PyObject *)target)->hash = -1;
+    // Or more commonly in 3.12 extensions:
+    _Py_HashSecret_t *dummy; // Some devs use internal headers here
+#endif
+    final_hash = PyObject_Hash(target);
 
     if (final_hash == -1) {
         // Rollback
