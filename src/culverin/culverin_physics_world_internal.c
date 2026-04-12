@@ -183,7 +183,9 @@ int allocate_buffers(PhysicsWorldObject *self, int max_bodies) {
     }
     self->max_jolt_bodies = (uint32_t)max_bodies;
 
-    size_t initial_cap = (max_bodies < 64) ? (size_t)max_bodies : 64;
+    constexpr auto INITIAL_BODY_CAPACITY = 64;
+
+    size_t initial_cap = (max_bodies < INITIAL_BODY_CAPACITY) ? (size_t)max_bodies : INITIAL_BODY_CAPACITY;
     self->capacity = initial_cap;
     self->slot_capacity = initial_cap;
 
