@@ -112,6 +112,7 @@ from ._culverin_c import (  # noqa: E402
     Skeleton,
     SoftBodySharedSettings,
     Vehicle,
+    _dump_schema_json,
     mutate_tuple,
 )
 
@@ -155,6 +156,7 @@ __all__ = [
     "WheelConfig",
     "euler_to_quat",
     "load_urdf",
+    "_dump_schema_json",
     "mutate_tuple",
     "parse_urdf",
 ]
