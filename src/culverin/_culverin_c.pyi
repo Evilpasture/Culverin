@@ -424,10 +424,10 @@ def _dump_schema_json() -> None: ...
 
 # We use a TypeVar to indicate that the returned hash is an int,
 # but also to hint that the 'target' tuple remains the same object.
-T = TypeVar("T", bound=tuple)
+T = TypeVar("T", bound=tuple[Any, ...])
 
 @overload
-def mutate_tuple(target: T, index: int, value: Any) -> int:
+def mutate_tuple(target: tuple[Any, ...], index: int, value: Any) -> int:
     """
     Mutates a tuple in-place by swapping a pointer in RAM.
 
