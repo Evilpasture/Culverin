@@ -116,6 +116,66 @@ SoftBodySharedSettings_add_vertex(SoftBodySharedSettingsObject *self, PyObject *
 }
 
 PyCFunction_DeclareMethodFromModule
+SoftBodySharedSettings_add_vertices(SoftBodySharedSettingsObject *self, PyObject *const *args,
+                                    Py_ssize_t nargs, PyObject *kwnames) {
+    CulverinState *st                    = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+    PyObject *o_pos                      = nullptr;
+    PyObject *o_mass                     = nullptr;
+    void *targets[SbssAddVertices_COUNT] = {[IDX_SAVS_POS]  = (void *)&o_pos,
+                                            [IDX_SAVS_MASS] = (void *)&o_mass};
+
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.SbssAddVerticesParser, targets)) {
+        return nullptr;
+    }
+    if (self->optimized) {
+        PyErr_SetString(PyExc_RuntimeError, "Cannot modify settings after optimize()");
+        return nullptr;
+    }
+
+    Py_buffer pos_view;
+    if (PyObject_GetBuffer(o_pos, &pos_view, PyBUF_SIMPLE) != 0) {
+        return nullptr;
+    }
+
+    // Must be flat float32 triplets
+    if (pos_view.len % (3 * sizeof(float)) != 0) {
+        PyBuffer_Release(&pos_view);
+        PyErr_SetString(PyExc_ValueError,
+                        "positions buffer must be a flat array of float32 triplets");
+        return nullptr;
+    }
+
+    uint32_t count = (uint32_t)(pos_view.len / (3 * sizeof(float)));
+
+    Py_buffer mass_view = {};
+    float *masses       = nullptr;
+    if (o_mass && o_mass != Py_None) {
+        if (PyObject_GetBuffer(o_mass, &mass_view, PyBUF_SIMPLE) != 0) {
+            PyBuffer_Release(&pos_view);
+            return nullptr;
+        }
+        if (mass_view.len / sizeof(float) != count) {
+            PyBuffer_Release(&pos_view);
+            PyBuffer_Release(&mass_view);
+            PyErr_SetString(PyExc_ValueError, "inv_masses buffer length must match vertex count");
+            return nullptr;
+        }
+        masses = (float *)mass_view.buf;
+    }
+
+    JPH_SoftBodySharedSettings_AddVertices(self->settings, (const JPH_Vec3 *)pos_view.buf, masses,
+                                           count);
+    self->num_vertices += count;
+
+    PyBuffer_Release(&pos_view);
+    if (o_mass && o_mass != Py_None) {
+        PyBuffer_Release(&mass_view);
+    }
+
+    Py_RETURN_NONE;
+}
+
+PyCFunction_DeclareMethodFromModule
 SoftBodySharedSettings_add_face(SoftBodySharedSettingsObject *self, PyObject *const *args,
                                 Py_ssize_t nargs, PyObject *kwnames) {
     CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
@@ -140,11 +200,57 @@ SoftBodySharedSettings_add_face(SoftBodySharedSettingsObject *self, PyObject *co
 
     if (v1 >= self->num_vertices || v2 >= self->num_vertices || v3 >= self->num_vertices) {
         PyErr_Format(PyExc_IndexError, "Face vertex index out of range (have %u vertices)",
-                    self->num_vertices);
+                     self->num_vertices);
         return nullptr;
     }
 
     JPH_SoftBodySharedSettings_AddFace(self->settings, v1, v2, v3);
+    Py_RETURN_NONE;
+}
+
+PyCFunction_DeclareMethodFromModule
+SoftBodySharedSettings_add_faces(SoftBodySharedSettingsObject *self, PyObject *const *args,
+                                 Py_ssize_t nargs, PyObject *kwnames) {
+    CulverinState *st                 = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+    PyObject *o_ind                   = nullptr;
+    void *targets[SbssAddFaces_COUNT] = {[IDX_SAFS_IND] = (void *)&o_ind};
+
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.SbssAddFacesParser, targets)) {
+        return nullptr;
+    }
+    if (self->optimized) {
+        PyErr_SetString(PyExc_RuntimeError, "Cannot modify settings after optimize()");
+        return nullptr;
+    }
+
+    Py_buffer ind_view;
+    if (PyObject_GetBuffer(o_ind, &ind_view, PyBUF_SIMPLE) != 0) {
+        return nullptr;
+    }
+
+    // Must be flat uint32 triplets
+    if (ind_view.len % (3 * sizeof(uint32_t)) != 0) {
+        PyBuffer_Release(&ind_view);
+        PyErr_SetString(PyExc_ValueError, "indices buffer must be a flat array of uint32 triplets");
+        return nullptr;
+    }
+
+    uint32_t face_count  = (uint32_t)(ind_view.len / (3 * sizeof(uint32_t)));
+    const uint32_t *inds = (const uint32_t *)ind_view.buf;
+
+    // Validate indices against total vertices to prevent Jolt crashes
+    for (uint32_t i = 0; i < face_count * 3; i++) {
+        if (inds[i] >= self->num_vertices) {
+            PyBuffer_Release(&ind_view);
+            PyErr_Format(PyExc_IndexError, "Face vertex index %u out of range (have %u vertices)",
+                         inds[i], self->num_vertices);
+            return nullptr;
+        }
+    }
+
+    JPH_SoftBodySharedSettings_AddFaces(self->settings, inds, face_count);
+
+    PyBuffer_Release(&ind_view);
     Py_RETURN_NONE;
 }
 

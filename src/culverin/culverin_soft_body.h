@@ -17,8 +17,14 @@ PyCFunction_DeclareMethodFromModule
 SoftBodySharedSettings_add_vertex(SoftBodySharedSettingsObject *self, PyObject *const *args,
                                   Py_ssize_t nargs, PyObject *kwnames);
 PyCFunction_DeclareMethodFromModule
+SoftBodySharedSettings_add_vertices(SoftBodySharedSettingsObject *self, PyObject *const *args,
+                                    Py_ssize_t nargs, PyObject *kwnames);
+PyCFunction_DeclareMethodFromModule
 SoftBodySharedSettings_add_face(SoftBodySharedSettingsObject *self, PyObject *const *args,
                                 Py_ssize_t nargs, PyObject *kwnames);
+PyCFunction_DeclareMethodFromModule
+SoftBodySharedSettings_add_faces(SoftBodySharedSettingsObject *self, PyObject *const *args,
+                                 Py_ssize_t nargs, PyObject *kwnames);
 PyCFunction_DeclareMethodFromModule
 SoftBodySharedSettings_create_constraints(SoftBodySharedSettingsObject *self, PyObject *const *args,
                                           Py_ssize_t nargs, PyObject *kwnames);
