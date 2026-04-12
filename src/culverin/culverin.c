@@ -2014,10 +2014,11 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
     CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
 
     // 1. FAST PARSE (Zero Lock Contention)
-    PyObject *py_pos                 = nullptr;
-    PyObject *py_sizes               = nullptr;
-    int shape_type                   = 0;
-    int motion_type                  = 2;
+    PyObject *py_pos   = nullptr;
+    PyObject *py_sizes = nullptr;
+    int shape_type     = 0;
+    int motion_type    = 2;
+
     void *targets[BatchCreate_COUNT] = {[IDX_BC_POSITIONS] = (void *)&py_pos,
                                         [IDX_BC_SIZES]     = (void *)&py_sizes,
                                         [IDX_BC_SHAPE]     = (void *)&shape_type,
@@ -2031,6 +2032,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
     if (!PyList_Check(py_pos) || !PyList_Check(py_sizes)) {
         return PyErr_Format(PyExc_TypeError, "Inputs must be lists");
     }
+
     const Py_ssize_t batch_count = PyList_GET_SIZE(py_pos);
     if (PyList_GET_SIZE(py_sizes) != batch_count) {
         return PyErr_Format(PyExc_ValueError, "List length mismatch");
@@ -2039,10 +2041,12 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
         return PyList_New(0);
     }
 
-    // 2. ARENA ALLOCATION (1 Malloc for all Temp Data -> Zero Fragmentation)
-    size_t arena_size = batch_count * (sizeof(PosStride) + sizeof(ShapeParams) +
-                                       sizeof(JPH_BodyCreationSettings *) + sizeof(uint64_t));
-    void *arena       = CULV_RAW_MALLOC(arena_size);
+    // 2. ARENA ALLOCATION (Include space for PyObject* pointers)
+    // We allocate: PosStride + ShapeParams + SettingsPtr + HandleUint64 + ResultPyObjectPtr
+    size_t arena_size =
+        batch_count * (sizeof(PosStride) + sizeof(ShapeParams) +
+                       sizeof(JPH_BodyCreationSettings *) + sizeof(uint64_t) + sizeof(PyObject *));
+    void *arena = CULV_RAW_MALLOC(arena_size);
     if (UNLIKELY(!arena)) {
         return PyErr_NoMemory();
     }
@@ -2051,6 +2055,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
     auto *size_buf      = (ShapeParams *)(pos_buf + batch_count);
     auto **settings_buf = (JPH_BodyCreationSettings **)(size_buf + batch_count);
     auto *handles_out   = (uint64_t *)(settings_buf + batch_count);
+    auto **py_results   = (PyObject **)(handles_out + batch_count);
 
     memset((void *)settings_buf, 0, batch_count * sizeof(void *));
 
@@ -2062,22 +2067,23 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
     // 3. JOLT PREP (No GIL, Inline Shape Caching)
     Py_BEGIN_ALLOW_THREADS;
     SHADOW_LOCK(&self->shadow_lock);
-
     JPH_Shape *last_shape = nullptr;
-    ShapeParams last_size = {-1.0f, -1.0f, -1.0f, -1.0f}; // Impossible baseline
+    ShapeParams last_size = {-1.0f, -1.0f, -1.0f, -1.0f};
 
     for (Py_ssize_t i = 0; i < batch_count; i++) {
         JPH_Shape *shape    = last_shape;
         const float *curr_p = size_buf[i].p;
         const float *last_p = last_size.p;
 
-        // OPTIMIZATION: 99% of batches use the same size.
-        // Manual comparison avoids padding-bit warnings and is easily vectorized by the compiler.
+        // Manual logical comparison: Correct float semantics and better optimization
         if (curr_p[0] != last_p[0] || curr_p[1] != last_p[1] || curr_p[2] != last_p[2] ||
             curr_p[3] != last_p[3]) {
+
             shape      = find_or_create_shape_locked(self, shape_type, curr_p);
             last_shape = shape;
-            last_size  = size_buf[i]; // Struct copy is fine here
+
+            // Struct assignment is faster and safer than memcpy in C23
+            last_size = size_buf[i];
         }
 
         if (shape) {
@@ -2091,14 +2097,14 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
     SHADOW_UNLOCK(&self->shadow_lock);
     Py_END_ALLOW_THREADS;
 
-    // 4. BULK COMMIT PHASE (Ultra-Tight Critical Section)
+    // 4. BULK COMMIT PHASE (Inside Shadow Lock)
     SHADOW_LOCK(&self->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
 
     size_t current_count = atomic_load_explicit(&self->count, memory_order_acquire);
     size_t available     = atomic_load_explicit(&self->free_count, memory_order_acquire);
 
-    // Bulk Capacity Check
+    // Expand if necessary
     if (UNLIKELY(available < (size_t)batch_count ||
                  (current_count + batch_count) > self->capacity)) {
         size_t needed = current_count + batch_count + INITIAL_BODY_CAPACITY;
@@ -2116,91 +2122,66 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
         goto fail_locked;
     }
 
-    if (UNLIKELY(self->command_count + batch_count > self->command_capacity)) {
-        if (!ensure_command_bulk_capacity(self, (size_t)batch_count)) {
-            goto fail_locked;
-        }
+    if (UNLIKELY(!ensure_command_bulk_capacity(self, (size_t)batch_count))) {
+        // If we can't grow the command queue, we can't proceed.
+        // Jump to cleanup to destroy JPH settings and free the arena.
+        goto fail_locked;
     }
 
-    // --- BULK RESOURCE ACQUISITION ---
     uint32_t base_dense =
         (uint32_t)atomic_fetch_add_explicit(&self->count, batch_count, memory_order_relaxed);
     size_t free_head = available - batch_count;
     atomic_store_explicit(&self->free_count, free_head, memory_order_release);
 
-    // Pointer Hoisting: Prevents repeated self-> dereferencing in the loop
-    PosStride *pos_shadow  = (PosStride *)self->positions;
-    PosStride *ppos_shadow = (PosStride *)self->prev_positions;
-    AuxStride *rot_shadow  = (AuxStride *)self->rotations;
-    AuxStride *prot_shadow = (AuxStride *)self->prev_rotations;
-    AuxStride *lvel_shadow = (AuxStride *)self->linear_velocities;
-    AuxStride *avel_shadow = (AuxStride *)self->angular_velocities;
-
-    uint32_t *s2d           = self->slot_to_dense;
-    uint32_t *d2s           = self->dense_to_slot;
-    JPH_BodyID *bids        = self->body_ids;
-    _Atomic uint8_t *states = self->slot_states;
-    PhysicsCommand *cmd_q   = self->command_queue;
-    size_t cmd_idx          = self->command_count;
-
-    // Population Loop (Pure sequential C array writes)
     for (Py_ssize_t i = 0; i < batch_count; i++) {
         if (UNLIKELY(!settings_buf[i])) {
+            handles_out[i] = 0;
             continue;
         }
 
         uint32_t slot  = self->free_slots[free_head + i];
         uint32_t dense = base_dense + (uint32_t)i;
-
         uint32_t gen   = atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
         uint64_t raw_h = ((uint64_t)gen << HANDLE_INDEX_BITS) | slot;
+
         JPH_BodyCreationSettings_SetUserData(settings_buf[i], raw_h);
 
-        s2d[slot]   = dense;
-        d2s[dense]  = slot;
-        bids[dense] = JPH_INVALID_BODY_ID;
+        self->slot_to_dense[slot]  = dense;
+        self->dense_to_slot[dense] = slot;
+        self->body_ids[dense]      = JPH_INVALID_BODY_ID;
 
-        PosStride p        = pos_buf[i];
-        p.w                = 0.0;
-        pos_shadow[dense]  = p;
-        ppos_shadow[dense] = p;
-        rot_shadow[dense]  = (AuxStride){0, 0, 0, 1};
-        prot_shadow[dense] = (AuxStride){0, 0, 0, 1};
-        lvel_shadow[dense] = (AuxStride){0, 0, 0, 0};
-        avel_shadow[dense] = (AuxStride){0, 0, 0, 0};
+        PosStride p                                = pos_buf[i];
+        p.w                                        = 0.0;
+        ((PosStride *)self->positions)[dense]      = p;
+        ((PosStride *)self->prev_positions)[dense] = p;
+        ((AuxStride *)self->rotations)[dense]      = (AuxStride){0, 0, 0, 1};
+        ((AuxStride *)self->prev_rotations)[dense] = (AuxStride){0, 0, 0, 1};
 
-        atomic_store_explicit(&states[slot], SLOT_PENDING_CREATE, memory_order_release);
+        atomic_store_explicit(&self->slot_states[slot], SLOT_PENDING_CREATE, memory_order_release);
 
-        PhysicsCommand *cmd  = &cmd_q[cmd_idx++];
+        PhysicsCommand *cmd  = &self->command_queue[self->command_count++];
         cmd->header          = CMD_HEADER(CMD_CREATE_BODY, slot);
         cmd->create.settings = settings_buf[i];
 
         handles_out[i] = raw_h;
     }
-
-    self->command_count = cmd_idx;
     self->view_shape[0] = (Py_ssize_t)atomic_load_explicit(&self->count, memory_order_relaxed);
-
     SHADOW_UNLOCK(&self->shadow_lock);
 
-    // 5. PYTHON LIST BUILD (Lock-Free)
-    // We construct the heavy Python objects outside the lock so we don't stall the physics engine.
-    PyObject *res_list = PyList_New(batch_count);
-    if (LIKELY(res_list)) {
-        for (Py_ssize_t i = 0; i < batch_count; i++) {
-            if (LIKELY(settings_buf[i])) {
-                PyObject *py_h = PyLong_FromUnsignedLongLong(handles_out[i]);
-                if (UNLIKELY(!py_h)) {
-                    py_h = Py_None;
-                    Py_INCREF(Py_None);
-                }
-                PyList_SET_ITEM(res_list, i, py_h);
-            } else {
-                Py_INCREF(Py_None);
-                PyList_SET_ITEM(res_list, i, Py_None);
-            }
+    // 5. FAST BUILD PHASE (Outside Lock)
+    for (Py_ssize_t i = 0; i < batch_count; i++) {
+        if (handles_out[i] != 0) {
+            // Converts uint64_t to PyLong object
+            py_results[i] = FastBuild_Value(handles_out[i]);
+        } else {
+            // Correctly handles Py_None as a "failure to create" entry
+            py_results[i] = FastBuild_Value(nullptr);
         }
     }
+
+    // Pack the pointer array into a Python List
+    // This function handles cleanup/decref internally if any py_results[i] is NULL
+    PyObject *res_list = fb_pack_list((size_t)batch_count, py_results);
 
     CULV_RAW_FREE(arena);
     return res_list;
@@ -2452,63 +2433,83 @@ PyCFunction_DeclareMethod PhysicsWorld_destroy_bodies_batch(PhysicsWorldObject *
         return nullptr;
     }
 
-    PyObject *py_handles = PySequence_Fast(py_handles_in, "handles must be a sequence");
-    if (UNLIKELY(!py_handles)) {
+    PyObject *py_seq = PySequence_Fast(py_handles_in, "handles must be a sequence");
+    if (UNLIKELY(!py_seq)) {
         return nullptr;
     }
 
-    const Py_ssize_t batch_count = PySequence_Fast_GET_SIZE(py_handles);
-    PyObject **items             = PySequence_Fast_ITEMS(py_handles);
-
+    const Py_ssize_t batch_count = PySequence_Fast_GET_SIZE(py_seq);
     if (batch_count <= 0) {
-        Py_DECREF(py_handles);
+        Py_DECREF(py_seq);
         Py_RETURN_NONE;
     }
 
-    SHADOW_LOCK(&self->shadow_lock);
-    BLOCK_UNTIL_NOT_STEPPING(self);
-
-    // 1. ONE-TIME BULK CAPACITY CHECK
-    if (UNLIKELY(!ensure_command_bulk_capacity(self, (size_t)batch_count))) {
-        SHADOW_UNLOCK(&self->shadow_lock);
-        Py_DECREF(py_handles);
+    // 1. EXTRACTION PHASE (Outside Lock)
+    // Extract Python handles into a raw C array while we don't care about the physics lock.
+    uint64_t *handle_cache = (uint64_t *)CULV_RAW_MALLOC(batch_count * sizeof(uint64_t));
+    if (UNLIKELY(!handle_cache)) {
+        Py_DECREF(py_seq);
         return PyErr_NoMemory();
     }
 
+    PyObject **items         = PySequence_Fast_ITEMS(py_seq);
+    size_t actual_work_count = 0;
+
     for (Py_ssize_t i = 0; i < batch_count; i++) {
-        uint64_t h_val = PyLong_AsUnsignedLongLong(items[i]);
+        uint64_t h = PyLong_AsUnsignedLongLong(items[i]);
         if (UNLIKELY(PyErr_Occurred())) {
             PyErr_Clear();
-            continue;
+            continue; // Skip invalid handles
         }
+        handle_cache[actual_work_count++] = h;
+    }
+    Py_DECREF(py_seq);
 
+    if (actual_work_count == 0) {
+        CULV_RAW_FREE(handle_cache);
+        Py_RETURN_NONE;
+    }
+
+    // 2. COMMIT PHASE (Inside Lock - Ultra Fast)
+    SHADOW_LOCK(&self->shadow_lock);
+    BLOCK_UNTIL_NOT_STEPPING(self);
+
+    if (UNLIKELY(!ensure_command_bulk_capacity(self, actual_work_count))) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        CULV_RAW_FREE(handle_cache);
+        return PyErr_NoMemory();
+    }
+
+    // Hoist pointers for maximum loop speed
+    PhysicsCommand *cmd_q   = self->command_queue;
+    size_t cmd_idx          = self->command_count;
+    _Atomic uint8_t *states = self->slot_states;
+
+    for (size_t i = 0; i < actual_work_count; i++) {
         uint32_t slot = 0;
-        if (unpack_handle(self, (BodyHandle)h_val, &slot)) {
-            const uint8_t state =
-                atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
+        if (unpack_handle(self, (BodyHandle)handle_cache[i], &slot)) {
+            const uint8_t state = atomic_load_explicit(&states[slot], memory_order_acquire);
 
-            // Branchless validity check
+            // Branchless liveness check using the mask
             static constexpr uint8_t BITMASK_CLAMP = 7;
             const uint32_t is_destructible =
                 !!((1u << (state & BITMASK_CLAMP)) & MASK_DESTRUCTIBLE);
 
-            // Speculative command queue write
-            PhysicsCommand *cmd = &self->command_queue[self->command_count];
-            cmd->header         = CMD_HEADER(CMD_DESTROY_BODY, slot);
-
-            // Only advance the count if valid; otherwise, next loop overwrites this slot
-            self->command_count += is_destructible;
+            // Commit command
+            cmd_q[cmd_idx].header = CMD_HEADER(CMD_DESTROY_BODY, slot);
+            cmd_idx += is_destructible;
 
             if (is_destructible) {
-                // Lock the slot immediately so other threads stop using it
-                atomic_store_explicit(&self->slot_states[slot], SLOT_PENDING_DESTROY,
-                                      memory_order_release);
+                // Immediate transition blocks other mutators from using this slot
+                atomic_store_explicit(&states[slot], SLOT_PENDING_DESTROY, memory_order_release);
             }
         }
     }
 
+    self->command_count = cmd_idx;
     SHADOW_UNLOCK(&self->shadow_lock);
-    Py_DECREF(py_handles);
+
+    CULV_RAW_FREE(handle_cache);
     Py_RETURN_NONE;
 }
 
@@ -4165,10 +4166,10 @@ static void stitch_docs_getset(PyGetSetDef *getset, const char *class_name) {
      .ml_flags = (method_type),                                                                    \
      .ml_doc   = nullptr} // Initialized to nullptr to be filled by stitcher
 
-#define CULV_FEAT_INTERNAL(prefix, name, method_type) \
-    {.ml_name  = "_" #name,                           \
-     .ml_meth  = (PyCFunction)prefix##_##name,        \
-     .ml_flags = (method_type),                       \
+#define CULV_FEAT_INTERNAL(prefix, name, method_type)                                              \
+    {.ml_name  = "_" #name,                                                                        \
+     .ml_meth  = (PyCFunction)prefix##_##name,                                                     \
+     .ml_flags = (method_type),                                                                    \
      .ml_doc   = NULL}
 
 // User-facing macros for context methods
