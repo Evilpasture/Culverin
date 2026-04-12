@@ -1355,19 +1355,6 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
     PhysicsCommand *captured_queue = self->command_queue;
     size_t captured_count          = self->command_count;
 
-    if (UNLIKELY(self->command_capacity > self->spare_capacity)) {
-        void *new_spare = CULV_RAW_REALLOC(self->command_queue_spare,
-                                           self->command_capacity * sizeof(PhysicsCommand));
-        if (UNLIKELY(!new_spare)) {
-            // Rollback flags on OOM
-            atomic_store_explicit(&self->is_stepping, false, memory_order_relaxed);
-            atomic_store_explicit(&self->step_requested, false, memory_order_relaxed);
-            SHADOW_UNLOCK(&self->shadow_lock);
-            return PyErr_NoMemory();
-        }
-        self->command_queue_spare = (PhysicsCommand *)new_spare;
-        self->spare_capacity      = self->command_capacity;
-    }
     self->command_queue       = self->command_queue_spare;
     self->command_queue_spare = captured_queue;
     self->command_count       = 0;
@@ -1418,15 +1405,9 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
         // --- PHASE 3: FINALIZATION ---
         SHADOW_LOCK(&self->shadow_lock);
 
-    // 1. Cleanup retired buffers (Atomic gens/stats handled in free_new_buffers)
-    if (self->trash_count > 0) {
-        for (size_t i = 0; i < self->trash_count; i++) {
-            free_new_buffers(&self->trash_buffers[i]);
-        }
-        self->trash_count = 0;
-    }
+    // We no longer need to cleanup buffer. The internal lifecycle handles it.
 
-    // 2. Metadata Updates
+    // Metadata Updates
     size_t c_idx        = atomic_load_explicit(&self->contact_atomic_idx, memory_order_acquire);
     self->contact_count = (c_idx > self->contact_max_capacity) ? self->contact_max_capacity : c_idx;
 
@@ -1436,7 +1417,7 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
 
     self->time += (double)dt;
 
-    // 3. Fence Release
+    // Fence Release
     atomic_store_explicit(&self->is_stepping, false, memory_order_release);
     atomic_store_explicit(&self->step_requested, false, memory_order_release);
 
