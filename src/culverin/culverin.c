@@ -3837,7 +3837,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_debug_data(PhysicsWorldObject *self,
     return ret;
 }
 
-PyCFunction_DeclareMethod culv_dump_schema(PyObject *self, PyObject *Py_UNUSED(args)) {
+PyCFunction_DeclareMethod culv_dump_schema_json(PyObject *self, PyObject *Py_UNUSED(args)) {
     // self is the module object
     CulverinState *st = get_culverin_state(self);
 
@@ -4184,6 +4184,12 @@ static void stitch_docs_getset(PyGetSetDef *getset, const char *class_name) {
      .ml_flags = (method_type),                                                                    \
      .ml_doc   = nullptr} // Initialized to nullptr to be filled by stitcher
 
+#define CULV_FEAT_INTERNAL(prefix, name, method_type) \
+    {.ml_name  = "_" #name,                           \
+     .ml_meth  = (PyCFunction)prefix##_##name,        \
+     .ml_flags = (method_type),                       \
+     .ml_doc   = NULL}
+
 // User-facing macros for context methods
 #define PW_FASTCALL(name) CULV_FEAT(PhysicsWorld, name, METH_FASTCALL | METH_KEYWORDS)
 #define PW_NOARGS(name) CULV_FEAT(PhysicsWorld, name, METH_NOARGS)
@@ -4217,16 +4223,17 @@ static void stitch_docs_getset(PyGetSetDef *getset, const char *class_name) {
      .doc     = nullptr,                                                                           \
      .closure = nullptr}
 
+// User-facing macros for module-level methods
+#define MOD_FASTCALL(name) CULV_FEAT(culv, name, METH_FASTCALL | METH_KEYWORDS)
+#define MOD_NOARGS(name) CULV_FEAT(culv, name, METH_NOARGS)
+
+#define MOD_NOARGS_INTERNAL(name) CULV_FEAT_INTERNAL(culv, name, METH_NOARGS)
+
+// --- Module Method Definitions ---
 static PyMethodDef module_methods[] = {
-    {.ml_name  = "_dump_schema_json",
-     .ml_meth  = CULV_CAST(culv_dump_schema),
-     .ml_flags = METH_NOARGS,
-     .ml_doc   = "Internal: Dumps schema to culverin_schema.json"},
-    {.ml_name  = "mutate_tuple",
-     .ml_meth  = (PyCFunction)(void (*)(void))culv_mutate_tuple,
-     .ml_flags = METH_FASTCALL,
-     .ml_doc   = "Bypasses Python immutability to modify a tuple index in-place. Use at own risk."},
-    {.ml_name = nullptr, .ml_meth = nullptr, .ml_flags = 0, .ml_doc = nullptr}};
+    MOD_NOARGS_INTERNAL(dump_schema_json), // Stitches from ### dump_schema in ## class Module
+    MOD_FASTCALL(mutate_tuple),            // Stitches from ### mutate_tuple in ## class Module
+    {nullptr, nullptr, 0, nullptr}};
 
 static PyGetSetDef PhysicsWorld_getset[] = {
     GETSET("positions", get_positions),
@@ -4362,9 +4369,9 @@ static PyMethodDef RagdollSettings_methods[] = {
     RDS_FASTCALL(add_part), RDS_NOARGS(stabilize), {nullptr, nullptr, 0, nullptr}};
 
 static PyMethodDef SoftBodySharedSettings_methods[] = {
-    SBSS_FASTCALL(add_vertex),     SBSS_O(add_pinned_vertex),         SBSS_O(get_vertex_position),
-    SBSS_FASTCALL(add_face),       SBSS_FASTCALL(create_constraints), SBSS_NOARGS(optimize),
-    {nullptr, nullptr, 0, nullptr}};
+    SBSS_FASTCALL(add_vertex),         SBSS_FASTCALL(add_vertices), SBSS_O(add_pinned_vertex),
+    SBSS_O(get_vertex_position),       SBSS_FASTCALL(add_face),     SBSS_FASTCALL(add_faces),
+    SBSS_FASTCALL(create_constraints), SBSS_NOARGS(optimize),       {nullptr, nullptr, 0, nullptr}};
 
 static const PyMemberDef PhysicsWorld_members[] = {
     {.name   = "__weaklistoffset__",
@@ -4669,7 +4676,7 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
                  precision, build_type, compiler_id);
 
         // --- THE WINNER: Run exactly once per process life ---
-
+        stitch_docs(module_methods, "Module");
         stitch_docs(PhysicsWorld_methods, "PhysicsWorld");
         stitch_docs(Character_methods, "Character");
         stitch_docs(Vehicle_methods, "Vehicle");
