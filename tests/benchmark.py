@@ -11,11 +11,11 @@ import psutil
 import culverin
 
 
-def get_ram_mb():
+def get_ram_mb() -> float:
     return psutil.Process(os.getpid()).memory_info().rss / 1024 / 1024
 
 
-def run_leak_test(iterations: int = 50000):
+def run_leak_test(iterations: int = 50000) -> None:
     print("\n=== CULVERIN MEMORY LEAK TEST ===")
     world = culverin.PhysicsWorld(settings={"max_bodies": 10000})
     verts = array.array("f", [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0]).tobytes()
@@ -45,7 +45,7 @@ def run_leak_test(iterations: int = 50000):
         print("✅ SUCCESS: Memory is stable")
 
 
-def run_threading_benchmark(duration: float = 5.0, num_bodies: int = 500):
+def run_threading_benchmark(duration: float = 5.0, num_bodies: int = 500) -> None:
     print("\n=== CULVERIN REALISTIC SIMULATION BENCHMARK ===")
     print(f"Simulating {num_bodies} active dynamic bodies across multiple cores for {duration}s...")
 
@@ -84,7 +84,7 @@ def run_threading_benchmark(duration: float = 5.0, num_bodies: int = 500):
     stats = {"steps": 0, "rays": 0, "contacts": 0, "resets": 0, "mutations": 0}
 
     # --- THREAD 1: THE CORE STEPPER ---
-    def worker_stepper():
+    def worker_stepper() -> None:
         while running:
             try:
                 # Run as fast as the CPU allows
@@ -95,7 +95,7 @@ def run_threading_benchmark(duration: float = 5.0, num_bodies: int = 500):
                 pass
 
     # --- THREAD 2: SENSORS (RAYCASTS) ---
-    def worker_sensors():
+    def worker_sensors() -> None:
         batch_size = 500
         starts = array.array("f", [0.0] * (batch_size * 3))
         dirs = array.array("f", [0.0, -1.0, 0.0] * batch_size)
@@ -106,7 +106,7 @@ def run_threading_benchmark(duration: float = 5.0, num_bodies: int = 500):
             time.sleep(0.01)  # ~100Hz
 
     # --- THREAD 3: GAMEPLAY LOGIC (ANTI-SLEEP & MEMORYVIEW) ---
-    def worker_housekeeper():
+    def worker_housekeeper() -> None:
         # Wrap the raw memoryview in a NumPy array
         pos_data = np.frombuffer(world.positions, dtype=np.float64).reshape(-1, 4)
 
@@ -133,7 +133,7 @@ def run_threading_benchmark(duration: float = 5.0, num_bodies: int = 500):
             time.sleep(0.5)
 
     # --- THREAD 4: THE MUTATOR (CONTROLLED HAMMER) ---
-    def worker_mutator():
+    def worker_mutator() -> None:
         while running:
             try:
                 # Destroy 5 bodies, create 5 bodies.
@@ -204,7 +204,7 @@ def run_threading_benchmark(duration: float = 5.0, num_bodies: int = 500):
     print(f"Total Raycasts: {stats['rays']}")
 
 
-def run_churn_test(duration: float = 10.0):
+def run_churn_test(duration: float = 10.0) -> None:
     # There is a known memory issue. will investigate...
     print("\n=== CULVERIN FRAGMENTATION (CHURN) TEST ===")
 
@@ -285,11 +285,101 @@ def run_churn_test(duration: float = 10.0):
     print(f" - Final RAM:     {get_ram_mb():.2f}MB")
 
 
+def run_soft_body_benchmark(duration: float = 10.0, num_bodies: int = 50, segments: int = 6) -> None:
+    print("\n=== CULVERIN SOFT BODY STRESS TEST ===")
+    print(f"Goal: Simulate {num_bodies} jelly cubes ({segments}^3 vertices each) for {duration}s")
+
+    world = culverin.PhysicsWorld(settings={"max_bodies": 2000})
+    world.create_body(pos=(0, -2, 0), size=(100, 1, 100), motion=culverin.MOTION_STATIC)
+
+    # 1. Measure Topology Setup (Shared Settings)
+    t0 = time.perf_counter()
+    settings = culverin.SoftBodySharedSettings()
+
+    # Pre-generate coordinates to avoid nested loop overhead in Python
+    lin = np.linspace(-1.0, 1.0, segments)
+    grid = np.stack(np.meshgrid(lin, lin, lin), axis=-1).reshape(-1, 3)
+
+    v_count = 0
+    for pos in grid:
+        # FIXED: Added required inv_mass argument
+        settings.add_vertex(pos=tuple(pos), inv_mass=1.0)
+        v_count += 1
+
+    # Create simple structural integrity (connecting vertices in sequence)
+    # Using distinct indices (i, i+1, i+2) to satisfy the C-guard
+    for i in range(v_count - 2):
+        settings.add_face(v1=i, v2=i + 1, v3=i + 2)
+
+    # Standard granular setup
+    settings.create_constraints(compliance=0.0001, bend_type=culverin.BEND_DISTANCE)
+    settings.optimize()
+
+    topology_time = (time.perf_counter() - t0) * 1000
+    print(f"-> SharedSettings built in {topology_time:.2f}ms ({v_count} vertices)")
+
+    handles: list[int] = []
+    start_ram = get_ram_mb()
+    dtype = np.float64 if culverin.USE_DOUBLE_PRECISION else np.float32
+
+    stats = {"steps": 0, "verts_synced": 0}
+    start_t = time.time()
+
+    print("-> Starting simulation loop...")
+    try:
+        while time.time() - start_t < duration:
+            # Maintain Population
+            while len(handles) < num_bodies:
+                h = world.create_soft_body(
+                    shared_settings=settings,
+                    pos=(random.uniform(-10, 10), random.uniform(10, 20), random.uniform(-10, 10)),
+                    rot=(0, 0, 0, 1),
+                    pressure=100.0,
+                    linear_damping=0.2,
+                    num_iterations=15,
+                )
+                handles.append(h)
+
+            world.step(1 / 60.0)
+            stats["steps"] += 1
+
+            # Stress the Sync Layer
+            for h in handles:
+                view = world.get_soft_body_vertices(h)
+                # This forces a read of the synchronized C memory into NumPy
+                _ = np.frombuffer(view, dtype=dtype)
+                stats["verts_synced"] += v_count
+
+            # Churn to test memory reclamation of SoftBodyShadow buffers
+            if stats["steps"] % 5 == 0:
+                for _ in range(2):
+                    if handles:
+                        world.destroy_body(handles.pop(0))
+
+    except Exception as e:
+        print(f"❌ ERROR: {e}")
+        import traceback
+
+        traceback.print_exc()
+
+    end_ram = get_ram_mb()
+    total_time = time.time() - start_t
+
+    print("\n✅ SOFT BODY RESULTS")
+    print(f" - Performance:   {stats['steps'] / total_time:.2f} FPS")
+    print(f" - Vertex Sync:  {stats['verts_synced'] / total_time / 1e6:.2f} Million Verts/sec")
+    print(f" - RAM Usage:     {end_ram:.2f} MB (Delta: {end_ram - start_ram:+.2f} MB)")
+
+    if abs(end_ram - start_ram) > 20.0:
+        print("⚠️ WARNING: Significant RAM growth. Vertex shadow buffers might be leaking.")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Culverin Diagnostic Tools")
     parser.add_argument("--leak", action="store_true")
     parser.add_argument("--stress", action="store_true")
     parser.add_argument("--churn", action="store_true")
+    parser.add_argument("--soft", action="store_true", help="Run Soft Body Benchmark")
     parser.add_argument("--all", action="store_true", help="Run all tests")
 
     args = parser.parse_args()
@@ -300,6 +390,8 @@ if __name__ == "__main__":
         run_threading_benchmark()
     if args.all or args.churn:
         run_churn_test()
+    if args.all or args.soft:
+        run_soft_body_benchmark()
 
-    if not any([args.all, args.leak, args.stress, args.churn]):
+    if not any([args.all, args.leak, args.stress, args.churn, args.soft]):
         print("Please specify a test...")
