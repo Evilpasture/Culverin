@@ -3900,9 +3900,11 @@ PyCFunction_DeclareMethod PhysicsWorld_benchmark_build(CULV_MAYBE_UNUSED PyObjec
     return result;
 }
 
+#include <tupleobject.h>
+
 PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, PyObject *const *args,
                                             Py_ssize_t nargsf) {
-    // --- 1. DECLARATIONS ---
+    // --- 1. DECLARATIONS (Must be at top for C++ / goto safety) ---
     auto nargs              = PyVectorcall_NARGS(nargsf);
     constexpr auto MIN_ARGS = 3;
     constexpr auto MAX_ARGS = 5;
@@ -3912,6 +3914,7 @@ PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, Py
     PyObject *registry = nullptr;
     PyObject *key      = nullptr;
     PyObject *old_val  = nullptr;
+    PyObject *stored   = nullptr;
 
     Py_ssize_t index     = 0;
     Py_hash_t final_hash = -1;
@@ -3947,27 +3950,22 @@ PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, Py
     if (nargs == MAX_ARGS) {
         registry = args[3];
         key      = args[4];
-        // CRITICAL FIX: Explicit type check to satisfy test_bounds_and_type_errors
         if (!PyDict_Check(registry)) {
             PyErr_SetString(PyExc_TypeError, "arg 3 must be a dict");
             return nullptr;
         }
     }
 
-    // --- 3. ADDRESS RESOLUTION (Layout Safe) ---
-    // Use the address of the first item to find the items array.
-    PyObject **items_base = (PyObject **)&PyTuple_GET_ITEM(target, 0);
-    // Hash is always stored exactly one Py_hash_t width before the items.
-    Py_hash_t *hash_ptr = (Py_hash_t *)((char *)items_base - sizeof(Py_hash_t));
-
-    // --- 4. CRITICAL SECTION ---
+    // --- 3. CRITICAL SECTION ---
+    // We lock the tuple to prevent concurrent reads/hashes.
+    // This macro opens a new scope '{'. No if/else allowed here.
 #if defined(Py_BEGIN_CRITICAL_SECTION)
     Py_BEGIN_CRITICAL_SECTION(target);
 #endif
 
     // Step A: Registry Removal
     if (registry) {
-        PyObject *stored = PyDict_GetItemWithError(registry, key);
+        stored = PyDict_GetItemWithError(registry, key);
         if (!stored) {
             if (!PyErr_Occurred()) {
                 PyErr_SetObject(PyExc_KeyError, key);
@@ -3978,6 +3976,7 @@ PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, Py
             PyErr_SetString(PyExc_ValueError, "registry[key] is not the same object as target");
             goto exit_critical;
         }
+
         Py_INCREF(target);
         if (PyDict_DelItem(registry, key) < 0) {
             Py_DECREF(target);
@@ -3985,22 +3984,26 @@ PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, Py
         }
     }
 
-    // Step B: The Mutation (Atomic Swap)
+    // Step B: The Mutation (Using official struct pointer)
     {
+        PyTupleObject *t = (PyTupleObject *)target;
         Py_INCREF(new_val);
-        _Atomic(PyObject *) *atomic_slot = (_Atomic(PyObject *) *)&items_base[index];
-        old_val = atomic_exchange_explicit(atomic_slot, new_val, memory_order_relaxed);
+        old_val           = t->ob_item[index];
+        t->ob_item[index] = new_val;
 
-        // Step C: Rehash (Busting the cache)
-        *hash_ptr = -1;
+        // Step C: Rehash Cache Bust (Version-Aware)
+#if PY_VERSION_HEX >= 0x030E0000
+        // ob_hash was restored in 3.14 for free-threading; we must reset it.
+        t->ob_hash = -1;
+#endif
+        // In 3.11-3.13, ob_hash field doesn't exist; hashes are recomputed.
     }
 
     final_hash = PyObject_Hash(target);
 
     if (final_hash == -1) {
         // Rollback
-        _Atomic(PyObject *) *atomic_slot = (_Atomic(PyObject *) *)&items_base[index];
-        atomic_store_explicit(atomic_slot, old_val, memory_order_relaxed);
+        ((PyTupleObject *)target)->ob_item[index] = old_val;
         Py_DECREF(new_val);
         if (registry) {
             Py_DECREF(target);
@@ -4012,8 +4015,7 @@ PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, Py
     if (registry) {
         if (PyDict_SetItem(registry, key, target) < 0) {
             // Rollback
-            _Atomic(PyObject *) *atomic_slot = (_Atomic(PyObject *) *)&items_base[index];
-            atomic_store_explicit(atomic_slot, old_val, memory_order_relaxed);
+            ((PyTupleObject *)target)->ob_item[index] = old_val;
             Py_DECREF(new_val);
             Py_DECREF(target);
             final_hash = -1;
@@ -4026,6 +4028,7 @@ PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, Py
     success = 1;
 
 exit_critical:
+    // This macro closes the scope '}'.
 #if defined(Py_BEGIN_CRITICAL_SECTION)
     Py_END_CRITICAL_SECTION();
 #endif
