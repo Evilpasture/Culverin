@@ -92,7 +92,7 @@ PyType_DeclareSlot_Status BufferProxy_getbuffer(BufferProxyObject *self, Py_buff
     return 0;
 }
 
-PyType_DeclareSlot_Void BufferProxy_releasebuffer(BufferProxyObject *self, Py_buffer *view) {
+PyType_DeclareSlot_Void BufferProxy_releasebuffer(CULV_MAYBE_UNUSED BufferProxyObject *self, CULV_MAYBE_UNUSED Py_buffer *view) {
 // Let NumPy hold the world buffer permanently.
 #if defined(STRICT_THREAD_SAFETY)
     PhysicsWorldObject *world = self->world;

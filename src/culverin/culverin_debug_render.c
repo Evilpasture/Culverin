@@ -43,7 +43,7 @@ void debug_buffer_free(DebugBuffer *buf) {
 // --- Jolt Debug Callbacks ---
 static void JPH_API_CALL OnDebugDrawLine(void *userData, const JPH_RVec3 *from, const JPH_RVec3 *to,
                                          JPH_Color color) {
-    auto *self = (PhysicsWorldObject *)userData;
+    auto self = (PhysicsWorldObject *)userData;
     debug_buffer_ensure(&self->debug_lines, 2);
     debug_buffer_push(&self->debug_lines,
                       (DebugCoordinates){(float)from->x, (float)from->y, (float)from->z}, color);

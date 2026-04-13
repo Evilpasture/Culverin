@@ -8,8 +8,8 @@
  * This is the "Cold Path" logic that allows GIL release.
  */
 static inline void internal_sync_wait_loop(PhysicsWorldObject *self, 
-                                           const _Atomic bool *bool_cond, 
-                                           const _Atomic int *int_cond,
+                                           const CULV_ATOMIC(bool) *bool_cond, 
+                                           const CULV_ATOMIC(int) *int_cond,
                                            bool is_bool) {
     SHADOW_UNLOCK(&self->shadow_lock);
     

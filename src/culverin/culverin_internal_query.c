@@ -38,7 +38,7 @@ JPH_Shape *find_or_create_shape_locked(PhysicsWorldObject *self, int type, const
     switch (type) {
     case CULV_SHAPE_BOX: {
         JPH_Vec3 half_extents = {p1, p2, p3};
-        auto *s               = JPH_BoxShapeSettings_Create(&half_extents, 0.05f);
+        auto s               = JPH_BoxShapeSettings_Create(&half_extents, 0.05f);
         if (s) {
             shape = (JPH_Shape *)JPH_BoxShapeSettings_CreateShape(s);
             JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);
@@ -46,7 +46,7 @@ JPH_Shape *find_or_create_shape_locked(PhysicsWorldObject *self, int type, const
         break;
     }
     case CULV_SHAPE_SPHERE: {
-        auto *s = JPH_SphereShapeSettings_Create(p1);
+        auto s = JPH_SphereShapeSettings_Create(p1);
         if (s) {
             shape = (JPH_Shape *)JPH_SphereShapeSettings_CreateShape(s);
             JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);
@@ -54,7 +54,7 @@ JPH_Shape *find_or_create_shape_locked(PhysicsWorldObject *self, int type, const
         break;
     }
     case CULV_SHAPE_CAPSULE: {
-        auto *s = JPH_CapsuleShapeSettings_Create(p1, p2);
+        auto s = JPH_CapsuleShapeSettings_Create(p1, p2);
         if (s) {
             shape = (JPH_Shape *)JPH_CapsuleShapeSettings_CreateShape(s);
             JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);
@@ -62,7 +62,7 @@ JPH_Shape *find_or_create_shape_locked(PhysicsWorldObject *self, int type, const
         break;
     }
     case CULV_SHAPE_CYLINDER: {
-        auto *s = JPH_CylinderShapeSettings_Create(p1, p2, 0.05f);
+        auto s = JPH_CylinderShapeSettings_Create(p1, p2, 0.05f);
         if (s) {
             shape = (JPH_Shape *)JPH_CylinderShapeSettings_CreateShape(s);
             JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);
@@ -71,7 +71,7 @@ JPH_Shape *find_or_create_shape_locked(PhysicsWorldObject *self, int type, const
     }
     case CULV_SHAPE_PLANE: {
         JPH_Plane plane = {{p1, p2, p3}, p4};
-        auto *s         = JPH_PlaneShapeSettings_Create(&plane, nullptr, 1000.0f);
+        auto s         = JPH_PlaneShapeSettings_Create(&plane, nullptr, 1000.0f);
         if (s) {
             shape = (JPH_Shape *)JPH_PlaneShapeSettings_CreateShape(s);
             JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);

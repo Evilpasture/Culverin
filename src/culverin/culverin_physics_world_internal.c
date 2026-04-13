@@ -48,8 +48,8 @@ void free_new_buffers(NewBuffers *nb) {
     CULV_RAW_FREE(nb->udat);
     
     // 3. ATOMIC Buffer Cleanup
-    // nb->gens is _Atomic uint32_t*
-    // nb->stat is _Atomic uint8_t*
+    // nb->gens is CULV_ATOMIC(uint32_t)*
+    // nb->stat is CULV_ATOMIC(uint8_t)*
     // We cast to (void*) to ensure standard C-library free works without warnings
     CULV_RAW_FREE((void *)nb->gens);
     CULV_RAW_FREE((void *)nb->stat);
@@ -78,10 +78,10 @@ static int alloc_new_buffers(NewBuffers *nb, size_t cap) {
     nb->avel = (float *)CulvMem_RawMallocAligned(cap * sizeof(AuxStride), AVX_ALIGNMENT);
 
     // ATOMIC Data Buffers
-    // gens is _Atomic uint32_t*
-    nb->gens = (_Atomic uint32_t *)CULV_RAW_MALLOC(cap * sizeof(_Atomic uint32_t));
-    // stat is _Atomic uint8_t*
-    nb->stat = (_Atomic uint8_t *)CULV_RAW_MALLOC(cap * sizeof(_Atomic uint8_t));
+    // gens is CULV_ATOMIC(uint32_t)*
+    nb->gens = (CULV_ATOMIC(uint32_t) *)CULV_RAW_MALLOC(cap * sizeof(CULV_ATOMIC(uint32_t)));
+    // stat is CULV_ATOMIC(uint8_t)*
+    nb->stat = (CULV_ATOMIC(uint8_t) *)CULV_RAW_MALLOC(cap * sizeof(CULV_ATOMIC(uint8_t)));
 
     // Standard Data Buffers
     nb->bids  = (JPH_BodyID *)CULV_RAW_MALLOC(cap * sizeof(JPH_BodyID));
@@ -214,13 +214,13 @@ int allocate_buffers(PhysicsWorldObject *self, int max_bodies) {
 
     // ATOMIC BUFFER ALLOCATIONS
     // id_to_handle_map is BodyHandle*
-    self->id_to_handle_map = (BodyHandle *)CULV_RAW_MALLOC((self->max_jolt_bodies + 1) * sizeof(BodyHandle));
+    self->id_to_handle_map = (CULV_ATOMIC(BodyHandle) *)CULV_RAW_MALLOC((self->max_jolt_bodies + 1) * sizeof(BodyHandle));
     
-    // generations is _Atomic uint32_t*
-    self->generations   = (_Atomic uint32_t *)CULV_RAW_MALLOC(self->slot_capacity * sizeof(_Atomic uint32_t));
+    // generations is CULV_ATOMIC(uint32_t)*
+    self->generations   = (CULV_ATOMIC(uint32_t) *)CULV_RAW_MALLOC(self->slot_capacity * sizeof(CULV_ATOMIC(uint32_t)));
     
-    // slot_states is _Atomic uint8_t*
-    self->slot_states   = (_Atomic uint8_t *)CULV_RAW_MALLOC(self->slot_capacity * sizeof(_Atomic uint8_t));
+    // slot_states is CULV_ATOMIC(uint8_t)*
+    self->slot_states   = (CULV_ATOMIC(uint8_t) *)CULV_RAW_MALLOC(self->slot_capacity * sizeof(CULV_ATOMIC(uint8_t)));
 
     // Normal Indirection/Mapping Buffers
     self->slot_to_dense = (uint32_t *)CULV_RAW_MALLOC(self->slot_capacity * sizeof(uint32_t));
@@ -421,8 +421,8 @@ void free_shadow_buffers(PhysicsWorldObject *self) {
     self->angular_velocities = nullptr;
 
     // 2. ATOMIC buffers
-    // Generations is _Atomic uint32_t*
-    // Slot States is _Atomic uint8_t*
+    // Generations is CULV_ATOMIC(uint32_t)*
+    // Slot States is CULV_ATOMIC(uint8_t)*
     CULV_RAW_FREE((void *)self->generations);
     self->generations = nullptr;
     CULV_RAW_FREE((void *)self->slot_states);
@@ -661,8 +661,8 @@ int load_baked_scene(PhysicsWorldObject *self, PyObject *baked) {
     SHADOW_LOCK(&self->shadow_lock);
 
     JPH_BodyInterface *bi = self->body_interface;
-    auto *shadow_pos      = (PosStride *)self->positions;
-    auto *shadow_rot      = (AuxStride *)self->rotations;
+    auto shadow_pos      = (PosStride *)self->positions;
+    auto shadow_rot      = (AuxStride *)self->rotations;
 
     for (size_t i = 0; i < current_count; i++) {
         // A. Shape Lookup
@@ -696,11 +696,11 @@ int load_baked_scene(PhysicsWorldObject *self, PyObject *baked) {
         // TSan Fix: Initialize the atomic generation for this slot
         atomic_store_explicit(&self->generations[i], 1, memory_order_relaxed);
         
-        // BodyHandle is _Atomic uint64_t. We create it locally.
+        // BodyHandle is CULV_ATOMIC(uint64_t). We create it locally.
         BodyHandle handle = make_handle((uint32_t)i, 1);
         
         // OPTIMIZATION: Use explicit relaxed load to avoid seq_cst penalty for Jolt
-        uint64_t raw_h = atomic_load_explicit(&handle, memory_order_relaxed);
+        uint64_t raw_h = handle;
         JPH_BodyCreationSettings_SetUserData(creation, raw_h);
         
         if (u_mot[i] == 2) {
@@ -731,7 +731,7 @@ int load_baked_scene(PhysicsWorldObject *self, PyObject *baked) {
 CULV_NODISCARD
 int verify_abi_alignment(JPH_BodyInterface *bi) {
     JPH_BoxShapeSettings *bs = JPH_BoxShapeSettings_Create(&(JPH_Vec3){1, 1, 1}, 0.0f);
-    auto *shape              = (JPH_Shape *)JPH_BoxShapeSettings_CreateShape(bs);
+    auto shape              = (JPH_Shape *)JPH_BoxShapeSettings_CreateShape(bs);
     JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)bs);
     if (!shape) {
         return -1;

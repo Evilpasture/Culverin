@@ -85,13 +85,8 @@ typedef struct {
 // Force exactly 64-byte alignment and sizing.
 // This ensures exactly ONE command per CPU Cache Line, preventing false-sharing
 // and cache-straddling across thread boundaries.
-#if defined(_MSC_VER)
-__declspec(align(MEMORY_ALIGNMENT_SIZE))
-#endif
 typedef union {
-#if !defined(_MSC_VER)
-    [[gnu::aligned(MEMORY_ALIGNMENT_SIZE)]]
-#endif
+    [[gnu::aligned(64)]]
     uint32_t header;
 
     // 1. Create Body (Matches current logic)

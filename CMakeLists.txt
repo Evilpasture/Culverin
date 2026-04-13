@@ -181,9 +181,10 @@ endif()
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 enforce_modern_compiler()
 message(STATUS "--- COMPILER VERIFICATION ---")
+message(STATUS "ID:           ${CMAKE_C_COMPILER_ID}")
 message(STATUS "C Compiler:   ${CMAKE_C_COMPILER}")
 message(STATUS "CXX Compiler: ${CMAKE_CXX_COMPILER}")
-message(STATUS "Clang Version: ${CMAKE_CXX_COMPILER_VERSION}")
+message(STATUS "Version:      ${CMAKE_CXX_COMPILER_VERSION}")
 message(STATUS "-----------------------------")
 
 if(NOT MSVC)
@@ -246,7 +247,7 @@ if(MSVC)
 else()
     message(STATUS "Culverin: Configuring GNU-like flags...")
 
-    set(FLAGS_DEBUG "-g -gcodeview")
+    set(FLAGS_DEBUG "-g")
     if(CMAKE_C_COMPILER_ID MATCHES "Clang")
         list(APPEND FLAGS_DEBUG "-gcodeview")
     endif()
@@ -255,6 +256,14 @@ else()
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
         list(APPEND FLAGS_PERF "-mavx2" "-mfma")
     endif()
+
+    if(CMAKE_C_COMPILER_ID STREQUAL "GNU" AND WIN32)
+        # -ffast-math breaks stdatomic memory ordering on MinGW
+        set(FLAGS_PERF_C "-O3" "-fomit-frame-pointer")
+    else()
+        set(FLAGS_PERF_C ${FLAGS_PERF})
+    endif()
+
 
     if(CMAKE_C_COMPILER_ID MATCHES "Clang")
         list(
@@ -270,17 +279,29 @@ else()
     set(FLAGS_STRICT
         "-Wall"
         "-Wextra"
-        "-Watomic-implicit-seq-cst"
-        "-Wsync-fetch-and-nand-semantics-changed"
         "-Wno-sign-conversion"
         "-Wno-shorten-64-to-32"
         "-Wno-double-promotion"
     )
 
+    if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+        list(
+            APPEND FLAGS_STRICT
+            "-Watomic-implicit-seq-cst"
+            "-Wsync-fetch-and-nand-semantics-changed"
+            "-Wno-c23-extensions"
+            "-Wno-c2x-extensions"
+        )
+    endif()
+
+    if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+        list(APPEND FLAGS_STRICT "-Wno-psabi") # Suppress AVX parameter passing ABI warnings
+    endif()
+
     list(
         APPEND CULVERIN_COMPILE_FLAGS
         ${FLAGS_DEBUG}
-        ${FLAGS_PERF}
+        ${FLAGS_PERF_C}
         ${FLAGS_STRICT}
     )
 
@@ -385,6 +406,17 @@ target_link_libraries(${JOLTC_TARGET} PRIVATE Jolt::Jolt)
 
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 
+if(CMAKE_C_COMPILER_ID STREQUAL "GNU" AND WIN32)
+    find_program(GCC_AR NAMES gcc-ar)
+    find_program(GCC_RANLIB NAMES gcc-ranlib)
+    if(GCC_AR)
+        set(CMAKE_AR "${GCC_AR}")
+    endif()
+    if(GCC_RANLIB)
+        set(CMAKE_RANLIB "${GCC_RANLIB}")
+    endif()
+endif()
+
 set(MAG_MUTEX_TARGET mag_mutex)
 add_library(
     ${MAG_MUTEX_TARGET}
@@ -441,17 +473,22 @@ else()
     )
 endif()
 
+# In section 4, guard IPO for GCC on Windows:
 include(CheckIPOSupported)
 check_ipo_supported(RESULT ipo_supported OUTPUT error)
 if(ipo_supported)
-    message(STATUS "Culverin: LTO/IPO is supported and ENABLED")
-    set_property(TARGET _culverin_c PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
-    set_property(
-        TARGET ${JOLTC_TARGET}
-        PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE
-    )
-    if(TARGET Jolt AND NOT DEFINED JOLT_PREBUILT_DIR)
-        set_property(TARGET Jolt PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+    # GCC LTO on Windows (MinGW/LLD) is broken for Python extensions.
+    # The INTERPROCEDURAL_OPTIMIZATION property fights with our -fno-lto workaround
+    # and PyInit_ visibility gets lost at link time.
+    if(CMAKE_C_COMPILER_ID STREQUAL "GNU" AND WIN32)
+        message(STATUS "Culverin: GCC+Windows detected — skipping CMake IPO to avoid PyInit_ visibility loss")
+    else()
+        message(STATUS "Culverin: LTO/IPO is supported and ENABLED")
+        set_property(TARGET _culverin_c PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+        set_property(TARGET ${JOLTC_TARGET} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+        if(TARGET Jolt AND NOT DEFINED JOLT_PREBUILT_DIR)
+            set_property(TARGET Jolt PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+        endif()
     endif()
 else()
     message(WARNING "Culverin: LTO/IPO not supported: ${error}")
@@ -465,57 +502,121 @@ add_custom_command(
         "Extension built at: $<TARGET_FILE:_culverin_c>"
 )
 
-if(MSVC)
+message(STATUS "Culverin: Applying GCC/Clang flags to targets...")
+target_compile_options(_culverin_c PRIVATE ${CULVERIN_COMPILE_FLAGS})
+target_compile_options(${JOLTC_TARGET} PRIVATE ${CULVERIN_COMPILE_FLAGS})
+target_compile_options(${MAG_MUTEX_TARGET} PRIVATE ${CULVERIN_COMPILE_FLAGS})
+
+# --- #embed Fallback Generator for Ancient Compilers which are probably older than me ---
+# 1. Ensure the generated directory exists immediately because sometimes it wouldn't work on other environments or compilers
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
+
+# 2. Correct paths relative to the project root (where pyproject.toml lives)
+set(EMBED_FILES 
+    "PYPROJECT_TOML:pyproject.toml"
+    "ALL_DOCS:docs/DOCS.md"
+)
+
+foreach(entry ${EMBED_FILES})
+    string(REPLACE ":" ";" pair ${entry})
+    list(GET pair 0 var_name)
+    list(GET pair 1 file_path)
+    
+    set(absolute_src "${CMAKE_CURRENT_SOURCE_DIR}/${file_path}")
+    set(inc_file "${CMAKE_CURRENT_BINARY_DIR}/generated/${var_name}.inc")
+    
+    # 3. Defensive check: only create the rule if the file actually exists
+    if(EXISTS "${absolute_src}")
+        add_custom_command(
+            OUTPUT "${inc_file}"
+            COMMAND ${Python_EXECUTABLE} -c 
+            "import sys; data=open(sys.argv[1], 'rb').read(); open(sys.argv[2], 'w').write(','.join(map(str, data)) + ',0')"
+            "${absolute_src}" "${inc_file}"
+            DEPENDS "${absolute_src}"
+            COMMENT "Generating fallback for ${file_path}"
+            VERBATIM
+        )
+        list(APPEND FALLBACK_HEADERS "${inc_file}")
+    else()
+        message(WARNING "Culverin: Could not find ${absolute_src} for embedding!")
+    endif()
+endforeach()
+
+# Attach to the target
+target_sources(_culverin_c PRIVATE ${FALLBACK_HEADERS})
+target_include_directories(_culverin_c PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+
+# ==============================================================================
+# 5. GLOBAL LTO / IPO CONFIGURATION (Compiler Agnostic)
+# ==============================================================================
+if(NOT ENABLE_SANITIZER AND NOT ENABLE_THREAD_SANITIZER)
+    set(LTO_COMPILE_FLAG "")
+    set(LTO_LINK_FLAG "")
+
     if(CMAKE_C_COMPILER_ID MATCHES "Clang")
-        # --- LTO LOGIC ---
-        if(NOT ENABLE_SANITIZER AND NOT ENABLE_THREAD_SANITIZER)
-            # The compiler still wants -flto=thin
-            set(LTO_COMPILE_FLAG "-flto=thin")
-
-            # The linker (lld-link) wants level 2 for ThinLTO
-            # Instead of /opt:lldlto=thin, use:
+        # LLVM / Clang-CL specific ThinLTO
+        set(LTO_COMPILE_FLAG "-flto=thin")
+        if(MSVC)
             set(LTO_LINK_FLAG "/opt:lldlto=2")
-
-            target_compile_options(_culverin_c PRIVATE ${LTO_COMPILE_FLAG})
-            target_link_options(_culverin_c PRIVATE ${LTO_LINK_FLAG})
-
-            target_compile_options(${JOLTC_TARGET} PRIVATE ${LTO_COMPILE_FLAG})
+        else()
+            set(LTO_LINK_FLAG "-flto=thin")
         endif()
+    elseif(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+        # GCC LTO on Windows often breaks PyInit visibility. 
+        # Disable it for now to confirm the fix, or use the "fat" workaround:
+        set(LTO_COMPILE_FLAG "-fno-lto" "-fvisibility=hidden") 
+        set(LTO_LINK_FLAG "")
     endif()
 
-    # --- PERFORMANCE & DEBUG FLAGS ---
+    if(LTO_COMPILE_FLAG)
+        message(STATUS "Culverin: Applying ${CMAKE_C_COMPILER_ID} LTO optimizations")
+        target_compile_options(_culverin_c PRIVATE ${LTO_COMPILE_FLAG})
+        target_link_options(_culverin_c PRIVATE ${LTO_LINK_FLAG})
+        target_compile_options(${JOLTC_TARGET} PRIVATE ${LTO_COMPILE_FLAG})
+        
+        if(TARGET Jolt AND NOT DEFINED JOLT_PREBUILT_DIR)
+            target_compile_options(Jolt PRIVATE ${LTO_COMPILE_FLAG})
+        endif()
+    endif()
+endif()
+
+# ==============================================================================
+# 6. PLATFORM & LINKER FLAGS
+# ==============================================================================
+if(MSVC)
+    # --- MSVC / Clang-CL PERFORMANCE & DEBUG FLAGS ---
     target_compile_options(_culverin_c PRIVATE /Zi /fp:fast)
     target_link_options(_culverin_c PRIVATE /DEBUG /OPT:REF /OPT:ICF)
     target_compile_definitions(_culverin_c PRIVATE _CRT_DECLARE_NONSTDC_NAMES=1)
-
-    # --- THE MISSING INCLUDES ---
-    # We use SYSTEM for Jolt because we don't want to see C++ warnings in our C23 build
-    target_include_directories(
-        _culverin_c
-        SYSTEM
-        PRIVATE "extern/JoltC/include" "${JOLT_DIR}"
-    )
-    target_include_directories(
-        ${JOLTC_TARGET}
-        SYSTEM
-        PRIVATE "extern/JoltC/include" "${JOLT_DIR}"
-    )
 else()
-    # GCC / Standard Clang (Linux/MinGW)
-    if(NOT ENABLE_SANITIZER AND NOT ENABLE_THREAD_SANITIZER)
-        target_compile_options(_culverin_c PRIVATE -flto=thin)
-        target_compile_options(${JOLTC_TARGET} PRIVATE -flto=thin)
-    endif()
-
+    # --- GNU / MinGW LINKER FLAGS ---
     if(WIN32)
-        set(WIN_LINK_FLAGS "-Wl,-nodefaultlib:libcmt") # CRITICAL: Prevents 3.14 Heap Crashes
+        set(WIN_LINK_FLAGS "")
+        
+        if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+            # Only Clang on Windows uses this MSVC-style nodefaultlib format via lld
+            list(APPEND WIN_LINK_FLAGS "-Wl,-nodefaultlib:libcmt")
+        else()
+            # 1. Use LLD if available for speed
+            list(APPEND WIN_LINK_FLAGS "-fuse-ld=lld")
+
+            # 2. Static GCC/C++ Runtimes
+            list(APPEND WIN_LINK_FLAGS "-static-libgcc")
+            list(APPEND WIN_LINK_FLAGS "-static-libstdc++")
+
+            # 3. THE MAGIC TRICK: Link winpthread statically without breaking the CRT
+            # This tells the linker: "Start linking statically now"
+            list(APPEND WIN_LINK_FLAGS "-Wl,-Bstatic")
+            list(APPEND WIN_LINK_FLAGS "-lwinpthread")
+            # This tells the linker: "Go back to dynamic linking for everything else"
+            list(APPEND WIN_LINK_FLAGS "-Wl,-Bdynamic")
+
+            # 4. Standard Windows Multimedia (already dynamic)
+            list(APPEND WIN_LINK_FLAGS "-lwinmm")
+        endif()
 
         if(ENABLE_SANITIZER OR ENABLE_THREAD_SANITIZER)
             list(APPEND WIN_LINK_FLAGS "-Wl,-debug")
-        endif()
-
-        if(NOT ENABLE_SANITIZER AND NOT ENABLE_THREAD_SANITIZER)
-            list(APPEND WIN_LINK_FLAGS "-flto=thin")
         endif()
 
         target_link_options(
@@ -523,18 +624,20 @@ else()
             PRIVATE ${WIN_LINK_FLAGS} ${CULVERIN_LINK_FLAGS}
         )
     endif()
-
-    target_include_directories(
-        _culverin_c
-        SYSTEM
-        PRIVATE "extern/JoltC/include" "${JOLT_DIR}"
-    )
-    target_include_directories(
-        ${JOLTC_TARGET}
-        SYSTEM
-        PRIVATE "extern/JoltC/include" "${JOLT_DIR}"
-    )
 endif()
+
+# ==============================================================================
+# 7. UNIFIED INCLUDES (DRY)
+# ==============================================================================
+# We use SYSTEM for Jolt to suppress C++ warnings bleeding into our C23 build
+target_include_directories(
+    _culverin_c
+    SYSTEM PRIVATE "extern/JoltC/include" "${JOLT_DIR}"
+)
+target_include_directories(
+    ${JOLTC_TARGET}
+    SYSTEM PRIVATE "extern/JoltC/include" "${JOLT_DIR}"
+)
 
 target_compile_definitions(
     _culverin_c
@@ -546,9 +649,6 @@ target_include_directories(
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" 
     "src/culverin"
     "extern/mag-mutex/include"
-    SYSTEM PRIVATE
-    "extern/JoltC/include"
-    "${JOLT_DIR}"
     ${Python_INCLUDE_DIRS}
 )
 
@@ -584,8 +684,21 @@ set_property(
     PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL"
 )
 
+# ==============================================================================
+# 8. INSTALLATION
+# ==============================================================================
 install(TARGETS _culverin_c DESTINATION .)
-if(MSVC OR WIN32)
-    install(FILES $<TARGET_PDB_FILE:_culverin_c> DESTINATION . OPTIONAL)
+
+# Only attempt to evaluate PDB generator expressions on Windows.
+# Even with OPTIONAL, Linux linkers will fail the generation phase if they see this GenEx.
+if(WIN32 AND (MSVC OR CMAKE_CXX_COMPILER_ID MATCHES "Clang"))
+    install(FILES $<TARGET_PDB_FILE:_culverin_c> 
+            DESTINATION . 
+            OPTIONAL) 
+    message(STATUS "Culverin: Windows PDB installation configured.")
+else()
+    message(STATUS "Culverin: Non-PDB platform/compiler detected, skipping PDB installation.")
 endif()
+
+
 install(FILES src/culverin/__init__.py src/culverin/_culverin.py DESTINATION .)

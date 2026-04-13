@@ -236,7 +236,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_destroy_constraint(PhysicsWorld
         // Automatic Body Wake-up: Prevents bodies from floating if their joint is deleted.
         // ActivateBody is thread-safe in Jolt.
         if (JPH_Constraint_GetType(c_to_destroy) == JPH_ConstraintType_TwoBodyConstraint) {
-            auto *tbc    = (JPH_TwoBodyConstraint *)c_to_destroy;
+            auto tbc    = (JPH_TwoBodyConstraint *)c_to_destroy;
             JPH_Body *b1 = JPH_TwoBodyConstraint_GetBody1(tbc);
             JPH_Body *b2 = JPH_TwoBodyConstraint_GetBody2(tbc);
 
@@ -293,11 +293,11 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_set_constraint_target(PhysicsWo
 
     // 3. JPH EXECUTION
     if (sub == JPH_ConstraintSubType_Hinge) {
-        auto *hc = (JPH_HingeConstraint *)c;
+        auto hc = (JPH_HingeConstraint *)c;
         JPH_HingeConstraint_SetMotorState(hc, JPH_MotorState_Position);
         JPH_HingeConstraint_SetTargetAngle(hc, target);
     } else if (sub == JPH_ConstraintSubType_Slider) {
-        auto *sc             = (JPH_SliderConstraint *)c;
+        auto sc             = (JPH_SliderConstraint *)c;
         JPH_MotorState state = JPH_SliderConstraint_GetMotorState(sc);
 
         if (state == JPH_MotorState_Off) {
