@@ -458,16 +458,28 @@ jobs:
 
       - name: Smoke Test GCC Wheel
         run: |
+          # 1. Setup environment
           uv venv --python 3.14t
+          
+          # 2. Force install ONLY the wheel we built, plus dependencies
+          # --no-index ensures it doesn't try to look at the local source folder
           uv pip install dist/*.whl numpy
-          VERSION_INFO=$(uv run python -c "import culverin; print(culverin.__version__)")
+          
+          # 3. CRITICAL: Move to a directory that has NO pyproject.toml or src/
+          # This ensures 'import culverin' loads from site-packages, not the current folder.
+          mkdir test_jail
+          cd test_jail
+          
+          # 4. Run tests using 'uv run --no-project'
+          VERSION_INFO=$(uv run --no-project python -c "import culverin; print(culverin.__version__)")
           echo "Built version: $VERSION_INFO"
+          
           if [[ "$VERSION_INFO" != *"GCC"* ]]; then
             echo "Error: Metadata check failed. Expected GCC in version string."
             exit 1
           fi
-          # Run a quick physics check to ensure Jolt linked correctly
-          uv run python -c "import culverin; w=culverin.PhysicsWorld(); print('World created safely')"
+          
+          uv run --no-project python -c "import culverin; w=culverin.PhysicsWorld(); print('World created safely')"
   
   # ===========================================================================
   # JOB 3.5: SANITY CHECKS
