@@ -61,7 +61,7 @@ CULV_MAYBE_UNUSED static constexpr size_t JPH_BODY_ID_INDEX_MASK = 0x00FFFFFF;
 CULV_NODISCARD [[gnu::const]]
 static inline uint32_t JPH_ID_TO_INDEX(uint32_t id) {
     // Mask for the raw array index (Stripping the 24th bit used for Static flags)
-    static constexpr unsigned _BitInt(24) ID_TO_INDEX_MASK = 0x7FFFFF;
+    static constexpr unsigned _BitInt(23) ID_TO_INDEX_MASK = 0x7FFFFF;
     constexpr auto stfu = 0x7FFFFF;
     static_assert(ID_TO_INDEX_MASK == stfu);
     return id & ID_TO_INDEX_MASK;
