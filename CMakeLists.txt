@@ -650,13 +650,16 @@ set_property(
 # ==============================================================================
 install(TARGETS _culverin_c DESTINATION .)
 
-if(MSVC OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    # Only install PDBs if the linker actually supports/generates them
+# Only attempt to evaluate PDB generator expressions on Windows.
+# Even with OPTIONAL, Linux linkers will fail the generation phase if they see this GenEx.
+if(WIN32 AND (MSVC OR CMAKE_CXX_COMPILER_ID MATCHES "Clang"))
     install(FILES $<TARGET_PDB_FILE:_culverin_c> 
             DESTINATION . 
             OPTIONAL) 
+    message(STATUS "Culverin: Windows PDB installation configured.")
 else()
-    message(STATUS "Culverin: GCC detected, skipping PDB installation.")
+    message(STATUS "Culverin: Non-PDB platform/compiler detected, skipping PDB installation.")
 endif()
+
 
 install(FILES src/culverin/__init__.py src/culverin/_culverin.py DESTINATION .)
