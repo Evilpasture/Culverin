@@ -508,8 +508,12 @@ target_compile_options(${JOLTC_TARGET} PRIVATE ${CULVERIN_COMPILE_FLAGS})
 target_compile_options(${MAG_MUTEX_TARGET} PRIVATE ${CULVERIN_COMPILE_FLAGS})
 
 # --- #embed Fallback Generator for Ancient Compilers which are probably older than me ---
+# 1. Ensure the generated directory exists immediately because sometimes it wouldn't work on other environments or compilers
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
+
+# 2. Correct paths relative to the project root (where pyproject.toml lives)
 set(EMBED_FILES 
-    "PYPROJECT_TOML:../pyproject.toml"
+    "PYPROJECT_TOML:pyproject.toml"
     "ALL_DOCS:docs/DOCS.md"
 )
 
@@ -518,20 +522,27 @@ foreach(entry ${EMBED_FILES})
     list(GET pair 0 var_name)
     list(GET pair 1 file_path)
     
+    set(absolute_src "${CMAKE_CURRENT_SOURCE_DIR}/${file_path}")
     set(inc_file "${CMAKE_CURRENT_BINARY_DIR}/generated/${var_name}.inc")
     
-    add_custom_command(
-        OUTPUT "${inc_file}"
-        COMMAND ${Python_EXECUTABLE} -c 
-        "import sys; data=open(sys.argv[1], 'rb').read(); open(sys.argv[2], 'w').write(','.join(map(str, data)) + ',0')"
-        "${CMAKE_CURRENT_SOURCE_DIR}/${file_path}" "${inc_file}"
-        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${file_path}"
-        COMMENT "Generating fallback for ${file_path}"
-    )
-    list(APPEND FALLBACK_HEADERS "${inc_file}")
+    # 3. Defensive check: only create the rule if the file actually exists
+    if(EXISTS "${absolute_src}")
+        add_custom_command(
+            OUTPUT "${inc_file}"
+            COMMAND ${Python_EXECUTABLE} -c 
+            "import sys; data=open(sys.argv[1], 'rb').read(); open(sys.argv[2], 'w').write(','.join(map(str, data)) + ',0')"
+            "${absolute_src}" "${inc_file}"
+            DEPENDS "${absolute_src}"
+            COMMENT "Generating fallback for ${file_path}"
+            VERBATIM
+        )
+        list(APPEND FALLBACK_HEADERS "${inc_file}")
+    else()
+        message(WARNING "Culverin: Could not find ${absolute_src} for embedding!")
+    endif()
 endforeach()
 
-# Attach generated headers to the target
+# Attach to the target
 target_sources(_culverin_c PRIVATE ${FALLBACK_HEADERS})
 target_include_directories(_culverin_c PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
