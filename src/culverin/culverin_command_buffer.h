@@ -173,7 +173,7 @@ typedef union {
 
 } PhysicsCommand;
 
-static constexpr size_t OFFSET_START =
+static constexpr auto OFFSET_START =
     8; // The offset where the actual command data starts (after the header and padding)
 
 // C23 native static_assert
