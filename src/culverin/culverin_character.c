@@ -36,8 +36,7 @@ static void record_character_contact(CharacterObject *self, JPH_BodyID bodyID2,
     }
 
     // TSan Fix: Atomic load of the character's own handle
-    BodyHandle h1   = self->handle;
-    uint64_t h1_raw = h1;
+    uint64_t h1_raw = atomic_load_explicit(&self->handle, memory_order_relaxed);
 
     size_t idx = atomic_fetch_add_explicit(&world->contact_atomic_idx, 1, memory_order_relaxed);
 
