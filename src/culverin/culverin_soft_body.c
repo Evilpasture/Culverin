@@ -412,7 +412,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_soft_body(PhysicsWorldOb
     auto py_shared                        = (SoftBodySharedSettingsObject *)o_shared;
     Py_INCREF(o_shared); // Ownership transfer to command queue
 
-    JPH_SoftBodyCreationSettings_SetSharedSettings(settings, py_shared->settings);
+    JPH_SoftBodyCreationSettings_SetSettings(settings, py_shared->settings);
     JPH_SoftBodyCreationSettings_SetPressure(settings, pressure);
     JPH_SoftBodyCreationSettings_SetVertexRadius(settings, vertex_radius);
     JPH_SoftBodyCreationSettings_SetLinearDamping(settings, linear_damping);
