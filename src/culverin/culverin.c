@@ -4663,18 +4663,10 @@ static constexpr auto MAGIC_BUFFER = 128;
 static char shared_version[MAGIC_BUFFER];
 
 PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
-    fprintf(stderr, "[culverin_exec] ENTER m=%p\n", (void *)m);
-    fflush(stderr);
     CulverinState *st = get_culverin_state(m);
-    fprintf(stderr, "[culverin_exec] st=%p\n", (void *)st);
-    fflush(stderr);
-
     // 1. THE MASTER GATE: Protects all static global memory in the process
     int expected = 0;
     if (atomic_compare_exchange_strong(&docs_status, &expected, 1)) {
-        fprintf(stderr, "[culverin_exec] won the CAS, doing init\n");
-        fflush(stderr);
-
         // --- 1A. VERSION & BUILD METADATA ---
         const char *ver_temp = extract_version_from_toml();
 
@@ -4736,8 +4728,6 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
         if (!JPH_Init()) {
             PyErr_SetString(PyExc_RuntimeError, "Jolt initialization failed");
             atomic_store_explicit(&docs_status, 0, memory_order_seq_cst);
-            fprintf(stderr, "[culverin_exec] FAIL at: <location>\n");
-            fflush(stderr);
             return -1;
         }
 
@@ -4753,28 +4743,19 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
         // (Fixes the race on g_jph_trampoline_lock write)
         if (INIT_NATIVE_MUTEX(g_jph_trampoline_lock) != 0) {
             PyErr_SetString(PyExc_RuntimeError, "Failed to initialize global lock");
-            fprintf(stderr, "[culverin_exec] FAIL at: <location>\n");
-            fflush(stderr);
             return -1;
         }
 
         atomic_store_explicit(&docs_status, 2, memory_order_seq_cst);
 
     } else {
-        fprintf(stderr, "[culverin_exec] lost CAS, expected=%d, docs_status=%d\n", expected,
-                docs_status);
-        fflush(stderr);
         // --- THE LOSERS: Wait for the Winner to finish ---
         while (atomic_load_explicit(&docs_status, memory_order_acquire) != 2) {
             culverin_yield();
         }
     }
-    fprintf(stderr, "[culverin_exec] per-interp setup begins\n");
-    fflush(stderr);
     // --- 2. PER-INTERPRETER SETUP (Runs for every import) ---
     if (PyModule_AddStringConstant(m, "__version__", shared_version) < 0) {
-        fprintf(stderr, "[culverin_exec] FAIL: PyModule_AddStringConstant\n");
-        fflush(stderr);
         return -1;
     }
 
@@ -4792,8 +4773,6 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
     if (init_constants(m) < 0) {
         return -1;
     }
-    fprintf(stderr, "[culverin_exec] SUCCESS, returning 0\n");
-    fflush(stderr);
     return 0;
 }
 
