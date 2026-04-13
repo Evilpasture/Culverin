@@ -53,7 +53,7 @@
 
 // Use a prefixed function to avoid collision
 [[noreturn]]
-inline void culv_unreachable(void) {
+static inline void culv_unreachable(void) {
 #if defined(CULVERIN_DEBUG)
     fprintf(stderr, "Unreachable hit at %s:%d\n", __FILE__, __LINE__);
     abort();
