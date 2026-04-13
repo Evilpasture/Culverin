@@ -4065,9 +4065,14 @@ exit_critical:
 #endif
 
 static const unsigned char ALL_DOCS[] = {
-#if defined(__has_embed) && __has_embed(CULVERIN_DOCS_PATH)
-    #embed CULVERIN_DOCS_PATH suffix(, 0)
-#else
+#ifdef __has_embed
+    #if __has_embed(CULVERIN_DOCS_PATH)
+        #embed CULVERIN_DOCS_PATH suffix(, 0)
+        #define CULV_DOCS_EMBEDDED
+    #endif
+#endif
+
+#ifndef CULV_DOCS_EMBEDDED
     #include "ALL_DOCS.inc"
 #endif
 };
@@ -4516,9 +4521,14 @@ static const PyType_Spec Ragdoll_spec = {
 
 // Embed the entire TOML file as a static string
 static const unsigned char PYPROJECT_TOML[] = {
-#if defined(__has_embed) && __has_embed("../../pyproject.toml")
-    #embed "../../pyproject.toml" suffix(, 0)
-#else
+#ifdef __has_embed
+    #if __has_embed("../../pyproject.toml")
+        #embed "../../pyproject.toml" suffix(, 0)
+        #define CULV_TOML_EMBEDDED
+    #endif
+#endif
+
+#ifndef CULV_TOML_EMBEDDED
     #include "PYPROJECT_TOML.inc"
 #endif
 };
