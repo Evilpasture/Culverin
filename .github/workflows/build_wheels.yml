@@ -399,7 +399,60 @@ jobs:
           source .venv/bin/activate
           python tests/benchmark.py --stress
           python -m pytest tests/test_core.py
+  # ===========================================================================
+  # JOB 3.2: GCC LINUX VALIDATION (The Lawyer Check)
+  # ===========================================================================
+  linux_gcc_validation:
+    name: GCC Validation (Ubuntu)
+    needs: [build_jolt]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Download prebuilt Jolt
+        uses: actions/download-artifact@v8
+        with:
+          name: jolt-prebuilt-ubuntu-latest
+          path: jolt-install
+
+      - name: Install GCC and Ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc g++ ninja-build
+
+      - name: Build with GCC
+        env:
+          CC: gcc
+          CXX: g++
+          # We pass the prebuilt Jolt path we just downloaded
+          CMAKE_ARGS: >-
+            -DENABLE_SANITIZER=OFF 
+            -DCMAKE_BUILD_TYPE=Release 
+            -DDOUBLE_PRECISION=ON 
+            -DJOLT_PREBUILT_DIR=${{ github.workspace }}/jolt-install/lib/cmake/Jolt
+        run: |
+          # Build the wheel using Python 3.14t (Free-threaded) to test the toughest path
+          uv build --wheel --python 3.14t --out-dir dist/ \
+            --config-setting=cmake.define.CMAKE_C_COMPILER=gcc \
+            --config-setting=cmake.define.CMAKE_CXX_COMPILER=g++
+
+      - name: Smoke Test GCC Wheel
+        run: |
+          uv venv --python 3.14t
+          uv pip install dist/*.whl numpy
+          # Verify the compiler string contains 'GCC'
+          COMPILER_INFO=$(uv run python -c "import culverin; print(culverin.__version__)")
+          echo "Output: $COMPILER_INFO"
+          if [[ "$COMPILER_INFO" != *"GCC"* ]]; then
+            echo "Error: Wheel was not compiled with GCC!"
+            exit 1
+          fi
   # ===========================================================================
   # JOB 3.5: SANITY CHECKS
   # ===========================================================================
