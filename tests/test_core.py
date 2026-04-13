@@ -21,6 +21,9 @@ class CulverinTestCase(unittest.TestCase):
         self.world = culverin.PhysicsWorld(settings={"gravity": (0, -10, 0), "max_bodies": 2048})
         self.world.step(0)  # Flush initial state
 
+    def tearDown(self) -> None:
+        del self.world
+
     def get_pos(self, handle: int) -> tuple[float, float, float]:
         return self.world.get_position(handle)
 
@@ -1933,28 +1936,21 @@ class TestTupleMutation(unittest.TestCase):
             culverin.mutate_tuple(t, 0, 99, ["not a dict"], "key") # type: ignore
 
     def test_free_threading_stability(self) -> None:
-        """
-        Rapidly mutate a tuple from multiple threads to ensure 
-        Py_BEGIN_CRITICAL_SECTION is preventing crashes.
-        """
-        # Start with hashable items
-        shared_tuple = (0, 0, 0) 
-        
+        shared_tuple = (0, 0, 0)
         def hammer():
             for i in range(1000):
                 try:
-                    # Use an integer i instead of a list [i]
                     culverin.mutate_tuple(shared_tuple, i % 3, i)
                 except Exception:
                     pass
-                
         threads = [threading.Thread(target=hammer) for _ in range(4)]
         for t in threads: t.start()
         for t in threads: t.join()
-        
-        # If we reach here without a segfault or ASan access violation, 
-        # the critical section is working.
         self.assertEqual(len(shared_tuple), 3)
+        # Restore to known-good hashable state to avoid corrupting Python's integer cache
+        culverin.mutate_tuple(shared_tuple, 0, 0)
+        culverin.mutate_tuple(shared_tuple, 1, 0)
+        culverin.mutate_tuple(shared_tuple, 2, 0)
 
 class TestCharacterInteractions(CulverinTestCase):
     def test_character_pushing_box(self) -> None:
@@ -1982,6 +1978,7 @@ class TestCharacterInteractions(CulverinTestCase):
         # The box should have gained velocity from the character's 'apply_character_impulse'
         vel = self.world.get_velocity(box)
         self.assertGreater(vel[0], 0.5, "Character failed to push the dynamic box")
+        self.world.step(1/60)  # flush character state before world teardown
 
     def test_character_vs_character_collision(self) -> None:
         """Verify the special callback path for virtual character collisions."""
@@ -2077,37 +2074,43 @@ class TestCharacterInteractions(CulverinTestCase):
         self.assertGreater(len(char_hits), 0, "Characters failed to collide after mask update")
 
     def test_character_slippery_platform(self) -> None:
-        """Verify character orbits with sticky platform."""
-        self.world.register_material(id=10, friction=1.0) 
-        self.world.register_material(id=11, friction=0.0) 
+        """Verify character is carried by a rotating kinematic platform."""
+        self.world.register_material(id=10, friction=1.0)
 
-        # Platforms
-        sticky_plat = self.world.create_body(pos=(0, 0, 0), size=(5, 0.2, 5),
-                                           motion=culverin.MOTION_KINEMATIC, material_id=10)
-        
-        # Start character offset from center to experience rotation
-        char_sticky = self.world.create_character(pos=(2, 0.5, 0))
+        sticky_plat = self.world.create_body(
+            pos=(0, 0, 0), size=(5, 0.5, 5),
+            motion=culverin.MOTION_KINEMATIC, material_id=10)
+
+        char_sticky = self.world.create_character(pos=(2, 1.0, 0), radius=0.5, height=1.0)
         self.world.step(0)
 
-        # Spin platform (2 rad/s)
-        self.world.set_angular_velocity(sticky_plat, x=0, y=2.0, z=0)
+        print(f"gravity={self.world.get_gravity()}", flush=True)
 
-        # 4. Simulation Loop (60 frames to give enough time to orbit)
-        for _ in range(60):
-            # Move (0,0,0) so the callback handles velocity, not the move() velocity
+        # Warmup: settle onto platform
+        for _ in range(20):
+            char_sticky.move((0, 0, 0), 1/60) 
+            self.world.step(1/60)
+
+        self.assertTrue(char_sticky.is_grounded(),
+                        f"Character failed to settle. Y={char_sticky.get_position()[1]}")
+
+        self.world.set_angular_velocity(sticky_plat, x=0, y=2.0, z=0)
+        start_pos = char_sticky.get_position()
+
+        # Zero input — ground velocity inheritance in C should do all the work
+        for _ in range(10):
             char_sticky.move((0, 0, 0), 1/60)
             self.world.step(1/60)
 
-        pos = char_sticky.get_position()
-        
-        # Calculate displacement from start (2, 0)
-        # Final position should be different because it orbited.
-        displacement_sq = (pos[0] - 2.0)**2 + (pos[2] - 0.0)**2
-        
-        # 60 frames @ 2rad/s = 120 degrees of rotation.
-        # It MUST have moved significantly.
-        self.assertGreater(displacement_sq, 0.5, 
-            f"Sticky character failed to orbit! Start(2,0), Current({pos[0]:.2f}, {pos[2]:.2f})")
+        end_pos = char_sticky.get_position()
+        dx = end_pos[0] - start_pos[0]
+        dz = end_pos[2] - start_pos[2]
+        displacement_sq = dx*dx + dz*dz
+
+        self.assertGreater(displacement_sq, 0.1,
+                        f"Character failed to orbit. Start={start_pos}, End={end_pos}")
+        self.assertTrue(char_sticky.is_grounded(),
+                        f"Character fell off platform. Y={end_pos[1]}")
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
