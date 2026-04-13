@@ -400,61 +400,75 @@ jobs:
           python tests/benchmark.py --stress
           python -m pytest tests/test_core.py
   # ===========================================================================
-  # JOB 3.2: GCC LINUX VALIDATION (The Lawyer Check)
+  # JOB 3.2: GCC DEEP VALIDATION (Full Source Build)
   # ===========================================================================
   linux_gcc_validation:
-    name: GCC Validation (Ubuntu)
-    needs: [build_jolt]
-    runs-on: ubuntu-24.04 # Ensure we are on the latest Ubuntu
+    name: GCC 14 Deep Validation (Ubuntu)
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - name: Checkout code
+        uses: actions/checkout@v6
         with:
           submodules: recursive
 
-      - name: Install GCC 14
+      - name: Install GCC 14 and Ninja
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-14 g++-14 ninja-build
-          # Link them as the default gcc/g++
+          sudo apt-get install -y gcc-14 g++-14 lld ninja-build
+          # Set GCC 14 as the default system compiler
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 100
+
+      - name: Patch Jolt Source (Force RTTI)
+        shell: bash
+        run: |
+          python3 - << 'EOF'
+          import os
+          path = 'extern/JoltPhysics/Build/CMakeLists.txt'
+          if os.path.exists(path):
+              with open(path, 'r') as f: text = f.read()
+              text = text.replace('-fno-rtti', '-frtti')
+              text = text.replace('/GR-', '/GR')
+              with open(path, 'w') as f: f.write(text)
+              print("Jolt patched successfully.")
+          EOF
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
 
-      - name: Download prebuilt Jolt
-        uses: actions/download-artifact@v8
-        with:
-          name: jolt-prebuilt-ubuntu-latest
-          path: jolt-install
-
-      - name: Build with GCC
+      - name: Deep Build with GCC (Jolt + Extension)
         env:
           CC: gcc
           CXX: g++
-          # We pass the prebuilt Jolt path we just downloaded
+          # Use LLD for speed, but now it's linking GCC objects against GCC objects
+          LDFLAGS: "-fuse-ld=lld"
+          # NOTE: JOLT_PREBUILT_DIR is NOT defined. 
+          # This triggers 'add_subdirectory' in your CMakeLists.txt
           CMAKE_ARGS: >-
             -DENABLE_SANITIZER=OFF 
             -DCMAKE_BUILD_TYPE=Release 
-            -DDOUBLE_PRECISION=ON 
-            -DJOLT_PREBUILT_DIR=${{ github.workspace }}/jolt-install/lib/cmake/Jolt
+            -DDOUBLE_PRECISION=ON
+            -DJPH_OBJECT_LAYER_BITS=32
         run: |
-          # Build the wheel using Python 3.14t (Free-threaded) to test the toughest path
+          # Build using 3.14t to ensure thread-safety and C23 compliance
           uv build --wheel --python 3.14t --out-dir dist/ \
             --config-setting=cmake.define.CMAKE_C_COMPILER=gcc \
-            --config-setting=cmake.define.CMAKE_CXX_COMPILER=g++
+            --config-setting=cmake.define.CMAKE_CXX_COMPILER=g++ \
+            --config-setting=cmake.verbose=true
 
       - name: Smoke Test GCC Wheel
         run: |
           uv venv --python 3.14t
           uv pip install dist/*.whl numpy
-          # Verify the compiler string contains 'GCC'
-          COMPILER_INFO=$(uv run python -c "import culverin; print(culverin.__version__)")
-          echo "Output: $COMPILER_INFO"
-          if [[ "$COMPILER_INFO" != *"GCC"* ]]; then
-            echo "Error: Wheel was not compiled with GCC!"
+          VERSION_INFO=$(uv run python -c "import culverin; print(culverin.__version__)")
+          echo "Built version: $VERSION_INFO"
+          if [[ "$VERSION_INFO" != *"GCC"* ]]; then
+            echo "Error: Metadata check failed. Expected GCC in version string."
             exit 1
           fi
+          # Run a quick physics check to ensure Jolt linked correctly
+          uv run python -c "import culverin; w=culverin.PhysicsWorld(); print('World created safely')"
+  
   # ===========================================================================
   # JOB 3.5: SANITY CHECKS
   # ===========================================================================
