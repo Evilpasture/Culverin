@@ -481,10 +481,10 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self
     JPH_Real px;
     JPH_Real py;
     JPH_Real pz;
-    void *targets[ImpAt_COUNT] = {[IDX_IMPAT_H] = (void *)&h_raw, [IDX_IMPAT_IX] = (void *)&ix,
-                                  [IDX_IMPAT_IY] = (void *)&iy,   [IDX_IMPAT_IZ] = (void *)&iz,
-                                  [IDX_IMPAT_PX] = (void *)&px,   [IDX_IMPAT_PY] = (void *)&py,
-                                  [IDX_IMPAT_PZ] = (void *)&pz};
+    void *targets[ImpAt_COUNT] = {
+        [IDX_IMPAT_H] = (void *)&h_raw, [IDX_IMPAT_IX] = (void *)&ix, [IDX_IMPAT_IY] = (void *)&iy,
+        [IDX_IMPAT_IZ] = (void *)&iz,   [IDX_IMPAT_PX] = (void *)&px, [IDX_IMPAT_PY] = (void *)&py,
+        [IDX_IMPAT_PZ] = (void *)&pz};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.ImpulseAtParser,
                            targets)) {
@@ -786,6 +786,24 @@ PyCFunction_DeclareMethod PhysicsWorld_set_gravity(PhysicsWorldObject *self, PyO
 
     SHADOW_UNLOCK(&self->shadow_lock);
     Py_RETURN_NONE;
+}
+
+
+PyCFunction_DeclareMethod PhysicsWorld_get_gravity(PhysicsWorldObject *self, PyObject *Py_UNUSED(ignored)) {
+    // We acquire the shadow_lock to ensure we don't read gravity 
+    // mid-update if the simulation is currently swapping buffers.
+    SHADOW_LOCK(&self->shadow_lock);
+    
+    JPH_Vec3 g;
+    JPH_PhysicsSystem_GetGravity(self->system, &g);
+    
+    SHADOW_UNLOCK(&self->shadow_lock);
+
+    return FastBuild_Tuple(
+        FastBuild_Value(g.x), 
+        FastBuild_Value(g.y), 
+        FastBuild_Value(g.z)
+    );
 }
 
 PyCFunction_DeclareMethod PhysicsWorld_get_body_stats(PhysicsWorldObject *self,
@@ -1950,7 +1968,9 @@ PyCFunction_DeclareMethod PhysicsWorld_create_body(PhysicsWorldObject *self, PyO
         JPH_Quat j_rot  = {rx, ry, rz, rw};
         settings        = JPH_BodyCreationSettings_Create3(
             shape, &j_pos, &j_rot, (JPH_MotionType)motion_type,
-            (motion_type == MOTION_STATIC) ? OBJECT_LAYER_STATIC : OBJECT_LAYER_DYNAMIC);
+            (motion_type == MOTION_KINEMATIC || motion_type == MOTION_STATIC)
+                       ? OBJECT_LAYER_STATIC
+                       : OBJECT_LAYER_DYNAMIC);
         if (settings) {
             BodyConfig config = {mass,           mat.friction, mat.restitution,
                                  (int)is_sensor, (int)use_ccd, motion_type};
@@ -4285,6 +4305,7 @@ static PyMethodDef PhysicsWorld_methods[] = {
     PW_FASTCALL(apply_force),
     PW_FASTCALL(apply_torque),
     PW_FASTCALL(set_gravity),
+    PW_NOARGS(get_gravity),
     PW_FASTCALL(apply_buoyancy),
     PW_FASTCALL(apply_buoyancy_batch),
     PW_FASTCALL(set_position),
@@ -4699,14 +4720,13 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
             return -1;
         }
 
-        // Gated Procedure Table Assignments
-        // (Fixes the race on ManagedDebugRendererSimple::s_Procs)
         JPH_BroadPhaseLayerFilter_SetProcs(&global_bp_procs);
         JPH_ObjectLayerFilter_SetProcs(&global_obj_procs);
         JPH_BodyFilter_SetProcs(&global_bf_procs);
         JPH_ShapeFilter_SetProcs(&global_sf_procs);
         JPH_DebugRenderer_SetProcs(&debug_procs);
         JPH_ContactListener_SetProcs(&contact_procs);
+        JPH_CharacterContactListener_SetProcs(&char_listener_procs);
 
         // Gated Mutex Initialization
         // (Fixes the race on g_jph_trampoline_lock write)
@@ -4723,7 +4743,6 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
             culverin_yield();
         }
     }
-
     // --- 2. PER-INTERPRETER SETUP (Runs for every import) ---
     if (PyModule_AddStringConstant(m, "__version__", shared_version) < 0) {
         return -1;

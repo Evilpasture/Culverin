@@ -21,6 +21,9 @@ class CulverinTestCase(unittest.TestCase):
         self.world = culverin.PhysicsWorld(settings={"gravity": (0, -10, 0), "max_bodies": 2048})
         self.world.step(0)  # Flush initial state
 
+    def tearDown(self) -> None:
+        del self.world
+
     def get_pos(self, handle: int) -> tuple[float, float, float]:
         return self.world.get_position(handle)
 
@@ -1933,29 +1936,181 @@ class TestTupleMutation(unittest.TestCase):
             culverin.mutate_tuple(t, 0, 99, ["not a dict"], "key") # type: ignore
 
     def test_free_threading_stability(self) -> None:
-        """
-        Rapidly mutate a tuple from multiple threads to ensure 
-        Py_BEGIN_CRITICAL_SECTION is preventing crashes.
-        """
-        # Start with hashable items
-        shared_tuple = (0, 0, 0) 
-        
+        shared_tuple = (0, 0, 0)
         def hammer():
             for i in range(1000):
                 try:
-                    # Use an integer i instead of a list [i]
                     culverin.mutate_tuple(shared_tuple, i % 3, i)
                 except Exception:
                     pass
-                
         threads = [threading.Thread(target=hammer) for _ in range(4)]
         for t in threads: t.start()
         for t in threads: t.join()
-        
-        # If we reach here without a segfault or ASan access violation, 
-        # the critical section is working.
         self.assertEqual(len(shared_tuple), 3)
+        # Restore to known-good hashable state to avoid corrupting Python's integer cache
+        culverin.mutate_tuple(shared_tuple, 0, 0)
+        culverin.mutate_tuple(shared_tuple, 1, 0)
+        culverin.mutate_tuple(shared_tuple, 2, 0)
 
+class TestCharacterInteractions(CulverinTestCase):
+    def test_character_pushing_box(self) -> None:
+        """Verify that characters can physically move dynamic bodies."""
+        # 1. Place a light box at X=1.1
+        box = self.world.create_body(pos=(1.1, 0.5, 0), size=(1, 1, 1), mass=1.0)
+        
+        # 2. Place character at X=0
+        char = self.world.create_character(pos=(0, 0.5, 0))
+        char.set_strength(5000.0)
+        self.world.step(0)
+
+        # 3. Move character into the box
+        # 20m/s * 1/60s = 0.33m. Radius 0.4. Reach = 0.73. 
+        # Box edge is at 1.1 - 0.5 = 0.6. Collision is guaranteed.
+        char.move((20, 0, 0), 1/60)
+        
+        # Check that a contact event was recorded
+        events = self.world.get_contact_events_ex()
+        self.assertTrue(any(box in e["bodies"] for e in events), "Box contact not recorded")
+
+        # 4. Step the world to allow the impulse to translate into movement
+        self.world.step(1/60)
+        
+        # The box should have gained velocity from the character's 'apply_character_impulse'
+        vel = self.world.get_velocity(box)
+        self.assertGreater(vel[0], 0.5, "Character failed to push the dynamic box")
+        self.world.step(1/60)  # flush character state before world teardown
+
+    def test_character_vs_character_collision(self) -> None:
+        """Verify the special callback path for virtual character collisions."""
+        # RADIUS 0.4. Sum of radii 0.8.
+        # Place centers at 0.0 and 1.2. Gap is 0.4 units.
+        char1 = self.world.create_character(pos=(0, 0.5, 0))
+        char2 = self.world.create_character(pos=(1.2, 0.5, 0))
+        
+        # Step 0 to flush registration commands
+        self.world.step(0)
+
+        # Move char2 slightly just to ensure it is fully "woken up" in the 
+        # CharacterVsCharacterCollision manager's broadphase.
+        char2.move((0.01, 0, 0), 1/60)
+
+        # Move char1 significantly into char2.
+        # Speed 120m/s * 1/60s = 2.0 units movement. 
+        # Range: X 0.0 -> 2.0. Intersection with char2 at 1.2 is guaranteed.
+        char1.move((120, 0, 0), 1/60)
+
+        # Capture events immediately after the move() call
+        events = self.world.get_contact_events_ex()
+        char_hits = [e for e in events if char1.handle in e["bodies"] and char2.handle in e["bodies"]]
+        
+        self.assertGreater(len(char_hits), 0, 
+            f"No character contact detected. Total events captured: {len(events)}. "
+            "Check if JPH_CharacterVirtual_Set/GetUserData is working in C.")
+        
+        # Verify it's an Added or Persisted event
+        self.assertIn(char_hits[0]["type"], [culverin.EVENT_ADDED, culverin.EVENT_PERSISTED])
+
+    def test_character_contact_lifecycle(self) -> None:
+        """Test Added -> Persisted -> Removed lifecycle against a static wall."""
+        wall = self.world.create_body(pos=(1.0, 0.5, 0), size=(1, 1, 1), motion=culverin.MOTION_STATIC)
+        char = self.world.create_character(pos=(0, 0.5, 0))
+        self.world.step(0)
+
+        # 1. ADDED
+        char.move((10, 0, 0), 1/60)
+        events = self.world.get_contact_events_ex()
+        self.assertTrue(any(e["type"] == culverin.EVENT_ADDED and wall in e["bodies"] for e in events))
+
+        # 2. PERSISTED
+        # We must step once to transition the Jolt listener's state
+        self.world.step(1/60)
+        char.move((10, 0, 0), 1/60)
+        events = self.world.get_contact_events_ex()
+        self.assertTrue(any(e["type"] == culverin.EVENT_PERSISTED and wall in e["bodies"] for e in events))
+
+        # 3. REMOVED
+        char.set_position((-5, 0.5, 0))
+        # ExtendedUpdate must run while NOT touching to fire Removed callback
+        char.move((0, 0, 0), 1/60)
+        events = self.world.get_contact_events_ex()
+        self.assertTrue(any(e["type"] == culverin.EVENT_REMOVED and wall in e["bodies"] for e in events))
+
+    def test_character_collision_filtering(self) -> None:
+        """Verify that character-vs-character contact can be filtered via bitmasks."""
+        # 1. Setup two characters on 'Team A'
+        # Category 2, Mask 1 (Collide with world, but not with other Category 2s)
+        char1 = self.world.create_character(pos=(0, 0.5, 0))
+        char2 = self.world.create_character(pos=(1.2, 0.5, 0))
+        
+        self.world.step(0) # Flush
+        
+        # Set filters: Both are category 2, and both only look for category 1
+        self.world.set_collision_filter(char1.handle, category=2, mask=1)
+        self.world.set_collision_filter(char2.handle, category=2, mask=1)
+        
+        # 2. Attempt to move char1 THROUGH char2
+        # If filtering works, char1 should move freely to X=2.0
+        # and NO contact events should be generated.
+        char1.move((120, 0, 0), 1/60)
+        
+        events = self.world.get_contact_events_ex()
+        char_hits = [e for e in events if char1.handle in e["bodies"] and char2.handle in e["bodies"]]
+        
+        self.assertEqual(len(char_hits), 0, "Characters collided despite filtering masks")
+        
+        # Verify char1 actually moved past char2 (didn't get stuck)
+        self.assertGreater(char1.get_position()[0], 1.5)
+
+        # 3. Change filter to allow collision
+        # Mask 3 = (1 | 2), so it now sees category 2
+        self.world.set_collision_filter(char1.handle, category=2, mask=3)
+        self.world.set_collision_filter(char2.handle, category=2, mask=3)
+        
+        char1.set_position((0, 0.5, 0))
+        char1.move((120, 0, 0), 1/60)
+        
+        events = self.world.get_contact_events_ex()
+        char_hits = [e for e in events if char1.handle in e["bodies"] and char2.handle in e["bodies"]]
+        self.assertGreater(len(char_hits), 0, "Characters failed to collide after mask update")
+
+    def test_character_slippery_platform(self) -> None:
+        """Verify character is carried by a rotating kinematic platform."""
+        self.world.register_material(id=10, friction=1.0)
+
+        sticky_plat = self.world.create_body(
+            pos=(0, 0, 0), size=(5, 0.5, 5),
+            motion=culverin.MOTION_KINEMATIC, material_id=10)
+
+        char_sticky = self.world.create_character(pos=(2, 1.0, 0), radius=0.5, height=1.0)
+        self.world.step(0)
+
+        print(f"gravity={self.world.get_gravity()}", flush=True)
+
+        # Warmup: settle onto platform
+        for _ in range(20):
+            char_sticky.move((0, 0, 0), 1/60) 
+            self.world.step(1/60)
+
+        self.assertTrue(char_sticky.is_grounded(),
+                        f"Character failed to settle. Y={char_sticky.get_position()[1]}")
+
+        self.world.set_angular_velocity(sticky_plat, x=0, y=2.0, z=0)
+        start_pos = char_sticky.get_position()
+
+        # Zero input — ground velocity inheritance in C should do all the work
+        for _ in range(10):
+            char_sticky.move((0, 0, 0), 1/60)
+            self.world.step(1/60)
+
+        end_pos = char_sticky.get_position()
+        dx = end_pos[0] - start_pos[0]
+        dz = end_pos[2] - start_pos[2]
+        displacement_sq = dx*dx + dz*dz
+
+        self.assertGreater(displacement_sq, 0.1,
+                        f"Character failed to orbit. Start={start_pos}, End={end_pos}")
+        self.assertTrue(char_sticky.is_grounded(),
+                        f"Character fell off platform. Y={end_pos[1]}")
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

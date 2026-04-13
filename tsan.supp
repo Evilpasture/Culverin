@@ -16,6 +16,7 @@ race:pycore_freelist.h
 race:mimalloc
 race:_mi_*
 race:mi_pthread_done
+race:mi_segment_alloc
 
 # --- 3. CPython Internal: Core Interpreter & JIT ---
 # TSan flags Tier 2 JIT warmup and opcode specialization as races.

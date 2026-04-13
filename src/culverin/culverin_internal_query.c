@@ -1,94 +1,95 @@
 #include "culverin_internal_query.h"
 
-// --- Helper: Shape Caching (Internal) ---
-// This is called during creation (e.g. create_body).
-// Since creation is low-frequency compared to rays, we handle locking internally here.
-// Requires: SHADOW_LOCK held AND g_jph_trampoline_lock held
+/**
+ * REQUIRES: SHADOW_LOCK held AND g_jph_trampoline_lock held
+ */
 JPH_Shape *find_or_create_shape_locked(PhysicsWorldObject *self, int type, const float *params) {
-    ShapeKey key;
-    memset(&key, 0, sizeof(ShapeKey));
-    key.type = (uint32_t)type;
+    // 1. KEY NORMALIZATION & SANITIZATION
+    // p1-p3 clamped to 1mm minimum to prevent solver issues.
+    // unused parameters are zeroed to maximize cache hits.
+    const float p1 = (params[0] < 1e-3f) ? 1e-3f : params[0];
+    const float p2 = (params[1] < 1e-3f) ? 1e-3f : params[1];
+    const float p3 = (params[2] < 1e-3f) ? 1e-3f : params[2];
+    const float p4 = (type == CULV_SHAPE_PLANE) ? params[3] : 0.0f;
 
-    // 1. SANITIZATION
-    float p1 = (params[0] < 0.001f) ? 0.001f : params[0];
-    float p2 = (params[1] < 0.001f) ? 0.001f : params[1];
-    float p3 = (params[2] < 0.001f) ? 0.001f : params[2];
-    float p4 = (type == 4) ? params[3] : 0.0f; // Only Plane uses p4
-
-    key.p1 = p1;
-    key.p2 = p2;
-    key.p3 = p3;
-    key.p4 = p4;
-
-    // 2. CACHE LOOKUP (Safe because SHADOW_LOCK is held)
-    for (size_t i = 0; i < self->shape_cache_count; i++) {
-        ShapeKey *cached = &self->shape_cache[i].key;
-
-        // Compare each field logically
-        if (cached->type == key.type && cached->p1 == key.p1 && cached->p2 == key.p2 &&
-            cached->p3 == key.p3 && cached->p4 == key.p4) {
+    // 2. CACHE LOOKUP
+    for (size_t i = 0; i < self->shape_cache_count; ++i) {
+        const ShapeKey *cached = &self->shape_cache[i].key;
+        if (cached->type == (uint32_t)type && cached->p1 == p1 && cached->p2 == p2 &&
+            cached->p3 == p3 && cached->p4 == p4) {
             return self->shape_cache[i].shape;
         }
     }
 
-    // 3. JOLT CREATION (Safe because Jolt Lock is held)
-    JPH_Shape *shape = nullptr;
+    // 3. PRE-ALLOCATION CHECK (Fail early before expensive Jolt work)
+    if (self->shape_cache_count >= self->shape_cache_capacity) {
+        size_t new_cap = (self->shape_cache_capacity == 0) ? 16 : self->shape_cache_capacity * 2;
+        ShapeEntry *new_ptr =
+            (ShapeEntry *)CULV_RAW_REALLOC(self->shape_cache, new_cap * sizeof(ShapeEntry));
+        if (UNLIKELY(!new_ptr)) {
+            return nullptr;
+        }
+        self->shape_cache          = new_ptr;
+        self->shape_cache_capacity = new_cap;
+    }
 
-    if (type == CULV_SHAPE_BOX) { // BOX
-        JPH_Vec3 he             = {p1, p2, p3};
-        JPH_BoxShapeSettings *s = JPH_BoxShapeSettings_Create(&he, 0.05f);
+    // 4. JOLT CREATION (Type-Specific Dispatch)
+    JPH_Shape *shape = nullptr;
+    switch (type) {
+    case CULV_SHAPE_BOX: {
+        JPH_Vec3 half_extents = {p1, p2, p3};
+        auto *s               = JPH_BoxShapeSettings_Create(&half_extents, 0.05f);
         if (s) {
             shape = (JPH_Shape *)JPH_BoxShapeSettings_CreateShape(s);
             JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);
         }
-    } else if (type == CULV_SHAPE_SPHERE) { // SPHERE
-        JPH_SphereShapeSettings *s = JPH_SphereShapeSettings_Create(p1);
+        break;
+    }
+    case CULV_SHAPE_SPHERE: {
+        auto *s = JPH_SphereShapeSettings_Create(p1);
         if (s) {
             shape = (JPH_Shape *)JPH_SphereShapeSettings_CreateShape(s);
             JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);
         }
-    } else if (type == CULV_SHAPE_CAPSULE) { // CAPSULE
-        JPH_CapsuleShapeSettings *s = JPH_CapsuleShapeSettings_Create(p1, p2);
+        break;
+    }
+    case CULV_SHAPE_CAPSULE: {
+        auto *s = JPH_CapsuleShapeSettings_Create(p1, p2);
         if (s) {
             shape = (JPH_Shape *)JPH_CapsuleShapeSettings_CreateShape(s);
             JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);
         }
-    } else if (type == CULV_SHAPE_CYLINDER) { // CYLINDER
-        JPH_CylinderShapeSettings *s = JPH_CylinderShapeSettings_Create(p1, p2, 0.05f);
+        break;
+    }
+    case CULV_SHAPE_CYLINDER: {
+        auto *s = JPH_CylinderShapeSettings_Create(p1, p2, 0.05f);
         if (s) {
             shape = (JPH_Shape *)JPH_CylinderShapeSettings_CreateShape(s);
             JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);
         }
-    } else if (type == CULV_SHAPE_PLANE) { // PLANE
-        JPH_Plane p               = {{p1, p2, p3}, p4};
-        JPH_PlaneShapeSettings *s = JPH_PlaneShapeSettings_Create(&p, nullptr, 1000.0f);
+        break;
+    }
+    case CULV_SHAPE_PLANE: {
+        JPH_Plane plane = {{p1, p2, p3}, p4};
+        auto *s         = JPH_PlaneShapeSettings_Create(&plane, nullptr, 1000.0f);
         if (s) {
             shape = (JPH_Shape *)JPH_PlaneShapeSettings_CreateShape(s);
             JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);
         }
+        break;
+    }
+    default:
+        break;
     }
 
-    if (!shape) {
+    if (UNLIKELY(!shape)) {
         return nullptr;
     }
 
-    // 4. CACHE STORAGE (Safe realloc because SHADOW_LOCK is held)
-    if (self->shape_cache_count >= self->shape_cache_capacity) {
-        size_t new_cap = (self->shape_cache_capacity == 0) ? 16 : self->shape_cache_capacity * 2;
-        void *new_ptr  = CULV_RAW_REALLOC(self->shape_cache, new_cap * sizeof(ShapeEntry));
-        if (!new_ptr) {
-            JPH_Shape_Destroy(shape);
-            // Do not set PyErr_NoMemory here if we are released GIL.
-            // Just return nullptr and let caller handle it.
-            return nullptr;
-        }
-        self->shape_cache          = (ShapeEntry *)new_ptr;
-        self->shape_cache_capacity = new_cap;
-    }
-
-    self->shape_cache[self->shape_cache_count].key   = key;
-    self->shape_cache[self->shape_cache_count].shape = shape;
-    self->shape_cache_count++;
+    // 5. CACHE COMMIT
+    ShapeEntry *entry = &self->shape_cache[self->shape_cache_count++];
+    entry->key        = (ShapeKey){.type = (uint32_t)type, .p1 = p1, .p2 = p2, .p3 = p3, .p4 = p4};
+    entry->shape      = shape;
 
     return shape;
 }
