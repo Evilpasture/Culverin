@@ -181,9 +181,10 @@ endif()
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 enforce_modern_compiler()
 message(STATUS "--- COMPILER VERIFICATION ---")
+message(STATUS "ID:           ${CMAKE_C_COMPILER_ID}")
 message(STATUS "C Compiler:   ${CMAKE_C_COMPILER}")
 message(STATUS "CXX Compiler: ${CMAKE_CXX_COMPILER}")
-message(STATUS "Clang Version: ${CMAKE_CXX_COMPILER_VERSION}")
+message(STATUS "Version:      ${CMAKE_CXX_COMPILER_VERSION}")
 message(STATUS "-----------------------------")
 
 if(NOT MSVC)
@@ -246,7 +247,7 @@ if(MSVC)
 else()
     message(STATUS "Culverin: Configuring GNU-like flags...")
 
-    set(FLAGS_DEBUG "-g -gcodeview")
+    set(FLAGS_DEBUG "-g")
     if(CMAKE_C_COMPILER_ID MATCHES "Clang")
         list(APPEND FLAGS_DEBUG "-gcodeview")
     endif()
@@ -270,12 +271,24 @@ else()
     set(FLAGS_STRICT
         "-Wall"
         "-Wextra"
-        "-Watomic-implicit-seq-cst"
-        "-Wsync-fetch-and-nand-semantics-changed"
         "-Wno-sign-conversion"
         "-Wno-shorten-64-to-32"
         "-Wno-double-promotion"
     )
+
+    if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+        list(
+            APPEND FLAGS_STRICT
+            "-Watomic-implicit-seq-cst"
+            "-Wsync-fetch-and-nand-semantics-changed"
+            "-Wno-c23-extensions"
+            "-Wno-c2x-extensions"
+        )
+    endif()
+
+    if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+        list(APPEND FLAGS_STRICT "-Wno-psabi") # Suppress AVX parameter passing ABI warnings
+    endif()
 
     list(
         APPEND CULVERIN_COMPILE_FLAGS
@@ -465,57 +478,67 @@ add_custom_command(
         "Extension built at: $<TARGET_FILE:_culverin_c>"
 )
 
-if(MSVC)
+message(STATUS "Culverin: Applying GCC/Clang flags to targets...")
+target_compile_options(_culverin_c PRIVATE ${CULVERIN_COMPILE_FLAGS})
+target_compile_options(${JOLTC_TARGET} PRIVATE ${CULVERIN_COMPILE_FLAGS})
+target_compile_options(${MAG_MUTEX_TARGET} PRIVATE ${CULVERIN_COMPILE_FLAGS}) # Don't forget this one!
+
+# ==============================================================================
+# 5. GLOBAL LTO / IPO CONFIGURATION (Compiler Agnostic)
+# ==============================================================================
+if(NOT ENABLE_SANITIZER AND NOT ENABLE_THREAD_SANITIZER)
+    set(LTO_COMPILE_FLAG "")
+    set(LTO_LINK_FLAG "")
+
     if(CMAKE_C_COMPILER_ID MATCHES "Clang")
-        # --- LTO LOGIC ---
-        if(NOT ENABLE_SANITIZER AND NOT ENABLE_THREAD_SANITIZER)
-            # The compiler still wants -flto=thin
-            set(LTO_COMPILE_FLAG "-flto=thin")
-
-            # The linker (lld-link) wants level 2 for ThinLTO
-            # Instead of /opt:lldlto=thin, use:
+        # LLVM / Clang-CL specific ThinLTO
+        set(LTO_COMPILE_FLAG "-flto=thin")
+        if(MSVC)
             set(LTO_LINK_FLAG "/opt:lldlto=2")
-
-            target_compile_options(_culverin_c PRIVATE ${LTO_COMPILE_FLAG})
-            target_link_options(_culverin_c PRIVATE ${LTO_LINK_FLAG})
-
-            target_compile_options(${JOLTC_TARGET} PRIVATE ${LTO_COMPILE_FLAG})
+        else()
+            set(LTO_LINK_FLAG "-flto=thin")
         endif()
+    elseif(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+        # GCC specific LTO
+        set(LTO_COMPILE_FLAG "-flto=auto")
+        set(LTO_LINK_FLAG "-flto=auto" "-fuse-linker-plugin")
     endif()
 
-    # --- PERFORMANCE & DEBUG FLAGS ---
+    if(LTO_COMPILE_FLAG)
+        message(STATUS "Culverin: Applying ${CMAKE_C_COMPILER_ID} LTO optimizations")
+        target_compile_options(_culverin_c PRIVATE ${LTO_COMPILE_FLAG})
+        target_link_options(_culverin_c PRIVATE ${LTO_LINK_FLAG})
+        target_compile_options(${JOLTC_TARGET} PRIVATE ${LTO_COMPILE_FLAG})
+        
+        if(TARGET Jolt AND NOT DEFINED JOLT_PREBUILT_DIR)
+            target_compile_options(Jolt PRIVATE ${LTO_COMPILE_FLAG})
+        endif()
+    endif()
+endif()
+
+# ==============================================================================
+# 6. PLATFORM & LINKER FLAGS
+# ==============================================================================
+if(MSVC)
+    # --- MSVC / Clang-CL PERFORMANCE & DEBUG FLAGS ---
     target_compile_options(_culverin_c PRIVATE /Zi /fp:fast)
     target_link_options(_culverin_c PRIVATE /DEBUG /OPT:REF /OPT:ICF)
     target_compile_definitions(_culverin_c PRIVATE _CRT_DECLARE_NONSTDC_NAMES=1)
-
-    # --- THE MISSING INCLUDES ---
-    # We use SYSTEM for Jolt because we don't want to see C++ warnings in our C23 build
-    target_include_directories(
-        _culverin_c
-        SYSTEM
-        PRIVATE "extern/JoltC/include" "${JOLT_DIR}"
-    )
-    target_include_directories(
-        ${JOLTC_TARGET}
-        SYSTEM
-        PRIVATE "extern/JoltC/include" "${JOLT_DIR}"
-    )
 else()
-    # GCC / Standard Clang (Linux/MinGW)
-    if(NOT ENABLE_SANITIZER AND NOT ENABLE_THREAD_SANITIZER)
-        target_compile_options(_culverin_c PRIVATE -flto=thin)
-        target_compile_options(${JOLTC_TARGET} PRIVATE -flto=thin)
-    endif()
-
+    # --- GNU / MinGW LINKER FLAGS ---
     if(WIN32)
-        set(WIN_LINK_FLAGS "-Wl,-nodefaultlib:libcmt") # CRITICAL: Prevents 3.14 Heap Crashes
+        set(WIN_LINK_FLAGS "")
+        
+        if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+            # Only Clang on Windows uses this MSVC-style nodefaultlib format via lld
+            list(APPEND WIN_LINK_FLAGS "-Wl,-nodefaultlib:libcmt")
+        else()
+            # GCC standard libraries
+            list(APPEND WIN_LINK_FLAGS "-static-libgcc" "-static-libstdc++")
+        endif()
 
         if(ENABLE_SANITIZER OR ENABLE_THREAD_SANITIZER)
             list(APPEND WIN_LINK_FLAGS "-Wl,-debug")
-        endif()
-
-        if(NOT ENABLE_SANITIZER AND NOT ENABLE_THREAD_SANITIZER)
-            list(APPEND WIN_LINK_FLAGS "-flto=thin")
         endif()
 
         target_link_options(
@@ -523,18 +546,20 @@ else()
             PRIVATE ${WIN_LINK_FLAGS} ${CULVERIN_LINK_FLAGS}
         )
     endif()
-
-    target_include_directories(
-        _culverin_c
-        SYSTEM
-        PRIVATE "extern/JoltC/include" "${JOLT_DIR}"
-    )
-    target_include_directories(
-        ${JOLTC_TARGET}
-        SYSTEM
-        PRIVATE "extern/JoltC/include" "${JOLT_DIR}"
-    )
 endif()
+
+# ==============================================================================
+# 7. UNIFIED INCLUDES (DRY)
+# ==============================================================================
+# We use SYSTEM for Jolt to suppress C++ warnings bleeding into our C23 build
+target_include_directories(
+    _culverin_c
+    SYSTEM PRIVATE "extern/JoltC/include" "${JOLT_DIR}"
+)
+target_include_directories(
+    ${JOLTC_TARGET}
+    SYSTEM PRIVATE "extern/JoltC/include" "${JOLT_DIR}"
+)
 
 target_compile_definitions(
     _culverin_c
@@ -546,9 +571,6 @@ target_include_directories(
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" 
     "src/culverin"
     "extern/mag-mutex/include"
-    SYSTEM PRIVATE
-    "extern/JoltC/include"
-    "${JOLT_DIR}"
     ${Python_INCLUDE_DIRS}
 )
 
@@ -584,8 +606,18 @@ set_property(
     PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL"
 )
 
+# ==============================================================================
+# 8. INSTALLATION
+# ==============================================================================
 install(TARGETS _culverin_c DESTINATION .)
-if(MSVC OR WIN32)
-    install(FILES $<TARGET_PDB_FILE:_culverin_c> DESTINATION . OPTIONAL)
+
+if(MSVC OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    # Only install PDBs if the linker actually supports/generates them
+    install(FILES $<TARGET_PDB_FILE:_culverin_c> 
+            DESTINATION . 
+            OPTIONAL) 
+else()
+    message(STATUS "Culverin: GCC detected, skipping PDB installation.")
 endif()
+
 install(FILES src/culverin/__init__.py src/culverin/_culverin.py DESTINATION .)
