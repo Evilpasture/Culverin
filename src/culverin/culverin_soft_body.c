@@ -370,22 +370,26 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_soft_body(PhysicsWorldOb
     float friction            = 0.2f;
     float restitution         = 0.0f;
     bool make_rot_identity    = false;
+    bool update_position      = true;  // Jolt default is usually true
+    bool faces_double_sided   = false;
 
-    void *targets[CreateSoftBody_COUNT] = {[IDX_CSB_SHARED]    = (void *)&o_shared,
-                                           [IDX_CSB_POS]       = (void *)&o_pos,
-                                           [IDX_CSB_ROT]       = (void *)&o_rot,
-                                           [IDX_CSB_USER_DATA] = (void *)&user_data,
-                                           [IDX_CSB_CAT]       = (void *)&category,
-                                           [IDX_CSB_MASK]      = (void *)&mask,
-                                           [IDX_CSB_PRESSURE]  = (void *)&pressure,
-                                           [IDX_CSB_V_RADIUS]  = (void *)&vertex_radius,
-                                           [IDX_CSB_LIN_DAMP]  = (void *)&linear_damping,
-                                           [IDX_CSB_ITER]      = (void *)&num_iterations,
-                                           [IDX_CSB_MAX_VEL]   = (void *)&max_linear_velocity,
-                                           [IDX_CSB_GRAV]      = (void *)&gravity_factor,
-                                           [IDX_CSB_FRIC]      = (void *)&friction,
-                                           [IDX_CSB_REST]      = (void *)&restitution,
-                                           [IDX_CSB_ROT_ID]    = (void *)&make_rot_identity};
+    void *targets[CreateSoftBody_COUNT] = {[IDX_CSB_SHARED]     = (void *)&o_shared,
+                                           [IDX_CSB_POS]        = (void *)&o_pos,
+                                           [IDX_CSB_ROT]        = (void *)&o_rot,
+                                           [IDX_CSB_USER_DATA]  = (void *)&user_data,
+                                           [IDX_CSB_CAT]        = (void *)&category,
+                                           [IDX_CSB_MASK]       = (void *)&mask,
+                                           [IDX_CSB_PRESSURE]   = (void *)&pressure,
+                                           [IDX_CSB_V_RADIUS]   = (void *)&vertex_radius,
+                                           [IDX_CSB_LIN_DAMP]   = (void *)&linear_damping,
+                                           [IDX_CSB_ITER]       = (void *)&num_iterations,
+                                           [IDX_CSB_MAX_VEL]    = (void *)&max_linear_velocity,
+                                           [IDX_CSB_GRAV]       = (void *)&gravity_factor,
+                                           [IDX_CSB_FRIC]       = (void *)&friction,
+                                           [IDX_CSB_REST]       = (void *)&restitution,
+                                           [IDX_CSB_ROT_ID]     = (void *)&make_rot_identity,
+                                           [IDX_CSB_UPDATE_POS] = (void *)&update_position,
+                                           [IDX_CSB_FACE_DS]    = (void *)&faces_double_sided};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &st->parsers.CreateSoftBodyParser, targets)) {
@@ -429,6 +433,9 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_soft_body(PhysicsWorldOb
     JPH_SoftBodyCreationSettings_SetRotation(settings, &j_rot);
     JPH_SoftBodyCreationSettings_SetObjectLayer(settings, OBJECT_LAYER_DYNAMIC);
     JPH_SoftBodyCreationSettings_SetAllowSleeping(settings, true);
+    JPH_SoftBodyCreationSettings_SetMakeRotationIdentity(settings, make_rot_identity);
+    JPH_SoftBodyCreationSettings_SetUpdatePosition(settings, update_position);
+    JPH_SoftBodyCreationSettings_SetFacesDoubleSided(settings, faces_double_sided);
 
     // 4. COMMIT
     SHADOW_LOCK(&self->shadow_lock);

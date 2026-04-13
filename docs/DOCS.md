@@ -362,15 +362,21 @@ Unlike rigid bodies, soft bodies do not have a fixed shape; they are composed of
 
 **Arguments:**
 - **`shared_settings` (SoftBodySharedSettings):** The topological blueprint defining the mesh and constraints.
-- **`pos` / `rot` (tuple):** Initial world-space transform of the body's center of mass.
-- **`pressure` (float):** Internal gas pressure (default: `0.0`). High values (e.g., `500.0+`) make the body behave like an inflated balloon.
+- **`pos` (tuple):** Initial world-space position of the body's center of mass.
+- **`rot` (tuple):** Initial world-space rotation (Quaternion: `x, y, z, w`).
+- **`pressure` (float):** Internal gas pressure (default: `0.0`). High values (e.g., `500.0+`) make the body behave like an inflated balloon. Requires a manifold (closed) mesh to work correctly.
 - **`vertex_radius` (float):** The physical thickness of the vertices for collision (default: `0.05`).
-- **`linear_damping` (float):** Resistance to motion (default: `0.1`). Vital for stopping "numerical explosions" in high-energy jelly.
-- **`num_iterations` (int):** Solver quality (default: `10`). Increase to `20-30` for stiffer, more structurally sound objects.
-- **`max_linear_velocity` (float):** Hard safety cap (default: `500.0`). Prevents vertices from teleporting off-screen if the math destabilizes.
+- **`linear_damping` (float):** Resistance to motion (default: `0.1`). Vital for stopping "numerical explosions" in high-energy deformable objects.
+- **`num_iterations` (int):** Solver quality (default: `10`). Increase to `20-30` for stiffer, more structurally sound objects or complex cloth.
+- **`max_linear_velocity` (float):** Hard safety cap (default: `500.0`). Prevents vertices from teleporting off-screen if the simulation math destabilizes.
 - **`gravity_factor` (float):** Multiplier for global gravity. Use `0.0` for weightless cloth or `0.5` for "moon-jelly."
-- **`friction` / `restitution` (float):** Surface properties for collisions.
-- **`make_rotation_identity` (bool):** If `True`, the initial rotation provided is "baked" into the vertices, and the body's transform rotation is reset to identity.
+- **`friction` (float):** Surface friction (default: `0.2`).
+- **`restitution` (float):** Bounciness/Energy return (default: `0.0`).
+- **`make_rotation_identity` (bool):** If `True`, the initial rotation provided in `rot` is applied directly to the vertex positions during initialization, and the body's actual transform rotation is reset to identity. (Default: `False`).
+- **`update_position` (bool):** If `True`, the Center of Mass (COM) position is updated every frame based on the average movement of the vertices. If `False`, the COM remains fixed at the origin of the body while vertices deform around it. (Default: `True`).
+- **`faces_double_sided` (bool):** If `True`, collisions will be detected against both the front and back faces of the triangles. Essential for single-layered cloth meshes or open shells where the "inside" is reachable. (Default: `False`).
+- **`user_data` (int):** Optional 64-bit integer for custom identification.
+- **`category` / `mask` (int):** Bitmasks for collision filtering.
 
 **Operational Mechanics:**
 - **Two-Tier Tracking:** Culverin tracks the Center of Mass in the global `positions` buffer, while individual vertices are synced to a specialized shadow buffer.

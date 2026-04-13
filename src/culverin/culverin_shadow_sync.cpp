@@ -26,17 +26,17 @@ struct CppSyncWorkItem {
 
 CULV_FORCE_INLINE void process_full_batch(PhysicsWorldObject *const CULV_RESTRICT self,
                                           const CppSyncWorkItem *const CULV_RESTRICT worklist) {
-    PosStride * CULV_RESTRICT s_pos =
+    PosStride *CULV_RESTRICT s_pos =
         (PosStride *)CULV_ASSUME_ALIGNED(self->positions, sizeof(PosStride));
-    PosStride * CULV_RESTRICT s_ppos =
+    PosStride *CULV_RESTRICT s_ppos =
         (PosStride *)CULV_ASSUME_ALIGNED(self->prev_positions, sizeof(PosStride));
-    AuxStride * CULV_RESTRICT s_rot =
+    AuxStride *CULV_RESTRICT s_rot =
         (AuxStride *)CULV_ASSUME_ALIGNED(self->rotations, sizeof(AuxStride));
-    AuxStride * CULV_RESTRICT s_prot =
+    AuxStride *CULV_RESTRICT s_prot =
         (AuxStride *)CULV_ASSUME_ALIGNED(self->prev_rotations, sizeof(AuxStride));
-    AuxStride * CULV_RESTRICT s_lvel =
+    AuxStride *CULV_RESTRICT s_lvel =
         (AuxStride *)CULV_ASSUME_ALIGNED(self->linear_velocities, sizeof(AuxStride));
-    AuxStride * CULV_RESTRICT s_avel =
+    AuxStride *CULV_RESTRICT s_avel =
         (AuxStride *)CULV_ASSUME_ALIGNED(self->angular_velocities, sizeof(AuxStride));
 
     // Prevent I-Cache bloat and register spilling by limiting unroll count
@@ -79,17 +79,17 @@ CULV_FORCE_INLINE void process_partial_batch(PhysicsWorldObject *const CULV_REST
         return;
     }
 
-    PosStride * CULV_RESTRICT s_pos =
+    PosStride *CULV_RESTRICT s_pos =
         (PosStride *)CULV_ASSUME_ALIGNED(self->positions, sizeof(PosStride));
-    PosStride * CULV_RESTRICT s_ppos =
+    PosStride *CULV_RESTRICT s_ppos =
         (PosStride *)CULV_ASSUME_ALIGNED(self->prev_positions, sizeof(PosStride));
-    AuxStride * CULV_RESTRICT s_rot =
+    AuxStride *CULV_RESTRICT s_rot =
         (AuxStride *)CULV_ASSUME_ALIGNED(self->rotations, sizeof(AuxStride));
-    AuxStride * CULV_RESTRICT s_prot =
+    AuxStride *CULV_RESTRICT s_prot =
         (AuxStride *)CULV_ASSUME_ALIGNED(self->prev_rotations, sizeof(AuxStride));
-    AuxStride * CULV_RESTRICT s_lvel =
+    AuxStride *CULV_RESTRICT s_lvel =
         (AuxStride *)CULV_ASSUME_ALIGNED(self->linear_velocities, sizeof(AuxStride));
-    AuxStride * CULV_RESTRICT s_avel =
+    AuxStride *CULV_RESTRICT s_avel =
         (AuxStride *)CULV_ASSUME_ALIGNED(self->angular_velocities, sizeof(AuxStride));
 
     for (uint32_t j = 0; j < count; j++) {
@@ -181,8 +181,8 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
     CULV_PROFILE_BEGIN(sync);
 
     const uint32_t *CULV_RESTRICT s2d = self->slot_to_dense;
-    PosStride * CULV_RESTRICT s_pos         = (PosStride *)self->positions;
-    AuxStride * CULV_RESTRICT s_rot         = (AuxStride *)self->rotations;
+    PosStride *CULV_RESTRICT s_pos    = (PosStride *)self->positions;
+    AuxStride *CULV_RESTRICT s_rot    = (AuxStride *)self->rotations;
 
     const JPH::BodyLockInterfaceNoLock *lock_iface =
         reinterpret_cast<const JPH::BodyLockInterfaceNoLock *>(
@@ -251,8 +251,8 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
             JPH_PhysicsSystem_GetActiveBodiesUnsafe(sys_c, JPH_BodyType_Soft);
 
         if (LIKELY(active_soft_ids)) {
-            PosStride * CULV_RESTRICT s_ppos = (PosStride *)self->prev_positions;
-            AuxStride * CULV_RESTRICT s_prot = (AuxStride *)self->prev_rotations;
+            PosStride *CULV_RESTRICT s_ppos = (PosStride *)self->prev_positions;
+            AuxStride *CULV_RESTRICT s_prot = (AuxStride *)self->prev_rotations;
 
             for (uint32_t i = 0; i < active_soft_count; i++) {
                 const JPH::Body *b = lock_iface->TryGetBody(JPH::BodyID(active_soft_ids[i]));
@@ -303,12 +303,25 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
                     // Safety check to ensure arrays align
                     if ((shadow.vertices != nullptr) && shadow.num_vertices == jolt_verts.size()) {
                         auto *dst_verts = reinterpret_cast<PosStride *>(shadow.vertices);
+                        auto *dst_vels  = reinterpret_cast<AuxStride *>(shadow.velocities);
 
                         // Jolt's soft body vertices are local to the Center of Mass transform.
                         JPH::RMat44 com_transform = b->GetCenterOfMassTransform();
+                        JPH::Quat rotation        = b->GetRotation();
 
                         const size_t num_v = shadow.num_vertices;
+
+                        CULV_UNROLL_LOOP(4)
                         for (size_t v = 0; v < num_v; ++v) {
+                            // Prefetch 2 cache-lines ahead (assuming 64-byte CL, 1 PosStride is
+                            // 32/16 bytes)
+                            if (v + 8 < num_v) {
+                                CULV_PREFETCH_WRITE(&dst_verts[v + 8]);
+                                if (dst_vels != nullptr) {
+                                    CULV_PREFETCH_WRITE(&dst_vels[v + 8]);
+                                }
+                            }
+
                             JPH::Vec3 local_pos(jolt_verts[v].mPosition);
 
 #ifndef JPH_DOUBLE_PRECISION
@@ -320,6 +333,13 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
                             world_pos.StoreDouble3(reinterpret_cast<JPH::Double3 *>(&dst_verts[v]));
                             dst_verts[v].w = 0.0;
 #endif
+                            // Optional: Extract velocities if Python requested them
+                            if (dst_vels != nullptr) {
+                                JPH::Vec3 local_vel(jolt_verts[v].mVelocity);
+                                JPH::Vec3 world_vel = rotation * local_vel;
+                                JPH::Vec4(world_vel, 0.0f)
+                                    .StoreFloat4(reinterpret_cast<JPH::Float4 *>(&dst_vels[v]));
+                            }
                         }
                     }
                 }

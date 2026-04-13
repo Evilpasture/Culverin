@@ -355,7 +355,9 @@ static constexpr size_t PARSER_REGISTRY_SIZE = 128;
     X(IDX_CSB_GRAV, "gravity_factor", float, 0)                                                    \
     X(IDX_CSB_FRIC, "friction", float, 0)                                                          \
     X(IDX_CSB_REST, "restitution", float, 0)                                                       \
-    X(IDX_CSB_ROT_ID, "make_rotation_identity", bool, 0)
+    X(IDX_CSB_ROT_ID, "make_rotation_identity", bool, 0)                                           \
+    X(IDX_CSB_UPDATE_POS, "update_position", bool, 0)                                              \
+    X(IDX_CSB_FACE_DS, "faces_double_sided", bool, 0)
 
 #define SCHEMA_SBSS_ADD_VERTEX(X)                                                                  \
     X(IDX_SAV_POS, "pos", PyObject *, 1)                                                           \

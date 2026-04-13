@@ -274,6 +274,9 @@ class PhysicsWorld:
         friction: float = 0.2,
         restitution: float = 0.0,
         make_rotation_identity: bool = False,
+        update_position: bool = True,
+        faces_double_sided: bool = False
+
     ) -> int: ...
     def create_character(
         self,
