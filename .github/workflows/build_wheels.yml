@@ -405,12 +405,19 @@ jobs:
   linux_gcc_validation:
     name: GCC Validation (Ubuntu)
     needs: [build_jolt]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # Ensure we are on the latest Ubuntu
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
+
+      - name: Install GCC 14
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-14 g++-14 ninja-build
+          # Link them as the default gcc/g++
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100
+          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 100
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
@@ -420,11 +427,6 @@ jobs:
         with:
           name: jolt-prebuilt-ubuntu-latest
           path: jolt-install
-
-      - name: Install GCC and Ninja
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc g++ ninja-build
 
       - name: Build with GCC
         env:
