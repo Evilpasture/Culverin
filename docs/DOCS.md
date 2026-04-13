@@ -481,6 +481,12 @@ Dynamically updates the global gravity vector for the entire physics world.
 - **Zero Gravity:** Passing `(0, 0, 0)` effectively creates a weightless environment. Note that objects will maintain their current momentum unless acted upon by drag or manual forces.
 - **Numerical Safety:** As with all coordinate inputs, Culverin validates that the gravity components are finite. Passing non-finite values will raise a `ValueError` to prevent the solver from destabilizing.
 
+### get_gravity(...)
+
+Gets the current gravity of the physics world.
+
+**Returns:** A tuple of 3 floats.
+
 
 ### apply_buoyancy(...)
 
