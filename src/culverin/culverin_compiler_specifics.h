@@ -13,8 +13,8 @@
     #define CULV_ATOMIC(t) _Atomic(t)
 #endif
 
-#ifdef __cplusplus
-    // C++ Fallbacks (G++ does not support _BitInt)
+#if defined(__cplusplus) || (defined(__GNUC__) && __GNUC__ < 14)
+    // Fallback for C++ or older GCC
     typedef uint32_t culv_u23;
     typedef uint8_t  culv_u1;
     typedef uint8_t  culv_u5;

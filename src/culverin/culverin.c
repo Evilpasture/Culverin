@@ -4065,8 +4065,11 @@ exit_critical:
 #endif
 
 static const unsigned char ALL_DOCS[] = {
-// NOLINTNEXTLINE(readability-magic-numbers)
-#embed CULVERIN_DOCS_PATH suffix(, 0)
+#if defined(__has_embed) && __has_embed(CULVERIN_DOCS_PATH)
+    #embed CULVERIN_DOCS_PATH suffix(, 0)
+#else
+    #include "ALL_DOCS.inc"
+#endif
 };
 
 // Global flag to ensure we only stitch once (important for subinterpreters)
@@ -4513,8 +4516,11 @@ static const PyType_Spec Ragdoll_spec = {
 
 // Embed the entire TOML file as a static string
 static const unsigned char PYPROJECT_TOML[] = {
-// NOLINTNEXTLINE(readability-magic-numbers)
-#embed "../../pyproject.toml" suffix(, 0)
+#if defined(__has_embed) && __has_embed("../../pyproject.toml")
+    #embed "../../pyproject.toml" suffix(, 0)
+#else
+    #include "PYPROJECT_TOML.inc"
+#endif
 };
 
 // Helper function to extract the version string at runtime
