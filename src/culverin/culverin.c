@@ -362,7 +362,7 @@ static uint64_t physics_world_commit_create_locked(PhysicsWorldObject *self,
     // 5. Handle and Metadata Mappings
     uint32_t gen      = atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
     BodyHandle handle = make_handle(slot, gen);
-    uint64_t raw_h    = atomic_load_explicit(&handle, memory_order_relaxed);
+    uint64_t raw_h    = handle;
 
     JPH_BodyCreationSettings_SetUserData(settings, raw_h);
 
@@ -481,10 +481,10 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self
     JPH_Real px;
     JPH_Real py;
     JPH_Real pz;
-    void *targets[ImpAt_COUNT] = {
-        [IDX_IMPAT_H] = (void *)&h_raw, [IDX_IMPAT_IX] = (void *)&ix, [IDX_IMPAT_IY] = (void *)&iy,
-        [IDX_IMPAT_IZ] = (void *)&iz,   [IDX_IMPAT_PX] = (void *)&px, [IDX_IMPAT_PY] = (void *)&py,
-        [IDX_IMPAT_PZ] = (void *)&pz};
+    void *targets[ImpAt_COUNT] = {[IDX_IMPAT_H] = (void *)&h_raw, [IDX_IMPAT_IX] = (void *)&ix,
+                                  [IDX_IMPAT_IY] = (void *)&iy,   [IDX_IMPAT_IZ] = (void *)&iz,
+                                  [IDX_IMPAT_PX] = (void *)&px,   [IDX_IMPAT_PY] = (void *)&py,
+                                  [IDX_IMPAT_PZ] = (void *)&pz};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.ImpulseAtParser,
                            targets)) {
@@ -788,22 +788,18 @@ PyCFunction_DeclareMethod PhysicsWorld_set_gravity(PhysicsWorldObject *self, PyO
     Py_RETURN_NONE;
 }
 
-
-PyCFunction_DeclareMethod PhysicsWorld_get_gravity(PhysicsWorldObject *self, PyObject *Py_UNUSED(ignored)) {
-    // We acquire the shadow_lock to ensure we don't read gravity 
+PyCFunction_DeclareMethod PhysicsWorld_get_gravity(PhysicsWorldObject *self,
+                                                   PyObject *Py_UNUSED(ignored)) {
+    // We acquire the shadow_lock to ensure we don't read gravity
     // mid-update if the simulation is currently swapping buffers.
     SHADOW_LOCK(&self->shadow_lock);
-    
+
     JPH_Vec3 g;
     JPH_PhysicsSystem_GetGravity(self->system, &g);
-    
+
     SHADOW_UNLOCK(&self->shadow_lock);
 
-    return FastBuild_Tuple(
-        FastBuild_Value(g.x), 
-        FastBuild_Value(g.y), 
-        FastBuild_Value(g.z)
-    );
+    return FastBuild_Tuple(FastBuild_Value(g.x), FastBuild_Value(g.y), FastBuild_Value(g.z));
 }
 
 PyCFunction_DeclareMethod PhysicsWorld_get_body_stats(PhysicsWorldObject *self,
@@ -1266,10 +1262,10 @@ PyCFunction_DeclareMethod PhysicsWorld_load_state(PhysicsWorldObject *self, PyOb
     // 9. JPH SYNC (Bridges Shadow to C++)
     JPH_BodyID *bids      = self->body_ids;
     JPH_BodyInterface *bi = self->body_interface;
-    auto *shadow_pos      = (PosStride *)self->positions;
-    auto *shadow_rot      = (AuxStride *)self->rotations;
-    auto *shadow_lvel     = (AuxStride *)self->linear_velocities;
-    auto *shadow_avel     = (AuxStride *)self->angular_velocities;
+    auto shadow_pos       = (PosStride *)self->positions;
+    auto shadow_rot       = (AuxStride *)self->rotations;
+    auto shadow_lvel      = (AuxStride *)self->linear_velocities;
+    auto shadow_avel      = (AuxStride *)self->angular_velocities;
 
     SHADOW_UNLOCK(&self->shadow_lock);
 
@@ -1292,7 +1288,7 @@ PyCFunction_DeclareMethod PhysicsWorld_load_state(PhysicsWorldObject *self, PyOb
         uint32_t gen  = atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
 
         BodyHandle h   = make_handle(slot, gen);
-        uint64_t raw_h = atomic_load_explicit(&h, memory_order_relaxed);
+        uint64_t raw_h = h;
 
         JPH_BodyInterface_SetUserData(bi, bid, raw_h);
         uint32_t j_idx = JPH_ID_TO_INDEX(bid);
@@ -1510,14 +1506,14 @@ PyCFunction_DeclareMethod PhysicsWorld_create_convex_hull(PhysicsWorldObject *se
     // 3. JOLT SHAPE BUILD (No GIL)
     JPH_Shape *shape = nullptr;
     Py_BEGIN_ALLOW_THREADS;
-    auto *jolt_points = (JPH_Vec3 *)CULV_RAW_MALLOC(num_points * sizeof(JPH_Vec3));
-    float *raw        = (float *)points_view.buf;
+    auto jolt_points = (JPH_Vec3 *)CULV_RAW_MALLOC(num_points * sizeof(JPH_Vec3));
+    float *raw       = (float *)points_view.buf;
     for (size_t i = 0; i < num_points; i++) {
         jolt_points[i] = (JPH_Vec3){raw[i * 3], raw[i * 3 + 1], raw[i * 3 + 2]};
     }
 
-    auto *hull_settings = JPH_ConvexHullShapeSettings_Create(jolt_points, (uint32_t)num_points,
-                                                             CONVEX_HULL_TOLERANCE);
+    auto hull_settings = JPH_ConvexHullShapeSettings_Create(jolt_points, (uint32_t)num_points,
+                                                            CONVEX_HULL_TOLERANCE);
     CULV_RAW_FREE(jolt_points);
     if (hull_settings) {
         shape = (JPH_Shape *)JPH_ConvexHullShapeSettings_CreateShape(hull_settings);
@@ -1969,8 +1965,8 @@ PyCFunction_DeclareMethod PhysicsWorld_create_body(PhysicsWorldObject *self, PyO
         settings        = JPH_BodyCreationSettings_Create3(
             shape, &j_pos, &j_rot, (JPH_MotionType)motion_type,
             (motion_type == MOTION_KINEMATIC || motion_type == MOTION_STATIC)
-                       ? OBJECT_LAYER_STATIC
-                       : OBJECT_LAYER_DYNAMIC);
+                ? OBJECT_LAYER_STATIC
+                : OBJECT_LAYER_DYNAMIC);
         if (settings) {
             BodyConfig config = {mass,           mat.friction, mat.restitution,
                                  (int)is_sensor, (int)use_ccd, motion_type};
@@ -2071,11 +2067,11 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
         return PyErr_NoMemory();
     }
 
-    auto *pos_buf       = (PosStride *)arena;
-    auto *size_buf      = (ShapeParams *)(pos_buf + batch_count);
-    auto **settings_buf = (JPH_BodyCreationSettings **)(size_buf + batch_count);
-    auto *handles_out   = (uint64_t *)(settings_buf + batch_count);
-    auto **py_results   = (PyObject **)(handles_out + batch_count);
+    auto pos_buf      = (PosStride *)arena;
+    auto size_buf     = (ShapeParams *)(pos_buf + batch_count);
+    auto settings_buf = (JPH_BodyCreationSettings **)(size_buf + batch_count);
+    auto handles_out  = (uint64_t *)(settings_buf + batch_count);
+    auto py_results   = (PyObject **)(handles_out + batch_count);
 
     memset((void *)settings_buf, 0, batch_count * sizeof(void *));
 
@@ -2088,7 +2084,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
     Py_BEGIN_ALLOW_THREADS;
     SHADOW_LOCK(&self->shadow_lock);
     JPH_Shape *last_shape = nullptr;
-    ShapeParams last_size = {-1.0f, -1.0f, -1.0f, -1.0f};
+    ShapeParams last_size = {.p[0] = -1.0f, .p[1] = -1.0f, .p[2] = -1.0f, .p[3] = -1.0f};
 
     for (Py_ssize_t i = 0; i < batch_count; i++) {
         JPH_Shape *shape    = last_shape;
@@ -2221,7 +2217,7 @@ fail_locked:
  * Helper 1: Build the Jolt triangle array while verifying index bounds.
  */
 static JPH_IndexedTriangle *build_mesh_triangles(const uint32_t *raw, MeshBounds bounds) {
-    auto *jolt_tris =
+    auto jolt_tris =
         (JPH_IndexedTriangle *)CULV_RAW_MALLOC(bounds.tri_count * sizeof(JPH_IndexedTriangle));
     if (!jolt_tris) {
         PyErr_NoMemory();
@@ -2501,9 +2497,9 @@ PyCFunction_DeclareMethod PhysicsWorld_destroy_bodies_batch(PhysicsWorldObject *
     }
 
     // Hoist pointers for maximum loop speed
-    PhysicsCommand *cmd_q   = self->command_queue;
-    size_t cmd_idx          = self->command_count;
-    _Atomic uint8_t *states = self->slot_states;
+    PhysicsCommand *cmd_q        = self->command_queue;
+    size_t cmd_idx               = self->command_count;
+    CULV_ATOMIC(uint8_t) *states = self->slot_states;
 
     for (size_t i = 0; i < actual_work_count; i++) {
         uint32_t slot = 0;
@@ -3401,7 +3397,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_active_indices(PhysicsWorldObject *se
 
     // 2. Query activity state WHILE UNLOCKED (Deadlock safe)
     // Jolt's IsActive check is thread-safe for reading.
-    auto *results = (uint32_t *)CULV_RAW_MALLOC(count * sizeof(uint32_t));
+    auto results = (uint32_t *)CULV_RAW_MALLOC(count * sizeof(uint32_t));
     if (!results) {
         CULV_RAW_FREE(id_scratch);
         return PyErr_NoMemory();
@@ -3464,10 +3460,10 @@ PyCFunction_DeclareMethod PhysicsWorld_get_render_state(PhysicsWorldObject *self
     float *out = (float *)PyBytes_AsString(bytes_obj);
 
     // Map shadow buffers (These are stable while holding SHADOW_LOCK + BLOCK_UNTIL_NOT_STEPPING)
-    auto *curr_p = (PosStride *)self->positions;
-    auto *prev_p = (PosStride *)self->prev_positions;
-    auto *curr_r = (AuxStride *)self->rotations;
-    auto *prev_r = (AuxStride *)self->prev_rotations;
+    auto curr_p = (PosStride *)self->positions;
+    auto prev_p = (PosStride *)self->prev_positions;
+    auto curr_r = (AuxStride *)self->rotations;
+    auto prev_r = (AuxStride *)self->prev_rotations;
 
     // 2. MATH & INTERPOLATION
     for (size_t i = 0; i < count; i++) {
@@ -3621,7 +3617,7 @@ PyCFunction_DeclareMethod PhysicsWorld_register_material(PhysicsWorldObject *sel
     if (self->material_count >= self->material_capacity) {
         size_t new_cap = (self->material_capacity == 0) ? INITIAL_MATERIAL_CAPACITY
                                                         : self->material_capacity * 2;
-        auto *new_ptr =
+        auto new_ptr =
             (MaterialData *)CULV_RAW_REALLOC(self->materials, new_cap * sizeof(MaterialData));
         if (UNLIKELY(!new_ptr)) {
             SHADOW_UNLOCK(&self->shadow_lock);
@@ -4068,7 +4064,7 @@ exit_critical:
 #    define CULVERIN_DOCS_PATH "../../docs/DOCS.md"
 #endif
 
-static const char ALL_DOCS[] = {
+static const unsigned char ALL_DOCS[] = {
 // NOLINTNEXTLINE(readability-magic-numbers)
 #embed CULVERIN_DOCS_PATH suffix(, 0)
 };
@@ -4095,7 +4091,8 @@ static char *extract_docstring(const char *class_name, const char *method_name) 
     snprintf(class_key, sizeof(class_key), "## class %s", class_name);
 
     // 1. Find the Class boundary
-    char *class_start = strstr(ALL_DOCS, class_key);
+    const char *docs_ptr = (const char *)ALL_DOCS;
+    char *class_start    = strstr(docs_ptr, class_key);
     if (!class_start) {
         return nullptr;
     }
@@ -4403,7 +4400,7 @@ static const PyMemberDef PhysicsWorld_members[] = {
      .doc    = nullptr},
     {.name = nullptr, .type = 0, .offset = 0, .flags = 0, .doc = nullptr}};
 
-static const PyType_Slot PhysicsWorld_slots[] = {
+static PyType_Slot PhysicsWorld_slots[] = {
     {.slot = Py_tp_new, .pfunc = PyType_GenericNew},
     {.slot = Py_tp_init, .pfunc = PhysicsWorld_init},
     {.slot = Py_tp_dealloc, .pfunc = PhysicsWorld_dealloc},
@@ -4417,7 +4414,7 @@ static const PyType_Slot PhysicsWorld_slots[] = {
     {.slot = 0, .pfunc = nullptr},
 };
 
-static const PyType_Slot Character_slots[] = {
+static PyType_Slot Character_slots[] = {
     {.slot = Py_tp_dealloc, .pfunc = Character_dealloc},
     {.slot = Py_tp_traverse, .pfunc = Character_traverse},
     {.slot = Py_tp_clear, .pfunc = Character_clear},
@@ -4426,7 +4423,7 @@ static const PyType_Slot Character_slots[] = {
     {.slot = 0, .pfunc = nullptr},
 };
 
-static const PyType_Slot Vehicle_slots[] = {
+static PyType_Slot Vehicle_slots[] = {
     {.slot = Py_tp_dealloc, .pfunc = Vehicle_dealloc},
     {.slot = Py_tp_traverse, .pfunc = Vehicle_traverse},
     {.slot = Py_tp_clear, .pfunc = Vehicle_clear},
@@ -4435,7 +4432,7 @@ static const PyType_Slot Vehicle_slots[] = {
     {.slot = 0, .pfunc = nullptr},
 };
 
-static const PyType_Slot Skeleton_slots[] = {
+static PyType_Slot Skeleton_slots[] = {
     {.slot = Py_tp_new, .pfunc = Skeleton_new},
     {.slot = Py_tp_dealloc, .pfunc = Skeleton_dealloc},
     {.slot = Py_tp_methods, .pfunc = (PyMethodDef *)Skeleton_methods},
@@ -4449,7 +4446,7 @@ static const PyType_Spec Skeleton_spec = {
     .slots     = (PyType_Slot *)Skeleton_slots,
 };
 
-static const PyType_Slot RagdollSettings_slots[] = {
+static PyType_Slot RagdollSettings_slots[] = {
     {.slot = Py_tp_dealloc, .pfunc = RagdollSettings_dealloc},
     {.slot = Py_tp_methods, .pfunc = (PyMethodDef *)RagdollSettings_methods},
     {.slot = 0, nullptr},
@@ -4485,7 +4482,7 @@ static const PyType_Spec RagdollSettings_spec = {
 };
 
 // Update the SoftBodySharedSettings_slots array
-static const PyType_Slot SoftBodySharedSettings_slots[] = {
+static PyType_Slot SoftBodySharedSettings_slots[] = {
     {.slot = Py_tp_new, .pfunc = PyType_GenericNew},
     {.slot = Py_tp_init, .pfunc = SoftBodySharedSettings_init},
     {.slot = Py_tp_dealloc, .pfunc = SoftBodySharedSettings_dealloc},
@@ -4499,7 +4496,7 @@ static const PyType_Spec SoftBodySharedSettings_spec = {
     .flags     = Py_TPFLAGS_DEFAULT,
     .slots     = (PyType_Slot *)SoftBodySharedSettings_slots};
 
-static const PyType_Slot Ragdoll_slots[] = {
+static PyType_Slot Ragdoll_slots[] = {
     {.slot = Py_tp_dealloc, .pfunc = Ragdoll_dealloc},
     {.slot = Py_tp_methods, .pfunc = (PyMethodDef *)Ragdoll_methods},
     {.slot = 0, .pfunc = nullptr},
@@ -4515,7 +4512,7 @@ static const PyType_Spec Ragdoll_spec = {
 // --- Module Initialization ---
 
 // Embed the entire TOML file as a static string
-static constexpr char PYPROJECT_TOML[] = {
+static const unsigned char PYPROJECT_TOML[] = {
 // NOLINTNEXTLINE(readability-magic-numbers)
 #embed "../../pyproject.toml" suffix(, 0)
 };
@@ -4650,11 +4647,17 @@ static constexpr auto MAGIC_BUFFER = 128;
 static char shared_version[MAGIC_BUFFER];
 
 PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
+    fprintf(stderr, "[culverin_exec] ENTER m=%p\n", (void *)m);
+    fflush(stderr);
     CulverinState *st = get_culverin_state(m);
+    fprintf(stderr, "[culverin_exec] st=%p\n", (void *)st);
+    fflush(stderr);
 
     // 1. THE MASTER GATE: Protects all static global memory in the process
     int expected = 0;
     if (atomic_compare_exchange_strong(&docs_status, &expected, 1)) {
+        fprintf(stderr, "[culverin_exec] won the CAS, doing init\n");
+        fflush(stderr);
 
         // --- 1A. VERSION & BUILD METADATA ---
         const char *ver_temp = extract_version_from_toml();
@@ -4716,7 +4719,9 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
 
         if (!JPH_Init()) {
             PyErr_SetString(PyExc_RuntimeError, "Jolt initialization failed");
-            atomic_store_explicit(&docs_status, 0, memory_order_relaxed);
+            atomic_store_explicit(&docs_status, 0, memory_order_seq_cst);
+            fprintf(stderr, "[culverin_exec] FAIL at: <location>\n");
+            fflush(stderr);
             return -1;
         }
 
@@ -4732,19 +4737,28 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
         // (Fixes the race on g_jph_trampoline_lock write)
         if (INIT_NATIVE_MUTEX(g_jph_trampoline_lock) != 0) {
             PyErr_SetString(PyExc_RuntimeError, "Failed to initialize global lock");
+            fprintf(stderr, "[culverin_exec] FAIL at: <location>\n");
+            fflush(stderr);
             return -1;
         }
 
-        atomic_store_explicit(&docs_status, 2, memory_order_release);
+        atomic_store_explicit(&docs_status, 2, memory_order_seq_cst);
 
     } else {
+        fprintf(stderr, "[culverin_exec] lost CAS, expected=%d, docs_status=%d\n", expected,
+                docs_status);
+        fflush(stderr);
         // --- THE LOSERS: Wait for the Winner to finish ---
         while (atomic_load_explicit(&docs_status, memory_order_acquire) != 2) {
             culverin_yield();
         }
     }
+    fprintf(stderr, "[culverin_exec] per-interp setup begins\n");
+    fflush(stderr);
     // --- 2. PER-INTERPRETER SETUP (Runs for every import) ---
     if (PyModule_AddStringConstant(m, "__version__", shared_version) < 0) {
+        fprintf(stderr, "[culverin_exec] FAIL: PyModule_AddStringConstant\n");
+        fflush(stderr);
         return -1;
     }
 
@@ -4762,7 +4776,8 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
     if (init_constants(m) < 0) {
         return -1;
     }
-
+    fprintf(stderr, "[culverin_exec] SUCCESS, returning 0\n");
+    fflush(stderr);
     return 0;
 }
 
@@ -4794,27 +4809,27 @@ PyType_DeclareSlot_Status culverin_clear(PyObject *m) {
     return 0;
 }
 
-static const PyModuleDef_Slot culverin_slots[] = {
-    {.slot = Py_mod_exec, .value = culverin_exec},
+static PyModuleDef_Slot culverin_slots[] = {{.slot = Py_mod_exec, .value = culverin_exec},
 
 // 1. Handle the Free-threaded (No GIL) declaration (3.13+)
 #if defined(Py_MOD_GIL_NOT_USED)
-    {.slot = Py_mod_gil, .value = Py_MOD_GIL_NOT_USED},
+                                            {.slot = Py_mod_gil, .value = Py_MOD_GIL_NOT_USED},
 #endif
 
-    // 2. Handle Subinterpreter support
-    {.slot = Py_mod_multiple_interpreters,
+                                            // 2. Handle Subinterpreter support
+                                            {.slot = Py_mod_multiple_interpreters,
 #if PY_VERSION_HEX >= 0x030D0000
-     .value = Py_MOD_MULTIPLE_INTERPRETERS_SUPPORTED
+                                             .value = Py_MOD_MULTIPLE_INTERPRETERS_SUPPORTED
 #else
-     .value = Py_MOD_PER_INTERPRETER_GIL_SUPPORTED
+                                             .value = Py_MOD_PER_INTERPRETER_GIL_SUPPORTED
 #endif
-    },
+                                            },
 
-    {.slot = 0, .value = nullptr}};
+                                            {.slot = 0, .value = NULL}};
 
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
-static PyModuleDef culverin_module = {
+[[gnu::used, gnu::visibility("default")]]
+PyModuleDef culverin_module = {
     .m_base     = PyModuleDef_HEAD_INIT,
     .m_name     = "_culverin_c",
     .m_doc      = "Culverin Physics Engine Core",
@@ -4824,5 +4839,7 @@ static PyModuleDef culverin_module = {
     .m_traverse = culverin_traverse,
     .m_clear    = culverin_clear,
 };
-
-extern PyMODINIT_FUNC PyInit__culverin_c(void) { return PyModuleDef_Init(&culverin_module); }
+[[gnu::visibility("default")]]
+extern PyMODINIT_FUNC PyInit__culverin_c(void) {
+    return PyModuleDef_Init(&culverin_module);
+}

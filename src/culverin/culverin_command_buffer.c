@@ -186,11 +186,11 @@ op_CREATE_BODY: {
             // TSan Fix: Load generation atomically
             uint32_t gen = atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
 
-            // BodyHandle is _Atomic uint64_t
+            // BodyHandle is CULV_ATOMIC(uint64_t)
             BodyHandle h = make_handle(slot, gen);
 
             // TSan Fix: Extract raw uint64_t to avoid implicit seq_cst load overhead
-            uint64_t raw_h = atomic_load_explicit(&h, memory_order_relaxed);
+            uint64_t raw_h = h;
 
             // TSan Fix: Publish the new handle to the shared map atomically.
             // Release ensures the body_ids update above is visible to Query threads.
@@ -234,7 +234,7 @@ op_CREATE_SOFT_BODY: {
         if (self->id_to_handle_map && j_idx <= self->max_jolt_bodies) {
             uint32_t gen   = atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
             BodyHandle h   = make_handle(slot, gen);
-            uint64_t raw_h = atomic_load_explicit(&h, memory_order_relaxed);
+            uint64_t raw_h = h;
             atomic_store_explicit(&self->id_to_handle_map[j_idx], raw_h, memory_order_release);
         }
 

@@ -385,7 +385,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_vehicle(PhysicsWorldObje
     Py_BLOCK_THREADS;
 
     // --- 5. PYTHON WRAPPER (Unchanged) ---
-    auto *obj = (VehicleObject *)PyObject_GC_New(VehicleObject, (PyTypeObject *)st->VehicleType);
+    auto obj = (VehicleObject *)PyObject_GC_New(VehicleObject, (PyTypeObject *)st->VehicleType);
 
     if (!obj) {
         SHADOW_LOCK(&self->shadow_lock);
@@ -464,7 +464,7 @@ PyCFunction_DeclareMethodFromModule Vehicle_set_input(VehicleObject *self, PyObj
         Py_RETURN_NONE;
     }
 
-    auto *controller =
+    auto controller =
         (JPH_WheeledVehicleController *)JPH_VehicleConstraint_GetController(self->vehicle);
     JPH_BodyID chassis_id = JPH_Body_GetID(JPH_VehicleConstraint_GetVehicleBody(self->vehicle));
     JPH_BodyInterface *bi = self->world->body_interface;
@@ -657,15 +657,15 @@ PyCFunction_DeclareMethodFromModule Vehicle_get_debug_state(CULV_MAYBE_UNUSED Ve
     }
 
     // 2. RESOLVE JOLT COMPONENTS
-    auto *controller =
+    auto controller =
         (JPH_WheeledVehicleController *)JPH_VehicleConstraint_GetController(self->vehicle);
     if (!controller) {
         SHADOW_UNLOCK(&self->world->shadow_lock);
         Py_RETURN_NONE;
     }
 
-    const auto *engine = JPH_WheeledVehicleController_GetEngine(controller);
-    const auto *trans  = JPH_WheeledVehicleController_GetTransmission(controller);
+    const auto engine = JPH_WheeledVehicleController_GetEngine(controller);
+    const auto trans  = JPH_WheeledVehicleController_GetTransmission(controller);
 
     // 3. CAPTURE INPUTS
     CULV_MAYBE_UNUSED float in_fwd = JPH_WheeledVehicleController_GetForwardInput(controller);

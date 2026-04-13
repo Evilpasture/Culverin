@@ -78,7 +78,7 @@ static JPH_TrackedVehicleControllerSettings *
 init_tracked_controller_settings(TrackedEngineConfig config,
                                  JPH_VehicleTransmissionSettings **out_trans) {
 
-    auto *t_ctrl = JPH_TrackedVehicleControllerSettings_Create();
+    auto t_ctrl = JPH_TrackedVehicleControllerSettings_Create();
 
     JPH_VehicleEngineSettings eng;
     JPH_VehicleEngineSettings_Init(&eng);
@@ -89,7 +89,7 @@ init_tracked_controller_settings(TrackedEngineConfig config,
 
     JPH_TrackedVehicleControllerSettings_SetEngine(t_ctrl, &eng);
 
-    auto *trans = JPH_VehicleTransmissionSettings_Create();
+    auto trans = JPH_VehicleTransmissionSettings_Create();
     JPH_VehicleTransmissionSettings_SetMode(trans, JPH_TransmissionMode_Auto);
 
     float gears[] = {TRACKED_GEAR_RATIO_1, TRACKED_GEAR_RATIO_2, TRACKED_GEAR_RATIO_3,
@@ -240,7 +240,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
         CULV_RAW_FREE(tracks[t].indices);
     }
 
-    auto *obj = (VehicleObject *)PyObject_GC_New(VehicleObject, (PyTypeObject *)st->VehicleType);
+    auto obj = (VehicleObject *)PyObject_GC_New(VehicleObject, (PyTypeObject *)st->VehicleType);
     if (!obj) {
         SHADOW_LOCK(&self->shadow_lock);
         cleanup_vehicle_resources(&r, num_wheels, self);
@@ -311,14 +311,14 @@ PyCFunction_DeclareMethodFromModule Vehicle_set_tank_input(VehicleObject *self,
     SHADOW_LOCK(&self->world->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self->world);
 
-    auto *t_ctrl =
+    auto t_ctrl =
         (JPH_TrackedVehicleController *)JPH_VehicleConstraint_GetController(self->vehicle);
     JPH_BodyID bid = JPH_Body_GetID(JPH_VehicleConstraint_GetVehicleBody(self->vehicle));
 
     // Wake up the tank to process inputs
     JPH_BodyInterface_ActivateBody(self->world->body_interface, bid);
 
-    auto *trans = (JPH_VehicleTransmission *)JPH_TrackedVehicleController_GetTransmission(t_ctrl);
+    auto trans = (JPH_VehicleTransmission *)JPH_TrackedVehicleController_GetTransmission(t_ctrl);
     int gear    = JPH_VehicleTransmission_GetCurrentGear(trans);
 
     // 3. TANK DRIVE LOGIC

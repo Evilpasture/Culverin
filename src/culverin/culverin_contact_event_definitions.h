@@ -3,8 +3,8 @@
 
 // 1. Remove alignas from the inner struct
 typedef struct {
-    BodyHandle body1;       // 8
-    BodyHandle body2;       // 8
+    CULV_ATOMIC(BodyHandle) body1;       // 8
+    CULV_ATOMIC(BodyHandle) body2;       // 8
     JPH_Real px, py, pz;    // 24/12
     float nx, ny, nz;       // 12
     float impulse;          // 4

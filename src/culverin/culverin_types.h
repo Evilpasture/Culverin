@@ -42,7 +42,7 @@ static_assert(sizeof(AuxStride) == sizeof(float) * 4);
 
 // Minimal Handle Helper
 // Python handles will be 64-bit integers: (Generation << 32) | SlotIndex
-typedef _Atomic uint64_t BodyHandle;
+typedef uint64_t BodyHandle;
 
 // Constraint Types
 typedef enum ConstraintType : uint8_t {

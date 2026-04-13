@@ -177,7 +177,7 @@ PyCFunction_DeclareMethodFromModule RagdollSettings_add_part(RagdollSettingsObje
     }
 
     // 4. Validation & Resizing
-    auto *skel     = JPH_RagdollSettings_GetSkeleton(self->settings);
+    auto skel     = JPH_RagdollSettings_GetSkeleton(self->settings);
     int skel_count = JPH_Skeleton_GetJointCount(skel);
     if (joint_idx < 0 || joint_idx >= skel_count) {
         return PyErr_Format(PyExc_IndexError, "Joint index %d out of bounds", joint_idx);
@@ -269,7 +269,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll(PhysicsWorldObje
         PyErr_SetString(PyExc_TypeError, "settings must be a RagdollSettings object");
         return nullptr;
     }
-    auto *py_settings = (RagdollSettingsObject *)settings_obj;
+    auto py_settings = (RagdollSettingsObject *)settings_obj;
 
     // --- 2. JOLT PREPARATION (Logic Preserved) ---
     JPH_Ragdoll *j_rag         = nullptr;
@@ -315,7 +315,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll(PhysicsWorldObje
     Py_END_ALLOW_THREADS;
 
     // --- 3. PYTHON OBJECT CREATION ---
-    auto *obj = (RagdollObject *)PyObject_New(RagdollObject, (PyTypeObject *)st->RagdollType);
+    auto obj = (RagdollObject *)PyObject_New(RagdollObject, (PyTypeObject *)st->RagdollType);
     if (!obj) {
         Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
         JPH_Ragdoll_Destroy(j_rag);
@@ -344,12 +344,12 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll(PhysicsWorldObje
     }
 
     JPH_BodyInterface *bi = self->body_interface;
-    auto *shadow_pos      = (PosStride *)self->positions;
-    auto *shadow_ppos     = (PosStride *)self->prev_positions;
-    auto *shadow_rot      = (AuxStride *)self->rotations;
-    auto *shadow_prot     = (AuxStride *)self->prev_rotations;
-    auto *shadow_lvel     = (AuxStride *)self->linear_velocities;
-    auto *shadow_avel     = (AuxStride *)self->angular_velocities;
+    auto shadow_pos      = (PosStride *)self->positions;
+    auto shadow_ppos     = (PosStride *)self->prev_positions;
+    auto shadow_rot      = (AuxStride *)self->rotations;
+    auto shadow_prot     = (AuxStride *)self->prev_rotations;
+    auto shadow_lvel     = (AuxStride *)self->linear_velocities;
+    auto shadow_avel     = (AuxStride *)self->angular_velocities;
 
     for (size_t i = 0; i < body_count; i++) {
         JPH_BodyID bid = JPH_Ragdoll_GetBodyID(j_rag, (int)i);
@@ -381,7 +381,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll(PhysicsWorldObje
         // TSan Fix: Fetch generation atomically
         uint32_t gen   = atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
         BodyHandle h   = make_handle(slot, gen);
-        uint64_t raw_h = atomic_load_explicit(&h, memory_order_relaxed);
+        uint64_t raw_h = h;
 
         uint32_t j_idx = JPH_ID_TO_INDEX(bid);
         if (self->id_to_handle_map && j_idx < self->max_jolt_bodies) {
@@ -433,7 +433,7 @@ PyCFunction_DeclareMethodFromModule Ragdoll_drive_to_pose(RagdollObject *self,
 
     // 2. RESOURCE ACQUISITION
     const JPH_RagdollSettings *settings = JPH_Ragdoll_GetRagdollSettings(self->ragdoll);
-    auto *skel                          = JPH_RagdollSettings_GetSkeleton(settings);
+    auto skel                          = JPH_RagdollSettings_GetSkeleton(settings);
     int joint_count                     = JPH_Skeleton_GetJointCount(skel);
 
     // Validate Buffer Size
@@ -507,7 +507,7 @@ PyCFunction_DeclareMethodFromModule Ragdoll_get_body_handles(RagdollObject *self
             BodyHandle h = make_handle(slot, gen);
 
             // Extract raw uint64 from the atomic BodyHandle for Python
-            uint64_t raw_h = atomic_load_explicit(&h, memory_order_relaxed);
+            uint64_t raw_h = h;
             PyList_SET_ITEM(list, i, PyLong_FromUnsignedLongLong(raw_h));
         } else {
             Py_INCREF(Py_None);
@@ -572,7 +572,7 @@ PyType_DeclareSlot_VoidFromModule Skeleton_dealloc(SkeletonObject *self) {
 
 PyType_DeclareSlot_ObjectFromModule Skeleton_new(PyTypeObject *type, PyObject *Py_UNUSED(args),
                                                  PyObject *Py_UNUSED(kwds)) {
-    auto *self = (SkeletonObject *)type->tp_alloc(type, 0);
+    auto self = (SkeletonObject *)type->tp_alloc(type, 0);
     if (self) {
         self->skeleton = JPH_Skeleton_Create();
         if (!self->skeleton) {

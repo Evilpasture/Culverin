@@ -5,8 +5,10 @@
 #endif
 
 #define PY_SSIZE_T_CLEAN
+#include "culverin_compiler_specifics.h"
 #include "joltc.h" // Amer Koleci's JoltC binder.
 #include <Python.h>
+
 
 // =========================================================================
 // ASAN COMPATIBILITY ALLOCATORS
@@ -25,19 +27,13 @@
 #    define CULV_RAW_FREE(ptr) PyMem_RawFree(ptr)
 #endif
 // =========================================================================
-
 #include "culverin_command_buffer.h"
-#include "culverin_compiler_specifics.h"
 #include "culverin_debug_render.h"
 #include "culverin_internal_query.h"
 #include "culverin_threading.h"
 #include "culverin_tracked_vehicle.h"
 #include "culverin_types.h"
-#ifdef __cplusplus
-#    include <atomic>
-#else
-#    include <stdatomic.h>
-#endif
+
 #include <stddef.h>
 #include <string.h>
 
@@ -61,8 +57,8 @@ CULV_MAYBE_UNUSED static constexpr size_t JPH_BODY_ID_INDEX_MASK = 0x00FFFFFF;
 CULV_NODISCARD [[gnu::const]]
 static inline uint32_t JPH_ID_TO_INDEX(uint32_t id) {
     // Mask for the raw array index (Stripping the 24th bit used for Static flags)
-    static constexpr unsigned _BitInt(23) ID_TO_INDEX_MASK = 0x7FFFFF;
-    constexpr auto stfu = 0x7FFFFF;
+    static constexpr culv_u23 ID_TO_INDEX_MASK = 0x7FFFFF;
+    constexpr auto stfu                        = 0x7FFFFF;
     static_assert(ID_TO_INDEX_MASK == stfu);
     return id & ID_TO_INDEX_MASK;
 }
@@ -97,8 +93,8 @@ using namespace std;
 // --- Callback Logic ---
 // Old ContactEvent for compatibility
 typedef struct ContactEvent {
-    BodyHandle body1;
-    BodyHandle body2;
+    CULV_ATOMIC(BodyHandle) body1;
+    CULV_ATOMIC(BodyHandle) body2;
     float px, py, pz;
     float nx, ny, nz;
     float impulse;
@@ -200,9 +196,9 @@ typedef struct {
 } MeshBounds;
 
 typedef struct {
-    JPH_Real *vertices;    // Shadow buffer for positions (Vec3/Vec4)
-    float *normals;        // Optional shadow buffer for normals
-    float *velocities;     // Optional
+    JPH_Real *vertices; // Shadow buffer for positions (Vec3/Vec4)
+    float *normals;     // Optional shadow buffer for normals
+    float *velocities;  // Optional
     uint32_t num_vertices;
 } SoftBodyShadow;
 
@@ -212,9 +208,9 @@ typedef struct {
     float *rot, *prot, *lvel, *avel;
     JPH_BodyID *bids;
     uint64_t *udat;
-    _Atomic uint32_t *gens;
+    CULV_ATOMIC(uint32_t) * gens;
     uint32_t *s2d, *d2s, *free, *cats, *masks, *mats;
-    _Atomic uint8_t *stat;
+    CULV_ATOMIC(uint8_t) * stat;
     SoftBodyShadow *softs;
 } NewBuffers;
 
@@ -246,7 +242,7 @@ typedef struct PhysicsWorldObject {
 
     // Array of SoftBodyShadow structs, parallel to body_ids.
     // If dense_idx is a rigid body, soft_shadows[dense_idx].vertices == nullptr
-    SoftBodyShadow *soft_shadows; 
+    SoftBodyShadow *soft_shadows;
 
     // --- Data Buffers ---
     ContactEvent *contact_events;
@@ -255,11 +251,11 @@ typedef struct PhysicsWorldObject {
     PhysicsCommand *command_queue;
     PhysicsCommand *command_queue_spare;
     ShapeEntry *shape_cache;
-    BodyHandle *id_to_handle_map;
+    CULV_ATOMIC(BodyHandle) * id_to_handle_map;
     JPH_Constraint **constraints;
     uint32_t *categories;
     uint32_t *masks;
-    _Atomic uint32_t *generations;
+    CULV_ATOMIC(uint32_t) * generations;
     uint32_t *slot_to_dense;
     uint32_t *dense_to_slot;
     uint32_t *free_slots;
@@ -298,16 +294,16 @@ typedef struct PhysicsWorldObject {
     uint32_t max_jolt_bodies;
     atomic_int active_queries;
     atomic_int view_export_count;
-    #if !defined(Py_GIL_DISABLED)
+#if !defined(Py_GIL_DISABLED)
     atomic_int waiting_threads;
-    #endif
+#endif
 
     // --- BUCKET 3: Structs & Complex Types ---
     ShadowSync step_sync;    // 16 bytes (Internal 2-byte alignment)
     ShadowMutex shadow_lock; // MagMutex (usually 1 bytes)
 
     // --- BUCKET 4: Small types (Packed at the tail) ---
-    _Atomic uint8_t *slot_states;
+    CULV_ATOMIC(uint8_t) * slot_states;
     uint8_t *constraint_states;
     atomic_bool step_requested;
     atomic_bool is_stepping;
@@ -363,40 +359,33 @@ static inline CulverinState *get_culverin_state(PyObject *module) {
 CULV_NODISCARD
 CULV_MAYBE_UNUSED
 static inline BodyHandle make_handle(uint32_t slot, uint32_t gen) {
-    uint64_t val = ((uint64_t)gen << HANDLE_INDEX_BITS) | (uint64_t)slot;
-    BodyHandle h;
-#ifdef __cplusplus
-    reinterpret_cast<std::atomic<uint64_t> *>(&h)->store(val, std::memory_order_relaxed);
-#else
-    atomic_init(&h, val);
-#endif
-    return h;
+    return ((uint64_t)gen << HANDLE_INDEX_BITS) | (uint64_t)slot;
 }
 
 CULV_NODISCARD
 CULV_MAYBE_UNUSED
 static inline bool unpack_handle(PhysicsWorldObject *self, BodyHandle h, uint32_t *slot) {
-#ifdef __cplusplus
-    uint64_t h_val = reinterpret_cast<std::atomic<uint64_t> *>(&h)->load(std::memory_order_relaxed);
-#else
-    uint64_t h_val = atomic_load_explicit(&h, memory_order_relaxed);
-#endif
+    // 1. 'h' is now a plain uint64_t (BodyHandle) passed by value.
+    // There is no thread contention on a local variable, so we read it directly.
+    // This eliminates the reinterpret_cast and the deleted constructor error.
+    uint64_t h_val = h;
 
     *slot        = (uint32_t)(h_val & HANDLE_INDEX_MASK);
     uint32_t gen = (uint32_t)(h_val >> HANDLE_INDEX_BITS);
 
+    // UNLIKELY is a compiler hint (builtin_expect) defined in specifics.h
     if (UNLIKELY(*slot >= self->slot_capacity)) {
         return false;
     }
 
-#ifdef __cplusplus
-    uint32_t current_gen = __atomic_load_n((uint32_t *)&self->generations[*slot], __ATOMIC_ACQUIRE);
-#else
-    // C23 handles _Atomic pointers natively with atomic_load_explicit
+    // 2. Read the current generation from the world's ATOMIC storage.
+    // This MUST stay atomic because another thread (Physics Sim) could
+    // be incrementing this value simultaneously.
+    // This works in both C and C++ because 'generations' is CULV_ATOMIC(uint32_t)*
     uint32_t current_gen = atomic_load_explicit(&self->generations[*slot], memory_order_acquire);
-#endif
 
-    return (bool)(current_gen == gen);
+    // 3. Logic check remains identical: Handle is valid if generations match.
+    return (current_gen == gen);
 }
 
 // --- Hardened Checkers (No Casts) ---
@@ -407,8 +396,8 @@ static inline bool culv_is_finite_f(float f) {
     uint32_t i;
     memcpy(&i, &f, sizeof(float));
     volatile uint32_t vi = i;
-    static_assert((sizeof(CULV_TYPE_OF(vi)) == sizeof(uint32_t) &&
-                   sizeof(CULV_TYPE_OF(vi)) == sizeof(float)) != 0);
+    static_assert((int)(sizeof(CULV_TYPE_OF(vi)) == sizeof(uint32_t) &&
+                        sizeof(CULV_TYPE_OF(vi)) == sizeof(float)) != 0);
     return (vi & MASK_F32) != MASK_F32;
 }
 
@@ -419,8 +408,8 @@ static inline bool culv_is_finite_d(double d) {
     uint64_t i;
     memcpy(&i, &d, sizeof(double));
     volatile uint64_t vi = i;
-    static_assert((sizeof(CULV_TYPE_OF(vi)) == sizeof(uint64_t) &&
-                   sizeof(CULV_TYPE_OF(vi)) == sizeof(double)) != 0);
+    static_assert((int)(sizeof(CULV_TYPE_OF(vi)) == sizeof(uint64_t) &&
+                        sizeof(CULV_TYPE_OF(vi)) == sizeof(double)) != 0);
     return (vi & MASK_F64) != MASK_F64;
 }
 
@@ -510,29 +499,32 @@ static inline bool is_state_valid(uint8_t state, uint8_t mask) {
     } while (false)
 
 typedef struct {
-    unsigned _BitInt(1) is_immediate : 1;
-    unsigned _BitInt(1) is_deferred : 1;
-    unsigned _BitInt(1) is_executable : 1;
-    unsigned _BitInt(5) _unused : 5;
+    culv_u1 is_immediate : 1;
+    culv_u1 is_deferred : 1;
+    culv_u1 is_executable : 1;
+    culv_u5 _unused : 5;
 } SlotPredicate;
 
 static_assert(sizeof(SlotPredicate) == sizeof(uint8_t));
 
 // Standard masks for reuse
-static constexpr uint32_t MASK_IMM_STANDARD = (1u << SLOT_ALIVE) | (1u << SLOT_CHARACTER) | (1u << SLOT_SOFT_BODY);
-static constexpr uint32_t MASK_IMM_STRICT   = (1u << SLOT_ALIVE) | (1u << SLOT_SOFT_BODY);
-static constexpr uint32_t MASK_DEFERRED     = (1u << SLOT_PENDING_CREATE);
+static constexpr uint32_t MASK_IMM_STANDARD =
+    (1u << SLOT_ALIVE) | (1u << SLOT_CHARACTER) | (1u << SLOT_SOFT_BODY);
+static constexpr uint32_t MASK_IMM_STRICT = (1u << SLOT_ALIVE) | (1u << SLOT_SOFT_BODY);
+static constexpr uint32_t MASK_DEFERRED   = (1u << SLOT_PENDING_CREATE);
 // Define the mask for states that can be destroyed
-static constexpr uint32_t MASK_DESTRUCTIBLE =
-    (1u << SLOT_ALIVE) | (1u << SLOT_PENDING_CREATE) | (1u << SLOT_CHARACTER) | (1u << SLOT_SOFT_BODY);
+static constexpr uint32_t MASK_DESTRUCTIBLE = (1u << SLOT_ALIVE) | (1u << SLOT_PENDING_CREATE) |
+                                              (1u << SLOT_CHARACTER) | (1u << SLOT_SOFT_BODY);
 
 [[gnu::const]] CULV_NODISCARD static CULV_FORCE_INLINE SlotPredicate
 get_slot_predicate(uint8_t state, uint32_t imm_mask) {
     const uint32_t state_bit = 1u << (state & 7);
 
-    auto imm = (unsigned _BitInt(1)) !!(bool)(state_bit & imm_mask);
-    auto def = (unsigned _BitInt(1)) !!(bool)(state_bit & MASK_DEFERRED);
+    culv_u1 imm = (culv_u1) !!(bool)(state_bit & imm_mask);
+    culv_u1 def = (culv_u1) !!(bool)(state_bit & MASK_DEFERRED);
 
-    return (SlotPredicate){
-        .is_immediate = imm, .is_deferred = def, .is_executable = imm | def, ._unused = {}};
+    return (SlotPredicate){.is_immediate  = imm,
+                           .is_deferred   = def,
+                           .is_executable = (culv_u1)(imm | def),
+                           ._unused       = 0};
 }

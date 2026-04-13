@@ -90,7 +90,7 @@ __declspec(align(MEMORY_ALIGNMENT_SIZE))
 #endif
 typedef union {
 #if !defined(_MSC_VER)
-    [[gnu::aligned(MEMORY_ALIGNMENT_SIZE)]]
+    [[gnu::aligned(64)]]
 #endif
     uint32_t header;
 

@@ -257,6 +257,14 @@ else()
         list(APPEND FLAGS_PERF "-mavx2" "-mfma")
     endif()
 
+    if(CMAKE_C_COMPILER_ID STREQUAL "GNU" AND WIN32)
+        # -ffast-math breaks stdatomic memory ordering on MinGW
+        set(FLAGS_PERF_C "-O3" "-fomit-frame-pointer")
+    else()
+        set(FLAGS_PERF_C ${FLAGS_PERF})
+    endif()
+
+
     if(CMAKE_C_COMPILER_ID MATCHES "Clang")
         list(
             APPEND FLAGS_PERF
@@ -293,7 +301,7 @@ else()
     list(
         APPEND CULVERIN_COMPILE_FLAGS
         ${FLAGS_DEBUG}
-        ${FLAGS_PERF}
+        ${FLAGS_PERF_C}
         ${FLAGS_STRICT}
     )
 
@@ -398,6 +406,17 @@ target_link_libraries(${JOLTC_TARGET} PRIVATE Jolt::Jolt)
 
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 
+if(CMAKE_C_COMPILER_ID STREQUAL "GNU" AND WIN32)
+    find_program(GCC_AR NAMES gcc-ar)
+    find_program(GCC_RANLIB NAMES gcc-ranlib)
+    if(GCC_AR)
+        set(CMAKE_AR "${GCC_AR}")
+    endif()
+    if(GCC_RANLIB)
+        set(CMAKE_RANLIB "${GCC_RANLIB}")
+    endif()
+endif()
+
 set(MAG_MUTEX_TARGET mag_mutex)
 add_library(
     ${MAG_MUTEX_TARGET}
@@ -454,17 +473,22 @@ else()
     )
 endif()
 
+# In section 4, guard IPO for GCC on Windows:
 include(CheckIPOSupported)
 check_ipo_supported(RESULT ipo_supported OUTPUT error)
 if(ipo_supported)
-    message(STATUS "Culverin: LTO/IPO is supported and ENABLED")
-    set_property(TARGET _culverin_c PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
-    set_property(
-        TARGET ${JOLTC_TARGET}
-        PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE
-    )
-    if(TARGET Jolt AND NOT DEFINED JOLT_PREBUILT_DIR)
-        set_property(TARGET Jolt PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+    # GCC LTO on Windows (MinGW/LLD) is broken for Python extensions.
+    # The INTERPROCEDURAL_OPTIMIZATION property fights with our -fno-lto workaround
+    # and PyInit_ visibility gets lost at link time.
+    if(CMAKE_C_COMPILER_ID STREQUAL "GNU" AND WIN32)
+        message(STATUS "Culverin: GCC+Windows detected — skipping CMake IPO to avoid PyInit_ visibility loss")
+    else()
+        message(STATUS "Culverin: LTO/IPO is supported and ENABLED")
+        set_property(TARGET _culverin_c PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+        set_property(TARGET ${JOLTC_TARGET} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+        if(TARGET Jolt AND NOT DEFINED JOLT_PREBUILT_DIR)
+            set_property(TARGET Jolt PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+        endif()
     endif()
 else()
     message(WARNING "Culverin: LTO/IPO not supported: ${error}")
@@ -499,9 +523,10 @@ if(NOT ENABLE_SANITIZER AND NOT ENABLE_THREAD_SANITIZER)
             set(LTO_LINK_FLAG "-flto=thin")
         endif()
     elseif(CMAKE_C_COMPILER_ID STREQUAL "GNU")
-        # GCC specific LTO
-        set(LTO_COMPILE_FLAG "-flto=auto")
-        set(LTO_LINK_FLAG "-flto=auto" "-fuse-linker-plugin")
+        # GCC LTO on Windows often breaks PyInit visibility. 
+        # Disable it for now to confirm the fix, or use the "fat" workaround:
+        set(LTO_COMPILE_FLAG "-fno-lto" "-fvisibility=hidden") 
+        set(LTO_LINK_FLAG "")
     endif()
 
     if(LTO_COMPILE_FLAG)
@@ -533,8 +558,22 @@ else()
             # Only Clang on Windows uses this MSVC-style nodefaultlib format via lld
             list(APPEND WIN_LINK_FLAGS "-Wl,-nodefaultlib:libcmt")
         else()
-            # GCC standard libraries
-            list(APPEND WIN_LINK_FLAGS "-static-libgcc" "-static-libstdc++")
+            # 1. Use LLD if available for speed
+            list(APPEND WIN_LINK_FLAGS "-fuse-ld=lld")
+
+            # 2. Static GCC/C++ Runtimes
+            list(APPEND WIN_LINK_FLAGS "-static-libgcc")
+            list(APPEND WIN_LINK_FLAGS "-static-libstdc++")
+
+            # 3. THE MAGIC TRICK: Link winpthread statically without breaking the CRT
+            # This tells the linker: "Start linking statically now"
+            list(APPEND WIN_LINK_FLAGS "-Wl,-Bstatic")
+            list(APPEND WIN_LINK_FLAGS "-lwinpthread")
+            # This tells the linker: "Go back to dynamic linking for everything else"
+            list(APPEND WIN_LINK_FLAGS "-Wl,-Bdynamic")
+
+            # 4. Standard Windows Multimedia (already dynamic)
+            list(APPEND WIN_LINK_FLAGS "-lwinmm")
         endif()
 
         if(ENABLE_SANITIZER OR ENABLE_THREAD_SANITIZER)

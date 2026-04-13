@@ -387,7 +387,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast(PhysicsWorldObject *sel
         hit_handle_raw = JPH_BodyInterface_GetUserData(self->body_interface, hit->bodyID);
         hit_fraction   = hit->fraction;
 
-        const auto *li =
+        auto li =
             JPH_PhysicsSystem_GetBodyLockInterfaceNoLock(self->system);
         JPH_BodyLockRead j_lock;
         JPH_BodyLockInterface_LockRead(li, hit->bodyID, &j_lock);

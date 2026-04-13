@@ -19,7 +19,7 @@ static bool JPH_API_CALL char_on_contact_validate(
 static void record_character_contact(CharacterObject *self, JPH_BodyID bodyID2,
                                      const JPH_RVec3 *pos, const JPH_Vec3 *norm,
                                      ContactEventType type) {
-    auto *world    = self->world;
+    auto world    = self->world;
     uint32_t j_idx = JPH_ID_TO_INDEX(bodyID2);
     BodyHandle h2  = 0;
 
@@ -30,14 +30,14 @@ static void record_character_contact(CharacterObject *self, JPH_BodyID bodyID2,
     }
 
     // Extract raw value for liveness check
-    uint64_t h2_raw = atomic_load_explicit(&h2, memory_order_relaxed);
+    uint64_t h2_raw = h2;
     if (h2_raw == 0) {
         return;
     }
 
     // TSan Fix: Atomic load of the character's own handle
     BodyHandle h1   = self->handle;
-    uint64_t h1_raw = atomic_load_explicit(&h1, memory_order_relaxed);
+    uint64_t h1_raw = h1;
 
     size_t idx = atomic_fetch_add_explicit(&world->contact_atomic_idx, 1, memory_order_relaxed);
 
@@ -81,7 +81,7 @@ static void record_character_contact(CharacterObject *self, JPH_BodyID bodyID2,
 static void report_char_vs_char(CharacterObject *self, const JPH_CharacterVirtual *other,
                                 const JPH_Vec3 *normal, const JPH_RVec3 *pos,
                                 ContactEventType type) {
-    auto *world     = self->world;
+    auto world     = self->world;
     uint64_t h1_raw = atomic_load_explicit(&self->handle, memory_order_relaxed);
 
     // FIX: Retrieve the handle directly from the other character's UserData.
@@ -93,9 +93,6 @@ static void report_char_vs_char(CharacterObject *self, const JPH_CharacterVirtua
     }
 
     // Initialize atomic local handle for the other character
-    BodyHandle h2;
-    atomic_init(&h2, h2_raw);
-
     size_t idx = atomic_fetch_add_explicit(&world->contact_atomic_idx, 1, memory_order_relaxed);
     if (idx < world->contact_max_capacity) {
         ContactEvent *ev = &world->contact_buffer[idx];
@@ -137,7 +134,7 @@ static void JPH_API_CALL char_on_character_contact_added(
     ioSettings->canPushCharacter   = true;
     ioSettings->canReceiveImpulses = true;
 
-    auto *self = (CharacterObject *)userData;
+    auto self = (CharacterObject *)userData;
     if (!self || !self->world) {
         return;
     }
@@ -193,7 +190,7 @@ static void JPH_API_CALL char_on_contact_added(
     ioSettings->canPushCharacter   = true;
     ioSettings->canReceiveImpulses = true;
 
-    auto *self = (CharacterObject *)userData;
+    auto self = (CharacterObject *)userData;
     if (!self) {
         return;
     }
@@ -213,7 +210,7 @@ static void JPH_API_CALL char_on_contact_persisted(
     ioSettings->canPushCharacter   = true;
     ioSettings->canReceiveImpulses = true;
 
-    auto *self = (CharacterObject *)userData;
+    auto self = (CharacterObject *)userData;
     if (!self) {
         return;
     }
@@ -229,7 +226,7 @@ static void JPH_API_CALL char_on_contact_removed(void *userData,
                                                  const JPH_CharacterVirtual *Py_UNUSED(character),
                                                  JPH_BodyID bodyID2,
                                                  JPH_SubShapeID Py_UNUSED(subShapeID2)) {
-    auto *self = (CharacterObject *)userData;
+    auto self = (CharacterObject *)userData;
     if (!self || !self->world) {
         return;
     }
@@ -292,8 +289,8 @@ static void JPH_API_CALL char_on_character_contact_persisted(
 static void JPH_API_CALL char_on_character_contact_removed(
     void *userData, const JPH_CharacterVirtual *Py_UNUSED(character),
     const JPH_CharacterID otherCharacterID, JPH_SubShapeID Py_UNUSED(subShapeID2)) {
-    auto *self  = (CharacterObject *)userData;
-    auto *world = self->world;
+    auto self  = (CharacterObject *)userData;
+    auto world = self->world;
 
     // TSan Fix: Explicit relaxed load of own handle
     uint64_t h1_raw = atomic_load_explicit(&self->handle, memory_order_relaxed);
@@ -489,10 +486,10 @@ PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObje
     uint32_t dense = self->world->slot_to_dense[slot];
 
     // Snapshot current state to prev for interpolation
-    auto *shadow_pos  = (PosStride *)self->world->positions;
-    auto *shadow_ppos = (PosStride *)self->world->prev_positions;
-    auto *shadow_rot  = (AuxStride *)self->world->rotations;
-    auto *shadow_prot = (AuxStride *)self->world->prev_rotations;
+    auto shadow_pos  = (PosStride *)self->world->positions;
+    auto shadow_ppos = (PosStride *)self->world->prev_positions;
+    auto shadow_rot  = (AuxStride *)self->world->rotations;
+    auto shadow_prot = (AuxStride *)self->world->prev_rotations;
 
     shadow_ppos[dense] = shadow_pos[dense];
     shadow_prot[dense] = shadow_rot[dense];
@@ -598,8 +595,8 @@ PyCFunction_DeclareMethodFromModule Character_set_position(CharacterObject *self
     uint32_t dense = self->world->slot_to_dense[slot];
 
     // Map world buffers using Stride types for better alignment and readability
-    auto *shadow_pos  = (PosStride *)self->world->positions;
-    auto *shadow_ppos = (PosStride *)self->world->prev_positions;
+    auto shadow_pos  = (PosStride *)self->world->positions;
+    auto shadow_ppos = (PosStride *)self->world->prev_positions;
 
     // Reset both current and previous to the new position.
     // This prevents "teleport streaks" by forcing LERP(prev, curr, alpha) to return exactly 'pos'.
@@ -708,8 +705,8 @@ PyCFunction_DeclareMethodFromModule Character_get_render_transform(CharacterObje
     uint32_t dense = self->world->slot_to_dense[slot];
 
     // Map world buffers using Strides
-    auto *shadow_ppos = (PosStride *)self->world->prev_positions;
-    auto *shadow_prot = (AuxStride *)self->world->prev_rotations;
+    auto shadow_ppos = (PosStride *)self->world->prev_positions;
+    auto shadow_prot = (AuxStride *)self->world->prev_rotations;
 
     // Capture "Start" state (Previous frame)
     PosStride start_p = shadow_ppos[dense];
@@ -865,7 +862,7 @@ alloc_j_char(PhysicsWorldObject *self, PositionVector pos,
 
     float half_h                 = fmaxf((params.height - 2.0f * params.radius) * 0.5f, 0.1f);
     JPH_CapsuleShapeSettings *ss = JPH_CapsuleShapeSettings_Create(half_h, params.radius);
-    auto *shape                  = (JPH_Shape *)JPH_CapsuleShapeSettings_CreateShape(ss);
+    auto shape                  = (JPH_Shape *)JPH_CapsuleShapeSettings_CreateShape(ss);
     JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)ss);
     if (!shape) {
         return nullptr;
@@ -903,7 +900,7 @@ static void register_char(PhysicsWorldObject *self, CharacterObject *obj,
     BodyHandle h = make_handle(slot, gen);
 
     // TSan Fix: Explicitly load the raw uint64_t once to use for all assignments
-    uint64_t raw_h = atomic_load_explicit(&h, memory_order_relaxed);
+    uint64_t raw_h = h;
 
     // TSan Fix: Use raw_h to avoid implicit seq_cst load on Character object
     atomic_store_explicit(&obj->handle, raw_h, memory_order_relaxed);
@@ -1047,7 +1044,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_character(PhysicsWorldOb
         goto fail_jolt;
     }
 
-    auto *obj = (CharacterObject *)PyObject_GC_New(
+    auto obj = (CharacterObject *)PyObject_GC_New(
         CharacterObject,
         (PyTypeObject *)get_culverin_state(PyType_GetModule(Py_TYPE(self)))->CharacterType);
     if (!obj) {

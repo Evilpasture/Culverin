@@ -3,6 +3,27 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stddef.h>
+#include <string.h>
+
+#ifdef __cplusplus
+    #include <atomic>
+    #define CULV_ATOMIC(t) std::atomic<t>
+#else
+    #include <stdatomic.h>
+    #define CULV_ATOMIC(t) _Atomic(t)
+#endif
+
+#ifdef __cplusplus
+    // C++ Fallbacks (G++ does not support _BitInt)
+    typedef uint32_t culv_u23;
+    typedef uint8_t  culv_u1;
+    typedef uint8_t  culv_u5;
+#else
+    // Native C23
+    typedef unsigned _BitInt(23) culv_u23;
+    typedef unsigned _BitInt(1)  culv_u1;
+    typedef unsigned _BitInt(5)  culv_u5;
+#endif
 
 // #define CULVERIN_DEBUG
 
@@ -32,7 +53,7 @@
 
 // Use a prefixed function to avoid collision
 [[noreturn]]
-static inline void culv_unreachable(void) {
+inline void culv_unreachable(void) {
 #if defined(CULVERIN_DEBUG)
     fprintf(stderr, "Unreachable hit at %s:%d\n", __FILE__, __LINE__);
     abort();
@@ -453,8 +474,10 @@ CULV_FORCE_INLINE nullptr_t culv_static_assert_failure(CULV_MAYBE_UNUSED nullptr
     // Instead of a direct cast, we use an intermediate void pointer
     // to "bleach" the type before forcing it into nullptr_t.
     // This satisfies the semantic analyzer because any pointer can cast to void*.
+    nullptr_t result;
     void *identity_bleach = (void *)(uintptr_t)dummy;
-    return *(nullptr_t *)&identity_bleach;
+    memcpy(&result, (const void *)&identity_bleach, sizeof(nullptr_t));
+    return result;
 }
 // NOLINTNEXTLINE(readability-identifier-naming)
 #        define culv_take_return_null(x)                                                           \
@@ -540,7 +563,7 @@ namespace {
 // This allows us to implement a "safety epoch" that forces us to update the library annually, which
 // is a crude but effective way to ensure we don't accidentally run code with stale assumptions
 // about hardware-backed null states.
-constexpr int current_year() {
+constexpr uint64_t current_year() {
     std::string_view date = __DATE__;
     // Extracting the last 4 characters for the year
     int year = 0;

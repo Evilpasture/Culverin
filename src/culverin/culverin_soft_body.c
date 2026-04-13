@@ -22,7 +22,7 @@ static uint64_t physics_world_commit_create_soft_locked(PhysicsWorldObject *self
         return 0;
     }
 
-    constexpr auto INITIAL_BODY_CAPACITY = 1024;
+    CULV_MAYBE_UNUSED constexpr auto INITIAL_BODY_CAPACITY = 1024;
 
     if (UNLIKELY(available == 0 || current_count + 1 > self->capacity)) {
         size_t next_cap = (self->capacity == 0) ? INITIAL_BODY_CAPACITY : self->capacity * 2;
@@ -45,7 +45,7 @@ static uint64_t physics_world_commit_create_soft_locked(PhysicsWorldObject *self
 
     uint32_t gen      = atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
     BodyHandle handle = make_handle(slot, gen);
-    uint64_t raw_h    = atomic_load_explicit(&handle, memory_order_relaxed);
+    uint64_t raw_h    = handle;
 
     // CRITICAL: Use the SoftBody specific setter (Binder ensures correct memory offset)
     JPH_SoftBodyCreationSettings_SetUserData(settings, raw_h);
@@ -409,7 +409,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_soft_body(PhysicsWorldOb
 
     // 3. JOLT PREP
     JPH_SoftBodyCreationSettings *settings = JPH_SoftBodyCreationSettings_Create();
-    auto *py_shared                        = (SoftBodySharedSettingsObject *)o_shared;
+    auto py_shared                        = (SoftBodySharedSettingsObject *)o_shared;
     Py_INCREF(o_shared); // Ownership transfer to command queue
 
     JPH_SoftBodyCreationSettings_SetSharedSettings(settings, py_shared->settings);
