@@ -33,6 +33,7 @@ typedef struct {
     SparseSet *components;
     uint32_t component_count;
     uint32_t component_capacity;
+    atomic_int view_export_count; // Track how many memoryviews are active
     ShadowMutex ecs_lock;
 } RegistryObject;
 

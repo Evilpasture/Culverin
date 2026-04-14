@@ -1,21 +1,37 @@
 #include "culverin_getters.h"
 #include "culverin.h"
 #include "culverin_character.h"
+#include "culverin_ecs.h"
 #include "culverin_physics_sync.h"
 #include <Python.h>
 
+static Py_ssize_t BufferProxy_length(BufferProxyObject *self) {
+    // Return the cached shape. Since we update shape[0] in the
+    // constructor and in getbuffer, this is always accurate
+    // to the count at the time of the last sync/query.
+    return self->shape[0];
+}
+
 PyType_DeclareSlot_Status BufferProxy_traverse(BufferProxyObject *self, visitproc visit,
                                                void *arg) {
-    Py_VISIT(self->world);
+    Py_VISIT(self->owner);
     return 0;
 }
 
+// Inside BufferProxy_clear
 PyType_DeclareSlot_Status BufferProxy_clear(BufferProxyObject *self) {
-    if (self->world) {
-        if (atomic_load_explicit(&self->world->view_export_count, memory_order_relaxed) > 0) {
-            atomic_fetch_sub_explicit(&self->world->view_export_count, 1, memory_order_relaxed);
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+    if (self->owner) {
+        // We know that both PhysicsWorld and Registry have the export count at a fixed offset
+        // or we can switch based on type.
+        if (PyObject_TypeCheck(self->owner, (PyTypeObject *)st->PhysicsWorldType)) {
+            atomic_fetch_sub_explicit(&((PhysicsWorldObject *)self->owner)->view_export_count, 1,
+                                      memory_order_relaxed);
+        } else {
+            atomic_fetch_sub_explicit(&((RegistryObject *)self->owner)->view_export_count, 1,
+                                      memory_order_relaxed);
         }
-        Py_CLEAR(self->world);
+        Py_CLEAR(self->owner);
     }
     return 0;
 }
@@ -31,46 +47,75 @@ PyType_DeclareSlot_Void BufferProxy_dealloc(BufferProxyObject *self) {
 
 PyType_DeclareSlot_Status BufferProxy_getbuffer(BufferProxyObject *self, Py_buffer *view,
                                                 CULV_MAYBE_UNUSED int flags) {
-    PhysicsWorldObject *world = self->world;
-
-    SHADOW_LOCK(&world->shadow_lock);
-    BLOCK_UNTIL_NOT_STEPPING(world);
-
-    // 1. Add PROXY_DYNAMIC to the switch statement
+    // Determine the lock and target based on the buffer type category
     void *target_ptr = nullptr;
-    switch (self->buf_type) {
-    case PROXY_POSITIONS:
-        target_ptr = world->positions;
-        break;
-    case PROXY_ROTATIONS:
-        target_ptr = world->rotations;
-        break;
-    case PROXY_LINEAR_VELOCITIES:
-        target_ptr = world->linear_velocities;
-        break;
-    case PROXY_ANGULAR_VELOCITIES:
-        target_ptr = world->angular_velocities;
-        break;
-    case PROXY_USER_DATA:
-        target_ptr = world->user_data;
-        break;
-    case PROXY_DYNAMIC:
-        target_ptr = self->dynamic_ptr;
-        break; // <-- ADD THIS
-    }
 
-    if (!target_ptr) {
+    if (self->buf_type < PROXY_ECS_DATA) {
+        /* --- CATEGORY: Physics World Buffers --- */
+        PhysicsWorldObject *world = (PhysicsWorldObject *)self->owner;
+
+        SHADOW_LOCK(&world->shadow_lock);
+        BLOCK_UNTIL_NOT_STEPPING(world);
+
+        switch (self->buf_type) {
+        case PROXY_POSITIONS:
+            target_ptr = world->positions;
+            break;
+        case PROXY_ROTATIONS:
+            target_ptr = world->rotations;
+            break;
+        case PROXY_LINEAR_VELOCITIES:
+            target_ptr = world->linear_velocities;
+            break;
+        case PROXY_ANGULAR_VELOCITIES:
+            target_ptr = world->angular_velocities;
+            break;
+        case PROXY_USER_DATA:
+            target_ptr = world->user_data;
+            break;
+        case PROXY_DYNAMIC:
+            target_ptr = self->dynamic_ptr;
+            break; // Soft Body Verts
+        default:
+            culv_unreachable();
+        }
+
+        if (!target_ptr) {
+            SHADOW_UNLOCK(&world->shadow_lock);
+            PyErr_SetString(PyExc_RuntimeError, "Physics buffer not allocated");
+            return -1;
+        }
+
+        // Auto-update shape based on current body count for non-dynamic buffers
+        if (self->buf_type != PROXY_DYNAMIC) {
+            size_t count   = atomic_load_explicit(&world->count, memory_order_acquire);
+            self->shape[0] = (Py_ssize_t)(count * self->stride);
+        }
+
         SHADOW_UNLOCK(&world->shadow_lock);
-        PyErr_SetString(PyExc_RuntimeError, "Buffer not allocated");
-        return -1;
+
+    } else {
+        /* --- CATEGORY: ECS Registry Buffers --- */
+        RegistryObject *reg = (RegistryObject *)self->owner;
+
+        SHADOW_LOCK(&reg->ecs_lock);
+
+        // For ECS, the pointer was stored in dynamic_ptr during make_ecs_proxy
+        target_ptr = self->dynamic_ptr;
+
+        if (!target_ptr) {
+            // This can happen if get_view was called on an empty component
+            // We allow it to return an empty buffer rather than erroring
+            target_ptr = (void *)"";
+        }
+
+        // ECS shape is pinned at creation because we block reallocs while views are held
+        // No need to update self->shape[0] here.
+
+        SHADOW_UNLOCK(&reg->ecs_lock);
     }
 
-    // 2. Prevent dynamic shapes from being overwritten by rigid body count!
-    if (self->buf_type != PROXY_DYNAMIC) {
-        size_t count   = atomic_load_explicit(&world->count, memory_order_acquire);
-        self->shape[0] = (Py_ssize_t)(count * self->stride);
-    }
-
+    // --- Standard Buffer Protocol Population ---
     self->strides[0] = (Py_ssize_t)self->itemsize;
 
     view->buf = target_ptr;
@@ -78,7 +123,7 @@ PyType_DeclareSlot_Status BufferProxy_getbuffer(BufferProxyObject *self, Py_buff
     Py_INCREF(self);
 
     view->len        = self->shape[0] * self->strides[0];
-    view->readonly   = 1;
+    view->readonly   = (self->buf_type == PROXY_ECS_ENTITIES) ? 1 : 0; // Entities are read-only
     view->itemsize   = (Py_ssize_t)self->itemsize;
     view->format     = (char *)self->format;
     view->ndim       = 1;
@@ -87,12 +132,11 @@ PyType_DeclareSlot_Status BufferProxy_getbuffer(BufferProxyObject *self, Py_buff
     view->suboffsets = nullptr;
     view->internal   = nullptr;
 
-    // 5. CRITICAL: Release the lock so other threads (Mutator/Stepper) can work!
-    SHADOW_UNLOCK(&world->shadow_lock);
     return 0;
 }
 
-PyType_DeclareSlot_Void BufferProxy_releasebuffer(CULV_MAYBE_UNUSED BufferProxyObject *self, CULV_MAYBE_UNUSED Py_buffer *view) {
+PyType_DeclareSlot_Void BufferProxy_releasebuffer(CULV_MAYBE_UNUSED BufferProxyObject *self,
+                                                  CULV_MAYBE_UNUSED Py_buffer *view) {
 // Let NumPy hold the world buffer permanently.
 #if defined(STRICT_THREAD_SAFETY)
     PhysicsWorldObject *world = self->world;
@@ -117,6 +161,7 @@ PyType_Slot BufferProxy_slots[] = {
     {.slot = Py_tp_clear, .pfunc = BufferProxy_clear},
     {.slot = Py_bf_getbuffer, .pfunc = BufferProxy_getbuffer},
     {.slot = Py_bf_releasebuffer, .pfunc = BufferProxy_releasebuffer},
+    {.slot = Py_sq_length, .pfunc = BufferProxy_length},
     {}};
 
 PyType_Spec BufferProxy_spec = {.name      = "culverin.BufferProxy",
@@ -137,12 +182,18 @@ static PyObject *make_proxy(PhysicsWorldObject *self, ProxyBufferType type, cons
     }
 
     // Initialization
-    proxy->world = self;
+    proxy->owner = (PyObject *)self;
     Py_INCREF(self);
     proxy->buf_type = type;
     proxy->format   = format;
     proxy->itemsize = itemsize;
     proxy->stride   = stride;
+
+    // INITIALIZE SHAPE IMMEDIATELY
+    // This allows len(proxy) to work even before a buffer is requested
+    size_t count      = atomic_load_explicit(&self->count, memory_order_acquire);
+    proxy->shape[0]   = (Py_ssize_t)(count * stride);
+    proxy->strides[0] = (Py_ssize_t)itemsize;
 
     atomic_fetch_add_explicit(&self->view_export_count, 1, memory_order_relaxed);
 
@@ -243,8 +294,9 @@ PyGetSet_DeclareGetter PhysicsWorld_get_remaining_capacity(PhysicsWorldObject *s
 }
 
 PyCFunction_DeclareMethodFromModule PhysicsWorld_get_soft_body_vertices(PhysicsWorldObject *self,
-                                                              PyObject *const *args, size_t nargsf,
-                                                              PyObject *kwnames) {
+                                                                        PyObject *const *args,
+                                                                        size_t nargsf,
+                                                                        PyObject *kwnames) {
     CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
 
     uint64_t h_raw;
@@ -278,7 +330,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_soft_body_vertices(PhysicsW
     // and THIS specific length, rather than the global positions array.
     BufferProxyObject *proxy =
         PyObject_GC_New(BufferProxyObject, (PyTypeObject *)st->BufferProxyType);
-    proxy->world = self;
+    proxy->owner = (PyObject *)self;
     Py_INCREF(self);
 
     proxy->buf_type    = PROXY_DYNAMIC;
@@ -286,7 +338,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_soft_body_vertices(PhysicsW
     proxy->format      = JPH_REAL_STRING;
     proxy->itemsize    = sizeof(JPH_Real);
     proxy->stride      = 4; // PosStride
-    proxy->shape[0] = (Py_ssize_t)shadow->num_vertices * 4;
+    proxy->shape[0]    = (Py_ssize_t)shadow->num_vertices * 4;
 
     atomic_fetch_add_explicit(&self->view_export_count, 1, memory_order_relaxed);
 
