@@ -7,18 +7,20 @@ struct PhysicsWorldObject;
 struct CharacterObject;
 struct VehicleObject;
 
-typedef enum {
-    PROXY_POSITIONS = 0,
+typedef enum : uint8_t {
+    PROXY_POSITIONS,
     PROXY_ROTATIONS,
     PROXY_LINEAR_VELOCITIES,
     PROXY_ANGULAR_VELOCITIES,
     PROXY_USER_DATA,
-    PROXY_DYNAMIC
+    PROXY_DYNAMIC,
+    PROXY_ECS_DATA,     // Contiguous component data
+    PROXY_ECS_ENTITIES   // Dense entity handle array
 } ProxyBufferType;
 
 typedef struct {
     PyObject_HEAD 
-    struct PhysicsWorldObject *world;
+    PyObject *owner;
     ProxyBufferType buf_type;
     const char *format;
     void *dynamic_ptr;

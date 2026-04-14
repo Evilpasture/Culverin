@@ -346,3 +346,95 @@ def test_multithreaded_ecs_hammer(registry: culverin.Registry) -> None:
     data = np.frombuffer(view, dtype=np.float32)
     assert len(data) >= 3 # At least our target entity
     print(f"\n[Multithreaded ECS] Hammer Success. Entity survived. Data: {data[:3]}")
+
+def test_proxy_len_support(registry: culverin.Registry) -> None:
+    """Verify that BufferProxy correctly implements the Sequence protocol (len)."""
+    COMP_A = registry.register_component(4)
+    for _ in range(5):
+        e = registry.create()
+        registry.add(e, COMP_A, b"\x00\x00\x00\x00")
+        
+    view = registry.get_view(COMP_A)
+    # This checks the sq_length slot fix
+    assert len(view) == 5 * 4 # 5 entities * 4 bytes
+    
+    entities = registry.get_entities(COMP_A)
+    assert len(entities) == 5 # 5 uint64 handles
+
+def test_proxy_resizing_guard(registry: culverin.Registry) -> None:
+    """
+    Ensure the Registry raises BufferError if a realloc is attempted 
+    while Python holds a memoryview.
+    """
+    COMP_A = registry.register_component(4)
+    # The default dense_capacity in our C code is 64.
+    # We fill exactly 64 slots.
+    for _ in range(64):
+        e = registry.create()
+        registry.add(e, COMP_A, b"\x00\x00\x00\x00")
+
+    # Export a view. This increments registry->view_export_count.
+    view = registry.get_view(COMP_A)
+
+    # Attempting to add the 65th entity triggers SparseSet_EnsureDenseCapacity.
+    # The C code should detect view_export_count > 0 and raise BufferError.
+    with pytest.raises(BufferError, match="Cannot resize ECS component while a memoryview is held"):
+        e_fail = registry.create()
+        registry.add(e_fail, COMP_A, b"\x01\x01\x01\x01")
+
+    # Once the view is deleted and collected, we should be able to resize again.
+    del view
+    import gc
+    gc.collect() # Force cleanup of the BufferProxy object
+
+    e_success = registry.create()
+    # Now it should work because exported_views is back to 0
+    registry.add(e_success, COMP_A, b"\x02\x02\x02\x02")
+    assert registry.has(e_success, COMP_A)
+
+def test_proxy_readonly_enforcement(registry: culverin.Registry) -> None:
+    """Verify that entities are read-only while component data is writable."""
+    COMP_A = registry.register_component(4)
+    e = registry.create()
+    registry.add(e, COMP_A, b"\x00\x00\x00\x00")
+
+    # 1. Component Data should be WRITABLE
+    data_view = registry.get_view(COMP_A)
+    data_arr = np.frombuffer(data_view, dtype=np.uint8)
+    data_arr[0] = 255 # Should succeed
+    assert data_arr[0] == 255
+
+    # 2. Entity Handles should be READ-ONLY
+    ents_view = registry.get_entities(COMP_A)
+    ents_arr = np.frombuffer(ents_view, dtype=np.uint64)
+    
+    with pytest.raises(ValueError, match="read-only"):
+        ents_arr[0] = 12345 # NumPy raises ValueError when writing to a RO buffer
+
+def test_proxy_ownership_persistence(registry: culverin.Registry) -> None:
+    """Verify that a BufferProxy keeps the Registry alive (refcounting)."""
+    COMP_A = registry.register_component(4)
+    e = registry.create()
+    registry.add(e, COMP_A, b"\xDE\xAD\xBE\xEF")
+
+    view = registry.get_view(COMP_A)
+
+    # Delete the local reference to the registry
+    # The BufferProxyObject->owner still holds a reference in C
+    del registry
+    import gc
+    gc.collect()
+
+    # The view must still be valid and accessible
+    assert bytes(view) == b"\xDE\xAD\xBE\xEF"
+
+def test_proxy_empty_component(registry: culverin.Registry) -> None:
+    """Ensure proxies for empty components handle null pointers gracefully."""
+    COMP_EMPTY = registry.register_component(100)
+    
+    view = registry.get_view(COMP_EMPTY)
+    assert len(view) == 0
+    
+    # Casting empty view to numpy should yield an empty array, not a crash
+    arr = np.frombuffer(view, dtype=np.float32)
+    assert arr.size == 0
