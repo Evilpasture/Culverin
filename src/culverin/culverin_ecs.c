@@ -1,11 +1,11 @@
 #include "culverin_ecs.h"
-#include "culverin_arg_indices.h"
 #include "culverin.h"
+#include "culverin_arg_indices.h"
 
 // --- INTERNAL HELPERS ---
-static constexpr uint32_t INVALID_DENSE_INDEX = 0xFFFFFFFF;
-static constexpr auto INITIAL_ENTITY_CAPACITY = 1024;
-static constexpr auto INITIAL_SPARSE_CAPACITY = 1024;
+static constexpr uint32_t INVALID_DENSE_INDEX    = 0xFFFFFFFF;
+static constexpr auto INITIAL_ENTITY_CAPACITY    = 1024;
+static constexpr auto INITIAL_SPARSE_CAPACITY    = 1024;
 static constexpr auto INITIAL_COMPONENT_CAPACITY = 16;
 
 static void SparseSet_Init(SparseSet *set, uint32_t element_size) {
@@ -35,7 +35,8 @@ static bool SparseSet_EnsureSparseCapacity(SparseSet *set, uint32_t required_cap
         return true;
     }
 
-    uint32_t new_cap = set->sparse_capacity == 0 ? INITIAL_SPARSE_CAPACITY : set->sparse_capacity * 2;
+    uint32_t new_cap =
+        set->sparse_capacity == 0 ? INITIAL_SPARSE_CAPACITY : set->sparse_capacity * 2;
     while (new_cap < required_capacity) {
         new_cap *= 2;
     }
@@ -206,6 +207,28 @@ PyCFunction_DeclareMethodFromModule Registry_destroy(RegistryObject *self, PyObj
     self->active_entities--;
 
     Py_RETURN_NONE;
+}
+
+PyCFunction_DeclareMethodFromModule Registry_is_alive(RegistryObject *self, PyObject *const *args,
+                                                      size_t nargsf, PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+    uint64_t handle;
+    void *targets[RegEntityOnly_COUNT] = {[IDX_REO_ENT] = &handle};
+
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+                           &st->parsers.RegEntityOnlyParser, targets)) {
+        return nullptr;
+    }
+
+    uint32_t index = (uint32_t)(handle & HANDLE_INDEX_MASK);
+    uint32_t gen   = (uint32_t)(handle >> HANDLE_INDEX_BITS);
+
+    bool alive = (index < self->entity_capacity && self->generations[index] == gen) != 0;
+
+    if (alive) {
+        Py_RETURN_TRUE;
+    }
+    Py_RETURN_FALSE;
 }
 
 // --- COMPONENT MANAGEMENT ---
