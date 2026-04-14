@@ -1871,3 +1871,51 @@ settings.add_faces(indices.tobytes())
 **Constraints:**
 - Raises `ValueError` if the buffer size is not a multiple of 12 bytes (3x uint32).
 - Raises `RuntimeError` if called after `optimize()`.
+
+## class Registry
+
+A native, high-performance **Sparse Set ECS (Entity Component System)** registry. 
+
+This class is designed to manage game state data in contiguous memory buffers, making it the perfect companion for `PhysicsWorld`. It allows you to process thousands of game entities using NumPy with zero Python-loop overhead.
+
+### create()
+[No Arguments] Creates a new 64-bit entity.
+**Returns:**
+- **`entity` (int):** A unique 64-bit generational handle.
+
+### destroy(entity)
+Removes an entity and all its associated components from the registry.
+**Arguments:**
+- **`entity` (int):** The 64-bit handle. 
+**Note:** This invalidates the handle. The internal memory slot will be recycled with a new generation ID in future `create()` calls.
+
+### register_component(size_bytes)
+Defines a new component type.
+**Returns:**
+- **`comp_id` (int):** An integer ID used to add/remove this component.
+**Arguments:**
+- **`size_bytes` (int):** The fixed size of the component data in bytes (e.g., 12 for a 3-float vector).
+
+### add(entity, comp_id, data=None)
+Attaches a component to an entity.
+**Arguments:**
+- **`entity` (int):** The entity handle.
+- **`comp_id` (int):** The ID from `register_component`.
+- **`data` (Buffer, optional):** The initial data. Must match the registered size. If `None`, memory is zero-initialized.
+
+### remove(entity, comp_id)
+Removes a specific component from an entity.
+**Note:** This triggers an internal "Swap-and-Pop" to keep the storage buffer contiguous.
+
+### has(entity, comp_id)
+**Returns:** `True` if the entity possesses the component.
+
+### get_view(comp_id)
+Returns a **writable zero-copy `memoryview`** of all active data for a component type.
+- **Layout:** Contiguous C-array of the size specified during registration.
+- **Usage:** Ideal for bulk updates using `np.frombuffer`.
+
+### get_entities(comp_id)
+Returns a **read-only zero-copy `memoryview`** of entity handles.
+- **Layout:** `uint64` handles.
+- **Relationship:** The handle at index `i` corresponds to the data at index `i` in the `get_view` buffer.
