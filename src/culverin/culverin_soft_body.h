@@ -40,3 +40,15 @@ SoftBodySharedSettings_get_vertex_position(SoftBodySharedSettingsObject *self, P
 PyCFunction_DeclareMethodFromModule PhysicsWorld_create_soft_body(PhysicsWorldObject *self,
                                                                   PyObject *const *args,
                                                                   size_t nargsf, PyObject *kwnames);
+
+PyCFunction_DeclareMethodFromModule
+PhysicsWorld_get_soft_body_vertex_count(PhysicsWorldObject *self, PyObject *const *args,
+                                        size_t nargsf, PyObject *kwnames);
+
+PyCFunction_DeclareMethodFromModule
+PhysicsWorld_get_soft_body_vertex_position(PhysicsWorldObject *self, PyObject *const *args,
+                                           size_t nargsf, PyObject *kwnames);
+
+PyCFunction_DeclareMethodFromModule
+PhysicsWorld_get_soft_body_local_vertices(PhysicsWorldObject *self, PyObject *const *args,
+                                          size_t nargsf, PyObject *kwnames);

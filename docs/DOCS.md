@@ -1313,6 +1313,47 @@ Creates a high-level **Kinematic Character Controller** (Virtual Character). Unl
 **Operational Workflow:**
 Instead of applying forces or setting velocity via the world, you move the character by calling **`character.move(velocity, dt)`**. This executes a sweep-and-slide algorithm to resolve collisions and find the final position.
 
+### get_soft_body_vertex_count(...)
+
+Retrieves the number of vertices currently comprising a simulated soft body.
+
+**Returns:**
+- **`count` (int):** The unsigned 32-bit vertex count.
+- Returns `None` (or raises) if the handle is invalid or does not belong to a soft body.
+
+**Arguments:**
+- **`handle` (int):** The 64-bit handle of the soft body.
+
+
+### get_soft_body_vertex_position(...)
+
+Retrieves the current **World Space** position of a specific vertex. 
+
+**Returns:**
+- **`pos` (tuple):** The `(x, y, z)` coordinates of the vertex relative to the body's Center of Mass.
+
+**Arguments:**
+- **`handle` (int):** The 64-bit handle of the soft body.
+- **`index` (int):** The vertex index to query.
+
+**Note:** This provides the "deformed" local position from Jolt's solver. To get the world-space position, you must either use the shadow buffer via `get_soft_body_vertices` or manually multiply this result by the body's world transform.
+
+
+### get_soft_body_local_vertices(...)
+
+Despite the name, Jolt returns these in World Space. This method extracts the deformed positions of all vertices in a single bulk operation.
+
+**Returns:**
+- **`buffer` (bytes):** A packed binary buffer of `float32` values.
+- **Layout:** Contiguous `[x, y, z]` triplets (12 bytes per vertex).
+- **NumPy Usage:** `verts = np.frombuffer(world.get_soft_body_local_vertices(h), dtype=np.float32).reshape(-1, 3)`
+
+**Arguments:**
+- **`handle` (int):** The 64-bit handle of the soft body.
+
+**Performance:**
+This method uses direct Jolt memory access and is faster than calling `get_soft_body_vertex_position` in a loop. Unlike `get_soft_body_vertices` (which returns a persistent `memoryview`), this method returns a **new copy** of the data as a `bytes` object. Use this when you specifically need local-space offsets for skeletal skinning or mesh-morphing logic.
+
 
 ### _benchmark_parse(...)
 

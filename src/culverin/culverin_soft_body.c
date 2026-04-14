@@ -475,3 +475,174 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_soft_body(PhysicsWorldOb
     SHADOW_UNLOCK(&self->shadow_lock);
     return PyLong_FromUnsignedLongLong(raw_h);
 }
+
+// Getters
+
+PyCFunction_DeclareMethodFromModule PhysicsWorld_get_soft_body_vertex_count(PhysicsWorldObject *self, PyObject *const *args, size_t nargsf, PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+    uint64_t h_raw;
+    void *targets[HOnly_COUNT] = {[IDX_H_H] = &h_raw};
+
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.HOnlyParser, targets)) {
+        return nullptr;
+    }
+
+    SHADOW_LOCK(&self->shadow_lock);
+    BLOCK_UNTIL_NOT_STEPPING(self);
+
+    uint32_t slot = 0;
+    CHECK_HANDLE(h_raw, slot);
+
+    const uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
+    const SlotPredicate pred = get_slot_predicate(state, MASK_IMM_STRICT);
+
+    if (pred.is_immediate) {
+        uint32_t dense = self->slot_to_dense[slot];
+        JPH_BodyID bid = self->body_ids[dense];
+        SHADOW_UNLOCK(&self->shadow_lock);
+
+        JPH_BodyLockRead lock;
+        Py_BEGIN_ALLOW_THREADS
+        JPH_BodyLockInterface_LockRead(JPH_PhysicsSystem_GetBodyLockInterface(self->system), bid, &lock);
+        Py_END_ALLOW_THREADS
+
+        if (lock.body && JPH_Body_IsSoftBody(lock.body)) {
+            uint32_t count = JPH_Body_GetSoftBodyVertexCount(lock.body);
+            JPH_BodyLockInterface_UnlockRead(JPH_PhysicsSystem_GetBodyLockInterface(self->system), &lock);
+            return PyLong_FromUnsignedLong(count);
+        }
+
+        if (lock.body) {
+            JPH_BodyLockInterface_UnlockRead(JPH_PhysicsSystem_GetBodyLockInterface(self->system), &lock);
+            PyErr_SetString(PyExc_TypeError, "Handle does not belong to a soft body");
+            return nullptr;
+        }
+
+        RAISE_STALE_HANDLE();
+    }
+
+    SHADOW_UNLOCK(&self->shadow_lock);
+    RAISE_STALE_HANDLE();
+}
+
+PyCFunction_DeclareMethodFromModule PhysicsWorld_get_soft_body_vertex_position(PhysicsWorldObject *self, PyObject *const *args, size_t nargsf, PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+    uint64_t h_raw;
+    uint32_t index;
+    void *targets[GetSbVertex_COUNT] = {
+        [IDX_GSBV_H] = &h_raw,
+        [IDX_GSBV_I] = &index
+    };
+
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.GetSbVertexParser, targets)) {
+        return nullptr;
+    }
+
+    SHADOW_LOCK(&self->shadow_lock);
+    BLOCK_UNTIL_NOT_STEPPING(self);
+
+    uint32_t slot = 0;
+    CHECK_HANDLE(h_raw, slot);
+
+    const uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
+    const SlotPredicate pred = get_slot_predicate(state, MASK_IMM_STRICT);
+
+    if (pred.is_immediate) {
+        uint32_t dense = self->slot_to_dense[slot];
+        JPH_BodyID bid = self->body_ids[dense];
+        SHADOW_UNLOCK(&self->shadow_lock);
+
+        JPH_BodyLockRead lock;
+        Py_BEGIN_ALLOW_THREADS
+        JPH_BodyLockInterface_LockRead(JPH_PhysicsSystem_GetBodyLockInterface(self->system), bid, &lock);
+        Py_END_ALLOW_THREADS
+
+        if (lock.body && JPH_Body_IsSoftBody(lock.body)) {
+            uint32_t count = JPH_Body_GetSoftBodyVertexCount(lock.body);
+            if (index >= count) {
+                JPH_BodyLockInterface_UnlockRead(JPH_PhysicsSystem_GetBodyLockInterface(self->system), &lock);
+                PyErr_Format(PyExc_IndexError, "Vertex index %u out of bounds (count: %u)", index, count);
+                return nullptr;
+            }
+
+            JPH_Vec3 pos;
+            JPH_Body_GetSoftBodyVertexPosition(lock.body, index, &pos);
+            JPH_BodyLockInterface_UnlockRead(JPH_PhysicsSystem_GetBodyLockInterface(self->system), &lock);
+            
+            return FastBuild_Tuple(pos.x, pos.y, pos.z);
+        }
+
+        if (lock.body) {
+            JPH_BodyLockInterface_UnlockRead(JPH_PhysicsSystem_GetBodyLockInterface(self->system), &lock);
+            PyErr_SetString(PyExc_TypeError, "Handle does not belong to a soft body");
+            return nullptr;
+        }
+
+        RAISE_STALE_HANDLE();
+    }
+
+    SHADOW_UNLOCK(&self->shadow_lock);
+    RAISE_STALE_HANDLE();
+}
+
+PyCFunction_DeclareMethodFromModule PhysicsWorld_get_soft_body_local_vertices(PhysicsWorldObject *self, PyObject *const *args, size_t nargsf, PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+    uint64_t h_raw;
+    void *targets[HOnly_COUNT] = {[IDX_H_H] = &h_raw};
+
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.HOnlyParser, targets)) {
+        return nullptr;
+    }
+
+    SHADOW_LOCK(&self->shadow_lock);
+    BLOCK_UNTIL_NOT_STEPPING(self);
+
+    uint32_t slot = 0;
+    CHECK_HANDLE(h_raw, slot);
+
+    const uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
+    const SlotPredicate pred = get_slot_predicate(state, MASK_IMM_STRICT);
+
+    if (pred.is_immediate) {
+        uint32_t dense = self->slot_to_dense[slot];
+        JPH_BodyID bid = self->body_ids[dense];
+        SHADOW_UNLOCK(&self->shadow_lock);
+
+        JPH_BodyLockRead lock;
+        Py_BEGIN_ALLOW_THREADS
+        JPH_BodyLockInterface_LockRead(JPH_PhysicsSystem_GetBodyLockInterface(self->system), bid, &lock);
+        Py_END_ALLOW_THREADS
+
+        if (lock.body && JPH_Body_IsSoftBody(lock.body)) {
+            uint32_t count = JPH_Body_GetSoftBodyVertexCount(lock.body);
+            
+            // JPH_Vec3 is strictly 3 floats (12 bytes)
+            size_t buffer_size = count * sizeof(JPH_Vec3);
+            PyObject *bytes_obj = PyBytes_FromStringAndSize(nullptr, (Py_ssize_t)buffer_size);
+            
+            if (!bytes_obj) {
+                JPH_BodyLockInterface_UnlockRead(JPH_PhysicsSystem_GetBodyLockInterface(self->system), &lock);
+                return PyErr_NoMemory();
+            }
+            
+            JPH_Vec3 *out_pos = (JPH_Vec3 *)PyBytes_AsString(bytes_obj);
+            uint32_t out_count = 0;
+            JPH_Body_GetSoftBodyVertexPositions(lock.body, out_pos, count, &out_count);
+            
+            JPH_BodyLockInterface_UnlockRead(JPH_PhysicsSystem_GetBodyLockInterface(self->system), &lock);
+            
+            return bytes_obj;
+        }
+
+        if (lock.body) {
+            JPH_BodyLockInterface_UnlockRead(JPH_PhysicsSystem_GetBodyLockInterface(self->system), &lock);
+            PyErr_SetString(PyExc_TypeError, "Handle does not belong to a soft body");
+            return nullptr;
+        }
+
+        RAISE_STALE_HANDLE();
+    }
+
+    SHADOW_UNLOCK(&self->shadow_lock);
+    RAISE_STALE_HANDLE();
+}

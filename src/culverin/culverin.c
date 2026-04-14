@@ -4331,6 +4331,9 @@ static PyMethodDef PhysicsWorld_methods[] = {
 
     // --- Queries ---
     PW_FASTCALL(get_soft_body_vertices),
+    PW_FASTCALL(get_soft_body_vertex_count),
+    PW_FASTCALL(get_soft_body_vertex_position),
+    PW_FASTCALL(get_soft_body_local_vertices),
     PW_FASTCALL(raycast),
     PW_FASTCALL(raycast_batch),
     PW_FASTCALL(shapecast),
