@@ -1,5 +1,6 @@
 #pragma once
 #include "culverin_compiler_specifics.h"
+#include "culverin_types.h"
 #include "joltc.h"
 #include <math.h>
 
@@ -62,3 +63,18 @@ static inline void vec3_get_perpendicular(const JPH_Vec3 *CULV_RESTRICT in,
         out->z = 0.0f;
     }
 }
+
+#if defined(__cplusplus)
+extern "C" {
+#endif
+void culverin_compute_interpolation_loop(
+    const PosStride* __restrict curr_p,
+    const PosStride* __restrict prev_p,
+    const AuxStride* __restrict curr_r,
+    const AuxStride* __restrict prev_r,
+    float alpha,
+    float* __restrict out,
+    size_t count);
+#if defined(__cplusplus)
+}
+#endif

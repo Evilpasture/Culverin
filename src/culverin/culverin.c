@@ -20,6 +20,7 @@
 #include "culverin_shadow_sync.h"
 #include "culverin_soft_body.h"
 #include "culverin_vehicle.h"
+#include "culverin_math.h"
 #include "joltc.h"
 #include <stdatomic.h>
 
@@ -43,13 +44,9 @@ static constexpr uint32_t COLLISION_FILTER_ALL_MASKS      = 0xFFFF;
 
 // Numerical Tolerances
 static constexpr float EPSILON_FLOAT                    = 1e-6f;
-static constexpr float EPSILON_QUATERNION_NORMALIZATION = 0.000001f;
 
 // Array Indices and Counts
-static constexpr int QUATERNION_INTERPOLATION_Z_INDEX = 5;
-static constexpr int QUATERNION_INTERPOLATION_W_INDEX = 6;
 static constexpr int INERTIA_MATRIX_COMPONENT_COUNT   = 3;
-static constexpr size_t FLOATS_PER_INTERPOLATED_BODY  = 7;    // 3 position + 4 quaternion
 static constexpr float RESTITUTION_BUFFER             = 0.5f; // Default restitution/bounce
 static constexpr size_t VERTEX_STRIDE_BYTES           = 12;   // 3 floats (x, y, z) * 4 bytes
 static constexpr size_t INITIAL_MATERIAL_CAPACITY     = 16;   // Initial material data capacity
@@ -3425,90 +3422,45 @@ PyCFunction_DeclareMethod PhysicsWorld_get_render_state(PhysicsWorldObject *self
                                                         PyObject *const *args, size_t nargsf,
                                                         PyObject *kwnames) {
     CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
-    // 1. FAST PARSE (Unchanged)
     float alpha;
-    void *targets[Render_COUNT] = {
-        [IDX_RND_ALPHA] = (void *)&alpha,
-    };
+    void *targets[Render_COUNT] = {[IDX_RND_ALPHA] = (void *)&alpha};
 
-    auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.RenderParser, targets)) {
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.RenderParser, targets)) {
         return nullptr;
     }
 
-    alpha        = fmaxf(0.0f, fminf(1.0f, alpha));
-    auto d_alpha = (double)alpha;
+    // Clamp alpha to [0, 1]
+    alpha = fmaxf(0.0f, fminf(1.0f, alpha));
 
     SHADOW_LOCK(&self->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
 
-    // TSan Fix: Atomic load of count to ensure consistent loop bounds
     size_t count = atomic_load_explicit(&self->count, memory_order_acquire);
-
     if (UNLIKELY(count == 0)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         return PyBytes_FromStringAndSize(nullptr, 0);
     }
 
-    size_t total_bytes  = count * FLOATS_PER_INTERPOLATED_BODY * sizeof(float);
+    // Calculate total output size: 7 floats (3 pos + 4 rot) per body
+    size_t total_bytes  = count * 7 * sizeof(float);
     PyObject *bytes_obj = PyBytes_FromStringAndSize(nullptr, (Py_ssize_t)total_bytes);
-    if (!bytes_obj) {
+    if (UNLIKELY(!bytes_obj)) {
         SHADOW_UNLOCK(&self->shadow_lock);
         return PyErr_NoMemory();
     }
 
     float *out = (float *)PyBytes_AsString(bytes_obj);
 
-    // Map shadow buffers (These are stable while holding SHADOW_LOCK + BLOCK_UNTIL_NOT_STEPPING)
-    auto curr_p = (PosStride *)self->positions;
-    auto prev_p = (PosStride *)self->prev_positions;
-    auto curr_r = (AuxStride *)self->rotations;
-    auto prev_r = (AuxStride *)self->prev_rotations;
-
-    // 2. MATH & INTERPOLATION
-    for (size_t i = 0; i < count; i++) {
-        size_t dst = i * FLOATS_PER_INTERPOLATED_BODY;
-
-        // Position Lerp (Double precision)
-        JPH_Real px = prev_p[i].x + (curr_p[i].x - prev_p[i].x) * d_alpha;
-        JPH_Real py = prev_p[i].y + (curr_p[i].y - prev_p[i].y) * d_alpha;
-        JPH_Real pz = prev_p[i].z + (curr_p[i].z - prev_p[i].z) * d_alpha;
-
-        out[dst + 0] = (float)px;
-        out[dst + 1] = (float)py;
-        out[dst + 2] = (float)pz;
-
-        // Rotation NLerp (Float precision)
-        float q1x = prev_r[i].x;
-        float q1y = prev_r[i].y;
-        float q1z = prev_r[i].z;
-        float q1w = prev_r[i].w;
-        float q2x = curr_r[i].x;
-        float q2y = curr_r[i].y;
-        float q2z = curr_r[i].z;
-        float q2w = curr_r[i].w;
-
-        float dot = q1x * q2x + q1y * q2y + q1z * q2z + q1w * q2w;
-        if (dot < 0.0f) {
-            q2x = -q2x;
-            q2y = -q2y;
-            q2z = -q2z;
-            q2w = -q2w;
-        }
-
-        float rx = q1x + (q2x - q1x) * alpha;
-        float ry = q1y + (q2y - q1y) * alpha;
-        float rz = q1z + (q2z - q1z) * alpha;
-        float rw = q1w + (q2w - q1w) * alpha;
-
-        float mag_sq  = rx * rx + ry * ry + rz * rz + rw * rw;
-        float inv_len = (mag_sq > EPSILON_QUATERNION_NORMALIZATION) ? 1.0f / sqrtf(mag_sq) : 1.0f;
-
-        out[dst + 3]                                = rx * inv_len;
-        out[dst + 4]                                = ry * inv_len;
-        out[dst + QUATERNION_INTERPOLATION_Z_INDEX] = rz * inv_len;
-        out[dst + QUATERNION_INTERPOLATION_W_INDEX] = rw * inv_len;
-    }
+    // Dispatch to optimized C++ SIMD helper
+    culverin_compute_interpolation_loop(
+        (PosStride *)self->positions,
+        (PosStride *)self->prev_positions,
+        (AuxStride *)self->rotations,
+        (AuxStride *)self->prev_rotations,
+        alpha,
+        out,
+        count
+    );
 
     SHADOW_UNLOCK(&self->shadow_lock);
     return bytes_obj;
