@@ -458,6 +458,7 @@ python_add_library(
     src/culverin/culverin_arg_indices.c
     src/culverin/culverin_handler.c
     src/culverin/culverin_soft_body.c
+    src/culverin/culverin_math.cpp
 )
 
 target_sources(_culverin_c PRIVATE src/culverin/culverin_jph_rtti_shim.cpp)

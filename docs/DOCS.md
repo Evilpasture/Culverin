@@ -362,15 +362,21 @@ Unlike rigid bodies, soft bodies do not have a fixed shape; they are composed of
 
 **Arguments:**
 - **`shared_settings` (SoftBodySharedSettings):** The topological blueprint defining the mesh and constraints.
-- **`pos` / `rot` (tuple):** Initial world-space transform of the body's center of mass.
-- **`pressure` (float):** Internal gas pressure (default: `0.0`). High values (e.g., `500.0+`) make the body behave like an inflated balloon.
+- **`pos` (tuple):** Initial world-space position of the body's center of mass.
+- **`rot` (tuple):** Initial world-space rotation (Quaternion: `x, y, z, w`).
+- **`pressure` (float):** Internal gas pressure (default: `0.0`). High values (e.g., `500.0+`) make the body behave like an inflated balloon. Requires a manifold (closed) mesh to work correctly.
 - **`vertex_radius` (float):** The physical thickness of the vertices for collision (default: `0.05`).
-- **`linear_damping` (float):** Resistance to motion (default: `0.1`). Vital for stopping "numerical explosions" in high-energy jelly.
-- **`num_iterations` (int):** Solver quality (default: `10`). Increase to `20-30` for stiffer, more structurally sound objects.
-- **`max_linear_velocity` (float):** Hard safety cap (default: `500.0`). Prevents vertices from teleporting off-screen if the math destabilizes.
+- **`linear_damping` (float):** Resistance to motion (default: `0.1`). Vital for stopping "numerical explosions" in high-energy deformable objects.
+- **`num_iterations` (int):** Solver quality (default: `10`). Increase to `20-30` for stiffer, more structurally sound objects or complex cloth.
+- **`max_linear_velocity` (float):** Hard safety cap (default: `500.0`). Prevents vertices from teleporting off-screen if the simulation math destabilizes.
 - **`gravity_factor` (float):** Multiplier for global gravity. Use `0.0` for weightless cloth or `0.5` for "moon-jelly."
-- **`friction` / `restitution` (float):** Surface properties for collisions.
-- **`make_rotation_identity` (bool):** If `True`, the initial rotation provided is "baked" into the vertices, and the body's transform rotation is reset to identity.
+- **`friction` (float):** Surface friction (default: `0.2`).
+- **`restitution` (float):** Bounciness/Energy return (default: `0.0`).
+- **`make_rotation_identity` (bool):** If `True`, the initial rotation provided in `rot` is applied directly to the vertex positions during initialization, and the body's actual transform rotation is reset to identity. (Default: `False`).
+- **`update_position` (bool):** If `True`, the Center of Mass (COM) position is updated every frame based on the average movement of the vertices. If `False`, the COM remains fixed at the origin of the body while vertices deform around it. (Default: `True`).
+- **`faces_double_sided` (bool):** If `True`, collisions will be detected against both the front and back faces of the triangles. Essential for single-layered cloth meshes or open shells where the "inside" is reachable. (Default: `False`).
+- **`user_data` (int):** Optional 64-bit integer for custom identification.
+- **`category` / `mask` (int):** Bitmasks for collision filtering.
 
 **Operational Mechanics:**
 - **Two-Tier Tracking:** Culverin tracks the Center of Mass in the global `positions` buffer, while individual vertices are synced to a specialized shadow buffer.
@@ -1306,6 +1312,47 @@ Creates a high-level **Kinematic Character Controller** (Virtual Character). Unl
 
 **Operational Workflow:**
 Instead of applying forces or setting velocity via the world, you move the character by calling **`character.move(velocity, dt)`**. This executes a sweep-and-slide algorithm to resolve collisions and find the final position.
+
+### get_soft_body_vertex_count(...)
+
+Retrieves the number of vertices currently comprising a simulated soft body.
+
+**Returns:**
+- **`count` (int):** The unsigned 32-bit vertex count.
+- Returns `None` (or raises) if the handle is invalid or does not belong to a soft body.
+
+**Arguments:**
+- **`handle` (int):** The 64-bit handle of the soft body.
+
+
+### get_soft_body_vertex_position(...)
+
+Retrieves the current **World Space** position of a specific vertex. 
+
+**Returns:**
+- **`pos` (tuple):** The `(x, y, z)` coordinates of the vertex relative to the body's Center of Mass.
+
+**Arguments:**
+- **`handle` (int):** The 64-bit handle of the soft body.
+- **`index` (int):** The vertex index to query.
+
+**Note:** This provides the "deformed" local position from Jolt's solver. To get the world-space position, you must either use the shadow buffer via `get_soft_body_vertices` or manually multiply this result by the body's world transform.
+
+
+### get_soft_body_local_vertices(...)
+
+Despite the name, Jolt returns these in World Space. This method extracts the deformed positions of all vertices in a single bulk operation.
+
+**Returns:**
+- **`buffer` (bytes):** A packed binary buffer of `float32` values.
+- **Layout:** Contiguous `[x, y, z]` triplets (12 bytes per vertex).
+- **NumPy Usage:** `verts = np.frombuffer(world.get_soft_body_local_vertices(h), dtype=np.float32).reshape(-1, 3)`
+
+**Arguments:**
+- **`handle` (int):** The 64-bit handle of the soft body.
+
+**Performance:**
+This method uses direct Jolt memory access and is faster than calling `get_soft_body_vertex_position` in a loop. Unlike `get_soft_body_vertices` (which returns a persistent `memoryview`), this method returns a **new copy** of the data as a `bytes` object. Use this when you specifically need local-space offsets for skeletal skinning or mesh-morphing logic.
 
 
 ### _benchmark_parse(...)

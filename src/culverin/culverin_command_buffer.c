@@ -16,6 +16,15 @@ void world_remove_body_slot(PhysicsWorldObject *self, uint32_t slot) {
     if (self->soft_shadows && self->soft_shadows[dense_idx].vertices) {
         CulvMem_RawFreeAligned(self->soft_shadows[dense_idx].vertices);
         self->soft_shadows[dense_idx].vertices = nullptr;
+        
+        if (self->soft_shadows[dense_idx].velocities) {
+            CulvMem_RawFreeAligned(self->soft_shadows[dense_idx].velocities);
+            self->soft_shadows[dense_idx].velocities = nullptr;
+        }
+        if (self->soft_shadows[dense_idx].normals) {
+            CulvMem_RawFreeAligned(self->soft_shadows[dense_idx].normals);
+            self->soft_shadows[dense_idx].normals = nullptr;
+        }
         self->soft_shadows[dense_idx].num_vertices = 0;
     }
 
@@ -54,6 +63,8 @@ void world_remove_body_slot(PhysicsWorldObject *self, uint32_t slot) {
             self->soft_shadows[dense_idx] = self->soft_shadows[last_dense];
             // Clear the old tail so we don't double-free later
             self->soft_shadows[last_dense].vertices = nullptr;
+            self->soft_shadows[last_dense].velocities = nullptr;
+            self->soft_shadows[last_dense].normals = nullptr;
             self->soft_shadows[last_dense].num_vertices = 0;
         }
     }
@@ -228,6 +239,8 @@ op_CREATE_SOFT_BODY: {
         self->soft_shadows[dense_idx].num_vertices = num_verts;
         self->soft_shadows[dense_idx].vertices =
             (JPH_Real *)CulvMem_RawMallocAligned(num_verts * sizeof(PosStride), AVX_ALIGNMENT);
+        self->soft_shadows[dense_idx].velocities = nullptr; // Initialize explicitly
+        self->soft_shadows[dense_idx].normals = nullptr;    // Initialize explicitly
 
         // Populate standard handles
         uint32_t j_idx = JPH_ID_TO_INDEX(new_bid);

@@ -1413,7 +1413,7 @@ class TestAdvancedPhysics(CulverinTestCase):
             self.world.step(1 / 60.0)
 
         vel = self.world.get_velocity(h)
-        self.assertLess(vel[0], 10.0, "Linear velocity did not damp")
+        self.assertLess(vel[0], 10.0, "Linear velocity did not damped")
 
     def test_slider_constraint(self) -> None:
         """Test a Slider (Prismatic) constraint for elevators or pistons."""
@@ -1738,6 +1738,70 @@ class TestSoftBodies(CulverinTestCase):
         self.world.step(0)
         self.assertFalse(self.world.is_alive(h))
 
+    def test_soft_body_creation_flags(self) -> None:
+        """Verify the newly added SoftBody creation kwargs are parsed and applied without crashing."""
+        settings = self.create_cube_settings()
+
+        h = self.world.create_soft_body(
+            shared_settings=settings,
+            pos=(0, 10, 0),
+            rot=(0, 0, 0, 1),
+            make_rotation_identity=True,
+            update_position=False,
+            faces_double_sided=True,
+            pressure=2000.0,
+        )
+
+        self.world.step(0)
+        self.assertTrue(self.world.is_alive(h))
+
+        # Simulate to ensure the flags don't cause solver crashes
+        for _ in range(10):
+            self.world.step(1 / 60.0)
+
+        # Because update_position is False, the "Center of Mass" position reported by Jolt
+        # might remain fixed or update differently. We mainly care that the flags parsed safely.
+        self.assertIsNotNone(self.get_pos(h))
+
+    def test_soft_body_dihedral_bending(self) -> None:
+        """Test soft body creation using Dihedral bending constraints."""
+        settings = culverin.SoftBodySharedSettings()
+        
+        # A simple hinge/book shape (4 vertices, 2 triangles sharing an edge)
+        # Verts: (0,0,0), (1,0,0), (0,1,0), (-1,0,0)
+        # Tri 1: 0, 1, 2
+        # Tri 2: 0, 2, 3
+        pos = np.array([
+            [0, 0, 0], [1, 0, 0], [0, 1, 0], [-1, 0, 0]
+        ], dtype=np.float32)
+        settings.add_vertices(pos.tobytes())
+        
+        faces = np.array([
+            [0, 1, 2], [0, 2, 3]
+        ], dtype=np.uint32)
+        settings.add_faces(faces.tobytes())
+        
+        # Use BEND_DIHEDRAL
+        settings.create_constraints(compliance=0.01, bend_type=culverin.BEND_DIHEDRAL)
+        settings.optimize()
+        
+        h = self.world.create_soft_body(settings, pos=(0, 5, 0), rot=(0, 0, 0, 1))
+        self.world.step(0)
+        self.assertTrue(self.world.is_alive(h))
+
+    def test_soft_body_rest_pose(self) -> None:
+        """Verify we can extract the rest-pose of a vertex before optimization."""
+        settings = culverin.SoftBodySharedSettings()
+        settings.add_vertex((1.5, 2.5, -3.5), 1.0)
+        
+        pos = settings.get_vertex_position(0)
+        self.assertAlmostEqual(pos[0], 1.5)
+        self.assertAlmostEqual(pos[1], 2.5)
+        self.assertAlmostEqual(pos[2], -3.5)
+        
+        with self.assertRaises(IndexError):
+            settings.get_vertex_position(99)
+
     def test_soft_body_bulk_creation_with_mass(self) -> None:
         """Verify bulk vertex loading with explicit inverse masses."""
         settings = culverin.SoftBodySharedSettings()
@@ -1870,6 +1934,61 @@ class TestSoftBodies(CulverinTestCase):
         self.assertTrue(self.world.is_alive(h))
         self.assertAlmostEqual(self.get_pos(h)[1], 10.0, places=3)
 
+    def test_soft_body_getters_logic(self) -> None:
+        """Test the new JoltC direct getters for soft body vertex data."""
+        # Cube of size 2.0 at Y=5.0. 
+        # Corner 0 is at local (-1, -1, -1). 
+        # World Y = 5.0 - 1.0 = 4.0.
+        settings = self.create_cube_settings(size=2.0)
+        h = self.world.create_soft_body(
+            settings, pos=(0, 5, 0), rot=(0, 0, 0, 1), pressure=0.0
+        )
+        # Flush creation
+        self.world.step(0)
+    
+        # 1. Test Vertex Count
+        count = self.world.get_soft_body_vertex_count(h)
+        self.assertEqual(count, 8, "Cube should have exactly 8 vertices")
+    
+        # 2. Test World Position via direct getter
+        # Jolt reports these in world-space immediately after creation
+        world_pos = self.world.get_soft_body_vertex_position(h, 0)
+        self.assertAlmostEqual(world_pos[0], -1.0)
+        self.assertAlmostEqual(world_pos[1], 4.0) # 5.0 (pos) - 1.0 (local)
+        self.assertAlmostEqual(world_pos[2], -1.0)
+    
+        # 3. Test Bulk Extraction
+        raw_bytes = self.world.get_soft_body_local_vertices(h)
+        self.assertEqual(len(raw_bytes), 8 * 12, "Byte length must be num_verts * 12")
+        
+        verts_world = np.frombuffer(raw_bytes, dtype=np.float32).reshape(-1, 3)
+        self.assertAlmostEqual(verts_world[0, 1], 4.0)
+
+        # 4. Verify physical movement
+        # Let the body fall for one frame
+        self.world.step(1/60)
+        
+        new_pos = self.world.get_soft_body_vertex_position(h, 0)
+        self.assertLess(new_pos[1], 4.0, "Vertex Y should have decreased due to gravity")
+
+    def test_soft_body_getter_errors(self) -> None:
+        """Verify safety guards for the new soft body getters."""
+        h_rigid = self.world.create_body(pos=(0, 0, 0))
+        self.world.step(0)
+
+        # 1. Wrong Body Type
+        with self.assertRaisesRegex(TypeError, "not belong to a soft body"):
+            self.world.get_soft_body_vertex_count(h_rigid)
+        
+        # 2. Index Out of Bounds
+        settings = self.create_cube_settings()
+        h_soft = self.world.create_soft_body(settings, pos=(0, 0, 0), rot=(0, 0, 0, 1))
+        self.world.step(0)
+        
+        with self.assertRaises(IndexError):
+            self.world.get_soft_body_vertex_position(h_soft, 999)
+
+
 class TestTupleMutation(unittest.TestCase):
     """
     Validation suite for culverin.mutate_tuple().
@@ -1951,6 +2070,7 @@ class TestTupleMutation(unittest.TestCase):
         culverin.mutate_tuple(shared_tuple, 0, 0)
         culverin.mutate_tuple(shared_tuple, 1, 0)
         culverin.mutate_tuple(shared_tuple, 2, 0)
+
 
 class TestCharacterInteractions(CulverinTestCase):
     def test_character_pushing_box(self) -> None:
@@ -2083,8 +2203,6 @@ class TestCharacterInteractions(CulverinTestCase):
 
         char_sticky = self.world.create_character(pos=(2, 1.0, 0), radius=0.5, height=1.0)
         self.world.step(0)
-
-        print(f"gravity={self.world.get_gravity()}", flush=True)
 
         # Warmup: settle onto platform
         for _ in range(20):
