@@ -1920,6 +1920,12 @@ Returns a **read-only zero-copy `memoryview`** of entity handles.
 - **Layout:** `uint64` handles.
 - **Relationship:** The handle at index `i` corresponds to the data at index `i` in the `get_view` buffer.
 
+### is_alive(...)
+Returns a boolean whether a handle is alive.
+
+**Returns:** `True` if the handle is alive, otherwise `False`.
+
+
 ### sync_from_world(...)
 
 Performs a high-performance, C-native bulk synchronization of body positions from the `PhysicsWorld` into the ECS `Registry`. 
