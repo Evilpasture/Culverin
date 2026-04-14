@@ -65,3 +65,7 @@ PyCFunction_DeclareMethodFromModule Registry_get_view(RegistryObject *self, PyOb
 PyCFunction_DeclareMethodFromModule Registry_get_entities(RegistryObject *self,
                                                           PyObject *const *args, size_t nargsf,
                                                           PyObject *kwnames);
+
+PyCFunction_DeclareMethodFromModule Registry_sync_from_world(RegistryObject *self,
+                                                             PyObject *const *args, size_t nargsf,
+                                                             PyObject *kwnames);

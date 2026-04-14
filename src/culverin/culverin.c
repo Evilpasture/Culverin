@@ -4481,6 +4481,7 @@ static PyMethodDef Registry_methods[] = {
     REG_FASTCALL(has),
     REG_FASTCALL(get_view),
     REG_FASTCALL(get_entities),
+    REG_FASTCALL(sync_from_world),
     {nullptr, nullptr, 0, nullptr}
 };
 

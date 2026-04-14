@@ -1919,3 +1919,41 @@ Returns a **writable zero-copy `memoryview`** of all active data for a component
 Returns a **read-only zero-copy `memoryview`** of entity handles.
 - **Layout:** `uint64` handles.
 - **Relationship:** The handle at index `i` corresponds to the data at index `i` in the `get_view` buffer.
+
+### sync_from_world(...)
+
+Performs a high-performance, C-native bulk synchronization of body positions from the `PhysicsWorld` into the ECS `Registry`. 
+
+This method solves the primary performance bottleneck in Python-based ECS architectures: mapping physics simulation results back to game entities. By executing the entire handle-lookup and data-transfer loop in C, it eliminates the $O(N)$ cost of Python list comprehensions and NumPy indexing.
+
+**Arguments:**
+- **`world` (PhysicsWorld):** The source world to read simulation results from.
+- **`handle_comp_id` (int):** The ID of the ECS component storing the `uint64` Jolt handles.
+- **`transform_comp_id` (int):** The ID of the ECS component where the `float32` positions will be written.
+
+**Technical Requirements:**
+- **Handle Buffer:** The component registered as `handle_comp_id` must have an `element_size` of exactly **8 bytes** (`uint64`).
+- **Transform Buffer:** The component registered as `transform_comp_id` must have an `element_size` of exactly **12 bytes** (3x `float32`).
+- **Handle Validation:** The method utilizes `unpack_handle` internally. If an entity possesses a stale or invalid physics handle, its transform will be safely skipped without interrupting the batch.
+
+**Performance & Precision:**
+- **C-Native Loop:** The synchronization is performed in a single contiguous memory sweep, staying entirely within the CPU's L1/L2 cache.
+- **Precision Downcasting:** If the engine is built with `DOUBLE_PRECISION`, this method automatically performs the cast from `float64` (Physics) to `float32` (ECS) during the copy, saving you from doing it manually in NumPy.
+- **Lock Consistency:** This method acquires the world's `shadow_lock` for the duration of the transfer, ensuring that the ECS receives a perfectly consistent snapshot of the physics world.
+
+**Usage Example:**
+```python
+# In your main game loop:
+world.step(1/60)
+
+# Sync thousands of entities in sub-millisecond time
+registry.sync_from_world(
+    world, 
+    COMP_PHYSICS_HANDLE, 
+    COMP_WORLD_POSITION
+)
+```
+
+**Constraints:**
+- Raises `TypeError` if the component sizes do not match the required bytes (8 for handles, 12 for positions).
+- Raises `ValueError` if the provided component IDs are invalid.

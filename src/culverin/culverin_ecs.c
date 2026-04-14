@@ -1,6 +1,8 @@
 #include "culverin_ecs.h"
+
 #include "culverin.h"
 #include "culverin_arg_indices.h"
+#include <stddef.h>
 
 // --- INTERNAL HELPERS ---
 static constexpr uint32_t INVALID_DENSE_INDEX    = 0xFFFFFFFF;
@@ -452,4 +454,66 @@ PyCFunction_DeclareMethodFromModule Registry_get_entities(RegistryObject *self,
 
     return PyMemoryView_FromMemory((char *)set->dense,
                                    (set->count * (Py_ssize_t)sizeof(CulvEntity)), PyBUF_READ);
+}
+
+PyCFunction_DeclareMethodFromModule Registry_sync_from_world(RegistryObject *self,
+                                                             PyObject *const *args, size_t nargsf,
+                                                             PyObject *kwnames) {
+    CulverinState *st   = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+    PyObject *world_obj = nullptr;
+    uint32_t h_comp_id;
+    uint32_t t_comp_id;
+
+    void *targets[RegSyncPhys_COUNT] = {[IDX_RSP_WORLD]  = (void *)&world_obj,
+                                        [IDX_RSP_H_COMP] = (void *)&h_comp_id,
+                                        [IDX_RSP_T_COMP] = (void *)&t_comp_id};
+
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+                           &st->parsers.RegSyncPhysParser, targets)) {
+        return nullptr;
+    }
+
+    PhysicsWorldObject *world = (PhysicsWorldObject *)world_obj;
+    SparseSet *h_set          = &self->components[h_comp_id];
+    SparseSet *t_set          = &self->components[t_comp_id];
+
+    // Verification
+    if (h_comp_id >= self->component_count || t_comp_id >= self->component_count) {
+        return PyErr_Format(PyExc_ValueError, "Invalid component ID");
+    }
+    if (h_set->element_size != sizeof(uint64_t)) {
+        return PyErr_Format(PyExc_TypeError, "Handle component must be 8 bytes (uint64)");
+    }
+    if (t_set->element_size != sizeof(float) * 3) {
+        return PyErr_Format(PyExc_TypeError, "Transform component must be 12 bytes (3x float32)");
+    }
+
+    SHADOW_LOCK(&world->shadow_lock);
+
+    // We iterate over the entities in the Transform set
+    for (uint32_t i = 0; i < t_set->count; i++) {
+        CulvEntity ent   = t_set->dense[i];
+        uint32_t ent_idx = (uint32_t)(ent & HANDLE_INDEX_MASK);
+
+        // Check if this entity also has a physics handle
+        if (ent_idx < h_set->sparse_capacity && h_set->sparse[ent_idx] != INVALID_DENSE_INDEX) {
+            uint32_t h_dense = h_set->sparse[ent_idx];
+            uint64_t handle  = *(uint64_t *)&h_set->data[(size_t)h_dense * sizeof(uint64_t)];
+
+            uint32_t slot;
+            if (unpack_handle(world, handle, &slot)) {
+                uint32_t phys_dense = world->slot_to_dense[slot];
+                PosStride *p        = &((PosStride *)world->positions)[phys_dense];
+                float *out          = (float *)&t_set->data[(size_t)i * sizeof(float) * 3];
+
+                // Direct Copy: Double (Physics) -> Float (ECS)
+                out[0] = (float)p->x;
+                out[1] = (float)p->y;
+                out[2] = (float)p->z;
+            }
+        }
+    }
+
+    SHADOW_UNLOCK(&world->shadow_lock);
+    Py_RETURN_NONE;
 }
