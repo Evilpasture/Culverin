@@ -197,8 +197,11 @@ jobs:
             (dnf install -y clang llvm || yum install -y clang llvm || apk add --no-cache clang llvm-dev) &&
             pip install ninja
 
-          CIBW_TEST_REQUIRES: numpy psutil
-          CIBW_TEST_COMMAND: "python {project}/tests/test_core.py"
+          CIBW_TEST_REQUIRES: numpy psutil pytest
+          CIBW_TEST_COMMAND: |
+            pytest {project}/tests/test_core.py
+            pytest {project}/tests/test_ecs.py
+            echo "All tests completed!"
 
       - name: Build Experimental Wheels (3.15)
         shell: bash
