@@ -16,7 +16,7 @@ extern "C" void culverin_compute_interpolation_loop(
     const float f_alpha  = alpha;
 
     CULV_UNROLL_LOOP(4)
-    for (auto i = 0ll; i < count; ++i) {
+    for (size_t i = 0; i < count; ++i) {
         const uint32_t base_idx = i * 7;
 
         // 1. Position Interpolation

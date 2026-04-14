@@ -1871,3 +1871,95 @@ settings.add_faces(indices.tobytes())
 **Constraints:**
 - Raises `ValueError` if the buffer size is not a multiple of 12 bytes (3x uint32).
 - Raises `RuntimeError` if called after `optimize()`.
+
+## class Registry
+
+A native, high-performance **Sparse Set ECS (Entity Component System)** registry. 
+
+This class is designed to manage game state data in contiguous memory buffers, making it the perfect companion for `PhysicsWorld`. It allows you to process thousands of game entities using NumPy with zero Python-loop overhead.
+
+### create()
+[No Arguments] Creates a new 64-bit entity.
+**Returns:**
+- **`entity` (int):** A unique 64-bit generational handle.
+
+### destroy(entity)
+Removes an entity and all its associated components from the registry.
+**Arguments:**
+- **`entity` (int):** The 64-bit handle. 
+**Note:** This invalidates the handle. The internal memory slot will be recycled with a new generation ID in future `create()` calls.
+
+### register_component(size_bytes)
+Defines a new component type.
+**Returns:**
+- **`comp_id` (int):** An integer ID used to add/remove this component.
+**Arguments:**
+- **`size_bytes` (int):** The fixed size of the component data in bytes (e.g., 12 for a 3-float vector).
+
+### add(entity, comp_id, data=None)
+Attaches a component to an entity.
+**Arguments:**
+- **`entity` (int):** The entity handle.
+- **`comp_id` (int):** The ID from `register_component`.
+- **`data` (Buffer, optional):** The initial data. Must match the registered size. If `None`, memory is zero-initialized.
+
+### remove(entity, comp_id)
+Removes a specific component from an entity.
+**Note:** This triggers an internal "Swap-and-Pop" to keep the storage buffer contiguous.
+
+### has(entity, comp_id)
+**Returns:** `True` if the entity possesses the component.
+
+### get_view(comp_id)
+Returns a **writable zero-copy `memoryview`** of all active data for a component type.
+- **Layout:** Contiguous C-array of the size specified during registration.
+- **Usage:** Ideal for bulk updates using `np.frombuffer`.
+
+### get_entities(comp_id)
+Returns a **read-only zero-copy `memoryview`** of entity handles.
+- **Layout:** `uint64` handles.
+- **Relationship:** The handle at index `i` corresponds to the data at index `i` in the `get_view` buffer.
+
+### is_alive(...)
+Returns a boolean whether a handle is alive.
+
+**Returns:** `True` if the handle is alive, otherwise `False`.
+
+
+### sync_from_world(...)
+
+Performs a high-performance, C-native bulk synchronization of body positions from the `PhysicsWorld` into the ECS `Registry`. 
+
+This method solves the primary performance bottleneck in Python-based ECS architectures: mapping physics simulation results back to game entities. By executing the entire handle-lookup and data-transfer loop in C, it eliminates the $O(N)$ cost of Python list comprehensions and NumPy indexing.
+
+**Arguments:**
+- **`world` (PhysicsWorld):** The source world to read simulation results from.
+- **`handle_comp_id` (int):** The ID of the ECS component storing the `uint64` Jolt handles.
+- **`transform_comp_id` (int):** The ID of the ECS component where the `float32` positions will be written.
+
+**Technical Requirements:**
+- **Handle Buffer:** The component registered as `handle_comp_id` must have an `element_size` of exactly **8 bytes** (`uint64`).
+- **Transform Buffer:** The component registered as `transform_comp_id` must have an `element_size` of exactly **12 bytes** (3x `float32`).
+- **Handle Validation:** The method utilizes `unpack_handle` internally. If an entity possesses a stale or invalid physics handle, its transform will be safely skipped without interrupting the batch.
+
+**Performance & Precision:**
+- **C-Native Loop:** The synchronization is performed in a single contiguous memory sweep, staying entirely within the CPU's L1/L2 cache.
+- **Precision Downcasting:** If the engine is built with `DOUBLE_PRECISION`, this method automatically performs the cast from `float64` (Physics) to `float32` (ECS) during the copy, saving you from doing it manually in NumPy.
+- **Lock Consistency:** This method acquires the world's `shadow_lock` for the duration of the transfer, ensuring that the ECS receives a perfectly consistent snapshot of the physics world.
+
+**Usage Example:**
+```python
+# In your main game loop:
+world.step(1/60)
+
+# Sync thousands of entities in sub-millisecond time
+registry.sync_from_world(
+    world, 
+    COMP_PHYSICS_HANDLE, 
+    COMP_WORLD_POSITION
+)
+```
+
+**Constraints:**
+- Raises `TypeError` if the component sizes do not match the required bytes (8 for handles, 12 for positions).
+- Raises `ValueError` if the provided component IDs are invalid.
