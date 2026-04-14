@@ -4189,6 +4189,9 @@ static void stitch_docs_getset(PyGetSetDef *getset, const char *class_name) {
 #define SBSS_NOARGS(name) CULV_FEAT(SoftBodySharedSettings, name, METH_NOARGS)
 #define SBSS_O(name) CULV_FEAT(SoftBodySharedSettings, name, METH_O)
 
+#define REG_FASTCALL(name) CULV_FEAT(Registry, name, METH_FASTCALL | METH_KEYWORDS)
+#define REG_NOARGS(name)   CULV_FEAT(Registry, name, METH_NOARGS)
+
 // Getter/Property macro - concise initialization
 #define GETSET(name_str, getter_func)                                                              \
     {.name    = (name_str),                                                                        \
@@ -4468,18 +4471,18 @@ static const PyType_Spec Ragdoll_spec = {
     .slots     = (PyType_Slot *)Ragdoll_slots,
 };
 
-// In culverin.c, define the methods:
 static PyMethodDef Registry_methods[] = {
-    {"create", CULV_CAST(Registry_create), METH_NOARGS, nullptr},
-    {"destroy", CULV_CAST(Registry_destroy), METH_FASTCALL | METH_KEYWORDS, nullptr},
-    {"register_component", CULV_CAST(Registry_register_component), METH_FASTCALL | METH_KEYWORDS,
-     nullptr},
-    {"add", CULV_CAST(Registry_add), METH_FASTCALL | METH_KEYWORDS, nullptr},
-    {"remove", CULV_CAST(Registry_remove), METH_FASTCALL | METH_KEYWORDS, nullptr},
-    {"has", CULV_CAST(Registry_has), METH_FASTCALL | METH_KEYWORDS, nullptr},
-    {"get_view", CULV_CAST(Registry_get_view), METH_FASTCALL | METH_KEYWORDS, nullptr},
-    {"get_entities", CULV_CAST(Registry_get_entities), METH_FASTCALL | METH_KEYWORDS, nullptr},
-    {nullptr, nullptr, 0, nullptr}};
+    REG_NOARGS(create),
+    REG_FASTCALL(destroy),
+    REG_FASTCALL(is_alive),
+    REG_FASTCALL(register_component),
+    REG_FASTCALL(add),
+    REG_FASTCALL(remove),
+    REG_FASTCALL(has),
+    REG_FASTCALL(get_view),
+    REG_FASTCALL(get_entities),
+    {nullptr, nullptr, 0, nullptr}
+};
 
 static PyType_Slot Registry_slots[] = {
     {.slot = Py_tp_new, .pfunc = PyType_GenericNew},
@@ -4698,6 +4701,7 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
         stitch_docs(Ragdoll_methods, "Ragdoll");
         stitch_docs(RagdollSettings_methods, "RagdollSettings");
         stitch_docs(SoftBodySharedSettings_methods, "SoftBodySharedSettings");
+        stitch_docs(Registry_methods, "Registry");
         stitch_docs_getset(PhysicsWorld_getset, "PhysicsWorld");
         stitch_docs_getset(Character_getset, "Character");
         stitch_docs_getset(Vehicle_getset, "Vehicle");
