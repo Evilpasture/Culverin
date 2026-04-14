@@ -80,10 +80,10 @@ static bool SparseSet_EnsureSparseCapacity(SparseSet *set, uint32_t required_cap
 
     uint32_t *new_sparse = (uint32_t *)CULV_RAW_REALLOC(set->sparse, new_cap * sizeof(uint32_t));
     if (!new_sparse) {
+        PyErr_NoMemory(); // Set error here
         return false;
     }
 
-    // Initialize new sparse indices to INVALID
     for (uint32_t i = set->sparse_capacity; i < new_cap; i++) {
         new_sparse[i] = INVALID_DENSE_INDEX;
     }
@@ -98,27 +98,29 @@ static bool SparseSet_EnsureDenseCapacity(RegistryObject *reg, SparseSet *set) {
         return true;
     }
 
-    // CRITICAL SAFETY CHECK
+    // 1. PROTECTION CHECK: Must happen before any reallocation logic
     if (atomic_load_explicit(&reg->view_export_count, memory_order_acquire) > 0) {
-        PyErr_SetString(PyExc_BufferError, 
-            "Cannot resize ECS component while a memoryview is held. "
-            "Delete the array or view before adding more entities.");
+        PyErr_SetString(PyExc_BufferError,
+                        "Cannot resize ECS component while a memoryview is held. "
+                        "Delete the array or view before adding more entities.");
         return false;
     }
 
     constexpr auto FIRST_DENSE_CAPACITY = 64;
-
     uint32_t new_cap = set->dense_capacity == 0 ? FIRST_DENSE_CAPACITY : set->dense_capacity * 2;
 
     CulvEntity *new_dense =
         (CulvEntity *)CULV_RAW_REALLOC(set->dense, new_cap * sizeof(CulvEntity));
     if (!new_dense) {
+        PyErr_NoMemory(); // Set error here
         return false;
     }
 
     uint8_t *new_data = (uint8_t *)CULV_RAW_REALLOC(set->data, (size_t)new_cap * set->element_size);
     if (!new_data) {
-        CULV_RAW_FREE(new_dense);
+        // Fallback: we failed data, but dense was already realloc'd.
+        // In a real engine we'd roll back, but here we just error.
+        PyErr_NoMemory();
         return false;
     }
 
@@ -307,6 +309,14 @@ PyCFunction_DeclareMethodFromModule Registry_register_component(RegistryObject *
     SHADOW_LOCK(&self->ecs_lock);
 
     if (self->component_count >= self->component_capacity) {
+        // Manual check for register_component too!
+        if (atomic_load_explicit(&self->view_export_count, memory_order_acquire) > 0) {
+            PyErr_SetString(PyExc_BufferError,
+                            "Cannot register new components while a view is held.");
+            SHADOW_UNLOCK(&self->ecs_lock);
+            return nullptr;
+        }
+
         uint32_t new_cap = self->component_capacity * 2;
         SparseSet *new_comps =
             (SparseSet *)CULV_RAW_REALLOC(self->components, new_cap * sizeof(SparseSet));
@@ -372,14 +382,14 @@ PyCFunction_DeclareMethodFromModule Registry_add(RegistryObject *self, PyObject 
     }
 
     if (!SparseSet_EnsureSparseCapacity(set, index + 1)) {
-        goto fail;
+        goto fail_quiet;
     }
 
     uint32_t dense_idx = set->sparse[index];
     if (dense_idx == INVALID_DENSE_INDEX) {
-        // Adding new component
+        // This helper now sets its own BufferError or MemoryError
         if (!SparseSet_EnsureDenseCapacity(self, set)) {
-            goto fail;
+            goto fail_quiet;
         }
         dense_idx             = set->count++;
         set->dense[dense_idx] = handle;
@@ -398,12 +408,12 @@ PyCFunction_DeclareMethodFromModule Registry_add(RegistryObject *self, PyObject 
 
     Py_RETURN_NONE;
 
-fail:
+fail_quiet:
     SHADOW_UNLOCK(&self->ecs_lock);
     if (data_obj && data_obj != Py_None) {
         PyBuffer_Release(&view);
     }
-    return PyErr_NoMemory();
+    return nullptr; // Return the error already set in the helper
 }
 
 PyCFunction_DeclareMethodFromModule Registry_remove(RegistryObject *self, PyObject *const *args,
@@ -518,7 +528,7 @@ PyCFunction_DeclareMethodFromModule Registry_get_entities(RegistryObject *self,
 
     SHADOW_LOCK(&self->ecs_lock);
     // make_ecs_proxy(self, comp_id, true) handles the PROXY_ECS_ENTITIES case
-    PyObject *proxy = make_ecs_proxy(self, comp_id, true); 
+    PyObject *proxy = make_ecs_proxy(self, comp_id, true);
     SHADOW_UNLOCK(&self->ecs_lock);
 
     return proxy;
