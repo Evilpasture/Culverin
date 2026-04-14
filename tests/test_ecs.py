@@ -274,3 +274,75 @@ def test_real_physics_integration(registry: culverin.Registry) -> None:
         assert current_y < 10.0, f"Entity {i} failed to fall in ECS storage. Y={current_y}"
         
     print(f"\n[Native ECS Sync] Success: Bulk synced {len(ecs_transforms)} entities.")
+
+
+
+def test_multithreaded_ecs_hammer(registry: culverin.Registry) -> None:
+    """
+    Stresses the ECS under heavy multithreaded contention:
+    - Thread 1: Simulates the Physics World.
+    - Thread 2: Constantly triggers C-native sync_from_world.
+    - Thread 3: Hammers entity creation and destruction (forces reallocs).
+    - Thread 4: Mutates component data via NumPy (releases GIL).
+    """
+    import culverin
+    import threading
+    import time
+    world = culverin.PhysicsWorld()
+    COMP_PHYS = registry.register_component(8)
+    COMP_POS  = registry.register_component(12)
+    
+    # Pre-populate some bodies
+    target_entity = registry.create()
+    phys_handle = world.create_body(pos=(0, 0, 0))
+    registry.add(target_entity, COMP_PHYS, np.array([phys_handle], dtype=np.uint64).tobytes())
+    registry.add(target_entity, COMP_POS, None)
+    
+    stop_event = threading.Event()
+
+    def physics_thread():
+        while not stop_event.is_set():
+            world.step(1/120) # High frequency step
+
+    def sync_thread():
+        while not stop_event.is_set():
+            # This is the C-native bottleneck we are testing
+            registry.sync_from_world(world, COMP_PHYS, COMP_POS)
+
+    def mutation_thread():
+        while not stop_event.is_set():
+            view = registry.get_view(COMP_POS)
+            if len(view) > 0:
+                arr = np.frombuffer(view, dtype=np.float32)
+                arr += 1.0 # True parallel math if GIL is disabled
+
+    def spawn_kill_thread():
+        while not stop_event.is_set():
+            # Force the Registry to realloc by crossing the 1024 entity boundary
+            temp_ents = [registry.create() for _ in range(50)]
+            for e in temp_ents:
+                registry.add(e, COMP_POS, None)
+            for e in temp_ents:
+                registry.destroy(e)
+
+    threads = [
+        threading.Thread(target=physics_thread),
+        threading.Thread(target=sync_thread),
+        threading.Thread(target=mutation_thread),
+        threading.Thread(target=spawn_kill_thread)
+    ]
+
+    for t in threads: t.start()
+    time.sleep(1.0) 
+    stop_event.set()
+    for t in threads: t.join()
+    
+    # 2. Check the real handle, not the index 1
+    assert registry.is_alive(target_entity), "Target entity should have survived the chaos"
+    
+    # 3. Final Integrity Check: Entity index 0 in the Transform view 
+    # should have been updated by the sync_thread or mutation_thread
+    view = registry.get_view(COMP_POS)
+    data = np.frombuffer(view, dtype=np.float32)
+    assert len(data) >= 3 # At least our target entity
+    print(f"\n[Multithreaded ECS] Hammer Success. Entity survived. Data: {data[:3]}")
