@@ -15,7 +15,7 @@ static_assert(sizeof(AuxStride) == sizeof(float) * 4, "AuxStride size mismatch")
 static constexpr int BATCH_SIZE = 128;
 
 namespace {
-struct CppSyncWorkItem {
+struct SyncWorkItem {
     const JPH::Body *body;
     uint32_t dense_idx;
 };
@@ -25,7 +25,7 @@ struct CppSyncWorkItem {
 // =================================================================================================
 
 CULV_FORCE_INLINE void process_full_batch(PhysicsWorldObject *const CULV_RESTRICT self,
-                                          const CppSyncWorkItem *const CULV_RESTRICT worklist) {
+                                          const SyncWorkItem *const CULV_RESTRICT worklist) {
     PosStride *CULV_RESTRICT s_pos =
         (PosStride *)CULV_ASSUME_ALIGNED(self->positions, sizeof(PosStride));
     PosStride *CULV_RESTRICT s_ppos =
@@ -70,10 +70,80 @@ CULV_FORCE_INLINE void process_full_batch(PhysicsWorldObject *const CULV_RESTRIC
 }
 
 // =================================================================================================
+// HOT PATH: Soft Body Batch Processor
+// =================================================================================================
+CULV_FORCE_INLINE void process_soft_batch(PhysicsWorldObject *const CULV_RESTRICT self,
+                                          const SyncWorkItem *const CULV_RESTRICT worklist,
+                                          const uint32_t count) {
+    PosStride *const CULV_RESTRICT s_pos =
+        (PosStride *)CULV_ASSUME_ALIGNED(self->positions, sizeof(PosStride));
+    PosStride *const CULV_RESTRICT s_ppos =
+        (PosStride *)CULV_ASSUME_ALIGNED(self->prev_positions, sizeof(PosStride));
+    AuxStride *const CULV_RESTRICT s_rot =
+        (AuxStride *)CULV_ASSUME_ALIGNED(self->rotations, sizeof(AuxStride));
+    AuxStride *const CULV_RESTRICT s_prot =
+        (AuxStride *)CULV_ASSUME_ALIGNED(self->prev_rotations, sizeof(AuxStride));
+
+    for (uint32_t j = 0; j < count; j++) {
+        const uint32_t D   = worklist[j].dense_idx;
+        const JPH::Body *b = worklist[j].body;
+
+        // 1. Snapshot and Update COM/Rotation (Rigid-compat layer)
+        const PosStride old_pos = s_pos[D];
+        const AuxStride old_rot = s_rot[D];
+        s_ppos[D] = old_pos;
+        s_prot[D] = old_rot;
+
+#ifndef JPH_DOUBLE_PRECISION
+        JPH::Vec4(b->GetCenterOfMassPosition(), 0.0f)
+            .StoreFloat4(reinterpret_cast<JPH::Float4 *>(&s_pos[D]));
+#else
+        b->GetCenterOfMassPosition().StoreDouble3(reinterpret_cast<JPH::Double3 *>(&s_pos[D]));
+        s_pos[D].w = 0.0;
+#endif
+        b->GetRotation().GetXYZW().StoreFloat4(reinterpret_cast<JPH::Float4 *>(&s_rot[D]));
+
+        // 2. Vertex Shadow Sync
+        const auto *soft_mp =
+            static_cast<const JPH::SoftBodyMotionProperties *>(b->GetMotionProperties());
+        const JPH::Array<JPH::SoftBodyVertex> &jolt_verts = soft_mp->GetVertices();
+        SoftBodyShadow &shadow                            = self->soft_shadows[D];
+
+        // Guard against mismatched topologies (e.g. async resizing)
+        if ((shadow.vertices != nullptr) && shadow.num_vertices == jolt_verts.size()) [[likely]] {
+            auto *dst_verts           = reinterpret_cast<PosStride *>(shadow.vertices);
+            JPH::RMat44 com_transform = b->GetCenterOfMassTransform();
+
+            const size_t num_v = shadow.num_vertices;
+
+            // Unrolled Vertex Loop
+            CULV_UNROLL_LOOP(4)
+            for (size_t v = 0; v < num_v; ++v) {
+                // Prefetch vertex writes 8 steps ahead
+                if (v + 8 < num_v) {
+                    CULV_PREFETCH_WRITE(&dst_verts[v + 8]);
+                }
+
+                JPH::Vec3 local_pos(jolt_verts[v].mPosition);
+#ifndef JPH_DOUBLE_PRECISION
+                JPH::Vec3 world_pos = com_transform * local_pos;
+                JPH::Vec4(world_pos, 0.0f)
+                    .StoreFloat4(reinterpret_cast<JPH::Float4 *>(&dst_verts[v]));
+#else
+                JPH::RVec3 world_pos = com_transform * local_pos;
+                world_pos.StoreDouble3(reinterpret_cast<JPH::Double3 *>(&dst_verts[v]));
+                dst_verts[v].w = 0.0;
+#endif
+            }
+        }
+    }
+}
+
+// =================================================================================================
 // COLD PATH: Remainder Handling (0 to 31 items)
 // =================================================================================================
 CULV_FORCE_INLINE void process_partial_batch(PhysicsWorldObject *const CULV_RESTRICT self,
-                                             const CppSyncWorkItem *const CULV_RESTRICT worklist,
+                                             const SyncWorkItem *const CULV_RESTRICT worklist,
                                              const uint32_t count) {
     if (count == 0) {
         return;
@@ -129,23 +199,23 @@ CULV_FORCE_INLINE void process_partial_batch(PhysicsWorldObject *const CULV_REST
 // =================================================================================================
 extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
 
-    if (UNLIKELY(!self)) {
+    if (self == nullptr) [[unlikely]] {
         return;
     }
 
-    if (UNLIKELY(!self->system)) {
+    if (self->system == nullptr) [[unlikely]] {
         return;
     }
 
     // Check the death flag! If the main thread is deallocating, we must not touch any pointers or
     // issue Jolt calls.
-    if (UNLIKELY(atomic_load_explicit(&self->is_deallocating, JPH::memory_order_acquire))) {
+    if (self->is_deallocating.load(JPH::memory_order_acquire)) [[unlikely]] {
         return;
     }
 
     // If the Main Thread is reallocating, DO NOT touch the pointers.
     // The main thread is holding the shadow_lock or about to move buffers.
-    if (UNLIKELY(atomic_load_explicit(&self->is_resizing, JPH::memory_order_acquire))) {
+    if (self->is_resizing.load(JPH::memory_order_acquire)) [[unlikely]] {
         return;
     }
 
@@ -157,20 +227,20 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
     const uint32_t active_soft_count =
         JPH_PhysicsSystem_GetNumActiveBodies(sys_c, JPH_BodyType_Soft);
 
-    if (UNLIKELY(!(active_rigid_count || active_soft_count))) {
+    if ((active_rigid_count == 0u) && (active_soft_count == 0u)) [[unlikely]] {
         return;
     }
 
-    if (UNLIKELY(!self->positions)) {
+    if (self->positions == nullptr) [[unlikely]] {
         return;
     }
-    if (UNLIKELY(!self->slot_to_dense)) {
+    if (self->slot_to_dense == nullptr) [[unlikely]] {
         return;
     }
-    if (UNLIKELY(!self->generations)) {
+    if (self->generations == nullptr) [[unlikely]] {
         return;
     }
-    if (UNLIKELY(!self->slot_states)) {
+    if (self->slot_states == nullptr) [[unlikely]] {
         return;
     }
 
@@ -194,13 +264,13 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
     if (active_rigid_count > 0) {
         const JPH_BodyID *active_rigid_ids =
             JPH_PhysicsSystem_GetActiveBodiesUnsafe(sys_c, JPH_BodyType_Rigid);
-        if (LIKELY(active_rigid_ids)) {
-            alignas(MEMORY_ALIGNMENT_SIZE) CppSyncWorkItem worklist[BATCH_SIZE];
+        if (active_rigid_ids != nullptr) [[unlikely]] {
+            alignas(MEMORY_ALIGNMENT_SIZE) SyncWorkItem worklist[BATCH_SIZE];
             uint32_t work_ptr = 0;
 
             for (uint32_t i = 0; i < active_rigid_count; i++) {
                 const JPH::Body *b = lock_iface->TryGetBody(JPH::BodyID(active_rigid_ids[i]));
-                if (UNLIKELY(b == nullptr)) {
+                if (b == nullptr) [[unlikely]] {
                     continue;
                 }
 
@@ -210,10 +280,9 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
 
                 const uint32_t safe_slot = (slot < self->slot_capacity) ? slot : 0;
 
-                const uint8_t state =
-                    __atomic_load_n((uint8_t *)&self->slot_states[safe_slot], __ATOMIC_ACQUIRE);
+                const uint8_t state = self->slot_states[safe_slot].load(JPH::memory_order_acquire);
                 const uint32_t current_gen =
-                    __atomic_load_n((uint32_t *)&self->generations[safe_slot], __ATOMIC_ACQUIRE);
+                    self->generations[safe_slot].load(JPH::memory_order_acquire);
 
                 const uint32_t state_bad = (state == SLOT_ALIVE || state == SLOT_CHARACTER) ? 0 : 1;
                 const uint32_t bad       = static_cast<uint32_t>(slot >= self->slot_capacity) |
@@ -244,105 +313,58 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
     }
 
     // ========================================================================
-    // PASS 2: SOFT BODIES
+    // PASS 2: SOFT BODIES (Branchless Dispatch)
     // ========================================================================
     if (active_soft_count > 0 && self->soft_shadows != nullptr) {
         const JPH_BodyID *active_soft_ids =
             JPH_PhysicsSystem_GetActiveBodiesUnsafe(sys_c, JPH_BodyType_Soft);
 
-        if (LIKELY(active_soft_ids)) {
-            PosStride *CULV_RESTRICT s_ppos = (PosStride *)self->prev_positions;
-            AuxStride *CULV_RESTRICT s_prot = (AuxStride *)self->prev_rotations;
+        if (active_soft_ids != nullptr) [[likely]] {
+            alignas(MEMORY_ALIGNMENT_SIZE) SyncWorkItem soft_worklist[BATCH_SIZE];
+            uint32_t soft_work_ptr = 0;
 
             for (uint32_t i = 0; i < active_soft_count; i++) {
                 const JPH::Body *b = lock_iface->TryGetBody(JPH::BodyID(active_soft_ids[i]));
-                if (UNLIKELY(!(b && b->IsSoftBody()))) {
+
+                // We still need this one null check because TryGetBody is an external lookup,
+                // but the handle/state logic below is now branchless.
+                if ((b == nullptr) || !b->IsSoftBody()) [[unlikely]] {
                     continue;
                 }
 
                 const uint64_t handle    = b->GetUserData();
-                const auto slot          = (uint32_t)(handle & HANDLE_INDEX_MASK);
-                const auto gen           = (uint32_t)(handle >> HANDLE_INDEX_BITS);
+                const uint32_t slot      = (uint32_t)(handle & HANDLE_INDEX_MASK);
+                const uint32_t gen       = (uint32_t)(handle >> HANDLE_INDEX_BITS);
                 const uint32_t safe_slot = (slot < self->slot_capacity) ? slot : 0;
 
-                const uint8_t state =
-                    __atomic_load_n((uint8_t *)&self->slot_states[safe_slot], __ATOMIC_ACQUIRE);
+                const uint8_t state = self->slot_states[safe_slot].load(JPH::memory_order_acquire);
                 const uint32_t current_gen =
-                    __atomic_load_n((uint32_t *)&self->generations[safe_slot], __ATOMIC_ACQUIRE);
+                    self->generations[safe_slot].load(JPH::memory_order_acquire);
 
-                if (slot >= self->slot_capacity || current_gen != gen || state != SLOT_SOFT_BODY) {
-                    continue;
+                // --- BRANCHLESS VALIDATION ---
+                const uint32_t state_bad = (state == SLOT_SOFT_BODY) ? 0 : 1;
+                const uint32_t bad       = static_cast<uint32_t>(slot >= self->slot_capacity) |
+                                           (current_gen ^ gen) | state_bad;
+
+                const uint32_t d_idx    = s2d[safe_slot];
+                const uint32_t is_valid = static_cast<uint32_t>(bad == 0);
+
+                // Prefetch the vertex shadow buffer metadata
+                CULV_PREFETCH_READ(&self->soft_shadows[d_idx]);
+
+                CULV_ASSUME(soft_work_ptr < BATCH_SIZE);
+                soft_worklist[soft_work_ptr].body      = b;
+                soft_worklist[soft_work_ptr].dense_idx = d_idx;
+                soft_work_ptr += is_valid;
+
+                if (soft_work_ptr == BATCH_SIZE) {
+                    process_soft_batch(self, soft_worklist, BATCH_SIZE);
+                    soft_work_ptr = 0;
                 }
+            }
 
-                const uint32_t d_idx = s2d[safe_slot];
-
-                // 1. Sync Center of Mass & Rotation (Keeps traditional rigid-body query functions
-                // happy)
-                s_ppos[d_idx] = s_pos[d_idx];
-                s_prot[d_idx] = s_rot[d_idx];
-
-#ifndef JPH_DOUBLE_PRECISION
-                JPH::Vec4(b->GetCenterOfMassPosition(), 0.0f)
-                    .StoreFloat4(reinterpret_cast<JPH::Float4 *>(&s_pos[d_idx]));
-#else
-                b->GetCenterOfMassPosition().StoreDouble3(
-                    reinterpret_cast<JPH::Double3 *>(&s_pos[d_idx]));
-                s_pos[d_idx].w = 0.0;
-#endif
-                b->GetRotation().GetXYZW().StoreFloat4(
-                    reinterpret_cast<JPH::Float4 *>(&s_rot[d_idx]));
-
-                // 2. Sync Soft Body Vertices
-                const JPH::MotionProperties *mp = b->GetMotionProperties();
-                if ((mp != nullptr) && b->IsSoftBody()) {
-                    const auto *soft_mp = static_cast<const JPH::SoftBodyMotionProperties *>(mp);
-                    const JPH::Array<JPH::SoftBodyVertex> &jolt_verts = soft_mp->GetVertices();
-
-                    SoftBodyShadow &shadow = self->soft_shadows[d_idx];
-
-                    // Safety check to ensure arrays align
-                    if ((shadow.vertices != nullptr) && shadow.num_vertices == jolt_verts.size()) {
-                        auto *dst_verts = reinterpret_cast<PosStride *>(shadow.vertices);
-                        auto *dst_vels  = reinterpret_cast<AuxStride *>(shadow.velocities);
-
-                        // Jolt's soft body vertices are local to the Center of Mass transform.
-                        JPH::RMat44 com_transform = b->GetCenterOfMassTransform();
-                        JPH::Quat rotation        = b->GetRotation();
-
-                        const size_t num_v = shadow.num_vertices;
-
-                        CULV_UNROLL_LOOP(4)
-                        for (size_t v = 0; v < num_v; ++v) {
-                            // Prefetch 2 cache-lines ahead (assuming 64-byte CL, 1 PosStride is
-                            // 32/16 bytes)
-                            if (v + 8 < num_v) {
-                                CULV_PREFETCH_WRITE(&dst_verts[v + 8]);
-                                if (dst_vels != nullptr) {
-                                    CULV_PREFETCH_WRITE(&dst_vels[v + 8]);
-                                }
-                            }
-
-                            JPH::Vec3 local_pos(jolt_verts[v].mPosition);
-
-#ifndef JPH_DOUBLE_PRECISION
-                            JPH::Vec3 world_pos = com_transform * local_pos;
-                            JPH::Vec4(world_pos, 0.0f)
-                                .StoreFloat4(reinterpret_cast<JPH::Float4 *>(&dst_verts[v]));
-#else
-                            JPH::RVec3 world_pos = com_transform * local_pos;
-                            world_pos.StoreDouble3(reinterpret_cast<JPH::Double3 *>(&dst_verts[v]));
-                            dst_verts[v].w = 0.0;
-#endif
-                            // Optional: Extract velocities if Python requested them
-                            if (dst_vels != nullptr) {
-                                JPH::Vec3 local_vel(jolt_verts[v].mVelocity);
-                                JPH::Vec3 world_vel = rotation * local_vel;
-                                JPH::Vec4(world_vel, 0.0f)
-                                    .StoreFloat4(reinterpret_cast<JPH::Float4 *>(&dst_vels[v]));
-                            }
-                        }
-                    }
-                }
+            if (soft_work_ptr > 0) {
+                process_soft_batch(self, soft_worklist, soft_work_ptr);
             }
         }
     }
