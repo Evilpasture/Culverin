@@ -1,6 +1,7 @@
 #pragma once
 #include <Python.h>
 #include "culverin_compiler_specifics.h"
+#include "culverin_threading.h"
 
 
 // A 64-bit Entity Handle: [32-bit Generation | 32-bit Index]
@@ -32,7 +33,7 @@ typedef struct {
     SparseSet *components;
     uint32_t component_count;
     uint32_t component_capacity;
-
+    ShadowMutex ecs_lock;
 } RegistryObject;
 
 // Lifecycle

@@ -112,6 +112,7 @@ PyType_DeclareSlot_StatusFromModule Registry_init(RegistryObject *self,
     if (!self->components) {
         return -1;
     }
+    INIT_LOCK(self->ecs_lock);
     return 0;
 }
 
@@ -136,6 +137,7 @@ PyType_DeclareSlot_VoidFromModule Registry_dealloc(RegistryObject *self) {
 // Signature updated for METH_NOARGS
 PyCFunction_DeclareMethodFromModule Registry_create(RegistryObject *self,
                                                     CULV_MAYBE_UNUSED PyObject *args) {
+    SHADOW_LOCK(&self->ecs_lock);
     if (self->free_count == 0) {
         uint32_t new_cap = self->entity_capacity * 2;
         uint32_t *new_gens =
@@ -143,6 +145,7 @@ PyCFunction_DeclareMethodFromModule Registry_create(RegistryObject *self,
         uint32_t *new_free =
             (uint32_t *)CULV_RAW_REALLOC(self->free_indices, new_cap * sizeof(uint32_t));
         if (!new_gens || !new_free) {
+            SHADOW_UNLOCK(&self->ecs_lock);
             return PyErr_NoMemory();
         }
 
@@ -160,6 +163,8 @@ PyCFunction_DeclareMethodFromModule Registry_create(RegistryObject *self,
     CulvEntity handle = ((uint64_t)gen << HANDLE_INDEX_BITS) | index;
     self->active_entities++;
 
+    SHADOW_UNLOCK(&self->ecs_lock);
+
     return PyLong_FromUnsignedLongLong(handle);
 }
 
@@ -174,10 +179,13 @@ PyCFunction_DeclareMethodFromModule Registry_destroy(RegistryObject *self, PyObj
         return nullptr;
     }
 
+    SHADOW_LOCK(&self->ecs_lock);
+
     uint32_t index = (uint32_t)(handle & HANDLE_INDEX_MASK);
     uint32_t gen   = (uint32_t)(handle >> HANDLE_INDEX_BITS);
 
     if (index >= self->entity_capacity || self->generations[index] != gen) {
+        SHADOW_UNLOCK(&self->ecs_lock);
         Py_RETURN_NONE; // Already dead
     }
 
@@ -208,6 +216,8 @@ PyCFunction_DeclareMethodFromModule Registry_destroy(RegistryObject *self, PyObj
     self->free_indices[self->free_count++] = index;
     self->active_entities--;
 
+    SHADOW_UNLOCK(&self->ecs_lock);
+
     Py_RETURN_NONE;
 }
 
@@ -222,10 +232,14 @@ PyCFunction_DeclareMethodFromModule Registry_is_alive(RegistryObject *self, PyOb
         return nullptr;
     }
 
+    SHADOW_LOCK(&self->ecs_lock);
+
     uint32_t index = (uint32_t)(handle & HANDLE_INDEX_MASK);
     uint32_t gen   = (uint32_t)(handle >> HANDLE_INDEX_BITS);
 
     bool alive = (index < self->entity_capacity && self->generations[index] == gen) != 0;
+
+    SHADOW_UNLOCK(&self->ecs_lock);
 
     if (alive) {
         Py_RETURN_TRUE;
@@ -247,11 +261,14 @@ PyCFunction_DeclareMethodFromModule Registry_register_component(RegistryObject *
         return nullptr;
     }
 
+    SHADOW_LOCK(&self->ecs_lock);
+
     if (self->component_count >= self->component_capacity) {
         uint32_t new_cap = self->component_capacity * 2;
         SparseSet *new_comps =
             (SparseSet *)CULV_RAW_REALLOC(self->components, new_cap * sizeof(SparseSet));
         if (!new_comps) {
+            SHADOW_UNLOCK(&self->ecs_lock);
             return PyErr_NoMemory();
         }
         self->components         = new_comps;
@@ -260,6 +277,8 @@ PyCFunction_DeclareMethodFromModule Registry_register_component(RegistryObject *
 
     uint32_t comp_id = self->component_count++;
     SparseSet_Init(&self->components[comp_id], size);
+
+    SHADOW_UNLOCK(&self->ecs_lock);
 
     return PyLong_FromUnsignedLong(comp_id);
 }
@@ -291,14 +310,18 @@ PyCFunction_DeclareMethodFromModule Registry_add(RegistryObject *self, PyObject 
         return PyErr_Format(PyExc_ValueError, "Invalid component ID");
     }
 
+    SHADOW_LOCK(&self->ecs_lock);
+
     SparseSet *set = &self->components[comp_id];
 
     Py_buffer view;
     if (data_obj && data_obj != Py_None) {
         if (PyObject_GetBuffer(data_obj, &view, PyBUF_SIMPLE) != 0) {
+            SHADOW_UNLOCK(&self->ecs_lock);
             return nullptr;
         }
         if (view.len != set->element_size) {
+            SHADOW_UNLOCK(&self->ecs_lock);
             PyBuffer_Release(&view);
             return PyErr_Format(PyExc_ValueError, "Data size mismatch: expected %u, got %zd",
                                 set->element_size, view.len);
@@ -328,9 +351,12 @@ PyCFunction_DeclareMethodFromModule Registry_add(RegistryObject *self, PyObject 
         memset(&set->data[(size_t)dense_idx * set->element_size], 0, set->element_size);
     }
 
+    SHADOW_UNLOCK(&self->ecs_lock);
+
     Py_RETURN_NONE;
 
 fail:
+    SHADOW_UNLOCK(&self->ecs_lock);
     if (data_obj && data_obj != Py_None) {
         PyBuffer_Release(&view);
     }
@@ -355,6 +381,8 @@ PyCFunction_DeclareMethodFromModule Registry_remove(RegistryObject *self, PyObje
         return PyErr_Format(PyExc_ValueError, "Invalid component ID");
     }
 
+    SHADOW_LOCK(&self->ecs_lock);
+
     SparseSet *set = &self->components[comp_id];
 
     if (index < set->sparse_capacity && set->sparse[index] != INVALID_DENSE_INDEX) {
@@ -374,6 +402,8 @@ PyCFunction_DeclareMethodFromModule Registry_remove(RegistryObject *self, PyObje
         set->sparse[index] = INVALID_DENSE_INDEX;
         set->count--;
     }
+
+    SHADOW_UNLOCK(&self->ecs_lock);
 
     Py_RETURN_NONE;
 }
@@ -395,11 +425,11 @@ PyCFunction_DeclareMethodFromModule Registry_has(RegistryObject *self, PyObject 
     if (comp_id >= self->component_count) {
         return PyErr_Format(PyExc_ValueError, "Invalid component ID");
     }
-
+    SHADOW_LOCK(&self->ecs_lock);
     SparseSet *set = &self->components[comp_id];
     bool has_comp =
         (index < set->sparse_capacity && set->sparse[index] != INVALID_DENSE_INDEX) != 0;
-
+    SHADOW_UNLOCK(&self->ecs_lock);
     if (has_comp) {
         Py_RETURN_TRUE;
     }
@@ -421,11 +451,16 @@ PyCFunction_DeclareMethodFromModule Registry_get_view(RegistryObject *self, PyOb
         return PyErr_Format(PyExc_ValueError, "Invalid component ID");
     }
 
+    SHADOW_LOCK(&self->ecs_lock);
+
     SparseSet *set = &self->components[comp_id];
 
     if (set->count == 0) {
+        SHADOW_UNLOCK(&self->ecs_lock);
         return PyMemoryView_FromMemory((char *)"", 0, PyBUF_WRITE);
     }
+
+    SHADOW_UNLOCK(&self->ecs_lock);
 
     return PyMemoryView_FromMemory((char *)set->data, set->count * set->element_size, PyBUF_WRITE);
 }
@@ -446,11 +481,16 @@ PyCFunction_DeclareMethodFromModule Registry_get_entities(RegistryObject *self,
         return PyErr_Format(PyExc_ValueError, "Invalid component ID");
     }
 
+    SHADOW_LOCK(&self->ecs_lock);
+
     SparseSet *set = &self->components[comp_id];
 
     if (set->count == 0) {
+        SHADOW_UNLOCK(&self->ecs_lock);
         return PyMemoryView_FromMemory((char *)"", 0, PyBUF_READ);
     }
+
+    SHADOW_UNLOCK(&self->ecs_lock);
 
     return PyMemoryView_FromMemory((char *)set->dense,
                                    (set->count * (Py_ssize_t)sizeof(CulvEntity)), PyBUF_READ);
@@ -489,6 +529,7 @@ PyCFunction_DeclareMethodFromModule Registry_sync_from_world(RegistryObject *sel
     }
 
     SHADOW_LOCK(&world->shadow_lock);
+    SHADOW_LOCK(&self->ecs_lock);
 
     // We iterate over the entities in the Transform set
     for (uint32_t i = 0; i < t_set->count; i++) {
@@ -514,6 +555,7 @@ PyCFunction_DeclareMethodFromModule Registry_sync_from_world(RegistryObject *sel
         }
     }
 
+    SHADOW_UNLOCK(&self->ecs_lock);
     SHADOW_UNLOCK(&world->shadow_lock);
     Py_RETURN_NONE;
 }
