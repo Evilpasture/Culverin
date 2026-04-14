@@ -227,3 +227,50 @@ def test_physics_to_ecs_sync_workflow(registry: culverin.Registry) -> None:
     view_verify = np.frombuffer(registry.get_view(COMP_TRANS), dtype=np.float32).reshape(-1, 3)
     assert view_verify[0, 0] == 10.0
     assert view_verify[4, 0] == 10.0
+
+def test_real_physics_integration(registry: culverin.Registry) -> None:
+    """
+    Test a full frame lifecycle using the optimized C-native sync method.
+    1. Update Physics.
+    2. Bulk Sync Physics results to ECS components in C.
+    """
+    import culverin
+    # Fresh world with gravity
+    world = culverin.PhysicsWorld(settings={"gravity": (0, -10, 0)})
+    
+    # 1. Register ECS Components
+    COMP_PHYSICS = registry.register_component(8)   # uint64 handle
+    COMP_TRANSFORM = registry.register_component(12) # 3x float32
+    
+    # 2. Spawn 10 falling boxes
+    # Spread them out so they don't collide
+    for i in range(10):
+        ent = registry.create()
+        handle = world.create_body(pos=(i * 2.0, 10.0, 0.0), motion=culverin.MOTION_DYNAMIC)
+        
+        # Add components to ECS
+        registry.add(ent, COMP_PHYSICS, np.array([handle], dtype=np.uint64).tobytes())
+        registry.add(ent, COMP_TRANSFORM, np.array([i * 2.0, 10.0, 0.0], dtype=np.float32).tobytes())
+        
+    # Flush creation
+    world.step(0)
+    
+    # 3. Simulate 10 frames of gravity
+    for _ in range(10):
+        world.step(1/60)
+        
+    # 4. OPTIMIZED SYNC PASS
+    # This single C call replaces the entire NumPy mapping and manual index-lookup loop.
+    # It performs handle validation and precision casting (double -> float) internally.
+    registry.sync_from_world(world, COMP_PHYSICS, COMP_TRANSFORM)
+    
+    # 5. VERIFICATION
+    # Access the ECS buffer to verify the sync worked
+    ecs_transforms = np.frombuffer(registry.get_view(COMP_TRANSFORM), dtype=np.float32).reshape(-1, 3)
+    
+    for i in range(10):
+        current_y = ecs_transforms[i, 1]
+        # Verify the entity has physically moved (fallen) in the ECS storage
+        assert current_y < 10.0, f"Entity {i} failed to fall in ECS storage. Y={current_y}"
+        
+    print(f"\n[Native ECS Sync] Success: Bulk synced {len(ecs_transforms)} entities.")
