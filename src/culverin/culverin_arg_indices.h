@@ -372,6 +372,21 @@ static constexpr size_t PARSER_REGISTRY_SIZE = 128;
     X(IDX_SAF_V2, "v2", uint32_t, 1)                                                               \
     X(IDX_SAF_V3, "v3", uint32_t, 1)
 
+#define SCHEMA_REG_ENTITY_ONLY(X) X(IDX_REO_ENT, "entity", uint64_t, 1)
+
+#define SCHEMA_REG_COMP_ONLY(X) X(IDX_RCO_COMP, "comp_id", uint32_t, 1)
+
+#define SCHEMA_REG_REG_COMP(X) X(IDX_RRC_SIZE, "size_bytes", uint32_t, 1)
+
+#define SCHEMA_REG_ADD(X)                                                                          \
+    X(IDX_RA_ENT, "entity", uint64_t, 1)                                                           \
+    X(IDX_RA_COMP, "comp_id", uint32_t, 1)                                                         \
+    X(IDX_RA_DATA, "data", PyObject *, 0)
+
+#define SCHEMA_REG_ENT_COMP(X)                                                                     \
+    X(IDX_REC_ENT, "entity", uint64_t, 1)                                                          \
+    X(IDX_REC_COMP, "comp_id", uint32_t, 1)
+
 #define SCHEMA_STRESS_TEST(X)                                                                      \
     X(IDX_0, "a0", uint64_t, 0)                                                                    \
     X(IDX_1, "a1", uint64_t, 0)                                                                    \
@@ -383,42 +398,42 @@ static constexpr size_t PARSER_REGISTRY_SIZE = 128;
     X(IDX_7, "a7", uint64_t, 0)                                                                    \
     X(IDX_8, "a8", uint64_t, 0)                                                                    \
     X(IDX_9, "a9", uint64_t, 0)                                                                    \
-    X(IDX_10, "a10", uint64_t, 0) X(IDX_11, "a11", uint64_t, 0) X(IDX_12, "a12", uint64_t, 0) X(   \
-        IDX_13, "a13", uint64_t, 0) X(IDX_14, "a14", uint64_t, 0) X(IDX_15, "a15", uint64_t, 0)    \
-        X(IDX_16, "a16", uint64_t, 0) X(IDX_17, "a17", uint64_t, 0) X(IDX_18, "a18", uint64_t, 0)  \
-            X(IDX_19, "a19", uint64_t, 0) X(IDX_20, "a20", uint64_t, 0)                            \
-                X(IDX_21, "a21", uint64_t, 0) X(IDX_22, "a22", uint64_t, 0)                        \
-                    X(IDX_23, "a23", uint64_t, 0) X(IDX_24, "a24", uint64_t, 0)                    \
-                        X(IDX_25, "a25", uint64_t, 0) X(IDX_26, "a26", uint64_t, 0)                \
-                            X(IDX_27, "a27", uint64_t, 0) X(IDX_28, "a28", uint64_t, 0) X(         \
-                                IDX_29, "a29", uint64_t, 0) X(IDX_30, "a30", uint64_t, 0)          \
-                                X(IDX_31, "a31", uint64_t, 0) X(IDX_32, "a32", uint64_t, 0) X(     \
-                                    IDX_33, "a33", uint64_t, 0) X(IDX_34, "a34", uint64_t, 0)      \
-                                    X(IDX_35, "a35", uint64_t, 0) X(IDX_36, "a36", uint64_t, 0) X( \
-                                        IDX_37, "a37", uint64_t, 0) X(IDX_38, "a38", uint64_t, 0)  \
-                                        X(IDX_39, "a39", uint64_t,                                 \
-                                          0) X(IDX_40, "a40", uint64_t,                            \
-                                               0) X(IDX_41, "a41", uint64_t,                       \
-                                                    0) X(IDX_42, "a42", uint64_t,                  \
-                                                         0) X(IDX_43, "a43", uint64_t, 0)          \
-                                            X(IDX_44, "a44", uint64_t,                             \
-                                              0) X(IDX_45, "a45", uint64_t,                        \
-                                                   0) X(IDX_46, "a46", uint64_t,                   \
-                                                        0) X(IDX_47, "a47", uint64_t,              \
-                                                             0) X(IDX_48, "a48", uint64_t, 0)      \
-                                                X(IDX_49, "a49", uint64_t,                         \
-                                                  0) X(IDX_50, "a50", uint64_t,                    \
-                                                       0) X(IDX_51, "a51", uint64_t,               \
-                                                            0) X(IDX_52, "a52", uint64_t,          \
-                                                                 0) X(IDX_53, "a53", uint64_t, 0)  \
-                                                    X(IDX_54, "a54", uint64_t,                     \
-                                                      0) X(IDX_55, "a55", uint64_t,                \
-                                                           0) X(IDX_56, "a56", uint64_t, 0)        \
-                                                        X(IDX_57, "a57", uint64_t,                 \
-                                                          0) X(IDX_58, "a58", uint64_t,            \
-                                                               0) X(IDX_59, "a59", uint64_t, 0)    \
-                                                            X(IDX_60, "a60", uint64_t,             \
-                                                              0) X(IDX_61, "a61", uint64_t, 0)     \
+    X(IDX_10, "a10", uint64_t, 0)                                                                  \
+    X(IDX_11, "a11", uint64_t, 0) X(IDX_12, "a12", uint64_t, 0) X(IDX_13, "a13", uint64_t, 0) X(   \
+        IDX_14, "a14", uint64_t, 0) X(IDX_15, "a15", uint64_t, 0) X(IDX_16, "a16", uint64_t, 0)    \
+        X(IDX_17, "a17", uint64_t, 0) X(IDX_18, "a18", uint64_t, 0) X(IDX_19, "a19", uint64_t, 0)  \
+            X(IDX_20, "a20", uint64_t, 0) X(IDX_21, "a21", uint64_t, 0)                            \
+                X(IDX_22, "a22", uint64_t, 0) X(IDX_23, "a23", uint64_t, 0)                        \
+                    X(IDX_24, "a24", uint64_t, 0) X(IDX_25, "a25", uint64_t, 0)                    \
+                        X(IDX_26, "a26", uint64_t, 0) X(IDX_27, "a27", uint64_t, 0)                \
+                            X(IDX_28, "a28", uint64_t, 0) X(IDX_29, "a29", uint64_t, 0) X(         \
+                                IDX_30, "a30", uint64_t, 0) X(IDX_31, "a31", uint64_t, 0)          \
+                                X(IDX_32, "a32", uint64_t, 0) X(IDX_33, "a33", uint64_t, 0) X(     \
+                                    IDX_34, "a34", uint64_t, 0) X(IDX_35, "a35", uint64_t, 0)      \
+                                    X(IDX_36, "a36", uint64_t, 0) X(IDX_37, "a37", uint64_t, 0) X( \
+                                        IDX_38, "a38", uint64_t, 0) X(IDX_39, "a39", uint64_t, 0)  \
+                                        X(IDX_40, "a40", uint64_t,                                 \
+                                          0) X(IDX_41, "a41", uint64_t,                            \
+                                               0) X(IDX_42, "a42", uint64_t,                       \
+                                                    0) X(IDX_43, "a43", uint64_t,                  \
+                                                         0) X(IDX_44, "a44", uint64_t, 0)          \
+                                            X(IDX_45, "a45", uint64_t,                             \
+                                              0) X(IDX_46, "a46", uint64_t,                        \
+                                                   0) X(IDX_47, "a47", uint64_t,                   \
+                                                        0) X(IDX_48, "a48", uint64_t,              \
+                                                             0) X(IDX_49, "a49", uint64_t, 0)      \
+                                                X(IDX_50, "a50", uint64_t,                         \
+                                                  0) X(IDX_51, "a51", uint64_t,                    \
+                                                       0) X(IDX_52, "a52", uint64_t,               \
+                                                            0) X(IDX_53, "a53", uint64_t,          \
+                                                                 0) X(IDX_54, "a54", uint64_t, 0)  \
+                                                    X(IDX_55, "a55", uint64_t,                     \
+                                                      0) X(IDX_56, "a56", uint64_t,                \
+                                                           0) X(IDX_57, "a57", uint64_t, 0)        \
+                                                        X(IDX_58, "a58", uint64_t,                 \
+                                                          0) X(IDX_59, "a59", uint64_t,            \
+                                                               0) X(IDX_60, "a60", uint64_t, 0)    \
+                                                            X(IDX_61, "a61", uint64_t, 0)          \
                                                                 X(IDX_62, "a62", uint64_t, 0)      \
                                                                     X(IDX_63, "a63", uint64_t, 0)
 
@@ -490,6 +505,11 @@ DEFINE_INDEX_GROUP(SbssAddFace, SCHEMA_SBSS_ADD_FACE)
 DEFINE_INDEX_GROUP(SbssAddVertices, SCHEMA_SBSS_ADD_VERTICES)
 DEFINE_INDEX_GROUP(SbssAddFaces, SCHEMA_SBSS_ADD_FACES)
 DEFINE_INDEX_GROUP(GetSbVertex, SCHEMA_GET_SB_VERTEX)
+DEFINE_INDEX_GROUP(RegEntityOnly, SCHEMA_REG_ENTITY_ONLY)
+DEFINE_INDEX_GROUP(RegCompOnly, SCHEMA_REG_COMP_ONLY)
+DEFINE_INDEX_GROUP(RegRegComp, SCHEMA_REG_REG_COMP)
+DEFINE_INDEX_GROUP(RegAdd, SCHEMA_REG_ADD)
+DEFINE_INDEX_GROUP(RegEntComp, SCHEMA_REG_ENT_COMP)
 DEFINE_INDEX_GROUP(StressTest, SCHEMA_STRESS_TEST)
 
 #define FOR_ALL_PARSERS(X)                                                                         \
@@ -558,6 +578,11 @@ DEFINE_INDEX_GROUP(StressTest, SCHEMA_STRESS_TEST)
     X(SbssAddVertices, SbssAddVertices, SCHEMA_SBSS_ADD_VERTICES)                                  \
     X(SbssAddFaces, SbssAddFaces, SCHEMA_SBSS_ADD_FACES)                                           \
     X(GetSbVertex, GetSbVertex, SCHEMA_GET_SB_VERTEX)                                              \
+    X(RegEntityOnly, RegEntityOnly, SCHEMA_REG_ENTITY_ONLY)                                        \
+    X(RegCompOnly, RegCompOnly, SCHEMA_REG_COMP_ONLY)                                              \
+    X(RegRegComp, RegRegComp, SCHEMA_REG_REG_COMP)                                                 \
+    X(RegAdd, RegAdd, SCHEMA_REG_ADD)                                                              \
+    X(RegEntComp, RegEntComp, SCHEMA_REG_ENT_COMP)                                                 \
     X(StressTest, StressTest, SCHEMA_STRESS_TEST)
 
 #define MAP_TO_DECLARE(P, G, S) DECLARE_PARSER(P, G)

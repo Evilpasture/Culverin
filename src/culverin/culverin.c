@@ -9,9 +9,11 @@
 #include "culverin_compiler_specifics.h"
 #include "culverin_constraint.h"
 #include "culverin_contact_listener.h"
+#include "culverin_ecs.h"
 #include "culverin_fast_build.h"
 #include "culverin_fast_parse.h"
 #include "culverin_getters.h"
+#include "culverin_math.h"
 #include "culverin_parsers.h"
 #include "culverin_physics_sync.h"
 #include "culverin_physics_world_internal.h"
@@ -20,7 +22,6 @@
 #include "culverin_shadow_sync.h"
 #include "culverin_soft_body.h"
 #include "culverin_vehicle.h"
-#include "culverin_math.h"
 #include "joltc.h"
 #include <stdatomic.h>
 
@@ -43,14 +44,14 @@ static constexpr uint32_t COLLISION_FILTER_ALL_CATEGORIES = 0xFFFF;
 static constexpr uint32_t COLLISION_FILTER_ALL_MASKS      = 0xFFFF;
 
 // Numerical Tolerances
-static constexpr float EPSILON_FLOAT                    = 1e-6f;
+static constexpr float EPSILON_FLOAT = 1e-6f;
 
 // Array Indices and Counts
-static constexpr int INERTIA_MATRIX_COMPONENT_COUNT   = 3;
-static constexpr float RESTITUTION_BUFFER             = 0.5f; // Default restitution/bounce
-static constexpr size_t VERTEX_STRIDE_BYTES           = 12;   // 3 floats (x, y, z) * 4 bytes
-static constexpr size_t INITIAL_MATERIAL_CAPACITY     = 16;   // Initial material data capacity
-static constexpr float DEFAULT_BODY_SIZE              = 0.5f;
+static constexpr int INERTIA_MATRIX_COMPONENT_COUNT = 3;
+static constexpr float RESTITUTION_BUFFER           = 0.5f; // Default restitution/bounce
+static constexpr size_t VERTEX_STRIDE_BYTES         = 12;   // 3 floats (x, y, z) * 4 bytes
+static constexpr size_t INITIAL_MATERIAL_CAPACITY   = 16;   // Initial material data capacity
+static constexpr float DEFAULT_BODY_SIZE            = 0.5f;
 
 // Global lock for JPH callbacks
 NativeMutex g_jph_trampoline_lock; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
@@ -3425,7 +3426,8 @@ PyCFunction_DeclareMethod PhysicsWorld_get_render_state(PhysicsWorldObject *self
     float alpha;
     void *targets[Render_COUNT] = {[IDX_RND_ALPHA] = (void *)&alpha};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.RenderParser, targets)) {
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.RenderParser,
+                           targets)) {
         return nullptr;
     }
 
@@ -3453,14 +3455,8 @@ PyCFunction_DeclareMethod PhysicsWorld_get_render_state(PhysicsWorldObject *self
 
     // Dispatch to optimized C++ SIMD helper
     culverin_compute_interpolation_loop(
-        (PosStride *)self->positions,
-        (PosStride *)self->prev_positions,
-        (AuxStride *)self->rotations,
-        (AuxStride *)self->prev_rotations,
-        alpha,
-        out,
-        count
-    );
+        (PosStride *)self->positions, (PosStride *)self->prev_positions,
+        (AuxStride *)self->rotations, (AuxStride *)self->prev_rotations, alpha, out, count);
 
     SHADOW_UNLOCK(&self->shadow_lock);
     return bytes_obj;
@@ -4018,14 +4014,14 @@ exit_critical:
 
 static const unsigned char ALL_DOCS[] = {
 #ifdef __has_embed
-    #if __has_embed(CULVERIN_DOCS_PATH)
-        #embed CULVERIN_DOCS_PATH suffix(, 0)
-        #define CULV_DOCS_EMBEDDED
-    #endif
+#    if __has_embed(CULVERIN_DOCS_PATH)
+#        embed CULVERIN_DOCS_PATH suffix(, 0)
+#        define CULV_DOCS_EMBEDDED
+#    endif
 #endif
 
 #ifndef CULV_DOCS_EMBEDDED
-    #include "ALL_DOCS.inc"
+#    include "ALL_DOCS.inc"
 #endif
 };
 
@@ -4472,19 +4468,47 @@ static const PyType_Spec Ragdoll_spec = {
     .slots     = (PyType_Slot *)Ragdoll_slots,
 };
 
+// In culverin.c, define the methods:
+static PyMethodDef Registry_methods[] = {
+    {"create", CULV_CAST(Registry_create), METH_NOARGS, nullptr},
+    {"destroy", CULV_CAST(Registry_destroy), METH_FASTCALL | METH_KEYWORDS, nullptr},
+    {"register_component", CULV_CAST(Registry_register_component), METH_FASTCALL | METH_KEYWORDS,
+     nullptr},
+    {"add", CULV_CAST(Registry_add), METH_FASTCALL | METH_KEYWORDS, nullptr},
+    {"remove", CULV_CAST(Registry_remove), METH_FASTCALL | METH_KEYWORDS, nullptr},
+    {"has", CULV_CAST(Registry_has), METH_FASTCALL | METH_KEYWORDS, nullptr},
+    {"get_view", CULV_CAST(Registry_get_view), METH_FASTCALL | METH_KEYWORDS, nullptr},
+    {"get_entities", CULV_CAST(Registry_get_entities), METH_FASTCALL | METH_KEYWORDS, nullptr},
+    {nullptr, nullptr, 0, nullptr}};
+
+static PyType_Slot Registry_slots[] = {
+    {.slot = Py_tp_new, .pfunc = PyType_GenericNew},
+    {.slot = Py_tp_init, .pfunc = Registry_init},
+    {.slot = Py_tp_dealloc, .pfunc = Registry_dealloc},
+    {.slot = Py_tp_methods, .pfunc = (PyMethodDef *)Registry_methods},
+    {.slot = 0, nullptr},
+};
+
+static const PyType_Spec Registry_spec = {
+    .name      = "culverin._culverin_c.Registry",
+    .basicsize = sizeof(RegistryObject),
+    .flags     = Py_TPFLAGS_DEFAULT,
+    .slots     = (PyType_Slot *)Registry_slots,
+};
+
 // --- Module Initialization ---
 
 // Embed the entire TOML file as a static string
 static const unsigned char PYPROJECT_TOML[] = {
 #ifdef __has_embed
-    #if __has_embed("../../pyproject.toml")
-        #embed "../../pyproject.toml" suffix(, 0)
-        #define CULV_TOML_EMBEDDED
-    #endif
+#    if __has_embed("../../pyproject.toml")
+#        embed "../../pyproject.toml" suffix(, 0)
+#        define CULV_TOML_EMBEDDED
+#    endif
 #endif
 
 #ifndef CULV_TOML_EMBEDDED
-    #include "PYPROJECT_TOML.inc"
+#    include "PYPROJECT_TOML.inc"
 #endif
 };
 
@@ -4525,15 +4549,17 @@ static int init_types(PyObject *m, CulverinState *st) {
         const PyType_Spec *spec;
         PyObject **slot;
         const char *name;
-    } types[] = {{(&PhysicsWorld_spec), &st->PhysicsWorldType, "PhysicsWorld"},
-                 {(&Character_spec), &st->CharacterType, "Character"},
-                 {(&Vehicle_spec), &st->VehicleType, "Vehicle"},
-                 {(&RagdollSettings_spec), &st->RagdollSettingsType, "RagdollSettings"},
-                 {(&Ragdoll_spec), &st->RagdollType, "Ragdoll"},
-                 {(&Skeleton_spec), &st->SkeletonType, "Skeleton"},
-                 {(&BufferProxy_spec), &st->BufferProxyType, "BufferProxyObject"},
-                 {(&SoftBodySharedSettings_spec), &st->SoftBodySharedSettingsType,
-                  "SoftBodySharedSettings"}};
+    } types[] = {
+        {(&PhysicsWorld_spec), &st->PhysicsWorldType, "PhysicsWorld"},
+        {(&Character_spec), &st->CharacterType, "Character"},
+        {(&Vehicle_spec), &st->VehicleType, "Vehicle"},
+        {(&RagdollSettings_spec), &st->RagdollSettingsType, "RagdollSettings"},
+        {(&Ragdoll_spec), &st->RagdollType, "Ragdoll"},
+        {(&Skeleton_spec), &st->SkeletonType, "Skeleton"},
+        {(&BufferProxy_spec), &st->BufferProxyType, "BufferProxyObject"},
+        {(&SoftBodySharedSettings_spec), &st->SoftBodySharedSettingsType, "SoftBodySharedSettings"},
+        {(&Registry_spec), &st->RegistryType, "Registry"},
+    };
 
     for (size_t i = 0; i < sizeof(types) / sizeof(types[0]); i++) {
         auto type = PyType_FromModuleAndSpec(m, (PyType_Spec *)types[i].spec, nullptr);
