@@ -199,3 +199,31 @@ def test_capacity_expansion(registry: culverin.Registry) -> None:
     
     assert len(data) == 100
     assert data[99] == 99
+
+def test_physics_to_ecs_sync_workflow(registry: culverin.Registry) -> None:
+    """Demonstrates a real-world usage: Syncing Jolt results to ECS components."""
+    # 1. Setup ECS components
+    # Transform: 12 bytes (x,y,z float32)
+    # Metadata: 8 bytes (uint64 Jolt Handle)
+    COMP_TRANS = registry.register_component(12)
+    COMP_JOLT  = registry.register_component(8)
+    
+    # 2. Create entities and "mock" Jolt handles
+    for i in range(5):
+        ent = registry.create()
+        registry.add(ent, COMP_TRANS, np.array([0, i, 0], dtype=np.float32).tobytes())
+        registry.add(ent, COMP_JOLT, np.array([i + 1000], dtype=np.uint64).tobytes())
+        
+    # 3. The Sync Pass (What you would do in your game loop)
+    # Get views of the ECS storage
+    transforms = np.frombuffer(registry.get_view(COMP_TRANS), dtype=np.float32).reshape(-1, 3)
+    jolt_handles = np.frombuffer(registry.get_entities(COMP_JOLT), dtype=np.uint64)
+    
+    # In a real game, you'd pull from world.positions[jolt_indices]
+    # Here we just perform a bulk operation on the ECS memory
+    transforms[:, 0] += 10.0 # Move all entities 10 units on X
+    
+    # 4. Verify
+    view_verify = np.frombuffer(registry.get_view(COMP_TRANS), dtype=np.float32).reshape(-1, 3)
+    assert view_verify[0, 0] == 10.0
+    assert view_verify[4, 0] == 10.0
