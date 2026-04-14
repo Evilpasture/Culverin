@@ -1934,6 +1934,60 @@ class TestSoftBodies(CulverinTestCase):
         self.assertTrue(self.world.is_alive(h))
         self.assertAlmostEqual(self.get_pos(h)[1], 10.0, places=3)
 
+    def test_soft_body_getters_logic(self) -> None:
+        """Test the new JoltC direct getters for soft body vertex data."""
+        # Cube of size 2.0 at Y=5.0. 
+        # Corner 0 is at local (-1, -1, -1). 
+        # World Y = 5.0 - 1.0 = 4.0.
+        settings = self.create_cube_settings(size=2.0)
+        h = self.world.create_soft_body(
+            settings, pos=(0, 5, 0), rot=(0, 0, 0, 1), pressure=0.0
+        )
+        # Flush creation
+        self.world.step(0)
+    
+        # 1. Test Vertex Count
+        count = self.world.get_soft_body_vertex_count(h)
+        self.assertEqual(count, 8, "Cube should have exactly 8 vertices")
+    
+        # 2. Test World Position via direct getter
+        # Jolt reports these in world-space immediately after creation
+        world_pos = self.world.get_soft_body_vertex_position(h, 0)
+        self.assertAlmostEqual(world_pos[0], -1.0)
+        self.assertAlmostEqual(world_pos[1], 4.0) # 5.0 (pos) - 1.0 (local)
+        self.assertAlmostEqual(world_pos[2], -1.0)
+    
+        # 3. Test Bulk Extraction
+        raw_bytes = self.world.get_soft_body_local_vertices(h)
+        self.assertEqual(len(raw_bytes), 8 * 12, "Byte length must be num_verts * 12")
+        
+        verts_world = np.frombuffer(raw_bytes, dtype=np.float32).reshape(-1, 3)
+        self.assertAlmostEqual(verts_world[0, 1], 4.0)
+
+        # 4. Verify physical movement
+        # Let the body fall for one frame
+        self.world.step(1/60)
+        
+        new_pos = self.world.get_soft_body_vertex_position(h, 0)
+        self.assertLess(new_pos[1], 4.0, "Vertex Y should have decreased due to gravity")
+
+    def test_soft_body_getter_errors(self) -> None:
+        """Verify safety guards for the new soft body getters."""
+        h_rigid = self.world.create_body(pos=(0, 0, 0))
+        self.world.step(0)
+
+        # 1. Wrong Body Type
+        with self.assertRaisesRegex(TypeError, "not belong to a soft body"):
+            self.world.get_soft_body_vertex_count(h_rigid)
+        
+        # 2. Index Out of Bounds
+        settings = self.create_cube_settings()
+        h_soft = self.world.create_soft_body(settings, pos=(0, 0, 0), rot=(0, 0, 0, 1))
+        self.world.step(0)
+        
+        with self.assertRaises(IndexError):
+            self.world.get_soft_body_vertex_position(h_soft, 999)
+
 
 class TestTupleMutation(unittest.TestCase):
     """
