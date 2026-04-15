@@ -48,7 +48,7 @@ from ._culverin_c import (
     SoftBodySharedSettings,
     Vehicle,
     Registry,
-    _dump_schema_json, # type: ignore
+    _dump_schema_json,  # type: ignore
     mutate_tuple,
 )
 

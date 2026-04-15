@@ -275,8 +275,7 @@ class PhysicsWorld:
         restitution: float = 0.0,
         make_rotation_identity: bool = False,
         update_position: bool = True,
-        faces_double_sided: bool = False
-
+        faces_double_sided: bool = False,
     ) -> int: ...
     def create_character(
         self,
@@ -424,11 +423,11 @@ class PhysicsWorld:
     # def set_object_layer(self, handle: int, layer: int) -> None: ...
 
     # def raycast_ex(
-    #     self, 
-    #     start: Vec3, 
-    #     direction: Vec3, 
-    #     max_dist: float = 1000.0, 
-    #     backface: bool = False, 
+    #     self,
+    #     start: Vec3,
+    #     direction: Vec3,
+    #     max_dist: float = 1000.0,
+    #     backface: bool = False,
     #     closest: bool = True
     # ) -> list[tuple[int, float, Vec3]] | None: ...
 
@@ -467,15 +466,15 @@ class Registry:
     def has(self, entity: int, comp_id: int) -> bool: ...
     def get_view(self, comp_id: int) -> memoryview: ...
     def get_entities(self, comp_id: int) -> memoryview: ...
-    def sync_from_world(self, world: PhysicsWorld, handle_comp_id: int, transform_comp_id: int) -> None: ...
+    def sync_from_world(
+        self, world: PhysicsWorld, handle_comp_id: int, transform_comp_id: int
+    ) -> None: ...
     def is_alive(self, entity: int) -> bool: ...
 
 def _dump_schema_json() -> None: ...
-
 @overload
-def mutate_tuple(target: tuple[Any, ...], index: int, value: object) -> int:
-    ...
-
+def mutate_tuple(target: tuple[Any, ...], index: int, value: object) -> int: ...
 @overload
-def mutate_tuple[T: tuple[Any, ...]](target: T, index: int, value: object, registry: dict[Any, T], key: object) -> int:
-    ...
+def mutate_tuple[T: tuple[Any, ...]](
+    target: T, index: int, value: object, registry: dict[Any, T], key: object
+) -> int: ...
