@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import TypedDict
 import shutil
 
+
 def setup_runtime_dlls():
     if sys.platform != "win32":
         return
@@ -17,7 +18,7 @@ def setup_runtime_dlls():
 
     # Priority 2: Derived from LLVM_INSTALL_DIR
     llvm_root = os.environ.get("LLVM_INSTALL_DIR")
-    
+
     # Priority 3: Auto-discovery via PATH (find clang, then infer lib path)
     if not llvm_root:
         clang_bin = shutil.which("clang")
@@ -29,20 +30,20 @@ def setup_runtime_dlls():
         # Check both modern and legacy LLVM layout structures
         potential_paths = [
             llvm_root / "lib" / "clang" / "23" / "lib" / "x86_64-pc-windows-msvc",
-            llvm_root / "lib" / "windows"
+            llvm_root / "lib" / "windows",
         ]
-        
+
         for p in potential_paths:
             if p.exists():
                 os.add_dll_directory(str(p))
                 return
+
 
 setup_runtime_dlls()
 
 from . import _culverin_c
 
 __version__ = _culverin_c.__version__
-
 
 
 # 1. Load Pure Python Configs
@@ -140,7 +141,7 @@ from ._culverin_c import (  # noqa: E402
     SoftBodySharedSettings,
     Vehicle,
     Registry,
-    _dump_schema_json, # type: ignore
+    _dump_schema_json,  # type: ignore
     mutate_tuple,
 )
 
