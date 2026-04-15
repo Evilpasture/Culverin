@@ -4190,7 +4190,7 @@ static void stitch_docs_getset(PyGetSetDef *getset, const char *class_name) {
 #define SBSS_O(name) CULV_FEAT(SoftBodySharedSettings, name, METH_O)
 
 #define REG_FASTCALL(name) CULV_FEAT(Registry, name, METH_FASTCALL | METH_KEYWORDS)
-#define REG_NOARGS(name)   CULV_FEAT(Registry, name, METH_NOARGS)
+#define REG_NOARGS(name) CULV_FEAT(Registry, name, METH_NOARGS)
 
 // Getter/Property macro - concise initialization
 #define GETSET(name_str, getter_func)                                                              \
@@ -4210,7 +4210,7 @@ static void stitch_docs_getset(PyGetSetDef *getset, const char *class_name) {
 static PyMethodDef module_methods[] = {
     MOD_NOARGS_INTERNAL(dump_schema_json), // Stitches from ### dump_schema in ## class Module
     MOD_FASTCALL(mutate_tuple),            // Stitches from ### mutate_tuple in ## class Module
-    {nullptr, nullptr, 0, nullptr}};
+    {}};
 
 static PyGetSetDef PhysicsWorld_getset[] = {
     GETSET("positions", get_positions),
@@ -4224,13 +4224,11 @@ static PyGetSetDef PhysicsWorld_getset[] = {
     GETSET("is_step_pending", get_is_step_pending),
     GETSET("max_bodies", PhysicsWorld_get_max_bodies),
     GETSET("remaining_capacity", PhysicsWorld_get_remaining_capacity),
-    {.name = nullptr, .get = nullptr, .set = nullptr, .doc = nullptr, .closure = nullptr}};
+    {}};
 
-static PyGetSetDef Character_getset[] = {GETSET("handle", Character_get_handle),
-                                         {nullptr, nullptr, nullptr, nullptr, nullptr}};
+static PyGetSetDef Character_getset[] = {GETSET("handle", Character_get_handle), {}};
 
-static PyGetSetDef Vehicle_getset[] = {GETSET("wheel_count", Vehicle_get_wheel_count),
-                                       {nullptr, nullptr, nullptr, nullptr, nullptr}};
+static PyGetSetDef Vehicle_getset[] = {GETSET("wheel_count", Vehicle_get_wheel_count), {}};
 
 // --- Method Definitions ---
 // IMPORTANT: REMOVE 'const' so the memory is writable!
@@ -4321,12 +4319,12 @@ static PyMethodDef PhysicsWorld_methods[] = {
 
     {"_benchmark_build", CULV_CAST(PhysicsWorld_benchmark_build), METH_NOARGS, nullptr},
 
-    {nullptr, nullptr, 0, nullptr}};
+    {}};
 
-static PyMethodDef Character_methods[] = {
-    CHAR_FASTCALL(move),          CHAR_NOARGS(get_position),     CHAR_FASTCALL(set_position),
-    CHAR_FASTCALL(set_rotation),  CHAR_NOARGS(is_grounded),      CHAR_FASTCALL(set_strength),
-    CHAR_O(get_render_transform), {nullptr, nullptr, 0, nullptr}};
+static PyMethodDef Character_methods[] = {CHAR_FASTCALL(move),          CHAR_NOARGS(get_position),
+                                          CHAR_FASTCALL(set_position),  CHAR_FASTCALL(set_rotation),
+                                          CHAR_NOARGS(is_grounded),     CHAR_FASTCALL(set_strength),
+                                          CHAR_O(get_render_transform), {}};
 
 static PyMethodDef Vehicle_methods[] = {VEH_FASTCALL(set_input),
                                         VEH_FASTCALL(set_tank_input),
@@ -4334,25 +4332,20 @@ static PyMethodDef Vehicle_methods[] = {VEH_FASTCALL(set_input),
                                         VEH_FASTCALL(get_wheel_local_transform),
                                         VEH_NOARGS(destroy),
                                         VEH_NOARGS(get_debug_state),
-                                        {nullptr, nullptr, 0, nullptr}};
+                                        {}};
 
-static PyMethodDef Skeleton_methods[] = {SKEL_FASTCALL(add_joint),
-                                         SKEL_FASTCALL(get_joint_index),
-                                         SKEL_NOARGS(finalize),
-                                         {nullptr, nullptr, 0, nullptr}};
+static PyMethodDef Skeleton_methods[] = {
+    SKEL_FASTCALL(add_joint), SKEL_FASTCALL(get_joint_index), SKEL_NOARGS(finalize), {}};
 
-static PyMethodDef Ragdoll_methods[] = {RD_FASTCALL(drive_to_pose),
-                                        RD_NOARGS(get_body_handles),
-                                        RD_NOARGS(get_debug_info),
-                                        {nullptr, nullptr, 0, nullptr}};
+static PyMethodDef Ragdoll_methods[] = {
+    RD_FASTCALL(drive_to_pose), RD_NOARGS(get_body_handles), RD_NOARGS(get_debug_info), {}};
 
-static PyMethodDef RagdollSettings_methods[] = {
-    RDS_FASTCALL(add_part), RDS_NOARGS(stabilize), {nullptr, nullptr, 0, nullptr}};
+static PyMethodDef RagdollSettings_methods[] = {RDS_FASTCALL(add_part), RDS_NOARGS(stabilize), {}};
 
 static PyMethodDef SoftBodySharedSettings_methods[] = {
     SBSS_FASTCALL(add_vertex),         SBSS_FASTCALL(add_vertices), SBSS_O(add_pinned_vertex),
     SBSS_O(get_vertex_position),       SBSS_FASTCALL(add_face),     SBSS_FASTCALL(add_faces),
-    SBSS_FASTCALL(create_constraints), SBSS_NOARGS(optimize),       {nullptr, nullptr, 0, nullptr}};
+    SBSS_FASTCALL(create_constraints), SBSS_NOARGS(optimize),       {}};
 
 static const PyMemberDef PhysicsWorld_members[] = {
     {.name   = "__weaklistoffset__",
@@ -4360,7 +4353,7 @@ static const PyMemberDef PhysicsWorld_members[] = {
      .offset = offsetof(PhysicsWorldObject, weakreflist),
      .flags  = Py_READONLY,
      .doc    = nullptr},
-    {.name = nullptr, .type = 0, .offset = 0, .flags = 0, .doc = nullptr}};
+    {}};
 
 static PyType_Slot PhysicsWorld_slots[] = {
     {.slot = Py_tp_new, .pfunc = PyType_GenericNew},
@@ -4373,7 +4366,7 @@ static PyType_Slot PhysicsWorld_slots[] = {
     {.slot = Py_bf_releasebuffer, .pfunc = PhysicsWorld_releasebuffer},
     {.slot = Py_tp_traverse, .pfunc = PhysicsWorld_traverse},
     {.slot = Py_tp_clear, .pfunc = PhysicsWorld_clear},
-    {.slot = 0, .pfunc = nullptr},
+    {},
 };
 
 static PyType_Slot Character_slots[] = {
@@ -4382,7 +4375,7 @@ static PyType_Slot Character_slots[] = {
     {.slot = Py_tp_clear, .pfunc = Character_clear},
     {.slot = Py_tp_methods, .pfunc = (PyMethodDef *)Character_methods},
     {.slot = Py_tp_getset, .pfunc = (PyGetSetDef *)Character_getset},
-    {.slot = 0, .pfunc = nullptr},
+    {},
 };
 
 static PyType_Slot Vehicle_slots[] = {
@@ -4391,14 +4384,14 @@ static PyType_Slot Vehicle_slots[] = {
     {.slot = Py_tp_clear, .pfunc = Vehicle_clear},
     {.slot = Py_tp_methods, .pfunc = (PyMethodDef *)Vehicle_methods},
     {.slot = Py_tp_getset, .pfunc = (PyGetSetDef *)Vehicle_getset},
-    {.slot = 0, .pfunc = nullptr},
+    {},
 };
 
 static PyType_Slot Skeleton_slots[] = {
     {.slot = Py_tp_new, .pfunc = Skeleton_new},
     {.slot = Py_tp_dealloc, .pfunc = Skeleton_dealloc},
     {.slot = Py_tp_methods, .pfunc = (PyMethodDef *)Skeleton_methods},
-    {.slot = 0, .pfunc = nullptr},
+    {},
 };
 
 static const PyType_Spec Skeleton_spec = {
@@ -4411,7 +4404,7 @@ static const PyType_Spec Skeleton_spec = {
 static PyType_Slot RagdollSettings_slots[] = {
     {.slot = Py_tp_dealloc, .pfunc = RagdollSettings_dealloc},
     {.slot = Py_tp_methods, .pfunc = (PyMethodDef *)RagdollSettings_methods},
-    {.slot = 0, nullptr},
+    {},
 };
 
 static const PyType_Spec PhysicsWorld_spec = {
@@ -4449,7 +4442,7 @@ static PyType_Slot SoftBodySharedSettings_slots[] = {
     {.slot = Py_tp_init, .pfunc = SoftBodySharedSettings_init},
     {.slot = Py_tp_dealloc, .pfunc = SoftBodySharedSettings_dealloc},
     {.slot = Py_tp_methods, .pfunc = (PyMethodDef *)SoftBodySharedSettings_methods},
-    {.slot = 0, nullptr},
+    {},
 };
 
 static const PyType_Spec SoftBodySharedSettings_spec = {
@@ -4461,7 +4454,7 @@ static const PyType_Spec SoftBodySharedSettings_spec = {
 static PyType_Slot Ragdoll_slots[] = {
     {.slot = Py_tp_dealloc, .pfunc = Ragdoll_dealloc},
     {.slot = Py_tp_methods, .pfunc = (PyMethodDef *)Ragdoll_methods},
-    {.slot = 0, .pfunc = nullptr},
+    {},
 };
 
 static const PyType_Spec Ragdoll_spec = {
@@ -4471,26 +4464,24 @@ static const PyType_Spec Ragdoll_spec = {
     .slots     = (PyType_Slot *)Ragdoll_slots,
 };
 
-static PyMethodDef Registry_methods[] = {
-    REG_NOARGS(create),
-    REG_FASTCALL(destroy),
-    REG_FASTCALL(is_alive),
-    REG_FASTCALL(register_component),
-    REG_FASTCALL(add),
-    REG_FASTCALL(remove),
-    REG_FASTCALL(has),
-    REG_FASTCALL(get_view),
-    REG_FASTCALL(get_entities),
-    REG_FASTCALL(sync_from_world),
-    {nullptr, nullptr, 0, nullptr}
-};
+static PyMethodDef Registry_methods[] = {REG_NOARGS(create),
+                                         REG_FASTCALL(destroy),
+                                         REG_FASTCALL(is_alive),
+                                         REG_FASTCALL(register_component),
+                                         REG_FASTCALL(add),
+                                         REG_FASTCALL(remove),
+                                         REG_FASTCALL(has),
+                                         REG_FASTCALL(get_view),
+                                         REG_FASTCALL(get_entities),
+                                         REG_FASTCALL(sync_from_world),
+                                         {}};
 
 static PyType_Slot Registry_slots[] = {
     {.slot = Py_tp_new, .pfunc = PyType_GenericNew},
     {.slot = Py_tp_init, .pfunc = Registry_init},
     {.slot = Py_tp_dealloc, .pfunc = Registry_dealloc},
     {.slot = Py_tp_methods, .pfunc = (PyMethodDef *)Registry_methods},
-    {.slot = 0, nullptr},
+    {},
 };
 
 static const PyType_Spec Registry_spec = {
@@ -4806,11 +4797,11 @@ static PyModuleDef_Slot culverin_slots[] = {{.slot = Py_mod_exec, .value = culve
 #endif
                                             },
 
-                                            {.slot = 0, .value = NULL}};
+                                            {}};
 
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
-[[gnu::used, gnu::visibility("default")]]
-PyModuleDef culverin_module = {
+[[gnu::used]]
+static PyModuleDef culverin_module = {
     .m_base     = PyModuleDef_HEAD_INIT,
     .m_name     = "_culverin_c",
     .m_doc      = "Culverin Physics Engine Core",
