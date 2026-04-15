@@ -9,4 +9,4 @@
 	url = https://github.com/Evilpasture/mag-mutex.git
 [submodule "extern/fast-capi"]
 	path = extern/fast-capi
-	url = https://github.com/Evilpasture/fast-capi
+	url = https://github.com/Evilpasture/fast-capi.git
