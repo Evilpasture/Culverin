@@ -454,7 +454,6 @@ python_add_library(
     src/culverin/culverin_query_methods.c
     src/culverin/culverin_constraint.c
     src/culverin/culverin_constraint_factory.c
-    src/culverin/culverin_fast_parse.c
     src/culverin/culverin_arg_indices.c
     src/culverin/culverin_handler.c
     src/culverin/culverin_soft_body.c
@@ -504,10 +503,22 @@ add_custom_command(
         "Extension built at: $<TARGET_FILE:_culverin_c>"
 )
 
-message(STATUS "Culverin: Applying GCC/Clang flags to targets...")
-target_compile_options(_culverin_c PRIVATE ${CULVERIN_COMPILE_FLAGS})
-target_compile_options(${JOLTC_TARGET} PRIVATE ${CULVERIN_COMPILE_FLAGS})
-target_compile_options(${MAG_MUTEX_TARGET} PRIVATE ${CULVERIN_COMPILE_FLAGS})
+# ==============================================================================
+# 4.1 BUILD FAST-CAPI (Via Submodule CMake)
+# ==============================================================================
+# 1. Use the submodule's own CMake logic
+add_subdirectory("extern/fast-capi")
+
+# 2. Extract the target name from the submodule (it's called 'fast_capi_core')
+set(FAST_CAPI_TARGET fast_capi_core)
+
+# 3. Apply Culverin's high-performance flags to the submodule target
+target_compile_options(${FAST_CAPI_TARGET} PRIVATE ${CULVERIN_COMPILE_FLAGS})
+
+# 4. Enforce IPO/LTO if supported
+if(ipo_supported AND NOT (CMAKE_C_COMPILER_ID STREQUAL "GNU" AND WIN32))
+    set_property(TARGET ${FAST_CAPI_TARGET} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+endif()
 
 # --- #embed Fallback Generator for Ancient Compilers which are probably older than me ---
 # 1. Ensure the generated directory exists immediately because sometimes it wouldn't work on other environments or compilers
@@ -663,7 +674,7 @@ if(WIN32)
     target_link_libraries(_culverin_c PRIVATE Winmm.lib)
 endif()
 target_compile_definitions(_culverin_c PRIVATE JPH_DEBUG_RENDERER)
-target_link_libraries(_culverin_c PRIVATE ${MAG_MUTEX_TARGET} ${JOLTC_TARGET} Jolt::Jolt)
+target_link_libraries(_culverin_c PRIVATE ${MAG_MUTEX_TARGET} ${JOLTC_TARGET} fast_capi_core Jolt::Jolt)
 
 if(APPLE)
     message(STATUS "Culverin: Enforcing Strong Symbol Export")
