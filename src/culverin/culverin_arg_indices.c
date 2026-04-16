@@ -34,32 +34,34 @@
         REGISTER_PARSER_ST(cp, ParserName);                                                        \
     } while (0)
 
-#define TEARDOWN_PARSER_ST(cp, ParserName)                                                         \
-    fp_deinit(&(cp)->ParserName##Parser);
+#define TEARDOWN_PARSER_ST(cp, ParserName) fp_deinit(&(cp)->ParserName##Parser);
 
 // --- 3. THE GENERATOR ---
 
+#define GET_TYPE_GUARD(T) _Generic((T), bool: &PyBool_Type, default: (PyTypeObject *)nullptr)
+
 #define GEN_SPEC(ID, NAME, TYPE, REQ)                                                              \
-    [ID] = {.name      = (NAME),                                                                   \
-            .type_name = #TYPE,                                                                    \
-            .required  = (bool)(REQ),                                                              \
-            .convert   = FP_GET_CONVERTER((TYPE){0})},
+    [ID] = {.name       = (NAME),                                                                  \
+            .type_name  = #TYPE,                                                                   \
+            .required   = (bool)(REQ),                                                             \
+            .type_guard = GET_TYPE_GUARD((TYPE){}),                                                \
+            .convert    = FP_GET_CONVERTER((TYPE){})},
 
 // --- 4. INITIALIZATION & CLEANUP ---
 
 void culverin_init_all_parsers(CulverinParsers *cp) {
     // Reset registry for this specific interpreter
-    cp->registry_count = 0; 
+    cp->registry_count = 0;
 
-    #define DO_SETUP(P, G, S) SETUP_PARSER_ST(cp, P, G, S);
+#define DO_SETUP(P, G, S) SETUP_PARSER_ST(cp, P, G, S);
     FOR_ALL_PARSERS(DO_SETUP)
-    #undef DO_SETUP
+#undef DO_SETUP
 }
 
 void culverin_free_all_parsers(CulverinParsers *cp) {
-    #define DO_FREE(P, G, S) TEARDOWN_PARSER_ST(cp, P);
+#define DO_FREE(P, G, S) TEARDOWN_PARSER_ST(cp, P);
     FOR_ALL_PARSERS(DO_FREE)
-    #undef DO_FREE
+#undef DO_FREE
 }
 
 void fp_dump_schemas_json(CulverinParsers *cp, FILE *out) {
