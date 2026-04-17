@@ -2,6 +2,7 @@
 #include "culverin.h"
 #include "culverin_character.h"
 #include "culverin_ecs.h"
+#include "culverin_fast_build.h"
 #include "culverin_physics_sync.h"
 #include <Python.h>
 
@@ -216,14 +217,6 @@ PyGetSet_DeclareGetter Vehicle_get_wheel_count(VehicleObject *self,
                                                CULV_MAYBE_UNUSED void *closure) {
     // num_wheels is set at creation and never changes
     return PyLong_FromUnsignedLong(self->num_wheels);
-}
-
-PyGetSet_DeclareGetter Character_get_handle(CharacterObject *self,
-                                            CULV_MAYBE_UNUSED void *closure) {
-    // TSan Fix: Atomic load of the character handle.
-    // Relaxed is sufficient because the handle is set during creation and never changes.
-    uint64_t raw_h = atomic_load_explicit(&self->handle, memory_order_relaxed);
-    return PyLong_FromUnsignedLongLong(raw_h);
 }
 
 /* --- Shadow Buffer Getters --- */

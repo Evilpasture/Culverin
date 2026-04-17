@@ -14,13 +14,12 @@ typedef enum : uint8_t {
     PROXY_ANGULAR_VELOCITIES,
     PROXY_USER_DATA,
     PROXY_DYNAMIC,
-    PROXY_ECS_DATA,     // Contiguous component data
-    PROXY_ECS_ENTITIES   // Dense entity handle array
+    PROXY_ECS_DATA,    // Contiguous component data
+    PROXY_ECS_ENTITIES // Dense entity handle array
 } ProxyBufferType;
 
 typedef struct {
-    PyObject_HEAD 
-    PyObject *owner;
+    PyObject_HEAD PyObject *owner;
     ProxyBufferType buf_type;
     const char *format;
     void *dynamic_ptr;
@@ -46,9 +45,6 @@ PyGetSet_DeclareGetter get_time(struct PhysicsWorldObject *self, CULV_MAYBE_UNUS
 PyGetSet_DeclareGetter get_user_data_buffer(struct PhysicsWorldObject *self,
                                             CULV_MAYBE_UNUSED void *c);
 
-PyGetSet_DeclareGetter Character_get_handle(struct CharacterObject *self,
-                                            CULV_MAYBE_UNUSED void *closure);
-
 PyGetSet_DeclareGetter Vehicle_get_wheel_count(struct VehicleObject *self,
                                                CULV_MAYBE_UNUSED void *closure);
 
@@ -59,4 +55,6 @@ PyGetSet_DeclareGetter PhysicsWorld_get_max_bodies(struct PhysicsWorldObject *se
                                                    CULV_MAYBE_UNUSED void *closure);
 PyGetSet_DeclareGetter PhysicsWorld_get_remaining_capacity(struct PhysicsWorldObject *self,
                                                            CULV_MAYBE_UNUSED void *closure);
-PyCFunction_DeclareMethodFromModule PhysicsWorld_get_soft_body_vertices(struct PhysicsWorldObject *self, PyObject *const *args, size_t nargsf, PyObject *kwnames);
+PyCFunction_DeclareMethodFromModule
+PhysicsWorld_get_soft_body_vertices(struct PhysicsWorldObject *self, PyObject *const *args,
+                                    size_t nargsf, PyObject *kwnames);

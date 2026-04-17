@@ -1,0 +1,20 @@
+name: Update Submodules
+on:
+  workflow_dispatch: #
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+      - name: update submodule~
+        run: |
+          git submodule update --remote --recursive
+          git config --global user.name "GitHub Action"
+          git config --global user.email "action@github.com"
+          git add .
+          git commit -m "chore: update submodules to latest" || echo "No changes"
+          git push
