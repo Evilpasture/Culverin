@@ -4,6 +4,7 @@
 #include "culverin_fast_build.h"
 #include "culverin_physics_sync.h"
 #include "culverin_physics_world_internal.h"
+#include "culverin_python.h"
 #include "culverin_types.h"
 
 // Character helpers
@@ -19,7 +20,7 @@ static bool JPH_API_CALL char_on_contact_validate(
 static void record_character_contact(CharacterObject *self, JPH_BodyID bodyID2,
                                      const JPH_RVec3 *pos, const JPH_Vec3 *norm,
                                      ContactEventType type) {
-    auto world    = self->world;
+    auto world     = self->world;
     uint32_t j_idx = JPH_ID_TO_INDEX(bodyID2);
     BodyHandle h2  = 0;
 
@@ -80,7 +81,7 @@ static void record_character_contact(CharacterObject *self, JPH_BodyID bodyID2,
 static void report_char_vs_char(CharacterObject *self, const JPH_CharacterVirtual *other,
                                 const JPH_Vec3 *normal, const JPH_RVec3 *pos,
                                 ContactEventType type) {
-    auto world     = self->world;
+    auto world      = self->world;
     uint64_t h1_raw = atomic_load_explicit(&self->handle, memory_order_relaxed);
 
     // FIX: Retrieve the handle directly from the other character's UserData.
@@ -861,7 +862,7 @@ alloc_j_char(PhysicsWorldObject *self, PositionVector pos,
 
     float half_h                 = fmaxf((params.height - 2.0f * params.radius) * 0.5f, 0.1f);
     JPH_CapsuleShapeSettings *ss = JPH_CapsuleShapeSettings_Create(half_h, params.radius);
-    auto shape                  = (JPH_Shape *)JPH_CapsuleShapeSettings_CreateShape(ss);
+    auto shape                   = (JPH_Shape *)JPH_CapsuleShapeSettings_CreateShape(ss);
     JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)ss);
     if (!shape) {
         return nullptr;
@@ -971,7 +972,7 @@ static void register_char(PhysicsWorldObject *self, CharacterObject *obj,
 
 // Helper 3: Filter and Listener serialization (Trampoline Lock)
 static void setup_char_filters(CharacterObject *obj) {
-    NATIVE_MUTEX_LOCK(g_jph_trampoline_lock); 
+    NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
     obj->listener     = JPH_CharacterContactListener_Create(obj);
     obj->body_filter  = JPH_BodyFilter_Create(nullptr);
     obj->shape_filter = JPH_ShapeFilter_Create(nullptr);
@@ -1089,3 +1090,36 @@ fail_jolt:
     SHADOW_UNLOCK(&self->shadow_lock);
     return nullptr;
 }
+
+PyGetSet_DeclareGetter Character_get_handle(CharacterObject *self,
+                                            CULV_MAYBE_UNUSED void *closure) {
+    uint64_t raw_h = atomic_load_explicit(&self->handle, memory_order_relaxed);
+    return FastBuild_Value(raw_h);
+}
+
+#define CHAR_FASTCALL(name) CULV_FEAT(Character, name, METH_FASTCALL | METH_KEYWORDS)
+#define CHAR_NOARGS(name) CULV_FEAT(Character, name, METH_NOARGS)
+#define CHAR_O(name) CULV_FEAT(Character, name, METH_O)
+
+PyGetSetDef Character_getset[] = {GETSET("handle", Character_get_handle), {}};
+
+PyMethodDef Character_methods[] = {CHAR_FASTCALL(move),          CHAR_NOARGS(get_position),
+                                   CHAR_FASTCALL(set_position),  CHAR_FASTCALL(set_rotation),
+                                   CHAR_NOARGS(is_grounded),     CHAR_FASTCALL(set_strength),
+                                   CHAR_O(get_render_transform), {}};
+
+static PyType_Slot Character_slots[] = {
+    {.slot = Py_tp_dealloc, .pfunc = Character_dealloc},
+    {.slot = Py_tp_traverse, .pfunc = Character_traverse},
+    {.slot = Py_tp_clear, .pfunc = Character_clear},
+    {.slot = Py_tp_methods, .pfunc = (PyMethodDef *)Character_methods},
+    {.slot = Py_tp_getset, .pfunc = (PyGetSetDef *)Character_getset},
+    {},
+};
+
+const PyType_Spec Character_spec = {
+    .name      = "culverin._culverin_c.Character",
+    .basicsize = sizeof(CharacterObject),
+    .flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
+    .slots     = (PyType_Slot *)Character_slots,
+};

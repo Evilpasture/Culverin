@@ -36,38 +36,13 @@ typedef struct {
 /* We expose the Procs table so the main module can assign it
    when creating the Character Virtual instance.
 */
+
 extern const JPH_CharacterContactListener_Procs char_listener_procs;
 
-PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObject *const *args,
-                                                   size_t nargsf, PyObject *kwnames);
+extern PyGetSetDef Character_getset[];
+extern PyMethodDef Character_methods[];
 
-PyCFunction_DeclareMethodFromModule Character_get_position(CharacterObject *self,
-                                                           PyObject *Py_UNUSED(ignored));
-
-PyCFunction_DeclareMethodFromModule Character_set_position(CharacterObject *self,
-                                                           PyObject *const *args, Py_ssize_t nargs,
-                                                           PyObject *kwnames);
-
-PyCFunction_DeclareMethodFromModule Character_set_rotation(CharacterObject *self,
-                                                           PyObject *const *args, Py_ssize_t nargs,
-                                                           PyObject *kwnames);
-
-PyCFunction_DeclareMethodFromModule Character_is_grounded(CharacterObject *self,
-                                                          PyObject *Py_UNUSED(ignored));
-
-PyCFunction_DeclareMethodFromModule Character_set_strength(CharacterObject *self,
-                                                           PyObject *const *args, Py_ssize_t nargs,
-                                                           PyObject *kwnames);
-
-PyCFunction_DeclareMethodFromModule Character_get_render_transform(CharacterObject *self,
-                                                                   PyObject *arg);
-
-PyType_DeclareSlot_StatusFromModule Character_traverse(CharacterObject *self, visitproc visit,
-                                                       void *arg);
-
-PyType_DeclareSlot_StatusFromModule Character_clear(CharacterObject *self);
-
-PyType_DeclareSlot_VoidFromModule Character_dealloc(CharacterObject *self);
+extern const PyType_Spec Character_spec;
 
 PyCFunction_DeclareMethodFromModule PhysicsWorld_create_character(PhysicsWorldObject *self,
                                                                   PyObject *const *args,
