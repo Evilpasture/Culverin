@@ -1101,25 +1101,38 @@ PyGetSet_DeclareGetter Character_get_handle(CharacterObject *self,
 #define CHAR_NOARGS(name) CULV_FEAT(Character, name, METH_NOARGS)
 #define CHAR_O(name) CULV_FEAT(Character, name, METH_O)
 
-PyGetSetDef Character_getset[] = {GETSET("handle", Character_get_handle), {}};
-
-PyMethodDef Character_methods[] = {CHAR_FASTCALL(move),          CHAR_NOARGS(get_position),
-                                   CHAR_FASTCALL(set_position),  CHAR_FASTCALL(set_rotation),
-                                   CHAR_NOARGS(is_grounded),     CHAR_FASTCALL(set_strength),
-                                   CHAR_O(get_render_transform), {}};
-
-static PyType_Slot Character_slots[] = {
-    {.slot = Py_tp_dealloc, .pfunc = Character_dealloc},
-    {.slot = Py_tp_traverse, .pfunc = Character_traverse},
-    {.slot = Py_tp_clear, .pfunc = Character_clear},
-    {.slot = Py_tp_methods, .pfunc = (PyMethodDef *)Character_methods},
-    {.slot = Py_tp_getset, .pfunc = (PyGetSetDef *)Character_getset},
-    {},
-};
-
-const PyType_Spec Character_spec = {
+PyType_Spec Character_spec = {
     .name      = "culverin._culverin_c.Character",
     .basicsize = sizeof(CharacterObject),
     .flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
-    .slots     = (PyType_Slot *)Character_slots,
+    .slots =
+        (PyType_Slot[]){
+
+            {.slot = Py_tp_dealloc, .pfunc = Character_dealloc},
+            {.slot = Py_tp_traverse, .pfunc = Character_traverse},
+            {.slot = Py_tp_clear, .pfunc = Character_clear},
+            {.slot = Py_tp_methods,
+             .pfunc =
+                 (PyMethodDef[]){
+
+                     CHAR_FASTCALL(move),
+                     CHAR_NOARGS(get_position),
+                     CHAR_FASTCALL(set_position),
+                     CHAR_FASTCALL(set_rotation),
+                     CHAR_NOARGS(is_grounded),
+                     CHAR_FASTCALL(set_strength),
+                     CHAR_O(get_render_transform),
+                     {}
+
+                 }},
+            {.slot = Py_tp_getset,
+             .pfunc =
+                 (PyGetSetDef[]){
+
+                     GETSET("handle", Character_get_handle), {}
+
+                 }},
+            {}
+
+        },
 };

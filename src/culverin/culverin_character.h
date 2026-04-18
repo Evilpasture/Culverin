@@ -39,10 +39,7 @@ typedef struct {
 
 extern const JPH_CharacterContactListener_Procs char_listener_procs;
 
-extern PyGetSetDef Character_getset[];
-extern PyMethodDef Character_methods[];
-
-extern const PyType_Spec Character_spec;
+extern PyType_Spec Character_spec;
 
 PyCFunction_DeclareMethodFromModule PhysicsWorld_create_character(PhysicsWorldObject *self,
                                                                   PyObject *const *args,
