@@ -480,10 +480,10 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self
     JPH_Real px;
     JPH_Real py;
     JPH_Real pz;
-    void *targets[ImpAt_COUNT] = {[IDX_IMPAT_H] = (void *)&h_raw, [IDX_IMPAT_IX] = (void *)&ix,
-                                  [IDX_IMPAT_IY] = (void *)&iy,   [IDX_IMPAT_IZ] = (void *)&iz,
-                                  [IDX_IMPAT_PX] = (void *)&px,   [IDX_IMPAT_PY] = (void *)&py,
-                                  [IDX_IMPAT_PZ] = (void *)&pz};
+    void *targets[ImpAt_COUNT] = {
+        [IDX_IMPAT_H] = (void *)&h_raw, [IDX_IMPAT_IX] = (void *)&ix, [IDX_IMPAT_IY] = (void *)&iy,
+        [IDX_IMPAT_IZ] = (void *)&iz,   [IDX_IMPAT_PX] = (void *)&px, [IDX_IMPAT_PY] = (void *)&py,
+        [IDX_IMPAT_PZ] = (void *)&pz};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.ImpulseAtParser,
                            targets)) {
@@ -1964,8 +1964,8 @@ PyCFunction_DeclareMethod PhysicsWorld_create_body(PhysicsWorldObject *self, PyO
         settings        = JPH_BodyCreationSettings_Create3(
             shape, &j_pos, &j_rot, (JPH_MotionType)motion_type,
             (motion_type == MOTION_KINEMATIC || motion_type == MOTION_STATIC)
-                ? OBJECT_LAYER_STATIC
-                : OBJECT_LAYER_DYNAMIC);
+                       ? OBJECT_LAYER_STATIC
+                       : OBJECT_LAYER_DYNAMIC);
         if (settings) {
             BodyConfig config = {mass,           mat.friction, mat.restitution,
                                  (int)is_sensor, (int)use_ccd, motion_type};
@@ -4147,6 +4147,20 @@ static void stitch_docs_getset(PyGetSetDef *getset, const char *class_name) {
     }
 }
 
+static void stitch_spec(PyType_Spec *spec, const char *class_name) {
+    if (!spec || !spec->slots) {
+        return;
+    }
+    // Cast to PyType_Slot* to iterate
+    for (const PyType_Slot *slot = (const PyType_Slot *)spec->slots; slot->slot != 0; slot++) {
+        if (slot->slot == Py_tp_methods) {
+            stitch_docs((PyMethodDef *)slot->pfunc, class_name);
+        } else if (slot->slot == Py_tp_getset) {
+            stitch_docs_getset((PyGetSetDef *)slot->pfunc, class_name);
+        }
+    }
+}
+
 // =============================================================================================
 
 // --- Macros ---
@@ -4181,266 +4195,312 @@ static void stitch_docs_getset(PyGetSetDef *getset, const char *class_name) {
 
 #define MOD_NOARGS_INTERNAL(name) CULV_FEAT_INTERNAL(culv, name, METH_NOARGS)
 
-// --- Module Method Definitions ---
-static PyMethodDef module_methods[] = {
-    MOD_NOARGS_INTERNAL(dump_schema_json), // Stitches from ### dump_schema in ## class Module
-    MOD_FASTCALL(mutate_tuple),            // Stitches from ### mutate_tuple in ## class Module
-    {}};
-
-static PyGetSetDef PhysicsWorld_getset[] = {
-    GETSET("positions", get_positions),
-    GETSET("rotations", get_rotations),
-    GETSET("velocities", get_velocities),
-    GETSET("angular_velocities", get_angular_velocities),
-    GETSET("count", get_count),
-    GETSET("time", get_time),
-    GETSET("user_data", get_user_data_buffer),
-    GETSET("shape_count", get_shape_count),
-    GETSET("is_step_pending", get_is_step_pending),
-    GETSET("max_bodies", PhysicsWorld_get_max_bodies),
-    GETSET("remaining_capacity", PhysicsWorld_get_remaining_capacity),
-    {}};
-
-static PyGetSetDef Vehicle_getset[] = {GETSET("wheel_count", Vehicle_get_wheel_count), {}};
-
-// --- Method Definitions ---
-// IMPORTANT: REMOVE 'const' so the memory is writable!
-static PyMethodDef PhysicsWorld_methods[] = {
-    // --- Lifecycle ---
-    PW_FASTCALL(step),
-    PW_FASTCALL(create_body),
-    PW_FASTCALL(create_bodies_batch),
-    PW_FASTCALL(destroy_body),
-    PW_FASTCALL(destroy_bodies_batch),
-    PW_FASTCALL(create_mesh_body),
-    PW_FASTCALL(create_constraint),
-    PW_FASTCALL(destroy_constraint),
-    PW_FASTCALL(get_constraint_type),
-    PW_FASTCALL(create_vehicle),
-    PW_FASTCALL(create_tracked_vehicle),
-    PW_FASTCALL(create_ragdoll_settings),
-    PW_FASTCALL(create_ragdoll),
-    PW_FASTCALL(create_heightfield),
-    PW_FASTCALL(create_convex_hull),
-    PW_FASTCALL(create_compound_body),
-    PW_FASTCALL(create_soft_body),
-
-    // --- Interaction ---
-    PW_FASTCALL(apply_impulse),
-    PW_FASTCALL(apply_angular_impulse),
-    PW_FASTCALL(apply_impulse_at),
-    PW_FASTCALL(apply_force),
-    PW_FASTCALL(apply_torque),
-    PW_FASTCALL(set_gravity),
-    PW_NOARGS(get_gravity),
-    PW_FASTCALL(apply_buoyancy),
-    PW_FASTCALL(apply_buoyancy_batch),
-    PW_FASTCALL(set_position),
-    PW_FASTCALL(set_rotation),
-    PW_FASTCALL(set_linear_velocity),
-    PW_FASTCALL(set_angular_velocity),
-    PW_FASTCALL(set_transform),
-    PW_FASTCALL(set_collision_filter),
-    PW_FASTCALL(register_material),
-    PW_FASTCALL(set_constraint_target),
-
-    // --- Motion Control ---
-    PW_FASTCALL(get_motion_type),
-    PW_FASTCALL(set_motion_type),
-    PW_FASTCALL(activate),
-    PW_FASTCALL(deactivate),
-    PW_FASTCALL(set_ccd),
-
-    // --- Queries ---
-    PW_FASTCALL(get_soft_body_vertices),
-    PW_FASTCALL(get_soft_body_vertex_count),
-    PW_FASTCALL(get_soft_body_vertex_position),
-    PW_FASTCALL(get_soft_body_local_vertices),
-    PW_FASTCALL(raycast),
-    PW_FASTCALL(raycast_batch),
-    PW_FASTCALL(shapecast),
-    PW_FASTCALL(overlap_sphere),
-    PW_FASTCALL(overlap_aabb),
-
-    // --- Utilities ---
-    PW_FASTCALL(get_index),
-    PW_FASTCALL(is_alive),
-    PW_FASTCALL(is_active),
-    PW_NOARGS(get_active_indices),
-    PW_FASTCALL(get_render_state),
-    PW_FASTCALL(get_debug_data),
-    PW_FASTCALL(get_body_stats),
-
-    // --- User Data ---
-    PW_FASTCALL(get_user_data),
-    PW_FASTCALL(set_user_data),
-
-    // -- Event Logic ---
-    PW_NOARGS(get_contact_events),
-    PW_NOARGS(get_contact_events_ex),
-    PW_NOARGS(get_contact_events_raw),
-
-    // --- State & Advanced ---
-    PW_NOARGS(save_state),
-    PW_FASTCALL(load_state),
-    PW_FASTCALL(create_character),
-
-    // --- Internal/Debug ---
-    // Not for public use, therefore can't use macros
-    {"_benchmark_parse", CULV_CAST(PhysicsWorld_benchmark_parse), METH_FASTCALL | METH_KEYWORDS,
-     nullptr},
-
-    {"_benchmark_build", CULV_CAST(PhysicsWorld_benchmark_build), METH_NOARGS, nullptr},
-
-    {}};
-
-static PyMethodDef Vehicle_methods[] = {VEH_FASTCALL(set_input),
-                                        VEH_FASTCALL(set_tank_input),
-                                        VEH_FASTCALL(get_wheel_transform),
-                                        VEH_FASTCALL(get_wheel_local_transform),
-                                        VEH_NOARGS(destroy),
-                                        VEH_NOARGS(get_debug_state),
-                                        {}};
-
-static PyMethodDef Skeleton_methods[] = {
-    SKEL_FASTCALL(add_joint), SKEL_FASTCALL(get_joint_index), SKEL_NOARGS(finalize), {}};
-
-static PyMethodDef Ragdoll_methods[] = {
-    RD_FASTCALL(drive_to_pose), RD_NOARGS(get_body_handles), RD_NOARGS(get_debug_info), {}};
-
-static PyMethodDef RagdollSettings_methods[] = {RDS_FASTCALL(add_part), RDS_NOARGS(stabilize), {}};
-
-static PyMethodDef SoftBodySharedSettings_methods[] = {
-    SBSS_FASTCALL(add_vertex),         SBSS_FASTCALL(add_vertices), SBSS_O(add_pinned_vertex),
-    SBSS_O(get_vertex_position),       SBSS_FASTCALL(add_face),     SBSS_FASTCALL(add_faces),
-    SBSS_FASTCALL(create_constraints), SBSS_NOARGS(optimize),       {}};
-
-static const PyMemberDef PhysicsWorld_members[] = {
-    {.name   = "__weaklistoffset__",
-     .type   = Py_T_PYSSIZET,
-     .offset = offsetof(PhysicsWorldObject, weakreflist),
-     .flags  = Py_READONLY,
-     .doc    = nullptr},
-    {}};
-
-static PyType_Slot PhysicsWorld_slots[] = {
-    {.slot = Py_tp_new, .pfunc = PyType_GenericNew},
-    {.slot = Py_tp_init, .pfunc = PhysicsWorld_init},
-    {.slot = Py_tp_dealloc, .pfunc = PhysicsWorld_dealloc},
-    {.slot = Py_tp_methods, .pfunc = (PyMethodDef *)PhysicsWorld_methods},
-    {.slot = Py_tp_members, .pfunc = (PyMemberDef *)PhysicsWorld_members},
-    {.slot = Py_tp_getset, .pfunc = (PyGetSetDef *)PhysicsWorld_getset},
-    {.slot = Py_bf_getbuffer, .pfunc = PhysicsWorld_getbuffer},
-    {.slot = Py_bf_releasebuffer, .pfunc = PhysicsWorld_releasebuffer},
-    {.slot = Py_tp_traverse, .pfunc = PhysicsWorld_traverse},
-    {.slot = Py_tp_clear, .pfunc = PhysicsWorld_clear},
-    {},
-};
-
-static PyType_Slot Vehicle_slots[] = {
-    {.slot = Py_tp_dealloc, .pfunc = Vehicle_dealloc},
-    {.slot = Py_tp_traverse, .pfunc = Vehicle_traverse},
-    {.slot = Py_tp_clear, .pfunc = Vehicle_clear},
-    {.slot = Py_tp_methods, .pfunc = (PyMethodDef *)Vehicle_methods},
-    {.slot = Py_tp_getset, .pfunc = (PyGetSetDef *)Vehicle_getset},
-    {},
-};
-
-static PyType_Slot Skeleton_slots[] = {
-    {.slot = Py_tp_new, .pfunc = Skeleton_new},
-    {.slot = Py_tp_dealloc, .pfunc = Skeleton_dealloc},
-    {.slot = Py_tp_methods, .pfunc = (PyMethodDef *)Skeleton_methods},
-    {},
-};
-
-static const PyType_Spec Skeleton_spec = {
+static PyType_Spec Skeleton_spec = {
     .name      = "culverin._culverin_c.Skeleton",
     .basicsize = sizeof(SkeletonObject),
     .flags     = Py_TPFLAGS_DEFAULT,
-    .slots     = (PyType_Slot *)Skeleton_slots,
+    .slots =
+        (PyType_Slot[]){
+
+            {.slot = Py_tp_new, .pfunc = Skeleton_new},
+            {.slot = Py_tp_dealloc, .pfunc = Skeleton_dealloc},
+            {.slot = Py_tp_methods,
+             .pfunc =
+                 (PyMethodDef[]){
+
+                     SKEL_FASTCALL(add_joint),
+                     SKEL_FASTCALL(get_joint_index),
+                     SKEL_NOARGS(finalize),
+                     {}
+
+                 }},
+            {},
+
+        },
 };
 
-static PyType_Slot RagdollSettings_slots[] = {
-    {.slot = Py_tp_dealloc, .pfunc = RagdollSettings_dealloc},
-    {.slot = Py_tp_methods, .pfunc = (PyMethodDef *)RagdollSettings_methods},
-    {},
-};
-
-static const PyType_Spec PhysicsWorld_spec = {
+static PyType_Spec PhysicsWorld_spec = {
     .name      = "culverin._culverin_c.PhysicsWorld",
     .basicsize = sizeof(PhysicsWorldObject),
     .flags =
         Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC | Py_TPFLAGS_MANAGED_DICT,
-    .slots = (PyType_Slot *)PhysicsWorld_slots,
+    .slots =
+        (PyType_Slot[]){
+
+            {.slot = Py_tp_new, .pfunc = PyType_GenericNew},
+            {.slot = Py_tp_init, .pfunc = PhysicsWorld_init},
+            {.slot = Py_tp_dealloc, .pfunc = PhysicsWorld_dealloc},
+            {.slot = Py_tp_methods,
+             .pfunc =
+                 (PyMethodDef[]){
+
+                     // --- Lifecycle ---
+                     PW_FASTCALL(step),
+                     PW_FASTCALL(create_body),
+                     PW_FASTCALL(create_bodies_batch),
+                     PW_FASTCALL(destroy_body),
+                     PW_FASTCALL(destroy_bodies_batch),
+                     PW_FASTCALL(create_mesh_body),
+                     PW_FASTCALL(create_constraint),
+                     PW_FASTCALL(destroy_constraint),
+                     PW_FASTCALL(get_constraint_type),
+                     PW_FASTCALL(create_vehicle),
+                     PW_FASTCALL(create_tracked_vehicle),
+                     PW_FASTCALL(create_ragdoll_settings),
+                     PW_FASTCALL(create_ragdoll),
+                     PW_FASTCALL(create_heightfield),
+                     PW_FASTCALL(create_convex_hull),
+                     PW_FASTCALL(create_compound_body),
+                     PW_FASTCALL(create_soft_body),
+
+                     // --- Interaction ---
+                     PW_FASTCALL(apply_impulse),
+                     PW_FASTCALL(apply_angular_impulse),
+                     PW_FASTCALL(apply_impulse_at),
+                     PW_FASTCALL(apply_force),
+                     PW_FASTCALL(apply_torque),
+                     PW_FASTCALL(set_gravity),
+                     PW_NOARGS(get_gravity),
+                     PW_FASTCALL(apply_buoyancy),
+                     PW_FASTCALL(apply_buoyancy_batch),
+                     PW_FASTCALL(set_position),
+                     PW_FASTCALL(set_rotation),
+                     PW_FASTCALL(set_linear_velocity),
+                     PW_FASTCALL(set_angular_velocity),
+                     PW_FASTCALL(set_transform),
+                     PW_FASTCALL(set_collision_filter),
+                     PW_FASTCALL(register_material),
+                     PW_FASTCALL(set_constraint_target),
+
+                     // --- Motion Control ---
+                     PW_FASTCALL(get_motion_type),
+                     PW_FASTCALL(set_motion_type),
+                     PW_FASTCALL(activate),
+                     PW_FASTCALL(deactivate),
+                     PW_FASTCALL(set_ccd),
+
+                     // --- Queries ---
+                     PW_FASTCALL(get_soft_body_vertices),
+                     PW_FASTCALL(get_soft_body_vertex_count),
+                     PW_FASTCALL(get_soft_body_vertex_position),
+                     PW_FASTCALL(get_soft_body_local_vertices),
+                     PW_FASTCALL(raycast),
+                     PW_FASTCALL(raycast_batch),
+                     PW_FASTCALL(shapecast),
+                     PW_FASTCALL(overlap_sphere),
+                     PW_FASTCALL(overlap_aabb),
+
+                     // --- Utilities ---
+                     PW_FASTCALL(get_index),
+                     PW_FASTCALL(is_alive),
+                     PW_FASTCALL(is_active),
+                     PW_NOARGS(get_active_indices),
+                     PW_FASTCALL(get_render_state),
+                     PW_FASTCALL(get_debug_data),
+                     PW_FASTCALL(get_body_stats),
+
+                     // --- User Data ---
+                     PW_FASTCALL(get_user_data),
+                     PW_FASTCALL(set_user_data),
+
+                     // -- Event Logic ---
+                     PW_NOARGS(get_contact_events),
+                     PW_NOARGS(get_contact_events_ex),
+                     PW_NOARGS(get_contact_events_raw),
+
+                     // --- State & Advanced ---
+                     PW_NOARGS(save_state),
+                     PW_FASTCALL(load_state),
+                     PW_FASTCALL(create_character),
+
+                     // --- Internal/Debug ---
+                     // Not for public use, therefore can't use macros
+                     {"_benchmark_parse", CULV_CAST(PhysicsWorld_benchmark_parse),
+                      METH_FASTCALL | METH_KEYWORDS, nullptr},
+
+                     {"_benchmark_build", CULV_CAST(PhysicsWorld_benchmark_build), METH_NOARGS,
+                      nullptr},
+
+                     {}
+
+                 }},
+            {.slot = Py_tp_members,
+             .pfunc =
+                 (PyMemberDef[]){
+
+                     {.name   = "__weaklistoffset__",
+                      .type   = Py_T_PYSSIZET,
+                      .offset = offsetof(PhysicsWorldObject, weakreflist),
+                      .flags  = Py_READONLY,
+                      .doc    = nullptr},
+                     {}
+
+                 }},
+            {.slot = Py_tp_getset,
+             .pfunc =
+                 (PyGetSetDef[]){
+
+                     GETSET("positions", get_positions),
+                     GETSET("rotations", get_rotations),
+                     GETSET("velocities", get_velocities),
+                     GETSET("angular_velocities", get_angular_velocities),
+                     GETSET("count", get_count),
+                     GETSET("time", get_time),
+                     GETSET("user_data", get_user_data_buffer),
+                     GETSET("shape_count", get_shape_count),
+                     GETSET("is_step_pending", get_is_step_pending),
+                     GETSET("max_bodies", PhysicsWorld_get_max_bodies),
+                     GETSET("remaining_capacity", PhysicsWorld_get_remaining_capacity),
+                     {}
+
+                 }},
+            {.slot = Py_bf_getbuffer, .pfunc = PhysicsWorld_getbuffer},
+            {.slot = Py_bf_releasebuffer, .pfunc = PhysicsWorld_releasebuffer},
+            {.slot = Py_tp_traverse, .pfunc = PhysicsWorld_traverse},
+            {.slot = Py_tp_clear, .pfunc = PhysicsWorld_clear},
+            {},
+
+        },
 };
 
-static const PyType_Spec Vehicle_spec = {
+static PyType_Spec Vehicle_spec = {
     .name      = "culverin._culverin_c.Vehicle",
     .basicsize = sizeof(VehicleObject),
     .flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
-    .slots     = (PyType_Slot *)Vehicle_slots,
+    .slots =
+        (PyType_Slot[]){
+
+            {.slot = Py_tp_dealloc, .pfunc = Vehicle_dealloc},
+            {.slot = Py_tp_traverse, .pfunc = Vehicle_traverse},
+            {.slot = Py_tp_clear, .pfunc = Vehicle_clear},
+            {.slot = Py_tp_methods,
+             .pfunc =
+                 (PyMethodDef[]){
+
+                     VEH_FASTCALL(set_input),
+                     VEH_FASTCALL(set_tank_input),
+                     VEH_FASTCALL(get_wheel_transform),
+                     VEH_FASTCALL(get_wheel_local_transform),
+                     VEH_NOARGS(destroy),
+                     VEH_NOARGS(get_debug_state),
+                     {}
+
+                 }},
+            {.slot = Py_tp_getset,
+             .pfunc =
+                 (PyGetSetDef[]){
+
+                     GETSET("wheel_count", Vehicle_get_wheel_count), {}
+
+                 }},
+            {},
+
+        },
 };
 
-static const PyType_Spec RagdollSettings_spec = {
+static PyType_Spec RagdollSettings_spec = {
     .name      = "culverin._culverin_c.RagdollSettings",
     .basicsize = sizeof(RagdollSettingsObject),
     .flags     = Py_TPFLAGS_DEFAULT,
-    .slots     = (PyType_Slot *)RagdollSettings_slots,
+    .slots =
+        (PyType_Slot[]){
+
+            {.slot = Py_tp_dealloc, .pfunc = RagdollSettings_dealloc},
+            {.slot = Py_tp_methods,
+             .pfunc =
+                 (PyMethodDef[]){
+
+                     RDS_FASTCALL(add_part), RDS_NOARGS(stabilize), {}
+
+                 }},
+            {},
+
+        },
 };
 
-// Update the SoftBodySharedSettings_slots array
-static PyType_Slot SoftBodySharedSettings_slots[] = {
-    {.slot = Py_tp_new, .pfunc = PyType_GenericNew},
-    {.slot = Py_tp_init, .pfunc = SoftBodySharedSettings_init},
-    {.slot = Py_tp_dealloc, .pfunc = SoftBodySharedSettings_dealloc},
-    {.slot = Py_tp_methods, .pfunc = (PyMethodDef *)SoftBodySharedSettings_methods},
-    {},
-};
-
-static const PyType_Spec SoftBodySharedSettings_spec = {
+static PyType_Spec SoftBodySharedSettings_spec = {
     .name      = "culverin._culverin_c.SoftBodySharedSettingsObject",
     .basicsize = sizeof(SoftBodySharedSettingsObject),
     .flags     = Py_TPFLAGS_DEFAULT,
-    .slots     = (PyType_Slot *)SoftBodySharedSettings_slots};
+    .slots =
+        (PyType_Slot[]){
 
-static PyType_Slot Ragdoll_slots[] = {
-    {.slot = Py_tp_dealloc, .pfunc = Ragdoll_dealloc},
-    {.slot = Py_tp_methods, .pfunc = (PyMethodDef *)Ragdoll_methods},
-    {},
+            {.slot = Py_tp_new, .pfunc = PyType_GenericNew},
+            {.slot = Py_tp_init, .pfunc = SoftBodySharedSettings_init},
+            {.slot = Py_tp_dealloc, .pfunc = SoftBodySharedSettings_dealloc},
+            {.slot = Py_tp_methods,
+             .pfunc =
+                 (PyMethodDef[]){
+
+                     SBSS_FASTCALL(add_vertex),
+                     SBSS_FASTCALL(add_vertices),
+                     SBSS_O(add_pinned_vertex),
+                     SBSS_O(get_vertex_position),
+                     SBSS_FASTCALL(add_face),
+                     SBSS_FASTCALL(add_faces),
+                     SBSS_FASTCALL(create_constraints),
+                     SBSS_NOARGS(optimize),
+                     {}
+
+                 }},
+            {},
+        }
+
 };
 
-static const PyType_Spec Ragdoll_spec = {
+static PyType_Spec Ragdoll_spec = {
     .name      = "culverin._culverin_c.Ragdoll",
     .basicsize = sizeof(RagdollObject),
     .flags     = Py_TPFLAGS_DEFAULT,
-    .slots     = (PyType_Slot *)Ragdoll_slots,
+    .slots =
+        (PyType_Slot[]){
+
+            {.slot = Py_tp_dealloc, .pfunc = Ragdoll_dealloc},
+            {.slot = Py_tp_methods,
+             .pfunc =
+                 (PyMethodDef[]){
+
+                     RD_FASTCALL(drive_to_pose),
+                     RD_NOARGS(get_body_handles),
+                     RD_NOARGS(get_debug_info),
+                     {}
+
+                 }},
+            {},
+
+        },
 };
 
-static PyMethodDef Registry_methods[] = {REG_NOARGS(create),
-                                         REG_FASTCALL(destroy),
-                                         REG_FASTCALL(is_alive),
-                                         REG_FASTCALL(register_component),
-                                         REG_FASTCALL(add),
-                                         REG_FASTCALL(remove),
-                                         REG_FASTCALL(has),
-                                         REG_FASTCALL(get_view),
-                                         REG_FASTCALL(get_entities),
-                                         REG_FASTCALL(sync_from_world),
-                                         {}};
-
-static PyType_Slot Registry_slots[] = {
-    {.slot = Py_tp_new, .pfunc = PyType_GenericNew},
-    {.slot = Py_tp_init, .pfunc = Registry_init},
-    {.slot = Py_tp_dealloc, .pfunc = Registry_dealloc},
-    {.slot = Py_tp_methods, .pfunc = (PyMethodDef *)Registry_methods},
-    {},
-};
-
-static const PyType_Spec Registry_spec = {
+static PyType_Spec Registry_spec = {
     .name      = "culverin._culverin_c.Registry",
     .basicsize = sizeof(RegistryObject),
     .flags     = Py_TPFLAGS_DEFAULT,
-    .slots     = (PyType_Slot *)Registry_slots,
+    .slots =
+        (PyType_Slot[]){
+
+            {.slot = Py_tp_new, .pfunc = PyType_GenericNew},
+            {.slot = Py_tp_init, .pfunc = Registry_init},
+            {.slot = Py_tp_dealloc, .pfunc = Registry_dealloc},
+            {.slot = Py_tp_methods,
+             .pfunc =
+                 (PyMethodDef[]){
+
+                     REG_NOARGS(create),
+                     REG_FASTCALL(destroy),
+                     REG_FASTCALL(is_alive),
+                     REG_FASTCALL(register_component),
+                     REG_FASTCALL(add),
+                     REG_FASTCALL(remove),
+                     REG_FASTCALL(has),
+                     REG_FASTCALL(get_view),
+                     REG_FASTCALL(get_entities),
+                     REG_FASTCALL(sync_from_world),
+                     {}
+
+                 }},
+            {},
+
+        },
 };
 
 // --- Module Initialization ---
@@ -4493,7 +4553,7 @@ static const char *extract_version_from_toml(void) {
 
 static int init_types(PyObject *m, CulverinState *st) {
     struct {
-        const PyType_Spec *spec;
+        PyType_Spec *spec;
         PyObject **slot;
         const char *name;
     } types[] = {
@@ -4509,7 +4569,7 @@ static int init_types(PyObject *m, CulverinState *st) {
     };
 
     for (size_t i = 0; i < sizeof(types) / sizeof(types[0]); i++) {
-        auto type = PyType_FromModuleAndSpec(m, (PyType_Spec *)types[i].spec, nullptr);
+        auto type = PyType_FromModuleAndSpec(m, types[i].spec, nullptr);
         if (!type) {
             return -1;
         }
@@ -4590,6 +4650,8 @@ static int init_constants(PyObject *m) {
 static constexpr auto MAGIC_BUFFER = 128;
 static char shared_version[MAGIC_BUFFER];
 
+extern PyModuleDef culverin_module;
+
 PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
     CulverinState *st = get_culverin_state(m);
     // 1. THE MASTER GATE: Protects all static global memory in the process
@@ -4637,19 +4699,16 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
                  precision, build_type, compiler_id);
 
         // --- THE WINNER: Run exactly once per process life ---
-        stitch_docs(module_methods, "Module");
-        stitch_docs(PhysicsWorld_methods, "PhysicsWorld");
-        stitch_docs(Character_methods, "Character");
-        stitch_docs(Vehicle_methods, "Vehicle");
-        stitch_docs(Skeleton_methods, "Skeleton");
-        stitch_docs(Ragdoll_methods, "Ragdoll");
-        stitch_docs(RagdollSettings_methods, "RagdollSettings");
-        stitch_docs(SoftBodySharedSettings_methods, "SoftBodySharedSettings");
-        stitch_docs(Registry_methods, "Registry");
-        stitch_docs_getset(PhysicsWorld_getset, "PhysicsWorld");
-        stitch_docs_getset(Character_getset, "Character");
-        stitch_docs_getset(Vehicle_getset, "Vehicle");
-
+        stitch_docs(culverin_module.m_methods, "Module");
+        stitch_spec(&PhysicsWorld_spec, "PhysicsWorld");
+        stitch_spec(&Character_spec, "Character");
+        stitch_spec(&Vehicle_spec, "Vehicle");
+        stitch_spec(&Skeleton_spec, "Skeleton");
+        stitch_spec(&Ragdoll_spec, "Ragdoll");
+        stitch_spec(&RagdollSettings_spec, "RagdollSettings");
+        stitch_spec(&SoftBodySharedSettings_spec, "SoftBodySharedSettings");
+        stitch_spec(&Registry_spec, "Registry");\
+        
         // Gated Handler Registration
         JPH_SetTraceHandler(culv_jph_trace);
         JPH_SetAssertFailureHandler(culv_jph_assert);
@@ -4733,33 +4792,41 @@ PyType_DeclareSlot_Status culverin_clear(PyObject *m) {
     return 0;
 }
 
-static PyModuleDef_Slot culverin_slots[] = {{.slot = Py_mod_exec, .value = culverin_exec},
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+[[gnu::used]]
+PyModuleDef culverin_module = {
+    .m_base = PyModuleDef_HEAD_INIT,
+    .m_name = "_culverin_c",
+    .m_doc  = "Culverin Physics Engine Core",
+    .m_size = sizeof(CulverinState),
+    .m_methods =
+        (PyMethodDef[]){
+
+            MOD_NOARGS_INTERNAL(dump_schema_json), MOD_FASTCALL(mutate_tuple), {}
+
+        },
+    .m_slots =
+        (PyModuleDef_Slot[]){
+
+            {.slot = Py_mod_exec, .value = culverin_exec},
 
 // 1. Handle the Free-threaded (No GIL) declaration (3.13+)
 #if defined(Py_MOD_GIL_NOT_USED)
-                                            {.slot = Py_mod_gil, .value = Py_MOD_GIL_NOT_USED},
+            {.slot = Py_mod_gil, .value = Py_MOD_GIL_NOT_USED},
 #endif
 
-                                            // 2. Handle Subinterpreter support
-                                            {.slot = Py_mod_multiple_interpreters,
+            // 2. Handle Subinterpreter support
+            {.slot = Py_mod_multiple_interpreters,
 #if PY_VERSION_HEX >= 0x030D0000
-                                             .value = Py_MOD_MULTIPLE_INTERPRETERS_SUPPORTED
+             .value = Py_MOD_MULTIPLE_INTERPRETERS_SUPPORTED
 #else
-                                             .value = Py_MOD_PER_INTERPRETER_GIL_SUPPORTED
+             .value = Py_MOD_PER_INTERPRETER_GIL_SUPPORTED
 #endif
-                                            },
+            },
 
-                                            {}};
+            {}
 
-// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
-[[gnu::used]]
-static PyModuleDef culverin_module = {
-    .m_base     = PyModuleDef_HEAD_INIT,
-    .m_name     = "_culverin_c",
-    .m_doc      = "Culverin Physics Engine Core",
-    .m_size     = sizeof(CulverinState),
-    .m_methods  = module_methods,
-    .m_slots    = (PyModuleDef_Slot *)culverin_slots,
+        },
     .m_traverse = culverin_traverse,
     .m_clear    = culverin_clear,
 };
