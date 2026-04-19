@@ -4488,13 +4488,17 @@ static PyType_Spec Registry_spec = {
                      REG_NOARGS(create),
                      REG_FASTCALL(destroy),
                      REG_FASTCALL(is_alive),
+                     REG_NOARGS(clear),                   // Wipes the registry
                      REG_FASTCALL(register_component),
                      REG_FASTCALL(add),
                      REG_FASTCALL(remove),
                      REG_FASTCALL(has),
+                     REG_FASTCALL(get),                   // Single entity data access
                      REG_FASTCALL(get_view),
                      REG_FASTCALL(get_entities),
                      REG_FASTCALL(sync_from_world),
+                     REG_NOARGS(get_active_count),        // ECS Statistics
+                     REG_FASTCALL(get_component_count),   // ECS Statistics
                      {}
 
                  }},

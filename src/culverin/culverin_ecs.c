@@ -489,6 +489,39 @@ PyCFunction_DeclareMethodFromModule Registry_has(RegistryObject *self, PyObject 
     Py_RETURN_FALSE;
 }
 
+PyCFunction_DeclareMethodFromModule Registry_get(RegistryObject *self, PyObject *const *args,
+                                                 size_t nargsf, PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+    uint64_t handle;
+    uint32_t comp_id;
+    void *targets[RegEntComp_COUNT] = {[IDX_REC_ENT] = &handle, [IDX_REC_COMP] = &comp_id};
+
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.RegEntCompParser,
+                           targets)) {
+        return nullptr;
+    }
+
+    uint32_t index = (uint32_t)(handle & HANDLE_INDEX_MASK);
+    if (comp_id >= self->component_count) {
+        return PyErr_Format(PyExc_ValueError, "Invalid component ID");
+    }
+
+    SHADOW_LOCK(&self->ecs_lock);
+    SparseSet *set = &self->components[comp_id];
+
+    if (index >= set->sparse_capacity || set->sparse[index] == INVALID_DENSE_INDEX) {
+        SHADOW_UNLOCK(&self->ecs_lock);
+        Py_RETURN_NONE;
+    }
+
+    uint32_t dense_idx = set->sparse[index];
+    PyObject *result   = PyBytes_FromStringAndSize(
+        (char *)&set->data[(size_t)dense_idx * set->element_size], set->element_size);
+    SHADOW_UNLOCK(&self->ecs_lock);
+
+    return result;
+}
+
 PyCFunction_DeclareMethodFromModule Registry_get_view(RegistryObject *self, PyObject *const *args,
                                                       size_t nargsf, PyObject *kwnames) {
     CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
@@ -534,62 +567,83 @@ PyCFunction_DeclareMethodFromModule Registry_get_entities(RegistryObject *self,
     return proxy;
 }
 
-PyCFunction_DeclareMethodFromModule Registry_sync_from_world(RegistryObject *self,
-                                                             PyObject *const *args, size_t nargsf,
-                                                             PyObject *kwnames) {
+PyCFunction_DeclareMethodFromModule Registry_sync_from_world(RegistryObject *self, PyObject *const *args, 
+                                                             size_t nargsf, PyObject *kwnames) {
     CulverinState *st   = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     PyObject *world_obj = nullptr;
     uint32_t h_comp_id;
-    uint32_t t_comp_id;
+    int p_comp_id = -1;
+    int r_comp_id = -1; // -1 means ignore
 
     void *targets[RegSyncPhys_COUNT] = {[IDX_RSP_WORLD]  = (void *)&world_obj,
                                         [IDX_RSP_H_COMP] = (void *)&h_comp_id,
-                                        [IDX_RSP_T_COMP] = (void *)&t_comp_id};
+                                        [IDX_RSP_T_COMP] = (void *)&p_comp_id,
+                                        [IDX_RSP_R_COMP] = (void *)&r_comp_id};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &st->parsers.RegSyncPhysParser, targets)) {
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.RegSyncPhysParser, targets)) {
         return nullptr;
     }
 
     PhysicsWorldObject *world = (PhysicsWorldObject *)world_obj;
-    SparseSet *h_set          = &self->components[h_comp_id];
-    SparseSet *t_set          = &self->components[t_comp_id];
-
-    // Verification
-    if (h_comp_id >= self->component_count || t_comp_id >= self->component_count) {
-        return PyErr_Format(PyExc_ValueError, "Invalid component ID");
+    
+    if (h_comp_id >= self->component_count) {
+        return PyErr_Format(PyExc_ValueError, "Invalid handle component ID");
     }
+
+    SparseSet *h_set = &self->components[h_comp_id];
+    SparseSet *p_set = (p_comp_id >= 0 && (uint32_t)p_comp_id < self->component_count) ? &self->components[p_comp_id] : nullptr;
+    SparseSet *r_set = (r_comp_id >= 0 && (uint32_t)r_comp_id < self->component_count) ? &self->components[r_comp_id] : nullptr;
+
     if (h_set->element_size != sizeof(uint64_t)) {
         return PyErr_Format(PyExc_TypeError, "Handle component must be 8 bytes (uint64)");
     }
-    if (t_set->element_size != sizeof(float) * 3) {
-        return PyErr_Format(PyExc_TypeError, "Transform component must be 12 bytes (3x float32)");
+    if (p_set && p_set->element_size != sizeof(float) * 3) {
+        return PyErr_Format(PyExc_TypeError, "Position component must be 12 bytes (3x float32)");
+    }
+    if (r_set && r_set->element_size != sizeof(float) * 4) {
+        return PyErr_Format(PyExc_TypeError, "Rotation component must be 16 bytes (4x float32)");
     }
 
+    // Lock both Physics and ECS
     SHADOW_LOCK(&world->shadow_lock);
     SHADOW_LOCK(&self->ecs_lock);
 
-    // We iterate over the entities in the Transform set
-    for (uint32_t i = 0; i < t_set->count; i++) {
-        CulvEntity ent   = t_set->dense[i];
-        uint32_t ent_idx = JPH_ID_TO_INDEX((uint32_t)ent);
+    for (uint32_t i = 0; i < h_set->count; i++) {
+        CulvEntity ent = h_set->dense[i];
+        uint32_t ent_idx = (uint32_t)(ent & HANDLE_INDEX_MASK);
+        
+        uint64_t handle;
+        memcpy(&handle, &h_set->data[(size_t)i * sizeof(uint64_t)], sizeof(uint64_t));
 
-        // Check if this entity also has a physics handle
-        if (ent_idx < h_set->sparse_capacity && h_set->sparse[ent_idx] != INVALID_DENSE_INDEX) {
-            uint32_t h_dense = h_set->sparse[ent_idx];
-            uint64_t handle;
-            memcpy(&handle, &h_set->data[(size_t)h_dense * sizeof(uint64_t)], sizeof(uint64_t));
+        uint32_t slot;
+        if (unpack_handle(world, handle, &slot)) {
+            uint32_t phys_dense = world->slot_to_dense[slot];
 
-            uint32_t slot;
-            if (unpack_handle(world, handle, &slot)) {
-                uint32_t phys_dense = world->slot_to_dense[slot];
-                PosStride *p        = &((PosStride *)world->positions)[phys_dense];
-                float *out          = (float *)&t_set->data[(size_t)i * sizeof(float) * 3];
-
-                // Direct Copy: Double (Physics) -> Float (ECS)
+            // 1. Sync Position (Using your PositionVector / PosStride logic)
+            if (p_set && ent_idx < p_set->sparse_capacity && p_set->sparse[ent_idx] != INVALID_DENSE_INDEX) {
+                uint32_t p_dense = p_set->sparse[ent_idx];
+                
+                // Assuming world->positions stores 1 PositionVector (or 4 Reals) per entity depending on your stride.
+                // Using PosStride as defined in your types header.
+                PosStride *p = &((PosStride *)world->positions)[phys_dense];
+                
+                float *out = (float *)&p_set->data[(size_t)p_dense * sizeof(float) * 3];
                 out[0] = (float)p->x;
                 out[1] = (float)p->y;
                 out[2] = (float)p->z;
+            }
+
+            // 2. Sync Rotation
+            // world->rotations is a flat float array (4 floats per quaternion)
+            if (r_set && ent_idx < r_set->sparse_capacity && r_set->sparse[ent_idx] != INVALID_DENSE_INDEX) {
+                uint32_t r_dense = r_set->sparse[ent_idx];
+                
+                // Index directly into the float array
+                float *phys_rot = &world->rotations[(size_t)phys_dense * 4];
+                float *out = (float *)&r_set->data[(size_t)r_dense * sizeof(float) * 4];
+                
+                // Fast direct float copy (16 bytes)
+                memcpy(out, phys_rot, sizeof(float) * 4);
             }
         }
     }
@@ -597,4 +651,61 @@ PyCFunction_DeclareMethodFromModule Registry_sync_from_world(RegistryObject *sel
     SHADOW_UNLOCK(&self->ecs_lock);
     SHADOW_UNLOCK(&world->shadow_lock);
     Py_RETURN_NONE;
+}
+
+PyCFunction_DeclareMethodFromModule Registry_clear(RegistryObject *self,
+                                                   CULV_MAYBE_UNUSED PyObject *args) {
+    SHADOW_LOCK(&self->ecs_lock);
+
+    if (atomic_load_explicit(&self->view_export_count, memory_order_acquire) > 0) {
+        SHADOW_UNLOCK(&self->ecs_lock);
+        return PyErr_Format(PyExc_BufferError,
+                            "Cannot clear registry while memoryviews are exported.");
+    }
+
+    // Clear all components
+    for (uint32_t i = 0; i < self->component_count; i++) {
+        self->components[i].count = 0;
+        if (self->components[i].sparse) {
+            // INVALID_DENSE_INDEX is usually 0xFFFFFFFF, so memset 0xFF is valid here
+            memset(self->components[i].sparse, 0xFF,
+                   self->components[i].sparse_capacity * sizeof(uint32_t));
+        }
+    }
+
+    // Invalidate entities
+    for (uint32_t i = 0; i < self->entity_capacity; i++) {
+        self->free_indices[i] = (self->entity_capacity - 1) - i;
+        self->generations[i]++; // Kills all active handles instantly
+    }
+
+    self->free_count      = self->entity_capacity;
+    self->active_entities = 0;
+
+    SHADOW_UNLOCK(&self->ecs_lock);
+    Py_RETURN_NONE;
+}
+
+PyCFunction_DeclareMethodFromModule Registry_get_active_count(RegistryObject *self,
+                                                              CULV_MAYBE_UNUSED PyObject *args) {
+    return PyLong_FromUnsignedLong(self->active_entities);
+}
+
+PyCFunction_DeclareMethodFromModule Registry_get_component_count(RegistryObject *self,
+                                                                 PyObject *const *args,
+                                                                 size_t nargsf, PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+    uint32_t comp_id;
+    void *targets[RegCompOnly_COUNT] = {[IDX_RCO_COMP] = &comp_id};
+
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+                           &st->parsers.RegCompOnlyParser, targets)) {
+        return nullptr;
+    }
+
+    if (comp_id >= self->component_count) {
+        return PyLong_FromLong(0);
+    }
+
+    return PyLong_FromSsize_t(self->components[comp_id].count);
 }

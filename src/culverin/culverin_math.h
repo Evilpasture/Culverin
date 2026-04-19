@@ -4,7 +4,6 @@
 #include "joltc.h"
 #include <Python.h>
 
-
 // --- Double Precision Refinement ---
 CULV_MAYBE_UNUSED
 static inline double newton_raphson_iterate_d(double number) {
@@ -81,7 +80,22 @@ void culverin_math_get_trs(const float *__restrict pos, const float *__restrict 
 void culverin_math_get_trs_batch(size_t count, const float *__restrict pos,
                                  const float *__restrict rot_q, const float *__restrict scale,
                                  float *__restrict out);
-
+void culverin_math_mat44_inverse(const float *__restrict in, float *__restrict out);
+void culverin_math_mat44_mul(const float *__restrict a, const float *__restrict b,
+                             float *__restrict out);
+void culverin_math_mat44_mul_batch(const float *__restrict single_mat,
+                                   const float *__restrict batch_mats, size_t count,
+                                   float *__restrict out);
+void culverin_math_transform_vec3(const float *__restrict mat, const float *__restrict vec,
+                                  float *__restrict out);
+void culverin_math_transform_vec3_batch(const float *__restrict mat, const float *__restrict vecs,
+                                        size_t count, float *__restrict out);
+// Returns 1 if visible, 0 if culled
+int culverin_math_cull_aabb(const float *__restrict vp_mat, const float *__restrict aabb_min,
+                            const float *__restrict aabb_max);
+void culverin_math_cull_aabb_batch(const float *__restrict vp_mat,
+                                   const float *__restrict aabb_data, size_t count,
+                                   uint8_t *__restrict out_visibility);
 #if defined(__cplusplus)
 }
 #endif

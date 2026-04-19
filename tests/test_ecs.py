@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-
+import struct
 import culverin
 
 
@@ -468,3 +468,152 @@ def test_proxy_empty_component(registry: culverin.Registry) -> None:
     # Casting empty view to numpy should yield an empty array, not a crash
     arr = np.frombuffer(view, dtype=np.float32)
     assert arr.size == 0
+
+def test_registry_clear(registry: culverin.Registry) -> None:
+    """Test that clearing the registry wipes all entities and data instantly."""
+    COMP_A = registry.register_component(4)
+    COMP_B = registry.register_component(8)
+
+    # Spawn 100 entities
+    entities = [registry.create() for _ in range(100)]
+    for e in entities:
+        registry.add(e, COMP_A, b"1234")
+        registry.add(e, COMP_B, b"56789012")
+
+    assert registry.get_active_count() == 100
+    assert registry.get_component_count(COMP_A) == 100
+
+    # The wipe
+    registry.clear()
+
+    # Verify Registry stats are reset
+    assert registry.get_active_count() == 0
+    assert registry.get_component_count(COMP_A) == 0
+    assert registry.get_component_count(COMP_B) == 0
+
+    # Verify old handles are entirely dead (generation bumped)
+    for e in entities:
+        assert not registry.is_alive(e)
+
+
+def test_registry_clear_guard(registry: culverin.Registry) -> None:
+    """Ensure clearing the registry is blocked if memoryviews are active."""
+    COMP_A = registry.register_component(4)
+    e = registry.create()
+    registry.add(e, COMP_A, b"1234")
+
+    # Export view
+    view = registry.get_view(COMP_A)
+
+    with pytest.raises(BufferError, match="Cannot clear registry"):
+        registry.clear()
+
+    del view
+    import gc
+    gc.collect()
+
+    # Now it should work
+    registry.clear()
+    assert registry.get_active_count() == 0
+
+
+def test_single_component_get(registry: culverin.Registry) -> None:
+    """Test retrieving raw bytes for a single entity's component."""
+    COMP_ID = registry.register_component(4)
+    ent = registry.create()
+    registry.add(ent, COMP_ID, b"\xAA\xBB\xCC\xDD")
+
+    data = registry.get(ent, COMP_ID)
+    assert isinstance(data, bytes)
+    assert data == b"\xAA\xBB\xCC\xDD"
+
+    # Test invalid cases
+    ent2 = registry.create()
+    assert registry.get(ent2, COMP_ID) is None  # Entity exists, but lacks component
+    
+    registry.destroy(ent)
+    assert registry.get(ent, COMP_ID) is None  # Entity is dead
+
+
+def test_stats_getters(registry: culverin.Registry) -> None:
+    """Test that ECS statistics track correctly."""
+    assert registry.get_active_count() == 0
+
+    COMP_ID = registry.register_component(4)
+    assert registry.get_component_count(COMP_ID) == 0
+
+    ent1 = registry.create()
+    ent2 = registry.create()
+
+    assert registry.get_active_count() == 2
+
+    registry.add(ent1, COMP_ID, b"1234")
+    assert registry.get_component_count(COMP_ID) == 1
+
+    registry.add(ent2, COMP_ID, b"5678")
+    assert registry.get_component_count(COMP_ID) == 2
+
+    registry.remove(ent1, COMP_ID)
+    assert registry.get_component_count(COMP_ID) == 1
+
+    registry.destroy(ent2)
+    assert registry.get_active_count() == 1  # ent1 is still alive here!
+    
+    registry.destroy(ent1)                   # Kill ent1
+    assert registry.get_active_count() == 0  # NOW it is 0
+    assert registry.get_component_count(COMP_ID) == 0
+
+
+def test_full_transform_sync(registry: culverin.Registry) -> None:
+    """Test syncing both Position AND Rotation from the physics engine."""
+    world = culverin.PhysicsWorld()
+
+    COMP_PHYS = registry.register_component(8)    # uint64 handle
+    COMP_POS = registry.register_component(12)    # 3x float32
+    COMP_ROT = registry.register_component(16)    # 4x float32
+
+    ent = registry.create()
+    phys_handle = world.create_body(pos=(1.0, 2.0, 3.0), rot=(0.0, 1.0, 0.0, 0.0))
+    
+    registry.add(ent, COMP_PHYS, np.array([phys_handle], dtype=np.uint64).tobytes())
+    registry.add(ent, COMP_POS, None)
+    registry.add(ent, COMP_ROT, None)
+
+    # Sync Both
+    registry.sync_from_world(world, COMP_PHYS, COMP_POS, COMP_ROT)
+
+    # Verify Position
+    assert (pos_data := registry.get(ent, COMP_POS))
+    pos_floats = struct.unpack("3f", pos_data)
+    assert pos_floats[0] == 1.0
+    assert pos_floats[1] == 2.0
+    assert pos_floats[2] == 3.0
+
+    # Verify Rotation
+    assert(rot_data := registry.get(ent, COMP_ROT))
+    rot_floats = struct.unpack("4f", rot_data)
+    assert rot_floats[0] == 0.0
+    assert rot_floats[1] == 1.0
+    assert rot_floats[2] == 0.0
+    assert rot_floats[3] == 0.0
+
+
+def test_partial_transform_sync(registry: culverin.Registry) -> None:
+    """Test syncing ONLY position, skipping rotation by passing -1."""
+    world = culverin.PhysicsWorld()
+
+    COMP_PHYS = registry.register_component(8)
+    COMP_POS = registry.register_component(12)
+
+    ent = registry.create()
+    phys_handle = world.create_body(pos=(10.0, 20.0, 30.0))
+    
+    registry.add(ent, COMP_PHYS, np.array([phys_handle], dtype=np.uint64).tobytes())
+    registry.add(ent, COMP_POS, None)
+
+    # Sync using -1 to ignore rotation
+    registry.sync_from_world(world, COMP_PHYS, COMP_POS, -1)
+
+    assert (pos_data := registry.get(ent, COMP_POS))
+    pos_floats = struct.unpack("3f", pos_data)
+    assert pos_floats[0] == 10.0
