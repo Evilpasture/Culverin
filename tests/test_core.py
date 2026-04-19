@@ -1,3 +1,4 @@
+import contextlib
 import math
 import re
 import textwrap
@@ -10,6 +11,7 @@ from types import CodeType, SimpleNamespace
 from typing import Literal, Protocol
 
 import numpy as np
+
 import culverin
 from culverin import TrackConfig, WheelConfig
 
@@ -24,10 +26,10 @@ class CulverinTestCase(unittest.TestCase):
     def tearDown(self) -> None:
         del self.world
 
-    def get_pos(self, handle: int) -> tuple[float, float, float]:
+    def get_pos(self, handle: int) -> tuple[float, float, float] | None:
         return self.world.get_position(handle)
 
-    def get_vel(self, handle: int) -> tuple[float, float, float]:
+    def get_vel(self, handle: int) -> tuple[float, float, float] | None:
         return self.world.get_velocity(handle)
 
     # Well, my computer has assertHasAttr, but GitHub Actions don't, so I'm adding one myself.'
@@ -55,9 +57,11 @@ class TestCoreMechanics(CulverinTestCase):
         h = self.world.create_body(pos=(0, 10, 0), shape=culverin.SHAPE_SPHERE, size=1.0)
         self.world.step(0)
 
-        self.assertEqual(self.get_pos(h)[1], 10.0)
+        assert (pos := self.get_pos(h)) is not None
+        self.assertEqual(pos[1], 10.0)
         self.world.step(1 / 60.0)
-        self.assertLess(self.get_pos(h)[1], 10.0, "Body did not fall")
+        assert (pos := self.get_pos(h)) is not None
+        self.assertLess(pos[1], 10.0, "Body did not fall")
 
     def test_generational_handles(self) -> None:
         h1 = self.world.create_body(pos=(0, 0, 0))
@@ -76,7 +80,8 @@ class TestCoreMechanics(CulverinTestCase):
         h = self.world.create_body(pos=(0, 0, 0), motion=culverin.MOTION_DYNAMIC)
         self.world.apply_impulse(h, 100, 0, 0)
         self.world.step(1 / 60.0)
-        self.assertGreater(self.get_vel(h)[0], 0.0)
+        assert (vel := self.get_vel(h)) is not None
+        self.assertGreater(vel[0], 0.0)
 
     def test_buoyancy(self) -> None:
         ball = self.world.create_body(
@@ -98,7 +103,7 @@ class TestCoreMechanics(CulverinTestCase):
             self.world.step(1 / 60)
 
         self.assertGreater(submerged_frames, 0)
-        self.assertGreater(self.get_pos(ball)[1], 4.0, "Ball should be floating, not at bottom")
+        assert (v := self.get_pos(ball)) is not None; self.assertGreater(v[1], 4.0, "Ball should be floating, not at bottom")
 
     def test_heightfield(self) -> None:
         grid_size = 64
@@ -116,11 +121,11 @@ class TestCoreMechanics(CulverinTestCase):
         ball = self.world.create_body(pos=(5, 3.5, 5), shape=culverin.SHAPE_SPHERE, mass=10.0)
 
         self.world.step(0)
-        start_x = self.get_pos(ball)[0]
+        assert (v := self.get_pos(ball)) is not None; start_x = v[0]
         for _ in range(60):
             self.world.step(1 / 60)
 
-        self.assertLess(self.get_pos(ball)[0], start_x, "Ball did not roll down slope")
+        assert (v := self.get_pos(ball)) is not None; self.assertLess(v[0], start_x, "Ball did not roll down slope")
 
     def test_material_hot_swap(self) -> None:
         """Test if changing material properties affects simulation."""
@@ -285,8 +290,8 @@ class TestCollisionsAndEvents(CulverinTestCase):
         for _ in range(120):
             self.world.step(1 / 60)
 
-        self.assertGreater(self.get_pos(player)[1], 5.0)  # Player caught by floor
-        self.assertLess(self.get_pos(ghost)[1], 5.6)  # Ghost passed through player, caught by floor
+        assert (v := self.get_pos(player)) is not None; self.assertGreater(v[1], 5.0)  # Player caught by floor
+        assert (v := self.get_pos(ghost)) is not None; self.assertLess(v[1], 5.6)  # Ghost passed through player, caught by floor
 
     def test_sensor_events(self) -> None:
         sensor = self.world.create_body(
@@ -344,7 +349,7 @@ class TestCharactersAndVehicles(CulverinTestCase):
         char.set_strength(10.0)
         char.move((20, 0, 0), 1 / 60)
         self.world.step(1 / 60)
-        vel_weak = self.get_vel(crate)[0]
+        assert (v := self.get_vel(crate)) is not None; vel_weak = v[0]
 
         # Strong strength
         char.set_strength(50000.0)
@@ -358,7 +363,7 @@ class TestCharactersAndVehicles(CulverinTestCase):
 
         char.move((20, 0, 0), 1 / 60)
         self.world.step(1 / 60)
-        vel_strong = self.get_vel(crate)[0]
+        assert (v := self.get_vel(crate)) is not None; vel_strong = v[0]
 
         self.assertGreater(vel_strong, vel_weak)
 
@@ -386,7 +391,7 @@ class TestCharactersAndVehicles(CulverinTestCase):
         for _ in range(60):
             self.world.step(1 / 60)
 
-        self.assertGreater(self.get_vel(chassis)[2], 1.0)
+        assert (v := self.get_vel(chassis)) is not None; self.assertGreater(v[2], 1.0)
         self.assertEqual(car.wheel_count, 4)
 
     def test_tracked_vehicle(self) -> None:
@@ -416,7 +421,7 @@ class TestCharactersAndVehicles(CulverinTestCase):
         for _ in range(60):
             self.world.step(1 / 60)
 
-        self.assertGreater(self.get_vel(chassis)[2], 0.5)  # Tank should move forward
+        assert (v := self.get_vel(chassis)) is not None; self.assertGreater(v[2], 0.5)  # Tank should move forward
 
 
 class TestThreadSafety(CulverinTestCase):
@@ -637,8 +642,7 @@ class TestConstraints(CulverinTestCase):
             if i % 10 == 0:
                 print(f"step {i}: pos={self.get_pos(b2)}")
 
-        pos = self.get_pos(b2)
-        self.assertLess(pos[0], 0.5, f"Body should have swung; current X is {pos[0]}")
+        assert (v := self.get_pos(b2)) is not None; self.assertLess(v[0], 0.5, f"Body should have swung; current X is {v[0]}")
 
 
 class TestRagdollsAndSkeletons(CulverinTestCase):
@@ -721,13 +725,13 @@ class TestStateManagement(CulverinTestCase):
         # Let it fall
         for _ in range(10):
             self.world.step(1 / 60)
-        self.assertLess(self.get_pos(b)[1], 10.0)
+        assert (v := self.get_pos(b)) is not None; self.assertLess(v[1], 10.0)
 
         # Restore state
         self.world.load_state(state=state)
         # Load state requires shadow buffer sync for python to see it immediately
         self.world.step(0)
-        self.assertEqual(self.get_pos(b)[1], 10.0)
+        assert (v := self.get_pos(b)) is not None; self.assertEqual(v[1], 10.0)
 
 
 class TestUserData(CulverinTestCase):
@@ -925,8 +929,7 @@ class TestSleepingStates(CulverinTestCase):
         )
 
         # 2. Verify it actually moved upward away from its resting state
-        pos = self.get_pos(box)
-        self.assertGreater(pos[1], 0.51, "Body woke up but didn't respond to the impulse velocity")
+        assert (v := self.get_pos(box)) is not None; self.assertGreater(v[1], 0.51, "Body woke up but didn't respond to the impulse velocity")
 
 
 # Compatibility: Python 3.13/3.14 uses _interpreters
@@ -1096,6 +1099,7 @@ class TestURDFLoader(CulverinTestCase):
 
         # Check Arm Link
         arm_pos = world.get_position(link_handles["arm"])
+        assert arm_pos is not None
         # XML says: <origin xyz="0 0 -0.5"/>
         self.assertAlmostEqual(arm_pos[2], -0.5)
 
@@ -1192,10 +1196,7 @@ class TestDocumentation(unittest.TestCase):
 
             try:
                 # 1. Resolve Class
-                if class_name == "Module":
-                    container = culverin
-                else:
-                    container = getattr(culverin, class_name)
+                container = culverin if class_name == "Module" else getattr(culverin, class_name)
 
                 # 2. Resolve Member (Method or Property)
                 # Some properties are defined via PyGetSetDef, others as methods
@@ -1261,8 +1262,8 @@ class TestKinematics(CulverinTestCase):
         for _ in range(10):
             self.world.step(1 / 60.0)
 
-        self.assertLess(self.get_pos(h_dyn)[1], 10.0, "Dynamic body failed to fall")
-        self.assertEqual(self.get_pos(h_kin)[1], 10.0, "Kinematic body moved under gravity")
+        assert (v := self.get_pos(h_dyn)) is not None; self.assertLess(v[1], 10.0, "Dynamic body failed to fall")
+        assert (v := self.get_pos(h_kin)) is not None; self.assertEqual(v[1], 10.0, "Kinematic body moved under gravity")
 
     def test_kinematic_velocity_drive(self) -> None:
         """Setting linear velocity on a kinematic body should move it predictably."""
@@ -1273,9 +1274,12 @@ class TestKinematics(CulverinTestCase):
         for _ in range(6):
             self.world.step(1 / 60.0)
 
-        pos = self.get_pos(h)
+        assert (pos := self.get_pos(h)) is not None
+
         # Should be roughly at X=1.0 (10 units/sec * 0.1 sec)
+
         self.assertAlmostEqual(pos[0], 1.0, places=2)
+
         self.assertEqual(pos[1], 0.0)
 
     def test_kinematic_pushing_dynamic(self) -> None:
@@ -1294,8 +1298,8 @@ class TestKinematics(CulverinTestCase):
         for _ in range(20):
             self.world.step(1 / 60.0)
 
-        crate_pos = self.get_pos(crate)
-        dozer_pos = self.get_pos(dozer)
+        assert (crate_pos := self.get_pos(crate)) is not None
+        assert (dozer_pos := self.get_pos(dozer)) is not None
 
         # The dozer should have pushed the crate forward
         self.assertGreater(dozer_pos[0], 1.0)
@@ -1307,7 +1311,7 @@ class TestKinematics(CulverinTestCase):
         """Test switching a body from Kinematic to Dynamic mid-simulation."""
         h = self.world.create_body(pos=(0, 10, 0), motion=culverin.MOTION_KINEMATIC)
         self.world.step(1 / 60.0)
-        self.assertEqual(self.get_pos(h)[1], 10.0)
+        assert (v := self.get_pos(h)) is not None; self.assertEqual(v[1], 10.0)
 
         # Switch to dynamic
         self.world.set_motion_type(h, culverin.MOTION_DYNAMIC)
@@ -1317,9 +1321,7 @@ class TestKinematics(CulverinTestCase):
         for _ in range(5):
             self.world.step(1 / 60.0)
 
-        self.assertLess(
-            self.get_pos(h)[1], 10.0, "Body did not start falling after switching to dynamic"
-        )
+        assert (v := self.get_pos(h)) is not None; self.assertLess(v[1], 10.0, "Body did not start falling after switching to dynamic")
 
     def test_kinematic_rotation_interaction(self) -> None:
         """Kinematic rotation should apply tangential velocity to dynamic objects."""
@@ -1340,7 +1342,7 @@ class TestKinematics(CulverinTestCase):
         for _ in range(10):
             self.world.step(1 / 60.0)
 
-        vel = self.get_vel(ball)
+        assert (vel := self.get_vel(ball)) is not None
         # The ball should have been 'thrown' or moved by the rotation
         speed_sq = vel[0] ** 2 + vel[2] ** 2
         self.assertGreater(speed_sq, 0.1, "Ball stayed static despite kinematic platform rotating")
@@ -1358,9 +1360,7 @@ class TestKinematics(CulverinTestCase):
         self.world.set_position(k, x=15, y=0, z=0)
         self.world.step(1 / 60.0)
 
-        self.assertEqual(
-            self.get_pos(k)[0], 15.0, "Kinematic teleport was blocked (should be unstoppable)"
-        )
+        assert (v := self.get_pos(k)) is not None; self.assertEqual(v[0], 15.0, "Kinematic teleport was blocked (should be unstoppable)")
 
 
 class TestAdvancedPhysics(CulverinTestCase):
@@ -1391,8 +1391,8 @@ class TestAdvancedPhysics(CulverinTestCase):
         self.world.step(0)  # Flush velocity commands
         self.world.step(1 / 60.0)  # Simulate 1 frame
 
-        pos_bullet = self.get_pos(bullet)
-        pos_ghost = self.get_pos(ghost)
+        assert (pos_bullet := self.get_pos(bullet)) is not None
+        assert (pos_ghost := self.get_pos(ghost)) is not None
 
         # CCD bullet should be stopped by the wall (stopped near X=2)
         self.assertLess(pos_bullet[0], 2.2, "CCD Bullet tunneled through wall")
@@ -1413,6 +1413,7 @@ class TestAdvancedPhysics(CulverinTestCase):
             self.world.step(1 / 60.0)
 
         vel = self.world.get_velocity(h)
+        assert vel is not None
         self.assertLess(vel[0], 10.0, "Linear velocity did not damped")
 
     def test_slider_constraint(self) -> None:
@@ -1432,8 +1433,7 @@ class TestAdvancedPhysics(CulverinTestCase):
         for _ in range(30):
             self.world.step(1 / 60.0)
 
-        pos = self.get_pos(b2)
-        self.assertLessEqual(pos[1], 5.2)
+        assert (pos := self.get_pos(b2)) is not None; self.assertLessEqual(pos[1], 5.2)
         self.assertGreaterEqual(pos[1], 0.8)
 
 
@@ -1457,8 +1457,7 @@ class TestKinematicsAdvanced(CulverinTestCase):
         for _ in range(30):
             self.world.step(1 / 60.0)
 
-        pos = self.get_pos(h)
-        self.assertGreater(pos[0], 4.5, "Kinematic compound body failed to move")
+        assert (v := self.get_pos(h)) is not None; self.assertGreater(v[0], 4.5, "Kinematic compound body failed to move")
 
     def test_kinematic_restitution_transfer(self) -> None:
         """Kinematic bodies should 'bounce' dynamic ones away based on their own velocity."""
@@ -1480,7 +1479,7 @@ class TestKinematicsAdvanced(CulverinTestCase):
         for _ in range(10):
             self.world.step(1 / 60.0)
 
-        ball_vel = self.get_vel(ball)
+        assert (ball_vel := self.get_vel(ball)) is not None
         self.assertGreater(
             ball_vel[1], 15.0, "Kinematic velocity was not transferred to dynamic body"
         )
@@ -1500,8 +1499,7 @@ class TestKinematicsAdvanced(CulverinTestCase):
         for _ in range(10):
             self.world.step(1 / 60.0)
 
-        pos = self.get_pos(k)
-        self.assertGreater(pos[0], 9.0, "Kinematic body was blocked by a static object")
+        assert (v := self.get_pos(k)) is not None; self.assertGreater(v[0], 9.0, "Kinematic body was blocked by a static object")
 
 
 class TestRobustness(CulverinTestCase):
@@ -1731,8 +1729,7 @@ class TestSoftBodies(CulverinTestCase):
 
         # Verify it falls
         self.world.step(1 / 60.0)
-        pos = self.get_pos(h)
-        self.assertLess(pos[1], 10.0, "Soft body center-of-mass did not fall")
+        assert (v := self.get_pos(h)) is not None; self.assertLess(v[1], 10.0, "Soft body center-of-mass did not fall")
 
         self.world.destroy_body(h)
         self.world.step(0)
@@ -1766,25 +1763,21 @@ class TestSoftBodies(CulverinTestCase):
     def test_soft_body_dihedral_bending(self) -> None:
         """Test soft body creation using Dihedral bending constraints."""
         settings = culverin.SoftBodySharedSettings()
-        
+
         # A simple hinge/book shape (4 vertices, 2 triangles sharing an edge)
         # Verts: (0,0,0), (1,0,0), (0,1,0), (-1,0,0)
         # Tri 1: 0, 1, 2
         # Tri 2: 0, 2, 3
-        pos = np.array([
-            [0, 0, 0], [1, 0, 0], [0, 1, 0], [-1, 0, 0]
-        ], dtype=np.float32)
+        pos = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [-1, 0, 0]], dtype=np.float32)
         settings.add_vertices(pos.tobytes())
-        
-        faces = np.array([
-            [0, 1, 2], [0, 2, 3]
-        ], dtype=np.uint32)
+
+        faces = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.uint32)
         settings.add_faces(faces.tobytes())
-        
+
         # Use BEND_DIHEDRAL
         settings.create_constraints(compliance=0.01, bend_type=culverin.BEND_DIHEDRAL)
         settings.optimize()
-        
+
         h = self.world.create_soft_body(settings, pos=(0, 5, 0), rot=(0, 0, 0, 1))
         self.world.step(0)
         self.assertTrue(self.world.is_alive(h))
@@ -1793,12 +1786,12 @@ class TestSoftBodies(CulverinTestCase):
         """Verify we can extract the rest-pose of a vertex before optimization."""
         settings = culverin.SoftBodySharedSettings()
         settings.add_vertex((1.5, 2.5, -3.5), 1.0)
-        
+
         pos = settings.get_vertex_position(0)
         self.assertAlmostEqual(pos[0], 1.5)
         self.assertAlmostEqual(pos[1], 2.5)
         self.assertAlmostEqual(pos[2], -3.5)
-        
+
         with self.assertRaises(IndexError):
             settings.get_vertex_position(99)
 
@@ -1926,48 +1919,46 @@ class TestSoftBodies(CulverinTestCase):
 
         for _ in range(10):
             self.world.step(1 / 60.0)
-        self.assertLess(self.get_pos(h)[1], 10.0)
+        assert (v := self.get_pos(h)) is not None; self.assertLess(v[1], 10.0)
 
         self.world.load_state(state=state)
         self.world.step(0)
 
         self.assertTrue(self.world.is_alive(h))
-        self.assertAlmostEqual(self.get_pos(h)[1], 10.0, places=3)
+        assert (v := self.get_pos(h)) is not None; self.assertAlmostEqual(v[1], 10.0, places=3)
 
     def test_soft_body_getters_logic(self) -> None:
         """Test the new JoltC direct getters for soft body vertex data."""
-        # Cube of size 2.0 at Y=5.0. 
-        # Corner 0 is at local (-1, -1, -1). 
+        # Cube of size 2.0 at Y=5.0.
+        # Corner 0 is at local (-1, -1, -1).
         # World Y = 5.0 - 1.0 = 4.0.
         settings = self.create_cube_settings(size=2.0)
-        h = self.world.create_soft_body(
-            settings, pos=(0, 5, 0), rot=(0, 0, 0, 1), pressure=0.0
-        )
+        h = self.world.create_soft_body(settings, pos=(0, 5, 0), rot=(0, 0, 0, 1), pressure=0.0)
         # Flush creation
         self.world.step(0)
-    
+
         # 1. Test Vertex Count
         count = self.world.get_soft_body_vertex_count(h)
         self.assertEqual(count, 8, "Cube should have exactly 8 vertices")
-    
+
         # 2. Test World Position via direct getter
         # Jolt reports these in world-space immediately after creation
         world_pos = self.world.get_soft_body_vertex_position(h, 0)
         self.assertAlmostEqual(world_pos[0], -1.0)
-        self.assertAlmostEqual(world_pos[1], 4.0) # 5.0 (pos) - 1.0 (local)
+        self.assertAlmostEqual(world_pos[1], 4.0)  # 5.0 (pos) - 1.0 (local)
         self.assertAlmostEqual(world_pos[2], -1.0)
-    
+
         # 3. Test Bulk Extraction
         raw_bytes = self.world.get_soft_body_local_vertices(h)
         self.assertEqual(len(raw_bytes), 8 * 12, "Byte length must be num_verts * 12")
-        
+
         verts_world = np.frombuffer(raw_bytes, dtype=np.float32).reshape(-1, 3)
         self.assertAlmostEqual(verts_world[0, 1], 4.0)
 
         # 4. Verify physical movement
         # Let the body fall for one frame
-        self.world.step(1/60)
-        
+        self.world.step(1 / 60)
+
         new_pos = self.world.get_soft_body_vertex_position(h, 0)
         self.assertLess(new_pos[1], 4.0, "Vertex Y should have decreased due to gravity")
 
@@ -1979,12 +1970,12 @@ class TestSoftBodies(CulverinTestCase):
         # 1. Wrong Body Type
         with self.assertRaisesRegex(TypeError, "not belong to a soft body"):
             self.world.get_soft_body_vertex_count(h_rigid)
-        
+
         # 2. Index Out of Bounds
         settings = self.create_cube_settings()
         h_soft = self.world.create_soft_body(settings, pos=(0, 0, 0), rot=(0, 0, 0, 1))
         self.world.step(0)
-        
+
         with self.assertRaises(IndexError):
             self.world.get_soft_body_vertex_position(h_soft, 999)
 
@@ -1992,7 +1983,7 @@ class TestSoftBodies(CulverinTestCase):
 class TestTupleMutation(unittest.TestCase):
     """
     Validation suite for culverin.mutate_tuple().
-    This tests the C-layer's ability to safely perform 'illegal' mutations on 
+    This tests the C-layer's ability to safely perform 'illegal' mutations on
     immutable tuples and keep Python's internal hash-maps in sync.
     """
 
@@ -2000,10 +1991,10 @@ class TestTupleMutation(unittest.TestCase):
         """Verify that we can change a tuple element and that the hash updates."""
         t = (1, "target", 3)
         old_hash = hash(t)
-        
+
         # Mutate index 1
         new_hash = culverin.mutate_tuple(t, 1, "mutated")
-        
+
         self.assertEqual(t[1], "mutated")
         self.assertEqual(t, (1, "mutated", 3))
         self.assertNotEqual(old_hash, new_hash, "Hash must change after mutation")
@@ -2016,17 +2007,17 @@ class TestTupleMutation(unittest.TestCase):
         self.assertEqual(t, (10, 20, 99))
 
     def test_registry_sync(self) -> None:
-        registry: dict[str, tuple[int, ...]] = {} # Type hint here is fine
+        registry: dict[str, tuple[int, ...]] = {}  # Type hint here is fine
         t = (1, 2, 3)
         key = "my_tuple"
         registry[key] = t
-        
+
         # ACTUAL call to your C function
         culverin.mutate_tuple(t, 0, 999, registry, key)
-        
+
         # 1. Content check (Now registry actually has the data)
         self.assertEqual(registry[key][0], 999)
-        
+
         # 2. Hash-map integrity check
         self.assertIn((999, 2, 3), registry.values())
 
@@ -2034,37 +2025,39 @@ class TestTupleMutation(unittest.TestCase):
         """Ensure the C-layer catches cases where the registry key doesn't match the target."""
         registry = {"a": (1, 2)}
         other_tuple = (3, 4)
-        
+
         with self.assertRaisesRegex(ValueError, "not the same object"):
             culverin.mutate_tuple(other_tuple, 0, 5, registry, "a")
 
     def test_bounds_and_type_errors(self) -> None:
         """Verify that the C-layer guards against invalid inputs."""
         t = (1, 2)
-        
+
         # 1. Index out of range
         with self.assertRaises(IndexError):
             culverin.mutate_tuple(t, 5, 99)
-        
+
         # 2. Not a tuple
         with self.assertRaisesRegex(TypeError, "must be a tuple"):
-            culverin.mutate_tuple([1, 2], 0, 99) # type: ignore
-            
+            culverin.mutate_tuple([1, 2], 0, 99)  # type: ignore
+
         # 3. Registry not a dict
         with self.assertRaisesRegex(TypeError, "must be a dict"):
-            culverin.mutate_tuple(t, 0, 99, ["not a dict"], "key") # type: ignore
+            culverin.mutate_tuple(t, 0, 99, ["not a dict"], "key")  # type: ignore
 
     def test_free_threading_stability(self) -> None:
         shared_tuple = (0, 0, 0)
-        def hammer():
+
+        def hammer() -> None:
             for i in range(1000):
-                try:
+                with contextlib.suppress(Exception):
                     culverin.mutate_tuple(shared_tuple, i % 3, i)
-                except Exception:
-                    pass
+
         threads = [threading.Thread(target=hammer) for _ in range(4)]
-        for t in threads: t.start()
-        for t in threads: t.join()
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
         self.assertEqual(len(shared_tuple), 3)
         # Restore to known-good hashable state to avoid corrupting Python's integer cache
         culverin.mutate_tuple(shared_tuple, 0, 0)
@@ -2077,28 +2070,29 @@ class TestCharacterInteractions(CulverinTestCase):
         """Verify that characters can physically move dynamic bodies."""
         # 1. Place a light box at X=1.1
         box = self.world.create_body(pos=(1.1, 0.5, 0), size=(1, 1, 1), mass=1.0)
-        
+
         # 2. Place character at X=0
         char = self.world.create_character(pos=(0, 0.5, 0))
         char.set_strength(5000.0)
         self.world.step(0)
 
         # 3. Move character into the box
-        # 20m/s * 1/60s = 0.33m. Radius 0.4. Reach = 0.73. 
+        # 20m/s * 1/60s = 0.33m. Radius 0.4. Reach = 0.73.
         # Box edge is at 1.1 - 0.5 = 0.6. Collision is guaranteed.
-        char.move((20, 0, 0), 1/60)
-        
+        char.move((20, 0, 0), 1 / 60)
+
         # Check that a contact event was recorded
         events = self.world.get_contact_events_ex()
         self.assertTrue(any(box in e["bodies"] for e in events), "Box contact not recorded")
 
         # 4. Step the world to allow the impulse to translate into movement
-        self.world.step(1/60)
-        
+        self.world.step(1 / 60)
+
         # The box should have gained velocity from the character's 'apply_character_impulse'
         vel = self.world.get_velocity(box)
+        assert vel is not None
         self.assertGreater(vel[0], 0.5, "Character failed to push the dynamic box")
-        self.world.step(1/60)  # flush character state before world teardown
+        self.world.step(1 / 60)  # flush character state before world teardown
 
     def test_character_vs_character_collision(self) -> None:
         """Verify the special callback path for virtual character collisions."""
@@ -2106,54 +2100,67 @@ class TestCharacterInteractions(CulverinTestCase):
         # Place centers at 0.0 and 1.2. Gap is 0.4 units.
         char1 = self.world.create_character(pos=(0, 0.5, 0))
         char2 = self.world.create_character(pos=(1.2, 0.5, 0))
-        
+
         # Step 0 to flush registration commands
         self.world.step(0)
 
-        # Move char2 slightly just to ensure it is fully "woken up" in the 
+        # Move char2 slightly just to ensure it is fully "woken up" in the
         # CharacterVsCharacterCollision manager's broadphase.
-        char2.move((0.01, 0, 0), 1/60)
+        char2.move((0.01, 0, 0), 1 / 60)
 
         # Move char1 significantly into char2.
-        # Speed 120m/s * 1/60s = 2.0 units movement. 
+        # Speed 120m/s * 1/60s = 2.0 units movement.
         # Range: X 0.0 -> 2.0. Intersection with char2 at 1.2 is guaranteed.
-        char1.move((120, 0, 0), 1/60)
+        char1.move((120, 0, 0), 1 / 60)
 
         # Capture events immediately after the move() call
         events = self.world.get_contact_events_ex()
-        char_hits = [e for e in events if char1.handle in e["bodies"] and char2.handle in e["bodies"]]
-        
-        self.assertGreater(len(char_hits), 0, 
+        char_hits = [
+            e for e in events if char1.handle in e["bodies"] and char2.handle in e["bodies"]
+        ]
+
+        self.assertGreater(
+            len(char_hits),
+            0,
             f"No character contact detected. Total events captured: {len(events)}. "
-            "Check if JPH_CharacterVirtual_Set/GetUserData is working in C.")
-        
+            "Check if JPH_CharacterVirtual_Set/GetUserData is working in C.",
+        )
+
         # Verify it's an Added or Persisted event
         self.assertIn(char_hits[0]["type"], [culverin.EVENT_ADDED, culverin.EVENT_PERSISTED])
 
     def test_character_contact_lifecycle(self) -> None:
         """Test Added -> Persisted -> Removed lifecycle against a static wall."""
-        wall = self.world.create_body(pos=(1.0, 0.5, 0), size=(1, 1, 1), motion=culverin.MOTION_STATIC)
+        wall = self.world.create_body(
+            pos=(1.0, 0.5, 0), size=(1, 1, 1), motion=culverin.MOTION_STATIC
+        )
         char = self.world.create_character(pos=(0, 0.5, 0))
         self.world.step(0)
 
         # 1. ADDED
-        char.move((10, 0, 0), 1/60)
+        char.move((10, 0, 0), 1 / 60)
         events = self.world.get_contact_events_ex()
-        self.assertTrue(any(e["type"] == culverin.EVENT_ADDED and wall in e["bodies"] for e in events))
+        self.assertTrue(
+            any(e["type"] == culverin.EVENT_ADDED and wall in e["bodies"] for e in events)
+        )
 
         # 2. PERSISTED
         # We must step once to transition the Jolt listener's state
-        self.world.step(1/60)
-        char.move((10, 0, 0), 1/60)
+        self.world.step(1 / 60)
+        char.move((10, 0, 0), 1 / 60)
         events = self.world.get_contact_events_ex()
-        self.assertTrue(any(e["type"] == culverin.EVENT_PERSISTED and wall in e["bodies"] for e in events))
+        self.assertTrue(
+            any(e["type"] == culverin.EVENT_PERSISTED and wall in e["bodies"] for e in events)
+        )
 
         # 3. REMOVED
         char.set_position((-5, 0.5, 0))
         # ExtendedUpdate must run while NOT touching to fire Removed callback
-        char.move((0, 0, 0), 1/60)
+        char.move((0, 0, 0), 1 / 60)
         events = self.world.get_contact_events_ex()
-        self.assertTrue(any(e["type"] == culverin.EVENT_REMOVED and wall in e["bodies"] for e in events))
+        self.assertTrue(
+            any(e["type"] == culverin.EVENT_REMOVED and wall in e["bodies"] for e in events)
+        )
 
     def test_character_collision_filtering(self) -> None:
         """Verify that character-vs-character contact can be filtered via bitmasks."""
@@ -2161,23 +2168,25 @@ class TestCharacterInteractions(CulverinTestCase):
         # Category 2, Mask 1 (Collide with world, but not with other Category 2s)
         char1 = self.world.create_character(pos=(0, 0.5, 0))
         char2 = self.world.create_character(pos=(1.2, 0.5, 0))
-        
-        self.world.step(0) # Flush
-        
+
+        self.world.step(0)  # Flush
+
         # Set filters: Both are category 2, and both only look for category 1
         self.world.set_collision_filter(char1.handle, category=2, mask=1)
         self.world.set_collision_filter(char2.handle, category=2, mask=1)
-        
+
         # 2. Attempt to move char1 THROUGH char2
         # If filtering works, char1 should move freely to X=2.0
         # and NO contact events should be generated.
-        char1.move((120, 0, 0), 1/60)
-        
+        char1.move((120, 0, 0), 1 / 60)
+
         events = self.world.get_contact_events_ex()
-        char_hits = [e for e in events if char1.handle in e["bodies"] and char2.handle in e["bodies"]]
-        
+        char_hits = [
+            e for e in events if char1.handle in e["bodies"] and char2.handle in e["bodies"]
+        ]
+
         self.assertEqual(len(char_hits), 0, "Characters collided despite filtering masks")
-        
+
         # Verify char1 actually moved past char2 (didn't get stuck)
         self.assertGreater(char1.get_position()[0], 1.5)
 
@@ -2185,12 +2194,14 @@ class TestCharacterInteractions(CulverinTestCase):
         # Mask 3 = (1 | 2), so it now sees category 2
         self.world.set_collision_filter(char1.handle, category=2, mask=3)
         self.world.set_collision_filter(char2.handle, category=2, mask=3)
-        
+
         char1.set_position((0, 0.5, 0))
-        char1.move((120, 0, 0), 1/60)
-        
+        char1.move((120, 0, 0), 1 / 60)
+
         events = self.world.get_contact_events_ex()
-        char_hits = [e for e in events if char1.handle in e["bodies"] and char2.handle in e["bodies"]]
+        char_hits = [
+            e for e in events if char1.handle in e["bodies"] and char2.handle in e["bodies"]
+        ]
         self.assertGreater(len(char_hits), 0, "Characters failed to collide after mask update")
 
     def test_character_slippery_platform(self) -> None:
@@ -2198,37 +2209,40 @@ class TestCharacterInteractions(CulverinTestCase):
         self.world.register_material(id=10, friction=1.0)
 
         sticky_plat = self.world.create_body(
-            pos=(0, 0, 0), size=(5, 0.5, 5),
-            motion=culverin.MOTION_KINEMATIC, material_id=10)
+            pos=(0, 0, 0), size=(5, 0.5, 5), motion=culverin.MOTION_KINEMATIC, material_id=10
+        )
 
         char_sticky = self.world.create_character(pos=(2, 1.0, 0), radius=0.5, height=1.0)
         self.world.step(0)
 
         # Warmup: settle onto platform
         for _ in range(20):
-            char_sticky.move((0, 0, 0), 1/60) 
-            self.world.step(1/60)
+            char_sticky.move((0, 0, 0), 1 / 60)
+            self.world.step(1 / 60)
 
-        self.assertTrue(char_sticky.is_grounded(),
-                        f"Character failed to settle. Y={char_sticky.get_position()[1]}")
+        self.assertTrue(
+            char_sticky.is_grounded(),
+            f"Character failed to settle. Y={char_sticky.get_position()[1]}",
+        )
 
         self.world.set_angular_velocity(sticky_plat, x=0, y=2.0, z=0)
         start_pos = char_sticky.get_position()
 
         # Zero input — ground velocity inheritance in C should do all the work
         for _ in range(10):
-            char_sticky.move((0, 0, 0), 1/60)
-            self.world.step(1/60)
+            char_sticky.move((0, 0, 0), 1 / 60)
+            self.world.step(1 / 60)
 
         end_pos = char_sticky.get_position()
         dx = end_pos[0] - start_pos[0]
         dz = end_pos[2] - start_pos[2]
-        displacement_sq = dx*dx + dz*dz
+        displacement_sq = dx * dx + dz * dz
 
-        self.assertGreater(displacement_sq, 0.1,
-                        f"Character failed to orbit. Start={start_pos}, End={end_pos}")
-        self.assertTrue(char_sticky.is_grounded(),
-                        f"Character fell off platform. Y={end_pos[1]}")
+        self.assertGreater(
+            displacement_sq, 0.1, f"Character failed to orbit. Start={start_pos}, End={end_pos}"
+        )
+        self.assertTrue(char_sticky.is_grounded(), f"Character fell off platform. Y={end_pos[1]}")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

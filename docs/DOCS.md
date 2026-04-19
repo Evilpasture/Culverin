@@ -1926,25 +1926,51 @@ Returns a boolean whether a handle is alive.
 **Returns:** `True` if the handle is alive, otherwise `False`.
 
 
-### sync_from_world(...)
+### clear()
+[No Arguments] Instantly destroys all entities and wipes all component data.
 
-Performs a high-performance, C-native bulk synchronization of body positions from the `PhysicsWorld` into the ECS `Registry`. 
+**Note:** This is highly optimized for scene transitions or level resets. It safely increments generation counters internally, which instantly invalidates all existing entity handles without the overhead of destroying them one by one.
+
+### get(entity, comp_id)
+Retrieves the raw component data for a single entity.
+
+**Arguments:**
+- **`entity` (int):** The 64-bit entity handle.
+- **`comp_id` (int):** The ID of the component.
+**Returns:**
+- **`data` (bytes | None):** A raw `bytes` object containing the data, or `None` if the entity does not possess the component or is invalid.
+
+### get_active_count()
+**Returns:**
+- **`count` (int):** The total number of currently alive entities in the registry.
+
+### get_component_count(comp_id)
+**Arguments:**
+- **`comp_id` (int):** The ID of the component.
+**Returns:**
+- **`count` (int):** The total number of entities that currently possess this specific component.
+
+### sync_from_world(world, handle_comp_id, pos_comp_id, rot_comp_id)
+
+Performs a high-performance, C-native bulk synchronization of body transforms (position and rotation) from the `PhysicsWorld` into the ECS `Registry`. 
 
 This method solves the primary performance bottleneck in Python-based ECS architectures: mapping physics simulation results back to game entities. By executing the entire handle-lookup and data-transfer loop in C, it eliminates the $O(N)$ cost of Python list comprehensions and NumPy indexing.
 
 **Arguments:**
 - **`world` (PhysicsWorld):** The source world to read simulation results from.
-- **`handle_comp_id` (int):** The ID of the ECS component storing the `uint64` Jolt handles.
-- **`transform_comp_id` (int):** The ID of the ECS component where the `float32` positions will be written.
+- **`handle_comp_id` (int):** The ECS component storing the `uint64` physics handles.
+- **`pos_comp_id` (int):** The ECS component where the `float32` positions will be written. Pass `-1` to skip syncing positions.
+- **`rot_comp_id` (int):** The ECS component where the `float32` quaternions will be written. Pass `-1` to skip syncing rotations.
 
 **Technical Requirements:**
 - **Handle Buffer:** The component registered as `handle_comp_id` must have an `element_size` of exactly **8 bytes** (`uint64`).
-- **Transform Buffer:** The component registered as `transform_comp_id` must have an `element_size` of exactly **12 bytes** (3x `float32`).
+- **Position Buffer:** If mapped, `pos_comp_id` must have an `element_size` of exactly **12 bytes** (3x `float32`).
+- **Rotation Buffer:** If mapped, `rot_comp_id` must have an `element_size` of exactly **16 bytes** (4x `float32`).
 - **Handle Validation:** The method utilizes `unpack_handle` internally. If an entity possesses a stale or invalid physics handle, its transform will be safely skipped without interrupting the batch.
 
 **Performance & Precision:**
-- **C-Native Loop:** The synchronization is performed in a single contiguous memory sweep, staying entirely within the CPU's L1/L2 cache.
-- **Precision Downcasting:** If the engine is built with `DOUBLE_PRECISION`, this method automatically performs the cast from `float64` (Physics) to `float32` (ECS) during the copy, saving you from doing it manually in NumPy.
+- **C-Native Loop:** The synchronization is performed in a single contiguous memory sweep, staying entirely within the CPU's L1/L2 cache. Both Position and Rotation are synced in the same pass.
+- **Precision Downcasting:** If the engine is built with `DOUBLE_PRECISION`, this method automatically performs the cast from `float64` (Physics Position) to `float32` (ECS Position) during the copy, saving you from doing it manually in NumPy.
 - **Lock Consistency:** This method acquires the world's `shadow_lock` for the duration of the transfer, ensuring that the ECS receives a perfectly consistent snapshot of the physics world.
 
 **Usage Example:**
@@ -1956,10 +1982,169 @@ world.step(1/60)
 registry.sync_from_world(
     world, 
     COMP_PHYSICS_HANDLE, 
-    COMP_WORLD_POSITION
+    COMP_WORLD_POSITION,
+    COMP_WORLD_ROTATION
 )
 ```
 
 **Constraints:**
-- Raises `TypeError` if the component sizes do not match the required bytes (8 for handles, 12 for positions).
+- Raises `TypeError` if the component sizes do not match the required bytes.
 - Raises `ValueError` if the provided component IDs are invalid.
+
+## class MathService
+
+A high-performance **SIMD-accelerated math utility** designed for Culverin. 
+
+This class provides a direct bridge to C++ math routines (typically Jolt or GLM-based). It utilizes a specialized **Speculative FastParse** system to achieve call overheads as low as **77ns**, making it significantly faster than equivalent NumPy scalar operations or standard Python functions for high-frequency matrix calculations.
+
+### get_perspective(fovy, aspect, near, far)
+Computes a standard 4x4 perspective projection matrix.
+
+**Arguments:**
+- **`fovy` (float):** Field of view in the y-direction, in radians.
+- **`aspect` (float):** Aspect ratio (width/height).
+- **`near` (float):** Distance to the near clipping plane.
+- **`far` (float):** Distance to the far clipping plane.
+**Returns:**
+- **`matrix` (tuple):** A 16-element tuple representing the 4x4 matrix in column-major order.
+
+### get_ortho(left, right, bottom, top, near, far)
+Computes a 4x4 orthographic projection matrix.
+
+**Arguments:**
+- **`left`, `right` (float):** Coordinates for the left and right vertical clipping planes.
+- **`bottom`, `top` (float):** Coordinates for the bottom and top horizontal clipping planes.
+- **`near`, `far` (float):** Distances to the near and far depth clipping planes.
+**Returns:**
+- **`matrix` (tuple):** A 16-element tuple (4x4 matrix).
+
+### get_look_at(eye, target, up)
+Computes a 4x4 View Matrix (LookAt).
+
+**Arguments:**
+- **`eye` (tuple):** 3-element tuple (x, y, z) of the camera position.
+- **`target` (tuple):** 3-element tuple (x, y, z) of the point to look at.
+- **`up` (tuple):** 3-element tuple (x, y, z) defining the world "up" vector.
+**Returns:**
+- **`matrix` (tuple):** A 16-element tuple (4x4 matrix).
+
+### get_trs(translation, rotation, scale)
+Computes a 4x4 **Translation-Rotation-Scale** transformation matrix.
+
+**Arguments:**
+- **`translation` (tuple):** 3-element tuple (x, y, z).
+- **`rotation` (tuple):** 4-element tuple (x, y, z, w) representing a quaternion.
+- **`scale` (tuple):** 3-element tuple (x, y, z).
+**Returns:**
+- **`matrix` (tuple):** A 16-element tuple (4x4 matrix).
+
+### get_trs_batch(translations, rotations, scales)
+Performs a high-performance **batch generation** of TRS matrices. This method is the primary tool for updating ECS transform components or preparing instance data for a GPU.
+
+**Arguments:**
+- **`translations` (Buffer):** Tightly packed `float32` data (3 per element).
+- **`rotations` (Buffer):** Tightly packed `float32` data (4 per element).
+- **`scales` (Buffer):** Tightly packed `float32` data (3 per element).
+
+**Returns:**
+- **`data` (bytes):** A raw bytes object containing the concatenated $16 \times \text{float32}$ matrices.
+
+**Technical Notes:**
+- **Zero-Copy Intent:** The returned `bytes` object can be cast to a `memoryview` or `numpy.ndarray` with zero copying, allowing for direct upload to a Vulkan/OpenGL buffer.
+- **SIMD Parallelism:** Internally utilizes CPU SIMD instructions to calculate multiple matrices simultaneously where possible.
+- **Memory Safety:** Automatically releases all input buffers immediately after calculation.
+
+**Usage Example:**
+```python
+# Batch calculate 10,000 matrices from ECS memoryviews
+matrices_raw = math_service.get_trs_batch(
+    registry.get_view(COMP_POS),
+    registry.get_view(COMP_ROT),
+    registry.get_view(COMP_SCALE)
+)
+
+# Upload directly to GPU or wrap in NumPy
+matrix_array = np.frombuffer(matrices_raw, dtype=np.float32).reshape(-1, 4, 4)
+```
+
+**Constraints:**
+- All input buffers must have matching element counts.
+- Input buffers must support the Python Buffer Protocol (e.g., `bytes`, `memoryview`, `numpy.ndarray`).
+
+### inverse(matrix)
+Computes the inverse of a 4x4 matrix.
+
+**Arguments:**
+- **`matrix` (tuple):** A 16-element tuple (4x4 matrix).
+**Returns:**
+- **`matrix` (tuple):** The inverted 16-element tuple.
+
+**Technical Notes:**
+- Highly optimized for View Matrix generation (inverting a Camera's World matrix).
+- Utilizes SIMD-accelerated Cramer's rule or Gaussian elimination based on CPU architecture.
+
+### matmul(a, b)
+Multiplies two 4x4 matrices.
+
+**Arguments:**
+- **`a` (tuple):** The left-hand 16-element matrix.
+- **`b` (tuple):** The right-hand 16-element matrix.
+**Returns:**
+- **`matrix` (tuple):** The resulting 16-element matrix.
+
+### transform_vec3(matrix, vector)
+Applies a 4x4 transformation matrix to a 3D vector.
+
+**Arguments:**
+- **`matrix` (tuple):** A 16-element tuple.
+- **`vector` (tuple):** A 3-element tuple (x, y, z).
+**Returns:**
+- **`vector` (tuple):** The transformed 3-element tuple.
+
+**Technical Notes:**
+- Performs full affine transformation including translation.
+- Internally handles the $w$ component as 1.0 for position transformation.
+
+### matmul_batch(matrix, batch)
+Multiplies a single 4x4 matrix by a buffer of 4x4 matrices. This is the optimal way to calculate **MVP (Model-View-Projection)** matrices for a group of entities.
+
+**Arguments:**
+- **`matrix` (tuple):** A single 16-element tuple (usually a View-Projection matrix).
+- **`batch` (Buffer):** Tightly packed `float32` data representing $N$ matrices.
+
+**Returns:**
+- **`data` (bytes):** A raw bytes object containing the concatenated results.
+
+### cull_aabb(vp_matrix, min, max)
+Performs a frustum culling check for a single Axis-Aligned Bounding Box (AABB).
+
+**Arguments:**
+- **`vp_matrix` (tuple):** A 16-element View-Projection matrix.
+- **`min` (tuple):** 3-element tuple (x, y, z) for AABB minimum corner.
+- **`max` (tuple):** 3-element tuple (x, y, z) for AABB maximum corner.
+**Returns:**
+- **`visible` (bool):** `True` if the box is inside or intersecting the frustum; `False` otherwise.
+
+### cull_aabb_batch(vp_matrix, aabbs)
+Performs a high-velocity **frustum culling** check on a batch of AABBs.
+
+**Arguments:**
+- **`vp_matrix` (tuple):** A 16-element View-Projection matrix.
+- **`aabbs` (Buffer):** Tightly packed `float32` data in the format `[minX, minY, minZ, maxX, maxY, maxZ, ...]`.
+
+**Returns:**
+- **`mask` (bytearray):** A visibility mask where each byte is `1` (visible) or `0` (culled).
+
+**Technical Notes:**
+- **Gribb-Hartmann Extraction:** Planes are extracted from the `vp_matrix` using SIMD rows.
+- **SIMD Culling:** Utilizes Jolt's `GetSupport` logic to test AABBs against 6 planes in parallel without branching.
+- **ECS Integration:** Designed to be used as a filter mask before submitting draw calls.
+
+**Usage Example:**
+```python
+# Cull 5,000 entities against the current camera frustum
+visibility_mask = math_service.cull_aabb_batch(view_proj, aabb_buffer)
+
+# Filter entity IDs for the renderer
+visible_entities = [id for i, id in enumerate(entities) if visibility_mask[i]]
+```

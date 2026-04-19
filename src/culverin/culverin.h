@@ -33,6 +33,7 @@
 #include "culverin_threading.h"
 #include "culverin_tracked_vehicle.h"
 #include "culverin_types.h"
+#include "culverin_math.h"
 #include <stddef.h>
 #include <string.h>
 
@@ -344,6 +345,7 @@ typedef struct {
     PyObject *RagdollType;
     PyObject *BufferProxyType;
     PyObject *RegistryType;
+    PyObject *MathServiceType;
     CulverinParsers parsers;
 } CulverinState;
 

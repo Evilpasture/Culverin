@@ -480,10 +480,10 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self
     JPH_Real px;
     JPH_Real py;
     JPH_Real pz;
-    void *targets[ImpAt_COUNT] = {
-        [IDX_IMPAT_H] = (void *)&h_raw, [IDX_IMPAT_IX] = (void *)&ix, [IDX_IMPAT_IY] = (void *)&iy,
-        [IDX_IMPAT_IZ] = (void *)&iz,   [IDX_IMPAT_PX] = (void *)&px, [IDX_IMPAT_PY] = (void *)&py,
-        [IDX_IMPAT_PZ] = (void *)&pz};
+    void *targets[ImpAt_COUNT] = {[IDX_IMPAT_H] = (void *)&h_raw, [IDX_IMPAT_IX] = (void *)&ix,
+                                  [IDX_IMPAT_IY] = (void *)&iy,   [IDX_IMPAT_IZ] = (void *)&iz,
+                                  [IDX_IMPAT_PX] = (void *)&px,   [IDX_IMPAT_PY] = (void *)&py,
+                                  [IDX_IMPAT_PZ] = (void *)&pz};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.ImpulseAtParser,
                            targets)) {
@@ -1964,8 +1964,8 @@ PyCFunction_DeclareMethod PhysicsWorld_create_body(PhysicsWorldObject *self, PyO
         settings        = JPH_BodyCreationSettings_Create3(
             shape, &j_pos, &j_rot, (JPH_MotionType)motion_type,
             (motion_type == MOTION_KINEMATIC || motion_type == MOTION_STATIC)
-                       ? OBJECT_LAYER_STATIC
-                       : OBJECT_LAYER_DYNAMIC);
+                ? OBJECT_LAYER_STATIC
+                : OBJECT_LAYER_DYNAMIC);
         if (settings) {
             BodyConfig config = {mass,           mat.friction, mat.restitution,
                                  (int)is_sensor, (int)use_ccd, motion_type};
@@ -1998,8 +1998,8 @@ PyCFunction_DeclareMethod PhysicsWorld_create_body(PhysicsWorldObject *self, PyO
     ((PosStride *)self->prev_positions)[dense]     = (PosStride){px, py, pz, 0.0};
     ((AuxStride *)self->rotations)[dense]          = (AuxStride){rx, ry, rz, rw};
     ((AuxStride *)self->prev_rotations)[dense]     = (AuxStride){rx, ry, rz, rw};
-    ((AuxStride *)self->linear_velocities)[dense]  = (AuxStride){0};
-    ((AuxStride *)self->angular_velocities)[dense] = (AuxStride){0};
+    ((AuxStride *)self->linear_velocities)[dense]  = (AuxStride){};
+    ((AuxStride *)self->angular_velocities)[dense] = (AuxStride){};
 
     self->categories[dense]   = category;
     self->masks[dense]        = mask;
@@ -4488,13 +4488,17 @@ static PyType_Spec Registry_spec = {
                      REG_NOARGS(create),
                      REG_FASTCALL(destroy),
                      REG_FASTCALL(is_alive),
+                     REG_NOARGS(clear),                   // Wipes the registry
                      REG_FASTCALL(register_component),
                      REG_FASTCALL(add),
                      REG_FASTCALL(remove),
                      REG_FASTCALL(has),
+                     REG_FASTCALL(get),                   // Single entity data access
                      REG_FASTCALL(get_view),
                      REG_FASTCALL(get_entities),
                      REG_FASTCALL(sync_from_world),
+                     REG_NOARGS(get_active_count),        // ECS Statistics
+                     REG_FASTCALL(get_component_count),   // ECS Statistics
                      {}
 
                  }},
@@ -4557,16 +4561,20 @@ static int init_types(PyObject *m, CulverinState *st) {
         PyObject **slot;
         const char *name;
     } types[] = {
-        {(&PhysicsWorld_spec), &st->PhysicsWorldType, "PhysicsWorld"},
-        {(&Character_spec), &st->CharacterType, "Character"},
-        {(&Vehicle_spec), &st->VehicleType, "Vehicle"},
-        {(&RagdollSettings_spec), &st->RagdollSettingsType, "RagdollSettings"},
-        {(&Ragdoll_spec), &st->RagdollType, "Ragdoll"},
-        {(&Skeleton_spec), &st->SkeletonType, "Skeleton"},
-        {(&BufferProxy_spec), &st->BufferProxyType, "BufferProxyObject"},
-        {(&SoftBodySharedSettings_spec), &st->SoftBodySharedSettingsType, "SoftBodySharedSettings"},
-        {(&Registry_spec), &st->RegistryType, "Registry"},
-    };
+        {.spec = (&PhysicsWorld_spec), .slot = &st->PhysicsWorldType, .name = "PhysicsWorld"},
+        {.spec = (&Character_spec), .slot = &st->CharacterType, .name = "Character"},
+        {.spec = (&Vehicle_spec), .slot = &st->VehicleType, .name = "Vehicle"},
+        {.spec = (&RagdollSettings_spec),
+         .slot = &st->RagdollSettingsType,
+         .name = "RagdollSettings"},
+        {.spec = (&Ragdoll_spec), .slot = &st->RagdollType, .name = "Ragdoll"},
+        {.spec = (&Skeleton_spec), .slot = &st->SkeletonType, .name = "Skeleton"},
+        {.spec = (&BufferProxy_spec), .slot = &st->BufferProxyType, .name = "BufferProxyObject"},
+        {.spec = (&SoftBodySharedSettings_spec),
+         .slot = &st->SoftBodySharedSettingsType,
+         .name = "SoftBodySharedSettings"},
+        {.spec = (&Registry_spec), .slot = &st->RegistryType, .name = "Registry"},
+        {.spec = (&MathService_spec), .slot = &st->MathServiceType, .name = "MathService"}};
 
     for (size_t i = 0; i < sizeof(types) / sizeof(types[0]); i++) {
         auto type = PyType_FromModuleAndSpec(m, types[i].spec, nullptr);
@@ -4707,8 +4715,9 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
         stitch_spec(&Ragdoll_spec, "Ragdoll");
         stitch_spec(&RagdollSettings_spec, "RagdollSettings");
         stitch_spec(&SoftBodySharedSettings_spec, "SoftBodySharedSettings");
-        stitch_spec(&Registry_spec, "Registry");\
-        
+        stitch_spec(&Registry_spec, "Registry");
+        stitch_spec(&MathService_spec, "MathService");
+
         // Gated Handler Registration
         JPH_SetTraceHandler(culv_jph_trace);
         JPH_SetAssertFailureHandler(culv_jph_assert);

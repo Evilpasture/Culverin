@@ -1,8 +1,8 @@
-from pathlib import Path
 import os
-import sysconfig
-import shutil
 import subprocess
+import sysconfig
+from pathlib import Path
+
 
 def get_macos_sdk_path():
     try:
@@ -10,9 +10,12 @@ def get_macos_sdk_path():
     except:
         return None
 
-def generate_clangd():
+
+def generate_clangd() -> None:
     script_path = Path(__file__).resolve()
-    project_root = script_path.parent.parent if script_path.parent.name == "tools" else script_path.parent
+    project_root = (
+        script_path.parent.parent if script_path.parent.name == "tools" else script_path.parent
+    )
 
     # 1. Find Python Include Path
     include_path = Path(sysconfig.get_path("include"))
@@ -37,20 +40,19 @@ def generate_clangd():
         "-m64",
         "-DJPH_DOUBLE_PRECISION",
         "-DPy_GIL_DISABLED=1",
-        
         # --- ATOMIC & CONCURRENCY SAFETY ---
-        "-Watomic-implicit-seq-cst",   # CRITICAL: Warns when memory_order is not explicit
-        "-Watomic-alignment",          # Warns if atomic ops will use a lock due to alignment
-        "-Wthread-safety",             # Enables Clang's Thread Safety Analysis
-        "-Wshadow",                    # Warns if locals shadow members (dangerous in C threads)
+        "-Watomic-implicit-seq-cst",  # CRITICAL: Warns when memory_order is not explicit
+        "-Watomic-alignment",  # Warns if atomic ops will use a lock due to alignment
+        "-Wthread-safety",  # Enables Clang's Thread Safety Analysis
+        "-Wshadow",  # Warns if locals shadow members (dangerous in C threads)
     ] + flags
 
     if sdk_path:
         all_flags.extend(["-isysroot", sdk_path])
 
-    if os.name == 'nt':
+    if os.name == "nt":
         all_flags.extend(["-fms-compatibility", "-fms-extensions"])
-    
+
     formatted_flags = ",\n      ".join([f"'{f}'" for f in all_flags])
 
     config = rf"""# GENERATED FOR CULVERIN ENGINE CONCURRENCY ANALYSIS
@@ -92,7 +94,8 @@ CompileFlags:
     with open(project_root / ".clangd", "w") as f:
         f.write(config)
 
-    print(f"Success: .clangd generated with Atomic Analysis flags.")
+    print("Success: .clangd generated with Atomic Analysis flags.")
+
 
 if __name__ == "__main__":
     generate_clangd()

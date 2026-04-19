@@ -1,11 +1,11 @@
 import os
+import shutil
 import sys
 from pathlib import Path
 from typing import TypedDict
-import shutil
 
 
-def setup_runtime_dlls():
+def setup_runtime_dlls() -> None:
     if sys.platform != "win32":
         return
 
@@ -137,10 +137,11 @@ from ._culverin_c import (  # noqa: E402
     Character,
     Ragdoll,
     RagdollSettings,
+    Registry,
     Skeleton,
     SoftBodySharedSettings,
     Vehicle,
-    Registry,
+    MathService,
     _dump_schema_json,  # type: ignore
     mutate_tuple,
 )
@@ -177,16 +178,17 @@ __all__ = [
     "PhysicsWorld",
     "Ragdoll",
     "RagdollSettings",
+    "Registry",
     "Skeleton",
     "SoftBodySharedSettings",
     "TrackConfig",
     "Transmission",
     "Vehicle",
-    "Registry",
     "WheelConfig",
+    "MathService",
+    "_dump_schema_json",
     "euler_to_quat",
     "load_urdf",
-    "_dump_schema_json",
     "mutate_tuple",
     "parse_urdf",
 ]

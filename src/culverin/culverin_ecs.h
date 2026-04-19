@@ -1,8 +1,7 @@
 #pragma once
-#include <Python.h>
 #include "culverin_compiler_specifics.h"
 #include "culverin_threading.h"
-
+#include <Python.h>
 
 // A 64-bit Entity Handle: [32-bit Generation | 32-bit Index]
 typedef uint64_t CulvEntity;
@@ -49,6 +48,8 @@ PyCFunction_DeclareMethodFromModule Registry_destroy(RegistryObject *self, PyObj
                                                      size_t nargsf, PyObject *kwnames);
 PyCFunction_DeclareMethodFromModule Registry_is_alive(RegistryObject *self, PyObject *const *args,
                                                       size_t nargsf, PyObject *kwnames);
+PyCFunction_DeclareMethodFromModule Registry_clear(RegistryObject *self,
+                                                   CULV_MAYBE_UNUSED PyObject *args);
 
 // Component Methods
 PyCFunction_DeclareMethodFromModule Registry_register_component(RegistryObject *self,
@@ -62,12 +63,22 @@ PyCFunction_DeclareMethodFromModule Registry_has(RegistryObject *self, PyObject 
                                                  size_t nargsf, PyObject *kwnames);
 
 // Data Access
+PyCFunction_DeclareMethodFromModule Registry_get(RegistryObject *self, PyObject *const *args,
+                                                 size_t nargsf, PyObject *kwnames);
 PyCFunction_DeclareMethodFromModule Registry_get_view(RegistryObject *self, PyObject *const *args,
                                                       size_t nargsf, PyObject *kwnames);
 PyCFunction_DeclareMethodFromModule Registry_get_entities(RegistryObject *self,
                                                           PyObject *const *args, size_t nargsf,
                                                           PyObject *kwnames);
 
+// Synchronization
 PyCFunction_DeclareMethodFromModule Registry_sync_from_world(RegistryObject *self,
                                                              PyObject *const *args, size_t nargsf,
                                                              PyObject *kwnames);
+
+// Stats
+PyCFunction_DeclareMethodFromModule Registry_get_active_count(RegistryObject *self,
+                                                              CULV_MAYBE_UNUSED PyObject *args);
+PyCFunction_DeclareMethodFromModule Registry_get_component_count(RegistryObject *self,
+                                                                 PyObject *const *args,
+                                                                 size_t nargsf, PyObject *kwnames);

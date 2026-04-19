@@ -64,6 +64,19 @@ void culverin_free_all_parsers(CulverinParsers *cp) {
 #undef DO_FREE
 }
 
+void culverin_math_init_all_parsers(MathParsers *mp) {
+    mp->registry_count = 0;
+    #define DO_SETUP(P, G, S) SETUP_PARSER_ST(mp, P, G, S);
+    FOR_ALL_MATH_PARSERS(DO_SETUP)
+    #undef DO_SETUP
+}
+
+void culverin_math_free_all_parsers(MathParsers *mp) {
+#define DO_FREE(P, G, S) TEARDOWN_PARSER_ST(mp, P);
+    FOR_ALL_MATH_PARSERS(DO_FREE)
+#undef DO_FREE
+}
+
 void fp_dump_schemas_json(CulverinParsers *cp, FILE *out) {
     fprintf(out, "{\n");
     for (size_t i = 0; i < cp->registry_count; i++) {
