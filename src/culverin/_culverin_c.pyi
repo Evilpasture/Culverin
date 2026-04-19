@@ -72,6 +72,26 @@ BEND_DIHEDRAL: int = 2
 type Vec3 = tuple[float, float, float]
 type Quat = tuple[float, float, float, float]
 
+# A 4x4 Matrix is returned as a 16-element tuple of floats
+type Matrix4x4 = tuple[
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+]
+
 class WheelConfig(TypedDict):
     pos: tuple[float, float, float]
     radius: float
@@ -470,6 +490,15 @@ class Registry:
         self, world: PhysicsWorld, handle_comp_id: int, transform_comp_id: int
     ) -> None: ...
     def is_alive(self, entity: int) -> bool: ...
+
+class MathService:
+    def get_perspective(self, fovy: float, aspect: float, near: float, far: float) -> Matrix4x4: ...
+    def get_ortho(
+        self, left: float, right: float, bottom: float, top: float, near: float, far: float
+    ) -> Matrix4x4: ...
+    def get_look_at(self, eye: Vec3, target: Vec3, up: Vec3) -> Matrix4x4: ...
+    def get_trs(self, translation: Vec3, rotation: Quat, scale: Vec3) -> Matrix4x4: ...
+    def get_trs_batch(self, translations: Buffer, rotations: Buffer, scales: Buffer) -> bytes: ...
 
 def _dump_schema_json() -> None: ...
 @overload
