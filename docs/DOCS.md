@@ -1963,3 +1963,83 @@ registry.sync_from_world(
 **Constraints:**
 - Raises `TypeError` if the component sizes do not match the required bytes (8 for handles, 12 for positions).
 - Raises `ValueError` if the provided component IDs are invalid.
+
+## class MathService
+
+A high-performance **SIMD-accelerated math utility** designed for Culverin. 
+
+This class provides a direct bridge to C++ math routines (typically Jolt or GLM-based). It utilizes a specialized **Speculative FastParse** system to achieve call overheads as low as **77ns**, making it significantly faster than equivalent NumPy scalar operations or standard Python functions for high-frequency matrix calculations.
+
+### get_perspective(fovy, aspect, near, far)
+Computes a standard 4x4 perspective projection matrix.
+
+**Arguments:**
+- **`fovy` (float):** Field of view in the y-direction, in radians.
+- **`aspect` (float):** Aspect ratio (width/height).
+- **`near` (float):** Distance to the near clipping plane.
+- **`far` (float):** Distance to the far clipping plane.
+**Returns:**
+- **`matrix` (tuple):** A 16-element tuple representing the 4x4 matrix in column-major order.
+
+### get_ortho(left, right, bottom, top, near, far)
+Computes a 4x4 orthographic projection matrix.
+
+**Arguments:**
+- **`left`, `right` (float):** Coordinates for the left and right vertical clipping planes.
+- **`bottom`, `top` (float):** Coordinates for the bottom and top horizontal clipping planes.
+- **`near`, `far` (float):** Distances to the near and far depth clipping planes.
+**Returns:**
+- **`matrix` (tuple):** A 16-element tuple (4x4 matrix).
+
+### get_look_at(eye, target, up)
+Computes a 4x4 View Matrix (LookAt).
+
+**Arguments:**
+- **`eye` (tuple):** 3-element tuple (x, y, z) of the camera position.
+- **`target` (tuple):** 3-element tuple (x, y, z) of the point to look at.
+- **`up` (tuple):** 3-element tuple (x, y, z) defining the world "up" vector.
+**Returns:**
+- **`matrix` (tuple):** A 16-element tuple (4x4 matrix).
+
+### get_trs(translation, rotation, scale)
+Computes a 4x4 **Translation-Rotation-Scale** transformation matrix.
+
+**Arguments:**
+- **`translation` (tuple):** 3-element tuple (x, y, z).
+- **`rotation` (tuple):** 4-element tuple (x, y, z, w) representing a quaternion.
+- **`scale` (tuple):** 3-element tuple (x, y, z).
+**Returns:**
+- **`matrix` (tuple):** A 16-element tuple (4x4 matrix).
+
+### get_trs_batch(translations, rotations, scales)
+Performs a high-performance **batch generation** of TRS matrices. This method is the primary tool for updating ECS transform components or preparing instance data for a GPU.
+
+**Arguments:**
+- **`translations` (Buffer):** Tightly packed `float32` data (3 per element).
+- **`rotations` (Buffer):** Tightly packed `float32` data (4 per element).
+- **`scales` (Buffer):** Tightly packed `float32` data (3 per element).
+
+**Returns:**
+- **`data` (bytes):** A raw bytes object containing the concatenated $16 \times \text{float32}$ matrices.
+
+**Technical Notes:**
+- **Zero-Copy Intent:** The returned `bytes` object can be cast to a `memoryview` or `numpy.ndarray` with zero copying, allowing for direct upload to a Vulkan/OpenGL buffer.
+- **SIMD Parallelism:** Internally utilizes CPU SIMD instructions to calculate multiple matrices simultaneously where possible.
+- **Memory Safety:** Automatically releases all input buffers immediately after calculation.
+
+**Usage Example:**
+```python
+# Batch calculate 10,000 matrices from ECS memoryviews
+matrices_raw = math_service.get_trs_batch(
+    registry.get_view(COMP_POS),
+    registry.get_view(COMP_ROT),
+    registry.get_view(COMP_SCALE)
+)
+
+# Upload directly to GPU or wrap in NumPy
+matrix_array = np.frombuffer(matrices_raw, dtype=np.float32).reshape(-1, 4, 4)
+```
+
+**Constraints:**
+- All input buffers must have matching element counts.
+- Input buffers must support the Python Buffer Protocol (e.g., `bytes`, `memoryview`, `numpy.ndarray`).
