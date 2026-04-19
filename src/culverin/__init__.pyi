@@ -48,6 +48,7 @@ from ._culverin_c import (
     SoftBodySharedSettings,
     Vehicle,
     Registry,
+    ContactEvent,
     _dump_schema_json,  # type: ignore
     mutate_tuple,
 )
@@ -99,6 +100,7 @@ __all__ = [
     "Vehicle",
     "Registry",
     "WheelConfig",
+    "ContactEvent",
     "euler_to_quat",
     "load_urdf",
     "_dump_schema_json",
