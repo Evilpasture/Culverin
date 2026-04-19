@@ -4,13 +4,12 @@ import os
 import random
 import threading
 import time
+from collections import deque
 
 import numpy as np
 import psutil
 
 import culverin
-
-from collections import deque
 
 
 def get_ram_mb() -> float:
@@ -288,8 +287,11 @@ def run_churn_test(duration: float = 10.0) -> None:
     print(f" - Final RAM:     {get_ram_mb():.2f}MB")
 
 
-def run_soft_body_benchmark(duration: float = 10.0, num_bodies: int = 100, segments: int = 10) -> None:
+def run_soft_body_benchmark(
+    duration: float = 10.0, num_bodies: int = 100, segments: int = 10
+) -> None:
     import gc
+
     print("\n=== CULVERIN SOFT BODY STRESS TEST ===")
     print(f"Goal: Simulate {num_bodies} jelly cubes ({segments}^3 vertices each) for {duration}s")
 
@@ -298,7 +300,9 @@ def run_soft_body_benchmark(duration: float = 10.0, num_bodies: int = 100, segme
     world.create_body(pos=(0, -2, 0), size=(100, 1, 100), motion=culverin.MOTION_STATIC)
 
     settings = culverin.SoftBodySharedSettings()
-    grid = np.mgrid[-1:1:complex(segments), -1:1:complex(segments), -1:1:complex(segments)]
+    grid = np.mgrid[
+        -1 : 1 : complex(segments), -1 : 1 : complex(segments), -1 : 1 : complex(segments)
+    ]
     grid = grid.reshape(3, -1).T.astype(np.float32)
     v_count = len(grid)
     settings.add_vertices(grid.tobytes())
@@ -309,16 +313,16 @@ def run_soft_body_benchmark(duration: float = 10.0, num_bodies: int = 100, segme
     # 2. Cache Data Structures with explicit typing for Pylance
     active_handles: deque[int] = deque()
     active_data: deque[np.ndarray] = deque()
-    pending_spawn: list[int] = [] 
+    pending_spawn: list[int] = []
 
     # 3. Cache ALL Methods (Absolute minimal overhead)
     w_step = world.step
     w_create = world.create_soft_body
     w_get_verts = world.get_soft_body_vertices
-    w_destroy_batch = world.destroy_bodies_batch 
+    w_destroy_batch = world.destroy_bodies_batch
     # Removed unused w_is_alive
     np_frombuf = np.frombuffer
-    
+
     ah_append = active_handles.append
     ah_popleft = active_handles.popleft
     ad_append = active_data.append
@@ -331,13 +335,13 @@ def run_soft_body_benchmark(duration: float = 10.0, num_bodies: int = 100, segme
     spawn_idx = 0
     steps = 0
     verts_synced = 0
-    
+
     print("-> Suppressing Python GC for the duration of the test...")
-    gc.collect() 
-    gc.disable() 
-    
+    gc.collect()
+    gc.disable()
+
     start_ram = get_ram_mb()
-    start_t = time.perf_counter() 
+    start_t = time.perf_counter()
 
     try:
         while (time.perf_counter() - start_t) < duration:
@@ -345,12 +349,14 @@ def run_soft_body_benchmark(duration: float = 10.0, num_bodies: int = 100, segme
             needed = num_bodies - (len(active_handles) + len(pending_spawn))
             if needed > 0:
                 for _ in range(needed):
-                    h = w_create(settings, spawn_pool[spawn_idx % 10000], (0,0,0,1), num_iterations=20)
+                    h = w_create(
+                        settings, spawn_pool[spawn_idx % 10000], (0, 0, 0, 1), num_iterations=20
+                    )
                     ps_append(h)
                     spawn_idx += 1
 
             # B. Physics Step (Release GIL)
-            w_step(1/60.0)
+            w_step(1 / 60.0)
             steps += 1
 
             # C. One-Time Mapping
@@ -362,7 +368,7 @@ def run_soft_body_benchmark(duration: float = 10.0, num_bodies: int = 100, segme
 
             # D. The Work Loop: Minimal memory touch
             [d[0] for d in active_data]
-            verts_synced += (len(active_data) * v_count)
+            verts_synced += len(active_data) * v_count
 
             # E. Churn (Batch Destruction)
             if steps % 10 == 0:
@@ -375,7 +381,7 @@ def run_soft_body_benchmark(duration: float = 10.0, num_bodies: int = 100, segme
                     w_destroy_batch(victims)
 
     finally:
-        gc.enable() 
+        gc.enable()
         gc.collect()
 
     total_time = time.perf_counter() - start_t

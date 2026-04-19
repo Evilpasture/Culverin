@@ -325,27 +325,54 @@ class TestPerformanceRegression(unittest.TestCase):
         for _ in range(iterations):
             calls_raw += 1
         t_raw = time.perf_counter() - t0
+        # 4.
         t0 = time.perf_counter()
         calls_func = 0
+
         def test_func(h: int, x: float, y: float, z: float) -> None:
             return None
+
         for _ in range(iterations):
             test_func(h, x=1.0, y=2.0, z=3.0)
             calls_func += 1
         t_func = time.perf_counter() - t0
+        # 5. Benchmark NumPy (Small Vector Creation/Update)
+        # This simulates the overhead of using common NumPy operations in a loop
+        vec = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+        t0 = time.perf_counter()
+        calls_np = 0
+        for _ in range(iterations):
+            # Benchmarking a simple update or creation
+            # NumPy has significant 'C-API' transition overhead for these
+            np.add(vec, 1.0, out=vec)
+            calls_np += 1
+        t_np = time.perf_counter() - t0
 
         # Calculate nanoseconds per call for the "Naked" truth
         ns_pos = (t_pos / iterations) * 1e9
         ns_kw = (t_kw / iterations) * 1e9
         ns_raw = (t_raw / iterations) * 1e9
         ns_func = (t_func / iterations) * 1e9
+        ns_np = (t_np / iterations) * 1e9
 
-        print(f"\n[Perf] FastParse Morphism Analysis:")
-        print(f"       PATH: Positional (Speculative) | Calls: {calls_pos:,} | Avg: {ns_pos:.1f} ns/call")
-        print(f"       PATH: Keywords   (Generic)     | Calls: {calls_kw:,} | Avg: {ns_kw:.1f} ns/call")
-        print(f"       PATH: Raw         (Generic)     | Calls: {calls_raw:,} | Avg: {ns_raw:.1f} ns/call")
-        print(f"       PATH: Function    (Generic)     | Calls: {calls_func:,} | Avg: {ns_func:.1f} ns/call")
+        print("\n[Perf] FastParse Morphism Analysis:")
+        print(
+            f"       PATH: Positional (Speculative) | Calls: {calls_pos:,} | Avg: {ns_pos:.1f} ns/call"
+        )
+        print(
+            f"       PATH: Keywords   (Generic)     | Calls: {calls_kw:,} | Avg: {ns_kw:.1f} ns/call"
+        )
+        print(
+            f"       PATH: Raw         (Loop)       | Calls: {calls_raw:,} | Avg: {ns_raw:.1f} ns/call"
+        )
+        print(
+            f"       PATH: Function    (Generic)    | Calls: {calls_func:,} | Avg: {ns_func:.1f} ns/call"
+        )
+        print(
+            f"       PATH: NumPy Add   (External C) | Calls: {calls_np:,} | Avg: {ns_np:.1f} ns/call"
+        )
         print(f"       RESULT: {t_kw / t_pos:.2f}x Speedup in Speculative path")
+        print(f"       RESULT: {ns_np / ns_pos:.2f}x Speedup vs NumPy overhead")
 
         # Verification of logic
         self.assertEqual(calls_pos, iterations)
