@@ -458,6 +458,7 @@ python_add_library(
     src/culverin/culverin_handler.c
     src/culverin/culverin_soft_body.c
     src/culverin/culverin_math.cpp
+    src/culverin/culverin_math.c
     src/culverin/culverin_ecs.c
 )
 
