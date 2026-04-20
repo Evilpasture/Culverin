@@ -397,6 +397,9 @@ This method instantiates a high-frequency **Ship Controller** that runs directly
 - **`kd` (float):** The derivative gain (damping) for the stabilizer. Prevents the ship from oscillating or "vibrating" when reaching the upright position.
 - **`throttle_force` (float):** The linear force in Newtons applied when the throttle is active.
 - **`steer_speed` (float):** The target angular velocity in radians per second for turning.
+- **`banking` (float, optional):** Intensity of the "lean-in" effect during turns. Higher values cause the ship to roll more into the steering direction. Defaults to `0.15`.
+- **`lateral_grip` (float, optional):** The lateral traction force used to counter-act sideways sliding. Higher values create a "rail" effect (zero drift); lower values result in sliding/drifting behavior. Defaults to `500.0`.
+- **`linear_drag` (float, optional):** Quadratic drag coefficient. Provides realistic resistance that increases with velocity, helping to enforce a natural terminal velocity. Defaults to `10.0`.
 
 **Thread Safety:**
 - This method flushes the command buffer and acquires the global trampoline lock to register a `StepListener` in Jolt. It should be called during initialization rather than in high-frequency loops.
