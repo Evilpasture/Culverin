@@ -504,7 +504,10 @@ static constexpr size_t PARSER_REGISTRY_SIZE = 128;
     X(IDX_CS_KP, "kp", float, true)                                                                \
     X(IDX_CS_KD, "kd", float, true)                                                                \
     X(IDX_CS_THROTTLE, "throttle_force", float, true)                                              \
-    X(IDX_CS_STEER, "steer_speed", float, true)
+    X(IDX_CS_STEER, "steer_speed", float, true)                                                    \
+    X(IDX_CS_BANKING, "banking", float, false)                                                     \
+    X(IDX_CS_GRIP, "lateral_grip", float, false)                                                   \
+    X(IDX_CS_DRAG, "linear_drag", float, false)
 
 #define SCHEMA_SHIP_INPUT(X)                                                                       \
     X(IDX_SI_FWD, "forward", float, true)                                                          \

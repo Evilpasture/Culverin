@@ -16,27 +16,34 @@ static void JPH_API_CALL Ship_OnStep(void *userData, const JPH_PhysicsStepListen
     // 1. Get current state
     JPH_Vec3 ang_vel;
     JPH_Quat rot;
+    JPH_Vec3 lin_vel;
     JPH_BodyInterface_GetAngularVelocity(bi, self->sled_bid, &ang_vel);
     JPH_BodyInterface_GetRotation(bi, self->sled_bid, &rot);
+    JPH_BodyInterface_GetLinearVelocity(bi, self->sled_bid, &lin_vel);
 
-    // 2. PD Stabilizer (Keep upright)
+    float fwd_input = atomic_load_explicit(&self->input_fwd, memory_order_relaxed);
+    float steer_input = atomic_load_explicit(&self->input_right, memory_order_relaxed);
+
+    // 2. PD Stabilizer & Banking
     JPH_Vec3 up_dir = {0, 1.0f, 0};
     JPH_Vec3 current_up;
     JPH_Quat_Rotate(&rot, &up_dir, &current_up);
 
-    // --- CORRECTED PD MATH ---
-    // Torque around X axis corrects tilt in Z (Pitch)
+    float target_roll_z = -steer_input * self->banking_strength;
+
+    // Torque X corrects Pitch, Torque Z corrects Roll (plus banking target)
     float tx = (-current_up.z * self->kp) - (ang_vel.x * self->kd);
-    // Torque around Z axis corrects tilt in X (Roll)
-    // Note the sign flip here: if ux is negative (tilted left), 
-    // we need negative torque (clockwise) to roll back right.
-    float tz = (current_up.x * self->kp) - (ang_vel.z * self->kd);
+    float tz = ((current_up.x - target_roll_z) * self->kp) - (ang_vel.z * self->kd);
     
-    JPH_Vec3 torque = {tx, 0.0f, tz};
+    // 3. Torque Steering (Yaw)
+    float current_yaw_vel = ang_vel.y;
+    float target_yaw_vel = steer_input * self->steer_speed;
+    float ty = (target_yaw_vel - current_yaw_vel) * (self->kp * 0.5f);
+
+    JPH_Vec3 torque = {tx, ty, tz};
     JPH_BodyInterface_AddTorque(bi, self->sled_bid, &torque);
 
-    // 3. Forward Movement (Throttle)
-    float fwd_input = atomic_load_explicit(&self->input_fwd, memory_order_relaxed);
+    // 4. Forward Movement (Throttle)
     if (fabsf(fwd_input) > 0.01f) {
         JPH_Vec3 fwd_dir = {0, 0, 1.0f};
         JPH_Vec3 current_fwd;
@@ -50,12 +57,35 @@ static void JPH_API_CALL Ship_OnStep(void *userData, const JPH_PhysicsStepListen
         JPH_BodyInterface_AddForce(bi, self->sled_bid, &force);
     }
 
-    // 4. Steering (High-speed angular velocity clamp)
-    float steer_input = atomic_load_explicit(&self->input_right, memory_order_relaxed);
-    // Always apply steering velocity to the Y axis to override drift, 
-    // while preserving the stabilizer's damping on X and Z.
-    JPH_Vec3 new_avel = {ang_vel.x, steer_input * self->steer_speed, ang_vel.z};
-    JPH_BodyInterface_SetAngularVelocity(bi, self->sled_bid, &new_avel);
+    // 5. Lateral Friction (Anti-Drift / Keel effect)
+    JPH_Vec3 right_dir = {1.0f, 0, 0};
+    JPH_Vec3 current_right;
+    JPH_Quat_Rotate(&rot, &right_dir, &current_right);
+
+    float lateral_speed = (lin_vel.x * current_right.x) + (lin_vel.y * current_right.y) + (lin_vel.z * current_right.z);
+    float lateral_force_mag = -lateral_speed * self->lateral_grip;
+    
+    if (fabsf(lateral_force_mag) > 0.01f) {
+        JPH_Vec3 side_force = {
+            current_right.x * lateral_force_mag,
+            current_right.y * lateral_force_mag,
+            current_right.z * lateral_force_mag
+        };
+        JPH_BodyInterface_AddForce(bi, self->sled_bid, &side_force);
+    }
+
+    // 6. Quadratic Drag (Speed Limiter)
+    float speed_sq = (lin_vel.x * lin_vel.x) + (lin_vel.y * lin_vel.y) + (lin_vel.z * lin_vel.z);
+    if (speed_sq > 0.01f) {
+        float speed = sqrtf(speed_sq);
+        float drag_mag = speed_sq * self->linear_drag;
+        JPH_Vec3 drag_force = {
+            -(lin_vel.x / speed) * drag_mag,
+            -(lin_vel.y / speed) * drag_mag,
+            -(lin_vel.z / speed) * drag_mag
+        };
+        JPH_BodyInterface_AddForce(bi, self->sled_bid, &drag_force);
+    }
 }
 
 static const JPH_PhysicsStepListener_Procs ship_listener_procs = {
@@ -72,13 +102,17 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ship(PhysicsWorldObject 
 
     uint64_t sled_raw = 0;
     float kp = 0.0f, kd = 0.0f, throttle = 0.0f, steer = 0.0f;
+    float banking = 0.15f, grip = 500.0f, drag = 10.0f;
 
     void *targets[CreateShip_COUNT] = {
         [IDX_CS_SLED]     = (void *)&sled_raw,
         [IDX_CS_KP]       = (void *)&kp,
         [IDX_CS_KD]       = (void *)&kd,
         [IDX_CS_THROTTLE] = (void *)&throttle,
-        [IDX_CS_STEER]    = (void *)&steer
+        [IDX_CS_STEER]    = (void *)&steer,
+        [IDX_CS_BANKING]  = (void *)&banking,
+        [IDX_CS_GRIP]     = (void *)&grip,
+        [IDX_CS_DRAG]     = (void *)&drag
     };
 
     if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.CreateShipParser, targets)) {
@@ -108,6 +142,9 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ship(PhysicsWorldObject 
     obj->kd = kd;
     obj->throttle_force = throttle;
     obj->steer_speed = steer;
+    obj->banking_strength = banking;
+    obj->lateral_grip = grip;
+    obj->linear_drag = drag;
 
     // Use global trampoline lock to register listener
     NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);

@@ -97,22 +97,23 @@ def test_ship_throttle(ship_setup: tuple[culverin.PhysicsWorld, int, culverin.Sh
     assert vel_end[2] > 1.0
 
 def test_ship_steering(ship_setup: tuple[culverin.PhysicsWorld, int, culverin.Ship]):
-    """Verify steering directly modifies angular velocity Y."""
+    """Verify steering torque moves angular velocity Y towards target."""
     world, sled, controller = ship_setup
     
-    # Set steer left
+    # Set steer right
     controller.set_input(forward=0.0, right=1.0)
     
-    world.step(1/60.0)
+    # Give it more time to ramp up since it's now Torque-based, not velocity-override
+    for _ in range(10):
+        world.step(1/60.0)
     
-    # Check angular velocity from stats
-    # stats: (pos, rot, vel) -> we need angular velocity separately or via custom C getter
-    # For now, use the world.angular_velocities buffer directly
     idx = world.get_index(sled)
+    # Access the property .angular_velocities, not a method
     avel_buffer = np.frombuffer(world.angular_velocities, dtype=np.float32).reshape(-1, 4)
     
-    # Current angular velocity Y should match our steer_speed config (1.0)
-    assert pytest.approx(avel_buffer[idx][1], abs=0.01) == 1.0
+    # Verify we are moving towards the target (1.0)
+    current_yaw_vel = avel_buffer[idx][1]
+    assert current_yaw_vel > 0.1, "Torque steering should have started rotating the ship"
 
 def test_ship_deallocation_safety(world: culverin.PhysicsWorld):
     """
@@ -155,3 +156,156 @@ def test_ship_multi_interpreter_isolation(world: culverin.PhysicsWorld):
     
     assert v1[2] > 0.5
     assert v2[2] == 0.0
+
+def test_ship_banking_behavior(ship_setup: tuple[culverin.PhysicsWorld, int, culverin.Ship]):
+    """Verify the ship rolls (banks) into its turns with sufficient gain."""
+    world, sled, _ = ship_setup
+    
+    # FIX: Use 4M gain like the fixture, otherwise 10k kg mass won't move
+    bank_controller = world.create_ship(
+        sled=sled, 
+        kp=4000000.0, kd=100000.0, 
+        throttle_force=0,
+        steer_speed=5.0, 
+        banking=0.5 
+    )
+    
+    bank_controller.set_input(forward=0.0, right=1.0)
+    
+    for _ in range(20): # 20 frames for physical response
+        world.step(1/60.0)
+        
+    if (stats := world.get_body_stats(sled)):
+        _, rot, _ = stats
+        # Ensure banking torque has created a measurable tilt
+        assert abs(rot[2]) > 0.01, f"Ship should have tilted. Got {abs(rot[2])}"
+
+def test_ship_lateral_grip_performance(world: culverin.PhysicsWorld):
+    """Verify that lateral grip significantly reduces sideways sliding."""
+    s1 = world.create_body(pos=(-5, 2, 0), mass=1000, motion=culverin.MOTION_DYNAMIC)
+    s2 = world.create_body(pos=(5, 2, 0), mass=1000, motion=culverin.MOTION_DYNAMIC)
+    world.step(0)
+
+    # 1. Use 1,000 grip: This provides resistance without solver oscillation (chatter)
+    c_ice = world.create_ship(s1, 1000000, 10000, 10000, 0.5, lateral_grip=0.0)
+    c_rail = world.create_ship(s2, 1000000, 10000, 10000, 0.5, lateral_grip=1000.0)
+    
+    # 2. Steer very gently (0.1) so we don't induce massive centrifugal drift
+    c_ice.set_input(forward=1.0, right=0.1)
+    c_rail.set_input(forward=1.0, right=0.1)
+
+    for _ in range(60):
+        world.step(1/60.0)
+
+    def get_lateral_slip(handle: int):
+        if not (stats := world.get_body_stats(handle)):
+            return 0.0
+        _, rot, vel = stats
+        qx, qy, qz, qw = rot
+        # Right vector = rot * (1, 0, 0)
+        rx = 1 - 2 * (qy**2 + qz**2)
+        ry = 2 * (qx * qy + qz * qw)
+        rz = 2 * (qx * qz - qy * qw)
+        return vel[0] * rx + vel[1] * ry + vel[2] * rz
+
+    slip_ice = abs(get_lateral_slip(s1))
+    slip_rail = abs(get_lateral_slip(s2))
+    # VALIDATION
+    assert slip_ice > 0.05, f"Ice ship should be sliding. Got {slip_ice}"
+    
+    # The 'Rail' ship should be significantly better than the Ice ship
+    # A ratio < 0.8 is a 20% reduction, which is scientifically verifiable 
+    # and physically stable.
+    reduction_ratio = slip_rail / max(slip_ice, 0.001)
+    assert reduction_ratio < 0.8, f"Grip failed to reduce slip. Rail: {slip_rail}, Ice: {slip_ice}, Ratio: {reduction_ratio}"
+
+def test_ship_terminal_velocity(ship_setup: tuple[culverin.PhysicsWorld, int, culverin.Ship]):
+    """Verify that quadratic drag results in a terminal velocity."""
+    world, sled, _ = ship_setup
+    
+    # Create a ship with very high drag
+    drag_ship = world.create_ship(
+        sled=sled, kp=1000, kd=100, 
+        throttle_force=100000.0, steer_speed=0, 
+        linear_drag=100.0 # Heavy resistance
+    )
+    
+    drag_ship.set_input(forward=1.0, right=0.0)
+    
+    velocities = []
+    # Run for 2 seconds
+    for _ in range(120):
+        world.step(1/60.0)
+        if (v := world.get_velocity(sled)):
+            velocities.append(v[2])
+            
+    # The acceleration should decrease over time
+    accel_start = velocities[10] - velocities[0]
+    accel_end = velocities[-1] - velocities[-11]
+    
+    assert accel_end < accel_start, "Drag should reduce acceleration over time"
+    # Velocity should plateau (terminal velocity)
+    assert velocities[-1] < 50.0, "Drag should prevent infinite acceleration"
+
+def test_ship_destruction_mid_step(world: culverin.PhysicsWorld):
+    """Verify that destroying a sled doesn't cause the Ship listener to segfault."""
+    sled = world.create_body(pos=(0, 0, 0))
+    ship = world.create_ship(sled, 100, 10, 1000, 1.0)
+    
+    world.step(1/60.0)
+    
+    # Destroy the body that the ship is controlling
+    world.destroy_body(sled)
+    
+    # The next step should handle the sled_bid being invalid or the body being gone
+    # without a C-level null pointer dereference.
+    try:
+        for _ in range(5):
+            world.step(1/60.0)
+            ship.set_input(forward=1.0, right=1.0)
+    except Exception as e:
+        pytest.fail(f"Ship controller failed to handle body destruction: {e}")
+
+def test_ship_parameter_ranges(world: culverin.PhysicsWorld):
+    """Test that extreme/unusual parameters don't explode the solver."""
+    sled = world.create_body(pos=(0, 0, 0), mass=100)
+    
+    # Massive KP/KD or negative drag (should be clamped or handled)
+    # Note: If C code doesn't clamp, this tests stability
+    crazy_ship = world.create_ship(
+        sled=sled, 
+        kp=99999999.0, 
+        kd=0.1, 
+        throttle_force=1e10, 
+        steer_speed=100.0,
+        banking=10.0,
+        lateral_grip=1e10,
+        linear_drag=0.0
+    )
+    
+    crazy_ship.set_input(forward=1.0, right=1.0)
+    
+    # If it doesn't crash or result in NaN, it's 'stable' enough
+    for _ in range(10):
+        world.step(1/60.0)
+        
+    if (stats := world.get_body_stats(sled)):
+        pos, _, _ = stats
+        # Check for NaN/Inf (using numpy or math)
+        assert np.isfinite(pos).all(), "Ship parameters caused numerical explosion"
+
+def test_ship_input_atomic_stability(ship_setup: tuple[culverin.PhysicsWorld, int, culverin.Ship]):
+    """Stress test the atomic input setters with rapid changes."""
+    world, _, controller = ship_setup
+    
+    # Rapidly toggle inputs
+    for i in range(100):
+        val = (i % 2) * 2.0 - 1.0 # Toggles between -1 and 1
+        controller.set_input(forward=val, right=-val)
+        # Step every few toggles
+        if i % 10 == 0:
+            world.step(1/60.0)
+            
+    # Ensure world is still ticking
+    world.step(1/60.0)
+    assert world.time > 0

@@ -336,6 +336,9 @@ class PhysicsWorld:
         kd: float,
         throttle_force: float,
         steer_speed: float,
+        banking: float = 0.15,
+        lateral_grip: float = 500.0,
+        linear_drag: float = 10.0,
     ) -> Ship: ...
 
     # --- Destruction ---
