@@ -4720,6 +4720,7 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
         stitch_spec(&SoftBodySharedSettings_spec, "SoftBodySharedSettings");
         stitch_spec(&Registry_spec, "Registry");
         stitch_spec(&MathService_spec, "MathService");
+        stitch_spec(&Ship_spec, "Ship");
 
         // Gated Handler Registration
         JPH_SetTraceHandler(culv_jph_trace);
