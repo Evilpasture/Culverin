@@ -186,13 +186,14 @@ def test_ship_lateral_grip_performance(world: culverin.PhysicsWorld):
     s2 = world.create_body(pos=(5, 2, 0), mass=1000, motion=culverin.MOTION_DYNAMIC)
     world.step(0)
 
-    # 1. Use 1,000 grip: This provides resistance without solver oscillation (chatter)
-    c_ice = world.create_ship(s1, 1000000, 10000, 10000, 0.5, lateral_grip=0.0)
-    c_rail = world.create_ship(s2, 1000000, 10000, 10000, 0.5, lateral_grip=1000.0)
+    # 1. Crank the grip to 100,000.0. 
+    # With 1000kg mass, this provides strong correction without creating solver jitter.
+    c_ice = world.create_ship(s1, 1000000, 10000, 5000, 0.5, lateral_grip=0.0)
+    c_rail = world.create_ship(s2, 1000000, 10000, 5000, 0.5, lateral_grip=100000.0)
     
-    # 2. Steer very gently (0.1) so we don't induce massive centrifugal drift
-    c_ice.set_input(forward=1.0, right=0.1)
-    c_rail.set_input(forward=1.0, right=0.1)
+    # 2. Use very light steering (0.05) to isolate the lateral drift correction
+    c_ice.set_input(forward=1.0, right=0.05)
+    c_rail.set_input(forward=1.0, right=0.05)
 
     for _ in range(60):
         world.step(1/60.0)
@@ -202,22 +203,22 @@ def test_ship_lateral_grip_performance(world: culverin.PhysicsWorld):
             return 0.0
         _, rot, vel = stats
         qx, qy, qz, qw = rot
-        # Right vector = rot * (1, 0, 0)
+        # Calculate Local Right vector (X-axis of rotation)
         rx = 1 - 2 * (qy**2 + qz**2)
         ry = 2 * (qx * qy + qz * qw)
         rz = 2 * (qx * qz - qy * qw)
+        # Dot product with velocity
         return vel[0] * rx + vel[1] * ry + vel[2] * rz
 
     slip_ice = abs(get_lateral_slip(s1))
     slip_rail = abs(get_lateral_slip(s2))
+
     # VALIDATION
     assert slip_ice > 0.05, f"Ice ship should be sliding. Got {slip_ice}"
     
-    # The 'Rail' ship should be significantly better than the Ice ship
-    # A ratio < 0.8 is a 20% reduction, which is scientifically verifiable 
-    # and physically stable.
-    reduction_ratio = slip_rail / max(slip_ice, 0.001)
-    assert reduction_ratio < 0.8, f"Grip failed to reduce slip. Rail: {slip_rail}, Ice: {slip_ice}, Ratio: {reduction_ratio}"
+    # Assert Rail ship has > 90% reduction in slip
+    reduction = slip_rail / max(slip_ice, 0.001)
+    assert reduction < 0.1, f"Grip failed to reduce slip sufficiently. Ratio: {reduction:.4f}. Rail: {slip_rail}, Ice: {slip_ice}"
 
 def test_ship_terminal_velocity(ship_setup: tuple[culverin.PhysicsWorld, int, culverin.Ship]):
     """Verify that quadratic drag results in a terminal velocity."""
