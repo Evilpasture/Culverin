@@ -42,7 +42,7 @@
 
 #define GEN_SPEC(ID, NAME, TYPE, REQ)                                                              \
     [ID] = {.name       = (NAME),                                                                  \
-            .type_name  = #TYPE,                                                                   \
+            .type_name  = FP_GET_TYPE_NAME((TYPE){}),                                                                   \
             .required   = (bool)(REQ),                                                             \
             .type_guard = GET_TYPE_GUARD((TYPE){}),                                                \
             .convert    = FP_GET_CONVERTER((TYPE){})},

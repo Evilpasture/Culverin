@@ -199,8 +199,7 @@ jobs:
 
           CIBW_TEST_REQUIRES: numpy psutil pytest
           CIBW_TEST_COMMAND: |
-            pytest {project}/tests/test_core.py
-            pytest {project}/tests/test_ecs.py
+            pytest {project}/tests/
             echo "All tests completed!"
 
       - name: Build Experimental Wheels (3.15)

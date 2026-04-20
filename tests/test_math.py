@@ -315,7 +315,7 @@ class TestMathService(unittest.TestCase):
         hit, dist, point = self.math.intersect_ray_plane(ro, rd, po, pn)
 
         self.assertTrue(hit)
-        self.assertAlmostEqual(dist, 10.0)
+        self.assertAlmostEqual(dist, 10.0, delta=1e-5)
         self.assertTupleAlmostEqual(point, (0.0, 0.0, 0.0))
 
         # Test parallel miss

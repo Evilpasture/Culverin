@@ -164,6 +164,9 @@ class Vehicle:
     ) -> None: ...
     def set_tank_input(self, left: float, right: float, brake: float = 0.0) -> None: ...
 
+class Ship:
+    def set_input(self, forward: float = 0.0, right: float = 0.0) -> None: ...
+
 class PhysicsWorld:
     # --- Properties (Direct Memory Access) ---
     @property
@@ -325,6 +328,18 @@ class PhysicsWorld:
         self, settings: RagdollSettings, pos: Vec3, rot: Quat = (0, 0, 0, 1)
     ) -> Ragdoll: ...
     def create_ragdoll_settings(self, skeleton: Skeleton) -> RagdollSettings: ...
+
+    def create_ship(
+        self,
+        sled: int,
+        kp: float,
+        kd: float,
+        throttle_force: float,
+        steer_speed: float,
+        banking: float = 0.15,
+        lateral_grip: float = 500.0,
+        linear_drag: float = 10.0,
+    ) -> Ship: ...
 
     # --- Destruction ---
     def destroy_body(self, handle: int) -> None: ...

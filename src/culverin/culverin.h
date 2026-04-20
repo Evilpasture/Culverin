@@ -33,7 +33,7 @@
 #include "culverin_threading.h"
 #include "culverin_tracked_vehicle.h"
 #include "culverin_types.h"
-#include "culverin_math.h"
+#include "culverin_ship.h"
 #include <stddef.h>
 #include <string.h>
 
@@ -339,6 +339,7 @@ typedef struct {
     PyObject *PhysicsWorldType; // Reference to the class
     PyObject *CharacterType;    // Reference to the character class
     PyObject *VehicleType;      // Reference to the vehicle class
+    PyObject *ShipType;
     PyObject *SkeletonType;
     PyObject *RagdollSettingsType;
     PyObject *SoftBodySharedSettingsType;
