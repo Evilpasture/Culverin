@@ -1,8 +1,9 @@
-#include "culverin_filters.h"
-#include "culverin_handler.h"
 #if !defined(_CRT_SECURE_NO_WARNINGS)
 #    define _CRT_SECURE_NO_WARNINGS
 #endif
+
+#include "culverin_filters.h"
+#include "culverin_handler.h"
 #include "culverin.h"
 #include "culverin_arg_indices.h"
 #include "culverin_character.h"
@@ -4246,6 +4247,7 @@ static PyType_Spec PhysicsWorld_spec = {
                      PW_FASTCALL(get_constraint_type),
                      PW_FASTCALL(create_vehicle),
                      PW_FASTCALL(create_tracked_vehicle),
+                     PW_FASTCALL(create_ship),
                      PW_FASTCALL(create_ragdoll_settings),
                      PW_FASTCALL(create_ragdoll),
                      PW_FASTCALL(create_heightfield),
@@ -4564,6 +4566,7 @@ static int init_types(PyObject *m, CulverinState *st) {
         {.spec = (&PhysicsWorld_spec), .slot = &st->PhysicsWorldType, .name = "PhysicsWorld"},
         {.spec = (&Character_spec), .slot = &st->CharacterType, .name = "Character"},
         {.spec = (&Vehicle_spec), .slot = &st->VehicleType, .name = "Vehicle"},
+        {.spec = (&Ship_spec), .slot = &st->ShipType, .name = "Ship"},
         {.spec = (&RagdollSettings_spec),
          .slot = &st->RagdollSettingsType,
          .name = "RagdollSettings"},
