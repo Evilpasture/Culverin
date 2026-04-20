@@ -382,6 +382,26 @@ Unlike rigid bodies, soft bodies do not have a fixed shape; they are composed of
 - **Two-Tier Tracking:** Culverin tracks the Center of Mass in the global `positions` buffer, while individual vertices are synced to a specialized shadow buffer.
 - **Structural Integrity:** Soft bodies are numerically sensitive. For high-speed collisions, it is recommended to use sub-stepping (e.g., calling `world.step()` 4 times per frame with `dt/4`).
 
+### create_ship(...)
+
+Creates a specialized native C-controller for buoyant vessels. 
+
+This method instantiates a high-frequency **Ship Controller** that runs directly within the Jolt Physics solver's sub-step loop. This eliminates the one-frame latency found in Python-based stabilizers, providing rock-solid stability for heavy ships even in turbulent water.
+
+**Returns:**
+- **`ship` (Ship):** A native control object for the ship instance.
+
+**Arguments:**
+- **`sled` (int):** The generational handle of the rigid body that acts as the ship's physical core (typically a compound body containing the hull volume and ballast).
+- **`kp` (float):** The proportional gain for the upright stabilizer. Higher values make the ship snap back to upright faster.
+- **`kd` (float):** The derivative gain (damping) for the stabilizer. Prevents the ship from oscillating or "vibrating" when reaching the upright position.
+- **`throttle_force` (float):** The linear force in Newtons applied when the throttle is active.
+- **`steer_speed` (float):** The target angular velocity in radians per second for turning.
+
+**Thread Safety:**
+- This method flushes the command buffer and acquires the global trampoline lock to register a `StepListener` in Jolt. It should be called during initialization rather than in high-frequency loops.
+
+
 ### get_soft_body_vertices(...)
 
 Returns a zero-copy `memoryview` pointing to the real-time, world-space positions of every vertex in a simulated soft body.
@@ -2359,3 +2379,20 @@ Extracts the rotation component from a 4x4 matrix as a quaternion.
 - **`mat` (tuple):** A 16-element matrix.
 **Returns:**
 - **`quaternion` (tuple):** A 4-element quaternion (x, y, z, w).
+
+
+## class Ship
+
+### set_input(...)
+
+Updates the driving commands for the native ship controller.
+
+**Arguments:**
+- **`forward` (float):** Acceleration intent ranging from `-1.0` (Full Reverse) to `1.0` (Full Forward).
+- **`right` (float):** Steering intent ranging from `-1.0` (Hard Left) to `1.0` (Hard Right).
+
+**Operational Features:**
+- **Zero-Latency Atomics:** Unlike standard body methods, `set_input` is 100% lock-free. It writes directly to internal atomic variables, bypassing the `shadow_lock` and `is_stepping` checks entirely.
+- **High-Frequency Execution:** The inputs are picked up by the ship's native **OnStep Listener** which runs at the solver's frequency. This ensures that movement and stabilization forces are always perfectly synchronized with the simulation's current state.
+- **Drivetrain Logic:** Steering directly overrides the Y-axis angular velocity while maintaining the PD-controller's damping on the X and Z axes to keep the ship stable during turns.
+- **Automatic Activation:** Setting a non-zero input automatically wakes the ship's body in Jolt if it has fallen asleep.
