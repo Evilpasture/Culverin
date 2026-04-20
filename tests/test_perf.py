@@ -62,7 +62,7 @@ class TestPerformanceRegression(unittest.TestCase):
 
     def test_batch_vs_iterative_creation(self) -> None:
         """Ensure C-level batch creation remains significantly faster than Python loops."""
-        body_count = 5000
+        body_count = 10000
         positions = np.random.uniform(-100, 100, (body_count, 3)).astype(np.float32).tolist()
         sizes = [[1.0, 1.0, 1.0]] * body_count
 
