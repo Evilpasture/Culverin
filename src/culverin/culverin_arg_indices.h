@@ -475,6 +475,30 @@ static constexpr size_t PARSER_REGISTRY_SIZE = 128;
     X(IDX_MUP_MVP, "mvp", PyObject *, true)                                                        \
     X(IDX_MUP_VP, "viewport", PyObject *, true)
 
+#define SCHEMA_MATH_VEC_PAIR(X)                                                                    \
+    X(IDX_MVP_V1, "v1", PyObject *, true)                                                          \
+    X(IDX_MVP_V2, "v2", PyObject *, true)
+
+#define SCHEMA_MATH_RAY_PLANE(X)                                                                   \
+    X(IDX_RP_RO, "ray_origin", PyObject *, true)                                                   \
+    X(IDX_RP_RD, "ray_dir", PyObject *, true)                                                      \
+    X(IDX_RP_PO, "plane_pos", PyObject *, true)                                                    \
+    X(IDX_RP_PN, "plane_norm", PyObject *, true)
+
+#define SCHEMA_MATH_AXIS_ANGLE(X)                                                                  \
+    X(IDX_MAA_AXIS, "axis", PyObject *, true)                                                      \
+    X(IDX_MAA_ANGLE, "angle", float, true)
+
+#define SCHEMA_MATH_DIST_BATCH(X)                                                                  \
+    X(IDX_MDB_VECS_A, "vecs_a", PyObject *, true)                                                  \
+    X(IDX_MDB_VECS_B, "vecs_b", PyObject *, true)
+
+#define SCHEMA_MATH_VEC_OP(X) X(IDX_MVO_V, "v", PyObject *, true)
+
+#define SCHEMA_MATH_REFLECT(X)                                                                     \
+    X(IDX_MRF_V, "v", PyObject *, true)                                                            \
+    X(IDX_MRF_N, "normal", PyObject *, true)
+
 #define SCHEMA_STRESS_TEST(X)                                                                      \
     X(IDX_0, "a0", uint64_t, false)                                                                \
     X(IDX_1, "a1", uint64_t, false)                                                                \
@@ -506,20 +530,24 @@ static constexpr size_t PARSER_REGISTRY_SIZE = 128;
     X(IDX_27, "a27", uint64_t, false)                                                              \
     X(IDX_28, "a28", uint64_t, false)                                                              \
     X(IDX_29, "a29", uint64_t, false)                                                              \
-    X(IDX_30, "a30", uint64_t, false) X(IDX_31, "a31", uint64_t, false)                            \
-        X(IDX_32, "a32", uint64_t, false) X(IDX_33, "a33", uint64_t, false)                        \
-            X(IDX_34, "a34", uint64_t, false) X(IDX_35, "a35", uint64_t, false)                    \
-                X(IDX_36, "a36", uint64_t, false) X(IDX_37, "a37", uint64_t, 0)                    \
-                    X(IDX_38, "a38", uint64_t, false) X(IDX_39, "a39", uint64_t, false)            \
-                        X(IDX_40, "a40", uint64_t, false) X(IDX_41, "a41", uint64_t, 0) X(         \
-                            IDX_42, "a42", uint64_t, false) X(IDX_43, "a43", uint64_t, false)      \
-                            X(IDX_44, "a44", uint64_t, false) X(IDX_45, "a45", uint64_t, 0) X(     \
-                                IDX_46, "a46", uint64_t, false) X(IDX_47, "a47", uint64_t, 0)      \
-                                X(IDX_48, "a48", uint64_t, 0) X(IDX_49, "a49", uint64_t, 0) X(     \
-                                    IDX_50, "a50", uint64_t, 0) X(IDX_51, "a51", uint64_t, false)  \
-                                    X(IDX_52, "a52", uint64_t, 0) X(IDX_53, "a53", uint64_t, 0) X( \
-                                        IDX_54, "a54", uint64_t, 0) X(IDX_55, "a55", uint64_t, 0)  \
-                                        X(IDX_56, "a56", uint64_t, false)                          \
+    X(IDX_30, "a30", uint64_t, false)                                                              \
+    X(IDX_31, "a31", uint64_t, false)                                                              \
+    X(IDX_32, "a32", uint64_t, false)                                                              \
+    X(IDX_33, "a33", uint64_t, false)                                                              \
+    X(IDX_34, "a34", uint64_t, false)                                                              \
+    X(IDX_35, "a35", uint64_t, false)                                                              \
+    X(IDX_36, "a36", uint64_t, false)                                                              \
+    X(IDX_37, "a37", uint64_t, 0) X(IDX_38, "a38", uint64_t, false)                                \
+        X(IDX_39, "a39", uint64_t, false) X(IDX_40, "a40", uint64_t, false)                        \
+            X(IDX_41, "a41", uint64_t, 0) X(IDX_42, "a42", uint64_t, false)                        \
+                X(IDX_43, "a43", uint64_t, false) X(IDX_44, "a44", uint64_t, false)                \
+                    X(IDX_45, "a45", uint64_t, 0) X(IDX_46, "a46", uint64_t, false)                \
+                        X(IDX_47, "a47", uint64_t, 0) X(IDX_48, "a48", uint64_t, 0)                \
+                            X(IDX_49, "a49", uint64_t, 0) X(IDX_50, "a50", uint64_t, 0)            \
+                                X(IDX_51, "a51", uint64_t, false) X(IDX_52, "a52", uint64_t, 0)    \
+                                    X(IDX_53, "a53", uint64_t, 0) X(IDX_54, "a54", uint64_t, 0)    \
+                                        X(IDX_55, "a55", uint64_t, 0) X(IDX_56, "a56", uint64_t,   \
+                                                                        false)                     \
                                             X(IDX_57, "a57", uint64_t, 0) X(IDX_58, "a58",         \
                                                                             uint64_t, false)       \
                                                 X(IDX_59, "a59", uint64_t, false)                  \
@@ -622,6 +650,12 @@ DEFINE_INDEX_GROUP(MathQuatVecBatch, SCHEMA_MATH_QUAT_VEC_BATCH)
 DEFINE_INDEX_GROUP(MathQuatOp, SCHEMA_MATH_QUAT_OP)
 DEFINE_INDEX_GROUP(MathProject, SCHEMA_MATH_PROJECT)
 DEFINE_INDEX_GROUP(MathUnproject, SCHEMA_MATH_UNPROJECT)
+DEFINE_INDEX_GROUP(MathVecPair, SCHEMA_MATH_VEC_PAIR)
+DEFINE_INDEX_GROUP(MathRayPlane, SCHEMA_MATH_RAY_PLANE)
+DEFINE_INDEX_GROUP(MathAxisAngle, SCHEMA_MATH_AXIS_ANGLE)
+DEFINE_INDEX_GROUP(MathDistBatch, SCHEMA_MATH_DIST_BATCH)
+DEFINE_INDEX_GROUP(MathVecOp, SCHEMA_MATH_VEC_OP)
+DEFINE_INDEX_GROUP(MathReflect, SCHEMA_MATH_REFLECT)
 DEFINE_INDEX_GROUP(StressTest, SCHEMA_STRESS_TEST)
 
 #define FOR_ALL_PARSERS(X)                                                                         \
@@ -718,7 +752,13 @@ DEFINE_INDEX_GROUP(StressTest, SCHEMA_STRESS_TEST)
     X(MathQuatVecBatch, MathQuatVecBatch, SCHEMA_MATH_QUAT_VEC_BATCH)                              \
     X(MathQuatOp, MathQuatOp, SCHEMA_MATH_QUAT_OP)                                                 \
     X(MathProject, MathProject, SCHEMA_MATH_PROJECT)                                               \
-    X(MathUnproject, MathUnproject, SCHEMA_MATH_UNPROJECT)
+    X(MathUnproject, MathUnproject, SCHEMA_MATH_UNPROJECT)                                         \
+    X(MathVecPair, MathVecPair, SCHEMA_MATH_VEC_PAIR)                                              \
+    X(MathRayPlane, MathRayPlane, SCHEMA_MATH_RAY_PLANE)                                           \
+    X(MathAxisAngle, MathAxisAngle, SCHEMA_MATH_AXIS_ANGLE)                                        \
+    X(MathDistBatch, MathDistBatch, SCHEMA_MATH_DIST_BATCH)                                        \
+    X(MathVecOp, MathVecOp, SCHEMA_MATH_VEC_OP)                                                    \
+    X(MathReflect, MathReflect, SCHEMA_MATH_REFLECT)
 
 #define MAP_TO_DECLARE(P, G, S) DECLARE_PARSER(P, G)
 
