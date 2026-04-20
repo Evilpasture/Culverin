@@ -1,6 +1,5 @@
 import pytest
 import culverin
-import math
 import numpy as np
 
 # --- FIXTURES ---
@@ -11,7 +10,7 @@ def world():
     return culverin.PhysicsWorld(settings={"max_bodies": 100})
 
 @pytest.fixture
-def ship_setup(world):
+def ship_setup(world: culverin.PhysicsWorld) -> tuple[culverin.PhysicsWorld, int, culverin.Ship]:
     """Creates a heavy sled and a native C ship controller."""
     sled = world.create_body(
         pos=(0, 10, 0), 
@@ -35,13 +34,13 @@ def ship_setup(world):
 
 # --- TESTS ---
 
-def test_ship_creation(ship_setup):
+def test_ship_creation(ship_setup: tuple[culverin.PhysicsWorld, int, culverin.Ship]):
     """Verify ship is created and carries the correct handle."""
     world, sled, controller = ship_setup
     assert controller is not None
     assert world.is_alive(sled)
 
-def test_ship_invalid_handle(world):
+def test_ship_invalid_handle(world: culverin.PhysicsWorld):
     """Ensure passing a bogus handle raises ValueError."""
     with pytest.raises(ValueError, match="Invalid sled handle"):
         world.create_ship(
@@ -49,28 +48,35 @@ def test_ship_invalid_handle(world):
             kp=1.0, kd=1.0, throttle_force=1.0, steer_speed=1.0
         )
 
-def test_ship_stabilization(ship_setup):
+def test_ship_stabilization(ship_setup: tuple[culverin.PhysicsWorld, int, culverin.Ship]):
     """Verify that the native C PD loop pulls the ship back to upright."""
-    world, sled, controller = ship_setup
+    world, sled, _controller = ship_setup
     
     # Force a 45 degree tilt
     world.set_rotation(sled, 0, 0, 0.382, 0.923)
     world.step(0)
     
-    _, rot_start, _ = world.get_body_stats(sled)
+    stats = world.get_body_stats(sled)
+    assert stats is not None, f"Sled {sled} should have valid body stats"
+
+    # The linter now knows 'stats' is not None and can be unpacked safely
+    _, rot_start, _ = stats
     
     # Give the ship 1 full second (60 frames) to stabilize
     for _ in range(60):
         world.step(1/60.0)
         
-    _, rot_end, _ = world.get_body_stats(sled)
+    stats_end = world.get_body_stats(sled)
+    assert stats_end is not None
+
+    _, rot_end, _ = stats_end
     
     # The Z component (roll) should have significantly decreased
     assert abs(rot_end[2]) < abs(rot_start[2])
     # With 4M gain and 60 frames, it should easily be under 0.1
     assert abs(rot_end[2]) < 0.1
 
-def test_ship_throttle(ship_setup):
+def test_ship_throttle(ship_setup: tuple[culverin.PhysicsWorld, int, culverin.Ship]):
     """Verify C code applies forward force when input is set."""
     world, sled, controller = ship_setup
     
@@ -90,7 +96,7 @@ def test_ship_throttle(ship_setup):
     # Ship should be moving forward (Z axis)
     assert vel_end[2] > 1.0
 
-def test_ship_steering(ship_setup):
+def test_ship_steering(ship_setup: tuple[culverin.PhysicsWorld, int, culverin.Ship]):
     """Verify steering directly modifies angular velocity Y."""
     world, sled, controller = ship_setup
     
@@ -108,7 +114,7 @@ def test_ship_steering(ship_setup):
     # Current angular velocity Y should match our steer_speed config (1.0)
     assert pytest.approx(avel_buffer[idx][1], abs=0.01) == 1.0
 
-def test_ship_deallocation_safety(world):
+def test_ship_deallocation_safety(world: culverin.PhysicsWorld):
     """
     Critical Test: Ensure deleting the Python object removes the Jolt listener.
     If this fails, the world.step() will call a dangling pointer and segfault.
@@ -128,7 +134,7 @@ def test_ship_deallocation_safety(world):
     except Exception as e:
         pytest.fail(f"World step crashed after ship deletion: {e}")
 
-def test_ship_multi_interpreter_isolation(world):
+def test_ship_multi_interpreter_isolation(world: culverin.PhysicsWorld):
     """Tests if multiple ships can exist without clobbering each other's inputs."""
     s1_sled = world.create_body(pos=(-10, 10, 0), mass=1000)
     s2_sled = world.create_body(pos=(10, 10, 0), mass=1000)
@@ -144,8 +150,8 @@ def test_ship_multi_interpreter_isolation(world):
     for _ in range(10):
         world.step(1/60.0)
         
-    v1 = world.get_velocity(s1_sled)
-    v2 = world.get_velocity(s2_sled)
+    assert(v1 := world.get_velocity(s1_sled))
+    assert(v2 := world.get_velocity(s2_sled))
     
     assert v1[2] > 0.5
     assert v2[2] == 0.0
