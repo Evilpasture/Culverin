@@ -286,4 +286,154 @@ void culverin_math_cull_aabb_batch(const float *__restrict vp_mat,
     }
 }
 
+void culverin_math_vec3_normalize_batch(const float *__restrict in, size_t count, float *__restrict out) {
+    for (size_t i = 0; i < count; ++i) {
+        // Load from float[3] into SIMD register
+        JPH::Vec3 v(in[i * 3 + 0], in[i * 3 + 1], in[i * 3 + 2]);
+        
+        float len_sq = v.LengthSq();
+        if (len_sq > 1e-12f) {
+            // Jolt uses Reciprocal Square Root (RSQRT) for normalization
+            v = v / std::sqrt(len_sq); 
+        } else {
+            v = JPH::Vec3::sZero();
+        }
+
+        // Store back to float[3]
+        out[i * 3 + 0] = v.GetX();
+        out[i * 3 + 1] = v.GetY();
+        out[i * 3 + 2] = v.GetZ();
+    }
+}
+
+void culverin_math_quat_from_euler(float x, float y, float z, float *__restrict out) {
+    // Jolt uses sEulerAngles for (x, y, z) radian inputs
+    // Order: Rotation around Y, then X, then Z
+    JPH::Quat q = JPH::Quat::sEulerAngles(JPH::Vec3(x, y, z));
+    
+    // Store back to out[4] as (x, y, z, w)
+    q.GetXYZW().StoreFloat4(reinterpret_cast<JPH::Float4 *>(out));
+}
+
+void culverin_math_quat_to_euler(const float *__restrict in_q, float *__restrict out_euler) {
+    // Load components into Jolt Quat
+    JPH::Quat q(in_q[0], in_q[1], in_q[2], in_q[3]);
+    
+    // GetEulerAngles returns Vec3(x, y, z) in radians
+    JPH::Vec3 euler = q.GetEulerAngles();
+    
+    out_euler[0] = euler.GetX();
+    out_euler[1] = euler.GetY();
+    out_euler[2] = euler.GetZ();
+}
+
+void culverin_math_quat_slerp(const float *__restrict q1, const float *__restrict q2, float t, float *__restrict out) {
+    // Jolt Quat stores as [x, y, z, w]
+    JPH::Quat a(q1[0], q1[1], q1[2], q1[3]);
+    JPH::Quat b(q2[0], q2[1], q2[2], q2[3]);
+    
+    // Corrected: Jolt uses uppercase SLERP
+    JPH::Quat res = a.SLERP(b, t);
+    
+    res.GetXYZW().StoreFloat4(reinterpret_cast<JPH::Float4 *>(out));
+}
+
+void culverin_math_quat_mul(const float *__restrict a, const float *__restrict b, float *__restrict out) {
+    JPH::Quat qa(a[0], a[1], a[2], a[3]);
+    JPH::Quat qb(b[0], b[1], b[2], b[3]);
+    
+    // Combine rotations: Apply b then a
+    JPH::Quat res = qa * qb;
+    
+    res.GetXYZW().StoreFloat4(reinterpret_cast<JPH::Float4 *>(out));
+}
+
+void culverin_math_quat_rotate_vec3(const float *__restrict q, const float *__restrict v, float *__restrict out) {
+    JPH::Quat rotation(q[0], q[1], q[2], q[3]);
+    JPH::Vec3 point(v[0], v[1], v[2]);
+    
+    // Rotate the vector
+    JPH::Vec3 res = rotation * point;
+    
+    out[0] = res.GetX();
+    out[1] = res.GetY();
+    out[2] = res.GetZ();
+}
+
+void culverin_math_quat_rotate_vec3_batch(const float *__restrict q, const float *__restrict vecs, size_t count, float *__restrict out) {
+    // Load the rotation once
+    JPH::Quat rotation(q[0], q[1], q[2], q[3]);
+    
+    for (size_t i = 0; i < count; ++i) {
+        size_t idx = i * 3;
+        JPH::Vec3 v(vecs[idx], vecs[idx + 1], vecs[idx + 2]);
+        
+        // Rotate vector
+        JPH::Vec3 res = rotation * v;
+        
+        out[idx]     = res.GetX();
+        out[idx + 1] = res.GetY();
+        out[idx + 2] = res.GetZ();
+    }
+}
+
+void culverin_math_quat_inverse(const float *__restrict q, float *__restrict out) {
+    JPH::Quat in_q(q[0], q[1], q[2], q[3]);
+    
+    // Calculate the inverse
+    JPH::Quat inv = in_q.Inversed();
+    
+    inv.GetXYZW().StoreFloat4(reinterpret_cast<JPH::Float4 *>(out));
+}
+
+void culverin_math_project(const float *__restrict v, const float *__restrict mvp, const int *__restrict viewport, float *__restrict out) {
+    JPH::Mat44 m = JPH::Mat44::sLoadFloat4x4(reinterpret_cast<const JPH::Float4 *>(mvp));
+    JPH::Vec3 world_pos(v[0], v[1], v[2]);
+    
+    // Transform to Clip Space
+    JPH::Vec4 clip = m * JPH::Vec4(world_pos, 1.0f);
+    
+    float w = clip.GetW();
+    if (std::abs(w) > 1e-6f) {
+        // NDC Space (-1 to 1)
+        float inv_w = 1.0f / w;
+        float ndc_x = clip.GetX() * inv_w;
+        float ndc_y = clip.GetY() * inv_w;
+        float ndc_z = clip.GetZ() * inv_w;
+
+        // Screen Space (Pixels)
+        out[0] = viewport[0] + (viewport[2] * (ndc_x + 1.0f) * 0.5f);
+        out[1] = viewport[1] + (viewport[3] * (1.0f - (ndc_y + 1.0f) * 0.5f)); // Flip Y for Screen space
+        out[2] = ndc_z; // Z is usually preserved for depth sorting
+    } else {
+        out[0] = out[1] = out[2] = 0.0f;
+    }
+}
+
+void culverin_math_unproject(const float *__restrict v, const float *__restrict mvp, const int *__restrict viewport, float *__restrict out) {
+    // 1. Load and Invert the MVP Matrix
+    JPH::Mat44 m = JPH::Mat44::sLoadFloat4x4(reinterpret_cast<const JPH::Float4 *>(mvp));
+    JPH::Mat44 inv_m = m.Inversed();
+
+    // 2. Convert Screen coordinates to NDC (-1 to 1)
+    // v[0] = x, v[1] = y, v[2] = depth (0 to 1)
+    float ndc_x = (v[0] - (float)viewport[0]) / (float)viewport[2] * 2.0f - 1.0f;
+    // Note: Screen Y is usually top-down, so we invert the Y NDC
+    float ndc_y = 1.0f - (v[1] - (float)viewport[1]) / (float)viewport[3] * 2.0f;
+    float ndc_z = v[2] * 2.0f - 1.0f; // Map 0..1 depth to -1..1 NDC
+
+    // 3. Transform to World Space
+    JPH::Vec4 world_pos = inv_m * JPH::Vec4(ndc_x, ndc_y, ndc_z, 1.0f);
+
+    float w = world_pos.GetW();
+    if (std::abs(w) > 1e-6f) {
+        float inv_w = 1.0f / w;
+        out[0] = world_pos.GetX() * inv_w;
+        out[1] = world_pos.GetY() * inv_w;
+        out[2] = world_pos.GetZ() * inv_w;
+    } else {
+        out[0] = out[1] = out[2] = 0.0f;
+    }
+}
+
 } // extern "C"

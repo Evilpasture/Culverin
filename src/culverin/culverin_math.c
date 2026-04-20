@@ -20,6 +20,35 @@ static inline bool unpack_mat44(PyObject *obj, float *out) {
     return (bool)!PyErr_Occurred();
 }
 
+static inline bool unpack_quat(PyObject *obj, float *out) {
+    if (!PyTuple_Check(obj) || PyTuple_GET_SIZE(obj) < 4) {
+        return false;
+    }
+    for (int i = 0; i < 4; ++i) {
+        out[i] = (float)PyFloat_AsDouble(PyTuple_GET_ITEM(obj, i));
+    }
+    return (bool)!PyErr_Occurred();
+}
+
+static inline bool unpack_vec3(PyObject *obj, float *out) {
+    if (!PyTuple_Check(obj) || PyTuple_GET_SIZE(obj) < 3) {
+        return false;
+    }
+    for (int i = 0; i < 3; ++i) {
+        out[i] = (float)PyFloat_AsDouble(PyTuple_GET_ITEM(obj, i));
+    }
+    return (bool)!PyErr_Occurred();
+}
+
+static inline bool unpack_viewport(PyObject *obj, int *out) {
+    if (!PyTuple_Check(obj) || PyTuple_GET_SIZE(obj) < 4)
+        return false;
+    for (int i = 0; i < 4; ++i) {
+        out[i] = (int)PyLong_AsLong(PyTuple_GET_ITEM(obj, i));
+    }
+    return (bool)!PyErr_Occurred();
+}
+
 // ============================================================================
 // FASTPARSE WRAPPERS
 // ============================================================================
@@ -55,9 +84,9 @@ static PyObject *MathHolderObject_get_ortho(MathHolderObject *self, PyObject *co
     float top;
     float near_p;
     float far_p;
-    void *targets[MathOrtho_COUNT] = {
-        [IDX_MO_LEFT] = &left, [IDX_MO_RIGHT] = &right, [IDX_MO_BOTTOM] = &bottom,
-        [IDX_MO_TOP] = &top,   [IDX_MO_NEAR] = &near_p, [IDX_MO_FAR] = &far_p};
+    void *targets[MathOrtho_COUNT] = {[IDX_MO_LEFT] = &left,     [IDX_MO_RIGHT] = &right,
+                                      [IDX_MO_BOTTOM] = &bottom, [IDX_MO_TOP] = &top,
+                                      [IDX_MO_NEAR] = &near_p,   [IDX_MO_FAR] = &far_p};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->MathOrthoParser, targets)) {
@@ -273,8 +302,8 @@ static PyObject *MathHolderObject_transform_vec3(MathHolderObject *self, PyObjec
                                                  Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *mat_obj;
     PyObject *vec_obj;
-    void *targets[MathMatVec_COUNT] = {
-        [IDX_MMV_MAT] = (void *)&mat_obj, [IDX_MMV_VEC] = (void *)&vec_obj};
+    void *targets[MathMatVec_COUNT] = {[IDX_MMV_MAT] = (void *)&mat_obj,
+                                       [IDX_MMV_VEC] = (void *)&vec_obj};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->MathMatVecParser, targets)) {
@@ -315,8 +344,8 @@ static PyObject *MathHolderObject_matmul_batch(MathHolderObject *self, PyObject 
                                                Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *mat_obj;
     PyObject *batch_obj;
-    void *targets[MathMatBatch_COUNT] = {
-        [IDX_MMB_MAT] = (void *)&mat_obj, [IDX_MMB_BATCH] = (void *)&batch_obj};
+    void *targets[MathMatBatch_COUNT] = {[IDX_MMB_MAT]   = (void *)&mat_obj,
+                                         [IDX_MMB_BATCH] = (void *)&batch_obj};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->MathMatBatchParser, targets)) {
@@ -389,8 +418,8 @@ static PyObject *MathHolderObject_cull_aabb_batch(MathHolderObject *self, PyObje
                                                   Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *vp_obj;
     PyObject *aabbs_obj;
-    void *targets[MathCullBatch_COUNT] = {
-        [IDX_MCB_VP] = (void *)&vp_obj, [IDX_MCB_AABBS] = (void *)&aabbs_obj};
+    void *targets[MathCullBatch_COUNT] = {[IDX_MCB_VP]    = (void *)&vp_obj,
+                                          [IDX_MCB_AABBS] = (void *)&aabbs_obj};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->MathCullBatchParser, targets)) {
@@ -419,6 +448,299 @@ static PyObject *MathHolderObject_cull_aabb_batch(MathHolderObject *self, PyObje
     return result;
 }
 
+static PyObject *MathHolderObject_vec3_normalize_batch(MathHolderObject *self,
+                                                       PyObject *const *args, Py_ssize_t nargsf,
+                                                       PyObject *kwnames) {
+    PyObject *vecs_obj;
+    void *targets[MathVec3Batch_COUNT] = {[IDX_MVB_VECS] = (void *)&vecs_obj};
+
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+                           &self->parsers->MathVec3BatchParser, targets)) {
+        return nullptr;
+    }
+
+    Py_buffer view;
+    if (PyObject_GetBuffer(vecs_obj, &view, PyBUF_SIMPLE) < 0) {
+        return nullptr; // PyErr_SetString already called by GetBuffer
+    }
+
+    // Verify we have enough bytes for float3 vectors
+    const size_t vec3_bytes = 3 * sizeof(float);
+    if (view.len % vec3_bytes != 0) {
+        PyBuffer_Release(&view);
+        PyErr_SetString(PyExc_ValueError, "Buffer length must be a multiple of 12 (3 floats)");
+        return nullptr;
+    }
+
+    size_t count     = view.len / vec3_bytes;
+    PyObject *result = PyBytes_FromStringAndSize(NULL, view.len);
+
+    if (result) {
+        culverin_math_vec3_normalize_batch((const float *)view.buf, count,
+                                           (float *)PyBytes_AsString(result));
+    }
+
+    PyBuffer_Release(&view);
+    return result;
+}
+
+static PyObject *MathHolderObject_quat_from_euler(MathHolderObject *self, PyObject *const *args,
+                                                  Py_ssize_t nargsf, PyObject *kwnames) {
+    float x, y, z;
+    void *targets[MathEuler_COUNT] = {[IDX_ME_X] = &x, [IDX_ME_Y] = &y, [IDX_ME_Z] = &z};
+
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+                           &self->parsers->MathEulerParser, targets)) {
+        return nullptr;
+    }
+
+    float out[4]; // quat: x, y, z, w
+    culverin_math_quat_from_euler(x, y, z, out);
+
+    // FastBuild_Tuple is optimized for returning fixed-size math results
+    return FastBuild_Tuple(out[0], out[1], out[2], out[3]);
+}
+
+static PyObject *MathHolderObject_quat_to_euler(MathHolderObject *self, PyObject *const *args,
+                                                Py_ssize_t nargsf, PyObject *kwnames) {
+    float x, y, z, w;
+    void *targets[MathQuat_COUNT] = {
+        [IDX_MQ_X] = &x, [IDX_MQ_Y] = &y, [IDX_MQ_Z] = &z, [IDX_MQ_W] = &w};
+
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+                           &self->parsers->MathQuatParser, targets)) {
+        return nullptr;
+    }
+
+    float in_q[4] = {x, y, z, w};
+    float out_euler[3];
+
+    culverin_math_quat_to_euler(in_q, out_euler);
+
+    return FastBuild_Tuple(out_euler[0], out_euler[1], out_euler[2]);
+}
+
+static PyObject *MathHolderObject_quat_slerp(MathHolderObject *self, PyObject *const *args,
+                                             Py_ssize_t nargsf, PyObject *kwnames) {
+    PyObject *q1_obj;
+    PyObject *q2_obj;
+    float t;
+    void *targets[MathSlerp_COUNT] = {
+        [IDX_MS_Q1] = &q1_obj, [IDX_MS_Q2] = &q2_obj, [IDX_MS_T] = &t};
+
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+                           &self->parsers->MathSlerpParser, targets)) {
+        return nullptr;
+    }
+
+    float q1[4], q2[4], out[4];
+    if (!unpack_quat(q1_obj, q1) || !unpack_quat(q2_obj, q2)) {
+        PyErr_SetString(PyExc_TypeError, "Quaternions must be tuples of 4 floats");
+        return nullptr;
+    }
+
+    culverin_math_quat_slerp(q1, q2, t, out);
+
+    return FastBuild_Tuple(out[0], out[1], out[2], out[3]);
+}
+
+static PyObject *MathHolderObject_quat_mul(MathHolderObject *self, PyObject *const *args,
+                                           Py_ssize_t nargsf, PyObject *kwnames) {
+    PyObject *a_obj;
+    PyObject *b_obj;
+    void *targets[MathQuatPair_COUNT] = {[IDX_MQP_A] = &a_obj, [IDX_MQP_B] = &b_obj};
+
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+                           &self->parsers->MathQuatPairParser, targets)) {
+        return nullptr;
+    }
+
+    float a[4], b[4], out[4];
+    if (!unpack_quat(a_obj, a) || !unpack_quat(b_obj, b)) {
+        PyErr_SetString(PyExc_TypeError, "Quaternions must be tuples of 4 floats");
+        return nullptr;
+    }
+
+    culverin_math_quat_mul(a, b, out);
+
+    return FastBuild_Tuple(out[0], out[1], out[2], out[3]);
+}
+
+static PyObject *MathHolderObject_vec3_lerp_batch(MathHolderObject *self, PyObject *const *args,
+                                                  Py_ssize_t nargsf, PyObject *kwnames) {
+    PyObject *a_obj, *b_obj;
+    float alpha;
+    void *targets[MathLerpBatch_COUNT] = {
+        [IDX_MLB_VECS_A] = &a_obj, [IDX_MLB_VECS_B] = &b_obj, [IDX_MLB_ALPHA] = &alpha};
+
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+                           &self->parsers->MathLerpBatchParser, targets)) {
+        return nullptr;
+    }
+
+    Py_buffer view_a, view_b;
+    if (PyObject_GetBuffer(a_obj, &view_a, PyBUF_SIMPLE) < 0)
+        return nullptr;
+    if (PyObject_GetBuffer(b_obj, &view_b, PyBUF_SIMPLE) < 0) {
+        PyBuffer_Release(&view_a);
+        return nullptr;
+    }
+
+    if (view_a.len != view_b.len || (view_a.len % 12 != 0)) {
+        PyBuffer_Release(&view_a);
+        PyBuffer_Release(&view_b);
+        PyErr_SetString(PyExc_ValueError, "Buffers must be equal size and multiples of 12 bytes");
+        return nullptr;
+    }
+
+    size_t count     = view_a.len / 12;
+    PyObject *result = PyBytes_FromStringAndSize(NULL, view_a.len);
+
+    if (result) {
+        culverin_math_vec3_lerp_batch((const float *)view_a.buf, (const float *)view_b.buf, alpha,
+                                      count, (float *)PyBytes_AsString(result));
+    }
+
+    PyBuffer_Release(&view_a);
+    PyBuffer_Release(&view_b);
+    return result;
+}
+
+static PyObject *MathHolderObject_quat_rotate_vec3(MathHolderObject *self, PyObject *const *args,
+                                                   Py_ssize_t nargsf, PyObject *kwnames) {
+    PyObject *q_obj, *v_obj;
+    void *targets[MathQuatVec_COUNT] = {[IDX_MQV_Q] = &q_obj, [IDX_MQV_V] = &v_obj};
+
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+                           &self->parsers->MathQuatVecParser, targets)) {
+        return nullptr;
+    }
+
+    float q[4], v[3], out[3];
+    if (!unpack_quat(q_obj, q) || !unpack_vec3(v_obj, v)) {
+        PyErr_SetString(PyExc_TypeError, "Inputs must be tuples of floats (Quat=4, Vec3=3)");
+        return nullptr;
+    }
+
+    culverin_math_quat_rotate_vec3(q, v, out);
+
+    return FastBuild_Tuple(out[0], out[1], out[2]);
+}
+
+static PyObject *MathHolderObject_quat_rotate_vec3_batch(MathHolderObject *self,
+                                                         PyObject *const *args, Py_ssize_t nargsf,
+                                                         PyObject *kwnames) {
+    PyObject *q_obj, *vecs_obj;
+    void *targets[MathQuatVecBatch_COUNT] = {[IDX_MQVB_Q] = &q_obj, [IDX_MQVB_VECS] = &vecs_obj};
+
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+                           &self->parsers->MathQuatVecBatchParser, targets)) {
+        return nullptr;
+    }
+
+    float q[4];
+    if (!unpack_quat(q_obj, q)) {
+        PyErr_SetString(PyExc_TypeError, "Quaternion must be a tuple of 4 floats");
+        return nullptr;
+    }
+
+    Py_buffer view;
+    if (PyObject_GetBuffer(vecs_obj, &view, PyBUF_SIMPLE) < 0)
+        return nullptr;
+
+    if (view.len % 12 != 0) {
+        PyBuffer_Release(&view);
+        PyErr_SetString(PyExc_ValueError,
+                        "Vector buffer must be a multiple of 12 bytes (3 floats)");
+        return nullptr;
+    }
+
+    size_t count     = view.len / 12;
+    PyObject *result = PyBytes_FromStringAndSize(NULL, view.len);
+
+    if (result) {
+        culverin_math_quat_rotate_vec3_batch(q, (const float *)view.buf, count,
+                                             (float *)PyBytes_AsString(result));
+    }
+
+    PyBuffer_Release(&view);
+    return result;
+}
+
+static PyObject *MathHolderObject_quat_inverse(MathHolderObject *self, PyObject *const *args,
+                                               Py_ssize_t nargsf, PyObject *kwnames) {
+    PyObject *q_obj;
+    void *targets[MathQuatOp_COUNT] = {[IDX_MQO_Q] = &q_obj};
+
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+                           &self->parsers->MathQuatOpParser, targets)) {
+        return nullptr;
+    }
+
+    float q[4], out[4];
+    if (!unpack_quat(q_obj, q)) {
+        PyErr_SetString(PyExc_TypeError, "Quaternion must be a tuple of 4 floats");
+        return nullptr;
+    }
+
+    culverin_math_quat_inverse(q, out);
+
+    return FastBuild_Tuple(out[0], out[1], out[2], out[3]);
+}
+
+static PyObject *MathHolderObject_project(MathHolderObject *self, PyObject *const *args,
+                                          Py_ssize_t nargsf, PyObject *kwnames) {
+    PyObject *v_obj, *mvp_obj, *vp_obj;
+    void *targets[MathProject_COUNT] = {
+        [IDX_MPR_V] = &v_obj, [IDX_MPR_MVP] = &mvp_obj, [IDX_MPR_VP] = &vp_obj};
+
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+                           &self->parsers->MathProjectParser, targets)) {
+        return nullptr;
+    }
+
+    float v[3], mvp[16], out[3];
+    int viewport[4];
+
+    if (!unpack_vec3(v_obj, v) || !unpack_mat44(mvp_obj, mvp) ||
+        !unpack_viewport(vp_obj, viewport)) {
+        PyErr_SetString(PyExc_TypeError,
+                        "Invalid arguments for project (Vec3, Mat44, ViewportTuple)");
+        return nullptr;
+    }
+
+    culverin_math_project(v, mvp, viewport, out);
+
+    return FastBuild_Tuple(out[0], out[1], out[2]);
+}
+
+
+static PyObject *MathHolderObject_unproject(MathHolderObject *self, PyObject *const *args,
+                                             Py_ssize_t nargsf, PyObject *kwnames) {
+    PyObject *v_obj, *mvp_obj, *vp_obj;
+    void *targets[MathUnproject_COUNT] = {
+        [IDX_MUP_V]   = &v_obj,
+        [IDX_MUP_MVP] = &mvp_obj,
+        [IDX_MUP_VP]  = &vp_obj
+    };
+
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+                           &self->parsers->MathUnprojectParser, targets)) {
+        return nullptr;
+    }
+
+    float v[3], mvp[16], out[3];
+    int viewport[4];
+
+    if (!unpack_vec3(v_obj, v) || !unpack_mat44(mvp_obj, mvp) || !unpack_viewport(vp_obj, viewport)) {
+        PyErr_SetString(PyExc_TypeError, "Invalid arguments for unproject (Vec3, Mat44, ViewportTuple)");
+        return nullptr;
+    }
+
+    culverin_math_unproject(v, mvp, viewport, out);
+
+    return FastBuild_Tuple(out[0], out[1], out[2]);
+}
 void culverin_math_init_all_parsers(MathParsers *mp);
 void culverin_math_free_all_parsers(MathParsers *mp);
 
@@ -484,6 +806,17 @@ PyType_Spec MathService_spec = {
                      MATH_FASTCALL(matmul_batch),
                      MATH_FASTCALL(cull_aabb),
                      MATH_FASTCALL(cull_aabb_batch),
+                     MATH_FASTCALL(vec3_normalize_batch),
+                     MATH_FASTCALL(quat_from_euler),
+                     MATH_FASTCALL(quat_to_euler),
+                     MATH_FASTCALL(quat_slerp),
+                     MATH_FASTCALL(quat_mul),
+                     MATH_FASTCALL(vec3_lerp_batch),
+                     MATH_FASTCALL(quat_rotate_vec3),
+                     MATH_FASTCALL(quat_rotate_vec3_batch),
+                     MATH_FASTCALL(quat_inverse),
+                     MATH_FASTCALL(project),
+                     MATH_FASTCALL(unproject),
                      {},
 
                  }
