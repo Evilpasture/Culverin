@@ -103,7 +103,8 @@ class TestCoreMechanics(CulverinTestCase):
             self.world.step(1 / 60)
 
         self.assertGreater(submerged_frames, 0)
-        assert (v := self.get_pos(ball)) is not None; self.assertGreater(v[1], 4.0, "Ball should be floating, not at bottom")
+        assert (v := self.get_pos(ball)) is not None
+        self.assertGreater(v[1], 4.0, "Ball should be floating, not at bottom")
 
     def test_heightfield(self) -> None:
         grid_size = 64
@@ -121,11 +122,13 @@ class TestCoreMechanics(CulverinTestCase):
         ball = self.world.create_body(pos=(5, 3.5, 5), shape=culverin.SHAPE_SPHERE, mass=10.0)
 
         self.world.step(0)
-        assert (v := self.get_pos(ball)) is not None; start_x = v[0]
+        assert (v := self.get_pos(ball)) is not None
+        start_x = v[0]
         for _ in range(60):
             self.world.step(1 / 60)
 
-        assert (v := self.get_pos(ball)) is not None; self.assertLess(v[0], start_x, "Ball did not roll down slope")
+        assert (v := self.get_pos(ball)) is not None
+        self.assertLess(v[0], start_x, "Ball did not roll down slope")
 
     def test_material_hot_swap(self) -> None:
         """Test if changing material properties affects simulation."""
@@ -290,8 +293,10 @@ class TestCollisionsAndEvents(CulverinTestCase):
         for _ in range(120):
             self.world.step(1 / 60)
 
-        assert (v := self.get_pos(player)) is not None; self.assertGreater(v[1], 5.0)  # Player caught by floor
-        assert (v := self.get_pos(ghost)) is not None; self.assertLess(v[1], 5.6)  # Ghost passed through player, caught by floor
+        assert (v := self.get_pos(player)) is not None
+        self.assertGreater(v[1], 5.0)  # Player caught by floor
+        assert (v := self.get_pos(ghost)) is not None
+        self.assertLess(v[1], 5.6)  # Ghost passed through player, caught by floor
 
     def test_sensor_events(self) -> None:
         sensor = self.world.create_body(
@@ -349,7 +354,8 @@ class TestCharactersAndVehicles(CulverinTestCase):
         char.set_strength(10.0)
         char.move((20, 0, 0), 1 / 60)
         self.world.step(1 / 60)
-        assert (v := self.get_vel(crate)) is not None; vel_weak = v[0]
+        assert (v := self.get_vel(crate)) is not None
+        vel_weak = v[0]
 
         # Strong strength
         char.set_strength(50000.0)
@@ -363,7 +369,8 @@ class TestCharactersAndVehicles(CulverinTestCase):
 
         char.move((20, 0, 0), 1 / 60)
         self.world.step(1 / 60)
-        assert (v := self.get_vel(crate)) is not None; vel_strong = v[0]
+        assert (v := self.get_vel(crate)) is not None
+        vel_strong = v[0]
 
         self.assertGreater(vel_strong, vel_weak)
 
@@ -391,7 +398,8 @@ class TestCharactersAndVehicles(CulverinTestCase):
         for _ in range(60):
             self.world.step(1 / 60)
 
-        assert (v := self.get_vel(chassis)) is not None; self.assertGreater(v[2], 1.0)
+        assert (v := self.get_vel(chassis)) is not None
+        self.assertGreater(v[2], 1.0)
         self.assertEqual(car.wheel_count, 4)
 
     def test_tracked_vehicle(self) -> None:
@@ -421,7 +429,8 @@ class TestCharactersAndVehicles(CulverinTestCase):
         for _ in range(60):
             self.world.step(1 / 60)
 
-        assert (v := self.get_vel(chassis)) is not None; self.assertGreater(v[2], 0.5)  # Tank should move forward
+        assert (v := self.get_vel(chassis)) is not None
+        self.assertGreater(v[2], 0.5)  # Tank should move forward
 
 
 class TestThreadSafety(CulverinTestCase):
@@ -642,7 +651,8 @@ class TestConstraints(CulverinTestCase):
             if i % 10 == 0:
                 print(f"step {i}: pos={self.get_pos(b2)}")
 
-        assert (v := self.get_pos(b2)) is not None; self.assertLess(v[0], 0.5, f"Body should have swung; current X is {v[0]}")
+        assert (v := self.get_pos(b2)) is not None
+        self.assertLess(v[0], 0.5, f"Body should have swung; current X is {v[0]}")
 
 
 class TestRagdollsAndSkeletons(CulverinTestCase):
@@ -725,13 +735,15 @@ class TestStateManagement(CulverinTestCase):
         # Let it fall
         for _ in range(10):
             self.world.step(1 / 60)
-        assert (v := self.get_pos(b)) is not None; self.assertLess(v[1], 10.0)
+        assert (v := self.get_pos(b)) is not None
+        self.assertLess(v[1], 10.0)
 
         # Restore state
         self.world.load_state(state=state)
         # Load state requires shadow buffer sync for python to see it immediately
         self.world.step(0)
-        assert (v := self.get_pos(b)) is not None; self.assertEqual(v[1], 10.0)
+        assert (v := self.get_pos(b)) is not None
+        self.assertEqual(v[1], 10.0)
 
 
 class TestUserData(CulverinTestCase):
@@ -929,7 +941,8 @@ class TestSleepingStates(CulverinTestCase):
         )
 
         # 2. Verify it actually moved upward away from its resting state
-        assert (v := self.get_pos(box)) is not None; self.assertGreater(v[1], 0.51, "Body woke up but didn't respond to the impulse velocity")
+        assert (v := self.get_pos(box)) is not None
+        self.assertGreater(v[1], 0.51, "Body woke up but didn't respond to the impulse velocity")
 
 
 # Compatibility: Python 3.13/3.14 uses _interpreters
@@ -1262,8 +1275,10 @@ class TestKinematics(CulverinTestCase):
         for _ in range(10):
             self.world.step(1 / 60.0)
 
-        assert (v := self.get_pos(h_dyn)) is not None; self.assertLess(v[1], 10.0, "Dynamic body failed to fall")
-        assert (v := self.get_pos(h_kin)) is not None; self.assertEqual(v[1], 10.0, "Kinematic body moved under gravity")
+        assert (v := self.get_pos(h_dyn)) is not None
+        self.assertLess(v[1], 10.0, "Dynamic body failed to fall")
+        assert (v := self.get_pos(h_kin)) is not None
+        self.assertEqual(v[1], 10.0, "Kinematic body moved under gravity")
 
     def test_kinematic_velocity_drive(self) -> None:
         """Setting linear velocity on a kinematic body should move it predictably."""
@@ -1311,7 +1326,8 @@ class TestKinematics(CulverinTestCase):
         """Test switching a body from Kinematic to Dynamic mid-simulation."""
         h = self.world.create_body(pos=(0, 10, 0), motion=culverin.MOTION_KINEMATIC)
         self.world.step(1 / 60.0)
-        assert (v := self.get_pos(h)) is not None; self.assertEqual(v[1], 10.0)
+        assert (v := self.get_pos(h)) is not None
+        self.assertEqual(v[1], 10.0)
 
         # Switch to dynamic
         self.world.set_motion_type(h, culverin.MOTION_DYNAMIC)
@@ -1321,7 +1337,8 @@ class TestKinematics(CulverinTestCase):
         for _ in range(5):
             self.world.step(1 / 60.0)
 
-        assert (v := self.get_pos(h)) is not None; self.assertLess(v[1], 10.0, "Body did not start falling after switching to dynamic")
+        assert (v := self.get_pos(h)) is not None
+        self.assertLess(v[1], 10.0, "Body did not start falling after switching to dynamic")
 
     def test_kinematic_rotation_interaction(self) -> None:
         """Kinematic rotation should apply tangential velocity to dynamic objects."""
@@ -1360,7 +1377,8 @@ class TestKinematics(CulverinTestCase):
         self.world.set_position(k, x=15, y=0, z=0)
         self.world.step(1 / 60.0)
 
-        assert (v := self.get_pos(k)) is not None; self.assertEqual(v[0], 15.0, "Kinematic teleport was blocked (should be unstoppable)")
+        assert (v := self.get_pos(k)) is not None
+        self.assertEqual(v[0], 15.0, "Kinematic teleport was blocked (should be unstoppable)")
 
 
 class TestAdvancedPhysics(CulverinTestCase):
@@ -1433,7 +1451,8 @@ class TestAdvancedPhysics(CulverinTestCase):
         for _ in range(30):
             self.world.step(1 / 60.0)
 
-        assert (pos := self.get_pos(b2)) is not None; self.assertLessEqual(pos[1], 5.2)
+        assert (pos := self.get_pos(b2)) is not None
+        self.assertLessEqual(pos[1], 5.2)
         self.assertGreaterEqual(pos[1], 0.8)
 
 
@@ -1457,7 +1476,8 @@ class TestKinematicsAdvanced(CulverinTestCase):
         for _ in range(30):
             self.world.step(1 / 60.0)
 
-        assert (v := self.get_pos(h)) is not None; self.assertGreater(v[0], 4.5, "Kinematic compound body failed to move")
+        assert (v := self.get_pos(h)) is not None
+        self.assertGreater(v[0], 4.5, "Kinematic compound body failed to move")
 
     def test_kinematic_restitution_transfer(self) -> None:
         """Kinematic bodies should 'bounce' dynamic ones away based on their own velocity."""
@@ -1499,7 +1519,8 @@ class TestKinematicsAdvanced(CulverinTestCase):
         for _ in range(10):
             self.world.step(1 / 60.0)
 
-        assert (v := self.get_pos(k)) is not None; self.assertGreater(v[0], 9.0, "Kinematic body was blocked by a static object")
+        assert (v := self.get_pos(k)) is not None
+        self.assertGreater(v[0], 9.0, "Kinematic body was blocked by a static object")
 
 
 class TestRobustness(CulverinTestCase):
@@ -1729,7 +1750,8 @@ class TestSoftBodies(CulverinTestCase):
 
         # Verify it falls
         self.world.step(1 / 60.0)
-        assert (v := self.get_pos(h)) is not None; self.assertLess(v[1], 10.0, "Soft body center-of-mass did not fall")
+        assert (v := self.get_pos(h)) is not None
+        self.assertLess(v[1], 10.0, "Soft body center-of-mass did not fall")
 
         self.world.destroy_body(h)
         self.world.step(0)
@@ -1919,13 +1941,15 @@ class TestSoftBodies(CulverinTestCase):
 
         for _ in range(10):
             self.world.step(1 / 60.0)
-        assert (v := self.get_pos(h)) is not None; self.assertLess(v[1], 10.0)
+        assert (v := self.get_pos(h)) is not None
+        self.assertLess(v[1], 10.0)
 
         self.world.load_state(state=state)
         self.world.step(0)
 
         self.assertTrue(self.world.is_alive(h))
-        assert (v := self.get_pos(h)) is not None; self.assertAlmostEqual(v[1], 10.0, places=3)
+        assert (v := self.get_pos(h)) is not None
+        self.assertAlmostEqual(v[1], 10.0, places=3)
 
     def test_soft_body_getters_logic(self) -> None:
         """Test the new JoltC direct getters for soft body vertex data."""

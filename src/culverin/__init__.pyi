@@ -41,6 +41,7 @@ from ._culverin_c import (
     USE_DOUBLE_PRECISION,
     Character,
     ContactEvent,
+    MathService,
     # Core Classes
     PhysicsWorld,
     Ragdoll,
@@ -49,7 +50,6 @@ from ._culverin_c import (
     Skeleton,
     SoftBodySharedSettings,
     Vehicle,
-    MathService,
     _dump_schema_json,  # type: ignore
     mutate_tuple,
 )
@@ -92,6 +92,7 @@ __all__ = [
     "ContactEvent",
     "Engine",
     "Manual",
+    "MathService",
     "PhysicsWorld",
     "Ragdoll",
     "RagdollSettings",
@@ -102,7 +103,6 @@ __all__ = [
     "Transmission",
     "Vehicle",
     "WheelConfig",
-    "MathService",
     "_dump_schema_json",
     "euler_to_quat",
     "load_urdf",

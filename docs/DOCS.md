@@ -2148,3 +2148,214 @@ visibility_mask = math_service.cull_aabb_batch(view_proj, aabb_buffer)
 # Filter entity IDs for the renderer
 visible_entities = [id for i, id in enumerate(entities) if visibility_mask[i]]
 ```
+
+### vec3_normalize(v)
+Scales a 3D vector to have a length of 1.0.
+
+**Arguments:**
+- **`v` (tuple):** A 3-element vector (x, y, z).
+**Returns:**
+- **`vector` (tuple):** The normalized 3-element vector. Returns `(0, 0, 0)` for zero-length inputs.
+
+### vec3_normalize_batch(vecs)
+Scales a buffer of 3D vectors to have a length of 1.0.
+
+**Arguments:**
+- **`vecs` (Buffer):** Tightly packed `float32` vector data.
+**Returns:**
+- **`data` (bytes):** A new bytes object with the normalized vector data.
+
+### vec3_lerp_batch(vecs_a, vecs_b, alpha)
+Performs linear interpolation between two buffers of 3D vectors.
+
+**Arguments:**
+- **`vecs_a` (Buffer):** The starting vectors.
+- **`vecs_b` (Buffer):** The ending vectors.
+- **`alpha` (float):** The interpolation factor, clamped to [0, 1].
+**Returns:**
+- **`data` (bytes):** A new bytes object with the interpolated vector data.
+
+### vec3_dot(v1, v2)
+Calculates the dot product of two 3D vectors.
+
+**Arguments:**
+- **`v1`, `v2` (tuple):** 3-element vectors.
+**Returns:**
+- **`result` (float):** The scalar dot product.
+
+### vec3_cross(v1, v2)
+Calculates the cross product of two 3D vectors.
+
+**Arguments:**
+- **`v1`, `v2` (tuple):** 3-element vectors.
+**Returns:**
+- **`vector` (tuple):** The resulting 3-element vector, perpendicular to both inputs.
+
+### vec3_distance(v1, v2)
+Calculates the Euclidean distance between two 3D points.
+
+**Arguments:**
+- **`v1`, `v2` (tuple):** 3-element vectors.
+**Returns:**
+- **`distance` (float):** The scalar distance.
+
+### vec3_distance_batch(vecs_a, vecs_b)
+Calculates the Euclidean distance between pairs of vectors from two buffers.
+
+**Arguments:**
+- **`vecs_a`, `vecs_b` (Buffer):** Buffers of 3D vector data.
+**Returns:**
+- **`data` (bytes):** A bytes object containing a flat list of `float32` distances.
+
+### vec3_reflect(v, normal)
+Reflects an incident vector off a surface normal.
+
+**Arguments:**
+- **`v` (tuple):** The incoming direction vector.
+- **`normal` (tuple):** The unit normal of the surface.
+**Returns:**
+- **`vector` (tuple):** The reflected direction vector.
+
+### quat_from_euler(x, y, z)
+Creates a quaternion from Euler angles (in radians).
+
+**Arguments:**
+- **`x`, `y`, `z` (float):** Rotation angles around the X, Y, and Z axes.
+**Returns:**
+- **`quaternion` (tuple):** The resulting 4-element quaternion (x, y, z, w).
+
+### quat_to_euler(x, y, z, w)
+Converts a quaternion back to Euler angles (in radians).
+
+**Arguments:**
+- **`x`, `y`, `z`, `w` (float):** The components of the quaternion.
+**Returns:**
+- **`angles` (tuple):** A 3-element tuple of Euler angles (x, y, z).
+
+### quat_slerp(q1, q2, t)
+Performs Spherical Linear Interpolation between two quaternions.
+
+**Arguments:**
+- **`q1`, `q2` (tuple):** 4-element quaternions.
+- **`t` (float):** The interpolation factor [0, 1].
+**Returns:**
+- **`quaternion` (tuple):** The interpolated quaternion.
+
+### quat_mul(a, b)
+Multiplies two quaternions, combining their rotations. The rotation `b` is applied first, followed by `a`.
+
+**Arguments:**
+- **`a`, `b` (tuple):** 4-element quaternions.
+**Returns:**
+- **`quaternion` (tuple):** The resulting combined rotation.
+
+### quat_inverse(q)
+Computes the inverse of a quaternion.
+
+**Arguments:**
+- **`q` (tuple):** A 4-element quaternion.
+**Returns:**
+- **`quaternion` (tuple):** The inverse quaternion.
+
+### quat_rotate_vec3(q, v)
+Rotates a 3D vector by a quaternion.
+
+**Arguments:**
+- **`q` (tuple):** The rotation quaternion.
+- **`v` (tuple):** The 3-element vector to rotate.
+**Returns:**
+- **`vector` (tuple):** The rotated 3-element vector.
+
+### quat_rotate_vec3_inverse(q, v)
+Rotates a 3D vector by the inverse (conjugate) of a quaternion. This is the standard way to convert a world-space offset to local space.
+
+**Arguments:**
+- **`q` (tuple):** The rotation quaternion.
+- **`v` (tuple):** The 3-element vector to rotate.
+**Returns:**
+- **`vector` (tuple):** The rotated 3-element vector.
+
+### quat_rotate_vec3_batch(q, vecs)
+Rotates a buffer of 3D vectors by a single quaternion.
+
+**Arguments:**
+- **`q` (tuple):** The rotation quaternion.
+- **`vecs` (Buffer):** A buffer of 3D vector data.
+**Returns:**
+- **`data` (bytes):** A new bytes object with the rotated vector data.
+
+### quat_from_to(v1, v2)
+Creates a quaternion that represents the shortest rotation from vector `v1` to `v2`.
+
+**Arguments:**
+- **`v1`, `v2` (tuple):** 3-element direction vectors.
+**Returns:**
+- **`quaternion` (tuple):** The resulting rotation.
+
+### quat_get_axis_angle(q)
+Decomposes a quaternion into its rotation axis and angle.
+
+**Arguments:**
+- **`q` (tuple):** A 4-element quaternion.
+**Returns:**
+- **`result` (tuple):** A nested tuple `((ax, ay, az), angle_rad)`.
+
+### quat_from_axis_angle(axis, angle)
+Creates a quaternion from a rotation axis and an angle in radians.
+
+**Arguments:**
+- **`axis` (tuple):** A 3-element rotation axis.
+- **`angle` (float):** The angle of rotation in radians.
+**Returns:**
+- **`quaternion` (tuple):** The resulting 4-element quaternion.
+
+### project(v, mvp, viewport)
+Transforms a 3D world-space point to 2D screen-space coordinates.
+
+**Arguments:**
+- **`v` (tuple):** A 3-element world position (x, y, z).
+- **`mvp` (tuple):** A 16-element Model-View-Projection matrix.
+- **`viewport` (tuple):** A 4-element tuple `(x, y, width, height)` of the screen viewport.
+**Returns:**
+- **`vector` (tuple):** A 3-element tuple `(screen_x, screen_y, depth)`.
+
+### unproject(v, mvp, viewport)
+Transforms a 2D screen-space point back into a 3D world-space point.
+
+**Arguments:**
+- **`v` (tuple):** A 3-element screen position `(x, y, depth)`, where depth is in [0, 1].
+- **`mvp` (tuple):** A 16-element Model-View-Projection matrix.
+- **`viewport` (tuple):** A 4-element tuple `(x, y, width, height)`.
+**Returns:**
+- **`vector` (tuple):** The resulting 3-element world position.
+
+### intersect_ray_plane(ray_origin, ray_dir, plane_pos, plane_norm)
+Calculates the intersection point of a ray and an infinite plane.
+
+**Arguments:**
+- **`ray_origin`, `ray_dir` (tuple):** 3D vectors defining the ray.
+- **`plane_pos`, `plane_norm` (tuple):** A point on the plane and the plane's normal vector.
+**Returns:**
+- **`result` (tuple):** A tuple `(hit, distance, point)`. `hit` is boolean, `distance` is float, `point` is a 3-element tuple or `None`.
+
+### mat44_identity()
+Returns a 4x4 identity matrix.
+
+**Returns:**
+- **`matrix` (tuple):** A 16-element identity matrix.
+
+### mat44_get_translation(mat)
+Extracts the translation component from a 4x4 matrix.
+
+**Arguments:**
+- **`mat` (tuple):** A 16-element matrix.
+**Returns:**
+- **`vector` (tuple):** A 3-element position vector (x, y, z).
+
+### mat44_get_rotation(mat)
+Extracts the rotation component from a 4x4 matrix as a quaternion.
+
+**Arguments:**
+- **`mat` (tuple):** A 16-element matrix.
+**Returns:**
+- **`quaternion` (tuple):** A 4-element quaternion (x, y, z, w).

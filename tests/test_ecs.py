@@ -1,6 +1,8 @@
+import struct
+
 import numpy as np
 import pytest
-import struct
+
 import culverin
 
 
@@ -469,6 +471,7 @@ def test_proxy_empty_component(registry: culverin.Registry) -> None:
     arr = np.frombuffer(view, dtype=np.float32)
     assert arr.size == 0
 
+
 def test_registry_clear(registry: culverin.Registry) -> None:
     """Test that clearing the registry wipes all entities and data instantly."""
     COMP_A = registry.register_component(4)
@@ -510,6 +513,7 @@ def test_registry_clear_guard(registry: culverin.Registry) -> None:
 
     del view
     import gc
+
     gc.collect()
 
     # Now it should work
@@ -521,16 +525,16 @@ def test_single_component_get(registry: culverin.Registry) -> None:
     """Test retrieving raw bytes for a single entity's component."""
     COMP_ID = registry.register_component(4)
     ent = registry.create()
-    registry.add(ent, COMP_ID, b"\xAA\xBB\xCC\xDD")
+    registry.add(ent, COMP_ID, b"\xaa\xbb\xcc\xdd")
 
     data = registry.get(ent, COMP_ID)
     assert isinstance(data, bytes)
-    assert data == b"\xAA\xBB\xCC\xDD"
+    assert data == b"\xaa\xbb\xcc\xdd"
 
     # Test invalid cases
     ent2 = registry.create()
     assert registry.get(ent2, COMP_ID) is None  # Entity exists, but lacks component
-    
+
     registry.destroy(ent)
     assert registry.get(ent, COMP_ID) is None  # Entity is dead
 
@@ -558,8 +562,8 @@ def test_stats_getters(registry: culverin.Registry) -> None:
 
     registry.destroy(ent2)
     assert registry.get_active_count() == 1  # ent1 is still alive here!
-    
-    registry.destroy(ent1)                   # Kill ent1
+
+    registry.destroy(ent1)  # Kill ent1
     assert registry.get_active_count() == 0  # NOW it is 0
     assert registry.get_component_count(COMP_ID) == 0
 
@@ -568,13 +572,13 @@ def test_full_transform_sync(registry: culverin.Registry) -> None:
     """Test syncing both Position AND Rotation from the physics engine."""
     world = culverin.PhysicsWorld()
 
-    COMP_PHYS = registry.register_component(8)    # uint64 handle
-    COMP_POS = registry.register_component(12)    # 3x float32
-    COMP_ROT = registry.register_component(16)    # 4x float32
+    COMP_PHYS = registry.register_component(8)  # uint64 handle
+    COMP_POS = registry.register_component(12)  # 3x float32
+    COMP_ROT = registry.register_component(16)  # 4x float32
 
     ent = registry.create()
     phys_handle = world.create_body(pos=(1.0, 2.0, 3.0), rot=(0.0, 1.0, 0.0, 0.0))
-    
+
     registry.add(ent, COMP_PHYS, np.array([phys_handle], dtype=np.uint64).tobytes())
     registry.add(ent, COMP_POS, None)
     registry.add(ent, COMP_ROT, None)
@@ -590,7 +594,7 @@ def test_full_transform_sync(registry: culverin.Registry) -> None:
     assert pos_floats[2] == 3.0
 
     # Verify Rotation
-    assert(rot_data := registry.get(ent, COMP_ROT))
+    assert (rot_data := registry.get(ent, COMP_ROT))
     rot_floats = struct.unpack("4f", rot_data)
     assert rot_floats[0] == 0.0
     assert rot_floats[1] == 1.0
@@ -607,7 +611,7 @@ def test_partial_transform_sync(registry: culverin.Registry) -> None:
 
     ent = registry.create()
     phys_handle = world.create_body(pos=(10.0, 20.0, 30.0))
-    
+
     registry.add(ent, COMP_PHYS, np.array([phys_handle], dtype=np.uint64).tobytes())
     registry.add(ent, COMP_POS, None)
 
@@ -618,6 +622,7 @@ def test_partial_transform_sync(registry: culverin.Registry) -> None:
     pos_floats = struct.unpack("3f", pos_data)
     assert pos_floats[0] == 10.0
 
+
 def test_sync_stride_integrity(registry: culverin.Registry) -> None:
     """
     CRITICAL: Verifies that the C-layer handles SIMD padding correctly.
@@ -625,19 +630,15 @@ def test_sync_stride_integrity(registry: culverin.Registry) -> None:
     This test ensures the sync loop jumps by 4 doubles in physics, not 3.
     """
     world = culverin.PhysicsWorld()
-    
-    COMP_H = registry.register_component(8)   # uint64
+
+    COMP_H = registry.register_component(8)  # uint64
     COMP_P = registry.register_component(12)  # 3x float32
-    
-    # We use very specific coordinates. 
-    # If stride is wrong, Entity 2's X (10.0) will be read from 
+
+    # We use very specific coordinates.
+    # If stride is wrong, Entity 2's X (10.0) will be read from
     # Entity 1's 'W' padding (which is 0.0).
-    coords = [
-        (1.1, 2.2, 3.3),
-        (10.0, 20.0, 30.0),
-        (100.0, 200.0, 300.0)
-    ]
-    
+    coords = [(1.1, 2.2, 3.3), (10.0, 20.0, 30.0), (100.0, 200.0, 300.0)]
+
     entities: list[int] = []
     for c in coords:
         ent = registry.create()
@@ -645,53 +646,55 @@ def test_sync_stride_integrity(registry: culverin.Registry) -> None:
         registry.add(ent, COMP_H, struct.pack("Q", h))
         registry.add(ent, COMP_P, None)
         entities.append(ent)
-        
+
     # Flush creation
     world.step(0)
-    
+
     # Trigger the native sync
     registry.sync_from_world(world, COMP_H, COMP_P, -1)
-    
+
     # Validate every entity
     for i, ent in enumerate(entities):
         data = registry.get(ent, COMP_P)
         assert data is not None
         actual = struct.unpack("3f", data)
         expected = coords[i]
-        
+
         assert np.isclose(actual[0], expected[0], atol=1e-5), f"Entity {i} X-stride error"
         assert np.isclose(actual[1], expected[1], atol=1e-5), f"Entity {i} Y-stride error"
         assert np.isclose(actual[2], expected[2], atol=1e-5), f"Entity {i} Z-stride error"
+
 
 def test_sync_with_invalid_handles_safety(registry: culverin.Registry) -> None:
     """Ensure sync_from_world skips entities with stale/invalid handles without crashing."""
     world = culverin.PhysicsWorld()
     COMP_H = registry.register_component(8)
     COMP_P = registry.register_component(12)
-    
+
     # 1. Real entity with real handle
     e1 = registry.create()
     h1 = world.create_body(pos=(1, 1, 1))
     registry.add(e1, COMP_H, struct.pack("Q", h1))
     registry.add(e1, COMP_P, struct.pack("3f", 0, 0, 0))
-    
+
     # 2. Entity with fake/garbage handle
     e2 = registry.create()
-    registry.add(e2, COMP_H, struct.pack("Q", 999999)) # Invalid handle
-    registry.add(e2, COMP_P, struct.pack("3f", 7, 7, 7)) # Should remain 7,7,7
-    
+    registry.add(e2, COMP_H, struct.pack("Q", 999999))  # Invalid handle
+    registry.add(e2, COMP_P, struct.pack("3f", 7, 7, 7))  # Should remain 7,7,7
+
     world.step(0)
     registry.sync_from_world(world, COMP_H, COMP_P, -1)
-    
+
     # e1 should have synced
     assert (data := registry.get(e1, COMP_P))
     p1 = struct.unpack("3f", data)
     assert p1[0] == 1.0
-    
+
     # e2 should have been safely skipped by the C-layer loop
     assert (data := registry.get(e2, COMP_P))
     p2 = struct.unpack("3f", data)
     assert p2[0] == 7.0
+
 
 def test_sync_with_discontiguous_physics_bodies(registry: culverin.Registry) -> None:
     """
@@ -700,24 +703,24 @@ def test_sync_with_discontiguous_physics_bodies(registry: culverin.Registry) -> 
     assuming the physics index matches the loop counter.
     """
     world = culverin.PhysicsWorld()
-    
+
     COMP_H = registry.register_component(8)
     COMP_P = registry.register_component(12)
-    
+
     # 1. Create 3 bodies
     h1 = world.create_body(pos=(1, 1, 1))
     h2 = world.create_body(pos=(2, 2, 2))
     h3 = world.create_body(pos=(3, 3, 3))
     world.step(0)
-    
+
     # 2. Destroy the middle body (Triggers Jolt swap-and-pop)
     world.destroy_body(h2)
     world.step(0)
-    
+
     # 3. Create a 4th body. It will likely reuse slot 2, but have a different dense index.
     h4 = world.create_body(pos=(4, 4, 4))
     world.step(0)
-    
+
     # 4. Map them to ECS
     handles = [h1, h3, h4]
     entities: list[int] = []
@@ -726,17 +729,20 @@ def test_sync_with_discontiguous_physics_bodies(registry: culverin.Registry) -> 
         registry.add(ent, COMP_H, struct.pack("Q", h))
         registry.add(ent, COMP_P, None)
         entities.append(ent)
-        
+
     # Trigger native sync
     registry.sync_from_world(world, COMP_H, COMP_P, -1)
-    
+
     # Verify. If C code assumes index mapping, these values will be shifted.
     expected_positions = [(1.0, 1.0, 1.0), (3.0, 3.0, 3.0), (4.0, 4.0, 4.0)]
     for i, ent in enumerate(entities):
         data = registry.get(ent, COMP_P)
         assert data is not None
         actual = struct.unpack("3f", data)
-        assert np.allclose(actual, expected_positions[i]), f"Discontiguous physics sync failed for entity {i}"
+        assert np.allclose(actual, expected_positions[i]), (
+            f"Discontiguous physics sync failed for entity {i}"
+        )
+
 
 def test_sync_with_sparse_holes_in_ecs(registry: culverin.Registry) -> None:
     """
@@ -744,107 +750,41 @@ def test_sync_with_sparse_holes_in_ecs(registry: culverin.Registry) -> None:
     This ensures the C-layer obeys p_set->sparse[ent_idx] during sync.
     """
     world = culverin.PhysicsWorld()
-    
+
     COMP_H = registry.register_component(8)
     COMP_P = registry.register_component(12)
-    
+
     entities: list[int] = []
     handles: list[int] = []
-    
+
     # Create 4 entities and 4 bodies
     for i in range(4):
         ent = registry.create()
-        h = world.create_body(pos=(float(i+1), float(i+1), float(i+1)))
-        
+        h = world.create_body(pos=(float(i + 1), float(i + 1), float(i + 1)))
+
         registry.add(ent, COMP_H, struct.pack("Q", h))
         registry.add(ent, COMP_P, None)
-        
+
         entities.append(ent)
         handles.append(h)
-        
+
     world.step(0)
-    
+
     # Remove position component from Entity 1 (the second one)
     # This creates a "hole" and shifts Entity 3 into index 1 in the dense array
     registry.remove(entities[1], COMP_P)
-    
+
     # Trigger native sync
     registry.sync_from_world(world, COMP_H, COMP_P, -1)
-    
+
     # Entity 1 should NOT have the position component anymore
     assert not registry.has(entities[1], COMP_P)
-    
+
     # The others must still have accurate positions
-    expected = {
-        0: (1.0, 1.0, 1.0),
-        2: (3.0, 3.0, 3.0),
-        3: (4.0, 4.0, 4.0)
-    }
-    
+    expected = {0: (1.0, 1.0, 1.0), 2: (3.0, 3.0, 3.0), 3: (4.0, 4.0, 4.0)}
+
     for idx, expected_pos in expected.items():
         data = registry.get(entities[idx], COMP_P)
         assert data is not None
         actual = struct.unpack("3f", data)
         assert np.allclose(actual, expected_pos), f"Sparse hole sync failed for entity {idx}"
-
-def test_sync_with_discontiguous_physics_bodies(registry: culverin.Registry) -> None:
-    """Ensures sync works even if physics bodies are in a different order than ECS."""
-    world = culverin.PhysicsWorld()
-    COMP_H = registry.register_component(8)
-    COMP_P = registry.register_component(12)
-    
-    # Create 3, destroy middle, create 1 more to force Jolt swap-and-pop
-    h1 = world.create_body(pos=(1, 1, 1))
-    h_del = world.create_body(pos=(2, 2, 2))
-    h2 = world.create_body(pos=(3, 3, 3))
-    world.step(0)
-    world.destroy_body(h_del)
-    world.step(0)
-    h3 = world.create_body(pos=(4, 4, 4))
-    world.step(0)
-
-    entities = []
-    for h, pos in [(h1, (1,1,1)), (h2, (3,3,3)), (h3, (4,4,4))]:
-        ent = registry.create()
-        registry.add(ent, COMP_H, struct.pack("Q", h))
-        registry.add(ent, COMP_P, struct.pack("3f", 0, 0, 0))
-        entities.append(ent)
-        
-    registry.sync_from_world(world, COMP_H, COMP_P, -1)
-    
-    # Check that every entity got its own correct physics position
-    for i, ent in enumerate(entities):
-        actual = struct.unpack("3f", registry.get(ent, COMP_P))
-        expected = [(1.0, 1.0, 1.0), (3.0, 3.0, 3.0), (4.0, 4.0, 4.0)][i]
-        assert np.allclose(actual, expected), f"Discontiguous physics error at Entity {i}"
-
-def test_sync_with_sparse_holes_in_ecs(registry: culverin.Registry) -> None:
-    """Ensures sync works even if ECS component arrays are compressed/shuffled."""
-    world = culverin.PhysicsWorld()
-    COMP_H = registry.register_component(8)
-    COMP_P = registry.register_component(12)
-    
-    # 1. Add Handle and Position to 3 entities
-    ents = [registry.create() for _ in range(3)]
-    handles = [world.create_body(pos=(float(i+1), 0, 0)) for i in range(3)]
-    world.step(0)
-    
-    for i in range(3):
-        registry.add(ents[i], COMP_H, struct.pack("Q", handles[i]))
-        registry.add(ents[i], COMP_P, None)
-        
-    # 2. Remove Position from the middle entity (forces ECS swap-and-pop)
-    registry.remove(ents[1], COMP_P)
-    
-    # 3. Sync
-    registry.sync_from_world(world, COMP_H, COMP_P, -1)
-    
-    # 4. Verify Entity 0 and Entity 2 (Entity 1 has no position)
-    assert (d0 := registry.get(ents[0], COMP_P)) and (d2 := registry.get(ents[2], COMP_P))
-
-    p0 = struct.unpack("3f", d0)
-    p2 = struct.unpack("3f", d2)
-
-    assert p0[0] == 1.0
-    assert p2[0] == 3.0
-    assert not registry.has(ents[1], COMP_P)

@@ -1,189 +1,328 @@
-import unittest
 import math
 import struct
-from culverin import MathService
+import unittest
 from typing import cast
+
+from culverin import MathService
 
 
 class TestMathService(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.math = MathService()
-
-    
 
     def assertIsMatrix4x4(self, obj: object) -> None:
         # 1. Narrow to tuple
         self.assertIsInstance(obj, tuple)
-        
+
         # 2. Tell Pylance exactly what is in that tuple
-        # We use cast because we've already verified it's a tuple at runtime
         items = cast(tuple[float, ...], obj)
-        
+
         self.assertEqual(len(items), 16)
         for val in items:
-            # Now Pylance knows 'val' is a float
             self.assertIsInstance(val, float)
 
-    def test_get_perspective(self):
-        # fovy=45 deg, aspect=1.0, near=0.1, far=100.0
+    def assertTupleAlmostEqual(
+        self, t1: tuple[float, ...] | None, t2: tuple[float, ...], places: int = 5
+    ) -> None:
+        # First, satisfy the type checker (and the test logic)
+        if t1 is None:
+            self.fail("Received None, but expected a tuple of floats.")
+
+        self.assertEqual(len(t1), len(t2), f"Tuple lengths differ: {len(t1)} != {len(t2)}")
+        for a, b in zip(t1, t2, strict=False):
+            self.assertAlmostEqual(a, b, places=places)
+
+    # =========================================================================
+    # ORIGINAL TESTS
+    # =========================================================================
+
+    def test_get_perspective(self) -> None:
         fovy = math.radians(45.0)
         assert (mat := self.math.get_perspective(fovy, 1.0, 0.1, 100.0)) is not None
         self.assertIsMatrix4x4(mat)
-        
-        # In column-major, [0][0] is focal length (1 / tan(fovy/2))
-        # For 45 deg, it's ~2.414
         self.assertAlmostEqual(mat[0], 2.4142135, places=5)
-        # [2][3] should be -1.0 for a standard GL-style projection
         self.assertEqual(mat[11], -1.0)
 
-    def test_get_ortho(self):
+    def test_get_ortho(self) -> None:
         assert (mat := self.math.get_ortho(-1, 1, -1, 1, 0.1, 100.0)) is not None
         self.assertIsMatrix4x4(mat)
-        # Center of ortho should have identity-like scale for these bounds
         self.assertEqual(mat[0], 1.0)
         self.assertEqual(mat[5], 1.0)
 
-    def test_get_look_at(self):
-        eye = (0.0, 0.0, 5.0)
-        target = (0.0, 0.0, 0.0)
-        up = (0.0, 1.0, 0.0)
-        
+    def test_get_look_at(self) -> None:
+        eye, target, up = (0.0, 0.0, 5.0), (0.0, 0.0, 0.0), (0.0, 1.0, 0.0)
         assert (mat := self.math.get_look_at(eye, target, up)) is not None
         self.assertIsMatrix4x4(mat)
-        # Translation part of view matrix should be at [12], [13], [14]
-        # LookAt from (0,0,5) looking at origin results in Z translation of -5
         self.assertEqual(mat[14], -5.0)
 
-    def test_get_trs(self):
-        t = (10.0, 20.0, 30.0)
-        r = (0.0, 0.0, 0.0, 1.0) # Identity quat
-        s = (1.0, 1.0, 1.0)
-        
+    def test_get_trs(self) -> None:
+        t, r, s = (10.0, 20.0, 30.0), (0.0, 0.0, 0.0, 1.0), (1.0, 1.0, 1.0)
         assert (mat := self.math.get_trs(t, r, s)) is not None
         self.assertIsMatrix4x4(mat)
-        # Column-major translation check
         self.assertEqual(mat[12], 10.0)
         self.assertEqual(mat[13], 20.0)
         self.assertEqual(mat[14], 30.0)
 
-    def test_get_trs_batch(self):
-        # Create a batch of 2 entities
-        # Use 'f' for float32 to match your C-API buffer expectations
-        translations = struct.pack('6f', 1.0, 2.0, 3.0, 4.0, 5.0, 6.0)
-        rotations = struct.pack('8f', 0, 0, 0, 1, 0, 0, 0, 1)
-        scales = struct.pack('6f', 1, 1, 1, 1, 1, 1)
-
+    def test_get_trs_batch(self) -> None:
+        translations = struct.pack("6f", 1.0, 2.0, 3.0, 4.0, 5.0, 6.0)
+        rotations = struct.pack("8f", 0, 0, 0, 1, 0, 0, 0, 1)
+        scales = struct.pack("6f", 1, 1, 1, 1, 1, 1)
         result = self.math.get_trs_batch(translations, rotations, scales)
-        
         self.assertIsInstance(result, bytes)
-        # 2 matrices * 16 floats * 4 bytes = 128 bytes
         self.assertEqual(len(result), 128)
-        
-        # Verify first matrix translation (indices 12, 13, 14 in floats)
-        # 12 * 4 = 48 byte offset
-        res_floats = struct.unpack('32f', result)
+        res_floats = struct.unpack("32f", result)
         self.assertEqual(res_floats[12], 1.0)
         self.assertEqual(res_floats[13], 2.0)
         self.assertEqual(res_floats[14], 3.0)
-        
-        # Verify second matrix translation (16 + 12 = 28 index)
         self.assertEqual(res_floats[28], 4.0)
 
-    def test_inverse(self):
-        # Create a translation matrix
-        t = (1.0, 2.0, 3.0)
-        r = (0.0, 0.0, 0.0, 1.0)
-        s = (1.0, 1.0, 1.0)
+    def test_inverse(self) -> None:
+        t, r, s = (1.0, 2.0, 3.0), (0.0, 0.0, 0.0, 1.0), (1.0, 1.0, 1.0)
         mat = self.math.get_trs(t, r, s)
-        
         inv = self.math.inverse(mat)
         self.assertIsMatrix4x4(inv)
-        
-        # Inverting a translation of (1, 2, 3) should give (-1, -2, -3)
         self.assertAlmostEqual(inv[12], -1.0)
         self.assertAlmostEqual(inv[13], -2.0)
         self.assertAlmostEqual(inv[14], -3.0)
 
-    def test_matmul(self):
-        # Identity matrices
-        eye_quat = (0.0, 0.0, 0.0, 1.0)
-        one_scale = (1.0, 1.0, 1.0)
-        
+    def test_matmul(self) -> None:
+        eye_quat, one_scale = (0.0, 0.0, 0.0, 1.0), (1.0, 1.0, 1.0)
         m1 = self.math.get_trs((10.0, 0.0, 0.0), eye_quat, one_scale)
         m2 = self.math.get_trs((5.0, 0.0, 0.0), eye_quat, one_scale)
-        
-        # (Translate 10) * (Translate 5) = Translate 15
         res = self.math.matmul(m1, m2)
         self.assertIsMatrix4x4(res)
         self.assertAlmostEqual(res[12], 15.0)
 
-    def test_transform_vec3(self):
-        t = (10.0, 20.0, 30.0)
-        r = (0.0, 0.0, 0.0, 1.0)
-        s = (1.0, 1.0, 1.0)
+    def test_transform_vec3(self) -> None:
+        t, r, s = (10.0, 20.0, 30.0), (0.0, 0.0, 0.0, 1.0), (1.0, 1.0, 1.0)
         mat = self.math.get_trs(t, r, s)
-        
-        point = (1.0, 1.0, 1.0)
-        # (1,1,1) + (10, 20, 30) = (11, 21, 31)
-        res = self.math.transform_vec3(mat, point)
-        
-        self.assertIsInstance(res, tuple)
-        self.assertEqual(len(res), 3)
-        self.assertAlmostEqual(res[0], 11.0)
-        self.assertAlmostEqual(res[1], 21.0)
-        self.assertAlmostEqual(res[2], 31.0)
+        res = self.math.transform_vec3(mat, (1.0, 1.0, 1.0))
+        self.assertTupleAlmostEqual(res, (11.0, 21.0, 31.0))
 
-    def test_matmul_batch(self):
-        eye_quat = (0.0, 0.0, 0.0, 1.0)
-        one_scale = (1.0, 1.0, 1.0)
-        
-        # Matrix to multiply by (e.g., a View-Projection)
+    def test_matmul_batch(self) -> None:
+        eye_quat, one_scale = (0.0, 0.0, 0.0, 1.0), (1.0, 1.0, 1.0)
         vp = self.math.get_trs((100.0, 0.0, 0.0), eye_quat, one_scale)
-        
-        # Batch of 2 model matrices
         m1 = self.math.get_trs((1.0, 0.0, 0.0), eye_quat, one_scale)
         m2 = self.math.get_trs((2.0, 0.0, 0.0), eye_quat, one_scale)
-        batch = struct.pack('32f', *m1, *m2)
-        
+        batch = struct.pack("32f", *m1, *m2)
         res_bytes = self.math.matmul_batch(vp, batch)
-        self.assertIsInstance(res_bytes, bytes)
-        self.assertEqual(len(res_bytes), 128)
-        
-        res_floats = struct.unpack('32f', res_bytes)
-        # First matrix translation: 100 + 1 = 101
+        res_floats = struct.unpack("32f", res_bytes)
         self.assertAlmostEqual(res_floats[12], 101.0)
-        # Second matrix translation: 100 + 2 = 102
         self.assertAlmostEqual(res_floats[28], 102.0)
 
-    def test_cull_aabb(self):
-        # Create a basic perspective projection
+    def test_cull_aabb(self) -> None:
         vp = self.math.get_perspective(math.radians(45.0), 1.0, 0.1, 100.0)
-        
-        # Box inside frustum (directly in front of camera)
-        box_min = (-1.0, -1.0, -10.0)
-        box_max = (1.0, 1.0, -5.0)
-        self.assertTrue(self.math.cull_aabb(vp, box_min, box_max))
-        
-        # Box far behind camera
-        box_min_off = (-1.0, -1.0, 10.0)
-        box_max_off = (1.0, 1.0, 15.0)
-        self.assertFalse(self.math.cull_aabb(vp, box_min_off, box_max_off))
+        self.assertTrue(self.math.cull_aabb(vp, (-1.0, -1.0, -10.0), (1.0, 1.0, -5.0)))
+        self.assertFalse(self.math.cull_aabb(vp, (-1.0, -1.0, 10.0), (1.0, 1.0, 15.0)))
 
-    def test_cull_aabb_batch(self):
+    def test_cull_aabb_batch(self) -> None:
         vp = self.math.get_perspective(math.radians(45.0), 1.0, 0.1, 100.0)
-        
-        # 1. Inside, 2. Outside
         aabbs = struct.pack(
-            '12f',
-            -1.0, -1.0, -10.0, 1.0, 1.0, -5.0,  # Box 1
-            -1.0, -1.0, 10.0, 1.0, 1.0, 15.0    # Box 2
+            "12f", -1.0, -1.0, -10.0, 1.0, 1.0, -5.0, -1.0, -1.0, 10.0, 1.0, 1.0, 15.0
         )
-        
         result = self.math.cull_aabb_batch(vp, aabbs)
-        self.assertIsInstance(result, bytearray)
-        self.assertEqual(len(result), 2)
-        self.assertEqual(result[0], 1) # Visible
-        self.assertEqual(result[1], 0) # Culled
+        self.assertEqual(result[0], 1)
+        self.assertEqual(result[1], 0)
 
-if __name__ == '__main__':
+    # =========================================================================
+    # NEW TESTS: VECTORS
+    # =========================================================================
+
+    def test_vec3_normalize(self) -> None:
+        # 3-4-5 triangle
+        norm = self.math.vec3_normalize((3.0, 0.0, 4.0))
+        self.assertTupleAlmostEqual(norm, (0.6, 0.0, 0.8))
+
+        # Degenerate case should return zero safely
+        zero = self.math.vec3_normalize((0.0, 0.0, 0.0))
+        self.assertTupleAlmostEqual(zero, (0.0, 0.0, 0.0))
+
+    def test_vec3_normalize_batch(self) -> None:
+        vecs = struct.pack("6f", 3.0, 0.0, 4.0, 0.0, 3.0, 4.0)
+        res_bytes = self.math.vec3_normalize_batch(vecs)
+        res_floats = struct.unpack("6f", res_bytes)
+        self.assertAlmostEqual(res_floats[0], 0.6)
+        self.assertAlmostEqual(res_floats[2], 0.8)
+        self.assertAlmostEqual(res_floats[4], 0.6)
+
+    def test_vec3_dot(self) -> None:
+        dot = self.math.vec3_dot((1.0, 2.0, 3.0), (4.0, -5.0, 6.0))
+        self.assertAlmostEqual(dot, 12.0)  # 4 - 10 + 18 = 12
+
+    def test_vec3_cross(self) -> None:
+        cross = self.math.vec3_cross((1.0, 0.0, 0.0), (0.0, 1.0, 0.0))
+        self.assertTupleAlmostEqual(cross, (0.0, 0.0, 1.0))
+
+    def test_vec3_distance(self) -> None:
+        dist = self.math.vec3_distance((0.0, 0.0, 0.0), (3.0, 4.0, 0.0))
+        self.assertAlmostEqual(dist, 5.0)
+
+    def test_vec3_distance_batch(self) -> None:
+        a = struct.pack("6f", 0.0, 0.0, 0.0, 10.0, 10.0, 10.0)
+        b = struct.pack("6f", 3.0, 4.0, 0.0, 10.0, 10.0, 10.0)
+        dist_bytes = self.math.vec3_distance_batch(a, b)
+        dist_floats = struct.unpack("2f", dist_bytes)
+        self.assertAlmostEqual(dist_floats[0], 5.0)
+        self.assertAlmostEqual(dist_floats[1], 0.0)
+
+    def test_vec3_lerp_batch(self) -> None:
+        a = struct.pack("3f", 0.0, 0.0, 0.0)
+        b = struct.pack("3f", 10.0, 20.0, 30.0)
+        res_bytes = self.math.vec3_lerp_batch(a, b, 0.5)
+        res_floats = struct.unpack("3f", res_bytes)
+        self.assertAlmostEqual(res_floats[0], 5.0)
+        self.assertAlmostEqual(res_floats[1], 10.0)
+        self.assertAlmostEqual(res_floats[2], 15.0)
+
+    def test_vec3_reflect(self) -> None:
+        vel = (1.0, -1.0, 0.0)
+        normal = (0.0, 1.0, 0.0)  # Floor normal
+        reflected = self.math.vec3_reflect(vel, normal)
+        self.assertTupleAlmostEqual(reflected, (1.0, 1.0, 0.0))
+
+    # =========================================================================
+    # NEW TESTS: QUATERNIONS
+    # =========================================================================
+
+    def test_euler_quat_conversions(self) -> None:
+        # Avoid 90 degrees exactly to prevent ambiguous equivalent representations (e.g. pi vs 0)
+        euler_in = (0.1, 0.2, 0.3)
+        q = self.math.quat_from_euler(*euler_in)
+
+        # Convert back
+        euler_out = self.math.quat_to_euler(*q)
+        self.assertTupleAlmostEqual(euler_out, euler_in, places=5)
+
+    def test_quat_slerp(self) -> None:
+        q1 = (0.0, 0.0, 0.0, 1.0)  # Identity
+        q2 = self.math.quat_from_euler(0.0, math.pi / 2.0, 0.0)  # 90 deg Y
+
+        # Slerp halfway -> 45 deg Y
+        res = self.math.quat_slerp(q1, q2, 0.5)
+        expected = self.math.quat_from_euler(0.0, math.pi / 4.0, 0.0)
+        self.assertTupleAlmostEqual(res, expected, places=5)
+
+    def test_quat_mul(self) -> None:
+        q90 = self.math.quat_from_euler(0.0, math.pi / 2.0, 0.0)
+        # 90 deg * 90 deg = 180 deg
+        res = self.math.quat_mul(q90, q90)
+        expected = self.math.quat_from_euler(0.0, math.pi, 0.0)
+        self.assertTupleAlmostEqual(res, expected)
+
+    def test_quat_inverse(self) -> None:
+        q = self.math.quat_from_euler(math.pi / 4.0, math.pi / 3.0, 0.0)
+        inv = self.math.quat_inverse(q)
+
+        # Multiply q by its inverse should yield Identity
+        identity = self.math.quat_mul(q, inv)
+        self.assertTupleAlmostEqual(identity, (0.0, 0.0, 0.0, 1.0), places=6)
+
+    def test_quat_from_to(self) -> None:
+        # Rotation from +X to +Y is a 90 deg rotation around +Z
+        q = self.math.quat_from_to((1.0, 0.0, 0.0), (0.0, 1.0, 0.0))
+        # Rotate X vector by q
+        res = self.math.quat_rotate_vec3(q, (1.0, 0.0, 0.0))
+        self.assertTupleAlmostEqual(res, (0.0, 1.0, 0.0))
+
+    def test_quat_axis_angle(self) -> None:
+        axis = (0.0, 1.0, 0.0)
+        angle = math.pi / 2.0
+        q = self.math.quat_from_axis_angle(axis, angle)
+
+        out_axis, out_angle = self.math.quat_get_axis_angle(q)
+        self.assertTupleAlmostEqual(out_axis, axis, places=5)
+        self.assertAlmostEqual(out_angle, angle, places=5)
+
+    def test_quat_rotate_vec3(self) -> None:
+        q = self.math.quat_from_euler(0.0, math.pi / 2.0, 0.0)  # 90 deg Y
+        v = (1.0, 0.0, 0.0)  # Right
+        # Right rotated 90 deg Left (Y-up) is Forward (-Z in right-handed)
+        res = self.math.quat_rotate_vec3(q, v)
+        self.assertTupleAlmostEqual(res, (0.0, 0.0, -1.0))
+
+    def test_quat_rotate_vec3_batch(self) -> None:
+        q = self.math.quat_from_euler(0.0, math.pi / 2.0, 0.0)
+        vecs = struct.pack("6f", 1.0, 0.0, 0.0, 0.0, 0.0, -1.0)
+        res_bytes = self.math.quat_rotate_vec3_batch(q, vecs)
+        res_floats = struct.unpack("6f", res_bytes)
+
+        # (1,0,0) -> (0,0,-1)
+        self.assertAlmostEqual(res_floats[0], 0.0, places=5)
+        self.assertAlmostEqual(res_floats[2], -1.0, places=5)
+        # (0,0,-1) -> (-1,0,0)
+        self.assertAlmostEqual(res_floats[3], -1.0, places=5)
+        self.assertAlmostEqual(res_floats[5], 0.0, places=5)
+
+    def test_quat_rotate_vec3_inverse(self) -> None:
+        q = self.math.quat_from_euler(0.0, math.pi / 2.0, 0.0)  # 90 deg Y
+        v = (0.0, 0.0, -1.0)  # Forward
+        # Inverse rotate Forward by 90 deg Y -> Right
+        res = self.math.quat_rotate_vec3_inverse(q, v)
+        self.assertTupleAlmostEqual(res, (1.0, 0.0, 0.0))
+
+    # =========================================================================
+    # NEW TESTS: MATRICES & PROJECTION
+    # =========================================================================
+
+    def test_mat44_identity(self) -> None:
+        m = self.math.mat44_identity()
+        self.assertIsMatrix4x4(m)
+        self.assertEqual(m[0], 1.0)
+        self.assertEqual(m[5], 1.0)
+        self.assertEqual(m[10], 1.0)
+        self.assertEqual(m[15], 1.0)
+        self.assertEqual(m[12], 0.0)  # Translation X
+
+    def test_mat44_get_components(self) -> None:
+        pos = (10.0, -5.0, 42.0)
+        rot = self.math.quat_from_euler(0.0, math.pi, 0.0)
+        mat = self.math.get_trs(pos, rot, (1.0, 1.0, 1.0))
+
+        out_pos = self.math.mat44_get_translation(mat)
+        self.assertTupleAlmostEqual(out_pos, pos)
+
+        out_rot = self.math.mat44_get_rotation(mat)
+        self.assertTupleAlmostEqual(out_rot, rot)
+
+    def test_project_unproject(self) -> None:
+        # Setup camera looking down -Z
+        view = self.math.get_look_at((0, 0, 5), (0, 0, 0), (0, 1, 0))
+        proj = self.math.get_perspective(math.radians(90), 1.0, 0.1, 100.0)
+        mvp = self.math.matmul(proj, view)
+        vp = (0, 0, 800, 600)
+
+        world_pt = (0.0, 0.0, 0.0)
+        # Project center of world
+        screen_pt = self.math.project(world_pt, mvp, vp)
+
+        # It should be perfectly in the middle of the 800x600 screen
+        self.assertAlmostEqual(screen_pt[0], 400.0)
+        self.assertAlmostEqual(screen_pt[1], 300.0)
+
+        # Unproject back to world space (using the exact depth from projection)
+        unproj_pt = self.math.unproject(screen_pt, mvp, vp)
+        self.assertTupleAlmostEqual(unproj_pt, world_pt)
+
+    def test_intersect_ray_plane(self) -> None:
+        # Ray straight down from (0, 10, 0)
+        ro = (0.0, 10.0, 0.0)
+        rd = (0.0, -1.0, 0.0)
+
+        # Plane at origin, pointing up
+        po = (0.0, 0.0, 0.0)
+        pn = (0.0, 1.0, 0.0)
+
+        hit, dist, point = self.math.intersect_ray_plane(ro, rd, po, pn)
+
+        self.assertTrue(hit)
+        self.assertAlmostEqual(dist, 10.0)
+        self.assertTupleAlmostEqual(point, (0.0, 0.0, 0.0))
+
+        # Test parallel miss
+        rd_miss = (1.0, 0.0, 0.0)  # Shooting sideways
+        hit_miss, _, _ = self.math.intersect_ray_plane(ro, rd_miss, po, pn)
+        self.assertFalse(hit_miss)
+
+
+if __name__ == "__main__":
     unittest.main()

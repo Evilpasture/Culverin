@@ -96,6 +96,46 @@ int culverin_math_cull_aabb(const float *__restrict vp_mat, const float *__restr
 void culverin_math_cull_aabb_batch(const float *__restrict vp_mat,
                                    const float *__restrict aabb_data, size_t count,
                                    uint8_t *__restrict out_visibility);
+void culverin_math_vec3_normalize_batch(const float *__restrict in, size_t count,
+                                        float *__restrict out);
+void culverin_math_quat_from_euler(float x, float y, float z, float *__restrict out);
+void culverin_math_quat_to_euler(const float *__restrict in_q, float *__restrict out_euler);
+void culverin_math_quat_slerp(const float *__restrict q1, const float *__restrict q2, float t,
+                              float *__restrict out);
+void culverin_math_quat_mul(const float *__restrict a, const float *__restrict b,
+                            float *__restrict out);
+void culverin_math_vec3_lerp_batch(const float *__restrict a, const float *__restrict b,
+                                   float alpha, size_t count, float *__restrict out);
+void culverin_math_quat_rotate_vec3(const float *__restrict q, const float *__restrict v,
+                                    float *__restrict out);
+void culverin_math_quat_rotate_vec3_batch(const float *__restrict q, const float *__restrict vecs,
+                                          size_t count, float *__restrict out);
+void culverin_math_quat_inverse(const float *__restrict q, float *__restrict out);
+void culverin_math_project(const float *__restrict v, const float *__restrict mvp,
+                           const int *__restrict viewport, float *__restrict out);
+void culverin_math_unproject(const float *__restrict v, const float *__restrict mvp,
+                             const int *__restrict viewport, float *__restrict out);
+void culverin_math_quat_from_to(const float *__restrict v1, const float *__restrict v2,
+                                float *__restrict out);
+float culverin_math_vec3_dot(const float *__restrict v1, const float *__restrict v2);
+void culverin_math_vec3_cross(const float *__restrict v1, const float *__restrict v2,
+                              float *__restrict out);
+int culverin_math_intersect_ray_plane(const float *__restrict ro, const float *__restrict rd,
+                                      const float *__restrict po, const float *__restrict pn,
+                                      float *__restrict out_t, float *__restrict out_p);
+void culverin_math_quat_get_axis_angle(const float *__restrict in_q, float *__restrict out_axis,
+                                       float *__restrict out_angle);
+void culverin_math_quat_from_axis_angle(const float *__restrict axis, float angle,
+                                        float *__restrict out);
+void culverin_math_vec3_distance_batch(const float *__restrict a, const float *__restrict b,
+                                       size_t count, float *__restrict out);
+                                       void culverin_math_vec3_normalize(const float *__restrict v, float *__restrict out);
+                                       void culverin_math_mat44_get_translation(const float *__restrict in_mat, float *__restrict out_vec);
+                                       void culverin_math_mat44_get_rotation(const float *__restrict in_mat, float *__restrict out_quat);
+                                       void culverin_math_mat44_identity(float *__restrict out);
+                                       void culverin_math_vec3_reflect(const float *__restrict v, const float *__restrict n, float *__restrict out);
+                                       float culverin_math_vec3_distance(const float *__restrict v1, const float *__restrict v2);
+                                       void culverin_math_quat_rotate_vec3_inverse(const float *__restrict q, const float *__restrict v, float *__restrict out);
 #if defined(__cplusplus)
 }
 #endif
