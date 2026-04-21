@@ -10,3 +10,6 @@
 [submodule "extern/fast-capi"]
 	path = extern/fast-capi
 	url = https://github.com/Evilpasture/fast-capi.git
+[submodule "extern/docs-embedder"]
+	path = extern/docs-embedder
+	url = https://github.com/Evilpasture/docs-embedder.git

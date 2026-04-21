@@ -522,6 +522,19 @@ if(ipo_supported AND NOT (CMAKE_C_COMPILER_ID STREQUAL "GNU" AND WIN32))
     set_property(TARGET ${FAST_CAPI_TARGET} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
 endif()
 
+# ==============================================================================
+# 4.2 BUILD DOCS-EMBEDDER (Via Submodule CMake)
+# ==============================================================================
+add_subdirectory("extern/docs-embedder")
+
+# Apply Culverin's high-performance flags to the submodule
+target_compile_options(docs_embedder PRIVATE ${CULVERIN_COMPILE_FLAGS})
+
+# Enforce IPO/LTO if supported
+if(ipo_supported AND NOT (CMAKE_C_COMPILER_ID STREQUAL "GNU" AND WIN32))
+    set_property(TARGET docs_embedder PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+endif()
+
 # --- #embed Fallback Generator for Ancient Compilers which are probably older than me ---
 # 1. Ensure the generated directory exists immediately because sometimes it wouldn't work on other environments or compilers
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
@@ -676,7 +689,7 @@ if(WIN32)
     target_link_libraries(_culverin_c PRIVATE Winmm.lib)
 endif()
 target_compile_definitions(_culverin_c PRIVATE JPH_DEBUG_RENDERER)
-target_link_libraries(_culverin_c PRIVATE ${MAG_MUTEX_TARGET} ${JOLTC_TARGET} fast_capi_core Jolt::Jolt)
+target_link_libraries(_culverin_c PRIVATE ${MAG_MUTEX_TARGET} ${JOLTC_TARGET} fast_capi_core Jolt::Jolt docs_embedder)
 
 if(APPLE)
     message(STATUS "Culverin: Enforcing Strong Symbol Export")
