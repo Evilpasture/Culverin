@@ -16,7 +16,7 @@ void world_remove_body_slot(PhysicsWorldObject *self, uint32_t slot) {
     if (self->soft_shadows && self->soft_shadows[dense_idx].vertices) {
         CulvMem_RawFreeAligned(self->soft_shadows[dense_idx].vertices);
         self->soft_shadows[dense_idx].vertices = nullptr;
-        
+
         if (self->soft_shadows[dense_idx].velocities) {
             CulvMem_RawFreeAligned(self->soft_shadows[dense_idx].velocities);
             self->soft_shadows[dense_idx].velocities = nullptr;
@@ -62,9 +62,9 @@ void world_remove_body_slot(PhysicsWorldObject *self, uint32_t slot) {
         if (self->soft_shadows) {
             self->soft_shadows[dense_idx] = self->soft_shadows[last_dense];
             // Clear the old tail so we don't double-free later
-            self->soft_shadows[last_dense].vertices = nullptr;
-            self->soft_shadows[last_dense].velocities = nullptr;
-            self->soft_shadows[last_dense].normals = nullptr;
+            self->soft_shadows[last_dense].vertices     = nullptr;
+            self->soft_shadows[last_dense].velocities   = nullptr;
+            self->soft_shadows[last_dense].normals      = nullptr;
             self->soft_shadows[last_dense].num_vertices = 0;
         }
     }
@@ -90,14 +90,16 @@ void world_remove_body_slot(PhysicsWorldObject *self, uint32_t slot) {
 
 // Internal helper to keep queues in sync
 static bool grow_queues(PhysicsWorldObject *self, size_t new_cap) {
-    if (new_cap > (SIZE_MAX / sizeof(PhysicsCommand))) { return false;
-}
+    if (new_cap > (SIZE_MAX / sizeof(PhysicsCommand))) {
+        return false;
+    }
 
     // Grow the ACTIVE queue
     void *new_active = CULV_RAW_REALLOC(self->command_queue, new_cap * sizeof(PhysicsCommand));
-    if (!new_active) { return false;
-}
-    self->command_queue = (PhysicsCommand *)new_active;
+    if (!new_active) {
+        return false;
+    }
+    self->command_queue    = (PhysicsCommand *)new_active;
     self->command_capacity = new_cap;
 
     // Grow the SPARE queue to match immediately
@@ -106,10 +108,10 @@ static bool grow_queues(PhysicsWorldObject *self, size_t new_cap) {
         // This is a rare partial-failure state. We can't easily roll back active,
         // but we can mark spare_capacity as smaller so step() knows it's not mirrored.
         // However, for high-perf, we assume if realloc 1 worked, 2 likely will.
-        return false; 
+        return false;
     }
     self->command_queue_spare = (PhysicsCommand *)new_spare;
-    self->spare_capacity = new_cap;
+    self->spare_capacity      = new_cap;
 
     return true;
 }
@@ -128,8 +130,9 @@ bool ensure_command_bulk_capacity(PhysicsWorldObject *self, size_t batch_size) {
     size_t required = self->command_count + batch_size;
     if (UNLIKELY(required > self->command_capacity)) {
         size_t new_cap = (self->command_capacity == 0) ? 64 : self->command_capacity * 2;
-        while (new_cap < required) { new_cap *= 2;
-}
+        while (new_cap < required) {
+            new_cap *= 2;
+        }
         return grow_queues(self, new_cap);
     }
     return true;
@@ -178,10 +181,11 @@ op_NOP:
     DISPATCH();
 
 op_CREATE_BODY: {
-    JPH_BodyCreationSettings *s = cmd->create.settings;
-    JPH_BodyID new_bid = JPH_BodyInterface_CreateAndAddBody(bi, s, JPH_Activation_Activate);
+    JPH_BodyCreationSettings *const settings = cmd->create.settings;
+    const JPH_BodyID new_bid =
+        JPH_BodyInterface_CreateAndAddBody(bi, settings, JPH_Activation_Activate);
 
-    JPH_BodyCreationSettings_Destroy(s);
+    JPH_BodyCreationSettings_Destroy(settings);
 
     SHADOW_LOCK(&self->shadow_lock);
 
@@ -192,16 +196,17 @@ op_CREATE_BODY: {
         // body_ids is non-atomic; protected by shadow_lock and the 'is_stepping' phase
         self->body_ids[self->slot_to_dense[slot]] = new_bid;
 
-        uint32_t j_idx = JPH_ID_TO_INDEX(new_bid);
+        const uint32_t j_idx = JPH_ID_TO_INDEX(new_bid);
         if (self->id_to_handle_map && j_idx <= self->max_jolt_bodies) {
             // TSan Fix: Load generation atomically
-            uint32_t gen = atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
+            const uint32_t gen =
+                atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
 
             // BodyHandle is CULV_ATOMIC(uint64_t)
-            BodyHandle h = make_handle(slot, gen);
+            const BodyHandle h = make_handle(slot, gen);
 
             // TSan Fix: Extract raw uint64_t to avoid implicit seq_cst load overhead
-            uint64_t raw_h = h;
+            const uint64_t raw_h = h;
 
             // TSan Fix: Publish the new handle to the shared map atomically.
             // Release ensures the body_ids update above is visible to Query threads.
@@ -220,19 +225,20 @@ op_CREATE_BODY: {
 }
 
 op_CREATE_SOFT_BODY: {
-    JPH_SoftBodyCreationSettings *s = cmd->create_soft.settings;
-    uint32_t num_verts              = cmd->create_soft.num_vertices; // O(1) Cache-local read!
+    JPH_SoftBodyCreationSettings *const settings = cmd->create_soft.settings;
+    const uint32_t num_verts = cmd->create_soft.num_vertices; // O(1) Cache-local read!
 
-    PyObject *py_shared             = cmd->create_soft.user_data.obj;
+    PyObject *const py_shared = cmd->create_soft.user_data.obj;
 
-    JPH_BodyID new_bid = JPH_BodyInterface_CreateAndAddSoftBody(bi, s, JPH_Activation_Activate);
+    const JPH_BodyID new_bid =
+        JPH_BodyInterface_CreateAndAddSoftBody(bi, settings, JPH_Activation_Activate);
 
     SHADOW_LOCK(&self->shadow_lock);
 
     if (UNLIKELY(new_bid == JPH_INVALID_BODY_ID)) {
         world_remove_body_slot(self, slot);
     } else {
-        uint32_t dense_idx        = self->slot_to_dense[slot];
+        const uint32_t dense_idx  = self->slot_to_dense[slot];
         self->body_ids[dense_idx] = new_bid;
 
         // --- ALLOCATE SHADOW VERTEX BUFFER ---
@@ -240,25 +246,26 @@ op_CREATE_SOFT_BODY: {
         self->soft_shadows[dense_idx].vertices =
             (JPH_Real *)CulvMem_RawMallocAligned(num_verts * sizeof(PosStride), AVX_ALIGNMENT);
         self->soft_shadows[dense_idx].velocities = nullptr; // Initialize explicitly
-        self->soft_shadows[dense_idx].normals = nullptr;    // Initialize explicitly
+        self->soft_shadows[dense_idx].normals    = nullptr; // Initialize explicitly
 
         // Populate standard handles
-        uint32_t j_idx = JPH_ID_TO_INDEX(new_bid);
+        const uint32_t j_idx = JPH_ID_TO_INDEX(new_bid);
         if (self->id_to_handle_map && j_idx <= self->max_jolt_bodies) {
-            uint32_t gen   = atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
-            BodyHandle h   = make_handle(slot, gen);
-            uint64_t raw_h = h;
+            const uint32_t gen =
+                atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
+            const BodyHandle h   = make_handle(slot, gen);
+            const uint64_t raw_h = h;
             atomic_store_explicit(&self->id_to_handle_map[j_idx], raw_h, memory_order_release);
         }
 
         atomic_store_explicit(&self->slot_states[slot], SLOT_SOFT_BODY, memory_order_release);
     }
 
-    JPH_SoftBodyCreationSettings_Destroy(s); // Cleanup
+    JPH_SoftBodyCreationSettings_Destroy(settings); // Cleanup
 
     // --- RELEASE PROTECTION ---
     // The creation is finished; Python can now safely delete the shared settings if it wants.
-    Py_DECREF(py_shared); 
+    Py_DECREF(py_shared);
 
     SHADOW_UNLOCK(&self->shadow_lock);
     DISPATCH();
