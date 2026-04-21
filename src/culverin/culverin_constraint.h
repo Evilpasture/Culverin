@@ -1,5 +1,6 @@
 #pragma once
-#include "culverin.h"
+#include "culverin_physics_world.h"
+#include <Python.h>
 
 PyCFunction_DeclareMethodFromModule PhysicsWorld_create_constraint(PhysicsWorldObject *self,
                                                                    PyObject *const *args,
@@ -15,7 +16,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_set_constraint_target(PhysicsWo
                                                                        PyObject *const *args,
                                                                        size_t nargsf,
                                                                        PyObject *kwnames);
-                                                                       
+
 PyCFunction_DeclareMethodFromModule PhysicsWorld_get_constraint_type(PhysicsWorldObject *self,
                                                                      PyObject *const *args,
                                                                      size_t nargsf,

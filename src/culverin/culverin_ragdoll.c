@@ -3,6 +3,7 @@
 #include "culverin_fast_build.h"
 #include "culverin_physics_sync.h"
 #include "culverin_physics_world_internal.h"
+#include "culverin_python.h"
 
 // Default mass
 static constexpr float RAGDOLL_DEFAULT_PART_MASS = 10.0f;
@@ -10,15 +11,6 @@ static constexpr float RAGDOLL_DEFAULT_PART_MASS = 10.0f;
 // Ragdoll constraint angle limits (in radians)
 static constexpr float RAGDOLL_DEFAULT_TWIST_MIN = -0.1f;
 static constexpr float RAGDOLL_DEFAULT_TWIST_MAX = 0.1f;
-
-// Jolt Physics collision masks (all layers/categories)
-static constexpr uint32_t JOLT_ALL_LAYER_BITS = 0xFFFF;
-
-// Buffer allocation increments
-static constexpr size_t RAGDOLL_BODY_BUFFER_INCREMENT = 1024;
-
-// JPH_Mat4 size in bytes (16 floats)
-static constexpr size_t JPH_MAT4_SIZE_BYTES = 64;
 
 PyCFunction_DeclareMethodFromModule Skeleton_add_joint(SkeletonObject *self, PyObject *const *args,
                                                        Py_ssize_t nargs, PyObject *kwnames) {
@@ -83,329 +75,12 @@ PyCFunction_DeclareMethodFromModule Skeleton_finalize(SkeletonObject *self,
     Py_RETURN_NONE;
 }
 
-// --- Ragdoll Settings Implementation ---
-
-PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll_settings(PhysicsWorldObject *self,
-                                                                         PyObject *const *args,
-                                                                         Py_ssize_t nargs,
-                                                                         PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
-    // --- 1. FAST ARGUMENT PARSING ---
-    PyObject *py_skel_obj                = nullptr;
-    void *targets[RagdollSettings_COUNT] = {
-        [IDX_RS_SKELETON] = (void *)&py_skel_obj,
-    };
-
-    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.RagdollSettingsParser, targets)) {
-        return nullptr;
-    }
-
-    // --- 2. TYPE VALIDATION ---
-
-    // Manual type check (replaces O! format string)
-    if (!PyObject_TypeCheck(py_skel_obj, (PyTypeObject *)st->SkeletonType)) {
-        PyErr_SetString(PyExc_TypeError, "skeleton must be a Skeleton object");
-        return nullptr;
-    }
-    SkeletonObject *py_skel = (SkeletonObject *)py_skel_obj;
-
-    // --- 3. OBJECT CREATION ---
-    RagdollSettingsObject *obj = (RagdollSettingsObject *)PyObject_New(
-        RagdollSettingsObject, (PyTypeObject *)st->RagdollSettingsType);
-    if (!obj) {
-        return nullptr;
-    }
-
-    // Initialize Jolt settings and link skeleton
-    obj->settings = JPH_RagdollSettings_Create();
-    JPH_RagdollSettings_SetSkeleton(obj->settings, py_skel->skeleton);
-
-    obj->world = self;
-    Py_INCREF(self);
-
-    return (PyObject *)obj;
-}
-
-PyCFunction_DeclareMethodFromModule RagdollSettings_add_part(RagdollSettingsObject *self,
-                                                             PyObject *const *args,
-                                                             Py_ssize_t nargs, PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
-    // 1. Setup Defaults
-    int joint_idx     = 0;
-    int parent_idx    = -1;
-    int shape_type    = 0;
-    float mass        = RAGDOLL_DEFAULT_PART_MASS;
-    PyObject *py_size = nullptr;
-    PyObject *py_pos  = nullptr;
-    float twist_min   = RAGDOLL_DEFAULT_TWIST_MIN;
-    float twist_max   = RAGDOLL_DEFAULT_TWIST_MAX;
-    float cone_angle  = 0.0f;
-
-    // Default orientation: Axis=X, Normal=Y
-    Vec3f axis   = {.x = 1.0f, .y = 0.0f, .z = 0.0f};
-    Vec3f normal = {.x = 0.0f, .y = 1.0f, .z = 0.0f};
-
-    void *targets[RagdollAddPart_COUNT] = {
-        [IDX_RAP_JOINT] = (void *)&joint_idx,     [IDX_RAP_SHAPE] = (void *)&shape_type,
-        [IDX_RAP_SIZE] = (void *)&py_size,        [IDX_RAP_MASS] = (void *)&mass,
-        [IDX_RAP_PARENT] = (void *)&parent_idx,   [IDX_RAP_TWIST_MIN] = (void *)&twist_min,
-        [IDX_RAP_TWIST_MAX] = (void *)&twist_max, [IDX_RAP_CONE] = (void *)&cone_angle,
-        [IDX_RAP_AXIS]   = (void *)&axis,   // Converter calls parse_vec3_f32
-        [IDX_RAP_NORMAL] = (void *)&normal, // Converter calls parse_vec3_f32
-        [IDX_RAP_POS]    = (void *)&py_pos,
-    };
-
-    // 2. High Speed Parse
-    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.RagdollAddPartParser, targets)) {
-        return nullptr;
-    }
-
-    // 3. Shape Acquisition (Using your existing helper)
-    float s[4];
-    parse_body_size(py_size, s); // From culverin_parsers.c
-
-    JPH_Shape *shape = nullptr;
-    Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
-    SHADOW_LOCK(&self->world->shadow_lock);
-    shape = find_or_create_shape_locked(self->world, shape_type, s);
-    SHADOW_UNLOCK(&self->world->shadow_lock);
-    NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
-    Py_END_ALLOW_THREADS;
-
-    if (!shape) {
-        return PyErr_Format(PyExc_ValueError, "Invalid shape configuration");
-    }
-
-    // 4. Validation & Resizing
-    auto skel     = JPH_RagdollSettings_GetSkeleton(self->settings);
-    int skel_count = JPH_Skeleton_GetJointCount(skel);
-    if (joint_idx < 0 || joint_idx >= skel_count) {
-        return PyErr_Format(PyExc_IndexError, "Joint index %d out of bounds", joint_idx);
-    }
-
-    if (JPH_RagdollSettings_GetPartCount(self->settings) <= joint_idx) {
-        JPH_RagdollSettings_ResizeParts(self->settings, skel_count);
-    }
-
-    // 5. Apply Core Part Settings
-    JPH_RagdollSettings_SetPartShape(self->settings, joint_idx, shape);
-    JPH_RagdollSettings_SetPartMassProperties(self->settings, joint_idx, mass);
-    JPH_RagdollSettings_SetPartObjectLayer(self->settings, joint_idx, 1);
-    JPH_RagdollSettings_SetPartMotionType(self->settings, joint_idx, JPH_MotionType_Dynamic);
-
-    // 6. Handle Position (Optional)
-    if (py_pos && py_pos != Py_None) {
-        PosStride p_stride;
-        if (parse_py_vec3_pos(py_pos, &p_stride)) {
-            JPH_RVec3 p = {.x = p_stride.x, .y = p_stride.y, .z = p_stride.z};
-            JPH_RagdollSettings_SetPartPosition(self->settings, joint_idx, &p);
-        }
-    }
-
-    // 7. Handle Parent Constraint
-    if (parent_idx >= 0) {
-        JPH_SwingTwistConstraintSettings cs;
-        JPH_SwingTwistConstraintSettings_Init(&cs);
-        cs.base.enabled = true;
-
-        // Identity positions for local bind
-        cs.position1 = (JPH_RVec3){0, 0, 0};
-        cs.position2 = (JPH_RVec3){0, 0, 0};
-
-        cs.twistAxis1 = (JPH_Vec3){axis.x, axis.y, axis.z};
-        cs.twistAxis2 = (JPH_Vec3){axis.x, axis.y, axis.z};
-        cs.planeAxis1 = (JPH_Vec3){normal.x, normal.y, normal.z};
-        cs.planeAxis2 = (JPH_Vec3){normal.x, normal.y, normal.z};
-
-        cs.normalHalfConeAngle = cone_angle;
-        cs.planeHalfConeAngle  = cone_angle;
-        cs.twistMinAngle       = twist_min;
-        cs.twistMaxAngle       = twist_max;
-
-        JPH_RagdollSettings_SetPartToParent(self->settings, joint_idx, &cs);
-    }
-
-    Py_RETURN_NONE;
-}
-
 PyCFunction_DeclareMethodFromModule RagdollSettings_stabilize(RagdollSettingsObject *self,
                                                               PyObject *Py_UNUSED(args)) {
     if (JPH_RagdollSettings_Stabilize(self->settings)) {
         Py_RETURN_TRUE;
     }
     Py_RETURN_FALSE;
-}
-
-PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll(PhysicsWorldObject *self,
-                                                                PyObject *const *args,
-                                                                Py_ssize_t nargs,
-                                                                PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
-    // --- 1. FAST ARGUMENT PARSING ---
-    PyObject *settings_obj = nullptr;
-    PosStride pos          = {.x = 0, .y = 0, .z = 0};
-    AuxStride rot          = {.x = 0, .y = 0, .z = 0, .w = 1.0f};
-    uint64_t user_data     = 0;
-    uint32_t category      = JOLT_ALL_LAYER_BITS;
-    uint32_t mask          = JOLT_ALL_LAYER_BITS;
-    uint32_t material_id   = 0;
-
-    void *targets[CreateRagdoll_COUNT] = {
-        [IDX_CR_SETTINGS] = (void *)&settings_obj,
-        [IDX_CR_POS]      = (void *)&pos,
-        [IDX_CR_ROT]      = (void *)&rot,
-        [IDX_CR_USER]     = (void *)&user_data,
-        [IDX_CR_CAT]      = (void *)&category,
-        [IDX_CR_MASK]     = (void *)&mask,
-        [IDX_CR_MAT]      = (void *)&material_id,
-    };
-
-    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.CreateRagdollParser, targets)) {
-        return nullptr;
-    }
-
-    // Type Safety Check (Replaces original O! logic)
-    if (!PyObject_TypeCheck(settings_obj, (PyTypeObject *)st->RagdollSettingsType)) {
-        PyErr_SetString(PyExc_TypeError, "settings must be a RagdollSettings object");
-        return nullptr;
-    }
-    auto py_settings = (RagdollSettingsObject *)settings_obj;
-
-    // --- 2. JOLT PREPARATION (Logic Preserved) ---
-    JPH_Ragdoll *j_rag         = nullptr;
-    JPH_Mat4 *neutral_matrices = nullptr;
-    size_t body_count          = 0;
-
-    Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
-
-    JPH_RagdollSettings_CalculateBodyIndexToConstraintIndex(py_settings->settings);
-    JPH_RagdollSettings_CalculateConstraintIndexToBodyIdxPair(py_settings->settings);
-
-    j_rag = JPH_RagdollSettings_CreateRagdoll(py_settings->settings, self->system, 0, user_data);
-
-    if (!j_rag) {
-        NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
-        Py_BLOCK_THREADS;
-        return PyErr_Format(PyExc_RuntimeError, "Jolt failed to create Ragdoll instance");
-    }
-
-    auto joint_count =
-        (size_t)JPH_Skeleton_GetJointCount(JPH_RagdollSettings_GetSkeleton(py_settings->settings));
-    neutral_matrices = (JPH_Mat4 *)CULV_RAW_MALLOC(joint_count * sizeof(JPH_Mat4));
-
-    JPH_RVec3 zero_root = {0, 0, 0};
-    JPH_Ragdoll_GetPose2(j_rag, &zero_root, neutral_matrices, true);
-
-    JPH_Quat root_q = {.x = rot.x, .y = rot.y, .z = rot.z, .w = rot.w};
-    JPH_STACK_ALLOC(JPH_Mat4, rot_matrix);
-    JPH_Mat4_Rotation(rot_matrix, &root_q);
-
-    for (size_t i = 0; i < joint_count; i++) {
-        JPH_STACK_ALLOC(JPH_Mat4, result);
-        JPH_Mat4_Multiply(rot_matrix, &neutral_matrices[i], result);
-        neutral_matrices[i] = *result;
-    }
-
-    JPH_RVec3 root_pos = {pos.x, pos.y, pos.z};
-    JPH_Ragdoll_SetPose2(j_rag, &root_pos, neutral_matrices, true);
-    JPH_Ragdoll_AddToPhysicsSystem(j_rag, JPH_Activation_Activate, true);
-
-    body_count = (size_t)JPH_Ragdoll_GetBodyCount(j_rag);
-    NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
-    Py_END_ALLOW_THREADS;
-
-    // --- 3. PYTHON OBJECT CREATION ---
-    auto obj = (RagdollObject *)PyObject_New(RagdollObject, (PyTypeObject *)st->RagdollType);
-    if (!obj) {
-        Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
-        JPH_Ragdoll_Destroy(j_rag);
-        NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
-        Py_END_ALLOW_THREADS CULV_RAW_FREE(neutral_matrices);
-        return nullptr;
-    }
-
-    obj->ragdoll = j_rag;
-    obj->world   = self;
-    Py_INCREF(self);
-    obj->body_count = body_count;
-    obj->body_slots = (uint32_t *)CULV_RAW_MALLOC(body_count * sizeof(uint32_t));
-
-    // --- 4. SHADOW BUFFER WARM-UP ---
-    SHADOW_LOCK(&self->shadow_lock);
-    if (atomic_load_explicit(&self->free_count, memory_order_acquire) < body_count) {
-        if (PhysicsWorld_resize(self, self->capacity + body_count + RAGDOLL_BODY_BUFFER_INCREMENT) <
-            0) {
-            SHADOW_UNLOCK(&self->shadow_lock);
-            JPH_Ragdoll_Destroy(j_rag);
-            CULV_RAW_FREE(neutral_matrices);
-            Py_DECREF(obj);
-            return nullptr;
-        }
-    }
-
-    JPH_BodyInterface *bi = self->body_interface;
-    auto shadow_pos      = (PosStride *)self->positions;
-    auto shadow_ppos     = (PosStride *)self->prev_positions;
-    auto shadow_rot      = (AuxStride *)self->rotations;
-    auto shadow_prot     = (AuxStride *)self->prev_rotations;
-    auto shadow_lvel     = (AuxStride *)self->linear_velocities;
-    auto shadow_avel     = (AuxStride *)self->angular_velocities;
-
-    for (size_t i = 0; i < body_count; i++) {
-        JPH_BodyID bid = JPH_Ragdoll_GetBodyID(j_rag, (int)i);
-
-        // TSan Fix: Pop from free stack atomically
-        size_t f_idx  = atomic_fetch_sub_explicit(&self->free_count, 1, memory_order_relaxed) - 1;
-        uint32_t slot = self->free_slots[f_idx];
-        obj->body_slots[i] = slot;
-
-        // TSan Fix: Increment dense count atomically
-        auto dense = (uint32_t)atomic_fetch_add_explicit(&self->count, 1, memory_order_relaxed);
-
-        JPH_RVec3 world_p;
-        JPH_Quat world_q;
-        JPH_BodyInterface_GetPosition(bi, bid, &world_p);
-        JPH_BodyInterface_GetRotation(bi, bid, &world_q);
-
-        shadow_pos[dense]  = (PosStride){world_p.x, world_p.y, world_p.z, 0.0};
-        shadow_ppos[dense] = shadow_pos[dense];
-        shadow_rot[dense]  = (AuxStride){world_q.x, world_q.y, world_q.z, world_q.w};
-        shadow_prot[dense] = shadow_rot[dense];
-        shadow_lvel[dense] = (AuxStride){};
-        shadow_avel[dense] = (AuxStride){};
-
-        self->body_ids[dense]      = bid;
-        self->slot_to_dense[slot]  = dense;
-        self->dense_to_slot[dense] = slot;
-
-        // TSan Fix: Fetch generation atomically
-        uint32_t gen   = atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
-        BodyHandle h   = make_handle(slot, gen);
-        uint64_t raw_h = h;
-
-        uint32_t j_idx = JPH_ID_TO_INDEX(bid);
-        if (self->id_to_handle_map && j_idx < self->max_jolt_bodies) {
-            // TSan Fix: Store handle to shared map atomically (Release ensures shadow writes are
-            // visible)
-            atomic_store_explicit(&self->id_to_handle_map[j_idx], raw_h, memory_order_release);
-        }
-        JPH_BodyInterface_SetUserData(bi, bid, raw_h);
-
-        // TSan Fix: Publish body as ALIVE atomically
-        atomic_store_explicit(&self->slot_states[slot], SLOT_ALIVE, memory_order_release);
-
-        self->user_data[dense]    = user_data;
-        self->categories[dense]   = category;
-        self->masks[dense]        = mask;
-        self->material_ids[dense] = material_id;
-    }
-
-    // TSan Fix: Update view shape with atomic count
-    self->view_shape[0] = (Py_ssize_t)atomic_load_explicit(&self->count, memory_order_relaxed);
-    SHADOW_UNLOCK(&self->shadow_lock);
-
-    CULV_RAW_FREE(neutral_matrices);
-    return (PyObject *)obj;
 }
 
 PyCFunction_DeclareMethodFromModule Ragdoll_drive_to_pose(RagdollObject *self,
@@ -433,7 +108,7 @@ PyCFunction_DeclareMethodFromModule Ragdoll_drive_to_pose(RagdollObject *self,
 
     // 2. RESOURCE ACQUISITION
     const JPH_RagdollSettings *settings = JPH_Ragdoll_GetRagdollSettings(self->ragdoll);
-    auto skel                          = JPH_RagdollSettings_GetSkeleton(settings);
+    auto skel                           = JPH_RagdollSettings_GetSkeleton(settings);
     int joint_count                     = JPH_Skeleton_GetJointCount(skel);
 
     // Validate Buffer Size
@@ -442,7 +117,7 @@ PyCFunction_DeclareMethodFromModule Ragdoll_drive_to_pose(RagdollObject *self,
         return nullptr;
     }
 
-    size_t required_size = (size_t)joint_count * JPH_MAT4_SIZE_BYTES;
+    size_t required_size = (size_t)joint_count * sizeof(JPH_Mat4);
     if (UNLIKELY((size_t)view.len < required_size)) {
         PyBuffer_Release(&view);
         return PyErr_Format(PyExc_ValueError,
@@ -642,3 +317,181 @@ PyType_DeclareSlot_VoidFromModule Ragdoll_dealloc(RagdollObject *self) {
     Py_XDECREF(self->world);
     Py_TYPE(self)->tp_free((PyObject *)self);
 }
+
+PyCFunction_DeclareMethodFromModule RagdollSettings_add_part(RagdollSettingsObject *self,
+                                                             PyObject *const *args,
+                                                             Py_ssize_t nargs, PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+    // 1. Setup Defaults
+    int joint_idx     = 0;
+    int parent_idx    = -1;
+    int shape_type    = 0;
+    float mass        = RAGDOLL_DEFAULT_PART_MASS;
+    PyObject *py_size = nullptr;
+    PyObject *py_pos  = nullptr;
+    float twist_min   = RAGDOLL_DEFAULT_TWIST_MIN;
+    float twist_max   = RAGDOLL_DEFAULT_TWIST_MAX;
+    float cone_angle  = 0.0f;
+
+    // Default orientation: Axis=X, Normal=Y
+    Vec3f axis   = {.x = 1.0f, .y = 0.0f, .z = 0.0f};
+    Vec3f normal = {.x = 0.0f, .y = 1.0f, .z = 0.0f};
+
+    void *targets[RagdollAddPart_COUNT] = {
+        [IDX_RAP_JOINT] = (void *)&joint_idx,     [IDX_RAP_SHAPE] = (void *)&shape_type,
+        [IDX_RAP_SIZE] = (void *)&py_size,        [IDX_RAP_MASS] = (void *)&mass,
+        [IDX_RAP_PARENT] = (void *)&parent_idx,   [IDX_RAP_TWIST_MIN] = (void *)&twist_min,
+        [IDX_RAP_TWIST_MAX] = (void *)&twist_max, [IDX_RAP_CONE] = (void *)&cone_angle,
+        [IDX_RAP_AXIS]   = (void *)&axis,   // Converter calls parse_vec3_f32
+        [IDX_RAP_NORMAL] = (void *)&normal, // Converter calls parse_vec3_f32
+        [IDX_RAP_POS]    = (void *)&py_pos,
+    };
+
+    // 2. High Speed Parse
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.RagdollAddPartParser, targets)) {
+        return nullptr;
+    }
+
+    // 3. Shape Acquisition (Using your existing helper)
+    float s[4];
+    parse_body_size(py_size, s); // From culverin_parsers.c
+
+    JPH_Shape *shape = nullptr;
+    Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+    SHADOW_LOCK(&self->world->shadow_lock);
+    shape = find_or_create_shape_locked(self->world, shape_type, s);
+    SHADOW_UNLOCK(&self->world->shadow_lock);
+    NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+    Py_END_ALLOW_THREADS;
+
+    if (!shape) {
+        return PyErr_Format(PyExc_ValueError, "Invalid shape configuration");
+    }
+
+    // 4. Validation & Resizing
+    auto skel      = JPH_RagdollSettings_GetSkeleton(self->settings);
+    int skel_count = JPH_Skeleton_GetJointCount(skel);
+    if (joint_idx < 0 || joint_idx >= skel_count) {
+        return PyErr_Format(PyExc_IndexError, "Joint index %d out of bounds", joint_idx);
+    }
+
+    if (JPH_RagdollSettings_GetPartCount(self->settings) <= joint_idx) {
+        JPH_RagdollSettings_ResizeParts(self->settings, skel_count);
+    }
+
+    // 5. Apply Core Part Settings
+    JPH_RagdollSettings_SetPartShape(self->settings, joint_idx, shape);
+    JPH_RagdollSettings_SetPartMassProperties(self->settings, joint_idx, mass);
+    JPH_RagdollSettings_SetPartObjectLayer(self->settings, joint_idx, 1);
+    JPH_RagdollSettings_SetPartMotionType(self->settings, joint_idx, JPH_MotionType_Dynamic);
+
+    // 6. Handle Position (Optional)
+    if (py_pos && py_pos != Py_None) {
+        PosStride p_stride;
+        if (parse_py_vec3_pos(py_pos, &p_stride)) {
+            JPH_RVec3 p = {.x = p_stride.x, .y = p_stride.y, .z = p_stride.z};
+            JPH_RagdollSettings_SetPartPosition(self->settings, joint_idx, &p);
+        }
+    }
+
+    // 7. Handle Parent Constraint
+    if (parent_idx >= 0) {
+        JPH_SwingTwistConstraintSettings cs;
+        JPH_SwingTwistConstraintSettings_Init(&cs);
+        cs.base.enabled = true;
+
+        // Identity positions for local bind
+        cs.position1 = (JPH_RVec3){0, 0, 0};
+        cs.position2 = (JPH_RVec3){0, 0, 0};
+
+        cs.twistAxis1 = (JPH_Vec3){axis.x, axis.y, axis.z};
+        cs.twistAxis2 = (JPH_Vec3){axis.x, axis.y, axis.z};
+        cs.planeAxis1 = (JPH_Vec3){normal.x, normal.y, normal.z};
+        cs.planeAxis2 = (JPH_Vec3){normal.x, normal.y, normal.z};
+
+        cs.normalHalfConeAngle = cone_angle;
+        cs.planeHalfConeAngle  = cone_angle;
+        cs.twistMinAngle       = twist_min;
+        cs.twistMaxAngle       = twist_max;
+
+        JPH_RagdollSettings_SetPartToParent(self->settings, joint_idx, &cs);
+    }
+
+    Py_RETURN_NONE;
+}
+
+#define RD_FASTCALL(name) CULV_FEAT(Ragdoll, name, METH_FASTCALL | METH_KEYWORDS)
+#define RD_NOARGS(name) CULV_FEAT(Ragdoll, name, METH_NOARGS)
+
+#define SKEL_FASTCALL(name) CULV_FEAT(Skeleton, name, METH_FASTCALL | METH_KEYWORDS)
+#define SKEL_NOARGS(name) CULV_FEAT(Skeleton, name, METH_NOARGS)
+
+#define RDS_FASTCALL(name) CULV_FEAT(RagdollSettings, name, METH_FASTCALL | METH_KEYWORDS)
+#define RDS_NOARGS(name) CULV_FEAT(RagdollSettings, name, METH_NOARGS)
+
+PyType_Spec RagdollSettings_spec = {
+    .name      = "culverin._culverin_c.RagdollSettings",
+    .basicsize = sizeof(RagdollSettingsObject),
+    .flags     = Py_TPFLAGS_DEFAULT,
+    .slots =
+        (PyType_Slot[]){
+
+            {.slot = Py_tp_dealloc, .pfunc = RagdollSettings_dealloc},
+            {.slot = Py_tp_methods,
+             .pfunc =
+                 (PyMethodDef[]){
+
+                     RDS_FASTCALL(add_part), RDS_NOARGS(stabilize), {}
+
+                 }},
+            {},
+
+        },
+};
+
+PyType_Spec Skeleton_spec = {
+    .name      = "culverin._culverin_c.Skeleton",
+    .basicsize = sizeof(SkeletonObject),
+    .flags     = Py_TPFLAGS_DEFAULT,
+    .slots =
+        (PyType_Slot[]){
+
+            {.slot = Py_tp_new, .pfunc = Skeleton_new},
+            {.slot = Py_tp_dealloc, .pfunc = Skeleton_dealloc},
+            {.slot = Py_tp_methods,
+             .pfunc =
+                 (PyMethodDef[]){
+
+                     SKEL_FASTCALL(add_joint),
+                     SKEL_FASTCALL(get_joint_index),
+                     SKEL_NOARGS(finalize),
+                     {}
+
+                 }},
+            {},
+
+        },
+};
+
+PyType_Spec Ragdoll_spec = {
+    .name      = "culverin._culverin_c.Ragdoll",
+    .basicsize = sizeof(RagdollObject),
+    .flags     = Py_TPFLAGS_DEFAULT,
+    .slots =
+        (PyType_Slot[]){
+
+            {.slot = Py_tp_dealloc, .pfunc = Ragdoll_dealloc},
+            {.slot = Py_tp_methods,
+             .pfunc =
+                 (PyMethodDef[]){
+
+                     RD_FASTCALL(drive_to_pose),
+                     RD_NOARGS(get_body_handles),
+                     RD_NOARGS(get_debug_info),
+                     {}
+
+                 }},
+            {},
+
+        },
+};

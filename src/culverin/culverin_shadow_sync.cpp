@@ -91,8 +91,8 @@ CULV_FORCE_INLINE void process_soft_batch(PhysicsWorldObject *const CULV_RESTRIC
         // 1. Snapshot and Update COM/Rotation (Rigid-compat layer)
         const PosStride old_pos = s_pos[D];
         const AuxStride old_rot = s_rot[D];
-        s_ppos[D] = old_pos;
-        s_prot[D] = old_rot;
+        s_ppos[D]               = old_pos;
+        s_prot[D]               = old_rot;
 
 #ifndef JPH_DOUBLE_PRECISION
         JPH::Vec4(b->GetCenterOfMassPosition(), 0.0f)
