@@ -217,7 +217,7 @@ static constexpr uint32_t VALID_BID_MASK = (1u << SLOT_ALIVE) | (1u << SLOT_PEND
                                                                                                    \
         if (LIKELY(i < count)) {                                                                   \
             CULV_PREFETCH_READ(&queue[i]);                                                         \
-            uint32_t next_slot = CMD_GET_SLOT(queue[i].header);                                    \
+            const uint32_t next_slot = CMD_GET_SLOT(queue[i].header);                              \
             CULV_PREFETCH_READ(&self->slot_states[next_slot]);                                     \
             CULV_PREFETCH_READ(&self->slot_to_dense[next_slot]);                                   \
         }                                                                                          \
@@ -226,18 +226,18 @@ static constexpr uint32_t VALID_BID_MASK = (1u << SLOT_ALIVE) | (1u << SLOT_PEND
                                                                                                    \
         /* Branchless State Validation (Guarded against UB shift) */                               \
         /* If state > 31, (state < 32) evaluates to 0, masking the entire result to 0 */           \
-        uint32_t is_valid = (state < 32) & ((VALID_BID_MASK >> (state & 31)) & 1);                 \
+        const uint32_t is_valid = (state < 32) & ((VALID_BID_MASK >> (state & 31)) & 1);           \
                                                                                                    \
         /* Unconditional Read: dense_idx and bid are always within allocated bounds */             \
-        uint32_t dense_idx = self->slot_to_dense[slot];                                            \
-        bid                = self->body_ids[dense_idx];                                            \
+        const uint32_t dense_idx = self->slot_to_dense[slot];                                      \
+        bid                      = self->body_ids[dense_idx];                                      \
                                                                                                    \
         /* Branchless Condition: Is it CREATE, or does it have a valid BID? */                     \
-        uint32_t is_executable =                                                                   \
+        const uint32_t is_executable =                                                             \
             is_valid & ((type == CMD_CREATE_BODY) | (type == CMD_CREATE_SOFT_BODY) |               \
                         (bid != JPH_INVALID_BODY_ID));                                             \
                                                                                                    \
         /* Branchless Target Selection via Ternary (Compiles to CMOV / CSEL) */                    \
-        const void *target = is_executable ? dispatch_table[type] : &&op_NOP;                      \
+        const void *const target = is_executable ? dispatch_table[type] : &&op_NOP;                \
         goto *target;                                                                              \
     } while (0)

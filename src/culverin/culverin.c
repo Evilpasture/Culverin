@@ -2,8 +2,6 @@
 #    define _CRT_SECURE_NO_WARNINGS
 #endif
 
-#include "culverin_filters.h"
-#include "culverin_handler.h"
 #include "culverin.h"
 #include "culverin_arg_indices.h"
 #include "culverin_character.h"
@@ -13,7 +11,9 @@
 #include "culverin_ecs.h"
 #include "culverin_fast_build.h"
 #include "culverin_fast_parse.h"
+#include "culverin_filters.h"
 #include "culverin_getters.h"
+#include "culverin_handler.h"
 #include "culverin_math.h"
 #include "culverin_parsers.h"
 #include "culverin_physics_sync.h"
@@ -24,6 +24,7 @@
 #include "culverin_shadow_sync.h"
 #include "culverin_soft_body.h"
 #include "culverin_vehicle.h"
+#include "docs_embedder.h"
 #include "joltc.h"
 #include <stdatomic.h>
 
@@ -114,6 +115,7 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
                         "cannot be re-initialized.");
         return -1;
     }
+    auto st                 = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     PyObject *settings_dict = nullptr;
     PyObject *bodies_list   = nullptr;
     PyObject *baked         = nullptr;
@@ -123,8 +125,10 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
     int max_bodies;
     int max_pairs;
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "|OO", (char *[]){"settings", "bodies", nullptr},
-                                     &settings_dict, &bodies_list)) {
+    void *targets[WorldInit_COUNT] = {[IDX_SETTINGS] = (void *)&settings_dict,
+                                      [IDX_BODIES]   = (void *)&bodies_list};
+
+    if (!FastParse_Unified(args, kwds, nullptr, &st->parsers.WorldInitParser, targets)) {
         return -1;
     }
 
@@ -4030,138 +4034,6 @@ static const unsigned char ALL_DOCS[] = {
 // Global flag to ensure we only stitch once (important for subinterpreters)
 static atomic_int docs_status = 0;
 
-static const char *COMMENT_MARKER = "<!--";
-
-static char *allocate_docstring(const char *start, size_t length) {
-    char *doc = (char *)PyMem_RawMalloc(length + 1);
-    if (doc == nullptr) {
-        return nullptr;
-    }
-    memcpy(doc, start, length);
-    doc[length] = '\0';
-    return doc;
-}
-
-// Master Docstring Extractor (Handles Nested ## class -> ### method)
-static char *extract_docstring(const char *class_name, const char *method_name) {
-    static constexpr size_t DOC_BUFFER = 128;
-    char class_key[DOC_BUFFER];
-    snprintf(class_key, sizeof(class_key), "## class %s", class_name);
-
-    // 1. Find the Class boundary
-    const char *docs_ptr = (const char *)ALL_DOCS;
-    char *class_start    = strstr(docs_ptr, class_key);
-    if (!class_start) {
-        return nullptr;
-    }
-
-    // The scope of this class ends when the next class begins
-    char *class_end = strstr(class_start + 1, "## class ");
-
-    // 2. Find the Method boundary within this class
-    char method_key[DOC_BUFFER];
-    snprintf(method_key, sizeof(method_key), "### %s", method_name);
-
-    char *method_start = strstr(class_start, method_key);
-
-    // Ensure we found it AND it belongs to THIS class AND isn't a substring (like finding "step_up"
-    // for "step")
-    while (method_start && (class_end == nullptr || method_start < class_end)) {
-        char c = *(method_start + strlen(method_key));
-        // We allow '(', '\r', '\n', ' ', or '\0' after the method name
-        if (c == '(' || c == '\r' || c == '\n' || c == ' ' || c == '\0') {
-            break; // Valid match
-        }
-        method_start = strstr(method_start + 1, method_key); // Keep searching
-    }
-
-    if (!method_start || (class_end != nullptr && method_start >= class_end)) {
-        return nullptr;
-    }
-
-    // 3. Move past the "### method(...)\n" header
-    char *doc_start = method_start;
-    while (*doc_start != '\0' && *doc_start != '\n' && *doc_start != '\r') {
-        doc_start++;
-    }
-    while (*doc_start == '\n' || *doc_start == '\r') {
-        doc_start++;
-    }
-
-    // 4. Skip HTML Comments if present
-    if (strncmp(doc_start, COMMENT_MARKER, 4) == 0) {
-        char *comment_end = strstr(doc_start, "-->");
-        if (comment_end) {
-            doc_start = comment_end + 3; // Skip "-->"
-            while (*doc_start == '\n' || *doc_start == '\r' || *doc_start == ' ') {
-                doc_start++;
-            }
-        }
-    }
-
-    // 5. Find the end of this method's docs (next ### or ##)
-    char *doc_end = doc_start;
-    while (*doc_end != '\0') {
-        if (strncmp(doc_end, "### ", 4) == 0 || strncmp(doc_end, "## ", 3) == 0) {
-            break;
-        }
-        doc_end++;
-    }
-
-    // 6. Trim trailing whitespace
-    if (doc_end > doc_start) {
-        doc_end--;
-        while (doc_end > doc_start &&
-               (*doc_end == '\n' || *doc_end == '\r' || *doc_end == ' ' || *doc_end == '\t')) {
-            doc_end--;
-        }
-    }
-
-    if (doc_end >= doc_start) {
-        return allocate_docstring(doc_start, (size_t)(doc_end - doc_start + 1));
-    }
-
-    return nullptr;
-}
-
-// Pass 1: Stitch docstrings to PyMethodDefs
-static void stitch_docs(PyMethodDef *methods, const char *class_name) {
-    if (methods == nullptr) {
-        return;
-    }
-    for (PyMethodDef *m = methods; m->ml_name != nullptr; m++) {
-        if (m->ml_doc == nullptr) {
-            m->ml_doc = extract_docstring(class_name, m->ml_name);
-        }
-    }
-}
-
-// Pass 2: Stitch docstrings into PyGetSetDef getters
-static void stitch_docs_getset(PyGetSetDef *getset, const char *class_name) {
-    if (getset == nullptr) {
-        return;
-    }
-    for (PyGetSetDef *g = getset; g->name != nullptr; g++) {
-        if (g->doc == nullptr) {
-            g->doc = extract_docstring(class_name, g->name);
-        }
-    }
-}
-
-static void stitch_spec(PyType_Spec *spec, const char *class_name) {
-    if (!spec || !spec->slots) {
-        return;
-    }
-    // Cast to PyType_Slot* to iterate
-    for (const PyType_Slot *slot = (const PyType_Slot *)spec->slots; slot->slot != 0; slot++) {
-        if (slot->slot == Py_tp_methods) {
-            stitch_docs((PyMethodDef *)slot->pfunc, class_name);
-        } else if (slot->slot == Py_tp_getset) {
-            stitch_docs_getset((PyGetSetDef *)slot->pfunc, class_name);
-        }
-    }
-}
-
 // =============================================================================================
 
 // --- Macros ---
@@ -4490,17 +4362,17 @@ static PyType_Spec Registry_spec = {
                      REG_NOARGS(create),
                      REG_FASTCALL(destroy),
                      REG_FASTCALL(is_alive),
-                     REG_NOARGS(clear),                   // Wipes the registry
+                     REG_NOARGS(clear), // Wipes the registry
                      REG_FASTCALL(register_component),
                      REG_FASTCALL(add),
                      REG_FASTCALL(remove),
                      REG_FASTCALL(has),
-                     REG_FASTCALL(get),                   // Single entity data access
+                     REG_FASTCALL(get), // Single entity data access
                      REG_FASTCALL(get_view),
                      REG_FASTCALL(get_entities),
                      REG_FASTCALL(sync_from_world),
-                     REG_NOARGS(get_active_count),        // ECS Statistics
-                     REG_FASTCALL(get_component_count),   // ECS Statistics
+                     REG_NOARGS(get_active_count),      // ECS Statistics
+                     REG_FASTCALL(get_component_count), // ECS Statistics
                      {}
 
                  }},
@@ -4710,17 +4582,18 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
                  precision, build_type, compiler_id);
 
         // --- THE WINNER: Run exactly once per process life ---
-        stitch_docs(culverin_module.m_methods, "Module");
-        stitch_spec(&PhysicsWorld_spec, "PhysicsWorld");
-        stitch_spec(&Character_spec, "Character");
-        stitch_spec(&Vehicle_spec, "Vehicle");
-        stitch_spec(&Skeleton_spec, "Skeleton");
-        stitch_spec(&Ragdoll_spec, "Ragdoll");
-        stitch_spec(&RagdollSettings_spec, "RagdollSettings");
-        stitch_spec(&SoftBodySharedSettings_spec, "SoftBodySharedSettings");
-        stitch_spec(&Registry_spec, "Registry");
-        stitch_spec(&MathService_spec, "MathService");
-        stitch_spec(&Ship_spec, "Ship");
+        const char *docs_str = (const char *)ALL_DOCS;
+        md_stitch_methods(culverin_module.m_methods, "Module", docs_str);
+        md_stitch_spec(&PhysicsWorld_spec, "PhysicsWorld", docs_str);
+        md_stitch_spec(&Character_spec, "Character", docs_str);
+        md_stitch_spec(&Vehicle_spec, "Vehicle", docs_str);
+        md_stitch_spec(&Skeleton_spec, "Skeleton", docs_str);
+        md_stitch_spec(&Ragdoll_spec, "Ragdoll", docs_str);
+        md_stitch_spec(&RagdollSettings_spec, "RagdollSettings", docs_str);
+        md_stitch_spec(&SoftBodySharedSettings_spec, "SoftBodySharedSettings", docs_str);
+        md_stitch_spec(&Registry_spec, "Registry", docs_str);
+        md_stitch_spec(&MathService_spec, "MathService", docs_str);
+        md_stitch_spec(&Ship_spec, "Ship", docs_str);
 
         // Gated Handler Registration
         JPH_SetTraceHandler(culv_jph_trace);
