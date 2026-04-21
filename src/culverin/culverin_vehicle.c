@@ -227,8 +227,7 @@ static void setup_transmission(JPH_WheeledVehicleControllerSettings *v_ctrl,
     }
 
     // Apply Differential Ratio from Python Transmission object
-    float diff_ratio =
-        get_py_attr(py_trans, "differential_ratio", DIFFERENTIAL_RATIO_DEFAULT);
+    float diff_ratio   = get_py_attr(py_trans, "differential_ratio", DIFFERENTIAL_RATIO_DEFAULT);
     uint32_t num_diffs = JPH_WheeledVehicleControllerSettings_GetDifferentialsCount(v_ctrl);
     for (uint32_t d = 0; d < num_diffs; d++) {
         JPH_VehicleDifferentialSettings ds;
@@ -812,3 +811,47 @@ PyType_DeclareSlot_VoidFromModule Vehicle_dealloc(VehicleObject *self) {
     Py_XDECREF(self->world);
     Py_TYPE(self)->tp_free((PyObject *)self);
 }
+
+PyGetSet_DeclareGetter Vehicle_get_wheel_count(VehicleObject *self,
+                                               CULV_MAYBE_UNUSED void *closure) {
+    // num_wheels is set at creation and never changes
+    return PyLong_FromUnsignedLong(self->num_wheels);
+}
+
+#define VEH_FASTCALL(name) CULV_FEAT(Vehicle, name, METH_FASTCALL | METH_KEYWORDS)
+#define VEH_NOARGS(name) CULV_FEAT(Vehicle, name, METH_NOARGS)
+
+PyType_Spec Vehicle_spec = {
+    .name      = "culverin._culverin_c.Vehicle",
+    .basicsize = sizeof(VehicleObject),
+    .flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
+    .slots =
+        (PyType_Slot[]){
+
+            {.slot = Py_tp_dealloc, .pfunc = Vehicle_dealloc},
+            {.slot = Py_tp_traverse, .pfunc = Vehicle_traverse},
+            {.slot = Py_tp_clear, .pfunc = Vehicle_clear},
+            {.slot = Py_tp_methods,
+             .pfunc =
+                 (PyMethodDef[]){
+
+                     VEH_FASTCALL(set_input),
+                     VEH_FASTCALL(set_tank_input),
+                     VEH_FASTCALL(get_wheel_transform),
+                     VEH_FASTCALL(get_wheel_local_transform),
+                     VEH_NOARGS(destroy),
+                     VEH_NOARGS(get_debug_state),
+                     {}
+
+                 }},
+            {.slot = Py_tp_getset,
+             .pfunc =
+                 (PyGetSetDef[]){
+
+                     GETSET("wheel_count", Vehicle_get_wheel_count), {}
+
+                 }},
+            {},
+
+        },
+};

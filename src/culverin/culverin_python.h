@@ -90,3 +90,11 @@ DEFINE_DICT_GETTER(s, const char *, py_to_str)
      .set     = nullptr,                                                                           \
      .doc     = nullptr,                                                                           \
      .closure = nullptr}
+
+extern PyType_Spec PhysicsWorld_spec;
+extern PyType_Spec Vehicle_spec;
+extern PyType_Spec RagdollSettings_spec;
+extern PyType_Spec Ragdoll_spec;
+extern PyType_Spec Skeleton_spec;
+extern PyType_Spec SoftBodySharedSettings_spec;
+extern PyType_Spec Registry_spec;

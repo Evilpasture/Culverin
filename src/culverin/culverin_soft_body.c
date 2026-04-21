@@ -1,62 +1,10 @@
 #include "culverin_soft_body.h"
 #include "culverin_fast_build.h"
-#include "culverin_physics_sync.h"
 #include "culverin_physics_world_internal.h"
+#include "culverin_python.h"
 
 static constexpr uint32_t COLLISION_FILTER_ALL_CATEGORIES = 0xFFFF;
 static constexpr uint32_t COLLISION_FILTER_ALL_MASKS      = 0xFFFF;
-
-/**
- * HELPER: physics_world_commit_create_soft_locked
- * Separate path for soft bodies to avoid binary-incompatibility with Rigid Body settings.
- */
-static uint64_t physics_world_commit_create_soft_locked(PhysicsWorldObject *self,
-                                                        JPH_SoftBodyCreationSettings *settings,
-                                                        uint32_t slot_state) {
-    size_t current_count = atomic_load_explicit(&self->count, memory_order_acquire);
-    size_t available     = atomic_load_explicit(&self->free_count, memory_order_acquire);
-
-    if (UNLIKELY(current_count >= self->max_jolt_bodies)) {
-        PyErr_Format(PyExc_RuntimeError, "PhysicsWorld limit reached: %u bodies",
-                     self->max_jolt_bodies);
-        return 0;
-    }
-
-    CULV_MAYBE_UNUSED constexpr auto INITIAL_BODY_CAPACITY = 1024;
-
-    if (UNLIKELY(available == 0 || current_count + 1 > self->capacity)) {
-        size_t next_cap = (self->capacity == 0) ? INITIAL_BODY_CAPACITY : self->capacity * 2;
-        if (next_cap > self->max_jolt_bodies) {
-            next_cap = self->max_jolt_bodies;
-        }
-        if (PhysicsWorld_resize(self, next_cap) < 0) {
-            return 0;
-        }
-        available = atomic_load_explicit(&self->free_count, memory_order_acquire);
-    }
-
-    if (UNLIKELY(!ensure_command_capacity(self))) {
-        return 0;
-    }
-
-    uint32_t slot  = self->free_slots[--available];
-    uint32_t dense = (uint32_t)atomic_fetch_add_explicit(&self->count, 1, memory_order_relaxed);
-    atomic_store_explicit(&self->free_count, available, memory_order_release);
-
-    uint32_t gen      = atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
-    BodyHandle handle = make_handle(slot, gen);
-    uint64_t raw_h    = handle;
-
-    // CRITICAL: Use the SoftBody specific setter (Binder ensures correct memory offset)
-    JPH_SoftBodyCreationSettings_SetUserData(settings, raw_h);
-
-    self->slot_to_dense[slot]  = dense;
-    self->dense_to_slot[dense] = slot;
-    self->body_ids[dense]      = JPH_INVALID_BODY_ID;
-    atomic_store_explicit(&self->slot_states[slot], slot_state, memory_order_release);
-
-    return raw_h;
-}
 
 // --- SharedSettings Lifecycle ---
 
@@ -346,303 +294,36 @@ SoftBodySharedSettings_get_vertex_position(SoftBodySharedSettingsObject *self, P
     return FastBuild_Tuple(pos.x, pos.y, pos.z);
 }
 
-// --- PhysicsWorld Methods ---
+#define SBSS_FASTCALL(name) CULV_FEAT(SoftBodySharedSettings, name, METH_FASTCALL | METH_KEYWORDS)
+#define SBSS_NOARGS(name) CULV_FEAT(SoftBodySharedSettings, name, METH_NOARGS)
+#define SBSS_O(name) CULV_FEAT(SoftBodySharedSettings, name, METH_O)
 
-PyCFunction_DeclareMethodFromModule PhysicsWorld_create_soft_body(PhysicsWorldObject *self,
-                                                                  PyObject *const *args,
-                                                                  size_t nargsf,
-                                                                  PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+PyType_Spec SoftBodySharedSettings_spec = {
+    .name      = "culverin._culverin_c.SoftBodySharedSettingsObject",
+    .basicsize = sizeof(SoftBodySharedSettingsObject),
+    .flags     = Py_TPFLAGS_DEFAULT,
+    .slots =
+        (PyType_Slot[]){
 
-    // 1. FAST PARSE
-    PyObject *o_shared        = nullptr;
-    PyObject *o_pos           = nullptr;
-    PyObject *o_rot           = nullptr;
-    uint64_t user_data        = 0;
-    uint32_t category         = COLLISION_FILTER_ALL_CATEGORIES;
-    uint32_t mask             = COLLISION_FILTER_ALL_MASKS;
-    float pressure            = 0.0f;
-    float vertex_radius       = 0.05f;
-    float linear_damping      = 0.1f;
-    uint32_t num_iterations   = 10;
-    float max_linear_velocity = 500.0f;
-    float gravity_factor      = 1.0f;
-    float friction            = 0.2f;
-    float restitution         = 0.0f;
-    bool make_rot_identity    = false;
-    bool update_position      = true;  // Jolt default is usually true
-    bool faces_double_sided   = false;
+            {.slot = Py_tp_new, .pfunc = PyType_GenericNew},
+            {.slot = Py_tp_init, .pfunc = SoftBodySharedSettings_init},
+            {.slot = Py_tp_dealloc, .pfunc = SoftBodySharedSettings_dealloc},
+            {.slot = Py_tp_methods,
+             .pfunc =
+                 (PyMethodDef[]){
 
-    void *targets[CreateSoftBody_COUNT] = {[IDX_CSB_SHARED]     = (void *)&o_shared,
-                                           [IDX_CSB_POS]        = (void *)&o_pos,
-                                           [IDX_CSB_ROT]        = (void *)&o_rot,
-                                           [IDX_CSB_USER_DATA]  = (void *)&user_data,
-                                           [IDX_CSB_CAT]        = (void *)&category,
-                                           [IDX_CSB_MASK]       = (void *)&mask,
-                                           [IDX_CSB_PRESSURE]   = (void *)&pressure,
-                                           [IDX_CSB_V_RADIUS]   = (void *)&vertex_radius,
-                                           [IDX_CSB_LIN_DAMP]   = (void *)&linear_damping,
-                                           [IDX_CSB_ITER]       = (void *)&num_iterations,
-                                           [IDX_CSB_MAX_VEL]    = (void *)&max_linear_velocity,
-                                           [IDX_CSB_GRAV]       = (void *)&gravity_factor,
-                                           [IDX_CSB_FRIC]       = (void *)&friction,
-                                           [IDX_CSB_REST]       = (void *)&restitution,
-                                           [IDX_CSB_ROT_ID]     = (void *)&make_rot_identity,
-                                           [IDX_CSB_UPDATE_POS] = (void *)&update_position,
-                                           [IDX_CSB_FACE_DS]    = (void *)&faces_double_sided};
+                     SBSS_FASTCALL(add_vertex),
+                     SBSS_FASTCALL(add_vertices),
+                     SBSS_O(add_pinned_vertex),
+                     SBSS_O(get_vertex_position),
+                     SBSS_FASTCALL(add_face),
+                     SBSS_FASTCALL(add_faces),
+                     SBSS_FASTCALL(create_constraints),
+                     SBSS_NOARGS(optimize),
+                     {}
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &st->parsers.CreateSoftBodyParser, targets)) {
-        return nullptr;
-    }
-
-    // 2. VECTOR EXTRACTION
-    JPH_Real px;
-    JPH_Real py;
-    JPH_Real pz;
-    float rx;
-    float ry;
-    float rz;
-    float rw;
-    if (!parse_vec3_direct(o_pos, &px, &py, &pz) || !parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) {
-        return nullptr;
-    }
-
-    VALIDATE_FINITE_VEC3(px, py, pz, "Position");
-    VALIDATE_FINITE_QUAT(rx, ry, rz, rw, "Rotation");
-
-    // 3. JOLT PREP
-    JPH_SoftBodyCreationSettings *settings = JPH_SoftBodyCreationSettings_Create();
-    auto py_shared                        = (SoftBodySharedSettingsObject *)o_shared;
-    Py_INCREF(o_shared); // Ownership transfer to command queue
-
-    JPH_SoftBodyCreationSettings_SetSettings(settings, py_shared->settings);
-    JPH_SoftBodyCreationSettings_SetPressure(settings, pressure);
-    JPH_SoftBodyCreationSettings_SetVertexRadius(settings, vertex_radius);
-    JPH_SoftBodyCreationSettings_SetLinearDamping(settings, linear_damping);
-    JPH_SoftBodyCreationSettings_SetNumIterations(settings, num_iterations);
-    JPH_SoftBodyCreationSettings_SetMaxLinearVelocity(settings, max_linear_velocity);
-    JPH_SoftBodyCreationSettings_SetGravityFactor(settings, gravity_factor);
-    JPH_SoftBodyCreationSettings_SetFriction(settings, friction);
-    JPH_SoftBodyCreationSettings_SetRestitution(settings, restitution);
-    JPH_SoftBodyCreationSettings_SetMakeRotationIdentity(settings, make_rot_identity);
-
-    JPH_RVec3 j_pos = {px, py, pz};
-    JPH_Quat j_rot  = {rx, ry, rz, rw};
-    JPH_SoftBodyCreationSettings_SetPosition(settings, &j_pos);
-    JPH_SoftBodyCreationSettings_SetRotation(settings, &j_rot);
-    JPH_SoftBodyCreationSettings_SetObjectLayer(settings, OBJECT_LAYER_DYNAMIC);
-    JPH_SoftBodyCreationSettings_SetAllowSleeping(settings, true);
-    JPH_SoftBodyCreationSettings_SetMakeRotationIdentity(settings, make_rot_identity);
-    JPH_SoftBodyCreationSettings_SetUpdatePosition(settings, update_position);
-    JPH_SoftBodyCreationSettings_SetFacesDoubleSided(settings, faces_double_sided);
-
-    // 4. COMMIT
-    SHADOW_LOCK(&self->shadow_lock);
-    BLOCK_UNTIL_NOT_STEPPING(self);
-
-    uint64_t raw_h = physics_world_commit_create_soft_locked(self, settings, SLOT_PENDING_CREATE);
-
-    if (UNLIKELY(!raw_h)) {
-        SHADOW_UNLOCK(&self->shadow_lock);
-        JPH_SoftBodyCreationSettings_Destroy(settings);
-        Py_DECREF(o_shared);
-        return nullptr;
-    }
-
-    // 5. SHADOW UPDATE
-    uint32_t slot  = (uint32_t)(raw_h & HANDLE_INDEX_MASK);
-    uint32_t dense = self->slot_to_dense[slot];
-
-    ((PosStride *)self->positions)[dense]      = (PosStride){px, py, pz, 0.0};
-    ((PosStride *)self->prev_positions)[dense] = (PosStride){px, py, pz, 0.0};
-    ((AuxStride *)self->rotations)[dense]      = (AuxStride){rx, ry, rz, rw};
-    ((AuxStride *)self->prev_rotations)[dense] = (AuxStride){rx, ry, rz, rw};
-    self->categories[dense]                    = category;
-    self->masks[dense]                         = mask;
-    self->user_data[dense]                     = user_data;
-    self->view_shape[0] = (Py_ssize_t)atomic_load_explicit(&self->count, memory_order_relaxed);
-
-    // 6. QUEUE COMMAND
-    PhysicsCommand *cmd            = &self->command_queue[self->command_count++];
-    cmd->header                    = CMD_HEADER(CMD_CREATE_SOFT_BODY, slot);
-    cmd->create_soft.settings      = settings;
-    cmd->create_soft.category      = category;
-    cmd->create_soft.mask          = mask;
-    cmd->create_soft.user_data.ptr = o_shared;
-    cmd->create_soft.num_vertices  = py_shared->num_vertices;
-
-    SHADOW_UNLOCK(&self->shadow_lock);
-    return PyLong_FromUnsignedLongLong(raw_h);
-}
-
-// Getters
-
-PyCFunction_DeclareMethodFromModule PhysicsWorld_get_soft_body_vertex_count(PhysicsWorldObject *self, PyObject *const *args, size_t nargsf, PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
-    uint64_t h_raw;
-    void *targets[HOnly_COUNT] = {[IDX_H_H] = &h_raw};
-
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.HOnlyParser, targets)) {
-        return nullptr;
-    }
-
-    SHADOW_LOCK(&self->shadow_lock);
-    BLOCK_UNTIL_NOT_STEPPING(self);
-
-    uint32_t slot = 0;
-    CHECK_HANDLE(h_raw, slot);
-
-    const uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
-    const SlotPredicate pred = get_slot_predicate(state, MASK_IMM_STRICT);
-
-    if (pred.is_immediate) {
-        uint32_t dense = self->slot_to_dense[slot];
-        JPH_BodyID bid = self->body_ids[dense];
-        SHADOW_UNLOCK(&self->shadow_lock);
-
-        JPH_BodyLockRead lock;
-        Py_BEGIN_ALLOW_THREADS
-        JPH_BodyLockInterface_LockRead(JPH_PhysicsSystem_GetBodyLockInterface(self->system), bid, &lock);
-        Py_END_ALLOW_THREADS
-
-        if (lock.body && JPH_Body_IsSoftBody(lock.body)) {
-            uint32_t count = JPH_Body_GetSoftBodyVertexCount(lock.body);
-            JPH_BodyLockInterface_UnlockRead(JPH_PhysicsSystem_GetBodyLockInterface(self->system), &lock);
-            return PyLong_FromUnsignedLong(count);
+                 }},
+            {},
         }
 
-        if (lock.body) {
-            JPH_BodyLockInterface_UnlockRead(JPH_PhysicsSystem_GetBodyLockInterface(self->system), &lock);
-            PyErr_SetString(PyExc_TypeError, "Handle does not belong to a soft body");
-            return nullptr;
-        }
-
-        RAISE_STALE_HANDLE();
-    }
-
-    SHADOW_UNLOCK(&self->shadow_lock);
-    RAISE_STALE_HANDLE();
-}
-
-PyCFunction_DeclareMethodFromModule PhysicsWorld_get_soft_body_vertex_position(PhysicsWorldObject *self, PyObject *const *args, size_t nargsf, PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
-    uint64_t h_raw;
-    uint32_t index;
-    void *targets[GetSbVertex_COUNT] = {
-        [IDX_GSBV_H] = &h_raw,
-        [IDX_GSBV_I] = &index
-    };
-
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.GetSbVertexParser, targets)) {
-        return nullptr;
-    }
-
-    SHADOW_LOCK(&self->shadow_lock);
-    BLOCK_UNTIL_NOT_STEPPING(self);
-
-    uint32_t slot = 0;
-    CHECK_HANDLE(h_raw, slot);
-
-    const uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
-    const SlotPredicate pred = get_slot_predicate(state, MASK_IMM_STRICT);
-
-    if (pred.is_immediate) {
-        uint32_t dense = self->slot_to_dense[slot];
-        JPH_BodyID bid = self->body_ids[dense];
-        SHADOW_UNLOCK(&self->shadow_lock);
-
-        JPH_BodyLockRead lock;
-        Py_BEGIN_ALLOW_THREADS
-        JPH_BodyLockInterface_LockRead(JPH_PhysicsSystem_GetBodyLockInterface(self->system), bid, &lock);
-        Py_END_ALLOW_THREADS
-
-        if (lock.body && JPH_Body_IsSoftBody(lock.body)) {
-            uint32_t count = JPH_Body_GetSoftBodyVertexCount(lock.body);
-            if (index >= count) {
-                JPH_BodyLockInterface_UnlockRead(JPH_PhysicsSystem_GetBodyLockInterface(self->system), &lock);
-                PyErr_Format(PyExc_IndexError, "Vertex index %u out of bounds (count: %u)", index, count);
-                return nullptr;
-            }
-
-            JPH_Vec3 pos;
-            JPH_Body_GetSoftBodyVertexPosition(lock.body, index, &pos);
-            JPH_BodyLockInterface_UnlockRead(JPH_PhysicsSystem_GetBodyLockInterface(self->system), &lock);
-            
-            return FastBuild_Tuple(pos.x, pos.y, pos.z);
-        }
-
-        if (lock.body) {
-            JPH_BodyLockInterface_UnlockRead(JPH_PhysicsSystem_GetBodyLockInterface(self->system), &lock);
-            PyErr_SetString(PyExc_TypeError, "Handle does not belong to a soft body");
-            return nullptr;
-        }
-
-        RAISE_STALE_HANDLE();
-    }
-
-    SHADOW_UNLOCK(&self->shadow_lock);
-    RAISE_STALE_HANDLE();
-}
-
-PyCFunction_DeclareMethodFromModule PhysicsWorld_get_soft_body_local_vertices(PhysicsWorldObject *self, PyObject *const *args, size_t nargsf, PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
-    uint64_t h_raw;
-    void *targets[HOnly_COUNT] = {[IDX_H_H] = &h_raw};
-
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.HOnlyParser, targets)) {
-        return nullptr;
-    }
-
-    SHADOW_LOCK(&self->shadow_lock);
-    BLOCK_UNTIL_NOT_STEPPING(self);
-
-    uint32_t slot = 0;
-    CHECK_HANDLE(h_raw, slot);
-
-    const uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
-    const SlotPredicate pred = get_slot_predicate(state, MASK_IMM_STRICT);
-
-    if (pred.is_immediate) {
-        uint32_t dense = self->slot_to_dense[slot];
-        JPH_BodyID bid = self->body_ids[dense];
-        SHADOW_UNLOCK(&self->shadow_lock);
-
-        JPH_BodyLockRead lock;
-        Py_BEGIN_ALLOW_THREADS
-        JPH_BodyLockInterface_LockRead(JPH_PhysicsSystem_GetBodyLockInterface(self->system), bid, &lock);
-        Py_END_ALLOW_THREADS
-
-        if (lock.body && JPH_Body_IsSoftBody(lock.body)) {
-            uint32_t count = JPH_Body_GetSoftBodyVertexCount(lock.body);
-            
-            // JPH_Vec3 is strictly 3 floats (12 bytes)
-            size_t buffer_size = count * sizeof(JPH_Vec3);
-            PyObject *bytes_obj = PyBytes_FromStringAndSize(nullptr, (Py_ssize_t)buffer_size);
-            
-            if (!bytes_obj) {
-                JPH_BodyLockInterface_UnlockRead(JPH_PhysicsSystem_GetBodyLockInterface(self->system), &lock);
-                return PyErr_NoMemory();
-            }
-            
-            JPH_Vec3 *out_pos = (JPH_Vec3 *)PyBytes_AsString(bytes_obj);
-            uint32_t out_count = 0;
-            JPH_Body_GetSoftBodyVertexPositions(lock.body, out_pos, count, &out_count);
-            
-            JPH_BodyLockInterface_UnlockRead(JPH_PhysicsSystem_GetBodyLockInterface(self->system), &lock);
-            
-            return bytes_obj;
-        }
-
-        if (lock.body) {
-            JPH_BodyLockInterface_UnlockRead(JPH_PhysicsSystem_GetBodyLockInterface(self->system), &lock);
-            PyErr_SetString(PyExc_TypeError, "Handle does not belong to a soft body");
-            return nullptr;
-        }
-
-        RAISE_STALE_HANDLE();
-    }
-
-    SHADOW_UNLOCK(&self->shadow_lock);
-    RAISE_STALE_HANDLE();
-}
+};

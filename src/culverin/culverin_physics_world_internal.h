@@ -1,33 +1,57 @@
 #pragma once
-#include "culverin.h"
-#include <stdlib.h>
+#include "culverin_types.h"
+#include <Python.h>
 #ifdef _WIN32
 #    include <malloc.h>
 #endif
 
+// Temporary container for resize
+typedef struct {
+    JPH_Real *pos, *ppos;
+    float *rot, *prot, *lvel, *avel;
+    JPH_BodyID *bids;
+    uint64_t *udat;
+    CULV_ATOMIC(uint32_t) * gens;
+    uint32_t *s2d, *d2s, *free, *cats, *masks, *mats;
+    CULV_ATOMIC(uint8_t) * stat;
+    struct SoftBodyShadow *softs;
+} NewBuffers;
+
+typedef struct {
+    int max_bodies;
+    int max_pairs;
+} WorldLimits;
+
+typedef struct {
+    float gx;
+    float gy;
+    float gz;
+} GravityVector;
+
 int PhysicsWorld_resize(struct PhysicsWorldObject *self, size_t new_capacity);
 
-void free_constraints(PhysicsWorldObject *self);
+void free_constraints(struct PhysicsWorldObject *self);
 
-void free_shadow_buffers(PhysicsWorldObject *self);
+void free_shadow_buffers(struct PhysicsWorldObject *self);
 
-void PhysicsWorld_free_members(PhysicsWorldObject *self);
+void PhysicsWorld_free_members(struct PhysicsWorldObject *self);
 
-int init_settings(PhysicsWorldObject *self, PyObject *settings_dict, float *gx, float *gy,
+int init_settings(struct PhysicsWorldObject *self, PyObject *settings_dict, float *gx, float *gy,
                   float *gz, int *max_bodies, int *max_pairs);
 
-int init_jolt_core(PhysicsWorldObject *self, WorldLimits limits, GravityVector gravity);
+int init_jolt_core(struct PhysicsWorldObject *self, WorldLimits limits, GravityVector gravity);
 
-int allocate_buffers(PhysicsWorldObject *self, int max_bodies);
+int allocate_buffers(struct PhysicsWorldObject *self, int max_bodies);
 
-int load_baked_scene(PhysicsWorldObject *self, PyObject *baked);
+int load_baked_scene(struct PhysicsWorldObject *self, PyObject *baked);
 
 int verify_abi_alignment(JPH_BodyInterface *bi);
 
-PyType_DeclareSlot_StatusFromModule PhysicsWorld_getbuffer(PhysicsWorldObject *self,
-                                                           Py_buffer *view, CULV_MAYBE_UNUSED int flags);
+PyType_DeclareSlot_StatusFromModule PhysicsWorld_getbuffer(struct PhysicsWorldObject *self,
+                                                           Py_buffer *view,
+                                                           CULV_MAYBE_UNUSED int flags);
 
-PyType_DeclareSlot_VoidFromModule PhysicsWorld_releasebuffer(PhysicsWorldObject *self,
+PyType_DeclareSlot_VoidFromModule PhysicsWorld_releasebuffer(struct PhysicsWorldObject *self,
                                                              Py_buffer *view);
 
 void free_new_buffers(NewBuffers *nb);

@@ -3,6 +3,7 @@
 #include "culverin.h"
 #include "culverin_arg_indices.h"
 #include "culverin_getters.h"
+#include "culverin_python.h"
 #include <stddef.h>
 
 // --- INTERNAL HELPERS ---
@@ -567,8 +568,9 @@ PyCFunction_DeclareMethodFromModule Registry_get_entities(RegistryObject *self,
     return proxy;
 }
 
-PyCFunction_DeclareMethodFromModule Registry_sync_from_world(RegistryObject *self, PyObject *const *args, 
-                                                             size_t nargsf, PyObject *kwnames) {
+PyCFunction_DeclareMethodFromModule Registry_sync_from_world(RegistryObject *self,
+                                                             PyObject *const *args, size_t nargsf,
+                                                             PyObject *kwnames) {
     CulverinState *st   = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     PyObject *world_obj = nullptr;
     uint32_t h_comp_id;
@@ -580,19 +582,24 @@ PyCFunction_DeclareMethodFromModule Registry_sync_from_world(RegistryObject *sel
                                         [IDX_RSP_T_COMP] = (void *)&p_comp_id,
                                         [IDX_RSP_R_COMP] = (void *)&r_comp_id};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.RegSyncPhysParser, targets)) {
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+                           &st->parsers.RegSyncPhysParser, targets)) {
         return nullptr;
     }
 
     PhysicsWorldObject *world = (PhysicsWorldObject *)world_obj;
-    
+
     if (h_comp_id >= self->component_count) {
         return PyErr_Format(PyExc_ValueError, "Invalid handle component ID");
     }
 
     SparseSet *h_set = &self->components[h_comp_id];
-    SparseSet *p_set = (p_comp_id >= 0 && (uint32_t)p_comp_id < self->component_count) ? &self->components[p_comp_id] : nullptr;
-    SparseSet *r_set = (r_comp_id >= 0 && (uint32_t)r_comp_id < self->component_count) ? &self->components[r_comp_id] : nullptr;
+    SparseSet *p_set = (p_comp_id >= 0 && (uint32_t)p_comp_id < self->component_count)
+                           ? &self->components[p_comp_id]
+                           : nullptr;
+    SparseSet *r_set = (r_comp_id >= 0 && (uint32_t)r_comp_id < self->component_count)
+                           ? &self->components[r_comp_id]
+                           : nullptr;
 
     if (h_set->element_size != sizeof(uint64_t)) {
         return PyErr_Format(PyExc_TypeError, "Handle component must be 8 bytes (uint64)");
@@ -609,9 +616,9 @@ PyCFunction_DeclareMethodFromModule Registry_sync_from_world(RegistryObject *sel
     SHADOW_LOCK(&self->ecs_lock);
 
     for (uint32_t i = 0; i < h_set->count; i++) {
-        CulvEntity ent = h_set->dense[i];
+        CulvEntity ent   = h_set->dense[i];
         uint32_t ent_idx = (uint32_t)(ent & HANDLE_INDEX_MASK);
-        
+
         uint64_t handle;
         memcpy(&handle, &h_set->data[(size_t)i * sizeof(uint64_t)], sizeof(uint64_t));
 
@@ -620,28 +627,30 @@ PyCFunction_DeclareMethodFromModule Registry_sync_from_world(RegistryObject *sel
             uint32_t phys_dense = world->slot_to_dense[slot];
 
             // 1. Sync Position (Using your PositionVector / PosStride logic)
-            if (p_set && ent_idx < p_set->sparse_capacity && p_set->sparse[ent_idx] != INVALID_DENSE_INDEX) {
+            if (p_set && ent_idx < p_set->sparse_capacity &&
+                p_set->sparse[ent_idx] != INVALID_DENSE_INDEX) {
                 uint32_t p_dense = p_set->sparse[ent_idx];
-                
-                // Assuming world->positions stores 1 PositionVector (or 4 Reals) per entity depending on your stride.
-                // Using PosStride as defined in your types header.
+
+                // Assuming world->positions stores 1 PositionVector (or 4 Reals) per entity
+                // depending on your stride. Using PosStride as defined in your types header.
                 PosStride *p = &((PosStride *)world->positions)[phys_dense];
-                
+
                 float *out = (float *)&p_set->data[(size_t)p_dense * sizeof(float) * 3];
-                out[0] = (float)p->x;
-                out[1] = (float)p->y;
-                out[2] = (float)p->z;
+                out[0]     = (float)p->x;
+                out[1]     = (float)p->y;
+                out[2]     = (float)p->z;
             }
 
             // 2. Sync Rotation
             // world->rotations is a flat float array (4 floats per quaternion)
-            if (r_set && ent_idx < r_set->sparse_capacity && r_set->sparse[ent_idx] != INVALID_DENSE_INDEX) {
+            if (r_set && ent_idx < r_set->sparse_capacity &&
+                r_set->sparse[ent_idx] != INVALID_DENSE_INDEX) {
                 uint32_t r_dense = r_set->sparse[ent_idx];
-                
+
                 // Index directly into the float array
                 float *phys_rot = &world->rotations[(size_t)phys_dense * 4];
-                float *out = (float *)&r_set->data[(size_t)r_dense * sizeof(float) * 4];
-                
+                float *out      = (float *)&r_set->data[(size_t)r_dense * sizeof(float) * 4];
+
                 // Fast direct float copy (16 bytes)
                 memcpy(out, phys_rot, sizeof(float) * 4);
             }
@@ -709,3 +718,42 @@ PyCFunction_DeclareMethodFromModule Registry_get_component_count(RegistryObject 
 
     return PyLong_FromSsize_t(self->components[comp_id].count);
 }
+
+#define REG_FASTCALL(name) CULV_FEAT(Registry, name, METH_FASTCALL | METH_KEYWORDS)
+#define REG_NOARGS(name) CULV_FEAT(Registry, name, METH_NOARGS)
+
+PyType_Spec Registry_spec = {
+    .name      = "culverin._culverin_c.Registry",
+    .basicsize = sizeof(RegistryObject),
+    .flags     = Py_TPFLAGS_DEFAULT,
+    .slots =
+        (PyType_Slot[]){
+
+            {.slot = Py_tp_new, .pfunc = PyType_GenericNew},
+            {.slot = Py_tp_init, .pfunc = Registry_init},
+            {.slot = Py_tp_dealloc, .pfunc = Registry_dealloc},
+            {.slot = Py_tp_methods,
+             .pfunc =
+                 (PyMethodDef[]){
+
+                     REG_NOARGS(create),
+                     REG_FASTCALL(destroy),
+                     REG_FASTCALL(is_alive),
+                     REG_NOARGS(clear), // Wipes the registry
+                     REG_FASTCALL(register_component),
+                     REG_FASTCALL(add),
+                     REG_FASTCALL(remove),
+                     REG_FASTCALL(has),
+                     REG_FASTCALL(get), // Single entity data access
+                     REG_FASTCALL(get_view),
+                     REG_FASTCALL(get_entities),
+                     REG_FASTCALL(sync_from_world),
+                     REG_NOARGS(get_active_count),      // ECS Statistics
+                     REG_FASTCALL(get_component_count), // ECS Statistics
+                     {}
+
+                 }},
+            {},
+
+        },
+};

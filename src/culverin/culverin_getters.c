@@ -211,14 +211,6 @@ PyGetSet_DeclareGetter get_is_step_pending(PhysicsWorldObject *self,
     Py_RETURN_FALSE;
 }
 
-/* --- Immutable Getters (Safe without locks) --- */
-
-PyGetSet_DeclareGetter Vehicle_get_wheel_count(VehicleObject *self,
-                                               CULV_MAYBE_UNUSED void *closure) {
-    // num_wheels is set at creation and never changes
-    return PyLong_FromUnsignedLong(self->num_wheels);
-}
-
 /* --- Shadow Buffer Getters --- */
 
 PyGetSet_DeclareGetter get_positions(PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *c) {
@@ -284,59 +276,4 @@ PyGetSet_DeclareGetter PhysicsWorld_get_remaining_capacity(PhysicsWorldObject *s
     size_t rem   = (current >= limit) ? 0 : (limit - current);
 
     return PyLong_FromSize_t(rem);
-}
-
-PyCFunction_DeclareMethodFromModule PhysicsWorld_get_soft_body_vertices(PhysicsWorldObject *self,
-                                                                        PyObject *const *args,
-                                                                        size_t nargsf,
-                                                                        PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
-
-    uint64_t h_raw;
-    void *targets[HOnly_COUNT] = {[IDX_H_H] = &h_raw};
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.HOnlyParser,
-                           targets)) {
-        return nullptr;
-    }
-
-    SHADOW_LOCK(&self->shadow_lock);
-    BLOCK_UNTIL_NOT_STEPPING(self);
-
-    uint32_t slot = 0;
-    CHECK_HANDLE(h_raw, slot);
-
-    const uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
-    if (state != SLOT_SOFT_BODY) {
-        SHADOW_UNLOCK(&self->shadow_lock);
-        return PyErr_Format(PyExc_TypeError, "Handle does not belong to a soft body");
-    }
-
-    uint32_t dense_idx     = self->slot_to_dense[slot];
-    SoftBodyShadow *shadow = &self->soft_shadows[dense_idx];
-
-    if (!shadow->vertices) {
-        SHADOW_UNLOCK(&self->shadow_lock);
-        return PyErr_Format(PyExc_RuntimeError, "Soft body shadow buffer missing");
-    }
-
-    // We can reuse BufferProxyObject, but we need to tell it to use THIS specific pointer
-    // and THIS specific length, rather than the global positions array.
-    BufferProxyObject *proxy =
-        PyObject_GC_New(BufferProxyObject, (PyTypeObject *)st->BufferProxyType);
-    proxy->owner = (PyObject *)self;
-    Py_INCREF(self);
-
-    proxy->buf_type    = PROXY_DYNAMIC;
-    proxy->dynamic_ptr = shadow->vertices;
-    proxy->format      = JPH_REAL_STRING;
-    proxy->itemsize    = sizeof(JPH_Real);
-    proxy->stride      = 4; // PosStride
-    proxy->shape[0]    = (Py_ssize_t)shadow->num_vertices * 4;
-
-    atomic_fetch_add_explicit(&self->view_export_count, 1, memory_order_relaxed);
-
-    SHADOW_UNLOCK(&self->shadow_lock);
-
-    PyObject_GC_Track(proxy);
-    return (PyObject *)proxy;
 }
