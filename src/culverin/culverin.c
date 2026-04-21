@@ -115,6 +115,7 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
                         "cannot be re-initialized.");
         return -1;
     }
+    auto st                 = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     PyObject *settings_dict = nullptr;
     PyObject *bodies_list   = nullptr;
     PyObject *baked         = nullptr;
@@ -124,8 +125,10 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
     int max_bodies;
     int max_pairs;
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "|OO", (char *[]){"settings", "bodies", nullptr},
-                                     &settings_dict, &bodies_list)) {
+    void *targets[WorldInit_COUNT] = {[IDX_SETTINGS] = (void *)&settings_dict,
+                                      [IDX_BODIES]   = (void *)&bodies_list};
+
+    if (!FastParse_Unified(args, kwds, nullptr, &st->parsers.WorldInitParser, targets)) {
         return -1;
     }
 
