@@ -5,14 +5,12 @@
 #include "culverin_physics_world_internal.h"
 #include "culverin_python.h"
 
-// Jolt Physics collision masks (all layers/categories)
-static constexpr uint32_t JOLT_ALL_LAYER_BITS = 0xFFFF;
+// Default mass
+static constexpr float RAGDOLL_DEFAULT_PART_MASS = 10.0f;
 
-// Buffer allocation increments
-static constexpr size_t RAGDOLL_BODY_BUFFER_INCREMENT = 1024;
-
-// JPH_Mat4 size in bytes (16 floats)
-static constexpr size_t JPH_MAT4_SIZE_BYTES = 64;
+// Ragdoll constraint angle limits (in radians)
+static constexpr float RAGDOLL_DEFAULT_TWIST_MIN = -0.1f;
+static constexpr float RAGDOLL_DEFAULT_TWIST_MAX = 0.1f;
 
 PyCFunction_DeclareMethodFromModule Skeleton_add_joint(SkeletonObject *self, PyObject *const *args,
                                                        Py_ssize_t nargs, PyObject *kwnames) {
@@ -119,7 +117,7 @@ PyCFunction_DeclareMethodFromModule Ragdoll_drive_to_pose(RagdollObject *self,
         return nullptr;
     }
 
-    size_t required_size = (size_t)joint_count * JPH_MAT4_SIZE_BYTES;
+    size_t required_size = (size_t)joint_count * sizeof(JPH_Mat4);
     if (UNLIKELY((size_t)view.len < required_size)) {
         PyBuffer_Release(&view);
         return PyErr_Format(PyExc_ValueError,
@@ -318,6 +316,108 @@ PyType_DeclareSlot_VoidFromModule Ragdoll_dealloc(RagdollObject *self) {
 
     Py_XDECREF(self->world);
     Py_TYPE(self)->tp_free((PyObject *)self);
+}
+
+PyCFunction_DeclareMethodFromModule RagdollSettings_add_part(RagdollSettingsObject *self,
+                                                             PyObject *const *args,
+                                                             Py_ssize_t nargs, PyObject *kwnames) {
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+    // 1. Setup Defaults
+    int joint_idx     = 0;
+    int parent_idx    = -1;
+    int shape_type    = 0;
+    float mass        = RAGDOLL_DEFAULT_PART_MASS;
+    PyObject *py_size = nullptr;
+    PyObject *py_pos  = nullptr;
+    float twist_min   = RAGDOLL_DEFAULT_TWIST_MIN;
+    float twist_max   = RAGDOLL_DEFAULT_TWIST_MAX;
+    float cone_angle  = 0.0f;
+
+    // Default orientation: Axis=X, Normal=Y
+    Vec3f axis   = {.x = 1.0f, .y = 0.0f, .z = 0.0f};
+    Vec3f normal = {.x = 0.0f, .y = 1.0f, .z = 0.0f};
+
+    void *targets[RagdollAddPart_COUNT] = {
+        [IDX_RAP_JOINT] = (void *)&joint_idx,     [IDX_RAP_SHAPE] = (void *)&shape_type,
+        [IDX_RAP_SIZE] = (void *)&py_size,        [IDX_RAP_MASS] = (void *)&mass,
+        [IDX_RAP_PARENT] = (void *)&parent_idx,   [IDX_RAP_TWIST_MIN] = (void *)&twist_min,
+        [IDX_RAP_TWIST_MAX] = (void *)&twist_max, [IDX_RAP_CONE] = (void *)&cone_angle,
+        [IDX_RAP_AXIS]   = (void *)&axis,   // Converter calls parse_vec3_f32
+        [IDX_RAP_NORMAL] = (void *)&normal, // Converter calls parse_vec3_f32
+        [IDX_RAP_POS]    = (void *)&py_pos,
+    };
+
+    // 2. High Speed Parse
+    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.RagdollAddPartParser, targets)) {
+        return nullptr;
+    }
+
+    // 3. Shape Acquisition (Using your existing helper)
+    float s[4];
+    parse_body_size(py_size, s); // From culverin_parsers.c
+
+    JPH_Shape *shape = nullptr;
+    Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+    SHADOW_LOCK(&self->world->shadow_lock);
+    shape = find_or_create_shape_locked(self->world, shape_type, s);
+    SHADOW_UNLOCK(&self->world->shadow_lock);
+    NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+    Py_END_ALLOW_THREADS;
+
+    if (!shape) {
+        return PyErr_Format(PyExc_ValueError, "Invalid shape configuration");
+    }
+
+    // 4. Validation & Resizing
+    auto skel      = JPH_RagdollSettings_GetSkeleton(self->settings);
+    int skel_count = JPH_Skeleton_GetJointCount(skel);
+    if (joint_idx < 0 || joint_idx >= skel_count) {
+        return PyErr_Format(PyExc_IndexError, "Joint index %d out of bounds", joint_idx);
+    }
+
+    if (JPH_RagdollSettings_GetPartCount(self->settings) <= joint_idx) {
+        JPH_RagdollSettings_ResizeParts(self->settings, skel_count);
+    }
+
+    // 5. Apply Core Part Settings
+    JPH_RagdollSettings_SetPartShape(self->settings, joint_idx, shape);
+    JPH_RagdollSettings_SetPartMassProperties(self->settings, joint_idx, mass);
+    JPH_RagdollSettings_SetPartObjectLayer(self->settings, joint_idx, 1);
+    JPH_RagdollSettings_SetPartMotionType(self->settings, joint_idx, JPH_MotionType_Dynamic);
+
+    // 6. Handle Position (Optional)
+    if (py_pos && py_pos != Py_None) {
+        PosStride p_stride;
+        if (parse_py_vec3_pos(py_pos, &p_stride)) {
+            JPH_RVec3 p = {.x = p_stride.x, .y = p_stride.y, .z = p_stride.z};
+            JPH_RagdollSettings_SetPartPosition(self->settings, joint_idx, &p);
+        }
+    }
+
+    // 7. Handle Parent Constraint
+    if (parent_idx >= 0) {
+        JPH_SwingTwistConstraintSettings cs;
+        JPH_SwingTwistConstraintSettings_Init(&cs);
+        cs.base.enabled = true;
+
+        // Identity positions for local bind
+        cs.position1 = (JPH_RVec3){0, 0, 0};
+        cs.position2 = (JPH_RVec3){0, 0, 0};
+
+        cs.twistAxis1 = (JPH_Vec3){axis.x, axis.y, axis.z};
+        cs.twistAxis2 = (JPH_Vec3){axis.x, axis.y, axis.z};
+        cs.planeAxis1 = (JPH_Vec3){normal.x, normal.y, normal.z};
+        cs.planeAxis2 = (JPH_Vec3){normal.x, normal.y, normal.z};
+
+        cs.normalHalfConeAngle = cone_angle;
+        cs.planeHalfConeAngle  = cone_angle;
+        cs.twistMinAngle       = twist_min;
+        cs.twistMaxAngle       = twist_max;
+
+        JPH_RagdollSettings_SetPartToParent(self->settings, joint_idx, &cs);
+    }
+
+    Py_RETURN_NONE;
 }
 
 #define RD_FASTCALL(name) CULV_FEAT(Ragdoll, name, METH_FASTCALL | METH_KEYWORDS)

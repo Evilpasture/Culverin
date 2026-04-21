@@ -98,3 +98,4 @@ extern PyType_Spec Ragdoll_spec;
 extern PyType_Spec Skeleton_spec;
 extern PyType_Spec SoftBodySharedSettings_spec;
 extern PyType_Spec Registry_spec;
+extern PyType_Spec Ship_spec;

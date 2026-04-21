@@ -1,4 +1,6 @@
 #pragma once
+
+#include "culverin_soft_body.h"
 #include "culverin_types.h"
 #include <Python.h>
 #ifdef _WIN32
@@ -14,7 +16,7 @@ typedef struct {
     CULV_ATOMIC(uint32_t) * gens;
     uint32_t *s2d, *d2s, *free, *cats, *masks, *mats;
     CULV_ATOMIC(uint8_t) * stat;
-    struct SoftBodyShadow *softs;
+    SoftBodyShadow *softs;
 } NewBuffers;
 
 typedef struct {
@@ -27,6 +29,8 @@ typedef struct {
     float gy;
     float gz;
 } GravityVector;
+
+struct PhysicsWorldObject;
 
 int PhysicsWorld_resize(struct PhysicsWorldObject *self, size_t new_capacity);
 

@@ -1,4 +1,5 @@
 #pragma once
+#include "culverin_types.h"
 #include "joltc.h"
 
 struct PhysicsWorldObject;
@@ -24,8 +25,6 @@ typedef struct {
 typedef struct {
     JPH_BodyID ignore_id;
 } CastShapeFilter;
-
-#include "culverin.h"
 
 JPH_Shape *find_or_create_shape_locked(struct PhysicsWorldObject *self, int type,
                                        const float *params);

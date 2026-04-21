@@ -1,4 +1,5 @@
 #include "culverin_internal_query.h"
+#include "culverin_physics_world.h"
 
 /**
  * REQUIRES: SHADOW_LOCK held AND g_jph_trampoline_lock held
@@ -38,7 +39,7 @@ JPH_Shape *find_or_create_shape_locked(PhysicsWorldObject *self, int type, const
     switch (type) {
     case CULV_SHAPE_BOX: {
         JPH_Vec3 half_extents = {p1, p2, p3};
-        auto s               = JPH_BoxShapeSettings_Create(&half_extents, 0.05f);
+        auto s                = JPH_BoxShapeSettings_Create(&half_extents, 0.05f);
         if (s) {
             shape = (JPH_Shape *)JPH_BoxShapeSettings_CreateShape(s);
             JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);
@@ -71,7 +72,7 @@ JPH_Shape *find_or_create_shape_locked(PhysicsWorldObject *self, int type, const
     }
     case CULV_SHAPE_PLANE: {
         JPH_Plane plane = {{p1, p2, p3}, p4};
-        auto s         = JPH_PlaneShapeSettings_Create(&plane, nullptr, 1000.0f);
+        auto s          = JPH_PlaneShapeSettings_Create(&plane, nullptr, 1000.0f);
         if (s) {
             shape = (JPH_Shape *)JPH_PlaneShapeSettings_CreateShape(s);
             JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);

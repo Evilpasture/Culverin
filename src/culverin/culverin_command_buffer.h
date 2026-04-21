@@ -6,9 +6,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-struct PhysicsWorldObject;
-typedef struct PhysicsWorldObject PhysicsWorldObject;
-
 #if defined(JPH_DOUBLE_PRECISION)
 CULV_MAYBE_UNUSED static constexpr int16_t CMD_ALIGN = 16;
 #else

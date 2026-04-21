@@ -3,12 +3,20 @@
 #include "culverin_compiler_specifics.h"
 #include "culverin_debug_render.h"
 #include "culverin_physics_world_internal.h"
-#include "culverin_ragdoll.h"
 #include "culverin_soft_body.h"
 #include "culverin_threading.h"
 #include "culverin_types.h"
 #include "joltc.h"
 #include <Python.h>
+
+// --- Material Registry ---
+typedef struct {
+    uint32_t id;
+    float friction;
+    float restitution;
+    // Padding/Alignment isn't critical here as this is a lookup array, not a
+    // stream
+} MaterialData;
 
 // --- The Object Struct ---
 typedef struct PhysicsWorldObject {
@@ -46,7 +54,7 @@ typedef struct PhysicsWorldObject {
     MaterialData *materials;
     PhysicsCommand *command_queue;
     PhysicsCommand *command_queue_spare;
-    struct ShapeEntry *shape_cache;
+    ShapeEntry *shape_cache;
     CULV_ATOMIC(BodyHandle) * id_to_handle_map;
     JPH_Constraint **constraints;
     uint32_t *categories;
@@ -116,6 +124,40 @@ typedef struct PhysicsWorldObject {
     DebugBuffer debug_lines;
     DebugBuffer debug_triangles;
 } PhysicsWorldObject;
+
+// --- Handle Helper ---
+
+CULV_NODISCARD
+CULV_MAYBE_UNUSED
+static inline BodyHandle make_handle(uint32_t slot, uint32_t gen) {
+    return ((uint64_t)gen << HANDLE_INDEX_BITS) | (uint64_t)slot;
+}
+
+CULV_NODISCARD
+CULV_MAYBE_UNUSED
+static inline bool unpack_handle(PhysicsWorldObject *self, BodyHandle h, uint32_t *slot) {
+    // 1. 'h' is now a plain uint64_t (BodyHandle) passed by value.
+    // There is no thread contention on a local variable, so we read it directly.
+    // This eliminates the reinterpret_cast and the deleted constructor error.
+    uint64_t h_val = h;
+
+    *slot        = (uint32_t)(h_val & HANDLE_INDEX_MASK);
+    uint32_t gen = (uint32_t)(h_val >> HANDLE_INDEX_BITS);
+
+    // UNLIKELY is a compiler hint (builtin_expect) defined in specifics.h
+    if (UNLIKELY(*slot >= self->slot_capacity)) {
+        return false;
+    }
+
+    // 2. Read the current generation from the world's ATOMIC storage.
+    // This MUST stay atomic because another thread (Physics Sim) could
+    // be incrementing this value simultaneously.
+    // This works in both C and C++ because 'generations' is CULV_ATOMIC(uint32_t)*
+    uint32_t current_gen = atomic_load_explicit(&self->generations[*slot], memory_order_acquire);
+
+    // 3. Logic check remains identical: Handle is valid if generations match.
+    return (current_gen == gen);
+}
 
 #define CHECK_HANDLE(h_raw, slot_out)                                                              \
     do {                                                                                           \

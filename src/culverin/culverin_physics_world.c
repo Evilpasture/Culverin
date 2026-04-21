@@ -1,12 +1,16 @@
 #include "culverin_physics_world.h"
 #include "culverin_arg_indices.h"
+#include "culverin_character.h"
 #include "culverin_constraint.h"
 #include "culverin_fast_build.h"
 #include "culverin_getters.h"
+#include "culverin_math.h"
 #include "culverin_physics_sync.h"
 #include "culverin_python.h"
 #include "culverin_query_methods.h"
+#include "culverin_ragdoll.h"
 #include "culverin_shadow_sync.h"
+#include "culverin_ship.h"
 
 // ============================================================================
 // Semantic Constants - Magic Number Replacements
@@ -36,12 +40,11 @@ static constexpr size_t VERTEX_STRIDE_BYTES         = 12;   // 3 floats (x, y, z
 static constexpr size_t INITIAL_MATERIAL_CAPACITY   = 16;   // Initial material data capacity
 static constexpr float DEFAULT_BODY_SIZE            = 0.5f;
 
-// Default mass
-static constexpr float RAGDOLL_DEFAULT_PART_MASS = 10.0f;
+// Jolt Physics collision masks (all layers/categories)
+static constexpr uint32_t JOLT_ALL_LAYER_BITS = 0xFFFF;
 
-// Ragdoll constraint angle limits (in radians)
-static constexpr float RAGDOLL_DEFAULT_TWIST_MIN = -0.1f;
-static constexpr float RAGDOLL_DEFAULT_TWIST_MAX = 0.1f;
+// Buffer allocation increments
+static constexpr size_t RAGDOLL_BODY_BUFFER_INCREMENT = 1024;
 
 // Global lock for JPH callbacks
 NativeMutex g_jph_trampoline_lock; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
@@ -4302,108 +4305,6 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll_settings(Physics
     return (PyObject *)obj;
 }
 
-PyCFunction_DeclareMethodFromModule RagdollSettings_add_part(RagdollSettingsObject *self,
-                                                             PyObject *const *args,
-                                                             Py_ssize_t nargs, PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
-    // 1. Setup Defaults
-    int joint_idx     = 0;
-    int parent_idx    = -1;
-    int shape_type    = 0;
-    float mass        = RAGDOLL_DEFAULT_PART_MASS;
-    PyObject *py_size = nullptr;
-    PyObject *py_pos  = nullptr;
-    float twist_min   = RAGDOLL_DEFAULT_TWIST_MIN;
-    float twist_max   = RAGDOLL_DEFAULT_TWIST_MAX;
-    float cone_angle  = 0.0f;
-
-    // Default orientation: Axis=X, Normal=Y
-    Vec3f axis   = {.x = 1.0f, .y = 0.0f, .z = 0.0f};
-    Vec3f normal = {.x = 0.0f, .y = 1.0f, .z = 0.0f};
-
-    void *targets[RagdollAddPart_COUNT] = {
-        [IDX_RAP_JOINT] = (void *)&joint_idx,     [IDX_RAP_SHAPE] = (void *)&shape_type,
-        [IDX_RAP_SIZE] = (void *)&py_size,        [IDX_RAP_MASS] = (void *)&mass,
-        [IDX_RAP_PARENT] = (void *)&parent_idx,   [IDX_RAP_TWIST_MIN] = (void *)&twist_min,
-        [IDX_RAP_TWIST_MAX] = (void *)&twist_max, [IDX_RAP_CONE] = (void *)&cone_angle,
-        [IDX_RAP_AXIS]   = (void *)&axis,   // Converter calls parse_vec3_f32
-        [IDX_RAP_NORMAL] = (void *)&normal, // Converter calls parse_vec3_f32
-        [IDX_RAP_POS]    = (void *)&py_pos,
-    };
-
-    // 2. High Speed Parse
-    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.RagdollAddPartParser, targets)) {
-        return nullptr;
-    }
-
-    // 3. Shape Acquisition (Using your existing helper)
-    float s[4];
-    parse_body_size(py_size, s); // From culverin_parsers.c
-
-    JPH_Shape *shape = nullptr;
-    Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
-    SHADOW_LOCK(&self->world->shadow_lock);
-    shape = find_or_create_shape_locked(self->world, shape_type, s);
-    SHADOW_UNLOCK(&self->world->shadow_lock);
-    NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
-    Py_END_ALLOW_THREADS;
-
-    if (!shape) {
-        return PyErr_Format(PyExc_ValueError, "Invalid shape configuration");
-    }
-
-    // 4. Validation & Resizing
-    auto skel      = JPH_RagdollSettings_GetSkeleton(self->settings);
-    int skel_count = JPH_Skeleton_GetJointCount(skel);
-    if (joint_idx < 0 || joint_idx >= skel_count) {
-        return PyErr_Format(PyExc_IndexError, "Joint index %d out of bounds", joint_idx);
-    }
-
-    if (JPH_RagdollSettings_GetPartCount(self->settings) <= joint_idx) {
-        JPH_RagdollSettings_ResizeParts(self->settings, skel_count);
-    }
-
-    // 5. Apply Core Part Settings
-    JPH_RagdollSettings_SetPartShape(self->settings, joint_idx, shape);
-    JPH_RagdollSettings_SetPartMassProperties(self->settings, joint_idx, mass);
-    JPH_RagdollSettings_SetPartObjectLayer(self->settings, joint_idx, 1);
-    JPH_RagdollSettings_SetPartMotionType(self->settings, joint_idx, JPH_MotionType_Dynamic);
-
-    // 6. Handle Position (Optional)
-    if (py_pos && py_pos != Py_None) {
-        PosStride p_stride;
-        if (parse_py_vec3_pos(py_pos, &p_stride)) {
-            JPH_RVec3 p = {.x = p_stride.x, .y = p_stride.y, .z = p_stride.z};
-            JPH_RagdollSettings_SetPartPosition(self->settings, joint_idx, &p);
-        }
-    }
-
-    // 7. Handle Parent Constraint
-    if (parent_idx >= 0) {
-        JPH_SwingTwistConstraintSettings cs;
-        JPH_SwingTwistConstraintSettings_Init(&cs);
-        cs.base.enabled = true;
-
-        // Identity positions for local bind
-        cs.position1 = (JPH_RVec3){0, 0, 0};
-        cs.position2 = (JPH_RVec3){0, 0, 0};
-
-        cs.twistAxis1 = (JPH_Vec3){axis.x, axis.y, axis.z};
-        cs.twistAxis2 = (JPH_Vec3){axis.x, axis.y, axis.z};
-        cs.planeAxis1 = (JPH_Vec3){normal.x, normal.y, normal.z};
-        cs.planeAxis2 = (JPH_Vec3){normal.x, normal.y, normal.z};
-
-        cs.normalHalfConeAngle = cone_angle;
-        cs.planeHalfConeAngle  = cone_angle;
-        cs.twistMinAngle       = twist_min;
-        cs.twistMaxAngle       = twist_max;
-
-        JPH_RagdollSettings_SetPartToParent(self->settings, joint_idx, &cs);
-    }
-
-    Py_RETURN_NONE;
-}
-
 PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll(PhysicsWorldObject *self,
                                                                 PyObject *const *args,
                                                                 Py_ssize_t nargs,
@@ -4576,12 +4477,262 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll(PhysicsWorldObje
     return (PyObject *)obj;
 }
 
+// Fixed get_contact_events to be safer with locking
+PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events(PhysicsWorldObject *self,
+                                                                    PyObject *Py_UNUSED(args)) {
+    // --- 1. SNAPSHOT PHASE (Locked) ---
+    SHADOW_LOCK(&self->shadow_lock);
+
+    // Guard: Ensure we aren't reading while Jolt is mid-step updating the buffer
+    BLOCK_UNTIL_NOT_STEPPING(self);
+
+    // Load atomic index (Acquire ensures we see all Listener stores)
+    size_t count = atomic_load_explicit(&self->contact_atomic_idx, memory_order_acquire);
+
+    if (count == 0) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        return PyList_New(0);
+    }
+
+    if (count > self->contact_max_capacity) {
+        count = self->contact_max_capacity;
+    }
+
+    // Fast copy into local memory so we can drop the lock immediately
+    ContactEvent *scratch = CULV_RAW_MALLOC(count * sizeof(ContactEvent));
+    if (!scratch) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        return PyErr_NoMemory();
+    }
+
+    memcpy(scratch, self->contact_buffer, count * sizeof(ContactEvent));
+
+    // Reset the index for the next frame
+    atomic_store_explicit(&self->contact_atomic_idx, 0, memory_order_relaxed);
+
+    SHADOW_UNLOCK(&self->shadow_lock);
+
+    // --- 2. BUILD PHASE (Unlocked & FastBuild Integrated) ---
+    PyObject *list = PyList_New((Py_ssize_t)count);
+    if (!list) {
+        CULV_RAW_FREE(scratch);
+        return nullptr;
+    }
+
+    for (size_t i = 0; i < count; i++) {
+        // TSan Fix: Explicitly load the handles from the atomic members in the struct.
+        // We use relaxed because this 'scratch' copy is thread-local and synchronized.
+        uint64_t b1_raw = atomic_load_explicit(&scratch[i].body1, memory_order_relaxed);
+        uint64_t b2_raw = atomic_load_explicit(&scratch[i].body2, memory_order_relaxed);
+
+        /**
+         * OPTIMIZATION: FastBuild_Tuple
+         * 1. fb_from_u64 converts b1_raw and b2_raw
+         * 2. fb_from_float converts impulse and sliding_speed_sq
+         * 3. fb_pack_tuple performs a single O(1) allocation
+         */
+        PyObject *item =
+            FastBuild_Tuple(b1_raw, b2_raw, scratch[i].impulse, scratch[i].sliding_speed_sq);
+
+        if (UNLIKELY(!item)) {
+            Py_DECREF(list);
+            CULV_RAW_FREE(scratch);
+            return nullptr;
+        }
+
+        // PyList_SET_ITEM steals the reference from FastBuild_Tuple
+        PyList_SET_ITEM(list, (Py_ssize_t)i, item);
+    }
+
+    CULV_RAW_FREE(scratch);
+    return list;
+}
+
+PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events_ex(PhysicsWorldObject *self,
+                                                                       PyObject *Py_UNUSED(args)) {
+    // --- 1. SNAPSHOT PHASE ---
+    SHADOW_LOCK(&self->shadow_lock);
+    BLOCK_UNTIL_NOT_STEPPING(self);
+
+    size_t count = atomic_load_explicit(&self->contact_atomic_idx, memory_order_acquire);
+    if (count == 0) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        return PyList_New(0);
+    }
+
+    if (count > self->contact_max_capacity) {
+        count = self->contact_max_capacity;
+    }
+
+    ContactEvent *scratch = CULV_RAW_MALLOC(count * sizeof(ContactEvent));
+    if (!scratch) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        return PyErr_NoMemory();
+    }
+
+    memcpy(scratch, self->contact_buffer, count * sizeof(ContactEvent));
+    atomic_store_explicit(&self->contact_atomic_idx, 0, memory_order_relaxed);
+    SHADOW_UNLOCK(&self->shadow_lock);
+
+    // --- 2. KEY INTERNING (Persistent) ---
+    static PyObject *k_bodies = nullptr;
+    static PyObject *k_pos    = nullptr;
+    static PyObject *k_norm   = nullptr;
+    static PyObject *k_str    = nullptr;
+    static PyObject *k_slide  = nullptr;
+    static PyObject *k_mat    = nullptr;
+    static PyObject *k_type   = nullptr;
+
+    if (UNLIKELY(!k_bodies)) {
+        k_bodies = PyUnicode_InternFromString("bodies");
+        k_pos    = PyUnicode_InternFromString("position");
+        k_norm   = PyUnicode_InternFromString("normal");
+        k_str    = PyUnicode_InternFromString("impulse");
+        k_slide  = PyUnicode_InternFromString("slide_sq");
+        k_mat    = PyUnicode_InternFromString("materials");
+        k_type   = PyUnicode_InternFromString("type");
+    }
+
+    // --- 3. BUILD PHASE (FastBuild Engine) ---
+    PyObject *list = PyList_New((Py_ssize_t)count);
+    if (!list) {
+        CULV_RAW_FREE(scratch);
+        return nullptr;
+    }
+
+    for (size_t i = 0; i < count; i++) {
+        ContactEvent *e = &scratch[i];
+
+        // TSan Fix: Explicit relaxed loads for atomic handles
+        uint64_t b1 = atomic_load_explicit(&e->body1, memory_order_relaxed);
+        uint64_t b2 = atomic_load_explicit(&e->body2, memory_order_relaxed);
+
+        /**
+         * OPTIMIZATION: FastBuild_Dict
+         * We compose the nested tuples (pos, normal, bodies, mats)
+         * and the dictionary in a single, readable expression.
+         */
+        PyObject *dict = FastBuild_Dict(
+            k_bodies, FastBuild_Tuple(b1, b2), k_pos, FastBuild_Tuple(e->px, e->py, e->pz), k_norm,
+            FastBuild_Tuple(e->nx, e->ny, e->nz), k_mat, FastBuild_Tuple(e->mat1, e->mat2), k_str,
+            e->impulse, k_slide, e->sliding_speed_sq, k_type, e->type);
+
+        if (UNLIKELY(!dict)) {
+            Py_INCREF(Py_None);
+            PyList_SET_ITEM(list, (Py_ssize_t)i, Py_None);
+            continue;
+        }
+
+        // Steals ref to dict created by FastBuild
+        PyList_SET_ITEM(list, (Py_ssize_t)i, dict);
+    }
+
+    CULV_RAW_FREE(scratch);
+    return list;
+}
+// ContactEvent layout (packed, little-endian):
+// - body1 (uint64)
+// - body2 (uint64)
+// - px, py, pz (float32)
+// - nx, ny, nz (float32)
+// - impulse (float32)
+// - sliding_speed_sq (float32)
+// - mat1 (uint32)
+// - mat2 (uint32)
+// - type (uint32)
+// - _pad (uint32)
+PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events_raw(PhysicsWorldObject *self,
+                                                                        PyObject *Py_UNUSED(args)) {
+    // 1. Phase Guard
+    SHADOW_LOCK(&self->shadow_lock);
+    BLOCK_UNTIL_NOT_STEPPING(self);
+
+    // 2. Atomic Acquire (Publication Visibility)
+    size_t count = atomic_load_explicit(&self->contact_atomic_idx, memory_order_acquire);
+
+    if (count == 0) {
+        SHADOW_UNLOCK(&self->shadow_lock);
+        // Return empty view
+        PyObject *empty = PyBytes_FromStringAndSize("", 0);
+        PyObject *view  = PyMemoryView_FromObject(empty);
+        Py_DECREF(empty);
+        return view;
+    }
+
+    if (count > self->contact_max_capacity) {
+        count = self->contact_max_capacity;
+    }
+
+    // 3. Snapshot Data
+    // We copy into a PyBytes object. This is fast (memcpy) and
+    // ensures the data remains valid even after the next step() resets the
+    // buffer.
+    size_t bytes_size = count * sizeof(ContactEvent);
+    PyObject *raw_bytes =
+        PyBytes_FromStringAndSize((char *)self->contact_buffer, (Py_ssize_t)bytes_size);
+
+    // 4. Reset Index for next frame
+    atomic_store_explicit(&self->contact_atomic_idx, 0, memory_order_relaxed);
+
+    SHADOW_UNLOCK(&self->shadow_lock);
+
+    if (!raw_bytes) {
+        return nullptr;
+    }
+
+    // 5. Wrap in MemoryView
+    // This allows the user to use np.frombuffer(events, dtype=...) without extra
+    // copies
+    PyObject *view = PyMemoryView_FromObject(raw_bytes);
+    Py_DECREF(raw_bytes);
+    return view;
+}
+
+PyType_DeclareSlot_StatusFromModule
+PhysicsWorld_getbuffer(PhysicsWorldObject *self, Py_buffer *view, CULV_MAYBE_UNUSED int flags) {
+    SHADOW_LOCK(&self->shadow_lock);
+
+    // TSan Fix: Read the atomic count safely
+    size_t current_count = atomic_load_explicit(&self->count, memory_order_acquire);
+
+    // We export the positions buffer as the default buffer for the object
+    view->buf        = self->positions;
+    view->len        = (Py_ssize_t)(current_count * sizeof(PosStride));
+    view->readonly   = 0;
+    view->itemsize   = sizeof(JPH_Real);
+    view->format     = (sizeof(JPH_Real) == sizeof(double)) ? "d" : "f";
+    view->ndim       = 2;
+    view->shape      = self->view_shape;
+    view->strides    = self->view_strides;
+    view->suboffsets = NULL;
+    view->internal   = NULL;
+
+    // view_export_count is a standard int protected by shadow_lock
+    atomic_fetch_add_explicit(&self->view_export_count, 1, memory_order_relaxed);
+
+    SHADOW_UNLOCK(&self->shadow_lock);
+    return 0;
+}
+
+// Buffer Release Slot
+PyType_DeclareSlot_VoidFromModule PhysicsWorld_releasebuffer(PhysicsWorldObject *self,
+                                                             Py_buffer *Py_UNUSED(view)) {
+    SHADOW_LOCK(&self->shadow_lock);
+
+    // Release logic remains simple as no atomic counters are mutated here
+    if (atomic_load_explicit(&self->view_export_count, memory_order_relaxed) > 0) {
+        atomic_fetch_sub_explicit(&self->view_export_count, 1, memory_order_relaxed);
+    }
+
+    SHADOW_UNLOCK(&self->shadow_lock);
+}
+
 // User-facing macros for context methods
 #define PW_FASTCALL(name) CULV_FEAT(PhysicsWorld, name, METH_FASTCALL | METH_KEYWORDS)
 #define PW_NOARGS(name) CULV_FEAT(PhysicsWorld, name, METH_NOARGS)
 #define PW_O(name) CULV_FEAT(PhysicsWorld, name, METH_O)
 
-static PyType_Spec PhysicsWorld_spec = {
+PyType_Spec PhysicsWorld_spec = {
     .name      = "culverin._culverin_c.PhysicsWorld",
     .basicsize = sizeof(PhysicsWorldObject),
     .flags =

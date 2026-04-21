@@ -26,7 +26,6 @@
 #    define CULV_RAW_FREE(ptr) PyMem_RawFree(ptr)
 #endif
 // =========================================================================
-#include "culverin_command_buffer.h"
 #include "culverin_internal_query.h"
 #include "culverin_physics_world.h"
 #include "culverin_tracked_vehicle.h"
@@ -131,15 +130,6 @@ static constexpr size_t RAYCAST_RESULT_SIZE = 48;
 
 static_assert(sizeof(RayCastBatchResult) == RAYCAST_RESULT_SIZE);
 
-// --- Material Registry ---
-typedef struct {
-    uint32_t id;
-    float friction;
-    float restitution;
-    // Padding/Alignment isn't critical here as this is a lookup array, not a
-    // stream
-} MaterialData;
-
 typedef struct {
     JPH_Real px;
     JPH_Real py;
@@ -215,40 +205,6 @@ CULV_NODISCARD
 CULV_MAYBE_UNUSED
 static inline CulverinState *get_culverin_state(PyObject *module) {
     return (CulverinState *)PyModule_GetState(module);
-}
-
-// --- Handle Helper ---
-
-CULV_NODISCARD
-CULV_MAYBE_UNUSED
-static inline BodyHandle make_handle(uint32_t slot, uint32_t gen) {
-    return ((uint64_t)gen << HANDLE_INDEX_BITS) | (uint64_t)slot;
-}
-
-CULV_NODISCARD
-CULV_MAYBE_UNUSED
-static inline bool unpack_handle(PhysicsWorldObject *self, BodyHandle h, uint32_t *slot) {
-    // 1. 'h' is now a plain uint64_t (BodyHandle) passed by value.
-    // There is no thread contention on a local variable, so we read it directly.
-    // This eliminates the reinterpret_cast and the deleted constructor error.
-    uint64_t h_val = h;
-
-    *slot        = (uint32_t)(h_val & HANDLE_INDEX_MASK);
-    uint32_t gen = (uint32_t)(h_val >> HANDLE_INDEX_BITS);
-
-    // UNLIKELY is a compiler hint (builtin_expect) defined in specifics.h
-    if (UNLIKELY(*slot >= self->slot_capacity)) {
-        return false;
-    }
-
-    // 2. Read the current generation from the world's ATOMIC storage.
-    // This MUST stay atomic because another thread (Physics Sim) could
-    // be incrementing this value simultaneously.
-    // This works in both C and C++ because 'generations' is CULV_ATOMIC(uint32_t)*
-    uint32_t current_gen = atomic_load_explicit(&self->generations[*slot], memory_order_acquire);
-
-    // 3. Logic check remains identical: Handle is valid if generations match.
-    return (current_gen == gen);
 }
 
 // --- Hardened Checkers (No Casts) ---
