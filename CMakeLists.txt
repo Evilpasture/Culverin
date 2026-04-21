@@ -461,6 +461,7 @@ python_add_library(
     src/culverin/culverin_math.c
     src/culverin/culverin_ecs.c
     src/culverin/culverin_ship.c
+    src/culverin/culverin_physics_world.c
 )
 
 target_sources(_culverin_c PRIVATE src/culverin/culverin_jph_rtti_shim.cpp)
