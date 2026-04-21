@@ -334,8 +334,8 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast(PhysicsWorldObject *sel
     }
 
     auto scale = (fabsf(mag_sq - 1.0f) < CQM_EPSILON_RELATIVE)
-                      ? max_dist
-                      : max_dist * culverin_fast_rsqrt(mag_sq);
+                     ? max_dist
+                     : max_dist * culverin_fast_rsqrt(mag_sq);
 
     // 3. RESOLUTION PHASE (Shadow Lock)
     SHADOW_LOCK(&self->shadow_lock);
@@ -387,8 +387,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast(PhysicsWorldObject *sel
         hit_handle_raw = JPH_BodyInterface_GetUserData(self->body_interface, hit->bodyID);
         hit_fraction   = hit->fraction;
 
-        auto li =
-            JPH_PhysicsSystem_GetBodyLockInterfaceNoLock(self->system);
+        auto li = JPH_PhysicsSystem_GetBodyLockInterfaceNoLock(self->system);
         JPH_BodyLockRead j_lock;
         JPH_BodyLockInterface_LockRead(li, hit->bodyID, &j_lock);
         if (j_lock.body) {

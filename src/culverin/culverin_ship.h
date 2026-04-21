@@ -1,5 +1,6 @@
 #pragma once
-#include "culverin.h"
+#include "culverin_compiler_specifics.h"
+#include "joltc.h"
 #include <Python.h>
 
 typedef struct ShipObject {
@@ -21,10 +22,3 @@ typedef struct ShipObject {
     float lateral_grip;
     float linear_drag;
 } ShipObject;
-
-PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ship(PhysicsWorldObject *self,
-                                                             PyObject *const *args,
-                                                             Py_ssize_t nargs, PyObject *kwnames);
-
-PyCFunction_DeclareMethodFromModule Ship_set_input(ShipObject *self, PyObject *const *args,
-                                                   Py_ssize_t nargs, PyObject *kwnames);

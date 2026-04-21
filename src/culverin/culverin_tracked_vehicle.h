@@ -18,11 +18,6 @@ typedef struct {
     float min_rpm;
 } TrackedEngineConfig;
 
-PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
-                                                                        PyObject *const *args,
-                                                                        Py_ssize_t nargs,
-                                                                        PyObject *kwnames);
-
 PyCFunction_DeclareMethodFromModule Vehicle_set_tank_input(VehicleObject *self,
                                                            PyObject *const *args, Py_ssize_t nargs,
                                                            PyObject *kwnames);

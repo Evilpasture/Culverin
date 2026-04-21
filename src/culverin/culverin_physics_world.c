@@ -4732,6 +4732,18 @@ PyType_DeclareSlot_VoidFromModule PhysicsWorld_releasebuffer(PhysicsWorldObject 
 #define PW_NOARGS(name) CULV_FEAT(PhysicsWorld, name, METH_NOARGS)
 #define PW_O(name) CULV_FEAT(PhysicsWorld, name, METH_O)
 
+PyCFunction_DeclareMethodFromModule PhysicsWorld_create_vehicle(PhysicsWorldObject *self,
+                                                                PyObject *const *args,
+                                                                Py_ssize_t nargs,
+                                                                PyObject *kwnames);
+
+PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
+                                                                        PyObject *const *args,
+                                                                        Py_ssize_t nargs,
+                                                                        PyObject *kwnames);
+PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ship(PhysicsWorldObject *self,
+                                                             PyObject *const *args,
+                                                             Py_ssize_t nargs, PyObject *kwnames);
 PyType_Spec PhysicsWorld_spec = {
     .name      = "culverin._culverin_c.PhysicsWorld",
     .basicsize = sizeof(PhysicsWorldObject),
