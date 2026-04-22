@@ -411,10 +411,20 @@ static constexpr size_t PARSER_REGISTRY_SIZE = 128;
     X(IDX_MO_NEAR, "near", float, true)                                                            \
     X(IDX_MO_FAR, "far", float, true)
 
-#define SCHEMA_MATH_TRIO(X)                                                                        \
-    X(IDX_MT_0, "arg0", PyObject *, true)                                                          \
-    X(IDX_MT_1, "arg1", PyObject *, true)                                                          \
-    X(IDX_MT_2, "arg2", PyObject *, true)
+#define SCHEMA_MATH_LOOKAT(X)                                                                      \
+    X(IDX_ML_EYE, "eye", PyObject *, true)                                                         \
+    X(IDX_ML_TARGET, "target", PyObject *, true)                                                   \
+    X(IDX_ML_UP, "up", PyObject *, true)
+
+#define SCHEMA_MATH_TRS(X)                                                                         \
+    X(IDX_MTRS_T, "translation", PyObject *, true)                                                 \
+    X(IDX_MTRS_R, "rotation", PyObject *, true)                                                    \
+    X(IDX_MTRS_S, "scale", PyObject *, true)
+
+#define SCHEMA_MATH_TRS_BATCH(X)                                                                   \
+    X(IDX_MTRSB_T, "translations", PyObject *, true)                                               \
+    X(IDX_MTRSB_R, "rotations", PyObject *, true)                                                  \
+    X(IDX_MTRSB_S, "scales", PyObject *, true)
 
 #define SCHEMA_MATH_MAT(X) X(IDX_MMM_MAT, "mat", PyObject *, true)
 #define SCHEMA_MATH_MAT_PAIR(X)                                                                    \
@@ -559,21 +569,21 @@ static constexpr size_t PARSER_REGISTRY_SIZE = 128;
     X(IDX_38, "a38", uint64_t, false)                                                              \
     X(IDX_39, "a39", uint64_t, false)                                                              \
     X(IDX_40, "a40", uint64_t, false)                                                              \
-    X(IDX_41, "a41", uint64_t, 0) X(IDX_42, "a42", uint64_t, false)                                \
-        X(IDX_43, "a43", uint64_t, false) X(IDX_44, "a44", uint64_t, false)                        \
-            X(IDX_45, "a45", uint64_t, 0) X(IDX_46, "a46", uint64_t, false)                        \
-                X(IDX_47, "a47", uint64_t, 0) X(IDX_48, "a48", uint64_t, 0)                        \
-                    X(IDX_49, "a49", uint64_t, 0) X(IDX_50, "a50", uint64_t, 0)                    \
-                        X(IDX_51, "a51", uint64_t, false) X(IDX_52, "a52", uint64_t, 0)            \
-                            X(IDX_53, "a53", uint64_t, 0) X(IDX_54, "a54", uint64_t, 0)            \
-                                X(IDX_55, "a55", uint64_t, 0) X(IDX_56, "a56", uint64_t, false)    \
-                                    X(IDX_57, "a57", uint64_t, 0)                                  \
-                                        X(IDX_58, "a58", uint64_t, false)                          \
-                                            X(IDX_59, "a59", uint64_t, false)                      \
-                                                X(IDX_60, "a60", uint64_t, false)                  \
-                                                    X(IDX_61, "a61", uint64_t, false)              \
-                                                        X(IDX_62, "a62", uint64_t, false)          \
-                                                            X(IDX_63, "a63", uint64_t, false)
+    X(IDX_41, "a41", uint64_t, 0)                                                                  \
+    X(IDX_42, "a42", uint64_t, false)                                                              \
+    X(IDX_43, "a43", uint64_t, false) X(IDX_44, "a44", uint64_t, false)                            \
+        X(IDX_45, "a45", uint64_t, 0) X(IDX_46, "a46", uint64_t, false)                            \
+            X(IDX_47, "a47", uint64_t, 0) X(IDX_48, "a48", uint64_t, 0)                            \
+                X(IDX_49, "a49", uint64_t, 0) X(IDX_50, "a50", uint64_t, 0)                        \
+                    X(IDX_51, "a51", uint64_t, false) X(IDX_52, "a52", uint64_t, 0)                \
+                        X(IDX_53, "a53", uint64_t, 0) X(IDX_54, "a54", uint64_t, 0)                \
+                            X(IDX_55, "a55", uint64_t, 0) X(IDX_56, "a56", uint64_t, false)        \
+                                X(IDX_57, "a57", uint64_t, 0) X(IDX_58, "a58", uint64_t, false)    \
+                                    X(IDX_59, "a59", uint64_t, false)                              \
+                                        X(IDX_60, "a60", uint64_t, false)                          \
+                                            X(IDX_61, "a61", uint64_t, false)                      \
+                                                X(IDX_62, "a62", uint64_t, false)                  \
+                                                    X(IDX_63, "a63", uint64_t, false)
 
 /** --- THE GENERATOR ENGINE --- **/
 
@@ -652,7 +662,9 @@ DEFINE_INDEX_GROUP(RegEntComp, SCHEMA_REG_ENT_COMP)
 DEFINE_INDEX_GROUP(RegSyncPhys, SCHEMA_REG_SYNC_PHYS)
 DEFINE_INDEX_GROUP(MathPersp, SCHEMA_MATH_PERSPECTIVE)
 DEFINE_INDEX_GROUP(MathOrtho, SCHEMA_MATH_ORTHO)
-DEFINE_INDEX_GROUP(MathTrio, SCHEMA_MATH_TRIO)
+DEFINE_INDEX_GROUP(MathLookAt, SCHEMA_MATH_LOOKAT)
+DEFINE_INDEX_GROUP(MathTRS, SCHEMA_MATH_TRS)
+DEFINE_INDEX_GROUP(MathTRSBatch, SCHEMA_MATH_TRS_BATCH)
 DEFINE_INDEX_GROUP(MathMat, SCHEMA_MATH_MAT)
 DEFINE_INDEX_GROUP(MathMatPair, SCHEMA_MATH_MAT_PAIR)
 DEFINE_INDEX_GROUP(MathMatVec, SCHEMA_MATH_MAT_VEC)
@@ -760,7 +772,9 @@ DEFINE_INDEX_GROUP(StressTest, SCHEMA_STRESS_TEST)
 #define FOR_ALL_MATH_PARSERS(X)                                                                    \
     X(MathPersp, MathPersp, SCHEMA_MATH_PERSPECTIVE)                                               \
     X(MathOrtho, MathOrtho, SCHEMA_MATH_ORTHO)                                                     \
-    X(MathTrio, MathTrio, SCHEMA_MATH_TRIO)                                                        \
+    X(MathLookAt, MathLookAt, SCHEMA_MATH_LOOKAT)                                                  \
+    X(MathTRS, MathTRS, SCHEMA_MATH_TRS)                                                           \
+    X(MathTRSBatch, MathTRSBatch, SCHEMA_MATH_TRS_BATCH)                                           \
     X(MathMat, MathMat, SCHEMA_MATH_MAT)                                                           \
     X(MathMatPair, MathMatPair, SCHEMA_MATH_MAT_PAIR)                                              \
     X(MathMatVec, MathMatVec, SCHEMA_MATH_MAT_VEC)                                                 \

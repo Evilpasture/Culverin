@@ -1,17 +1,22 @@
 #include "culverin_ship.h"
+#include "culverin.h"
 #include "culverin_arg_indices.h"
-#include "culverin_physics_sync.h"
+#include "culverin_module.h"
+#include "culverin_physics_world.h"
 #include "culverin_physics_world_internal.h"
 #include "culverin_python.h"
 #include <math.h>
 
 // --- THE HOT PATH (No Locks, No GIL) ---
 
-static void JPH_API_CALL Ship_OnStep(void *userData, const JPH_PhysicsStepListenerContext *inContext) {
-    ShipObject *self = (ShipObject *)userData;
+static void JPH_API_CALL Ship_OnStep(void *userData,
+                                     const JPH_PhysicsStepListenerContext *inContext) {
+    ShipObject *self      = (ShipObject *)userData;
     JPH_BodyInterface *bi = JPH_PhysicsSystem_GetBodyInterfaceNoLock(inContext->physicsSystem);
-    
-    if (self->sled_bid == JPH_INVALID_BODY_ID) return;
+
+    if (self->sled_bid == JPH_INVALID_BODY_ID) {
+        return;
+    }
 
     // 1. Get current state
     JPH_Vec3 ang_vel;
@@ -21,7 +26,7 @@ static void JPH_API_CALL Ship_OnStep(void *userData, const JPH_PhysicsStepListen
     JPH_BodyInterface_GetRotation(bi, self->sled_bid, &rot);
     JPH_BodyInterface_GetLinearVelocity(bi, self->sled_bid, &lin_vel);
 
-    float fwd_input = atomic_load_explicit(&self->input_fwd, memory_order_relaxed);
+    float fwd_input   = atomic_load_explicit(&self->input_fwd, memory_order_relaxed);
     float steer_input = atomic_load_explicit(&self->input_right, memory_order_relaxed);
 
     // 2. PD Stabilizer & Banking
@@ -34,11 +39,11 @@ static void JPH_API_CALL Ship_OnStep(void *userData, const JPH_PhysicsStepListen
     // Torque X corrects Pitch, Torque Z corrects Roll (plus banking target)
     float tx = (-current_up.z * self->kp) - (ang_vel.x * self->kd);
     float tz = ((current_up.x - target_roll_z) * self->kp) - (ang_vel.z * self->kd);
-    
+
     // 3. Torque Steering (Yaw)
     float current_yaw_vel = ang_vel.y;
-    float target_yaw_vel = steer_input * self->steer_speed;
-    float ty = (target_yaw_vel - current_yaw_vel) * (self->kp * 0.5f);
+    float target_yaw_vel  = steer_input * self->steer_speed;
+    float ty              = (target_yaw_vel - current_yaw_vel) * (self->kp * 0.5f);
 
     JPH_Vec3 torque = {tx, ty, tz};
     JPH_BodyInterface_AddTorque(bi, self->sled_bid, &torque);
@@ -49,11 +54,8 @@ static void JPH_API_CALL Ship_OnStep(void *userData, const JPH_PhysicsStepListen
         JPH_Vec3 current_fwd;
         JPH_Quat_Rotate(&rot, &fwd_dir, &current_fwd);
 
-        JPH_Vec3 force = {
-            current_fwd.x * fwd_input * self->throttle_force,
-            0.0f,
-            current_fwd.z * fwd_input * self->throttle_force
-        };
+        JPH_Vec3 force = {current_fwd.x * fwd_input * self->throttle_force, 0.0f,
+                          current_fwd.z * fwd_input * self->throttle_force};
         JPH_BodyInterface_AddForce(bi, self->sled_bid, &force);
     }
 
@@ -62,58 +64,51 @@ static void JPH_API_CALL Ship_OnStep(void *userData, const JPH_PhysicsStepListen
     JPH_Vec3 current_right;
     JPH_Quat_Rotate(&rot, &right_dir, &current_right);
 
-    float lateral_speed = (lin_vel.x * current_right.x) + (lin_vel.y * current_right.y) + (lin_vel.z * current_right.z);
+    float lateral_speed     = (lin_vel.x * current_right.x) + (lin_vel.y * current_right.y) +
+                              (lin_vel.z * current_right.z);
     float lateral_force_mag = -lateral_speed * self->lateral_grip;
-    
+
     if (fabsf(lateral_force_mag) > 0.01f) {
-        JPH_Vec3 side_force = {
-            current_right.x * lateral_force_mag,
-            current_right.y * lateral_force_mag,
-            current_right.z * lateral_force_mag
-        };
+        JPH_Vec3 side_force = {current_right.x * lateral_force_mag,
+                               current_right.y * lateral_force_mag,
+                               current_right.z * lateral_force_mag};
         JPH_BodyInterface_AddForce(bi, self->sled_bid, &side_force);
     }
 
     // 6. Quadratic Drag (Speed Limiter)
     float speed_sq = (lin_vel.x * lin_vel.x) + (lin_vel.y * lin_vel.y) + (lin_vel.z * lin_vel.z);
     if (speed_sq > 0.01f) {
-        float speed = sqrtf(speed_sq);
-        float drag_mag = speed_sq * self->linear_drag;
-        JPH_Vec3 drag_force = {
-            -(lin_vel.x / speed) * drag_mag,
-            -(lin_vel.y / speed) * drag_mag,
-            -(lin_vel.z / speed) * drag_mag
-        };
+        float speed         = sqrtf(speed_sq);
+        float drag_mag      = speed_sq * self->linear_drag;
+        JPH_Vec3 drag_force = {-(lin_vel.x / speed) * drag_mag, -(lin_vel.y / speed) * drag_mag,
+                               -(lin_vel.z / speed) * drag_mag};
         JPH_BodyInterface_AddForce(bi, self->sled_bid, &drag_force);
     }
 }
 
-static const JPH_PhysicsStepListener_Procs ship_listener_procs = {
-    .OnStep = Ship_OnStep
-};
+static const JPH_PhysicsStepListener_Procs ship_listener_procs = {.OnStep = Ship_OnStep};
 
 // --- CREATION ---
 
 PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ship(PhysicsWorldObject *self,
                                                              PyObject *const *args,
-                                                             Py_ssize_t nargs,
-                                                             PyObject *kwnames) {
+                                                             Py_ssize_t nargs, PyObject *kwnames) {
     CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
 
     uint64_t sled_raw = 0;
-    float kp = 0.0f, kd = 0.0f, throttle = 0.0f, steer = 0.0f;
-    float banking = 0.15f, grip = 500.0f, drag = 10.0f;
+    float kp          = 0.0f;
+    float kd          = 0.0f;
+    float throttle    = 0.0f;
+    float steer       = 0.0f;
+    float banking     = 0.15f;
+    float grip        = 500.0f;
+    float drag        = 10.0f;
 
     void *targets[CreateShip_COUNT] = {
-        [IDX_CS_SLED]     = (void *)&sled_raw,
-        [IDX_CS_KP]       = (void *)&kp,
-        [IDX_CS_KD]       = (void *)&kd,
-        [IDX_CS_THROTTLE] = (void *)&throttle,
-        [IDX_CS_STEER]    = (void *)&steer,
-        [IDX_CS_BANKING]  = (void *)&banking,
-        [IDX_CS_GRIP]     = (void *)&grip,
-        [IDX_CS_DRAG]     = (void *)&drag
-    };
+        [IDX_CS_SLED] = (void *)&sled_raw, [IDX_CS_KP] = (void *)&kp,
+        [IDX_CS_KD] = (void *)&kd,         [IDX_CS_THROTTLE] = (void *)&throttle,
+        [IDX_CS_STEER] = (void *)&steer,   [IDX_CS_BANKING] = (void *)&banking,
+        [IDX_CS_GRIP] = (void *)&grip,     [IDX_CS_DRAG] = (void *)&drag};
 
     if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.CreateShipParser, targets)) {
         return nullptr;
@@ -131,20 +126,22 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ship(PhysicsWorldObject 
     SHADOW_UNLOCK(&self->shadow_lock);
 
     auto obj = (ShipObject *)PyObject_GC_New(ShipObject, (PyTypeObject *)st->ShipType);
-    if (!obj) return nullptr;
+    if (!obj) {
+        return nullptr;
+    }
 
-    obj->world = (PhysicsWorldObject *)Py_NewRef(self);
-    obj->sled_bid = bid;
+    obj->world      = (PhysicsWorldObject *)Py_NewRef(self);
+    obj->sled_bid   = bid;
     obj->sled_h_raw = sled_raw;
     atomic_init(&obj->input_fwd, 0.0f);
     atomic_init(&obj->input_right, 0.0f);
-    obj->kp = kp;
-    obj->kd = kd;
-    obj->throttle_force = throttle;
-    obj->steer_speed = steer;
+    obj->kp               = kp;
+    obj->kd               = kd;
+    obj->throttle_force   = throttle;
+    obj->steer_speed      = steer;
     obj->banking_strength = banking;
-    obj->lateral_grip = grip;
-    obj->linear_drag = drag;
+    obj->lateral_grip     = grip;
+    obj->linear_drag      = drag;
 
     // Use global trampoline lock to register listener
     NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
@@ -161,19 +158,20 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ship(PhysicsWorldObject 
 
 PyCFunction_DeclareMethodFromModule Ship_set_input(ShipObject *self, PyObject *const *args,
                                                    Py_ssize_t nargs, PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
-    float fwd = 0.0f, right = 0.0f;
+    CulverinState *st              = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+    float fwd                      = 0.0f;
+    float right                    = 0.0f;
     void *targets[ShipInput_COUNT] = {[IDX_SI_FWD] = &fwd, [IDX_SI_RIGHT] = &right};
 
     if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.ShipInputParser, targets)) {
         return nullptr;
     }
 
-    // No locks! Just update atomics. 
+    // No locks! Just update atomics.
     // The C listener running in the Jolt thread will pick these up automatically.
     atomic_store_explicit(&self->input_fwd, fwd, memory_order_relaxed);
     atomic_store_explicit(&self->input_right, right, memory_order_relaxed);
-    
+
     Py_RETURN_NONE;
 }
 
@@ -181,7 +179,7 @@ PyCFunction_DeclareMethodFromModule Ship_set_input(ShipObject *self, PyObject *c
 
 PyType_DeclareSlot_VoidFromModule Ship_dealloc(ShipObject *self) {
     PyObject_GC_UnTrack(self);
-    
+
     if (self->world && self->listener) {
         // Protect Jolt system call with trampoline lock
         NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
@@ -209,14 +207,10 @@ PyType_Spec Ship_spec = {
     .name      = "culverin._culverin_c.Ship",
     .basicsize = sizeof(ShipObject),
     .flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
-    .slots = (PyType_Slot[]){
-        {.slot = Py_tp_dealloc, .pfunc = Ship_dealloc},
-        {.slot = Py_tp_traverse, .pfunc = Ship_traverse},
-        {.slot = Py_tp_clear, .pfunc = Ship_clear},
-        {.slot = Py_tp_methods, .pfunc = (PyMethodDef[]){
-            SHIP_FASTCALL(set_input),
-            {}
-        }},
-        {}
-    },
+    .slots     = (PyType_Slot[]){{.slot = Py_tp_dealloc, .pfunc = Ship_dealloc},
+                                 {.slot = Py_tp_traverse, .pfunc = Ship_traverse},
+                                 {.slot = Py_tp_clear, .pfunc = Ship_clear},
+                                 {.slot  = Py_tp_methods,
+                                  .pfunc = (PyMethodDef[]){SHIP_FASTCALL(set_input), {}}},
+                                 {}},
 };

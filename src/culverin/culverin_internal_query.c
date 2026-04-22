@@ -1,4 +1,5 @@
 #include "culverin_internal_query.h"
+#include "culverin.h"
 #include "culverin_physics_world.h"
 
 /**

@@ -186,15 +186,15 @@ static_assert(alignof(PhysicsCommand) == MEMORY_ALIGNMENT_SIZE,
 static_assert(offsetof(PhysicsCommand, create_soft.settings) == OFFSET_START);
 
 // INCLUDE AFTER PHYSICSCOMMAND!
-#include "culverin.h"
+typedef struct PhysicsWorldObject PhysicsWorldObject;
 
 void world_remove_body_slot(struct PhysicsWorldObject *self, uint32_t slot);
 CULV_NODISCARD
 bool ensure_command_capacity(struct PhysicsWorldObject *self);
 CULV_NODISCARD
-bool ensure_command_bulk_capacity(PhysicsWorldObject *self, size_t batch_size);
+bool ensure_command_bulk_capacity(struct PhysicsWorldObject *self, size_t batch_size);
 void flush_commands_internal(struct PhysicsWorldObject *self, PhysicsCommand *queue, size_t count);
-void sync_and_flush_internal(struct PhysicsWorldObject *self);
+void sync_and_flush_internal(PhysicsWorldObject *self);
 void clear_command_queue(struct PhysicsWorldObject *self);
 
 // True Direct Threading: Evaluates the next command without returning to a while loop.

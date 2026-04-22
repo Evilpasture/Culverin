@@ -1,6 +1,8 @@
 #include "culverin_vehicle.h"
+#include "culverin.h"
 #include "culverin_arg_indices.h"
 #include "culverin_compiler_specifics.h"
+#include "culverin_module.h"
 #include "culverin_parsers.h"
 #include "culverin_physics_sync.h"
 #include "culverin_python.h"
@@ -820,6 +822,10 @@ PyGetSet_DeclareGetter Vehicle_get_wheel_count(VehicleObject *self,
 
 #define VEH_FASTCALL(name) CULV_FEAT(Vehicle, name, METH_FASTCALL | METH_KEYWORDS)
 #define VEH_NOARGS(name) CULV_FEAT(Vehicle, name, METH_NOARGS)
+
+PyCFunction_DeclareMethodFromModule Vehicle_set_tank_input(VehicleObject *self,
+                                                           PyObject *const *args, Py_ssize_t nargs,
+                                                           PyObject *kwnames);
 
 PyType_Spec Vehicle_spec = {
     .name      = "culverin._culverin_c.Vehicle",

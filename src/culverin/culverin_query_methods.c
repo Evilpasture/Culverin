@@ -1,8 +1,10 @@
 #include "culverin_query_methods.h"
+#include "culverin.h"
 #include "culverin_arg_indices.h"
 #include "culverin_compiler_specifics.h"
 #include "culverin_fast_build.h"
 #include "culverin_math.h"
+#include "culverin_module.h"
 #include "culverin_parsers.h"
 #include "culverin_physics_sync.h"
 
@@ -334,8 +336,8 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast(PhysicsWorldObject *sel
     }
 
     auto scale = (fabsf(mag_sq - 1.0f) < CQM_EPSILON_RELATIVE)
-                      ? max_dist
-                      : max_dist * culverin_fast_rsqrt(mag_sq);
+                     ? max_dist
+                     : max_dist * culverin_fast_rsqrt(mag_sq);
 
     // 3. RESOLUTION PHASE (Shadow Lock)
     SHADOW_LOCK(&self->shadow_lock);
@@ -387,8 +389,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast(PhysicsWorldObject *sel
         hit_handle_raw = JPH_BodyInterface_GetUserData(self->body_interface, hit->bodyID);
         hit_fraction   = hit->fraction;
 
-        auto li =
-            JPH_PhysicsSystem_GetBodyLockInterfaceNoLock(self->system);
+        auto li = JPH_PhysicsSystem_GetBodyLockInterfaceNoLock(self->system);
         JPH_BodyLockRead j_lock;
         JPH_BodyLockInterface_LockRead(li, hit->bodyID, &j_lock);
         if (j_lock.body) {

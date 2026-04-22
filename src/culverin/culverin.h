@@ -26,9 +26,7 @@
 #    define CULV_RAW_FREE(ptr) PyMem_RawFree(ptr)
 #endif
 // =========================================================================
-#include "culverin_internal_query.h"
 #include "culverin_physics_world.h"
-#include "culverin_tracked_vehicle.h"
 #include "culverin_types.h"
 #include <stddef.h>
 #include <string.h>
@@ -86,50 +84,6 @@ static inline uint32_t JPH_ID_TO_INDEX(uint32_t id) {
 using namespace std;
 #endif
 
-// --- Callback Logic ---
-// Old ContactEvent for compatibility
-typedef struct ContactEvent {
-    CULV_ATOMIC(BodyHandle) body1;
-    CULV_ATOMIC(BodyHandle) body2;
-    float px, py, pz;
-    float nx, ny, nz;
-    float impulse;
-    float sliding_speed_sq; // Scratching speed squared(tangential)
-    uint32_t mat1;
-    uint32_t mat2;
-    uint32_t type;
-    uint32_t _pad;
-} ContactEvent;
-
-static_assert(sizeof(ContactEvent) == MEMORY_ALIGNMENT_SIZE);
-
-CULV_MAYBE_UNUSED static constexpr int CONTACT_MAX_CAPACITY = sizeof(ContactEvent) * 8 << 5;
-
-// --- Raycast Batch Result (Aligned to 16-bytes, Total 48-bytes) ---
-#ifdef _MSC_VER
-#    pragma pack(push, 1)
-#endif
-typedef struct
-#ifndef _MSC_VER
-    __attribute__((packed))
-#endif
-{
-    uint64_t handle;      // 8 bytes
-    float fraction;       // 4 bytes
-    float nx, ny, nz;     // 12 bytes
-    float px, py, pz;     // 12 bytes
-    uint32_t subShapeID;  // 4 bytes
-    uint32_t material_id; // 4 bytes
-    uint32_t _pad;
-} RayCastBatchResult;
-#ifdef _MSC_VER
-#    pragma pack(pop)
-#endif
-
-static constexpr size_t RAYCAST_RESULT_SIZE = 48;
-
-static_assert(sizeof(RayCastBatchResult) == RAYCAST_RESULT_SIZE);
-
 typedef struct {
     JPH_Real px;
     JPH_Real py;
@@ -182,31 +136,6 @@ typedef enum : uint8_t {
     CULV_SHAPE_CONVEX_HULL = 7
 } CulvShapeType;
 
-// --- Module State (PEP 489) ---
-#include "culverin_arg_indices.h"
-typedef struct {
-    PyObject *helper;           // Reference to culverin._culverin module
-    PyObject *PhysicsWorldType; // Reference to the class
-    PyObject *CharacterType;    // Reference to the character class
-    PyObject *VehicleType;      // Reference to the vehicle class
-    PyObject *ShipType;
-    PyObject *SkeletonType;
-    PyObject *RagdollSettingsType;
-    PyObject *SoftBodySharedSettingsType;
-    PyObject *RagdollType;
-    PyObject *BufferProxyType;
-    PyObject *RegistryType;
-    PyObject *MathServiceType;
-    CulverinParsers parsers;
-} CulverinState;
-
-// Helper to retrieve state from the module object
-CULV_NODISCARD
-CULV_MAYBE_UNUSED
-static inline CulverinState *get_culverin_state(PyObject *module) {
-    return (CulverinState *)PyModule_GetState(module);
-}
-
 // --- Hardened Checkers (No Casts) ---
 CULV_NODISCARD
 static inline bool culv_is_finite_f(float f) {
@@ -215,8 +144,8 @@ static inline bool culv_is_finite_f(float f) {
     uint32_t i;
     memcpy(&i, &f, sizeof(float));
     volatile uint32_t vi = i;
-    static_assert((int)(sizeof(CULV_TYPE_OF(vi)) == sizeof(uint32_t) &&
-                        sizeof(CULV_TYPE_OF(vi)) == sizeof(float)) != 0);
+    static_assert((sizeof(CULV_TYPE_OF(vi)) == sizeof(uint32_t) &&
+                   sizeof(CULV_TYPE_OF(vi)) == sizeof(float)) != 0);
     return (vi & MASK_F32) != MASK_F32;
 }
 
@@ -227,8 +156,8 @@ static inline bool culv_is_finite_d(double d) {
     uint64_t i;
     memcpy(&i, &d, sizeof(double));
     volatile uint64_t vi = i;
-    static_assert((int)(sizeof(CULV_TYPE_OF(vi)) == sizeof(uint64_t) &&
-                        sizeof(CULV_TYPE_OF(vi)) == sizeof(double)) != 0);
+    static_assert((sizeof(CULV_TYPE_OF(vi)) == sizeof(uint64_t) &&
+                   sizeof(CULV_TYPE_OF(vi)) == sizeof(double)) != 0);
     return (vi & MASK_F64) != MASK_F64;
 }
 

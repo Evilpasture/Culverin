@@ -1,6 +1,8 @@
 #include "culverin_ragdoll.h"
+#include "culverin.h"
 #include "culverin_arg_indices.h"
 #include "culverin_fast_build.h"
+#include "culverin_module.h"
 #include "culverin_physics_sync.h"
 #include "culverin_physics_world_internal.h"
 #include "culverin_python.h"

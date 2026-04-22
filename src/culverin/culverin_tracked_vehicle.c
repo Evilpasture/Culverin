@@ -1,6 +1,8 @@
 #include "culverin_tracked_vehicle.h"
+#include "culverin.h"
 #include "culverin_arg_indices.h"
 #include "culverin_compiler_specifics.h"
+#include "culverin_module.h"
 #include "culverin_parsers.h"
 #include "culverin_physics_sync.h"
 #include "culverin_python.h"
@@ -45,11 +47,10 @@ static JPH_WheelSettings *create_track_wheel(PyObject *w_dict) {
         return nullptr;
     }
 
-    float radius = get_py_attr(w_dict, "radius", TRACKED_WHEEL_RADIUS_DEFAULT);
-    float width  = get_py_attr(w_dict, "width", TRACKED_WHEEL_WIDTH_DEFAULT);
-    float suspension_len =
-        get_py_attr(w_dict, "suspension", TRACKED_WHEEL_SUSPENSION_DEFAULT);
-    float friction = get_py_attr(w_dict, "friction", 1.0f);
+    float radius         = get_py_attr(w_dict, "radius", TRACKED_WHEEL_RADIUS_DEFAULT);
+    float width          = get_py_attr(w_dict, "width", TRACKED_WHEEL_WIDTH_DEFAULT);
+    float suspension_len = get_py_attr(w_dict, "suspension", TRACKED_WHEEL_SUSPENSION_DEFAULT);
+    float friction       = get_py_attr(w_dict, "friction", 1.0f);
 
     // Suspension Spring Properties
     float freq = get_py_attr(w_dict, "spring_freq", TRACKED_SPRING_FREQ_DEFAULT);
@@ -102,6 +103,9 @@ init_tracked_controller_settings(TrackedEngineConfig config,
     *out_trans = trans;
     return t_ctrl;
 }
+
+extern void cleanup_vehicle_resources(VehicleResources *r, uint32_t num_wheels,
+                                      PhysicsWorldObject *self);
 
 // Orchestrator
 PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsWorldObject *self,
@@ -319,7 +323,7 @@ PyCFunction_DeclareMethodFromModule Vehicle_set_tank_input(VehicleObject *self,
     JPH_BodyInterface_ActivateBody(self->world->body_interface, bid);
 
     auto trans = (JPH_VehicleTransmission *)JPH_TrackedVehicleController_GetTransmission(t_ctrl);
-    int gear    = JPH_VehicleTransmission_GetCurrentGear(trans);
+    int gear   = JPH_VehicleTransmission_GetCurrentGear(trans);
 
     // 3. TANK DRIVE LOGIC
     // Throttle for a tracked vehicle is typically the max absolute power requested from either side

@@ -1,7 +1,7 @@
 #include "culverin_soft_body.h"
-#include "culverin.h"
 #include "culverin_arg_indices.h"
 #include "culverin_fast_build.h"
+#include "culverin_module.h"
 #include "culverin_python.h"
 
 static constexpr uint32_t COLLISION_FILTER_ALL_CATEGORIES = 0xFFFF;
