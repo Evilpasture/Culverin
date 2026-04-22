@@ -466,6 +466,10 @@ Applies an instantaneous impulse at a specific point in world space. Because the
 - **Causal Consistency:** Just like standard impulses, this can be called on a body that was created in the same frame (`PENDING_CREATE`). Culverin will store the world-space impact point and apply it correctly as soon as the body is physically added to the world.
 - **Automatic Activation:** Applying an impulse at a point automatically wakes the body if it was sleeping.
 
+> [!WARNING]
+> **Coordinate API misuse:** The impact position `(px, py, pz)` must be in **Absolute World Space**! 
+> A common error is passing a unit normal (from a raycast) or a hit fraction by mistake. If you provide a point that is physically far from the body's actual location, the engine calculates a massive force dubbed the "Lever Arm" phenomenon, resulting in astronomical torque and violent, glitchy spinning.
+
 
 ### apply_force(...)
 
