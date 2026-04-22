@@ -15,6 +15,9 @@ import numpy as np
 import culverin
 from culverin import TrackConfig, WheelConfig
 
+if not __debug__:
+    raise RuntimeError("Cannot run tests in release mode")
+
 
 class CulverinTestCase(unittest.TestCase):
     """Base class providing helper methods for interacting with Culverin buffers."""
@@ -672,6 +675,98 @@ class TestInterpolation(CulverinTestCase):
         data = np.frombuffer(state, dtype=np.float32)
         # If the fix is in, this will be 1000. If not, it will be 500.
         self.assertEqual(data[0], 1000.0)
+
+    def test_apply_impulse_at_pure_torque_couple(self) -> None: 
+        """
+        Test a 'Force Couple': Equal and opposite impulses at opposite sides.
+        Result: Translation = 0, Rotation = High.
+        """
+        # Disable gravity to isolate the impulse math
+        self.world.set_gravity(0, 0, 0)
+        
+        # Create a cube
+        h = self.world.create_body(pos=(0, 0, 0), size=(2, 2, 2), mass=1.0)
+        self.world.step(0)
+
+        # Apply Force Couple: 
+        # Impulse 1: +10 Y at +1 X
+        # Impulse 2: -10 Y at -1 X
+        # Net Linear Force: 10 + (-10) = 0
+        # Net Torque (Z): (1 * 10) - (-1 * -10) = 20
+        self.world.apply_impulse_at(h, 0, 10, 0,  1, 0, 0) 
+        self.world.apply_impulse_at(h, 0, -10, 0, -1, 0, 0)
+
+        self.world.step(1/60.0)
+
+        vel = self.world.get_velocity(h)
+        ang = self.world.get_angular_velocity(h)
+
+        assert vel is not None
+        assert ang is not None
+
+        # Resultant linear velocity should now be exactly zero
+        self.assertAlmostEqual(vel[0], 0.0, places=5)
+        self.assertAlmostEqual(vel[1], 0.0, places=5)
+        self.assertAlmostEqual(vel[2], 0.0, places=5)
+
+        # Resultant angular velocity should be significant
+        self.assertGreater(ang[2], 5.0, "The couple should have generated significant Z-rotation")
+
+    def test_angular_velocity_empty_world_safety(self) -> None:
+        """Verify the monkey-patched getter doesn't crash on an uninitialized world."""
+        fresh_world = culverin.PhysicsWorld()
+        # Passing a random integer to a world with 0 bodies
+        self.assertIsNone(fresh_world.get_angular_velocity(12345))
+
+    def test_handle_recycling_data_leak(self) -> None:
+        """
+        Crucial Safety: Ensure a new body in a recycled slot doesn't 
+        'inherit' the angular velocity of the previous destroyed body.
+        """
+        # 1. Create a spinner
+        h1 = self.world.create_body(pos=(0, 0, 0))
+        self.world.step(0)
+        self.world.set_angular_velocity(h1, 50, 0, 0)
+        self.world.step(1/60.0)
+        
+        # 2. Kill it
+        self.world.destroy_body(h1)
+        self.world.step(0) # Slots are now marked empty
+
+        # 3. Create a new body (this will likely take the same dense index/slot)
+        h2 = self.world.create_body(pos=(10, 10, 10))
+        self.world.step(0)
+
+        # 4. Verify the new body is cold
+        ang2 = self.world.get_angular_velocity(h2)
+        self.assertEqual(ang2, (0.0, 0.0, 0.0), 
+                         "Recycled body inherited velocity from previous occupant!")
+
+    def test_apply_impulse_at_offset_from_com(self) -> None:
+        """Test applying impulse at a massive offset to check for numerical explosion."""
+        h = self.world.create_body(pos=(0, 0, 0), mass=1.0)
+        self.world.step(0)
+
+        # Apply impulse 1km away from the center of a 1m body
+        # This is a classic 'user mistake' or stress test
+        self.world.apply_impulse_at(h, 0, 1, 0, 1000, 0, 0)
+        self.world.step(1/60.0)
+
+        assert(ang := self.world.get_angular_velocity(h))
+        self.assertIsNotNone(ang)
+        # It should spin very fast, but not be NaN
+        self.assertTrue(all(math.isfinite(v) for v in ang))
+
+    def test_angular_velocity_character_handle(self) -> None:
+        """Characters are Virtual and don't have angular velocity in the same shadow buffer."""
+        char = self.world.create_character(pos=(0, 0, 0))
+        self.world.step(0)
+        
+        # Depending on C-implementation, this may return (0,0,0) or None.
+        # But it MUST NOT crash or return garbage.
+        res = self.world.get_angular_velocity(char.handle)
+        if res is not None:
+            self.assertEqual(res, (0.0, 0.0, 0.0))
 
 
 class TestEdgeCases(CulverinTestCase):
