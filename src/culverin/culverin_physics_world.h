@@ -2,6 +2,7 @@
 #include "culverin_command_buffer.h"
 #include "culverin_compiler_specifics.h"
 #include "culverin_debug_render.h"
+#include "culverin_internal_query.h"
 #include "culverin_physics_world_internal.h"
 #include "culverin_soft_body.h"
 #include "culverin_threading.h"
@@ -124,6 +125,25 @@ typedef struct PhysicsWorldObject {
     DebugBuffer debug_lines;
     DebugBuffer debug_triangles;
 } PhysicsWorldObject;
+
+// --- Callback Logic ---
+// Old ContactEvent for compatibility
+typedef struct ContactEvent {
+    CULV_ATOMIC(BodyHandle) body1;
+    CULV_ATOMIC(BodyHandle) body2;
+    float px, py, pz;
+    float nx, ny, nz;
+    float impulse;
+    float sliding_speed_sq; // Scratching speed squared(tangential)
+    uint32_t mat1;
+    uint32_t mat2;
+    uint32_t type;
+    uint32_t _pad;
+} ContactEvent;
+
+static_assert(sizeof(ContactEvent) == MEMORY_ALIGNMENT_SIZE);
+
+CULV_MAYBE_UNUSED static constexpr int CONTACT_MAX_CAPACITY = sizeof(ContactEvent) * 8 << 5;
 
 // --- Handle Helper ---
 

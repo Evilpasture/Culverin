@@ -1,5 +1,5 @@
 #pragma once
-#include "culverin.h"
+#include "culverin_compiler_specifics.h"
 #include "culverin_vehicle.h"
 
 CULV_MAYBE_UNUSED static constexpr uint32_t TRACKED_LAYER_MOVING   = 0;
@@ -17,7 +17,3 @@ typedef struct {
     float max_rpm;
     float min_rpm;
 } TrackedEngineConfig;
-
-PyCFunction_DeclareMethodFromModule Vehicle_set_tank_input(VehicleObject *self,
-                                                           PyObject *const *args, Py_ssize_t nargs,
-                                                           PyObject *kwnames);

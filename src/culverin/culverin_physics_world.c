@@ -5,12 +5,12 @@
 #include "culverin_fast_build.h"
 #include "culverin_getters.h"
 #include "culverin_math.h"
+#include "culverin_module.h"
 #include "culverin_physics_sync.h"
 #include "culverin_python.h"
 #include "culverin_query_methods.h"
 #include "culverin_ragdoll.h"
 #include "culverin_shadow_sync.h"
-#include "culverin_ship.h"
 
 // ============================================================================
 // Semantic Constants - Magic Number Replacements

@@ -1,6 +1,8 @@
 #include "culverin_constraint.h"
+#include "culverin.h"
 #include "culverin_arg_indices.h"
 #include "culverin_constraint_factory.h"
+#include "culverin_module.h"
 #include "culverin_physics_sync.h"
 #include "culverin_types.h"
 
@@ -236,7 +238,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_destroy_constraint(PhysicsWorld
         // Automatic Body Wake-up: Prevents bodies from floating if their joint is deleted.
         // ActivateBody is thread-safe in Jolt.
         if (JPH_Constraint_GetType(c_to_destroy) == JPH_ConstraintType_TwoBodyConstraint) {
-            auto tbc    = (JPH_TwoBodyConstraint *)c_to_destroy;
+            auto tbc     = (JPH_TwoBodyConstraint *)c_to_destroy;
             JPH_Body *b1 = JPH_TwoBodyConstraint_GetBody1(tbc);
             JPH_Body *b2 = JPH_TwoBodyConstraint_GetBody2(tbc);
 
@@ -297,7 +299,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_set_constraint_target(PhysicsWo
         JPH_HingeConstraint_SetMotorState(hc, JPH_MotorState_Position);
         JPH_HingeConstraint_SetTargetAngle(hc, target);
     } else if (sub == JPH_ConstraintSubType_Slider) {
-        auto sc             = (JPH_SliderConstraint *)c;
+        auto sc              = (JPH_SliderConstraint *)c;
         JPH_MotorState state = JPH_SliderConstraint_GetMotorState(sc);
 
         if (state == JPH_MotorState_Off) {
@@ -374,7 +376,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_constraint_type(PhysicsWorl
 }
 
 /*
-TODO: for constraints 
+TODO: for constraints
 def set_hinge_limits(self, handle: int, min_angle: float, max_angle: float) -> None: ...
 def set_hinge_motor(self, handle: int, target_velocity: float, max_torque: float) -> None: ...
 def set_slider_motor(self, handle: int, target_velocity: float, max_force: float) -> None: ...

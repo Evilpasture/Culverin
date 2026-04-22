@@ -1,8 +1,7 @@
 #include "culverin_getters.h"
-#include "culverin.h"
-#include "culverin_character.h"
 #include "culverin_ecs.h"
 #include "culverin_fast_build.h"
+#include "culverin_module.h"
 #include "culverin_physics_sync.h"
 #include <Python.h>
 

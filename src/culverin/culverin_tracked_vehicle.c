@@ -1,6 +1,8 @@
 #include "culverin_tracked_vehicle.h"
+#include "culverin.h"
 #include "culverin_arg_indices.h"
 #include "culverin_compiler_specifics.h"
+#include "culverin_module.h"
 #include "culverin_parsers.h"
 #include "culverin_physics_sync.h"
 #include "culverin_python.h"

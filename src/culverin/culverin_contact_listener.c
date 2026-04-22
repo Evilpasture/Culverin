@@ -1,4 +1,5 @@
 #include "culverin_contact_listener.h"
+#include "culverin.h"
 #include "culverin_fast_build.h"
 #include "culverin_physics_world.h"
 

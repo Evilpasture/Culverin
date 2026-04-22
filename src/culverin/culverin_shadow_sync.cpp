@@ -8,6 +8,7 @@
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/Physics/SoftBody/SoftBodyMotionProperties.h>
 #include <Jolt/Physics/SoftBody/SoftBodyVertex.h>
+#include <cstddef>
 
 static_assert(sizeof(PosStride) == sizeof(JPH_Real) * 4, "PosStride size mismatch");
 static_assert(sizeof(AuxStride) == sizeof(float) * 4, "AuxStride size mismatch");

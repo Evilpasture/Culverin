@@ -1,5 +1,7 @@
 #include "culverin_physics_world_internal.h"
+#include "culverin.h"
 #include "culverin_compiler_specifics.h"
+#include "culverin_module.h"
 #include "culverin_physics_sync.h"
 #include "culverin_threading.h"
 
