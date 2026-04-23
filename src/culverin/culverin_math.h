@@ -129,13 +129,18 @@ void culverin_math_quat_from_axis_angle(const float *__restrict axis, float angl
                                         float *__restrict out);
 void culverin_math_vec3_distance_batch(const float *__restrict a, const float *__restrict b,
                                        size_t count, float *__restrict out);
-                                       void culverin_math_vec3_normalize(const float *__restrict v, float *__restrict out);
-                                       void culverin_math_mat44_get_translation(const float *__restrict in_mat, float *__restrict out_vec);
-                                       void culverin_math_mat44_get_rotation(const float *__restrict in_mat, float *__restrict out_quat);
-                                       void culverin_math_mat44_identity(float *__restrict out);
-                                       void culverin_math_vec3_reflect(const float *__restrict v, const float *__restrict n, float *__restrict out);
-                                       float culverin_math_vec3_distance(const float *__restrict v1, const float *__restrict v2);
-                                       void culverin_math_quat_rotate_vec3_inverse(const float *__restrict q, const float *__restrict v, float *__restrict out);
+void culverin_math_vec3_normalize(const float *__restrict v, float *__restrict out);
+void culverin_math_mat44_get_translation(const float *__restrict in_mat, float *__restrict out_vec);
+void culverin_math_mat44_get_rotation(const float *__restrict in_mat, float *__restrict out_quat);
+void culverin_math_mat44_identity(float *__restrict out);
+void culverin_math_vec3_reflect(const float *__restrict v, const float *__restrict n,
+                                float *__restrict out);
+float culverin_math_vec3_distance(const float *__restrict v1, const float *__restrict v2);
+void culverin_math_quat_rotate_vec3_inverse(const float *__restrict q, const float *__restrict v,
+                                            float *__restrict out);
+void culverin_math_euler_to_quat(const float *__restrict euler, float *__restrict out_q);
+void culverin_math_euler_to_quat_batch(const float *__restrict eulers, size_t count,
+                                       float *__restrict out_qs);
 #if defined(__cplusplus)
 }
 #endif
