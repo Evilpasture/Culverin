@@ -153,11 +153,11 @@ class TestCoreMechanics(CulverinTestCase):
         """Kicking the center of mass must result in zero angular velocity."""
         h = self.world.create_body(pos=(0, 0, 0), size=(2, 2, 2), mass=1.0)
         self.world.step(0)
-        
+
         # Apply impulse directly at center (0,0,0)
         self.world.apply_impulse_at(h, 0, 10, 0, 0, 0, 0)
         self.world.step(1 / 60.0)
-        
+
         assert(ang := self.world.get_angular_velocity(h))
         # Verify no spin occurred
         self.assertAlmostEqual(ang[0], 0, places=3)
@@ -168,12 +168,12 @@ class TestCoreMechanics(CulverinTestCase):
         """Kicking a corner must generate torque (angular velocity)."""
         h = self.world.create_body(pos=(0, 0, 0), size=(2, 2, 2), mass=1.0)
         self.world.step(0)
-        
+
         # Kick the top-right corner (1, 1, 0)
         # Apply vertical impulse (0, 10, 0) at (1, 1, 0) -> should create Z-axis torque
         self.world.apply_impulse_at(h, 0, 10, 0, 1, 1, 0)
         self.world.step(1 / 60.0)
-        
+
         assert(ang := self.world.get_angular_velocity(h))
         self.assertGreater(abs(ang[2]), 0.1, "Corner hit failed to generate Z-axis torque")
 
@@ -181,11 +181,11 @@ class TestCoreMechanics(CulverinTestCase):
         """Verify that our setter correctly overwrites angular velocity."""
         h = self.world.create_body(pos=(0, 0, 0), mass=1.0)
         self.world.step(0)
-        
+
         self.world.set_angular_velocity(h, 5.0, 5.0, 5.0)
         self.world.set_angular_velocity(h, 0.0, 0.0, 0.0)
         self.world.step(1 / 60.0)
-        
+
         ang = self.world.get_angular_velocity(h)
         self.assertEqual(ang, (0.0, 0.0, 0.0), "Manual velocity override failed")
 
@@ -196,17 +196,17 @@ class TestCoreMechanics(CulverinTestCase):
         # Body 2: Kick at edge (0.9 offset)
         h2 = self.world.create_body(pos=(5, 0, 0), size=(2, 2, 2), mass=1.0)
         self.world.step(0)
-        
+
         self.world.apply_impulse_at(h1, 0, 10, 0, 0.1, 0, 0)
         self.world.apply_impulse_at(h2, 0, 10, 0, 0.9, 0, 0)
         self.world.step(1 / 60.0)
-        
+
         assert(ang1 := self.world.get_angular_velocity(h1))
         assert(ang2 := self.world.get_angular_velocity(h2))
-        
+
         self.assertGreater(
-            abs(ang2[2]), 
-            abs(ang1[2]), 
+            abs(ang2[2]),
+            abs(ang1[2]),
             "Edge kick should produce significantly more torque than center kick"
         )
 
@@ -214,7 +214,7 @@ class TestAngularDynamicsExtended(CulverinTestCase):
     def test_apply_impulse_at_physics_correctness(self) -> None:
         """
         Verify the Cross Product logic (r x F).
-        Applying an UPward impulse on the RIGHT side of a body 
+        Applying an UPward impulse on the RIGHT side of a body
         should create POSITIVE rotation around the Z-axis (counter-clockwise).
         """
         # Create a cube at origin
@@ -229,7 +229,7 @@ class TestAngularDynamicsExtended(CulverinTestCase):
 
         ang_vel = self.world.get_angular_velocity(h)
         assert ang_vel is not None
-        
+
         self.assertAlmostEqual(ang_vel[0], 0.0, places=5, msg="X-axis should not rotate")
         self.assertAlmostEqual(ang_vel[1], 0.0, places=5, msg="Y-axis should not rotate")
         self.assertGreater(ang_vel[2], 0.0, "Z-axis must rotate positively (Right-Hand Rule)")
@@ -238,16 +238,16 @@ class TestAngularDynamicsExtended(CulverinTestCase):
         """Verify the monkey-patched getter handles destroyed bodies without throwing C-level errors."""
         h = self.world.create_body(pos=(0, 0, 0))
         self.world.step(0)
-        
+
         # 1. Check while alive
         self.assertIsNotNone(self.world.get_angular_velocity(h))
-        
+
         # 2. Destroy and check immediately (Pending state)
         self.world.destroy_body(h)
         # Note: Depending on whether you use get_index or is_alive in the patch,
         # this might return None immediately.
         self.world.step(0)
-        
+
         # 3. Check after fully recycled
         self.assertIsNone(self.world.get_angular_velocity(h), "Stale handle should return None")
 
@@ -259,7 +259,7 @@ class TestAngularDynamicsExtended(CulverinTestCase):
         # User tries to apply an infinite impulse at a NaN position
         with self.assertRaises(ValueError):
             self.world.apply_impulse_at(h, float('inf'), 0, 0, 0, 0, 0)
-        
+
         with self.assertRaises(ValueError):
             self.world.apply_impulse_at(h, 1, 0, 0, float('nan'), 0, 0)
 
@@ -269,41 +269,41 @@ class TestAngularDynamicsExtended(CulverinTestCase):
         self.world.step(0)
 
         # 1. Test Immediate Setter (Shadow Buffer Consistency)
-        # We check this BEFORE calling step() to verify our C-layer's 
+        # We check this BEFORE calling step() to verify our C-layer's
         # "Causal Consistency Mirror" (the shadow buffer write) works.
-        test_spin = 50.0 
+        test_spin = 50.0
         self.world.set_angular_velocity(h, test_spin, 0, 0)
-        
+
         assert(ang_immediate := self.world.get_angular_velocity(h))
-        self.assertAlmostEqual(ang_immediate[0], test_spin, places=5, 
+        self.assertAlmostEqual(ang_immediate[0], test_spin, places=5,
                                msg="Shadow buffer must mirror the set value immediately")
 
         # 2. Test Physical Clamping
         # Now we call an absurdly high spin.
         absurd_spin = 100000.0
         self.world.set_angular_velocity(h, absurd_spin, 0, 0)
-        
+
         # Step the world. Jolt will clamp this value to its internal MaxAngularVelocity.
         self.world.step(1/60.0)
-        
+
         assert(ang_after_step := self.world.get_angular_velocity(h))
-        
-        # We verify that Jolt stayed stable (didn't return NaN) and 
+
+        # We verify that Jolt stayed stable (didn't return NaN) and
         # applied its internal safety limits.
-        self.assertLess(ang_after_step[0], absurd_spin, 
+        self.assertLess(ang_after_step[0], absurd_spin,
                         "Jolt should have clamped the absurdly high angular velocity")
-        self.assertGreater(ang_after_step[0], 0.0, 
+        self.assertGreater(ang_after_step[0], 0.0,
                            "Body should still be spinning at the engine's max limit")
 
     def test_apply_impulse_at_static_body(self) -> None:
         """Static bodies should ignore impulses entirely without crashing."""
         h = self.world.create_body(pos=(0, 0, 0), motion=culverin.MOTION_STATIC)
         self.world.step(0)
-        
+
         # This call reaches C but should be rejected by the SlotPredicate/Jolt logic
         self.world.apply_impulse_at(h, 0, 100, 0, 1, 0, 0)
         self.world.step(1/60.0)
-        
+
         pos = self.world.get_position(h)
         self.assertEqual(pos, (0, 0, 0), "Static body moved after impulse_at!")
 
@@ -311,12 +311,12 @@ class TestAngularDynamicsExtended(CulverinTestCase):
         """Stress test the memoryview interpretation to ensure no memory leaks/slowdowns."""
         h = self.world.create_body(pos=(0, 0, 0))
         self.world.step(0)
-        
+
         start = time.perf_counter()
         for _ in range(10000):
             _ = self.world.get_angular_velocity(h)
         end = time.perf_counter()
-        
+
         # 10k calls should take well under 10ms on modern hardware
         duration = end - start
         self.assertLess(duration, 0.1, "Angular velocity getter is too slow")
@@ -676,24 +676,24 @@ class TestInterpolation(CulverinTestCase):
         # If the fix is in, this will be 1000. If not, it will be 500.
         self.assertEqual(data[0], 1000.0)
 
-    def test_apply_impulse_at_pure_torque_couple(self) -> None: 
+    def test_apply_impulse_at_pure_torque_couple(self) -> None:
         """
         Test a 'Force Couple': Equal and opposite impulses at opposite sides.
         Result: Translation = 0, Rotation = High.
         """
         # Disable gravity to isolate the impulse math
         self.world.set_gravity(0, 0, 0)
-        
+
         # Create a cube
         h = self.world.create_body(pos=(0, 0, 0), size=(2, 2, 2), mass=1.0)
         self.world.step(0)
 
-        # Apply Force Couple: 
+        # Apply Force Couple:
         # Impulse 1: +10 Y at +1 X
         # Impulse 2: -10 Y at -1 X
         # Net Linear Force: 10 + (-10) = 0
         # Net Torque (Z): (1 * 10) - (-1 * -10) = 20
-        self.world.apply_impulse_at(h, 0, 10, 0,  1, 0, 0) 
+        self.world.apply_impulse_at(h, 0, 10, 0,  1, 0, 0)
         self.world.apply_impulse_at(h, 0, -10, 0, -1, 0, 0)
 
         self.world.step(1/60.0)
@@ -720,7 +720,7 @@ class TestInterpolation(CulverinTestCase):
 
     def test_handle_recycling_data_leak(self) -> None:
         """
-        Crucial Safety: Ensure a new body in a recycled slot doesn't 
+        Crucial Safety: Ensure a new body in a recycled slot doesn't
         'inherit' the angular velocity of the previous destroyed body.
         """
         # 1. Create a spinner
@@ -728,7 +728,7 @@ class TestInterpolation(CulverinTestCase):
         self.world.step(0)
         self.world.set_angular_velocity(h1, 50, 0, 0)
         self.world.step(1/60.0)
-        
+
         # 2. Kill it
         self.world.destroy_body(h1)
         self.world.step(0) # Slots are now marked empty
@@ -739,7 +739,7 @@ class TestInterpolation(CulverinTestCase):
 
         # 4. Verify the new body is cold
         ang2 = self.world.get_angular_velocity(h2)
-        self.assertEqual(ang2, (0.0, 0.0, 0.0), 
+        self.assertEqual(ang2, (0.0, 0.0, 0.0),
                          "Recycled body inherited velocity from previous occupant!")
 
     def test_apply_impulse_at_offset_from_com(self) -> None:
@@ -761,7 +761,7 @@ class TestInterpolation(CulverinTestCase):
         """Characters are Virtual and don't have angular velocity in the same shadow buffer."""
         char = self.world.create_character(pos=(0, 0, 0))
         self.world.step(0)
-        
+
         # Depending on C-implementation, this may return (0,0,0) or None.
         # But it MUST NOT crash or return garbage.
         res = self.world.get_angular_velocity(char.handle)

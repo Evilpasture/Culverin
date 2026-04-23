@@ -74,7 +74,8 @@ class TrackConfig(TypedDict):
 def get_position(self: _culverin_c.PhysicsWorld, handle: int) -> tuple[float, float, float] | None:
     """Returns the world position of a body as (x, y, z)."""
     idx = self.get_index(handle)
-    if idx is None: return None
+    if idx is None:
+        return None
     # positions format is 'd' or 'f' automatically based on JPH_DOUBLE_PRECISION
     view = memoryview(self.positions)
     base = idx * 4
@@ -83,10 +84,14 @@ def get_position(self: _culverin_c.PhysicsWorld, handle: int) -> tuple[float, fl
     except (IndexError, ValueError):
         return None
 
-def get_rotation(self: _culverin_c.PhysicsWorld, handle: int) -> tuple[float, float, float, float] | None:
+
+def get_rotation(
+    self: _culverin_c.PhysicsWorld, handle: int
+) -> tuple[float, float, float, float] | None:
     """Returns the world rotation of a body as (x, y, z, w)."""
     idx = self.get_index(handle)
-    if idx is None: return None
+    if idx is None:
+        return None
     view = memoryview(self.rotations)
     base = idx * 4
     try:
@@ -94,10 +99,12 @@ def get_rotation(self: _culverin_c.PhysicsWorld, handle: int) -> tuple[float, fl
     except (IndexError, ValueError):
         return None
 
+
 def get_velocity(self: _culverin_c.PhysicsWorld, handle: int) -> tuple[float, float, float] | None:
     """Returns the world linear velocity of a body as (x, y, z)."""
     idx = self.get_index(handle)
-    if idx is None: return None
+    if idx is None:
+        return None
     view = memoryview(self.velocities)
     base = idx * 4
     try:
@@ -105,10 +112,14 @@ def get_velocity(self: _culverin_c.PhysicsWorld, handle: int) -> tuple[float, fl
     except (IndexError, ValueError):
         return None
 
-def get_angular_velocity(self: _culverin_c.PhysicsWorld, handle: int) -> tuple[float, float, float] | None:
+
+def get_angular_velocity(
+    self: _culverin_c.PhysicsWorld, handle: int
+) -> tuple[float, float, float] | None:
     """Returns the world angular velocity of a body as (x, y, z)."""
     idx = self.get_index(handle)
-    if idx is None: return None
+    if idx is None:
+        return None
     view = memoryview(self.angular_velocities)
     base = idx * 4
     try:
@@ -116,18 +127,17 @@ def get_angular_velocity(self: _culverin_c.PhysicsWorld, handle: int) -> tuple[f
     except (IndexError, ValueError):
         return None
 
+
 def world_repr(self: _culverin_c.PhysicsWorld) -> str:
     return f"<culverin.PhysicsWorld bodies={self.count} time={self.time:.2f}>"
 
 
 # 3. ATTACH HELPERS
-# We use 'type: ignore' here because linters often think C-extension
-# classes are immutable/read-only even when MANAGED_DICT is enabled.
-_culverin_c.PhysicsWorld.get_position = get_position  # type: ignore
-_culverin_c.PhysicsWorld.get_rotation = get_rotation  # type: ignore
-_culverin_c.PhysicsWorld.get_velocity = get_velocity  # type: ignore
-_culverin_c.PhysicsWorld.get_angular_velocity = get_angular_velocity  # type: ignore
-_culverin_c.PhysicsWorld.__repr__ = world_repr  # type: ignore
+_culverin_c.PhysicsWorld.get_position = get_position 
+_culverin_c.PhysicsWorld.get_rotation = get_rotation  
+_culverin_c.PhysicsWorld.get_velocity = get_velocity  
+_culverin_c.PhysicsWorld.get_angular_velocity = get_angular_velocity 
+_culverin_c.PhysicsWorld.__repr__ = world_repr 
 
 
 # 4. EXPOSE THE C CLASS
@@ -149,7 +159,7 @@ from ._culverin_c import (  # noqa: E402
     EVENT_REMOVED,
     MOTION_DYNAMIC,
     MOTION_KINEMATIC,
-    MOTION_STATIC,
+    MOTION_STATIC, 
     SHAPE_BOX,
     SHAPE_CAPSULE,
     SHAPE_CONVEX_HULL,
@@ -164,10 +174,10 @@ from ._culverin_c import (  # noqa: E402
     Ragdoll,
     RagdollSettings,
     Registry,
+    Ship,
     Skeleton,
     SoftBodySharedSettings,
     Vehicle,
-    Ship,
     _dump_schema_json,  # type: ignore
     mutate_tuple,
 )
@@ -206,13 +216,13 @@ __all__ = [
     "Ragdoll",
     "RagdollSettings",
     "Registry",
+    "Ship",
     "Skeleton",
     "SoftBodySharedSettings",
     "TrackConfig",
     "Transmission",
     "Vehicle",
     "WheelConfig",
-    "Ship",
     "_dump_schema_json",
     "euler_to_quat",
     "load_urdf",

@@ -439,24 +439,25 @@ void culverin_math_project(const float *__restrict v, const float *__restrict mv
     }
 }
 
-void culverin_math_unproject(const float *__restrict v, const float *__restrict mvp, const int *__restrict viewport, float *__restrict out) {
-    JPH::Mat44 m = JPH::Mat44::sLoadFloat4x4(reinterpret_cast<const JPH::Float4 *>(mvp));
+void culverin_math_unproject(const float *__restrict v, const float *__restrict mvp,
+                             const int *__restrict viewport, float *__restrict out) {
+    JPH::Mat44 m     = JPH::Mat44::sLoadFloat4x4(reinterpret_cast<const JPH::Float4 *>(mvp));
     JPH::Mat44 inv_m = m.Inversed();
 
     float ndc_x = (v[0] - (float)viewport[0]) / (float)viewport[2] * 2.0f - 1.0f;
     float ndc_y = 1.0f - (v[1] - (float)viewport[1]) / (float)viewport[3] * 2.0f;
-    
+
     // FIX: Maintain symmetry with project()
-    float ndc_z = v[2]; 
+    float ndc_z = v[2];
 
     JPH::Vec4 world_pos = inv_m * JPH::Vec4(ndc_x, ndc_y, ndc_z, 1.0f);
 
     float w = world_pos.GetW();
     if (std::abs(w) > 1e-6f) {
         float inv_w = 1.0f / w;
-        out[0] = world_pos.GetX() * inv_w;
-        out[1] = world_pos.GetY() * inv_w;
-        out[2] = world_pos.GetZ() * inv_w;
+        out[0]      = world_pos.GetX() * inv_w;
+        out[1]      = world_pos.GetY() * inv_w;
+        out[2]      = world_pos.GetZ() * inv_w;
     } else {
         out[0] = out[1] = out[2] = 0.0f;
     }
@@ -566,27 +567,28 @@ void culverin_math_vec3_distance_batch(const float *__restrict a, const float *_
 
 void culverin_math_vec3_normalize(const float *__restrict v, float *__restrict out) {
     JPH::Vec3 vec(v[0], v[1], v[2]);
-    
+
     float len_sq = vec.LengthSq();
     if (len_sq > 1e-12f) {
         // Jolt's Normalized() uses optimized reciprocal square root
         JPH::Vec3 res = vec.Normalized();
-        out[0] = res.GetX();
-        out[1] = res.GetY();
-        out[2] = res.GetZ();
+        out[0]        = res.GetX();
+        out[1]        = res.GetY();
+        out[2]        = res.GetZ();
     } else {
         // Return zero vector for degenerate inputs
         out[0] = out[1] = out[2] = 0.0f;
     }
 }
 
-void culverin_math_mat44_get_translation(const float *__restrict in_mat, float *__restrict out_vec) {
+void culverin_math_mat44_get_translation(const float *__restrict in_mat,
+                                         float *__restrict out_vec) {
     // Load 4x4 matrix from float buffer
     JPH::Mat44 m = JPH::Mat44::sLoadFloat4x4(reinterpret_cast<const JPH::Float4 *>(in_mat));
-    
+
     // Extract translation component (Column 3)
     JPH::Vec3 t = m.GetTranslation();
-    
+
     out_vec[0] = t.GetX();
     out_vec[1] = t.GetY();
     out_vec[2] = t.GetZ();
@@ -595,10 +597,10 @@ void culverin_math_mat44_get_translation(const float *__restrict in_mat, float *
 void culverin_math_mat44_get_rotation(const float *__restrict in_mat, float *__restrict out_quat) {
     // Load 4x4 matrix
     JPH::Mat44 m = JPH::Mat44::sLoadFloat4x4(reinterpret_cast<const JPH::Float4 *>(in_mat));
-    
+
     // Extract rotation as a Quaternion
     JPH::Quat q = m.GetQuaternion();
-    
+
     // Store as [x, y, z, w]
     q.GetXYZW().StoreFloat4(reinterpret_cast<JPH::Float4 *>(out_quat));
 }
@@ -608,13 +610,14 @@ void culverin_math_mat44_identity(float *__restrict out) {
     JPH::Mat44::sIdentity().StoreFloat4x4(reinterpret_cast<JPH::Float4 *>(out));
 }
 
-void culverin_math_vec3_reflect(const float *__restrict v, const float *__restrict n, float *__restrict out) {
+void culverin_math_vec3_reflect(const float *__restrict v, const float *__restrict n,
+                                float *__restrict out) {
     JPH::Vec3 vec(v[0], v[1], v[2]);
     JPH::Vec3 norm(n[0], n[1], n[2]);
-    
+
     // Formula: v - 2 * dot(v, n) * n
     JPH::Vec3 res = vec - 2.0f * vec.Dot(norm) * norm;
-    
+
     out[0] = res.GetX();
     out[1] = res.GetY();
     out[2] = res.GetZ();
@@ -623,21 +626,39 @@ void culverin_math_vec3_reflect(const float *__restrict v, const float *__restri
 float culverin_math_vec3_distance(const float *__restrict v1, const float *__restrict v2) {
     JPH::Vec3 a(v1[0], v1[1], v1[2]);
     JPH::Vec3 b(v2[0], v2[1], v2[2]);
-    
+
     // Euclidean Distance: Length of the difference vector
     return (a - b).Length();
 }
 
-void culverin_math_quat_rotate_vec3_inverse(const float *__restrict q, const float *__restrict v, float *__restrict out) {
+void culverin_math_quat_rotate_vec3_inverse(const float *__restrict q, const float *__restrict v,
+                                            float *__restrict out) {
     JPH::Quat rotation(q[0], q[1], q[2], q[3]);
     JPH::Vec3 point(v[0], v[1], v[2]);
-    
+
     // Rotate the vector by the inverse (conjugate) of the quaternion
     JPH::Vec3 res = rotation.InverseRotate(point);
-    
+
     out[0] = res.GetX();
     out[1] = res.GetY();
     out[2] = res.GetZ();
+}
+
+void culverin_math_euler_to_quat(const float *__restrict euler, float *__restrict out_q) {
+    // Jolt implementation: Euler XYZ -> Quat
+    JPH::Quat q = JPH::Quat::sEulerAngles(JPH::Vec3(euler[0], euler[1], euler[2]));
+    q.GetXYZW().StoreFloat4(reinterpret_cast<JPH::Float4 *>(out_q));
+}
+
+void culverin_math_euler_to_quat_batch(const float *__restrict eulers, size_t count,
+                                       float *__restrict out_qs) {
+    for (size_t i = 0; i < count; ++i) {
+        const float *e = &eulers[i * 3];
+        JPH::Quat q    = JPH::Quat::sEulerAngles(JPH::Vec3(e[0], e[1], e[2]));
+
+        // Store into the output buffer (16 bytes per quaternion)
+        q.GetXYZW().StoreFloat4(reinterpret_cast<JPH::Float4 *>(&out_qs[i * 4]));
+    }
 }
 
 } // extern "C"

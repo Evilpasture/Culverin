@@ -323,6 +323,55 @@ class TestMathService(unittest.TestCase):
         hit_miss, _, _ = self.math.intersect_ray_plane(ro, rd_miss, po, pn)
         self.assertFalse(hit_miss)
 
+    # =========================================================================
+    # NEW TESTS: QUATERNIONS (Continued)
+    # =========================================================================
+
+    def test_euler_to_quat_single(self) -> None:
+        """Tests the tuple-to-tuple (Vec3 -> Quat) conversion."""
+        euler_vec = (0.1, 0.2, 0.3)
+
+        # Test single vec version
+        q = self.math.euler_to_quat(euler_vec)
+
+        # Verify it matches the component-based version
+        q_expected = self.math.quat_from_euler(0.1, 0.2, 0.3)
+        self.assertIsInstance(q, tuple)
+        self.assertEqual(len(q), 4)
+        self.assertTupleAlmostEqual(q, q_expected)
+
+    def test_euler_to_quat_batch(self) -> None:
+        """Tests the high-performance Buffer-to-Bytes conversion."""
+        # Define two distinct rotations
+        e1 = (math.radians(45), 0.0, 0.0)
+        e2 = (0.0, math.radians(-90), 0.0)
+
+        # Pack into float32 buffer (12 bytes per rotation)
+        eulers_buf = struct.pack("6f", *e1, *e2)
+
+        # Perform batch conversion
+        res_bytes = self.math.euler_to_quat_batch(eulers_buf)
+
+        # Verify output size (16 bytes per quaternion)
+        self.assertIsInstance(res_bytes, bytes)
+        self.assertEqual(len(res_bytes), 32) # 2 rotations * 4 floats * 4 bytes
+
+        # Unpack and verify against single-call logic
+        res_floats = struct.unpack("8f", res_bytes)
+
+        q1_expected = self.math.euler_to_quat(e1)
+        q2_expected = self.math.euler_to_quat(e2)
+
+        self.assertTupleAlmostEqual(res_floats[0:4], q1_expected)
+        self.assertTupleAlmostEqual(res_floats[4:8], q2_expected)
+
+    def test_euler_to_quat_batch_invalid(self) -> None:
+        """Ensures the batch conversion catches malformed buffers."""
+        # Only 2 floats (8 bytes) when 3 (12 bytes) are required per element
+        bad_buf = struct.pack("2f", 1.0, 2.0)
+        with self.assertRaises(ValueError):
+            self.math.euler_to_quat_batch(bad_buf)
+
 
 if __name__ == "__main__":
     unittest.main()

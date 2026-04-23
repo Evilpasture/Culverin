@@ -2387,6 +2387,40 @@ Extracts the rotation component from a 4x4 matrix as a quaternion.
 **Returns:**
 - **`quaternion` (tuple):** A 4-element quaternion (x, y, z, w).
 
+### euler_to_quat(euler)
+Creates a quaternion from a 3-element Euler vector. This is an ergonomic alternative to `quat_from_euler` for handling vector-based rotation data.
+
+**Arguments:**
+- **`euler` (tuple):** A 3-element tuple `(x, y, z)` representing rotation angles in radians.
+**Returns:**
+- **`quaternion` (tuple):** The resulting 4-element quaternion `(x, y, z, w)`.
+
+---
+
+### euler_to_quat_batch(eulers)
+Performs a high-velocity **batch conversion** of Euler angles to Quaternions. This is the optimal path for converting animation tracks or procedural rotation buffers from rotation vectors into physics-ready orientations.
+
+**Arguments:**
+- **`eulers` (Buffer):** Tightly packed `float32` data (3 floats per element: X, Y, Z).
+
+**Returns:**
+- **`data` (bytes):** A raw bytes object containing the concatenated `(x, y, z, w)` quaternions (16 bytes per element).
+
+**Technical Notes:**
+- **SIMD Optimized:** Converts multiple rotations in parallel using Jolt's internal vector math.
+- **Memory Layout:** Input is expected as 12 bytes per rotation; output is 16 bytes per rotation.
+- **ECS/Animation Integration:** Perfectly suited for converting a `memoryview` of Euler angles directly into a buffer that can be uploaded to a GPU or fed into a rigid body update.
+
+**Usage Example:**
+```python
+# Convert 1,000 Euler rotations from a NumPy array to Quaternions
+euler_data = np.random.rand(1000, 3).astype(np.float32)
+quat_bytes = math_service.euler_to_quat_batch(euler_data)
+
+# quat_bytes is now a 16,000-byte buffer (1000 quats * 16 bytes)
+quaternions = np.frombuffer(quat_bytes, dtype=np.float32).reshape(-1, 4)
+```
+
 
 ## class Ship
 

@@ -992,7 +992,8 @@ static PyObject *MathHolderObject_vec3_normalize(MathHolderObject *self, PyObjec
         return nullptr;
     }
 
-    float v[3], out[3];
+    float v[3];
+    float out[3];
     if (!unpack_vec3(v_obj, v)) {
         PyErr_SetString(PyExc_TypeError, "v must be a tuple of 3 floats");
         return nullptr;
@@ -1059,7 +1060,8 @@ static PyObject *MathHolderObject_mat44_identity(CULV_MAYBE_UNUSED MathHolderObj
 
 static PyObject *MathHolderObject_vec3_reflect(MathHolderObject *self, PyObject *const *args,
                                                Py_ssize_t nargsf, PyObject *kwnames) {
-    PyObject *v_obj, *n_obj;
+    PyObject *v_obj;
+    PyObject *n_obj;
     void *targets[MathReflect_COUNT] = {[IDX_MRF_V] = (void *)&v_obj, [IDX_MRF_N] = (void *)&n_obj};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
@@ -1067,7 +1069,9 @@ static PyObject *MathHolderObject_vec3_reflect(MathHolderObject *self, PyObject 
         return nullptr;
     }
 
-    float v[3], n[3], out[3];
+    float v[3];
+    float n[3];
+    float out[3];
     if (!unpack_vec3(v_obj, v) || !unpack_vec3(n_obj, n)) {
         PyErr_SetString(PyExc_TypeError, "v and normal must be tuples of 3 floats");
         return nullptr;
@@ -1080,7 +1084,8 @@ static PyObject *MathHolderObject_vec3_reflect(MathHolderObject *self, PyObject 
 
 static PyObject *MathHolderObject_vec3_distance(MathHolderObject *self, PyObject *const *args,
                                                 Py_ssize_t nargsf, PyObject *kwnames) {
-    PyObject *v1_obj, *v2_obj;
+    PyObject *v1_obj;
+    PyObject *v2_obj;
     void *targets[MathVecPair_COUNT] = {[IDX_MVP_V1] = (void *)&v1_obj,
                                         [IDX_MVP_V2] = (void *)&v2_obj};
 
@@ -1089,7 +1094,8 @@ static PyObject *MathHolderObject_vec3_distance(MathHolderObject *self, PyObject
         return nullptr;
     }
 
-    float v1[3], v2[3];
+    float v1[3];
+    float v2[3];
     if (!unpack_vec3(v1_obj, v1) || !unpack_vec3(v2_obj, v2)) {
         PyErr_SetString(PyExc_TypeError, "v1 and v2 must be tuples of 3 floats");
         return nullptr;
@@ -1103,7 +1109,8 @@ static PyObject *MathHolderObject_vec3_distance(MathHolderObject *self, PyObject
 static PyObject *MathHolderObject_quat_rotate_vec3_inverse(MathHolderObject *self,
                                                            PyObject *const *args, Py_ssize_t nargsf,
                                                            PyObject *kwnames) {
-    PyObject *q_obj, *v_obj;
+    PyObject *q_obj;
+    PyObject *v_obj;
     void *targets[MathQuatVec_COUNT] = {[IDX_MQV_Q] = (void *)&q_obj, [IDX_MQV_V] = (void *)&v_obj};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
@@ -1111,7 +1118,9 @@ static PyObject *MathHolderObject_quat_rotate_vec3_inverse(MathHolderObject *sel
         return nullptr;
     }
 
-    float q[4], v[3], out[3];
+    float q[4];
+    float v[3];
+    float out[3];
     if (!unpack_quat(q_obj, q) || !unpack_vec3(v_obj, v)) {
         PyErr_SetString(PyExc_TypeError, "Inputs must be tuples of floats (Quat=4, Vec3=3)");
         return nullptr;
@@ -1120,6 +1129,63 @@ static PyObject *MathHolderObject_quat_rotate_vec3_inverse(MathHolderObject *sel
     culverin_math_quat_rotate_vec3_inverse(q, v, out);
 
     return FastBuild_Tuple(out[0], out[1], out[2]);
+}
+
+// --- Wrapper for single tuple (x, y, z) -> (x, y, z, w) ---
+static PyObject *MathHolderObject_euler_to_quat(MathHolderObject *self, PyObject *const *args,
+                                                Py_ssize_t nargsf, PyObject *kwnames) {
+    PyObject *euler_obj;
+    void *targets[MathEulerVec_COUNT] = {[IDX_MEV_V] = (void *)&euler_obj};
+
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+                           &self->parsers->MathEulerVecParser, targets)) {
+        return nullptr;
+    }
+
+    float euler[3];
+    float q[4];
+    if (!unpack_vec3(euler_obj, euler)) {
+        PyErr_SetString(PyExc_TypeError, "Euler must be a tuple of 3 floats");
+        return nullptr;
+    }
+
+    culverin_math_euler_to_quat(euler, q);
+    return FastBuild_Tuple(q[0], q[1], q[2], q[3]);
+}
+
+// --- Wrapper for batch conversion (Bytes/Buffer) ---
+static PyObject *MathHolderObject_euler_to_quat_batch(MathHolderObject *self, PyObject *const *args,
+                                                      Py_ssize_t nargsf, PyObject *kwnames) {
+    PyObject *eulers_obj;
+    void *targets[MathEulerBatch_COUNT] = {[IDX_MEB_VECS] = (void *)&eulers_obj};
+
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+                           &self->parsers->MathEulerBatchParser, targets)) {
+        return nullptr;
+    }
+
+    Py_buffer view;
+    if (PyObject_GetBuffer(eulers_obj, &view, PyBUF_SIMPLE) < 0) {
+        return nullptr;
+    }
+
+    if (view.len % 12 != 0) {
+        PyBuffer_Release(&view);
+        PyErr_SetString(PyExc_ValueError, "Buffer must be multiple of 12 bytes (3 floats)");
+        return nullptr;
+    }
+
+    size_t count = view.len / 12;
+    PyObject *result =
+        PyBytes_FromStringAndSize(NULL, (Py_ssize_t)(count * 16)); // 4 floats per quat
+
+    if (result) {
+        culverin_math_euler_to_quat_batch((const float *)view.buf, count,
+                                          (float *)PyBytes_AsString(result));
+    }
+
+    PyBuffer_Release(&view);
+    return result;
 }
 
 void culverin_math_init_all_parsers(MathParsers *mp);
@@ -1213,6 +1279,8 @@ PyType_Spec MathService_spec = {
                      MATH_FASTCALL(vec3_reflect),
                      MATH_FASTCALL(vec3_distance),
                      MATH_FASTCALL(quat_rotate_vec3_inverse),
+                     MATH_FASTCALL(euler_to_quat),
+                     MATH_FASTCALL(euler_to_quat_batch),
                      {},
 
                  }

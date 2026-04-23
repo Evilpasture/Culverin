@@ -1,8 +1,9 @@
-import subprocess
 import argparse
 import os
-from pathlib import Path
+import subprocess
 from collections import Counter
+from pathlib import Path
+
 
 def get_git_tracked_files(directory):
     """Fetch all files currently tracked by Git in the target directory."""
@@ -30,7 +31,7 @@ def analyze_files(directory, file_list):
 
         ext = full_path.suffix or "[no extension]"
         stats[ext] += 1
-        
+
         try:
             with open(full_path, "rb") as f:
                 lines = sum(1 for _ in f)
@@ -41,7 +42,7 @@ def analyze_files(directory, file_list):
 
     return stats, total_lines, ext_lines
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Analyze Git-tracked files in a directory.")
     parser.add_argument("dir", nargs="?", default=".", help="Directory to analyze (default: current)")
     args = parser.parse_args()
@@ -58,9 +59,9 @@ def main():
     # Output Results Table
     print(f"{'Extension':<15} | {'Count':<8} | {'Total Lines':<12} | {'% of Code'}")
     print("-" * 55)
-    
+
     sorted_exts = sorted(ext_counts.items(), key=lambda x: ext_lines[x[0]], reverse=True)
-    
+
     for ext, count in sorted_exts:
         lines = ext_lines[ext]
         percentage = (lines / total_lines * 100) if total_lines > 0 else 0
