@@ -81,7 +81,7 @@ def get_position(self: _culverin_c.PhysicsWorld, handle: int) -> tuple[float, fl
     base = idx * 4
     try:
         return (view[base], view[base + 1], view[base + 2])
-    except IndexError, ValueError:
+    except (IndexError, ValueError):
         return None
 
 
@@ -96,7 +96,7 @@ def get_rotation(
     base = idx * 4
     try:
         return (view[base], view[base + 1], view[base + 2], view[base + 3])
-    except IndexError, ValueError:
+    except (IndexError, ValueError):
         return None
 
 
@@ -109,7 +109,7 @@ def get_velocity(self: _culverin_c.PhysicsWorld, handle: int) -> tuple[float, fl
     base = idx * 4
     try:
         return (view[base], view[base + 1], view[base + 2])
-    except IndexError, ValueError:
+    except (IndexError, ValueError):
         return None
 
 
@@ -124,7 +124,7 @@ def get_angular_velocity(
     base = idx * 4
     try:
         return (view[base], view[base + 1], view[base + 2])
-    except IndexError, ValueError:
+    except (IndexError, ValueError):
         return None
 
 
@@ -133,13 +133,11 @@ def world_repr(self: _culverin_c.PhysicsWorld) -> str:
 
 
 # 3. ATTACH HELPERS
-# We use 'type: ignore' here because linters often think C-extension
-# classes are immutable/read-only even when MANAGED_DICT is enabled.
-_culverin_c.PhysicsWorld.get_position = get_position  # type: ignore
-_culverin_c.PhysicsWorld.get_rotation = get_rotation  # type: ignore
-_culverin_c.PhysicsWorld.get_velocity = get_velocity  # type: ignore
-_culverin_c.PhysicsWorld.get_angular_velocity = get_angular_velocity  # type: ignore
-_culverin_c.PhysicsWorld.__repr__ = world_repr  # type: ignore
+_culverin_c.PhysicsWorld.get_position = get_position 
+_culverin_c.PhysicsWorld.get_rotation = get_rotation  
+_culverin_c.PhysicsWorld.get_velocity = get_velocity  
+_culverin_c.PhysicsWorld.get_angular_velocity = get_angular_velocity 
+_culverin_c.PhysicsWorld.__repr__ = world_repr 
 
 
 # 4. EXPOSE THE C CLASS
@@ -161,7 +159,7 @@ from ._culverin_c import (  # noqa: E402
     EVENT_REMOVED,
     MOTION_DYNAMIC,
     MOTION_KINEMATIC,
-    MOTION_STATIC,
+    MOTION_STATIC, 
     SHAPE_BOX,
     SHAPE_CAPSULE,
     SHAPE_CONVEX_HULL,
