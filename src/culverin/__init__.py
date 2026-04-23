@@ -74,47 +74,59 @@ class TrackConfig(TypedDict):
 def get_position(self: _culverin_c.PhysicsWorld, handle: int) -> tuple[float, float, float] | None:
     """Returns the world position of a body as (x, y, z)."""
     idx = self.get_index(handle)
-    if idx is None: return None
+    if idx is None:
+        return None
     # positions format is 'd' or 'f' automatically based on JPH_DOUBLE_PRECISION
     view = memoryview(self.positions)
     base = idx * 4
     try:
         return (view[base], view[base + 1], view[base + 2])
-    except (IndexError, ValueError):
+    except IndexError, ValueError:
         return None
 
-def get_rotation(self: _culverin_c.PhysicsWorld, handle: int) -> tuple[float, float, float, float] | None:
+
+def get_rotation(
+    self: _culverin_c.PhysicsWorld, handle: int
+) -> tuple[float, float, float, float] | None:
     """Returns the world rotation of a body as (x, y, z, w)."""
     idx = self.get_index(handle)
-    if idx is None: return None
+    if idx is None:
+        return None
     view = memoryview(self.rotations)
     base = idx * 4
     try:
         return (view[base], view[base + 1], view[base + 2], view[base + 3])
-    except (IndexError, ValueError):
+    except IndexError, ValueError:
         return None
+
 
 def get_velocity(self: _culverin_c.PhysicsWorld, handle: int) -> tuple[float, float, float] | None:
     """Returns the world linear velocity of a body as (x, y, z)."""
     idx = self.get_index(handle)
-    if idx is None: return None
+    if idx is None:
+        return None
     view = memoryview(self.velocities)
     base = idx * 4
     try:
         return (view[base], view[base + 1], view[base + 2])
-    except (IndexError, ValueError):
+    except IndexError, ValueError:
         return None
 
-def get_angular_velocity(self: _culverin_c.PhysicsWorld, handle: int) -> tuple[float, float, float] | None:
+
+def get_angular_velocity(
+    self: _culverin_c.PhysicsWorld, handle: int
+) -> tuple[float, float, float] | None:
     """Returns the world angular velocity of a body as (x, y, z)."""
     idx = self.get_index(handle)
-    if idx is None: return None
+    if idx is None:
+        return None
     view = memoryview(self.angular_velocities)
     base = idx * 4
     try:
         return (view[base], view[base + 1], view[base + 2])
-    except (IndexError, ValueError):
+    except IndexError, ValueError:
         return None
+
 
 def world_repr(self: _culverin_c.PhysicsWorld) -> str:
     return f"<culverin.PhysicsWorld bodies={self.count} time={self.time:.2f}>"
@@ -164,10 +176,10 @@ from ._culverin_c import (  # noqa: E402
     Ragdoll,
     RagdollSettings,
     Registry,
+    Ship,
     Skeleton,
     SoftBodySharedSettings,
     Vehicle,
-    Ship,
     _dump_schema_json,  # type: ignore
     mutate_tuple,
 )
@@ -206,13 +218,13 @@ __all__ = [
     "Ragdoll",
     "RagdollSettings",
     "Registry",
+    "Ship",
     "Skeleton",
     "SoftBodySharedSettings",
     "TrackConfig",
     "Transmission",
     "Vehicle",
     "WheelConfig",
-    "Ship",
     "_dump_schema_json",
     "euler_to_quat",
     "load_urdf",
