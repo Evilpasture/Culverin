@@ -35,18 +35,20 @@ void world_remove_body_slot(PhysicsWorldObject *self, uint32_t slot) {
         CULV_PREFETCH_WRITE(&self->positions[dense_idx]);
 
         // --- GROUP 1: PHYSICS STATE (Non-atomic) ---
-        ((PosStride *)self->positions)[dense_idx] = ((PosStride *)self->positions)[last_dense];
-        ((PosStride *)self->prev_positions)[dense_idx] =
-            ((PosStride *)self->prev_positions)[last_dense];
+        ((PosStride * CULV_RESTRICT) self->positions)[dense_idx] =
+            ((PosStride * CULV_RESTRICT) self->positions)[last_dense];
+        ((PosStride * CULV_RESTRICT) self->prev_positions)[dense_idx] =
+            ((PosStride * CULV_RESTRICT) self->prev_positions)[last_dense];
 
-        ((AuxStride *)self->rotations)[dense_idx] = ((AuxStride *)self->rotations)[last_dense];
-        ((AuxStride *)self->prev_rotations)[dense_idx] =
-            ((AuxStride *)self->prev_rotations)[last_dense];
+        ((AuxStride * CULV_RESTRICT) self->rotations)[dense_idx] =
+            ((AuxStride *)self->rotations)[last_dense];
+        ((AuxStride * CULV_RESTRICT) self->prev_rotations)[dense_idx] =
+            ((AuxStride * CULV_RESTRICT) self->prev_rotations)[last_dense];
 
-        ((AuxStride *)self->linear_velocities)[dense_idx] =
-            ((AuxStride *)self->linear_velocities)[last_dense];
-        ((AuxStride *)self->angular_velocities)[dense_idx] =
-            ((AuxStride *)self->angular_velocities)[last_dense];
+        ((AuxStride * CULV_RESTRICT) self->linear_velocities)[dense_idx] =
+            ((AuxStride * CULV_RESTRICT) self->linear_velocities)[last_dense];
+        ((AuxStride * CULV_RESTRICT) self->angular_velocities)[dense_idx] =
+            ((AuxStride * CULV_RESTRICT) self->angular_velocities)[last_dense];
 
         // --- GROUP 2: METADATA (Non-atomic) ---
         self->body_ids[dense_idx]     = self->body_ids[last_dense];
