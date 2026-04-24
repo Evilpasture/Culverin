@@ -104,7 +104,7 @@ set(USE_VULKAN OFF CACHE BOOL "" FORCE)
 
 set(FORCE_RTTI ON CACHE BOOL "Force RTTI on" FORCE)
 
-project(culverin LANGUAGES C CXX)
+project(culverin LANGUAGES C CXX ASM)
 # 1.1 FORCE BUILD TYPE (RelWithDebInfo is the sweet spot for ASan)
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES AND ENABLE_SANITIZER)
     message(
@@ -417,23 +417,7 @@ if(CMAKE_C_COMPILER_ID STREQUAL "GNU" AND WIN32)
     endif()
 endif()
 
-set(MAG_MUTEX_TARGET mag_mutex)
-add_library(
-    ${MAG_MUTEX_TARGET}
-    STATIC
-    "extern/mag-mutex/src/mag_mutex.c"
-)
-
-if(MSVC)
-    target_compile_options(${MAG_MUTEX_TARGET} PRIVATE /W0)
-else()
-    target_compile_options(${MAG_MUTEX_TARGET} PRIVATE -w)
-endif()
-
-target_include_directories(
-    ${MAG_MUTEX_TARGET}
-    PUBLIC "extern/mag-mutex/include" 
-)
+add_subdirectory("extern/mag-mutex")
 
 python_add_library(
     _culverin_c
@@ -690,7 +674,7 @@ if(WIN32)
     target_link_libraries(_culverin_c PRIVATE Winmm.lib)
 endif()
 target_compile_definitions(_culverin_c PRIVATE JPH_DEBUG_RENDERER)
-target_link_libraries(_culverin_c PRIVATE ${MAG_MUTEX_TARGET} ${JOLTC_TARGET} fast_capi_core Jolt::Jolt docs_embedder)
+target_link_libraries(_culverin_c PRIVATE mag_mutex_lib ${JOLTC_TARGET} fast_capi_core Jolt::Jolt docs_embedder)
 
 if(APPLE)
     message(STATUS "Culverin: Enforcing Strong Symbol Export")
