@@ -1132,7 +1132,7 @@ PyCFunction_DeclareMethod PhysicsWorld_save_state(PhysicsWorldObject *self,
     size_t aux_size_total = current_count * sizeof(AuxStride);
 
     // Mappings: gen(u32), s2d(u32), d2s(u32), state(u8)
-    size_t mapping_size = slot_cap * (sizeof(uint32_t) * 3 + sizeof(uint8_t));
+    size_t mapping_size = slot_cap * ((sizeof(uint32_t) * 3) + sizeof(uint8_t));
 
     size_t total_size = HEADER_SIZE + pos_size_total + (3 * aux_size_total) + mapping_size;
 
@@ -1256,7 +1256,7 @@ PyCFunction_DeclareMethod PhysicsWorld_load_state(PhysicsWorldObject *self, PyOb
     // 4. Size Validation
     size_t pos_bytes     = saved_count * sizeof(PosStride);
     size_t aux_bytes     = saved_count * sizeof(AuxStride);
-    size_t mapping_bytes = saved_cap * (sizeof(uint32_t) * 3 + sizeof(uint8_t));
+    size_t mapping_bytes = saved_cap * ((sizeof(uint32_t) * 3) + sizeof(uint8_t));
 
     if (UNLIKELY(total_len != (HEADER_SIZE + pos_bytes + (aux_bytes * 3) + mapping_bytes))) {
         goto size_fail;
@@ -1550,10 +1550,12 @@ PyCFunction_DeclareMethod PhysicsWorld_create_convex_hull(PhysicsWorldObject *se
     // 3. JOLT SHAPE BUILD (No GIL)
     JPH_Shape *shape = nullptr;
     Py_BEGIN_ALLOW_THREADS;
-    auto jolt_points = (JPH_Vec3 *)CULV_RAW_MALLOC(num_points * sizeof(JPH_Vec3));
-    float *raw       = (float *)points_view.buf;
+    auto jolt_points                = (JPH_Vec3 *)CULV_RAW_MALLOC(num_points * sizeof(JPH_Vec3));
+    float *raw                      = (float *)points_view.buf;
+    constexpr uint64_t VEC_3_STRIDE = 3;
     for (size_t i = 0; i < num_points; i++) {
-        jolt_points[i] = (JPH_Vec3){raw[i * 3], raw[i * 3 + 1], raw[i * 3 + 2]};
+        jolt_points[i] = (JPH_Vec3){raw[i * VEC_3_STRIDE], raw[(i * VEC_3_STRIDE) + 1],
+                                    raw[(i * VEC_3_STRIDE) + 2]};
     }
 
     auto hull_settings = JPH_ConvexHullShapeSettings_Create(jolt_points, (uint32_t)num_points,
@@ -2128,7 +2130,23 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
     Py_BEGIN_ALLOW_THREADS;
     SHADOW_LOCK(&self->shadow_lock);
     JPH_Shape *last_shape = nullptr;
-    ShapeParams last_size = {.p[0] = -1.0f, .p[1] = -1.0f, .p[2] = -1.0f, .p[3] = -1.0f};
+
+    // ShapeParams last_size = {.p[0] = -1.0f, .p[1] = -1.0f, .p[2] = -1.0f, .p[3] = -1.0f};
+
+    // ShapeParams last_size = {};
+    // #pragma unroll
+    //     for (auto j = 0ULL; j < (sizeof(ShapeParams) / sizeof(float)); j++) {
+    //         last_size.p[j] = -1.0f;
+    //     }
+
+    enum : uint8_t { PARAM_0, PARAM_1, PARAM_2, PARAM_3 };
+
+    auto last_size = (ShapeParams){.p = {
+                                       [PARAM_0] = -1.0F,
+                                       [PARAM_1] = -1.0F,
+                                       [PARAM_2] = -1.0F,
+                                       [PARAM_3] = -1.0F,
+                                   }};
 
     for (Py_ssize_t i = 0; i < batch_count; i++) {
         JPH_Shape *shape    = last_shape;
@@ -2136,8 +2154,8 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
         const float *last_p = last_size.p;
 
         // Manual logical comparison: Correct float semantics and better optimization
-        if (curr_p[0] != last_p[0] || curr_p[1] != last_p[1] || curr_p[2] != last_p[2] ||
-            curr_p[3] != last_p[3]) {
+        if (curr_p[PARAM_0] != last_p[PARAM_0] || curr_p[PARAM_1] != last_p[PARAM_1] ||
+            curr_p[PARAM_2] != last_p[PARAM_2] || curr_p[PARAM_3] != last_p[PARAM_3]) {
 
             shape      = find_or_create_shape_locked(self, shape_type, curr_p);
             last_shape = shape;
@@ -2267,11 +2285,11 @@ static JPH_IndexedTriangle *build_mesh_triangles(const uint32_t *raw, MeshBounds
         PyErr_NoMemory();
         return nullptr;
     }
-
+    constexpr uint32_t STRIDE = 3;
     for (uint32_t t = 0; t < bounds.tri_count; t++) {
-        uint32_t i1 = raw[t * 3 + 0];
-        uint32_t i2 = raw[t * 3 + 1];
-        uint32_t i3 = raw[t * 3 + 2];
+        uint32_t i1 = raw[(t * STRIDE) + 0];
+        uint32_t i2 = raw[(t * STRIDE) + 1];
+        uint32_t i3 = raw[(t * STRIDE) + 2];
 
         if (i1 >= bounds.vertex_count || i2 >= bounds.vertex_count || i3 >= bounds.vertex_count) {
             CULV_RAW_FREE(jolt_tris);

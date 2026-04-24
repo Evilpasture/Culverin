@@ -26,7 +26,7 @@
 #    define CULV_RAW_FREE(ptr) PyMem_RawFree(ptr)
 #endif
 // =========================================================================
-#include "culverin_physics_world.h"
+#include "culverin_command_buffer.h"
 #include "culverin_types.h"
 #include <stddef.h>
 #include <string.h>
@@ -238,16 +238,16 @@ static_assert(sizeof(SlotPredicate) == sizeof(uint8_t));
 
 // Standard masks for reuse
 static constexpr uint32_t MASK_IMM_STANDARD =
-    (1u << SLOT_ALIVE) | (1u << SLOT_CHARACTER) | (1u << SLOT_SOFT_BODY);
-static constexpr uint32_t MASK_IMM_STRICT = (1u << SLOT_ALIVE) | (1u << SLOT_SOFT_BODY);
-static constexpr uint32_t MASK_DEFERRED   = (1u << SLOT_PENDING_CREATE);
+    (1U << SLOT_ALIVE) | (1U << SLOT_CHARACTER) | (1U << SLOT_SOFT_BODY);
+static constexpr uint32_t MASK_IMM_STRICT = (1U << SLOT_ALIVE) | (1U << SLOT_SOFT_BODY);
+static constexpr uint32_t MASK_DEFERRED   = (1U << SLOT_PENDING_CREATE);
 // Define the mask for states that can be destroyed
-static constexpr uint32_t MASK_DESTRUCTIBLE = (1u << SLOT_ALIVE) | (1u << SLOT_PENDING_CREATE) |
-                                              (1u << SLOT_CHARACTER) | (1u << SLOT_SOFT_BODY);
+static constexpr uint32_t MASK_DESTRUCTIBLE = (1U << SLOT_ALIVE) | (1U << SLOT_PENDING_CREATE) |
+                                              (1U << SLOT_CHARACTER) | (1U << SLOT_SOFT_BODY);
 
 [[gnu::const]] CULV_NODISCARD static CULV_FORCE_INLINE SlotPredicate
 get_slot_predicate(uint8_t state, uint32_t imm_mask) {
-    const uint32_t state_bit = 1u << (state & 7);
+    const uint32_t state_bit = 1U << (state & 7);
 
     culv_u1 imm = (culv_u1) !!(bool)(state_bit & imm_mask);
     culv_u1 def = (culv_u1) !!(bool)(state_bit & MASK_DEFERRED);

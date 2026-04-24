@@ -4,9 +4,6 @@
 #include "culverin_module.h"
 #include "culverin_python.h"
 
-static constexpr uint32_t COLLISION_FILTER_ALL_CATEGORIES = 0xFFFF;
-static constexpr uint32_t COLLISION_FILTER_ALL_MASKS      = 0xFFFF;
-
 // --- SharedSettings Lifecycle ---
 
 PyType_DeclareSlot_StatusFromModule SoftBodySharedSettings_init(SoftBodySharedSettingsObject *self,

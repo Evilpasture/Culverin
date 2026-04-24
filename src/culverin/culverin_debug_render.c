@@ -1,11 +1,12 @@
 #include "culverin_debug_render.h"
 #include "culverin.h"
-#include <Python.h>
+#include "culverin_physics_world.h"
 
 // --- Debug Buffer Helpers ---
 void debug_buffer_ensure(DebugBuffer *buf, size_t count_needed) {
     if (buf->count + count_needed > buf->capacity) {
-        size_t new_cap = (buf->capacity == 0) ? 4096 : buf->capacity * 2;
+        constexpr size_t NEW_INITIAL_CAPACITY = 4096;
+        size_t new_cap = (buf->capacity == 0) ? NEW_INITIAL_CAPACITY : buf->capacity * 2;
         while (buf->count + count_needed > new_cap) {
             new_cap *= 2;
         }
@@ -56,8 +57,9 @@ static void JPH_API_CALL OnDebugDrawTriangle(void *userData, const JPH_RVec3 *v1
                                              // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
                                              const JPH_RVec3 *v3, JPH_Color color,
                                              JPH_DebugRenderer_CastShadow Py_UNUSED(castShadow)) {
-    PhysicsWorldObject *self = (PhysicsWorldObject *)userData;
-    debug_buffer_ensure(&self->debug_triangles, 3);
+    PhysicsWorldObject *self         = (PhysicsWorldObject *)userData;
+    constexpr int VERTS_PER_TRIANGLE = 3;
+    debug_buffer_ensure(&self->debug_triangles, VERTS_PER_TRIANGLE);
     debug_buffer_push(&self->debug_triangles,
                       (DebugCoordinates){(float)v1->x, (float)v1->y, (float)v1->z}, color);
     debug_buffer_push(&self->debug_triangles,

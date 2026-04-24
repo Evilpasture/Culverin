@@ -245,7 +245,7 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
         return;
     }
 
-    static constexpr size_t MIN_CYCLES           = 0xFFFFFFFFFFFFFFFFULL;
+    static constexpr uint64_t MIN_CYCLES         = 0xFFFFFFFFFFFFFFFFULL;
     CULV_MAYBE_UNUSED static CulvStat sync_stats = {
         .total_cycles = 0, .min_cycles = MIN_CYCLES, .max_cycles = 0, .count = 0};
 
