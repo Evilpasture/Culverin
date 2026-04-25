@@ -198,3 +198,5 @@ typedef struct {
     uint8_t
         _pad_after[CACHE_ISOLATE_PAD(sizeof(NativeMutex) + sizeof(NativeCond)) + CACHE_LINE_SIZE];
 } ShadowSync;
+
+extern NativeMutex g_jph_init_lock;

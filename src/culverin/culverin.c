@@ -444,8 +444,6 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
         JPH_ContactListener_SetProcs(&contact_procs);
         JPH_CharacterContactListener_SetProcs(&char_listener_procs);
 
-        extern NativeMutex g_jph_init_lock;
-
         // Gated Mutex Initialization
         // (Fixes the race on g_jph_trampoline_lock write)
         if (INIT_NATIVE_MUTEX(g_jph_init_lock) != 0) {
