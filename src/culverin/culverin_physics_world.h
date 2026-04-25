@@ -26,6 +26,7 @@ typedef struct PhysicsWorldObject {
 
     // --- BUCKET 1: Pointers & 8-byte types (Zero Padding) ---
     JPH_PhysicsSystem *system;
+    JPH_TempAllocator *temp_allocator;
     JPH_CharacterVsCharacterCollision *char_vs_char_manager;
     JPH_BodyInterface *body_interface;
     JPH_JobSystem *job_system;

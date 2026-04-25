@@ -7,15 +7,17 @@
 
 /**
  * INIT_PARSER_ST
- * Builds the spec array inside the struct and initializes the parser.
+ * Initializes the parser using a temporary stack-allocated definition array.
+ * fp_init_impl will copy the data into its own optimized internal storage.
  */
 #define INIT_PARSER_ST(cp, ParserName, GroupName, Schema)                                          \
     do {                                                                                           \
         static_assert((0 Schema(COUNT_X)) == GroupName##_COUNT,                                    \
                       "FastParse: Schema length mismatch for " #ParserName);                       \
-        FastArgSpec temp[] = {Schema(GEN_SPEC)};                                                   \
-        memcpy((cp)->ParserName##Specs, temp, sizeof(temp));                                       \
-        fp_init_impl(&(cp)->ParserName##Parser, (cp)->ParserName##Specs, GroupName##_COUNT);       \
+        /* 1. Create the definitions on the stack */                                               \
+        FastArgDef temp[] = {Schema(GEN_SPEC)};                                                    \
+        /* 2. Pass the stack pointer directly. fp_init_impl handles the mallocing now. */          \
+        fp_init_impl(&(cp)->ParserName##Parser, temp, GroupName##_COUNT);                          \
     } while (0)
 
 // --- 2. REGISTRATION & SETUP MACROS ---
@@ -42,7 +44,7 @@
 
 #define GEN_SPEC(ID, NAME, TYPE, REQ)                                                              \
     [ID] = {.name       = (NAME),                                                                  \
-            .type_name  = FP_GET_TYPE_NAME((TYPE){}),                                                                   \
+            .type_name  = FP_GET_TYPE_NAME((TYPE){}),                                              \
             .required   = (bool)(REQ),                                                             \
             .type_guard = GET_TYPE_GUARD((TYPE){}),                                                \
             .convert    = FP_GET_CONVERTER((TYPE){})},
@@ -66,9 +68,9 @@ void culverin_free_all_parsers(CulverinParsers *cp) {
 
 void culverin_math_init_all_parsers(MathParsers *mp) {
     mp->registry_count = 0;
-    #define DO_SETUP(P, G, S) SETUP_PARSER_ST(mp, P, G, S);
+#define DO_SETUP(P, G, S) SETUP_PARSER_ST(mp, P, G, S);
     FOR_ALL_MATH_PARSERS(DO_SETUP)
-    #undef DO_SETUP
+#undef DO_SETUP
 }
 
 void culverin_math_free_all_parsers(MathParsers *mp) {
@@ -83,9 +85,12 @@ void fp_dump_schemas_json(CulverinParsers *cp, FILE *out) {
         FastParser *fp = cp->registry[i];
         fprintf(out, "  \"%s\": [\n", fp->parser_name);
         for (size_t j = 0; j < fp->count; j++) {
+            // FIX: Access strings from cold_specs, but requirement status from the mask
+            bool is_req = (fp->required_mask & (1ULL << j)) != 0;
+
             fprintf(out, "    {\"name\": \"%s\", \"type\": \"%s\", \"required\": %s}%s\n",
-                    fp->specs[j].name, fp->specs[j].type_name,
-                    (int)fp->specs[j].required ? "true" : "false", (j == fp->count - 1) ? "" : ",");
+                    fp->cold_specs[j].name, fp->cold_specs[j].type_name, is_req ? "true" : "false",
+                    (j == fp->count - 1) ? "" : ",");
         }
         fprintf(out, "  ]%s\n", (i == cp->registry_count - 1) ? "" : ",");
     }

@@ -577,16 +577,16 @@ static constexpr size_t PARSER_REGISTRY_SIZE = 128;
     X(IDX_43, "a43", uint64_t, false)                                                              \
     X(IDX_44, "a44", uint64_t, false)                                                              \
     X(IDX_45, "a45", uint64_t, 0)                                                                  \
-    X(IDX_46, "a46", uint64_t, false) X(IDX_47, "a47", uint64_t, 0) X(IDX_48, "a48", uint64_t, 0)  \
-        X(IDX_49, "a49", uint64_t, 0) X(IDX_50, "a50", uint64_t, 0)                                \
-            X(IDX_51, "a51", uint64_t, false) X(IDX_52, "a52", uint64_t, 0)                        \
-                X(IDX_53, "a53", uint64_t, 0) X(IDX_54, "a54", uint64_t, 0)                        \
-                    X(IDX_55, "a55", uint64_t, 0) X(IDX_56, "a56", uint64_t, false)                \
-                        X(IDX_57, "a57", uint64_t, 0) X(IDX_58, "a58", uint64_t, false)            \
-                            X(IDX_59, "a59", uint64_t, false) X(IDX_60, "a60", uint64_t, false)    \
-                                X(IDX_61, "a61", uint64_t, false)                                  \
-                                    X(IDX_62, "a62", uint64_t, false)                              \
-                                        X(IDX_63, "a63", uint64_t, false)
+    X(IDX_46, "a46", uint64_t, false)                                                              \
+    X(IDX_47, "a47", uint64_t, 0)                                                                  \
+    X(IDX_48, "a48", uint64_t, 0)                                                                  \
+    X(IDX_49, "a49", uint64_t, 0) X(IDX_50, "a50", uint64_t, 0) X(IDX_51, "a51", uint64_t, false)  \
+        X(IDX_52, "a52", uint64_t, 0) X(IDX_53, "a53", uint64_t, 0) X(IDX_54, "a54", uint64_t, 0)  \
+            X(IDX_55, "a55", uint64_t, 0) X(IDX_56, "a56", uint64_t, false)                        \
+                X(IDX_57, "a57", uint64_t, 0) X(IDX_58, "a58", uint64_t, false)                    \
+                    X(IDX_59, "a59", uint64_t, false) X(IDX_60, "a60", uint64_t, false)            \
+                        X(IDX_61, "a61", uint64_t, false) X(IDX_62, "a62", uint64_t, false)        \
+                            X(IDX_63, "a63", uint64_t, false)
 
 /** --- THE GENERATOR ENGINE --- **/
 
@@ -597,9 +597,7 @@ static constexpr size_t PARSER_REGISTRY_SIZE = 128;
     typedef enum { Schema(GEN_ENUM) GroupName##_COUNT } GroupName##_Idx;
 
 // Declares a specific parser that uses an Index Group
-#define DECLARE_PARSER(ParserName, GroupName)                                                      \
-    FastParser ParserName##Parser;                                                                 \
-    FastArgSpec ParserName##Specs[GroupName##_COUNT];
+#define DECLARE_PARSER(ParserName, GroupName) FastParser ParserName##Parser;
 
 // A. Define the Index Groups (One per unique signature)
 DEFINE_INDEX_GROUP(WorldInit, SCHEMA_WORLD_INIT)
