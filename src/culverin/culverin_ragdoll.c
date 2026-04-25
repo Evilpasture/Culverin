@@ -359,11 +359,11 @@ PyCFunction_DeclareMethodFromModule RagdollSettings_add_part(RagdollSettingsObje
     parse_body_size(py_size, s); // From culverin_parsers.c
 
     JPH_Shape *shape = nullptr;
-    Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+    Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(self->world->jph_trampoline_lock);
     SHADOW_LOCK(&self->world->shadow_lock);
     shape = find_or_create_shape_locked(self->world, shape_type, s);
     SHADOW_UNLOCK(&self->world->shadow_lock);
-    NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+    NATIVE_MUTEX_UNLOCK(self->world->jph_trampoline_lock);
     Py_END_ALLOW_THREADS;
 
     if (!shape) {

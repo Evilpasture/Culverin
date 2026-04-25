@@ -520,11 +520,11 @@ PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObje
     update_settings.walkStairsStepForwardTest        = 0.15f;
     update_settings.walkStairsCosAngleForwardContact = 0.996f;
 
-    NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+    NATIVE_MUTEX_LOCK(self->world->jph_trampoline_lock);
     Py_BEGIN_ALLOW_THREADS JPH_CharacterVirtual_ExtendedUpdate(
         self->character, dt, &update_settings, OBJECT_LAYER_DYNAMIC, self->world->system,
         self->body_filter, self->shape_filter);
-    Py_END_ALLOW_THREADS NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+    Py_END_ALLOW_THREADS NATIVE_MUTEX_UNLOCK(self->world->jph_trampoline_lock);
 
     // 4. POST-MOVE SYNC
     SHADOW_LOCK(&self->world->shadow_lock);
@@ -820,7 +820,7 @@ PyType_DeclareSlot_VoidFromModule Character_dealloc(CharacterObject *self) {
 
     // --- 2. JOLT DESTRUCTION (Hard Serialized) ---
     // Protect Jolt's callback registry during destruction
-    NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+    NATIVE_MUTEX_LOCK(self->world->jph_trampoline_lock);
 
     if (self->world->char_vs_char_manager && self->character) {
         JPH_CharacterVsCharacterCollisionSimple_RemoveCharacter(self->world->char_vs_char_manager,
@@ -846,7 +846,7 @@ PyType_DeclareSlot_VoidFromModule Character_dealloc(CharacterObject *self) {
         JPH_ObjectLayerFilter_Destroy(self->obj_filter);
     }
 
-    NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+    NATIVE_MUTEX_UNLOCK(self->world->jph_trampoline_lock);
 
 finalize:
     Py_XDECREF(self->world);
@@ -973,13 +973,13 @@ static void register_char(PhysicsWorldObject *self, CharacterObject *obj,
 
 // Helper 3: Filter and Listener serialization (Trampoline Lock)
 static void setup_char_filters(CharacterObject *obj) {
-    NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+    NATIVE_MUTEX_LOCK(obj->world->jph_trampoline_lock);
     obj->listener     = JPH_CharacterContactListener_Create(obj);
     obj->body_filter  = JPH_BodyFilter_Create(nullptr);
     obj->shape_filter = JPH_ShapeFilter_Create(nullptr);
     obj->bp_filter    = JPH_BroadPhaseLayerFilter_Create(nullptr);
     obj->obj_filter   = JPH_ObjectLayerFilter_Create(nullptr);
-    NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+    NATIVE_MUTEX_UNLOCK(obj->world->jph_trampoline_lock);
     JPH_CharacterVirtual_SetListener(obj->character, obj->listener);
 }
 

@@ -547,6 +547,7 @@ void PhysicsWorld_free_members(PhysicsWorldObject *self) {
 
     // 11. Threading Primitives
     FREE_LOCK(self->shadow_lock);
+    FREE_NATIVE_MUTEX(self->jph_trampoline_lock);
     FREE_NATIVE_MUTEX(self->step_sync.mutex);
     FREE_NATIVE_COND(self->step_sync.cond);
 }
@@ -593,7 +594,7 @@ int init_jolt_core(PhysicsWorldObject *self, WorldLimits limits, GravityVector g
 
     // TSan Fix: Serialize the first PhysicsSystem creation.
     // This allows Jolt's internal lazy-statics to initialize safely.
-    NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+    NATIVE_MUTEX_LOCK(self->jph_trampoline_lock);
     self->job_system = JPH_JobSystemThreadPool_Create(&job_cfg);
 
     // --- 3 LAYERS: 0=Static, 1=Dynamic, 2=VehicleRay ---
@@ -626,7 +627,7 @@ int init_jolt_core(PhysicsWorldObject *self, WorldLimits limits, GravityVector g
                                                .objectVsBroadPhaseLayerFilter = self->bp_filter};
 
     self->system = JPH_PhysicsSystem_Create(&phys_settings);
-    NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+    NATIVE_MUTEX_UNLOCK(self->jph_trampoline_lock);
     self->char_vs_char_manager = JPH_CharacterVsCharacterCollision_CreateSimple();
     JPH_PhysicsSystem_SetGravity(self->system, &(JPH_Vec3){gravity.gx, gravity.gy, gravity.gz});
     self->body_interface = JPH_PhysicsSystem_GetBodyInterface(self->system);

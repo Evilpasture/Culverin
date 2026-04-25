@@ -455,11 +455,11 @@ void sync_and_flush_internal(PhysicsWorldObject *self) {
 
     SHADOW_UNLOCK(&self->shadow_lock);
 
-    Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+    Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(self->jph_trampoline_lock);
 
     flush_commands_internal(self, captured_queue, captured_count);
 
-    NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+    NATIVE_MUTEX_UNLOCK(self->jph_trampoline_lock);
     Py_END_ALLOW_THREADS
 
         SHADOW_LOCK(&self->shadow_lock);

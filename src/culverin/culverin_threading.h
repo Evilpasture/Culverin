@@ -15,7 +15,7 @@
  * * 2. OWNERSHIP:
  * - SHADOW_LOCK protects the Command Queue, Slot States, and Shadow Buffers.
  * - NATIVE_MUTEX/COND handles thread arbitration (parking/waking).
- * - g_jph_trampoline_lock protects the non-thread-safe JPH Physics System
+ * - self->jph_trampoline_lock protects the non-thread-safe JPH Physics System
  * state.
  * * 3. STEPPING INVARIANT:
  * - is_stepping = true  => No external thread may read/write Shadow Buffers.
@@ -23,7 +23,7 @@
  * under SHADOW_LOCK.
  * * 4. DOUBLE-BUFFERING:
  * - Command queues are swapped under SHADOW_LOCK but flushed under
- * g_jph_trampoline_lock.
+ * self->jph_trampoline_lock.
  * - This allows Python to queue new commands while the previous batch is being
  * simulated.
  */
@@ -99,7 +99,6 @@ CULV_MAYBE_UNUSED static inline void culverin_yield() {
  * Replaces SRWLOCK/CONDITION_VARIABLE (Win) and pthread_mutex/cond (POSIX)
  */
 
-
 typedef MagMutex NativeMutex;
 typedef MagCond NativeCond;
 
@@ -115,13 +114,9 @@ static inline int internal_native_mutex_init(NativeMutex *m) {
     return 0;
 }
 
-static inline void internal_native_mutex_lock(NativeMutex *m) {
-    MagMutex_Lock(m);
-}
+static inline void internal_native_mutex_lock(NativeMutex *m) { MagMutex_Lock(m); }
 
-static inline void internal_native_mutex_unlock(NativeMutex *m) {
-    MagMutex_Unlock(m);
-}
+static inline void internal_native_mutex_unlock(NativeMutex *m) { MagMutex_Unlock(m); }
 
 static inline int internal_native_mutex_free(NativeMutex *m) {
     (void)m; // MagMutex is a 1-byte value type; no OS resources to free.
@@ -135,13 +130,9 @@ static inline int internal_native_cond_init(NativeCond *c) {
     return 0;
 }
 
-static inline void internal_native_cond_wait(NativeCond *c, NativeMutex *m) {
-    MagCond_Wait(c, m);
-}
+static inline void internal_native_cond_wait(NativeCond *c, NativeMutex *m) { MagCond_Wait(c, m); }
 
-static inline void internal_native_cond_broadcast(NativeCond *c) {
-    MagCond_Broadcast(c);
-}
+static inline void internal_native_cond_broadcast(NativeCond *c) { MagCond_Broadcast(c); }
 
 static inline int internal_native_cond_free(NativeCond *c) {
     (void)c; // MagCond is a 1-byte value type; no OS resources to free.
@@ -154,22 +145,13 @@ static inline int internal_native_cond_free(NativeCond *c) {
 
 typedef NativeMutex ShadowMutex;
 
-static inline int internal_shadow_init(ShadowMutex *m) { 
-    return internal_native_mutex_init(m); 
-}
+static inline int internal_shadow_init(ShadowMutex *m) { return internal_native_mutex_init(m); }
 
-static inline void internal_shadow_lock(ShadowMutex *m) { 
-    internal_native_mutex_lock(m); 
-}
+static inline void internal_shadow_lock(ShadowMutex *m) { internal_native_mutex_lock(m); }
 
-static inline void internal_shadow_unlock(ShadowMutex *m) { 
-    internal_native_mutex_unlock(m); 
-}
+static inline void internal_shadow_unlock(ShadowMutex *m) { internal_native_mutex_unlock(m); }
 
-static inline int internal_shadow_free(ShadowMutex *m) { 
-    return internal_native_mutex_free(m); 
-}
-
+static inline int internal_shadow_free(ShadowMutex *m) { return internal_native_mutex_free(m); }
 
 /* ============================================================================
  * 3. PUBLIC API MACROS
@@ -196,7 +178,6 @@ static inline int internal_shadow_free(ShadowMutex *m) {
  * 4. STRUCTURES
  * ============================================================================ */
 
-
 // Use a standard constant for cache line width
 static constexpr auto CACHE_LINE_SIZE = 64;
 
@@ -212,9 +193,8 @@ typedef struct {
     NativeCond cond;
 
     // 3. Isolate from trailing fields (like shadow_lock)
-    // We use a calculated constant so if you change Mutex size, 
+    // We use a calculated constant so if you change Mutex size,
     // the padding adjusts automatically.
-    uint8_t _pad_after[CACHE_ISOLATE_PAD(sizeof(NativeMutex) + sizeof(NativeCond)) + CACHE_LINE_SIZE];
+    uint8_t
+        _pad_after[CACHE_ISOLATE_PAD(sizeof(NativeMutex) + sizeof(NativeCond)) + CACHE_LINE_SIZE];
 } ShadowSync;
-
-extern NativeMutex g_jph_trampoline_lock;
