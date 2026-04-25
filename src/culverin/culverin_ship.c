@@ -144,11 +144,11 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ship(PhysicsWorldObject 
     obj->linear_drag      = drag;
 
     // Use global trampoline lock to register listener
-    NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+    NATIVE_MUTEX_LOCK(self->jph_trampoline_lock);
     JPH_PhysicsStepListener_SetProcs(&ship_listener_procs);
     obj->listener = JPH_PhysicsStepListener_Create(obj);
     JPH_PhysicsSystem_AddStepListener(self->system, obj->listener);
-    NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+    NATIVE_MUTEX_UNLOCK(self->jph_trampoline_lock);
 
     PyObject_GC_Track((PyObject *)obj);
     return (PyObject *)obj;
@@ -182,10 +182,10 @@ PyType_DeclareSlot_VoidFromModule Ship_dealloc(ShipObject *self) {
 
     if (self->world && self->listener) {
         // Protect Jolt system call with trampoline lock
-        NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+        NATIVE_MUTEX_LOCK(self->world->jph_trampoline_lock);
         JPH_PhysicsSystem_RemoveStepListener(self->world->system, self->listener);
         JPH_PhysicsStepListener_Destroy(self->listener);
-        NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+        NATIVE_MUTEX_UNLOCK(self->world->jph_trampoline_lock);
     }
 
     Py_XDECREF(self->world);

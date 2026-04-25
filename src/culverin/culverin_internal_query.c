@@ -3,7 +3,7 @@
 #include "culverin_physics_world.h"
 
 /**
- * REQUIRES: SHADOW_LOCK held AND g_jph_trampoline_lock held
+ * REQUIRES: SHADOW_LOCK held AND self->jph_trampoline_lock held
  */
 JPH_Shape *find_or_create_shape_locked(PhysicsWorldObject *self, int type, const float *params) {
     // 1. KEY NORMALIZATION & SANITIZATION
@@ -112,7 +112,7 @@ void free_shape_cache(PhysicsWorldObject *self) {
 }
 
 // Helper 1: Run the Raycast
-// ASSUMPTION: Caller has already acquired g_jph_trampoline_lock and released GIL.
+// ASSUMPTION: Caller has already acquired self->jph_trampoline_lock and released GIL.
 bool execute_raycast_query(PhysicsWorldObject *self, JPH_BodyID ignore_bid, const JPH_RVec3 *origin,
                            const JPH_Vec3 *direction, JPH_RayCastResult *hit) {
     // 1. Filter Setup (Safe, doesn't touch shared Jolt memory yet)
@@ -156,7 +156,7 @@ void extract_hit_normal(PhysicsWorldObject *self, JPH_BodyID bodyID, JPH_SubShap
 }
 
 // Helper 3: Internal logic to run the actual query
-// ASSUMPTION: Caller has already acquired g_jph_trampoline_lock and released GIL.
+// ASSUMPTION: Caller has already acquired self->jph_trampoline_lock and released GIL.
 void shapecast_execute_internal(PhysicsWorldObject *self, const JPH_Shape *shape,
                                 const JPH_RMat4 *transform, const JPH_Vec3 *sweep_dir,
                                 JPH_BodyID ignore_bid, CastShapeContext *ctx) {

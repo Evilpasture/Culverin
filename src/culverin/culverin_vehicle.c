@@ -345,7 +345,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_vehicle(PhysicsWorldObje
     bool jolt_locked = false;
     Py_UNBLOCK_THREADS;
 
-    NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+    NATIVE_MUTEX_LOCK(self->jph_trampoline_lock);
     jolt_locked = true;
 
     const JPH_BodyLockInterface *lock_iface = JPH_PhysicsSystem_GetBodyLockInterface(self->system);
@@ -381,7 +381,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_vehicle(PhysicsWorldObje
     r.is_added_to_world = true;
 
     JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
-    NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+    NATIVE_MUTEX_UNLOCK(self->jph_trampoline_lock);
     jolt_locked = false;
     Py_BLOCK_THREADS;
 
@@ -415,7 +415,7 @@ jolt_fail:
         JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
     }
     if (jolt_locked) {
-        NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+        NATIVE_MUTEX_UNLOCK(self->jph_trampoline_lock);
     }
     Py_BLOCK_THREADS;
 

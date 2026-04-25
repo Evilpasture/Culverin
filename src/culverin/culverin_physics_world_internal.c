@@ -504,6 +504,11 @@ void PhysicsWorld_free_members(PhysicsWorldObject *self) {
         self->job_system = nullptr;
     }
 
+    if (self->temp_allocator) {
+        JPH_TempAllocator_Destroy(self->temp_allocator);
+        self->temp_allocator = nullptr;
+    }
+
     // 5. Debug Utilities
     if (self->debug_renderer) {
         JPH_DebugRenderer_Destroy(self->debug_renderer);
@@ -547,6 +552,7 @@ void PhysicsWorld_free_members(PhysicsWorldObject *self) {
 
     // 11. Threading Primitives
     FREE_LOCK(self->shadow_lock);
+    FREE_NATIVE_MUTEX(self->jph_trampoline_lock);
     FREE_NATIVE_MUTEX(self->step_sync.mutex);
     FREE_NATIVE_COND(self->step_sync.cond);
 }
@@ -575,6 +581,11 @@ int init_settings(PhysicsWorldObject *self, PyObject *settings_dict, float *gx, 
     return ok ? 0 : -1;
 }
 
+NativeMutex g_jph_init_lock;
+
+// Increase to 32MB to comfortably fit CCD and complex queries
+static constexpr uint32_t TEMP_ALLOCATOR_SIZE = 32 * 1024 * 1024;
+
 // helper: Initialize Jolt Core Systems
 CULV_NODISCARD
 int init_jolt_core(PhysicsWorldObject *self, WorldLimits limits, GravityVector gravity) {
@@ -593,8 +604,14 @@ int init_jolt_core(PhysicsWorldObject *self, WorldLimits limits, GravityVector g
 
     // TSan Fix: Serialize the first PhysicsSystem creation.
     // This allows Jolt's internal lazy-statics to initialize safely.
-    NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+    NATIVE_MUTEX_LOCK(g_jph_init_lock);
     self->job_system = JPH_JobSystemThreadPool_Create(&job_cfg);
+
+#if defined(__SANITIZE_THREAD__) || defined(ENABLE_SANITIZER)
+    self->temp_allocator = JPH_TempAllocatorMalloc_Create();
+#else
+    self->temp_allocator = JPH_TempAllocator_Create(TEMP_ALLOCATOR_SIZE);
+#endif
 
     // --- 3 LAYERS: 0=Static, 1=Dynamic, 2=VehicleRay ---
     self->bp_interface = JPH_BroadPhaseLayerInterfaceTable_Create(3, 3);
@@ -626,7 +643,7 @@ int init_jolt_core(PhysicsWorldObject *self, WorldLimits limits, GravityVector g
                                                .objectVsBroadPhaseLayerFilter = self->bp_filter};
 
     self->system = JPH_PhysicsSystem_Create(&phys_settings);
-    NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+    NATIVE_MUTEX_UNLOCK(g_jph_init_lock);
     self->char_vs_char_manager = JPH_CharacterVsCharacterCollision_CreateSimple();
     JPH_PhysicsSystem_SetGravity(self->system, &(JPH_Vec3){gravity.gx, gravity.gy, gravity.gz});
     self->body_interface = JPH_PhysicsSystem_GetBodyInterface(self->system);

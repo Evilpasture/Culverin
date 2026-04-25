@@ -1,10 +1,11 @@
 #pragma once
 #include "culverin_compiler_specifics.h"
+#include "culverin_physics_world.h"
 #include "joltc.h"
 #include <Python.h>
 
 typedef struct ShipObject {
-    PyObject_HEAD struct PhysicsWorldObject *world;
+    PyObject_HEAD PhysicsWorldObject *world;
     JPH_PhysicsStepListener *listener; // Native listener pointer
     JPH_BodyID sled_bid;               // Resolved ID for the heavy part
     uint64_t sled_h_raw;               // Added to store the Python-side handle

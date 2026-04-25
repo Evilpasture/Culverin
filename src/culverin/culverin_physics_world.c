@@ -46,9 +46,6 @@ static constexpr uint32_t JOLT_ALL_LAYER_BITS = 0xFFFF;
 // Buffer allocation increments
 static constexpr size_t RAGDOLL_BODY_BUFFER_INCREMENT = 1024;
 
-// Global lock for JPH callbacks
-NativeMutex g_jph_trampoline_lock; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
-
 // --- Lifecycle: Deallocation ---
 PyType_DeclareSlot_Status PhysicsWorld_traverse(PhysicsWorldObject *self, visitproc visit,
                                                 void *arg) {
@@ -200,7 +197,8 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
 
     // 1.6. Complex Structs (Safe to zero these individually)
     memset(&self->step_sync, 0, sizeof(ShadowSync));
-    // Note: INIT_LOCK(self->shadow_lock) handles its own initialization
+    INIT_LOCK(self->shadow_lock);
+    INIT_NATIVE_MUTEX(self->jph_trampoline_lock);
 
     // 1.7. View Metadata
     self->view_shape[0]   = 0;
@@ -212,7 +210,7 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
     self->debug_renderer = nullptr;
     memset(&self->debug_lines, 0, sizeof(DebugBuffer));
     memset(&self->debug_triangles, 0, sizeof(DebugBuffer));
-    INIT_LOCK(self->shadow_lock);
+
     self->debug_renderer = JPH_DebugRenderer_Create(self);
     atomic_init(&self->is_stepping, false);
 
@@ -1421,7 +1419,7 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
     SHADOW_UNLOCK(&self->shadow_lock);
 
     // --- PHASE 2: JOLT CRUNCH (GIL Released) ---
-    Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+    Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(self->jph_trampoline_lock);
 
     CULV_PROFILE_BEGIN(jolt_step);
 
@@ -1433,12 +1431,12 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
 
     // 2. Simulation Step
     if (dt <= 0.0f) {
-        JPH_PhysicsSystem_OptimizeBroadPhase(self->system);
+        JPH_PhysicsSystem_OptimizeBroadPhase2(self->system, self->temp_allocator);
         self->needs_optimization = false;
     } else {
-        JPH_PhysicsSystem_Update(self->system, dt, 1, self->job_system);
+        JPH_PhysicsSystem_Update2(self->system, dt, 1, self->temp_allocator, self->job_system);
         if (self->needs_optimization) {
-            JPH_PhysicsSystem_OptimizeBroadPhase(self->system);
+            JPH_PhysicsSystem_OptimizeBroadPhase2(self->system, self->temp_allocator);
             self->needs_optimization = false;
         }
     }
@@ -1457,7 +1455,7 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
 
     CULV_PROFILE_END(jolt_step, "Jolt Physics Crunch", (unsigned int)captured_count);
 
-    NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+    NATIVE_MUTEX_UNLOCK(self->jph_trampoline_lock);
     Py_END_ALLOW_THREADS
 
         // --- PHASE 3: FINALIZATION ---
@@ -1701,7 +1699,7 @@ static JPH_Shape *init_compound_shape(PhysicsWorldObject *self, PyObject *parts)
     JPH_Shape *final_shape = nullptr;
     Py_BEGIN_ALLOW_THREADS
 
-        NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+        NATIVE_MUTEX_LOCK(self->jph_trampoline_lock);
 
     JPH_StaticCompoundShapeSettings *compound_settings = JPH_StaticCompoundShapeSettings_Create();
 
@@ -1722,7 +1720,7 @@ static JPH_Shape *init_compound_shape(PhysicsWorldObject *self, PyObject *parts)
     final_shape = (JPH_Shape *)JPH_StaticCompoundShape_Create(compound_settings);
     JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)compound_settings);
 
-    NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+    NATIVE_MUTEX_UNLOCK(self->jph_trampoline_lock);
     Py_END_ALLOW_THREADS
 
         // --- 3. CLEANUP ---
@@ -4363,7 +4361,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll(PhysicsWorldObje
     JPH_Mat4 *neutral_matrices = nullptr;
     size_t body_count          = 0;
 
-    Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+    Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(self->jph_trampoline_lock);
 
     JPH_RagdollSettings_CalculateBodyIndexToConstraintIndex(py_settings->settings);
     JPH_RagdollSettings_CalculateConstraintIndexToBodyIdxPair(py_settings->settings);
@@ -4371,7 +4369,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll(PhysicsWorldObje
     j_rag = JPH_RagdollSettings_CreateRagdoll(py_settings->settings, self->system, 0, user_data);
 
     if (!j_rag) {
-        NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+        NATIVE_MUTEX_UNLOCK(self->jph_trampoline_lock);
         Py_BLOCK_THREADS;
         return PyErr_Format(PyExc_RuntimeError, "Jolt failed to create Ragdoll instance");
     }
@@ -4398,15 +4396,15 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll(PhysicsWorldObje
     JPH_Ragdoll_AddToPhysicsSystem(j_rag, JPH_Activation_Activate, true);
 
     body_count = (size_t)JPH_Ragdoll_GetBodyCount(j_rag);
-    NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+    NATIVE_MUTEX_UNLOCK(self->jph_trampoline_lock);
     Py_END_ALLOW_THREADS;
 
     // --- 3. PYTHON OBJECT CREATION ---
     auto obj = (RagdollObject *)PyObject_New(RagdollObject, (PyTypeObject *)st->RagdollType);
     if (!obj) {
-        Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(g_jph_trampoline_lock);
+        Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(self->jph_trampoline_lock);
         JPH_Ragdoll_Destroy(j_rag);
-        NATIVE_MUTEX_UNLOCK(g_jph_trampoline_lock);
+        NATIVE_MUTEX_UNLOCK(self->jph_trampoline_lock);
         Py_END_ALLOW_THREADS CULV_RAW_FREE(neutral_matrices);
         return nullptr;
     }

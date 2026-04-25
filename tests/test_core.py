@@ -505,6 +505,110 @@ class TestCollisionsAndEvents(CulverinTestCase):
         self.assertGreater(len(removed), 0)
         self.assertIn(b1, removed[0]["bodies"])
 
+class TestMultiWorldConcurrency(unittest.TestCase):
+    """
+    Tests isolation and parallel performance of multiple PhysicsWorld instances.
+    Since the global lock was removed, these should run truly in parallel 
+    (especially on Free-Threaded Python 3.13+ builds).
+    """
+
+    def test_parallel_world_isolation(self) -> None:
+        """Verify that actions in one world do not affect another world running in parallel."""
+        world_a = culverin.PhysicsWorld(settings={"gravity": (0, -10, 0)})
+        world_b = culverin.PhysicsWorld(settings={"gravity": (0, 0, 0)}) # No gravity in B
+
+        body_a = world_a.create_body(pos=(0, 10, 0), motion=culverin.MOTION_DYNAMIC)
+        body_b = world_b.create_body(pos=(0, 10, 0), motion=culverin.MOTION_DYNAMIC)
+        
+        world_a.step(0)
+        world_b.step(0)
+
+        def run_world(world: culverin.PhysicsWorld, steps: int):
+            for _ in range(steps):
+                world.step(1/60.0)
+
+        thread_a = threading.Thread(target=run_world, args=(world_a, 60))
+        thread_b = threading.Thread(target=run_world, args=(world_b, 60))
+
+        thread_a.start()
+        thread_b.start()
+        thread_a.join()
+        thread_b.join()
+
+        pos_a = world_a.get_position(body_a)
+        pos_b = world_b.get_position(body_b)
+
+        # World A should have fallen due to gravity
+        self.assertLess(pos_a[1], 10.0) if pos_a is not None else self.fail("Body A disappeared!")
+        # World B should remain at Y=10 because it has no gravity
+        self.assertEqual(pos_b[1], 10.0, "World B was cross-contaminated by World A's gravity!") if pos_b is not None else self.fail("Body B disappeared!")
+
+    def test_heavy_multi_world_load(self) -> None:
+        """Stress test 8 worlds running simultaneously to check for race conditions in C-statics."""
+        num_worlds = 8
+        steps = 100
+        worlds = [culverin.PhysicsWorld() for _ in range(num_worlds)]
+        
+        # Populate each world
+        for w in worlds:
+            w.create_bodies_batch(
+                positions=[(0, i, 0) for i in range(50)],
+                sizes=[(1, 1, 1)] * 50,
+                shape_type=culverin.SHAPE_BOX
+            )
+
+        def worker(world: culverin.PhysicsWorld):
+            for _ in range(steps):
+                world.step(1/60.0)
+                # Randomly query state to force concurrent read/writes
+                _ = world.get_render_state(alpha=0.5)
+                _ = world.positions
+
+        threads = [threading.Thread(target=worker, args=(w,)) for w in worlds]
+        
+        start_time = time.perf_counter()
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        duration = time.perf_counter() - start_time
+
+        print(f"\n[Concurrency] 8 worlds / 100 steps parallel: {duration:.4f}s")
+        
+        for w in worlds:
+            self.assertEqual(w.count, 50)
+            self.assertFalse(w.is_step_pending)
+
+    def test_concurrent_creation_and_destruction(self) -> None:
+        """Verify that one world can create/destroy while another is stepping."""
+        world_stepper = culverin.PhysicsWorld()
+        world_mutator = culverin.PhysicsWorld()
+        
+        stop_event = threading.Event()
+
+        def step_task():
+            while not stop_event.is_set():
+                world_stepper.step(1/60.0)
+
+        def mutate_task():
+            for _ in range(100):
+                h = world_mutator.create_body(pos=(0, 0, 0))
+                world_mutator.step(0)
+                world_mutator.destroy_body(h)
+                world_mutator.step(0)
+
+        t1 = threading.Thread(target=step_task)
+        t2 = threading.Thread(target=mutate_task)
+
+        t1.start()
+        t2.start()
+        
+        t2.join() # Wait for mutations to finish
+        stop_event.set()
+        t1.join()
+        
+        # If no segfault occurred, the C-level instance isolation is working
+        self.assertTrue(True)
 
 class TestCharactersAndVehicles(CulverinTestCase):
     def test_character_lifecycle_and_movement(self) -> None:

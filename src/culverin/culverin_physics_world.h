@@ -26,6 +26,7 @@ typedef struct PhysicsWorldObject {
 
     // --- BUCKET 1: Pointers & 8-byte types (Zero Padding) ---
     JPH_PhysicsSystem *system;
+    JPH_TempAllocator *temp_allocator;
     JPH_CharacterVsCharacterCollision *char_vs_char_manager;
     JPH_BodyInterface *body_interface;
     JPH_JobSystem *job_system;
@@ -104,8 +105,9 @@ typedef struct PhysicsWorldObject {
 #endif
 
     // --- BUCKET 3: Structs & Complex Types ---
-    ShadowSync step_sync;    // 16 bytes (Internal 2-byte alignment)
-    ShadowMutex shadow_lock; // MagMutex (usually 1 bytes)
+    ShadowSync step_sync;            // 16 bytes (Internal 2-byte alignment)
+    ShadowMutex shadow_lock;         // MagMutex (usually 1 bytes)
+    NativeMutex jph_trampoline_lock; // For JPH callbacks (1 byte, but uses native mutex)
 
     // --- BUCKET 4: Small types (Packed at the tail) ---
     CULV_ATOMIC(uint8_t) * slot_states;
