@@ -4,6 +4,8 @@
 #include <time.h>
 
 #ifdef _WIN32
+#    define WIN32_LEAN_AND_MEAN
+#    include <io.h>
 #    include <windows.h>
 #    define IS_ATTY _isatty(_fileno(stderr))
 #else
@@ -19,9 +21,9 @@ static void get_timestamp(char *buf, size_t len) {
 }
 
 void culv_jph_trace(const char *inString) {
-    if (!inString || !*inString)
+    if (!inString || !*inString) {
         return;
-
+    }
     char ts[16];
     get_timestamp(ts, sizeof(ts));
 
