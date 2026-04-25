@@ -1,20 +1,21 @@
-#include "culverin_debug_render.h"
-#include "culverin_threading.h"
+// clang-format off
 #if !defined(_CRT_SECURE_NO_WARNINGS)
 #    define _CRT_SECURE_NO_WARNINGS
 #endif
-
+// clang-format on
 #include "culverin.h"
 #include "culverin_arg_indices.h"
 #include "culverin_character.h"
 #include "culverin_compiler_specifics.h"
 #include "culverin_contact_listener.h"
+#include "culverin_debug_render.h"
 #include "culverin_filters.h"
 #include "culverin_getters.h"
 #include "culverin_handler.h"
 #include "culverin_math.h"
 #include "culverin_module.h"
 #include "culverin_python.h"
+#include "culverin_threading.h"
 #include "docs_embedder.h"
 #include "joltc.h"
 #include <stdatomic.h>
