@@ -576,7 +576,7 @@ int init_settings(PhysicsWorldObject *self, PyObject *settings_dict, float *gx, 
     return ok ? 0 : -1;
 }
 
-static NativeMutex g_jph_init_lock;
+NativeMutex g_jph_init_lock;
 
 // helper: Initialize Jolt Core Systems
 CULV_NODISCARD
