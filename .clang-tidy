@@ -1,35 +1,30 @@
-# .clang-tidy
+# Proposed Refinements
 Checks: >
   -*,
   bugprone-*,
   -bugprone-easily-swappable-parameters,
   clang-analyzer-*,
   -clang-analyzer-security.insecureAPI.strcpy,
-  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
   readability-*,
-  readability-magic-numbers,
   -readability-identifier-length,
-  -readability-uppercase-literal-suffix,
-  -readability-math-missing-parentheses,
   -readability-function-cognitive-complexity,
   performance-*,
   misc-*,
   -misc-unused-parameters,
-  -misc-confusable-identifiers,
-  -misc-non-private-member-variables-in-classes,
   
-  cppcoreguidelines-no-malloc, 
-  -cppcoreguidelines-init-variables
+  # Crucial for concurrency/low-level
+  bugprone-suspicious-include,
+  bugprone-multiple-new-line-before-fallback,
+  
+  # Remove if the "no-malloc" warnings get too noisy
+  -cppcoreguidelines-no-malloc 
 
 CheckOptions:
-  readability-identifier-naming.ClassCase: CamelCase
-  readability-identifier-naming.StructCase: snake_case
+  # Allow slightly larger functions for unrolled loops/SIMD
+  readability-function-size.LineThreshold: 800 
+  # Strict snake_case for everything in the C API
   readability-identifier-naming.VariableCase: snake_case
   readability-identifier-naming.FunctionCase: snake_case
-  readability-identifier-naming.MacroDefinitionCase: UPPER_CASE
-  readability-function-cognitive-complexity.Threshold: 15
-  readability-function-size.LineThreshold: 500
-
-HeaderFilterRegex: 'src/culverin/.*'
-
-WarningsAsErrors: ''
+  readability-identifier-naming.ParameterCase: snake_case
+  # Magic numbers: ignore 0, 1, 2, and common powers of 2 (4, 8, 16, 32, 64)
+  readability-magic-numbers.IgnoredIntegerValues: "0;1;2;4;8;16;32;64;128;256;512;1024"

@@ -3,6 +3,7 @@
 #include "culverin_arg_indices.h"
 #include "culverin_getters.h"
 #include "culverin_module.h"
+#include "culverin_physics_world.h"
 #include "culverin_python.h"
 #include <stddef.h>
 

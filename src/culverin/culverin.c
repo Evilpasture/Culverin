@@ -1,18 +1,21 @@
+// clang-format off
 #if !defined(_CRT_SECURE_NO_WARNINGS)
 #    define _CRT_SECURE_NO_WARNINGS
 #endif
-
+// clang-format on
 #include "culverin.h"
 #include "culverin_arg_indices.h"
 #include "culverin_character.h"
 #include "culverin_compiler_specifics.h"
 #include "culverin_contact_listener.h"
+#include "culverin_debug_render.h"
 #include "culverin_filters.h"
 #include "culverin_getters.h"
 #include "culverin_handler.h"
 #include "culverin_math.h"
 #include "culverin_module.h"
 #include "culverin_python.h"
+#include "culverin_threading.h"
 #include "docs_embedder.h"
 #include "joltc.h"
 #include <stdatomic.h>
@@ -39,7 +42,8 @@ PyCFunction_DeclareMethod culv_dump_schema_json(PyObject *self, PyObject *Py_UNU
 
 PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, PyObject *const *args,
                                             Py_ssize_t nargsf) {
-    // --- 1. DECLARATIONS (C++ / goto safety) ---
+    enum : uint8_t { ARG_0, ARG_1, ARG_2, ARG_3, ARG_4 };
+    // --- 1. DECLARATIONS (C / goto safety) ---
     auto nargs              = PyVectorcall_NARGS(nargsf);
     constexpr auto MIN_ARGS = 3;
     constexpr auto MAX_ARGS = 5;
@@ -61,14 +65,14 @@ PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, Py
         return nullptr;
     }
 
-    target  = args[0];
-    new_val = args[2];
+    target  = args[ARG_0];
+    new_val = args[ARG_2];
     if (!PyTuple_Check(target)) {
         PyErr_SetString(PyExc_TypeError, "arg 0 must be a tuple");
         return nullptr;
     }
 
-    index = PyLong_AsSsize_t(args[1]);
+    index = PyLong_AsSsize_t(args[ARG_1]);
     if (index == -1 && PyErr_Occurred()) {
         return nullptr;
     }
@@ -83,8 +87,8 @@ PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, Py
     }
 
     if (nargs == MAX_ARGS) {
-        registry = args[3];
-        key      = args[4];
+        registry = args[ARG_3];
+        key      = args[ARG_4];
         if (!PyDict_Check(registry)) {
             PyErr_SetString(PyExc_TypeError, "arg 3 must be a dict");
             return nullptr;

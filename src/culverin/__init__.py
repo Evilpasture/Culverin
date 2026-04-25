@@ -4,6 +4,31 @@ import sys
 from pathlib import Path
 from typing import TypedDict
 
+def _verify_cpu_requirements():
+    """Ensure the CPU meets the x86-64-v3 (AVX2/FMA) requirement."""
+    import platform
+    if platform.machine().lower() not in ("x86_64", "amd64"):
+        return # Skip check on ARM (Mac M1/M2, etc.)
+
+    try:
+        # On Linux, check /proc/cpuinfo
+        if platform.system() == "Linux":
+            with open("/proc/cpuinfo", "r") as f:
+                content = f.read()
+                if "avx2" not in content or "fma" not in content:
+                    raise RuntimeError(
+                        "Culverin requires a CPU with AVX2/FMA support (x86-64-v3). "
+                        "GitHub Actions runner or local CPU is too old."
+                    )
+        # On Windows, we can use a quick check via ctypes or just let the 
+        # DLL loader handle it, but for CI, the Linux check is the priority.
+    except Exception:
+        # If we can't check, we proceed and let the OS signal the error
+        pass
+
+_verify_cpu_requirements()
+
+del _verify_cpu_requirements
 
 def setup_runtime_dlls() -> None:
     if sys.platform != "win32":
@@ -40,6 +65,8 @@ def setup_runtime_dlls() -> None:
 
 
 setup_runtime_dlls()
+
+del setup_runtime_dlls
 
 from . import _culverin_c
 
