@@ -2,33 +2,73 @@
 #include "culverin.h"
 #include "culverin_python.h"
 
-static int parse_sequence_internal(PyObject *obj, void *out, int count, bool is_double) {
+static int parse_sequence_internal(PyObject *obj, void *restrict out, int count, bool is_double) {
     if (!obj || obj == Py_None) {
         return 0;
     }
+
+    // 1. Optimized Buffer Path (NumPy, array.array, bytes)
+    // Use PyObject_CheckBuffer to avoid triggering a TypeError on lists/tuples
+    if (PyObject_CheckBuffer(obj)) {
+        Py_buffer view;
+        if (PyObject_GetBuffer(obj, &view, PyBUF_SIMPLE) == 0) {
+            size_t expected_size = (size_t)count * (is_double ? sizeof(double) : sizeof(float));
+            if ((size_t)view.len == expected_size) {
+                memcpy(out, view.buf, expected_size);
+                PyBuffer_Release(&view);
+                return 1;
+            }
+            PyBuffer_Release(&view);
+            // If size didn't match, we don't clear error (none was set)
+            // and fall through to sequence logic which will likely fail/return 0.
+        } else {
+            // This clears the "a bytes-like object is required" error
+            // so we can proceed to try the sequence path.
+            PyErr_Clear();
+        }
+    }
+
+    // 2. Standard Sequence Path (list, tuple, etc.)
     PyObject *seq = PySequence_Fast(obj, "Expected sequence");
     if (!seq) {
+        // If PySequence_Fast fails, it sets its own error; we leave it for Python.
         return 0;
     }
 
     if (PySequence_Fast_GET_SIZE(seq) != count) {
         Py_DECREF(seq);
+        // Important: PySequence_Fast doesn't set an error for size mismatch,
+        // so we set one here to be helpful.
+        PyErr_Format(PyExc_ValueError, "Expected sequence of length %d, got %zd", count,
+                     PySequence_Fast_GET_SIZE(seq));
         return 0;
     }
 
-    for (int i = 0; i < count; i++) {
-        double val = PyFloat_AsDouble(PySequence_Fast_GET_ITEM(seq, i));
-        if (PyErr_Occurred()) {
-            Py_DECREF(seq);
-            return 0;
-        }
+    PyObject **items = PySequence_Fast_ITEMS(seq);
 
-        if (is_double) {
-            ((double *)out)[i] = val;
-        } else {
-            ((float *)out)[i] = (float)val;
+    // Hoist the type check outside the loop
+    if (is_double) {
+        double *restrict d_out = (double *)out;
+        for (int i = 0; i < count; i++) {
+            double val = PyFloat_AsDouble(items[i]);
+            if (val == -1.0 && PyErr_Occurred()) {
+                Py_DECREF(seq);
+                return 0;
+            }
+            d_out[i] = val;
+        }
+    } else {
+        float *restrict f_out = (float *)out;
+        for (int i = 0; i < count; i++) {
+            double val = PyFloat_AsDouble(items[i]);
+            if (val == -1.0 && PyErr_Occurred()) {
+                Py_DECREF(seq);
+                return 0;
+            }
+            f_out[i] = (float)val;
         }
     }
+
     Py_DECREF(seq);
     return 1;
 }
@@ -36,7 +76,9 @@ static int parse_sequence_internal(PyObject *obj, void *out, int count, bool is_
 int parse_vec3_f32(PyObject *obj, float *x, float *y, float *z) {
     float res[3];
     if (parse_sequence_internal(obj, res, 3, false)) {
-        *x = res[0]; *y = res[1]; *z = res[2];
+        *x = res[0];
+        *y = res[1];
+        *z = res[2];
         return 1;
     }
     return 0;
@@ -45,7 +87,9 @@ int parse_vec3_f32(PyObject *obj, float *x, float *y, float *z) {
 int parse_vec3_r64(PyObject *obj, double *x, double *y, double *z) {
     double res[3];
     if (parse_sequence_internal(obj, res, 3, true)) {
-        *x = res[0]; *y = res[1]; *z = res[2];
+        *x = res[0];
+        *y = res[1];
+        *z = res[2];
         return 1;
     }
     return 0;
@@ -54,7 +98,10 @@ int parse_vec3_r64(PyObject *obj, double *x, double *y, double *z) {
 int parse_quat_f32(PyObject *obj, float *x, float *y, float *z, float *w) {
     float res[4];
     if (parse_sequence_internal(obj, res, 4, false)) {
-        *x = res[0]; *y = res[1]; *z = res[2]; *w = res[3];
+        *x = res[0];
+        *y = res[1];
+        *z = res[2];
+        *w = res[3];
         return 1;
     }
     return 0;
@@ -63,7 +110,10 @@ int parse_quat_f32(PyObject *obj, float *x, float *y, float *z, float *w) {
 int parse_quat_r64(PyObject *obj, double *x, double *y, double *z, double *w) {
     double res[4];
     if (parse_sequence_internal(obj, res, 4, true)) {
-        *x = res[0]; *y = res[1]; *z = res[2]; *w = res[3];
+        *x = res[0];
+        *y = res[1];
+        *z = res[2];
+        *w = res[3];
         return 1;
     }
     return 0;
