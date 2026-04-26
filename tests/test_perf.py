@@ -16,23 +16,23 @@ import culverin
 class THRESHOLDS:
     # Creation & Lifecycle
     BATCH_CREATE_RATIO = 0.5  # Batch must take < 50% the time of a Python loop
-    BATCH_CREATE_MAX_S_5K = 0.05  # Max time (s) to batch create 5,000 bodies
+    BATCH_CREATE_MAX_S_5K = 0.04  # Max time (s) to batch create 5,000 bodies
 
     # Core Simulation
-    SIM_STEP_MAX_MS_10K = 12.0  # Max time (ms) per frame for 10,000 free-falling bodies
-    BULK_MUTATION_MAX_MS = 50.0  # Max time (ms) per frame with 5,000 queued forces
-    CONTENTION_STEP_MAX_MS = 15.0  # Max time (ms) per frame when fighting Numpy for locks
+    SIM_STEP_MAX_MS_10K = 2.0  # Max time (ms) per frame for 10,000 free-falling bodies
+    BULK_MUTATION_MAX_MS = 2.0  # Max time (ms) per frame with 5,000 queued forces
+    CONTENTION_STEP_MAX_MS = 1.8  # Max time (ms) per frame when fighting Numpy for locks
 
     # C-API Bindings (FastParse & FastBuild)
-    FASTPARSE_MAX_S_50K = 0.100  # Max time (s) for 50,000 calls parsing 64 arguments
-    FASTBUILD_MAX_S_100K = 0.060  # Max time (s) for 100,000 Tuple builds
+    FASTPARSE_MAX_S_50K = 0.025  # Max time (s) for 50,000 calls parsing 64 arguments
+    FASTBUILD_MAX_S_100K = 0.01  # Max time (s) for 100,000 Tuple builds
 
     # Queries
-    RAYCAST_MAX_S_50K = 0.080  # Max time (s) for 50,000 batch raycasts
+    RAYCAST_MAX_S_50K = 0.020  # Max time (s) for 50,000 batch raycasts
 
     # State Management
-    STATE_SAVE_MAX_S = 0.05  # Max time (s) to save 10,000 bodies
-    STATE_LOAD_MAX_S = 0.05  # Max time (s) to load 10,000 bodies
+    STATE_SAVE_MAX_S = 0.025  # Max time (s) to save 10,000 bodies
+    STATE_LOAD_MAX_S = 0.025  # Max time (s) to load 10,000 bodies
 
 
 # ==============================================================================
@@ -47,7 +47,7 @@ class TestPerformanceRegression(unittest.TestCase):
 
     def setUp(self) -> None:
         # Create a massive world for stress testing
-        self.max_bodies = 20000
+        self.max_bodies = 50000
         self.world = culverin.PhysicsWorld(
             settings={
                 "gravity": (0, -10, 0),
@@ -62,8 +62,9 @@ class TestPerformanceRegression(unittest.TestCase):
 
     def test_batch_vs_iterative_creation(self) -> None:
         """Ensure C-level batch creation remains significantly faster than Python loops."""
-        body_count = 10000
-        positions = np.random.uniform(-100, 100, (body_count, 3)).astype(np.float32).tolist()
+        body_count = 20000
+        rng = np.random.default_rng()
+        positions = rng.uniform(-100, 100, (body_count, 3)).astype(np.float32).tolist()
         sizes = [[1.0, 1.0, 1.0]] * body_count
 
         # 1. Iterative Creation
@@ -112,7 +113,8 @@ class TestPerformanceRegression(unittest.TestCase):
     def test_simulation_step_overhead(self) -> None:
         """Ensure the core simulation step remains highly performant under heavy load."""
         body_count = 10000
-        positions = np.random.uniform(-50, 50, (body_count, 3)).astype(np.float32).tolist()
+        rng = np.random.default_rng()
+        positions = rng.uniform(-50, 50, (body_count, 3)).astype(np.float32).tolist()
 
         # Spawn a massive block of falling cubes
         self.world.create_bodies_batch(
@@ -120,12 +122,12 @@ class TestPerformanceRegression(unittest.TestCase):
         )
         self.world.step(0)  # Initial flush
 
-        # Step 60 frames
+        # Step 600 frames
         t0 = time.perf_counter()
-        for _ in range(60):
+        for _ in range(600):
             self.world.step(1 / 60.0)
         total_time = time.perf_counter() - t0
-        avg_ms = (total_time / 60.0) * 1000.0
+        avg_ms = (total_time / 600.0) * 1000.0
 
         print(f"\n[Perf] 10k Body Sim Step -> Avg: {avg_ms:.2f} ms/frame")
 
