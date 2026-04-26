@@ -7,6 +7,7 @@
 #include "culverin_soft_body.h"
 #include "culverin_threading.h"
 #include "culverin_types.h"
+#include "culverin.h"
 #include "joltc.h"
 #include <Python.h>
 
@@ -19,23 +20,45 @@ typedef struct {
     // stream
 } MaterialData;
 
+/**
+ * CACHE ISOLATION MACRO
+ * Using explicit padding instead of alignas() to remain compatible 
+ * with the Python allocator (which doesn't respect 64-byte alignment).
+ */
+#define CULV_CACHE_LINE_SPACER uint8_t CULV_CONCAT(_unused_pad_, __LINE__)[64]
+
 // --- The Object Struct ---
 typedef struct PhysicsWorldObject {
-    PyObject_HEAD // 16 bytes
-        PyObject *weakreflist;
+    PyObject_HEAD 
+    PyObject *weakreflist;
 
-    // --- BUCKET 1: Pointers & 8-byte types (Zero Padding) ---
+    /* ========================================================================
+     * BUCKET 1: COLD / READ-ONLY DATA
+     * ======================================================================== */
     JPH_PhysicsSystem *system;
-    JPH_TempAllocator *temp_allocator;
-    JPH_CharacterVsCharacterCollision *char_vs_char_manager;
     JPH_BodyInterface *body_interface;
     JPH_JobSystem *job_system;
     JPH_BroadPhaseLayerInterface *bp_interface;
     JPH_ObjectLayerPairFilter *pair_filter;
     JPH_ObjectVsBroadPhaseLayerFilter *bp_filter;
     JPH_ContactListener *contact_listener;
+    JPH_TempAllocator *temp_allocator;
+    JPH_CharacterVsCharacterCollision *char_vs_char_manager;
+    uint32_t max_jolt_bodies;
+    size_t contact_max_capacity;
 
-    // --- HOT SYNC BLOCK: Kept together for L1d Locality ---
+    CULV_CACHE_LINE_SPACER;
+
+    /* ========================================================================
+     * BUCKET 2: HOT DATA - SIMULATION STATE (The Stepper's Primary Workspace)
+     * ======================================================================== */
+    double time;
+    atomic_size_t count;
+    size_t capacity;
+    size_t slot_capacity;
+    atomic_size_t free_count;
+
+    // Shadow Pointers
     JPH_Real *positions;
     JPH_Real *prev_positions;
     float *rotations;
@@ -45,87 +68,105 @@ typedef struct PhysicsWorldObject {
     JPH_BodyID *body_ids;
     uint64_t *user_data;
     uint32_t *material_ids;
-
-    // Array of SoftBodyShadow structs, parallel to body_ids.
-    // If dense_idx is a rigid body, soft_shadows[dense_idx].vertices == nullptr
     SoftBodyShadow *soft_shadows;
 
-    // --- Data Buffers ---
-    struct ContactEvent *contact_events;
-    struct ContactEvent *contact_buffer;
-    MaterialData *materials;
-    PhysicsCommand *command_queue;
-    PhysicsCommand *command_queue_spare;
-    ShapeEntry *shape_cache;
-    CULV_ATOMIC(BodyHandle) * id_to_handle_map;
-    JPH_Constraint **constraints;
-    uint32_t *categories;
-    uint32_t *masks;
-    CULV_ATOMIC(uint32_t) * generations;
-    uint32_t *slot_to_dense;
-    uint32_t *dense_to_slot;
-    uint32_t *free_slots;
-    uint32_t *constraint_generations;
-    uint32_t *free_constraint_slots;
+    CULV_CACHE_LINE_SPACER;
 
-    // --- Counters (8-byte) ---
-    size_t contact_count;
-    size_t contact_capacity;
-    size_t contact_max_capacity;
-    atomic_size_t contact_atomic_idx;
-    size_t material_count;
-    size_t material_capacity;
-    atomic_size_t free_count;
-    size_t slot_capacity;
-    size_t command_count;
-    size_t command_capacity;
-    size_t spare_capacity;
-    size_t shape_cache_count;
-    size_t shape_cache_capacity;
-    atomic_size_t count;
-    size_t capacity;
-    size_t constraint_count;
-    size_t constraint_capacity;
-    size_t free_constraint_count;
-    double time;
+    /* ========================================================================
+     * BUCKET 3: THE WAR ZONE - SYNCHRONIZATION
+     * ======================================================================== */
+    ShadowSync step_sync;            // Already contains internal 64-byte padding
+    
+    CULV_CACHE_LINE_SPACER;
+    ShadowMutex shadow_lock;         // Command Queue access
+    
+    CULV_CACHE_LINE_SPACER;
+    NativeMutex jph_trampoline_lock; // Jolt C++ state access
 
-    // --- DEFERRED GARBAGE COLLECTION ---
-    NewBuffers *trash_buffers;
-    size_t trash_count;
-    size_t trash_capacity;
+    CULV_CACHE_LINE_SPACER;
 
-    // --- BUCKET 2: 4-byte types (Packed 2-per-slot) ---
-    // These three now share 12 bytes total + 4 bytes padding at the end
-    // instead of creating holes between every pointer.
-    uint32_t max_jolt_bodies;
-    atomic_int active_queries;
-    atomic_int view_export_count;
+    /* ========================================================================
+     * BUCKET 4: VOLATILE ATOMIC FLAGS (Polling targets)
+     * ======================================================================== */
+    atomic_bool is_stepping;
+    atomic_bool step_requested;
 #if !defined(Py_GIL_DISABLED)
     atomic_int waiting_threads;
 #endif
 
-    // --- BUCKET 3: Structs & Complex Types ---
-    ShadowSync step_sync;            // 16 bytes (Internal 2-byte alignment)
-    ShadowMutex shadow_lock;         // MagMutex (usually 1 bytes)
-    NativeMutex jph_trampoline_lock; // For JPH callbacks (1 byte, but uses native mutex)
+    CULV_CACHE_LINE_SPACER;
+    atomic_int active_queries;
+    atomic_int view_export_count;
 
-    // --- BUCKET 4: Small types (Packed at the tail) ---
-    CULV_ATOMIC(uint8_t) * slot_states;
-    uint8_t *constraint_states;
-    atomic_bool step_requested;
-    atomic_bool is_stepping;
-    bool needs_optimization;
+    CULV_CACHE_LINE_SPACER;
     atomic_bool is_resizing;
     atomic_bool is_deallocating;
+    bool needs_optimization;
 
-    // --- Large Tail Arrays ---
-    Py_ssize_t view_shape[2];
-    Py_ssize_t view_strides[2];
+    CULV_CACHE_LINE_SPACER;
 
-    // --- Debug Renderer ---
+    /* ========================================================================
+     * BUCKET 5: COMMANDS & CONTACTS
+     * ======================================================================== */
+    PhysicsCommand *command_queue;
+    PhysicsCommand *command_queue_spare;
+    size_t command_count;
+    size_t command_capacity;
+    size_t spare_capacity;
+
+    struct ContactEvent *contact_events;
+    struct ContactEvent *contact_buffer;
+    atomic_size_t contact_atomic_idx;
+    size_t contact_count;
+    size_t contact_capacity;
+
+    CULV_CACHE_LINE_SPACER;
+
+    /* ========================================================================
+     * BUCKET 6: LOOKUP TABLES & CONSTRAINTS
+     * ======================================================================== */
+    ShapeEntry *shape_cache;
+    size_t shape_cache_count;
+    size_t shape_cache_capacity;
+
+    MaterialData *materials;
+    size_t material_count;
+    size_t material_capacity;
+
+    CULV_ATOMIC(BodyHandle) * id_to_handle_map;
+    uint32_t *slot_to_dense;
+    uint32_t *dense_to_slot;
+    uint32_t *free_slots;
+    uint32_t *categories;
+    uint32_t *masks;
+    CULV_ATOMIC(uint8_t) * slot_states;
+    CULV_ATOMIC(uint32_t) * generations;
+
+    /* --- Constraints --- */
+    JPH_Constraint **constraints;
+    uint32_t *constraint_generations;
+    uint32_t *free_constraint_slots;
+    uint8_t *constraint_states;
+    size_t constraint_count;
+    size_t constraint_capacity;
+    size_t free_constraint_count;
+
+    CULV_CACHE_LINE_SPACER;
+
+    /* ========================================================================
+     * BUCKET 7: DEFERRED GC & DEBUGGING
+     * ======================================================================== */
+    NewBuffers *trash_buffers;
+    size_t trash_count;
+    size_t trash_capacity;
+
     JPH_DebugRenderer *debug_renderer;
     DebugBuffer debug_lines;
     DebugBuffer debug_triangles;
+
+    Py_ssize_t view_shape[2];
+    Py_ssize_t view_strides[2];
+
 } PhysicsWorldObject;
 
 // --- Callback Logic ---
