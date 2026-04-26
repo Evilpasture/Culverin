@@ -33,7 +33,7 @@ typedef struct PhysicsWorldObject {
     PyObject *weakreflist;
 
     /* ========================================================================
-     * BUCKET 1: COLD / READ-ONLY DATA
+     * BUCKET 1: READ-ONLY / COLD DATA
      * ======================================================================== */
     JPH_PhysicsSystem *system;
     JPH_BodyInterface *body_interface;
@@ -50,7 +50,7 @@ typedef struct PhysicsWorldObject {
     CULV_CACHE_LINE_SPACER;
 
     /* ========================================================================
-     * BUCKET 2: HOT DATA - SIMULATION STATE (The Stepper's Primary Workspace)
+     * BUCKET 2: HOT SIMULATION STATE (The Stepper's Workspace)
      * ======================================================================== */
     double time;
     atomic_size_t count;
@@ -58,7 +58,7 @@ typedef struct PhysicsWorldObject {
     size_t slot_capacity;
     atomic_size_t free_count;
 
-    // Shadow Pointers
+    // Hot Pointers (Shadow Buffers)
     JPH_Real *positions;
     JPH_Real *prev_positions;
     float *rotations;
@@ -73,32 +73,42 @@ typedef struct PhysicsWorldObject {
     CULV_CACHE_LINE_SPACER;
 
     /* ========================================================================
-     * BUCKET 3: THE WAR ZONE - SYNCHRONIZATION
+     * BUCKET 3: GLOBAL SYNCHRONIZATION (Step Sync)
      * ======================================================================== */
-    ShadowSync step_sync;            // Already contains internal 64-byte padding
-    
-    CULV_CACHE_LINE_SPACER;
-    ShadowMutex shadow_lock;         // Command Queue access
-    
-    CULV_CACHE_LINE_SPACER;
-    NativeMutex jph_trampoline_lock; // Jolt C++ state access
+    ShadowSync step_sync; 
 
     CULV_CACHE_LINE_SPACER;
 
     /* ========================================================================
-     * BUCKET 4: VOLATILE ATOMIC FLAGS (Polling targets)
+     * BUCKET 4: COMMAND QUEUE & MUTEXES (The War Zone)
+     * ======================================================================== */
+    ShadowMutex shadow_lock;         // Primary lock for Python mutations
+    NativeMutex jph_trampoline_lock; // Secondary lock for Jolt internals
+    
+    PhysicsCommand *command_queue;
+    PhysicsCommand *command_queue_spare;
+    size_t command_count;
+    size_t command_capacity;
+    size_t spare_capacity;
+
+    CULV_CACHE_LINE_SPACER;
+
+    /* ========================================================================
+     * BUCKET 5: VOLATILE ATOMIC FLAGS (Polling Targets)
      * ======================================================================== */
     atomic_bool is_stepping;
     atomic_bool step_requested;
 #if !defined(Py_GIL_DISABLED)
-    atomic_int waiting_threads;
+    atomic_int waiting_threads; 
 #endif
 
     CULV_CACHE_LINE_SPACER;
-    atomic_int active_queries;
-    atomic_int view_export_count;
 
-    CULV_CACHE_LINE_SPACER;
+    /* ========================================================================
+     * BUCKET 6: QUERIES & BUFFER VIEWS
+     * ======================================================================== */
+    atomic_int active_queries;   // Hammered by batch raycasts
+    atomic_int view_export_count; // Hammered by housekeeper (Numpy view)
     atomic_bool is_resizing;
     atomic_bool is_deallocating;
     bool needs_optimization;
@@ -106,43 +116,41 @@ typedef struct PhysicsWorldObject {
     CULV_CACHE_LINE_SPACER;
 
     /* ========================================================================
-     * BUCKET 5: COMMANDS & CONTACTS
+     * BUCKET 7: CONTACTS & REGISTRIES
      * ======================================================================== */
-    PhysicsCommand *command_queue;
-    PhysicsCommand *command_queue_spare;
-    size_t command_count;
-    size_t command_capacity;
-    size_t spare_capacity;
-
     struct ContactEvent *contact_events;
     struct ContactEvent *contact_buffer;
     atomic_size_t contact_atomic_idx;
     size_t contact_count;
     size_t contact_capacity;
 
+    MaterialData *materials;
+    size_t material_count;
+    size_t material_capacity;
+
     CULV_CACHE_LINE_SPACER;
 
     /* ========================================================================
-     * BUCKET 6: LOOKUP TABLES & CONSTRAINTS
+     * BUCKET 8: MAPPINGS & FILTERS (Categories/Masks)
      * ======================================================================== */
     ShapeEntry *shape_cache;
     size_t shape_cache_count;
     size_t shape_cache_capacity;
 
-    MaterialData *materials;
-    size_t material_count;
-    size_t material_capacity;
-
     CULV_ATOMIC(BodyHandle) * id_to_handle_map;
     uint32_t *slot_to_dense;
     uint32_t *dense_to_slot;
     uint32_t *free_slots;
-    uint32_t *categories;
-    uint32_t *masks;
+    uint32_t *categories;   // Filter Data
+    uint32_t *masks;        // Filter Data
     CULV_ATOMIC(uint8_t) * slot_states;
     CULV_ATOMIC(uint32_t) * generations;
 
-    /* --- Constraints --- */
+    CULV_CACHE_LINE_SPACER;
+
+    /* ========================================================================
+     * BUCKET 9: CONSTRAINTS & DEFERRED GC
+     * ======================================================================== */
     JPH_Constraint **constraints;
     uint32_t *constraint_generations;
     uint32_t *free_constraint_slots;
@@ -151,15 +159,15 @@ typedef struct PhysicsWorldObject {
     size_t constraint_capacity;
     size_t free_constraint_count;
 
-    CULV_CACHE_LINE_SPACER;
-
-    /* ========================================================================
-     * BUCKET 7: DEFERRED GC & DEBUGGING
-     * ======================================================================== */
     NewBuffers *trash_buffers;
     size_t trash_count;
     size_t trash_capacity;
 
+    CULV_CACHE_LINE_SPACER;
+
+    /* ========================================================================
+     * BUCKET 10: TAIL DATA (Debug & View Shapes)
+     * ======================================================================== */
     JPH_DebugRenderer *debug_renderer;
     DebugBuffer debug_lines;
     DebugBuffer debug_triangles;
