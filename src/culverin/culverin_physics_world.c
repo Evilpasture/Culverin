@@ -3506,12 +3506,12 @@ PyCFunction_DeclareMethod PhysicsWorld_get_render_state(PhysicsWorldObject *self
         return PyErr_NoMemory();
     }
 
-    float *out = (float *)PyBytes_AsString(bytes_obj);
+    auto out = (float *)PyBytes_AsString(bytes_obj);
 
     // Dispatch to optimized C++ SIMD helper
     culverin_compute_interpolation_loop(
-        (PosStride *)self->positions, (PosStride *)self->prev_positions,
-        (AuxStride *)self->rotations, (AuxStride *)self->prev_rotations, alpha, out, count);
+        (PosStride *restrict)self->positions, (PosStride *restrict)self->prev_positions,
+        (AuxStride *restrict)self->rotations, (AuxStride *restrict)self->prev_rotations, alpha, out, count);
 
     SHADOW_UNLOCK(&self->shadow_lock);
     return bytes_obj;
