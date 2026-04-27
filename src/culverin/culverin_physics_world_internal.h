@@ -1,5 +1,6 @@
 #pragma once
 
+#include "culverin.h"
 #include "culverin_soft_body.h"
 #include "culverin_types.h"
 #include <Python.h>
@@ -93,7 +94,7 @@ static inline void *CulvMem_RawMallocAligned(size_t size, size_t alignment) {
 #if defined(_WIN32)
     return _aligned_malloc(size, alignment);
 #else
-    void *ptr = nullptr; // C23 nullptr
+    void *ptr = nullptr;
     if (posix_memalign(&ptr, alignment, size) != 0) {
         return nullptr;
     }
@@ -108,3 +109,22 @@ static inline void CulvMem_RawFreeAligned(void *aligned) {
     free(aligned);
 #endif
 }
+
+[[gnu::always_inline, maybe_unused]]
+static inline void internal_culverin_safe_free(void **ptr) {
+    if ((ptr != nullptr) && ((*ptr) != nullptr)) {
+        CULV_RAW_FREE(*ptr);
+        *ptr = nullptr;
+    }
+}
+
+[[gnu::always_inline, maybe_unused]]
+static inline void internal_culverin_safe_free_aligned(void **ptr) {
+    if ((ptr != nullptr) && ((*ptr) != nullptr)) {
+        CulvMem_RawFreeAligned(*ptr);
+        *ptr = nullptr;
+    }
+}
+
+#define CULVERIN_SAFE_FREE(p) internal_culverin_safe_free((void **)&(p))
+#define CULVERIN_SAFE_FREE_ALIGNED(p) internal_culverin_safe_free_aligned((void **)&(p))
