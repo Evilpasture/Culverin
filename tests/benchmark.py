@@ -11,11 +11,6 @@ import psutil
 
 import culverin
 
-pid = os.getpid()
-print(f"--- PROFILER ATTACH POINT ---")
-print(f"PID: {pid}")
-input("Press Enter to start the benchmark once profiler is attached...")
-
 
 def get_ram_mb() -> float:
     return psutil.Process(os.getpid()).memory_info().rss / 1024 / 1024
