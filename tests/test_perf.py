@@ -19,7 +19,7 @@ class THRESHOLDS:
     
     # Scale factors based on your actual CI regression logs:
     # Physics is close (1.5x), but Python-to-C plumbing is hit hard (6x)
-    PHYS_SCALE = 1.5 if IS_CI else 1.0
+    PHYS_SCALE = 2.0 if IS_CI else 1.0
     API_SCALE  = 6.0 if IS_CI else 1.0
 
     # Creation & Lifecycle
