@@ -1425,12 +1425,12 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
 
     // 2. Simulation Step
     if (dt <= 0.0f) {
-        JPH_PhysicsSystem_OptimizeBroadPhase2(self->system, self->temp_allocator);
+        JPH_PhysicsSystem_OptimizeBroadPhase(self->system);
         self->needs_optimization = false;
     } else {
         JPH_PhysicsSystem_Update2(self->system, dt, 1, self->temp_allocator, self->job_system);
         if (self->needs_optimization) {
-            JPH_PhysicsSystem_OptimizeBroadPhase2(self->system, self->temp_allocator);
+            JPH_PhysicsSystem_OptimizeBroadPhase(self->system);
             self->needs_optimization = false;
         }
     }
