@@ -1,4 +1,5 @@
 #pragma once
+#include "culverin.h"
 #include "culverin_command_buffer.h"
 #include "culverin_compiler_specifics.h"
 #include "culverin_debug_render.h"
@@ -7,7 +8,6 @@
 #include "culverin_soft_body.h"
 #include "culverin_threading.h"
 #include "culverin_types.h"
-#include "culverin.h"
 #include "joltc.h"
 #include <Python.h>
 
@@ -22,15 +22,14 @@ typedef struct {
 
 /**
  * CACHE ISOLATION MACRO
- * Using explicit padding instead of alignas() to remain compatible 
+ * Using explicit padding instead of alignas() to remain compatible
  * with the Python allocator (which doesn't respect 64-byte alignment).
  */
 #define CULV_CACHE_LINE_SPACER uint8_t CULV_CONCAT(_unused_pad_, __LINE__)[64]
 
 // --- The Object Struct ---
 typedef struct PhysicsWorldObject {
-    PyObject_HEAD 
-    PyObject *weakreflist;
+    PyObject_HEAD PyObject *weakreflist;
 
     /* ========================================================================
      * BUCKET 1: READ-ONLY / COLD DATA
@@ -75,7 +74,7 @@ typedef struct PhysicsWorldObject {
     /* ========================================================================
      * BUCKET 3: GLOBAL SYNCHRONIZATION (Step Sync)
      * ======================================================================== */
-    ShadowSync step_sync; 
+    ShadowSync step_sync;
 
     CULV_CACHE_LINE_SPACER;
 
@@ -84,7 +83,7 @@ typedef struct PhysicsWorldObject {
      * ======================================================================== */
     ShadowMutex shadow_lock;         // Primary lock for Python mutations
     NativeMutex jph_trampoline_lock; // Secondary lock for Jolt internals
-    
+
     PhysicsCommand *command_queue;
     PhysicsCommand *command_queue_spare;
     size_t command_count;
@@ -96,21 +95,22 @@ typedef struct PhysicsWorldObject {
     /* ========================================================================
      * BUCKET 5: VOLATILE ATOMIC FLAGS (Polling Targets)
      * ======================================================================== */
+    CULV_CACHE_LINE_SPACER;
     atomic_bool is_stepping;
     atomic_bool step_requested;
-#if !defined(Py_GIL_DISABLED)
-    atomic_int waiting_threads; 
-#endif
+    // #if !defined(Py_GIL_DISABLED)
+    CULV_CACHE_LINE_SPACER;
+    atomic_int waiting_threads;
+    // #endif
 
     CULV_CACHE_LINE_SPACER;
 
     /* ========================================================================
      * BUCKET 6: QUERIES & BUFFER VIEWS
      * ======================================================================== */
-    atomic_int active_queries;   // Hammered by batch raycasts
+    CULV_CACHE_LINE_SPACER;
+    atomic_int active_queries;    // Hammered by batch raycasts
     atomic_int view_export_count; // Hammered by housekeeper (Numpy view)
-    atomic_bool is_resizing;
-    atomic_bool is_deallocating;
     bool needs_optimization;
 
     CULV_CACHE_LINE_SPACER;
@@ -137,12 +137,14 @@ typedef struct PhysicsWorldObject {
     size_t shape_cache_count;
     size_t shape_cache_capacity;
 
+    const void **jolt_body_ptrs;
+
     CULV_ATOMIC(BodyHandle) * id_to_handle_map;
     uint32_t *slot_to_dense;
     uint32_t *dense_to_slot;
     uint32_t *free_slots;
-    uint32_t *categories;   // Filter Data
-    uint32_t *masks;        // Filter Data
+    uint32_t *categories; // Filter Data
+    uint32_t *masks;      // Filter Data
     CULV_ATOMIC(uint8_t) * slot_states;
     CULV_ATOMIC(uint32_t) * generations;
 

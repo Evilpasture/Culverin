@@ -1,28 +1,28 @@
 #pragma once
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <stddef.h>
 #include <string.h>
 
 #ifdef __cplusplus
-    #include <atomic>
-    #define CULV_ATOMIC(t) std::atomic<t>
+#    include <atomic>
+#    define CULV_ATOMIC(t) std::atomic<t>
 #else
-    #include <stdatomic.h>
-    #define CULV_ATOMIC(t) _Atomic(t)
+#    include <stdatomic.h>
+#    define CULV_ATOMIC(t) _Atomic(t)
 #endif
 
 #if defined(__cplusplus) || (defined(__GNUC__) && __GNUC__ < 14)
-    // Fallback for C++ or older GCC
-    typedef uint32_t culv_u23;
-    typedef uint8_t  culv_u1;
-    typedef uint8_t  culv_u5;
+// Fallback for C++ or older GCC
+typedef uint32_t culv_u23;
+typedef uint8_t culv_u1;
+typedef uint8_t culv_u5;
 #else
-    // Native C23
-    typedef unsigned _BitInt(23) culv_u23;
-    typedef unsigned _BitInt(1)  culv_u1;
-    typedef unsigned _BitInt(5)  culv_u5;
+// Native C23
+typedef unsigned _BitInt(23) culv_u23;
+typedef unsigned _BitInt(1) culv_u1;
+typedef unsigned _BitInt(5) culv_u5;
 #endif
 
 // #define CULVERIN_DEBUG
@@ -134,35 +134,29 @@ static inline void culv_init_counters(void) {
     sigaction(SIGILL, &old, NULL);
 }
 
+// On Apple Silicon, we cannot use pmccntr_el0 (Cycles) in user-space.
+// We use cntvct_el0 (Virtual Timer). It frequency is typically 24MHz.
 static inline uint64_t culv_read_start(void) {
     uint64_t val;
-    if (culv_use_pmccntr) {
-        __asm__ __volatile__("isb\n\t"
-                             "mrs %0, pmccntr_el0"
-                             : "=r"(val)::"memory");
-    } else {
-        __asm__ __volatile__("isb\n\t"
-                             "mrs %0, cntvct_el0"
-                             : "=r"(val)::"memory");
-    }
+    // ISB (Instruction Synchronization Barrier) ensures all previous
+    // instructions finished before we read the timer.
+    __asm__ __volatile__("isb\n\t"
+                         "mrs %0, cntvct_el0"
+                         : "=r"(val)::"memory");
     return val;
 }
 
 static inline uint64_t culv_read_end(void) {
     uint64_t val;
-    if (culv_use_pmccntr) {
-        __asm__ __volatile__("mrs %0, pmccntr_el0\n\t"
-                             "isb"
-                             : "=r"(val)::"memory");
-    } else {
-        __asm__ __volatile__("mrs %0, cntvct_el0\n\t"
-                             "isb"
-                             : "=r"(val)::"memory");
-    }
+    // ISB ensures the work is finished before we read the timer.
+    __asm__ __volatile__("mrs %0, cntvct_el0\n\t"
+                         "isb"
+                         : "=r"(val)::"memory");
     return val;
 }
 
-#        define CULV_INIT_PROFILER() culv_init_counters()
+#        define CULV_INIT_PROFILER()                                                               \
+            fprintf(stderr, "[culverin] Using ARM Virtual Timer (cntvct_el0)\n")
 
 #    elif defined(_MSC_VER)
 
@@ -265,15 +259,15 @@ static inline uint64_t culv_read_end(void) {
 
 #if defined(__clang__) || defined(__GNUC__)
 // rw: 0 = read, 1 = write | locality: 3 = high (keep in L1)
-#    define CULV_PREFETCH_READ(addr)  __builtin_prefetch((const void *)(addr), 0, 3)
+#    define CULV_PREFETCH_READ(addr) __builtin_prefetch((const void *)(addr), 0, 3)
 #    define CULV_PREFETCH_WRITE(addr) __builtin_prefetch((const void *)(addr), 1, 3)
 #elif defined(_MSC_VER)
 #    include <mmintrin.h>
 // MSVC uses hints: _MM_HINT_T0 = all cache levels
-#    define CULV_PREFETCH_READ(addr)  _mm_prefetch((const char *)(addr), _MM_HINT_T0)
+#    define CULV_PREFETCH_READ(addr) _mm_prefetch((const char *)(addr), _MM_HINT_T0)
 #    define CULV_PREFETCH_WRITE(addr) _mm_prefetch((const char *)(addr), _MM_HINT_T0)
 #else
-#    define CULV_PREFETCH_READ(addr)  ((void)0)
+#    define CULV_PREFETCH_READ(addr) ((void)0)
 #    define CULV_PREFETCH_WRITE(addr) ((void)0)
 #endif
 
@@ -384,7 +378,7 @@ CULV_MAYBE_UNUSED static constexpr size_t MEMORY_ALIGNMENT_SIZE = 64;
 #if defined(__clang__)
 #    define CULV_UNROLL_LOOP(n) _Pragma(CULV_STR(clang loop unroll_count(n)))
 #elif defined(__GNUC__)
-#    define CULV_UNROLL_LOOP(x) _Pragma(CULV_STR(GCC unroll (x)))
+#    define CULV_UNROLL_LOOP(x) _Pragma(CULV_STR(GCC unroll(x)))
 #else
 #    define CULV_UNROLL_LOOP(x)
 #endif
@@ -409,13 +403,13 @@ CULV_MAYBE_UNUSED static constexpr size_t MEMORY_ALIGNMENT_SIZE = 64;
 // us to avoid type errors in contexts where a null pointer constant is expected, without having to
 // use a more complex compile-time construct like in C++.
 // If the ancient header didn't give us nullptr_t, we define it ourselves
-#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L
-    // C23 compiler will handle this, but if headers are stale:
-    #ifndef __nullptr_t_defined
-        typedef typeof(nullptr) nullptr_t;
-        #define __nullptr_t_defined
-    #endif
-#endif
+#    if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L
+// C23 compiler will handle this, but if headers are stale:
+#        ifndef __nullptr_t_defined
+typedef typeof(nullptr) nullptr_t;
+#            define __nullptr_t_defined
+#        endif
+#    endif
 #    if defined(__STDC_VERSION__) &&                                                               \
         __STDC_VERSION__ >=                                                                        \
             202311 // C23 introduces _Generic, typeof_unqual and other keywords, which allows us to
@@ -675,17 +669,16 @@ static_assert(
 } // namespace
 #endif                     // __cplusplus
 
-
 #ifdef __cplusplus
-    // In C++, use the standard decltype
-    #include <type_traits>
-    #define CULV_TYPE_OF(x) decltype(x)
+// In C++, use the standard decltype
+#    include <type_traits>
+#    define CULV_TYPE_OF(x) decltype(x)
 #else
-    // In C, use C23 typeof or the GCC/Clang extension
-    #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L
-        #define CULV_TYPE_OF(x) typeof(x)
-    #else
-        // Fallback for older C or compilers with extensions
-        #define CULV_TYPE_OF(x) __typeof__(x)
-    #endif
+// In C, use C23 typeof or the GCC/Clang extension
+#    if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L
+#        define CULV_TYPE_OF(x) typeof(x)
+#    else
+// Fallback for older C or compilers with extensions
+#        define CULV_TYPE_OF(x) __typeof__(x)
+#    endif
 #endif

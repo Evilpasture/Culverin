@@ -66,8 +66,6 @@ PyType_DeclareSlot_Status PhysicsWorld_clear(CULV_MAYBE_UNUSED PhysicsWorldObjec
 PyType_DeclareSlot_Void PhysicsWorld_dealloc(PhysicsWorldObject *self) {
     PyTypeObject *tp = Py_TYPE(self);
 
-    atomic_store_explicit(&self->is_deallocating, true, memory_order_release);
-
     // 1. The GC "Safety Shield"
     // Use the check-then-untrack to avoid the 'already untracked' abort
     if (PyObject_GC_IsTracked((PyObject *)self)) {
@@ -188,9 +186,9 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
     self->max_jolt_bodies = 0;
     atomic_init(&self->active_queries, 0);
     atomic_init(&self->view_export_count, 0);
-#if !defined(Py_GIL_DISABLED)
+    // #if !defined(Py_GIL_DISABLED)
     atomic_init(&self->waiting_threads, 0);
-#endif
+    // #endif
     atomic_init(&self->step_requested, false);
     atomic_init(&self->is_stepping, false);
     self->needs_optimization = false;
@@ -1364,12 +1362,6 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
 
     VALIDATE_FINITE_FLOAT(dt, "dt");
 
-    // Check death flag
-    if (atomic_load_explicit(&self->is_deallocating, memory_order_acquire)) {
-        PyErr_SetString(PyExc_RuntimeError, "Cannot step: World is deallocating");
-        return nullptr;
-    }
-
     // --- PHASE 0: RE-ENTRANCY GUARD ---
     if (atomic_load_explicit(&self->is_stepping, memory_order_acquire)) {
         PyErr_SetString(PyExc_RuntimeError, "Concurrent step detected.");
@@ -1382,15 +1374,17 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
     // I have no idea why I should even need this, but the GIL is giving me trouble, so this will
     // do.
     // TODO: investigate how the hell does this work
-#if !defined(Py_GIL_DISABLED)
+    // #if !defined(Py_GIL_DISABLED)
     // ANTI-STARVATION: Yield to waiting Python threads (Getters/Mutators)
 
-    while (atomic_load_explicit(&self->waiting_threads, memory_order_acquire) > 0) {
+    while (atomic_load_explicit(&self->waiting_threads, memory_order_relaxed) > 0) {
         SHADOW_UNLOCK(&self->shadow_lock);
         Py_BEGIN_ALLOW_THREADS culverin_yield();
         Py_END_ALLOW_THREADS SHADOW_LOCK(&self->shadow_lock);
     }
-#endif
+
+    atomic_thread_fence(memory_order_acquire);
+    // #endif
 
     // Raise flags
     atomic_store_explicit(&self->is_stepping, true, memory_order_relaxed);
@@ -1448,10 +1442,10 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
         NATIVE_COND_WAIT(self->step_sync.cond, self->step_sync.mutex);
     }
 
+    NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
+
     // 3. Jolt-to-Shadow Buffer Sync
     culverin_sync_shadow_buffers(self);
-
-    NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
 
     CULV_PROFILE_END(jolt_step, "Jolt Physics Crunch", (unsigned int)captured_count);
 
@@ -3511,7 +3505,8 @@ PyCFunction_DeclareMethod PhysicsWorld_get_render_state(PhysicsWorldObject *self
     // Dispatch to optimized C++ SIMD helper
     culverin_compute_interpolation_loop(
         (PosStride *restrict)self->positions, (PosStride *restrict)self->prev_positions,
-        (AuxStride *restrict)self->rotations, (AuxStride *restrict)self->prev_rotations, alpha, out, count);
+        (AuxStride *restrict)self->rotations, (AuxStride *restrict)self->prev_rotations, alpha, out,
+        count);
 
     SHADOW_UNLOCK(&self->shadow_lock);
     return bytes_obj;

@@ -207,26 +207,35 @@ int allocate_buffers(PhysicsWorldObject *self, int max_bodies) {
     self->angular_velocities =
         (float *)CulvMem_RawMallocAligned(self->capacity * sizeof(AuxStride), AVX_ALIGNMENT);
 
-    self->body_ids     = (JPH_BodyID *)CULV_RAW_MALLOC(self->capacity * sizeof(JPH_BodyID));
-    self->user_data    = (uint64_t *)CULV_RAW_CALLOC(self->capacity, sizeof(uint64_t));
-    self->categories   = (uint32_t *)CULV_RAW_MALLOC(self->capacity * sizeof(uint32_t));
-    self->masks        = (uint32_t *)CULV_RAW_MALLOC(self->capacity * sizeof(uint32_t));
-    self->material_ids = (uint32_t *)CULV_RAW_CALLOC(self->capacity, sizeof(uint32_t));
+    self->body_ids =
+        (typeof(self->body_ids))CULV_RAW_MALLOC(self->capacity * sizeof(typeof(*self->body_ids)));
+    self->user_data =
+        (typeof(self->user_data))CULV_RAW_CALLOC(self->capacity, sizeof(typeof(*self->user_data)));
+    self->categories = (typeof(self->categories))CULV_RAW_MALLOC(self->capacity *
+                                                                 sizeof(typeof(*self->categories)));
+    self->masks =
+        (typeof(self->masks))CULV_RAW_MALLOC(self->capacity * sizeof(typeof(*self->masks)));
+    self->material_ids = (typeof(self->material_ids))CULV_RAW_CALLOC(
+        self->capacity, sizeof(typeof(*self->material_ids)));
 
-    self->soft_shadows = (SoftBodyShadow *)CULV_RAW_CALLOC(self->capacity, sizeof(SoftBodyShadow));
+    self->soft_shadows = (typeof(self->soft_shadows))CULV_RAW_CALLOC(
+        self->capacity, sizeof(typeof(*self->soft_shadows)));
 
     // ATOMIC BUFFER ALLOCATIONS
     // id_to_handle_map is BodyHandle*
-    self->id_to_handle_map = (CULV_ATOMIC(BodyHandle) *)CULV_RAW_MALLOC(
-        (self->max_jolt_bodies + 1) * sizeof(BodyHandle));
+    self->id_to_handle_map = (CULV_ATOMIC(typeof_unqual(*self->id_to_handle_map)) *)CULV_RAW_MALLOC(
+        (self->max_jolt_bodies + 1) * sizeof(typeof_unqual(*self->id_to_handle_map)));
+
+    self->jolt_body_ptrs = (typeof(self->jolt_body_ptrs))CULV_RAW_CALLOC(
+        self->max_jolt_bodies + 1, sizeof(typeof(*self->jolt_body_ptrs)));
 
     // generations is CULV_ATOMIC(uint32_t)*
     self->generations = (CULV_ATOMIC(uint32_t) *)CULV_RAW_MALLOC(self->slot_capacity *
                                                                  sizeof(CULV_ATOMIC(uint32_t)));
 
     // slot_states is CULV_ATOMIC(uint8_t)*
-    self->slot_states =
-        (CULV_ATOMIC(uint8_t) *)CULV_RAW_MALLOC(self->slot_capacity * sizeof(CULV_ATOMIC(uint8_t)));
+    self->slot_states = (CULV_ATOMIC(typeof_unqual(*self->slot_states)) *)CULV_RAW_MALLOC(
+        self->slot_capacity * sizeof(CULV_ATOMIC(typeof_unqual(*self->slot_states))));
 
     // Normal Indirection/Mapping Buffers
     self->slot_to_dense = (uint32_t *)CULV_RAW_MALLOC(self->slot_capacity * sizeof(uint32_t));
@@ -245,7 +254,9 @@ int allocate_buffers(PhysicsWorldObject *self, int max_bodies) {
     self->trash_buffers  = (NewBuffers *)CULV_RAW_CALLOC(self->trash_capacity, sizeof(NewBuffers));
 
     if (!self->positions || !self->rotations || !self->id_to_handle_map || !self->command_queue ||
-        !self->slot_states || !self->generations) {
+        !self->slot_states || !self->generations || !self->free_slots || !self->slot_to_dense ||
+        !self->dense_to_slot || !self->user_data || !self->categories || !self->masks ||
+        !self->material_ids || !self->soft_shadows || !self->jolt_body_ptrs) {
         return -1;
     }
 
@@ -276,10 +287,8 @@ int allocate_buffers(PhysicsWorldObject *self, int max_bodies) {
 CULV_NODISCARD
 int PhysicsWorld_resize(PhysicsWorldObject *self, size_t new_capacity) {
     // 1. Signal Start
-    atomic_store_explicit(&self->is_resizing, true, memory_order_release);
 
     if (atomic_load_explicit(&self->view_export_count, memory_order_relaxed) > 0) {
-        atomic_store_explicit(&self->is_resizing, false, memory_order_relaxed);
         PyErr_SetString(PyExc_BufferError, "Cannot resize while memoryview is active.");
         return -1;
     }
@@ -303,14 +312,12 @@ int PhysicsWorld_resize(PhysicsWorldObject *self, size_t new_capacity) {
     }
 
     if (new_capacity <= self->capacity) {
-        atomic_store_explicit(&self->is_resizing, false, memory_order_relaxed);
         return 0;
     }
 
     // 3. Prepare New Buffers
     NewBuffers nb;
     if (alloc_new_buffers(&nb, new_capacity) < 0) {
-        atomic_store_explicit(&self->is_resizing, false, memory_order_relaxed);
         PyErr_NoMemory();
         return -1;
     }
@@ -324,7 +331,6 @@ int PhysicsWorld_resize(PhysicsWorldObject *self, size_t new_capacity) {
         void *new_trash = CULV_RAW_REALLOC(self->trash_buffers, next_cap * sizeof(NewBuffers));
         if (!new_trash) {
             free_new_buffers(&nb);
-            atomic_store_explicit(&self->is_resizing, false, memory_order_relaxed);
             return -1;
         }
         size_t added_elements = next_cap - self->trash_capacity;
@@ -378,7 +384,6 @@ int PhysicsWorld_resize(PhysicsWorldObject *self, size_t new_capacity) {
     self->slot_capacity = new_capacity;
 
     // 8. Signal End
-    atomic_store_explicit(&self->is_resizing, false, memory_order_release);
 
     return 0;
 }
@@ -410,6 +415,11 @@ void free_constraints(PhysicsWorldObject *self) {
     CULV_RAW_FREE(self->constraint_states);
     self->constraint_states = nullptr;
 }
+[[gnu::always_inline]]
+static inline void culverin_safe_free(void *ptr) {
+    CULV_RAW_FREE(ptr);
+    ptr = nullptr;
+}
 
 void free_shadow_buffers(PhysicsWorldObject *self) {
     // 1. Aligned buffers (stride types)
@@ -429,25 +439,17 @@ void free_shadow_buffers(PhysicsWorldObject *self) {
     // 2. ATOMIC buffers
     // Generations is CULV_ATOMIC(uint32_t)*
     // Slot States is CULV_ATOMIC(uint8_t)*
-    CULV_RAW_FREE((void *)self->generations);
-    self->generations = nullptr;
-    CULV_RAW_FREE((void *)self->slot_states);
-    self->slot_states = nullptr;
+    culverin_safe_free((void *)self->generations);
+    culverin_safe_free((void *)self->slot_states);
 
     // 3. Regular buffers
-    CULV_RAW_FREE(self->body_ids);
-    self->body_ids = nullptr;
-    CULV_RAW_FREE(self->slot_to_dense);
-    self->slot_to_dense = nullptr;
-    CULV_RAW_FREE(self->dense_to_slot);
-    self->dense_to_slot = nullptr;
-    CULV_RAW_FREE(self->free_slots);
-    self->free_slots = nullptr;
-    CULV_RAW_FREE(self->command_queue);
-    self->command_queue = nullptr;
-    CULV_RAW_FREE(self->user_data);
-    self->user_data = nullptr;
-    CULV_RAW_FREE(self->categories);
+    culverin_safe_free(self->body_ids);
+    culverin_safe_free(self->slot_to_dense);
+    culverin_safe_free(self->dense_to_slot);
+    culverin_safe_free(self->free_slots);
+    culverin_safe_free(self->command_queue);
+    culverin_safe_free(self->user_data);
+    culverin_safe_free(self->categories);
 
     if (self->soft_shadows) {
         for (size_t i = 0; i < self->capacity; i++) {
@@ -455,17 +457,12 @@ void free_shadow_buffers(PhysicsWorldObject *self) {
                 CulvMem_RawFreeAligned(self->soft_shadows[i].vertices);
             }
         }
-        CULV_RAW_FREE(self->soft_shadows);
-        self->soft_shadows = nullptr;
+        culverin_safe_free(self->soft_shadows);
     }
-
-    self->categories = nullptr;
-    CULV_RAW_FREE(self->masks);
-    self->masks = nullptr;
-    CULV_RAW_FREE(self->material_ids);
-    self->material_ids = nullptr;
-    CULV_RAW_FREE(self->materials);
-    self->materials = nullptr;
+    culverin_safe_free(self->masks);
+    culverin_safe_free(self->material_ids);
+    culverin_safe_free(self->materials);
+    culverin_safe_free((void *)self->jolt_body_ptrs);
 }
 
 // --- Helper: Resource Cleanup (Idempotent) ---
@@ -596,7 +593,7 @@ int init_jolt_core(PhysicsWorldObject *self, WorldLimits limits, GravityVector g
     // to focus exclusively on finding real concurrency bugs in the Culverin/Python layer.
     constexpr int num_workers = 0;
 #else
-    constexpr int num_workers = -1;
+    constexpr int num_workers = 4;
 #endif
     JobSystemThreadPoolConfig job_cfg = {.maxJobs     = JOB_SYSTEM_MAX_JOBS,
                                          .maxBarriers = JOB_SYSTEM_MAX_BARRIERS,
