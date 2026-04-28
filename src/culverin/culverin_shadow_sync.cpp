@@ -258,7 +258,6 @@ culverin_sync_shadow_buffers(const PhysicsWorldObject *const CULV_RESTRICT self)
             const auto *const CULV_RESTRICT slot_states                    = self->slot_states;
             const auto *const CULV_RESTRICT generations                    = self->generations;
             const size_t slot_capacity                                     = self->slot_capacity;
-            CULV_UNROLL_LOOP(8)
             for (uint32_t i = 0; i < active_rigid_count; i++) {
                 const uint32_t raw_jolt_id = active_rigid_ids[i];
                 const uint32_t j_idx       = JPH_ID_TO_INDEX(raw_jolt_id);
@@ -332,7 +331,6 @@ culverin_sync_shadow_buffers(const PhysicsWorldObject *const CULV_RESTRICT self)
             const auto *const CULV_RESTRICT generations                    = self->generations;
             const size_t slot_capacity                                     = self->slot_capacity;
             const auto *const CULV_RESTRICT soft_shadows                   = self->soft_shadows;
-            CULV_UNROLL_LOOP(8)
             for (uint32_t i = 0; i < active_soft_count; i++) {
                 const uint32_t raw_jolt_id = active_soft_ids[i];
                 const uint32_t j_idx       = JPH_ID_TO_INDEX(raw_jolt_id);
