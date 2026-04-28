@@ -340,9 +340,12 @@ static constexpr size_t PARSER_REGISTRY_SIZE = 128;
 
 #define SCHEMA_SBSS_ADD_VERTICES(X)                                                                \
     X(IDX_SAVS_POS, "positions", PyObject *, true)                                                 \
-    X(IDX_SAVS_MASS, "inv_masses", PyObject *, false)
+    X(IDX_SAVS_MASS, "inv_masses", PyObject *, false)                                              \
+    X(IDX_SAVS_VEL, "velocities", PyObject *, false)
 
-#define SCHEMA_SBSS_ADD_FACES(X) X(IDX_SAFS_IND, "indices", PyObject *, true)
+#define SCHEMA_SBSS_ADD_FACES(X)                                                                   \
+    X(IDX_SAFS_IND, "indices", PyObject *, true)                                                   \
+    X(IDX_SAFS_MAT, "materials", PyObject *, false)
 
 #define SCHEMA_GET_SB_VERTEX(X)                                                                    \
     X(IDX_GSBV_H, "handle", ParseBodyHandle, true)                                                 \
@@ -369,12 +372,14 @@ static constexpr size_t PARSER_REGISTRY_SIZE = 128;
 
 #define SCHEMA_SBSS_ADD_VERTEX(X)                                                                  \
     X(IDX_SAV_POS, "pos", PyObject *, true)                                                        \
-    X(IDX_SAV_MASS, "inv_mass", float, true)
+    X(IDX_SAV_MASS, "inv_mass", float, false)                                                      \
+    X(IDX_SAV_VEL, "velocity", PyObject *, false)
 
 #define SCHEMA_SBSS_ADD_FACE(X)                                                                    \
     X(IDX_SAF_V1, "v1", uint32_t, true)                                                            \
     X(IDX_SAF_V2, "v2", uint32_t, true)                                                            \
-    X(IDX_SAF_V3, "v3", uint32_t, true)
+    X(IDX_SAF_V3, "v3", uint32_t, true)                                                            \
+    X(IDX_SAF_MAT, "material_index", uint32_t, false) // Add this line
 
 #define SCHEMA_REG_ENTITY_ONLY(X) X(IDX_REO_ENT, "entity", uint64_t, true)
 

@@ -5,6 +5,7 @@
 
 from collections.abc import Buffer, Sequence
 from typing import Any, Literal, TypedDict, overload
+from warnings import deprecated
 
 __version__: str
 
@@ -143,13 +144,42 @@ class Ragdoll:
 
 class SoftBodySharedSettings:
     def __init__(self) -> None: ...
-    def add_vertex(self, pos: Vec3, inv_mass: float) -> None: ...
-    def add_vertices(self, positions: Buffer, inv_masses: Buffer | None = None) -> None: ...
-    def add_face(self, v1: int, v2: int, v3: int) -> None: ...
-    def add_faces(self, indices: Buffer) -> None: ...
+
+    def add_vertex(
+        self, 
+        pos: Vec3, 
+        inv_mass: float = 1.0, 
+        velocity: Vec3 = (0.0, 0.0, 0.0)
+    ) -> None: ...
+
+    def add_vertices(
+        self, 
+        positions: Buffer, 
+        inv_masses: Buffer | None = None, 
+        velocities: Buffer | None = None
+    ) -> None: ...
+
+    def add_face(
+        self, 
+        v1: int, 
+        v2: int, 
+        v3: int, 
+        material_index: int = 0
+    ) -> None: ...
+
+    def add_faces(
+        self, 
+        indices: Buffer, 
+        materials: Buffer | None = None
+    ) -> None: ...
+
+    @deprecated("Pin vertices by passing 0.0 mass in add_vertices().")
     def add_pinned_vertex(self, index: int, /) -> None: ...
+
     def create_constraints(self, compliance: float, bend_type: int = 1) -> None: ...
+
     def optimize(self) -> None: ...
+
     def get_vertex_position(self, index: int, /) -> Vec3: ...
 
 class Vehicle:
