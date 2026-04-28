@@ -32,7 +32,7 @@ static inline void internal_sync_wait_loop(PhysicsWorldObject *self,
 /* ============================================================================
  * PUBLIC SYNCHRONIZATION API
  * ============================================================================ */
-
+[[gnu::always_inline]]
 static inline void internal_block_until_not_stepping(PhysicsWorldObject *self) {
     if (atomic_load_explicit(&self->is_stepping, memory_order_relaxed)) {
         // #if !defined(Py_GIL_DISABLED)
@@ -47,7 +47,7 @@ static inline void internal_block_until_not_stepping(PhysicsWorldObject *self) {
         // #endif
     }
 }
-
+[[gnu::always_inline]]
 static inline void internal_block_until_not_querying(PhysicsWorldObject *self) {
     // Note: Query check uses 'acquire' to ensure visibility of query completion
     while (atomic_load_explicit(&self->active_queries, memory_order_acquire) > 0) {
@@ -68,7 +68,7 @@ static inline void internal_block_if_step_pending(PhysicsWorldObject *self) {
         // #endif
     }
 }
-
+[[gnu::always_inline]]
 static inline void internal_block_until_can_query(PhysicsWorldObject *self) {
     if (atomic_load_explicit(&self->is_stepping, memory_order_relaxed) ||
         atomic_load_explicit(&self->step_requested, memory_order_relaxed)) {
