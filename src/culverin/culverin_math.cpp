@@ -61,6 +61,48 @@ void culverin_compute_interpolation_loop(const PosStride *__restrict curr_p,
     }
 }
 
+/**
+ * @brief SIMD Interpolation for Character Transforms.
+ * start_p is JPH_Real (potentially double), start_r is float.
+ */
+[[gnu::hot, gnu::nonnull]]
+void culverin_math_interpolate_character_transform(const PosStride *__restrict start_p,
+                                                   const AuxStride *__restrict start_r,
+                                                   const JPH_RVec3 *__restrict end_p,
+                                                   const JPH_Quat *__restrict end_r,
+                                                   const float alpha, float *__restrict out_p,
+                                                   float *__restrict out_r) {
+    using namespace JPH;
+
+    // Use RVec3 for position to respect double-precision worlds
+    const RVec3 p1(static_cast<Real>(start_p->x), static_cast<Real>(start_p->y),
+                   static_cast<Real>(start_p->z));
+
+    // Pointer reinterpretation is safe here as Jolt types are POD-like
+    const auto &p2   = *reinterpret_cast<const RVec3 *>(end_p);
+    const auto p_res = p1 + (p2 - p1) * static_cast<Real>(alpha);
+
+    // Rotation is always float[4] regardless of JPH_DOUBLE_PRECISION
+    const auto v1  = Vec4::sLoadFloat4(reinterpret_cast<const Float4 *>(start_r));
+    const auto &q2 = *reinterpret_cast<const Quat *>(end_r);
+    const auto v2  = q2.mValue;
+
+    // SIMD Dot and shortest path
+    const float dot = v1.Dot(v2);
+    const Quat q1(v1);
+    const Quat q2_shortest = (dot < 0.0F) ? -q2 : q2;
+
+    // NLerp + Normalize
+    const Quat q_res = (q1 + (q2_shortest - q1) * alpha).Normalized();
+
+    // Final stores
+    out_p[0] = static_cast<float>(p_res.GetX());
+    out_p[1] = static_cast<float>(p_res.GetY());
+    out_p[2] = static_cast<float>(p_res.GetZ());
+
+    q_res.mValue.StoreFloat4(reinterpret_cast<Float4 *>(out_r));
+}
+
 // Internal helpers for Python
 
 // -----------------------------------------------------------------------------
