@@ -26,28 +26,27 @@ struct SyncWorkItem {
 // =================================================================================================
 
 [[gnu::always_inline, gnu::hot, gnu::flatten, gnu::nonnull(1, 2)]] void
-process_full_batch(PhysicsWorldObject *const CULV_RESTRICT self,
+process_full_batch(const PhysicsWorldObject *const CULV_RESTRICT self,
                    const SyncWorkItem *const CULV_RESTRICT worklist) noexcept {
-    auto *CULV_RESTRICT s_pos =
-        (PosStride * CULV_RESTRICT) CULV_ASSUME_ALIGNED(self->positions, sizeof(PosStride));
-    auto *CULV_RESTRICT s_ppos =
-        (PosStride * CULV_RESTRICT) CULV_ASSUME_ALIGNED(self->prev_positions, sizeof(PosStride));
-    auto *CULV_RESTRICT s_rot =
-        (AuxStride * CULV_RESTRICT) CULV_ASSUME_ALIGNED(self->rotations, sizeof(AuxStride));
-    auto *CULV_RESTRICT s_prot =
-        (AuxStride * CULV_RESTRICT) CULV_ASSUME_ALIGNED(self->prev_rotations, sizeof(AuxStride));
-    auto *CULV_RESTRICT s_lvel =
-        (AuxStride * CULV_RESTRICT) CULV_ASSUME_ALIGNED(self->linear_velocities, sizeof(AuxStride));
-    auto *CULV_RESTRICT s_avel = (AuxStride * CULV_RESTRICT)
-        CULV_ASSUME_ALIGNED(self->angular_velocities, sizeof(AuxStride));
+    auto *const CULV_RESTRICT s_pos =
+        (PosStride *const CULV_RESTRICT)CULV_ASSUME_ALIGNED(self->positions, sizeof(PosStride));
+    auto *const CULV_RESTRICT s_ppos = (PosStride *const CULV_RESTRICT)CULV_ASSUME_ALIGNED(
+        self->prev_positions, sizeof(PosStride));
+    auto *const CULV_RESTRICT s_rot =
+        (AuxStride *const CULV_RESTRICT)CULV_ASSUME_ALIGNED(self->rotations, sizeof(AuxStride));
+    auto *const CULV_RESTRICT s_prot = (AuxStride *const CULV_RESTRICT)CULV_ASSUME_ALIGNED(
+        self->prev_rotations, sizeof(AuxStride));
+    auto *const CULV_RESTRICT s_lvel = (AuxStride *const CULV_RESTRICT)CULV_ASSUME_ALIGNED(
+        self->linear_velocities, sizeof(AuxStride));
+    auto *const CULV_RESTRICT s_avel = (AuxStride *const CULV_RESTRICT)CULV_ASSUME_ALIGNED(
+        self->angular_velocities, sizeof(AuxStride));
 
-    // Prevent I-Cache bloat and register spilling by limiting unroll count
-    CULV_UNROLL_LOOP(4)
+    CULV_UNROLL_LOOP(8)
     for (uint32_t j = 0; j < BATCH_SIZE; j++) {
         const uint32_t D = worklist[j].dense_idx;
 
         // Native C++ Pointer - GUARANTEED SAFE
-        const JPH::Body *b = worklist[j].body;
+        const JPH::Body *const CULV_RESTRICT b = worklist[j].body;
 
         // Snapshot previous state (Wide 128/256-bit copy)
         const PosStride old_pos = s_pos[D];
@@ -56,17 +55,19 @@ process_full_batch(PhysicsWorldObject *const CULV_RESTRICT self,
         s_prot[D]               = old_rot;
 
 #ifndef JPH_DOUBLE_PRECISION
-        JPH::Vec4(b->GetCenterOfMassPosition(), 0.0f)
+        [[clang::always_inline]] JPH::Vec4(b->GetCenterOfMassPosition(), 0.0f)
             .StoreFloat4(reinterpret_cast<JPH::Float4 *>(&s_pos[D]));
 #else
-        b->GetCenterOfMassPosition().StoreDouble3(reinterpret_cast<JPH::Double3 *>(&s_pos[D]));
+        [[clang::always_inline]] b->GetCenterOfMassPosition().StoreDouble3(
+            reinterpret_cast<JPH::Double3 *>(&s_pos[D]));
         s_pos[D].w = 0.0;
 #endif
 
-        b->GetRotation().GetXYZW().StoreFloat4(reinterpret_cast<JPH::Float4 *>(&s_rot[D]));
-        JPH::Vec4(b->GetLinearVelocity(), 0.0F)
+        [[clang::always_inline]] b->GetRotation().GetXYZW().StoreFloat4(
+            reinterpret_cast<JPH::Float4 *>(&s_rot[D]));
+        [[clang::always_inline]] JPH::Vec4(b->GetLinearVelocity(), 0.0F)
             .StoreFloat4(reinterpret_cast<JPH::Float4 *>(&s_lvel[D]));
-        JPH::Vec4(b->GetAngularVelocity(), 0.0F)
+        [[clang::always_inline]] JPH::Vec4(b->GetAngularVelocity(), 0.0F)
             .StoreFloat4(reinterpret_cast<JPH::Float4 *>(&s_avel[D]));
     }
 }
@@ -75,23 +76,23 @@ process_full_batch(PhysicsWorldObject *const CULV_RESTRICT self,
 // HOT PATH: Soft Body Batch Processor
 // =================================================================================================
 [[gnu::always_inline, gnu::hot, gnu::flatten, gnu::nonnull(1, 2)]] void
-process_soft_batch(PhysicsWorldObject *const CULV_RESTRICT self,
+process_soft_batch(const PhysicsWorldObject *const CULV_RESTRICT self,
                    const SyncWorkItem *const CULV_RESTRICT worklist,
                    const uint32_t count) noexcept {
-    auto *CULV_RESTRICT s_pos =
-        (PosStride * CULV_RESTRICT) CULV_ASSUME_ALIGNED(self->positions, sizeof(PosStride));
-    auto *CULV_RESTRICT s_ppos =
-        (PosStride * CULV_RESTRICT) CULV_ASSUME_ALIGNED(self->prev_positions, sizeof(PosStride));
-    auto *CULV_RESTRICT s_rot =
-        (AuxStride * CULV_RESTRICT) CULV_ASSUME_ALIGNED(self->rotations, sizeof(AuxStride));
-    auto *CULV_RESTRICT s_prot =
-        (AuxStride * CULV_RESTRICT) CULV_ASSUME_ALIGNED(self->prev_rotations, sizeof(AuxStride));
+    auto *const CULV_RESTRICT s_pos = static_cast<PosStride *const CULV_RESTRICT>(
+        CULV_ASSUME_ALIGNED(self->positions, sizeof(PosStride)));
+    auto *const CULV_RESTRICT s_ppos = static_cast<PosStride *const CULV_RESTRICT>(
+        CULV_ASSUME_ALIGNED(self->prev_positions, sizeof(PosStride)));
+    auto *const CULV_RESTRICT s_rot = static_cast<AuxStride *const CULV_RESTRICT>(
+        CULV_ASSUME_ALIGNED(self->rotations, sizeof(AuxStride)));
+    auto *const CULV_RESTRICT s_prot = static_cast<AuxStride *const CULV_RESTRICT>(
+        CULV_ASSUME_ALIGNED(self->prev_rotations, sizeof(AuxStride)));
 
     const auto *CULV_RESTRICT soft_shadows = self->soft_shadows;
-
+#pragma unroll
     for (uint32_t j = 0; j < count; j++) {
-        const uint32_t D   = worklist[j].dense_idx;
-        const JPH::Body *b = worklist[j].body;
+        const uint32_t D         = worklist[j].dense_idx;
+        const JPH::Body *const b = worklist[j].body;
 
         // 1. Snapshot and Update COM/Rotation (Rigid-compat layer)
         const PosStride old_pos = s_pos[D];
@@ -100,43 +101,46 @@ process_soft_batch(PhysicsWorldObject *const CULV_RESTRICT self,
         s_prot[D]               = old_rot;
 
 #ifndef JPH_DOUBLE_PRECISION
-        JPH::Vec4(b->GetCenterOfMassPosition(), 0.0f)
+        [[clang::always_inline]] JPH::Vec4(b->GetCenterOfMassPosition(), 0.0f)
             .StoreFloat4(reinterpret_cast<JPH::Float4 *>(&s_pos[D]));
 #else
-        b->GetCenterOfMassPosition().StoreDouble3(reinterpret_cast<JPH::Double3 *>(&s_pos[D]));
+        [[clang::always_inline]] b->GetCenterOfMassPosition().StoreDouble3(
+            reinterpret_cast<JPH::Double3 *>(&s_pos[D]));
         s_pos[D].w = 0.0;
 #endif
-        b->GetRotation().GetXYZW().StoreFloat4(reinterpret_cast<JPH::Float4 *>(&s_rot[D]));
+        [[clang::always_inline]] b->GetRotation().GetXYZW().StoreFloat4(
+            reinterpret_cast<JPH::Float4 *>(&s_rot[D]));
 
         // 2. Vertex Shadow Sync
-        const auto *CULV_RESTRICT soft_mp =
+        const auto *const CULV_RESTRICT soft_mp =
             static_cast<const JPH::SoftBodyMotionProperties *>(b->GetMotionProperties());
         const JPH::Array<JPH::SoftBodyVertex> &jolt_verts = soft_mp->GetVertices();
         const SoftBodyShadow &shadow                      = soft_shadows[D];
 
         // Guard against mismatched topologies (e.g. async resizing)
         if ((shadow.vertices != nullptr) && shadow.num_vertices == jolt_verts.size()) [[likely]] {
-            auto *CULV_RESTRICT dst_verts = reinterpret_cast<PosStride *>(shadow.vertices);
-            JPH::Quat rotation            = b->GetRotation();
-            JPH::RVec3 translation        = b->GetCenterOfMassPosition();
+            auto *const CULV_RESTRICT dst_verts =
+                reinterpret_cast<PosStride *const>(shadow.vertices);
+            const JPH::Quat rotation     = b->GetRotation();
+            const JPH::RVec3 translation = b->GetCenterOfMassPosition();
 
             const size_t num_v = shadow.num_vertices;
 
             // Unrolled Vertex Loop
-            CULV_UNROLL_LOOP(4)
+            CULV_UNROLL_LOOP(8)
             for (size_t v = 0; v < num_v; ++v) {
                 // Prefetch vertex writes 8 steps ahead
                 if (v + 8 < num_v) {
                     CULV_PREFETCH_WRITE(&dst_verts[v + 8]);
                 }
 
-                JPH::Vec3 local_pos(jolt_verts[v].mPosition);
+                const JPH::Vec3 local_pos(jolt_verts[v].mPosition);
 #ifndef JPH_DOUBLE_PRECISION
-                JPH::Vec3 world_pos = (rotation * local_pos) + translation;
+                const JPH::Vec3 world_pos = (rotation * local_pos) + translation;
                 JPH::Vec4(world_pos, 0.0f)
                     .StoreFloat4(reinterpret_cast<JPH::Float4 *>(&dst_verts[v]));
 #else
-                JPH::RVec3 world_pos = JPH::RVec3(rotation * local_pos) + translation;
+                const JPH::RVec3 world_pos = JPH::RVec3(rotation * local_pos) + translation;
                 world_pos.StoreDouble3(reinterpret_cast<JPH::Double3 *>(&dst_verts[v]));
                 dst_verts[v].w = 0.0;
 #endif
@@ -149,25 +153,25 @@ process_soft_batch(PhysicsWorldObject *const CULV_RESTRICT self,
 // COLD PATH: Remainder Handling (0 to 31 items)
 // =================================================================================================
 [[gnu::always_inline, gnu::hot, gnu::nonnull(1, 2)]] void
-process_partial_batch(PhysicsWorldObject *const CULV_RESTRICT self,
+process_partial_batch(const PhysicsWorldObject *const CULV_RESTRICT self,
                       const SyncWorkItem *const CULV_RESTRICT worklist,
                       const uint32_t count) noexcept {
     if (count == 0) {
         return;
     }
 
-    auto *CULV_RESTRICT s_pos =
-        (PosStride * CULV_RESTRICT) CULV_ASSUME_ALIGNED(self->positions, sizeof(PosStride));
-    auto *CULV_RESTRICT s_ppos =
-        (PosStride * CULV_RESTRICT) CULV_ASSUME_ALIGNED(self->prev_positions, sizeof(PosStride));
-    auto *CULV_RESTRICT s_rot =
-        (AuxStride * CULV_RESTRICT) CULV_ASSUME_ALIGNED(self->rotations, sizeof(AuxStride));
-    auto *CULV_RESTRICT s_prot =
-        (AuxStride * CULV_RESTRICT) CULV_ASSUME_ALIGNED(self->prev_rotations, sizeof(AuxStride));
-    auto *CULV_RESTRICT s_lvel =
-        (AuxStride * CULV_RESTRICT) CULV_ASSUME_ALIGNED(self->linear_velocities, sizeof(AuxStride));
-    auto *CULV_RESTRICT s_avel = (AuxStride * CULV_RESTRICT)
-        CULV_ASSUME_ALIGNED(self->angular_velocities, sizeof(AuxStride));
+    auto *const CULV_RESTRICT s_pos = static_cast<PosStride *const CULV_RESTRICT>(
+        CULV_ASSUME_ALIGNED(self->positions, sizeof(PosStride)));
+    auto *const CULV_RESTRICT s_ppos = static_cast<PosStride *const CULV_RESTRICT>(
+        CULV_ASSUME_ALIGNED(self->prev_positions, sizeof(PosStride)));
+    auto *const CULV_RESTRICT s_rot = static_cast<AuxStride *const CULV_RESTRICT>(
+        CULV_ASSUME_ALIGNED(self->rotations, sizeof(AuxStride)));
+    auto *const CULV_RESTRICT s_prot = static_cast<AuxStride *const CULV_RESTRICT>(
+        CULV_ASSUME_ALIGNED(self->prev_rotations, sizeof(AuxStride)));
+    auto *const CULV_RESTRICT s_lvel = static_cast<AuxStride *const CULV_RESTRICT>(
+        CULV_ASSUME_ALIGNED(self->linear_velocities, sizeof(AuxStride)));
+    auto *const CULV_RESTRICT s_avel = static_cast<AuxStride *const CULV_RESTRICT>(
+        CULV_ASSUME_ALIGNED(self->angular_velocities, sizeof(AuxStride)));
 
     for (uint32_t j = 0; j < count; j++) {
         if (j + 2 < count) {
@@ -176,8 +180,8 @@ process_partial_batch(PhysicsWorldObject *const CULV_RESTRICT self,
             CULV_PREFETCH_WRITE(&s_rot[future_D]);
         }
 
-        const uint32_t D   = worklist[j].dense_idx;
-        const JPH::Body *b = worklist[j].body;
+        const uint32_t D         = worklist[j].dense_idx;
+        const JPH::Body *const b = worklist[j].body;
 
         const PosStride old_pos = s_pos[D];
         const AuxStride old_rot = s_rot[D];
@@ -185,17 +189,19 @@ process_partial_batch(PhysicsWorldObject *const CULV_RESTRICT self,
         s_prot[D]               = old_rot;
 
 #ifndef JPH_DOUBLE_PRECISION
-        JPH::Vec4(b->GetCenterOfMassPosition(), 0.0f)
+        [[clang::always_inline]] JPH::Vec4(b->GetCenterOfMassPosition(), 0.0f)
             .StoreFloat4(reinterpret_cast<JPH::Float4 *>(&s_pos[D]));
 #else
-        b->GetCenterOfMassPosition().StoreDouble3(reinterpret_cast<JPH::Double3 *>(&s_pos[D]));
+        [[clang::always_inline]] b->GetCenterOfMassPosition().StoreDouble3(
+            reinterpret_cast<JPH::Double3 *>(&s_pos[D]));
         s_pos[D].w = 0.0;
 #endif
 
-        b->GetRotation().GetXYZW().StoreFloat4(reinterpret_cast<JPH::Float4 *>(&s_rot[D]));
-        JPH::Vec4(b->GetLinearVelocity(), 0.0F)
+        [[clang::always_inline]] b->GetRotation().GetXYZW().StoreFloat4(
+            reinterpret_cast<JPH::Float4 *>(&s_rot[D]));
+        [[clang::always_inline]] JPH::Vec4(b->GetLinearVelocity(), 0.0F)
             .StoreFloat4(reinterpret_cast<JPH::Float4 *>(&s_lvel[D]));
-        JPH::Vec4(b->GetAngularVelocity(), 0.0F)
+        [[clang::always_inline]] JPH::Vec4(b->GetAngularVelocity(), 0.0F)
             .StoreFloat4(reinterpret_cast<JPH::Float4 *>(&s_avel[D]));
     }
 }
@@ -206,11 +212,11 @@ process_partial_batch(PhysicsWorldObject *const CULV_RESTRICT self,
 // =================================================================================================
 
 extern "C" [[gnu::flatten, gnu::hot, gnu::nonnull(1)]] void
-culverin_sync_shadow_buffers(PhysicsWorldObject *self) noexcept {
+culverin_sync_shadow_buffers(const PhysicsWorldObject *const CULV_RESTRICT self) noexcept {
     if (!self->sync_ready) [[unlikely]] {
         return;
     }
-    const auto *sys_c = self->system;
+    const auto *const CULV_RESTRICT sys_c = self->system;
 
     // Check for both Rigid and Soft active bodies
     const uint32_t active_rigid_count =
@@ -227,30 +233,31 @@ culverin_sync_shadow_buffers(PhysicsWorldObject *self) noexcept {
 
     CULV_PROFILE_BEGIN(sync);
 
-    const uint32_t *CULV_RESTRICT s2d = self->slot_to_dense;
-    auto *CULV_RESTRICT s_pos =
-        (PosStride * CULV_RESTRICT) CULV_ASSUME_ALIGNED(self->positions, sizeof(PosStride));
-    auto *CULV_RESTRICT s_rot =
-        (AuxStride * CULV_RESTRICT) CULV_ASSUME_ALIGNED(self->rotations, sizeof(AuxStride));
+    const uint32_t *const CULV_RESTRICT s2d = self->slot_to_dense;
+    const auto *const CULV_RESTRICT s_pos   = static_cast<PosStride *const CULV_RESTRICT>(
+        CULV_ASSUME_ALIGNED(self->positions, sizeof(PosStride)));
+    const auto *const CULV_RESTRICT s_rot = static_cast<AuxStride *const CULV_RESTRICT>(
+        CULV_ASSUME_ALIGNED(self->rotations, sizeof(AuxStride)));
 
-    const auto *lock_iface = reinterpret_cast<const JPH::BodyLockInterfaceNoLock *>(
-        JPH_PhysicsSystem_GetBodyLockInterfaceNoLock(sys_c));
+    const auto *const CULV_RESTRICT lock_iface =
+        reinterpret_cast<const JPH::BodyLockInterfaceNoLock *const>(
+            JPH_PhysicsSystem_GetBodyLockInterfaceNoLock(sys_c));
 
     // ========================================================================
     // PASS 1: RIGID BODIES
     // ========================================================================
     if (active_rigid_count > 0) {
-        const JPH_BodyID *active_rigid_ids =
+        const JPH_BodyID *const active_rigid_ids =
             JPH_PhysicsSystem_GetActiveBodiesUnsafe(sys_c, JPH_BodyType_Rigid);
         if (active_rigid_ids != nullptr) [[unlikely]] {
             alignas(MEMORY_ALIGNMENT_SIZE) SyncWorkItem worklist[BATCH_SIZE];
             uint32_t work_ptr = 0;
 
-            const void *const *CULV_RESTRICT body_ptrs = self->jolt_body_ptrs;
-            const auto *CULV_RESTRICT slot_states      = self->slot_states;
-            const auto *CULV_RESTRICT generations      = self->generations;
-            const size_t slot_capacity                 = self->slot_capacity;
-
+            const void *const CULV_RESTRICT *const CULV_RESTRICT body_ptrs = self->jolt_body_ptrs;
+            const auto *const CULV_RESTRICT slot_states                    = self->slot_states;
+            const auto *const CULV_RESTRICT generations                    = self->generations;
+            const size_t slot_capacity                                     = self->slot_capacity;
+            CULV_UNROLL_LOOP(8)
             for (uint32_t i = 0; i < active_rigid_count; i++) {
                 const uint32_t raw_jolt_id = active_rigid_ids[i];
                 const uint32_t j_idx       = JPH_ID_TO_INDEX(raw_jolt_id);
@@ -259,10 +266,11 @@ culverin_sync_shadow_buffers(PhysicsWorldObject *self) noexcept {
                 const auto *b = static_cast<const JPH::Body *>(body_ptrs[j_idx]);
 
                 // Validate pointer and Sequence ID (in case Jolt destroyed and reused this slot)
-                if (b == nullptr || b->GetID().GetIndexAndSequenceNumber() != raw_jolt_id)
+                [[clang::always_inline]] if (b == nullptr ||
+                                             b->GetID().GetIndexAndSequenceNumber() != raw_jolt_id)
                     [[unlikely]] {
                     // Cache miss: Fallback to Jolt lookup and update our cache
-                    b                           = lock_iface->TryGetBody(JPH::BodyID(raw_jolt_id));
+                    [[clang::always_inline]] b  = lock_iface->TryGetBody(JPH::BodyID(raw_jolt_id));
                     self->jolt_body_ptrs[j_idx] = b;
                 }
 
@@ -271,8 +279,8 @@ culverin_sync_shadow_buffers(PhysicsWorldObject *self) noexcept {
                 }
 
                 const uint64_t handle = b->GetUserData();
-                const auto slot       = (uint32_t)(handle & HANDLE_INDEX_MASK);
-                const auto gen        = (uint32_t)(handle >> HANDLE_INDEX_BITS);
+                const auto slot       = static_cast<const uint32_t>(handle & HANDLE_INDEX_MASK);
+                const auto gen        = static_cast<const uint32_t>(handle >> HANDLE_INDEX_BITS);
 
                 const uint32_t safe_slot = (slot < slot_capacity) ? slot : 0;
 
@@ -289,10 +297,9 @@ culverin_sync_shadow_buffers(PhysicsWorldObject *self) noexcept {
                 CULV_PREFETCH_WRITE(&s_rot[d_idx]);
 
                 CULV_ASSUME(work_ptr < BATCH_SIZE);
-                const auto is_valid     = static_cast<uint32_t>(bad == 0);
-                worklist[work_ptr].body = (is_valid != 0U) ? b : worklist[work_ptr].body;
-                worklist[work_ptr].dense_idx =
-                    (is_valid != 0U) ? d_idx : worklist[work_ptr].dense_idx;
+                const auto is_valid          = static_cast<const uint32_t>(bad == 0);
+                worklist[work_ptr].body      = b;
+                worklist[work_ptr].dense_idx = d_idx;
                 work_ptr += is_valid;
 
                 if (work_ptr == BATCH_SIZE) {
@@ -311,28 +318,30 @@ culverin_sync_shadow_buffers(PhysicsWorldObject *self) noexcept {
     // PASS 2: SOFT BODIES (Branchless Dispatch)
     // ========================================================================
     if (active_soft_count > 0 && self->soft_shadows != nullptr) {
-        const JPH_BodyID *active_soft_ids =
+        const JPH_BodyID *const active_soft_ids =
             JPH_PhysicsSystem_GetActiveBodiesUnsafe(sys_c, JPH_BodyType_Soft);
 
         if (active_soft_ids != nullptr) [[likely]] {
             alignas(MEMORY_ALIGNMENT_SIZE) SyncWorkItem soft_worklist[BATCH_SIZE];
             uint32_t soft_work_ptr = 0;
 
-            const void *const *CULV_RESTRICT body_ptrs = self->jolt_body_ptrs;
-            const auto *CULV_RESTRICT slot_states      = self->slot_states;
-            const auto *CULV_RESTRICT generations      = self->generations;
-            const size_t slot_capacity                 = self->slot_capacity;
-            const auto *CULV_RESTRICT soft_shadows     = self->soft_shadows;
-
+            const void *const CULV_RESTRICT *const CULV_RESTRICT body_ptrs = self->jolt_body_ptrs;
+            const auto *const CULV_RESTRICT slot_states                    = self->slot_states;
+            const auto *const CULV_RESTRICT generations                    = self->generations;
+            const size_t slot_capacity                                     = self->slot_capacity;
+            const auto *const CULV_RESTRICT soft_shadows                   = self->soft_shadows;
+            CULV_UNROLL_LOOP(8)
             for (uint32_t i = 0; i < active_soft_count; i++) {
                 const uint32_t raw_jolt_id = active_soft_ids[i];
                 const uint32_t j_idx       = JPH_ID_TO_INDEX(raw_jolt_id);
 
-                const auto *b = static_cast<const JPH::Body *>(body_ptrs[j_idx]);
+                const auto *CULV_RESTRICT b =
+                    static_cast<const JPH::Body * CULV_RESTRICT>(body_ptrs[j_idx]);
 
-                if (b == nullptr || b->GetID().GetIndexAndSequenceNumber() != raw_jolt_id)
+                [[clang::always_inline]] if (b == nullptr ||
+                                             b->GetID().GetIndexAndSequenceNumber() != raw_jolt_id)
                     [[unlikely]] {
-                    b                           = lock_iface->TryGetBody(JPH::BodyID(raw_jolt_id));
+                    [[clang::always_inline]] b  = lock_iface->TryGetBody(JPH::BodyID(raw_jolt_id));
                     self->jolt_body_ptrs[j_idx] = b;
                 }
 
@@ -341,8 +350,8 @@ culverin_sync_shadow_buffers(PhysicsWorldObject *self) noexcept {
                 }
 
                 const uint64_t handle    = b->GetUserData();
-                const auto slot          = (uint32_t)(handle & HANDLE_INDEX_MASK);
-                const auto gen           = (uint32_t)(handle >> HANDLE_INDEX_BITS);
+                const auto slot          = static_cast<const uint32_t>(handle & HANDLE_INDEX_MASK);
+                const auto gen           = static_cast<const uint32_t>(handle >> HANDLE_INDEX_BITS);
                 const uint32_t safe_slot = (slot < slot_capacity) ? slot : 0;
 
                 const uint8_t state        = slot_states[safe_slot].load(std::memory_order_acquire);

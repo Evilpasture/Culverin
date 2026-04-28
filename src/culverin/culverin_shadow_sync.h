@@ -11,7 +11,7 @@
 extern "C" {
 #endif
 [[gnu::flatten, gnu::hot]]
-void culverin_sync_shadow_buffers(PhysicsWorldObject *self) CULV_NOEXCEPT;
+void culverin_sync_shadow_buffers(const PhysicsWorldObject *self) CULV_NOEXCEPT;
 
 #ifdef __cplusplus
 }
