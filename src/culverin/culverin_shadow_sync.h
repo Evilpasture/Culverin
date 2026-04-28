@@ -2,10 +2,16 @@
 #include "culverin_physics_world.h"
 
 #ifdef __cplusplus
-extern "C" {
+#    define CULV_NOEXCEPT noexcept
+#else
+#    define CULV_NOEXCEPT
 #endif
 
-void culverin_sync_shadow_buffers(PhysicsWorldObject *self);
+#ifdef __cplusplus
+extern "C" {
+#endif
+[[gnu::flatten, gnu::hot]]
+void culverin_sync_shadow_buffers(PhysicsWorldObject *self) CULV_NOEXCEPT;
 
 #ifdef __cplusplus
 }

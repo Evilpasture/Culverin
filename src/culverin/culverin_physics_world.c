@@ -119,6 +119,7 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
 
     // 1. Initial State
     // 1.1 Jolt Core Pointers
+    self->sync_ready           = false;
     self->system               = nullptr;
     self->char_vs_char_manager = nullptr;
     self->body_interface       = nullptr;
@@ -286,6 +287,7 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
         size_t f_idx = atomic_fetch_add_explicit(&self->free_count, 1, memory_order_relaxed);
         self->free_slots[f_idx] = i;
     }
+    self->sync_ready = true;
     SHADOW_LOCK(&self->shadow_lock);
     culverin_sync_shadow_buffers(self);
     SHADOW_UNLOCK(&self->shadow_lock);
@@ -1371,12 +1373,8 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
     // --- PHASE 1: SHADOW STATE LOCK-DOWN ---
     SHADOW_LOCK(&self->shadow_lock);
 
-    // I have no idea why I should even need this, but the GIL is giving me trouble, so this will
-    // do.
-    // TODO: investigate how the hell does this work
-    // #if !defined(Py_GIL_DISABLED)
     // ANTI-STARVATION: Yield to waiting Python threads (Getters/Mutators)
-
+    // This is necessary for performance.
     while (atomic_load_explicit(&self->waiting_threads, memory_order_relaxed) > 0) {
         SHADOW_UNLOCK(&self->shadow_lock);
         Py_BEGIN_ALLOW_THREADS culverin_yield();
@@ -1384,7 +1382,6 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
     }
 
     atomic_thread_fence(memory_order_acquire);
-    // #endif
 
     // Raise flags
     atomic_store_explicit(&self->is_stepping, true, memory_order_relaxed);

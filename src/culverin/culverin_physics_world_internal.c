@@ -469,6 +469,7 @@ void free_shadow_buffers(PhysicsWorldObject *self) {
 // - Must not be called from a Jolt callback
 // - Must not race with Python memoryview access
 void PhysicsWorld_free_members(PhysicsWorldObject *self) {
+    self->sync_ready = false;
     // 1. Clear and free the ACTIVE command queue
     if (self->command_queue) {
         clear_command_queue(self);
