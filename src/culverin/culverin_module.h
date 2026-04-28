@@ -1,7 +1,7 @@
 #pragma once
 
 // --- Module State (PEP 489) ---
-#include "culverin_arg_indices.h"
+#include <Python.h>
 typedef struct {
     PyObject *helper;           // Reference to culverin._culverin module
     PyObject *PhysicsWorldType; // Reference to the class
@@ -15,12 +15,10 @@ typedef struct {
     PyObject *BufferProxyType;
     PyObject *RegistryType;
     PyObject *MathServiceType;
-    CulverinParsers parsers;
 } CulverinState;
 
 // Helper to retrieve state from the module object
-CULV_NODISCARD
-CULV_MAYBE_UNUSED
+[[maybe_unused, nodiscard]]
 static inline CulverinState *get_culverin_state(PyObject *module) {
     return (CulverinState *)PyModule_GetState(module);
 }

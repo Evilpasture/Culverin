@@ -1,4 +1,5 @@
 #pragma once
+#include "culverin_arg_indices.h"
 #include "culverin_compiler_specifics.h"
 #include "culverin_physics_world.h"
 #include "joltc.h"
@@ -7,8 +8,9 @@
 typedef struct ShipObject {
     PyObject_HEAD PhysicsWorldObject *world;
     JPH_PhysicsStepListener *listener; // Native listener pointer
-    JPH_BodyID sled_bid;               // Resolved ID for the heavy part
-    uint64_t sled_h_raw;               // Added to store the Python-side handle
+    ShipParsers *parsers;
+    JPH_BodyID sled_bid; // Resolved ID for the heavy part
+    uint64_t sled_h_raw; // Added to store the Python-side handle
 
     // Inputs (Atomics so Python can write while C reads)
     CULV_ATOMIC(float) input_fwd;

@@ -133,7 +133,7 @@ static bool SparseSet_EnsureDenseCapacity(RegistryObject *reg, SparseSet *set) {
 }
 
 // --- LIFECYCLE ---
-
+void culverin_init_ecs_parsers(ECSParsers *ep);
 PyType_DeclareSlot_StatusFromModule Registry_init(RegistryObject *self,
                                                   CULV_MAYBE_UNUSED PyObject *args,
                                                   CULV_MAYBE_UNUSED PyObject *kwds) {
@@ -160,9 +160,14 @@ PyType_DeclareSlot_StatusFromModule Registry_init(RegistryObject *self,
         return -1;
     }
     INIT_LOCK(self->ecs_lock);
+    self->parsers = (ECSParsers *)PyMem_Malloc(sizeof(ECSParsers));
+    if (!self->parsers) {
+        return -1;
+    }
+    culverin_init_ecs_parsers(self->parsers);
     return 0;
 }
-
+void culverin_free_ecs_parsers(ECSParsers *ep);
 PyType_DeclareSlot_VoidFromModule Registry_dealloc(RegistryObject *self) {
     if (self->generations) {
         CULV_RAW_FREE(self->generations);
@@ -175,6 +180,10 @@ PyType_DeclareSlot_VoidFromModule Registry_dealloc(RegistryObject *self) {
             SparseSet_Destroy(&self->components[i]);
         }
         CULV_RAW_FREE(self->components);
+    }
+    if (self->parsers) {
+        culverin_free_ecs_parsers(self->parsers);
+        PyMem_Free(self->parsers);
     }
     Py_TYPE(self)->tp_free((PyObject *)self);
 }
@@ -217,12 +226,11 @@ PyCFunction_DeclareMethodFromModule Registry_create(RegistryObject *self,
 
 PyCFunction_DeclareMethodFromModule Registry_destroy(RegistryObject *self, PyObject *const *args,
                                                      size_t nargsf, PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     uint64_t handle;
     void *targets[RegEntityOnly_COUNT] = {[IDX_REO_ENT] = &handle};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &st->parsers.RegEntityOnlyParser, targets)) {
+                           &self->parsers->RegEntityOnlyParser, targets)) {
         return nullptr;
     }
 
@@ -270,12 +278,11 @@ PyCFunction_DeclareMethodFromModule Registry_destroy(RegistryObject *self, PyObj
 
 PyCFunction_DeclareMethodFromModule Registry_is_alive(RegistryObject *self, PyObject *const *args,
                                                       size_t nargsf, PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     uint64_t handle;
     void *targets[RegEntityOnly_COUNT] = {[IDX_REO_ENT] = &handle};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &st->parsers.RegEntityOnlyParser, targets)) {
+                           &self->parsers->RegEntityOnlyParser, targets)) {
         return nullptr;
     }
 
@@ -299,12 +306,11 @@ PyCFunction_DeclareMethodFromModule Registry_is_alive(RegistryObject *self, PyOb
 PyCFunction_DeclareMethodFromModule Registry_register_component(RegistryObject *self,
                                                                 PyObject *const *args,
                                                                 size_t nargsf, PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     uint32_t size;
     void *targets[RegRegComp_COUNT] = {[IDX_RRC_SIZE] = &size};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.RegRegCompParser,
-                           targets)) {
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+                           &self->parsers->RegRegCompParser, targets)) {
         return nullptr;
     }
 
@@ -340,7 +346,6 @@ PyCFunction_DeclareMethodFromModule Registry_register_component(RegistryObject *
 
 PyCFunction_DeclareMethodFromModule Registry_add(RegistryObject *self, PyObject *const *args,
                                                  size_t nargsf, PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     uint64_t handle;
     uint32_t comp_id;
     PyObject *data_obj = nullptr;
@@ -349,7 +354,7 @@ PyCFunction_DeclareMethodFromModule Registry_add(RegistryObject *self, PyObject 
                                    [IDX_RA_COMP] = (void *)&comp_id,
                                    [IDX_RA_DATA] = (void *)&data_obj};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.RegAddParser,
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->RegAddParser,
                            targets)) {
         return nullptr;
     }
@@ -420,14 +425,13 @@ fail_quiet:
 
 PyCFunction_DeclareMethodFromModule Registry_remove(RegistryObject *self, PyObject *const *args,
                                                     size_t nargsf, PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     uint64_t handle;
     uint32_t comp_id;
 
     void *targets[RegEntComp_COUNT] = {[IDX_REC_ENT] = &handle, [IDX_REC_COMP] = &comp_id};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.RegEntCompParser,
-                           targets)) {
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+                           &self->parsers->RegEntCompParser, targets)) {
         return nullptr;
     }
 
@@ -465,14 +469,13 @@ PyCFunction_DeclareMethodFromModule Registry_remove(RegistryObject *self, PyObje
 
 PyCFunction_DeclareMethodFromModule Registry_has(RegistryObject *self, PyObject *const *args,
                                                  size_t nargsf, PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     uint64_t handle;
     uint32_t comp_id;
 
     void *targets[RegEntComp_COUNT] = {[IDX_REC_ENT] = &handle, [IDX_REC_COMP] = &comp_id};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.RegEntCompParser,
-                           targets)) {
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+                           &self->parsers->RegEntCompParser, targets)) {
         return nullptr;
     }
 
@@ -493,13 +496,12 @@ PyCFunction_DeclareMethodFromModule Registry_has(RegistryObject *self, PyObject 
 
 PyCFunction_DeclareMethodFromModule Registry_get(RegistryObject *self, PyObject *const *args,
                                                  size_t nargsf, PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     uint64_t handle;
     uint32_t comp_id;
     void *targets[RegEntComp_COUNT] = {[IDX_REC_ENT] = &handle, [IDX_REC_COMP] = &comp_id};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.RegEntCompParser,
-                           targets)) {
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+                           &self->parsers->RegEntCompParser, targets)) {
         return nullptr;
     }
 
@@ -526,12 +528,11 @@ PyCFunction_DeclareMethodFromModule Registry_get(RegistryObject *self, PyObject 
 
 PyCFunction_DeclareMethodFromModule Registry_get_view(RegistryObject *self, PyObject *const *args,
                                                       size_t nargsf, PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     uint32_t comp_id;
     void *targets[RegCompOnly_COUNT] = {[IDX_RCO_COMP] = &comp_id};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &st->parsers.RegCompOnlyParser, targets)) {
+                           &self->parsers->RegCompOnlyParser, targets)) {
         return nullptr;
     }
 
@@ -548,12 +549,11 @@ PyCFunction_DeclareMethodFromModule Registry_get_view(RegistryObject *self, PyOb
 PyCFunction_DeclareMethodFromModule Registry_get_entities(RegistryObject *self,
                                                           PyObject *const *args, size_t nargsf,
                                                           PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     uint32_t comp_id;
     void *targets[RegCompOnly_COUNT] = {[IDX_RCO_COMP] = &comp_id};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &st->parsers.RegCompOnlyParser, targets)) {
+                           &self->parsers->RegCompOnlyParser, targets)) {
         return nullptr;
     }
 
@@ -572,7 +572,6 @@ PyCFunction_DeclareMethodFromModule Registry_get_entities(RegistryObject *self,
 PyCFunction_DeclareMethodFromModule Registry_sync_from_world(RegistryObject *self,
                                                              PyObject *const *args, size_t nargsf,
                                                              PyObject *kwnames) {
-    CulverinState *st   = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     PyObject *world_obj = nullptr;
     uint32_t h_comp_id;
     int p_comp_id = -1;
@@ -584,7 +583,7 @@ PyCFunction_DeclareMethodFromModule Registry_sync_from_world(RegistryObject *sel
                                         [IDX_RSP_R_COMP] = (void *)&r_comp_id};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &st->parsers.RegSyncPhysParser, targets)) {
+                           &self->parsers->RegSyncPhysParser, targets)) {
         return nullptr;
     }
 
@@ -704,12 +703,11 @@ PyCFunction_DeclareMethodFromModule Registry_get_active_count(RegistryObject *se
 PyCFunction_DeclareMethodFromModule Registry_get_component_count(RegistryObject *self,
                                                                  PyObject *const *args,
                                                                  size_t nargsf, PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     uint32_t comp_id;
     void *targets[RegCompOnly_COUNT] = {[IDX_RCO_COMP] = &comp_id};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &st->parsers.RegCompOnlyParser, targets)) {
+                           &self->parsers->RegCompOnlyParser, targets)) {
         return nullptr;
     }
 

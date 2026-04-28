@@ -1,5 +1,6 @@
 #pragma once
 #include "culverin.h"
+#include "culverin_arg_indices.h"
 #include "culverin_command_buffer.h"
 #include "culverin_compiler_specifics.h"
 #include "culverin_debug_render.h"
@@ -177,6 +178,12 @@ typedef struct PhysicsWorldObject {
 
     Py_ssize_t view_shape[2];
     Py_ssize_t view_strides[2];
+
+    /* ========================================================================
+     * BUCKET 11: LOCAL PARSER ENGINE
+     * ======================================================================== */
+    CULV_CACHE_LINE_SPACER;
+    WorldParsers *parsers;
 
 } PhysicsWorldObject;
 

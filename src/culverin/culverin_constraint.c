@@ -11,7 +11,6 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_constraint(PhysicsWorldO
                                                                    PyObject *const *args,
                                                                    size_t nargsf,
                                                                    PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
 
     // 1. FAST PARSE
     int type           = 0;
@@ -27,7 +26,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_constraint(PhysicsWorldO
                                          [IDX_CC_MOTOR]  = (void *)&o_motor};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &st->parsers.CreateConstrParser, targets)) {
+                           &self->parsers->CreateConstrParser, targets)) {
         return nullptr;
     }
 
@@ -190,7 +189,6 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_destroy_constraint(PhysicsWorld
                                                                     PyObject *const *args,
                                                                     size_t nargsf,
                                                                     PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. FAST PARSE
     // TSan Fix: Use raw uint64 for the parser target to avoid atomic init overhead
     uint64_t h_raw;
@@ -199,7 +197,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_destroy_constraint(PhysicsWorld
     };
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.DestroyConstrParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->DestroyConstrParser, targets)) {
         return nullptr;
     }
 
@@ -261,7 +259,6 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_set_constraint_target(PhysicsWo
                                                                        PyObject *const *args,
                                                                        size_t nargsf,
                                                                        PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. FAST PARSE (Unchanged)
     uint64_t h_raw;
     float target;
@@ -272,7 +269,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_set_constraint_target(PhysicsWo
     };
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.SetConstrTargetParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->SetConstrTargetParser, targets)) {
         return nullptr;
     }
 
@@ -336,13 +333,12 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_constraint_type(PhysicsWorl
                                                                      PyObject *const *args,
                                                                      size_t nargsf,
                                                                      PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
 
     // 1. FAST PARSE (Zero-Allocation)
     uint64_t handle_raw;
     void *targets[HOnly_COUNT] = {[IDX_H_H] = &handle_raw};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.HOnlyParser,
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->HOnlyParser,
                            targets)) {
         return nullptr;
     }

@@ -1,4 +1,5 @@
 #pragma once
+#include "culverin_arg_indices.h"
 #include "culverin_compiler_specifics.h"
 #include "culverin_threading.h"
 #include <Python.h>
@@ -34,6 +35,9 @@ typedef struct {
     uint32_t component_capacity;
     atomic_int view_export_count; // Track how many memoryviews are active
     ShadowMutex ecs_lock;
+
+    // Parsers
+    ECSParsers *parsers;
 } RegistryObject;
 
 // Lifecycle

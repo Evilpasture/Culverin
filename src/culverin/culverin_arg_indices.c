@@ -52,18 +52,124 @@
 
 // --- 4. INITIALIZATION & CLEANUP ---
 
-void culverin_init_all_parsers(CulverinParsers *cp) {
-    // Reset registry for this specific interpreter
-    cp->registry_count = 0;
-
-#define DO_SETUP(P, G, S) SETUP_PARSER_ST(cp, P, G, S);
+void culverin_init_world_parsers(WorldParsers *wp) {
+    // Reset registry for this specific instance
+    wp->registry_count = 0;
+#define DO_SETUP(P, G, S) SETUP_PARSER_ST(wp, P, G, S);
     FOR_ALL_PARSERS(DO_SETUP)
 #undef DO_SETUP
 }
 
-void culverin_free_all_parsers(CulverinParsers *cp) {
-#define DO_FREE(P, G, S) TEARDOWN_PARSER_ST(cp, P);
+void culverin_free_world_parsers(WorldParsers *wp) {
+#define DO_FREE(P, G, S) TEARDOWN_PARSER_ST(wp, P);
     FOR_ALL_PARSERS(DO_FREE)
+#undef DO_FREE
+}
+
+void culverin_init_char_parsers(CharacterParsers *cp) {
+    // Reset registry for this specific instance
+    cp->registry_count = 0;
+#define DO_SETUP(P, G, S) SETUP_PARSER_ST(cp, P, G, S);
+    FOR_ALL_CHAR_PARSERS(DO_SETUP)
+#undef DO_SETUP
+}
+
+void culverin_free_char_parsers(CharacterParsers *cp) {
+#define DO_FREE(P, G, S) TEARDOWN_PARSER_ST(cp, P);
+    FOR_ALL_CHAR_PARSERS(DO_FREE)
+#undef DO_FREE
+}
+
+void culverin_init_vehicle_parsers(VehicleParsers *vp) {
+    // Reset registry for this specific instance
+    vp->registry_count = 0;
+#define DO_SETUP(P, G, S) SETUP_PARSER_ST(vp, P, G, S);
+    FOR_ALL_VEHICLE_PARSERS(DO_SETUP)
+#undef DO_SETUP
+}
+
+void culverin_free_vehicle_parsers(VehicleParsers *vp) {
+#define DO_FREE(P, G, S) TEARDOWN_PARSER_ST(vp, P);
+    FOR_ALL_VEHICLE_PARSERS(DO_FREE)
+#undef DO_FREE
+}
+
+void culverin_init_ecs_parsers(ECSParsers *ep) {
+    // Reset registry for this specific instance
+    ep->registry_count = 0;
+#define DO_SETUP(P, G, S) SETUP_PARSER_ST(ep, P, G, S);
+    FOR_ALL_ECS_PARSERS(DO_SETUP)
+#undef DO_SETUP
+}
+
+void culverin_free_ecs_parsers(ECSParsers *ep) {
+#define DO_FREE(P, G, S) TEARDOWN_PARSER_ST(ep, P);
+    FOR_ALL_ECS_PARSERS(DO_FREE)
+#undef DO_FREE
+}
+
+void culverin_init_skeleton_parsers(SkeletonParsers *sp) {
+    sp->registry_count = 0;
+#define DO_SETUP(P, G, S) SETUP_PARSER_ST(sp, P, G, S);
+    FOR_ALL_SKELETON_PARSERS(DO_SETUP)
+#undef DO_SETUP
+}
+
+void culverin_free_skeleton_parsers(SkeletonParsers *sp) {
+#define DO_FREE(P, G, S) TEARDOWN_PARSER_ST(sp, P)
+    FOR_ALL_SKELETON_PARSERS(DO_FREE)
+#undef DO_FREE
+}
+
+void culverin_init_ragdoll_parsers(RagdollParsers *rp) {
+    rp->registry_count = 0;
+#define DO_SETUP(P, G, S) SETUP_PARSER_ST(rp, P, G, S);
+    FOR_ALL_RAGDOLL_PARSERS(DO_SETUP)
+#undef DO_SETUP
+}
+
+void culverin_free_ragdoll_parsers(RagdollParsers *rp) {
+#define DO_FREE(P, G, S) TEARDOWN_PARSER_ST(rp, P)
+    FOR_ALL_RAGDOLL_PARSERS(DO_FREE)
+#undef DO_FREE
+}
+
+void culverin_init_ragdoll_settings_parsers(RagdollSettingsParsers *rsp) {
+    rsp->registry_count = 0;
+#define DO_SETUP(P, G, S) SETUP_PARSER_ST(rsp, P, G, S);
+    FOR_ALL_RAGDOLL_SETTINGS_PARSERS(DO_SETUP)
+#undef DO_SETUP
+}
+
+void culverin_free_ragdoll_settings_parsers(RagdollSettingsParsers *rsp) {
+#define DO_FREE(P, G, S) TEARDOWN_PARSER_ST(rsp, P)
+    FOR_ALL_RAGDOLL_SETTINGS_PARSERS(DO_FREE)
+#undef DO_FREE
+}
+
+void culverin_init_ship_parsers(ShipParsers *sp) {
+    sp->registry_count = 0;
+#define DO_SETUP(P, G, S) SETUP_PARSER_ST(sp, P, G, S);
+    FOR_ALL_SHIP_PARSERS(DO_SETUP)
+#undef DO_SETUP
+}
+
+void culverin_free_ship_parsers(ShipParsers *sp) {
+#define DO_FREE(P, G, S) TEARDOWN_PARSER_ST(sp, P)
+    FOR_ALL_SHIP_PARSERS(DO_FREE)
+#undef DO_FREE
+}
+
+void culverin_init_sbss_parsers(SoftBodySharedSettingsParsers *sbssp) {
+    sbssp->registry_count = 0;
+#define DO_SETUP(P, G, S) SETUP_PARSER_ST(sbssp, P, G, S);
+    FOR_ALL_SBSS_PARSERS(DO_SETUP)
+#undef DO_SETUP
+}
+
+void culverin_free_sbss_parsers(SoftBodySharedSettingsParsers *sbssp) {
+#define DO_FREE(P, G, S) TEARDOWN_PARSER_ST(sbssp, P)
+    FOR_ALL_SBSS_PARSERS(DO_FREE)
 #undef DO_FREE
 }
 
@@ -75,15 +181,15 @@ void culverin_math_init_all_parsers(MathParsers *mp) {
 }
 
 void culverin_math_free_all_parsers(MathParsers *mp) {
-#define DO_FREE(P, G, S) TEARDOWN_PARSER_ST(mp, P);
+#define DO_FREE(P, G, S) TEARDOWN_PARSER_ST(mp, P)
     FOR_ALL_MATH_PARSERS(DO_FREE)
 #undef DO_FREE
 }
 
-void fp_dump_schemas_json(CulverinParsers *cp, FILE *out) {
+void fp_dump_schemas_json(WorldParsers *wp, FILE *out) {
     fprintf(out, "{\n");
-    for (size_t i = 0; i < cp->registry_count; i++) {
-        FastParser *fp = cp->registry[i];
+    for (size_t i = 0; i < wp->registry_count; i++) {
+        FastParser *fp = wp->registry[i];
         fprintf(out, "  \"%s\": [\n", fp->parser_name);
         for (size_t j = 0; j < fp->count; j++) {
             // FIX: Access strings from cold_specs, but requirement status from the mask
@@ -93,7 +199,7 @@ void fp_dump_schemas_json(CulverinParsers *cp, FILE *out) {
                     fp->cold_specs[j].name, fp->cold_specs[j].type_name, is_req ? "true" : "false",
                     (j == fp->count - 1) ? "" : ",");
         }
-        fprintf(out, "  ]%s\n", (i == cp->registry_count - 1) ? "" : ",");
+        fprintf(out, "  ]%s\n", (i == wp->registry_count - 1) ? "" : ",");
     }
     fprintf(out, "}\n");
 }

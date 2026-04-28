@@ -458,7 +458,6 @@ const JPH_CharacterContactListener_Procs char_listener_procs = {
 
 PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObject *const *args,
                                                    size_t nargsf, PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. INTEGRATED FAST PARSE (Unchanged)
     Vec3f v_in = {.x = 0.0f, .y = 0.0f, .z = 0.0f};
     float dt   = 0.0f;
@@ -466,7 +465,7 @@ PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObje
     void *targets[CharMove_COUNT] = {[IDX_CM_VEL] = &v_in, [IDX_CM_DT] = &dt};
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.CharMoveParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->CharMoveParser, targets)) {
         return nullptr;
     }
 
@@ -568,7 +567,6 @@ PyCFunction_DeclareMethodFromModule Character_get_position(CharacterObject *self
 PyCFunction_DeclareMethodFromModule Character_set_position(CharacterObject *self,
                                                            PyObject *const *args, Py_ssize_t nargs,
                                                            PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. Stack Allocation and Parser Targets (Unchanged)
     PosStride pos                   = {};
     void *targets[SetPosChar_COUNT] = {
@@ -576,7 +574,7 @@ PyCFunction_DeclareMethodFromModule Character_set_position(CharacterObject *self
     };
 
     // 2. High Speed Parse (Unchanged)
-    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.SetPosCharParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->SetPosCharParser, targets)) {
         return nullptr;
     }
 
@@ -612,7 +610,6 @@ PyCFunction_DeclareMethodFromModule Character_set_position(CharacterObject *self
 PyCFunction_DeclareMethodFromModule Character_set_rotation(CharacterObject *self,
                                                            PyObject *const *args, Py_ssize_t nargs,
                                                            PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. Explicitly initialized stack target
     AuxStride rot = {.x = 0.0f, .y = 0.0f, .z = 0.0f, .w = 1.0f};
 
@@ -621,7 +618,7 @@ PyCFunction_DeclareMethodFromModule Character_set_rotation(CharacterObject *self
     };
 
     // 2. High Speed Parse
-    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.SetRotCharParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->SetRotCharParser, targets)) {
         return nullptr;
     }
 
@@ -653,7 +650,6 @@ PyCFunction_DeclareMethodFromModule Character_set_rotation(CharacterObject *self
 PyCFunction_DeclareMethodFromModule Character_set_strength(CharacterObject *self,
                                                            PyObject *const *args, Py_ssize_t nargs,
                                                            PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. Explicitly initialized target
     float strength = 0.0f;
 
@@ -663,7 +659,7 @@ PyCFunction_DeclareMethodFromModule Character_set_strength(CharacterObject *self
 
     // 2. High Speed Parse (Handles both world.set_strength(200.0) and
     // world.set_strength(strength=200.0))
-    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.SetStrengthCharParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->SetStrengthCharParser, targets)) {
         return nullptr;
     }
 
@@ -794,6 +790,8 @@ PyType_DeclareSlot_StatusFromModule Character_clear(CharacterObject *self) {
     Py_CLEAR(self->world);
     return 0;
 }
+
+void culverin_free_char_parsers(CharacterParsers *cp);
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 PyType_DeclareSlot_VoidFromModule Character_dealloc(CharacterObject *self) {
     PyObject_GC_UnTrack(self);
@@ -849,12 +847,16 @@ PyType_DeclareSlot_VoidFromModule Character_dealloc(CharacterObject *self) {
     NATIVE_MUTEX_UNLOCK(self->world->jph_trampoline_lock);
 
 finalize:
+    if (self->parsers) {
+        culverin_free_char_parsers(self->parsers);
+        PyMem_Free(self->parsers);
+    }
     Py_XDECREF(self->world);
     Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
 // Helper 1: Jolt-side allocation and Collision Manager linking
-static JPH_CharacterVirtual *
+static inline JPH_CharacterVirtual *
 alloc_j_char(PhysicsWorldObject *self, PositionVector pos,
              CharacterParams params) { // Reduced to 2 conceptual arguments
 
@@ -892,8 +894,8 @@ alloc_j_char(PhysicsWorldObject *self, PositionVector pos,
 }
 
 // Helper 2: Shadow Buffer Registration (Atomic Commit)
-static void register_char(PhysicsWorldObject *self, CharacterObject *obj,
-                          JPH_CharacterVirtual *j_char, uint32_t slot) {
+static inline void register_char(PhysicsWorldObject *self, CharacterObject *obj,
+                                 JPH_CharacterVirtual *j_char, uint32_t slot) {
     SHADOW_LOCK(&self->shadow_lock);
 
     // 1. Resolve Handle Metadata
@@ -972,7 +974,7 @@ static void register_char(PhysicsWorldObject *self, CharacterObject *obj,
 }
 
 // Helper 3: Filter and Listener serialization (Trampoline Lock)
-static void setup_char_filters(CharacterObject *obj) {
+static inline void setup_char_filters(CharacterObject *obj) {
     NATIVE_MUTEX_LOCK(obj->world->jph_trampoline_lock);
     obj->listener     = JPH_CharacterContactListener_Create(obj);
     obj->body_filter  = JPH_BodyFilter_Create(nullptr);
@@ -982,15 +984,24 @@ static void setup_char_filters(CharacterObject *obj) {
     NATIVE_MUTEX_UNLOCK(obj->world->jph_trampoline_lock);
     JPH_CharacterVirtual_SetListener(obj->character, obj->listener);
 }
+void culverin_init_char_parsers(CharacterParsers *cp);
+[[nodiscard]]
+static inline int setup_char_parsers(CharacterObject *obj) {
+    obj->parsers = (CharacterParsers *)PyMem_Malloc(sizeof(CharacterParsers));
+    if (!obj->parsers) {
+        return -1;
+    }
+    culverin_init_char_parsers(obj->parsers);
+    return 0;
+}
 
 // Main Orchestrator
 PyCFunction_DeclareMethodFromModule PhysicsWorld_create_character(PhysicsWorldObject *self,
                                                                   PyObject *const *args,
                                                                   Py_ssize_t nargs,
                                                                   PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. Setup Targets (Unchanged)
-    PosStride pos                 = {.x = 0, .y = 0, .z = 0};
+    PosStride pos                 = {};
     constexpr auto DEFAULT_HEIGHT = 1.8f;
     constexpr auto DEFAULT_RADIUS = 0.4f;
     constexpr auto DEFUALT_STEP_H = 0.4f;
@@ -1006,7 +1017,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_character(PhysicsWorldOb
                                        [IDX_CCHAR_STEP]  = (void *)&step_h,
                                        [IDX_CCHAR_SLOPE] = (void *)&slope};
 
-    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.CreateCharParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->CreateCharParser, targets)) {
         return nullptr;
     }
 
@@ -1049,6 +1060,10 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_character(PhysicsWorldOb
         CharacterObject,
         (PyTypeObject *)get_culverin_state(PyType_GetModule(Py_TYPE(self)))->CharacterType);
     if (!obj) {
+        goto fail_py;
+    }
+
+    if (setup_char_parsers(obj) < 0) {
         goto fail_py;
     }
 

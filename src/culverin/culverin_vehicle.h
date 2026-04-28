@@ -1,4 +1,5 @@
 #pragma once
+#include "culverin_arg_indices.h"
 #include "joltc.h"
 #include <Python.h>
 
@@ -28,6 +29,7 @@ typedef struct VehicleObject {
     JPH_VehicleTransmissionSettings *transmission_settings; // NEW: Keep alive
     JPH_LinearCurve *friction_curve;
     JPH_LinearCurve *torque_curve;
+    VehicleParsers *parsers;
 
     uint32_t num_wheels;
     int current_gear;

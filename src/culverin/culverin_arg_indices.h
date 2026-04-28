@@ -578,15 +578,22 @@ static constexpr size_t PARSER_REGISTRY_SIZE = 128;
     X(IDX_44, "a44", uint64_t, false)                                                              \
     X(IDX_45, "a45", uint64_t, 0)                                                                  \
     X(IDX_46, "a46", uint64_t, false)                                                              \
-    X(IDX_47, "a47", uint64_t, 0)                                                                  \
+    X(IDX_47, "a47", uint64_t, false)                                                              \
     X(IDX_48, "a48", uint64_t, 0)                                                                  \
-    X(IDX_49, "a49", uint64_t, 0) X(IDX_50, "a50", uint64_t, 0) X(IDX_51, "a51", uint64_t, false)  \
-        X(IDX_52, "a52", uint64_t, 0) X(IDX_53, "a53", uint64_t, 0) X(IDX_54, "a54", uint64_t, 0)  \
-            X(IDX_55, "a55", uint64_t, 0) X(IDX_56, "a56", uint64_t, false)                        \
-                X(IDX_57, "a57", uint64_t, 0) X(IDX_58, "a58", uint64_t, false)                    \
-                    X(IDX_59, "a59", uint64_t, false) X(IDX_60, "a60", uint64_t, false)            \
-                        X(IDX_61, "a61", uint64_t, false) X(IDX_62, "a62", uint64_t, false)        \
-                            X(IDX_63, "a63", uint64_t, false)
+    X(IDX_49, "a49", uint64_t, 0)                                                                  \
+    X(IDX_50, "a50", uint64_t, 0)                                                                  \
+    X(IDX_51, "a51", uint64_t, false)                                                              \
+    X(IDX_52, "a52", uint64_t, 0)                                                                  \
+    X(IDX_53, "a53", uint64_t, 0)                                                                  \
+    X(IDX_54, "a54", uint64_t, 0)                                                                  \
+    X(IDX_55, "a55", uint64_t, 0)                                                                  \
+    X(IDX_56, "a56", uint64_t, false)                                                              \
+    X(IDX_57, "a57", uint64_t, 0)                                                                  \
+    X(IDX_58, "a58", uint64_t, false)                                                              \
+    X(IDX_59, "a59", uint64_t, false)                                                              \
+    X(IDX_60, "a60", uint64_t, false)                                                              \
+    X(IDX_61, "a61", uint64_t, false)                                                              \
+    X(IDX_62, "a62", uint64_t, false) X(IDX_63, "a63", uint64_t, false)
 
 /** --- THE GENERATOR ENGINE --- **/
 
@@ -739,38 +746,52 @@ DEFINE_INDEX_GROUP(StressTest, SCHEMA_STRESS_TEST)
     X(CreateConstr, CreateConstr, SCHEMA_CREATE_CONSTR)                                            \
     X(DestroyConstr, HOnly, SCHEMA_HANDLE_ONLY)                                                    \
     X(Step, Step, SCHEMA_STEP)                                                                     \
-    X(CharMove, CharMove, SCHEMA_CHAR_MOVE)                                                        \
-    X(LoadState, LoadState, SCHEMA_LOAD_STATE)                                                     \
     X(CreateChar, CreateChar, SCHEMA_CREATE_CHAR)                                                  \
-    X(SetPosChar, SetPosChar, SCHEMA_SET_POS_CHAR)                                                 \
-    X(SetRotChar, SetRotChar, SCHEMA_SET_ROT_CHAR)                                                 \
-    X(SetStrengthChar, SetStrengthChar, SCHEMA_SET_STRENGTH_CHAR)                                  \
-    X(VehicleInput, VehicleInput, SCHEMA_VEHICLE_INPUT)                                            \
-    X(TankInput, TankInput, SCHEMA_TANK_INPUT)                                                     \
+    X(LoadState, LoadState, SCHEMA_LOAD_STATE)                                                     \
     X(CreateVehicle, CreateVehicle, SCHEMA_CREATE_VEHICLE)                                         \
     X(CreateTracked, CreateTracked, SCHEMA_CREATE_TRACKED)                                         \
     X(CreateRagdoll, CreateRagdoll, SCHEMA_CREATE_RAGDOLL)                                         \
     X(RagdollSettings, RagdollSettings, SCHEMA_RAGDOLL_SETTINGS)                                   \
-    X(RagdollAddPart, RagdollAddPart, SCHEMA_RAGDOLL_ADD_PART)                                     \
-    X(AddJoint, AddJoint, SCHEMA_ADD_JOINT)                                                        \
-    X(GetJointIdx, GetJointIdx, SCHEMA_GET_JOINT_IDX)                                              \
-    X(RagdollDrive, RagdollDrive, SCHEMA_RAGDOLL_DRIVE)                                            \
-    X(SbssCreateConstraints, SbssCreateConstraints, SCHEMA_SBSS_CREATE_CONSTRAINTS)                \
     X(CreateSoftBody, CreateSoftBody, SCHEMA_CREATE_SOFT_BODY)                                     \
-    X(SbssAddVertex, SbssAddVertex, SCHEMA_SBSS_ADD_VERTEX)                                        \
-    X(SbssAddFace, SbssAddFace, SCHEMA_SBSS_ADD_FACE)                                              \
-    X(SbssAddVertices, SbssAddVertices, SCHEMA_SBSS_ADD_VERTICES)                                  \
-    X(SbssAddFaces, SbssAddFaces, SCHEMA_SBSS_ADD_FACES)                                           \
     X(GetSbVertex, GetSbVertex, SCHEMA_GET_SB_VERTEX)                                              \
+    X(StressTest, StressTest, SCHEMA_STRESS_TEST)                                                  \
+    X(CreateShip, CreateShip, SCHEMA_CREATE_SHIP)
+
+#define FOR_ALL_CHAR_PARSERS(X)                                                                    \
+    X(CharMove, CharMove, SCHEMA_CHAR_MOVE)                                                        \
+    X(SetPosChar, SetPosChar, SCHEMA_SET_POS_CHAR)                                                 \
+    X(SetRotChar, SetRotChar, SCHEMA_SET_ROT_CHAR)                                                 \
+    X(SetStrengthChar, SetStrengthChar, SCHEMA_SET_STRENGTH_CHAR)
+
+#define FOR_ALL_VEHICLE_PARSERS(X)                                                                 \
+    X(VehicleInput, VehicleInput, SCHEMA_VEHICLE_INPUT)                                            \
+    X(TankInput, TankInput, SCHEMA_TANK_INPUT)
+
+#define FOR_ALL_ECS_PARSERS(X)                                                                     \
     X(RegEntityOnly, RegEntityOnly, SCHEMA_REG_ENTITY_ONLY)                                        \
     X(RegCompOnly, RegCompOnly, SCHEMA_REG_COMP_ONLY)                                              \
     X(RegRegComp, RegRegComp, SCHEMA_REG_REG_COMP)                                                 \
     X(RegAdd, RegAdd, SCHEMA_REG_ADD)                                                              \
     X(RegEntComp, RegEntComp, SCHEMA_REG_ENT_COMP)                                                 \
-    X(RegSyncPhys, RegSyncPhys, SCHEMA_REG_SYNC_PHYS)                                              \
-    X(StressTest, StressTest, SCHEMA_STRESS_TEST)                                                  \
-    X(CreateShip, CreateShip, SCHEMA_CREATE_SHIP)                                                  \
-    X(ShipInput, ShipInput, SCHEMA_SHIP_INPUT)
+    X(RegSyncPhys, RegSyncPhys, SCHEMA_REG_SYNC_PHYS)
+
+#define FOR_ALL_SKELETON_PARSERS(X)                                                                \
+    X(AddJoint, AddJoint, SCHEMA_ADD_JOINT)                                                        \
+    X(GetJointIdx, GetJointIdx, SCHEMA_GET_JOINT_IDX)
+
+#define FOR_ALL_RAGDOLL_PARSERS(X) X(RagdollDrive, RagdollDrive, SCHEMA_RAGDOLL_DRIVE)
+
+#define FOR_ALL_RAGDOLL_SETTINGS_PARSERS(X)                                                        \
+    X(RagdollAddPart, RagdollAddPart, SCHEMA_RAGDOLL_ADD_PART)
+
+#define FOR_ALL_SHIP_PARSERS(X) X(ShipInput, ShipInput, SCHEMA_SHIP_INPUT)
+
+#define FOR_ALL_SBSS_PARSERS(X)                                                                    \
+    X(SbssAddVertex, SbssAddVertex, SCHEMA_SBSS_ADD_VERTEX)                                        \
+    X(SbssAddFace, SbssAddFace, SCHEMA_SBSS_ADD_FACE)                                              \
+    X(SbssAddVertices, SbssAddVertices, SCHEMA_SBSS_ADD_VERTICES)                                  \
+    X(SbssAddFaces, SbssAddFaces, SCHEMA_SBSS_ADD_FACES)                                           \
+    X(SbssCreateConstraints, SbssCreateConstraints, SCHEMA_SBSS_CREATE_CONSTRAINTS)
 
 #define FOR_ALL_MATH_PARSERS(X)                                                                    \
     X(MathPersp, MathPersp, SCHEMA_MATH_PERSPECTIVE)                                               \
@@ -807,11 +828,59 @@ DEFINE_INDEX_GROUP(StressTest, SCHEMA_STRESS_TEST)
 #define MAP_TO_DECLARE(P, G, S) DECLARE_PARSER(P, G)
 
 // B. Declare the Parsers
-typedef struct CulverinParsers {
+typedef struct WorldParsers {
     FOR_ALL_PARSERS(MAP_TO_DECLARE)
     FastParser *registry[PARSER_REGISTRY_SIZE];
     size_t registry_count;
-} CulverinParsers;
+} WorldParsers;
+
+typedef struct CharacterParsers {
+    FOR_ALL_CHAR_PARSERS(MAP_TO_DECLARE)
+    FastParser *registry[PARSER_REGISTRY_SIZE];
+    size_t registry_count;
+} CharacterParsers;
+
+typedef struct VehicleParsers {
+    FOR_ALL_VEHICLE_PARSERS(MAP_TO_DECLARE)
+    FastParser *registry[PARSER_REGISTRY_SIZE];
+    size_t registry_count;
+} VehicleParsers;
+
+typedef struct ECSParsers {
+    FOR_ALL_ECS_PARSERS(MAP_TO_DECLARE)
+    FastParser *registry[PARSER_REGISTRY_SIZE];
+    size_t registry_count;
+} ECSParsers;
+
+typedef struct SkeletonParsers {
+    FOR_ALL_SKELETON_PARSERS(MAP_TO_DECLARE)
+    FastParser *registry[PARSER_REGISTRY_SIZE];
+    size_t registry_count;
+} SkeletonParsers;
+
+typedef struct RagdollParsers {
+    FOR_ALL_RAGDOLL_PARSERS(MAP_TO_DECLARE)
+    FastParser *registry[PARSER_REGISTRY_SIZE];
+    size_t registry_count;
+} RagdollParsers;
+
+typedef struct RagdollSettingsParsers {
+    FOR_ALL_RAGDOLL_SETTINGS_PARSERS(MAP_TO_DECLARE)
+    FastParser *registry[PARSER_REGISTRY_SIZE];
+    size_t registry_count;
+} RagdollSettingsParsers;
+
+typedef struct ShipParsers {
+    FOR_ALL_SHIP_PARSERS(MAP_TO_DECLARE)
+    FastParser *registry[PARSER_REGISTRY_SIZE];
+    size_t registry_count;
+} ShipParsers;
+
+typedef struct SoftBodySharedSettingsParsers {
+    FOR_ALL_SBSS_PARSERS(MAP_TO_DECLARE)
+    FastParser *registry[PARSER_REGISTRY_SIZE];
+    size_t registry_count;
+} SoftBodySharedSettingsParsers;
 
 typedef struct MathParsers {
     FOR_ALL_MATH_PARSERS(MAP_TO_DECLARE)
@@ -819,6 +888,4 @@ typedef struct MathParsers {
     size_t registry_count;
 } MathParsers;
 
-void fp_dump_schemas_json(CulverinParsers *cp, FILE *out);
-void culverin_init_all_parsers(CulverinParsers *cp);
-void culverin_free_all_parsers(CulverinParsers *cp);
+void fp_dump_schemas_json(WorldParsers *wp, FILE *out);

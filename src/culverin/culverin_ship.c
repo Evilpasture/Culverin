@@ -89,12 +89,10 @@ static void JPH_API_CALL Ship_OnStep(void *userData,
 static const JPH_PhysicsStepListener_Procs ship_listener_procs = {.OnStep = Ship_OnStep};
 
 // --- CREATION ---
-
+void culverin_init_ship_parsers(ShipParsers *sp);
 PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ship(PhysicsWorldObject *self,
                                                              PyObject *const *args,
                                                              Py_ssize_t nargs, PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
-
     uint64_t sled_raw = 0;
     float kp          = 0.0f;
     float kd          = 0.0f;
@@ -110,7 +108,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ship(PhysicsWorldObject 
         [IDX_CS_STEER] = (void *)&steer,   [IDX_CS_BANKING] = (void *)&banking,
         [IDX_CS_GRIP] = (void *)&grip,     [IDX_CS_DRAG] = (void *)&drag};
 
-    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.CreateShipParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->CreateShipParser, targets)) {
         return nullptr;
     }
 
@@ -124,11 +122,18 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ship(PhysicsWorldObject 
     }
     JPH_BodyID bid = self->body_ids[self->slot_to_dense[slot]];
     SHADOW_UNLOCK(&self->shadow_lock);
-
-    auto obj = (ShipObject *)PyObject_GC_New(ShipObject, (PyTypeObject *)st->ShipType);
+    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+    auto obj          = (ShipObject *)PyObject_GC_New(ShipObject, (PyTypeObject *)st->ShipType);
     if (!obj) {
         return nullptr;
     }
+    obj->parsers = (ShipParsers *)PyMem_Malloc(sizeof(ShipParsers));
+    if (!obj->parsers) {
+        Py_DECREF(obj);
+        PyErr_NoMemory();
+        return nullptr;
+    }
+    culverin_init_ship_parsers(obj->parsers);
 
     obj->world      = (PhysicsWorldObject *)Py_NewRef(self);
     obj->sled_bid   = bid;
@@ -158,12 +163,11 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ship(PhysicsWorldObject 
 
 PyCFunction_DeclareMethodFromModule Ship_set_input(ShipObject *self, PyObject *const *args,
                                                    Py_ssize_t nargs, PyObject *kwnames) {
-    CulverinState *st              = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     float fwd                      = 0.0f;
     float right                    = 0.0f;
     void *targets[ShipInput_COUNT] = {[IDX_SI_FWD] = &fwd, [IDX_SI_RIGHT] = &right};
 
-    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.ShipInputParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->ShipInputParser, targets)) {
         return nullptr;
     }
 
@@ -176,7 +180,7 @@ PyCFunction_DeclareMethodFromModule Ship_set_input(ShipObject *self, PyObject *c
 }
 
 // --- CLEANUP ---
-
+void culverin_free_ship_parsers(ShipParsers *sp);
 PyType_DeclareSlot_VoidFromModule Ship_dealloc(ShipObject *self) {
     PyObject_GC_UnTrack(self);
 
@@ -186,6 +190,11 @@ PyType_DeclareSlot_VoidFromModule Ship_dealloc(ShipObject *self) {
         JPH_PhysicsSystem_RemoveStepListener(self->world->system, self->listener);
         JPH_PhysicsStepListener_Destroy(self->listener);
         NATIVE_MUTEX_UNLOCK(self->world->jph_trampoline_lock);
+    }
+
+    if (self->parsers) {
+        culverin_free_ship_parsers(self->parsers);
+        PyMem_Free(self->parsers);
     }
 
     Py_XDECREF(self->world);

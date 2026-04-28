@@ -22,18 +22,18 @@
 
 PyCFunction_DeclareMethod culv_dump_schema_json(PyObject *self, PyObject *Py_UNUSED(args)) {
     // self is the module object
-    CulverinState *st = get_culverin_state(self);
+    // CulverinState *st = get_culverin_state(self);
 
-    const char *filename = "culverin_schema.json";
-    FILE *f              = fopen(filename, "w");
-    if (!f) {
-        return PyErr_SetFromErrno(PyExc_IOError);
-    }
+    // const char *filename = "culverin_schema.json";
+    // FILE *f              = fopen(filename, "w");
+    // if (!f) {
+    //     return PyErr_SetFromErrno(PyExc_IOError);
+    // }
 
-    // Pass the pointer to the parser struct and the file handle
-    fp_dump_schemas_json(&st->parsers, f);
+    // // Pass the pointer to the parser struct and the file handle
+    // fp_dump_schemas_json(&st->parsers, f);
 
-    fclose(f);
+    // fclose(f);
     Py_RETURN_NONE;
 }
 
@@ -461,8 +461,6 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
     if (PyModule_AddStringConstant(m, "__version__", shared_version) < 0) {
         return -1;
     }
-
-    culverin_init_all_parsers(&st->parsers);
     CULV_INIT_PROFILER();
 
     st->helper = PyImport_ImportModule("culverin._culverin");
@@ -489,6 +487,10 @@ PyType_DeclareSlot_Status culverin_traverse(PyObject *m, visitproc visit, void *
     Py_VISIT(st->RagdollSettingsType);
     Py_VISIT(st->RagdollType);
     Py_VISIT(st->SkeletonType);
+    Py_VISIT(st->ShipType);
+    Py_VISIT(st->BufferProxyType);
+    Py_VISIT(st->MathServiceType);
+    Py_VISIT(st->SoftBodySharedSettingsType);
     return 0;
 }
 
@@ -502,8 +504,10 @@ PyType_DeclareSlot_Status culverin_clear(PyObject *m) {
     Py_CLEAR(st->RagdollSettingsType);
     Py_CLEAR(st->RagdollType);
     Py_CLEAR(st->SkeletonType);
-    // Clean up the parsers for this interpreter
-    culverin_free_all_parsers(&st->parsers);
+    Py_CLEAR(st->ShipType);
+    Py_CLEAR(st->BufferProxyType);
+    Py_CLEAR(st->MathServiceType);
+    Py_CLEAR(st->SoftBodySharedSettingsType);
     return 0;
 }
 
