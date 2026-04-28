@@ -28,18 +28,18 @@ struct SyncWorkItem {
 [[gnu::always_inline, gnu::hot, gnu::flatten, gnu::nonnull(1, 2)]] void
 process_full_batch(const PhysicsWorldObject *const CULV_RESTRICT self,
                    const SyncWorkItem *const CULV_RESTRICT worklist) noexcept {
-    auto *const CULV_RESTRICT s_pos =
-        (PosStride *const CULV_RESTRICT)CULV_ASSUME_ALIGNED(self->positions, sizeof(PosStride));
-    auto *const CULV_RESTRICT s_ppos = (PosStride *const CULV_RESTRICT)CULV_ASSUME_ALIGNED(
-        self->prev_positions, sizeof(PosStride));
-    auto *const CULV_RESTRICT s_rot =
-        (AuxStride *const CULV_RESTRICT)CULV_ASSUME_ALIGNED(self->rotations, sizeof(AuxStride));
-    auto *const CULV_RESTRICT s_prot = (AuxStride *const CULV_RESTRICT)CULV_ASSUME_ALIGNED(
-        self->prev_rotations, sizeof(AuxStride));
-    auto *const CULV_RESTRICT s_lvel = (AuxStride *const CULV_RESTRICT)CULV_ASSUME_ALIGNED(
-        self->linear_velocities, sizeof(AuxStride));
-    auto *const CULV_RESTRICT s_avel = (AuxStride *const CULV_RESTRICT)CULV_ASSUME_ALIGNED(
-        self->angular_velocities, sizeof(AuxStride));
+    auto *const CULV_RESTRICT s_pos = reinterpret_cast<PosStride *const CULV_RESTRICT>(
+        CULV_ASSUME_ALIGNED(self->positions, sizeof(PosStride)));
+    auto *const CULV_RESTRICT s_ppos = reinterpret_cast<PosStride *const CULV_RESTRICT>(
+        CULV_ASSUME_ALIGNED(self->prev_positions, sizeof(PosStride)));
+    auto *const CULV_RESTRICT s_rot = reinterpret_cast<AuxStride *const CULV_RESTRICT>(
+        CULV_ASSUME_ALIGNED(self->rotations, sizeof(AuxStride)));
+    auto *const CULV_RESTRICT s_prot = reinterpret_cast<AuxStride *const CULV_RESTRICT>(
+        CULV_ASSUME_ALIGNED(self->prev_rotations, sizeof(AuxStride)));
+    auto *const CULV_RESTRICT s_lvel = reinterpret_cast<AuxStride *const CULV_RESTRICT>(
+        CULV_ASSUME_ALIGNED(self->linear_velocities, sizeof(AuxStride)));
+    auto *const CULV_RESTRICT s_avel = reinterpret_cast<AuxStride *const CULV_RESTRICT>(
+        CULV_ASSUME_ALIGNED(self->angular_velocities, sizeof(AuxStride)));
 
     CULV_UNROLL_LOOP(8)
     for (uint32_t j = 0; j < BATCH_SIZE; j++) {
@@ -79,13 +79,13 @@ process_full_batch(const PhysicsWorldObject *const CULV_RESTRICT self,
 process_soft_batch(const PhysicsWorldObject *const CULV_RESTRICT self,
                    const SyncWorkItem *const CULV_RESTRICT worklist,
                    const uint32_t count) noexcept {
-    auto *const CULV_RESTRICT s_pos = static_cast<PosStride *const CULV_RESTRICT>(
+    auto *const CULV_RESTRICT s_pos = reinterpret_cast<PosStride *const CULV_RESTRICT>(
         CULV_ASSUME_ALIGNED(self->positions, sizeof(PosStride)));
-    auto *const CULV_RESTRICT s_ppos = static_cast<PosStride *const CULV_RESTRICT>(
+    auto *const CULV_RESTRICT s_ppos = reinterpret_cast<PosStride *const CULV_RESTRICT>(
         CULV_ASSUME_ALIGNED(self->prev_positions, sizeof(PosStride)));
-    auto *const CULV_RESTRICT s_rot = static_cast<AuxStride *const CULV_RESTRICT>(
+    auto *const CULV_RESTRICT s_rot = reinterpret_cast<AuxStride *const CULV_RESTRICT>(
         CULV_ASSUME_ALIGNED(self->rotations, sizeof(AuxStride)));
-    auto *const CULV_RESTRICT s_prot = static_cast<AuxStride *const CULV_RESTRICT>(
+    auto *const CULV_RESTRICT s_prot = reinterpret_cast<AuxStride *const CULV_RESTRICT>(
         CULV_ASSUME_ALIGNED(self->prev_rotations, sizeof(AuxStride)));
 
     const auto *CULV_RESTRICT soft_shadows = self->soft_shadows;
@@ -160,17 +160,17 @@ process_partial_batch(const PhysicsWorldObject *const CULV_RESTRICT self,
         return;
     }
 
-    auto *const CULV_RESTRICT s_pos = static_cast<PosStride *const CULV_RESTRICT>(
+    auto *const CULV_RESTRICT s_pos = reinterpret_cast<PosStride *const CULV_RESTRICT>(
         CULV_ASSUME_ALIGNED(self->positions, sizeof(PosStride)));
-    auto *const CULV_RESTRICT s_ppos = static_cast<PosStride *const CULV_RESTRICT>(
+    auto *const CULV_RESTRICT s_ppos = reinterpret_cast<PosStride *const CULV_RESTRICT>(
         CULV_ASSUME_ALIGNED(self->prev_positions, sizeof(PosStride)));
-    auto *const CULV_RESTRICT s_rot = static_cast<AuxStride *const CULV_RESTRICT>(
+    auto *const CULV_RESTRICT s_rot = reinterpret_cast<AuxStride *const CULV_RESTRICT>(
         CULV_ASSUME_ALIGNED(self->rotations, sizeof(AuxStride)));
-    auto *const CULV_RESTRICT s_prot = static_cast<AuxStride *const CULV_RESTRICT>(
+    auto *const CULV_RESTRICT s_prot = reinterpret_cast<AuxStride *const CULV_RESTRICT>(
         CULV_ASSUME_ALIGNED(self->prev_rotations, sizeof(AuxStride)));
-    auto *const CULV_RESTRICT s_lvel = static_cast<AuxStride *const CULV_RESTRICT>(
+    auto *const CULV_RESTRICT s_lvel = reinterpret_cast<AuxStride *const CULV_RESTRICT>(
         CULV_ASSUME_ALIGNED(self->linear_velocities, sizeof(AuxStride)));
-    auto *const CULV_RESTRICT s_avel = static_cast<AuxStride *const CULV_RESTRICT>(
+    auto *const CULV_RESTRICT s_avel = reinterpret_cast<AuxStride *const CULV_RESTRICT>(
         CULV_ASSUME_ALIGNED(self->angular_velocities, sizeof(AuxStride)));
 
     for (uint32_t j = 0; j < count; j++) {
@@ -234,9 +234,9 @@ culverin_sync_shadow_buffers(const PhysicsWorldObject *const CULV_RESTRICT self)
     CULV_PROFILE_BEGIN(sync);
 
     const uint32_t *const CULV_RESTRICT s2d = self->slot_to_dense;
-    const auto *const CULV_RESTRICT s_pos   = static_cast<PosStride *const CULV_RESTRICT>(
+    const auto *const CULV_RESTRICT s_pos   = reinterpret_cast<PosStride *const CULV_RESTRICT>(
         CULV_ASSUME_ALIGNED(self->positions, sizeof(PosStride)));
-    const auto *const CULV_RESTRICT s_rot = static_cast<AuxStride *const CULV_RESTRICT>(
+    const auto *const CULV_RESTRICT s_rot = reinterpret_cast<AuxStride *const CULV_RESTRICT>(
         CULV_ASSUME_ALIGNED(self->rotations, sizeof(AuxStride)));
 
     const auto *const CULV_RESTRICT lock_iface =
