@@ -157,10 +157,6 @@ process_soft_batch(const PhysicsWorldObject *const CULV_RESTRICT self,
 process_partial_batch(const PhysicsWorldObject *const CULV_RESTRICT self,
                       const SyncWorkItem *const CULV_RESTRICT worklist,
                       const uint32_t count) noexcept {
-    if (count == 0) {
-        return;
-    }
-
     auto *const CULV_RESTRICT s_pos = reinterpret_cast<PosStride *const CULV_RESTRICT>(
         CULV_ASSUME_ALIGNED(self->positions, sizeof(PosStride)));
     auto *const CULV_RESTRICT s_ppos = reinterpret_cast<PosStride *const CULV_RESTRICT>(
