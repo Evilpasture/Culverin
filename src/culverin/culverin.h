@@ -12,19 +12,44 @@
 // =========================================================================
 // ASAN COMPATIBILITY ALLOCATORS
 // =========================================================================
-#ifdef ENABLE_SANITIZER
-// Bypass mimalloc entirely so ASan can catch buffer overflows
-#    define CULV_RAW_MALLOC(sz) malloc(sz)
-#    define CULV_RAW_CALLOC(n, sz) calloc(n, sz)
-#    define CULV_RAW_REALLOC(ptr, sz) realloc(ptr, sz)
-#    define CULV_RAW_FREE(ptr) free(ptr)
-#else
-// Use Python's ultra-fast mimalloc for Release builds
-#    define CULV_RAW_MALLOC(sz) PyMem_RawMalloc(sz)
-#    define CULV_RAW_CALLOC(n, sz) PyMem_RawCalloc(n, sz)
-#    define CULV_RAW_REALLOC(ptr, sz) PyMem_RawRealloc(ptr, sz)
-#    define CULV_RAW_FREE(ptr) PyMem_RawFree(ptr)
-#endif
+[[clang::ownership_returns(culv_mem)]]
+[[gnu::always_inline]]
+static inline void *CULV_RAW_MALLOC(size_t sz) {
+    #ifdef ENABLE_SANITIZER
+        return malloc(sz);
+    #else
+        return PyMem_RawMalloc(sz);
+    #endif
+}
+[[clang::ownership_returns(culv_mem)]]
+[[gnu::always_inline]]
+static inline void *CULV_RAW_CALLOC(size_t n, size_t sz) {
+    #ifdef ENABLE_SANITIZER
+        return calloc(n, sz);
+    #else
+        return PyMem_RawCalloc(n, sz);
+    #endif
+}
+[[clang::ownership_takes(culv_mem, 1)]]
+[[clang::ownership_returns(culv_mem)]]
+[[gnu::always_inline]]
+static inline void *CULV_RAW_REALLOC(void *ptr, size_t sz) {
+    #ifdef ENABLE_SANITIZER
+        return realloc(ptr, sz);
+    #else
+        return PyMem_RawRealloc(ptr, sz);
+    #endif
+}
+[[clang::ownership_takes(culv_mem, 1)]]
+[[gnu::always_inline]]
+static inline void CULV_RAW_FREE(void *ptr) {
+    #ifdef ENABLE_SANITIZER
+        free(ptr);
+    #else
+        PyMem_RawFree(ptr);
+    #endif
+}
+
 // =========================================================================
 #include "culverin_command_buffer.h"
 #include "culverin_types.h"

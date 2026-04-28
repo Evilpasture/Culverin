@@ -142,6 +142,7 @@ bool ensure_command_bulk_capacity(PhysicsWorldObject *self, size_t batch_size) {
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
+[[gnu::hot, gnu::flatten, gnu::nonnull(1, 2)]]
 void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *CULV_RESTRICT queue,
                              size_t count) {
     if (UNLIKELY(count == 0)) {
@@ -275,6 +276,12 @@ op_CREATE_SOFT_BODY: {
 }
 
 op_DESTROY_BODY: {
+    // If we don't clear this, the next frame's sync step might try to call
+    // b->GetID() on a freed C++ pointer!
+    const uint32_t j_idx = JPH_ID_TO_INDEX(bid);
+    if (self->jolt_body_ptrs && j_idx <= self->max_jolt_bodies) {
+        self->jolt_body_ptrs[j_idx] = nullptr;
+    }
     JPH_BodyInterface_RemoveBody(bi, bid);
     JPH_BodyInterface_DestroyBody(bi, bid);
     SHADOW_LOCK(&self->shadow_lock);

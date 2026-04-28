@@ -247,7 +247,7 @@ if(MSVC)
 else()
     message(STATUS "Culverin: Configuring GNU-like flags...")
 
-    set(FLAGS_DEBUG "-g")
+    set(FLAGS_DEBUG "-g" "-gcodeview")
     if(CMAKE_C_COMPILER_ID MATCHES "Clang")
         list(APPEND FLAGS_DEBUG "-gcodeview")
     endif()
@@ -680,7 +680,7 @@ if(APPLE)
     message(STATUS "Culverin: Enforcing Strong Symbol Export")
     target_compile_options(${JOLTC_TARGET} PRIVATE "-frtti")
     target_compile_options(_culverin_c PRIVATE "-frtti")
-    target_link_options(_culverin_c PRIVATE "-Wl,-all_load")
+    target_link_options(_culverin_c PRIVATE "-Wl,-all_load,-object_path_lto,culverin.o")
 endif()
 
 set_target_properties(

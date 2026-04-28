@@ -72,25 +72,25 @@ static inline void culverin_cpu_relax() {
 }
 
 CULV_MAYBE_UNUSED static inline void culverin_yield() {
-    // 1. Give the CPU a break (Hardware level)
-    culverin_cpu_relax();
-
-// 2. Give the OS a break (Kernel level)
-#if defined(_WIN32)
-    // SwitchToThread() is the gold standard for Windows yielding
-    if (SwitchToThread() == FALSE) {
-        Sleep(0);
+    // 1. HARDWARE SPIN (User-space - No Syscall)
+    // This is cross-platform. It uses the 'pause' or 'yield' instructions
+    // you already defined in culverin_cpu_relax.
+    // We do this 50-100 times. It takes ~1 microsecond.
+    for (int i = 0; i < 100; i++) {
+        culverin_cpu_relax();
     }
-#elif defined(__linux__) || defined(__FreeBSD__)
-    sched_yield();
+
+    // 2. KERNEL FALLBACK (OS-specific)
+    // We only reach this if the hardware spin didn't work.
+#if defined(_WIN32)
+    if (SwitchToThread() == FALSE)
+        Sleep(0);
 #elif defined(__APPLE__)
-#    include <unistd.h>
-    // macOS deprecated sched_yield behavior; usleep(0) is often preferred
-    // for thread arbitration in user-space.
+    // This is your current bottleneck. usleep(0) is very slow on M4.
+    // But since we did the loop above, we hit this 100x less often.
     usleep(0);
 #else
-    // Fallback for unknown POSIX systems
-    sleep(0);
+    sched_yield();
 #endif
 }
 

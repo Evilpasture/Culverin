@@ -65,9 +65,8 @@
  *                                     [IDX_IMPAT_PX] = (void *)&px,   [IDX_IMPAT_PY] = (void *)&py,
  *                                     [IDX_IMPAT_PZ] = (void *)&pz};
  *
- *       if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.ImpulseAtParser,
- *                              targets)) {
- *           return nullptr;
+ *       if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+ * &st->parsers.ImpulseAtParser, targets)) { return nullptr;
  *       }
  *
  *
@@ -113,8 +112,7 @@ CULV_MAYBE_UNUSED CULV_NODISCARD static inline bool fp_conv_aux_stride(PyObject 
     return parse_quat_f32(o, &v->x, &v->y, &v->z, &v->w) != 0;
 }
 
-#define FP_CUSTOM_TYPE_NAMES                                                                       \
-    , Vec3f : "Vector3", PosStride : "Vector3", AuxStride : "Quaternion"
+#define FP_CUSTOM_TYPE_NAMES , Vec3f : "Vector3", PosStride : "Vector3", AuxStride : "Quaternion"
 
 #define FP_CUSTOM_CONVERTERS                                                                       \
     , Vec3f : fp_conv_vec3f, PosStride : fp_conv_pos_stride, AuxStride : fp_conv_aux_stride

@@ -208,18 +208,6 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
         return;
     }
 
-    // Check the death flag! If the main thread is deallocating, we must not touch any pointers or
-    // issue Jolt calls.
-    if (self->is_deallocating.load(JPH::memory_order_acquire)) [[unlikely]] {
-        return;
-    }
-
-    // If the Main Thread is reallocating, DO NOT touch the pointers.
-    // The main thread is holding the shadow_lock or about to move buffers.
-    if (self->is_resizing.load(JPH::memory_order_acquire)) [[unlikely]] {
-        return;
-    }
-
     const auto *sys_c = self->system;
 
     // Check for both Rigid and Soft active bodies
@@ -272,7 +260,20 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
             uint32_t work_ptr = 0;
 
             for (uint32_t i = 0; i < active_rigid_count; i++) {
-                const JPH::Body *b = lock_iface->TryGetBody(JPH::BodyID(active_rigid_ids[i]));
+                const uint32_t raw_jolt_id = active_rigid_ids[i];
+                const uint32_t j_idx       = JPH_ID_TO_INDEX(raw_jolt_id);
+
+                // Read from our flat cache
+                const JPH::Body *b = static_cast<const JPH::Body *>(self->jolt_body_ptrs[j_idx]);
+
+                // Validate pointer and Sequence ID (in case Jolt destroyed and reused this slot)
+                if (b == nullptr || b->GetID().GetIndexAndSequenceNumber() != raw_jolt_id)
+                    [[unlikely]] {
+                    // Cache miss: Fallback to Jolt lookup and update our cache
+                    b                           = lock_iface->TryGetBody(JPH::BodyID(raw_jolt_id));
+                    self->jolt_body_ptrs[j_idx] = b;
+                }
+
                 if (b == nullptr) [[unlikely]] {
                     continue;
                 }
@@ -327,10 +328,17 @@ extern "C" void culverin_sync_shadow_buffers(PhysicsWorldObject *self) {
             uint32_t soft_work_ptr = 0;
 
             for (uint32_t i = 0; i < active_soft_count; i++) {
-                const JPH::Body *b = lock_iface->TryGetBody(JPH::BodyID(active_soft_ids[i]));
+                const uint32_t raw_jolt_id = active_soft_ids[i];
+                const uint32_t j_idx       = JPH_ID_TO_INDEX(raw_jolt_id);
 
-                // We still need this one null check because TryGetBody is an external lookup,
-                // but the handle/state logic below is now branchless.
+                const JPH::Body *b = static_cast<const JPH::Body *>(self->jolt_body_ptrs[j_idx]);
+
+                if (b == nullptr || b->GetID().GetIndexAndSequenceNumber() != raw_jolt_id)
+                    [[unlikely]] {
+                    b                           = lock_iface->TryGetBody(JPH::BodyID(raw_jolt_id));
+                    self->jolt_body_ptrs[j_idx] = b;
+                }
+
                 if ((b == nullptr) || !b->IsSoftBody()) [[unlikely]] {
                     continue;
                 }

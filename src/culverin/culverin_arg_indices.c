@@ -14,6 +14,7 @@
     do {                                                                                           \
         static_assert((0 Schema(COUNT_X)) == GroupName##_COUNT,                                    \
                       "FastParse: Schema length mismatch for " #ParserName);                       \
+        (cp)->ParserName##Parser.parser_name = #ParserName;                                        \
         /* 1. Create the definitions on the stack */                                               \
         FastArgDef temp[] = {Schema(GEN_SPEC)};                                                    \
         /* 2. Pass the stack pointer directly. fp_init_impl handles the mallocing now. */          \

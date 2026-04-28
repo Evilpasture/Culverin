@@ -66,8 +66,6 @@ PyType_DeclareSlot_Status PhysicsWorld_clear(CULV_MAYBE_UNUSED PhysicsWorldObjec
 PyType_DeclareSlot_Void PhysicsWorld_dealloc(PhysicsWorldObject *self) {
     PyTypeObject *tp = Py_TYPE(self);
 
-    atomic_store_explicit(&self->is_deallocating, true, memory_order_release);
-
     // 1. The GC "Safety Shield"
     // Use the check-then-untrack to avoid the 'already untracked' abort
     if (PyObject_GC_IsTracked((PyObject *)self)) {
@@ -188,9 +186,9 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
     self->max_jolt_bodies = 0;
     atomic_init(&self->active_queries, 0);
     atomic_init(&self->view_export_count, 0);
-#if !defined(Py_GIL_DISABLED)
+    // #if !defined(Py_GIL_DISABLED)
     atomic_init(&self->waiting_threads, 0);
-#endif
+    // #endif
     atomic_init(&self->step_requested, false);
     atomic_init(&self->is_stepping, false);
     self->needs_optimization = false;
@@ -1302,12 +1300,12 @@ PyCFunction_DeclareMethod PhysicsWorld_load_state(PhysicsWorldObject *self, PyOb
     atomic_store_explicit(&self->free_count, local_free_count, memory_order_release);
 
     // 9. JPH SYNC (Bridges Shadow to C++)
-    JPH_BodyID *bids      = self->body_ids;
-    JPH_BodyInterface *bi = self->body_interface;
-    auto shadow_pos       = (PosStride *)self->positions;
-    auto shadow_rot       = (AuxStride *)self->rotations;
-    auto shadow_lvel      = (AuxStride *)self->linear_velocities;
-    auto shadow_avel      = (AuxStride *)self->angular_velocities;
+    JPH_BodyID *CULV_RESTRICT bids      = self->body_ids;
+    JPH_BodyInterface *CULV_RESTRICT bi = self->body_interface;
+    auto shadow_pos                     = (PosStride * CULV_RESTRICT) self->positions;
+    auto shadow_rot                     = (AuxStride * CULV_RESTRICT) self->rotations;
+    auto shadow_lvel                    = (AuxStride * CULV_RESTRICT) self->linear_velocities;
+    auto shadow_avel                    = (AuxStride * CULV_RESTRICT) self->angular_velocities;
 
     SHADOW_UNLOCK(&self->shadow_lock);
 
@@ -1364,12 +1362,6 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
 
     VALIDATE_FINITE_FLOAT(dt, "dt");
 
-    // Check death flag
-    if (atomic_load_explicit(&self->is_deallocating, memory_order_acquire)) {
-        PyErr_SetString(PyExc_RuntimeError, "Cannot step: World is deallocating");
-        return nullptr;
-    }
-
     // --- PHASE 0: RE-ENTRANCY GUARD ---
     if (atomic_load_explicit(&self->is_stepping, memory_order_acquire)) {
         PyErr_SetString(PyExc_RuntimeError, "Concurrent step detected.");
@@ -1382,15 +1374,17 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
     // I have no idea why I should even need this, but the GIL is giving me trouble, so this will
     // do.
     // TODO: investigate how the hell does this work
-#if !defined(Py_GIL_DISABLED)
+    // #if !defined(Py_GIL_DISABLED)
     // ANTI-STARVATION: Yield to waiting Python threads (Getters/Mutators)
 
-    while (atomic_load_explicit(&self->waiting_threads, memory_order_acquire) > 0) {
+    while (atomic_load_explicit(&self->waiting_threads, memory_order_relaxed) > 0) {
         SHADOW_UNLOCK(&self->shadow_lock);
         Py_BEGIN_ALLOW_THREADS culverin_yield();
         Py_END_ALLOW_THREADS SHADOW_LOCK(&self->shadow_lock);
     }
-#endif
+
+    atomic_thread_fence(memory_order_acquire);
+    // #endif
 
     // Raise flags
     atomic_store_explicit(&self->is_stepping, true, memory_order_relaxed);
@@ -1431,12 +1425,12 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
 
     // 2. Simulation Step
     if (dt <= 0.0f) {
-        JPH_PhysicsSystem_OptimizeBroadPhase2(self->system, self->temp_allocator);
+        JPH_PhysicsSystem_OptimizeBroadPhase(self->system);
         self->needs_optimization = false;
     } else {
         JPH_PhysicsSystem_Update2(self->system, dt, 1, self->temp_allocator, self->job_system);
         if (self->needs_optimization) {
-            JPH_PhysicsSystem_OptimizeBroadPhase2(self->system, self->temp_allocator);
+            JPH_PhysicsSystem_OptimizeBroadPhase(self->system);
             self->needs_optimization = false;
         }
     }
@@ -1448,10 +1442,10 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
         NATIVE_COND_WAIT(self->step_sync.cond, self->step_sync.mutex);
     }
 
+    NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
+
     // 3. Jolt-to-Shadow Buffer Sync
     culverin_sync_shadow_buffers(self);
-
-    NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
 
     CULV_PROFILE_END(jolt_step, "Jolt Physics Crunch", (unsigned int)captured_count);
 
@@ -2103,7 +2097,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
 
     // 2. ARENA ALLOCATION (Include space for PyObject* pointers)
     // We allocate: PosStride + ShapeParams + SettingsPtr + HandleUint64 + ResultPyObjectPtr
-    size_t arena_size =
+    const size_t arena_size =
         batch_count * (sizeof(PosStride) + sizeof(ShapeParams) +
                        sizeof(JPH_BodyCreationSettings *) + sizeof(uint64_t) + sizeof(PyObject *));
     void *arena = CULV_RAW_MALLOC(arena_size);
@@ -2111,11 +2105,12 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
         return PyErr_NoMemory();
     }
 
-    auto pos_buf      = (PosStride *)arena;
-    auto size_buf     = (ShapeParams *)(pos_buf + batch_count);
-    auto settings_buf = (JPH_BodyCreationSettings **)(size_buf + batch_count);
-    auto handles_out  = (uint64_t *)(settings_buf + batch_count);
-    auto py_results   = (PyObject **)(handles_out + batch_count);
+    auto pos_buf  = (PosStride * CULV_RESTRICT) arena;
+    auto size_buf = (ShapeParams * CULV_RESTRICT)(pos_buf + batch_count);
+    auto settings_buf =
+        (JPH_BodyCreationSettings * CULV_RESTRICT * CULV_RESTRICT)(size_buf + batch_count);
+    auto handles_out = (uint64_t *CULV_RESTRICT)(settings_buf + batch_count);
+    auto py_results  = (PyObject * CULV_RESTRICT * CULV_RESTRICT)(handles_out + batch_count);
 
     memset((void *)settings_buf, 0, batch_count * sizeof(void *));
 
@@ -2127,15 +2122,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
     // 3. JOLT PREP (No GIL, Inline Shape Caching)
     Py_BEGIN_ALLOW_THREADS;
     SHADOW_LOCK(&self->shadow_lock);
-    JPH_Shape *last_shape = nullptr;
-
-    // ShapeParams last_size = {.p[0] = -1.0f, .p[1] = -1.0f, .p[2] = -1.0f, .p[3] = -1.0f};
-
-    // ShapeParams last_size = {};
-    // #pragma unroll
-    //     for (auto j = 0ULL; j < (sizeof(ShapeParams) / sizeof(float)); j++) {
-    //         last_size.p[j] = -1.0f;
-    //     }
+    JPH_Shape *CULV_RESTRICT last_shape = nullptr;
 
     enum : uint8_t { PARAM_0, PARAM_1, PARAM_2, PARAM_3 };
 
@@ -2147,9 +2134,9 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
                                    }};
 
     for (Py_ssize_t i = 0; i < batch_count; i++) {
-        JPH_Shape *shape    = last_shape;
-        const float *curr_p = size_buf[i].p;
-        const float *last_p = last_size.p;
+        JPH_Shape *CULV_RESTRICT shape    = last_shape;
+        const float *CULV_RESTRICT curr_p = size_buf[i].p;
+        const float *CULV_RESTRICT last_p = last_size.p;
 
         // Manual logical comparison: Correct float semantics and better optimization
         if (curr_p[PARAM_0] != last_p[PARAM_0] || curr_p[PARAM_1] != last_p[PARAM_1] ||
@@ -2208,7 +2195,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
         (uint32_t)atomic_fetch_add_explicit(&self->count, batch_count, memory_order_relaxed);
     size_t free_head = available - batch_count;
     atomic_store_explicit(&self->free_count, free_head, memory_order_release);
-
+#pragma unroll 8
     for (Py_ssize_t i = 0; i < batch_count; i++) {
         if (UNLIKELY(!settings_buf[i])) {
             handles_out[i] = 0;
@@ -2226,12 +2213,12 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
         self->dense_to_slot[dense] = slot;
         self->body_ids[dense]      = JPH_INVALID_BODY_ID;
 
-        PosStride p                                = pos_buf[i];
-        p.w                                        = 0.0;
-        ((PosStride *)self->positions)[dense]      = p;
-        ((PosStride *)self->prev_positions)[dense] = p;
-        ((AuxStride *)self->rotations)[dense]      = (AuxStride){0, 0, 0, 1};
-        ((AuxStride *)self->prev_rotations)[dense] = (AuxStride){0, 0, 0, 1};
+        PosStride p                                               = pos_buf[i];
+        p.w                                                       = 0.0;
+        ((PosStride * CULV_RESTRICT) self->positions)[dense]      = p;
+        ((PosStride * CULV_RESTRICT) self->prev_positions)[dense] = p;
+        ((AuxStride * CULV_RESTRICT) self->rotations)[dense]      = (AuxStride){0, 0, 0, 1};
+        ((AuxStride * CULV_RESTRICT) self->prev_rotations)[dense] = (AuxStride){0, 0, 0, 1};
 
         atomic_store_explicit(&self->slot_states[slot], SLOT_PENDING_CREATE, memory_order_release);
 
@@ -2257,7 +2244,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
 
     // Pack the pointer array into a Python List
     // This function handles cleanup/decref internally if any py_results[i] is NULL
-    PyObject *res_list = fb_pack_list((size_t)batch_count, py_results);
+    PyObject *const res_list = fb_pack_list((size_t)batch_count, (PyObject **)py_results);
 
     CULV_RAW_FREE(arena);
     return res_list;
@@ -3513,12 +3500,13 @@ PyCFunction_DeclareMethod PhysicsWorld_get_render_state(PhysicsWorldObject *self
         return PyErr_NoMemory();
     }
 
-    float *out = (float *)PyBytes_AsString(bytes_obj);
+    auto out = (float *)PyBytes_AsString(bytes_obj);
 
     // Dispatch to optimized C++ SIMD helper
     culverin_compute_interpolation_loop(
-        (PosStride *)self->positions, (PosStride *)self->prev_positions,
-        (AuxStride *)self->rotations, (AuxStride *)self->prev_rotations, alpha, out, count);
+        (PosStride *restrict)self->positions, (PosStride *restrict)self->prev_positions,
+        (AuxStride *restrict)self->rotations, (AuxStride *restrict)self->prev_rotations, alpha, out,
+        count);
 
     SHADOW_UNLOCK(&self->shadow_lock);
     return bytes_obj;
