@@ -557,7 +557,7 @@ static constexpr size_t PARSER_REGISTRY_SIZE = 128;
     X(IDX_18, "a18", uint64_t, false)                                                              \
     X(IDX_19, "a19", uint64_t, false)                                                              \
     X(IDX_20, "a20", uint64_t, false)                                                              \
-    X(IDX_21, "a21", uint64_t, 0)                                                                  \
+    X(IDX_21, "a21", uint64_t, false)                                                              \
     X(IDX_22, "a22", uint64_t, false)                                                              \
     X(IDX_23, "a23", uint64_t, false)                                                              \
     X(IDX_24, "a24", uint64_t, false)                                                              \
@@ -573,32 +573,33 @@ static constexpr size_t PARSER_REGISTRY_SIZE = 128;
     X(IDX_34, "a34", uint64_t, false)                                                              \
     X(IDX_35, "a35", uint64_t, false)                                                              \
     X(IDX_36, "a36", uint64_t, false)                                                              \
-    X(IDX_37, "a37", uint64_t, 0)                                                                  \
+    X(IDX_37, "a37", uint64_t, false)                                                              \
     X(IDX_38, "a38", uint64_t, false)                                                              \
     X(IDX_39, "a39", uint64_t, false)                                                              \
     X(IDX_40, "a40", uint64_t, false)                                                              \
-    X(IDX_41, "a41", uint64_t, 0)                                                                  \
+    X(IDX_41, "a41", uint64_t, false)                                                              \
     X(IDX_42, "a42", uint64_t, false)                                                              \
     X(IDX_43, "a43", uint64_t, false)                                                              \
     X(IDX_44, "a44", uint64_t, false)                                                              \
-    X(IDX_45, "a45", uint64_t, 0)                                                                  \
+    X(IDX_45, "a45", uint64_t, false)                                                              \
     X(IDX_46, "a46", uint64_t, false)                                                              \
     X(IDX_47, "a47", uint64_t, false)                                                              \
-    X(IDX_48, "a48", uint64_t, 0)                                                                  \
-    X(IDX_49, "a49", uint64_t, 0)                                                                  \
-    X(IDX_50, "a50", uint64_t, 0)                                                                  \
+    X(IDX_48, "a48", uint64_t, false)                                                              \
+    X(IDX_49, "a49", uint64_t, false)                                                              \
+    X(IDX_50, "a50", uint64_t, false)                                                              \
     X(IDX_51, "a51", uint64_t, false)                                                              \
-    X(IDX_52, "a52", uint64_t, 0)                                                                  \
-    X(IDX_53, "a53", uint64_t, 0)                                                                  \
-    X(IDX_54, "a54", uint64_t, 0)                                                                  \
-    X(IDX_55, "a55", uint64_t, 0)                                                                  \
+    X(IDX_52, "a52", uint64_t, false)                                                              \
+    X(IDX_53, "a53", uint64_t, false)                                                              \
+    X(IDX_54, "a54", uint64_t, false)                                                              \
+    X(IDX_55, "a55", uint64_t, false)                                                              \
     X(IDX_56, "a56", uint64_t, false)                                                              \
-    X(IDX_57, "a57", uint64_t, 0)                                                                  \
+    X(IDX_57, "a57", uint64_t, false)                                                              \
     X(IDX_58, "a58", uint64_t, false)                                                              \
     X(IDX_59, "a59", uint64_t, false)                                                              \
     X(IDX_60, "a60", uint64_t, false)                                                              \
     X(IDX_61, "a61", uint64_t, false)                                                              \
-    X(IDX_62, "a62", uint64_t, false) X(IDX_63, "a63", uint64_t, false)
+    X(IDX_62, "a62", uint64_t, false)                                                              \
+    X(IDX_63, "a63", uint64_t, false)
 
 /** --- THE GENERATOR ENGINE --- **/
 
