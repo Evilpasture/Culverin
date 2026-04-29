@@ -92,7 +92,7 @@ jobs:
               -DCMAKE_CXX_FLAGS="/arch:AVX2 /fp:fast -DJPH_OBJECT_LAYER_BITS=32"
               
           elif [ "$RUNNER_OS" == "macOS" ]; then
-            export MACOSX_DEPLOYMENT_TARGET=13.0
+            export MACOSX_DEPLOYMENT_TARGET=13.3
             cmake -S extern/JoltPhysics/Build -B jolt-build \
               "${COMMON_CMAKE_ARGS[@]}" \
               -DCMAKE_C_COMPILER="/opt/homebrew/opt/llvm/bin/clang" \
@@ -184,7 +184,7 @@ jobs:
           CIBW_ENVIRONMENT_MACOS: >
             CC=/opt/homebrew/opt/llvm/bin/clang
             CXX=/opt/homebrew/opt/llvm/bin/clang++
-            CMAKE_GENERATOR=Ninja MACOSX_DEPLOYMENT_TARGET=13.0
+            CMAKE_GENERATOR=Ninja MACOSX_DEPLOYMENT_TARGET=13.3
             CMAKE_ARGS="-DENABLE_SANITIZER=OFF -DCMAKE_BUILD_TYPE=Release -DDOUBLE_PRECISION=ON -DJOLT_PREBUILT_DIR=$JOLT_CMAKE_DIR"
 
           CIBW_ENVIRONMENT_WINDOWS: >
