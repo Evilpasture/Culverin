@@ -50,7 +50,7 @@ static void dump_parser_registry(FastParser *const *const registry, const size_t
  */
 PyCFunction_DeclareMethod culv_dump_schema_json(PyObject *const self, PyObject *const *args,
                                                 size_t nargsf, PyObject *kwnames) {
-    auto *const st       = get_culverin_state(self);
+    const auto st       = get_culverin_state(self);
     const char *filename = "culverin_schema.json";
 
     // 1. Thread-safe, subinterpreter-safe parsing via FastParser
