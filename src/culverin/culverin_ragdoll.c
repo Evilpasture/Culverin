@@ -236,7 +236,7 @@ PyCFunction_DeclareMethodFromModule Ragdoll_get_debug_info(RagdollObject *self,
 
     return list;
 }
-void culverin_free_skeleton_parsers(SkeletonParsers *sp);
+
 PyType_DeclareSlot_VoidFromModule Skeleton_dealloc(SkeletonObject *self) {
     if (self->skeleton) {
         JPH_Skeleton_Destroy(self->skeleton);
@@ -247,7 +247,7 @@ PyType_DeclareSlot_VoidFromModule Skeleton_dealloc(SkeletonObject *self) {
     }
     Py_TYPE(self)->tp_free((PyObject *)self);
 }
-void culverin_init_skeleton_parsers(SkeletonParsers *sp);
+
 PyType_DeclareSlot_ObjectFromModule Skeleton_new(PyTypeObject *type, PyObject *Py_UNUSED(args),
                                                  PyObject *Py_UNUSED(kwds)) {
     auto self = (SkeletonObject *)type->tp_alloc(type, 0);
@@ -267,7 +267,7 @@ PyType_DeclareSlot_ObjectFromModule Skeleton_new(PyTypeObject *type, PyObject *P
     }
     return (PyObject *)self;
 }
-void culverin_free_ragdoll_settings_parsers(RagdollSettingsParsers *rsp);
+
 PyType_DeclareSlot_VoidFromModule RagdollSettings_dealloc(RagdollSettingsObject *self) {
     if (self->settings) {
         JPH_RagdollSettings_Destroy(self->settings);
@@ -281,7 +281,7 @@ PyType_DeclareSlot_VoidFromModule RagdollSettings_dealloc(RagdollSettingsObject 
 }
 
 // --- Ragdoll Instance Implementation ---
-void culverin_free_ragdoll_parsers(RagdollParsers *rp);
+
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 PyType_DeclareSlot_VoidFromModule Ragdoll_dealloc(RagdollObject *self) {
     if (self->world && self->ragdoll) {

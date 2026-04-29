@@ -134,7 +134,7 @@ process_soft_batch(const PhysicsWorldObject *const CULV_RESTRICT self,
         CULV_ASSUME_ALIGNED(self->prev_rotations, sizeof(AuxStride)));
 
     const auto *const CULV_RESTRICT soft_shadows = self->soft_shadows;
-#pragma unroll
+    CULV_UNROLL_LOOP(4)
     for (uint32_t j = 0; j < count; j++) {
         const uint32_t D                       = worklist[j].dense_idx;
         const JPH::Body *const CULV_RESTRICT b = worklist[j].body;

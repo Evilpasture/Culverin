@@ -165,7 +165,7 @@ void cleanup_vehicle_resources(VehicleResources *r, uint32_t num_wheels, Physics
     }
 }
 
-void culverin_init_vehicle_parsers(VehicleParsers *vp);
+
 int init_vehicle_parsers(VehicleObject *obj) {
     obj->parsers = (VehicleParsers *)PyMem_Malloc(sizeof(VehicleParsers));
     if (!obj->parsers) {
@@ -807,7 +807,7 @@ static void Vehicle_internal_cleanup(VehicleObject *self) {
         JPH_LinearCurve_Destroy(t_curve);
     }
 }
-void culverin_free_vehicle_parsers(VehicleParsers *vp);
+
 // --- Python Wrapper ---
 // Using [[nodiscard]] on this will now only affect Python callers
 PyCFunction_DeclareMethodFromModule Vehicle_destroy(VehicleObject *self,

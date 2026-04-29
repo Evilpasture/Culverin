@@ -601,6 +601,10 @@ static constexpr size_t PARSER_REGISTRY_SIZE = 128;
     X(IDX_62, "a62", uint64_t, false)                                                              \
     X(IDX_63, "a63", uint64_t, false)
 
+#define SCHEMA_DUMP_SCHEMA(X)                                                                      \
+    X(IDX_DS_PATH, "path", const char *, false)
+
+
 /** --- THE GENERATOR ENGINE --- **/
 
 #define GEN_ENUM(ID, NAME, TYPE, REQ) ID,
@@ -707,6 +711,7 @@ DEFINE_INDEX_GROUP(MathEulerBatch, SCHEMA_MATH_EULER_BATCH)
 DEFINE_INDEX_GROUP(CreateShip, SCHEMA_CREATE_SHIP)
 DEFINE_INDEX_GROUP(ShipInput, SCHEMA_SHIP_INPUT)
 DEFINE_INDEX_GROUP(StressTest, SCHEMA_STRESS_TEST)
+DEFINE_INDEX_GROUP(DumpSchema, SCHEMA_DUMP_SCHEMA)
 
 #define FOR_ALL_PARSERS(X)                                                                         \
     X(WorldInit, WorldInit, SCHEMA_WORLD_INIT)                                                     \
@@ -831,6 +836,9 @@ DEFINE_INDEX_GROUP(StressTest, SCHEMA_STRESS_TEST)
     X(MathEulerVec, MathEulerVec, SCHEMA_MATH_EULER_VEC)                                           \
     X(MathEulerBatch, MathEulerBatch, SCHEMA_MATH_EULER_BATCH)
 
+#define FOR_ALL_MODULE_PARSERS(X)                                                                  \
+    X(DumpSchema, DumpSchema, SCHEMA_DUMP_SCHEMA)
+
 #define MAP_TO_DECLARE(P, G, S) DECLARE_PARSER(P, G)
 
 // B. Declare the Parsers
@@ -893,5 +901,55 @@ typedef struct MathParsers {
     FastParser *registry[PARSER_REGISTRY_SIZE];
     size_t registry_count;
 } MathParsers;
+
+typedef struct ModuleParsers {
+    FOR_ALL_MODULE_PARSERS(MAP_TO_DECLARE)
+    FastParser *registry[PARSER_REGISTRY_SIZE];
+    size_t registry_count;
+} ModuleParsers;
+
+// --- World ---
+void culverin_init_world_parsers(WorldParsers *wp);
+void culverin_free_world_parsers(WorldParsers *wp);
+
+// --- Character ---
+void culverin_init_char_parsers(CharacterParsers *cp);
+void culverin_free_char_parsers(CharacterParsers *cp);
+
+// --- Vehicle ---
+void culverin_init_vehicle_parsers(VehicleParsers *vp);
+void culverin_free_vehicle_parsers(VehicleParsers *vp);
+
+// --- ECS Registry ---
+void culverin_init_ecs_parsers(ECSParsers *ep);
+void culverin_free_ecs_parsers(ECSParsers *ep);
+
+// --- Skeleton ---
+void culverin_init_skeleton_parsers(SkeletonParsers *sp);
+void culverin_free_skeleton_parsers(SkeletonParsers *sp);
+
+// --- Ragdoll Runtime ---
+void culverin_init_ragdoll_parsers(RagdollParsers *rp);
+void culverin_free_ragdoll_parsers(RagdollParsers *rp);
+
+// --- Ragdoll Settings ---
+void culverin_init_ragdoll_settings_parsers(RagdollSettingsParsers *rsp);
+void culverin_free_ragdoll_settings_parsers(RagdollSettingsParsers *rsp);
+
+// --- Ship ---
+void culverin_init_ship_parsers(ShipParsers *sp);
+void culverin_free_ship_parsers(ShipParsers *sp);
+
+// --- Soft Body Shared Settings (SBSS) ---
+void culverin_init_sbss_parsers(SoftBodySharedSettingsParsers *sbssp);
+void culverin_free_sbss_parsers(SoftBodySharedSettingsParsers *sbssp);
+
+// --- Math Service ---
+void culverin_math_init_all_parsers(MathParsers *mp);
+void culverin_math_free_all_parsers(MathParsers *mp);
+
+// --- Module ---
+void culverin_init_module_parsers(ModuleParsers *mp);
+void culverin_free_module_parsers(ModuleParsers *mp);
 
 void fp_dump_schemas_json(WorldParsers *wp, FILE *out);

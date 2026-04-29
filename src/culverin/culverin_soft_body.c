@@ -5,7 +5,7 @@
 #include "culverin_python.h"
 
 // --- SharedSettings Lifecycle ---
-void culverin_init_sbss_parsers(SoftBodySharedSettingsParsers *sbssp);
+
 PyType_DeclareSlot_StatusFromModule SoftBodySharedSettings_init(SoftBodySharedSettingsObject *self,
                                                                 CULV_MAYBE_UNUSED PyObject *args,
                                                                 CULV_MAYBE_UNUSED PyObject *kwds) {
@@ -28,7 +28,7 @@ PyType_DeclareSlot_StatusFromModule SoftBodySharedSettings_init(SoftBodySharedSe
     culverin_init_sbss_parsers(self->parsers);
     return 0;
 }
-void culverin_free_sbss_parsers(SoftBodySharedSettingsParsers *sbssp);
+
 PyType_DeclareSlot_VoidFromModule
 SoftBodySharedSettings_dealloc(SoftBodySharedSettingsObject *self) {
     if (self->settings) {

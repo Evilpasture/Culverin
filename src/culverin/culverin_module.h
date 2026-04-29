@@ -2,6 +2,7 @@
 
 // --- Module State (PEP 489) ---
 #include <Python.h>
+#include "culverin_arg_indices.h"
 typedef struct {
     PyObject *helper;           // Reference to culverin._culverin module
     PyObject *PhysicsWorldType; // Reference to the class
@@ -15,6 +16,8 @@ typedef struct {
     PyObject *BufferProxyType;
     PyObject *RegistryType;
     PyObject *MathServiceType;
+    // Parser group for top-level module functions
+    ModuleParsers parsers; 
 } CulverinState;
 
 // Helper to retrieve state from the module object

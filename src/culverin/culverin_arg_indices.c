@@ -186,6 +186,19 @@ void culverin_math_free_all_parsers(MathParsers *mp) {
 #undef DO_FREE
 }
 
+void culverin_init_module_parsers(ModuleParsers *mp) {
+    mp->registry_count = 0;
+#define DO_SETUP(P, G, S) SETUP_PARSER_ST(mp, P, G, S);
+    FOR_ALL_MODULE_PARSERS(DO_SETUP)
+#undef DO_SETUP
+}
+
+void culverin_free_module_parsers(ModuleParsers *mp) {
+#define DO_FREE(P, G, S) TEARDOWN_PARSER_ST(mp, P);
+    FOR_ALL_MODULE_PARSERS(DO_FREE)
+#undef DO_FREE
+}
+
 void fp_dump_schemas_json(WorldParsers *wp, FILE *out) {
     fprintf(out, "{\n");
     for (size_t i = 0; i < wp->registry_count; i++) {

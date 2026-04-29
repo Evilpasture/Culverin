@@ -63,8 +63,8 @@ PyType_DeclareSlot_Status PhysicsWorld_clear(CULV_MAYBE_UNUSED PhysicsWorldObjec
     return 0;
 }
 
-void culverin_init_world_parsers(WorldParsers *cp);
-void culverin_free_world_parsers(WorldParsers *cp);
+
+
 
 PyType_DeclareSlot_Void PhysicsWorld_dealloc(PhysicsWorldObject *self) {
     auto tp = Py_TYPE(self);
