@@ -1,6 +1,5 @@
 #include "culverin_handler.h"
 #include <array>
-#include <chrono>
 #include <format>
 #include <iostream>
 #include <string_view>
@@ -65,7 +64,7 @@ namespace {
     struct TimeSpec { int h, m, s; };
     [[nodiscard]]
     auto get_local_time() noexcept -> TimeSpec {
-        const auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+        const auto now = std::time(nullptr);
         std::tm tm_info{};
 #ifdef _WIN32
         localtime_s(&tm_info, &now);
