@@ -86,10 +86,9 @@ PyCFunction_DeclareMethodFromModule RagdollSettings_stabilize(RagdollSettingsObj
 PyCFunction_DeclareMethodFromModule Ragdoll_drive_to_pose(RagdollObject *self,
                                                           PyObject *const *args, Py_ssize_t nargs,
                                                           PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. FAST ARGUMENT PARSING
-    PosStride root_p      = {.x = 0, .y = 0, .z = 0};
-    AuxStride root_q      = {.x = 0, .y = 0, .z = 0, .w = 1.0f};
+    PosStride root_p      = {};
+    AuxStride root_q      = {.w = 1.0f};
     PyObject *py_matrices = nullptr;
 
     void *targets[RagdollDrive_COUNT] = {
