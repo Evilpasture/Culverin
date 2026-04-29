@@ -1,5 +1,6 @@
 #pragma once
 #include "culverin.h"
+#include "culverin_arg_indices.h"
 #include <Python.h>
 
 // --- Character Object ---
@@ -14,6 +15,9 @@ typedef struct CharacterObject {
     JPH_BroadPhaseLayerFilter *bp_filter;
     JPH_ObjectLayerFilter *obj_filter;
     JPH_CharacterContactListener *listener;
+
+    // Parsers
+    CharacterParsers *parsers;
 
     // ATOMIC INPUTS: Read by Jolt worker threads in callbacks
     CULV_ATOMIC(float) push_strength;

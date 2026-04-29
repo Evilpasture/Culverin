@@ -2158,14 +2158,12 @@ class TestSoftBodies(CulverinTestCase):
         settings = culverin.SoftBodySharedSettings()
 
         # A simple hinge/book shape (4 vertices, 2 triangles sharing an edge)
-        # Verts: (0,0,0), (1,0,0), (0,1,0), (-1,0,0)
-        # Tri 1: 0, 1, 2
-        # Tri 2: 0, 2, 3
         pos = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [-1, 0, 0]], dtype=np.float32)
         settings.add_vertices(pos.tobytes())
 
-        faces = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.uint32)
-        settings.add_faces(faces.tobytes())
+        # Explicitly pass the default material via the individual add_face kwargs
+        settings.add_face(0, 1, 2, material_index=0)
+        settings.add_face(0, 2, 3, material_index=0)
 
         # Use BEND_DIHEDRAL
         settings.create_constraints(compliance=0.01, bend_type=culverin.BEND_DIHEDRAL)
@@ -2178,7 +2176,8 @@ class TestSoftBodies(CulverinTestCase):
     def test_soft_body_rest_pose(self) -> None:
         """Verify we can extract the rest-pose of a vertex before optimization."""
         settings = culverin.SoftBodySharedSettings()
-        settings.add_vertex((1.5, 2.5, -3.5), 1.0)
+        # Ensure we can optionally pass a velocity to the individual vertex insertion
+        settings.add_vertex((1.5, 2.5, -3.5), inv_mass=1.0, velocity=(0.0, 10.0, 0.0))
 
         pos = settings.get_vertex_position(0)
         self.assertAlmostEqual(pos[0], 1.5)
@@ -2188,17 +2187,31 @@ class TestSoftBodies(CulverinTestCase):
         with self.assertRaises(IndexError):
             settings.get_vertex_position(99)
 
-    def test_soft_body_bulk_creation_with_mass(self) -> None:
-        """Verify bulk vertex loading with explicit inverse masses."""
+    def test_soft_body_bulk_api_full(self) -> None:
+        """Verify bulk vertex loading with explicit inverse masses, velocities, and materials."""
         settings = culverin.SoftBodySharedSettings()
 
         # 3 vertices for a single triangle
         pos = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float32)
+        
         # Mix of stationary (0.0) and mobile (1.0) vertices
         inv_masses = np.array([0.0, 1.0, 1.0], dtype=np.float32)
+        
+        # Inject velocity on the first vertex
+        velocities = np.array([[0, 10, 0], [0, 0, 0], [0, 0, 0]], dtype=np.float32)
 
-        settings.add_vertices(pos.tobytes(), inv_masses.tobytes())
-        settings.add_faces(np.array([0, 1, 2], dtype=np.uint32).tobytes())
+        # Test the expanded C API
+        settings.add_vertices(
+            pos.tobytes(), 
+            inv_masses=inv_masses.tobytes(), 
+            velocities=velocities.tobytes()
+        )
+        
+        faces = np.array([[0, 1, 2]], dtype=np.uint32)
+        materials = np.array([0], dtype=np.uint32)
+        
+        # Test the expanded Face API
+        settings.add_faces(faces.tobytes(), materials=materials.tobytes())
 
         settings.create_constraints(0.001)
         settings.optimize()
@@ -2210,7 +2223,7 @@ class TestSoftBodies(CulverinTestCase):
         view = self.world.get_soft_body_vertices(h)
         verts = np.frombuffer(view, dtype=dtype).reshape(-1, 4)
 
-        # Check initial positions
+        # Check initial positions (Note: V0 is pinned to 0,0,0)
         self.assertEqual(verts[1, 0], 1.0)
         self.assertEqual(verts[2, 1], 1.0)
 
@@ -2235,18 +2248,19 @@ class TestSoftBodies(CulverinTestCase):
         self.assertLess(verts[2, 1], 5.5, "Vertices in NumPy buffer did not update after step")
 
     def test_soft_body_pinning(self) -> None:
-        """Verify that pinned vertices remain fixed in space relative to the COM."""
+        """Verify that pinned vertices (invMass = 0.0) remain fixed in space relative to the COM."""
         settings = culverin.SoftBodySharedSettings()
 
         # Create a vertical line of 3 vertices
         pos = np.array([[0, 0, 0], [0, 1, 0], [0, 2, 0]], dtype=np.float32)
-        settings.add_vertices(pos.tobytes())
+        
+        # Pin the very top vertex (index 2)
+        masses = np.array([1.0, 1.0, 0.0], dtype=np.float32)
+        settings.add_vertices(pos.tobytes(), inv_masses=masses.tobytes())
 
         # Jolt requires at least one face to optimize correctly
         settings.add_face(0, 1, 2)
 
-        # Pin the very top vertex (index 2)
-        settings.add_pinned_vertex(2)
         settings.create_constraints(0.001, culverin.BEND_DISTANCE)
         settings.optimize()
 
@@ -2262,6 +2276,21 @@ class TestSoftBodies(CulverinTestCase):
 
         # The pinned vertex (2) should be physically higher than the mobile ones
         self.assertGreater(verts[2, 1], verts[0, 1], "Pinned vertex fell below bottom vertex")
+
+    def test_deprecated_pinning(self) -> None:
+        """Verify add_pinned_vertex emits a warning and does not crash."""
+        settings = culverin.SoftBodySharedSettings()
+        settings.add_vertex((0, 0, 0), inv_mass=1.0)
+
+        import warnings
+        
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            settings.add_pinned_vertex(0) # type: ignore
+            
+            self.assertEqual(len(w), 1)
+            self.assertTrue(issubclass(w[-1].category, DeprecationWarning))
+            self.assertIn("add_vertices", str(w[-1].message))
 
     def test_soft_body_collision(self) -> None:
         """Test if a soft body deforms/stops when hitting the floor."""

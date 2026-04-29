@@ -2,6 +2,7 @@
 #include "culverin.h"
 #include "culverin_arg_indices.h"
 #include "culverin_fast_build.h"
+#include "culverin_math.h"
 #include "culverin_module.h"
 #include "culverin_physics_sync.h"
 #include "culverin_physics_world_internal.h"
@@ -458,15 +459,14 @@ const JPH_CharacterContactListener_Procs char_listener_procs = {
 
 PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObject *const *args,
                                                    size_t nargsf, PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. INTEGRATED FAST PARSE (Unchanged)
-    Vec3f v_in = {.x = 0.0f, .y = 0.0f, .z = 0.0f};
+    Vec3f v_in = {};
     float dt   = 0.0f;
 
     void *targets[CharMove_COUNT] = {[IDX_CM_VEL] = &v_in, [IDX_CM_DT] = &dt};
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.CharMoveParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->CharMoveParser, targets)) {
         return nullptr;
     }
 
@@ -568,7 +568,6 @@ PyCFunction_DeclareMethodFromModule Character_get_position(CharacterObject *self
 PyCFunction_DeclareMethodFromModule Character_set_position(CharacterObject *self,
                                                            PyObject *const *args, Py_ssize_t nargs,
                                                            PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. Stack Allocation and Parser Targets (Unchanged)
     PosStride pos                   = {};
     void *targets[SetPosChar_COUNT] = {
@@ -576,7 +575,7 @@ PyCFunction_DeclareMethodFromModule Character_set_position(CharacterObject *self
     };
 
     // 2. High Speed Parse (Unchanged)
-    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.SetPosCharParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->SetPosCharParser, targets)) {
         return nullptr;
     }
 
@@ -612,7 +611,6 @@ PyCFunction_DeclareMethodFromModule Character_set_position(CharacterObject *self
 PyCFunction_DeclareMethodFromModule Character_set_rotation(CharacterObject *self,
                                                            PyObject *const *args, Py_ssize_t nargs,
                                                            PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. Explicitly initialized stack target
     AuxStride rot = {.x = 0.0f, .y = 0.0f, .z = 0.0f, .w = 1.0f};
 
@@ -621,7 +619,7 @@ PyCFunction_DeclareMethodFromModule Character_set_rotation(CharacterObject *self
     };
 
     // 2. High Speed Parse
-    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.SetRotCharParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->SetRotCharParser, targets)) {
         return nullptr;
     }
 
@@ -653,7 +651,6 @@ PyCFunction_DeclareMethodFromModule Character_set_rotation(CharacterObject *self
 PyCFunction_DeclareMethodFromModule Character_set_strength(CharacterObject *self,
                                                            PyObject *const *args, Py_ssize_t nargs,
                                                            PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. Explicitly initialized target
     float strength = 0.0f;
 
@@ -663,7 +660,7 @@ PyCFunction_DeclareMethodFromModule Character_set_strength(CharacterObject *self
 
     // 2. High Speed Parse (Handles both world.set_strength(200.0) and
     // world.set_strength(strength=200.0))
-    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.SetStrengthCharParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->SetStrengthCharParser, targets)) {
         return nullptr;
     }
 
@@ -685,84 +682,47 @@ PyCFunction_DeclareMethodFromModule Character_set_strength(CharacterObject *self
 // Change signature to take PyObject* arg directly
 PyCFunction_DeclareMethodFromModule Character_get_render_transform(CharacterObject *self,
                                                                    PyObject *arg) {
-    // --- 1. Fast Argument Parsing ---
-    double alpha_dbl = PyFloat_AsDouble(arg);
-    if (alpha_dbl == -1.0 && PyErr_Occurred()) {
+    const auto alpha_raw = PyFloat_AsDouble(arg);
+    if (alpha_raw == -1.0 && PyErr_Occurred()) {
         return nullptr;
     }
 
-    // Clamp alpha to [0.0, 1.0]
-    JPH_Real alpha = fmax(0.0, fmin(1.0, (JPH_Real)alpha_dbl));
+    constexpr float min_v = 0.0f;
+    constexpr float max_v = 1.0f;
+    const auto alpha      = (float)fmax(min_v, fmin(max_v, alpha_raw));
 
-    // --- 2. Snapshot State (Locked) ---
+    // Align to 16 bytes for SIMD safety
+    alignas(16) float res_p[3];
+    alignas(16) float res_r[4];
+
     SHADOW_LOCK(&self->world->shadow_lock);
 
-    // Consistency Guard: Ensure we aren't reading while the world is stepping/swapping
     BLOCK_UNTIL_NOT_STEPPING(self->world);
 
-    // TSan Fix: Explicitly load raw handle value to resolve slot
-    uint64_t h_raw = atomic_load_explicit(&self->handle, memory_order_relaxed);
-    uint32_t slot  = (uint32_t)(h_raw & HANDLE_INDEX_MASK);
-    uint32_t dense = self->world->slot_to_dense[slot];
+    const auto h_raw = atomic_load_explicit(&self->handle, memory_order_relaxed);
+    const auto slot  = (uint32_t)(h_raw & HANDLE_INDEX_MASK);
+    const auto dense = self->world->slot_to_dense[slot];
 
-    // Map world buffers using Strides
-    auto shadow_ppos = (PosStride *)self->world->prev_positions;
-    auto shadow_prot = (AuxStride *)self->world->prev_rotations;
+    // Capture Shadow Buffers
+    // Prev Positions (PosStride) contains JPH_Real (doubles)
+    const auto shadow_ppos = (PosStride *)self->world->prev_positions;
+    // Prev Rotations (AuxStride) contains floats
+    const auto shadow_prot = (AuxStride *)self->world->prev_rotations;
 
-    // Capture "Start" state (Previous frame)
-    PosStride start_p = shadow_ppos[dense];
-    AuxStride start_r = shadow_prot[dense];
-
-    // Capture "End" state (Current frame from Jolt)
+    // Capture Jolt State
     JPH_STACK_ALLOC(JPH_RVec3, end_p);
     JPH_STACK_ALLOC(JPH_Quat, end_r);
     JPH_CharacterVirtual_GetPosition(self->character, end_p);
     JPH_CharacterVirtual_GetRotation(self->character, end_r);
 
+    // Call our specialized SIMD routine
+    culverin_math_interpolate_character_transform(&shadow_ppos[dense], &shadow_prot[dense], end_p,
+                                                  end_r, alpha, res_p, res_r);
+
     SHADOW_UNLOCK(&self->world->shadow_lock);
 
-    // --- 3. MATH (Unlocked) ---
-
-    // Position LERP (Performed in DOUBLE to prevent jitter far from origin)
-    JPH_Real px = start_p.x + (end_p->x - start_p.x) * alpha;
-    JPH_Real py = start_p.y + (end_p->y - start_p.y) * alpha;
-    JPH_Real pz = start_p.z + (end_p->z - start_p.z) * alpha;
-
-    // Rotation NLERP (Performed in FLOAT)
-    float p_rx = start_r.x;
-    float p_ry = start_r.y;
-    float p_rz = start_r.z;
-    float p_rw = start_r.w;
-
-    float dot = p_rx * end_r->x + p_ry * end_r->y + p_rz * end_r->z + p_rw * end_r->w;
-    float q2x = end_r->x;
-    float q2y = end_r->y;
-    float q2z = end_r->z;
-    float q2w = end_r->w;
-
-    // Correct for quaternion double-cover (shortest path)
-    if (dot < 0.0f) {
-        q2x = -q2x;
-        q2y = -q2y;
-        q2z = -q2z;
-        q2w = -q2w;
-    }
-
-    float rx = p_rx + (q2x - p_rx) * (float)alpha;
-    float ry = p_ry + (q2y - p_ry) * (float)alpha;
-    float rz = p_rz + (q2z - p_rz) * (float)alpha;
-    float rw = p_rw + (q2w - p_rw) * (float)alpha;
-
-    // Re-normalize to ensure the result is a unit quaternion
-    float mag_sq  = rx * rx + ry * ry + rz * rz + rw * rw;
-    float inv_len = (mag_sq > 1e-9f) ? 1.0f / sqrtf(mag_sq) : 1.0f;
-    rx *= inv_len;
-    ry *= inv_len;
-    rz *= inv_len;
-    rw *= inv_len;
-
-    // --- 4. Optimized Return (Using FastBuild) ---
-    return FastBuild_Tuple(FastBuild_Tuple(px, py, pz), FastBuild_Tuple(rx, ry, rz, rw));
+    return FastBuild_Tuple(FastBuild_Tuple(res_p[0], res_p[1], res_p[2]),
+                           FastBuild_Tuple(res_r[0], res_r[1], res_r[2], res_r[3]));
 }
 
 PyCFunction_DeclareMethodFromModule Character_is_grounded(CharacterObject *self,
@@ -794,6 +754,8 @@ PyType_DeclareSlot_StatusFromModule Character_clear(CharacterObject *self) {
     Py_CLEAR(self->world);
     return 0;
 }
+
+void culverin_free_char_parsers(CharacterParsers *cp);
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 PyType_DeclareSlot_VoidFromModule Character_dealloc(CharacterObject *self) {
     PyObject_GC_UnTrack(self);
@@ -849,12 +811,16 @@ PyType_DeclareSlot_VoidFromModule Character_dealloc(CharacterObject *self) {
     NATIVE_MUTEX_UNLOCK(self->world->jph_trampoline_lock);
 
 finalize:
+    if (self->parsers) {
+        culverin_free_char_parsers(self->parsers);
+        PyMem_Free(self->parsers);
+    }
     Py_XDECREF(self->world);
     Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
 // Helper 1: Jolt-side allocation and Collision Manager linking
-static JPH_CharacterVirtual *
+static inline JPH_CharacterVirtual *
 alloc_j_char(PhysicsWorldObject *self, PositionVector pos,
              CharacterParams params) { // Reduced to 2 conceptual arguments
 
@@ -892,8 +858,8 @@ alloc_j_char(PhysicsWorldObject *self, PositionVector pos,
 }
 
 // Helper 2: Shadow Buffer Registration (Atomic Commit)
-static void register_char(PhysicsWorldObject *self, CharacterObject *obj,
-                          JPH_CharacterVirtual *j_char, uint32_t slot) {
+static inline void register_char(PhysicsWorldObject *self, CharacterObject *obj,
+                                 JPH_CharacterVirtual *j_char, uint32_t slot) {
     SHADOW_LOCK(&self->shadow_lock);
 
     // 1. Resolve Handle Metadata
@@ -972,7 +938,7 @@ static void register_char(PhysicsWorldObject *self, CharacterObject *obj,
 }
 
 // Helper 3: Filter and Listener serialization (Trampoline Lock)
-static void setup_char_filters(CharacterObject *obj) {
+static inline void setup_char_filters(CharacterObject *obj) {
     NATIVE_MUTEX_LOCK(obj->world->jph_trampoline_lock);
     obj->listener     = JPH_CharacterContactListener_Create(obj);
     obj->body_filter  = JPH_BodyFilter_Create(nullptr);
@@ -982,15 +948,24 @@ static void setup_char_filters(CharacterObject *obj) {
     NATIVE_MUTEX_UNLOCK(obj->world->jph_trampoline_lock);
     JPH_CharacterVirtual_SetListener(obj->character, obj->listener);
 }
+void culverin_init_char_parsers(CharacterParsers *cp);
+[[nodiscard]]
+static inline int setup_char_parsers(CharacterObject *obj) {
+    obj->parsers = (CharacterParsers *)PyMem_Malloc(sizeof(CharacterParsers));
+    if (!obj->parsers) {
+        return -1;
+    }
+    culverin_init_char_parsers(obj->parsers);
+    return 0;
+}
 
 // Main Orchestrator
 PyCFunction_DeclareMethodFromModule PhysicsWorld_create_character(PhysicsWorldObject *self,
                                                                   PyObject *const *args,
                                                                   Py_ssize_t nargs,
                                                                   PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. Setup Targets (Unchanged)
-    PosStride pos                 = {.x = 0, .y = 0, .z = 0};
+    PosStride pos                 = {};
     constexpr auto DEFAULT_HEIGHT = 1.8f;
     constexpr auto DEFAULT_RADIUS = 0.4f;
     constexpr auto DEFUALT_STEP_H = 0.4f;
@@ -1006,7 +981,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_character(PhysicsWorldOb
                                        [IDX_CCHAR_STEP]  = (void *)&step_h,
                                        [IDX_CCHAR_SLOPE] = (void *)&slope};
 
-    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.CreateCharParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->CreateCharParser, targets)) {
         return nullptr;
     }
 
@@ -1049,6 +1024,10 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_character(PhysicsWorldOb
         CharacterObject,
         (PyTypeObject *)get_culverin_state(PyType_GetModule(Py_TYPE(self)))->CharacterType);
     if (!obj) {
+        goto fail_py;
+    }
+
+    if (setup_char_parsers(obj) < 0) {
         goto fail_py;
     }
 

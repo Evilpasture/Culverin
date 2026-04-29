@@ -12,43 +12,58 @@
 // =========================================================================
 // ASAN COMPATIBILITY ALLOCATORS
 // =========================================================================
-[[clang::ownership_returns(culv_mem)]]
-[[gnu::always_inline]]
+[[clang::ownership_returns(culv_mem)]] [[gnu::always_inline]]
 static inline void *CULV_RAW_MALLOC(size_t sz) {
-    #ifdef ENABLE_SANITIZER
-        return malloc(sz);
-    #else
-        return PyMem_RawMalloc(sz);
-    #endif
+#ifdef ENABLE_SANITIZER
+    return malloc(sz);
+#else
+    return PyMem_RawMalloc(sz);
+#endif
 }
-[[clang::ownership_returns(culv_mem)]]
-[[gnu::always_inline]]
+[[clang::ownership_returns(culv_mem)]] [[gnu::always_inline]]
 static inline void *CULV_RAW_CALLOC(size_t n, size_t sz) {
-    #ifdef ENABLE_SANITIZER
-        return calloc(n, sz);
-    #else
-        return PyMem_RawCalloc(n, sz);
-    #endif
+#ifdef ENABLE_SANITIZER
+    return calloc(n, sz);
+#else
+    return PyMem_RawCalloc(n, sz);
+#endif
 }
-[[clang::ownership_takes(culv_mem, 1)]]
-[[clang::ownership_returns(culv_mem)]]
-[[gnu::always_inline]]
+[[clang::ownership_takes(culv_mem,
+                         1)]] [[clang::ownership_returns(culv_mem)]] [[gnu::always_inline]]
 static inline void *CULV_RAW_REALLOC(void *ptr, size_t sz) {
-    #ifdef ENABLE_SANITIZER
-        return realloc(ptr, sz);
-    #else
-        return PyMem_RawRealloc(ptr, sz);
-    #endif
+#ifdef ENABLE_SANITIZER
+    return realloc(ptr, sz);
+#else
+    return PyMem_RawRealloc(ptr, sz);
+#endif
 }
-[[clang::ownership_takes(culv_mem, 1)]]
-[[gnu::always_inline]]
+[[clang::ownership_takes(culv_mem, 1)]] [[gnu::always_inline]]
 static inline void CULV_RAW_FREE(void *ptr) {
-    #ifdef ENABLE_SANITIZER
-        free(ptr);
-    #else
-        PyMem_RawFree(ptr);
-    #endif
+#ifdef ENABLE_SANITIZER
+    free(ptr);
+#else
+    PyMem_RawFree(ptr);
+#endif
 }
+
+static inline void PyObject_cleanup(void *ptr) {
+    PyObject **obj = (PyObject **)ptr;
+    Py_CLEAR(*obj);
+}
+#define AUTO_DECREF [[gnu::cleanup(PyObject_cleanup)]]
+static inline PyObject *internal_move_obj(PyObject **obj) {
+    auto tmp = *obj;
+    *obj     = nullptr;
+    return tmp;
+}
+#define RETURN_RAII_OBJECT(obj) return internal_move_obj(&(obj))
+
+/* How to use:
+static inline PyObject *test_function() {
+    AUTO_DECREF PyObject *result = PyLong_FromLong(50);
+    RETURN_RAII_OBJECT(result);
+}
+*/
 
 // =========================================================================
 #include "culverin_command_buffer.h"

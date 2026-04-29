@@ -340,9 +340,12 @@ static constexpr size_t PARSER_REGISTRY_SIZE = 128;
 
 #define SCHEMA_SBSS_ADD_VERTICES(X)                                                                \
     X(IDX_SAVS_POS, "positions", PyObject *, true)                                                 \
-    X(IDX_SAVS_MASS, "inv_masses", PyObject *, false)
+    X(IDX_SAVS_MASS, "inv_masses", PyObject *, false)                                              \
+    X(IDX_SAVS_VEL, "velocities", PyObject *, false)
 
-#define SCHEMA_SBSS_ADD_FACES(X) X(IDX_SAFS_IND, "indices", PyObject *, true)
+#define SCHEMA_SBSS_ADD_FACES(X)                                                                   \
+    X(IDX_SAFS_IND, "indices", PyObject *, true)                                                   \
+    X(IDX_SAFS_MAT, "materials", PyObject *, false)
 
 #define SCHEMA_GET_SB_VERTEX(X)                                                                    \
     X(IDX_GSBV_H, "handle", ParseBodyHandle, true)                                                 \
@@ -369,12 +372,14 @@ static constexpr size_t PARSER_REGISTRY_SIZE = 128;
 
 #define SCHEMA_SBSS_ADD_VERTEX(X)                                                                  \
     X(IDX_SAV_POS, "pos", PyObject *, true)                                                        \
-    X(IDX_SAV_MASS, "inv_mass", float, true)
+    X(IDX_SAV_MASS, "inv_mass", float, false)                                                      \
+    X(IDX_SAV_VEL, "velocity", PyObject *, false)
 
 #define SCHEMA_SBSS_ADD_FACE(X)                                                                    \
     X(IDX_SAF_V1, "v1", uint32_t, true)                                                            \
     X(IDX_SAF_V2, "v2", uint32_t, true)                                                            \
-    X(IDX_SAF_V3, "v3", uint32_t, true)
+    X(IDX_SAF_V3, "v3", uint32_t, true)                                                            \
+    X(IDX_SAF_MAT, "material_index", uint32_t, false) // Add this line
 
 #define SCHEMA_REG_ENTITY_ONLY(X) X(IDX_REO_ENT, "entity", uint64_t, true)
 
@@ -552,7 +557,7 @@ static constexpr size_t PARSER_REGISTRY_SIZE = 128;
     X(IDX_18, "a18", uint64_t, false)                                                              \
     X(IDX_19, "a19", uint64_t, false)                                                              \
     X(IDX_20, "a20", uint64_t, false)                                                              \
-    X(IDX_21, "a21", uint64_t, 0)                                                                  \
+    X(IDX_21, "a21", uint64_t, false)                                                              \
     X(IDX_22, "a22", uint64_t, false)                                                              \
     X(IDX_23, "a23", uint64_t, false)                                                              \
     X(IDX_24, "a24", uint64_t, false)                                                              \
@@ -568,25 +573,37 @@ static constexpr size_t PARSER_REGISTRY_SIZE = 128;
     X(IDX_34, "a34", uint64_t, false)                                                              \
     X(IDX_35, "a35", uint64_t, false)                                                              \
     X(IDX_36, "a36", uint64_t, false)                                                              \
-    X(IDX_37, "a37", uint64_t, 0)                                                                  \
+    X(IDX_37, "a37", uint64_t, false)                                                              \
     X(IDX_38, "a38", uint64_t, false)                                                              \
     X(IDX_39, "a39", uint64_t, false)                                                              \
     X(IDX_40, "a40", uint64_t, false)                                                              \
-    X(IDX_41, "a41", uint64_t, 0)                                                                  \
+    X(IDX_41, "a41", uint64_t, false)                                                              \
     X(IDX_42, "a42", uint64_t, false)                                                              \
     X(IDX_43, "a43", uint64_t, false)                                                              \
     X(IDX_44, "a44", uint64_t, false)                                                              \
-    X(IDX_45, "a45", uint64_t, 0)                                                                  \
+    X(IDX_45, "a45", uint64_t, false)                                                              \
     X(IDX_46, "a46", uint64_t, false)                                                              \
-    X(IDX_47, "a47", uint64_t, 0)                                                                  \
-    X(IDX_48, "a48", uint64_t, 0)                                                                  \
-    X(IDX_49, "a49", uint64_t, 0) X(IDX_50, "a50", uint64_t, 0) X(IDX_51, "a51", uint64_t, false)  \
-        X(IDX_52, "a52", uint64_t, 0) X(IDX_53, "a53", uint64_t, 0) X(IDX_54, "a54", uint64_t, 0)  \
-            X(IDX_55, "a55", uint64_t, 0) X(IDX_56, "a56", uint64_t, false)                        \
-                X(IDX_57, "a57", uint64_t, 0) X(IDX_58, "a58", uint64_t, false)                    \
-                    X(IDX_59, "a59", uint64_t, false) X(IDX_60, "a60", uint64_t, false)            \
-                        X(IDX_61, "a61", uint64_t, false) X(IDX_62, "a62", uint64_t, false)        \
-                            X(IDX_63, "a63", uint64_t, false)
+    X(IDX_47, "a47", uint64_t, false)                                                              \
+    X(IDX_48, "a48", uint64_t, false)                                                              \
+    X(IDX_49, "a49", uint64_t, false)                                                              \
+    X(IDX_50, "a50", uint64_t, false)                                                              \
+    X(IDX_51, "a51", uint64_t, false)                                                              \
+    X(IDX_52, "a52", uint64_t, false)                                                              \
+    X(IDX_53, "a53", uint64_t, false)                                                              \
+    X(IDX_54, "a54", uint64_t, false)                                                              \
+    X(IDX_55, "a55", uint64_t, false)                                                              \
+    X(IDX_56, "a56", uint64_t, false)                                                              \
+    X(IDX_57, "a57", uint64_t, false)                                                              \
+    X(IDX_58, "a58", uint64_t, false)                                                              \
+    X(IDX_59, "a59", uint64_t, false)                                                              \
+    X(IDX_60, "a60", uint64_t, false)                                                              \
+    X(IDX_61, "a61", uint64_t, false)                                                              \
+    X(IDX_62, "a62", uint64_t, false)                                                              \
+    X(IDX_63, "a63", uint64_t, false)
+
+#define SCHEMA_DUMP_SCHEMA(X)                                                                      \
+    X(IDX_DS_PATH, "path", const char *, false)
+
 
 /** --- THE GENERATOR ENGINE --- **/
 
@@ -694,6 +711,7 @@ DEFINE_INDEX_GROUP(MathEulerBatch, SCHEMA_MATH_EULER_BATCH)
 DEFINE_INDEX_GROUP(CreateShip, SCHEMA_CREATE_SHIP)
 DEFINE_INDEX_GROUP(ShipInput, SCHEMA_SHIP_INPUT)
 DEFINE_INDEX_GROUP(StressTest, SCHEMA_STRESS_TEST)
+DEFINE_INDEX_GROUP(DumpSchema, SCHEMA_DUMP_SCHEMA)
 
 #define FOR_ALL_PARSERS(X)                                                                         \
     X(WorldInit, WorldInit, SCHEMA_WORLD_INIT)                                                     \
@@ -739,38 +757,52 @@ DEFINE_INDEX_GROUP(StressTest, SCHEMA_STRESS_TEST)
     X(CreateConstr, CreateConstr, SCHEMA_CREATE_CONSTR)                                            \
     X(DestroyConstr, HOnly, SCHEMA_HANDLE_ONLY)                                                    \
     X(Step, Step, SCHEMA_STEP)                                                                     \
-    X(CharMove, CharMove, SCHEMA_CHAR_MOVE)                                                        \
-    X(LoadState, LoadState, SCHEMA_LOAD_STATE)                                                     \
     X(CreateChar, CreateChar, SCHEMA_CREATE_CHAR)                                                  \
-    X(SetPosChar, SetPosChar, SCHEMA_SET_POS_CHAR)                                                 \
-    X(SetRotChar, SetRotChar, SCHEMA_SET_ROT_CHAR)                                                 \
-    X(SetStrengthChar, SetStrengthChar, SCHEMA_SET_STRENGTH_CHAR)                                  \
-    X(VehicleInput, VehicleInput, SCHEMA_VEHICLE_INPUT)                                            \
-    X(TankInput, TankInput, SCHEMA_TANK_INPUT)                                                     \
+    X(LoadState, LoadState, SCHEMA_LOAD_STATE)                                                     \
     X(CreateVehicle, CreateVehicle, SCHEMA_CREATE_VEHICLE)                                         \
     X(CreateTracked, CreateTracked, SCHEMA_CREATE_TRACKED)                                         \
     X(CreateRagdoll, CreateRagdoll, SCHEMA_CREATE_RAGDOLL)                                         \
     X(RagdollSettings, RagdollSettings, SCHEMA_RAGDOLL_SETTINGS)                                   \
-    X(RagdollAddPart, RagdollAddPart, SCHEMA_RAGDOLL_ADD_PART)                                     \
-    X(AddJoint, AddJoint, SCHEMA_ADD_JOINT)                                                        \
-    X(GetJointIdx, GetJointIdx, SCHEMA_GET_JOINT_IDX)                                              \
-    X(RagdollDrive, RagdollDrive, SCHEMA_RAGDOLL_DRIVE)                                            \
-    X(SbssCreateConstraints, SbssCreateConstraints, SCHEMA_SBSS_CREATE_CONSTRAINTS)                \
     X(CreateSoftBody, CreateSoftBody, SCHEMA_CREATE_SOFT_BODY)                                     \
-    X(SbssAddVertex, SbssAddVertex, SCHEMA_SBSS_ADD_VERTEX)                                        \
-    X(SbssAddFace, SbssAddFace, SCHEMA_SBSS_ADD_FACE)                                              \
-    X(SbssAddVertices, SbssAddVertices, SCHEMA_SBSS_ADD_VERTICES)                                  \
-    X(SbssAddFaces, SbssAddFaces, SCHEMA_SBSS_ADD_FACES)                                           \
     X(GetSbVertex, GetSbVertex, SCHEMA_GET_SB_VERTEX)                                              \
+    X(StressTest, StressTest, SCHEMA_STRESS_TEST)                                                  \
+    X(CreateShip, CreateShip, SCHEMA_CREATE_SHIP)
+
+#define FOR_ALL_CHAR_PARSERS(X)                                                                    \
+    X(CharMove, CharMove, SCHEMA_CHAR_MOVE)                                                        \
+    X(SetPosChar, SetPosChar, SCHEMA_SET_POS_CHAR)                                                 \
+    X(SetRotChar, SetRotChar, SCHEMA_SET_ROT_CHAR)                                                 \
+    X(SetStrengthChar, SetStrengthChar, SCHEMA_SET_STRENGTH_CHAR)
+
+#define FOR_ALL_VEHICLE_PARSERS(X)                                                                 \
+    X(VehicleInput, VehicleInput, SCHEMA_VEHICLE_INPUT)                                            \
+    X(TankInput, TankInput, SCHEMA_TANK_INPUT)
+
+#define FOR_ALL_ECS_PARSERS(X)                                                                     \
     X(RegEntityOnly, RegEntityOnly, SCHEMA_REG_ENTITY_ONLY)                                        \
     X(RegCompOnly, RegCompOnly, SCHEMA_REG_COMP_ONLY)                                              \
     X(RegRegComp, RegRegComp, SCHEMA_REG_REG_COMP)                                                 \
     X(RegAdd, RegAdd, SCHEMA_REG_ADD)                                                              \
     X(RegEntComp, RegEntComp, SCHEMA_REG_ENT_COMP)                                                 \
-    X(RegSyncPhys, RegSyncPhys, SCHEMA_REG_SYNC_PHYS)                                              \
-    X(StressTest, StressTest, SCHEMA_STRESS_TEST)                                                  \
-    X(CreateShip, CreateShip, SCHEMA_CREATE_SHIP)                                                  \
-    X(ShipInput, ShipInput, SCHEMA_SHIP_INPUT)
+    X(RegSyncPhys, RegSyncPhys, SCHEMA_REG_SYNC_PHYS)
+
+#define FOR_ALL_SKELETON_PARSERS(X)                                                                \
+    X(AddJoint, AddJoint, SCHEMA_ADD_JOINT)                                                        \
+    X(GetJointIdx, GetJointIdx, SCHEMA_GET_JOINT_IDX)
+
+#define FOR_ALL_RAGDOLL_PARSERS(X) X(RagdollDrive, RagdollDrive, SCHEMA_RAGDOLL_DRIVE)
+
+#define FOR_ALL_RAGDOLL_SETTINGS_PARSERS(X)                                                        \
+    X(RagdollAddPart, RagdollAddPart, SCHEMA_RAGDOLL_ADD_PART)
+
+#define FOR_ALL_SHIP_PARSERS(X) X(ShipInput, ShipInput, SCHEMA_SHIP_INPUT)
+
+#define FOR_ALL_SBSS_PARSERS(X)                                                                    \
+    X(SbssAddVertex, SbssAddVertex, SCHEMA_SBSS_ADD_VERTEX)                                        \
+    X(SbssAddFace, SbssAddFace, SCHEMA_SBSS_ADD_FACE)                                              \
+    X(SbssAddVertices, SbssAddVertices, SCHEMA_SBSS_ADD_VERTICES)                                  \
+    X(SbssAddFaces, SbssAddFaces, SCHEMA_SBSS_ADD_FACES)                                           \
+    X(SbssCreateConstraints, SbssCreateConstraints, SCHEMA_SBSS_CREATE_CONSTRAINTS)
 
 #define FOR_ALL_MATH_PARSERS(X)                                                                    \
     X(MathPersp, MathPersp, SCHEMA_MATH_PERSPECTIVE)                                               \
@@ -804,14 +836,65 @@ DEFINE_INDEX_GROUP(StressTest, SCHEMA_STRESS_TEST)
     X(MathEulerVec, MathEulerVec, SCHEMA_MATH_EULER_VEC)                                           \
     X(MathEulerBatch, MathEulerBatch, SCHEMA_MATH_EULER_BATCH)
 
+#define FOR_ALL_MODULE_PARSERS(X)                                                                  \
+    X(DumpSchema, DumpSchema, SCHEMA_DUMP_SCHEMA)
+
 #define MAP_TO_DECLARE(P, G, S) DECLARE_PARSER(P, G)
 
 // B. Declare the Parsers
-typedef struct CulverinParsers {
+typedef struct WorldParsers {
     FOR_ALL_PARSERS(MAP_TO_DECLARE)
     FastParser *registry[PARSER_REGISTRY_SIZE];
     size_t registry_count;
-} CulverinParsers;
+} WorldParsers;
+
+typedef struct CharacterParsers {
+    FOR_ALL_CHAR_PARSERS(MAP_TO_DECLARE)
+    FastParser *registry[PARSER_REGISTRY_SIZE];
+    size_t registry_count;
+} CharacterParsers;
+
+typedef struct VehicleParsers {
+    FOR_ALL_VEHICLE_PARSERS(MAP_TO_DECLARE)
+    FastParser *registry[PARSER_REGISTRY_SIZE];
+    size_t registry_count;
+} VehicleParsers;
+
+typedef struct ECSParsers {
+    FOR_ALL_ECS_PARSERS(MAP_TO_DECLARE)
+    FastParser *registry[PARSER_REGISTRY_SIZE];
+    size_t registry_count;
+} ECSParsers;
+
+typedef struct SkeletonParsers {
+    FOR_ALL_SKELETON_PARSERS(MAP_TO_DECLARE)
+    FastParser *registry[PARSER_REGISTRY_SIZE];
+    size_t registry_count;
+} SkeletonParsers;
+
+typedef struct RagdollParsers {
+    FOR_ALL_RAGDOLL_PARSERS(MAP_TO_DECLARE)
+    FastParser *registry[PARSER_REGISTRY_SIZE];
+    size_t registry_count;
+} RagdollParsers;
+
+typedef struct RagdollSettingsParsers {
+    FOR_ALL_RAGDOLL_SETTINGS_PARSERS(MAP_TO_DECLARE)
+    FastParser *registry[PARSER_REGISTRY_SIZE];
+    size_t registry_count;
+} RagdollSettingsParsers;
+
+typedef struct ShipParsers {
+    FOR_ALL_SHIP_PARSERS(MAP_TO_DECLARE)
+    FastParser *registry[PARSER_REGISTRY_SIZE];
+    size_t registry_count;
+} ShipParsers;
+
+typedef struct SoftBodySharedSettingsParsers {
+    FOR_ALL_SBSS_PARSERS(MAP_TO_DECLARE)
+    FastParser *registry[PARSER_REGISTRY_SIZE];
+    size_t registry_count;
+} SoftBodySharedSettingsParsers;
 
 typedef struct MathParsers {
     FOR_ALL_MATH_PARSERS(MAP_TO_DECLARE)
@@ -819,6 +902,54 @@ typedef struct MathParsers {
     size_t registry_count;
 } MathParsers;
 
-void fp_dump_schemas_json(CulverinParsers *cp, FILE *out);
-void culverin_init_all_parsers(CulverinParsers *cp);
-void culverin_free_all_parsers(CulverinParsers *cp);
+typedef struct ModuleParsers {
+    FOR_ALL_MODULE_PARSERS(MAP_TO_DECLARE)
+    FastParser *registry[PARSER_REGISTRY_SIZE];
+    size_t registry_count;
+} ModuleParsers;
+
+// --- World ---
+void culverin_init_world_parsers(WorldParsers *wp);
+void culverin_free_world_parsers(WorldParsers *wp);
+
+// --- Character ---
+void culverin_init_char_parsers(CharacterParsers *cp);
+void culverin_free_char_parsers(CharacterParsers *cp);
+
+// --- Vehicle ---
+void culverin_init_vehicle_parsers(VehicleParsers *vp);
+void culverin_free_vehicle_parsers(VehicleParsers *vp);
+
+// --- ECS Registry ---
+void culverin_init_ecs_parsers(ECSParsers *ep);
+void culverin_free_ecs_parsers(ECSParsers *ep);
+
+// --- Skeleton ---
+void culverin_init_skeleton_parsers(SkeletonParsers *sp);
+void culverin_free_skeleton_parsers(SkeletonParsers *sp);
+
+// --- Ragdoll Runtime ---
+void culverin_init_ragdoll_parsers(RagdollParsers *rp);
+void culverin_free_ragdoll_parsers(RagdollParsers *rp);
+
+// --- Ragdoll Settings ---
+void culverin_init_ragdoll_settings_parsers(RagdollSettingsParsers *rsp);
+void culverin_free_ragdoll_settings_parsers(RagdollSettingsParsers *rsp);
+
+// --- Ship ---
+void culverin_init_ship_parsers(ShipParsers *sp);
+void culverin_free_ship_parsers(ShipParsers *sp);
+
+// --- Soft Body Shared Settings (SBSS) ---
+void culverin_init_sbss_parsers(SoftBodySharedSettingsParsers *sbssp);
+void culverin_free_sbss_parsers(SoftBodySharedSettingsParsers *sbssp);
+
+// --- Math Service ---
+void culverin_math_init_all_parsers(MathParsers *mp);
+void culverin_math_free_all_parsers(MathParsers *mp);
+
+// --- Module ---
+void culverin_init_module_parsers(ModuleParsers *mp);
+void culverin_free_module_parsers(ModuleParsers *mp);
+
+void fp_dump_schemas_json(WorldParsers *wp, FILE *out);

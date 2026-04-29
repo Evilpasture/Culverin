@@ -16,7 +16,6 @@ static constexpr float RAGDOLL_DEFAULT_TWIST_MAX = 0.1f;
 
 PyCFunction_DeclareMethodFromModule Skeleton_add_joint(SkeletonObject *self, PyObject *const *args,
                                                        Py_ssize_t nargs, PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. Setup Targets
     PyObject *name_obj = nullptr;
     int parent_idx     = -1; // Default to root
@@ -27,7 +26,7 @@ PyCFunction_DeclareMethodFromModule Skeleton_add_joint(SkeletonObject *self, PyO
     };
 
     // 2. High Speed Parse
-    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.AddJointParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->AddJointParser, targets)) {
         return nullptr;
     }
 
@@ -44,7 +43,6 @@ PyCFunction_DeclareMethodFromModule Skeleton_add_joint(SkeletonObject *self, PyO
 PyCFunction_DeclareMethodFromModule Skeleton_get_joint_index(SkeletonObject *self,
                                                              PyObject *const *args,
                                                              Py_ssize_t nargs, PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. Setup Targets
     PyObject *name_obj               = nullptr;
     void *targets[GetJointIdx_COUNT] = {
@@ -52,7 +50,7 @@ PyCFunction_DeclareMethodFromModule Skeleton_get_joint_index(SkeletonObject *sel
     };
 
     // 2. High Speed Parse
-    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.GetJointIdxParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->GetJointIdxParser, targets)) {
         return nullptr;
     }
 
@@ -88,10 +86,9 @@ PyCFunction_DeclareMethodFromModule RagdollSettings_stabilize(RagdollSettingsObj
 PyCFunction_DeclareMethodFromModule Ragdoll_drive_to_pose(RagdollObject *self,
                                                           PyObject *const *args, Py_ssize_t nargs,
                                                           PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. FAST ARGUMENT PARSING
-    PosStride root_p      = {.x = 0, .y = 0, .z = 0};
-    AuxStride root_q      = {.x = 0, .y = 0, .z = 0, .w = 1.0f};
+    PosStride root_p      = {};
+    AuxStride root_q      = {.w = 1.0f};
     PyObject *py_matrices = nullptr;
 
     void *targets[RagdollDrive_COUNT] = {
@@ -100,7 +97,7 @@ PyCFunction_DeclareMethodFromModule Ragdoll_drive_to_pose(RagdollObject *self,
         [IDX_RD_MATS] = (void *)&py_matrices,
     };
 
-    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.RagdollDriveParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->RagdollDriveParser, targets)) {
         return nullptr;
     }
 
@@ -244,6 +241,10 @@ PyType_DeclareSlot_VoidFromModule Skeleton_dealloc(SkeletonObject *self) {
     if (self->skeleton) {
         JPH_Skeleton_Destroy(self->skeleton);
     }
+    if (self->parsers) {
+        culverin_free_skeleton_parsers(self->parsers);
+        PyMem_Free(self->parsers);
+    }
     Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
@@ -256,6 +257,13 @@ PyType_DeclareSlot_ObjectFromModule Skeleton_new(PyTypeObject *type, PyObject *P
             Py_DECREF(self);
             return PyErr_NoMemory();
         }
+        self->parsers = (SkeletonParsers *)PyMem_Malloc(sizeof(SkeletonParsers));
+        if (!self->parsers) {
+            JPH_Skeleton_Destroy(self->skeleton);
+            Py_DECREF(self);
+            return PyErr_NoMemory();
+        }
+        culverin_init_skeleton_parsers(self->parsers);
     }
     return (PyObject *)self;
 }
@@ -264,11 +272,16 @@ PyType_DeclareSlot_VoidFromModule RagdollSettings_dealloc(RagdollSettingsObject 
     if (self->settings) {
         JPH_RagdollSettings_Destroy(self->settings);
     }
+    if (self->parsers) {
+        culverin_free_ragdoll_settings_parsers(self->parsers);
+        PyMem_Free(self->parsers);
+    }
     Py_XDECREF(self->world);
     Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
 // --- Ragdoll Instance Implementation ---
+
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 PyType_DeclareSlot_VoidFromModule Ragdoll_dealloc(RagdollObject *self) {
     if (self->world && self->ragdoll) {
@@ -316,6 +329,11 @@ PyType_DeclareSlot_VoidFromModule Ragdoll_dealloc(RagdollObject *self) {
         self->body_slots = nullptr;
     }
 
+    if (self->parsers) {
+        culverin_free_ragdoll_parsers(self->parsers);
+        PyMem_Free(self->parsers);
+    }
+
     Py_XDECREF(self->world);
     Py_TYPE(self)->tp_free((PyObject *)self);
 }
@@ -323,7 +341,6 @@ PyType_DeclareSlot_VoidFromModule Ragdoll_dealloc(RagdollObject *self) {
 PyCFunction_DeclareMethodFromModule RagdollSettings_add_part(RagdollSettingsObject *self,
                                                              PyObject *const *args,
                                                              Py_ssize_t nargs, PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. Setup Defaults
     int joint_idx     = 0;
     int parent_idx    = -1;
@@ -350,7 +367,7 @@ PyCFunction_DeclareMethodFromModule RagdollSettings_add_part(RagdollSettingsObje
     };
 
     // 2. High Speed Parse
-    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.RagdollAddPartParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->RagdollAddPartParser, targets)) {
         return nullptr;
     }
 
@@ -481,7 +498,6 @@ PyType_Spec Ragdoll_spec = {
     .flags     = Py_TPFLAGS_DEFAULT,
     .slots =
         (PyType_Slot[]){
-
             {.slot = Py_tp_dealloc, .pfunc = Ragdoll_dealloc},
             {.slot = Py_tp_methods,
              .pfunc =

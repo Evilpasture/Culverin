@@ -69,6 +69,12 @@ void culverin_compute_interpolation_loop(const PosStride *__restrict curr_p,
                                          const AuxStride *__restrict prev_r, float alpha,
                                          float *__restrict out, size_t count);
 
+void culverin_math_interpolate_character_transform(const PosStride *__restrict start_p,
+                                                   const AuxStride *__restrict start_r,
+                                                   const JPH_RVec3 *__restrict end_p,
+                                                   const JPH_Quat *__restrict end_r, float alpha,
+                                                   float *__restrict out_p,
+                                                   float *__restrict out_r);
 void culverin_math_get_perspective(float fovy_rad, float aspect, float near_p, float far_p,
                                    float *__restrict out);
 void culverin_math_get_ortho(float left, float right, float bottom, float top, float near_p,

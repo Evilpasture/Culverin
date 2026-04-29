@@ -1,30 +1,45 @@
-# Proposed Refinements
 Checks: >
   -*,
   bugprone-*,
   -bugprone-easily-swappable-parameters,
   clang-analyzer-*,
-  -clang-analyzer-security.insecureAPI.strcpy,
-  readability-*,
-  -readability-identifier-length,
-  -readability-function-cognitive-complexity,
   performance-*,
+  modernize-*,
+  
+  performance-unnecessary-copy-initialization,
+  performance-unnecessary-value-param,
+  performance-move-const-arg,
+  performance-no-automatic-move,
+  performance-inefficient-vector-operation,
+  performance-inefficient-string-concatenation,
+  performance-trivially-destructible,
+  
+  # Crucial for cache/memory
+  cppcoreguidelines-pro-type-member-init,
+  cppcoreguidelines-no-malloc,
+  modernize-pass-by-value,
+  modernize-use-emplace,
+  
+  # Low-level sanity
   misc-*,
   -misc-unused-parameters,
-  
-  # Crucial for concurrency/low-level
-  bugprone-suspicious-include,
-  bugprone-multiple-new-line-before-fallback,
-  
-  # Remove if the "no-malloc" warnings get too noisy
-  -cppcoreguidelines-no-malloc 
+  readability-*,
+  -readability-identifier-length,
+  -readability-function-cognitive-complexity
 
 CheckOptions:
-  # Allow slightly larger functions for unrolled loops/SIMD
-  readability-function-size.LineThreshold: 800 
-  # Strict snake_case for everything in the C API
+  # High-performance threshold: keep functions smaller to encourage inlining
+  readability-function-size.LineThreshold: 200
+  
+  # Strict snake_case for the C-API interface
   readability-identifier-naming.VariableCase: snake_case
   readability-identifier-naming.FunctionCase: snake_case
   readability-identifier-naming.ParameterCase: snake_case
-  # Magic numbers: ignore 0, 1, 2, and common powers of 2 (4, 8, 16, 32, 64)
-  readability-magic-numbers.IgnoredIntegerValues: "0;1;2;4;8;16;32;64;128;256;512;1024"
+  
+  # Magic numbers: Only allow 0, 1, and 2. 
+  # Powers of 2 must be named constants (e.g., CACHE_LINE_SIZE)
+  readability-magic-numbers.IgnoredIntegerValues: "0;1;2"
+  readability-magic-numbers.IgnorePowersOfTwoValue: false
+
+  # Vector optimization: Flag if we don't reserve space
+  performance-inefficient-vector-operation.EnableImplicitConverters: true

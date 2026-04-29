@@ -61,6 +61,59 @@ void culverin_compute_interpolation_loop(const PosStride *__restrict curr_p,
     }
 }
 
+/**
+ * @brief SIMD Interpolation for Character Transforms.
+ * start_p is JPH_Real (potentially double), start_r is float.
+ */
+[[gnu::hot, gnu::nonnull]]
+void culverin_math_interpolate_character_transform(const PosStride *__restrict start_p,
+                                                   const AuxStride *__restrict start_r,
+                                                   const JPH_RVec3 *__restrict end_p,
+                                                   const JPH_Quat *__restrict end_r,
+                                                   const float alpha, float *__restrict out_p,
+                                                   float *__restrict out_r) {
+    using namespace JPH;
+
+    // 1. POSITION LERP
+    // SAFETY: Explicitly construct from components.
+    // This prevents the Jolt SIMD engine from trying to
+    // perform a 32-byte (4-double) load on a 24-byte (3-double) C-struct.
+    const RVec3 p1(static_cast<Real>(start_p->x), static_cast<Real>(start_p->y),
+                   static_cast<Real>(start_p->z));
+
+    const RVec3 p2(static_cast<Real>(end_p->x), static_cast<Real>(end_p->y),
+                   static_cast<Real>(end_p->z));
+
+    const auto p_res = p1 + (p2 - p1) * static_cast<Real>(alpha);
+
+    // 2. ROTATION NLERP
+    // start_r is AuxStride (float[4], 16 bytes). sLoadFloat4 is safe here.
+    const auto v1 = Vec4::sLoadFloat4(reinterpret_cast<const Float4 *>(start_r));
+
+    // end_r is JPH_Quat (float[4], 16 bytes).
+    // Construct explicitly to avoid any potential AVX-512 over-reads.
+    const Quat q1(v1);
+    const Quat q2(end_r->x, end_r->y, end_r->z, end_r->w);
+
+    const auto v2   = q2.mValue;
+    const float dot = v1.Dot(v2);
+
+    // Shortest path hemisphere check
+    const Quat q2_shortest = (dot < 0.0f) ? -q2 : q2;
+
+    // NLerp: (q1 + (q2 - q1) * alpha).Normalized()
+    const Quat q_res = (q1 + (q2_shortest - q1) * alpha).Normalized();
+
+    // 3. STORE RESULTS
+    // Cast back to float for the renderer
+    out_p[0] = static_cast<float>(p_res.GetX());
+    out_p[1] = static_cast<float>(p_res.GetY());
+    out_p[2] = static_cast<float>(p_res.GetZ());
+
+    // out_r is float[4] (16 bytes). StoreFloat4 is safe.
+    q_res.mValue.StoreFloat4(reinterpret_cast<Float4 *>(out_r));
+}
+
 // Internal helpers for Python
 
 // -----------------------------------------------------------------------------

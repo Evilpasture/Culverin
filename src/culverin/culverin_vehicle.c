@@ -165,6 +165,16 @@ void cleanup_vehicle_resources(VehicleResources *r, uint32_t num_wheels, Physics
     }
 }
 
+
+int init_vehicle_parsers(VehicleObject *obj) {
+    obj->parsers = (VehicleParsers *)PyMem_Malloc(sizeof(VehicleParsers));
+    if (!obj->parsers) {
+        return -1;
+    }
+    culverin_init_vehicle_parsers(obj->parsers);
+    return 0;
+}
+
 // --- Sub-helper: Engine Configuration ---
 static void setup_engine(JPH_WheeledVehicleControllerSettings *v_ctrl, JPH_LinearCurve *t_curve,
                          PyObject *py_engine) {
@@ -279,7 +289,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_vehicle(PhysicsWorldObje
         [IDX_CV_TRANS] = (void *)&py_trans,
     };
 
-    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.CreateVehicleParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->CreateVehicleParser, targets)) {
         return nullptr;
     }
 
@@ -349,7 +359,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_vehicle(PhysicsWorldObje
     jolt_locked = true;
 
     const JPH_BodyLockInterface *lock_iface = JPH_PhysicsSystem_GetBodyLockInterface(self->system);
-    JPH_BodyLockWrite lock                  = {0};
+    JPH_BodyLockWrite lock                  = {};
     JPH_BodyLockInterface_LockWrite(lock_iface, chassis_bid, &lock);
 
     if (UNLIKELY(!lock.body)) {
@@ -394,6 +404,13 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_vehicle(PhysicsWorldObje
         SHADOW_UNLOCK(&self->shadow_lock);
         return nullptr;
     }
+    if (init_vehicle_parsers(obj) < 0) {
+        SHADOW_LOCK(&self->shadow_lock);
+        cleanup_vehicle_resources(&r, num_wheels, self);
+        SHADOW_UNLOCK(&self->shadow_lock);
+        Py_DECREF(obj);
+        return nullptr;
+    }
 
     obj->vehicle               = r.j_veh;
     obj->tester                = (JPH_VehicleCollisionTester *)r.tester;
@@ -434,7 +451,6 @@ python_fail:
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 PyCFunction_DeclareMethodFromModule Vehicle_set_input(VehicleObject *self, PyObject *const *args,
                                                       Py_ssize_t nargs, PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. FAST PARSE (Unchanged)
     float forward   = 0.0f;
     float right     = 0.0f;
@@ -448,7 +464,7 @@ PyCFunction_DeclareMethodFromModule Vehicle_set_input(VehicleObject *self, PyObj
         [IDX_VI_HAND]  = &handbrake,
     };
 
-    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.VehicleInputParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->VehicleInputParser, targets)) {
         return nullptr;
     }
 
@@ -547,13 +563,12 @@ PyCFunction_DeclareMethodFromModule Vehicle_get_wheel_transform(VehicleObject *s
                                                                 PyObject *const *args,
                                                                 Py_ssize_t nargs,
                                                                 PyObject *kwnames) {
-    CulverinState *st             = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     uint32_t index                = 0;
     void *targets[WheelIdx_COUNT] = {
         [IDX_WH_INDEX] = &index,
     };
 
-    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.WheelIdxParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &self->world->parsers->WheelIdxParser, targets)) {
         return nullptr;
     }
 
@@ -592,13 +607,12 @@ PyCFunction_DeclareMethodFromModule Vehicle_get_wheel_local_transform(VehicleObj
                                                                       PyObject *const *args,
                                                                       Py_ssize_t nargs,
                                                                       PyObject *kwnames) {
-    CulverinState *st             = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     uint32_t index                = 0;
     void *targets[WheelIdx_COUNT] = {
         [IDX_WH_INDEX] = &index,
     };
 
-    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.WheelIdxParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &self->world->parsers->WheelIdxParser, targets)) {
         return nullptr;
     }
 
@@ -799,6 +813,10 @@ static void Vehicle_internal_cleanup(VehicleObject *self) {
 PyCFunction_DeclareMethodFromModule Vehicle_destroy(VehicleObject *self,
                                                     PyObject *Py_UNUSED(ignored)) {
     Vehicle_internal_cleanup(self);
+    if (self->parsers) {
+        culverin_free_vehicle_parsers(self->parsers);
+        PyMem_Free(self->parsers);
+    }
     Py_RETURN_NONE;
 }
 
@@ -809,6 +827,11 @@ PyType_DeclareSlot_VoidFromModule Vehicle_dealloc(VehicleObject *self) {
     // Call the internal C logic directly
     // This avoids [[nodiscard]] warnings because the return is void
     Vehicle_internal_cleanup(self);
+
+    if (self->parsers) {
+        culverin_free_vehicle_parsers(self->parsers);
+        PyMem_Free(self->parsers);
+    }
 
     Py_XDECREF(self->world);
     Py_TYPE(self)->tp_free((PyObject *)self);

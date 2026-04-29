@@ -1793,9 +1793,10 @@ Adds a single vertex (node) to the soft body definition.
 
 **Arguments:**
 - **`pos` (tuple):** The `(x, y, z)` local-space coordinate of the vertex.
-- **`inv_mass` (float):** The inverse mass ($1/m$). 
-    - `1.0`: 1kg vertex. 
-    - `0.0`: Technically pins the vertex (though `add_pinned_vertex` is the preferred API).
+- **`inv_mass` (float, optional):** The inverse mass ($1/m$). Default is `1.0`.
+    - `1.0`: Standard mobile vertex. 
+    - `0.0`: **Pins** the vertex, fixing it in local-space (kinematic).
+- **`velocity` (tuple, optional):** The initial `(x, y, z)` velocity of this vertex. Default is `(0.0, 0.0, 0.0)`.
 
 
 ### add_face(...)
@@ -1804,16 +1805,16 @@ Defines a triangular surface on the mesh by linking three vertex indices. Edges 
 
 **Arguments:**
 - **`v1`, `v2`, `v3` (int):** Vertex indices in the order they were added.
+- **`material_index` (int, optional):** The physics material index for this specific face. Default is `0`.
 
 
 ### add_pinned_vertex(...)
 
-[Positional Only] Marks a specific vertex as **Pinned**. Pinned vertices have zero inverse mass and are fixed in world-space (relative to the body's center of mass).
+[Positional Only] **[DEPRECATED]** 
 
-**Arguments:**
-- **`index` (int):** The vertex index to anchor.
+This method is now a safe no-op. The modern Jolt API requires vertices to be configured as packed structures upon creation.
 
-**IMPORTANT:** Must be called **BEFORE** `create_constraints()` to ensure the structural springs correctly account for the anchored point.
+**Migration:** To create pinned (fixed) vertices, provide an inverse mass of `0.0` to `add_vertex` or within the `inv_masses` buffer of `add_vertices()`.
 
 
 ### create_constraints(...)
@@ -1859,12 +1860,13 @@ Massively parallelized addition of vertices to the soft body blueprint. This is 
 **Arguments:**
 - **`positions` (Buffer):** A flat, contiguous array of `float32` values representing `(x, y, z)` coordinates.
 - **`inv_masses` (Buffer, optional):** A flat array of `float32` values defining the inverse mass for each vertex. 
-    - If provided, the length must exactly match the number of vertices in the `positions` buffer.
-    - If `None` (default), all vertices in this batch are assigned a mass of 1.0kg.
+    - Pass `0.0` at specific indices to **pin** those vertices.
+    - If `None` (default), all vertices are mobile (`1.0`).
+- **`velocities` (Buffer, optional):** A flat array of `float32` values representing `(x, y, z)` initial velocities per vertex.
 
 **Performance & Memory:**
 - **Single Allocation:** Unlike calling `add_vertex` in a loop, this method performs exactly one heap allocation by pre-reserving memory for the entire batch.
-- **SIMD Optimized:** The underlying C++ loop is designed to be auto-vectorized by the compiler for high-speed coordinate conversion.
+- **AoS Packing:** Culverin automatically interleaves your flat SoA (Structure of Arrays) buffers into Jolt's required AoS (Array of Structures) layout in a highly-optimized $O(N)$ pass.
 - **NumPy Integration:** Designed to ingest NumPy arrays directly:
   ```python
   positions = np.random.uniform(-1, 1, (1000, 3)).astype(np.float32)
@@ -1872,7 +1874,7 @@ Massively parallelized addition of vertices to the soft body blueprint. This is 
   ```
 
 **Constraints:**
-- Raises `ValueError` if the buffer size is not a multiple of 12 bytes (3x float32).
+- Raises `ValueError` if the buffer sizes do not match the expected strides.
 - Raises `RuntimeError` if called after `optimize()`.
 
 
@@ -1882,6 +1884,7 @@ High-speed batch definition of the soft body's surface triangles.
 
 **Arguments:**
 - **`indices` (Buffer):** A flat, contiguous array of `uint32` values representing vertex indices. Every 3 values define one triangular face.
+- **`materials` (Buffer, optional):** A flat, contiguous array of `uint32` values mapping each face to a specific material index. Length must match the face count (indices length / 3).
 
 **Operational Details:**
 - **Safety Validation:** Culverin performs a C-native bounds check on every index provided. If an index points to a non-existent vertex, the method raises an `IndexError` before any data is sent to Jolt.
@@ -1890,14 +1893,16 @@ High-speed batch definition of the soft body's surface triangles.
 
 **Usage Example:**
 ```python
-# Create a single triangle connecting vertices 0, 1, and 2
+# Create a single triangle connecting vertices 0, 1, and 2 with material ID 1
 indices = np.array([0, 1, 2], dtype=np.uint32)
-settings.add_faces(indices.tobytes())
+mats = np.array([1], dtype=np.uint32)
+settings.add_faces(indices.tobytes(), materials=mats.tobytes())
 ```
 
 **Constraints:**
 - Raises `ValueError` if the buffer size is not a multiple of 12 bytes (3x uint32).
 - Raises `RuntimeError` if called after `optimize()`.
+
 
 ## class Registry
 

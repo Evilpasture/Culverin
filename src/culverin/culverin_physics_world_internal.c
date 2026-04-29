@@ -175,6 +175,10 @@ static size_t migrate_and_init(PhysicsWorldObject *self, NewBuffers *nb, size_t 
         atomic_init(&nb->stat[i], SLOT_EMPTY); // Starting state
         nb->free[local_free_count++] = (uint32_t)i;
     }
+    // Guarantee new body IDs won't trigger false positives in active queries
+    for (size_t i = current_count; i < new_cap; i++) {
+        nb->bids[i] = JPH_INVALID_BODY_ID;
+    }
 
     return local_free_count;
 }
@@ -286,6 +290,7 @@ int allocate_buffers(PhysicsWorldObject *self, int max_bodies) {
     for (size_t i = 0; i < self->capacity; i++) {
         self->categories[i] = ALL_LAYER_BITS;
         self->masks[i]      = ALL_LAYER_BITS;
+        self->body_ids[i]   = JPH_INVALID_BODY_ID;
     }
 
     return 0;
@@ -469,6 +474,7 @@ void free_shadow_buffers(PhysicsWorldObject *self) {
 // - Must not be called from a Jolt callback
 // - Must not race with Python memoryview access
 void PhysicsWorld_free_members(PhysicsWorldObject *self) {
+    self->sync_ready = false;
     // 1. Clear and free the ACTIVE command queue
     if (self->command_queue) {
         clear_command_queue(self);

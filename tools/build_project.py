@@ -107,7 +107,7 @@ def build_extension() -> None:
     print(f"--- CULVERIN ONE-CLICK BUILD (Python {sys.version.split()[0]}) ---")
 
     config: dict[str, str | list[str]] = {
-        "cmake.define.CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "cmake.define.CMAKE_BUILD_TYPE": "Release",
         "cmake.define.DOUBLE_PRECISION": "ON",
         "cmake.define.JPH_DOUBLE_PRECISION": "ON",
         "cmake.define.CMAKE_C_COMPILER": "clang",

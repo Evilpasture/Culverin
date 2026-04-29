@@ -72,7 +72,6 @@ static float OverlapCallback_Broad(void *context, const JPH_BodyID result_bid) {
 PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_sphere(PhysicsWorldObject *self,
                                                                 PyObject *const *args,
                                                                 size_t nargsf, PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
 
     // 1. FAST PARSE
     PyObject *o_center                 = nullptr;
@@ -83,7 +82,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_sphere(PhysicsWorldObje
     };
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &st->parsers.OverlapSphereParser, targets)) {
+                           &self->parsers->OverlapSphereParser, targets)) {
         return nullptr;
     }
 
@@ -196,7 +195,6 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_sphere(PhysicsWorldObje
 PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_aabb(PhysicsWorldObject *self,
                                                               PyObject *const *args, size_t nargsf,
                                                               PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
 
     // 1. FAST PARSE
     PyObject *o_min                  = nullptr;
@@ -207,7 +205,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_aabb(PhysicsWorldObject
     };
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &st->parsers.OverlapAABBParser, targets)) {
+                           &self->parsers->OverlapAABBParser, targets)) {
         return nullptr;
     }
 
@@ -299,7 +297,6 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_aabb(PhysicsWorldObject
 PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast(PhysicsWorldObject *self,
                                                          PyObject *const *args, size_t nargsf,
                                                          PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
 
     // 1. FAST PARSE
     PyObject *o_start     = nullptr;
@@ -314,7 +311,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast(PhysicsWorldObject *sel
         [IDX_RAY_IGN]   = (void *)&ignore_h_raw,
     };
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.RaycastParser,
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->RaycastParser,
                            targets)) {
         return nullptr;
     }
@@ -442,7 +439,6 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast(PhysicsWorldObject *sel
 PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast_batch(PhysicsWorldObject *self,
                                                                PyObject *const *args, size_t nargsf,
                                                                PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
 
     // 1. FAST PARSE
     PyObject *o_starts = nullptr;
@@ -455,8 +451,8 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast_batch(PhysicsWorldObjec
         [IDX_RB_DIST]   = (void *)&max_dist,
     };
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.RayBatchParser,
-                           targets)) {
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+                           &self->parsers->RayBatchParser, targets)) {
         return nullptr;
     }
 
@@ -600,7 +596,6 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast_batch(PhysicsWorldObjec
 PyCFunction_DeclareMethodFromModule PhysicsWorld_shapecast(PhysicsWorldObject *self,
                                                            PyObject *const *args, size_t nargsf,
                                                            PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
 
     // 1. FAST PARSE
     int shape_type        = 0;
@@ -616,8 +611,8 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_shapecast(PhysicsWorldObject *s
         [IDX_SC_SIZE] = (void *)&o_size,      [IDX_SC_IGNORE] = (void *)&ignore_h_raw,
     };
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.ShapecastParser,
-                           targets)) {
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+                           &self->parsers->ShapecastParser, targets)) {
         return nullptr;
     }
 

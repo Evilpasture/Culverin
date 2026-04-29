@@ -94,6 +94,7 @@ endfunction()
 # 1. THE NUCLEAR INITIALIZATION
 option(ENABLE_SANITIZER "Enable Clang Sanitizers (ASan/TSan/UBSan)" OFF)
 option(ENABLE_THREAD_SANITIZER "Enable Thread Sanitizer (TSan)" OFF)
+option(CULV_AGGRESSIVE_OPTIMIZATION "Enable aggressive __builtin_assume for assertions in Release" OFF)
 
 set(DOUBLE_PRECISION ON CACHE BOOL "Use double precision math" FORCE)
 set(GENERATE_SAMPLES OFF CACHE BOOL "" FORCE)
@@ -180,6 +181,23 @@ endif()
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 enforce_modern_compiler()
+
+# ==============================================================================
+# ASSERTION LEVEL MAPPING
+# ==============================================================================
+# Logic:
+# - If config is Debug: Level 2 (Full)
+# - If Sanitizers are ON: Level 2 (Full) - because sanitizers imply a debug context
+# - If Aggressive Opt is ON and config is Release: Level 0 (Assume)
+# - Default (RelWithDebInfo / Release / MinSizeRel): Level 1 (Trap)
+set(CULV_ASSERT_DEFS
+    $<$<OR:$<CONFIG:Debug>,$<BOOL:${ENABLE_SANITIZER}>,$<BOOL:${ENABLE_THREAD_SANITIZER}>>:CULV_ASSERT_LEVEL=2>
+    $<$<AND:$<CONFIG:Release>,$<BOOL:${CULV_AGGRESSIVE_OPTIMIZATION}>>:CULV_ASSERT_LEVEL=0>
+    # This catch-all ensures optimized builds default to Level 1 (Safe Trap) 
+    # if not explicitly caught by the rules above.
+    $<$<AND:$<NOT:$<CONFIG:Debug>>,$<NOT:$<BOOL:${ENABLE_SANITIZER}>>,$<NOT:$<BOOL:${ENABLE_THREAD_SANITIZER}>>,$<NOT:$<AND:$<CONFIG:Release>,$<BOOL:${CULV_AGGRESSIVE_OPTIMIZATION}>>>>:CULV_ASSERT_LEVEL=1>
+)
+
 message(STATUS "--- COMPILER VERIFICATION ---")
 message(STATUS "ID:           ${CMAKE_C_COMPILER_ID}")
 message(STATUS "C Compiler:   ${CMAKE_C_COMPILER}")
@@ -254,7 +272,7 @@ else()
 
     set(FLAGS_PERF "-O3" "-ffast-math" "-fomit-frame-pointer")
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
-        list(APPEND FLAGS_PERF "-mavx2" "-mfma")
+        list(APPEND FLAGS_PERF "-mavx2" "-mfma" "-mcx16")
     endif()
 
     if(CMAKE_C_COMPILER_ID STREQUAL "GNU" AND WIN32)
@@ -402,6 +420,7 @@ target_include_directories(
     ${JOLTC_TARGET}
     PUBLIC "extern/JoltC/include" "${JOLT_DIR}"
 )
+target_compile_definitions(${JOLTC_TARGET} PRIVATE ${CULV_ASSERT_DEFS})
 target_link_libraries(${JOLTC_TARGET} PRIVATE Jolt::Jolt)
 
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
@@ -439,7 +458,7 @@ python_add_library(
     src/culverin/culverin_constraint.c
     src/culverin/culverin_constraint_factory.c
     src/culverin/culverin_arg_indices.c
-    src/culverin/culverin_handler.c
+    src/culverin/culverin_handler.cpp
     src/culverin/culverin_soft_body.c
     src/culverin/culverin_math.cpp
     src/culverin/culverin_math.c
@@ -460,6 +479,9 @@ else()
         PROPERTIES COMPILE_OPTIONS "-frtti"
     )
 endif()
+
+target_compile_options(_culverin_c PRIVATE ${CULVERIN_COMPILE_FLAGS})
+target_compile_definitions(_culverin_c PRIVATE ${CULV_ASSERT_DEFS})
 
 # In section 4, guard IPO for GCC on Windows:
 include(CheckIPOSupported)
@@ -501,6 +523,7 @@ set(FAST_CAPI_TARGET fast_capi_core)
 
 # 3. Apply Culverin's high-performance flags to the submodule target
 target_compile_options(${FAST_CAPI_TARGET} PRIVATE ${CULVERIN_COMPILE_FLAGS})
+target_compile_definitions(${FAST_CAPI_TARGET} PRIVATE ${CULV_ASSERT_DEFS})
 
 # 4. Enforce IPO/LTO if supported
 if(ipo_supported AND NOT (CMAKE_C_COMPILER_ID STREQUAL "GNU" AND WIN32))
@@ -514,6 +537,7 @@ add_subdirectory("extern/docs-embedder")
 
 # Apply Culverin's high-performance flags to the submodule
 target_compile_options(docs_embedder PRIVATE ${CULVERIN_COMPILE_FLAGS})
+target_compile_definitions(docs_embedder PRIVATE ${CULV_ASSERT_DEFS})
 
 # Enforce IPO/LTO if supported
 if(ipo_supported AND NOT (CMAKE_C_COMPILER_ID STREQUAL "GNU" AND WIN32))

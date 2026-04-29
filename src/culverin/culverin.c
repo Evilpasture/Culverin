@@ -20,20 +20,116 @@
 #include "joltc.h"
 #include <stdatomic.h>
 
-PyCFunction_DeclareMethod culv_dump_schema_json(PyObject *self, PyObject *Py_UNUSED(args)) {
-    // self is the module object
-    CulverinState *st = get_culverin_state(self);
+/**
+ * INTERNAL HELPER: dump_parser_registry
+ * Iterates through a specific registry array and writes the JSON entries.
+ */
+static void dump_parser_registry(FastParser *const *const registry, const size_t count,
+                                 FILE *const out, bool *const is_first) {
+    for (size_t i = 0; i < count; ++i) {
+        const auto fp = registry[i];
+        if (!(*is_first)) {
+            fprintf(out, ",\n");
+        }
+        *is_first = false;
 
+        fprintf(out, "  \"%s\": [\n", fp->parser_name);
+        for (size_t j = 0; j < fp->count; ++j) {
+            const bool is_req = (fp->required_mask & (1ULL << j)) != 0;
+            fprintf(out, "    {\"name\": \"%s\", \"type\": \"%s\", \"required\": %s}%s\n",
+                    fp->cold_specs[j].name, fp->cold_specs[j].type_name, is_req ? "true" : "false",
+                    (j == fp->count - 1) ? "" : ",");
+        }
+        fprintf(out, "  ]");
+    }
+}
+
+/**
+ * PyCFunction: dump_schema
+ * Initializes every known parser group, dumps them to a unified JSON, and cleans up.
+ */
+PyCFunction_DeclareMethod culv_dump_schema_json(PyObject *const self, PyObject *const *args,
+                                                size_t nargsf, PyObject *kwnames) {
+    const auto st       = get_culverin_state(self);
     const char *filename = "culverin_schema.json";
-    FILE *f              = fopen(filename, "w");
-    if (!f) {
+
+    // 1. Thread-safe, subinterpreter-safe parsing via FastParser
+    void *targets[DumpSchema_COUNT] = {[IDX_DS_PATH] = (void *)&filename};
+
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+                           &st->parsers.DumpSchemaParser, targets)) {
+        return nullptr;
+    }
+
+    FILE *const f = fopen(filename, "w");
+    if (f == nullptr) {
         return PyErr_SetFromErrno(PyExc_IOError);
     }
 
-    // Pass the pointer to the parser struct and the file handle
-    fp_dump_schemas_json(&st->parsers, f);
+    // 2. Initialize temporary registries to extract cold metadata
+    struct {
+        WorldParsers world;
+        CharacterParsers character;
+        VehicleParsers vehicle;
+        ECSParsers ecs;
+        SkeletonParsers skeleton;
+        RagdollParsers ragdoll;
+        RagdollSettingsParsers ragdoll_settings;
+        ShipParsers ship;
+        SoftBodySharedSettingsParsers sbss;
+        MathParsers math;
+        ModuleParsers module;
+    } all = {};
 
+    culverin_init_world_parsers(&all.world);
+    culverin_init_char_parsers(&all.character);
+    culverin_init_vehicle_parsers(&all.vehicle);
+    culverin_init_ecs_parsers(&all.ecs);
+    culverin_init_skeleton_parsers(&all.skeleton);
+    culverin_init_ragdoll_parsers(&all.ragdoll);
+    culverin_init_ragdoll_settings_parsers(&all.ragdoll_settings);
+    culverin_init_ship_parsers(&all.ship);
+    culverin_init_sbss_parsers(&all.sbss);
+    culverin_math_init_all_parsers(&all.math);
+    culverin_init_module_parsers(&all.module);
+
+    // 3. Export to JSON
+    fprintf(f, "{\n");
+    bool is_first = true;
+
+#define DUMP_GROUP(member)                                                                         \
+    dump_parser_registry(all.member.registry, all.member.registry_count, f, &is_first)
+
+    DUMP_GROUP(world);
+    DUMP_GROUP(character);
+    DUMP_GROUP(vehicle);
+    DUMP_GROUP(ecs);
+    DUMP_GROUP(skeleton);
+    DUMP_GROUP(ragdoll);
+    DUMP_GROUP(ragdoll_settings);
+    DUMP_GROUP(ship);
+    DUMP_GROUP(sbss);
+    DUMP_GROUP(math);
+    DUMP_GROUP(module);
+
+#undef DUMP_GROUP
+
+    fprintf(f, "\n}\n");
     fclose(f);
+
+    // 4. Cleanup temporary allocations
+    culverin_free_world_parsers(&all.world);
+    culverin_free_char_parsers(&all.character);
+    culverin_free_vehicle_parsers(&all.vehicle);
+    culverin_free_ecs_parsers(&all.ecs);
+    culverin_free_skeleton_parsers(&all.skeleton);
+    culverin_free_ragdoll_parsers(&all.ragdoll);
+    culverin_free_ragdoll_settings_parsers(&all.ragdoll_settings);
+    culverin_free_ship_parsers(&all.ship);
+    culverin_free_sbss_parsers(&all.sbss);
+    culverin_math_free_all_parsers(&all.math);
+    culverin_free_module_parsers(&all.module);
+
     Py_RETURN_NONE;
 }
 
@@ -209,8 +305,10 @@ static atomic_int docs_status = 0;
 // User-facing macros for module-level methods
 #define MOD_FASTCALL(name) CULV_FEAT(culv, name, METH_FASTCALL | METH_KEYWORDS)
 #define MOD_NOARGS(name) CULV_FEAT(culv, name, METH_NOARGS)
+#define MOD_VARARGS(name) CULV_FEAT(culv, name, METH_VARARGS | METH_KEYWORDS)
 
 #define MOD_NOARGS_INTERNAL(name) CULV_FEAT_INTERNAL(culv, name, METH_NOARGS)
+#define MOD_FASTCALL_INTERNAL(name) CULV_FEAT_INTERNAL(culv, name, METH_FASTCALL | METH_KEYWORDS)
 
 // --- Module Initialization ---
 
@@ -461,14 +559,13 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
     if (PyModule_AddStringConstant(m, "__version__", shared_version) < 0) {
         return -1;
     }
-
-    culverin_init_all_parsers(&st->parsers);
     CULV_INIT_PROFILER();
 
     st->helper = PyImport_ImportModule("culverin._culverin");
     if (!st->helper) {
         return -1;
     }
+    culverin_init_module_parsers(&st->parsers);
 
     if (init_types(m, st) < 0) {
         return -1;
@@ -489,6 +586,10 @@ PyType_DeclareSlot_Status culverin_traverse(PyObject *m, visitproc visit, void *
     Py_VISIT(st->RagdollSettingsType);
     Py_VISIT(st->RagdollType);
     Py_VISIT(st->SkeletonType);
+    Py_VISIT(st->ShipType);
+    Py_VISIT(st->BufferProxyType);
+    Py_VISIT(st->MathServiceType);
+    Py_VISIT(st->SoftBodySharedSettingsType);
     return 0;
 }
 
@@ -502,8 +603,11 @@ PyType_DeclareSlot_Status culverin_clear(PyObject *m) {
     Py_CLEAR(st->RagdollSettingsType);
     Py_CLEAR(st->RagdollType);
     Py_CLEAR(st->SkeletonType);
-    // Clean up the parsers for this interpreter
-    culverin_free_all_parsers(&st->parsers);
+    Py_CLEAR(st->ShipType);
+    Py_CLEAR(st->BufferProxyType);
+    Py_CLEAR(st->MathServiceType);
+    Py_CLEAR(st->SoftBodySharedSettingsType);
+    culverin_free_module_parsers(&st->parsers);
     return 0;
 }
 
@@ -517,7 +621,7 @@ PyModuleDef culverin_module = {
     .m_methods =
         (PyMethodDef[]){
 
-            MOD_NOARGS_INTERNAL(dump_schema_json), MOD_FASTCALL(mutate_tuple), {}
+            MOD_FASTCALL_INTERNAL(dump_schema_json), MOD_FASTCALL(mutate_tuple), {}
 
         },
     .m_slots =

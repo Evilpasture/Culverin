@@ -79,7 +79,7 @@ DEFINE_DICT_GETTER(s, const char *, py_to_str)
 
 #define CULV_FEAT_INTERNAL(prefix, name, method_type)                                              \
     {.ml_name  = "_" #name,                                                                        \
-     .ml_meth  = (PyCFunction)prefix##_##name,                                                     \
+     .ml_meth  = CULV_CAST(prefix##_##name),                                                     \
      .ml_flags = (method_type),                                                                    \
      .ml_doc   = nullptr}
 

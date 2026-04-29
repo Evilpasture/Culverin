@@ -103,6 +103,7 @@ init_tracked_controller_settings(TrackedEngineConfig config,
     *out_trans = trans;
     return t_ctrl;
 }
+int init_vehicle_parsers(VehicleObject *obj);
 
 extern void cleanup_vehicle_resources(VehicleResources *r, uint32_t num_wheels,
                                       PhysicsWorldObject *self);
@@ -113,7 +114,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
                                                                         Py_ssize_t nargs,
                                                                         PyObject *kwnames) {
     CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
-    // --- 1. FAST ARGUMENT PARSING (Unchanged) ---
+    // --- 1. FAST ARGUMENT PARSING ---
     uint64_t chassis_h_raw = 0;
     PyObject *py_wheels    = nullptr;
     PyObject *py_tracks    = nullptr;
@@ -127,7 +128,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
         [IDX_CT_RPM] = (void *)&max_rpm,
     };
 
-    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.CreateTrackedParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->CreateTrackedParser, targets)) {
         return nullptr;
     }
 
@@ -187,7 +188,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
     jolt_locked = true;
 
     const JPH_BodyLockInterface *lock_iface = JPH_PhysicsSystem_GetBodyLockInterface(self->system);
-    JPH_BodyLockWrite lock                  = {0};
+    JPH_BodyLockWrite lock                  = {};
     JPH_BodyLockInterface_LockWrite(lock_iface, chassis_bid, &lock);
 
     if (UNLIKELY(!lock.body)) {
@@ -252,6 +253,14 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
         return nullptr;
     }
 
+    if (init_vehicle_parsers(obj) < 0) {
+        SHADOW_LOCK(&self->shadow_lock);
+        cleanup_vehicle_resources(&r, num_wheels, self);
+        SHADOW_UNLOCK(&self->shadow_lock);
+        Py_DECREF(obj);
+        return nullptr;
+    }
+
     obj->vehicle               = r.j_veh;
     obj->tester                = (JPH_VehicleCollisionTester *)r.tester;
     obj->world                 = (PhysicsWorldObject *)Py_NewRef(self);
@@ -290,7 +299,6 @@ python_fail:
 PyCFunction_DeclareMethodFromModule Vehicle_set_tank_input(VehicleObject *self,
                                                            PyObject *const *args, Py_ssize_t nargs,
                                                            PyObject *kwnames) {
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // 1. FAST PARSE (Zero-Allocation)
     float left  = 0.0f;
     float right = 0.0f;
@@ -302,7 +310,7 @@ PyCFunction_DeclareMethodFromModule Vehicle_set_tank_input(VehicleObject *self,
         [IDX_TI_BRAKE] = (void *)&brake,
     };
 
-    if (!FastParse_Unified(args, nargs, kwnames, &st->parsers.TankInputParser, targets)) {
+    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->TankInputParser, targets)) {
         return nullptr;
     }
 
