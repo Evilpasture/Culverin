@@ -2241,7 +2241,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
     }
 
     // Pack the pointer array into a Python List
-    // This function handles cleanup/decref internally if any py_results[i] is NULL
+    // This function handles cleanup/decref internally if any py_results[i] is nullptr
     PyObject *const res_list = fb_pack_list((size_t)batch_count, (PyObject **)py_results);
 
     CULV_RAW_FREE(arena);
@@ -4692,8 +4692,8 @@ PhysicsWorld_getbuffer(PhysicsWorldObject *self, Py_buffer *view, CULV_MAYBE_UNU
     view->ndim       = 2;
     view->shape      = self->view_shape;
     view->strides    = self->view_strides;
-    view->suboffsets = NULL;
-    view->internal   = NULL;
+    view->suboffsets = nullptr;
+    view->internal   = nullptr;
 
     // view_export_count is a standard int protected by shadow_lock
     atomic_fetch_add_explicit(&self->view_export_count, 1, memory_order_relaxed);
@@ -4743,6 +4743,7 @@ PyType_Spec PhysicsWorld_spec = {
             {.slot = Py_tp_new, .pfunc = PyType_GenericNew},
             {.slot = Py_tp_init, .pfunc = PhysicsWorld_init},
             {.slot = Py_tp_dealloc, .pfunc = PhysicsWorld_dealloc},
+             {.slot = Py_tp_call, .pfunc = nullptr},
             {.slot = Py_tp_methods,
              .pfunc =
                  (PyMethodDef[]){

@@ -40,7 +40,7 @@ static inline void internal_block_until_not_stepping(PhysicsWorldObject *self) {
         // #endif
 
         while (atomic_load_explicit(&self->is_stepping, memory_order_relaxed)) {
-            internal_sync_wait_loop(self, &self->is_stepping, NULL, true);
+            internal_sync_wait_loop(self, &self->is_stepping, nullptr, true);
         }
         // #if !defined(Py_GIL_DISABLED)
         atomic_fetch_sub_explicit(&self->waiting_threads, 1, memory_order_relaxed);
@@ -51,7 +51,7 @@ static inline void internal_block_until_not_stepping(PhysicsWorldObject *self) {
 static inline void internal_block_until_not_querying(PhysicsWorldObject *self) {
     // Note: Query check uses 'acquire' to ensure visibility of query completion
     while (atomic_load_explicit(&self->active_queries, memory_order_acquire) > 0) {
-        internal_sync_wait_loop(self, NULL, &self->active_queries, false);
+        internal_sync_wait_loop(self, nullptr, &self->active_queries, false);
     }
 }
 
@@ -61,7 +61,7 @@ static inline void internal_block_if_step_pending(PhysicsWorldObject *self) {
         atomic_fetch_add_explicit(&self->waiting_threads, 1, memory_order_relaxed);
         // #endif
         while (atomic_load_explicit(&self->step_requested, memory_order_relaxed)) {
-            internal_sync_wait_loop(self, &self->step_requested, NULL, true);
+            internal_sync_wait_loop(self, &self->step_requested, nullptr, true);
         }
         // #if !defined(Py_GIL_DISABLED)
         atomic_fetch_sub_explicit(&self->waiting_threads, 1, memory_order_relaxed);

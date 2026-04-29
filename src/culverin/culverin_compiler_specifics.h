@@ -131,7 +131,7 @@ static inline void culv_init_counters(void) {
         fprintf(stderr, "[culverin] pmccntr_el0 denied — falling back to "
                         "cntvct_el0 (timer ticks, NOT cycles)\n");
     }
-    sigaction(SIGILL, &old, NULL);
+    sigaction(SIGILL, &old, nullptr);
 }
 
 // On Apple Silicon, we cannot use pmccntr_el0 (Cycles) in user-space.

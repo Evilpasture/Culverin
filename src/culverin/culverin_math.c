@@ -478,7 +478,7 @@ static PyObject *MathHolderObject_vec3_normalize_batch(MathHolderObject *self,
     }
 
     size_t count     = view.len / vec3_bytes;
-    PyObject *result = PyBytes_FromStringAndSize(NULL, view.len);
+    PyObject *result = PyBytes_FromStringAndSize(nullptr, view.len);
 
     if (result) {
         culverin_math_vec3_normalize_batch((const float *)view.buf, count,
@@ -616,7 +616,7 @@ static PyObject *MathHolderObject_vec3_lerp_batch(MathHolderObject *self, PyObje
     }
 
     size_t count     = view_a.len / 12;
-    PyObject *result = PyBytes_FromStringAndSize(NULL, view_a.len);
+    PyObject *result = PyBytes_FromStringAndSize(nullptr, view_a.len);
 
     if (result) {
         culverin_math_vec3_lerp_batch((const float *)view_a.buf, (const float *)view_b.buf, alpha,
@@ -684,7 +684,7 @@ static PyObject *MathHolderObject_quat_rotate_vec3_batch(MathHolderObject *self,
     }
 
     size_t count     = view.len / 12;
-    PyObject *result = PyBytes_FromStringAndSize(NULL, view.len);
+    PyObject *result = PyBytes_FromStringAndSize(nullptr, view.len);
 
     if (result) {
         culverin_math_quat_rotate_vec3_batch(q, (const float *)view.buf, count,
@@ -970,7 +970,7 @@ static PyObject *MathHolderObject_vec3_distance_batch(MathHolderObject *self, Py
 
     size_t count = view_a.len / 12;
     // Result is a flat array of floats (4 bytes per distance)
-    PyObject *result = PyBytes_FromStringAndSize(NULL, (Py_ssize_t)(count * sizeof(float)));
+    PyObject *result = PyBytes_FromStringAndSize(nullptr, (Py_ssize_t)(count * sizeof(float)));
 
     if (result) {
         culverin_math_vec3_distance_batch((const float *)view_a.buf, (const float *)view_b.buf,
@@ -1177,7 +1177,7 @@ static PyObject *MathHolderObject_euler_to_quat_batch(MathHolderObject *self, Py
 
     size_t count = view.len / 12;
     PyObject *result =
-        PyBytes_FromStringAndSize(NULL, (Py_ssize_t)(count * 16)); // 4 floats per quat
+        PyBytes_FromStringAndSize(nullptr, (Py_ssize_t)(count * 16)); // 4 floats per quat
 
     if (result) {
         culverin_math_euler_to_quat_batch((const float *)view.buf, count,

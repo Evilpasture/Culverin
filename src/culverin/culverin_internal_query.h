@@ -54,7 +54,7 @@ static inline float CastShape_ClosestCollector(void *context, const JPH_ShapeCas
 
 static inline bool JPH_API_CALL UnifiedBodyFilter(void *userData, JPH_BodyID bodyID) {
     // If no context was provided (e.g. overlap_sphere), allow everything
-    if (userData == NULL) {
+    if (userData == nullptr) {
         return true;
     }
 
