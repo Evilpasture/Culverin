@@ -3,7 +3,7 @@
 
 # NOTE: Some methods compiled with STRICT_HANDLE_ENABLED will crash with ValueError. Otherwise, returns None or silent.
 
-from collections.abc import Buffer, Sequence
+from collections.abc import Buffer, Sequence, Iterable
 from typing import Any, Literal, TypedDict, overload
 from warnings import deprecated
 
@@ -37,6 +37,26 @@ class Automatic(Transmission):
 
 class Manual(Transmission):
     mode: int
+
+class WorldSettings(TypedDict, total=False):
+    gravity: Vec3                      # Default: (0.0, -9.81, 0.0)
+    penetration_slop: float            # Default: 0.02
+    max_bodies: int                    # Default: 10240
+    max_pairs: int                     # Default: 65536
+    max_contact_constraints: int       # Default: 32768
+    temp_allocator_size: int           # Default: 33554432 (32MB)
+    max_physics_jobs: int              # Default: 2048
+    max_physics_barriers: int          # Default: 8
+    num_threads: int                   # Default: 4
+
+class BodyDefinition(TypedDict, total=False):
+    shape: int                         # One of CULV_SHAPE_* constants
+    pos: Vec3                          # (x, y, z)
+    rot: Vec3                          # (x, y, z, w) quaternion
+    size: float | Sequence[float]      # radius, (x,y,z) extents, or (nx,ny,nz,c)
+    mass: float                        # Mass in kg (0 for static)
+    motion: int                        # MOTION_STATIC, KINEMATIC, or DYNAMIC
+    user_data: int                     # Custom 64-bit integer identifier
 
 # --- Constants ---
 SHAPE_BOX: int = 0
@@ -230,7 +250,9 @@ class PhysicsWorld:
 
     # --- Lifecycle ---
     def __init__(
-        self, settings: dict[str, Any] | None = None, bodies: list[dict[str, Any]] | None = None
+        self, 
+        settings: WorldSettings | None = None, 
+        bodies: Iterable[BodyDefinition] | None = None
     ) -> None: ...
     def step(self, dt: float = ...) -> None: ...
 

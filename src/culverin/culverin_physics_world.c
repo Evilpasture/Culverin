@@ -63,9 +63,6 @@ PyType_DeclareSlot_Status PhysicsWorld_clear(CULV_MAYBE_UNUSED PhysicsWorldObjec
     return 0;
 }
 
-
-
-
 PyType_DeclareSlot_Void PhysicsWorld_dealloc(PhysicsWorldObject *self) {
     auto tp = Py_TYPE(self);
 
@@ -98,42 +95,7 @@ PyType_DeclareSlot_Void PhysicsWorld_dealloc(PhysicsWorldObject *self) {
 }
 // --- Lifecycle: Initialization ---
 
-// Orchestrator function
-// NOLINTNEXTLINE(readability-function-cognitive-complexity)
-PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
-                                            PyObject *kwds) {
-    if (self->system != nullptr) {
-        // Please don't call __init__() again.
-        PyErr_SetString(PyExc_RuntimeError,
-                        "PhysicsWorld instance has already been initialized and "
-                        "cannot be re-initialized.");
-        return -1;
-    }
-    if (self->parsers == nullptr) {
-        self->parsers = (WorldParsers *)PyMem_Malloc(sizeof(WorldParsers));
-        if (self->parsers == nullptr) {
-            PyErr_NoMemory();
-            return -1;
-        }
-        culverin_init_world_parsers(self->parsers);
-    }
-    PyObject *settings_dict = nullptr;
-    PyObject *bodies_list   = nullptr;
-    PyObject *baked         = nullptr;
-    float gx;
-    float gy;
-    float gz;
-    int max_bodies;
-    int max_pairs;
-
-    void *targets[WorldInit_COUNT] = {[IDX_SETTINGS] = (void *)&settings_dict,
-                                      [IDX_BODIES]   = (void *)&bodies_list};
-
-    if (!FastParse_Unified(args, kwds, nullptr, &self->parsers->WorldInitParser, targets)) {
-        return -1;
-    }
-
-    // 1. Initial State
+static void init_world_state(PhysicsWorldObject *self) {
     // 1.1 Jolt Core Pointers
     self->sync_ready           = false;
     self->system               = nullptr;
@@ -210,8 +172,8 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
     atomic_init(&self->is_stepping, false);
     self->needs_optimization = false;
 
-    // 1.6. Complex Structs (Safe to zero these individually)
-    memset(&self->step_sync, 0, sizeof(ShadowSync));
+    // 1.6. Complex Structs
+    self->step_sync = (ShadowSync){};
     INIT_LOCK(self->shadow_lock);
     INIT_NATIVE_MUTEX(self->jph_trampoline_lock);
 
@@ -222,23 +184,91 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
     self->view_strides[1] = 0;
 
     // 1.8. Debug Renderer
-    self->debug_renderer = nullptr;
-    memset(&self->debug_lines, 0, sizeof(DebugBuffer));
-    memset(&self->debug_triangles, 0, sizeof(DebugBuffer));
+    self->debug_renderer  = nullptr;
+    self->debug_lines     = (DebugBuffer){};
+    self->debug_triangles = (DebugBuffer){};
 
     self->debug_renderer = JPH_DebugRenderer_Create(self);
     atomic_init(&self->is_stepping, false);
 
     INIT_NATIVE_MUTEX(self->step_sync.mutex);
     INIT_NATIVE_COND(self->step_sync.cond);
+}
+
+static int allocate_constraints(PhysicsWorldObject *self) {
+    constexpr uint32_t CONSTRAINT_INITIAL_CAPACITY = 256;
+    self->constraint_capacity                      = CONSTRAINT_INITIAL_CAPACITY;
+    self->constraints =
+        (JPH_Constraint **)CULV_RAW_CALLOC(CONSTRAINT_INITIAL_CAPACITY, sizeof(JPH_Constraint *));
+    self->constraint_generations = CULV_RAW_CALLOC(CONSTRAINT_INITIAL_CAPACITY, sizeof(uint32_t));
+    self->free_constraint_slots  = CULV_RAW_MALLOC(CONSTRAINT_INITIAL_CAPACITY * sizeof(uint32_t));
+    self->constraint_states      = CULV_RAW_CALLOC(CONSTRAINT_INITIAL_CAPACITY, sizeof(uint8_t));
+
+    if (!self->constraints || !self->free_constraint_slots || !self->constraint_generations ||
+        !self->constraint_states) {
+        return -1;
+    }
+
+    for (uint32_t i = 0; i < CONSTRAINT_INITIAL_CAPACITY; i++) {
+        self->constraint_generations[i] = 1;
+        self->free_constraint_slots[i]  = i;
+    }
+    self->free_constraint_count = CONSTRAINT_INITIAL_CAPACITY;
+    return 0;
+}
+
+static void initialize_free_slots(PhysicsWorldObject *self, size_t start_idx) {
+    for (uint32_t i = (uint32_t)start_idx; i < (uint32_t)self->slot_capacity; i++) {
+        // Initialize the atomic generation for this slot
+        atomic_init(&self->generations[i], 1);
+
+        // Atomically increment free_count and get the index to store the slot
+        size_t f_idx = atomic_fetch_add_explicit(&self->free_count, 1, memory_order_relaxed);
+        self->free_slots[f_idx] = i;
+    }
+}
+
+// Orchestrator function
+PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *args,
+                                            PyObject *kwds) {
+    if (self->system != nullptr) {
+        // Please don't call __init__() again.
+        PyErr_SetString(PyExc_RuntimeError,
+                        "PhysicsWorld instance has already been initialized and "
+                        "cannot be re-initialized.");
+        return -1;
+    }
+    if (self->parsers == nullptr) {
+        self->parsers = (WorldParsers *)PyMem_Malloc(sizeof(WorldParsers));
+        if (self->parsers == nullptr) {
+            PyErr_NoMemory();
+            return -1;
+        }
+        culverin_init_world_parsers(self->parsers);
+    }
+
+    PyObject *settings_dict = nullptr;
+    PyObject *bodies_list   = nullptr;
+    AUTO_DECREF PyObject *baked = nullptr;
+    GravityVector gravity;
+    WorldSettings settings;
+
+    void *targets[WorldInit_COUNT] = {[IDX_SETTINGS] = (void *)&settings_dict,
+                                      [IDX_BODIES]   = (void *)&bodies_list};
+
+    if (!FastParse_Unified(args, kwds, nullptr, &self->parsers->WorldInitParser, targets)) {
+        return -1;
+    }
+
+    // 1. Initial State
+    init_world_state(self);
 
     // 2. Settings & Jolt Init
-    if (init_settings(self, settings_dict, &gx, &gy, &gz, &max_bodies, &max_pairs) < 0) {
+    if (init_settings(self, settings_dict, &gravity, &settings) < 0) {
         goto fail;
     }
-    WorldLimits limits    = {max_bodies, max_pairs};
-    GravityVector gravity = {gx, gy, gz};
-    if (init_jolt_core(self, limits, gravity) < 0) {
+    
+    if (init_jolt_core(self, settings, gravity) < 0) {
         goto fail;
     }
 
@@ -255,9 +285,8 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
     // 3. Bake & Buffers
     if (bodies_list && bodies_list != Py_None) {
         PyObject *st_helper = get_culverin_state(PyType_GetModule(Py_TYPE(self)))->helper;
-        PyObject *bake_func = PyObject_GetAttrString(st_helper, "bake_scene");
+        AUTO_DECREF PyObject *bake_func = PyObject_GetAttrString(st_helper, "bake_scene");
         baked               = PyObject_CallFunctionObjArgs(bake_func, bodies_list, nullptr);
-        Py_XDECREF(bake_func);
         if (!baked) {
             goto fail;
         }
@@ -265,44 +294,22 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
                               memory_order_relaxed);
     }
 
-    if (allocate_buffers(self, max_bodies) < 0) {
+    if (allocate_buffers(self, settings.max_bodies) < 0) {
         goto fail;
     }
 
     // 4. Constraints & Data Loading
-    constexpr uint32_t CONSTRAINT_INITIAL_CAPACITY = 256;
-    self->constraint_capacity                      = CONSTRAINT_INITIAL_CAPACITY;
-    self->constraints =
-        (JPH_Constraint **)CULV_RAW_CALLOC(CONSTRAINT_INITIAL_CAPACITY, sizeof(JPH_Constraint *));
-    self->constraint_generations = CULV_RAW_CALLOC(CONSTRAINT_INITIAL_CAPACITY, sizeof(uint32_t));
-    self->free_constraint_slots  = CULV_RAW_MALLOC(CONSTRAINT_INITIAL_CAPACITY * sizeof(uint32_t));
-    self->constraint_states      = CULV_RAW_CALLOC(CONSTRAINT_INITIAL_CAPACITY, sizeof(uint8_t));
-    if (!self->constraints || !self->free_constraint_slots) {
+    if (allocate_constraints(self) < 0) {
         goto fail;
     }
-
-    for (uint32_t i = 0; i < CONSTRAINT_INITIAL_CAPACITY; i++) {
-        self->constraint_generations[i] = 1;
-        self->free_constraint_slots[i]  = i;
-    }
-    self->free_constraint_count = CONSTRAINT_INITIAL_CAPACITY;
 
     if (baked && load_baked_scene(self, baked) < 0) {
         goto fail;
     }
-    Py_XDECREF(baked);
 
-    // 1. Load the current count (from baked scene or 0)
     size_t start_idx = atomic_load_explicit(&self->count, memory_order_relaxed);
+    initialize_free_slots(self, start_idx);
 
-    for (uint32_t i = (uint32_t)start_idx; i < (uint32_t)self->slot_capacity; i++) {
-        // 2. Initialize the atomic generation for this slot
-        atomic_init(&self->generations[i], 1);
-
-        // 3. Atomically increment free_count and get the index to store the slot
-        size_t f_idx = atomic_fetch_add_explicit(&self->free_count, 1, memory_order_relaxed);
-        self->free_slots[f_idx] = i;
-    }
     self->sync_ready = true;
     SHADOW_LOCK(&self->shadow_lock);
     culverin_sync_shadow_buffers(self);
@@ -310,11 +317,9 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
     return 0;
 
 fail:
-    Py_XDECREF(baked);
     PhysicsWorld_free_members(self);
     return -1;
 }
-
 /**
  * HELPER: physics_world_commit_create_locked
  * Encapsulates slot acquisition, handle generation, and command queuing.
@@ -1652,8 +1657,7 @@ static JPH_Shape *init_compound_shape(PhysicsWorldObject *self, PyObject *parts)
             return nullptr;
         }
 
-        buffer[i].type = (int)type_l;
-        memset(buffer[i].params, 0, sizeof(float) * 4);
+        buffer[i] = (CompoundPart){ .type = (int)type_l };
 
         // Parse Position
         if (PyTuple_Check(p_pos) && PyTuple_Size(p_pos) == 3) {
@@ -1661,7 +1665,7 @@ static JPH_Shape *init_compound_shape(PhysicsWorldObject *self, PyObject *parts)
             buffer[i].local_p.y = (float)PyFloat_AsDouble(PyTuple_GetItem(p_pos, 1));
             buffer[i].local_p.z = (float)PyFloat_AsDouble(PyTuple_GetItem(p_pos, 2));
         } else {
-            buffer[i].local_p = (JPH_Vec3){0, 0, 0};
+            buffer[i].local_p = (JPH_Vec3){};
         }
 
         // Parse Rotation
@@ -1671,7 +1675,7 @@ static JPH_Shape *init_compound_shape(PhysicsWorldObject *self, PyObject *parts)
             buffer[i].local_q.z = (float)PyFloat_AsDouble(PyTuple_GetItem(p_rot, 2));
             buffer[i].local_q.w = (float)PyFloat_AsDouble(PyTuple_GetItem(p_rot, 3));
         } else {
-            buffer[i].local_q = (JPH_Quat){0, 0, 0, 1};
+            buffer[i].local_q.w = 1.0F;
         }
 
         // Parse Size Params
@@ -4743,7 +4747,7 @@ PyType_Spec PhysicsWorld_spec = {
             {.slot = Py_tp_new, .pfunc = PyType_GenericNew},
             {.slot = Py_tp_init, .pfunc = PhysicsWorld_init},
             {.slot = Py_tp_dealloc, .pfunc = PhysicsWorld_dealloc},
-             {.slot = Py_tp_call, .pfunc = nullptr},
+            {.slot = Py_tp_call, .pfunc = nullptr},
             {.slot = Py_tp_methods,
              .pfunc =
                  (PyMethodDef[]){

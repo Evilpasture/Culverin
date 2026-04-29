@@ -11,9 +11,6 @@ static constexpr size_t SHADOW_CAPACITY_PADDING        = 128;
 static constexpr size_t SHADOW_CAPACITY_GROW           = 1024;
 static constexpr size_t COMMAND_QUEUE_INITIAL_CAPACITY = 64;
 static constexpr uint32_t ALL_LAYER_BITS               = 0xFFFFu;
-static constexpr uint32_t MAX_CONTACT_CONSTRAINTS      = 1024u * 32u;
-static constexpr uint32_t JOB_SYSTEM_MAX_JOBS          = 1024u;
-static constexpr uint32_t JOB_SYSTEM_MAX_BARRIERS      = 8u;
 
 // Baked scene formats (tuple indices and per-object strides)
 static constexpr int BAKED_INDEX_POS      = 1;
@@ -532,8 +529,8 @@ void PhysicsWorld_free_members(PhysicsWorldObject *self) {
 
 // helper: Initialize settings via Python helper
 CULV_NODISCARD
-int init_settings(PhysicsWorldObject *self, PyObject *settings_dict, float *gx, float *gy,
-                  float *gz, int *max_bodies, int *max_pairs) {
+int init_settings(PhysicsWorldObject *self, PyObject *settings_dict, GravityVector *gravity,
+                  WorldSettings *settings) {
     PyObject *st_module = PyType_GetModule(Py_TYPE(self));
     CulverinState *st   = get_culverin_state(st_module);
     PyObject *val_func  = PyObject_GetAttrString(st->helper, "validate_settings");
@@ -548,31 +545,30 @@ int init_settings(PhysicsWorldObject *self, PyObject *settings_dict, float *gx, 
         return -1;
     }
 
-    float slop;
-    int ok = PyArg_ParseTuple(norm, "ffffii", gx, gy, gz, &slop, max_bodies, max_pairs);
+    int ok = PyArg_ParseTuple(norm, "ffffiiiiiii", &gravity->gx, &gravity->gy, &gravity->gz,
+                              &settings->penetration_slop, &settings->max_bodies,
+                              &settings->max_pairs, &settings->max_contact_constraints,
+                              &settings->temp_allocator_size, &settings->max_physics_jobs,
+                              &settings->max_physics_barriers, &settings->num_threads);
     Py_DECREF(norm);
     return ok ? 0 : -1;
 }
 
 NativeMutex g_jph_init_lock;
 
-// Increase to 32MB to comfortably fit CCD and complex queries
-static constexpr uint32_t TEMP_ALLOCATOR_SIZE = 32 * 1024 * 1024;
-
 // helper: Initialize Jolt Core Systems
 CULV_NODISCARD
-int init_jolt_core(PhysicsWorldObject *self, WorldLimits limits, GravityVector gravity) {
+int init_jolt_core(PhysicsWorldObject *self, WorldSettings settings, GravityVector gravity) {
+    int num_workers = settings.num_threads;
 #if defined(__SANITIZE_THREAD__) || defined(ENABLE_SANITIZER)
     // When running ThreadSanitizer, disable Jolt's background workers.
     // TSan cannot understand Jolt's highly-optimized C++ lock-free job queues
     // and will generate false positives. Running Jolt synchronously allows TSan
     // to focus exclusively on finding real concurrency bugs in the Culverin/Python layer.
-    constexpr int num_workers = 0;
-#else
-    constexpr int num_workers = 4;
+    num_workers = 0;
 #endif
-    JobSystemThreadPoolConfig job_cfg = {.maxJobs     = JOB_SYSTEM_MAX_JOBS,
-                                         .maxBarriers = JOB_SYSTEM_MAX_BARRIERS,
+    JobSystemThreadPoolConfig job_cfg = {.maxJobs     = (uint32_t)settings.max_physics_jobs,
+                                         .maxBarriers = (uint32_t)settings.max_physics_barriers,
                                          .numThreads  = num_workers};
 
     // TSan Fix: Serialize the first PhysicsSystem creation.
@@ -583,14 +579,14 @@ int init_jolt_core(PhysicsWorldObject *self, WorldLimits limits, GravityVector g
 #if defined(__SANITIZE_THREAD__) || defined(ENABLE_SANITIZER)
     self->temp_allocator = JPH_TempAllocatorMalloc_Create();
 #else
-    self->temp_allocator = JPH_TempAllocator_Create(TEMP_ALLOCATOR_SIZE);
+    self->temp_allocator = JPH_TempAllocator_Create((uint32_t)settings.temp_allocator_size);
 #endif
 
     // --- 3 LAYERS: 0=Static, 1=Dynamic, 2=VehicleRay ---
-    self->bp_interface = JPH_BroadPhaseLayerInterfaceTable_Create(3, 3);
-    JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(self->bp_interface, 0, 0);
-    JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(self->bp_interface, 1, 1);
-    JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(self->bp_interface, 2, 2);
+    self->bp_interface = JPH_BroadPhaseLayerInterfaceTable_Create(OBJECT_LAYER_COUNT, 3);
+    JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(self->bp_interface, OBJECT_LAYER_STATIC, 0);
+    JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(self->bp_interface, OBJECT_LAYER_DYNAMIC, 1);
+    JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(self->bp_interface, OBJECT_LAYER_VEHICLE, 2);
 
     self->pair_filter = JPH_ObjectLayerPairFilterTable_Create(3);
 
@@ -608,9 +604,10 @@ int init_jolt_core(PhysicsWorldObject *self, WorldLimits limits, GravityVector g
     self->bp_filter =
         JPH_ObjectVsBroadPhaseLayerFilterTable_Create(self->bp_interface, 3, self->pair_filter, 3);
 
-    JPH_PhysicsSystemSettings phys_settings = {.maxBodies             = (uint32_t)limits.max_bodies,
-                                               .maxBodyPairs          = (uint32_t)limits.max_pairs,
-                                               .maxContactConstraints = MAX_CONTACT_CONSTRAINTS,
+    JPH_PhysicsSystemSettings phys_settings = {.maxBodies    = (uint32_t)settings.max_bodies,
+                                               .maxBodyPairs = (uint32_t)settings.max_pairs,
+                                               .maxContactConstraints =
+                                                   (uint32_t)settings.max_contact_constraints,
                                                .broadPhaseLayerInterface      = self->bp_interface,
                                                .objectLayerPairFilter         = self->pair_filter,
                                                .objectVsBroadPhaseLayerFilter = self->bp_filter};

@@ -72,8 +72,9 @@ typedef enum MotionType : uint8_t {
 
 typedef enum ObjectLayer : uint32_t {
     OBJECT_LAYER_STATIC  = 0,
-    OBJECT_LAYER_DYNAMIC = 1,
-    OBJECT_LAYER_VEHICLE = 2  // For raycasts/sensors that shouldn't hit the vehicle itself
+    OBJECT_LAYER_DYNAMIC,
+    OBJECT_LAYER_VEHICLE, // For raycasts/sensors that shouldn't hit the vehicle itself
+    OBJECT_LAYER_COUNT
 } ObjectLayer;
 
 CULV_MAYBE_UNUSED static constexpr uint32_t HANDLE_INDEX_BITS = 32;
