@@ -1,7 +1,7 @@
 #include "culverin_shadow_sync.h"
 #include "culverin_compiler_specifics.h"
 #include "culverin_types.h"
-#include "culverin_assert.h"
+
 
 // Include native Jolt headers for ultra-fast C++ bypass
 #include <Jolt/Jolt.h>
@@ -21,51 +21,6 @@ struct SyncWorkItem {
     const JPH::Body *body;
     uint32_t dense_idx;
 };
-
-/**
- * FIREWALL: JPH_PhysicsSystem_Internal
- * This mirrors the opaque struct defined in joltc.cpp.
- * We use this to perform a zero-cost pointer extraction to the C++ core.
- */
-struct JPH_PhysicsSystem_Internal {
-    void* broadPhaseLayerInterface;
-    void* objectLayerPairFilter;
-    void* objectVsBroadPhaseLayerFilter;
-    JPH::PhysicsSystem* physicsSystem;
-};
-
-// --- STATIC SAFETY GUARANTEES ---
-
-// 1. Verify Pointer Arithmetic: Ensure the system is exactly at the 4th pointer slot
-static_assert(offsetof(JPH_PhysicsSystem_Internal, physicsSystem) == (sizeof(void*) * 3),
-    "JoltC wrapper layout mismatch: physicsSystem must be the 4th pointer.");
-
-// 2. Verify Struct Size: Ensure no hidden padding or extra members exist
-static_assert(sizeof(JPH_PhysicsSystem_Internal) == (sizeof(void*) * 4),
-    "JoltC wrapper size mismatch: Expected exactly 4 pointers.");
-
-// 3. Verify Alignment: Ensure the struct is pointer-aligned for safe reinterpret_casting
-static_assert(alignof(JPH_PhysicsSystem_Internal) == alignof(void*),
-    "JoltC wrapper alignment mismatch.");
-
-/**
- * HELPER: extract_physics_system
- * Encapsulates the technical debt into a single type-safe inline function.
- */
-[[nodiscard]]
-[[gnu::always_inline]] 
-inline auto extract_physics_system(const JPH_PhysicsSystem* const CULV_RESTRICT sys_c) noexcept -> auto* {
-    // We treat sys_c as a pointer to our verified internal layout
-    const auto* const internal_ptr = reinterpret_cast<const JPH_PhysicsSystem_Internal* const>(sys_c);
-    
-    // Boundary check for the extracted pointer before returning
-    const auto* const sys_cpp = internal_ptr->physicsSystem;
-    
-    // In a debug build, this helps catch initialization races
-    CULV_ASSERT(sys_cpp != nullptr);
-    
-    return sys_cpp;
-}
 
 // =================================================================================================
 // HOT PATH: Unrolled, Prefetched, and SIMD Vectorized Stores (RIGID BODIES)
@@ -260,11 +215,12 @@ culverin_sync_shadow_buffers(const PhysicsWorldObject *const CULV_RESTRICT self)
     if (!self->sync_ready) [[unlikely]] {
         return;
     }
-    const auto* const CULV_RESTRICT sys_cpp = extract_physics_system(self->system);
+    const auto *const CULV_RESTRICT system =
+        static_cast<PhysicsSystem *>(JPH_PhysicsSystem_GetPhysicsSystemInstance(self->system));
 
     // Check for both Rigid and Soft active bodies
-    const uint32_t active_rigid_count = sys_cpp->GetNumActiveBodies(EBodyType::RigidBody);
-    const uint32_t active_soft_count  = sys_cpp->GetNumActiveBodies(EBodyType::SoftBody);
+    const uint32_t active_rigid_count = system->GetNumActiveBodies(EBodyType::RigidBody);
+    const uint32_t active_soft_count  = system->GetNumActiveBodies(EBodyType::SoftBody);
 
     if ((active_rigid_count == 0U) && (active_soft_count == 0U)) [[unlikely]] {
         return;
@@ -281,14 +237,14 @@ culverin_sync_shadow_buffers(const PhysicsWorldObject *const CULV_RESTRICT self)
     const auto *const CULV_RESTRICT s_rot = reinterpret_cast<const AuxStride *const CULV_RESTRICT>(
         CULV_ASSUME_ALIGNED(self->rotations, sizeof(AuxStride)));
 
-    const auto *const CULV_RESTRICT lock_iface = &sys_cpp->GetBodyLockInterfaceNoLock();
+    const auto *const CULV_RESTRICT lock_iface = &system->GetBodyLockInterfaceNoLock();
 
     // ========================================================================
     // PASS 1: RIGID BODIES
     // ========================================================================
     if (active_rigid_count > 0) {
         const BodyID *const CULV_RESTRICT active_rigid_ids =
-            sys_cpp->GetActiveBodiesUnsafe(EBodyType::RigidBody);
+            system->GetActiveBodiesUnsafe(EBodyType::RigidBody);
         if (active_rigid_ids != nullptr) [[unlikely]] {
             alignas(MEMORY_ALIGNMENT_SIZE) SyncWorkItem worklist[BATCH_SIZE];
             uint32_t work_ptr = 0;
@@ -359,7 +315,7 @@ culverin_sync_shadow_buffers(const PhysicsWorldObject *const CULV_RESTRICT self)
     // ========================================================================
     if (active_soft_count > 0 && self->soft_shadows != nullptr) {
         const BodyID *const CULV_RESTRICT active_soft_ids =
-            sys_cpp->GetActiveBodiesUnsafe(EBodyType::SoftBody);
+            system->GetActiveBodiesUnsafe(EBodyType::SoftBody);
 
         if (active_soft_ids != nullptr) [[likely]] {
             alignas(MEMORY_ALIGNMENT_SIZE) SyncWorkItem soft_worklist[BATCH_SIZE];
