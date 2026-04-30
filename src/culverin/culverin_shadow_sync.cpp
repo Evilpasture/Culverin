@@ -2,7 +2,6 @@
 #include "culverin_compiler_specifics.h"
 #include "culverin_types.h"
 
-
 // Include native Jolt headers for ultra-fast C++ bypass
 #include <Jolt/Jolt.h>
 #include <Jolt/Physics/Body/Body.h>
@@ -26,22 +25,11 @@ struct SyncWorkItem {
 // HOT PATH: Unrolled, Prefetched, and SIMD Vectorized Stores (RIGID BODIES)
 // =================================================================================================
 
-[[gnu::always_inline, gnu::hot, gnu::flatten, gnu::nonnull(1, 2)]] inline void
-process_full_batch(const PhysicsWorldObject *const CULV_RESTRICT self,
+[[gnu::always_inline, gnu::hot, gnu::flatten]] inline void
+process_full_batch(PosStride *const CULV_RESTRICT s_pos, PosStride *const CULV_RESTRICT s_ppos,
+                   AuxStride *const CULV_RESTRICT s_rot, AuxStride *const CULV_RESTRICT s_prot,
+                   AuxStride *const CULV_RESTRICT s_lvel, AuxStride *const CULV_RESTRICT s_avel,
                    const SyncWorkItem *const CULV_RESTRICT worklist) noexcept {
-    auto *const CULV_RESTRICT s_pos = reinterpret_cast<PosStride *const CULV_RESTRICT>(
-        CULV_ASSUME_ALIGNED(self->positions, sizeof(PosStride)));
-    auto *const CULV_RESTRICT s_ppos = reinterpret_cast<PosStride *const CULV_RESTRICT>(
-        CULV_ASSUME_ALIGNED(self->prev_positions, sizeof(PosStride)));
-    auto *const CULV_RESTRICT s_rot = reinterpret_cast<AuxStride *const CULV_RESTRICT>(
-        CULV_ASSUME_ALIGNED(self->rotations, sizeof(AuxStride)));
-    auto *const CULV_RESTRICT s_prot = reinterpret_cast<AuxStride *const CULV_RESTRICT>(
-        CULV_ASSUME_ALIGNED(self->prev_rotations, sizeof(AuxStride)));
-    auto *const CULV_RESTRICT s_lvel = reinterpret_cast<AuxStride *const CULV_RESTRICT>(
-        CULV_ASSUME_ALIGNED(self->linear_velocities, sizeof(AuxStride)));
-    auto *const CULV_RESTRICT s_avel = reinterpret_cast<AuxStride *const CULV_RESTRICT>(
-        CULV_ASSUME_ALIGNED(self->angular_velocities, sizeof(AuxStride)));
-
     CULV_UNROLL_LOOP(8)
     for (uint32_t j = 0; j < BATCH_SIZE; j++) {
         const uint32_t D = worklist[j].dense_idx;
@@ -76,19 +64,11 @@ process_full_batch(const PhysicsWorldObject *const CULV_RESTRICT self,
 // HOT PATH: Soft Body Batch Processor
 // =================================================================================================
 [[gnu::always_inline, gnu::hot, gnu::flatten, gnu::nonnull(1, 2)]] inline void
-process_soft_batch(const PhysicsWorldObject *const CULV_RESTRICT self,
+process_soft_batch(PosStride *const CULV_RESTRICT s_pos, PosStride *const CULV_RESTRICT s_ppos,
+                   AuxStride *const CULV_RESTRICT s_rot, AuxStride *const CULV_RESTRICT s_prot,
+                   const SoftBodyShadow *const CULV_RESTRICT soft_shadows,
                    const SyncWorkItem *const CULV_RESTRICT worklist,
                    const uint32_t count) noexcept {
-    auto *const CULV_RESTRICT s_pos = reinterpret_cast<PosStride *const CULV_RESTRICT>(
-        CULV_ASSUME_ALIGNED(self->positions, sizeof(PosStride)));
-    auto *const CULV_RESTRICT s_ppos = reinterpret_cast<PosStride *const CULV_RESTRICT>(
-        CULV_ASSUME_ALIGNED(self->prev_positions, sizeof(PosStride)));
-    auto *const CULV_RESTRICT s_rot = reinterpret_cast<AuxStride *const CULV_RESTRICT>(
-        CULV_ASSUME_ALIGNED(self->rotations, sizeof(AuxStride)));
-    auto *const CULV_RESTRICT s_prot = reinterpret_cast<AuxStride *const CULV_RESTRICT>(
-        CULV_ASSUME_ALIGNED(self->prev_rotations, sizeof(AuxStride)));
-
-    const auto *const CULV_RESTRICT soft_shadows = self->soft_shadows;
     CULV_UNROLL_LOOP(4)
     for (uint32_t j = 0; j < count; j++) {
         const uint32_t D                       = worklist[j].dense_idx;
@@ -155,21 +135,11 @@ process_soft_batch(const PhysicsWorldObject *const CULV_RESTRICT self,
 // COLD PATH: Remainder Handling (0 to 31 items)
 // =================================================================================================
 [[gnu::always_inline, gnu::hot, gnu::nonnull(1, 2)]] inline void
-process_partial_batch(const PhysicsWorldObject *const CULV_RESTRICT self,
+process_partial_batch(PosStride *const CULV_RESTRICT s_pos, PosStride *const CULV_RESTRICT s_ppos,
+                      AuxStride *const CULV_RESTRICT s_rot, AuxStride *const CULV_RESTRICT s_prot,
+                      AuxStride *const CULV_RESTRICT s_lvel, AuxStride *const CULV_RESTRICT s_avel,
                       const SyncWorkItem *const CULV_RESTRICT worklist,
                       const uint32_t count) noexcept {
-    auto *const CULV_RESTRICT s_pos = reinterpret_cast<PosStride *const CULV_RESTRICT>(
-        CULV_ASSUME_ALIGNED(self->positions, sizeof(PosStride)));
-    auto *const CULV_RESTRICT s_ppos = reinterpret_cast<PosStride *const CULV_RESTRICT>(
-        CULV_ASSUME_ALIGNED(self->prev_positions, sizeof(PosStride)));
-    auto *const CULV_RESTRICT s_rot = reinterpret_cast<AuxStride *const CULV_RESTRICT>(
-        CULV_ASSUME_ALIGNED(self->rotations, sizeof(AuxStride)));
-    auto *const CULV_RESTRICT s_prot = reinterpret_cast<AuxStride *const CULV_RESTRICT>(
-        CULV_ASSUME_ALIGNED(self->prev_rotations, sizeof(AuxStride)));
-    auto *const CULV_RESTRICT s_lvel = reinterpret_cast<AuxStride *const CULV_RESTRICT>(
-        CULV_ASSUME_ALIGNED(self->linear_velocities, sizeof(AuxStride)));
-    auto *const CULV_RESTRICT s_avel = reinterpret_cast<AuxStride *const CULV_RESTRICT>(
-        CULV_ASSUME_ALIGNED(self->angular_velocities, sizeof(AuxStride)));
 
     for (uint32_t j = 0; j < count; j++) {
         if (j + 2 < count) {
@@ -232,10 +202,18 @@ culverin_sync_shadow_buffers(const PhysicsWorldObject *const CULV_RESTRICT self)
     CULV_PROFILE_BEGIN(sync);
 
     const uint32_t *const CULV_RESTRICT s2d = self->slot_to_dense;
-    const auto *const CULV_RESTRICT s_pos = reinterpret_cast<const PosStride *const CULV_RESTRICT>(
+    auto *const CULV_RESTRICT s_pos         = reinterpret_cast<PosStride *const CULV_RESTRICT>(
         CULV_ASSUME_ALIGNED(self->positions, sizeof(PosStride)));
-    const auto *const CULV_RESTRICT s_rot = reinterpret_cast<const AuxStride *const CULV_RESTRICT>(
+    auto *const CULV_RESTRICT s_ppos = reinterpret_cast<PosStride *const CULV_RESTRICT>(
+        CULV_ASSUME_ALIGNED(self->prev_positions, sizeof(PosStride)));
+    auto *const CULV_RESTRICT s_rot = reinterpret_cast<AuxStride *const CULV_RESTRICT>(
         CULV_ASSUME_ALIGNED(self->rotations, sizeof(AuxStride)));
+    auto *const CULV_RESTRICT s_prot = reinterpret_cast<AuxStride *const CULV_RESTRICT>(
+        CULV_ASSUME_ALIGNED(self->prev_rotations, sizeof(AuxStride)));
+    auto *const CULV_RESTRICT s_lvel = reinterpret_cast<AuxStride *const CULV_RESTRICT>(
+        CULV_ASSUME_ALIGNED(self->linear_velocities, sizeof(AuxStride)));
+    auto *const CULV_RESTRICT s_avel = reinterpret_cast<AuxStride *const CULV_RESTRICT>(
+        CULV_ASSUME_ALIGNED(self->angular_velocities, sizeof(AuxStride)));
 
     const auto *const CULV_RESTRICT lock_iface = &system->GetBodyLockInterfaceNoLock();
 
@@ -299,13 +277,14 @@ culverin_sync_shadow_buffers(const PhysicsWorldObject *const CULV_RESTRICT self)
                 work_ptr += is_valid;
 
                 if (work_ptr == BATCH_SIZE) {
-                    process_full_batch(self, worklist);
+                    process_full_batch(s_pos, s_ppos, s_rot, s_prot, s_lvel, s_avel, worklist);
                     work_ptr = 0;
                 }
             }
 
             if (work_ptr > 0) {
-                process_partial_batch(self, worklist, work_ptr);
+                process_partial_batch(s_pos, s_ppos, s_rot, s_prot, s_lvel, s_avel, worklist,
+                                      work_ptr);
             }
         }
     }
@@ -369,13 +348,15 @@ culverin_sync_shadow_buffers(const PhysicsWorldObject *const CULV_RESTRICT self)
                 soft_work_ptr += is_valid;
 
                 if (soft_work_ptr == BATCH_SIZE) {
-                    process_soft_batch(self, soft_worklist, BATCH_SIZE);
+                    process_soft_batch(s_pos, s_ppos, s_rot, s_prot, soft_shadows, soft_worklist,
+                                       BATCH_SIZE);
                     soft_work_ptr = 0;
                 }
             }
 
             if (soft_work_ptr > 0) {
-                process_soft_batch(self, soft_worklist, soft_work_ptr);
+                process_soft_batch(s_pos, s_ppos, s_rot, s_prot, soft_shadows, soft_worklist,
+                                   soft_work_ptr);
             }
         }
     }
