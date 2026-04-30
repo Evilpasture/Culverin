@@ -22,48 +22,57 @@ struct SyncWorkItem {
     uint32_t dense_idx;
 };
 
+struct WorldDataCreateInfo {
+    PosStride *const CULV_RESTRICT shadow_pos;
+    PosStride *const CULV_RESTRICT shadow_ppos;
+    AuxStride *const CULV_RESTRICT shadow_rot;
+    AuxStride *const CULV_RESTRICT shadow_prot;
+    AuxStride *const CULV_RESTRICT shadow_lvel;
+    AuxStride *const CULV_RESTRICT shadow_avel;
+    const SoftBodyShadow *const CULV_RESTRICT soft_shadows;
+};
+
+static_assert(std::is_trivially_copyable<WorldDataCreateInfo>());
+
 // =================================================================================================
 // UNIFIED ITEM PROCESSOR
 // Automatically eliminates dead code branches at compile time via `if constexpr`.
 // =================================================================================================
 template <JPH::EBodyType TType>
-[[gnu::always_inline]] inline void
-process_item(const uint32_t D, const JPH::Body *const CULV_RESTRICT b,
-             PosStride *const CULV_RESTRICT s_pos, PosStride *const CULV_RESTRICT s_ppos,
-             AuxStride *const CULV_RESTRICT s_rot, AuxStride *const CULV_RESTRICT s_prot,
-             AuxStride *const CULV_RESTRICT s_lvel, AuxStride *const CULV_RESTRICT s_avel,
-             const SoftBodyShadow *const CULV_RESTRICT soft_shadows) noexcept {
+[[gnu::always_inline]] inline void process_item(const uint32_t D,
+                                                const JPH::Body *const CULV_RESTRICT b,
+                                                const WorldDataCreateInfo world) noexcept {
 
     // 1. Snapshot previous state
-    s_ppos[D] = s_pos[D];
-    s_prot[D] = s_rot[D];
+    world.shadow_ppos[D] = world.shadow_pos[D];
+    world.shadow_prot[D] = world.shadow_rot[D];
 
     // 2. Write Current COM
 #ifndef JPH_DOUBLE_PRECISION
     [[clang::always_inline]] JPH::Vec4(b->GetCenterOfMassPosition(), 0.0f)
-        .StoreFloat4(reinterpret_cast<JPH::Float4 *const CULV_RESTRICT>(&s_pos[D]));
+        .StoreFloat4(reinterpret_cast<JPH::Float4 *const CULV_RESTRICT>(&world.shadow_pos[D]));
 #else
     [[clang::always_inline]] b->GetCenterOfMassPosition().StoreDouble3(
-        reinterpret_cast<JPH::Double3 *const CULV_RESTRICT>(&s_pos[D]));
-    s_pos[D].w = 0.0;
+        reinterpret_cast<JPH::Double3 *const CULV_RESTRICT>(&world.shadow_pos[D]));
+    world.shadow_pos[D].w = 0.0;
 #endif
 
     // 3. Write Current Rotation
     [[clang::always_inline]] b->GetRotation().GetXYZW().StoreFloat4(
-        reinterpret_cast<JPH::Float4 *const CULV_RESTRICT>(&s_rot[D]));
+        reinterpret_cast<JPH::Float4 *const CULV_RESTRICT>(&world.shadow_rot[D]));
 
     // 4. Type-Specific Sub-Data
     if constexpr (TType == JPH::EBodyType::RigidBody) {
         [[clang::always_inline]] JPH::Vec4(b->GetLinearVelocity(), 0.0F)
-            .StoreFloat4(reinterpret_cast<JPH::Float4 *const CULV_RESTRICT>(&s_lvel[D]));
+            .StoreFloat4(reinterpret_cast<JPH::Float4 *const CULV_RESTRICT>(&world.shadow_lvel[D]));
         [[clang::always_inline]] JPH::Vec4(b->GetAngularVelocity(), 0.0F)
-            .StoreFloat4(reinterpret_cast<JPH::Float4 *const CULV_RESTRICT>(&s_avel[D]));
+            .StoreFloat4(reinterpret_cast<JPH::Float4 *const CULV_RESTRICT>(&world.shadow_avel[D]));
     } else if constexpr (TType == JPH::EBodyType::SoftBody) {
         const auto *const CULV_RESTRICT soft_mp =
             static_cast<const JPH::SoftBodyMotionProperties *const CULV_RESTRICT>(
                 b->GetMotionProperties());
         const JPH::Array<JPH::SoftBodyVertex> &jolt_verts = soft_mp->GetVertices();
-        const SoftBodyShadow &shadow                      = soft_shadows[D];
+        const SoftBodyShadow &shadow                      = world.soft_shadows[D];
 
         if ((shadow.vertices != nullptr) && shadow.num_vertices == jolt_verts.size()) [[likely]] {
             auto *const CULV_RESTRICT dst_verts =
@@ -81,11 +90,11 @@ process_item(const uint32_t D, const JPH::Body *const CULV_RESTRICT b,
                 const JPH::Vec3 local_pos(jolt_verts[v].mPosition);
 #ifndef JPH_DOUBLE_PRECISION
                 const JPH::Vec3 world_pos = (rotation * local_pos) + translation;
-                JPH::Vec4(world_pos, 0.0f)
+                [[clang::always_inline]] JPH::Vec4(world_pos, 0.0f)
                     .StoreFloat4(reinterpret_cast<JPH::Float4 *const CULV_RESTRICT>(&dst_verts[v]));
 #else
                 const JPH::RVec3 world_pos = JPH::RVec3(rotation * local_pos) + translation;
-                world_pos.StoreDouble3(
+                [[clang::always_inline]] world_pos.StoreDouble3(
                     reinterpret_cast<JPH::Double3 *const CULV_RESTRICT>(&dst_verts[v]));
                 dst_verts[v].w = 0.0;
 #endif
@@ -100,28 +109,22 @@ process_item(const uint32_t D, const JPH::Body *const CULV_RESTRICT b,
 // =================================================================================================
 template <JPH::EBodyType TType, uint32_t FixedCount = 0>
 [[gnu::always_inline, gnu::hot, gnu::flatten]] inline void
-process_batch(PosStride *const CULV_RESTRICT s_pos, PosStride *const CULV_RESTRICT s_ppos,
-              AuxStride *const CULV_RESTRICT s_rot, AuxStride *const CULV_RESTRICT s_prot,
-              AuxStride *const CULV_RESTRICT s_lvel, AuxStride *const CULV_RESTRICT s_avel,
-              const SoftBodyShadow *const CULV_RESTRICT soft_shadows,
-              const SyncWorkItem *const CULV_RESTRICT worklist,
+process_batch(const WorldDataCreateInfo world, const SyncWorkItem *const CULV_RESTRICT worklist,
               const uint32_t dynamic_count = 0) noexcept {
 
     if constexpr (FixedCount > 0) {
         CULV_UNROLL_LOOP(8)
         for (uint32_t j = 0; j < FixedCount; j++) {
-            process_item<TType>(worklist[j].dense_idx, worklist[j].body, s_pos, s_ppos, s_rot,
-                                s_prot, s_lvel, s_avel, soft_shadows);
+            process_item<TType>(worklist[j].dense_idx, worklist[j].body, world);
         }
     } else {
         CULV_UNROLL_LOOP(4)
         for (uint32_t j = 0; j < dynamic_count; j++) {
             if (j + 2 < dynamic_count) {
-                CULV_PREFETCH_WRITE(&s_pos[worklist[j + 2].dense_idx]);
-                CULV_PREFETCH_WRITE(&s_rot[worklist[j + 2].dense_idx]);
+                CULV_PREFETCH_WRITE(&world.shadow_pos[worklist[j + 2].dense_idx]);
+                CULV_PREFETCH_WRITE(&world.shadow_rot[worklist[j + 2].dense_idx]);
             }
-            process_item<TType>(worklist[j].dense_idx, worklist[j].body, s_pos, s_ppos, s_rot,
-                                s_prot, s_lvel, s_avel, soft_shadows);
+            process_item<TType>(worklist[j].dense_idx, worklist[j].body, world);
         }
     }
 }
@@ -231,14 +234,36 @@ culverin_sync_shadow_buffers(const PhysicsWorldObject *const CULV_RESTRICT self)
 
                 if (work_ptr == BATCH_SIZE) {
                     process_batch<EBodyType::RigidBody, BATCH_SIZE>(
-                        s_pos, s_ppos, s_rot, s_prot, s_lvel, s_avel, nullptr, worklist);
+                        WorldDataCreateInfo{
+
+                            .shadow_pos   = s_pos,
+                            .shadow_ppos  = s_ppos,
+                            .shadow_rot   = s_rot,
+                            .shadow_prot  = s_prot,
+                            .shadow_lvel  = s_lvel,
+                            .shadow_avel  = s_avel,
+                            .soft_shadows = nullptr
+
+                        },
+                        worklist);
                     work_ptr = 0;
                 }
             }
 
             if (work_ptr > 0) {
-                process_batch<EBodyType::RigidBody, 0>(s_pos, s_ppos, s_rot, s_prot, s_lvel, s_avel,
-                                                       nullptr, worklist, work_ptr);
+                process_batch<EBodyType::RigidBody, 0>(
+                    WorldDataCreateInfo{
+
+                        .shadow_pos   = s_pos,
+                        .shadow_ppos  = s_ppos,
+                        .shadow_rot   = s_rot,
+                        .shadow_prot  = s_prot,
+                        .shadow_lvel  = s_lvel,
+                        .shadow_avel  = s_avel,
+                        .soft_shadows = nullptr
+
+                    },
+                    worklist, work_ptr);
             }
         }
     }
@@ -302,17 +327,37 @@ culverin_sync_shadow_buffers(const PhysicsWorldObject *const CULV_RESTRICT self)
                 soft_work_ptr += is_valid;
 
                 if (soft_work_ptr == BATCH_SIZE) {
-                    process_batch<EBodyType::SoftBody, BATCH_SIZE>(s_pos, s_ppos, s_rot, s_prot,
-                                                                   nullptr, nullptr, soft_shadows,
-                                                                   soft_worklist);
+                    process_batch<EBodyType::SoftBody, BATCH_SIZE>(
+                        WorldDataCreateInfo{
+
+                            .shadow_pos   = s_pos,
+                            .shadow_ppos  = s_ppos,
+                            .shadow_rot   = s_rot,
+                            .shadow_prot  = s_prot,
+                            .shadow_lvel  = nullptr,
+                            .shadow_avel  = nullptr,
+                            .soft_shadows = soft_shadows
+
+                        },
+                        soft_worklist);
                     soft_work_ptr = 0;
                 }
             }
 
             if (soft_work_ptr > 0) {
-                process_batch<EBodyType::SoftBody, 0>(s_pos, s_ppos, s_rot, s_prot, nullptr,
-                                                      nullptr, soft_shadows, soft_worklist,
-                                                      soft_work_ptr);
+                process_batch<EBodyType::SoftBody, 0>(
+                    WorldDataCreateInfo{
+
+                        .shadow_pos   = s_pos,
+                        .shadow_ppos  = s_ppos,
+                        .shadow_rot   = s_rot,
+                        .shadow_prot  = s_prot,
+                        .shadow_lvel  = nullptr,
+                        .shadow_avel  = nullptr,
+                        .soft_shadows = soft_shadows
+
+                    },
+                    soft_worklist, soft_work_ptr);
             }
         }
     }
