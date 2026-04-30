@@ -40,15 +40,25 @@ typedef unsigned _BitInt(5) culv_u5;
 // Use restrict keyword to tell the compiler these buffers do not overlap.
 // This is the single best way to enable SIMD auto-vectorization.
 #ifdef _MSC_VER
-#    define CULV_RESTRICT __restrict
-// MSVC doesn't have a direct equivalent to assume_aligned,
-// though __assume( ((intptr_t)x & 31) == 0 ) is sometimes used.
-#    define CULV_ASSUME_ALIGNED(x, alignment) (x)
-#    define CULV_FORCE_INLINE __forceinline
+    // MSVC: __restrict is standard here.
+    #define CULV_RESTRICT __restrict
+    
+    // MSVC doesn't have a direct equivalent to builtin_assume_aligned.
+    // We use __assume to hint the optimizer about the pointer's alignment bits.
+    #define CULV_ASSUME_ALIGNED(x, alignment) \
+        (__assume(((uintptr_t)(x) & ((alignment) - 1)) == 0), (x))
+        
+    #define CULV_FORCE_INLINE __forceinline
 #else
-#    define CULV_RESTRICT __restrict__
-#    define CULV_ASSUME_ALIGNED(x, alignment) __builtin_assume_aligned((x), (alignment))
-#    define CULV_FORCE_INLINE inline __attribute__((always_inline))
+    // Clang/GCC: Use the double-underscore version for maximum compatibility.
+    #define CULV_RESTRICT __restrict__
+    
+    // The Builtin is an expression, not an attribute. 
+    // It "cleanses" the pointer and returns it with alignment metadata attached.
+    #define CULV_ASSUME_ALIGNED(x, alignment) \
+        (__builtin_assume_aligned((x), (alignment)))
+        
+    #define CULV_FORCE_INLINE inline __attribute__((always_inline))
 #endif
 
 // Use a prefixed function to avoid collision
