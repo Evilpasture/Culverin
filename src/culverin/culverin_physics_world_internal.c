@@ -471,7 +471,6 @@ void free_shadow_buffers(PhysicsWorldObject *self) {
 // - Must not be called from a Jolt callback
 // - Must not race with Python memoryview access
 void PhysicsWorld_free_members(PhysicsWorldObject *self) {
-    self->sync_ready = false;
     // 1. Clear and free the ACTIVE command queue
     if (self->command_queue) {
         clear_command_queue(self);
@@ -584,9 +583,12 @@ int init_jolt_core(PhysicsWorldObject *self, WorldSettings settings, GravityVect
 
     // --- 3 LAYERS: 0=Static, 1=Dynamic, 2=VehicleRay ---
     self->bp_interface = JPH_BroadPhaseLayerInterfaceTable_Create(OBJECT_LAYER_COUNT, 3);
-    JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(self->bp_interface, OBJECT_LAYER_STATIC, 0);
-    JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(self->bp_interface, OBJECT_LAYER_DYNAMIC, 1);
-    JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(self->bp_interface, OBJECT_LAYER_VEHICLE, 2);
+    JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(self->bp_interface,
+                                                                 OBJECT_LAYER_STATIC, 0);
+    JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(self->bp_interface,
+                                                                 OBJECT_LAYER_DYNAMIC, 1);
+    JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(self->bp_interface,
+                                                                 OBJECT_LAYER_VEHICLE, 2);
 
     self->pair_filter = JPH_ObjectLayerPairFilterTable_Create(3);
 

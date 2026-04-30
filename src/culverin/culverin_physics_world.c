@@ -97,7 +97,6 @@ PyType_DeclareSlot_Void PhysicsWorld_dealloc(PhysicsWorldObject *self) {
 
 static void init_world_state(PhysicsWorldObject *self) {
     // 1.1 Jolt Core Pointers
-    self->sync_ready           = false;
     self->system               = nullptr;
     self->char_vs_char_manager = nullptr;
     self->body_interface       = nullptr;
@@ -247,8 +246,8 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
         culverin_init_world_parsers(self->parsers);
     }
 
-    PyObject *settings_dict = nullptr;
-    PyObject *bodies_list   = nullptr;
+    PyObject *settings_dict     = nullptr;
+    PyObject *bodies_list       = nullptr;
     AUTO_DECREF PyObject *baked = nullptr;
     GravityVector gravity;
     WorldSettings settings;
@@ -267,7 +266,7 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
     if (init_settings(self, settings_dict, &gravity, &settings) < 0) {
         goto fail;
     }
-    
+
     if (init_jolt_core(self, settings, gravity) < 0) {
         goto fail;
     }
@@ -286,7 +285,7 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
     if (bodies_list && bodies_list != Py_None) {
         PyObject *st_helper = get_culverin_state(PyType_GetModule(Py_TYPE(self)))->helper;
         AUTO_DECREF PyObject *bake_func = PyObject_GetAttrString(st_helper, "bake_scene");
-        baked               = PyObject_CallFunctionObjArgs(bake_func, bodies_list, nullptr);
+        baked = PyObject_CallFunctionObjArgs(bake_func, bodies_list, nullptr);
         if (!baked) {
             goto fail;
         }
@@ -310,7 +309,6 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
     size_t start_idx = atomic_load_explicit(&self->count, memory_order_relaxed);
     initialize_free_slots(self, start_idx);
 
-    self->sync_ready = true;
     SHADOW_LOCK(&self->shadow_lock);
     culverin_sync_shadow_buffers(self);
     SHADOW_UNLOCK(&self->shadow_lock);
@@ -1359,6 +1357,25 @@ size_fail:
     PyErr_SetString(PyExc_ValueError, "Snapshot buffer truncated or stride mismatch");
     return nullptr;
 }
+
+typedef struct {
+    PyThreadState *tstate;
+    bool once;
+} PyThreadCtx;
+
+[[gnu::always_inline]]
+static inline void internal_auto_gil_restore(PyThreadCtx *ctx) {
+    if (ctx->tstate) {
+        PyEval_RestoreThread(ctx->tstate);
+        ctx->tstate = nullptr;
+    }
+}
+
+#define WITH_ALLOW_THREADS                                                                         \
+    for ([[gnu::cleanup(internal_auto_gil_restore)]] PyThreadCtx _ctx = {PyEval_SaveThread(),      \
+                                                                         true};                    \
+         _ctx.once; _ctx.once                                         = false)
+
 [[gnu::flatten]]
 PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *const *args,
                                             size_t nargsf, PyObject *kwnames) {
@@ -1387,8 +1404,8 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
     // This is necessary for performance.
     while (atomic_load_explicit(&self->waiting_threads, memory_order_relaxed) > 0) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        Py_BEGIN_ALLOW_THREADS culverin_yield();
-        Py_END_ALLOW_THREADS SHADOW_LOCK(&self->shadow_lock);
+        WITH_ALLOW_THREADS { culverin_yield(); }
+        SHADOW_LOCK(&self->shadow_lock);
     }
 
     atomic_thread_fence(memory_order_acquire);
@@ -1400,12 +1417,14 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
     // Drain in-flight queries
     if (atomic_load_explicit(&self->active_queries, memory_order_acquire) > 0) {
         SHADOW_UNLOCK(&self->shadow_lock);
-        Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(self->step_sync.mutex);
-        while (atomic_load_explicit(&self->active_queries, memory_order_relaxed) > 0) {
-            NATIVE_COND_WAIT(self->step_sync.cond, self->step_sync.mutex);
+        WITH_ALLOW_THREADS {
+            NATIVE_MUTEX_LOCK(self->step_sync.mutex);
+            while (atomic_load_explicit(&self->active_queries, memory_order_relaxed) > 0) {
+                NATIVE_COND_WAIT(self->step_sync.cond, self->step_sync.mutex);
+            }
+            NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
         }
-        NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
-        Py_END_ALLOW_THREADS SHADOW_LOCK(&self->shadow_lock);
+        SHADOW_LOCK(&self->shadow_lock);
     }
 
     // Command Queue Swap (Safe non-atomic logic under SHADOW_LOCK)
@@ -1420,47 +1439,48 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
     SHADOW_UNLOCK(&self->shadow_lock);
 
     // --- PHASE 2: JOLT CRUNCH (GIL Released) ---
-    Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(self->jph_trampoline_lock);
+    WITH_ALLOW_THREADS {
+        NATIVE_MUTEX_LOCK(self->jph_trampoline_lock);
 
-    CULV_PROFILE_BEGIN(jolt_step);
+        CULV_PROFILE_BEGIN(jolt_step);
 
-    // 1. Process Batch Mutations (Shadow-to-Jolt)
-    if (captured_count > 0) {
-        flush_commands_internal(self, captured_queue, captured_count);
-        self->needs_optimization = true;
-    }
+        // 1. Process Batch Mutations (Shadow-to-Jolt)
+        if (captured_count > 0) {
+            flush_commands_internal(self, captured_queue, captured_count);
+            self->needs_optimization = true;
+        }
 
-    // 2. Simulation Step
-    if (dt <= 0.0f) {
-        JPH_PhysicsSystem_OptimizeBroadPhase(self->system);
-        self->needs_optimization = false;
-    } else {
-        JPH_PhysicsSystem_Update2(self->system, dt, 1, self->temp_allocator, self->job_system);
-        if (self->needs_optimization) {
+        // 2. Simulation Step
+        if (dt <= 0.0f) {
             JPH_PhysicsSystem_OptimizeBroadPhase(self->system);
             self->needs_optimization = false;
+        } else {
+            JPH_PhysicsSystem_Update2(self->system, dt, 1, self->temp_allocator, self->job_system);
+            if (self->needs_optimization) {
+                JPH_PhysicsSystem_OptimizeBroadPhase(self->system);
+                self->needs_optimization = false;
+            }
         }
+
+        // SYNC HANDOVER: Wait for Numpy/Proxies to finish
+        // Note: We use the dedicated step_sync.mutex, NOT the shadow_lock
+        NATIVE_MUTEX_LOCK(self->step_sync.mutex);
+        while (atomic_load_explicit(&self->active_queries, memory_order_acquire) > 0) {
+            NATIVE_COND_WAIT(self->step_sync.cond, self->step_sync.mutex);
+        }
+
+        NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
+
+        // 3. Jolt-to-Shadow Buffer Sync
+        culverin_sync_shadow_buffers(self);
+
+        CULV_PROFILE_END(jolt_step, "Jolt Physics Crunch", (unsigned int)captured_count);
+
+        NATIVE_MUTEX_UNLOCK(self->jph_trampoline_lock);
     }
 
-    // SYNC HANDOVER: Wait for Numpy/Proxies to finish
-    // Note: We use the dedicated step_sync.mutex, NOT the shadow_lock
-    NATIVE_MUTEX_LOCK(self->step_sync.mutex);
-    while (atomic_load_explicit(&self->active_queries, memory_order_acquire) > 0) {
-        NATIVE_COND_WAIT(self->step_sync.cond, self->step_sync.mutex);
-    }
-
-    NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
-
-    // 3. Jolt-to-Shadow Buffer Sync
-    culverin_sync_shadow_buffers(self);
-
-    CULV_PROFILE_END(jolt_step, "Jolt Physics Crunch", (unsigned int)captured_count);
-
-    NATIVE_MUTEX_UNLOCK(self->jph_trampoline_lock);
-    Py_END_ALLOW_THREADS
-
-        // --- PHASE 3: FINALIZATION ---
-        SHADOW_LOCK(&self->shadow_lock);
+    // --- PHASE 3: FINALIZATION ---
+    SHADOW_LOCK(&self->shadow_lock);
 
     // We no longer need to cleanup buffer. The internal lifecycle handles it.
 
@@ -1657,7 +1677,7 @@ static JPH_Shape *init_compound_shape(PhysicsWorldObject *self, PyObject *parts)
             return nullptr;
         }
 
-        buffer[i] = (CompoundPart){ .type = (int)type_l };
+        buffer[i] = (CompoundPart){.type = (int)type_l};
 
         // Parse Position
         if (PyTuple_Check(p_pos) && PyTuple_Size(p_pos) == 3) {

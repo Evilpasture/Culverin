@@ -46,7 +46,6 @@ typedef struct PhysicsWorldObject {
     JPH_CharacterVsCharacterCollision *char_vs_char_manager;
     uint32_t max_jolt_bodies;
     size_t contact_max_capacity;
-    bool sync_ready;
 
     CULV_CACHE_LINE_SPACER;
 
