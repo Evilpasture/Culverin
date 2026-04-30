@@ -16,101 +16,64 @@ static_assert(sizeof(AuxStride) == sizeof(float) * 4, "AuxStride size mismatch")
 static constexpr int BATCH_SIZE = 128;
 
 namespace {
+
 struct SyncWorkItem {
     const JPH::Body *body;
     uint32_t dense_idx;
 };
 
 // =================================================================================================
-// HOT PATH: Unrolled, Prefetched, and SIMD Vectorized Stores (RIGID BODIES)
+// UNIFIED ITEM PROCESSOR
+// Automatically eliminates dead code branches at compile time via `if constexpr`.
 // =================================================================================================
+template <JPH::EBodyType TType>
+[[gnu::always_inline]] inline void
+process_item(const uint32_t D, const JPH::Body *const CULV_RESTRICT b,
+             PosStride *const CULV_RESTRICT s_pos, PosStride *const CULV_RESTRICT s_ppos,
+             AuxStride *const CULV_RESTRICT s_rot, AuxStride *const CULV_RESTRICT s_prot,
+             AuxStride *const CULV_RESTRICT s_lvel, AuxStride *const CULV_RESTRICT s_avel,
+             const SoftBodyShadow *const CULV_RESTRICT soft_shadows) noexcept {
 
-[[gnu::always_inline, gnu::hot, gnu::flatten]] inline void
-process_full_batch(PosStride *const CULV_RESTRICT s_pos, PosStride *const CULV_RESTRICT s_ppos,
-                   AuxStride *const CULV_RESTRICT s_rot, AuxStride *const CULV_RESTRICT s_prot,
-                   AuxStride *const CULV_RESTRICT s_lvel, AuxStride *const CULV_RESTRICT s_avel,
-                   const SyncWorkItem *const CULV_RESTRICT worklist) noexcept {
-    CULV_UNROLL_LOOP(8)
-    for (uint32_t j = 0; j < BATCH_SIZE; j++) {
-        const uint32_t D = worklist[j].dense_idx;
+    // 1. Snapshot previous state
+    s_ppos[D] = s_pos[D];
+    s_prot[D] = s_rot[D];
 
-        const JPH::Body *const CULV_RESTRICT b = worklist[j].body;
-
-        // Snapshot previous state (Wide 128/256-bit copy)
-        const PosStride old_pos = s_pos[D];
-        const AuxStride old_rot = s_rot[D];
-        s_ppos[D]               = old_pos;
-        s_prot[D]               = old_rot;
-
+    // 2. Write Current COM
 #ifndef JPH_DOUBLE_PRECISION
-        [[clang::always_inline]] JPH::Vec4(b->GetCenterOfMassPosition(), 0.0f)
-            .StoreFloat4(reinterpret_cast<JPH::Float4 *const CULV_RESTRICT>(&s_pos[D]));
+    [[clang::always_inline]] JPH::Vec4(b->GetCenterOfMassPosition(), 0.0f)
+        .StoreFloat4(reinterpret_cast<JPH::Float4 *const CULV_RESTRICT>(&s_pos[D]));
 #else
-        [[clang::always_inline]] b->GetCenterOfMassPosition().StoreDouble3(
-            reinterpret_cast<JPH::Double3 *const CULV_RESTRICT>(&s_pos[D]));
-        s_pos[D].w = 0.0;
+    [[clang::always_inline]] b->GetCenterOfMassPosition().StoreDouble3(
+        reinterpret_cast<JPH::Double3 *const CULV_RESTRICT>(&s_pos[D]));
+    s_pos[D].w = 0.0;
 #endif
 
-        [[clang::always_inline]] b->GetRotation().GetXYZW().StoreFloat4(
-            reinterpret_cast<JPH::Float4 *>(&s_rot[D]));
+    // 3. Write Current Rotation
+    [[clang::always_inline]] b->GetRotation().GetXYZW().StoreFloat4(
+        reinterpret_cast<JPH::Float4 *const CULV_RESTRICT>(&s_rot[D]));
+
+    // 4. Type-Specific Sub-Data
+    if constexpr (TType == JPH::EBodyType::RigidBody) {
         [[clang::always_inline]] JPH::Vec4(b->GetLinearVelocity(), 0.0F)
             .StoreFloat4(reinterpret_cast<JPH::Float4 *const CULV_RESTRICT>(&s_lvel[D]));
         [[clang::always_inline]] JPH::Vec4(b->GetAngularVelocity(), 0.0F)
             .StoreFloat4(reinterpret_cast<JPH::Float4 *const CULV_RESTRICT>(&s_avel[D]));
-    }
-}
-
-// =================================================================================================
-// HOT PATH: Soft Body Batch Processor
-// =================================================================================================
-[[gnu::always_inline, gnu::hot, gnu::flatten, gnu::nonnull(1, 2)]] inline void
-process_soft_batch(PosStride *const CULV_RESTRICT s_pos, PosStride *const CULV_RESTRICT s_ppos,
-                   AuxStride *const CULV_RESTRICT s_rot, AuxStride *const CULV_RESTRICT s_prot,
-                   const SoftBodyShadow *const CULV_RESTRICT soft_shadows,
-                   const SyncWorkItem *const CULV_RESTRICT worklist,
-                   const uint32_t count) noexcept {
-    CULV_UNROLL_LOOP(4)
-    for (uint32_t j = 0; j < count; j++) {
-        const uint32_t D                       = worklist[j].dense_idx;
-        const JPH::Body *const CULV_RESTRICT b = worklist[j].body;
-
-        // 1. Snapshot and Update COM/Rotation (Rigid-compat layer)
-        const PosStride old_pos = s_pos[D];
-        const AuxStride old_rot = s_rot[D];
-        s_ppos[D]               = old_pos;
-        s_prot[D]               = old_rot;
-
-#ifndef JPH_DOUBLE_PRECISION
-        [[clang::always_inline]] JPH::Vec4(b->GetCenterOfMassPosition(), 0.0f)
-            .StoreFloat4(reinterpret_cast<JPH::Float4 *const CULV_RESTRICT>(&s_pos[D]));
-#else
-        [[clang::always_inline]] b->GetCenterOfMassPosition().StoreDouble3(
-            reinterpret_cast<JPH::Double3 *const CULV_RESTRICT>(&s_pos[D]));
-        s_pos[D].w = 0.0;
-#endif
-        [[clang::always_inline]] b->GetRotation().GetXYZW().StoreFloat4(
-            reinterpret_cast<JPH::Float4 *const CULV_RESTRICT>(&s_rot[D]));
-
-        // 2. Vertex Shadow Sync
+    } else if constexpr (TType == JPH::EBodyType::SoftBody) {
         const auto *const CULV_RESTRICT soft_mp =
             static_cast<const JPH::SoftBodyMotionProperties *const CULV_RESTRICT>(
                 b->GetMotionProperties());
         const JPH::Array<JPH::SoftBodyVertex> &jolt_verts = soft_mp->GetVertices();
         const SoftBodyShadow &shadow                      = soft_shadows[D];
 
-        // Guard against mismatched topologies (e.g. async resizing)
         if ((shadow.vertices != nullptr) && shadow.num_vertices == jolt_verts.size()) [[likely]] {
             auto *const CULV_RESTRICT dst_verts =
                 reinterpret_cast<PosStride *const CULV_RESTRICT>(shadow.vertices);
             const JPH::Quat rotation     = b->GetRotation();
             const JPH::RVec3 translation = b->GetCenterOfMassPosition();
+            const size_t num_v           = shadow.num_vertices;
 
-            const size_t num_v = shadow.num_vertices;
-
-            // Unrolled Vertex Loop
             CULV_UNROLL_LOOP(8)
             for (size_t v = 0; v < num_v; ++v) {
-                // Prefetch vertex writes 8 steps ahead
                 if (v + 8 < num_v) {
                     CULV_PREFETCH_WRITE(&dst_verts[v + 8]);
                 }
@@ -132,47 +95,37 @@ process_soft_batch(PosStride *const CULV_RESTRICT s_pos, PosStride *const CULV_R
 }
 
 // =================================================================================================
-// COLD PATH: Remainder Handling (0 to 31 items)
+// UNIFIED BATCH PROCESSOR
+// Routes to either fully unrolled loops (FixedCount > 0) or prefetched remainder loops.
 // =================================================================================================
-[[gnu::always_inline, gnu::hot, gnu::nonnull(1, 2)]] inline void
-process_partial_batch(PosStride *const CULV_RESTRICT s_pos, PosStride *const CULV_RESTRICT s_ppos,
-                      AuxStride *const CULV_RESTRICT s_rot, AuxStride *const CULV_RESTRICT s_prot,
-                      AuxStride *const CULV_RESTRICT s_lvel, AuxStride *const CULV_RESTRICT s_avel,
-                      const SyncWorkItem *const CULV_RESTRICT worklist,
-                      const uint32_t count) noexcept {
+template <JPH::EBodyType TType, uint32_t FixedCount = 0>
+[[gnu::always_inline, gnu::hot, gnu::flatten]] inline void
+process_batch(PosStride *const CULV_RESTRICT s_pos, PosStride *const CULV_RESTRICT s_ppos,
+              AuxStride *const CULV_RESTRICT s_rot, AuxStride *const CULV_RESTRICT s_prot,
+              AuxStride *const CULV_RESTRICT s_lvel, AuxStride *const CULV_RESTRICT s_avel,
+              const SoftBodyShadow *const CULV_RESTRICT soft_shadows,
+              const SyncWorkItem *const CULV_RESTRICT worklist,
+              const uint32_t dynamic_count = 0) noexcept {
 
-    for (uint32_t j = 0; j < count; j++) {
-        if (j + 2 < count) {
-            const uint32_t future_D = worklist[j + 2].dense_idx;
-            CULV_PREFETCH_WRITE(&s_pos[future_D]);
-            CULV_PREFETCH_WRITE(&s_rot[future_D]);
+    if constexpr (FixedCount > 0) {
+        CULV_UNROLL_LOOP(8)
+        for (uint32_t j = 0; j < FixedCount; j++) {
+            process_item<TType>(worklist[j].dense_idx, worklist[j].body, s_pos, s_ppos, s_rot,
+                                s_prot, s_lvel, s_avel, soft_shadows);
         }
-
-        const uint32_t D                       = worklist[j].dense_idx;
-        const JPH::Body *const CULV_RESTRICT b = worklist[j].body;
-
-        const PosStride old_pos = s_pos[D];
-        const AuxStride old_rot = s_rot[D];
-        s_ppos[D]               = old_pos;
-        s_prot[D]               = old_rot;
-
-#ifndef JPH_DOUBLE_PRECISION
-        [[clang::always_inline]] JPH::Vec4(b->GetCenterOfMassPosition(), 0.0f)
-            .StoreFloat4(reinterpret_cast<JPH::Float4 *const CULV_RESTRICT>(&s_pos[D]));
-#else
-        [[clang::always_inline]] b->GetCenterOfMassPosition().StoreDouble3(
-            reinterpret_cast<JPH::Double3 *const CULV_RESTRICT>(&s_pos[D]));
-        s_pos[D].w = 0.0;
-#endif
-
-        [[clang::always_inline]] b->GetRotation().GetXYZW().StoreFloat4(
-            reinterpret_cast<JPH::Float4 *const CULV_RESTRICT>(&s_rot[D]));
-        [[clang::always_inline]] JPH::Vec4(b->GetLinearVelocity(), 0.0F)
-            .StoreFloat4(reinterpret_cast<JPH::Float4 *const CULV_RESTRICT>(&s_lvel[D]));
-        [[clang::always_inline]] JPH::Vec4(b->GetAngularVelocity(), 0.0F)
-            .StoreFloat4(reinterpret_cast<JPH::Float4 *const CULV_RESTRICT>(&s_avel[D]));
+    } else {
+        CULV_UNROLL_LOOP(4)
+        for (uint32_t j = 0; j < dynamic_count; j++) {
+            if (j + 2 < dynamic_count) {
+                CULV_PREFETCH_WRITE(&s_pos[worklist[j + 2].dense_idx]);
+                CULV_PREFETCH_WRITE(&s_rot[worklist[j + 2].dense_idx]);
+            }
+            process_item<TType>(worklist[j].dense_idx, worklist[j].body, s_pos, s_ppos, s_rot,
+                                s_prot, s_lvel, s_avel, soft_shadows);
+        }
     }
 }
+
 } // namespace
 
 // =================================================================================================
@@ -277,14 +230,15 @@ culverin_sync_shadow_buffers(const PhysicsWorldObject *const CULV_RESTRICT self)
                 work_ptr += is_valid;
 
                 if (work_ptr == BATCH_SIZE) {
-                    process_full_batch(s_pos, s_ppos, s_rot, s_prot, s_lvel, s_avel, worklist);
+                    process_batch<EBodyType::RigidBody, BATCH_SIZE>(
+                        s_pos, s_ppos, s_rot, s_prot, s_lvel, s_avel, nullptr, worklist);
                     work_ptr = 0;
                 }
             }
 
             if (work_ptr > 0) {
-                process_partial_batch(s_pos, s_ppos, s_rot, s_prot, s_lvel, s_avel, worklist,
-                                      work_ptr);
+                process_batch<EBodyType::RigidBody, 0>(s_pos, s_ppos, s_rot, s_prot, s_lvel, s_avel,
+                                                       nullptr, worklist, work_ptr);
             }
         }
     }
@@ -348,15 +302,17 @@ culverin_sync_shadow_buffers(const PhysicsWorldObject *const CULV_RESTRICT self)
                 soft_work_ptr += is_valid;
 
                 if (soft_work_ptr == BATCH_SIZE) {
-                    process_soft_batch(s_pos, s_ppos, s_rot, s_prot, soft_shadows, soft_worklist,
-                                       BATCH_SIZE);
+                    process_batch<EBodyType::SoftBody, BATCH_SIZE>(s_pos, s_ppos, s_rot, s_prot,
+                                                                   nullptr, nullptr, soft_shadows,
+                                                                   soft_worklist);
                     soft_work_ptr = 0;
                 }
             }
 
             if (soft_work_ptr > 0) {
-                process_soft_batch(s_pos, s_ppos, s_rot, s_prot, soft_shadows, soft_worklist,
-                                   soft_work_ptr);
+                process_batch<EBodyType::SoftBody, 0>(s_pos, s_ppos, s_rot, s_prot, nullptr,
+                                                      nullptr, soft_shadows, soft_worklist,
+                                                      soft_work_ptr);
             }
         }
     }
