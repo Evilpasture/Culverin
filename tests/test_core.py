@@ -49,6 +49,119 @@ class CulverinTestCase(unittest.TestCase):
                 self.fail(self._formatMessage(msg, standardMsg))
 
 
+class TestWorldInitialization(unittest.TestCase):
+    """
+    Tests the PhysicsWorld.__init__ method, specifically the settings_dict
+    and the baked 'bodies' list initialization path.
+    """
+
+    def test_default_init(self) -> None:
+        """Verify the engine starts with sensible defaults when no args are provided."""
+        world = culverin.PhysicsWorld()
+        # Default gravity is -9.81
+        _, gy, _ = world.get_gravity()
+        self.assertAlmostEqual(gy, -9.81, places=2)
+        self.assertEqual(world.count, 0)
+        self.assertEqual(world.max_bodies, 10240)
+
+    def test_custom_gravity_and_limits(self) -> None:
+        """Verify that gravity and hard body limits are applied."""
+        custom_settings: culverin.WorldSettings = {
+            "gravity": (0, 9.81, 0),  # Inverted gravity
+            "max_bodies": 500,
+            "max_pairs": 1000
+        }
+        world = culverin.PhysicsWorld(settings=custom_settings)
+        
+        _, gy, _ = world.get_gravity()
+        self.assertAlmostEqual(gy, 9.81, places=5)
+        self.assertEqual(world.max_bodies, 500)
+        self.assertEqual(world.remaining_capacity, 500)
+
+    def test_jolt_internal_tuning(self) -> None:
+        """
+        Verify that Jolt-specific internal settings are parsed.
+        Note: We can't easily query these back from the C-API yet, 
+        so we verify that initialization succeeds with these values.
+        """
+        advanced_settings: culverin.WorldSettings = {
+            "num_threads": 2,
+            "max_physics_jobs": 1024,
+            "max_physics_barriers": 4,
+            "temp_allocator_size": 16 * 1024 * 1024, # 16MB
+            "max_contact_constraints": 16384,
+            "penetration_slop": 0.05
+        }
+        # If this doesn't crash/raise, the C-layer parsed the expanded struct correctly
+        world = culverin.PhysicsWorld(settings=advanced_settings)
+        self.assertIsNotNone(world)
+
+    def test_invalid_settings_validation(self) -> None:
+        """Ensure Python-side validation catches out-of-bounds Jolt limits."""
+        # JoltC hard-caps jobs at 2048
+        with self.assertRaisesRegex(ValueError, "max_physics_jobs"):
+            culverin.PhysicsWorld(settings={"max_physics_jobs": 5000})
+            
+        # JoltC hard-caps barriers at 8
+        with self.assertRaisesRegex(ValueError, "max_physics_barriers"):
+            culverin.PhysicsWorld(settings={"max_physics_barriers": 10})
+
+    def test_baked_scene_initialization(self) -> None:
+        """
+        Verify that passing a list of bodies to __init__ correctly 
+        invokes the bake_scene -> load_baked_scene pipeline.
+        """
+        initial_bodies: list[culverin.BodyDefinition] = [
+            {
+                "pos": (0, 10, 0),
+                "shape": culverin.SHAPE_SPHERE,
+                "size": 1.0,
+                "mass": 5.0,
+                "user_data": 123
+            },
+            {
+                "pos": (0, 0, 0),
+                "shape": culverin.SHAPE_BOX,
+                "size": (10, 1, 10),
+                "motion": culverin.MOTION_STATIC,
+                "user_data": 456
+            }
+        ]
+        
+        world = culverin.PhysicsWorld(bodies=initial_bodies)
+        
+        # 1. Check count
+        self.assertEqual(world.count, 2)
+        
+        # 2. Check individual body data
+        # Baked bodies start at slot 0 with Generation 1.
+        # Handle format: (generation << 32) | slot
+        for i in range(2):
+            h = (1 << 32) | i
+            
+            # Assignment and check happen in one shot.
+            # Pylance now knows 'pos' is NOT None inside this block.
+            if (pos := world.get_position(h)) is not None:
+                ud = world.get_user_data(h)
+                if ud == 123:
+                    self.assertAlmostEqual(pos[1], 10.0)
+                elif ud == 456:
+                    self.assertAlmostEqual(pos[1], 0.0)
+            else:
+                self.fail(f"Handle {h} (slot {i}) is stale!")
+
+    def test_reinitialization_guard(self) -> None:
+        """Ensure __init__ cannot be called a second time on an active world."""
+        world = culverin.PhysicsWorld()
+        with self.assertRaisesRegex(RuntimeError, "already been initialized"):
+            world.__init__(settings={"max_bodies": 100})
+
+    def test_init_with_empty_bodies_list(self) -> None:
+        """Verify passing an empty list doesn't crash."""
+        world = culverin.PhysicsWorld(bodies=[])
+        self.assertEqual(world.count, 0)
+        self.assertEqual(world.remaining_capacity, 10240)
+
 class TestPrintVersion(CulverinTestCase):
     def test_print_version(self) -> None:
         self.assertHasAttr(culverin, "__version__", "Check version...")

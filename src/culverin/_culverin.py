@@ -331,13 +331,21 @@ def validate_constraint(
     raise ValueError(f"Unknown constraint type: {type_id}")
 
 
-def validate_settings(s: dict[str, Any] | None) -> tuple[float, float, float, float, int, int]:
+def validate_settings(s: dict[str, Any] | None) -> tuple[float, float, float, float, int, int, int, int, int, int, int]:
     """Settings validation for physics world."""
     settings = s or {}
 
     # Cast the result of .get() specifically to the type _validate_vec3 expects
     raw_gravity = cast(tuple[float, float, float], settings.get("gravity", (0.0, -9.81, 0.0)))
     grav = _validate_vec3(raw_gravity, "gravity")
+
+    max_jobs = int(settings.get("max_physics_jobs", 2048))
+    if max_jobs > 2048:
+        raise ValueError("max_physics_jobs cannot exceed JoltC limit of 2048")
+        
+    max_barriers = int(settings.get("max_physics_barriers", 8))
+    if max_barriers > 8:
+        raise ValueError("max_physics_barriers cannot exceed JoltC limit of 8")
 
     return (
         grav[0],
@@ -346,6 +354,11 @@ def validate_settings(s: dict[str, Any] | None) -> tuple[float, float, float, fl
         float(settings.get("penetration_slop", 0.02)),
         int(settings.get("max_bodies", 10240)),
         int(settings.get("max_pairs", 65536)),
+        int(settings.get("max_contact_constraints", 32768)),
+        int(settings.get("temp_allocator_size", 33554432)), # 32 MB
+        max_jobs,
+        max_barriers,
+        int(settings.get("num_threads", 4)),
     )
 
 

@@ -51,6 +51,8 @@ from ._culverin_c import (
     Skeleton,
     SoftBodySharedSettings,
     Vehicle,
+    WorldSettings,
+    BodyDefinition,
     _dump_schema_json,  # type: ignore
     mutate_tuple,
 )
@@ -105,6 +107,8 @@ __all__ = [
     "Transmission",
     "Vehicle",
     "WheelConfig",
+    "WorldSettings",
+    "BodyDefinition",
     "_dump_schema_json",
     "euler_to_quat",
     "load_urdf",

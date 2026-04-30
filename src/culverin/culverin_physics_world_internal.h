@@ -23,7 +23,13 @@ typedef struct {
 typedef struct {
     int max_bodies;
     int max_pairs;
-} WorldLimits;
+    int max_contact_constraints;
+    int temp_allocator_size;
+    int max_physics_jobs;
+    int max_physics_barriers;
+    int num_threads;
+    float penetration_slop;
+} WorldSettings;
 
 typedef struct {
     float gx;
@@ -41,10 +47,10 @@ void free_shadow_buffers(struct PhysicsWorldObject *self);
 
 void PhysicsWorld_free_members(struct PhysicsWorldObject *self);
 
-int init_settings(struct PhysicsWorldObject *self, PyObject *settings_dict, float *gx, float *gy,
-                  float *gz, int *max_bodies, int *max_pairs);
+int init_settings(struct PhysicsWorldObject *self, PyObject *settings_dict, GravityVector *gravity, 
+                  WorldSettings *settings);
 
-int init_jolt_core(struct PhysicsWorldObject *self, WorldLimits limits, GravityVector gravity);
+int init_jolt_core(struct PhysicsWorldObject *self, WorldSettings settings, GravityVector gravity);
 
 int allocate_buffers(struct PhysicsWorldObject *self, int max_bodies);
 
