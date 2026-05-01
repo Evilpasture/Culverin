@@ -2,6 +2,7 @@
 #include "culverin_arg_indices.h"
 #include "culverin_character.h"
 #include "culverin_constraint.h"
+#include "culverin_contact_event_definitions.h"
 #include "culverin_fast_build.h"
 #include "culverin_getters.h"
 #include "culverin_math.h"
@@ -45,6 +46,7 @@ static constexpr uint32_t JOLT_ALL_LAYER_BITS = 0xFFFF;
 
 // Buffer allocation increments
 static constexpr size_t RAGDOLL_BODY_BUFFER_INCREMENT = 1024;
+static constexpr int CONTACT_MAX_CAPACITY             = sizeof(ContactEvent) * 8 << 5;
 
 // --- Lifecycle: Deallocation ---
 PyType_DeclareSlot_Status PhysicsWorld_traverse(PhysicsWorldObject *self, visitproc visit,
@@ -4511,7 +4513,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events(PhysicsWorld
     }
 
     // Fast copy into local memory so we can drop the lock immediately
-    ContactEvent *scratch = CULV_RAW_MALLOC(count * sizeof(ContactEvent));
+    auto *scratch = (ContactEvent *)CULV_RAW_MALLOC(count * sizeof(ContactEvent));
     if (!scratch) {
         SHADOW_UNLOCK(&self->shadow_lock);
         return PyErr_NoMemory();
@@ -4532,19 +4534,20 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events(PhysicsWorld
     }
 
     for (size_t i = 0; i < count; i++) {
+        ContactEventSlim *slim = GetSlimHeader(&scratch[i]);
+
         // TSan Fix: Explicitly load the handles from the atomic members in the struct.
         // We use relaxed because this 'scratch' copy is thread-local and synchronized.
-        uint64_t b1_raw = atomic_load_explicit(&scratch[i].body1, memory_order_relaxed);
-        uint64_t b2_raw = atomic_load_explicit(&scratch[i].body2, memory_order_relaxed);
+        uint64_t b1_raw = atomic_load_explicit(&slim->body1, memory_order_relaxed);
+        uint64_t b2_raw = atomic_load_explicit(&slim->body2, memory_order_relaxed);
 
         /**
          * OPTIMIZATION: FastBuild_Tuple
          * 1. fb_from_u64 converts b1_raw and b2_raw
-         * 2. fb_from_float converts impulse and sliding_speed_sq
+         * 2. fb_from_float converts impulse and sliding_speed
          * 3. fb_pack_tuple performs a single O(1) allocation
          */
-        PyObject *item =
-            FastBuild_Tuple(b1_raw, b2_raw, scratch[i].impulse, scratch[i].sliding_speed_sq);
+        PyObject *item = FastBuild_Tuple(b1_raw, b2_raw, slim->impulse, slim->sliding_speed);
 
         if (UNLIKELY(!item)) {
             Py_DECREF(list);
@@ -4576,7 +4579,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events_ex(PhysicsWo
         count = self->contact_max_capacity;
     }
 
-    ContactEvent *scratch = CULV_RAW_MALLOC(count * sizeof(ContactEvent));
+    auto *scratch = (ContactEvent *)CULV_RAW_MALLOC(count * sizeof(ContactEvent));
     if (!scratch) {
         SHADOW_UNLOCK(&self->shadow_lock);
         return PyErr_NoMemory();
@@ -4600,7 +4603,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events_ex(PhysicsWo
         k_pos    = PyUnicode_InternFromString("position");
         k_norm   = PyUnicode_InternFromString("normal");
         k_str    = PyUnicode_InternFromString("impulse");
-        k_slide  = PyUnicode_InternFromString("slide_sq");
+        k_slide  = PyUnicode_InternFromString("slide_speed"); // Updated key to reflect lack of _sq
         k_mat    = PyUnicode_InternFromString("materials");
         k_type   = PyUnicode_InternFromString("type");
     }
@@ -4613,21 +4616,23 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events_ex(PhysicsWo
     }
 
     for (size_t i = 0; i < count; i++) {
-        ContactEvent *e = &scratch[i];
+        ContactEventSlim *slim  = GetSlimHeader(&scratch[i]);
+        ContactEventFatExt *fat = GetFatExtension(&scratch[i]);
 
         // TSan Fix: Explicit relaxed loads for atomic handles
-        uint64_t b1 = atomic_load_explicit(&e->body1, memory_order_relaxed);
-        uint64_t b2 = atomic_load_explicit(&e->body2, memory_order_relaxed);
+        uint64_t b1 = atomic_load_explicit(&slim->body1, memory_order_relaxed);
+        uint64_t b2 = atomic_load_explicit(&slim->body2, memory_order_relaxed);
 
         /**
          * OPTIMIZATION: FastBuild_Dict
          * We compose the nested tuples (pos, normal, bodies, mats)
          * and the dictionary in a single, readable expression.
          */
-        PyObject *dict = FastBuild_Dict(
-            k_bodies, FastBuild_Tuple(b1, b2), k_pos, FastBuild_Tuple(e->px, e->py, e->pz), k_norm,
-            FastBuild_Tuple(e->nx, e->ny, e->nz), k_mat, FastBuild_Tuple(e->mat1, e->mat2), k_str,
-            e->impulse, k_slide, e->sliding_speed_sq, k_type, e->type);
+        PyObject *dict = FastBuild_Dict(k_bodies, FastBuild_Tuple(b1, b2), k_pos,
+                                        FastBuild_Tuple(slim->px, slim->py, slim->pz), k_norm,
+                                        FastBuild_Tuple(slim->nx, slim->ny, slim->nz), k_mat,
+                                        FastBuild_Tuple(fat->mat1, fat->mat2), k_str, slim->impulse,
+                                        k_slide, slim->sliding_speed, k_type, slim->flags);
 
         if (UNLIKELY(!dict)) {
             Py_INCREF(Py_None);
@@ -4642,17 +4647,10 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events_ex(PhysicsWo
     CULV_RAW_FREE(scratch);
     return list;
 }
-// ContactEvent layout (packed, little-endian):
-// - body1 (uint64)
-// - body2 (uint64)
-// - px, py, pz (float32)
-// - nx, ny, nz (float32)
-// - impulse (float32)
-// - sliding_speed_sq (float32)
-// - mat1 (uint32)
-// - mat2 (uint32)
-// - type (uint32)
-// - _pad (uint32)
+
+// ContactEvent layout:
+// 128 bytes total (64 Slim Header, 64 Fat Extension)
+// See culverin_contact_event_definitions.h for exact alignment and padding.
 PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events_raw(PhysicsWorldObject *self,
                                                                         PyObject *Py_UNUSED(args)) {
     // 1. Phase Guard
@@ -4693,8 +4691,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events_raw(PhysicsW
     }
 
     // 5. Wrap in MemoryView
-    // This allows the user to use np.frombuffer(events, dtype=...) without extra
-    // copies
+    // This allows the user to use np.frombuffer(events, dtype=...) without extra copies
     PyObject *view = PyMemoryView_FromObject(raw_bytes);
     Py_DECREF(raw_bytes);
     return view;

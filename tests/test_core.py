@@ -8,13 +8,13 @@ import types
 import unittest
 from pathlib import Path
 from types import CodeType, SimpleNamespace
-from typing import Literal, Protocol
+from typing import Literal, Protocol, Any
 
 import numpy as np
 
 import culverin
 from culverin import TrackConfig, WheelConfig
-
+type DTypeField = tuple[str, Any]
 if not __debug__:
     raise RuntimeError("Cannot run tests in release mode")
 
@@ -617,6 +617,68 @@ class TestCollisionsAndEvents(CulverinTestCase):
         removed = [e for e in events if e["type"] == culverin.EVENT_REMOVED]
         self.assertGreater(len(removed), 0)
         self.assertIn(b1, removed[0]["bodies"])
+    def test_contact_events_raw_memory_layout(self) -> None:
+        """Verify the new 128-byte Slim/Fat memory layout for raw contact events."""
+        
+        self.world.create_body(pos=(0, 0, 0), size=(2, 2, 2), motion=culverin.MOTION_STATIC)
+        self.world.create_body(pos=(0, 1.5, 0), size=(1, 1, 1), motion=culverin.MOTION_DYNAMIC)
+        self.world.step(0)
+        self.world.step(1 / 60.0)  # Trigger collision
+
+        raw_bytes = self.world.get_contact_events_raw()
+        self.assertGreater(len(raw_bytes), 0, "No raw bytes returned!")
+
+        # 1. Define the Slim Header based on compilation precision
+        if culverin.USE_DOUBLE_PRECISION:
+            slim_fields: list[DTypeField] = [
+                ("body1", np.uint64),
+                ("body2", np.uint64),
+                ("px", np.float64), ("py", np.float64), ("pz", np.float64),
+                ("nx", np.float32), ("ny", np.float32), ("nz", np.float32),
+                ("impulse", np.float32),
+                ("sliding_speed", np.float32),
+                ("flags", np.uint32),
+            ]
+        else:
+            slim_fields = [
+                ("body1", np.uint64),
+                ("body2", np.uint64),
+                ("px", np.float32), ("py", np.float32), ("pz", np.float32),
+                ("nx", np.float32), ("ny", np.float32), ("nz", np.float32),
+                ("impulse", np.float32),
+                ("sliding_speed", np.float32),
+                ("flags", np.uint32),
+                ("padding_magic", "(3,)u4"),
+            ]
+
+        # 2. Define the Fat Extension
+        fat_fields: list[DTypeField] = [
+            ("udata1", np.uint64),
+            ("udata2", np.uint64),
+            ("rvx", np.float32), ("rvy", np.float32), ("rvz", np.float32),
+            ("toi", np.float32),
+            ("penetration", np.float32),
+            ("mat1", np.uint32),
+            ("mat2", np.uint32),
+            ("sub1", np.uint32),
+            ("sub2", np.uint32),
+            ("pad_fat", "(3,)u4")
+        ]
+
+        dt = np.dtype(slim_fields + fat_fields)
+
+        # 3. Assert alignment and parse
+        self.assertEqual(dt.itemsize, 128, "NumPy dtype size must match C++ 128-byte alignment!")
+        
+        events = np.frombuffer(raw_bytes, dtype=dt)
+        self.assertGreaterEqual(len(events), 1)
+
+        # 4. Data validation
+        # Canonical ordering guarantee (body1 handle is ALWAYS smaller than body2 handle)
+        self.assertLess(events[0]["body1"], events[0]["body2"])
+        
+        # Verify event type flag
+        self.assertIn(events[0]["flags"], [culverin.EVENT_ADDED, culverin.EVENT_PERSISTED])
 
 class TestMultiWorldConcurrency(unittest.TestCase):
     """

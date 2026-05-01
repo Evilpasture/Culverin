@@ -446,7 +446,7 @@ python_add_library(
     src/culverin/culverin_debug_render.c
     src/culverin/culverin_getters.c
     src/culverin/culverin_character.c
-    src/culverin/culverin_contact_listener.c
+    src/culverin/culverin_contact_listener.cpp
     src/culverin/culverin_parsers.c
     src/culverin/culverin_vehicle.c
     src/culverin/culverin_command_buffer.c
