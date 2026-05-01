@@ -21,12 +21,9 @@ template <typename T, SizeType N, typename F> constexpr void Unroll(F &&f) {
 
 template <SizeType Factor, typename F> constexpr void UnrollLoop(SizeType total, F &&f) {
     SizeType i = 0;
-    if (total >= Factor) {
-        for (; i <= total - Factor; i += Factor) {
-            Unroll<Factor>([&](auto index) -> auto { f(i + index); });
-        }
+    for (; i + Factor <= total; i += Factor) {
+        Unroll<Factor>([&](auto index) -> auto { f(i + index); });
     }
-    // Clean up the remainder
     for (; i < total; ++i) {
         f(i);
     }
