@@ -1,5 +1,6 @@
 #include "culverin_shadow_sync.h"
 #include "culverin_compiler_specifics.h"
+#include "culverin_tmp.hpp"
 #include "culverin_types.h"
 
 // Include native Jolt headers for ultra-fast C++ bypass
@@ -15,43 +16,7 @@
 static_assert(sizeof(PosStride) == sizeof(JPH::Real) * 4);
 static_assert(sizeof(AuxStride) == sizeof(float) * 4);
 
-namespace {
-
-// Locality hints for clarity
-enum class CacheLevel : uint8_t { L1 = 3, L2 = 2, L3 = 1, stream = 0 };
-enum class AccessType : uint8_t { Read = 0, Write = 1 };
-
-template <AccessType Access = AccessType::Read, CacheLevel Level = CacheLevel::L1>
-[[gnu::always_inline]] inline void prefetch(const void *addr) noexcept {
-#if defined(__clang__) || defined(__GNUC__)
-    __builtin_prefetch(addr, static_cast<int>(Access), static_cast<int>(Level));
-#elif defined(_MSC_VER)
-    // MSVC doesn't have a direct 1:1 for __builtin_prefetch's rw param
-    if constexpr (Access == AccessType::Write) {
-        // PREFETCHW support is CPU-specific; T0 is the standard fallback
-        _mm_prefetch(static_cast<const char *>(addr), _MM_HINT_T0);
-    } else {
-        if constexpr (Level == CacheLevel::L1)
-            _mm_prefetch(static_cast<const char *>(addr), _MM_HINT_T0);
-        else if constexpr (Level == CacheLevel::L2)
-            _mm_prefetch(static_cast<const char *>(addr), _MM_HINT_T1);
-        else
-            _mm_prefetch(static_cast<const char *>(addr), _MM_HINT_NTA);
-    }
-#endif
-}
-
-template <size_t N, typename F> constexpr void unroll(F &&f) {
-    [&f]<size_t... Is>(std::index_sequence<Is...>) -> auto {
-        (f(std::integral_constant<size_t, Is>{}), ...);
-    }(std::make_index_sequence<N>{});
-}
-
-template <size_t N, typename F> constexpr void repeat(F &&f) {
-    [&f]<size_t... Is>(std::index_sequence<Is...>) -> auto {
-        ((static_cast<void>(Is), f()), ...);
-    }(std::make_index_sequence<N>{});
-}
+namespace CPH {
 
 constexpr int BATCH_SIZE = 128;
 struct SyncWorkItem {
@@ -79,6 +44,8 @@ struct MappingDataCreateInfo {
 
 static_assert(std::is_trivially_copyable<WorldDataCreateInfo>());
 static_assert(std::is_trivial<WorldDataCreateInfo>());
+static_assert(std::is_trivially_copyable<MappingDataCreateInfo>());
+static_assert(std::is_trivial<MappingDataCreateInfo>());
 
 #ifdef JPH_DOUBLE_PRECISION
 inline constexpr bool double_precision = true;
@@ -95,8 +62,8 @@ using aux_ptr_t = JPH::Float4 *const CULV_RESTRICT;
 // =================================================================================================
 template <JPH::EBodyType TType>
 [[gnu::always_inline, gnu::nonnull(2)]] inline auto
-process_item(const uint32_t D, const JPH::Body *const CULV_RESTRICT b,
-             const WorldDataCreateInfo world) noexcept -> void {
+ProcessItem(const uint32_t D, const JPH::Body *const CULV_RESTRICT b,
+            const WorldDataCreateInfo world) noexcept -> void {
 
     // 1. Snapshot previous state
     world.shadow_ppos[D] = world.shadow_pos[D];
@@ -105,17 +72,20 @@ process_item(const uint32_t D, const JPH::Body *const CULV_RESTRICT b,
     // 2. Write Current COM
     auto *const target = &world.shadow_pos[D];
 
+    const auto &rotation    = b->GetRotation();
+    const auto &translation = b->GetCenterOfMassPosition();
+
     if constexpr (double_precision) {
-        [[clang::always_inline]] b->GetCenterOfMassPosition().StoreDouble3(
-            reinterpret_cast<pos_ptr_t>(target));
+        [[clang::always_inline]] translation.StoreDouble3(reinterpret_cast<pos_ptr_t>(target));
         target->w = 0.0;
     } else {
-        [[clang::always_inline]] JPH::Vec4(JPH::Vec3(b->GetCenterOfMassPosition()), 0.0F)
+        [[clang::always_inline]] JPH::Vec4(JPH::Vec3(translation), 0.0F)
             .StoreFloat4(reinterpret_cast<JPH::Float4 *const CULV_RESTRICT>(target));
     }
 
     // 3. Write Current Rotation
-    [[clang::always_inline]] b->GetRotation().GetXYZW().StoreFloat4(
+
+    [[clang::always_inline]] rotation.GetXYZW().StoreFloat4(
         reinterpret_cast<aux_ptr_t>(&world.shadow_rot[D]));
 
     // 4. Type-Specific Sub-Data
@@ -131,34 +101,33 @@ process_item(const uint32_t D, const JPH::Body *const CULV_RESTRICT b,
         const JPH::Array<JPH::SoftBodyVertex> &jolt_verts = soft_mp->GetVertices();
         const SoftBodyShadow &shadow                      = world.soft_shadows[D];
 
-        if ((shadow.vertices != nullptr) && shadow.num_vertices == jolt_verts.size()) [[likely]] {
-            auto *const CULV_RESTRICT dst_verts =
-                reinterpret_cast<PosStride *const CULV_RESTRICT>(shadow.vertices);
-            const JPH::Quat rotation     = b->GetRotation();
-            const JPH::RVec3 translation = b->GetCenterOfMassPosition();
-            const size_t num_v           = shadow.num_vertices;
+        if ((shadow.vertices == nullptr) || shadow.num_vertices != jolt_verts.size()) [[unlikely]] {
+            return;
+        }
 
-            CULV_UNROLL_LOOP(8)
-            for (size_t v = 0; v < num_v; ++v) {
-                if (v + 8 < num_v) {
-                    prefetch<AccessType::Write>(&dst_verts[v + 8]);
-                }
+        auto *const CULV_RESTRICT dst_verts =
+            reinterpret_cast<PosStride *const CULV_RESTRICT>(shadow.vertices);
 
-                const JPH::Vec3 local_pos(jolt_verts[v].mPosition);
+        const size_t num_v = shadow.num_vertices;
+        CULV_UNROLL_LOOP(8)
+        for (size_t v = 0; v < num_v; ++v) {
+            if (v + 8 < num_v) {
+                CPH::Prefetch<CPH::AccessType::Write>(&dst_verts[v + 8]);
+            }
 
-                if constexpr (double_precision) {
-                    const JPH::RVec3 world_pos = JPH::RVec3(rotation * local_pos) + translation;
+            const JPH::Vec3 local_pos(jolt_verts[v].mPosition);
 
-                    [[clang::always_inline]] world_pos.StoreDouble3(
-                        reinterpret_cast<pos_ptr_t>(&dst_verts[v]));
-                    dst_verts[v].w = 0.0;
-                } else {
-                    const JPH::Vec3 world_pos = (rotation * local_pos) + JPH::Vec3(translation);
+            if constexpr (double_precision) {
+                const JPH::RVec3 world_pos = JPH::RVec3(rotation * local_pos) + translation;
 
-                    [[clang::always_inline]] JPH::Vec4(world_pos, 0.0F)
-                        .StoreFloat4(
-                            reinterpret_cast<JPH::Float4 *const CULV_RESTRICT>(&dst_verts[v]));
-                }
+                [[clang::always_inline]] world_pos.StoreDouble3(
+                    reinterpret_cast<pos_ptr_t>(&dst_verts[v]));
+                dst_verts[v].w = 0.0;
+            } else {
+                const JPH::Vec3 world_pos = (rotation * local_pos) + JPH::Vec3(translation);
+
+                [[clang::always_inline]] JPH::Vec4(world_pos, 0.0F)
+                    .StoreFloat4(reinterpret_cast<JPH::Float4 *const CULV_RESTRICT>(&dst_verts[v]));
             }
         }
     }
@@ -168,33 +137,21 @@ process_item(const uint32_t D, const JPH::Body *const CULV_RESTRICT b,
 // UNIFIED BATCH PROCESSOR
 // Routes to either fully unrolled loops (FixedCount > 0) or prefetched remainder loops.
 // =================================================================================================
-template <JPH::EBodyType TType, uint32_t FixedCount = 0>
+template <JPH::EBodyType TType>
 [[gnu::always_inline, gnu::hot, gnu::flatten, gnu::nonnull(2)]] inline auto
-process_batch(const WorldDataCreateInfo world, const SyncWorkItem *const CULV_RESTRICT worklist,
-              const uint32_t dynamic_count = 0) noexcept -> void {
+ProcessBatch(const WorldDataCreateInfo world, const SyncWorkItem *const CULV_RESTRICT worklist,
+             const uint32_t count) noexcept -> void {
 
-    if constexpr (FixedCount > 0) {
-        unroll<FixedCount>([&](auto j) -> auto {
-            process_item<TType>(worklist[j].dense_idx, worklist[j].body, world);
-        });
-    } else {
-        [[assume(dynamic_count > 0)]];
-
-        CULV_UNROLL_LOOP(4)
-        for (uint32_t j = 0; j < dynamic_count; j++) {
-            if (j + 2 < dynamic_count) {
-                prefetch<AccessType::Write>(&world.shadow_pos[worklist[j + 2].dense_idx]);
-                prefetch<AccessType::Write>(&world.shadow_rot[worklist[j + 2].dense_idx]);
-            }
-            process_item<TType>(worklist[j].dense_idx, worklist[j].body, world);
+    [[assume(count > 0), assume(count <= BATCH_SIZE)]];
+    CULV_UNROLL_LOOP(4) for (uint32_t j = 0; j < count; j++) {
+        if (j + 2 < count) {
+            const uint32_t next_idx = worklist[j + 2].dense_idx;
+            CPH::Prefetch<CPH::AccessType::Write>(&world.shadow_pos[next_idx]);
+            CPH::Prefetch<CPH::AccessType::Write>(&world.shadow_rot[next_idx]);
         }
-    }
-}
 
-template <JPH::EBodyType TType, uint32_t FixedCount>
-inline void process_batch(const WorldDataCreateInfo world,
-                          const std::array<SyncWorkItem, FixedCount> &arr) noexcept {
-    process_batch<TType, FixedCount>(world, arr.data());
+        ProcessItem<TType>(worklist[j].dense_idx, worklist[j].body, world);
+    }
 }
 
 // =================================================================================================
@@ -203,8 +160,8 @@ inline void process_batch(const WorldDataCreateInfo world,
 // =================================================================================================
 template <JPH::EBodyType TType>
 [[gnu::always_inline, gnu::flatten, gnu::nonnull(2)]] inline auto
-execute_sync_pass(const uint32_t active_count, const JPH::PhysicsSystem *const CULV_RESTRICT system,
-                  MappingDataCreateInfo map, const WorldDataCreateInfo world) noexcept -> void {
+ExecuteSyncPass(const uint32_t active_count, const JPH::PhysicsSystem *const CULV_RESTRICT system,
+                MappingDataCreateInfo map, const WorldDataCreateInfo world) noexcept -> void {
     if (active_count == 0) {
         return;
     }
@@ -240,10 +197,11 @@ execute_sync_pass(const uint32_t active_count, const JPH::PhysicsSystem *const C
         const auto gen           = static_cast<const uint32_t>(handle >> HANDLE_INDEX_BITS);
         const uint32_t safe_slot = (slot < map.slot_capacity) ? slot : 0;
 
-        const uint8_t state        = map.slot_states[safe_slot].load(std::memory_order_acquire);
-        const uint32_t current_gen = map.generations[safe_slot].load(std::memory_order_acquire);
+        const uint8_t state        = map.slot_states[safe_slot].load(std::memory_order_relaxed);
+        const uint32_t current_gen = map.generations[safe_slot].load(std::memory_order_relaxed);
 
         // --- BRANCHLESS VALIDATION ---
+        [[assume(state < SLOT_COUNT)]];
         const uint32_t state_bad = [state]() -> uint32_t {
             if constexpr (TType == JPH::EBodyType::RigidBody) {
                 // Create a mask of the bits we want (bit 1 and bit 2)
@@ -260,34 +218,30 @@ execute_sync_pass(const uint32_t active_count, const JPH::PhysicsSystem *const C
                 return (state != SLOT_SOFT_BODY);
             }
         }();
-        const uint32_t bad =
-            static_cast<const uint32_t>(slot >= map.slot_capacity) | (current_gen ^ gen) | state_bad;
+        const uint32_t bad   = static_cast<const uint32_t>(slot >= map.slot_capacity) |
+                               (current_gen ^ gen) | state_bad;
         const uint32_t d_idx = map.slot_to_dense[safe_slot];
         const auto is_valid  = static_cast<uint32_t>(bad == 0);
-
-        prefetch<AccessType::Write>(&world.shadow_pos[d_idx]);
-        prefetch<AccessType::Write>(&world.shadow_rot[d_idx]);
-        if constexpr (TType == JPH::EBodyType::SoftBody) {
-            prefetch<AccessType::Read>(&world.soft_shadows[d_idx]);
-        }
 
         [[assume(work_ptr < BATCH_SIZE)]];
         worklist[work_ptr].body      = b;
         worklist[work_ptr].dense_idx = d_idx;
         work_ptr += is_valid;
 
+        // When the worklist is full, flush it.
         if (work_ptr == BATCH_SIZE) {
-            process_batch<TType, BATCH_SIZE>(world, worklist);
+            ProcessBatch<TType>(world, worklist.data(), BATCH_SIZE);
             work_ptr = 0;
         }
     }
 
+    // Flush any remaining items in the worklist (the remainder)
     if (work_ptr > 0) {
-        process_batch<TType, 0>(world, worklist.data(), work_ptr);
+        ProcessBatch<TType>(world, worklist.data(), work_ptr);
     }
 }
 
-} // namespace
+} // namespace CPH
 
 // =================================================================================================
 // MAIN SYNC ROUTINE
@@ -312,7 +266,7 @@ culverin_sync_shadow_buffers(const PhysicsWorldObject *const CULV_RESTRICT self)
 
     CULV_PROFILE_BEGIN(sync);
 
-    const WorldDataCreateInfo world = {
+    const CPH::WorldDataCreateInfo world = {
         .shadow_pos = std::assume_aligned<sizeof(PosStride)>(
             reinterpret_cast<PosStride *const CULV_RESTRICT>(self->positions)),
 
@@ -333,7 +287,7 @@ culverin_sync_shadow_buffers(const PhysicsWorldObject *const CULV_RESTRICT self)
 
         .soft_shadows = self->soft_shadows};
 
-    const MappingDataCreateInfo mapping_data = {
+    const CPH::MappingDataCreateInfo mapping_data = {
         .body_ptrs     = self->jolt_body_ptrs,
         .slot_states   = self->slot_states,
         .generations   = self->generations,
@@ -341,10 +295,10 @@ culverin_sync_shadow_buffers(const PhysicsWorldObject *const CULV_RESTRICT self)
         .slot_to_dense = self->slot_to_dense,
     };
 
-    execute_sync_pass<EBodyType::RigidBody>(active_rigid_count, system, mapping_data, world);
+    ExecuteSyncPass<EBodyType::RigidBody>(active_rigid_count, system, mapping_data, world);
 
     if (self->soft_shadows != nullptr) {
-        execute_sync_pass<EBodyType::SoftBody>(active_soft_count, system, mapping_data, world);
+        ExecuteSyncPass<EBodyType::SoftBody>(active_soft_count, system, mapping_data, world);
     }
 
     CULV_PROFILE_ACCUMULATE(sync, &sync_stats);
