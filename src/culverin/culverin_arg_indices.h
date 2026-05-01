@@ -601,9 +601,7 @@ static constexpr size_t PARSER_REGISTRY_SIZE = 128;
     X(IDX_62, "a62", uint64_t, false)                                                              \
     X(IDX_63, "a63", uint64_t, false)
 
-#define SCHEMA_DUMP_SCHEMA(X)                                                                      \
-    X(IDX_DS_PATH, "path", const char *, false)
-
+#define SCHEMA_DUMP_SCHEMA(X) X(IDX_DS_PATH, "path", const char *, false)
 
 /** --- THE GENERATOR ENGINE --- **/
 
@@ -611,7 +609,7 @@ static constexpr size_t PARSER_REGISTRY_SIZE = 128;
 
 // Defines the Enum and the Count for a signature type
 #define DEFINE_INDEX_GROUP(GroupName, Schema)                                                      \
-    typedef enum { Schema(GEN_ENUM) GroupName##_COUNT } GroupName##_Idx;
+    typedef enum : uint8_t { Schema(GEN_ENUM) GroupName##_COUNT } GroupName##_Idx;
 
 // Declares a specific parser that uses an Index Group
 #define DECLARE_PARSER(ParserName, GroupName) FastParser ParserName##Parser;
@@ -836,8 +834,7 @@ DEFINE_INDEX_GROUP(DumpSchema, SCHEMA_DUMP_SCHEMA)
     X(MathEulerVec, MathEulerVec, SCHEMA_MATH_EULER_VEC)                                           \
     X(MathEulerBatch, MathEulerBatch, SCHEMA_MATH_EULER_BATCH)
 
-#define FOR_ALL_MODULE_PARSERS(X)                                                                  \
-    X(DumpSchema, DumpSchema, SCHEMA_DUMP_SCHEMA)
+#define FOR_ALL_MODULE_PARSERS(X) X(DumpSchema, DumpSchema, SCHEMA_DUMP_SCHEMA)
 
 #define MAP_TO_DECLARE(P, G, S) DECLARE_PARSER(P, G)
 
