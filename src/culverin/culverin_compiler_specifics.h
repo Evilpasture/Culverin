@@ -1,4 +1,5 @@
 #pragma once
+
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -13,8 +14,11 @@
 #    define CULV_ATOMIC(t) _Atomic(t)
 #endif
 
-#if defined(__cplusplus) || (defined(__GNUC__) && __GNUC__ < 14)
-// Fallback for C++ or older GCC
+#if defined(__cplusplus)
+using culv_u23 = uint32_t;
+using culv_u1  = uint8_t;
+using culv_u5  = uint8_t;
+#elif (defined(__GNUC__) && __GNUC__ < 14)
 typedef uint32_t culv_u23;
 typedef uint8_t culv_u1;
 typedef uint8_t culv_u5;
@@ -40,25 +44,24 @@ typedef unsigned _BitInt(5) culv_u5;
 // Use restrict keyword to tell the compiler these buffers do not overlap.
 // This is the single best way to enable SIMD auto-vectorization.
 #ifdef _MSC_VER
-    // MSVC: __restrict is standard here.
-    #define CULV_RESTRICT __restrict
-    
-    // MSVC doesn't have a direct equivalent to builtin_assume_aligned.
-    // We use __assume to hint the optimizer about the pointer's alignment bits.
-    #define CULV_ASSUME_ALIGNED(x, alignment) \
+// MSVC: __restrict is standard here.
+#    define CULV_RESTRICT __restrict
+
+// MSVC doesn't have a direct equivalent to builtin_assume_aligned.
+// We use __assume to hint the optimizer about the pointer's alignment bits.
+#    define CULV_ASSUME_ALIGNED(x, alignment)                                                      \
         (__assume(((uintptr_t)(x) & ((alignment) - 1)) == 0), (x))
-        
-    #define CULV_FORCE_INLINE __forceinline
+
+#    define CULV_FORCE_INLINE __forceinline
 #else
-    // Clang/GCC: Use the double-underscore version for maximum compatibility.
-    #define CULV_RESTRICT __restrict__
-    
-    // The Builtin is an expression, not an attribute. 
-    // It "cleanses" the pointer and returns it with alignment metadata attached.
-    #define CULV_ASSUME_ALIGNED(x, alignment) \
-        (__builtin_assume_aligned((x), (alignment)))
-        
-    #define CULV_FORCE_INLINE inline __attribute__((always_inline))
+// Clang/GCC: Use the double-underscore version for maximum compatibility.
+#    define CULV_RESTRICT __restrict__
+
+// The Builtin is an expression, not an attribute.
+// It "cleanses" the pointer and returns it with alignment metadata attached.
+#    define CULV_ASSUME_ALIGNED(x, alignment) (__builtin_assume_aligned((x), (alignment)))
+
+#    define CULV_FORCE_INLINE inline __attribute__((always_inline))
 #endif
 
 // Use a prefixed function to avoid collision
@@ -555,8 +558,8 @@ pub inline fn culv_take_return_null(comptime T : type, comptime pointer_literal 
 #else
 // C++ version with compile-time type checking to ensure only null pointer constants are accepted.
 #    include <algorithm>   // For std::ranges::all_of in the internal_verify_null_state function
+#    include <array>       // For std::array
 #    include <cstddef>     // For std::nullptr_t
-#    include <string_view> // For std::string_view in the compile-time date parser
 #    include <type_traits> // For std::is_same_v and std::remove_cv_t in the Void type trait
 
 // This function performs a volatile-qualified identity transformation on the null-set, allowing us
@@ -567,13 +570,15 @@ namespace {
 // This allows us to implement a "safety epoch" that forces us to update the library annually, which
 // is a crude but effective way to ensure we don't accidentally run code with stale assumptions
 // about hardware-backed null states.
-constexpr uint64_t current_year() {
-    std::string_view date = __DATE__;
-    // Extracting the last 4 characters for the year
+consteval auto current_year() -> uint64_t {
+    // We treat __DATE__ as what it is: a const char*
+    const char *date = __DATE__;
+
+    // Manual index for the year (e.g., "Mmm dd yyyy")
+    // index 7, 8, 9, 10
     int year = 0;
-    for (size_t i = date.size() - 4; i < date.size(); ++i) {
-        year = year * 10 + (date[i] - '0'); // Convert ASCII digits to an integer
-    }
+    year     = ((date[7] - '0') * 1000) + ((date[8] - '0') * 100) + ((date[9] - '0') * 10) +
+               (date[10] - '0');
     return year;
 }
 
@@ -608,8 +613,10 @@ struct Void {
  * @note complexity: O(1), but really it's a compile-time construct that either compiles
  * successfully or fails to compile.
  */
-template <typename T, typename = std::enable_if_t<Void<T>::value>>
-[[nodiscard]] [[maybe_unused]] constexpr auto culv_take_return_null(T &&arg) noexcept {
+template <typename T>
+[[nodiscard]] [[maybe_unused]] constexpr auto culv_take_return_null(T &&arg) noexcept
+    requires Void<T>::value
+{
     static_assert(
         sizeof(arg) == sizeof(void *),
         "Size mismatch! This function is only meant to be used with null pointer constants.");
@@ -625,8 +632,8 @@ template <typename T, typename = std::enable_if_t<Void<T>::value>>
 // contexts where a null pointer constant is expected. If this function returns false, it indicates
 // that there is a fundamental issue with the implementation of culv_take_return_null, and it needs
 // to be addressed before the library can be safely used.
-[[nodiscard]] constexpr bool internal_verify_null_state() noexcept {
-    std::nullptr_t test_array[4] = {nullptr, nullptr, nullptr, nullptr};
+[[nodiscard]] constexpr auto internal_verify_null_state() noexcept -> bool {
+    std::array<std::nullptr_t, 4> test_array = {};
 
     return std::ranges::all_of(test_array,
                                [](auto &n) { return culv_take_return_null(n) == nullptr; });
@@ -642,7 +649,7 @@ template <typename T, typename = std::enable_if_t<Void<T>::value>>
     constexpr uint64_t test_size =
         16; // We can adjust this size to test more or fewer cases, but 16 is a reasonable number to
             // ensure we're not just getting lucky with a small sample.
-    std::nullptr_t test_array[test_size] = {nullptr};
+    std::array<std::nullptr_t, test_size> test_array = {};
     // Fill the test array with null pointer constants. This is a sanity check to ensure that we're
     // actually testing the function with valid null pointer constants, and not just relying on a
     // single test case. If the function is implemented correctly, all elements of the test array
@@ -651,7 +658,7 @@ template <typename T, typename = std::enable_if_t<Void<T>::value>>
     // the implementation of culv_take_return_null, and it needs to be addressed before the library
     // can be safely used.
     if (!std::ranges::all_of(test_array,
-                             [](auto &n) { return culv_take_return_null(n) == nullptr; })) {
+                             [](auto &n) -> auto { return culv_take_return_null(n) == nullptr; })) {
         return false;
     }
 
@@ -681,7 +688,6 @@ static_assert(
 
 #ifdef __cplusplus
 // In C++, use the standard decltype
-#    include <type_traits>
 #    define CULV_TYPE_OF(x) decltype(x)
 #else
 // In C, use C23 typeof or the GCC/Clang extension
