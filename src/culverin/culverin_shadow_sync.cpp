@@ -16,6 +16,9 @@
 
 static_assert(sizeof(PosStride) == sizeof(JPH::Real) * 4);
 static_assert(sizeof(AuxStride) == sizeof(CPH::Float32) * 4);
+static_assert(alignof(PosStride) == 32);
+static_assert(alignof(AuxStride) == 16);
+static_assert(sizeof(PosStride) % 32 == 0);
 
 namespace CPH {
 
@@ -26,21 +29,21 @@ struct SyncWorkItem {
 };
 
 struct WorldDataCreateInfo {
-    PosStride *const CULV_RESTRICT shadow_pos;
-    PosStride *const CULV_RESTRICT shadow_ppos;
-    AuxStride *const CULV_RESTRICT shadow_rot;
-    AuxStride *const CULV_RESTRICT shadow_prot;
-    AuxStride *const CULV_RESTRICT shadow_lvel;
-    AuxStride *const CULV_RESTRICT shadow_avel;
-    const SoftBodyShadow *const CULV_RESTRICT soft_shadows;
+    PosStride *const CPH_RESTRICT shadow_pos;
+    PosStride *const CPH_RESTRICT shadow_ppos;
+    AuxStride *const CPH_RESTRICT shadow_rot;
+    AuxStride *const CPH_RESTRICT shadow_prot;
+    AuxStride *const CPH_RESTRICT shadow_lvel;
+    AuxStride *const CPH_RESTRICT shadow_avel;
+    const SoftBodyShadow *const CPH_RESTRICT soft_shadows;
 };
 
 struct MappingDataCreateInfo {
-    const void *CULV_RESTRICT *const CULV_RESTRICT body_ptrs;
-    const std::atomic<Unsigned8> *const CULV_RESTRICT slot_states;
-    const std::atomic<Unsigned32> *const CULV_RESTRICT generations;
+    const void *CPH_RESTRICT *const CPH_RESTRICT body_ptrs;
+    const std::atomic<Unsigned8> *const CPH_RESTRICT slot_states;
+    const std::atomic<Unsigned32> *const CPH_RESTRICT generations;
     const SizeType slot_capacity;
-    const Unsigned32 *const CULV_RESTRICT slot_to_dense;
+    const Unsigned32 *const CPH_RESTRICT slot_to_dense;
 };
 
 static_assert(std::is_trivially_copyable<WorldDataCreateInfo>());
@@ -54,8 +57,8 @@ inline constexpr bool double_precision = true;
 inline constexpr bool double_precision = false;
 #endif
 
-using PosPointerType = JPH::Double3 *const CULV_RESTRICT;
-using AuxPointerType = JPH::Float4 *const CULV_RESTRICT;
+using PosPointerType = JPH::Double3 *const CPH_RESTRICT;
+using AuxPointerType = JPH::Float4 *const CPH_RESTRICT;
 
 // =================================================================================================
 // UNIFIED ITEM PROCESSOR
@@ -63,7 +66,7 @@ using AuxPointerType = JPH::Float4 *const CULV_RESTRICT;
 // =================================================================================================
 template <JPH::EBodyType TType>
 [[gnu::always_inline, gnu::nonnull(2)]] inline auto
-ProcessItem(const Unsigned32 D, const JPH::Body *const CULV_RESTRICT b,
+ProcessItem(const Unsigned32 D, const JPH::Body *const CPH_RESTRICT b,
             const WorldDataCreateInfo world) noexcept -> void {
 
     // 1. Snapshot previous state
@@ -81,7 +84,7 @@ ProcessItem(const Unsigned32 D, const JPH::Body *const CULV_RESTRICT b,
         target->w = 0.0;
     } else {
         [[clang::always_inline]] JPH::Vec4(JPH::Vec3(translation), 0.0F)
-            .StoreFloat4(reinterpret_cast<JPH::Float4 *const CULV_RESTRICT>(target));
+            .StoreFloat4(reinterpret_cast<JPH::Float4 *const CPH_RESTRICT>(target));
     }
 
     // 3. Write Current Rotation
@@ -96,8 +99,8 @@ ProcessItem(const Unsigned32 D, const JPH::Body *const CULV_RESTRICT b,
         [[clang::always_inline]] JPH::Vec4(b->GetAngularVelocity(), 0.0F)
             .StoreFloat4(reinterpret_cast<AuxPointerType>(&world.shadow_avel[D]));
     } else if constexpr (TType == JPH::EBodyType::SoftBody) {
-        const auto *const CULV_RESTRICT soft_mp =
-            static_cast<const JPH::SoftBodyMotionProperties *const CULV_RESTRICT>(
+        const auto *const CPH_RESTRICT soft_mp =
+            static_cast<const JPH::SoftBodyMotionProperties *const CPH_RESTRICT>(
                 b->GetMotionProperties());
         const JPH::Array<JPH::SoftBodyVertex> &jolt_verts = soft_mp->GetVertices();
         const SoftBodyShadow &shadow                      = world.soft_shadows[D];
@@ -106,8 +109,8 @@ ProcessItem(const Unsigned32 D, const JPH::Body *const CULV_RESTRICT b,
             return;
         }
 
-        auto *const CULV_RESTRICT dst_verts =
-            reinterpret_cast<PosStride *const CULV_RESTRICT>(shadow.vertices);
+        auto *const CPH_RESTRICT dst_verts =
+            reinterpret_cast<PosStride *const CPH_RESTRICT>(shadow.vertices);
 
         const SizeType num_v = shadow.num_vertices;
         CULV_UNROLL_LOOP(8)
@@ -128,7 +131,7 @@ ProcessItem(const Unsigned32 D, const JPH::Body *const CULV_RESTRICT b,
                 const JPH::Vec3 world_pos = (rotation * local_pos) + JPH::Vec3(translation);
 
                 [[clang::always_inline]] JPH::Vec4(world_pos, 0.0F)
-                    .StoreFloat4(reinterpret_cast<JPH::Float4 *const CULV_RESTRICT>(&dst_verts[v]));
+                    .StoreFloat4(reinterpret_cast<JPH::Float4 *const CPH_RESTRICT>(&dst_verts[v]));
             }
         }
     }
@@ -164,18 +167,18 @@ inline auto ProcessBatch(const WorldDataCreateInfo world,
 // =================================================================================================
 template <JPH::EBodyType TType>
 [[gnu::always_inline, gnu::flatten, gnu::nonnull(2)]] inline auto
-ExecuteSyncPass(const Unsigned32 active_count, const JPH::PhysicsSystem *const CULV_RESTRICT system,
+ExecuteSyncPass(const Unsigned32 active_count, const JPH::PhysicsSystem *const CPH_RESTRICT system,
                 MappingDataCreateInfo map, const WorldDataCreateInfo world) noexcept -> void {
     if (active_count == 0) {
         return;
     }
 
-    const JPH::BodyID *const CULV_RESTRICT active_ids = system->GetActiveBodiesUnsafe(TType);
+    const JPH::BodyID *const CPH_RESTRICT active_ids = system->GetActiveBodiesUnsafe(TType);
     if (active_ids == nullptr) {
         [[unlikely]] return;
     }
 
-    const auto *const CULV_RESTRICT lock_iface = &system->GetBodyLockInterfaceNoLock();
+    const auto *const CPH_RESTRICT lock_iface = &system->GetBodyLockInterfaceNoLock();
 
     alignas(MEMORY_ALIGNMENT_SIZE) std::array<SyncWorkItem, BATCH_SIZE> worklist;
 
@@ -185,8 +188,8 @@ ExecuteSyncPass(const Unsigned32 active_count, const JPH::PhysicsSystem *const C
         const Unsigned32 raw_jolt_id = active_ids[i].GetIndexAndSequenceNumber();
         const Unsigned32 j_idx       = raw_jolt_id & JPH::BodyID::cMaxBodyIndex;
 
-        const auto *CULV_RESTRICT b =
-            static_cast<const JPH::Body * CULV_RESTRICT>(map.body_ptrs[j_idx]);
+        const auto *CPH_RESTRICT b =
+            static_cast<const JPH::Body * CPH_RESTRICT>(map.body_ptrs[j_idx]);
 
         [[clang::always_inline]] if (b == nullptr || b->GetID().GetIndexAndSequenceNumber() !=
                                                          raw_jolt_id) [[unlikely]] {
@@ -253,10 +256,10 @@ ExecuteSyncPass(const Unsigned32 active_count, const JPH::PhysicsSystem *const C
 // =================================================================================================
 
 extern "C" [[gnu::flatten, gnu::hot, gnu::nonnull(1)]] auto
-culverin_sync_shadow_buffers(const PhysicsWorldObject *const CULV_RESTRICT self) noexcept -> void {
+culverin_sync_shadow_buffers(const PhysicsWorldObject *const CPH_RESTRICT self) noexcept -> void {
     using namespace JPH;
     using namespace CPH;
-    const auto *const CULV_RESTRICT system = static_cast<const PhysicsSystem *const CULV_RESTRICT>(
+    const auto *const CPH_RESTRICT system = static_cast<const PhysicsSystem *const CPH_RESTRICT>(
         JPH_PhysicsSystem_GetPhysicsSystemInstance(self->system));
 
     const Unsigned32 active_rigid_count = system->GetNumActiveBodies(EBodyType::RigidBody);
@@ -274,22 +277,22 @@ culverin_sync_shadow_buffers(const PhysicsWorldObject *const CULV_RESTRICT self)
 
     const CPH::WorldDataCreateInfo world = {
         .shadow_pos = std::assume_aligned<sizeof(PosStride)>(
-            reinterpret_cast<PosStride *const CULV_RESTRICT>(self->positions)),
+            reinterpret_cast<PosStride *const CPH_RESTRICT>(self->positions)),
 
         .shadow_ppos = std::assume_aligned<sizeof(PosStride)>(
-            reinterpret_cast<PosStride *const CULV_RESTRICT>(self->prev_positions)),
+            reinterpret_cast<PosStride *const CPH_RESTRICT>(self->prev_positions)),
 
         .shadow_rot = std::assume_aligned<sizeof(AuxStride)>(
-            reinterpret_cast<AuxStride *const CULV_RESTRICT>(self->rotations)),
+            reinterpret_cast<AuxStride *const CPH_RESTRICT>(self->rotations)),
 
         .shadow_prot = std::assume_aligned<sizeof(AuxStride)>(
-            reinterpret_cast<AuxStride *const CULV_RESTRICT>(self->prev_rotations)),
+            reinterpret_cast<AuxStride *const CPH_RESTRICT>(self->prev_rotations)),
 
         .shadow_lvel = std::assume_aligned<sizeof(AuxStride)>(
-            reinterpret_cast<AuxStride *const CULV_RESTRICT>(self->linear_velocities)),
+            reinterpret_cast<AuxStride *const CPH_RESTRICT>(self->linear_velocities)),
 
         .shadow_avel = std::assume_aligned<sizeof(AuxStride)>(
-            reinterpret_cast<AuxStride *const CULV_RESTRICT>(self->angular_velocities)),
+            reinterpret_cast<AuxStride *const CPH_RESTRICT>(self->angular_velocities)),
 
         .soft_shadows = self->soft_shadows};
 
