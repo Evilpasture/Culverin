@@ -1203,7 +1203,7 @@ Retrieves a simplified list of collision interactions that occurred during the m
     - **`handle1` (int):** 64-bit handle of the first body.
     - **`handle2` (int):** 64-bit handle of the second body.
     - **`impulse` (float):** The magnitude of the impact force.
-    - **`sliding_speed_sq` (float):** The squared tangential velocity (useful for detecting "scratching" or "grinding" sounds).
+    - **`sliding_speed` (float):** The tangential velocity magnitude (useful for detecting "scratching" or "grinding" sounds).
 
 **Operational Mechanics:**
 - **Canonical Ordering:** Culverin automatically sorts the handles (`handle1 < handle2`). This ensures that a collision between Object A and Object B is always reported the same way, regardless of which body Jolt processed first.
@@ -1221,7 +1221,7 @@ Retrieves detailed collision data, including the exact coordinates and surface p
     - **`position` (tuple):** `(x, y, z)` world-space contact point.
     - **`normal` (tuple):** `(nx, ny, nz)` surface normal of the collision.
     - **`impulse` (float):** Impact magnitude.
-    - **`slide_sq` (float):** Squared sliding speed.
+    - **`slide_speed` (float):** Tangential (sliding) velocity.
     - **`materials` (tuple):** `(mat_id1, mat_id2)` as defined in `register_material`.
     - **`type` (int):** The event phase:
         - `EVENT_ADDED` (0): New collision started this frame.
@@ -1234,42 +1234,67 @@ Retrieves detailed collision data, including the exact coordinates and surface p
 Returns a zero-copy `memoryview` providing direct access to the engine's internal contact event buffer. This is the recommended path for processing large-scale collision data using **NumPy** or **Pandas**.
 
 **Returns:**
-- **`buffer` (memoryview):** A contiguous binary view of the contact events. Each event is a **64-byte structured record**.
+- **`buffer` (memoryview):** A contiguous binary view of the contact events. Each event is a **128-byte structured record** divided into a `Slim` header and a `Fat` extension.
 
-**Record Format (`<QQfffffffffIIII`):**
+**Record Format (128 Bytes Total):**
+
+*Note: Position vectors (`px, py, pz`) are `float64` if Culverin was compiled with `USE_DOUBLE_PRECISION=True`, otherwise `float32`. This table assumes Double Precision.*
 
 ---
 
 | Byte Offset | Type | Member | Description |
 | :--- | :--- | :--- | :--- |
-| `0` | `uint64` | `body1` | Handle of the first body (canonical order). |
-| `8` | `uint64` | `body2` | Handle of the second body. |
-| `16` | `float32` | `px, py, pz` | World-space contact position. |
-| `28` | `float32` | `nx, ny, nz` | World-space contact normal. |
-| `40` | `float32` | `impulse` | Impact force magnitude. |
-| `44` | `float32` | `slide_sq` | Squared tangential (sliding) velocity. |
-| `48` | `uint32` | `mat1, mat2` | Material IDs for both bodies. |
-| `56` | `uint32` | `type` | Event phase (`ADDED`, `PERSISTED`, `REMOVED`). |
-| `60` | `uint32` | `_pad` | Padding for 8-byte alignment. |
+| **0** | `uint64` | `body1` | Handle of the first body (canonical order). |
+| **8** | `uint64` | `body2` | Handle of the second body. |
+| **16** | `float64` | `px, py, pz` | World-space contact position. |
+| **40** | `float32` | `nx, ny, nz` | World-space contact normal. |
+| **52** | `float32` | `impulse` | Impact force magnitude. |
+| **56** | `float32` | `sliding_speed`| Tangential (sliding) velocity magnitude. |
+| **60** | `uint32` | `flags` | Event phase (`ADDED`, `PERSISTED`, `REMOVED`). |
+| **64** | `uint64` | `udata1` | Advanced extension data 1. |
+| **72** | `uint64` | `udata2` | Advanced extension data 2. |
+| **80** | `float32` | `rvx, rvy, rvz`| Relative surface velocity. |
+| **92** | `float32` | `toi` | Time of impact fraction. |
+| **96** | `float32` | `penetration` | Penetration depth. |
+| **100** | `uint32` | `mat1, mat2` | Material IDs for both bodies. |
+| **108** | `uint32` | `sub1, sub2` | Sub-shape IDs for compound/mesh collisions. |
+| **116** | `uint32` | `pad_fat` | 12 bytes of padding for strict 64-byte boundary alignment. |
 
 **Operational Features:**
 - **Zero-Copy Snapshot:** This method creates a high-speed binary snapshot of the internal buffer. Accessing the data does not block the physics engine from starting the next simulation step.
 - **Consumption Model:** Just like the high-level event methods, calling this **resets the internal event count to zero** for the next frame.
-- **NumPy Integration:** This is designed to be cast directly into a structured NumPy array:
+- **NumPy Integration:** This is designed to be cast directly into a structured NumPy array using the dynamic precision flags:
+
   ```python
   import numpy as np
+  import culverin
 
-  # Define the structure matching the C-struct
-  contact_dtype = np.dtype([
-      ('bodies', np.uint64, (2,)),
-      ('position', np.float32, (3,)),
-      ('normal', np.float32, (3,)),
-      ('impulse', np.float32),
-      ('slide_sq', np.float32),
-      ('materials', np.uint32, (2,)),
-      ('type', np.uint32),
-      ('_pad', np.uint32)
-  ])
+  # Dynamically structure the dtype based on compilation precision
+  pos_type = np.float64 if culverin.USE_DOUBLE_PRECISION else np.float32
+
+  slim_fields = [
+      ("body1", np.uint64),
+      ("body2", np.uint64),
+      ("px", pos_type), ("py", pos_type), ("pz", pos_type),
+      ("nx", np.float32), ("ny", np.float32), ("nz", np.float32),
+      ("impulse", np.float32),
+      ("sliding_speed", np.float32),
+      ("flags", np.uint32),
+  ]
+  
+  if not culverin.USE_DOUBLE_PRECISION:
+      slim_fields.append(("pad_slim", "(3,)u4")) # 12-byte pad for single-precision
+
+  fat_fields = [
+      ("udata1", np.uint64), ("udata2", np.uint64),
+      ("rvx", np.float32), ("rvy", np.float32), ("rvz", np.float32),
+      ("toi", np.float32), ("penetration", np.float32),
+      ("mat1", np.uint32), ("mat2", np.uint32),
+      ("sub1", np.uint32), ("sub2", np.uint32),
+      ("pad_fat", "(3,)u4")
+  ]
+
+  contact_dtype = np.dtype(slim_fields + fat_fields)
 
   # Extract and process in bulk
   raw_view = world.get_contact_events_raw()
@@ -1277,12 +1302,6 @@ Returns a zero-copy `memoryview` providing direct access to the engine's interna
 
   # Example: Find all collisions with high impulse
   explosive_hits = events[events['impulse'] > 100.0]
-  ```
-
-**When to use this:**
-- Use this when you expect more than 100 collision events per frame.
-- Use this for Reinforcement Learning (RL) observations where you need to feed collision data directly into a tensor.
-- Use this for custom audio engines that need to process thousands of "scratches" or "slides" simultaneously.
 
 
 ### save_state(...)

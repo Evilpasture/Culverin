@@ -186,25 +186,6 @@ typedef struct PhysicsWorldObject {
 
 } PhysicsWorldObject;
 
-// --- Callback Logic ---
-// Old ContactEvent for compatibility
-typedef struct ContactEvent {
-    CULV_ATOMIC(BodyHandle) body1;
-    CULV_ATOMIC(BodyHandle) body2;
-    float px, py, pz;
-    float nx, ny, nz;
-    float impulse;
-    float sliding_speed_sq; // Scratching speed squared(tangential)
-    uint32_t mat1;
-    uint32_t mat2;
-    uint32_t type;
-    uint32_t _pad;
-} ContactEvent;
-
-static_assert(sizeof(ContactEvent) == MEMORY_ALIGNMENT_SIZE);
-
-CULV_MAYBE_UNUSED static constexpr int CONTACT_MAX_CAPACITY = sizeof(ContactEvent) * 8 << 5;
-
 // --- Handle Helper ---
 
 CULV_NODISCARD

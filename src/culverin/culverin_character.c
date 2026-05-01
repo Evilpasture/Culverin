@@ -1,6 +1,7 @@
 #include "culverin_character.h"
 #include "culverin.h"
 #include "culverin_arg_indices.h"
+#include "culverin_contact_event_definitions.h"
 #include "culverin_fast_build.h"
 #include "culverin_math.h"
 #include "culverin_module.h"
@@ -44,35 +45,37 @@ static void record_character_contact(CharacterObject *self, JPH_BodyID bodyID2,
     size_t idx = atomic_fetch_add_explicit(&world->contact_atomic_idx, 1, memory_order_relaxed);
 
     if (idx < world->contact_max_capacity) {
-        ContactEvent *ev = &world->contact_buffer[idx];
-        ev->type         = (uint32_t)type;
+        // ContactEvent_ Refactor
+        ContactEvent *ev_base   = GetEventAt(world->contact_buffer, idx);
+        ContactEventSlim *slim  = GetSlimHeader(ev_base);
+        ContactEventFatExt *fat = GetFatExtension(ev_base);
+
+        slim->flags = (uint32_t)type;
 
         // TSan Fix: Use raw values for canonical handle ordering
-        // canonicalize and store using the raw values we already loaded
         if (h1_raw < h2_raw) {
-            // TSan Fix: Store base uint64_t values to avoid implicit seq_cst loads
-            atomic_store_explicit(&ev->body1, h1_raw, memory_order_relaxed);
-            atomic_store_explicit(&ev->body2, h2_raw, memory_order_relaxed);
+            atomic_store_explicit(&slim->body1, h1_raw, memory_order_relaxed);
+            atomic_store_explicit(&slim->body2, h2_raw, memory_order_relaxed);
         } else {
-            atomic_store_explicit(&ev->body1, h2_raw, memory_order_relaxed);
-            atomic_store_explicit(&ev->body2, h1_raw, memory_order_relaxed);
+            atomic_store_explicit(&slim->body1, h2_raw, memory_order_relaxed);
+            atomic_store_explicit(&slim->body2, h1_raw, memory_order_relaxed);
         }
 
-        // Geometry (Standard floats are safe to store here as world.step() owns the buffer)
-        ev->px               = (float)pos->x;
-        ev->py               = (float)pos->y;
-        ev->pz               = (float)pos->z;
-        ev->nx               = norm->x;
-        ev->ny               = norm->y;
-        ev->nz               = norm->z;
-        ev->impulse          = 1.0f;
-        ev->sliding_speed_sq = 0.0f;
+        // Geometry
+        slim->px            = (JPH_Real)pos->x;
+        slim->py            = (JPH_Real)pos->y;
+        slim->pz            = (JPH_Real)pos->z;
+        slim->nx            = norm->x;
+        slim->ny            = norm->y;
+        slim->nz            = norm->z;
+        slim->impulse       = 1.0f;
+        slim->sliding_speed = 0.0f;
 
         // Metadata lookups
         auto slot2      = (uint32_t)(h2_raw & HANDLE_INDEX_MASK);
         uint32_t dense2 = world->slot_to_dense[slot2];
-        ev->mat1        = 0;
-        ev->mat2        = world->material_ids[dense2];
+        fat->mat1       = 0;
+        fat->mat2       = world->material_ids[dense2];
 
         // Release fence ensures all previous stores are visible to Python when it reads
         // contact_atomic_idx
@@ -94,33 +97,34 @@ static void report_char_vs_char(CharacterObject *self, const JPH_CharacterVirtua
         return; // Still 0? Probably a Jolt internal body.
     }
 
-    // Initialize atomic local handle for the other character
     size_t idx = atomic_fetch_add_explicit(&world->contact_atomic_idx, 1, memory_order_relaxed);
     if (idx < world->contact_max_capacity) {
-        ContactEvent *ev = &world->contact_buffer[idx];
-        ev->type         = (uint32_t)type;
+        // ContactEvent_ Refactor
+        ContactEvent *ev_base   = GetEventAt(world->contact_buffer, idx);
+        ContactEventSlim *slim  = GetSlimHeader(ev_base);
+        ContactEventFatExt *fat = GetFatExtension(ev_base);
 
-        // TSan Fix: Use raw values for canonical ordering check
-        // canonicalize and store using the raw values we already loaded
+        slim->flags = (uint32_t)type;
+
+        // TSan Fix: Canonicalize ordering
         if (h1_raw < h2_raw) {
-            // TSan Fix: Store base uint64_t values to avoid implicit seq_cst loads
-            atomic_store_explicit(&ev->body1, h1_raw, memory_order_relaxed);
-            atomic_store_explicit(&ev->body2, h2_raw, memory_order_relaxed);
+            atomic_store_explicit(&slim->body1, h1_raw, memory_order_relaxed);
+            atomic_store_explicit(&slim->body2, h2_raw, memory_order_relaxed);
         } else {
-            atomic_store_explicit(&ev->body1, h2_raw, memory_order_relaxed);
-            atomic_store_explicit(&ev->body2, h1_raw, memory_order_relaxed);
+            atomic_store_explicit(&slim->body1, h2_raw, memory_order_relaxed);
+            atomic_store_explicit(&slim->body2, h1_raw, memory_order_relaxed);
         }
 
-        ev->sliding_speed_sq = 0.0f;
-        ev->nx               = normal->x;
-        ev->ny               = normal->y;
-        ev->nz               = normal->z;
-        ev->px               = (float)pos->x;
-        ev->py               = (float)pos->y;
-        ev->pz               = (float)pos->z;
-        ev->impulse          = 1.0f;
-        ev->mat1             = 0;
-        ev->mat2             = 0;
+        slim->sliding_speed = 0.0f;
+        slim->nx            = normal->x;
+        slim->ny            = normal->y;
+        slim->nz            = normal->z;
+        slim->px            = (JPH_Real)pos->x;
+        slim->py            = (JPH_Real)pos->y;
+        slim->pz            = (JPH_Real)pos->z;
+        slim->impulse       = 1.0f;
+        fat->mat1           = 0;
+        fat->mat2           = 0;
 
         // Release visibility of the whole event to Python
         atomic_thread_fence(memory_order_release);
@@ -241,7 +245,6 @@ static void JPH_API_CALL char_on_contact_removed(void *userData,
     uint64_t h2_raw = 0;
 
     if (world->id_to_handle_map && j_idx <= world->max_jolt_bodies) {
-        // TSan Fix: Use acquire to see initialization data if body was just created
         h2_raw = atomic_load_explicit(&world->id_to_handle_map[j_idx], memory_order_acquire);
     }
 
@@ -251,20 +254,29 @@ static void JPH_API_CALL char_on_contact_removed(void *userData,
 
     size_t idx = atomic_fetch_add_explicit(&world->contact_atomic_idx, 1, memory_order_relaxed);
     if (idx < world->contact_max_capacity) {
-        ContactEvent *ev = &world->contact_buffer[idx];
-        ev->type         = EVENT_REMOVED;
+        ContactEvent *ev_base  = GetEventAt(world->contact_buffer, idx);
+        ContactEventSlim *slim = GetSlimHeader(ev_base);
+
+        slim->flags = EVENT_REMOVED;
 
         // TSan Fix: Canonicalize using raw registers
         if (h1_raw < h2_raw) {
-            atomic_store_explicit(&ev->body1, h1_raw, memory_order_relaxed);
-            atomic_store_explicit(&ev->body2, h2_raw, memory_order_relaxed);
+            atomic_store_explicit(&slim->body1, h1_raw, memory_order_relaxed);
+            atomic_store_explicit(&slim->body2, h2_raw, memory_order_relaxed);
         } else {
-            atomic_store_explicit(&ev->body1, h2_raw, memory_order_relaxed);
-            atomic_store_explicit(&ev->body2, h1_raw, memory_order_relaxed);
+            atomic_store_explicit(&slim->body1, h2_raw, memory_order_relaxed);
+            atomic_store_explicit(&slim->body2, h1_raw, memory_order_relaxed);
         }
 
-        // Geometry is zeroed for removal (Standard floats)
-        memset(&ev->px, 0, sizeof(float) * 8);
+        // Explicit zeroing (Safer than memset due to strict aliasing/layout padding)
+        slim->px            = 0.0;
+        slim->py            = 0.0;
+        slim->pz            = 0.0;
+        slim->nx            = 0.0f;
+        slim->ny            = 0.0f;
+        slim->nz            = 0.0f;
+        slim->impulse       = 0.0f;
+        slim->sliding_speed = 0.0f;
 
         // Finalize visibility for Python readers
         atomic_thread_fence(memory_order_release);
@@ -302,7 +314,6 @@ static void JPH_API_CALL char_on_character_contact_removed(
     uint64_t h2_raw = 0;
 
     if (world->id_to_handle_map && j_idx <= world->max_jolt_bodies) {
-        // TSan Fix: Atomic load from map with acquire semantics
         h2_raw = atomic_load_explicit(&world->id_to_handle_map[j_idx], memory_order_acquire);
     }
 
@@ -312,17 +323,29 @@ static void JPH_API_CALL char_on_character_contact_removed(
 
     size_t idx = atomic_fetch_add_explicit(&world->contact_atomic_idx, 1, memory_order_relaxed);
     if (idx < world->contact_max_capacity) {
-        ContactEvent *ev = &world->contact_buffer[idx];
-        ev->type         = EVENT_REMOVED;
+        ContactEvent *ev_base  = GetEventAt(world->contact_buffer, idx);
+        ContactEventSlim *slim = GetSlimHeader(ev_base);
+
+        slim->flags = EVENT_REMOVED;
 
         // TSan Fix: Canonicalize using standard integer registers
         if (h1_raw < h2_raw) {
-            atomic_store_explicit(&ev->body1, h1_raw, memory_order_relaxed);
-            atomic_store_explicit(&ev->body2, h2_raw, memory_order_relaxed);
+            atomic_store_explicit(&slim->body1, h1_raw, memory_order_relaxed);
+            atomic_store_explicit(&slim->body2, h2_raw, memory_order_relaxed);
         } else {
-            atomic_store_explicit(&ev->body1, h2_raw, memory_order_relaxed);
-            atomic_store_explicit(&ev->body2, h1_raw, memory_order_relaxed);
+            atomic_store_explicit(&slim->body1, h2_raw, memory_order_relaxed);
+            atomic_store_explicit(&slim->body2, h1_raw, memory_order_relaxed);
         }
+
+        // Explicit zeroing (Safer than memset)
+        slim->px            = 0.0;
+        slim->py            = 0.0;
+        slim->pz            = 0.0;
+        slim->nx            = 0.0f;
+        slim->ny            = 0.0f;
+        slim->nz            = 0.0f;
+        slim->impulse       = 0.0f;
+        slim->sliding_speed = 0.0f;
 
         // Finalize event publication
         atomic_thread_fence(memory_order_release);
@@ -431,15 +454,7 @@ CULV_NO_TSAN CULV_MAYBE_UNUSED static void JPH_API_CALL char_on_contact_solve(
     CULV_MAYBE_UNUSED void *userData, CULV_MAYBE_UNUSED const JPH_Body *body1,
     CULV_MAYBE_UNUSED const JPH_Body *body2, CULV_MAYBE_UNUSED const JPH_ContactManifold *manifold,
     CULV_MAYBE_UNUSED JPH_ContactSettings *settings) {
-    // 1. You can access userData (PhysicsWorldObject*) here if you need
-    // to look up global world parameters.
-
-    // 2. You can override friction/restitution dynamically.
-    // Example: If you wanted to make a contact "slippery" based on its depth
-    // float depth = JPH_ContactManifold_GetContactPointOn1(manifold, 0, ...) -> Z
-    // if (depth < -0.1f) settings->mFriction = 0.0f;
-
-    // 3. For now, leave it empty or add logging/metrics if needed.
+    // Advanced solver overrides here if needed
 }
 
 // Map the procs
@@ -453,9 +468,8 @@ const JPH_CharacterContactListener_Procs char_listener_procs = {
     .OnCharacterContactAdded     = char_on_character_contact_added,
     .OnCharacterContactPersisted = char_on_character_contact_persisted,
     .OnCharacterContactRemoved   = char_on_character_contact_removed,
-    .OnContactSolve              = nullptr, // Advanced solver override
-    .OnCharacterContactSolve     = nullptr  // Advanced solver override
-};
+    .OnContactSolve              = nullptr,
+    .OnCharacterContactSolve     = nullptr};
 
 PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObject *const *args,
                                                    size_t nargsf, PyObject *kwnames) {
@@ -513,7 +527,7 @@ PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObje
 
     JPH_CharacterVirtual_SetLinearVelocity(self->character, &j_v);
 
-    JPH_ExtendedUpdateSettings update_settings       = {}; // Guaranteed zero-init
+    JPH_ExtendedUpdateSettings update_settings       = {};
     update_settings.stickToFloorStepDown             = (JPH_Vec3){0.0f, -0.5f, 0.0f};
     update_settings.walkStairsStepUp                 = (JPH_Vec3){0.0f, 0.4f, 0.0f};
     update_settings.walkStairsMinStepForward         = 0.02f;
@@ -568,13 +582,11 @@ PyCFunction_DeclareMethodFromModule Character_get_position(CharacterObject *self
 PyCFunction_DeclareMethodFromModule Character_set_position(CharacterObject *self,
                                                            PyObject *const *args, Py_ssize_t nargs,
                                                            PyObject *kwnames) {
-    // 1. Stack Allocation and Parser Targets (Unchanged)
     PosStride pos                   = {};
     void *targets[SetPosChar_COUNT] = {
         [IDX_SPC_POS] = (void *)&pos,
     };
 
-    // 2. High Speed Parse (Unchanged)
     if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->SetPosCharParser, targets)) {
         return nullptr;
     }
@@ -583,23 +595,17 @@ PyCFunction_DeclareMethodFromModule Character_set_position(CharacterObject *self
     SHADOW_LOCK(&self->world->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self->world);
 
-    // 3. Update Jolt
     JPH_RVec3 j_pos = {pos.x, pos.y, pos.z};
     JPH_CharacterVirtual_SetPosition(self->character, &j_pos);
 
-    // 4. Update Shadow Buffers (ATOMIC REFACTOR)
-
-    // TSan Fix: Load handle atomically to resolve mapping
+    // Update Shadow Buffers
     uint64_t h_raw = atomic_load_explicit(&self->handle, memory_order_relaxed);
     uint32_t slot  = (uint32_t)(h_raw & HANDLE_INDEX_MASK);
     uint32_t dense = self->world->slot_to_dense[slot];
 
-    // Map world buffers using Stride types for better alignment and readability
     auto shadow_pos  = (PosStride *)self->world->positions;
     auto shadow_ppos = (PosStride *)self->world->prev_positions;
 
-    // Reset both current and previous to the new position.
-    // This prevents "teleport streaks" by forcing LERP(prev, curr, alpha) to return exactly 'pos'.
     PosStride p_val    = {pos.x, pos.y, pos.z, 0.0};
     shadow_pos[dense]  = p_val;
     shadow_ppos[dense] = p_val;
@@ -611,14 +617,12 @@ PyCFunction_DeclareMethodFromModule Character_set_position(CharacterObject *self
 PyCFunction_DeclareMethodFromModule Character_set_rotation(CharacterObject *self,
                                                            PyObject *const *args, Py_ssize_t nargs,
                                                            PyObject *kwnames) {
-    // 1. Explicitly initialized stack target
     AuxStride rot = {.x = 0.0f, .y = 0.0f, .z = 0.0f, .w = 1.0f};
 
     void *targets[SetRotChar_COUNT] = {
         [IDX_SRC_ROT] = (void *)&rot,
     };
 
-    // 2. High Speed Parse
     if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->SetRotCharParser, targets)) {
         return nullptr;
     }
@@ -627,20 +631,15 @@ PyCFunction_DeclareMethodFromModule Character_set_rotation(CharacterObject *self
     SHADOW_LOCK(&self->world->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self->world);
 
-    // 3. Update Jolt
-    // We can cast our AuxStride directly to JPH_Quat if they are layout-compatible
-    // or just initialize a temporary.
     JPH_Quat q = {.x = rot.x, .y = rot.y, .z = rot.z, .w = rot.w};
     JPH_CharacterVirtual_SetRotation(self->character, &q);
 
     uint64_t raw_h = atomic_load_explicit(&self->handle, memory_order_relaxed);
 
-    // 4. Update Shadow Buffers (Zero-Streak Reset)
     auto slot          = (uint32_t)(raw_h & HANDLE_INDEX_MASK);
     uint32_t dense_idx = self->world->slot_to_dense[slot];
     size_t off         = (size_t)dense_idx * 4;
 
-    // Direct 16-byte copies to update current and previous states
     memcpy(&self->world->rotations[off], &q, 16);
     memcpy(&self->world->prev_rotations[off], &q, 16);
 
@@ -651,35 +650,27 @@ PyCFunction_DeclareMethodFromModule Character_set_rotation(CharacterObject *self
 PyCFunction_DeclareMethodFromModule Character_set_strength(CharacterObject *self,
                                                            PyObject *const *args, Py_ssize_t nargs,
                                                            PyObject *kwnames) {
-    // 1. Explicitly initialized target
     float strength = 0.0f;
 
     void *targets[SetStrengthChar_COUNT] = {
         [IDX_SSC_STRENGTH] = (void *)&strength,
     };
 
-    // 2. High Speed Parse (Handles both world.set_strength(200.0) and
-    // world.set_strength(strength=200.0))
     if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->SetStrengthCharParser, targets)) {
         return nullptr;
     }
 
-    // --- CONCURRENCY & LOCKING ---
     SHADOW_LOCK(&self->world->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self->world);
     BLOCK_UNTIL_NOT_QUERYING(self->world);
 
-    // 3. Update Atomic for Jolt worker threads (Physics side)
     atomic_store_explicit(&self->push_strength, strength, memory_order_relaxed);
-
-    // 4. Update Jolt internal state (Direct state change)
     JPH_CharacterVirtual_SetMaxStrength(self->character, strength);
 
     SHADOW_UNLOCK(&self->world->shadow_lock);
     Py_RETURN_NONE;
 }
 
-// Change signature to take PyObject* arg directly
 PyCFunction_DeclareMethodFromModule Character_get_render_transform(CharacterObject *self,
                                                                    PyObject *arg) {
     const auto alpha_raw = PyFloat_AsDouble(arg);
@@ -691,7 +682,6 @@ PyCFunction_DeclareMethodFromModule Character_get_render_transform(CharacterObje
     constexpr float max_v = 1.0f;
     const auto alpha      = (float)fmax(min_v, fmin(max_v, alpha_raw));
 
-    // Align to 16 bytes for SIMD safety
     alignas(16) float res_p[3];
     alignas(16) float res_r[4];
 
@@ -703,19 +693,14 @@ PyCFunction_DeclareMethodFromModule Character_get_render_transform(CharacterObje
     const auto slot  = (uint32_t)(h_raw & HANDLE_INDEX_MASK);
     const auto dense = self->world->slot_to_dense[slot];
 
-    // Capture Shadow Buffers
-    // Prev Positions (PosStride) contains JPH_Real (doubles)
     const auto shadow_ppos = (PosStride *)self->world->prev_positions;
-    // Prev Rotations (AuxStride) contains floats
     const auto shadow_prot = (AuxStride *)self->world->prev_rotations;
 
-    // Capture Jolt State
     JPH_STACK_ALLOC(JPH_RVec3, end_p);
     JPH_STACK_ALLOC(JPH_Quat, end_r);
     JPH_CharacterVirtual_GetPosition(self->character, end_p);
     JPH_CharacterVirtual_GetRotation(self->character, end_r);
 
-    // Call our specialized SIMD routine
     culverin_math_interpolate_character_transform(&shadow_ppos[dense], &shadow_prot[dense], end_p,
                                                   end_r, alpha, res_p, res_r);
 
@@ -728,16 +713,9 @@ PyCFunction_DeclareMethodFromModule Character_get_render_transform(CharacterObje
 PyCFunction_DeclareMethodFromModule Character_is_grounded(CharacterObject *self,
                                                           PyObject *Py_UNUSED(ignored)) {
     SHADOW_LOCK(&self->world->shadow_lock);
-
-    /*
-       Jolt C-API: CharacterVirtual is a subclass of CharacterBase.
-       We cast the virtual instance to the base pointer to check the ground state.
-    */
     JPH_GroundState state = JPH_CharacterBase_GetGroundState((JPH_CharacterBase *)self->character);
-
     SHADOW_UNLOCK(&self->world->shadow_lock);
 
-    // Return True only if supported by walkable ground
     if (state == JPH_GroundState_OnGround) {
         Py_RETURN_TRUE;
     }
@@ -756,7 +734,7 @@ PyType_DeclareSlot_StatusFromModule Character_clear(CharacterObject *self) {
 }
 
 void culverin_free_char_parsers(CharacterParsers *cp);
-// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+
 PyType_DeclareSlot_VoidFromModule Character_dealloc(CharacterObject *self) {
     PyObject_GC_UnTrack(self);
 
@@ -766,22 +744,17 @@ PyType_DeclareSlot_VoidFromModule Character_dealloc(CharacterObject *self) {
 
     // --- 1. WORLD DRAIN (Locked) ---
     SHADOW_LOCK(&self->world->shadow_lock);
-
-    // Guard: Ensure we aren't mid-step or mid-query
     BLOCK_UNTIL_NOT_STEPPING(self->world);
     BLOCK_UNTIL_NOT_QUERYING(self->world);
 
-    // TSan Fix: Explicitly load raw handle to extract the slot index
     uint64_t h_raw = atomic_load_explicit(&self->handle, memory_order_relaxed);
     uint32_t slot  = (uint32_t)(h_raw & HANDLE_INDEX_MASK);
 
-    // Note: world_remove_body_slot handles atomic count/state updates internally
     world_remove_body_slot(self->world, slot);
 
     SHADOW_UNLOCK(&self->world->shadow_lock);
 
     // --- 2. JOLT DESTRUCTION (Hard Serialized) ---
-    // Protect Jolt's callback registry during destruction
     NATIVE_MUTEX_LOCK(self->world->jph_trampoline_lock);
 
     if (self->world->char_vs_char_manager && self->character) {
@@ -820,12 +793,8 @@ finalize:
 }
 
 // Helper 1: Jolt-side allocation and Collision Manager linking
-static inline JPH_CharacterVirtual *
-alloc_j_char(PhysicsWorldObject *self, PositionVector pos,
-             CharacterParams params) { // Reduced to 2 conceptual arguments
-
-    // Position parameters are now accessed via pos.px, pos.py, pos.pz
-    // Size parameters are now accessed via params.height, params.radius, etc.
+static inline JPH_CharacterVirtual *alloc_j_char(PhysicsWorldObject *self, PositionVector pos,
+                                                 CharacterParams params) {
 
     float half_h                 = fmaxf((params.height - 2.0f * params.radius) * 0.5f, 0.1f);
     JPH_CapsuleShapeSettings *ss = JPH_CapsuleShapeSettings_Create(half_h, params.radius);
@@ -862,29 +831,20 @@ static inline void register_char(PhysicsWorldObject *self, CharacterObject *obj,
                                  JPH_CharacterVirtual *j_char, uint32_t slot) {
     SHADOW_LOCK(&self->shadow_lock);
 
-    // 1. Resolve Handle Metadata
     uint32_t gen = atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
     BodyHandle h = make_handle(slot, gen);
 
-    // TSan Fix: Explicitly load the raw uint64_t once to use for all assignments
     uint64_t raw_h = h;
-
-    // TSan Fix: Use raw_h to avoid implicit seq_cst load on Character object
     atomic_store_explicit(&obj->handle, raw_h, memory_order_relaxed);
 
-    // 2. Dense Mapping
     auto dense_idx = (uint32_t)atomic_load_explicit(&self->count, memory_order_relaxed);
     JPH_BodyID bid = JPH_CharacterVirtual_GetInnerBodyID(j_char);
     uint32_t j_idx = JPH_ID_TO_INDEX(bid);
 
     if (j_idx <= self->max_jolt_bodies) {
-        // TSan Fix: Use raw_h to avoid implicit seq_cst load on shared world map
-        // Release ensures that when a thread reads this handle, it sees the shadow buffer writes
-        // below.
         atomic_store_explicit(&self->id_to_handle_map[j_idx], raw_h, memory_order_release);
     }
 
-    // 3. Update Non-Atomic Shadow Buffers
     self->body_ids[dense_idx]      = bid;
     self->slot_to_dense[slot]      = dense_idx;
     self->dense_to_slot[dense_idx] = slot;
@@ -893,12 +853,10 @@ static inline void register_char(PhysicsWorldObject *self, CharacterObject *obj,
     constexpr auto COLLISION_FILTER_ALL_CATEGORIES = 0xFFFF;
     constexpr auto COLLISION_FILTER_ALL_MASKS      = 0xFFFF;
 
-    // Initialize Metadata (Fixes the collision/settling failure)
     self->categories[dense_idx]   = COLLISION_FILTER_ALL_CATEGORIES;
     self->masks[dense_idx]        = COLLISION_FILTER_ALL_MASKS;
     self->material_ids[dense_idx] = 0;
 
-    // Fetch actual Jolt transform to populate shadow buffers
     JPH_STACK_ALLOC(JPH_RVec3, p);
     JPH_STACK_ALLOC(JPH_Quat, q);
     JPH_CharacterVirtual_GetPosition(j_char, p);
@@ -907,7 +865,6 @@ static inline void register_char(PhysicsWorldObject *self, CharacterObject *obj,
     PosStride p_val = {p->x, p->y, p->z, 0.0};
     AuxStride r_val = {q->x, q->y, q->z, q->w};
 
-    // 3. Populate shadow buffers (Prevents teleport streaks and garbage reads)
     ((PosStride *)self->positions)[dense_idx]          = p_val;
     ((PosStride *)self->prev_positions)[dense_idx]     = p_val;
     ((AuxStride *)self->rotations)[dense_idx]          = r_val;
@@ -919,18 +876,12 @@ static inline void register_char(PhysicsWorldObject *self, CharacterObject *obj,
         self->soft_shadows[dense_idx].vertices = nullptr;
     }
 
-    // 4. Atomic Publication
-    // Publish slot state first (Release semantics)
     atomic_store_explicit(&self->slot_states[slot], SLOT_CHARACTER, memory_order_release);
-
-    // Then increment total world count (Release semantics)
     atomic_fetch_add_explicit(&self->count, 1, memory_order_release);
 
-    // Finalize view metadata for Python memoryview consistency
     size_t final_count  = atomic_load_explicit(&self->count, memory_order_relaxed);
     self->view_shape[0] = (Py_ssize_t)final_count;
 
-    // 5. Jolt Sync
     JPH_BodyInterface_SetUserData(self->body_interface, bid, raw_h);
     JPH_CharacterVirtual_SetUserData(j_char, raw_h);
 
@@ -964,7 +915,6 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_character(PhysicsWorldOb
                                                                   PyObject *const *args,
                                                                   Py_ssize_t nargs,
                                                                   PyObject *kwnames) {
-    // 1. Setup Targets (Unchanged)
     PosStride pos                 = {};
     constexpr auto DEFAULT_HEIGHT = 1.8f;
     constexpr auto DEFAULT_RADIUS = 0.4f;
@@ -985,12 +935,10 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_character(PhysicsWorldOb
         return nullptr;
     }
 
-    // --- 2. WORLD LOGIC (ATOMIC REFACTOR) ---
     SHADOW_LOCK(&self->shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
     BLOCK_UNTIL_NOT_QUERYING(self);
 
-    // TSan Fix: Atomic load of availability
     size_t available = atomic_load_explicit(&self->free_count, memory_order_acquire);
 
     if (available == 0) {
@@ -998,20 +946,16 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_character(PhysicsWorldOb
             SHADOW_UNLOCK(&self->shadow_lock);
             return nullptr;
         }
-        // Re-read available count after resize
         available = atomic_load_explicit(&self->free_count, memory_order_acquire);
     }
 
-    // Pop from free stack and update count atomically
     uint32_t char_slot = self->free_slots[available - 1];
     atomic_store_explicit(&self->free_count, available - 1, memory_order_release);
 
-    // Transition state atomically to prevent races with is_alive()
     atomic_store_explicit(&self->slot_states[char_slot], SLOT_PENDING_CREATE, memory_order_release);
 
     SHADOW_UNLOCK(&self->shadow_lock);
 
-    // 3. Resource Allocation (Unchanged)
     PositionVector pos_vec      = {pos.x, pos.y, pos.z};
     CharacterParams char_params = {height, radius, slope};
 
@@ -1047,7 +991,6 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_character(PhysicsWorldOb
     atomic_init(&obj->last_vy, 0.0f);
     atomic_init(&obj->last_vz, 0.0f);
 
-    // Note: register_char has been refactored to handle atomic count/state updates
     register_char(self, obj, j_char, char_slot);
     setup_char_filters(obj);
 
@@ -1057,13 +1000,10 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_character(PhysicsWorldOb
 fail_py:
     JPH_CharacterBase_Destroy((JPH_CharacterBase *)j_char);
 fail_jolt:
-    // --- ROLLBACK LOGIC (ATOMIC REFACTOR) ---
     SHADOW_LOCK(&self->shadow_lock);
 
-    // Reset state atomically
     atomic_store_explicit(&self->slot_states[char_slot], SLOT_EMPTY, memory_order_relaxed);
 
-    // Push back to free stack atomically
     size_t f_idx            = atomic_fetch_add_explicit(&self->free_count, 1, memory_order_relaxed);
     self->free_slots[f_idx] = char_slot;
 

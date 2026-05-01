@@ -102,7 +102,8 @@ void culv_jph_trace(const char *const inString) {
 
     // 4. Output safely
     // Clamp the size to the buffer capacity
-    const CPH::SizeType write_size = (result.size > buffer.size()) ? buffer.size() : result.size;
+    const CPH::SizeType write_size =
+        (static_cast<unsigned long>(result.size) > buffer.size()) ? buffer.size() : result.size;
     std::print(stderr, "{}", std::string_view(buffer.data(), write_size));
 }
 
