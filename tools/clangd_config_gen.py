@@ -78,6 +78,17 @@ Diagnostics:
   UnusedIncludes: Strict
 
 ---
+# 0. EXTENSIONLESS SRC FILES (The "Culverin" Dialect Fix)
+If:
+  PathMatch: src/[^.]* # Matches files with NO dots in the name
+CompileFlags:
+  Add: [
+      "-xc++",
+      "-std=c++23",
+      "-fno-exceptions"
+  ]
+
+---
 # 1. THE C23 BLOCK
 If:
   PathMatch: [.*\.c, .*/extern/JoltC/.*\.h]
