@@ -54,11 +54,20 @@ def generate_clangd() -> None:
         all_flags.extend(["-fms-compatibility", "-fms-extensions"])
 
     formatted_flags = ",\n      ".join([f"'{f}'" for f in all_flags])
-
+    llvm_root = "/opt/homebrew/opt/llvm"
+    find_llvm_root = rf"""
+    "-isystem", "{llvm_root}/include/c++/v1",
+    """ if os.name != "nt" else None
+    resource_dir = "/opt/homebrew/Cellar/llvm/22.1.2/lib/clang/22/include"
+    find_system = rf"""
+    "-isystem", "{resource_dir}",
+    """ if os.name != "nt" else None
     config = rf"""# GENERATED FOR CULVERIN ENGINE CONCURRENCY ANALYSIS
 CompileFlags:
   CompilationDatabase: "{(project_root / "build").as_posix()}"
   Add: [
+      {find_llvm_root}
+      {find_system}
       {formatted_flags},
       "-ferror-limit=0"
   ]
