@@ -1302,7 +1302,12 @@ Returns a zero-copy `memoryview` providing direct access to the engine's interna
 
   # Example: Find all collisions with high impulse
   explosive_hits = events[events['impulse'] > 100.0]
+```
 
+**When to use this:**
+- Use this when you expect more than 100 collision events per frame.
+- Use this for Reinforcement Learning (RL) observations where you need to feed collision data directly into a tensor.
+- Use this for custom audio engines that need to process thousands of "scratches" or "slides" simultaneously without Python overhead.
 
 ### save_state(...)
 
