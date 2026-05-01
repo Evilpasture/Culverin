@@ -14,12 +14,13 @@ CULV_MAYBE_UNUSED static constexpr int16_t CMD_ALIGN = 8;
 
 // --- Slot State Machine ---
 typedef enum SlotState : uint8_t {
-    SLOT_EMPTY           = 0,
-    SLOT_PENDING_CREATE  = 1,
-    SLOT_ALIVE           = 2,
-    SLOT_PENDING_DESTROY = 3,
-    SLOT_CHARACTER       = 4,
-    SLOT_SOFT_BODY       = 5
+    SLOT_EMPTY = 0,
+    SLOT_PENDING_CREATE,
+    SLOT_ALIVE,
+    SLOT_PENDING_DESTROY,
+    SLOT_CHARACTER,
+    SLOT_SOFT_BODY,
+    SLOT_COUNT,
 } SlotState;
 
 typedef enum CommandType : uint8_t {

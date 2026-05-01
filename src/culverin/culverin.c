@@ -50,14 +50,14 @@ static void dump_parser_registry(FastParser *const *const registry, const size_t
  */
 PyCFunction_DeclareMethod culv_dump_schema_json(PyObject *const self, PyObject *const *args,
                                                 size_t nargsf, PyObject *kwnames) {
-    const auto st       = get_culverin_state(self);
+    const auto st        = get_culverin_state(self);
     const char *filename = "culverin_schema.json";
 
     // 1. Thread-safe, subinterpreter-safe parsing via FastParser
     void *targets[DumpSchema_COUNT] = {[IDX_DS_PATH] = (void *)&filename};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &st->parsers.DumpSchemaParser, targets)) {
+    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.DumpSchemaParser,
+                           targets)) {
         return nullptr;
     }
 
@@ -542,10 +542,7 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
         JPH_ContactListener_SetProcs(&contact_procs);
         JPH_CharacterContactListener_SetProcs(&char_listener_procs);
 
-        if (INIT_NATIVE_MUTEX(g_jph_init_lock) != 0) {
-            PyErr_SetString(PyExc_RuntimeError, "Failed to initialize global initialization lock");
-            return -1;
-        }
+        INIT_NATIVE_MUTEX(g_jph_init_lock);
 
         atomic_store_explicit(&docs_status, 2, memory_order_seq_cst);
 
