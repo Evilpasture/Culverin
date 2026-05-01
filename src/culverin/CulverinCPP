@@ -12,7 +12,9 @@ namespace CPH {
 using Unsigned8   = std::uint8_t;
 using Unsigned32  = std::uint32_t;
 using Unsigned64  = std::uint64_t;
+using Integer8    = std::int8_t;
 using Integer32   = std::int32_t;
+using Integer64   = std::int64_t;
 using Float32     = float;
 using Float64     = double;
 using ByteType    = std::uint8_t;
