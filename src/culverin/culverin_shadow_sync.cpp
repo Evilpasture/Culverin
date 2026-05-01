@@ -138,19 +138,22 @@ ProcessItem(const uint32_t D, const JPH::Body *const CULV_RESTRICT b,
 // Routes to either fully unrolled loops (FixedCount > 0) or prefetched remainder loops.
 // =================================================================================================
 template <JPH::EBodyType TType>
-[[gnu::always_inline, gnu::hot, gnu::flatten, gnu::nonnull(2)]] inline auto
-ProcessBatch(const WorldDataCreateInfo world, const SyncWorkItem *const CULV_RESTRICT worklist,
-             const uint32_t count) noexcept -> void {
+[[gnu::always_inline, gnu::hot, gnu::flatten]]
+inline auto ProcessBatch(const WorldDataCreateInfo world,
+                         RestrictSpan<const CPH::SyncWorkItem> items) noexcept -> void {
 
+    const size_t count = items.size();
     [[assume(count > 0), assume(count <= BATCH_SIZE)]];
-    CULV_UNROLL_LOOP(4) for (uint32_t j = 0; j < count; j++) {
+
+    CULV_UNROLL_LOOP(4)
+    for (uint32_t j = 0; j < count; j++) {
         if (j + 2 < count) {
-            const uint32_t next_idx = worklist[j + 2].dense_idx;
+            const uint32_t next_idx = items[j + 2].dense_idx;
             CPH::Prefetch<CPH::AccessType::Write>(&world.shadow_pos[next_idx]);
             CPH::Prefetch<CPH::AccessType::Write>(&world.shadow_rot[next_idx]);
         }
 
-        ProcessItem<TType>(worklist[j].dense_idx, worklist[j].body, world);
+        ProcessItem<TType>(items[j].dense_idx, items[j].body, world);
     }
 }
 
@@ -228,16 +231,17 @@ ExecuteSyncPass(const uint32_t active_count, const JPH::PhysicsSystem *const CUL
         worklist[work_ptr].dense_idx = d_idx;
         work_ptr += is_valid;
 
-        // When the worklist is full, flush it.
         if (work_ptr == BATCH_SIZE) {
-            ProcessBatch<TType>(world, worklist.data(), BATCH_SIZE);
+            // "Convert worklist to span, then take the first BATCH_SIZE items"
+            ProcessBatch<TType>(world, CPH::RestrictSpan(worklist));
             work_ptr = 0;
         }
     }
 
-    // Flush any remaining items in the worklist (the remainder)
+    // Flush remainder
     if (work_ptr > 0) {
-        ProcessBatch<TType>(world, worklist.data(), work_ptr);
+        // "Convert worklist to span, then take the first 'work_ptr' items"
+        ProcessBatch<TType>(world, CPH::RestrictSpan(worklist).first(work_ptr));
     }
 }
 
