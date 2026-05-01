@@ -542,10 +542,7 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
         JPH_ContactListener_SetProcs(&contact_procs);
         JPH_CharacterContactListener_SetProcs(&char_listener_procs);
 
-        if (INIT_NATIVE_MUTEX(g_jph_init_lock) != 0) {
-            PyErr_SetString(PyExc_RuntimeError, "Failed to initialize global initialization lock");
-            return -1;
-        }
+        INIT_NATIVE_MUTEX(g_jph_init_lock);
 
         atomic_store_explicit(&docs_status, 2, memory_order_seq_cst);
 
