@@ -584,6 +584,19 @@ jobs:
           WHEEL=$(ls dist/culverin-*cp313-cp313-manylinux*.whl | head -n 1)
           uv pip install --system "$WHEEL"
 
+      - name: CPU Feature Audit
+        run: |
+          echo "### Runner CPU Info" >> $GITHUB_STEP_SUMMARY
+          # Check for v3 requirements (AVX2, BMI2, FMA)
+          grep -E "avx2|bmi2|fma" /proc/cpuinfo > /dev/null \
+            && echo "✅ Hardware supports x86-64-v3" >> $GITHUB_STEP_SUMMARY \
+            || echo "❌ ERROR: Ancient CPU detected (Missing v3 features)" >> $GITHUB_STEP_SUMMARY
+          
+          # List all flags for deep dive
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          lscpu >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
       - name: Run Performance Suite
         shell: bash
         run: |
