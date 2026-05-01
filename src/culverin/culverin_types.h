@@ -19,7 +19,7 @@ typedef float JPH_Real;
 // --- Memory Stride Helpers ---
 
 typedef struct {
-    JPH_Real x;
+    alignas(32) JPH_Real x;
     JPH_Real y;
     JPH_Real z;
     JPH_Real w;
@@ -27,7 +27,8 @@ typedef struct {
 
 // Maps to self->rotations, velocities (Packed X, Y, Z, W)
 typedef struct {
-    float x, y, z, w;
+    alignas(16) float x;
+    float y, z, w;
 } AuxStride;
 
 typedef struct {
@@ -65,13 +66,13 @@ typedef enum ContactEventType : uint8_t {
 } ContactEventType;
 
 typedef enum MotionType : uint8_t {
-    MOTION_STATIC = JPH_MotionType_Static,
+    MOTION_STATIC    = JPH_MotionType_Static,
     MOTION_KINEMATIC = JPH_MotionType_Kinematic,
-    MOTION_DYNAMIC = JPH_MotionType_Dynamic,
+    MOTION_DYNAMIC   = JPH_MotionType_Dynamic,
 } MotionType;
 
 typedef enum ObjectLayer : uint32_t {
-    OBJECT_LAYER_STATIC  = 0,
+    OBJECT_LAYER_STATIC = 0,
     OBJECT_LAYER_DYNAMIC,
     OBJECT_LAYER_VEHICLE, // For raycasts/sensors that shouldn't hit the vehicle itself
     OBJECT_LAYER_COUNT
