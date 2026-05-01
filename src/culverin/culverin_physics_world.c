@@ -4513,7 +4513,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events(PhysicsWorld
     }
 
     // Fast copy into local memory so we can drop the lock immediately
-    auto *scratch = (ContactEvent *)CULV_RAW_MALLOC(count * sizeof(ContactEvent));
+    auto scratch = (ContactEvent *)CULV_RAW_MALLOC(count * sizeof(ContactEvent));
     if (!scratch) {
         SHADOW_UNLOCK(&self->shadow_lock);
         return PyErr_NoMemory();
@@ -4579,7 +4579,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events_ex(PhysicsWo
         count = self->contact_max_capacity;
     }
 
-    auto *scratch = (ContactEvent *)CULV_RAW_MALLOC(count * sizeof(ContactEvent));
+    auto scratch = (ContactEvent *)CULV_RAW_MALLOC(count * sizeof(ContactEvent));
     if (!scratch) {
         SHADOW_UNLOCK(&self->shadow_lock);
         return PyErr_NoMemory();
