@@ -1,32 +1,29 @@
 #pragma once
 #include "culverin_compiler_specifics.h"
+#include "mag_mutex.h" // 1-byte Mutex and Cond
 #include <Python.h>
 #include <stdatomic.h>
-// This is a custom Mutex I made. 1 byte!
-#include "mag_mutex.h"
 
 /**
  * Culverin Threading Invariants & Lock Hierarchy
  * ---------------------------------------------
- * * 1. HIERARCHY: ShadowMutex (High) -> NativeMutex (Low).
+ * 1. HIERARCHY: ShadowMutex (High) -> NativeMutex (Low).
  * - Always acquire shadow_lock BEFORE step_sync.mutex.
- * - To avoid deadlock, release shadow_lock before blocking on condition
- * variables.
- * * 2. OWNERSHIP:
+ * - To avoid deadlock, release shadow_lock before blocking on condition variables.
+ * 2. OWNERSHIP:
  * - SHADOW_LOCK protects the Command Queue, Slot States, and Shadow Buffers.
  * - NATIVE_MUTEX/COND handles thread arbitration (parking/waking).
- * - self->jph_trampoline_lock protects the non-thread-safe JPH Physics System
- * state.
- * * 3. STEPPING INVARIANT:
+ * - self->jph_trampoline_lock protects the non-thread-safe JPH Physics System state.
+ * 3. STEPPING INVARIANT:
  * - is_stepping = true  => No external thread may read/write Shadow Buffers.
- * - is_stepping = false => External (Python) threads may read Shadow Buffers
- * under SHADOW_LOCK.
- * * 4. DOUBLE-BUFFERING:
- * - Command queues are swapped under SHADOW_LOCK but flushed under
- * self->jph_trampoline_lock.
- * - This allows Python to queue new commands while the previous batch is being
- * simulated.
+ * - is_stepping = false => External (Python) threads may read Shadow Buffers under SHADOW_LOCK.
+ * 4. DOUBLE-BUFFERING:
+ * - Command queues are swapped under SHADOW_LOCK but flushed under self->jph_trampoline_lock.
  */
+
+/* ============================================================================
+ * 1. PROFILING & HARDWARE YIELDING
+ * ============================================================================ */
 
 #ifdef CULVERIN_PROFILE_SYNC
 #    define SYNC_START_TIMER(start)                                                                \
@@ -46,18 +43,6 @@
 #    define SYNC_END_TIMER(start, self)
 #endif
 
-#ifdef _WIN32
-#    define WIN32_LEAN_AND_MEAN
-#    include <windows.h>
-#elif defined(__linux__) || defined(__apple__)
-#    include <sched.h>
-#    include <unistd.h>
-#endif
-
-#if defined(_MSC_VER) || defined(__INTEL_COMPILER)
-#    include <immintrin.h>
-#endif
-
 // Processor-level hint to save power during spin-waits
 static inline void culverin_cpu_relax() {
 #if defined(_MSC_VER) || defined(__INTEL_COMPILER)
@@ -72,129 +57,59 @@ static inline void culverin_cpu_relax() {
 }
 
 CULV_MAYBE_UNUSED static inline void culverin_yield() {
-    // 1. HARDWARE SPIN (User-space - No Syscall)
-    // This is cross-platform. It uses the 'pause' or 'yield' instructions
-    // you already defined in culverin_cpu_relax.
-    // We do this 50-100 times. It takes ~1 microsecond.
     for (int i = 0; i < 100; i++) {
         culverin_cpu_relax();
     }
-
-    // 2. KERNEL FALLBACK (OS-specific)
-    // We only reach this if the hardware spin didn't work.
 #if defined(_WIN32)
     if (SwitchToThread() == FALSE)
         Sleep(0);
 #elif defined(__APPLE__)
-    // This is your current bottleneck. usleep(0) is very slow on M4.
-    // But since we did the loop above, we hit this 100x less often.
     usleep(0);
 #else
     sched_yield();
 #endif
 }
 
-/**
- * MagMutex & MagCond Abstraction Layer
- * Replaces SRWLOCK/CONDITION_VARIABLE (Win) and pthread_mutex/cond (POSIX)
- */
+/* ============================================================================
+ * 2. UNIFIED LOCK API (Directly mapping to MagMutex/MagCond)
+ * ============================================================================ */
 
 typedef MagMutex NativeMutex;
 typedef MagCond NativeCond;
+typedef MagMutex ShadowMutex;
 
-// --- Mutex Operations ---
+// Mutex Operations
+#define INIT_NATIVE_MUTEX(m) atomic_init(&(m).bits, MAG_UNLOCKED)
+#define FREE_NATIVE_MUTEX(m) (void)(m)
+#define NATIVE_MUTEX_LOCK(m) MagMutex_Lock(&(m))
+#define NATIVE_MUTEX_UNLOCK(m) MagMutex_Unlock(&(m))
 
-static inline int internal_native_mutex_init(NativeMutex *m) {
-    // MagMutex is safe to zero-initialize, but atomic_init is more explicit
-#ifdef __cplusplus
-    m->bits.store(MAG_UNLOCKED, std::memory_order_relaxed);
-#else
-    atomic_init(&m->bits, MAG_UNLOCKED);
-#endif
-    return 0;
-}
+// Condition Variable Operations
+#define INIT_NATIVE_COND(c) MagCond_Init(&(c))
+#define FREE_NATIVE_COND(c) (void)(c)
+#define NATIVE_COND_WAIT(c, m) MagCond_Wait(&(c), &(m))
+#define NATIVE_COND_BROADCAST(c) MagCond_Broadcast(&(c))
 
-static inline void internal_native_mutex_lock(NativeMutex *m) { MagMutex_Lock(m); }
-
-static inline void internal_native_mutex_unlock(NativeMutex *m) { MagMutex_Unlock(m); }
-
-static inline int internal_native_mutex_free(NativeMutex *m) {
-    (void)m; // MagMutex is a 1-byte value type; no OS resources to free.
-    return 0;
-}
-
-// --- Condition Variable Operations ---
-
-static inline int internal_native_cond_init(NativeCond *c) {
-    MagCond_Init(c);
-    return 0;
-}
-
-static inline void internal_native_cond_wait(NativeCond *c, NativeMutex *m) { MagCond_Wait(c, m); }
-
-static inline void internal_native_cond_broadcast(NativeCond *c) { MagCond_Broadcast(c); }
-
-static inline int internal_native_cond_free(NativeCond *c) {
-    (void)c; // MagCond is a 1-byte value type; no OS resources to free.
-    return 0;
-}
+// Shadow Mutex Operations (Maps directly to Native operations)
+#define INIT_LOCK(m) atomic_init(&(m).bits, MAG_UNLOCKED)
+#define FREE_LOCK(m) (void)(m)
+#define SHADOW_LOCK(m) MagMutex_Lock(m)
+#define SHADOW_UNLOCK(m) MagMutex_Unlock(m)
 
 /* ============================================================================
- * 2. SHADOW MUTEX IMPLEMENTATIONS
+ * 3. STRUCTURES & CACHE ISOLATION
  * ============================================================================ */
 
-typedef NativeMutex ShadowMutex;
-
-static inline int internal_shadow_init(ShadowMutex *m) { return internal_native_mutex_init(m); }
-
-static inline void internal_shadow_lock(ShadowMutex *m) { internal_native_mutex_lock(m); }
-
-static inline void internal_shadow_unlock(ShadowMutex *m) { internal_native_mutex_unlock(m); }
-
-static inline int internal_shadow_free(ShadowMutex *m) { return internal_native_mutex_free(m); }
-
-/* ============================================================================
- * 3. PUBLIC API MACROS
- * ============================================================================ */
-
-#define INIT_NATIVE_MUTEX(m) internal_native_mutex_init(&(m))
-#define FREE_NATIVE_MUTEX(m) internal_native_mutex_free(&(m))
-#define NATIVE_MUTEX_LOCK(m) internal_native_mutex_lock(&(m))
-#define NATIVE_MUTEX_UNLOCK(m) internal_native_mutex_unlock(&(m))
-
-#define INIT_NATIVE_COND(c) internal_native_cond_init(&(c))
-#define FREE_NATIVE_COND(c) internal_native_cond_free(&(c))
-#define NATIVE_COND_WAIT(c, m) internal_native_cond_wait(&(c), &(m))
-#define NATIVE_COND_BROADCAST(c) internal_native_cond_broadcast(&(c))
-
-#define INIT_LOCK(m) internal_shadow_init(&(m))
-#define FREE_LOCK(m) internal_shadow_free(&(m))
-
-/* These two accept the pointer directly as per culverin.c usage */
-#define SHADOW_LOCK(m) internal_shadow_lock(m)
-#define SHADOW_UNLOCK(m) internal_shadow_unlock(m)
-
-/* ============================================================================
- * 4. STRUCTURES
- * ============================================================================ */
-
-// Use a standard constant for cache line width
-static constexpr auto CACHE_LINE_SIZE = 64;
-
-/* A helper macro to calculate remaining space in a cache line */
+constexpr auto CACHE_LINE_SIZE = 64;
 #define CACHE_ISOLATE_PAD(current_size) (CACHE_LINE_SIZE - ((current_size) % CACHE_LINE_SIZE))
 
 typedef struct {
-    // 1. Isolate from the main PhysicsWorld fields (like active_queries)
     uint8_t _pad_before[CACHE_LINE_SIZE];
 
-    // 2. The actual synchronization primitives (2 bytes)
     NativeMutex mutex;
     NativeCond cond;
 
-    // 3. Isolate from trailing fields (like shadow_lock)
-    // We use a calculated constant so if you change Mutex size,
-    // the padding adjusts automatically.
+    // Automatically adjusts if MagMutex/MagCond ever change size
     uint8_t
         _pad_after[CACHE_ISOLATE_PAD(sizeof(NativeMutex) + sizeof(NativeCond)) + CACHE_LINE_SIZE];
 } ShadowSync;
