@@ -1,6 +1,7 @@
 #include "culverin_shadow_sync.h"
+#include "CulverinPrefetch"
+#include "CulverinSpan"
 #include "culverin_compiler_specifics.h"
-#include "culverin_tmp.hpp"
 #include "culverin_types.h"
 
 // Include native Jolt headers for ultra-fast C++ bypass
@@ -14,14 +15,14 @@
 #include <memory>
 
 static_assert(sizeof(PosStride) == sizeof(JPH::Real) * 4);
-static_assert(sizeof(AuxStride) == sizeof(float) * 4);
+static_assert(sizeof(AuxStride) == sizeof(CPH::Float32) * 4);
 
 namespace CPH {
 
-constexpr int BATCH_SIZE = 128;
+constexpr Unsigned32 BATCH_SIZE = 128;
 struct SyncWorkItem {
     const JPH::Body *body;
-    uint32_t dense_idx;
+    Unsigned32 dense_idx;
 };
 
 struct WorldDataCreateInfo {
@@ -36,10 +37,10 @@ struct WorldDataCreateInfo {
 
 struct MappingDataCreateInfo {
     const void *CULV_RESTRICT *const CULV_RESTRICT body_ptrs;
-    const std::atomic<uint8_t> *const CULV_RESTRICT slot_states;
-    const std::atomic<uint32_t> *const CULV_RESTRICT generations;
-    const size_t slot_capacity;
-    const uint32_t *const CULV_RESTRICT slot_to_dense;
+    const std::atomic<Unsigned8> *const CULV_RESTRICT slot_states;
+    const std::atomic<Unsigned32> *const CULV_RESTRICT generations;
+    const SizeType slot_capacity;
+    const Unsigned32 *const CULV_RESTRICT slot_to_dense;
 };
 
 static_assert(std::is_trivially_copyable<WorldDataCreateInfo>());
@@ -53,8 +54,8 @@ inline constexpr bool double_precision = true;
 inline constexpr bool double_precision = false;
 #endif
 
-using pos_ptr_t = JPH::Double3 *const CULV_RESTRICT;
-using aux_ptr_t = JPH::Float4 *const CULV_RESTRICT;
+using PosPointerType = JPH::Double3 *const CULV_RESTRICT;
+using AuxPointerType = JPH::Float4 *const CULV_RESTRICT;
 
 // =================================================================================================
 // UNIFIED ITEM PROCESSOR
@@ -62,7 +63,7 @@ using aux_ptr_t = JPH::Float4 *const CULV_RESTRICT;
 // =================================================================================================
 template <JPH::EBodyType TType>
 [[gnu::always_inline, gnu::nonnull(2)]] inline auto
-ProcessItem(const uint32_t D, const JPH::Body *const CULV_RESTRICT b,
+ProcessItem(const Unsigned32 D, const JPH::Body *const CULV_RESTRICT b,
             const WorldDataCreateInfo world) noexcept -> void {
 
     // 1. Snapshot previous state
@@ -76,7 +77,7 @@ ProcessItem(const uint32_t D, const JPH::Body *const CULV_RESTRICT b,
     const auto &translation = b->GetCenterOfMassPosition();
 
     if constexpr (double_precision) {
-        [[clang::always_inline]] translation.StoreDouble3(reinterpret_cast<pos_ptr_t>(target));
+        [[clang::always_inline]] translation.StoreDouble3(reinterpret_cast<PosPointerType>(target));
         target->w = 0.0;
     } else {
         [[clang::always_inline]] JPH::Vec4(JPH::Vec3(translation), 0.0F)
@@ -86,14 +87,14 @@ ProcessItem(const uint32_t D, const JPH::Body *const CULV_RESTRICT b,
     // 3. Write Current Rotation
 
     [[clang::always_inline]] rotation.GetXYZW().StoreFloat4(
-        reinterpret_cast<aux_ptr_t>(&world.shadow_rot[D]));
+        reinterpret_cast<AuxPointerType>(&world.shadow_rot[D]));
 
     // 4. Type-Specific Sub-Data
     if constexpr (TType == JPH::EBodyType::RigidBody) {
         [[clang::always_inline]] JPH::Vec4(b->GetLinearVelocity(), 0.0F)
-            .StoreFloat4(reinterpret_cast<aux_ptr_t>(&world.shadow_lvel[D]));
+            .StoreFloat4(reinterpret_cast<AuxPointerType>(&world.shadow_lvel[D]));
         [[clang::always_inline]] JPH::Vec4(b->GetAngularVelocity(), 0.0F)
-            .StoreFloat4(reinterpret_cast<aux_ptr_t>(&world.shadow_avel[D]));
+            .StoreFloat4(reinterpret_cast<AuxPointerType>(&world.shadow_avel[D]));
     } else if constexpr (TType == JPH::EBodyType::SoftBody) {
         const auto *const CULV_RESTRICT soft_mp =
             static_cast<const JPH::SoftBodyMotionProperties *const CULV_RESTRICT>(
@@ -108,9 +109,9 @@ ProcessItem(const uint32_t D, const JPH::Body *const CULV_RESTRICT b,
         auto *const CULV_RESTRICT dst_verts =
             reinterpret_cast<PosStride *const CULV_RESTRICT>(shadow.vertices);
 
-        const size_t num_v = shadow.num_vertices;
+        const SizeType num_v = shadow.num_vertices;
         CULV_UNROLL_LOOP(8)
-        for (size_t v = 0; v < num_v; ++v) {
+        for (SizeType v = 0; v < num_v; ++v) {
             if (v + 8 < num_v) {
                 CPH::Prefetch<CPH::AccessType::Write>(&dst_verts[v + 8]);
             }
@@ -121,7 +122,7 @@ ProcessItem(const uint32_t D, const JPH::Body *const CULV_RESTRICT b,
                 const JPH::RVec3 world_pos = JPH::RVec3(rotation * local_pos) + translation;
 
                 [[clang::always_inline]] world_pos.StoreDouble3(
-                    reinterpret_cast<pos_ptr_t>(&dst_verts[v]));
+                    reinterpret_cast<PosPointerType>(&dst_verts[v]));
                 dst_verts[v].w = 0.0;
             } else {
                 const JPH::Vec3 world_pos = (rotation * local_pos) + JPH::Vec3(translation);
@@ -142,13 +143,13 @@ template <JPH::EBodyType TType>
 inline auto ProcessBatch(const WorldDataCreateInfo world,
                          RestrictSpan<const CPH::SyncWorkItem> items) noexcept -> void {
 
-    const size_t count = items.size();
+    const SizeType count = items.size();
     [[assume(count > 0), assume(count <= BATCH_SIZE)]];
 
     CULV_UNROLL_LOOP(4)
-    for (uint32_t j = 0; j < count; j++) {
+    for (Unsigned32 j = 0; j < count; j++) {
         if (j + 2 < count) {
-            const uint32_t next_idx = items[j + 2].dense_idx;
+            const Unsigned32 next_idx = items[j + 2].dense_idx;
             CPH::Prefetch<CPH::AccessType::Write>(&world.shadow_pos[next_idx]);
             CPH::Prefetch<CPH::AccessType::Write>(&world.shadow_rot[next_idx]);
         }
@@ -163,7 +164,7 @@ inline auto ProcessBatch(const WorldDataCreateInfo world,
 // =================================================================================================
 template <JPH::EBodyType TType>
 [[gnu::always_inline, gnu::flatten, gnu::nonnull(2)]] inline auto
-ExecuteSyncPass(const uint32_t active_count, const JPH::PhysicsSystem *const CULV_RESTRICT system,
+ExecuteSyncPass(const Unsigned32 active_count, const JPH::PhysicsSystem *const CULV_RESTRICT system,
                 MappingDataCreateInfo map, const WorldDataCreateInfo world) noexcept -> void {
     if (active_count == 0) {
         return;
@@ -178,11 +179,11 @@ ExecuteSyncPass(const uint32_t active_count, const JPH::PhysicsSystem *const CUL
 
     alignas(MEMORY_ALIGNMENT_SIZE) std::array<SyncWorkItem, BATCH_SIZE> worklist;
 
-    uint32_t work_ptr = 0;
+    Unsigned32 work_ptr = 0;
 
-    for (uint32_t i = 0; i < active_count; i++) {
-        const uint32_t raw_jolt_id = active_ids[i].GetIndexAndSequenceNumber();
-        const uint32_t j_idx       = raw_jolt_id & JPH::BodyID::cMaxBodyIndex;
+    for (Unsigned32 i = 0; i < active_count; i++) {
+        const Unsigned32 raw_jolt_id = active_ids[i].GetIndexAndSequenceNumber();
+        const Unsigned32 j_idx       = raw_jolt_id & JPH::BodyID::cMaxBodyIndex;
 
         const auto *CULV_RESTRICT b =
             static_cast<const JPH::Body * CULV_RESTRICT>(map.body_ptrs[j_idx]);
@@ -195,22 +196,22 @@ ExecuteSyncPass(const uint32_t active_count, const JPH::PhysicsSystem *const CUL
         // Verified by flush_commands_internal.
         [[assume(b != nullptr)]];
 
-        const uint64_t handle    = b->GetUserData();
-        const auto slot          = static_cast<const uint32_t>(handle & HANDLE_INDEX_MASK);
-        const auto gen           = static_cast<const uint32_t>(handle >> HANDLE_INDEX_BITS);
-        const uint32_t safe_slot = (slot < map.slot_capacity) ? slot : 0;
+        const Unsigned64 handle    = b->GetUserData();
+        const auto slot            = static_cast<const Unsigned32>(handle & HANDLE_INDEX_MASK);
+        const auto gen             = static_cast<const Unsigned32>(handle >> HANDLE_INDEX_BITS);
+        const Unsigned32 safe_slot = (slot < map.slot_capacity) ? slot : 0;
 
-        const uint8_t state        = map.slot_states[safe_slot].load(std::memory_order_relaxed);
-        const uint32_t current_gen = map.generations[safe_slot].load(std::memory_order_relaxed);
+        const Unsigned8 state        = map.slot_states[safe_slot].load(std::memory_order_relaxed);
+        const Unsigned32 current_gen = map.generations[safe_slot].load(std::memory_order_relaxed);
 
         // --- BRANCHLESS VALIDATION ---
         [[assume(state < SLOT_COUNT)]];
-        const uint32_t state_bad = [state]() -> uint32_t {
+        const Unsigned32 state_bad = [state]() -> Unsigned32 {
             if constexpr (TType == JPH::EBodyType::RigidBody) {
                 // Create a mask of the bits we want (bit 1 and bit 2)
                 // (1 << 2) | (1 << 4) is not correct because the values are 2 and 4, not bit
                 // positions. We use the values directly:
-                constexpr uint8_t mask = (1 << SLOT_ALIVE) | (1 << SLOT_CHARACTER);
+                constexpr Unsigned8 mask = (1 << SLOT_ALIVE) | (1 << SLOT_CHARACTER);
 
                 // Use the state as a shift amount to index into our 'valid' bitmask
                 // If state is 2 or 4, (mask >> state) & 1 will be 1.
@@ -221,10 +222,10 @@ ExecuteSyncPass(const uint32_t active_count, const JPH::PhysicsSystem *const CUL
                 return (state != SLOT_SOFT_BODY);
             }
         }();
-        const uint32_t bad   = static_cast<const uint32_t>(slot >= map.slot_capacity) |
-                               (current_gen ^ gen) | state_bad;
-        const uint32_t d_idx = map.slot_to_dense[safe_slot];
-        const auto is_valid  = static_cast<uint32_t>(bad == 0);
+        const Unsigned32 bad   = static_cast<const Unsigned32>(slot >= map.slot_capacity) |
+                                 (current_gen ^ gen) | state_bad;
+        const Unsigned32 d_idx = map.slot_to_dense[safe_slot];
+        const auto is_valid    = static_cast<Unsigned32>(bad == 0);
 
         [[assume(work_ptr < BATCH_SIZE)]];
         worklist[work_ptr].body      = b;
@@ -254,17 +255,18 @@ ExecuteSyncPass(const uint32_t active_count, const JPH::PhysicsSystem *const CUL
 extern "C" [[gnu::flatten, gnu::hot, gnu::nonnull(1)]] auto
 culverin_sync_shadow_buffers(const PhysicsWorldObject *const CULV_RESTRICT self) noexcept -> void {
     using namespace JPH;
+    using namespace CPH;
     const auto *const CULV_RESTRICT system = static_cast<const PhysicsSystem *const CULV_RESTRICT>(
         JPH_PhysicsSystem_GetPhysicsSystemInstance(self->system));
 
-    const uint32_t active_rigid_count = system->GetNumActiveBodies(EBodyType::RigidBody);
-    const uint32_t active_soft_count  = system->GetNumActiveBodies(EBodyType::SoftBody);
+    const Unsigned32 active_rigid_count = system->GetNumActiveBodies(EBodyType::RigidBody);
+    const Unsigned32 active_soft_count  = system->GetNumActiveBodies(EBodyType::SoftBody);
 
     if ((active_rigid_count == 0U) && (active_soft_count == 0U)) {
         [[unlikely]] return;
     }
 
-    constexpr uint64_t MIN_CYCLES               = 0xFFFFFFFFFFFFFFFFULL;
+    constexpr Unsigned64 MIN_CYCLES             = 0xFFFFFFFFFFFFFFFFULL;
     [[maybe_unused]] static CulvStat sync_stats = {
         .total_cycles = 0, .min_cycles = MIN_CYCLES, .max_cycles = 0, .count = 0};
 
