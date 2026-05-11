@@ -403,8 +403,9 @@ void free_constraints(PhysicsWorldObject *self) {
                 continue;
             }
 
-            bool is_alive =
-                (!self->constraint_states || self->constraint_states[i] == SLOT_ALIVE) != 0;
+            bool is_alive = (!self->constraint_states ||
+                             atomic_load_explicit(&self->constraint_states[i],
+                                                  memory_order_relaxed) == SLOT_ALIVE) != 0;
             if (is_alive) {
                 if (self->system) {
                     JPH_PhysicsSystem_RemoveConstraint(self->system, self->constraints[i]);

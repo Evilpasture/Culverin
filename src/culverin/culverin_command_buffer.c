@@ -1,6 +1,7 @@
 #include "culverin_command_buffer.h"
 #include "culverin.h"
 #include "culverin_compiler_specifics.h"
+#include "culverin_constraint_factory.h"
 #include "culverin_physics_sync.h"
 #include "culverin_physics_world_internal.h"
 #include "culverin_threading.h"
@@ -152,25 +153,28 @@ void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *CULV_REST
     queue                               = CULV_ASSUME_ALIGNED(queue, 64);
     JPH_BodyInterface *CULV_RESTRICT bi = self->body_interface;
 
-    static const void *const dispatch_table[] = {[CMD_CREATE_BODY]       = &&op_CREATE_BODY,
-                                                 [CMD_DESTROY_BODY]      = &&op_DESTROY_BODY,
-                                                 [CMD_SET_POS]           = &&op_SET_POS,
-                                                 [CMD_SET_ROT]           = &&op_SET_ROT,
-                                                 [CMD_SET_TRNS]          = &&op_SET_TRNS,
-                                                 [CMD_SET_LINVEL]        = &&op_SET_LINVEL,
-                                                 [CMD_SET_ANGVEL]        = &&op_SET_ANGVEL,
-                                                 [CMD_SET_MOTION]        = &&op_SET_MOTION,
-                                                 [CMD_ACTIVATE]          = &&op_ACTIVATE,
-                                                 [CMD_DEACTIVATE]        = &&op_DEACTIVATE,
-                                                 [CMD_SET_USER_DATA]     = &&op_SET_USER_DATA,
-                                                 [CMD_SET_CCD]           = &&op_SET_CCD,
-                                                 [CMD_TELEPORT]          = &&op_TELEPORT,
-                                                 [CMD_APPLY_IMPULSE]     = &&op_APPLY_IMPULSE,
-                                                 [CMD_APPLY_FORCE]       = &&op_APPLY_FORCE,
-                                                 [CMD_APPLY_TORQUE]      = &&op_APPLY_TORQUE,
-                                                 [CMD_APPLY_ANG_IMPULSE] = &&op_APPLY_ANG_IMPULSE,
-                                                 [CMD_APPLY_IMPULSE_AT]  = &&op_APPLY_IMPULSE_AT,
-                                                 [CMD_CREATE_SOFT_BODY]  = &&op_CREATE_SOFT_BODY};
+    static const void *const dispatch_table[] = {
+        [CMD_CREATE_BODY]       = &&op_CREATE_BODY,
+        [CMD_DESTROY_BODY]      = &&op_DESTROY_BODY,
+        [CMD_SET_POS]           = &&op_SET_POS,
+        [CMD_SET_ROT]           = &&op_SET_ROT,
+        [CMD_SET_TRNS]          = &&op_SET_TRNS,
+        [CMD_SET_LINVEL]        = &&op_SET_LINVEL,
+        [CMD_SET_ANGVEL]        = &&op_SET_ANGVEL,
+        [CMD_SET_MOTION]        = &&op_SET_MOTION,
+        [CMD_ACTIVATE]          = &&op_ACTIVATE,
+        [CMD_DEACTIVATE]        = &&op_DEACTIVATE,
+        [CMD_SET_USER_DATA]     = &&op_SET_USER_DATA,
+        [CMD_SET_CCD]           = &&op_SET_CCD,
+        [CMD_TELEPORT]          = &&op_TELEPORT,
+        [CMD_APPLY_IMPULSE]     = &&op_APPLY_IMPULSE,
+        [CMD_APPLY_FORCE]       = &&op_APPLY_FORCE,
+        [CMD_APPLY_TORQUE]      = &&op_APPLY_TORQUE,
+        [CMD_APPLY_ANG_IMPULSE] = &&op_APPLY_ANG_IMPULSE,
+        [CMD_APPLY_IMPULSE_AT]  = &&op_APPLY_IMPULSE_AT,
+        [CMD_CREATE_SOFT_BODY]  = &&op_CREATE_SOFT_BODY,
+        [CMD_CREATE_CONSTRAINT] = &&op_CREATE_CONSTRAINT,
+    };
 
     size_t i = 0;
     PhysicsCommand *cmd;
@@ -427,6 +431,84 @@ op_APPLY_IMPULSE_AT: {
 
     JPH_BodyInterface_AddImpulse2(bi, bid, imp, pos);
     JPH_BodyInterface_ActivateBody(bi, bid);
+    DISPATCH();
+}
+
+op_CREATE_CONSTRAINT: {
+    uint32_t s1         = slot;
+    uint32_t s2         = cmd->constraint.body2_slot;
+    uint32_t c_slot     = cmd->constraint.constraint_slot;
+    ConstraintParams *p = cmd->constraint.params;
+
+    JPH_BodyID bid1 = self->body_ids[self->slot_to_dense[s1]];
+    JPH_BodyID bid2 = self->body_ids[self->slot_to_dense[s2]];
+
+    // CHECK: Did the user call destroy_constraint() while this was in the queue?
+    state = atomic_load_explicit(&self->constraint_states[c_slot], memory_order_acquire);
+
+    if (state == SLOT_PENDING_CREATE) {
+        // Verify bodies still exist in Jolt
+        if (bid1 != JPH_INVALID_BODY_ID && bid2 != JPH_INVALID_BODY_ID) {
+            JPH_BodyLockWrite lock1;
+            JPH_BodyLockWrite lock2;
+            const JPH_BodyLockInterface *li = JPH_PhysicsSystem_GetBodyLockInterface(self->system);
+
+            // Consistent locking order to prevent deadlocks
+            if (bid1 < bid2) {
+                JPH_BodyLockInterface_LockWrite(li, bid1, &lock1);
+                JPH_BodyLockInterface_LockWrite(li, bid2, &lock2);
+            } else {
+                JPH_BodyLockInterface_LockWrite(li, bid2, &lock2);
+                JPH_BodyLockInterface_LockWrite(li, bid1, &lock1);
+            }
+
+            JPH_Constraint *constraint = nullptr;
+            if (lock1.body && lock2.body) {
+                JPH_Body *b1 = (JPH_Body_GetID(lock1.body) == bid1) ? lock1.body : lock2.body;
+                JPH_Body *b2 = (JPH_Body_GetID(lock1.body) == bid2) ? lock1.body : lock2.body;
+
+                switch (cmd->constraint.type) {
+                case CONSTRAINT_FIXED:
+                    constraint = create_fixed(p, b1, b2);
+                    break;
+                case CONSTRAINT_POINT:
+                    constraint = create_point(p, b1, b2);
+                    break;
+                case CONSTRAINT_HINGE:
+                    constraint = create_hinge(p, b1, b2);
+                    break;
+                case CONSTRAINT_SLIDER:
+                    constraint = create_slider(p, b1, b2);
+                    break;
+                case CONSTRAINT_CONE:
+                    constraint = create_cone(p, b1, b2);
+                    break;
+                case CONSTRAINT_DISTANCE:
+                    constraint = create_distance(p, b1, b2);
+                    break;
+                default:
+                    break;
+                }
+            }
+
+            JPH_BodyLockInterface_UnlockWrite(li, &lock1);
+            JPH_BodyLockInterface_UnlockWrite(li, &lock2);
+
+            if (constraint) {
+                JPH_PhysicsSystem_AddConstraint(self->system, constraint);
+                self->constraints[c_slot] = constraint;
+                // Mark as ALIVE so future SET_TARGET commands can find it
+                atomic_store_explicit(&self->constraint_states[c_slot], SLOT_ALIVE,
+                                      memory_order_release);
+            } else {
+                // Failure: Return slot to pool
+                atomic_store_explicit(&self->constraint_states[c_slot], SLOT_EMPTY,
+                                      memory_order_relaxed);
+                self->free_constraint_slots[self->free_constraint_count++] = c_slot;
+            }
+        }
+    }
+    CULV_RAW_FREE(p); // Important: Free the heap allocation
     DISPATCH();
 }
 }

@@ -1,5 +1,6 @@
 #pragma once
 #include "culverin_compiler_specifics.h"
+#include "culverin_parsers.h"
 #include "culverin_types.h"
 #include "joltc.h"
 #include <Python.h>
@@ -42,7 +43,8 @@ typedef enum CommandType : uint8_t {
     CMD_APPLY_FORCE,
     CMD_APPLY_TORQUE,
     CMD_APPLY_ANG_IMPULSE,
-    CMD_APPLY_IMPULSE_AT
+    CMD_APPLY_IMPULSE_AT,
+    CMD_CREATE_CONSTRAINT,
 } CommandType;
 
 /**
@@ -165,6 +167,14 @@ typedef union {
         uint32_t material_id;
         uint32_t num_vertices;
     } create_soft;
+
+    struct {
+        uint32_t header; // Body 1 Slot
+        uint32_t body2_slot;
+        uint32_t constraint_slot;
+        int type;
+        ConstraintParams *params; // Heap allocated, freed during flush
+    } constraint;
 
     // Forces the entire union to be exactly 64 bytes
     uint8_t _cache_pad[MEMORY_ALIGNMENT_SIZE];

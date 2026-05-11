@@ -204,15 +204,17 @@ static int allocate_constraints(PhysicsWorldObject *self) {
     self->constraint_generations = CULV_RAW_CALLOC(CONSTRAINT_INITIAL_CAPACITY, sizeof(uint32_t));
     self->free_constraint_slots  = CULV_RAW_MALLOC(CONSTRAINT_INITIAL_CAPACITY * sizeof(uint32_t));
     self->constraint_states      = CULV_RAW_CALLOC(CONSTRAINT_INITIAL_CAPACITY, sizeof(uint8_t));
+    self->constraint_types       = CULV_RAW_CALLOC(CONSTRAINT_INITIAL_CAPACITY, sizeof(int));
 
     if (!self->constraints || !self->free_constraint_slots || !self->constraint_generations ||
-        !self->constraint_states) {
+        !self->constraint_states || !self->constraint_types) {
         return -1;
     }
 
     for (uint32_t i = 0; i < CONSTRAINT_INITIAL_CAPACITY; i++) {
         self->constraint_generations[i] = 1;
         self->free_constraint_slots[i]  = i;
+        atomic_store_explicit(&self->constraint_states[i], SLOT_EMPTY, memory_order_relaxed);
     }
     self->free_constraint_count = CONSTRAINT_INITIAL_CAPACITY;
     return 0;
