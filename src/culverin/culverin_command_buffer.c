@@ -145,11 +145,7 @@ bool ensure_command_bulk_capacity(PhysicsWorldObject *self, size_t batch_size) {
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 [[gnu::hot, gnu::flatten, gnu::nonnull(1, 2)]]
 void flush_commands_internal(PhysicsWorldObject *self, PhysicsCommand *CULV_RESTRICT queue,
-                             size_t count) {
-    if (UNLIKELY(count == 0)) {
-        return;
-    }
-
+                             size_t count) { // Check count before calling.
     queue                               = CULV_ASSUME_ALIGNED(queue, 64);
     JPH_BodyInterface *CULV_RESTRICT bi = self->body_interface;
 
