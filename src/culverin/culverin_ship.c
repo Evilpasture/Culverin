@@ -102,11 +102,15 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ship(PhysicsWorldObject 
     float grip        = 500.0f;
     float drag        = 10.0f;
 
-    void *targets[CreateShip_COUNT] = {
-        [IDX_CS_SLED] = (void *)&sled_raw, [IDX_CS_KP] = (void *)&kp,
-        [IDX_CS_KD] = (void *)&kd,         [IDX_CS_THROTTLE] = (void *)&throttle,
-        [IDX_CS_STEER] = (void *)&steer,   [IDX_CS_BANKING] = (void *)&banking,
-        [IDX_CS_GRIP] = (void *)&grip,     [IDX_CS_DRAG] = (void *)&drag};
+    const void *const restrict targets[CreateShip_COUNT] = {
+        [IDX_CS_SLED]     = (const void *const restrict)&sled_raw,
+        [IDX_CS_KP]       = (const void *const restrict)&kp,
+        [IDX_CS_KD]       = (const void *const restrict)&kd,
+        [IDX_CS_THROTTLE] = (const void *const restrict)&throttle,
+        [IDX_CS_STEER]    = (const void *const restrict)&steer,
+        [IDX_CS_BANKING]  = (const void *const restrict)&banking,
+        [IDX_CS_GRIP]     = (const void *const restrict)&grip,
+        [IDX_CS_DRAG]     = (const void *const restrict)&drag};
 
     if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->CreateShipParser, targets)) {
         return nullptr;
@@ -163,9 +167,11 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ship(PhysicsWorldObject 
 
 PyCFunction_DeclareMethodFromModule Ship_set_input(ShipObject *self, PyObject *const *args,
                                                    Py_ssize_t nargs, PyObject *kwnames) {
-    float fwd                      = 0.0f;
-    float right                    = 0.0f;
-    void *targets[ShipInput_COUNT] = {[IDX_SI_FWD] = &fwd, [IDX_SI_RIGHT] = &right};
+    float fwd                                           = 0.0f;
+    float right                                         = 0.0f;
+    const void *const restrict targets[ShipInput_COUNT] = {
+        [IDX_SI_FWD]   = (const void *const restrict)&fwd,
+        [IDX_SI_RIGHT] = (const void *const restrict)&right};
 
     if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->ShipInputParser, targets)) {
         return nullptr;

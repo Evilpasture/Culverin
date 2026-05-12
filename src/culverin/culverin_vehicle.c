@@ -165,7 +165,6 @@ void cleanup_vehicle_resources(VehicleResources *r, uint32_t num_wheels, Physics
     }
 }
 
-
 int init_vehicle_parsers(VehicleObject *obj) {
     obj->parsers = (VehicleParsers *)PyMem_Malloc(sizeof(VehicleParsers));
     if (!obj->parsers) {
@@ -283,10 +282,12 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_vehicle(PhysicsWorldObje
     PyObject *py_trans     = nullptr;
     const char *drive_str  = "RWD";
 
-    void *targets[CreateVehicle_COUNT] = {
-        [IDX_CV_CHASSIS] = (void *)&chassis_h_raw, [IDX_CV_WHEELS] = (void *)&py_wheels,
-        [IDX_CV_DRIVE] = (void *)&py_drive,        [IDX_CV_ENGINE] = (void *)&py_engine,
-        [IDX_CV_TRANS] = (void *)&py_trans,
+    const void *const restrict targets[CreateVehicle_COUNT] = {
+        [IDX_CV_CHASSIS] = (const void *const restrict)&chassis_h_raw,
+        [IDX_CV_WHEELS]  = (const void *const restrict)&py_wheels,
+        [IDX_CV_DRIVE]   = (const void *const restrict)&py_drive,
+        [IDX_CV_ENGINE]  = (const void *const restrict)&py_engine,
+        [IDX_CV_TRANS]   = (const void *const restrict)&py_trans,
     };
 
     if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->CreateVehicleParser, targets)) {
@@ -457,11 +458,11 @@ PyCFunction_DeclareMethodFromModule Vehicle_set_input(VehicleObject *self, PyObj
     float brake     = 0.0f;
     float handbrake = 0.0f;
 
-    void *targets[VehicleInput_COUNT] = {
-        [IDX_VI_FWD]   = &forward,
-        [IDX_VI_RIGHT] = &right,
-        [IDX_VI_BRAKE] = &brake,
-        [IDX_VI_HAND]  = &handbrake,
+    const void *const restrict targets[VehicleInput_COUNT] = {
+        [IDX_VI_FWD]   = (const void *const restrict)&forward,
+        [IDX_VI_RIGHT] = (const void *const restrict)&right,
+        [IDX_VI_BRAKE] = (const void *const restrict)&brake,
+        [IDX_VI_HAND]  = (const void *const restrict)&handbrake,
     };
 
     if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->VehicleInputParser, targets)) {
@@ -563,9 +564,9 @@ PyCFunction_DeclareMethodFromModule Vehicle_get_wheel_transform(VehicleObject *s
                                                                 PyObject *const *args,
                                                                 Py_ssize_t nargs,
                                                                 PyObject *kwnames) {
-    uint32_t index                = 0;
-    void *targets[WheelIdx_COUNT] = {
-        [IDX_WH_INDEX] = &index,
+    uint32_t index                                     = 0;
+    const void *const restrict targets[WheelIdx_COUNT] = {
+        [IDX_WH_INDEX] = (const void *const restrict)&index,
     };
 
     if (!FastParse_Unified(args, nargs, kwnames, &self->world->parsers->WheelIdxParser, targets)) {
@@ -607,9 +608,9 @@ PyCFunction_DeclareMethodFromModule Vehicle_get_wheel_local_transform(VehicleObj
                                                                       PyObject *const *args,
                                                                       Py_ssize_t nargs,
                                                                       PyObject *kwnames) {
-    uint32_t index                = 0;
-    void *targets[WheelIdx_COUNT] = {
-        [IDX_WH_INDEX] = &index,
+    uint32_t index                                     = 0;
+    const void *const restrict targets[WheelIdx_COUNT] = {
+        [IDX_WH_INDEX] = (const void *const restrict)&index,
     };
 
     if (!FastParse_Unified(args, nargs, kwnames, &self->world->parsers->WheelIdxParser, targets)) {

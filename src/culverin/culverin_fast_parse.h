@@ -60,10 +60,11 @@
  *       JPH_Real px;
  *       JPH_Real py;
  *       JPH_Real pz;
- *       void *targets[ImpAt_COUNT] = {[IDX_IMPAT_H] = (void *)&h_raw, [IDX_IMPAT_IX] = (void *)&ix,
- *                                     [IDX_IMPAT_IY] = (void *)&iy,   [IDX_IMPAT_IZ] = (void *)&iz,
- *                                     [IDX_IMPAT_PX] = (void *)&px,   [IDX_IMPAT_PY] = (void *)&py,
- *                                     [IDX_IMPAT_PZ] = (void *)&pz};
+ *       const void *const restrict targets[ImpAt_COUNT] = {[IDX_IMPAT_H] = (const void *const
+ * restrict)&h_raw, [IDX_IMPAT_IX] = (const void *const restrict)&ix, [IDX_IMPAT_IY] = (const void
+ * *const restrict)&iy,   [IDX_IMPAT_IZ] = (const void *const restrict)&iz, [IDX_IMPAT_PX] = (const
+ * void *const restrict)&px,   [IDX_IMPAT_PY] = (const void *const restrict)&py, [IDX_IMPAT_PZ] =
+ * (const void *const restrict)&pz};
  *
  *       if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
  * &st->parsers.ImpulseAtParser, targets)) { return nullptr;
@@ -98,16 +99,18 @@
  * ============================================================================
  */
 
-// Define Culverin-Specific Converters
-CULV_MAYBE_UNUSED CULV_NODISCARD static inline bool fp_conv_vec3f(PyObject *o, void *t) {
-    Vec3f *v = (Vec3f *)t;
+// Culverin-Specific Converters
+CULV_MAYBE_UNUSED CULV_NODISCARD static inline bool fp_conv_vec3f(PyObject *o, const void *t) {
+    Vec3f *v = (Vec3f *)t; // Cast away const to write to the struct
     return parse_vec3_f32(o, &v->x, &v->y, &v->z) != 0;
 }
-CULV_MAYBE_UNUSED CULV_NODISCARD static inline bool fp_conv_pos_stride(PyObject *o, void *t) {
+
+CULV_MAYBE_UNUSED CULV_NODISCARD static inline bool fp_conv_pos_stride(PyObject *o, const void *t) {
     PosStride *v = (PosStride *)t;
     return parse_vec3_r64(o, &v->x, &v->y, &v->z) != 0;
 }
-CULV_MAYBE_UNUSED CULV_NODISCARD static inline bool fp_conv_aux_stride(PyObject *o, void *t) {
+
+CULV_MAYBE_UNUSED CULV_NODISCARD static inline bool fp_conv_aux_stride(PyObject *o, const void *t) {
     AuxStride *v = (AuxStride *)t;
     return parse_quat_f32(o, &v->x, &v->y, &v->z, &v->w) != 0;
 }

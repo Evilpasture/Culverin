@@ -477,7 +477,9 @@ PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObje
     Vec3f v_in = {};
     float dt   = 0.0f;
 
-    void *targets[CharMove_COUNT] = {[IDX_CM_VEL] = &v_in, [IDX_CM_DT] = &dt};
+    const void *const restrict targets[CharMove_COUNT] = {
+        [IDX_CM_VEL] = (const void *const restrict)&v_in,
+        [IDX_CM_DT]  = (const void *const restrict)&dt};
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->CharMoveParser, targets)) {
@@ -582,9 +584,9 @@ PyCFunction_DeclareMethodFromModule Character_get_position(CharacterObject *self
 PyCFunction_DeclareMethodFromModule Character_set_position(CharacterObject *self,
                                                            PyObject *const *args, Py_ssize_t nargs,
                                                            PyObject *kwnames) {
-    PosStride pos                   = {};
-    void *targets[SetPosChar_COUNT] = {
-        [IDX_SPC_POS] = (void *)&pos,
+    PosStride pos                                        = {};
+    const void *const restrict targets[SetPosChar_COUNT] = {
+        [IDX_SPC_POS] = (const void *const restrict)&pos,
     };
 
     if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->SetPosCharParser, targets)) {
@@ -619,8 +621,8 @@ PyCFunction_DeclareMethodFromModule Character_set_rotation(CharacterObject *self
                                                            PyObject *kwnames) {
     AuxStride rot = {.x = 0.0f, .y = 0.0f, .z = 0.0f, .w = 1.0f};
 
-    void *targets[SetRotChar_COUNT] = {
-        [IDX_SRC_ROT] = (void *)&rot,
+    const void *const restrict targets[SetRotChar_COUNT] = {
+        [IDX_SRC_ROT] = (const void *const restrict)&rot,
     };
 
     if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->SetRotCharParser, targets)) {
@@ -652,8 +654,8 @@ PyCFunction_DeclareMethodFromModule Character_set_strength(CharacterObject *self
                                                            PyObject *kwnames) {
     float strength = 0.0f;
 
-    void *targets[SetStrengthChar_COUNT] = {
-        [IDX_SSC_STRENGTH] = (void *)&strength,
+    const void *const restrict targets[SetStrengthChar_COUNT] = {
+        [IDX_SSC_STRENGTH] = (const void *const restrict)&strength,
     };
 
     if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->SetStrengthCharParser, targets)) {
@@ -925,11 +927,12 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_character(PhysicsWorldOb
     float step_h                  = DEFUALT_STEP_H;
     float slope                   = DEFAULT_SLOPE;
 
-    void *targets[CreateChar_COUNT] = {[IDX_CCHAR_POS]   = (void *)&pos,
-                                       [IDX_CCHAR_H]     = (void *)&height,
-                                       [IDX_CCHAR_R]     = (void *)&radius,
-                                       [IDX_CCHAR_STEP]  = (void *)&step_h,
-                                       [IDX_CCHAR_SLOPE] = (void *)&slope};
+    const void *const restrict targets[CreateChar_COUNT] = {
+        [IDX_CCHAR_POS]   = (const void *const restrict)&pos,
+        [IDX_CCHAR_H]     = (const void *const restrict)&height,
+        [IDX_CCHAR_R]     = (const void *const restrict)&radius,
+        [IDX_CCHAR_STEP]  = (const void *const restrict)&step_h,
+        [IDX_CCHAR_SLOPE] = (const void *const restrict)&slope};
 
     if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->CreateCharParser, targets)) {
         return nullptr;

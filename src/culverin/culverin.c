@@ -54,7 +54,8 @@ PyCFunction_DeclareMethod culv_dump_schema_json(PyObject *const self, PyObject *
     const char *filename = "culverin_schema.json";
 
     // 1. Thread-safe, subinterpreter-safe parsing via FastParser
-    void *targets[DumpSchema_COUNT] = {[IDX_DS_PATH] = (void *)&filename};
+    const void *const restrict targets[DumpSchema_COUNT] = {
+        [IDX_DS_PATH] = (const void *const restrict)&filename};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.DumpSchemaParser,
                            targets)) {

@@ -55,9 +55,10 @@ SoftBodySharedSettings_add_vertex(SoftBodySharedSettingsObject *self, PyObject *
     PyObject *o_vel = nullptr;
     float inv_mass  = default_inv_mass;
 
-    void *targets[SbssAddVertex_COUNT] = {[IDX_SAV_POS]  = (void *)&o_pos,
-                                          [IDX_SAV_MASS] = (void *)&inv_mass,
-                                          [IDX_SAV_VEL]  = (void *)&o_vel};
+    const void *const restrict targets[SbssAddVertex_COUNT] = {
+        [IDX_SAV_POS]  = (const void *const restrict)&o_pos,
+        [IDX_SAV_MASS] = (const void *const restrict)&inv_mass,
+        [IDX_SAV_VEL]  = (const void *const restrict)&o_vel};
 
     if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->SbssAddVertexParser, targets)) {
         return nullptr;
@@ -99,9 +100,10 @@ SoftBodySharedSettings_add_vertices(SoftBodySharedSettingsObject *self, PyObject
     auto o_mass = (PyObject *)nullptr;
     auto o_vel  = (PyObject *)nullptr;
 
-    void *targets[SbssAddVertices_COUNT] = {[IDX_SAVS_POS]  = (void *)&o_pos,
-                                            [IDX_SAVS_MASS] = (void *)&o_mass,
-                                            [IDX_SAVS_VEL]  = (void *)&o_vel};
+    const void *const restrict targets[SbssAddVertices_COUNT] = {
+        [IDX_SAVS_POS]  = (const void *const restrict)&o_pos,
+        [IDX_SAVS_MASS] = (const void *const restrict)&o_mass,
+        [IDX_SAVS_VEL]  = (const void *const restrict)&o_vel};
 
     if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->SbssAddVerticesParser, targets)) {
         return nullptr;
@@ -210,8 +212,11 @@ SoftBodySharedSettings_add_face(SoftBodySharedSettingsObject *self, PyObject *co
     uint32_t v3      = 0;
     uint32_t mat_idx = 0;
 
-    void *targets[SbssAddFace_COUNT] = {
-        [IDX_SAF_V1] = &v1, [IDX_SAF_V2] = &v2, [IDX_SAF_V3] = &v3, [IDX_SAF_MAT] = &mat_idx};
+    const void *const restrict targets[SbssAddFace_COUNT] = {
+        [IDX_SAF_V1]  = (const void *const restrict)&v1,
+        [IDX_SAF_V2]  = (const void *const restrict)&v2,
+        [IDX_SAF_V3]  = (const void *const restrict)&v3,
+        [IDX_SAF_MAT] = (const void *const restrict)&mat_idx};
 
     if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->SbssAddFaceParser, targets)) {
         return nullptr;
@@ -253,8 +258,9 @@ SoftBodySharedSettings_add_faces(SoftBodySharedSettingsObject *self, PyObject *c
     auto o_ind = (PyObject *)nullptr;
     auto o_mat = (PyObject *)nullptr;
 
-    void *targets[SbssAddFaces_COUNT] = {[IDX_SAFS_IND] = (void *)&o_ind,
-                                         [IDX_SAFS_MAT] = (void *)&o_mat};
+    const void *const restrict targets[SbssAddFaces_COUNT] = {
+        [IDX_SAFS_IND] = (const void *const restrict)&o_ind,
+        [IDX_SAFS_MAT] = (const void *const restrict)&o_mat};
 
     if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->SbssAddFacesParser, targets)) {
         return nullptr;
@@ -396,7 +402,7 @@ SoftBodySharedSettings_create_constraints(SoftBodySharedSettingsObject *self, Py
     float compliance               = 0.0001f;
     JPH_SoftBodyBendType bend_type = JPH_SoftBodyBendType_Distance; // Default: Distance
 
-    void *targets[2] = {&compliance, &bend_type};
+    const void *const restrict targets[2] = {&compliance, &bend_type};
     if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->SbssCreateConstraintsParser,
                            targets)) {
         return nullptr;

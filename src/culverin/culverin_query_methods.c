@@ -74,11 +74,11 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_sphere(PhysicsWorldObje
                                                                 size_t nargsf, PyObject *kwnames) {
 
     // 1. FAST PARSE
-    PyObject *o_center                 = nullptr;
-    float radius                       = 1.0f;
-    void *targets[OverlapSphere_COUNT] = {
-        [IDX_OS_CENTER] = (void *)&o_center,
-        [IDX_OS_RADIUS] = (void *)&radius,
+    PyObject *o_center                                      = nullptr;
+    float radius                                            = 1.0f;
+    const void *const restrict targets[OverlapSphere_COUNT] = {
+        [IDX_OS_CENTER] = (const void *const restrict)&o_center,
+        [IDX_OS_RADIUS] = (const void *const restrict)&radius,
     };
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
@@ -197,11 +197,11 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_aabb(PhysicsWorldObject
                                                               PyObject *kwnames) {
 
     // 1. FAST PARSE
-    PyObject *o_min                  = nullptr;
-    PyObject *o_max                  = nullptr;
-    void *targets[OverlapAABB_COUNT] = {
-        [IDX_OA_MIN] = (void *)&o_min,
-        [IDX_OA_MAX] = (void *)&o_max,
+    PyObject *o_min                                       = nullptr;
+    PyObject *o_max                                       = nullptr;
+    const void *const restrict targets[OverlapAABB_COUNT] = {
+        [IDX_OA_MIN] = (const void *const restrict)&o_min,
+        [IDX_OA_MAX] = (const void *const restrict)&o_max,
     };
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
@@ -304,11 +304,11 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast(PhysicsWorldObject *sel
     float max_dist        = CQM_DEFAULT_MAX_DIST;
     uint64_t ignore_h_raw = 0;
 
-    void *targets[Raycast_COUNT] = {
-        [IDX_RAY_START] = (void *)&o_start,
-        [IDX_RAY_DIR]   = (void *)&o_dir,
-        [IDX_RAY_DIST]  = (void *)&max_dist,
-        [IDX_RAY_IGN]   = (void *)&ignore_h_raw,
+    const void *const restrict targets[Raycast_COUNT] = {
+        [IDX_RAY_START] = (const void *const restrict)&o_start,
+        [IDX_RAY_DIR]   = (const void *const restrict)&o_dir,
+        [IDX_RAY_DIST]  = (const void *const restrict)&max_dist,
+        [IDX_RAY_IGN]   = (const void *const restrict)&ignore_h_raw,
     };
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->RaycastParser,
@@ -445,10 +445,10 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast_batch(PhysicsWorldObjec
     PyObject *o_dirs   = nullptr;
     float max_dist     = CQM_DEFAULT_MAX_DIST;
 
-    void *targets[RayBatch_COUNT] = {
-        [IDX_RB_STARTS] = (void *)&o_starts,
-        [IDX_RB_DIRS]   = (void *)&o_dirs,
-        [IDX_RB_DIST]   = (void *)&max_dist,
+    const void *const restrict targets[RayBatch_COUNT] = {
+        [IDX_RB_STARTS] = (const void *const restrict)&o_starts,
+        [IDX_RB_DIRS]   = (const void *const restrict)&o_dirs,
+        [IDX_RB_DIST]   = (const void *const restrict)&max_dist,
     };
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
@@ -605,10 +605,13 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_shapecast(PhysicsWorldObject *s
     PyObject *o_size      = nullptr;
     uint64_t ignore_h_raw = 0;
 
-    void *targets[Shapecast_COUNT] = {
-        [IDX_SC_SHAPE] = (void *)&shape_type, [IDX_SC_POS] = (void *)&o_pos,
-        [IDX_SC_ROT] = (void *)&o_rot,        [IDX_SC_DIR] = (void *)&o_dir,
-        [IDX_SC_SIZE] = (void *)&o_size,      [IDX_SC_IGNORE] = (void *)&ignore_h_raw,
+    const void *const restrict targets[Shapecast_COUNT] = {
+        [IDX_SC_SHAPE]  = (const void *const restrict)&shape_type,
+        [IDX_SC_POS]    = (const void *const restrict)&o_pos,
+        [IDX_SC_ROT]    = (const void *const restrict)&o_rot,
+        [IDX_SC_DIR]    = (const void *const restrict)&o_dir,
+        [IDX_SC_SIZE]   = (const void *const restrict)&o_size,
+        [IDX_SC_IGNORE] = (const void *const restrict)&ignore_h_raw,
     };
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,

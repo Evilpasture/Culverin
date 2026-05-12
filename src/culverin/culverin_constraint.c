@@ -18,11 +18,12 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_constraint(PhysicsWorldO
     PyObject *o_params = nullptr;
     PyObject *o_motor  = nullptr;
 
-    void *targets[CreateConstr_COUNT] = {[IDX_CC_TYPE]   = (void *)&type,
-                                         [IDX_CC_BODY1]  = (void *)&h1_raw,
-                                         [IDX_CC_BODY2]  = (void *)&h2_raw,
-                                         [IDX_CC_PARAMS] = (void *)&o_params,
-                                         [IDX_CC_MOTOR]  = (void *)&o_motor};
+    const void *const restrict targets[CreateConstr_COUNT] = {
+        [IDX_CC_TYPE]   = (const void *const restrict)&type,
+        [IDX_CC_BODY1]  = (const void *const restrict)&h1_raw,
+        [IDX_CC_BODY2]  = (const void *const restrict)&h2_raw,
+        [IDX_CC_PARAMS] = (const void *const restrict)&o_params,
+        [IDX_CC_MOTOR]  = (const void *const restrict)&o_motor};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->CreateConstrParser, targets)) {
@@ -123,8 +124,8 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_destroy_constraint(PhysicsWorld
     // 1. FAST PARSE
     // TSan Fix: Use raw uint64 for the parser target to avoid atomic init overhead
     uint64_t h_raw;
-    void *targets[HOnly_COUNT] = {
-        [IDX_H_H] = (void *)&h_raw,
+    const void *const restrict targets[HOnly_COUNT] = {
+        [IDX_H_H] = (const void *const restrict)&h_raw,
     };
 
     auto nargs = PyVectorcall_NARGS(nargsf);
@@ -195,9 +196,9 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_set_constraint_target(PhysicsWo
     uint64_t h_raw;
     float target;
 
-    void *targets[SetConstr_COUNT] = {
-        [IDX_SCT_H] = (void *)&h_raw,
-        [IDX_SCT_T] = (void *)&target,
+    const void *const restrict targets[SetConstr_COUNT] = {
+        [IDX_SCT_H] = (const void *const restrict)&h_raw,
+        [IDX_SCT_T] = (const void *const restrict)&target,
     };
 
     auto nargs = PyVectorcall_NARGS(nargsf);
@@ -267,7 +268,8 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_constraint_type(PhysicsWorl
                                                                      size_t nargsf,
                                                                      PyObject *kwnames) {
     uint64_t handle_raw;
-    void *targets[HOnly_COUNT] = {[IDX_H_H] = &handle_raw};
+    const void *const restrict targets[HOnly_COUNT] = {[IDX_H_H] =
+                                                           (const void *const restrict)&handle_raw};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->HOnlyParser,
                            targets)) {

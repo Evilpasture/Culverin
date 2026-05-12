@@ -20,9 +20,9 @@ PyCFunction_DeclareMethodFromModule Skeleton_add_joint(SkeletonObject *self, PyO
     PyObject *name_obj = nullptr;
     int parent_idx     = -1; // Default to root
 
-    void *targets[AddJoint_COUNT] = {
-        [IDX_AJ_NAME]   = (void *)&name_obj,
-        [IDX_AJ_PARENT] = (void *)&parent_idx,
+    const void *const restrict targets[AddJoint_COUNT] = {
+        [IDX_AJ_NAME]   = (const void *const restrict)&name_obj,
+        [IDX_AJ_PARENT] = (const void *const restrict)&parent_idx,
     };
 
     // 2. High Speed Parse
@@ -44,9 +44,9 @@ PyCFunction_DeclareMethodFromModule Skeleton_get_joint_index(SkeletonObject *sel
                                                              PyObject *const *args,
                                                              Py_ssize_t nargs, PyObject *kwnames) {
     // 1. Setup Targets
-    PyObject *name_obj               = nullptr;
-    void *targets[GetJointIdx_COUNT] = {
-        [IDX_GJI_NAME] = (void *)&name_obj,
+    PyObject *name_obj                                    = nullptr;
+    const void *const restrict targets[GetJointIdx_COUNT] = {
+        [IDX_GJI_NAME] = (const void *const restrict)&name_obj,
     };
 
     // 2. High Speed Parse
@@ -91,10 +91,10 @@ PyCFunction_DeclareMethodFromModule Ragdoll_drive_to_pose(RagdollObject *self,
     AuxStride root_q      = {.w = 1.0f};
     PyObject *py_matrices = nullptr;
 
-    void *targets[RagdollDrive_COUNT] = {
-        [IDX_RD_POS]  = (void *)&root_p,
-        [IDX_RD_ROT]  = (void *)&root_q,
-        [IDX_RD_MATS] = (void *)&py_matrices,
+    const void *const restrict targets[RagdollDrive_COUNT] = {
+        [IDX_RD_POS]  = (const void *const restrict)&root_p,
+        [IDX_RD_ROT]  = (const void *const restrict)&root_q,
+        [IDX_RD_MATS] = (const void *const restrict)&py_matrices,
     };
 
     if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->RagdollDriveParser, targets)) {
@@ -356,14 +356,18 @@ PyCFunction_DeclareMethodFromModule RagdollSettings_add_part(RagdollSettingsObje
     Vec3f axis   = {.x = 1.0f, .y = 0.0f, .z = 0.0f};
     Vec3f normal = {.x = 0.0f, .y = 1.0f, .z = 0.0f};
 
-    void *targets[RagdollAddPart_COUNT] = {
-        [IDX_RAP_JOINT] = (void *)&joint_idx,     [IDX_RAP_SHAPE] = (void *)&shape_type,
-        [IDX_RAP_SIZE] = (void *)&py_size,        [IDX_RAP_MASS] = (void *)&mass,
-        [IDX_RAP_PARENT] = (void *)&parent_idx,   [IDX_RAP_TWIST_MIN] = (void *)&twist_min,
-        [IDX_RAP_TWIST_MAX] = (void *)&twist_max, [IDX_RAP_CONE] = (void *)&cone_angle,
-        [IDX_RAP_AXIS]   = (void *)&axis,   // Converter calls parse_vec3_f32
-        [IDX_RAP_NORMAL] = (void *)&normal, // Converter calls parse_vec3_f32
-        [IDX_RAP_POS]    = (void *)&py_pos,
+    const void *const restrict targets[RagdollAddPart_COUNT] = {
+        [IDX_RAP_JOINT]     = (const void *const restrict)&joint_idx,
+        [IDX_RAP_SHAPE]     = (const void *const restrict)&shape_type,
+        [IDX_RAP_SIZE]      = (const void *const restrict)&py_size,
+        [IDX_RAP_MASS]      = (const void *const restrict)&mass,
+        [IDX_RAP_PARENT]    = (const void *const restrict)&parent_idx,
+        [IDX_RAP_TWIST_MIN] = (const void *const restrict)&twist_min,
+        [IDX_RAP_TWIST_MAX] = (const void *const restrict)&twist_max,
+        [IDX_RAP_CONE]      = (const void *const restrict)&cone_angle,
+        [IDX_RAP_AXIS]      = (const void *const restrict)&axis,   // Converter calls parse_vec3_f32
+        [IDX_RAP_NORMAL]    = (const void *const restrict)&normal, // Converter calls parse_vec3_f32
+        [IDX_RAP_POS]       = (const void *const restrict)&py_pos,
     };
 
     // 2. High Speed Parse

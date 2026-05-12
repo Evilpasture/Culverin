@@ -227,7 +227,8 @@ PyCFunction_DeclareMethodFromModule Registry_create(RegistryObject *self,
 PyCFunction_DeclareMethodFromModule Registry_destroy(RegistryObject *self, PyObject *const *args,
                                                      size_t nargsf, PyObject *kwnames) {
     uint64_t handle;
-    void *targets[RegEntityOnly_COUNT] = {[IDX_REO_ENT] = &handle};
+    const void *const restrict targets[RegEntityOnly_COUNT] = {
+        [IDX_REO_ENT] = (const void *const restrict)&handle};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->RegEntityOnlyParser, targets)) {
@@ -279,7 +280,8 @@ PyCFunction_DeclareMethodFromModule Registry_destroy(RegistryObject *self, PyObj
 PyCFunction_DeclareMethodFromModule Registry_is_alive(RegistryObject *self, PyObject *const *args,
                                                       size_t nargsf, PyObject *kwnames) {
     uint64_t handle;
-    void *targets[RegEntityOnly_COUNT] = {[IDX_REO_ENT] = &handle};
+    const void *const restrict targets[RegEntityOnly_COUNT] = {
+        [IDX_REO_ENT] = (const void *const restrict)&handle};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->RegEntityOnlyParser, targets)) {
@@ -307,7 +309,8 @@ PyCFunction_DeclareMethodFromModule Registry_register_component(RegistryObject *
                                                                 PyObject *const *args,
                                                                 size_t nargsf, PyObject *kwnames) {
     uint32_t size;
-    void *targets[RegRegComp_COUNT] = {[IDX_RRC_SIZE] = &size};
+    const void *const restrict targets[RegRegComp_COUNT] = {[IDX_RRC_SIZE] =
+                                                                (const void *const restrict)&size};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->RegRegCompParser, targets)) {
@@ -350,9 +353,10 @@ PyCFunction_DeclareMethodFromModule Registry_add(RegistryObject *self, PyObject 
     uint32_t comp_id;
     PyObject *data_obj = nullptr;
 
-    void *targets[RegAdd_COUNT] = {[IDX_RA_ENT]  = (void *)&handle,
-                                   [IDX_RA_COMP] = (void *)&comp_id,
-                                   [IDX_RA_DATA] = (void *)&data_obj};
+    const void *const restrict targets[RegAdd_COUNT] = {
+        [IDX_RA_ENT]  = (const void *const restrict)&handle,
+        [IDX_RA_COMP] = (const void *const restrict)&comp_id,
+        [IDX_RA_DATA] = (const void *const restrict)&data_obj};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->RegAddParser,
                            targets)) {
@@ -428,7 +432,9 @@ PyCFunction_DeclareMethodFromModule Registry_remove(RegistryObject *self, PyObje
     uint64_t handle;
     uint32_t comp_id;
 
-    void *targets[RegEntComp_COUNT] = {[IDX_REC_ENT] = &handle, [IDX_REC_COMP] = &comp_id};
+    const void *const restrict targets[RegEntComp_COUNT] = {
+        [IDX_REC_ENT]  = (const void *const restrict)&handle,
+        [IDX_REC_COMP] = (const void *const restrict)&comp_id};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->RegEntCompParser, targets)) {
@@ -472,7 +478,9 @@ PyCFunction_DeclareMethodFromModule Registry_has(RegistryObject *self, PyObject 
     uint64_t handle;
     uint32_t comp_id;
 
-    void *targets[RegEntComp_COUNT] = {[IDX_REC_ENT] = &handle, [IDX_REC_COMP] = &comp_id};
+    const void *const restrict targets[RegEntComp_COUNT] = {
+        [IDX_REC_ENT]  = (const void *const restrict)&handle,
+        [IDX_REC_COMP] = (const void *const restrict)&comp_id};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->RegEntCompParser, targets)) {
@@ -498,7 +506,9 @@ PyCFunction_DeclareMethodFromModule Registry_get(RegistryObject *self, PyObject 
                                                  size_t nargsf, PyObject *kwnames) {
     uint64_t handle;
     uint32_t comp_id;
-    void *targets[RegEntComp_COUNT] = {[IDX_REC_ENT] = &handle, [IDX_REC_COMP] = &comp_id};
+    const void *const restrict targets[RegEntComp_COUNT] = {
+        [IDX_REC_ENT]  = (const void *const restrict)&handle,
+        [IDX_REC_COMP] = (const void *const restrict)&comp_id};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->RegEntCompParser, targets)) {
@@ -529,7 +539,8 @@ PyCFunction_DeclareMethodFromModule Registry_get(RegistryObject *self, PyObject 
 PyCFunction_DeclareMethodFromModule Registry_get_view(RegistryObject *self, PyObject *const *args,
                                                       size_t nargsf, PyObject *kwnames) {
     uint32_t comp_id;
-    void *targets[RegCompOnly_COUNT] = {[IDX_RCO_COMP] = &comp_id};
+    const void *const restrict targets[RegCompOnly_COUNT] = {
+        [IDX_RCO_COMP] = (const void *const restrict)&comp_id};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->RegCompOnlyParser, targets)) {
@@ -550,7 +561,8 @@ PyCFunction_DeclareMethodFromModule Registry_get_entities(RegistryObject *self,
                                                           PyObject *const *args, size_t nargsf,
                                                           PyObject *kwnames) {
     uint32_t comp_id;
-    void *targets[RegCompOnly_COUNT] = {[IDX_RCO_COMP] = &comp_id};
+    const void *const restrict targets[RegCompOnly_COUNT] = {
+        [IDX_RCO_COMP] = (const void *const restrict)&comp_id};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->RegCompOnlyParser, targets)) {
@@ -577,10 +589,11 @@ PyCFunction_DeclareMethodFromModule Registry_sync_from_world(RegistryObject *sel
     int p_comp_id = -1;
     int r_comp_id = -1; // -1 means ignore
 
-    void *targets[RegSyncPhys_COUNT] = {[IDX_RSP_WORLD]  = (void *)&world_obj,
-                                        [IDX_RSP_H_COMP] = (void *)&h_comp_id,
-                                        [IDX_RSP_T_COMP] = (void *)&p_comp_id,
-                                        [IDX_RSP_R_COMP] = (void *)&r_comp_id};
+    const void *const restrict targets[RegSyncPhys_COUNT] = {
+        [IDX_RSP_WORLD]  = (const void *const restrict)&world_obj,
+        [IDX_RSP_H_COMP] = (const void *const restrict)&h_comp_id,
+        [IDX_RSP_T_COMP] = (const void *const restrict)&p_comp_id,
+        [IDX_RSP_R_COMP] = (const void *const restrict)&r_comp_id};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->RegSyncPhysParser, targets)) {
@@ -704,7 +717,8 @@ PyCFunction_DeclareMethodFromModule Registry_get_component_count(RegistryObject 
                                                                  PyObject *const *args,
                                                                  size_t nargsf, PyObject *kwnames) {
     uint32_t comp_id;
-    void *targets[RegCompOnly_COUNT] = {[IDX_RCO_COMP] = &comp_id};
+    const void *const restrict targets[RegCompOnly_COUNT] = {
+        [IDX_RCO_COMP] = (const void *const restrict)&comp_id};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->RegCompOnlyParser, targets)) {
