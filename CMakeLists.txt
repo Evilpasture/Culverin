@@ -50,7 +50,7 @@ function(enforce_modern_compiler)
         )
 
         if(CLANG_PATH OR GCC_PATH)
-            string(APPEND HELP_MSG " Alternatives on your computer:\n")
+            string(APPEND HELP_MSG " Alternatives on your :\n")
             if(CLANG_PATH)
                 string(
                     APPEND HELP_MSG
@@ -265,7 +265,7 @@ if(MSVC)
 else()
     message(STATUS "Culverin: Configuring GNU-like flags...")
 
-    set(FLAGS_DEBUG "-g" "-gcodeview")
+    set(FLAGS_DEBUG "-g")
     if(CMAKE_C_COMPILER_ID MATCHES "Clang")
         list(APPEND FLAGS_DEBUG "-gcodeview")
     endif()

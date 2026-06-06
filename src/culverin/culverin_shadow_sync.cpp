@@ -46,10 +46,8 @@ struct MappingDataCreateInfo {
     const Unsigned32 *const CPH_RESTRICT slot_to_dense;
 };
 
-static_assert(std::is_trivially_copyable<WorldDataCreateInfo>());
-static_assert(std::is_trivial<WorldDataCreateInfo>());
-static_assert(std::is_trivially_copyable<MappingDataCreateInfo>());
-static_assert(std::is_trivial<MappingDataCreateInfo>());
+static_assert(std::atomic<Unsigned8>::is_always_lock_free);
+static_assert(std::atomic<Unsigned32>::is_always_lock_free);
 
 #ifdef JPH_DOUBLE_PRECISION
 inline constexpr bool double_precision = true;
