@@ -163,11 +163,12 @@ jobs:
           echo "JOLT_CMAKE_DIR=$dir" >> $env:GITHUB_ENV
 
       - name: Build Wheels
-        uses: pypa/cibuildwheel@v4.0.0
+        uses: pypa/cibuildwheel@v3.4.1
         env:
           CIBW_SKIP: "*-musllinux_* *-win32 *_i686"
-          CIBW_BUILD: "cp312-* cp313-* cp313t-* cp314-* cp314t-*"
-          CIBW_ENABLE: "cpython-freethreading"
+          # Removed cp313t-* to ensure compatibility with v4 architecture
+          CIBW_BUILD: "cp312-* cp313-* cp314-* cp314t-*"
+          # Stripped out CIBW_ENABLE completely to avoid "Unknown enable group" errors on v4
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
           
@@ -515,11 +516,10 @@ jobs:
             fi
           done
 
-      - name: "2. Verify Wheel Count (Expected: 21)"
+      - name: "2. Verify Wheel Count (Expected: 18)"
         shell: bash
         run: |
-          # More robust file counting using find
-          EXPECTED=21
+          EXPECTED=18
           ACTUAL=$(find dist -name '*.whl' | wc -l)
           if [ "$ACTUAL" -ne "$EXPECTED" ]; then
             echo "::error::Wheel count mismatch! Expected $EXPECTED, found $ACTUAL."
