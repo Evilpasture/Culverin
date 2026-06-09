@@ -8,12 +8,13 @@ import types
 import unittest
 from pathlib import Path
 from types import CodeType, SimpleNamespace
-from typing import Literal, Protocol, Any
+from typing import Any, Literal, Protocol
 
 import numpy as np
 
 import culverin
 from culverin import TrackConfig, WheelConfig
+
 type DTypeField = tuple[str, Any]
 if not __debug__:
     raise RuntimeError("Cannot run tests in release mode")
@@ -69,10 +70,10 @@ class TestWorldInitialization(unittest.TestCase):
         custom_settings: culverin.WorldSettings = {
             "gravity": (0, 9.81, 0),  # Inverted gravity
             "max_bodies": 500,
-            "max_pairs": 1000
+            "max_pairs": 1000,
         }
         world = culverin.PhysicsWorld(settings=custom_settings)
-        
+
         _, gy, _ = world.get_gravity()
         self.assertAlmostEqual(gy, 9.81, places=5)
         self.assertEqual(world.max_bodies, 500)
@@ -81,16 +82,16 @@ class TestWorldInitialization(unittest.TestCase):
     def test_jolt_internal_tuning(self) -> None:
         """
         Verify that Jolt-specific internal settings are parsed.
-        Note: We can't easily query these back from the C-API yet, 
+        Note: We can't easily query these back from the C-API yet,
         so we verify that initialization succeeds with these values.
         """
         advanced_settings: culverin.WorldSettings = {
             "num_threads": 2,
             "max_physics_jobs": 1024,
             "max_physics_barriers": 4,
-            "temp_allocator_size": 16 * 1024 * 1024, # 16MB
+            "temp_allocator_size": 16 * 1024 * 1024,  # 16MB
             "max_contact_constraints": 16384,
-            "penetration_slop": 0.05
+            "penetration_slop": 0.05,
         }
         # If this doesn't crash/raise, the C-layer parsed the expanded struct correctly
         world = culverin.PhysicsWorld(settings=advanced_settings)
@@ -101,14 +102,14 @@ class TestWorldInitialization(unittest.TestCase):
         # JoltC hard-caps jobs at 2048
         with self.assertRaisesRegex(ValueError, "max_physics_jobs"):
             culverin.PhysicsWorld(settings={"max_physics_jobs": 5000})
-            
+
         # JoltC hard-caps barriers at 8
         with self.assertRaisesRegex(ValueError, "max_physics_barriers"):
             culverin.PhysicsWorld(settings={"max_physics_barriers": 10})
 
     def test_baked_scene_initialization(self) -> None:
         """
-        Verify that passing a list of bodies to __init__ correctly 
+        Verify that passing a list of bodies to __init__ correctly
         invokes the bake_scene -> load_baked_scene pipeline.
         """
         initial_bodies: list[culverin.BodyDefinition] = [
@@ -117,28 +118,28 @@ class TestWorldInitialization(unittest.TestCase):
                 "shape": culverin.SHAPE_SPHERE,
                 "size": 1.0,
                 "mass": 5.0,
-                "user_data": 123
+                "user_data": 123,
             },
             {
                 "pos": (0, 0, 0),
                 "shape": culverin.SHAPE_BOX,
                 "size": (10, 1, 10),
                 "motion": culverin.MOTION_STATIC,
-                "user_data": 456
-            }
+                "user_data": 456,
+            },
         ]
-        
+
         world = culverin.PhysicsWorld(bodies=initial_bodies)
-        
+
         # 1. Check count
         self.assertEqual(world.count, 2)
-        
+
         # 2. Check individual body data
         # Baked bodies start at slot 0 with Generation 1.
         # Handle format: (generation << 32) | slot
         for i in range(2):
             h = (1 << 32) | i
-            
+
             # Assignment and check happen in one shot.
             # Pylance now knows 'pos' is NOT None inside this block.
             if (pos := world.get_position(h)) is not None:
@@ -161,6 +162,7 @@ class TestWorldInitialization(unittest.TestCase):
         world = culverin.PhysicsWorld(bodies=[])
         self.assertEqual(world.count, 0)
         self.assertEqual(world.remaining_capacity, 10240)
+
 
 class TestPrintVersion(CulverinTestCase):
     def test_print_version(self) -> None:
@@ -271,7 +273,7 @@ class TestCoreMechanics(CulverinTestCase):
         self.world.apply_impulse_at(h, 0, 10, 0, 0, 0, 0)
         self.world.step(1 / 60.0)
 
-        assert(ang := self.world.get_angular_velocity(h))
+        assert (ang := self.world.get_angular_velocity(h))
         # Verify no spin occurred
         self.assertAlmostEqual(ang[0], 0, places=3)
         self.assertAlmostEqual(ang[1], 0, places=3)
@@ -287,7 +289,7 @@ class TestCoreMechanics(CulverinTestCase):
         self.world.apply_impulse_at(h, 0, 10, 0, 1, 1, 0)
         self.world.step(1 / 60.0)
 
-        assert(ang := self.world.get_angular_velocity(h))
+        assert (ang := self.world.get_angular_velocity(h))
         self.assertGreater(abs(ang[2]), 0.1, "Corner hit failed to generate Z-axis torque")
 
     def test_angular_velocity_manual_override(self) -> None:
@@ -314,14 +316,29 @@ class TestCoreMechanics(CulverinTestCase):
         self.world.apply_impulse_at(h2, 0, 10, 0, 0.9, 0, 0)
         self.world.step(1 / 60.0)
 
-        assert(ang1 := self.world.get_angular_velocity(h1))
-        assert(ang2 := self.world.get_angular_velocity(h2))
+        assert (ang1 := self.world.get_angular_velocity(h1))
+        assert (ang2 := self.world.get_angular_velocity(h2))
 
         self.assertGreater(
             abs(ang2[2]),
             abs(ang1[2]),
-            "Edge kick should produce significantly more torque than center kick"
+            "Edge kick should produce significantly more torque than center kick",
         )
+
+    def test_plane_creation_without_explicit_size(self) -> None:
+        """Verify that a plane can be created using default parameters without raising a RuntimeError."""
+        # Prior to the fix, omitting 'size' fell back to the default (0.5, 0.5, 0.5, 0).
+        # This was clamped/unnormalized, causing the shape factory to fail.
+        try:
+            h = self.world.create_body(
+                pos=(0, 0, 0), shape=culverin.SHAPE_PLANE, motion=culverin.MOTION_STATIC
+            )
+        except RuntimeError as e:
+            self.fail(f"Plane creation failed when size was omitted: {e}")
+
+        self.world.step(0)
+        self.assertTrue(self.world.is_alive(h), "Default plane should be alive in the simulation.")
+
 
 class TestAngularDynamicsExtended(CulverinTestCase):
     def test_apply_impulse_at_physics_correctness(self) -> None:
@@ -338,7 +355,7 @@ class TestAngularDynamicsExtended(CulverinTestCase):
         # Position: (1, 0, 0) -> 1 unit to the right of center
         # Torque = r x F = (1, 0, 0) x (0, 10, 0) = (0, 0, 10)
         self.world.apply_impulse_at(h, 0, 10, 0, 1, 0, 0)
-        self.world.step(1/60.0)
+        self.world.step(1 / 60.0)
 
         ang_vel = self.world.get_angular_velocity(h)
         assert ang_vel is not None
@@ -371,10 +388,10 @@ class TestAngularDynamicsExtended(CulverinTestCase):
 
         # User tries to apply an infinite impulse at a NaN position
         with self.assertRaises(ValueError):
-            self.world.apply_impulse_at(h, float('inf'), 0, 0, 0, 0, 0)
+            self.world.apply_impulse_at(h, float("inf"), 0, 0, 0, 0, 0)
 
         with self.assertRaises(ValueError):
-            self.world.apply_impulse_at(h, 1, 0, 0, float('nan'), 0, 0)
+            self.world.apply_impulse_at(h, 1, 0, 0, float("nan"), 0, 0)
 
     def test_angular_velocity_consistency_and_clamping(self) -> None:
         """Verify setter works immediately and acknowledgement of Jolt's physical limits."""
@@ -387,9 +404,13 @@ class TestAngularDynamicsExtended(CulverinTestCase):
         test_spin = 50.0
         self.world.set_angular_velocity(h, test_spin, 0, 0)
 
-        assert(ang_immediate := self.world.get_angular_velocity(h))
-        self.assertAlmostEqual(ang_immediate[0], test_spin, places=5,
-                               msg="Shadow buffer must mirror the set value immediately")
+        assert (ang_immediate := self.world.get_angular_velocity(h))
+        self.assertAlmostEqual(
+            ang_immediate[0],
+            test_spin,
+            places=5,
+            msg="Shadow buffer must mirror the set value immediately",
+        )
 
         # 2. Test Physical Clamping
         # Now we call an absurdly high spin.
@@ -397,16 +418,20 @@ class TestAngularDynamicsExtended(CulverinTestCase):
         self.world.set_angular_velocity(h, absurd_spin, 0, 0)
 
         # Step the world. Jolt will clamp this value to its internal MaxAngularVelocity.
-        self.world.step(1/60.0)
+        self.world.step(1 / 60.0)
 
-        assert(ang_after_step := self.world.get_angular_velocity(h))
+        assert (ang_after_step := self.world.get_angular_velocity(h))
 
         # We verify that Jolt stayed stable (didn't return NaN) and
         # applied its internal safety limits.
-        self.assertLess(ang_after_step[0], absurd_spin,
-                        "Jolt should have clamped the absurdly high angular velocity")
-        self.assertGreater(ang_after_step[0], 0.0,
-                           "Body should still be spinning at the engine's max limit")
+        self.assertLess(
+            ang_after_step[0],
+            absurd_spin,
+            "Jolt should have clamped the absurdly high angular velocity",
+        )
+        self.assertGreater(
+            ang_after_step[0], 0.0, "Body should still be spinning at the engine's max limit"
+        )
 
     def test_apply_impulse_at_static_body(self) -> None:
         """Static bodies should ignore impulses entirely without crashing."""
@@ -415,7 +440,7 @@ class TestAngularDynamicsExtended(CulverinTestCase):
 
         # This call reaches C but should be rejected by the SlotPredicate/Jolt logic
         self.world.apply_impulse_at(h, 0, 100, 0, 1, 0, 0)
-        self.world.step(1/60.0)
+        self.world.step(1 / 60.0)
 
         pos = self.world.get_position(h)
         self.assertEqual(pos, (0, 0, 0), "Static body moved after impulse_at!")
@@ -617,9 +642,10 @@ class TestCollisionsAndEvents(CulverinTestCase):
         removed = [e for e in events if e["type"] == culverin.EVENT_REMOVED]
         self.assertGreater(len(removed), 0)
         self.assertIn(b1, removed[0]["bodies"])
+
     def test_contact_events_raw_memory_layout(self) -> None:
         """Verify the new 128-byte Slim/Fat memory layout for raw contact events."""
-        
+
         self.world.create_body(pos=(0, 0, 0), size=(2, 2, 2), motion=culverin.MOTION_STATIC)
         self.world.create_body(pos=(0, 1.5, 0), size=(1, 1, 1), motion=culverin.MOTION_DYNAMIC)
         self.world.step(0)
@@ -633,8 +659,12 @@ class TestCollisionsAndEvents(CulverinTestCase):
             slim_fields: list[DTypeField] = [
                 ("body1", np.uint64),
                 ("body2", np.uint64),
-                ("px", np.float64), ("py", np.float64), ("pz", np.float64),
-                ("nx", np.float32), ("ny", np.float32), ("nz", np.float32),
+                ("px", np.float64),
+                ("py", np.float64),
+                ("pz", np.float64),
+                ("nx", np.float32),
+                ("ny", np.float32),
+                ("nz", np.float32),
                 ("impulse", np.float32),
                 ("sliding_speed", np.float32),
                 ("flags", np.uint32),
@@ -643,8 +673,12 @@ class TestCollisionsAndEvents(CulverinTestCase):
             slim_fields = [
                 ("body1", np.uint64),
                 ("body2", np.uint64),
-                ("px", np.float32), ("py", np.float32), ("pz", np.float32),
-                ("nx", np.float32), ("ny", np.float32), ("nz", np.float32),
+                ("px", np.float32),
+                ("py", np.float32),
+                ("pz", np.float32),
+                ("nx", np.float32),
+                ("ny", np.float32),
+                ("nz", np.float32),
                 ("impulse", np.float32),
                 ("sliding_speed", np.float32),
                 ("flags", np.uint32),
@@ -655,52 +689,55 @@ class TestCollisionsAndEvents(CulverinTestCase):
         fat_fields: list[DTypeField] = [
             ("udata1", np.uint64),
             ("udata2", np.uint64),
-            ("rvx", np.float32), ("rvy", np.float32), ("rvz", np.float32),
+            ("rvx", np.float32),
+            ("rvy", np.float32),
+            ("rvz", np.float32),
             ("toi", np.float32),
             ("penetration", np.float32),
             ("mat1", np.uint32),
             ("mat2", np.uint32),
             ("sub1", np.uint32),
             ("sub2", np.uint32),
-            ("pad_fat", "(3,)u4")
+            ("pad_fat", "(3,)u4"),
         ]
 
         dt = np.dtype(slim_fields + fat_fields)
 
         # 3. Assert alignment and parse
         self.assertEqual(dt.itemsize, 128, "NumPy dtype size must match C++ 128-byte alignment!")
-        
+
         events = np.frombuffer(raw_bytes, dtype=dt)
         self.assertGreaterEqual(len(events), 1)
 
         # 4. Data validation
         # Canonical ordering guarantee (body1 handle is ALWAYS smaller than body2 handle)
         self.assertLess(events[0]["body1"], events[0]["body2"])
-        
+
         # Verify event type flag
         self.assertIn(events[0]["flags"], [culverin.EVENT_ADDED, culverin.EVENT_PERSISTED])
+
 
 class TestMultiWorldConcurrency(unittest.TestCase):
     """
     Tests isolation and parallel performance of multiple PhysicsWorld instances.
-    Since the global lock was removed, these should run truly in parallel 
+    Since the global lock was removed, these should run truly in parallel
     (especially on Free-Threaded Python 3.13+ builds).
     """
 
     def test_parallel_world_isolation(self) -> None:
         """Verify that actions in one world do not affect another world running in parallel."""
         world_a = culverin.PhysicsWorld(settings={"gravity": (0, -10, 0)})
-        world_b = culverin.PhysicsWorld(settings={"gravity": (0, 0, 0)}) # No gravity in B
+        world_b = culverin.PhysicsWorld(settings={"gravity": (0, 0, 0)})  # No gravity in B
 
         body_a = world_a.create_body(pos=(0, 10, 0), motion=culverin.MOTION_DYNAMIC)
         body_b = world_b.create_body(pos=(0, 10, 0), motion=culverin.MOTION_DYNAMIC)
-        
+
         world_a.step(0)
         world_b.step(0)
 
         def run_world(world: culverin.PhysicsWorld, steps: int):
             for _ in range(steps):
-                world.step(1/60.0)
+                world.step(1 / 60.0)
 
         thread_a = threading.Thread(target=run_world, args=(world_a, 60))
         thread_b = threading.Thread(target=run_world, args=(world_b, 60))
@@ -716,31 +753,33 @@ class TestMultiWorldConcurrency(unittest.TestCase):
         # World A should have fallen due to gravity
         self.assertLess(pos_a[1], 10.0) if pos_a is not None else self.fail("Body A disappeared!")
         # World B should remain at Y=10 because it has no gravity
-        self.assertEqual(pos_b[1], 10.0, "World B was cross-contaminated by World A's gravity!") if pos_b is not None else self.fail("Body B disappeared!")
+        self.assertEqual(
+            pos_b[1], 10.0, "World B was cross-contaminated by World A's gravity!"
+        ) if pos_b is not None else self.fail("Body B disappeared!")
 
     def test_heavy_multi_world_load(self) -> None:
         """Stress test 8 worlds running simultaneously to check for race conditions in C-statics."""
         num_worlds = 8
         steps = 100
         worlds = [culverin.PhysicsWorld() for _ in range(num_worlds)]
-        
+
         # Populate each world
         for w in worlds:
             w.create_bodies_batch(
                 positions=[(0, i, 0) for i in range(50)],
                 sizes=[(1, 1, 1)] * 50,
-                shape_type=culverin.SHAPE_BOX
+                shape_type=culverin.SHAPE_BOX,
             )
 
         def worker(world: culverin.PhysicsWorld):
             for _ in range(steps):
-                world.step(1/60.0)
+                world.step(1 / 60.0)
                 # Randomly query state to force concurrent read/writes
                 _ = world.get_render_state(alpha=0.5)
                 _ = world.positions
 
         threads = [threading.Thread(target=worker, args=(w,)) for w in worlds]
-        
+
         start_time = time.perf_counter()
         for t in threads:
             t.start()
@@ -749,7 +788,7 @@ class TestMultiWorldConcurrency(unittest.TestCase):
         duration = time.perf_counter() - start_time
 
         print(f"\n[Concurrency] 8 worlds / 100 steps parallel: {duration:.4f}s")
-        
+
         for w in worlds:
             self.assertEqual(w.count, 50)
             self.assertFalse(w.is_step_pending)
@@ -758,12 +797,12 @@ class TestMultiWorldConcurrency(unittest.TestCase):
         """Verify that one world can create/destroy while another is stepping."""
         world_stepper = culverin.PhysicsWorld()
         world_mutator = culverin.PhysicsWorld()
-        
+
         stop_event = threading.Event()
 
         def step_task():
             while not stop_event.is_set():
-                world_stepper.step(1/60.0)
+                world_stepper.step(1 / 60.0)
 
         def mutate_task():
             for _ in range(100):
@@ -777,13 +816,14 @@ class TestMultiWorldConcurrency(unittest.TestCase):
 
         t1.start()
         t2.start()
-        
-        t2.join() # Wait for mutations to finish
+
+        t2.join()  # Wait for mutations to finish
         stop_event.set()
         t1.join()
-        
+
         # If no segfault occurred, the C-level instance isolation is working
         self.assertTrue(True)
+
 
 class TestCharactersAndVehicles(CulverinTestCase):
     def test_character_lifecycle_and_movement(self) -> None:
@@ -972,10 +1012,10 @@ class TestInterpolation(CulverinTestCase):
         # Impulse 2: -10 Y at -1 X
         # Net Linear Force: 10 + (-10) = 0
         # Net Torque (Z): (1 * 10) - (-1 * -10) = 20
-        self.world.apply_impulse_at(h, 0, 10, 0,  1, 0, 0)
+        self.world.apply_impulse_at(h, 0, 10, 0, 1, 0, 0)
         self.world.apply_impulse_at(h, 0, -10, 0, -1, 0, 0)
 
-        self.world.step(1/60.0)
+        self.world.step(1 / 60.0)
 
         vel = self.world.get_velocity(h)
         ang = self.world.get_angular_velocity(h)
@@ -1006,11 +1046,11 @@ class TestInterpolation(CulverinTestCase):
         h1 = self.world.create_body(pos=(0, 0, 0))
         self.world.step(0)
         self.world.set_angular_velocity(h1, 50, 0, 0)
-        self.world.step(1/60.0)
+        self.world.step(1 / 60.0)
 
         # 2. Kill it
         self.world.destroy_body(h1)
-        self.world.step(0) # Slots are now marked empty
+        self.world.step(0)  # Slots are now marked empty
 
         # 3. Create a new body (this will likely take the same dense index/slot)
         h2 = self.world.create_body(pos=(10, 10, 10))
@@ -1018,8 +1058,9 @@ class TestInterpolation(CulverinTestCase):
 
         # 4. Verify the new body is cold
         ang2 = self.world.get_angular_velocity(h2)
-        self.assertEqual(ang2, (0.0, 0.0, 0.0),
-                         "Recycled body inherited velocity from previous occupant!")
+        self.assertEqual(
+            ang2, (0.0, 0.0, 0.0), "Recycled body inherited velocity from previous occupant!"
+        )
 
     def test_apply_impulse_at_offset_from_com(self) -> None:
         """Test applying impulse at a massive offset to check for numerical explosion."""
@@ -1029,9 +1070,9 @@ class TestInterpolation(CulverinTestCase):
         # Apply impulse 1km away from the center of a 1m body
         # This is a classic 'user mistake' or stress test
         self.world.apply_impulse_at(h, 0, 1, 0, 1000, 0, 0)
-        self.world.step(1/60.0)
+        self.world.step(1 / 60.0)
 
-        assert(ang := self.world.get_angular_velocity(h))
+        assert (ang := self.world.get_angular_velocity(h))
         self.assertIsNotNone(ang)
         # It should spin very fast, but not be NaN
         self.assertTrue(all(math.isfinite(v) for v in ang))
@@ -2368,23 +2409,21 @@ class TestSoftBodies(CulverinTestCase):
 
         # 3 vertices for a single triangle
         pos = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float32)
-        
+
         # Mix of stationary (0.0) and mobile (1.0) vertices
         inv_masses = np.array([0.0, 1.0, 1.0], dtype=np.float32)
-        
+
         # Inject velocity on the first vertex
         velocities = np.array([[0, 10, 0], [0, 0, 0], [0, 0, 0]], dtype=np.float32)
 
         # Test the expanded C API
         settings.add_vertices(
-            pos.tobytes(), 
-            inv_masses=inv_masses.tobytes(), 
-            velocities=velocities.tobytes()
+            pos.tobytes(), inv_masses=inv_masses.tobytes(), velocities=velocities.tobytes()
         )
-        
+
         faces = np.array([[0, 1, 2]], dtype=np.uint32)
         materials = np.array([0], dtype=np.uint32)
-        
+
         # Test the expanded Face API
         settings.add_faces(faces.tobytes(), materials=materials.tobytes())
 
@@ -2428,7 +2467,7 @@ class TestSoftBodies(CulverinTestCase):
 
         # Create a vertical line of 3 vertices
         pos = np.array([[0, 0, 0], [0, 1, 0], [0, 2, 0]], dtype=np.float32)
-        
+
         # Pin the very top vertex (index 2)
         masses = np.array([1.0, 1.0, 0.0], dtype=np.float32)
         settings.add_vertices(pos.tobytes(), inv_masses=masses.tobytes())
@@ -2458,11 +2497,11 @@ class TestSoftBodies(CulverinTestCase):
         settings.add_vertex((0, 0, 0), inv_mass=1.0)
 
         import warnings
-        
+
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            settings.add_pinned_vertex(0) # type: ignore
-            
+            settings.add_pinned_vertex(0)  # type: ignore
+
             self.assertEqual(len(w), 1)
             self.assertTrue(issubclass(w[-1].category, DeprecationWarning))
             self.assertIn("add_vertices", str(w[-1].message))
