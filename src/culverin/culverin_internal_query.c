@@ -7,13 +7,39 @@
  */
 JPH_Shape *find_or_create_shape_locked(PhysicsWorldObject *self, int type, const float *params) {
     // 1. KEY NORMALIZATION & SANITIZATION
-    // p1-p3 clamped to 1mm minimum to prevent solver issues.
-    // unused parameters are zeroed to maximize cache hits.
-    const float p1 = (params[0] < 1e-3f) ? 1e-3f : params[0];
-    const float p2 = (params[1] < 1e-3f) ? 1e-3f : params[1];
-    const float p3 = (params[2] < 1e-3f) ? 1e-3f : params[2];
-    const float p4 = (type == CULV_SHAPE_PLANE) ? params[3] : 0.0f;
+    // Defensive clamping
+    float p1;
+    float p2;
+    float p3;
+    float p4;
 
+    if (type == CULV_SHAPE_PLANE) {
+        // Plane normal components must represent a unit vector.
+        // We defensively normalize them and avoid clamping zero-components.
+        float nx     = params[0];
+        float ny     = params[1];
+        float nz     = params[2];
+        float len_sq = (nx * nx) + (ny * ny) + (nz * nz);
+
+        if (len_sq < 1e-6f) {
+            // Safeguard against degenerate (0,0,0) vectors by defaulting to straight up
+            p1 = 0.0f;
+            p2 = 1.0f;
+            p3 = 0.0f;
+        } else {
+            float len = sqrtf(len_sq);
+            p1        = nx / len;
+            p2        = ny / len;
+            p3        = nz / len;
+        }
+        p4 = params[3]; // Keep plane offset
+    } else {
+        // Standard geometric shapes are clamped to a 1mm minimum to protect solver stability.
+        p1 = (params[0] < 1e-3f) ? 1e-3f : params[0];
+        p2 = (params[1] < 1e-3f) ? 1e-3f : params[1];
+        p3 = (params[2] < 1e-3f) ? 1e-3f : params[2];
+        p4 = 0.0f;
+    }
     // 2. CACHE LOOKUP
     for (size_t i = 0; i < self->shape_cache_count; ++i) {
         const ShapeKey *cached = &self->shape_cache[i].key;
