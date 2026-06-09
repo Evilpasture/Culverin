@@ -41,30 +41,31 @@ Detailed API references for every class and method are available:
 ### Quick Start
 
 ```python
-import culverin
 import numpy as np
+
+import culverin
 
 # Initialize the world with a capacity limit
 world = culverin.PhysicsWorld(settings={"max_bodies": 1000})
 
 # Create a static ground plane
+# a plane normal of default (0.577, 0.577, 0.577) represents an infinite 45-degree tilted ramp.
 world.create_body(pos=(0, 0, 0), shape=culverin.SHAPE_PLANE, motion=culverin.MOTION_STATIC)
 
 # Create a dynamic box
 handle = world.create_body(
-    pos=(0, 10, 0), size=(1, 1, 1), 
-    shape=culverin.SHAPE_BOX, motion=culverin.MOTION_DYNAMIC
+    pos=(0, 10, 0), size=(1, 1, 1), shape=culverin.SHAPE_BOX, motion=culverin.MOTION_DYNAMIC
 )
 
 # Simulation loop
 for _ in range(1000):
-    world.step(1/60)
-    
+    world.step(1 / 60)
+
     # Zero-Copy Data Access
     # Wrap the internal engine memory in NumPy without copying a single byte.
     # This gives you O(1) access to all 1,000+ bodies at once.
     positions = np.frombuffer(world.positions, dtype=np.float64).reshape(-1, 4)
-    
+
     # Print the Y position of our box
     idx = world.get_index(handle)
     print(f"Box Height: {positions[idx, 1]:.2f}m")
