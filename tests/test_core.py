@@ -1283,6 +1283,7 @@ class TestConstraints(CulverinTestCase):
 
         constraints: list[int] = []
         errors: list[Exception] = []
+
         lock = threading.Lock()
 
         def worker(index: int) -> None:
