@@ -118,23 +118,45 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_constraint(PhysicsWorldO
 
     // 4. JOLT EXECUTION (Lock-safe body pointer retrieval)
     const JPH_BodyLockInterface *lock_iface = JPH_PhysicsSystem_GetBodyLockInterface(self->system);
-    JPH_BodyLockWrite lock1;
-    JPH_BodyLockWrite lock2;
+    JPH_Body *b1                            = nullptr;
+    JPH_Body *b2                            = nullptr;
 
-    // Lock bodies in consistent ID order to prevent deadlocks
-    if (bid1 < bid2) {
-        JPH_BodyLockInterface_LockWrite(lock_iface, bid1, &lock1);
-        JPH_BodyLockInterface_LockWrite(lock_iface, bid2, &lock2);
-    } else {
-        JPH_BodyLockInterface_LockWrite(lock_iface, bid2, &lock2);
-        JPH_BodyLockInterface_LockWrite(lock_iface, bid1, &lock1);
+    // --- MUTEX_ARRAY HASH-COLLISION PREVENTER ---
+    // Originally, this function write-locked both bid1 and bid2 concurrently.
+    // Because upstream Jolt uses a fixed-size 'MutexArray' to map thousands of BodyIDs to a
+    // smaller array of locks (typically size 128 or 256), distinct BodyIDs with indices differing
+    // by multiples of the array size will hash to the exact same physical mutex.
+    //
+    // Attempting to lock bid1 and bid2 sequentially on the same thread while keeping both active
+    // caused a recursive write-lock on the shared mutex. This resulted in an immediate abort on
+    // POSIX systems (glibc) with "Resource deadlock avoided" (EDEADLK).
+    //
+    // RESOLUTION: Since the world is verified to be idle (BLOCK_UNTIL_NOT_STEPPING is complete),
+    // we lock each body sequentially in separate scopes. This allows us to extract the stable
+    // body pointer under a single lock and immediately release it, guaranteeing that the thread
+    // never holds more than one lock at a time. This completely eliminates both lock-order
+    // deadlocks and MutexArray hash collisions.
+
+    {
+        JPH_BodyLockWrite lock;
+        JPH_BodyLockInterface_LockWrite(lock_iface, bid1, &lock);
+        if (lock.body && JPH_Body_GetID(lock.body) == bid1) {
+            b1 = lock.body;
+        }
+        JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
+    }
+
+    {
+        JPH_BodyLockWrite lock;
+        JPH_BodyLockInterface_LockWrite(lock_iface, bid2, &lock);
+        if (lock.body && JPH_Body_GetID(lock.body) == bid2) {
+            b2 = lock.body;
+        }
+        JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
     }
 
     JPH_Constraint *constraint = nullptr;
-    if (lock1.body && lock2.body) {
-        JPH_Body *b1 = (JPH_Body_GetID(lock1.body) == bid1) ? lock1.body : lock2.body;
-        JPH_Body *b2 = (JPH_Body_GetID(lock1.body) == bid2) ? lock1.body : lock2.body;
-
+    if (b1 && b2) {
         switch (type) {
         case CONSTRAINT_FIXED:
             constraint = create_fixed(&p, b1, b2);
@@ -158,9 +180,6 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_constraint(PhysicsWorldO
             culv_unreachable();
         }
     }
-
-    JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock1);
-    JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock2);
 
     // 5. COMMIT PHASE
     if (UNLIKELY(!constraint)) {

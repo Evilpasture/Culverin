@@ -1241,6 +1241,177 @@ class TestConstraints(CulverinTestCase):
         assert (v := self.get_pos(b2)) is not None
         self.assertLess(v[0], 0.5, f"Body should have swung; current X is {v[0]}")
 
+    def test_double_constraints(self) -> None:
+        """
+        Tests creating multiple fixed constraints on a shared body.
+        Expanded to verify behavior under both single-threaded world configurations
+        and concurrent multi-threaded execution to help isolate deadlock issues.
+        """
+        # --- Scenario 1: Sequential Double Constraint with a Single-Threaded World ---
+        # This helps reproduce issues where Jolt's JobSystem Single-Threaded fallback
+        # or non-recursive wrapper locks deadlock under single-threaded limits.
+        st_world = culverin.PhysicsWorld(settings={"num_threads": 1, "max_bodies": 128})
+        st_world.step(0)
+
+        b1_st = st_world.create_body(pos=(0, 0, 0), motion=culverin.MOTION_DYNAMIC)
+        b2_st = st_world.create_body(pos=(2, 0, 0), motion=culverin.MOTION_DYNAMIC)
+        b3_st = st_world.create_body(pos=(4, 0, 0), motion=culverin.MOTION_DYNAMIC)
+        st_world.step(0)
+
+        try:
+            c1_st = st_world.create_constraint(culverin.CONSTRAINT_FIXED, b1_st, b3_st)
+            c2_st = st_world.create_constraint(culverin.CONSTRAINT_FIXED, b2_st, b3_st)
+            st_world.step(1 / 60.0)
+
+            self.assertEqual(st_world.get_constraint_type(c1_st), culverin.CONSTRAINT_FIXED)
+            self.assertEqual(st_world.get_constraint_type(c2_st), culverin.CONSTRAINT_FIXED)
+        except Exception as e:
+            self.fail(f"Sequential constraints failed on single-threaded world: {e}")
+
+        # --- Scenario 2: Concurrent/Multithreaded Constraint Creation from Python Threads ---
+        # Spawns multiple threads to concurrently link dynamic bodies to a shared central body.
+        # This checks for lock-order inversion and re-entrancy issues under thread contention.
+        shared_body = self.world.create_body(pos=(0, 0, 0), motion=culverin.MOTION_DYNAMIC)
+        self.world.step(0)
+
+        num_threads = 4
+        worker_bodies = [
+            self.world.create_body(pos=(2.0 * i, 0, 0), motion=culverin.MOTION_DYNAMIC)
+            for i in range(num_threads)
+        ]
+        self.world.step(0)
+
+        constraints: list[int] = []
+        errors: list[Exception] = []
+
+        lock = threading.Lock()
+
+        def worker(index: int) -> None:
+            try:
+                c = self.world.create_constraint(
+                    culverin.CONSTRAINT_FIXED, worker_bodies[index], shared_body
+                )
+                with lock:
+                    constraints.append(c)
+            except Exception as e:
+                with lock:
+                    errors.append(e)
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(num_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        if errors:
+            self.fail(f"Concurrent constraint creation encountered errors: {errors}")
+
+        self.assertEqual(len(constraints), num_threads)
+
+        # Ensure stepping the world with multiple concurrent constraints works without a deadlock
+        try:
+            self.world.step(1 / 60.0)
+        except Exception as e:
+            self.fail(f"Stepping the world after concurrent constraint creation failed: {e}")
+
+        for c in constraints:
+            self.assertEqual(self.world.get_constraint_type(c), culverin.CONSTRAINT_FIXED)
+
+    def test_double_constraints_sleeping_deadlock(self) -> None:
+        """
+        Forces a transition from sleeping to active during constraint creation.
+        Since Jolt locks the bodies internally during the BodyActivationListener
+        callback, any re-entrant lock inside the wrapper callback will trigger
+        EDEADLK ("Resource deadlock avoided") on Linux.
+        """
+        st_world = culverin.PhysicsWorld(settings={"num_threads": 1, "max_bodies": 128})
+
+        # 1. Create a static floor to let the dynamic bodies settle and sleep on
+        st_world.create_body(
+            pos=(0, -1, 0), size=(100, 1, 100), motion=culverin.MOTION_STATIC, friction=1.0
+        )
+        st_world.step(0)
+
+        # 2. Place three dynamic boxes just above the floor
+        b1 = st_world.create_body(
+            pos=(-2.0, 0.5, 0.0),
+            shape=culverin.SHAPE_BOX,
+            size=(1.0, 1.0, 1.0),
+            motion=culverin.MOTION_DYNAMIC,
+            mass=1.0,
+        )
+        b2 = st_world.create_body(
+            pos=(2.0, 0.5, 0.0),
+            shape=culverin.SHAPE_BOX,
+            size=(1.0, 1.0, 1.0),
+            motion=culverin.MOTION_DYNAMIC,
+            mass=1.0,
+        )
+        b3 = st_world.create_body(
+            pos=(0.0, 0.5, 0.0),
+            shape=culverin.SHAPE_BOX,
+            size=(1.0, 1.0, 1.0),
+            motion=culverin.MOTION_DYNAMIC,
+            mass=1.0,
+        )
+        st_world.step(0)
+
+        # 3. Simulate for 150 frames to ensure all dynamic bodies have settled and gone to sleep
+        for _ in range(150):
+            st_world.step(1 / 60.0)
+
+        # 4. Verify pre-condition: all bodies are asleep (inactive)
+        self.assertFalse(st_world.is_active(b1), "Pre-condition failed: b1 is still active")
+        self.assertFalse(st_world.is_active(b2), "Pre-condition failed: b2 is still active")
+        self.assertFalse(st_world.is_active(b3), "Pre-condition failed: b3 is still active")
+
+        # 5. Create constraints. Waking up sleeping bodies synchronously invokes
+        # Jolt's OnBodyActivated callback inside AddConstraint. If the callback
+        # tries to lock the body or self->mutex, it will raise EDEADLK on Linux.
+        try:
+            c1 = st_world.create_constraint(culverin.CONSTRAINT_FIXED, b1, b3)
+            c2 = st_world.create_constraint(culverin.CONSTRAINT_FIXED, b2, b3)
+            st_world.step(1 / 60.0)
+
+            self.assertEqual(st_world.get_constraint_type(c1), culverin.CONSTRAINT_FIXED)
+            self.assertEqual(st_world.get_constraint_type(c2), culverin.CONSTRAINT_FIXED)
+        except Exception as e:
+            # Captures and fails gracefully if any deadlock exception is thrown
+            self.fail(f"Constraint creation triggered a system deadlock: {e}")
+
+    def test_constraint_mutex_collision_regression(self) -> None:
+        """
+        Verify that creating constraints between bodies whose internal IDs hash
+        to the same Jolt MutexArray bucket (strides of 64, 128, 256) does not
+        trigger a recursive write-lock deadlock ("Resource deadlock avoided").
+        """
+        # Create a dedicated local world to avoid polluting the default test suite world
+        world = culverin.PhysicsWorld(settings={"max_bodies": 1024})
+        world.step(0)
+
+        # Create sequentially allocated bodies to ensure steady ID index offsets
+        bodies = []
+        for _ in range(300):
+            bodies.append(world.create_body(pos=(0, 0, 0), motion=culverin.MOTION_DYNAMIC))
+        world.step(0)
+
+        # Test common MutexArray array sizes (64, 128, 256)
+        for stride in [64, 128, 256]:
+            for i in range(len(bodies) - stride):
+                b1 = bodies[i]
+                b2 = bodies[i + stride]
+                try:
+                    # Sequential locking should safely instantiate and destroy
+                    # constraints even if b1 and b2 collide on the same internal mutex.
+                    c = world.create_constraint(culverin.CONSTRAINT_FIXED, b1, b2)
+                    self.assertIsNotNone(c)
+                    world.destroy_constraint(c)
+                except Exception as e:
+                    self.fail(
+                        f"Regression detected: Lock collision triggered a deadlock "
+                        f"with stride {stride} at index {i}. Error: {e}"
+                    )
+
 
 class TestRagdollsAndSkeletons(CulverinTestCase):
     def test_skeleton_and_ragdoll_creation(self) -> None:
