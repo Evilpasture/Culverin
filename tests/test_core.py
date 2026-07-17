@@ -927,6 +927,168 @@ class TestCharactersAndVehicles(CulverinTestCase):
         self.assertGreater(v[2], 0.5)  # Tank should move forward
 
 
+class TestCharacterVirtualLimits(CulverinTestCase):
+    """
+    Verification suite for Jolt's CharacterVirtual design limits.
+    These tests verify the engine against real-world integration pitfalls.
+    """
+
+    def test_double_move_sinking_degradation(self) -> None:
+        """
+        Verify that calling move() twice in a single frame desynchronizes
+        Jolt's collision resolver, causing the character to sink deeper
+        into the floor compared to a single combined move.
+        """
+        # Create a static floor
+        self.world.create_body(pos=(0, -1, 0), size=(100, 1, 100), motion=culverin.MOTION_STATIC)
+        self.world.step(0)
+
+        # Character 1: Single combined move
+        char_single = self.world.create_character(pos=(0, 1.0, 0))
+        # Character 2: Double move (Gravity first, then horizontal movement)
+        char_double = self.world.create_character(pos=(5.0, 1.0, 0))
+        self.world.step(0)
+
+        dt = 1 / 60.0
+        gravity = self.world.get_gravity()
+
+        # Run for 30 frames
+        for _ in range(30):
+            # Correct way: Combined 3D move
+            char_single.move((2.0, -1.0, 0.0), dt)
+
+            # Incorrect way: Move gravity first, then horizontal movement with Y=0
+            char_double.move(gravity, dt)
+            char_double.move((2.0, 0.0, 0.0), dt)
+
+            self.world.step(dt)
+
+        single_y = char_single.get_position()[1]
+        double_y = char_double.get_position()[1]
+
+        # The double-move character should have sunk slightly lower into the floor
+        # due to Jolt's sweep-and-slide resolver resetting vertical step-down on the second call
+        self.assertLess(
+            double_y, single_y, "Double move caused character to sink deeper into the ground"
+        )
+
+    def test_character_self_collision_hovering(self) -> None:
+        """
+        Verify that having an active collidable physical body (e.g. Torso)
+        at the exact same location as the virtual character capsule causes
+        Jolt's resolver to register self-penetration as ground contact.
+
+        This false contact keeps the character 'grounded' in mid-air,
+        preventing them from falling under gravity.
+        """
+        # Torso placed precisely at Y=8.7 to bias upward penetration resolution
+        pos = (0, 10.0, 0)
+        torso = self.world.create_body(
+            pos=(0, 8.7, 0), size=(1, 1, 1), motion=culverin.MOTION_KINEMATIC
+        )  # <--- Update pos here
+        char = self.world.create_character(pos=pos)
+        self.world.step(0)
+
+        # Scenario A: Self-collision ACTIVE (Torso can collide)
+        # This replicates the bug where character parts default to category=1, mask=1
+        self.world.set_collision_filter(torso, category=1, mask=1)
+
+        # Step and check grounding
+        char.move((0, 0, 0), 1 / 60.0)
+        self.world.step(1 / 60.0)
+
+        # The character should falsely report being grounded because it's colliding with the torso
+        self.assertTrue(
+            char.is_grounded(), "Virtual character failed to ignore its own collidable limbs"
+        )
+
+        # Scenario B: Self-collision FILTERED (Torso has collision disabled)
+        # Replicates the fix where ChangeBodyCollision(torso, False) is called, setting category=0
+        # Our C patch char_on_contact_validate ignores contact if category == 0
+        self.world.set_collision_filter(torso, category=0, mask=0)
+
+        # Move and step
+        char.move((0, 0, 0), 1 / 60.0)
+        self.world.step(1 / 60.0)
+
+        # The character should now correctly detect it is in the air and start falling
+        self.assertFalse(
+            char.is_grounded(), "Character should be airborne after filtering out self-collision"
+        )
+
+    def test_character_gravity_kinematic_nature(self) -> None:
+        """
+        Verify Jolt's virtual character is strictly kinematic and does not
+        automatically fall under gravity during the world step unless the
+        caller actively passes a downward velocity to move().
+        """
+        start_y = 10.0
+        char = self.world.create_character(pos=(0, start_y, 0))
+        self.world.step(0)
+
+        # We step the world, but we do NOT call char.move()
+        for _ in range(10):
+            self.world.step(1 / 60.0)
+
+        # The character should remain suspended at exactly start_y
+        self.assertEqual(
+            char.get_position()[1],
+            start_y,
+            "Kinematic virtual character fell without calling move()",
+        )
+
+    def test_character_limb_motion_type_requirement(self) -> None:
+        """
+        Verify why client-simulated character parts must be kinematic.
+        If they are dynamic, Jolt automatically applies gravity and forces
+        to them during the world step, causing them to fall independently
+        of the virtual character's capsule before the next Python update.
+        """
+        # Create a dynamic body representing a dynamic limb
+        pos = (0, 10.0, 0)
+        dynamic_limb = self.world.create_body(pos=pos, motion=culverin.MOTION_DYNAMIC, mass=1.0)
+
+        # Create a kinematic body representing a kinematic limb
+        kinematic_limb = self.world.create_body(pos=pos, motion=culverin.MOTION_KINEMATIC)
+        self.world.step(0)
+
+        # Step the world for 1 frame
+        self.world.step(1 / 60.0)
+
+        # 1. The dynamic limb should have fallen due to Jolt's internal gravity step
+        dyn_pos = self.world.get_position(dynamic_limb)
+        assert dyn_pos is not None
+        self.assertLess(dyn_pos[1], 10.0, "Dynamic limb failed to respond to Jolt's gravity step")
+
+        # 2. The kinematic limb should remain exactly at Y=10.0
+        kin_pos = self.world.get_position(kinematic_limb)
+        assert kin_pos is not None
+        self.assertEqual(kin_pos[1], 10.0, "Kinematic limb drifted under gravity")
+
+    def test_character_get_linear_velocity(self) -> None:
+        """
+        Verify that the newly exposed get_linear_velocity() C-getter
+        correctly retrieves Jolt's internal virtual character velocity.
+        """
+        char = self.world.create_character(pos=(0, 10.0, 0))
+        self.world.step(0)
+
+        # 1. Verify initial velocity is exactly zero
+        init_vel = char.get_linear_velocity()
+        self.assertEqual(init_vel, (0.0, 0.0, 0.0))
+
+        # 2. Call move with a target velocity
+        target_vel = (10.0, -5.0, 20.0)
+        char.move(target_vel, 1 / 60.0)
+        self.world.step(1 / 60.0)
+
+        # 3. Verify Jolt's internal velocity matches the active physical state
+        resolved_vel = char.get_linear_velocity()
+        self.assertAlmostEqual(resolved_vel[0], target_vel[0], places=5)
+        self.assertAlmostEqual(resolved_vel[1], target_vel[1], places=5)
+        self.assertAlmostEqual(resolved_vel[2], target_vel[2], places=5)
+
+
 class TestThreadSafety(CulverinTestCase):
     def test_blocking_mutation(self) -> None:
         # 1. Create a valid body to mutate

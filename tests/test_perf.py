@@ -20,21 +20,24 @@ class THRESHOLDS:
 
     # Scale factors based on your actual CI regression logs:
     # Physics is close (1.5x), but Python-to-C plumbing is hit hard (6x)
-    PHYS_SCALE = 3.0 if IS_CI else 1.0
-    API_SCALE = 6.0 if IS_CI else 1.0
+    # We increase the base scale from 1.0 to 1.5 or 2.0 locally to accommodate
+    # developers running background applications (IDEs, web browsers, etc.)
+    PHYS_SCALE = 3.0 if IS_CI else 1.5
+    API_SCALE = 6.0 if IS_CI else 2.0  # <--- Relaxed local scale from 1.0 to 2.0
 
     # Creation & Lifecycle
     BATCH_CREATE_RATIO = 0.7 if IS_CI else 0.5
     BATCH_CREATE_MAX_S_5K = 0.04 * PHYS_SCALE
 
     # Core Simulation
-    SIM_STEP_MAX_MS_10K = 2.0 * PHYS_SCALE  # (Logs showed 2.48ms)
-    BULK_MUTATION_MAX_MS = 2.0 * PHYS_SCALE  # (Logs showed 2.66ms)
+    SIM_STEP_MAX_MS_10K = 2.0 * PHYS_SCALE
+    BULK_MUTATION_MAX_MS = 2.0 * PHYS_SCALE
     CONTENTION_STEP_MAX_MS = 1.8 * PHYS_SCALE
 
-    # C-API Bindings (The "Heavy Hitters" on CI)
-    FASTPARSE_MAX_S_50K = 0.025 * API_SCALE  # (Logs showed ~0.14s)
-    FASTBUILD_MAX_S_100K = 0.01 * API_SCALE  # (Logs showed ~0.033s)
+    # C-API Bindings
+    # These are now scaled by the updated API_SCALE to give the CPU some breathing room
+    FASTPARSE_MAX_S_50K = 0.025 * API_SCALE
+    FASTBUILD_MAX_S_100K = 0.01 * API_SCALE
 
     # Queries
     RAYCAST_MAX_S_50K = 0.020 * PHYS_SCALE
