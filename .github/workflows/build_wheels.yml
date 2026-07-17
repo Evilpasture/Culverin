@@ -457,7 +457,7 @@ jobs:
           uv build --wheel --python 3.14t --out-dir dist/ \
             --config-setting=cmake.define.CMAKE_C_COMPILER=gcc \
             --config-setting=cmake.define.CMAKE_CXX_COMPILER=g++ \
-            --config-setting=cmake.verbose=true
+            --config-setting=build.verbose=true
 
       - name: Smoke Test GCC Wheel
         run: |
