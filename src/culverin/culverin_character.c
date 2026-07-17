@@ -15,11 +15,10 @@
 
 static bool JPH_API_CALL
 char_on_contact_validate(void *userData, CULV_MAYBE_UNUSED const JPH_CharacterVirtual *character,
-                         JPH_BodyID bodyID2, CULV_MAYBE_UNUSED JPH_SubShapeID subShapeID2) {
+                         const JPH_CharacterContact *contact) {
 
     CharacterObject *self = (CharacterObject *)userData;
-    if (!self || !self->world) {
-        fprintf(stderr, "\n[DEBUG] char_on_contact_validate: self or world is NULL\n");
+    if (!self || !self->world || !contact) {
         return true;
     }
     PhysicsWorldObject *world = self->world;
@@ -27,66 +26,40 @@ char_on_contact_validate(void *userData, CULV_MAYBE_UNUSED const JPH_CharacterVi
     // 1. Get Culverin Handles
     uint64_t h1_raw = atomic_load_explicit(&self->handle, memory_order_relaxed);
 
-    // Direct thread-safe lookup of the other body's UserData
-    uint64_t h2_raw = 0;
-    if (world->body_interface) {
-        h2_raw = JPH_BodyInterface_GetUserData(world->body_interface, bodyID2);
+    // Direct thread-safe lookup of the other body's UserData from contact
+    uint64_t h2_raw = contact->userData;
+    if (h2_raw == 0 && world->body_interface) {
+        h2_raw = JPH_BodyInterface_GetUserData(world->body_interface, contact->bodyB);
     }
     // Fallback to safe lock-free id-to-handle map lookup
     if (h2_raw == 0 && world->id_to_handle_map) {
-        uint32_t j_idx = JPH_ID_TO_INDEX(bodyID2);
+        uint32_t j_idx = JPH_ID_TO_INDEX(contact->bodyB);
         if (j_idx <= world->max_jolt_bodies) {
             h2_raw = atomic_load_explicit(&world->id_to_handle_map[j_idx], memory_order_acquire);
         }
     }
 
-    fprintf(stderr,
-            "\n[DEBUG] char_on_contact_validate:\n"
-            "  -> h1_raw (Char)  : 0x%llx\n"
-            "  -> h2_raw (Body)  : 0x%llx\n"
-            "  -> bodyID2 (Jolt) : %u\n",
-            (unsigned long long)h1_raw, (unsigned long long)h2_raw, (unsigned int)bodyID2);
-
     if (h2_raw == 0) {
-        fprintf(stderr,
-                "  -> h2_raw is 0 (static/unregistered), colliding by default (return true)\n");
-        return true;
+        return true; // Collide by default if handle is missing (e.g. static environment)
     }
 
     // 2. Safely Resolve Slots with Generation Checking
     uint32_t slot1 = 0;
     uint32_t slot2 = 0;
-    bool unpack1   = unpack_handle(world, (BodyHandle)h1_raw, &slot1);
-    bool unpack2   = unpack_handle(world, (BodyHandle)h2_raw, &slot2);
-
-    fprintf(stderr,
-            "  -> unpack1 (Char) : %d (slot: %u)\n"
-            "  -> unpack2 (Body) : %d (slot: %u)\n",
-            unpack1, slot1, unpack2, slot2);
-
-    if (!unpack1 || !unpack2) {
-        fprintf(stderr, "  -> Unpack failed, colliding by default (return true)\n");
-        return true;
+    if (!unpack_handle(world, (BodyHandle)h1_raw, &slot1) ||
+        !unpack_handle(world, (BodyHandle)h2_raw, &slot2)) {
+        return true; // Collide on handle verification mismatches
     }
 
     // Safety checks for array bounds
     if (slot1 >= world->slot_capacity || slot2 >= world->slot_capacity) {
-        fprintf(stderr,
-                "  -> Slot out of bounds (capacity: %zu), colliding by default (return true)\n",
-                world->slot_capacity);
         return true;
     }
 
     // Check states to ensure both slots are in use
     uint8_t state1 = atomic_load_explicit(&world->slot_states[slot1], memory_order_relaxed);
     uint8_t state2 = atomic_load_explicit(&world->slot_states[slot2], memory_order_relaxed);
-    fprintf(stderr,
-            "  -> state1 (Char)  : %u\n"
-            "  -> state2 (Body)  : %u\n",
-            state1, state2);
-
     if (state1 == SLOT_EMPTY || state2 == SLOT_EMPTY) {
-        fprintf(stderr, "  -> One or both slots empty, colliding by default (return true)\n");
         return true;
     }
 
@@ -94,14 +67,7 @@ char_on_contact_validate(void *userData, CULV_MAYBE_UNUSED const JPH_CharacterVi
     uint32_t idx2 = world->slot_to_dense[slot2];
 
     size_t active_count = atomic_load_explicit(&world->count, memory_order_relaxed);
-    fprintf(stderr,
-            "  -> idx1 (Char)    : %u\n"
-            "  -> idx2 (Body)    : %u\n"
-            "  -> active_count   : %zu\n",
-            idx1, idx2, active_count);
-
     if (idx1 >= active_count || idx2 >= active_count) {
-        fprintf(stderr, "  -> Dense index out of bounds, colliding by default (return true)\n");
         return true;
     }
 
@@ -111,14 +77,8 @@ char_on_contact_validate(void *userData, CULV_MAYBE_UNUSED const JPH_CharacterVi
     uint32_t cat2  = world->categories[idx2];
     uint32_t mask2 = world->masks[idx2];
 
-    bool result = (cat1 & mask2) != 0 && (cat2 & mask1) != 0;
-    fprintf(stderr,
-            "  -> cat1: 0x%x, mask1: 0x%x\n"
-            "  -> cat2: 0x%x, mask2: 0x%x\n"
-            "  -> FINAL DECISION : %s\n",
-            cat1, mask1, cat2, mask2, result ? "COLLIDE" : "IGNORE");
-
-    return result;
+    // Reject if either mask blocks the other's category
+    return (cat1 & mask2) != 0 && (cat2 & mask1) != 0;
 }
 
 static void record_character_contact(CharacterObject *self, JPH_BodyID bodyID2,
@@ -234,19 +194,18 @@ static void report_char_vs_char(CharacterObject *self, const JPH_CharacterVirtua
 
 static void JPH_API_CALL char_on_character_contact_added(
     void *userData, CULV_MAYBE_UNUSED const JPH_CharacterVirtual *character,
-    const JPH_CharacterVirtual *otherCharacter, CULV_MAYBE_UNUSED JPH_SubShapeID subShapeID2,
-    const JPH_RVec3 *contactPosition, const JPH_Vec3 *contactNormal,
-    JPH_CharacterContactSettings *ioSettings) {
+    const JPH_CharacterContact *contact, JPH_CharacterContactSettings *ioSettings) {
 
     ioSettings->canPushCharacter   = true;
     ioSettings->canReceiveImpulses = true;
 
     auto self = (CharacterObject *)userData;
-    if (!self || !self->world) {
+    if (!self || !contact) {
         return;
     }
 
-    report_char_vs_char(self, otherCharacter, contactNormal, contactPosition, EVENT_ADDED);
+    report_char_vs_char(self, contact->characterB, &contact->contactNormal, &contact->position,
+                        EVENT_ADDED);
 }
 
 static void apply_character_impulse(CharacterObject *self, JPH_BodyID bodyID2,
@@ -288,45 +247,44 @@ static void apply_character_impulse(CharacterObject *self, JPH_BodyID bodyID2,
     }
 }
 
-// --- Updated Added Callback ---
 static void JPH_API_CALL char_on_contact_added(
-    void *userData, CULV_MAYBE_UNUSED const JPH_CharacterVirtual *character, JPH_BodyID bodyID2,
-    CULV_MAYBE_UNUSED JPH_SubShapeID subShapeID2, const JPH_RVec3 *contactPosition,
-    const JPH_Vec3 *contactNormal, JPH_CharacterContactSettings *ioSettings) {
+    void *userData, CULV_MAYBE_UNUSED const JPH_CharacterVirtual *character,
+    const JPH_CharacterContact *contact, JPH_CharacterContactSettings *ioSettings) {
 
     ioSettings->canPushCharacter   = true;
     ioSettings->canReceiveImpulses = true;
 
     auto self = (CharacterObject *)userData;
-    if (!self) {
+    if (!self || !contact) {
         return;
     }
 
     // Record Event
-    record_character_contact(self, bodyID2, contactPosition, contactNormal, EVENT_ADDED);
+    record_character_contact(self, contact->bodyB, &contact->position, &contact->contactNormal,
+                             EVENT_ADDED);
 
     // Apply Impulse
-    apply_character_impulse(self, bodyID2, contactNormal);
+    apply_character_impulse(self, contact->bodyB, &contact->contactNormal);
 }
 
 static void JPH_API_CALL char_on_contact_persisted(
-    void *userData, CULV_MAYBE_UNUSED const JPH_CharacterVirtual *character, JPH_BodyID bodyID2,
-    CULV_MAYBE_UNUSED JPH_SubShapeID subShapeID2, const JPH_RVec3 *contactPosition,
-    const JPH_Vec3 *contactNormal, JPH_CharacterContactSettings *ioSettings) {
+    void *userData, CULV_MAYBE_UNUSED const JPH_CharacterVirtual *character,
+    const JPH_CharacterContact *contact, JPH_CharacterContactSettings *ioSettings) {
 
     ioSettings->canPushCharacter   = true;
     ioSettings->canReceiveImpulses = true;
 
     auto self = (CharacterObject *)userData;
-    if (!self) {
+    if (!self || !contact) {
         return;
     }
 
     // Record Event
-    record_character_contact(self, bodyID2, contactPosition, contactNormal, EVENT_PERSISTED);
+    record_character_contact(self, contact->bodyB, &contact->position, &contact->contactNormal,
+                             EVENT_PERSISTED);
 
-    // Apply Impulse (CRITICAL FIX)
-    apply_character_impulse(self, bodyID2, contactNormal);
+    // Apply Impulse
+    apply_character_impulse(self, contact->bodyB, &contact->contactNormal);
 }
 
 static void JPH_API_CALL char_on_contact_removed(void *userData,
@@ -385,20 +343,19 @@ static void JPH_API_CALL char_on_contact_removed(void *userData,
 }
 
 static void JPH_API_CALL char_on_character_contact_persisted(
-    void *userData, const JPH_CharacterVirtual *Py_UNUSED(character),
-    const JPH_CharacterVirtual *otherCharacter, JPH_SubShapeID Py_UNUSED(subShapeID2),
-    const JPH_RVec3 *contactPosition, const JPH_Vec3 *contactNormal,
-    JPH_CharacterContactSettings *ioSettings) {
+    void *userData, CULV_MAYBE_UNUSED const JPH_CharacterVirtual *character,
+    const JPH_CharacterContact *contact, JPH_CharacterContactSettings *ioSettings) {
 
     ioSettings->canPushCharacter   = true;
     ioSettings->canReceiveImpulses = true;
 
     CharacterObject *self = (CharacterObject *)userData;
-    if (!self || !self->world) {
+    if (!self || !contact) {
         return;
     }
 
-    report_char_vs_char(self, otherCharacter, contactNormal, contactPosition, EVENT_PERSISTED);
+    report_char_vs_char(self, contact->characterB, &contact->contactNormal, &contact->position,
+                        EVENT_PERSISTED);
 }
 
 static void JPH_API_CALL char_on_character_contact_removed(
@@ -509,36 +466,48 @@ static void JPH_API_CALL char_on_adjust_velocity(void *userData,
 
 static bool JPH_API_CALL char_on_character_contact_validate(
     void *userData, CULV_MAYBE_UNUSED const JPH_CharacterVirtual *character,
-    const JPH_CharacterVirtual *otherCharacter, CULV_MAYBE_UNUSED JPH_SubShapeID subShapeID2) {
+    const JPH_CharacterContact *contact) {
 
     CharacterObject *self = (CharacterObject *)userData;
-    if (!self || !self->world) {
+    if (!self || !self->world || !contact) {
         return true;
     }
 
     PhysicsWorldObject *world = self->world;
 
     // 1. Get Culverin Handles
-    // h1: self (stored on the CharacterObject)
-    // h2: other (stored in JPH UserData, which we set in register_char)
     uint64_t h1_raw = atomic_load_explicit(&self->handle, memory_order_relaxed);
-    uint64_t h2_raw = JPH_CharacterVirtual_GetUserData(otherCharacter);
+
+    // In JPH_CharacterContact, other character handle is stored in contact->userData
+    // or falls back to JPH_CharacterVirtual_GetUserData(contact->characterB)
+    uint64_t h2_raw = contact->userData;
+    if (h2_raw == 0 && contact->characterB) {
+        h2_raw = JPH_CharacterVirtual_GetUserData(contact->characterB);
+    }
 
     if (h2_raw == 0) {
         return true; // Collide by default if handle is missing
     }
 
-    // 2. Resolve Dense Indices for filter lookup
-    uint32_t slot1 = (uint32_t)(h1_raw & HANDLE_INDEX_MASK);
-    uint32_t slot2 = (uint32_t)(h2_raw & HANDLE_INDEX_MASK);
+    // 2. Resolve Slots
+    uint32_t slot1 = 0;
+    uint32_t slot2 = 0;
+    if (!unpack_handle(world, (BodyHandle)h1_raw, &slot1) ||
+        !unpack_handle(world, (BodyHandle)h2_raw, &slot2)) {
+        return true;
+    }
 
-    // Safety check for array bounds
     if (slot1 >= world->slot_capacity || slot2 >= world->slot_capacity) {
         return true;
     }
 
     uint32_t idx1 = world->slot_to_dense[slot1];
     uint32_t idx2 = world->slot_to_dense[slot2];
+
+    size_t active_count = atomic_load_explicit(&world->count, memory_order_relaxed);
+    if (idx1 >= active_count || idx2 >= active_count) {
+        return true;
+    }
 
     // 3. Perform Bitmask Filtering
     uint32_t cat1  = world->categories[idx1];
