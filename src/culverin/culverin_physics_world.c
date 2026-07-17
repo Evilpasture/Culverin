@@ -2191,7 +2191,6 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
 
     // 3. JOLT PREP (No GIL, Inline Shape Caching)
     Py_BEGIN_ALLOW_THREADS;
-    SHADOW_LOCK(&self->shadow_lock);
     JPH_Shape *CULV_RESTRICT last_shape = nullptr;
 
     enum : uint8_t { PARAM_0, PARAM_1, PARAM_2, PARAM_3 };
@@ -2212,7 +2211,9 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
         if (curr_p[PARAM_0] != last_p[PARAM_0] || curr_p[PARAM_1] != last_p[PARAM_1] ||
             curr_p[PARAM_2] != last_p[PARAM_2] || curr_p[PARAM_3] != last_p[PARAM_3]) {
 
-            shape      = find_or_create_shape_locked(self, shape_type, curr_p);
+            SHADOW_LOCK(&self->shadow_lock);
+            shape = find_or_create_shape_locked(self, shape_type, curr_p);
+            SHADOW_UNLOCK(&self->shadow_lock);
             last_shape = shape;
 
             // Struct assignment is faster and safer than memcpy in C23
@@ -2227,7 +2228,6 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
                 (motion_type == MOTION_STATIC) ? OBJECT_LAYER_STATIC : OBJECT_LAYER_DYNAMIC);
         }
     }
-    SHADOW_UNLOCK(&self->shadow_lock);
     Py_END_ALLOW_THREADS;
 
     // 4. BULK COMMIT PHASE (Inside Shadow Lock)
