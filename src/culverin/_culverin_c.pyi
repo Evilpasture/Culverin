@@ -3,7 +3,7 @@
 
 # NOTE: Some methods compiled with STRICT_HANDLE_ENABLED will crash with ValueError. Otherwise, returns None or silent.
 
-from collections.abc import Buffer, Sequence, Iterable
+from collections.abc import Buffer, Iterable, Sequence
 from typing import Any, Literal, TypedDict, overload
 from warnings import deprecated
 
@@ -39,24 +39,24 @@ class Manual(Transmission):
     mode: int
 
 class WorldSettings(TypedDict, total=False):
-    gravity: Vec3                      # Default: (0.0, -9.81, 0.0)
-    penetration_slop: float            # Default: 0.02
-    max_bodies: int                    # Default: 10240
-    max_pairs: int                     # Default: 65536
-    max_contact_constraints: int       # Default: 32768
-    temp_allocator_size: int           # Default: 33554432 (32MB)
-    max_physics_jobs: int              # Default: 2048
-    max_physics_barriers: int          # Default: 8
-    num_threads: int                   # Default: 4
+    gravity: Vec3  # Default: (0.0, -9.81, 0.0)
+    penetration_slop: float  # Default: 0.02
+    max_bodies: int  # Default: 10240
+    max_pairs: int  # Default: 65536
+    max_contact_constraints: int  # Default: 32768
+    temp_allocator_size: int  # Default: 33554432 (32MB)
+    max_physics_jobs: int  # Default: 2048
+    max_physics_barriers: int  # Default: 8
+    num_threads: int  # Default: 4
 
 class BodyDefinition(TypedDict, total=False):
-    shape: int                         # One of CULV_SHAPE_* constants
-    pos: Vec3                          # (x, y, z)
-    rot: Vec3                          # (x, y, z, w) quaternion
-    size: float | Sequence[float]      # radius, (x,y,z) extents, or (nx,ny,nz,c)
-    mass: float                        # Mass in kg (0 for static)
-    motion: int                        # MOTION_STATIC, KINEMATIC, or DYNAMIC
-    user_data: int                     # Custom 64-bit integer identifier
+    shape: int  # One of CULV_SHAPE_* constants
+    pos: Vec3  # (x, y, z)
+    rot: Vec3  # (x, y, z, w) quaternion
+    size: float | Sequence[float]  # radius, (x,y,z) extents, or (nx,ny,nz,c)
+    mass: float  # Mass in kg (0 for static)
+    motion: int  # MOTION_STATIC, KINEMATIC, or DYNAMIC
+    user_data: int  # Custom 64-bit integer identifier
 
 # --- Constants ---
 SHAPE_BOX: int = 0
@@ -128,6 +128,7 @@ class Character:
     def handle(self) -> int: ...
     def move(self, velocity: Vec3, dt: float) -> None: ...
     def get_position(self) -> Vec3: ...
+    def get_linear_velocity(self) -> Vec3: ...
     def set_position(self, pos: Vec3) -> None: ...
     def set_rotation(self, rot: Quat) -> None: ...
     def is_grounded(self) -> bool: ...
@@ -164,42 +165,18 @@ class Ragdoll:
 
 class SoftBodySharedSettings:
     def __init__(self) -> None: ...
-
     def add_vertex(
-        self, 
-        pos: Vec3, 
-        inv_mass: float = 1.0, 
-        velocity: Vec3 = (0.0, 0.0, 0.0)
+        self, pos: Vec3, inv_mass: float = 1.0, velocity: Vec3 = (0.0, 0.0, 0.0)
     ) -> None: ...
-
     def add_vertices(
-        self, 
-        positions: Buffer, 
-        inv_masses: Buffer | None = None, 
-        velocities: Buffer | None = None
+        self, positions: Buffer, inv_masses: Buffer | None = None, velocities: Buffer | None = None
     ) -> None: ...
-
-    def add_face(
-        self, 
-        v1: int, 
-        v2: int, 
-        v3: int, 
-        material_index: int = 0
-    ) -> None: ...
-
-    def add_faces(
-        self, 
-        indices: Buffer, 
-        materials: Buffer | None = None
-    ) -> None: ...
-
+    def add_face(self, v1: int, v2: int, v3: int, material_index: int = 0) -> None: ...
+    def add_faces(self, indices: Buffer, materials: Buffer | None = None) -> None: ...
     @deprecated("Pin vertices by passing 0.0 mass in add_vertices().")
     def add_pinned_vertex(self, index: int, /) -> None: ...
-
     def create_constraints(self, compliance: float, bend_type: int = 1) -> None: ...
-
     def optimize(self) -> None: ...
-
     def get_vertex_position(self, index: int, /) -> Vec3: ...
 
 class Vehicle:
@@ -250,9 +227,7 @@ class PhysicsWorld:
 
     # --- Lifecycle ---
     def __init__(
-        self, 
-        settings: WorldSettings | None = None, 
-        bodies: Iterable[BodyDefinition] | None = None
+        self, settings: WorldSettings | None = None, bodies: Iterable[BodyDefinition] | None = None
     ) -> None: ...
     def step(self, dt: float = ...) -> None: ...
 
