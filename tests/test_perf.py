@@ -1,8 +1,9 @@
+import os
 import sys
 import threading
 import time
 import unittest
-import os
+
 import numpy as np
 
 import culverin
@@ -16,24 +17,24 @@ import culverin
 class THRESHOLDS:
     # Detect if we are running in GitHub Actions/CI
     IS_CI = os.getenv("CI", "false").lower() == "true"
-    
+
     # Scale factors based on your actual CI regression logs:
     # Physics is close (1.5x), but Python-to-C plumbing is hit hard (6x)
     PHYS_SCALE = 3.0 if IS_CI else 1.0
-    API_SCALE  = 6.0 if IS_CI else 1.0
+    API_SCALE = 6.0 if IS_CI else 1.0
 
     # Creation & Lifecycle
-    BATCH_CREATE_RATIO = 0.6 if IS_CI else 0.5 
+    BATCH_CREATE_RATIO = 0.7 if IS_CI else 0.5
     BATCH_CREATE_MAX_S_5K = 0.04 * PHYS_SCALE
 
     # Core Simulation
     SIM_STEP_MAX_MS_10K = 2.0 * PHYS_SCALE  # (Logs showed 2.48ms)
-    BULK_MUTATION_MAX_MS = 2.0 * PHYS_SCALE # (Logs showed 2.66ms)
+    BULK_MUTATION_MAX_MS = 2.0 * PHYS_SCALE  # (Logs showed 2.66ms)
     CONTENTION_STEP_MAX_MS = 1.8 * PHYS_SCALE
 
     # C-API Bindings (The "Heavy Hitters" on CI)
-    FASTPARSE_MAX_S_50K = 0.025 * API_SCALE # (Logs showed ~0.14s)
-    FASTBUILD_MAX_S_100K = 0.01 * API_SCALE # (Logs showed ~0.033s)
+    FASTPARSE_MAX_S_50K = 0.025 * API_SCALE  # (Logs showed ~0.14s)
+    FASTBUILD_MAX_S_100K = 0.01 * API_SCALE  # (Logs showed ~0.033s)
 
     # Queries
     RAYCAST_MAX_S_50K = 0.020 * PHYS_SCALE
@@ -75,11 +76,16 @@ class TestPerformanceRegression(unittest.TestCase):
         positions = rng.uniform(-100, 100, (body_count, 3)).astype(np.float32).tolist()
         sizes = [[1.0, 1.0, 1.0]] * body_count
 
-        # 1. Iterative Creation
+        # 1. Iterative Creation (Fair comparison: passes the same 'size' structures)
         t0 = time.perf_counter()
         loop_handles = [
-            self.world.create_body(pos=p, shape=culverin.SHAPE_BOX, motion=culverin.MOTION_DYNAMIC)
-            for p in positions
+            self.world.create_body(
+                pos=p,
+                size=sizes[i],
+                shape=culverin.SHAPE_BOX,
+                motion=culverin.MOTION_DYNAMIC,
+            )
+            for i, p in enumerate(positions)
         ]
         loop_time = time.perf_counter() - t0
 

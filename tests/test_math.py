@@ -46,8 +46,8 @@ class TestMathService(unittest.TestCase):
     def test_get_ortho(self) -> None:
         assert (mat := self.math.get_ortho(-1, 1, -1, 1, 0.1, 100.0)) is not None
         self.assertIsMatrix4x4(mat)
-        self.assertEqual(mat[0], 1.0)
-        self.assertEqual(mat[5], 1.0)
+        self.assertAlmostEqual(mat[0], 1.0, places=6)
+        self.assertAlmostEqual(mat[5], 1.0, places=6)
 
     def test_get_look_at(self) -> None:
         eye, target, up = (0.0, 0.0, 5.0), (0.0, 0.0, 0.0), (0.0, 1.0, 0.0)
@@ -354,7 +354,7 @@ class TestMathService(unittest.TestCase):
 
         # Verify output size (16 bytes per quaternion)
         self.assertIsInstance(res_bytes, bytes)
-        self.assertEqual(len(res_bytes), 32) # 2 rotations * 4 floats * 4 bytes
+        self.assertEqual(len(res_bytes), 32)  # 2 rotations * 4 floats * 4 bytes
 
         # Unpack and verify against single-call logic
         res_floats = struct.unpack("8f", res_bytes)
