@@ -4,31 +4,37 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "culverin"
-version = "0.13.2"
+version = "0.14.0"
 description = "High-performance Jolt Physics bindings for Python featuring Shadow Buffers and Free-Threading support."
 readme = "README.md"
 requires-python = ">=3.12"
-authors = [
-    {name = "Mai Huy Hiếu"}
+authors = [{ name = "Mai Huy Hiếu" }]
+license = { text = "MIT" }
+keywords = [
+  "physics",
+  "jolt",
+  "gamedev",
+  "free-threading",
+  "3d",
+  "simulation",
+  "robotics",
 ]
-license = {text = "MIT"}
-keywords = ["physics", "jolt", "gamedev", "free-threading", "3d", "simulation", "robotics"]
 classifiers = [
-    "Development Status :: 4 - Beta",
-    "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: Microsoft :: Windows",
-    "Operating System :: POSIX :: Linux",
-    "Operating System :: MacOS",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
-    "Programming Language :: Python :: 3.14",
-    "Programming Language :: Python :: 3.15",
-    "Programming Language :: Python :: Implementation :: CPython",
-    "Programming Language :: C",
-    "Programming Language :: C++",
-    "Topic :: Games/Entertainment",
-    "Topic :: Scientific/Engineering :: Physics",
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Operating System :: MacOS",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Programming Language :: C",
+  "Programming Language :: C++",
+  "Topic :: Games/Entertainment",
+  "Topic :: Scientific/Engineering :: Physics",
 ]
 
 dependencies = []
@@ -42,12 +48,12 @@ Repository = "https://github.com/Evilpasture/culverin.git"
 [tool.scikit-build]
 cmake.build-type = "Release"
 cmake.args = [
-    "-GNinja",
-    "-DDOUBLE_PRECISION=ON",
-    "-DGENERATE_SAMPLES=OFF",
-    "-DGENERATE_UNIT_TESTS=OFF",
-    "-DUSE_VULKAN=OFF",
-    "-DCMAKE_OSX_DEPLOYMENT_TARGET=13.3",
+  "-GNinja",
+  "-DDOUBLE_PRECISION=ON",
+  "-DGENERATE_SAMPLES=OFF",
+  "-DGENERATE_UNIT_TESTS=OFF",
+  "-DUSE_VULKAN=OFF",
+  "-DCMAKE_OSX_DEPLOYMENT_TARGET=13.3",
 ]
 
 # This ensures the .so/.pyd is placed correctly in the package
@@ -55,17 +61,17 @@ wheel.install-dir = "culverin"
 
 # Clean up the wheel - don't ship build artifacts or raw source in the binary wheel
 wheel.exclude = [
-    "culverin/include/**",
-    "culverin/lib/**",
-    "culverin/share/**",
-    "src/**",
-    "**/*.c",
-    "**/*.h",
-    "**/*.cpp",
-    "**/*.obj",
-    "**/*.a",
-    "**/*.lib",
-    "**/*.pdb"
+  "culverin/include/**",
+  "culverin/lib/**",
+  "culverin/share/**",
+  "src/**",
+  "**/*.c",
+  "**/*.h",
+  "**/*.cpp",
+  "**/*.obj",
+  "**/*.a",
+  "**/*.lib",
+  "**/*.pdb",
 ]
 
 # Important for SDIST (Source Distribution)
@@ -80,27 +86,28 @@ line-length = 100
 
 [tool.ruff.lint]
 select = [
-    "F",      # Pyflakes: Logic errors, undefined names
-    "E", "W", # Pycodestyle: Standard PEP8 errors/warnings
-    "I",      # Isort: Strict import sorting (crucial for C-extension init order)
-    "UP",     # Pyupgrade: Force modern 3.14+ syntax (e.g., | instead of Union)
-    "B",      # Flake8-bugbear: Catches "soft" design flaws and potential bouncers
-    "SIM",    # Flake8-simplify: Collapses nested ifs/logic (keeps physics loops clean)
-    "PTH",    # Flake8-use-pathlib: Replaces messy os.path with Pathlib objects
-    "PERF",   # Perflint: Performance-specific anti-patterns (e.g., slow loops)
-    "RUF",    # Ruff-specific: Catches shadowed builtins and async/concurrency traps
-    "C4",     # Flake8-comprehensions: Optimizes list/dict/set literal creation
-    "FA",     # Flake8-future-annotations: Ensures 'from __future__ import annotations'
-    "TID",    # Flake8-tidy-imports: Prevents messy relative imports
-    "SLOT",   # Flake8-slots: Forces __slots__ on classes (saves memory in huge worlds)
-    "ANN", # Enforce that you actually write hints
-    "PYI", # Lint your .pyi stub files for errors
+  "F",    # Pyflakes: Logic errors, undefined names
+  "E",
+  "W",    # Pycodestyle: Standard PEP8 errors/warnings
+  "I",    # Isort: Strict import sorting (crucial for C-extension init order)
+  "UP",   # Pyupgrade: Force modern 3.14+ syntax (e.g., | instead of Union)
+  "B",    # Flake8-bugbear: Catches "soft" design flaws and potential bouncers
+  "SIM",  # Flake8-simplify: Collapses nested ifs/logic (keeps physics loops clean)
+  "PTH",  # Flake8-use-pathlib: Replaces messy os.path with Pathlib objects
+  "PERF", # Perflint: Performance-specific anti-patterns (e.g., slow loops)
+  "RUF",  # Ruff-specific: Catches shadowed builtins and async/concurrency traps
+  "C4",   # Flake8-comprehensions: Optimizes list/dict/set literal creation
+  "FA",   # Flake8-future-annotations: Ensures 'from __future__ import annotations'
+  "TID",  # Flake8-tidy-imports: Prevents messy relative imports
+  "SLOT", # Flake8-slots: Forces __slots__ on classes (saves memory in huge worlds)
+  "ANN",  # Enforce that you actually write hints
+  "PYI",  # Lint your .pyi stub files for errors
 ]
 
 # Specifically ignore rules that clash with C-extension naming conventions
 ignore = [
-    "E501",   # Line too long (let the formatter handle this, don't error)
-    "B008",   # Do not perform function calls in argument defaults (fine for some Jolt defaults)
+  "E501", # Line too long (let the formatter handle this, don't error)
+  "B008", # Do not perform function calls in argument defaults (fine for some Jolt defaults)
 ]
 
 [tool.ruff.lint.isort]
