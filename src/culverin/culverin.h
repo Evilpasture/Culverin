@@ -72,6 +72,9 @@ static inline PyObject *test_function() {
 #include <string.h>
 
 #ifdef _WIN32
+#    ifndef NOMINMAX
+#        define NOMINMAX
+#    endif
 #    define WIN32_LEAN_AND_MEAN
 #    include <windows.h>
 #elif defined(__linux__) || defined(__apple__)
