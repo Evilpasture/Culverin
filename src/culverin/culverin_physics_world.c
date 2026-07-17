@@ -204,15 +204,17 @@ static int allocate_constraints(PhysicsWorldObject *self) {
     self->constraint_generations = CULV_RAW_CALLOC(CONSTRAINT_INITIAL_CAPACITY, sizeof(uint32_t));
     self->free_constraint_slots  = CULV_RAW_MALLOC(CONSTRAINT_INITIAL_CAPACITY * sizeof(uint32_t));
     self->constraint_states      = CULV_RAW_CALLOC(CONSTRAINT_INITIAL_CAPACITY, sizeof(uint8_t));
+    self->constraint_types       = CULV_RAW_CALLOC(CONSTRAINT_INITIAL_CAPACITY, sizeof(int));
 
     if (!self->constraints || !self->free_constraint_slots || !self->constraint_generations ||
-        !self->constraint_states) {
+        !self->constraint_states || !self->constraint_types) {
         return -1;
     }
 
     for (uint32_t i = 0; i < CONSTRAINT_INITIAL_CAPACITY; i++) {
         self->constraint_generations[i] = 1;
         self->free_constraint_slots[i]  = i;
+        atomic_store_explicit(&self->constraint_states[i], SLOT_EMPTY, memory_order_relaxed);
     }
     self->free_constraint_count = CONSTRAINT_INITIAL_CAPACITY;
     return 0;
@@ -254,8 +256,9 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
     GravityVector gravity;
     WorldSettings settings;
 
-    void *targets[WorldInit_COUNT] = {[IDX_SETTINGS] = (void *)&settings_dict,
-                                      [IDX_BODIES]   = (void *)&bodies_list};
+    const void *const restrict targets[WorldInit_COUNT] = {
+        [IDX_SETTINGS] = (const void *const restrict)&settings_dict,
+        [IDX_BODIES]   = (const void *const restrict)&bodies_list};
 
     if (!FastParse_Unified(args, kwds, nullptr, &self->parsers->WorldInitParser, targets)) {
         return -1;
@@ -483,8 +486,11 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_impulse(PhysicsWorldObject *self,
     float x;
     float y;
     float z;
-    void *targets[Vec3_COUNT] = {
-        [IDX_V3_H] = &h_raw, [IDX_V3_X] = &x, [IDX_V3_Y] = &y, [IDX_V3_Z] = &z};
+    const void *const restrict targets[Vec3_COUNT] = {[IDX_V3_H] =
+                                                          (const void *const restrict)&h_raw,
+                                                      [IDX_V3_X] = (const void *const restrict)&x,
+                                                      [IDX_V3_Y] = (const void *const restrict)&y,
+                                                      [IDX_V3_Z] = (const void *const restrict)&z};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->ImpulseParser,
                            targets)) {
@@ -542,10 +548,14 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self
     JPH_Real px;
     JPH_Real py;
     JPH_Real pz;
-    void *targets[ImpAt_COUNT] = {[IDX_IMPAT_H] = (void *)&h_raw, [IDX_IMPAT_IX] = (void *)&ix,
-                                  [IDX_IMPAT_IY] = (void *)&iy,   [IDX_IMPAT_IZ] = (void *)&iz,
-                                  [IDX_IMPAT_PX] = (void *)&px,   [IDX_IMPAT_PY] = (void *)&py,
-                                  [IDX_IMPAT_PZ] = (void *)&pz};
+    const void *const restrict targets[ImpAt_COUNT] = {
+        [IDX_IMPAT_H]  = (const void *const restrict)&h_raw,
+        [IDX_IMPAT_IX] = (const void *const restrict)&ix,
+        [IDX_IMPAT_IY] = (const void *const restrict)&iy,
+        [IDX_IMPAT_IZ] = (const void *const restrict)&iz,
+        [IDX_IMPAT_PX] = (const void *const restrict)&px,
+        [IDX_IMPAT_PY] = (const void *const restrict)&py,
+        [IDX_IMPAT_PZ] = (const void *const restrict)&pz};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->ImpulseAtParser, targets)) {
@@ -605,8 +615,11 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_angular_impulse(PhysicsWorldObject 
     float x;
     float y;
     float z;
-    void *targets[Vec3_COUNT] = {
-        [IDX_V3_H] = &h_raw, [IDX_V3_X] = &x, [IDX_V3_Y] = &y, [IDX_V3_Z] = &z};
+    const void *const restrict targets[Vec3_COUNT] = {[IDX_V3_H] =
+                                                          (const void *const restrict)&h_raw,
+                                                      [IDX_V3_X] = (const void *const restrict)&x,
+                                                      [IDX_V3_Y] = (const void *const restrict)&y,
+                                                      [IDX_V3_Z] = (const void *const restrict)&z};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->AngImpulseParser, targets)) {
@@ -665,8 +678,11 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_force(PhysicsWorldObject *self, PyO
     float x;
     float y;
     float z;
-    void *targets[Vec3_COUNT] = {
-        [IDX_V3_H] = &h_raw, [IDX_V3_X] = &x, [IDX_V3_Y] = &y, [IDX_V3_Z] = &z};
+    const void *const restrict targets[Vec3_COUNT] = {[IDX_V3_H] =
+                                                          (const void *const restrict)&h_raw,
+                                                      [IDX_V3_X] = (const void *const restrict)&x,
+                                                      [IDX_V3_Y] = (const void *const restrict)&y,
+                                                      [IDX_V3_Z] = (const void *const restrict)&z};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->ForceParser,
                            targets)) {
@@ -731,8 +747,11 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_torque(PhysicsWorldObject *self, Py
     float x;
     float y;
     float z;
-    void *targets[Vec3_COUNT] = {
-        [IDX_V3_H] = &h_raw, [IDX_V3_X] = &x, [IDX_V3_Y] = &y, [IDX_V3_Z] = &z};
+    const void *const restrict targets[Vec3_COUNT] = {[IDX_V3_H] =
+                                                          (const void *const restrict)&h_raw,
+                                                      [IDX_V3_X] = (const void *const restrict)&x,
+                                                      [IDX_V3_Y] = (const void *const restrict)&y,
+                                                      [IDX_V3_Z] = (const void *const restrict)&z};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->TorqueParser,
                            targets)) {
@@ -800,10 +819,10 @@ PyCFunction_DeclareMethod PhysicsWorld_set_gravity(PhysicsWorldObject *self, PyO
     float y;
     float z;
 
-    void *targets[XYZ_COUNT] = {
-        [IDX_XYZ_X] = (void *)&x,
-        [IDX_XYZ_Y] = (void *)&y,
-        [IDX_XYZ_Z] = (void *)&z,
+    const void *const restrict targets[XYZ_COUNT] = {
+        [IDX_XYZ_X] = (const void *const restrict)&x,
+        [IDX_XYZ_Y] = (const void *const restrict)&y,
+        [IDX_XYZ_Z] = (const void *const restrict)&z,
     };
 
     auto nargs = PyVectorcall_NARGS(nargsf);
@@ -865,7 +884,8 @@ PyCFunction_DeclareMethod PhysicsWorld_get_body_stats(PhysicsWorldObject *self,
 
     // 1. FAST PARSE & VALIDATION
     uint64_t h_raw;
-    void *targets[HOnly_COUNT] = {[IDX_H_H] = &h_raw};
+    const void *const restrict targets[HOnly_COUNT] = {[IDX_H_H] =
+                                                           (const void *const restrict)&h_raw};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->HOnlyParser,
                            targets)) {
@@ -920,11 +940,14 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self,
     float dt        = DEFAULT_FRAME_TIME;
     PyObject *o_vel = nullptr;
 
-    void *targets[Buoy_COUNT] = {
-        [IDX_BUOY_HANDLE] = (void *)&h_raw,      [IDX_BUOY_SURFACE_Y] = (void *)&surface_y,
-        [IDX_BUOY_BUOYANCY] = (void *)&buoyancy, [IDX_BUOY_LIN_DRAG] = (void *)&lin_drag,
-        [IDX_BUOY_ANG_DRAG] = (void *)&ang_drag, [IDX_BUOY_DT] = (void *)&dt,
-        [IDX_BUOY_VEL] = (void *)&o_vel};
+    const void *const restrict targets[Buoy_COUNT] = {
+        [IDX_BUOY_HANDLE]    = (const void *const restrict)&h_raw,
+        [IDX_BUOY_SURFACE_Y] = (const void *const restrict)&surface_y,
+        [IDX_BUOY_BUOYANCY]  = (const void *const restrict)&buoyancy,
+        [IDX_BUOY_LIN_DRAG]  = (const void *const restrict)&lin_drag,
+        [IDX_BUOY_ANG_DRAG]  = (const void *const restrict)&ang_drag,
+        [IDX_BUOY_DT]        = (const void *const restrict)&dt,
+        [IDX_BUOY_VEL]       = (const void *const restrict)&o_vel};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->BuoyParser,
                            targets)) {
@@ -1018,11 +1041,14 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy_batch(PhysicsWorldObject *
     float ang_drag      = DEFAULT_ANGULAR_DRAG;
     float dt            = DEFAULT_FRAME_TIME;
 
-    void *targets[BatchBuoy_COUNT] = {
-        [IDX_BBUOY_HANDLES] = (void *)&o_handles, [IDX_BBUOY_SURFACE_Y] = (void *)&surface_y,
-        [IDX_BBUOY_BUOYANCY] = (void *)&buoyancy, [IDX_BBUOY_LIN_DRAG] = (void *)&lin_drag,
-        [IDX_BBUOY_ANG_DRAG] = (void *)&ang_drag, [IDX_BBUOY_DT] = (void *)&dt,
-        [IDX_BBUOY_VEL] = (void *)&o_vel};
+    const void *const restrict targets[BatchBuoy_COUNT] = {
+        [IDX_BBUOY_HANDLES]   = (const void *const restrict)&o_handles,
+        [IDX_BBUOY_SURFACE_Y] = (const void *const restrict)&surface_y,
+        [IDX_BBUOY_BUOYANCY]  = (const void *const restrict)&buoyancy,
+        [IDX_BBUOY_LIN_DRAG]  = (const void *const restrict)&lin_drag,
+        [IDX_BBUOY_ANG_DRAG]  = (const void *const restrict)&ang_drag,
+        [IDX_BBUOY_DT]        = (const void *const restrict)&dt,
+        [IDX_BBUOY_VEL]       = (const void *const restrict)&o_vel};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->BatchBuoyParser, targets)) {
@@ -1205,9 +1231,9 @@ PyCFunction_DeclareMethod PhysicsWorld_save_state(PhysicsWorldObject *self,
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 PyCFunction_DeclareMethod PhysicsWorld_load_state(PhysicsWorldObject *self, PyObject *const *args,
                                                   Py_ssize_t nargs, PyObject *kwnames) {
-    PyObject *state_obj            = nullptr;
-    void *targets[LoadState_COUNT] = {
-        [IDX_LS_STATE] = (void *)&state_obj,
+    PyObject *state_obj                                 = nullptr;
+    const void *const restrict targets[LoadState_COUNT] = {
+        [IDX_LS_STATE] = (const void *const restrict)&state_obj,
     };
 
     if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->LoadStateParser, targets)) {
@@ -1381,9 +1407,9 @@ static inline void internal_auto_gil_restore(PyThreadCtx *ctx) {
 [[gnu::flatten]]
 PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *const *args,
                                             size_t nargsf, PyObject *kwnames) {
-    float dt                  = DEFAULT_FRAME_TIME;
-    void *targets[Step_COUNT] = {
-        [IDX_STEP_DT] = (void *)&dt,
+    float dt                                       = DEFAULT_FRAME_TIME;
+    const void *const restrict targets[Step_COUNT] = {
+        [IDX_STEP_DT] = (const void *const restrict)&dt,
     };
 
     auto nargs = PyVectorcall_NARGS(nargsf);
@@ -1528,14 +1554,20 @@ PyCFunction_DeclareMethod PhysicsWorld_create_convex_hull(PhysicsWorldObject *se
     bool is_sensor       = false;
     bool use_ccd         = false;
 
-    void *targets[HC_COUNT] = {
-        [IDX_HC_POS] = (void *)&o_pos,        [IDX_HC_ROT] = (void *)&o_rot,
-        [IDX_HC_DATA] = (void *)&o_points,    [IDX_HC_MOTION] = (void *)&motion_type,
-        [IDX_HC_MASS] = (void *)&mass,        [IDX_HC_USER_DATA] = (void *)&user_data,
-        [IDX_HC_SENSOR] = (void *)&is_sensor, [IDX_HC_CAT] = (void *)&category,
-        [IDX_HC_MASK] = (void *)&mask,        [IDX_HC_MAT_ID] = (void *)&material_id,
-        [IDX_HC_FRIC] = (void *)&friction,    [IDX_HC_REST] = (void *)&restitution,
-        [IDX_HC_CCD] = (void *)&use_ccd};
+    const void *const restrict targets[HC_COUNT] = {
+        [IDX_HC_POS]       = (void *const restrict)&o_pos,
+        [IDX_HC_ROT]       = (void *const restrict)&o_rot,
+        [IDX_HC_DATA]      = (void *const restrict)&o_points,
+        [IDX_HC_MOTION]    = (void *const restrict)&motion_type,
+        [IDX_HC_MASS]      = (void *const restrict)&mass,
+        [IDX_HC_USER_DATA] = (void *const restrict)&user_data,
+        [IDX_HC_SENSOR]    = (void *const restrict)&is_sensor,
+        [IDX_HC_CAT]       = (void *const restrict)&category,
+        [IDX_HC_MASK]      = (void *const restrict)&mask,
+        [IDX_HC_MAT_ID]    = (void *const restrict)&material_id,
+        [IDX_HC_FRIC]      = (void *const restrict)&friction,
+        [IDX_HC_REST]      = (void *const restrict)&restitution,
+        [IDX_HC_CCD]       = (void *const restrict)&use_ccd};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->ConvexHullParser, targets)) {
@@ -1809,14 +1841,20 @@ PyCFunction_DeclareMethod PhysicsWorld_create_compound_body(PhysicsWorldObject *
     bool is_sensor       = false;
     bool use_ccd         = false;
 
-    void *targets[HC_COUNT] = {
-        [IDX_HC_POS] = (void *)&o_pos,        [IDX_HC_ROT] = (void *)&o_rot,
-        [IDX_HC_DATA] = (void *)&o_parts,     [IDX_HC_MOTION] = (void *)&motion_type,
-        [IDX_HC_MASS] = (void *)&mass,        [IDX_HC_USER_DATA] = (void *)&user_data,
-        [IDX_HC_SENSOR] = (void *)&is_sensor, [IDX_HC_CAT] = (void *)&category,
-        [IDX_HC_MASK] = (void *)&mask,        [IDX_HC_MAT_ID] = (void *)&material_id,
-        [IDX_HC_FRIC] = (void *)&friction,    [IDX_HC_REST] = (void *)&restitution,
-        [IDX_HC_CCD] = (void *)&use_ccd};
+    const void *const restrict targets[HC_COUNT] = {
+        [IDX_HC_POS]       = (const void *const restrict)&o_pos,
+        [IDX_HC_ROT]       = (const void *const restrict)&o_rot,
+        [IDX_HC_DATA]      = (const void *const restrict)&o_parts,
+        [IDX_HC_MOTION]    = (const void *const restrict)&motion_type,
+        [IDX_HC_MASS]      = (const void *const restrict)&mass,
+        [IDX_HC_USER_DATA] = (const void *const restrict)&user_data,
+        [IDX_HC_SENSOR]    = (const void *const restrict)&is_sensor,
+        [IDX_HC_CAT]       = (const void *const restrict)&category,
+        [IDX_HC_MASK]      = (const void *const restrict)&mask,
+        [IDX_HC_MAT_ID]    = (const void *const restrict)&material_id,
+        [IDX_HC_FRIC]      = (const void *const restrict)&friction,
+        [IDX_HC_REST]      = (const void *const restrict)&restitution,
+        [IDX_HC_CCD]       = (const void *const restrict)&use_ccd};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->CompoundParser, targets)) {
@@ -1956,14 +1994,21 @@ PyCFunction_DeclareMethod PhysicsWorld_create_body(PhysicsWorldObject *self, PyO
 
     // 2. TARGET MAPPING (Explicitly mapped via Enum)
     // Using explicit indices [IDX_...] makes this reorder-proof.
-    void *targets[Body_COUNT] = {
-        [IDX_POS] = (void *)&o_pos,          [IDX_ROT] = (void *)&o_rot,
-        [IDX_SIZE] = (void *)&o_size,        [IDX_SHAPE] = (void *)&shape_type,
-        [IDX_MOTION] = (void *)&motion_type, [IDX_USER_DATA] = (void *)&user_data,
-        [IDX_SENSOR] = (void *)&is_sensor,   [IDX_MASS] = (void *)&mass,
-        [IDX_CAT] = (void *)&category,       [IDX_MASK] = (void *)&mask,
-        [IDX_FRIC] = (void *)&friction,      [IDX_REST] = (void *)&restitution,
-        [IDX_MAT] = (void *)&material_id,    [IDX_CCD] = (void *)&use_ccd,
+    const void *const restrict targets[Body_COUNT] = {
+        [IDX_POS]       = (const void *const restrict)&o_pos,
+        [IDX_ROT]       = (const void *const restrict)&o_rot,
+        [IDX_SIZE]      = (const void *const restrict)&o_size,
+        [IDX_SHAPE]     = (const void *const restrict)&shape_type,
+        [IDX_MOTION]    = (const void *const restrict)&motion_type,
+        [IDX_USER_DATA] = (const void *const restrict)&user_data,
+        [IDX_SENSOR]    = (const void *const restrict)&is_sensor,
+        [IDX_MASS]      = (const void *const restrict)&mass,
+        [IDX_CAT]       = (const void *const restrict)&category,
+        [IDX_MASK]      = (const void *const restrict)&mask,
+        [IDX_FRIC]      = (const void *const restrict)&friction,
+        [IDX_REST]      = (const void *const restrict)&restitution,
+        [IDX_MAT]       = (const void *const restrict)&material_id,
+        [IDX_CCD]       = (const void *const restrict)&use_ccd,
     };
 
     // 3. THE FAST PARSE
@@ -2097,10 +2142,11 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
     int shape_type     = 0;
     int motion_type    = 2;
 
-    void *targets[BatchCreate_COUNT] = {[IDX_BC_POSITIONS] = (void *)&py_pos,
-                                        [IDX_BC_SIZES]     = (void *)&py_sizes,
-                                        [IDX_BC_SHAPE]     = (void *)&shape_type,
-                                        [IDX_BC_MOTION]    = (void *)&motion_type};
+    const void *const restrict targets[BatchCreate_COUNT] = {
+        [IDX_BC_POSITIONS] = (const void *const restrict)&py_pos,
+        [IDX_BC_SIZES]     = (const void *const restrict)&py_sizes,
+        [IDX_BC_SHAPE]     = (const void *const restrict)&shape_type,
+        [IDX_BC_MOTION]    = (const void *const restrict)&motion_type};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->BatchCreateParser, targets)) {
@@ -2136,7 +2182,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
     auto handles_out = (uint64_t *CULV_RESTRICT)(settings_buf + batch_count);
     auto py_results  = (PyObject * CULV_RESTRICT * CULV_RESTRICT)(handles_out + batch_count);
 
-    memset((void *)settings_buf, 0, batch_count * sizeof(void *));
+    memset((void *)settings_buf, 0, batch_count * sizeof(const void *const restrict));
 
     for (Py_ssize_t i = 0; i < batch_count; i++) {
         parse_py_vec3(PyList_GET_ITEM(py_pos, i), &pos_buf[i]);
@@ -2355,13 +2401,14 @@ PyCFunction_DeclareMethod PhysicsWorld_create_mesh_body(PhysicsWorldObject *self
     uint32_t cat        = COLLISION_FILTER_ALL_CATEGORIES;
     uint32_t mask       = COLLISION_FILTER_ALL_MASKS;
 
-    void *targets[Mesh_COUNT] = {[IDX_MSH_POS]       = (void *)&o_pos,
-                                 [IDX_MSH_ROT]       = (void *)&o_rot,
-                                 [IDX_MSH_VERTS]     = (void *)&o_verts,
-                                 [IDX_MSH_INDICES]   = (void *)&o_indices,
-                                 [IDX_MSH_USER_DATA] = (void *)&user_data,
-                                 [IDX_MSH_CAT]       = (void *)&cat,
-                                 [IDX_MSH_MASK]      = (void *)&mask};
+    const void *const restrict targets[Mesh_COUNT] = {
+        [IDX_MSH_POS]       = (const void *const restrict)&o_pos,
+        [IDX_MSH_ROT]       = (const void *const restrict)&o_rot,
+        [IDX_MSH_VERTS]     = (const void *const restrict)&o_verts,
+        [IDX_MSH_INDICES]   = (const void *const restrict)&o_indices,
+        [IDX_MSH_USER_DATA] = (const void *const restrict)&user_data,
+        [IDX_MSH_CAT]       = (const void *const restrict)&cat,
+        [IDX_MSH_MASK]      = (const void *const restrict)&mask};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->MeshParser,
                            targets)) {
@@ -2465,7 +2512,8 @@ PyCFunction_DeclareMethod PhysicsWorld_create_mesh_body(PhysicsWorldObject *self
 PyCFunction_DeclareMethod PhysicsWorld_destroy_body(PhysicsWorldObject *self, PyObject *const *args,
                                                     size_t nargsf, PyObject *kwnames) {
     uint64_t h_raw;
-    void *targets[HOnly_COUNT] = {[IDX_H_H] = &h_raw};
+    const void *const restrict targets[HOnly_COUNT] = {[IDX_H_H] =
+                                                           (const void *const restrict)&h_raw};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->DestroyParser,
                            targets)) {
@@ -2508,8 +2556,9 @@ PyCFunction_DeclareMethod PhysicsWorld_destroy_body(PhysicsWorldObject *self, Py
 PyCFunction_DeclareMethod PhysicsWorld_destroy_bodies_batch(PhysicsWorldObject *self,
                                                             PyObject *const *args, size_t nargsf,
                                                             PyObject *kwnames) {
-    PyObject *py_handles_in           = nullptr;
-    void *targets[BatchDestroy_COUNT] = {[IDX_BD_HANDLES] = (void *)&py_handles_in};
+    PyObject *py_handles_in                                = nullptr;
+    const void *const restrict targets[BatchDestroy_COUNT] = {
+        [IDX_BD_HANDLES] = (const void *const restrict)&py_handles_in};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->BatchDestroyParser, targets)) {
@@ -2604,10 +2653,11 @@ PyCFunction_DeclareMethod PhysicsWorld_set_position(PhysicsWorldObject *self, Py
     JPH_Real x;
     JPH_Real y;
     JPH_Real z;
-    void *targets[SetPos_COUNT] = {[IDX_SETPOS_HANDLE] = &h_raw,
-                                   [IDX_SETPOS_X]      = &x,
-                                   [IDX_SETPOS_Y]      = &y,
-                                   [IDX_SETPOS_Z]      = &z};
+    const void *const restrict targets[SetPos_COUNT] = {
+        [IDX_SETPOS_HANDLE] = (const void *const restrict)&h_raw,
+        [IDX_SETPOS_X]      = (const void *const restrict)&x,
+        [IDX_SETPOS_Y]      = (const void *const restrict)&y,
+        [IDX_SETPOS_Z]      = (const void *const restrict)&z};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->SetPosParser,
                            targets)) {
@@ -2674,11 +2724,12 @@ PyCFunction_DeclareMethod PhysicsWorld_set_rotation(PhysicsWorldObject *self, Py
     float y;
     float z;
     float w;
-    void *targets[SetRot_COUNT] = {[IDX_SETROT_H] = &h_raw,
-                                   [IDX_SETROT_X] = &x,
-                                   [IDX_SETROT_Y] = &y,
-                                   [IDX_SETROT_Z] = &z,
-                                   [IDX_SETROT_W] = &w};
+    const void *const restrict targets[SetRot_COUNT] = {
+        [IDX_SETROT_H] = (const void *const restrict)&h_raw,
+        [IDX_SETROT_X] = (const void *const restrict)&x,
+        [IDX_SETROT_Y] = (const void *const restrict)&y,
+        [IDX_SETROT_Z] = (const void *const restrict)&z,
+        [IDX_SETROT_W] = (const void *const restrict)&w};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->SetRotParser,
                            targets)) {
@@ -2747,8 +2798,11 @@ PyCFunction_DeclareMethod PhysicsWorld_set_linear_velocity(PhysicsWorldObject *s
     float x;
     float y;
     float z;
-    void *targets[Vec3_COUNT] = {
-        [IDX_V3_H] = &h_raw, [IDX_V3_X] = &x, [IDX_V3_Y] = &y, [IDX_V3_Z] = &z};
+    const void *const restrict targets[Vec3_COUNT] = {[IDX_V3_H] =
+                                                          (const void *const restrict)&h_raw,
+                                                      [IDX_V3_X] = (const void *const restrict)&x,
+                                                      [IDX_V3_Y] = (const void *const restrict)&y,
+                                                      [IDX_V3_Z] = (const void *const restrict)&z};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->SetLinVelParser, targets)) {
@@ -2810,8 +2864,11 @@ PyCFunction_DeclareMethod PhysicsWorld_set_angular_velocity(PhysicsWorldObject *
     float x;
     float y;
     float z;
-    void *targets[Vec3_COUNT] = {
-        [IDX_V3_H] = &h_raw, [IDX_V3_X] = &x, [IDX_V3_Y] = &y, [IDX_V3_Z] = &z};
+    const void *const restrict targets[Vec3_COUNT] = {[IDX_V3_H] =
+                                                          (const void *const restrict)&h_raw,
+                                                      [IDX_V3_X] = (const void *const restrict)&x,
+                                                      [IDX_V3_Y] = (const void *const restrict)&y,
+                                                      [IDX_V3_Z] = (const void *const restrict)&z};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->SetAngVelParser, targets)) {
@@ -2871,7 +2928,8 @@ PyCFunction_DeclareMethod PhysicsWorld_get_motion_type(PhysicsWorldObject *self,
 
     // 1. FAST PARSE & VALIDATION
     uint64_t h_raw;
-    void *targets[HOnly_COUNT] = {[IDX_H_H] = &h_raw};
+    const void *const restrict targets[HOnly_COUNT] = {[IDX_H_H] =
+                                                           (const void *const restrict)&h_raw};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->GetMotionParser, targets)) {
@@ -2922,7 +2980,9 @@ PyCFunction_DeclareMethod PhysicsWorld_set_motion_type(PhysicsWorldObject *self,
     // 1. FAST PARSE & VALIDATION
     uint64_t h_raw;
     int motion_type;
-    void *targets[SetMotion_COUNT] = {[IDX_SM_H] = &h_raw, [IDX_SM_M] = &motion_type};
+    const void *const restrict targets[SetMotion_COUNT] = {
+        [IDX_SM_H] = (const void *const restrict)&h_raw,
+        [IDX_SM_M] = (const void *const restrict)&motion_type};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->SetMotionParser, targets)) {
@@ -2973,7 +3033,9 @@ PyCFunction_DeclareMethod PhysicsWorld_set_user_data(PhysicsWorldObject *self,
     // 1. FAST PARSE & VALIDATION
     uint64_t h_raw;
     uint64_t data_raw;
-    void *targets[SetUserData_COUNT] = {[IDX_SUD_H] = &h_raw, [IDX_SUD_D] = &data_raw};
+    const void *const restrict targets[SetUserData_COUNT] = {
+        [IDX_SUD_H] = (const void *const restrict)&h_raw,
+        [IDX_SUD_D] = (const void *const restrict)&data_raw};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->SetUserDataParser, targets)) {
@@ -3030,7 +3092,8 @@ PyCFunction_DeclareMethod PhysicsWorld_get_user_data(PhysicsWorldObject *self,
 
     // 1. FAST PARSE & VALIDATION
     uint64_t h_raw;
-    void *targets[HOnly_COUNT] = {[IDX_H_H] = &h_raw};
+    const void *const restrict targets[HOnly_COUNT] = {[IDX_H_H] =
+                                                           (const void *const restrict)&h_raw};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->GetUserDataParser, targets)) {
@@ -3069,7 +3132,8 @@ PyCFunction_DeclareMethod PhysicsWorld_activate(PhysicsWorldObject *self, PyObje
 
     // 1. FAST PARSE & VALIDATION
     uint64_t h_raw;
-    void *targets[HOnly_COUNT] = {[IDX_H_H] = &h_raw};
+    const void *const restrict targets[HOnly_COUNT] = {[IDX_H_H] =
+                                                           (const void *const restrict)&h_raw};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->ActivateParser, targets)) {
@@ -3116,7 +3180,8 @@ PyCFunction_DeclareMethod PhysicsWorld_deactivate(PhysicsWorldObject *self, PyOb
 
     // 1. FAST PARSE & VALIDATION
     uint64_t h_raw;
-    void *targets[HOnly_COUNT] = {[IDX_H_H] = &h_raw};
+    const void *const restrict targets[HOnly_COUNT] = {[IDX_H_H] =
+                                                           (const void *const restrict)&h_raw};
 
     // Note: Reusing ActivateParser as the schema is identical (single handle)
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
@@ -3166,11 +3231,12 @@ PyCFunction_DeclareMethod PhysicsWorld_set_transform(PhysicsWorldObject *self,
 
     // 1. FAST PARSE & VALIDATION
     uint64_t h_raw;
-    PyObject *o_pos              = nullptr;
-    PyObject *o_rot              = nullptr;
-    void *targets[SetTrns_COUNT] = {[IDX_ST_HANDLE] = (void *)&h_raw,
-                                    [IDX_ST_POS]    = (void *)&o_pos,
-                                    [IDX_ST_ROT]    = (void *)&o_rot};
+    PyObject *o_pos                                   = nullptr;
+    PyObject *o_rot                                   = nullptr;
+    const void *const restrict targets[SetTrns_COUNT] = {
+        [IDX_ST_HANDLE] = (const void *const restrict)&h_raw,
+        [IDX_ST_POS]    = (const void *const restrict)&o_pos,
+        [IDX_ST_ROT]    = (const void *const restrict)&o_rot};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->SetTrnsParser,
                            targets)) {
@@ -3256,7 +3322,9 @@ PyCFunction_DeclareMethod PhysicsWorld_set_ccd(PhysicsWorldObject *self, PyObjec
     // 1. FAST PARSE & VALIDATION
     uint64_t h_raw;
     bool enabled;
-    void *targets[CCD_COUNT] = {[IDX_CCD_H] = &h_raw, [IDX_CCD_E] = &enabled};
+    const void *const restrict targets[CCD_COUNT] = {
+        [IDX_CCD_H] = (const void *const restrict)&h_raw,
+        [IDX_CCD_E] = (const void *const restrict)&enabled};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->CCDParser,
                            targets)) {
@@ -3306,7 +3374,8 @@ PyCFunction_DeclareMethod PhysicsWorld_get_index(PhysicsWorldObject *self, PyObj
 
     // 1. FAST PARSE & VALIDATION
     uint64_t h_raw;
-    void *targets[HOnly_COUNT] = {[IDX_H_H] = &h_raw};
+    const void *const restrict targets[HOnly_COUNT] = {[IDX_H_H] =
+                                                           (const void *const restrict)&h_raw};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->ActivateParser, targets)) {
@@ -3343,7 +3412,8 @@ PyCFunction_DeclareMethod PhysicsWorld_is_alive(PhysicsWorldObject *self, PyObje
 
     // 1. FAST PARSE & VALIDATION
     uint64_t h_raw;
-    void *targets[HOnly_COUNT] = {[IDX_H_H] = &h_raw};
+    const void *const restrict targets[HOnly_COUNT] = {[IDX_H_H] =
+                                                           (const void *const restrict)&h_raw};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->ActivateParser, targets)) {
@@ -3380,7 +3450,8 @@ PyCFunction_DeclareMethod PhysicsWorld_is_active(PhysicsWorldObject *self, PyObj
 
     // 1. FAST PARSE & VALIDATION
     uint64_t h_raw;
-    void *targets[HOnly_COUNT] = {[IDX_H_H] = &h_raw};
+    const void *const restrict targets[HOnly_COUNT] = {[IDX_H_H] =
+                                                           (const void *const restrict)&h_raw};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->ActivateParser, targets)) {
@@ -3477,7 +3548,8 @@ PyCFunction_DeclareMethod PhysicsWorld_get_render_state(PhysicsWorldObject *self
                                                         PyObject *const *args, size_t nargsf,
                                                         PyObject *kwnames) {
     float alpha;
-    void *targets[Render_COUNT] = {[IDX_RND_ALPHA] = (void *)&alpha};
+    const void *const restrict targets[Render_COUNT] = {[IDX_RND_ALPHA] =
+                                                            (const void *const restrict)&alpha};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->RenderParser,
                            targets)) {
@@ -3524,8 +3596,10 @@ PyCFunction_DeclareMethod PhysicsWorld_set_collision_filter(PhysicsWorldObject *
     uint64_t h_raw;
     uint32_t category;
     uint32_t mask;
-    void *targets[ColFilter_COUNT] = {
-        [IDX_CF_H] = &h_raw, [IDX_CF_C] = &category, [IDX_CF_M] = &mask};
+    const void *const restrict targets[ColFilter_COUNT] = {
+        [IDX_CF_H] = (const void *const restrict)&h_raw,
+        [IDX_CF_C] = (const void *const restrict)&category,
+        [IDX_CF_M] = (const void *const restrict)&mask};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->ColFilterParser, targets)) {
@@ -3584,10 +3658,10 @@ PyCFunction_DeclareMethod PhysicsWorld_register_material(PhysicsWorldObject *sel
     float restitution = 0.0f;
 
     // 2. FAST PARSE (Zero-Allocation)
-    void *targets[RegMat_COUNT] = {
-        [IDX_RM_ID]   = (void *)&id,
-        [IDX_RM_FRIC] = (void *)&friction,
-        [IDX_RM_REST] = (void *)&restitution,
+    const void *const restrict targets[RegMat_COUNT] = {
+        [IDX_RM_ID]   = (const void *const restrict)&id,
+        [IDX_RM_FRIC] = (const void *const restrict)&friction,
+        [IDX_RM_REST] = (const void *const restrict)&restitution,
     };
 
     auto nargs = PyVectorcall_NARGS(nargsf);
@@ -3654,13 +3728,18 @@ PyCFunction_DeclareMethod PhysicsWorld_create_heightfield(PhysicsWorldObject *se
     float friction       = DEFAULT_FRICTION;
     float restitution    = 0.0f;
 
-    void *targets[Heightfield_COUNT] = {
-        [IDX_HF_POS] = (void *)&o_pos,           [IDX_HF_ROT] = (void *)&o_rot,
-        [IDX_HF_SCALE] = (void *)&o_scale,       [IDX_HF_HEIGHTS] = (void *)&o_heights,
-        [IDX_HF_GRID_SIZE] = (void *)&grid_size, [IDX_HF_USER_DATA] = (void *)&user_data,
-        [IDX_HF_CAT] = (void *)&category,        [IDX_HF_MASK] = (void *)&mask,
-        [IDX_HF_MAT_ID] = (void *)&material_id,  [IDX_HF_FRIC] = (void *)&friction,
-        [IDX_HF_REST] = (void *)&restitution};
+    const void *const restrict targets[Heightfield_COUNT] = {
+        [IDX_HF_POS]       = (const void *const restrict)&o_pos,
+        [IDX_HF_ROT]       = (const void *const restrict)&o_rot,
+        [IDX_HF_SCALE]     = (const void *const restrict)&o_scale,
+        [IDX_HF_HEIGHTS]   = (const void *const restrict)&o_heights,
+        [IDX_HF_GRID_SIZE] = (const void *const restrict)&grid_size,
+        [IDX_HF_USER_DATA] = (const void *const restrict)&user_data,
+        [IDX_HF_CAT]       = (const void *const restrict)&category,
+        [IDX_HF_MASK]      = (const void *const restrict)&mask,
+        [IDX_HF_MAT_ID]    = (const void *const restrict)&material_id,
+        [IDX_HF_FRIC]      = (const void *const restrict)&friction,
+        [IDX_HF_REST]      = (const void *const restrict)&restitution};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->HeightfieldParser, targets)) {
@@ -3766,12 +3845,12 @@ PyCFunction_DeclareMethod PhysicsWorld_get_debug_data(PhysicsWorldObject *self,
     bool wireframe         = true;
 
     // 2. FAST PARSE (Zero-Allocation)
-    void *targets[DebugData_COUNT] = {
-        [IDX_DD_SHAPES]      = (void *)&draw_shapes,
-        [IDX_DD_CONSTRAINTS] = (void *)&draw_constraints,
-        [IDX_DD_BBOX]        = (void *)&draw_bounding_box,
-        [IDX_DD_CENTERS]     = (void *)&draw_centers,
-        [IDX_DD_WIREFRAME]   = (void *)&wireframe,
+    const void *const restrict targets[DebugData_COUNT] = {
+        [IDX_DD_SHAPES]      = (const void *const restrict)&draw_shapes,
+        [IDX_DD_CONSTRAINTS] = (const void *const restrict)&draw_constraints,
+        [IDX_DD_BBOX]        = (const void *const restrict)&draw_bounding_box,
+        [IDX_DD_CENTERS]     = (const void *const restrict)&draw_centers,
+        [IDX_DD_WIREFRAME]   = (const void *const restrict)&wireframe,
     };
 
     auto nargs = PyVectorcall_NARGS(nargsf);
@@ -3857,23 +3936,24 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_soft_body(PhysicsWorldOb
     bool update_position      = true; // Jolt default is usually true
     bool faces_double_sided   = false;
 
-    void *targets[CreateSoftBody_COUNT] = {[IDX_CSB_SHARED]     = (void *)&o_shared,
-                                           [IDX_CSB_POS]        = (void *)&o_pos,
-                                           [IDX_CSB_ROT]        = (void *)&o_rot,
-                                           [IDX_CSB_USER_DATA]  = (void *)&user_data,
-                                           [IDX_CSB_CAT]        = (void *)&category,
-                                           [IDX_CSB_MASK]       = (void *)&mask,
-                                           [IDX_CSB_PRESSURE]   = (void *)&pressure,
-                                           [IDX_CSB_V_RADIUS]   = (void *)&vertex_radius,
-                                           [IDX_CSB_LIN_DAMP]   = (void *)&linear_damping,
-                                           [IDX_CSB_ITER]       = (void *)&num_iterations,
-                                           [IDX_CSB_MAX_VEL]    = (void *)&max_linear_velocity,
-                                           [IDX_CSB_GRAV]       = (void *)&gravity_factor,
-                                           [IDX_CSB_FRIC]       = (void *)&friction,
-                                           [IDX_CSB_REST]       = (void *)&restitution,
-                                           [IDX_CSB_ROT_ID]     = (void *)&make_rot_identity,
-                                           [IDX_CSB_UPDATE_POS] = (void *)&update_position,
-                                           [IDX_CSB_FACE_DS]    = (void *)&faces_double_sided};
+    const void *const restrict targets[CreateSoftBody_COUNT] = {
+        [IDX_CSB_SHARED]     = (const void *const restrict)&o_shared,
+        [IDX_CSB_POS]        = (const void *const restrict)&o_pos,
+        [IDX_CSB_ROT]        = (const void *const restrict)&o_rot,
+        [IDX_CSB_USER_DATA]  = (const void *const restrict)&user_data,
+        [IDX_CSB_CAT]        = (const void *const restrict)&category,
+        [IDX_CSB_MASK]       = (const void *const restrict)&mask,
+        [IDX_CSB_PRESSURE]   = (const void *const restrict)&pressure,
+        [IDX_CSB_V_RADIUS]   = (const void *const restrict)&vertex_radius,
+        [IDX_CSB_LIN_DAMP]   = (const void *const restrict)&linear_damping,
+        [IDX_CSB_ITER]       = (const void *const restrict)&num_iterations,
+        [IDX_CSB_MAX_VEL]    = (const void *const restrict)&max_linear_velocity,
+        [IDX_CSB_GRAV]       = (const void *const restrict)&gravity_factor,
+        [IDX_CSB_FRIC]       = (const void *const restrict)&friction,
+        [IDX_CSB_REST]       = (const void *const restrict)&restitution,
+        [IDX_CSB_ROT_ID]     = (const void *const restrict)&make_rot_identity,
+        [IDX_CSB_UPDATE_POS] = (const void *const restrict)&update_position,
+        [IDX_CSB_FACE_DS]    = (const void *const restrict)&faces_double_sided};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->CreateSoftBodyParser, targets)) {
@@ -3966,7 +4046,8 @@ PyCFunction_DeclareMethodFromModule
 PhysicsWorld_get_soft_body_vertex_count(PhysicsWorldObject *self, PyObject *const *args,
                                         size_t nargsf, PyObject *kwnames) {
     uint64_t h_raw;
-    void *targets[HOnly_COUNT] = {[IDX_H_H] = &h_raw};
+    const void *const restrict targets[HOnly_COUNT] = {[IDX_H_H] =
+                                                           (const void *const restrict)&h_raw};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->HOnlyParser,
                            targets)) {
@@ -4018,7 +4099,9 @@ PhysicsWorld_get_soft_body_vertex_position(PhysicsWorldObject *self, PyObject *c
                                            size_t nargsf, PyObject *kwnames) {
     uint64_t h_raw;
     uint32_t index;
-    void *targets[GetSbVertex_COUNT] = {[IDX_GSBV_H] = &h_raw, [IDX_GSBV_I] = &index};
+    const void *const restrict targets[GetSbVertex_COUNT] = {
+        [IDX_GSBV_H] = (const void *const restrict)&h_raw,
+        [IDX_GSBV_I] = (const void *const restrict)&index};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->GetSbVertexParser, targets)) {
@@ -4080,7 +4163,8 @@ PyCFunction_DeclareMethodFromModule
 PhysicsWorld_get_soft_body_local_vertices(PhysicsWorldObject *self, PyObject *const *args,
                                           size_t nargsf, PyObject *kwnames) {
     uint64_t h_raw;
-    void *targets[HOnly_COUNT] = {[IDX_H_H] = &h_raw};
+    const void *const restrict targets[HOnly_COUNT] = {[IDX_H_H] =
+                                                           (const void *const restrict)&h_raw};
 
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->HOnlyParser,
                            targets)) {
@@ -4148,7 +4232,8 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_soft_body_vertices(PhysicsW
                                                                         size_t nargsf,
                                                                         PyObject *kwnames) {
     uint64_t h_raw;
-    void *targets[HOnly_COUNT] = {[IDX_H_H] = &h_raw};
+    const void *const restrict targets[HOnly_COUNT] = {[IDX_H_H] =
+                                                           (const void *const restrict)&h_raw};
     if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->HOnlyParser,
                            targets)) {
         return nullptr;
@@ -4202,11 +4287,11 @@ PyCFunction_DeclareMethod PhysicsWorld_benchmark_parse(CULV_MAYBE_UNUSED Physics
                                                        PyObject *kwnames) {
     constexpr size_t NUM_ARGS = 64;
     uint64_t values[NUM_ARGS] = {};
-    void *targets[NUM_ARGS];
+    const void *restrict targets[NUM_ARGS];
 
     // Map targets to values array (Loop is efficient here, unrolled by compiler)
     for (size_t i = 0; i < NUM_ARGS; ++i) {
-        targets[i] = &values[i];
+        targets[i] = (const void *const restrict)&values[i];
     }
 
     auto nargs = PyVectorcall_NARGS(nargsf);
@@ -4267,9 +4352,9 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll_settings(Physics
                                                                          Py_ssize_t nargs,
                                                                          PyObject *kwnames) {
     // --- 1. FAST ARGUMENT PARSING ---
-    PyObject *py_skel_obj                = nullptr;
-    void *targets[RagdollSettings_COUNT] = {
-        [IDX_RS_SKELETON] = (void *)&py_skel_obj,
+    PyObject *py_skel_obj                                     = nullptr;
+    const void *const restrict targets[RagdollSettings_COUNT] = {
+        [IDX_RS_SKELETON] = (const void *const restrict)&py_skel_obj,
     };
 
     if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->RagdollSettingsParser, targets)) {
@@ -4322,14 +4407,14 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll(PhysicsWorldObje
     uint32_t mask          = JOLT_ALL_LAYER_BITS;
     uint32_t material_id   = 0;
 
-    void *targets[CreateRagdoll_COUNT] = {
-        [IDX_CR_SETTINGS] = (void *)&settings_obj,
-        [IDX_CR_POS]      = (void *)&pos,
-        [IDX_CR_ROT]      = (void *)&rot,
-        [IDX_CR_USER]     = (void *)&user_data,
-        [IDX_CR_CAT]      = (void *)&category,
-        [IDX_CR_MASK]     = (void *)&mask,
-        [IDX_CR_MAT]      = (void *)&material_id,
+    const void *const restrict targets[CreateRagdoll_COUNT] = {
+        [IDX_CR_SETTINGS] = (const void *const restrict)&settings_obj,
+        [IDX_CR_POS]      = (const void *const restrict)&pos,
+        [IDX_CR_ROT]      = (const void *const restrict)&rot,
+        [IDX_CR_USER]     = (const void *const restrict)&user_data,
+        [IDX_CR_CAT]      = (const void *const restrict)&category,
+        [IDX_CR_MASK]     = (const void *const restrict)&mask,
+        [IDX_CR_MAT]      = (const void *const restrict)&material_id,
     };
 
     if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->CreateRagdollParser, targets)) {

@@ -157,10 +157,12 @@ typedef struct PhysicsWorldObject {
     JPH_Constraint **constraints;
     uint32_t *constraint_generations;
     uint32_t *free_constraint_slots;
-    uint8_t *constraint_states;
+    CULV_ATOMIC(uint8_t) * constraint_states;
     size_t constraint_count;
     size_t constraint_capacity;
     size_t free_constraint_count;
+
+    int *constraint_types;
 
     NewBuffers *trash_buffers;
     size_t trash_count;
