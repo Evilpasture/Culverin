@@ -1459,6 +1459,17 @@ Retrieves the character’s current world-space coordinates.
 - **SIMD Optimized:** The underlying C-implementation utilizes aligned memory access to retrieve the position with minimal CPU overhead.
 
 
+### get_linear_velocity()
+[No Arguments]
+Retrieves the character’s current world-space linear velocity vector.
+
+**Returns:**
+- **`velocity` (tuple):** A 3-tuple of floats `(vx, vy, vz)` representing the current velocity in meters per second ($m/s$).
+
+**Operational Features:**
+- **Solver State Query:** Reads Jolt's internal virtual character velocity directly, bypassing standard rigid body arrays.
+- **Thread Safety:** Safe to query from any thread. Access is synchronized with the world's internal state.
+
 
 ### set_position(...)
 
