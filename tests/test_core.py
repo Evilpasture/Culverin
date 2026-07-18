@@ -1091,6 +1091,197 @@ class TestCharacterVirtualLimits(CulverinTestCase):
         self.assertAlmostEqual(resolved_vel[2], target_vel[2], places=5)
 
 
+class TestCharacterStandingOnProps(CulverinTestCase):
+    """
+    Verification suite for testing the physical stability of character controllers
+    interacting with and standing on top of static and dynamic props.
+    """
+
+    def test_character_standing_on_static_prop(self) -> None:
+        """Verify that a character can stand stably on a static prop without falling through or jittering."""
+        # Create a static box as a raised platform
+        prop = self.world.create_body(
+            pos=(0, 1.0, 0), size=(2.0, 0.5, 2.0), motion=culverin.MOTION_STATIC
+        )
+        # Spawn the character slightly above the platform
+        char = self.world.create_character(pos=(0, 2.5, 0))
+        self.world.step(0)
+
+        dt = 1 / 60.0
+        # Settle the character onto the prop over 30 steps
+        for _ in range(30):
+            # Kinematic characters do not automatically respond to gravity,
+            # so we actively apply a downward velocity to simulate gravity.
+            char.move((0, -10.0, 0), dt)
+            self.world.step(dt)
+
+        # Confirm the character detected the ground and remains stable
+        self.assertTrue(
+            char.is_grounded(), "Character failed to detect the static platform as ground"
+        )
+
+        pos_start = char.get_position()
+
+        # Step for another 30 frames to verify lack of drift or jitter
+        for _ in range(30):
+            char.move((0, -10.0, 0), dt)
+            self.world.step(dt)
+
+        pos_end = char.get_position()
+        self.assertAlmostEqual(
+            pos_start[1],
+            pos_end[1],
+            places=3,
+            msg="Character vertical position is unstable on static prop",
+        )
+
+    def test_character_standing_on_dynamic_prop(self) -> None:
+        """
+        Verify that a character with active physical push strength can stand on
+        a dynamic prop resting on a floor without causing physical instability or explosions.
+        """
+        # 1. Create a static floor
+        self.world.create_body(
+            pos=(0, -0.5, 0), size=(10.0, 1.0, 10.0), motion=culverin.MOTION_STATIC, friction=1.0
+        )
+
+        # 2. Create a dynamic prop box resting on the floor
+        prop = self.world.create_body(
+            pos=(0, 0.5, 0),
+            size=(1.5, 1.0, 1.5),
+            motion=culverin.MOTION_DYNAMIC,
+            mass=10.0,
+            friction=1.0,
+        )
+        self.world.step(0)
+
+        # Allow the dynamic prop to settle completely onto the floor
+        for _ in range(30):
+            self.world.step(1 / 60.0)
+
+        # 3. Spawn the character directly on top of the dynamic prop
+        # Prop top surface height is at Y = 1.0. Capsule center sits above it.
+        char = self.world.create_character(pos=(0, 2.5, 0))
+        char.set_strength(5000.0)  # High push strength to verify feedback limits
+        self.world.step(0)
+
+        dt = 1 / 60.0
+        # Settle the character onto the dynamic prop
+        for _ in range(30):
+            char.move((0, -10.0, 0), dt)
+            self.world.step(dt)
+
+        self.assertTrue(char.is_grounded(), "Character failed to ground on the dynamic prop")
+
+        prop_pos_start = self.world.get_position(prop)
+        self.assertIsNotNone(prop_pos_start)
+        assert prop_pos_start is not None
+
+        # 4. Simulate under continuous downward kinematic load for 60 frames (1 second)
+        for _ in range(60):
+            char.move((0, -10.0, 0), dt)
+            self.world.step(dt)
+
+        prop_pos_end = self.world.get_position(prop)
+        self.assertIsNotNone(prop_pos_end)
+        assert prop_pos_end is not None
+
+        # Retrieve velocity of the prop to detect any explosive kinetic energy gain
+        prop_vel = self.world.get_velocity(prop)
+        self.assertIsNotNone(prop_vel)
+        assert prop_vel is not None
+
+        # Verify translation stability (the prop did not slide out from under the character)
+        self.assertLess(abs(prop_vel[0]), 0.1, "Prop gained lateral velocity while stood on")
+        self.assertLess(abs(prop_vel[1]), 0.1, "Prop is bouncing vertically under character weight")
+        self.assertLess(abs(prop_vel[2]), 0.1, "Prop gained depth velocity while stood on")
+
+        # Verify positional stability (the prop did not sink through the floor or fly away)
+        self.assertAlmostEqual(
+            prop_pos_end[0], prop_pos_start[0], places=2, msg="Prop drifted horizontally"
+        )
+        self.assertAlmostEqual(
+            prop_pos_end[1], prop_pos_start[1], places=2, msg="Prop sank through the static floor"
+        )
+
+    def test_character_standing_on_dynamic_prop_low_strength(self) -> None:
+        """
+        Verify that a character with extremely low push strength (0.1) standing on
+        a dynamic prop does not generate unstable micro-impulses that cause
+        the prop to wobble, tip over, or 'flop around' unstably.
+        """
+        # 1. Create static floor
+        self.world.create_body(
+            pos=(0, -0.5, 0), size=(10.0, 1.0, 10.0), motion=culverin.MOTION_STATIC, friction=0.5
+        )
+
+        # 2. Create a slightly taller dynamic prop (taller shapes tip over/flop more easily)
+        prop = self.world.create_body(
+            pos=(0, 1.0, 0),
+            size=(1.0, 2.0, 1.0),  # Slender, 2.0 units tall box
+            motion=culverin.MOTION_DYNAMIC,
+            mass=15.0,
+            friction=0.5,
+        )
+        self.world.step(0)
+
+        # Let the prop settle on the floor
+        for _ in range(60):
+            self.world.step(1 / 60.0)
+
+        # 3. Create character directly above the settled taller prop
+        # Prop height is 2.0 centered at Y=1.0. Top surface is near Y=2.0.
+        char = self.world.create_character(pos=(0, 3.2, 0))
+        char.set_strength(0.1)  # Set push strength to an extremely low value
+        self.world.step(0)
+
+        dt = 1 / 60.0
+        # Settle character onto the prop
+        for _ in range(45):
+            char.move((0, -10.0, 0), dt)
+            self.world.step(dt)
+
+        self.assertTrue(
+            char.is_grounded(), "Character failed to ground on the prop with low strength"
+        )
+
+        # 4. Simulate and actively monitor for rotational/tilt instability (flopping)
+        max_angular_speed = 0.0
+        max_tilt = 0.0
+
+        # Monitor over 90 frames (1.5 seconds of sustained contact)
+        for _ in range(90):
+            char.move((0, -10.0, 0), dt)
+            self.world.step(dt)
+
+            # Check angular velocity of the prop
+            ang_vel = self.world.get_angular_velocity(prop)
+            if ang_vel is not None:
+                speed = math.sqrt(ang_vel[0] ** 2 + ang_vel[1] ** 2 + ang_vel[2] ** 2)
+                max_angular_speed = max(max_angular_speed, speed)
+
+            # Check if the prop has tilted away from its upright orientation (0, 0, 0, 1)
+            rot = self.world.get_rotation(prop)
+            if rot is not None:
+                # Measure X and Z deviation from the identity quaternion
+                tilt = math.sqrt(rot[0] ** 2 + rot[2] ** 2)
+                max_tilt = max(max_tilt, tilt)
+
+        # Assertions
+        # If the prop is "flopping around" due to low-strength collision feedback,
+        # it will register significant angular velocity and eventually tip over.
+        self.assertLess(
+            max_angular_speed,
+            0.2,
+            f"Prop is flopping around! Max angular speed reached: {max_angular_speed:.4f} rad/s",
+        )
+        self.assertLess(
+            max_tilt,
+            0.1,
+            f"Prop tipped over or tilted excessively under low-strength character! Max tilt metric: {max_tilt:.4f}",
+        )
+
+
 class TestThreadSafety(CulverinTestCase):
     def test_blocking_mutation(self) -> None:
         # 1. Create a valid body to mutate
