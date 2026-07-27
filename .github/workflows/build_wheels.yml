@@ -163,7 +163,7 @@ jobs:
           echo "JOLT_CMAKE_DIR=$dir" >> $env:GITHUB_ENV
 
       - name: Build Wheels
-        uses: pypa/cibuildwheel@v4.1.0
+        uses: pypa/cibuildwheel@v4.1.1
         env:
           CIBW_SKIP: "*-musllinux_* *-win32 *_i686"
           # Removed cp313t-* to ensure compatibility with v4 architecture
