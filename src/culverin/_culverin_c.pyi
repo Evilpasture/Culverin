@@ -72,6 +72,17 @@ MOTION_STATIC: int = 0
 MOTION_KINEMATIC: int = 1
 MOTION_DYNAMIC: int = 2
 
+DOF_TRANSLATION_X: int = 1
+DOF_TRANSLATION_Y: int = 2
+DOF_TRANSLATION_Z: int = 4
+DOF_ROTATION_X: int = 8
+DOF_ROTATION_Y: int = 16
+DOF_ROTATION_Z: int = 32
+DOF_ALL: int = 63
+DOF_TRANSLATE_XY: int = 3
+DOF_PLANE_XY: int = 3
+DOF_PLANE_2D: int = 35
+
 CONSTRAINT_FIXED: int = 0
 CONSTRAINT_POINT: int = 1
 CONSTRAINT_HINGE: int = 2
@@ -248,6 +259,7 @@ class PhysicsWorld:
         restitution: float = 0.0,
         material_id: int = 0,
         ccd: bool = False,
+        allowed_dofs: int = 0,
     ) -> int: ...
     def create_bodies_batch(
         self, positions: list[Vec3], sizes: list[Any], shape_type: int = 0, motion_type: int = 2

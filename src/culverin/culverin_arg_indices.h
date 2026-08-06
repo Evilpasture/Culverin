@@ -29,7 +29,8 @@ static constexpr size_t PARSER_REGISTRY_SIZE = 128;
     X(IDX_FRIC, "friction", float, false)                                                          \
     X(IDX_REST, "restitution", float, false)                                                       \
     X(IDX_MAT, "material_id", uint32_t, false)                                                     \
-    X(IDX_CCD, "ccd", bool, false)
+    X(IDX_CCD, "ccd", bool, false)                                                                 \
+    X(IDX_ALLOWED_DOFS, "allowed_dofs", uint32_t, false)
 
 #define SCHEMA_SET_POS(X)                                                                          \
     X(IDX_SETPOS_HANDLE, "handle", ParseBodyHandle, true)                                          \

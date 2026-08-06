@@ -201,6 +201,118 @@ class TestCoreMechanics(CulverinTestCase):
         assert (vel := self.get_vel(h)) is not None
         self.assertGreater(vel[0], 0.0)
 
+    def test_allowed_dof_constants(self) -> None:
+        self.assertEqual(culverin.DOF_TRANSLATION_X, 1 << 0)
+        self.assertEqual(culverin.DOF_TRANSLATION_Y, 1 << 1)
+        self.assertEqual(culverin.DOF_TRANSLATION_Z, 1 << 2)
+        self.assertEqual(culverin.DOF_ROTATION_X, 1 << 3)
+        self.assertEqual(culverin.DOF_ROTATION_Y, 1 << 4)
+        self.assertEqual(culverin.DOF_ROTATION_Z, 1 << 5)
+        self.assertEqual(culverin.DOF_ALL, (1 << 6) - 1)
+        self.assertEqual(
+            culverin.DOF_TRANSLATE_XY,
+            culverin.DOF_TRANSLATION_X | culverin.DOF_TRANSLATION_Y,
+        )
+        self.assertEqual(culverin.DOF_PLANE_XY, culverin.DOF_TRANSLATE_XY)
+        self.assertEqual(
+            culverin.DOF_PLANE_2D,
+            culverin.DOF_TRANSLATION_X | culverin.DOF_TRANSLATION_Y | culverin.DOF_ROTATION_Z,
+        )
+
+    def test_allowed_dofs_translate_xy_locks_z_and_rotation(self) -> None:
+        constrained = self.world.create_body(
+            pos=(0, 5, 0),
+            shape=culverin.SHAPE_BOX,
+            size=(0.5, 0.5, 0.5),
+            mass=1.0,
+            motion=culverin.MOTION_DYNAMIC,
+            allowed_dofs=culverin.DOF_TRANSLATE_XY,
+        )
+        unconstrained = self.world.create_body(
+            pos=(5, 5, 0),
+            shape=culverin.SHAPE_BOX,
+            size=(0.5, 0.5, 0.5),
+            mass=1.0,
+            motion=culverin.MOTION_DYNAMIC,
+        )
+        self.world.step(0)
+
+        for handle in (constrained, unconstrained):
+            self.world.apply_impulse(handle, 5.0, 0.0, 5.0)
+            self.world.apply_angular_impulse(handle, 3.0, 4.0, 5.0)
+
+        for _ in range(20):
+            self.world.step(1 / 60.0)
+
+        constrained_stats = self.world.get_body_stats(constrained)
+        unconstrained_stats = self.world.get_body_stats(unconstrained)
+        self.assertIsNotNone(constrained_stats)
+        self.assertIsNotNone(unconstrained_stats)
+        assert constrained_stats is not None
+        assert unconstrained_stats is not None
+
+        constrained_pos, constrained_rot, constrained_vel = constrained_stats
+        unconstrained_pos, unconstrained_rot, _ = unconstrained_stats
+
+        self.assertGreater(constrained_pos[0], 0.0)
+        self.assertLess(constrained_pos[1], 5.0)
+        self.assertAlmostEqual(constrained_pos[2], 0.0, places=5)
+        self.assertAlmostEqual(constrained_vel[2], 0.0, places=5)
+        self.assertAlmostEqual(constrained_rot[0], 0.0, places=5)
+        self.assertAlmostEqual(constrained_rot[1], 0.0, places=5)
+        self.assertAlmostEqual(constrained_rot[2], 0.0, places=5)
+        self.assertAlmostEqual(constrained_rot[3], 1.0, places=5)
+
+        constrained_ang = self.world.get_angular_velocity(constrained)
+        self.assertIsNotNone(constrained_ang)
+        assert constrained_ang is not None
+        self.assertAlmostEqual(constrained_ang[0], 0.0, places=5)
+        self.assertAlmostEqual(constrained_ang[1], 0.0, places=5)
+        self.assertAlmostEqual(constrained_ang[2], 0.0, places=5)
+
+        self.assertGreater(unconstrained_pos[2], 0.1)
+        self.assertGreater(
+            abs(unconstrained_rot[0]) + abs(unconstrained_rot[1]) + abs(unconstrained_rot[2]),
+            0.01,
+        )
+
+    def test_allowed_dofs_plane_2d_allows_z_rotation(self) -> None:
+        h = self.world.create_body(
+            pos=(0, 5, 0),
+            shape=culverin.SHAPE_BOX,
+            size=(0.5, 0.5, 0.5),
+            mass=1.0,
+            motion=culverin.MOTION_DYNAMIC,
+            allowed_dofs=culverin.DOF_PLANE_2D,
+        )
+        self.world.step(0)
+
+        self.world.apply_impulse(h, 5.0, 0.0, 5.0)
+        self.world.apply_angular_impulse(h, 3.0, 4.0, 5.0)
+
+        for _ in range(20):
+            self.world.step(1 / 60.0)
+
+        stats = self.world.get_body_stats(h)
+        self.assertIsNotNone(stats)
+        assert stats is not None
+        pos, rot, vel = stats
+
+        self.assertGreater(pos[0], 0.0)
+        self.assertLess(pos[1], 5.0)
+        self.assertAlmostEqual(pos[2], 0.0, places=5)
+        self.assertAlmostEqual(vel[2], 0.0, places=5)
+        self.assertAlmostEqual(rot[0], 0.0, places=5)
+        self.assertAlmostEqual(rot[1], 0.0, places=5)
+        self.assertGreater(abs(rot[2]), 0.01)
+
+        ang = self.world.get_angular_velocity(h)
+        self.assertIsNotNone(ang)
+        assert ang is not None
+        self.assertAlmostEqual(ang[0], 0.0, places=5)
+        self.assertAlmostEqual(ang[1], 0.0, places=5)
+        self.assertGreater(abs(ang[2]), 0.01)
+
     def test_buoyancy(self) -> None:
         ball = self.world.create_body(
             pos=(0, 10, 0), shape=culverin.SHAPE_SPHERE, size=(0.5,), mass=10.0

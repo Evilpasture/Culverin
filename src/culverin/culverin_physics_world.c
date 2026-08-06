@@ -26,6 +26,7 @@ static constexpr float DEFAULT_LINEAR_DRAG   = 0.5f;
 static constexpr float DEFAULT_ANGULAR_DRAG  = 0.5f;
 static constexpr float DEFAULT_FRICTION      = 0.2f;
 static constexpr float CONVEX_HULL_TOLERANCE = 0.05f;
+static constexpr uint32_t NO_ALLOWED_DOFS_OVERRIDE = 0U;
 
 // Collision Filtering
 static constexpr uint32_t COLLISION_FILTER_ALL_CATEGORIES = 0xFFFF;
@@ -457,6 +458,10 @@ static void configure_body_settings(JPH_BodyCreationSettings *settings, JPH_Shap
 
     if (cfg.motion_type == 2) { // MOTION_DYNAMIC
         JPH_BodyCreationSettings_SetAllowSleeping(settings, true);
+    }
+
+    if (cfg.allowed_dofs != NO_ALLOWED_DOFS_OVERRIDE) {
+        JPH_BodyCreationSettings_SetAllowedDOFs(settings, (JPH_AllowedDOFs)cfg.allowed_dofs);
     }
 
     JPH_BodyCreationSettings_SetFriction(settings, cfg.friction);
@@ -1629,7 +1634,8 @@ PyCFunction_DeclareMethod PhysicsWorld_create_convex_hull(PhysicsWorldObject *se
         shape, &(JPH_RVec3){px, py, pz}, &(JPH_Quat){rx, ry, rz, rw}, (JPH_MotionType)motion_type,
         (motion_type == MOTION_STATIC ? OBJECT_LAYER_STATIC : OBJECT_LAYER_DYNAMIC));
 
-    BodyConfig config = {mass, friction, restitution, (int)is_sensor, (int)use_ccd, motion_type};
+    BodyConfig config = {mass, friction, restitution, (int)is_sensor, (int)use_ccd, motion_type,
+                         NO_ALLOWED_DOFS_OVERRIDE};
     configure_body_settings(settings, shape, config);
 
     // 5. COMMIT PHASE
@@ -1985,6 +1991,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_body(PhysicsWorldObject *self, PyO
     uint32_t category    = COLLISION_FILTER_ALL_CATEGORIES;
     uint32_t mask        = COLLISION_FILTER_ALL_MASKS;
     uint32_t material_id = 0;
+    uint32_t allowed_dofs = NO_ALLOWED_DOFS_OVERRIDE;
     uint64_t user_data   = 0;
     bool is_sensor       = false;
     bool use_ccd         = false;
@@ -1995,20 +2002,21 @@ PyCFunction_DeclareMethod PhysicsWorld_create_body(PhysicsWorldObject *self, PyO
     // 2. TARGET MAPPING (Explicitly mapped via Enum)
     // Using explicit indices [IDX_...] makes this reorder-proof.
     const void *const restrict targets[Body_COUNT] = {
-        [IDX_POS]       = (const void *const restrict)&o_pos,
-        [IDX_ROT]       = (const void *const restrict)&o_rot,
-        [IDX_SIZE]      = (const void *const restrict)&o_size,
-        [IDX_SHAPE]     = (const void *const restrict)&shape_type,
-        [IDX_MOTION]    = (const void *const restrict)&motion_type,
-        [IDX_USER_DATA] = (const void *const restrict)&user_data,
-        [IDX_SENSOR]    = (const void *const restrict)&is_sensor,
-        [IDX_MASS]      = (const void *const restrict)&mass,
-        [IDX_CAT]       = (const void *const restrict)&category,
-        [IDX_MASK]      = (const void *const restrict)&mask,
-        [IDX_FRIC]      = (const void *const restrict)&friction,
-        [IDX_REST]      = (const void *const restrict)&restitution,
-        [IDX_MAT]       = (const void *const restrict)&material_id,
-        [IDX_CCD]       = (const void *const restrict)&use_ccd,
+        [IDX_POS]          = (const void *const restrict)&o_pos,
+        [IDX_ROT]          = (const void *const restrict)&o_rot,
+        [IDX_SIZE]         = (const void *const restrict)&o_size,
+        [IDX_SHAPE]        = (const void *const restrict)&shape_type,
+        [IDX_MOTION]       = (const void *const restrict)&motion_type,
+        [IDX_USER_DATA]    = (const void *const restrict)&user_data,
+        [IDX_SENSOR]       = (const void *const restrict)&is_sensor,
+        [IDX_MASS]         = (const void *const restrict)&mass,
+        [IDX_CAT]          = (const void *const restrict)&category,
+        [IDX_MASK]         = (const void *const restrict)&mask,
+        [IDX_FRIC]         = (const void *const restrict)&friction,
+        [IDX_REST]         = (const void *const restrict)&restitution,
+        [IDX_MAT]          = (const void *const restrict)&material_id,
+        [IDX_CCD]          = (const void *const restrict)&use_ccd,
+        [IDX_ALLOWED_DOFS] = (const void *const restrict)&allowed_dofs,
     };
 
     // 3. THE FAST PARSE
@@ -2077,7 +2085,8 @@ PyCFunction_DeclareMethod PhysicsWorld_create_body(PhysicsWorldObject *self, PyO
                 : OBJECT_LAYER_DYNAMIC);
         if (settings) {
             BodyConfig config = {mass,           mat.friction, mat.restitution,
-                                 (int)is_sensor, (int)use_ccd, motion_type};
+                                 (int)is_sensor, (int)use_ccd, motion_type,
+                                 allowed_dofs};
             configure_body_settings(settings, shape, config);
         }
     }
