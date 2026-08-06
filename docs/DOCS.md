@@ -56,6 +56,7 @@ Allocates and initializes a new rigid body within the simulation.
     - `MOTION_DYNAMIC`: Full physics simulation (e.g., crates, debris).
     - `MOTION_KINEMATIC`: Position controlled via script; pushes dynamic objects but is not moved by forces.
 - **`mass` (float):** Mass in kg. If positive, Culverin automatically calculates the moment of inertia. Defaults to 1.0.
+- **`allowed_dofs` (int):** Optional bitmask restricting a dynamic or kinematic body's allowed world-space degrees of freedom. Combine `DOF_TRANSLATION_X`, `DOF_TRANSLATION_Y`, `DOF_TRANSLATION_Z`, `DOF_ROTATION_X`, `DOF_ROTATION_Y`, and `DOF_ROTATION_Z`, or use the presets `DOF_TRANSLATE_XY` and `DOF_PLANE_2D`. The default `0` leaves Jolt's normal `DOF_ALL` behavior unchanged.
 - **`category` / `mask` (int):** Bitmasks for collision filtering. Bodies only collide if `(A.category & B.mask)` and `(B.category & A.mask)` are both non-zero.
 - **`ccd` (bool):** Enables **Continuous Collision Detection**. Set to `True` for small, fast-moving objects (bullets) to prevent them from "tunneling" through walls.
 - **`is_sensor` (bool):** If `True`, the body generates collision events but does not physically push other objects (trigger zones).

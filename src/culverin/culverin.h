@@ -153,6 +153,7 @@ typedef struct {
     int is_sensor;
     int use_ccd;
     int motion_type;
+    uint32_t allowed_dofs;
 } BodyConfig;
 
 // Struct to hold parsed Python data safely in C

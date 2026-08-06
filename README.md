@@ -21,6 +21,7 @@ Culverin is a middleware bridge between the **Jolt Physics** engine and the Pyth
 *   **Character Controller:** A virtual character controller with built-in support for climbing stairs, sliding down slopes, and pushing objects.
 *   **Vehicles:** Support for wheeled vehicles and tracked vehicles (tanks) with physical treads and skid-steering.
 *   **Ragdolls & Skeletons:** Multi-body articulated physics with active motorized poses.
+*   **Allowed Degrees of Freedom:** Restrict rigid bodies to specific world-space translation and rotation axes, including 2D-style motion.
 *   **Constraints:** Fixed, Point, Hinge, Slider, Distance, Swing-Twist, and Cone constraints.
 *   **Queries:** Efficient single and batch Raycasting, Shapecasting (sweeps), and Overlap queries.
 *   **Collision Events:** Native event buffer for contact added, persisted, and removed events.
