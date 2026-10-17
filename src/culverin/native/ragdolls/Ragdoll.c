@@ -1,10 +1,9 @@
 #include "ragdolls/Ragdoll.h"
 #include "bindings/BindingCommon.h"
 #include "bindings/parsing/ArgIndices.h"
+#include "core/CompilerSpecifics.h"
 #include "bindings/FastBuild.h"
-#include "bindings/ModuleState.h"
 #include "bindings/physics/PhysicsSync.h"
-#include "bindings/physics/WorldAdapters.h"
 #include "bindings/PythonSupport.h"
 
 // Default mass

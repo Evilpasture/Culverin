@@ -1,9 +1,7 @@
 #include "vehicles/Ship.h"
-#include "bindings/BindingCommon.h"
 #include "bindings/parsing/ArgIndices.h"
 #include "bindings/ModuleState.h"
 #include "bindings/physics/PhysicsWorld.h"
-#include "bindings/physics/WorldAdapters.h"
 #include "bindings/PythonSupport.h"
 #include <math.h>
 

@@ -3,6 +3,7 @@
 #include "bindings/BindingCommon.h"
 #include "bindings/parsing/ArgIndices.h"
 #include "physics/ContactEventDefinitions.h"
+#include "core/CompilerSpecifics.h"
 #include "bindings/FastBuild.h"
 #include "math/Math.h"
 #include "bindings/ModuleState.h"

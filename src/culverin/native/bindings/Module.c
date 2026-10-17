@@ -3,7 +3,6 @@
 #    define _CRT_SECURE_NO_WARNINGS
 #endif
 // clang-format on
-#include "bindings/BindingCommon.h"
 #include "bindings/parsing/ArgIndices.h"
 #include "characters/Character.h"
 #include "core/CompilerSpecifics.h"

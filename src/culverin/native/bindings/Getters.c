@@ -1,6 +1,5 @@
 #include "bindings/Getters.h"
 #include "ecs/Ecs.h"
-#include "bindings/FastBuild.h"
 #include "bindings/ModuleState.h"
 #include "bindings/physics/PhysicsSync.h"
 #include <Python.h>

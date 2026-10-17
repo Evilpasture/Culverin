@@ -1,12 +1,13 @@
 #include <math.h>
 #include "bindings/physics/PhysicsWorld.h"
+#include "characters/Character.h" // IWYU pragma: keep
+#include "bindings/physics/Constraint.h" // IWYU pragma: keep
 #include "physics/PhysicsWorldCore.h"
 #include "bindings/physics/WorldAdapters.h"
 #include "core/NativeAlloc.h"
 #include "bindings/parsing/ArgIndices.h"
-#include "characters/Character.h"
-#include "bindings/physics/Constraint.h"
 #include "physics/ContactEventDefinitions.h"
+#include "core/CompilerSpecifics.h"
 #include "bindings/FastBuild.h"
 #include "bindings/Getters.h"
 #include "math/Math.h"

@@ -29,6 +29,9 @@ def generate_clangd() -> None:
         (project_root / "src/culverin/native").as_posix(),
         (project_root / "extern/JoltC/include").as_posix(),
         (project_root / "extern/JoltPhysics").as_posix(),
+        (project_root / "extern/fast-capi/include").as_posix(),
+        (project_root / "extern/mag-mutex/include").as_posix(),
+        (project_root / "extern/docs-embedder/include").as_posix(),
         final_python_path.as_posix(),
     ]
 
@@ -40,6 +43,8 @@ def generate_clangd() -> None:
         "-Wextra",
         "-m64",
         "-DJPH_DOUBLE_PRECISION",
+        "-DJPH_OBJECT_LAYER_BITS=32",
+        "-DJPH_DEBUG_RENDERER",
         "-DPy_GIL_DISABLED=1",
         # --- ATOMIC & CONCURRENCY SAFETY ---
         "-Watomic-implicit-seq-cst",  # CRITICAL: Warns when memory_order is not explicit
@@ -81,7 +86,7 @@ Diagnostics:
 ---
 # 0. THE C23 BLOCK
 If:
-  PathMatch: [.*\.c, .*/extern/JoltC/.*\.h]
+  PathMatch: ['.*\.c$', '.*/extern/JoltC/.*\.h$']
 CompileFlags:
   Add: [
       "-std=c23",
@@ -92,7 +97,7 @@ CompileFlags:
 ---
 # 1. THE C++23 BLOCK
 If:
-  PathMatch: [.*\.cpp, .*\.hpp, .*\.cc]
+  PathMatch: ['.*\.cpp$', '.*\.hpp$', '.*\.cc$']
 CompileFlags:
   Add: [
       "-std=c++23",

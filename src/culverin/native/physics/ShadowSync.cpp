@@ -11,8 +11,8 @@
 #include <Jolt/Physics/SoftBody/SoftBodyMotionProperties.h>
 #include <Jolt/Physics/SoftBody/SoftBodyVertex.h>
 #include <array>
-#include <cstddef>
-#include <memory>
+#include <atomic>
+#include <memory> // IWYU pragma: keep
 
 static_assert(sizeof(PosStride) == sizeof(JPH::Real) * 4);
 static_assert(sizeof(AuxStride) == sizeof(CPH::Float32) * 4);

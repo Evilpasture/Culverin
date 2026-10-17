@@ -1,6 +1,5 @@
 #include "bindings/physics/WorldAdapters.h"
 #include "physics/PhysicsWorldCore.h"
-#include "core/NativeAlloc.h"
 #include "bindings/ModuleState.h"
 #include "bindings/physics/PhysicsSync.h"
 

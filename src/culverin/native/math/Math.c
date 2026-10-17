@@ -2,7 +2,7 @@
 #include "bindings/parsing/ArgIndices.h"
 #include "core/CompilerSpecifics.h"
 #include "bindings/PythonSupport.h"
-#include "fast_build.h"
+#include "bindings/FastBuild.h"
 #include "fast_parse.h"
 #include <Python.h>
 

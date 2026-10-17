@@ -1,5 +1,10 @@
+#define PY_SSIZE_T_CLEAN
+#include <Python.h>
+#include <stdatomic.h>
+#include <stddef.h>
+
+#include "bindings/physics/PhysicsWorld.h"
 #include "physics/CommandBuffer.h"
-#include "bindings/BindingCommon.h"
 #include "bindings/physics/PhysicsSync.h"
 #include "core/Threading.h"
 

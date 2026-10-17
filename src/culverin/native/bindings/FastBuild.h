@@ -2,11 +2,11 @@
 
 #include "core/CompilerSpecifics.h"
 
-// 1. Override Submodule Directives with Culverin Defaults
+// Override FastBuild annotations with the project defaults.
 #define FB_FORCE_INLINE CULV_FORCE_INLINE
 #define FB_NODISCARD CULV_NODISCARD
 
-// (Optional): If you later want to build Vec3 structs directly into PyTuple objects, 
+// (Optional): If you later want to build Vec3 structs directly into PyTuple objects,
 // you would define the function here and inject it like this:
 /*
 CULV_NODISCARD CULV_FORCE_INLINE static PyObject* fb_from_vec3f(Vec3f v) {
@@ -15,5 +15,4 @@ CULV_NODISCARD CULV_FORCE_INLINE static PyObject* fb_from_vec3f(Vec3f v) {
 #define FB_CUSTOM_CONVERTERS , Vec3f: fb_from_vec3f
 */
 
-// 2. Include the Submodule
-#include <fast_build.h>
+#include <fast_build.h> // IWYU pragma: export

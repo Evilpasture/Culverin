@@ -1,7 +1,7 @@
 #include "soft_bodies/SoftBody.h"
 #include "bindings/parsing/ArgIndices.h"
+#include "core/CompilerSpecifics.h"
 #include "bindings/FastBuild.h"
-#include "bindings/ModuleState.h"
 #include "bindings/PythonSupport.h"
 
 // --- SharedSettings Lifecycle ---
