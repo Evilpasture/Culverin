@@ -24,48 +24,47 @@ typedef typeof(nullptr) nullptr_t;
 #    endif
 #endif
 
-#ifndef CULV_PY_BUILD_NODISCARD
-#    define CULV_PY_BUILD_NODISCARD [[nodiscard]]
-#endif
-
 #ifndef CULV_PY_BUILD_FORCE_INLINE
 #    define CULV_PY_BUILD_FORCE_INLINE inline
 #endif
 
 /* --- 1. TYPE CONSTRUCTORS (Inlined) --- */
 
-CULV_PY_BUILD_NODISCARD CULV_PY_BUILD_FORCE_INLINE static PyObject *culv_py_build_from_float(float v) {
+[[nodiscard]] CULV_PY_BUILD_FORCE_INLINE static PyObject *culv_py_build_from_float(float v) {
     return PyFloat_FromDouble((double)v);
 }
-CULV_PY_BUILD_NODISCARD CULV_PY_BUILD_FORCE_INLINE static PyObject *culv_py_build_from_double(double v) {
+[[nodiscard]] CULV_PY_BUILD_FORCE_INLINE static PyObject *culv_py_build_from_double(double v) {
     return PyFloat_FromDouble(v);
 }
-CULV_PY_BUILD_NODISCARD CULV_PY_BUILD_FORCE_INLINE static PyObject *culv_py_build_from_int(int v) {
+[[nodiscard]] CULV_PY_BUILD_FORCE_INLINE static PyObject *culv_py_build_from_int(int v) {
     return PyLong_FromLong((long)v);
 }
-CULV_PY_BUILD_NODISCARD CULV_PY_BUILD_FORCE_INLINE static PyObject *culv_py_build_from_long(long v) { return PyLong_FromLong(v); }
-CULV_PY_BUILD_NODISCARD CULV_PY_BUILD_FORCE_INLINE static PyObject *culv_py_build_from_longlong(long long v) {
+[[nodiscard]] CULV_PY_BUILD_FORCE_INLINE static PyObject *culv_py_build_from_long(long v) {
+    return PyLong_FromLong(v);
+}
+[[nodiscard]] CULV_PY_BUILD_FORCE_INLINE static PyObject *culv_py_build_from_longlong(long long v) {
     return PyLong_FromLongLong(v);
 }
-CULV_PY_BUILD_NODISCARD CULV_PY_BUILD_FORCE_INLINE static PyObject *culv_py_build_from_u32(uint32_t v) {
+[[nodiscard]] CULV_PY_BUILD_FORCE_INLINE static PyObject *culv_py_build_from_u32(uint32_t v) {
     return PyLong_FromUnsignedLong((unsigned long)v);
 }
-CULV_PY_BUILD_NODISCARD CULV_PY_BUILD_FORCE_INLINE static PyObject *culv_py_build_from_u64(uint64_t v) {
+[[nodiscard]] CULV_PY_BUILD_FORCE_INLINE static PyObject *culv_py_build_from_u64(uint64_t v) {
     return PyLong_FromUnsignedLongLong((unsigned long long)v);
 }
-CULV_PY_BUILD_NODISCARD CULV_PY_BUILD_FORCE_INLINE static PyObject *culv_py_build_from_str(const char *v) {
+[[nodiscard]] CULV_PY_BUILD_FORCE_INLINE static PyObject *culv_py_build_from_str(const char *v) {
     return PyUnicode_FromString(v);
 }
-CULV_PY_BUILD_NODISCARD CULV_PY_BUILD_FORCE_INLINE static PyObject *culv_py_build_from_bool(bool v) {
+[[nodiscard]] CULV_PY_BUILD_FORCE_INLINE static PyObject *culv_py_build_from_bool(bool v) {
     PyObject *res = (int)v ? Py_True : Py_False;
     Py_INCREF(res);
     return res;
 }
-CULV_PY_BUILD_NODISCARD CULV_PY_BUILD_FORCE_INLINE static PyObject *culv_py_build_incref(PyObject *v) {
+[[nodiscard]] CULV_PY_BUILD_FORCE_INLINE static PyObject *culv_py_build_incref(PyObject *v) {
     Py_XINCREF(v);
     return v;
 }
-CULV_PY_BUILD_NODISCARD CULV_PY_BUILD_FORCE_INLINE static PyObject *culv_py_build_from_none([[maybe_unused]] nullptr_t v) {
+[[nodiscard]] CULV_PY_BUILD_FORCE_INLINE static PyObject *
+culv_py_build_from_none([[maybe_unused]] nullptr_t v) {
     Py_RETURN_NONE;
 }
 
@@ -97,7 +96,7 @@ extern PyObject *culv_py_build_unsupported_type(void);
 
 /* --- 3. THE CONTAINER PACKERS --- */
 
-CULV_PY_BUILD_NODISCARD [[gnu::always_inline]]
+[[nodiscard]] [[gnu::always_inline]]
 static inline PyObject *culv_py_build_pack_tuple(size_t n, PyObject **arr) {
     if (CULV_PY_BUILD_UNLIKELY(n == 0)) {
         return PyTuple_New(0);
@@ -130,7 +129,8 @@ static inline PyObject *culv_py_build_pack_tuple(size_t n, PyObject **arr) {
     return t;
 }
 
-CULV_PY_BUILD_NODISCARD CULV_PY_BUILD_FORCE_INLINE static PyObject *culv_py_build_pack_list(size_t n, PyObject **arr) {
+[[nodiscard]] CULV_PY_BUILD_FORCE_INLINE static PyObject *culv_py_build_pack_list(size_t n,
+                                                                                  PyObject **arr) {
     if (CULV_PY_BUILD_UNLIKELY(n == 0)) {
         return PyList_New(0);
     }
@@ -159,7 +159,8 @@ error:
     return nullptr;
 }
 
-CULV_PY_BUILD_NODISCARD CULV_PY_BUILD_FORCE_INLINE static PyObject *culv_py_build_pack_dict(size_t n, PyObject **arr) {
+[[nodiscard]] CULV_PY_BUILD_FORCE_INLINE static PyObject *culv_py_build_pack_dict(size_t n,
+                                                                                  PyObject **arr) {
     if (CULV_PY_BUILD_UNLIKELY(n == 0)) {
         return PyDict_New();
     }

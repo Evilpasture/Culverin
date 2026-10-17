@@ -1,8 +1,9 @@
 #include "physics/ShadowSync.h"
+#include "core/CompilerSpecifics.h"
+#include "core/Profiling.h"
+#include "core/Types.h"
 #include "cpp/Prefetch.hpp"
 #include "cpp/Span.hpp"
-#include "core/CompilerSpecifics.h"
-#include "core/Types.h"
 
 // Include native Jolt headers for ultra-fast C++ bypass
 #include <Jolt/Jolt.h>

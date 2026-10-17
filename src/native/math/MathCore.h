@@ -5,7 +5,7 @@
 #include "joltc.h"
 
 // --- Double Precision Refinement ---
-CULV_MAYBE_UNUSED
+[[maybe_unused]]
 static inline double newton_raphson_iterate_d(double number) {
     constexpr double threehalfs = 1.5;
     const double half_number    = number * 0.5;
@@ -18,7 +18,7 @@ static inline double culverin_fast_rsqrt_d(double number) {
 }
 
 // --- Float Precision Refinement ---
-CULV_MAYBE_UNUSED
+[[maybe_unused]]
 static inline float newton_raphson_iterate_f(float number) {
     constexpr float threehalfs = 1.5f;
     const float half_number    = number * 0.5f;
@@ -33,7 +33,7 @@ static inline float culverin_fast_rsqrt_f(float number) { return 1.0f / sqrtf(nu
     _Generic((x), float: culverin_fast_rsqrt_f, double: culverin_fast_rsqrt_d)(x)
 
 // Helper to find an arbitrary vector perpendicular to 'in'
-CULV_MAYBE_UNUSED
+[[maybe_unused]]
 static inline void vec3_get_perpendicular(const JPH_Vec3 *CULV_RESTRICT in,
                                           JPH_Vec3 *CULV_RESTRICT out) {
     if (fabsf(in->x) > fabsf(in->z)) {

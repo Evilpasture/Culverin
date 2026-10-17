@@ -1,8 +1,9 @@
 #include "physics/PhysicsWorldCore.h"
 #include "core/NativeAlloc.h"
+#include "core/Profiling.h"
+#include "physics/CommandBuffer.h"
 #include "physics/ContactEventDefinitions.h"
 #include "physics/InternalQuery.h"
-#include "physics/CommandBuffer.h"
 #include "physics/ShadowSync.h"
 #include <math.h>
 #include <string.h>
@@ -274,7 +275,7 @@ static bool NewBuffers_check_alloc(NewBuffers *nb) {
             nb->masks && nb->mats && nb->softs) != 0;
 }
 
-CULV_NODISCARD
+[[nodiscard]]
 static int alloc_new_buffers(NewBuffers *nb, size_t cap) {
     *nb = (NewBuffers){};
 
@@ -383,7 +384,7 @@ static size_t migrate_and_init(PhysicsWorld *world, NewBuffers *nb, size_t new_c
 }
 
 // helper: Allocate shadow buffers and indirection maps
-CULV_NODISCARD
+[[nodiscard]]
 int allocate_buffers(PhysicsWorld *world, int max_bodies) {
     // TSan Fix: Load count atomically
     size_t current_count = atomic_load_explicit(&world->count, memory_order_relaxed);

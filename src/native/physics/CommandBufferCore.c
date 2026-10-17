@@ -123,7 +123,7 @@ static bool grow_queues(PhysicsWorld *world, size_t new_cap) {
     return true;
 }
 
-CULV_NODISCARD
+[[nodiscard]]
 bool ensure_command_capacity(PhysicsWorld *world) {
     if (UNLIKELY(world->command_count >= world->command_capacity)) {
         if (world->command_capacity > SIZE_MAX / 2) {
@@ -135,7 +135,7 @@ bool ensure_command_capacity(PhysicsWorld *world) {
     return true;
 }
 
-CULV_NODISCARD
+[[nodiscard]]
 bool ensure_command_bulk_capacity(PhysicsWorld *world, size_t batch_size) {
     if (batch_size > SIZE_MAX - world->command_count) {
         return false;
@@ -188,7 +188,7 @@ void flush_commands_internal(PhysicsWorld *world, PhysicsCommand *CULV_RESTRICT 
     PhysicsCommand *cmd;
     uint32_t header;
     uint32_t slot;
-    CULV_MAYBE_UNUSED uint32_t dense;
+    [[maybe_unused]] uint32_t dense;
     CommandType type;
     SlotState state;
     JPH_BodyID bid;

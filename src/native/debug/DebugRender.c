@@ -52,11 +52,11 @@ static void JPH_API_CALL OnDebugDrawLine(void *userData, const JPH_RVec3 *from, 
                       (DebugCoordinates){(float)to->x, (float)to->y, (float)to->z}, color);
 }
 
-static void JPH_API_CALL OnDebugDrawTriangle(void *userData, const JPH_RVec3 *v1,
-                                             const JPH_RVec3 *v2,
-                                             // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-                                             const JPH_RVec3 *v3, JPH_Color color,
-                                             CULV_MAYBE_UNUSED JPH_DebugRenderer_CastShadow castShadow) {
+static void JPH_API_CALL
+OnDebugDrawTriangle(void *userData, const JPH_RVec3 *v1, const JPH_RVec3 *v2,
+                    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+                    const JPH_RVec3 *v3, JPH_Color color,
+                    [[maybe_unused]] JPH_DebugRenderer_CastShadow castShadow) {
     auto *world = (PhysicsWorld *)userData;
     constexpr int VERTS_PER_TRIANGLE = 3;
     debug_buffer_ensure(&world->debug_triangles, VERTS_PER_TRIANGLE);
@@ -68,12 +68,12 @@ static void JPH_API_CALL OnDebugDrawTriangle(void *userData, const JPH_RVec3 *v1
                       (DebugCoordinates){(float)v3->x, (float)v3->y, (float)v3->z}, color);
 }
 
-static void JPH_API_CALL OnDebugDrawText(CULV_MAYBE_UNUSED void *userData,
-                                         CULV_MAYBE_UNUSED const JPH_RVec3 *position,
+static void JPH_API_CALL OnDebugDrawText([[maybe_unused]] void *userData,
+                                         [[maybe_unused]] const JPH_RVec3 *position,
                                          // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-                                         CULV_MAYBE_UNUSED const char *str,
-                                         CULV_MAYBE_UNUSED JPH_Color color,
-                                         CULV_MAYBE_UNUSED float height) {
+                                         [[maybe_unused]] const char *str,
+                                         [[maybe_unused]] JPH_Color color,
+                                         [[maybe_unused]] float height) {
     // Text is hard to batch efficiently to Python bytes.
     // Usually ignored or printed to stdout.
 }

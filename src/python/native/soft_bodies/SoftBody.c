@@ -7,8 +7,8 @@
 // --- SharedSettings Lifecycle ---
 
 PyType_DeclareSlot_StatusFromModule SoftBodySharedSettings_init(SoftBodySharedSettingsObject *self,
-                                                                CULV_MAYBE_UNUSED PyObject *args,
-                                                                CULV_MAYBE_UNUSED PyObject *kwds) {
+                                                                [[maybe_unused]] PyObject *args,
+                                                                [[maybe_unused]] PyObject *kwds) {
     self->settings            = JPH_SoftBodySharedSettings_Create();
     self->num_vertices        = 0;
     self->constraints_created = false;
@@ -427,7 +427,7 @@ SoftBodySharedSettings_create_constraints(SoftBodySharedSettingsObject *self, Py
 // Method: settings.optimize() (METH_NOARGS)
 PyCFunction_DeclareMethodFromModule
 SoftBodySharedSettings_optimize(SoftBodySharedSettingsObject *self,
-                                CULV_MAYBE_UNUSED PyObject *args) {
+                                [[maybe_unused]] PyObject *args) {
     if (!self->constraints_created) {
         PyErr_SetString(PyExc_RuntimeError, "create_constraints must be called before optimize");
         return nullptr;

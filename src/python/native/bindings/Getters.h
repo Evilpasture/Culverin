@@ -35,27 +35,27 @@ extern PyType_Slot BufferProxy_slots[];
 extern PyType_Spec BufferProxy_spec;
 
 PyGetSet_DeclareGetter get_is_step_pending(struct PhysicsWorldObject *self,
-                                           CULV_MAYBE_UNUSED void *closure);
-PyGetSet_DeclareGetter get_positions(struct PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *c);
-PyGetSet_DeclareGetter get_rotations(struct PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *c);
-PyGetSet_DeclareGetter get_velocities(struct PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *c);
+                                           [[maybe_unused]] void *closure);
+PyGetSet_DeclareGetter get_positions(struct PhysicsWorldObject *self, [[maybe_unused]] void *c);
+PyGetSet_DeclareGetter get_rotations(struct PhysicsWorldObject *self, [[maybe_unused]] void *c);
+PyGetSet_DeclareGetter get_velocities(struct PhysicsWorldObject *self, [[maybe_unused]] void *c);
 PyGetSet_DeclareGetter get_angular_velocities(struct PhysicsWorldObject *self,
-                                              CULV_MAYBE_UNUSED void *c);
-PyGetSet_DeclareGetter get_count(struct PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *c);
-PyGetSet_DeclareGetter get_time(struct PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *c);
+                                              [[maybe_unused]] void *c);
+PyGetSet_DeclareGetter get_count(struct PhysicsWorldObject *self, [[maybe_unused]] void *c);
+PyGetSet_DeclareGetter get_time(struct PhysicsWorldObject *self, [[maybe_unused]] void *c);
 PyGetSet_DeclareGetter get_user_data_buffer(struct PhysicsWorldObject *self,
-                                            CULV_MAYBE_UNUSED void *c);
+                                            [[maybe_unused]] void *c);
 
 PyGetSet_DeclareGetter Vehicle_get_wheel_count(struct VehicleObject *self,
-                                               CULV_MAYBE_UNUSED void *closure);
+                                               [[maybe_unused]] void *closure);
 
 PyGetSet_DeclareGetter get_shape_count(struct PhysicsWorldObject *self,
-                                       CULV_MAYBE_UNUSED void *closure);
+                                       [[maybe_unused]] void *closure);
 
 PyGetSet_DeclareGetter PhysicsWorld_get_max_bodies(struct PhysicsWorldObject *self,
-                                                   CULV_MAYBE_UNUSED void *closure);
+                                                   [[maybe_unused]] void *closure);
 PyGetSet_DeclareGetter PhysicsWorld_get_remaining_capacity(struct PhysicsWorldObject *self,
-                                                           CULV_MAYBE_UNUSED void *closure);
+                                                           [[maybe_unused]] void *closure);
 PyCFunction_DeclareMethodFromModule
 PhysicsWorld_get_soft_body_vertices(struct PhysicsWorldObject *self, PyObject *const *args,
                                     size_t nargsf, PyObject *kwnames);

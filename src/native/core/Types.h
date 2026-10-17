@@ -108,5 +108,5 @@ typedef enum ObjectLayer : uint32_t {
     OBJECT_LAYER_COUNT
 } ObjectLayer;
 
-CULV_MAYBE_UNUSED static constexpr uint32_t HANDLE_INDEX_BITS = 32;
-CULV_MAYBE_UNUSED static constexpr uint64_t HANDLE_INDEX_MASK = 0xFFFFFFFF;
+[[maybe_unused]] static constexpr uint32_t HANDLE_INDEX_BITS = 32;
+[[maybe_unused]] static constexpr uint64_t HANDLE_INDEX_MASK = 0xFFFFFFFF;

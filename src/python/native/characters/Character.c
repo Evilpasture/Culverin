@@ -16,7 +16,7 @@
 // Callback: Can the character collide with this object?
 
 static bool JPH_API_CALL
-char_on_contact_validate(void *userData, CULV_MAYBE_UNUSED const JPH_CharacterVirtual *character,
+char_on_contact_validate(void *userData, [[maybe_unused]] const JPH_CharacterVirtual *character,
                          const JPH_CharacterContact *contact) {
 
     CharacterObject *self = (CharacterObject *)userData;
@@ -195,7 +195,7 @@ static void report_char_vs_char(CharacterObject *self, const JPH_CharacterVirtua
 }
 
 static void JPH_API_CALL char_on_character_contact_added(
-    void *userData, CULV_MAYBE_UNUSED const JPH_CharacterVirtual *character,
+    void *userData, [[maybe_unused]] const JPH_CharacterVirtual *character,
     const JPH_CharacterContact *contact, JPH_CharacterContactSettings *ioSettings) {
 
     ioSettings->canPushCharacter   = true;
@@ -250,7 +250,7 @@ static void apply_character_impulse(CharacterObject *self, JPH_BodyID bodyID2,
 }
 
 static void JPH_API_CALL char_on_contact_added(
-    void *userData, CULV_MAYBE_UNUSED const JPH_CharacterVirtual *character,
+    void *userData, [[maybe_unused]] const JPH_CharacterVirtual *character,
     const JPH_CharacterContact *contact, JPH_CharacterContactSettings *ioSettings) {
 
     ioSettings->canPushCharacter   = true;
@@ -270,7 +270,7 @@ static void JPH_API_CALL char_on_contact_added(
 }
 
 static void JPH_API_CALL char_on_contact_persisted(
-    void *userData, CULV_MAYBE_UNUSED const JPH_CharacterVirtual *character,
+    void *userData, [[maybe_unused]] const JPH_CharacterVirtual *character,
     const JPH_CharacterContact *contact, JPH_CharacterContactSettings *ioSettings) {
 
     ioSettings->canPushCharacter   = true;
@@ -290,9 +290,10 @@ static void JPH_API_CALL char_on_contact_persisted(
 }
 
 static void JPH_API_CALL char_on_contact_removed(void *userData,
-                                                 const JPH_CharacterVirtual *Py_UNUSED(character),
+                                                 const JPH_CharacterVirtual *character
+                                                 [[maybe_unused]],
                                                  JPH_BodyID bodyID2,
-                                                 JPH_SubShapeID Py_UNUSED(subShapeID2)) {
+                                                 JPH_SubShapeID subShapeID2 [[maybe_unused]]) {
     auto self = (CharacterObject *)userData;
     if (!self || !self->world) {
         return;
@@ -345,7 +346,7 @@ static void JPH_API_CALL char_on_contact_removed(void *userData,
 }
 
 static void JPH_API_CALL char_on_character_contact_persisted(
-    void *userData, CULV_MAYBE_UNUSED const JPH_CharacterVirtual *character,
+    void *userData, [[maybe_unused]] const JPH_CharacterVirtual *character,
     const JPH_CharacterContact *contact, JPH_CharacterContactSettings *ioSettings) {
 
     ioSettings->canPushCharacter   = true;
@@ -361,8 +362,8 @@ static void JPH_API_CALL char_on_character_contact_persisted(
 }
 
 static void JPH_API_CALL char_on_character_contact_removed(
-    void *userData, const JPH_CharacterVirtual *Py_UNUSED(character),
-    const JPH_CharacterID otherCharacterID, JPH_SubShapeID Py_UNUSED(subShapeID2)) {
+    void *userData, const JPH_CharacterVirtual *character [[maybe_unused]],
+    const JPH_CharacterID otherCharacterID, JPH_SubShapeID subShapeID2 [[maybe_unused]]) {
     auto self  = (CharacterObject *)userData;
     auto world = self->world;
 
@@ -467,7 +468,7 @@ static void JPH_API_CALL char_on_adjust_velocity(void *userData,
 }
 
 static bool JPH_API_CALL char_on_character_contact_validate(
-    void *userData, CULV_MAYBE_UNUSED const JPH_CharacterVirtual *character,
+    void *userData, [[maybe_unused]] const JPH_CharacterVirtual *character,
     const JPH_CharacterContact *contact) {
 
     CharacterObject *self = (CharacterObject *)userData;
@@ -522,10 +523,10 @@ static bool JPH_API_CALL char_on_character_contact_validate(
 }
 
 // High-frequency callback: DO NOT allocate memory or lock.
-CULV_NO_TSAN CULV_MAYBE_UNUSED static void JPH_API_CALL char_on_contact_solve(
-    CULV_MAYBE_UNUSED void *userData, CULV_MAYBE_UNUSED const JPH_Body *body1,
-    CULV_MAYBE_UNUSED const JPH_Body *body2, CULV_MAYBE_UNUSED const JPH_ContactManifold *manifold,
-    CULV_MAYBE_UNUSED JPH_ContactSettings *settings) {
+CULV_NO_TSAN [[maybe_unused]] static void JPH_API_CALL char_on_contact_solve(
+    [[maybe_unused]] void *userData, [[maybe_unused]] const JPH_Body *body1,
+    [[maybe_unused]] const JPH_Body *body2, [[maybe_unused]] const JPH_ContactManifold *manifold,
+    [[maybe_unused]] JPH_ContactSettings *settings) {
     // Advanced solver overrides here if needed
 }
 
@@ -631,7 +632,7 @@ PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObje
 }
 
 PyCFunction_DeclareMethodFromModule Character_get_position(CharacterObject *self,
-                                                           PyObject *Py_UNUSED(ignored)) {
+                                                           PyObject *ignored [[maybe_unused]]) {
     // 1. Aligned stack storage for SIMD
     JPH_STACK_ALLOC(JPH_RVec3, pos);
 
@@ -653,8 +654,8 @@ PyCFunction_DeclareMethodFromModule Character_get_position(CharacterObject *self
     return ret;
 }
 
-PyCFunction_DeclareMethodFromModule Character_get_linear_velocity(CharacterObject *self,
-                                                                  PyObject *Py_UNUSED(ignored)) {
+PyCFunction_DeclareMethodFromModule
+Character_get_linear_velocity(CharacterObject *self, PyObject *ignored [[maybe_unused]]) {
     JPH_STACK_ALLOC(JPH_Vec3, vel);
 
     SHADOW_LOCK(&self->world->physics.shadow_lock);
@@ -796,7 +797,7 @@ PyCFunction_DeclareMethodFromModule Character_get_render_transform(CharacterObje
 }
 
 PyCFunction_DeclareMethodFromModule Character_is_grounded(CharacterObject *self,
-                                                          PyObject *Py_UNUSED(ignored)) {
+                                                          PyObject *ignored [[maybe_unused]]) {
     SHADOW_LOCK(&self->world->physics.shadow_lock);
     JPH_GroundState state = JPH_CharacterBase_GetGroundState((JPH_CharacterBase *)self->character);
     SHADOW_UNLOCK(&self->world->physics.shadow_lock);
@@ -1097,8 +1098,7 @@ fail_jolt:
     return nullptr;
 }
 
-PyGetSet_DeclareGetter Character_get_handle(CharacterObject *self,
-                                            CULV_MAYBE_UNUSED void *closure) {
+PyGetSet_DeclareGetter Character_get_handle(CharacterObject *self, [[maybe_unused]] void *closure) {
     uint64_t raw_h = atomic_load_explicit(&self->handle, memory_order_relaxed);
     return CULV_PY_BUILD_VALUE(raw_h);
 }

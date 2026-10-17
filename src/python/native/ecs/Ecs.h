@@ -48,13 +48,13 @@ PyType_DeclareSlot_VoidFromModule Registry_dealloc(RegistryObject *self);
 
 // Entity Methods
 PyCFunction_DeclareMethodFromModule Registry_create(RegistryObject *self,
-                                                    CULV_MAYBE_UNUSED PyObject *args);
+                                                    [[maybe_unused]] PyObject *args);
 PyCFunction_DeclareMethodFromModule Registry_destroy(RegistryObject *self, PyObject *const *args,
                                                      size_t nargsf, PyObject *kwnames);
 PyCFunction_DeclareMethodFromModule Registry_is_alive(RegistryObject *self, PyObject *const *args,
                                                       size_t nargsf, PyObject *kwnames);
 PyCFunction_DeclareMethodFromModule Registry_clear(RegistryObject *self,
-                                                   CULV_MAYBE_UNUSED PyObject *args);
+                                                   [[maybe_unused]] PyObject *args);
 
 // Component Methods
 PyCFunction_DeclareMethodFromModule Registry_register_component(RegistryObject *self,
@@ -83,7 +83,7 @@ PyCFunction_DeclareMethodFromModule Registry_sync_from_world(RegistryObject *sel
 
 // Stats
 PyCFunction_DeclareMethodFromModule Registry_get_active_count(RegistryObject *self,
-                                                              CULV_MAYBE_UNUSED PyObject *args);
+                                                              [[maybe_unused]] PyObject *args);
 PyCFunction_DeclareMethodFromModule Registry_get_component_count(RegistryObject *self,
                                                                  PyObject *const *args,
                                                                  size_t nargsf, PyObject *kwnames);

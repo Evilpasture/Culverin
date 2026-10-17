@@ -64,7 +64,7 @@ PyCFunction_DeclareMethodFromModule Skeleton_get_joint_index(SkeletonObject *sel
 }
 
 PyCFunction_DeclareMethodFromModule Skeleton_finalize(SkeletonObject *self,
-                                                      PyObject *Py_UNUSED(args)) {
+                                                      PyObject *args [[maybe_unused]]) {
     JPH_Skeleton_CalculateParentJointIndices(self->skeleton);
     if (!JPH_Skeleton_AreJointsCorrectlyOrdered(self->skeleton)) {
         PyErr_SetString(PyExc_RuntimeError,
@@ -75,7 +75,7 @@ PyCFunction_DeclareMethodFromModule Skeleton_finalize(SkeletonObject *self,
 }
 
 PyCFunction_DeclareMethodFromModule RagdollSettings_stabilize(RagdollSettingsObject *self,
-                                                              PyObject *Py_UNUSED(args)) {
+                                                              PyObject *args [[maybe_unused]]) {
     if (JPH_RagdollSettings_Stabilize(self->settings)) {
         Py_RETURN_TRUE;
     }
@@ -156,7 +156,7 @@ PyCFunction_DeclareMethodFromModule Ragdoll_drive_to_pose(RagdollObject *self,
 }
 
 PyCFunction_DeclareMethodFromModule Ragdoll_get_body_handles(RagdollObject *self,
-                                                             PyObject *Py_UNUSED(args)) {
+                                                             PyObject *args [[maybe_unused]]) {
     // Helper to get the Body Handles of the parts so users can manipulate
     // specific limbs
     PyObject *list = PyList_New((Py_ssize_t)self->body_count);
@@ -193,7 +193,7 @@ PyCFunction_DeclareMethodFromModule Ragdoll_get_body_handles(RagdollObject *self
 }
 
 PyCFunction_DeclareMethodFromModule Ragdoll_get_debug_info(RagdollObject *self,
-                                                           PyObject *Py_UNUSED(ignored)) {
+                                                           PyObject *ignored [[maybe_unused]]) {
     if (!self->ragdoll || !self->world) {
         Py_RETURN_NONE;
     }
@@ -247,8 +247,8 @@ PyType_DeclareSlot_VoidFromModule Skeleton_dealloc(SkeletonObject *self) {
     Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
-PyType_DeclareSlot_ObjectFromModule Skeleton_new(PyTypeObject *type, PyObject *Py_UNUSED(args),
-                                                 PyObject *Py_UNUSED(kwds)) {
+PyType_DeclareSlot_ObjectFromModule
+Skeleton_new(PyTypeObject *type, PyObject *args [[maybe_unused]], PyObject *kwds [[maybe_unused]]) {
     auto self = (SkeletonObject *)type->tp_alloc(type, 0);
     if (self) {
         self->skeleton = JPH_Skeleton_Create();

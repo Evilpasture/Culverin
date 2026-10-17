@@ -7,16 +7,16 @@
 #include <stdint.h>
 
 #ifndef JPH_INVALID_BODY_ID
-CULV_MAYBE_UNUSED static constexpr size_t JPH_INVALID_BODY_ID = 0xFFFFFFFF;
+[[maybe_unused]] static constexpr size_t JPH_INVALID_BODY_ID = 0xFFFFFFFF;
 #endif
 
 // Jolt BodyID layout: [8 bits sequence | 24 bits index]. The low 23 bits hold
 // the index because the top bit of the low 24-bit portion is used for flags.
 #ifndef JPH_BODY_ID_INDEX_MASK
-CULV_MAYBE_UNUSED static constexpr size_t JPH_BODY_ID_INDEX_MASK = 0x00FFFFFF;
+[[maybe_unused]] static constexpr size_t JPH_BODY_ID_INDEX_MASK = 0x00FFFFFF;
 #endif
 
-CULV_NODISCARD [[gnu::const]]
+[[nodiscard]] [[gnu::const]]
 static inline uint32_t JPH_ID_TO_INDEX(uint32_t id) {
     static constexpr uint32_t ID_TO_INDEX_MASK = 0x007FFFFF;
     return id & ID_TO_INDEX_MASK;

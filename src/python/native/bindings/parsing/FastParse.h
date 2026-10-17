@@ -100,17 +100,20 @@
  */
 
 // Culverin-Specific Converters
-CULV_MAYBE_UNUSED CULV_NODISCARD static inline bool culv_fast_parse_conv_vec3f(PyObject *o, const void *t) {
+[[maybe_unused]] [[nodiscard]] static inline bool culv_fast_parse_conv_vec3f(PyObject *o,
+                                                                             const void *t) {
     Vec3f *v = (Vec3f *)t; // Cast away const to write to the struct
     return parse_vec3_f32(o, &v->x, &v->y, &v->z) != 0;
 }
 
-CULV_MAYBE_UNUSED CULV_NODISCARD static inline bool culv_fast_parse_conv_pos_stride(PyObject *o, const void *t) {
+[[maybe_unused]] [[nodiscard]] static inline bool culv_fast_parse_conv_pos_stride(PyObject *o,
+                                                                                  const void *t) {
     PosStride *v = (PosStride *)t;
     return parse_vec3_r64(o, &v->x, &v->y, &v->z) != 0;
 }
 
-CULV_MAYBE_UNUSED CULV_NODISCARD static inline bool culv_fast_parse_conv_aux_stride(PyObject *o, const void *t) {
+[[maybe_unused]] [[nodiscard]] static inline bool culv_fast_parse_conv_aux_stride(PyObject *o,
+                                                                                  const void *t) {
     AuxStride *v = (AuxStride *)t;
     return parse_quat_f32(o, &v->x, &v->y, &v->z, &v->w) != 0;
 }

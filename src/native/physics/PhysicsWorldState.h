@@ -215,14 +215,12 @@ struct PhysicsWorld {
 
 
 // --- Native handle helpers ---
-CULV_NODISCARD
-CULV_MAYBE_UNUSED
+[[nodiscard]] [[maybe_unused]]
 static inline BodyHandle make_handle(uint32_t slot, uint32_t gen) {
     return ((uint64_t)gen << HANDLE_INDEX_BITS) | (uint64_t)slot;
 }
 
-CULV_NODISCARD
-CULV_MAYBE_UNUSED
+[[nodiscard]] [[maybe_unused]]
 static inline bool unpack_handle(PhysicsWorld *world, BodyHandle h, uint32_t *slot) {
     const uint64_t h_val = h;
     *slot = (uint32_t)(h_val & HANDLE_INDEX_MASK);

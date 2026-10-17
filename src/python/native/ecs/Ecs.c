@@ -135,8 +135,8 @@ static bool SparseSet_EnsureDenseCapacity(RegistryObject *reg, SparseSet *set) {
 // --- LIFECYCLE ---
 void culverin_init_ecs_parsers(ECSParsers *ep);
 PyType_DeclareSlot_StatusFromModule Registry_init(RegistryObject *self,
-                                                  CULV_MAYBE_UNUSED PyObject *args,
-                                                  CULV_MAYBE_UNUSED PyObject *kwds) {
+                                                  [[maybe_unused]] PyObject *args,
+                                                  [[maybe_unused]] PyObject *kwds) {
     self->entity_capacity = INITIAL_ENTITY_CAPACITY;
     self->active_entities = 0;
     self->generations     = (uint32_t *)CULV_RAW_CALLOC(self->entity_capacity, sizeof(uint32_t));
@@ -192,7 +192,7 @@ PyType_DeclareSlot_VoidFromModule Registry_dealloc(RegistryObject *self) {
 
 // Signature updated for METH_NOARGS
 PyCFunction_DeclareMethodFromModule Registry_create(RegistryObject *self,
-                                                    CULV_MAYBE_UNUSED PyObject *args) {
+                                                    [[maybe_unused]] PyObject *args) {
     SHADOW_LOCK(&self->ecs_lock);
     if (self->free_count == 0) {
         uint32_t new_cap = self->entity_capacity * 2;
@@ -676,7 +676,7 @@ PyCFunction_DeclareMethodFromModule Registry_sync_from_world(RegistryObject *sel
 }
 
 PyCFunction_DeclareMethodFromModule Registry_clear(RegistryObject *self,
-                                                   CULV_MAYBE_UNUSED PyObject *args) {
+                                                   [[maybe_unused]] PyObject *args) {
     SHADOW_LOCK(&self->ecs_lock);
 
     if (atomic_load_explicit(&self->view_export_count, memory_order_acquire) > 0) {
@@ -709,7 +709,7 @@ PyCFunction_DeclareMethodFromModule Registry_clear(RegistryObject *self,
 }
 
 PyCFunction_DeclareMethodFromModule Registry_get_active_count(RegistryObject *self,
-                                                              CULV_MAYBE_UNUSED PyObject *args) {
+                                                              [[maybe_unused]] PyObject *args) {
     return PyLong_FromUnsignedLong(self->active_entities);
 }
 

@@ -2,9 +2,9 @@
 #include "core/CompilerSpecifics.h"
 #include "vehicles/Vehicle.h"
 
-CULV_MAYBE_UNUSED static constexpr uint32_t TRACKED_LAYER_MOVING   = 0;
-CULV_MAYBE_UNUSED static constexpr uint32_t TRACKED_LAYER_STATIC   = 1;
-CULV_MAYBE_UNUSED static constexpr uint32_t TRACKED_LAYER_DRIVABLE = 2;
+[[maybe_unused]] static constexpr uint32_t TRACKED_LAYER_MOVING   = 0;
+[[maybe_unused]] static constexpr uint32_t TRACKED_LAYER_STATIC   = 1;
+[[maybe_unused]] static constexpr uint32_t TRACKED_LAYER_DRIVABLE = 2;
 
 struct PhysicsWorldObject;
 typedef struct PhysicsWorldObject PhysicsWorldObject;

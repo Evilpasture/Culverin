@@ -14,7 +14,7 @@ static constexpr int BAKED_POS_STRIDE     = 4;
 static constexpr int BAKED_ROT_STRIDE     = 4;
 static constexpr int BAKED_SHAPE_STRIDE   = 5;
 
-CULV_NODISCARD
+[[nodiscard]]
 int PhysicsWorld_resize(PhysicsWorldObject *self, size_t new_capacity) {
     PhysicsWorld *world = &self->physics;
     if (atomic_load_explicit(&world->view_export_count, memory_order_relaxed) > 0) {
@@ -37,13 +37,12 @@ int PhysicsWorld_resize(PhysicsWorldObject *self, size_t new_capacity) {
     return 0;
 }
 
-
 void PhysicsWorld_free_members(PhysicsWorldObject *self) {
     physics_world_free_native(&self->physics);
 }
 
 // helper: Initialize settings via Python helper
-CULV_NODISCARD
+[[nodiscard]]
 int init_settings(PhysicsWorldObject *self, PyObject *settings_dict, GravityVector *gravity,
                   WorldSettings *settings) {
     PyObject *st_module = PyType_GetModule(Py_TYPE(self));
@@ -70,7 +69,7 @@ int init_settings(PhysicsWorldObject *self, PyObject *settings_dict, GravityVect
 }
 
 // helper: Iterate over baked Python data to create initial Jolt bodies
-CULV_NODISCARD
+[[nodiscard]]
 int load_baked_scene(PhysicsWorldObject *self, PyObject *baked) {
     // TSan Fix: Load current count atomically
     size_t current_count = atomic_load_explicit(&self->physics.count, memory_order_acquire);

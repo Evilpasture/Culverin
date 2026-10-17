@@ -3,7 +3,7 @@
 #include "physics/CommandBuffer.h"
 #include <stdint.h>
 
-CULV_NODISCARD [[gnu::const]]
+[[nodiscard]] [[gnu::const]]
 static inline bool is_state_valid(uint8_t state, uint8_t mask) {
     return (bool)((1U << state) & mask);
 }
@@ -25,7 +25,7 @@ static constexpr uint32_t MASK_DESTRUCTIBLE =
     (1U << SLOT_ALIVE) | (1U << SLOT_PENDING_CREATE) | (1U << SLOT_CHARACTER) |
     (1U << SLOT_SOFT_BODY);
 
-[[gnu::const]] CULV_NODISCARD static CULV_FORCE_INLINE SlotPredicate
+[[gnu::const]] [[nodiscard]] static CULV_FORCE_INLINE SlotPredicate
 get_slot_predicate(uint8_t state, uint32_t imm_mask) {
     const uint32_t state_bit = 1U << (state & 7);
 

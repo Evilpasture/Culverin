@@ -1087,8 +1087,8 @@ static PyObject *MathHolderObject_mat44_get_rotation(MathHolderObject *self, PyO
     return CULV_PY_BUILD_TUPLE(out_quat[0], out_quat[1], out_quat[2], out_quat[3]);
 }
 
-static PyObject *MathHolderObject_mat44_identity(CULV_MAYBE_UNUSED MathHolderObject *self,
-                                                 PyObject *Py_UNUSED(ignored)) {
+static PyObject *MathHolderObject_mat44_identity([[maybe_unused]] MathHolderObject *self,
+                                                 PyObject *ignored [[maybe_unused]]) {
     float out[sixteen_floats];
     culverin_math_mat44_identity(out);
 
@@ -1236,8 +1236,8 @@ static PyObject *MathHolderObject_euler_to_quat_batch(MathHolderObject *self, Py
 void culverin_math_init_all_parsers(MathParsers *mp);
 void culverin_math_free_all_parsers(MathParsers *mp);
 
-static PyObject *MathHolderObject_new(PyTypeObject *type, CULV_MAYBE_UNUSED PyObject *args,
-                                      CULV_MAYBE_UNUSED PyObject *kwds) {
+static PyObject *MathHolderObject_new(PyTypeObject *type, [[maybe_unused]] PyObject *args,
+                                      [[maybe_unused]] PyObject *kwds) {
     MathHolderObject *self = (MathHolderObject *)type->tp_alloc(type, 0);
     if (self == nullptr) {
         return nullptr;

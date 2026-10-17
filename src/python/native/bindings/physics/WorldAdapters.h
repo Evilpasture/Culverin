@@ -17,6 +17,6 @@ int load_baked_scene(struct PhysicsWorldObject *self, PyObject *baked);
 
 PyType_DeclareSlot_StatusFromModule PhysicsWorld_getbuffer(struct PhysicsWorldObject *self,
                                                            Py_buffer *view,
-                                                           CULV_MAYBE_UNUSED int flags);
+                                                           [[maybe_unused]] int flags);
 PyType_DeclareSlot_VoidFromModule PhysicsWorld_releasebuffer(struct PhysicsWorldObject *self,
                                                              Py_buffer *view);

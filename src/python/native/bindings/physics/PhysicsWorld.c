@@ -66,7 +66,7 @@ PyType_DeclareSlot_Status PhysicsWorld_traverse(PhysicsWorldObject *self, visitp
     return 0;
 }
 
-PyType_DeclareSlot_Status PhysicsWorld_clear(CULV_MAYBE_UNUSED PhysicsWorldObject *self) {
+PyType_DeclareSlot_Status PhysicsWorld_clear([[maybe_unused]] PhysicsWorldObject *self) {
     // Currently nothing to clear.
     return 0;
 }
@@ -636,7 +636,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_gravity(PhysicsWorldObject *self, PyO
 }
 
 PyCFunction_DeclareMethod PhysicsWorld_get_gravity(PhysicsWorldObject *self,
-                                                   PyObject *Py_UNUSED(ignored)) {
+                                                   PyObject *ignored [[maybe_unused]]) {
     // We acquire the shadow_lock to ensure we don't read gravity
     // mid-update if the simulation is currently swapping buffers.
     SHADOW_LOCK(&self->physics.shadow_lock);
@@ -920,7 +920,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy_batch(PhysicsWorldObject *
 }
 
 PyCFunction_DeclareMethod PhysicsWorld_save_state(PhysicsWorldObject *self,
-                                                  PyObject *Py_UNUSED(unused)) {
+                                                  PyObject *unused [[maybe_unused]]) {
     SHADOW_LOCK(&self->physics.shadow_lock);
 
     // Ensure state is static
@@ -3180,7 +3180,7 @@ PyCFunction_DeclareMethod PhysicsWorld_is_active(PhysicsWorldObject *self, PyObj
 }
 
 PyCFunction_DeclareMethod PhysicsWorld_get_active_indices(PhysicsWorldObject *self,
-                                                          PyObject *Py_UNUSED(args)) {
+                                                          PyObject *args [[maybe_unused]]) {
     SHADOW_LOCK(&self->physics.shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
 
@@ -3965,7 +3965,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_soft_body_vertices(PhysicsW
     return (PyObject *)proxy;
 }
 
-PyCFunction_DeclareMethod PhysicsWorld_benchmark_parse(CULV_MAYBE_UNUSED PhysicsWorldObject *self,
+PyCFunction_DeclareMethod PhysicsWorld_benchmark_parse([[maybe_unused]] PhysicsWorldObject *self,
                                                        PyObject *const *args, size_t nargsf,
                                                        PyObject *kwnames) {
     constexpr size_t NUM_ARGS = 64;
@@ -3991,8 +3991,8 @@ PyCFunction_DeclareMethod PhysicsWorld_benchmark_parse(CULV_MAYBE_UNUSED Physics
  * This eliminates all argument parsing overhead to isolate the
  * performance of the Culverin Fast Build engine.
  */
-PyCFunction_DeclareMethod PhysicsWorld_benchmark_build(CULV_MAYBE_UNUSED PyObject *self,
-                                                       CULV_MAYBE_UNUSED PyObject *args) {
+PyCFunction_DeclareMethod PhysicsWorld_benchmark_build([[maybe_unused]] PyObject *self,
+                                                       [[maybe_unused]] PyObject *args) {
     // 1. Define dummy C data to be "built" into Python
     constexpr int trash         = 42;
     constexpr float trashpi     = 3.14f;
@@ -4260,8 +4260,8 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll(PhysicsWorldObje
 }
 
 // Fixed get_contact_events to be safer with locking
-PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events(PhysicsWorldObject *self,
-                                                                    PyObject *Py_UNUSED(args)) {
+PyCFunction_DeclareMethodFromModule
+PhysicsWorld_get_contact_events(PhysicsWorldObject *self, PyObject *args [[maybe_unused]]) {
     // --- 1. SNAPSHOT PHASE (Locked) ---
     SHADOW_LOCK(&self->physics.shadow_lock);
 
@@ -4332,8 +4332,8 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events(PhysicsWorld
     return list;
 }
 
-PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events_ex(PhysicsWorldObject *self,
-                                                                       PyObject *Py_UNUSED(args)) {
+PyCFunction_DeclareMethodFromModule
+PhysicsWorld_get_contact_events_ex(PhysicsWorldObject *self, PyObject *args [[maybe_unused]]) {
     // --- 1. SNAPSHOT PHASE ---
     SHADOW_LOCK(&self->physics.shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
@@ -4421,8 +4421,8 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events_ex(PhysicsWo
 // ContactEvent layout:
 // 128 bytes total (64 Slim Header, 64 Fat Extension)
 // See ContactEventDefinitions.h for exact alignment and padding.
-PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events_raw(PhysicsWorldObject *self,
-                                                                        PyObject *Py_UNUSED(args)) {
+PyCFunction_DeclareMethodFromModule
+PhysicsWorld_get_contact_events_raw(PhysicsWorldObject *self, PyObject *args [[maybe_unused]]) {
     // 1. Phase Guard
     SHADOW_LOCK(&self->physics.shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
@@ -4468,7 +4468,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events_raw(PhysicsW
 }
 
 PyType_DeclareSlot_StatusFromModule
-PhysicsWorld_getbuffer(PhysicsWorldObject *self, Py_buffer *view, CULV_MAYBE_UNUSED int flags) {
+PhysicsWorld_getbuffer(PhysicsWorldObject *self, Py_buffer *view, [[maybe_unused]] int flags) {
     SHADOW_LOCK(&self->physics.shadow_lock);
 
     // TSan Fix: Read the atomic count safely
@@ -4495,7 +4495,7 @@ PhysicsWorld_getbuffer(PhysicsWorldObject *self, Py_buffer *view, CULV_MAYBE_UNU
 
 // Buffer Release Slot
 PyType_DeclareSlot_VoidFromModule PhysicsWorld_releasebuffer(PhysicsWorldObject *self,
-                                                             Py_buffer *Py_UNUSED(view)) {
+                                                             Py_buffer *view [[maybe_unused]]) {
     SHADOW_LOCK(&self->physics.shadow_lock);
 
     // Release logic remains simple as no atomic counters are mutated here

@@ -649,8 +649,8 @@ PyCFunction_DeclareMethodFromModule Vehicle_get_wheel_local_transform(VehicleObj
     return pack_transform(lx, ly, lz, q->x, q->y, q->z, q->w);
 }
 
-PyCFunction_DeclareMethodFromModule Vehicle_get_debug_state(CULV_MAYBE_UNUSED VehicleObject *self,
-                                                            PyObject *Py_UNUSED(ignored)) {
+PyCFunction_DeclareMethodFromModule Vehicle_get_debug_state([[maybe_unused]] VehicleObject *self,
+                                                            PyObject *ignored [[maybe_unused]]) {
 #ifndef CULVERIN_DEBUG
     Py_RETURN_NONE;
 #else
@@ -685,14 +685,14 @@ PyCFunction_DeclareMethodFromModule Vehicle_get_debug_state(CULV_MAYBE_UNUSED Ve
     const auto trans  = JPH_WheeledVehicleController_GetTransmission(controller);
 
     // 3. CAPTURE INPUTS
-    CULV_MAYBE_UNUSED float in_fwd = JPH_WheeledVehicleController_GetForwardInput(controller);
-    CULV_MAYBE_UNUSED float in_brk = JPH_WheeledVehicleController_GetBrakeInput(controller);
+    [[maybe_unused]] float in_fwd = JPH_WheeledVehicleController_GetForwardInput(controller);
+    [[maybe_unused]] float in_brk = JPH_WheeledVehicleController_GetBrakeInput(controller);
 
     // 4. CAPTURE DRIVETRAIN
-    CULV_MAYBE_UNUSED float rpm           = JPH_VehicleEngine_GetCurrentRPM(engine);
-    CULV_MAYBE_UNUSED float engine_torque = JPH_VehicleEngine_GetTorque(engine, in_fwd);
-    CULV_MAYBE_UNUSED int gear            = JPH_VehicleTransmission_GetCurrentGear(trans);
-    CULV_MAYBE_UNUSED float clutch        = JPH_VehicleTransmission_GetClutchFriction(trans);
+    [[maybe_unused]] float rpm           = JPH_VehicleEngine_GetCurrentRPM(engine);
+    [[maybe_unused]] float engine_torque = JPH_VehicleEngine_GetTorque(engine, in_fwd);
+    [[maybe_unused]] int gear            = JPH_VehicleTransmission_GetCurrentGear(trans);
+    [[maybe_unused]] float clutch        = JPH_VehicleTransmission_GetClutchFriction(trans);
 
     DEBUG_LOG("=== VEHICLE DEBUG STATE ===");
     DEBUG_LOG("  Inputs: Fwd=%.2f | Brk=%.2f", in_fwd, in_brk);
@@ -704,14 +704,14 @@ PyCFunction_DeclareMethodFromModule Vehicle_get_debug_state(CULV_MAYBE_UNUSED Ve
         const JPH_Wheel *w          = JPH_VehicleConstraint_GetWheel(self->vehicle, i);
         const JPH_WheelSettings *ws = JPH_Wheel_GetSettings(w);
 
-        CULV_MAYBE_UNUSED bool contact   = JPH_Wheel_HasContact(w);
-        CULV_MAYBE_UNUSED float susp_len = JPH_Wheel_GetSuspensionLength(w);
-        CULV_MAYBE_UNUSED float ang_vel  = JPH_Wheel_GetAngularVelocity(w);
-        CULV_MAYBE_UNUSED float radius   = JPH_WheelSettings_GetRadius(ws);
+        [[maybe_unused]] bool contact   = JPH_Wheel_HasContact(w);
+        [[maybe_unused]] float susp_len = JPH_Wheel_GetSuspensionLength(w);
+        [[maybe_unused]] float ang_vel  = JPH_Wheel_GetAngularVelocity(w);
+        [[maybe_unused]] float radius   = JPH_WheelSettings_GetRadius(ws);
 
-        CULV_MAYBE_UNUSED float tire_speed  = ang_vel * radius;
-        CULV_MAYBE_UNUSED float long_lambda = JPH_Wheel_GetLongitudinalLambda(w);
-        CULV_MAYBE_UNUSED float lat_lambda  = JPH_Wheel_GetLateralLambda(w);
+        [[maybe_unused]] float tire_speed  = ang_vel * radius;
+        [[maybe_unused]] float long_lambda = JPH_Wheel_GetLongitudinalLambda(w);
+        [[maybe_unused]] float lat_lambda  = JPH_Wheel_GetLateralLambda(w);
 
         DEBUG_LOG("  Wheel %u: %s", i, contact ? "GROUND" : "AIR   ");
         DEBUG_LOG("    Susp: %.3fm | AngVel: %.2f rad/s | SurfSpd: %.2f m/s", susp_len, ang_vel,
@@ -813,7 +813,7 @@ static void Vehicle_internal_cleanup(VehicleObject *self) {
 // --- Python Wrapper ---
 // Using [[nodiscard]] on this will now only affect Python callers
 PyCFunction_DeclareMethodFromModule Vehicle_destroy(VehicleObject *self,
-                                                    PyObject *Py_UNUSED(ignored)) {
+                                                    PyObject *ignored [[maybe_unused]]) {
     Vehicle_internal_cleanup(self);
     if (self->parsers) {
         culverin_free_vehicle_parsers(self->parsers);
@@ -840,7 +840,7 @@ PyType_DeclareSlot_VoidFromModule Vehicle_dealloc(VehicleObject *self) {
 }
 
 PyGetSet_DeclareGetter Vehicle_get_wheel_count(VehicleObject *self,
-                                               CULV_MAYBE_UNUSED void *closure) {
+                                               [[maybe_unused]] void *closure) {
     // num_wheels is set at creation and never changes
     return PyLong_FromUnsignedLong(self->num_wheels);
 }

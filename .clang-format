@@ -25,6 +25,3 @@ AllowAllParametersOfDeclarationOnNextLine: true
 SpaceAfterCStyleCast: false
 SpaceBeforeParens: ControlStatements
 PointerAlignment: Right
-
-# 6. ATTRIBUTE HANDLING
-StatementAttributeLikeMacros: [CULV_MAYBE_UNUSED, CULV_NODISCARD]

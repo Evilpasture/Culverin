@@ -7,6 +7,7 @@ target_sources(
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Assert.h>"
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/CompilerSpecifics.h>"
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/NativeAlloc.h>"
+        "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Profiling.h>"
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Threading.h>"
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Types.h>"
 )

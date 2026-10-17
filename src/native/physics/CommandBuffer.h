@@ -8,9 +8,9 @@
 #include <stdint.h>
 
 #if defined(JPH_DOUBLE_PRECISION)
-CULV_MAYBE_UNUSED static constexpr int16_t CMD_ALIGN = 16;
+[[maybe_unused]] static constexpr int16_t CMD_ALIGN = 16;
 #else
-CULV_MAYBE_UNUSED static constexpr int16_t CMD_ALIGN = 8;
+[[maybe_unused]] static constexpr int16_t CMD_ALIGN = 8;
 #endif
 
 // --- Slot State Machine ---
@@ -51,7 +51,7 @@ typedef enum CommandType : uint8_t {
  * Packs a CommandType and a Slot ID into a single U32 header.
  * Layout: [ Slot (24 bits) | Type (8 bits) ]
  */
-CULV_NODISCARD [[gnu::const]]
+[[nodiscard]] [[gnu::const]]
 static inline uint32_t CMD_HEADER(CommandType type, uint32_t slot) {
     static constexpr uint8_t CMD_TYPE_BITS  = 8;
     static constexpr uint8_t CMD_TYPE_MASK  = ((1u << CMD_TYPE_BITS) - 1);
@@ -60,7 +60,7 @@ static inline uint32_t CMD_HEADER(CommandType type, uint32_t slot) {
 }
 
 /** Extracts the CommandType (lowest 8 bits) */
-CULV_NODISCARD [[gnu::const]]
+[[nodiscard]] [[gnu::const]]
 static inline CommandType CMD_GET_TYPE(uint32_t header) {
     static constexpr uint8_t CMD_TYPE_BITS = 8;
     static constexpr uint8_t CMD_TYPE_MASK = ((1u << CMD_TYPE_BITS) - 1);
@@ -68,7 +68,7 @@ static inline CommandType CMD_GET_TYPE(uint32_t header) {
 }
 
 /** Extracts the Slot ID (upper 24 bits) */
-CULV_NODISCARD [[gnu::const]]
+[[nodiscard]] [[gnu::const]]
 static inline uint32_t CMD_GET_SLOT(uint32_t header) {
     static constexpr uint8_t CMD_TYPE_BITS  = 8;
     static constexpr uint8_t CMD_SLOT_SHIFT = CMD_TYPE_BITS;
@@ -194,9 +194,9 @@ static_assert(offsetof(PhysicsCommand, create_soft.settings) == OFFSET_START);
 struct PhysicsWorld;
 
 void world_remove_body_slot(struct PhysicsWorld *world, uint32_t slot);
-CULV_NODISCARD
+[[nodiscard]]
 bool ensure_command_capacity(struct PhysicsWorld *world);
-CULV_NODISCARD
+[[nodiscard]]
 bool ensure_command_bulk_capacity(struct PhysicsWorld *world, size_t batch_size);
 void flush_commands_internal(struct PhysicsWorld *world, PhysicsCommand *queue, size_t count);
 void clear_command_queue(struct PhysicsWorld *world);

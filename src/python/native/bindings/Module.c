@@ -3,20 +3,21 @@
 #    define _CRT_SECURE_NO_WARNINGS
 #endif
 // clang-format on
+#include "bindings/Getters.h"
+#include "bindings/ModuleState.h"
+#include "bindings/PythonSupport.h"
+#include "bindings/docstrings/Docstrings.h"
 #include "bindings/parsing/ArgIndices.h"
 #include "characters/Character.h"
 #include "core/CompilerSpecifics.h"
-#include "physics/ContactListener.h"
-#include "debug/DebugRender.h"
-#include "physics/Filters.h"
-#include "bindings/Getters.h"
-#include "jolt/JoltHandler.h"
-#include "math/Math.h"
-#include "bindings/ModuleState.h"
-#include "bindings/PythonSupport.h"
+#include "core/Profiling.h"
 #include "core/Threading.h"
-#include "bindings/docstrings/Docstrings.h"
+#include "debug/DebugRender.h"
+#include "jolt/JoltHandler.h"
 #include "joltc.h"
+#include "math/Math.h"
+#include "physics/ContactListener.h"
+#include "physics/Filters.h"
 #include <stdatomic.h>
 
 /**
@@ -136,7 +137,7 @@ PyCFunction_DeclareMethod culv_dump_schema_json(PyObject *const self, PyObject *
 #include <stdatomic.h>
 #include <tupleobject.h>
 
-PyCFunction_DeclareMethod culv_mutate_tuple(CULV_MAYBE_UNUSED PyObject *self, PyObject *const *args,
+PyCFunction_DeclareMethod culv_mutate_tuple([[maybe_unused]] PyObject *self, PyObject *const *args,
                                             Py_ssize_t nargsf) {
     enum : uint8_t { ARG_0, ARG_1, ARG_2, ARG_3, ARG_4 };
     // --- 1. DECLARATIONS (C / goto safety) ---

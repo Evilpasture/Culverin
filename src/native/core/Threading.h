@@ -21,26 +21,8 @@
  */
 
 /* ============================================================================
- * 1. PROFILING & HARDWARE YIELDING
+ * 1. HARDWARE YIELDING
  * ============================================================================ */
-
-#ifdef CULVERIN_PROFILE_SYNC
-#    define SYNC_START_TIMER(start)                                                                \
-        struct timespec start;                                                                     \
-        clock_gettime(CLOCK_MONOTONIC, &start)
-#    define SYNC_END_TIMER(start, self)                                                            \
-        do {                                                                                       \
-            struct timespec end;                                                                   \
-            clock_gettime(CLOCK_MONOTONIC, &end);                                                  \
-            uint64_t ns =                                                                          \
-                (end.tv_sec - start.tv_sec) * 1000000000ULL + (end.tv_nsec - start.tv_nsec);       \
-            atomic_fetch_add_explicit(&(self)->step_sync.total_blocked_ns, ns,                     \
-                                      memory_order_relaxed);                                       \
-        } while (0)
-#else
-#    define SYNC_START_TIMER(start)
-#    define SYNC_END_TIMER(start, self)
-#endif
 
 // Processor-level hint to save power during spin-waits
 static inline void culverin_cpu_relax() {
@@ -55,7 +37,7 @@ static inline void culverin_cpu_relax() {
 #endif
 }
 
-CULV_MAYBE_UNUSED static inline void culverin_yield() {
+[[maybe_unused]] static inline void culverin_yield() {
     for (int i = 0; i < 100; i++) {
         culverin_cpu_relax();
     }

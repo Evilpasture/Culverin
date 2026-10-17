@@ -117,7 +117,7 @@ typedef struct {
 } MeshBounds;
 
 // --- Hardened Checkers (No Casts) ---
-CULV_NODISCARD
+[[nodiscard]]
 static inline bool culv_is_finite_f(float f) {
     static constexpr uint32_t MASK_F32 = 0x7F800000U;
     static_assert(sizeof(MASK_F32 + 0) == sizeof(uint32_t));
@@ -129,7 +129,7 @@ static inline bool culv_is_finite_f(float f) {
     return (vi & MASK_F32) != MASK_F32;
 }
 
-CULV_NODISCARD
+[[nodiscard]]
 static inline bool culv_is_finite_d(double d) {
     static constexpr uint64_t MASK_F64 = 0x7FF0000000000000ULL;
     static_assert(sizeof(MASK_F64 + 0) == sizeof(uint64_t));
@@ -149,7 +149,7 @@ static inline bool culv_is_finite_d(double d) {
         default: culv_is_finite_d((double)(x)))
 
 // --- Error Reporting (One instance, no bloat) ---
-CULV_MAYBE_UNUSED
+[[maybe_unused]]
 static PyObject *culv_raise_finite_err(const char *msg) {
     PyErr_Format(PyExc_ValueError, "Numerical Error: '%s' must be finite", msg);
     return nullptr;
