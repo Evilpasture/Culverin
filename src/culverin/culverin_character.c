@@ -28,14 +28,14 @@ char_on_contact_validate(void *userData, CULV_MAYBE_UNUSED const JPH_CharacterVi
 
     // Direct thread-safe lookup of the other body's UserData from contact
     uint64_t h2_raw = contact->userData;
-    if (h2_raw == 0 && world->body_interface) {
-        h2_raw = JPH_BodyInterface_GetUserData(world->body_interface, contact->bodyB);
+    if (h2_raw == 0 && world->physics.body_interface) {
+        h2_raw = JPH_BodyInterface_GetUserData(world->physics.body_interface, contact->bodyB);
     }
     // Fallback to safe lock-free id-to-handle map lookup
-    if (h2_raw == 0 && world->id_to_handle_map) {
+    if (h2_raw == 0 && world->physics.id_to_handle_map) {
         uint32_t j_idx = JPH_ID_TO_INDEX(contact->bodyB);
-        if (j_idx <= world->max_jolt_bodies) {
-            h2_raw = atomic_load_explicit(&world->id_to_handle_map[j_idx], memory_order_acquire);
+        if (j_idx <= world->physics.max_jolt_bodies) {
+            h2_raw = atomic_load_explicit(&world->physics.id_to_handle_map[j_idx], memory_order_acquire);
         }
     }
 
@@ -46,36 +46,36 @@ char_on_contact_validate(void *userData, CULV_MAYBE_UNUSED const JPH_CharacterVi
     // 2. Safely Resolve Slots with Generation Checking
     uint32_t slot1 = 0;
     uint32_t slot2 = 0;
-    if (!unpack_handle(world, (BodyHandle)h1_raw, &slot1) ||
-        !unpack_handle(world, (BodyHandle)h2_raw, &slot2)) {
+    if (!unpack_handle(&world->physics, (BodyHandle)h1_raw, &slot1) ||
+        !unpack_handle(&world->physics, (BodyHandle)h2_raw, &slot2)) {
         return true; // Collide on handle verification mismatches
     }
 
     // Safety checks for array bounds
-    if (slot1 >= world->slot_capacity || slot2 >= world->slot_capacity) {
+    if (slot1 >= world->physics.slot_capacity || slot2 >= world->physics.slot_capacity) {
         return true;
     }
 
     // Check states to ensure both slots are in use
-    uint8_t state1 = atomic_load_explicit(&world->slot_states[slot1], memory_order_relaxed);
-    uint8_t state2 = atomic_load_explicit(&world->slot_states[slot2], memory_order_relaxed);
+    uint8_t state1 = atomic_load_explicit(&world->physics.slot_states[slot1], memory_order_relaxed);
+    uint8_t state2 = atomic_load_explicit(&world->physics.slot_states[slot2], memory_order_relaxed);
     if (state1 == SLOT_EMPTY || state2 == SLOT_EMPTY) {
         return true;
     }
 
-    uint32_t idx1 = world->slot_to_dense[slot1];
-    uint32_t idx2 = world->slot_to_dense[slot2];
+    uint32_t idx1 = world->physics.slot_to_dense[slot1];
+    uint32_t idx2 = world->physics.slot_to_dense[slot2];
 
-    size_t active_count = atomic_load_explicit(&world->count, memory_order_relaxed);
+    size_t active_count = atomic_load_explicit(&world->physics.count, memory_order_relaxed);
     if (idx1 >= active_count || idx2 >= active_count) {
         return true;
     }
 
     // 3. Perform Bitmask Filtering
-    uint32_t cat1  = world->categories[idx1];
-    uint32_t mask1 = world->masks[idx1];
-    uint32_t cat2  = world->categories[idx2];
-    uint32_t mask2 = world->masks[idx2];
+    uint32_t cat1  = world->physics.categories[idx1];
+    uint32_t mask1 = world->physics.masks[idx1];
+    uint32_t cat2  = world->physics.categories[idx2];
+    uint32_t mask2 = world->physics.masks[idx2];
 
     // Reject if either mask blocks the other's category
     return (cat1 & mask2) != 0 && (cat2 & mask1) != 0;
@@ -88,10 +88,10 @@ static void record_character_contact(CharacterObject *self, JPH_BodyID bodyID2,
     uint32_t j_idx = JPH_ID_TO_INDEX(bodyID2);
     BodyHandle h2  = 0;
 
-    if (world->id_to_handle_map && j_idx <= world->max_jolt_bodies) {
+    if (world->physics.id_to_handle_map && j_idx <= world->physics.max_jolt_bodies) {
         // TSan Fix: Atomic load from the shared handle map.
         // Acquire ensures we see the body initialization if it was just created.
-        h2 = atomic_load_explicit(&world->id_to_handle_map[j_idx], memory_order_acquire);
+        h2 = atomic_load_explicit(&world->physics.id_to_handle_map[j_idx], memory_order_acquire);
     }
 
     // Extract raw value for liveness check
@@ -103,11 +103,11 @@ static void record_character_contact(CharacterObject *self, JPH_BodyID bodyID2,
     // TSan Fix: Atomic load of the character's own handle
     uint64_t h1_raw = atomic_load_explicit(&self->handle, memory_order_relaxed);
 
-    size_t idx = atomic_fetch_add_explicit(&world->contact_atomic_idx, 1, memory_order_relaxed);
+    size_t idx = atomic_fetch_add_explicit(&world->physics.contact_atomic_idx, 1, memory_order_relaxed);
 
-    if (idx < world->contact_max_capacity) {
+    if (idx < world->physics.contact_max_capacity) {
         // ContactEvent_ Refactor
-        ContactEvent *ev_base   = GetEventAt(world->contact_buffer, idx);
+        ContactEvent *ev_base   = GetEventAt(world->physics.contact_buffer, idx);
         ContactEventSlim *slim  = GetSlimHeader(ev_base);
         ContactEventFatExt *fat = GetFatExtension(ev_base);
 
@@ -134,9 +134,9 @@ static void record_character_contact(CharacterObject *self, JPH_BodyID bodyID2,
 
         // Metadata lookups
         auto slot2      = (uint32_t)(h2_raw & HANDLE_INDEX_MASK);
-        uint32_t dense2 = world->slot_to_dense[slot2];
+        uint32_t dense2 = world->physics.slot_to_dense[slot2];
         fat->mat1       = 0;
-        fat->mat2       = world->material_ids[dense2];
+        fat->mat2       = world->physics.material_ids[dense2];
 
         // Release fence ensures all previous stores are visible to Python when it reads
         // contact_atomic_idx
@@ -158,10 +158,10 @@ static void report_char_vs_char(CharacterObject *self, const JPH_CharacterVirtua
         return; // Still 0? Probably a Jolt internal body.
     }
 
-    size_t idx = atomic_fetch_add_explicit(&world->contact_atomic_idx, 1, memory_order_relaxed);
-    if (idx < world->contact_max_capacity) {
+    size_t idx = atomic_fetch_add_explicit(&world->physics.contact_atomic_idx, 1, memory_order_relaxed);
+    if (idx < world->physics.contact_max_capacity) {
         // ContactEvent_ Refactor
-        ContactEvent *ev_base   = GetEventAt(world->contact_buffer, idx);
+        ContactEvent *ev_base   = GetEventAt(world->physics.contact_buffer, idx);
         ContactEventSlim *slim  = GetSlimHeader(ev_base);
         ContactEventFatExt *fat = GetFatExtension(ev_base);
 
@@ -216,7 +216,7 @@ static void apply_character_impulse(CharacterObject *self, JPH_BodyID bodyID2,
     float vz       = atomic_load_explicit((&self->last_vz), memory_order_relaxed);
     float strength = atomic_load_explicit((&self->push_strength), memory_order_relaxed);
 
-    JPH_BodyInterface *bi = self->world->body_interface;
+    JPH_BodyInterface *bi = self->world->physics.body_interface;
 
     // 2. Ignore Sensors & Non-Dynamic Bodies
     if ((int)JPH_BodyInterface_IsSensor(bi, bodyID2) ||
@@ -303,17 +303,17 @@ static void JPH_API_CALL char_on_contact_removed(void *userData,
     uint64_t h1_raw = atomic_load_explicit(&self->handle, memory_order_relaxed);
     uint64_t h2_raw = 0;
 
-    if (world->id_to_handle_map && j_idx <= world->max_jolt_bodies) {
-        h2_raw = atomic_load_explicit(&world->id_to_handle_map[j_idx], memory_order_acquire);
+    if (world->physics.id_to_handle_map && j_idx <= world->physics.max_jolt_bodies) {
+        h2_raw = atomic_load_explicit(&world->physics.id_to_handle_map[j_idx], memory_order_acquire);
     }
 
     if (h2_raw == 0) {
         return;
     }
 
-    size_t idx = atomic_fetch_add_explicit(&world->contact_atomic_idx, 1, memory_order_relaxed);
-    if (idx < world->contact_max_capacity) {
-        ContactEvent *ev_base  = GetEventAt(world->contact_buffer, idx);
+    size_t idx = atomic_fetch_add_explicit(&world->physics.contact_atomic_idx, 1, memory_order_relaxed);
+    if (idx < world->physics.contact_max_capacity) {
+        ContactEvent *ev_base  = GetEventAt(world->physics.contact_buffer, idx);
         ContactEventSlim *slim = GetSlimHeader(ev_base);
 
         slim->flags = EVENT_REMOVED;
@@ -371,17 +371,17 @@ static void JPH_API_CALL char_on_character_contact_removed(
     uint32_t j_idx  = JPH_ID_TO_INDEX(otherCharacterID);
     uint64_t h2_raw = 0;
 
-    if (world->id_to_handle_map && j_idx <= world->max_jolt_bodies) {
-        h2_raw = atomic_load_explicit(&world->id_to_handle_map[j_idx], memory_order_acquire);
+    if (world->physics.id_to_handle_map && j_idx <= world->physics.max_jolt_bodies) {
+        h2_raw = atomic_load_explicit(&world->physics.id_to_handle_map[j_idx], memory_order_acquire);
     }
 
     if (h2_raw == 0) {
         return;
     }
 
-    size_t idx = atomic_fetch_add_explicit(&world->contact_atomic_idx, 1, memory_order_relaxed);
-    if (idx < world->contact_max_capacity) {
-        ContactEvent *ev_base  = GetEventAt(world->contact_buffer, idx);
+    size_t idx = atomic_fetch_add_explicit(&world->physics.contact_atomic_idx, 1, memory_order_relaxed);
+    if (idx < world->physics.contact_max_capacity) {
+        ContactEvent *ev_base  = GetEventAt(world->physics.contact_buffer, idx);
         ContactEventSlim *slim = GetSlimHeader(ev_base);
 
         slim->flags = EVENT_REMOVED;
@@ -424,12 +424,12 @@ static void JPH_API_CALL char_on_adjust_velocity(void *userData,
     uint64_t h2_raw = JPH_Body_GetUserData((JPH_Body *)body2);
     float friction  = 1.0f;
     uint32_t slot2  = (uint32_t)(h2_raw & HANDLE_INDEX_MASK);
-    if (slot2 < self->world->slot_capacity) {
-        uint32_t dense2 = self->world->slot_to_dense[slot2];
-        uint32_t mat_id = self->world->material_ids[dense2];
-        for (size_t i = 0; i < self->world->material_count; i++) {
-            if (self->world->materials[i].id == mat_id) {
-                friction = self->world->materials[i].friction;
+    if (slot2 < self->world->physics.slot_capacity) {
+        uint32_t dense2 = self->world->physics.slot_to_dense[slot2];
+        uint32_t mat_id = self->world->physics.material_ids[dense2];
+        for (size_t i = 0; i < self->world->physics.material_count; i++) {
+            if (self->world->physics.materials[i].id == mat_id) {
+                friction = self->world->physics.materials[i].friction;
                 break;
             }
         }
@@ -492,28 +492,28 @@ static bool JPH_API_CALL char_on_character_contact_validate(
     // 2. Resolve Slots
     uint32_t slot1 = 0;
     uint32_t slot2 = 0;
-    if (!unpack_handle(world, (BodyHandle)h1_raw, &slot1) ||
-        !unpack_handle(world, (BodyHandle)h2_raw, &slot2)) {
+    if (!unpack_handle(&world->physics, (BodyHandle)h1_raw, &slot1) ||
+        !unpack_handle(&world->physics, (BodyHandle)h2_raw, &slot2)) {
         return true;
     }
 
-    if (slot1 >= world->slot_capacity || slot2 >= world->slot_capacity) {
+    if (slot1 >= world->physics.slot_capacity || slot2 >= world->physics.slot_capacity) {
         return true;
     }
 
-    uint32_t idx1 = world->slot_to_dense[slot1];
-    uint32_t idx2 = world->slot_to_dense[slot2];
+    uint32_t idx1 = world->physics.slot_to_dense[slot1];
+    uint32_t idx2 = world->physics.slot_to_dense[slot2];
 
-    size_t active_count = atomic_load_explicit(&world->count, memory_order_relaxed);
+    size_t active_count = atomic_load_explicit(&world->physics.count, memory_order_relaxed);
     if (idx1 >= active_count || idx2 >= active_count) {
         return true;
     }
 
     // 3. Perform Bitmask Filtering
-    uint32_t cat1  = world->categories[idx1];
-    uint32_t mask1 = world->masks[idx1];
-    uint32_t cat2  = world->categories[idx2];
-    uint32_t mask2 = world->masks[idx2];
+    uint32_t cat1  = world->physics.categories[idx1];
+    uint32_t mask1 = world->physics.masks[idx1];
+    uint32_t cat2  = world->physics.categories[idx2];
+    uint32_t mask2 = world->physics.masks[idx2];
 
     // Reject if either mask blocks the other's category
     return ((cat1 & mask2) && (cat2 & mask1)) != 0;
@@ -559,7 +559,7 @@ PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObje
     VALIDATE_FINITE_VEC3(v_in.x, v_in.y, v_in.z, "Character velocity");
 
     // 2. SNAPSHOT (Shadow Lock)
-    SHADOW_LOCK(&self->world->shadow_lock);
+    SHADOW_LOCK(&self->world->physics.shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self->world);
 
     // TSan Fix: Explicit relaxed stores for worker-thread inputs
@@ -570,18 +570,18 @@ PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObje
     // TSan Fix: Load handle atomically to resolve indices
     uint64_t h_raw = atomic_load_explicit(&self->handle, memory_order_relaxed);
     uint32_t slot  = (uint32_t)(h_raw & HANDLE_INDEX_MASK);
-    uint32_t dense = self->world->slot_to_dense[slot];
+    uint32_t dense = self->world->physics.slot_to_dense[slot];
 
     // Snapshot current state to prev for interpolation
-    auto shadow_pos  = (PosStride *)self->world->positions;
-    auto shadow_ppos = (PosStride *)self->world->prev_positions;
-    auto shadow_rot  = (AuxStride *)self->world->rotations;
-    auto shadow_prot = (AuxStride *)self->world->prev_rotations;
+    auto shadow_pos  = (PosStride *)self->world->physics.positions;
+    auto shadow_ppos = (PosStride *)self->world->physics.prev_positions;
+    auto shadow_rot  = (AuxStride *)self->world->physics.rotations;
+    auto shadow_prot = (AuxStride *)self->world->physics.prev_rotations;
 
     shadow_ppos[dense] = shadow_pos[dense];
     shadow_prot[dense] = shadow_rot[dense];
 
-    SHADOW_UNLOCK(&self->world->shadow_lock);
+    SHADOW_UNLOCK(&self->world->physics.shadow_lock);
 
     // 3. JOLT EXECUTION
     JPH_Vec3 j_v = {v_in.x, v_in.y, v_in.z};
@@ -606,14 +606,14 @@ PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObje
     update_settings.walkStairsStepForwardTest        = 0.15f;
     update_settings.walkStairsCosAngleForwardContact = 0.996f;
 
-    NATIVE_MUTEX_LOCK(self->world->jph_trampoline_lock);
+    NATIVE_MUTEX_LOCK(self->world->physics.jph_trampoline_lock);
     Py_BEGIN_ALLOW_THREADS JPH_CharacterVirtual_ExtendedUpdate(
-        self->character, dt, &update_settings, OBJECT_LAYER_DYNAMIC, self->world->system,
+        self->character, dt, &update_settings, OBJECT_LAYER_DYNAMIC, self->world->physics.system,
         self->body_filter, self->shape_filter);
-    Py_END_ALLOW_THREADS NATIVE_MUTEX_UNLOCK(self->world->jph_trampoline_lock);
+    Py_END_ALLOW_THREADS NATIVE_MUTEX_UNLOCK(self->world->physics.jph_trampoline_lock);
 
     // 4. POST-MOVE SYNC
-    SHADOW_LOCK(&self->world->shadow_lock);
+    SHADOW_LOCK(&self->world->physics.shadow_lock);
 
     JPH_STACK_ALLOC(JPH_RVec3, current_p);
     JPH_STACK_ALLOC(JPH_Quat, current_r);
@@ -624,7 +624,7 @@ PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObje
     shadow_pos[dense] = (PosStride){current_p->x, current_p->y, current_p->z, 0.0};
     shadow_rot[dense] = (AuxStride){current_r->x, current_r->y, current_r->z, current_r->w};
 
-    SHADOW_UNLOCK(&self->world->shadow_lock);
+    SHADOW_UNLOCK(&self->world->physics.shadow_lock);
     Py_RETURN_NONE;
 }
 
@@ -634,9 +634,9 @@ PyCFunction_DeclareMethodFromModule Character_get_position(CharacterObject *self
     JPH_STACK_ALLOC(JPH_RVec3, pos);
 
     // 2. Lock for consistency (ensure we aren't reading mid-step)
-    SHADOW_LOCK(&self->world->shadow_lock);
+    SHADOW_LOCK(&self->world->physics.shadow_lock);
     JPH_CharacterVirtual_GetPosition(self->character, pos);
-    SHADOW_UNLOCK(&self->world->shadow_lock);
+    SHADOW_UNLOCK(&self->world->physics.shadow_lock);
 
     PyObject *ret = PyTuple_New(3);
     if (!ret) {
@@ -655,9 +655,9 @@ PyCFunction_DeclareMethodFromModule Character_get_linear_velocity(CharacterObjec
                                                                   PyObject *Py_UNUSED(ignored)) {
     JPH_STACK_ALLOC(JPH_Vec3, vel);
 
-    SHADOW_LOCK(&self->world->shadow_lock);
+    SHADOW_LOCK(&self->world->physics.shadow_lock);
     JPH_CharacterVirtual_GetLinearVelocity(self->character, vel);
-    SHADOW_UNLOCK(&self->world->shadow_lock);
+    SHADOW_UNLOCK(&self->world->physics.shadow_lock);
 
     return FastBuild_Tuple(vel->x, vel->y, vel->z);
 }
@@ -675,7 +675,7 @@ PyCFunction_DeclareMethodFromModule Character_set_position(CharacterObject *self
     }
 
     // --- PHYSICS LOGIC ---
-    SHADOW_LOCK(&self->world->shadow_lock);
+    SHADOW_LOCK(&self->world->physics.shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self->world);
 
     JPH_RVec3 j_pos = {pos.x, pos.y, pos.z};
@@ -684,16 +684,16 @@ PyCFunction_DeclareMethodFromModule Character_set_position(CharacterObject *self
     // Update Shadow Buffers
     uint64_t h_raw = atomic_load_explicit(&self->handle, memory_order_relaxed);
     uint32_t slot  = (uint32_t)(h_raw & HANDLE_INDEX_MASK);
-    uint32_t dense = self->world->slot_to_dense[slot];
+    uint32_t dense = self->world->physics.slot_to_dense[slot];
 
-    auto shadow_pos  = (PosStride *)self->world->positions;
-    auto shadow_ppos = (PosStride *)self->world->prev_positions;
+    auto shadow_pos  = (PosStride *)self->world->physics.positions;
+    auto shadow_ppos = (PosStride *)self->world->physics.prev_positions;
 
     PosStride p_val    = {pos.x, pos.y, pos.z, 0.0};
     shadow_pos[dense]  = p_val;
     shadow_ppos[dense] = p_val;
 
-    SHADOW_UNLOCK(&self->world->shadow_lock);
+    SHADOW_UNLOCK(&self->world->physics.shadow_lock);
     Py_RETURN_NONE;
 }
 
@@ -711,7 +711,7 @@ PyCFunction_DeclareMethodFromModule Character_set_rotation(CharacterObject *self
     }
 
     // --- PHYSICS LOGIC ---
-    SHADOW_LOCK(&self->world->shadow_lock);
+    SHADOW_LOCK(&self->world->physics.shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self->world);
 
     JPH_Quat q = {.x = rot.x, .y = rot.y, .z = rot.z, .w = rot.w};
@@ -720,13 +720,13 @@ PyCFunction_DeclareMethodFromModule Character_set_rotation(CharacterObject *self
     uint64_t raw_h = atomic_load_explicit(&self->handle, memory_order_relaxed);
 
     auto slot          = (uint32_t)(raw_h & HANDLE_INDEX_MASK);
-    uint32_t dense_idx = self->world->slot_to_dense[slot];
+    uint32_t dense_idx = self->world->physics.slot_to_dense[slot];
     size_t off         = (size_t)dense_idx * 4;
 
-    memcpy(&self->world->rotations[off], &q, 16);
-    memcpy(&self->world->prev_rotations[off], &q, 16);
+    memcpy(&self->world->physics.rotations[off], &q, 16);
+    memcpy(&self->world->physics.prev_rotations[off], &q, 16);
 
-    SHADOW_UNLOCK(&self->world->shadow_lock);
+    SHADOW_UNLOCK(&self->world->physics.shadow_lock);
     Py_RETURN_NONE;
 }
 
@@ -743,14 +743,14 @@ PyCFunction_DeclareMethodFromModule Character_set_strength(CharacterObject *self
         return nullptr;
     }
 
-    SHADOW_LOCK(&self->world->shadow_lock);
+    SHADOW_LOCK(&self->world->physics.shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self->world);
     BLOCK_UNTIL_NOT_QUERYING(self->world);
 
     atomic_store_explicit(&self->push_strength, strength, memory_order_relaxed);
     JPH_CharacterVirtual_SetMaxStrength(self->character, strength);
 
-    SHADOW_UNLOCK(&self->world->shadow_lock);
+    SHADOW_UNLOCK(&self->world->physics.shadow_lock);
     Py_RETURN_NONE;
 }
 
@@ -768,16 +768,16 @@ PyCFunction_DeclareMethodFromModule Character_get_render_transform(CharacterObje
     alignas(16) float res_p[3];
     alignas(16) float res_r[4];
 
-    SHADOW_LOCK(&self->world->shadow_lock);
+    SHADOW_LOCK(&self->world->physics.shadow_lock);
 
     BLOCK_UNTIL_NOT_STEPPING(self->world);
 
     const auto h_raw = atomic_load_explicit(&self->handle, memory_order_relaxed);
     const auto slot  = (uint32_t)(h_raw & HANDLE_INDEX_MASK);
-    const auto dense = self->world->slot_to_dense[slot];
+    const auto dense = self->world->physics.slot_to_dense[slot];
 
-    const auto shadow_ppos = (PosStride *)self->world->prev_positions;
-    const auto shadow_prot = (AuxStride *)self->world->prev_rotations;
+    const auto shadow_ppos = (PosStride *)self->world->physics.prev_positions;
+    const auto shadow_prot = (AuxStride *)self->world->physics.prev_rotations;
 
     JPH_STACK_ALLOC(JPH_RVec3, end_p);
     JPH_STACK_ALLOC(JPH_Quat, end_r);
@@ -787,7 +787,7 @@ PyCFunction_DeclareMethodFromModule Character_get_render_transform(CharacterObje
     culverin_math_interpolate_character_transform(&shadow_ppos[dense], &shadow_prot[dense], end_p,
                                                   end_r, alpha, res_p, res_r);
 
-    SHADOW_UNLOCK(&self->world->shadow_lock);
+    SHADOW_UNLOCK(&self->world->physics.shadow_lock);
 
     return FastBuild_Tuple(FastBuild_Tuple(res_p[0], res_p[1], res_p[2]),
                            FastBuild_Tuple(res_r[0], res_r[1], res_r[2], res_r[3]));
@@ -795,9 +795,9 @@ PyCFunction_DeclareMethodFromModule Character_get_render_transform(CharacterObje
 
 PyCFunction_DeclareMethodFromModule Character_is_grounded(CharacterObject *self,
                                                           PyObject *Py_UNUSED(ignored)) {
-    SHADOW_LOCK(&self->world->shadow_lock);
+    SHADOW_LOCK(&self->world->physics.shadow_lock);
     JPH_GroundState state = JPH_CharacterBase_GetGroundState((JPH_CharacterBase *)self->character);
-    SHADOW_UNLOCK(&self->world->shadow_lock);
+    SHADOW_UNLOCK(&self->world->physics.shadow_lock);
 
     if (state == JPH_GroundState_OnGround) {
         Py_RETURN_TRUE;
@@ -826,22 +826,22 @@ PyType_DeclareSlot_VoidFromModule Character_dealloc(CharacterObject *self) {
     }
 
     // --- 1. WORLD DRAIN (Locked) ---
-    SHADOW_LOCK(&self->world->shadow_lock);
+    SHADOW_LOCK(&self->world->physics.shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self->world);
     BLOCK_UNTIL_NOT_QUERYING(self->world);
 
     uint64_t h_raw = atomic_load_explicit(&self->handle, memory_order_relaxed);
     uint32_t slot  = (uint32_t)(h_raw & HANDLE_INDEX_MASK);
 
-    world_remove_body_slot(self->world, slot);
+    world_remove_body_slot(&self->world->physics, slot);
 
-    SHADOW_UNLOCK(&self->world->shadow_lock);
+    SHADOW_UNLOCK(&self->world->physics.shadow_lock);
 
     // --- 2. JOLT DESTRUCTION (Hard Serialized) ---
-    NATIVE_MUTEX_LOCK(self->world->jph_trampoline_lock);
+    NATIVE_MUTEX_LOCK(self->world->physics.jph_trampoline_lock);
 
-    if (self->world->char_vs_char_manager && self->character) {
-        JPH_CharacterVsCharacterCollisionSimple_RemoveCharacter(self->world->char_vs_char_manager,
+    if (self->world->physics.char_vs_char_manager && self->character) {
+        JPH_CharacterVsCharacterCollisionSimple_RemoveCharacter(self->world->physics.char_vs_char_manager,
                                                                 self->character);
     }
 
@@ -857,14 +857,14 @@ PyType_DeclareSlot_VoidFromModule Character_dealloc(CharacterObject *self) {
     if (self->shape_filter) {
         JPH_ShapeFilter_Destroy(self->shape_filter);
     }
-    if (self->bp_filter) {
-        JPH_BroadPhaseLayerFilter_Destroy(self->bp_filter);
+    if (self->physics.bp_filter) {
+        JPH_BroadPhaseLayerFilter_Destroy(self->physics.bp_filter);
     }
     if (self->obj_filter) {
         JPH_ObjectLayerFilter_Destroy(self->obj_filter);
     }
 
-    NATIVE_MUTEX_UNLOCK(self->world->jph_trampoline_lock);
+    NATIVE_MUTEX_UNLOCK(self->world->physics.jph_trampoline_lock);
 
 finalize:
     if (self->parsers) {
@@ -895,16 +895,16 @@ static inline JPH_CharacterVirtual *alloc_j_char(PhysicsWorldObject *self, Posit
 
     JPH_CharacterVirtual *j_char = JPH_CharacterVirtual_Create(
         &settings, &(JPH_RVec3){(double)pos.px, (double)pos.py, (double)pos.pz},
-        &(JPH_Quat){0, 0, 0, 1}, 1, self->system);
+        &(JPH_Quat){0, 0, 0, 1}, 1, self->physics.system);
 
     JPH_Shape_Destroy(shape);
     if (!j_char) {
         return nullptr;
     }
 
-    if (self->char_vs_char_manager) {
-        JPH_CharacterVsCharacterCollisionSimple_AddCharacter(self->char_vs_char_manager, j_char);
-        JPH_CharacterVirtual_SetCharacterVsCharacterCollision(j_char, self->char_vs_char_manager);
+    if (self->physics.char_vs_char_manager) {
+        JPH_CharacterVsCharacterCollisionSimple_AddCharacter(self->physics.char_vs_char_manager, j_char);
+        JPH_CharacterVirtual_SetCharacterVsCharacterCollision(j_char, self->physics.char_vs_char_manager);
     }
     return j_char;
 }
@@ -912,33 +912,33 @@ static inline JPH_CharacterVirtual *alloc_j_char(PhysicsWorldObject *self, Posit
 // Helper 2: Shadow Buffer Registration (Atomic Commit)
 static inline void register_char(PhysicsWorldObject *self, CharacterObject *obj,
                                  JPH_CharacterVirtual *j_char, uint32_t slot) {
-    SHADOW_LOCK(&self->shadow_lock);
+    SHADOW_LOCK(&self->physics.shadow_lock);
 
-    uint32_t gen = atomic_load_explicit(&self->generations[slot], memory_order_relaxed);
+    uint32_t gen = atomic_load_explicit(&self->physics.generations[slot], memory_order_relaxed);
     BodyHandle h = make_handle(slot, gen);
 
     uint64_t raw_h = h;
     atomic_store_explicit(&obj->handle, raw_h, memory_order_relaxed);
 
-    auto dense_idx = (uint32_t)atomic_load_explicit(&self->count, memory_order_relaxed);
+    auto dense_idx = (uint32_t)atomic_load_explicit(&self->physics.count, memory_order_relaxed);
     JPH_BodyID bid = JPH_CharacterVirtual_GetInnerBodyID(j_char);
     uint32_t j_idx = JPH_ID_TO_INDEX(bid);
 
-    if (j_idx <= self->max_jolt_bodies) {
-        atomic_store_explicit(&self->id_to_handle_map[j_idx], raw_h, memory_order_release);
+    if (j_idx <= self->physics.max_jolt_bodies) {
+        atomic_store_explicit(&self->physics.id_to_handle_map[j_idx], raw_h, memory_order_release);
     }
 
-    self->body_ids[dense_idx]      = bid;
-    self->slot_to_dense[slot]      = dense_idx;
-    self->dense_to_slot[dense_idx] = slot;
-    self->user_data[dense_idx]     = 0;
+    self->physics.body_ids[dense_idx]      = bid;
+    self->physics.slot_to_dense[slot]      = dense_idx;
+    self->physics.dense_to_slot[dense_idx] = slot;
+    self->physics.user_data[dense_idx]     = 0;
 
     constexpr auto COLLISION_FILTER_ALL_CATEGORIES = 0xFFFF;
     constexpr auto COLLISION_FILTER_ALL_MASKS      = 0xFFFF;
 
-    self->categories[dense_idx]   = COLLISION_FILTER_ALL_CATEGORIES;
-    self->masks[dense_idx]        = COLLISION_FILTER_ALL_MASKS;
-    self->material_ids[dense_idx] = 0;
+    self->physics.categories[dense_idx]   = COLLISION_FILTER_ALL_CATEGORIES;
+    self->physics.masks[dense_idx]        = COLLISION_FILTER_ALL_MASKS;
+    self->physics.material_ids[dense_idx] = 0;
 
     JPH_STACK_ALLOC(JPH_RVec3, p);
     JPH_STACK_ALLOC(JPH_Quat, q);
@@ -948,38 +948,38 @@ static inline void register_char(PhysicsWorldObject *self, CharacterObject *obj,
     PosStride p_val = {p->x, p->y, p->z, 0.0};
     AuxStride r_val = {q->x, q->y, q->z, q->w};
 
-    ((PosStride *)self->positions)[dense_idx]          = p_val;
-    ((PosStride *)self->prev_positions)[dense_idx]     = p_val;
-    ((AuxStride *)self->rotations)[dense_idx]          = r_val;
-    ((AuxStride *)self->prev_rotations)[dense_idx]     = r_val;
-    ((AuxStride *)self->linear_velocities)[dense_idx]  = (AuxStride){0};
-    ((AuxStride *)self->angular_velocities)[dense_idx] = (AuxStride){0};
+    ((PosStride *)self->physics.positions)[dense_idx]          = p_val;
+    ((PosStride *)self->physics.prev_positions)[dense_idx]     = p_val;
+    ((AuxStride *)self->physics.rotations)[dense_idx]          = r_val;
+    ((AuxStride *)self->physics.prev_rotations)[dense_idx]     = r_val;
+    ((AuxStride *)self->physics.linear_velocities)[dense_idx]  = (AuxStride){0};
+    ((AuxStride *)self->physics.angular_velocities)[dense_idx] = (AuxStride){0};
 
-    if (self->soft_shadows) {
-        self->soft_shadows[dense_idx].vertices = nullptr;
+    if (self->physics.soft_shadows) {
+        self->physics.soft_shadows[dense_idx].vertices = nullptr;
     }
 
-    atomic_store_explicit(&self->slot_states[slot], SLOT_CHARACTER, memory_order_release);
-    atomic_fetch_add_explicit(&self->count, 1, memory_order_release);
+    atomic_store_explicit(&self->physics.slot_states[slot], SLOT_CHARACTER, memory_order_release);
+    atomic_fetch_add_explicit(&self->physics.count, 1, memory_order_release);
 
-    size_t final_count  = atomic_load_explicit(&self->count, memory_order_relaxed);
+    size_t final_count  = atomic_load_explicit(&self->physics.count, memory_order_relaxed);
     self->view_shape[0] = (Py_ssize_t)final_count;
 
-    JPH_BodyInterface_SetUserData(self->body_interface, bid, raw_h);
+    JPH_BodyInterface_SetUserData(self->physics.body_interface, bid, raw_h);
     JPH_CharacterVirtual_SetUserData(j_char, raw_h);
 
-    SHADOW_UNLOCK(&self->shadow_lock);
+    SHADOW_UNLOCK(&self->physics.shadow_lock);
 }
 
 // Helper 3: Filter and Listener serialization (Trampoline Lock)
 static inline void setup_char_filters(CharacterObject *obj) {
-    NATIVE_MUTEX_LOCK(obj->world->jph_trampoline_lock);
+    NATIVE_MUTEX_LOCK(obj->world->physics.jph_trampoline_lock);
     obj->listener     = JPH_CharacterContactListener_Create(obj);
     obj->body_filter  = JPH_BodyFilter_Create(nullptr);
     obj->shape_filter = JPH_ShapeFilter_Create(nullptr);
     obj->bp_filter    = JPH_BroadPhaseLayerFilter_Create(nullptr);
     obj->obj_filter   = JPH_ObjectLayerFilter_Create(nullptr);
-    NATIVE_MUTEX_UNLOCK(obj->world->jph_trampoline_lock);
+    NATIVE_MUTEX_UNLOCK(obj->world->physics.jph_trampoline_lock);
     JPH_CharacterVirtual_SetListener(obj->character, obj->listener);
 }
 void culverin_init_char_parsers(CharacterParsers *cp);
@@ -1019,26 +1019,26 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_character(PhysicsWorldOb
         return nullptr;
     }
 
-    SHADOW_LOCK(&self->shadow_lock);
+    SHADOW_LOCK(&self->physics.shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
     BLOCK_UNTIL_NOT_QUERYING(self);
 
-    size_t available = atomic_load_explicit(&self->free_count, memory_order_acquire);
+    size_t available = atomic_load_explicit(&self->physics.free_count, memory_order_acquire);
 
     if (available == 0) {
-        if (PhysicsWorld_resize(self, self->capacity * 2) < 0) {
-            SHADOW_UNLOCK(&self->shadow_lock);
+        if (PhysicsWorld_resize(self, self->physics.capacity * 2) < 0) {
+            SHADOW_UNLOCK(&self->physics.shadow_lock);
             return nullptr;
         }
-        available = atomic_load_explicit(&self->free_count, memory_order_acquire);
+        available = atomic_load_explicit(&self->physics.free_count, memory_order_acquire);
     }
 
-    uint32_t char_slot = self->free_slots[available - 1];
-    atomic_store_explicit(&self->free_count, available - 1, memory_order_release);
+    uint32_t char_slot = self->physics.free_slots[available - 1];
+    atomic_store_explicit(&self->physics.free_count, available - 1, memory_order_release);
 
-    atomic_store_explicit(&self->slot_states[char_slot], SLOT_PENDING_CREATE, memory_order_release);
+    atomic_store_explicit(&self->physics.slot_states[char_slot], SLOT_PENDING_CREATE, memory_order_release);
 
-    SHADOW_UNLOCK(&self->shadow_lock);
+    SHADOW_UNLOCK(&self->physics.shadow_lock);
 
     PositionVector pos_vec      = {pos.x, pos.y, pos.z};
     CharacterParams char_params = {height, radius, slope};
@@ -1084,14 +1084,14 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_character(PhysicsWorldOb
 fail_py:
     JPH_CharacterBase_Destroy((JPH_CharacterBase *)j_char);
 fail_jolt:
-    SHADOW_LOCK(&self->shadow_lock);
+    SHADOW_LOCK(&self->physics.shadow_lock);
 
-    atomic_store_explicit(&self->slot_states[char_slot], SLOT_EMPTY, memory_order_relaxed);
+    atomic_store_explicit(&self->physics.slot_states[char_slot], SLOT_EMPTY, memory_order_relaxed);
 
-    size_t f_idx            = atomic_fetch_add_explicit(&self->free_count, 1, memory_order_relaxed);
-    self->free_slots[f_idx] = char_slot;
+    size_t f_idx            = atomic_fetch_add_explicit(&self->physics.free_count, 1, memory_order_relaxed);
+    self->physics.free_slots[f_idx] = char_slot;
 
-    SHADOW_UNLOCK(&self->shadow_lock);
+    SHADOW_UNLOCK(&self->physics.shadow_lock);
     return nullptr;
 }
 

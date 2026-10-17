@@ -449,10 +449,12 @@ python_add_library(
     src/culverin/culverin_contact_listener.cpp
     src/culverin/culverin_parsers.c
     src/culverin/culverin_vehicle.c
+    src/culverin/culverin_command_buffer_core.c
     src/culverin/culverin_command_buffer.c
     src/culverin/culverin_tracked_vehicle.c
     src/culverin/culverin_ragdoll.c
     src/culverin/culverin_internal_query.c
+    src/culverin/culverin_physics_world_core.c
     src/culverin/culverin_physics_world_internal.c
     src/culverin/culverin_query_methods.c
     src/culverin/culverin_constraint.c

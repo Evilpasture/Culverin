@@ -137,7 +137,7 @@ PyCFunction_DeclareMethodFromModule Ragdoll_drive_to_pose(RagdollObject *self,
     JPH_SkeletonPose_SetRootOffset(pose, r_pos);
 
     // 4. PHYSICS EXECUTION (Shadow Locked)
-    SHADOW_LOCK(&self->world->shadow_lock);
+    SHADOW_LOCK(&self->world->physics.shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self->world);
 
     // Set the current world-space pose directly (Teleport)
@@ -148,7 +148,7 @@ PyCFunction_DeclareMethodFromModule Ragdoll_drive_to_pose(RagdollObject *self,
     JPH_Ragdoll_Activate(self->ragdoll, true);
     JPH_Ragdoll_DriveToPoseUsingMotors(self->ragdoll, pose);
 
-    SHADOW_UNLOCK(&self->world->shadow_lock);
+    SHADOW_UNLOCK(&self->world->physics.shadow_lock);
 
     // 5. CLEANUP
     PyBuffer_Release(&view);
@@ -165,18 +165,18 @@ PyCFunction_DeclareMethodFromModule Ragdoll_get_body_handles(RagdollObject *self
         return nullptr;
     }
 
-    SHADOW_LOCK(&self->world->shadow_lock);
+    SHADOW_LOCK(&self->world->physics.shadow_lock);
 
     for (size_t i = 0; i < self->body_count; i++) {
         uint32_t slot = self->body_slots[i];
 
         // TSan Fix: Atomic load of the slot state
-        uint8_t state = atomic_load_explicit(&self->world->slot_states[slot], memory_order_acquire);
+        uint8_t state = atomic_load_explicit(&self->world->physics.slot_states[slot], memory_order_acquire);
 
         if (state == SLOT_ALIVE) {
             // TSan Fix: Atomic load of the generation
             uint32_t gen =
-                atomic_load_explicit(&self->world->generations[slot], memory_order_relaxed);
+                atomic_load_explicit(&self->world->physics.generations[slot], memory_order_relaxed);
 
             BodyHandle h = make_handle(slot, gen);
 
@@ -189,7 +189,7 @@ PyCFunction_DeclareMethodFromModule Ragdoll_get_body_handles(RagdollObject *self
         }
     }
 
-    SHADOW_UNLOCK(&self->world->shadow_lock);
+    SHADOW_UNLOCK(&self->world->physics.shadow_lock);
     return list;
 }
 
@@ -205,9 +205,9 @@ PyCFunction_DeclareMethodFromModule Ragdoll_get_debug_info(RagdollObject *self,
         return nullptr;
     }
 
-    JPH_BodyInterface *bi = self->world->body_interface;
+    JPH_BodyInterface *bi = self->world->physics.body_interface;
 
-    SHADOW_LOCK(&self->world->shadow_lock);
+    SHADOW_LOCK(&self->world->physics.shadow_lock);
     for (int i = 0; i < body_count; i++) {
         JPH_BodyID bid = JPH_Ragdoll_GetBodyID(self->ragdoll, i);
 
@@ -226,13 +226,13 @@ PyCFunction_DeclareMethodFromModule Ragdoll_get_debug_info(RagdollObject *self,
 
         if (!dict) {
             Py_DECREF(list);
-            SHADOW_UNLOCK(&self->world->shadow_lock);
+            SHADOW_UNLOCK(&self->world->physics.shadow_lock);
             return nullptr;
         }
 
         PyList_SET_ITEM(list, i, dict);
     }
-    SHADOW_UNLOCK(&self->world->shadow_lock);
+    SHADOW_UNLOCK(&self->world->physics.shadow_lock);
 
     return list;
 }
@@ -285,7 +285,7 @@ PyType_DeclareSlot_VoidFromModule RagdollSettings_dealloc(RagdollSettingsObject 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 PyType_DeclareSlot_VoidFromModule Ragdoll_dealloc(RagdollObject *self) {
     if (self->world && self->ragdoll) {
-        SHADOW_LOCK(&self->world->shadow_lock);
+        SHADOW_LOCK(&self->world->physics.shadow_lock);
 
         // Guard against simulation or in-flight queries
         BLOCK_UNTIL_NOT_STEPPING(self->world);
@@ -293,18 +293,18 @@ PyType_DeclareSlot_VoidFromModule Ragdoll_dealloc(RagdollObject *self) {
 
         JPH_Ragdoll_RemoveFromPhysicsSystem(self->ragdoll, true);
 
-        if (self->body_slots && self->world->slot_states) {
+        if (self->body_slots && self->world->physics.slot_states) {
             for (size_t i = 0; i < self->body_count; i++) {
                 uint32_t slot = self->body_slots[i];
 
-                if (slot >= self->world->slot_capacity) {
+                if (slot >= self->world->physics.slot_capacity) {
                     continue;
                 }
 
                 // TSan Fix: Atomic load of slot state.
                 // Acquire ensures we see all initialization data before calling remove.
                 uint8_t state =
-                    atomic_load_explicit(&self->world->slot_states[slot], memory_order_acquire);
+                    atomic_load_explicit(&self->world->physics.slot_states[slot], memory_order_acquire);
 
                 if (state != SLOT_ALIVE) {
                     continue;
@@ -312,10 +312,10 @@ PyType_DeclareSlot_VoidFromModule Ragdoll_dealloc(RagdollObject *self) {
 
                 // Note: world_remove_body_slot has been refactored
                 // to handle atomic count/generation/state updates.
-                world_remove_body_slot(self->world, slot);
+                world_remove_body_slot(&self->world->physics, slot);
             }
         }
-        SHADOW_UNLOCK(&self->world->shadow_lock);
+        SHADOW_UNLOCK(&self->world->physics.shadow_lock);
     }
 
     if (self->ragdoll) {
@@ -380,11 +380,11 @@ PyCFunction_DeclareMethodFromModule RagdollSettings_add_part(RagdollSettingsObje
     parse_body_size(py_size, s); // From culverin_parsers.c
 
     JPH_Shape *shape = nullptr;
-    Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(self->world->jph_trampoline_lock);
-    SHADOW_LOCK(&self->world->shadow_lock);
-    shape = find_or_create_shape_locked(self->world, shape_type, s);
-    SHADOW_UNLOCK(&self->world->shadow_lock);
-    NATIVE_MUTEX_UNLOCK(self->world->jph_trampoline_lock);
+    Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(self->world->physics.jph_trampoline_lock);
+    SHADOW_LOCK(&self->world->physics.shadow_lock);
+    shape = find_or_create_shape_locked(&self->world->physics, shape_type, s);
+    SHADOW_UNLOCK(&self->world->physics.shadow_lock);
+    NATIVE_MUTEX_UNLOCK(self->world->physics.jph_trampoline_lock);
     Py_END_ALLOW_THREADS;
 
     if (!shape) {

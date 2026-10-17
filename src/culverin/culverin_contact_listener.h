@@ -1,4 +1,5 @@
 #pragma once
+#include "culverin_jolt_config.h"
 #include "joltc.h"
 
 #ifdef __cplusplus

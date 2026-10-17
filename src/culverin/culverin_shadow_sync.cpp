@@ -258,10 +258,10 @@ ExecuteSyncPass(const Unsigned32 active_count, const JPH_PhysicsSystem *const CP
 // =================================================================================================
 
 extern "C" [[gnu::flatten, gnu::hot, gnu::nonnull(1)]] auto
-culverin_sync_shadow_buffers(const PhysicsWorldObject *const CPH_RESTRICT self) noexcept -> void {
+culverin_sync_shadow_buffers(const PhysicsWorld *const CPH_RESTRICT world) noexcept -> void {
     using namespace CPH;
     // Use upstream JoltC's public API instead of the fork-only raw PhysicsSystem accessor.
-    const JPH_PhysicsSystem *const CPH_RESTRICT system = self->system;
+    const JPH_PhysicsSystem *const CPH_RESTRICT system = world->system;
 
     const Unsigned32 active_rigid_count =
         JPH_PhysicsSystem_GetNumActiveBodies(system, JPH_BodyType_Rigid);
@@ -280,36 +280,36 @@ culverin_sync_shadow_buffers(const PhysicsWorldObject *const CPH_RESTRICT self) 
 
     const CPH::WorldDataCreateInfo world = {
         .shadow_pos = std::assume_aligned<sizeof(PosStride)>(
-            reinterpret_cast<PosStride *const CPH_RESTRICT>(self->positions)),
+            reinterpret_cast<PosStride *const CPH_RESTRICT>(world->positions)),
 
         .shadow_ppos = std::assume_aligned<sizeof(PosStride)>(
-            reinterpret_cast<PosStride *const CPH_RESTRICT>(self->prev_positions)),
+            reinterpret_cast<PosStride *const CPH_RESTRICT>(world->prev_positions)),
 
         .shadow_rot = std::assume_aligned<sizeof(AuxStride)>(
-            reinterpret_cast<AuxStride *const CPH_RESTRICT>(self->rotations)),
+            reinterpret_cast<AuxStride *const CPH_RESTRICT>(world->rotations)),
 
         .shadow_prot = std::assume_aligned<sizeof(AuxStride)>(
-            reinterpret_cast<AuxStride *const CPH_RESTRICT>(self->prev_rotations)),
+            reinterpret_cast<AuxStride *const CPH_RESTRICT>(world->prev_rotations)),
 
         .shadow_lvel = std::assume_aligned<sizeof(AuxStride)>(
-            reinterpret_cast<AuxStride *const CPH_RESTRICT>(self->linear_velocities)),
+            reinterpret_cast<AuxStride *const CPH_RESTRICT>(world->linear_velocities)),
 
         .shadow_avel = std::assume_aligned<sizeof(AuxStride)>(
-            reinterpret_cast<AuxStride *const CPH_RESTRICT>(self->angular_velocities)),
+            reinterpret_cast<AuxStride *const CPH_RESTRICT>(world->angular_velocities)),
 
-        .soft_shadows = self->soft_shadows};
+        .soft_shadows = world->soft_shadows};
 
     const CPH::MappingDataCreateInfo mapping_data = {
-        .body_ptrs     = self->jolt_body_ptrs,
-        .slot_states   = self->slot_states,
-        .generations   = self->generations,
-        .slot_capacity = self->slot_capacity,
-        .slot_to_dense = self->slot_to_dense,
+        .body_ptrs     = world->jolt_body_ptrs,
+        .slot_states   = world->slot_states,
+        .generations   = world->generations,
+        .slot_capacity = world->slot_capacity,
+        .slot_to_dense = world->slot_to_dense,
     };
 
     ExecuteSyncPass<JPH::EBodyType::RigidBody>(active_rigid_count, system, mapping_data, world);
 
-    if (self->soft_shadows != nullptr) {
+    if (world->soft_shadows != nullptr) {
         ExecuteSyncPass<JPH::EBodyType::SoftBody>(active_soft_count, system, mapping_data, world);
     }
 

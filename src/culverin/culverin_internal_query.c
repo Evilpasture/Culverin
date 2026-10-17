@@ -1,11 +1,11 @@
 #include "culverin_internal_query.h"
-#include "culverin.h"
-#include "culverin_physics_world.h"
+#include "culverin_native_alloc.h"
+#include "culverin_physics_world_state.h"
 
 /**
- * REQUIRES: SHADOW_LOCK held AND self->jph_trampoline_lock held
+ * REQUIRES: SHADOW_LOCK held AND world->jph_trampoline_lock held
  */
-JPH_Shape *find_or_create_shape_locked(PhysicsWorldObject *self, int type, const float *params) {
+JPH_Shape *find_or_create_shape_locked(PhysicsWorld *world, int type, const float *params) {
     // 1. KEY NORMALIZATION & SANITIZATION
     // Defensive clamping
     float p1;
@@ -41,24 +41,24 @@ JPH_Shape *find_or_create_shape_locked(PhysicsWorldObject *self, int type, const
         p4 = 0.0f;
     }
     // 2. CACHE LOOKUP
-    for (size_t i = 0; i < self->shape_cache_count; ++i) {
-        const ShapeKey *cached = &self->shape_cache[i].key;
+    for (size_t i = 0; i < world->shape_cache_count; ++i) {
+        const ShapeKey *cached = &world->shape_cache[i].key;
         if (cached->type == (uint32_t)type && cached->p1 == p1 && cached->p2 == p2 &&
             cached->p3 == p3 && cached->p4 == p4) {
-            return self->shape_cache[i].shape;
+            return world->shape_cache[i].shape;
         }
     }
 
     // 3. PRE-ALLOCATION CHECK (Fail early before expensive Jolt work)
-    if (self->shape_cache_count >= self->shape_cache_capacity) {
-        size_t new_cap = (self->shape_cache_capacity == 0) ? 16 : self->shape_cache_capacity * 2;
+    if (world->shape_cache_count >= world->shape_cache_capacity) {
+        size_t new_cap = (world->shape_cache_capacity == 0) ? 16 : world->shape_cache_capacity * 2;
         ShapeEntry *new_ptr =
-            (ShapeEntry *)CULV_RAW_REALLOC(self->shape_cache, new_cap * sizeof(ShapeEntry));
+            (ShapeEntry *)CulvNative_Realloc(world->shape_cache, new_cap * sizeof(ShapeEntry));
         if (UNLIKELY(!new_ptr)) {
             return nullptr;
         }
-        self->shape_cache          = new_ptr;
-        self->shape_cache_capacity = new_cap;
+        world->shape_cache          = new_ptr;
+        world->shape_cache_capacity = new_cap;
     }
 
     // 4. JOLT CREATION (Type-Specific Dispatch)
@@ -115,31 +115,31 @@ JPH_Shape *find_or_create_shape_locked(PhysicsWorldObject *self, int type, const
     }
 
     // 5. CACHE COMMIT
-    ShapeEntry *entry = &self->shape_cache[self->shape_cache_count++];
+    ShapeEntry *entry = &world->shape_cache[world->shape_cache_count++];
     entry->key        = (ShapeKey){.type = (uint32_t)type, .p1 = p1, .p2 = p2, .p3 = p3, .p4 = p4};
     entry->shape      = shape;
 
     return shape;
 }
 
-void free_shape_cache(PhysicsWorldObject *self) {
-    if (!self->shape_cache) {
+void free_shape_cache(PhysicsWorld *world) {
+    if (!world->shape_cache) {
         return;
     }
 
-    for (size_t i = 0; i < self->shape_cache_count; i++) {
-        if (self->shape_cache[i].shape) {
-            JPH_Shape_Destroy(self->shape_cache[i].shape);
+    for (size_t i = 0; i < world->shape_cache_count; i++) {
+        if (world->shape_cache[i].shape) {
+            JPH_Shape_Destroy(world->shape_cache[i].shape);
         }
     }
-    CULV_RAW_FREE(self->shape_cache);
-    self->shape_cache       = nullptr;
-    self->shape_cache_count = 0;
+    CulvNative_Free(world->shape_cache);
+    world->shape_cache       = nullptr;
+    world->shape_cache_count = 0;
 }
 
 // Helper 1: Run the Raycast
-// ASSUMPTION: Caller has already acquired self->jph_trampoline_lock and released GIL.
-bool execute_raycast_query(PhysicsWorldObject *self, JPH_BodyID ignore_bid, const JPH_RVec3 *origin,
+// ASSUMPTION: Caller has already acquired world->jph_trampoline_lock and released GIL.
+bool execute_raycast_query(PhysicsWorld *world, JPH_BodyID ignore_bid, const JPH_RVec3 *origin,
                            const JPH_Vec3 *direction, JPH_RayCastResult *hit) {
     // 1. Filter Setup (Safe, doesn't touch shared Jolt memory yet)
     JPH_BroadPhaseLayerFilter *bp_f = JPH_BroadPhaseLayerFilter_Create(nullptr);
@@ -149,7 +149,7 @@ bool execute_raycast_query(PhysicsWorldObject *self, JPH_BodyID ignore_bid, cons
     JPH_BodyFilter *bf         = JPH_BodyFilter_Create(&filter_ctx);
 
     // 2. Execution
-    const JPH_NarrowPhaseQuery *query = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
+    const JPH_NarrowPhaseQuery *query = JPH_PhysicsSystem_GetNarrowPhaseQuery(world->system);
     bool has_hit = JPH_NarrowPhaseQuery_CastRay(query, origin, direction, hit, bp_f, obj_f, bf);
 
     // 3. Cleanup
@@ -162,10 +162,10 @@ bool execute_raycast_query(PhysicsWorldObject *self, JPH_BodyID ignore_bid, cons
 
 // Helper 2: Extract World Space Normal after hit
 // ASSUMPTION: Caller holds the Jolt lock.
-void extract_hit_normal(PhysicsWorldObject *self, JPH_BodyID bodyID, JPH_SubShapeID subShapeID2,
+void extract_hit_normal(PhysicsWorld *world, JPH_BodyID bodyID, JPH_SubShapeID subShapeID2,
                         const JPH_RVec3 *origin, const JPH_Vec3 *ray_dir, JPH_Real fraction,
                         JPH_Vec3 *normal_out) {
-    const JPH_BodyLockInterface *lock_iface = JPH_PhysicsSystem_GetBodyLockInterface(self->system);
+    const JPH_BodyLockInterface *lock_iface = JPH_PhysicsSystem_GetBodyLockInterface(world->system);
     JPH_BodyLockRead lock;
     JPH_BodyLockInterface_LockRead(lock_iface, bodyID, &lock);
 
@@ -182,8 +182,8 @@ void extract_hit_normal(PhysicsWorldObject *self, JPH_BodyID bodyID, JPH_SubShap
 }
 
 // Helper 3: Internal logic to run the actual query
-// ASSUMPTION: Caller has already acquired self->jph_trampoline_lock and released GIL.
-void shapecast_execute_internal(PhysicsWorldObject *self, const JPH_Shape *shape,
+// ASSUMPTION: Caller has already acquired world->jph_trampoline_lock and released GIL.
+void shapecast_execute_internal(PhysicsWorld *world, const JPH_Shape *shape,
                                 const JPH_RMat4 *transform, const JPH_Vec3 *sweep_dir,
                                 JPH_BodyID ignore_bid, CastShapeContext *ctx) {
     JPH_BroadPhaseLayerFilter *bp_f = JPH_BroadPhaseLayerFilter_Create(nullptr);
@@ -199,7 +199,7 @@ void shapecast_execute_internal(PhysicsWorldObject *self, const JPH_Shape *shape
     settings->backFaceModeConvex    = JPH_BackFaceMode_IgnoreBackFaces;
 
     JPH_RVec3 base_offset          = {0, 0, 0};
-    const JPH_NarrowPhaseQuery *nq = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
+    const JPH_NarrowPhaseQuery *nq = JPH_PhysicsSystem_GetNarrowPhaseQuery(world->system);
 
     JPH_NarrowPhaseQuery_CastShape(nq, shape, transform, sweep_dir, settings, &base_offset,
                                    CastShape_ClosestCollector, ctx, bp_f, obj_f, bf, nullptr);

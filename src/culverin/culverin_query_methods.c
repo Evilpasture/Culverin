@@ -18,19 +18,19 @@ static constexpr int CQM_VEC3_STRIDE        = 12; // bytes for 3 floats
 // If we are the last query to finish, we must wake up the physics stepper.
 void end_query_scope(PhysicsWorldObject *self) {
     // 1. Lock native mutex first
-    NATIVE_MUTEX_LOCK(self->step_sync.mutex);
+    NATIVE_MUTEX_LOCK(self->physics.step_sync.mutex);
 
     // 2. Decrement and check
     // We use fetch_sub; if it was 1, it's now 0.
-    uint32_t prev = atomic_fetch_sub_explicit(&self->active_queries, 1, memory_order_acq_rel);
+    uint32_t prev = atomic_fetch_sub_explicit(&self->physics.active_queries, 1, memory_order_acq_rel);
 
     if (prev == 1) {
         // We were the last one, signal the stepper
-        NATIVE_COND_BROADCAST(self->step_sync.cond);
+        NATIVE_COND_BROADCAST(self->physics.step_sync.cond);
     }
 
     // 3. Unlock
-    NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
+    NATIVE_MUTEX_UNLOCK(self->physics.step_sync.mutex);
 }
 
 // Unified hit collector for both Broad and Narrow phase overlaps
@@ -55,7 +55,7 @@ static void overlap_record_hit(OverlapContext *ctx, JPH_BodyID bid) {
         ctx->hits     = new_ptr;
         ctx->capacity = new_cap;
     }
-    ctx->hits[ctx->count++] = JPH_BodyInterface_GetUserData(ctx->world->body_interface, bid);
+    ctx->hits[ctx->count++] = JPH_BodyInterface_GetUserData(ctx->world->physics.body_interface, bid);
 }
 
 static float OverlapCallback_Narrow(void *context, const JPH_CollideShapeResult *result) {
@@ -103,20 +103,20 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_sphere(PhysicsWorldObje
                           .is_on_stack = true};
 
     // 4. RESOURCE RESOLUTION (Shadow Lock)
-    SHADOW_LOCK(&self->shadow_lock);
+    SHADOW_LOCK(&self->physics.shadow_lock);
     BLOCK_UNTIL_CAN_QUERY(self);
 
     float s_params[4] = {radius, 0, 0, 0};
-    JPH_Shape *shape  = find_or_create_shape_locked(self, CULV_SHAPE_SPHERE, s_params);
+    JPH_Shape *shape  = find_or_create_shape_locked(&self->physics, CULV_SHAPE_SPHERE, s_params);
 
     if (!shape) {
-        SHADOW_UNLOCK(&self->shadow_lock);
+        SHADOW_UNLOCK(&self->physics.shadow_lock);
         return PyErr_Format(PyExc_RuntimeError, "Failed to resolve sphere shape");
     }
 
     // Mark query active so the Stepper thread waits for us
-    atomic_fetch_add_explicit(&self->active_queries, 1, memory_order_acquire);
-    SHADOW_UNLOCK(&self->shadow_lock);
+    atomic_fetch_add_explicit(&self->physics.active_queries, 1, memory_order_acquire);
+    SHADOW_UNLOCK(&self->physics.shadow_lock);
 
     // 5. EXECUTION (Released GIL)
     JPH_BroadPhaseLayerFilter *bp_filter = nullptr;
@@ -138,7 +138,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_sphere(PhysicsWorldObje
     obj_filter  = JPH_ObjectLayerFilter_Create(nullptr);
     body_filter = JPH_BodyFilter_Create(nullptr);
 
-    const JPH_NarrowPhaseQuery *nq = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
+    const JPH_NarrowPhaseQuery *nq = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->physics.system);
     JPH_NarrowPhaseQuery_CollideShape(nq, shape, &scale, &transform, &settings, &base_offset,
                                       OverlapCallback_Narrow, &ctx, bp_filter, obj_filter,
                                       body_filter, nullptr);
@@ -149,14 +149,14 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_sphere(PhysicsWorldObje
         // 6. RESULT CONSTRUCTION (Refactored with SlotPredicate)
         PyObject *ret_list = PyList_New(0);
     if (ret_list) {
-        SHADOW_LOCK(&self->shadow_lock);
+        SHADOW_LOCK(&self->physics.shadow_lock);
         for (size_t i = 0; i < ctx.count; i++) {
             uint64_t raw_h = ctx.hits[i];
             uint32_t slot;
 
-            if (unpack_handle(self, (BodyHandle)raw_h, &slot)) {
+            if (unpack_handle(&self->physics, (BodyHandle)raw_h, &slot)) {
                 const uint8_t state =
-                    atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
+                    atomic_load_explicit(&self->physics.slot_states[slot], memory_order_acquire);
 
                 // Use standard mask: Alive, Character, and SoftBody are valid results for a sphere
                 // overlap
@@ -171,7 +171,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_sphere(PhysicsWorldObje
                 }
             }
         }
-        SHADOW_UNLOCK(&self->shadow_lock);
+        SHADOW_UNLOCK(&self->physics.shadow_lock);
     }
 
     // 7. CLEANUP
@@ -230,11 +230,11 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_aabb(PhysicsWorldObject
                           .is_on_stack = true};
 
     // 4. CONCURRENCY GUARD
-    SHADOW_LOCK(&self->shadow_lock);
+    SHADOW_LOCK(&self->physics.shadow_lock);
     BLOCK_UNTIL_CAN_QUERY(self);
     // Increment active_queries so the stepping thread waits for us
-    atomic_fetch_add_explicit(&self->active_queries, 1, memory_order_acquire);
-    SHADOW_UNLOCK(&self->shadow_lock);
+    atomic_fetch_add_explicit(&self->physics.active_queries, 1, memory_order_acquire);
+    SHADOW_UNLOCK(&self->physics.shadow_lock);
 
     // 5. JOLT EXECUTION (GIL Released)
     JPH_BroadPhaseLayerFilter *bp_filter = nullptr;
@@ -247,7 +247,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_aabb(PhysicsWorldObject
     bp_filter  = JPH_BroadPhaseLayerFilter_Create(nullptr);
     obj_filter = JPH_ObjectLayerFilter_Create(nullptr);
 
-    const JPH_BroadPhaseQuery *bq = JPH_PhysicsSystem_GetBroadPhaseQuery(self->system);
+    const JPH_BroadPhaseQuery *bq = JPH_PhysicsSystem_GetBroadPhaseQuery(self->physics.system);
     JPH_BroadPhaseQuery_CollideAABox(bq, box, OverlapCallback_Broad, &ctx, bp_filter, obj_filter);
 
     end_query_scope(self);
@@ -256,14 +256,14 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_aabb(PhysicsWorldObject
         // 6. RESULT CONSTRUCTION (Refactored with SlotPredicate)
         PyObject *ret_list = PyList_New(0);
     if (ret_list) {
-        SHADOW_LOCK(&self->shadow_lock);
+        SHADOW_LOCK(&self->physics.shadow_lock);
         for (size_t i = 0; i < ctx.count; i++) {
             uint64_t raw_h = ctx.hits[i];
             uint32_t slot;
 
-            if (unpack_handle(self, (BodyHandle)raw_h, &slot)) {
+            if (unpack_handle(&self->physics, (BodyHandle)raw_h, &slot)) {
                 const uint8_t state =
-                    atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
+                    atomic_load_explicit(&self->physics.slot_states[slot], memory_order_acquire);
 
                 // Use the standard mask: returns True for ALIVE, CHARACTER, and SOFT_BODY
                 const SlotPredicate pred = get_slot_predicate(state, MASK_IMM_STANDARD);
@@ -277,7 +277,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_aabb(PhysicsWorldObject
                 }
             }
         }
-        SHADOW_UNLOCK(&self->shadow_lock);
+        SHADOW_UNLOCK(&self->physics.shadow_lock);
     }
 
     // 7. CLEANUP
@@ -337,26 +337,26 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast(PhysicsWorldObject *sel
                      : max_dist * culverin_fast_rsqrt(mag_sq);
 
     // 3. RESOLUTION PHASE (Shadow Lock)
-    SHADOW_LOCK(&self->shadow_lock);
+    SHADOW_LOCK(&self->physics.shadow_lock);
     BLOCK_UNTIL_CAN_QUERY(self);
 
     JPH_BodyID ignore_bid = JPH_INVALID_BODY_ID;
     if (ignore_h_raw != 0) {
         uint32_t ignore_slot;
-        if (unpack_handle(self, (BodyHandle)ignore_h_raw, &ignore_slot)) {
+        if (unpack_handle(&self->physics, (BodyHandle)ignore_h_raw, &ignore_slot)) {
             const uint8_t state =
-                atomic_load_explicit(&self->slot_states[ignore_slot], memory_order_acquire);
+                atomic_load_explicit(&self->physics.slot_states[ignore_slot], memory_order_acquire);
             const SlotPredicate pred = get_slot_predicate(state, MASK_IMM_STANDARD);
 
             if (pred.is_immediate) {
-                ignore_bid = self->body_ids[self->slot_to_dense[ignore_slot]];
+                ignore_bid = self->physics.body_ids[self->physics.slot_to_dense[ignore_slot]];
             }
         }
     }
 
     // Mark query active so Stepper waits for completion
-    atomic_fetch_add_explicit(&self->active_queries, 1, memory_order_acquire);
-    SHADOW_UNLOCK(&self->shadow_lock);
+    atomic_fetch_add_explicit(&self->physics.active_queries, 1, memory_order_acquire);
+    SHADOW_UNLOCK(&self->physics.shadow_lock);
 
     // 4. EXECUTION PHASE (Lockless)
     bool has_hit            = false;
@@ -379,14 +379,14 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast(PhysicsWorldObject *sel
     CastShapeFilter filter_ctx      = {.ignore_id = ignore_bid};
     JPH_BodyFilter *bf              = JPH_BodyFilter_Create(&filter_ctx);
 
-    const JPH_NarrowPhaseQuery *query = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
+    const JPH_NarrowPhaseQuery *query = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->physics.system);
     has_hit = JPH_NarrowPhaseQuery_CastRay(query, origin, direction, hit, bp_f, obj_f, bf);
 
     if (has_hit) {
-        hit_handle_raw = JPH_BodyInterface_GetUserData(self->body_interface, hit->bodyID);
+        hit_handle_raw = JPH_BodyInterface_GetUserData(self->physics.body_interface, hit->bodyID);
         hit_fraction   = hit->fraction;
 
-        auto li = JPH_PhysicsSystem_GetBodyLockInterfaceNoLock(self->system);
+        auto li = JPH_PhysicsSystem_GetBodyLockInterfaceNoLock(self->physics.system);
         JPH_BodyLockRead j_lock;
         JPH_BodyLockInterface_LockRead(li, hit->bodyID, &j_lock);
         if (j_lock.body) {
@@ -411,11 +411,11 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast(PhysicsWorldObject *sel
     }
 
     PyObject *result = nullptr;
-    SHADOW_LOCK(&self->shadow_lock);
+    SHADOW_LOCK(&self->physics.shadow_lock);
 
     uint32_t slot;
-    if (unpack_handle(self, (BodyHandle)hit_handle_raw, &slot)) {
-        const uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
+    if (unpack_handle(&self->physics, (BodyHandle)hit_handle_raw, &slot)) {
+        const uint8_t state = atomic_load_explicit(&self->physics.slot_states[slot], memory_order_acquire);
 
         // Raycast hits must be on bodies existing in the simulation (Standard Mask)
         const SlotPredicate pred = get_slot_predicate(state, MASK_IMM_STANDARD);
@@ -426,7 +426,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast(PhysicsWorldObject *sel
         }
     }
 
-    SHADOW_UNLOCK(&self->shadow_lock);
+    SHADOW_UNLOCK(&self->physics.shadow_lock);
 
     if (result) {
         return result;
@@ -491,17 +491,17 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast_batch(PhysicsWorldObjec
     }
 
     // 3. RESOLUTION PHASE (Shadow Lock)
-    SHADOW_LOCK(&self->shadow_lock);
+    SHADOW_LOCK(&self->physics.shadow_lock);
     BLOCK_UNTIL_CAN_QUERY(self);
 
     // Snapshot pointers for the loop
-    const uint32_t *CULV_RESTRICT s2d  = self->slot_to_dense;
-    const uint32_t *CULV_RESTRICT mats = self->material_ids;
-    const size_t body_cap              = atomic_load_explicit(&self->count, memory_order_relaxed);
+    const uint32_t *CULV_RESTRICT s2d  = self->physics.slot_to_dense;
+    const uint32_t *CULV_RESTRICT mats = self->physics.material_ids;
+    const size_t body_cap              = atomic_load_explicit(&self->physics.count, memory_order_relaxed);
 
     // Register active query to block structural flushes/resizes
-    atomic_fetch_add_explicit(&self->active_queries, 1, memory_order_acquire);
-    SHADOW_UNLOCK(&self->shadow_lock);
+    atomic_fetch_add_explicit(&self->physics.active_queries, 1, memory_order_acquire);
+    SHADOW_UNLOCK(&self->physics.shadow_lock);
 
     // 4. EXECUTION PHASE (Lockless Batch Processing)
     const float *CULV_RESTRICT f_starts = (const float *)b_starts.buf;
@@ -509,10 +509,10 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast_batch(PhysicsWorldObjec
     RayCastBatchResult *CULV_RESTRICT results =
         (RayCastBatchResult *)PyBytes_AsString(result_bytes);
 
-    const JPH_NarrowPhaseQuery *query = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->system);
+    const JPH_NarrowPhaseQuery *query = JPH_PhysicsSystem_GetNarrowPhaseQuery(self->physics.system);
     const JPH_BodyLockInterface *lock_iface =
-        JPH_PhysicsSystem_GetBodyLockInterfaceNoLock(self->system);
-    JPH_BodyInterface *bi = self->body_interface;
+        JPH_PhysicsSystem_GetBodyLockInterfaceNoLock(self->physics.system);
+    JPH_BodyInterface *bi = self->physics.body_interface;
 
     Py_BEGIN_ALLOW_THREADS for (size_t i = 0; i < count; i++) {
         size_t off        = i * 3;
@@ -544,9 +544,9 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast_batch(PhysicsWorldObjec
             uint32_t slot;
 
             // Use the standard handle unpacking and predicate check
-            if (unpack_handle(self, (BodyHandle)h_raw, &slot)) {
+            if (unpack_handle(&self->physics, (BodyHandle)h_raw, &slot)) {
                 const uint8_t state =
-                    atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
+                    atomic_load_explicit(&self->physics.slot_states[slot], memory_order_acquire);
                 const SlotPredicate pred = get_slot_predicate(state, MASK_IMM_STANDARD);
 
                 if (pred.is_immediate) {
@@ -643,31 +643,31 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_shapecast(PhysicsWorldObject *s
     }
 
     // 3. RESOURCE RESOLUTION (Shadow Lock)
-    SHADOW_LOCK(&self->shadow_lock);
+    SHADOW_LOCK(&self->physics.shadow_lock);
     BLOCK_UNTIL_CAN_QUERY(self);
 
-    JPH_Shape *shape = find_or_create_shape_locked(self, shape_type, s);
+    JPH_Shape *shape = find_or_create_shape_locked(&self->physics, shape_type, s);
     if (!shape) {
-        SHADOW_UNLOCK(&self->shadow_lock);
+        SHADOW_UNLOCK(&self->physics.shadow_lock);
         return PyErr_Format(PyExc_RuntimeError, "Invalid shape parameters or cache failure");
     }
 
     JPH_BodyID ignore_bid = JPH_INVALID_BODY_ID;
     if (ignore_h_raw != 0) {
         uint32_t ignore_slot;
-        if (unpack_handle(self, (BodyHandle)ignore_h_raw, &ignore_slot)) {
+        if (unpack_handle(&self->physics, (BodyHandle)ignore_h_raw, &ignore_slot)) {
             const uint8_t state =
-                atomic_load_explicit(&self->slot_states[ignore_slot], memory_order_acquire);
+                atomic_load_explicit(&self->physics.slot_states[ignore_slot], memory_order_acquire);
             const SlotPredicate pred = get_slot_predicate(state, MASK_IMM_STANDARD);
             if (pred.is_immediate) {
-                ignore_bid = self->body_ids[self->slot_to_dense[ignore_slot]];
+                ignore_bid = self->physics.body_ids[self->physics.slot_to_dense[ignore_slot]];
             }
         }
     }
 
     // Mark query active so the Stepper thread waits for us
-    atomic_fetch_add_explicit(&self->active_queries, 1, memory_order_acquire);
-    SHADOW_UNLOCK(&self->shadow_lock);
+    atomic_fetch_add_explicit(&self->physics.active_queries, 1, memory_order_acquire);
+    SHADOW_UNLOCK(&self->physics.shadow_lock);
 
     // 4. EXECUTION PHASE (Released GIL)
     CastShapeContext ctx    = {.has_hit = false};
@@ -680,10 +680,10 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_shapecast(PhysicsWorldObject *s
     JPH_RMat4_RotationTranslation(&transform, &v_rot, &v_pos);
     JPH_Vec3 sweep_dir = {dx, dy, dz};
 
-    shapecast_execute_internal(self, shape, &transform, &sweep_dir, ignore_bid, &ctx);
+    shapecast_execute_internal(&self->physics, shape, &transform, &sweep_dir, ignore_bid, &ctx);
 
     if (ctx.has_hit) {
-        hit_handle_raw = JPH_BodyInterface_GetUserData(self->body_interface, ctx.hit.bodyID2);
+        hit_handle_raw = JPH_BodyInterface_GetUserData(self->physics.body_interface, ctx.hit.bodyID2);
     }
 
     end_query_scope(self);
@@ -695,11 +695,11 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_shapecast(PhysicsWorldObject *s
     }
 
     PyObject *result = nullptr;
-    SHADOW_LOCK(&self->shadow_lock);
+    SHADOW_LOCK(&self->physics.shadow_lock);
 
     uint32_t slot;
-    if (unpack_handle(self, (BodyHandle)hit_handle_raw, &slot)) {
-        const uint8_t state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);
+    if (unpack_handle(&self->physics, (BodyHandle)hit_handle_raw, &slot)) {
+        const uint8_t state = atomic_load_explicit(&self->physics.slot_states[slot], memory_order_acquire);
 
         // Use standard mask: Alive, Character, and SoftBody are valid results for a shapecast
         const SlotPredicate pred = get_slot_predicate(state, MASK_IMM_STANDARD);
@@ -725,7 +725,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_shapecast(PhysicsWorldObject *s
         }
     }
 
-    SHADOW_UNLOCK(&self->shadow_lock);
+    SHADOW_UNLOCK(&self->physics.shadow_lock);
 
     if (result) {
         return result;

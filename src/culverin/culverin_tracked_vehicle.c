@@ -135,28 +135,28 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
     }
 
     // --- 2. RESOLVE CHASSIS (ATOMIC REFACTOR) ---
-    SHADOW_LOCK(&self->shadow_lock);
+    SHADOW_LOCK(&self->physics.shadow_lock);
 
     // Ensure all pending creation commands are flushed before we try to link a constraint
     sync_and_flush_internal(self);
 
     uint32_t slot = 0;
     // TSan Fix: Cast raw uint64 to atomic BodyHandle for verification
-    bool handle_valid = unpack_handle(self, (BodyHandle)chassis_h_raw, &slot);
+    bool handle_valid = unpack_handle(&self->physics, (BodyHandle)chassis_h_raw, &slot);
 
     // TSan Fix: Atomic load of the slot state (Acquire ensures chassis data is visible)
     uint8_t state = (int)handle_valid
-                        ? atomic_load_explicit(&self->slot_states[slot], memory_order_acquire)
+                        ? atomic_load_explicit(&self->physics.slot_states[slot], memory_order_acquire)
                         : SLOT_EMPTY;
 
     if (!handle_valid || state != SLOT_ALIVE) {
-        SHADOW_UNLOCK(&self->shadow_lock);
+        SHADOW_UNLOCK(&self->physics.shadow_lock);
         return PyErr_Format(PyExc_ValueError, "Invalid chassis handle (Body is dead or pending)");
     }
 
     // Access non-atomic dense buffer while holding shadow_lock
-    JPH_BodyID chassis_bid = self->body_ids[self->slot_to_dense[slot]];
-    SHADOW_UNLOCK(&self->shadow_lock);
+    JPH_BodyID chassis_bid = self->physics.body_ids[self->physics.slot_to_dense[slot]];
+    SHADOW_UNLOCK(&self->physics.shadow_lock);
 
     // --- 3. PRE-JOLT RESOURCE ALLOCATION (Unchanged) ---
     VehicleResources r = {0};
@@ -186,10 +186,10 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
     PyThreadState *_save = nullptr;
     Py_UNBLOCK_THREADS;
 
-    NATIVE_MUTEX_LOCK(self->jph_trampoline_lock);
+    NATIVE_MUTEX_LOCK(self->physics.jph_trampoline_lock);
     jolt_locked = true;
 
-    const JPH_BodyLockInterface *lock_iface = JPH_PhysicsSystem_GetBodyLockInterface(self->system);
+    const JPH_BodyLockInterface *lock_iface = JPH_PhysicsSystem_GetBodyLockInterface(self->physics.system);
     JPH_BodyLockWrite lock                  = {};
     JPH_BodyLockInterface_LockWrite(lock_iface, chassis_bid, &lock);
 
@@ -232,13 +232,13 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
 
     JPH_VehicleConstraint_SetVehicleCollisionTester(r.j_veh,
                                                     (JPH_VehicleCollisionTester *)r.tester);
-    JPH_PhysicsSystem_AddConstraint(self->system, (JPH_Constraint *)r.j_veh);
-    JPH_PhysicsSystem_AddStepListener(self->system,
+    JPH_PhysicsSystem_AddConstraint(self->physics.system, (JPH_Constraint *)r.j_veh);
+    JPH_PhysicsSystem_AddStepListener(self->physics.system,
                                       JPH_VehicleConstraint_AsPhysicsStepListener(r.j_veh));
     r.is_added_to_world = true;
 
     JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
-    NATIVE_MUTEX_UNLOCK(self->jph_trampoline_lock);
+    NATIVE_MUTEX_UNLOCK(self->physics.jph_trampoline_lock);
     jolt_locked = false;
     Py_BLOCK_THREADS;
 
@@ -249,16 +249,16 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
 
     auto obj = (VehicleObject *)PyObject_GC_New(VehicleObject, (PyTypeObject *)st->VehicleType);
     if (!obj) {
-        SHADOW_LOCK(&self->shadow_lock);
+        SHADOW_LOCK(&self->physics.shadow_lock);
         cleanup_vehicle_resources(&r, num_wheels, self);
-        SHADOW_UNLOCK(&self->shadow_lock);
+        SHADOW_UNLOCK(&self->physics.shadow_lock);
         return nullptr;
     }
 
     if (init_vehicle_parsers(obj) < 0) {
-        SHADOW_LOCK(&self->shadow_lock);
+        SHADOW_LOCK(&self->physics.shadow_lock);
         cleanup_vehicle_resources(&r, num_wheels, self);
-        SHADOW_UNLOCK(&self->shadow_lock);
+        SHADOW_UNLOCK(&self->physics.shadow_lock);
         Py_DECREF(obj);
         return nullptr;
     }
@@ -281,7 +281,7 @@ jolt_fail:
         JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
     }
     if (jolt_locked) {
-        NATIVE_MUTEX_UNLOCK(self->jph_trampoline_lock);
+        NATIVE_MUTEX_UNLOCK(self->physics.jph_trampoline_lock);
     }
     Py_BLOCK_THREADS;
 
@@ -291,9 +291,9 @@ python_fail:
             CULV_RAW_FREE(tracks[t].indices);
         }
     }
-    SHADOW_LOCK(&self->shadow_lock);
+    SHADOW_LOCK(&self->physics.shadow_lock);
     cleanup_vehicle_resources(&r, num_wheels, self);
-    SHADOW_UNLOCK(&self->shadow_lock);
+    SHADOW_UNLOCK(&self->physics.shadow_lock);
     return PyErr_Format(PyExc_RuntimeError, "Tracked vehicle creation failed");
 }
 
@@ -322,7 +322,7 @@ PyCFunction_DeclareMethodFromModule Vehicle_set_tank_input(VehicleObject *self,
     }
 
     // 2. STATE SNAPSHOT & JOLT ACTIVATION
-    SHADOW_LOCK(&self->world->shadow_lock);
+    SHADOW_LOCK(&self->world->physics.shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self->world);
 
     auto t_ctrl =
@@ -330,7 +330,7 @@ PyCFunction_DeclareMethodFromModule Vehicle_set_tank_input(VehicleObject *self,
     JPH_BodyID bid = JPH_Body_GetID(JPH_VehicleConstraint_GetVehicleBody(self->vehicle));
 
     // Wake up the tank to process inputs
-    JPH_BodyInterface_ActivateBody(self->world->body_interface, bid);
+    JPH_BodyInterface_ActivateBody(self->world->physics.body_interface, bid);
 
     auto trans = (JPH_VehicleTransmission *)JPH_TrackedVehicleController_GetTransmission(t_ctrl);
     int gear   = JPH_VehicleTransmission_GetCurrentGear(trans);
@@ -354,6 +354,6 @@ PyCFunction_DeclareMethodFromModule Vehicle_set_tank_input(VehicleObject *self,
     // 4. Final Application
     JPH_TrackedVehicleController_SetDriverInput(t_ctrl, throttle, left, right, brake);
 
-    SHADOW_UNLOCK(&self->world->shadow_lock);
+    SHADOW_UNLOCK(&self->world->physics.shadow_lock);
     Py_RETURN_NONE;
 }

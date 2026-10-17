@@ -1,13 +1,12 @@
 #pragma once
 
-#ifndef JPH_DOUBLE_PRECISION
-#    define JPH_DOUBLE_PRECISION 1
-#endif
-
 #define PY_SSIZE_T_CLEAN
+#include "culverin_jolt_config.h"
 #include "culverin_compiler_specifics.h"
 #include "joltc.h" // Amer Koleci's JoltC binder.
+#include "culverin_jolt_utils.h"
 #include <Python.h>
+#include "culverin_python_declare.h"
 
 // =========================================================================
 // ASAN COMPATIBILITY ALLOCATORS
@@ -67,6 +66,7 @@ static inline PyObject *test_function() {
 
 // =========================================================================
 #include "culverin_command_buffer.h"
+#include "culverin_slot_state.h"
 #include "culverin_types.h"
 #include <stddef.h>
 #include <string.h>
@@ -81,41 +81,6 @@ static inline PyObject *test_function() {
 #    include <sched.h>
 #    include <unistd.h>
 #endif
-
-#ifndef JPH_INVALID_BODY_ID
-CULV_MAYBE_UNUSED static constexpr size_t JPH_INVALID_BODY_ID = 0xFFFFFFFF;
-#endif
-
-// Jolt BodyID layout: [8 bits sequence | 24 bits index]
-#ifndef JPH_BODY_ID_INDEX_MASK
-CULV_MAYBE_UNUSED static constexpr size_t JPH_BODY_ID_INDEX_MASK = 0x00FFFFFF;
-#endif
-
-CULV_NODISCARD [[gnu::const]]
-static inline uint32_t JPH_ID_TO_INDEX(uint32_t id) {
-    // Mask for the raw array index (Stripping the 24th bit used for Static flags)
-    static constexpr culv_u23 ID_TO_INDEX_MASK = 0x7FFFFF;
-    constexpr auto stfu                        = 0x7FFFFF;
-    static_assert(ID_TO_INDEX_MASK == stfu);
-    return id & ID_TO_INDEX_MASK;
-}
-
-// Allocate 'Type' on the stack with guaranteed 32-byte alignment.
-// USAGE: JPH_STACK_ALLOC(JPH_RVec3, my_vec);
-#if defined(__clang__) || defined(__GNUC__)
-// Clang/LLVM alignment logic (highly robust)
-#    define JPH_ALIGNED_STORAGE(Type, Name, Align) Type Name __attribute__((aligned(Align)))
-#elif defined(_MSC_VER)
-#    define JPH_ALIGNED_STORAGE(Type, Name, Align) __declspec(align(Align)) Type Name
-#else
-#    include <stdalign.h>
-#    define JPH_ALIGNED_STORAGE(Type, Name, Align) alignas(Align) Type Name
-#endif
-
-#define JPH_STACK_ALLOC(Type, Name)                                                                \
-    JPH_ALIGNED_STORAGE(Type, Name##_storage, 32);                                                 \
-    /*NOLINTNEXTLINE(bugprone-macro-parentheses)*/                                                 \
-    Type *Name = &Name##_storage
 
 #ifdef CULVERIN_DEBUG
 #    define DEBUG_LOG(fmt, ...) fprintf(stderr, "[Culverin] " fmt "\n", ##__VA_ARGS__)
@@ -134,27 +99,9 @@ typedef struct {
 } PositionVector;
 
 typedef struct {
-    float mass;
-    float friction;
-    float restitution;
-    int is_sensor;
-    int use_ccd;
-} BodyCreationProps;
-
-typedef struct {
     float friction;
     float restitution;
 } MaterialSettings;
-
-typedef struct {
-    float mass;
-    float friction;
-    float restitution;
-    int is_sensor;
-    int use_ccd;
-    int motion_type;
-    uint32_t allowed_dofs;
-} BodyConfig;
 
 // Struct to hold parsed Python data safely in C
 typedef struct {
@@ -241,8 +188,6 @@ static PyObject *culv_raise_finite_err(const char *msg) {
 
 #define CULV_NARGS(...) CULV_NARGS_IMP(__VA_ARGS__, 4, 3, 2, 1)
 #define CULV_NARGS_IMP(_1, _2, _3, _4, N, ...) N
-#define CULV_GLUE(a, b) a##b
-#define CULV_CONCAT(a, b) CULV_GLUE(a, b)
 #define CULV_EXPAND(x) x
 
 // --- User API (Zero cost wrappers) ---
@@ -265,39 +210,3 @@ static PyObject *culv_raise_finite_err(const char *msg) {
             Py_RETURN_NONE;                                                                        \
         } while (false)
 #endif
-
-CULV_NODISCARD [[gnu::const]]
-static inline bool is_state_valid(uint8_t state, uint8_t mask) {
-    return (bool)((1U << state) & mask);
-}
-
-typedef struct {
-    culv_u1 is_immediate : 1;
-    culv_u1 is_deferred : 1;
-    culv_u1 is_executable : 1;
-    culv_u5 _unused : 5;
-} SlotPredicate;
-
-static_assert(sizeof(SlotPredicate) == sizeof(uint8_t));
-
-// Standard masks for reuse
-static constexpr uint32_t MASK_IMM_STANDARD =
-    (1U << SLOT_ALIVE) | (1U << SLOT_CHARACTER) | (1U << SLOT_SOFT_BODY);
-static constexpr uint32_t MASK_IMM_STRICT = (1U << SLOT_ALIVE) | (1U << SLOT_SOFT_BODY);
-static constexpr uint32_t MASK_DEFERRED   = (1U << SLOT_PENDING_CREATE);
-// Define the mask for states that can be destroyed
-static constexpr uint32_t MASK_DESTRUCTIBLE = (1U << SLOT_ALIVE) | (1U << SLOT_PENDING_CREATE) |
-                                              (1U << SLOT_CHARACTER) | (1U << SLOT_SOFT_BODY);
-
-[[gnu::const]] CULV_NODISCARD static CULV_FORCE_INLINE SlotPredicate
-get_slot_predicate(uint8_t state, uint32_t imm_mask) {
-    const uint32_t state_bit = 1U << (state & 7);
-
-    culv_u1 imm = (culv_u1) !!(bool)(state_bit & imm_mask);
-    culv_u1 def = (culv_u1) !!(bool)(state_bit & MASK_DEFERRED);
-
-    return (SlotPredicate){.is_immediate  = imm,
-                           .is_deferred   = def,
-                           .is_executable = (culv_u1)(imm | def),
-                           ._unused       = 0};
-}

@@ -9,24 +9,24 @@
 static inline void internal_sync_wait_loop(PhysicsWorldObject *self,
                                            const CULV_ATOMIC(bool) * bool_cond,
                                            const CULV_ATOMIC(int) * int_cond, bool is_bool) {
-    SHADOW_UNLOCK(&self->shadow_lock);
+    SHADOW_UNLOCK(&self->physics.shadow_lock);
 
-    Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(self->step_sync.mutex);
+    Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(self->physics.step_sync.mutex);
 
     if (is_bool) {
         while (atomic_load_explicit(bool_cond, memory_order_relaxed)) {
-            NATIVE_COND_WAIT(self->step_sync.cond, self->step_sync.mutex);
+            NATIVE_COND_WAIT(self->physics.step_sync.cond, self->physics.step_sync.mutex);
         }
     } else {
         while (atomic_load_explicit(int_cond, memory_order_relaxed) > 0) {
-            NATIVE_COND_WAIT(self->step_sync.cond, self->step_sync.mutex);
+            NATIVE_COND_WAIT(self->physics.step_sync.cond, self->physics.step_sync.mutex);
         }
     }
 
-    NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
+    NATIVE_MUTEX_UNLOCK(self->physics.step_sync.mutex);
     Py_END_ALLOW_THREADS
 
-        SHADOW_LOCK(&self->shadow_lock);
+        SHADOW_LOCK(&self->physics.shadow_lock);
 }
 
 /* ============================================================================
@@ -34,64 +34,64 @@ static inline void internal_sync_wait_loop(PhysicsWorldObject *self,
  * ============================================================================ */
 [[gnu::always_inline]]
 static inline void internal_block_until_not_stepping(PhysicsWorldObject *self) {
-    if (atomic_load_explicit(&self->is_stepping, memory_order_relaxed)) {
+    if (atomic_load_explicit(&self->physics.is_stepping, memory_order_relaxed)) {
         // #if !defined(Py_GIL_DISABLED)
-        atomic_fetch_add_explicit(&self->waiting_threads, 1, memory_order_relaxed);
+        atomic_fetch_add_explicit(&self->physics.waiting_threads, 1, memory_order_relaxed);
         // #endif
 
-        while (atomic_load_explicit(&self->is_stepping, memory_order_relaxed)) {
-            internal_sync_wait_loop(self, &self->is_stepping, nullptr, true);
+        while (atomic_load_explicit(&self->physics.is_stepping, memory_order_relaxed)) {
+            internal_sync_wait_loop(self, &self->physics.is_stepping, nullptr, true);
         }
         // #if !defined(Py_GIL_DISABLED)
-        atomic_fetch_sub_explicit(&self->waiting_threads, 1, memory_order_relaxed);
+        atomic_fetch_sub_explicit(&self->physics.waiting_threads, 1, memory_order_relaxed);
         // #endif
     }
 }
 [[gnu::always_inline]]
 static inline void internal_block_until_not_querying(PhysicsWorldObject *self) {
     // Note: Query check uses 'acquire' to ensure visibility of query completion
-    while (atomic_load_explicit(&self->active_queries, memory_order_acquire) > 0) {
-        internal_sync_wait_loop(self, nullptr, &self->active_queries, false);
+    while (atomic_load_explicit(&self->physics.active_queries, memory_order_acquire) > 0) {
+        internal_sync_wait_loop(self, nullptr, &self->physics.active_queries, false);
     }
 }
 
 static inline void internal_block_if_step_pending(PhysicsWorldObject *self) {
-    if (atomic_load_explicit(&self->step_requested, memory_order_relaxed)) {
+    if (atomic_load_explicit(&self->physics.step_requested, memory_order_relaxed)) {
         // #if !defined(Py_GIL_DISABLED)
-        atomic_fetch_add_explicit(&self->waiting_threads, 1, memory_order_relaxed);
+        atomic_fetch_add_explicit(&self->physics.waiting_threads, 1, memory_order_relaxed);
         // #endif
-        while (atomic_load_explicit(&self->step_requested, memory_order_relaxed)) {
-            internal_sync_wait_loop(self, &self->step_requested, nullptr, true);
+        while (atomic_load_explicit(&self->physics.step_requested, memory_order_relaxed)) {
+            internal_sync_wait_loop(self, &self->physics.step_requested, nullptr, true);
         }
         // #if !defined(Py_GIL_DISABLED)
-        atomic_fetch_sub_explicit(&self->waiting_threads, 1, memory_order_relaxed);
+        atomic_fetch_sub_explicit(&self->physics.waiting_threads, 1, memory_order_relaxed);
         // #endif
     }
 }
 [[gnu::always_inline]]
 static inline void internal_block_until_can_query(PhysicsWorldObject *self) {
-    if (atomic_load_explicit(&self->is_stepping, memory_order_relaxed) ||
-        atomic_load_explicit(&self->step_requested, memory_order_relaxed)) {
+    if (atomic_load_explicit(&self->physics.is_stepping, memory_order_relaxed) ||
+        atomic_load_explicit(&self->physics.step_requested, memory_order_relaxed)) {
 
         // #if !defined(Py_GIL_DISABLED)
-        atomic_fetch_add_explicit(&self->waiting_threads, 1, memory_order_relaxed);
+        atomic_fetch_add_explicit(&self->physics.waiting_threads, 1, memory_order_relaxed);
         // #endif
 
-        while (atomic_load_explicit(&self->is_stepping, memory_order_relaxed) ||
-               atomic_load_explicit(&self->step_requested, memory_order_relaxed)) {
+        while (atomic_load_explicit(&self->physics.is_stepping, memory_order_relaxed) ||
+               atomic_load_explicit(&self->physics.step_requested, memory_order_relaxed)) {
 
             // This is a special composite case; we don't use the simple helper loop
-            SHADOW_UNLOCK(&self->shadow_lock);
-            Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(self->step_sync.mutex);
-            while (atomic_load_explicit(&self->is_stepping, memory_order_relaxed) ||
-                   atomic_load_explicit(&self->step_requested, memory_order_relaxed)) {
-                NATIVE_COND_WAIT(self->step_sync.cond, self->step_sync.mutex);
+            SHADOW_UNLOCK(&self->physics.shadow_lock);
+            Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(self->physics.step_sync.mutex);
+            while (atomic_load_explicit(&self->physics.is_stepping, memory_order_relaxed) ||
+                   atomic_load_explicit(&self->physics.step_requested, memory_order_relaxed)) {
+                NATIVE_COND_WAIT(self->physics.step_sync.cond, self->physics.step_sync.mutex);
             }
-            NATIVE_MUTEX_UNLOCK(self->step_sync.mutex);
-            Py_END_ALLOW_THREADS SHADOW_LOCK(&self->shadow_lock);
+            NATIVE_MUTEX_UNLOCK(self->physics.step_sync.mutex);
+            Py_END_ALLOW_THREADS SHADOW_LOCK(&self->physics.shadow_lock);
         }
         // #if !defined(Py_GIL_DISABLED)
-        atomic_fetch_sub_explicit(&self->waiting_threads, 1, memory_order_relaxed);
+        atomic_fetch_sub_explicit(&self->physics.waiting_threads, 1, memory_order_relaxed);
         // #endif
     }
 }

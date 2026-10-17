@@ -1,5 +1,6 @@
 #pragma once
-#include "culverin.h"
+#include "culverin_types.h"
+#include <stddef.h>
 
 // 1. Remove alignas from the inner struct
 typedef struct {
@@ -46,6 +47,7 @@ typedef struct ContactEvent {
 } ContactEvent;
 
 static_assert(sizeof(ContactEvent) == MEMORY_ALIGNMENT_SIZE * 2);
+static_assert(alignof(ContactEvent) == MEMORY_ALIGNMENT_SIZE);
 static_assert(offsetof(ContactEvent, fat) == MEMORY_ALIGNMENT_SIZE);
 
 static inline ContactEvent *GetEventAt(void *buffer, size_t index) {

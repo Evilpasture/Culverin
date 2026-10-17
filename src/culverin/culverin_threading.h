@@ -1,7 +1,6 @@
 #pragma once
 #include "culverin_compiler_specifics.h"
 #include "mag_mutex.h" // 1-byte Mutex and Cond
-#include <Python.h>
 #include <stdatomic.h>
 
 /**
@@ -13,12 +12,12 @@
  * 2. OWNERSHIP:
  * - SHADOW_LOCK protects the Command Queue, Slot States, and Shadow Buffers.
  * - NATIVE_MUTEX/COND handles thread arbitration (parking/waking).
- * - self->jph_trampoline_lock protects the non-thread-safe JPH Physics System state.
+ * - jph_trampoline_lock protects the non-thread-safe JPH Physics System state.
  * 3. STEPPING INVARIANT:
  * - is_stepping = true  => No external thread may read/write Shadow Buffers.
  * - is_stepping = false => External (Python) threads may read Shadow Buffers under SHADOW_LOCK.
  * 4. DOUBLE-BUFFERING:
- * - Command queues are swapped under SHADOW_LOCK but flushed under self->jph_trampoline_lock.
+ * - Command queues are swapped under SHADOW_LOCK but flushed under jph_trampoline_lock.
  */
 
 /* ============================================================================

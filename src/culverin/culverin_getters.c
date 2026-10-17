@@ -25,7 +25,7 @@ PyType_DeclareSlot_Status BufferProxy_clear(BufferProxyObject *self) {
         // We know that both PhysicsWorld and Registry have the export count at a fixed offset
         // or we can switch based on type.
         if (PyObject_TypeCheck(self->owner, (PyTypeObject *)st->PhysicsWorldType)) {
-            atomic_fetch_sub_explicit(&((PhysicsWorldObject *)self->owner)->view_export_count, 1,
+            atomic_fetch_sub_explicit(&((PhysicsWorldObject *)self->owner)->physics.view_export_count, 1,
                                       memory_order_relaxed);
         } else {
             atomic_fetch_sub_explicit(&((RegistryObject *)self->owner)->view_export_count, 1,
@@ -54,24 +54,24 @@ PyType_DeclareSlot_Status BufferProxy_getbuffer(BufferProxyObject *self, Py_buff
         /* --- CATEGORY: Physics World Buffers --- */
         PhysicsWorldObject *world = (PhysicsWorldObject *)self->owner;
 
-        SHADOW_LOCK(&world->shadow_lock);
+        SHADOW_LOCK(&world->physics.shadow_lock);
         BLOCK_UNTIL_NOT_STEPPING(world);
 
         switch (self->buf_type) {
         case PROXY_POSITIONS:
-            target_ptr = world->positions;
+            target_ptr = world->physics.positions;
             break;
         case PROXY_ROTATIONS:
-            target_ptr = world->rotations;
+            target_ptr = world->physics.rotations;
             break;
         case PROXY_LINEAR_VELOCITIES:
-            target_ptr = world->linear_velocities;
+            target_ptr = world->physics.linear_velocities;
             break;
         case PROXY_ANGULAR_VELOCITIES:
-            target_ptr = world->angular_velocities;
+            target_ptr = world->physics.angular_velocities;
             break;
         case PROXY_USER_DATA:
-            target_ptr = world->user_data;
+            target_ptr = world->physics.user_data;
             break;
         case PROXY_DYNAMIC:
             target_ptr = self->dynamic_ptr;
@@ -81,18 +81,18 @@ PyType_DeclareSlot_Status BufferProxy_getbuffer(BufferProxyObject *self, Py_buff
         }
 
         if (!target_ptr) {
-            SHADOW_UNLOCK(&world->shadow_lock);
+            SHADOW_UNLOCK(&world->physics.shadow_lock);
             PyErr_SetString(PyExc_RuntimeError, "Physics buffer not allocated");
             return -1;
         }
 
         // Auto-update shape based on current body count for non-dynamic buffers
         if (self->buf_type != PROXY_DYNAMIC) {
-            size_t count   = atomic_load_explicit(&world->count, memory_order_acquire);
+            size_t count   = atomic_load_explicit(&world->physics.count, memory_order_acquire);
             self->shape[0] = (Py_ssize_t)(count * self->stride);
         }
 
-        SHADOW_UNLOCK(&world->shadow_lock);
+        SHADOW_UNLOCK(&world->physics.shadow_lock);
 
     } else {
         /* --- CATEGORY: ECS Registry Buffers --- */
@@ -143,13 +143,13 @@ PyType_DeclareSlot_Void BufferProxy_releasebuffer(CULV_MAYBE_UNUSED BufferProxyO
 
     // 4. Mark query finished
     // Use 'release' barrier to ensure Numpy reads are finished before Stepper writes
-    if (atomic_fetch_sub_explicit(&world->active_queries, 1, memory_order_release) == 1) {
+    if (atomic_fetch_sub_explicit(&world->physics.active_queries, 1, memory_order_release) == 1) {
 
         // 5. If we were the last ones, wake up the Stepper!
         // We use the internal sync mutex/cond here
-        NATIVE_MUTEX_LOCK(world->step_sync.mutex);
-        NATIVE_COND_BROADCAST(world->step_sync.cond);
-        NATIVE_MUTEX_UNLOCK(world->step_sync.mutex);
+        NATIVE_MUTEX_LOCK(world->physics.step_sync.mutex);
+        NATIVE_COND_BROADCAST(world->physics.step_sync.cond);
+        NATIVE_MUTEX_UNLOCK(world->physics.step_sync.mutex);
     }
 #endif
 }
@@ -191,11 +191,11 @@ static PyObject *make_proxy(PhysicsWorldObject *self, ProxyBufferType type, cons
 
     // INITIALIZE SHAPE IMMEDIATELY
     // This allows len(proxy) to work even before a buffer is requested
-    size_t count      = atomic_load_explicit(&self->count, memory_order_acquire);
+    size_t count      = atomic_load_explicit(&self->physics.count, memory_order_acquire);
     proxy->shape[0]   = (Py_ssize_t)(count * stride);
     proxy->strides[0] = (Py_ssize_t)itemsize;
 
-    atomic_fetch_add_explicit(&self->view_export_count, 1, memory_order_relaxed);
+    atomic_fetch_add_explicit(&self->physics.view_export_count, 1, memory_order_relaxed);
 
     PyObject_GC_Track(proxy);
     return (PyObject *)proxy;
@@ -204,7 +204,7 @@ static PyObject *make_proxy(PhysicsWorldObject *self, ProxyBufferType type, cons
 // --- Advanced getters for lock and thread management ---
 PyGetSet_DeclareGetter get_is_step_pending(PhysicsWorldObject *self,
                                            CULV_MAYBE_UNUSED void *closure) {
-    if (atomic_load_explicit(&self->step_requested, memory_order_acquire)) {
+    if (atomic_load_explicit(&self->physics.step_requested, memory_order_acquire)) {
         Py_RETURN_TRUE;
     }
     Py_RETURN_FALSE;
@@ -236,14 +236,14 @@ PyGetSet_DeclareGetter get_angular_velocities(PhysicsWorldObject *self, CULV_MAY
 PyGetSet_DeclareGetter get_count(PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *c) {
     // TSan Fix: Lock-free atomic read.
     // Acquire ensures we see the final state of any bodies recently added/removed.
-    size_t val = atomic_load_explicit(&self->count, memory_order_acquire);
+    size_t val = atomic_load_explicit(&self->physics.count, memory_order_acquire);
     return PyLong_FromSize_t(val);
 }
 
 PyGetSet_DeclareGetter get_time(PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *c) {
-    SHADOW_LOCK(&self->shadow_lock);
-    double val = self->time;
-    SHADOW_UNLOCK(&self->shadow_lock);
+    SHADOW_LOCK(&self->physics.shadow_lock);
+    double val = self->physics.time;
+    SHADOW_UNLOCK(&self->physics.shadow_lock);
     return PyFloat_FromDouble(val);
 }
 
@@ -254,24 +254,24 @@ PyGetSet_DeclareGetter get_user_data_buffer(PhysicsWorldObject *self, CULV_MAYBE
 
 PyGetSet_DeclareGetter get_shape_count(PhysicsWorldObject *self, CULV_MAYBE_UNUSED void *closure) {
     // Protected because resize() could move shape_cache
-    SHADOW_LOCK(&self->shadow_lock);
-    size_t count = self->shape_cache_count;
-    SHADOW_UNLOCK(&self->shadow_lock);
+    SHADOW_LOCK(&self->physics.shadow_lock);
+    size_t count = self->physics.shape_cache_count;
+    SHADOW_UNLOCK(&self->physics.shadow_lock);
     return PyLong_FromSize_t(count);
 }
 
 PyGetSet_DeclareGetter PhysicsWorld_get_max_bodies(PhysicsWorldObject *self,
                                                    CULV_MAYBE_UNUSED void *closure) {
-    return PyLong_FromUnsignedLong(self->max_jolt_bodies);
+    return PyLong_FromUnsignedLong(self->physics.max_jolt_bodies);
 }
 
 PyGetSet_DeclareGetter PhysicsWorld_get_remaining_capacity(PhysicsWorldObject *self,
                                                            CULV_MAYBE_UNUSED void *closure) {
     // TSan Fix: Lock-free calculation using atomic count.
-    size_t current = atomic_load_explicit(&self->count, memory_order_acquire);
+    size_t current = atomic_load_explicit(&self->physics.count, memory_order_acquire);
 
     // max_jolt_bodies is immutable after world initialization
-    size_t limit = self->max_jolt_bodies;
+    size_t limit = self->physics.max_jolt_bodies;
     size_t rem   = (current >= limit) ? 0 : (limit - current);
 
     return PyLong_FromSize_t(rem);

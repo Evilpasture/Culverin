@@ -1,16 +1,8 @@
 #include "culverin_physics_world_internal.h"
-#include "culverin.h"
-#include "culverin_compiler_specifics.h"
+#include "culverin_physics_world_core.h"
+#include "culverin_native_alloc.h"
 #include "culverin_module.h"
 #include "culverin_physics_sync.h"
-#include "culverin_threading.h"
-
-// Constants for buffer alignment, capacity growth and defaults
-static constexpr size_t AVX_ALIGNMENT                  = 32; // 32-byte alignment for AVX-256
-static constexpr size_t SHADOW_CAPACITY_PADDING        = 128;
-static constexpr size_t SHADOW_CAPACITY_GROW           = 1024;
-static constexpr size_t COMMAND_QUEUE_INITIAL_CAPACITY = 64;
-static constexpr uint32_t ALL_LAYER_BITS               = 0xFFFFu;
 
 // Baked scene formats (tuple indices and per-object strides)
 static constexpr int BAKED_INDEX_POS      = 1;
@@ -23,508 +15,32 @@ static constexpr int BAKED_POS_STRIDE     = 4;
 static constexpr int BAKED_ROT_STRIDE     = 4;
 static constexpr int BAKED_SHAPE_STRIDE   = 5;
 
-// ABI verification constants
-static constexpr JPH_Real VERIFY_ABI_POS_X   = 10.0;
-static constexpr JPH_Real VERIFY_ABI_POS_Y   = 20.0;
-static constexpr JPH_Real VERIFY_ABI_POS_Z   = 30.0;
-static constexpr double VERIFY_ABI_TOLERANCE = 0.1;
-
-void free_new_buffers(NewBuffers *nb) {
-    if (!nb) {
-        return;
-    }
-
-    // 1. Aligned Buffer Cleanup (Non-atomic)
-    CULVERIN_SAFE_FREE_ALIGNED(nb->pos);
-    CULVERIN_SAFE_FREE_ALIGNED(nb->rot);
-    CULVERIN_SAFE_FREE_ALIGNED(nb->ppos);
-    CULVERIN_SAFE_FREE_ALIGNED(nb->prot);
-    CULVERIN_SAFE_FREE_ALIGNED(nb->lvel);
-    CULVERIN_SAFE_FREE_ALIGNED(nb->avel);
-
-    // 2. Standard Buffer Cleanup
-    CULVERIN_SAFE_FREE(nb->bids);
-    CULVERIN_SAFE_FREE(nb->udat);
-
-    // 3. ATOMIC Buffer Cleanup
-    // nb->gens is CULV_ATOMIC(uint32_t)*
-    // nb->stat is CULV_ATOMIC(uint8_t)*
-    // We cast to (void*) to ensure standard C-library free works without warnings
-    CULVERIN_SAFE_FREE(nb->gens);
-    CULVERIN_SAFE_FREE(nb->stat);
-
-    // 4. Mapping Buffer Cleanup (Non-atomic)
-    CULVERIN_SAFE_FREE(nb->s2d);
-    CULVERIN_SAFE_FREE(nb->d2s);
-    CULVERIN_SAFE_FREE(nb->free);
-    CULVERIN_SAFE_FREE(nb->cats);
-    CULVERIN_SAFE_FREE(nb->masks);
-    CULVERIN_SAFE_FREE(nb->mats);
-
-    // Defensive: Zero the struct to prevent Use-After-Free/Double-Free
-    *nb = (NewBuffers){};
-}
-
-static bool NewBuffers_check_alloc(NewBuffers *nb) {
-    // Just a list of the pointers that MUST be there
-    return (nb->pos && nb->rot && nb->ppos && nb->prot && nb->lvel && nb->avel && nb->bids &&
-            nb->udat && nb->gens && nb->s2d && nb->d2s && nb->stat && nb->free && nb->cats &&
-            nb->masks && nb->mats) != 0;
-}
-
-CULV_NODISCARD
-static int alloc_new_buffers(NewBuffers *nb, size_t cap) {
-    *nb = (NewBuffers){};
-
-    // SIMD-Heavy Buffers: AVX alignment (Non-atomic)
-    nb->pos  = (JPH_Real *)CulvMem_RawMallocAligned(cap * sizeof(PosStride), AVX_ALIGNMENT);
-    nb->ppos = (JPH_Real *)CulvMem_RawMallocAligned(cap * sizeof(PosStride), AVX_ALIGNMENT);
-    nb->rot  = (float *)CulvMem_RawMallocAligned(cap * sizeof(AuxStride), AVX_ALIGNMENT);
-    nb->prot = (float *)CulvMem_RawMallocAligned(cap * sizeof(AuxStride), AVX_ALIGNMENT);
-    nb->lvel = (float *)CulvMem_RawMallocAligned(cap * sizeof(AuxStride), AVX_ALIGNMENT);
-    nb->avel = (float *)CulvMem_RawMallocAligned(cap * sizeof(AuxStride), AVX_ALIGNMENT);
-
-    // ATOMIC Data Buffers
-    // gens is CULV_ATOMIC(uint32_t)*
-    nb->gens = (CULV_ATOMIC(uint32_t) *)CULV_RAW_MALLOC(cap * sizeof(CULV_ATOMIC(uint32_t)));
-    // stat is CULV_ATOMIC(uint8_t)*
-    nb->stat = (CULV_ATOMIC(uint8_t) *)CULV_RAW_MALLOC(cap * sizeof(CULV_ATOMIC(uint8_t)));
-
-    // Standard Data Buffers
-    nb->bids  = (JPH_BodyID *)CULV_RAW_MALLOC(cap * sizeof(JPH_BodyID));
-    nb->udat  = (uint64_t *)CULV_RAW_CALLOC(cap, sizeof(uint64_t));
-    nb->s2d   = (uint32_t *)CULV_RAW_MALLOC(cap * sizeof(uint32_t));
-    nb->d2s   = (uint32_t *)CULV_RAW_MALLOC(cap * sizeof(uint32_t));
-    nb->free  = (uint32_t *)CULV_RAW_MALLOC(cap * sizeof(uint32_t));
-    nb->cats  = (uint32_t *)CULV_RAW_MALLOC(cap * sizeof(uint32_t));
-    nb->masks = (uint32_t *)CULV_RAW_MALLOC(cap * sizeof(uint32_t));
-    nb->mats  = (uint32_t *)CULV_RAW_CALLOC(cap, sizeof(uint32_t));
-    nb->softs = (SoftBodyShadow *)CULV_RAW_CALLOC(cap, sizeof(SoftBodyShadow));
-
-    // Validation
-    if (!NewBuffers_check_alloc(nb)) {
-        free_new_buffers(nb);
-        return -1;
-    }
-
-    return 0;
-}
-
-static size_t migrate_and_init(PhysicsWorldObject *self, NewBuffers *nb, size_t new_cap) {
-    // TSan Fix: Load counts atomically
-    size_t current_count = atomic_load_explicit(&self->count, memory_order_acquire);
-    size_t current_free  = atomic_load_explicit(&self->free_count, memory_order_acquire);
-
-    // 1. Copy Active Dense Data (The bodies currently in simulation)
-    if (current_count > 0) {
-        // Positions use Stride 4
-        size_t pos_bytes = current_count * sizeof(PosStride);
-        memcpy(nb->pos, self->positions, pos_bytes);
-        memcpy(nb->ppos, self->prev_positions, pos_bytes);
-
-        // Rotations/Velocities use Stride 4
-        size_t aux_bytes = current_count * sizeof(AuxStride);
-        memcpy(nb->rot, self->rotations, aux_bytes);
-        memcpy(nb->prot, self->prev_rotations, aux_bytes);
-        memcpy(nb->lvel, self->linear_velocities, aux_bytes);
-        memcpy(nb->avel, self->angular_velocities, aux_bytes);
-
-        // Metadata (BodyIDs, UserData, Masks, etc.)
-        memcpy(nb->bids, self->body_ids, current_count * sizeof(JPH_BodyID));
-        memcpy(nb->udat, self->user_data, current_count * sizeof(uint64_t));
-        memcpy(nb->cats, self->categories, current_count * sizeof(uint32_t));
-        memcpy(nb->masks, self->masks, current_count * sizeof(uint32_t));
-        memcpy(nb->mats, self->material_ids, current_count * sizeof(uint32_t));
-
-        if (self->soft_shadows) {
-            memcpy(nb->softs, self->soft_shadows, current_count * sizeof(SoftBodyShadow));
-        }
-
-        // Dense-to-Slot mapping
-        memcpy(nb->d2s, self->dense_to_slot, current_count * sizeof(uint32_t));
-    }
-
-    // 2. Copy Mapping Tables (The Slot-based indirection)
-    if (self->slot_capacity > 0) {
-        // TSan Fix: Atomic arrays MUST be copied element-by-element
-        for (size_t i = 0; i < self->slot_capacity; i++) {
-            uint32_t gen = atomic_load_explicit(&self->generations[i], memory_order_relaxed);
-            uint8_t stat = atomic_load_explicit(&self->slot_states[i], memory_order_relaxed);
-
-            atomic_init(&nb->gens[i], gen);
-            atomic_init(&nb->stat[i], stat);
-        }
-
-        // Standard buffers can still use memcpy
-        size_t slot_bytes_u32 = self->slot_capacity * sizeof(uint32_t);
-        memcpy(nb->s2d, self->slot_to_dense, slot_bytes_u32);
-
-        // Copy the current free list
-        if (current_free > 0) {
-            memcpy(nb->free, self->free_slots, current_free * sizeof(uint32_t));
-        }
-    }
-
-    // 3. Initialize Expanded Slots
-    size_t local_free_count = current_free;
-    for (size_t i = self->slot_capacity; i < new_cap; i++) {
-        atomic_init(&nb->gens[i], 1);          // Starting generation
-        atomic_init(&nb->stat[i], SLOT_EMPTY); // Starting state
-        nb->free[local_free_count++] = (uint32_t)i;
-    }
-    // Guarantee new body IDs won't trigger false positives in active queries
-    for (size_t i = current_count; i < new_cap; i++) {
-        nb->bids[i] = JPH_INVALID_BODY_ID;
-    }
-
-    return local_free_count;
-}
-
-// helper: Allocate shadow buffers and indirection maps
-CULV_NODISCARD
-int allocate_buffers(PhysicsWorldObject *self, int max_bodies) {
-    // TSan Fix: Load count atomically
-    size_t current_count = atomic_load_explicit(&self->count, memory_order_relaxed);
-
-    self->capacity = (size_t)max_bodies;
-    if (self->capacity < current_count + SHADOW_CAPACITY_PADDING) {
-        self->capacity = current_count + SHADOW_CAPACITY_GROW;
-    }
-    self->max_jolt_bodies = (uint32_t)max_bodies;
-
-    constexpr auto INITIAL_BODY_CAPACITY = 64;
-
-    size_t initial_cap =
-        (max_bodies < INITIAL_BODY_CAPACITY) ? (size_t)max_bodies : INITIAL_BODY_CAPACITY;
-    self->capacity      = initial_cap;
-    self->slot_capacity = initial_cap;
-
-    // SIMD Aligned Buffers (Not atomic, these are the heavy data buffers)
-    self->positions =
-        (JPH_Real *)CulvMem_RawMallocAligned(self->capacity * sizeof(PosStride), AVX_ALIGNMENT);
-    self->prev_positions =
-        (JPH_Real *)CulvMem_RawMallocAligned(self->capacity * sizeof(PosStride), AVX_ALIGNMENT);
-
-    self->rotations =
-        (float *)CulvMem_RawMallocAligned(self->capacity * sizeof(AuxStride), AVX_ALIGNMENT);
-    self->prev_rotations =
-        (float *)CulvMem_RawMallocAligned(self->capacity * sizeof(AuxStride), AVX_ALIGNMENT);
-    self->linear_velocities =
-        (float *)CulvMem_RawMallocAligned(self->capacity * sizeof(AuxStride), AVX_ALIGNMENT);
-    self->angular_velocities =
-        (float *)CulvMem_RawMallocAligned(self->capacity * sizeof(AuxStride), AVX_ALIGNMENT);
-
-    self->body_ids =
-        (typeof(self->body_ids))CULV_RAW_MALLOC(self->capacity * sizeof(typeof(*self->body_ids)));
-    self->user_data =
-        (typeof(self->user_data))CULV_RAW_CALLOC(self->capacity, sizeof(typeof(*self->user_data)));
-    self->categories = (typeof(self->categories))CULV_RAW_MALLOC(self->capacity *
-                                                                 sizeof(typeof(*self->categories)));
-    self->masks =
-        (typeof(self->masks))CULV_RAW_MALLOC(self->capacity * sizeof(typeof(*self->masks)));
-    self->material_ids = (typeof(self->material_ids))CULV_RAW_CALLOC(
-        self->capacity, sizeof(typeof(*self->material_ids)));
-
-    self->soft_shadows = (typeof(self->soft_shadows))CULV_RAW_CALLOC(
-        self->capacity, sizeof(typeof(*self->soft_shadows)));
-
-    // ATOMIC BUFFER ALLOCATIONS
-    // id_to_handle_map is BodyHandle*
-    self->id_to_handle_map = (CULV_ATOMIC(typeof_unqual(*self->id_to_handle_map)) *)CULV_RAW_MALLOC(
-        (self->max_jolt_bodies + 1) * sizeof(typeof_unqual(*self->id_to_handle_map)));
-
-    self->jolt_body_ptrs = (typeof(self->jolt_body_ptrs))CULV_RAW_CALLOC(
-        self->max_jolt_bodies + 1, sizeof(typeof(*self->jolt_body_ptrs)));
-
-    // generations is CULV_ATOMIC(uint32_t)*
-    self->generations = (CULV_ATOMIC(uint32_t) *)CULV_RAW_MALLOC(self->slot_capacity *
-                                                                 sizeof(CULV_ATOMIC(uint32_t)));
-
-    // slot_states is CULV_ATOMIC(uint8_t)*
-    self->slot_states = (CULV_ATOMIC(typeof_unqual(*self->slot_states)) *)CULV_RAW_MALLOC(
-        self->slot_capacity * sizeof(CULV_ATOMIC(typeof_unqual(*self->slot_states))));
-
-    // Normal Indirection/Mapping Buffers
-    self->slot_to_dense = (uint32_t *)CULV_RAW_MALLOC(self->slot_capacity * sizeof(uint32_t));
-    self->dense_to_slot = (uint32_t *)CULV_RAW_MALLOC(self->slot_capacity * sizeof(uint32_t));
-    self->free_slots    = (uint32_t *)CULV_RAW_MALLOC(self->slot_capacity * sizeof(uint32_t));
-
-    self->command_queue =
-        (PhysicsCommand *)CULV_RAW_MALLOC(COMMAND_QUEUE_INITIAL_CAPACITY * sizeof(PhysicsCommand));
-    self->command_queue_spare =
-        (PhysicsCommand *)CULV_RAW_MALLOC(COMMAND_QUEUE_INITIAL_CAPACITY * sizeof(PhysicsCommand));
-    self->command_capacity = COMMAND_QUEUE_INITIAL_CAPACITY;
-    self->spare_capacity   = COMMAND_QUEUE_INITIAL_CAPACITY;
-
-    self->trash_capacity = 4;
-    self->trash_count    = 0;
-    self->trash_buffers  = (NewBuffers *)CULV_RAW_CALLOC(self->trash_capacity, sizeof(NewBuffers));
-
-    if (!self->positions || !self->rotations || !self->id_to_handle_map || !self->command_queue ||
-        !self->slot_states || !self->generations || !self->free_slots || !self->slot_to_dense ||
-        !self->dense_to_slot || !self->user_data || !self->categories || !self->masks ||
-        !self->material_ids || !self->soft_shadows || !self->jolt_body_ptrs) {
-        return -1;
-    }
-
-    // INITIALIZE ATOMIC ARRAY ELEMENTS
-    for (size_t i = 0; i <= self->max_jolt_bodies; i++) {
-        atomic_init(&self->id_to_handle_map[i], 0);
-    }
-    for (size_t i = 0; i < self->slot_capacity; i++) {
-        atomic_init(&self->generations[i], 0);
-        atomic_init(&self->slot_states[i], SLOT_EMPTY);
-    }
-
-    // Zero-initialize the aligned buffers
-    memset(self->positions, 0, self->capacity * sizeof(PosStride));
-    memset(self->prev_positions, 0, self->capacity * sizeof(PosStride));
-    memset(self->rotations, 0, self->capacity * sizeof(AuxStride));
-    memset(self->prev_rotations, 0, self->capacity * sizeof(AuxStride));
-    memset(self->linear_velocities, 0, self->capacity * sizeof(AuxStride));
-    memset(self->angular_velocities, 0, self->capacity * sizeof(AuxStride));
-
-    for (size_t i = 0; i < self->capacity; i++) {
-        self->categories[i] = ALL_LAYER_BITS;
-        self->masks[i]      = ALL_LAYER_BITS;
-        self->body_ids[i]   = JPH_INVALID_BODY_ID;
-    }
-
-    return 0;
-}
 CULV_NODISCARD
 int PhysicsWorld_resize(PhysicsWorldObject *self, size_t new_capacity) {
-    // 1. Signal Start
-
-    if (atomic_load_explicit(&self->view_export_count, memory_order_relaxed) > 0) {
+    PhysicsWorld *world = &self->physics;
+    if (atomic_load_explicit(&world->view_export_count, memory_order_relaxed) > 0) {
         PyErr_SetString(PyExc_BufferError, "Cannot resize while memoryview is active.");
         return -1;
     }
 
-    // 2. Concurrency Guard
     BLOCK_UNTIL_NOT_STEPPING(self);
     BLOCK_UNTIL_NOT_QUERYING(self);
 
-    // --- VACUUM OLD TRASH ---
-    // We do the deallocation here, in the mutator thread,
-    // before we allocate new memory.
-    if (self->trash_count > 0) {
-        for (size_t i = 0; i < self->trash_count; i++) {
-            free_new_buffers(&self->trash_buffers[i]);
-        }
-        self->trash_count = 0;
+    const PhysicsWorldStatus status = physics_world_resize(world, new_capacity);
+    if (status == PHYSICS_WORLD_STATUS_BUFFER_EXPORTED) {
+        PyErr_SetString(PyExc_BufferError, "Cannot resize while memoryview is active.");
+        return -1;
     }
-
-    if (new_capacity > self->max_jolt_bodies) {
-        new_capacity = self->max_jolt_bodies;
-    }
-
-    if (new_capacity <= self->capacity) {
-        return 0;
-    }
-
-    // 3. Prepare New Buffers
-    NewBuffers nb;
-    if (alloc_new_buffers(&nb, new_capacity) < 0) {
+    if (status != PHYSICS_WORLD_STATUS_OK) {
         PyErr_NoMemory();
         return -1;
     }
-
-    // 4. Migrate Data
-    size_t final_free_count = migrate_and_init(self, &nb, new_capacity);
-
-    // 5. Expand Trash Bin
-    if (UNLIKELY(self->trash_count >= self->trash_capacity)) {
-        size_t next_cap = (self->trash_capacity == 0) ? 4 : self->trash_capacity * 2;
-        void *new_trash = CULV_RAW_REALLOC(self->trash_buffers, next_cap * sizeof(NewBuffers));
-        if (!new_trash) {
-            free_new_buffers(&nb);
-            return -1;
-        }
-        size_t added_elements = next_cap - self->trash_capacity;
-        memset((NewBuffers *)new_trash + self->trash_capacity, 0,
-               added_elements * sizeof(NewBuffers));
-        self->trash_buffers  = (NewBuffers *)new_trash;
-        self->trash_capacity = next_cap;
-    }
-
-    // 6. THE COMMIT (Swap pointers)
-    NewBuffers old_bufs                      = {.pos   = self->positions,
-                                                .ppos  = self->prev_positions,
-                                                .rot   = self->rotations,
-                                                .prot  = self->prev_rotations,
-                                                .lvel  = self->linear_velocities,
-                                                .avel  = self->angular_velocities,
-                                                .bids  = self->body_ids,
-                                                .udat  = self->user_data,
-                                                .softs = self->soft_shadows,
-                                                .gens  = self->generations, // Atomic pointer swap
-                                                .s2d   = self->slot_to_dense,
-                                                .d2s   = self->dense_to_slot,
-                                                .stat  = self->slot_states, // Atomic pointer swap
-                                                .free  = self->free_slots,
-                                                .cats  = self->categories,
-                                                .masks = self->masks,
-                                                .mats  = self->material_ids};
-    self->trash_buffers[self->trash_count++] = old_bufs;
-
-    self->positions          = nb.pos;
-    self->prev_positions     = nb.ppos;
-    self->rotations          = nb.rot;
-    self->prev_rotations     = nb.prot;
-    self->linear_velocities  = nb.lvel;
-    self->angular_velocities = nb.avel;
-    self->body_ids           = nb.bids;
-    self->user_data          = nb.udat;
-    self->soft_shadows       = nb.softs;
-    self->generations        = nb.gens; // Pointer to new atomic array
-    self->slot_to_dense      = nb.s2d;
-    self->dense_to_slot      = nb.d2s;
-    self->slot_states        = nb.stat; // Pointer to new atomic array
-    self->free_slots         = nb.free;
-    self->categories         = nb.cats;
-    self->masks              = nb.masks;
-    self->material_ids       = nb.mats;
-
-    // 7. Update metadata atomically
-    atomic_store_explicit(&self->free_count, final_free_count, memory_order_release);
-    self->capacity      = new_capacity;
-    self->slot_capacity = new_capacity;
-
-    // 8. Signal End
-
     return 0;
 }
 
-void free_constraints(PhysicsWorldObject *self) {
-    if (self->constraints) {
-        for (size_t i = 0; i < self->constraint_capacity; i++) {
-            if (!self->constraints[i]) {
-                continue;
-            }
 
-            bool is_alive = (!self->constraint_states ||
-                             atomic_load_explicit(&self->constraint_states[i],
-                                                  memory_order_relaxed) == SLOT_ALIVE) != 0;
-            if (is_alive) {
-                if (self->system) {
-                    JPH_PhysicsSystem_RemoveConstraint(self->system, self->constraints[i]);
-                }
-                JPH_Constraint_Destroy(self->constraints[i]);
-            }
-            self->constraints[i] = nullptr;
-        }
-        CULVERIN_SAFE_FREE(self->constraints);
-    }
-    CULVERIN_SAFE_FREE(self->constraint_generations);
-    CULVERIN_SAFE_FREE(self->free_constraint_slots);
-    CULVERIN_SAFE_FREE(self->constraint_states);
-}
-
-void free_shadow_buffers(PhysicsWorldObject *self) {
-    // 1. Aligned buffers (stride types)
-    CULVERIN_SAFE_FREE_ALIGNED(self->positions);
-    CULVERIN_SAFE_FREE_ALIGNED(self->prev_positions);
-    CULVERIN_SAFE_FREE_ALIGNED(self->rotations);
-    CULVERIN_SAFE_FREE_ALIGNED(self->prev_rotations);
-    CULVERIN_SAFE_FREE_ALIGNED(self->linear_velocities);
-    CULVERIN_SAFE_FREE_ALIGNED(self->angular_velocities);
-
-    // 2. ATOMIC buffers
-    // Generations is CULV_ATOMIC(uint32_t)*
-    // Slot States is CULV_ATOMIC(uint8_t)*
-    CULVERIN_SAFE_FREE(self->generations);
-    CULVERIN_SAFE_FREE(self->slot_states);
-
-    // 3. Regular buffers
-    CULVERIN_SAFE_FREE(self->body_ids);
-    CULVERIN_SAFE_FREE(self->slot_to_dense);
-    CULVERIN_SAFE_FREE(self->dense_to_slot);
-    CULVERIN_SAFE_FREE(self->free_slots);
-    CULVERIN_SAFE_FREE(self->command_queue);
-    CULVERIN_SAFE_FREE(self->user_data);
-    CULVERIN_SAFE_FREE(self->categories);
-
-    if (self->soft_shadows) {
-        for (size_t i = 0; i < self->capacity; i++) {
-            CULVERIN_SAFE_FREE_ALIGNED(self->soft_shadows[i].vertices);
-        }
-        CULVERIN_SAFE_FREE(self->soft_shadows);
-    }
-    CULVERIN_SAFE_FREE(self->masks);
-    CULVERIN_SAFE_FREE(self->material_ids);
-    CULVERIN_SAFE_FREE(self->materials);
-    CULVERIN_SAFE_FREE(self->jolt_body_ptrs);
-}
-
-#define CULVERIN_DESTROY(destroy_func, p)                                                          \
-    do {                                                                                           \
-        typeof(p) _tmp_ptr = (p);                                                                  \
-        if (_tmp_ptr) {                                                                            \
-            (p) = nullptr;                                                                         \
-            (destroy_func)(_tmp_ptr);                                                              \
-        }                                                                                          \
-    } while (false)
-
-// --- Helper: Resource Cleanup (Idempotent) ---
-// SAFETY:
-// - Must not be called while PhysicsSystem is stepping
-// - Must not be called from a Jolt callback
-// - Must not race with Python memoryview access
 void PhysicsWorld_free_members(PhysicsWorldObject *self) {
-    // 1. Clear and free the ACTIVE command queue
-    if (self->command_queue) {
-        clear_command_queue(self);
-        CULVERIN_SAFE_FREE(self->command_queue);
-    }
-
-    // 2. Free the SPARE command queue
-    CULVERIN_SAFE_FREE(self->command_queue_spare);
-
-    // 3. Constraints (Must go before PhysicsSystem)
-    free_constraints(self);
-
-    // 4. Core Jolt Systems
-    CULVERIN_DESTROY(JPH_PhysicsSystem_Destroy, self->system);
-    CULVERIN_DESTROY(JPH_CharacterVsCharacterCollision_Destroy, self->char_vs_char_manager);
-    CULVERIN_DESTROY(JPH_JobSystem_Destroy, self->job_system);
-    CULVERIN_DESTROY(JPH_TempAllocator_Destroy, self->temp_allocator);
-
-    // 5. Debug Utilities
-    CULVERIN_DESTROY(JPH_DebugRenderer_Destroy, self->debug_renderer);
-    debug_buffer_free(&self->debug_lines);
-    debug_buffer_free(&self->debug_triangles);
-
-    // 6. Shape Cache
-    free_shape_cache(self);
-
-    // 7. Contact Listener & Buffers
-    CULVERIN_DESTROY(JPH_ContactListener_Destroy, self->contact_listener);
-    CULVERIN_SAFE_FREE(self->contact_buffer);
-
-    // 8. Deferred Trash Cleanup
-    // Note: free_new_buffers has been updated to handle internal atomics
-    if (self->trash_buffers) {
-        for (size_t i = 0; i < self->trash_count; i++) {
-            free_new_buffers(&self->trash_buffers[i]);
-        }
-        CULVERIN_SAFE_FREE(self->trash_buffers);
-        self->trash_count = 0;
-    }
-
-    // 9. Dense/Shadow Buffers
-    // Note: free_shadow_buffers has been updated to handle gens/slot_states atomics
-    free_shadow_buffers(self);
-
-    // 10. Handle Mapping
-    // TSan Fix: Cast pointer to atomic array to void* for free()
-    CULVERIN_SAFE_FREE(self->id_to_handle_map);
-
-    // 11. Threading Primitives
-    FREE_LOCK(self->shadow_lock);
-    FREE_NATIVE_MUTEX(self->jph_trampoline_lock);
-    FREE_NATIVE_MUTEX(self->step_sync.mutex);
-    FREE_NATIVE_COND(self->step_sync.cond);
+    physics_world_free_native(&self->physics);
 }
 
 // helper: Initialize settings via Python helper
@@ -554,80 +70,11 @@ int init_settings(PhysicsWorldObject *self, PyObject *settings_dict, GravityVect
     return ok ? 0 : -1;
 }
 
-NativeMutex g_jph_init_lock;
-
-// helper: Initialize Jolt Core Systems
-CULV_NODISCARD
-int init_jolt_core(PhysicsWorldObject *self, WorldSettings settings, GravityVector gravity) {
-    int num_workers = settings.num_threads;
-#if defined(__SANITIZE_THREAD__) || defined(ENABLE_SANITIZER)
-    // When running ThreadSanitizer, disable Jolt's background workers.
-    // TSan cannot understand Jolt's highly-optimized C++ lock-free job queues
-    // and will generate false positives. Running Jolt synchronously allows TSan
-    // to focus exclusively on finding real concurrency bugs in the Culverin/Python layer.
-    num_workers = 0;
-#endif
-    JobSystemThreadPoolConfig job_cfg = {.maxJobs     = (uint32_t)settings.max_physics_jobs,
-                                         .maxBarriers = (uint32_t)settings.max_physics_barriers,
-                                         .numThreads  = num_workers};
-
-    // TSan Fix: Serialize the first PhysicsSystem creation.
-    // This allows Jolt's internal lazy-statics to initialize safely.
-    NATIVE_MUTEX_LOCK(g_jph_init_lock);
-    self->job_system = JPH_JobSystemThreadPool_Create(&job_cfg);
-
-#if defined(__SANITIZE_THREAD__) || defined(ENABLE_SANITIZER)
-    self->temp_allocator = JPH_TempAllocatorMalloc_Create();
-#else
-    self->temp_allocator = JPH_TempAllocator_Create((uint32_t)settings.temp_allocator_size);
-#endif
-
-    // --- 3 LAYERS: 0=Static, 1=Dynamic, 2=VehicleRay ---
-    self->bp_interface = JPH_BroadPhaseLayerInterfaceTable_Create(OBJECT_LAYER_COUNT, 3);
-    JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(self->bp_interface,
-                                                                 OBJECT_LAYER_STATIC, 0);
-    JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(self->bp_interface,
-                                                                 OBJECT_LAYER_DYNAMIC, 1);
-    JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(self->bp_interface,
-                                                                 OBJECT_LAYER_VEHICLE, 2);
-
-    self->pair_filter = JPH_ObjectLayerPairFilterTable_Create(3);
-
-    // Matrix:
-    // 0 (Static)  vs 1 (Dynamic) -> ON
-    // 0 (Static)  vs 2 (Ray)     -> ON
-    // 1 (Dynamic) vs 1 (Dynamic) -> ON
-    // 1 (Dynamic) vs 2 (Ray)     -> OFF (Fixes self-collision)
-    // 2 (Ray)     vs 2 (Ray)     -> OFF
-    JPH_ObjectLayerPairFilterTable_EnableCollision(self->pair_filter, 0, 1);
-    JPH_ObjectLayerPairFilterTable_EnableCollision(self->pair_filter, 0, 2);
-    JPH_ObjectLayerPairFilterTable_EnableCollision(self->pair_filter, 1, 1);
-    JPH_ObjectLayerPairFilterTable_DisableCollision(self->pair_filter, 1, 2);
-
-    self->bp_filter =
-        JPH_ObjectVsBroadPhaseLayerFilterTable_Create(self->bp_interface, 3, self->pair_filter, 3);
-
-    JPH_PhysicsSystemSettings phys_settings = {.maxBodies    = (uint32_t)settings.max_bodies,
-                                               .maxBodyPairs = (uint32_t)settings.max_pairs,
-                                               .maxContactConstraints =
-                                                   (uint32_t)settings.max_contact_constraints,
-                                               .broadPhaseLayerInterface      = self->bp_interface,
-                                               .objectLayerPairFilter         = self->pair_filter,
-                                               .objectVsBroadPhaseLayerFilter = self->bp_filter};
-
-    self->system = JPH_PhysicsSystem_Create(&phys_settings);
-    NATIVE_MUTEX_UNLOCK(g_jph_init_lock);
-    self->char_vs_char_manager = JPH_CharacterVsCharacterCollision_CreateSimple();
-    JPH_PhysicsSystem_SetGravity(self->system, &(JPH_Vec3){gravity.gx, gravity.gy, gravity.gz});
-    self->body_interface = JPH_PhysicsSystem_GetBodyInterface(self->system);
-    return 0;
-}
-
 // helper: Iterate over baked Python data to create initial Jolt bodies
 CULV_NODISCARD
 int load_baked_scene(PhysicsWorldObject *self, PyObject *baked) {
     // TSan Fix: Load current count atomically
-    size_t current_count = atomic_load_explicit(&self->count, memory_order_acquire);
+    size_t current_count = atomic_load_explicit(&self->physics.count, memory_order_acquire);
 
     PyObject *pos_bytes_obj = PyTuple_GetItem(baked, BAKED_INDEX_POS);
     Py_ssize_t pos_len      = PyBytes_Size(pos_bytes_obj);
@@ -655,17 +102,17 @@ int load_baked_scene(PhysicsWorldObject *self, PyObject *baked) {
     }
 
     int result = 0;
-    SHADOW_LOCK(&self->shadow_lock);
+    SHADOW_LOCK(&self->physics.shadow_lock);
 
-    JPH_BodyInterface *bi = self->body_interface;
-    auto shadow_pos       = (PosStride *)self->positions;
-    auto shadow_rot       = (AuxStride *)self->rotations;
+    JPH_BodyInterface *bi = self->physics.body_interface;
+    auto shadow_pos       = (PosStride *)self->physics.positions;
+    auto shadow_rot       = (AuxStride *)self->physics.rotations;
 
     for (size_t i = 0; i < current_count; i++) {
         // A. Shape Lookup
         float *s_data    = &baked_shape[i * BAKED_SHAPE_STRIDE];
         float params[4]  = {s_data[1], s_data[2], s_data[3], s_data[4]};
-        JPH_Shape *shape = find_or_create_shape_locked(self, (int)s_data[0], params);
+        JPH_Shape *shape = find_or_create_shape_locked(&self->physics, (int)s_data[0], params);
 
         if (UNLIKELY(!shape)) {
             result = -1;
@@ -691,7 +138,7 @@ int load_baked_scene(PhysicsWorldObject *self, PyObject *baked) {
             shape, &j_pos, &j_rot, (JPH_MotionType)u_mot[i], (JPH_ObjectLayer)u_layer[i]);
 
         // TSan Fix: Initialize the atomic generation for this slot
-        atomic_store_explicit(&self->generations[i], 1, memory_order_relaxed);
+        atomic_store_explicit(&self->physics.generations[i], 1, memory_order_relaxed);
 
         // BodyHandle is CULV_ATOMIC(uint64_t). We create it locally.
         BodyHandle handle = make_handle((uint32_t)i, 1);
@@ -704,57 +151,25 @@ int load_baked_scene(PhysicsWorldObject *self, PyObject *baked) {
             JPH_BodyCreationSettings_SetAllowSleeping(creation, true);
         }
 
-        self->body_ids[i] =
+        self->physics.body_ids[i] =
             JPH_BodyInterface_CreateAndAddBody(bi, creation, JPH_Activation_Activate);
 
-        uint32_t j_idx = JPH_ID_TO_INDEX(self->body_ids[i]);
-        if (self->id_to_handle_map && j_idx < self->max_jolt_bodies) {
+        uint32_t j_idx = JPH_ID_TO_INDEX(self->physics.body_ids[i]);
+        if (self->physics.id_to_handle_map && j_idx < self->physics.max_jolt_bodies) {
             // TSan Fix: Store to shared map using relaxed (world is not yet simulating)
-            atomic_store_explicit(&self->id_to_handle_map[j_idx], raw_h, memory_order_relaxed);
+            atomic_store_explicit(&self->physics.id_to_handle_map[j_idx], raw_h, memory_order_relaxed);
         }
 
-        self->slot_to_dense[i] = (uint32_t)i;
-        self->dense_to_slot[i] = (uint32_t)i;
+        self->physics.slot_to_dense[i] = (uint32_t)i;
+        self->physics.dense_to_slot[i] = (uint32_t)i;
 
         // TSan Fix: Atomic state update
-        atomic_store_explicit(&self->slot_states[i], SLOT_ALIVE, memory_order_relaxed);
+        atomic_store_explicit(&self->physics.slot_states[i], SLOT_ALIVE, memory_order_relaxed);
 
-        self->user_data[i] = u_data[i];
+        self->physics.user_data[i] = u_data[i];
         JPH_BodyCreationSettings_Destroy(creation);
     }
 
-    SHADOW_UNLOCK(&self->shadow_lock);
+    SHADOW_UNLOCK(&self->physics.shadow_lock);
     return result;
-}
-CULV_NODISCARD
-int verify_abi_alignment(JPH_BodyInterface *bi) {
-    JPH_BoxShapeSettings *bs = JPH_BoxShapeSettings_Create(&(JPH_Vec3){1, 1, 1}, 0.0f);
-    auto shape               = (JPH_Shape *)JPH_BoxShapeSettings_CreateShape(bs);
-    JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)bs);
-    if (!shape) {
-        return -1;
-    }
-
-    JPH_BodyCreationSettings *bcs = JPH_BodyCreationSettings_Create3(
-        shape, &(JPH_RVec3){VERIFY_ABI_POS_X, VERIFY_ABI_POS_Y, VERIFY_ABI_POS_Z},
-        &(JPH_Quat){0, 0, 0, 1}, JPH_MotionType_Static, 0);
-    JPH_Shape_Destroy(shape);
-    if (!bcs) {
-        return -1;
-    }
-
-    JPH_BodyID bid = JPH_BodyInterface_CreateAndAddBody(bi, bcs, JPH_Activation_Activate);
-    JPH_BodyCreationSettings_Destroy(bcs);
-
-    JPH_STACK_ALLOC(JPH_RVec3, p_check);
-    JPH_BodyInterface_GetPosition(bi, bid, p_check);
-    JPH_BodyInterface_RemoveBody(bi, bid);
-    JPH_BodyInterface_DestroyBody(bi, bid);
-
-    if (fabs(p_check->x - VERIFY_ABI_POS_X) > VERIFY_ABI_TOLERANCE ||
-        fabs(p_check->y - VERIFY_ABI_POS_Y) > VERIFY_ABI_TOLERANCE) {
-        PyErr_SetString(PyExc_RuntimeError, "JoltC ABI Mismatch: Precision issue.");
-        return -1;
-    }
-    return 0;
 }

@@ -130,10 +130,10 @@ static void setup_vehicle_differentials(JPH_WheeledVehicleControllerSettings *v_
 void cleanup_vehicle_resources(VehicleResources *r, uint32_t num_wheels, PhysicsWorldObject *self) {
     if (r->j_veh) {
         // If it was already added to Jolt, we MUST remove it before destroying it
-        if ((int)r->is_added_to_world && self && self->system) {
+        if ((int)r->is_added_to_world && self && self->physics.system) {
             JPH_PhysicsSystem_RemoveStepListener(
-                self->system, JPH_VehicleConstraint_AsPhysicsStepListener(r->j_veh));
-            JPH_PhysicsSystem_RemoveConstraint(self->system, (JPH_Constraint *)r->j_veh);
+                self->physics.system, JPH_VehicleConstraint_AsPhysicsStepListener(r->j_veh));
+            JPH_PhysicsSystem_RemoveConstraint(self->physics.system, (JPH_Constraint *)r->j_veh);
         }
         JPH_Constraint_Destroy((JPH_Constraint *)r->j_veh);
     }
@@ -306,27 +306,27 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_vehicle(PhysicsWorldObje
     PyThreadState *_save = nullptr;
 
     // --- 2. RESOLVE CHASSIS (ATOMIC REFACTOR) ---
-    SHADOW_LOCK(&self->shadow_lock);
+    SHADOW_LOCK(&self->physics.shadow_lock);
 
     // Ensure all body creation commands are processed before linking
     sync_and_flush_internal(self);
 
     uint32_t slot = 0;
     // TSan Fix: Cast to atomic type for handle verification
-    bool handle_valid = unpack_handle(self, (BodyHandle)chassis_h_raw, &slot);
+    bool handle_valid = unpack_handle(&self->physics, (BodyHandle)chassis_h_raw, &slot);
 
     // TSan Fix: Atomic load of state (Acquire ensures visibility of the chassis initialization)
     uint8_t state = (int)handle_valid
-                        ? atomic_load_explicit(&self->slot_states[slot], memory_order_acquire)
+                        ? atomic_load_explicit(&self->physics.slot_states[slot], memory_order_acquire)
                         : SLOT_EMPTY;
 
     if (!handle_valid || state != SLOT_ALIVE) {
-        SHADOW_UNLOCK(&self->shadow_lock);
+        SHADOW_UNLOCK(&self->physics.shadow_lock);
         return PyErr_Format(PyExc_ValueError, "Invalid chassis handle (Body is dead or pending)");
     }
 
-    JPH_BodyID chassis_bid = self->body_ids[self->slot_to_dense[slot]];
-    SHADOW_UNLOCK(&self->shadow_lock);
+    JPH_BodyID chassis_bid = self->physics.body_ids[self->physics.slot_to_dense[slot]];
+    SHADOW_UNLOCK(&self->physics.shadow_lock);
 
     // --- 3. PRE-JOLT RESOURCE ALLOCATION (Unchanged) ---
     VehicleResources r = {};
@@ -356,10 +356,10 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_vehicle(PhysicsWorldObje
     bool jolt_locked = false;
     Py_UNBLOCK_THREADS;
 
-    NATIVE_MUTEX_LOCK(self->jph_trampoline_lock);
+    NATIVE_MUTEX_LOCK(self->physics.jph_trampoline_lock);
     jolt_locked = true;
 
-    const JPH_BodyLockInterface *lock_iface = JPH_PhysicsSystem_GetBodyLockInterface(self->system);
+    const JPH_BodyLockInterface *lock_iface = JPH_PhysicsSystem_GetBodyLockInterface(self->physics.system);
     JPH_BodyLockWrite lock                  = {};
     JPH_BodyLockInterface_LockWrite(lock_iface, chassis_bid, &lock);
 
@@ -386,13 +386,13 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_vehicle(PhysicsWorldObje
 
     JPH_VehicleConstraint_SetVehicleCollisionTester(r.j_veh,
                                                     (JPH_VehicleCollisionTester *)r.tester);
-    JPH_PhysicsSystem_AddConstraint(self->system, (JPH_Constraint *)r.j_veh);
-    JPH_PhysicsSystem_AddStepListener(self->system,
+    JPH_PhysicsSystem_AddConstraint(self->physics.system, (JPH_Constraint *)r.j_veh);
+    JPH_PhysicsSystem_AddStepListener(self->physics.system,
                                       JPH_VehicleConstraint_AsPhysicsStepListener(r.j_veh));
     r.is_added_to_world = true;
 
     JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
-    NATIVE_MUTEX_UNLOCK(self->jph_trampoline_lock);
+    NATIVE_MUTEX_UNLOCK(self->physics.jph_trampoline_lock);
     jolt_locked = false;
     Py_BLOCK_THREADS;
 
@@ -400,15 +400,15 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_vehicle(PhysicsWorldObje
     auto obj = (VehicleObject *)PyObject_GC_New(VehicleObject, (PyTypeObject *)st->VehicleType);
 
     if (!obj) {
-        SHADOW_LOCK(&self->shadow_lock);
+        SHADOW_LOCK(&self->physics.shadow_lock);
         cleanup_vehicle_resources(&r, num_wheels, self);
-        SHADOW_UNLOCK(&self->shadow_lock);
+        SHADOW_UNLOCK(&self->physics.shadow_lock);
         return nullptr;
     }
     if (init_vehicle_parsers(obj) < 0) {
-        SHADOW_LOCK(&self->shadow_lock);
+        SHADOW_LOCK(&self->physics.shadow_lock);
         cleanup_vehicle_resources(&r, num_wheels, self);
-        SHADOW_UNLOCK(&self->shadow_lock);
+        SHADOW_UNLOCK(&self->physics.shadow_lock);
         Py_DECREF(obj);
         return nullptr;
     }
@@ -433,14 +433,14 @@ jolt_fail:
         JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
     }
     if (jolt_locked) {
-        NATIVE_MUTEX_UNLOCK(self->jph_trampoline_lock);
+        NATIVE_MUTEX_UNLOCK(self->physics.jph_trampoline_lock);
     }
     Py_BLOCK_THREADS;
 
 python_fail:
-    SHADOW_LOCK(&self->shadow_lock);
+    SHADOW_LOCK(&self->physics.shadow_lock);
     cleanup_vehicle_resources(&r, num_wheels, self);
-    SHADOW_UNLOCK(&self->shadow_lock);
+    SHADOW_UNLOCK(&self->physics.shadow_lock);
 
     if (!PyErr_Occurred()) {
         PyErr_SetString(PyExc_RuntimeError, "Jolt vehicle creation failed");
@@ -470,22 +470,22 @@ PyCFunction_DeclareMethodFromModule Vehicle_set_input(VehicleObject *self, PyObj
     }
 
     // 2. STATE MACHINE & JOLT SYNC
-    SHADOW_LOCK(&self->world->shadow_lock);
+    SHADOW_LOCK(&self->world->physics.shadow_lock);
 
     // TSan Fix: Explicit relaxed load of is_stepping flag.
     // Since we hold the SHADOW_LOCK, we only need to verify if the Stepper
     // thread has raised the flag to begin a buffer swap.
-    bool stepping = atomic_load_explicit(&self->world->is_stepping, memory_order_relaxed);
+    bool stepping = atomic_load_explicit(&self->world->physics.is_stepping, memory_order_relaxed);
 
     if (UNLIKELY(stepping || !self->vehicle)) {
-        SHADOW_UNLOCK(&self->world->shadow_lock);
+        SHADOW_UNLOCK(&self->world->physics.shadow_lock);
         Py_RETURN_NONE;
     }
 
     auto controller =
         (JPH_WheeledVehicleController *)JPH_VehicleConstraint_GetController(self->vehicle);
     JPH_BodyID chassis_id = JPH_Body_GetID(JPH_VehicleConstraint_GetVehicleBody(self->vehicle));
-    JPH_BodyInterface *bi = self->world->body_interface;
+    JPH_BodyInterface *bi = self->world->physics.body_interface;
 
     // Ensure the vehicle is awake to respond to inputs
     JPH_BodyInterface_ActivateBody(bi, chassis_id);
@@ -543,7 +543,7 @@ PyCFunction_DeclareMethodFromModule Vehicle_set_input(VehicleObject *self, PyObj
     JPH_WheeledVehicleController_SetDriverInput(controller, input_throttle, right, input_brake,
                                                 handbrake);
 
-    SHADOW_UNLOCK(&self->world->shadow_lock);
+    SHADOW_UNLOCK(&self->world->physics.shadow_lock);
     Py_RETURN_NONE;
 }
 
@@ -573,11 +573,11 @@ PyCFunction_DeclareMethodFromModule Vehicle_get_wheel_transform(VehicleObject *s
         return nullptr;
     }
 
-    SHADOW_LOCK(&self->world->shadow_lock);
+    SHADOW_LOCK(&self->world->physics.shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self->world);
 
     if (!self->vehicle || index >= self->num_wheels) {
-        SHADOW_UNLOCK(&self->world->shadow_lock);
+        SHADOW_UNLOCK(&self->world->physics.shadow_lock);
         Py_RETURN_NONE;
     }
 
@@ -599,7 +599,7 @@ PyCFunction_DeclareMethodFromModule Vehicle_get_wheel_transform(VehicleObject *s
 
     JPH_STACK_ALLOC(JPH_Quat, q);
     JPH_Mat4_GetQuaternion(rot_only_mat, q);
-    SHADOW_UNLOCK(&self->world->shadow_lock);
+    SHADOW_UNLOCK(&self->world->physics.shadow_lock);
 
     return pack_transform(px, py, pz, q->x, q->y, q->z, q->w);
 }
@@ -617,11 +617,11 @@ PyCFunction_DeclareMethodFromModule Vehicle_get_wheel_local_transform(VehicleObj
         return nullptr;
     }
 
-    SHADOW_LOCK(&self->world->shadow_lock);
+    SHADOW_LOCK(&self->world->physics.shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self->world);
 
     if (!self->vehicle || index >= self->num_wheels) {
-        SHADOW_UNLOCK(&self->world->shadow_lock);
+        SHADOW_UNLOCK(&self->world->physics.shadow_lock);
         Py_RETURN_NONE;
     }
 
@@ -643,7 +643,7 @@ PyCFunction_DeclareMethodFromModule Vehicle_get_wheel_local_transform(VehicleObj
 
     JPH_STACK_ALLOC(JPH_Quat, q);
     JPH_Mat4_GetQuaternion(local_transform, q);
-    SHADOW_UNLOCK(&self->world->shadow_lock);
+    SHADOW_UNLOCK(&self->world->physics.shadow_lock);
 
     return pack_transform(lx, ly, lz, q->x, q->y, q->z, q->w);
 }
@@ -656,10 +656,10 @@ PyCFunction_DeclareMethodFromModule Vehicle_get_debug_state(CULV_MAYBE_UNUSED Ve
     // 1. LOCK AND GUARD
     // We need the world lock to ensure the vehicle pointer is stable
     // and the physics step isn't currently mutating these values.
-    SHADOW_LOCK(&self->world->shadow_lock);
+    SHADOW_LOCK(&self->world->physics.shadow_lock);
 
-    if (self->world->is_stepping) {
-        SHADOW_UNLOCK(&self->world->shadow_lock);
+    if (self->world->physics.is_stepping) {
+        SHADOW_UNLOCK(&self->world->physics.shadow_lock);
         // Debug prints usually shouldn't raise Python errors,
         // so we just log a warning and return.
         DEBUG_LOG("Warning: Cannot get debug state while physics is stepping.");
@@ -667,7 +667,7 @@ PyCFunction_DeclareMethodFromModule Vehicle_get_debug_state(CULV_MAYBE_UNUSED Ve
     }
 
     if (!self->vehicle) {
-        SHADOW_UNLOCK(&self->world->shadow_lock);
+        SHADOW_UNLOCK(&self->world->physics.shadow_lock);
         DEBUG_LOG("Warning: Vehicle has been destroyed.");
         Py_RETURN_NONE;
     }
@@ -676,7 +676,7 @@ PyCFunction_DeclareMethodFromModule Vehicle_get_debug_state(CULV_MAYBE_UNUSED Ve
     auto controller =
         (JPH_WheeledVehicleController *)JPH_VehicleConstraint_GetController(self->vehicle);
     if (!controller) {
-        SHADOW_UNLOCK(&self->world->shadow_lock);
+        SHADOW_UNLOCK(&self->world->physics.shadow_lock);
         Py_RETURN_NONE;
     }
 
@@ -720,7 +720,7 @@ PyCFunction_DeclareMethodFromModule Vehicle_get_debug_state(CULV_MAYBE_UNUSED Ve
     DEBUG_LOG("===========================");
 
     // 6. UNLOCK
-    SHADOW_UNLOCK(&self->world->shadow_lock);
+    SHADOW_UNLOCK(&self->world->physics.shadow_lock);
 
     Py_RETURN_NONE;
 #endif
@@ -744,13 +744,13 @@ static void Vehicle_internal_cleanup(VehicleObject *self) {
         return;
     }
 
-    SHADOW_LOCK(&self->world->shadow_lock);
+    SHADOW_LOCK(&self->world->physics.shadow_lock);
 
     BLOCK_UNTIL_NOT_STEPPING(self->world);
     BLOCK_UNTIL_NOT_QUERYING(self->world);
 
     if (!self->vehicle) {
-        SHADOW_UNLOCK(&self->world->shadow_lock);
+        SHADOW_UNLOCK(&self->world->physics.shadow_lock);
         return;
     }
 
@@ -772,13 +772,13 @@ static void Vehicle_internal_cleanup(VehicleObject *self) {
     self->friction_curve        = nullptr;
     self->torque_curve          = nullptr;
 
-    SHADOW_UNLOCK(&self->world->shadow_lock);
+    SHADOW_UNLOCK(&self->world->physics.shadow_lock);
 
     // Safely destroy Jolt objects outside the lock
     if (j_veh) {
         JPH_PhysicsStepListener *step_listener = JPH_VehicleConstraint_AsPhysicsStepListener(j_veh);
-        JPH_PhysicsSystem_RemoveStepListener(self->world->system, step_listener);
-        JPH_PhysicsSystem_RemoveConstraint(self->world->system, (JPH_Constraint *)j_veh);
+        JPH_PhysicsSystem_RemoveStepListener(self->world->physics.system, step_listener);
+        JPH_PhysicsSystem_RemoveConstraint(self->world->physics.system, (JPH_Constraint *)j_veh);
         JPH_Constraint_Destroy((JPH_Constraint *)j_veh);
     }
 

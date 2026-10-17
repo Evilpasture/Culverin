@@ -1,9 +1,9 @@
 #pragma once
+#include "culverin_jolt_config.h"
 #include "culverin_compiler_specifics.h"
-#include "culverin_parsers.h"
+#include "culverin_parser_types.h"
 #include "culverin_types.h"
 #include "joltc.h"
-#include <Python.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -158,11 +158,6 @@ typedef union {
         uint32_t header;
         uint32_t category;
         JPH_SoftBodyCreationSettings *settings;
-        union {
-            uint64_t u64;
-            PyObject *obj;
-            void *ptr;
-        } user_data; // Still 8 bytes
         uint32_t mask;
         uint32_t material_id;
         uint32_t num_vertices;
@@ -196,17 +191,15 @@ static_assert(alignof(PhysicsCommand) == MEMORY_ALIGNMENT_SIZE,
               "PhysicsCommand must be 64-byte aligned");
 static_assert(offsetof(PhysicsCommand, create_soft.settings) == OFFSET_START);
 
-// INCLUDE AFTER PHYSICSCOMMAND!
-typedef struct PhysicsWorldObject PhysicsWorldObject;
+struct PhysicsWorld;
 
-void world_remove_body_slot(struct PhysicsWorldObject *self, uint32_t slot);
+void world_remove_body_slot(struct PhysicsWorld *world, uint32_t slot);
 CULV_NODISCARD
-bool ensure_command_capacity(struct PhysicsWorldObject *self);
+bool ensure_command_capacity(struct PhysicsWorld *world);
 CULV_NODISCARD
-bool ensure_command_bulk_capacity(struct PhysicsWorldObject *self, size_t batch_size);
-void flush_commands_internal(struct PhysicsWorldObject *self, PhysicsCommand *queue, size_t count);
-void sync_and_flush_internal(PhysicsWorldObject *self);
-void clear_command_queue(struct PhysicsWorldObject *self);
+bool ensure_command_bulk_capacity(struct PhysicsWorld *world, size_t batch_size);
+void flush_commands_internal(struct PhysicsWorld *world, PhysicsCommand *queue, size_t count);
+void clear_command_queue(struct PhysicsWorld *world);
 
 // True Direct Threading: Evaluates the next command without returning to a while loop.
 // Includes aggressive software prefetching for indirect lookups.
@@ -226,19 +219,19 @@ static constexpr uint32_t VALID_BID_MASK = (1u << SLOT_ALIVE) | (1u << SLOT_PEND
         if (LIKELY(i < count)) {                                                                   \
             CULV_PREFETCH_READ(&queue[i]);                                                         \
             const uint32_t next_slot = CMD_GET_SLOT(queue[i].header);                              \
-            CULV_PREFETCH_READ(&self->slot_states[next_slot]);                                     \
-            CULV_PREFETCH_READ(&self->slot_to_dense[next_slot]);                                   \
+            CULV_PREFETCH_READ(&world->slot_states[next_slot]);                                     \
+            CULV_PREFETCH_READ(&world->slot_to_dense[next_slot]);                                   \
         }                                                                                          \
                                                                                                    \
-        state = atomic_load_explicit(&self->slot_states[slot], memory_order_acquire);              \
+        state = atomic_load_explicit(&world->slot_states[slot], memory_order_acquire);              \
                                                                                                    \
         /* Branchless State Validation (Guarded against UB shift) */                               \
         /* If state > 31, (state < 32) evaluates to 0, masking the entire result to 0 */           \
         const uint32_t is_valid = (state < 32) & ((VALID_BID_MASK >> (state & 31)) & 1);           \
                                                                                                    \
         /* Unconditional Read: dense_idx and bid are always within allocated bounds */             \
-        const uint32_t dense_idx = self->slot_to_dense[slot];                                      \
-        bid                      = self->body_ids[dense_idx];                                      \
+        const uint32_t dense_idx = world->slot_to_dense[slot];                                      \
+        bid                      = world->body_ids[dense_idx];                                      \
                                                                                                    \
         /* Branchless Condition: Is it CREATE, or does it have a valid BID? */                     \
         const uint32_t is_executable =                                                             \

@@ -1,6 +1,7 @@
 #pragma once
 #include "culverin_compiler_specifics.h"
 #include <Python.h>
+#include "culverin_python_declare.h"
 
 // Forward declarations: "Trust me, these exist"
 struct PhysicsWorldObject;

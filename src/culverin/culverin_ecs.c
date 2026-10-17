@@ -625,7 +625,7 @@ PyCFunction_DeclareMethodFromModule Registry_sync_from_world(RegistryObject *sel
     }
 
     // Lock both Physics and ECS
-    SHADOW_LOCK(&world->shadow_lock);
+    SHADOW_LOCK(&world->physics.shadow_lock);
     SHADOW_LOCK(&self->ecs_lock);
 
     for (uint32_t i = 0; i < h_set->count; i++) {
@@ -636,17 +636,17 @@ PyCFunction_DeclareMethodFromModule Registry_sync_from_world(RegistryObject *sel
         memcpy(&handle, &h_set->data[(size_t)i * sizeof(uint64_t)], sizeof(uint64_t));
 
         uint32_t slot;
-        if (unpack_handle(world, handle, &slot)) {
-            uint32_t phys_dense = world->slot_to_dense[slot];
+        if (unpack_handle(&world->physics, handle, &slot)) {
+            uint32_t phys_dense = world->physics.slot_to_dense[slot];
 
             // 1. Sync Position (Using your PositionVector / PosStride logic)
             if (p_set && ent_idx < p_set->sparse_capacity &&
                 p_set->sparse[ent_idx] != INVALID_DENSE_INDEX) {
                 uint32_t p_dense = p_set->sparse[ent_idx];
 
-                // Assuming world->positions stores 1 PositionVector (or 4 Reals) per entity
+                // Assuming world->physics.positions stores 1 PositionVector (or 4 Reals) per entity
                 // depending on your stride. Using PosStride as defined in your types header.
-                PosStride *p = &((PosStride *)world->positions)[phys_dense];
+                PosStride *p = &((PosStride *)world->physics.positions)[phys_dense];
 
                 float *out = (float *)&p_set->data[(size_t)p_dense * sizeof(float) * 3];
                 out[0]     = (float)p->x;
@@ -655,13 +655,13 @@ PyCFunction_DeclareMethodFromModule Registry_sync_from_world(RegistryObject *sel
             }
 
             // 2. Sync Rotation
-            // world->rotations is a flat float array (4 floats per quaternion)
+            // world->physics.rotations is a flat float array (4 floats per quaternion)
             if (r_set && ent_idx < r_set->sparse_capacity &&
                 r_set->sparse[ent_idx] != INVALID_DENSE_INDEX) {
                 uint32_t r_dense = r_set->sparse[ent_idx];
 
                 // Index directly into the float array
-                float *phys_rot = &world->rotations[(size_t)phys_dense * 4];
+                float *phys_rot = &world->physics.rotations[(size_t)phys_dense * 4];
                 float *out      = (float *)&r_set->data[(size_t)r_dense * sizeof(float) * 4];
 
                 // Fast direct float copy (16 bytes)
@@ -671,7 +671,7 @@ PyCFunction_DeclareMethodFromModule Registry_sync_from_world(RegistryObject *sel
     }
 
     SHADOW_UNLOCK(&self->ecs_lock);
-    SHADOW_UNLOCK(&world->shadow_lock);
+    SHADOW_UNLOCK(&world->physics.shadow_lock);
     Py_RETURN_NONE;
 }
 

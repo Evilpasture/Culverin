@@ -3,6 +3,7 @@
 #include "culverin_compiler_specifics.h"
 #include "culverin_threading.h"
 #include <Python.h>
+#include "culverin_python_declare.h"
 
 // A 64-bit Entity Handle: [32-bit Generation | 32-bit Index]
 typedef uint64_t CulvEntity;

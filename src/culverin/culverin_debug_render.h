@@ -1,5 +1,7 @@
 #pragma once
+#include "culverin_jolt_config.h"
 #include "joltc.h"
+#include <stddef.h>
 #include <stdint.h>
 
 // 16-byte strided vertex for easy GPU upload: [X, Y, Z, Color(u32)]

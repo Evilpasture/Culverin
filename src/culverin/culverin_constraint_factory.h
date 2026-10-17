@@ -1,5 +1,5 @@
 #pragma once
-#include "culverin_parsers.h"
+#include "culverin_parser_types.h"
 #include "joltc.h"
 
 void params_init(ConstraintParams *p);

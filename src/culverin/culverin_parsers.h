@@ -1,24 +1,6 @@
 #pragma once
-#include "culverin_types.h"
+#include "culverin_parser_types.h"
 #include <Python.h>
-
-typedef struct {
-    float p[4];
-} ShapeParams;
-
-typedef struct {
-    uint32_t *indices;
-    uint32_t count;
-    uint32_t driven_idx;
-} TrackData;
-
-typedef struct {
-    float px, py, pz, ax, ay, az;
-    float limit_min, limit_max, half_cone_angle;
-    bool has_motor;
-    int motor_type;
-    float motor_target, max_torque, frequency, damping, max_force;
-} ConstraintParams;
 
 // Direct variable extraction (Fast path)
 int parse_vec3_f32(PyObject *obj, float *x, float *y, float *z);

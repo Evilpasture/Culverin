@@ -25,7 +25,8 @@ void params_init(ConstraintParams *p) {
 
 // --- Jolt Creator Helpers ---
 
-JPH_Constraint *create_fixed(const ConstraintParams *Py_UNUSED(p), JPH_Body *b1, JPH_Body *b2) {
+JPH_Constraint *create_fixed(const ConstraintParams *p, JPH_Body *b1, JPH_Body *b2) {
+    (void)p;
     JPH_FixedConstraintSettings s;
     JPH_FixedConstraintSettings_Init(&s);
     s.base.enabled    = true;

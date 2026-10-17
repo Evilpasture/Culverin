@@ -1,5 +1,5 @@
 #pragma once
-#include "culverin_physics_world.h"
+#include "culverin_physics_world_state.h"
 
 #ifdef __cplusplus
 #    define CULV_NOEXCEPT noexcept
@@ -11,7 +11,7 @@
 extern "C" {
 #endif
 [[gnu::flatten, gnu::hot]]
-void culverin_sync_shadow_buffers(const PhysicsWorldObject *self) CULV_NOEXCEPT;
+void culverin_sync_shadow_buffers(const PhysicsWorld *world) CULV_NOEXCEPT;
 
 #ifdef __cplusplus
 }

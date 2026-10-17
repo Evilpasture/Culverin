@@ -4,6 +4,7 @@
 #include "culverin_constraint_factory.h"
 #include "culverin_physics_sync.h"
 #include "culverin_types.h"
+#include "culverin_native_alloc.h"
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 PyCFunction_DeclareMethodFromModule PhysicsWorld_create_constraint(PhysicsWorldObject *self,
@@ -71,48 +72,48 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_constraint(PhysicsWorldO
     }
 
     // 3. RESOURCE RESERVATION (Shadow Lock)
-    SHADOW_LOCK(&self->shadow_lock);
+    SHADOW_LOCK(&self->physics.shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
 
     uint32_t s1;
     uint32_t s2;
-    if (!unpack_handle(self, (BodyHandle)h1_raw, &s1) ||
-        !unpack_handle(self, (BodyHandle)h2_raw, &s2)) {
-        SHADOW_UNLOCK(&self->shadow_lock);
+    if (!unpack_handle(&self->physics, (BodyHandle)h1_raw, &s1) ||
+        !unpack_handle(&self->physics, (BodyHandle)h2_raw, &s2)) {
+        SHADOW_UNLOCK(&self->physics.shadow_lock);
         RAISE_STALE_HANDLE();
     }
 
-    if (UNLIKELY(self->free_constraint_count == 0)) {
-        SHADOW_UNLOCK(&self->shadow_lock);
+    if (UNLIKELY(self->physics.free_constraint_count == 0)) {
+        SHADOW_UNLOCK(&self->physics.shadow_lock);
         return PyErr_Format(PyExc_MemoryError, "Max constraints reached");
     }
 
     // Allocate heap copy of params for the worker thread
-    ConstraintParams *p_heap = (ConstraintParams *)CULV_RAW_MALLOC(sizeof(ConstraintParams));
+    ConstraintParams *p_heap = (ConstraintParams *)CulvNative_Malloc(sizeof(ConstraintParams));
     memcpy(p_heap, &p, sizeof(ConstraintParams));
 
     // Reserve constraint slot
-    uint32_t c_slot                = self->free_constraint_slots[--self->free_constraint_count];
-    self->constraint_types[c_slot] = type;
-    atomic_store_explicit(&self->constraint_states[c_slot], SLOT_PENDING_CREATE,
+    uint32_t c_slot                = self->physics.free_constraint_slots[--self->physics.free_constraint_count];
+    self->physics.constraint_types[c_slot] = type;
+    atomic_store_explicit(&self->physics.constraint_states[c_slot], SLOT_PENDING_CREATE,
                           memory_order_relaxed);
-    uint32_t gen            = self->constraint_generations[c_slot];
+    uint32_t gen            = self->physics.constraint_generations[c_slot];
     ConstraintHandle handle = ((uint64_t)gen << HANDLE_INDEX_BITS) | c_slot;
 
     // 4. QUEUE ASYNCHRONOUS COMMAND
-    if (UNLIKELY(!ensure_command_capacity(self))) {
-        CULV_RAW_FREE(p_heap); // DO NOT LEAK MEMORY
-        SHADOW_UNLOCK(&self->shadow_lock);
+    if (UNLIKELY(!ensure_command_capacity(&self->physics))) {
+        CulvNative_Free(p_heap); // DO NOT LEAK MEMORY
+        SHADOW_UNLOCK(&self->physics.shadow_lock);
         return PyErr_NoMemory();
     }
-    PhysicsCommand *cmd             = &self->command_queue[self->command_count++];
+    PhysicsCommand *cmd             = &self->physics.command_queue[self->physics.command_count++];
     cmd->header                     = CMD_HEADER(CMD_CREATE_CONSTRAINT, s1);
     cmd->constraint.body2_slot      = s2;
     cmd->constraint.constraint_slot = c_slot;
     cmd->constraint.type            = type;
     cmd->constraint.params          = p_heap;
 
-    SHADOW_UNLOCK(&self->shadow_lock);
+    SHADOW_UNLOCK(&self->physics.shadow_lock);
     return PyLong_FromUnsignedLongLong(handle);
 }
 
@@ -136,33 +137,33 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_destroy_constraint(PhysicsWorld
     JPH_Constraint *c_to_destroy = nullptr;
 
     // 2. RESOLUTION PHASE (Inside Shadow Lock)
-    SHADOW_LOCK(&self->shadow_lock);
+    SHADOW_LOCK(&self->physics.shadow_lock);
 
     // RESOLUTION PHASE
     uint32_t slot = (uint32_t)(h_raw & HANDLE_INDEX_MASK);
     uint32_t gen  = (uint32_t)(h_raw >> HANDLE_INDEX_BITS);
 
-    uint8_t state = atomic_load_explicit(&self->constraint_states[slot], memory_order_relaxed);
+    uint8_t state = atomic_load_explicit(&self->physics.constraint_states[slot], memory_order_relaxed);
 
     // FIX: Allow destruction of ALIVE OR PENDING_CREATE
-    if (slot >= self->constraint_capacity || self->constraint_generations[slot] != gen ||
+    if (slot >= self->physics.constraint_capacity || self->physics.constraint_generations[slot] != gen ||
         (state != SLOT_ALIVE && state != SLOT_PENDING_CREATE)) {
 
-        SHADOW_UNLOCK(&self->shadow_lock);
+        SHADOW_UNLOCK(&self->physics.shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Invalid or stale constraint handle");
         return nullptr;
     }
 
-    c_to_destroy = self->constraints[slot];
+    c_to_destroy = self->physics.constraints[slot];
 
     // Transition to EMPTY immediately.
     // If it was PENDING, the flush worker will see SLOT_EMPTY and skip creation.
-    self->constraints[slot] = nullptr;
-    atomic_store_explicit(&self->constraint_states[slot], SLOT_EMPTY, memory_order_release);
-    self->constraint_generations[slot]++;
-    self->free_constraint_slots[self->free_constraint_count++] = slot;
+    self->physics.constraints[slot] = nullptr;
+    atomic_store_explicit(&self->physics.constraint_states[slot], SLOT_EMPTY, memory_order_release);
+    self->physics.constraint_generations[slot]++;
+    self->physics.free_constraint_slots[self->physics.free_constraint_count++] = slot;
 
-    SHADOW_UNLOCK(&self->shadow_lock);
+    SHADOW_UNLOCK(&self->physics.shadow_lock);
 
     // 3. JOLT DESTRUCTION PHASE (Outside Shadow Lock)
     if (c_to_destroy) {
@@ -174,14 +175,14 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_destroy_constraint(PhysicsWorld
             JPH_Body *b2 = JPH_TwoBodyConstraint_GetBody2(tbc);
 
             if (b1) {
-                JPH_BodyInterface_ActivateBody(self->body_interface, JPH_Body_GetID(b1));
+                JPH_BodyInterface_ActivateBody(self->physics.body_interface, JPH_Body_GetID(b1));
             }
             if (b2) {
-                JPH_BodyInterface_ActivateBody(self->body_interface, JPH_Body_GetID(b2));
+                JPH_BodyInterface_ActivateBody(self->physics.body_interface, JPH_Body_GetID(b2));
             }
         }
 
-        JPH_PhysicsSystem_RemoveConstraint(self->system, c_to_destroy);
+        JPH_PhysicsSystem_RemoveConstraint(self->physics.system, c_to_destroy);
         JPH_Constraint_Destroy(c_to_destroy);
     }
 
@@ -207,21 +208,21 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_set_constraint_target(PhysicsWo
     }
 
     // 2. CRITICAL SECTION
-    SHADOW_LOCK(&self->shadow_lock);
+    SHADOW_LOCK(&self->physics.shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
 
     uint32_t slot = (uint32_t)(h_raw & HANDLE_INDEX_MASK);
     uint32_t gen  = (uint32_t)(h_raw >> HANDLE_INDEX_BITS);
 
-    if (UNLIKELY(slot >= self->constraint_capacity || self->constraint_generations[slot] != gen ||
-                 atomic_load_explicit(&self->constraint_states[slot], memory_order_relaxed) !=
+    if (UNLIKELY(slot >= self->physics.constraint_capacity || self->physics.constraint_generations[slot] != gen ||
+                 atomic_load_explicit(&self->physics.constraint_states[slot], memory_order_relaxed) !=
                      SLOT_ALIVE)) {
-        SHADOW_UNLOCK(&self->shadow_lock);
+        SHADOW_UNLOCK(&self->physics.shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Invalid or stale constraint handle");
         return nullptr;
     }
 
-    JPH_Constraint *c         = self->constraints[slot];
+    JPH_Constraint *c         = self->physics.constraints[slot];
     JPH_ConstraintSubType sub = JPH_Constraint_GetSubType(c);
 
     // 3. JPH EXECUTION
@@ -252,14 +253,14 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_set_constraint_target(PhysicsWo
         JPH_Body *b2 = JPH_TwoBodyConstraint_GetBody2((JPH_TwoBodyConstraint *)c);
 
         if (b1) {
-            JPH_BodyInterface_ActivateBody(self->body_interface, JPH_Body_GetID(b1));
+            JPH_BodyInterface_ActivateBody(self->physics.body_interface, JPH_Body_GetID(b1));
         }
         if (b2) {
-            JPH_BodyInterface_ActivateBody(self->body_interface, JPH_Body_GetID(b2));
+            JPH_BodyInterface_ActivateBody(self->physics.body_interface, JPH_Body_GetID(b2));
         }
     }
 
-    SHADOW_UNLOCK(&self->shadow_lock);
+    SHADOW_UNLOCK(&self->physics.shadow_lock);
     Py_RETURN_NONE;
 }
 
@@ -276,32 +277,32 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_constraint_type(PhysicsWorl
         return nullptr;
     }
 
-    SHADOW_LOCK(&self->shadow_lock);
+    SHADOW_LOCK(&self->physics.shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self);
 
     uint32_t slot = (uint32_t)(handle_raw & HANDLE_INDEX_MASK);
     uint32_t gen  = (uint32_t)(handle_raw >> HANDLE_INDEX_BITS);
 
     // Validate slot range and generation
-    if (UNLIKELY(slot >= self->constraint_capacity || self->constraint_generations[slot] != gen)) {
-        SHADOW_UNLOCK(&self->shadow_lock);
+    if (UNLIKELY(slot >= self->physics.constraint_capacity || self->physics.constraint_generations[slot] != gen)) {
+        SHADOW_UNLOCK(&self->physics.shadow_lock);
         RAISE_STALE_HANDLE();
     }
 
     // Load state atomically
-    uint8_t state = atomic_load_explicit(&self->constraint_states[slot], memory_order_acquire);
+    uint8_t state = atomic_load_explicit(&self->physics.constraint_states[slot], memory_order_acquire);
 
     // NEW LOGIC: Accept both ALIVE and PENDING_CREATE
     if (state == SLOT_ALIVE || state == SLOT_PENDING_CREATE) {
         // Return from shadow array directly.
         // This is safe even if Jolt hasn't built the object yet.
-        int type = self->constraint_types[slot];
-        SHADOW_UNLOCK(&self->shadow_lock);
+        int type = self->physics.constraint_types[slot];
+        SHADOW_UNLOCK(&self->physics.shadow_lock);
         return PyLong_FromLong((long)type);
     }
 
     // If state is SLOT_EMPTY or PENDING_DESTROY
-    SHADOW_UNLOCK(&self->shadow_lock);
+    SHADOW_UNLOCK(&self->physics.shadow_lock);
     RAISE_STALE_HANDLE();
 }
 

@@ -1,6 +1,6 @@
 #include "culverin_debug_render.h"
-#include "culverin.h"
-#include "culverin_physics_world.h"
+#include "culverin_native_alloc.h"
+#include "culverin_physics_world_state.h"
 
 // --- Debug Buffer Helpers ---
 void debug_buffer_ensure(DebugBuffer *buf, size_t count_needed) {
@@ -11,7 +11,7 @@ void debug_buffer_ensure(DebugBuffer *buf, size_t count_needed) {
             new_cap *= 2;
         }
 
-        void *new_ptr = CULV_RAW_REALLOC(buf->data, new_cap * sizeof(DebugVertex));
+        void *new_ptr = CulvNative_Realloc(buf->data, new_cap * sizeof(DebugVertex));
         if (!new_ptr) {
             return; // Silent fail on OOM for debug info
         }
@@ -34,7 +34,7 @@ void debug_buffer_push(DebugBuffer *buf, DebugCoordinates pos, uint32_t color) {
 
 void debug_buffer_free(DebugBuffer *buf) {
     if (buf->data) {
-        CULV_RAW_FREE(buf->data);
+        CulvNative_Free(buf->data);
     }
     buf->data     = nullptr;
     buf->count    = 0;
@@ -44,11 +44,11 @@ void debug_buffer_free(DebugBuffer *buf) {
 // --- Jolt Debug Callbacks ---
 static void JPH_API_CALL OnDebugDrawLine(void *userData, const JPH_RVec3 *from, const JPH_RVec3 *to,
                                          JPH_Color color) {
-    auto self = (PhysicsWorldObject *)userData;
-    debug_buffer_ensure(&self->debug_lines, 2);
-    debug_buffer_push(&self->debug_lines,
+    auto *world = (PhysicsWorld *)userData;
+    debug_buffer_ensure(&world->debug_lines, 2);
+    debug_buffer_push(&world->debug_lines,
                       (DebugCoordinates){(float)from->x, (float)from->y, (float)from->z}, color);
-    debug_buffer_push(&self->debug_lines,
+    debug_buffer_push(&world->debug_lines,
                       (DebugCoordinates){(float)to->x, (float)to->y, (float)to->z}, color);
 }
 
@@ -56,15 +56,15 @@ static void JPH_API_CALL OnDebugDrawTriangle(void *userData, const JPH_RVec3 *v1
                                              const JPH_RVec3 *v2,
                                              // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
                                              const JPH_RVec3 *v3, JPH_Color color,
-                                             JPH_DebugRenderer_CastShadow Py_UNUSED(castShadow)) {
-    PhysicsWorldObject *self         = (PhysicsWorldObject *)userData;
+                                             CULV_MAYBE_UNUSED JPH_DebugRenderer_CastShadow castShadow) {
+    auto *world = (PhysicsWorld *)userData;
     constexpr int VERTS_PER_TRIANGLE = 3;
-    debug_buffer_ensure(&self->debug_triangles, VERTS_PER_TRIANGLE);
-    debug_buffer_push(&self->debug_triangles,
+    debug_buffer_ensure(&world->debug_triangles, VERTS_PER_TRIANGLE);
+    debug_buffer_push(&world->debug_triangles,
                       (DebugCoordinates){(float)v1->x, (float)v1->y, (float)v1->z}, color);
-    debug_buffer_push(&self->debug_triangles,
+    debug_buffer_push(&world->debug_triangles,
                       (DebugCoordinates){(float)v2->x, (float)v2->y, (float)v2->z}, color);
-    debug_buffer_push(&self->debug_triangles,
+    debug_buffer_push(&world->debug_triangles,
                       (DebugCoordinates){(float)v3->x, (float)v3->y, (float)v3->z}, color);
 }
 

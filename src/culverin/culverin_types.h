@@ -1,4 +1,5 @@
 #pragma once
+#include "culverin_jolt_config.h"
 #include "culverin_compiler_specifics.h"
 #include <joltc.h>
 #include <stdint.h>
@@ -25,7 +26,7 @@ typedef struct {
     JPH_Real w;
 } PosStride;
 
-// Maps to self->rotations, velocities (Packed X, Y, Z, W)
+// Maps to self->physics.rotations, velocities (Packed X, Y, Z, W)
 typedef struct {
     alignas(16) float x;
     float y, z, w;
@@ -70,6 +71,24 @@ typedef enum MotionType : uint8_t {
     MOTION_KINEMATIC = JPH_MotionType_Kinematic,
     MOTION_DYNAMIC   = JPH_MotionType_Dynamic,
 } MotionType;
+
+typedef struct {
+    float mass;
+    float friction;
+    float restitution;
+    int is_sensor;
+    int use_ccd;
+} BodyCreationProps;
+
+typedef struct {
+    float mass;
+    float friction;
+    float restitution;
+    int is_sensor;
+    int use_ccd;
+    int motion_type;
+    uint32_t allowed_dofs;
+} BodyConfig;
 
 typedef enum ObjectLayer : uint32_t {
     OBJECT_LAYER_STATIC = 0,

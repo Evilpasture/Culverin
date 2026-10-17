@@ -116,16 +116,16 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ship(PhysicsWorldObject 
         return nullptr;
     }
 
-    SHADOW_LOCK(&self->shadow_lock);
+    SHADOW_LOCK(&self->physics.shadow_lock);
     sync_and_flush_internal(self);
 
     uint32_t slot;
-    if (!unpack_handle(self, (BodyHandle)sled_raw, &slot)) {
-        SHADOW_UNLOCK(&self->shadow_lock);
+    if (!unpack_handle(&self->physics, (BodyHandle)sled_raw, &slot)) {
+        SHADOW_UNLOCK(&self->physics.shadow_lock);
         return PyErr_Format(PyExc_ValueError, "Invalid sled handle.");
     }
-    JPH_BodyID bid = self->body_ids[self->slot_to_dense[slot]];
-    SHADOW_UNLOCK(&self->shadow_lock);
+    JPH_BodyID bid = self->physics.body_ids[self->physics.slot_to_dense[slot]];
+    SHADOW_UNLOCK(&self->physics.shadow_lock);
     CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     auto obj          = (ShipObject *)PyObject_GC_New(ShipObject, (PyTypeObject *)st->ShipType);
     if (!obj) {
@@ -153,11 +153,11 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ship(PhysicsWorldObject 
     obj->linear_drag      = drag;
 
     // Use global trampoline lock to register listener
-    NATIVE_MUTEX_LOCK(self->jph_trampoline_lock);
+    NATIVE_MUTEX_LOCK(self->physics.jph_trampoline_lock);
     JPH_PhysicsStepListener_SetProcs(&ship_listener_procs);
     obj->listener = JPH_PhysicsStepListener_Create(obj);
-    JPH_PhysicsSystem_AddStepListener(self->system, obj->listener);
-    NATIVE_MUTEX_UNLOCK(self->jph_trampoline_lock);
+    JPH_PhysicsSystem_AddStepListener(self->physics.system, obj->listener);
+    NATIVE_MUTEX_UNLOCK(self->physics.jph_trampoline_lock);
 
     PyObject_GC_Track((PyObject *)obj);
     return (PyObject *)obj;
@@ -192,10 +192,10 @@ PyType_DeclareSlot_VoidFromModule Ship_dealloc(ShipObject *self) {
 
     if (self->world && self->listener) {
         // Protect Jolt system call with trampoline lock
-        NATIVE_MUTEX_LOCK(self->world->jph_trampoline_lock);
-        JPH_PhysicsSystem_RemoveStepListener(self->world->system, self->listener);
+        NATIVE_MUTEX_LOCK(self->world->physics.jph_trampoline_lock);
+        JPH_PhysicsSystem_RemoveStepListener(self->world->physics.system, self->listener);
         JPH_PhysicsStepListener_Destroy(self->listener);
-        NATIVE_MUTEX_UNLOCK(self->world->jph_trampoline_lock);
+        NATIVE_MUTEX_UNLOCK(self->world->physics.jph_trampoline_lock);
     }
 
     if (self->parsers) {

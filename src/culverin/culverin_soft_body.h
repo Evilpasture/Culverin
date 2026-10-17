@@ -1,8 +1,9 @@
 #pragma once
 #include "culverin_arg_indices.h"
-#include "culverin_types.h"
+#include "culverin_soft_body_core.h"
 #include "joltc.h"
 #include <Python.h>
+#include "culverin_python_declare.h"
 
 typedef struct {
     PyObject_HEAD JPH_SoftBodySharedSettings *settings;
@@ -11,10 +12,3 @@ typedef struct {
     bool constraints_created;
     bool optimized;
 } SoftBodySharedSettingsObject;
-
-typedef struct {
-    JPH_Real *vertices; // Shadow buffer for positions (Vec3/Vec4)
-    float *normals;     // Optional shadow buffer for normals
-    float *velocities;  // Optional
-    uint32_t num_vertices;
-} SoftBodyShadow;
