@@ -84,10 +84,23 @@ void culv_jph_trace(const char *const inString) {
     }
 
     // 2. Metadata extraction
-    const auto now          = std::chrono::system_clock::now();
     const auto level        = detect_level(msg);
     const auto atty         = static_cast<bool>(IS_ATTY);
     const auto [color, tag] = get_theme(level, atty);
+
+    // libc++'s chrono formatter pulls in floating-point to_chars, which requires macOS 13.4.
+    // Keep the project's 13.3 deployment target by formatting the UTC clock directly.
+    const auto now_seconds = std::chrono::floor<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch());
+    const auto day_start = std::chrono::floor<std::chrono::days>(now_seconds);
+    const std::chrono::hh_mm_ss time_of_day(now_seconds - day_start);
+    const auto hours   = static_cast<unsigned>(time_of_day.hours().count());
+    const auto minutes = static_cast<unsigned>(time_of_day.minutes().count());
+    const auto seconds = static_cast<unsigned>(time_of_day.seconds().count());
+    const std::array<char, 9> timestamp = {
+        static_cast<char>('0' + (hours / 10)), static_cast<char>('0' + (hours % 10)), ':',
+        static_cast<char>('0' + (minutes / 10)), static_cast<char>('0' + (minutes % 10)), ':',
+        static_cast<char>('0' + (seconds / 10)), static_cast<char>('0' + (seconds % 10)), '\0'};
 
     // 3. Stack-allocated formatting (Non-throwing, Zero-allocation)
     // 2048 is usually enough for any physics trace or error message
@@ -96,8 +109,8 @@ void culv_jph_trace(const char *const inString) {
     // std::format_to_n returns a result object containing a pointer to the end
     // and the total size that would have been written. It does not throw.
     const auto result =
-        std::format_to_n(buffer.data(), buffer.size(), "[{:%H:%M:%S}] {}{}{}{} {}\n",
-                         std::chrono::floor<std::chrono::seconds>(now), color, tag,
+        std::format_to_n(buffer.data(), buffer.size(), "[{}] {}{}{}{} {}\n",
+                         std::string_view(timestamp.data(), timestamp.size() - 1), color, tag,
                          (atty ? ANSI_RESET : ""), (atty ? "" : ":"), msg);
 
     // 4. Output safely

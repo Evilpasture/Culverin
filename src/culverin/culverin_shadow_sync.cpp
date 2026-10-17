@@ -307,10 +307,10 @@ culverin_sync_shadow_buffers(const PhysicsWorldObject *const CPH_RESTRICT self) 
         .slot_to_dense = self->slot_to_dense,
     };
 
-    ExecuteSyncPass<EBodyType::RigidBody>(active_rigid_count, system, mapping_data, world);
+    ExecuteSyncPass<JPH::EBodyType::RigidBody>(active_rigid_count, system, mapping_data, world);
 
     if (self->soft_shadows != nullptr) {
-        ExecuteSyncPass<EBodyType::SoftBody>(active_soft_count, system, mapping_data, world);
+        ExecuteSyncPass<JPH::EBodyType::SoftBody>(active_soft_count, system, mapping_data, world);
     }
 
     CULV_PROFILE_ACCUMULATE(sync, &sync_stats);
