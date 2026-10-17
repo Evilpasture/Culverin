@@ -1,10 +1,10 @@
 #pragma once
 
 #define PY_SSIZE_T_CLEAN
-#include "core/JoltConfig.h"
+#include "jolt/JoltConfig.h"
 #include "core/CompilerSpecifics.h"
 #include "joltc.h" // Amer Koleci's JoltC binder.
-#include "core/JoltUtils.h"
+#include "jolt/JoltUtils.h"
 #include <Python.h>
 #include "bindings/PythonDeclarations.h"
 

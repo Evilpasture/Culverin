@@ -1,0 +1,29 @@
+add_library(
+    culverin_native_physics
+    OBJECT
+        CommandBufferCore.c
+        CommandBuffer.h
+        ConstraintFactory.c
+        ConstraintFactory.h
+        ContactListener.cpp
+        ContactListener.h
+        ContactEventDefinitions.h
+        Filters.h
+        InternalQuery.c
+        InternalQuery.h
+        PhysicsParams.h
+        PhysicsWorldCore.c
+        PhysicsWorldCore.h
+        PhysicsWorldState.h
+        ShadowSync.cpp
+        ShadowSync.h
+        SlotState.h
+)
+target_link_libraries(
+    culverin_native_physics
+    PRIVATE
+        culverin_native_common
+        culverin_native_cpp
+        culverin_native_soft_bodies
+)
+culverin_configure_compile_target(culverin_native_physics)

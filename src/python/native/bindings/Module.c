@@ -10,7 +10,7 @@
 #include "debug/DebugRender.h"
 #include "physics/Filters.h"
 #include "bindings/Getters.h"
-#include "core/JoltHandler.h"
+#include "jolt/JoltHandler.h"
 #include "math/Math.h"
 #include "bindings/ModuleState.h"
 #include "bindings/PythonSupport.h"

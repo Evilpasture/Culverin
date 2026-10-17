@@ -1,0 +1,2 @@
+add_library(culverin_python_characters OBJECT Character.c Character.h)
+culverin_configure_python_target(culverin_python_characters)

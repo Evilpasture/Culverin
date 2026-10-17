@@ -2,8 +2,8 @@
 
 // This header defines native world state without interpreter headers or
 // interpreter-local state.
-#include "core/JoltConfig.h"
-#include "core/JoltUtils.h"
+#include "jolt/JoltConfig.h"
+#include "jolt/JoltUtils.h"
 #include "physics/CommandBuffer.h"
 #include "core/CompilerSpecifics.h"
 #include "debug/DebugRender.h"

@@ -330,6 +330,23 @@ else()
     endif()
 endif()
 
+# Centralize flags shared by the project-owned compile targets. Domain targets
+# call this helper in their local CMakeLists.txt; IPO/LTO is applied after all
+# targets have been declared.
+function(culverin_configure_compile_target target)
+    target_compile_options(${target} PRIVATE ${CULVERIN_COMPILE_FLAGS})
+    target_compile_definitions(${target} PRIVATE ${CULV_ASSERT_DEFS} JPH_DEBUG_RENDERER)
+
+    if(NOT MSVC)
+        target_compile_definitions(${target} PRIVATE _GNU_SOURCE)
+    else()
+        target_compile_options(${target} PRIVATE /Zi /fp:fast)
+        target_compile_definitions(${target} PRIVATE _CRT_DECLARE_NONSTDC_NAMES=1)
+    endif()
+
+    set_property(GLOBAL APPEND PROPERTY CULVERIN_COMPILE_TARGETS "${target}")
+endfunction()
+
 # ==============================================================================
 # 3. BUILD JOLT PHYSICS
 # ==============================================================================
@@ -436,77 +453,26 @@ endif()
 
 add_subdirectory("extern/mag-mutex")
 
-# The reusable engine target is deliberately independent of CPython. It receives
-# native/Jolt headers and native dependencies only; the extension owns Python.h.
-add_library(
-    culverin_core
-    STATIC
-    src/native/physics/ShadowSync.cpp
-    src/native/debug/DebugRender.c
-    src/native/physics/ContactListener.cpp
-    src/native/physics/CommandBufferCore.c
-    src/native/physics/InternalQuery.c
-    src/native/physics/PhysicsWorldCore.c
-    src/native/physics/ConstraintFactory.c
-    src/native/core/JoltHandler.cpp
-    src/native/math/Math.cpp
-)
-target_compile_options(culverin_core PRIVATE ${CULVERIN_COMPILE_FLAGS})
-target_compile_definitions(culverin_core PRIVATE ${CULV_ASSERT_DEFS} JPH_DEBUG_RENDERER)
-target_include_directories(
-    culverin_core
-    PUBLIC
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/native"
-        "extern/mag-mutex/include"
-)
-target_include_directories(
-    culverin_core
-    SYSTEM PUBLIC "extern/JoltC/include" "${JOLT_DIR}"
-)
-target_link_libraries(culverin_core PUBLIC mag_mutex_lib ${JOLTC_TARGET} Jolt::Jolt)
+# Domain targets are declared next to their sources. The native subproject
+# aggregates Python-independent object targets into culverin_core.
+add_subdirectory("src/native")
 
-# Python discovery begins only after the Python-independent core target exists.
+# Python discovery and extension domains come after the native core boundary.
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 
-python_add_library(
-    _culverin_c
-    MODULE
-    src/python/native/bindings/Module.c
-    src/python/native/bindings/Getters.c
-    src/python/native/characters/Character.c
-    src/python/native/bindings/parsing/Parsers.c
-    src/python/native/vehicles/Vehicle.c
-    src/python/native/bindings/physics/CommandBufferBinding.c
-    src/python/native/vehicles/TrackedVehicle.c
-    src/python/native/ragdolls/Ragdoll.c
-    src/python/native/bindings/physics/WorldAdapters.c
-    src/python/native/bindings/physics/QueryMethods.c
-    src/python/native/bindings/physics/Constraint.c
-    src/python/native/bindings/parsing/ArgIndices.c
-    src/python/native/soft_bodies/SoftBody.c
-    src/python/native/math/Math.c
-    src/python/native/ecs/Ecs.c
-    src/python/native/vehicles/Ship.c
-    src/python/native/bindings/physics/PhysicsWorld.c
-    src/native/core/JoltRttiShim.cpp
-)
+# External libraries are declared before the adapter domains that consume them.
+add_subdirectory("extern/fast-capi")
+set(FAST_CAPI_TARGET fast_capi_core)
+target_compile_options(${FAST_CAPI_TARGET} PRIVATE ${CULVERIN_COMPILE_FLAGS})
+target_compile_definitions(${FAST_CAPI_TARGET} PRIVATE ${CULV_ASSERT_DEFS})
 
-if(MSVC)
-    set_source_files_properties(
-        src/native/core/JoltRttiShim.cpp
-        PROPERTIES COMPILE_OPTIONS "/GR"
-    )
-else()
-    set_source_files_properties(
-        src/native/core/JoltRttiShim.cpp
-        PROPERTIES COMPILE_OPTIONS "-frtti"
-    )
-endif()
+add_subdirectory("extern/docs-embedder")
+target_compile_options(docs_embedder PRIVATE ${CULVERIN_COMPILE_FLAGS})
+target_compile_definitions(docs_embedder PRIVATE ${CULV_ASSERT_DEFS})
 
-target_compile_options(_culverin_c PRIVATE ${CULVERIN_COMPILE_FLAGS})
-target_compile_definitions(_culverin_c PRIVATE ${CULV_ASSERT_DEFS} JPH_DEBUG_RENDERER)
+add_subdirectory("src/python/native")
 
-# In section 4, guard IPO for GCC on Windows:
+# Check IPO support for all project-owned and external targets.
 include(CheckIPOSupported)
 check_ipo_supported(RESULT ipo_supported OUTPUT error)
 if(ipo_supported)
@@ -517,55 +483,23 @@ if(ipo_supported)
         message(STATUS "Culverin: GCC+Windows detected — skipping CMake IPO to avoid PyInit_ visibility loss")
     else()
         message(STATUS "Culverin: LTO/IPO is supported and ENABLED")
-        set_property(TARGET _culverin_c PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+        get_property(
+            CULVERIN_COMPILE_TARGETS
+            GLOBAL PROPERTY CULVERIN_COMPILE_TARGETS
+        )
+        foreach(target IN LISTS CULVERIN_COMPILE_TARGETS)
+            set_property(TARGET ${target} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+        endforeach()
         set_property(TARGET culverin_core PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
         set_property(TARGET ${JOLTC_TARGET} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+        set_property(TARGET ${FAST_CAPI_TARGET} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+        set_property(TARGET docs_embedder PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
         if(TARGET Jolt AND NOT DEFINED JOLT_PREBUILT_DIR)
             set_property(TARGET Jolt PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
         endif()
     endif()
 else()
     message(WARNING "Culverin: LTO/IPO not supported: ${error}")
-endif()
-
-add_custom_command(
-    TARGET _culverin_c
-    POST_BUILD
-    COMMAND
-        ${CMAKE_COMMAND} -E echo
-        "Extension built at: $<TARGET_FILE:_culverin_c>"
-)
-
-# ==============================================================================
-# 4.1 BUILD FAST-CAPI (Via Submodule CMake)
-# ==============================================================================
-# 1. Use the submodule's own CMake logic
-add_subdirectory("extern/fast-capi")
-
-# 2. Extract the target name from the submodule (it's called 'fast_capi_core')
-set(FAST_CAPI_TARGET fast_capi_core)
-
-# 3. Apply Culverin's high-performance flags to the submodule target
-target_compile_options(${FAST_CAPI_TARGET} PRIVATE ${CULVERIN_COMPILE_FLAGS})
-target_compile_definitions(${FAST_CAPI_TARGET} PRIVATE ${CULV_ASSERT_DEFS})
-
-# 4. Enforce IPO/LTO if supported
-if(ipo_supported AND NOT (CMAKE_C_COMPILER_ID STREQUAL "GNU" AND WIN32))
-    set_property(TARGET ${FAST_CAPI_TARGET} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
-endif()
-
-# ==============================================================================
-# 4.2 BUILD DOCS-EMBEDDER (Via Submodule CMake)
-# ==============================================================================
-add_subdirectory("extern/docs-embedder")
-
-# Apply Culverin's high-performance flags to the submodule
-target_compile_options(docs_embedder PRIVATE ${CULVERIN_COMPILE_FLAGS})
-target_compile_definitions(docs_embedder PRIVATE ${CULV_ASSERT_DEFS})
-
-# Enforce IPO/LTO if supported
-if(ipo_supported AND NOT (CMAKE_C_COMPILER_ID STREQUAL "GNU" AND WIN32))
-    set_property(TARGET docs_embedder PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
 endif()
 
 # --- #embed Fallback Generator for Ancient Compilers which are probably older than me ---
@@ -631,8 +565,13 @@ if(NOT ENABLE_SANITIZER AND NOT ENABLE_THREAD_SANITIZER)
 
     if(LTO_COMPILE_FLAG)
         message(STATUS "Culverin: Applying ${CMAKE_C_COMPILER_ID} LTO optimizations")
-        target_compile_options(_culverin_c PRIVATE ${LTO_COMPILE_FLAG})
-        target_compile_options(culverin_core PRIVATE ${LTO_COMPILE_FLAG})
+        get_property(
+            CULVERIN_COMPILE_TARGETS
+            GLOBAL PROPERTY CULVERIN_COMPILE_TARGETS
+        )
+        foreach(target IN LISTS CULVERIN_COMPILE_TARGETS)
+            target_compile_options(${target} PRIVATE ${LTO_COMPILE_FLAG})
+        endforeach()
         target_link_options(_culverin_c PRIVATE ${LTO_LINK_FLAG})
         target_compile_options(${JOLTC_TARGET} PRIVATE ${LTO_COMPILE_FLAG})
         
@@ -646,12 +585,8 @@ endif()
 # 6. PLATFORM & LINKER FLAGS
 # ==============================================================================
 if(MSVC)
-    # --- MSVC / Clang-CL PERFORMANCE & DEBUG FLAGS ---
-    target_compile_options(_culverin_c PRIVATE /Zi /fp:fast)
-    target_compile_options(culverin_core PRIVATE /Zi /fp:fast)
+    # --- MSVC / Clang-CL LINKER FLAGS ---
     target_link_options(_culverin_c PRIVATE /DEBUG /OPT:REF /OPT:ICF)
-    target_compile_definitions(_culverin_c PRIVATE _CRT_DECLARE_NONSTDC_NAMES=1)
-    target_compile_definitions(culverin_core PRIVATE _CRT_DECLARE_NONSTDC_NAMES=1)
 else()
     # --- GNU / MinGW LINKER FLAGS ---
     if(WIN32)
@@ -700,25 +635,6 @@ target_include_directories(
 )
 
 target_compile_definitions(
-    culverin_core
-    PRIVATE $<$<NOT:$<BOOL:${MSVC}>>:_GNU_SOURCE>
-)
-target_compile_definitions(
-    _culverin_c
-    PRIVATE $<$<NOT:$<BOOL:${MSVC}>>:_GNU_SOURCE>
-)
-
-target_include_directories(
-    _culverin_c
-    PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/native"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/python/native"
-        "extern/mag-mutex/include"
-        ${Python_INCLUDE_DIRS}
-)
-
-target_compile_definitions(
     _culverin_c
     PRIVATE CULVERIN_DOCS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/docs/DOCS.md"
 )
@@ -726,13 +642,17 @@ target_compile_definitions(
 if(WIN32)
     target_link_libraries(_culverin_c PRIVATE Winmm.lib)
 endif()
-target_link_libraries(_culverin_c PRIVATE culverin_core fast_capi_core docs_embedder)
 
 if(APPLE)
     message(STATUS "Culverin: Enforcing Strong Symbol Export")
+    get_property(
+        CULVERIN_COMPILE_TARGETS
+        GLOBAL PROPERTY CULVERIN_COMPILE_TARGETS
+    )
+    foreach(target IN LISTS CULVERIN_COMPILE_TARGETS)
+        target_compile_options(${target} PRIVATE "-frtti")
+    endforeach()
     target_compile_options(${JOLTC_TARGET} PRIVATE "-frtti")
-    target_compile_options(culverin_core PRIVATE "-frtti")
-    target_compile_options(_culverin_c PRIVATE "-frtti")
     target_link_options(_culverin_c PRIVATE "-Wl,-all_load,-object_path_lto,culverin.o")
 endif()
 
@@ -753,20 +673,6 @@ set_property(
 # ==============================================================================
 # 8. INSTALLATION
 # ==============================================================================
-install(TARGETS _culverin_c DESTINATION .)
-
-# Only attempt to evaluate PDB generator expressions on Windows.
-# Even with OPTIONAL, Linux linkers will fail the generation phase if they see this GenEx.
-if(WIN32 AND (MSVC OR CMAKE_CXX_COMPILER_ID MATCHES "Clang"))
-    install(FILES $<TARGET_PDB_FILE:_culverin_c> 
-            DESTINATION . 
-            OPTIONAL) 
-    message(STATUS "Culverin: Windows PDB installation configured.")
-else()
-    message(STATUS "Culverin: Non-PDB platform/compiler detected, skipping PDB installation.")
-endif()
-
-
 install(
     FILES
         src/python/culverin/__init__.py

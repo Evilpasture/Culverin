@@ -1,5 +1,5 @@
 #pragma once
-#include "core/JoltConfig.h"
+#include "jolt/JoltConfig.h"
 #include "core/CompilerSpecifics.h"
 #include <joltc.h>
 #include <stdint.h>

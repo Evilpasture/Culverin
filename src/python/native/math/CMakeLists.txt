@@ -1,0 +1,2 @@
+add_library(culverin_python_math OBJECT Math.c Math.h)
+culverin_configure_python_target(culverin_python_math)
