@@ -26,6 +26,7 @@ def generate_clangd() -> None:
             break
 
     include_dirs = [
+        (project_root / "src/culverin/native").as_posix(),
         (project_root / "extern/JoltC/include").as_posix(),
         (project_root / "extern/JoltPhysics").as_posix(),
         final_python_path.as_posix(),
@@ -78,18 +79,7 @@ Diagnostics:
   UnusedIncludes: Strict
 
 ---
-# 0. EXTENSIONLESS SRC FILES (The "Culverin" Dialect Fix)
-If:
-  PathMatch: src/[^.]* # Matches files with NO dots in the name
-CompileFlags:
-  Add: [
-      "-xc++",
-      "-std=c++23",
-      "-fno-exceptions"
-  ]
-
----
-# 1. THE C23 BLOCK
+# 0. THE C23 BLOCK
 If:
   PathMatch: [.*\.c, .*/extern/JoltC/.*\.h]
 CompileFlags:
@@ -100,7 +90,7 @@ CompileFlags:
   ]
 
 ---
-# 2. THE C++23 BLOCK
+# 1. THE C++23 BLOCK
 If:
   PathMatch: [.*\.cpp, .*\.hpp, .*\.cc]
 CompileFlags:

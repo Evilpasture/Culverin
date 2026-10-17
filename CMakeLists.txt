@@ -441,43 +441,43 @@ add_subdirectory("extern/mag-mutex")
 python_add_library(
     _culverin_c
     MODULE
-    src/culverin/culverin.c
-    src/culverin/culverin_shadow_sync.cpp
-    src/culverin/culverin_debug_render.c
-    src/culverin/culverin_getters.c
-    src/culverin/culverin_character.c
-    src/culverin/culverin_contact_listener.cpp
-    src/culverin/culverin_parsers.c
-    src/culverin/culverin_vehicle.c
-    src/culverin/culverin_command_buffer_core.c
-    src/culverin/culverin_command_buffer.c
-    src/culverin/culverin_tracked_vehicle.c
-    src/culverin/culverin_ragdoll.c
-    src/culverin/culverin_internal_query.c
-    src/culverin/culverin_physics_world_core.c
-    src/culverin/culverin_physics_world_internal.c
-    src/culverin/culverin_query_methods.c
-    src/culverin/culverin_constraint.c
-    src/culverin/culverin_constraint_factory.c
-    src/culverin/culverin_arg_indices.c
-    src/culverin/culverin_handler.cpp
-    src/culverin/culverin_soft_body.c
-    src/culverin/culverin_math.cpp
-    src/culverin/culverin_math.c
-    src/culverin/culverin_ecs.c
-    src/culverin/culverin_ship.c
-    src/culverin/culverin_physics_world.c
+    src/culverin/native/bindings/Module.c
+    src/culverin/native/physics/ShadowSync.cpp
+    src/culverin/native/debug/DebugRender.c
+    src/culverin/native/bindings/Getters.c
+    src/culverin/native/characters/Character.c
+    src/culverin/native/physics/ContactListener.cpp
+    src/culverin/native/bindings/parsing/Parsers.c
+    src/culverin/native/vehicles/Vehicle.c
+    src/culverin/native/physics/CommandBufferCore.c
+    src/culverin/native/bindings/physics/CommandBufferBinding.c
+    src/culverin/native/vehicles/TrackedVehicle.c
+    src/culverin/native/ragdolls/Ragdoll.c
+    src/culverin/native/physics/InternalQuery.c
+    src/culverin/native/physics/PhysicsWorldCore.c
+    src/culverin/native/bindings/physics/WorldAdapters.c
+    src/culverin/native/bindings/physics/QueryMethods.c
+    src/culverin/native/bindings/physics/Constraint.c
+    src/culverin/native/physics/ConstraintFactory.c
+    src/culverin/native/bindings/parsing/ArgIndices.c
+    src/culverin/native/core/JoltHandler.cpp
+    src/culverin/native/soft_bodies/SoftBody.c
+    src/culverin/native/math/Math.cpp
+    src/culverin/native/math/Math.c
+    src/culverin/native/ecs/Ecs.c
+    src/culverin/native/vehicles/Ship.c
+    src/culverin/native/bindings/physics/PhysicsWorld.c
 )
 
-target_sources(_culverin_c PRIVATE src/culverin/culverin_jph_rtti_shim.cpp)
+target_sources(_culverin_c PRIVATE src/culverin/native/core/JoltRttiShim.cpp)
 if(MSVC)
     set_source_files_properties(
-        src/culverin/culverin_jph_rtti_shim.cpp
+        src/culverin/native/core/JoltRttiShim.cpp
         PROPERTIES COMPILE_OPTIONS "/GR"
     )
 else()
     set_source_files_properties(
-        src/culverin/culverin_jph_rtti_shim.cpp
+        src/culverin/native/core/JoltRttiShim.cpp
         PROPERTIES COMPILE_OPTIONS "-frtti"
     )
 endif()
@@ -686,7 +686,7 @@ target_compile_definitions(
 target_include_directories(
     _culverin_c
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" 
-    "src/culverin"
+    "src/culverin/native"
     "extern/mag-mutex/include"
     ${Python_INCLUDE_DIRS}
 )

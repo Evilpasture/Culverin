@@ -4,8 +4,8 @@ from pathlib import Path
 
 # Configuration
 JOLTC_HEADER = Path("extern/JoltC/include/joltc.h")
-SOURCE_DIR = Path("src/culverin")
-EXTENSIONS = {".c", ".h", ".cpp"}
+SOURCE_DIR = Path("src/culverin/native")
+EXTENSIONS = {".c", ".h", ".cpp", ".hpp"}
 
 
 def get_jolt_functions(header_path):
