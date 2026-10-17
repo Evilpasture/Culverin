@@ -165,25 +165,26 @@ inline auto ProcessBatch(const WorldDataCreateInfo world,
 // =================================================================================================
 template <JPH::EBodyType TType>
 [[gnu::always_inline, gnu::flatten, gnu::nonnull(2)]] inline auto
-ExecuteSyncPass(const Unsigned32 active_count, const JPH::PhysicsSystem *const CPH_RESTRICT system,
+ExecuteSyncPass(const Unsigned32 active_count, const JPH_PhysicsSystem *const CPH_RESTRICT system,
                 MappingDataCreateInfo map, const WorldDataCreateInfo world) noexcept -> void {
     if (active_count == 0) {
         return;
     }
 
-    const JPH::BodyID *const CPH_RESTRICT active_ids = system->GetActiveBodiesUnsafe(TType);
+    constexpr JPH_BodyType body_type =
+        TType == JPH::EBodyType::RigidBody ? JPH_BodyType_Rigid : JPH_BodyType_Soft;
+    const JPH_BodyID *const CPH_RESTRICT active_ids =
+        JPH_PhysicsSystem_GetActiveBodiesUnsafe(system, body_type);
     if (active_ids == nullptr) {
         [[unlikely]] return;
     }
-
-    const auto *const CPH_RESTRICT lock_iface = &system->GetBodyLockInterfaceNoLock();
 
     alignas(MEMORY_ALIGNMENT_SIZE) std::array<SyncWorkItem, BATCH_SIZE> worklist;
 
     Unsigned32 work_ptr = 0;
 
     for (Unsigned32 i = 0; i < active_count; i++) {
-        const Unsigned32 raw_jolt_id = active_ids[i].GetIndexAndSequenceNumber();
+        const JPH_BodyID raw_jolt_id = active_ids[i];
         const Unsigned32 j_idx       = raw_jolt_id & JPH::BodyID::cMaxBodyIndex;
 
         const auto *CPH_RESTRICT b =
@@ -191,11 +192,14 @@ ExecuteSyncPass(const Unsigned32 active_count, const JPH::PhysicsSystem *const C
 
         [[clang::always_inline]] if (b == nullptr || b->GetID().GetIndexAndSequenceNumber() !=
                                                          raw_jolt_id) [[unlikely]] {
-            [[clang::always_inline]] b = lock_iface->TryGetBody(JPH::BodyID(raw_jolt_id));
-            map.body_ptrs[j_idx]       = b;
+            const JPH_Body *const c_body =
+                JPH_PhysicsSystem_GetBodyPtr(system, raw_jolt_id);
+            b = reinterpret_cast<const JPH::Body *>(c_body);
+            map.body_ptrs[j_idx] = b;
         }
-        // Verified by flush_commands_internal.
-        [[assume(b != nullptr)]];
+        if (b == nullptr) [[unlikely]] {
+            continue;
+        }
 
         const Unsigned64 handle    = b->GetUserData();
         const auto slot            = static_cast<const Unsigned32>(handle & HANDLE_INDEX_MASK);
@@ -255,13 +259,14 @@ ExecuteSyncPass(const Unsigned32 active_count, const JPH::PhysicsSystem *const C
 
 extern "C" [[gnu::flatten, gnu::hot, gnu::nonnull(1)]] auto
 culverin_sync_shadow_buffers(const PhysicsWorldObject *const CPH_RESTRICT self) noexcept -> void {
-    using namespace JPH;
     using namespace CPH;
-    const auto *const CPH_RESTRICT system = static_cast<const PhysicsSystem *const CPH_RESTRICT>(
-        JPH_PhysicsSystem_GetPhysicsSystemInstance(self->system));
+    // Use upstream JoltC's public API instead of the fork-only raw PhysicsSystem accessor.
+    const JPH_PhysicsSystem *const CPH_RESTRICT system = self->system;
 
-    const Unsigned32 active_rigid_count = system->GetNumActiveBodies(EBodyType::RigidBody);
-    const Unsigned32 active_soft_count  = system->GetNumActiveBodies(EBodyType::SoftBody);
+    const Unsigned32 active_rigid_count =
+        JPH_PhysicsSystem_GetNumActiveBodies(system, JPH_BodyType_Rigid);
+    const Unsigned32 active_soft_count =
+        JPH_PhysicsSystem_GetNumActiveBodies(system, JPH_BodyType_Soft);
 
     if ((active_rigid_count == 0U) && (active_soft_count == 0U)) {
         [[unlikely]] return;
