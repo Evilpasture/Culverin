@@ -9,8 +9,6 @@
 #include <string.h>
 
 static constexpr size_t AVX_ALIGNMENT                  = 32;
-static constexpr size_t SHADOW_CAPACITY_PADDING        = 128;
-static constexpr size_t SHADOW_CAPACITY_GROW           = 1024;
 static constexpr size_t COMMAND_QUEUE_INITIAL_CAPACITY = 64;
 static constexpr size_t INITIAL_BODY_CAPACITY = 1024;
 static constexpr size_t CONTACT_MAX_CAPACITY = sizeof(ContactEvent) * 8 << 5;
@@ -230,6 +228,97 @@ void initialize_free_slots(PhysicsWorld *world, size_t start_idx) {
     }
 }
 
+PhysicsWorldStatus physics_world_load_baked_scene(PhysicsWorld *world,
+                                                  const BakedSceneData *scene) {
+    if (world == nullptr || scene == nullptr) {
+        return PHYSICS_WORLD_STATUS_INVALID_ARGUMENT;
+    }
+    if (scene->count == 0) {
+        return PHYSICS_WORLD_STATUS_OK;
+    }
+    if (scene->positions == nullptr || scene->rotations == nullptr || scene->shapes == nullptr ||
+        scene->motion_types == nullptr || scene->object_layers == nullptr ||
+        scene->user_data == nullptr || world->body_interface == nullptr) {
+        return PHYSICS_WORLD_STATUS_INVALID_ARGUMENT;
+    }
+    if (scene->count > world->capacity || scene->count > world->slot_capacity ||
+        scene->count > world->max_jolt_bodies) {
+        return PHYSICS_WORLD_STATUS_LIMIT_REACHED;
+    }
+
+    auto *const shadow_pos    = (PosStride *)world->positions;
+    auto *const shadow_rot    = (AuxStride *)world->rotations;
+    PhysicsWorldStatus status = PHYSICS_WORLD_STATUS_OK;
+
+    SHADOW_LOCK(&world->shadow_lock);
+    NATIVE_MUTEX_LOCK(world->jph_trampoline_lock);
+    for (size_t i = 0; i < scene->count; ++i) {
+        const float *const shape_data = &scene->shapes[i * CULV_BAKED_SHAPE_STRIDE];
+        const float params[4]  = {shape_data[1], shape_data[2], shape_data[3], shape_data[4]};
+        JPH_Shape *const shape = find_or_create_shape_locked(world, (int)shape_data[0], params);
+        if (UNLIKELY(shape == nullptr)) {
+            status = PHYSICS_WORLD_STATUS_OUT_OF_MEMORY;
+            break;
+        }
+
+        const size_t pos_idx = i * CULV_BAKED_POSITION_STRIDE;
+        const size_t rot_idx = i * CULV_BAKED_ROTATION_STRIDE;
+        shadow_pos[i].x      = scene->positions[pos_idx + 0];
+        shadow_pos[i].y      = scene->positions[pos_idx + 1];
+        shadow_pos[i].z      = scene->positions[pos_idx + 2];
+        shadow_pos[i].w      = 0.0;
+
+        shadow_rot[i].x = scene->rotations[rot_idx + 0];
+        shadow_rot[i].y = scene->rotations[rot_idx + 1];
+        shadow_rot[i].z = scene->rotations[rot_idx + 2];
+        shadow_rot[i].w = scene->rotations[rot_idx + 3];
+
+        JPH_RVec3 j_pos = {shadow_pos[i].x, shadow_pos[i].y, shadow_pos[i].z};
+        JPH_Quat j_rot  = {shadow_rot[i].x, shadow_rot[i].y, shadow_rot[i].z, shadow_rot[i].w};
+        const uint8_t motion_type = scene->motion_types[i];
+        JPH_BodyCreationSettings *creation =
+            JPH_BodyCreationSettings_Create3(shape, &j_pos, &j_rot, (JPH_MotionType)motion_type,
+                                             (JPH_ObjectLayer)scene->object_layers[i]);
+        if (UNLIKELY(creation == nullptr)) {
+            status = PHYSICS_WORLD_STATUS_OUT_OF_MEMORY;
+            break;
+        }
+
+        atomic_store_explicit(&world->generations[i], 1, memory_order_relaxed);
+        const BodyHandle handle = make_handle((uint32_t)i, 1);
+        JPH_BodyCreationSettings_SetUserData(creation, handle);
+        if (motion_type == MOTION_DYNAMIC) {
+            JPH_BodyCreationSettings_SetAllowSleeping(creation, true);
+        }
+
+        const JPH_BodyID body_id = JPH_BodyInterface_CreateAndAddBody(
+            world->body_interface, creation, JPH_Activation_Activate);
+        JPH_BodyCreationSettings_Destroy(creation);
+        if (UNLIKELY(body_id == JPH_INVALID_BODY_ID)) {
+            status = PHYSICS_WORLD_STATUS_OUT_OF_MEMORY;
+            break;
+        }
+
+        world->body_ids[i]      = body_id;
+        const uint32_t jolt_idx = JPH_ID_TO_INDEX(body_id);
+        if (world->id_to_handle_map != nullptr && jolt_idx < world->max_jolt_bodies) {
+            atomic_store_explicit(&world->id_to_handle_map[jolt_idx], handle, memory_order_relaxed);
+        }
+
+        world->slot_to_dense[i] = (uint32_t)i;
+        world->dense_to_slot[i] = (uint32_t)i;
+        atomic_store_explicit(&world->slot_states[i], SLOT_ALIVE, memory_order_relaxed);
+        world->user_data[i] = scene->user_data[i];
+    }
+    NATIVE_MUTEX_UNLOCK(world->jph_trampoline_lock);
+    SHADOW_UNLOCK(&world->shadow_lock);
+
+    if (status == PHYSICS_WORLD_STATUS_OK) {
+        // Publish the initial body count only after every body was created successfully.
+        atomic_store_explicit(&world->count, scene->count, memory_order_relaxed);
+    }
+    return status;
+}
 
 void free_new_buffers(NewBuffers *nb) {
     if (!nb) {
@@ -385,22 +474,19 @@ static size_t migrate_and_init(PhysicsWorld *world, NewBuffers *nb, size_t new_c
 
 // helper: Allocate shadow buffers and indirection maps
 [[nodiscard]]
-int allocate_buffers(PhysicsWorld *world, int max_bodies) {
-    // TSan Fix: Load count atomically
-    size_t current_count = atomic_load_explicit(&world->count, memory_order_relaxed);
-
-    world->capacity = (size_t)max_bodies;
-    if (world->capacity < current_count + SHADOW_CAPACITY_PADDING) {
-        world->capacity = current_count + SHADOW_CAPACITY_GROW;
-    }
+int allocate_buffers(PhysicsWorld *world, int max_bodies, size_t initial_count) {
+    // Reserve for pending baked bodies without publishing them to world->count yet.
+    const size_t max_capacity = (max_bodies > 0) ? (size_t)max_bodies : 0;
     world->max_jolt_bodies = (uint32_t)max_bodies;
 
-    constexpr auto INITIAL_BODY_CAPACITY = 64;
-
-    size_t initial_cap =
-        (max_bodies < INITIAL_BODY_CAPACITY) ? (size_t)max_bodies : INITIAL_BODY_CAPACITY;
-    world->capacity      = initial_cap;
-    world->slot_capacity = initial_cap;
+    constexpr size_t INITIAL_SLOT_CAPACITY = 64;
+    size_t initial_capacity =
+        (max_capacity < INITIAL_SLOT_CAPACITY) ? max_capacity : INITIAL_SLOT_CAPACITY;
+    if (initial_count > initial_capacity && initial_count <= max_capacity) {
+        initial_capacity = initial_count;
+    }
+    world->capacity      = initial_capacity;
+    world->slot_capacity = initial_capacity;
 
     // SIMD Aligned Buffers (Not atomic, these are the heavy data buffers)
     world->positions =

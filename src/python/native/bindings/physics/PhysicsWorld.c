@@ -125,6 +125,7 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
     PyObject *settings_dict     = nullptr;
     PyObject *bodies_list       = nullptr;
     AUTO_DECREF PyObject *baked = nullptr;
+    size_t baked_count          = 0;
     GravityVector gravity;
     WorldSettings settings;
 
@@ -173,11 +174,12 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
         if (!baked) {
             goto fail;
         }
-        atomic_store_explicit(&self->physics.count, PyLong_AsSize_t(PyTuple_GetItem(baked, 0)),
-                              memory_order_relaxed);
+        if (get_baked_scene_count(baked, &baked_count) < 0) {
+            goto fail;
+        }
     }
 
-    if (allocate_buffers(&self->physics, settings.max_bodies) < 0) {
+    if (allocate_buffers(&self->physics, settings.max_bodies, baked_count) < 0) {
         PyErr_NoMemory();
         goto fail;
     }

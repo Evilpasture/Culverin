@@ -1,8 +1,25 @@
 #pragma once
 
 #include "core/Types.h"
+#include <stddef.h>
 
 // Plain native data structures shared by parser adapters and the physics core.
+enum {
+    CULV_BAKED_POSITION_STRIDE = 4,
+    CULV_BAKED_ROTATION_STRIDE = 4,
+    CULV_BAKED_SHAPE_STRIDE    = 5,
+};
+
+typedef struct {
+    size_t count;
+    const JPH_Real *positions;
+    const float *rotations;
+    const float *shapes;
+    const uint8_t *motion_types;
+    const uint8_t *object_layers;
+    const uint64_t *user_data;
+} BakedSceneData;
+
 typedef struct {
     float p[4];
 } ShapeParams;

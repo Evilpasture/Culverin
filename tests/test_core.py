@@ -151,6 +151,37 @@ class TestWorldInitialization(unittest.TestCase):
             else:
                 self.fail(f"Handle {h} (slot {i}) is stale!")
 
+    def test_baked_scene_exceeds_initial_slot_capacity(self) -> None:
+        """Initial bodies should size native storage beyond the small default slot batch."""
+        initial_bodies: list[culverin.BodyDefinition] = [
+            {
+                "pos": (float(i), 0.0, 0.0),
+                "shape": culverin.SHAPE_SPHERE,
+                "size": 0.5,
+            }
+            for i in range(65)
+        ]
+
+        world = culverin.PhysicsWorld(settings={"max_bodies": 128}, bodies=initial_bodies)
+
+        self.assertEqual(world.count, len(initial_bodies))
+        last_body = world.get_position((1 << 32) | (len(initial_bodies) - 1))
+        self.assertEqual(last_body, (64.0, 0.0, 0.0))
+
+    def test_baked_scene_over_max_bodies_fails_cleanly(self) -> None:
+        """Reject an initial scene larger than max_bodies before native writes."""
+        initial_bodies: list[culverin.BodyDefinition] = [
+            {
+                "pos": (float(i), 0.0, 0.0),
+                "shape": culverin.SHAPE_SPHERE,
+                "size": 0.5,
+            }
+            for i in range(65)
+        ]
+
+        with self.assertRaisesRegex(ValueError, "exceeding max_bodies"):
+            culverin.PhysicsWorld(settings={"max_bodies": 64}, bodies=initial_bodies)
+
     def test_reinitialization_guard(self) -> None:
         """Ensure __init__ cannot be called a second time on an active world."""
         world = culverin.PhysicsWorld()

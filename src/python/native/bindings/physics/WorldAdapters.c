@@ -3,16 +3,63 @@
 #include "bindings/ModuleState.h"
 #include "bindings/physics/PhysicsSync.h"
 
-// Baked scene formats (tuple indices and per-object strides)
-static constexpr int BAKED_INDEX_POS      = 1;
-static constexpr int BAKED_INDEX_ROT      = 2;
-static constexpr int BAKED_INDEX_SHAPE    = 3;
-static constexpr int BAKED_INDEX_MOT      = 4;
-static constexpr int BAKED_INDEX_LAYER    = 5;
-static constexpr int BAKED_INDEX_USERDATA = 6;
-static constexpr int BAKED_POS_STRIDE     = 4;
-static constexpr int BAKED_ROT_STRIDE     = 4;
-static constexpr int BAKED_SHAPE_STRIDE   = 5;
+// Baked scene tuple layout produced by culverin.bake_scene.
+enum {
+    BAKED_INDEX_POS = 1,
+    BAKED_INDEX_ROT,
+    BAKED_INDEX_SHAPE,
+    BAKED_INDEX_MOT,
+    BAKED_INDEX_LAYER,
+    BAKED_INDEX_USERDATA,
+    BAKED_TUPLE_SIZE,
+};
+
+[[nodiscard]]
+int get_baked_scene_count(PyObject *baked, size_t *out_count) {
+    if (out_count == nullptr || !PyTuple_Check(baked) ||
+        PyTuple_GET_SIZE(baked) < BAKED_TUPLE_SIZE) {
+        PyErr_SetString(PyExc_ValueError, "Invalid baked scene tuple");
+        return -1;
+    }
+
+    const size_t count = PyLong_AsSize_t(PyTuple_GET_ITEM(baked, 0));
+    if (PyErr_Occurred()) {
+        return -1;
+    }
+    *out_count = count;
+    return 0;
+}
+
+static int baked_buffer_size(size_t count, size_t bytes_per_body, size_t *out_size) {
+    if (count > SIZE_MAX / bytes_per_body || count > (size_t)PY_SSIZE_T_MAX / bytes_per_body) {
+        PyErr_SetString(PyExc_OverflowError, "Baked scene buffer size is too large");
+        return -1;
+    }
+    *out_size = count * bytes_per_body;
+    return 0;
+}
+
+static int get_baked_buffer(PyObject *baked, Py_ssize_t index, size_t expected_size,
+                            const char *name, const void **out_buffer) {
+    PyObject *item = PyTuple_GetItem(baked, index);
+    if (item == nullptr) {
+        return -1;
+    }
+
+    char *buffer    = nullptr;
+    Py_ssize_t size = 0;
+    if (PyBytes_AsStringAndSize(item, &buffer, &size) < 0) {
+        return -1;
+    }
+    if ((size_t)size < expected_size) {
+        PyErr_Format(PyExc_ValueError, "Baked %s buffer too small. Expected %zu bytes, got %zd.",
+                     name, expected_size, size);
+        return -1;
+    }
+
+    *out_buffer = buffer;
+    return 0;
+}
 
 [[nodiscard]]
 int PhysicsWorld_resize(PhysicsWorldObject *self, size_t new_capacity) {
@@ -68,106 +115,73 @@ int init_settings(PhysicsWorldObject *self, PyObject *settings_dict, GravityVect
     return ok ? 0 : -1;
 }
 
-// helper: Iterate over baked Python data to create initial Jolt bodies
+// Decode Python-owned byte buffers, then hand the plain data contract to native physics.
 [[nodiscard]]
 int load_baked_scene(PhysicsWorldObject *self, PyObject *baked) {
-    // TSan Fix: Load current count atomically
-    size_t current_count = atomic_load_explicit(&self->physics.count, memory_order_acquire);
+    size_t count;
+    if (get_baked_scene_count(baked, &count) < 0) {
+        return -1;
+    }
 
-    PyObject *pos_bytes_obj = PyTuple_GetItem(baked, BAKED_INDEX_POS);
-    Py_ssize_t pos_len      = PyBytes_Size(pos_bytes_obj);
+    size_t positions_size;
+    size_t rotations_size;
+    size_t shapes_size;
+    size_t byte_array_size;
+    size_t user_data_size;
+    if (baked_buffer_size(count, sizeof(PosStride), &positions_size) < 0 ||
+        baked_buffer_size(count, sizeof(AuxStride), &rotations_size) < 0 ||
+        baked_buffer_size(count, CULV_BAKED_SHAPE_STRIDE * sizeof(float), &shapes_size) < 0 ||
+        baked_buffer_size(count, sizeof(uint8_t), &byte_array_size) < 0 ||
+        baked_buffer_size(count, sizeof(uint64_t), &user_data_size) < 0) {
+        return -1;
+    }
 
-    if (pos_len < (Py_ssize_t)(current_count * sizeof(PosStride))) {
+    const void *positions;
+    const void *rotations;
+    const void *shapes;
+    const void *motion_types;
+    const void *object_layers;
+    const void *user_data;
+    if (get_baked_buffer(baked, BAKED_INDEX_POS, positions_size, "position", &positions) < 0 ||
+        get_baked_buffer(baked, BAKED_INDEX_ROT, rotations_size, "rotation", &rotations) < 0 ||
+        get_baked_buffer(baked, BAKED_INDEX_SHAPE, shapes_size, "shape", &shapes) < 0 ||
+        get_baked_buffer(baked, BAKED_INDEX_MOT, byte_array_size, "motion type", &motion_types) <
+            0 ||
+        get_baked_buffer(baked, BAKED_INDEX_LAYER, byte_array_size, "object layer",
+                         &object_layers) < 0 ||
+        get_baked_buffer(baked, BAKED_INDEX_USERDATA, user_data_size, "user data", &user_data) <
+            0) {
+        return -1;
+    }
+
+    const BakedSceneData scene = {
+        .count         = count,
+        .positions     = (const JPH_Real *)positions,
+        .rotations     = (const float *)rotations,
+        .shapes        = (const float *)shapes,
+        .motion_types  = (const uint8_t *)motion_types,
+        .object_layers = (const uint8_t *)object_layers,
+        .user_data     = (const uint64_t *)user_data,
+    };
+
+    const PhysicsWorldStatus status = physics_world_load_baked_scene(&self->physics, &scene);
+    switch (status) {
+    case PHYSICS_WORLD_STATUS_OK:
+        return 0;
+    case PHYSICS_WORLD_STATUS_OUT_OF_MEMORY:
+        PyErr_NoMemory();
+        break;
+    case PHYSICS_WORLD_STATUS_LIMIT_REACHED:
         PyErr_Format(PyExc_ValueError,
-                     "Baked position buffer too small. Expected %zu bytes, got %zd.",
-                     current_count * sizeof(PosStride), pos_len);
-        return -1;
+                     "Initial scene contains %zu bodies, exceeding max_bodies (%u).", count,
+                     self->physics.max_jolt_bodies);
+        break;
+    case PHYSICS_WORLD_STATUS_INVALID_ARGUMENT:
+        PyErr_SetString(PyExc_ValueError, "Invalid baked scene data");
+        break;
+    default:
+        PyErr_SetString(PyExc_RuntimeError, "Failed to load baked scene");
+        break;
     }
-
-    // 1. EXTRACT RAW BYTES AS PACKED ARRAYS
-    JPH_Real *baked_pos = (JPH_Real *)PyBytes_AsString(PyTuple_GetItem(baked, BAKED_INDEX_POS));
-    float *baked_rot    = (float *)PyBytes_AsString(PyTuple_GetItem(baked, BAKED_INDEX_ROT));
-    float *baked_shape  = (float *)PyBytes_AsString(PyTuple_GetItem(baked, BAKED_INDEX_SHAPE));
-    unsigned char *u_mot =
-        (unsigned char *)PyBytes_AsString(PyTuple_GetItem(baked, BAKED_INDEX_MOT));
-    unsigned char *u_layer =
-        (unsigned char *)PyBytes_AsString(PyTuple_GetItem(baked, BAKED_INDEX_LAYER));
-    uint64_t *u_data = (uint64_t *)PyBytes_AsString(PyTuple_GetItem(baked, BAKED_INDEX_USERDATA));
-
-    if (!baked_pos || !baked_rot || !baked_shape || !u_mot || !u_layer || !u_data) {
-        PyErr_SetString(PyExc_ValueError, "Invalid or truncated baked data bytes");
-        return -1;
-    }
-
-    int result = 0;
-    SHADOW_LOCK(&self->physics.shadow_lock);
-
-    JPH_BodyInterface *bi = self->physics.body_interface;
-    auto shadow_pos       = (PosStride *)self->physics.positions;
-    auto shadow_rot       = (AuxStride *)self->physics.rotations;
-
-    for (size_t i = 0; i < current_count; i++) {
-        // A. Shape Lookup
-        float *s_data    = &baked_shape[i * BAKED_SHAPE_STRIDE];
-        float params[4]  = {s_data[1], s_data[2], s_data[3], s_data[4]};
-        JPH_Shape *shape = find_or_create_shape_locked(&self->physics, (int)s_data[0], params);
-
-        if (UNLIKELY(!shape)) {
-            result = -1;
-            break;
-        }
-
-        // B. EXTRACT POSITION (Shadow buffers are non-atomic)
-        shadow_pos[i].x = baked_pos[i * BAKED_POS_STRIDE + 0];
-        shadow_pos[i].y = baked_pos[i * BAKED_POS_STRIDE + 1];
-        shadow_pos[i].z = baked_pos[i * BAKED_POS_STRIDE + 2];
-        shadow_pos[i].w = 0.0;
-
-        shadow_rot[i].x = baked_rot[i * BAKED_ROT_STRIDE + 0];
-        shadow_rot[i].y = baked_rot[i * BAKED_ROT_STRIDE + 1];
-        shadow_rot[i].z = baked_rot[i * BAKED_ROT_STRIDE + 2];
-        shadow_rot[i].w = baked_rot[i * BAKED_ROT_STRIDE + 3];
-
-        // C. Jolt Create Settings
-        JPH_RVec3 j_pos = {shadow_pos[i].x, shadow_pos[i].y, shadow_pos[i].z};
-        JPH_Quat j_rot  = {shadow_rot[i].x, shadow_rot[i].y, shadow_rot[i].z, shadow_rot[i].w};
-
-        JPH_BodyCreationSettings *creation = JPH_BodyCreationSettings_Create3(
-            shape, &j_pos, &j_rot, (JPH_MotionType)u_mot[i], (JPH_ObjectLayer)u_layer[i]);
-
-        // TSan Fix: Initialize the atomic generation for this slot
-        atomic_store_explicit(&self->physics.generations[i], 1, memory_order_relaxed);
-
-        // BodyHandle is CULV_ATOMIC(uint64_t). We create it locally.
-        BodyHandle handle = make_handle((uint32_t)i, 1);
-
-        // OPTIMIZATION: Use explicit relaxed load to avoid seq_cst penalty for Jolt
-        uint64_t raw_h = handle;
-        JPH_BodyCreationSettings_SetUserData(creation, raw_h);
-
-        if (u_mot[i] == 2) {
-            JPH_BodyCreationSettings_SetAllowSleeping(creation, true);
-        }
-
-        self->physics.body_ids[i] =
-            JPH_BodyInterface_CreateAndAddBody(bi, creation, JPH_Activation_Activate);
-
-        uint32_t j_idx = JPH_ID_TO_INDEX(self->physics.body_ids[i]);
-        if (self->physics.id_to_handle_map && j_idx < self->physics.max_jolt_bodies) {
-            // TSan Fix: Store to shared map using relaxed (world is not yet simulating)
-            atomic_store_explicit(&self->physics.id_to_handle_map[j_idx], raw_h, memory_order_relaxed);
-        }
-
-        self->physics.slot_to_dense[i] = (uint32_t)i;
-        self->physics.dense_to_slot[i] = (uint32_t)i;
-
-        // TSan Fix: Atomic state update
-        atomic_store_explicit(&self->physics.slot_states[i], SLOT_ALIVE, memory_order_relaxed);
-
-        self->physics.user_data[i] = u_data[i];
-        JPH_BodyCreationSettings_Destroy(creation);
-    }
-
-    SHADOW_UNLOCK(&self->physics.shadow_lock);
-    return result;
+    return -1;
 }

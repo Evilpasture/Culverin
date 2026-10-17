@@ -13,6 +13,7 @@ void PhysicsWorld_free_members(struct PhysicsWorldObject *self);
 
 int init_settings(struct PhysicsWorldObject *self, PyObject *settings_dict, GravityVector *gravity,
                   WorldSettings *settings);
+int get_baked_scene_count(PyObject *baked, size_t *out_count);
 int load_baked_scene(struct PhysicsWorldObject *self, PyObject *baked);
 
 PyType_DeclareSlot_StatusFromModule PhysicsWorld_getbuffer(struct PhysicsWorldObject *self,
