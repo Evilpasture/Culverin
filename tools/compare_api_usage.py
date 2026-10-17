@@ -4,7 +4,7 @@ from pathlib import Path
 
 # Configuration
 JOLTC_HEADER = Path("extern/JoltC/include/joltc.h")
-SOURCE_DIR = Path("src/culverin/native")
+SOURCE_DIR = Path("src")
 EXTENSIONS = {".c", ".h", ".cpp", ".hpp"}
 
 

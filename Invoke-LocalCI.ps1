@@ -28,14 +28,14 @@ try {
         Write-Host "`n>>> Task: Cleaning and Building Extension..." -ForegroundColor Magenta
         
         # 1. CLEAN
-        Get-ChildItem "$ProjectRoot\src\culverin\*" -Include *.pyd, *.so, *.pdb | Remove-Item -Force -ErrorAction SilentlyContinue
+        Get-ChildItem "$ProjectRoot\src\python\culverin\*" -Include *.pyd, *.so, *.pdb | Remove-Item -Force -ErrorAction SilentlyContinue
         
         # 2. BUILD
         uv run python tools/build_project.py
         
         # 3. VERIFY
-        if (-not (Get-ChildItem "$ProjectRoot\src\culverin\_culverin_c.*" -Include *.pyd, *.so)) {
-            Write-Host "ERROR: Build finished but no binary was deployed to src/culverin!" -ForegroundColor Red
+        if (-not (Get-ChildItem "$ProjectRoot\src\python\culverin\_culverin_c.*" -Include *.pyd, *.so)) {
+            Write-Host "ERROR: Build finished but no binary was deployed to src/python/culverin!" -ForegroundColor Red
             exit 1
         }
 
@@ -81,7 +81,7 @@ try {
             }
 
             # 3. Copy py.typed (For Mypy/Pyright)
-            $PyTyped = "$ProjectRoot\src\culverin\py.typed"
+            $PyTyped = "$ProjectRoot\src\python\culverin\py.typed"
             if (Test-Path $PyTyped) {
                 Write-Host "  -> Injecting py.typed..." -ForegroundColor Gray
                 Copy-Item $PyTyped -Destination $DestDir -Force
@@ -91,7 +91,7 @@ try {
             Write-Host ">>> Generating Type Stubs (.pyi)..." -ForegroundColor Yellow
             uv run tools/gen_stubs.py
             
-            Get-ChildItem -Path "$ProjectRoot\src\culverin" -Filter "*.pyi" | ForEach-Object {
+            Get-ChildItem -Path "$ProjectRoot\src\python\culverin" -Filter "*.pyi" | ForEach-Object {
                 Write-Host "  -> Injecting Stub: $($_.Name)" -ForegroundColor Gray
                 Copy-Item $_.FullName -Destination $DestDir -Force
             }

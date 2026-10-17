@@ -1,4 +1,4 @@
-#include "core/Types.h" // Needed for PosStride/AuxStride
+#include "math/MathCore.h"
 // clang-format off
 #include <Jolt/Jolt.h>
 #include <Jolt/Geometry/AABox.h>
@@ -7,14 +7,13 @@
 #include <Jolt/Math/Quat.h>
 #include <Jolt/Math/Vec3.h>
 #include <Jolt/Math/Vec4.h>
-#include <Python.h>
 #include <cmath>
 #include "cpp/Cpp.hpp"
 // clang-format on
 
 extern "C" {
 
-// Internal math helper for C, Python doesn't need this
+// Internal native math operations exposed through the C ABI.
 void culverin_compute_interpolation_loop(const PosStride *CPH_RESTRICT curr_p,
                                          const PosStride *CPH_RESTRICT prev_p,
                                          const AuxStride *CPH_RESTRICT curr_r,
@@ -113,7 +112,7 @@ void culverin_math_interpolate_character_transform(
     q_res.mValue.StoreFloat4(reinterpret_cast<Float4 *>(out_r));
 }
 
-// Internal helpers for Python
+// Native math operations exposed to the binding through a C ABI.
 
 // -----------------------------------------------------------------------------
 // Projection Matrices (Standard Column-Major)

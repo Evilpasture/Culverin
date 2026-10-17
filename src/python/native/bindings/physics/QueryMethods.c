@@ -4,7 +4,7 @@
 #include "bindings/parsing/ArgIndices.h"
 #include "core/CompilerSpecifics.h"
 #include "bindings/FastBuild.h"
-#include "math/Math.h"
+#include "math/MathCore.h"
 #include "bindings/parsing/Parsers.h"
 #include "bindings/physics/PhysicsSync.h"
 

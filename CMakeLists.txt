@@ -423,8 +423,6 @@ target_include_directories(
 target_compile_definitions(${JOLTC_TARGET} PRIVATE ${CULV_ASSERT_DEFS})
 target_link_libraries(${JOLTC_TARGET} PRIVATE Jolt::Jolt)
 
-find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
-
 if(CMAKE_C_COMPILER_ID STREQUAL "GNU" AND WIN32)
     find_program(GCC_AR NAMES gcc-ar)
     find_program(GCC_RANLIB NAMES gcc-ranlib)
@@ -438,52 +436,75 @@ endif()
 
 add_subdirectory("extern/mag-mutex")
 
+# The reusable engine target is deliberately independent of CPython. It receives
+# native/Jolt headers and native dependencies only; the extension owns Python.h.
+add_library(
+    culverin_core
+    STATIC
+    src/native/physics/ShadowSync.cpp
+    src/native/debug/DebugRender.c
+    src/native/physics/ContactListener.cpp
+    src/native/physics/CommandBufferCore.c
+    src/native/physics/InternalQuery.c
+    src/native/physics/PhysicsWorldCore.c
+    src/native/physics/ConstraintFactory.c
+    src/native/core/JoltHandler.cpp
+    src/native/math/Math.cpp
+)
+target_compile_options(culverin_core PRIVATE ${CULVERIN_COMPILE_FLAGS})
+target_compile_definitions(culverin_core PRIVATE ${CULV_ASSERT_DEFS} JPH_DEBUG_RENDERER)
+target_include_directories(
+    culverin_core
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/native"
+        "extern/mag-mutex/include"
+)
+target_include_directories(
+    culverin_core
+    SYSTEM PUBLIC "extern/JoltC/include" "${JOLT_DIR}"
+)
+target_link_libraries(culverin_core PUBLIC mag_mutex_lib ${JOLTC_TARGET} Jolt::Jolt)
+
+# Python discovery begins only after the Python-independent core target exists.
+find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
+
 python_add_library(
     _culverin_c
     MODULE
-    src/culverin/native/bindings/Module.c
-    src/culverin/native/physics/ShadowSync.cpp
-    src/culverin/native/debug/DebugRender.c
-    src/culverin/native/bindings/Getters.c
-    src/culverin/native/characters/Character.c
-    src/culverin/native/physics/ContactListener.cpp
-    src/culverin/native/bindings/parsing/Parsers.c
-    src/culverin/native/vehicles/Vehicle.c
-    src/culverin/native/physics/CommandBufferCore.c
-    src/culverin/native/bindings/physics/CommandBufferBinding.c
-    src/culverin/native/vehicles/TrackedVehicle.c
-    src/culverin/native/ragdolls/Ragdoll.c
-    src/culverin/native/physics/InternalQuery.c
-    src/culverin/native/physics/PhysicsWorldCore.c
-    src/culverin/native/bindings/physics/WorldAdapters.c
-    src/culverin/native/bindings/physics/QueryMethods.c
-    src/culverin/native/bindings/physics/Constraint.c
-    src/culverin/native/physics/ConstraintFactory.c
-    src/culverin/native/bindings/parsing/ArgIndices.c
-    src/culverin/native/core/JoltHandler.cpp
-    src/culverin/native/soft_bodies/SoftBody.c
-    src/culverin/native/math/Math.cpp
-    src/culverin/native/math/Math.c
-    src/culverin/native/ecs/Ecs.c
-    src/culverin/native/vehicles/Ship.c
-    src/culverin/native/bindings/physics/PhysicsWorld.c
+    src/python/native/bindings/Module.c
+    src/python/native/bindings/Getters.c
+    src/python/native/characters/Character.c
+    src/python/native/bindings/parsing/Parsers.c
+    src/python/native/vehicles/Vehicle.c
+    src/python/native/bindings/physics/CommandBufferBinding.c
+    src/python/native/vehicles/TrackedVehicle.c
+    src/python/native/ragdolls/Ragdoll.c
+    src/python/native/bindings/physics/WorldAdapters.c
+    src/python/native/bindings/physics/QueryMethods.c
+    src/python/native/bindings/physics/Constraint.c
+    src/python/native/bindings/parsing/ArgIndices.c
+    src/python/native/soft_bodies/SoftBody.c
+    src/python/native/math/Math.c
+    src/python/native/ecs/Ecs.c
+    src/python/native/vehicles/Ship.c
+    src/python/native/bindings/physics/PhysicsWorld.c
+    src/native/core/JoltRttiShim.cpp
 )
 
-target_sources(_culverin_c PRIVATE src/culverin/native/core/JoltRttiShim.cpp)
 if(MSVC)
     set_source_files_properties(
-        src/culverin/native/core/JoltRttiShim.cpp
+        src/native/core/JoltRttiShim.cpp
         PROPERTIES COMPILE_OPTIONS "/GR"
     )
 else()
     set_source_files_properties(
-        src/culverin/native/core/JoltRttiShim.cpp
+        src/native/core/JoltRttiShim.cpp
         PROPERTIES COMPILE_OPTIONS "-frtti"
     )
 endif()
 
 target_compile_options(_culverin_c PRIVATE ${CULVERIN_COMPILE_FLAGS})
-target_compile_definitions(_culverin_c PRIVATE ${CULV_ASSERT_DEFS})
+target_compile_definitions(_culverin_c PRIVATE ${CULV_ASSERT_DEFS} JPH_DEBUG_RENDERER)
 
 # In section 4, guard IPO for GCC on Windows:
 include(CheckIPOSupported)
@@ -497,6 +518,7 @@ if(ipo_supported)
     else()
         message(STATUS "Culverin: LTO/IPO is supported and ENABLED")
         set_property(TARGET _culverin_c PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+        set_property(TARGET culverin_core PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
         set_property(TARGET ${JOLTC_TARGET} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
         if(TARGET Jolt AND NOT DEFINED JOLT_PREBUILT_DIR)
             set_property(TARGET Jolt PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
@@ -610,6 +632,7 @@ if(NOT ENABLE_SANITIZER AND NOT ENABLE_THREAD_SANITIZER)
     if(LTO_COMPILE_FLAG)
         message(STATUS "Culverin: Applying ${CMAKE_C_COMPILER_ID} LTO optimizations")
         target_compile_options(_culverin_c PRIVATE ${LTO_COMPILE_FLAG})
+        target_compile_options(culverin_core PRIVATE ${LTO_COMPILE_FLAG})
         target_link_options(_culverin_c PRIVATE ${LTO_LINK_FLAG})
         target_compile_options(${JOLTC_TARGET} PRIVATE ${LTO_COMPILE_FLAG})
         
@@ -625,8 +648,10 @@ endif()
 if(MSVC)
     # --- MSVC / Clang-CL PERFORMANCE & DEBUG FLAGS ---
     target_compile_options(_culverin_c PRIVATE /Zi /fp:fast)
+    target_compile_options(culverin_core PRIVATE /Zi /fp:fast)
     target_link_options(_culverin_c PRIVATE /DEBUG /OPT:REF /OPT:ICF)
     target_compile_definitions(_culverin_c PRIVATE _CRT_DECLARE_NONSTDC_NAMES=1)
+    target_compile_definitions(culverin_core PRIVATE _CRT_DECLARE_NONSTDC_NAMES=1)
 else()
     # --- GNU / MinGW LINKER FLAGS ---
     if(WIN32)
@@ -670,14 +695,14 @@ endif()
 # ==============================================================================
 # We use SYSTEM for Jolt to suppress C++ warnings bleeding into our C23 build
 target_include_directories(
-    _culverin_c
-    SYSTEM PRIVATE "extern/JoltC/include" "${JOLT_DIR}"
-)
-target_include_directories(
     ${JOLTC_TARGET}
     SYSTEM PRIVATE "extern/JoltC/include" "${JOLT_DIR}"
 )
 
+target_compile_definitions(
+    culverin_core
+    PRIVATE $<$<NOT:$<BOOL:${MSVC}>>:_GNU_SOURCE>
+)
 target_compile_definitions(
     _culverin_c
     PRIVATE $<$<NOT:$<BOOL:${MSVC}>>:_GNU_SOURCE>
@@ -685,10 +710,12 @@ target_compile_definitions(
 
 target_include_directories(
     _culverin_c
-    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" 
-    "src/culverin/native"
-    "extern/mag-mutex/include"
-    ${Python_INCLUDE_DIRS}
+    PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/native"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/python/native"
+        "extern/mag-mutex/include"
+        ${Python_INCLUDE_DIRS}
 )
 
 target_compile_definitions(
@@ -699,12 +726,12 @@ target_compile_definitions(
 if(WIN32)
     target_link_libraries(_culverin_c PRIVATE Winmm.lib)
 endif()
-target_compile_definitions(_culverin_c PRIVATE JPH_DEBUG_RENDERER)
-target_link_libraries(_culverin_c PRIVATE mag_mutex_lib ${JOLTC_TARGET} fast_capi_core Jolt::Jolt docs_embedder)
+target_link_libraries(_culverin_c PRIVATE culverin_core fast_capi_core docs_embedder)
 
 if(APPLE)
     message(STATUS "Culverin: Enforcing Strong Symbol Export")
     target_compile_options(${JOLTC_TARGET} PRIVATE "-frtti")
+    target_compile_options(culverin_core PRIVATE "-frtti")
     target_compile_options(_culverin_c PRIVATE "-frtti")
     target_link_options(_culverin_c PRIVATE "-Wl,-all_load,-object_path_lto,culverin.o")
 endif()
@@ -740,4 +767,12 @@ else()
 endif()
 
 
-install(FILES src/culverin/__init__.py src/culverin/_culverin.py DESTINATION .)
+install(
+    FILES
+        src/python/culverin/__init__.py
+        src/python/culverin/_culverin.py
+        src/python/culverin/__init__.pyi
+        src/python/culverin/_culverin_c.pyi
+        src/python/culverin/py.typed
+    DESTINATION .
+)

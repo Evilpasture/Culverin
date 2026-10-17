@@ -1,5 +1,5 @@
 #pragma once
-#include "bindings/parsing/ParserTypes.h"
+#include "physics/PhysicsParams.h"
 #include <Python.h>
 
 // Direct variable extraction (Fast path)

@@ -1,7 +1,7 @@
 #pragma once
 #include "core/JoltConfig.h"
 #include "core/CompilerSpecifics.h"
-#include "bindings/parsing/ParserTypes.h"
+#include "physics/PhysicsParams.h"
 #include "core/Types.h"
 #include "joltc.h"
 #include <stddef.h>

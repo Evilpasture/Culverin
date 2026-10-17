@@ -10,7 +10,7 @@
 #include "core/CompilerSpecifics.h"
 #include "bindings/FastBuild.h"
 #include "bindings/Getters.h"
-#include "math/Math.h"
+#include "math/MathCore.h"
 #include "bindings/ModuleState.h"
 #include "bindings/physics/PhysicsSync.h"
 #include "bindings/PythonSupport.h"

@@ -1,7 +1,7 @@
 #pragma once
 
-// This header is the native world state boundary. It deliberately includes no
-// CPython headers and contains no PyObject fields or interpreter-local state.
+// This header defines native world state without interpreter headers or
+// interpreter-local state.
 #include "core/JoltConfig.h"
 #include "core/JoltUtils.h"
 #include "physics/CommandBuffer.h"

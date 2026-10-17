@@ -76,7 +76,7 @@ wheel.exclude = [
 
 # Important for SDIST (Source Distribution)
 [tool.scikit-build.sdist]
-include = ["culverin/*.pyi", "extern/**", "src/**"]
+include = ["src/python/culverin/*.pyi", "extern/**", "src/**"]
 exclude = ["build/**", "dist/**"]
 
 [tool.ruff]

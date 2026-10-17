@@ -3,7 +3,6 @@
 #include "core/CompilerSpecifics.h"
 #include "core/Types.h"
 #include "joltc.h"
-#include <Python.h>
 
 // --- Double Precision Refinement ---
 CULV_MAYBE_UNUSED
@@ -151,5 +150,3 @@ void culverin_math_euler_to_quat_batch(const float *__restrict eulers, size_t co
 #if defined(__cplusplus)
 }
 #endif
-
-extern PyType_Spec MathService_spec;

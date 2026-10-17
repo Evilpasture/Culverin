@@ -14,7 +14,7 @@ TOOLS_DIR = Path(__file__).parent.resolve()
 PROJECT_ROOT = TOOLS_DIR.parent
 DIST_DIR = PROJECT_ROOT / "dist"
 BUILD_DIR = PROJECT_ROOT / "build"
-TARGET_DIR = PROJECT_ROOT / "src" / "culverin"
+TARGET_DIR = PROJECT_ROOT / "src" / "python" / "culverin"
 
 IS_CI = os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS")
 cpu_count = os.cpu_count() or 4
