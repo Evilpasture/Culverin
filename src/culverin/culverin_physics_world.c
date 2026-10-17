@@ -16,6 +16,7 @@
 #include "culverin_query_methods.h"
 #include "culverin_ragdoll.h"
 #include "culverin_shadow_sync.h"
+#include "culverin_soft_body.h"
 
 // ============================================================================
 // Semantic Constants - Magic Number Replacements
