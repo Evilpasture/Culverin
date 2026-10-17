@@ -1,6 +1,7 @@
 #include "culverin_internal_query.h"
 #include "culverin_native_alloc.h"
 #include "culverin_physics_world_state.h"
+#include <math.h>
 
 /**
  * REQUIRES: SHADOW_LOCK held AND world->jph_trampoline_lock held

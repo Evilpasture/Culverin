@@ -116,17 +116,6 @@ typedef struct {
     uint32_t vertex_count;
 } MeshBounds;
 
-typedef enum : uint8_t {
-    CULV_SHAPE_BOX         = 0,
-    CULV_SHAPE_SPHERE      = 1,
-    CULV_SHAPE_CAPSULE     = 2,
-    CULV_SHAPE_CYLINDER    = 3,
-    CULV_SHAPE_PLANE       = 4,
-    CULV_SHAPE_MESH        = 5,
-    CULV_SHAPE_HEIGHTFIELD = 6,
-    CULV_SHAPE_CONVEX_HULL = 7
-} CulvShapeType;
-
 // --- Hardened Checkers (No Casts) ---
 CULV_NODISCARD
 static inline bool culv_is_finite_f(float f) {

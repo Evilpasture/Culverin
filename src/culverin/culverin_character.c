@@ -857,8 +857,8 @@ PyType_DeclareSlot_VoidFromModule Character_dealloc(CharacterObject *self) {
     if (self->shape_filter) {
         JPH_ShapeFilter_Destroy(self->shape_filter);
     }
-    if (self->physics.bp_filter) {
-        JPH_BroadPhaseLayerFilter_Destroy(self->physics.bp_filter);
+    if (self->bp_filter) {
+        JPH_BroadPhaseLayerFilter_Destroy(self->bp_filter);
     }
     if (self->obj_filter) {
         JPH_ObjectLayerFilter_Destroy(self->obj_filter);

@@ -278,7 +278,7 @@ culverin_sync_shadow_buffers(const PhysicsWorld *const CPH_RESTRICT world) noexc
 
     CULV_PROFILE_BEGIN(sync);
 
-    const CPH::WorldDataCreateInfo world = {
+    const CPH::WorldDataCreateInfo world_data = {
         .shadow_pos = std::assume_aligned<sizeof(PosStride)>(
             reinterpret_cast<PosStride *const CPH_RESTRICT>(world->positions)),
 
@@ -307,10 +307,10 @@ culverin_sync_shadow_buffers(const PhysicsWorld *const CPH_RESTRICT world) noexc
         .slot_to_dense = world->slot_to_dense,
     };
 
-    ExecuteSyncPass<JPH::EBodyType::RigidBody>(active_rigid_count, system, mapping_data, world);
+    ExecuteSyncPass<JPH::EBodyType::RigidBody>(active_rigid_count, system, mapping_data, world_data);
 
     if (world->soft_shadows != nullptr) {
-        ExecuteSyncPass<JPH::EBodyType::SoftBody>(active_soft_count, system, mapping_data, world);
+        ExecuteSyncPass<JPH::EBodyType::SoftBody>(active_soft_count, system, mapping_data, world_data);
     }
 
     CULV_PROFILE_ACCUMULATE(sync, &sync_stats);
