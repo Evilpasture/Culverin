@@ -8,17 +8,17 @@
 /**
  * INIT_PARSER_ST
  * Initializes the parser using a temporary stack-allocated definition array.
- * fp_init_impl will copy the data into its own optimized internal storage.
+ * culv_fast_parse_init_impl will copy the data into its own optimized internal storage.
  */
 #define INIT_PARSER_ST(cp, ParserName, GroupName, Schema)                                          \
     do {                                                                                           \
         static_assert((0 Schema(COUNT_X)) == GroupName##_COUNT,                                    \
-                      "FastParse: Schema length mismatch for " #ParserName);                       \
+                      "Culverin parser: schema length mismatch for " #ParserName);                       \
         (cp)->ParserName##Parser.parser_name = #ParserName;                                        \
         /* 1. Create the definitions on the stack */                                               \
-        FastArgDef temp[] = {Schema(GEN_SPEC)};                                                    \
-        /* 2. Pass the stack pointer directly. fp_init_impl handles the mallocing now. */          \
-        fp_init_impl(&(cp)->ParserName##Parser, temp, GroupName##_COUNT);                          \
+        CulvFastArgDef temp[] = {Schema(GEN_SPEC)};                                                    \
+        /* 2. Pass the stack pointer directly. culv_fast_parse_init_impl handles the mallocing now. */          \
+        culv_fast_parse_init_impl(&(cp)->ParserName##Parser, temp, GroupName##_COUNT);                          \
     } while (0)
 
 // --- 2. REGISTRATION & SETUP MACROS ---
@@ -37,7 +37,7 @@
         REGISTER_PARSER_ST(cp, ParserName);                                                        \
     } while (0)
 
-#define TEARDOWN_PARSER_ST(cp, ParserName) fp_deinit(&(cp)->ParserName##Parser);
+#define TEARDOWN_PARSER_ST(cp, ParserName) culv_fast_parse_deinit(&(cp)->ParserName##Parser);
 
 // --- 3. THE GENERATOR ---
 
@@ -45,10 +45,10 @@
 
 #define GEN_SPEC(ID, NAME, TYPE, REQ)                                                              \
     [ID] = {.name       = (NAME),                                                                  \
-            .type_name  = FP_GET_TYPE_NAME((TYPE){}),                                              \
+            .type_name  = CULV_FAST_PARSE_GET_TYPE_NAME((TYPE){}),                                              \
             .required   = (bool)(REQ),                                                             \
             .type_guard = GET_TYPE_GUARD((TYPE){}),                                                \
-            .convert    = FP_GET_CONVERTER((TYPE){})},
+            .convert    = CULV_FAST_PARSE_GET_CONVERTER((TYPE){})},
 
 // --- 4. INITIALIZATION & CLEANUP ---
 
@@ -199,10 +199,10 @@ void culverin_free_module_parsers(ModuleParsers *mp) {
 #undef DO_FREE
 }
 
-void fp_dump_schemas_json(WorldParsers *wp, FILE *out) {
+void culv_fast_parse_dump_schemas_json(WorldParsers *wp, FILE *out) {
     fprintf(out, "{\n");
     for (size_t i = 0; i < wp->registry_count; i++) {
-        FastParser *fp = wp->registry[i];
+        CulvFastParser *fp = wp->registry[i];
         fprintf(out, "  \"%s\": [\n", fp->parser_name);
         for (size_t j = 0; j < fp->count; j++) {
             // FIX: Access strings from cold_specs, but requirement status from the mask

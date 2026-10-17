@@ -613,7 +613,7 @@ static constexpr size_t PARSER_REGISTRY_SIZE = 128;
     typedef enum : uint8_t { Schema(GEN_ENUM) GroupName##_COUNT } GroupName##_Idx;
 
 // Declares a specific parser that uses an Index Group
-#define DECLARE_PARSER(ParserName, GroupName) FastParser ParserName##Parser;
+#define DECLARE_PARSER(ParserName, GroupName) CulvFastParser ParserName##Parser;
 
 // A. Define the Index Groups (One per unique signature)
 DEFINE_INDEX_GROUP(WorldInit, SCHEMA_WORLD_INIT)
@@ -842,67 +842,67 @@ DEFINE_INDEX_GROUP(DumpSchema, SCHEMA_DUMP_SCHEMA)
 // B. Declare the Parsers
 typedef struct WorldParsers {
     FOR_ALL_PARSERS(MAP_TO_DECLARE)
-    FastParser *registry[PARSER_REGISTRY_SIZE];
+    CulvFastParser *registry[PARSER_REGISTRY_SIZE];
     size_t registry_count;
 } WorldParsers;
 
 typedef struct CharacterParsers {
     FOR_ALL_CHAR_PARSERS(MAP_TO_DECLARE)
-    FastParser *registry[PARSER_REGISTRY_SIZE];
+    CulvFastParser *registry[PARSER_REGISTRY_SIZE];
     size_t registry_count;
 } CharacterParsers;
 
 typedef struct VehicleParsers {
     FOR_ALL_VEHICLE_PARSERS(MAP_TO_DECLARE)
-    FastParser *registry[PARSER_REGISTRY_SIZE];
+    CulvFastParser *registry[PARSER_REGISTRY_SIZE];
     size_t registry_count;
 } VehicleParsers;
 
 typedef struct ECSParsers {
     FOR_ALL_ECS_PARSERS(MAP_TO_DECLARE)
-    FastParser *registry[PARSER_REGISTRY_SIZE];
+    CulvFastParser *registry[PARSER_REGISTRY_SIZE];
     size_t registry_count;
 } ECSParsers;
 
 typedef struct SkeletonParsers {
     FOR_ALL_SKELETON_PARSERS(MAP_TO_DECLARE)
-    FastParser *registry[PARSER_REGISTRY_SIZE];
+    CulvFastParser *registry[PARSER_REGISTRY_SIZE];
     size_t registry_count;
 } SkeletonParsers;
 
 typedef struct RagdollParsers {
     FOR_ALL_RAGDOLL_PARSERS(MAP_TO_DECLARE)
-    FastParser *registry[PARSER_REGISTRY_SIZE];
+    CulvFastParser *registry[PARSER_REGISTRY_SIZE];
     size_t registry_count;
 } RagdollParsers;
 
 typedef struct RagdollSettingsParsers {
     FOR_ALL_RAGDOLL_SETTINGS_PARSERS(MAP_TO_DECLARE)
-    FastParser *registry[PARSER_REGISTRY_SIZE];
+    CulvFastParser *registry[PARSER_REGISTRY_SIZE];
     size_t registry_count;
 } RagdollSettingsParsers;
 
 typedef struct ShipParsers {
     FOR_ALL_SHIP_PARSERS(MAP_TO_DECLARE)
-    FastParser *registry[PARSER_REGISTRY_SIZE];
+    CulvFastParser *registry[PARSER_REGISTRY_SIZE];
     size_t registry_count;
 } ShipParsers;
 
 typedef struct SoftBodySharedSettingsParsers {
     FOR_ALL_SBSS_PARSERS(MAP_TO_DECLARE)
-    FastParser *registry[PARSER_REGISTRY_SIZE];
+    CulvFastParser *registry[PARSER_REGISTRY_SIZE];
     size_t registry_count;
 } SoftBodySharedSettingsParsers;
 
 typedef struct MathParsers {
     FOR_ALL_MATH_PARSERS(MAP_TO_DECLARE)
-    FastParser *registry[PARSER_REGISTRY_SIZE];
+    CulvFastParser *registry[PARSER_REGISTRY_SIZE];
     size_t registry_count;
 } MathParsers;
 
 typedef struct ModuleParsers {
     FOR_ALL_MODULE_PARSERS(MAP_TO_DECLARE)
-    FastParser *registry[PARSER_REGISTRY_SIZE];
+    CulvFastParser *registry[PARSER_REGISTRY_SIZE];
     size_t registry_count;
 } ModuleParsers;
 
@@ -950,4 +950,4 @@ void culverin_math_free_all_parsers(MathParsers *mp);
 void culverin_init_module_parsers(ModuleParsers *mp);
 void culverin_free_module_parsers(ModuleParsers *mp);
 
-void fp_dump_schemas_json(WorldParsers *wp, FILE *out);
+void culv_fast_parse_dump_schemas_json(WorldParsers *wp, FILE *out);

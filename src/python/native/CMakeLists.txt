@@ -7,7 +7,7 @@ target_include_directories(
 )
 target_link_libraries(
     culverin_python_native_support
-    INTERFACE Python::Module culverin_native_common fast_capi_core docs_embedder
+    INTERFACE Python::Module culverin_native_common
 )
 
 function(culverin_configure_python_target target)

@@ -291,7 +291,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_vehicle(PhysicsWorldObje
         [IDX_CV_TRANS]   = (const void *const restrict)&py_trans,
     };
 
-    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->CreateVehicleParser, targets)) {
+    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->CreateVehicleParser, targets)) {
         return nullptr;
     }
 
@@ -466,7 +466,7 @@ PyCFunction_DeclareMethodFromModule Vehicle_set_input(VehicleObject *self, PyObj
         [IDX_VI_HAND]  = (const void *const restrict)&handbrake,
     };
 
-    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->VehicleInputParser, targets)) {
+    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->VehicleInputParser, targets)) {
         return nullptr;
     }
 
@@ -570,7 +570,7 @@ PyCFunction_DeclareMethodFromModule Vehicle_get_wheel_transform(VehicleObject *s
         [IDX_WH_INDEX] = (const void *const restrict)&index,
     };
 
-    if (!FastParse_Unified(args, nargs, kwnames, &self->world->parsers->WheelIdxParser, targets)) {
+    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->world->parsers->WheelIdxParser, targets)) {
         return nullptr;
     }
 
@@ -614,7 +614,7 @@ PyCFunction_DeclareMethodFromModule Vehicle_get_wheel_local_transform(VehicleObj
         [IDX_WH_INDEX] = (const void *const restrict)&index,
     };
 
-    if (!FastParse_Unified(args, nargs, kwnames, &self->world->parsers->WheelIdxParser, targets)) {
+    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->world->parsers->WheelIdxParser, targets)) {
         return nullptr;
     }
 

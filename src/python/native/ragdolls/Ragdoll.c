@@ -25,7 +25,7 @@ PyCFunction_DeclareMethodFromModule Skeleton_add_joint(SkeletonObject *self, PyO
     };
 
     // 2. High Speed Parse
-    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->AddJointParser, targets)) {
+    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->AddJointParser, targets)) {
         return nullptr;
     }
 
@@ -49,7 +49,7 @@ PyCFunction_DeclareMethodFromModule Skeleton_get_joint_index(SkeletonObject *sel
     };
 
     // 2. High Speed Parse
-    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->GetJointIdxParser, targets)) {
+    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->GetJointIdxParser, targets)) {
         return nullptr;
     }
 
@@ -96,7 +96,7 @@ PyCFunction_DeclareMethodFromModule Ragdoll_drive_to_pose(RagdollObject *self,
         [IDX_RD_MATS] = (const void *const restrict)&py_matrices,
     };
 
-    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->RagdollDriveParser, targets)) {
+    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->RagdollDriveParser, targets)) {
         return nullptr;
     }
 
@@ -220,8 +220,8 @@ PyCFunction_DeclareMethodFromModule Ragdoll_get_debug_info(RagdollObject *self,
 
         // Build the dictionary using FastBuild
         // Format: "index", i, "pos", (x,y,z), "vel", (vx,vy,vz)
-        PyObject *dict = FastBuild_Dict("index", i, "pos", FastBuild_Tuple(pos->x, pos->y, pos->z),
-                                        "vel", FastBuild_Tuple(vel->x, vel->y, vel->z));
+        PyObject *dict = CULV_PY_BUILD_DICT("index", i, "pos", CULV_PY_BUILD_TUPLE(pos->x, pos->y, pos->z),
+                                        "vel", CULV_PY_BUILD_TUPLE(vel->x, vel->y, vel->z));
 
         if (!dict) {
             Py_DECREF(list);
@@ -370,7 +370,7 @@ PyCFunction_DeclareMethodFromModule RagdollSettings_add_part(RagdollSettingsObje
     };
 
     // 2. High Speed Parse
-    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->RagdollAddPartParser, targets)) {
+    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->RagdollAddPartParser, targets)) {
         return nullptr;
     }
 

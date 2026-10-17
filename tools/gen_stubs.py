@@ -76,7 +76,7 @@ ARG_HINTS = {
     "Skeleton.finalize": "",  # Fixed syntax error
 }
 
-# Maps Python method names to the C `FastParser` registry name
+# Maps Python method names to the C `CulvFastParser` registry name
 CLASS_METHOD_TO_PARSER = {
     "PhysicsWorld.create_body": "Body",
     "PhysicsWorld.apply_impulse": "Impulse",

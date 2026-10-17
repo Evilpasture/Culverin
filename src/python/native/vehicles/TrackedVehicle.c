@@ -131,7 +131,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_tracked_vehicle(PhysicsW
         [IDX_CT_RPM]     = (const void *const restrict)&max_rpm,
     };
 
-    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->CreateTrackedParser, targets)) {
+    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->CreateTrackedParser, targets)) {
         return nullptr;
     }
 
@@ -313,7 +313,7 @@ PyCFunction_DeclareMethodFromModule Vehicle_set_tank_input(VehicleObject *self,
         [IDX_TI_BRAKE] = (const void *const restrict)&brake,
     };
 
-    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->TankInputParser, targets)) {
+    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->TankInputParser, targets)) {
         return nullptr;
     }
 

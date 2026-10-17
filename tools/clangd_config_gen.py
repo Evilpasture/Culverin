@@ -30,9 +30,6 @@ def generate_clangd() -> None:
         (project_root / "src/python/native").as_posix(),
         (project_root / "extern/JoltC/include").as_posix(),
         (project_root / "extern/JoltPhysics").as_posix(),
-        (project_root / "extern/fast-capi/include").as_posix(),
-        (project_root / "extern/mag-mutex/include").as_posix(),
-        (project_root / "extern/docs-embedder/include").as_posix(),
         final_python_path.as_posix(),
     ]
 

@@ -3,7 +3,7 @@
 #include "core/CompilerSpecifics.h"
 #include "bindings/PythonSupport.h"
 #include "bindings/FastBuild.h"
-#include "fast_parse.h"
+#include "bindings/parsing/FastParse.h"
 #include <Python.h>
 
 typedef struct MathHolderObject {
@@ -69,7 +69,7 @@ static PyObject *MathHolderObject_get_perspective(MathHolderObject *self, PyObje
         [IDX_MP_NEAR]   = (const void *const restrict)&near_p,
         [IDX_MP_FAR]    = (const void *const restrict)&far_p};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->MathPerspParser, targets)) {
         return nullptr;
     }
@@ -77,7 +77,7 @@ static PyObject *MathHolderObject_get_perspective(MathHolderObject *self, PyObje
     float out[sixteen_floats];
     culverin_math_get_perspective(fovy, aspect, near_p, far_p, out);
 
-    return FastBuild_Tuple(out[0], out[1], out[2], out[3], out[4], out[5], out[6], out[7], out[8],
+    return CULV_PY_BUILD_TUPLE(out[0], out[1], out[2], out[3], out[4], out[5], out[6], out[7], out[8],
                            out[9], out[10], out[11], out[12], out[13], out[14], out[15]);
 }
 
@@ -97,7 +97,7 @@ static PyObject *MathHolderObject_get_ortho(MathHolderObject *self, PyObject *co
         [IDX_MO_NEAR]   = (const void *const restrict)&near_p,
         [IDX_MO_FAR]    = (const void *const restrict)&far_p};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->MathOrthoParser, targets)) {
         return nullptr;
     }
@@ -105,7 +105,7 @@ static PyObject *MathHolderObject_get_ortho(MathHolderObject *self, PyObject *co
     float out[sixteen_floats];
     culverin_math_get_ortho(left, right, bottom, top, near_p, far_p, out);
 
-    return FastBuild_Tuple(out[0], out[1], out[2], out[3], out[4], out[5], out[6], out[7], out[8],
+    return CULV_PY_BUILD_TUPLE(out[0], out[1], out[2], out[3], out[4], out[5], out[6], out[7], out[8],
                            out[9], out[10], out[11], out[12], out[13], out[14], out[15]);
 }
 
@@ -119,7 +119,7 @@ static PyObject *MathHolderObject_get_look_at(MathHolderObject *self, PyObject *
         [IDX_ML_TARGET] = (const void *const restrict)&target_obj,
         [IDX_ML_UP]     = (const void *const restrict)&up_obj};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->MathLookAtParser, targets)) {
         return nullptr;
     }
@@ -155,7 +155,7 @@ static PyObject *MathHolderObject_get_look_at(MathHolderObject *self, PyObject *
     alignas(simd_alignment) float out[sixteen_floats];
     culverin_math_get_look_at(eye, target, up, out);
 
-    return FastBuild_Tuple(out[0], out[1], out[2], out[3], out[4], out[5], out[6], out[7], out[8],
+    return CULV_PY_BUILD_TUPLE(out[0], out[1], out[2], out[3], out[4], out[5], out[6], out[7], out[8],
                            out[9], out[10], out[11], out[12], out[13], out[14], out[15]);
 }
 
@@ -169,7 +169,7 @@ static PyObject *MathHolderObject_get_trs(MathHolderObject *self, PyObject *cons
         [IDX_MTRS_R] = (const void *const restrict)&rot_obj,
         [IDX_MTRS_S] = (const void *const restrict)&scale_obj};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->MathTRSParser,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->MathTRSParser,
                            targets)) {
         return nullptr;
     }
@@ -213,7 +213,7 @@ static PyObject *MathHolderObject_get_trs(MathHolderObject *self, PyObject *cons
     alignas(simd_alignment) float out[sixteen_floats];
     culverin_math_get_trs(p, r, s, out);
 
-    return FastBuild_Tuple(out[0], out[1], out[2], out[3], out[4], out[5], out[6], out[7], out[8],
+    return CULV_PY_BUILD_TUPLE(out[0], out[1], out[2], out[3], out[4], out[5], out[6], out[7], out[8],
                            out[9], out[10], out[11], out[12], out[13], out[14], out[15]);
 }
 
@@ -227,7 +227,7 @@ static PyObject *MathHolderObject_get_trs_batch(MathHolderObject *self, PyObject
         [IDX_MTRSB_R] = (const void *const restrict)&rot_obj,
         [IDX_MTRSB_S] = (const void *const restrict)&scale_obj};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->MathTRSBatchParser, targets)) {
         return nullptr;
     }
@@ -269,7 +269,7 @@ static PyObject *MathHolderObject_inverse(MathHolderObject *self, PyObject *cons
     const void *const restrict targets[MathMat_COUNT] = {[IDX_MMM_MAT] =
                                                              (const void *const restrict)&mat_obj};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->MathMatParser,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->MathMatParser,
                            targets)) {
         return nullptr;
     }
@@ -282,7 +282,7 @@ static PyObject *MathHolderObject_inverse(MathHolderObject *self, PyObject *cons
     }
 
     culverin_math_mat44_inverse(in, out);
-    return FastBuild_Tuple(out[0], out[1], out[2], out[3], out[4], out[5], out[6], out[7], out[8],
+    return CULV_PY_BUILD_TUPLE(out[0], out[1], out[2], out[3], out[4], out[5], out[6], out[7], out[8],
                            out[9], out[10], out[11], out[12], out[13], out[14], out[15]);
 }
 
@@ -295,7 +295,7 @@ static PyObject *MathHolderObject_matmul(MathHolderObject *self, PyObject *const
         [IDX_MMP_A] = (const void *const restrict)&a_obj,
         [IDX_MMP_B] = (const void *const restrict)&b_obj};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->MathMatPairParser, targets)) {
         return nullptr;
     }
@@ -308,7 +308,7 @@ static PyObject *MathHolderObject_matmul(MathHolderObject *self, PyObject *const
     }
 
     culverin_math_mat44_mul(a, b, out);
-    return FastBuild_Tuple(out[0], out[1], out[2], out[3], out[4], out[5], out[6], out[7], out[8],
+    return CULV_PY_BUILD_TUPLE(out[0], out[1], out[2], out[3], out[4], out[5], out[6], out[7], out[8],
                            out[9], out[10], out[11], out[12], out[13], out[14], out[15]);
 }
 
@@ -321,7 +321,7 @@ static PyObject *MathHolderObject_transform_vec3(MathHolderObject *self, PyObjec
         [IDX_MMV_MAT] = (const void *const restrict)&mat_obj,
         [IDX_MMV_VEC] = (const void *const restrict)&vec_obj};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->MathMatVecParser, targets)) {
         return nullptr;
     }
@@ -351,7 +351,7 @@ static PyObject *MathHolderObject_transform_vec3(MathHolderObject *self, PyObjec
     culverin_math_transform_vec3(m, v, out);
 
     // FastBuild is significantly faster than Py_BuildValue
-    return FastBuild_Tuple(out[0], out[1], out[2]);
+    return CULV_PY_BUILD_TUPLE(out[0], out[1], out[2]);
 }
 
 // 4. Batch Matrix Multiply (Single * Batch)
@@ -364,7 +364,7 @@ static PyObject *MathHolderObject_matmul_batch(MathHolderObject *self, PyObject 
         [IDX_MMB_MAT]   = (const void *const restrict)&mat_obj,
         [IDX_MMB_BATCH] = (const void *const restrict)&batch_obj};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->MathMatBatchParser, targets)) {
         return nullptr;
     }
@@ -401,7 +401,7 @@ static PyObject *MathHolderObject_cull_aabb(MathHolderObject *self, PyObject *co
         [IDX_MC_MIN] = (const void *const restrict)&min_obj,
         [IDX_MC_MAX] = (const void *const restrict)&max_obj};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->MathCullParser, targets)) {
         return nullptr;
     }
@@ -428,7 +428,7 @@ static PyObject *MathHolderObject_cull_aabb(MathHolderObject *self, PyObject *co
     }
 
     int visible = culverin_math_cull_aabb(vp, a_min, a_max);
-    return FastBuild_Value((bool)visible);
+    return CULV_PY_BUILD_VALUE((bool)visible);
 }
 
 // 6. Batch AABB Culling (Essential for ECS Performance)
@@ -440,7 +440,7 @@ static PyObject *MathHolderObject_cull_aabb_batch(MathHolderObject *self, PyObje
         [IDX_MCB_VP]    = (const void *const restrict)&vp_obj,
         [IDX_MCB_AABBS] = (const void *const restrict)&aabbs_obj};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->MathCullBatchParser, targets)) {
         return nullptr;
     }
@@ -474,7 +474,7 @@ static PyObject *MathHolderObject_vec3_normalize_batch(MathHolderObject *self,
     const void *const restrict targets[MathVec3Batch_COUNT] = {
         [IDX_MVB_VECS] = (const void *const restrict)&vecs_obj};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->MathVec3BatchParser, targets)) {
         return nullptr;
     }
@@ -514,7 +514,7 @@ static PyObject *MathHolderObject_quat_from_euler(MathHolderObject *self, PyObje
         [IDX_ME_Y] = (const void *const restrict)&y,
         [IDX_ME_Z] = (const void *const restrict)&z};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->MathEulerParser, targets)) {
         return nullptr;
     }
@@ -522,8 +522,8 @@ static PyObject *MathHolderObject_quat_from_euler(MathHolderObject *self, PyObje
     float out[4]; // quat: x, y, z, w
     culverin_math_quat_from_euler(x, y, z, out);
 
-    // FastBuild_Tuple is optimized for returning fixed-size math results
-    return FastBuild_Tuple(out[0], out[1], out[2], out[3]);
+    // CULV_PY_BUILD_TUPLE is optimized for returning fixed-size math results
+    return CULV_PY_BUILD_TUPLE(out[0], out[1], out[2], out[3]);
 }
 
 static PyObject *MathHolderObject_quat_to_euler(MathHolderObject *self, PyObject *const *args,
@@ -538,7 +538,7 @@ static PyObject *MathHolderObject_quat_to_euler(MathHolderObject *self, PyObject
         [IDX_MQ_Z] = (const void *const restrict)&z,
         [IDX_MQ_W] = (const void *const restrict)&w};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->MathQuatParser, targets)) {
         return nullptr;
     }
@@ -548,7 +548,7 @@ static PyObject *MathHolderObject_quat_to_euler(MathHolderObject *self, PyObject
 
     culverin_math_quat_to_euler(in_q, out_euler);
 
-    return FastBuild_Tuple(out_euler[0], out_euler[1], out_euler[2]);
+    return CULV_PY_BUILD_TUPLE(out_euler[0], out_euler[1], out_euler[2]);
 }
 
 static PyObject *MathHolderObject_quat_slerp(MathHolderObject *self, PyObject *const *args,
@@ -561,7 +561,7 @@ static PyObject *MathHolderObject_quat_slerp(MathHolderObject *self, PyObject *c
         [IDX_MS_Q2] = (const void *const restrict)&q2_obj,
         [IDX_MS_T]  = (const void *const restrict)&t};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->MathSlerpParser, targets)) {
         return nullptr;
     }
@@ -576,7 +576,7 @@ static PyObject *MathHolderObject_quat_slerp(MathHolderObject *self, PyObject *c
 
     culverin_math_quat_slerp(q1, q2, t, out);
 
-    return FastBuild_Tuple(out[0], out[1], out[2], out[3]);
+    return CULV_PY_BUILD_TUPLE(out[0], out[1], out[2], out[3]);
 }
 
 static PyObject *MathHolderObject_quat_mul(MathHolderObject *self, PyObject *const *args,
@@ -587,7 +587,7 @@ static PyObject *MathHolderObject_quat_mul(MathHolderObject *self, PyObject *con
         [IDX_MQP_A] = (const void *const restrict)&a_obj,
         [IDX_MQP_B] = (const void *const restrict)&b_obj};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->MathQuatPairParser, targets)) {
         return nullptr;
     }
@@ -602,7 +602,7 @@ static PyObject *MathHolderObject_quat_mul(MathHolderObject *self, PyObject *con
 
     culverin_math_quat_mul(a, b, out);
 
-    return FastBuild_Tuple(out[0], out[1], out[2], out[3]);
+    return CULV_PY_BUILD_TUPLE(out[0], out[1], out[2], out[3]);
 }
 
 static PyObject *MathHolderObject_vec3_lerp_batch(MathHolderObject *self, PyObject *const *args,
@@ -615,7 +615,7 @@ static PyObject *MathHolderObject_vec3_lerp_batch(MathHolderObject *self, PyObje
         [IDX_MLB_VECS_B] = (const void *const restrict)&b_obj,
         [IDX_MLB_ALPHA]  = (const void *const restrict)&alpha};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->MathLerpBatchParser, targets)) {
         return nullptr;
     }
@@ -658,7 +658,7 @@ static PyObject *MathHolderObject_quat_rotate_vec3(MathHolderObject *self, PyObj
         [IDX_MQV_Q] = (const void *const restrict)&q_obj,
         [IDX_MQV_V] = (const void *const restrict)&v_obj};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->MathQuatVecParser, targets)) {
         return nullptr;
     }
@@ -673,7 +673,7 @@ static PyObject *MathHolderObject_quat_rotate_vec3(MathHolderObject *self, PyObj
 
     culverin_math_quat_rotate_vec3(q, v, out);
 
-    return FastBuild_Tuple(out[0], out[1], out[2]);
+    return CULV_PY_BUILD_TUPLE(out[0], out[1], out[2]);
 }
 
 static PyObject *MathHolderObject_quat_rotate_vec3_batch(MathHolderObject *self,
@@ -685,7 +685,7 @@ static PyObject *MathHolderObject_quat_rotate_vec3_batch(MathHolderObject *self,
         [IDX_MQVB_Q]    = (const void *const restrict)&q_obj,
         [IDX_MQVB_VECS] = (const void *const restrict)&vecs_obj};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->MathQuatVecBatchParser, targets)) {
         return nullptr;
     }
@@ -726,7 +726,7 @@ static PyObject *MathHolderObject_quat_inverse(MathHolderObject *self, PyObject 
     const void *const restrict targets[MathQuatOp_COUNT] = {[IDX_MQO_Q] =
                                                                 (const void *const restrict)&q_obj};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->MathQuatOpParser, targets)) {
         return nullptr;
     }
@@ -740,7 +740,7 @@ static PyObject *MathHolderObject_quat_inverse(MathHolderObject *self, PyObject 
 
     culverin_math_quat_inverse(q, out);
 
-    return FastBuild_Tuple(out[0], out[1], out[2], out[3]);
+    return CULV_PY_BUILD_TUPLE(out[0], out[1], out[2], out[3]);
 }
 
 static PyObject *MathHolderObject_project(MathHolderObject *self, PyObject *const *args,
@@ -753,7 +753,7 @@ static PyObject *MathHolderObject_project(MathHolderObject *self, PyObject *cons
         [IDX_MPR_MVP] = (const void *const restrict)&mvp_obj,
         [IDX_MPR_VP]  = (const void *const restrict)&vp_obj};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->MathProjectParser, targets)) {
         return nullptr;
     }
@@ -772,7 +772,7 @@ static PyObject *MathHolderObject_project(MathHolderObject *self, PyObject *cons
 
     culverin_math_project(v, mvp, viewport, out);
 
-    return FastBuild_Tuple(out[0], out[1], out[2]);
+    return CULV_PY_BUILD_TUPLE(out[0], out[1], out[2]);
 }
 
 static PyObject *MathHolderObject_unproject(MathHolderObject *self, PyObject *const *args,
@@ -785,7 +785,7 @@ static PyObject *MathHolderObject_unproject(MathHolderObject *self, PyObject *co
         [IDX_MUP_MVP] = (const void *const restrict)&mvp_obj,
         [IDX_MUP_VP]  = (const void *const restrict)&vp_obj};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->MathUnprojectParser, targets)) {
         return nullptr;
     }
@@ -804,7 +804,7 @@ static PyObject *MathHolderObject_unproject(MathHolderObject *self, PyObject *co
 
     culverin_math_unproject(v, mvp, viewport, out);
 
-    return FastBuild_Tuple(out[0], out[1], out[2]);
+    return CULV_PY_BUILD_TUPLE(out[0], out[1], out[2]);
 }
 
 static PyObject *MathHolderObject_quat_from_to(MathHolderObject *self, PyObject *const *args,
@@ -815,7 +815,7 @@ static PyObject *MathHolderObject_quat_from_to(MathHolderObject *self, PyObject 
         [IDX_MVP_V1] = (const void *const restrict)&v1_obj,
         [IDX_MVP_V2] = (const void *const restrict)&v2_obj};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->MathVecPairParser, targets)) {
         return nullptr;
     }
@@ -830,7 +830,7 @@ static PyObject *MathHolderObject_quat_from_to(MathHolderObject *self, PyObject 
 
     culverin_math_quat_from_to(v1, v2, out);
 
-    return FastBuild_Tuple(out[0], out[1], out[2], out[3]);
+    return CULV_PY_BUILD_TUPLE(out[0], out[1], out[2], out[3]);
 }
 
 static PyObject *MathHolderObject_vec3_dot(MathHolderObject *self, PyObject *const *args,
@@ -842,7 +842,7 @@ static PyObject *MathHolderObject_vec3_dot(MathHolderObject *self, PyObject *con
         [IDX_MVP_V2] = (const void *const restrict)&v2_obj};
 
     // Reusing the parser from quat_from_to
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->MathVecPairParser, targets)) {
         return nullptr;
     }
@@ -867,7 +867,7 @@ static PyObject *MathHolderObject_vec3_cross(MathHolderObject *self, PyObject *c
         [IDX_MVP_V1] = (const void *const restrict)&v1_obj,
         [IDX_MVP_V2] = (const void *const restrict)&v2_obj};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->MathVecPairParser, targets)) {
         return nullptr;
     }
@@ -882,7 +882,7 @@ static PyObject *MathHolderObject_vec3_cross(MathHolderObject *self, PyObject *c
 
     culverin_math_vec3_cross(v1, v2, out);
 
-    return FastBuild_Tuple(out[0], out[1], out[2]);
+    return CULV_PY_BUILD_TUPLE(out[0], out[1], out[2]);
 }
 
 static PyObject *MathHolderObject_intersect_ray_plane(MathHolderObject *self, PyObject *const *args,
@@ -897,7 +897,7 @@ static PyObject *MathHolderObject_intersect_ray_plane(MathHolderObject *self, Py
         [IDX_RP_PO] = (const void *const restrict)&po_obj,
         [IDX_RP_PN] = (const void *const restrict)&pn_obj};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->MathRayPlaneParser, targets)) {
         return nullptr;
     }
@@ -916,10 +916,10 @@ static PyObject *MathHolderObject_intersect_ray_plane(MathHolderObject *self, Py
     int hit = culverin_math_intersect_ray_plane(ro, rd, po, pn, &out_t, out_p);
 
     if (!hit) {
-        return FastBuild_Tuple(Py_False, 0.0f, Py_None);
+        return CULV_PY_BUILD_TUPLE(Py_False, 0.0f, Py_None);
     }
 
-    return FastBuild_Tuple(Py_True, out_t, FastBuild_Tuple(out_p[0], out_p[1], out_p[2]));
+    return CULV_PY_BUILD_TUPLE(Py_True, out_t, CULV_PY_BUILD_TUPLE(out_p[0], out_p[1], out_p[2]));
 }
 
 static PyObject *MathHolderObject_quat_get_axis_angle(MathHolderObject *self, PyObject *const *args,
@@ -929,7 +929,7 @@ static PyObject *MathHolderObject_quat_get_axis_angle(MathHolderObject *self, Py
     const void *const restrict targets[MathQuatOp_COUNT] = {[IDX_MQO_Q] =
                                                                 (const void *const restrict)&q_obj};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->MathQuatOpParser, targets)) {
         return nullptr;
     }
@@ -944,7 +944,7 @@ static PyObject *MathHolderObject_quat_get_axis_angle(MathHolderObject *self, Py
 
     culverin_math_quat_get_axis_angle(q, axis, &angle);
 
-    return FastBuild_Tuple(FastBuild_Tuple(axis[0], axis[1], axis[2]), angle);
+    return CULV_PY_BUILD_TUPLE(CULV_PY_BUILD_TUPLE(axis[0], axis[1], axis[2]), angle);
 }
 
 static PyObject *MathHolderObject_quat_from_axis_angle(MathHolderObject *self,
@@ -956,7 +956,7 @@ static PyObject *MathHolderObject_quat_from_axis_angle(MathHolderObject *self,
         [IDX_MAA_AXIS]  = (const void *const restrict)&axis_obj,
         [IDX_MAA_ANGLE] = (const void *const restrict)&angle};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->MathAxisAngleParser, targets)) {
         return nullptr;
     }
@@ -970,7 +970,7 @@ static PyObject *MathHolderObject_quat_from_axis_angle(MathHolderObject *self,
 
     culverin_math_quat_from_axis_angle(axis, angle, out);
 
-    return FastBuild_Tuple(out[0], out[1], out[2], out[3]);
+    return CULV_PY_BUILD_TUPLE(out[0], out[1], out[2], out[3]);
 }
 
 static PyObject *MathHolderObject_vec3_distance_batch(MathHolderObject *self, PyObject *const *args,
@@ -981,7 +981,7 @@ static PyObject *MathHolderObject_vec3_distance_batch(MathHolderObject *self, Py
         [IDX_MDB_VECS_A] = (const void *const restrict)&a_obj,
         [IDX_MDB_VECS_B] = (const void *const restrict)&b_obj};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->MathDistBatchParser, targets)) {
         return nullptr;
     }
@@ -1023,7 +1023,7 @@ static PyObject *MathHolderObject_vec3_normalize(MathHolderObject *self, PyObjec
     const void *const restrict targets[MathVecOp_COUNT] = {[IDX_MVO_V] =
                                                                (const void *const restrict)&v_obj};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->MathVecOpParser, targets)) {
         return nullptr;
     }
@@ -1037,7 +1037,7 @@ static PyObject *MathHolderObject_vec3_normalize(MathHolderObject *self, PyObjec
 
     culverin_math_vec3_normalize(v, out);
 
-    return FastBuild_Tuple(out[0], out[1], out[2]);
+    return CULV_PY_BUILD_TUPLE(out[0], out[1], out[2]);
 }
 
 static PyObject *MathHolderObject_mat44_get_translation(MathHolderObject *self,
@@ -1047,7 +1047,7 @@ static PyObject *MathHolderObject_mat44_get_translation(MathHolderObject *self,
     const void *const restrict targets[MathMat_COUNT] = {[IDX_MMM_MAT] =
                                                              (const void *const restrict)&mat_obj};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->MathMatParser,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->MathMatParser,
                            targets)) {
         return nullptr;
     }
@@ -1061,7 +1061,7 @@ static PyObject *MathHolderObject_mat44_get_translation(MathHolderObject *self,
     float out_vec[3];
     culverin_math_mat44_get_translation(in_mat, out_vec);
 
-    return FastBuild_Tuple(out_vec[0], out_vec[1], out_vec[2]);
+    return CULV_PY_BUILD_TUPLE(out_vec[0], out_vec[1], out_vec[2]);
 }
 
 static PyObject *MathHolderObject_mat44_get_rotation(MathHolderObject *self, PyObject *const *args,
@@ -1070,7 +1070,7 @@ static PyObject *MathHolderObject_mat44_get_rotation(MathHolderObject *self, PyO
     const void *const restrict targets[MathMat_COUNT] = {[IDX_MMM_MAT] =
                                                              (const void *const restrict)&mat_obj};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->MathMatParser,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->MathMatParser,
                            targets)) {
         return nullptr;
     }
@@ -1084,7 +1084,7 @@ static PyObject *MathHolderObject_mat44_get_rotation(MathHolderObject *self, PyO
     float out_quat[4];
     culverin_math_mat44_get_rotation(in_mat, out_quat);
 
-    return FastBuild_Tuple(out_quat[0], out_quat[1], out_quat[2], out_quat[3]);
+    return CULV_PY_BUILD_TUPLE(out_quat[0], out_quat[1], out_quat[2], out_quat[3]);
 }
 
 static PyObject *MathHolderObject_mat44_identity(CULV_MAYBE_UNUSED MathHolderObject *self,
@@ -1092,7 +1092,7 @@ static PyObject *MathHolderObject_mat44_identity(CULV_MAYBE_UNUSED MathHolderObj
     float out[sixteen_floats];
     culverin_math_mat44_identity(out);
 
-    return FastBuild_Tuple(out[0], out[1], out[2], out[3], out[4], out[5], out[6], out[7], out[8],
+    return CULV_PY_BUILD_TUPLE(out[0], out[1], out[2], out[3], out[4], out[5], out[6], out[7], out[8],
                            out[9], out[10], out[11], out[12], out[13], out[14], out[15]);
 }
 
@@ -1104,7 +1104,7 @@ static PyObject *MathHolderObject_vec3_reflect(MathHolderObject *self, PyObject 
         [IDX_MRF_V] = (const void *const restrict)&v_obj,
         [IDX_MRF_N] = (const void *const restrict)&n_obj};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->MathReflectParser, targets)) {
         return nullptr;
     }
@@ -1119,7 +1119,7 @@ static PyObject *MathHolderObject_vec3_reflect(MathHolderObject *self, PyObject 
 
     culverin_math_vec3_reflect(v, n, out);
 
-    return FastBuild_Tuple(out[0], out[1], out[2]);
+    return CULV_PY_BUILD_TUPLE(out[0], out[1], out[2]);
 }
 
 static PyObject *MathHolderObject_vec3_distance(MathHolderObject *self, PyObject *const *args,
@@ -1130,7 +1130,7 @@ static PyObject *MathHolderObject_vec3_distance(MathHolderObject *self, PyObject
         [IDX_MVP_V1] = (const void *const restrict)&v1_obj,
         [IDX_MVP_V2] = (const void *const restrict)&v2_obj};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->MathVecPairParser, targets)) {
         return nullptr;
     }
@@ -1156,7 +1156,7 @@ static PyObject *MathHolderObject_quat_rotate_vec3_inverse(MathHolderObject *sel
         [IDX_MQV_Q] = (const void *const restrict)&q_obj,
         [IDX_MQV_V] = (const void *const restrict)&v_obj};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->MathQuatVecParser, targets)) {
         return nullptr;
     }
@@ -1171,7 +1171,7 @@ static PyObject *MathHolderObject_quat_rotate_vec3_inverse(MathHolderObject *sel
 
     culverin_math_quat_rotate_vec3_inverse(q, v, out);
 
-    return FastBuild_Tuple(out[0], out[1], out[2]);
+    return CULV_PY_BUILD_TUPLE(out[0], out[1], out[2]);
 }
 
 // --- Wrapper for single tuple (x, y, z) -> (x, y, z, w) ---
@@ -1181,7 +1181,7 @@ static PyObject *MathHolderObject_euler_to_quat(MathHolderObject *self, PyObject
     const void *const restrict targets[MathEulerVec_COUNT] = {
         [IDX_MEV_V] = (const void *const restrict)&euler_obj};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->MathEulerVecParser, targets)) {
         return nullptr;
     }
@@ -1194,7 +1194,7 @@ static PyObject *MathHolderObject_euler_to_quat(MathHolderObject *self, PyObject
     }
 
     culverin_math_euler_to_quat(euler, q);
-    return FastBuild_Tuple(q[0], q[1], q[2], q[3]);
+    return CULV_PY_BUILD_TUPLE(q[0], q[1], q[2], q[3]);
 }
 
 // --- Wrapper for batch conversion (Bytes/Buffer) ---
@@ -1204,7 +1204,7 @@ static PyObject *MathHolderObject_euler_to_quat_batch(MathHolderObject *self, Py
     const void *const restrict targets[MathEulerBatch_COUNT] = {[IDX_MEB_VECS] =
                                                                     (void *)&eulers_obj};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->MathEulerBatchParser, targets)) {
         return nullptr;
     }

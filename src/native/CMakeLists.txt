@@ -1,10 +1,10 @@
 # Native dependencies and include paths are shared by every native domain.
+find_package(Threads REQUIRED)
+
 add_library(culverin_native_support INTERFACE)
 target_include_directories(
     culverin_native_support
-    INTERFACE
-        "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>"
-        "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/extern/mag-mutex/include>"
+    INTERFACE "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>"
 )
 target_include_directories(
     culverin_native_support
@@ -14,7 +14,7 @@ target_include_directories(
 )
 target_link_libraries(
     culverin_native_support
-    INTERFACE mag_mutex_lib ${JOLTC_TARGET} Jolt::Jolt
+    INTERFACE ${JOLTC_TARGET} Jolt::Jolt
 )
 
 # Header-only utility and shared-contract targets.
@@ -30,7 +30,17 @@ add_subdirectory(physics)
 
 # Preserve one reusable Python-independent archive while keeping compilation
 # partitioned by domain. The Jolt RTTI anchor is extension-link glue, not core.
-add_library(culverin_core STATIC)
+add_library(
+    culverin_core
+    STATIC
+        threading/Mutex.c
+        threading/Mutex.h
+        threading/Thread.c
+        threading/Thread.h
+        threading/ThreadSwitch.S
+        threading/ThreadAssembly.h
+)
+set_source_files_properties(threading/ThreadSwitch.S PROPERTIES LANGUAGE ASM)
 target_sources(
     culverin_core
     PRIVATE
@@ -45,4 +55,6 @@ target_link_libraries(
         culverin_native_common
         culverin_native_cpp
         culverin_native_soft_bodies
+        Threads::Threads
 )
+culverin_configure_compile_target(culverin_core)

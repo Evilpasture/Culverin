@@ -132,7 +132,7 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
         [IDX_SETTINGS] = (const void *const restrict)&settings_dict,
         [IDX_BODIES]   = (const void *const restrict)&bodies_list};
 
-    if (!FastParse_Unified(args, kwds, nullptr, &self->parsers->WorldInitParser, targets)) {
+    if (!CULV_FAST_PARSE_UNIFIED(args, kwds, nullptr, &self->parsers->WorldInitParser, targets)) {
         return -1;
     }
 
@@ -263,7 +263,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_impulse(PhysicsWorldObject *self,
                                                       [IDX_V3_Y] = (const void *const restrict)&y,
                                                       [IDX_V3_Z] = (const void *const restrict)&z};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->ImpulseParser,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->ImpulseParser,
                            targets)) {
         return nullptr;
     }
@@ -328,7 +328,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_impulse_at(PhysicsWorldObject *self
         [IDX_IMPAT_PY] = (const void *const restrict)&py,
         [IDX_IMPAT_PZ] = (const void *const restrict)&pz};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->ImpulseAtParser, targets)) {
         return nullptr;
     }
@@ -392,7 +392,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_angular_impulse(PhysicsWorldObject 
                                                       [IDX_V3_Y] = (const void *const restrict)&y,
                                                       [IDX_V3_Z] = (const void *const restrict)&z};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->AngImpulseParser, targets)) {
         return nullptr;
     }
@@ -455,7 +455,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_force(PhysicsWorldObject *self, PyO
                                                       [IDX_V3_Y] = (const void *const restrict)&y,
                                                       [IDX_V3_Z] = (const void *const restrict)&z};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->ForceParser,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->ForceParser,
                            targets)) {
         return nullptr;
     }
@@ -524,7 +524,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_torque(PhysicsWorldObject *self, Py
                                                       [IDX_V3_Y] = (const void *const restrict)&y,
                                                       [IDX_V3_Z] = (const void *const restrict)&z};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->TorqueParser,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->TorqueParser,
                            targets)) {
         return nullptr;
     }
@@ -597,7 +597,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_gravity(PhysicsWorldObject *self, PyO
     };
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->GravityParser, targets)) {
+    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->GravityParser, targets)) {
         return nullptr;
     }
 
@@ -646,7 +646,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_gravity(PhysicsWorldObject *self,
 
     SHADOW_UNLOCK(&self->physics.shadow_lock);
 
-    return FastBuild_Tuple(FastBuild_Value(g.x), FastBuild_Value(g.y), FastBuild_Value(g.z));
+    return CULV_PY_BUILD_TUPLE(CULV_PY_BUILD_VALUE(g.x), CULV_PY_BUILD_VALUE(g.y), CULV_PY_BUILD_VALUE(g.z));
 }
 
 PyCFunction_DeclareMethod PhysicsWorld_get_body_stats(PhysicsWorldObject *self,
@@ -658,7 +658,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_body_stats(PhysicsWorldObject *self,
     const void *const restrict targets[HOnly_COUNT] = {[IDX_H_H] =
                                                            (const void *const restrict)&h_raw};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->HOnlyParser,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->HOnlyParser,
                            targets)) {
         return nullptr;
     }
@@ -690,8 +690,8 @@ PyCFunction_DeclareMethod PhysicsWorld_get_body_stats(PhysicsWorldObject *self,
 
         // 4. RESULT CONSTRUCTION
         // Nested tuples: ((px, py, pz), (rx, ry, rz, rw), (vx, vy, vz))
-        return FastBuild_Tuple(FastBuild_Tuple(p.x, p.y, p.z), FastBuild_Tuple(r.x, r.y, r.z, r.w),
-                               FastBuild_Tuple(v.x, v.y, v.z));
+        return CULV_PY_BUILD_TUPLE(CULV_PY_BUILD_TUPLE(p.x, p.y, p.z), CULV_PY_BUILD_TUPLE(r.x, r.y, r.z, r.w),
+                               CULV_PY_BUILD_TUPLE(v.x, v.y, v.z));
     }
 
     // 5. ERROR FALLBACK
@@ -720,7 +720,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self,
         [IDX_BUOY_DT]        = (const void *const restrict)&dt,
         [IDX_BUOY_VEL]       = (const void *const restrict)&o_vel};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->BuoyParser,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->BuoyParser,
                            targets)) {
         return nullptr;
     }
@@ -821,7 +821,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy_batch(PhysicsWorldObject *
         [IDX_BBUOY_DT]        = (const void *const restrict)&dt,
         [IDX_BBUOY_VEL]       = (const void *const restrict)&o_vel};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->BatchBuoyParser, targets)) {
         return nullptr;
     }
@@ -1007,7 +1007,7 @@ PyCFunction_DeclareMethod PhysicsWorld_load_state(PhysicsWorldObject *self, PyOb
         [IDX_LS_STATE] = (const void *const restrict)&state_obj,
     };
 
-    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->LoadStateParser, targets)) {
+    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->LoadStateParser, targets)) {
         return nullptr;
     }
 
@@ -1184,7 +1184,7 @@ PyCFunction_DeclareMethod PhysicsWorld_step(PhysicsWorldObject *self, PyObject *
     };
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->StepParser, targets)) {
+    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->StepParser, targets)) {
         return nullptr;
     }
 
@@ -1284,7 +1284,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_convex_hull(PhysicsWorldObject *se
         [IDX_HC_REST]      = (void *const restrict)&restitution,
         [IDX_HC_CCD]       = (void *const restrict)&use_ccd};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->ConvexHullParser, targets)) {
         return nullptr;
     }
@@ -1538,7 +1538,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_compound_body(PhysicsWorldObject *
         [IDX_HC_REST]      = (const void *const restrict)&restitution,
         [IDX_HC_CCD]       = (const void *const restrict)&use_ccd};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->CompoundParser, targets)) {
         return nullptr;
     }
@@ -1697,7 +1697,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_body(PhysicsWorldObject *self, PyO
 
     // 3. THE FAST PARSE
     // We pass the global 'BodyParser' defined in the God Init helper
-    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->BodyParser, targets)) {
+    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->BodyParser, targets)) {
         return nullptr;
     }
 
@@ -1833,7 +1833,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
         [IDX_BC_SHAPE]     = (const void *const restrict)&shape_type,
         [IDX_BC_MOTION]    = (const void *const restrict)&motion_type};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->BatchCreateParser, targets)) {
         return nullptr;
     }
@@ -1990,16 +1990,16 @@ PyCFunction_DeclareMethod PhysicsWorld_create_bodies_batch(PhysicsWorldObject *s
     for (Py_ssize_t i = 0; i < batch_count; i++) {
         if (handles_out[i] != 0) {
             // Converts uint64_t to PyLong object
-            py_results[i] = FastBuild_Value(handles_out[i]);
+            py_results[i] = CULV_PY_BUILD_VALUE(handles_out[i]);
         } else {
             // Correctly handles Py_None as a "failure to create" entry
-            py_results[i] = FastBuild_Value(nullptr);
+            py_results[i] = CULV_PY_BUILD_VALUE(nullptr);
         }
     }
 
     // Pack the pointer array into a Python List
     // This function handles cleanup/decref internally if any py_results[i] is nullptr
-    PyObject *const res_list = fb_pack_list((size_t)batch_count, (PyObject **)py_results);
+    PyObject *const res_list = culv_py_build_pack_list((size_t)batch_count, (PyObject **)py_results);
 
     CULV_RAW_FREE(arena);
     return res_list;
@@ -2095,7 +2095,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_mesh_body(PhysicsWorldObject *self
         [IDX_MSH_CAT]       = (const void *const restrict)&cat,
         [IDX_MSH_MASK]      = (const void *const restrict)&mask};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->MeshParser,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->MeshParser,
                            targets)) {
         return nullptr;
     }
@@ -2200,7 +2200,7 @@ PyCFunction_DeclareMethod PhysicsWorld_destroy_body(PhysicsWorldObject *self, Py
     const void *const restrict targets[HOnly_COUNT] = {[IDX_H_H] =
                                                            (const void *const restrict)&h_raw};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->DestroyParser,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->DestroyParser,
                            targets)) {
         return nullptr;
     }
@@ -2245,7 +2245,7 @@ PyCFunction_DeclareMethod PhysicsWorld_destroy_bodies_batch(PhysicsWorldObject *
     const void *const restrict targets[BatchDestroy_COUNT] = {
         [IDX_BD_HANDLES] = (const void *const restrict)&py_handles_in};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->BatchDestroyParser, targets)) {
         return nullptr;
     }
@@ -2344,7 +2344,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_position(PhysicsWorldObject *self, Py
         [IDX_SETPOS_Y]      = (const void *const restrict)&y,
         [IDX_SETPOS_Z]      = (const void *const restrict)&z};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->SetPosParser,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->SetPosParser,
                            targets)) {
         return nullptr;
     }
@@ -2416,7 +2416,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_rotation(PhysicsWorldObject *self, Py
         [IDX_SETROT_Z] = (const void *const restrict)&z,
         [IDX_SETROT_W] = (const void *const restrict)&w};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->SetRotParser,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->SetRotParser,
                            targets)) {
         return nullptr;
     }
@@ -2489,7 +2489,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_linear_velocity(PhysicsWorldObject *s
                                                       [IDX_V3_Y] = (const void *const restrict)&y,
                                                       [IDX_V3_Z] = (const void *const restrict)&z};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->SetLinVelParser, targets)) {
         return nullptr;
     }
@@ -2555,7 +2555,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_angular_velocity(PhysicsWorldObject *
                                                       [IDX_V3_Y] = (const void *const restrict)&y,
                                                       [IDX_V3_Z] = (const void *const restrict)&z};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->SetAngVelParser, targets)) {
         return nullptr;
     }
@@ -2616,7 +2616,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_motion_type(PhysicsWorldObject *self,
     const void *const restrict targets[HOnly_COUNT] = {[IDX_H_H] =
                                                            (const void *const restrict)&h_raw};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->GetMotionParser, targets)) {
         return nullptr;
     }
@@ -2669,7 +2669,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_motion_type(PhysicsWorldObject *self,
         [IDX_SM_H] = (const void *const restrict)&h_raw,
         [IDX_SM_M] = (const void *const restrict)&motion_type};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->SetMotionParser, targets)) {
         return nullptr;
     }
@@ -2722,7 +2722,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_user_data(PhysicsWorldObject *self,
         [IDX_SUD_H] = (const void *const restrict)&h_raw,
         [IDX_SUD_D] = (const void *const restrict)&data_raw};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->SetUserDataParser, targets)) {
         return nullptr;
     }
@@ -2780,7 +2780,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_user_data(PhysicsWorldObject *self,
     const void *const restrict targets[HOnly_COUNT] = {[IDX_H_H] =
                                                            (const void *const restrict)&h_raw};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->GetUserDataParser, targets)) {
         return nullptr;
     }
@@ -2820,7 +2820,7 @@ PyCFunction_DeclareMethod PhysicsWorld_activate(PhysicsWorldObject *self, PyObje
     const void *const restrict targets[HOnly_COUNT] = {[IDX_H_H] =
                                                            (const void *const restrict)&h_raw};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->ActivateParser, targets)) {
         return nullptr;
     }
@@ -2869,7 +2869,7 @@ PyCFunction_DeclareMethod PhysicsWorld_deactivate(PhysicsWorldObject *self, PyOb
                                                            (const void *const restrict)&h_raw};
 
     // Note: Reusing ActivateParser as the schema is identical (single handle)
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->ActivateParser, targets)) {
         return nullptr;
     }
@@ -2923,7 +2923,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_transform(PhysicsWorldObject *self,
         [IDX_ST_POS]    = (const void *const restrict)&o_pos,
         [IDX_ST_ROT]    = (const void *const restrict)&o_rot};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->SetTrnsParser,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->SetTrnsParser,
                            targets)) {
         return nullptr;
     }
@@ -3011,7 +3011,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_ccd(PhysicsWorldObject *self, PyObjec
         [IDX_CCD_H] = (const void *const restrict)&h_raw,
         [IDX_CCD_E] = (const void *const restrict)&enabled};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->CCDParser,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->CCDParser,
                            targets)) {
         return nullptr;
     }
@@ -3062,7 +3062,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_index(PhysicsWorldObject *self, PyObj
     const void *const restrict targets[HOnly_COUNT] = {[IDX_H_H] =
                                                            (const void *const restrict)&h_raw};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->ActivateParser, targets)) {
         return nullptr;
     }
@@ -3100,7 +3100,7 @@ PyCFunction_DeclareMethod PhysicsWorld_is_alive(PhysicsWorldObject *self, PyObje
     const void *const restrict targets[HOnly_COUNT] = {[IDX_H_H] =
                                                            (const void *const restrict)&h_raw};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->ActivateParser, targets)) {
         return nullptr;
     }
@@ -3138,7 +3138,7 @@ PyCFunction_DeclareMethod PhysicsWorld_is_active(PhysicsWorldObject *self, PyObj
     const void *const restrict targets[HOnly_COUNT] = {[IDX_H_H] =
                                                            (const void *const restrict)&h_raw};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->ActivateParser, targets)) {
         return nullptr;
     }
@@ -3236,7 +3236,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_render_state(PhysicsWorldObject *self
     const void *const restrict targets[Render_COUNT] = {[IDX_RND_ALPHA] =
                                                             (const void *const restrict)&alpha};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->RenderParser,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->RenderParser,
                            targets)) {
         return nullptr;
     }
@@ -3286,7 +3286,7 @@ PyCFunction_DeclareMethod PhysicsWorld_set_collision_filter(PhysicsWorldObject *
         [IDX_CF_C] = (const void *const restrict)&category,
         [IDX_CF_M] = (const void *const restrict)&mask};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->ColFilterParser, targets)) {
         return nullptr;
     }
@@ -3350,7 +3350,7 @@ PyCFunction_DeclareMethod PhysicsWorld_register_material(PhysicsWorldObject *sel
     };
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->RegMatParser, targets)) {
+    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->RegMatParser, targets)) {
         return nullptr;
     }
 
@@ -3426,7 +3426,7 @@ PyCFunction_DeclareMethod PhysicsWorld_create_heightfield(PhysicsWorldObject *se
         [IDX_HF_FRIC]      = (const void *const restrict)&friction,
         [IDX_HF_REST]      = (const void *const restrict)&restitution};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->HeightfieldParser, targets)) {
         return nullptr;
     }
@@ -3539,7 +3539,7 @@ PyCFunction_DeclareMethod PhysicsWorld_get_debug_data(PhysicsWorldObject *self,
     };
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->DebugDataParser, targets)) {
+    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->DebugDataParser, targets)) {
         return nullptr;
     }
 
@@ -3640,7 +3640,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_soft_body(PhysicsWorldOb
         [IDX_CSB_UPDATE_POS] = (const void *const restrict)&update_position,
         [IDX_CSB_FACE_DS]    = (const void *const restrict)&faces_double_sided};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->CreateSoftBodyParser, targets)) {
         return nullptr;
     }
@@ -3732,7 +3732,7 @@ PhysicsWorld_get_soft_body_vertex_count(PhysicsWorldObject *self, PyObject *cons
     const void *const restrict targets[HOnly_COUNT] = {[IDX_H_H] =
                                                            (const void *const restrict)&h_raw};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->HOnlyParser,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->HOnlyParser,
                            targets)) {
         return nullptr;
     }
@@ -3786,7 +3786,7 @@ PhysicsWorld_get_soft_body_vertex_position(PhysicsWorldObject *self, PyObject *c
         [IDX_GSBV_H] = (const void *const restrict)&h_raw,
         [IDX_GSBV_I] = (const void *const restrict)&index};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->GetSbVertexParser, targets)) {
         return nullptr;
     }
@@ -3825,7 +3825,7 @@ PhysicsWorld_get_soft_body_vertex_position(PhysicsWorldObject *self, PyObject *c
             JPH_BodyLockInterface_UnlockRead(JPH_PhysicsSystem_GetBodyLockInterface(self->physics.system),
                                              &lock);
 
-            return FastBuild_Tuple(pos.x, pos.y, pos.z);
+            return CULV_PY_BUILD_TUPLE(pos.x, pos.y, pos.z);
         }
 
         if (lock.body) {
@@ -3849,7 +3849,7 @@ PhysicsWorld_get_soft_body_local_vertices(PhysicsWorldObject *self, PyObject *co
     const void *const restrict targets[HOnly_COUNT] = {[IDX_H_H] =
                                                            (const void *const restrict)&h_raw};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->HOnlyParser,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->HOnlyParser,
                            targets)) {
         return nullptr;
     }
@@ -3917,7 +3917,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_soft_body_vertices(PhysicsW
     uint64_t h_raw;
     const void *const restrict targets[HOnly_COUNT] = {[IDX_H_H] =
                                                            (const void *const restrict)&h_raw};
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->HOnlyParser,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->HOnlyParser,
                            targets)) {
         return nullptr;
     }
@@ -3979,7 +3979,7 @@ PyCFunction_DeclareMethod PhysicsWorld_benchmark_parse(CULV_MAYBE_UNUSED Physics
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (UNLIKELY(
-            !FastParse_Unified(args, nargs, kwnames, &self->parsers->StressTestParser, targets))) {
+            !CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->StressTestParser, targets))) {
         return nullptr;
     }
 
@@ -3987,7 +3987,7 @@ PyCFunction_DeclareMethod PhysicsWorld_benchmark_parse(CULV_MAYBE_UNUSED Physics
 }
 
 /**
- * Benchmark for FastBuild_Tuple using METH_NOARGS.
+ * Benchmark for CULV_PY_BUILD_TUPLE using METH_NOARGS.
  * This eliminates all argument parsing overhead to isolate the
  * performance of the Culverin Fast Build engine.
  */
@@ -4008,19 +4008,19 @@ PyCFunction_DeclareMethod PhysicsWorld_benchmark_build(CULV_MAYBE_UNUSED PyObjec
     bool b_val = true;
 
     // 2. Execute the Build
-    // FastBuild_Tuple uses FB_VAL to route types at compile-time.
-    // It then uses fb_pack_tuple to perform O(1) allocation and
+    // CULV_PY_BUILD_TUPLE uses CULV_PY_BUILD_VAL to route types at compile-time.
+    // It then uses culv_py_build_pack_tuple to perform O(1) allocation and
     // O(N) reference stealing.
     constexpr float stfu = 200.0f;
     PyObject *result =
-        FastBuild_Tuple(i_val, f_val, d_val, s_val, b_val, (int)100, (float)stfu,
+        CULV_PY_BUILD_TUPLE(i_val, f_val, d_val, s_val, b_val, (int)100, (float)stfu,
                         "Lorem ipsum dolor sit amet consectetur adipiscing elit, sed do eiusmod "
                         "tempor incididunt ut labore et dolore magna aliqua.",
                         false);
 
     // 3. Error handling
     if (UNLIKELY(!result)) {
-        // fb_pack_tuple handles internal cleanup on failure
+        // culv_py_build_pack_tuple handles internal cleanup on failure
         return nullptr;
     }
 
@@ -4040,7 +4040,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll_settings(Physics
         [IDX_RS_SKELETON] = (const void *const restrict)&py_skel_obj,
     };
 
-    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->RagdollSettingsParser, targets)) {
+    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->RagdollSettingsParser, targets)) {
         return nullptr;
     }
 
@@ -4100,7 +4100,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ragdoll(PhysicsWorldObje
         [IDX_CR_MAT]      = (const void *const restrict)&material_id,
     };
 
-    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->CreateRagdollParser, targets)) {
+    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->CreateRagdollParser, targets)) {
         return nullptr;
     }
 
@@ -4311,12 +4311,12 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events(PhysicsWorld
         uint64_t b2_raw = atomic_load_explicit(&slim->body2, memory_order_relaxed);
 
         /**
-         * OPTIMIZATION: FastBuild_Tuple
-         * 1. fb_from_u64 converts b1_raw and b2_raw
-         * 2. fb_from_float converts impulse and sliding_speed
-         * 3. fb_pack_tuple performs a single O(1) allocation
+         * OPTIMIZATION: CULV_PY_BUILD_TUPLE
+         * 1. culv_py_build_from_u64 converts b1_raw and b2_raw
+         * 2. culv_py_build_from_float converts impulse and sliding_speed
+         * 3. culv_py_build_pack_tuple performs a single O(1) allocation
          */
-        PyObject *item = FastBuild_Tuple(b1_raw, b2_raw, slim->impulse, slim->sliding_speed);
+        PyObject *item = CULV_PY_BUILD_TUPLE(b1_raw, b2_raw, slim->impulse, slim->sliding_speed);
 
         if (UNLIKELY(!item)) {
             Py_DECREF(list);
@@ -4324,7 +4324,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events(PhysicsWorld
             return nullptr;
         }
 
-        // PyList_SET_ITEM steals the reference from FastBuild_Tuple
+        // PyList_SET_ITEM steals the reference from CULV_PY_BUILD_TUPLE
         PyList_SET_ITEM(list, (Py_ssize_t)i, item);
     }
 
@@ -4394,14 +4394,14 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_contact_events_ex(PhysicsWo
         uint64_t b2 = atomic_load_explicit(&slim->body2, memory_order_relaxed);
 
         /**
-         * OPTIMIZATION: FastBuild_Dict
+         * OPTIMIZATION: CULV_PY_BUILD_DICT
          * We compose the nested tuples (pos, normal, bodies, mats)
          * and the dictionary in a single, readable expression.
          */
-        PyObject *dict = FastBuild_Dict(k_bodies, FastBuild_Tuple(b1, b2), k_pos,
-                                        FastBuild_Tuple(slim->px, slim->py, slim->pz), k_norm,
-                                        FastBuild_Tuple(slim->nx, slim->ny, slim->nz), k_mat,
-                                        FastBuild_Tuple(fat->mat1, fat->mat2), k_str, slim->impulse,
+        PyObject *dict = CULV_PY_BUILD_DICT(k_bodies, CULV_PY_BUILD_TUPLE(b1, b2), k_pos,
+                                        CULV_PY_BUILD_TUPLE(slim->px, slim->py, slim->pz), k_norm,
+                                        CULV_PY_BUILD_TUPLE(slim->nx, slim->ny, slim->nz), k_mat,
+                                        CULV_PY_BUILD_TUPLE(fat->mat1, fat->mat2), k_str, slim->impulse,
                                         k_slide, slim->sliding_speed, k_type, slim->flags);
 
         if (UNLIKELY(!dict)) {

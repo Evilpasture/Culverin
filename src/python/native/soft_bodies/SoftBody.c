@@ -60,7 +60,7 @@ SoftBodySharedSettings_add_vertex(SoftBodySharedSettingsObject *self, PyObject *
         [IDX_SAV_MASS] = (const void *const restrict)&inv_mass,
         [IDX_SAV_VEL]  = (const void *const restrict)&o_vel};
 
-    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->SbssAddVertexParser, targets)) {
+    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->SbssAddVertexParser, targets)) {
         return nullptr;
     }
 
@@ -105,7 +105,7 @@ SoftBodySharedSettings_add_vertices(SoftBodySharedSettingsObject *self, PyObject
         [IDX_SAVS_MASS] = (const void *const restrict)&o_mass,
         [IDX_SAVS_VEL]  = (const void *const restrict)&o_vel};
 
-    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->SbssAddVerticesParser, targets)) {
+    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->SbssAddVerticesParser, targets)) {
         return nullptr;
     }
     if (self->optimized) {
@@ -218,7 +218,7 @@ SoftBodySharedSettings_add_face(SoftBodySharedSettingsObject *self, PyObject *co
         [IDX_SAF_V3]  = (const void *const restrict)&v3,
         [IDX_SAF_MAT] = (const void *const restrict)&mat_idx};
 
-    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->SbssAddFaceParser, targets)) {
+    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->SbssAddFaceParser, targets)) {
         return nullptr;
     }
 
@@ -262,7 +262,7 @@ SoftBodySharedSettings_add_faces(SoftBodySharedSettingsObject *self, PyObject *c
         [IDX_SAFS_IND] = (const void *const restrict)&o_ind,
         [IDX_SAFS_MAT] = (const void *const restrict)&o_mat};
 
-    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->SbssAddFacesParser, targets)) {
+    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->SbssAddFacesParser, targets)) {
         return nullptr;
     }
 
@@ -403,7 +403,7 @@ SoftBodySharedSettings_create_constraints(SoftBodySharedSettingsObject *self, Py
     JPH_SoftBodyBendType bend_type = JPH_SoftBodyBendType_Distance; // Default: Distance
 
     const void *const restrict targets[2] = {&compliance, &bend_type};
-    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->SbssCreateConstraintsParser,
+    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->SbssCreateConstraintsParser,
                            targets)) {
         return nullptr;
     }
@@ -464,7 +464,7 @@ SoftBodySharedSettings_get_vertex_position(SoftBodySharedSettingsObject *self, P
     }
 
     // Return only the position component as requested
-    return FastBuild_Tuple(vertex.position.x, vertex.position.y, vertex.position.z);
+    return CULV_PY_BUILD_TUPLE(vertex.position.x, vertex.position.y, vertex.position.z);
 }
 
 #define SBSS_FASTCALL(name) CULV_FEAT(SoftBodySharedSettings, name, METH_FASTCALL | METH_KEYWORDS)

@@ -5,8 +5,11 @@ add_library(
     culverin_python_bindings
     OBJECT
         Getters.c
+        docstrings/Docstrings.c
+        docstrings/Docstrings.h
         BindingCommon.h
         FastBuild.h
+        FastBuildCore.h
         Getters.h
         ModuleState.h
         PythonDeclarations.h

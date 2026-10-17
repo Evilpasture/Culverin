@@ -28,7 +28,7 @@
  *       X(Torque, Vec3, SCHEMA_VEC3)
  *
  *   typedef struct {
- *       FOR_ALL_PARSERS(DECLARE_PARSER) // Expands to FastParser members
+ *       FOR_ALL_PARSERS(DECLARE_PARSER) // Expands to CulvFastParser members
  *   } CulverinParsers;
  *
  * ----------------------------------------------------------------------------
@@ -66,7 +66,7 @@
  * void *const restrict)&px,   [IDX_IMPAT_PY] = (const void *const restrict)&py, [IDX_IMPAT_PZ] =
  * (const void *const restrict)&pz};
  *
- *       if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+ *       if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
  * &st->parsers.ImpulseAtParser, targets)) { return nullptr;
  *       }
  *
@@ -77,7 +77,7 @@
  *
  * INVARIANT A: POINTER ISOLATION
  * PyObject* addresses for interned keywords (e.g., "handle") are ONLY valid
- * in the interpreter that created them. NEVER share a FastParser struct
+ * in the interpreter that created them. NEVER share a CulvFastParser struct
  * globally across C-memory.
  *
  * INVARIANT B: SCHEMA INTEGRITY
@@ -100,25 +100,25 @@
  */
 
 // Culverin-Specific Converters
-CULV_MAYBE_UNUSED CULV_NODISCARD static inline bool fp_conv_vec3f(PyObject *o, const void *t) {
+CULV_MAYBE_UNUSED CULV_NODISCARD static inline bool culv_fast_parse_conv_vec3f(PyObject *o, const void *t) {
     Vec3f *v = (Vec3f *)t; // Cast away const to write to the struct
     return parse_vec3_f32(o, &v->x, &v->y, &v->z) != 0;
 }
 
-CULV_MAYBE_UNUSED CULV_NODISCARD static inline bool fp_conv_pos_stride(PyObject *o, const void *t) {
+CULV_MAYBE_UNUSED CULV_NODISCARD static inline bool culv_fast_parse_conv_pos_stride(PyObject *o, const void *t) {
     PosStride *v = (PosStride *)t;
     return parse_vec3_r64(o, &v->x, &v->y, &v->z) != 0;
 }
 
-CULV_MAYBE_UNUSED CULV_NODISCARD static inline bool fp_conv_aux_stride(PyObject *o, const void *t) {
+CULV_MAYBE_UNUSED CULV_NODISCARD static inline bool culv_fast_parse_conv_aux_stride(PyObject *o, const void *t) {
     AuxStride *v = (AuxStride *)t;
     return parse_quat_f32(o, &v->x, &v->y, &v->z, &v->w) != 0;
 }
 
-#define FP_CUSTOM_TYPE_NAMES , Vec3f : "Vector3", PosStride : "Vector3", AuxStride : "Quaternion"
+#define CULV_FAST_PARSE_CUSTOM_TYPE_NAMES , Vec3f : "Vector3", PosStride : "Vector3", AuxStride : "Quaternion"
 
-#define FP_CUSTOM_CONVERTERS                                                                       \
-    , Vec3f : fp_conv_vec3f, PosStride : fp_conv_pos_stride, AuxStride : fp_conv_aux_stride
+#define CULV_FAST_PARSE_CUSTOM_CONVERTERS                                                                       \
+    , Vec3f : culv_fast_parse_conv_vec3f, PosStride : culv_fast_parse_conv_pos_stride, AuxStride : culv_fast_parse_conv_aux_stride
 
 // 4. Include the actual submodule
-#include <fast_parse.h>
+#include "FastParserCore.h"

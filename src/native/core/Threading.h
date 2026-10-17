@@ -1,6 +1,6 @@
 #pragma once
 #include "core/CompilerSpecifics.h"
-#include "mag_mutex.h" // 1-byte Mutex and Cond
+#include "threading/Mutex.h" // Native mutex and condition primitives
 #include <stdatomic.h>
 
 /**
@@ -70,30 +70,30 @@ CULV_MAYBE_UNUSED static inline void culverin_yield() {
 }
 
 /* ============================================================================
- * 2. UNIFIED LOCK API (Directly mapping to MagMutex/MagCond)
+ * 2. UNIFIED LOCK API (Directly mapping to CulvMutex/CulvCond)
  * ============================================================================ */
 
-typedef MagMutex NativeMutex;
-typedef MagCond NativeCond;
-typedef MagMutex ShadowMutex;
+typedef CulvMutex NativeMutex;
+typedef CulvCond NativeCond;
+typedef CulvMutex ShadowMutex;
 
 // Mutex Operations
-#define INIT_NATIVE_MUTEX(m) atomic_init(&(m).bits, MAG_UNLOCKED)
+#define INIT_NATIVE_MUTEX(m) atomic_init(&(m).bits, CULV_MUTEX_UNLOCKED)
 #define FREE_NATIVE_MUTEX(m) (void)(m)
-#define NATIVE_MUTEX_LOCK(m) MagMutex_Lock(&(m))
-#define NATIVE_MUTEX_UNLOCK(m) MagMutex_Unlock(&(m))
+#define NATIVE_MUTEX_LOCK(m) culv_mutex_lock(&(m))
+#define NATIVE_MUTEX_UNLOCK(m) culv_mutex_unlock(&(m))
 
 // Condition Variable Operations
-#define INIT_NATIVE_COND(c) MagCond_Init(&(c))
+#define INIT_NATIVE_COND(c) culv_cond_init(&(c))
 #define FREE_NATIVE_COND(c) (void)(c)
-#define NATIVE_COND_WAIT(c, m) MagCond_Wait(&(c), &(m))
-#define NATIVE_COND_BROADCAST(c) MagCond_Broadcast(&(c))
+#define NATIVE_COND_WAIT(c, m) culv_cond_wait(&(c), &(m))
+#define NATIVE_COND_BROADCAST(c) culv_cond_broadcast(&(c))
 
 // Shadow Mutex Operations (Maps directly to Native operations)
-#define INIT_LOCK(m) atomic_init(&(m).bits, MAG_UNLOCKED)
+#define INIT_LOCK(m) atomic_init(&(m).bits, CULV_MUTEX_UNLOCKED)
 #define FREE_LOCK(m) (void)(m)
-#define SHADOW_LOCK(m) MagMutex_Lock(m)
-#define SHADOW_UNLOCK(m) MagMutex_Unlock(m)
+#define SHADOW_LOCK(m) culv_mutex_lock(m)
+#define SHADOW_UNLOCK(m) culv_mutex_unlock(m)
 
 /* ============================================================================
  * 3. STRUCTURES & CACHE ISOLATION
@@ -108,7 +108,7 @@ typedef struct {
     NativeMutex mutex;
     NativeCond cond;
 
-    // Automatically adjusts if MagMutex/MagCond ever change size
+    // Automatically adjusts if the native mutex or condition size changes
     uint8_t
         _pad_after[CACHE_ISOLATE_PAD(sizeof(NativeMutex) + sizeof(NativeCond)) + CACHE_LINE_SIZE];
 } ShadowSync;

@@ -110,7 +110,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ship(PhysicsWorldObject 
         [IDX_CS_GRIP]     = (const void *const restrict)&grip,
         [IDX_CS_DRAG]     = (const void *const restrict)&drag};
 
-    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->CreateShipParser, targets)) {
+    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->CreateShipParser, targets)) {
         return nullptr;
     }
 
@@ -171,7 +171,7 @@ PyCFunction_DeclareMethodFromModule Ship_set_input(ShipObject *self, PyObject *c
         [IDX_SI_FWD]   = (const void *const restrict)&fwd,
         [IDX_SI_RIGHT] = (const void *const restrict)&right};
 
-    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->ShipInputParser, targets)) {
+    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->ShipInputParser, targets)) {
         return nullptr;
     }
 

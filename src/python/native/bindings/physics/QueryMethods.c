@@ -81,7 +81,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_sphere(PhysicsWorldObje
         [IDX_OS_RADIUS] = (const void *const restrict)&radius,
     };
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->OverlapSphereParser, targets)) {
         return nullptr;
     }
@@ -204,7 +204,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_aabb(PhysicsWorldObject
         [IDX_OA_MAX] = (const void *const restrict)&o_max,
     };
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->OverlapAABBParser, targets)) {
         return nullptr;
     }
@@ -311,7 +311,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast(PhysicsWorldObject *sel
         [IDX_RAY_IGN]   = (const void *const restrict)&ignore_h_raw,
     };
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->RaycastParser,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->RaycastParser,
                            targets)) {
         return nullptr;
     }
@@ -421,8 +421,8 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast(PhysicsWorldObject *sel
         const SlotPredicate pred = get_slot_predicate(state, MASK_IMM_STANDARD);
 
         if (pred.is_immediate) {
-            result = FastBuild_Tuple(hit_handle_raw, hit_fraction,
-                                     FastBuild_Tuple(normal.x, normal.y, normal.z));
+            result = CULV_PY_BUILD_TUPLE(hit_handle_raw, hit_fraction,
+                                     CULV_PY_BUILD_TUPLE(normal.x, normal.y, normal.z));
         }
     }
 
@@ -451,7 +451,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_raycast_batch(PhysicsWorldObjec
         [IDX_RB_DIST]   = (const void *const restrict)&max_dist,
     };
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->RayBatchParser, targets)) {
         return nullptr;
     }
@@ -614,7 +614,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_shapecast(PhysicsWorldObject *s
         [IDX_SC_IGNORE] = (const void *const restrict)&ignore_h_raw,
     };
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->ShapecastParser, targets)) {
         return nullptr;
     }
@@ -717,11 +717,11 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_shapecast(PhysicsWorldObject *s
                 nz *= inv_n;
             }
 
-            result = FastBuild_Tuple(hit_handle_raw, ctx.hit.fraction,
-                                     FastBuild_Tuple(ctx.hit.contactPointOn2.x,
+            result = CULV_PY_BUILD_TUPLE(hit_handle_raw, ctx.hit.fraction,
+                                     CULV_PY_BUILD_TUPLE(ctx.hit.contactPointOn2.x,
                                                      ctx.hit.contactPointOn2.y,
                                                      ctx.hit.contactPointOn2.z),
-                                     FastBuild_Tuple(nx, ny, nz));
+                                     CULV_PY_BUILD_TUPLE(nx, ny, nz));
         }
     }
 

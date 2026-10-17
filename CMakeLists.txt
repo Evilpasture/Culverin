@@ -334,13 +334,20 @@ endif()
 # call this helper in their local CMakeLists.txt; IPO/LTO is applied after all
 # targets have been declared.
 function(culverin_configure_compile_target target)
-    target_compile_options(${target} PRIVATE ${CULVERIN_COMPILE_FLAGS})
+    # Most flags are C/C++-specific; keep them off assembly translation units.
+    target_compile_options(
+        ${target}
+        PRIVATE "$<$<COMPILE_LANGUAGE:C,CXX>:${CULVERIN_COMPILE_FLAGS}>"
+    )
     target_compile_definitions(${target} PRIVATE ${CULV_ASSERT_DEFS} JPH_DEBUG_RENDERER)
 
     if(NOT MSVC)
         target_compile_definitions(${target} PRIVATE _GNU_SOURCE)
     else()
-        target_compile_options(${target} PRIVATE /Zi /fp:fast)
+        target_compile_options(
+            ${target}
+            PRIVATE "$<$<COMPILE_LANGUAGE:C,CXX>:/Zi>" "$<$<COMPILE_LANGUAGE:C,CXX>:/fp:fast>"
+        )
         target_compile_definitions(${target} PRIVATE _CRT_DECLARE_NONSTDC_NAMES=1)
     endif()
 
@@ -416,7 +423,7 @@ else()
 endif()
 
 # ==============================================================================
-# 4. BUILD JOLTC, MAG-MUTEX & EXTENSION
+# 4. BUILD JOLTC & EXTENSION
 # ==============================================================================
 set(JOLTC_TARGET joltc_double)
 add_library(
@@ -451,28 +458,15 @@ if(CMAKE_C_COMPILER_ID STREQUAL "GNU" AND WIN32)
     endif()
 endif()
 
-add_subdirectory("extern/mag-mutex")
-
 # Domain targets are declared next to their sources. The native subproject
 # aggregates Python-independent object targets into culverin_core.
 add_subdirectory("src/native")
 
 # Python discovery and extension domains come after the native core boundary.
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
-
-# External libraries are declared before the adapter domains that consume them.
-add_subdirectory("extern/fast-capi")
-set(FAST_CAPI_TARGET fast_capi_core)
-target_compile_options(${FAST_CAPI_TARGET} PRIVATE ${CULVERIN_COMPILE_FLAGS})
-target_compile_definitions(${FAST_CAPI_TARGET} PRIVATE ${CULV_ASSERT_DEFS})
-
-add_subdirectory("extern/docs-embedder")
-target_compile_options(docs_embedder PRIVATE ${CULVERIN_COMPILE_FLAGS})
-target_compile_definitions(docs_embedder PRIVATE ${CULV_ASSERT_DEFS})
-
 add_subdirectory("src/python/native")
 
-# Check IPO support for all project-owned and external targets.
+# Apply IPO after all project-owned targets have been declared.
 include(CheckIPOSupported)
 check_ipo_supported(RESULT ipo_supported OUTPUT error)
 if(ipo_supported)
@@ -492,8 +486,6 @@ if(ipo_supported)
         endforeach()
         set_property(TARGET culverin_core PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
         set_property(TARGET ${JOLTC_TARGET} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
-        set_property(TARGET ${FAST_CAPI_TARGET} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
-        set_property(TARGET docs_embedder PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
         if(TARGET Jolt AND NOT DEFINED JOLT_PREBUILT_DIR)
             set_property(TARGET Jolt PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
         endif()
@@ -537,8 +529,15 @@ foreach(entry ${EMBED_FILES})
     endif()
 endforeach()
 
-# Attach to the target
-target_sources(_culverin_c PRIVATE ${FALLBACK_HEADERS})
+# Make the generated headers explicit build dependencies. Their .inc suffix is
+# intentionally non-compilable, so listing them as target sources alone does not
+# reliably schedule the custom commands with every generator.
+if(FALLBACK_HEADERS)
+    set_source_files_properties(${FALLBACK_HEADERS} PROPERTIES GENERATED TRUE HEADER_FILE_ONLY TRUE)
+    add_custom_target(culverin_embed_fallbacks DEPENDS ${FALLBACK_HEADERS})
+    add_dependencies(_culverin_c culverin_embed_fallbacks)
+    target_sources(_culverin_c PRIVATE ${FALLBACK_HEADERS})
+endif()
 target_include_directories(_culverin_c PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
 # ==============================================================================
@@ -570,7 +569,10 @@ if(NOT ENABLE_SANITIZER AND NOT ENABLE_THREAD_SANITIZER)
             GLOBAL PROPERTY CULVERIN_COMPILE_TARGETS
         )
         foreach(target IN LISTS CULVERIN_COMPILE_TARGETS)
-            target_compile_options(${target} PRIVATE ${LTO_COMPILE_FLAG})
+            target_compile_options(
+                ${target}
+                PRIVATE "$<$<COMPILE_LANGUAGE:C,CXX>:${LTO_COMPILE_FLAG}>"
+            )
         endforeach()
         target_link_options(_culverin_c PRIVATE ${LTO_LINK_FLAG})
         target_compile_options(${JOLTC_TARGET} PRIVATE ${LTO_COMPILE_FLAG})
@@ -650,9 +652,15 @@ if(APPLE)
         GLOBAL PROPERTY CULVERIN_COMPILE_TARGETS
     )
     foreach(target IN LISTS CULVERIN_COMPILE_TARGETS)
-        target_compile_options(${target} PRIVATE "-frtti")
+        target_compile_options(
+            ${target}
+            PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:-frtti>"
+        )
     endforeach()
-    target_compile_options(${JOLTC_TARGET} PRIVATE "-frtti")
+    target_compile_options(
+        ${JOLTC_TARGET}
+        PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:-frtti>"
+    )
     target_link_options(_culverin_c PRIVATE "-Wl,-all_load,-object_path_lto,culverin.o")
 endif()
 

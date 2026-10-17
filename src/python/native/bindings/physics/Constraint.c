@@ -26,7 +26,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_constraint(PhysicsWorldO
         [IDX_CC_PARAMS] = (const void *const restrict)&o_params,
         [IDX_CC_MOTOR]  = (const void *const restrict)&o_motor};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
                            &self->parsers->CreateConstrParser, targets)) {
         return nullptr;
     }
@@ -130,7 +130,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_destroy_constraint(PhysicsWorld
     };
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->DestroyConstrParser, targets)) {
+    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->DestroyConstrParser, targets)) {
         return nullptr;
     }
 
@@ -203,7 +203,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_set_constraint_target(PhysicsWo
     };
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->SetConstrTargetParser, targets)) {
+    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->SetConstrTargetParser, targets)) {
         return nullptr;
     }
 
@@ -272,7 +272,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_get_constraint_type(PhysicsWorl
     const void *const restrict targets[HOnly_COUNT] = {[IDX_H_H] =
                                                            (const void *const restrict)&handle_raw};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->HOnlyParser,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->HOnlyParser,
                            targets)) {
         return nullptr;
     }

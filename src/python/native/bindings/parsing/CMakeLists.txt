@@ -5,6 +5,8 @@ add_library(
         ArgIndices.h
         DefaultConfig.h
         FastParse.h
+        FastParserCore.c
+        FastParserCore.h
         Parsers.c
         Parsers.h
 )

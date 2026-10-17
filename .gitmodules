@@ -5,12 +5,3 @@
 	path = extern/JoltC
 	url = https://github.com/amerkoleci/joltc.git
 	branch = main
-[submodule "extern/mag-mutex"]
-	path = extern/mag-mutex
-	url = https://github.com/Evilpasture/mag-mutex.git
-[submodule "extern/fast-capi"]
-	path = extern/fast-capi
-	url = https://github.com/Evilpasture/fast-capi.git
-[submodule "extern/docs-embedder"]
-	path = extern/docs-embedder
-	url = https://github.com/Evilpasture/docs-embedder.git

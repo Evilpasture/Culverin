@@ -15,7 +15,7 @@
 #include "bindings/ModuleState.h"
 #include "bindings/PythonSupport.h"
 #include "core/Threading.h"
-#include "docs_embedder.h"
+#include "bindings/docstrings/Docstrings.h"
 #include "joltc.h"
 #include <stdatomic.h>
 
@@ -23,7 +23,7 @@
  * INTERNAL HELPER: dump_parser_registry
  * Iterates through a specific registry array and writes the JSON entries.
  */
-static void dump_parser_registry(FastParser *const *const registry, const size_t count,
+static void dump_parser_registry(CulvFastParser *const *const registry, const size_t count,
                                  FILE *const out, bool *const is_first) {
     for (size_t i = 0; i < count; ++i) {
         const auto fp = registry[i];
@@ -52,11 +52,11 @@ PyCFunction_DeclareMethod culv_dump_schema_json(PyObject *const self, PyObject *
     const auto st        = get_culverin_state(self);
     const char *filename = "culverin_schema.json";
 
-    // 1. Thread-safe, subinterpreter-safe parsing via FastParser
+    // 1. Thread-safe, subinterpreter-safe parsing via CulvFastParser
     const void *const restrict targets[DumpSchema_COUNT] = {
         [IDX_DS_PATH] = (const void *const restrict)&filename};
 
-    if (!FastParse_Unified(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.DumpSchemaParser,
+    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.DumpSchemaParser,
                            targets)) {
         return nullptr;
     }
@@ -524,17 +524,17 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
 
         // --- THE WINNER: Run exactly once per process life ---
         const char *docs_str = (const char *)ALL_DOCS;
-        md_stitch_methods(culverin_module.m_methods, "Module", docs_str);
-        md_stitch_spec(&PhysicsWorld_spec, "PhysicsWorld", docs_str);
-        md_stitch_spec(&Character_spec, "Character", docs_str);
-        md_stitch_spec(&Vehicle_spec, "Vehicle", docs_str);
-        md_stitch_spec(&Skeleton_spec, "Skeleton", docs_str);
-        md_stitch_spec(&Ragdoll_spec, "Ragdoll", docs_str);
-        md_stitch_spec(&RagdollSettings_spec, "RagdollSettings", docs_str);
-        md_stitch_spec(&SoftBodySharedSettings_spec, "SoftBodySharedSettings", docs_str);
-        md_stitch_spec(&Registry_spec, "Registry", docs_str);
-        md_stitch_spec(&MathService_spec, "MathService", docs_str);
-        md_stitch_spec(&Ship_spec, "Ship", docs_str);
+        culv_docs_stitch_methods(culverin_module.m_methods, "Module", docs_str);
+        culv_docs_stitch_spec(&PhysicsWorld_spec, "PhysicsWorld", docs_str);
+        culv_docs_stitch_spec(&Character_spec, "Character", docs_str);
+        culv_docs_stitch_spec(&Vehicle_spec, "Vehicle", docs_str);
+        culv_docs_stitch_spec(&Skeleton_spec, "Skeleton", docs_str);
+        culv_docs_stitch_spec(&Ragdoll_spec, "Ragdoll", docs_str);
+        culv_docs_stitch_spec(&RagdollSettings_spec, "RagdollSettings", docs_str);
+        culv_docs_stitch_spec(&SoftBodySharedSettings_spec, "SoftBodySharedSettings", docs_str);
+        culv_docs_stitch_spec(&Registry_spec, "Registry", docs_str);
+        culv_docs_stitch_spec(&MathService_spec, "MathService", docs_str);
+        culv_docs_stitch_spec(&Ship_spec, "Ship", docs_str);
 
         // Gated Handler Registration
         JPH_SetTraceHandler(culv_jph_trace);

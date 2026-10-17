@@ -554,7 +554,7 @@ PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObje
         [IDX_CM_DT]  = (const void *const restrict)&dt};
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->CharMoveParser, targets)) {
+    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->CharMoveParser, targets)) {
         return nullptr;
     }
 
@@ -661,7 +661,7 @@ PyCFunction_DeclareMethodFromModule Character_get_linear_velocity(CharacterObjec
     JPH_CharacterVirtual_GetLinearVelocity(self->character, vel);
     SHADOW_UNLOCK(&self->world->physics.shadow_lock);
 
-    return FastBuild_Tuple(vel->x, vel->y, vel->z);
+    return CULV_PY_BUILD_TUPLE(vel->x, vel->y, vel->z);
 }
 
 PyCFunction_DeclareMethodFromModule Character_set_position(CharacterObject *self,
@@ -672,7 +672,7 @@ PyCFunction_DeclareMethodFromModule Character_set_position(CharacterObject *self
         [IDX_SPC_POS] = (const void *const restrict)&pos,
     };
 
-    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->SetPosCharParser, targets)) {
+    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->SetPosCharParser, targets)) {
         return nullptr;
     }
 
@@ -708,7 +708,7 @@ PyCFunction_DeclareMethodFromModule Character_set_rotation(CharacterObject *self
         [IDX_SRC_ROT] = (const void *const restrict)&rot,
     };
 
-    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->SetRotCharParser, targets)) {
+    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->SetRotCharParser, targets)) {
         return nullptr;
     }
 
@@ -741,7 +741,7 @@ PyCFunction_DeclareMethodFromModule Character_set_strength(CharacterObject *self
         [IDX_SSC_STRENGTH] = (const void *const restrict)&strength,
     };
 
-    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->SetStrengthCharParser, targets)) {
+    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->SetStrengthCharParser, targets)) {
         return nullptr;
     }
 
@@ -791,8 +791,8 @@ PyCFunction_DeclareMethodFromModule Character_get_render_transform(CharacterObje
 
     SHADOW_UNLOCK(&self->world->physics.shadow_lock);
 
-    return FastBuild_Tuple(FastBuild_Tuple(res_p[0], res_p[1], res_p[2]),
-                           FastBuild_Tuple(res_r[0], res_r[1], res_r[2], res_r[3]));
+    return CULV_PY_BUILD_TUPLE(CULV_PY_BUILD_TUPLE(res_p[0], res_p[1], res_p[2]),
+                           CULV_PY_BUILD_TUPLE(res_r[0], res_r[1], res_r[2], res_r[3]));
 }
 
 PyCFunction_DeclareMethodFromModule Character_is_grounded(CharacterObject *self,
@@ -1017,7 +1017,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_character(PhysicsWorldOb
         [IDX_CCHAR_STEP]  = (const void *const restrict)&step_h,
         [IDX_CCHAR_SLOPE] = (const void *const restrict)&slope};
 
-    if (!FastParse_Unified(args, nargs, kwnames, &self->parsers->CreateCharParser, targets)) {
+    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->CreateCharParser, targets)) {
         return nullptr;
     }
 
@@ -1100,7 +1100,7 @@ fail_jolt:
 PyGetSet_DeclareGetter Character_get_handle(CharacterObject *self,
                                             CULV_MAYBE_UNUSED void *closure) {
     uint64_t raw_h = atomic_load_explicit(&self->handle, memory_order_relaxed);
-    return FastBuild_Value(raw_h);
+    return CULV_PY_BUILD_VALUE(raw_h);
 }
 
 #define CHAR_FASTCALL(name) CULV_FEAT(Character, name, METH_FASTCALL | METH_KEYWORDS)
