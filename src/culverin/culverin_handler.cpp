@@ -2,8 +2,9 @@
 #include "CulverinCPP"
 #include <array>
 #include <chrono>
-#include <format>
-#include <print>
+#include <cstddef>
+#include <cstdio>
+#include <cstring>
 #include <string_view>
 
 #ifdef _WIN32
@@ -24,6 +25,41 @@ struct LogTheme {
 };
 
 constexpr std::string_view ANSI_RESET = "\033[0m";
+
+template <std::size_t Capacity>
+class StackBuffer {
+public:
+    void append(std::string_view text) noexcept {
+        const auto remaining = Capacity - size_;
+        const auto count = text.size() < remaining ? text.size() : remaining;
+        if (count == 0) {
+            return;
+        }
+
+        std::memcpy(data_.data() + size_, text.data(), count);
+        size_ += count;
+    }
+
+    void append_unsigned(CPH::Unsigned32 value) noexcept {
+        std::array<char, 10> digits{};
+        std::size_t count = 0;
+        do {
+            digits[count++] = static_cast<char>('0' + (value % 10U));
+            value /= 10U;
+        } while (value != 0);
+
+        while (count != 0) {
+            append(std::string_view(&digits[--count], 1));
+        }
+    }
+
+    [[nodiscard]] auto data() const noexcept -> const char * { return data_.data(); }
+    [[nodiscard]] auto size() const noexcept -> std::size_t { return size_; }
+
+private:
+    std::array<char, Capacity> data_{};
+    std::size_t size_ = 0;
+};
 
 [[nodiscard]]
 constexpr auto get_theme(LogLevel level, bool use_color) noexcept -> LogTheme {
@@ -88,8 +124,8 @@ void culv_jph_trace(const char *const inString) {
     const auto atty         = static_cast<bool>(IS_ATTY);
     const auto [color, tag] = get_theme(level, atty);
 
-    // libc++'s chrono formatter pulls in floating-point to_chars, which requires macOS 13.4.
-    // Keep the project's 13.3 deployment target by formatting the UTC clock directly.
+    // Format UTC as HH:MM:SS without std::format, whose libc++ implementation
+    // instantiates floating-point to_chars unavailable at the macOS 13.3 target.
     const auto now_seconds = std::chrono::floor<std::chrono::seconds>(
         std::chrono::system_clock::now().time_since_epoch());
     const auto day_start = std::chrono::floor<std::chrono::days>(now_seconds);
@@ -97,27 +133,24 @@ void culv_jph_trace(const char *const inString) {
     const auto hours   = static_cast<unsigned>(time_of_day.hours().count());
     const auto minutes = static_cast<unsigned>(time_of_day.minutes().count());
     const auto seconds = static_cast<unsigned>(time_of_day.seconds().count());
-    const std::array<char, 9> timestamp = {
+    const std::array<char, 8> timestamp = {
         static_cast<char>('0' + (hours / 10)), static_cast<char>('0' + (hours % 10)), ':',
         static_cast<char>('0' + (minutes / 10)), static_cast<char>('0' + (minutes % 10)), ':',
-        static_cast<char>('0' + (seconds / 10)), static_cast<char>('0' + (seconds % 10)), '\0'};
+        static_cast<char>('0' + (seconds / 10)), static_cast<char>('0' + (seconds % 10))};
 
-    // 3. Stack-allocated formatting (Non-throwing, Zero-allocation)
-    // 2048 is usually enough for any physics trace or error message
-    std::array<char, 2048> buffer;
-
-    // std::format_to_n returns a result object containing a pointer to the end
-    // and the total size that would have been written. It does not throw.
-    const auto result =
-        std::format_to_n(buffer.data(), buffer.size(), "[{}] {}{}{}{} {}\n",
-                         std::string_view(timestamp.data(), timestamp.size() - 1), color, tag,
-                         (atty ? ANSI_RESET : ""), (atty ? "" : ":"), msg);
-
-    // 4. Output safely
-    // Clamp the size to the buffer capacity
-    const CPH::SizeType write_size =
-        (static_cast<unsigned long>(result.size) > buffer.size()) ? buffer.size() : result.size;
-    std::print(stderr, "{}", std::string_view(buffer.data(), write_size));
+    // 3. Assemble in a bounded stack buffer, then write the exact bytes to stderr.
+    StackBuffer<2048> buffer;
+    buffer.append("[");
+    buffer.append(std::string_view(timestamp.data(), timestamp.size()));
+    buffer.append("] ");
+    buffer.append(color);
+    buffer.append(tag);
+    buffer.append(atty ? ANSI_RESET : std::string_view{});
+    buffer.append(atty ? std::string_view{} : std::string_view{":"});
+    buffer.append(" ");
+    buffer.append(msg);
+    buffer.append("\n");
+    (void)std::fwrite(buffer.data(), sizeof(char), buffer.size(), stderr);
 }
 
 /**
@@ -130,22 +163,22 @@ auto culv_jph_assert(const char *const inExpression, const char *const inMessage
     const auto *const color = atty ? "\033[1;41m" : "";
     const auto reset        = atty ? ANSI_RESET : "";
 
-    // Asserts are rare and critical, using a stack buffer again to be safe
-    std::array<char, 1024> buffer;
-    const auto result =
-        std::format_to_n(buffer.data(), buffer.size(),
-                         "\n{}[JOLT ASSERTION FAILURE]{}\n"
-                         "  Expression: {}\n"
-                         "  Message:    {}\n"
-                         "  Location:   {}:{}\n",
-                         color, reset, (inExpression != nullptr) ? inExpression : "N/A",
-                         (inMessage != nullptr) ? inMessage : "No message provided",
-                         (inFile != nullptr) ? inFile : "Unknown", inLine);
-
-    const CPH::SizeType write_size = std::min<CPH::SizeType>(result.size, buffer.size());
-
-    // This replaces all three of your lines:
-    std::print(stderr, "{}", std::string_view(buffer.data(), write_size));
+    // Asserts are rare and critical; keep their output bounded and allocation-free too.
+    StackBuffer<1024> buffer;
+    buffer.append("\n");
+    buffer.append(color);
+    buffer.append("[JOLT ASSERTION FAILURE]");
+    buffer.append(reset);
+    buffer.append("\n  Expression: ");
+    buffer.append((inExpression != nullptr) ? inExpression : "N/A");
+    buffer.append("\n  Message:    ");
+    buffer.append((inMessage != nullptr) ? inMessage : "No message provided");
+    buffer.append("\n  Location:   ");
+    buffer.append((inFile != nullptr) ? inFile : "Unknown");
+    buffer.append(":");
+    buffer.append_unsigned(inLine);
+    buffer.append("\n");
+    (void)std::fwrite(buffer.data(), sizeof(char), buffer.size(), stderr);
 
     return true;
 }
