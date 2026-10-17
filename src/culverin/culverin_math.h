@@ -1,4 +1,5 @@
 #pragma once
+#include <math.h>
 #include "culverin_compiler_specifics.h"
 #include "culverin_types.h"
 #include "joltc.h"

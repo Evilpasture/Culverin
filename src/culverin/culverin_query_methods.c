@@ -1,3 +1,4 @@
+#include <math.h>
 #include "culverin_query_methods.h"
 #include "culverin.h"
 #include "culverin_arg_indices.h"

@@ -1,3 +1,4 @@
+#include <math.h>
 #include "culverin_physics_world.h"
 #include "culverin_physics_world_core.h"
 #include "culverin_physics_world_internal.h"

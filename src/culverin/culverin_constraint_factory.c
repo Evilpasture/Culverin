@@ -1,4 +1,5 @@
 #include "culverin_constraint_factory.h"
+#include <math.h>
 #include <float.h>
 
 // Named constants to avoid magic numbers
