@@ -1,8 +1,8 @@
-#include "physics/PhysicsWorldRuntimeCore.h"
+#include "physics/PhysicsWorldRuntime.h"
 #include "core/NativeAlloc.h"
 #include "math/MathCore.h"
 #include "physics/ContactEventDefinitions.h"
-#include "physics/QueryCore.h"
+#include "physics/Query.h"
 #include "physics/SlotState.h"
 #include <string.h>
 

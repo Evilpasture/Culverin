@@ -1,7 +1,7 @@
 add_library(
     culverin_native_physics
     OBJECT
-        CommandBufferCore.c
+        CommandBuffer.c
         CommandBuffer.h
         ConstraintFactory.c
         ConstraintFactory.h
@@ -12,18 +12,18 @@ add_library(
         InternalQuery.c
         InternalQuery.h
         PhysicsParams.h
-        QueryCore.c
-        QueryCore.h
-        PhysicsWorldCore.c
-        PhysicsWorldCore.h
-        PhysicsWorldCreationCore.c
-        PhysicsWorldCreationCore.h
-        PhysicsWorldOpsCore.c
-        PhysicsWorldOpsCore.h
-        PhysicsWorldRuntimeCore.c
-        PhysicsWorldRuntimeCore.h
-        RagdollCore.c
-        RagdollCore.h
+        Query.c
+        Query.h
+        PhysicsWorld.c
+        PhysicsWorld.h
+        PhysicsWorldCreation.c
+        PhysicsWorldCreation.h
+        PhysicsWorldOps.c
+        PhysicsWorldOps.h
+        PhysicsWorldRuntime.c
+        PhysicsWorldRuntime.h
+        Ragdoll.c
+        Ragdoll.h
         PhysicsWorldState.h
         ShadowSync.cpp
         ShadowSync.h

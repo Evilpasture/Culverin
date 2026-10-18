@@ -1,4 +1,4 @@
-#include "physics/PhysicsWorldOpsCore.h"
+#include "physics/PhysicsWorldOps.h"
 #include "physics/CommandBuffer.h"
 #include "physics/SlotState.h"
 

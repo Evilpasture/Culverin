@@ -2,12 +2,12 @@
 
 #include "physics/PhysicsWorldState.h"
 
-typedef enum PhysicsRagdollCoreStatus : int {
-    PHYSICS_RAGDOLL_CORE_STATUS_OK                 = 0,
-    PHYSICS_RAGDOLL_CORE_STATUS_INVALID_ARGUMENT   = -1,
-    PHYSICS_RAGDOLL_CORE_STATUS_INVALID_SHAPE      = -2,
-    PHYSICS_RAGDOLL_CORE_STATUS_JOINT_OUT_OF_RANGE = -3,
-} PhysicsRagdollCoreStatus;
+typedef enum PhysicsRagdollStatus : int {
+    PHYSICS_RAGDOLL_STATUS_OK                 = 0,
+    PHYSICS_RAGDOLL_STATUS_INVALID_ARGUMENT   = -1,
+    PHYSICS_RAGDOLL_STATUS_INVALID_SHAPE      = -2,
+    PHYSICS_RAGDOLL_STATUS_JOINT_OUT_OF_RANGE = -3,
+} PhysicsRagdollStatus;
 
 typedef struct PhysicsRagdollPartRequest {
     int joint_index;
@@ -43,7 +43,7 @@ void physics_ragdoll_settings_destroy(JPH_RagdollSettings *settings);
 bool physics_ragdoll_settings_stabilize(JPH_RagdollSettings *settings);
 JPH_Shape *physics_ragdoll_find_or_create_shape(PhysicsWorld *world, int shape_type,
                                                 const float shape_params[4]);
-PhysicsRagdollCoreStatus physics_ragdoll_settings_add_part(JPH_RagdollSettings *settings,
+PhysicsRagdollStatus physics_ragdoll_settings_add_part(JPH_RagdollSettings *settings,
                                                            JPH_Shape *shape,
                                                            const PhysicsRagdollPartRequest *request,
                                                            int *out_joint_count);

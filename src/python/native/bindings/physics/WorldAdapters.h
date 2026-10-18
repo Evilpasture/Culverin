@@ -7,7 +7,7 @@
 struct PhysicsWorldObject;
 
 // Python entry points translate Python-side concerns and exceptions around the
-// native core operations declared in PhysicsWorldCore.h.
+// native core operations declared in PhysicsWorld.h.
 int PhysicsWorld_resize(struct PhysicsWorldObject *self, size_t new_capacity);
 void PhysicsWorld_free_members(struct PhysicsWorldObject *self);
 

@@ -2,10 +2,10 @@
 #include "bindings/physics/PhysicsWorld.h"
 #include "characters/Character.h" // IWYU pragma: keep
 #include "bindings/physics/Constraint.h" // IWYU pragma: keep
-#include "physics/PhysicsWorldCore.h"
-#include "physics/PhysicsWorldCreationCore.h"
-#include "physics/PhysicsWorldOpsCore.h"
-#include "physics/PhysicsWorldRuntimeCore.h"
+#include "physics/PhysicsWorld.h"
+#include "physics/PhysicsWorldCreation.h"
+#include "physics/PhysicsWorldOps.h"
+#include "physics/PhysicsWorldRuntime.h"
 #include "bindings/physics/WorldAdapters.h"
 #include "core/NativeAlloc.h"
 #include "bindings/parsing/ArgIndices.h"
@@ -144,7 +144,7 @@ PyType_DeclareSlot_Status PhysicsWorld_init(PhysicsWorldObject *self, PyObject *
         goto fail;
     }
 
-    if (init_jolt_core(&self->physics, settings, gravity) < 0) {
+    if (physics_world_init_jolt(&self->physics, settings, gravity) < 0) {
         if (!PyErr_Occurred()) {
             PyErr_SetString(PyExc_RuntimeError, "Failed to initialize native Jolt world resources.");
         }

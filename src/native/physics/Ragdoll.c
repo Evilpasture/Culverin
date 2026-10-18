@@ -1,4 +1,4 @@
-#include "physics/RagdollCore.h"
+#include "physics/Ragdoll.h"
 #include "physics/CommandBuffer.h"
 #include "physics/InternalQuery.h"
 
@@ -83,25 +83,25 @@ JPH_Shape *physics_ragdoll_find_or_create_shape(PhysicsWorld *world, int shape_t
     return shape;
 }
 
-PhysicsRagdollCoreStatus physics_ragdoll_settings_add_part(JPH_RagdollSettings *settings,
+PhysicsRagdollStatus physics_ragdoll_settings_add_part(JPH_RagdollSettings *settings,
                                                            JPH_Shape *shape,
                                                            const PhysicsRagdollPartRequest *request,
                                                            int *out_joint_count) {
     if (!settings || !request || !out_joint_count) {
-        return PHYSICS_RAGDOLL_CORE_STATUS_INVALID_ARGUMENT;
+        return PHYSICS_RAGDOLL_STATUS_INVALID_ARGUMENT;
     }
     if (!shape) {
-        return PHYSICS_RAGDOLL_CORE_STATUS_INVALID_SHAPE;
+        return PHYSICS_RAGDOLL_STATUS_INVALID_SHAPE;
     }
 
     const JPH_Skeleton *skeleton = JPH_RagdollSettings_GetSkeleton(settings);
     if (!skeleton) {
-        return PHYSICS_RAGDOLL_CORE_STATUS_INVALID_ARGUMENT;
+        return PHYSICS_RAGDOLL_STATUS_INVALID_ARGUMENT;
     }
     const int joint_count = JPH_Skeleton_GetJointCount(skeleton);
     *out_joint_count      = joint_count;
     if (request->joint_index < 0 || request->joint_index >= joint_count) {
-        return PHYSICS_RAGDOLL_CORE_STATUS_JOINT_OUT_OF_RANGE;
+        return PHYSICS_RAGDOLL_STATUS_JOINT_OUT_OF_RANGE;
     }
 
     if (JPH_RagdollSettings_GetPartCount(settings) <= request->joint_index) {
@@ -134,7 +134,7 @@ PhysicsRagdollCoreStatus physics_ragdoll_settings_add_part(JPH_RagdollSettings *
         JPH_RagdollSettings_SetPartToParent(settings, request->joint_index, &constraint);
     }
 
-    return PHYSICS_RAGDOLL_CORE_STATUS_OK;
+    return PHYSICS_RAGDOLL_STATUS_OK;
 }
 
 int physics_ragdoll_get_joint_count(JPH_Ragdoll *ragdoll) {

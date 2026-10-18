@@ -1,4 +1,4 @@
-#include "physics/PhysicsWorldCore.h"
+#include "physics/PhysicsWorld.h"
 #include "core/NativeAlloc.h"
 #include "core/Profiling.h"
 #include "physics/CommandBuffer.h"
@@ -907,7 +907,7 @@ void physics_world_free_native(PhysicsWorld *world) {
     FREE_NATIVE_COND(world->step_sync.cond);
 }
 
-int init_jolt_core(PhysicsWorld *world, WorldSettings settings, GravityVector gravity) {
+int physics_world_init_jolt(PhysicsWorld *world, WorldSettings settings, GravityVector gravity) {
     int num_workers = settings.num_threads;
 #if defined(__SANITIZE_THREAD__) || defined(ENABLE_SANITIZER)
     // When running ThreadSanitizer, disable Jolt's background workers.

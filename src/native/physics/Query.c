@@ -1,4 +1,4 @@
-#include "physics/QueryCore.h"
+#include "physics/Query.h"
 #include "core/NativeAlloc.h"
 #include "math/MathCore.h"
 #include "physics/InternalQuery.h"

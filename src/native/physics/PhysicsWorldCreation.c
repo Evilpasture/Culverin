@@ -1,8 +1,8 @@
-#include "physics/PhysicsWorldCreationCore.h"
+#include "physics/PhysicsWorldCreation.h"
 #include "core/NativeAlloc.h"
 #include "physics/CommandBuffer.h"
 #include "physics/InternalQuery.h"
-#include "physics/PhysicsWorldCore.h"
+#include "physics/PhysicsWorld.h"
 #include "physics/SlotState.h"
 #include <string.h>
 

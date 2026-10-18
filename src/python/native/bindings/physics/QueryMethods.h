@@ -1,7 +1,7 @@
 #pragma once
 
 #include "bindings/physics/PhysicsWorld.h"
-#include "physics/QueryCore.h"
+#include "physics/Query.h"
 #include <Python.h>
 
 PyCFunction_DeclareMethodFromModule PhysicsWorld_overlap_sphere(PhysicsWorldObject *self,

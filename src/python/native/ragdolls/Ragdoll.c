@@ -5,7 +5,7 @@
 #include "bindings/parsing/ArgIndices.h"
 #include "bindings/physics/PhysicsSync.h"
 #include "core/CompilerSpecifics.h"
-#include "physics/RagdollCore.h"
+#include "physics/Ragdoll.h"
 
 // Default mass
 static constexpr float RAGDOLL_DEFAULT_PART_MASS = 10.0f;
@@ -373,16 +373,16 @@ PyCFunction_DeclareMethodFromModule RagdollSettings_add_part(RagdollSettingsObje
         .position     = position,
     };
     int joint_count = 0;
-    const PhysicsRagdollCoreStatus status =
+    const PhysicsRagdollStatus status =
         physics_ragdoll_settings_add_part(self->settings, shape, &request, &joint_count);
 
-    if (status == PHYSICS_RAGDOLL_CORE_STATUS_INVALID_SHAPE) {
+    if (status == PHYSICS_RAGDOLL_STATUS_INVALID_SHAPE) {
         return PyErr_Format(PyExc_ValueError, "Invalid shape configuration");
     }
-    if (status == PHYSICS_RAGDOLL_CORE_STATUS_JOINT_OUT_OF_RANGE) {
+    if (status == PHYSICS_RAGDOLL_STATUS_JOINT_OUT_OF_RANGE) {
         return PyErr_Format(PyExc_IndexError, "Joint index %d out of bounds", joint_idx);
     }
-    if (status != PHYSICS_RAGDOLL_CORE_STATUS_OK) {
+    if (status != PHYSICS_RAGDOLL_STATUS_OK) {
         return PyErr_Format(PyExc_RuntimeError, "Invalid ragdoll settings state");
     }
 
