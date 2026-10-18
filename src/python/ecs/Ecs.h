@@ -1,8 +1,8 @@
 #pragma once
 #include "bindings/PythonDeclarations.h"
-#include "bindings/parsing/ParserRegistry.hpp"
 #include "core/CompilerSpecifics.h"
 #include "core/Threading.h"
+#include "ecs/EcsParsers.hpp"
 #include <Python.h>
 
 // A 64-bit Entity Handle: [32-bit Generation | 32-bit Index]
@@ -38,7 +38,7 @@ typedef struct {
     ShadowMutex ecs_lock;
 
     // Parsers
-    CPH_ECSParsers *parsers;
+    CPH::Python::EcsParsers *parsers;
 } CPH_RegistryObject;
 
 // Lifecycle

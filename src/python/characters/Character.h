@@ -1,6 +1,6 @@
 #pragma once
 #include "bindings/BindingCommon.h"
-#include "bindings/parsing/ParserRegistry.hpp"
+#include "characters/CharacterParsers.hpp"
 #include <Python.h>
 
 // --- Character Object ---
@@ -17,7 +17,7 @@ typedef struct CPH_CharacterObject {
     JPH_CharacterContactListener *listener;
 
     // Parsers
-    CPH_CharacterParsers *parsers;
+    CPH::Python::CharacterParsers *parsers;
 
     // ATOMIC INPUTS: Read by Jolt worker threads in callbacks
     CPH_ATOMIC(float) push_strength;

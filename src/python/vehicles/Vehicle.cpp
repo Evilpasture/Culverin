@@ -2,7 +2,6 @@
 #include "bindings/BindingCommon.h"
 #include "bindings/ModuleState.h"
 #include "bindings/PythonSupport.h"
-#include "bindings/parsing/ParserRegistry.hpp"
 #include "bindings/parsing/Parsers.h"
 #include "bindings/physics/PhysicsSync.h"
 #include "core/CompilerSpecifics.h"
@@ -180,11 +179,10 @@ void CPH_CleanupVehicleResources(CPH_VehicleResources *r, uint32_t num_wheels,
 }
 
 int CPH_InitVehicleParsers(CPH_VehicleObject *obj) {
-    obj->parsers = CPH::NewParserGroup<CPH_VehicleParsers>();
+    obj->parsers = CPH::Python::NewParserGroup<CPH::Python::VehicleParsers>();
     if (!obj->parsers) {
         return -1;
     }
-    obj->parsers->Init();
     return 0;
 }
 

@@ -3,7 +3,6 @@
 #include "bindings/FastBuild.h"
 #include "bindings/ModuleState.h"
 #include "bindings/PythonSupport.h"
-#include "bindings/parsing/ParserRegistry.hpp"
 #include "bindings/physics/PhysicsSync.h"
 #include "bindings/physics/WorldAdapters.h"
 #include "core/CompilerSpecifics.h"
@@ -992,11 +991,10 @@ static inline void setup_char_filters(CPH_CharacterObject *obj) {
 }
 [[nodiscard]]
 static inline int setup_char_parsers(CPH_CharacterObject *obj) {
-    obj->parsers = CPH::NewParserGroup<CPH_CharacterParsers>();
+    obj->parsers = CPH::Python::NewParserGroup<CPH::Python::CharacterParsers>();
     if (!obj->parsers) {
         return -1;
     }
-    obj->parsers->Init();
     return 0;
 }
 

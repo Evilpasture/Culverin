@@ -2,7 +2,6 @@
 #include "bindings/BindingCommon.h"
 #include "bindings/FastBuild.h"
 #include "bindings/PythonSupport.h"
-#include "bindings/parsing/ParserRegistry.hpp"
 #include "bindings/physics/PhysicsSync.h"
 #include "core/CompilerSpecifics.h"
 #include "physics/Ragdoll.h"
@@ -247,14 +246,13 @@ PyType_DeclareSlot_ObjectFromModule CPH_PySkeleton_New(PyTypeObject *type,
             Py_DECREF(self);
             return PyErr_NoMemory();
         }
-        self->parsers = CPH::NewParserGroup<CPH_SkeletonParsers>();
+        self->parsers = CPH::Python::NewParserGroup<CPH::Python::SkeletonParsers>();
         if (!self->parsers) {
             CPH_PhysicsRagdollSkeletonDestroy(self->skeleton);
             self->skeleton = nullptr;
             Py_DECREF(self);
             return PyErr_NoMemory();
         }
-        self->parsers->Init();
     }
     return reinterpret_cast<PyObject *>(self);
 }

@@ -1,6 +1,6 @@
 #pragma once
-#include "bindings/parsing/ParserRegistry.hpp"
 #include "joltc.h"
+#include "vehicles/VehicleParsers.hpp"
 #include <Python.h>
 
 constexpr uint32_t kLayerStatic  = 1;
@@ -29,7 +29,7 @@ typedef struct CPH_VehicleObject {
     JPH_VehicleTransmissionSettings *transmission_settings; // NEW: Keep alive
     JPH_LinearCurve *friction_curve;
     JPH_LinearCurve *torque_curve;
-    CPH_VehicleParsers *parsers;
+    CPH::Python::VehicleParsers *parsers;
 
     uint32_t num_wheels;
     int current_gear;

@@ -1,14 +1,14 @@
 #pragma once
-#include "bindings/parsing/ParserRegistry.hpp"
 #include "bindings/physics/PhysicsWorld.h"
 #include "core/CompilerSpecifics.h"
 #include "joltc.h"
+#include "vehicles/ShipParsers.hpp"
 #include <Python.h>
 
 typedef struct CPH_ShipObject {
     PyObject_HEAD CPH_PhysicsWorldObject *world;
     JPH_PhysicsStepListener *listener; // Native listener pointer
-    CPH_ShipParsers *parsers;
+    CPH::Python::ShipParsers *parsers;
     JPH_BodyID sled_bid; // Resolved ID for the heavy part
     uint64_t sled_h_raw; // Added to store the Python-side handle
 

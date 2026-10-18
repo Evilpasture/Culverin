@@ -1,7 +1,7 @@
 #pragma once
 
 #include "bindings/BindingCommon.h"
-#include "bindings/parsing/ParserRegistry.hpp"
+#include "bindings/physics/PhysicsWorldParsers.hpp"
 #include "physics/PhysicsWorldState.h"
 #include <Python.h>
 
@@ -12,7 +12,7 @@ typedef struct CPH_PhysicsWorldObject {
     CPH_PhysicsWorld physics;
     Py_ssize_t view_shape[2];
     Py_ssize_t view_strides[2];
-    CPH_WorldParsers *parsers;
+    CPH::Python::WorldParsers *parsers;
 } CPH_PhysicsWorldObject;
 
 // Python/GIL-aware adapter around the native command processor.

@@ -1,2 +1,2 @@
-add_library(culverin_python_characters OBJECT Character.cpp Character.h)
+add_library(culverin_python_characters OBJECT Character.cpp Character.h CharacterParsers.hpp)
 culverin_configure_python_target(culverin_python_characters)

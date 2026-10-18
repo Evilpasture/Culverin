@@ -4,7 +4,6 @@
 #include "bindings/Getters.h"
 #include "bindings/ModuleState.h"
 #include "bindings/PythonSupport.h"
-#include "bindings/parsing/ParserRegistry.hpp"
 #include "bindings/physics/Constraint.h" // IWYU pragma: keep
 #include "bindings/physics/PhysicsSync.h"
 #include "bindings/physics/QueryMethods.h"
@@ -112,12 +111,11 @@ PyType_DeclareSlot_Status CPH_PyWorld_Init(CPH_PhysicsWorldObject *self, PyObjec
         return -1;
     }
     if (self->parsers == nullptr) {
-        self->parsers = CPH::NewParserGroup<CPH_WorldParsers>();
+        self->parsers = CPH::Python::NewParserGroup<CPH::Python::WorldParsers>();
         if (self->parsers == nullptr) {
             PyErr_NoMemory();
             return -1;
         }
-        self->parsers->Init();
     }
 
     PyObject *settings_dict         = nullptr;
@@ -2264,12 +2262,11 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateRagdollSettings(CPH_Physic
     if (!obj) {
         return PyErr_NoMemory();
     }
-    obj->parsers = CPH::NewParserGroup<CPH_RagdollSettingsParsers>();
+    obj->parsers = CPH::Python::NewParserGroup<CPH::Python::RagdollSettingsParsers>();
     if (!obj->parsers) {
         Py_DECREF(obj);
         return PyErr_NoMemory();
     }
-    obj->parsers->Init();
 
     // Create native Jolt settings without crossing the Python boundary from core code.
     Py_BEGIN_ALLOW_THREADS obj->settings = CPH_PhysicsWorldCreateRagdollSettings(py_skel->skeleton);
@@ -2343,13 +2340,12 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateRagdoll(CPH_PhysicsWorldOb
     obj->body_count = 0;
     obj->body_slots = body_slots;
     obj->parsers    = nullptr;
-    obj->parsers    = CPH::NewParserGroup<CPH_RagdollParsers>();
+    obj->parsers    = CPH::Python::NewParserGroup<CPH::Python::RagdollParsers>();
     if (!obj->parsers) {
         Py_DECREF(obj);
         Py_BEGIN_ALLOW_THREADS CPH_PhysicsWorldDestroyRagdoll(&self->physics, j_rag);
         Py_END_ALLOW_THREADS return PyErr_NoMemory();
     }
-    obj->parsers->Init();
 
     obj->ragdoll = j_rag;
     obj->world   = self;

@@ -2,12 +2,11 @@
 #include "bindings/FastBuild.h"
 #include "bindings/PythonSupport.h"
 #include "bindings/parsing/FastParser.hpp"
-#include "bindings/parsing/ParserRegistry.hpp"
 #include "core/CompilerSpecifics.h"
 #include <Python.h>
 
 typedef struct CPH_MathHolderObject {
-    PyObject_HEAD CPH_MathParsers *parsers;
+    PyObject_HEAD CPH::Python::MathParsers *parsers;
 } CPH_MathHolderObject;
 static constexpr int kSixteenFloats = 16;
 static constexpr int kSimdAlignment = 16;
@@ -1105,14 +1104,13 @@ static PyObject *CPH_PyMath_New(PyTypeObject *type, [[maybe_unused]] PyObject *a
     if (self == nullptr) {
         return nullptr;
     }
-    self->parsers = CPH::NewParserGroup<CPH_MathParsers>();
+    self->parsers = CPH::Python::NewParserGroup<CPH::Python::MathParsers>();
     if (self->parsers == nullptr) {
         Py_DECREF(self);
         return PyErr_NoMemory();
     }
 
     // 3. Call your parser setup logic
-    self->parsers->Init();
 
     return reinterpret_cast<PyObject *>(self);
 }

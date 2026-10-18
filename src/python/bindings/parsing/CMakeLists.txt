@@ -4,8 +4,6 @@ add_library(
         FastParserCore.cpp
         FastParserCore.h
         FastParser.hpp
-        ParserRegistry.cpp
-        ParserRegistry.hpp
         Parsers.cpp
         Parsers.h
         DefaultConfig.h

@@ -4,7 +4,7 @@
 
 #include <memory>
 
-#include "bindings/parsing/ParserRegistry.hpp"
+#include "bindings/ModuleParsers.hpp"
 
 // C++ state lives on the heap: CPython allocates m_size storage as raw bytes,
 // so non-trivial members must not be placed directly in that storage.
@@ -23,7 +23,7 @@ struct CPH_ModuleState {
     PyObject *MathServiceType{};
 
     // RAII-owned parser group for top-level module functions.
-    std::unique_ptr<CPH_ModuleParsers> parsers{};
+    std::unique_ptr<CPH::Python::ModuleParsers> parsers{};
 };
 
 // Trivial pointer slot stored in CPython's zero-initialized per-module state.

@@ -1,6 +1,5 @@
 #include "bindings/physics/Constraint.h"
 #include "bindings/BindingCommon.h"
-#include "bindings/parsing/ParserRegistry.hpp"
 #include "bindings/physics/PhysicsSync.h"
 #include "core/NativeAlloc.h"
 #include "core/Types.h"

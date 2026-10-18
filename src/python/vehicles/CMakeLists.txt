@@ -3,9 +3,11 @@ add_library(
     OBJECT
         Ship.cpp
         Ship.h
+        ShipParsers.hpp
         TrackedVehicle.cpp
         TrackedVehicle.h
         Vehicle.cpp
         Vehicle.h
+        VehicleParsers.hpp
 )
 culverin_configure_python_target(culverin_python_vehicles)

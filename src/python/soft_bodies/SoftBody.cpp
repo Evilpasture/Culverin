@@ -2,7 +2,6 @@
 #include "bindings/BindingCommon.h"
 #include "bindings/FastBuild.h"
 #include "bindings/PythonSupport.h"
-#include "bindings/parsing/ParserRegistry.hpp"
 #include "core/CompilerSpecifics.h"
 
 // --- SharedSettings Lifecycle ---
@@ -19,13 +18,12 @@ PyType_DeclareSlot_StatusFromModule CPH_PySbss_Init(CPH_SoftBodySharedSettingsOb
         PyErr_NoMemory();
         return -1;
     }
-    self->parsers = CPH::NewParserGroup<CPH_SoftBodySharedSettingsParsers>();
+    self->parsers = CPH::Python::NewParserGroup<CPH::Python::SoftBodySharedSettingsParsers>();
     if (!self->parsers) {
         JPH_SoftBodySharedSettings_Destroy(self->settings);
         PyErr_NoMemory();
         return -1;
     }
-    self->parsers->Init();
     return 0;
 }
 

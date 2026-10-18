@@ -1,7 +1,6 @@
 #include "bindings/physics/QueryMethods.h"
 #include "bindings/BindingCommon.h"
 #include "bindings/FastBuild.h"
-#include "bindings/parsing/ParserRegistry.hpp"
 #include "bindings/parsing/Parsers.h"
 #include "core/CompilerSpecifics.h"
 

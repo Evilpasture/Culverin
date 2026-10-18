@@ -2,7 +2,6 @@
 #include "bindings/BindingCommon.h"
 #include "bindings/ModuleState.h"
 #include "bindings/PythonSupport.h"
-#include "bindings/parsing/ParserRegistry.hpp"
 #include "bindings/physics/PhysicsWorld.h"
 #include <math.h>
 
@@ -121,13 +120,12 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateShip(CPH_PhysicsWorldObjec
     if (!obj) {
         return nullptr;
     }
-    obj->parsers = CPH::NewParserGroup<CPH_ShipParsers>();
+    obj->parsers = CPH::Python::NewParserGroup<CPH::Python::ShipParsers>();
     if (!obj->parsers) {
         Py_DECREF(obj);
         PyErr_NoMemory();
         return nullptr;
     }
-    obj->parsers->Init();
 
     obj->world      = reinterpret_cast<CPH_PhysicsWorldObject *>(Py_NewRef(self));
     obj->sled_bid   = bid;

@@ -7,28 +7,33 @@
 #include "bindings/ModuleState.h"
 #include "bindings/PythonSupport.h"
 #include "bindings/docstrings/Docstrings.h"
-#include "bindings/parsing/ParserRegistry.hpp"
+#include "bindings/physics/PhysicsWorld.h"
 #include "characters/Character.h"
 #include "core/CompilerSpecifics.h"
 #include "core/Profiling.h"
 #include "core/Threading.h"
 #include "debug/DebugRender.h"
+#include "ecs/Ecs.h"
 #include "jolt/JoltHandler.h"
 #include "joltc.h"
 #include "math/Math.h"
 #include "physics/ContactListener.h"
 #include "physics/Filters.h"
+#include "ragdolls/Ragdoll.h"
+#include "soft_bodies/SoftBody.h"
+#include "vehicles/Ship.h"
+#include "vehicles/Vehicle.h"
 #include <new>
 #include <stdatomic.h>
 
 /**
- * INTERNAL HELPER: dump_parser_registry
- * Iterates through a specific registry array and writes the JSON entries.
+ * INTERNAL HELPER: dump_parser_catalog
+ * Iterates through one parser group's self-populated catalog and writes its JSON entries.
  */
-static void dump_parser_registry(CPH_FastParser *const *const registry, const size_t count,
-                                 FILE *const out, bool *const is_first) {
+static void dump_parser_catalog(CPH_FastParser *const *const parsers, const size_t count,
+                                FILE *const out, bool *const is_first) {
     for (size_t i = 0; i < count; ++i) {
-        const auto fp = registry[i];
+        const auto fp = parsers[i];
         if (!(*is_first)) {
             fprintf(out, ",\n");
         }
@@ -47,7 +52,7 @@ static void dump_parser_registry(CPH_FastParser *const *const registry, const si
 
 /**
  * PyCFunction: dump_schema
- * Initializes every known parser group, dumps them to a unified JSON, and cleans up.
+ * Constructs each self-describing parser group, dumps their schemas to one JSON, and cleans up.
  */
 PyCFunction_DeclareMethod CPH_PyModule_DumpSchemaJson(PyObject *const self, PyObject *const *args,
                                                       size_t nargsf, PyObject *kwnames) {
@@ -65,39 +70,28 @@ PyCFunction_DeclareMethod CPH_PyModule_DumpSchemaJson(PyObject *const self, PyOb
         return PyErr_SetFromErrno(PyExc_IOError);
     }
 
-    // 2. Initialize temporary registries to extract cold metadata
+    // 2. Construct temporary parser groups. Each parser initializes itself and
+    // joins its owner's catalog during construction.
     struct {
-        CPH_WorldParsers world;
-        CPH_CharacterParsers character;
-        CPH_VehicleParsers vehicle;
-        CPH_ECSParsers ecs;
-        CPH_SkeletonParsers skeleton;
-        CPH_RagdollParsers ragdoll;
-        CPH_RagdollSettingsParsers ragdoll_settings;
-        CPH_ShipParsers ship;
-        CPH_SoftBodySharedSettingsParsers sbss;
-        CPH_MathParsers math;
-        CPH_ModuleParsers module;
-    } all = {};
-
-    all.world.Init();
-    all.character.Init();
-    all.vehicle.Init();
-    all.ecs.Init();
-    all.skeleton.Init();
-    all.ragdoll.Init();
-    all.ragdoll_settings.Init();
-    all.ship.Init();
-    all.sbss.Init();
-    all.math.Init();
-    all.module.Init();
+        CPH::Python::WorldParsers world;
+        CPH::Python::CharacterParsers character;
+        CPH::Python::VehicleParsers vehicle;
+        CPH::Python::EcsParsers ecs;
+        CPH::Python::SkeletonParsers skeleton;
+        CPH::Python::RagdollParsers ragdoll;
+        CPH::Python::RagdollSettingsParsers ragdoll_settings;
+        CPH::Python::ShipParsers ship;
+        CPH::Python::SoftBodySharedSettingsParsers sbss;
+        CPH::Python::MathParsers math;
+        CPH::Python::ModuleParsers module;
+    } all{};
 
     // 3. Export to JSON
     fprintf(f, "{\n");
     bool is_first = true;
 
 #define CPH_DUMP_GROUP(member)                                                                     \
-    dump_parser_registry(all.member.registry, all.member.registry_count, f, &is_first)
+    dump_parser_catalog(all.member.catalog.Data(), all.member.catalog.Size(), f, &is_first)
 
     CPH_DUMP_GROUP(world);
     CPH_DUMP_GROUP(character);
@@ -566,11 +560,10 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
         return -1;
     }
     if (st->parsers == nullptr) {
-        st->parsers.reset(CPH::NewParserGroup<CPH_ModuleParsers>());
+        st->parsers.reset(CPH::Python::NewParserGroup<CPH::Python::ModuleParsers>());
         if (st->parsers == nullptr) {
             return -1;
         }
-        st->parsers->Init();
     }
 
     if (init_types(m, st) < 0) {

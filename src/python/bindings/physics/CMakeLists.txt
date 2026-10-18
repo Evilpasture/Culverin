@@ -7,6 +7,7 @@ add_library(
         PhysicsSync.h
         PhysicsWorld.cpp
         PhysicsWorld.h
+        PhysicsWorldParsers.hpp
         QueryMethods.cpp
         QueryMethods.h
         WorldAdapters.cpp

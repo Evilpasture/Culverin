@@ -3,7 +3,6 @@
 #include "bindings/Getters.h"
 #include "bindings/ModuleState.h"
 #include "bindings/PythonSupport.h"
-#include "bindings/parsing/ParserRegistry.hpp"
 #include "bindings/physics/PhysicsWorld.h"
 #include <stddef.h>
 
@@ -164,11 +163,10 @@ PyType_DeclareSlot_StatusFromModule CPH_PyRegistry_Init(CPH_RegistryObject *self
         return -1;
     }
     CPH_INIT_LOCK(self->ecs_lock);
-    self->parsers = CPH::NewParserGroup<CPH_ECSParsers>();
+    self->parsers = CPH::Python::NewParserGroup<CPH::Python::EcsParsers>();
     if (!self->parsers) {
         return -1;
     }
-    self->parsers->Init();
     return 0;
 }
 PyType_DeclareSlot_VoidFromModule CPH_PyRegistry_Dealloc(CPH_RegistryObject *self) {

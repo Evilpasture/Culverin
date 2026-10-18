@@ -12,6 +12,7 @@ add_library(
         FastBuildCore.h
         Getters.h
         ModuleState.h
+        ModuleParsers.hpp
         PythonDeclarations.h
         PythonSupport.h
 )

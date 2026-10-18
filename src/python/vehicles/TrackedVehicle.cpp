@@ -2,7 +2,6 @@
 #include "bindings/BindingCommon.h"
 #include "bindings/ModuleState.h"
 #include "bindings/PythonSupport.h"
-#include "bindings/parsing/ParserRegistry.hpp"
 #include "bindings/parsing/Parsers.h"
 #include "bindings/physics/PhysicsSync.h"
 #include "core/CompilerSpecifics.h"
