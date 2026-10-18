@@ -1,9 +1,9 @@
 #pragma once
-#include "bindings/parsing/ParserRegistry.hpp"
-#include "soft_bodies/SoftBodyCore.h"
-#include "joltc.h"
-#include <Python.h>
 #include "bindings/PythonDeclarations.h"
+#include "bindings/parsing/ParserRegistry.hpp"
+#include "joltc.h"
+#include "soft_bodies/SoftBodyCore.h"
+#include <Python.h>
 
 typedef struct {
     PyObject_HEAD JPH_SoftBodySharedSettings *settings;

@@ -9,8 +9,7 @@ static inline int py_to_int(PyObject *obj) { return static_cast<int>(PyLong_AsLo
 static inline long py_to_long(PyObject *obj) { return PyLong_AsLong(obj); }
 static inline const char *py_to_str(PyObject *obj) { return PyUnicode_AsUTF8(obj); }
 
-template <typename T>
-[[nodiscard]] static inline T py_to_value(PyObject *obj) {
+template <typename T> [[nodiscard]] static inline T py_to_value(PyObject *obj) {
     if constexpr (std::is_same_v<T, float>) {
         return py_to_float(obj);
     } else if constexpr (std::is_same_v<T, double>) {
@@ -32,7 +31,7 @@ template <typename T>
         return default_value;
     }
 
-    T result = default_value;
+    T result       = default_value;
     PyObject *attr = PyObject_GetAttrString(obj, name);
     if (attr != nullptr) {
         const T value = py_to_value<T>(attr);
@@ -62,22 +61,20 @@ template <typename T>
     return default_value;
 }
 
-#define CPH_CAST(m) (PyCFunction)(void (*)(void))(m)
+#define CPH_CAST(m) _PyCFunction_CAST(m)
 
-#define CPH_FEAT(prefix, name, method_type)                                                       \
-    {.ml_name  = #name,                                                                            \
-     .ml_meth  = CPH_CAST(prefix),                                                       \
-     .ml_flags = (method_type),                                                                    \
-     .ml_doc   = nullptr} // Initialized to nullptr to be filled by stitcher
+#define CPH_FEAT(prefix, name, method_type)                                                        \
+    {.ml_name = #name, .ml_meth = CPH_CAST(prefix), .ml_flags = (method_type), .ml_doc = nullptr}  \
+    // Initialized to nullptr to be filled by stitcher
 
-#define CPH_FEAT_INTERNAL(prefix, name, method_type)                                              \
+#define CPH_FEAT_INTERNAL(prefix, name, method_type)                                               \
     {.ml_name  = "_" #name,                                                                        \
-     .ml_meth  = CPH_CAST(prefix),                                                     \
+     .ml_meth  = CPH_CAST(prefix),                                                                 \
      .ml_flags = (method_type),                                                                    \
      .ml_doc   = nullptr}
 
 // Getter/Property macro - concise initialization
-#define CPH_GETSET(name_str, getter_func)                                                              \
+#define CPH_GETSET(name_str, getter_func)                                                          \
     {.name    = (name_str),                                                                        \
      .get     = (getter)(getter_func),                                                             \
      .set     = nullptr,                                                                           \

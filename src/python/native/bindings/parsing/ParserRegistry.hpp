@@ -6,13 +6,14 @@
 #include <cstdint>
 #include <new>
 
-using ParseBodyHandle = uint64_t;
+using ParseBodyHandle                            = uint64_t;
 inline constexpr std::size_t kParserRegistrySize = 128;
-
 
 struct CPH_WorldParsers {
     CPH::FastParser<PyObject *, PyObject *> WorldInit;
-    CPH::FastParser<PyObject *, PyObject *, PyObject *, int, int, uint64_t, bool, float, uint32_t, uint32_t, float, float, uint32_t, bool, uint32_t> Body;
+    CPH::FastParser<PyObject *, PyObject *, PyObject *, int, int, uint64_t, bool, float, uint32_t,
+                    uint32_t, float, float, uint32_t, bool, uint32_t>
+        Body;
     CPH::FastParser<ParseBodyHandle, float, float, float> Impulse;
     CPH::FastParser<uint32_t> WheelIdx;
     CPH::FastParser<ParseBodyHandle, float, float, float> AngImpulse;
@@ -28,11 +29,16 @@ struct CPH_WorldParsers {
     CPH::FastParser<ParseBodyHandle, JPH_Real, JPH_Real, JPH_Real> SetPos;
     CPH::FastParser<ParseBodyHandle, double, float, float, float, float, PyObject *> Buoy;
     CPH::FastParser<PyObject *, double, float, float, float, float, PyObject *> BatchBuoy;
-    CPH::FastParser<PyObject *, PyObject *, PyObject *, PyObject *, uint64_t, uint32_t, uint32_t> Mesh;
+    CPH::FastParser<PyObject *, PyObject *, PyObject *, PyObject *, uint64_t, uint32_t, uint32_t>
+        Mesh;
     CPH::FastParser<ParseBodyHandle, PyObject *, PyObject *> SetTrns;
     CPH::FastParser<ParseBodyHandle, bool> CCD;
-    CPH::FastParser<PyObject *, PyObject *, PyObject *, int, float, uint64_t, bool, uint32_t, uint32_t, uint32_t, float, float, bool> ConvexHull;
-    CPH::FastParser<PyObject *, PyObject *, PyObject *, int, float, uint64_t, bool, uint32_t, uint32_t, uint32_t, float, float, bool> Compound;
+    CPH::FastParser<PyObject *, PyObject *, PyObject *, int, float, uint64_t, bool, uint32_t,
+                    uint32_t, uint32_t, float, float, bool>
+        ConvexHull;
+    CPH::FastParser<PyObject *, PyObject *, PyObject *, int, float, uint64_t, bool, uint32_t,
+                    uint32_t, uint32_t, float, float, bool>
+        Compound;
     CPH::FastParser<PyObject *, PyObject *, int, int> BatchCreate;
     CPH::FastParser<PyObject *> BatchDestroy;
     CPH::FastParser<ParseBodyHandle, float, float, float, float> SetRot;
@@ -49,7 +55,9 @@ struct CPH_WorldParsers {
     CPH::FastParser<ParseBodyHandle, uint32_t, uint32_t> ColFilter;
     CPH::FastParser<uint32_t, float, float> RegMat;
     CPH::FastParser<uint64_t, float> SetConstrTarget;
-    CPH::FastParser<PyObject *, PyObject *, PyObject *, PyObject *, int, uint64_t, uint32_t, uint32_t, uint32_t, float, float> Heightfield;
+    CPH::FastParser<PyObject *, PyObject *, PyObject *, PyObject *, int, uint64_t, uint32_t,
+                    uint32_t, uint32_t, float, float>
+        Heightfield;
     CPH::FastParser<bool, bool, bool, bool, bool> DebugData;
     CPH::FastParser<int, ParseBodyHandle, ParseBodyHandle, PyObject *, PyObject *> CreateConstr;
     CPH::FastParser<ParseBodyHandle> DestroyConstr;
@@ -58,11 +66,23 @@ struct CPH_WorldParsers {
     CPH::FastParser<PyObject *> LoadState;
     CPH::FastParser<uint64_t, PyObject *, PyObject *, PyObject *, PyObject *> CreateVehicle;
     CPH::FastParser<uint64_t, PyObject *, PyObject *, float, float> CreateTracked;
-    CPH::FastParser<PyObject *, CPH_PosStride, CPH_AuxStride, uint64_t, uint32_t, uint32_t, uint32_t> CreateRagdoll;
+    CPH::FastParser<PyObject *, CPH_PosStride, CPH_AuxStride, uint64_t, uint32_t, uint32_t,
+                    uint32_t>
+        CreateRagdoll;
     CPH::FastParser<PyObject *> RagdollSettings;
-    CPH::FastParser<PyObject *, PyObject *, PyObject *, uint64_t, uint32_t, uint32_t, float, float, float, uint32_t, float, float, float, float, bool, bool, bool> CreateSoftBody;
+    CPH::FastParser<PyObject *, PyObject *, PyObject *, uint64_t, uint32_t, uint32_t, float, float,
+                    float, uint32_t, float, float, float, float, bool, bool, bool>
+        CreateSoftBody;
     CPH::FastParser<ParseBodyHandle, uint32_t> GetSbVertex;
-    CPH::FastParser<uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t> StressTest;
+    CPH::FastParser<uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t,
+                    uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t,
+                    uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t,
+                    uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t,
+                    uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t,
+                    uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t,
+                    uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t,
+                    uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t>
+        StressTest;
     CPH::FastParser<ParseBodyHandle, float, float, float, float, float, float, float> CreateShip;
     CPH_FastParser *registry[kParserRegistrySize]{};
     std::size_t registry_count{};
@@ -115,7 +135,9 @@ struct CPH_RagdollParsers {
 };
 
 struct CPH_RagdollSettingsParsers {
-    CPH::FastParser<int, int, PyObject *, float, int, float, float, float, CPH_Vec3f, CPH_Vec3f, PyObject *> RagdollAddPart;
+    CPH::FastParser<int, int, PyObject *, float, int, float, float, float, CPH_Vec3f, CPH_Vec3f,
+                    PyObject *>
+        RagdollAddPart;
     CPH_FastParser *registry[kParserRegistrySize]{};
     std::size_t registry_count{};
     void Init();
@@ -183,8 +205,7 @@ struct CPH_ModuleParsers {
 };
 
 namespace CPH {
-template <typename ParserGroup>
-[[nodiscard]] ParserGroup *NewParserGroup() noexcept {
+template <typename ParserGroup> [[nodiscard]] ParserGroup *NewParserGroup() noexcept {
     auto *group = new (std::nothrow) ParserGroup{};
     if (group == nullptr) {
         PyErr_NoMemory();

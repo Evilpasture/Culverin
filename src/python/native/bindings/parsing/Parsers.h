@@ -8,21 +8,20 @@ int CPH_ParseVec3R64(PyObject *obj, double *x, double *y, double *z);
 int CPH_ParseQuatF32(PyObject *obj, float *x, float *y, float *z, float *w);
 int CPH_ParseQuatR64(PyObject *obj, double *x, double *y, double *z, double *w);
 
-[[nodiscard]] static inline int CPH_parse_vec3_direct(PyObject *obj, float *x, float *y,
-                                                       float *z) {
+[[nodiscard]] static inline int CPH_parse_vec3_direct(PyObject *obj, float *x, float *y, float *z) {
     return CPH_ParseVec3F32(obj, x, y, z);
 }
 [[nodiscard]] static inline int CPH_parse_vec3_direct(PyObject *obj, double *x, double *y,
-                                                       double *z) {
+                                                      double *z) {
     return CPH_ParseVec3R64(obj, x, y, z);
 }
 
-[[nodiscard]] static inline int CPH_parse_quat_direct(PyObject *obj, float *x, float *y,
-                                                       float *z, float *w) {
+[[nodiscard]] static inline int CPH_parse_quat_direct(PyObject *obj, float *x, float *y, float *z,
+                                                      float *w) {
     return CPH_ParseQuatF32(obj, x, y, z, w);
 }
 [[nodiscard]] static inline int CPH_parse_quat_direct(PyObject *obj, double *x, double *y,
-                                                       double *z, double *w) {
+                                                      double *z, double *w) {
     return CPH_ParseQuatR64(obj, x, y, z, w);
 }
 

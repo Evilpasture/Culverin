@@ -1,12 +1,12 @@
 #pragma once
 
 #define PY_SSIZE_T_CLEAN
-#include "jolt/JoltConfig.h"
-#include "core/CompilerSpecifics.h"
-#include "joltc.h" // Amer Koleci's JoltC binder.
-#include "jolt/JoltUtils.h"
-#include <Python.h>
 #include "bindings/PythonDeclarations.h"
+#include "core/CompilerSpecifics.h"
+#include "jolt/JoltConfig.h"
+#include "jolt/JoltUtils.h"
+#include "joltc.h" // Amer Koleci's JoltC binder.
+#include <Python.h>
 
 // =========================================================================
 // ASAN COMPATIBILITY ALLOCATORS
@@ -46,7 +46,7 @@ static inline void CPH_PyFree(void *ptr) {
 }
 
 static inline void PyObject_cleanup(void *ptr) {
-    PyObject **obj = (PyObject **)ptr;
+    PyObject **obj = static_cast<PyObject **>(ptr);
     Py_CLEAR(*obj);
 }
 #define CPH_AUTO_DECREF [[gnu::cleanup(PyObject_cleanup)]]
@@ -65,9 +65,9 @@ static inline PyObject *test_function() {
 */
 
 // =========================================================================
+#include "core/Types.h"
 #include "physics/CommandBuffer.h"
 #include "physics/SlotState.h"
-#include "core/Types.h"
 #include <stddef.h>
 #include <string.h>
 #include <type_traits>
@@ -125,8 +125,8 @@ static inline bool culv_is_finite_f(float f) {
     uint32_t i;
     memcpy(&i, &f, sizeof(float));
     volatile uint32_t vi = i;
-    static_assert((sizeof(decltype(vi)) == sizeof(uint32_t) &&
-                   sizeof(decltype(vi)) == sizeof(float)) != 0);
+    static_assert(
+        (sizeof(decltype(vi)) == sizeof(uint32_t) && sizeof(decltype(vi)) == sizeof(float)) != 0);
     return (vi & MASK_F32) != MASK_F32;
 }
 
@@ -137,14 +137,13 @@ static inline bool culv_is_finite_d(double d) {
     uint64_t i;
     memcpy(&i, &d, sizeof(double));
     volatile uint64_t vi = i;
-    static_assert((sizeof(decltype(vi)) == sizeof(uint64_t) &&
-                   sizeof(decltype(vi)) == sizeof(double)) != 0);
+    static_assert(
+        (sizeof(decltype(vi)) == sizeof(uint64_t) && sizeof(decltype(vi)) == sizeof(double)) != 0);
     return (vi & MASK_F64) != MASK_F64;
 }
 
 // --- C++23 type-directed finite checks ---
-template <typename T>
-[[nodiscard]] static inline bool CPH_IsFinite(T value) noexcept {
+template <typename T> [[nodiscard]] static inline bool CPH_IsFinite(T value) noexcept {
     if constexpr (std::is_same_v<std::remove_cv_t<T>, float>) {
         return culv_is_finite_f(value);
     } else {
@@ -161,22 +160,22 @@ static PyObject *culv_raise_finite_err(const char *msg) {
 
 // --- The Macro Engine (Variadic Expansion) ---
 // This expands into individual checks without creating arrays or casting types.
-#define CPH_VALIDATE_FINITE_CORE(msg, ...)                                                             \
+#define CPH_VALIDATE_FINITE_CORE(msg, ...)                                                         \
     CPH_EXPAND(CPH_CONCAT(CPH_VAL_ARGS_, CPH_NARGS(__VA_ARGS__))(msg, __VA_ARGS__))
 
-#define CPH_VAL_ARGS_1(m, x)                                                                      \
+#define CPH_VAL_ARGS_1(m, x)                                                                       \
     do {                                                                                           \
-        if (CPH_UNLIKELY(!CPH_IsFinite(x)))                                                               \
+        if (CPH_UNLIKELY(!CPH_IsFinite(x)))                                                        \
             return culv_raise_finite_err(m);                                                       \
     } while (0)
-#define CPH_VAL_ARGS_2(m, x, ...)                                                                 \
-    CPH_VAL_ARGS_1(m, x);                                                                         \
+#define CPH_VAL_ARGS_2(m, x, ...)                                                                  \
+    CPH_VAL_ARGS_1(m, x);                                                                          \
     CPH_VAL_ARGS_1(m, __VA_ARGS__)
-#define CPH_VAL_ARGS_3(m, x, ...)                                                                 \
-    CPH_VAL_ARGS_1(m, x);                                                                         \
+#define CPH_VAL_ARGS_3(m, x, ...)                                                                  \
+    CPH_VAL_ARGS_1(m, x);                                                                          \
     CPH_VAL_ARGS_2(m, __VA_ARGS__)
-#define CPH_VAL_ARGS_4(m, x, ...)                                                                 \
-    CPH_VAL_ARGS_1(m, x);                                                                         \
+#define CPH_VAL_ARGS_4(m, x, ...)                                                                  \
+    CPH_VAL_ARGS_1(m, x);                                                                          \
     CPH_VAL_ARGS_3(m, __VA_ARGS__)
 
 #define CPH_NARGS(...) CPH_NARGS_IMP(__VA_ARGS__, 4, 3, 2, 1)
@@ -188,4 +187,3 @@ static PyObject *culv_raise_finite_err(const char *msg) {
 #define CPH_VALIDATE_FINITE_VEC3(x, y, z, name) CPH_VALIDATE_FINITE_CORE(name, x, y, z)
 #define CPH_VALIDATE_FINITE_QUAT(x, y, z, w, name) CPH_VALIDATE_FINITE_CORE(name, x, y, z, w)
 #define CPH_VALIDATE_FINITE_VEC4(x, y, z, w, name) CPH_VALIDATE_FINITE_CORE(name, x, y, z, w)
-

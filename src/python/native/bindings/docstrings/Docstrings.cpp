@@ -6,7 +6,7 @@
 static const char *CULV_DOCS_COMMENT_MARKER = "<!--";
 
 static char *culv_docs_allocate_docstring(const char *start, size_t length) {
-    char *doc = (char *)CPH_PyAlloc(length + 1);
+    char *doc = static_cast<char *>(CPH_PyAlloc(length + 1));
     if (doc == nullptr) {
         return nullptr;
     }
@@ -17,7 +17,7 @@ static char *culv_docs_allocate_docstring(const char *start, size_t length) {
 
 // Master Docstring Extractor (Handles Nested ## class -> ### method)
 static char *culv_docs_extract_docstring(const char *docs_ptr, const char *class_name,
-                               const char *method_name) {
+                                         const char *method_name) {
     if (!docs_ptr || !class_name || !method_name) {
         return nullptr;
     }
@@ -95,13 +95,15 @@ static char *culv_docs_extract_docstring(const char *docs_ptr, const char *class
     }
 
     if (doc_end >= doc_start) {
-        return culv_docs_allocate_docstring(doc_start, (size_t)(doc_end - doc_start + 1));
+        return culv_docs_allocate_docstring(doc_start,
+                                            static_cast<size_t>(doc_end - doc_start + 1));
     }
 
     return nullptr;
 }
 
-void CPH_DocsStitchMethods(PyMethodDef *methods, const char *class_name, const char *markdown_content) {
+void CPH_DocsStitchMethods(PyMethodDef *methods, const char *class_name,
+                           const char *markdown_content) {
     if (methods == nullptr || markdown_content == nullptr) {
         return;
     }
@@ -112,7 +114,8 @@ void CPH_DocsStitchMethods(PyMethodDef *methods, const char *class_name, const c
     }
 }
 
-void CPH_DocsStitchGetset(PyGetSetDef *getset, const char *class_name, const char *markdown_content) {
+void CPH_DocsStitchGetset(PyGetSetDef *getset, const char *class_name,
+                          const char *markdown_content) {
     if (getset == nullptr || markdown_content == nullptr) {
         return;
     }
@@ -128,11 +131,13 @@ void CPH_DocsStitchSpec(PyType_Spec *spec, const char *class_name, const char *m
         return;
     }
     // Cast to PyType_Slot* to iterate
-    for (const PyType_Slot *slot = (const PyType_Slot *)spec->slots; slot->slot != 0; slot++) {
+    for (const PyType_Slot *slot = spec->slots; slot->slot != 0; slot++) {
         if (slot->slot == Py_tp_methods) {
-            CPH_DocsStitchMethods((PyMethodDef *)slot->pfunc, class_name, markdown_content);
+            CPH_DocsStitchMethods(static_cast<PyMethodDef *>(slot->pfunc), class_name,
+                                  markdown_content);
         } else if (slot->slot == Py_tp_getset) {
-            CPH_DocsStitchGetset((PyGetSetDef *)slot->pfunc, class_name, markdown_content);
+            CPH_DocsStitchGetset(static_cast<PyGetSetDef *>(slot->pfunc), class_name,
+                                 markdown_content);
         }
     }
 }

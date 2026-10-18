@@ -17,41 +17,43 @@ static PyObject *query_status_error(PhysicsQueryStatus status, const char *messa
     } else if (status == PHYSICS_QUERY_STATUS_INVALID_ARGUMENT) {
         PyErr_SetString(PyExc_ValueError, message);
     } else {
-        PyErr_Format(PyExc_RuntimeError, "Native query failed with status %d", (int)status);
+        PyErr_Format(PyExc_RuntimeError, "Native query failed with status %d",
+                     static_cast<int>(status));
     }
     return nullptr;
 }
 
 static PyObject *overlap_hits_to_list(const CPH_PhysicsQueryHitBuffer *hits) {
-    if (hits->count > (size_t)PY_SSIZE_T_MAX) {
+    if (hits->count > static_cast<size_t>(PY_SSIZE_T_MAX)) {
         PyErr_SetString(PyExc_OverflowError, "Overlap query returned too many results");
         return nullptr;
     }
 
-    PyObject *result = PyList_New((Py_ssize_t)hits->count);
+    PyObject *result = PyList_New(static_cast<Py_ssize_t>(hits->count));
     if (!result) {
         return nullptr;
     }
 
     for (size_t i = 0; i < hits->count; ++i) {
-        PyObject *handle = PyLong_FromUnsignedLongLong((unsigned long long)hits->hits[i]);
+        PyObject *handle =
+            PyLong_FromUnsignedLongLong(static_cast<unsigned long long>(hits->hits[i]));
         if (!handle) {
             Py_DECREF(result);
             return nullptr;
         }
-        PyList_SET_ITEM(result, (Py_ssize_t)i, handle);
+        PyList_SET_ITEM(result, static_cast<Py_ssize_t>(i), handle);
     }
     return result;
 }
 
 PyCFunction_DeclareMethodFromModule CPH_PyWorld_OverlapSphere(CPH_PhysicsWorldObject *self,
-                                                                PyObject *const *args,
-                                                                size_t nargsf, PyObject *kwnames) {
-    PyObject *o_center                                      = nullptr;
-    float radius                                            = 1.0f;
+                                                              PyObject *const *args, size_t nargsf,
+                                                              PyObject *kwnames) {
+    PyObject *o_center = nullptr;
+    float radius       = 1.0f;
 
-
-    if (!self->parsers->OverlapSphere.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_center, radius)) {
+    if (!self->parsers->OverlapSphere.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_center,
+                                            radius)) {
         return nullptr;
     }
 
@@ -82,13 +84,13 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_OverlapSphere(CPH_PhysicsWorldOb
 }
 
 PyCFunction_DeclareMethodFromModule CPH_PyWorld_OverlapAabb(CPH_PhysicsWorldObject *self,
-                                                              PyObject *const *args, size_t nargsf,
-                                                              PyObject *kwnames) {
-    PyObject *o_min                                       = nullptr;
-    PyObject *o_max                                       = nullptr;
+                                                            PyObject *const *args, size_t nargsf,
+                                                            PyObject *kwnames) {
+    PyObject *o_min = nullptr;
+    PyObject *o_max = nullptr;
 
-
-    if (!self->parsers->OverlapAABB.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_min, o_max)) {
+    if (!self->parsers->OverlapAABB.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_min,
+                                          o_max)) {
         return nullptr;
     }
 
@@ -123,15 +125,15 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_OverlapAabb(CPH_PhysicsWorldObje
 }
 
 PyCFunction_DeclareMethodFromModule CPH_PyWorld_Raycast(CPH_PhysicsWorldObject *self,
-                                                         PyObject *const *args, size_t nargsf,
-                                                         PyObject *kwnames) {
-    PyObject *o_start                                 = nullptr;
-    PyObject *o_direction                             = nullptr;
-    float max_distance                                = kPhysicsQueryDefaultMaxDistance;
-    uint64_t ignore_handle                            = 0;
+                                                        PyObject *const *args, size_t nargsf,
+                                                        PyObject *kwnames) {
+    PyObject *o_start      = nullptr;
+    PyObject *o_direction  = nullptr;
+    float max_distance     = kPhysicsQueryDefaultMaxDistance;
+    uint64_t ignore_handle = 0;
 
-
-    if (!self->parsers->Raycast.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_start, o_direction, max_distance, ignore_handle)) {
+    if (!self->parsers->Raycast.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_start,
+                                      o_direction, max_distance, ignore_handle)) {
         return nullptr;
     }
 
@@ -146,13 +148,14 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_Raycast(CPH_PhysicsWorldObject *
         return nullptr;
     }
 
-    const JPH_RVec3 origin   = {start_x, start_y, start_z};
-    const JPH_Vec3 direction = {direction_x, direction_y, direction_z};
-    CPH_PhysicsRaycastHit hit    = {};
+    const JPH_RVec3 origin    = {start_x, start_y, start_z};
+    const JPH_Vec3 direction  = {direction_x, direction_y, direction_z};
+    CPH_PhysicsRaycastHit hit = {};
 
     PhysicsQueryStatus status;
-    Py_BEGIN_ALLOW_THREADS status = CPH_PhysicsWorldRaycast(
-        &self->physics, origin, direction, max_distance, (BodyHandle)ignore_handle, &hit);
+    Py_BEGIN_ALLOW_THREADS status =
+        CPH_PhysicsWorldRaycast(&self->physics, origin, direction, max_distance,
+                                static_cast<BodyHandle>(ignore_handle), &hit);
     Py_END_ALLOW_THREADS
 
         if (status != PHYSICS_QUERY_STATUS_OK) {
@@ -163,18 +166,18 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_Raycast(CPH_PhysicsWorldObject *
     }
 
     return CPH_PY_BUILD_TUPLE((unsigned long long)hit.handle, hit.fraction,
-                               CPH_PY_BUILD_TUPLE(hit.normal.x, hit.normal.y, hit.normal.z));
+                              CPH_PY_BUILD_TUPLE(hit.normal.x, hit.normal.y, hit.normal.z));
 }
 
 PyCFunction_DeclareMethodFromModule CPH_PyWorld_RaycastBatch(CPH_PhysicsWorldObject *self,
-                                                               PyObject *const *args, size_t nargsf,
-                                                               PyObject *kwnames) {
-    PyObject *o_starts                                 = nullptr;
-    PyObject *o_directions                             = nullptr;
-    float max_distance                                 = kPhysicsQueryDefaultMaxDistance;
+                                                             PyObject *const *args, size_t nargsf,
+                                                             PyObject *kwnames) {
+    PyObject *o_starts     = nullptr;
+    PyObject *o_directions = nullptr;
+    float max_distance     = kPhysicsQueryDefaultMaxDistance;
 
-
-    if (!self->parsers->RayBatch.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_starts, o_directions, max_distance)) {
+    if (!self->parsers->RayBatch.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_starts,
+                                       o_directions, max_distance)) {
         return nullptr;
     }
 
@@ -189,28 +192,29 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_RaycastBatch(CPH_PhysicsWorldObj
     }
 
     if (CPH_UNLIKELY(starts_buffer.len != directions_buffer.len ||
-                 starts_buffer.len % (Py_ssize_t)kCqmVec3StrideBytes != 0)) {
+                     starts_buffer.len % static_cast<Py_ssize_t>(kCqmVec3StrideBytes) != 0)) {
         PyErr_SetString(PyExc_ValueError, "Buffer size mismatch");
         PyBuffer_Release(&starts_buffer);
         PyBuffer_Release(&directions_buffer);
         return nullptr;
     }
 
-    const size_t count = (size_t)(starts_buffer.len / (Py_ssize_t)kCqmVec3StrideBytes);
+    const size_t count =
+        static_cast<size_t>(starts_buffer.len / static_cast<Py_ssize_t>(kCqmVec3StrideBytes));
     if (count == 0) {
         PyBuffer_Release(&starts_buffer);
         PyBuffer_Release(&directions_buffer);
         return PyBytes_FromStringAndSize(nullptr, 0);
     }
 
-    if (count > (size_t)PY_SSIZE_T_MAX / sizeof(RayCastBatchResult)) {
+    if (count > static_cast<size_t>(PY_SSIZE_T_MAX) / sizeof(RayCastBatchResult)) {
         PyErr_SetString(PyExc_OverflowError, "Batch raycast result is too large");
         PyBuffer_Release(&starts_buffer);
         PyBuffer_Release(&directions_buffer);
         return nullptr;
     }
 
-    const Py_ssize_t output_size = (Py_ssize_t)(count * sizeof(RayCastBatchResult));
+    const Py_ssize_t output_size = static_cast<Py_ssize_t>(count * sizeof(RayCastBatchResult));
     PyObject *result_bytes       = PyBytes_FromStringAndSize(nullptr, output_size);
     if (CPH_UNLIKELY(!result_bytes)) {
         PyBuffer_Release(&starts_buffer);
@@ -218,7 +222,8 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_RaycastBatch(CPH_PhysicsWorldObj
         return nullptr;
     }
 
-    RayCastBatchResult *results = (RayCastBatchResult *)PyBytes_AsString(result_bytes);
+    RayCastBatchResult *results =
+        reinterpret_cast<RayCastBatchResult *>(PyBytes_AsString(result_bytes));
     if (CPH_UNLIKELY(!results)) {
         Py_DECREF(result_bytes);
         PyBuffer_Release(&starts_buffer);
@@ -228,8 +233,8 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_RaycastBatch(CPH_PhysicsWorldObj
 
     PhysicsQueryStatus status;
     Py_BEGIN_ALLOW_THREADS status = CPH_PhysicsWorldRaycastBatch(
-        &self->physics, (const float *)starts_buffer.buf, (const float *)directions_buffer.buf,
-        count, max_distance, results);
+        &self->physics, static_cast<const float *>(starts_buffer.buf),
+        static_cast<const float *>(directions_buffer.buf), count, max_distance, results);
     Py_END_ALLOW_THREADS
 
         PyBuffer_Release(&starts_buffer);
@@ -243,17 +248,18 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_RaycastBatch(CPH_PhysicsWorldObj
 }
 
 PyCFunction_DeclareMethodFromModule CPH_PyWorld_Shapecast(CPH_PhysicsWorldObject *self,
-                                                           PyObject *const *args, size_t nargsf,
-                                                           PyObject *kwnames) {
-    int shape_type                                      = 0;
-    PyObject *o_position                                = nullptr;
-    PyObject *o_rotation                                = nullptr;
-    PyObject *o_direction                               = nullptr;
-    PyObject *o_size                                    = nullptr;
-    uint64_t ignore_handle                              = 0;
+                                                          PyObject *const *args, size_t nargsf,
+                                                          PyObject *kwnames) {
+    int shape_type         = 0;
+    PyObject *o_position   = nullptr;
+    PyObject *o_rotation   = nullptr;
+    PyObject *o_direction  = nullptr;
+    PyObject *o_size       = nullptr;
+    uint64_t ignore_handle = 0;
 
-
-    if (!self->parsers->Shapecast.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, shape_type, o_position, o_rotation, o_direction, o_size, ignore_handle)) {
+    if (!self->parsers->Shapecast.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, shape_type,
+                                        o_position, o_rotation, o_direction, o_size,
+                                        ignore_handle)) {
         return nullptr;
     }
 
@@ -275,15 +281,15 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_Shapecast(CPH_PhysicsWorldObject
     }
     CPH_ParseBodySize(o_size, size);
 
-    const JPH_RVec3 position = {position_x, position_y, position_z};
-    const JPH_Quat rotation  = {rotation_x, rotation_y, rotation_z, rotation_w};
-    const JPH_Vec3 direction = {direction_x, direction_y, direction_z};
-    CPH_PhysicsShapecastHit hit  = {};
+    const JPH_RVec3 position    = {position_x, position_y, position_z};
+    const JPH_Quat rotation     = {rotation_x, rotation_y, rotation_z, rotation_w};
+    const JPH_Vec3 direction    = {direction_x, direction_y, direction_z};
+    CPH_PhysicsShapecastHit hit = {};
 
     PhysicsQueryStatus status;
     Py_BEGIN_ALLOW_THREADS status =
         CPH_PhysicsWorldShapecast(&self->physics, shape_type, position, rotation, direction, size,
-                                (BodyHandle)ignore_handle, &hit);
+                                  static_cast<BodyHandle>(ignore_handle), &hit);
     Py_END_ALLOW_THREADS
 
         if (status != PHYSICS_QUERY_STATUS_OK) {
@@ -294,6 +300,6 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_Shapecast(CPH_PhysicsWorldObject
     }
 
     return CPH_PY_BUILD_TUPLE((unsigned long long)hit.handle, hit.fraction,
-                               CPH_PY_BUILD_TUPLE(hit.point.x, hit.point.y, hit.point.z),
-                               CPH_PY_BUILD_TUPLE(hit.normal.x, hit.normal.y, hit.normal.z));
+                              CPH_PY_BUILD_TUPLE(hit.point.x, hit.point.y, hit.point.z),
+                              CPH_PY_BUILD_TUPLE(hit.normal.x, hit.normal.y, hit.normal.z));
 }

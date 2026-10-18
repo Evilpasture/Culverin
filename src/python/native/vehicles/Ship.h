@@ -1,7 +1,7 @@
 #pragma once
 #include "bindings/parsing/ParserRegistry.hpp"
-#include "core/CompilerSpecifics.h"
 #include "bindings/physics/PhysicsWorld.h"
+#include "core/CompilerSpecifics.h"
 #include "joltc.h"
 #include <Python.h>
 

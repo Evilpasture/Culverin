@@ -10,69 +10,59 @@
 
 namespace CPH {
 
-template <typename T>
-struct FastParseTrait;
+template <typename T> struct FastParseTrait;
 
-template <>
-struct FastParseTrait<float> {
-    static constexpr const char *type_name = "float";
-    static constexpr auto converter = ::culv_fast_parse_conv_float;
+template <> struct FastParseTrait<float> {
+    static constexpr const char *type_name    = "float";
+    static constexpr auto converter           = ::culv_fast_parse_conv_float;
     static constexpr PyTypeObject *type_guard = nullptr;
 };
 
-template <>
-struct FastParseTrait<double> {
-    static constexpr const char *type_name = "float";
-    static constexpr auto converter = ::culv_fast_parse_conv_double;
+template <> struct FastParseTrait<double> {
+    static constexpr const char *type_name    = "float";
+    static constexpr auto converter           = ::culv_fast_parse_conv_double;
     static constexpr PyTypeObject *type_guard = nullptr;
 };
 
-template <>
-struct FastParseTrait<int> {
-    static constexpr const char *type_name = "int";
-    static constexpr auto converter = ::culv_fast_parse_conv_int;
+template <> struct FastParseTrait<int> {
+    static constexpr const char *type_name    = "int";
+    static constexpr auto converter           = ::culv_fast_parse_conv_int;
     static constexpr PyTypeObject *type_guard = nullptr;
 };
 
-template <>
-struct FastParseTrait<uint32_t> {
-    static constexpr const char *type_name = "int";
-    static constexpr auto converter = ::culv_fast_parse_conv_u32;
+template <> struct FastParseTrait<uint32_t> {
+    static constexpr const char *type_name    = "int";
+    static constexpr auto converter           = ::culv_fast_parse_conv_u32;
     static constexpr PyTypeObject *type_guard = nullptr;
 };
 
-template <>
-struct FastParseTrait<uint64_t> {
-    static constexpr const char *type_name = "int";
-    static constexpr auto converter = ::culv_fast_parse_conv_u64;
+template <> struct FastParseTrait<uint64_t> {
+    static constexpr const char *type_name    = "int";
+    static constexpr auto converter           = ::culv_fast_parse_conv_u64;
     static constexpr PyTypeObject *type_guard = nullptr;
 };
 
-template <>
-struct FastParseTrait<Py_ssize_t> {
-    static constexpr const char *type_name = "int";
-    static constexpr auto converter = ::culv_fast_parse_conv_ssize;
+template <> struct FastParseTrait<Py_ssize_t> {
+    static constexpr const char *type_name    = "int";
+    static constexpr auto converter           = ::culv_fast_parse_conv_ssize;
     static constexpr PyTypeObject *type_guard = nullptr;
 };
 
-template <>
-struct FastParseTrait<bool> {
-    static constexpr const char *type_name = "bool";
-    static constexpr auto converter = ::culv_fast_parse_conv_bool;
+template <> struct FastParseTrait<bool> {
+    static constexpr const char *type_name    = "bool";
+    static constexpr auto converter           = ::culv_fast_parse_conv_bool;
     static constexpr PyTypeObject *type_guard = &PyBool_Type;
 };
 
-template <>
-struct FastParseTrait<const char *> {
-    static constexpr const char *type_name = "str";
-    static constexpr auto converter = ::culv_fast_parse_conv_str;
+template <> struct FastParseTrait<const char *> {
+    static constexpr const char *type_name    = "str";
+    static constexpr auto converter           = ::culv_fast_parse_conv_str;
     static constexpr PyTypeObject *type_guard = nullptr;
 };
 
-template <>
-struct FastParseTrait<PyObject *> {
-    static constexpr const char *type_name = "object";
-    static constexpr auto converter = ::culv_fast_parse_conv_pyobj;
+template <> struct FastParseTrait<PyObject *> {
+    static constexpr const char *type_name    = "object";
+    static constexpr auto converter           = ::culv_fast_parse_conv_pyobj;
     static constexpr PyTypeObject *type_guard = nullptr;
 };
 
@@ -91,30 +81,26 @@ struct FastParseTrait<PyObject *> {
     return CPH_ParseQuatF32(obj, &value->x, &value->y, &value->z, &value->w) != 0;
 }
 
-template <>
-struct FastParseTrait<CPH_Vec3f> {
-    static constexpr const char *type_name = "Vector3";
-    static constexpr auto converter = fast_parse_conv_vec3f;
+template <> struct FastParseTrait<CPH_Vec3f> {
+    static constexpr const char *type_name    = "Vector3";
+    static constexpr auto converter           = fast_parse_conv_vec3f;
     static constexpr PyTypeObject *type_guard = nullptr;
 };
 
-template <>
-struct FastParseTrait<CPH_PosStride> {
-    static constexpr const char *type_name = "Vector3";
-    static constexpr auto converter = fast_parse_conv_pos_stride;
+template <> struct FastParseTrait<CPH_PosStride> {
+    static constexpr const char *type_name    = "Vector3";
+    static constexpr auto converter           = fast_parse_conv_pos_stride;
     static constexpr PyTypeObject *type_guard = nullptr;
 };
 
-template <>
-struct FastParseTrait<CPH_AuxStride> {
-    static constexpr const char *type_name = "Quaternion";
-    static constexpr auto converter = fast_parse_conv_aux_stride;
+template <> struct FastParseTrait<CPH_AuxStride> {
+    static constexpr const char *type_name    = "Quaternion";
+    static constexpr auto converter           = fast_parse_conv_aux_stride;
     static constexpr PyTypeObject *type_guard = nullptr;
 };
 
 // Helper to define argument names and requirement status.
-template <typename T>
-struct FastArg {
+template <typename T> struct FastArg {
     const char *name;
     bool required;
 
@@ -122,17 +108,16 @@ struct FastArg {
         : name(arg_name), required(is_required) {}
 };
 
-template <typename... Ts>
-class FastParser {
+template <typename... Ts> class FastParser {
     CPH_FastParser core_{};
     bool initialized_{};
 
-public:
-    FastParser() = default;
-    FastParser(const FastParser &) = delete;
+  public:
+    FastParser()                              = default;
+    FastParser(const FastParser &)            = delete;
     FastParser &operator=(const FastParser &) = delete;
-    FastParser(FastParser &&) = delete;
-    FastParser &operator=(FastParser &&) = delete;
+    FastParser(FastParser &&)                 = delete;
+    FastParser &operator=(FastParser &&)      = delete;
 
     ~FastParser() noexcept {
         if (initialized_) {
@@ -143,18 +128,18 @@ public:
     void Init(const char *parser_name, FastArg<Ts>... args) {
         if (initialized_) {
             CPH_FastParseDeinit(&core_);
-            core_ = CPH_FastParser{};
+            core_        = CPH_FastParser{};
             initialized_ = false;
         }
 
         if constexpr (sizeof...(Ts) > 0) {
             const std::array<CPH_FastArgDef, sizeof...(Ts)> c_defs{{
                 CPH_FastArgDef{
-                    .name = args.name,
-                    .type_name = FastParseTrait<Ts>::type_name,
+                    .name       = args.name,
+                    .type_name  = FastParseTrait<Ts>::type_name,
                     .type_guard = FastParseTrait<Ts>::type_guard,
-                    .convert = FastParseTrait<Ts>::converter,
-                    .required = args.required,
+                    .convert    = FastParseTrait<Ts>::converter,
+                    .required   = args.required,
                 }...,
             }};
             CPH_FastParseInitImpl(&core_, c_defs.data(), c_defs.size());
@@ -162,11 +147,11 @@ public:
             CPH_FastParseInitImpl(&core_, nullptr, 0);
         }
         core_.parser_name = parser_name;
-        initialized_ = true;
+        initialized_      = true;
     }
 
     [[nodiscard, gnu::always_inline]] bool Parse(PyObject *const *args, Py_ssize_t nargs,
-                                                PyObject *kwnames, Ts &...targets) const {
+                                                 PyObject *kwnames, Ts &...targets) const {
         if constexpr (sizeof...(Ts) == 0) {
             return core_.hot_path(args, nargs, kwnames, &core_, nullptr);
         } else {
@@ -178,7 +163,7 @@ public:
     }
 
     [[nodiscard, gnu::always_inline]] bool Parse(PyObject *args, PyObject *kwargs,
-                                                Ts &...targets) const {
+                                                 Ts &...targets) const {
         if constexpr (sizeof...(Ts) == 0) {
             return CPH_FastParseLegacy(args, kwargs, nullptr, &core_, nullptr);
         } else {

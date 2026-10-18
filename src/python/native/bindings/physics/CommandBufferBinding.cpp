@@ -3,10 +3,10 @@
 #include <stdatomic.h>
 #include <stddef.h>
 
-#include "bindings/physics/PhysicsWorld.h"
-#include "physics/CommandBuffer.h"
 #include "bindings/physics/PhysicsSync.h"
+#include "bindings/physics/PhysicsWorld.h"
 #include "core/Threading.h"
+#include "physics/CommandBuffer.h"
 
 void CPH_SyncAndFlushInternal(CPH_PhysicsWorldObject *self) {
     CPH_BLOCK_UNTIL_NOT_STEPPING(self);

@@ -12,8 +12,9 @@ static int parse_sequence_internal(PyObject *obj, void *out, int count, bool is_
     if (PyObject_CheckBuffer(obj)) {
         Py_buffer view;
         if (PyObject_GetBuffer(obj, &view, PyBUF_SIMPLE) == 0) {
-            size_t expected_size = (size_t)count * (is_double ? sizeof(double) : sizeof(float));
-            if ((size_t)view.len == expected_size) {
+            size_t expected_size =
+                static_cast<size_t>(count) * (is_double ? sizeof(double) : sizeof(float));
+            if (static_cast<size_t>(view.len) == expected_size) {
                 memcpy(out, view.buf, expected_size);
                 PyBuffer_Release(&view);
                 return 1;
@@ -48,7 +49,7 @@ static int parse_sequence_internal(PyObject *obj, void *out, int count, bool is_
 
     // Hoist the type check outside the loop
     if (is_double) {
-        double *d_out = (double *)out;
+        double *d_out = static_cast<double *>(out);
         for (int i = 0; i < count; i++) {
             double val = PyFloat_AsDouble(items[i]);
             if (val == -1.0 && PyErr_Occurred()) {
@@ -58,14 +59,14 @@ static int parse_sequence_internal(PyObject *obj, void *out, int count, bool is_
             d_out[i] = val;
         }
     } else {
-        float *f_out = (float *)out;
+        float *f_out = static_cast<float *>(out);
         for (int i = 0; i < count; i++) {
             double val = PyFloat_AsDouble(items[i]);
             if (val == -1.0 && PyErr_Occurred()) {
                 Py_DECREF(seq);
                 return 0;
             }
-            f_out[i] = (float)val;
+            f_out[i] = static_cast<float>(val);
         }
     }
 
@@ -219,11 +220,11 @@ void CPH_ParseBodySize(PyObject *py_size, float s[4]) {
         for (Py_ssize_t i = 0; i < sz_len && i < 4; i++) {
             PyObject *item = PyTuple_GetItem(py_size, i);
             if (PyNumber_Check(item)) {
-                s[i] = (float)PyFloat_AsDouble(item);
+                s[i] = static_cast<float>(PyFloat_AsDouble(item));
             }
         }
     } else if (PyNumber_Check(py_size)) {
-        s[0] = (float)PyFloat_AsDouble(py_size);
+        s[0] = static_cast<float>(PyFloat_AsDouble(py_size));
     }
 }
 
@@ -232,7 +233,7 @@ int CPH_ParseTracksToC(PyObject *py_tracks, CPH_TrackData *out_data, int *num_ou
         return 0;
     }
 
-    int num = (int)PyList_Size(py_tracks);
+    int num = static_cast<int>(PyList_Size(py_tracks));
     if (num > 2) {
         num = 2;
     }
@@ -243,16 +244,17 @@ int CPH_ParseTracksToC(PyObject *py_tracks, CPH_TrackData *out_data, int *num_ou
         PyObject *py_idxs = PyDict_GetItemString(dict, "indices");
 
         if (py_idxs && PyList_Check(py_idxs)) {
-            uint32_t count      = (uint32_t)PyList_Size(py_idxs);
+            uint32_t count      = static_cast<uint32_t>(PyList_Size(py_idxs));
             out_data[t].count   = count;
             out_data[t].indices = static_cast<uint32_t *>(CPH_PyAlloc(count * sizeof(uint32_t)));
 
             for (uint32_t k = 0; k < count; k++) {
-                out_data[t].indices[k] = (uint32_t)PyLong_AsLong(PyList_GetItem(py_idxs, k));
+                out_data[t].indices[k] =
+                    static_cast<uint32_t>(PyLong_AsLong(PyList_GetItem(py_idxs, k)));
             }
         }
         // Generic used here for driven wheel
-        out_data[t].driven_idx = (uint32_t)CPH_get_py_dict(dict, "driven_wheel", 0L);
+        out_data[t].driven_idx = static_cast<uint32_t>(CPH_get_py_dict(dict, "driven_wheel", 0L));
     }
     return 1;
 }

@@ -1,7 +1,7 @@
 #pragma once
+#include "bindings/PythonDeclarations.h"
 #include "core/CompilerSpecifics.h"
 #include <Python.h>
-#include "bindings/PythonDeclarations.h"
 
 // Forward declarations: "Trust me, these exist"
 struct CPH_PhysicsWorldObject;
@@ -35,27 +35,32 @@ extern PyType_Slot BufferProxy_slots[];
 extern PyType_Spec BufferProxy_spec;
 
 PyGetSet_DeclareGetter CPH_PyWorld_GetIsStepPending(struct CPH_PhysicsWorldObject *self,
-                                           [[maybe_unused]] void *closure);
-PyGetSet_DeclareGetter CPH_PyWorld_GetPositions(struct CPH_PhysicsWorldObject *self, [[maybe_unused]] void *c);
-PyGetSet_DeclareGetter CPH_PyWorld_GetRotations(struct CPH_PhysicsWorldObject *self, [[maybe_unused]] void *c);
-PyGetSet_DeclareGetter CPH_PyWorld_GetVelocities(struct CPH_PhysicsWorldObject *self, [[maybe_unused]] void *c);
+                                                    [[maybe_unused]] void *closure);
+PyGetSet_DeclareGetter CPH_PyWorld_GetPositions(struct CPH_PhysicsWorldObject *self,
+                                                [[maybe_unused]] void *c);
+PyGetSet_DeclareGetter CPH_PyWorld_GetRotations(struct CPH_PhysicsWorldObject *self,
+                                                [[maybe_unused]] void *c);
+PyGetSet_DeclareGetter CPH_PyWorld_GetVelocities(struct CPH_PhysicsWorldObject *self,
+                                                 [[maybe_unused]] void *c);
 PyGetSet_DeclareGetter CPH_PyWorld_GetAngularVelocities(struct CPH_PhysicsWorldObject *self,
-                                              [[maybe_unused]] void *c);
-PyGetSet_DeclareGetter CPH_PyWorld_GetCount(struct CPH_PhysicsWorldObject *self, [[maybe_unused]] void *c);
-PyGetSet_DeclareGetter CPH_PyWorld_GetTime(struct CPH_PhysicsWorldObject *self, [[maybe_unused]] void *c);
-PyGetSet_DeclareGetter CPH_PyWorld_GetUserDataBuffer(struct CPH_PhysicsWorldObject *self,
+                                                        [[maybe_unused]] void *c);
+PyGetSet_DeclareGetter CPH_PyWorld_GetCount(struct CPH_PhysicsWorldObject *self,
                                             [[maybe_unused]] void *c);
+PyGetSet_DeclareGetter CPH_PyWorld_GetTime(struct CPH_PhysicsWorldObject *self,
+                                           [[maybe_unused]] void *c);
+PyGetSet_DeclareGetter CPH_PyWorld_GetUserDataBuffer(struct CPH_PhysicsWorldObject *self,
+                                                     [[maybe_unused]] void *c);
 
 PyGetSet_DeclareGetter CPH_PyVehicle_GetWheelCount(struct CPH_VehicleObject *self,
-                                               [[maybe_unused]] void *closure);
+                                                   [[maybe_unused]] void *closure);
 
 PyGetSet_DeclareGetter CPH_PyWorld_GetShapeCount(struct CPH_PhysicsWorldObject *self,
-                                       [[maybe_unused]] void *closure);
+                                                 [[maybe_unused]] void *closure);
 
 PyGetSet_DeclareGetter CPH_PyWorld_GetMaxBodies(struct CPH_PhysicsWorldObject *self,
-                                                   [[maybe_unused]] void *closure);
+                                                [[maybe_unused]] void *closure);
 PyGetSet_DeclareGetter CPH_PyWorld_GetRemainingCapacity(struct CPH_PhysicsWorldObject *self,
-                                                           [[maybe_unused]] void *closure);
+                                                        [[maybe_unused]] void *closure);
 PyCFunction_DeclareMethodFromModule
 CPH_PyWorld_GetSoftBodyVertices(struct CPH_PhysicsWorldObject *self, PyObject *const *args,
-                                    size_t nargsf, PyObject *kwnames);
+                                size_t nargsf, PyObject *kwnames);

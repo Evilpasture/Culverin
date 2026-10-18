@@ -1,7 +1,7 @@
 #include "bindings/physics/WorldAdapters.h"
-#include "physics/PhysicsWorld.h"
 #include "bindings/ModuleState.h"
 #include "bindings/physics/PhysicsSync.h"
+#include "physics/PhysicsWorld.h"
 
 // Baked scene tuple layout produced by culverin.bake_scene.
 enum {
@@ -31,7 +31,8 @@ int CPH_GetBakedSceneCount(PyObject *baked, size_t *out_count) {
 }
 
 static int baked_buffer_size(size_t count, size_t bytes_per_body, size_t *out_size) {
-    if (count > SIZE_MAX / bytes_per_body || count > (size_t)PY_SSIZE_T_MAX / bytes_per_body) {
+    if (count > SIZE_MAX / bytes_per_body ||
+        count > static_cast<size_t>(PY_SSIZE_T_MAX) / bytes_per_body) {
         PyErr_SetString(PyExc_OverflowError, "Baked scene buffer size is too large");
         return -1;
     }
@@ -51,7 +52,7 @@ static int get_baked_buffer(PyObject *baked, Py_ssize_t index, size_t expected_s
     if (PyBytes_AsStringAndSize(item, &buffer, &size) < 0) {
         return -1;
     }
-    if ((size_t)size < expected_size) {
+    if (static_cast<size_t>(size) < expected_size) {
         PyErr_Format(PyExc_ValueError, "Baked %s buffer too small. Expected %zu bytes, got %zd.",
                      name, expected_size, size);
         return -1;
@@ -90,10 +91,10 @@ void CPH_PyWorld_FreeMembers(CPH_PhysicsWorldObject *self) {
 
 // helper: Initialize settings via Python helper
 [[nodiscard]]
-int CPH_InitSettings(CPH_PhysicsWorldObject *self, PyObject *settings_dict, CPH_GravityVector *gravity,
-                  CPH_WorldSettings *settings) {
+int CPH_InitSettings(CPH_PhysicsWorldObject *self, PyObject *settings_dict,
+                     CPH_GravityVector *gravity, CPH_WorldSettings *settings) {
     PyObject *st_module = PyType_GetModule(Py_TYPE(self));
-    CPH_ModuleState *st   = CPH_GetModuleState(st_module);
+    CPH_ModuleState *st = CPH_GetModuleState(st_module);
     PyObject *val_func  = PyObject_GetAttrString(st->helper, "validate_settings");
     if (!val_func) {
         return -1;
@@ -156,12 +157,12 @@ int CPH_LoadBakedScene(CPH_PhysicsWorldObject *self, PyObject *baked) {
 
     const CPH_BakedSceneData scene = {
         .count         = count,
-        .positions     = (const JPH_Real *)positions,
-        .rotations     = (const float *)rotations,
-        .shapes        = (const float *)shapes,
-        .motion_types  = (const uint8_t *)motion_types,
-        .object_layers = (const uint8_t *)object_layers,
-        .user_data     = (const uint64_t *)user_data,
+        .positions     = static_cast<const JPH_Real *>(positions),
+        .rotations     = static_cast<const float *>(rotations),
+        .shapes        = static_cast<const float *>(shapes),
+        .motion_types  = static_cast<const uint8_t *>(motion_types),
+        .object_layers = static_cast<const uint8_t *>(object_layers),
+        .user_data     = static_cast<const uint64_t *>(user_data),
     };
 
     const PhysicsWorldStatus status = CPH_PhysicsWorldLoadBakedScene(&self->physics, &scene);

@@ -18,6 +18,7 @@
 #include "math/Math.h"
 #include "physics/ContactListener.h"
 #include "physics/Filters.h"
+#include <new>
 #include <stdatomic.h>
 
 /**
@@ -49,12 +50,11 @@ static void dump_parser_registry(CPH_FastParser *const *const registry, const si
  * Initializes every known parser group, dumps them to a unified JSON, and cleans up.
  */
 PyCFunction_DeclareMethod CPH_PyModule_DumpSchemaJson(PyObject *const self, PyObject *const *args,
-                                                size_t nargsf, PyObject *kwnames) {
+                                                      size_t nargsf, PyObject *kwnames) {
     const auto st        = CPH_GetModuleState(self);
     const char *filename = "culverin_schema.json";
 
     // 1. Thread-safe, subinterpreter-safe parsing via CulvFastParser
-
 
     if (!st->parsers->DumpSchema.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, filename)) {
         return nullptr;
@@ -96,7 +96,7 @@ PyCFunction_DeclareMethod CPH_PyModule_DumpSchemaJson(PyObject *const self, PyOb
     fprintf(f, "{\n");
     bool is_first = true;
 
-#define CPH_DUMP_GROUP(member)                                                                         \
+#define CPH_DUMP_GROUP(member)                                                                     \
     dump_parser_registry(all.member.registry, all.member.registry_count, f, &is_first)
 
     CPH_DUMP_GROUP(world);
@@ -124,8 +124,8 @@ PyCFunction_DeclareMethod CPH_PyModule_DumpSchemaJson(PyObject *const self, PyOb
 #include <stdatomic.h>
 #include <tupleobject.h>
 
-PyCFunction_DeclareMethod CPH_PyModule_MutateTuple([[maybe_unused]] PyObject *self, PyObject *const *args,
-                                            Py_ssize_t nargsf) {
+PyCFunction_DeclareMethod CPH_PyModule_MutateTuple([[maybe_unused]] PyObject *self,
+                                                   PyObject *const *args, Py_ssize_t nargsf) {
     enum : uint8_t { ARG_0, ARG_1, ARG_2, ARG_3, ARG_4 };
     // --- 1. DECLARATIONS (C / goto safety) ---
     auto nargs              = PyVectorcall_NARGS(nargsf);
@@ -206,17 +206,18 @@ PyCFunction_DeclareMethod CPH_PyModule_MutateTuple([[maybe_unused]] PyObject *se
 
     // Step B: The Mutation (Atomic Swap)
     {
-        PyTupleObject *t = (PyTupleObject *)target;
+        PyTupleObject *t = reinterpret_cast<PyTupleObject *>(target);
         Py_INCREF(new_val);
 
         // Cast the item slot to an atomic pointer.
         // This prevents TSan "Data Race" warnings and ensures memory visibility.
-        _Atomic(PyObject *) *atomic_slot = (_Atomic(PyObject *) *)&(t->ob_item[index]);
+        _Atomic(PyObject *) *atomic_slot =
+            reinterpret_cast<_Atomic(PyObject *) *>(&(t->ob_item[index]));
         old_val = atomic_exchange_explicit(atomic_slot, new_val, memory_order_acq_rel);
 
         // Step C: Rehash Cache Bust (Atomic)
 #if PY_VERSION_HEX >= 0x030E0000
-        _Atomic(Py_hash_t) *atomic_hash = (_Atomic(Py_hash_t) *)&(t->ob_hash);
+        _Atomic(Py_hash_t) *atomic_hash = reinterpret_cast<_Atomic(Py_hash_t) *>(&t->ob_hash);
         atomic_store_explicit(atomic_hash, -1, memory_order_relaxed);
 #endif
     }
@@ -225,8 +226,8 @@ PyCFunction_DeclareMethod CPH_PyModule_MutateTuple([[maybe_unused]] PyObject *se
 
     if (final_hash == -1) {
         // Rollback (Atomic)
-        _Atomic(PyObject *) *atomic_slot =
-            (_Atomic(PyObject *) *)&((PyTupleObject *)target)->ob_item[index];
+        _Atomic(PyObject *) *atomic_slot = reinterpret_cast<_Atomic(PyObject *) *>(
+            &(reinterpret_cast<PyTupleObject *>(target))->ob_item[index]);
         atomic_store_explicit(atomic_slot, old_val, memory_order_relaxed);
         Py_DECREF(new_val);
         if (registry) {
@@ -239,8 +240,8 @@ PyCFunction_DeclareMethod CPH_PyModule_MutateTuple([[maybe_unused]] PyObject *se
     if (registry) {
         if (PyDict_SetItem(registry, key, target) < 0) {
             // Rollback (Atomic)
-            _Atomic(PyObject *) *atomic_slot =
-                (_Atomic(PyObject *) *)&((PyTupleObject *)target)->ob_item[index];
+            _Atomic(PyObject *) *atomic_slot = reinterpret_cast<_Atomic(PyObject *) *>(
+                &(reinterpret_cast<PyTupleObject *>(target))->ob_item[index]);
             atomic_store_explicit(atomic_slot, old_val, memory_order_relaxed);
             Py_DECREF(new_val);
             Py_DECREF(target);
@@ -296,7 +297,8 @@ static atomic_int docs_status = 0;
 #define CPH_MOD_VARARGS(fn, name) CPH_FEAT(fn, name, METH_VARARGS | METH_KEYWORDS)
 
 #define CPH_MOD_NOARGS_INTERNAL(fn, name) CPH_FEAT_INTERNAL(fn, name, METH_NOARGS)
-#define CPH_MOD_FASTCALL_INTERNAL(fn, name) CPH_FEAT_INTERNAL(fn, name, METH_FASTCALL | METH_KEYWORDS)
+#define CPH_MOD_FASTCALL_INTERNAL(fn, name)                                                        \
+    CPH_FEAT_INTERNAL(fn, name, METH_FASTCALL | METH_KEYWORDS)
 
 // --- Module Initialization ---
 
@@ -318,7 +320,7 @@ static const unsigned char kPyprojectToml[] = {
 static const char *extract_version_from_toml(void) {
     // Look for the specific pattern 'version = "'
     const char *key = "version = \"";
-    auto start      = strstr((char *)kPyprojectToml, key);
+    auto start      = strstr(reinterpret_cast<const char *>(kPyprojectToml), key);
 
     if (!start) {
         return "0.0.0-unknown";
@@ -411,9 +413,9 @@ static int init_constants(PyObject *m) {
                   {.name = "DOF_ROTATION_Y", .value = JPH_AllowedDOFs_RotationY},
                   {.name = "DOF_ROTATION_Z", .value = JPH_AllowedDOFs_RotationZ},
                   {.name = "DOF_ALL", .value = JPH_AllowedDOFs_All},
-                  {.name = "DOF_TRANSLATE_XY",
+                  {.name  = "DOF_TRANSLATE_XY",
                    .value = JPH_AllowedDOFs_TranslationX | JPH_AllowedDOFs_TranslationY},
-                  {.name = "DOF_PLANE_XY",
+                  {.name  = "DOF_PLANE_XY",
                    .value = JPH_AllowedDOFs_TranslationX | JPH_AllowedDOFs_TranslationY},
                   {.name = "DOF_PLANE_2D", .value = JPH_AllowedDOFs_Plane2D},
                   {.name = "CONSTRAINT_FIXED", .value = CONSTRAINT_FIXED},
@@ -465,7 +467,19 @@ static char shared_version[kMagicBuffer];
 extern PyModuleDef culverin_module;
 
 PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
-    CPH_ModuleState *st = CPH_GetModuleState(m);
+    auto *storage = CPH_GetModuleStateStorage(m);
+    if (storage == nullptr) {
+        PyErr_SetString(PyExc_RuntimeError, "CPython module state is unavailable");
+        return -1;
+    }
+    if (storage->state == nullptr) {
+        storage->state = new (std::nothrow) CPH_ModuleState{};
+        if (storage->state == nullptr) {
+            PyErr_NoMemory();
+            return -1;
+        }
+    }
+    CPH_ModuleState *st = storage->state;
     // 1. THE MASTER GATE: Protects all static global memory in the process
     int expected = 0;
     if (atomic_compare_exchange_strong(&docs_status, &expected, 1)) {
@@ -511,7 +525,7 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
                  precision, build_type, compiler_id);
 
         // --- THE WINNER: Run exactly once per process life ---
-        const char *docs_str = (const char *)kAllDocs;
+        const char *docs_str = reinterpret_cast<const char *>(kAllDocs);
         CPH_DocsStitchMethods(culverin_module.m_methods, "Module", docs_str);
         CPH_DocsStitchSpec(&CPH_PyWorld_Spec, "PhysicsWorld", docs_str);
         CPH_DocsStitchSpec(&Character_spec, "Character", docs_str);
@@ -563,7 +577,7 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
         return -1;
     }
     if (st->parsers == nullptr) {
-        st->parsers = CPH::NewParserGroup<CPH_ModuleParsers>();
+        st->parsers.reset(CPH::NewParserGroup<CPH_ModuleParsers>());
         if (st->parsers == nullptr) {
             return -1;
         }
@@ -582,6 +596,9 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 PyType_DeclareSlot_Status culverin_traverse(PyObject *m, visitproc visit, void *arg) {
     CPH_ModuleState *st = CPH_GetModuleState(m);
+    if (st == nullptr) {
+        return 0;
+    }
     Py_VISIT(st->helper);
     Py_VISIT(st->PhysicsWorldType);
     Py_VISIT(st->CharacterType);
@@ -591,6 +608,7 @@ PyType_DeclareSlot_Status culverin_traverse(PyObject *m, visitproc visit, void *
     Py_VISIT(st->SkeletonType);
     Py_VISIT(st->ShipType);
     Py_VISIT(st->BufferProxyType);
+    Py_VISIT(st->RegistryType);
     Py_VISIT(st->MathServiceType);
     Py_VISIT(st->SoftBodySharedSettingsType);
     return 0;
@@ -599,6 +617,9 @@ PyType_DeclareSlot_Status culverin_traverse(PyObject *m, visitproc visit, void *
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 PyType_DeclareSlot_Status culverin_clear(PyObject *m) {
     CPH_ModuleState *st = CPH_GetModuleState(m);
+    if (st == nullptr) {
+        return 0;
+    }
     Py_CLEAR(st->helper);
     Py_CLEAR(st->PhysicsWorldType);
     Py_CLEAR(st->CharacterType);
@@ -608,27 +629,41 @@ PyType_DeclareSlot_Status culverin_clear(PyObject *m) {
     Py_CLEAR(st->SkeletonType);
     Py_CLEAR(st->ShipType);
     Py_CLEAR(st->BufferProxyType);
+    Py_CLEAR(st->RegistryType);
     Py_CLEAR(st->MathServiceType);
     Py_CLEAR(st->SoftBodySharedSettingsType);
-    delete st->parsers;
-    st->parsers = nullptr;
+    st->parsers.reset();
     return 0;
+}
+
+static void culverin_free(void *module) {
+    auto *py_module = static_cast<PyObject *>(module);
+    auto *storage   = CPH_GetModuleStateStorage(py_module);
+    if (storage == nullptr || storage->state == nullptr) {
+        return;
+    }
+
+    // m_clear can run before m_free, so keep this idempotent and clear any
+    // remaining Python references before destroying the C++ state object.
+    [[maybe_unused]] const auto clear_status = culverin_clear(py_module);
+    delete storage->state;
+    storage->state = nullptr;
 }
 
 static PyMethodDef kModuleMethods[] = {
 
-            CPH_MOD_FASTCALL_INTERNAL(CPH_PyModule_DumpSchemaJson, dump_schema_json), CPH_MOD_FASTCALL(CPH_PyModule_MutateTuple, mutate_tuple),     {nullptr, nullptr, 0, nullptr}
-};
+    CPH_MOD_FASTCALL_INTERNAL(CPH_PyModule_DumpSchemaJson, dump_schema_json),
+    CPH_MOD_FASTCALL(CPH_PyModule_MutateTuple, mutate_tuple),
+    {nullptr, nullptr, 0, nullptr}};
 
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 [[gnu::used]]
 PyModuleDef culverin_module = {
-    .m_base = PyModuleDef_HEAD_INIT,
-    .m_name = "_culverin_c",
-    .m_doc  = "Culverin Physics Engine Core",
-    .m_size = sizeof(CPH_ModuleState),
-    .m_methods =
-        kModuleMethods,
+    .m_base    = PyModuleDef_HEAD_INIT,
+    .m_name    = "_culverin_c",
+    .m_doc     = "Culverin Physics Engine Core",
+    .m_size    = sizeof(CPH_ModuleStateStorage),
+    .m_methods = kModuleMethods,
     .m_slots =
         (PyModuleDef_Slot[]){
 
@@ -653,7 +688,6 @@ PyModuleDef culverin_module = {
         },
     .m_traverse = culverin_traverse,
     .m_clear    = culverin_clear,
+    .m_free     = culverin_free,
 };
-PyMODINIT_FUNC PyInit__culverin_c(void) {
-    return PyModuleDef_Init(&culverin_module);
-}
+PyMODINIT_FUNC PyInit__culverin_c(void) { return PyModuleDef_Init(&culverin_module); }

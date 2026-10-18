@@ -22,12 +22,10 @@ void CPH_SyncAndFlushInternal(CPH_PhysicsWorldObject *self);
 // is released and ValueError is raised; the caller must return nullptr.
 [[nodiscard]] static inline bool CPH_ValidateHandle(CPH_PhysicsWorldObject *self, uint64_t h_raw,
                                                     uint32_t *out_slot) {
-    if (CPH_UNLIKELY(!unpack_handle(&self->physics, (BodyHandle)h_raw, out_slot))) {
+    if (CPH_UNLIKELY(!unpack_handle(&self->physics, static_cast<BodyHandle>(h_raw), out_slot))) {
         CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
         return false;
     }
     return true;
 }
-
-

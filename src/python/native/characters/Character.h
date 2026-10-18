@@ -47,5 +47,6 @@ extern PyType_Spec Character_spec;
 
 struct CPH_PhysicsWorldObject;
 
-PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateCharacter(
-    struct CPH_PhysicsWorldObject *self, PyObject *const *args, size_t nargsf, PyObject *kwnames);
+PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateCharacter(struct CPH_PhysicsWorldObject *self,
+                                                                PyObject *const *args,
+                                                                size_t nargsf, PyObject *kwnames);

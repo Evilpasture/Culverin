@@ -1,16 +1,15 @@
 #include "bindings/physics/Constraint.h"
 #include "bindings/BindingCommon.h"
 #include "bindings/parsing/ParserRegistry.hpp"
-#include "physics/ConstraintFactory.h"
 #include "bindings/physics/PhysicsSync.h"
-#include "core/Types.h"
 #include "core/NativeAlloc.h"
+#include "core/Types.h"
+#include "physics/ConstraintFactory.h"
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateConstraint(CPH_PhysicsWorldObject *self,
-                                                                   PyObject *const *args,
-                                                                   size_t nargsf,
-                                                                   PyObject *kwnames) {
+                                                                 PyObject *const *args,
+                                                                 size_t nargsf, PyObject *kwnames) {
 
     // 1. FAST PARSE
     int type           = 0;
@@ -19,9 +18,8 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateConstraint(CPH_PhysicsWorl
     PyObject *o_params = nullptr;
     PyObject *o_motor  = nullptr;
 
-
-
-    if (!self->parsers->CreateConstr.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, type, h1_raw, h2_raw, o_params, o_motor)) {
+    if (!self->parsers->CreateConstr.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, type, h1_raw,
+                                           h2_raw, o_params, o_motor)) {
         return nullptr;
     }
 
@@ -71,8 +69,8 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateConstraint(CPH_PhysicsWorl
 
     uint32_t s1;
     uint32_t s2;
-    if (!unpack_handle(&self->physics, (BodyHandle)h1_raw, &s1) ||
-        !unpack_handle(&self->physics, (BodyHandle)h2_raw, &s2)) {
+    if (!unpack_handle(&self->physics, static_cast<BodyHandle>(h1_raw), &s1) ||
+        !unpack_handle(&self->physics, static_cast<BodyHandle>(h2_raw), &s2)) {
         CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
         return nullptr;
@@ -84,16 +82,17 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateConstraint(CPH_PhysicsWorl
     }
 
     // Allocate heap copy of params for the worker thread
-    CPH_ConstraintParams *p_heap = (CPH_ConstraintParams *)CPH_Alloc(sizeof(CPH_ConstraintParams));
+    CPH_ConstraintParams *p_heap =
+        static_cast<CPH_ConstraintParams *>(CPH_Alloc(sizeof(CPH_ConstraintParams)));
     memcpy(p_heap, &p, sizeof(CPH_ConstraintParams));
 
     // Reserve constraint slot
-    uint32_t c_slot                = self->physics.free_constraint_slots[--self->physics.free_constraint_count];
+    uint32_t c_slot = self->physics.free_constraint_slots[--self->physics.free_constraint_count];
     self->physics.constraint_types[c_slot] = type;
     atomic_store_explicit(&self->physics.constraint_states[c_slot], SLOT_PENDING_CREATE,
                           memory_order_relaxed);
     uint32_t gen            = self->physics.constraint_generations[c_slot];
-    ConstraintHandle handle = ((uint64_t)gen << kHandleIndexBits) | c_slot;
+    ConstraintHandle handle = (static_cast<uint64_t>(gen) << kHandleIndexBits) | c_slot;
 
     // 4. QUEUE ASYNCHRONOUS COMMAND
     if (CPH_UNLIKELY(!CPH_EnsureCommandCapacity(&self->physics))) {
@@ -114,13 +113,12 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateConstraint(CPH_PhysicsWorl
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 PyCFunction_DeclareMethodFromModule CPH_PyWorld_DestroyConstraint(CPH_PhysicsWorldObject *self,
-                                                                    PyObject *const *args,
-                                                                    size_t nargsf,
-                                                                    PyObject *kwnames) {
+                                                                  PyObject *const *args,
+                                                                  size_t nargsf,
+                                                                  PyObject *kwnames) {
     // 1. FAST PARSE
     // TSan Fix: Use raw uint64 for the parser target to avoid atomic init overhead
     uint64_t h_raw;
-
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!self->parsers->DestroyConstr.Parse(args, nargs, kwnames, h_raw)) {
@@ -133,13 +131,15 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_DestroyConstraint(CPH_PhysicsWor
     CPH_SHADOW_LOCK(&self->physics.shadow_lock);
 
     // RESOLUTION PHASE
-    uint32_t slot = (uint32_t)(h_raw & kHandleIndexMask);
-    uint32_t gen  = (uint32_t)(h_raw >> kHandleIndexBits);
+    uint32_t slot = static_cast<uint32_t>(h_raw & kHandleIndexMask);
+    uint32_t gen  = static_cast<uint32_t>(h_raw >> kHandleIndexBits);
 
-    uint8_t state = atomic_load_explicit(&self->physics.constraint_states[slot], memory_order_relaxed);
+    uint8_t state =
+        atomic_load_explicit(&self->physics.constraint_states[slot], memory_order_relaxed);
 
     // FIX: Allow destruction of ALIVE OR PENDING_CREATE
-    if (slot >= self->physics.constraint_capacity || self->physics.constraint_generations[slot] != gen ||
+    if (slot >= self->physics.constraint_capacity ||
+        self->physics.constraint_generations[slot] != gen ||
         (state != SLOT_ALIVE && state != SLOT_PENDING_CREATE)) {
 
         CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
@@ -163,7 +163,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_DestroyConstraint(CPH_PhysicsWor
         // Automatic Body Wake-up: Prevents bodies from floating if their joint is deleted.
         // ActivateBody is thread-safe in Jolt.
         if (JPH_Constraint_GetType(c_to_destroy) == JPH_ConstraintType_TwoBodyConstraint) {
-            auto tbc     = (JPH_TwoBodyConstraint *)c_to_destroy;
+            auto tbc     = reinterpret_cast<JPH_TwoBodyConstraint *>(c_to_destroy);
             JPH_Body *b1 = JPH_TwoBodyConstraint_GetBody1(tbc);
             JPH_Body *b2 = JPH_TwoBodyConstraint_GetBody2(tbc);
 
@@ -183,14 +183,12 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_DestroyConstraint(CPH_PhysicsWor
 }
 
 PyCFunction_DeclareMethodFromModule CPH_PyWorld_SetConstraintTarget(CPH_PhysicsWorldObject *self,
-                                                                       PyObject *const *args,
-                                                                       size_t nargsf,
-                                                                       PyObject *kwnames) {
+                                                                    PyObject *const *args,
+                                                                    size_t nargsf,
+                                                                    PyObject *kwnames) {
     // 1. FAST PARSE (Unchanged)
     uint64_t h_raw;
     float target;
-
-
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     if (!self->parsers->SetConstrTarget.Parse(args, nargs, kwnames, h_raw, target)) {
@@ -201,12 +199,13 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_SetConstraintTarget(CPH_PhysicsW
     CPH_SHADOW_LOCK(&self->physics.shadow_lock);
     CPH_BLOCK_UNTIL_NOT_STEPPING(self);
 
-    uint32_t slot = (uint32_t)(h_raw & kHandleIndexMask);
-    uint32_t gen  = (uint32_t)(h_raw >> kHandleIndexBits);
+    uint32_t slot = static_cast<uint32_t>(h_raw & kHandleIndexMask);
+    uint32_t gen  = static_cast<uint32_t>(h_raw >> kHandleIndexBits);
 
-    if (CPH_UNLIKELY(slot >= self->physics.constraint_capacity || self->physics.constraint_generations[slot] != gen ||
-                 atomic_load_explicit(&self->physics.constraint_states[slot], memory_order_relaxed) !=
-                     SLOT_ALIVE)) {
+    if (CPH_UNLIKELY(slot >= self->physics.constraint_capacity ||
+                     self->physics.constraint_generations[slot] != gen ||
+                     atomic_load_explicit(&self->physics.constraint_states[slot],
+                                          memory_order_relaxed) != SLOT_ALIVE)) {
         CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Invalid or stale constraint handle");
         return nullptr;
@@ -217,11 +216,11 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_SetConstraintTarget(CPH_PhysicsW
 
     // 3. JPH EXECUTION
     if (sub == JPH_ConstraintSubType_Hinge) {
-        auto hc = (JPH_HingeConstraint *)c;
+        auto hc = reinterpret_cast<JPH_HingeConstraint *>(c);
         JPH_HingeConstraint_SetMotorState(hc, JPH_MotorState_Position);
         JPH_HingeConstraint_SetTargetAngle(hc, target);
     } else if (sub == JPH_ConstraintSubType_Slider) {
-        auto sc              = (JPH_SliderConstraint *)c;
+        auto sc              = reinterpret_cast<JPH_SliderConstraint *>(c);
         JPH_MotorState state = JPH_SliderConstraint_GetMotorState(sc);
 
         if (state == JPH_MotorState_Off) {
@@ -239,8 +238,8 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_SetConstraintTarget(CPH_PhysicsW
     // 4. WAKE UP BODIES (Locked sequence)
     JPH_ConstraintType type = JPH_Constraint_GetType(c);
     if (type == JPH_ConstraintType_TwoBodyConstraint) {
-        JPH_Body *b1 = JPH_TwoBodyConstraint_GetBody1((JPH_TwoBodyConstraint *)c);
-        JPH_Body *b2 = JPH_TwoBodyConstraint_GetBody2((JPH_TwoBodyConstraint *)c);
+        JPH_Body *b1 = JPH_TwoBodyConstraint_GetBody1(reinterpret_cast<JPH_TwoBodyConstraint *>(c));
+        JPH_Body *b2 = JPH_TwoBodyConstraint_GetBody2(reinterpret_cast<JPH_TwoBodyConstraint *>(c));
 
         if (b1) {
             JPH_BodyInterface_ActivateBody(self->physics.body_interface, JPH_Body_GetID(b1));
@@ -255,11 +254,10 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_SetConstraintTarget(CPH_PhysicsW
 }
 
 PyCFunction_DeclareMethodFromModule CPH_PyWorld_GetConstraintType(CPH_PhysicsWorldObject *self,
-                                                                     PyObject *const *args,
-                                                                     size_t nargsf,
-                                                                     PyObject *kwnames) {
+                                                                  PyObject *const *args,
+                                                                  size_t nargsf,
+                                                                  PyObject *kwnames) {
     uint64_t handle_raw;
-
 
     if (!self->parsers->HOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle_raw)) {
         return nullptr;
@@ -268,18 +266,20 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_GetConstraintType(CPH_PhysicsWor
     CPH_SHADOW_LOCK(&self->physics.shadow_lock);
     CPH_BLOCK_UNTIL_NOT_STEPPING(self);
 
-    uint32_t slot = (uint32_t)(handle_raw & kHandleIndexMask);
-    uint32_t gen  = (uint32_t)(handle_raw >> kHandleIndexBits);
+    uint32_t slot = static_cast<uint32_t>(handle_raw & kHandleIndexMask);
+    uint32_t gen  = static_cast<uint32_t>(handle_raw >> kHandleIndexBits);
 
     // Validate slot range and generation
-    if (CPH_UNLIKELY(slot >= self->physics.constraint_capacity || self->physics.constraint_generations[slot] != gen)) {
+    if (CPH_UNLIKELY(slot >= self->physics.constraint_capacity ||
+                     self->physics.constraint_generations[slot] != gen)) {
         CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
         PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
         return nullptr;
     }
 
     // Load state atomically
-    uint8_t state = atomic_load_explicit(&self->physics.constraint_states[slot], memory_order_acquire);
+    uint8_t state =
+        atomic_load_explicit(&self->physics.constraint_states[slot], memory_order_acquire);
 
     // NEW LOGIC: Accept both ALIVE and PENDING_CREATE
     if (state == SLOT_ALIVE || state == SLOT_PENDING_CREATE) {
@@ -287,7 +287,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_GetConstraintType(CPH_PhysicsWor
         // This is safe even if Jolt hasn't built the object yet.
         int type = self->physics.constraint_types[slot];
         CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
-        return PyLong_FromLong((long)type);
+        return PyLong_FromLong(static_cast<long>(type));
     }
 
     // If state is SLOT_EMPTY or PENDING_DESTROY

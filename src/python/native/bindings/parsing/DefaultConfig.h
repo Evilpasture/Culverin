@@ -1,6 +1,6 @@
 #pragma once
-#include <stddef.h>
 #include "core/CompilerSpecifics.h"
+#include <stddef.h>
 
 // Parser constants
 [[maybe_unused]] static constexpr size_t kMaxArgLimit = 64;

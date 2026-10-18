@@ -51,7 +51,7 @@ typedef struct {
     PyObject *interned;                        // For keyword matching
     PyTypeObject *type_guard;                  // For type checking
     bool (*convert)(PyObject *, const void *); // The workhorse
-} CPH_FastArgSpecHot;                              // 24 bytes
+} CPH_FastArgSpecHot;                          // 24 bytes
 
 typedef struct {
     const char *name;
@@ -61,10 +61,12 @@ typedef struct {
 typedef struct CPH_FastParser CPH_FastParser;
 
 typedef bool (*CulvFastParseFunc)(
-    PyObject *const args[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)], Py_ssize_t nargs,
+    PyObject *const args[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)],
+    Py_ssize_t nargs,
     PyObject kwnames[CPH_FAST_PARSE_ARR_QUALIFIERS(const CPH_FAST_PARSE_RESTRICT)],
     const CPH_FastParser *const CPH_FAST_PARSE_RESTRICT fastparser,
-    const void *const CPH_FAST_PARSE_RESTRICT targets[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)]);
+    const void *const CPH_FAST_PARSE_RESTRICT
+        targets[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)]);
 
 static constexpr auto kFastParseAlignmentSize = 64;
 typedef struct {
@@ -88,19 +90,22 @@ struct CPH_FastParser {
     uint64_t warned_mask;
 };
 
-static_assert(sizeof(struct CPH_FastParser) == (size_t)kFastParseAlignmentSize * 2);
+static_assert(sizeof(struct CPH_FastParser) == static_cast<size_t>(kFastParseAlignmentSize) * 2);
 static_assert(alignof(struct CPH_FastParser) == kFastParseAlignmentSize);
 
 // Forward declaration of the generic fallback
-[[nodiscard]] static inline bool
-culv_fast_parse_vector(PyObject *const args[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)], Py_ssize_t nargs,
-                PyObject kwnames[CPH_FAST_PARSE_ARR_QUALIFIERS(const CPH_FAST_PARSE_RESTRICT)],
-                const CPH_FastParser fastparser[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)],
-                const void *const CPH_FAST_PARSE_RESTRICT targets[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)]);
+[[nodiscard]] static inline bool culv_fast_parse_vector(
+    PyObject *const args[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)],
+    Py_ssize_t nargs,
+    PyObject kwnames[CPH_FAST_PARSE_ARR_QUALIFIERS(const CPH_FAST_PARSE_RESTRICT)],
+    const CPH_FastParser fastparser[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)],
+    const void *const CPH_FAST_PARSE_RESTRICT
+        targets[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)]);
 
 /** --- 2. EXTERN DECLARATIONS --- **/
 [[gnu::noinline, nodiscard]]
-extern bool CPH_FastParseReportTypeError(const CPH_FastParser *fastparser, size_t index, PyObject *val);
+extern bool CPH_FastParseReportTypeError(const CPH_FastParser *fastparser, size_t index,
+                                         PyObject *val);
 [[gnu::noinline, nodiscard]]
 extern bool CPH_FastParseReportMissing(const CPH_FastParser *fastparser, uint64_t provided_mask);
 [[gnu::noinline, nodiscard]]
@@ -110,15 +115,18 @@ extern bool CPH_FastParseReportTooMany(const CPH_FastParser *fastparser, Py_ssiz
 [[gnu::noinline, nodiscard]]
 extern bool CPH_FastParseReportUnknownKeyword(const CPH_FastParser *fastparser, PyObject *key);
 [[gnu::noinline, nodiscard]]
-extern bool CPH_FastParseReportConversionError(const CPH_FastParser *fastparser, size_t index, PyObject *val);
-extern void CPH_FastParseInitImpl(CPH_FastParser *fastparser, const CPH_FastArgDef *defs, size_t count);
+extern bool CPH_FastParseReportConversionError(const CPH_FastParser *fastparser, size_t index,
+                                               PyObject *val);
+extern void CPH_FastParseInitImpl(CPH_FastParser *fastparser, const CPH_FastArgDef *defs,
+                                  size_t count);
 extern void CPH_FastParseDeinit(CPH_FastParser *fastparser);
-extern bool
-CPH_FastParseLegacy(PyObject args[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)],
-                PyObject kwargs[CPH_FAST_PARSE_ARR_QUALIFIERS(const CPH_FAST_PARSE_RESTRICT)],
-                [[maybe_unused]] PyObject *unused,
-                const CPH_FastParser fastparser[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)],
-                const void *const CPH_FAST_PARSE_RESTRICT targets[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)]);
+extern bool CPH_FastParseLegacy(
+    PyObject args[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)],
+    PyObject kwargs[CPH_FAST_PARSE_ARR_QUALIFIERS(const CPH_FAST_PARSE_RESTRICT)],
+    [[maybe_unused]] PyObject *unused,
+    const CPH_FastParser fastparser[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)],
+    const void *const CPH_FAST_PARSE_RESTRICT
+        targets[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)]);
 
 /** --- 3. SPECULATIVE STUBS (Monomorphic fast-paths) --- **/
 
@@ -134,14 +142,14 @@ enum CulvFastParseIndex : uint8_t {
     CULV_FAST_PARSE_IDX_8
 };
 [[gnu::always_inline]]
-static inline bool culv_fast_parse_dispatch_conv(bool (*conv)(PyObject *, const void *), PyObject *obj,
-                                    const void *target);
+static inline bool culv_fast_parse_dispatch_conv(bool (*conv)(PyObject *, const void *),
+                                                 PyObject *obj, const void *target);
 
 [[nodiscard, gnu::always_inline]]
-static inline bool
-culv_fast_parse_spec_check_and_conv(const CPH_FastArgSpecHot spec[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)], size_t idx,
-                       PyObject *val, const void *target,
-                       const CPH_FastParser fastparser[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)]) {
+static inline bool culv_fast_parse_spec_check_and_conv(
+    const CPH_FastArgSpecHot spec[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)],
+    size_t idx, PyObject *val, const void *target,
+    const CPH_FastParser fastparser[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)]) {
     // 1. Type Guard (Combined pointer + inheritance check)
     if (spec->type_guard) {
         if (CPH_FAST_PARSE_LIKELY(Py_TYPE(val) != spec->type_guard)) {
@@ -156,9 +164,10 @@ culv_fast_parse_spec_check_and_conv(const CPH_FastArgSpecHot spec[CPH_FAST_PARSE
 }
 
 // Individual conversion call using the Enum and the safety helper
-#define CPH_FAST_PARSE_CALL_CONV(n)                                                                            \
-    culv_fast_parse_spec_check_and_conv(&fastparser->hot_specs[CULV_FAST_PARSE_IDX_##n], CULV_FAST_PARSE_IDX_##n, args[CULV_FAST_PARSE_IDX_##n],       \
-                           targets[CULV_FAST_PARSE_IDX_##n], fastparser)
+#define CPH_FAST_PARSE_CALL_CONV(n)                                                                \
+    culv_fast_parse_spec_check_and_conv(&fastparser->hot_specs[CULV_FAST_PARSE_IDX_##n],           \
+                                        CULV_FAST_PARSE_IDX_##n, args[CULV_FAST_PARSE_IDX_##n],    \
+                                        targets[CULV_FAST_PARSE_IDX_##n], fastparser)
 
 /**
  * DIRECT CONVERSION CALL
@@ -170,28 +179,36 @@ culv_fast_parse_spec_check_and_conv(const CPH_FastArgSpecHot spec[CPH_FAST_PARSE
  * - No check for interned identity.
  * - Direct call to .convert().
  */
-#define CPH_FAST_PARSE_CALL_CONV_DIRECT(n)                                                                     \
-    fastparser->hot_specs[CULV_FAST_PARSE_IDX_##n].convert(args[CULV_FAST_PARSE_IDX_##n], targets[CULV_FAST_PARSE_IDX_##n])
+#define CPH_FAST_PARSE_CALL_CONV_DIRECT(n)                                                         \
+    fastparser->hot_specs[CULV_FAST_PARSE_IDX_##n].convert(args[CULV_FAST_PARSE_IDX_##n],          \
+                                                           targets[CULV_FAST_PARSE_IDX_##n])
 
 // Stub Function Boilerplate
-#define CPH_FAST_PARSE_GEN_STUB(N, ...)                                                                        \
-    [[gnu::always_inline]] [[nodiscard]] static inline bool culv_fast_parse_speculate_p##N##_naked(             \
-        PyObject *const args[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)], Py_ssize_t nargs,               \
-        PyObject kwnames[CPH_FAST_PARSE_ARR_QUALIFIERS(const CPH_FAST_PARSE_RESTRICT)],                                    \
-        const CPH_FastParser fastparser[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)],                          \
-        const void *const CPH_FAST_PARSE_RESTRICT targets[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)]) {              \
-        if (CPH_FAST_PARSE_LIKELY(nargs == N && kwnames == nullptr)) {                                         \
+#define CPH_FAST_PARSE_GEN_STUB(N, ...)                                                            \
+    [[gnu::always_inline]] [[nodiscard]] static inline bool                                        \
+        culv_fast_parse_speculate_p##N##_naked(                                                    \
+            PyObject *const args[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)],     \
+            Py_ssize_t nargs,                                                                      \
+            PyObject kwnames[CPH_FAST_PARSE_ARR_QUALIFIERS(const CPH_FAST_PARSE_RESTRICT)],        \
+            const CPH_FastParser                                                                   \
+                fastparser[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)],           \
+            const void *const CPH_FAST_PARSE_RESTRICT                                              \
+                targets[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)]) {            \
+        if (CPH_FAST_PARSE_LIKELY(nargs == N && kwnames == nullptr)) {                             \
             return (__VA_ARGS__);                                                                  \
         }                                                                                          \
-        [[clang::noinline]] return culv_fast_parse_vector(args, nargs, kwnames, fastparser, targets);     \
+        [[clang::noinline]] return culv_fast_parse_vector(args, nargs, kwnames, fastparser,        \
+                                                          targets);                                \
     }
 
 // 0 Args (Special case)
-[[nodiscard]] static inline bool
-culv_fast_parse_speculate_p0(PyObject *const args[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)], Py_ssize_t nargs,
-                PyObject kwnames[CPH_FAST_PARSE_ARR_QUALIFIERS(const CPH_FAST_PARSE_RESTRICT)],
-                const CPH_FastParser fastparser[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)],
-                const void *const CPH_FAST_PARSE_RESTRICT targets[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)]) {
+[[nodiscard]] static inline bool culv_fast_parse_speculate_p0(
+    PyObject *const args[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)],
+    Py_ssize_t nargs,
+    PyObject kwnames[CPH_FAST_PARSE_ARR_QUALIFIERS(const CPH_FAST_PARSE_RESTRICT)],
+    const CPH_FastParser fastparser[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)],
+    const void *const CPH_FAST_PARSE_RESTRICT
+        targets[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)]) {
     if (CPH_FAST_PARSE_LIKELY(nargs == 0 && kwnames == nullptr)) {
         return true;
     }
@@ -203,29 +220,43 @@ CPH_FAST_PARSE_GEN_STUB(1, CPH_FAST_PARSE_CALL_CONV(0))
 
 CPH_FAST_PARSE_GEN_STUB(2, CPH_FAST_PARSE_CALL_CONV(0) && CPH_FAST_PARSE_CALL_CONV(1))
 
-CPH_FAST_PARSE_GEN_STUB(3, CPH_FAST_PARSE_CALL_CONV(0) && CPH_FAST_PARSE_CALL_CONV(1) && CPH_FAST_PARSE_CALL_CONV(2))
+CPH_FAST_PARSE_GEN_STUB(3, CPH_FAST_PARSE_CALL_CONV(0) && CPH_FAST_PARSE_CALL_CONV(1) &&
+                               CPH_FAST_PARSE_CALL_CONV(2))
 
-CPH_FAST_PARSE_GEN_STUB(4, CPH_FAST_PARSE_CALL_CONV(0) && CPH_FAST_PARSE_CALL_CONV(1) && CPH_FAST_PARSE_CALL_CONV(2) && CPH_FAST_PARSE_CALL_CONV(3))
+CPH_FAST_PARSE_GEN_STUB(4, CPH_FAST_PARSE_CALL_CONV(0) && CPH_FAST_PARSE_CALL_CONV(1) &&
+                               CPH_FAST_PARSE_CALL_CONV(2) && CPH_FAST_PARSE_CALL_CONV(3))
 
-CPH_FAST_PARSE_GEN_STUB(5, CPH_FAST_PARSE_CALL_CONV(0) && CPH_FAST_PARSE_CALL_CONV(1) && CPH_FAST_PARSE_CALL_CONV(2) && CPH_FAST_PARSE_CALL_CONV(3) &&
-                   CPH_FAST_PARSE_CALL_CONV(4))
+CPH_FAST_PARSE_GEN_STUB(5, CPH_FAST_PARSE_CALL_CONV(0) && CPH_FAST_PARSE_CALL_CONV(1) &&
+                               CPH_FAST_PARSE_CALL_CONV(2) && CPH_FAST_PARSE_CALL_CONV(3) &&
+                               CPH_FAST_PARSE_CALL_CONV(4))
 
-CPH_FAST_PARSE_GEN_STUB(6, CPH_FAST_PARSE_CALL_CONV(0) && CPH_FAST_PARSE_CALL_CONV(1) && CPH_FAST_PARSE_CALL_CONV(2) && CPH_FAST_PARSE_CALL_CONV(3) &&
-                   CPH_FAST_PARSE_CALL_CONV(4) && CPH_FAST_PARSE_CALL_CONV(5))
+CPH_FAST_PARSE_GEN_STUB(6, CPH_FAST_PARSE_CALL_CONV(0) && CPH_FAST_PARSE_CALL_CONV(1) &&
+                               CPH_FAST_PARSE_CALL_CONV(2) && CPH_FAST_PARSE_CALL_CONV(3) &&
+                               CPH_FAST_PARSE_CALL_CONV(4) && CPH_FAST_PARSE_CALL_CONV(5))
 
-CPH_FAST_PARSE_GEN_STUB(7, CPH_FAST_PARSE_CALL_CONV(0) && CPH_FAST_PARSE_CALL_CONV(1) && CPH_FAST_PARSE_CALL_CONV(2) && CPH_FAST_PARSE_CALL_CONV(3) &&
-                   CPH_FAST_PARSE_CALL_CONV(4) && CPH_FAST_PARSE_CALL_CONV(5) && CPH_FAST_PARSE_CALL_CONV(6))
+CPH_FAST_PARSE_GEN_STUB(7, CPH_FAST_PARSE_CALL_CONV(0) && CPH_FAST_PARSE_CALL_CONV(1) &&
+                               CPH_FAST_PARSE_CALL_CONV(2) && CPH_FAST_PARSE_CALL_CONV(3) &&
+                               CPH_FAST_PARSE_CALL_CONV(4) && CPH_FAST_PARSE_CALL_CONV(5) &&
+                               CPH_FAST_PARSE_CALL_CONV(6))
 
-CPH_FAST_PARSE_GEN_STUB(8, CPH_FAST_PARSE_CALL_CONV(0) && CPH_FAST_PARSE_CALL_CONV(1) && CPH_FAST_PARSE_CALL_CONV(2) && CPH_FAST_PARSE_CALL_CONV(3) &&
-                   CPH_FAST_PARSE_CALL_CONV(4) && CPH_FAST_PARSE_CALL_CONV(5) && CPH_FAST_PARSE_CALL_CONV(6) && CPH_FAST_PARSE_CALL_CONV(7))
+CPH_FAST_PARSE_GEN_STUB(8, CPH_FAST_PARSE_CALL_CONV(0) && CPH_FAST_PARSE_CALL_CONV(1) &&
+                               CPH_FAST_PARSE_CALL_CONV(2) && CPH_FAST_PARSE_CALL_CONV(3) &&
+                               CPH_FAST_PARSE_CALL_CONV(4) && CPH_FAST_PARSE_CALL_CONV(5) &&
+                               CPH_FAST_PARSE_CALL_CONV(6) && CPH_FAST_PARSE_CALL_CONV(7))
 
 /** --- 3. CONVERTER DISPATCH --- **/
 
-[[nodiscard, gnu::always_inline]] static inline bool culv_fast_parse_conv_float(PyObject *obj,
-                                                                   const void *target) {
+template <typename T>
+[[nodiscard]] static inline T *culv_fast_parse_target(const void *target) noexcept {
+    return static_cast<T *>(const_cast<void *>(target));
+}
+
+[[nodiscard, gnu::always_inline]] static inline bool
+culv_fast_parse_conv_float(PyObject *obj, const void *target) {
     // HOT PATH: Exact float match (Pointer comparison)
     if (PyFloat_CheckExact(obj)) {
-        *(float *)target = (float)((PyFloatObject *)obj)->ob_fval;
+        *culv_fast_parse_target<float>(target) =
+            static_cast<float>((reinterpret_cast<PyFloatObject *>(obj))->ob_fval);
         return true;
     }
 
@@ -234,16 +265,16 @@ CPH_FAST_PARSE_GEN_STUB(8, CPH_FAST_PARSE_CALL_CONV(0) && CPH_FAST_PARSE_CALL_CO
     if (CPH_FAST_PARSE_UNLIKELY(val == -1.0 && PyErr_Occurred())) {
         return false;
     }
-    *(float *)target = (float)val;
+    *culv_fast_parse_target<float>(target) = static_cast<float>(val);
     return true;
 }
 
-[[nodiscard, gnu::always_inline]] static inline bool culv_fast_parse_conv_double(PyObject *obj,
-                                                                    const void *target) {
+[[nodiscard, gnu::always_inline]] static inline bool
+culv_fast_parse_conv_double(PyObject *obj, const void *target) {
     // HOT PATH: Exact float match
     // Bypasses the overhead of PyFloat_AsDouble (magic method checks, int conversion logic)
     if (PyFloat_CheckExact(obj)) {
-        *(double *)target = ((PyFloatObject *)obj)->ob_fval;
+        *culv_fast_parse_target<double>(target) = (reinterpret_cast<PyFloatObject *>(obj))->ob_fval;
         return true;
     }
 
@@ -257,19 +288,19 @@ CPH_FAST_PARSE_GEN_STUB(8, CPH_FAST_PARSE_CALL_CONV(0) && CPH_FAST_PARSE_CALL_CO
     if (CPH_FAST_PARSE_UNLIKELY(val == -1.0 && PyErr_Occurred())) {
         return false;
     }
-    *(double *)target = val;
+    *culv_fast_parse_target<double>(target) = val;
     return true;
 }
 
 [[nodiscard, gnu::always_inline]] static inline bool culv_fast_parse_conv_int(PyObject *obj,
-                                                                 const void *target) {
+                                                                              const void *target) {
     // 1. Singletons (Pointer identity is the fastest possible check)
     if (obj == Py_True) {
-        *(int *)target = 1;
+        *culv_fast_parse_target<int>(target) = 1;
         return true;
     }
     if (obj == Py_False) {
-        *(int *)target = 0;
+        *culv_fast_parse_target<int>(target) = 0;
         return true;
     }
 
@@ -284,7 +315,7 @@ CPH_FAST_PARSE_GEN_STUB(8, CPH_FAST_PARSE_CALL_CONV(0) && CPH_FAST_PARSE_CALL_CO
 
     // 4. Hot Path: 99.9% of integers in physics/logic are not -1
     if (CPH_FAST_PARSE_LIKELY(val != -1)) {
-        *(int *)target = (int)val;
+        *culv_fast_parse_target<int>(target) = static_cast<int>(val);
         return true;
     }
 
@@ -293,18 +324,18 @@ CPH_FAST_PARSE_GEN_STUB(8, CPH_FAST_PARSE_CALL_CONV(0) && CPH_FAST_PARSE_CALL_CO
         return false;
     }
 
-    *(int *)target = -1;
+    *culv_fast_parse_target<int>(target) = -1;
     return true;
 }
 
 [[nodiscard, gnu::always_inline]] static inline bool culv_fast_parse_conv_u32(PyObject *obj,
-                                                                 const void *target) {
+                                                                              const void *target) {
     if (obj == Py_True) {
-        *(uint32_t *)target = 1;
+        *culv_fast_parse_target<uint32_t>(target) = 1;
         return true;
     }
     if (obj == Py_False) {
-        *(uint32_t *)target = 0;
+        *culv_fast_parse_target<uint32_t>(target) = 0;
         return true;
     }
     if (CPH_FAST_PARSE_UNLIKELY(obj == Py_None)) {
@@ -315,7 +346,7 @@ CPH_FAST_PARSE_GEN_STUB(8, CPH_FAST_PARSE_CALL_CONV(0) && CPH_FAST_PARSE_CALL_CO
     unsigned long val = PyLong_AsUnsignedLong(obj);
 
     if (CPH_FAST_PARSE_LIKELY(val != (unsigned long)-1)) {
-        *(uint32_t *)target = (uint32_t)val;
+        *culv_fast_parse_target<uint32_t>(target) = static_cast<uint32_t>(val);
         return true;
     }
 
@@ -323,30 +354,30 @@ CPH_FAST_PARSE_GEN_STUB(8, CPH_FAST_PARSE_CALL_CONV(0) && CPH_FAST_PARSE_CALL_CO
         return false;
     }
 
-    *(uint32_t *)target = (uint32_t)-1;
+    *culv_fast_parse_target<uint32_t>(target) = static_cast<uint32_t>(-1);
     return true;
 }
 
 [[nodiscard, gnu::always_inline]] static inline bool culv_fast_parse_conv_u64(PyObject *obj,
-                                                                 const void *target) {
+                                                                              const void *target) {
     if (obj == Py_True) {
-        *(uint64_t *)target = 1;
+        *culv_fast_parse_target<uint64_t>(target) = 1;
         return true;
     }
     if (obj == Py_False) {
-        *(uint64_t *)target = 0;
+        *culv_fast_parse_target<uint64_t>(target) = 0;
         return true;
     }
     // u64 often used for handles, which might be None
     if (obj == Py_None) {
-        *(uint64_t *)target = 0;
+        *culv_fast_parse_target<uint64_t>(target) = 0;
         return true;
     }
 
     unsigned long long val = PyLong_AsUnsignedLongLong(obj);
 
     if (CPH_FAST_PARSE_LIKELY(val != (unsigned long long)-1)) {
-        *(uint64_t *)target = (uint64_t)val;
+        *culv_fast_parse_target<uint64_t>(target) = static_cast<uint64_t>(val);
         return true;
     }
 
@@ -354,19 +385,19 @@ CPH_FAST_PARSE_GEN_STUB(8, CPH_FAST_PARSE_CALL_CONV(0) && CPH_FAST_PARSE_CALL_CO
         return false;
     }
 
-    *(uint64_t *)target = (uint64_t)-1;
+    *culv_fast_parse_target<uint64_t>(target) = static_cast<uint64_t>(-1);
     return true;
 }
 
 [[nodiscard, gnu::always_inline]] static inline bool culv_fast_parse_conv_bool(PyObject *obj,
-                                                                  const void *target) {
+                                                                               const void *target) {
     // Exact pointer check for the singletons
     if (obj == Py_True) {
-        *(bool *)target = true;
+        *culv_fast_parse_target<bool>(target) = true;
         return true;
     }
     if (obj == Py_False) {
-        *(bool *)target = false;
+        *culv_fast_parse_target<bool>(target) = false;
         return true;
     }
 
@@ -375,18 +406,18 @@ CPH_FAST_PARSE_GEN_STUB(8, CPH_FAST_PARSE_CALL_CONV(0) && CPH_FAST_PARSE_CALL_CO
     if (CPH_FAST_PARSE_UNLIKELY(val == -1)) {
         return false;
     }
-    *(bool *)target = (bool)val;
+    *culv_fast_parse_target<bool>(target) = static_cast<bool>(val);
     return true;
 }
 
-[[nodiscard, gnu::always_inline]] static inline bool culv_fast_parse_conv_pyobj(PyObject *obj,
-                                                                   const void *target) {
-    *(PyObject **)target = obj;
+[[nodiscard, gnu::always_inline]] static inline bool
+culv_fast_parse_conv_pyobj(PyObject *obj, const void *target) {
+    *culv_fast_parse_target<PyObject *>(target) = obj;
     return true;
 }
 
 [[nodiscard, gnu::always_inline]] static inline bool culv_fast_parse_conv_str(PyObject *obj,
-                                                                 const void *target) {
+                                                                              const void *target) {
     if (CPH_FAST_PARSE_UNLIKELY(!PyUnicode_Check(obj))) {
         PyErr_Format(PyExc_TypeError, "expected str, got %s", Py_TYPE(obj)->tp_name);
         return false;
@@ -395,18 +426,18 @@ CPH_FAST_PARSE_GEN_STUB(8, CPH_FAST_PARSE_CALL_CONV(0) && CPH_FAST_PARSE_CALL_CO
     if (CPH_FAST_PARSE_UNLIKELY(str == nullptr)) {
         return false;
     }
-    *(const char **)target = str;
+    *culv_fast_parse_target<const char *>(target) = str;
     return true;
 }
 
-[[nodiscard, gnu::always_inline]] static inline bool culv_fast_parse_conv_ssize(PyObject *obj,
-                                                                   const void *target) {
+[[nodiscard, gnu::always_inline]] static inline bool
+culv_fast_parse_conv_ssize(PyObject *obj, const void *target) {
     // HOT PATH: Exact integer match
     if (CPH_FAST_PARSE_LIKELY(PyLong_CheckExact(obj))) {
         Py_ssize_t val = PyLong_AsSsize_t(obj);
         // Optimization: Values like buffer sizes and counts are rarely exactly -1.
         if (CPH_FAST_PARSE_LIKELY(val != -1)) {
-            *(Py_ssize_t *)target = val;
+            *culv_fast_parse_target<Py_ssize_t>(target) = val;
             return true;
         }
     }
@@ -421,13 +452,13 @@ CPH_FAST_PARSE_GEN_STUB(8, CPH_FAST_PARSE_CALL_CONV(0) && CPH_FAST_PARSE_CALL_CO
     if (val == -1 && PyErr_Occurred()) {
         return false;
     }
-    *(Py_ssize_t *)target = val;
+    *culv_fast_parse_target<Py_ssize_t>(target) = val;
     return true;
 }
 
 [[gnu::always_inline, nodiscard]]
-static inline bool culv_fast_parse_dispatch_conv(bool (*conv)(PyObject *, const void *), PyObject *obj,
-                                    const void *target) {
+static inline bool culv_fast_parse_dispatch_conv(bool (*conv)(PyObject *, const void *),
+                                                 PyObject *obj, const void *target) {
     // These comparisons are just address checks (extremely fast)
     // If a match is found, the compiler inlines the specific converter.
     if (conv == culv_fast_parse_conv_float) {
@@ -456,16 +487,16 @@ static inline bool culv_fast_parse_dispatch_conv(bool (*conv)(PyObject *, const 
 /** --- 4. THE HOT PATH --- **/
 [[gnu::always_inline, gnu::const, maybe_unused, nodiscard]]
 static inline size_t culv_fast_parse_hash_ptr(PyObject *ptr, size_t mask) {
-    auto val = (uintptr_t)ptr;
+    auto val = reinterpret_cast<uintptr_t>(ptr);
     // Golden ratio multiplier spreads pointer bits effectively
     constexpr auto gratio     = 11400714819323198485ULL;
     constexpr auto shift_bits = 32ULL;
     return ((val * gratio) >> shift_bits) & mask;
 }
 [[gnu::always_inline, nodiscard]]
-static inline bool
-culv_fast_parse_check_type_guard(const CPH_FastArgSpecHot spec[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)],
-                    PyObject val[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)]) {
+static inline bool culv_fast_parse_check_type_guard(
+    const CPH_FastArgSpecHot spec[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)],
+    PyObject val[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)]) {
     PyTypeObject *guard = spec->type_guard;
 
     // If no guard is defined (NULL), this branch is perfectly predicted as "not taken"
@@ -489,15 +520,16 @@ extern bool CPH_FastParseWarnUninternedSlow(PyObject key[], const char pname[]);
  * Separated to keep the instruction cache lean for interned keys.
  */
 [[gnu::noinline, gnu::cold]]
-extern size_t CPH_FastParseCmpSlow(PyObject key[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)],
-                          const CPH_FastParser fastparse[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)]);
+extern size_t CPH_FastParseCmpSlow(
+    PyObject key[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)],
+    const CPH_FastParser fastparse[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)]);
 
 [[gnu::always_inline, nodiscard]]
-static inline size_t
-culv_fast_parse_find_keyword_index(PyObject key[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)],
-                      const CPH_FastParser fastparse[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)]) {
+static inline size_t culv_fast_parse_find_keyword_index(
+    PyObject key[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)],
+    const CPH_FastParser fastparse[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)]) {
     const CPH_FastArgSpecHot *specs = fastparse->hot_specs;
-    const uint16_t *ltable      = fastparse->lookup_table;
+    const uint16_t *ltable          = fastparse->lookup_table;
 
     if (CPH_FAST_PARSE_LIKELY(ltable != nullptr)) {
         size_t hash = culv_fast_parse_hash_ptr(key, fastparse->table_mask);
@@ -526,10 +558,12 @@ culv_fast_parse_find_keyword_index(PyObject key[CPH_FAST_PARSE_STATIC_SIZE(const
 }
 
 [[gnu::always_inline]]
-static inline bool
-culv_fast_parse_process_pos(const CPH_FastParser fastparse[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)],
-               PyObject *const args[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)], Py_ssize_t nargs,
-               const void *const CPH_FAST_PARSE_RESTRICT targets[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)]) {
+static inline bool culv_fast_parse_process_pos(
+    const CPH_FastParser fastparse[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)],
+    PyObject *const args[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)],
+    Py_ssize_t nargs,
+    const void *const CPH_FAST_PARSE_RESTRICT
+        targets[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)]) {
 #pragma unroll 4
     for (Py_ssize_t i = 0; i < nargs; ++i) {
         // spec is 24 bytes, targets[i] is 8 bytes.
@@ -539,23 +573,25 @@ culv_fast_parse_process_pos(const CPH_FastParser fastparse[CPH_FAST_PARSE_STATIC
         // 1. Safety check (Type Guard)
         // We use the helper to keep the "Happy Path" linear.
         if (CPH_FAST_PARSE_UNLIKELY(!culv_fast_parse_check_type_guard(spec, args[i]))) {
-            return CPH_FastParseReportTypeError(fastparse, (size_t)i, args[i]);
+            return CPH_FastParseReportTypeError(fastparse, static_cast<size_t>(i), args[i]);
         }
 
         // 2. Conversion
         if (CPH_FAST_PARSE_UNLIKELY(!spec->convert(args[i], targets[i]))) {
-            return CPH_FastParseReportConversionError(fastparse, (size_t)i, args[i]);
+            return CPH_FastParseReportConversionError(fastparse, static_cast<size_t>(i), args[i]);
         }
     }
     return true;
 }
 [[gnu::always_inline, nodiscard]]
-static inline bool
-culv_fast_parse_process_kw(const CPH_FastParser fastparse[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)],
-              PyObject *const args[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)], Py_ssize_t nargs,
-              PyObject kwnames[CPH_FAST_PARSE_ARR_QUALIFIERS(const CPH_FAST_PARSE_RESTRICT)],
-              uint64_t mask[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)],
-              const void *const CPH_FAST_PARSE_RESTRICT targets[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)]) {
+static inline bool culv_fast_parse_process_kw(
+    const CPH_FastParser fastparse[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)],
+    PyObject *const args[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)],
+    Py_ssize_t nargs,
+    PyObject kwnames[CPH_FAST_PARSE_ARR_QUALIFIERS(const CPH_FAST_PARSE_RESTRICT)],
+    uint64_t mask[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)],
+    const void *const CPH_FAST_PARSE_RESTRICT
+        targets[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)]) {
     if (!kwnames) {
         return true;
     }
@@ -596,20 +632,23 @@ static inline uint64_t culv_fast_parse_make_mask(size_t n) {
     }
     static constexpr uint64_t FULL_BITS = 64;
     if (n >= FULL_BITS) {
-        return ~(uint64_t)0;
+        return ~static_cast<uint64_t>(0);
     }
-    return (n >= 64) ? ~(uint64_t)0 : (1ULL << n) - 1;
+    return (n >= 64) ? ~static_cast<uint64_t>(0) : (1ULL << n) - 1;
 }
 
 // unadulterated speed!!!
 [[nodiscard, gnu::always_inline, gnu::hot, gnu::no_stack_protector,
   gnu::nonnull(1, 4, 5)]] static inline bool
-culv_fast_parse_vector(PyObject *const args[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)], Py_ssize_t nargs,
-                PyObject kwnames[CPH_FAST_PARSE_ARR_QUALIFIERS(const CPH_FAST_PARSE_RESTRICT)],
-                const CPH_FastParser fastparse[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)],
-                const void *const CPH_FAST_PARSE_RESTRICT targets[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)]) {
+culv_fast_parse_vector(
+    PyObject *const args[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)],
+    Py_ssize_t nargs,
+    PyObject kwnames[CPH_FAST_PARSE_ARR_QUALIFIERS(const CPH_FAST_PARSE_RESTRICT)],
+    const CPH_FastParser fastparse[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)],
+    const void *const CPH_FAST_PARSE_RESTRICT
+        targets[CPH_FAST_PARSE_STATIC_SIZE(const CPH_FAST_PARSE_RESTRICT 1)]) {
     // 1. Pre-flight Check
-    if (CPH_FAST_PARSE_UNLIKELY(nargs > (Py_ssize_t)fastparse->count)) {
+    if (CPH_FAST_PARSE_UNLIKELY(nargs > static_cast<Py_ssize_t>(fastparse->count))) {
         return CPH_FastParseReportTooMany(fastparse, nargs);
     }
 
@@ -621,7 +660,8 @@ culv_fast_parse_vector(PyObject *const args[CPH_FAST_PARSE_STATIC_SIZE(const CPH
     // 3. Setup Mask & Handle Keywords
 
     uint64_t mask = culv_fast_parse_make_mask(nargs);
-    if (CPH_FAST_PARSE_UNLIKELY(!culv_fast_parse_process_kw(fastparse, args, nargs, kwnames, &mask, targets))) {
+    if (CPH_FAST_PARSE_UNLIKELY(
+            !culv_fast_parse_process_kw(fastparse, args, nargs, kwnames, &mask, targets))) {
         return false;
     }
 

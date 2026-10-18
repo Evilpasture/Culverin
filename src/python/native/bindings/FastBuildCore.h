@@ -27,13 +27,13 @@
 /* --- 1. TYPE CONSTRUCTORS (Inlined) --- */
 
 [[nodiscard]] CPH_PY_BUILD_FORCE_INLINE static PyObject *CPH_PyBuildFromFloat(float v) {
-    return PyFloat_FromDouble((double)v);
+    return PyFloat_FromDouble(static_cast<double>(v));
 }
 [[nodiscard]] CPH_PY_BUILD_FORCE_INLINE static PyObject *CPH_PyBuildFromDouble(double v) {
     return PyFloat_FromDouble(v);
 }
 [[nodiscard]] CPH_PY_BUILD_FORCE_INLINE static PyObject *CPH_PyBuildFromInt(int v) {
-    return PyLong_FromLong((long)v);
+    return PyLong_FromLong(static_cast<long>(v));
 }
 [[nodiscard]] CPH_PY_BUILD_FORCE_INLINE static PyObject *CPH_PyBuildFromLong(long v) {
     return PyLong_FromLong(v);
@@ -42,16 +42,16 @@
     return PyLong_FromLongLong(v);
 }
 [[nodiscard]] CPH_PY_BUILD_FORCE_INLINE static PyObject *CPH_PyBuildFromU32(uint32_t v) {
-    return PyLong_FromUnsignedLong((unsigned long)v);
+    return PyLong_FromUnsignedLong(static_cast<unsigned long>(v));
 }
 [[nodiscard]] CPH_PY_BUILD_FORCE_INLINE static PyObject *CPH_PyBuildFromU64(uint64_t v) {
-    return PyLong_FromUnsignedLongLong((unsigned long long)v);
+    return PyLong_FromUnsignedLongLong(static_cast<unsigned long long>(v));
 }
 [[nodiscard]] CPH_PY_BUILD_FORCE_INLINE static PyObject *CPH_PyBuildFromStr(const char *v) {
     return PyUnicode_FromString(v);
 }
 [[nodiscard]] CPH_PY_BUILD_FORCE_INLINE static PyObject *CPH_PyBuildFromBool(bool v) {
-    PyObject *res = (int)v ? Py_True : Py_False;
+    PyObject *res = static_cast<int>(v) ? Py_True : Py_False;
     Py_INCREF(res);
     return res;
 }
@@ -114,7 +114,7 @@ static inline PyObject *CPH_PyBuildPackTuple(size_t n, PyObject **arr) {
         return PyTuple_New(0);
     }
 
-    PyObject *t = PyTuple_New((Py_ssize_t)n);
+    PyObject *t = PyTuple_New(static_cast<Py_ssize_t>(n));
     if (CPH_PY_BUILD_UNLIKELY(!t)) {
         for (size_t i = 0; i < n; i++) {
             Py_XDECREF(arr[i]);
@@ -142,7 +142,7 @@ static inline PyObject *CPH_PyBuildPackTuple(size_t n, PyObject **arr) {
 }
 
 [[nodiscard]] CPH_PY_BUILD_FORCE_INLINE static PyObject *CPH_PyBuildPackList(size_t n,
-                                                                                  PyObject **arr) {
+                                                                             PyObject **arr) {
     if (CPH_PY_BUILD_UNLIKELY(n == 0)) {
         return PyList_New(0);
     }
@@ -154,7 +154,7 @@ static inline PyObject *CPH_PyBuildPackTuple(size_t n, PyObject **arr) {
         }
     }
 
-    l = PyList_New((Py_ssize_t)n);
+    l = PyList_New(static_cast<Py_ssize_t>(n));
     if (CPH_PY_BUILD_UNLIKELY(!l)) {
         goto error;
     }
@@ -173,7 +173,7 @@ error:
 }
 
 [[nodiscard]] CPH_PY_BUILD_FORCE_INLINE static PyObject *CPH_PyBuildPackDict(size_t n,
-                                                                                  PyObject **arr) {
+                                                                             PyObject **arr) {
     if (CPH_PY_BUILD_UNLIKELY(n == 0)) {
         return PyDict_New();
     }
@@ -213,7 +213,8 @@ error:
 /* --- 4. C++23 CONTAINER BUILDERS --- */
 
 template <typename... Ts>
-[[nodiscard]] CPH_PY_BUILD_FORCE_INLINE static PyObject *CPH_PyBuildPackTupleValues(Ts &&...values) {
+[[nodiscard]] CPH_PY_BUILD_FORCE_INLINE static PyObject *
+CPH_PyBuildPackTupleValues(Ts &&...values) {
     if constexpr (sizeof...(Ts) == 0) {
         return CPH_PyBuildPackTuple(0, nullptr);
     } else {
