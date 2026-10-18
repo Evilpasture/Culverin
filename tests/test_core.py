@@ -1,3 +1,4 @@
+import array
 import contextlib
 import math
 import re
@@ -446,6 +447,18 @@ class TestCoreMechanics(CulverinTestCase):
 
         ang = self.world.get_angular_velocity(h)
         self.assertEqual(ang, (0.0, 0.0, 0.0), "Manual velocity override failed")
+
+    def test_set_transform_updates_shadow_buffers(self) -> None:
+        h = self.world.create_body(pos=(0, 0, 0))
+        self.world.step(0)
+
+        self.world.set_transform(h, pos=(3.0, 4.0, 5.0), rot=(0.0, 0.0, 0.0, 1.0))
+
+        stats = self.world.get_body_stats(h)
+        self.assertIsNotNone(stats)
+        assert stats is not None
+        self.assertEqual(stats[0], (3.0, 4.0, 5.0))
+        self.assertEqual(stats[1], (0.0, 0.0, 0.0, 1.0))
 
     def test_torque_proportionality(self) -> None:
         """Verify that hitting further from the center produces more torque."""
@@ -1651,6 +1664,17 @@ class TestEdgeCases(CulverinTestCase):
         handles = self.world.create_bodies_batch([], [])
         self.assertEqual(len(handles), 0)
 
+        # 3. Batch destroy tolerates stale inputs while destroying valid bodies.
+        created = self.world.create_bodies_batch(
+            positions=[(0, 5, 0), (1, 5, 0)],
+            sizes=[(1, 1, 1), (1, 1, 1)],
+            shape_type=culverin.SHAPE_BOX,
+        )
+        self.world.step(0)
+        self.world.destroy_bodies_batch([*created, 999999])
+        self.world.step(0)
+        self.assertTrue(all(not self.world.is_alive(handle) for handle in created))
+
     def test_zero_scale_shapes(self) -> None:
         """Jolt usually dislikes zero-volume shapes. We should handle it gracefully."""
         # This should either raise a Python error or be clamped in C
@@ -1701,6 +1725,21 @@ class TestComplexShapes(CulverinTestCase):
         )
         self.world.step(0)
         self.assertTrue(self.world.is_alive(hull))
+
+    def test_mesh_body_creation_and_index_validation(self) -> None:
+        vertices = array.array("f", [0, 0, 0, 1, 0, 0, 0, 1, 0]).tobytes()
+        indices = array.array("I", [0, 1, 2]).tobytes()
+        mesh = self.world.create_mesh_body(
+            pos=(0, 0, 0), rot=(0, 0, 0, 1), vertices=vertices, indices=indices
+        )
+        self.world.step(0)
+        self.assertTrue(self.world.is_alive(mesh))
+
+        invalid_indices = array.array("I", [0, 1, 99]).tobytes()
+        with self.assertRaisesRegex(ValueError, "Mesh index out of range"):
+            self.world.create_mesh_body(
+                pos=(0, 0, 0), rot=(0, 0, 0, 1), vertices=vertices, indices=invalid_indices
+            )
 
 
 class TestConstraints(CulverinTestCase):
@@ -1956,6 +1995,9 @@ class TestRagdollsAndSkeletons(CulverinTestCase):
         matrices = np.eye(4, dtype=np.float32)
         mats_buffer = np.stack([matrices, matrices]).tobytes()  # 2 joints
         ragdoll.drive_to_pose(root_pos=(0, 5, 0), root_rot=(0, 0, 0, 1), matrices=mats_buffer)
+
+        del ragdoll
+        self.assertTrue(all(not self.world.is_alive(handle) for handle in handles))
 
     def test_ragdoll_get_debug_info(self) -> None:
         import culverin
@@ -2664,7 +2706,7 @@ class TestAdvancedPhysics(CulverinTestCase):
 
         # 2. Create high-speed projectiles
         bullet = self.world.create_body(
-            pos=(0, 0, 0), size=(0.2, 0.2, 0.2), motion=culverin.MOTION_DYNAMIC, ccd=True
+            pos=(0, 0, 0), size=(0.2, 0.2, 0.2), motion=culverin.MOTION_DYNAMIC, ccd=False
         )
 
         ghost = self.world.create_body(
@@ -2673,8 +2715,9 @@ class TestAdvancedPhysics(CulverinTestCase):
 
         self.world.step(0)  # Flush creation
 
-        # 3. Launch at 400 m/s (below the 500m/s default cap)
+        # 3. Enable CCD at runtime and launch at 400 m/s (below the 500m/s default cap).
         # In 1/60s, they travel ~6.6m. The wall is at X=2.
+        self.world.set_ccd(bullet, enabled=True)
         self.world.set_linear_velocity(bullet, x=400.0, y=0, z=0)
         self.world.set_linear_velocity(ghost, x=400.0, y=0, z=0)
 
@@ -2689,6 +2732,18 @@ class TestAdvancedPhysics(CulverinTestCase):
 
         # Non-CCD bullet (ghost) should have tunneled (ended up near X=6.6)
         self.assertGreater(pos_ghost[0], 4.0, "Non-CCD Bullet was unexpectedly stopped")
+
+    def test_activate_and_deactivate_body(self) -> None:
+        handle = self.world.create_body(pos=(0, 5, 0))
+        self.world.step(0)
+
+        self.world.deactivate(handle)
+        self.world.step(0)
+        self.assertFalse(self.world.is_active(handle))
+
+        self.world.activate(handle)
+        self.world.step(0)
+        self.assertTrue(self.world.is_active(handle))
 
     def test_linear_and_angular_damping(self) -> None:
         """Verify that damping slows down bodies over time in a vacuum."""

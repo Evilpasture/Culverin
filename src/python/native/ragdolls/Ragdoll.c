@@ -1,10 +1,11 @@
 #include "ragdolls/Ragdoll.h"
 #include "bindings/BindingCommon.h"
-#include "bindings/parsing/ArgIndices.h"
-#include "core/CompilerSpecifics.h"
 #include "bindings/FastBuild.h"
-#include "bindings/physics/PhysicsSync.h"
 #include "bindings/PythonSupport.h"
+#include "bindings/parsing/ArgIndices.h"
+#include "bindings/physics/PhysicsSync.h"
+#include "core/CompilerSpecifics.h"
+#include "physics/RagdollCore.h"
 
 // Default mass
 static constexpr float RAGDOLL_DEFAULT_PART_MASS = 10.0f;
@@ -35,7 +36,7 @@ PyCFunction_DeclareMethodFromModule Skeleton_add_joint(SkeletonObject *self, PyO
         return nullptr;
     }
 
-    int idx = (int)JPH_Skeleton_AddJoint2(self->skeleton, name, parent_idx);
+    const int idx = physics_ragdoll_skeleton_add_joint(self->skeleton, name, parent_idx);
     return PyLong_FromLong(idx);
 }
 
@@ -49,7 +50,8 @@ PyCFunction_DeclareMethodFromModule Skeleton_get_joint_index(SkeletonObject *sel
     };
 
     // 2. High Speed Parse
-    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->GetJointIdxParser, targets)) {
+    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->GetJointIdxParser,
+                                 targets)) {
         return nullptr;
     }
 
@@ -59,14 +61,13 @@ PyCFunction_DeclareMethodFromModule Skeleton_get_joint_index(SkeletonObject *sel
         return nullptr;
     }
 
-    int idx = JPH_Skeleton_GetJointIndex(self->skeleton, name);
+    const int idx = physics_ragdoll_skeleton_get_joint_index(self->skeleton, name);
     return PyLong_FromLong(idx);
 }
 
 PyCFunction_DeclareMethodFromModule Skeleton_finalize(SkeletonObject *self,
                                                       PyObject *args [[maybe_unused]]) {
-    JPH_Skeleton_CalculateParentJointIndices(self->skeleton);
-    if (!JPH_Skeleton_AreJointsCorrectlyOrdered(self->skeleton)) {
+    if (!physics_ragdoll_skeleton_finalize(self->skeleton)) {
         PyErr_SetString(PyExc_RuntimeError,
                         "Skeleton joints are out of order (parent must be added before child)");
         return nullptr;
@@ -76,7 +77,7 @@ PyCFunction_DeclareMethodFromModule Skeleton_finalize(SkeletonObject *self,
 
 PyCFunction_DeclareMethodFromModule RagdollSettings_stabilize(RagdollSettingsObject *self,
                                                               PyObject *args [[maybe_unused]]) {
-    if (JPH_RagdollSettings_Stabilize(self->settings)) {
+    if (physics_ragdoll_settings_stabilize(self->settings)) {
         Py_RETURN_TRUE;
     }
     Py_RETURN_FALSE;
@@ -96,7 +97,8 @@ PyCFunction_DeclareMethodFromModule Ragdoll_drive_to_pose(RagdollObject *self,
         [IDX_RD_MATS] = (const void *const restrict)&py_matrices,
     };
 
-    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->RagdollDriveParser, targets)) {
+    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->RagdollDriveParser,
+                                 targets)) {
         return nullptr;
     }
 
@@ -105,9 +107,7 @@ PyCFunction_DeclareMethodFromModule Ragdoll_drive_to_pose(RagdollObject *self,
     }
 
     // 2. RESOURCE ACQUISITION
-    const JPH_RagdollSettings *settings = JPH_Ragdoll_GetRagdollSettings(self->ragdoll);
-    auto skel                           = JPH_RagdollSettings_GetSkeleton(settings);
-    int joint_count                     = JPH_Skeleton_GetJointCount(skel);
+    const int joint_count = physics_ragdoll_get_joint_count(self->ragdoll);
 
     // Validate Buffer Size
     Py_buffer view;
@@ -115,7 +115,7 @@ PyCFunction_DeclareMethodFromModule Ragdoll_drive_to_pose(RagdollObject *self,
         return nullptr;
     }
 
-    size_t required_size = (size_t)joint_count * sizeof(JPH_Mat4);
+    const size_t required_size = (size_t)joint_count * sizeof(JPH_Mat4);
     if (UNLIKELY((size_t)view.len < required_size)) {
         PyBuffer_Release(&view);
         return PyErr_Format(PyExc_ValueError,
@@ -123,72 +123,62 @@ PyCFunction_DeclareMethodFromModule Ragdoll_drive_to_pose(RagdollObject *self,
                             required_size, joint_count, view.len);
     }
 
-    JPH_Mat4 *matrices = (JPH_Mat4 *)view.buf;
+    JPH_Mat4 *matrices            = (JPH_Mat4 *)view.buf;
+    const JPH_RVec3 root_position = {root_p.x, root_p.y, root_p.z};
 
-    // 3. POSE SETUP
-    JPH_SkeletonPose *pose = JPH_SkeletonPose_Create();
-    JPH_SkeletonPose_SetSkeleton(pose, skel);
-
-    JPH_STACK_ALLOC(JPH_RVec3, r_pos);
-    r_pos->x = root_p.x;
-    r_pos->y = root_p.y;
-    r_pos->z = root_p.z;
-    JPH_SkeletonPose_SetRootOffset(pose, r_pos);
-
-    // 4. PHYSICS EXECUTION (Shadow Locked)
+    // 3. PHYSICS EXECUTION (Shadow Locked)
     SHADOW_LOCK(&self->world->physics.shadow_lock);
     BLOCK_UNTIL_NOT_STEPPING(self->world);
-
-    // Set the current world-space pose directly (Teleport)
-    JPH_Ragdoll_SetPose2(self->ragdoll, r_pos, matrices, true);
-
-    // Configure and execute the motor drive
-    JPH_SkeletonPose_SetJointMatrices(pose, matrices, joint_count);
-    JPH_Ragdoll_Activate(self->ragdoll, true);
-    JPH_Ragdoll_DriveToPoseUsingMotors(self->ragdoll, pose);
-
+    const bool pose_applied =
+        physics_ragdoll_drive_to_pose(self->ragdoll, root_position, matrices, joint_count);
     SHADOW_UNLOCK(&self->world->physics.shadow_lock);
 
-    // 5. CLEANUP
+    // 4. CLEANUP
     PyBuffer_Release(&view);
-    JPH_SkeletonPose_Destroy(pose);
+    if (!pose_applied) {
+        return PyErr_NoMemory();
+    }
     Py_RETURN_NONE;
 }
 
 PyCFunction_DeclareMethodFromModule Ragdoll_get_body_handles(RagdollObject *self,
                                                              PyObject *args [[maybe_unused]]) {
-    // Helper to get the Body Handles of the parts so users can manipulate
-    // specific limbs
-    PyObject *list = PyList_New((Py_ssize_t)self->body_count);
+    if (self->body_count > (size_t)PY_SSIZE_T_MAX ||
+        self->body_count > SIZE_MAX / sizeof(PhysicsRagdollBodyHandleInfo)) {
+        return PyErr_NoMemory();
+    }
+
+    const Py_ssize_t body_count = (Py_ssize_t)self->body_count;
+    PyObject *list              = PyList_New(body_count);
     if (!list) {
         return nullptr;
     }
 
-    SHADOW_LOCK(&self->world->physics.shadow_lock);
+    PhysicsRagdollBodyHandleInfo *handles =
+        body_count ? PyMem_Malloc((size_t)body_count * sizeof(*handles)) : nullptr;
+    if (body_count && !handles) {
+        Py_DECREF(list);
+        return PyErr_NoMemory();
+    }
 
-    for (size_t i = 0; i < self->body_count; i++) {
-        uint32_t slot = self->body_slots[i];
-
-        // TSan Fix: Atomic load of the slot state
-        uint8_t state = atomic_load_explicit(&self->world->physics.slot_states[slot], memory_order_acquire);
-
-        if (state == SLOT_ALIVE) {
-            // TSan Fix: Atomic load of the generation
-            uint32_t gen =
-                atomic_load_explicit(&self->world->physics.generations[slot], memory_order_relaxed);
-
-            BodyHandle h = make_handle(slot, gen);
-
-            // Extract raw uint64 from the atomic BodyHandle for Python
-            uint64_t raw_h = h;
-            PyList_SET_ITEM(list, i, PyLong_FromUnsignedLongLong(raw_h));
+    physics_ragdoll_copy_body_handles(&self->world->physics, self->body_slots, (size_t)body_count,
+                                      handles);
+    for (Py_ssize_t i = 0; i < body_count; ++i) {
+        if (handles[i].alive) {
+            PyObject *handle = PyLong_FromUnsignedLongLong((uint64_t)handles[i].handle);
+            if (!handle) {
+                PyMem_Free(handles);
+                Py_DECREF(list);
+                return nullptr;
+            }
+            PyList_SET_ITEM(list, i, handle);
         } else {
             Py_INCREF(Py_None);
             PyList_SET_ITEM(list, i, Py_None);
         }
     }
 
-    SHADOW_UNLOCK(&self->world->physics.shadow_lock);
+    PyMem_Free(handles);
     return list;
 }
 
@@ -198,47 +188,53 @@ PyCFunction_DeclareMethodFromModule Ragdoll_get_debug_info(RagdollObject *self,
         Py_RETURN_NONE;
     }
 
-    int body_count = JPH_Ragdoll_GetBodyCount(self->ragdoll);
+    const int body_count = physics_ragdoll_get_body_count(self->ragdoll);
+    if (body_count < 0 || (size_t)body_count > SIZE_MAX / sizeof(PhysicsRagdollBodyDebugInfo)) {
+        return PyErr_NoMemory();
+    }
+
     PyObject *list = PyList_New(body_count);
     if (!list) {
         return nullptr;
     }
 
-    JPH_BodyInterface *bi = self->world->physics.body_interface;
+    PhysicsRagdollBodyDebugInfo *info =
+        body_count ? PyMem_Malloc((size_t)body_count * sizeof(*info)) : nullptr;
+    if (body_count && !info) {
+        Py_DECREF(list);
+        return PyErr_NoMemory();
+    }
+    if (!physics_ragdoll_copy_debug_info(&self->world->physics, self->ragdoll, info,
+                                         (size_t)body_count)) {
+        PyMem_Free(info);
+        Py_DECREF(list);
+        return PyErr_Format(PyExc_RuntimeError, "Unable to read ragdoll body state");
+    }
 
-    SHADOW_LOCK(&self->world->physics.shadow_lock);
-    for (int i = 0; i < body_count; i++) {
-        JPH_BodyID bid = JPH_Ragdoll_GetBodyID(self->ragdoll, i);
-
-        JPH_STACK_ALLOC(JPH_RVec3, pos);
-        JPH_STACK_ALLOC(JPH_Quat, rot);
-        JPH_STACK_ALLOC(JPH_Vec3, vel);
-
-        JPH_BodyInterface_GetPosition(bi, bid, pos);
-        JPH_BodyInterface_GetRotation(bi, bid, rot);
-        JPH_BodyInterface_GetLinearVelocity(bi, bid, vel);
-
-        // Build the dictionary using FastBuild
-        // Format: "index", i, "pos", (x,y,z), "vel", (vx,vy,vz)
-        PyObject *dict = CULV_PY_BUILD_DICT("index", i, "pos", CULV_PY_BUILD_TUPLE(pos->x, pos->y, pos->z),
-                                        "vel", CULV_PY_BUILD_TUPLE(vel->x, vel->y, vel->z));
+    for (int i = 0; i < body_count; ++i) {
+        const PhysicsRagdollBodyDebugInfo *part = &info[i];
+        PyObject *dict                          = CULV_PY_BUILD_DICT(
+            "index", i, "pos",
+            CULV_PY_BUILD_TUPLE(part->position.x, part->position.y, part->position.z), "vel",
+            CULV_PY_BUILD_TUPLE(part->linear_velocity.x, part->linear_velocity.y,
+                                part->linear_velocity.z));
 
         if (!dict) {
+            PyMem_Free(info);
             Py_DECREF(list);
-            SHADOW_UNLOCK(&self->world->physics.shadow_lock);
             return nullptr;
         }
 
         PyList_SET_ITEM(list, i, dict);
     }
-    SHADOW_UNLOCK(&self->world->physics.shadow_lock);
 
+    PyMem_Free(info);
     return list;
 }
 
 PyType_DeclareSlot_VoidFromModule Skeleton_dealloc(SkeletonObject *self) {
     if (self->skeleton) {
-        JPH_Skeleton_Destroy(self->skeleton);
+        physics_ragdoll_skeleton_destroy(self->skeleton);
     }
     if (self->parsers) {
         culverin_free_skeleton_parsers(self->parsers);
@@ -251,14 +247,15 @@ PyType_DeclareSlot_ObjectFromModule
 Skeleton_new(PyTypeObject *type, PyObject *args [[maybe_unused]], PyObject *kwds [[maybe_unused]]) {
     auto self = (SkeletonObject *)type->tp_alloc(type, 0);
     if (self) {
-        self->skeleton = JPH_Skeleton_Create();
+        self->skeleton = physics_ragdoll_skeleton_create();
         if (!self->skeleton) {
             Py_DECREF(self);
             return PyErr_NoMemory();
         }
         self->parsers = (SkeletonParsers *)PyMem_Malloc(sizeof(SkeletonParsers));
         if (!self->parsers) {
-            JPH_Skeleton_Destroy(self->skeleton);
+            physics_ragdoll_skeleton_destroy(self->skeleton);
+            self->skeleton = nullptr;
             Py_DECREF(self);
             return PyErr_NoMemory();
         }
@@ -269,7 +266,7 @@ Skeleton_new(PyTypeObject *type, PyObject *args [[maybe_unused]], PyObject *kwds
 
 PyType_DeclareSlot_VoidFromModule RagdollSettings_dealloc(RagdollSettingsObject *self) {
     if (self->settings) {
-        JPH_RagdollSettings_Destroy(self->settings);
+        physics_ragdoll_settings_destroy(self->settings);
     }
     if (self->parsers) {
         culverin_free_ragdoll_settings_parsers(self->parsers);
@@ -283,44 +280,11 @@ PyType_DeclareSlot_VoidFromModule RagdollSettings_dealloc(RagdollSettingsObject 
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 PyType_DeclareSlot_VoidFromModule Ragdoll_dealloc(RagdollObject *self) {
-    if (self->world && self->ragdoll) {
-        SHADOW_LOCK(&self->world->physics.shadow_lock);
-
-        // Guard against simulation or in-flight queries
-        BLOCK_UNTIL_NOT_STEPPING(self->world);
-        BLOCK_UNTIL_NOT_QUERYING(self->world);
-
-        JPH_Ragdoll_RemoveFromPhysicsSystem(self->ragdoll, true);
-
-        if (self->body_slots && self->world->physics.slot_states) {
-            for (size_t i = 0; i < self->body_count; i++) {
-                uint32_t slot = self->body_slots[i];
-
-                if (slot >= self->world->physics.slot_capacity) {
-                    continue;
-                }
-
-                // TSan Fix: Atomic load of slot state.
-                // Acquire ensures we see all initialization data before calling remove.
-                uint8_t state =
-                    atomic_load_explicit(&self->world->physics.slot_states[slot], memory_order_acquire);
-
-                if (state != SLOT_ALIVE) {
-                    continue;
-                }
-
-                // Note: world_remove_body_slot has been refactored
-                // to handle atomic count/generation/state updates.
-                world_remove_body_slot(&self->world->physics, slot);
-            }
-        }
-        SHADOW_UNLOCK(&self->world->physics.shadow_lock);
-    }
-
     if (self->ragdoll) {
-        // Jolt Destruction must happen outside the Shadow Lock to prevent deadlock
-        // with Jolt internal pool managers.
-        JPH_Ragdoll_Destroy(self->ragdoll);
+        PhysicsWorld *world = self->world ? &self->world->physics : nullptr;
+        Py_BEGIN_ALLOW_THREADS physics_ragdoll_deallocate(world, self->ragdoll, self->body_slots,
+                                                          self->body_count);
+        Py_END_ALLOW_THREADS self->ragdoll = nullptr;
     }
 
     if (self->body_slots) {
@@ -370,73 +334,56 @@ PyCFunction_DeclareMethodFromModule RagdollSettings_add_part(RagdollSettingsObje
     };
 
     // 2. High Speed Parse
-    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->RagdollAddPartParser, targets)) {
+    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->RagdollAddPartParser,
+                                 targets)) {
         return nullptr;
     }
 
-    // 3. Shape Acquisition (Using your existing helper)
-    float s[4];
-    parse_body_size(py_size, s); // From bindings/parsing/Parsers.c
+    // 3. Parse native shape and pose parameters, then delegate engine operations.
+    float shape_params[4];
+    parse_body_size(py_size, shape_params);
 
-    JPH_Shape *shape = nullptr;
-    Py_BEGIN_ALLOW_THREADS NATIVE_MUTEX_LOCK(self->world->physics.jph_trampoline_lock);
-    SHADOW_LOCK(&self->world->physics.shadow_lock);
-    shape = find_or_create_shape_locked(&self->world->physics, shape_type, s);
-    SHADOW_UNLOCK(&self->world->physics.shadow_lock);
-    NATIVE_MUTEX_UNLOCK(self->world->physics.jph_trampoline_lock);
-    Py_END_ALLOW_THREADS;
-
-    if (!shape) {
+    JPH_Shape *shape             = nullptr;
+    Py_BEGIN_ALLOW_THREADS shape = physics_ragdoll_find_or_create_shape(
+        self->world ? &self->world->physics : nullptr, shape_type, shape_params);
+    Py_END_ALLOW_THREADS if (!shape) {
         return PyErr_Format(PyExc_ValueError, "Invalid shape configuration");
     }
 
-    // 4. Validation & Resizing
-    auto skel      = JPH_RagdollSettings_GetSkeleton(self->settings);
-    int skel_count = JPH_Skeleton_GetJointCount(skel);
-    if (joint_idx < 0 || joint_idx >= skel_count) {
-        return PyErr_Format(PyExc_IndexError, "Joint index %d out of bounds", joint_idx);
-    }
-
-    if (JPH_RagdollSettings_GetPartCount(self->settings) <= joint_idx) {
-        JPH_RagdollSettings_ResizeParts(self->settings, skel_count);
-    }
-
-    // 5. Apply Core Part Settings
-    JPH_RagdollSettings_SetPartShape(self->settings, joint_idx, shape);
-    JPH_RagdollSettings_SetPartMassProperties(self->settings, joint_idx, mass);
-    JPH_RagdollSettings_SetPartObjectLayer(self->settings, joint_idx, 1);
-    JPH_RagdollSettings_SetPartMotionType(self->settings, joint_idx, JPH_MotionType_Dynamic);
-
-    // 6. Handle Position (Optional)
+    bool has_position  = false;
+    JPH_RVec3 position = {0, 0, 0};
     if (py_pos && py_pos != Py_None) {
-        PosStride p_stride;
+        PosStride p_stride = {};
         if (parse_py_vec3_pos(py_pos, &p_stride)) {
-            JPH_RVec3 p = {.x = p_stride.x, .y = p_stride.y, .z = p_stride.z};
-            JPH_RagdollSettings_SetPartPosition(self->settings, joint_idx, &p);
+            position     = (JPH_RVec3){p_stride.x, p_stride.y, p_stride.z};
+            has_position = true;
         }
     }
 
-    // 7. Handle Parent Constraint
-    if (parent_idx >= 0) {
-        JPH_SwingTwistConstraintSettings cs;
-        JPH_SwingTwistConstraintSettings_Init(&cs);
-        cs.base.enabled = true;
+    const PhysicsRagdollPartRequest request = {
+        .joint_index  = joint_idx,
+        .parent_index = parent_idx,
+        .mass         = mass,
+        .twist_min    = twist_min,
+        .twist_max    = twist_max,
+        .cone_angle   = cone_angle,
+        .axis         = {axis.x, axis.y, axis.z},
+        .normal       = {normal.x, normal.y, normal.z},
+        .has_position = has_position,
+        .position     = position,
+    };
+    int joint_count = 0;
+    const PhysicsRagdollCoreStatus status =
+        physics_ragdoll_settings_add_part(self->settings, shape, &request, &joint_count);
 
-        // Identity positions for local bind
-        cs.position1 = (JPH_RVec3){0, 0, 0};
-        cs.position2 = (JPH_RVec3){0, 0, 0};
-
-        cs.twistAxis1 = (JPH_Vec3){axis.x, axis.y, axis.z};
-        cs.twistAxis2 = (JPH_Vec3){axis.x, axis.y, axis.z};
-        cs.planeAxis1 = (JPH_Vec3){normal.x, normal.y, normal.z};
-        cs.planeAxis2 = (JPH_Vec3){normal.x, normal.y, normal.z};
-
-        cs.normalHalfConeAngle = cone_angle;
-        cs.planeHalfConeAngle  = cone_angle;
-        cs.twistMinAngle       = twist_min;
-        cs.twistMaxAngle       = twist_max;
-
-        JPH_RagdollSettings_SetPartToParent(self->settings, joint_idx, &cs);
+    if (status == PHYSICS_RAGDOLL_CORE_STATUS_INVALID_SHAPE) {
+        return PyErr_Format(PyExc_ValueError, "Invalid shape configuration");
+    }
+    if (status == PHYSICS_RAGDOLL_CORE_STATUS_JOINT_OUT_OF_RANGE) {
+        return PyErr_Format(PyExc_IndexError, "Joint index %d out of bounds", joint_idx);
+    }
+    if (status != PHYSICS_RAGDOLL_CORE_STATUS_OK) {
+        return PyErr_Format(PyExc_RuntimeError, "Invalid ragdoll settings state");
     }
 
     Py_RETURN_NONE;

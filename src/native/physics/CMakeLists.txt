@@ -16,6 +16,14 @@ add_library(
         QueryCore.h
         PhysicsWorldCore.c
         PhysicsWorldCore.h
+        PhysicsWorldCreationCore.c
+        PhysicsWorldCreationCore.h
+        PhysicsWorldOpsCore.c
+        PhysicsWorldOpsCore.h
+        PhysicsWorldRuntimeCore.c
+        PhysicsWorldRuntimeCore.h
+        RagdollCore.c
+        RagdollCore.h
         PhysicsWorldState.h
         ShadowSync.cpp
         ShadowSync.h
