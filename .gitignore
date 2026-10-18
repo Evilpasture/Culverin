@@ -30,4 +30,6 @@ compile_commands.json
 
 # Local development files and directories
 messy/
-.clangd
+*.patch
+*.txt
+*.log
