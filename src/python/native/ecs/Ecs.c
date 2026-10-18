@@ -14,7 +14,7 @@ static constexpr auto kInitialSparseCapacity    = 1024;
 static constexpr auto kInitialComponentCapacity = 16;
 
 static PyObject *make_ecs_proxy(CPH_RegistryObject *self, uint32_t comp_id, bool entities) {
-    CPH_CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+    CPH_ModuleState *st = CPH_GetModuleState(PyType_GetModule(Py_TYPE(self)));
     CPH_SparseSet *set    = &self->components[comp_id];
 
     CPH_BufferProxyObject *proxy =
@@ -111,8 +111,8 @@ static bool SparseSet_EnsureDenseCapacity(CPH_RegistryObject *reg, CPH_SparseSet
     constexpr auto FIRST_DENSE_CAPACITY = 64;
     uint32_t new_cap = set->dense_capacity == 0 ? FIRST_DENSE_CAPACITY : set->dense_capacity * 2;
 
-    CulvEntity *new_dense =
-        (CulvEntity *)CPH_PyRealloc(set->dense, new_cap * sizeof(CulvEntity));
+    CPH_Entity *new_dense =
+        (CPH_Entity *)CPH_PyRealloc(set->dense, new_cap * sizeof(CPH_Entity));
     if (!new_dense) {
         PyErr_NoMemory(); // Set error here
         return false;
@@ -133,7 +133,7 @@ static bool SparseSet_EnsureDenseCapacity(CPH_RegistryObject *reg, CPH_SparseSet
 }
 
 // --- LIFECYCLE ---
-void CPH_CulverinInitEcsParsers(CPH_ECSParsers *ep);
+void CPH_InitEcsParsers(CPH_ECSParsers *ep);
 PyType_DeclareSlot_StatusFromModule CPH_PyRegistry_Init(CPH_RegistryObject *self,
                                                   [[maybe_unused]] PyObject *args,
                                                   [[maybe_unused]] PyObject *kwds) {
@@ -164,10 +164,10 @@ PyType_DeclareSlot_StatusFromModule CPH_PyRegistry_Init(CPH_RegistryObject *self
     if (!self->parsers) {
         return -1;
     }
-    CPH_CulverinInitEcsParsers(self->parsers);
+    CPH_InitEcsParsers(self->parsers);
     return 0;
 }
-void CPH_CulverinFreeEcsParsers(CPH_ECSParsers *ep);
+void CPH_FreeEcsParsers(CPH_ECSParsers *ep);
 PyType_DeclareSlot_VoidFromModule CPH_PyRegistry_Dealloc(CPH_RegistryObject *self) {
     if (self->generations) {
         CPH_PyFree(self->generations);
@@ -182,7 +182,7 @@ PyType_DeclareSlot_VoidFromModule CPH_PyRegistry_Dealloc(CPH_RegistryObject *sel
         CPH_PyFree(self->components);
     }
     if (self->parsers) {
-        CPH_CulverinFreeEcsParsers(self->parsers);
+        CPH_FreeEcsParsers(self->parsers);
         CPH_PyFree(self->parsers);
     }
     Py_TYPE(self)->tp_free((PyObject *)self);
@@ -216,7 +216,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Create(CPH_RegistryObject *se
 
     uint32_t index    = self->free_indices[--self->free_count];
     uint32_t gen      = self->generations[index];
-    CulvEntity handle = ((uint64_t)gen << kHandleIndexBits) | index;
+    CPH_Entity handle = ((uint64_t)gen << kHandleIndexBits) | index;
     self->active_entities++;
 
     CPH_SHADOW_UNLOCK(&self->ecs_lock);
@@ -254,7 +254,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Destroy(CPH_RegistryObject *s
 
             if (dense_idx != last_idx) {
                 // Swap and pop
-                CulvEntity last_entity   = set->dense[last_idx];
+                CPH_Entity last_entity   = set->dense[last_idx];
                 uint32_t last_entity_idx = (uint32_t)(last_entity & kHandleIndexMask);
 
                 set->dense[dense_idx]        = last_entity;
@@ -456,7 +456,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Remove(CPH_RegistryObject *se
 
         if (dense_idx != last_idx) {
             // Swap and pop
-            CulvEntity last_entity   = set->dense[last_idx];
+            CPH_Entity last_entity   = set->dense[last_idx];
             uint32_t last_entity_idx = (uint32_t)(last_entity & kHandleIndexMask);
 
             set->dense[dense_idx]        = last_entity;
@@ -629,7 +629,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_SyncFromWorld(CPH_RegistryObj
     CPH_SHADOW_LOCK(&self->ecs_lock);
 
     for (uint32_t i = 0; i < h_set->count; i++) {
-        CulvEntity ent   = h_set->dense[i];
+        CPH_Entity ent   = h_set->dense[i];
         uint32_t ent_idx = (uint32_t)(ent & kHandleIndexMask);
 
         uint64_t handle;

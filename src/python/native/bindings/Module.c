@@ -24,7 +24,7 @@
  * INTERNAL HELPER: dump_parser_registry
  * Iterates through a specific registry array and writes the JSON entries.
  */
-static void dump_parser_registry(CPH_CulvFastParser *const *const registry, const size_t count,
+static void dump_parser_registry(CPH_FastParser *const *const registry, const size_t count,
                                  FILE *const out, bool *const is_first) {
     for (size_t i = 0; i < count; ++i) {
         const auto fp = registry[i];
@@ -50,7 +50,7 @@ static void dump_parser_registry(CPH_CulvFastParser *const *const registry, cons
  */
 PyCFunction_DeclareMethod CPH_PyModule_DumpSchemaJson(PyObject *const self, PyObject *const *args,
                                                 size_t nargsf, PyObject *kwnames) {
-    const auto st        = get_culverin_state(self);
+    const auto st        = CPH_GetModuleState(self);
     const char *filename = "culverin_schema.json";
 
     // 1. Thread-safe, subinterpreter-safe parsing via CulvFastParser
@@ -82,17 +82,17 @@ PyCFunction_DeclareMethod CPH_PyModule_DumpSchemaJson(PyObject *const self, PyOb
         CPH_ModuleParsers module;
     } all = {};
 
-    CPH_CulverinInitWorldParsers(&all.world);
-    CPH_CulverinInitCharParsers(&all.character);
-    CPH_CulverinInitVehicleParsers(&all.vehicle);
-    CPH_CulverinInitEcsParsers(&all.ecs);
-    CPH_CulverinInitSkeletonParsers(&all.skeleton);
-    CPH_CulverinInitRagdollParsers(&all.ragdoll);
-    CPH_CulverinInitRagdollSettingsParsers(&all.ragdoll_settings);
-    CPH_CulverinInitShipParsers(&all.ship);
-    CPH_CulverinInitSbssParsers(&all.sbss);
-    CPH_CulverinMathInitAllParsers(&all.math);
-    CPH_CulverinInitModuleParsers(&all.module);
+    CPH_InitWorldParsers(&all.world);
+    CPH_InitCharParsers(&all.character);
+    CPH_InitVehicleParserGroup(&all.vehicle);
+    CPH_InitEcsParsers(&all.ecs);
+    CPH_InitSkeletonParsers(&all.skeleton);
+    CPH_InitRagdollParsers(&all.ragdoll);
+    CPH_InitRagdollSettingsParsers(&all.ragdoll_settings);
+    CPH_InitShipParsers(&all.ship);
+    CPH_InitSbssParsers(&all.sbss);
+    CPH_MathInitAllParsers(&all.math);
+    CPH_InitModuleParsers(&all.module);
 
     // 3. Export to JSON
     fprintf(f, "{\n");
@@ -119,17 +119,17 @@ PyCFunction_DeclareMethod CPH_PyModule_DumpSchemaJson(PyObject *const self, PyOb
     fclose(f);
 
     // 4. Cleanup temporary allocations
-    CPH_CulverinFreeWorldParsers(&all.world);
-    CPH_CulverinFreeCharParsers(&all.character);
-    CPH_CulverinFreeVehicleParsers(&all.vehicle);
-    CPH_CulverinFreeEcsParsers(&all.ecs);
-    CPH_CulverinFreeSkeletonParsers(&all.skeleton);
-    CPH_CulverinFreeRagdollParsers(&all.ragdoll);
-    CPH_CulverinFreeRagdollSettingsParsers(&all.ragdoll_settings);
-    CPH_CulverinFreeShipParsers(&all.ship);
-    CPH_CulverinFreeSbssParsers(&all.sbss);
-    CPH_CulverinMathFreeAllParsers(&all.math);
-    CPH_CulverinFreeModuleParsers(&all.module);
+    CPH_FreeWorldParsers(&all.world);
+    CPH_FreeCharParsers(&all.character);
+    CPH_FreeVehicleParserGroup(&all.vehicle);
+    CPH_FreeEcsParsers(&all.ecs);
+    CPH_FreeSkeletonParsers(&all.skeleton);
+    CPH_FreeRagdollParsers(&all.ragdoll);
+    CPH_FreeRagdollSettingsParsers(&all.ragdoll_settings);
+    CPH_FreeShipParsers(&all.ship);
+    CPH_FreeSbssParsers(&all.sbss);
+    CPH_MathFreeAllParsers(&all.math);
+    CPH_FreeModuleParsers(&all.module);
 
     Py_RETURN_NONE;
 }
@@ -359,13 +359,13 @@ static const char *extract_version_from_toml(void) {
     return version_buffer;
 }
 
-static int init_types(PyObject *m, CPH_CulverinState *st) {
+static int init_types(PyObject *m, CPH_ModuleState *st) {
     struct {
         PyType_Spec *spec;
         PyObject **slot;
         const char *name;
     } types[] = {
-        {.spec = (&PhysicsWorld_spec), .slot = &st->PhysicsWorldType, .name = "PhysicsWorld"},
+        {.spec = (&CPH_PyWorld_Spec), .slot = &st->PhysicsWorldType, .name = "PhysicsWorld"},
         {.spec = (&Character_spec), .slot = &st->CharacterType, .name = "Character"},
         {.spec = (&Vehicle_spec), .slot = &st->VehicleType, .name = "Vehicle"},
         {.spec = (&Ship_spec), .slot = &st->ShipType, .name = "Ship"},
@@ -478,7 +478,7 @@ static char shared_version[kMagicBuffer];
 extern PyModuleDef culverin_module;
 
 PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
-    CPH_CulverinState *st = get_culverin_state(m);
+    CPH_ModuleState *st = CPH_GetModuleState(m);
     // 1. THE MASTER GATE: Protects all static global memory in the process
     int expected = 0;
     if (atomic_compare_exchange_strong(&docs_status, &expected, 1)) {
@@ -525,21 +525,21 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
 
         // --- THE WINNER: Run exactly once per process life ---
         const char *docs_str = (const char *)kAllDocs;
-        CPH_CulvDocsStitchMethods(culverin_module.m_methods, "Module", docs_str);
-        CPH_CulvDocsStitchSpec(&PhysicsWorld_spec, "PhysicsWorld", docs_str);
-        CPH_CulvDocsStitchSpec(&Character_spec, "Character", docs_str);
-        CPH_CulvDocsStitchSpec(&Vehicle_spec, "Vehicle", docs_str);
-        CPH_CulvDocsStitchSpec(&Skeleton_spec, "Skeleton", docs_str);
-        CPH_CulvDocsStitchSpec(&Ragdoll_spec, "Ragdoll", docs_str);
-        CPH_CulvDocsStitchSpec(&RagdollSettings_spec, "RagdollSettings", docs_str);
-        CPH_CulvDocsStitchSpec(&SoftBodySharedSettings_spec, "SoftBodySharedSettings", docs_str);
-        CPH_CulvDocsStitchSpec(&Registry_spec, "Registry", docs_str);
-        CPH_CulvDocsStitchSpec(&MathService_spec, "MathService", docs_str);
-        CPH_CulvDocsStitchSpec(&Ship_spec, "Ship", docs_str);
+        CPH_DocsStitchMethods(culverin_module.m_methods, "Module", docs_str);
+        CPH_DocsStitchSpec(&CPH_PyWorld_Spec, "PhysicsWorld", docs_str);
+        CPH_DocsStitchSpec(&Character_spec, "Character", docs_str);
+        CPH_DocsStitchSpec(&Vehicle_spec, "Vehicle", docs_str);
+        CPH_DocsStitchSpec(&Skeleton_spec, "Skeleton", docs_str);
+        CPH_DocsStitchSpec(&Ragdoll_spec, "Ragdoll", docs_str);
+        CPH_DocsStitchSpec(&RagdollSettings_spec, "RagdollSettings", docs_str);
+        CPH_DocsStitchSpec(&SoftBodySharedSettings_spec, "SoftBodySharedSettings", docs_str);
+        CPH_DocsStitchSpec(&Registry_spec, "Registry", docs_str);
+        CPH_DocsStitchSpec(&MathService_spec, "MathService", docs_str);
+        CPH_DocsStitchSpec(&Ship_spec, "Ship", docs_str);
 
         // Gated Handler Registration
-        JPH_SetTraceHandler(culv_jph_trace);
-        JPH_SetAssertFailureHandler(culv_jph_assert);
+        JPH_SetTraceHandler(CPH_JphTrace);
+        JPH_SetAssertFailureHandler(CPH_JphAssert);
 
         if (!JPH_Init()) {
             PyErr_SetString(PyExc_RuntimeError, "Jolt initialization failed");
@@ -562,7 +562,7 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
     } else {
         // --- THE LOSERS: Wait for the Winner to finish ---
         while (atomic_load_explicit(&docs_status, memory_order_acquire) != 2) {
-            culverin_yield();
+            CPH_CpuYield();
         }
     }
     // --- 2. PER-INTERPRETER SETUP (Runs for every import) ---
@@ -575,7 +575,7 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
     if (!st->helper) {
         return -1;
     }
-    CPH_CulverinInitModuleParsers(&st->parsers);
+    CPH_InitModuleParsers(&st->parsers);
 
     if (init_types(m, st) < 0) {
         return -1;
@@ -588,7 +588,7 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 PyType_DeclareSlot_Status culverin_traverse(PyObject *m, visitproc visit, void *arg) {
-    CPH_CulverinState *st = get_culverin_state(m);
+    CPH_ModuleState *st = CPH_GetModuleState(m);
     Py_VISIT(st->helper);
     Py_VISIT(st->PhysicsWorldType);
     Py_VISIT(st->CharacterType);
@@ -605,7 +605,7 @@ PyType_DeclareSlot_Status culverin_traverse(PyObject *m, visitproc visit, void *
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 PyType_DeclareSlot_Status culverin_clear(PyObject *m) {
-    CPH_CulverinState *st = get_culverin_state(m);
+    CPH_ModuleState *st = CPH_GetModuleState(m);
     Py_CLEAR(st->helper);
     Py_CLEAR(st->PhysicsWorldType);
     Py_CLEAR(st->CharacterType);
@@ -617,7 +617,7 @@ PyType_DeclareSlot_Status culverin_clear(PyObject *m) {
     Py_CLEAR(st->BufferProxyType);
     Py_CLEAR(st->MathServiceType);
     Py_CLEAR(st->SoftBodySharedSettingsType);
-    CPH_CulverinFreeModuleParsers(&st->parsers);
+    CPH_FreeModuleParsers(&st->parsers);
     return 0;
 }
 
@@ -632,7 +632,7 @@ PyModuleDef culverin_module = {
     .m_base = PyModuleDef_HEAD_INIT,
     .m_name = "_culverin_c",
     .m_doc  = "Culverin Physics Engine Core",
-    .m_size = sizeof(CPH_CulverinState),
+    .m_size = sizeof(CPH_ModuleState),
     .m_methods =
         kModuleMethods,
     .m_slots =

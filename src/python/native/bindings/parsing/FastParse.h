@@ -38,7 +38,7 @@
  * current interpreter instance:
  *
  *   PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
- *       CulverinState *st = get_culverin_state(m);
+ *       CulverinState *st = CPH_GetModuleState(m);
  *       culverin_init_all_parsers(&st->parsers);
  *       return 0;
  *   }
@@ -51,7 +51,7 @@
  *   static PyObject* my_func(PyObject* self, PyObject* const* args,
  *                            size_t nargsf, PyObject* kwnames) {
  *       // Fetch state specific to THIS interpreter
- *       CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+ *       CulverinState *st = CPH_GetModuleState(PyType_GetModule(Py_TYPE(self)));
  *
  *       uint64_t h_raw;
  *       float ix;

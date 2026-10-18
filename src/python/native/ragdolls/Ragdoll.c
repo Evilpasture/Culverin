@@ -240,7 +240,7 @@ PyType_DeclareSlot_VoidFromModule CPH_PySkeleton_Dealloc(CPH_SkeletonObject *sel
         CPH_PhysicsRagdollSkeletonDestroy(self->skeleton);
     }
     if (self->parsers) {
-        CPH_CulverinFreeSkeletonParsers(self->parsers);
+        CPH_FreeSkeletonParsers(self->parsers);
         CPH_PyFree(self->parsers);
     }
     Py_TYPE(self)->tp_free((PyObject *)self);
@@ -262,7 +262,7 @@ CPH_PySkeleton_New(PyTypeObject *type, PyObject *args [[maybe_unused]], PyObject
             Py_DECREF(self);
             return PyErr_NoMemory();
         }
-        CPH_CulverinInitSkeletonParsers(self->parsers);
+        CPH_InitSkeletonParsers(self->parsers);
     }
     return (PyObject *)self;
 }
@@ -272,7 +272,7 @@ PyType_DeclareSlot_VoidFromModule CPH_PyRagdollSettings_Dealloc(CPH_RagdollSetti
         CPH_PhysicsRagdollSettingsDestroy(self->settings);
     }
     if (self->parsers) {
-        CPH_CulverinFreeRagdollSettingsParsers(self->parsers);
+        CPH_FreeRagdollSettingsParsers(self->parsers);
         CPH_PyFree(self->parsers);
     }
     Py_XDECREF(self->world);
@@ -296,7 +296,7 @@ PyType_DeclareSlot_VoidFromModule CPH_PyRagdoll_Dealloc(CPH_RagdollObject *self)
     }
 
     if (self->parsers) {
-        CPH_CulverinFreeRagdollParsers(self->parsers);
+        CPH_FreeRagdollParsers(self->parsers);
         CPH_PyFree(self->parsers);
     }
 

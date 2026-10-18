@@ -103,7 +103,7 @@ extern "C" {
 /**
  * JPH Trace Bridge
  */
-void culv_jph_trace(const char *const inString) {
+void CPH_JphTrace(const char *const inString) {
     if (inString == nullptr || *inString == '\0') [[unlikely]] {
         return;
     }
@@ -156,7 +156,7 @@ void culv_jph_trace(const char *const inString) {
 /**
  * JPH Assert Bridge
  */
-auto culv_jph_assert(const char *const inExpression, const char *const inMessage,
+auto CPH_JphAssert(const char *const inExpression, const char *const inMessage,
                      const char *const inFile, const CPH::Unsigned32 inLine) -> bool {
 
     const auto atty         = static_cast<bool>(IS_ATTY);

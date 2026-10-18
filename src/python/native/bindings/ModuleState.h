@@ -18,10 +18,10 @@ typedef struct {
     PyObject *MathServiceType;
     // Parser group for top-level module functions
     CPH_ModuleParsers parsers; 
-} CPH_CulverinState;
+} CPH_ModuleState;
 
 // Helper to retrieve state from the module object
 [[maybe_unused, nodiscard]]
-static inline CPH_CulverinState *get_culverin_state(PyObject *module) {
-    return (CPH_CulverinState *)PyModule_GetState(module);
+static inline CPH_ModuleState *CPH_GetModuleState(PyObject *module) {
+    return (CPH_ModuleState *)PyModule_GetState(module);
 }

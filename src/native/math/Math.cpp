@@ -14,7 +14,7 @@
 extern "C" {
 
 // Internal native math operations exposed through the C ABI.
-void culverin_compute_interpolation_loop(const CPH_PosStride *CPH_RESTRICT curr_p,
+void CPH_MathComputeInterpolationLoop(const CPH_PosStride *CPH_RESTRICT curr_p,
                                          const CPH_PosStride *CPH_RESTRICT prev_p,
                                          const CPH_AuxStride *CPH_RESTRICT curr_r,
                                          const CPH_AuxStride *CPH_RESTRICT prev_r, CPH::Float32 alpha,
@@ -66,7 +66,7 @@ void culverin_compute_interpolation_loop(const CPH_PosStride *CPH_RESTRICT curr_
  * start_p is JPH_Real (potentially CPH::Float64), start_r is CPH::Float32.
  */
 [[gnu::hot, gnu::nonnull]]
-void culverin_math_interpolate_character_transform(
+void CPH_MathInterpolateCharacterTransform(
     const CPH_PosStride *CPH_RESTRICT start_p, const CPH_AuxStride *CPH_RESTRICT start_r,
     const JPH_RVec3 *CPH_RESTRICT end_p, const JPH_Quat *CPH_RESTRICT end_r,
     const CPH::Float32 alpha, CPH::Float32 *CPH_RESTRICT out_p, CPH::Float32 *CPH_RESTRICT out_r) {
@@ -117,7 +117,7 @@ void culverin_math_interpolate_character_transform(
 // -----------------------------------------------------------------------------
 // Projection Matrices (Standard Column-Major)
 // -----------------------------------------------------------------------------
-void culverin_math_get_perspective(CPH::Float32 fovy_rad, CPH::Float32 aspect, CPH::Float32 near_p,
+void CPH_MathGetPerspective(CPH::Float32 fovy_rad, CPH::Float32 aspect, CPH::Float32 near_p,
                                    CPH::Float32 far_p, CPH::Float32 *CPH_RESTRICT out) {
     CPH::Float32 f         = 1.0F / std::tan(fovy_rad * 0.5F);
     CPH::Float32 range_inv = 1.0F / (near_p - far_p);
@@ -136,7 +136,7 @@ void culverin_math_get_perspective(CPH::Float32 fovy_rad, CPH::Float32 aspect, C
     m.StoreFloat4x4(reinterpret_cast<JPH::Float4 *>(out));
 }
 
-void culverin_math_get_ortho(CPH::Float32 left, CPH::Float32 right, CPH::Float32 bottom,
+void CPH_MathGetOrtho(CPH::Float32 left, CPH::Float32 right, CPH::Float32 bottom,
                              CPH::Float32 top, CPH::Float32 near_p, CPH::Float32 far_p,
                              CPH::Float32 *CPH_RESTRICT out) {
     CPH::Float32 r_l = 1.0F / (right - left);
@@ -156,7 +156,7 @@ void culverin_math_get_ortho(CPH::Float32 left, CPH::Float32 right, CPH::Float32
 // -----------------------------------------------------------------------------
 // View Matrix
 // -----------------------------------------------------------------------------
-void culverin_math_get_look_at(const CPH::Float32 *CPH_RESTRICT eye,
+void CPH_MathGetLookAt(const CPH::Float32 *CPH_RESTRICT eye,
                                const CPH::Float32 *CPH_RESTRICT target,
                                const CPH::Float32 *CPH_RESTRICT up,
                                CPH::Float32 *CPH_RESTRICT out) {
@@ -174,7 +174,7 @@ void culverin_math_get_look_at(const CPH::Float32 *CPH_RESTRICT eye,
 // -----------------------------------------------------------------------------
 // Model Matrices (TRS)
 // -----------------------------------------------------------------------------
-void culverin_math_get_trs(const CPH::Float32 *CPH_RESTRICT pos,
+void CPH_MathGetTrs(const CPH::Float32 *CPH_RESTRICT pos,
                            const CPH::Float32 *CPH_RESTRICT rot_q,
                            const CPH::Float32 *CPH_RESTRICT scale, CPH::Float32 *CPH_RESTRICT out) {
     JPH::Quat q(rot_q[0], rot_q[1], rot_q[2], rot_q[3]);
@@ -195,7 +195,7 @@ void culverin_math_get_trs(const CPH::Float32 *CPH_RESTRICT pos,
     m.StoreFloat4x4(reinterpret_cast<JPH::Float4 *>(out));
 }
 
-void culverin_math_get_trs_batch(CPH::SizeType count, const CPH::Float32 *CPH_RESTRICT pos,
+void CPH_MathGetTrsBatch(CPH::SizeType count, const CPH::Float32 *CPH_RESTRICT pos,
                                  const CPH::Float32 *CPH_RESTRICT rot_q,
                                  const CPH::Float32 *CPH_RESTRICT scale,
                                  CPH::Float32 *CPH_RESTRICT out) {
@@ -214,14 +214,14 @@ void culverin_math_get_trs_batch(CPH::SizeType count, const CPH::Float32 *CPH_RE
     }
 }
 
-void culverin_math_mat44_inverse(const CPH::Float32 *CPH_RESTRICT in,
+void CPH_MathMat44Inverse(const CPH::Float32 *CPH_RESTRICT in,
                                  CPH::Float32 *CPH_RESTRICT out) {
     JPH::Mat44 m = JPH::Mat44::sLoadFloat4x4(reinterpret_cast<const JPH::Float4 *>(in));
     // Jolt's Inversed() is highly optimized SIMD
     m.Inversed().StoreFloat4x4(reinterpret_cast<JPH::Float4 *>(out));
 }
 
-void culverin_math_mat44_mul(const CPH::Float32 *CPH_RESTRICT a, const CPH::Float32 *CPH_RESTRICT b,
+void CPH_MathMat44Mul(const CPH::Float32 *CPH_RESTRICT a, const CPH::Float32 *CPH_RESTRICT b,
                              CPH::Float32 *CPH_RESTRICT out) {
     JPH::Mat44 ma = JPH::Mat44::sLoadFloat4x4(reinterpret_cast<const JPH::Float4 *>(a));
     JPH::Mat44 mb = JPH::Mat44::sLoadFloat4x4(reinterpret_cast<const JPH::Float4 *>(b));
@@ -230,7 +230,7 @@ void culverin_math_mat44_mul(const CPH::Float32 *CPH_RESTRICT a, const CPH::Floa
 
 // Computes: Out[i] = Single * Batch[i]
 // Use case: MVP_Batch = ViewProj * Model_Batch
-void culverin_math_mat44_mul_batch(const CPH::Float32 *CPH_RESTRICT single_mat,
+void CPH_MathMat44MulBatch(const CPH::Float32 *CPH_RESTRICT single_mat,
                                    const CPH::Float32 *CPH_RESTRICT batch_mats, CPH::SizeType count,
                                    CPH::Float32 *CPH_RESTRICT out) {
     JPH::Mat44 s = JPH::Mat44::sLoadFloat4x4(reinterpret_cast<const JPH::Float4 *>(single_mat));
@@ -241,7 +241,7 @@ void culverin_math_mat44_mul_batch(const CPH::Float32 *CPH_RESTRICT single_mat,
     }
 }
 
-void culverin_math_transform_vec3(const CPH::Float32 *CPH_RESTRICT mat,
+void CPH_MathTransformVec3(const CPH::Float32 *CPH_RESTRICT mat,
                                   const CPH::Float32 *CPH_RESTRICT vec,
                                   CPH::Float32 *CPH_RESTRICT out) {
     JPH::Mat44 m = JPH::Mat44::sLoadFloat4x4(reinterpret_cast<const JPH::Float4 *>(mat));
@@ -254,7 +254,7 @@ void culverin_math_transform_vec3(const CPH::Float32 *CPH_RESTRICT mat,
 }
 
 // Transforms N Vec3s by 1 Matrix
-void culverin_math_transform_vec3_batch(const CPH::Float32 *CPH_RESTRICT mat,
+void CPH_MathTransformVec3Batch(const CPH::Float32 *CPH_RESTRICT mat,
                                         const CPH::Float32 *CPH_RESTRICT vecs, CPH::SizeType count,
                                         CPH::Float32 *CPH_RESTRICT out) {
     JPH::Mat44 m = JPH::Mat44::sLoadFloat4x4(reinterpret_cast<const JPH::Float4 *>(mat));
@@ -267,7 +267,7 @@ void culverin_math_transform_vec3_batch(const CPH::Float32 *CPH_RESTRICT mat,
     }
 }
 
-int culverin_math_cull_aabb(const CPH::Float32 *CPH_RESTRICT vp_mat,
+int CPH_MathCullAabb(const CPH::Float32 *CPH_RESTRICT vp_mat,
                             const CPH::Float32 *CPH_RESTRICT aabb_min,
                             const CPH::Float32 *CPH_RESTRICT aabb_max) {
     // 1. Load Matrix (Column-Major)
@@ -320,7 +320,7 @@ int culverin_math_cull_aabb(const CPH::Float32 *CPH_RESTRICT vp_mat,
     return 1; // Visible or Intersecting
 }
 
-void culverin_math_cull_aabb_batch(const CPH::Float32 *CPH_RESTRICT vp_mat,
+void CPH_MathCullAabbBatch(const CPH::Float32 *CPH_RESTRICT vp_mat,
                                    const CPH::Float32 *CPH_RESTRICT aabb_data, CPH::SizeType count,
                                    uint8_t *CPH_RESTRICT out_visibility) {
     JPH::Mat44 m  = JPH::Mat44::sLoadFloat4x4(reinterpret_cast<const JPH::Float4 *>(vp_mat));
@@ -347,7 +347,7 @@ void culverin_math_cull_aabb_batch(const CPH::Float32 *CPH_RESTRICT vp_mat,
     }
 }
 
-void culverin_math_vec3_normalize_batch(const CPH::Float32 *CPH_RESTRICT in, CPH::SizeType count,
+void CPH_MathVec3NormalizeBatch(const CPH::Float32 *CPH_RESTRICT in, CPH::SizeType count,
                                         CPH::Float32 *CPH_RESTRICT out) {
     for (CPH::SizeType i = 0; i < count; ++i) {
         // Load from CPH::Float32[3] into SIMD register
@@ -368,7 +368,7 @@ void culverin_math_vec3_normalize_batch(const CPH::Float32 *CPH_RESTRICT in, CPH
     }
 }
 
-void culverin_math_quat_from_euler(CPH::Float32 x, CPH::Float32 y, CPH::Float32 z,
+void CPH_MathQuatFromEuler(CPH::Float32 x, CPH::Float32 y, CPH::Float32 z,
                                    CPH::Float32 *CPH_RESTRICT out) {
     // Jolt uses sEulerAngles for (x, y, z) radian inputs
     // Order: Rotation around Y, then X, then Z
@@ -378,7 +378,7 @@ void culverin_math_quat_from_euler(CPH::Float32 x, CPH::Float32 y, CPH::Float32 
     q.GetXYZW().StoreFloat4(reinterpret_cast<JPH::Float4 *>(out));
 }
 
-void culverin_math_quat_to_euler(const CPH::Float32 *CPH_RESTRICT in_q,
+void CPH_MathQuatToEuler(const CPH::Float32 *CPH_RESTRICT in_q,
                                  CPH::Float32 *CPH_RESTRICT out_euler) {
     // Load components into Jolt Quat
     JPH::Quat q(in_q[0], in_q[1], in_q[2], in_q[3]);
@@ -391,7 +391,7 @@ void culverin_math_quat_to_euler(const CPH::Float32 *CPH_RESTRICT in_q,
     out_euler[2] = euler.GetZ();
 }
 
-void culverin_math_quat_slerp(const CPH::Float32 *CPH_RESTRICT q1,
+void CPH_MathQuatSlerp(const CPH::Float32 *CPH_RESTRICT q1,
                               const CPH::Float32 *CPH_RESTRICT q2, CPH::Float32 t,
                               CPH::Float32 *CPH_RESTRICT out) {
     // Jolt Quat stores as [x, y, z, w]
@@ -404,7 +404,7 @@ void culverin_math_quat_slerp(const CPH::Float32 *CPH_RESTRICT q1,
     res.GetXYZW().StoreFloat4(reinterpret_cast<JPH::Float4 *>(out));
 }
 
-void culverin_math_quat_mul(const CPH::Float32 *CPH_RESTRICT a, const CPH::Float32 *CPH_RESTRICT b,
+void CPH_MathQuatMul(const CPH::Float32 *CPH_RESTRICT a, const CPH::Float32 *CPH_RESTRICT b,
                             CPH::Float32 *CPH_RESTRICT out) {
     JPH::Quat qa(a[0], a[1], a[2], a[3]);
     JPH::Quat qb(b[0], b[1], b[2], b[3]);
@@ -415,7 +415,7 @@ void culverin_math_quat_mul(const CPH::Float32 *CPH_RESTRICT a, const CPH::Float
     res.GetXYZW().StoreFloat4(reinterpret_cast<JPH::Float4 *>(out));
 }
 
-void culverin_math_vec3_lerp_batch(const CPH::Float32 *CPH_RESTRICT a,
+void CPH_MathVec3LerpBatch(const CPH::Float32 *CPH_RESTRICT a,
                                    const CPH::Float32 *CPH_RESTRICT b, CPH::Float32 alpha,
                                    CPH::SizeType count, CPH::Float32 *CPH_RESTRICT out) {
     // Optimization: If alpha is 0 or 1, we can just memcpy,
@@ -438,7 +438,7 @@ void culverin_math_vec3_lerp_batch(const CPH::Float32 *CPH_RESTRICT a,
     }
 }
 
-void culverin_math_quat_rotate_vec3(const CPH::Float32 *CPH_RESTRICT q,
+void CPH_MathQuatRotateVec3(const CPH::Float32 *CPH_RESTRICT q,
                                     const CPH::Float32 *CPH_RESTRICT v,
                                     CPH::Float32 *CPH_RESTRICT out) {
     JPH::Quat rotation(q[0], q[1], q[2], q[3]);
@@ -452,7 +452,7 @@ void culverin_math_quat_rotate_vec3(const CPH::Float32 *CPH_RESTRICT q,
     out[2] = res.GetZ();
 }
 
-void culverin_math_quat_rotate_vec3_batch(const CPH::Float32 *CPH_RESTRICT q,
+void CPH_MathQuatRotateVec3Batch(const CPH::Float32 *CPH_RESTRICT q,
                                           const CPH::Float32 *CPH_RESTRICT vecs,
                                           CPH::SizeType count, CPH::Float32 *CPH_RESTRICT out) {
     // Load the rotation once
@@ -471,7 +471,7 @@ void culverin_math_quat_rotate_vec3_batch(const CPH::Float32 *CPH_RESTRICT q,
     }
 }
 
-void culverin_math_quat_inverse(const CPH::Float32 *CPH_RESTRICT q,
+void CPH_MathQuatInverse(const CPH::Float32 *CPH_RESTRICT q,
                                 CPH::Float32 *CPH_RESTRICT out) {
     JPH::Quat in_q(q[0], q[1], q[2], q[3]);
 
@@ -481,7 +481,7 @@ void culverin_math_quat_inverse(const CPH::Float32 *CPH_RESTRICT q,
     inv.GetXYZW().StoreFloat4(reinterpret_cast<JPH::Float4 *>(out));
 }
 
-void culverin_math_project(const CPH::Float32 *CPH_RESTRICT v, const CPH::Float32 *CPH_RESTRICT mvp,
+void CPH_MathProject(const CPH::Float32 *CPH_RESTRICT v, const CPH::Float32 *CPH_RESTRICT mvp,
                            const int *CPH_RESTRICT viewport, CPH::Float32 *CPH_RESTRICT out) {
     JPH::Mat44 m = JPH::Mat44::sLoadFloat4x4(reinterpret_cast<const JPH::Float4 *>(mvp));
     JPH::Vec3 world_pos(v[0], v[1], v[2]);
@@ -507,7 +507,7 @@ void culverin_math_project(const CPH::Float32 *CPH_RESTRICT v, const CPH::Float3
     }
 }
 
-void culverin_math_unproject(const CPH::Float32 *CPH_RESTRICT v,
+void CPH_MathUnproject(const CPH::Float32 *CPH_RESTRICT v,
                              const CPH::Float32 *CPH_RESTRICT mvp, const int *CPH_RESTRICT viewport,
                              CPH::Float32 *CPH_RESTRICT out) {
     JPH::Mat44 m     = JPH::Mat44::sLoadFloat4x4(reinterpret_cast<const JPH::Float4 *>(mvp));
@@ -534,7 +534,7 @@ void culverin_math_unproject(const CPH::Float32 *CPH_RESTRICT v,
     }
 }
 
-void culverin_math_quat_from_to(const CPH::Float32 *CPH_RESTRICT v1,
+void CPH_MathQuatFromTo(const CPH::Float32 *CPH_RESTRICT v1,
                                 const CPH::Float32 *CPH_RESTRICT v2,
                                 CPH::Float32 *CPH_RESTRICT out) {
     JPH::Vec3 from(v1[0], v1[1], v1[2]);
@@ -546,7 +546,7 @@ void culverin_math_quat_from_to(const CPH::Float32 *CPH_RESTRICT v1,
     q.GetXYZW().StoreFloat4(reinterpret_cast<JPH::Float4 *>(out));
 }
 
-CPH::Float32 culverin_math_vec3_dot(const CPH::Float32 *CPH_RESTRICT v1,
+CPH::Float32 CPH_MathVec3Dot(const CPH::Float32 *CPH_RESTRICT v1,
                                     const CPH::Float32 *CPH_RESTRICT v2) {
     JPH::Vec3 a(v1[0], v1[1], v1[2]);
     JPH::Vec3 b(v2[0], v2[1], v2[2]);
@@ -554,7 +554,7 @@ CPH::Float32 culverin_math_vec3_dot(const CPH::Float32 *CPH_RESTRICT v1,
     return a.Dot(b);
 }
 
-void culverin_math_vec3_cross(const CPH::Float32 *CPH_RESTRICT v1,
+void CPH_MathVec3Cross(const CPH::Float32 *CPH_RESTRICT v1,
                               const CPH::Float32 *CPH_RESTRICT v2, CPH::Float32 *CPH_RESTRICT out) {
     JPH::Vec3 a(v1[0], v1[1], v1[2]);
     JPH::Vec3 b(v2[0], v2[1], v2[2]);
@@ -567,7 +567,7 @@ void culverin_math_vec3_cross(const CPH::Float32 *CPH_RESTRICT v1,
     out[2] = res.GetZ();
 }
 
-int culverin_math_intersect_ray_plane(const CPH::Float32 *CPH_RESTRICT ro,
+int CPH_MathIntersectRayPlane(const CPH::Float32 *CPH_RESTRICT ro,
                                       const CPH::Float32 *CPH_RESTRICT rd,
                                       const CPH::Float32 *CPH_RESTRICT po,
                                       const CPH::Float32 *CPH_RESTRICT pn,
@@ -598,7 +598,7 @@ int culverin_math_intersect_ray_plane(const CPH::Float32 *CPH_RESTRICT ro,
     return 0;
 }
 
-void culverin_math_quat_get_axis_angle(const CPH::Float32 *CPH_RESTRICT in_q,
+void CPH_MathQuatGetAxisAngle(const CPH::Float32 *CPH_RESTRICT in_q,
                                        CPH::Float32 *CPH_RESTRICT out_axis,
                                        CPH::Float32 *CPH_RESTRICT out_angle) {
     JPH::Quat q(in_q[0], in_q[1], in_q[2], in_q[3]);
@@ -613,7 +613,7 @@ void culverin_math_quat_get_axis_angle(const CPH::Float32 *CPH_RESTRICT in_q,
     *out_angle  = angle;
 }
 
-void culverin_math_quat_from_axis_angle(const CPH::Float32 *CPH_RESTRICT axis, CPH::Float32 angle,
+void CPH_MathQuatFromAxisAngle(const CPH::Float32 *CPH_RESTRICT axis, CPH::Float32 angle,
                                         CPH::Float32 *CPH_RESTRICT out) {
     JPH::Vec3 v(axis[0], axis[1], axis[2]);
 
@@ -630,7 +630,7 @@ void culverin_math_quat_from_axis_angle(const CPH::Float32 *CPH_RESTRICT axis, C
     q.GetXYZW().StoreFloat4(reinterpret_cast<JPH::Float4 *>(out));
 }
 
-void culverin_math_vec3_distance_batch(const CPH::Float32 *CPH_RESTRICT a,
+void CPH_MathVec3DistanceBatch(const CPH::Float32 *CPH_RESTRICT a,
                                        const CPH::Float32 *CPH_RESTRICT b, CPH::SizeType count,
                                        CPH::Float32 *CPH_RESTRICT out) {
     for (CPH::SizeType i = 0; i < count; ++i) {
@@ -643,7 +643,7 @@ void culverin_math_vec3_distance_batch(const CPH::Float32 *CPH_RESTRICT a,
     }
 }
 
-void culverin_math_vec3_normalize(const CPH::Float32 *CPH_RESTRICT v,
+void CPH_MathVec3Normalize(const CPH::Float32 *CPH_RESTRICT v,
                                   CPH::Float32 *CPH_RESTRICT out) {
     JPH::Vec3 vec(v[0], v[1], v[2]);
 
@@ -660,7 +660,7 @@ void culverin_math_vec3_normalize(const CPH::Float32 *CPH_RESTRICT v,
     }
 }
 
-void culverin_math_mat44_get_translation(const CPH::Float32 *CPH_RESTRICT in_mat,
+void CPH_MathMat44GetTranslation(const CPH::Float32 *CPH_RESTRICT in_mat,
                                          CPH::Float32 *CPH_RESTRICT out_vec) {
     // Load 4x4 matrix from CPH::Float32 buffer
     JPH::Mat44 m = JPH::Mat44::sLoadFloat4x4(reinterpret_cast<const JPH::Float4 *>(in_mat));
@@ -673,7 +673,7 @@ void culverin_math_mat44_get_translation(const CPH::Float32 *CPH_RESTRICT in_mat
     out_vec[2] = t.GetZ();
 }
 
-void culverin_math_mat44_get_rotation(const CPH::Float32 *CPH_RESTRICT in_mat,
+void CPH_MathMat44GetRotation(const CPH::Float32 *CPH_RESTRICT in_mat,
                                       CPH::Float32 *CPH_RESTRICT out_quat) {
     // Load 4x4 matrix
     JPH::Mat44 m = JPH::Mat44::sLoadFloat4x4(reinterpret_cast<const JPH::Float4 *>(in_mat));
@@ -685,12 +685,12 @@ void culverin_math_mat44_get_rotation(const CPH::Float32 *CPH_RESTRICT in_mat,
     q.GetXYZW().StoreFloat4(reinterpret_cast<JPH::Float4 *>(out_quat));
 }
 
-void culverin_math_mat44_identity(CPH::Float32 *CPH_RESTRICT out) {
+void CPH_MathMat44Identity(CPH::Float32 *CPH_RESTRICT out) {
     // Jolt's static identity matrix
     JPH::Mat44::sIdentity().StoreFloat4x4(reinterpret_cast<JPH::Float4 *>(out));
 }
 
-void culverin_math_vec3_reflect(const CPH::Float32 *CPH_RESTRICT v,
+void CPH_MathVec3Reflect(const CPH::Float32 *CPH_RESTRICT v,
                                 const CPH::Float32 *CPH_RESTRICT n,
                                 CPH::Float32 *CPH_RESTRICT out) {
     JPH::Vec3 vec(v[0], v[1], v[2]);
@@ -704,7 +704,7 @@ void culverin_math_vec3_reflect(const CPH::Float32 *CPH_RESTRICT v,
     out[2] = res.GetZ();
 }
 
-CPH::Float32 culverin_math_vec3_distance(const CPH::Float32 *CPH_RESTRICT v1,
+CPH::Float32 CPH_MathVec3Distance(const CPH::Float32 *CPH_RESTRICT v1,
                                          const CPH::Float32 *CPH_RESTRICT v2) {
     JPH::Vec3 a(v1[0], v1[1], v1[2]);
     JPH::Vec3 b(v2[0], v2[1], v2[2]);
@@ -713,7 +713,7 @@ CPH::Float32 culverin_math_vec3_distance(const CPH::Float32 *CPH_RESTRICT v1,
     return (a - b).Length();
 }
 
-void culverin_math_quat_rotate_vec3_inverse(const CPH::Float32 *CPH_RESTRICT q,
+void CPH_MathQuatRotateVec3Inverse(const CPH::Float32 *CPH_RESTRICT q,
                                             const CPH::Float32 *CPH_RESTRICT v,
                                             CPH::Float32 *CPH_RESTRICT out) {
     JPH::Quat rotation(q[0], q[1], q[2], q[3]);
@@ -727,14 +727,14 @@ void culverin_math_quat_rotate_vec3_inverse(const CPH::Float32 *CPH_RESTRICT q,
     out[2] = res.GetZ();
 }
 
-void culverin_math_euler_to_quat(const CPH::Float32 *CPH_RESTRICT euler,
+void CPH_MathEulerToQuat(const CPH::Float32 *CPH_RESTRICT euler,
                                  CPH::Float32 *CPH_RESTRICT out_q) {
     // Jolt implementation: Euler XYZ -> Quat
     JPH::Quat q = JPH::Quat::sEulerAngles(JPH::Vec3(euler[0], euler[1], euler[2]));
     q.GetXYZW().StoreFloat4(reinterpret_cast<JPH::Float4 *>(out_q));
 }
 
-void culverin_math_euler_to_quat_batch(const CPH::Float32 *CPH_RESTRICT eulers, CPH::SizeType count,
+void CPH_MathEulerToQuatBatch(const CPH::Float32 *CPH_RESTRICT eulers, CPH::SizeType count,
                                        CPH::Float32 *CPH_RESTRICT out_qs) {
     for (CPH::SizeType i = 0; i < count; ++i) {
         const CPH::Float32 *e = &eulers[i * 3];

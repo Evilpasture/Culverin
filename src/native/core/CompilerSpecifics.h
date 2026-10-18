@@ -69,7 +69,7 @@ typedef unsigned _BitInt(5) culv_u5;
 
 // Use a prefixed function to avoid collision
 [[noreturn]]
-static inline void culv_unreachable(void) {
+static inline void CPH_Unreachable(void) {
 #if defined(CULVERIN_DEBUG)
     fprintf(stderr, "Unreachable hit at %s:%d\n", __FILE__, __LINE__);
     abort();

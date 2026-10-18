@@ -13,8 +13,8 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-void culv_jph_trace(const char *inString);
-bool culv_jph_assert(const char *inExpression, const char *inMessage, const char *inFile,
+void CPH_JphTrace(const char *inString);
+bool CPH_JphAssert(const char *inExpression, const char *inMessage, const char *inFile,
                      uint32_t inLine);
 #ifdef __cplusplus
 }
@@ -69,9 +69,9 @@ panic(std::string_view expression, std::string_view message = "",
                     "  Func: {}\n",
                     expression, message, loc.file_name(), loc.line(), loc.function_name());
 
-    culv_jph_trace(msg.c_str());
+    CPH_JphTrace(msg.c_str());
 
-    if (culv_jph_assert(expression.data(), message.data(), loc.file_name(), loc.line())) {
+    if (CPH_JphAssert(expression.data(), message.data(), loc.file_name(), loc.line())) {
         culv_internal_break();
     }
 
@@ -116,7 +116,7 @@ culv_internal_panic_c(const char *expr, const char *file, uint32_t line, const c
             "  Func: %s\n",
             expr, user_msg, file, line, func);
 
-    if (culv_jph_assert(expr, user_msg, file, line)) {
+    if (CPH_JphAssert(expr, user_msg, file, line)) {
         culv_internal_break();
     }
     abort();

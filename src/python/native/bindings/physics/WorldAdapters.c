@@ -93,7 +93,7 @@ void CPH_PyWorld_FreeMembers(CPH_PhysicsWorldObject *self) {
 int CPH_InitSettings(CPH_PhysicsWorldObject *self, PyObject *settings_dict, CPH_GravityVector *gravity,
                   CPH_WorldSettings *settings) {
     PyObject *st_module = PyType_GetModule(Py_TYPE(self));
-    CPH_CulverinState *st   = get_culverin_state(st_module);
+    CPH_ModuleState *st   = CPH_GetModuleState(st_module);
     PyObject *val_func  = PyObject_GetAttrString(st->helper, "validate_settings");
     if (!val_func) {
         return -1;

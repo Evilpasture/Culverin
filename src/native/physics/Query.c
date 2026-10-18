@@ -36,7 +36,7 @@ static void query_begin(CPH_PhysicsWorld *world) {
     CPH_SHADOW_LOCK(&world->shadow_lock);
     wait_until_can_query_locked(world);
 
-    // This increment is protected by shadow_lock, so PhysicsWorld_step cannot
+    // This increment is protected by shadow_lock, so CPH_PyWorld_Step cannot
     // set the step flags between the gate check and query registration.
     atomic_fetch_add_explicit(&world->active_queries, 1, memory_order_acquire);
     CPH_SHADOW_UNLOCK(&world->shadow_lock);
@@ -339,7 +339,7 @@ static float ray_direction_scale(JPH_Vec3 direction, float max_distance, float *
     if (fabsf(length_sq - 1.0f) < kQueryDirectionUnitTolerance) {
         return max_distance;
     }
-    return max_distance * CPH_culverin_fast_rsqrt(length_sq);
+    return max_distance * CPH_FastRsqrt(length_sq);
 }
 
 PhysicsQueryStatus CPH_PhysicsWorldRaycast(CPH_PhysicsWorld *world, JPH_RVec3 origin, JPH_Vec3 direction,
@@ -557,7 +557,7 @@ PhysicsQueryStatus CPH_PhysicsWorldShapecast(CPH_PhysicsWorld *world, int shape_
             float nz                     = -context.hit.penetrationAxis.z;
             const float normal_length_sq = nx * nx + ny * ny + nz * nz;
             if (normal_length_sq > kQueryDirectionEpsilonSquared) {
-                const float inverse_length = CPH_culverin_fast_rsqrt(normal_length_sq);
+                const float inverse_length = CPH_FastRsqrt(normal_length_sq);
                 nx *= inverse_length;
                 ny *= inverse_length;
                 nz *= inverse_length;

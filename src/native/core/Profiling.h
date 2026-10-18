@@ -16,7 +16,7 @@ typedef struct {
     uint64_t min_cycles;
     uint64_t max_cycles;
     uint32_t count;
-} CPH_CulvStat;
+} CPH_Stat;
 
 #ifdef CULVERIN_PROFILE_SYNC
 /* ── Platform counter ───────────────────────────────────────────────────────
@@ -35,40 +35,40 @@ typedef struct {
 
 #    if defined(__aarch64__) || defined(__arm64__)
 
-static int culv_use_pmccntr = -1; /* -1 = uninitialised */
+static int cph_use_pmccntr = -1; /* -1 = uninitialised */
 
-static inline void culv_probe_pmu(void) {
-    if (culv_use_pmccntr != -1)
+static inline void CPH_ProbePmu(void) {
+    if (cph_use_pmccntr != -1)
         return;
     uint64_t val = 0;
     /* PMUSERENR_EL0 bit 0 grants user access; a SIGILL here means denied */
     __asm__ __volatile__("mrs %0, pmccntr_el0" : "=r"(val));
-    culv_use_pmccntr = 1;
+    cph_use_pmccntr = 1;
 }
 
 /* Call once before profiling; installs SIGILL handler to detect PMU access */
 #        include <setjmp.h>
 #        include <signal.h>
 
-static volatile sig_atomic_t culv_pmu_fault;
-static jmp_buf culv_pmu_jmp;
-static void culv_pmu_sigill(int sig) {
+static volatile sig_atomic_t cph_pmu_fault;
+static jmp_buf cph_pmu_jmp;
+static void CPH_PmuSigill(int sig) {
     (void)sig;
-    culv_pmu_fault = 1;
-    longjmp(culv_pmu_jmp, 1);
+    cph_pmu_fault = 1;
+    longjmp(cph_pmu_jmp, 1);
 }
 
-static inline void culv_init_counters(void) {
+static inline void CPH_InitCounters(void) {
     struct sigaction sa = {0}, old;
-    sa.sa_handler       = culv_pmu_sigill;
+    sa.sa_handler       = CPH_PmuSigill;
     sigaction(SIGILL, &sa, &old);
-    culv_pmu_fault = 0;
-    if (setjmp(culv_pmu_jmp) == 0) {
+    cph_pmu_fault = 0;
+    if (setjmp(cph_pmu_jmp) == 0) {
         uint64_t v;
         __asm__ __volatile__("mrs %0, pmccntr_el0" : "=r"(v));
-        culv_use_pmccntr = 1;
+        cph_use_pmccntr = 1;
     } else {
-        culv_use_pmccntr = 0;
+        cph_use_pmccntr = 0;
         fprintf(stderr, "[culverin] pmccntr_el0 denied — falling back to "
                         "cntvct_el0 (timer ticks, NOT cycles)\n");
     }
@@ -77,7 +77,7 @@ static inline void culv_init_counters(void) {
 
 // On Apple Silicon, we cannot use pmccntr_el0 (Cycles) in user-space.
 // We use cntvct_el0 (Virtual Timer). It frequency is typically 24MHz.
-static inline uint64_t culv_read_start(void) {
+static inline uint64_t CPH_ReadStart(void) {
     uint64_t val;
     // ISB (Instruction Synchronization Barrier) ensures all previous
     // instructions finished before we read the timer.
@@ -87,7 +87,7 @@ static inline uint64_t culv_read_start(void) {
     return val;
 }
 
-static inline uint64_t culv_read_end(void) {
+static inline uint64_t CPH_ReadEnd(void) {
     uint64_t val;
     // ISB ensures the work is finished before we read the timer.
     __asm__ __volatile__("mrs %0, cntvct_el0\n\t"
@@ -103,11 +103,11 @@ static inline uint64_t culv_read_end(void) {
 
 #        include <intrin.h>
 
-static inline uint64_t culv_read_start(void) {
+static inline uint64_t CPH_ReadStart(void) {
     _mm_lfence();
     return __rdtsc();
 }
-static inline uint64_t culv_read_end(void) {
+static inline uint64_t CPH_ReadEnd(void) {
     /* rdtscp serialises the end read; lfence stops later loads from retiring
      * before we capture the counter */
     unsigned int aux;
@@ -119,7 +119,7 @@ static inline uint64_t culv_read_end(void) {
 
 #    else /* GCC/Clang x86-64 */
 
-static inline uint64_t culv_read_start(void) {
+static inline uint64_t CPH_ReadStart(void) {
     uint32_t lo, hi;
     /* cpuid is the only reliable full serialising instruction on x86 */
     __asm__ __volatile__("cpuid\n\t"
@@ -130,7 +130,7 @@ static inline uint64_t culv_read_start(void) {
     return ((uint64_t)hi << 32) | lo;
 }
 
-static inline uint64_t culv_read_end(void) {
+static inline uint64_t CPH_ReadEnd(void) {
     uint32_t lo, hi;
     uint32_t aux; /* rdtscp writes TSC_AUX (CPU id) into ecx — must consume it */
     __asm__ __volatile__("rdtscp\n\t"
@@ -160,27 +160,27 @@ static inline uint64_t culv_read_end(void) {
  * `count` is the body/item count for cyc/body output; pass 0 to suppress.
  * ────────────────────────────────────────────────────────────────────────── */
 
-#    define CPH_PROFILE_BEGIN(tag) uint64_t _culv_start_##tag = culv_read_start()
+#    define CPH_PROFILE_BEGIN(tag) uint64_t _cph_start_##tag = CPH_ReadStart()
 
 #    define CPH_PROFILE_END(tag, label, count)                                                    \
         do {                                                                                       \
-            uint64_t _culv_end     = culv_read_end();                                              \
-            uint64_t _culv_elapsed = _culv_end - _culv_start_##tag;                                \
-            unsigned int _culv_c   = (unsigned int)(count);                                        \
-            if (_culv_c > 0) {                                                                     \
+            uint64_t _cph_end     = CPH_ReadEnd();                                              \
+            uint64_t _cph_elapsed = _cph_end - _cph_start_##tag;                                \
+            unsigned int _cph_count   = (unsigned int)(count);                                        \
+            if (_cph_count > 0) {                                                                     \
                 fprintf(stderr,                                                                    \
                         "[culverin] %s: %" PRIu64 " cycles for %u items"                           \
                         " (%.1f cyc/item)\n",                                                      \
-                        label, _culv_elapsed, _culv_c, (double)_culv_elapsed / _culv_c);           \
+                        label, _cph_elapsed, _cph_count, (double)_cph_elapsed / _cph_count);           \
             } else {                                                                               \
-                fprintf(stderr, "[culverin] %s: %" PRIu64 " cycles\n", label, _culv_elapsed);      \
+                fprintf(stderr, "[culverin] %s: %" PRIu64 " cycles\n", label, _cph_elapsed);      \
             }                                                                                      \
         } while (0)
 
 #    define CPH_PROFILE_ACCUMULATE(tag, stat_ptr)                                                 \
         do {                                                                                       \
-            uint64_t _end     = culv_read_end();                                                   \
-            uint64_t _elapsed = _end - _culv_start_##tag;                                          \
+            uint64_t _end     = CPH_ReadEnd();                                                   \
+            uint64_t _elapsed = _end - _cph_start_##tag;                                          \
             (stat_ptr)->total_cycles += _elapsed;                                                  \
             if (_elapsed < (stat_ptr)->min_cycles)                                                 \
                 (stat_ptr)->min_cycles = _elapsed;                                                 \

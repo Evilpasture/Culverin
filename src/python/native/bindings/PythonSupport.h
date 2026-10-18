@@ -91,7 +91,7 @@ CPH_DEFINE_DICT_GETTER(s, const char *, py_to_str)
      .doc     = nullptr,                                                                           \
      .closure = nullptr}
 
-extern PyType_Spec PhysicsWorld_spec;
+extern PyType_Spec CPH_PyWorld_Spec;
 extern PyType_Spec Vehicle_spec;
 extern PyType_Spec RagdollSettings_spec;
 extern PyType_Spec Ragdoll_spec;

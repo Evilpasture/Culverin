@@ -25,7 +25,7 @@
  * ============================================================================ */
 
 // Processor-level hint to save power during spin-waits
-static inline void culverin_cpu_relax() {
+static inline void CPH_CpuRelax() {
 #if defined(_MSC_VER) || defined(__INTEL_COMPILER)
     _mm_pause();
 #elif defined(__GNUC__) || defined(__clang__)
@@ -37,9 +37,9 @@ static inline void culverin_cpu_relax() {
 #endif
 }
 
-[[maybe_unused]] static inline void culverin_yield() {
+[[maybe_unused]] static inline void CPH_CpuYield() {
     for (int i = 0; i < 100; i++) {
-        culverin_cpu_relax();
+        CPH_CpuRelax();
     }
 #if defined(_WIN32)
     if (SwitchToThread() == FALSE)
@@ -55,9 +55,9 @@ static inline void culverin_cpu_relax() {
  * 2. UNIFIED LOCK API (Directly mapping to CulvMutex/CulvCond)
  * ============================================================================ */
 
-typedef CPH_CulvMutex NativeMutex;
-typedef CPH_CulvCond NativeCond;
-typedef CPH_CulvMutex ShadowMutex;
+typedef CPH_Mutex NativeMutex;
+typedef CPH_Cond NativeCond;
+typedef CPH_Mutex ShadowMutex;
 
 // Mutex Operations
 #define CPH_INIT_NATIVE_MUTEX(m) atomic_init(&(m).bits, kMutexUnlocked)
@@ -68,8 +68,8 @@ typedef CPH_CulvMutex ShadowMutex;
 // Condition Variable Operations
 #define CPH_INIT_NATIVE_COND(c) culv_cond_init(&(c))
 #define CPH_FREE_NATIVE_COND(c) (void)(c)
-#define CPH_NATIVE_COND_WAIT(c, m) CPH_CulvCondWait(&(c), &(m))
-#define CPH_NATIVE_COND_BROADCAST(c) CPH_CulvCondBroadcast(&(c))
+#define CPH_NATIVE_COND_WAIT(c, m) CPH_CondWait(&(c), &(m))
+#define CPH_NATIVE_COND_BROADCAST(c) CPH_CondBroadcast(&(c))
 
 // Shadow Mutex Operations (Maps directly to Native operations)
 #define CPH_INIT_LOCK(m) atomic_init(&(m).bits, kMutexUnlocked)

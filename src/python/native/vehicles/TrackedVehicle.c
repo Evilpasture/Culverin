@@ -115,7 +115,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateTrackedVehicle(CPH_Physics
                                                                         size_t nargsf,
                                                                         PyObject *kwnames) {
     const Py_ssize_t nargs = (Py_ssize_t)PyVectorcall_NARGS(nargsf);
-    CPH_CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+    CPH_ModuleState *st = CPH_GetModuleState(PyType_GetModule(Py_TYPE(self)));
     // --- 1. FAST ARGUMENT PARSING ---
     uint64_t chassis_h_raw = 0;
     PyObject *py_wheels    = nullptr;

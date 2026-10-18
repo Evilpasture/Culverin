@@ -171,7 +171,7 @@ int CPH_InitVehicleParsers(CPH_VehicleObject *obj) {
     if (!obj->parsers) {
         return -1;
     }
-    CPH_CulverinInitVehicleParsers(obj->parsers);
+    CPH_InitVehicleParserGroup(obj->parsers);
     return 0;
 }
 
@@ -275,7 +275,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateVehicle(CPH_PhysicsWorldOb
                                                                 size_t nargsf,
                                                                 PyObject *kwnames) {
     const Py_ssize_t nargs = (Py_ssize_t)PyVectorcall_NARGS(nargsf);
-    CPH_CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+    CPH_ModuleState *st = CPH_GetModuleState(PyType_GetModule(Py_TYPE(self)));
     // --- 1. FAST ARGUMENT PARSING (Unchanged) ---
     uint64_t chassis_h_raw = 0;
     PyObject *py_wheels    = nullptr;
@@ -820,7 +820,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyVehicle_Destroy(CPH_VehicleObject *sel
                                                     PyObject *ignored [[maybe_unused]]) {
     CPH_PyVehicle_InternalCleanup(self);
     if (self->parsers) {
-        CPH_CulverinFreeVehicleParsers(self->parsers);
+        CPH_FreeVehicleParserGroup(self->parsers);
         CPH_PyFree(self->parsers);
     }
     Py_RETURN_NONE;
@@ -835,7 +835,7 @@ PyType_DeclareSlot_VoidFromModule CPH_PyVehicle_Dealloc(CPH_VehicleObject *self)
     CPH_PyVehicle_InternalCleanup(self);
 
     if (self->parsers) {
-        CPH_CulverinFreeVehicleParsers(self->parsers);
+        CPH_FreeVehicleParserGroup(self->parsers);
         CPH_PyFree(self->parsers);
     }
 

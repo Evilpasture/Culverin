@@ -75,7 +75,7 @@ static PyObject *CPH_PyMath_GetPerspective(CPH_MathHolderObject *self, PyObject 
     }
 
     float out[kSixteenFloats];
-    culverin_math_get_perspective(fovy, aspect, near_p, far_p, out);
+    CPH_MathGetPerspective(fovy, aspect, near_p, far_p, out);
 
     return CPH_PY_BUILD_TUPLE(out[0], out[1], out[2], out[3], out[4], out[5], out[6], out[7], out[8],
                            out[9], out[10], out[11], out[12], out[13], out[14], out[15]);
@@ -103,7 +103,7 @@ static PyObject *CPH_PyMath_GetOrtho(CPH_MathHolderObject *self, PyObject *const
     }
 
     float out[kSixteenFloats];
-    culverin_math_get_ortho(left, right, bottom, top, near_p, far_p, out);
+    CPH_MathGetOrtho(left, right, bottom, top, near_p, far_p, out);
 
     return CPH_PY_BUILD_TUPLE(out[0], out[1], out[2], out[3], out[4], out[5], out[6], out[7], out[8],
                            out[9], out[10], out[11], out[12], out[13], out[14], out[15]);
@@ -153,7 +153,7 @@ static PyObject *CPH_PyMath_GetLookAt(CPH_MathHolderObject *self, PyObject *cons
     }
 
     alignas(kSimdAlignment) float out[kSixteenFloats];
-    culverin_math_get_look_at(eye, target, up, out);
+    CPH_MathGetLookAt(eye, target, up, out);
 
     return CPH_PY_BUILD_TUPLE(out[0], out[1], out[2], out[3], out[4], out[5], out[6], out[7], out[8],
                            out[9], out[10], out[11], out[12], out[13], out[14], out[15]);
@@ -211,7 +211,7 @@ static PyObject *CPH_PyMath_GetTrs(CPH_MathHolderObject *self, PyObject *const *
     }
 
     alignas(kSimdAlignment) float out[kSixteenFloats];
-    culverin_math_get_trs(p, r, s, out);
+    CPH_MathGetTrs(p, r, s, out);
 
     return CPH_PY_BUILD_TUPLE(out[0], out[1], out[2], out[3], out[4], out[5], out[6], out[7], out[8],
                            out[9], out[10], out[11], out[12], out[13], out[14], out[15]);
@@ -252,7 +252,7 @@ static PyObject *CPH_PyMath_GetTrsBatch(CPH_MathHolderObject *self, PyObject *co
     PyObject *result =
         PyBytes_FromStringAndSize(nullptr, count * kSixteenFloats * (Py_ssize_t)sizeof(float));
     if (result) {
-        culverin_math_get_trs_batch(count, (float *)p_buf.buf, (float *)r_buf.buf,
+        CPH_MathGetTrsBatch(count, (float *)p_buf.buf, (float *)r_buf.buf,
                                     (float *)s_buf.buf, (float *)PyBytes_AsString(result));
     }
 
@@ -281,7 +281,7 @@ static PyObject *CPH_PyMath_Inverse(CPH_MathHolderObject *self, PyObject *const 
         return nullptr;
     }
 
-    culverin_math_mat44_inverse(in, out);
+    CPH_MathMat44Inverse(in, out);
     return CPH_PY_BUILD_TUPLE(out[0], out[1], out[2], out[3], out[4], out[5], out[6], out[7], out[8],
                            out[9], out[10], out[11], out[12], out[13], out[14], out[15]);
 }
@@ -307,7 +307,7 @@ static PyObject *CPH_PyMath_Matmul(CPH_MathHolderObject *self, PyObject *const *
         return nullptr;
     }
 
-    culverin_math_mat44_mul(a, b, out);
+    CPH_MathMat44Mul(a, b, out);
     return CPH_PY_BUILD_TUPLE(out[0], out[1], out[2], out[3], out[4], out[5], out[6], out[7], out[8],
                            out[9], out[10], out[11], out[12], out[13], out[14], out[15]);
 }
@@ -348,7 +348,7 @@ static PyObject *CPH_PyMath_TransformVec3(CPH_MathHolderObject *self, PyObject *
     }
 
     float out[3];
-    culverin_math_transform_vec3(m, v, out);
+    CPH_MathTransformVec3(m, v, out);
 
     // FastBuild is significantly faster than Py_BuildValue
     return CPH_PY_BUILD_TUPLE(out[0], out[1], out[2]);
@@ -382,7 +382,7 @@ static PyObject *CPH_PyMath_MatmulBatch(CPH_MathHolderObject *self, PyObject *co
     size_t count     = view.len / (kSixteenFloats * sizeof(float));
     PyObject *result = PyBytes_FromStringAndSize(nullptr, view.len);
     if (result) {
-        culverin_math_mat44_mul_batch(m, (float *)view.buf, count,
+        CPH_MathMat44MulBatch(m, (float *)view.buf, count,
                                       (float *)PyBytes_AsString(result));
     }
 
@@ -427,7 +427,7 @@ static PyObject *CPH_PyMath_CullAabb(CPH_MathHolderObject *self, PyObject *const
         return nullptr;
     }
 
-    int visible = culverin_math_cull_aabb(vp, a_min, a_max);
+    int visible = CPH_MathCullAabb(vp, a_min, a_max);
     return CPH_PY_BUILD_VALUE((bool)visible);
 }
 
@@ -459,7 +459,7 @@ static PyObject *CPH_PyMath_CullAabbBatch(CPH_MathHolderObject *self, PyObject *
     Py_ssize_t count = view.len / (6 * (Py_ssize_t)sizeof(float));
     PyObject *result = PyByteArray_FromStringAndSize(nullptr, count);
     if (result) {
-        culverin_math_cull_aabb_batch(vp, (float *)view.buf, count,
+        CPH_MathCullAabbBatch(vp, (float *)view.buf, count,
                                       (uint8_t *)PyByteArray_AsString(result));
     }
 
@@ -496,7 +496,7 @@ static PyObject *CPH_PyMath_Vec3NormalizeBatch(CPH_MathHolderObject *self,
     PyObject *result = PyBytes_FromStringAndSize(nullptr, view.len);
 
     if (result) {
-        culverin_math_vec3_normalize_batch((const float *)view.buf, count,
+        CPH_MathVec3NormalizeBatch((const float *)view.buf, count,
                                            (float *)PyBytes_AsString(result));
     }
 
@@ -520,7 +520,7 @@ static PyObject *CPH_PyMath_QuatFromEuler(CPH_MathHolderObject *self, PyObject *
     }
 
     float out[4]; // quat: x, y, z, w
-    culverin_math_quat_from_euler(x, y, z, out);
+    CPH_MathQuatFromEuler(x, y, z, out);
 
     // CULV_PY_BUILD_TUPLE is optimized for returning fixed-size math results
     return CPH_PY_BUILD_TUPLE(out[0], out[1], out[2], out[3]);
@@ -546,7 +546,7 @@ static PyObject *CPH_PyMath_QuatToEuler(CPH_MathHolderObject *self, PyObject *co
     float in_q[4] = {x, y, z, w};
     float out_euler[3];
 
-    culverin_math_quat_to_euler(in_q, out_euler);
+    CPH_MathQuatToEuler(in_q, out_euler);
 
     return CPH_PY_BUILD_TUPLE(out_euler[0], out_euler[1], out_euler[2]);
 }
@@ -574,7 +574,7 @@ static PyObject *CPH_PyMath_QuatSlerp(CPH_MathHolderObject *self, PyObject *cons
         return nullptr;
     }
 
-    culverin_math_quat_slerp(q1, q2, t, out);
+    CPH_MathQuatSlerp(q1, q2, t, out);
 
     return CPH_PY_BUILD_TUPLE(out[0], out[1], out[2], out[3]);
 }
@@ -600,7 +600,7 @@ static PyObject *CPH_PyMath_QuatMul(CPH_MathHolderObject *self, PyObject *const 
         return nullptr;
     }
 
-    culverin_math_quat_mul(a, b, out);
+    CPH_MathQuatMul(a, b, out);
 
     return CPH_PY_BUILD_TUPLE(out[0], out[1], out[2], out[3]);
 }
@@ -641,7 +641,7 @@ static PyObject *CPH_PyMath_Vec3LerpBatch(CPH_MathHolderObject *self, PyObject *
     PyObject *result = PyBytes_FromStringAndSize(nullptr, view_a.len);
 
     if (result) {
-        culverin_math_vec3_lerp_batch((const float *)view_a.buf, (const float *)view_b.buf, alpha,
+        CPH_MathVec3LerpBatch((const float *)view_a.buf, (const float *)view_b.buf, alpha,
                                       count, (float *)PyBytes_AsString(result));
     }
 
@@ -671,7 +671,7 @@ static PyObject *CPH_PyMath_QuatRotateVec3(CPH_MathHolderObject *self, PyObject 
         return nullptr;
     }
 
-    culverin_math_quat_rotate_vec3(q, v, out);
+    CPH_MathQuatRotateVec3(q, v, out);
 
     return CPH_PY_BUILD_TUPLE(out[0], out[1], out[2]);
 }
@@ -712,7 +712,7 @@ static PyObject *CPH_PyMath_QuatRotateVec3Batch(CPH_MathHolderObject *self,
     PyObject *result = PyBytes_FromStringAndSize(nullptr, view.len);
 
     if (result) {
-        culverin_math_quat_rotate_vec3_batch(q, (const float *)view.buf, count,
+        CPH_MathQuatRotateVec3Batch(q, (const float *)view.buf, count,
                                              (float *)PyBytes_AsString(result));
     }
 
@@ -738,7 +738,7 @@ static PyObject *CPH_PyMath_QuatInverse(CPH_MathHolderObject *self, PyObject *co
         return nullptr;
     }
 
-    culverin_math_quat_inverse(q, out);
+    CPH_MathQuatInverse(q, out);
 
     return CPH_PY_BUILD_TUPLE(out[0], out[1], out[2], out[3]);
 }
@@ -770,7 +770,7 @@ static PyObject *CPH_PyMath_Project(CPH_MathHolderObject *self, PyObject *const 
         return nullptr;
     }
 
-    culverin_math_project(v, mvp, viewport, out);
+    CPH_MathProject(v, mvp, viewport, out);
 
     return CPH_PY_BUILD_TUPLE(out[0], out[1], out[2]);
 }
@@ -802,7 +802,7 @@ static PyObject *CPH_PyMath_Unproject(CPH_MathHolderObject *self, PyObject *cons
         return nullptr;
     }
 
-    culverin_math_unproject(v, mvp, viewport, out);
+    CPH_MathUnproject(v, mvp, viewport, out);
 
     return CPH_PY_BUILD_TUPLE(out[0], out[1], out[2]);
 }
@@ -828,7 +828,7 @@ static PyObject *CPH_PyMath_QuatFromTo(CPH_MathHolderObject *self, PyObject *con
         return nullptr;
     }
 
-    culverin_math_quat_from_to(v1, v2, out);
+    CPH_MathQuatFromTo(v1, v2, out);
 
     return CPH_PY_BUILD_TUPLE(out[0], out[1], out[2], out[3]);
 }
@@ -854,7 +854,7 @@ static PyObject *CPH_PyMath_Vec3Dot(CPH_MathHolderObject *self, PyObject *const 
         return nullptr;
     }
 
-    float result = culverin_math_vec3_dot(v1, v2);
+    float result = CPH_MathVec3Dot(v1, v2);
 
     return PyFloat_FromDouble((double)result);
 }
@@ -880,7 +880,7 @@ static PyObject *CPH_PyMath_Vec3Cross(CPH_MathHolderObject *self, PyObject *cons
         return nullptr;
     }
 
-    culverin_math_vec3_cross(v1, v2, out);
+    CPH_MathVec3Cross(v1, v2, out);
 
     return CPH_PY_BUILD_TUPLE(out[0], out[1], out[2]);
 }
@@ -913,7 +913,7 @@ static PyObject *CPH_PyMath_IntersectRayPlane(CPH_MathHolderObject *self, PyObje
         return nullptr;
     }
 
-    int hit = culverin_math_intersect_ray_plane(ro, rd, po, pn, &out_t, out_p);
+    int hit = CPH_MathIntersectRayPlane(ro, rd, po, pn, &out_t, out_p);
 
     if (!hit) {
         return CPH_PY_BUILD_TUPLE(Py_False, 0.0f, Py_None);
@@ -942,7 +942,7 @@ static PyObject *CPH_PyMath_QuatGetAxisAngle(CPH_MathHolderObject *self, PyObjec
         return nullptr;
     }
 
-    culverin_math_quat_get_axis_angle(q, axis, &angle);
+    CPH_MathQuatGetAxisAngle(q, axis, &angle);
 
     return CPH_PY_BUILD_TUPLE(CPH_PY_BUILD_TUPLE(axis[0], axis[1], axis[2]), angle);
 }
@@ -968,7 +968,7 @@ static PyObject *CPH_PyMath_QuatFromAxisAngle(CPH_MathHolderObject *self,
         return nullptr;
     }
 
-    culverin_math_quat_from_axis_angle(axis, angle, out);
+    CPH_MathQuatFromAxisAngle(axis, angle, out);
 
     return CPH_PY_BUILD_TUPLE(out[0], out[1], out[2], out[3]);
 }
@@ -1008,7 +1008,7 @@ static PyObject *CPH_PyMath_Vec3DistanceBatch(CPH_MathHolderObject *self, PyObje
     PyObject *result = PyBytes_FromStringAndSize(nullptr, (Py_ssize_t)(count * sizeof(float)));
 
     if (result) {
-        culverin_math_vec3_distance_batch((const float *)view_a.buf, (const float *)view_b.buf,
+        CPH_MathVec3DistanceBatch((const float *)view_a.buf, (const float *)view_b.buf,
                                           count, (float *)PyBytes_AsString(result));
     }
 
@@ -1035,7 +1035,7 @@ static PyObject *CPH_PyMath_Vec3Normalize(CPH_MathHolderObject *self, PyObject *
         return nullptr;
     }
 
-    culverin_math_vec3_normalize(v, out);
+    CPH_MathVec3Normalize(v, out);
 
     return CPH_PY_BUILD_TUPLE(out[0], out[1], out[2]);
 }
@@ -1059,7 +1059,7 @@ static PyObject *CPH_PyMath_Mat44GetTranslation(CPH_MathHolderObject *self,
     }
 
     float out_vec[3];
-    culverin_math_mat44_get_translation(in_mat, out_vec);
+    CPH_MathMat44GetTranslation(in_mat, out_vec);
 
     return CPH_PY_BUILD_TUPLE(out_vec[0], out_vec[1], out_vec[2]);
 }
@@ -1082,7 +1082,7 @@ static PyObject *CPH_PyMath_Mat44GetRotation(CPH_MathHolderObject *self, PyObjec
     }
 
     float out_quat[4];
-    culverin_math_mat44_get_rotation(in_mat, out_quat);
+    CPH_MathMat44GetRotation(in_mat, out_quat);
 
     return CPH_PY_BUILD_TUPLE(out_quat[0], out_quat[1], out_quat[2], out_quat[3]);
 }
@@ -1090,7 +1090,7 @@ static PyObject *CPH_PyMath_Mat44GetRotation(CPH_MathHolderObject *self, PyObjec
 static PyObject *CPH_PyMath_Mat44Identity([[maybe_unused]] CPH_MathHolderObject *self,
                                                  PyObject *ignored [[maybe_unused]]) {
     float out[kSixteenFloats];
-    culverin_math_mat44_identity(out);
+    CPH_MathMat44Identity(out);
 
     return CPH_PY_BUILD_TUPLE(out[0], out[1], out[2], out[3], out[4], out[5], out[6], out[7], out[8],
                            out[9], out[10], out[11], out[12], out[13], out[14], out[15]);
@@ -1117,7 +1117,7 @@ static PyObject *CPH_PyMath_Vec3Reflect(CPH_MathHolderObject *self, PyObject *co
         return nullptr;
     }
 
-    culverin_math_vec3_reflect(v, n, out);
+    CPH_MathVec3Reflect(v, n, out);
 
     return CPH_PY_BUILD_TUPLE(out[0], out[1], out[2]);
 }
@@ -1142,7 +1142,7 @@ static PyObject *CPH_PyMath_Vec3Distance(CPH_MathHolderObject *self, PyObject *c
         return nullptr;
     }
 
-    float dist = culverin_math_vec3_distance(v1, v2);
+    float dist = CPH_MathVec3Distance(v1, v2);
 
     return PyFloat_FromDouble((double)dist);
 }
@@ -1169,7 +1169,7 @@ static PyObject *CPH_PyMath_QuatRotateVec3Inverse(CPH_MathHolderObject *self,
         return nullptr;
     }
 
-    culverin_math_quat_rotate_vec3_inverse(q, v, out);
+    CPH_MathQuatRotateVec3Inverse(q, v, out);
 
     return CPH_PY_BUILD_TUPLE(out[0], out[1], out[2]);
 }
@@ -1193,7 +1193,7 @@ static PyObject *CPH_PyMath_EulerToQuat(CPH_MathHolderObject *self, PyObject *co
         return nullptr;
     }
 
-    culverin_math_euler_to_quat(euler, q);
+    CPH_MathEulerToQuat(euler, q);
     return CPH_PY_BUILD_TUPLE(q[0], q[1], q[2], q[3]);
 }
 
@@ -1225,7 +1225,7 @@ static PyObject *CPH_PyMath_EulerToQuatBatch(CPH_MathHolderObject *self, PyObjec
         PyBytes_FromStringAndSize(nullptr, (Py_ssize_t)(count * 16)); // 4 floats per quat
 
     if (result) {
-        culverin_math_euler_to_quat_batch((const float *)view.buf, count,
+        CPH_MathEulerToQuatBatch((const float *)view.buf, count,
                                           (float *)PyBytes_AsString(result));
     }
 
@@ -1233,8 +1233,8 @@ static PyObject *CPH_PyMath_EulerToQuatBatch(CPH_MathHolderObject *self, PyObjec
     return result;
 }
 
-void CPH_CulverinMathInitAllParsers(CPH_MathParsers *mp);
-void CPH_CulverinMathFreeAllParsers(CPH_MathParsers *mp);
+void CPH_MathInitAllParsers(CPH_MathParsers *mp);
+void CPH_MathFreeAllParsers(CPH_MathParsers *mp);
 
 static PyObject *CPH_PyMath_New(PyTypeObject *type, [[maybe_unused]] PyObject *args,
                                       [[maybe_unused]] PyObject *kwds) {
@@ -1249,14 +1249,14 @@ static PyObject *CPH_PyMath_New(PyTypeObject *type, [[maybe_unused]] PyObject *a
     }
 
     // 3. Call your parser setup logic
-    CPH_CulverinMathInitAllParsers(self->parsers);
+    CPH_MathInitAllParsers(self->parsers);
 
     return (PyObject *)self;
 }
 
 static void CPH_PyMath_Dealloc(CPH_MathHolderObject *self) {
     if (self->parsers != nullptr) {
-        CPH_CulverinMathFreeAllParsers(self->parsers);
+        CPH_MathFreeAllParsers(self->parsers);
         PyMem_Free(self->parsers);
     }
     PyTypeObject *tp = Py_TYPE(self);

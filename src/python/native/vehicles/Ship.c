@@ -88,7 +88,7 @@ static void JPH_API_CALL Ship_OnStep(void *userData,
 static const JPH_PhysicsStepListener_Procs kShipListenerProcs = {.OnStep = Ship_OnStep};
 
 // --- CREATION ---
-void CPH_CulverinInitShipParsers(CPH_ShipParsers *sp);
+void CPH_InitShipParsers(CPH_ShipParsers *sp);
 PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateShip(CPH_PhysicsWorldObject *self,
                                                              PyObject *const *args,
                                                              size_t nargsf, PyObject *kwnames) {
@@ -126,7 +126,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateShip(CPH_PhysicsWorldObjec
     }
     JPH_BodyID bid = self->physics.body_ids[self->physics.slot_to_dense[slot]];
     CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
-    CPH_CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+    CPH_ModuleState *st = CPH_GetModuleState(PyType_GetModule(Py_TYPE(self)));
     auto obj          = (CPH_ShipObject *)PyObject_GC_New(CPH_ShipObject, (PyTypeObject *)st->ShipType);
     if (!obj) {
         return nullptr;
@@ -137,7 +137,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateShip(CPH_PhysicsWorldObjec
         PyErr_NoMemory();
         return nullptr;
     }
-    CPH_CulverinInitShipParsers(obj->parsers);
+    CPH_InitShipParsers(obj->parsers);
 
     obj->world      = (CPH_PhysicsWorldObject *)Py_NewRef(self);
     obj->sled_bid   = bid;
@@ -187,7 +187,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyShip_SetInput(CPH_ShipObject *self, Py
 }
 
 // --- CLEANUP ---
-void CPH_CulverinFreeShipParsers(CPH_ShipParsers *sp);
+void CPH_FreeShipParsers(CPH_ShipParsers *sp);
 PyType_DeclareSlot_VoidFromModule CPH_PyShip_Dealloc(CPH_ShipObject *self) {
     PyObject_GC_UnTrack(self);
 
@@ -200,7 +200,7 @@ PyType_DeclareSlot_VoidFromModule CPH_PyShip_Dealloc(CPH_ShipObject *self) {
     }
 
     if (self->parsers) {
-        CPH_CulverinFreeShipParsers(self->parsers);
+        CPH_FreeShipParsers(self->parsers);
         CPH_PyFree(self->parsers);
     }
 

@@ -6,12 +6,12 @@
 #include "bindings/PythonDeclarations.h"
 
 // A 64-bit Entity Handle: [32-bit Generation | 32-bit Index]
-typedef uint64_t CulvEntity;
+typedef uint64_t CPH_Entity;
 
 // The Sparse Set: Maps sparse Entity IDs to dense, contiguous data arrays.
 typedef struct {
     uint32_t *sparse;      // Index matches Entity ID. Value is Dense Index.
-    CulvEntity *dense;     // Index matches Dense Index. Value is Entity Handle.
+    CPH_Entity *dense;     // Index matches Dense Index. Value is Entity Handle.
     uint8_t *data;         // Contiguous byte array of component data
     uint32_t element_size; // Size of one component in bytes
     Py_ssize_t count;      // Active components

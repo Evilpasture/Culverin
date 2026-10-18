@@ -16,9 +16,9 @@
                       "Culverin parser: schema length mismatch for " #ParserName);                       \
         (cp)->ParserName##Parser.parser_name = #ParserName;                                        \
         /* 1. Create the definitions on the stack */                                               \
-        CPH_CulvFastArgDef temp[] = {Schema(CPH_GEN_SPEC)};                                                    \
+        CPH_FastArgDef temp[] = {Schema(CPH_GEN_SPEC)};                                                    \
         /* 2. Pass the stack pointer directly. culv_fast_parse_init_impl handles the mallocing now. */          \
-        CPH_CulvFastParseInitImpl(&(cp)->ParserName##Parser, temp, GroupName##_COUNT);                          \
+        CPH_FastParseInitImpl(&(cp)->ParserName##Parser, temp, GroupName##_COUNT);                          \
     } while (0)
 
 // --- 2. REGISTRATION & SETUP MACROS ---
@@ -37,7 +37,7 @@
         CPH_REGISTER_PARSER_ST(cp, ParserName);                                                        \
     } while (0)
 
-#define CPH_TEARDOWN_PARSER_ST(cp, ParserName) CPH_CulvFastParseDeinit(&(cp)->ParserName##Parser);
+#define CPH_TEARDOWN_PARSER_ST(cp, ParserName) CPH_FastParseDeinit(&(cp)->ParserName##Parser);
 
 // --- 3. THE GENERATOR ---
 
@@ -52,7 +52,7 @@
 
 // --- 4. INITIALIZATION & CLEANUP ---
 
-void CPH_CulverinInitWorldParsers(CPH_WorldParsers *wp) {
+void CPH_InitWorldParsers(CPH_WorldParsers *wp) {
     // Reset registry for this specific instance
     wp->registry_count = 0;
 #define CPH_DO_SETUP(P, G, S) CPH_SETUP_PARSER_ST(wp, P, G, S);
@@ -60,13 +60,13 @@ void CPH_CulverinInitWorldParsers(CPH_WorldParsers *wp) {
 #undef CPH_DO_SETUP
 }
 
-void CPH_CulverinFreeWorldParsers(CPH_WorldParsers *wp) {
+void CPH_FreeWorldParsers(CPH_WorldParsers *wp) {
 #define CPH_DO_FREE(P, G, S) CPH_TEARDOWN_PARSER_ST(wp, P);
     CPH_FOR_ALL_PARSERS(CPH_DO_FREE)
 #undef CPH_DO_FREE
 }
 
-void CPH_CulverinInitCharParsers(CPH_CharacterParsers *cp) {
+void CPH_InitCharParsers(CPH_CharacterParsers *cp) {
     // Reset registry for this specific instance
     cp->registry_count = 0;
 #define CPH_DO_SETUP(P, G, S) CPH_SETUP_PARSER_ST(cp, P, G, S);
@@ -74,13 +74,13 @@ void CPH_CulverinInitCharParsers(CPH_CharacterParsers *cp) {
 #undef CPH_DO_SETUP
 }
 
-void CPH_CulverinFreeCharParsers(CPH_CharacterParsers *cp) {
+void CPH_FreeCharParsers(CPH_CharacterParsers *cp) {
 #define CPH_DO_FREE(P, G, S) CPH_TEARDOWN_PARSER_ST(cp, P);
     CPH_FOR_ALL_CHAR_PARSERS(CPH_DO_FREE)
 #undef CPH_DO_FREE
 }
 
-void CPH_CulverinInitVehicleParsers(CPH_VehicleParsers *vp) {
+void CPH_InitVehicleParserGroup(CPH_VehicleParsers *vp) {
     // Reset registry for this specific instance
     vp->registry_count = 0;
 #define CPH_DO_SETUP(P, G, S) CPH_SETUP_PARSER_ST(vp, P, G, S);
@@ -88,13 +88,13 @@ void CPH_CulverinInitVehicleParsers(CPH_VehicleParsers *vp) {
 #undef CPH_DO_SETUP
 }
 
-void CPH_CulverinFreeVehicleParsers(CPH_VehicleParsers *vp) {
+void CPH_FreeVehicleParserGroup(CPH_VehicleParsers *vp) {
 #define CPH_DO_FREE(P, G, S) CPH_TEARDOWN_PARSER_ST(vp, P);
     CPH_FOR_ALL_VEHICLE_PARSERS(CPH_DO_FREE)
 #undef CPH_DO_FREE
 }
 
-void CPH_CulverinInitEcsParsers(CPH_ECSParsers *ep) {
+void CPH_InitEcsParsers(CPH_ECSParsers *ep) {
     // Reset registry for this specific instance
     ep->registry_count = 0;
 #define CPH_DO_SETUP(P, G, S) CPH_SETUP_PARSER_ST(ep, P, G, S);
@@ -102,107 +102,107 @@ void CPH_CulverinInitEcsParsers(CPH_ECSParsers *ep) {
 #undef CPH_DO_SETUP
 }
 
-void CPH_CulverinFreeEcsParsers(CPH_ECSParsers *ep) {
+void CPH_FreeEcsParsers(CPH_ECSParsers *ep) {
 #define CPH_DO_FREE(P, G, S) CPH_TEARDOWN_PARSER_ST(ep, P);
     CPH_FOR_ALL_ECS_PARSERS(CPH_DO_FREE)
 #undef CPH_DO_FREE
 }
 
-void CPH_CulverinInitSkeletonParsers(CPH_SkeletonParsers *sp) {
+void CPH_InitSkeletonParsers(CPH_SkeletonParsers *sp) {
     sp->registry_count = 0;
 #define CPH_DO_SETUP(P, G, S) CPH_SETUP_PARSER_ST(sp, P, G, S);
     CPH_FOR_ALL_SKELETON_PARSERS(CPH_DO_SETUP)
 #undef CPH_DO_SETUP
 }
 
-void CPH_CulverinFreeSkeletonParsers(CPH_SkeletonParsers *sp) {
+void CPH_FreeSkeletonParsers(CPH_SkeletonParsers *sp) {
 #define CPH_DO_FREE(P, G, S) CPH_TEARDOWN_PARSER_ST(sp, P)
     CPH_FOR_ALL_SKELETON_PARSERS(CPH_DO_FREE)
 #undef CPH_DO_FREE
 }
 
-void CPH_CulverinInitRagdollParsers(CPH_RagdollParsers *rp) {
+void CPH_InitRagdollParsers(CPH_RagdollParsers *rp) {
     rp->registry_count = 0;
 #define CPH_DO_SETUP(P, G, S) CPH_SETUP_PARSER_ST(rp, P, G, S);
     CPH_FOR_ALL_RAGDOLL_PARSERS(CPH_DO_SETUP)
 #undef CPH_DO_SETUP
 }
 
-void CPH_CulverinFreeRagdollParsers(CPH_RagdollParsers *rp) {
+void CPH_FreeRagdollParsers(CPH_RagdollParsers *rp) {
 #define CPH_DO_FREE(P, G, S) CPH_TEARDOWN_PARSER_ST(rp, P)
     CPH_FOR_ALL_RAGDOLL_PARSERS(CPH_DO_FREE)
 #undef CPH_DO_FREE
 }
 
-void CPH_CulverinInitRagdollSettingsParsers(CPH_RagdollSettingsParsers *rsp) {
+void CPH_InitRagdollSettingsParsers(CPH_RagdollSettingsParsers *rsp) {
     rsp->registry_count = 0;
 #define CPH_DO_SETUP(P, G, S) CPH_SETUP_PARSER_ST(rsp, P, G, S);
     CPH_FOR_ALL_RAGDOLL_SETTINGS_PARSERS(CPH_DO_SETUP)
 #undef CPH_DO_SETUP
 }
 
-void CPH_CulverinFreeRagdollSettingsParsers(CPH_RagdollSettingsParsers *rsp) {
+void CPH_FreeRagdollSettingsParsers(CPH_RagdollSettingsParsers *rsp) {
 #define CPH_DO_FREE(P, G, S) CPH_TEARDOWN_PARSER_ST(rsp, P)
     CPH_FOR_ALL_RAGDOLL_SETTINGS_PARSERS(CPH_DO_FREE)
 #undef CPH_DO_FREE
 }
 
-void CPH_CulverinInitShipParsers(CPH_ShipParsers *sp) {
+void CPH_InitShipParsers(CPH_ShipParsers *sp) {
     sp->registry_count = 0;
 #define CPH_DO_SETUP(P, G, S) CPH_SETUP_PARSER_ST(sp, P, G, S);
     CPH_FOR_ALL_SHIP_PARSERS(CPH_DO_SETUP)
 #undef CPH_DO_SETUP
 }
 
-void CPH_CulverinFreeShipParsers(CPH_ShipParsers *sp) {
+void CPH_FreeShipParsers(CPH_ShipParsers *sp) {
 #define CPH_DO_FREE(P, G, S) CPH_TEARDOWN_PARSER_ST(sp, P)
     CPH_FOR_ALL_SHIP_PARSERS(CPH_DO_FREE)
 #undef CPH_DO_FREE
 }
 
-void CPH_CulverinInitSbssParsers(CPH_SoftBodySharedSettingsParsers *sbssp) {
+void CPH_InitSbssParsers(CPH_SoftBodySharedSettingsParsers *sbssp) {
     sbssp->registry_count = 0;
 #define CPH_DO_SETUP(P, G, S) CPH_SETUP_PARSER_ST(sbssp, P, G, S);
     CPH_FOR_ALL_SBSS_PARSERS(CPH_DO_SETUP)
 #undef CPH_DO_SETUP
 }
 
-void CPH_CulverinFreeSbssParsers(CPH_SoftBodySharedSettingsParsers *sbssp) {
+void CPH_FreeSbssParsers(CPH_SoftBodySharedSettingsParsers *sbssp) {
 #define CPH_DO_FREE(P, G, S) CPH_TEARDOWN_PARSER_ST(sbssp, P)
     CPH_FOR_ALL_SBSS_PARSERS(CPH_DO_FREE)
 #undef CPH_DO_FREE
 }
 
-void CPH_CulverinMathInitAllParsers(CPH_MathParsers *mp) {
+void CPH_MathInitAllParsers(CPH_MathParsers *mp) {
     mp->registry_count = 0;
 #define CPH_DO_SETUP(P, G, S) CPH_SETUP_PARSER_ST(mp, P, G, S);
     CPH_FOR_ALL_MATH_PARSERS(CPH_DO_SETUP)
 #undef CPH_DO_SETUP
 }
 
-void CPH_CulverinMathFreeAllParsers(CPH_MathParsers *mp) {
+void CPH_MathFreeAllParsers(CPH_MathParsers *mp) {
 #define CPH_DO_FREE(P, G, S) CPH_TEARDOWN_PARSER_ST(mp, P)
     CPH_FOR_ALL_MATH_PARSERS(CPH_DO_FREE)
 #undef CPH_DO_FREE
 }
 
-void CPH_CulverinInitModuleParsers(CPH_ModuleParsers *mp) {
+void CPH_InitModuleParsers(CPH_ModuleParsers *mp) {
     mp->registry_count = 0;
 #define CPH_DO_SETUP(P, G, S) CPH_SETUP_PARSER_ST(mp, P, G, S);
     CPH_FOR_ALL_MODULE_PARSERS(CPH_DO_SETUP)
 #undef CPH_DO_SETUP
 }
 
-void CPH_CulverinFreeModuleParsers(CPH_ModuleParsers *mp) {
+void CPH_FreeModuleParsers(CPH_ModuleParsers *mp) {
 #define CPH_DO_FREE(P, G, S) CPH_TEARDOWN_PARSER_ST(mp, P);
     CPH_FOR_ALL_MODULE_PARSERS(CPH_DO_FREE)
 #undef CPH_DO_FREE
 }
 
-void CPH_CulvFastParseDumpSchemasJson(CPH_WorldParsers *wp, FILE *out) {
+void CPH_FastParseDumpSchemasJson(CPH_WorldParsers *wp, FILE *out) {
     fprintf(out, "{\n");
     for (size_t i = 0; i < wp->registry_count; i++) {
-        CPH_CulvFastParser *fp = wp->registry[i];
+        CPH_FastParser *fp = wp->registry[i];
         fprintf(out, "  \"%s\": [\n", fp->parser_name);
         for (size_t j = 0; j < fp->count; j++) {
             // FIX: Access strings from cold_specs, but requirement status from the mask

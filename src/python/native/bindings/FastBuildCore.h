@@ -30,47 +30,47 @@ typedef typeof(nullptr) nullptr_t;
 
 /* --- 1. TYPE CONSTRUCTORS (Inlined) --- */
 
-[[nodiscard]] CPH_PY_BUILD_FORCE_INLINE static PyObject *culv_py_build_from_float(float v) {
+[[nodiscard]] CPH_PY_BUILD_FORCE_INLINE static PyObject *CPH_PyBuildFromFloat(float v) {
     return PyFloat_FromDouble((double)v);
 }
-[[nodiscard]] CPH_PY_BUILD_FORCE_INLINE static PyObject *culv_py_build_from_double(double v) {
+[[nodiscard]] CPH_PY_BUILD_FORCE_INLINE static PyObject *CPH_PyBuildFromDouble(double v) {
     return PyFloat_FromDouble(v);
 }
-[[nodiscard]] CPH_PY_BUILD_FORCE_INLINE static PyObject *culv_py_build_from_int(int v) {
+[[nodiscard]] CPH_PY_BUILD_FORCE_INLINE static PyObject *CPH_PyBuildFromInt(int v) {
     return PyLong_FromLong((long)v);
 }
-[[nodiscard]] CPH_PY_BUILD_FORCE_INLINE static PyObject *culv_py_build_from_long(long v) {
+[[nodiscard]] CPH_PY_BUILD_FORCE_INLINE static PyObject *CPH_PyBuildFromLong(long v) {
     return PyLong_FromLong(v);
 }
-[[nodiscard]] CPH_PY_BUILD_FORCE_INLINE static PyObject *culv_py_build_from_longlong(long long v) {
+[[nodiscard]] CPH_PY_BUILD_FORCE_INLINE static PyObject *CPH_PyBuildFromLonglong(long long v) {
     return PyLong_FromLongLong(v);
 }
-[[nodiscard]] CPH_PY_BUILD_FORCE_INLINE static PyObject *culv_py_build_from_u32(uint32_t v) {
+[[nodiscard]] CPH_PY_BUILD_FORCE_INLINE static PyObject *CPH_PyBuildFromU32(uint32_t v) {
     return PyLong_FromUnsignedLong((unsigned long)v);
 }
-[[nodiscard]] CPH_PY_BUILD_FORCE_INLINE static PyObject *culv_py_build_from_u64(uint64_t v) {
+[[nodiscard]] CPH_PY_BUILD_FORCE_INLINE static PyObject *CPH_PyBuildFromU64(uint64_t v) {
     return PyLong_FromUnsignedLongLong((unsigned long long)v);
 }
-[[nodiscard]] CPH_PY_BUILD_FORCE_INLINE static PyObject *culv_py_build_from_str(const char *v) {
+[[nodiscard]] CPH_PY_BUILD_FORCE_INLINE static PyObject *CPH_PyBuildFromStr(const char *v) {
     return PyUnicode_FromString(v);
 }
-[[nodiscard]] CPH_PY_BUILD_FORCE_INLINE static PyObject *culv_py_build_from_bool(bool v) {
+[[nodiscard]] CPH_PY_BUILD_FORCE_INLINE static PyObject *CPH_PyBuildFromBool(bool v) {
     PyObject *res = (int)v ? Py_True : Py_False;
     Py_INCREF(res);
     return res;
 }
-[[nodiscard]] CPH_PY_BUILD_FORCE_INLINE static PyObject *culv_py_build_incref(PyObject *v) {
+[[nodiscard]] CPH_PY_BUILD_FORCE_INLINE static PyObject *CPH_PyBuildIncref(PyObject *v) {
     Py_XINCREF(v);
     return v;
 }
 [[nodiscard]] CPH_PY_BUILD_FORCE_INLINE static PyObject *
-culv_py_build_from_none([[maybe_unused]] nullptr_t v) {
+CPH_PyBuildFromNone([[maybe_unused]] nullptr_t v) {
     Py_RETURN_NONE;
 }
 
 /* --- 2. THE C23 COMPILE-TIME ROUTER --- */
 
-extern PyObject *culv_py_build_unsupported_type(void);
+extern PyObject *CPH_PyBuildUnsupportedType(void);
 
 // Allow host projects to inject custom builders
 #ifndef CPH_PY_BUILD_CUSTOM_CONVERTERS
@@ -79,25 +79,25 @@ extern PyObject *culv_py_build_unsupported_type(void);
 
 #define CPH_PY_BUILD_VAL(x)                                                                                  \
     _Generic((x),                                                                                  \
-        float: culv_py_build_from_float,                                                                      \
-        double: culv_py_build_from_double,                                                                    \
-        int: culv_py_build_from_int,                                                                          \
-        long: culv_py_build_from_long,                                                                        \
-        long long: culv_py_build_from_longlong,                                                               \
-        unsigned int: culv_py_build_from_u32,                                                                 \
+        float: CPH_PyBuildFromFloat,                                                                      \
+        double: CPH_PyBuildFromDouble,                                                                    \
+        int: CPH_PyBuildFromInt,                                                                          \
+        long: CPH_PyBuildFromLong,                                                                        \
+        long long: CPH_PyBuildFromLonglong,                                                               \
+        unsigned int: CPH_PyBuildFromU32,                                                                 \
         unsigned long: PyLong_FromUnsignedLong,                                                    \
-        unsigned long long: culv_py_build_from_u64,                                                           \
-        bool: culv_py_build_from_bool,                                                                        \
-        char *: culv_py_build_from_str,                                                                       \
-        const char *: culv_py_build_from_str,                                                                 \
-        nullptr_t: culv_py_build_from_none,                                                                   \
-        PyObject *: culv_py_build_incref CPH_PY_BUILD_CUSTOM_CONVERTERS,                                                \
-        default: culv_py_build_unsupported_type)(x)
+        unsigned long long: CPH_PyBuildFromU64,                                                           \
+        bool: CPH_PyBuildFromBool,                                                                        \
+        char *: CPH_PyBuildFromStr,                                                                       \
+        const char *: CPH_PyBuildFromStr,                                                                 \
+        nullptr_t: CPH_PyBuildFromNone,                                                                   \
+        PyObject *: CPH_PyBuildIncref CPH_PY_BUILD_CUSTOM_CONVERTERS,                                                \
+        default: CPH_PyBuildUnsupportedType)(x)
 
 /* --- 3. THE CONTAINER PACKERS --- */
 
 [[nodiscard]] [[gnu::always_inline]]
-static inline PyObject *culv_py_build_pack_tuple(size_t n, PyObject **arr) {
+static inline PyObject *CPH_PyBuildPackTuple(size_t n, PyObject **arr) {
     if (CPH_PY_BUILD_UNLIKELY(n == 0)) {
         return PyTuple_New(0);
     }
@@ -129,7 +129,7 @@ static inline PyObject *culv_py_build_pack_tuple(size_t n, PyObject **arr) {
     return t;
 }
 
-[[nodiscard]] CPH_PY_BUILD_FORCE_INLINE static PyObject *culv_py_build_pack_list(size_t n,
+[[nodiscard]] CPH_PY_BUILD_FORCE_INLINE static PyObject *CPH_PyBuildPackList(size_t n,
                                                                                   PyObject **arr) {
     if (CPH_PY_BUILD_UNLIKELY(n == 0)) {
         return PyList_New(0);
@@ -159,7 +159,7 @@ error:
     return nullptr;
 }
 
-[[nodiscard]] CPH_PY_BUILD_FORCE_INLINE static PyObject *culv_py_build_pack_dict(size_t n,
+[[nodiscard]] CPH_PY_BUILD_FORCE_INLINE static PyObject *CPH_PyBuildPackDict(size_t n,
                                                                                   PyObject **arr) {
     if (CPH_PY_BUILD_UNLIKELY(n == 0)) {
         return PyDict_New();
@@ -253,18 +253,18 @@ error:
 #define CPH_PY_BUILD_VALUE(x) CPH_PY_BUILD_VAL(x)
 
 #define CPH_PY_BUILD_TUPLE(...)                                                                       \
-    culv_py_build_pack_tuple(CPH_PY_BUILD_NARGS(__VA_ARGS__), CPH_PY_BUILD_NARGS(__VA_ARGS__)                                     \
+    CPH_PyBuildPackTuple(CPH_PY_BUILD_NARGS(__VA_ARGS__), CPH_PY_BUILD_NARGS(__VA_ARGS__)                                     \
                                              ? (PyObject *[]){__VA_OPT__(CPH_PY_BUILD_MAP(__VA_ARGS__))}     \
                                              : nullptr)
 
 #define CPH_PY_BUILD_LIST(...)                                                                        \
-    culv_py_build_pack_list(CPH_PY_BUILD_NARGS(__VA_ARGS__), CPH_PY_BUILD_NARGS(__VA_ARGS__)                                      \
+    CPH_PyBuildPackList(CPH_PY_BUILD_NARGS(__VA_ARGS__), CPH_PY_BUILD_NARGS(__VA_ARGS__)                                      \
                                             ? (PyObject *[]){__VA_OPT__(CPH_PY_BUILD_MAP(__VA_ARGS__))}      \
                                             : nullptr)
 
 #define CPH_PY_BUILD_DICT(...)                                                                        \
     (CPH_PY_BUILD_NARGS(__VA_ARGS__) % 2 == 0                                                                \
-         ? culv_py_build_pack_dict(CPH_PY_BUILD_NARGS(__VA_ARGS__),                                                     \
+         ? CPH_PyBuildPackDict(CPH_PY_BUILD_NARGS(__VA_ARGS__),                                                     \
                         CPH_PY_BUILD_NARGS(__VA_ARGS__) ? (PyObject *[]){__VA_OPT__(CPH_PY_BUILD_MAP(__VA_ARGS__))}    \
                                               : nullptr)                                           \
-         : culv_py_build_unsupported_type()) // This will fail to link or compile
+         : CPH_PyBuildUnsupportedType()) // This will fail to link or compile

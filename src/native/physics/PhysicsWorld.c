@@ -1038,7 +1038,7 @@ void CPH_PhysicsWorldStepNative(CPH_PhysicsWorld *world, float dt, PhysicsComman
     }
     CPH_NATIVE_MUTEX_UNLOCK(world->step_sync.mutex);
 
-    culverin_sync_shadow_buffers(world);
+    CPH_SyncShadowBuffers(world);
 
     CPH_PROFILE_END(jolt_step, "Jolt Physics Crunch", (unsigned int)command_count);
     CPH_NATIVE_MUTEX_UNLOCK(world->jph_trampoline_lock);

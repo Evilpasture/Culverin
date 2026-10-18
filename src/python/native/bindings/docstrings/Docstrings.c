@@ -101,7 +101,7 @@ static char *culv_docs_extract_docstring(const char *docs_ptr, const char *class
     return nullptr;
 }
 
-void CPH_CulvDocsStitchMethods(PyMethodDef *methods, const char *class_name, const char *markdown_content) {
+void CPH_DocsStitchMethods(PyMethodDef *methods, const char *class_name, const char *markdown_content) {
     if (methods == nullptr || markdown_content == nullptr) {
         return;
     }
@@ -112,7 +112,7 @@ void CPH_CulvDocsStitchMethods(PyMethodDef *methods, const char *class_name, con
     }
 }
 
-void CPH_CulvDocsStitchGetset(PyGetSetDef *getset, const char *class_name, const char *markdown_content) {
+void CPH_DocsStitchGetset(PyGetSetDef *getset, const char *class_name, const char *markdown_content) {
     if (getset == nullptr || markdown_content == nullptr) {
         return;
     }
@@ -123,16 +123,16 @@ void CPH_CulvDocsStitchGetset(PyGetSetDef *getset, const char *class_name, const
     }
 }
 
-void CPH_CulvDocsStitchSpec(PyType_Spec *spec, const char *class_name, const char *markdown_content) {
+void CPH_DocsStitchSpec(PyType_Spec *spec, const char *class_name, const char *markdown_content) {
     if (!spec || !spec->slots || !markdown_content) {
         return;
     }
     // Cast to PyType_Slot* to iterate
     for (const PyType_Slot *slot = (const PyType_Slot *)spec->slots; slot->slot != 0; slot++) {
         if (slot->slot == Py_tp_methods) {
-            CPH_CulvDocsStitchMethods((PyMethodDef *)slot->pfunc, class_name, markdown_content);
+            CPH_DocsStitchMethods((PyMethodDef *)slot->pfunc, class_name, markdown_content);
         } else if (slot->slot == Py_tp_getset) {
-            CPH_CulvDocsStitchGetset((PyGetSetDef *)slot->pfunc, class_name, markdown_content);
+            CPH_DocsStitchGetset((PyGetSetDef *)slot->pfunc, class_name, markdown_content);
         }
     }
 }

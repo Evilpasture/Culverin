@@ -780,7 +780,7 @@ PhysicsWorldRuntimeStatus CPH_PhysicsWorldGetRenderState(CPH_PhysicsWorld *world
         return PHYSICS_WORLD_RUNTIME_STATUS_OUT_OF_MEMORY;
     }
 
-    culverin_compute_interpolation_loop(
+    CPH_MathComputeInterpolationLoop(
         (CPH_PosStride *)world->positions, (CPH_PosStride *)world->prev_positions,
         (CPH_AuxStride *)world->rotations, (CPH_AuxStride *)world->prev_rotations, alpha, state, count);
     CPH_SHADOW_UNLOCK(&world->shadow_lock);

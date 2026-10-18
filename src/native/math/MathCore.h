@@ -12,7 +12,7 @@ static inline double newton_raphson_iterate_d(double number) {
     return number * (threehalfs - (half_number * number * number));
 }
 
-static inline double culverin_fast_rsqrt_d(double number) {
+static inline double CPH_FastRsqrtD(double number) {
     // Clang will likely emit RSQRTD (if available) or SQRTD + DIVD
     return 1.0 / sqrt(number);
 }
@@ -25,12 +25,12 @@ static inline float newton_raphson_iterate_f(float number) {
     return number * (threehalfs - (half_number * number * number));
 }
 
-static inline float culverin_fast_rsqrt_f(float number) { return 1.0f / sqrtf(number); }
+static inline float CPH_FastRsqrtF(float number) { return 1.0f / sqrtf(number); }
 
 // --- The Type-Generic Interface ---
 // NOLINTNEXTLINE(readability-identifier-naming)
-#define CPH_culverin_fast_rsqrt(x)                                                                     \
-    _Generic((x), float: culverin_fast_rsqrt_f, double: culverin_fast_rsqrt_d)(x)
+#define CPH_FastRsqrt(x)                                                                     \
+    _Generic((x), float: CPH_FastRsqrtF, double: CPH_FastRsqrtD)(x)
 
 // Helper to find an arbitrary vector perpendicular to 'in'
 [[maybe_unused]]
@@ -63,89 +63,89 @@ static inline void vec3_get_perpendicular(const JPH_Vec3 *CPH_RESTRICT in,
 #if defined(__cplusplus)
 extern "C" {
 #endif
-void culverin_compute_interpolation_loop(const CPH_PosStride *__restrict curr_p,
+void CPH_MathComputeInterpolationLoop(const CPH_PosStride *__restrict curr_p,
                                          const CPH_PosStride *__restrict prev_p,
                                          const CPH_AuxStride *__restrict curr_r,
                                          const CPH_AuxStride *__restrict prev_r, float alpha,
                                          float *__restrict out, size_t count);
 
-void culverin_math_interpolate_character_transform(const CPH_PosStride *__restrict start_p,
+void CPH_MathInterpolateCharacterTransform(const CPH_PosStride *__restrict start_p,
                                                    const CPH_AuxStride *__restrict start_r,
                                                    const JPH_RVec3 *__restrict end_p,
                                                    const JPH_Quat *__restrict end_r, float alpha,
                                                    float *__restrict out_p,
                                                    float *__restrict out_r);
-void culverin_math_get_perspective(float fovy_rad, float aspect, float near_p, float far_p,
+void CPH_MathGetPerspective(float fovy_rad, float aspect, float near_p, float far_p,
                                    float *__restrict out);
-void culverin_math_get_ortho(float left, float right, float bottom, float top, float near_p,
+void CPH_MathGetOrtho(float left, float right, float bottom, float top, float near_p,
                              float far_p, float *__restrict out);
-void culverin_math_get_look_at(const float *__restrict eye, const float *__restrict target,
+void CPH_MathGetLookAt(const float *__restrict eye, const float *__restrict target,
                                const float *__restrict up, float *__restrict out);
-void culverin_math_get_trs(const float *__restrict pos, const float *__restrict rot_q,
+void CPH_MathGetTrs(const float *__restrict pos, const float *__restrict rot_q,
                            const float *__restrict scale, float *__restrict out);
-void culverin_math_get_trs_batch(size_t count, const float *__restrict pos,
+void CPH_MathGetTrsBatch(size_t count, const float *__restrict pos,
                                  const float *__restrict rot_q, const float *__restrict scale,
                                  float *__restrict out);
-void culverin_math_mat44_inverse(const float *__restrict in, float *__restrict out);
-void culverin_math_mat44_mul(const float *__restrict a, const float *__restrict b,
+void CPH_MathMat44Inverse(const float *__restrict in, float *__restrict out);
+void CPH_MathMat44Mul(const float *__restrict a, const float *__restrict b,
                              float *__restrict out);
-void culverin_math_mat44_mul_batch(const float *__restrict single_mat,
+void CPH_MathMat44MulBatch(const float *__restrict single_mat,
                                    const float *__restrict batch_mats, size_t count,
                                    float *__restrict out);
-void culverin_math_transform_vec3(const float *__restrict mat, const float *__restrict vec,
+void CPH_MathTransformVec3(const float *__restrict mat, const float *__restrict vec,
                                   float *__restrict out);
-void culverin_math_transform_vec3_batch(const float *__restrict mat, const float *__restrict vecs,
+void CPH_MathTransformVec3Batch(const float *__restrict mat, const float *__restrict vecs,
                                         size_t count, float *__restrict out);
 // Returns 1 if visible, 0 if culled
-int culverin_math_cull_aabb(const float *__restrict vp_mat, const float *__restrict aabb_min,
+int CPH_MathCullAabb(const float *__restrict vp_mat, const float *__restrict aabb_min,
                             const float *__restrict aabb_max);
-void culverin_math_cull_aabb_batch(const float *__restrict vp_mat,
+void CPH_MathCullAabbBatch(const float *__restrict vp_mat,
                                    const float *__restrict aabb_data, size_t count,
                                    uint8_t *__restrict out_visibility);
-void culverin_math_vec3_normalize_batch(const float *__restrict in, size_t count,
+void CPH_MathVec3NormalizeBatch(const float *__restrict in, size_t count,
                                         float *__restrict out);
-void culverin_math_quat_from_euler(float x, float y, float z, float *__restrict out);
-void culverin_math_quat_to_euler(const float *__restrict in_q, float *__restrict out_euler);
-void culverin_math_quat_slerp(const float *__restrict q1, const float *__restrict q2, float t,
+void CPH_MathQuatFromEuler(float x, float y, float z, float *__restrict out);
+void CPH_MathQuatToEuler(const float *__restrict in_q, float *__restrict out_euler);
+void CPH_MathQuatSlerp(const float *__restrict q1, const float *__restrict q2, float t,
                               float *__restrict out);
-void culverin_math_quat_mul(const float *__restrict a, const float *__restrict b,
+void CPH_MathQuatMul(const float *__restrict a, const float *__restrict b,
                             float *__restrict out);
-void culverin_math_vec3_lerp_batch(const float *__restrict a, const float *__restrict b,
+void CPH_MathVec3LerpBatch(const float *__restrict a, const float *__restrict b,
                                    float alpha, size_t count, float *__restrict out);
-void culverin_math_quat_rotate_vec3(const float *__restrict q, const float *__restrict v,
+void CPH_MathQuatRotateVec3(const float *__restrict q, const float *__restrict v,
                                     float *__restrict out);
-void culverin_math_quat_rotate_vec3_batch(const float *__restrict q, const float *__restrict vecs,
+void CPH_MathQuatRotateVec3Batch(const float *__restrict q, const float *__restrict vecs,
                                           size_t count, float *__restrict out);
-void culverin_math_quat_inverse(const float *__restrict q, float *__restrict out);
-void culverin_math_project(const float *__restrict v, const float *__restrict mvp,
+void CPH_MathQuatInverse(const float *__restrict q, float *__restrict out);
+void CPH_MathProject(const float *__restrict v, const float *__restrict mvp,
                            const int *__restrict viewport, float *__restrict out);
-void culverin_math_unproject(const float *__restrict v, const float *__restrict mvp,
+void CPH_MathUnproject(const float *__restrict v, const float *__restrict mvp,
                              const int *__restrict viewport, float *__restrict out);
-void culverin_math_quat_from_to(const float *__restrict v1, const float *__restrict v2,
+void CPH_MathQuatFromTo(const float *__restrict v1, const float *__restrict v2,
                                 float *__restrict out);
-float culverin_math_vec3_dot(const float *__restrict v1, const float *__restrict v2);
-void culverin_math_vec3_cross(const float *__restrict v1, const float *__restrict v2,
+float CPH_MathVec3Dot(const float *__restrict v1, const float *__restrict v2);
+void CPH_MathVec3Cross(const float *__restrict v1, const float *__restrict v2,
                               float *__restrict out);
-int culverin_math_intersect_ray_plane(const float *__restrict ro, const float *__restrict rd,
+int CPH_MathIntersectRayPlane(const float *__restrict ro, const float *__restrict rd,
                                       const float *__restrict po, const float *__restrict pn,
                                       float *__restrict out_t, float *__restrict out_p);
-void culverin_math_quat_get_axis_angle(const float *__restrict in_q, float *__restrict out_axis,
+void CPH_MathQuatGetAxisAngle(const float *__restrict in_q, float *__restrict out_axis,
                                        float *__restrict out_angle);
-void culverin_math_quat_from_axis_angle(const float *__restrict axis, float angle,
+void CPH_MathQuatFromAxisAngle(const float *__restrict axis, float angle,
                                         float *__restrict out);
-void culverin_math_vec3_distance_batch(const float *__restrict a, const float *__restrict b,
+void CPH_MathVec3DistanceBatch(const float *__restrict a, const float *__restrict b,
                                        size_t count, float *__restrict out);
-void culverin_math_vec3_normalize(const float *__restrict v, float *__restrict out);
-void culverin_math_mat44_get_translation(const float *__restrict in_mat, float *__restrict out_vec);
-void culverin_math_mat44_get_rotation(const float *__restrict in_mat, float *__restrict out_quat);
-void culverin_math_mat44_identity(float *__restrict out);
-void culverin_math_vec3_reflect(const float *__restrict v, const float *__restrict n,
+void CPH_MathVec3Normalize(const float *__restrict v, float *__restrict out);
+void CPH_MathMat44GetTranslation(const float *__restrict in_mat, float *__restrict out_vec);
+void CPH_MathMat44GetRotation(const float *__restrict in_mat, float *__restrict out_quat);
+void CPH_MathMat44Identity(float *__restrict out);
+void CPH_MathVec3Reflect(const float *__restrict v, const float *__restrict n,
                                 float *__restrict out);
-float culverin_math_vec3_distance(const float *__restrict v1, const float *__restrict v2);
-void culverin_math_quat_rotate_vec3_inverse(const float *__restrict q, const float *__restrict v,
+float CPH_MathVec3Distance(const float *__restrict v1, const float *__restrict v2);
+void CPH_MathQuatRotateVec3Inverse(const float *__restrict q, const float *__restrict v,
                                             float *__restrict out);
-void culverin_math_euler_to_quat(const float *__restrict euler, float *__restrict out_q);
-void culverin_math_euler_to_quat_batch(const float *__restrict eulers, size_t count,
+void CPH_MathEulerToQuat(const float *__restrict euler, float *__restrict out_q);
+void CPH_MathEulerToQuatBatch(const float *__restrict eulers, size_t count,
                                        float *__restrict out_qs);
 #if defined(__cplusplus)
 }

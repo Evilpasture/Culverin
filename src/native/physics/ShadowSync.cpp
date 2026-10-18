@@ -259,7 +259,7 @@ ExecuteSyncPass(const Unsigned32 active_count, const JPH_PhysicsSystem *const CP
 // =================================================================================================
 
 extern "C" [[gnu::flatten, gnu::hot, gnu::nonnull(1)]] auto
-culverin_sync_shadow_buffers(const CPH_PhysicsWorld *const CPH_RESTRICT world) noexcept -> void {
+CPH_SyncShadowBuffers(const CPH_PhysicsWorld *const CPH_RESTRICT world) noexcept -> void {
     using namespace CPH;
     // Use upstream JoltC's public API instead of the fork-only raw PhysicsSystem accessor.
     const JPH_PhysicsSystem *const CPH_RESTRICT system = world->system;
@@ -274,7 +274,7 @@ culverin_sync_shadow_buffers(const CPH_PhysicsWorld *const CPH_RESTRICT world) n
     }
 
     constexpr Unsigned64 MIN_CYCLES             = 0xFFFFFFFFFFFFFFFFULL;
-    [[maybe_unused]] static CPH_CulvStat sync_stats = {
+    [[maybe_unused]] static CPH_Stat sync_stats = {
         .total_cycles = 0, .min_cycles = MIN_CYCLES, .max_cycles = 0, .count = 0};
 
     CPH_PROFILE_BEGIN(sync);
@@ -319,7 +319,7 @@ culverin_sync_shadow_buffers(const CPH_PhysicsWorld *const CPH_RESTRICT world) n
     if (sync_stats.count >= 50) {
         fprintf(stderr, "[culverin] Sync Stat Avg: %" PRIu64 " | Max: %" PRIu64 "\n",
                 sync_stats.total_cycles / sync_stats.count, sync_stats.max_cycles);
-        sync_stats = (CPH_CulvStat){0, MIN_CYCLES, 0, 0};
+        sync_stats = (CPH_Stat){0, MIN_CYCLES, 0, 0};
     }
 #endif
 }

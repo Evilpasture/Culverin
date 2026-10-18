@@ -31,16 +31,16 @@ static constexpr size_t kMutexMaxHeldLocks  = 64;
 
 static culv_platform_mutex_t culv_mutex_debug_graph_lock;
 static struct {
-    const CPH_CulvMutex *from;
-    const CPH_CulvMutex *to;
+    const CPH_Mutex *from;
+    const CPH_Mutex *to;
 } culv_mutex_debug_lock_edges[kMutexMaxDebugEdges];
 static size_t culv_mutex_debug_lock_edge_count = 0;
 
-static thread_local const CPH_CulvMutex *culv_mutex_debug_held_locks[kMutexMaxHeldLocks];
+static thread_local const CPH_Mutex *culv_mutex_debug_held_locks[kMutexMaxHeldLocks];
 static thread_local size_t culv_mutex_debug_held_lock_count = 0;
 
 static inline uintptr_t culv_mutex_get_current_id(void) {
-    CPH_CulvThread *fiber = CPH_CulvThreadGetCurrent();
+    CPH_Thread *fiber = CPH_ThreadGetCurrent();
     // If we are in a fiber context, the fiber pointer is our unique ID.
     if (fiber) {
         return (uintptr_t)fiber;
@@ -49,7 +49,7 @@ static inline uintptr_t culv_mutex_get_current_id(void) {
     return (uintptr_t)CPH_THREAD_PLATFORM_CURRENT_ID();
 }
 
-static bool culv_mutex_debug_dfs_check_cycle(const CPH_CulvMutex *current, const CPH_CulvMutex *target) {
+static bool culv_mutex_debug_dfs_check_cycle(const CPH_Mutex *current, const CPH_Mutex *target) {
     if (current == target)
         return true;
     for (size_t i = 0; i < culv_mutex_debug_lock_edge_count; i++) {
@@ -61,7 +61,7 @@ static bool culv_mutex_debug_dfs_check_cycle(const CPH_CulvMutex *current, const
     return false;
 }
 
-static void culv_mutex_debug_add_lock_edge(const CPH_CulvMutex *from, const CPH_CulvMutex *to) {
+static void culv_mutex_debug_add_lock_edge(const CPH_Mutex *from, const CPH_Mutex *to) {
     CPH_THREAD_PLATFORM_MUTEX_LOCK(&culv_mutex_debug_graph_lock);
 
     for (size_t i = 0; i < culv_mutex_debug_lock_edge_count; i++) {
@@ -85,11 +85,11 @@ static void culv_mutex_debug_add_lock_edge(const CPH_CulvMutex *from, const CPH_
     CPH_THREAD_PLATFORM_MUTEX_UNLOCK(&culv_mutex_debug_graph_lock);
 }
 
-void culv_mutex_debug_clear_owner(CPH_CulvMutex *mod) {
+void culv_mutex_debug_clear_owner(CPH_Mutex *mod) {
     atomic_store_explicit(&mod->has_owner, false, memory_order_release);
 }
 
-void culv_mutex_debug_check_pre_lock(CPH_CulvMutex *mod) {
+void culv_mutex_debug_check_pre_lock(CPH_Mutex *mod) {
     uint8_t bits = atomic_load_explicit(&mod->bits, memory_order_relaxed);
     if (bits & kMutexPoisoned) {
         assert(false && "FATAL: Attempting to lock a POISONED mutex!");
@@ -109,7 +109,7 @@ void culv_mutex_debug_check_pre_lock(CPH_CulvMutex *mod) {
     }
 }
 
-void culv_mutex_debug_post_lock(CPH_CulvMutex *mod) {
+void culv_mutex_debug_post_lock(CPH_Mutex *mod) {
     atomic_store_explicit(&mod->owner, culv_mutex_get_current_id(), memory_order_relaxed);
     atomic_store_explicit(&mod->has_owner, true, memory_order_release);
 
@@ -121,7 +121,7 @@ void culv_mutex_debug_post_lock(CPH_CulvMutex *mod) {
     }
 }
 
-void culv_mutex_debug_pre_unlock(CPH_CulvMutex *mod) {
+void culv_mutex_debug_pre_unlock(CPH_Mutex *mod) {
     if (!atomic_load_explicit(&mod->has_owner, memory_order_acquire)) {
         assert(false && "FATAL: Unlocking a mutex that has no owner!");
         abort();
@@ -147,14 +147,14 @@ void culv_mutex_debug_pre_unlock(CPH_CulvMutex *mod) {
 }
 #endif
 
-typedef struct CPH_CulvMutexWaiter CPH_CulvMutexWaiter;
+typedef struct CPH_MutexWaiter CPH_MutexWaiter;
 static constexpr size_t kMutexWaiterAlignment = 64;
-struct CPH_CulvMutexWaiter {
+struct CPH_MutexWaiter {
     alignas(kMutexWaiterAlignment)
         // 8-byte members grouped together
         const void *address;
-    CPH_CulvThread *fiber;
-    CPH_CulvMutexWaiter *next;
+    CPH_Thread *fiber;
+    CPH_MutexWaiter *next;
 
     // culv_platform_cond_t size varies by OS, but we keep it here
     culv_platform_cond_t cond;
@@ -167,14 +167,14 @@ struct CPH_CulvMutexWaiter {
 static constexpr size_t kMutexBucketAlignment = 128;
 typedef struct {
     alignas(kMutexBucketAlignment) culv_platform_mutex_t mutex;
-    CPH_CulvMutexWaiter *head;
+    CPH_MutexWaiter *head;
     uint8_t _pad[kMutexBucketAlignment - (sizeof(culv_platform_mutex_t) + sizeof(void *))];
-} CPH_CulvMutexBucket;
+} CPH_MutexBucket;
 
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
-alignas(kMutexBucketAlignment) static CPH_CulvMutexBucket culv_mutex_parking_lot[kMutexBucketCount];
+alignas(kMutexBucketAlignment) static CPH_MutexBucket culv_mutex_parking_lot[kMutexBucketCount];
 
-static_assert(sizeof(CPH_CulvMutexBucket) == kMutexBucketAlignment, "CulvMutexBucket must be exactly 128 bytes!");
+static_assert(sizeof(CPH_MutexBucket) == kMutexBucketAlignment, "CulvMutexBucket must be exactly 128 bytes!");
 
 [[gnu::constructor]]
 static void culv_mutex_init_parking_lot() {
@@ -200,9 +200,9 @@ static inline size_t culv_mutex_hash_address(const void *addr) {
     return (size_t)(hash_val % kMutexBucketCount);
 }
 
-[[gnu::cold, gnu::noinline, gnu::nonnull(1)]] CPH_MUTEX_INTERNAL void CPH_CulvMutexLockSlow(CPH_CulvMutex *mod) {
+[[gnu::cold, gnu::noinline, gnu::nonnull(1)]] CPH_MUTEX_INTERNAL void CPH_MutexLockSlow(CPH_Mutex *mod) {
     size_t hash    = culv_mutex_hash_address(mod);
-    CPH_CulvMutexBucket *bucket = &culv_mutex_parking_lot[hash];
+    CPH_MutexBucket *bucket = &culv_mutex_parking_lot[hash];
 
     // --- PHASE 1: Adaptive Exponential Backoff Spin ---
     // We increase the number of culv_cpu_relax() calls per iteration.
@@ -266,10 +266,10 @@ static inline size_t culv_mutex_hash_address(const void *addr) {
         atomic_fetch_add_explicit(&mod->park_count, 1, memory_order_relaxed);
 #endif
 
-        CPH_CulvThread *current_thread = CPH_CulvThreadGetCurrent();
+        CPH_Thread *current_thread = CPH_ThreadGetCurrent();
         bool is_fiber             = (bool)(current_thread != nullptr && !current_thread->is_main);
 
-        CPH_CulvMutexWaiter node = {
+        CPH_MutexWaiter node = {
             .address = mod, .next = nullptr, .fiber = (int)is_fiber ? current_thread : nullptr};
         atomic_init(&node.signaled, false);
 
@@ -305,14 +305,14 @@ static inline size_t culv_mutex_hash_address(const void *addr) {
             CPH_THREAD_PLATFORM_MUTEX_UNLOCK(&bucket->mutex);
 
             while (!atomic_load_explicit(&node.signaled, memory_order_acquire)) {
-                CPH_CulvThreadYield(); // Give CPU back to the scheduler
+                CPH_ThreadYield(); // Give CPU back to the scheduler
             }
             // No destruction needed, fiber resumes natively.
         }
     }
 }
 
-[[gnu::cold, gnu::noinline, gnu::nonnull(1)]] CPH_MUTEX_INTERNAL void CPH_CulvMutexUnlockSlow(CPH_CulvMutex *mod) {
+[[gnu::cold, gnu::noinline, gnu::nonnull(1)]] CPH_MUTEX_INTERNAL void CPH_MutexUnlockSlow(CPH_Mutex *mod) {
     uint8_t val = atomic_load_explicit(&mod->bits, memory_order_relaxed);
     for (;;) {
         uint8_t desired = val & ~kMutexLocked;
@@ -326,11 +326,11 @@ static inline size_t culv_mutex_hash_address(const void *addr) {
     }
 
     size_t hash    = culv_mutex_hash_address(mod);
-    CPH_CulvMutexBucket *bucket = &culv_mutex_parking_lot[hash];
+    CPH_MutexBucket *bucket = &culv_mutex_parking_lot[hash];
     CPH_THREAD_PLATFORM_MUTEX_LOCK(&bucket->mutex);
 
-    CPH_CulvMutexWaiter **curr   = &bucket->head;
-    CPH_CulvMutexWaiter *to_wake = nullptr;
+    CPH_MutexWaiter **curr   = &bucket->head;
+    CPH_MutexWaiter *to_wake = nullptr;
     bool more       = false;
 
     while (*curr != nullptr) {
@@ -371,14 +371,14 @@ static inline size_t culv_mutex_hash_address(const void *addr) {
 // CulvCond Implementation
 // ============================================================================
 
-void CPH_CulvCondWait(CPH_CulvCond *condvar, CPH_CulvMutex *mod) {
+void CPH_CondWait(CPH_Cond *condvar, CPH_Mutex *mod) {
     size_t hash    = culv_mutex_hash_address(condvar);
-    CPH_CulvMutexBucket *bucket = &culv_mutex_parking_lot[hash];
+    CPH_MutexBucket *bucket = &culv_mutex_parking_lot[hash];
 
-    CPH_CulvThread *current_thread = CPH_CulvThreadGetCurrent();
+    CPH_Thread *current_thread = CPH_ThreadGetCurrent();
     bool is_fiber             = (bool)(current_thread != nullptr && !current_thread->is_main);
 
-    CPH_CulvMutexWaiter node = {
+    CPH_MutexWaiter node = {
         .address = condvar, .next = nullptr, .fiber = (int)is_fiber ? current_thread : nullptr};
     atomic_init(&node.signaled, false);
 
@@ -411,7 +411,7 @@ void CPH_CulvCondWait(CPH_CulvCond *condvar, CPH_CulvMutex *mod) {
         culv_mutex_unlock(mod);            // Unlock user's mutex
 
         while (!atomic_load_explicit(&node.signaled, memory_order_acquire)) {
-            CPH_CulvThreadYield(); // Yield CPU to other fibers
+            CPH_ThreadYield(); // Yield CPU to other fibers
         }
     }
 
@@ -419,7 +419,7 @@ void CPH_CulvCondWait(CPH_CulvCond *condvar, CPH_CulvMutex *mod) {
     culv_mutex_lock(mod);
 }
 
-void CPH_CulvCondSignal(CPH_CulvCond *condvar) {
+void CPH_CondSignal(CPH_Cond *condvar) {
     // Fast path: if no waiters exist, bail out immediately without taking the bucket lock.
     // (This is completely safe due to the Acquire/Release relationship of the user's Mutex).
     if (atomic_load_explicit(&condvar->bits, memory_order_relaxed) == 0) {
@@ -427,11 +427,11 @@ void CPH_CulvCondSignal(CPH_CulvCond *condvar) {
     }
 
     size_t hash    = culv_mutex_hash_address(condvar);
-    CPH_CulvMutexBucket *bucket = &culv_mutex_parking_lot[hash];
+    CPH_MutexBucket *bucket = &culv_mutex_parking_lot[hash];
     CPH_THREAD_PLATFORM_MUTEX_LOCK(&bucket->mutex);
 
-    CPH_CulvMutexWaiter **curr   = &bucket->head;
-    CPH_CulvMutexWaiter *to_wake = nullptr;
+    CPH_MutexWaiter **curr   = &bucket->head;
+    CPH_MutexWaiter *to_wake = nullptr;
     bool more       = false;
 
     // Extract the first waiter waiting on this specific CV address
@@ -460,21 +460,21 @@ void CPH_CulvCondSignal(CPH_CulvCond *condvar) {
     CPH_THREAD_PLATFORM_MUTEX_UNLOCK(&bucket->mutex);
 }
 
-void CPH_CulvCondBroadcast(CPH_CulvCond *condvar) {
+void CPH_CondBroadcast(CPH_Cond *condvar) {
     if (atomic_load_explicit(&condvar->bits, memory_order_relaxed) == 0) {
         return;
     }
 
     size_t hash    = culv_mutex_hash_address(condvar);
-    CPH_CulvMutexBucket *bucket = &culv_mutex_parking_lot[hash];
+    CPH_MutexBucket *bucket = &culv_mutex_parking_lot[hash];
     CPH_THREAD_PLATFORM_MUTEX_LOCK(&bucket->mutex);
 
-    CPH_CulvMutexWaiter **curr     = &bucket->head;
-    CPH_CulvMutexWaiter *wake_list = nullptr;
+    CPH_MutexWaiter **curr     = &bucket->head;
+    CPH_MutexWaiter *wake_list = nullptr;
 
     while (*curr != nullptr) {
         if ((*curr)->address == condvar) {
-            CPH_CulvMutexWaiter *waiter = *curr;
+            CPH_MutexWaiter *waiter = *curr;
             *curr          = waiter->next; // Unlink from bucket
 
             waiter->next = wake_list; // Link to local stack wake_list
@@ -488,7 +488,7 @@ void CPH_CulvCondBroadcast(CPH_CulvCond *condvar) {
 
     // Wake all extracted nodes
     while (wake_list != nullptr) {
-        CPH_CulvMutexWaiter *waiter = wake_list;
+        CPH_MutexWaiter *waiter = wake_list;
         wake_list      = waiter->next;
 
         atomic_store_explicit(&waiter->signaled, true, memory_order_release);

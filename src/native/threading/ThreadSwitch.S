@@ -1,12 +1,12 @@
 #include "ThreadAssembly.h"
 
 // ----------------------------------------------------------------------------
-// culv_thread_switch(void **old_sp, void *new_sp)
+// CPH_ThreadSwitch(void **old_sp, void *new_sp)
 // ----------------------------------------------------------------------------
-    .global CPH_ASM_SYMBOL(culv_thread_switch)
+    .global CPH_ASM_SYMBOL(CPH_ThreadSwitch)
     .text
     .p2align 4
-CPH_ASM_SYMBOL(culv_thread_switch):
+CPH_ASM_SYMBOL(CPH_ThreadSwitch):
 #if defined(CPH_ASM_OS_WINDOWS) && defined(CPH_ASM_ARCH_X64)
     push %rax
     push %rbp; push %rbx; push %rdi; push %rsi
@@ -62,29 +62,29 @@ CPH_ASM_SYMBOL(culv_thread_switch):
     ret
 #endif
 #if defined(CPH_ASM_OS_LINUX)
-    .size CPH_ASM_SYMBOL(culv_thread_switch), .- CPH_ASM_SYMBOL(culv_thread_switch)
+    .size CPH_ASM_SYMBOL(CPH_ThreadSwitch), .- CPH_ASM_SYMBOL(CPH_ThreadSwitch)
 #endif
 
 // ----------------------------------------------------------------------------
-// culv_thread_trampoline_asm
+// CPH_ThreadTrampolineAsm
 // ----------------------------------------------------------------------------
-    .global CPH_ASM_SYMBOL(culv_thread_trampoline_asm)
+    .global CPH_ASM_SYMBOL(CPH_ThreadTrampolineAsm)
     .text
     .p2align 4
-CPH_ASM_SYMBOL(culv_thread_trampoline_asm):
+CPH_ASM_SYMBOL(CPH_ThreadTrampolineAsm):
 #if defined(CPH_ASM_OS_WINDOWS) && defined(CPH_ASM_ARCH_X64)
     sub $32, %rsp
-    call CPH_ASM_SYMBOL(CPH_CulvThreadTrampoline)
+    call CPH_ASM_SYMBOL(CPH_ThreadTrampoline)
     add $32, %rsp
     ret
 #elif defined(CPH_ASM_ARCH_X64)
     sub $8, %rsp
-    call CPH_ASM_SYMBOL(CPH_CulvThreadTrampoline)
+    call CPH_ASM_SYMBOL(CPH_ThreadTrampoline)
     add $8, %rsp
     ret
 #elif defined(CPH_ASM_ARCH_ARM64)
-    b CPH_ASM_SYMBOL(CPH_CulvThreadTrampoline)
+    b CPH_ASM_SYMBOL(CPH_ThreadTrampoline)
 #endif
 #if defined(CPH_ASM_OS_LINUX)
-    .size CPH_ASM_SYMBOL(culv_thread_trampoline_asm), .- CPH_ASM_SYMBOL(culv_thread_trampoline_asm)
+    .size CPH_ASM_SYMBOL(CPH_ThreadTrampolineAsm), .- CPH_ASM_SYMBOL(CPH_ThreadTrampolineAsm)
 #endif

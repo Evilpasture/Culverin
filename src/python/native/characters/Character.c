@@ -790,7 +790,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyChar_GetRenderTransform(CPH_CharacterO
     JPH_CharacterVirtual_GetPosition(self->character, end_p);
     JPH_CharacterVirtual_GetRotation(self->character, end_r);
 
-    culverin_math_interpolate_character_transform(&shadow_ppos[dense], &shadow_prot[dense], end_p,
+    CPH_MathInterpolateCharacterTransform(&shadow_ppos[dense], &shadow_prot[dense], end_p,
                                                   end_r, alpha, res_p, res_r);
 
     CPH_SHADOW_UNLOCK(&self->world->physics.shadow_lock);
@@ -822,7 +822,7 @@ PyType_DeclareSlot_StatusFromModule CPH_PyChar_Clear(CPH_CharacterObject *self) 
     return 0;
 }
 
-void CPH_CulverinFreeCharParsers(CPH_CharacterParsers *cp);
+void CPH_FreeCharParsers(CPH_CharacterParsers *cp);
 
 PyType_DeclareSlot_VoidFromModule CPH_PyChar_Dealloc(CPH_CharacterObject *self) {
     PyObject_GC_UnTrack(self);
@@ -874,7 +874,7 @@ PyType_DeclareSlot_VoidFromModule CPH_PyChar_Dealloc(CPH_CharacterObject *self) 
 
 finalize:
     if (self->parsers) {
-        CPH_CulverinFreeCharParsers(self->parsers);
+        CPH_FreeCharParsers(self->parsers);
         CPH_PyFree(self->parsers);
     }
     Py_XDECREF(self->world);
@@ -988,14 +988,14 @@ static inline void setup_char_filters(CPH_CharacterObject *obj) {
     CPH_NATIVE_MUTEX_UNLOCK(obj->world->physics.jph_trampoline_lock);
     JPH_CharacterVirtual_SetListener(obj->character, obj->listener);
 }
-void CPH_CulverinInitCharParsers(CPH_CharacterParsers *cp);
+void CPH_InitCharParsers(CPH_CharacterParsers *cp);
 [[nodiscard]]
 static inline int setup_char_parsers(CPH_CharacterObject *obj) {
     obj->parsers = (CPH_CharacterParsers *)CPH_PyAlloc(sizeof(CPH_CharacterParsers));
     if (!obj->parsers) {
         return -1;
     }
-    CPH_CulverinInitCharParsers(obj->parsers);
+    CPH_InitCharParsers(obj->parsers);
     return 0;
 }
 
@@ -1057,7 +1057,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateCharacter(CPH_PhysicsWorld
 
     auto obj = (CPH_CharacterObject *)PyObject_GC_New(
         CPH_CharacterObject,
-        (PyTypeObject *)get_culverin_state(PyType_GetModule(Py_TYPE(self)))->CharacterType);
+        (PyTypeObject *)CPH_GetModuleState(PyType_GetModule(Py_TYPE(self)))->CharacterType);
     if (!obj) {
         goto fail_py;
     }

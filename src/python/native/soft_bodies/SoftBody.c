@@ -26,7 +26,7 @@ PyType_DeclareSlot_StatusFromModule CPH_PySbss_Init(CPH_SoftBodySharedSettingsOb
         PyErr_NoMemory();
         return -1;
     }
-    CPH_CulverinInitSbssParsers(self->parsers);
+    CPH_InitSbssParsers(self->parsers);
     return 0;
 }
 
@@ -37,7 +37,7 @@ CPH_PySbss_Dealloc(CPH_SoftBodySharedSettingsObject *self) {
         self->settings = nullptr;
     }
     if (self->parsers) {
-        CPH_CulverinFreeSbssParsers(self->parsers);
+        CPH_FreeSbssParsers(self->parsers);
         CPH_PyFree(self->parsers);
     }
     PyTypeObject *tp = Py_TYPE(self);
