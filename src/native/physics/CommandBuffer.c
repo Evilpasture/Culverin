@@ -451,24 +451,40 @@ op_CREATE_CONSTRAINT: {
     if (state == SLOT_PENDING_CREATE) {
         // Verify bodies still exist in Jolt
         if (bid1 != kJphInvalidBodyId && bid2 != kJphInvalidBodyId) {
-            JPH_BodyLockWrite lock1;
-            JPH_BodyLockWrite lock2;
             const JPH_BodyLockInterface *li = JPH_PhysicsSystem_GetBodyLockInterface(world->system);
+            JPH_Body *b1 = nullptr;
+            JPH_Body *b2 = nullptr;
 
-            // Consistent locking order to prevent deadlocks
-            if (bid1 < bid2) {
-                JPH_BodyLockInterface_LockWrite(li, bid1, &lock1);
-                JPH_BodyLockInterface_LockWrite(li, bid2, &lock2);
-            } else {
-                JPH_BodyLockInterface_LockWrite(li, bid2, &lock2);
-                JPH_BodyLockInterface_LockWrite(li, bid1, &lock1);
+            // --- MUTEX_ARRAY HASH-COLLISION PREVENTION (restores fix #89) ---
+            // Jolt's BodyLockInterface maps thousands of BodyIDs onto a fixed-size mutex array
+            // (typically 128/256). Two BodyIDs whose indices differ by a multiple of the array
+            // size hash to the SAME physical mutex, so holding two write locks simultaneously
+            // can recurse that mutex on this thread -> glibc aborts with EDEADLK
+            // ("Resource deadlock avoided", std::system_error).
+            //
+            // The world is quiesced for this command flush (BLOCK_UNTIL_NOT_STEPPING is
+            // complete), so lock each body in a short separate scope, retain the stable body
+            // pointer, and never hold more than one body lock at a time. This eliminates both
+            // lock-order deadlocks (obviating the bid1<bid2 handshake) and hash collisions.
+            {
+                JPH_BodyLockWrite lock;
+                JPH_BodyLockInterface_LockWrite(li, bid1, &lock);
+                if (lock.body && JPH_Body_GetID(lock.body) == bid1) {
+                    b1 = lock.body;
+                }
+                JPH_BodyLockInterface_UnlockWrite(li, &lock);
+            }
+            {
+                JPH_BodyLockWrite lock;
+                JPH_BodyLockInterface_LockWrite(li, bid2, &lock);
+                if (lock.body && JPH_Body_GetID(lock.body) == bid2) {
+                    b2 = lock.body;
+                }
+                JPH_BodyLockInterface_UnlockWrite(li, &lock);
             }
 
             JPH_Constraint *constraint = nullptr;
-            if (lock1.body && lock2.body) {
-                JPH_Body *b1 = (JPH_Body_GetID(lock1.body) == bid1) ? lock1.body : lock2.body;
-                JPH_Body *b2 = (JPH_Body_GetID(lock1.body) == bid2) ? lock1.body : lock2.body;
-
+            if (b1 && b2) {
                 switch (cmd->constraint.type) {
                 case CONSTRAINT_FIXED:
                     constraint = CPH_CreateFixed(p, b1, b2);
@@ -492,9 +508,6 @@ op_CREATE_CONSTRAINT: {
                     break;
                 }
             }
-
-            JPH_BodyLockInterface_UnlockWrite(li, &lock1);
-            JPH_BodyLockInterface_UnlockWrite(li, &lock2);
 
             if (constraint) {
                 JPH_PhysicsSystem_AddConstraint(world->system, constraint);
