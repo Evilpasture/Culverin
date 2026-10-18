@@ -246,9 +246,9 @@ PhysicsWorldStatus physics_world_load_baked_scene(PhysicsWorld *world,
         return PHYSICS_WORLD_STATUS_LIMIT_REACHED;
     }
 
-    auto *const shadow_pos    = (PosStride *)world->positions;
-    auto *const shadow_rot    = (AuxStride *)world->rotations;
-    PhysicsWorldStatus status = PHYSICS_WORLD_STATUS_OK;
+    PosStride *const shadow_pos = (PosStride *)world->positions;
+    AuxStride *const shadow_rot = (AuxStride *)world->rotations;
+    PhysicsWorldStatus status   = PHYSICS_WORLD_STATUS_OK;
 
     SHADOW_LOCK(&world->shadow_lock);
     NATIVE_MUTEX_LOCK(world->jph_trampoline_lock);

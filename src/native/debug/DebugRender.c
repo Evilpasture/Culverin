@@ -44,7 +44,7 @@ void debug_buffer_free(DebugBuffer *buf) {
 // --- Jolt Debug Callbacks ---
 static void JPH_API_CALL OnDebugDrawLine(void *userData, const JPH_RVec3 *from, const JPH_RVec3 *to,
                                          JPH_Color color) {
-    auto *world = (PhysicsWorld *)userData;
+    PhysicsWorld *world = (PhysicsWorld *)userData;
     debug_buffer_ensure(&world->debug_lines, 2);
     debug_buffer_push(&world->debug_lines,
                       (DebugCoordinates){(float)from->x, (float)from->y, (float)from->z}, color);
@@ -57,7 +57,7 @@ OnDebugDrawTriangle(void *userData, const JPH_RVec3 *v1, const JPH_RVec3 *v2,
                     // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
                     const JPH_RVec3 *v3, JPH_Color color,
                     [[maybe_unused]] JPH_DebugRenderer_CastShadow castShadow) {
-    auto *world = (PhysicsWorld *)userData;
+    PhysicsWorld *world = (PhysicsWorld *)userData;
     constexpr int VERTS_PER_TRIANGLE = 3;
     debug_buffer_ensure(&world->debug_triangles, VERTS_PER_TRIANGLE);
     debug_buffer_push(&world->debug_triangles,
