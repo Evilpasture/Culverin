@@ -1,7 +1,7 @@
 #include <math.h>
 #include "characters/Character.h"
 #include "bindings/BindingCommon.h"
-#include "bindings/parsing/ArgIndices.h"
+#include "bindings/parsing/ParserRegistry.hpp"
 #include "physics/ContactEventDefinitions.h"
 #include "core/CompilerSpecifics.h"
 #include "bindings/FastBuild.h"
@@ -550,12 +550,10 @@ PyCFunction_DeclareMethodFromModule CPH_PyChar_Move(CPH_CharacterObject *self, P
     CPH_Vec3f v_in = {};
     float dt   = 0.0f;
 
-    const void *const restrict targets[CharMove_COUNT] = {
-        [IDX_CM_VEL] = (const void *const restrict)&v_in,
-        [IDX_CM_DT]  = (const void *const restrict)&dt};
+
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!CPH_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->CharMoveParser, targets)) {
+    if (!self->parsers->CharMove.Parse(args, nargs, kwnames, v_in, dt)) {
         return nullptr;
     }
 
@@ -572,7 +570,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyChar_Move(CPH_CharacterObject *self, P
 
     // TSan Fix: Load handle atomically to resolve indices
     uint64_t h_raw = atomic_load_explicit(&self->handle, memory_order_relaxed);
-    uint32_t slot  = (uint32_t)(h_raw & kHandleIndexMask);
+    uint32_t slot = (uint32_t)(h_raw & kHandleIndexMask);
     uint32_t dense = self->world->physics.slot_to_dense[slot];
 
     // Snapshot current state to prev for interpolation
@@ -670,11 +668,9 @@ PyCFunction_DeclareMethodFromModule CPH_PyChar_SetPosition(CPH_CharacterObject *
                                                            PyObject *kwnames) {
     const Py_ssize_t nargs = (Py_ssize_t)PyVectorcall_NARGS(nargsf);
     CPH_PosStride pos                                        = {};
-    const void *const restrict targets[SetPosChar_COUNT] = {
-        [IDX_SPC_POS] = (const void *const restrict)&pos,
-    };
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->SetPosCharParser, targets)) {
+
+    if (!self->parsers->SetPosChar.Parse(args, nargs, kwnames, pos)) {
         return nullptr;
     }
 
@@ -687,7 +683,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyChar_SetPosition(CPH_CharacterObject *
 
     // Update Shadow Buffers
     uint64_t h_raw = atomic_load_explicit(&self->handle, memory_order_relaxed);
-    uint32_t slot  = (uint32_t)(h_raw & kHandleIndexMask);
+    uint32_t slot = (uint32_t)(h_raw & kHandleIndexMask);
     uint32_t dense = self->world->physics.slot_to_dense[slot];
 
     auto shadow_pos  = (CPH_PosStride *)self->world->physics.positions;
@@ -707,11 +703,9 @@ PyCFunction_DeclareMethodFromModule CPH_PyChar_SetRotation(CPH_CharacterObject *
     const Py_ssize_t nargs = (Py_ssize_t)PyVectorcall_NARGS(nargsf);
     CPH_AuxStride rot = {.x = 0.0f, .y = 0.0f, .z = 0.0f, .w = 1.0f};
 
-    const void *const restrict targets[SetRotChar_COUNT] = {
-        [IDX_SRC_ROT] = (const void *const restrict)&rot,
-    };
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->SetRotCharParser, targets)) {
+
+    if (!self->parsers->SetRotChar.Parse(args, nargs, kwnames, rot)) {
         return nullptr;
     }
 
@@ -741,11 +735,9 @@ PyCFunction_DeclareMethodFromModule CPH_PyChar_SetStrength(CPH_CharacterObject *
     const Py_ssize_t nargs = (Py_ssize_t)PyVectorcall_NARGS(nargsf);
     float strength = 0.0f;
 
-    const void *const restrict targets[SetStrengthChar_COUNT] = {
-        [IDX_SSC_STRENGTH] = (const void *const restrict)&strength,
-    };
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->SetStrengthCharParser, targets)) {
+
+    if (!self->parsers->SetStrengthChar.Parse(args, nargs, kwnames, strength)) {
         return nullptr;
     }
 
@@ -821,12 +813,11 @@ PyType_DeclareSlot_StatusFromModule CPH_PyChar_Clear(CPH_CharacterObject *self) 
     Py_CLEAR(self->world);
     return 0;
 }
-
-void CPH_FreeCharParsers(CPH_CharacterParsers *cp);
-
 PyType_DeclareSlot_VoidFromModule CPH_PyChar_Dealloc(CPH_CharacterObject *self) {
     PyObject_GC_UnTrack(self);
 
+    uint64_t h_raw = 0;
+    uint32_t slot = 0;
     if (!self->world) {
         goto finalize;
     }
@@ -836,8 +827,8 @@ PyType_DeclareSlot_VoidFromModule CPH_PyChar_Dealloc(CPH_CharacterObject *self) 
     CPH_BLOCK_UNTIL_NOT_STEPPING(self->world);
     CPH_BLOCK_UNTIL_NOT_QUERYING(self->world);
 
-    uint64_t h_raw = atomic_load_explicit(&self->handle, memory_order_relaxed);
-    uint32_t slot  = (uint32_t)(h_raw & kHandleIndexMask);
+    h_raw = atomic_load_explicit(&self->handle, memory_order_relaxed);
+    slot = (uint32_t)(h_raw & kHandleIndexMask);
 
     CPH_WorldRemoveBodySlot(&self->world->physics, slot);
 
@@ -874,8 +865,8 @@ PyType_DeclareSlot_VoidFromModule CPH_PyChar_Dealloc(CPH_CharacterObject *self) 
 
 finalize:
     if (self->parsers) {
-        CPH_FreeCharParsers(self->parsers);
-        CPH_PyFree(self->parsers);
+
+        delete self->parsers;
     }
     Py_XDECREF(self->world);
     Py_TYPE(self)->tp_free((PyObject *)self);
@@ -899,9 +890,10 @@ static inline JPH_CharacterVirtual *alloc_j_char(CPH_PhysicsWorldObject *self, C
     static constexpr float DegreesPerSemiCircle = 180.0f;
     settings.base.maxSlopeAngle = params.max_slope * (JPH_M_PI / DegreesPerSemiCircle);
 
+    JPH_RVec3 initial_position{(double)pos.px, (double)pos.py, (double)pos.pz};
+    JPH_Quat initial_rotation{0, 0, 0, 1};
     JPH_CharacterVirtual *j_char = JPH_CharacterVirtual_Create(
-        &settings, &(JPH_RVec3){(double)pos.px, (double)pos.py, (double)pos.pz},
-        &(JPH_Quat){0, 0, 0, 1}, 1, self->physics.system);
+        &settings, &initial_position, &initial_rotation, 1, self->physics.system);
 
     JPH_Shape_Destroy(shape);
     if (!j_char) {
@@ -988,14 +980,13 @@ static inline void setup_char_filters(CPH_CharacterObject *obj) {
     CPH_NATIVE_MUTEX_UNLOCK(obj->world->physics.jph_trampoline_lock);
     JPH_CharacterVirtual_SetListener(obj->character, obj->listener);
 }
-void CPH_InitCharParsers(CPH_CharacterParsers *cp);
 [[nodiscard]]
 static inline int setup_char_parsers(CPH_CharacterObject *obj) {
-    obj->parsers = (CPH_CharacterParsers *)CPH_PyAlloc(sizeof(CPH_CharacterParsers));
+    obj->parsers = CPH::NewParserGroup<CPH_CharacterParsers>();
     if (!obj->parsers) {
         return -1;
     }
-    CPH_InitCharParsers(obj->parsers);
+    obj->parsers->Init();
     return 0;
 }
 
@@ -1015,14 +1006,9 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateCharacter(CPH_PhysicsWorld
     float step_h                  = DEFUALT_STEP_H;
     float slope                   = DEFAULT_SLOPE;
 
-    const void *const restrict targets[CreateChar_COUNT] = {
-        [IDX_CCHAR_POS]   = (const void *const restrict)&pos,
-        [IDX_CCHAR_H]     = (const void *const restrict)&height,
-        [IDX_CCHAR_R]     = (const void *const restrict)&radius,
-        [IDX_CCHAR_STEP]  = (const void *const restrict)&step_h,
-        [IDX_CCHAR_SLOPE] = (const void *const restrict)&slope};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->CreateCharParser, targets)) {
+
+    if (!self->parsers->CreateChar.Parse(args, nargs, kwnames, pos, height, radius, step_h, slope)) {
         return nullptr;
     }
 
@@ -1050,12 +1036,13 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateCharacter(CPH_PhysicsWorld
     CPH_PositionVector pos_vec      = {pos.x, pos.y, pos.z};
     CPH_CharacterParams char_params = {height, radius, slope};
 
+    CPH_CharacterObject *obj = nullptr;
     JPH_CharacterVirtual *j_char = alloc_j_char(self, pos_vec, char_params);
     if (!j_char) {
         goto fail_jolt;
     }
 
-    auto obj = (CPH_CharacterObject *)PyObject_GC_New(
+    obj = (CPH_CharacterObject *)PyObject_GC_New(
         CPH_CharacterObject,
         (PyTypeObject *)CPH_GetModuleState(PyType_GetModule(Py_TYPE(self)))->CharacterType);
     if (!obj) {
@@ -1130,10 +1117,10 @@ PyType_Spec Character_spec = {
     .slots =
         (PyType_Slot[]){
 
-            {.slot = Py_tp_dealloc, .pfunc = CPH_PyChar_Dealloc},
-            {.slot = Py_tp_traverse, .pfunc = CPH_PyChar_Traverse},
-            {.slot = Py_tp_clear, .pfunc = CPH_PyChar_Clear},
-            {.slot = Py_tp_methods, .pfunc = kCharacterMethods },
+            {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(CPH_PyChar_Dealloc)},
+            {.slot = Py_tp_traverse, .pfunc = reinterpret_cast<void *>(CPH_PyChar_Traverse)},
+            {.slot = Py_tp_clear, .pfunc = reinterpret_cast<void *>(CPH_PyChar_Clear)},
+            {.slot = Py_tp_methods, .pfunc = reinterpret_cast<void *>(kCharacterMethods) },
             {.slot = Py_tp_getset,
              .pfunc =
                  (PyGetSetDef[]){

@@ -1,2 +1,2 @@
-add_library(culverin_python_ragdolls OBJECT Ragdoll.c Ragdoll.h)
+add_library(culverin_python_ragdolls OBJECT Ragdoll.cpp Ragdoll.h)
 culverin_configure_python_target(culverin_python_ragdolls)

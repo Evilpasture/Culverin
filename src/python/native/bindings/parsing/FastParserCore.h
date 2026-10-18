@@ -453,75 +453,6 @@ static inline bool culv_fast_parse_dispatch_conv(bool (*conv)(PyObject *, const 
     return conv(obj, target);
 }
 
-// Allow host projects to inject custom types
-#ifndef CPH_FAST_PARSE_CUSTOM_CONVERTERS
-#    define CPH_FAST_PARSE_CUSTOM_CONVERTERS /* empty */
-#endif
-
-extern void culv_fast_parse_unsupported_type(void);
-
-#define CPH_FAST_PARSE_GET_CONVERTER(T)                                                                        \
-    _Generic((T),                                                                                  \
-        float: culv_fast_parse_conv_float,                                                                      \
-        double: culv_fast_parse_conv_double,                                                                    \
-        int: culv_fast_parse_conv_int,                                                                          \
-        uint32_t: culv_fast_parse_conv_u32,                                                                     \
-        uint64_t: culv_fast_parse_conv_u64,                                                                     \
-        Py_ssize_t: culv_fast_parse_conv_ssize,                                                                 \
-        bool: culv_fast_parse_conv_bool,                                                                        \
-        const char *: culv_fast_parse_conv_str,                                                                 \
-        PyObject *: culv_fast_parse_conv_pyobj CPH_FAST_PARSE_CUSTOM_CONVERTERS, /* INJECTION POINT */                      \
-        default: culv_fast_parse_unsupported_type)
-
-#ifndef CPH_FAST_PARSE_CUSTOM_TYPE_NAMES
-#    define CPH_FAST_PARSE_CUSTOM_TYPE_NAMES /* empty */
-#endif
-
-#define CPH_FAST_PARSE_GET_TYPE_NAME(T)                                                                        \
-    _Generic((T),                                                                                  \
-        float: "float",                                                                            \
-        double: "float",                                                                           \
-        int: "int",                                                                                \
-        uint32_t: "int",                                                                           \
-        uint64_t: "int",                                                                           \
-        Py_ssize_t: "int",                                                                         \
-        bool: "bool",                                                                              \
-        const char *: "str",                                                                       \
-        PyObject *: "object" CPH_FAST_PARSE_CUSTOM_TYPE_NAMES, /* INJECTION POINT */                           \
-        default: "any")
-
-#define CPH_FAST_PARSE_ARG(name_str, var)                                                                      \
-    (CPH_FastArgDef) {                                                                                 \
-        .name = (name_str), .type_name = CPH_FAST_PARSE_GET_TYPE_NAME((typeof_unqual(var)){}),                 \
-        .type_guard = NULL, .convert = CPH_FAST_PARSE_GET_CONVERTER((typeof_unqual(var)){}), .required = false \
-    }
-
-#define CPH_FAST_PARSE_REQ_ARG(name_str, var)                                                                  \
-    (CPH_FastArgDef) {                                                                                 \
-        .name = (name_str), .type_name = CPH_FAST_PARSE_GET_TYPE_NAME((typeof_unqual(var)){}),                 \
-        .type_guard = NULL, .convert = CPH_FAST_PARSE_GET_CONVERTER((typeof_unqual(var)){}), .required = true  \
-    }
-
-#define CPH_FAST_PARSE_ARG_GUARD(name_str, guard_type_ptr, var)                                                \
-    (CPH_FastArgDef) {                                                                                 \
-        .name = (name_str), .type_name = (guard_type_ptr)->tp_name,                                \
-        .type_guard = (guard_type_ptr), .convert = CPH_FAST_PARSE_GET_CONVERTER((typeof_unqual(var)){}),       \
-        .required = false                                                                          \
-    }
-
-#define CPH_FAST_PARSE_REQ_ARG_GUARD(name_str, guard_type_ptr, var)                                            \
-    (CPH_FastArgDef) {                                                                                 \
-        .name = (name_str), .type_name = (guard_type_ptr)->tp_name,                                \
-        .type_guard = (guard_type_ptr), .convert = CPH_FAST_PARSE_GET_CONVERTER((typeof_unqual(var)){}),       \
-        .required = true                                                                           \
-    }
-
-#define CPH_FAST_PARSE_ARG_CUSTOM(name_str, conv_func)                                                         \
-    (CPH_FastArgDef) {                                                                                 \
-        .name = (name_str), .type_name = "object", .type_guard = NULL, .convert = (conv_func),     \
-        .required = false                                                                          \
-    }
-
 /** --- 4. THE HOT PATH --- **/
 [[gnu::always_inline, gnu::const, maybe_unused, nodiscard]]
 static inline size_t culv_fast_parse_hash_ptr(PyObject *ptr, size_t mask) {
@@ -701,22 +632,3 @@ culv_fast_parse_vector(PyObject *const args[CPH_FAST_PARSE_STATIC_SIZE(const CPH
 
     return true;
 }
-
-/** --- 5. PUBLIC MACROS --- **/
-
-// Triggered if argument 1 is of an unsupported type
-extern void culv_fast_parse_invalid_argument_vector(void);
-// NOLINTNEXTLINE(readability-identifier-naming)
-#define CPH_FAST_PARSE_UNIFIED(arg1, arg2, arg3, arg4, arg5)                                            \
-    _Generic((arg1),                                                                               \
-        PyObject *const *: (arg4)->hot_path,                                                       \
-        PyObject **: (arg4)->hot_path,                                                             \
-        PyObject *: CPH_FastParseLegacy,                                                               \
-        default: culv_fast_parse_invalid_argument_vector)(                \
-        (arg1), (arg2), (arg3), (arg4), (arg5))
-// NOLINTNEXTLINE(readability-identifier-naming)
-#define CPH_FAST_PARSE_INIT(fastparser, specs, count)                                                   \
-    do {                                                                                           \
-        static_assert((count) <= 64, "Culverin parser supports at most 64 arguments");                \
-        CPH_FastParseInitImpl(fastparser, specs, count);                                                    \
-    } while (false)

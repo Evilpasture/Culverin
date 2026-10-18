@@ -9,7 +9,7 @@
 #include "physics/PhysicsWorldRuntime.h"
 #include "bindings/physics/WorldAdapters.h"
 #include "core/NativeAlloc.h"
-#include "bindings/parsing/ArgIndices.h"
+#include "bindings/parsing/ParserRegistry.hpp"
 #include "physics/ContactEventDefinitions.h"
 #include "core/CompilerSpecifics.h"
 #include "bindings/FastBuild.h"
@@ -85,8 +85,8 @@ PyType_DeclareSlot_Void CPH_PyWorld_Dealloc(CPH_PhysicsWorldObject *self) {
 
     // Clean up local parsers
     if (self->parsers != nullptr) {
-        CPH_FreeWorldParsers(self->parsers);
-        CPH_PyFree(self->parsers);
+
+        delete self->parsers;
     }
 
     // 3. The "Manual" work
@@ -112,12 +112,12 @@ PyType_DeclareSlot_Status CPH_PyWorld_Init(CPH_PhysicsWorldObject *self, PyObjec
         return -1;
     }
     if (self->parsers == nullptr) {
-        self->parsers = (CPH_WorldParsers *)CPH_PyAlloc(sizeof(CPH_WorldParsers));
+        self->parsers = CPH::NewParserGroup<CPH_WorldParsers>();
         if (self->parsers == nullptr) {
             PyErr_NoMemory();
             return -1;
         }
-        CPH_InitWorldParsers(self->parsers);
+        self->parsers->Init();
     }
 
     PyObject *settings_dict     = nullptr;
@@ -126,12 +126,11 @@ PyType_DeclareSlot_Status CPH_PyWorld_Init(CPH_PhysicsWorldObject *self, PyObjec
     size_t baked_count          = 0;
     CPH_GravityVector gravity;
     CPH_WorldSettings settings;
+    size_t start_idx = 0;
 
-    const void *const restrict targets[WorldInit_COUNT] = {
-        [IDX_SETTINGS] = (const void *const restrict)&settings_dict,
-        [IDX_BODIES]   = (const void *const restrict)&bodies_list};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, kwds, nullptr, &self->parsers->WorldInitParser, targets)) {
+
+    if (!self->parsers->WorldInit.Parse(args, kwds, settings_dict, bodies_list)) {
         return -1;
     }
 
@@ -190,7 +189,7 @@ PyType_DeclareSlot_Status CPH_PyWorld_Init(CPH_PhysicsWorldObject *self, PyObjec
         goto fail;
     }
 
-    size_t start_idx = atomic_load_explicit(&self->physics.count, memory_order_relaxed);
+    start_idx = atomic_load_explicit(&self->physics.count, memory_order_relaxed);
     CPH_InitializeFreeSlots(&self->physics, start_idx);
 
     CPH_SHADOW_LOCK(&self->physics.shadow_lock);
@@ -354,14 +353,9 @@ PyCFunction_DeclareMethod CPH_PyWorld_ApplyImpulse(CPH_PhysicsWorldObject *self,
     float x;
     float y;
     float z;
-    const void *const restrict targets[Vec3_COUNT] = {[IDX_V3_H] =
-                                                          (const void *const restrict)&h_raw,
-                                                      [IDX_V3_X] = (const void *const restrict)&x,
-                                                      [IDX_V3_Y] = (const void *const restrict)&y,
-                                                      [IDX_V3_Z] = (const void *const restrict)&z};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->ImpulseParser, targets)) {
+
+    if (!self->parsers->Impulse.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, x, y, z)) {
         return nullptr;
     }
     CPH_VALIDATE_FINITE_VEC3(x, y, z, "Impulse");
@@ -384,17 +378,9 @@ PyCFunction_DeclareMethod CPH_PyWorld_ApplyImpulseAt(CPH_PhysicsWorldObject *sel
     JPH_Real px;
     JPH_Real py;
     JPH_Real pz;
-    const void *const restrict targets[ImpAt_COUNT] = {
-        [IDX_IMPAT_H]  = (const void *const restrict)&h_raw,
-        [IDX_IMPAT_IX] = (const void *const restrict)&ix,
-        [IDX_IMPAT_IY] = (const void *const restrict)&iy,
-        [IDX_IMPAT_IZ] = (const void *const restrict)&iz,
-        [IDX_IMPAT_PX] = (const void *const restrict)&px,
-        [IDX_IMPAT_PY] = (const void *const restrict)&py,
-        [IDX_IMPAT_PZ] = (const void *const restrict)&pz};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->ImpulseAtParser, targets)) {
+
+    if (!self->parsers->ImpulseAt.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, ix, iy, iz, px, py, pz)) {
         return nullptr;
     }
 
@@ -417,14 +403,9 @@ PyCFunction_DeclareMethod CPH_PyWorld_ApplyAngularImpulse(CPH_PhysicsWorldObject
     float x;
     float y;
     float z;
-    const void *const restrict targets[Vec3_COUNT] = {[IDX_V3_H] =
-                                                          (const void *const restrict)&h_raw,
-                                                      [IDX_V3_X] = (const void *const restrict)&x,
-                                                      [IDX_V3_Y] = (const void *const restrict)&y,
-                                                      [IDX_V3_Z] = (const void *const restrict)&z};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->AngImpulseParser, targets)) {
+
+    if (!self->parsers->AngImpulse.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, x, y, z)) {
         return nullptr;
     }
     CPH_VALIDATE_FINITE_VEC3(x, y, z, "Angular impulse");
@@ -445,14 +426,9 @@ PyCFunction_DeclareMethod CPH_PyWorld_ApplyForce(CPH_PhysicsWorldObject *self, P
     float x;
     float y;
     float z;
-    const void *const restrict targets[Vec3_COUNT] = {[IDX_V3_H] =
-                                                          (const void *const restrict)&h_raw,
-                                                      [IDX_V3_X] = (const void *const restrict)&x,
-                                                      [IDX_V3_Y] = (const void *const restrict)&y,
-                                                      [IDX_V3_Z] = (const void *const restrict)&z};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->ForceParser, targets)) {
+
+    if (!self->parsers->Force.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, x, y, z)) {
         return nullptr;
     }
     CPH_VALIDATE_FINITE_VEC3(x, y, z, "Force");
@@ -474,14 +450,9 @@ PyCFunction_DeclareMethod CPH_PyWorld_ApplyTorque(CPH_PhysicsWorldObject *self, 
     float x;
     float y;
     float z;
-    const void *const restrict targets[Vec3_COUNT] = {[IDX_V3_H] =
-                                                          (const void *const restrict)&h_raw,
-                                                      [IDX_V3_X] = (const void *const restrict)&x,
-                                                      [IDX_V3_Y] = (const void *const restrict)&y,
-                                                      [IDX_V3_Z] = (const void *const restrict)&z};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->TorqueParser, targets)) {
+
+    if (!self->parsers->Torque.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, x, y, z)) {
         return nullptr;
     }
     CPH_VALIDATE_FINITE_VEC3(x, y, z, "Torque");
@@ -500,14 +471,9 @@ PyCFunction_DeclareMethod CPH_PyWorld_SetGravity(CPH_PhysicsWorldObject *self, P
     float x;
     float y;
     float z;
-    const void *const restrict targets[XYZ_COUNT] = {
-        [IDX_XYZ_X] = (const void *const restrict)&x,
-        [IDX_XYZ_Y] = (const void *const restrict)&y,
-        [IDX_XYZ_Z] = (const void *const restrict)&z,
-    };
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->GravityParser, targets)) {
+
+    if (!self->parsers->Gravity.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, x, y, z)) {
         return nullptr;
     }
     CPH_VALIDATE_FINITE_VEC3(x, y, z, "Gravity");
@@ -541,11 +507,8 @@ PyCFunction_DeclareMethod CPH_PyWorld_GetBodyStats(CPH_PhysicsWorldObject *self,
                                                       PyObject *const *args, size_t nargsf,
                                                       PyObject *kwnames) {
     uint64_t h_raw;
-    const void *const restrict targets[HOnly_COUNT] = {
-        [IDX_H_H] = (const void *const restrict)&h_raw,
-    };
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->HOnlyParser, targets)) {
+
+    if (!self->parsers->HOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw)) {
         return nullptr;
     }
 
@@ -575,17 +538,8 @@ PyCFunction_DeclareMethod CPH_PyWorld_ApplyBuoyancy(CPH_PhysicsWorldObject *self
     float ang_drag                                 = kDefaultAngularDrag;
     float dt                                       = kDefaultFrameTime;
     PyObject *o_vel                                = nullptr;
-    const void *const restrict targets[Buoy_COUNT] = {
-        [IDX_BUOY_HANDLE]    = (const void *const restrict)&h_raw,
-        [IDX_BUOY_SURFACE_Y] = (const void *const restrict)&surface_y,
-        [IDX_BUOY_BUOYANCY]  = (const void *const restrict)&buoyancy,
-        [IDX_BUOY_LIN_DRAG]  = (const void *const restrict)&lin_drag,
-        [IDX_BUOY_ANG_DRAG]  = (const void *const restrict)&ang_drag,
-        [IDX_BUOY_DT]        = (const void *const restrict)&dt,
-        [IDX_BUOY_VEL]       = (const void *const restrict)&o_vel,
-    };
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->BuoyParser, targets)) {
+
+    if (!self->parsers->Buoy.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, surface_y, buoyancy, lin_drag, ang_drag, dt, o_vel)) {
         return nullptr;
     }
 
@@ -628,17 +582,8 @@ PyCFunction_DeclareMethod CPH_PyWorld_ApplyBuoyancyBatch(CPH_PhysicsWorldObject 
     float lin_drag                                      = kDefaultLinearDrag;
     float ang_drag                                      = kDefaultAngularDrag;
     float dt                                            = kDefaultFrameTime;
-    const void *const restrict targets[BatchBuoy_COUNT] = {
-        [IDX_BBUOY_HANDLES]   = (const void *const restrict)&o_handles,
-        [IDX_BBUOY_SURFACE_Y] = (const void *const restrict)&surface_y,
-        [IDX_BBUOY_BUOYANCY]  = (const void *const restrict)&buoyancy,
-        [IDX_BBUOY_LIN_DRAG]  = (const void *const restrict)&lin_drag,
-        [IDX_BBUOY_ANG_DRAG]  = (const void *const restrict)&ang_drag,
-        [IDX_BBUOY_DT]        = (const void *const restrict)&dt,
-        [IDX_BBUOY_VEL]       = (const void *const restrict)&o_vel,
-    };
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->BatchBuoyParser, targets)) {
+
+    if (!self->parsers->BatchBuoy.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_handles, surface_y, buoyancy, lin_drag, ang_drag, dt, o_vel)) {
         return nullptr;
     }
 
@@ -714,19 +659,17 @@ PyCFunction_DeclareMethod CPH_PyWorld_LoadState(CPH_PhysicsWorldObject *self, Py
                                                   size_t nargsf, PyObject *kwnames) {
     const Py_ssize_t nargs = (Py_ssize_t)PyVectorcall_NARGS(nargsf);
     PyObject *state_obj = nullptr;
-    const void *const restrict targets[LoadState_COUNT] = {
-        [IDX_LS_STATE] = (const void *const restrict)&state_obj,
-    };
-    if (!CPH_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->LoadStateParser, targets)) {
+
+    if (!self->parsers->LoadState.Parse(args, nargs, kwnames, state_obj)) {
         return nullptr;
     }
 
-    Py_buffer view = {0};
+    Py_buffer view{};
     if (PyObject_GetBuffer(state_obj, &view, PyBUF_SIMPLE) != 0) {
         return nullptr;
     }
     const size_t data_size = (size_t)view.len;
-    uint8_t *snapshot = CPH_Alloc(data_size ? data_size : 1);
+    uint8_t *snapshot = static_cast<uint8_t *>(CPH_Alloc(data_size ? data_size : 1));
     if (!snapshot) {
         PyBuffer_Release(&view);
         return PyErr_NoMemory();
@@ -775,12 +718,10 @@ static inline void internal_auto_gil_restore(CPH_PyThreadCtx *ctx) {
 PyCFunction_DeclareMethod CPH_PyWorld_Step(CPH_PhysicsWorldObject *self, PyObject *const *args,
                                             size_t nargsf, PyObject *kwnames) {
     float dt                                       = kDefaultFrameTime;
-    const void *const restrict targets[Step_COUNT] = {
-        [IDX_STEP_DT] = (const void *const restrict)&dt,
-    };
+
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!CPH_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->StepParser, targets)) {
+    if (!self->parsers->Step.Parse(args, nargs, kwnames, dt)) {
         return nullptr;
     }
 
@@ -865,23 +806,9 @@ PyCFunction_DeclareMethod CPH_PyWorld_CreateConvexHull(CPH_PhysicsWorldObject *s
     bool is_sensor       = false;
     bool use_ccd         = false;
 
-    const void *const restrict targets[HC_COUNT] = {
-        [IDX_HC_POS]       = (void *const restrict)&o_pos,
-        [IDX_HC_ROT]       = (void *const restrict)&o_rot,
-        [IDX_HC_DATA]      = (void *const restrict)&o_points,
-        [IDX_HC_MOTION]    = (void *const restrict)&motion_type,
-        [IDX_HC_MASS]      = (void *const restrict)&mass,
-        [IDX_HC_USER_DATA] = (void *const restrict)&user_data,
-        [IDX_HC_SENSOR]    = (void *const restrict)&is_sensor,
-        [IDX_HC_CAT]       = (void *const restrict)&category,
-        [IDX_HC_MASK]      = (void *const restrict)&mask,
-        [IDX_HC_MAT_ID]    = (void *const restrict)&material_id,
-        [IDX_HC_FRIC]      = (void *const restrict)&friction,
-        [IDX_HC_REST]      = (void *const restrict)&restitution,
-        [IDX_HC_CCD]       = (void *const restrict)&use_ccd};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->ConvexHullParser, targets)) {
+
+    if (!self->parsers->ConvexHull.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_pos, o_rot, o_points, motion_type, mass, user_data, is_sensor, category, mask, material_id, friction, restitution, use_ccd)) {
         return nullptr;
     }
 
@@ -956,8 +883,8 @@ static CPH_PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_
         return nullptr;
     }
 
-    CPH_PhysicsWorldCompoundPart *buffer =
-        CPH_PyAlloc((size_t)part_count * sizeof(CPH_PhysicsWorldCompoundPart));
+    CPH_PhysicsWorldCompoundPart *buffer = static_cast<CPH_PhysicsWorldCompoundPart *>(
+        CPH_PyAlloc((size_t)part_count * sizeof(CPH_PhysicsWorldCompoundPart)));
     if (!buffer) {
         PyErr_NoMemory();
         return nullptr;
@@ -980,7 +907,7 @@ static CPH_PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_
             return nullptr;
         }
 
-        buffer[i] = (CPH_PhysicsWorldCompoundPart){.shape_type = (int)type};
+        buffer[i] = CPH_PhysicsWorldCompoundPart{.shape_type = (int)type};
         if (PyTuple_Check(part_position) && PyTuple_GET_SIZE(part_position) == 3) {
             buffer[i].local_position.x =
                 (float)PyFloat_AsDouble(PyTuple_GET_ITEM(part_position, 0));
@@ -1039,23 +966,9 @@ PyCFunction_DeclareMethod CPH_PyWorld_CreateCompoundBody(CPH_PhysicsWorldObject 
     bool is_sensor       = false;
     bool use_ccd         = false;
 
-    const void *const restrict targets[HC_COUNT] = {
-        [IDX_HC_POS]       = (const void *const restrict)&o_pos,
-        [IDX_HC_ROT]       = (const void *const restrict)&o_rot,
-        [IDX_HC_DATA]      = (const void *const restrict)&o_parts,
-        [IDX_HC_MOTION]    = (const void *const restrict)&motion_type,
-        [IDX_HC_MASS]      = (const void *const restrict)&mass,
-        [IDX_HC_USER_DATA] = (const void *const restrict)&user_data,
-        [IDX_HC_SENSOR]    = (const void *const restrict)&is_sensor,
-        [IDX_HC_CAT]       = (const void *const restrict)&category,
-        [IDX_HC_MASK]      = (const void *const restrict)&mask,
-        [IDX_HC_MAT_ID]    = (const void *const restrict)&material_id,
-        [IDX_HC_FRIC]      = (const void *const restrict)&friction,
-        [IDX_HC_REST]      = (const void *const restrict)&restitution,
-        [IDX_HC_CCD]       = (const void *const restrict)&use_ccd};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->CompoundParser, targets)) {
+
+    if (!self->parsers->Compound.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_pos, o_rot, o_parts, motion_type, mass, user_data, is_sensor, category, mask, material_id, friction, restitution, use_ccd)) {
         return nullptr;
     }
 
@@ -1139,27 +1052,11 @@ PyCFunction_DeclareMethod CPH_PyWorld_CreateBody(CPH_PhysicsWorldObject *self, P
 
     // 2. TARGET MAPPING (Explicitly mapped via Enum)
     // Using explicit indices [IDX_...] makes this reorder-proof.
-    const void *const restrict targets[Body_COUNT] = {
-        [IDX_POS]          = (const void *const restrict)&o_pos,
-        [IDX_ROT]          = (const void *const restrict)&o_rot,
-        [IDX_SIZE]         = (const void *const restrict)&o_size,
-        [IDX_SHAPE]        = (const void *const restrict)&shape_type,
-        [IDX_MOTION]       = (const void *const restrict)&motion_type,
-        [IDX_USER_DATA]    = (const void *const restrict)&user_data,
-        [IDX_SENSOR]       = (const void *const restrict)&is_sensor,
-        [IDX_MASS]         = (const void *const restrict)&mass,
-        [IDX_CAT]          = (const void *const restrict)&category,
-        [IDX_MASK]         = (const void *const restrict)&mask,
-        [IDX_FRIC]         = (const void *const restrict)&friction,
-        [IDX_REST]         = (const void *const restrict)&restitution,
-        [IDX_MAT]          = (const void *const restrict)&material_id,
-        [IDX_CCD]          = (const void *const restrict)&use_ccd,
-        [IDX_ALLOWED_DOFS] = (const void *const restrict)&allowed_dofs,
-    };
+
 
     // 3. THE FAST PARSE
     // We pass the global 'BodyParser' defined in the God Init helper
-    if (!CPH_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->BodyParser, targets)) {
+    if (!self->parsers->Body.Parse(args, nargs, kwnames, o_pos, o_rot, o_size, shape_type, motion_type, user_data, is_sensor, mass, category, mask, friction, restitution, material_id, use_ccd, allowed_dofs)) {
         return nullptr;
     }
 
@@ -1252,14 +1149,9 @@ PyCFunction_DeclareMethod CPH_PyWorld_CreateBodiesBatch(CPH_PhysicsWorldObject *
     int shape_type     = 0;
     int motion_type    = 2;
 
-    const void *const restrict targets[BatchCreate_COUNT] = {
-        [IDX_BC_POSITIONS] = (const void *const restrict)&py_pos,
-        [IDX_BC_SIZES]     = (const void *const restrict)&py_sizes,
-        [IDX_BC_SHAPE]     = (const void *const restrict)&shape_type,
-        [IDX_BC_MOTION]    = (const void *const restrict)&motion_type};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->BatchCreateParser, targets)) {
+
+    if (!self->parsers->BatchCreate.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, py_pos, py_sizes, shape_type, motion_type)) {
         return nullptr;
     }
 
@@ -1286,7 +1178,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_CreateBodiesBatch(CPH_PhysicsWorldObject *
         return PyErr_NoMemory();
     }
 
-    CPH_PosStride *positions = arena;
+    CPH_PosStride *positions = static_cast<CPH_PosStride *>(arena);
     CPH_ShapeParams *sizes   = (CPH_ShapeParams *)(positions + batch_count);
     BodyHandle *handles  = (BodyHandle *)(sizes + batch_count);
     PyObject **results   = (PyObject **)(handles + batch_count);
@@ -1345,17 +1237,9 @@ PyCFunction_DeclareMethod CPH_PyWorld_CreateMeshBody(CPH_PhysicsWorldObject *sel
     uint32_t cat        = kCollisionFilterAllCategories;
     uint32_t mask       = kCollisionFilterAllMasks;
 
-    const void *const restrict targets[Mesh_COUNT] = {
-        [IDX_MSH_POS]       = (const void *const restrict)&o_pos,
-        [IDX_MSH_ROT]       = (const void *const restrict)&o_rot,
-        [IDX_MSH_VERTS]     = (const void *const restrict)&o_verts,
-        [IDX_MSH_INDICES]   = (const void *const restrict)&o_indices,
-        [IDX_MSH_USER_DATA] = (const void *const restrict)&user_data,
-        [IDX_MSH_CAT]       = (const void *const restrict)&cat,
-        [IDX_MSH_MASK]      = (const void *const restrict)&mask};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->MeshParser, targets)) {
+
+    if (!self->parsers->Mesh.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_pos, o_rot, o_verts, o_indices, user_data, cat, mask)) {
         return nullptr;
     }
 
@@ -1371,8 +1255,8 @@ PyCFunction_DeclareMethod CPH_PyWorld_CreateMeshBody(CPH_PhysicsWorldObject *sel
         return nullptr;
     }
 
-    Py_buffer v_view = {0};
-    Py_buffer i_view = {0};
+    Py_buffer v_view{};
+    Py_buffer i_view{};
     if (PyObject_GetBuffer(o_verts, &v_view, PyBUF_SIMPLE) != 0 ||
         PyObject_GetBuffer(o_indices, &i_view, PyBUF_SIMPLE) != 0) {
         if (v_view.buf) {
@@ -1398,7 +1282,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_CreateMeshBody(CPH_PhysicsWorldObject *sel
     const size_t triangle_count   = (size_t)(i_view.len / kVertexStrideBytes);
     Py_BEGIN_ALLOW_THREADS status = CPH_PhysicsWorldCreateMeshBody(
         &self->physics, (const float *)v_view.buf, vertex_count, (const uint32_t *)i_view.buf,
-        triangle_count, (JPH_RVec3){px, py, pz}, (JPH_Quat){rx, ry, rz, rw}, cat, mask, user_data,
+        triangle_count, JPH_RVec3{px, py, pz}, JPH_Quat{rx, ry, rz, rw}, cat, mask, user_data,
         &handle, &body_count, &native_status, bad_indices);
     Py_END_ALLOW_THREADS
 
@@ -1421,10 +1305,8 @@ PyCFunction_DeclareMethod CPH_PyWorld_DestroyBody(CPH_PhysicsWorldObject *self,
                                                     PyObject *const *args, size_t nargsf,
                                                     PyObject *kwnames) {
     uint64_t raw_handle;
-    const void *const restrict targets[HOnly_COUNT] = {
-        [IDX_H_H] = (const void *const restrict)&raw_handle};
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->DestroyParser, targets)) {
+
+    if (!self->parsers->Destroy.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, raw_handle)) {
         return nullptr;
     }
 
@@ -1439,10 +1321,8 @@ PyCFunction_DeclareMethod CPH_PyWorld_DestroyBodiesBatch(CPH_PhysicsWorldObject 
                                                             PyObject *const *args, size_t nargsf,
                                                             PyObject *kwnames) {
     PyObject *py_handles = nullptr;
-    const void *const restrict targets[BatchDestroy_COUNT] = {
-        [IDX_BD_HANDLES] = (const void *const restrict)&py_handles};
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->BatchDestroyParser, targets)) {
+
+    if (!self->parsers->BatchDestroy.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, py_handles)) {
         return nullptr;
     }
 
@@ -1460,7 +1340,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_DestroyBodiesBatch(CPH_PhysicsWorldObject 
         return PyErr_NoMemory();
     }
 
-    BodyHandle *handles = CPH_PyAlloc((size_t)input_count * sizeof(BodyHandle));
+    BodyHandle *handles = static_cast<BodyHandle *>(CPH_PyAlloc((size_t)input_count * sizeof(BodyHandle)));
     if (!handles) {
         Py_DECREF(sequence);
         return PyErr_NoMemory();
@@ -1493,14 +1373,9 @@ PyCFunction_DeclareMethod CPH_PyWorld_SetPosition(CPH_PhysicsWorldObject *self, 
     JPH_Real x;
     JPH_Real y;
     JPH_Real z;
-    const void *const restrict targets[SetPos_COUNT] = {
-        [IDX_SETPOS_HANDLE] = (const void *const restrict)&h_raw,
-        [IDX_SETPOS_X]      = (const void *const restrict)&x,
-        [IDX_SETPOS_Y]      = (const void *const restrict)&y,
-        [IDX_SETPOS_Z]      = (const void *const restrict)&z};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->SetPosParser, targets)) {
+
+    if (!self->parsers->SetPos.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, x, y, z)) {
         return nullptr;
     }
     CPH_VALIDATE_FINITE_VEC3(x, y, z, "SetPosition");
@@ -1523,15 +1398,9 @@ PyCFunction_DeclareMethod CPH_PyWorld_SetRotation(CPH_PhysicsWorldObject *self, 
     float y;
     float z;
     float w;
-    const void *const restrict targets[SetRot_COUNT] = {
-        [IDX_SETROT_H] = (const void *const restrict)&h_raw,
-        [IDX_SETROT_X] = (const void *const restrict)&x,
-        [IDX_SETROT_Y] = (const void *const restrict)&y,
-        [IDX_SETROT_Z] = (const void *const restrict)&z,
-        [IDX_SETROT_W] = (const void *const restrict)&w};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->SetRotParser, targets)) {
+
+    if (!self->parsers->SetRot.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, x, y, z, w)) {
         return nullptr;
     }
     CPH_VALIDATE_FINITE_QUAT(x, y, z, w, "SetRotation");
@@ -1554,14 +1423,9 @@ PyCFunction_DeclareMethod CPH_PyWorld_SetLinearVelocity(CPH_PhysicsWorldObject *
     float x;
     float y;
     float z;
-    const void *const restrict targets[Vec3_COUNT] = {[IDX_V3_H] =
-                                                          (const void *const restrict)&h_raw,
-                                                      [IDX_V3_X] = (const void *const restrict)&x,
-                                                      [IDX_V3_Y] = (const void *const restrict)&y,
-                                                      [IDX_V3_Z] = (const void *const restrict)&z};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->SetLinVelParser, targets)) {
+
+    if (!self->parsers->SetLinVel.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, x, y, z)) {
         return nullptr;
     }
     CPH_VALIDATE_FINITE_VEC3(x, y, z, "LinearVelocity");
@@ -1584,14 +1448,9 @@ PyCFunction_DeclareMethod CPH_PyWorld_SetAngularVelocity(CPH_PhysicsWorldObject 
     float x;
     float y;
     float z;
-    const void *const restrict targets[Vec3_COUNT] = {[IDX_V3_H] =
-                                                          (const void *const restrict)&h_raw,
-                                                      [IDX_V3_X] = (const void *const restrict)&x,
-                                                      [IDX_V3_Y] = (const void *const restrict)&y,
-                                                      [IDX_V3_Z] = (const void *const restrict)&z};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->SetAngVelParser, targets)) {
+
+    if (!self->parsers->SetAngVel.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, x, y, z)) {
         return nullptr;
     }
     CPH_VALIDATE_FINITE_VEC3(x, y, z, "AngularVelocity");
@@ -1609,11 +1468,8 @@ PyCFunction_DeclareMethod CPH_PyWorld_GetMotionType(CPH_PhysicsWorldObject *self
                                                        PyObject *const *args, size_t nargsf,
                                                        PyObject *kwnames) {
     uint64_t h_raw;
-    const void *const restrict targets[HOnly_COUNT] = {
-        [IDX_H_H] = (const void *const restrict)&h_raw,
-    };
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->GetMotionParser, targets)) {
+
+    if (!self->parsers->GetMotion.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw)) {
         return nullptr;
     }
 
@@ -1637,12 +1493,9 @@ PyCFunction_DeclareMethod CPH_PyWorld_SetMotionType(CPH_PhysicsWorldObject *self
     // 1. FAST PARSE & VALIDATION
     uint64_t h_raw;
     int motion_type;
-    const void *const restrict targets[SetMotion_COUNT] = {
-        [IDX_SM_H] = (const void *const restrict)&h_raw,
-        [IDX_SM_M] = (const void *const restrict)&motion_type};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->SetMotionParser, targets)) {
+
+    if (!self->parsers->SetMotion.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, motion_type)) {
         return nullptr;
     }
 
@@ -1662,12 +1515,9 @@ PyCFunction_DeclareMethod CPH_PyWorld_SetUserData(CPH_PhysicsWorldObject *self,
     // 1. FAST PARSE & VALIDATION
     uint64_t h_raw;
     uint64_t data_raw;
-    const void *const restrict targets[SetUserData_COUNT] = {
-        [IDX_SUD_H] = (const void *const restrict)&h_raw,
-        [IDX_SUD_D] = (const void *const restrict)&data_raw};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->SetUserDataParser, targets)) {
+
+    if (!self->parsers->SetUserData.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, data_raw)) {
         return nullptr;
     }
 
@@ -1684,11 +1534,8 @@ PyCFunction_DeclareMethod CPH_PyWorld_GetUserData(CPH_PhysicsWorldObject *self,
                                                      PyObject *const *args, size_t nargsf,
                                                      PyObject *kwnames) {
     uint64_t h_raw;
-    const void *const restrict targets[HOnly_COUNT] = {
-        [IDX_H_H] = (const void *const restrict)&h_raw,
-    };
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->GetUserDataParser, targets)) {
+
+    if (!self->parsers->GetUserData.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw)) {
         return nullptr;
     }
 
@@ -1709,11 +1556,9 @@ PyCFunction_DeclareMethod CPH_PyWorld_Activate(CPH_PhysicsWorldObject *self, PyO
 
     // 1. FAST PARSE & VALIDATION
     uint64_t h_raw;
-    const void *const restrict targets[HOnly_COUNT] = {[IDX_H_H] =
-                                                           (const void *const restrict)&h_raw};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->ActivateParser, targets)) {
+
+    if (!self->parsers->Activate.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw)) {
         return nullptr;
     }
 
@@ -1730,12 +1575,10 @@ PyCFunction_DeclareMethod CPH_PyWorld_Deactivate(CPH_PhysicsWorldObject *self, P
 
     // 1. FAST PARSE & VALIDATION
     uint64_t h_raw;
-    const void *const restrict targets[HOnly_COUNT] = {[IDX_H_H] =
-                                                           (const void *const restrict)&h_raw};
+
 
     // Note: Reusing ActivateParser as the schema is identical (single handle)
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->ActivateParser, targets)) {
+    if (!self->parsers->Activate.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw)) {
         return nullptr;
     }
 
@@ -1755,13 +1598,9 @@ PyCFunction_DeclareMethod CPH_PyWorld_SetTransform(CPH_PhysicsWorldObject *self,
     uint64_t h_raw;
     PyObject *o_pos                                   = nullptr;
     PyObject *o_rot                                   = nullptr;
-    const void *const restrict targets[SetTrns_COUNT] = {
-        [IDX_ST_HANDLE] = (const void *const restrict)&h_raw,
-        [IDX_ST_POS]    = (const void *const restrict)&o_pos,
-        [IDX_ST_ROT]    = (const void *const restrict)&o_rot};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->SetTrnsParser, targets)) {
+
+    if (!self->parsers->SetTrns.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, o_pos, o_rot)) {
         return nullptr;
     }
 
@@ -1799,12 +1638,9 @@ PyCFunction_DeclareMethod CPH_PyWorld_SetCcd(CPH_PhysicsWorldObject *self, PyObj
     // 1. FAST PARSE & VALIDATION
     uint64_t h_raw;
     bool enabled;
-    const void *const restrict targets[CCD_COUNT] = {
-        [IDX_CCD_H] = (const void *const restrict)&h_raw,
-        [IDX_CCD_E] = (const void *const restrict)&enabled};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->CCDParser, targets)) {
+
+    if (!self->parsers->CCD.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, enabled)) {
         return nullptr;
     }
 
@@ -1820,11 +1656,8 @@ PyCFunction_DeclareMethod CPH_PyWorld_SetCcd(CPH_PhysicsWorldObject *self, PyObj
 PyCFunction_DeclareMethod CPH_PyWorld_GetIndex(CPH_PhysicsWorldObject *self, PyObject *const *args,
                                                  size_t nargsf, PyObject *kwnames) {
     uint64_t h_raw;
-    const void *const restrict targets[HOnly_COUNT] = {
-        [IDX_H_H] = (const void *const restrict)&h_raw,
-    };
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->ActivateParser, targets)) {
+
+    if (!self->parsers->Activate.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw)) {
         return nullptr;
     }
 
@@ -1843,11 +1676,8 @@ PyCFunction_DeclareMethod CPH_PyWorld_GetIndex(CPH_PhysicsWorldObject *self, PyO
 PyCFunction_DeclareMethod CPH_PyWorld_IsAlive(CPH_PhysicsWorldObject *self, PyObject *const *args,
                                                 size_t nargsf, PyObject *kwnames) {
     uint64_t h_raw;
-    const void *const restrict targets[HOnly_COUNT] = {
-        [IDX_H_H] = (const void *const restrict)&h_raw,
-    };
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->ActivateParser, targets)) {
+
+    if (!self->parsers->Activate.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw)) {
         return nullptr;
     }
 
@@ -1864,11 +1694,8 @@ PyCFunction_DeclareMethod CPH_PyWorld_IsAlive(CPH_PhysicsWorldObject *self, PyOb
 PyCFunction_DeclareMethod CPH_PyWorld_IsActive(CPH_PhysicsWorldObject *self, PyObject *const *args,
                                                  size_t nargsf, PyObject *kwnames) {
     uint64_t h_raw;
-    const void *const restrict targets[HOnly_COUNT] = {
-        [IDX_H_H] = (const void *const restrict)&h_raw,
-    };
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->ActivateParser, targets)) {
+
+    if (!self->parsers->Activate.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw)) {
         return nullptr;
     }
 
@@ -1914,11 +1741,8 @@ PyCFunction_DeclareMethod CPH_PyWorld_GetRenderState(CPH_PhysicsWorldObject *sel
                                                         PyObject *const *args, size_t nargsf,
                                                         PyObject *kwnames) {
     float alpha;
-    const void *const restrict targets[Render_COUNT] = {
-        [IDX_RND_ALPHA] = (const void *const restrict)&alpha,
-    };
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->RenderParser, targets)) {
+
+    if (!self->parsers->Render.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, alpha)) {
         return nullptr;
     }
 
@@ -1951,13 +1775,8 @@ PyCFunction_DeclareMethod CPH_PyWorld_SetCollisionFilter(CPH_PhysicsWorldObject 
     uint64_t h_raw;
     uint32_t category;
     uint32_t mask;
-    const void *const restrict targets[ColFilter_COUNT] = {
-        [IDX_CF_H] = (const void *const restrict)&h_raw,
-        [IDX_CF_C] = (const void *const restrict)&category,
-        [IDX_CF_M] = (const void *const restrict)&mask,
-    };
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->ColFilterParser, targets)) {
+
+    if (!self->parsers->ColFilter.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, category, mask)) {
         return nullptr;
     }
 
@@ -1979,13 +1798,8 @@ PyCFunction_DeclareMethod CPH_PyWorld_RegisterMaterial(CPH_PhysicsWorldObject *s
     uint32_t id;
     float friction                                   = kRestitutionBuffer;
     float restitution                                = 0.0f;
-    const void *const restrict targets[RegMat_COUNT] = {
-        [IDX_RM_ID]   = (const void *const restrict)&id,
-        [IDX_RM_FRIC] = (const void *const restrict)&friction,
-        [IDX_RM_REST] = (const void *const restrict)&restitution,
-    };
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->RegMatParser, targets)) {
+
+    if (!self->parsers->RegMat.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, id, friction, restitution)) {
         return nullptr;
     }
 
@@ -2017,21 +1831,9 @@ PyCFunction_DeclareMethod CPH_PyWorld_CreateHeightfield(CPH_PhysicsWorldObject *
     float friction       = kDefaultFriction;
     float restitution    = 0.0f;
 
-    const void *const restrict targets[Heightfield_COUNT] = {
-        [IDX_HF_POS]       = (const void *const restrict)&o_pos,
-        [IDX_HF_ROT]       = (const void *const restrict)&o_rot,
-        [IDX_HF_SCALE]     = (const void *const restrict)&o_scale,
-        [IDX_HF_HEIGHTS]   = (const void *const restrict)&o_heights,
-        [IDX_HF_GRID_SIZE] = (const void *const restrict)&grid_size,
-        [IDX_HF_USER_DATA] = (const void *const restrict)&user_data,
-        [IDX_HF_CAT]       = (const void *const restrict)&category,
-        [IDX_HF_MASK]      = (const void *const restrict)&mask,
-        [IDX_HF_MAT_ID]    = (const void *const restrict)&material_id,
-        [IDX_HF_FRIC]      = (const void *const restrict)&friction,
-        [IDX_HF_REST]      = (const void *const restrict)&restitution};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->HeightfieldParser, targets)) {
+
+    if (!self->parsers->Heightfield.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_pos, o_rot, o_scale, o_heights, grid_size, user_data, category, mask, material_id, friction, restitution)) {
         return nullptr;
     }
 
@@ -2065,8 +1867,8 @@ PyCFunction_DeclareMethod CPH_PyWorld_CreateHeightfield(CPH_PhysicsWorldObject *
     PhysicsWorldStatus native_status = PHYSICS_WORLD_STATUS_OK;
     PhysicsWorldCreationStatus status;
     Py_BEGIN_ALLOW_THREADS status = CPH_PhysicsWorldCreateHeightfieldBody(
-        &self->physics, (const float *)h_view.buf, (size_t)grid_size, (JPH_Vec3){sx, sy, sz},
-        (JPH_RVec3){px, py, pz}, (JPH_Quat){rx, ry, rz, rw}, friction, restitution, category, mask,
+        &self->physics, (const float *)h_view.buf, (size_t)grid_size, JPH_Vec3{sx, sy, sz},
+        JPH_RVec3{px, py, pz}, JPH_Quat{rx, ry, rz, rw}, friction, restitution, category, mask,
         material_id, user_data, &handle, &body_count, &native_status);
     Py_END_ALLOW_THREADS PyBuffer_Release(&h_view);
 
@@ -2087,15 +1889,8 @@ PyCFunction_DeclareMethod CPH_PyWorld_GetDebugData(CPH_PhysicsWorldObject *self,
     bool draw_bounding_box                              = false;
     bool draw_centers                                   = false;
     bool wireframe                                      = true;
-    const void *const restrict targets[DebugData_COUNT] = {
-        [IDX_DD_SHAPES]      = (const void *const restrict)&draw_shapes,
-        [IDX_DD_CONSTRAINTS] = (const void *const restrict)&draw_constraints,
-        [IDX_DD_BBOX]        = (const void *const restrict)&draw_bounding_box,
-        [IDX_DD_CENTERS]     = (const void *const restrict)&draw_centers,
-        [IDX_DD_WIREFRAME]   = (const void *const restrict)&wireframe,
-    };
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->DebugDataParser, targets)) {
+
+    if (!self->parsers->DebugData.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, draw_shapes, draw_constraints, draw_bounding_box, draw_centers, wireframe)) {
         return nullptr;
     }
 
@@ -2162,27 +1957,9 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateSoftBody(CPH_PhysicsWorldO
     bool update_position      = true; // Jolt default is usually true
     bool faces_double_sided   = false;
 
-    const void *const restrict targets[CreateSoftBody_COUNT] = {
-        [IDX_CSB_SHARED]     = (const void *const restrict)&o_shared,
-        [IDX_CSB_POS]        = (const void *const restrict)&o_pos,
-        [IDX_CSB_ROT]        = (const void *const restrict)&o_rot,
-        [IDX_CSB_USER_DATA]  = (const void *const restrict)&user_data,
-        [IDX_CSB_CAT]        = (const void *const restrict)&category,
-        [IDX_CSB_MASK]       = (const void *const restrict)&mask,
-        [IDX_CSB_PRESSURE]   = (const void *const restrict)&pressure,
-        [IDX_CSB_V_RADIUS]   = (const void *const restrict)&vertex_radius,
-        [IDX_CSB_LIN_DAMP]   = (const void *const restrict)&linear_damping,
-        [IDX_CSB_ITER]       = (const void *const restrict)&num_iterations,
-        [IDX_CSB_MAX_VEL]    = (const void *const restrict)&max_linear_velocity,
-        [IDX_CSB_GRAV]       = (const void *const restrict)&gravity_factor,
-        [IDX_CSB_FRIC]       = (const void *const restrict)&friction,
-        [IDX_CSB_REST]       = (const void *const restrict)&restitution,
-        [IDX_CSB_ROT_ID]     = (const void *const restrict)&make_rot_identity,
-        [IDX_CSB_UPDATE_POS] = (const void *const restrict)&update_position,
-        [IDX_CSB_FACE_DS]    = (const void *const restrict)&faces_double_sided};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->CreateSoftBodyParser, targets)) {
+
+    if (!self->parsers->CreateSoftBody.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_shared, o_pos, o_rot, user_data, category, mask, pressure, vertex_radius, linear_damping, num_iterations, max_linear_velocity, gravity_factor, friction, restitution, make_rot_identity, update_position, faces_double_sided)) {
         return nullptr;
     }
 
@@ -2252,10 +2029,8 @@ PyCFunction_DeclareMethodFromModule
 CPH_PyWorld_GetSoftBodyVertexCount(CPH_PhysicsWorldObject *self, PyObject *const *args,
                                         size_t nargsf, PyObject *kwnames) {
     uint64_t handle;
-    const void *const restrict targets[HOnly_COUNT] = {[IDX_H_H] =
-                                                           (const void *const restrict)&handle};
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->HOnlyParser, targets)) {
+
+    if (!self->parsers->HOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle)) {
         return nullptr;
     }
 
@@ -2274,11 +2049,8 @@ CPH_PyWorld_GetSoftBodyVertexPosition(CPH_PhysicsWorldObject *self, PyObject *co
                                            size_t nargsf, PyObject *kwnames) {
     uint64_t handle;
     uint32_t index;
-    const void *const restrict targets[GetSbVertex_COUNT] = {
-        [IDX_GSBV_H] = (const void *const restrict)&handle,
-        [IDX_GSBV_I] = (const void *const restrict)&index};
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->GetSbVertexParser, targets)) {
+
+    if (!self->parsers->GetSbVertex.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle, index)) {
         return nullptr;
     }
 
@@ -2301,10 +2073,8 @@ PyCFunction_DeclareMethodFromModule
 CPH_PyWorld_GetSoftBodyLocalVertices(CPH_PhysicsWorldObject *self, PyObject *const *args,
                                           size_t nargsf, PyObject *kwnames) {
     uint64_t handle;
-    const void *const restrict targets[HOnly_COUNT] = {[IDX_H_H] =
-                                                           (const void *const restrict)&handle};
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->HOnlyParser, targets)) {
+
+    if (!self->parsers->HOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle)) {
         return nullptr;
     }
 
@@ -2333,10 +2103,8 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_GetSoftBodyVertices(CPH_PhysicsW
                                                                         size_t nargsf,
                                                                         PyObject *kwnames) {
     uint64_t h_raw;
-    const void *const restrict targets[HOnly_COUNT] = {[IDX_H_H] =
-                                                           (const void *const restrict)&h_raw};
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->HOnlyParser, targets)) {
+
+    if (!self->parsers->HOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw)) {
         return nullptr;
     }
 
@@ -2389,16 +2157,10 @@ PyCFunction_DeclareMethod CPH_PyWorld_BenchmarkParse([[maybe_unused]] CPH_Physic
                                                        PyObject *kwnames) {
     constexpr size_t NUM_ARGS = 64;
     uint64_t values[NUM_ARGS] = {};
-    const void *restrict targets[NUM_ARGS];
 
-    // Map targets to values array (Loop is efficient here, unrolled by compiler)
-    for (size_t i = 0; i < NUM_ARGS; ++i) {
-        targets[i] = (const void *const restrict)&values[i];
-    }
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (CPH_UNLIKELY(!CPH_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->StressTestParser,
-                                          targets))) {
+    if (CPH_UNLIKELY(!self->parsers->StressTest.Parse(args, nargs, kwnames, values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7], values[8], values[9], values[10], values[11], values[12], values[13], values[14], values[15], values[16], values[17], values[18], values[19], values[20], values[21], values[22], values[23], values[24], values[25], values[26], values[27], values[28], values[29], values[30], values[31], values[32], values[33], values[34], values[35], values[36], values[37], values[38], values[39], values[40], values[41], values[42], values[43], values[44], values[45], values[46], values[47], values[48], values[49], values[50], values[51], values[52], values[53], values[54], values[55], values[56], values[57], values[58], values[59], values[60], values[61], values[62], values[63]))) {
         return nullptr;
     }
 
@@ -2448,7 +2210,6 @@ PyCFunction_DeclareMethod CPH_PyWorld_BenchmarkBuild([[maybe_unused]] PyObject *
 }
 
 // --- Ragdoll Settings Implementation ---
-void CPH_InitRagdollSettingsParsers(CPH_RagdollSettingsParsers *rsp);
 PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateRagdollSettings(CPH_PhysicsWorldObject *self,
                                                                          PyObject *const *args,
                                                                          size_t nargsf,
@@ -2456,12 +2217,9 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateRagdollSettings(CPH_Physic
     const Py_ssize_t nargs = (Py_ssize_t)PyVectorcall_NARGS(nargsf);
     // --- 1. FAST ARGUMENT PARSING ---
     PyObject *py_skel_obj                                     = nullptr;
-    const void *const restrict targets[RagdollSettings_COUNT] = {
-        [IDX_RS_SKELETON] = (const void *const restrict)&py_skel_obj,
-    };
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->RagdollSettingsParser,
-                                 targets)) {
+
+    if (!self->parsers->RagdollSettings.Parse(args, nargs, kwnames, py_skel_obj)) {
         return nullptr;
     }
 
@@ -2481,12 +2239,12 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateRagdollSettings(CPH_Physic
     if (!obj) {
         return PyErr_NoMemory();
     }
-    obj->parsers = (CPH_RagdollSettingsParsers *)CPH_PyAlloc(sizeof(CPH_RagdollSettingsParsers));
+    obj->parsers = CPH::NewParserGroup<CPH_RagdollSettingsParsers>();
     if (!obj->parsers) {
         Py_DECREF(obj);
         return PyErr_NoMemory();
     }
-    CPH_InitRagdollSettingsParsers(obj->parsers);
+    obj->parsers->Init();
 
     // Create native Jolt settings without crossing the Python boundary from core code.
     Py_BEGIN_ALLOW_THREADS obj->settings = CPH_PhysicsWorldCreateRagdollSettings(py_skel->skeleton);
@@ -2500,7 +2258,6 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateRagdollSettings(CPH_Physic
 
     return (PyObject *)obj;
 }
-void CPH_InitRagdollParsers(CPH_RagdollParsers *rp);
 PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateRagdoll(CPH_PhysicsWorldObject *self,
                                                                 PyObject *const *args,
                                                                 size_t nargsf,
@@ -2508,25 +2265,16 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateRagdoll(CPH_PhysicsWorldOb
     const Py_ssize_t nargs = (Py_ssize_t)PyVectorcall_NARGS(nargsf);
     // --- 1. FAST ARGUMENT PARSING ---
     PyObject *settings_obj = nullptr;
-    CPH_PosStride pos          = {.x = 0, .y = 0, .z = 0};
+    CPH_PosStride pos{};
     CPH_AuxStride rot          = {.x = 0, .y = 0, .z = 0, .w = 1.0f};
     uint64_t user_data     = 0;
     uint32_t category      = kJoltAllLayerBits;
     uint32_t mask          = kJoltAllLayerBits;
     uint32_t material_id   = 0;
 
-    const void *const restrict targets[CreateRagdoll_COUNT] = {
-        [IDX_CR_SETTINGS] = (const void *const restrict)&settings_obj,
-        [IDX_CR_POS]      = (const void *const restrict)&pos,
-        [IDX_CR_ROT]      = (const void *const restrict)&rot,
-        [IDX_CR_USER]     = (const void *const restrict)&user_data,
-        [IDX_CR_CAT]      = (const void *const restrict)&category,
-        [IDX_CR_MASK]     = (const void *const restrict)&mask,
-        [IDX_CR_MAT]      = (const void *const restrict)&material_id,
-    };
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->CreateRagdollParser,
-                                 targets)) {
+
+    if (!self->parsers->CreateRagdoll.Parse(args, nargs, kwnames, settings_obj, pos, rot, user_data, category, mask, material_id)) {
         return nullptr;
     }
 
@@ -2542,10 +2290,14 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateRagdoll(CPH_PhysicsWorldOb
     JPH_Ragdoll *j_rag = nullptr;
     size_t body_count  = 0;
     PhysicsWorldCreationStatus creation_status;
-    Py_BEGIN_ALLOW_THREADS creation_status = CPH_PhysicsWorldCreateRagdollInstance(
-        &self->physics, py_settings->settings, (JPH_RVec3){pos.x, pos.y, pos.z},
-        (JPH_Quat){rot.x, rot.y, rot.z, rot.w}, user_data, &j_rag, &body_count);
-    Py_END_ALLOW_THREADS if (creation_status != PHYSICS_WORLD_CREATION_STATUS_OK) {
+    JPH_RVec3 initial_position{pos.x, pos.y, pos.z};
+    JPH_Quat initial_rotation{rot.x, rot.y, rot.z, rot.w};
+    Py_BEGIN_ALLOW_THREADS
+    creation_status = CPH_PhysicsWorldCreateRagdollInstance(
+        &self->physics, py_settings->settings, initial_position, initial_rotation, user_data,
+        &j_rag, &body_count);
+    Py_END_ALLOW_THREADS
+    if (creation_status != PHYSICS_WORLD_CREATION_STATUS_OK) {
         set_creation_error(self, creation_status, PHYSICS_WORLD_STATUS_OK,
                            "Jolt failed to create Ragdoll instance", nullptr);
         return nullptr;
@@ -2553,7 +2305,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateRagdoll(CPH_PhysicsWorldOb
 
     uint32_t *body_slots = nullptr;
     if (body_count > SIZE_MAX / sizeof(uint32_t) ||
-        !(body_slots = CPH_PyAlloc(body_count * sizeof(uint32_t)))) {
+        !(body_slots = static_cast<uint32_t *>(CPH_PyAlloc(body_count * sizeof(uint32_t))))) {
         Py_BEGIN_ALLOW_THREADS CPH_PhysicsWorldDestroyRagdoll(&self->physics, j_rag);
         Py_END_ALLOW_THREADS return PyErr_NoMemory();
     }
@@ -2569,13 +2321,13 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateRagdoll(CPH_PhysicsWorldOb
     obj->body_count = 0;
     obj->body_slots = body_slots;
     obj->parsers    = nullptr;
-    obj->parsers    = (CPH_RagdollParsers *)CPH_PyAlloc(sizeof(CPH_RagdollParsers));
+    obj->parsers    = CPH::NewParserGroup<CPH_RagdollParsers>();
     if (!obj->parsers) {
         Py_DECREF(obj);
         Py_BEGIN_ALLOW_THREADS CPH_PhysicsWorldDestroyRagdoll(&self->physics, j_rag);
         Py_END_ALLOW_THREADS return PyErr_NoMemory();
     }
-    CPH_InitRagdollParsers(obj->parsers);
+    obj->parsers->Init();
 
     obj->ragdoll = j_rag;
     obj->world   = self;
@@ -2777,7 +2529,7 @@ CPH_PyWorld_Getbuffer(CPH_PhysicsWorldObject *self, Py_buffer *view, [[maybe_unu
     view->len        = (Py_ssize_t)(current_count * sizeof(CPH_PosStride));
     view->readonly   = 0;
     view->itemsize   = sizeof(JPH_Real);
-    view->format     = (sizeof(JPH_Real) == sizeof(double)) ? "d" : "f";
+    view->format     = const_cast<char *>((sizeof(JPH_Real) == sizeof(double)) ? "d" : "f");
     view->ndim       = 2;
     view->shape      = self->view_shape;
     view->strides    = self->view_strides;
@@ -2921,11 +2673,11 @@ PyType_Spec CPH_PyWorld_Spec = {
     .slots =
         (PyType_Slot[]){
 
-            {.slot = Py_tp_new, .pfunc = PyType_GenericNew},
-            {.slot = Py_tp_init, .pfunc = CPH_PyWorld_Init},
-            {.slot = Py_tp_dealloc, .pfunc = CPH_PyWorld_Dealloc},
+            {.slot = Py_tp_new, .pfunc = reinterpret_cast<void *>(PyType_GenericNew)},
+            {.slot = Py_tp_init, .pfunc = reinterpret_cast<void *>(CPH_PyWorld_Init)},
+            {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(CPH_PyWorld_Dealloc)},
             {.slot = Py_tp_call, .pfunc = nullptr},
-            {.slot = Py_tp_methods, .pfunc = kPhysicsWorldMethods },
+            {.slot = Py_tp_methods, .pfunc = reinterpret_cast<void *>(kPhysicsWorldMethods) },
             {.slot = Py_tp_members,
              .pfunc =
                  (PyMemberDef[]){
@@ -2956,10 +2708,10 @@ PyType_Spec CPH_PyWorld_Spec = {
                      {}
 
                  }},
-            {.slot = Py_bf_getbuffer, .pfunc = CPH_PyWorld_Getbuffer},
-            {.slot = Py_bf_releasebuffer, .pfunc = CPH_PyWorld_Releasebuffer},
-            {.slot = Py_tp_traverse, .pfunc = CPH_PyWorld_Traverse},
-            {.slot = Py_tp_clear, .pfunc = CPH_PyWorld_Clear},
+            {.slot = Py_bf_getbuffer, .pfunc = reinterpret_cast<void *>(CPH_PyWorld_Getbuffer)},
+            {.slot = Py_bf_releasebuffer, .pfunc = reinterpret_cast<void *>(CPH_PyWorld_Releasebuffer)},
+            {.slot = Py_tp_traverse, .pfunc = reinterpret_cast<void *>(CPH_PyWorld_Traverse)},
+            {.slot = Py_tp_clear, .pfunc = reinterpret_cast<void *>(CPH_PyWorld_Clear)},
             {},
 
         },

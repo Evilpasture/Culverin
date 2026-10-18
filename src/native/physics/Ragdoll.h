@@ -33,6 +33,10 @@ typedef struct CPH_PhysicsRagdollBodyDebugInfo {
     JPH_Vec3 linear_velocity;
 } CPH_PhysicsRagdollBodyDebugInfo;
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 JPH_Skeleton *CPH_PhysicsRagdollSkeletonCreate(void);
 void CPH_PhysicsRagdollSkeletonDestroy(JPH_Skeleton *skeleton);
 int CPH_PhysicsRagdollSkeletonAddJoint(JPH_Skeleton *skeleton, const char *name, int parent_index);
@@ -59,3 +63,7 @@ bool CPH_PhysicsRagdollCopyDebugInfo(CPH_PhysicsWorld *world, JPH_Ragdoll *ragdo
                                      CPH_PhysicsRagdollBodyDebugInfo *out_info, size_t body_count);
 void CPH_PhysicsRagdollDeallocate(CPH_PhysicsWorld *world, JPH_Ragdoll *ragdoll,
                                 const uint32_t *body_slots, size_t body_count);
+
+#ifdef __cplusplus
+}
+#endif

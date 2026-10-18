@@ -4,8 +4,8 @@ add_subdirectory(physics)
 add_library(
     culverin_python_bindings
     OBJECT
-        Getters.c
-        docstrings/Docstrings.c
+        Getters.cpp
+        docstrings/Docstrings.cpp
         docstrings/Docstrings.h
         BindingCommon.h
         FastBuild.h
@@ -19,7 +19,7 @@ culverin_configure_python_target(culverin_python_bindings)
 
 # The root module is assembled here, but CPython adapters are compiled into
 # separately named object targets that match their feature/domain directories.
-python_add_library(_culverin_c MODULE Module.c)
+python_add_library(_culverin_c MODULE Module.cpp)
 culverin_configure_python_target(_culverin_c)
 target_link_libraries(
     _culverin_c

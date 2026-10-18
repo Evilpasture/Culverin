@@ -1,7 +1,7 @@
 #include <math.h>
 #include "vehicles/Vehicle.h"
 #include "bindings/BindingCommon.h"
-#include "bindings/parsing/ArgIndices.h"
+#include "bindings/parsing/ParserRegistry.hpp"
 #include "core/CompilerSpecifics.h"
 #include "bindings/ModuleState.h"
 #include "bindings/parsing/Parsers.h"
@@ -78,17 +78,21 @@ static JPH_WheelSettings *create_single_wheel(PyObject *w_dict, JPH_LinearCurve 
     JPH_SpringSettings spring = {JPH_SpringMode_FrequencyAndDamping, freq, damp};
     JPH_WheelSettings_SetSuspensionSpring((JPH_WheelSettings *)w, &spring);
     // The axis the wheel pivots around for steering
-    JPH_WheelSettings_SetSteeringAxis((JPH_WheelSettings *)w, &(JPH_Vec3){0, 1.0f, 0});
+    JPH_Vec3 steering_axis{0, 1.0f, 0};
+    JPH_WheelSettings_SetSteeringAxis((JPH_WheelSettings *)w, &steering_axis);
 
     // The 'Up' direction for the wheel geometry
-    JPH_WheelSettings_SetWheelUp((JPH_WheelSettings *)w, &(JPH_Vec3){0, 1.0f, 0});
+    JPH_Vec3 wheel_up{0, 1.0f, 0};
+    JPH_WheelSettings_SetWheelUp((JPH_WheelSettings *)w, &wheel_up);
 
     // The 'Forward' direction (the way it rolls)
-    JPH_WheelSettings_SetWheelForward((JPH_WheelSettings *)w, &(JPH_Vec3){0, 0, 1.0f});
+    JPH_Vec3 wheel_forward{0, 0, 1.0f};
+    JPH_WheelSettings_SetWheelForward((JPH_WheelSettings *)w, &wheel_forward);
 
     // Suspension direction (the way the shock absorber moves) - usually opposite
     // to Up
-    JPH_WheelSettings_SetSuspensionDirection((JPH_WheelSettings *)w, &(JPH_Vec3){0, -1.0f, 0});
+    JPH_Vec3 suspension_direction{0, -1.0f, 0};
+    JPH_WheelSettings_SetSuspensionDirection((JPH_WheelSettings *)w, &suspension_direction);
     JPH_WheelSettingsWV_SetMaxBrakeTorque(w, brake);
     if (pos.z > kWheelSteerThreshold) {
         JPH_WheelSettingsWV_SetMaxSteerAngle(w, kWheelMaxSteerAngle);
@@ -97,8 +101,8 @@ static JPH_WheelSettings *create_single_wheel(PyObject *w_dict, JPH_LinearCurve 
         JPH_WheelSettingsWV_SetMaxSteerAngle(w, 0.0f);
         JPH_WheelSettingsWV_SetMaxHandBrakeTorque(w, handbrake);
     }
-    JPH_WheelSettings_SetPosition((JPH_WheelSettings *)w,
-                                  &(JPH_Vec3){(float)pos.x, (float)pos.y, (float)pos.z});
+    JPH_Vec3 wheel_position{(float)pos.x, (float)pos.y, (float)pos.z};
+    JPH_WheelSettings_SetPosition((JPH_WheelSettings *)w, &wheel_position);
     JPH_WheelSettings_SetRadius((JPH_WheelSettings *)w, radius);
     JPH_WheelSettings_SetWidth((JPH_WheelSettings *)w, width);
 
@@ -167,11 +171,11 @@ void CPH_CleanupVehicleResources(CPH_VehicleResources *r, uint32_t num_wheels, C
 }
 
 int CPH_InitVehicleParsers(CPH_VehicleObject *obj) {
-    obj->parsers = (CPH_VehicleParsers *)CPH_PyAlloc(sizeof(CPH_VehicleParsers));
+    obj->parsers = CPH::NewParserGroup<CPH_VehicleParsers>();
     if (!obj->parsers) {
         return -1;
     }
-    CPH_InitVehicleParserGroup(obj->parsers);
+    obj->parsers->Init();
     return 0;
 }
 
@@ -217,7 +221,7 @@ static void setup_transmission(JPH_WheeledVehicleControllerSettings *v_ctrl,
         PyObject *py_ratios = PyObject_GetAttrString(py_trans, "ratios");
         if (py_ratios && PyList_Check(py_ratios)) {
             Py_ssize_t n = PyList_Size(py_ratios);
-            float *r     = CPH_PyAlloc((size_t)n * sizeof(float));
+            float *r     = static_cast<float *>(CPH_PyAlloc((size_t)n * sizeof(float)));
             if (r) {
                 for (Py_ssize_t i = 0; i < n; i++) {
                     r[i] = (float)PyFloat_AsDouble(PyList_GetItem(py_ratios, i));
@@ -284,15 +288,9 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateVehicle(CPH_PhysicsWorldOb
     PyObject *py_trans     = nullptr;
     const char *drive_str  = "RWD";
 
-    const void *const restrict targets[CreateVehicle_COUNT] = {
-        [IDX_CV_CHASSIS] = (const void *const restrict)&chassis_h_raw,
-        [IDX_CV_WHEELS]  = (const void *const restrict)&py_wheels,
-        [IDX_CV_DRIVE]   = (const void *const restrict)&py_drive,
-        [IDX_CV_ENGINE]  = (const void *const restrict)&py_engine,
-        [IDX_CV_TRANS]   = (const void *const restrict)&py_trans,
-    };
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->CreateVehicleParser, targets)) {
+
+    if (!self->parsers->CreateVehicle.Parse(args, nargs, kwnames, chassis_h_raw, py_wheels, py_drive, py_engine, py_trans)) {
         return nullptr;
     }
 
@@ -331,7 +329,14 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateVehicle(CPH_PhysicsWorldOb
     CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
 
     // --- 3. PRE-JOLT RESOURCE ALLOCATION (Unchanged) ---
-    CPH_VehicleResources r = {};
+    CPH_VehicleResources r{};
+    bool jolt_locked = false;
+    const JPH_BodyLockInterface *lock_iface = nullptr;
+    JPH_BodyLockWrite lock{};
+    JPH_VehicleConstraintSettings v_set{};
+    CPH_VehicleObject *obj = nullptr;
+    JPH_Vec3 tester_up{0, 1.0f, 0};
+
     r.f_curve          = JPH_LinearCurve_Create();
     JPH_LinearCurve_AddPoint(r.f_curve, 0.0f, 1.0f);
     JPH_LinearCurve_AddPoint(r.f_curve, kFrictionCurveX1, kFrictionCurveY1);
@@ -355,21 +360,18 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateVehicle(CPH_PhysicsWorldOb
     configure_drivetrain(&r, py_engine, py_trans, drive_str, num_wheels);
 
     // --- 4. JOLT COMMIT (No GIL - Unchanged) ---
-    bool jolt_locked = false;
     Py_UNBLOCK_THREADS;
 
     CPH_NATIVE_MUTEX_LOCK(self->physics.jph_trampoline_lock);
     jolt_locked = true;
 
-    const JPH_BodyLockInterface *lock_iface = JPH_PhysicsSystem_GetBodyLockInterface(self->physics.system);
-    JPH_BodyLockWrite lock                  = {};
+    lock_iface = JPH_PhysicsSystem_GetBodyLockInterface(self->physics.system);
     JPH_BodyLockInterface_LockWrite(lock_iface, chassis_bid, &lock);
 
     if (CPH_UNLIKELY(!lock.body)) {
         goto jolt_fail;
     }
 
-    JPH_VehicleConstraintSettings v_set;
     JPH_VehicleConstraintSettings_Init(&v_set);
     v_set.wheelsCount = num_wheels;
     v_set.wheels      = r.w_settings;
@@ -380,7 +382,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateVehicle(CPH_PhysicsWorldOb
         goto jolt_fail;
     }
 
-    r.tester = JPH_VehicleCollisionTesterRay_Create(kLayerDynamic, &(JPH_Vec3){0, 1.0f, 0},
+    r.tester = JPH_VehicleCollisionTesterRay_Create(kLayerDynamic, &tester_up,
                                                     kVehicleCollisionTesterScale);
     if (!r.tester) {
         goto jolt_fail;
@@ -399,7 +401,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateVehicle(CPH_PhysicsWorldOb
     Py_BLOCK_THREADS;
 
     // --- 5. PYTHON WRAPPER (Unchanged) ---
-    auto obj = (CPH_VehicleObject *)PyObject_GC_New(CPH_VehicleObject, (PyTypeObject *)st->VehicleType);
+    obj = (CPH_VehicleObject *)PyObject_GC_New(CPH_VehicleObject, (PyTypeObject *)st->VehicleType);
 
     if (!obj) {
         CPH_SHADOW_LOCK(&self->physics.shadow_lock);
@@ -461,14 +463,9 @@ PyCFunction_DeclareMethodFromModule CPH_PyVehicle_SetInput(CPH_VehicleObject *se
     float brake     = 0.0f;
     float handbrake = 0.0f;
 
-    const void *const restrict targets[VehicleInput_COUNT] = {
-        [IDX_VI_FWD]   = (const void *const restrict)&forward,
-        [IDX_VI_RIGHT] = (const void *const restrict)&right,
-        [IDX_VI_BRAKE] = (const void *const restrict)&brake,
-        [IDX_VI_HAND]  = (const void *const restrict)&handbrake,
-    };
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->VehicleInputParser, targets)) {
+
+    if (!self->parsers->VehicleInput.Parse(args, nargs, kwnames, forward, right, brake, handbrake)) {
         return nullptr;
     }
 
@@ -500,8 +497,9 @@ PyCFunction_DeclareMethodFromModule CPH_PyVehicle_SetInput(CPH_VehicleObject *se
     JPH_BodyInterface_GetRotation(bi, chassis_id, chassis_q);
 
     // Calculate forward speed via dot product
-    JPH_Vec3 world_fwd = {};
-    JPH_Quat_Rotate(chassis_q, &(JPH_Vec3){0, 0, 1.0f}, &world_fwd);
+    JPH_Vec3 world_fwd{};
+    JPH_Vec3 local_forward{0, 0, 1.0f};
+    JPH_Quat_Rotate(chassis_q, &local_forward, &world_fwd);
     float speed = (linear_vel->x * world_fwd.x) + (linear_vel->y * world_fwd.y) +
                   (linear_vel->z * world_fwd.z);
 
@@ -569,11 +567,9 @@ PyCFunction_DeclareMethodFromModule CPH_PyVehicle_GetWheelTransform(CPH_VehicleO
                                                                 PyObject *kwnames) {
     const Py_ssize_t nargs = (Py_ssize_t)PyVectorcall_NARGS(nargsf);
     uint32_t index                                     = 0;
-    const void *const restrict targets[WheelIdx_COUNT] = {
-        [IDX_WH_INDEX] = (const void *const restrict)&index,
-    };
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->world->parsers->WheelIdxParser, targets)) {
+
+    if (!self->world->parsers->WheelIdx.Parse(args, nargs, kwnames, index)) {
         return nullptr;
     }
 
@@ -599,7 +595,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyVehicle_GetWheelTransform(CPH_VehicleO
     rot_only_mat->column[0] = transform->column[0];
     rot_only_mat->column[1] = transform->column[1];
     rot_only_mat->column[2] = transform->column[2];
-    rot_only_mat->column[3] = (JPH_Vec4){0, 0, 0, 1.0f};
+    rot_only_mat->column[3] = JPH_Vec4{0, 0, 0, 1.0f};
 
     JPH_STACK_ALLOC(JPH_Quat, q);
     JPH_Mat4_GetQuaternion(rot_only_mat, q);
@@ -614,11 +610,9 @@ PyCFunction_DeclareMethodFromModule CPH_PyVehicle_GetWheelLocalTransform(CPH_Veh
                                                                       PyObject *kwnames) {
     const Py_ssize_t nargs = (Py_ssize_t)PyVectorcall_NARGS(nargsf);
     uint32_t index                                     = 0;
-    const void *const restrict targets[WheelIdx_COUNT] = {
-        [IDX_WH_INDEX] = (const void *const restrict)&index,
-    };
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->world->parsers->WheelIdxParser, targets)) {
+
+    if (!self->world->parsers->WheelIdx.Parse(args, nargs, kwnames, index)) {
         return nullptr;
     }
 
@@ -820,8 +814,8 @@ PyCFunction_DeclareMethodFromModule CPH_PyVehicle_Destroy(CPH_VehicleObject *sel
                                                     PyObject *ignored [[maybe_unused]]) {
     CPH_PyVehicle_InternalCleanup(self);
     if (self->parsers) {
-        CPH_FreeVehicleParserGroup(self->parsers);
-        CPH_PyFree(self->parsers);
+
+        delete self->parsers;
     }
     Py_RETURN_NONE;
 }
@@ -835,8 +829,8 @@ PyType_DeclareSlot_VoidFromModule CPH_PyVehicle_Dealloc(CPH_VehicleObject *self)
     CPH_PyVehicle_InternalCleanup(self);
 
     if (self->parsers) {
-        CPH_FreeVehicleParserGroup(self->parsers);
-        CPH_PyFree(self->parsers);
+
+        delete self->parsers;
     }
 
     Py_XDECREF(self->world);
@@ -873,10 +867,10 @@ PyType_Spec Vehicle_spec = {
     .slots =
         (PyType_Slot[]){
 
-            {.slot = Py_tp_dealloc, .pfunc = CPH_PyVehicle_Dealloc},
-            {.slot = Py_tp_traverse, .pfunc = CPH_PyVehicle_Traverse},
-            {.slot = Py_tp_clear, .pfunc = CPH_PyVehicle_Clear},
-            {.slot = Py_tp_methods, .pfunc = kVehicleMethods },
+            {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(CPH_PyVehicle_Dealloc)},
+            {.slot = Py_tp_traverse, .pfunc = reinterpret_cast<void *>(CPH_PyVehicle_Traverse)},
+            {.slot = Py_tp_clear, .pfunc = reinterpret_cast<void *>(CPH_PyVehicle_Clear)},
+            {.slot = Py_tp_methods, .pfunc = reinterpret_cast<void *>(kVehicleMethods) },
             {.slot = Py_tp_getset,
              .pfunc =
                  (PyGetSetDef[]){

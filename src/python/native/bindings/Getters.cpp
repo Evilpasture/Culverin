@@ -155,12 +155,12 @@ PyType_DeclareSlot_Void BufferProxy_releasebuffer([[maybe_unused]] CPH_BufferPro
 
 // --- Heap Type Specification ---
 PyType_Slot BufferProxy_slots[] = {
-    {.slot = Py_tp_dealloc, .pfunc = BufferProxy_dealloc},
-    {.slot = Py_tp_traverse, .pfunc = BufferProxy_traverse},
-    {.slot = Py_tp_clear, .pfunc = BufferProxy_clear},
-    {.slot = Py_bf_getbuffer, .pfunc = BufferProxy_getbuffer},
-    {.slot = Py_bf_releasebuffer, .pfunc = BufferProxy_releasebuffer},
-    {.slot = Py_sq_length, .pfunc = BufferProxy_length},
+    {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(BufferProxy_dealloc)},
+    {.slot = Py_tp_traverse, .pfunc = reinterpret_cast<void *>(BufferProxy_traverse)},
+    {.slot = Py_tp_clear, .pfunc = reinterpret_cast<void *>(BufferProxy_clear)},
+    {.slot = Py_bf_getbuffer, .pfunc = reinterpret_cast<void *>(BufferProxy_getbuffer)},
+    {.slot = Py_bf_releasebuffer, .pfunc = reinterpret_cast<void *>(BufferProxy_releasebuffer)},
+    {.slot = Py_sq_length, .pfunc = reinterpret_cast<void *>(BufferProxy_length)},
     {}};
 
 PyType_Spec BufferProxy_spec = {.name      = "culverin.BufferProxy",

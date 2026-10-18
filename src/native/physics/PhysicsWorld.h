@@ -5,6 +5,10 @@
 
 // Native operations never call the Python API. The CPython binding translates
 // native status codes into exceptions where appropriate.
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 void CPH_PhysicsWorldInitState(CPH_PhysicsWorld *world);
 int CPH_AllocateBuffers(CPH_PhysicsWorld *world, int max_bodies, size_t initial_count);
 int CPH_AllocateConstraints(CPH_PhysicsWorld *world);
@@ -39,3 +43,7 @@ void CPH_FreeNewBuffers(CPH_NewBuffers *buffers);
 void CPH_FreeConstraints(CPH_PhysicsWorld *world);
 void CPH_FreeShadowBuffers(CPH_PhysicsWorld *world);
 void CPH_PhysicsWorldFreeNative(CPH_PhysicsWorld *world);
+
+#ifdef __cplusplus
+}
+#endif

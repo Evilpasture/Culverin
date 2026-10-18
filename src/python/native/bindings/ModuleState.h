@@ -2,7 +2,7 @@
 
 // --- Module State (PEP 489) ---
 #include <Python.h>
-#include "bindings/parsing/ArgIndices.h"
+#include "bindings/parsing/ParserRegistry.hpp"
 typedef struct {
     PyObject *helper;           // Reference to culverin._culverin module
     PyObject *PhysicsWorldType; // Reference to the class
@@ -17,7 +17,7 @@ typedef struct {
     PyObject *RegistryType;
     PyObject *MathServiceType;
     // Parser group for top-level module functions
-    CPH_ModuleParsers parsers; 
+    CPH_ModuleParsers *parsers;
 } CPH_ModuleState;
 
 // Helper to retrieve state from the module object

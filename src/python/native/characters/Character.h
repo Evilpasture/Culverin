@@ -1,6 +1,6 @@
 #pragma once
 #include "bindings/BindingCommon.h"
-#include "bindings/parsing/ArgIndices.h"
+#include "bindings/parsing/ParserRegistry.hpp"
 #include <Python.h>
 
 // --- Character Object ---

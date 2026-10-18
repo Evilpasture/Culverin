@@ -2,7 +2,7 @@
 #include "bindings/BindingCommon.h"
 #include "bindings/PythonSupport.h"
 
-static int parse_sequence_internal(PyObject *obj, void *restrict out, int count, bool is_double) {
+static int parse_sequence_internal(PyObject *obj, void *out, int count, bool is_double) {
     if (!obj || obj == Py_None) {
         return 0;
     }
@@ -48,7 +48,7 @@ static int parse_sequence_internal(PyObject *obj, void *restrict out, int count,
 
     // Hoist the type check outside the loop
     if (is_double) {
-        double *restrict d_out = (double *)out;
+        double *d_out = (double *)out;
         for (int i = 0; i < count; i++) {
             double val = PyFloat_AsDouble(items[i]);
             if (val == -1.0 && PyErr_Occurred()) {
@@ -58,7 +58,7 @@ static int parse_sequence_internal(PyObject *obj, void *restrict out, int count,
             d_out[i] = val;
         }
     } else {
-        float *restrict f_out = (float *)out;
+        float *f_out = (float *)out;
         for (int i = 0; i < count; i++) {
             double val = PyFloat_AsDouble(items[i]);
             if (val == -1.0 && PyErr_Occurred()) {
@@ -245,7 +245,7 @@ int CPH_ParseTracksToC(PyObject *py_tracks, CPH_TrackData *out_data, int *num_ou
         if (py_idxs && PyList_Check(py_idxs)) {
             uint32_t count      = (uint32_t)PyList_Size(py_idxs);
             out_data[t].count   = count;
-            out_data[t].indices = CPH_PyAlloc(count * sizeof(uint32_t));
+            out_data[t].indices = static_cast<uint32_t *>(CPH_PyAlloc(count * sizeof(uint32_t)));
 
             for (uint32_t k = 0; k < count; k++) {
                 out_data[t].indices[k] = (uint32_t)PyLong_AsLong(PyList_GetItem(py_idxs, k));

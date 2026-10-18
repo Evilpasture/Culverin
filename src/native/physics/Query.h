@@ -64,6 +64,10 @@ typedef struct CPH_PhysicsShapecastHit {
     bool has_hit;
 } CPH_PhysicsShapecastHit;
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 void CPH_PhysicsQueryHitBufferInit(CPH_PhysicsQueryHitBuffer *buffer);
 void CPH_PhysicsQueryHitBufferDestroy(CPH_PhysicsQueryHitBuffer *buffer);
 
@@ -86,3 +90,7 @@ PhysicsQueryStatus CPH_PhysicsWorldShapecast(struct CPH_PhysicsWorld *world, int
                                            JPH_RVec3 position, JPH_Quat rotation,
                                            JPH_Vec3 sweep_direction, const float size[4],
                                            BodyHandle ignore_handle, CPH_PhysicsShapecastHit *hit);
+
+#ifdef __cplusplus
+}
+#endif

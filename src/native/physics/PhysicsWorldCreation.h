@@ -61,6 +61,10 @@ typedef struct CPH_PhysicsWorldSoftBodyCreateRequest {
     bool faces_double_sided;
 } CPH_PhysicsWorldSoftBodyCreateRequest;
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 void CPH_PhysicsWorldResolveMaterial(CPH_PhysicsWorld *world, uint32_t material_id, float input_friction,
                                     float input_restitution, float *out_friction,
                                     float *out_restitution);
@@ -107,3 +111,7 @@ PhysicsWorldCreationStatus CPH_PhysicsWorldCreateHeightfieldBody(
     JPH_Quat rotation, float friction, float restitution, uint32_t category, uint32_t mask,
     uint32_t material_id, uint64_t user_data, BodyHandle *out_handle, size_t *out_count,
     PhysicsWorldStatus *out_native_status);
+
+#ifdef __cplusplus
+}
+#endif

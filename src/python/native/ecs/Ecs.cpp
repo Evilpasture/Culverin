@@ -1,6 +1,6 @@
 #include "ecs/Ecs.h"
 #include "bindings/BindingCommon.h"
-#include "bindings/parsing/ArgIndices.h"
+#include "bindings/parsing/ParserRegistry.hpp"
 #include "bindings/Getters.h"
 #include "bindings/ModuleState.h"
 #include "bindings/physics/PhysicsWorld.h"
@@ -133,7 +133,6 @@ static bool SparseSet_EnsureDenseCapacity(CPH_RegistryObject *reg, CPH_SparseSet
 }
 
 // --- LIFECYCLE ---
-void CPH_InitEcsParsers(CPH_ECSParsers *ep);
 PyType_DeclareSlot_StatusFromModule CPH_PyRegistry_Init(CPH_RegistryObject *self,
                                                   [[maybe_unused]] PyObject *args,
                                                   [[maybe_unused]] PyObject *kwds) {
@@ -160,14 +159,13 @@ PyType_DeclareSlot_StatusFromModule CPH_PyRegistry_Init(CPH_RegistryObject *self
         return -1;
     }
     CPH_INIT_LOCK(self->ecs_lock);
-    self->parsers = (CPH_ECSParsers *)CPH_PyAlloc(sizeof(CPH_ECSParsers));
+    self->parsers = CPH::NewParserGroup<CPH_ECSParsers>();
     if (!self->parsers) {
         return -1;
     }
-    CPH_InitEcsParsers(self->parsers);
+    self->parsers->Init();
     return 0;
 }
-void CPH_FreeEcsParsers(CPH_ECSParsers *ep);
 PyType_DeclareSlot_VoidFromModule CPH_PyRegistry_Dealloc(CPH_RegistryObject *self) {
     if (self->generations) {
         CPH_PyFree(self->generations);
@@ -182,8 +180,8 @@ PyType_DeclareSlot_VoidFromModule CPH_PyRegistry_Dealloc(CPH_RegistryObject *sel
         CPH_PyFree(self->components);
     }
     if (self->parsers) {
-        CPH_FreeEcsParsers(self->parsers);
-        CPH_PyFree(self->parsers);
+
+        delete self->parsers;
     }
     Py_TYPE(self)->tp_free((PyObject *)self);
 }
@@ -227,11 +225,9 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Create(CPH_RegistryObject *se
 PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Destroy(CPH_RegistryObject *self, PyObject *const *args,
                                                      size_t nargsf, PyObject *kwnames) {
     uint64_t handle;
-    const void *const restrict targets[RegEntityOnly_COUNT] = {
-        [IDX_REO_ENT] = (const void *const restrict)&handle};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->RegEntityOnlyParser, targets)) {
+
+    if (!self->parsers->RegEntityOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle)) {
         return nullptr;
     }
 
@@ -280,11 +276,9 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Destroy(CPH_RegistryObject *s
 PyCFunction_DeclareMethodFromModule CPH_PyRegistry_IsAlive(CPH_RegistryObject *self, PyObject *const *args,
                                                       size_t nargsf, PyObject *kwnames) {
     uint64_t handle;
-    const void *const restrict targets[RegEntityOnly_COUNT] = {
-        [IDX_REO_ENT] = (const void *const restrict)&handle};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->RegEntityOnlyParser, targets)) {
+
+    if (!self->parsers->RegEntityOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle)) {
         return nullptr;
     }
 
@@ -309,11 +303,9 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_RegisterComponent(CPH_Registr
                                                                 PyObject *const *args,
                                                                 size_t nargsf, PyObject *kwnames) {
     uint32_t size;
-    const void *const restrict targets[RegRegComp_COUNT] = {[IDX_RRC_SIZE] =
-                                                                (const void *const restrict)&size};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->RegRegCompParser, targets)) {
+
+    if (!self->parsers->RegRegComp.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, size)) {
         return nullptr;
     }
 
@@ -353,13 +345,9 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Add(CPH_RegistryObject *self,
     uint32_t comp_id;
     PyObject *data_obj = nullptr;
 
-    const void *const restrict targets[RegAdd_COUNT] = {
-        [IDX_RA_ENT]  = (const void *const restrict)&handle,
-        [IDX_RA_COMP] = (const void *const restrict)&comp_id,
-        [IDX_RA_DATA] = (const void *const restrict)&data_obj};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->RegAddParser,
-                           targets)) {
+
+    if (!self->parsers->RegAdd.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle, comp_id, data_obj)) {
         return nullptr;
     }
 
@@ -392,11 +380,12 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Add(CPH_RegistryObject *self,
         }
     }
 
+    uint32_t dense_idx = kInvalidDenseIndex;
     if (!SparseSet_EnsureSparseCapacity(set, index + 1)) {
         goto fail_quiet;
     }
 
-    uint32_t dense_idx = set->sparse[index];
+    dense_idx = set->sparse[index];
     if (dense_idx == kInvalidDenseIndex) {
         // This helper now sets its own BufferError or MemoryError
         if (!SparseSet_EnsureDenseCapacity(self, set)) {
@@ -432,12 +421,9 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Remove(CPH_RegistryObject *se
     uint64_t handle;
     uint32_t comp_id;
 
-    const void *const restrict targets[RegEntComp_COUNT] = {
-        [IDX_REC_ENT]  = (const void *const restrict)&handle,
-        [IDX_REC_COMP] = (const void *const restrict)&comp_id};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->RegEntCompParser, targets)) {
+
+    if (!self->parsers->RegEntComp.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle, comp_id)) {
         return nullptr;
     }
 
@@ -478,12 +464,9 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Has(CPH_RegistryObject *self,
     uint64_t handle;
     uint32_t comp_id;
 
-    const void *const restrict targets[RegEntComp_COUNT] = {
-        [IDX_REC_ENT]  = (const void *const restrict)&handle,
-        [IDX_REC_COMP] = (const void *const restrict)&comp_id};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->RegEntCompParser, targets)) {
+
+    if (!self->parsers->RegEntComp.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle, comp_id)) {
         return nullptr;
     }
 
@@ -506,12 +489,9 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Get(CPH_RegistryObject *self,
                                                  size_t nargsf, PyObject *kwnames) {
     uint64_t handle;
     uint32_t comp_id;
-    const void *const restrict targets[RegEntComp_COUNT] = {
-        [IDX_REC_ENT]  = (const void *const restrict)&handle,
-        [IDX_REC_COMP] = (const void *const restrict)&comp_id};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->RegEntCompParser, targets)) {
+
+    if (!self->parsers->RegEntComp.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle, comp_id)) {
         return nullptr;
     }
 
@@ -539,11 +519,9 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Get(CPH_RegistryObject *self,
 PyCFunction_DeclareMethodFromModule CPH_PyRegistry_GetView(CPH_RegistryObject *self, PyObject *const *args,
                                                       size_t nargsf, PyObject *kwnames) {
     uint32_t comp_id;
-    const void *const restrict targets[RegCompOnly_COUNT] = {
-        [IDX_RCO_COMP] = (const void *const restrict)&comp_id};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->RegCompOnlyParser, targets)) {
+
+    if (!self->parsers->RegCompOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, comp_id)) {
         return nullptr;
     }
 
@@ -561,11 +539,9 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_GetEntities(CPH_RegistryObjec
                                                           PyObject *const *args, size_t nargsf,
                                                           PyObject *kwnames) {
     uint32_t comp_id;
-    const void *const restrict targets[RegCompOnly_COUNT] = {
-        [IDX_RCO_COMP] = (const void *const restrict)&comp_id};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->RegCompOnlyParser, targets)) {
+
+    if (!self->parsers->RegCompOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, comp_id)) {
         return nullptr;
     }
 
@@ -589,14 +565,9 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_SyncFromWorld(CPH_RegistryObj
     int p_comp_id = -1;
     int r_comp_id = -1; // -1 means ignore
 
-    const void *const restrict targets[RegSyncPhys_COUNT] = {
-        [IDX_RSP_WORLD]  = (const void *const restrict)&world_obj,
-        [IDX_RSP_H_COMP] = (const void *const restrict)&h_comp_id,
-        [IDX_RSP_T_COMP] = (const void *const restrict)&p_comp_id,
-        [IDX_RSP_R_COMP] = (const void *const restrict)&r_comp_id};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->RegSyncPhysParser, targets)) {
+
+    if (!self->parsers->RegSyncPhys.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, world_obj, h_comp_id, p_comp_id, r_comp_id)) {
         return nullptr;
     }
 
@@ -717,11 +688,9 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_GetComponentCount(CPH_Registr
                                                                  PyObject *const *args,
                                                                  size_t nargsf, PyObject *kwnames) {
     uint32_t comp_id;
-    const void *const restrict targets[RegCompOnly_COUNT] = {
-        [IDX_RCO_COMP] = (const void *const restrict)&comp_id};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->RegCompOnlyParser, targets)) {
+
+    if (!self->parsers->RegCompOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, comp_id)) {
         return nullptr;
     }
 
@@ -760,10 +729,10 @@ PyType_Spec Registry_spec = {
     .slots =
         (PyType_Slot[]){
 
-            {.slot = Py_tp_new, .pfunc = PyType_GenericNew},
-            {.slot = Py_tp_init, .pfunc = CPH_PyRegistry_Init},
-            {.slot = Py_tp_dealloc, .pfunc = CPH_PyRegistry_Dealloc},
-            {.slot = Py_tp_methods, .pfunc = kRegistryMethods },
+            {.slot = Py_tp_new, .pfunc = reinterpret_cast<void *>(PyType_GenericNew)},
+            {.slot = Py_tp_init, .pfunc = reinterpret_cast<void *>(CPH_PyRegistry_Init)},
+            {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(CPH_PyRegistry_Dealloc)},
+            {.slot = Py_tp_methods, .pfunc = reinterpret_cast<void *>(kRegistryMethods) },
             {},
 
         },

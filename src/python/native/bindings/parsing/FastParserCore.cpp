@@ -30,8 +30,7 @@ bool CPH_FastParseWarnUninternedSlow(PyObject *key, const char *pname) {
 }
 
 [[gnu::noinline, gnu::cold, nodiscard]]
-size_t CPH_FastParseCmpSlow(PyObject key[static const restrict 1],
-                   const CPH_FastParser fastparse[static const restrict 1]) {
+size_t CPH_FastParseCmpSlow(PyObject *key, const CPH_FastParser *fastparse) {
     const size_t count          = fastparse->count;
     const CPH_FastArgSpecHot *specs = fastparse->hot_specs;
 
@@ -694,9 +693,8 @@ void CPH_FastParseDeinit(CPH_FastParser *fastparser) {
 
 [[gnu::always_inline]]
 static inline bool
-culv_fast_parse_process_pos_legacy(const CPH_FastParser fastparse[static const restrict 1],
-                      PyObject args[static const restrict 1], Py_ssize_t nargs,
-                      const void *const CPH_FAST_PARSE_RESTRICT targets[static const restrict 1]) {
+culv_fast_parse_process_pos_legacy(const CPH_FastParser *fastparse, PyObject *args,
+                                    Py_ssize_t nargs, const void *const CPH_FAST_PARSE_RESTRICT *targets) {
 #pragma unroll 2
     for (Py_ssize_t i = 0; i < nargs; ++i) {
         PyObject *val              = PyTuple_GET_ITEM(args, i);
@@ -718,10 +716,8 @@ culv_fast_parse_process_pos_legacy(const CPH_FastParser fastparse[static const r
 
 [[gnu::always_inline]]
 static inline bool
-culv_fast_parse_process_kw_legacy(const CPH_FastParser fastparse[static const restrict 1],
-                     PyObject kwargs[static const restrict 1],
-                     uint64_t mask[static const restrict 1],
-                     const void *const CPH_FAST_PARSE_RESTRICT targets[static const restrict 1]) {
+culv_fast_parse_process_kw_legacy(const CPH_FastParser *fastparse, PyObject *kwargs,
+                                   uint64_t *mask, const void *const CPH_FAST_PARSE_RESTRICT *targets) {
     PyObject *key;
     PyObject *val;
     Py_ssize_t pos = 0;
@@ -761,10 +757,9 @@ culv_fast_parse_process_kw_legacy(const CPH_FastParser fastparse[static const re
 /** --- ORCHESTRATOR --- **/
 
 [[nodiscard, gnu::hot, gnu::nonnull(4, 5), gnu::no_stack_protector, gnu::flatten, gnu::noinline]]
-bool CPH_FastParseLegacy(PyObject args[static const CPH_FAST_PARSE_RESTRICT 1], PyObject kwargs[const CPH_FAST_PARSE_RESTRICT],
-                     [[maybe_unused]] PyObject *unused,
-                     const CPH_FastParser fastparser[static const CPH_FAST_PARSE_RESTRICT 1],
-                     const void *const CPH_FAST_PARSE_RESTRICT targets[static const CPH_FAST_PARSE_RESTRICT 1]) {
+bool CPH_FastParseLegacy(PyObject *args, PyObject *kwargs, [[maybe_unused]] PyObject *unused,
+                         const CPH_FastParser *fastparser,
+                         const void *const CPH_FAST_PARSE_RESTRICT targets[1]) {
 
     Py_ssize_t nargs = args ? PyTuple_GET_SIZE(args) : 0;
 

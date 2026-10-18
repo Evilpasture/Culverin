@@ -1,5 +1,5 @@
 #pragma once
-#include "bindings/parsing/ArgIndices.h"
+#include "bindings/parsing/ParserRegistry.hpp"
 #include "soft_bodies/SoftBodyCore.h"
 #include "joltc.h"
 #include <Python.h>

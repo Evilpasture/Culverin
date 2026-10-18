@@ -1,5 +1,5 @@
 #pragma once
-#include "bindings/parsing/ArgIndices.h"
+#include "bindings/parsing/ParserRegistry.hpp"
 #include <Python.h>
 #include <joltc.h>
 

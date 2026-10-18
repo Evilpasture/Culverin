@@ -40,9 +40,17 @@ typedef enum PhysicsBodyOperationStatus : int {
 // Executes engine-side body mutations, command staging, and shadow-buffer
 // mirroring. Call with the GIL released; stale-handle errors are translated by
 // the CPython binding.
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 PhysicsBodyOperationStatus
 CPH_PhysicsWorldApplyBodyOperation(CPH_PhysicsWorld *world, const CPH_PhysicsBodyOperation *operation);
 PhysicsBodyOperationStatus CPH_PhysicsWorldQueueBodyDestroy(CPH_PhysicsWorld *world, BodyHandle handle);
 PhysicsBodyOperationStatus CPH_PhysicsWorldQueueBodyDestroyBatch(CPH_PhysicsWorld *world,
                                                                   const BodyHandle *handles,
                                                                   size_t handle_count);
+
+#ifdef __cplusplus
+}
+#endif

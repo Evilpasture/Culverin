@@ -1,9 +1,9 @@
 #include "math/Math.h"
-#include "bindings/parsing/ArgIndices.h"
+#include "bindings/parsing/ParserRegistry.hpp"
 #include "core/CompilerSpecifics.h"
 #include "bindings/PythonSupport.h"
 #include "bindings/FastBuild.h"
-#include "bindings/parsing/FastParse.h"
+#include "bindings/parsing/FastParser.hpp"
 #include <Python.h>
 
 typedef struct CPH_MathHolderObject {
@@ -63,14 +63,9 @@ static PyObject *CPH_PyMath_GetPerspective(CPH_MathHolderObject *self, PyObject 
     float aspect;
     float near_p;
     float far_p;
-    const void *const restrict targets[MathPersp_COUNT] = {
-        [IDX_MP_FOVY]   = (const void *const restrict)&fovy,
-        [IDX_MP_ASPECT] = (const void *const restrict)&aspect,
-        [IDX_MP_NEAR]   = (const void *const restrict)&near_p,
-        [IDX_MP_FAR]    = (const void *const restrict)&far_p};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->MathPerspParser, targets)) {
+
+    if (!self->parsers->MathPersp.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, fovy, aspect, near_p, far_p)) {
         return nullptr;
     }
 
@@ -89,16 +84,9 @@ static PyObject *CPH_PyMath_GetOrtho(CPH_MathHolderObject *self, PyObject *const
     float top;
     float near_p;
     float far_p;
-    const void *const restrict targets[MathOrtho_COUNT] = {
-        [IDX_MO_LEFT]   = (const void *const restrict)&left,
-        [IDX_MO_RIGHT]  = (const void *const restrict)&right,
-        [IDX_MO_BOTTOM] = (const void *const restrict)&bottom,
-        [IDX_MO_TOP]    = (const void *const restrict)&top,
-        [IDX_MO_NEAR]   = (const void *const restrict)&near_p,
-        [IDX_MO_FAR]    = (const void *const restrict)&far_p};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->MathOrthoParser, targets)) {
+
+    if (!self->parsers->MathOrtho.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, left, right, bottom, top, near_p, far_p)) {
         return nullptr;
     }
 
@@ -114,13 +102,9 @@ static PyObject *CPH_PyMath_GetLookAt(CPH_MathHolderObject *self, PyObject *cons
     PyObject *eye_obj;
     PyObject *target_obj;
     PyObject *up_obj;
-    const void *const restrict targets[MathLookAt_COUNT] = {
-        [IDX_ML_EYE]    = (const void *const restrict)&eye_obj,
-        [IDX_ML_TARGET] = (const void *const restrict)&target_obj,
-        [IDX_ML_UP]     = (const void *const restrict)&up_obj};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->MathLookAtParser, targets)) {
+
+    if (!self->parsers->MathLookAt.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, eye_obj, target_obj, up_obj)) {
         return nullptr;
     }
 
@@ -164,13 +148,9 @@ static PyObject *CPH_PyMath_GetTrs(CPH_MathHolderObject *self, PyObject *const *
     PyObject *pos_obj;
     PyObject *rot_obj;
     PyObject *scale_obj;
-    const void *const restrict targets[MathTRS_COUNT] = {
-        [IDX_MTRS_T] = (const void *const restrict)&pos_obj,
-        [IDX_MTRS_R] = (const void *const restrict)&rot_obj,
-        [IDX_MTRS_S] = (const void *const restrict)&scale_obj};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->MathTRSParser,
-                           targets)) {
+
+    if (!self->parsers->MathTRS.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, pos_obj, rot_obj, scale_obj)) {
         return nullptr;
     }
 
@@ -222,13 +202,9 @@ static PyObject *CPH_PyMath_GetTrsBatch(CPH_MathHolderObject *self, PyObject *co
     PyObject *pos_obj;
     PyObject *rot_obj;
     PyObject *scale_obj;
-    const void *const restrict targets[MathTRSBatch_COUNT] = {
-        [IDX_MTRSB_T] = (const void *const restrict)&pos_obj,
-        [IDX_MTRSB_R] = (const void *const restrict)&rot_obj,
-        [IDX_MTRSB_S] = (const void *const restrict)&scale_obj};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->MathTRSBatchParser, targets)) {
+
+    if (!self->parsers->MathTRSBatch.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, pos_obj, rot_obj, scale_obj)) {
         return nullptr;
     }
 
@@ -266,11 +242,9 @@ static PyObject *CPH_PyMath_GetTrsBatch(CPH_MathHolderObject *self, PyObject *co
 static PyObject *CPH_PyMath_Inverse(CPH_MathHolderObject *self, PyObject *const *args,
                                           Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *mat_obj;
-    const void *const restrict targets[MathMat_COUNT] = {[IDX_MMM_MAT] =
-                                                             (const void *const restrict)&mat_obj};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->MathMatParser,
-                           targets)) {
+
+    if (!self->parsers->MathMat.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, mat_obj)) {
         return nullptr;
     }
 
@@ -291,12 +265,9 @@ static PyObject *CPH_PyMath_Matmul(CPH_MathHolderObject *self, PyObject *const *
                                          Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *a_obj;
     PyObject *b_obj;
-    const void *const restrict targets[MathMatPair_COUNT] = {
-        [IDX_MMP_A] = (const void *const restrict)&a_obj,
-        [IDX_MMP_B] = (const void *const restrict)&b_obj};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->MathMatPairParser, targets)) {
+
+    if (!self->parsers->MathMatPair.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, a_obj, b_obj)) {
         return nullptr;
     }
 
@@ -317,12 +288,9 @@ static PyObject *CPH_PyMath_TransformVec3(CPH_MathHolderObject *self, PyObject *
                                                  Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *mat_obj;
     PyObject *vec_obj;
-    const void *const restrict targets[MathMatVec_COUNT] = {
-        [IDX_MMV_MAT] = (const void *const restrict)&mat_obj,
-        [IDX_MMV_VEC] = (const void *const restrict)&vec_obj};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->MathMatVecParser, targets)) {
+
+    if (!self->parsers->MathMatVec.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, mat_obj, vec_obj)) {
         return nullptr;
     }
 
@@ -360,12 +328,9 @@ static PyObject *CPH_PyMath_MatmulBatch(CPH_MathHolderObject *self, PyObject *co
                                                Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *mat_obj;
     PyObject *batch_obj;
-    const void *const restrict targets[MathMatBatch_COUNT] = {
-        [IDX_MMB_MAT]   = (const void *const restrict)&mat_obj,
-        [IDX_MMB_BATCH] = (const void *const restrict)&batch_obj};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->MathMatBatchParser, targets)) {
+
+    if (!self->parsers->MathMatBatch.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, mat_obj, batch_obj)) {
         return nullptr;
     }
 
@@ -396,13 +361,9 @@ static PyObject *CPH_PyMath_CullAabb(CPH_MathHolderObject *self, PyObject *const
     PyObject *vp_obj;
     PyObject *min_obj;
     PyObject *max_obj;
-    const void *const restrict targets[MathCull_COUNT] = {
-        [IDX_MC_VP]  = (const void *const restrict)&vp_obj,
-        [IDX_MC_MIN] = (const void *const restrict)&min_obj,
-        [IDX_MC_MAX] = (const void *const restrict)&max_obj};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->MathCullParser, targets)) {
+
+    if (!self->parsers->MathCull.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, vp_obj, min_obj, max_obj)) {
         return nullptr;
     }
 
@@ -436,12 +397,9 @@ static PyObject *CPH_PyMath_CullAabbBatch(CPH_MathHolderObject *self, PyObject *
                                                   Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *vp_obj;
     PyObject *aabbs_obj;
-    const void *const restrict targets[MathCullBatch_COUNT] = {
-        [IDX_MCB_VP]    = (const void *const restrict)&vp_obj,
-        [IDX_MCB_AABBS] = (const void *const restrict)&aabbs_obj};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->MathCullBatchParser, targets)) {
+
+    if (!self->parsers->MathCullBatch.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, vp_obj, aabbs_obj)) {
         return nullptr;
     }
 
@@ -471,11 +429,9 @@ static PyObject *CPH_PyMath_Vec3NormalizeBatch(CPH_MathHolderObject *self,
                                                        PyObject *const *args, Py_ssize_t nargsf,
                                                        PyObject *kwnames) {
     PyObject *vecs_obj;
-    const void *const restrict targets[MathVec3Batch_COUNT] = {
-        [IDX_MVB_VECS] = (const void *const restrict)&vecs_obj};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->MathVec3BatchParser, targets)) {
+
+    if (!self->parsers->MathVec3Batch.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, vecs_obj)) {
         return nullptr;
     }
 
@@ -509,13 +465,9 @@ static PyObject *CPH_PyMath_QuatFromEuler(CPH_MathHolderObject *self, PyObject *
     float x;
     float y;
     float z;
-    const void *const restrict targets[MathEuler_COUNT] = {
-        [IDX_ME_X] = (const void *const restrict)&x,
-        [IDX_ME_Y] = (const void *const restrict)&y,
-        [IDX_ME_Z] = (const void *const restrict)&z};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->MathEulerParser, targets)) {
+
+    if (!self->parsers->MathEuler.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, x, y, z)) {
         return nullptr;
     }
 
@@ -532,14 +484,9 @@ static PyObject *CPH_PyMath_QuatToEuler(CPH_MathHolderObject *self, PyObject *co
     float y;
     float z;
     float w;
-    const void *const restrict targets[MathQuat_COUNT] = {
-        [IDX_MQ_X] = (const void *const restrict)&x,
-        [IDX_MQ_Y] = (const void *const restrict)&y,
-        [IDX_MQ_Z] = (const void *const restrict)&z,
-        [IDX_MQ_W] = (const void *const restrict)&w};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->MathQuatParser, targets)) {
+
+    if (!self->parsers->MathQuat.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, x, y, z, w)) {
         return nullptr;
     }
 
@@ -556,13 +503,9 @@ static PyObject *CPH_PyMath_QuatSlerp(CPH_MathHolderObject *self, PyObject *cons
     PyObject *q1_obj;
     PyObject *q2_obj;
     float t;
-    const void *const restrict targets[MathSlerp_COUNT] = {
-        [IDX_MS_Q1] = (const void *const restrict)&q1_obj,
-        [IDX_MS_Q2] = (const void *const restrict)&q2_obj,
-        [IDX_MS_T]  = (const void *const restrict)&t};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->MathSlerpParser, targets)) {
+
+    if (!self->parsers->MathSlerp.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, q1_obj, q2_obj, t)) {
         return nullptr;
     }
 
@@ -583,12 +526,9 @@ static PyObject *CPH_PyMath_QuatMul(CPH_MathHolderObject *self, PyObject *const 
                                            Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *a_obj;
     PyObject *b_obj;
-    const void *const restrict targets[MathQuatPair_COUNT] = {
-        [IDX_MQP_A] = (const void *const restrict)&a_obj,
-        [IDX_MQP_B] = (const void *const restrict)&b_obj};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->MathQuatPairParser, targets)) {
+
+    if (!self->parsers->MathQuatPair.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, a_obj, b_obj)) {
         return nullptr;
     }
 
@@ -610,13 +550,9 @@ static PyObject *CPH_PyMath_Vec3LerpBatch(CPH_MathHolderObject *self, PyObject *
     PyObject *a_obj;
     PyObject *b_obj;
     float alpha;
-    const void *const restrict targets[MathLerpBatch_COUNT] = {
-        [IDX_MLB_VECS_A] = (const void *const restrict)&a_obj,
-        [IDX_MLB_VECS_B] = (const void *const restrict)&b_obj,
-        [IDX_MLB_ALPHA]  = (const void *const restrict)&alpha};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->MathLerpBatchParser, targets)) {
+
+    if (!self->parsers->MathLerpBatch.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, a_obj, b_obj, alpha)) {
         return nullptr;
     }
 
@@ -654,12 +590,9 @@ static PyObject *CPH_PyMath_QuatRotateVec3(CPH_MathHolderObject *self, PyObject 
                                                    Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *q_obj;
     PyObject *v_obj;
-    const void *const restrict targets[MathQuatVec_COUNT] = {
-        [IDX_MQV_Q] = (const void *const restrict)&q_obj,
-        [IDX_MQV_V] = (const void *const restrict)&v_obj};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->MathQuatVecParser, targets)) {
+
+    if (!self->parsers->MathQuatVec.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, q_obj, v_obj)) {
         return nullptr;
     }
 
@@ -681,12 +614,9 @@ static PyObject *CPH_PyMath_QuatRotateVec3Batch(CPH_MathHolderObject *self,
                                                          PyObject *kwnames) {
     PyObject *q_obj;
     PyObject *vecs_obj;
-    const void *const restrict targets[MathQuatVecBatch_COUNT] = {
-        [IDX_MQVB_Q]    = (const void *const restrict)&q_obj,
-        [IDX_MQVB_VECS] = (const void *const restrict)&vecs_obj};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->MathQuatVecBatchParser, targets)) {
+
+    if (!self->parsers->MathQuatVecBatch.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, q_obj, vecs_obj)) {
         return nullptr;
     }
 
@@ -723,11 +653,9 @@ static PyObject *CPH_PyMath_QuatRotateVec3Batch(CPH_MathHolderObject *self,
 static PyObject *CPH_PyMath_QuatInverse(CPH_MathHolderObject *self, PyObject *const *args,
                                                Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *q_obj;
-    const void *const restrict targets[MathQuatOp_COUNT] = {[IDX_MQO_Q] =
-                                                                (const void *const restrict)&q_obj};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->MathQuatOpParser, targets)) {
+
+    if (!self->parsers->MathQuatOp.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, q_obj)) {
         return nullptr;
     }
 
@@ -748,13 +676,9 @@ static PyObject *CPH_PyMath_Project(CPH_MathHolderObject *self, PyObject *const 
     PyObject *v_obj;
     PyObject *mvp_obj;
     PyObject *vp_obj;
-    const void *const restrict targets[MathProject_COUNT] = {
-        [IDX_MPR_V]   = (const void *const restrict)&v_obj,
-        [IDX_MPR_MVP] = (const void *const restrict)&mvp_obj,
-        [IDX_MPR_VP]  = (const void *const restrict)&vp_obj};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->MathProjectParser, targets)) {
+
+    if (!self->parsers->MathProject.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, v_obj, mvp_obj, vp_obj)) {
         return nullptr;
     }
 
@@ -780,13 +704,9 @@ static PyObject *CPH_PyMath_Unproject(CPH_MathHolderObject *self, PyObject *cons
     PyObject *v_obj;
     PyObject *mvp_obj;
     PyObject *vp_obj;
-    const void *const restrict targets[MathUnproject_COUNT] = {
-        [IDX_MUP_V]   = (const void *const restrict)&v_obj,
-        [IDX_MUP_MVP] = (const void *const restrict)&mvp_obj,
-        [IDX_MUP_VP]  = (const void *const restrict)&vp_obj};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->MathUnprojectParser, targets)) {
+
+    if (!self->parsers->MathUnproject.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, v_obj, mvp_obj, vp_obj)) {
         return nullptr;
     }
 
@@ -811,12 +731,9 @@ static PyObject *CPH_PyMath_QuatFromTo(CPH_MathHolderObject *self, PyObject *con
                                                Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *v1_obj;
     PyObject *v2_obj;
-    const void *const restrict targets[MathVecPair_COUNT] = {
-        [IDX_MVP_V1] = (const void *const restrict)&v1_obj,
-        [IDX_MVP_V2] = (const void *const restrict)&v2_obj};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->MathVecPairParser, targets)) {
+
+    if (!self->parsers->MathVecPair.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, v1_obj, v2_obj)) {
         return nullptr;
     }
 
@@ -837,13 +754,10 @@ static PyObject *CPH_PyMath_Vec3Dot(CPH_MathHolderObject *self, PyObject *const 
                                            Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *v1_obj;
     PyObject *v2_obj;
-    const void *const restrict targets[MathVecPair_COUNT] = {
-        [IDX_MVP_V1] = (const void *const restrict)&v1_obj,
-        [IDX_MVP_V2] = (const void *const restrict)&v2_obj};
+
 
     // Reusing the parser from quat_from_to
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->MathVecPairParser, targets)) {
+    if (!self->parsers->MathVecPair.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, v1_obj, v2_obj)) {
         return nullptr;
     }
 
@@ -863,12 +777,9 @@ static PyObject *CPH_PyMath_Vec3Cross(CPH_MathHolderObject *self, PyObject *cons
                                              Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *v1_obj;
     PyObject *v2_obj;
-    const void *const restrict targets[MathVecPair_COUNT] = {
-        [IDX_MVP_V1] = (const void *const restrict)&v1_obj,
-        [IDX_MVP_V2] = (const void *const restrict)&v2_obj};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->MathVecPairParser, targets)) {
+
+    if (!self->parsers->MathVecPair.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, v1_obj, v2_obj)) {
         return nullptr;
     }
 
@@ -891,14 +802,9 @@ static PyObject *CPH_PyMath_IntersectRayPlane(CPH_MathHolderObject *self, PyObje
     PyObject *rd_obj;
     PyObject *po_obj;
     PyObject *pn_obj;
-    const void *const restrict targets[MathRayPlane_COUNT] = {
-        [IDX_RP_RO] = (const void *const restrict)&ro_obj,
-        [IDX_RP_RD] = (const void *const restrict)&rd_obj,
-        [IDX_RP_PO] = (const void *const restrict)&po_obj,
-        [IDX_RP_PN] = (const void *const restrict)&pn_obj};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->MathRayPlaneParser, targets)) {
+
+    if (!self->parsers->MathRayPlane.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, ro_obj, rd_obj, po_obj, pn_obj)) {
         return nullptr;
     }
 
@@ -925,12 +831,9 @@ static PyObject *CPH_PyMath_IntersectRayPlane(CPH_MathHolderObject *self, PyObje
 static PyObject *CPH_PyMath_QuatGetAxisAngle(CPH_MathHolderObject *self, PyObject *const *args,
                                                       Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *q_obj;
-    // Reusing MathQuatOp which has [IDX_MQO_Q]
-    const void *const restrict targets[MathQuatOp_COUNT] = {[IDX_MQO_Q] =
-                                                                (const void *const restrict)&q_obj};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->MathQuatOpParser, targets)) {
+
+    if (!self->parsers->MathQuatOp.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, q_obj)) {
         return nullptr;
     }
 
@@ -952,12 +855,9 @@ static PyObject *CPH_PyMath_QuatFromAxisAngle(CPH_MathHolderObject *self,
                                                        PyObject *kwnames) {
     PyObject *axis_obj;
     float angle;
-    const void *const restrict targets[MathAxisAngle_COUNT] = {
-        [IDX_MAA_AXIS]  = (const void *const restrict)&axis_obj,
-        [IDX_MAA_ANGLE] = (const void *const restrict)&angle};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->MathAxisAngleParser, targets)) {
+
+    if (!self->parsers->MathAxisAngle.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, axis_obj, angle)) {
         return nullptr;
     }
 
@@ -977,12 +877,9 @@ static PyObject *CPH_PyMath_Vec3DistanceBatch(CPH_MathHolderObject *self, PyObje
                                                       Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *a_obj;
     PyObject *b_obj;
-    const void *const restrict targets[MathDistBatch_COUNT] = {
-        [IDX_MDB_VECS_A] = (const void *const restrict)&a_obj,
-        [IDX_MDB_VECS_B] = (const void *const restrict)&b_obj};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->MathDistBatchParser, targets)) {
+
+    if (!self->parsers->MathDistBatch.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, a_obj, b_obj)) {
         return nullptr;
     }
 
@@ -1020,11 +917,9 @@ static PyObject *CPH_PyMath_Vec3DistanceBatch(CPH_MathHolderObject *self, PyObje
 static PyObject *CPH_PyMath_Vec3Normalize(CPH_MathHolderObject *self, PyObject *const *args,
                                                  Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *v_obj;
-    const void *const restrict targets[MathVecOp_COUNT] = {[IDX_MVO_V] =
-                                                               (const void *const restrict)&v_obj};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->MathVecOpParser, targets)) {
+
+    if (!self->parsers->MathVecOp.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, v_obj)) {
         return nullptr;
     }
 
@@ -1044,11 +939,9 @@ static PyObject *CPH_PyMath_Mat44GetTranslation(CPH_MathHolderObject *self,
                                                         PyObject *const *args, Py_ssize_t nargsf,
                                                         PyObject *kwnames) {
     PyObject *mat_obj;
-    const void *const restrict targets[MathMat_COUNT] = {[IDX_MMM_MAT] =
-                                                             (const void *const restrict)&mat_obj};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->MathMatParser,
-                           targets)) {
+
+    if (!self->parsers->MathMat.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, mat_obj)) {
         return nullptr;
     }
 
@@ -1067,11 +960,9 @@ static PyObject *CPH_PyMath_Mat44GetTranslation(CPH_MathHolderObject *self,
 static PyObject *CPH_PyMath_Mat44GetRotation(CPH_MathHolderObject *self, PyObject *const *args,
                                                      Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *mat_obj;
-    const void *const restrict targets[MathMat_COUNT] = {[IDX_MMM_MAT] =
-                                                             (const void *const restrict)&mat_obj};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames, &self->parsers->MathMatParser,
-                           targets)) {
+
+    if (!self->parsers->MathMat.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, mat_obj)) {
         return nullptr;
     }
 
@@ -1100,12 +991,9 @@ static PyObject *CPH_PyMath_Vec3Reflect(CPH_MathHolderObject *self, PyObject *co
                                                Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *v_obj;
     PyObject *n_obj;
-    const void *const restrict targets[MathReflect_COUNT] = {
-        [IDX_MRF_V] = (const void *const restrict)&v_obj,
-        [IDX_MRF_N] = (const void *const restrict)&n_obj};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->MathReflectParser, targets)) {
+
+    if (!self->parsers->MathReflect.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, v_obj, n_obj)) {
         return nullptr;
     }
 
@@ -1126,12 +1014,9 @@ static PyObject *CPH_PyMath_Vec3Distance(CPH_MathHolderObject *self, PyObject *c
                                                 Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *v1_obj;
     PyObject *v2_obj;
-    const void *const restrict targets[MathVecPair_COUNT] = {
-        [IDX_MVP_V1] = (const void *const restrict)&v1_obj,
-        [IDX_MVP_V2] = (const void *const restrict)&v2_obj};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->MathVecPairParser, targets)) {
+
+    if (!self->parsers->MathVecPair.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, v1_obj, v2_obj)) {
         return nullptr;
     }
 
@@ -1152,12 +1037,9 @@ static PyObject *CPH_PyMath_QuatRotateVec3Inverse(CPH_MathHolderObject *self,
                                                            PyObject *kwnames) {
     PyObject *q_obj;
     PyObject *v_obj;
-    const void *const restrict targets[MathQuatVec_COUNT] = {
-        [IDX_MQV_Q] = (const void *const restrict)&q_obj,
-        [IDX_MQV_V] = (const void *const restrict)&v_obj};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->MathQuatVecParser, targets)) {
+
+    if (!self->parsers->MathQuatVec.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, q_obj, v_obj)) {
         return nullptr;
     }
 
@@ -1178,11 +1060,9 @@ static PyObject *CPH_PyMath_QuatRotateVec3Inverse(CPH_MathHolderObject *self,
 static PyObject *CPH_PyMath_EulerToQuat(CPH_MathHolderObject *self, PyObject *const *args,
                                                 Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *euler_obj;
-    const void *const restrict targets[MathEulerVec_COUNT] = {
-        [IDX_MEV_V] = (const void *const restrict)&euler_obj};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->MathEulerVecParser, targets)) {
+
+    if (!self->parsers->MathEulerVec.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, euler_obj)) {
         return nullptr;
     }
 
@@ -1201,11 +1081,9 @@ static PyObject *CPH_PyMath_EulerToQuat(CPH_MathHolderObject *self, PyObject *co
 static PyObject *CPH_PyMath_EulerToQuatBatch(CPH_MathHolderObject *self, PyObject *const *args,
                                                       Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *eulers_obj;
-    const void *const restrict targets[MathEulerBatch_COUNT] = {[IDX_MEB_VECS] =
-                                                                    (void *)&eulers_obj};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                           &self->parsers->MathEulerBatchParser, targets)) {
+
+    if (!self->parsers->MathEulerBatch.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, eulers_obj)) {
         return nullptr;
     }
 
@@ -1232,32 +1110,28 @@ static PyObject *CPH_PyMath_EulerToQuatBatch(CPH_MathHolderObject *self, PyObjec
     PyBuffer_Release(&view);
     return result;
 }
-
-void CPH_MathInitAllParsers(CPH_MathParsers *mp);
-void CPH_MathFreeAllParsers(CPH_MathParsers *mp);
-
 static PyObject *CPH_PyMath_New(PyTypeObject *type, [[maybe_unused]] PyObject *args,
                                       [[maybe_unused]] PyObject *kwds) {
     CPH_MathHolderObject *self = (CPH_MathHolderObject *)type->tp_alloc(type, 0);
     if (self == nullptr) {
         return nullptr;
     }
-    self->parsers = (CPH_MathParsers *)PyMem_Malloc(sizeof(CPH_MathParsers));
+    self->parsers = CPH::NewParserGroup<CPH_MathParsers>();
     if (self->parsers == nullptr) {
         Py_DECREF(self);
         return PyErr_NoMemory();
     }
 
     // 3. Call your parser setup logic
-    CPH_MathInitAllParsers(self->parsers);
+    self->parsers->Init();
 
     return (PyObject *)self;
 }
 
 static void CPH_PyMath_Dealloc(CPH_MathHolderObject *self) {
     if (self->parsers != nullptr) {
-        CPH_MathFreeAllParsers(self->parsers);
-        PyMem_Free(self->parsers);
+
+        delete self->parsers;
     }
     PyTypeObject *tp = Py_TYPE(self);
     tp->tp_free((PyObject *)self);
@@ -1327,7 +1201,7 @@ PyType_Spec MathService_spec = {
             // 2. Add the Destructor logic
             {.slot = Py_tp_dealloc, .pfunc = (void *)CPH_PyMath_Dealloc},
 
-            {.slot = Py_tp_methods, .pfunc = kMathMethods },
+            {.slot = Py_tp_methods, .pfunc = reinterpret_cast<void *>(kMathMethods) },
             {}
 
         },

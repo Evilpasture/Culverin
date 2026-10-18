@@ -31,6 +31,10 @@ typedef struct CPH_PhysicsBodyStats {
 
 // Engine and native world-state operations. CPython bindings own argument
 // parsing, result conversion, and translation of these status codes.
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 bool CPH_PhysicsWorldAttachContactListener(CPH_PhysicsWorld *world);
 void CPH_PhysicsWorldSyncLoadedState(CPH_PhysicsWorld *world, size_t saved_count);
 PhysicsWorldRuntimeStatus CPH_PhysicsWorldTakeContactEvents(CPH_PhysicsWorld *world,
@@ -88,3 +92,7 @@ CPH_PhysicsWorldBuildDebugData(CPH_PhysicsWorld *world, bool draw_shapes, bool d
                                bool draw_bounding_box, bool draw_centers, bool wireframe,
                                CPH_DebugVertex **out_lines, size_t *out_line_count,
                                CPH_DebugVertex **out_triangles, size_t *out_triangle_count);
+
+#ifdef __cplusplus
+}
+#endif

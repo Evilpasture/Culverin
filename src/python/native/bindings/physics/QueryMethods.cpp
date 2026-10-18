@@ -1,7 +1,7 @@
 #include "bindings/physics/QueryMethods.h"
 #include "bindings/BindingCommon.h"
 #include "bindings/FastBuild.h"
-#include "bindings/parsing/ArgIndices.h"
+#include "bindings/parsing/ParserRegistry.hpp"
 #include "bindings/parsing/Parsers.h"
 #include "core/CompilerSpecifics.h"
 
@@ -49,13 +49,9 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_OverlapSphere(CPH_PhysicsWorldOb
                                                                 size_t nargsf, PyObject *kwnames) {
     PyObject *o_center                                      = nullptr;
     float radius                                            = 1.0f;
-    const void *const restrict targets[OverlapSphere_COUNT] = {
-        [IDX_OS_CENTER] = (const void *const restrict)&o_center,
-        [IDX_OS_RADIUS] = (const void *const restrict)&radius,
-    };
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->OverlapSphereParser, targets)) {
+
+    if (!self->parsers->OverlapSphere.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_center, radius)) {
         return nullptr;
     }
 
@@ -90,13 +86,9 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_OverlapAabb(CPH_PhysicsWorldObje
                                                               PyObject *kwnames) {
     PyObject *o_min                                       = nullptr;
     PyObject *o_max                                       = nullptr;
-    const void *const restrict targets[OverlapAABB_COUNT] = {
-        [IDX_OA_MIN] = (const void *const restrict)&o_min,
-        [IDX_OA_MAX] = (const void *const restrict)&o_max,
-    };
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->OverlapAABBParser, targets)) {
+
+    if (!self->parsers->OverlapAABB.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_min, o_max)) {
         return nullptr;
     }
 
@@ -137,15 +129,9 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_Raycast(CPH_PhysicsWorldObject *
     PyObject *o_direction                             = nullptr;
     float max_distance                                = kPhysicsQueryDefaultMaxDistance;
     uint64_t ignore_handle                            = 0;
-    const void *const restrict targets[Raycast_COUNT] = {
-        [IDX_RAY_START] = (const void *const restrict)&o_start,
-        [IDX_RAY_DIR]   = (const void *const restrict)&o_direction,
-        [IDX_RAY_DIST]  = (const void *const restrict)&max_distance,
-        [IDX_RAY_IGN]   = (const void *const restrict)&ignore_handle,
-    };
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->RaycastParser, targets)) {
+
+    if (!self->parsers->Raycast.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_start, o_direction, max_distance, ignore_handle)) {
         return nullptr;
     }
 
@@ -186,14 +172,9 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_RaycastBatch(CPH_PhysicsWorldObj
     PyObject *o_starts                                 = nullptr;
     PyObject *o_directions                             = nullptr;
     float max_distance                                 = kPhysicsQueryDefaultMaxDistance;
-    const void *const restrict targets[RayBatch_COUNT] = {
-        [IDX_RB_STARTS] = (const void *const restrict)&o_starts,
-        [IDX_RB_DIRS]   = (const void *const restrict)&o_directions,
-        [IDX_RB_DIST]   = (const void *const restrict)&max_distance,
-    };
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->RayBatchParser, targets)) {
+
+    if (!self->parsers->RayBatch.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_starts, o_directions, max_distance)) {
         return nullptr;
     }
 
@@ -270,17 +251,9 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_Shapecast(CPH_PhysicsWorldObject
     PyObject *o_direction                               = nullptr;
     PyObject *o_size                                    = nullptr;
     uint64_t ignore_handle                              = 0;
-    const void *const restrict targets[Shapecast_COUNT] = {
-        [IDX_SC_SHAPE]  = (const void *const restrict)&shape_type,
-        [IDX_SC_POS]    = (const void *const restrict)&o_position,
-        [IDX_SC_ROT]    = (const void *const restrict)&o_rotation,
-        [IDX_SC_DIR]    = (const void *const)&o_direction,
-        [IDX_SC_SIZE]   = (const void *const)&o_size,
-        [IDX_SC_IGNORE] = (const void *const)&ignore_handle,
-    };
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames,
-                                 &self->parsers->ShapecastParser, targets)) {
+
+    if (!self->parsers->Shapecast.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, shape_type, o_position, o_rotation, o_direction, o_size, ignore_handle)) {
         return nullptr;
     }
 

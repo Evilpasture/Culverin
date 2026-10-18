@@ -1,5 +1,5 @@
 #pragma once
-#include "bindings/parsing/ArgIndices.h"
+#include "bindings/parsing/ParserRegistry.hpp"
 #include "core/CompilerSpecifics.h"
 #include "bindings/physics/PhysicsWorld.h"
 #include "joltc.h"

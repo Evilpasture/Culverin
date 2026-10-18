@@ -1,7 +1,7 @@
 #include <math.h>
 #include "vehicles/TrackedVehicle.h"
 #include "bindings/BindingCommon.h"
-#include "bindings/parsing/ArgIndices.h"
+#include "bindings/parsing/ParserRegistry.hpp"
 #include "core/CompilerSpecifics.h"
 #include "bindings/ModuleState.h"
 #include "bindings/parsing/Parsers.h"
@@ -59,7 +59,8 @@ static JPH_WheelSettings *create_track_wheel(PyObject *w_dict) {
 
     JPH_WheelSettingsTV *w = JPH_WheelSettingsTV_Create();
 
-    JPH_WheelSettings_SetPosition((JPH_WheelSettings *)w, &(JPH_Vec3){pos.x, pos.y, pos.z});
+    JPH_Vec3 wheel_position{pos.x, pos.y, pos.z};
+    JPH_WheelSettings_SetPosition((JPH_WheelSettings *)w, &wheel_position);
     JPH_WheelSettings_SetRadius((JPH_WheelSettings *)w, radius);
     JPH_WheelSettings_SetWidth((JPH_WheelSettings *)w, width);
 
@@ -124,15 +125,9 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateTrackedVehicle(CPH_Physics
     float max_rpm          = kTrackedEngineMaxRpmDefault;
     float min_rpm          = kTrackedEngineMinRpmDefault;
 
-    const void *const restrict targets[CreateTracked_COUNT] = {
-        [IDX_CT_CHASSIS] = (const void *const restrict)&chassis_h_raw,
-        [IDX_CT_WHEELS]  = (const void *const restrict)&py_wheels,
-        [IDX_CT_TRACKS]  = (const void *const restrict)&py_tracks,
-        [IDX_CT_TORQUE]  = (const void *const restrict)&max_torque,
-        [IDX_CT_RPM]     = (const void *const restrict)&max_rpm,
-    };
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->CreateTrackedParser, targets)) {
+
+    if (!self->parsers->CreateTracked.Parse(args, nargs, kwnames, chassis_h_raw, py_wheels, py_tracks, max_torque, max_rpm)) {
         return nullptr;
     }
 
@@ -161,11 +156,21 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateTrackedVehicle(CPH_Physics
     CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
 
     // --- 3. PRE-JOLT RESOURCE ALLOCATION (Unchanged) ---
-    CPH_VehicleResources r = {0};
+    CPH_VehicleResources r{};
     auto num_wheels    = (uint32_t)PyList_Size(py_wheels);
     CPH_TrackData tracks[2];
     memset(tracks, 0, sizeof(tracks));
     int num_tracks = 0;
+    bool jolt_locked = false;
+    PyThreadState *_save = nullptr;
+    const JPH_BodyLockInterface *lock_iface = nullptr;
+    JPH_BodyLockWrite lock{};
+    CPH_TrackedEngineConfig eng_cfg{};
+    JPH_VehicleTransmissionSettings *v_trans = nullptr;
+    JPH_TrackedVehicleControllerSettings *t_ctrl = nullptr;
+    JPH_VehicleConstraintSettings v_set{};
+    CPH_VehicleObject *obj = nullptr;
+    JPH_Vec3 tester_up{0, 1.0f, 0};
 
     r.f_curve = JPH_LinearCurve_Create();
     JPH_LinearCurve_AddPoint(r.f_curve, 0.0f, 1.0f);
@@ -184,25 +189,20 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateTrackedVehicle(CPH_Physics
     }
 
     // --- 4. JOLT COMMIT (No GIL - Unchanged) ---
-    bool jolt_locked     = false;
-    PyThreadState *_save = nullptr;
     Py_UNBLOCK_THREADS;
 
     CPH_NATIVE_MUTEX_LOCK(self->physics.jph_trampoline_lock);
     jolt_locked = true;
 
-    const JPH_BodyLockInterface *lock_iface = JPH_PhysicsSystem_GetBodyLockInterface(self->physics.system);
-    JPH_BodyLockWrite lock                  = {};
+    lock_iface = JPH_PhysicsSystem_GetBodyLockInterface(self->physics.system);
     JPH_BodyLockInterface_LockWrite(lock_iface, chassis_bid, &lock);
 
     if (CPH_UNLIKELY(!lock.body)) {
         goto jolt_fail;
     }
 
-    CPH_TrackedEngineConfig eng_cfg = {.torque = max_torque, .max_rpm = max_rpm, .min_rpm = min_rpm};
-    JPH_VehicleTransmissionSettings *v_trans = nullptr;
-    JPH_TrackedVehicleControllerSettings *t_ctrl =
-        init_tracked_controller_settings(eng_cfg, &v_trans);
+    eng_cfg = {.torque = max_torque, .max_rpm = max_rpm, .min_rpm = min_rpm};
+    t_ctrl = init_tracked_controller_settings(eng_cfg, &v_trans);
     r.v_ctrl      = (JPH_WheeledVehicleControllerSettings *)t_ctrl;
     r.v_trans_set = v_trans;
 
@@ -215,7 +215,6 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateTrackedVehicle(CPH_Physics
         JPH_TrackedVehicleControllerSettings_SetTrack(t_ctrl, (uint32_t)t, &track_set);
     }
 
-    JPH_VehicleConstraintSettings v_set;
     JPH_VehicleConstraintSettings_Init(&v_set);
     v_set.wheelsCount = num_wheels;
     v_set.wheels      = r.w_settings;
@@ -226,7 +225,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateTrackedVehicle(CPH_Physics
         goto jolt_fail;
     }
 
-    r.tester = JPH_VehicleCollisionTesterRay_Create(kTrackedLayerDrivable, &(JPH_Vec3){0, 1.0f, 0},
+    r.tester = JPH_VehicleCollisionTesterRay_Create(kTrackedLayerDrivable, &tester_up,
                                                     kTrackedCollisionTesterScale);
     if (!r.tester) {
         goto jolt_fail;
@@ -249,7 +248,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateTrackedVehicle(CPH_Physics
         CPH_PyFree(tracks[t].indices);
     }
 
-    auto obj = (CPH_VehicleObject *)PyObject_GC_New(CPH_VehicleObject, (PyTypeObject *)st->VehicleType);
+    obj = (CPH_VehicleObject *)PyObject_GC_New(CPH_VehicleObject, (PyTypeObject *)st->VehicleType);
     if (!obj) {
         CPH_SHADOW_LOCK(&self->physics.shadow_lock);
         CPH_CleanupVehicleResources(&r, num_wheels, self);
@@ -309,13 +308,9 @@ PyCFunction_DeclareMethodFromModule CPH_PyVehicle_SetTankInput(CPH_VehicleObject
     float right = 0.0f;
     float brake = 0.0f;
 
-    const void *const restrict targets[TankInput_COUNT] = {
-        [IDX_TI_LEFT]  = (const void *const restrict)&left,
-        [IDX_TI_RIGHT] = (const void *const restrict)&right,
-        [IDX_TI_BRAKE] = (const void *const restrict)&brake,
-    };
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->TankInputParser, targets)) {
+
+    if (!self->parsers->TankInput.Parse(args, nargs, kwnames, left, right, brake)) {
         return nullptr;
     }
 

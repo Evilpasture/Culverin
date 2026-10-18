@@ -1,73 +1,66 @@
 #pragma once
 #include <Python.h>
 
-static inline float py_to_float(PyObject *i) { return (float)PyFloat_AsDouble(i); }
-static inline double py_to_double(PyObject *i) { return PyFloat_AsDouble(i); }
-static inline int py_to_int(PyObject *i) { return (int)PyLong_AsLong(i); }
-static inline long py_to_long(PyObject *i) { return PyLong_AsLong(i); }
-static inline const char *py_to_str(PyObject *i) { return PyUnicode_AsUTF8(i); }
+#include <type_traits>
 
-#define CPH_DEFINE_ATTR_GETTER(suffix, type, conv)                                                     \
-    [[nodiscard]] static inline type get_py_attr_##suffix(PyObject *obj, const char *n,            \
-                                                          type def) {                              \
-        if (obj == nullptr || obj == Py_None)                                                      \
-            return def;                                                                            \
-        type result    = def;                                                                      \
-        PyObject *attr = PyObject_GetAttrString(obj, n);                                           \
-        if (attr) {                                                                                \
-            type val = conv(attr);                                                                 \
-            if (!PyErr_Occurred())                                                                 \
-                result = val;                                                                      \
-            Py_DECREF(attr);                                                                       \
-        }                                                                                          \
-        PyErr_Clear();                                                                             \
-        return result;                                                                             \
+static inline float py_to_float(PyObject *obj) { return static_cast<float>(PyFloat_AsDouble(obj)); }
+static inline double py_to_double(PyObject *obj) { return PyFloat_AsDouble(obj); }
+static inline int py_to_int(PyObject *obj) { return static_cast<int>(PyLong_AsLong(obj)); }
+static inline long py_to_long(PyObject *obj) { return PyLong_AsLong(obj); }
+static inline const char *py_to_str(PyObject *obj) { return PyUnicode_AsUTF8(obj); }
+
+template <typename T>
+[[nodiscard]] static inline T py_to_value(PyObject *obj) {
+    if constexpr (std::is_same_v<T, float>) {
+        return py_to_float(obj);
+    } else if constexpr (std::is_same_v<T, double>) {
+        return py_to_double(obj);
+    } else if constexpr (std::is_same_v<T, int>) {
+        return py_to_int(obj);
+    } else if constexpr (std::is_same_v<T, long>) {
+        return py_to_long(obj);
+    } else if constexpr (std::is_same_v<T, const char *>) {
+        return py_to_str(obj);
+    } else {
+        static_assert(std::is_same_v<T, void>, "Unsupported Python default-value type");
+    }
+}
+
+template <typename T>
+[[nodiscard]] static inline T CPH_get_py_attr(PyObject *obj, const char *name, T default_value) {
+    if (obj == nullptr || obj == Py_None) {
+        return default_value;
     }
 
-#define CPH_DEFINE_DICT_GETTER(suffix, type, conv)                                                     \
-    [[nodiscard]] static inline type get_py_dict_##suffix(PyObject *dict, const char *k,           \
-                                                          type def) {                              \
-        if (dict == nullptr || !PyDict_Check(dict))                                                \
-            return def;                                                                            \
-        PyObject *item = PyDict_GetItemString(dict, k);                                            \
-        if (item) {                                                                                \
-            type val = conv(item);                                                                 \
-            if (!PyErr_Occurred())                                                                 \
-                return val;                                                                        \
-        }                                                                                          \
-        PyErr_Clear();                                                                             \
-        return def;                                                                                \
+    T result = default_value;
+    PyObject *attr = PyObject_GetAttrString(obj, name);
+    if (attr != nullptr) {
+        const T value = py_to_value<T>(attr);
+        if (!PyErr_Occurred()) {
+            result = value;
+        }
+        Py_DECREF(attr);
+    }
+    PyErr_Clear();
+    return result;
+}
+
+template <typename T>
+[[nodiscard]] static inline T CPH_get_py_dict(PyObject *dict, const char *key, T default_value) {
+    if (dict == nullptr || !PyDict_Check(dict)) {
+        return default_value;
     }
 
-CPH_DEFINE_ATTR_GETTER(f, float, py_to_float)
-CPH_DEFINE_ATTR_GETTER(d, double, py_to_double)
-CPH_DEFINE_ATTR_GETTER(i, int, py_to_int)
-CPH_DEFINE_ATTR_GETTER(l, long, py_to_long)
-CPH_DEFINE_ATTR_GETTER(s, const char *, py_to_str)
-
-CPH_DEFINE_DICT_GETTER(f, float, py_to_float)
-CPH_DEFINE_DICT_GETTER(d, double, py_to_double)
-CPH_DEFINE_DICT_GETTER(i, int, py_to_int)
-CPH_DEFINE_DICT_GETTER(l, long, py_to_long)
-CPH_DEFINE_DICT_GETTER(s, const char *, py_to_str)
-
-#define CPH_get_py_attr(obj, name, def)                                                                \
-    _Generic((def),                                                                                \
-        float: get_py_attr_f,                                                                      \
-        double: get_py_attr_d,                                                                     \
-        int: get_py_attr_i,                                                                        \
-        long: get_py_attr_l,                                                                       \
-        char *: get_py_attr_s,                                                                     \
-        const char *: get_py_attr_s)(obj, name, def)
-
-#define CPH_get_py_dict(dict, key, def)                                                                \
-    _Generic((def),                                                                                \
-        float: get_py_dict_f,                                                                      \
-        double: get_py_dict_d,                                                                     \
-        int: get_py_dict_i,                                                                        \
-        long: get_py_dict_l,                                                                       \
-        char *: get_py_dict_s,                                                                     \
-        const char *: get_py_dict_s)(dict, key, def)
+    PyObject *item = PyDict_GetItemString(dict, key);
+    if (item != nullptr) {
+        const T value = py_to_value<T>(item);
+        if (!PyErr_Occurred()) {
+            return value;
+        }
+    }
+    PyErr_Clear();
+    return default_value;
+}
 
 #define CPH_CAST(m) (PyCFunction)(void (*)(void))(m)
 

@@ -7,7 +7,7 @@
 #include "bindings/ModuleState.h"
 #include "bindings/PythonSupport.h"
 #include "bindings/docstrings/Docstrings.h"
-#include "bindings/parsing/ArgIndices.h"
+#include "bindings/parsing/ParserRegistry.hpp"
 #include "characters/Character.h"
 #include "core/CompilerSpecifics.h"
 #include "core/Profiling.h"
@@ -54,11 +54,9 @@ PyCFunction_DeclareMethod CPH_PyModule_DumpSchemaJson(PyObject *const self, PyOb
     const char *filename = "culverin_schema.json";
 
     // 1. Thread-safe, subinterpreter-safe parsing via CulvFastParser
-    const void *const restrict targets[DumpSchema_COUNT] = {
-        [IDX_DS_PATH] = (const void *const restrict)&filename};
 
-    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.DumpSchemaParser,
-                           targets)) {
+
+    if (!st->parsers->DumpSchema.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, filename)) {
         return nullptr;
     }
 
@@ -82,17 +80,17 @@ PyCFunction_DeclareMethod CPH_PyModule_DumpSchemaJson(PyObject *const self, PyOb
         CPH_ModuleParsers module;
     } all = {};
 
-    CPH_InitWorldParsers(&all.world);
-    CPH_InitCharParsers(&all.character);
-    CPH_InitVehicleParserGroup(&all.vehicle);
-    CPH_InitEcsParsers(&all.ecs);
-    CPH_InitSkeletonParsers(&all.skeleton);
-    CPH_InitRagdollParsers(&all.ragdoll);
-    CPH_InitRagdollSettingsParsers(&all.ragdoll_settings);
-    CPH_InitShipParsers(&all.ship);
-    CPH_InitSbssParsers(&all.sbss);
-    CPH_MathInitAllParsers(&all.math);
-    CPH_InitModuleParsers(&all.module);
+    all.world.Init();
+    all.character.Init();
+    all.vehicle.Init();
+    all.ecs.Init();
+    all.skeleton.Init();
+    all.ragdoll.Init();
+    all.ragdoll_settings.Init();
+    all.ship.Init();
+    all.sbss.Init();
+    all.math.Init();
+    all.module.Init();
 
     // 3. Export to JSON
     fprintf(f, "{\n");
@@ -119,17 +117,6 @@ PyCFunction_DeclareMethod CPH_PyModule_DumpSchemaJson(PyObject *const self, PyOb
     fclose(f);
 
     // 4. Cleanup temporary allocations
-    CPH_FreeWorldParsers(&all.world);
-    CPH_FreeCharParsers(&all.character);
-    CPH_FreeVehicleParserGroup(&all.vehicle);
-    CPH_FreeEcsParsers(&all.ecs);
-    CPH_FreeSkeletonParsers(&all.skeleton);
-    CPH_FreeRagdollParsers(&all.ragdoll);
-    CPH_FreeRagdollSettingsParsers(&all.ragdoll_settings);
-    CPH_FreeShipParsers(&all.ship);
-    CPH_FreeSbssParsers(&all.sbss);
-    CPH_MathFreeAllParsers(&all.math);
-    CPH_FreeModuleParsers(&all.module);
 
     Py_RETURN_NONE;
 }
@@ -575,7 +562,13 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
     if (!st->helper) {
         return -1;
     }
-    CPH_InitModuleParsers(&st->parsers);
+    if (st->parsers == nullptr) {
+        st->parsers = CPH::NewParserGroup<CPH_ModuleParsers>();
+        if (st->parsers == nullptr) {
+            return -1;
+        }
+        st->parsers->Init();
+    }
 
     if (init_types(m, st) < 0) {
         return -1;
@@ -617,7 +610,8 @@ PyType_DeclareSlot_Status culverin_clear(PyObject *m) {
     Py_CLEAR(st->BufferProxyType);
     Py_CLEAR(st->MathServiceType);
     Py_CLEAR(st->SoftBodySharedSettingsType);
-    CPH_FreeModuleParsers(&st->parsers);
+    delete st->parsers;
+    st->parsers = nullptr;
     return 0;
 }
 
@@ -638,7 +632,7 @@ PyModuleDef culverin_module = {
     .m_slots =
         (PyModuleDef_Slot[]){
 
-            {.slot = Py_mod_exec, .value = culverin_exec},
+            {.slot = Py_mod_exec, .value = reinterpret_cast<void *>(culverin_exec)},
 
 // 1. Handle the Free-threaded (No GIL) declaration (3.13+)
 #if defined(Py_MOD_GIL_NOT_USED)
@@ -660,7 +654,6 @@ PyModuleDef culverin_module = {
     .m_traverse = culverin_traverse,
     .m_clear    = culverin_clear,
 };
-[[gnu::visibility("default")]]
-extern PyMODINIT_FUNC PyInit__culverin_c(void) {
+PyMODINIT_FUNC PyInit__culverin_c(void) {
     return PyModuleDef_Init(&culverin_module);
 }

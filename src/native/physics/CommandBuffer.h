@@ -191,6 +191,10 @@ static_assert(alignof(PhysicsCommand) == kMemoryAlignmentSize,
               "PhysicsCommand must be 64-byte aligned");
 static_assert(offsetof(PhysicsCommand, create_soft.settings) == kOffsetStart);
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 struct CPH_PhysicsWorld;
 
 void CPH_WorldRemoveBodySlot(struct CPH_PhysicsWorld *world, uint32_t slot);
@@ -200,6 +204,11 @@ bool CPH_EnsureCommandCapacity(struct CPH_PhysicsWorld *world);
 bool CPH_EnsureCommandBulkCapacity(struct CPH_PhysicsWorld *world, size_t batch_size);
 void CPH_FlushCommandsInternal(struct CPH_PhysicsWorld *world, PhysicsCommand *queue, size_t count);
 void CPH_ClearCommandQueue(struct CPH_PhysicsWorld *world);
+
+#ifdef __cplusplus
+}
+#endif
+
 
 // True Direct Threading: Evaluates the next command without returning to a while loop.
 // Includes aggressive software prefetching for indirect lookups.

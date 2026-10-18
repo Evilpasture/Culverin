@@ -1,13 +1,13 @@
 add_library(
     culverin_python_parsing
     OBJECT
-        ArgIndices.c
-        ArgIndices.h
-        DefaultConfig.h
-        FastParse.h
-        FastParserCore.c
+        FastParserCore.cpp
         FastParserCore.h
-        Parsers.c
+        FastParser.hpp
+        ParserRegistry.cpp
+        ParserRegistry.hpp
+        Parsers.cpp
         Parsers.h
+        DefaultConfig.h
 )
 culverin_configure_python_target(culverin_python_parsing)
