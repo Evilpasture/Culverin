@@ -96,6 +96,8 @@ set(USE_VULKAN OFF CACHE BOOL "" FORCE)
 # Jolt defaults RTTI off (-fno-rtti); our extension needs RTTI across the
 # Jolt/joltc boundary. Use Jolt's own option — no source patching anywhere.
 set(CPP_RTTI_ENABLED ON CACHE BOOL "Jolt: enable RTTI" FORCE)
+# No C++ exception handling is used; keep Jolt in the same no-exceptions mode.
+set(CPP_EXCEPTIONS_ENABLED OFF CACHE BOOL "Jolt: disable C++ exceptions" FORCE)
 # Third-party -Werror must not gate our superbuild (Jolt adds -Wall -Werror
 # on its GNU arm when this is ON).
 set(ENABLE_ALL_WARNINGS OFF CACHE BOOL "Jolt: no warning escalation" FORCE)
@@ -352,7 +354,9 @@ function(culverin_configure_compile_target target)
     # Most flags are C/C++-specific; keep them off assembly translation units.
     target_compile_options(
         ${target}
-        PRIVATE "$<$<COMPILE_LANGUAGE:C,CXX>:${CULVERIN_COMPILE_FLAGS}>"
+        PRIVATE
+            "$<$<COMPILE_LANGUAGE:C,CXX>:${CULVERIN_COMPILE_FLAGS}>"
+            "$<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>"
     )
     target_compile_definitions(${target} PRIVATE ${CULV_ASSERT_DEFS} JPH_DEBUG_RENDERER)
 
@@ -414,7 +418,13 @@ else()
         set_property(TARGET Jolt PROPERTY COMPILE_OPTIONS "")
         culv_collect_supported_cxx_flags(CULV_JOLT_ARCH "-march=x86-64-v3")
         culv_collect_supported_cxx_flags(CULV_JOLT_PERF "-ffast-math" "-fomit-frame-pointer")
-        target_compile_options(Jolt PRIVATE ${CULV_JOLT_ARCH} ${CULV_JOLT_PERF})
+        target_compile_options(
+            Jolt
+            PRIVATE
+                ${CULV_JOLT_ARCH}
+                ${CULV_JOLT_PERF}
+                "$<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>"
+        )
     endif()
 endif()
 
@@ -431,7 +441,10 @@ add_library(
 )
 
 # Third-party code: silence warnings (GNU-dialect -w is universal here).
-target_compile_options(${JOLTC_TARGET} PRIVATE -w)
+target_compile_options(
+    ${JOLTC_TARGET}
+    PRIVATE -w "$<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>"
+)
 
 target_include_directories(
     ${JOLTC_TARGET}

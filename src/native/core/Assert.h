@@ -57,7 +57,7 @@ bool CPH_JphAssert(const char *inExpression, const char *inMessage, const char *
 
 #    ifdef __cplusplus
 // --- C++20 Engine ---
-namespace culv::detail {
+namespace CPH::detail {
 [[noreturn]] inline void
 panic(std::string_view expression, std::string_view message = "",
       const std::source_location loc = std::source_location::current()) noexcept {
@@ -77,15 +77,15 @@ panic(std::string_view expression, std::string_view message = "",
 
     std::terminate();
 }
-} // namespace culv::detail
+} // namespace CPH::detail
 
 #        define CPH_ASSERT(expr, ...)                                                             \
             do {                                                                                   \
                 if (!(expr)) [[unlikely]] {                                                        \
                     if consteval {                                                                 \
-                        throw "Assertion failed at compile time";                                  \
+                        __builtin_trap();                                                          \
                     } else {                                                                       \
-                        ::culv::detail::panic(#expr __VA_OPT__(, )                                 \
+                        ::CPH::detail::panic(#expr __VA_OPT__(, )                                 \
                                                   __VA_OPT__(std::format(__VA_ARGS__)));           \
                     }                                                                              \
                 }                                                                                  \
