@@ -1,6 +1,6 @@
 #pragma once
-#include "bindings/physics/PhysicsWorld.h"
 #include "core/Threading.h"
+#include "physics/PhysicsWorldBinding.h"
 /**
  * INTERNAL HELPER: internal_sync_wait_loop
  * Encapsulates the heavy lifting of waiting on the condition variable.

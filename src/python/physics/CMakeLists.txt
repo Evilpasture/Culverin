@@ -6,7 +6,7 @@ add_library(
         Constraint.h
         PhysicsSync.h
         PhysicsWorld.cpp
-        PhysicsWorld.h
+        PhysicsWorldBinding.h
         PhysicsWorldParsers.hpp
         QueryMethods.cpp
         QueryMethods.h

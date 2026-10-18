@@ -1,5 +1,5 @@
 #pragma once
-#include "bindings/physics/PhysicsWorld.h"
+#include "physics/PhysicsWorldBinding.h"
 #include <Python.h>
 
 PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateConstraint(CPH_PhysicsWorldObject *self,

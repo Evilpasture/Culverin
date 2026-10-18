@@ -1,4 +1,4 @@
-#include "bindings/physics/QueryMethods.h"
+#include "physics/QueryMethods.h"
 #include "bindings/BindingCommon.h"
 #include "bindings/FastBuild.h"
 #include "bindings/parsing/Parsers.h"

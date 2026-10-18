@@ -3,8 +3,8 @@
 #include "bindings/ModuleState.h"
 #include "bindings/PythonSupport.h"
 #include "bindings/parsing/Parsers.h"
-#include "bindings/physics/PhysicsSync.h"
 #include "core/CompilerSpecifics.h"
+#include "physics/PhysicsSync.h"
 #include <math.h>
 
 // --- Tracked Vehicle Constants ---

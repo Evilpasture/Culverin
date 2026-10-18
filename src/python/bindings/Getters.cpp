@@ -1,7 +1,7 @@
 #include "bindings/Getters.h"
 #include "bindings/ModuleState.h"
-#include "bindings/physics/PhysicsSync.h"
 #include "ecs/Ecs.h"
+#include "physics/PhysicsSync.h"
 #include <Python.h>
 
 static Py_ssize_t BufferProxy_length(CPH_BufferProxyObject *self) {

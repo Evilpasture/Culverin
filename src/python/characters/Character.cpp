@@ -3,12 +3,12 @@
 #include "bindings/FastBuild.h"
 #include "bindings/ModuleState.h"
 #include "bindings/PythonSupport.h"
-#include "bindings/physics/PhysicsSync.h"
-#include "bindings/physics/WorldAdapters.h"
 #include "core/CompilerSpecifics.h"
 #include "core/Types.h"
 #include "math/MathCore.h"
 #include "physics/ContactEventDefinitions.h"
+#include "physics/PhysicsSync.h"
+#include "physics/WorldAdapters.h"
 #include <math.h>
 
 // Character helpers

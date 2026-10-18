@@ -1,5 +1,4 @@
 add_subdirectory(parsing)
-add_subdirectory(physics)
 
 add_library(
     culverin_python_bindings

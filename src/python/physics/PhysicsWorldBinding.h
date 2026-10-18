@@ -1,7 +1,7 @@
 #pragma once
 
 #include "bindings/BindingCommon.h"
-#include "bindings/physics/PhysicsWorldParsers.hpp"
+#include "physics/PhysicsWorldParsers.hpp"
 #include "physics/PhysicsWorldState.h"
 #include <Python.h>
 

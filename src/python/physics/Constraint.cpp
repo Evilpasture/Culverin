@@ -1,9 +1,9 @@
-#include "bindings/physics/Constraint.h"
+#include "physics/Constraint.h"
 #include "bindings/BindingCommon.h"
-#include "bindings/physics/PhysicsSync.h"
 #include "core/NativeAlloc.h"
 #include "core/Types.h"
 #include "physics/ConstraintFactory.h"
+#include "physics/PhysicsSync.h"
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateConstraint(CPH_PhysicsWorldObject *self,

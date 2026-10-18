@@ -1,7 +1,7 @@
 #pragma once
-#include "bindings/physics/PhysicsWorld.h"
 #include "core/CompilerSpecifics.h"
 #include "joltc.h"
+#include "physics/PhysicsWorldBinding.h"
 #include "vehicles/ShipParsers.hpp"
 #include <Python.h>
 

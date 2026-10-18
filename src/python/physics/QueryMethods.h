@@ -1,6 +1,6 @@
 #pragma once
 
-#include "bindings/physics/PhysicsWorld.h"
+#include "physics/PhysicsWorldBinding.h"
 #include "physics/Query.h"
 #include <Python.h>
 

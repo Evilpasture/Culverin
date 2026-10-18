@@ -3,7 +3,7 @@
 #include "bindings/Getters.h"
 #include "bindings/ModuleState.h"
 #include "bindings/PythonSupport.h"
-#include "bindings/physics/PhysicsWorld.h"
+#include "physics/PhysicsWorldBinding.h"
 #include <stddef.h>
 
 // --- INTERNAL HELPERS ---

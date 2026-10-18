@@ -2,7 +2,7 @@
 #include "bindings/BindingCommon.h"
 #include "bindings/ModuleState.h"
 #include "bindings/PythonSupport.h"
-#include "bindings/physics/PhysicsWorld.h"
+#include "physics/PhysicsWorldBinding.h"
 #include <math.h>
 
 // --- THE HOT PATH (No Locks, No GIL) ---

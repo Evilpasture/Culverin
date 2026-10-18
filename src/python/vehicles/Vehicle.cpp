@@ -3,8 +3,8 @@
 #include "bindings/ModuleState.h"
 #include "bindings/PythonSupport.h"
 #include "bindings/parsing/Parsers.h"
-#include "bindings/physics/PhysicsSync.h"
 #include "core/CompilerSpecifics.h"
+#include "physics/PhysicsSync.h"
 #include <math.h>
 
 // --- Wheel Configuration Defaults ---
@@ -853,7 +853,6 @@ PyGetSet_DeclareGetter CPH_PyVehicle_GetWheelCount(CPH_VehicleObject *self,
     // num_wheels is set at creation and never changes
     return PyLong_FromUnsignedLong(self->num_wheels);
 }
-
 
 PyCFunction_DeclareMethodFromModule CPH_PyVehicle_SetTankInput(CPH_VehicleObject *self,
                                                                PyObject *const *args, size_t nargsf,

@@ -1,6 +1,6 @@
-#include "bindings/physics/WorldAdapters.h"
+#include "physics/WorldAdapters.h"
 #include "bindings/ModuleState.h"
-#include "bindings/physics/PhysicsSync.h"
+#include "physics/PhysicsSync.h"
 #include "physics/PhysicsWorld.h"
 
 // Baked scene tuple layout produced by culverin.bake_scene.

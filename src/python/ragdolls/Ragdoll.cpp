@@ -2,8 +2,8 @@
 #include "bindings/BindingCommon.h"
 #include "bindings/FastBuild.h"
 #include "bindings/PythonSupport.h"
-#include "bindings/physics/PhysicsSync.h"
 #include "core/CompilerSpecifics.h"
+#include "physics/PhysicsSync.h"
 #include "physics/Ragdoll.h"
 
 // Default mass
