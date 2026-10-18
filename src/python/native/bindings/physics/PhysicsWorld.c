@@ -790,7 +790,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy(PhysicsWorldObject *self,
             bi, bid, surf_pos, surf_norm, buoyancy, lin_drag, ang_drag, fluid_vel, &gravity, dt);
 
         // Signal completion to the Stepper thread
-        end_query_scope(self);
+        physics_world_query_end(&self->physics);
         Py_END_ALLOW_THREADS
 
             return PyBool_FromLong((int)submerged);
@@ -913,7 +913,7 @@ PyCFunction_DeclareMethod PhysicsWorld_apply_buoyancy_batch(PhysicsWorldObject *
                                                    lin_drag, ang_drag, fluid_vel, &gravity, dt);
         }
 
-        end_query_scope(self);
+        physics_world_query_end(&self->physics);
         Py_END_ALLOW_THREADS
     }
 

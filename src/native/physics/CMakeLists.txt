@@ -12,6 +12,8 @@ add_library(
         InternalQuery.c
         InternalQuery.h
         PhysicsParams.h
+        QueryCore.c
+        QueryCore.h
         PhysicsWorldCore.c
         PhysicsWorldCore.h
         PhysicsWorldState.h

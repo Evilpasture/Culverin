@@ -683,6 +683,22 @@ class TestQueries(CulverinTestCase):
         hits = self.world.overlap_aabb(min=(-2, 3, -2), max=(2, 7, 2))
         self.assertIn(b1, hits)
 
+    def test_overlap_collectors_grow_beyond_inline_capacity(self) -> None:
+        handles = [
+            self.world.create_body(
+                pos=(index * 0.05, 5, 0),
+                size=(0.1, 0.1, 0.1),
+                motion=culverin.MOTION_STATIC,
+            )
+            for index in range(70)
+        ]
+        self.world.step(0)
+
+        sphere_hits = self.world.overlap_sphere(center=(1.75, 5, 0), radius=4.0)
+        aabb_hits = self.world.overlap_aabb(min=(-1, 4, -1), max=(5, 6, 1))
+        self.assertTrue(set(handles).issubset(sphere_hits))
+        self.assertTrue(set(handles).issubset(aabb_hits))
+
     def test_get_body_stats(self) -> None:
         # 1. Test Valid Body
         pos = (5.0, 10.0, -2.0)

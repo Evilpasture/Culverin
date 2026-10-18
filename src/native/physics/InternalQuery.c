@@ -4,7 +4,9 @@
 #include <math.h>
 
 /**
- * REQUIRES: SHADOW_LOCK held AND world->jph_trampoline_lock held
+ * REQUIRES: SHADOW_LOCK held. It serializes both shape-cache access and shape
+ * creation. This helper does not access the physics system and does not require
+ * jph_trampoline_lock.
  */
 JPH_Shape *find_or_create_shape_locked(PhysicsWorld *world, int type, const float *params) {
     // 1. KEY NORMALIZATION & SANITIZATION
@@ -138,61 +140,29 @@ void free_shape_cache(PhysicsWorld *world) {
     world->shape_cache_count = 0;
 }
 
-// Helper 1: Run the Raycast
-// ASSUMPTION: Caller has already acquired world->jph_trampoline_lock and released GIL.
-bool execute_raycast_query(PhysicsWorld *world, JPH_BodyID ignore_bid, const JPH_RVec3 *origin,
-                           const JPH_Vec3 *direction, JPH_RayCastResult *hit) {
-    // 1. Filter Setup (Safe, doesn't touch shared Jolt memory yet)
+// Execute one native shapecast. The caller owns query registration and holds
+// the shape alive for the duration of this call.
+bool shapecast_execute_internal(PhysicsWorld *world, const JPH_Shape *shape,
+                                const JPH_RMat4 *transform, const JPH_Vec3 *sweep_dir,
+                                JPH_BodyID ignore_bid, CastShapeContext *ctx) {
     JPH_BroadPhaseLayerFilter *bp_f = JPH_BroadPhaseLayerFilter_Create(nullptr);
     JPH_ObjectLayerFilter *obj_f    = JPH_ObjectLayerFilter_Create(nullptr);
 
     CastShapeFilter filter_ctx = {.ignore_id = ignore_bid};
     JPH_BodyFilter *bf         = JPH_BodyFilter_Create(&filter_ctx);
 
-    // 2. Execution
-    const JPH_NarrowPhaseQuery *query = JPH_PhysicsSystem_GetNarrowPhaseQuery(world->system);
-    bool has_hit = JPH_NarrowPhaseQuery_CastRay(query, origin, direction, hit, bp_f, obj_f, bf);
-
-    // 3. Cleanup
-    JPH_BodyFilter_Destroy(bf);
-    JPH_BroadPhaseLayerFilter_Destroy(bp_f);
-    JPH_ObjectLayerFilter_Destroy(obj_f);
-
-    return has_hit;
-}
-
-// Helper 2: Extract World Space Normal after hit
-// ASSUMPTION: Caller holds the Jolt lock.
-void extract_hit_normal(PhysicsWorld *world, JPH_BodyID bodyID, JPH_SubShapeID subShapeID2,
-                        const JPH_RVec3 *origin, const JPH_Vec3 *ray_dir, JPH_Real fraction,
-                        JPH_Vec3 *normal_out) {
-    const JPH_BodyLockInterface *lock_iface = JPH_PhysicsSystem_GetBodyLockInterface(world->system);
-    JPH_BodyLockRead lock;
-    JPH_BodyLockInterface_LockRead(lock_iface, bodyID, &lock);
-
-    if (lock.body) {
-        // Perform hit point calculation in high precision
-        JPH_RVec3 hit_p = {origin->x + (JPH_Real)ray_dir->x * fraction,
-                           origin->y + (JPH_Real)ray_dir->y * fraction,
-                           origin->z + (JPH_Real)ray_dir->z * fraction};
-        JPH_Body_GetWorldSpaceSurfaceNormal(lock.body, subShapeID2, &hit_p, normal_out);
-    } else {
-        *normal_out = (JPH_Vec3){0, 1, 0};
+    if (!bp_f || !obj_f || !bf) {
+        if (bf) {
+            JPH_BodyFilter_Destroy(bf);
+        }
+        if (bp_f) {
+            JPH_BroadPhaseLayerFilter_Destroy(bp_f);
+        }
+        if (obj_f) {
+            JPH_ObjectLayerFilter_Destroy(obj_f);
+        }
+        return false;
     }
-    JPH_BodyLockInterface_UnlockRead(lock_iface, &lock);
-}
-
-// Helper 3: Internal logic to run the actual query
-// ASSUMPTION: Caller has already acquired world->jph_trampoline_lock and released GIL.
-void shapecast_execute_internal(PhysicsWorld *world, const JPH_Shape *shape,
-                                const JPH_RMat4 *transform, const JPH_Vec3 *sweep_dir,
-                                JPH_BodyID ignore_bid, CastShapeContext *ctx) {
-    JPH_BroadPhaseLayerFilter *bp_f = JPH_BroadPhaseLayerFilter_Create(nullptr);
-
-    JPH_ObjectLayerFilter *obj_f = JPH_ObjectLayerFilter_Create(nullptr);
-
-    CastShapeFilter filter_ctx = {.ignore_id = ignore_bid};
-    JPH_BodyFilter *bf         = JPH_BodyFilter_Create(&filter_ctx);
 
     JPH_STACK_ALLOC(JPH_ShapeCastSettings, settings);
     JPH_ShapeCastSettings_Init(settings);
@@ -208,4 +178,5 @@ void shapecast_execute_internal(PhysicsWorld *world, const JPH_Shape *shape,
     JPH_BodyFilter_Destroy(bf);
     JPH_BroadPhaseLayerFilter_Destroy(bp_f);
     JPH_ObjectLayerFilter_Destroy(obj_f);
+    return true;
 }

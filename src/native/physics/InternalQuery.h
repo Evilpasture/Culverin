@@ -29,14 +29,7 @@ JPH_Shape *find_or_create_shape_locked(struct PhysicsWorld *world, int type, con
 
 void free_shape_cache(struct PhysicsWorld *world);
 
-bool execute_raycast_query(struct PhysicsWorld *world, JPH_BodyID ignore_bid, const JPH_RVec3 *origin,
-                           const JPH_Vec3 *direction, JPH_RayCastResult *hit);
-
-void extract_hit_normal(struct PhysicsWorld *world, JPH_BodyID bodyID, JPH_SubShapeID subShapeID2,
-                        const JPH_RVec3 *origin, const JPH_Vec3 *ray_dir, JPH_Real fraction,
-                        JPH_Vec3 *normal_out);
-
-void shapecast_execute_internal(struct PhysicsWorld *world, const JPH_Shape *shape,
+bool shapecast_execute_internal(struct PhysicsWorld *world, const JPH_Shape *shape,
                                 const JPH_RMat4 *transform, const JPH_Vec3 *sweep_dir,
                                 JPH_BodyID ignore_bid, CastShapeContext *ctx);
 
