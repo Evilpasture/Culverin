@@ -18,9 +18,8 @@ namespace {
 // Isolates thread synchronization, bounds checking, and canonicalization into a single template.
 // =================================================================================================
 template <auto EventType, typename InfoExtractor>
-[[gnu::no_sanitize("thread")]]
-inline void RecordContact(CPH_PhysicsWorld *world, uint64_t r1, uint64_t r2,
-                          InfoExtractor &&extract_info) noexcept {
+CPH_NO_TSAN inline void RecordContact(CPH_PhysicsWorld *world, uint64_t r1, uint64_t r2,
+                                      InfoExtractor &&extract_info) noexcept {
     // 1. Thread-safe Index Allocation
     const size_t idx =
         std::atomic_fetch_add_explicit(&world->contact_atomic_idx, 1, std::memory_order_relaxed);
@@ -83,7 +82,8 @@ inline void ProcessManifoldEvent(CPH_PhysicsWorld *world, const JPH_Body *c_body
 
     // Defer memory allocation and math to the unified generator
     RecordContact<EventType>(
-        world, r1, r2, [&](CPH_ContactEventSlim *slim, CPH_ContactEventFatExt *fat, bool swapped) -> auto {
+        world, r1, r2,
+        [&](CPH_ContactEventSlim *slim, CPH_ContactEventFatExt *fat, bool swapped) -> auto {
             // Native SIMD Vector Loading
             JPH::Vec3 n = manifold->mWorldSpaceNormal;
             if (swapped) {
@@ -141,7 +141,7 @@ void JPH_API_CALL OnContactPersisted(void *userData, const JPH_Body *body1, cons
                                           manifold);
 }
 
-[[gnu::no_sanitize("thread")]]
+CPH_NO_TSAN
 void JPH_API_CALL OnContactRemoved(void *userData, const JPH_SubShapeIDPair *pair) noexcept {
     auto *world = static_cast<CPH_PhysicsWorld *>(userData);
 

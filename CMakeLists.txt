@@ -453,13 +453,12 @@ target_include_directories(
 target_compile_definitions(${JOLTC_TARGET} PRIVATE ${CULV_ASSERT_DEFS})
 target_link_libraries(${JOLTC_TARGET} PRIVATE Jolt::Jolt)
 
-# Domain targets are declared next to their sources. The native subproject
-# aggregates Python-independent object targets into culverin_core.
-add_subdirectory("src/native")
+# C++ engine targets are declared next to their sources under src/.
+add_subdirectory("src")
 
-# Python discovery and extension domains come after the native core boundary.
+# Python discovery and extension domains come after the engine core boundary.
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
-add_subdirectory("src/python/native")
+add_subdirectory("src/python")
 
 # ==============================================================================
 # 6. INTERPROCEDURAL OPTIMIZATION (ask CMake whether the toolchain can)

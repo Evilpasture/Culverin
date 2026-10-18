@@ -26,8 +26,8 @@ def generate_clangd() -> None:
             break
 
     include_dirs = [
-        (project_root / "src/native").as_posix(),
-        (project_root / "src/python/native").as_posix(),
+        (project_root / "src").as_posix(),
+        (project_root / "src/python").as_posix(),
         (project_root / "extern/JoltC/include").as_posix(),
         (project_root / "extern/JoltPhysics").as_posix(),
         final_python_path.as_posix(),

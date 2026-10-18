@@ -1,3 +1,0 @@
-add_library(culverin_python_soft_bodies OBJECT SoftBody.cpp SoftBody.h)
-culverin_configure_python_target(culverin_python_soft_bodies)
-target_link_libraries(culverin_python_soft_bodies PRIVATE culverin_native_soft_bodies)
