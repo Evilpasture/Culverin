@@ -8,23 +8,23 @@
 typedef struct {
     float x, y, z;
     uint32_t color;
-} DebugVertex;
+} CPH_DebugVertex;
 
 // A simple dynamic array container
 typedef struct {
-    DebugVertex *data;
+    CPH_DebugVertex *data;
     size_t count;
     size_t capacity;
-} DebugBuffer;
+} CPH_DebugBuffer;
 
 typedef struct {
     float x;
     float y;
     float z;
-} DebugCoordinates;
+} CPH_DebugCoordinates;
 
-void debug_buffer_ensure(DebugBuffer *buf, size_t count_needed);
-void debug_buffer_push(DebugBuffer *buf, DebugCoordinates pos, uint32_t color);
-void debug_buffer_free(DebugBuffer *buf);
+void CPH_DebugBufferEnsure(CPH_DebugBuffer *buf, size_t count_needed);
+void CPH_DebugBufferPush(CPH_DebugBuffer *buf, CPH_DebugCoordinates pos, uint32_t color);
+void CPH_DebugBufferFree(CPH_DebugBuffer *buf);
 
-extern const JPH_DebugRenderer_Procs debug_procs;
+extern const JPH_DebugRenderer_Procs kDebugProcs;

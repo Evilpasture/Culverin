@@ -8,22 +8,22 @@
 #include <math.h>
 #include <string.h>
 
-static constexpr size_t AVX_ALIGNMENT                  = 32;
-static constexpr size_t COMMAND_QUEUE_INITIAL_CAPACITY = 64;
-static constexpr size_t INITIAL_BODY_CAPACITY = 1024;
-static constexpr size_t CONTACT_MAX_CAPACITY = sizeof(ContactEvent) * 8 << 5;
-static constexpr uint32_t ALL_LAYER_BITS               = 0xFFFFu;
+static constexpr size_t kAvxAlignment                  = 32;
+static constexpr size_t kCommandQueueInitialCapacity = 64;
+static constexpr size_t kInitialBodyCapacity = 1024;
+static constexpr size_t kContactMaxCapacity = sizeof(CPH_ContactEvent) * 8 << 5;
+static constexpr uint32_t kAllLayerBits               = 0xFFFFu;
 
-static constexpr JPH_Real VERIFY_ABI_POS_X   = 10.0;
-static constexpr JPH_Real VERIFY_ABI_POS_Y   = 20.0;
-static constexpr JPH_Real VERIFY_ABI_POS_Z   = 30.0;
-static constexpr double VERIFY_ABI_TOLERANCE = 0.1;
+static constexpr JPH_Real kVerifyAbiPosX   = 10.0;
+static constexpr JPH_Real kVerifyAbiPosY   = 20.0;
+static constexpr JPH_Real kVerifyAbiPosZ   = 30.0;
+static constexpr double kVerifyAbiTolerance = 0.1;
 
 
 // Helper: Apply mass, sensor, CCD, and sleeping settings to the creation
 // struct
-void configure_body_settings(JPH_BodyCreationSettings *settings, JPH_Shape *shape,
-                                    BodyConfig cfg) {
+void CPH_ConfigureBodySettings(JPH_BodyCreationSettings *settings, JPH_Shape *shape,
+                                    CPH_BodyConfig cfg) {
     // Use the members of the struct instead of loose variables
     if (cfg.is_sensor) {
         JPH_BodyCreationSettings_SetIsSensor(settings, true);
@@ -62,8 +62,8 @@ void configure_body_settings(JPH_BodyCreationSettings *settings, JPH_Shape *shap
 
 
 // Helper 2: Apply physics properties (mass, friction, etc) to creation settings
-void apply_body_creation_props(JPH_BodyCreationSettings *settings, JPH_Shape *shape,
-                                      BodyCreationProps props) {
+void CPH_ApplyBodyCreationProps(JPH_BodyCreationSettings *settings, JPH_Shape *shape,
+                                      CPH_BodyCreationProps props) {
     if (props.mass > 0.0f) {
         JPH_MassProperties mp;
         JPH_Shape_GetMassProperties(shape, &mp);
@@ -97,7 +97,7 @@ void apply_body_creation_props(JPH_BodyCreationSettings *settings, JPH_Shape *sh
 
 NativeMutex g_jph_init_lock;
 
-void physics_world_init_state(PhysicsWorld *world) {
+void CPH_PhysicsWorldInitState(CPH_PhysicsWorld *world) {
     // 1.1 Jolt Core Pointers
     world->system               = nullptr;
     world->char_vs_char_manager = nullptr;
@@ -178,22 +178,22 @@ void physics_world_init_state(PhysicsWorld *world) {
     world->needs_optimization = false;
 
     // 1.6. Complex Structs
-    world->step_sync = (ShadowSync){};
-    INIT_LOCK(world->shadow_lock);
-    INIT_NATIVE_MUTEX(world->jph_trampoline_lock);
+    world->step_sync = (CPH_ShadowSync){};
+    CPH_INIT_LOCK(world->shadow_lock);
+    CPH_INIT_NATIVE_MUTEX(world->jph_trampoline_lock);
 
     // 1.7. Debug Renderer
     world->debug_renderer  = nullptr;
-    world->debug_lines     = (DebugBuffer){};
-    world->debug_triangles = (DebugBuffer){};
+    world->debug_lines     = (CPH_DebugBuffer){};
+    world->debug_triangles = (CPH_DebugBuffer){};
 
     world->debug_renderer = JPH_DebugRenderer_Create(world);
 
-    INIT_NATIVE_MUTEX(world->step_sync.mutex);
-    INIT_NATIVE_COND(world->step_sync.cond);
+    CPH_INIT_NATIVE_MUTEX(world->step_sync.mutex);
+    CPH_INIT_NATIVE_COND(world->step_sync.cond);
 }
 
-int allocate_constraints(PhysicsWorld *world) {
+int CPH_AllocateConstraints(CPH_PhysicsWorld *world) {
     constexpr uint32_t CONSTRAINT_INITIAL_CAPACITY = 256;
     world->constraint_capacity                      = CONSTRAINT_INITIAL_CAPACITY;
     world->constraints =
@@ -217,7 +217,7 @@ int allocate_constraints(PhysicsWorld *world) {
     return 0;
 }
 
-void initialize_free_slots(PhysicsWorld *world, size_t start_idx) {
+void CPH_InitializeFreeSlots(CPH_PhysicsWorld *world, size_t start_idx) {
     for (uint32_t i = (uint32_t)start_idx; i < (uint32_t)world->slot_capacity; i++) {
         // Initialize the atomic generation for this slot
         atomic_init(&world->generations[i], 1);
@@ -228,8 +228,8 @@ void initialize_free_slots(PhysicsWorld *world, size_t start_idx) {
     }
 }
 
-PhysicsWorldStatus physics_world_load_baked_scene(PhysicsWorld *world,
-                                                  const BakedSceneData *scene) {
+PhysicsWorldStatus CPH_PhysicsWorldLoadBakedScene(CPH_PhysicsWorld *world,
+                                                  const CPH_BakedSceneData *scene) {
     if (world == nullptr || scene == nullptr) {
         return PHYSICS_WORLD_STATUS_INVALID_ARGUMENT;
     }
@@ -246,17 +246,17 @@ PhysicsWorldStatus physics_world_load_baked_scene(PhysicsWorld *world,
         return PHYSICS_WORLD_STATUS_LIMIT_REACHED;
     }
 
-    PosStride *const shadow_pos = (PosStride *)world->positions;
-    AuxStride *const shadow_rot = (AuxStride *)world->rotations;
+    CPH_PosStride *const shadow_pos = (CPH_PosStride *)world->positions;
+    CPH_AuxStride *const shadow_rot = (CPH_AuxStride *)world->rotations;
     PhysicsWorldStatus status   = PHYSICS_WORLD_STATUS_OK;
 
-    SHADOW_LOCK(&world->shadow_lock);
-    NATIVE_MUTEX_LOCK(world->jph_trampoline_lock);
+    CPH_SHADOW_LOCK(&world->shadow_lock);
+    CPH_NATIVE_MUTEX_LOCK(world->jph_trampoline_lock);
     for (size_t i = 0; i < scene->count; ++i) {
         const float *const shape_data = &scene->shapes[i * CULV_BAKED_SHAPE_STRIDE];
         const float params[4]  = {shape_data[1], shape_data[2], shape_data[3], shape_data[4]};
-        JPH_Shape *const shape = find_or_create_shape_locked(world, (int)shape_data[0], params);
-        if (UNLIKELY(shape == nullptr)) {
+        JPH_Shape *const shape = CPH_FindOrCreateShapeLocked(world, (int)shape_data[0], params);
+        if (CPH_UNLIKELY(shape == nullptr)) {
             status = PHYSICS_WORLD_STATUS_OUT_OF_MEMORY;
             break;
         }
@@ -279,7 +279,7 @@ PhysicsWorldStatus physics_world_load_baked_scene(PhysicsWorld *world,
         JPH_BodyCreationSettings *creation =
             JPH_BodyCreationSettings_Create3(shape, &j_pos, &j_rot, (JPH_MotionType)motion_type,
                                              (JPH_ObjectLayer)scene->object_layers[i]);
-        if (UNLIKELY(creation == nullptr)) {
+        if (CPH_UNLIKELY(creation == nullptr)) {
             status = PHYSICS_WORLD_STATUS_OUT_OF_MEMORY;
             break;
         }
@@ -294,7 +294,7 @@ PhysicsWorldStatus physics_world_load_baked_scene(PhysicsWorld *world,
         const JPH_BodyID body_id = JPH_BodyInterface_CreateAndAddBody(
             world->body_interface, creation, JPH_Activation_Activate);
         JPH_BodyCreationSettings_Destroy(creation);
-        if (UNLIKELY(body_id == JPH_INVALID_BODY_ID)) {
+        if (CPH_UNLIKELY(body_id == kJphInvalidBodyId)) {
             status = PHYSICS_WORLD_STATUS_OUT_OF_MEMORY;
             break;
         }
@@ -310,8 +310,8 @@ PhysicsWorldStatus physics_world_load_baked_scene(PhysicsWorld *world,
         atomic_store_explicit(&world->slot_states[i], SLOT_ALIVE, memory_order_relaxed);
         world->user_data[i] = scene->user_data[i];
     }
-    NATIVE_MUTEX_UNLOCK(world->jph_trampoline_lock);
-    SHADOW_UNLOCK(&world->shadow_lock);
+    CPH_NATIVE_MUTEX_UNLOCK(world->jph_trampoline_lock);
+    CPH_SHADOW_UNLOCK(&world->shadow_lock);
 
     if (status == PHYSICS_WORLD_STATUS_OK) {
         // Publish the initial body count only after every body was created successfully.
@@ -320,44 +320,44 @@ PhysicsWorldStatus physics_world_load_baked_scene(PhysicsWorld *world,
     return status;
 }
 
-void free_new_buffers(NewBuffers *nb) {
+void CPH_FreeNewBuffers(CPH_NewBuffers *nb) {
     if (!nb) {
         return;
     }
 
     // 1. Aligned Buffer Cleanup (Non-atomic)
-    CULVERIN_SAFE_FREE_ALIGNED(nb->pos);
-    CULVERIN_SAFE_FREE_ALIGNED(nb->rot);
-    CULVERIN_SAFE_FREE_ALIGNED(nb->ppos);
-    CULVERIN_SAFE_FREE_ALIGNED(nb->prot);
-    CULVERIN_SAFE_FREE_ALIGNED(nb->lvel);
-    CULVERIN_SAFE_FREE_ALIGNED(nb->avel);
+    CPH_SAFE_FREE_ALIGNED(nb->pos);
+    CPH_SAFE_FREE_ALIGNED(nb->rot);
+    CPH_SAFE_FREE_ALIGNED(nb->ppos);
+    CPH_SAFE_FREE_ALIGNED(nb->prot);
+    CPH_SAFE_FREE_ALIGNED(nb->lvel);
+    CPH_SAFE_FREE_ALIGNED(nb->avel);
 
     // 2. Standard Buffer Cleanup
-    CULVERIN_SAFE_FREE(nb->bids);
-    CULVERIN_SAFE_FREE(nb->udat);
+    CPH_SAFE_FREE(nb->bids);
+    CPH_SAFE_FREE(nb->udat);
 
     // 3. ATOMIC Buffer Cleanup
     // nb->gens is CULV_ATOMIC(uint32_t)*
     // nb->stat is CULV_ATOMIC(uint8_t)*
     // We cast to (void*) to ensure standard C-library free works without warnings
-    CULVERIN_SAFE_FREE(nb->gens);
-    CULVERIN_SAFE_FREE(nb->stat);
+    CPH_SAFE_FREE(nb->gens);
+    CPH_SAFE_FREE(nb->stat);
 
     // 4. Mapping Buffer Cleanup (Non-atomic)
-    CULVERIN_SAFE_FREE(nb->s2d);
-    CULVERIN_SAFE_FREE(nb->d2s);
-    CULVERIN_SAFE_FREE(nb->free);
-    CULVERIN_SAFE_FREE(nb->cats);
-    CULVERIN_SAFE_FREE(nb->masks);
-    CULVERIN_SAFE_FREE(nb->mats);
-    CULVERIN_SAFE_FREE(nb->softs);
+    CPH_SAFE_FREE(nb->s2d);
+    CPH_SAFE_FREE(nb->d2s);
+    CPH_SAFE_FREE(nb->free);
+    CPH_SAFE_FREE(nb->cats);
+    CPH_SAFE_FREE(nb->masks);
+    CPH_SAFE_FREE(nb->mats);
+    CPH_SAFE_FREE(nb->softs);
 
     // Defensive: Zero the struct to prevent Use-After-Free/Double-Free
-    *nb = (NewBuffers){};
+    *nb = (CPH_NewBuffers){};
 }
 
-static bool NewBuffers_check_alloc(NewBuffers *nb) {
+static bool NewBuffers_check_alloc(CPH_NewBuffers *nb) {
     // Just a list of the pointers that MUST be there
     return (nb->pos && nb->rot && nb->ppos && nb->prot && nb->lvel && nb->avel && nb->bids &&
             nb->udat && nb->gens && nb->s2d && nb->d2s && nb->stat && nb->free && nb->cats &&
@@ -365,22 +365,22 @@ static bool NewBuffers_check_alloc(NewBuffers *nb) {
 }
 
 [[nodiscard]]
-static int alloc_new_buffers(NewBuffers *nb, size_t cap) {
-    *nb = (NewBuffers){};
+static int alloc_new_buffers(CPH_NewBuffers *nb, size_t cap) {
+    *nb = (CPH_NewBuffers){};
 
     // SIMD-Heavy Buffers: AVX alignment (Non-atomic)
-    nb->pos  = (JPH_Real *)CulvNative_AlignedMalloc(cap * sizeof(PosStride), AVX_ALIGNMENT);
-    nb->ppos = (JPH_Real *)CulvNative_AlignedMalloc(cap * sizeof(PosStride), AVX_ALIGNMENT);
-    nb->rot  = (float *)CulvNative_AlignedMalloc(cap * sizeof(AuxStride), AVX_ALIGNMENT);
-    nb->prot = (float *)CulvNative_AlignedMalloc(cap * sizeof(AuxStride), AVX_ALIGNMENT);
-    nb->lvel = (float *)CulvNative_AlignedMalloc(cap * sizeof(AuxStride), AVX_ALIGNMENT);
-    nb->avel = (float *)CulvNative_AlignedMalloc(cap * sizeof(AuxStride), AVX_ALIGNMENT);
+    nb->pos  = (JPH_Real *)CulvNative_AlignedMalloc(cap * sizeof(CPH_PosStride), kAvxAlignment);
+    nb->ppos = (JPH_Real *)CulvNative_AlignedMalloc(cap * sizeof(CPH_PosStride), kAvxAlignment);
+    nb->rot  = (float *)CulvNative_AlignedMalloc(cap * sizeof(CPH_AuxStride), kAvxAlignment);
+    nb->prot = (float *)CulvNative_AlignedMalloc(cap * sizeof(CPH_AuxStride), kAvxAlignment);
+    nb->lvel = (float *)CulvNative_AlignedMalloc(cap * sizeof(CPH_AuxStride), kAvxAlignment);
+    nb->avel = (float *)CulvNative_AlignedMalloc(cap * sizeof(CPH_AuxStride), kAvxAlignment);
 
     // ATOMIC Data Buffers
     // gens is CULV_ATOMIC(uint32_t)*
-    nb->gens = (CULV_ATOMIC(uint32_t) *)CulvNative_Malloc(cap * sizeof(CULV_ATOMIC(uint32_t)));
+    nb->gens = (CPH_ATOMIC(uint32_t) *)CulvNative_Malloc(cap * sizeof(CPH_ATOMIC(uint32_t)));
     // stat is CULV_ATOMIC(uint8_t)*
-    nb->stat = (CULV_ATOMIC(uint8_t) *)CulvNative_Malloc(cap * sizeof(CULV_ATOMIC(uint8_t)));
+    nb->stat = (CPH_ATOMIC(uint8_t) *)CulvNative_Malloc(cap * sizeof(CPH_ATOMIC(uint8_t)));
 
     // Standard Data Buffers
     nb->bids  = (JPH_BodyID *)CulvNative_Malloc(cap * sizeof(JPH_BodyID));
@@ -391,18 +391,18 @@ static int alloc_new_buffers(NewBuffers *nb, size_t cap) {
     nb->cats  = (uint32_t *)CulvNative_Malloc(cap * sizeof(uint32_t));
     nb->masks = (uint32_t *)CulvNative_Malloc(cap * sizeof(uint32_t));
     nb->mats  = (uint32_t *)CulvNative_Calloc(cap, sizeof(uint32_t));
-    nb->softs = (SoftBodyShadow *)CulvNative_Calloc(cap, sizeof(SoftBodyShadow));
+    nb->softs = (CPH_SoftBodyShadow *)CulvNative_Calloc(cap, sizeof(CPH_SoftBodyShadow));
 
     // Validation
     if (!NewBuffers_check_alloc(nb)) {
-        free_new_buffers(nb);
+        CPH_FreeNewBuffers(nb);
         return -1;
     }
 
     return 0;
 }
 
-static size_t migrate_and_init(PhysicsWorld *world, NewBuffers *nb, size_t new_cap) {
+static size_t migrate_and_init(CPH_PhysicsWorld *world, CPH_NewBuffers *nb, size_t new_cap) {
     // TSan Fix: Load counts atomically
     size_t current_count = atomic_load_explicit(&world->count, memory_order_acquire);
     size_t current_free  = atomic_load_explicit(&world->free_count, memory_order_acquire);
@@ -410,12 +410,12 @@ static size_t migrate_and_init(PhysicsWorld *world, NewBuffers *nb, size_t new_c
     // 1. Copy Active Dense Data (The bodies currently in simulation)
     if (current_count > 0) {
         // Positions use Stride 4
-        size_t pos_bytes = current_count * sizeof(PosStride);
+        size_t pos_bytes = current_count * sizeof(CPH_PosStride);
         memcpy(nb->pos, world->positions, pos_bytes);
         memcpy(nb->ppos, world->prev_positions, pos_bytes);
 
         // Rotations/Velocities use Stride 4
-        size_t aux_bytes = current_count * sizeof(AuxStride);
+        size_t aux_bytes = current_count * sizeof(CPH_AuxStride);
         memcpy(nb->rot, world->rotations, aux_bytes);
         memcpy(nb->prot, world->prev_rotations, aux_bytes);
         memcpy(nb->lvel, world->linear_velocities, aux_bytes);
@@ -429,7 +429,7 @@ static size_t migrate_and_init(PhysicsWorld *world, NewBuffers *nb, size_t new_c
         memcpy(nb->mats, world->material_ids, current_count * sizeof(uint32_t));
 
         if (world->soft_shadows) {
-            memcpy(nb->softs, world->soft_shadows, current_count * sizeof(SoftBodyShadow));
+            memcpy(nb->softs, world->soft_shadows, current_count * sizeof(CPH_SoftBodyShadow));
         }
 
         // Dense-to-Slot mapping
@@ -466,7 +466,7 @@ static size_t migrate_and_init(PhysicsWorld *world, NewBuffers *nb, size_t new_c
     }
     // Guarantee new body IDs won't trigger false positives in active queries
     for (size_t i = current_count; i < new_cap; i++) {
-        nb->bids[i] = JPH_INVALID_BODY_ID;
+        nb->bids[i] = kJphInvalidBodyId;
     }
 
     return local_free_count;
@@ -474,7 +474,7 @@ static size_t migrate_and_init(PhysicsWorld *world, NewBuffers *nb, size_t new_c
 
 // helper: Allocate shadow buffers and indirection maps
 [[nodiscard]]
-int allocate_buffers(PhysicsWorld *world, int max_bodies, size_t initial_count) {
+int CPH_AllocateBuffers(CPH_PhysicsWorld *world, int max_bodies, size_t initial_count) {
     // Reserve for pending baked bodies without publishing them to world->count yet.
     const size_t max_capacity = (max_bodies > 0) ? (size_t)max_bodies : 0;
     world->max_jolt_bodies = (uint32_t)max_bodies;
@@ -490,18 +490,18 @@ int allocate_buffers(PhysicsWorld *world, int max_bodies, size_t initial_count) 
 
     // SIMD Aligned Buffers (Not atomic, these are the heavy data buffers)
     world->positions =
-        (JPH_Real *)CulvNative_AlignedMalloc(world->capacity * sizeof(PosStride), AVX_ALIGNMENT);
+        (JPH_Real *)CulvNative_AlignedMalloc(world->capacity * sizeof(CPH_PosStride), kAvxAlignment);
     world->prev_positions =
-        (JPH_Real *)CulvNative_AlignedMalloc(world->capacity * sizeof(PosStride), AVX_ALIGNMENT);
+        (JPH_Real *)CulvNative_AlignedMalloc(world->capacity * sizeof(CPH_PosStride), kAvxAlignment);
 
     world->rotations =
-        (float *)CulvNative_AlignedMalloc(world->capacity * sizeof(AuxStride), AVX_ALIGNMENT);
+        (float *)CulvNative_AlignedMalloc(world->capacity * sizeof(CPH_AuxStride), kAvxAlignment);
     world->prev_rotations =
-        (float *)CulvNative_AlignedMalloc(world->capacity * sizeof(AuxStride), AVX_ALIGNMENT);
+        (float *)CulvNative_AlignedMalloc(world->capacity * sizeof(CPH_AuxStride), kAvxAlignment);
     world->linear_velocities =
-        (float *)CulvNative_AlignedMalloc(world->capacity * sizeof(AuxStride), AVX_ALIGNMENT);
+        (float *)CulvNative_AlignedMalloc(world->capacity * sizeof(CPH_AuxStride), kAvxAlignment);
     world->angular_velocities =
-        (float *)CulvNative_AlignedMalloc(world->capacity * sizeof(AuxStride), AVX_ALIGNMENT);
+        (float *)CulvNative_AlignedMalloc(world->capacity * sizeof(CPH_AuxStride), kAvxAlignment);
 
     world->body_ids =
         (typeof(world->body_ids))CulvNative_Malloc(world->capacity * sizeof(typeof(*world->body_ids)));
@@ -519,19 +519,19 @@ int allocate_buffers(PhysicsWorld *world, int max_bodies, size_t initial_count) 
 
     // ATOMIC BUFFER ALLOCATIONS
     // id_to_handle_map is BodyHandle*
-    world->id_to_handle_map = (CULV_ATOMIC(typeof_unqual(*world->id_to_handle_map)) *)CulvNative_Malloc(
+    world->id_to_handle_map = (CPH_ATOMIC(typeof_unqual(*world->id_to_handle_map)) *)CulvNative_Malloc(
         (world->max_jolt_bodies + 1) * sizeof(typeof_unqual(*world->id_to_handle_map)));
 
     world->jolt_body_ptrs = (typeof(world->jolt_body_ptrs))CulvNative_Calloc(
         world->max_jolt_bodies + 1, sizeof(typeof(*world->jolt_body_ptrs)));
 
     // generations is CULV_ATOMIC(uint32_t)*
-    world->generations = (CULV_ATOMIC(uint32_t) *)CulvNative_Malloc(world->slot_capacity *
-                                                                 sizeof(CULV_ATOMIC(uint32_t)));
+    world->generations = (CPH_ATOMIC(uint32_t) *)CulvNative_Malloc(world->slot_capacity *
+                                                                 sizeof(CPH_ATOMIC(uint32_t)));
 
     // slot_states is CULV_ATOMIC(uint8_t)*
-    world->slot_states = (CULV_ATOMIC(typeof_unqual(*world->slot_states)) *)CulvNative_Malloc(
-        world->slot_capacity * sizeof(CULV_ATOMIC(typeof_unqual(*world->slot_states))));
+    world->slot_states = (CPH_ATOMIC(typeof_unqual(*world->slot_states)) *)CulvNative_Malloc(
+        world->slot_capacity * sizeof(CPH_ATOMIC(typeof_unqual(*world->slot_states))));
 
     // Normal Indirection/Mapping Buffers
     world->slot_to_dense = (uint32_t *)CulvNative_Malloc(world->slot_capacity * sizeof(uint32_t));
@@ -539,18 +539,18 @@ int allocate_buffers(PhysicsWorld *world, int max_bodies, size_t initial_count) 
     world->free_slots    = (uint32_t *)CulvNative_Malloc(world->slot_capacity * sizeof(uint32_t));
 
     world->command_queue = (PhysicsCommand *)CulvNative_AlignedMalloc(
-        COMMAND_QUEUE_INITIAL_CAPACITY * sizeof(PhysicsCommand), MEMORY_ALIGNMENT_SIZE);
+        kCommandQueueInitialCapacity * sizeof(PhysicsCommand), kMemoryAlignmentSize);
     world->command_queue_spare = (PhysicsCommand *)CulvNative_AlignedMalloc(
-        COMMAND_QUEUE_INITIAL_CAPACITY * sizeof(PhysicsCommand), MEMORY_ALIGNMENT_SIZE);
-    world->command_capacity = COMMAND_QUEUE_INITIAL_CAPACITY;
+        kCommandQueueInitialCapacity * sizeof(PhysicsCommand), kMemoryAlignmentSize);
+    world->command_capacity = kCommandQueueInitialCapacity;
 
     world->trash_capacity = 4;
     world->trash_count    = 0;
-    world->trash_buffers  = (NewBuffers *)CulvNative_Calloc(world->trash_capacity, sizeof(NewBuffers));
+    world->trash_buffers  = (CPH_NewBuffers *)CulvNative_Calloc(world->trash_capacity, sizeof(CPH_NewBuffers));
 
-    world->contact_max_capacity = CONTACT_MAX_CAPACITY;
-    world->contact_buffer = (ContactEvent *)CulvNative_AlignedMalloc(
-        world->contact_max_capacity * sizeof(ContactEvent), MEMORY_ALIGNMENT_SIZE);
+    world->contact_max_capacity = kContactMaxCapacity;
+    world->contact_buffer = (CPH_ContactEvent *)CulvNative_AlignedMalloc(
+        world->contact_max_capacity * sizeof(CPH_ContactEvent), kMemoryAlignmentSize);
 
     if (!world->positions || !world->prev_positions || !world->rotations ||
         !world->prev_rotations || !world->linear_velocities || !world->angular_velocities ||
@@ -572,22 +572,22 @@ int allocate_buffers(PhysicsWorld *world, int max_bodies, size_t initial_count) 
     }
 
     // Zero-initialize the aligned buffers
-    memset(world->positions, 0, world->capacity * sizeof(PosStride));
-    memset(world->prev_positions, 0, world->capacity * sizeof(PosStride));
-    memset(world->rotations, 0, world->capacity * sizeof(AuxStride));
-    memset(world->prev_rotations, 0, world->capacity * sizeof(AuxStride));
-    memset(world->linear_velocities, 0, world->capacity * sizeof(AuxStride));
-    memset(world->angular_velocities, 0, world->capacity * sizeof(AuxStride));
+    memset(world->positions, 0, world->capacity * sizeof(CPH_PosStride));
+    memset(world->prev_positions, 0, world->capacity * sizeof(CPH_PosStride));
+    memset(world->rotations, 0, world->capacity * sizeof(CPH_AuxStride));
+    memset(world->prev_rotations, 0, world->capacity * sizeof(CPH_AuxStride));
+    memset(world->linear_velocities, 0, world->capacity * sizeof(CPH_AuxStride));
+    memset(world->angular_velocities, 0, world->capacity * sizeof(CPH_AuxStride));
 
     for (size_t i = 0; i < world->capacity; i++) {
-        world->categories[i] = ALL_LAYER_BITS;
-        world->masks[i]      = ALL_LAYER_BITS;
-        world->body_ids[i]   = JPH_INVALID_BODY_ID;
+        world->categories[i] = kAllLayerBits;
+        world->masks[i]      = kAllLayerBits;
+        world->body_ids[i]   = kJphInvalidBodyId;
     }
 
     return 0;
 }
-PhysicsWorldStatus physics_world_resize(PhysicsWorld *world, size_t new_capacity) {
+PhysicsWorldStatus CPH_PhysicsWorldResize(CPH_PhysicsWorld *world, size_t new_capacity) {
     if (atomic_load_explicit(&world->view_export_count, memory_order_relaxed) > 0) {
         return PHYSICS_WORLD_STATUS_BUFFER_EXPORTED;
     }
@@ -597,7 +597,7 @@ PhysicsWorldStatus physics_world_resize(PhysicsWorld *world, size_t new_capacity
     // before we allocate new memory.
     if (world->trash_count > 0) {
         for (size_t i = 0; i < world->trash_count; i++) {
-            free_new_buffers(&world->trash_buffers[i]);
+            CPH_FreeNewBuffers(&world->trash_buffers[i]);
         }
         world->trash_count = 0;
     }
@@ -611,7 +611,7 @@ PhysicsWorldStatus physics_world_resize(PhysicsWorld *world, size_t new_capacity
     }
 
     // 3. Prepare New Buffers
-    NewBuffers nb;
+    CPH_NewBuffers nb;
     if (alloc_new_buffers(&nb, new_capacity) < 0) {
         return PHYSICS_WORLD_STATUS_OUT_OF_MEMORY;
     }
@@ -620,22 +620,22 @@ PhysicsWorldStatus physics_world_resize(PhysicsWorld *world, size_t new_capacity
     size_t final_free_count = migrate_and_init(world, &nb, new_capacity);
 
     // 5. Expand Trash Bin
-    if (UNLIKELY(world->trash_count >= world->trash_capacity)) {
+    if (CPH_UNLIKELY(world->trash_count >= world->trash_capacity)) {
         size_t next_cap = (world->trash_capacity == 0) ? 4 : world->trash_capacity * 2;
-        void *new_trash = CulvNative_Realloc(world->trash_buffers, next_cap * sizeof(NewBuffers));
+        void *new_trash = CulvNative_Realloc(world->trash_buffers, next_cap * sizeof(CPH_NewBuffers));
         if (!new_trash) {
-            free_new_buffers(&nb);
+            CPH_FreeNewBuffers(&nb);
             return PHYSICS_WORLD_STATUS_OUT_OF_MEMORY;
         }
         size_t added_elements = next_cap - world->trash_capacity;
-        memset((NewBuffers *)new_trash + world->trash_capacity, 0,
-               added_elements * sizeof(NewBuffers));
-        world->trash_buffers  = (NewBuffers *)new_trash;
+        memset((CPH_NewBuffers *)new_trash + world->trash_capacity, 0,
+               added_elements * sizeof(CPH_NewBuffers));
+        world->trash_buffers  = (CPH_NewBuffers *)new_trash;
         world->trash_capacity = next_cap;
     }
 
     // 6. THE COMMIT (Swap pointers)
-    NewBuffers old_bufs                      = {.pos   = world->positions,
+    CPH_NewBuffers old_bufs                      = {.pos   = world->positions,
                                                 .ppos  = world->prev_positions,
                                                 .rot   = world->rotations,
                                                 .prot  = world->prev_rotations,
@@ -682,31 +682,31 @@ PhysicsWorldStatus physics_world_resize(PhysicsWorld *world, size_t new_capacity
     return PHYSICS_WORLD_STATUS_OK;
 }
 
-static PhysicsWorldStatus reserve_body_slot(PhysicsWorld *world, uint32_t slot_state,
+static PhysicsWorldStatus reserve_body_slot(CPH_PhysicsWorld *world, uint32_t slot_state,
                                              BodyHandle *handle_out) {
     const size_t current_count = atomic_load_explicit(&world->count, memory_order_acquire);
     size_t available = atomic_load_explicit(&world->free_count, memory_order_acquire);
 
-    if (UNLIKELY(current_count >= world->max_jolt_bodies)) {
+    if (CPH_UNLIKELY(current_count >= world->max_jolt_bodies)) {
         return PHYSICS_WORLD_STATUS_LIMIT_REACHED;
     }
 
-    if (UNLIKELY(available == 0 || current_count + 1 > world->capacity)) {
-        size_t next_capacity = world->capacity == 0 ? INITIAL_BODY_CAPACITY : world->capacity * 2;
+    if (CPH_UNLIKELY(available == 0 || current_count + 1 > world->capacity)) {
+        size_t next_capacity = world->capacity == 0 ? kInitialBodyCapacity : world->capacity * 2;
         if (next_capacity > world->max_jolt_bodies) {
             next_capacity = world->max_jolt_bodies;
         }
-        const PhysicsWorldStatus resize_status = physics_world_resize(world, next_capacity);
+        const PhysicsWorldStatus resize_status = CPH_PhysicsWorldResize(world, next_capacity);
         if (resize_status != PHYSICS_WORLD_STATUS_OK) {
             return resize_status;
         }
         available = atomic_load_explicit(&world->free_count, memory_order_acquire);
-        if (UNLIKELY(available == 0)) {
+        if (CPH_UNLIKELY(available == 0)) {
             return PHYSICS_WORLD_STATUS_LIMIT_REACHED;
         }
     }
 
-    if (UNLIKELY(!ensure_command_capacity(world))) {
+    if (CPH_UNLIKELY(!CPH_EnsureCommandCapacity(world))) {
         return PHYSICS_WORLD_STATUS_OUT_OF_MEMORY;
     }
 
@@ -721,14 +721,14 @@ static PhysicsWorldStatus reserve_body_slot(PhysicsWorld *world, uint32_t slot_s
 
     world->slot_to_dense[slot] = dense;
     world->dense_to_slot[dense] = slot;
-    world->body_ids[dense] = JPH_INVALID_BODY_ID;
+    world->body_ids[dense] = kJphInvalidBodyId;
     atomic_store_explicit(&world->slot_states[slot], slot_state, memory_order_release);
 
     *handle_out = handle;
     return PHYSICS_WORLD_STATUS_OK;
 }
 
-PhysicsWorldStatus physics_world_commit_create(PhysicsWorld *world,
+PhysicsWorldStatus CPH_PhysicsWorldCommitCreate(CPH_PhysicsWorld *world,
                                                JPH_BodyCreationSettings *settings,
                                                uint32_t slot_state, BodyHandle *out_handle) {
     if (!world || !settings || !out_handle) {
@@ -747,7 +747,7 @@ PhysicsWorldStatus physics_world_commit_create(PhysicsWorld *world,
     return PHYSICS_WORLD_STATUS_OK;
 }
 
-PhysicsWorldStatus physics_world_commit_create_soft(PhysicsWorld *world,
+PhysicsWorldStatus CPH_PhysicsWorldCommitCreateSoft(CPH_PhysicsWorld *world,
                                                     JPH_SoftBodyCreationSettings *settings,
                                                     uint32_t slot_state, BodyHandle *out_handle) {
     if (!world || !settings || !out_handle) {
@@ -766,7 +766,7 @@ PhysicsWorldStatus physics_world_commit_create_soft(PhysicsWorld *world,
     return PHYSICS_WORLD_STATUS_OK;
 }
 
-void free_constraints(PhysicsWorld *world) {
+void CPH_FreeConstraints(CPH_PhysicsWorld *world) {
     if (world->constraints) {
         for (size_t i = 0; i < world->constraint_capacity; i++) {
             if (!world->constraints[i]) {
@@ -784,59 +784,59 @@ void free_constraints(PhysicsWorld *world) {
             }
             world->constraints[i] = nullptr;
         }
-        CULVERIN_SAFE_FREE(world->constraints);
+        CPH_SAFE_FREE(world->constraints);
     }
-    CULVERIN_SAFE_FREE(world->constraint_generations);
-    CULVERIN_SAFE_FREE(world->free_constraint_slots);
-    CULVERIN_SAFE_FREE(world->constraint_states);
-    CULVERIN_SAFE_FREE(world->constraint_types);
+    CPH_SAFE_FREE(world->constraint_generations);
+    CPH_SAFE_FREE(world->free_constraint_slots);
+    CPH_SAFE_FREE(world->constraint_states);
+    CPH_SAFE_FREE(world->constraint_types);
 }
 
-void free_shadow_buffers(PhysicsWorld *world) {
+void CPH_FreeShadowBuffers(CPH_PhysicsWorld *world) {
     // 1. Aligned buffers (stride types)
-    CULVERIN_SAFE_FREE_ALIGNED(world->positions);
-    CULVERIN_SAFE_FREE_ALIGNED(world->prev_positions);
-    CULVERIN_SAFE_FREE_ALIGNED(world->rotations);
-    CULVERIN_SAFE_FREE_ALIGNED(world->prev_rotations);
-    CULVERIN_SAFE_FREE_ALIGNED(world->linear_velocities);
-    CULVERIN_SAFE_FREE_ALIGNED(world->angular_velocities);
+    CPH_SAFE_FREE_ALIGNED(world->positions);
+    CPH_SAFE_FREE_ALIGNED(world->prev_positions);
+    CPH_SAFE_FREE_ALIGNED(world->rotations);
+    CPH_SAFE_FREE_ALIGNED(world->prev_rotations);
+    CPH_SAFE_FREE_ALIGNED(world->linear_velocities);
+    CPH_SAFE_FREE_ALIGNED(world->angular_velocities);
 
     // 2. ATOMIC buffers
     // Generations is CULV_ATOMIC(uint32_t)*
     // Slot States is CULV_ATOMIC(uint8_t)*
-    CULVERIN_SAFE_FREE(world->generations);
-    CULVERIN_SAFE_FREE(world->slot_states);
+    CPH_SAFE_FREE(world->generations);
+    CPH_SAFE_FREE(world->slot_states);
 
     // 3. Regular buffers
-    CULVERIN_SAFE_FREE(world->body_ids);
-    CULVERIN_SAFE_FREE(world->slot_to_dense);
-    CULVERIN_SAFE_FREE(world->dense_to_slot);
-    CULVERIN_SAFE_FREE(world->free_slots);
-    CULVERIN_SAFE_FREE_ALIGNED(world->command_queue);
-    CULVERIN_SAFE_FREE(world->user_data);
-    CULVERIN_SAFE_FREE(world->categories);
+    CPH_SAFE_FREE(world->body_ids);
+    CPH_SAFE_FREE(world->slot_to_dense);
+    CPH_SAFE_FREE(world->dense_to_slot);
+    CPH_SAFE_FREE(world->free_slots);
+    CPH_SAFE_FREE_ALIGNED(world->command_queue);
+    CPH_SAFE_FREE(world->user_data);
+    CPH_SAFE_FREE(world->categories);
 
     if (world->soft_shadows) {
         for (size_t i = 0; i < world->capacity; i++) {
-            CULVERIN_SAFE_FREE_ALIGNED(world->soft_shadows[i].vertices);
-            CULVERIN_SAFE_FREE_ALIGNED(world->soft_shadows[i].velocities);
-            CULVERIN_SAFE_FREE_ALIGNED(world->soft_shadows[i].normals);
+            CPH_SAFE_FREE_ALIGNED(world->soft_shadows[i].vertices);
+            CPH_SAFE_FREE_ALIGNED(world->soft_shadows[i].velocities);
+            CPH_SAFE_FREE_ALIGNED(world->soft_shadows[i].normals);
         }
-        CULVERIN_SAFE_FREE(world->soft_shadows);
+        CPH_SAFE_FREE(world->soft_shadows);
     }
-    CULVERIN_SAFE_FREE(world->masks);
-    CULVERIN_SAFE_FREE(world->material_ids);
-    CULVERIN_SAFE_FREE(world->materials);
-    CULVERIN_SAFE_FREE(world->jolt_body_ptrs);
+    CPH_SAFE_FREE(world->masks);
+    CPH_SAFE_FREE(world->material_ids);
+    CPH_SAFE_FREE(world->materials);
+    CPH_SAFE_FREE(world->jolt_body_ptrs);
 }
 
-void physics_world_free_native(PhysicsWorld *world) {
+void CPH_PhysicsWorldFreeNative(CPH_PhysicsWorld *world) {
     if (!world) {
         return;
     }
 
-    clear_command_queue(world);
-    free_constraints(world);
+    CPH_ClearCommandQueue(world);
+    CPH_FreeConstraints(world);
 
     if (world->system) {
         JPH_PhysicsSystem_Destroy(world->system);
@@ -878,36 +878,36 @@ void physics_world_free_native(PhysicsWorld *world) {
         JPH_DebugRenderer_Destroy(world->debug_renderer);
         world->debug_renderer = nullptr;
     }
-    debug_buffer_free(&world->debug_lines);
-    debug_buffer_free(&world->debug_triangles);
-    free_shape_cache(world);
+    CPH_DebugBufferFree(&world->debug_lines);
+    CPH_DebugBufferFree(&world->debug_triangles);
+    CPH_FreeShapeCache(world);
 
     if (world->contact_listener) {
         JPH_ContactListener_Destroy(world->contact_listener);
         world->contact_listener = nullptr;
     }
-    CULVERIN_SAFE_FREE_ALIGNED(world->contact_buffer);
-    CULVERIN_SAFE_FREE_ALIGNED(world->contact_events);
+    CPH_SAFE_FREE_ALIGNED(world->contact_buffer);
+    CPH_SAFE_FREE_ALIGNED(world->contact_events);
 
     if (world->trash_buffers) {
         for (size_t i = 0; i < world->trash_count; i++) {
-            free_new_buffers(&world->trash_buffers[i]);
+            CPH_FreeNewBuffers(&world->trash_buffers[i]);
         }
-        CULVERIN_SAFE_FREE(world->trash_buffers);
+        CPH_SAFE_FREE(world->trash_buffers);
     }
     world->trash_count = 0;
 
-    CULVERIN_SAFE_FREE_ALIGNED(world->command_queue_spare);
-    free_shadow_buffers(world);
-    CULVERIN_SAFE_FREE(world->id_to_handle_map);
+    CPH_SAFE_FREE_ALIGNED(world->command_queue_spare);
+    CPH_FreeShadowBuffers(world);
+    CPH_SAFE_FREE(world->id_to_handle_map);
 
-    FREE_LOCK(world->shadow_lock);
-    FREE_NATIVE_MUTEX(world->jph_trampoline_lock);
-    FREE_NATIVE_MUTEX(world->step_sync.mutex);
-    FREE_NATIVE_COND(world->step_sync.cond);
+    CPH_FREE_LOCK(world->shadow_lock);
+    CPH_FREE_NATIVE_MUTEX(world->jph_trampoline_lock);
+    CPH_FREE_NATIVE_MUTEX(world->step_sync.mutex);
+    CPH_FREE_NATIVE_COND(world->step_sync.cond);
 }
 
-int physics_world_init_jolt(PhysicsWorld *world, WorldSettings settings, GravityVector gravity) {
+int CPH_PhysicsWorldInitJolt(CPH_PhysicsWorld *world, CPH_WorldSettings settings, CPH_GravityVector gravity) {
     int num_workers = settings.num_threads;
 #if defined(__SANITIZE_THREAD__) || defined(ENABLE_SANITIZER)
     // When running ThreadSanitizer, disable Jolt's background workers.
@@ -922,10 +922,10 @@ int physics_world_init_jolt(PhysicsWorld *world, WorldSettings settings, Gravity
 
     // TSan Fix: Serialize the first PhysicsSystem creation.
     // This allows Jolt's internal lazy-statics to initialize safely.
-    NATIVE_MUTEX_LOCK(g_jph_init_lock);
+    CPH_NATIVE_MUTEX_LOCK(g_jph_init_lock);
     world->job_system = JPH_JobSystemThreadPool_Create(&job_cfg);
     if (!world->job_system) {
-        NATIVE_MUTEX_UNLOCK(g_jph_init_lock);
+        CPH_NATIVE_MUTEX_UNLOCK(g_jph_init_lock);
         return -1;
     }
 
@@ -935,14 +935,14 @@ int physics_world_init_jolt(PhysicsWorld *world, WorldSettings settings, Gravity
     world->temp_allocator = JPH_TempAllocator_Create((uint32_t)settings.temp_allocator_size);
 #endif
     if (!world->temp_allocator) {
-        NATIVE_MUTEX_UNLOCK(g_jph_init_lock);
+        CPH_NATIVE_MUTEX_UNLOCK(g_jph_init_lock);
         return -1;
     }
 
     // --- 3 LAYERS: 0=Static, 1=Dynamic, 2=VehicleRay ---
     world->bp_interface = JPH_BroadPhaseLayerInterfaceTable_Create(OBJECT_LAYER_COUNT, 3);
     if (!world->bp_interface) {
-        NATIVE_MUTEX_UNLOCK(g_jph_init_lock);
+        CPH_NATIVE_MUTEX_UNLOCK(g_jph_init_lock);
         return -1;
     }
     JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(world->bp_interface,
@@ -954,7 +954,7 @@ int physics_world_init_jolt(PhysicsWorld *world, WorldSettings settings, Gravity
 
     world->pair_filter = JPH_ObjectLayerPairFilterTable_Create(3);
     if (!world->pair_filter) {
-        NATIVE_MUTEX_UNLOCK(g_jph_init_lock);
+        CPH_NATIVE_MUTEX_UNLOCK(g_jph_init_lock);
         return -1;
     }
 
@@ -972,7 +972,7 @@ int physics_world_init_jolt(PhysicsWorld *world, WorldSettings settings, Gravity
     world->bp_filter =
         JPH_ObjectVsBroadPhaseLayerFilterTable_Create(world->bp_interface, 3, world->pair_filter, 3);
     if (!world->bp_filter) {
-        NATIVE_MUTEX_UNLOCK(g_jph_init_lock);
+        CPH_NATIVE_MUTEX_UNLOCK(g_jph_init_lock);
         return -1;
     }
 
@@ -985,7 +985,7 @@ int physics_world_init_jolt(PhysicsWorld *world, WorldSettings settings, Gravity
                                                .objectVsBroadPhaseLayerFilter = world->bp_filter};
 
     world->system = JPH_PhysicsSystem_Create(&phys_settings);
-    NATIVE_MUTEX_UNLOCK(g_jph_init_lock);
+    CPH_NATIVE_MUTEX_UNLOCK(g_jph_init_lock);
     if (!world->system) {
         return -1;
     }
@@ -999,7 +999,7 @@ int physics_world_init_jolt(PhysicsWorld *world, WorldSettings settings, Gravity
     return world->body_interface ? 0 : -1;
 }
 
-PhysicsCommand *physics_world_detach_command_queue(PhysicsWorld *world, size_t *command_count) {
+PhysicsCommand *CPH_PhysicsWorldDetachCommandQueue(CPH_PhysicsWorld *world, size_t *command_count) {
     PhysicsCommand *queue = world->command_queue;
     *command_count = world->command_count;
 
@@ -1009,14 +1009,14 @@ PhysicsCommand *physics_world_detach_command_queue(PhysicsWorld *world, size_t *
     return queue;
 }
 
-void physics_world_step_native(PhysicsWorld *world, float dt, PhysicsCommand *queue,
+void CPH_PhysicsWorldStepNative(CPH_PhysicsWorld *world, float dt, PhysicsCommand *queue,
                                size_t command_count) {
-    NATIVE_MUTEX_LOCK(world->jph_trampoline_lock);
+    CPH_NATIVE_MUTEX_LOCK(world->jph_trampoline_lock);
 
-    CULV_PROFILE_BEGIN(jolt_step);
+    CPH_PROFILE_BEGIN(jolt_step);
 
     if (command_count > 0) {
-        flush_commands_internal(world, queue, command_count);
+        CPH_FlushCommandsInternal(world, queue, command_count);
         world->needs_optimization = true;
     }
 
@@ -1032,19 +1032,19 @@ void physics_world_step_native(PhysicsWorld *world, float dt, PhysicsCommand *qu
     }
 
     // Wait for exported query views to finish before writing the shadow buffers.
-    NATIVE_MUTEX_LOCK(world->step_sync.mutex);
+    CPH_NATIVE_MUTEX_LOCK(world->step_sync.mutex);
     while (atomic_load_explicit(&world->active_queries, memory_order_acquire) > 0) {
-        NATIVE_COND_WAIT(world->step_sync.cond, world->step_sync.mutex);
+        CPH_NATIVE_COND_WAIT(world->step_sync.cond, world->step_sync.mutex);
     }
-    NATIVE_MUTEX_UNLOCK(world->step_sync.mutex);
+    CPH_NATIVE_MUTEX_UNLOCK(world->step_sync.mutex);
 
     culverin_sync_shadow_buffers(world);
 
-    CULV_PROFILE_END(jolt_step, "Jolt Physics Crunch", (unsigned int)command_count);
-    NATIVE_MUTEX_UNLOCK(world->jph_trampoline_lock);
+    CPH_PROFILE_END(jolt_step, "Jolt Physics Crunch", (unsigned int)command_count);
+    CPH_NATIVE_MUTEX_UNLOCK(world->jph_trampoline_lock);
 }
 
-size_t physics_world_finalize_step(PhysicsWorld *world, float dt) {
+size_t CPH_PhysicsWorldFinalizeStep(CPH_PhysicsWorld *world, float dt) {
     const size_t contact_count =
         atomic_load_explicit(&world->contact_atomic_idx, memory_order_acquire);
     world->contact_count =
@@ -1056,14 +1056,14 @@ size_t physics_world_finalize_step(PhysicsWorld *world, float dt) {
     atomic_store_explicit(&world->is_stepping, false, memory_order_release);
     atomic_store_explicit(&world->step_requested, false, memory_order_release);
 
-    NATIVE_MUTEX_LOCK(world->step_sync.mutex);
-    NATIVE_COND_BROADCAST(world->step_sync.cond);
-    NATIVE_MUTEX_UNLOCK(world->step_sync.mutex);
+    CPH_NATIVE_MUTEX_LOCK(world->step_sync.mutex);
+    CPH_NATIVE_COND_BROADCAST(world->step_sync.cond);
+    CPH_NATIVE_MUTEX_UNLOCK(world->step_sync.mutex);
 
     return body_count;
 }
 
-int verify_abi_alignment(JPH_BodyInterface *bi) {
+int CPH_VerifyAbiAlignment(JPH_BodyInterface *bi) {
     JPH_BoxShapeSettings *bs = JPH_BoxShapeSettings_Create(&(JPH_Vec3){1, 1, 1}, 0.0f);
     auto shape               = (JPH_Shape *)JPH_BoxShapeSettings_CreateShape(bs);
     JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)bs);
@@ -1072,7 +1072,7 @@ int verify_abi_alignment(JPH_BodyInterface *bi) {
     }
 
     JPH_BodyCreationSettings *bcs = JPH_BodyCreationSettings_Create3(
-        shape, &(JPH_RVec3){VERIFY_ABI_POS_X, VERIFY_ABI_POS_Y, VERIFY_ABI_POS_Z},
+        shape, &(JPH_RVec3){kVerifyAbiPosX, kVerifyAbiPosY, kVerifyAbiPosZ},
         &(JPH_Quat){0, 0, 0, 1}, JPH_MotionType_Static, 0);
     JPH_Shape_Destroy(shape);
     if (!bcs) {
@@ -1087,8 +1087,8 @@ int verify_abi_alignment(JPH_BodyInterface *bi) {
     JPH_BodyInterface_RemoveBody(bi, bid);
     JPH_BodyInterface_DestroyBody(bi, bid);
 
-    if (fabs(p_check->x - VERIFY_ABI_POS_X) > VERIFY_ABI_TOLERANCE ||
-        fabs(p_check->y - VERIFY_ABI_POS_Y) > VERIFY_ABI_TOLERANCE) {
+    if (fabs(p_check->x - kVerifyAbiPosX) > kVerifyAbiTolerance ||
+        fabs(p_check->y - kVerifyAbiPosY) > kVerifyAbiTolerance) {
         return -1;
     }
     return 0;

@@ -6,7 +6,7 @@
 #include <string.h>
 
 #if defined(_WIN32)
-#    define WIN32_LEAN_AND_MEAN
+#    define CPH_WIN32_LEAN_AND_MEAN
 #    include <windows.h>
 #else
 #    include <sys/mman.h>
@@ -18,25 +18,25 @@
 extern void culv_thread_switch(void **old_sp, void *new_sp);
 extern void culv_thread_trampoline_asm(void);
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
-static thread_local CulvThread culv_main_thread;
+static thread_local CPH_CulvThread culv_main_thread;
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
-static thread_local CulvThread *culv_current_thread = nullptr;
+static thread_local CPH_CulvThread *culv_current_thread = nullptr;
 // NOLINTNEXTLINE(misc-use-internal-linkage)
-void culv_thread_trampoline(void);
+void CPH_CulvThreadTrampoline(void);
 // Real C entry point called by Culverin thread switch assembly
-void culv_thread_trampoline(void) {
-    CulvThread *self = culv_current_thread;
+void CPH_CulvThreadTrampoline(void) {
+    CPH_CulvThread *self = culv_current_thread;
     if (self->func) {
         self->func(self->arg);
     }
     self->is_finished = true;
     // NOLINTNEXTLINE(altera-unroll-loops)
     while (true) {
-        culv_thread_yield();
+        CPH_CulvThreadYield();
     }
 }
 
-static inline void culv_thread_swap_teb(CulvThread *target) {
+static inline void culv_thread_swap_teb(CPH_CulvThread *target) {
 #if defined(_WIN32)
     NT_TIB *tib                   = (NT_TIB *)NtCurrentTeb();
     culv_current_thread->stack_base  = tib->StackBase;
@@ -60,7 +60,7 @@ static size_t culv_thread_get_page_size(void) {
 #endif
 }
 
-void culv_thread_init_main(void) {
+void CPH_CulvThreadInitMain(void) {
     culv_main_thread.is_finished = false;
     culv_main_thread.is_main     = true;
     culv_main_thread.caller      = nullptr;
@@ -72,7 +72,7 @@ void culv_thread_init_main(void) {
     culv_current_thread = &culv_main_thread;
 }
 
-CulvThread *culv_thread_create(size_t stack_size, CulvThreadFunc func, void *arg) {
+CPH_CulvThread *CPH_CulvThreadCreate(size_t stack_size, CulvThreadFunc func, void *arg) {
     size_t page_size         = culv_thread_get_page_size();
     constexpr size_t CULV_THREAD_ONE_MIB = 1024ULL * 1024ULL;
     if (stack_size == 0) {
@@ -99,9 +99,9 @@ CulvThread *culv_thread_create(size_t stack_size, CulvThreadFunc func, void *arg
     constexpr size_t CULV_THREAD_STACK_ALIGNMENT  = 16ULL;
     constexpr size_t CULV_THREAD_STACK_ALIGN_MASK = CULV_THREAD_STACK_ALIGNMENT - 1ULL;
     uintptr_t end_addr                = (uintptr_t)map + total_size;
-    uintptr_t thread_addr             = (end_addr - sizeof(CulvThread)) & ~CULV_THREAD_STACK_ALIGN_MASK;
-    CulvThread *thread                 = nullptr;
-    memcpy((void *)&thread, &thread_addr, sizeof(CulvThread *));
+    uintptr_t thread_addr             = (end_addr - sizeof(CPH_CulvThread)) & ~CULV_THREAD_STACK_ALIGN_MASK;
+    CPH_CulvThread *thread                 = nullptr;
+    memcpy((void *)&thread, &thread_addr, sizeof(CPH_CulvThread *));
 
     thread->map_addr    = map;
     thread->map_size    = total_size;
@@ -121,7 +121,7 @@ CulvThread *culv_thread_create(size_t stack_size, CulvThreadFunc func, void *arg
     uintptr_t stack_pointer = (uintptr_t)thread;
     // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers, readability-magic-numbers)
     static_assert(
-        alignof(CulvThread) % 16 == 0,
+        alignof(CPH_CulvThread) % 16 == 0,
         "CulvThread struct alignment must be a multiple of 16 to ensure the stack starts aligned");
     constexpr size_t GPR_SIZE = 8ULL; // Each general-purpose register is 8 bytes
 #if defined(_WIN32) && (defined(__x86_64__) || defined(_M_X64))
@@ -207,17 +207,17 @@ CulvThread *culv_thread_create(size_t stack_size, CulvThreadFunc func, void *arg
     return thread;
 }
 
-void culv_thread_resume(CulvThread *target) {
-    CulvThread *self = culv_current_thread;
+void CPH_CulvThreadResume(CPH_CulvThread *target) {
+    CPH_CulvThread *self = culv_current_thread;
     target->caller  = self;
     culv_thread_swap_teb(target);
     culv_current_thread = target;
     culv_thread_switch(&self->stack_pointer, target->stack_pointer);
 }
 
-void culv_thread_yield(void) {
-    CulvThread *self   = culv_current_thread;
-    CulvThread *target = self->caller;
+void CPH_CulvThreadYield(void) {
+    CPH_CulvThread *self   = culv_current_thread;
+    CPH_CulvThread *target = self->caller;
     if (!target) {
         return;
     }
@@ -226,7 +226,7 @@ void culv_thread_yield(void) {
     culv_thread_switch(&self->stack_pointer, target->stack_pointer);
 }
 
-void culv_thread_destroy(CulvThread *thread) {
+void CPH_CulvThreadDestroy(CPH_CulvThread *thread) {
     if (!thread) {
         return;
     }
@@ -237,4 +237,4 @@ void culv_thread_destroy(CulvThread *thread) {
 #endif
 }
 
-CulvThread *culv_thread_get_current(void) { return culv_current_thread; }
+CPH_CulvThread *CPH_CulvThreadGetCurrent(void) { return culv_current_thread; }

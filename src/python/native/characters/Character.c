@@ -19,11 +19,11 @@ static bool JPH_API_CALL
 char_on_contact_validate(void *userData, [[maybe_unused]] const JPH_CharacterVirtual *character,
                          const JPH_CharacterContact *contact) {
 
-    CharacterObject *self = (CharacterObject *)userData;
+    CPH_CharacterObject *self = (CPH_CharacterObject *)userData;
     if (!self || !self->world || !contact) {
         return true;
     }
-    PhysicsWorldObject *world = self->world;
+    CPH_PhysicsWorldObject *world = self->world;
 
     // 1. Get Culverin Handles
     uint64_t h1_raw = atomic_load_explicit(&self->handle, memory_order_relaxed);
@@ -83,7 +83,7 @@ char_on_contact_validate(void *userData, [[maybe_unused]] const JPH_CharacterVir
     return (cat1 & mask2) != 0 && (cat2 & mask1) != 0;
 }
 
-static void record_character_contact(CharacterObject *self, JPH_BodyID bodyID2,
+static void record_character_contact(CPH_CharacterObject *self, JPH_BodyID bodyID2,
                                      const JPH_RVec3 *pos, const JPH_Vec3 *norm,
                                      ContactEventType type) {
     auto world     = self->world;
@@ -109,9 +109,9 @@ static void record_character_contact(CharacterObject *self, JPH_BodyID bodyID2,
 
     if (idx < world->physics.contact_max_capacity) {
         // ContactEvent_ Refactor
-        ContactEvent *ev_base   = GetEventAt(world->physics.contact_buffer, idx);
-        ContactEventSlim *slim  = GetSlimHeader(ev_base);
-        ContactEventFatExt *fat = GetFatExtension(ev_base);
+        CPH_ContactEvent *ev_base   = GetEventAt(world->physics.contact_buffer, idx);
+        CPH_ContactEventSlim *slim  = GetSlimHeader(ev_base);
+        CPH_ContactEventFatExt *fat = GetFatExtension(ev_base);
 
         slim->flags = (uint32_t)type;
 
@@ -135,7 +135,7 @@ static void record_character_contact(CharacterObject *self, JPH_BodyID bodyID2,
         slim->sliding_speed = 0.0f;
 
         // Metadata lookups
-        auto slot2      = (uint32_t)(h2_raw & HANDLE_INDEX_MASK);
+        auto slot2      = (uint32_t)(h2_raw & kHandleIndexMask);
         uint32_t dense2 = world->physics.slot_to_dense[slot2];
         fat->mat1       = 0;
         fat->mat2       = world->physics.material_ids[dense2];
@@ -146,7 +146,7 @@ static void record_character_contact(CharacterObject *self, JPH_BodyID bodyID2,
     }
 }
 
-static void report_char_vs_char(CharacterObject *self, const JPH_CharacterVirtual *other,
+static void report_char_vs_char(CPH_CharacterObject *self, const JPH_CharacterVirtual *other,
                                 const JPH_Vec3 *normal, const JPH_RVec3 *pos,
                                 ContactEventType type) {
     auto world      = self->world;
@@ -163,9 +163,9 @@ static void report_char_vs_char(CharacterObject *self, const JPH_CharacterVirtua
     size_t idx = atomic_fetch_add_explicit(&world->physics.contact_atomic_idx, 1, memory_order_relaxed);
     if (idx < world->physics.contact_max_capacity) {
         // ContactEvent_ Refactor
-        ContactEvent *ev_base   = GetEventAt(world->physics.contact_buffer, idx);
-        ContactEventSlim *slim  = GetSlimHeader(ev_base);
-        ContactEventFatExt *fat = GetFatExtension(ev_base);
+        CPH_ContactEvent *ev_base   = GetEventAt(world->physics.contact_buffer, idx);
+        CPH_ContactEventSlim *slim  = GetSlimHeader(ev_base);
+        CPH_ContactEventFatExt *fat = GetFatExtension(ev_base);
 
         slim->flags = (uint32_t)type;
 
@@ -201,7 +201,7 @@ static void JPH_API_CALL char_on_character_contact_added(
     ioSettings->canPushCharacter   = true;
     ioSettings->canReceiveImpulses = true;
 
-    auto self = (CharacterObject *)userData;
+    auto self = (CPH_CharacterObject *)userData;
     if (!self || !contact) {
         return;
     }
@@ -210,7 +210,7 @@ static void JPH_API_CALL char_on_character_contact_added(
                         EVENT_ADDED);
 }
 
-static void apply_character_impulse(CharacterObject *self, JPH_BodyID bodyID2,
+static void apply_character_impulse(CPH_CharacterObject *self, JPH_BodyID bodyID2,
                                     const JPH_Vec3 *contactNormal) {
     // 1. Thread-Safe Member Access
     float vx       = atomic_load_explicit((&self->last_vx), memory_order_relaxed);
@@ -256,7 +256,7 @@ static void JPH_API_CALL char_on_contact_added(
     ioSettings->canPushCharacter   = true;
     ioSettings->canReceiveImpulses = true;
 
-    auto self = (CharacterObject *)userData;
+    auto self = (CPH_CharacterObject *)userData;
     if (!self || !contact) {
         return;
     }
@@ -276,7 +276,7 @@ static void JPH_API_CALL char_on_contact_persisted(
     ioSettings->canPushCharacter   = true;
     ioSettings->canReceiveImpulses = true;
 
-    auto self = (CharacterObject *)userData;
+    auto self = (CPH_CharacterObject *)userData;
     if (!self || !contact) {
         return;
     }
@@ -294,12 +294,12 @@ static void JPH_API_CALL char_on_contact_removed(void *userData,
                                                  [[maybe_unused]],
                                                  JPH_BodyID bodyID2,
                                                  JPH_SubShapeID subShapeID2 [[maybe_unused]]) {
-    auto self = (CharacterObject *)userData;
+    auto self = (CPH_CharacterObject *)userData;
     if (!self || !self->world) {
         return;
     }
 
-    PhysicsWorldObject *world = self->world;
+    CPH_PhysicsWorldObject *world = self->world;
     uint32_t j_idx            = JPH_ID_TO_INDEX(bodyID2);
 
     // TSan Fix: Explicitly load raw values to avoid seq_cst overhead
@@ -316,8 +316,8 @@ static void JPH_API_CALL char_on_contact_removed(void *userData,
 
     size_t idx = atomic_fetch_add_explicit(&world->physics.contact_atomic_idx, 1, memory_order_relaxed);
     if (idx < world->physics.contact_max_capacity) {
-        ContactEvent *ev_base  = GetEventAt(world->physics.contact_buffer, idx);
-        ContactEventSlim *slim = GetSlimHeader(ev_base);
+        CPH_ContactEvent *ev_base  = GetEventAt(world->physics.contact_buffer, idx);
+        CPH_ContactEventSlim *slim = GetSlimHeader(ev_base);
 
         slim->flags = EVENT_REMOVED;
 
@@ -352,7 +352,7 @@ static void JPH_API_CALL char_on_character_contact_persisted(
     ioSettings->canPushCharacter   = true;
     ioSettings->canReceiveImpulses = true;
 
-    CharacterObject *self = (CharacterObject *)userData;
+    CPH_CharacterObject *self = (CPH_CharacterObject *)userData;
     if (!self || !contact) {
         return;
     }
@@ -364,7 +364,7 @@ static void JPH_API_CALL char_on_character_contact_persisted(
 static void JPH_API_CALL char_on_character_contact_removed(
     void *userData, const JPH_CharacterVirtual *character [[maybe_unused]],
     const JPH_CharacterID otherCharacterID, JPH_SubShapeID subShapeID2 [[maybe_unused]]) {
-    auto self  = (CharacterObject *)userData;
+    auto self  = (CPH_CharacterObject *)userData;
     auto world = self->world;
 
     // TSan Fix: Explicit relaxed load of own handle
@@ -384,8 +384,8 @@ static void JPH_API_CALL char_on_character_contact_removed(
 
     size_t idx = atomic_fetch_add_explicit(&world->physics.contact_atomic_idx, 1, memory_order_relaxed);
     if (idx < world->physics.contact_max_capacity) {
-        ContactEvent *ev_base  = GetEventAt(world->physics.contact_buffer, idx);
-        ContactEventSlim *slim = GetSlimHeader(ev_base);
+        CPH_ContactEvent *ev_base  = GetEventAt(world->physics.contact_buffer, idx);
+        CPH_ContactEventSlim *slim = GetSlimHeader(ev_base);
 
         slim->flags = EVENT_REMOVED;
 
@@ -418,7 +418,7 @@ static void JPH_API_CALL char_on_adjust_velocity(void *userData,
                                                  const JPH_Body *body2, JPH_Vec3 *ioLinearVelocity,
                                                  JPH_Vec3 *ioAngularVelocity) {
 
-    CharacterObject *self = (CharacterObject *)userData;
+    CPH_CharacterObject *self = (CPH_CharacterObject *)userData;
     if (!self || !self->world) {
         return;
     }
@@ -426,7 +426,7 @@ static void JPH_API_CALL char_on_adjust_velocity(void *userData,
     // 1. Get Platform/Friction Data
     uint64_t h2_raw = JPH_Body_GetUserData((JPH_Body *)body2);
     float friction  = 1.0f;
-    uint32_t slot2  = (uint32_t)(h2_raw & HANDLE_INDEX_MASK);
+    uint32_t slot2  = (uint32_t)(h2_raw & kHandleIndexMask);
     if (slot2 < self->world->physics.slot_capacity) {
         uint32_t dense2 = self->world->physics.slot_to_dense[slot2];
         uint32_t mat_id = self->world->physics.material_ids[dense2];
@@ -471,12 +471,12 @@ static bool JPH_API_CALL char_on_character_contact_validate(
     void *userData, [[maybe_unused]] const JPH_CharacterVirtual *character,
     const JPH_CharacterContact *contact) {
 
-    CharacterObject *self = (CharacterObject *)userData;
+    CPH_CharacterObject *self = (CPH_CharacterObject *)userData;
     if (!self || !self->world || !contact) {
         return true;
     }
 
-    PhysicsWorldObject *world = self->world;
+    CPH_PhysicsWorldObject *world = self->world;
 
     // 1. Get Culverin Handles
     uint64_t h1_raw = atomic_load_explicit(&self->handle, memory_order_relaxed);
@@ -523,7 +523,7 @@ static bool JPH_API_CALL char_on_character_contact_validate(
 }
 
 // High-frequency callback: DO NOT allocate memory or lock.
-CULV_NO_TSAN [[maybe_unused]] static void JPH_API_CALL char_on_contact_solve(
+CPH_NO_TSAN [[maybe_unused]] static void JPH_API_CALL char_on_contact_solve(
     [[maybe_unused]] void *userData, [[maybe_unused]] const JPH_Body *body1,
     [[maybe_unused]] const JPH_Body *body2, [[maybe_unused]] const JPH_ContactManifold *manifold,
     [[maybe_unused]] JPH_ContactSettings *settings) {
@@ -531,7 +531,7 @@ CULV_NO_TSAN [[maybe_unused]] static void JPH_API_CALL char_on_contact_solve(
 }
 
 // Map the procs
-const JPH_CharacterContactListener_Procs char_listener_procs = {
+const JPH_CharacterContactListener_Procs kCharListenerProcs = {
     .OnAdjustBodyVelocity        = char_on_adjust_velocity,
     .OnContactValidate           = char_on_contact_validate,
     .OnCharacterContactValidate  = char_on_character_contact_validate,
@@ -544,10 +544,10 @@ const JPH_CharacterContactListener_Procs char_listener_procs = {
     .OnContactSolve              = nullptr,
     .OnCharacterContactSolve     = nullptr};
 
-PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObject *const *args,
+PyCFunction_DeclareMethodFromModule CPH_PyCharacterMove(CPH_CharacterObject *self, PyObject *const *args,
                                                    size_t nargsf, PyObject *kwnames) {
     // 1. INTEGRATED FAST PARSE (Unchanged)
-    Vec3f v_in = {};
+    CPH_Vec3f v_in = {};
     float dt   = 0.0f;
 
     const void *const restrict targets[CharMove_COUNT] = {
@@ -555,15 +555,15 @@ PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObje
         [IDX_CM_DT]  = (const void *const restrict)&dt};
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->CharMoveParser, targets)) {
+    if (!CPH_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->CharMoveParser, targets)) {
         return nullptr;
     }
 
-    VALIDATE_FINITE_VEC3(v_in.x, v_in.y, v_in.z, "Character velocity");
+    CPH_VALIDATE_FINITE_VEC3(v_in.x, v_in.y, v_in.z, "Character velocity");
 
     // 2. SNAPSHOT (Shadow Lock)
-    SHADOW_LOCK(&self->world->physics.shadow_lock);
-    BLOCK_UNTIL_NOT_STEPPING(self->world);
+    CPH_SHADOW_LOCK(&self->world->physics.shadow_lock);
+    CPH_BLOCK_UNTIL_NOT_STEPPING(self->world);
 
     // TSan Fix: Explicit relaxed stores for worker-thread inputs
     atomic_store_explicit(&self->last_vx, v_in.x, memory_order_relaxed);
@@ -572,19 +572,19 @@ PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObje
 
     // TSan Fix: Load handle atomically to resolve indices
     uint64_t h_raw = atomic_load_explicit(&self->handle, memory_order_relaxed);
-    uint32_t slot  = (uint32_t)(h_raw & HANDLE_INDEX_MASK);
+    uint32_t slot  = (uint32_t)(h_raw & kHandleIndexMask);
     uint32_t dense = self->world->physics.slot_to_dense[slot];
 
     // Snapshot current state to prev for interpolation
-    auto shadow_pos  = (PosStride *)self->world->physics.positions;
-    auto shadow_ppos = (PosStride *)self->world->physics.prev_positions;
-    auto shadow_rot  = (AuxStride *)self->world->physics.rotations;
-    auto shadow_prot = (AuxStride *)self->world->physics.prev_rotations;
+    auto shadow_pos  = (CPH_PosStride *)self->world->physics.positions;
+    auto shadow_ppos = (CPH_PosStride *)self->world->physics.prev_positions;
+    auto shadow_rot  = (CPH_AuxStride *)self->world->physics.rotations;
+    auto shadow_prot = (CPH_AuxStride *)self->world->physics.prev_rotations;
 
     shadow_ppos[dense] = shadow_pos[dense];
     shadow_prot[dense] = shadow_rot[dense];
 
-    SHADOW_UNLOCK(&self->world->physics.shadow_lock);
+    CPH_SHADOW_UNLOCK(&self->world->physics.shadow_lock);
 
     // 3. JOLT EXECUTION
     JPH_Vec3 j_v = {v_in.x, v_in.y, v_in.z};
@@ -592,7 +592,7 @@ PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObje
     // Inherit velocity from ground platform if grounded
     JPH_BodyID ground_id = JPH_CharacterBase_GetGroundBodyId((JPH_CharacterBase *)self->character);
 
-    if (ground_id != JPH_INVALID_BODY_ID) {
+    if (ground_id != kJphInvalidBodyId) {
         JPH_Vec3 ground_vel;
         JPH_CharacterBase_GetGroundVelocity((JPH_CharacterBase *)self->character, &ground_vel);
         j_v.x += ground_vel.x;
@@ -609,14 +609,14 @@ PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObje
     update_settings.walkStairsStepForwardTest        = 0.15f;
     update_settings.walkStairsCosAngleForwardContact = 0.996f;
 
-    NATIVE_MUTEX_LOCK(self->world->physics.jph_trampoline_lock);
+    CPH_NATIVE_MUTEX_LOCK(self->world->physics.jph_trampoline_lock);
     Py_BEGIN_ALLOW_THREADS JPH_CharacterVirtual_ExtendedUpdate(
         self->character, dt, &update_settings, OBJECT_LAYER_DYNAMIC, self->world->physics.system,
         self->body_filter, self->shape_filter);
-    Py_END_ALLOW_THREADS NATIVE_MUTEX_UNLOCK(self->world->physics.jph_trampoline_lock);
+    Py_END_ALLOW_THREADS CPH_NATIVE_MUTEX_UNLOCK(self->world->physics.jph_trampoline_lock);
 
     // 4. POST-MOVE SYNC
-    SHADOW_LOCK(&self->world->physics.shadow_lock);
+    CPH_SHADOW_LOCK(&self->world->physics.shadow_lock);
 
     JPH_STACK_ALLOC(JPH_RVec3, current_p);
     JPH_STACK_ALLOC(JPH_Quat, current_r);
@@ -624,22 +624,22 @@ PyCFunction_DeclareMethodFromModule Character_move(CharacterObject *self, PyObje
     JPH_CharacterVirtual_GetRotation(self->character, current_r);
 
     // Sync non-atomic shadow buffers
-    shadow_pos[dense] = (PosStride){current_p->x, current_p->y, current_p->z, 0.0};
-    shadow_rot[dense] = (AuxStride){current_r->x, current_r->y, current_r->z, current_r->w};
+    shadow_pos[dense] = (CPH_PosStride){current_p->x, current_p->y, current_p->z, 0.0};
+    shadow_rot[dense] = (CPH_AuxStride){current_r->x, current_r->y, current_r->z, current_r->w};
 
-    SHADOW_UNLOCK(&self->world->physics.shadow_lock);
+    CPH_SHADOW_UNLOCK(&self->world->physics.shadow_lock);
     Py_RETURN_NONE;
 }
 
-PyCFunction_DeclareMethodFromModule Character_get_position(CharacterObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyCharacterGetPosition(CPH_CharacterObject *self,
                                                            PyObject *ignored [[maybe_unused]]) {
     // 1. Aligned stack storage for SIMD
     JPH_STACK_ALLOC(JPH_RVec3, pos);
 
     // 2. Lock for consistency (ensure we aren't reading mid-step)
-    SHADOW_LOCK(&self->world->physics.shadow_lock);
+    CPH_SHADOW_LOCK(&self->world->physics.shadow_lock);
     JPH_CharacterVirtual_GetPosition(self->character, pos);
-    SHADOW_UNLOCK(&self->world->physics.shadow_lock);
+    CPH_SHADOW_UNLOCK(&self->world->physics.shadow_lock);
 
     PyObject *ret = PyTuple_New(3);
     if (!ret) {
@@ -655,85 +655,85 @@ PyCFunction_DeclareMethodFromModule Character_get_position(CharacterObject *self
 }
 
 PyCFunction_DeclareMethodFromModule
-Character_get_linear_velocity(CharacterObject *self, PyObject *ignored [[maybe_unused]]) {
+CPH_PyCharacterGetLinearVelocity(CPH_CharacterObject *self, PyObject *ignored [[maybe_unused]]) {
     JPH_STACK_ALLOC(JPH_Vec3, vel);
 
-    SHADOW_LOCK(&self->world->physics.shadow_lock);
+    CPH_SHADOW_LOCK(&self->world->physics.shadow_lock);
     JPH_CharacterVirtual_GetLinearVelocity(self->character, vel);
-    SHADOW_UNLOCK(&self->world->physics.shadow_lock);
+    CPH_SHADOW_UNLOCK(&self->world->physics.shadow_lock);
 
-    return CULV_PY_BUILD_TUPLE(vel->x, vel->y, vel->z);
+    return CPH_PY_BUILD_TUPLE(vel->x, vel->y, vel->z);
 }
 
-PyCFunction_DeclareMethodFromModule Character_set_position(CharacterObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyCharacterSetPosition(CPH_CharacterObject *self,
                                                            PyObject *const *args, Py_ssize_t nargs,
                                                            PyObject *kwnames) {
-    PosStride pos                                        = {};
+    CPH_PosStride pos                                        = {};
     const void *const restrict targets[SetPosChar_COUNT] = {
         [IDX_SPC_POS] = (const void *const restrict)&pos,
     };
 
-    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->SetPosCharParser, targets)) {
+    if (!CPH_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->SetPosCharParser, targets)) {
         return nullptr;
     }
 
     // --- PHYSICS LOGIC ---
-    SHADOW_LOCK(&self->world->physics.shadow_lock);
-    BLOCK_UNTIL_NOT_STEPPING(self->world);
+    CPH_SHADOW_LOCK(&self->world->physics.shadow_lock);
+    CPH_BLOCK_UNTIL_NOT_STEPPING(self->world);
 
     JPH_RVec3 j_pos = {pos.x, pos.y, pos.z};
     JPH_CharacterVirtual_SetPosition(self->character, &j_pos);
 
     // Update Shadow Buffers
     uint64_t h_raw = atomic_load_explicit(&self->handle, memory_order_relaxed);
-    uint32_t slot  = (uint32_t)(h_raw & HANDLE_INDEX_MASK);
+    uint32_t slot  = (uint32_t)(h_raw & kHandleIndexMask);
     uint32_t dense = self->world->physics.slot_to_dense[slot];
 
-    auto shadow_pos  = (PosStride *)self->world->physics.positions;
-    auto shadow_ppos = (PosStride *)self->world->physics.prev_positions;
+    auto shadow_pos  = (CPH_PosStride *)self->world->physics.positions;
+    auto shadow_ppos = (CPH_PosStride *)self->world->physics.prev_positions;
 
-    PosStride p_val    = {pos.x, pos.y, pos.z, 0.0};
+    CPH_PosStride p_val    = {pos.x, pos.y, pos.z, 0.0};
     shadow_pos[dense]  = p_val;
     shadow_ppos[dense] = p_val;
 
-    SHADOW_UNLOCK(&self->world->physics.shadow_lock);
+    CPH_SHADOW_UNLOCK(&self->world->physics.shadow_lock);
     Py_RETURN_NONE;
 }
 
-PyCFunction_DeclareMethodFromModule Character_set_rotation(CharacterObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyCharacterSetRotation(CPH_CharacterObject *self,
                                                            PyObject *const *args, Py_ssize_t nargs,
                                                            PyObject *kwnames) {
-    AuxStride rot = {.x = 0.0f, .y = 0.0f, .z = 0.0f, .w = 1.0f};
+    CPH_AuxStride rot = {.x = 0.0f, .y = 0.0f, .z = 0.0f, .w = 1.0f};
 
     const void *const restrict targets[SetRotChar_COUNT] = {
         [IDX_SRC_ROT] = (const void *const restrict)&rot,
     };
 
-    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->SetRotCharParser, targets)) {
+    if (!CPH_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->SetRotCharParser, targets)) {
         return nullptr;
     }
 
     // --- PHYSICS LOGIC ---
-    SHADOW_LOCK(&self->world->physics.shadow_lock);
-    BLOCK_UNTIL_NOT_STEPPING(self->world);
+    CPH_SHADOW_LOCK(&self->world->physics.shadow_lock);
+    CPH_BLOCK_UNTIL_NOT_STEPPING(self->world);
 
     JPH_Quat q = {.x = rot.x, .y = rot.y, .z = rot.z, .w = rot.w};
     JPH_CharacterVirtual_SetRotation(self->character, &q);
 
     uint64_t raw_h = atomic_load_explicit(&self->handle, memory_order_relaxed);
 
-    auto slot          = (uint32_t)(raw_h & HANDLE_INDEX_MASK);
+    auto slot          = (uint32_t)(raw_h & kHandleIndexMask);
     uint32_t dense_idx = self->world->physics.slot_to_dense[slot];
     size_t off         = (size_t)dense_idx * 4;
 
     memcpy(&self->world->physics.rotations[off], &q, 16);
     memcpy(&self->world->physics.prev_rotations[off], &q, 16);
 
-    SHADOW_UNLOCK(&self->world->physics.shadow_lock);
+    CPH_SHADOW_UNLOCK(&self->world->physics.shadow_lock);
     Py_RETURN_NONE;
 }
 
-PyCFunction_DeclareMethodFromModule Character_set_strength(CharacterObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyCharacterSetStrength(CPH_CharacterObject *self,
                                                            PyObject *const *args, Py_ssize_t nargs,
                                                            PyObject *kwnames) {
     float strength = 0.0f;
@@ -742,22 +742,22 @@ PyCFunction_DeclareMethodFromModule Character_set_strength(CharacterObject *self
         [IDX_SSC_STRENGTH] = (const void *const restrict)&strength,
     };
 
-    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->SetStrengthCharParser, targets)) {
+    if (!CPH_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->SetStrengthCharParser, targets)) {
         return nullptr;
     }
 
-    SHADOW_LOCK(&self->world->physics.shadow_lock);
-    BLOCK_UNTIL_NOT_STEPPING(self->world);
-    BLOCK_UNTIL_NOT_QUERYING(self->world);
+    CPH_SHADOW_LOCK(&self->world->physics.shadow_lock);
+    CPH_BLOCK_UNTIL_NOT_STEPPING(self->world);
+    CPH_BLOCK_UNTIL_NOT_QUERYING(self->world);
 
     atomic_store_explicit(&self->push_strength, strength, memory_order_relaxed);
     JPH_CharacterVirtual_SetMaxStrength(self->character, strength);
 
-    SHADOW_UNLOCK(&self->world->physics.shadow_lock);
+    CPH_SHADOW_UNLOCK(&self->world->physics.shadow_lock);
     Py_RETURN_NONE;
 }
 
-PyCFunction_DeclareMethodFromModule Character_get_render_transform(CharacterObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyCharacterGetRenderTransform(CPH_CharacterObject *self,
                                                                    PyObject *arg) {
     const auto alpha_raw = PyFloat_AsDouble(arg);
     if (alpha_raw == -1.0 && PyErr_Occurred()) {
@@ -771,16 +771,16 @@ PyCFunction_DeclareMethodFromModule Character_get_render_transform(CharacterObje
     alignas(16) float res_p[3];
     alignas(16) float res_r[4];
 
-    SHADOW_LOCK(&self->world->physics.shadow_lock);
+    CPH_SHADOW_LOCK(&self->world->physics.shadow_lock);
 
-    BLOCK_UNTIL_NOT_STEPPING(self->world);
+    CPH_BLOCK_UNTIL_NOT_STEPPING(self->world);
 
     const auto h_raw = atomic_load_explicit(&self->handle, memory_order_relaxed);
-    const auto slot  = (uint32_t)(h_raw & HANDLE_INDEX_MASK);
+    const auto slot  = (uint32_t)(h_raw & kHandleIndexMask);
     const auto dense = self->world->physics.slot_to_dense[slot];
 
-    const auto shadow_ppos = (PosStride *)self->world->physics.prev_positions;
-    const auto shadow_prot = (AuxStride *)self->world->physics.prev_rotations;
+    const auto shadow_ppos = (CPH_PosStride *)self->world->physics.prev_positions;
+    const auto shadow_prot = (CPH_AuxStride *)self->world->physics.prev_rotations;
 
     JPH_STACK_ALLOC(JPH_RVec3, end_p);
     JPH_STACK_ALLOC(JPH_Quat, end_r);
@@ -790,17 +790,17 @@ PyCFunction_DeclareMethodFromModule Character_get_render_transform(CharacterObje
     culverin_math_interpolate_character_transform(&shadow_ppos[dense], &shadow_prot[dense], end_p,
                                                   end_r, alpha, res_p, res_r);
 
-    SHADOW_UNLOCK(&self->world->physics.shadow_lock);
+    CPH_SHADOW_UNLOCK(&self->world->physics.shadow_lock);
 
-    return CULV_PY_BUILD_TUPLE(CULV_PY_BUILD_TUPLE(res_p[0], res_p[1], res_p[2]),
-                           CULV_PY_BUILD_TUPLE(res_r[0], res_r[1], res_r[2], res_r[3]));
+    return CPH_PY_BUILD_TUPLE(CPH_PY_BUILD_TUPLE(res_p[0], res_p[1], res_p[2]),
+                           CPH_PY_BUILD_TUPLE(res_r[0], res_r[1], res_r[2], res_r[3]));
 }
 
-PyCFunction_DeclareMethodFromModule Character_is_grounded(CharacterObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyCharacterIsGrounded(CPH_CharacterObject *self,
                                                           PyObject *ignored [[maybe_unused]]) {
-    SHADOW_LOCK(&self->world->physics.shadow_lock);
+    CPH_SHADOW_LOCK(&self->world->physics.shadow_lock);
     JPH_GroundState state = JPH_CharacterBase_GetGroundState((JPH_CharacterBase *)self->character);
-    SHADOW_UNLOCK(&self->world->physics.shadow_lock);
+    CPH_SHADOW_UNLOCK(&self->world->physics.shadow_lock);
 
     if (state == JPH_GroundState_OnGround) {
         Py_RETURN_TRUE;
@@ -809,19 +809,19 @@ PyCFunction_DeclareMethodFromModule Character_is_grounded(CharacterObject *self,
 }
 
 // NEW: GC Traverse/Clear for Character
-PyType_DeclareSlot_StatusFromModule Character_traverse(CharacterObject *self, visitproc visit,
+PyType_DeclareSlot_StatusFromModule CPH_PyCharacterTraverse(CPH_CharacterObject *self, visitproc visit,
                                                        void *arg) {
     Py_VISIT(self->world);
     return 0;
 }
-PyType_DeclareSlot_StatusFromModule Character_clear(CharacterObject *self) {
+PyType_DeclareSlot_StatusFromModule CPH_PyCharacterClear(CPH_CharacterObject *self) {
     Py_CLEAR(self->world);
     return 0;
 }
 
-void culverin_free_char_parsers(CharacterParsers *cp);
+void CPH_CulverinFreeCharParsers(CPH_CharacterParsers *cp);
 
-PyType_DeclareSlot_VoidFromModule Character_dealloc(CharacterObject *self) {
+PyType_DeclareSlot_VoidFromModule CPH_PyCharacterDealloc(CPH_CharacterObject *self) {
     PyObject_GC_UnTrack(self);
 
     if (!self->world) {
@@ -829,19 +829,19 @@ PyType_DeclareSlot_VoidFromModule Character_dealloc(CharacterObject *self) {
     }
 
     // --- 1. WORLD DRAIN (Locked) ---
-    SHADOW_LOCK(&self->world->physics.shadow_lock);
-    BLOCK_UNTIL_NOT_STEPPING(self->world);
-    BLOCK_UNTIL_NOT_QUERYING(self->world);
+    CPH_SHADOW_LOCK(&self->world->physics.shadow_lock);
+    CPH_BLOCK_UNTIL_NOT_STEPPING(self->world);
+    CPH_BLOCK_UNTIL_NOT_QUERYING(self->world);
 
     uint64_t h_raw = atomic_load_explicit(&self->handle, memory_order_relaxed);
-    uint32_t slot  = (uint32_t)(h_raw & HANDLE_INDEX_MASK);
+    uint32_t slot  = (uint32_t)(h_raw & kHandleIndexMask);
 
-    world_remove_body_slot(&self->world->physics, slot);
+    CPH_WorldRemoveBodySlot(&self->world->physics, slot);
 
-    SHADOW_UNLOCK(&self->world->physics.shadow_lock);
+    CPH_SHADOW_UNLOCK(&self->world->physics.shadow_lock);
 
     // --- 2. JOLT DESTRUCTION (Hard Serialized) ---
-    NATIVE_MUTEX_LOCK(self->world->physics.jph_trampoline_lock);
+    CPH_NATIVE_MUTEX_LOCK(self->world->physics.jph_trampoline_lock);
 
     if (self->world->physics.char_vs_char_manager && self->character) {
         JPH_CharacterVsCharacterCollisionSimple_RemoveCharacter(self->world->physics.char_vs_char_manager,
@@ -867,11 +867,11 @@ PyType_DeclareSlot_VoidFromModule Character_dealloc(CharacterObject *self) {
         JPH_ObjectLayerFilter_Destroy(self->obj_filter);
     }
 
-    NATIVE_MUTEX_UNLOCK(self->world->physics.jph_trampoline_lock);
+    CPH_NATIVE_MUTEX_UNLOCK(self->world->physics.jph_trampoline_lock);
 
 finalize:
     if (self->parsers) {
-        culverin_free_char_parsers(self->parsers);
+        CPH_CulverinFreeCharParsers(self->parsers);
         PyMem_Free(self->parsers);
     }
     Py_XDECREF(self->world);
@@ -879,8 +879,8 @@ finalize:
 }
 
 // Helper 1: Jolt-side allocation and Collision Manager linking
-static inline JPH_CharacterVirtual *alloc_j_char(PhysicsWorldObject *self, PositionVector pos,
-                                                 CharacterParams params) {
+static inline JPH_CharacterVirtual *alloc_j_char(CPH_PhysicsWorldObject *self, CPH_PositionVector pos,
+                                                 CPH_CharacterParams params) {
 
     float half_h                 = fmaxf((params.height - 2.0f * params.radius) * 0.5f, 0.1f);
     JPH_CapsuleShapeSettings *ss = JPH_CapsuleShapeSettings_Create(half_h, params.radius);
@@ -913,9 +913,9 @@ static inline JPH_CharacterVirtual *alloc_j_char(PhysicsWorldObject *self, Posit
 }
 
 // Helper 2: Shadow Buffer Registration (Atomic Commit)
-static inline void register_char(PhysicsWorldObject *self, CharacterObject *obj,
+static inline void register_char(CPH_PhysicsWorldObject *self, CPH_CharacterObject *obj,
                                  JPH_CharacterVirtual *j_char, uint32_t slot) {
-    SHADOW_LOCK(&self->physics.shadow_lock);
+    CPH_SHADOW_LOCK(&self->physics.shadow_lock);
 
     uint32_t gen = atomic_load_explicit(&self->physics.generations[slot], memory_order_relaxed);
     BodyHandle h = make_handle(slot, gen);
@@ -936,11 +936,11 @@ static inline void register_char(PhysicsWorldObject *self, CharacterObject *obj,
     self->physics.dense_to_slot[dense_idx] = slot;
     self->physics.user_data[dense_idx]     = 0;
 
-    constexpr auto COLLISION_FILTER_ALL_CATEGORIES = 0xFFFF;
-    constexpr auto COLLISION_FILTER_ALL_MASKS      = 0xFFFF;
+    constexpr auto kCollisionFilterAllCategories = 0xFFFF;
+    constexpr auto kCollisionFilterAllMasks      = 0xFFFF;
 
-    self->physics.categories[dense_idx]   = COLLISION_FILTER_ALL_CATEGORIES;
-    self->physics.masks[dense_idx]        = COLLISION_FILTER_ALL_MASKS;
+    self->physics.categories[dense_idx]   = kCollisionFilterAllCategories;
+    self->physics.masks[dense_idx]        = kCollisionFilterAllMasks;
     self->physics.material_ids[dense_idx] = 0;
 
     JPH_STACK_ALLOC(JPH_RVec3, p);
@@ -948,15 +948,15 @@ static inline void register_char(PhysicsWorldObject *self, CharacterObject *obj,
     JPH_CharacterVirtual_GetPosition(j_char, p);
     JPH_CharacterVirtual_GetRotation(j_char, q);
 
-    PosStride p_val = {p->x, p->y, p->z, 0.0};
-    AuxStride r_val = {q->x, q->y, q->z, q->w};
+    CPH_PosStride p_val = {p->x, p->y, p->z, 0.0};
+    CPH_AuxStride r_val = {q->x, q->y, q->z, q->w};
 
-    ((PosStride *)self->physics.positions)[dense_idx]          = p_val;
-    ((PosStride *)self->physics.prev_positions)[dense_idx]     = p_val;
-    ((AuxStride *)self->physics.rotations)[dense_idx]          = r_val;
-    ((AuxStride *)self->physics.prev_rotations)[dense_idx]     = r_val;
-    ((AuxStride *)self->physics.linear_velocities)[dense_idx]  = (AuxStride){0};
-    ((AuxStride *)self->physics.angular_velocities)[dense_idx] = (AuxStride){0};
+    ((CPH_PosStride *)self->physics.positions)[dense_idx]          = p_val;
+    ((CPH_PosStride *)self->physics.prev_positions)[dense_idx]     = p_val;
+    ((CPH_AuxStride *)self->physics.rotations)[dense_idx]          = r_val;
+    ((CPH_AuxStride *)self->physics.prev_rotations)[dense_idx]     = r_val;
+    ((CPH_AuxStride *)self->physics.linear_velocities)[dense_idx]  = (CPH_AuxStride){0};
+    ((CPH_AuxStride *)self->physics.angular_velocities)[dense_idx] = (CPH_AuxStride){0};
 
     if (self->physics.soft_shadows) {
         self->physics.soft_shadows[dense_idx].vertices = nullptr;
@@ -971,37 +971,37 @@ static inline void register_char(PhysicsWorldObject *self, CharacterObject *obj,
     JPH_BodyInterface_SetUserData(self->physics.body_interface, bid, raw_h);
     JPH_CharacterVirtual_SetUserData(j_char, raw_h);
 
-    SHADOW_UNLOCK(&self->physics.shadow_lock);
+    CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
 }
 
 // Helper 3: Filter and Listener serialization (Trampoline Lock)
-static inline void setup_char_filters(CharacterObject *obj) {
-    NATIVE_MUTEX_LOCK(obj->world->physics.jph_trampoline_lock);
+static inline void setup_char_filters(CPH_CharacterObject *obj) {
+    CPH_NATIVE_MUTEX_LOCK(obj->world->physics.jph_trampoline_lock);
     obj->listener     = JPH_CharacterContactListener_Create(obj);
     obj->body_filter  = JPH_BodyFilter_Create(nullptr);
     obj->shape_filter = JPH_ShapeFilter_Create(nullptr);
     obj->bp_filter    = JPH_BroadPhaseLayerFilter_Create(nullptr);
     obj->obj_filter   = JPH_ObjectLayerFilter_Create(nullptr);
-    NATIVE_MUTEX_UNLOCK(obj->world->physics.jph_trampoline_lock);
+    CPH_NATIVE_MUTEX_UNLOCK(obj->world->physics.jph_trampoline_lock);
     JPH_CharacterVirtual_SetListener(obj->character, obj->listener);
 }
-void culverin_init_char_parsers(CharacterParsers *cp);
+void CPH_CulverinInitCharParsers(CPH_CharacterParsers *cp);
 [[nodiscard]]
-static inline int setup_char_parsers(CharacterObject *obj) {
-    obj->parsers = (CharacterParsers *)PyMem_Malloc(sizeof(CharacterParsers));
+static inline int setup_char_parsers(CPH_CharacterObject *obj) {
+    obj->parsers = (CPH_CharacterParsers *)PyMem_Malloc(sizeof(CPH_CharacterParsers));
     if (!obj->parsers) {
         return -1;
     }
-    culverin_init_char_parsers(obj->parsers);
+    CPH_CulverinInitCharParsers(obj->parsers);
     return 0;
 }
 
 // Main Orchestrator
-PyCFunction_DeclareMethodFromModule PhysicsWorld_create_character(PhysicsWorldObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldCreateCharacter(CPH_PhysicsWorldObject *self,
                                                                   PyObject *const *args,
                                                                   Py_ssize_t nargs,
                                                                   PyObject *kwnames) {
-    PosStride pos                 = {};
+    CPH_PosStride pos                 = {};
     constexpr auto DEFAULT_HEIGHT = 1.8f;
     constexpr auto DEFAULT_RADIUS = 0.4f;
     constexpr auto DEFUALT_STEP_H = 0.4f;
@@ -1018,19 +1018,19 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_character(PhysicsWorldOb
         [IDX_CCHAR_STEP]  = (const void *const restrict)&step_h,
         [IDX_CCHAR_SLOPE] = (const void *const restrict)&slope};
 
-    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->CreateCharParser, targets)) {
+    if (!CPH_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->CreateCharParser, targets)) {
         return nullptr;
     }
 
-    SHADOW_LOCK(&self->physics.shadow_lock);
-    BLOCK_UNTIL_NOT_STEPPING(self);
-    BLOCK_UNTIL_NOT_QUERYING(self);
+    CPH_SHADOW_LOCK(&self->physics.shadow_lock);
+    CPH_BLOCK_UNTIL_NOT_STEPPING(self);
+    CPH_BLOCK_UNTIL_NOT_QUERYING(self);
 
     size_t available = atomic_load_explicit(&self->physics.free_count, memory_order_acquire);
 
     if (available == 0) {
-        if (PhysicsWorld_resize(self, self->physics.capacity * 2) < 0) {
-            SHADOW_UNLOCK(&self->physics.shadow_lock);
+        if (CPH_PyPhysicsWorldResize(self, self->physics.capacity * 2) < 0) {
+            CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
             return nullptr;
         }
         available = atomic_load_explicit(&self->physics.free_count, memory_order_acquire);
@@ -1041,18 +1041,18 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_character(PhysicsWorldOb
 
     atomic_store_explicit(&self->physics.slot_states[char_slot], SLOT_PENDING_CREATE, memory_order_release);
 
-    SHADOW_UNLOCK(&self->physics.shadow_lock);
+    CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
 
-    PositionVector pos_vec      = {pos.x, pos.y, pos.z};
-    CharacterParams char_params = {height, radius, slope};
+    CPH_PositionVector pos_vec      = {pos.x, pos.y, pos.z};
+    CPH_CharacterParams char_params = {height, radius, slope};
 
     JPH_CharacterVirtual *j_char = alloc_j_char(self, pos_vec, char_params);
     if (!j_char) {
         goto fail_jolt;
     }
 
-    auto obj = (CharacterObject *)PyObject_GC_New(
-        CharacterObject,
+    auto obj = (CPH_CharacterObject *)PyObject_GC_New(
+        CPH_CharacterObject,
         (PyTypeObject *)get_culverin_state(PyType_GetModule(Py_TYPE(self)))->CharacterType);
     if (!obj) {
         goto fail_py;
@@ -1062,7 +1062,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_character(PhysicsWorldOb
         goto fail_py;
     }
 
-    obj->world     = (PhysicsWorldObject *)Py_NewRef(self);
+    obj->world     = (CPH_PhysicsWorldObject *)Py_NewRef(self);
     obj->character = j_char;
     obj->prev_px   = pos.x;
     obj->prev_py   = pos.y;
@@ -1087,48 +1087,48 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_character(PhysicsWorldOb
 fail_py:
     JPH_CharacterBase_Destroy((JPH_CharacterBase *)j_char);
 fail_jolt:
-    SHADOW_LOCK(&self->physics.shadow_lock);
+    CPH_SHADOW_LOCK(&self->physics.shadow_lock);
 
     atomic_store_explicit(&self->physics.slot_states[char_slot], SLOT_EMPTY, memory_order_relaxed);
 
     size_t f_idx            = atomic_fetch_add_explicit(&self->physics.free_count, 1, memory_order_relaxed);
     self->physics.free_slots[f_idx] = char_slot;
 
-    SHADOW_UNLOCK(&self->physics.shadow_lock);
+    CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
     return nullptr;
 }
 
-PyGetSet_DeclareGetter Character_get_handle(CharacterObject *self, [[maybe_unused]] void *closure) {
+PyGetSet_DeclareGetter CPH_PyCharacterGetHandle(CPH_CharacterObject *self, [[maybe_unused]] void *closure) {
     uint64_t raw_h = atomic_load_explicit(&self->handle, memory_order_relaxed);
-    return CULV_PY_BUILD_VALUE(raw_h);
+    return CPH_PY_BUILD_VALUE(raw_h);
 }
 
-#define CHAR_FASTCALL(name) CULV_FEAT(Character, name, METH_FASTCALL | METH_KEYWORDS)
-#define CHAR_NOARGS(name) CULV_FEAT(Character, name, METH_NOARGS)
-#define CHAR_O(name) CULV_FEAT(Character, name, METH_O)
+#define CPH_CHAR_FASTCALL(fn, name) CPH_FEAT(fn, name, METH_FASTCALL | METH_KEYWORDS)
+#define CPH_CHAR_NOARGS(fn, name) CPH_FEAT(fn, name, METH_NOARGS)
+#define CPH_CHAR_O(fn, name) CPH_FEAT(fn, name, METH_O)
 
 PyType_Spec Character_spec = {
     .name      = "culverin._culverin_c.Character",
-    .basicsize = sizeof(CharacterObject),
+    .basicsize = sizeof(CPH_CharacterObject),
     .flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
     .slots =
         (PyType_Slot[]){
 
-            {.slot = Py_tp_dealloc, .pfunc = Character_dealloc},
-            {.slot = Py_tp_traverse, .pfunc = Character_traverse},
-            {.slot = Py_tp_clear, .pfunc = Character_clear},
+            {.slot = Py_tp_dealloc, .pfunc = CPH_PyCharacterDealloc},
+            {.slot = Py_tp_traverse, .pfunc = CPH_PyCharacterTraverse},
+            {.slot = Py_tp_clear, .pfunc = CPH_PyCharacterClear},
             {.slot = Py_tp_methods,
              .pfunc =
                  (PyMethodDef[]){
 
-                     CHAR_FASTCALL(move),
-                     CHAR_NOARGS(get_position),
-                     CHAR_NOARGS(get_linear_velocity),
-                     CHAR_FASTCALL(set_position),
-                     CHAR_FASTCALL(set_rotation),
-                     CHAR_NOARGS(is_grounded),
-                     CHAR_FASTCALL(set_strength),
-                     CHAR_O(get_render_transform),
+                     CPH_CHAR_FASTCALL(CPH_PyCharacterMove, move),
+                     CPH_CHAR_NOARGS(CPH_PyCharacterGetPosition, get_position),
+                     CPH_CHAR_NOARGS(CPH_PyCharacterGetLinearVelocity, get_linear_velocity),
+                     CPH_CHAR_FASTCALL(CPH_PyCharacterSetPosition, set_position),
+                     CPH_CHAR_FASTCALL(CPH_PyCharacterSetRotation, set_rotation),
+                     CPH_CHAR_NOARGS(CPH_PyCharacterIsGrounded, is_grounded),
+                     CPH_CHAR_FASTCALL(CPH_PyCharacterSetStrength, set_strength),
+                     CPH_CHAR_O(CPH_PyCharacterGetRenderTransform, get_render_transform),
                      {}
 
                  }},
@@ -1136,7 +1136,7 @@ PyType_Spec Character_spec = {
              .pfunc =
                  (PyGetSetDef[]){
 
-                     GETSET("handle", Character_get_handle), {}
+                     CPH_GETSET("handle", CPH_PyCharacterGetHandle), {}
 
                  }},
             {}

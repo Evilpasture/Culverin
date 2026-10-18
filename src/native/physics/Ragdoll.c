@@ -2,59 +2,59 @@
 #include "physics/CommandBuffer.h"
 #include "physics/InternalQuery.h"
 
-static void wait_until_not_stepping_locked(PhysicsWorld *world) {
+static void wait_until_not_stepping_locked(CPH_PhysicsWorld *world) {
     if (!atomic_load_explicit(&world->is_stepping, memory_order_relaxed)) {
         return;
     }
 
     atomic_fetch_add_explicit(&world->waiting_threads, 1, memory_order_relaxed);
     while (atomic_load_explicit(&world->is_stepping, memory_order_relaxed)) {
-        SHADOW_UNLOCK(&world->shadow_lock);
-        NATIVE_MUTEX_LOCK(world->step_sync.mutex);
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
+        CPH_NATIVE_MUTEX_LOCK(world->step_sync.mutex);
         while (atomic_load_explicit(&world->is_stepping, memory_order_relaxed)) {
-            NATIVE_COND_WAIT(world->step_sync.cond, world->step_sync.mutex);
+            CPH_NATIVE_COND_WAIT(world->step_sync.cond, world->step_sync.mutex);
         }
-        NATIVE_MUTEX_UNLOCK(world->step_sync.mutex);
-        SHADOW_LOCK(&world->shadow_lock);
+        CPH_NATIVE_MUTEX_UNLOCK(world->step_sync.mutex);
+        CPH_SHADOW_LOCK(&world->shadow_lock);
     }
     atomic_fetch_sub_explicit(&world->waiting_threads, 1, memory_order_relaxed);
 }
 
-static void wait_until_not_querying_locked(PhysicsWorld *world) {
+static void wait_until_not_querying_locked(CPH_PhysicsWorld *world) {
     while (atomic_load_explicit(&world->active_queries, memory_order_acquire) > 0) {
-        SHADOW_UNLOCK(&world->shadow_lock);
-        NATIVE_MUTEX_LOCK(world->step_sync.mutex);
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
+        CPH_NATIVE_MUTEX_LOCK(world->step_sync.mutex);
         while (atomic_load_explicit(&world->active_queries, memory_order_acquire) > 0) {
-            NATIVE_COND_WAIT(world->step_sync.cond, world->step_sync.mutex);
+            CPH_NATIVE_COND_WAIT(world->step_sync.cond, world->step_sync.mutex);
         }
-        NATIVE_MUTEX_UNLOCK(world->step_sync.mutex);
-        SHADOW_LOCK(&world->shadow_lock);
+        CPH_NATIVE_MUTEX_UNLOCK(world->step_sync.mutex);
+        CPH_SHADOW_LOCK(&world->shadow_lock);
     }
 }
 
-JPH_Skeleton *physics_ragdoll_skeleton_create(void) { return JPH_Skeleton_Create(); }
+JPH_Skeleton *CPH_PhysicsRagdollSkeletonCreate(void) { return JPH_Skeleton_Create(); }
 
-void physics_ragdoll_skeleton_destroy(JPH_Skeleton *skeleton) {
+void CPH_PhysicsRagdollSkeletonDestroy(JPH_Skeleton *skeleton) {
     if (skeleton) {
         JPH_Skeleton_Destroy(skeleton);
     }
 }
 
-int physics_ragdoll_skeleton_add_joint(JPH_Skeleton *skeleton, const char *name, int parent_index) {
+int CPH_PhysicsRagdollSkeletonAddJoint(JPH_Skeleton *skeleton, const char *name, int parent_index) {
     if (!skeleton || !name) {
         return -1;
     }
     return (int)JPH_Skeleton_AddJoint2(skeleton, name, parent_index);
 }
 
-int physics_ragdoll_skeleton_get_joint_index(JPH_Skeleton *skeleton, const char *name) {
+int CPH_PhysicsRagdollSkeletonGetJointIndex(JPH_Skeleton *skeleton, const char *name) {
     if (!skeleton || !name) {
         return -1;
     }
     return JPH_Skeleton_GetJointIndex(skeleton, name);
 }
 
-bool physics_ragdoll_skeleton_finalize(JPH_Skeleton *skeleton) {
+bool CPH_PhysicsRagdollSkeletonFinalize(JPH_Skeleton *skeleton) {
     if (!skeleton) {
         return false;
     }
@@ -62,30 +62,30 @@ bool physics_ragdoll_skeleton_finalize(JPH_Skeleton *skeleton) {
     return JPH_Skeleton_AreJointsCorrectlyOrdered(skeleton);
 }
 
-void physics_ragdoll_settings_destroy(JPH_RagdollSettings *settings) {
+void CPH_PhysicsRagdollSettingsDestroy(JPH_RagdollSettings *settings) {
     if (settings) {
         JPH_RagdollSettings_Destroy(settings);
     }
 }
 
-bool physics_ragdoll_settings_stabilize(JPH_RagdollSettings *settings) {
+bool CPH_PhysicsRagdollSettingsStabilize(JPH_RagdollSettings *settings) {
     return settings && JPH_RagdollSettings_Stabilize(settings);
 }
 
-JPH_Shape *physics_ragdoll_find_or_create_shape(PhysicsWorld *world, int shape_type,
+JPH_Shape *CPH_PhysicsRagdollFindOrCreateShape(CPH_PhysicsWorld *world, int shape_type,
                                                 const float shape_params[4]) {
     if (!world || !shape_params) {
         return nullptr;
     }
-    SHADOW_LOCK(&world->shadow_lock);
-    JPH_Shape *shape = find_or_create_shape_locked(world, shape_type, shape_params);
-    SHADOW_UNLOCK(&world->shadow_lock);
+    CPH_SHADOW_LOCK(&world->shadow_lock);
+    JPH_Shape *shape = CPH_FindOrCreateShapeLocked(world, shape_type, shape_params);
+    CPH_SHADOW_UNLOCK(&world->shadow_lock);
     return shape;
 }
 
-PhysicsRagdollStatus physics_ragdoll_settings_add_part(JPH_RagdollSettings *settings,
+PhysicsRagdollStatus CPH_PhysicsRagdollSettingsAddPart(JPH_RagdollSettings *settings,
                                                            JPH_Shape *shape,
-                                                           const PhysicsRagdollPartRequest *request,
+                                                           const CPH_PhysicsRagdollPartRequest *request,
                                                            int *out_joint_count) {
     if (!settings || !request || !out_joint_count) {
         return PHYSICS_RAGDOLL_STATUS_INVALID_ARGUMENT;
@@ -137,7 +137,7 @@ PhysicsRagdollStatus physics_ragdoll_settings_add_part(JPH_RagdollSettings *sett
     return PHYSICS_RAGDOLL_STATUS_OK;
 }
 
-int physics_ragdoll_get_joint_count(JPH_Ragdoll *ragdoll) {
+int CPH_PhysicsRagdollGetJointCount(JPH_Ragdoll *ragdoll) {
     if (!ragdoll) {
         return 0;
     }
@@ -149,7 +149,7 @@ int physics_ragdoll_get_joint_count(JPH_Ragdoll *ragdoll) {
     return skeleton ? JPH_Skeleton_GetJointCount(skeleton) : 0;
 }
 
-bool physics_ragdoll_drive_to_pose(JPH_Ragdoll *ragdoll, JPH_RVec3 root_position,
+bool CPH_PhysicsRagdollDriveToPose(JPH_Ragdoll *ragdoll, JPH_RVec3 root_position,
                                    const JPH_Mat4 *matrices, int joint_count) {
     if (!ragdoll || !matrices || joint_count < 0) {
         return false;
@@ -178,20 +178,20 @@ bool physics_ragdoll_drive_to_pose(JPH_Ragdoll *ragdoll, JPH_RVec3 root_position
     return true;
 }
 
-int physics_ragdoll_get_body_count(JPH_Ragdoll *ragdoll) {
+int CPH_PhysicsRagdollGetBodyCount(JPH_Ragdoll *ragdoll) {
     return ragdoll ? JPH_Ragdoll_GetBodyCount(ragdoll) : 0;
 }
 
-void physics_ragdoll_copy_body_handles(PhysicsWorld *world, const uint32_t *body_slots,
+void CPH_PhysicsRagdollCopyBodyHandles(CPH_PhysicsWorld *world, const uint32_t *body_slots,
                                        size_t body_count,
-                                       PhysicsRagdollBodyHandleInfo *out_handles) {
+                                       CPH_PhysicsRagdollBodyHandleInfo *out_handles) {
     if (!world || (body_count && (!body_slots || !out_handles))) {
         return;
     }
 
-    SHADOW_LOCK(&world->shadow_lock);
+    CPH_SHADOW_LOCK(&world->shadow_lock);
     for (size_t i = 0; i < body_count; ++i) {
-        out_handles[i]      = (PhysicsRagdollBodyHandleInfo){.handle = 0, .alive = false};
+        out_handles[i]      = (CPH_PhysicsRagdollBodyHandleInfo){.handle = 0, .alive = false};
         const uint32_t slot = body_slots[i];
         if (slot >= world->slot_capacity || !world->slot_states || !world->generations) {
             continue;
@@ -202,16 +202,16 @@ void physics_ragdoll_copy_body_handles(PhysicsWorld *world, const uint32_t *body
         }
         const uint32_t generation =
             atomic_load_explicit(&world->generations[slot], memory_order_relaxed);
-        out_handles[i] = (PhysicsRagdollBodyHandleInfo){
+        out_handles[i] = (CPH_PhysicsRagdollBodyHandleInfo){
             .handle = make_handle(slot, generation),
             .alive  = true,
         };
     }
-    SHADOW_UNLOCK(&world->shadow_lock);
+    CPH_SHADOW_UNLOCK(&world->shadow_lock);
 }
 
-bool physics_ragdoll_copy_debug_info(PhysicsWorld *world, JPH_Ragdoll *ragdoll,
-                                     PhysicsRagdollBodyDebugInfo *out_info, size_t body_count) {
+bool CPH_PhysicsRagdollCopyDebugInfo(CPH_PhysicsWorld *world, JPH_Ragdoll *ragdoll,
+                                     CPH_PhysicsRagdollBodyDebugInfo *out_info, size_t body_count) {
     if (!world || !ragdoll || (body_count && !out_info) || !world->body_interface) {
         return false;
     }
@@ -221,25 +221,25 @@ bool physics_ragdoll_copy_debug_info(PhysicsWorld *world, JPH_Ragdoll *ragdoll,
     }
 
     JPH_BodyInterface *body_interface = world->body_interface;
-    SHADOW_LOCK(&world->shadow_lock);
+    CPH_SHADOW_LOCK(&world->shadow_lock);
     for (int i = 0; i < ragdoll_body_count; ++i) {
         const JPH_BodyID body_id = JPH_Ragdoll_GetBodyID(ragdoll, i);
         JPH_BodyInterface_GetPosition(body_interface, body_id, &out_info[i].position);
         JPH_BodyInterface_GetRotation(body_interface, body_id, &out_info[i].rotation);
         JPH_BodyInterface_GetLinearVelocity(body_interface, body_id, &out_info[i].linear_velocity);
     }
-    SHADOW_UNLOCK(&world->shadow_lock);
+    CPH_SHADOW_UNLOCK(&world->shadow_lock);
     return true;
 }
 
-void physics_ragdoll_deallocate(PhysicsWorld *world, JPH_Ragdoll *ragdoll,
+void CPH_PhysicsRagdollDeallocate(CPH_PhysicsWorld *world, JPH_Ragdoll *ragdoll,
                                 const uint32_t *body_slots, size_t body_count) {
     if (!ragdoll) {
         return;
     }
 
     if (world) {
-        SHADOW_LOCK(&world->shadow_lock);
+        CPH_SHADOW_LOCK(&world->shadow_lock);
         wait_until_not_stepping_locked(world);
         wait_until_not_querying_locked(world);
         JPH_Ragdoll_RemoveFromPhysicsSystem(ragdoll, true);
@@ -253,15 +253,15 @@ void physics_ragdoll_deallocate(PhysicsWorld *world, JPH_Ragdoll *ragdoll,
                 const uint8_t state =
                     atomic_load_explicit(&world->slot_states[slot], memory_order_acquire);
                 if (state == SLOT_ALIVE) {
-                    world_remove_body_slot(world, slot);
+                    CPH_WorldRemoveBodySlot(world, slot);
                 }
             }
         }
-        SHADOW_UNLOCK(&world->shadow_lock);
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
 
-        NATIVE_MUTEX_LOCK(world->jph_trampoline_lock);
+        CPH_NATIVE_MUTEX_LOCK(world->jph_trampoline_lock);
         JPH_Ragdoll_Destroy(ragdoll);
-        NATIVE_MUTEX_UNLOCK(world->jph_trampoline_lock);
+        CPH_NATIVE_MUTEX_UNLOCK(world->jph_trampoline_lock);
         return;
     }
 

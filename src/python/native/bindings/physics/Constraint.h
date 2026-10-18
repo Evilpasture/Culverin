@@ -2,22 +2,22 @@
 #include "bindings/physics/PhysicsWorld.h"
 #include <Python.h>
 
-PyCFunction_DeclareMethodFromModule PhysicsWorld_create_constraint(PhysicsWorldObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldCreateConstraint(CPH_PhysicsWorldObject *self,
                                                                    PyObject *const *args,
                                                                    size_t nargsf,
                                                                    PyObject *kwnames);
 
-PyCFunction_DeclareMethodFromModule PhysicsWorld_destroy_constraint(PhysicsWorldObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldDestroyConstraint(CPH_PhysicsWorldObject *self,
                                                                     PyObject *const *args,
                                                                     size_t nargsf,
                                                                     PyObject *kwnames);
 
-PyCFunction_DeclareMethodFromModule PhysicsWorld_set_constraint_target(PhysicsWorldObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldSetConstraintTarget(CPH_PhysicsWorldObject *self,
                                                                        PyObject *const *args,
                                                                        size_t nargsf,
                                                                        PyObject *kwnames);
 
-PyCFunction_DeclareMethodFromModule PhysicsWorld_get_constraint_type(PhysicsWorldObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldGetConstraintType(CPH_PhysicsWorldObject *self,
                                                                      PyObject *const *args,
                                                                      size_t nargsf,
                                                                      PyObject *kwnames);

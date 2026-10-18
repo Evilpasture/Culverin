@@ -20,7 +20,7 @@ typedef enum PhysicsBodyOperationType : uint8_t {
     PHYSICS_BODY_OP_SET_CCD,
 } PhysicsBodyOperationType;
 
-typedef struct PhysicsBodyOperation {
+typedef struct CPH_PhysicsBodyOperation {
     PhysicsBodyOperationType type;
     BodyHandle handle;
     JPH_RVec3 position;
@@ -28,7 +28,7 @@ typedef struct PhysicsBodyOperation {
     JPH_Quat rotation;
     uint64_t user_data;
     int value;
-} PhysicsBodyOperation;
+} CPH_PhysicsBodyOperation;
 
 typedef enum PhysicsBodyOperationStatus : int {
     PHYSICS_BODY_OPERATION_STATUS_OK               = 0,
@@ -41,8 +41,8 @@ typedef enum PhysicsBodyOperationStatus : int {
 // mirroring. Call with the GIL released; stale-handle errors are translated by
 // the CPython binding.
 PhysicsBodyOperationStatus
-physics_world_apply_body_operation(PhysicsWorld *world, const PhysicsBodyOperation *operation);
-PhysicsBodyOperationStatus physics_world_queue_body_destroy(PhysicsWorld *world, BodyHandle handle);
-PhysicsBodyOperationStatus physics_world_queue_body_destroy_batch(PhysicsWorld *world,
+CPH_PhysicsWorldApplyBodyOperation(CPH_PhysicsWorld *world, const CPH_PhysicsBodyOperation *operation);
+PhysicsBodyOperationStatus CPH_PhysicsWorldQueueBodyDestroy(CPH_PhysicsWorld *world, BodyHandle handle);
+PhysicsBodyOperationStatus CPH_PhysicsWorldQueueBodyDestroyBatch(CPH_PhysicsWorld *world,
                                                                   const BodyHandle *handles,
                                                                   size_t handle_count);

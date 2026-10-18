@@ -2,21 +2,21 @@
 #include "physics/CommandBuffer.h"
 #include "physics/SlotState.h"
 
-static void lock_until_not_stepping(PhysicsWorld *world) {
-    SHADOW_LOCK(&world->shadow_lock);
+static void lock_until_not_stepping(CPH_PhysicsWorld *world) {
+    CPH_SHADOW_LOCK(&world->shadow_lock);
     if (!atomic_load_explicit(&world->is_stepping, memory_order_relaxed)) {
         return;
     }
 
     atomic_fetch_add_explicit(&world->waiting_threads, 1, memory_order_relaxed);
     while (atomic_load_explicit(&world->is_stepping, memory_order_relaxed)) {
-        SHADOW_UNLOCK(&world->shadow_lock);
-        NATIVE_MUTEX_LOCK(world->step_sync.mutex);
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
+        CPH_NATIVE_MUTEX_LOCK(world->step_sync.mutex);
         while (atomic_load_explicit(&world->is_stepping, memory_order_relaxed)) {
-            NATIVE_COND_WAIT(world->step_sync.cond, world->step_sync.mutex);
+            CPH_NATIVE_COND_WAIT(world->step_sync.cond, world->step_sync.mutex);
         }
-        NATIVE_MUTEX_UNLOCK(world->step_sync.mutex);
-        SHADOW_LOCK(&world->shadow_lock);
+        CPH_NATIVE_MUTEX_UNLOCK(world->step_sync.mutex);
+        CPH_SHADOW_LOCK(&world->shadow_lock);
     }
     atomic_fetch_sub_explicit(&world->waiting_threads, 1, memory_order_relaxed);
 }
@@ -39,15 +39,15 @@ static uint32_t operation_immediate_mask(PhysicsBodyOperationType type) {
     case PHYSICS_BODY_OP_APPLY_ANGULAR_IMPULSE:
     case PHYSICS_BODY_OP_SET_ANGULAR_VELOCITY:
     case PHYSICS_BODY_OP_SET_MOTION_TYPE:
-        return MASK_IMM_STRICT;
+        return kMaskImmStrict;
     default:
-        return MASK_IMM_STANDARD;
+        return kMaskImmStandard;
     }
 }
 
-static bool write_operation_command(PhysicsWorld *world, uint32_t slot,
-                                    const PhysicsBodyOperation *operation,
-                                    SlotPredicate predicate) {
+static bool write_operation_command(CPH_PhysicsWorld *world, uint32_t slot,
+                                    const CPH_PhysicsBodyOperation *operation,
+                                    CPH_SlotPredicate predicate) {
     PhysicsCommand *command     = &world->command_queue[world->command_count];
     const bool immediate_action = operation_is_immediate_jolt_action(operation->type);
 
@@ -146,9 +146,9 @@ static bool write_operation_command(PhysicsWorld *world, uint32_t slot,
     return true;
 }
 
-static void mirror_operation_to_shadow(PhysicsWorld *world, uint32_t slot,
-                                       const PhysicsBodyOperation *operation,
-                                       SlotPredicate predicate) {
+static void mirror_operation_to_shadow(CPH_PhysicsWorld *world, uint32_t slot,
+                                       const CPH_PhysicsBodyOperation *operation,
+                                       CPH_SlotPredicate predicate) {
     if (!predicate.is_executable) {
         return;
     }
@@ -156,39 +156,39 @@ static void mirror_operation_to_shadow(PhysicsWorld *world, uint32_t slot,
     const uint32_t dense = world->slot_to_dense[slot];
     switch (operation->type) {
     case PHYSICS_BODY_OP_SET_POSITION: {
-        const PosStride position                    = {operation->position.x, operation->position.y,
+        const CPH_PosStride position                    = {operation->position.x, operation->position.y,
                                                        operation->position.z, 0.0};
-        ((PosStride *)world->positions)[dense]      = position;
-        ((PosStride *)world->prev_positions)[dense] = position;
+        ((CPH_PosStride *)world->positions)[dense]      = position;
+        ((CPH_PosStride *)world->prev_positions)[dense] = position;
         break;
     }
     case PHYSICS_BODY_OP_SET_ROTATION: {
-        const AuxStride rotation               = {operation->rotation.x, operation->rotation.y,
+        const CPH_AuxStride rotation               = {operation->rotation.x, operation->rotation.y,
                                                   operation->rotation.z, operation->rotation.w};
-        ((AuxStride *)world->rotations)[dense] = rotation;
-        ((AuxStride *)world->prev_rotations)[dense] = rotation;
+        ((CPH_AuxStride *)world->rotations)[dense] = rotation;
+        ((CPH_AuxStride *)world->prev_rotations)[dense] = rotation;
         break;
     }
     case PHYSICS_BODY_OP_SET_LINEAR_VELOCITY:
-        ((AuxStride *)world->linear_velocities)[dense] =
-            (AuxStride){operation->vector.x, operation->vector.y, operation->vector.z, 0.0f};
+        ((CPH_AuxStride *)world->linear_velocities)[dense] =
+            (CPH_AuxStride){operation->vector.x, operation->vector.y, operation->vector.z, 0.0f};
         break;
     case PHYSICS_BODY_OP_SET_ANGULAR_VELOCITY:
-        ((AuxStride *)world->angular_velocities)[dense] =
-            (AuxStride){operation->vector.x, operation->vector.y, operation->vector.z, 0.0f};
+        ((CPH_AuxStride *)world->angular_velocities)[dense] =
+            (CPH_AuxStride){operation->vector.x, operation->vector.y, operation->vector.z, 0.0f};
         break;
     case PHYSICS_BODY_OP_SET_USER_DATA:
         world->user_data[dense] = operation->user_data;
         break;
     case PHYSICS_BODY_OP_SET_TRANSFORM: {
-        const PosStride position               = {operation->position.x, operation->position.y,
+        const CPH_PosStride position               = {operation->position.x, operation->position.y,
                                                   operation->position.z, 0.0};
-        const AuxStride rotation               = {operation->rotation.x, operation->rotation.y,
+        const CPH_AuxStride rotation               = {operation->rotation.x, operation->rotation.y,
                                                   operation->rotation.z, operation->rotation.w};
-        ((PosStride *)world->positions)[dense] = position;
-        ((PosStride *)world->prev_positions)[dense] = position;
-        ((AuxStride *)world->rotations)[dense]      = rotation;
-        ((AuxStride *)world->prev_rotations)[dense] = rotation;
+        ((CPH_PosStride *)world->positions)[dense] = position;
+        ((CPH_PosStride *)world->prev_positions)[dense] = position;
+        ((CPH_AuxStride *)world->rotations)[dense]      = rotation;
+        ((CPH_AuxStride *)world->prev_rotations)[dense] = rotation;
         break;
     }
     default:
@@ -196,8 +196,8 @@ static void mirror_operation_to_shadow(PhysicsWorld *world, uint32_t slot,
     }
 }
 
-static void execute_immediate_jolt_action(PhysicsWorld *world, JPH_BodyID body_id,
-                                          const PhysicsBodyOperation *operation) {
+static void execute_immediate_jolt_action(CPH_PhysicsWorld *world, JPH_BodyID body_id,
+                                          const CPH_PhysicsBodyOperation *operation) {
     JPH_Vec3 vector    = operation->vector;
     JPH_RVec3 position = operation->position;
     switch (operation->type) {
@@ -223,7 +223,7 @@ static void execute_immediate_jolt_action(PhysicsWorld *world, JPH_BodyID body_i
 }
 
 PhysicsBodyOperationStatus
-physics_world_apply_body_operation(PhysicsWorld *world, const PhysicsBodyOperation *operation) {
+CPH_PhysicsWorldApplyBodyOperation(CPH_PhysicsWorld *world, const CPH_PhysicsBodyOperation *operation) {
     if (!world || !operation || operation->type > PHYSICS_BODY_OP_SET_CCD) {
         return PHYSICS_BODY_OPERATION_STATUS_INVALID_ARGUMENT;
     }
@@ -232,21 +232,21 @@ physics_world_apply_body_operation(PhysicsWorld *world, const PhysicsBodyOperati
 
     uint32_t slot = 0;
     if (!unpack_handle(world, operation->handle, &slot)) {
-        SHADOW_UNLOCK(&world->shadow_lock);
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_BODY_OPERATION_STATUS_STALE_HANDLE;
     }
 
     const uint8_t state = atomic_load_explicit(&world->slot_states[slot], memory_order_acquire);
-    const SlotPredicate predicate =
+    const CPH_SlotPredicate predicate =
         get_slot_predicate(state, operation_immediate_mask(operation->type));
 
-    if (UNLIKELY(!ensure_command_capacity(world))) {
-        SHADOW_UNLOCK(&world->shadow_lock);
+    if (CPH_UNLIKELY(!CPH_EnsureCommandCapacity(world))) {
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_BODY_OPERATION_STATUS_OUT_OF_MEMORY;
     }
 
     if (!write_operation_command(world, slot, operation, predicate)) {
-        SHADOW_UNLOCK(&world->shadow_lock);
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_BODY_OPERATION_STATUS_INVALID_ARGUMENT;
     }
     mirror_operation_to_shadow(world, slot, operation, predicate);
@@ -254,9 +254,9 @@ physics_world_apply_body_operation(PhysicsWorld *world, const PhysicsBodyOperati
     const bool execute_now =
         operation_is_immediate_jolt_action(operation->type) && predicate.is_immediate;
     const JPH_BodyID body_id =
-        execute_now ? world->body_ids[world->slot_to_dense[slot]] : JPH_INVALID_BODY_ID;
+        execute_now ? world->body_ids[world->slot_to_dense[slot]] : kJphInvalidBodyId;
 
-    SHADOW_UNLOCK(&world->shadow_lock);
+    CPH_SHADOW_UNLOCK(&world->shadow_lock);
 
     if (!predicate.is_executable) {
         return PHYSICS_BODY_OPERATION_STATUS_STALE_HANDLE;
@@ -267,7 +267,7 @@ physics_world_apply_body_operation(PhysicsWorld *world, const PhysicsBodyOperati
     return PHYSICS_BODY_OPERATION_STATUS_OK;
 }
 
-PhysicsBodyOperationStatus physics_world_queue_body_destroy(PhysicsWorld *world,
+PhysicsBodyOperationStatus CPH_PhysicsWorldQueueBodyDestroy(CPH_PhysicsWorld *world,
                                                             BodyHandle handle) {
     if (!world) {
         return PHYSICS_BODY_OPERATION_STATUS_INVALID_ARGUMENT;
@@ -276,13 +276,13 @@ PhysicsBodyOperationStatus physics_world_queue_body_destroy(PhysicsWorld *world,
     lock_until_not_stepping(world);
     uint32_t slot = 0;
     if (!unpack_handle(world, handle, &slot)) {
-        SHADOW_UNLOCK(&world->shadow_lock);
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_BODY_OPERATION_STATUS_STALE_HANDLE;
     }
     const uint8_t state = atomic_load_explicit(&world->slot_states[slot], memory_order_acquire);
-    const bool is_destructible = get_slot_predicate(state, MASK_DESTRUCTIBLE).is_executable;
-    if (!ensure_command_capacity(world)) {
-        SHADOW_UNLOCK(&world->shadow_lock);
+    const bool is_destructible = get_slot_predicate(state, kMaskDestructible).is_executable;
+    if (!CPH_EnsureCommandCapacity(world)) {
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_BODY_OPERATION_STATUS_OUT_OF_MEMORY;
     }
 
@@ -293,11 +293,11 @@ PhysicsBodyOperationStatus physics_world_queue_body_destroy(PhysicsWorld *world,
         atomic_store_explicit(&world->slot_states[slot], SLOT_PENDING_DESTROY,
                               memory_order_release);
     }
-    SHADOW_UNLOCK(&world->shadow_lock);
+    CPH_SHADOW_UNLOCK(&world->shadow_lock);
     return PHYSICS_BODY_OPERATION_STATUS_OK;
 }
 
-PhysicsBodyOperationStatus physics_world_queue_body_destroy_batch(PhysicsWorld *world,
+PhysicsBodyOperationStatus CPH_PhysicsWorldQueueBodyDestroyBatch(CPH_PhysicsWorld *world,
                                                                   const BodyHandle *handles,
                                                                   size_t handle_count) {
     if (!world || (handle_count != 0 && !handles)) {
@@ -308,21 +308,21 @@ PhysicsBodyOperationStatus physics_world_queue_body_destroy_batch(PhysicsWorld *
     }
 
     lock_until_not_stepping(world);
-    if (!ensure_command_bulk_capacity(world, handle_count)) {
-        SHADOW_UNLOCK(&world->shadow_lock);
+    if (!CPH_EnsureCommandBulkCapacity(world, handle_count)) {
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_BODY_OPERATION_STATUS_OUT_OF_MEMORY;
     }
 
     PhysicsCommand *commands     = world->command_queue;
     size_t command_index         = world->command_count;
-    CULV_ATOMIC(uint8_t) *states = world->slot_states;
+    CPH_ATOMIC(uint8_t) *states = world->slot_states;
     for (size_t i = 0; i < handle_count; i++) {
         uint32_t slot = 0;
         if (!unpack_handle(world, handles[i], &slot)) {
             continue;
         }
         const uint8_t state            = atomic_load_explicit(&states[slot], memory_order_acquire);
-        const bool is_destructible     = get_slot_predicate(state, MASK_DESTRUCTIBLE).is_executable;
+        const bool is_destructible     = get_slot_predicate(state, kMaskDestructible).is_executable;
         commands[command_index].header = CMD_HEADER(CMD_DESTROY_BODY, slot);
         command_index += is_destructible;
         if (is_destructible) {
@@ -330,6 +330,6 @@ PhysicsBodyOperationStatus physics_world_queue_body_destroy_batch(PhysicsWorld *
         }
     }
     world->command_count = command_index;
-    SHADOW_UNLOCK(&world->shadow_lock);
+    CPH_SHADOW_UNLOCK(&world->shadow_lock);
     return PHYSICS_BODY_OPERATION_STATUS_OK;
 }

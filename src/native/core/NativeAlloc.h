@@ -62,5 +62,5 @@ static inline void CulvNative_SafeAlignedFree(void **ptr) {
     }
 }
 
-#define CULVERIN_SAFE_FREE(ptr) CulvNative_SafeFree((void **)&(ptr))
-#define CULVERIN_SAFE_FREE_ALIGNED(ptr) CulvNative_SafeAlignedFree((void **)&(ptr))
+#define CPH_SAFE_FREE(ptr) CulvNative_SafeFree((void **)&(ptr))
+#define CPH_SAFE_FREE_ALIGNED(ptr) CulvNative_SafeAlignedFree((void **)&(ptr))

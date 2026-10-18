@@ -49,13 +49,13 @@ static inline void PyObject_cleanup(void *ptr) {
     PyObject **obj = (PyObject **)ptr;
     Py_CLEAR(*obj);
 }
-#define AUTO_DECREF [[gnu::cleanup(PyObject_cleanup)]]
+#define CPH_AUTO_DECREF [[gnu::cleanup(PyObject_cleanup)]]
 static inline PyObject *internal_move_obj(PyObject **obj) {
     auto tmp = *obj;
     *obj     = nullptr;
     return tmp;
 }
-#define RETURN_RAII_OBJECT(obj) return internal_move_obj(&(obj))
+#define CPH_RETURN_RAII_OBJECT(obj) return internal_move_obj(&(obj))
 
 /* How to use:
 static inline PyObject *test_function() {
@@ -72,10 +72,10 @@ static inline PyObject *test_function() {
 #include <string.h>
 
 #ifdef _WIN32
-#    ifndef NOMINMAX
-#        define NOMINMAX
+#    ifndef CPH_NOMINMAX
+#        define CPH_NOMINMAX
 #    endif
-#    define WIN32_LEAN_AND_MEAN
+#    define CPH_WIN32_LEAN_AND_MEAN
 #    include <windows.h>
 #elif defined(__linux__) || defined(__apple__)
 #    include <sched.h>
@@ -83,9 +83,9 @@ static inline PyObject *test_function() {
 #endif
 
 #ifdef CULVERIN_DEBUG
-#    define DEBUG_LOG(fmt, ...) fprintf(stderr, "[Culverin] " fmt "\n", ##__VA_ARGS__)
+#    define CPH_DEBUG_LOG(fmt, ...) fprintf(stderr, "[Culverin] " fmt "\n", ##__VA_ARGS__)
 #else
-#    define DEBUG_LOG(fmt, ...)
+#    define CPH_DEBUG_LOG(fmt, ...)
 #endif
 
 #if defined(__cplusplus)
@@ -96,12 +96,12 @@ typedef struct {
     JPH_Real px;
     JPH_Real py;
     JPH_Real pz;
-} PositionVector;
+} CPH_PositionVector;
 
 typedef struct {
     float friction;
     float restitution;
-} MaterialSettings;
+} CPH_MaterialSettings;
 
 // Struct to hold parsed Python data safely in C
 typedef struct {
@@ -109,12 +109,12 @@ typedef struct {
     JPH_Quat local_q;
     float params[4];
     int type;
-} CompoundPart;
+} CPH_CompoundPart;
 
 typedef struct {
     uint32_t tri_count;
     uint32_t vertex_count;
-} MeshBounds;
+} CPH_MeshBounds;
 
 // --- Hardened Checkers (No Casts) ---
 [[nodiscard]]
@@ -124,8 +124,8 @@ static inline bool culv_is_finite_f(float f) {
     uint32_t i;
     memcpy(&i, &f, sizeof(float));
     volatile uint32_t vi = i;
-    static_assert((sizeof(CULV_TYPE_OF(vi)) == sizeof(uint32_t) &&
-                   sizeof(CULV_TYPE_OF(vi)) == sizeof(float)) != 0);
+    static_assert((sizeof(CPH_TYPE_OF(vi)) == sizeof(uint32_t) &&
+                   sizeof(CPH_TYPE_OF(vi)) == sizeof(float)) != 0);
     return (vi & MASK_F32) != MASK_F32;
 }
 
@@ -136,13 +136,13 @@ static inline bool culv_is_finite_d(double d) {
     uint64_t i;
     memcpy(&i, &d, sizeof(double));
     volatile uint64_t vi = i;
-    static_assert((sizeof(CULV_TYPE_OF(vi)) == sizeof(uint64_t) &&
-                   sizeof(CULV_TYPE_OF(vi)) == sizeof(double)) != 0);
+    static_assert((sizeof(CPH_TYPE_OF(vi)) == sizeof(uint64_t) &&
+                   sizeof(CPH_TYPE_OF(vi)) == sizeof(double)) != 0);
     return (vi & MASK_F64) != MASK_F64;
 }
 
 // --- The Generic Dispatcher (Preserves Types) ---
-#define IS_FINITE(x)                                                                               \
+#define CPH_IS_FINITE(x)                                                                               \
     _Generic((x),                                                                                  \
         float: culv_is_finite_f(x),                                                                \
         double: culv_is_finite_d(x),                                                               \
@@ -157,44 +157,44 @@ static PyObject *culv_raise_finite_err(const char *msg) {
 
 // --- The Macro Engine (Variadic Expansion) ---
 // This expands into individual checks without creating arrays or casting types.
-#define VALIDATE_FINITE_CORE(msg, ...)                                                             \
-    CULV_EXPAND(CULV_CONCAT(CULV_VAL_ARGS_, CULV_NARGS(__VA_ARGS__))(msg, __VA_ARGS__))
+#define CPH_VALIDATE_FINITE_CORE(msg, ...)                                                             \
+    CPH_EXPAND(CPH_CONCAT(CPH_VAL_ARGS_, CPH_NARGS(__VA_ARGS__))(msg, __VA_ARGS__))
 
-#define CULV_VAL_ARGS_1(m, x)                                                                      \
+#define CPH_VAL_ARGS_1(m, x)                                                                      \
     do {                                                                                           \
-        if (UNLIKELY(!IS_FINITE(x)))                                                               \
+        if (CPH_UNLIKELY(!CPH_IS_FINITE(x)))                                                               \
             return culv_raise_finite_err(m);                                                       \
     } while (0)
-#define CULV_VAL_ARGS_2(m, x, ...)                                                                 \
-    CULV_VAL_ARGS_1(m, x);                                                                         \
-    CULV_VAL_ARGS_1(m, __VA_ARGS__)
-#define CULV_VAL_ARGS_3(m, x, ...)                                                                 \
-    CULV_VAL_ARGS_1(m, x);                                                                         \
-    CULV_VAL_ARGS_2(m, __VA_ARGS__)
-#define CULV_VAL_ARGS_4(m, x, ...)                                                                 \
-    CULV_VAL_ARGS_1(m, x);                                                                         \
-    CULV_VAL_ARGS_3(m, __VA_ARGS__)
+#define CPH_VAL_ARGS_2(m, x, ...)                                                                 \
+    CPH_VAL_ARGS_1(m, x);                                                                         \
+    CPH_VAL_ARGS_1(m, __VA_ARGS__)
+#define CPH_VAL_ARGS_3(m, x, ...)                                                                 \
+    CPH_VAL_ARGS_1(m, x);                                                                         \
+    CPH_VAL_ARGS_2(m, __VA_ARGS__)
+#define CPH_VAL_ARGS_4(m, x, ...)                                                                 \
+    CPH_VAL_ARGS_1(m, x);                                                                         \
+    CPH_VAL_ARGS_3(m, __VA_ARGS__)
 
-#define CULV_NARGS(...) CULV_NARGS_IMP(__VA_ARGS__, 4, 3, 2, 1)
-#define CULV_NARGS_IMP(_1, _2, _3, _4, N, ...) N
-#define CULV_EXPAND(x) x
+#define CPH_NARGS(...) CPH_NARGS_IMP(__VA_ARGS__, 4, 3, 2, 1)
+#define CPH_NARGS_IMP(_1, _2, _3, _4, N, ...) N
+#define CPH_EXPAND(x) x
 
 // --- User API (Zero cost wrappers) ---
-#define VALIDATE_FINITE_FLOAT(val, name) VALIDATE_FINITE_CORE(name, val)
-#define VALIDATE_FINITE_VEC3(x, y, z, name) VALIDATE_FINITE_CORE(name, x, y, z)
-#define VALIDATE_FINITE_QUAT(x, y, z, w, name) VALIDATE_FINITE_CORE(name, x, y, z, w)
-#define VALIDATE_FINITE_VEC4(x, y, z, w, name) VALIDATE_FINITE_CORE(name, x, y, z, w)
+#define CPH_VALIDATE_FINITE_FLOAT(val, name) CPH_VALIDATE_FINITE_CORE(name, val)
+#define CPH_VALIDATE_FINITE_VEC3(x, y, z, name) CPH_VALIDATE_FINITE_CORE(name, x, y, z)
+#define CPH_VALIDATE_FINITE_QUAT(x, y, z, w, name) CPH_VALIDATE_FINITE_CORE(name, x, y, z, w)
+#define CPH_VALIDATE_FINITE_VEC4(x, y, z, w, name) CPH_VALIDATE_FINITE_CORE(name, x, y, z, w)
 
 // DOESN'T DO THE SHADOW UNLOCKING FOR YOU. REMEMBER!
 // DEFINE STRICT_HANDLE_ENABLED IN THE BUILD IF YOU WANT IT TO FAIL FAST
 #if defined(STRICT_HANDLE_ENABLED)
-#    define RAISE_STALE_HANDLE()                                                                   \
+#    define CPH_RAISE_STALE_HANDLE()                                                                   \
         do {                                                                                       \
             PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");                          \
             return nullptr;                                                                        \
         } while (false)
 #else
-#    define RAISE_STALE_HANDLE()                                                                   \
+#    define CPH_RAISE_STALE_HANDLE()                                                                   \
         do {                                                                                       \
             Py_RETURN_NONE;                                                                        \
         } while (false)

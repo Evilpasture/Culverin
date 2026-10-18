@@ -8,7 +8,7 @@
  * creation. This helper does not access the physics system and does not require
  * jph_trampoline_lock.
  */
-JPH_Shape *find_or_create_shape_locked(PhysicsWorld *world, int type, const float *params) {
+JPH_Shape *CPH_FindOrCreateShapeLocked(CPH_PhysicsWorld *world, int type, const float *params) {
     // 1. KEY NORMALIZATION & SANITIZATION
     // Defensive clamping
     float p1;
@@ -45,7 +45,7 @@ JPH_Shape *find_or_create_shape_locked(PhysicsWorld *world, int type, const floa
     }
     // 2. CACHE LOOKUP
     for (size_t i = 0; i < world->shape_cache_count; ++i) {
-        const ShapeKey *cached = &world->shape_cache[i].key;
+        const CPH_ShapeKey *cached = &world->shape_cache[i].key;
         if (cached->type == (uint32_t)type && cached->p1 == p1 && cached->p2 == p2 &&
             cached->p3 == p3 && cached->p4 == p4) {
             return world->shape_cache[i].shape;
@@ -55,9 +55,9 @@ JPH_Shape *find_or_create_shape_locked(PhysicsWorld *world, int type, const floa
     // 3. PRE-ALLOCATION CHECK (Fail early before expensive Jolt work)
     if (world->shape_cache_count >= world->shape_cache_capacity) {
         size_t new_cap = (world->shape_cache_capacity == 0) ? 16 : world->shape_cache_capacity * 2;
-        ShapeEntry *new_ptr =
-            (ShapeEntry *)CulvNative_Realloc(world->shape_cache, new_cap * sizeof(ShapeEntry));
-        if (UNLIKELY(!new_ptr)) {
+        CPH_ShapeEntry *new_ptr =
+            (CPH_ShapeEntry *)CulvNative_Realloc(world->shape_cache, new_cap * sizeof(CPH_ShapeEntry));
+        if (CPH_UNLIKELY(!new_ptr)) {
             return nullptr;
         }
         world->shape_cache          = new_ptr;
@@ -113,19 +113,19 @@ JPH_Shape *find_or_create_shape_locked(PhysicsWorld *world, int type, const floa
         break;
     }
 
-    if (UNLIKELY(!shape)) {
+    if (CPH_UNLIKELY(!shape)) {
         return nullptr;
     }
 
     // 5. CACHE COMMIT
-    ShapeEntry *entry = &world->shape_cache[world->shape_cache_count++];
-    entry->key        = (ShapeKey){.type = (uint32_t)type, .p1 = p1, .p2 = p2, .p3 = p3, .p4 = p4};
+    CPH_ShapeEntry *entry = &world->shape_cache[world->shape_cache_count++];
+    entry->key        = (CPH_ShapeKey){.type = (uint32_t)type, .p1 = p1, .p2 = p2, .p3 = p3, .p4 = p4};
     entry->shape      = shape;
 
     return shape;
 }
 
-void free_shape_cache(PhysicsWorld *world) {
+void CPH_FreeShapeCache(CPH_PhysicsWorld *world) {
     if (!world->shape_cache) {
         return;
     }
@@ -142,13 +142,13 @@ void free_shape_cache(PhysicsWorld *world) {
 
 // Execute one native shapecast. The caller owns query registration and holds
 // the shape alive for the duration of this call.
-bool shapecast_execute_internal(PhysicsWorld *world, const JPH_Shape *shape,
+bool CPH_ShapecastExecuteInternal(CPH_PhysicsWorld *world, const JPH_Shape *shape,
                                 const JPH_RMat4 *transform, const JPH_Vec3 *sweep_dir,
-                                JPH_BodyID ignore_bid, CastShapeContext *ctx) {
+                                JPH_BodyID ignore_bid, CPH_CastShapeContext *ctx) {
     JPH_BroadPhaseLayerFilter *bp_f = JPH_BroadPhaseLayerFilter_Create(nullptr);
     JPH_ObjectLayerFilter *obj_f    = JPH_ObjectLayerFilter_Create(nullptr);
 
-    CastShapeFilter filter_ctx = {.ignore_id = ignore_bid};
+    CPH_CastShapeFilter filter_ctx = {.ignore_id = ignore_bid};
     JPH_BodyFilter *bf         = JPH_BodyFilter_Create(&filter_ctx);
 
     if (!bp_f || !obj_f || !bf) {

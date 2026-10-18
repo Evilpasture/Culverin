@@ -19,7 +19,7 @@ namespace {
 // =================================================================================================
 template <auto EventType, typename InfoExtractor>
 [[gnu::no_sanitize("thread")]]
-inline void RecordContact(PhysicsWorld *world, uint64_t r1, uint64_t r2,
+inline void RecordContact(CPH_PhysicsWorld *world, uint64_t r1, uint64_t r2,
                           InfoExtractor &&extract_info) noexcept {
     // 1. Thread-safe Index Allocation
     const size_t idx =
@@ -29,9 +29,9 @@ inline void RecordContact(PhysicsWorld *world, uint64_t r1, uint64_t r2,
     }
 
     // 2. Fetch the newly structured 128-byte event
-    ContactEvent *ev_base   = GetEventAt(world->contact_buffer, idx);
-    ContactEventSlim *slim  = GetSlimHeader(ev_base);
-    ContactEventFatExt *fat = GetFatExtension(ev_base);
+    CPH_ContactEvent *ev_base   = GetEventAt(world->contact_buffer, idx);
+    CPH_ContactEventSlim *slim  = GetSlimHeader(ev_base);
+    CPH_ContactEventFatExt *fat = GetFatExtension(ev_base);
 
     // 3. Set Event Type
     slim->flags = static_cast<uint32_t>(EventType);
@@ -53,7 +53,7 @@ inline void RecordContact(PhysicsWorld *world, uint64_t r1, uint64_t r2,
 // Leverages native JPH::Vec3 math for vectorized AVX/SSE acceleration.
 // =================================================================================================
 template <auto EventType>
-inline void ProcessManifoldEvent(PhysicsWorld *world, const JPH_Body *c_body1,
+inline void ProcessManifoldEvent(CPH_PhysicsWorld *world, const JPH_Body *c_body1,
                                  const JPH_Body *c_body2,
                                  const JPH_ContactManifold *c_manifold) noexcept {
 
@@ -65,8 +65,8 @@ inline void ProcessManifoldEvent(PhysicsWorld *world, const JPH_Body *c_body1,
     const uint64_t r1 = body1->GetUserData();
     const uint64_t r2 = body2->GetUserData();
 
-    const auto slot1 = static_cast<uint32_t>(r1 & HANDLE_INDEX_MASK);
-    const auto slot2 = static_cast<uint32_t>(r2 & HANDLE_INDEX_MASK);
+    const auto slot1 = static_cast<uint32_t>(r1 & kHandleIndexMask);
+    const auto slot2 = static_cast<uint32_t>(r2 & kHandleIndexMask);
 
     if (slot1 >= world->slot_capacity || slot2 >= world->slot_capacity) [[unlikely]] {
         return;
@@ -83,7 +83,7 @@ inline void ProcessManifoldEvent(PhysicsWorld *world, const JPH_Body *c_body1,
 
     // Defer memory allocation and math to the unified generator
     RecordContact<EventType>(
-        world, r1, r2, [&](ContactEventSlim *slim, ContactEventFatExt *fat, bool swapped) -> auto {
+        world, r1, r2, [&](CPH_ContactEventSlim *slim, CPH_ContactEventFatExt *fat, bool swapped) -> auto {
             // Native SIMD Vector Loading
             JPH::Vec3 n = manifold->mWorldSpaceNormal;
             if (swapped) {
@@ -130,20 +130,20 @@ inline void ProcessManifoldEvent(PhysicsWorld *world, const JPH_Body *c_body1,
 void JPH_API_CALL OnContactAdded(void *userData, const JPH_Body *body1, const JPH_Body *body2,
                                  const JPH_ContactManifold *manifold,
                                  JPH_ContactSettings * /*unused*/) noexcept {
-    ProcessManifoldEvent<EVENT_ADDED>(static_cast<PhysicsWorld *>(userData), body1, body2,
+    ProcessManifoldEvent<EVENT_ADDED>(static_cast<CPH_PhysicsWorld *>(userData), body1, body2,
                                       manifold);
 }
 
 void JPH_API_CALL OnContactPersisted(void *userData, const JPH_Body *body1, const JPH_Body *body2,
                                      const JPH_ContactManifold *manifold,
                                      JPH_ContactSettings * /*unused*/) noexcept {
-    ProcessManifoldEvent<EVENT_PERSISTED>(static_cast<PhysicsWorld *>(userData), body1, body2,
+    ProcessManifoldEvent<EVENT_PERSISTED>(static_cast<CPH_PhysicsWorld *>(userData), body1, body2,
                                           manifold);
 }
 
 [[gnu::no_sanitize("thread")]]
 void JPH_API_CALL OnContactRemoved(void *userData, const JPH_SubShapeIDPair *pair) noexcept {
-    auto *world = static_cast<PhysicsWorld *>(userData);
+    auto *world = static_cast<CPH_PhysicsWorld *>(userData);
 
     const uint32_t i1 = pair->Body1ID & JPH::BodyID::cMaxBodyIndex;
     const uint32_t i2 = pair->Body2ID & JPH::BodyID::cMaxBodyIndex;
@@ -167,7 +167,7 @@ void JPH_API_CALL OnContactRemoved(void *userData, const JPH_SubShapeIDPair *pai
     // Removed bodies only receive a subset of the data
     RecordContact<EVENT_REMOVED>(
         world, r1, r2,
-        [](ContactEventSlim *slim, ContactEventFatExt * /*fat*/, bool /*swapped*/) -> void {
+        [](CPH_ContactEventSlim *slim, CPH_ContactEventFatExt * /*fat*/, bool /*swapped*/) -> void {
             slim->px            = 0.0f;
             slim->py            = 0.0f;
             slim->pz            = 0.0f;
@@ -183,7 +183,7 @@ auto JPH_API_CALL OnContactValidate(void *userData, const JPH_Body *c_body1,
                                     const JPH_Body *c_body2, const JPH_RVec3 * /*unused*/,
                                     const JPH_CollideShapeResult * /*unused*/) noexcept
     -> JPH_ValidateResult {
-    auto *world = static_cast<PhysicsWorld *>(userData);
+    auto *world = static_cast<CPH_PhysicsWorld *>(userData);
 
     const auto *body1 = reinterpret_cast<const JPH::Body *>(c_body1);
     const auto *body2 = reinterpret_cast<const JPH::Body *>(c_body2);
@@ -191,8 +191,8 @@ auto JPH_API_CALL OnContactValidate(void *userData, const JPH_Body *c_body1,
     const uint64_t r1 = body1->GetUserData();
     const uint64_t r2 = body2->GetUserData();
 
-    const auto slot1 = static_cast<uint32_t>(r1 & HANDLE_INDEX_MASK);
-    const auto slot2 = static_cast<uint32_t>(r2 & HANDLE_INDEX_MASK);
+    const auto slot1 = static_cast<uint32_t>(r1 & kHandleIndexMask);
+    const auto slot2 = static_cast<uint32_t>(r2 & kHandleIndexMask);
 
     if (slot1 >= world->slot_capacity || slot2 >= world->slot_capacity) [[unlikely]] {
         return JPH_ValidateResult_RejectContact;

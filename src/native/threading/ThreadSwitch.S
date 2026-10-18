@@ -3,11 +3,11 @@
 // ----------------------------------------------------------------------------
 // culv_thread_switch(void **old_sp, void *new_sp)
 // ----------------------------------------------------------------------------
-    .global CULV_ASM_SYMBOL(culv_thread_switch)
+    .global CPH_ASM_SYMBOL(culv_thread_switch)
     .text
     .p2align 4
-CULV_ASM_SYMBOL(culv_thread_switch):
-#if defined(CULV_ASM_OS_WINDOWS) && defined(CULV_ASM_ARCH_X64)
+CPH_ASM_SYMBOL(culv_thread_switch):
+#if defined(CPH_ASM_OS_WINDOWS) && defined(CPH_ASM_ARCH_X64)
     push %rax
     push %rbp; push %rbx; push %rdi; push %rsi
     push %r12; push %r13; push %r14; push %r15
@@ -27,13 +27,13 @@ CULV_ASM_SYMBOL(culv_thread_switch):
     pop %rsi; pop %rdi; pop %rbx; pop %rbp
     pop %rax
     ret
-#elif defined(CULV_ASM_ARCH_X64)
+#elif defined(CPH_ASM_ARCH_X64)
     push %rbp; push %rbx; push %r12; push %r13; push %r14; push %r15
     mov %rsp, (%rdi)
     mov %rsi, %rsp
     pop %r15; pop %r14; pop %r13; pop %r12; pop %rbx; pop %rbp
     ret
-#elif defined(CULV_ASM_ARCH_ARM64)
+#elif defined(CPH_ASM_ARCH_ARM64)
     sub sp, sp, #160
     stp x19, x20, [sp, #0x00]
     stp x21, x22, [sp, #0x10]
@@ -61,30 +61,30 @@ CULV_ASM_SYMBOL(culv_thread_switch):
     add sp, sp, #160
     ret
 #endif
-#if defined(CULV_ASM_OS_LINUX)
-    .size CULV_ASM_SYMBOL(culv_thread_switch), .- CULV_ASM_SYMBOL(culv_thread_switch)
+#if defined(CPH_ASM_OS_LINUX)
+    .size CPH_ASM_SYMBOL(culv_thread_switch), .- CPH_ASM_SYMBOL(culv_thread_switch)
 #endif
 
 // ----------------------------------------------------------------------------
 // culv_thread_trampoline_asm
 // ----------------------------------------------------------------------------
-    .global CULV_ASM_SYMBOL(culv_thread_trampoline_asm)
+    .global CPH_ASM_SYMBOL(culv_thread_trampoline_asm)
     .text
     .p2align 4
-CULV_ASM_SYMBOL(culv_thread_trampoline_asm):
-#if defined(CULV_ASM_OS_WINDOWS) && defined(CULV_ASM_ARCH_X64)
+CPH_ASM_SYMBOL(culv_thread_trampoline_asm):
+#if defined(CPH_ASM_OS_WINDOWS) && defined(CPH_ASM_ARCH_X64)
     sub $32, %rsp
-    call CULV_ASM_SYMBOL(culv_thread_trampoline)
+    call CPH_ASM_SYMBOL(CPH_CulvThreadTrampoline)
     add $32, %rsp
     ret
-#elif defined(CULV_ASM_ARCH_X64)
+#elif defined(CPH_ASM_ARCH_X64)
     sub $8, %rsp
-    call CULV_ASM_SYMBOL(culv_thread_trampoline)
+    call CPH_ASM_SYMBOL(CPH_CulvThreadTrampoline)
     add $8, %rsp
     ret
-#elif defined(CULV_ASM_ARCH_ARM64)
-    b CULV_ASM_SYMBOL(culv_thread_trampoline)
+#elif defined(CPH_ASM_ARCH_ARM64)
+    b CPH_ASM_SYMBOL(CPH_CulvThreadTrampoline)
 #endif
-#if defined(CULV_ASM_OS_LINUX)
-    .size CULV_ASM_SYMBOL(culv_thread_trampoline_asm), .- CULV_ASM_SYMBOL(culv_thread_trampoline_asm)
+#if defined(CPH_ASM_OS_LINUX)
+    .size CPH_ASM_SYMBOL(culv_thread_trampoline_asm), .- CPH_ASM_SYMBOL(culv_thread_trampoline_asm)
 #endif

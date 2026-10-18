@@ -8,9 +8,9 @@
 #include <stdint.h>
 
 #if defined(JPH_DOUBLE_PRECISION)
-[[maybe_unused]] static constexpr int16_t CMD_ALIGN = 16;
+[[maybe_unused]] static constexpr int16_t kCmdAlign = 16;
 #else
-[[maybe_unused]] static constexpr int16_t CMD_ALIGN = 8;
+[[maybe_unused]] static constexpr int16_t kCmdAlign = 8;
 #endif
 
 // --- Slot State Machine ---
@@ -80,7 +80,7 @@ typedef struct {
     JPH_BodyID bid;
     uint32_t dense_idx;
     bool is_alive;
-} ResolvedCmd;
+} CPH_ResolvedCmd;
 
 // Force exactly 64-byte alignment and sizing.
 // This ensures exactly ONE command per CPU Cache Line, preventing false-sharing
@@ -168,47 +168,47 @@ typedef union {
         uint32_t body2_slot;
         uint32_t constraint_slot;
         int type;
-        ConstraintParams *params; // Heap allocated, freed during flush
+        CPH_ConstraintParams *params; // Heap allocated, freed during flush
     } constraint;
 
     // Forces the entire union to be exactly 64 bytes
-    uint8_t _cache_pad[MEMORY_ALIGNMENT_SIZE];
+    uint8_t _cache_pad[kMemoryAlignmentSize];
 
 } PhysicsCommand;
 
-static constexpr auto OFFSET_START =
+static constexpr auto kOffsetStart =
     8; // The offset where the actual command data starts (after the header and padding)
 
 // C23 native static_assert
-static_assert(sizeof(PhysicsCommand) == MEMORY_ALIGNMENT_SIZE,
+static_assert(sizeof(PhysicsCommand) == kMemoryAlignmentSize,
               "PhysicsCommand MUST be exactly 64 bytes for cache alignment");
-static_assert(offsetof(PhysicsCommand, vec3f.x) == OFFSET_START, "vec3f.x must start at offset 8");
-static_assert(offsetof(PhysicsCommand, transform.px) == OFFSET_START,
+static_assert(offsetof(PhysicsCommand, vec3f.x) == kOffsetStart, "vec3f.x must start at offset 8");
+static_assert(offsetof(PhysicsCommand, transform.px) == kOffsetStart,
               "transform.px must start at offset 8");
-static_assert(offsetof(PhysicsCommand, create.settings) == OFFSET_START,
+static_assert(offsetof(PhysicsCommand, create.settings) == kOffsetStart,
               "create.settings must start at offset 8");
-static_assert(alignof(PhysicsCommand) == MEMORY_ALIGNMENT_SIZE,
+static_assert(alignof(PhysicsCommand) == kMemoryAlignmentSize,
               "PhysicsCommand must be 64-byte aligned");
-static_assert(offsetof(PhysicsCommand, create_soft.settings) == OFFSET_START);
+static_assert(offsetof(PhysicsCommand, create_soft.settings) == kOffsetStart);
 
-struct PhysicsWorld;
+struct CPH_PhysicsWorld;
 
-void world_remove_body_slot(struct PhysicsWorld *world, uint32_t slot);
+void CPH_WorldRemoveBodySlot(struct CPH_PhysicsWorld *world, uint32_t slot);
 [[nodiscard]]
-bool ensure_command_capacity(struct PhysicsWorld *world);
+bool CPH_EnsureCommandCapacity(struct CPH_PhysicsWorld *world);
 [[nodiscard]]
-bool ensure_command_bulk_capacity(struct PhysicsWorld *world, size_t batch_size);
-void flush_commands_internal(struct PhysicsWorld *world, PhysicsCommand *queue, size_t count);
-void clear_command_queue(struct PhysicsWorld *world);
+bool CPH_EnsureCommandBulkCapacity(struct CPH_PhysicsWorld *world, size_t batch_size);
+void CPH_FlushCommandsInternal(struct CPH_PhysicsWorld *world, PhysicsCommand *queue, size_t count);
+void CPH_ClearCommandQueue(struct CPH_PhysicsWorld *world);
 
 // True Direct Threading: Evaluates the next command without returning to a while loop.
 // Includes aggressive software prefetching for indirect lookups.
-static constexpr uint32_t VALID_BID_MASK = (1u << SLOT_ALIVE) | (1u << SLOT_PENDING_CREATE) |
+static constexpr uint32_t kValidBidMask = (1u << SLOT_ALIVE) | (1u << SLOT_PENDING_CREATE) |
                                            (1u << SLOT_PENDING_DESTROY) |
                                            (1u << SLOT_CHARACTER | (1u << SLOT_SOFT_BODY));
-#define DISPATCH()                                                                                 \
+#define CPH_DISPATCH()                                                                                 \
     do {                                                                                           \
-        if (UNLIKELY(i >= count)) {                                                                \
+        if (CPH_UNLIKELY(i >= count)) {                                                                \
             return;                                                                                \
         }                                                                                          \
         cmd    = &queue[i++];                                                                      \
@@ -216,18 +216,18 @@ static constexpr uint32_t VALID_BID_MASK = (1u << SLOT_ALIVE) | (1u << SLOT_PEND
         type   = CMD_GET_TYPE(header);                                                             \
         slot   = CMD_GET_SLOT(header);                                                             \
                                                                                                    \
-        if (LIKELY(i < count)) {                                                                   \
-            CULV_PREFETCH_READ(&queue[i]);                                                         \
+        if (CPH_LIKELY(i < count)) {                                                                   \
+            CPH_PREFETCH_READ(&queue[i]);                                                         \
             const uint32_t next_slot = CMD_GET_SLOT(queue[i].header);                              \
-            CULV_PREFETCH_READ(&world->slot_states[next_slot]);                                     \
-            CULV_PREFETCH_READ(&world->slot_to_dense[next_slot]);                                   \
+            CPH_PREFETCH_READ(&world->slot_states[next_slot]);                                     \
+            CPH_PREFETCH_READ(&world->slot_to_dense[next_slot]);                                   \
         }                                                                                          \
                                                                                                    \
         state = atomic_load_explicit(&world->slot_states[slot], memory_order_acquire);              \
                                                                                                    \
         /* Branchless State Validation (Guarded against UB shift) */                               \
         /* If state > 31, (state < 32) evaluates to 0, masking the entire result to 0 */           \
-        const uint32_t is_valid = (state < 32) & ((VALID_BID_MASK >> (state & 31)) & 1);           \
+        const uint32_t is_valid = (state < 32) & ((kValidBidMask >> (state & 31)) & 1);           \
                                                                                                    \
         /* Unconditional Read: dense_idx and bid are always within allocated bounds */             \
         const uint32_t dense_idx = world->slot_to_dense[slot];                                      \
@@ -236,7 +236,7 @@ static constexpr uint32_t VALID_BID_MASK = (1u << SLOT_ALIVE) | (1u << SLOT_PEND
         /* Branchless Condition: Is it CREATE, or does it have a valid BID? */                     \
         const uint32_t is_executable =                                                             \
             is_valid & ((type == CMD_CREATE_BODY) | (type == CMD_CREATE_SOFT_BODY) |               \
-                        (bid != JPH_INVALID_BODY_ID));                                             \
+                        (bid != kJphInvalidBodyId));                                             \
                                                                                                    \
         /* Branchless Target Selection via Ternary (Compiles to CMOV / CSEL) */                    \
         const void *const target = is_executable ? dispatch_table[type] : &&op_NOP;                \

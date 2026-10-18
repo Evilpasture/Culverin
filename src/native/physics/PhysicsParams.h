@@ -18,17 +18,17 @@ typedef struct {
     const uint8_t *motion_types;
     const uint8_t *object_layers;
     const uint64_t *user_data;
-} BakedSceneData;
+} CPH_BakedSceneData;
 
 typedef struct {
     float p[4];
-} ShapeParams;
+} CPH_ShapeParams;
 
 typedef struct {
     uint32_t *indices;
     uint32_t count;
     uint32_t driven_idx;
-} TrackData;
+} CPH_TrackData;
 
 typedef struct {
     float px, py, pz, ax, ay, az;
@@ -36,4 +36,4 @@ typedef struct {
     bool has_motor;
     int motor_type;
     float motor_target, max_torque, frequency, damping, max_force;
-} ConstraintParams;
+} CPH_ConstraintParams;

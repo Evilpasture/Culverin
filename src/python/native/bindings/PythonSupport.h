@@ -7,7 +7,7 @@ static inline int py_to_int(PyObject *i) { return (int)PyLong_AsLong(i); }
 static inline long py_to_long(PyObject *i) { return PyLong_AsLong(i); }
 static inline const char *py_to_str(PyObject *i) { return PyUnicode_AsUTF8(i); }
 
-#define DEFINE_ATTR_GETTER(suffix, type, conv)                                                     \
+#define CPH_DEFINE_ATTR_GETTER(suffix, type, conv)                                                     \
     [[nodiscard]] static inline type get_py_attr_##suffix(PyObject *obj, const char *n,            \
                                                           type def) {                              \
         if (obj == nullptr || obj == Py_None)                                                      \
@@ -24,7 +24,7 @@ static inline const char *py_to_str(PyObject *i) { return PyUnicode_AsUTF8(i); }
         return result;                                                                             \
     }
 
-#define DEFINE_DICT_GETTER(suffix, type, conv)                                                     \
+#define CPH_DEFINE_DICT_GETTER(suffix, type, conv)                                                     \
     [[nodiscard]] static inline type get_py_dict_##suffix(PyObject *dict, const char *k,           \
                                                           type def) {                              \
         if (dict == nullptr || !PyDict_Check(dict))                                                \
@@ -39,19 +39,19 @@ static inline const char *py_to_str(PyObject *i) { return PyUnicode_AsUTF8(i); }
         return def;                                                                                \
     }
 
-DEFINE_ATTR_GETTER(f, float, py_to_float)
-DEFINE_ATTR_GETTER(d, double, py_to_double)
-DEFINE_ATTR_GETTER(i, int, py_to_int)
-DEFINE_ATTR_GETTER(l, long, py_to_long)
-DEFINE_ATTR_GETTER(s, const char *, py_to_str)
+CPH_DEFINE_ATTR_GETTER(f, float, py_to_float)
+CPH_DEFINE_ATTR_GETTER(d, double, py_to_double)
+CPH_DEFINE_ATTR_GETTER(i, int, py_to_int)
+CPH_DEFINE_ATTR_GETTER(l, long, py_to_long)
+CPH_DEFINE_ATTR_GETTER(s, const char *, py_to_str)
 
-DEFINE_DICT_GETTER(f, float, py_to_float)
-DEFINE_DICT_GETTER(d, double, py_to_double)
-DEFINE_DICT_GETTER(i, int, py_to_int)
-DEFINE_DICT_GETTER(l, long, py_to_long)
-DEFINE_DICT_GETTER(s, const char *, py_to_str)
+CPH_DEFINE_DICT_GETTER(f, float, py_to_float)
+CPH_DEFINE_DICT_GETTER(d, double, py_to_double)
+CPH_DEFINE_DICT_GETTER(i, int, py_to_int)
+CPH_DEFINE_DICT_GETTER(l, long, py_to_long)
+CPH_DEFINE_DICT_GETTER(s, const char *, py_to_str)
 
-#define get_py_attr(obj, name, def)                                                                \
+#define CPH_get_py_attr(obj, name, def)                                                                \
     _Generic((def),                                                                                \
         float: get_py_attr_f,                                                                      \
         double: get_py_attr_d,                                                                     \
@@ -60,7 +60,7 @@ DEFINE_DICT_GETTER(s, const char *, py_to_str)
         char *: get_py_attr_s,                                                                     \
         const char *: get_py_attr_s)(obj, name, def)
 
-#define get_py_dict(dict, key, def)                                                                \
+#define CPH_get_py_dict(dict, key, def)                                                                \
     _Generic((def),                                                                                \
         float: get_py_dict_f,                                                                      \
         double: get_py_dict_d,                                                                     \
@@ -69,22 +69,22 @@ DEFINE_DICT_GETTER(s, const char *, py_to_str)
         char *: get_py_dict_s,                                                                     \
         const char *: get_py_dict_s)(dict, key, def)
 
-#define CULV_CAST(m) (PyCFunction)(void (*)(void))(m)
+#define CPH_CAST(m) (PyCFunction)(void (*)(void))(m)
 
-#define CULV_FEAT(prefix, name, method_type)                                                       \
+#define CPH_FEAT(prefix, name, method_type)                                                       \
     {.ml_name  = #name,                                                                            \
-     .ml_meth  = CULV_CAST(prefix##_##name),                                                       \
+     .ml_meth  = CPH_CAST(prefix),                                                       \
      .ml_flags = (method_type),                                                                    \
      .ml_doc   = nullptr} // Initialized to nullptr to be filled by stitcher
 
-#define CULV_FEAT_INTERNAL(prefix, name, method_type)                                              \
+#define CPH_FEAT_INTERNAL(prefix, name, method_type)                                              \
     {.ml_name  = "_" #name,                                                                        \
-     .ml_meth  = CULV_CAST(prefix##_##name),                                                     \
+     .ml_meth  = CPH_CAST(prefix),                                                     \
      .ml_flags = (method_type),                                                                    \
      .ml_doc   = nullptr}
 
 // Getter/Property macro - concise initialization
-#define GETSET(name_str, getter_func)                                                              \
+#define CPH_GETSET(name_str, getter_func)                                                              \
     {.name    = (name_str),                                                                        \
      .get     = (getter)(getter_func),                                                             \
      .set     = nullptr,                                                                           \

@@ -23,13 +23,13 @@ filter_true_shape([[maybe_unused]] void *userData, [[maybe_unused]] const JPH_Sh
 }
 
 // 3. Define the GLOBAL procedure tables
-[[maybe_unused]] static const JPH_BroadPhaseLayerFilter_Procs global_bp_procs = {
+[[maybe_unused]] static const JPH_BroadPhaseLayerFilter_Procs kGlobalBpProcs = {
     .ShouldCollide = filter_allow_all_bp};
 
-[[maybe_unused]] static const JPH_ObjectLayerFilter_Procs global_obj_procs = {
+[[maybe_unused]] static const JPH_ObjectLayerFilter_Procs kGlobalObjProcs = {
     .ShouldCollide = filter_allow_all_obj};
 
-[[maybe_unused]] static const JPH_BodyFilter_Procs global_bf_procs  = {.ShouldCollide =
+[[maybe_unused]] static const JPH_BodyFilter_Procs kGlobalBfProcs  = {.ShouldCollide =
                                                                            UnifiedBodyFilter};
-[[maybe_unused]] static const JPH_ShapeFilter_Procs global_sf_procs = {.ShouldCollide =
+[[maybe_unused]] static const JPH_ShapeFilter_Procs kGlobalSfProcs = {.ShouldCollide =
                                                                            filter_true_shape};

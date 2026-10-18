@@ -3,7 +3,7 @@
 #include "physics/PhysicsWorldState.h"
 
 // --- Debug Buffer Helpers ---
-void debug_buffer_ensure(DebugBuffer *buf, size_t count_needed) {
+void CPH_DebugBufferEnsure(CPH_DebugBuffer *buf, size_t count_needed) {
     if (buf->count + count_needed > buf->capacity) {
         constexpr size_t NEW_INITIAL_CAPACITY = 4096;
         size_t new_cap = (buf->capacity == 0) ? NEW_INITIAL_CAPACITY : buf->capacity * 2;
@@ -11,17 +11,17 @@ void debug_buffer_ensure(DebugBuffer *buf, size_t count_needed) {
             new_cap *= 2;
         }
 
-        void *new_ptr = CulvNative_Realloc(buf->data, new_cap * sizeof(DebugVertex));
+        void *new_ptr = CulvNative_Realloc(buf->data, new_cap * sizeof(CPH_DebugVertex));
         if (!new_ptr) {
             return; // Silent fail on OOM for debug info
         }
 
-        buf->data     = (DebugVertex *)new_ptr;
+        buf->data     = (CPH_DebugVertex *)new_ptr;
         buf->capacity = new_cap;
     }
 }
 
-void debug_buffer_push(DebugBuffer *buf, DebugCoordinates pos, uint32_t color) {
+void CPH_DebugBufferPush(CPH_DebugBuffer *buf, CPH_DebugCoordinates pos, uint32_t color) {
     if (buf->count >= buf->capacity) {
         return; // Safety
     }
@@ -32,7 +32,7 @@ void debug_buffer_push(DebugBuffer *buf, DebugCoordinates pos, uint32_t color) {
     buf->count++;
 }
 
-void debug_buffer_free(DebugBuffer *buf) {
+void CPH_DebugBufferFree(CPH_DebugBuffer *buf) {
     if (buf->data) {
         CulvNative_Free(buf->data);
     }
@@ -44,12 +44,12 @@ void debug_buffer_free(DebugBuffer *buf) {
 // --- Jolt Debug Callbacks ---
 static void JPH_API_CALL OnDebugDrawLine(void *userData, const JPH_RVec3 *from, const JPH_RVec3 *to,
                                          JPH_Color color) {
-    PhysicsWorld *world = (PhysicsWorld *)userData;
-    debug_buffer_ensure(&world->debug_lines, 2);
-    debug_buffer_push(&world->debug_lines,
-                      (DebugCoordinates){(float)from->x, (float)from->y, (float)from->z}, color);
-    debug_buffer_push(&world->debug_lines,
-                      (DebugCoordinates){(float)to->x, (float)to->y, (float)to->z}, color);
+    CPH_PhysicsWorld *world = (CPH_PhysicsWorld *)userData;
+    CPH_DebugBufferEnsure(&world->debug_lines, 2);
+    CPH_DebugBufferPush(&world->debug_lines,
+                      (CPH_DebugCoordinates){(float)from->x, (float)from->y, (float)from->z}, color);
+    CPH_DebugBufferPush(&world->debug_lines,
+                      (CPH_DebugCoordinates){(float)to->x, (float)to->y, (float)to->z}, color);
 }
 
 static void JPH_API_CALL
@@ -57,15 +57,15 @@ OnDebugDrawTriangle(void *userData, const JPH_RVec3 *v1, const JPH_RVec3 *v2,
                     // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
                     const JPH_RVec3 *v3, JPH_Color color,
                     [[maybe_unused]] JPH_DebugRenderer_CastShadow castShadow) {
-    PhysicsWorld *world = (PhysicsWorld *)userData;
+    CPH_PhysicsWorld *world = (CPH_PhysicsWorld *)userData;
     constexpr int VERTS_PER_TRIANGLE = 3;
-    debug_buffer_ensure(&world->debug_triangles, VERTS_PER_TRIANGLE);
-    debug_buffer_push(&world->debug_triangles,
-                      (DebugCoordinates){(float)v1->x, (float)v1->y, (float)v1->z}, color);
-    debug_buffer_push(&world->debug_triangles,
-                      (DebugCoordinates){(float)v2->x, (float)v2->y, (float)v2->z}, color);
-    debug_buffer_push(&world->debug_triangles,
-                      (DebugCoordinates){(float)v3->x, (float)v3->y, (float)v3->z}, color);
+    CPH_DebugBufferEnsure(&world->debug_triangles, VERTS_PER_TRIANGLE);
+    CPH_DebugBufferPush(&world->debug_triangles,
+                      (CPH_DebugCoordinates){(float)v1->x, (float)v1->y, (float)v1->z}, color);
+    CPH_DebugBufferPush(&world->debug_triangles,
+                      (CPH_DebugCoordinates){(float)v2->x, (float)v2->y, (float)v2->z}, color);
+    CPH_DebugBufferPush(&world->debug_triangles,
+                      (CPH_DebugCoordinates){(float)v3->x, (float)v3->y, (float)v3->z}, color);
 }
 
 static void JPH_API_CALL OnDebugDrawText([[maybe_unused]] void *userData,
@@ -78,6 +78,6 @@ static void JPH_API_CALL OnDebugDrawText([[maybe_unused]] void *userData,
     // Usually ignored or printed to stdout.
 }
 
-const JPH_DebugRenderer_Procs debug_procs = {.DrawLine     = OnDebugDrawLine,
+const JPH_DebugRenderer_Procs kDebugProcs = {.DrawLine     = OnDebugDrawLine,
                                              .DrawTriangle = OnDebugDrawTriangle,
                                              .DrawText3D   = OnDebugDrawText};

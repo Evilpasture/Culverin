@@ -9,10 +9,10 @@
 
 static void JPH_API_CALL Ship_OnStep(void *userData,
                                      const JPH_PhysicsStepListenerContext *inContext) {
-    ShipObject *self      = (ShipObject *)userData;
+    CPH_ShipObject *self      = (CPH_ShipObject *)userData;
     JPH_BodyInterface *bi = JPH_PhysicsSystem_GetBodyInterfaceNoLock(inContext->physicsSystem);
 
-    if (self->sled_bid == JPH_INVALID_BODY_ID) {
+    if (self->sled_bid == kJphInvalidBodyId) {
         return;
     }
 
@@ -84,11 +84,11 @@ static void JPH_API_CALL Ship_OnStep(void *userData,
     }
 }
 
-static const JPH_PhysicsStepListener_Procs ship_listener_procs = {.OnStep = Ship_OnStep};
+static const JPH_PhysicsStepListener_Procs kShipListenerProcs = {.OnStep = Ship_OnStep};
 
 // --- CREATION ---
-void culverin_init_ship_parsers(ShipParsers *sp);
-PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ship(PhysicsWorldObject *self,
+void CPH_CulverinInitShipParsers(CPH_ShipParsers *sp);
+PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldCreateShip(CPH_PhysicsWorldObject *self,
                                                              PyObject *const *args,
                                                              Py_ssize_t nargs, PyObject *kwnames) {
     uint64_t sled_raw = 0;
@@ -110,34 +110,34 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ship(PhysicsWorldObject 
         [IDX_CS_GRIP]     = (const void *const restrict)&grip,
         [IDX_CS_DRAG]     = (const void *const restrict)&drag};
 
-    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->CreateShipParser, targets)) {
+    if (!CPH_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->CreateShipParser, targets)) {
         return nullptr;
     }
 
-    SHADOW_LOCK(&self->physics.shadow_lock);
-    sync_and_flush_internal(self);
+    CPH_SHADOW_LOCK(&self->physics.shadow_lock);
+    CPH_SyncAndFlushInternal(self);
 
     uint32_t slot;
     if (!unpack_handle(&self->physics, (BodyHandle)sled_raw, &slot)) {
-        SHADOW_UNLOCK(&self->physics.shadow_lock);
+        CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
         return PyErr_Format(PyExc_ValueError, "Invalid sled handle.");
     }
     JPH_BodyID bid = self->physics.body_ids[self->physics.slot_to_dense[slot]];
-    SHADOW_UNLOCK(&self->physics.shadow_lock);
-    CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
-    auto obj          = (ShipObject *)PyObject_GC_New(ShipObject, (PyTypeObject *)st->ShipType);
+    CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
+    CPH_CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
+    auto obj          = (CPH_ShipObject *)PyObject_GC_New(CPH_ShipObject, (PyTypeObject *)st->ShipType);
     if (!obj) {
         return nullptr;
     }
-    obj->parsers = (ShipParsers *)PyMem_Malloc(sizeof(ShipParsers));
+    obj->parsers = (CPH_ShipParsers *)PyMem_Malloc(sizeof(CPH_ShipParsers));
     if (!obj->parsers) {
         Py_DECREF(obj);
         PyErr_NoMemory();
         return nullptr;
     }
-    culverin_init_ship_parsers(obj->parsers);
+    CPH_CulverinInitShipParsers(obj->parsers);
 
-    obj->world      = (PhysicsWorldObject *)Py_NewRef(self);
+    obj->world      = (CPH_PhysicsWorldObject *)Py_NewRef(self);
     obj->sled_bid   = bid;
     obj->sled_h_raw = sled_raw;
     atomic_init(&obj->input_fwd, 0.0f);
@@ -151,11 +151,11 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ship(PhysicsWorldObject 
     obj->linear_drag      = drag;
 
     // Use global trampoline lock to register listener
-    NATIVE_MUTEX_LOCK(self->physics.jph_trampoline_lock);
-    JPH_PhysicsStepListener_SetProcs(&ship_listener_procs);
+    CPH_NATIVE_MUTEX_LOCK(self->physics.jph_trampoline_lock);
+    JPH_PhysicsStepListener_SetProcs(&kShipListenerProcs);
     obj->listener = JPH_PhysicsStepListener_Create(obj);
     JPH_PhysicsSystem_AddStepListener(self->physics.system, obj->listener);
-    NATIVE_MUTEX_UNLOCK(self->physics.jph_trampoline_lock);
+    CPH_NATIVE_MUTEX_UNLOCK(self->physics.jph_trampoline_lock);
 
     PyObject_GC_Track((PyObject *)obj);
     return (PyObject *)obj;
@@ -163,7 +163,7 @@ PyCFunction_DeclareMethodFromModule PhysicsWorld_create_ship(PhysicsWorldObject 
 
 // --- INPUT (ULTRA FAST) ---
 
-PyCFunction_DeclareMethodFromModule Ship_set_input(ShipObject *self, PyObject *const *args,
+PyCFunction_DeclareMethodFromModule CPH_PyShipSetInput(CPH_ShipObject *self, PyObject *const *args,
                                                    Py_ssize_t nargs, PyObject *kwnames) {
     float fwd                                           = 0.0f;
     float right                                         = 0.0f;
@@ -171,7 +171,7 @@ PyCFunction_DeclareMethodFromModule Ship_set_input(ShipObject *self, PyObject *c
         [IDX_SI_FWD]   = (const void *const restrict)&fwd,
         [IDX_SI_RIGHT] = (const void *const restrict)&right};
 
-    if (!CULV_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->ShipInputParser, targets)) {
+    if (!CPH_FAST_PARSE_UNIFIED(args, nargs, kwnames, &self->parsers->ShipInputParser, targets)) {
         return nullptr;
     }
 
@@ -184,20 +184,20 @@ PyCFunction_DeclareMethodFromModule Ship_set_input(ShipObject *self, PyObject *c
 }
 
 // --- CLEANUP ---
-void culverin_free_ship_parsers(ShipParsers *sp);
-PyType_DeclareSlot_VoidFromModule Ship_dealloc(ShipObject *self) {
+void CPH_CulverinFreeShipParsers(CPH_ShipParsers *sp);
+PyType_DeclareSlot_VoidFromModule CPH_PyShipDealloc(CPH_ShipObject *self) {
     PyObject_GC_UnTrack(self);
 
     if (self->world && self->listener) {
         // Protect Jolt system call with trampoline lock
-        NATIVE_MUTEX_LOCK(self->world->physics.jph_trampoline_lock);
+        CPH_NATIVE_MUTEX_LOCK(self->world->physics.jph_trampoline_lock);
         JPH_PhysicsSystem_RemoveStepListener(self->world->physics.system, self->listener);
         JPH_PhysicsStepListener_Destroy(self->listener);
-        NATIVE_MUTEX_UNLOCK(self->world->physics.jph_trampoline_lock);
+        CPH_NATIVE_MUTEX_UNLOCK(self->world->physics.jph_trampoline_lock);
     }
 
     if (self->parsers) {
-        culverin_free_ship_parsers(self->parsers);
+        CPH_CulverinFreeShipParsers(self->parsers);
         PyMem_Free(self->parsers);
     }
 
@@ -205,25 +205,25 @@ PyType_DeclareSlot_VoidFromModule Ship_dealloc(ShipObject *self) {
     Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
-PyType_DeclareSlot_StatusFromModule Ship_traverse(ShipObject *self, visitproc visit, void *arg) {
+PyType_DeclareSlot_StatusFromModule CPH_PyShipTraverse(CPH_ShipObject *self, visitproc visit, void *arg) {
     Py_VISIT(self->world);
     return 0;
 }
 
-PyType_DeclareSlot_StatusFromModule Ship_clear(ShipObject *self) {
+PyType_DeclareSlot_StatusFromModule CPH_PyShipClear(CPH_ShipObject *self) {
     Py_CLEAR(self->world);
     return 0;
 }
 
-#define SHIP_FASTCALL(name) CULV_FEAT(Ship, name, METH_FASTCALL | METH_KEYWORDS)
+#define CPH_SHIP_FASTCALL(fn, name) CPH_FEAT(fn, name, METH_FASTCALL | METH_KEYWORDS)
 PyType_Spec Ship_spec = {
     .name      = "culverin._culverin_c.Ship",
-    .basicsize = sizeof(ShipObject),
+    .basicsize = sizeof(CPH_ShipObject),
     .flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
-    .slots     = (PyType_Slot[]){{.slot = Py_tp_dealloc, .pfunc = Ship_dealloc},
-                                 {.slot = Py_tp_traverse, .pfunc = Ship_traverse},
-                                 {.slot = Py_tp_clear, .pfunc = Ship_clear},
+    .slots     = (PyType_Slot[]){{.slot = Py_tp_dealloc, .pfunc = CPH_PyShipDealloc},
+                                 {.slot = Py_tp_traverse, .pfunc = CPH_PyShipTraverse},
+                                 {.slot = Py_tp_clear, .pfunc = CPH_PyShipClear},
                                  {.slot  = Py_tp_methods,
-                                  .pfunc = (PyMethodDef[]){SHIP_FASTCALL(set_input), {}}},
+                                  .pfunc = (PyMethodDef[]){CPH_SHIP_FASTCALL(CPH_PyShipSetInput, set_input), {}}},
                                  {}},
 };

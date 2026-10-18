@@ -15,11 +15,11 @@
 #include <atomic>
 #include <memory> // IWYU pragma: keep
 
-static_assert(sizeof(PosStride) == sizeof(JPH::Real) * 4);
-static_assert(sizeof(AuxStride) == sizeof(CPH::Float32) * 4);
-static_assert(alignof(PosStride) == 32);
-static_assert(alignof(AuxStride) == 16);
-static_assert(sizeof(PosStride) % 32 == 0);
+static_assert(sizeof(CPH_PosStride) == sizeof(JPH::Real) * 4);
+static_assert(sizeof(CPH_AuxStride) == sizeof(CPH::Float32) * 4);
+static_assert(alignof(CPH_PosStride) == 32);
+static_assert(alignof(CPH_AuxStride) == 16);
+static_assert(sizeof(CPH_PosStride) % 32 == 0);
 
 namespace CPH {
 
@@ -30,13 +30,13 @@ struct SyncWorkItem {
 };
 
 struct WorldDataCreateInfo {
-    PosStride *const CPH_RESTRICT shadow_pos;
-    PosStride *const CPH_RESTRICT shadow_ppos;
-    AuxStride *const CPH_RESTRICT shadow_rot;
-    AuxStride *const CPH_RESTRICT shadow_prot;
-    AuxStride *const CPH_RESTRICT shadow_lvel;
-    AuxStride *const CPH_RESTRICT shadow_avel;
-    const SoftBodyShadow *const CPH_RESTRICT soft_shadows;
+    CPH_PosStride *const CPH_RESTRICT shadow_pos;
+    CPH_PosStride *const CPH_RESTRICT shadow_ppos;
+    CPH_AuxStride *const CPH_RESTRICT shadow_rot;
+    CPH_AuxStride *const CPH_RESTRICT shadow_prot;
+    CPH_AuxStride *const CPH_RESTRICT shadow_lvel;
+    CPH_AuxStride *const CPH_RESTRICT shadow_avel;
+    const CPH_SoftBodyShadow *const CPH_RESTRICT soft_shadows;
 };
 
 struct MappingDataCreateInfo {
@@ -102,17 +102,17 @@ ProcessItem(const Unsigned32 D, const JPH::Body *const CPH_RESTRICT b,
             static_cast<const JPH::SoftBodyMotionProperties *const CPH_RESTRICT>(
                 b->GetMotionProperties());
         const JPH::Array<JPH::SoftBodyVertex> &jolt_verts = soft_mp->GetVertices();
-        const SoftBodyShadow &shadow                      = world.soft_shadows[D];
+        const CPH_SoftBodyShadow &shadow                      = world.soft_shadows[D];
 
         if ((shadow.vertices == nullptr) || shadow.num_vertices != jolt_verts.size()) [[unlikely]] {
             return;
         }
 
         auto *const CPH_RESTRICT dst_verts =
-            reinterpret_cast<PosStride *const CPH_RESTRICT>(shadow.vertices);
+            reinterpret_cast<CPH_PosStride *const CPH_RESTRICT>(shadow.vertices);
 
         const SizeType num_v = shadow.num_vertices;
-        CULV_UNROLL_LOOP(8)
+        CPH_UNROLL_LOOP(8)
         for (SizeType v = 0; v < num_v; ++v) {
             if (v + 8 < num_v) {
                 CPH::Prefetch<CPH::AccessType::Write>(&dst_verts[v + 8]);
@@ -148,7 +148,7 @@ inline auto ProcessBatch(const WorldDataCreateInfo world,
     const SizeType count = items.size();
     [[assume(count > 0), assume(count <= BATCH_SIZE)]];
 
-    CULV_UNROLL_LOOP(4)
+    CPH_UNROLL_LOOP(4)
     for (Unsigned32 j = 0; j < count; j++) {
         if (j + 2 < count) {
             const Unsigned32 next_idx = items[j + 2].dense_idx;
@@ -180,7 +180,7 @@ ExecuteSyncPass(const Unsigned32 active_count, const JPH_PhysicsSystem *const CP
         [[unlikely]] return;
     }
 
-    alignas(MEMORY_ALIGNMENT_SIZE) std::array<SyncWorkItem, BATCH_SIZE> worklist;
+    alignas(kMemoryAlignmentSize) std::array<SyncWorkItem, BATCH_SIZE> worklist;
 
     Unsigned32 work_ptr = 0;
 
@@ -203,8 +203,8 @@ ExecuteSyncPass(const Unsigned32 active_count, const JPH_PhysicsSystem *const CP
         }
 
         const Unsigned64 handle    = b->GetUserData();
-        const auto slot            = static_cast<const Unsigned32>(handle & HANDLE_INDEX_MASK);
-        const auto gen             = static_cast<const Unsigned32>(handle >> HANDLE_INDEX_BITS);
+        const auto slot            = static_cast<const Unsigned32>(handle & kHandleIndexMask);
+        const auto gen             = static_cast<const Unsigned32>(handle >> kHandleIndexBits);
         const Unsigned32 safe_slot = (slot < map.slot_capacity) ? slot : 0;
 
         const Unsigned8 state        = map.slot_states[safe_slot].load(std::memory_order_relaxed);
@@ -259,7 +259,7 @@ ExecuteSyncPass(const Unsigned32 active_count, const JPH_PhysicsSystem *const CP
 // =================================================================================================
 
 extern "C" [[gnu::flatten, gnu::hot, gnu::nonnull(1)]] auto
-culverin_sync_shadow_buffers(const PhysicsWorld *const CPH_RESTRICT world) noexcept -> void {
+culverin_sync_shadow_buffers(const CPH_PhysicsWorld *const CPH_RESTRICT world) noexcept -> void {
     using namespace CPH;
     // Use upstream JoltC's public API instead of the fork-only raw PhysicsSystem accessor.
     const JPH_PhysicsSystem *const CPH_RESTRICT system = world->system;
@@ -274,29 +274,29 @@ culverin_sync_shadow_buffers(const PhysicsWorld *const CPH_RESTRICT world) noexc
     }
 
     constexpr Unsigned64 MIN_CYCLES             = 0xFFFFFFFFFFFFFFFFULL;
-    [[maybe_unused]] static CulvStat sync_stats = {
+    [[maybe_unused]] static CPH_CulvStat sync_stats = {
         .total_cycles = 0, .min_cycles = MIN_CYCLES, .max_cycles = 0, .count = 0};
 
-    CULV_PROFILE_BEGIN(sync);
+    CPH_PROFILE_BEGIN(sync);
 
     const CPH::WorldDataCreateInfo world_data = {
-        .shadow_pos = std::assume_aligned<sizeof(PosStride)>(
-            reinterpret_cast<PosStride *const CPH_RESTRICT>(world->positions)),
+        .shadow_pos = std::assume_aligned<sizeof(CPH_PosStride)>(
+            reinterpret_cast<CPH_PosStride *const CPH_RESTRICT>(world->positions)),
 
-        .shadow_ppos = std::assume_aligned<sizeof(PosStride)>(
-            reinterpret_cast<PosStride *const CPH_RESTRICT>(world->prev_positions)),
+        .shadow_ppos = std::assume_aligned<sizeof(CPH_PosStride)>(
+            reinterpret_cast<CPH_PosStride *const CPH_RESTRICT>(world->prev_positions)),
 
-        .shadow_rot = std::assume_aligned<sizeof(AuxStride)>(
-            reinterpret_cast<AuxStride *const CPH_RESTRICT>(world->rotations)),
+        .shadow_rot = std::assume_aligned<sizeof(CPH_AuxStride)>(
+            reinterpret_cast<CPH_AuxStride *const CPH_RESTRICT>(world->rotations)),
 
-        .shadow_prot = std::assume_aligned<sizeof(AuxStride)>(
-            reinterpret_cast<AuxStride *const CPH_RESTRICT>(world->prev_rotations)),
+        .shadow_prot = std::assume_aligned<sizeof(CPH_AuxStride)>(
+            reinterpret_cast<CPH_AuxStride *const CPH_RESTRICT>(world->prev_rotations)),
 
-        .shadow_lvel = std::assume_aligned<sizeof(AuxStride)>(
-            reinterpret_cast<AuxStride *const CPH_RESTRICT>(world->linear_velocities)),
+        .shadow_lvel = std::assume_aligned<sizeof(CPH_AuxStride)>(
+            reinterpret_cast<CPH_AuxStride *const CPH_RESTRICT>(world->linear_velocities)),
 
-        .shadow_avel = std::assume_aligned<sizeof(AuxStride)>(
-            reinterpret_cast<AuxStride *const CPH_RESTRICT>(world->angular_velocities)),
+        .shadow_avel = std::assume_aligned<sizeof(CPH_AuxStride)>(
+            reinterpret_cast<CPH_AuxStride *const CPH_RESTRICT>(world->angular_velocities)),
 
         .soft_shadows = world->soft_shadows};
 
@@ -314,12 +314,12 @@ culverin_sync_shadow_buffers(const PhysicsWorld *const CPH_RESTRICT world) noexc
         ExecuteSyncPass<JPH::EBodyType::SoftBody>(active_soft_count, system, mapping_data, world_data);
     }
 
-    CULV_PROFILE_ACCUMULATE(sync, &sync_stats);
+    CPH_PROFILE_ACCUMULATE(sync, &sync_stats);
 #ifdef CULVERIN_PROFILE_SYNC
     if (sync_stats.count >= 50) {
         fprintf(stderr, "[culverin] Sync Stat Avg: %" PRIu64 " | Max: %" PRIu64 "\n",
                 sync_stats.total_cycles / sync_stats.count, sync_stats.max_cycles);
-        sync_stats = (CulvStat){0, MIN_CYCLES, 0, 0};
+        sync_stats = (CPH_CulvStat){0, MIN_CYCLES, 0, 0};
     }
 #endif
 }

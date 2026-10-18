@@ -102,26 +102,26 @@
 // Culverin-Specific Converters
 [[maybe_unused]] [[nodiscard]] static inline bool culv_fast_parse_conv_vec3f(PyObject *o,
                                                                              const void *t) {
-    Vec3f *v = (Vec3f *)t; // Cast away const to write to the struct
-    return parse_vec3_f32(o, &v->x, &v->y, &v->z) != 0;
+    CPH_Vec3f *v = (CPH_Vec3f *)t; // Cast away const to write to the struct
+    return CPH_ParseVec3F32(o, &v->x, &v->y, &v->z) != 0;
 }
 
 [[maybe_unused]] [[nodiscard]] static inline bool culv_fast_parse_conv_pos_stride(PyObject *o,
                                                                                   const void *t) {
-    PosStride *v = (PosStride *)t;
-    return parse_vec3_r64(o, &v->x, &v->y, &v->z) != 0;
+    CPH_PosStride *v = (CPH_PosStride *)t;
+    return CPH_ParseVec3R64(o, &v->x, &v->y, &v->z) != 0;
 }
 
 [[maybe_unused]] [[nodiscard]] static inline bool culv_fast_parse_conv_aux_stride(PyObject *o,
                                                                                   const void *t) {
-    AuxStride *v = (AuxStride *)t;
-    return parse_quat_f32(o, &v->x, &v->y, &v->z, &v->w) != 0;
+    CPH_AuxStride *v = (CPH_AuxStride *)t;
+    return CPH_ParseQuatF32(o, &v->x, &v->y, &v->z, &v->w) != 0;
 }
 
-#define CULV_FAST_PARSE_CUSTOM_TYPE_NAMES , Vec3f : "Vector3", PosStride : "Vector3", AuxStride : "Quaternion"
+#define CPH_FAST_PARSE_CUSTOM_TYPE_NAMES , CPH_Vec3f : "Vector3", CPH_PosStride : "Vector3", CPH_AuxStride : "Quaternion"
 
-#define CULV_FAST_PARSE_CUSTOM_CONVERTERS                                                                       \
-    , Vec3f : culv_fast_parse_conv_vec3f, PosStride : culv_fast_parse_conv_pos_stride, AuxStride : culv_fast_parse_conv_aux_stride
+#define CPH_FAST_PARSE_CUSTOM_CONVERTERS                                                                       \
+    , CPH_Vec3f : culv_fast_parse_conv_vec3f, CPH_PosStride : culv_fast_parse_conv_pos_stride, CPH_AuxStride : culv_fast_parse_conv_aux_stride
 
 // 4. Include the actual submodule
 #include "FastParserCore.h"

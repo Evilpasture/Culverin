@@ -8,15 +8,15 @@
 
 typedef void (*CulvThreadFunc)(void *arg);
 
-typedef struct CulvThread CulvThread;
-static constexpr size_t CULV_THREAD_ALIGNMENT = 128;
-struct CulvThread {
-    alignas(CULV_THREAD_ALIGNMENT) void *stack_pointer;
+typedef struct CPH_CulvThread CPH_CulvThread;
+static constexpr size_t kThreadAlignment = 128;
+struct CPH_CulvThread {
+    alignas(kThreadAlignment) void *stack_pointer;
     void *map_addr;
     size_t map_size;
     CulvThreadFunc func;
     void *arg;
-    CulvThread *caller;
+    CPH_CulvThread *caller;
 #if defined(_WIN32)
     void *stack_base;
     void *stack_limit;
@@ -29,12 +29,12 @@ struct CulvThread {
 extern "C" {
 #endif
 
-void culv_thread_init_main(void);
-CulvThread *culv_thread_create(size_t stack_size, CulvThreadFunc func, void *arg);
-void culv_thread_resume(CulvThread *target);
-void culv_thread_yield(void);
-void culv_thread_destroy(CulvThread *thread);
-CulvThread *culv_thread_get_current(void);
+void CPH_CulvThreadInitMain(void);
+CPH_CulvThread *CPH_CulvThreadCreate(size_t stack_size, CulvThreadFunc func, void *arg);
+void CPH_CulvThreadResume(CPH_CulvThread *target);
+void CPH_CulvThreadYield(void);
+void CPH_CulvThreadDestroy(CPH_CulvThread *thread);
+CPH_CulvThread *CPH_CulvThreadGetCurrent(void);
 
 #ifdef __cplusplus
 } // extern "C"

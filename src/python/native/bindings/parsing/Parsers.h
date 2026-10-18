@@ -3,37 +3,37 @@
 #include <Python.h>
 
 // Direct variable extraction (Fast path)
-int parse_vec3_f32(PyObject *obj, float *x, float *y, float *z);
-int parse_vec3_r64(PyObject *obj, double *x, double *y, double *z);
-int parse_quat_f32(PyObject *obj, float *x, float *y, float *z, float *w);
-int parse_quat_r64(PyObject *obj, double *x, double *y, double *z, double *w);
+int CPH_ParseVec3F32(PyObject *obj, float *x, float *y, float *z);
+int CPH_ParseVec3R64(PyObject *obj, double *x, double *y, double *z);
+int CPH_ParseQuatF32(PyObject *obj, float *x, float *y, float *z, float *w);
+int CPH_ParseQuatR64(PyObject *obj, double *x, double *y, double *z, double *w);
 
 // Type-safe dispatchers
-#define parse_vec3_direct(obj, x, y, z)                                                            \
-    _Generic((x), float *: parse_vec3_f32, double *: parse_vec3_r64)(obj, x, y, z)
+#define CPH_parse_vec3_direct(obj, x, y, z)                                                            \
+    _Generic((x), float *: CPH_ParseVec3F32, double *: CPH_ParseVec3R64)(obj, x, y, z)
 
-#define parse_quat_direct(obj, x, y, z, w)                                                         \
-    _Generic((x), float *: parse_quat_f32, double *: parse_quat_r64)(obj, x, y, z, w)
+#define CPH_parse_quat_direct(obj, x, y, z, w)                                                         \
+    _Generic((x), float *: CPH_ParseQuatF32, double *: CPH_ParseQuatR64)(obj, x, y, z, w)
 
-int parse_py_vec3f(PyObject *obj, Vec3f *out);
-int parse_py_vec3_pos(PyObject *obj, PosStride *out);
-int parse_py_vec3_aux(PyObject *obj, AuxStride *out);
+int CPH_ParsePyVec3f(PyObject *obj, CPH_Vec3f *out);
+int CPH_ParsePyVec3Pos(PyObject *obj, CPH_PosStride *out);
+int CPH_ParsePyVec3Aux(PyObject *obj, CPH_AuxStride *out);
 
-#define parse_py_vec3(obj, out)                                                                    \
+#define CPH_parse_py_vec3(obj, out)                                                                    \
     _Generic((out),                                                                                \
-        PosStride *: parse_py_vec3_pos,                                                            \
-        const PosStride *: parse_py_vec3_pos,                                                      \
-        AuxStride *: parse_py_vec3_aux,                                                            \
-        const AuxStride *: parse_py_vec3_aux,                                                      \
-        Vec3f *: parse_py_vec3f,                                                                   \
-        const Vec3f *: parse_py_vec3f)(obj, out)
+        CPH_PosStride *: CPH_ParsePyVec3Pos,                                                            \
+        const CPH_PosStride *: CPH_ParsePyVec3Pos,                                                      \
+        CPH_AuxStride *: CPH_ParsePyVec3Aux,                                                            \
+        const CPH_AuxStride *: CPH_ParsePyVec3Aux,                                                      \
+        CPH_Vec3f *: CPH_ParsePyVec3f,                                                                   \
+        const CPH_Vec3f *: CPH_ParsePyVec3f)(obj, out)
 
-void parse_motor_config(PyObject *motor_dict, ConstraintParams *p);
-int parse_point_params(PyObject *args, ConstraintParams *p);
-int parse_hinge_params(PyObject *args, ConstraintParams *p);
-int parse_slider_params(PyObject *args, ConstraintParams *p);
-int parse_cone_params(PyObject *args, ConstraintParams *p);
-int parse_distance_params(PyObject *args, ConstraintParams *p);
-void parse_body_size(PyObject *py_size, float s[4]);
+void CPH_ParseMotorConfig(PyObject *motor_dict, CPH_ConstraintParams *p);
+int CPH_ParsePointParams(PyObject *args, CPH_ConstraintParams *p);
+int CPH_ParseHingeParams(PyObject *args, CPH_ConstraintParams *p);
+int CPH_ParseSliderParams(PyObject *args, CPH_ConstraintParams *p);
+int CPH_ParseConeParams(PyObject *args, CPH_ConstraintParams *p);
+int CPH_ParseDistanceParams(PyObject *args, CPH_ConstraintParams *p);
+void CPH_ParseBodySize(PyObject *py_size, float s[4]);
 
-[[nodiscard]] int parse_tracks_to_c(PyObject *py_tracks, TrackData *out_data, int *num_out);
+[[nodiscard]] int CPH_ParseTracksToC(PyObject *py_tracks, CPH_TrackData *out_data, int *num_out);

@@ -37,52 +37,52 @@ using std::memory_order_acq_rel;
 using std::memory_order_acquire;
 using std::memory_order_relaxed;
 using std::memory_order_release;
-#    define CULV_MUTEX_ATOMIC(T) std::atomic<T>
+#    define CPH_MUTEX_ATOMIC(T) std::atomic<T>
 #else
 #    include <stdatomic.h>
-#    define CULV_MUTEX_ATOMIC(T) _Atomic T
+#    define CPH_MUTEX_ATOMIC(T) _Atomic T
 #endif
 #include <stdint.h>
 
 #ifdef __cplusplus
-#    define CULV_MUTEX_ATOMIC_CX(obj, exp, des, succ, fail)                                               \
+#    define CPH_MUTEX_ATOMIC_CX(obj, exp, des, succ, fail)                                               \
         std::atomic_compare_exchange_strong_explicit(obj, exp, des, succ, fail)
 #else
-#    define CULV_MUTEX_ATOMIC_CX(obj, exp, des, succ, fail)                                               \
+#    define CPH_MUTEX_ATOMIC_CX(obj, exp, des, succ, fail)                                               \
         atomic_compare_exchange_strong_explicit(obj, exp, des, succ, fail)
 #endif
 
 #ifndef NDEBUG
-#    define CULV_MUTEX_DEBUG 1
+#    define CPH_MUTEX_DEBUG 1
 #endif
 
 #if defined(__GNUC__) || defined(__clang__)
-#    define CULV_MUTEX_LIKELY(x) __builtin_expect(!!(x), 1)
-#    define CULV_MUTEX_UNLIKELY(x) __builtin_expect(!!(x), 0)
-#    define CULV_MUTEX_COLD __attribute__((cold))
-#    define CULV_MUTEX_ALWAYS_INLINE __attribute__((always_inline))
-#    define CULV_MUTEX_ASSUME(x) __builtin_assume(x)
+#    define CPH_MUTEX_LIKELY(x) __builtin_expect(!!(x), 1)
+#    define CPH_MUTEX_UNLIKELY(x) __builtin_expect(!!(x), 0)
+#    define CPH_MUTEX_COLD __attribute__((cold))
+#    define CPH_MUTEX_ALWAYS_INLINE __attribute__((always_inline))
+#    define CPH_MUTEX_ASSUME(x) __builtin_assume(x)
 #else
-#    define CULV_MUTEX_LIKELY(x) (x)
-#    define CULV_MUTEX_UNLIKELY(x) (x)
-#    define CULV_MUTEX_COLD
-#    define CULV_MUTEX_ALWAYS_INLINE
-#    define CULV_MUTEX_ASSUME(x) (x)
+#    define CPH_MUTEX_LIKELY(x) (x)
+#    define CPH_MUTEX_UNLIKELY(x) (x)
+#    define CPH_MUTEX_COLD
+#    define CPH_MUTEX_ALWAYS_INLINE
+#    define CPH_MUTEX_ASSUME(x) (x)
 #endif
 
 #if defined(CULV_MUTEX_EXPORT_INTERNAL) || !defined(__GNUC__) || defined(CULV_MUTEX_BUILDING_TESTS)
-#    define CULV_MUTEX_INTERNAL [[gnu::visibility("default")]]
+#    define CPH_MUTEX_INTERNAL [[gnu::visibility("default")]]
 #else
-#    define CULV_MUTEX_INTERNAL [[gnu::visibility("hidden")]]
+#    define CPH_MUTEX_INTERNAL [[gnu::visibility("hidden")]]
 #endif
 
 // NOLINTBEGIN(readability-identifier-naming)
 #if defined(_WIN32)
-#    ifndef WIN32_LEAN_AND_MEAN
-#        define WIN32_LEAN_AND_MEAN
+#    ifndef CPH_WIN32_LEAN_AND_MEAN
+#        define CPH_WIN32_LEAN_AND_MEAN
 #    endif
-#    ifndef NOMINMAX
-#        define NOMINMAX
+#    ifndef CPH_NOMINMAX
+#        define CPH_NOMINMAX
 #    endif
 #    include <windows.h>
 
@@ -95,70 +95,70 @@ using std::memory_order_release;
 typedef CRITICAL_SECTION culv_platform_mutex_t;
 typedef CONDITION_VARIABLE culv_platform_cond_t;
 typedef DWORD culv_platform_thread_id_t;
-#    define CULV_THREAD_PLATFORM_MUTEX_INIT(mod) InitializeCriticalSection(mod)
-#    define CULV_THREAD_PLATFORM_MUTEX_LOCK(mod) EnterCriticalSection(mod)
-#    define CULV_THREAD_PLATFORM_MUTEX_UNLOCK(mod) LeaveCriticalSection(mod)
-#    define CULV_THREAD_PLATFORM_COND_INIT(condvar) InitializeConditionVariable(condvar)
-#    define CULV_THREAD_PLATFORM_COND_WAIT(condvar, mod) SleepConditionVariableCS(condvar, mod, INFINITE)
-#    define CULV_THREAD_PLATFORM_COND_SIGNAL(condvar) WakeConditionVariable(condvar)
-#    define CULV_THREAD_PLATFORM_COND_DESTROY(condvar)
-#    define CULV_THREAD_PLATFORM_CURRENT_ID() GetCurrentThreadId()
-#    define CULV_THREAD_PLATFORM_THREADS_EQUAL(t1, t2) ((t1) == (t2))
+#    define CPH_THREAD_PLATFORM_MUTEX_INIT(mod) InitializeCriticalSection(mod)
+#    define CPH_THREAD_PLATFORM_MUTEX_LOCK(mod) EnterCriticalSection(mod)
+#    define CPH_THREAD_PLATFORM_MUTEX_UNLOCK(mod) LeaveCriticalSection(mod)
+#    define CPH_THREAD_PLATFORM_COND_INIT(condvar) InitializeConditionVariable(condvar)
+#    define CPH_THREAD_PLATFORM_COND_WAIT(condvar, mod) SleepConditionVariableCS(condvar, mod, INFINITE)
+#    define CPH_THREAD_PLATFORM_COND_SIGNAL(condvar) WakeConditionVariable(condvar)
+#    define CPH_THREAD_PLATFORM_COND_DESTROY(condvar)
+#    define CPH_THREAD_PLATFORM_CURRENT_ID() GetCurrentThreadId()
+#    define CPH_THREAD_PLATFORM_THREADS_EQUAL(t1, t2) ((t1) == (t2))
 #else
 #    include <pthread.h>
 #    include <sched.h>
 typedef pthread_mutex_t culv_platform_mutex_t;
 typedef pthread_cond_t culv_platform_cond_t;
 typedef pthread_t culv_platform_thread_id_t;
-#    define CULV_THREAD_PLATFORM_MUTEX_INIT(mod) pthread_mutex_init(mod, nullptr)
-#    define CULV_THREAD_PLATFORM_MUTEX_LOCK(mod) pthread_mutex_lock(mod)
-#    define CULV_THREAD_PLATFORM_MUTEX_UNLOCK(mod) pthread_mutex_unlock(mod)
-#    define CULV_THREAD_PLATFORM_COND_INIT(condvar) pthread_cond_init(condvar, nullptr)
-#    define CULV_THREAD_PLATFORM_COND_WAIT(condvar, mod) pthread_cond_wait(condvar, mod)
-#    define CULV_THREAD_PLATFORM_COND_SIGNAL(condvar) pthread_cond_signal(condvar)
-#    define CULV_THREAD_PLATFORM_COND_DESTROY(condvar) pthread_cond_destroy(condvar)
-#    define CULV_THREAD_PLATFORM_CURRENT_ID() pthread_self()
-#    define CULV_THREAD_PLATFORM_THREADS_EQUAL(t1, t2) pthread_equal((t1), (t2))
+#    define CPH_THREAD_PLATFORM_MUTEX_INIT(mod) pthread_mutex_init(mod, nullptr)
+#    define CPH_THREAD_PLATFORM_MUTEX_LOCK(mod) pthread_mutex_lock(mod)
+#    define CPH_THREAD_PLATFORM_MUTEX_UNLOCK(mod) pthread_mutex_unlock(mod)
+#    define CPH_THREAD_PLATFORM_COND_INIT(condvar) pthread_cond_init(condvar, nullptr)
+#    define CPH_THREAD_PLATFORM_COND_WAIT(condvar, mod) pthread_cond_wait(condvar, mod)
+#    define CPH_THREAD_PLATFORM_COND_SIGNAL(condvar) pthread_cond_signal(condvar)
+#    define CPH_THREAD_PLATFORM_COND_DESTROY(condvar) pthread_cond_destroy(condvar)
+#    define CPH_THREAD_PLATFORM_CURRENT_ID() pthread_self()
+#    define CPH_THREAD_PLATFORM_THREADS_EQUAL(t1, t2) pthread_equal((t1), (t2))
 #endif
 // NOLINTEND(readability-identifier-naming)
 // --- Memory Ordering Configuration ---
 
-#if defined(CULV_MUTEX_FORCE_CASAL)
+#if defined(CPH_MUTEX_FORCE_CASAL)
 // Experimental: Use Full Barriers for both Lock and Unlock
-#    define CULV_MUTEX_LOCK_ORDER memory_order_acq_rel
-#    define CULV_MUTEX_UNLOCK_ORDER memory_order_acq_rel
+#    define CPH_MUTEX_LOCK_ORDER memory_order_acq_rel
+#    define CPH_MUTEX_UNLOCK_ORDER memory_order_acq_rel
 #else
 // Standard: Standard Acquire for Lock, Release for Unlock
-#    define CULV_MUTEX_LOCK_ORDER memory_order_acquire
-#    define CULV_MUTEX_UNLOCK_ORDER memory_order_release
+#    define CPH_MUTEX_LOCK_ORDER memory_order_acquire
+#    define CPH_MUTEX_UNLOCK_ORDER memory_order_release
 #endif
 // NOLINTEND(llvmlibc-restrict-system-libc-headers)
 
 // --- CulvMutex States ---
 
-constexpr uint8_t CULV_MUTEX_UNLOCKED    = 0x00;
-constexpr uint8_t CULV_MUTEX_LOCKED      = 0x01;
-constexpr uint8_t CULV_MUTEX_HAS_WAITERS = 0x02;
-constexpr uint8_t CULV_MUTEX_POISONED    = 0x04;
-#ifdef CULV_MUTEX_DEBUG
-constexpr uint8_t CULV_MUTEX_DEBUG_ALIGNMENT = 32;
+constexpr uint8_t kMutexUnlocked    = 0x00;
+constexpr uint8_t kMutexLocked      = 0x01;
+constexpr uint8_t kMutexHasWaiters = 0x02;
+constexpr uint8_t kMutexPoisoned    = 0x04;
+#ifdef CPH_MUTEX_DEBUG
+constexpr uint8_t kMutexDebugAlignment = 32;
 #endif
 /**
  * @struct CulvMutex
  * @brief The core mutex structure.
  */
-typedef struct CulvMutex {
-#ifdef CULV_MUTEX_DEBUG
-    alignas(CULV_MUTEX_DEBUG_ALIGNMENT)
+typedef struct CPH_CulvMutex {
+#ifdef CPH_MUTEX_DEBUG
+    alignas(kMutexDebugAlignment)
 #endif
-        CULV_MUTEX_ATOMIC(uint8_t) bits;
-#ifdef CULV_MUTEX_DEBUG
-    CULV_MUTEX_ATOMIC(bool) has_owner;
-    CULV_MUTEX_ATOMIC(uintptr_t) owner;
-    CULV_MUTEX_ATOMIC(uint64_t) spin_success_count;
-    CULV_MUTEX_ATOMIC(uint64_t) park_count;
+        CPH_MUTEX_ATOMIC(uint8_t) bits;
+#ifdef CPH_MUTEX_DEBUG
+    CPH_MUTEX_ATOMIC(bool) has_owner;
+    CPH_MUTEX_ATOMIC(uintptr_t) owner;
+    CPH_MUTEX_ATOMIC(uint64_t) spin_success_count;
+    CPH_MUTEX_ATOMIC(uint64_t) park_count;
 #endif
-} CulvMutex;
+} CPH_CulvMutex;
 
 #ifdef __cplusplus
 extern "C" {
@@ -166,24 +166,24 @@ extern "C" {
 
 // --- Debug Prototypes ---
 
-#ifdef CULV_MUTEX_DEBUG
-void culv_mutex_debug_check_pre_lock(CulvMutex *mod);
-void culv_mutex_debug_post_lock(CulvMutex *mod);
-void culv_mutex_debug_pre_unlock(CulvMutex *mod);
-void culv_mutex_debug_clear_owner(CulvMutex *mod);
+#ifdef CPH_MUTEX_DEBUG
+void culv_mutex_debug_check_pre_lock(CPH_CulvMutex *mod);
+void culv_mutex_debug_post_lock(CPH_CulvMutex *mod);
+void culv_mutex_debug_pre_unlock(CPH_CulvMutex *mod);
+void culv_mutex_debug_clear_owner(CPH_CulvMutex *mod);
 #else
-static inline void culv_mutex_debug_check_pre_lock(CulvMutex *mod) { (void)mod; }
-static inline void culv_mutex_debug_post_lock(CulvMutex *mod) { (void)mod; }
-static inline void culv_mutex_debug_pre_unlock(CulvMutex *mod) { (void)mod; }
-static inline void culv_mutex_debug_clear_owner(CulvMutex *mod) { (void)mod; }
+static inline void culv_mutex_debug_check_pre_lock(CPH_CulvMutex *mod) { (void)mod; }
+static inline void culv_mutex_debug_post_lock(CPH_CulvMutex *mod) { (void)mod; }
+static inline void culv_mutex_debug_pre_unlock(CPH_CulvMutex *mod) { (void)mod; }
+static inline void culv_mutex_debug_clear_owner(CPH_CulvMutex *mod) { (void)mod; }
 #endif
 
-[[gnu::cold, gnu::noinline, gnu::nonnull(1)]] CULV_MUTEX_INTERNAL
+[[gnu::cold, gnu::noinline, gnu::nonnull(1)]] CPH_MUTEX_INTERNAL
     // NOLINTNEXTLINE(readability-identifier-naming)
-    void culv_mutex_lock_slow(CulvMutex *mod);
-[[gnu::cold, gnu::noinline, gnu::nonnull(1)]] CULV_MUTEX_INTERNAL
+    void CPH_CulvMutexLockSlow(CPH_CulvMutex *mod);
+[[gnu::cold, gnu::noinline, gnu::nonnull(1)]] CPH_MUTEX_INTERNAL
     // NOLINTNEXTLINE(readability-identifier-naming)
-    void culv_mutex_unlock_slow(CulvMutex *mod);
+    void CPH_CulvMutexUnlockSlow(CPH_CulvMutex *mod);
 
 // --- Public API ---
 
@@ -209,8 +209,8 @@ static inline void culv_cpu_relax() {
  * @brief Permanently poisons the mutex. Any subsequent lock attempt will abort.
  */
 // NOLINTNEXTLINE(readability-identifier-naming)
-static inline void culv_mutex_poison(CulvMutex *mod) {
-    atomic_fetch_or_explicit(&mod->bits, CULV_MUTEX_POISONED, memory_order_release);
+static inline void culv_mutex_poison(CPH_CulvMutex *mod) {
+    atomic_fetch_or_explicit(&mod->bits, kMutexPoisoned, memory_order_release);
 }
 
 /**
@@ -219,10 +219,10 @@ static inline void culv_mutex_poison(CulvMutex *mod) {
  */
 [[gnu::flatten]] [[gnu::hot]] [[gnu::always_inline]] [[gnu::artificial]]
 // NOLINTNEXTLINE(readability-identifier-naming)
-static inline bool culv_mutex_try_lock(CulvMutex *mod) {
+static inline bool culv_mutex_try_lock(CPH_CulvMutex *mod) {
     culv_mutex_debug_check_pre_lock(mod);
-    uint8_t expected = CULV_MUTEX_UNLOCKED;
-    bool success     = CULV_MUTEX_ATOMIC_CX(&mod->bits, &expected, CULV_MUTEX_LOCKED, memory_order_acquire,
+    uint8_t expected = kMutexUnlocked;
+    bool success     = CPH_MUTEX_ATOMIC_CX(&mod->bits, &expected, kMutexLocked, memory_order_acquire,
                                      memory_order_relaxed);
     if (success) {
         culv_mutex_debug_post_lock(mod);
@@ -237,16 +237,16 @@ static inline bool culv_mutex_try_lock(CulvMutex *mod) {
  */
 [[gnu::flatten, gnu::hot, gnu::always_inline, gnu::artificial, gnu::nonnull(1)]]
 // NOLINTNEXTLINE(readability-identifier-naming)
-static inline void culv_mutex_lock(CulvMutex *mod) {
+static inline void culv_mutex_lock(CPH_CulvMutex *mod) {
     culv_mutex_debug_check_pre_lock(mod);
-    uint8_t expected = CULV_MUTEX_UNLOCKED;
+    uint8_t expected = kMutexUnlocked;
 
-    if (CULV_MUTEX_LIKELY(CULV_MUTEX_ATOMIC_CX(&mod->bits, &expected, CULV_MUTEX_LOCKED, CULV_MUTEX_LOCK_ORDER,
+    if (CPH_MUTEX_LIKELY(CPH_MUTEX_ATOMIC_CX(&mod->bits, &expected, kMutexLocked, CPH_MUTEX_LOCK_ORDER,
                                  memory_order_relaxed))) {
         culv_mutex_debug_post_lock(mod);
         return;
     }
-    culv_mutex_lock_slow(mod);
+    CPH_CulvMutexLockSlow(mod);
 }
 
 /**
@@ -256,17 +256,17 @@ static inline void culv_mutex_lock(CulvMutex *mod) {
  */
 [[gnu::flatten, gnu::hot, gnu::always_inline, gnu::artificial, gnu::nonnull(1)]]
 // NOLINTNEXTLINE(readability-identifier-naming)
-static inline void culv_mutex_unlock(CulvMutex *mod) {
+static inline void culv_mutex_unlock(CPH_CulvMutex *mod) {
     culv_mutex_debug_pre_unlock(mod);
     culv_mutex_debug_clear_owner(mod);
 
-    uint8_t expected = CULV_MUTEX_LOCKED;
+    uint8_t expected = kMutexLocked;
 
-    if (CULV_MUTEX_LIKELY(CULV_MUTEX_ATOMIC_CX(&mod->bits, &expected, CULV_MUTEX_UNLOCKED, CULV_MUTEX_UNLOCK_ORDER,
+    if (CPH_MUTEX_LIKELY(CPH_MUTEX_ATOMIC_CX(&mod->bits, &expected, kMutexUnlocked, CPH_MUTEX_UNLOCK_ORDER,
                                  memory_order_relaxed))) {
         return;
     }
-    culv_mutex_unlock_slow(mod);
+    CPH_CulvMutexUnlockSlow(mod);
 }
 
 // --- CulvCond (Condition Variable) ---
@@ -278,15 +278,15 @@ static inline void culv_mutex_unlock(CulvMutex *mod) {
  * Works seamlessly with CulvMutex. Uses the same parking lot backend to
  * provide ultra-low memory footprint synchronization.
  */
-typedef struct CulvCond {
-    CULV_MUTEX_ATOMIC(uint8_t) bits;
-} CulvCond;
+typedef struct CPH_CulvCond {
+    CPH_MUTEX_ATOMIC(uint8_t) bits;
+} CPH_CulvCond;
 
 /**
  * @brief Initializes a CulvCond.
  */
 // NOLINTNEXTLINE(readability-identifier-naming)
-static inline void culv_cond_init(CulvCond *condvar) {
+static inline void culv_cond_init(CPH_CulvCond *condvar) {
 #ifdef __cplusplus
     condvar->bits.store(0, std::memory_order_relaxed);
 #else
@@ -300,19 +300,19 @@ static inline void culv_cond_init(CulvCond *condvar) {
  * thread.
  */
 // NOLINTNEXTLINE(readability-identifier-naming)
-void culv_cond_wait(CulvCond *condvar, CulvMutex *mod);
+void CPH_CulvCondWait(CPH_CulvCond *condvar, CPH_CulvMutex *mod);
 
 /**
  * @brief Unblocks at least one of the threads that are blocked on the specified condition variable.
  */
 // NOLINTNEXTLINE(readability-identifier-naming)
-void culv_cond_signal(CulvCond *condvar);
+void CPH_CulvCondSignal(CPH_CulvCond *condvar);
 
 /**
  * @brief Unblocks all threads currently blocked on the specified condition variable.
  */
 // NOLINTNEXTLINE(readability-identifier-naming)
-void culv_cond_broadcast(CulvCond *condvar);
+void CPH_CulvCondBroadcast(CPH_CulvCond *condvar);
 
 #ifdef __cplusplus
 } // extern "C"

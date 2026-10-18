@@ -6,14 +6,14 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#ifndef JPH_INVALID_BODY_ID
-[[maybe_unused]] static constexpr size_t JPH_INVALID_BODY_ID = 0xFFFFFFFF;
+#ifndef kJphInvalidBodyId
+[[maybe_unused]] static constexpr size_t kJphInvalidBodyId = 0xFFFFFFFF;
 #endif
 
 // Jolt BodyID layout: [8 bits sequence | 24 bits index]. The low 23 bits hold
 // the index because the top bit of the low 24-bit portion is used for flags.
-#ifndef JPH_BODY_ID_INDEX_MASK
-[[maybe_unused]] static constexpr size_t JPH_BODY_ID_INDEX_MASK = 0x00FFFFFF;
+#ifndef kJphBodyIdIndexMask
+[[maybe_unused]] static constexpr size_t kJphBodyIdIndexMask = 0x00FFFFFF;
 #endif
 
 [[nodiscard]] [[gnu::const]]

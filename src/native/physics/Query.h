@@ -5,10 +5,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-struct PhysicsWorld;
+struct CPH_PhysicsWorld;
 
-static constexpr float PHYSICS_QUERY_DEFAULT_MAX_DISTANCE = 1000.0f;
-static constexpr size_t PHYSICS_QUERY_INLINE_HIT_CAPACITY = 64;
+static constexpr float kPhysicsQueryDefaultMaxDistance = 1000.0f;
+static constexpr size_t kPhysicsQueryInlineHitCapacity = 64;
 
 typedef enum PhysicsQueryStatus : int {
     PHYSICS_QUERY_STATUS_OK               = 0,
@@ -17,12 +17,12 @@ typedef enum PhysicsQueryStatus : int {
     PHYSICS_QUERY_STATUS_SHAPE_FAILURE    = -3,
 } PhysicsQueryStatus;
 
-typedef struct PhysicsQueryHitBuffer {
-    BodyHandle inline_hits[PHYSICS_QUERY_INLINE_HIT_CAPACITY];
+typedef struct CPH_PhysicsQueryHitBuffer {
+    BodyHandle inline_hits[kPhysicsQueryInlineHitCapacity];
     BodyHandle *hits;
     size_t count;
     size_t capacity;
-} PhysicsQueryHitBuffer;
+} CPH_PhysicsQueryHitBuffer;
 
 // Packed output for the Python raycast-batch byte buffer. Keep this wire layout
 // stable: consumers decode each record as exactly 48 bytes.
@@ -46,43 +46,43 @@ typedef struct
 #    pragma pack(pop)
 #endif
 
-static constexpr size_t RAYCAST_RESULT_SIZE = 48;
-static_assert(sizeof(RayCastBatchResult) == RAYCAST_RESULT_SIZE);
+static constexpr size_t kRaycastResultSize = 48;
+static_assert(sizeof(RayCastBatchResult) == kRaycastResultSize);
 
-typedef struct PhysicsRaycastHit {
+typedef struct CPH_PhysicsRaycastHit {
     BodyHandle handle;
     float fraction;
     JPH_Vec3 normal;
     bool has_hit;
-} PhysicsRaycastHit;
+} CPH_PhysicsRaycastHit;
 
-typedef struct PhysicsShapecastHit {
+typedef struct CPH_PhysicsShapecastHit {
     BodyHandle handle;
     float fraction;
     JPH_Vec3 point;
     JPH_Vec3 normal;
     bool has_hit;
-} PhysicsShapecastHit;
+} CPH_PhysicsShapecastHit;
 
-void physics_query_hit_buffer_init(PhysicsQueryHitBuffer *buffer);
-void physics_query_hit_buffer_destroy(PhysicsQueryHitBuffer *buffer);
+void CPH_PhysicsQueryHitBufferInit(CPH_PhysicsQueryHitBuffer *buffer);
+void CPH_PhysicsQueryHitBufferDestroy(CPH_PhysicsQueryHitBuffer *buffer);
 
 // Native query lifetime/synchronization helpers shared with other native
 // physics operations that increment active_queries while running outside the
 // shadow lock.
-void physics_world_query_end(struct PhysicsWorld *world);
+void CPH_PhysicsWorldQueryEnd(struct CPH_PhysicsWorld *world);
 
-PhysicsQueryStatus physics_world_overlap_sphere(struct PhysicsWorld *world, JPH_RVec3 center,
-                                                float radius, PhysicsQueryHitBuffer *hits);
-PhysicsQueryStatus physics_world_overlap_aabb(struct PhysicsWorld *world, JPH_RVec3 min,
-                                              JPH_RVec3 max, PhysicsQueryHitBuffer *hits);
-PhysicsQueryStatus physics_world_raycast(struct PhysicsWorld *world, JPH_RVec3 origin,
+PhysicsQueryStatus CPH_PhysicsWorldOverlapSphere(struct CPH_PhysicsWorld *world, JPH_RVec3 center,
+                                                float radius, CPH_PhysicsQueryHitBuffer *hits);
+PhysicsQueryStatus CPH_PhysicsWorldOverlapAabb(struct CPH_PhysicsWorld *world, JPH_RVec3 min,
+                                              JPH_RVec3 max, CPH_PhysicsQueryHitBuffer *hits);
+PhysicsQueryStatus CPH_PhysicsWorldRaycast(struct CPH_PhysicsWorld *world, JPH_RVec3 origin,
                                          JPH_Vec3 direction, float max_distance,
-                                         BodyHandle ignore_handle, PhysicsRaycastHit *hit);
-PhysicsQueryStatus physics_world_raycast_batch(struct PhysicsWorld *world, const float *starts,
+                                         BodyHandle ignore_handle, CPH_PhysicsRaycastHit *hit);
+PhysicsQueryStatus CPH_PhysicsWorldRaycastBatch(struct CPH_PhysicsWorld *world, const float *starts,
                                                const float *directions, size_t count,
                                                float max_distance, RayCastBatchResult *results);
-PhysicsQueryStatus physics_world_shapecast(struct PhysicsWorld *world, int shape_type,
+PhysicsQueryStatus CPH_PhysicsWorldShapecast(struct CPH_PhysicsWorld *world, int shape_type,
                                            JPH_RVec3 position, JPH_Quat rotation,
                                            JPH_Vec3 sweep_direction, const float size[4],
-                                           BodyHandle ignore_handle, PhysicsShapecastHit *hit);
+                                           BodyHandle ignore_handle, CPH_PhysicsShapecastHit *hit);

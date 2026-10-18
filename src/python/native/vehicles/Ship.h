@@ -5,16 +5,16 @@
 #include "joltc.h"
 #include <Python.h>
 
-typedef struct ShipObject {
-    PyObject_HEAD PhysicsWorldObject *world;
+typedef struct CPH_ShipObject {
+    PyObject_HEAD CPH_PhysicsWorldObject *world;
     JPH_PhysicsStepListener *listener; // Native listener pointer
-    ShipParsers *parsers;
+    CPH_ShipParsers *parsers;
     JPH_BodyID sled_bid; // Resolved ID for the heavy part
     uint64_t sled_h_raw; // Added to store the Python-side handle
 
     // Inputs (Atomics so Python can write while C reads)
-    CULV_ATOMIC(float) input_fwd;
-    CULV_ATOMIC(float) input_right;
+    CPH_ATOMIC(float) input_fwd;
+    CPH_ATOMIC(float) input_right;
 
     // Config
     float kp;
@@ -24,4 +24,4 @@ typedef struct ShipObject {
     float banking_strength;
     float lateral_grip;
     float linear_drag;
-} ShipObject;
+} CPH_ShipObject;

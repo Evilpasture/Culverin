@@ -14,15 +14,15 @@
 extern "C" {
 
 // Internal native math operations exposed through the C ABI.
-void culverin_compute_interpolation_loop(const PosStride *CPH_RESTRICT curr_p,
-                                         const PosStride *CPH_RESTRICT prev_p,
-                                         const AuxStride *CPH_RESTRICT curr_r,
-                                         const AuxStride *CPH_RESTRICT prev_r, CPH::Float32 alpha,
+void culverin_compute_interpolation_loop(const CPH_PosStride *CPH_RESTRICT curr_p,
+                                         const CPH_PosStride *CPH_RESTRICT prev_p,
+                                         const CPH_AuxStride *CPH_RESTRICT curr_r,
+                                         const CPH_AuxStride *CPH_RESTRICT prev_r, CPH::Float32 alpha,
                                          CPH::Float32 *CPH_RESTRICT out, CPH::SizeType count) {
     const auto d_alpha         = static_cast<CPH::Float64>(alpha);
     const CPH::Float32 f_alpha = alpha;
 
-    CULV_UNROLL_LOOP(4)
+    CPH_UNROLL_LOOP(4)
     for (CPH::SizeType i = 0; i < count; ++i) {
         const uint32_t base_idx = i * 7;
 
@@ -67,7 +67,7 @@ void culverin_compute_interpolation_loop(const PosStride *CPH_RESTRICT curr_p,
  */
 [[gnu::hot, gnu::nonnull]]
 void culverin_math_interpolate_character_transform(
-    const PosStride *CPH_RESTRICT start_p, const AuxStride *CPH_RESTRICT start_r,
+    const CPH_PosStride *CPH_RESTRICT start_p, const CPH_AuxStride *CPH_RESTRICT start_r,
     const JPH_RVec3 *CPH_RESTRICT end_p, const JPH_Quat *CPH_RESTRICT end_r,
     const CPH::Float32 alpha, CPH::Float32 *CPH_RESTRICT out_p, CPH::Float32 *CPH_RESTRICT out_r) {
     using namespace JPH;

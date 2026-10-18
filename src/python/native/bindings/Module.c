@@ -24,7 +24,7 @@
  * INTERNAL HELPER: dump_parser_registry
  * Iterates through a specific registry array and writes the JSON entries.
  */
-static void dump_parser_registry(CulvFastParser *const *const registry, const size_t count,
+static void dump_parser_registry(CPH_CulvFastParser *const *const registry, const size_t count,
                                  FILE *const out, bool *const is_first) {
     for (size_t i = 0; i < count; ++i) {
         const auto fp = registry[i];
@@ -57,7 +57,7 @@ PyCFunction_DeclareMethod culv_dump_schema_json(PyObject *const self, PyObject *
     const void *const restrict targets[DumpSchema_COUNT] = {
         [IDX_DS_PATH] = (const void *const restrict)&filename};
 
-    if (!CULV_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.DumpSchemaParser,
+    if (!CPH_FAST_PARSE_UNIFIED(args, PyVectorcall_NARGS(nargsf), kwnames, &st->parsers.DumpSchemaParser,
                            targets)) {
         return nullptr;
     }
@@ -69,67 +69,67 @@ PyCFunction_DeclareMethod culv_dump_schema_json(PyObject *const self, PyObject *
 
     // 2. Initialize temporary registries to extract cold metadata
     struct {
-        WorldParsers world;
-        CharacterParsers character;
-        VehicleParsers vehicle;
-        ECSParsers ecs;
-        SkeletonParsers skeleton;
-        RagdollParsers ragdoll;
-        RagdollSettingsParsers ragdoll_settings;
-        ShipParsers ship;
-        SoftBodySharedSettingsParsers sbss;
-        MathParsers math;
-        ModuleParsers module;
+        CPH_WorldParsers world;
+        CPH_CharacterParsers character;
+        CPH_VehicleParsers vehicle;
+        CPH_ECSParsers ecs;
+        CPH_SkeletonParsers skeleton;
+        CPH_RagdollParsers ragdoll;
+        CPH_RagdollSettingsParsers ragdoll_settings;
+        CPH_ShipParsers ship;
+        CPH_SoftBodySharedSettingsParsers sbss;
+        CPH_MathParsers math;
+        CPH_ModuleParsers module;
     } all = {};
 
-    culverin_init_world_parsers(&all.world);
-    culverin_init_char_parsers(&all.character);
-    culverin_init_vehicle_parsers(&all.vehicle);
-    culverin_init_ecs_parsers(&all.ecs);
-    culverin_init_skeleton_parsers(&all.skeleton);
-    culverin_init_ragdoll_parsers(&all.ragdoll);
-    culverin_init_ragdoll_settings_parsers(&all.ragdoll_settings);
-    culverin_init_ship_parsers(&all.ship);
-    culverin_init_sbss_parsers(&all.sbss);
-    culverin_math_init_all_parsers(&all.math);
-    culverin_init_module_parsers(&all.module);
+    CPH_CulverinInitWorldParsers(&all.world);
+    CPH_CulverinInitCharParsers(&all.character);
+    CPH_CulverinInitVehicleParsers(&all.vehicle);
+    CPH_CulverinInitEcsParsers(&all.ecs);
+    CPH_CulverinInitSkeletonParsers(&all.skeleton);
+    CPH_CulverinInitRagdollParsers(&all.ragdoll);
+    CPH_CulverinInitRagdollSettingsParsers(&all.ragdoll_settings);
+    CPH_CulverinInitShipParsers(&all.ship);
+    CPH_CulverinInitSbssParsers(&all.sbss);
+    CPH_CulverinMathInitAllParsers(&all.math);
+    CPH_CulverinInitModuleParsers(&all.module);
 
     // 3. Export to JSON
     fprintf(f, "{\n");
     bool is_first = true;
 
-#define DUMP_GROUP(member)                                                                         \
+#define CPH_DUMP_GROUP(member)                                                                         \
     dump_parser_registry(all.member.registry, all.member.registry_count, f, &is_first)
 
-    DUMP_GROUP(world);
-    DUMP_GROUP(character);
-    DUMP_GROUP(vehicle);
-    DUMP_GROUP(ecs);
-    DUMP_GROUP(skeleton);
-    DUMP_GROUP(ragdoll);
-    DUMP_GROUP(ragdoll_settings);
-    DUMP_GROUP(ship);
-    DUMP_GROUP(sbss);
-    DUMP_GROUP(math);
-    DUMP_GROUP(module);
+    CPH_DUMP_GROUP(world);
+    CPH_DUMP_GROUP(character);
+    CPH_DUMP_GROUP(vehicle);
+    CPH_DUMP_GROUP(ecs);
+    CPH_DUMP_GROUP(skeleton);
+    CPH_DUMP_GROUP(ragdoll);
+    CPH_DUMP_GROUP(ragdoll_settings);
+    CPH_DUMP_GROUP(ship);
+    CPH_DUMP_GROUP(sbss);
+    CPH_DUMP_GROUP(math);
+    CPH_DUMP_GROUP(module);
 
-#undef DUMP_GROUP
+#undef CPH_DUMP_GROUP
 
     fprintf(f, "\n}\n");
     fclose(f);
 
     // 4. Cleanup temporary allocations
-    culverin_free_world_parsers(&all.world);
-    culverin_free_char_parsers(&all.character);
-    culverin_free_vehicle_parsers(&all.vehicle);
-    culverin_free_ecs_parsers(&all.ecs);
-    culverin_free_skeleton_parsers(&all.skeleton);
-    culverin_free_ragdoll_parsers(&all.ragdoll);
-    culverin_free_ragdoll_settings_parsers(&all.ragdoll_settings);
-    culverin_free_ship_parsers(&all.ship);
-    culverin_free_sbss_parsers(&all.sbss);
-    culverin_math_free_all_parsers(&all.math);
-    culverin_free_module_parsers(&all.module);
+    CPH_CulverinFreeWorldParsers(&all.world);
+    CPH_CulverinFreeCharParsers(&all.character);
+    CPH_CulverinFreeVehicleParsers(&all.vehicle);
+    CPH_CulverinFreeEcsParsers(&all.ecs);
+    CPH_CulverinFreeSkeletonParsers(&all.skeleton);
+    CPH_CulverinFreeRagdollParsers(&all.ragdoll);
+    CPH_CulverinFreeRagdollSettingsParsers(&all.ragdoll_settings);
+    CPH_CulverinFreeShipParsers(&all.ship);
+    CPH_CulverinFreeSbssParsers(&all.sbss);
+    CPH_CulverinMathFreeAllParsers(&all.math);
+    CPH_CulverinFreeModuleParsers(&all.module);
 
     Py_RETURN_NONE;
 }
@@ -279,19 +279,19 @@ exit_critical:
 
 // --- The Documentation System ---
 
-#ifndef CULVERIN_DOCS_PATH
-#    define CULVERIN_DOCS_PATH "../../docs/DOCS.md"
+#ifndef CPH_DOCS_PATH
+#    define CPH_DOCS_PATH "../../docs/DOCS.md"
 #endif
 
-static const unsigned char ALL_DOCS[] = {
+static const unsigned char kAllDocs[] = {
 #ifdef __has_embed
-#    if __has_embed(CULVERIN_DOCS_PATH)
-#        embed CULVERIN_DOCS_PATH suffix(, 0)
-#        define CULV_DOCS_EMBEDDED
+#    if __has_embed(CPH_DOCS_PATH)
+#        embed CPH_DOCS_PATH suffix(, 0)
+#        define CPH_DOCS_EMBEDDED
 #    endif
 #endif
 
-#ifndef CULV_DOCS_EMBEDDED
+#ifndef CPH_DOCS_EMBEDDED
 #    include "ALL_DOCS.inc"
 #endif
 };
@@ -304,25 +304,25 @@ static atomic_int docs_status = 0;
 // --- Macros ---
 
 // User-facing macros for module-level methods
-#define MOD_FASTCALL(name) CULV_FEAT(culv, name, METH_FASTCALL | METH_KEYWORDS)
-#define MOD_NOARGS(name) CULV_FEAT(culv, name, METH_NOARGS)
-#define MOD_VARARGS(name) CULV_FEAT(culv, name, METH_VARARGS | METH_KEYWORDS)
+#define CPH_MOD_FASTCALL(fn, name) CPH_FEAT(fn, name, METH_FASTCALL | METH_KEYWORDS)
+#define CPH_MOD_NOARGS(fn, name) CPH_FEAT(fn, name, METH_NOARGS)
+#define CPH_MOD_VARARGS(fn, name) CPH_FEAT(fn, name, METH_VARARGS | METH_KEYWORDS)
 
-#define MOD_NOARGS_INTERNAL(name) CULV_FEAT_INTERNAL(culv, name, METH_NOARGS)
-#define MOD_FASTCALL_INTERNAL(name) CULV_FEAT_INTERNAL(culv, name, METH_FASTCALL | METH_KEYWORDS)
+#define CPH_MOD_NOARGS_INTERNAL(fn, name) CPH_FEAT_INTERNAL(fn, name, METH_NOARGS)
+#define CPH_MOD_FASTCALL_INTERNAL(fn, name) CPH_FEAT_INTERNAL(fn, name, METH_FASTCALL | METH_KEYWORDS)
 
 // --- Module Initialization ---
 
 // Embed the entire TOML file as a static string
-static const unsigned char PYPROJECT_TOML[] = {
+static const unsigned char kPyprojectToml[] = {
 #ifdef __has_embed
 #    if __has_embed("../../pyproject.toml")
 #        embed "../../pyproject.toml" suffix(, 0)
-#        define CULV_TOML_EMBEDDED
+#        define CPH_TOML_EMBEDDED
 #    endif
 #endif
 
-#ifndef CULV_TOML_EMBEDDED
+#ifndef CPH_TOML_EMBEDDED
 #    include "PYPROJECT_TOML.inc"
 #endif
 };
@@ -331,7 +331,7 @@ static const unsigned char PYPROJECT_TOML[] = {
 static const char *extract_version_from_toml(void) {
     // Look for the specific pattern 'version = "'
     const char *key = "version = \"";
-    auto start      = strstr((char *)PYPROJECT_TOML, key);
+    auto start      = strstr((char *)kPyprojectToml, key);
 
     if (!start) {
         return "0.0.0-unknown";
@@ -359,7 +359,7 @@ static const char *extract_version_from_toml(void) {
     return version_buffer;
 }
 
-static int init_types(PyObject *m, CulverinState *st) {
+static int init_types(PyObject *m, CPH_CulverinState *st) {
     struct {
         PyType_Spec *spec;
         PyObject **slot;
@@ -472,13 +472,13 @@ static int init_constants(PyObject *m) {
     return 0;
 }
 
-static constexpr auto MAGIC_BUFFER = 128;
-static char shared_version[MAGIC_BUFFER];
+static constexpr auto kMagicBuffer = 128;
+static char shared_version[kMagicBuffer];
 
 extern PyModuleDef culverin_module;
 
 PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
-    CulverinState *st = get_culverin_state(m);
+    CPH_CulverinState *st = get_culverin_state(m);
     // 1. THE MASTER GATE: Protects all static global memory in the process
     int expected = 0;
     if (atomic_compare_exchange_strong(&docs_status, &expected, 1)) {
@@ -520,22 +520,22 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
 #endif
 
         // Result: e.g. "0.6.0 (free-threaded, double-precision, release, Clang 22.1.0)"
-        snprintf(shared_version, MAGIC_BUFFER, "%s (%s, %s, %s, %s)", ver_temp, gil_status,
+        snprintf(shared_version, kMagicBuffer, "%s (%s, %s, %s, %s)", ver_temp, gil_status,
                  precision, build_type, compiler_id);
 
         // --- THE WINNER: Run exactly once per process life ---
-        const char *docs_str = (const char *)ALL_DOCS;
-        culv_docs_stitch_methods(culverin_module.m_methods, "Module", docs_str);
-        culv_docs_stitch_spec(&PhysicsWorld_spec, "PhysicsWorld", docs_str);
-        culv_docs_stitch_spec(&Character_spec, "Character", docs_str);
-        culv_docs_stitch_spec(&Vehicle_spec, "Vehicle", docs_str);
-        culv_docs_stitch_spec(&Skeleton_spec, "Skeleton", docs_str);
-        culv_docs_stitch_spec(&Ragdoll_spec, "Ragdoll", docs_str);
-        culv_docs_stitch_spec(&RagdollSettings_spec, "RagdollSettings", docs_str);
-        culv_docs_stitch_spec(&SoftBodySharedSettings_spec, "SoftBodySharedSettings", docs_str);
-        culv_docs_stitch_spec(&Registry_spec, "Registry", docs_str);
-        culv_docs_stitch_spec(&MathService_spec, "MathService", docs_str);
-        culv_docs_stitch_spec(&Ship_spec, "Ship", docs_str);
+        const char *docs_str = (const char *)kAllDocs;
+        CPH_CulvDocsStitchMethods(culverin_module.m_methods, "Module", docs_str);
+        CPH_CulvDocsStitchSpec(&PhysicsWorld_spec, "PhysicsWorld", docs_str);
+        CPH_CulvDocsStitchSpec(&Character_spec, "Character", docs_str);
+        CPH_CulvDocsStitchSpec(&Vehicle_spec, "Vehicle", docs_str);
+        CPH_CulvDocsStitchSpec(&Skeleton_spec, "Skeleton", docs_str);
+        CPH_CulvDocsStitchSpec(&Ragdoll_spec, "Ragdoll", docs_str);
+        CPH_CulvDocsStitchSpec(&RagdollSettings_spec, "RagdollSettings", docs_str);
+        CPH_CulvDocsStitchSpec(&SoftBodySharedSettings_spec, "SoftBodySharedSettings", docs_str);
+        CPH_CulvDocsStitchSpec(&Registry_spec, "Registry", docs_str);
+        CPH_CulvDocsStitchSpec(&MathService_spec, "MathService", docs_str);
+        CPH_CulvDocsStitchSpec(&Ship_spec, "Ship", docs_str);
 
         // Gated Handler Registration
         JPH_SetTraceHandler(culv_jph_trace);
@@ -547,15 +547,15 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
             return -1;
         }
 
-        JPH_BroadPhaseLayerFilter_SetProcs(&global_bp_procs);
-        JPH_ObjectLayerFilter_SetProcs(&global_obj_procs);
-        JPH_BodyFilter_SetProcs(&global_bf_procs);
-        JPH_ShapeFilter_SetProcs(&global_sf_procs);
-        JPH_DebugRenderer_SetProcs(&debug_procs);
+        JPH_BroadPhaseLayerFilter_SetProcs(&kGlobalBpProcs);
+        JPH_ObjectLayerFilter_SetProcs(&kGlobalObjProcs);
+        JPH_BodyFilter_SetProcs(&kGlobalBfProcs);
+        JPH_ShapeFilter_SetProcs(&kGlobalSfProcs);
+        JPH_DebugRenderer_SetProcs(&kDebugProcs);
         JPH_ContactListener_SetProcs(&contact_procs);
-        JPH_CharacterContactListener_SetProcs(&char_listener_procs);
+        JPH_CharacterContactListener_SetProcs(&kCharListenerProcs);
 
-        INIT_NATIVE_MUTEX(g_jph_init_lock);
+        CPH_INIT_NATIVE_MUTEX(g_jph_init_lock);
 
         atomic_store_explicit(&docs_status, 2, memory_order_seq_cst);
 
@@ -569,13 +569,13 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
     if (PyModule_AddStringConstant(m, "__version__", shared_version) < 0) {
         return -1;
     }
-    CULV_INIT_PROFILER();
+    CPH_INIT_PROFILER();
 
     st->helper = PyImport_ImportModule("culverin._culverin");
     if (!st->helper) {
         return -1;
     }
-    culverin_init_module_parsers(&st->parsers);
+    CPH_CulverinInitModuleParsers(&st->parsers);
 
     if (init_types(m, st) < 0) {
         return -1;
@@ -588,7 +588,7 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 PyType_DeclareSlot_Status culverin_traverse(PyObject *m, visitproc visit, void *arg) {
-    CulverinState *st = get_culverin_state(m);
+    CPH_CulverinState *st = get_culverin_state(m);
     Py_VISIT(st->helper);
     Py_VISIT(st->PhysicsWorldType);
     Py_VISIT(st->CharacterType);
@@ -605,7 +605,7 @@ PyType_DeclareSlot_Status culverin_traverse(PyObject *m, visitproc visit, void *
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 PyType_DeclareSlot_Status culverin_clear(PyObject *m) {
-    CulverinState *st = get_culverin_state(m);
+    CPH_CulverinState *st = get_culverin_state(m);
     Py_CLEAR(st->helper);
     Py_CLEAR(st->PhysicsWorldType);
     Py_CLEAR(st->CharacterType);
@@ -617,7 +617,7 @@ PyType_DeclareSlot_Status culverin_clear(PyObject *m) {
     Py_CLEAR(st->BufferProxyType);
     Py_CLEAR(st->MathServiceType);
     Py_CLEAR(st->SoftBodySharedSettingsType);
-    culverin_free_module_parsers(&st->parsers);
+    CPH_CulverinFreeModuleParsers(&st->parsers);
     return 0;
 }
 
@@ -627,11 +627,11 @@ PyModuleDef culverin_module = {
     .m_base = PyModuleDef_HEAD_INIT,
     .m_name = "_culverin_c",
     .m_doc  = "Culverin Physics Engine Core",
-    .m_size = sizeof(CulverinState),
+    .m_size = sizeof(CPH_CulverinState),
     .m_methods =
         (PyMethodDef[]){
 
-            MOD_FASTCALL_INTERNAL(dump_schema_json), MOD_FASTCALL(mutate_tuple), {}
+            CPH_MOD_FASTCALL_INTERNAL(culv_dump_schema_json, dump_schema_json), CPH_MOD_FASTCALL(culv_mutate_tuple, mutate_tuple), {}
 
         },
     .m_slots =

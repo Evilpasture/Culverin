@@ -55,44 +55,44 @@ static inline void culverin_cpu_relax() {
  * 2. UNIFIED LOCK API (Directly mapping to CulvMutex/CulvCond)
  * ============================================================================ */
 
-typedef CulvMutex NativeMutex;
-typedef CulvCond NativeCond;
-typedef CulvMutex ShadowMutex;
+typedef CPH_CulvMutex NativeMutex;
+typedef CPH_CulvCond NativeCond;
+typedef CPH_CulvMutex ShadowMutex;
 
 // Mutex Operations
-#define INIT_NATIVE_MUTEX(m) atomic_init(&(m).bits, CULV_MUTEX_UNLOCKED)
-#define FREE_NATIVE_MUTEX(m) (void)(m)
-#define NATIVE_MUTEX_LOCK(m) culv_mutex_lock(&(m))
-#define NATIVE_MUTEX_UNLOCK(m) culv_mutex_unlock(&(m))
+#define CPH_INIT_NATIVE_MUTEX(m) atomic_init(&(m).bits, kMutexUnlocked)
+#define CPH_FREE_NATIVE_MUTEX(m) (void)(m)
+#define CPH_NATIVE_MUTEX_LOCK(m) culv_mutex_lock(&(m))
+#define CPH_NATIVE_MUTEX_UNLOCK(m) culv_mutex_unlock(&(m))
 
 // Condition Variable Operations
-#define INIT_NATIVE_COND(c) culv_cond_init(&(c))
-#define FREE_NATIVE_COND(c) (void)(c)
-#define NATIVE_COND_WAIT(c, m) culv_cond_wait(&(c), &(m))
-#define NATIVE_COND_BROADCAST(c) culv_cond_broadcast(&(c))
+#define CPH_INIT_NATIVE_COND(c) culv_cond_init(&(c))
+#define CPH_FREE_NATIVE_COND(c) (void)(c)
+#define CPH_NATIVE_COND_WAIT(c, m) CPH_CulvCondWait(&(c), &(m))
+#define CPH_NATIVE_COND_BROADCAST(c) CPH_CulvCondBroadcast(&(c))
 
 // Shadow Mutex Operations (Maps directly to Native operations)
-#define INIT_LOCK(m) atomic_init(&(m).bits, CULV_MUTEX_UNLOCKED)
-#define FREE_LOCK(m) (void)(m)
-#define SHADOW_LOCK(m) culv_mutex_lock(m)
-#define SHADOW_UNLOCK(m) culv_mutex_unlock(m)
+#define CPH_INIT_LOCK(m) atomic_init(&(m).bits, kMutexUnlocked)
+#define CPH_FREE_LOCK(m) (void)(m)
+#define CPH_SHADOW_LOCK(m) culv_mutex_lock(m)
+#define CPH_SHADOW_UNLOCK(m) culv_mutex_unlock(m)
 
 /* ============================================================================
  * 3. STRUCTURES & CACHE ISOLATION
  * ============================================================================ */
 
-constexpr auto CACHE_LINE_SIZE = 64;
-#define CACHE_ISOLATE_PAD(current_size) (CACHE_LINE_SIZE - ((current_size) % CACHE_LINE_SIZE))
+constexpr auto kCacheLineSize = 64;
+#define CPH_CACHE_ISOLATE_PAD(current_size) (kCacheLineSize - ((current_size) % kCacheLineSize))
 
 typedef struct {
-    uint8_t _pad_before[CACHE_LINE_SIZE];
+    uint8_t _pad_before[kCacheLineSize];
 
     NativeMutex mutex;
     NativeCond cond;
 
     // Automatically adjusts if the native mutex or condition size changes
     uint8_t
-        _pad_after[CACHE_ISOLATE_PAD(sizeof(NativeMutex) + sizeof(NativeCond)) + CACHE_LINE_SIZE];
-} ShadowSync;
+        _pad_after[CPH_CACHE_ISOLATE_PAD(sizeof(NativeMutex) + sizeof(NativeCond)) + kCacheLineSize];
+} CPH_ShadowSync;
 
 extern NativeMutex g_jph_init_lock;

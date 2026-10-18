@@ -2,40 +2,40 @@
 #include "core/Types.h"
 #include "joltc.h"
 
-struct PhysicsWorld;
+struct CPH_PhysicsWorld;
 
 // --- Shape Caching ---
 typedef struct {
     uint32_t type; // 0=Box, 1=Sphere, 2=Capsule, 3=Cylinder, 4=Plane
     float p1, p2, p3, p4;
-} ShapeKey;
+} CPH_ShapeKey;
 
 typedef struct {
-    ShapeKey key;
+    CPH_ShapeKey key;
     JPH_Shape *shape;
-} ShapeEntry;
+} CPH_ShapeEntry;
 
 typedef struct {
     JPH_ShapeCastResult hit;
     bool has_hit;
-} CastShapeContext;
+} CPH_CastShapeContext;
 
 // Optional filter to ignore a specific body
 typedef struct {
     JPH_BodyID ignore_id;
-} CastShapeFilter;
+} CPH_CastShapeFilter;
 
-JPH_Shape *find_or_create_shape_locked(struct PhysicsWorld *world, int type, const float *params);
+JPH_Shape *CPH_FindOrCreateShapeLocked(struct CPH_PhysicsWorld *world, int type, const float *params);
 
-void free_shape_cache(struct PhysicsWorld *world);
+void CPH_FreeShapeCache(struct CPH_PhysicsWorld *world);
 
-bool shapecast_execute_internal(struct PhysicsWorld *world, const JPH_Shape *shape,
+bool CPH_ShapecastExecuteInternal(struct CPH_PhysicsWorld *world, const JPH_Shape *shape,
                                 const JPH_RMat4 *transform, const JPH_Vec3 *sweep_dir,
-                                JPH_BodyID ignore_bid, CastShapeContext *ctx);
+                                JPH_BodyID ignore_bid, CPH_CastShapeContext *ctx);
 
 // Collector for Shapecast
 static inline float CastShape_ClosestCollector(void *context, const JPH_ShapeCastResult *result) {
-    CastShapeContext *ctx = (CastShapeContext *)context;
+    CPH_CastShapeContext *ctx = (CPH_CastShapeContext *)context;
     if (result->fraction < ctx->hit.fraction) {
         ctx->hit     = *result;
         ctx->has_hit = true;
@@ -50,6 +50,6 @@ static inline bool JPH_API_CALL UnifiedBodyFilter(void *userData, JPH_BodyID bod
     }
 
     // Otherwise, check the ignore_id
-    CastShapeFilter *ctx = (CastShapeFilter *)userData;
+    CPH_CastShapeFilter *ctx = (CPH_CastShapeFilter *)userData;
     return (bool)(ctx->ignore_id == 0 || bodyID != ctx->ignore_id);
 }

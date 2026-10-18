@@ -27,15 +27,15 @@ bool culv_jph_assert(const char *inExpression, const char *inMessage, const char
 // Level 1: Trap (RelWithDebInfo - Crashes instantly, keeps instruction cache clean)
 // Level 2: Full Debug (Debug - Full string formatting and stack tracing)
 
-#if !defined(CULV_ASSERT_LEVEL)
+#if !defined(CPH_ASSERT_LEVEL)
 #    if defined(NDEBUG)
 #        if defined(CULV_AGGRESSIVE_OPTIMIZATION)
-#            define CULV_ASSERT_LEVEL 0
+#            define CPH_ASSERT_LEVEL 0
 #        else
-#            define CULV_ASSERT_LEVEL 1
+#            define CPH_ASSERT_LEVEL 1
 #        endif
 #    else
-#        define CULV_ASSERT_LEVEL 2
+#        define CPH_ASSERT_LEVEL 2
 #    endif
 #endif
 
@@ -50,7 +50,7 @@ bool culv_jph_assert(const char *inExpression, const char *inMessage, const char
 #endif
 }
 
-#if CULV_ASSERT_LEVEL == 2
+#if CPH_ASSERT_LEVEL == 2
 // ============================================================================
 // LEVEL 2: FULL DEBUG (Rich Formatting & Callbacks)
 // ============================================================================
@@ -79,7 +79,7 @@ panic(std::string_view expression, std::string_view message = "",
 }
 } // namespace culv::detail
 
-#        define CULV_ASSERT(expr, ...)                                                             \
+#        define CPH_ASSERT(expr, ...)                                                             \
             do {                                                                                   \
                 if (!(expr)) [[unlikely]] {                                                        \
                     if consteval {                                                                 \
@@ -124,7 +124,7 @@ culv_internal_panic_c(const char *expr, const char *file, uint32_t line, const c
 
 // C23 variadic macro trick: The trailing `nullptr` safely acts as the formatting
 // string if __VA_ARGS__ is empty, or as an ignored variadic argument if it's not.
-#        define CULV_ASSERT(expr, ...)                                                             \
+#        define CPH_ASSERT(expr, ...)                                                             \
             do {                                                                                   \
                 if (!(expr)) [[unlikely]] {                                                        \
                     culv_internal_panic_c(#expr, __FILE__, __LINE__, __func__,                     \
@@ -134,14 +134,14 @@ culv_internal_panic_c(const char *expr, const char *file, uint32_t line, const c
 
 #    endif
 
-#elif CULV_ASSERT_LEVEL == 1
+#elif CPH_ASSERT_LEVEL == 1
 // ============================================================================
 // LEVEL 1: TRAP ONLY (RelWithDebInfo)
 // ============================================================================
 // Safe Release Mode: No string bloat in the binary, keeps the instruction cache
 // perfectly clean for hot physics loops, but halts immediately on logic errors.
 
-#    define CULV_ASSERT(expr, ...)                                                                 \
+#    define CPH_ASSERT(expr, ...)                                                                 \
         do {                                                                                       \
             if (!(expr)) [[unlikely]] {                                                            \
                 culv_internal_break();                                                             \
@@ -157,19 +157,19 @@ culv_internal_panic_c(const char *expr, const char *file, uint32_t line, const c
 
 #    if defined(__clang__) || defined(__GNUC__)
 #        ifdef __cplusplus
-#            define CULV_ASSERT(expr, ...)                                                         \
+#            define CPH_ASSERT(expr, ...)                                                         \
                 do {                                                                               \
                     __builtin_assume(static_cast<bool>(expr));                                     \
                 } while (false)
 #        else
-#            define CULV_ASSERT(expr, ...)                                                         \
+#            define CPH_ASSERT(expr, ...)                                                         \
                 do {                                                                               \
                     __builtin_assume((bool)(expr));                                                \
                 } while (false)
 #        endif
 #    else
 // Fallback if __builtin_assume is unavailable
-#        define CULV_ASSERT(expr, ...) ((void)0)
+#        define CPH_ASSERT(expr, ...) ((void)0)
 #    endif
 
 #endif

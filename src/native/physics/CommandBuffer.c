@@ -4,10 +4,10 @@
 #include "physics/PhysicsWorldState.h"
 #include <string.h>
 
-static constexpr size_t AVX_ALIGNMENT = 32;
+static constexpr size_t kAvxAlignment = 32;
 
 
-void world_remove_body_slot(PhysicsWorld *world, uint32_t slot) {
+void CPH_WorldRemoveBodySlot(CPH_PhysicsWorld *world, uint32_t slot) {
     const uint32_t dense_idx = world->slot_to_dense[slot];
 
     // TSan Fix: Load count atomically to determine the last index
@@ -31,24 +31,24 @@ void world_remove_body_slot(PhysicsWorld *world, uint32_t slot) {
 
     // THE SWAP-TO-DELETE (Dense Pack)
     if (dense_idx != last_dense) {
-        CULV_PREFETCH_READ(&world->positions[last_dense]);
-        CULV_PREFETCH_WRITE(&world->positions[dense_idx]);
+        CPH_PREFETCH_READ(&world->positions[last_dense]);
+        CPH_PREFETCH_WRITE(&world->positions[dense_idx]);
 
         // --- GROUP 1: PHYSICS STATE (Non-atomic) ---
-        ((PosStride * CULV_RESTRICT) world->positions)[dense_idx] =
-            ((PosStride * CULV_RESTRICT) world->positions)[last_dense];
-        ((PosStride * CULV_RESTRICT) world->prev_positions)[dense_idx] =
-            ((PosStride * CULV_RESTRICT) world->prev_positions)[last_dense];
+        ((CPH_PosStride * CPH_RESTRICT) world->positions)[dense_idx] =
+            ((CPH_PosStride * CPH_RESTRICT) world->positions)[last_dense];
+        ((CPH_PosStride * CPH_RESTRICT) world->prev_positions)[dense_idx] =
+            ((CPH_PosStride * CPH_RESTRICT) world->prev_positions)[last_dense];
 
-        ((AuxStride * CULV_RESTRICT) world->rotations)[dense_idx] =
-            ((AuxStride *)world->rotations)[last_dense];
-        ((AuxStride * CULV_RESTRICT) world->prev_rotations)[dense_idx] =
-            ((AuxStride * CULV_RESTRICT) world->prev_rotations)[last_dense];
+        ((CPH_AuxStride * CPH_RESTRICT) world->rotations)[dense_idx] =
+            ((CPH_AuxStride *)world->rotations)[last_dense];
+        ((CPH_AuxStride * CPH_RESTRICT) world->prev_rotations)[dense_idx] =
+            ((CPH_AuxStride * CPH_RESTRICT) world->prev_rotations)[last_dense];
 
-        ((AuxStride * CULV_RESTRICT) world->linear_velocities)[dense_idx] =
-            ((AuxStride * CULV_RESTRICT) world->linear_velocities)[last_dense];
-        ((AuxStride * CULV_RESTRICT) world->angular_velocities)[dense_idx] =
-            ((AuxStride * CULV_RESTRICT) world->angular_velocities)[last_dense];
+        ((CPH_AuxStride * CPH_RESTRICT) world->linear_velocities)[dense_idx] =
+            ((CPH_AuxStride * CPH_RESTRICT) world->linear_velocities)[last_dense];
+        ((CPH_AuxStride * CPH_RESTRICT) world->angular_velocities)[dense_idx] =
+            ((CPH_AuxStride * CPH_RESTRICT) world->angular_velocities)[last_dense];
 
         // --- GROUP 2: METADATA (Non-atomic) ---
         world->body_ids[dense_idx]     = world->body_ids[last_dense];
@@ -92,16 +92,16 @@ void world_remove_body_slot(PhysicsWorld *world, uint32_t slot) {
 }
 
 // Internal helper to keep queues in sync
-static bool grow_queues(PhysicsWorld *world, size_t new_cap) {
+static bool grow_queues(CPH_PhysicsWorld *world, size_t new_cap) {
     if (new_cap > (SIZE_MAX / sizeof(PhysicsCommand))) {
         return false;
     }
 
     const size_t bytes = new_cap * sizeof(PhysicsCommand);
     PhysicsCommand *new_active =
-        (PhysicsCommand *)CulvNative_AlignedMalloc(bytes, MEMORY_ALIGNMENT_SIZE);
+        (PhysicsCommand *)CulvNative_AlignedMalloc(bytes, kMemoryAlignmentSize);
     PhysicsCommand *new_spare =
-        (PhysicsCommand *)CulvNative_AlignedMalloc(bytes, MEMORY_ALIGNMENT_SIZE);
+        (PhysicsCommand *)CulvNative_AlignedMalloc(bytes, kMemoryAlignmentSize);
     if (!new_active || !new_spare) {
         CulvNative_AlignedFree(new_active);
         CulvNative_AlignedFree(new_spare);
@@ -124,8 +124,8 @@ static bool grow_queues(PhysicsWorld *world, size_t new_cap) {
 }
 
 [[nodiscard]]
-bool ensure_command_capacity(PhysicsWorld *world) {
-    if (UNLIKELY(world->command_count >= world->command_capacity)) {
+bool CPH_EnsureCommandCapacity(CPH_PhysicsWorld *world) {
+    if (CPH_UNLIKELY(world->command_count >= world->command_capacity)) {
         if (world->command_capacity > SIZE_MAX / 2) {
             return false;
         }
@@ -136,12 +136,12 @@ bool ensure_command_capacity(PhysicsWorld *world) {
 }
 
 [[nodiscard]]
-bool ensure_command_bulk_capacity(PhysicsWorld *world, size_t batch_size) {
+bool CPH_EnsureCommandBulkCapacity(CPH_PhysicsWorld *world, size_t batch_size) {
     if (batch_size > SIZE_MAX - world->command_count) {
         return false;
     }
     const size_t required = world->command_count + batch_size;
-    if (UNLIKELY(required > world->command_capacity)) {
+    if (CPH_UNLIKELY(required > world->command_capacity)) {
         size_t new_cap = (world->command_capacity == 0) ? 64 : world->command_capacity;
         while (new_cap < required) {
             if (new_cap > SIZE_MAX / 2) {
@@ -156,10 +156,10 @@ bool ensure_command_bulk_capacity(PhysicsWorld *world, size_t batch_size) {
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 [[gnu::hot, gnu::flatten, gnu::nonnull(1, 2)]]
-void flush_commands_internal(PhysicsWorld *world, PhysicsCommand *CULV_RESTRICT queue,
+void CPH_FlushCommandsInternal(CPH_PhysicsWorld *world, PhysicsCommand *CPH_RESTRICT queue,
                              size_t count) { // Check count before calling.
-    queue                               = CULV_ASSUME_ALIGNED(queue, 64);
-    JPH_BodyInterface *CULV_RESTRICT bi = world->body_interface;
+    queue                               = CPH_ASSUME_ALIGNED(queue, 64);
+    JPH_BodyInterface *CPH_RESTRICT bi = world->body_interface;
 
     static const void *const dispatch_table[] = {
         [CMD_CREATE_BODY]       = &&op_CREATE_BODY,
@@ -194,7 +194,7 @@ void flush_commands_internal(PhysicsWorld *world, PhysicsCommand *CULV_RESTRICT 
     JPH_BodyID bid;
 
 op_NOP:
-    DISPATCH();
+    CPH_DISPATCH();
 
 op_CREATE_BODY: {
     JPH_BodyCreationSettings *const settings = cmd->create.settings;
@@ -203,11 +203,11 @@ op_CREATE_BODY: {
 
     JPH_BodyCreationSettings_Destroy(settings);
 
-    SHADOW_LOCK(&world->shadow_lock);
+    CPH_SHADOW_LOCK(&world->shadow_lock);
 
-    if (UNLIKELY(new_bid == JPH_INVALID_BODY_ID)) {
+    if (CPH_UNLIKELY(new_bid == kJphInvalidBodyId)) {
         // world_remove_body_slot handles atomic count/state updates internally
-        world_remove_body_slot(world, slot);
+        CPH_WorldRemoveBodySlot(world, slot);
     } else {
         // body_ids is non-atomic; protected by shadow_lock and the 'is_stepping' phase
         world->body_ids[world->slot_to_dense[slot]] = new_bid;
@@ -235,9 +235,9 @@ op_CREATE_BODY: {
         atomic_store_explicit(&world->slot_states[slot], SLOT_ALIVE, memory_order_release);
     }
 
-    SHADOW_UNLOCK(&world->shadow_lock);
+    CPH_SHADOW_UNLOCK(&world->shadow_lock);
 
-    DISPATCH();
+    CPH_DISPATCH();
 }
 
 op_CREATE_SOFT_BODY: {
@@ -247,10 +247,10 @@ op_CREATE_SOFT_BODY: {
     const JPH_BodyID new_bid =
         JPH_BodyInterface_CreateAndAddSoftBody(bi, settings, JPH_Activation_Activate);
 
-    SHADOW_LOCK(&world->shadow_lock);
+    CPH_SHADOW_LOCK(&world->shadow_lock);
 
-    if (UNLIKELY(new_bid == JPH_INVALID_BODY_ID)) {
-        world_remove_body_slot(world, slot);
+    if (CPH_UNLIKELY(new_bid == kJphInvalidBodyId)) {
+        CPH_WorldRemoveBodySlot(world, slot);
     } else {
         const uint32_t dense_idx  = world->slot_to_dense[slot];
         world->body_ids[dense_idx] = new_bid;
@@ -258,7 +258,7 @@ op_CREATE_SOFT_BODY: {
         // --- ALLOCATE SHADOW VERTEX BUFFER ---
         world->soft_shadows[dense_idx].num_vertices = num_verts;
         world->soft_shadows[dense_idx].vertices =
-            (JPH_Real *)CulvNative_AlignedMalloc(num_verts * sizeof(PosStride), AVX_ALIGNMENT);
+            (JPH_Real *)CulvNative_AlignedMalloc(num_verts * sizeof(CPH_PosStride), kAvxAlignment);
         world->soft_shadows[dense_idx].velocities = nullptr; // Initialize explicitly
         world->soft_shadows[dense_idx].normals    = nullptr; // Initialize explicitly
 
@@ -277,8 +277,8 @@ op_CREATE_SOFT_BODY: {
 
     JPH_SoftBodyCreationSettings_Destroy(settings); // Cleanup
 
-    SHADOW_UNLOCK(&world->shadow_lock);
-    DISPATCH();
+    CPH_SHADOW_UNLOCK(&world->shadow_lock);
+    CPH_DISPATCH();
 }
 
 op_DESTROY_BODY: {
@@ -290,10 +290,10 @@ op_DESTROY_BODY: {
     }
     JPH_BodyInterface_RemoveBody(bi, bid);
     JPH_BodyInterface_DestroyBody(bi, bid);
-    SHADOW_LOCK(&world->shadow_lock);
-    world_remove_body_slot(world, slot);
-    SHADOW_UNLOCK(&world->shadow_lock);
-    DISPATCH();
+    CPH_SHADOW_LOCK(&world->shadow_lock);
+    CPH_WorldRemoveBodySlot(world, slot);
+    CPH_SHADOW_UNLOCK(&world->shadow_lock);
+    CPH_DISPATCH();
 }
 
 op_SET_POS: {
@@ -304,7 +304,7 @@ op_SET_POS: {
     bool active = JPH_BodyInterface_IsActive(bi, bid);
     JPH_BodyInterface_SetPosition(
         bi, bid, p, (int)active ? JPH_Activation_DontActivate : JPH_Activation_Activate);
-    DISPATCH();
+    CPH_DISPATCH();
 }
 
 op_SET_ROT: {
@@ -314,7 +314,7 @@ op_SET_ROT: {
     q->z = cmd->quat.z;
     q->w = cmd->quat.w;
     JPH_BodyInterface_SetRotation(bi, bid, q, JPH_Activation_Activate);
-    DISPATCH();
+    CPH_DISPATCH();
 }
 
 op_SET_TRNS: {
@@ -330,7 +330,7 @@ op_SET_TRNS: {
     q->w = cmd->transform.rw;
 
     JPH_BodyInterface_SetPositionAndRotation(bi, bid, p, q, JPH_Activation_Activate);
-    DISPATCH();
+    CPH_DISPATCH();
 }
 
 op_SET_LINVEL: {
@@ -339,7 +339,7 @@ op_SET_LINVEL: {
     v->y = cmd->vec3f.y;
     v->z = cmd->vec3f.z;
     JPH_BodyInterface_SetLinearVelocity(bi, bid, v);
-    DISPATCH();
+    CPH_DISPATCH();
 }
 
 op_SET_ANGVEL: {
@@ -348,7 +348,7 @@ op_SET_ANGVEL: {
     v->y = cmd->vec3f.y;
     v->z = cmd->vec3f.z;
     JPH_BodyInterface_SetAngularVelocity(bi, bid, v);
-    DISPATCH();
+    CPH_DISPATCH();
 }
 
 op_SET_MOTION: {
@@ -356,29 +356,29 @@ op_SET_MOTION: {
                                     JPH_Activation_Activate);
     uint32_t layer = (cmd->motion.motion_type == 0) ? 0 : 1;
     JPH_BodyInterface_SetObjectLayer(bi, bid, (JPH_ObjectLayer)layer);
-    DISPATCH();
+    CPH_DISPATCH();
 }
 
 op_ACTIVATE: {
     JPH_BodyInterface_ActivateBody(bi, bid);
-    DISPATCH();
+    CPH_DISPATCH();
 }
 
 op_DEACTIVATE: {
     JPH_BodyInterface_DeactivateBody(bi, bid);
-    DISPATCH();
+    CPH_DISPATCH();
 }
 
-op_SET_USER_DATA: { DISPATCH(); }
+op_SET_USER_DATA: { CPH_DISPATCH(); }
 
 op_SET_CCD: {
     JPH_MotionQuality qual =
         cmd->motion.motion_type ? JPH_MotionQuality_LinearCast : JPH_MotionQuality_Discrete;
     JPH_BodyInterface_SetMotionQuality(bi, bid, qual);
-    DISPATCH();
+    CPH_DISPATCH();
 }
 
-op_TELEPORT: { DISPATCH(); }
+op_TELEPORT: { CPH_DISPATCH(); }
 
 op_APPLY_IMPULSE: {
     JPH_STACK_ALLOC(JPH_Vec3, v);
@@ -387,7 +387,7 @@ op_APPLY_IMPULSE: {
     v->z = cmd->vec3f.z;
     JPH_BodyInterface_AddImpulse(bi, bid, v);
     JPH_BodyInterface_ActivateBody(bi, bid);
-    DISPATCH();
+    CPH_DISPATCH();
 }
 
 op_APPLY_FORCE: {
@@ -397,7 +397,7 @@ op_APPLY_FORCE: {
     v->z = cmd->vec3f.z;
     JPH_BodyInterface_AddForce(bi, bid, v);
     JPH_BodyInterface_ActivateBody(bi, bid);
-    DISPATCH();
+    CPH_DISPATCH();
 }
 
 op_APPLY_TORQUE: {
@@ -407,7 +407,7 @@ op_APPLY_TORQUE: {
     v->z = cmd->vec3f.z;
     JPH_BodyInterface_AddTorque(bi, bid, v);
     JPH_BodyInterface_ActivateBody(bi, bid);
-    DISPATCH();
+    CPH_DISPATCH();
 }
 
 op_APPLY_ANG_IMPULSE: {
@@ -417,7 +417,7 @@ op_APPLY_ANG_IMPULSE: {
     v->z = cmd->vec3f.z;
     JPH_BodyInterface_AddAngularImpulse(bi, bid, v);
     JPH_BodyInterface_ActivateBody(bi, bid);
-    DISPATCH();
+    CPH_DISPATCH();
 }
 
 op_APPLY_IMPULSE_AT: {
@@ -433,14 +433,14 @@ op_APPLY_IMPULSE_AT: {
 
     JPH_BodyInterface_AddImpulse2(bi, bid, imp, pos);
     JPH_BodyInterface_ActivateBody(bi, bid);
-    DISPATCH();
+    CPH_DISPATCH();
 }
 
 op_CREATE_CONSTRAINT: {
     uint32_t s1         = slot;
     uint32_t s2         = cmd->constraint.body2_slot;
     uint32_t c_slot     = cmd->constraint.constraint_slot;
-    ConstraintParams *p = cmd->constraint.params;
+    CPH_ConstraintParams *p = cmd->constraint.params;
 
     JPH_BodyID bid1 = world->body_ids[world->slot_to_dense[s1]];
     JPH_BodyID bid2 = world->body_ids[world->slot_to_dense[s2]];
@@ -450,7 +450,7 @@ op_CREATE_CONSTRAINT: {
 
     if (state == SLOT_PENDING_CREATE) {
         // Verify bodies still exist in Jolt
-        if (bid1 != JPH_INVALID_BODY_ID && bid2 != JPH_INVALID_BODY_ID) {
+        if (bid1 != kJphInvalidBodyId && bid2 != kJphInvalidBodyId) {
             JPH_BodyLockWrite lock1;
             JPH_BodyLockWrite lock2;
             const JPH_BodyLockInterface *li = JPH_PhysicsSystem_GetBodyLockInterface(world->system);
@@ -471,22 +471,22 @@ op_CREATE_CONSTRAINT: {
 
                 switch (cmd->constraint.type) {
                 case CONSTRAINT_FIXED:
-                    constraint = create_fixed(p, b1, b2);
+                    constraint = CPH_CreateFixed(p, b1, b2);
                     break;
                 case CONSTRAINT_POINT:
-                    constraint = create_point(p, b1, b2);
+                    constraint = CPH_CreatePoint(p, b1, b2);
                     break;
                 case CONSTRAINT_HINGE:
-                    constraint = create_hinge(p, b1, b2);
+                    constraint = CPH_CreateHinge(p, b1, b2);
                     break;
                 case CONSTRAINT_SLIDER:
-                    constraint = create_slider(p, b1, b2);
+                    constraint = CPH_CreateSlider(p, b1, b2);
                     break;
                 case CONSTRAINT_CONE:
-                    constraint = create_cone(p, b1, b2);
+                    constraint = CPH_CreateCone(p, b1, b2);
                     break;
                 case CONSTRAINT_DISTANCE:
-                    constraint = create_distance(p, b1, b2);
+                    constraint = CPH_CreateDistance(p, b1, b2);
                     break;
                 default:
                     break;
@@ -511,11 +511,11 @@ op_CREATE_CONSTRAINT: {
         }
     }
     CulvNative_Free(p); // Important: Free the heap allocation
-    DISPATCH();
+    CPH_DISPATCH();
 }
 }
 
-void clear_command_queue(PhysicsWorld *world) {
+void CPH_ClearCommandQueue(CPH_PhysicsWorld *world) {
     if (!world->command_queue) {
         return;
     }

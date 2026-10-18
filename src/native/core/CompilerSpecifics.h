@@ -6,15 +6,15 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define CULV_GLUE(a, b) a##b
-#define CULV_CONCAT(a, b) CULV_GLUE(a, b)
+#define CPH_GLUE(a, b) a##b
+#define CPH_CONCAT(a, b) CPH_GLUE(a, b)
 
 #ifdef __cplusplus
 #    include <atomic>
-#    define CULV_ATOMIC(t) std::atomic<t>
+#    define CPH_ATOMIC(t) std::atomic<t>
 #else
 #    include <stdatomic.h>
-#    define CULV_ATOMIC(t) _Atomic(t)
+#    define CPH_ATOMIC(t) _Atomic(t)
 #endif
 
 #if defined(__cplusplus)
@@ -36,35 +36,35 @@ typedef unsigned _BitInt(5) culv_u5;
 
 // --- Compiler Hints ---
 #if defined(__GNUC__) || defined(__clang__)
-#    define LIKELY(x) __builtin_expect(!!(x), 1)
-#    define UNLIKELY(x) __builtin_expect(!!(x), 0)
+#    define CPH_LIKELY(x) __builtin_expect(!!(x), 1)
+#    define CPH_UNLIKELY(x) __builtin_expect(!!(x), 0)
 #else
 // Fallback for MSVC or other compilers that don't support built-in expect
-#    define LIKELY(x) (x)
-#    define UNLIKELY(x) (x)
+#    define CPH_LIKELY(x) (x)
+#    define CPH_UNLIKELY(x) (x)
 #endif
 
 // Use restrict keyword to tell the compiler these buffers do not overlap.
 // This is the single best way to enable SIMD auto-vectorization.
 #ifdef _MSC_VER
 // MSVC: __restrict is standard here.
-#    define CULV_RESTRICT __restrict
+#    define CPH_RESTRICT __restrict
 
 // MSVC doesn't have a direct equivalent to builtin_assume_aligned.
 // We use __assume to hint the optimizer about the pointer's alignment bits.
-#    define CULV_ASSUME_ALIGNED(x, alignment)                                                      \
+#    define CPH_ASSUME_ALIGNED(x, alignment)                                                      \
         (__assume(((uintptr_t)(x) & ((alignment) - 1)) == 0), (x))
 
-#    define CULV_FORCE_INLINE __forceinline
+#    define CPH_FORCE_INLINE __forceinline
 #else
 // Clang/GCC: Use the double-underscore version for maximum compatibility.
-#    define CULV_RESTRICT __restrict__
+#    define CPH_RESTRICT __restrict__
 
 // The Builtin is an expression, not an attribute.
 // It "cleanses" the pointer and returns it with alignment metadata attached.
-#    define CULV_ASSUME_ALIGNED(x, alignment) (__builtin_assume_aligned((x), (alignment)))
+#    define CPH_ASSUME_ALIGNED(x, alignment) (__builtin_assume_aligned((x), (alignment)))
 
-#    define CULV_FORCE_INLINE inline __attribute__((always_inline))
+#    define CPH_FORCE_INLINE inline __attribute__((always_inline))
 #endif
 
 // Use a prefixed function to avoid collision
@@ -82,23 +82,23 @@ static inline void culv_unreachable(void) {
 
 #if defined(__clang__) || defined(__GNUC__)
 // rw: 0 = read, 1 = write | locality: 3 = high (keep in L1)
-#    define CULV_PREFETCH_READ(addr) __builtin_prefetch((const void *)(addr), 0, 3)
-#    define CULV_PREFETCH_WRITE(addr) __builtin_prefetch((const void *)(addr), 1, 3)
+#    define CPH_PREFETCH_READ(addr) __builtin_prefetch((const void *)(addr), 0, 3)
+#    define CPH_PREFETCH_WRITE(addr) __builtin_prefetch((const void *)(addr), 1, 3)
 #elif defined(_MSC_VER)
 #    include <mmintrin.h>
 // MSVC uses hints: _MM_HINT_T0 = all cache levels
-#    define CULV_PREFETCH_READ(addr) _mm_prefetch((const char *)(addr), _MM_HINT_T0)
-#    define CULV_PREFETCH_WRITE(addr) _mm_prefetch((const char *)(addr), _MM_HINT_T0)
+#    define CPH_PREFETCH_READ(addr) _mm_prefetch((const char *)(addr), _MM_HINT_T0)
+#    define CPH_PREFETCH_WRITE(addr) _mm_prefetch((const char *)(addr), _MM_HINT_T0)
 #else
-#    define CULV_PREFETCH_READ(addr) ((void)0)
-#    define CULV_PREFETCH_WRITE(addr) ((void)0)
+#    define CPH_PREFETCH_READ(addr) ((void)0)
+#    define CPH_PREFETCH_WRITE(addr) ((void)0)
 #endif
 
 // --- Compiler Assume Hint ---
 // Tells the compiler an expression is guaranteed to be true, allowing it to
 // optimize away range checks and improve loop unrolling.
 #if defined(CULVERIN_DEBUG)
-#    define CULV_ASSUME(x)                                                                         \
+#    define CPH_ASSUME(x)                                                                         \
         do {                                                                                       \
             if (!(x)) {                                                                            \
                 fprintf(stderr, "Assumption failed: %s at %s:%d\n", #x, __FILE__, __LINE__);       \
@@ -106,44 +106,44 @@ static inline void culv_unreachable(void) {
             }                                                                                      \
         } while (0)
 #elif defined(__clang__) || defined(__GNUC__)
-#    define CULV_ASSUME(x)                                                                         \
+#    define CPH_ASSUME(x)                                                                         \
         do {                                                                                       \
             if (!(x))                                                                              \
                 __builtin_unreachable();                                                           \
         } while (0)
 #elif defined(_MSC_VER)
-#    define CULV_ASSUME(x) __assume(x)
+#    define CPH_ASSUME(x) __assume(x)
 #else
-#    define CULV_ASSUME(x) ((void)0)
+#    define CPH_ASSUME(x) ((void)0)
 #endif
 
 // Force TSan to ignore a specific function
 #if defined(__has_feature)
 #    if __has_feature(thread_sanitizer)
-#        define CULV_NO_TSAN __attribute__((no_sanitize("thread")))
+#        define CPH_NO_TSAN __attribute__((no_sanitize("thread")))
 #    else
-#        define CULV_NO_TSAN
+#        define CPH_NO_TSAN
 #    endif
 #elif defined(__SANITIZE_THREAD__)
-#    define CULV_NO_TSAN __attribute__((no_sanitize("thread")))
+#    define CPH_NO_TSAN __attribute__((no_sanitize("thread")))
 #else
-#    define CULV_NO_TSAN
+#    define CPH_NO_TSAN
 #endif
 
-[[maybe_unused]] static constexpr size_t MEMORY_ALIGNMENT_SIZE = 64;
+[[maybe_unused]] static constexpr size_t kMemoryAlignmentSize = 64;
 
-#define CULV_STR_HELPER(x) #x
-#define CULV_STR(x) CULV_STR_HELPER(x)
+#define CPH_STR_HELPER(x) #x
+#define CPH_STR(x) CPH_STR_HELPER(x)
 
-#define CULV_JOIN_HELPER(x, y) x##y
-#define CULV_JOIN(x, y) CULV_JOIN_HELPER(x, y)
+#define CPH_JOIN_HELPER(x, y) x##y
+#define CPH_JOIN(x, y) CPH_JOIN_HELPER(x, y)
 
 #if defined(__clang__)
-#    define CULV_UNROLL_LOOP(n) _Pragma(CULV_STR(clang loop unroll_count(n)))
+#    define CPH_UNROLL_LOOP(n) _Pragma(CPH_STR(clang loop unroll_count(n)))
 #elif defined(__GNUC__)
-#    define CULV_UNROLL_LOOP(x) _Pragma(CULV_STR(GCC unroll(x)))
+#    define CPH_UNROLL_LOOP(x) _Pragma(CPH_STR(GCC unroll(x)))
 #else
-#    define CULV_UNROLL_LOOP(x)
+#    define CPH_UNROLL_LOOP(x)
 #endif
 
 /*
@@ -151,7 +151,7 @@ static inline void culv_unreachable(void) {
  * ==================== INTERNALS BELOW THIS LINE ===================================
  * ==================================================================================
  */
-#define UNSAFE_NULLPTR // Define this to disable volatile qualification on the null pointer identity
+#define CPH_UNSAFE_NULLPTR // Define this to disable volatile qualification on the null pointer identity
                        // transformation, which may allow the compiler to optimize away null checks
                        // in certain scenarios. Use with caution, as this can lead to undefined
                        // behavior if the compiler determines that the null check is redundant and
@@ -194,13 +194,13 @@ typedef typeof(nullptr) nullptr_t;
   ensures \result == \null;
   assigns \nothing;
 */
-#        if !defined(UNSAFE_NULLPTR)
-[[maybe_unused]] [[nodiscard]] static CULV_FORCE_INLINE
+#        if !defined(CPH_UNSAFE_NULLPTR)
+[[maybe_unused]] [[nodiscard]] static CPH_FORCE_INLINE
     nullptr_t culv_internal_impl_null([[maybe_unused]] const volatile typeof_unqual(nullptr) ptr) {
     return (typeof_unqual(nullptr))(ptr);
 }
 #        else
-[[maybe_unused]] [[nodiscard]] static CULV_FORCE_INLINE
+[[maybe_unused]] [[nodiscard]] static CPH_FORCE_INLINE
     nullptr_t culv_internal_impl_null([[maybe_unused]] const typeof_unqual(nullptr) ptr) {
     [[maybe_unused]] register const nullptr_t null_ptr =
         (nullptr_t)ptr; // Identity transformation on the null-set, with volatile to prevent
@@ -210,7 +210,7 @@ typedef typeof(nullptr) nullptr_t;
     return (typeof_unqual(nullptr))(null_ptr);
 }
 #        endif
-CULV_FORCE_INLINE nullptr_t culv_static_assert_failure([[maybe_unused]] nullptr_t x) {
+CPH_FORCE_INLINE nullptr_t culv_static_assert_failure([[maybe_unused]] nullptr_t x) {
     // This function is never meant to be called; it's only used in a static_assert context to cause
     // a compile-time failure when the macro is misused. The parameter is just there to make it a
     // valid function and to provide a type for the static_assert.
@@ -237,7 +237,7 @@ CULV_FORCE_INLINE nullptr_t culv_static_assert_failure([[maybe_unused]] nullptr_
     return result;
 }
 // NOLINTNEXTLINE(readability-identifier-naming)
-#        define culv_take_return_null(x)                                                           \
+#        define CPH_culv_take_return_null(x)                                                           \
             _Generic((x),                                                                          \
                 nullptr_t: culv_internal_impl_null(x),                                             \
                 default: culv_static_assert_failure(x))
@@ -245,15 +245,15 @@ CULV_FORCE_INLINE nullptr_t culv_static_assert_failure([[maybe_unused]] nullptr_
           // indicate the intent. We can't enforce at compile time that only null pointer
           // constants are accepted, but we can at least provide a marker to indicate the
           // intent.
-#        if !defined(UNSAFE_NULLPTR)
-[[maybe_unused]] [[nodiscard]] static CULV_FORCE_INLINE void *
-culv_take_return_null([[maybe_unused]] const volatile void *ptr) {
+#        if !defined(CPH_UNSAFE_NULLPTR)
+[[maybe_unused]] [[nodiscard]] static CPH_FORCE_INLINE void *
+CPH_culv_take_return_null([[maybe_unused]] const volatile void *ptr) {
     return (void *)(ptr); // Identity transformation on the null-set, with volatile to prevent
                           // dead-code elimination in strict-aliasing scenarios.
 }
 #        else
-[[maybe_unused]] [[nodiscard]] static CULV_FORCE_INLINE void *
-culv_take_return_null([[maybe_unused]] const void *ptr) {
+[[maybe_unused]] [[nodiscard]] static CPH_FORCE_INLINE void *
+CPH_culv_take_return_null([[maybe_unused]] const void *ptr) {
     return (void *)(ptr); // Identity transformation on the null-set without volatile qualification.
                           // This may be optimized away by the compiler if it determines that the
                           // null check is redundant, which could lead to undefined behavior in
@@ -264,7 +264,7 @@ culv_take_return_null([[maybe_unused]] const void *ptr) {
 #elif defined(__ZIG__)
 /// @param T: The target pointer type.
 /// @param pointer_literal: Must be a literal 'null' or a 0-value comptime int.
-pub inline fn culv_take_return_null(comptime T : type, comptime pointer_literal : anytype) ? *T {
+pub inline fn CPH_culv_take_return_null(comptime T : type, comptime pointer_literal : anytype) ? *T {
     // Static Type Validation: Ensure T is actually a pointer-compatible type
     comptime {
         const info = @typeInfo(T);
@@ -345,7 +345,7 @@ static_assert(current_year() <= CULV_SAFETY_EPOCH,
 // Helper to check if a type is exactly void (after removing const/volatile qualifiers)
 template <typename T>
 // NOLINTNEXTLINE(readability-identifier-naming)
-struct Void {
+struct CPH_Void {
     // We MUST strip references and cv-qualifiers or test_array[i] will fail deduction
     static constexpr bool value = std::is_same_v<std::remove_cvref_t<T>, std::nullptr_t>;
 };
@@ -364,8 +364,8 @@ struct Void {
  * successfully or fails to compile.
  */
 template <typename T>
-[[nodiscard]] [[maybe_unused]] constexpr auto culv_take_return_null(T &&arg) noexcept
-    requires Void<T>::value
+[[nodiscard]] [[maybe_unused]] constexpr auto CPH_culv_take_return_null(T &&arg) noexcept
+    requires CPH_Void<T>::value
 {
     static_assert(
         sizeof(arg) == sizeof(void *),
@@ -386,7 +386,7 @@ template <typename T>
     std::array<std::nullptr_t, 4> test_array = {};
 
     return std::ranges::all_of(test_array,
-                               [](auto &n) { return culv_take_return_null(n) == nullptr; });
+                               [](auto &n) { return CPH_culv_take_return_null(n) == nullptr; });
 }
 
 // helper function to validate that the return type of culv_take_return_null is indeed nullptr_t,
@@ -408,7 +408,7 @@ template <typename T>
     // the implementation of culv_take_return_null, and it needs to be addressed before the library
     // can be safely used.
     if (!std::ranges::all_of(test_array,
-                             [](auto &n) -> auto { return culv_take_return_null(n) == nullptr; })) {
+                             [](auto &n) -> auto { return CPH_culv_take_return_null(n) == nullptr; })) {
         return false;
     }
 
@@ -426,7 +426,7 @@ template <typename T>
 
 // Verify that the function behaves as expected at compile time. If this fails, the logic is broken
 // and we need to fix it before proceeding.
-static_assert(culv_take_return_null(nullptr) ==
+static_assert(CPH_culv_take_return_null(nullptr) ==
                   (static_cast<void>(0), nullptr), // Identity transformation on the null-set
               "culv_take_return_null does not return nullptr as expected!");
 static_assert(
@@ -438,13 +438,13 @@ static_assert(
 
 #ifdef __cplusplus
 // In C++, use the standard decltype
-#    define CULV_TYPE_OF(x) decltype(x)
+#    define CPH_TYPE_OF(x) decltype(x)
 #else
 // In C, use C23 typeof or the GCC/Clang extension
 #    if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L
-#        define CULV_TYPE_OF(x) typeof(x)
+#        define CPH_TYPE_OF(x) typeof(x)
 #    else
 // Fallback for older C or compilers with extensions
-#        define CULV_TYPE_OF(x) __typeof__(x)
+#        define CPH_TYPE_OF(x) __typeof__(x)
 #    endif
 #endif

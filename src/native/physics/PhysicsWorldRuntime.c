@@ -6,9 +6,9 @@
 #include "physics/SlotState.h"
 #include <string.h>
 
-static constexpr size_t INITIAL_MATERIAL_CAPACITY = 16;
+static constexpr size_t kInitialMaterialCapacity = 16;
 
-bool physics_world_attach_contact_listener(PhysicsWorld *world) {
+bool CPH_PhysicsWorldAttachContactListener(CPH_PhysicsWorld *world) {
     if (!world || !world->system) {
         return false;
     }
@@ -20,21 +20,21 @@ bool physics_world_attach_contact_listener(PhysicsWorld *world) {
     return true;
 }
 
-void physics_world_sync_loaded_state(PhysicsWorld *world, size_t saved_count) {
+void CPH_PhysicsWorldSyncLoadedState(CPH_PhysicsWorld *world, size_t saved_count) {
     if (!world) {
         return;
     }
 
-    JPH_BodyID *CULV_RESTRICT body_ids              = world->body_ids;
-    JPH_BodyInterface *CULV_RESTRICT body_interface = world->body_interface;
-    PosStride *CULV_RESTRICT positions              = (PosStride *)world->positions;
-    AuxStride *CULV_RESTRICT rotations              = (AuxStride *)world->rotations;
-    AuxStride *CULV_RESTRICT linear_velocities      = (AuxStride *)world->linear_velocities;
-    AuxStride *CULV_RESTRICT angular_velocities     = (AuxStride *)world->angular_velocities;
+    JPH_BodyID *CPH_RESTRICT body_ids              = world->body_ids;
+    JPH_BodyInterface *CPH_RESTRICT body_interface = world->body_interface;
+    CPH_PosStride *CPH_RESTRICT positions              = (CPH_PosStride *)world->positions;
+    CPH_AuxStride *CPH_RESTRICT rotations              = (CPH_AuxStride *)world->rotations;
+    CPH_AuxStride *CPH_RESTRICT linear_velocities      = (CPH_AuxStride *)world->linear_velocities;
+    CPH_AuxStride *CPH_RESTRICT angular_velocities     = (CPH_AuxStride *)world->angular_velocities;
 
     for (size_t i = 0; i < saved_count; i++) {
         const JPH_BodyID body_id = body_ids[i];
-        if (body_id == JPH_INVALID_BODY_ID) {
+        if (body_id == kJphInvalidBodyId) {
             continue;
         }
 
@@ -63,34 +63,34 @@ void physics_world_sync_loaded_state(PhysicsWorld *world, size_t saved_count) {
     }
 }
 
-static void lock_until_not_stepping(PhysicsWorld *world) {
-    SHADOW_LOCK(&world->shadow_lock);
+static void lock_until_not_stepping(CPH_PhysicsWorld *world) {
+    CPH_SHADOW_LOCK(&world->shadow_lock);
     if (!atomic_load_explicit(&world->is_stepping, memory_order_relaxed)) {
         return;
     }
 
     atomic_fetch_add_explicit(&world->waiting_threads, 1, memory_order_relaxed);
     while (atomic_load_explicit(&world->is_stepping, memory_order_relaxed)) {
-        SHADOW_UNLOCK(&world->shadow_lock);
-        NATIVE_MUTEX_LOCK(world->step_sync.mutex);
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
+        CPH_NATIVE_MUTEX_LOCK(world->step_sync.mutex);
         while (atomic_load_explicit(&world->is_stepping, memory_order_relaxed)) {
-            NATIVE_COND_WAIT(world->step_sync.cond, world->step_sync.mutex);
+            CPH_NATIVE_COND_WAIT(world->step_sync.cond, world->step_sync.mutex);
         }
-        NATIVE_MUTEX_UNLOCK(world->step_sync.mutex);
-        SHADOW_LOCK(&world->shadow_lock);
+        CPH_NATIVE_MUTEX_UNLOCK(world->step_sync.mutex);
+        CPH_SHADOW_LOCK(&world->shadow_lock);
     }
     atomic_fetch_sub_explicit(&world->waiting_threads, 1, memory_order_relaxed);
 }
 
-static void wait_until_not_querying_locked(PhysicsWorld *world) {
+static void wait_until_not_querying_locked(CPH_PhysicsWorld *world) {
     while (atomic_load_explicit(&world->active_queries, memory_order_acquire) > 0) {
-        SHADOW_UNLOCK(&world->shadow_lock);
-        NATIVE_MUTEX_LOCK(world->step_sync.mutex);
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
+        CPH_NATIVE_MUTEX_LOCK(world->step_sync.mutex);
         while (atomic_load_explicit(&world->active_queries, memory_order_relaxed) > 0) {
-            NATIVE_COND_WAIT(world->step_sync.cond, world->step_sync.mutex);
+            CPH_NATIVE_COND_WAIT(world->step_sync.cond, world->step_sync.mutex);
         }
-        NATIVE_MUTEX_UNLOCK(world->step_sync.mutex);
-        SHADOW_LOCK(&world->shadow_lock);
+        CPH_NATIVE_MUTEX_UNLOCK(world->step_sync.mutex);
+        CPH_SHADOW_LOCK(&world->shadow_lock);
     }
 }
 
@@ -103,8 +103,8 @@ static bool calculate_snapshot_size(size_t body_count, size_t slot_capacity, siz
     size_t mapping_size         = 0;
     size_t three_auxiliary_size = 0;
     size_t total_size           = header_size;
-    if (__builtin_mul_overflow(body_count, sizeof(PosStride), &positions_size) ||
-        __builtin_mul_overflow(body_count, sizeof(AuxStride), &auxiliary_size) ||
+    if (__builtin_mul_overflow(body_count, sizeof(CPH_PosStride), &positions_size) ||
+        __builtin_mul_overflow(body_count, sizeof(CPH_AuxStride), &auxiliary_size) ||
         __builtin_mul_overflow(slot_capacity, sizeof(uint32_t) * 3 + sizeof(uint8_t),
                                &mapping_size) ||
         __builtin_mul_overflow(auxiliary_size, (size_t)3, &three_auxiliary_size) ||
@@ -128,7 +128,7 @@ static bool calculate_snapshot_size(size_t body_count, size_t slot_capacity, siz
     return true;
 }
 
-PhysicsWorldSnapshotStatus physics_world_save_snapshot(PhysicsWorld *world, uint8_t **out_data,
+PhysicsWorldSnapshotStatus CPH_PhysicsWorldSaveSnapshot(CPH_PhysicsWorld *world, uint8_t **out_data,
                                                        size_t *out_size) {
     if (!world || !out_data || !out_size) {
         return PHYSICS_WORLD_SNAPSHOT_STATUS_INVALID_ARGUMENT;
@@ -147,12 +147,12 @@ PhysicsWorldSnapshotStatus physics_world_save_snapshot(PhysicsWorld *world, uint
     size_t mapping_size        = 0;
     if (!calculate_snapshot_size(body_count, slot_capacity, &total_size, &position_size,
                                  &auxiliary_size, &mapping_size)) {
-        SHADOW_UNLOCK(&world->shadow_lock);
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_SNAPSHOT_STATUS_OVERFLOW;
     }
     uint8_t *snapshot = CulvNative_Malloc(total_size);
     if (!snapshot) {
-        SHADOW_UNLOCK(&world->shadow_lock);
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_SNAPSHOT_STATUS_OUT_OF_MEMORY;
     }
 
@@ -186,13 +186,13 @@ PhysicsWorldSnapshotStatus physics_world_save_snapshot(PhysicsWorld *world, uint
         out_states[i] = atomic_load_explicit(&world->slot_states[i], memory_order_relaxed);
     }
 
-    SHADOW_UNLOCK(&world->shadow_lock);
+    CPH_SHADOW_UNLOCK(&world->shadow_lock);
     *out_data = snapshot;
     *out_size = total_size;
     return PHYSICS_WORLD_SNAPSHOT_STATUS_OK;
 }
 
-PhysicsWorldSnapshotStatus physics_world_load_snapshot(PhysicsWorld *world, const uint8_t *data,
+PhysicsWorldSnapshotStatus CPH_PhysicsWorldLoadSnapshot(CPH_PhysicsWorld *world, const uint8_t *data,
                                                        size_t data_size, size_t *out_saved_count,
                                                        size_t *out_world_capacity,
                                                        size_t *out_saved_capacity) {
@@ -207,7 +207,7 @@ PhysicsWorldSnapshotStatus physics_world_load_snapshot(PhysicsWorld *world, cons
     wait_until_not_querying_locked(world);
     const size_t header_size = sizeof(size_t) + sizeof(double) + sizeof(size_t);
     if (data_size < header_size) {
-        SHADOW_UNLOCK(&world->shadow_lock);
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_SNAPSHOT_STATUS_TRUNCATED;
     }
 
@@ -225,11 +225,11 @@ PhysicsWorldSnapshotStatus physics_world_load_snapshot(PhysicsWorld *world, cons
     *out_world_capacity = world->slot_capacity;
     *out_saved_capacity = saved_capacity;
     if (saved_capacity != world->slot_capacity) {
-        SHADOW_UNLOCK(&world->shadow_lock);
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_SNAPSHOT_STATUS_CAPACITY_MISMATCH;
     }
     if (saved_count > saved_capacity || saved_count > world->max_jolt_bodies) {
-        SHADOW_UNLOCK(&world->shadow_lock);
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_SNAPSHOT_STATUS_TRUNCATED;
     }
 
@@ -239,11 +239,11 @@ PhysicsWorldSnapshotStatus physics_world_load_snapshot(PhysicsWorld *world, cons
     size_t mapping_size   = 0;
     if (!calculate_snapshot_size(saved_count, saved_capacity, &expected_size, &position_size,
                                  &auxiliary_size, &mapping_size)) {
-        SHADOW_UNLOCK(&world->shadow_lock);
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_SNAPSHOT_STATUS_TRUNCATED;
     }
     if (data_size != expected_size) {
-        SHADOW_UNLOCK(&world->shadow_lock);
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_SNAPSHOT_STATUS_TRUNCATED;
     }
 
@@ -279,15 +279,15 @@ PhysicsWorldSnapshotStatus physics_world_load_snapshot(PhysicsWorld *world, cons
         }
     }
     atomic_store_explicit(&world->free_count, free_count, memory_order_release);
-    SHADOW_UNLOCK(&world->shadow_lock);
+    CPH_SHADOW_UNLOCK(&world->shadow_lock);
 
-    physics_world_sync_loaded_state(world, saved_count);
+    CPH_PhysicsWorldSyncLoadedState(world, saved_count);
     *out_saved_count = saved_count;
     return PHYSICS_WORLD_SNAPSHOT_STATUS_OK;
 }
 
-PhysicsWorldRuntimeStatus physics_world_take_contact_events(PhysicsWorld *world,
-                                                            struct ContactEvent **out_events,
+PhysicsWorldRuntimeStatus CPH_PhysicsWorldTakeContactEvents(CPH_PhysicsWorld *world,
+                                                            struct CPH_ContactEvent **out_events,
                                                             size_t *out_count) {
     if (!world || !out_events || !out_count) {
         return PHYSICS_WORLD_RUNTIME_STATUS_INVALID_ARGUMENT;
@@ -301,30 +301,30 @@ PhysicsWorldRuntimeStatus physics_world_take_contact_events(PhysicsWorld *world,
         count = world->contact_max_capacity;
     }
     if (count == 0) {
-        SHADOW_UNLOCK(&world->shadow_lock);
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_RUNTIME_STATUS_OK;
     }
-    if (count > SIZE_MAX / sizeof(struct ContactEvent)) {
-        SHADOW_UNLOCK(&world->shadow_lock);
+    if (count > SIZE_MAX / sizeof(struct CPH_ContactEvent)) {
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_RUNTIME_STATUS_OVERFLOW;
     }
 
-    struct ContactEvent *events =
-        CulvNative_AlignedMalloc(count * sizeof(struct ContactEvent), MEMORY_ALIGNMENT_SIZE);
+    struct CPH_ContactEvent *events =
+        CulvNative_AlignedMalloc(count * sizeof(struct CPH_ContactEvent), kMemoryAlignmentSize);
     if (!events) {
-        SHADOW_UNLOCK(&world->shadow_lock);
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_RUNTIME_STATUS_OUT_OF_MEMORY;
     }
-    memcpy(events, world->contact_buffer, count * sizeof(struct ContactEvent));
+    memcpy(events, world->contact_buffer, count * sizeof(struct CPH_ContactEvent));
     atomic_store_explicit(&world->contact_atomic_idx, 0, memory_order_relaxed);
-    SHADOW_UNLOCK(&world->shadow_lock);
+    CPH_SHADOW_UNLOCK(&world->shadow_lock);
 
     *out_events = events;
     *out_count  = count;
     return PHYSICS_WORLD_RUNTIME_STATUS_OK;
 }
 
-PhysicsWorldRuntimeStatus physics_world_set_gravity(PhysicsWorld *world, JPH_Vec3 gravity) {
+PhysicsWorldRuntimeStatus CPH_PhysicsWorldSetGravity(CPH_PhysicsWorld *world, JPH_Vec3 gravity) {
     if (!world) {
         return PHYSICS_WORLD_RUNTIME_STATUS_INVALID_ARGUMENT;
     }
@@ -333,8 +333,8 @@ PhysicsWorldRuntimeStatus physics_world_set_gravity(PhysicsWorld *world, JPH_Vec
     const size_t current_count = atomic_load_explicit(&world->count, memory_order_acquire);
     JPH_PhysicsSystem_SetGravity(world->system, &gravity);
 
-    if (UNLIKELY(current_count > UINT32_MAX)) {
-        SHADOW_UNLOCK(&world->shadow_lock);
+    if (CPH_UNLIKELY(current_count > UINT32_MAX)) {
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_RUNTIME_STATUS_OVERFLOW;
     }
 
@@ -343,23 +343,23 @@ PhysicsWorldRuntimeStatus physics_world_set_gravity(PhysicsWorld *world, JPH_Vec
                                          (uint32_t)current_count);
     }
 
-    SHADOW_UNLOCK(&world->shadow_lock);
+    CPH_SHADOW_UNLOCK(&world->shadow_lock);
     return PHYSICS_WORLD_RUNTIME_STATUS_OK;
 }
 
-PhysicsWorldRuntimeStatus physics_world_get_gravity(PhysicsWorld *world, JPH_Vec3 *out_gravity) {
+PhysicsWorldRuntimeStatus CPH_PhysicsWorldGetGravity(CPH_PhysicsWorld *world, JPH_Vec3 *out_gravity) {
     if (!world || !out_gravity) {
         return PHYSICS_WORLD_RUNTIME_STATUS_INVALID_ARGUMENT;
     }
 
-    SHADOW_LOCK(&world->shadow_lock);
+    CPH_SHADOW_LOCK(&world->shadow_lock);
     JPH_PhysicsSystem_GetGravity(world->system, out_gravity);
-    SHADOW_UNLOCK(&world->shadow_lock);
+    CPH_SHADOW_UNLOCK(&world->shadow_lock);
     return PHYSICS_WORLD_RUNTIME_STATUS_OK;
 }
 
-PhysicsWorldRuntimeStatus physics_world_get_body_stats(PhysicsWorld *world, BodyHandle handle,
-                                                       PhysicsBodyStats *out_stats) {
+PhysicsWorldRuntimeStatus CPH_PhysicsWorldGetBodyStats(CPH_PhysicsWorld *world, BodyHandle handle,
+                                                       CPH_PhysicsBodyStats *out_stats) {
     if (!world || !out_stats) {
         return PHYSICS_WORLD_RUNTIME_STATUS_INVALID_ARGUMENT;
     }
@@ -367,26 +367,26 @@ PhysicsWorldRuntimeStatus physics_world_get_body_stats(PhysicsWorld *world, Body
     lock_until_not_stepping(world);
     uint32_t slot = 0;
     if (!unpack_handle(world, handle, &slot)) {
-        SHADOW_UNLOCK(&world->shadow_lock);
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_RUNTIME_STATUS_STALE_HANDLE;
     }
 
     const uint8_t state = atomic_load_explicit(&world->slot_states[slot], memory_order_acquire);
-    if (!get_slot_predicate(state, MASK_IMM_STANDARD).is_immediate) {
-        SHADOW_UNLOCK(&world->shadow_lock);
+    if (!get_slot_predicate(state, kMaskImmStandard).is_immediate) {
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_RUNTIME_STATUS_STALE_HANDLE;
     }
 
     const uint32_t dense       = world->slot_to_dense[slot];
-    out_stats->position        = ((PosStride *)world->positions)[dense];
-    out_stats->rotation        = ((AuxStride *)world->rotations)[dense];
-    out_stats->linear_velocity = ((AuxStride *)world->linear_velocities)[dense];
-    SHADOW_UNLOCK(&world->shadow_lock);
+    out_stats->position        = ((CPH_PosStride *)world->positions)[dense];
+    out_stats->rotation        = ((CPH_AuxStride *)world->rotations)[dense];
+    out_stats->linear_velocity = ((CPH_AuxStride *)world->linear_velocities)[dense];
+    CPH_SHADOW_UNLOCK(&world->shadow_lock);
     return PHYSICS_WORLD_RUNTIME_STATUS_OK;
 }
 
 static PhysicsWorldRuntimeStatus
-lock_soft_body_for_read(PhysicsWorld *world, BodyHandle handle, JPH_BodyLockRead *out_lock,
+lock_soft_body_for_read(CPH_PhysicsWorld *world, BodyHandle handle, JPH_BodyLockRead *out_lock,
                         const JPH_BodyLockInterface **out_interface, uint32_t *out_count) {
     if (!world || !out_lock || !out_interface || !out_count || !world->system) {
         return PHYSICS_WORLD_RUNTIME_STATUS_INVALID_ARGUMENT;
@@ -395,17 +395,17 @@ lock_soft_body_for_read(PhysicsWorld *world, BodyHandle handle, JPH_BodyLockRead
     lock_until_not_stepping(world);
     uint32_t slot = 0;
     if (!unpack_handle(world, handle, &slot)) {
-        SHADOW_UNLOCK(&world->shadow_lock);
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_RUNTIME_STATUS_STALE_HANDLE;
     }
     const uint8_t state = atomic_load_explicit(&world->slot_states[slot], memory_order_acquire);
-    if (!get_slot_predicate(state, MASK_IMM_STRICT).is_immediate) {
-        SHADOW_UNLOCK(&world->shadow_lock);
+    if (!get_slot_predicate(state, kMaskImmStrict).is_immediate) {
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_RUNTIME_STATUS_STALE_HANDLE;
     }
     const uint32_t dense     = world->slot_to_dense[slot];
     const JPH_BodyID body_id = world->body_ids[dense];
-    SHADOW_UNLOCK(&world->shadow_lock);
+    CPH_SHADOW_UNLOCK(&world->shadow_lock);
 
     const JPH_BodyLockInterface *lock_interface =
         JPH_PhysicsSystem_GetBodyLockInterface(world->system);
@@ -423,7 +423,7 @@ lock_soft_body_for_read(PhysicsWorld *world, BodyHandle handle, JPH_BodyLockRead
     return PHYSICS_WORLD_RUNTIME_STATUS_OK;
 }
 
-PhysicsWorldRuntimeStatus physics_world_get_soft_body_vertex_count(PhysicsWorld *world,
+PhysicsWorldRuntimeStatus CPH_PhysicsWorldGetSoftBodyVertexCount(CPH_PhysicsWorld *world,
                                                                    BodyHandle handle,
                                                                    uint32_t *out_count) {
     if (!out_count) {
@@ -439,7 +439,7 @@ PhysicsWorldRuntimeStatus physics_world_get_soft_body_vertex_count(PhysicsWorld 
     return status;
 }
 
-PhysicsWorldRuntimeStatus physics_world_get_soft_body_vertex_position(PhysicsWorld *world,
+PhysicsWorldRuntimeStatus CPH_PhysicsWorldGetSoftBodyVertexPosition(CPH_PhysicsWorld *world,
                                                                       BodyHandle handle,
                                                                       uint32_t vertex_index,
                                                                       JPH_Vec3 *out_position,
@@ -463,7 +463,7 @@ PhysicsWorldRuntimeStatus physics_world_get_soft_body_vertex_position(PhysicsWor
     return PHYSICS_WORLD_RUNTIME_STATUS_OK;
 }
 
-PhysicsWorldRuntimeStatus physics_world_get_soft_body_local_vertices(PhysicsWorld *world,
+PhysicsWorldRuntimeStatus CPH_PhysicsWorldGetSoftBodyLocalVertices(CPH_PhysicsWorld *world,
                                                                      BodyHandle handle,
                                                                      JPH_Vec3 **out_positions,
                                                                      uint32_t *out_count) {
@@ -498,7 +498,7 @@ PhysicsWorldRuntimeStatus physics_world_get_soft_body_local_vertices(PhysicsWorl
     return PHYSICS_WORLD_RUNTIME_STATUS_OK;
 }
 
-PhysicsWorldRuntimeStatus physics_world_apply_buoyancy(PhysicsWorld *world, BodyHandle handle,
+PhysicsWorldRuntimeStatus CPH_PhysicsWorldApplyBuoyancy(CPH_PhysicsWorld *world, BodyHandle handle,
                                                        JPH_Real surface_y, float buoyancy,
                                                        float linear_drag, float angular_drag,
                                                        JPH_Vec3 fluid_velocity, float dt,
@@ -511,20 +511,20 @@ PhysicsWorldRuntimeStatus physics_world_apply_buoyancy(PhysicsWorld *world, Body
     lock_until_not_stepping(world);
     uint32_t slot = 0;
     if (!unpack_handle(world, handle, &slot)) {
-        SHADOW_UNLOCK(&world->shadow_lock);
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_RUNTIME_STATUS_OK;
     }
 
     const uint8_t state = atomic_load_explicit(&world->slot_states[slot], memory_order_acquire);
-    if (!get_slot_predicate(state, MASK_IMM_STRICT).is_immediate) {
-        SHADOW_UNLOCK(&world->shadow_lock);
+    if (!get_slot_predicate(state, kMaskImmStrict).is_immediate) {
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_RUNTIME_STATUS_OK;
     }
 
     const uint32_t dense     = world->slot_to_dense[slot];
     const JPH_BodyID body_id = world->body_ids[dense];
     atomic_fetch_add_explicit(&world->active_queries, 1, memory_order_acquire);
-    SHADOW_UNLOCK(&world->shadow_lock);
+    CPH_SHADOW_UNLOCK(&world->shadow_lock);
 
     JPH_BodyInterface_ActivateBody(world->body_interface, body_id);
     JPH_Vec3 gravity;
@@ -534,12 +534,12 @@ PhysicsWorldRuntimeStatus physics_world_apply_buoyancy(PhysicsWorld *world, Body
     *out_submerged             = JPH_BodyInterface_ApplyBuoyancyImpulse(
         world->body_interface, body_id, &surface_position, &surface_normal, buoyancy, linear_drag,
         angular_drag, &fluid_velocity, &gravity, dt);
-    physics_world_query_end(world);
+    CPH_PhysicsWorldQueryEnd(world);
     return PHYSICS_WORLD_RUNTIME_STATUS_OK;
 }
 
-PhysicsWorldRuntimeStatus physics_world_apply_buoyancy_batch(
-    PhysicsWorld *world, const BodyHandle *handles, size_t handle_count, JPH_Real surface_y,
+PhysicsWorldRuntimeStatus CPH_PhysicsWorldApplyBuoyancyBatch(
+    CPH_PhysicsWorld *world, const BodyHandle *handles, size_t handle_count, JPH_Real surface_y,
     float buoyancy, float linear_drag, float angular_drag, JPH_Vec3 fluid_velocity, float dt) {
     if (!world || (handle_count > 0 && !handles)) {
         return PHYSICS_WORLD_RUNTIME_STATUS_INVALID_ARGUMENT;
@@ -547,7 +547,7 @@ PhysicsWorldRuntimeStatus physics_world_apply_buoyancy_batch(
     if (handle_count == 0) {
         return PHYSICS_WORLD_RUNTIME_STATUS_OK;
     }
-    if (UNLIKELY(handle_count > SIZE_MAX / sizeof(JPH_BodyID))) {
+    if (CPH_UNLIKELY(handle_count > SIZE_MAX / sizeof(JPH_BodyID))) {
         return PHYSICS_WORLD_RUNTIME_STATUS_OVERFLOW;
     }
 
@@ -564,7 +564,7 @@ PhysicsWorldRuntimeStatus physics_world_apply_buoyancy_batch(
             continue;
         }
         const uint8_t state = atomic_load_explicit(&world->slot_states[slot], memory_order_acquire);
-        if (get_slot_predicate(state, MASK_IMM_STRICT).is_immediate) {
+        if (get_slot_predicate(state, kMaskImmStrict).is_immediate) {
             body_ids[valid_count++] = world->body_ids[world->slot_to_dense[slot]];
         }
     }
@@ -572,7 +572,7 @@ PhysicsWorldRuntimeStatus physics_world_apply_buoyancy_batch(
     if (valid_count > 0) {
         atomic_fetch_add_explicit(&world->active_queries, 1, memory_order_acquire);
     }
-    SHADOW_UNLOCK(&world->shadow_lock);
+    CPH_SHADOW_UNLOCK(&world->shadow_lock);
 
     if (valid_count > 0) {
         JPH_Vec3 gravity;
@@ -585,14 +585,14 @@ PhysicsWorldRuntimeStatus physics_world_apply_buoyancy_batch(
                 world->body_interface, body_ids[i], &surface_position, &surface_normal, buoyancy,
                 linear_drag, angular_drag, &fluid_velocity, &gravity, dt);
         }
-        physics_world_query_end(world);
+        CPH_PhysicsWorldQueryEnd(world);
     }
 
     CulvNative_Free(body_ids);
     return PHYSICS_WORLD_RUNTIME_STATUS_OK;
 }
 
-PhysicsWorldRuntimeStatus physics_world_get_motion_type(PhysicsWorld *world, BodyHandle handle,
+PhysicsWorldRuntimeStatus CPH_PhysicsWorldGetMotionType(CPH_PhysicsWorld *world, BodyHandle handle,
                                                         JPH_MotionType *out_motion_type) {
     if (!world || !out_motion_type) {
         return PHYSICS_WORLD_RUNTIME_STATUS_INVALID_ARGUMENT;
@@ -601,27 +601,27 @@ PhysicsWorldRuntimeStatus physics_world_get_motion_type(PhysicsWorld *world, Bod
     lock_until_not_stepping(world);
     uint32_t slot = 0;
     if (!unpack_handle(world, handle, &slot)) {
-        SHADOW_UNLOCK(&world->shadow_lock);
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_RUNTIME_STATUS_STALE_HANDLE;
     }
 
     const uint8_t state = atomic_load_explicit(&world->slot_states[slot], memory_order_acquire);
-    if (get_slot_predicate(state, MASK_IMM_STANDARD).is_immediate) {
+    if (get_slot_predicate(state, kMaskImmStandard).is_immediate) {
         const uint32_t dense     = world->slot_to_dense[slot];
         const JPH_BodyID body_id = world->body_ids[dense];
-        SHADOW_UNLOCK(&world->shadow_lock);
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         *out_motion_type = JPH_BodyInterface_GetMotionType(world->body_interface, body_id);
         return PHYSICS_WORLD_RUNTIME_STATUS_OK;
     }
 
-    SHADOW_UNLOCK(&world->shadow_lock);
+    CPH_SHADOW_UNLOCK(&world->shadow_lock);
     if (state == SLOT_PENDING_CREATE) {
         return PHYSICS_WORLD_RUNTIME_STATUS_PENDING_CREATE;
     }
     return PHYSICS_WORLD_RUNTIME_STATUS_STALE_HANDLE;
 }
 
-PhysicsWorldRuntimeStatus physics_world_get_user_data(PhysicsWorld *world, BodyHandle handle,
+PhysicsWorldRuntimeStatus CPH_PhysicsWorldGetUserData(CPH_PhysicsWorld *world, BodyHandle handle,
                                                       uint64_t *out_user_data) {
     if (!world || !out_user_data) {
         return PHYSICS_WORLD_RUNTIME_STATUS_INVALID_ARGUMENT;
@@ -630,23 +630,23 @@ PhysicsWorldRuntimeStatus physics_world_get_user_data(PhysicsWorld *world, BodyH
     lock_until_not_stepping(world);
     uint32_t slot = 0;
     if (!unpack_handle(world, handle, &slot)) {
-        SHADOW_UNLOCK(&world->shadow_lock);
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_RUNTIME_STATUS_STALE_HANDLE;
     }
 
     const uint8_t state = atomic_load_explicit(&world->slot_states[slot], memory_order_acquire);
-    if (!get_slot_predicate(state, MASK_IMM_STANDARD).is_executable) {
-        SHADOW_UNLOCK(&world->shadow_lock);
+    if (!get_slot_predicate(state, kMaskImmStandard).is_executable) {
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_RUNTIME_STATUS_STALE_HANDLE;
     }
 
     const uint32_t dense = world->slot_to_dense[slot];
     *out_user_data       = world->user_data[dense];
-    SHADOW_UNLOCK(&world->shadow_lock);
+    CPH_SHADOW_UNLOCK(&world->shadow_lock);
     return PHYSICS_WORLD_RUNTIME_STATUS_OK;
 }
 
-PhysicsWorldRuntimeStatus physics_world_get_index(PhysicsWorld *world, BodyHandle handle,
+PhysicsWorldRuntimeStatus CPH_PhysicsWorldGetIndex(CPH_PhysicsWorld *world, BodyHandle handle,
                                                   uint32_t *out_index) {
     if (!world || !out_index) {
         return PHYSICS_WORLD_RUNTIME_STATUS_INVALID_ARGUMENT;
@@ -655,22 +655,22 @@ PhysicsWorldRuntimeStatus physics_world_get_index(PhysicsWorld *world, BodyHandl
     lock_until_not_stepping(world);
     uint32_t slot = 0;
     if (!unpack_handle(world, handle, &slot)) {
-        SHADOW_UNLOCK(&world->shadow_lock);
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_RUNTIME_STATUS_STALE_HANDLE;
     }
 
     const uint8_t state = atomic_load_explicit(&world->slot_states[slot], memory_order_acquire);
-    if (!get_slot_predicate(state, MASK_IMM_STANDARD).is_immediate) {
-        SHADOW_UNLOCK(&world->shadow_lock);
+    if (!get_slot_predicate(state, kMaskImmStandard).is_immediate) {
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_RUNTIME_STATUS_STALE_HANDLE;
     }
 
     *out_index = world->slot_to_dense[slot];
-    SHADOW_UNLOCK(&world->shadow_lock);
+    CPH_SHADOW_UNLOCK(&world->shadow_lock);
     return PHYSICS_WORLD_RUNTIME_STATUS_OK;
 }
 
-bool physics_world_is_alive(PhysicsWorld *world, BodyHandle handle) {
+bool CPH_PhysicsWorldIsAlive(CPH_PhysicsWorld *world, BodyHandle handle) {
     if (!world) {
         return false;
     }
@@ -680,13 +680,13 @@ bool physics_world_is_alive(PhysicsWorld *world, BodyHandle handle) {
     bool alive    = false;
     if (unpack_handle(world, handle, &slot)) {
         const uint8_t state = atomic_load_explicit(&world->slot_states[slot], memory_order_acquire);
-        alive               = get_slot_predicate(state, MASK_IMM_STANDARD).is_executable;
+        alive               = get_slot_predicate(state, kMaskImmStandard).is_executable;
     }
-    SHADOW_UNLOCK(&world->shadow_lock);
+    CPH_SHADOW_UNLOCK(&world->shadow_lock);
     return alive;
 }
 
-PhysicsWorldRuntimeStatus physics_world_is_active(PhysicsWorld *world, BodyHandle handle,
+PhysicsWorldRuntimeStatus CPH_PhysicsWorldIsActive(CPH_PhysicsWorld *world, BodyHandle handle,
                                                   bool *out_active) {
     if (!world || !out_active) {
         return PHYSICS_WORLD_RUNTIME_STATUS_INVALID_ARGUMENT;
@@ -695,26 +695,26 @@ PhysicsWorldRuntimeStatus physics_world_is_active(PhysicsWorld *world, BodyHandl
     lock_until_not_stepping(world);
     uint32_t slot = 0;
     if (!unpack_handle(world, handle, &slot)) {
-        SHADOW_UNLOCK(&world->shadow_lock);
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_RUNTIME_STATUS_STALE_HANDLE;
     }
 
     const uint8_t state = atomic_load_explicit(&world->slot_states[slot], memory_order_acquire);
-    if (!get_slot_predicate(state, MASK_IMM_STANDARD).is_immediate) {
+    if (!get_slot_predicate(state, kMaskImmStandard).is_immediate) {
         *out_active = false;
-        SHADOW_UNLOCK(&world->shadow_lock);
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_RUNTIME_STATUS_OK;
     }
 
     const uint32_t dense     = world->slot_to_dense[slot];
     const JPH_BodyID body_id = world->body_ids[dense];
-    SHADOW_UNLOCK(&world->shadow_lock);
+    CPH_SHADOW_UNLOCK(&world->shadow_lock);
     *out_active = JPH_BodyInterface_IsActive(world->body_interface, body_id);
     return PHYSICS_WORLD_RUNTIME_STATUS_OK;
 }
 
 PhysicsWorldRuntimeStatus
-physics_world_get_active_indices(PhysicsWorld *world, uint32_t **out_indices, size_t *out_count) {
+CPH_PhysicsWorldGetActiveIndices(CPH_PhysicsWorld *world, uint32_t **out_indices, size_t *out_count) {
     if (!world || !out_indices || !out_count) {
         return PHYSICS_WORLD_RUNTIME_STATUS_INVALID_ARGUMENT;
     }
@@ -724,17 +724,17 @@ physics_world_get_active_indices(PhysicsWorld *world, uint32_t **out_indices, si
     lock_until_not_stepping(world);
     const size_t count = atomic_load_explicit(&world->count, memory_order_acquire);
     if (count == 0) {
-        SHADOW_UNLOCK(&world->shadow_lock);
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_RUNTIME_STATUS_OK;
     }
 
     JPH_BodyID *body_ids = (JPH_BodyID *)CulvNative_Malloc(count * sizeof(JPH_BodyID));
     if (!body_ids) {
-        SHADOW_UNLOCK(&world->shadow_lock);
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_RUNTIME_STATUS_OUT_OF_MEMORY;
     }
     memcpy(body_ids, world->body_ids, count * sizeof(JPH_BodyID));
-    SHADOW_UNLOCK(&world->shadow_lock);
+    CPH_SHADOW_UNLOCK(&world->shadow_lock);
 
     uint32_t *indices = (uint32_t *)CulvNative_Malloc(count * sizeof(uint32_t));
     if (!indices) {
@@ -744,7 +744,7 @@ physics_world_get_active_indices(PhysicsWorld *world, uint32_t **out_indices, si
 
     size_t active_count = 0;
     for (size_t i = 0; i < count; i++) {
-        if (body_ids[i] != JPH_INVALID_BODY_ID &&
+        if (body_ids[i] != kJphInvalidBodyId &&
             JPH_BodyInterface_IsActive(world->body_interface, body_ids[i])) {
             indices[active_count++] = (uint32_t)i;
         }
@@ -755,7 +755,7 @@ physics_world_get_active_indices(PhysicsWorld *world, uint32_t **out_indices, si
     return PHYSICS_WORLD_RUNTIME_STATUS_OK;
 }
 
-PhysicsWorldRuntimeStatus physics_world_get_render_state(PhysicsWorld *world, float alpha,
+PhysicsWorldRuntimeStatus CPH_PhysicsWorldGetRenderState(CPH_PhysicsWorld *world, float alpha,
                                                          float **out_state, size_t *out_count) {
     if (!world || !out_state || !out_count) {
         return PHYSICS_WORLD_RUNTIME_STATUS_INVALID_ARGUMENT;
@@ -766,30 +766,30 @@ PhysicsWorldRuntimeStatus physics_world_get_render_state(PhysicsWorld *world, fl
     lock_until_not_stepping(world);
     const size_t count = atomic_load_explicit(&world->count, memory_order_acquire);
     if (count == 0) {
-        SHADOW_UNLOCK(&world->shadow_lock);
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_RUNTIME_STATUS_OK;
     }
 
-    if (UNLIKELY(count > SIZE_MAX / (7 * sizeof(float)))) {
-        SHADOW_UNLOCK(&world->shadow_lock);
+    if (CPH_UNLIKELY(count > SIZE_MAX / (7 * sizeof(float)))) {
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_RUNTIME_STATUS_OVERFLOW;
     }
     float *state = (float *)CulvNative_Malloc(count * 7 * sizeof(float));
     if (!state) {
-        SHADOW_UNLOCK(&world->shadow_lock);
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_RUNTIME_STATUS_OUT_OF_MEMORY;
     }
 
     culverin_compute_interpolation_loop(
-        (PosStride *)world->positions, (PosStride *)world->prev_positions,
-        (AuxStride *)world->rotations, (AuxStride *)world->prev_rotations, alpha, state, count);
-    SHADOW_UNLOCK(&world->shadow_lock);
+        (CPH_PosStride *)world->positions, (CPH_PosStride *)world->prev_positions,
+        (CPH_AuxStride *)world->rotations, (CPH_AuxStride *)world->prev_rotations, alpha, state, count);
+    CPH_SHADOW_UNLOCK(&world->shadow_lock);
     *out_state = state;
     *out_count = count;
     return PHYSICS_WORLD_RUNTIME_STATUS_OK;
 }
 
-PhysicsWorldRuntimeStatus physics_world_set_collision_filter(PhysicsWorld *world, BodyHandle handle,
+PhysicsWorldRuntimeStatus CPH_PhysicsWorldSetCollisionFilter(CPH_PhysicsWorld *world, BodyHandle handle,
                                                              uint32_t category, uint32_t mask) {
     if (!world) {
         return PHYSICS_WORLD_RUNTIME_STATUS_INVALID_ARGUMENT;
@@ -799,27 +799,27 @@ PhysicsWorldRuntimeStatus physics_world_set_collision_filter(PhysicsWorld *world
     wait_until_not_querying_locked(world);
     uint32_t slot = 0;
     if (!unpack_handle(world, handle, &slot)) {
-        SHADOW_UNLOCK(&world->shadow_lock);
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_RUNTIME_STATUS_STALE_HANDLE;
     }
 
     const uint8_t state = atomic_load_explicit(&world->slot_states[slot], memory_order_acquire);
-    if (get_slot_predicate(state, MASK_IMM_STANDARD).is_immediate) {
+    if (get_slot_predicate(state, kMaskImmStandard).is_immediate) {
         const uint32_t dense     = world->slot_to_dense[slot];
         world->categories[dense] = category;
         world->masks[dense]      = mask;
-        SHADOW_UNLOCK(&world->shadow_lock);
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_RUNTIME_STATUS_OK;
     }
 
-    SHADOW_UNLOCK(&world->shadow_lock);
+    CPH_SHADOW_UNLOCK(&world->shadow_lock);
     if (state == SLOT_PENDING_CREATE) {
         return PHYSICS_WORLD_RUNTIME_STATUS_PENDING_CREATE;
     }
     return PHYSICS_WORLD_RUNTIME_STATUS_STALE_HANDLE;
 }
 
-PhysicsWorldRuntimeStatus physics_world_register_material(PhysicsWorld *world, uint32_t id,
+PhysicsWorldRuntimeStatus CPH_PhysicsWorldRegisterMaterial(CPH_PhysicsWorld *world, uint32_t id,
                                                           float friction, float restitution) {
     if (!world) {
         return PHYSICS_WORLD_RUNTIME_STATUS_INVALID_ARGUMENT;
@@ -832,34 +832,34 @@ PhysicsWorldRuntimeStatus physics_world_register_material(PhysicsWorld *world, u
         if (world->materials[i].id == id) {
             world->materials[i].friction    = friction;
             world->materials[i].restitution = restitution;
-            SHADOW_UNLOCK(&world->shadow_lock);
+            CPH_SHADOW_UNLOCK(&world->shadow_lock);
             return PHYSICS_WORLD_RUNTIME_STATUS_OK;
         }
     }
 
     if (world->material_count >= world->material_capacity) {
-        const size_t new_capacity = world->material_capacity == 0 ? INITIAL_MATERIAL_CAPACITY
+        const size_t new_capacity = world->material_capacity == 0 ? kInitialMaterialCapacity
                                                                   : world->material_capacity * 2;
-        MaterialData *materials   = (MaterialData *)CulvNative_Realloc(
-            world->materials, new_capacity * sizeof(MaterialData));
-        if (UNLIKELY(!materials)) {
-            SHADOW_UNLOCK(&world->shadow_lock);
+        CPH_MaterialData *materials   = (CPH_MaterialData *)CulvNative_Realloc(
+            world->materials, new_capacity * sizeof(CPH_MaterialData));
+        if (CPH_UNLIKELY(!materials)) {
+            CPH_SHADOW_UNLOCK(&world->shadow_lock);
             return PHYSICS_WORLD_RUNTIME_STATUS_OUT_OF_MEMORY;
         }
         world->materials         = materials;
         world->material_capacity = new_capacity;
     }
 
-    world->materials[world->material_count++] = (MaterialData){id, friction, restitution};
-    SHADOW_UNLOCK(&world->shadow_lock);
+    world->materials[world->material_count++] = (CPH_MaterialData){id, friction, restitution};
+    CPH_SHADOW_UNLOCK(&world->shadow_lock);
     return PHYSICS_WORLD_RUNTIME_STATUS_OK;
 }
 
 PhysicsWorldRuntimeStatus
-physics_world_build_debug_data(PhysicsWorld *world, bool draw_shapes, bool draw_constraints,
+CPH_PhysicsWorldBuildDebugData(CPH_PhysicsWorld *world, bool draw_shapes, bool draw_constraints,
                                bool draw_bounding_box, bool draw_centers, bool wireframe,
-                               DebugVertex **out_lines, size_t *out_line_count,
-                               DebugVertex **out_triangles, size_t *out_triangle_count) {
+                               CPH_DebugVertex **out_lines, size_t *out_line_count,
+                               CPH_DebugVertex **out_triangles, size_t *out_triangle_count) {
     if (!world || !out_lines || !out_line_count || !out_triangles || !out_triangle_count) {
         return PHYSICS_WORLD_RUNTIME_STATUS_INVALID_ARGUMENT;
     }
@@ -888,15 +888,15 @@ physics_world_build_debug_data(PhysicsWorld *world, bool draw_shapes, bool draw_
         JPH_PhysicsSystem_DrawConstraintLimits(world->system, world->debug_renderer);
     }
 
-    const size_t line_bytes     = world->debug_lines.count * sizeof(DebugVertex);
-    const size_t triangle_bytes = world->debug_triangles.count * sizeof(DebugVertex);
-    DebugVertex *lines = line_bytes ? (DebugVertex *)CulvNative_Malloc(line_bytes) : nullptr;
-    DebugVertex *triangles =
-        triangle_bytes ? (DebugVertex *)CulvNative_Malloc(triangle_bytes) : nullptr;
+    const size_t line_bytes     = world->debug_lines.count * sizeof(CPH_DebugVertex);
+    const size_t triangle_bytes = world->debug_triangles.count * sizeof(CPH_DebugVertex);
+    CPH_DebugVertex *lines = line_bytes ? (CPH_DebugVertex *)CulvNative_Malloc(line_bytes) : nullptr;
+    CPH_DebugVertex *triangles =
+        triangle_bytes ? (CPH_DebugVertex *)CulvNative_Malloc(triangle_bytes) : nullptr;
     if ((line_bytes && !lines) || (triangle_bytes && !triangles)) {
         CulvNative_Free(lines);
         CulvNative_Free(triangles);
-        SHADOW_UNLOCK(&world->shadow_lock);
+        CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_RUNTIME_STATUS_OUT_OF_MEMORY;
     }
     if (line_bytes) {
@@ -910,6 +910,6 @@ physics_world_build_debug_data(PhysicsWorld *world, bool draw_shapes, bool draw_
     *out_line_count     = world->debug_lines.count;
     *out_triangles      = triangles;
     *out_triangle_count = world->debug_triangles.count;
-    SHADOW_UNLOCK(&world->shadow_lock);
+    CPH_SHADOW_UNLOCK(&world->shadow_lock);
     return PHYSICS_WORLD_RUNTIME_STATUS_OK;
 }

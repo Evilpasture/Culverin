@@ -16,7 +16,7 @@ typedef struct {
     uint64_t min_cycles;
     uint64_t max_cycles;
     uint32_t count;
-} CulvStat;
+} CPH_CulvStat;
 
 #ifdef CULVERIN_PROFILE_SYNC
 /* ── Platform counter ───────────────────────────────────────────────────────
@@ -96,7 +96,7 @@ static inline uint64_t culv_read_end(void) {
     return val;
 }
 
-#        define CULV_INIT_PROFILER()                                                               \
+#        define CPH_INIT_PROFILER()                                                               \
             fprintf(stderr, "[culverin] Using ARM Virtual Timer (cntvct_el0)\n")
 
 #    elif defined(_MSC_VER)
@@ -115,7 +115,7 @@ static inline uint64_t culv_read_end(void) {
     _mm_lfence();
     return v;
 }
-#        define CULV_INIT_PROFILER() ((void)0)
+#        define CPH_INIT_PROFILER() ((void)0)
 
 #    else /* GCC/Clang x86-64 */
 
@@ -143,7 +143,7 @@ static inline uint64_t culv_read_end(void) {
                          : "%rax", "%rbx", "%rcx", "%rdx", "memory");
     return ((uint64_t)hi << 32) | lo;
 }
-#        define CULV_INIT_PROFILER() ((void)0)
+#        define CPH_INIT_PROFILER() ((void)0)
 
 #    endif /* platform */
 
@@ -160,9 +160,9 @@ static inline uint64_t culv_read_end(void) {
  * `count` is the body/item count for cyc/body output; pass 0 to suppress.
  * ────────────────────────────────────────────────────────────────────────── */
 
-#    define CULV_PROFILE_BEGIN(tag) uint64_t _culv_start_##tag = culv_read_start()
+#    define CPH_PROFILE_BEGIN(tag) uint64_t _culv_start_##tag = culv_read_start()
 
-#    define CULV_PROFILE_END(tag, label, count)                                                    \
+#    define CPH_PROFILE_END(tag, label, count)                                                    \
         do {                                                                                       \
             uint64_t _culv_end     = culv_read_end();                                              \
             uint64_t _culv_elapsed = _culv_end - _culv_start_##tag;                                \
@@ -177,7 +177,7 @@ static inline uint64_t culv_read_end(void) {
             }                                                                                      \
         } while (0)
 
-#    define CULV_PROFILE_ACCUMULATE(tag, stat_ptr)                                                 \
+#    define CPH_PROFILE_ACCUMULATE(tag, stat_ptr)                                                 \
         do {                                                                                       \
             uint64_t _end     = culv_read_end();                                                   \
             uint64_t _elapsed = _end - _culv_start_##tag;                                          \
@@ -191,18 +191,18 @@ static inline uint64_t culv_read_end(void) {
 
 #else /* CULVERIN_PROFILE_SYNC not defined */
 
-#    define CULV_INIT_PROFILER() ((void)0)
-#    define CULV_PROFILE_BEGIN(tag) ((void)0)
-#    define CULV_PROFILE_END(tag, label, count) ((void)0)
-#    define CULV_PROFILE_ACCUMULATE(tag, stat_ptr) ((void)0)
+#    define CPH_INIT_PROFILER() ((void)0)
+#    define CPH_PROFILE_BEGIN(tag) ((void)0)
+#    define CPH_PROFILE_END(tag, label, count) ((void)0)
+#    define CPH_PROFILE_ACCUMULATE(tag, stat_ptr) ((void)0)
 
 #endif /* CULVERIN_PROFILE_SYNC */
 
 #ifdef CULVERIN_PROFILE_SYNC
-#    define SYNC_START_TIMER(start)                                                                \
+#    define CPH_SYNC_START_TIMER(start)                                                                \
         struct timespec start;                                                                     \
         clock_gettime(CLOCK_MONOTONIC, &start)
-#    define SYNC_END_TIMER(start, self)                                                            \
+#    define CPH_SYNC_END_TIMER(start, self)                                                            \
         do {                                                                                       \
             struct timespec end;                                                                   \
             clock_gettime(CLOCK_MONOTONIC, &end);                                                  \
@@ -212,6 +212,6 @@ static inline uint64_t culv_read_end(void) {
                                       memory_order_relaxed);                                       \
         } while (0)
 #else
-#    define SYNC_START_TIMER(start)
-#    define SYNC_END_TIMER(start, self)
+#    define CPH_SYNC_START_TIMER(start)
+#    define CPH_SYNC_END_TIMER(start, self)
 #endif

@@ -24,23 +24,23 @@ typedef struct {
     JPH_Real y;
     JPH_Real z;
     JPH_Real w;
-} PosStride;
+} CPH_PosStride;
 
 // Maps to self->physics.rotations, velocities (Packed X, Y, Z, W)
 typedef struct {
     alignas(16) float x;
     float y, z, w;
-} AuxStride;
+} CPH_AuxStride;
 
 typedef struct {
     float x;
     float y;
     float z;
-} Vec3f; // General Vec3f
+} CPH_Vec3f; // General Vec3f
 
 // Sanity check sizes
-static_assert(sizeof(PosStride) == sizeof(JPH_Real) * 4);
-static_assert(sizeof(AuxStride) == sizeof(float) * 4);
+static_assert(sizeof(CPH_PosStride) == sizeof(JPH_Real) * 4);
+static_assert(sizeof(CPH_AuxStride) == sizeof(float) * 4);
 
 // Minimal Handle Helper
 // Python handles will be 64-bit integers: (Generation << 32) | SlotIndex
@@ -89,7 +89,7 @@ typedef struct {
     float restitution;
     int is_sensor;
     int use_ccd;
-} BodyCreationProps;
+} CPH_BodyCreationProps;
 
 typedef struct {
     float mass;
@@ -99,7 +99,7 @@ typedef struct {
     int use_ccd;
     int motion_type;
     uint32_t allowed_dofs;
-} BodyConfig;
+} CPH_BodyConfig;
 
 typedef enum ObjectLayer : uint32_t {
     OBJECT_LAYER_STATIC = 0,
@@ -108,5 +108,5 @@ typedef enum ObjectLayer : uint32_t {
     OBJECT_LAYER_COUNT
 } ObjectLayer;
 
-[[maybe_unused]] static constexpr uint32_t HANDLE_INDEX_BITS = 32;
-[[maybe_unused]] static constexpr uint64_t HANDLE_INDEX_MASK = 0xFFFFFFFF;
+[[maybe_unused]] static constexpr uint32_t kHandleIndexBits = 32;
+[[maybe_unused]] static constexpr uint64_t kHandleIndexMask = 0xFFFFFFFF;

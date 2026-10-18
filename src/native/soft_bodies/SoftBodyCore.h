@@ -9,4 +9,4 @@ typedef struct {
     float *normals;
     float *velocities;
     uint32_t num_vertices;
-} SoftBodyShadow;
+} CPH_SoftBodyShadow;

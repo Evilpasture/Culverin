@@ -6,10 +6,10 @@
 #include <math.h>
 #include <string.h>
 
-static constexpr float QUERY_DIRECTION_EPSILON_SQUARED = 1e-12f;
-static constexpr float QUERY_DIRECTION_UNIT_TOLERANCE  = 1e-4f;
+static constexpr float kQueryDirectionEpsilonSquared = 1e-12f;
+static constexpr float kQueryDirectionUnitTolerance  = 1e-4f;
 
-static void wait_until_can_query_locked(PhysicsWorld *world) {
+static void wait_until_can_query_locked(CPH_PhysicsWorld *world) {
     if (atomic_load_explicit(&world->is_stepping, memory_order_relaxed) ||
         atomic_load_explicit(&world->step_requested, memory_order_relaxed)) {
         atomic_fetch_add_explicit(&world->waiting_threads, 1, memory_order_relaxed);
@@ -18,54 +18,54 @@ static void wait_until_can_query_locked(PhysicsWorld *world) {
                atomic_load_explicit(&world->step_requested, memory_order_relaxed)) {
             // Keep the step flags and active-query count ordered by shadow_lock,
             // but never hold that lock while parking on the condition variable.
-            SHADOW_UNLOCK(&world->shadow_lock);
-            NATIVE_MUTEX_LOCK(world->step_sync.mutex);
+            CPH_SHADOW_UNLOCK(&world->shadow_lock);
+            CPH_NATIVE_MUTEX_LOCK(world->step_sync.mutex);
             while (atomic_load_explicit(&world->is_stepping, memory_order_relaxed) ||
                    atomic_load_explicit(&world->step_requested, memory_order_relaxed)) {
-                NATIVE_COND_WAIT(world->step_sync.cond, world->step_sync.mutex);
+                CPH_NATIVE_COND_WAIT(world->step_sync.cond, world->step_sync.mutex);
             }
-            NATIVE_MUTEX_UNLOCK(world->step_sync.mutex);
-            SHADOW_LOCK(&world->shadow_lock);
+            CPH_NATIVE_MUTEX_UNLOCK(world->step_sync.mutex);
+            CPH_SHADOW_LOCK(&world->shadow_lock);
         }
 
         atomic_fetch_sub_explicit(&world->waiting_threads, 1, memory_order_relaxed);
     }
 }
 
-static void query_begin(PhysicsWorld *world) {
-    SHADOW_LOCK(&world->shadow_lock);
+static void query_begin(CPH_PhysicsWorld *world) {
+    CPH_SHADOW_LOCK(&world->shadow_lock);
     wait_until_can_query_locked(world);
 
     // This increment is protected by shadow_lock, so PhysicsWorld_step cannot
     // set the step flags between the gate check and query registration.
     atomic_fetch_add_explicit(&world->active_queries, 1, memory_order_acquire);
-    SHADOW_UNLOCK(&world->shadow_lock);
+    CPH_SHADOW_UNLOCK(&world->shadow_lock);
 }
 
-void physics_world_query_end(PhysicsWorld *world) {
+void CPH_PhysicsWorldQueryEnd(CPH_PhysicsWorld *world) {
     if (!world) {
         return;
     }
 
-    NATIVE_MUTEX_LOCK(world->step_sync.mutex);
+    CPH_NATIVE_MUTEX_LOCK(world->step_sync.mutex);
     const int previous = atomic_fetch_sub_explicit(&world->active_queries, 1, memory_order_acq_rel);
     if (previous == 1) {
-        NATIVE_COND_BROADCAST(world->step_sync.cond);
+        CPH_NATIVE_COND_BROADCAST(world->step_sync.cond);
     }
-    NATIVE_MUTEX_UNLOCK(world->step_sync.mutex);
+    CPH_NATIVE_MUTEX_UNLOCK(world->step_sync.mutex);
 }
 
-void physics_query_hit_buffer_init(PhysicsQueryHitBuffer *buffer) {
+void CPH_PhysicsQueryHitBufferInit(CPH_PhysicsQueryHitBuffer *buffer) {
     if (!buffer) {
         return;
     }
 
     buffer->hits     = buffer->inline_hits;
     buffer->count    = 0;
-    buffer->capacity = PHYSICS_QUERY_INLINE_HIT_CAPACITY;
+    buffer->capacity = kPhysicsQueryInlineHitCapacity;
 }
 
-void physics_query_hit_buffer_destroy(PhysicsQueryHitBuffer *buffer) {
+void CPH_PhysicsQueryHitBufferDestroy(CPH_PhysicsQueryHitBuffer *buffer) {
     if (!buffer) {
         return;
     }
@@ -75,13 +75,13 @@ void physics_query_hit_buffer_destroy(PhysicsQueryHitBuffer *buffer) {
     }
     buffer->hits     = buffer->inline_hits;
     buffer->count    = 0;
-    buffer->capacity = PHYSICS_QUERY_INLINE_HIT_CAPACITY;
+    buffer->capacity = kPhysicsQueryInlineHitCapacity;
 }
 
-static bool query_hit_buffer_append(PhysicsQueryHitBuffer *buffer, BodyHandle handle) {
+static bool query_hit_buffer_append(CPH_PhysicsQueryHitBuffer *buffer, BodyHandle handle) {
     if (buffer->count >= buffer->capacity) {
         size_t new_capacity =
-            buffer->capacity ? buffer->capacity * 2 : PHYSICS_QUERY_INLINE_HIT_CAPACITY;
+            buffer->capacity ? buffer->capacity * 2 : kPhysicsQueryInlineHitCapacity;
         if (new_capacity < buffer->capacity || new_capacity > SIZE_MAX / sizeof(*buffer->hits)) {
             return false;
         }
@@ -107,7 +107,7 @@ static bool query_hit_buffer_append(PhysicsQueryHitBuffer *buffer, BodyHandle ha
     return true;
 }
 
-static bool query_handle_is_valid_locked(PhysicsWorld *world, BodyHandle handle,
+static bool query_handle_is_valid_locked(CPH_PhysicsWorld *world, BodyHandle handle,
                                          uint32_t *slot_out) {
     if (!handle) {
         return false;
@@ -119,7 +119,7 @@ static bool query_handle_is_valid_locked(PhysicsWorld *world, BodyHandle handle,
     }
 
     const uint8_t state = atomic_load_explicit(&world->slot_states[slot], memory_order_acquire);
-    if (!get_slot_predicate(state, MASK_IMM_STANDARD).is_immediate) {
+    if (!get_slot_predicate(state, kMaskImmStandard).is_immediate) {
         return false;
     }
 
@@ -129,8 +129,8 @@ static bool query_handle_is_valid_locked(PhysicsWorld *world, BodyHandle handle,
     return true;
 }
 
-static void filter_query_hits(PhysicsWorld *world, PhysicsQueryHitBuffer *hits) {
-    SHADOW_LOCK(&world->shadow_lock);
+static void filter_query_hits(CPH_PhysicsWorld *world, CPH_PhysicsQueryHitBuffer *hits) {
+    CPH_SHADOW_LOCK(&world->shadow_lock);
     size_t write_index = 0;
     for (size_t i = 0; i < hits->count; ++i) {
         if (query_handle_is_valid_locked(world, hits->hits[i], nullptr)) {
@@ -138,20 +138,20 @@ static void filter_query_hits(PhysicsWorld *world, PhysicsQueryHitBuffer *hits) 
         }
     }
     hits->count = write_index;
-    SHADOW_UNLOCK(&world->shadow_lock);
+    CPH_SHADOW_UNLOCK(&world->shadow_lock);
 }
 
-static JPH_Shape *query_begin_with_shape(PhysicsWorld *world, int shape_type, const float params[4],
+static JPH_Shape *query_begin_with_shape(CPH_PhysicsWorld *world, int shape_type, const float params[4],
                                          JPH_BodyID *ignore_body, BodyHandle ignore_handle) {
-    SHADOW_LOCK(&world->shadow_lock);
+    CPH_SHADOW_LOCK(&world->shadow_lock);
     wait_until_can_query_locked(world);
 
     // The shadow lock serializes cache access. Avoid taking jph_trampoline_lock
     // here: other native paths may hold it while waiting for shadow_lock.
-    JPH_Shape *shape = find_or_create_shape_locked(world, shape_type, params);
+    JPH_Shape *shape = CPH_FindOrCreateShapeLocked(world, shape_type, params);
 
     if (shape && ignore_body) {
-        *ignore_body         = JPH_INVALID_BODY_ID;
+        *ignore_body         = kJphInvalidBodyId;
         uint32_t ignore_slot = 0;
         if (query_handle_is_valid_locked(world, ignore_handle, &ignore_slot)) {
             const size_t body_count = atomic_load_explicit(&world->count, memory_order_relaxed);
@@ -167,15 +167,15 @@ static JPH_Shape *query_begin_with_shape(PhysicsWorld *world, int shape_type, co
     if (shape) {
         atomic_fetch_add_explicit(&world->active_queries, 1, memory_order_acquire);
     }
-    SHADOW_UNLOCK(&world->shadow_lock);
+    CPH_SHADOW_UNLOCK(&world->shadow_lock);
     return shape;
 }
 
-static JPH_BodyID query_begin_with_ignore(PhysicsWorld *world, BodyHandle ignore_handle) {
-    SHADOW_LOCK(&world->shadow_lock);
+static JPH_BodyID query_begin_with_ignore(CPH_PhysicsWorld *world, BodyHandle ignore_handle) {
+    CPH_SHADOW_LOCK(&world->shadow_lock);
     wait_until_can_query_locked(world);
 
-    JPH_BodyID ignore_body = JPH_INVALID_BODY_ID;
+    JPH_BodyID ignore_body = kJphInvalidBodyId;
     uint32_t ignore_slot   = 0;
     if (query_handle_is_valid_locked(world, ignore_handle, &ignore_slot)) {
         const size_t body_count = atomic_load_explicit(&world->count, memory_order_relaxed);
@@ -186,17 +186,17 @@ static JPH_BodyID query_begin_with_ignore(PhysicsWorld *world, BodyHandle ignore
     }
 
     atomic_fetch_add_explicit(&world->active_queries, 1, memory_order_acquire);
-    SHADOW_UNLOCK(&world->shadow_lock);
+    CPH_SHADOW_UNLOCK(&world->shadow_lock);
     return ignore_body;
 }
 
-typedef struct QueryFilters {
+typedef struct CPH_QueryFilters {
     JPH_BroadPhaseLayerFilter *broad_phase;
     JPH_ObjectLayerFilter *object_layer;
     JPH_BodyFilter *body;
-} QueryFilters;
+} CPH_QueryFilters;
 
-static void destroy_query_filters(QueryFilters *filters) {
+static void destroy_query_filters(CPH_QueryFilters *filters) {
     if (filters->body) {
         JPH_BodyFilter_Destroy(filters->body);
         filters->body = nullptr;
@@ -211,9 +211,9 @@ static void destroy_query_filters(QueryFilters *filters) {
     }
 }
 
-static PhysicsQueryStatus create_query_filters(QueryFilters *filters, bool with_body_filter,
+static PhysicsQueryStatus create_query_filters(CPH_QueryFilters *filters, bool with_body_filter,
                                                void *body_user_data) {
-    *filters              = (QueryFilters){};
+    *filters              = (CPH_QueryFilters){};
     filters->broad_phase  = JPH_BroadPhaseLayerFilter_Create(nullptr);
     filters->object_layer = JPH_ObjectLayerFilter_Create(nullptr);
     if (with_body_filter) {
@@ -227,13 +227,13 @@ static PhysicsQueryStatus create_query_filters(QueryFilters *filters, bool with_
     return PHYSICS_QUERY_STATUS_OK;
 }
 
-typedef struct OverlapContext {
-    PhysicsWorld *world;
-    PhysicsQueryHitBuffer *hits;
+typedef struct CPH_OverlapContext {
+    CPH_PhysicsWorld *world;
+    CPH_PhysicsQueryHitBuffer *hits;
     PhysicsQueryStatus status;
-} OverlapContext;
+} CPH_OverlapContext;
 
-static void overlap_record_hit(OverlapContext *context, JPH_BodyID body_id) {
+static void overlap_record_hit(CPH_OverlapContext *context, JPH_BodyID body_id) {
     if (context->status != PHYSICS_QUERY_STATUS_OK) {
         return;
     }
@@ -246,17 +246,17 @@ static void overlap_record_hit(OverlapContext *context, JPH_BodyID body_id) {
 }
 
 static float overlap_callback_narrow(void *user_data, const JPH_CollideShapeResult *result) {
-    overlap_record_hit((OverlapContext *)user_data, result->bodyID2);
+    overlap_record_hit((CPH_OverlapContext *)user_data, result->bodyID2);
     return 1.0f;
 }
 
 static float overlap_callback_broad(void *user_data, JPH_BodyID body_id) {
-    overlap_record_hit((OverlapContext *)user_data, body_id);
+    overlap_record_hit((CPH_OverlapContext *)user_data, body_id);
     return 1.0f;
 }
 
-PhysicsQueryStatus physics_world_overlap_sphere(PhysicsWorld *world, JPH_RVec3 center, float radius,
-                                                PhysicsQueryHitBuffer *hits) {
+PhysicsQueryStatus CPH_PhysicsWorldOverlapSphere(CPH_PhysicsWorld *world, JPH_RVec3 center, float radius,
+                                                CPH_PhysicsQueryHitBuffer *hits) {
     if (!world || !hits || !hits->hits) {
         return PHYSICS_QUERY_STATUS_INVALID_ARGUMENT;
     }
@@ -267,10 +267,10 @@ PhysicsQueryStatus physics_world_overlap_sphere(PhysicsWorld *world, JPH_RVec3 c
         return PHYSICS_QUERY_STATUS_SHAPE_FAILURE;
     }
 
-    QueryFilters filters      = {};
+    CPH_QueryFilters filters      = {};
     PhysicsQueryStatus status = create_query_filters(&filters, true, nullptr);
     if (status != PHYSICS_QUERY_STATUS_OK) {
-        physics_world_query_end(world);
+        CPH_PhysicsWorldQueryEnd(world);
         return status;
     }
 
@@ -283,7 +283,7 @@ PhysicsQueryStatus physics_world_overlap_sphere(PhysicsWorld *world, JPH_RVec3 c
     JPH_CollideShapeSettings settings;
     JPH_CollideShapeSettings_Init(&settings);
 
-    OverlapContext context = {.world = world, .hits = hits, .status = PHYSICS_QUERY_STATUS_OK};
+    CPH_OverlapContext context = {.world = world, .hits = hits, .status = PHYSICS_QUERY_STATUS_OK};
     const JPH_NarrowPhaseQuery *query = JPH_PhysicsSystem_GetNarrowPhaseQuery(world->system);
     JPH_NarrowPhaseQuery_CollideShape(query, shape, &scale, &transform, &settings, &base_offset,
                                       overlap_callback_narrow, &context, filters.broad_phase,
@@ -293,22 +293,22 @@ PhysicsQueryStatus physics_world_overlap_sphere(PhysicsWorld *world, JPH_RVec3 c
     if (context.status == PHYSICS_QUERY_STATUS_OK) {
         filter_query_hits(world, hits);
     }
-    physics_world_query_end(world);
+    CPH_PhysicsWorldQueryEnd(world);
     return context.status;
 }
 
-PhysicsQueryStatus physics_world_overlap_aabb(PhysicsWorld *world, JPH_RVec3 min, JPH_RVec3 max,
-                                              PhysicsQueryHitBuffer *hits) {
+PhysicsQueryStatus CPH_PhysicsWorldOverlapAabb(CPH_PhysicsWorld *world, JPH_RVec3 min, JPH_RVec3 max,
+                                              CPH_PhysicsQueryHitBuffer *hits) {
     if (!world || !hits || !hits->hits) {
         return PHYSICS_QUERY_STATUS_INVALID_ARGUMENT;
     }
 
     query_begin(world);
 
-    QueryFilters filters      = {};
+    CPH_QueryFilters filters      = {};
     PhysicsQueryStatus status = create_query_filters(&filters, false, nullptr);
     if (status != PHYSICS_QUERY_STATUS_OK) {
-        physics_world_query_end(world);
+        CPH_PhysicsWorldQueryEnd(world);
         return status;
     }
 
@@ -316,7 +316,7 @@ PhysicsQueryStatus physics_world_overlap_aabb(PhysicsWorld *world, JPH_RVec3 min
     box.min = (JPH_Vec3){(float)min.x, (float)min.y, (float)min.z};
     box.max = (JPH_Vec3){(float)max.x, (float)max.y, (float)max.z};
 
-    OverlapContext context = {.world = world, .hits = hits, .status = PHYSICS_QUERY_STATUS_OK};
+    CPH_OverlapContext context = {.world = world, .hits = hits, .status = PHYSICS_QUERY_STATUS_OK};
     const JPH_BroadPhaseQuery *query = JPH_PhysicsSystem_GetBroadPhaseQuery(world->system);
     JPH_BroadPhaseQuery_CollideAABox(query, &box, overlap_callback_broad, &context,
                                      filters.broad_phase, filters.object_layer);
@@ -325,7 +325,7 @@ PhysicsQueryStatus physics_world_overlap_aabb(PhysicsWorld *world, JPH_RVec3 min
     if (context.status == PHYSICS_QUERY_STATUS_OK) {
         filter_query_hits(world, hits);
     }
-    physics_world_query_end(world);
+    CPH_PhysicsWorldQueryEnd(world);
     return context.status;
 }
 
@@ -333,41 +333,41 @@ static float ray_direction_scale(JPH_Vec3 direction, float max_distance, float *
     const float length_sq =
         direction.x * direction.x + direction.y * direction.y + direction.z * direction.z;
     *magnitude_sq = length_sq;
-    if (length_sq < QUERY_DIRECTION_EPSILON_SQUARED) {
+    if (length_sq < kQueryDirectionEpsilonSquared) {
         return 0.0f;
     }
-    if (fabsf(length_sq - 1.0f) < QUERY_DIRECTION_UNIT_TOLERANCE) {
+    if (fabsf(length_sq - 1.0f) < kQueryDirectionUnitTolerance) {
         return max_distance;
     }
-    return max_distance * culverin_fast_rsqrt(length_sq);
+    return max_distance * CPH_culverin_fast_rsqrt(length_sq);
 }
 
-PhysicsQueryStatus physics_world_raycast(PhysicsWorld *world, JPH_RVec3 origin, JPH_Vec3 direction,
+PhysicsQueryStatus CPH_PhysicsWorldRaycast(CPH_PhysicsWorld *world, JPH_RVec3 origin, JPH_Vec3 direction,
                                          float max_distance, BodyHandle ignore_handle,
-                                         PhysicsRaycastHit *out_hit) {
+                                         CPH_PhysicsRaycastHit *out_hit) {
     if (!world || !out_hit) {
         return PHYSICS_QUERY_STATUS_INVALID_ARGUMENT;
     }
-    *out_hit = (PhysicsRaycastHit){};
+    *out_hit = (CPH_PhysicsRaycastHit){};
 
     float magnitude_sq = 0.0f;
     const float scale  = ray_direction_scale(direction, max_distance, &magnitude_sq);
-    if (magnitude_sq < QUERY_DIRECTION_EPSILON_SQUARED) {
+    if (magnitude_sq < kQueryDirectionEpsilonSquared) {
         return PHYSICS_QUERY_STATUS_OK;
     }
 
     // A missing/stale ignored handle intentionally means "ignore nothing".
     const JPH_BodyID ignore_body   = query_begin_with_ignore(world, ignore_handle);
-    CastShapeFilter filter_context = {.ignore_id = ignore_body};
-    QueryFilters filters           = {};
+    CPH_CastShapeFilter filter_context = {.ignore_id = ignore_body};
+    CPH_QueryFilters filters           = {};
     PhysicsQueryStatus status      = create_query_filters(&filters, true, &filter_context);
     if (status != PHYSICS_QUERY_STATUS_OK) {
-        physics_world_query_end(world);
+        CPH_PhysicsWorldQueryEnd(world);
         return status;
     }
 
     const JPH_Vec3 ray_direction = {direction.x * scale, direction.y * scale, direction.z * scale};
-    JPH_RayCastResult ray_hit = {.bodyID = JPH_INVALID_BODY_ID, .fraction = 1.0f, .subShapeID2 = 0};
+    JPH_RayCastResult ray_hit = {.bodyID = kJphInvalidBodyId, .fraction = 1.0f, .subShapeID2 = 0};
     const JPH_NarrowPhaseQuery *query = JPH_PhysicsSystem_GetNarrowPhaseQuery(world->system);
     const bool has_hit =
         JPH_NarrowPhaseQuery_CastRay(query, &origin, &ray_direction, &ray_hit, filters.broad_phase,
@@ -378,9 +378,9 @@ PhysicsQueryStatus physics_world_raycast(PhysicsWorld *world, JPH_RVec3 origin, 
             JPH_BodyInterface_GetUserData(world->body_interface, ray_hit.bodyID);
         bool valid_handle = false;
         if (handle) {
-            SHADOW_LOCK(&world->shadow_lock);
+            CPH_SHADOW_LOCK(&world->shadow_lock);
             valid_handle = query_handle_is_valid_locked(world, handle, nullptr);
-            SHADOW_UNLOCK(&world->shadow_lock);
+            CPH_SHADOW_UNLOCK(&world->shadow_lock);
         }
 
         if (valid_handle) {
@@ -407,11 +407,11 @@ PhysicsQueryStatus physics_world_raycast(PhysicsWorld *world, JPH_RVec3 origin, 
     }
 
     destroy_query_filters(&filters);
-    physics_world_query_end(world);
+    CPH_PhysicsWorldQueryEnd(world);
     return PHYSICS_QUERY_STATUS_OK;
 }
 
-PhysicsQueryStatus physics_world_raycast_batch(PhysicsWorld *world, const float *starts,
+PhysicsQueryStatus CPH_PhysicsWorldRaycastBatch(CPH_PhysicsWorld *world, const float *starts,
                                                const float *directions, size_t count,
                                                float max_distance, RayCastBatchResult *results) {
     if (!world || (count && (!starts || !directions || !results)) ||
@@ -436,7 +436,7 @@ PhysicsQueryStatus physics_world_raycast_batch(PhysicsWorld *world, const float 
                                     directions[offset + 2]};
         float magnitude_sq       = 0.0f;
         const float scale        = ray_direction_scale(direction, max_distance, &magnitude_sq);
-        if (magnitude_sq < QUERY_DIRECTION_EPSILON_SQUARED) {
+        if (magnitude_sq < kQueryDirectionEpsilonSquared) {
             continue;
         }
 
@@ -445,7 +445,7 @@ PhysicsQueryStatus physics_world_raycast_batch(PhysicsWorld *world, const float 
         const JPH_RVec3 origin       = {(JPH_Real)starts[offset], (JPH_Real)starts[offset + 1],
                                         (JPH_Real)starts[offset + 2]};
         JPH_RayCastResult ray_hit    = {
-            .bodyID = JPH_INVALID_BODY_ID, .fraction = 1.0f, .subShapeID2 = 0};
+            .bodyID = kJphInvalidBodyId, .fraction = 1.0f, .subShapeID2 = 0};
 
         if (!JPH_NarrowPhaseQuery_CastRay(query, &origin, &ray_direction, &ray_hit, nullptr,
                                           nullptr, nullptr)) {
@@ -485,7 +485,7 @@ PhysicsQueryStatus physics_world_raycast_batch(PhysicsWorld *world, const float 
     // Validate all collected body handles and resolve their material IDs while
     // the slot map is protected. active_queries prevents step/resize from
     // invalidating this batch while the Jolt queries are in flight.
-    SHADOW_LOCK(&world->shadow_lock);
+    CPH_SHADOW_LOCK(&world->shadow_lock);
     const size_t body_count = atomic_load_explicit(&world->count, memory_order_relaxed);
     for (size_t i = 0; i < count; ++i) {
         RayCastBatchResult *result = &results[i];
@@ -500,30 +500,30 @@ PhysicsQueryStatus physics_world_raycast_batch(PhysicsWorld *world, const float 
             result->material_id = world->material_ids[dense];
         }
     }
-    SHADOW_UNLOCK(&world->shadow_lock);
+    CPH_SHADOW_UNLOCK(&world->shadow_lock);
 
-    physics_world_query_end(world);
+    CPH_PhysicsWorldQueryEnd(world);
     return PHYSICS_QUERY_STATUS_OK;
 }
 
-PhysicsQueryStatus physics_world_shapecast(PhysicsWorld *world, int shape_type, JPH_RVec3 position,
+PhysicsQueryStatus CPH_PhysicsWorldShapecast(CPH_PhysicsWorld *world, int shape_type, JPH_RVec3 position,
                                            JPH_Quat rotation, JPH_Vec3 sweep_direction,
                                            const float size[4], BodyHandle ignore_handle,
-                                           PhysicsShapecastHit *out_hit) {
+                                           CPH_PhysicsShapecastHit *out_hit) {
     if (!world || !size || !out_hit) {
         return PHYSICS_QUERY_STATUS_INVALID_ARGUMENT;
     }
-    *out_hit = (PhysicsShapecastHit){};
+    *out_hit = (CPH_PhysicsShapecastHit){};
 
     const float magnitude_sq = sweep_direction.x * sweep_direction.x +
                                sweep_direction.y * sweep_direction.y +
                                sweep_direction.z * sweep_direction.z;
-    if (magnitude_sq < QUERY_DIRECTION_EPSILON_SQUARED) {
+    if (magnitude_sq < kQueryDirectionEpsilonSquared) {
         return PHYSICS_QUERY_STATUS_OK;
     }
 
     const float shape_params[4] = {size[0], size[1], size[2], size[3]};
-    JPH_BodyID ignore_body      = JPH_INVALID_BODY_ID;
+    JPH_BodyID ignore_body      = kJphInvalidBodyId;
     JPH_Shape *shape =
         query_begin_with_shape(world, shape_type, shape_params, &ignore_body, ignore_handle);
     if (!shape) {
@@ -532,12 +532,12 @@ PhysicsQueryStatus physics_world_shapecast(PhysicsWorld *world, int shape_type, 
 
     JPH_RMat4 transform;
     JPH_RMat4_RotationTranslation(&transform, &rotation, &position);
-    CastShapeContext context = {.has_hit = false};
+    CPH_CastShapeContext context = {.has_hit = false};
     context.hit.fraction     = 1.0f;
 
-    if (!shapecast_execute_internal(world, shape, &transform, &sweep_direction, ignore_body,
+    if (!CPH_ShapecastExecuteInternal(world, shape, &transform, &sweep_direction, ignore_body,
                                     &context)) {
-        physics_world_query_end(world);
+        CPH_PhysicsWorldQueryEnd(world);
         return PHYSICS_QUERY_STATUS_OUT_OF_MEMORY;
     }
 
@@ -546,9 +546,9 @@ PhysicsQueryStatus physics_world_shapecast(PhysicsWorld *world, int shape_type, 
             JPH_BodyInterface_GetUserData(world->body_interface, context.hit.bodyID2);
         bool valid_handle = false;
         if (handle) {
-            SHADOW_LOCK(&world->shadow_lock);
+            CPH_SHADOW_LOCK(&world->shadow_lock);
             valid_handle = query_handle_is_valid_locked(world, handle, nullptr);
-            SHADOW_UNLOCK(&world->shadow_lock);
+            CPH_SHADOW_UNLOCK(&world->shadow_lock);
         }
 
         if (valid_handle) {
@@ -556,8 +556,8 @@ PhysicsQueryStatus physics_world_shapecast(PhysicsWorld *world, int shape_type, 
             float ny                     = -context.hit.penetrationAxis.y;
             float nz                     = -context.hit.penetrationAxis.z;
             const float normal_length_sq = nx * nx + ny * ny + nz * nz;
-            if (normal_length_sq > QUERY_DIRECTION_EPSILON_SQUARED) {
-                const float inverse_length = culverin_fast_rsqrt(normal_length_sq);
+            if (normal_length_sq > kQueryDirectionEpsilonSquared) {
+                const float inverse_length = CPH_culverin_fast_rsqrt(normal_length_sq);
                 nx *= inverse_length;
                 ny *= inverse_length;
                 nz *= inverse_length;
@@ -571,6 +571,6 @@ PhysicsQueryStatus physics_world_shapecast(PhysicsWorld *world, int shape_type, 
         }
     }
 
-    physics_world_query_end(world);
+    CPH_PhysicsWorldQueryEnd(world);
     return PHYSICS_QUERY_STATUS_OK;
 }

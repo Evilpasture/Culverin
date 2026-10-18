@@ -3,9 +3,9 @@
 #include "joltc.h"
 #include <Python.h>
 
-constexpr uint32_t LAYER_STATIC  = 1;
-constexpr uint32_t LAYER_DYNAMIC = 2;
-constexpr uint32_t LAYER_SPECIAL = 3;
+constexpr uint32_t kLayerStatic  = 1;
+constexpr uint32_t kLayerDynamic = 2;
+constexpr uint32_t kLayerSpecial = 3;
 
 typedef struct {
     JPH_LinearCurve *f_curve;
@@ -16,12 +16,12 @@ typedef struct {
     JPH_VehicleCollisionTesterRay *tester;
     JPH_VehicleConstraint *j_veh;
     bool is_added_to_world;
-} VehicleResources;
+} CPH_VehicleResources;
 
-typedef struct VehicleObject {
+typedef struct CPH_VehicleObject {
     PyObject_HEAD JPH_VehicleConstraint *vehicle;
     JPH_VehicleCollisionTester *tester;
-    struct PhysicsWorldObject *world;
+    struct CPH_PhysicsWorldObject *world;
 
     // Ownership tracking for cleanup
     JPH_WheelSettings **wheel_settings;
@@ -29,8 +29,8 @@ typedef struct VehicleObject {
     JPH_VehicleTransmissionSettings *transmission_settings; // NEW: Keep alive
     JPH_LinearCurve *friction_curve;
     JPH_LinearCurve *torque_curve;
-    VehicleParsers *parsers;
+    CPH_VehicleParsers *parsers;
 
     uint32_t num_wheels;
     int current_gear;
-} VehicleObject;
+} CPH_VehicleObject;

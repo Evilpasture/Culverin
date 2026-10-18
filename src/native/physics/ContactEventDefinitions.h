@@ -4,8 +4,8 @@
 
 // 1. Remove alignas from the inner struct
 typedef struct {
-    CULV_ATOMIC(BodyHandle) body1; // 8
-    CULV_ATOMIC(BodyHandle) body2; // 8
+    CPH_ATOMIC(BodyHandle) body1; // 8
+    CPH_ATOMIC(BodyHandle) body2; // 8
     JPH_Real px, py, pz;           // 24/12
     float nx, ny, nz;              // 12
     float impulse;                 // 4
@@ -14,9 +14,9 @@ typedef struct {
 #if !defined(JPH_DOUBLE_PRECISION)
     uint32_t padding_magic[3];
 #endif
-} ContactEventSlim; // Just a 64-byte data block now
+} CPH_ContactEventSlim; // Just a 64-byte data block now
 
-static_assert(sizeof(ContactEventSlim) == MEMORY_ALIGNMENT_SIZE);
+static_assert(sizeof(CPH_ContactEventSlim) == kMemoryAlignmentSize);
 
 // 2. The Tail (Already 64 bytes)
 typedef struct {
@@ -36,31 +36,31 @@ typedef struct {
     uint32_t sub2; // 4  (Total 52)
 
     uint32_t padding[3]; // 12 (Total 64!)
-} ContactEventFatExt;
+} CPH_ContactEventFatExt;
 
-static_assert(sizeof(ContactEventFatExt) == MEMORY_ALIGNMENT_SIZE);
+static_assert(sizeof(CPH_ContactEventFatExt) == kMemoryAlignmentSize);
 
 // 3. The Outer Container (Where the alignment lives)
-typedef struct ContactEvent {
-    alignas(MEMORY_ALIGNMENT_SIZE) ContactEventSlim slim; // Offset 0
-    ContactEventFatExt fat;                               // Offset 64
-} ContactEvent;
+typedef struct CPH_ContactEvent {
+    alignas(kMemoryAlignmentSize) CPH_ContactEventSlim slim; // Offset 0
+    CPH_ContactEventFatExt fat;                               // Offset 64
+} CPH_ContactEvent;
 
-static_assert(sizeof(ContactEvent) == MEMORY_ALIGNMENT_SIZE * 2);
-static_assert(alignof(ContactEvent) == MEMORY_ALIGNMENT_SIZE);
-static_assert(offsetof(ContactEvent, fat) == MEMORY_ALIGNMENT_SIZE);
+static_assert(sizeof(CPH_ContactEvent) == kMemoryAlignmentSize * 2);
+static_assert(alignof(CPH_ContactEvent) == kMemoryAlignmentSize);
+static_assert(offsetof(CPH_ContactEvent, fat) == kMemoryAlignmentSize);
 
-static inline ContactEvent *GetEventAt(void *buffer, size_t index) {
+static inline CPH_ContactEvent *GetEventAt(void *buffer, size_t index) {
     // Standard pointer arithmetic on ContactEvent* handles the 128-byte stride
-    return &((ContactEvent *)buffer)[index];
+    return &((CPH_ContactEvent *)buffer)[index];
 }
 
-static inline ContactEventSlim *GetSlimHeader(ContactEvent *event) {
+static inline CPH_ContactEventSlim *GetSlimHeader(CPH_ContactEvent *event) {
     // Offset 0
     return &event->slim;
 }
 
-static inline ContactEventFatExt *GetFatExtension(ContactEvent *event) {
+static inline CPH_ContactEventFatExt *GetFatExtension(CPH_ContactEvent *event) {
     // Offset 64 - guaranteed by our alignment wizardry
     return &event->fat;
 }

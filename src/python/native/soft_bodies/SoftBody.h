@@ -7,8 +7,8 @@
 
 typedef struct {
     PyObject_HEAD JPH_SoftBodySharedSettings *settings;
-    SoftBodySharedSettingsParsers *parsers;
+    CPH_SoftBodySharedSettingsParsers *parsers;
     uint32_t num_vertices;
     bool constraints_created;
     bool optimized;
-} SoftBodySharedSettingsObject;
+} CPH_SoftBodySharedSettingsObject;

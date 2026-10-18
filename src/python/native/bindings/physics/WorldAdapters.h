@@ -4,20 +4,20 @@
 #include "physics/PhysicsWorldState.h"
 #include <Python.h>
 
-struct PhysicsWorldObject;
+struct CPH_PhysicsWorldObject;
 
 // Python entry points translate Python-side concerns and exceptions around the
 // native core operations declared in PhysicsWorld.h.
-int PhysicsWorld_resize(struct PhysicsWorldObject *self, size_t new_capacity);
-void PhysicsWorld_free_members(struct PhysicsWorldObject *self);
+int CPH_PyPhysicsWorldResize(struct CPH_PhysicsWorldObject *self, size_t new_capacity);
+void CPH_PyPhysicsWorldFreeMembers(struct CPH_PhysicsWorldObject *self);
 
-int init_settings(struct PhysicsWorldObject *self, PyObject *settings_dict, GravityVector *gravity,
-                  WorldSettings *settings);
-int get_baked_scene_count(PyObject *baked, size_t *out_count);
-int load_baked_scene(struct PhysicsWorldObject *self, PyObject *baked);
+int CPH_InitSettings(struct CPH_PhysicsWorldObject *self, PyObject *settings_dict, CPH_GravityVector *gravity,
+                  CPH_WorldSettings *settings);
+int CPH_GetBakedSceneCount(PyObject *baked, size_t *out_count);
+int CPH_LoadBakedScene(struct CPH_PhysicsWorldObject *self, PyObject *baked);
 
-PyType_DeclareSlot_StatusFromModule PhysicsWorld_getbuffer(struct PhysicsWorldObject *self,
+PyType_DeclareSlot_StatusFromModule CPH_PyPhysicsWorldGetbuffer(struct CPH_PhysicsWorldObject *self,
                                                            Py_buffer *view,
                                                            [[maybe_unused]] int flags);
-PyType_DeclareSlot_VoidFromModule PhysicsWorld_releasebuffer(struct PhysicsWorldObject *self,
+PyType_DeclareSlot_VoidFromModule CPH_PyPhysicsWorldReleasebuffer(struct CPH_PhysicsWorldObject *self,
                                                              Py_buffer *view);

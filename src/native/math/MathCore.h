@@ -29,13 +29,13 @@ static inline float culverin_fast_rsqrt_f(float number) { return 1.0f / sqrtf(nu
 
 // --- The Type-Generic Interface ---
 // NOLINTNEXTLINE(readability-identifier-naming)
-#define culverin_fast_rsqrt(x)                                                                     \
+#define CPH_culverin_fast_rsqrt(x)                                                                     \
     _Generic((x), float: culverin_fast_rsqrt_f, double: culverin_fast_rsqrt_d)(x)
 
 // Helper to find an arbitrary vector perpendicular to 'in'
 [[maybe_unused]]
-static inline void vec3_get_perpendicular(const JPH_Vec3 *CULV_RESTRICT in,
-                                          JPH_Vec3 *CULV_RESTRICT out) {
+static inline void vec3_get_perpendicular(const JPH_Vec3 *CPH_RESTRICT in,
+                                          JPH_Vec3 *CPH_RESTRICT out) {
     if (fabsf(in->x) > fabsf(in->z)) {
         out->x = -in->y;
         out->y = in->x;
@@ -63,14 +63,14 @@ static inline void vec3_get_perpendicular(const JPH_Vec3 *CULV_RESTRICT in,
 #if defined(__cplusplus)
 extern "C" {
 #endif
-void culverin_compute_interpolation_loop(const PosStride *__restrict curr_p,
-                                         const PosStride *__restrict prev_p,
-                                         const AuxStride *__restrict curr_r,
-                                         const AuxStride *__restrict prev_r, float alpha,
+void culverin_compute_interpolation_loop(const CPH_PosStride *__restrict curr_p,
+                                         const CPH_PosStride *__restrict prev_p,
+                                         const CPH_AuxStride *__restrict curr_r,
+                                         const CPH_AuxStride *__restrict prev_r, float alpha,
                                          float *__restrict out, size_t count);
 
-void culverin_math_interpolate_character_transform(const PosStride *__restrict start_p,
-                                                   const AuxStride *__restrict start_r,
+void culverin_math_interpolate_character_transform(const CPH_PosStride *__restrict start_p,
+                                                   const CPH_AuxStride *__restrict start_r,
                                                    const JPH_RVec3 *__restrict end_p,
                                                    const JPH_Quat *__restrict end_r, float alpha,
                                                    float *__restrict out_p,

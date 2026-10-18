@@ -2,16 +2,16 @@
 #include "physics/PhysicsParams.h"
 #include "joltc.h"
 
-void params_init(ConstraintParams *p);
+void CPH_ParamsInit(CPH_ConstraintParams *p);
 
-JPH_Constraint *create_fixed(const ConstraintParams *p, JPH_Body *b1, JPH_Body *b2);
+JPH_Constraint *CPH_CreateFixed(const CPH_ConstraintParams *p, JPH_Body *b1, JPH_Body *b2);
 
-JPH_Constraint *create_point(const ConstraintParams *p, JPH_Body *b1, JPH_Body *b2);
+JPH_Constraint *CPH_CreatePoint(const CPH_ConstraintParams *p, JPH_Body *b1, JPH_Body *b2);
 
-JPH_Constraint *create_hinge(const ConstraintParams *p, JPH_Body *b1, JPH_Body *b2);
+JPH_Constraint *CPH_CreateHinge(const CPH_ConstraintParams *p, JPH_Body *b1, JPH_Body *b2);
 
-JPH_Constraint *create_slider(const ConstraintParams *p, JPH_Body *b1, JPH_Body *b2);
+JPH_Constraint *CPH_CreateSlider(const CPH_ConstraintParams *p, JPH_Body *b1, JPH_Body *b2);
 
-JPH_Constraint *create_cone(const ConstraintParams *p, JPH_Body *b1, JPH_Body *b2);
+JPH_Constraint *CPH_CreateCone(const CPH_ConstraintParams *p, JPH_Body *b1, JPH_Body *b2);
 
-JPH_Constraint *create_distance(const ConstraintParams *p, JPH_Body *b1, JPH_Body *b2);
+JPH_Constraint *CPH_CreateDistance(const CPH_ConstraintParams *p, JPH_Body *b1, JPH_Body *b2);

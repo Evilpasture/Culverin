@@ -73,7 +73,7 @@ static int parse_sequence_internal(PyObject *obj, void *restrict out, int count,
     return 1;
 }
 
-int parse_vec3_f32(PyObject *obj, float *x, float *y, float *z) {
+int CPH_ParseVec3F32(PyObject *obj, float *x, float *y, float *z) {
     float res[3];
     if (parse_sequence_internal(obj, res, 3, false)) {
         *x = res[0];
@@ -84,7 +84,7 @@ int parse_vec3_f32(PyObject *obj, float *x, float *y, float *z) {
     return 0;
 }
 
-int parse_vec3_r64(PyObject *obj, double *x, double *y, double *z) {
+int CPH_ParseVec3R64(PyObject *obj, double *x, double *y, double *z) {
     double res[3];
     if (parse_sequence_internal(obj, res, 3, true)) {
         *x = res[0];
@@ -95,7 +95,7 @@ int parse_vec3_r64(PyObject *obj, double *x, double *y, double *z) {
     return 0;
 }
 
-int parse_quat_f32(PyObject *obj, float *x, float *y, float *z, float *w) {
+int CPH_ParseQuatF32(PyObject *obj, float *x, float *y, float *z, float *w) {
     float res[4];
     if (parse_sequence_internal(obj, res, 4, false)) {
         *x = res[0];
@@ -107,7 +107,7 @@ int parse_quat_f32(PyObject *obj, float *x, float *y, float *z, float *w) {
     return 0;
 }
 
-int parse_quat_r64(PyObject *obj, double *x, double *y, double *z, double *w) {
+int CPH_ParseQuatR64(PyObject *obj, double *x, double *y, double *z, double *w) {
     double res[4];
     if (parse_sequence_internal(obj, res, 4, true)) {
         *x = res[0];
@@ -119,17 +119,17 @@ int parse_quat_r64(PyObject *obj, double *x, double *y, double *z, double *w) {
     return 0;
 }
 
-int parse_py_vec3f(PyObject *obj, Vec3f *out) {
+int CPH_ParsePyVec3f(PyObject *obj, CPH_Vec3f *out) {
     return parse_sequence_internal(obj, out, 3, false);
 }
-int parse_py_vec3_pos(PyObject *obj, PosStride *out) {
+int CPH_ParsePyVec3Pos(PyObject *obj, CPH_PosStride *out) {
     return parse_sequence_internal(obj, out, 3, (sizeof(JPH_Real) == 8));
 }
-int parse_py_vec3_aux(PyObject *obj, AuxStride *out) {
+int CPH_ParsePyVec3Aux(PyObject *obj, CPH_AuxStride *out) {
     return parse_sequence_internal(obj, out, 4, false);
 }
 
-void parse_motor_config(PyObject *motor_dict, ConstraintParams *p) {
+void CPH_ParseMotorConfig(PyObject *motor_dict, CPH_ConstraintParams *p) {
     if (!motor_dict || motor_dict == Py_None) {
         return;
     }
@@ -137,7 +137,7 @@ void parse_motor_config(PyObject *motor_dict, ConstraintParams *p) {
     p->has_motor = true;
 
     // Use Generic to fetch string
-    const char *mode = get_py_dict(motor_dict, "mode", "");
+    const char *mode = CPH_get_py_dict(motor_dict, "mode", "");
     if (strcmp(mode, "velocity") == 0) {
         p->motor_type = 1;
     } else if (strcmp(mode, "position") == 0) {
@@ -145,13 +145,13 @@ void parse_motor_config(PyObject *motor_dict, ConstraintParams *p) {
     }
 
     // Use Generic to fetch floats
-    p->motor_target = get_py_dict(motor_dict, "target", 0.0f);
-    p->max_torque   = get_py_dict(motor_dict, "max_force", 1000.0f);
-    p->frequency    = get_py_dict(motor_dict, "stiffness", 0.0f);
-    p->damping      = get_py_dict(motor_dict, "damping", 1.0f);
+    p->motor_target = CPH_get_py_dict(motor_dict, "target", 0.0f);
+    p->max_torque   = CPH_get_py_dict(motor_dict, "max_force", 1000.0f);
+    p->frequency    = CPH_get_py_dict(motor_dict, "stiffness", 0.0f);
+    p->damping      = CPH_get_py_dict(motor_dict, "damping", 1.0f);
 }
 
-int parse_point_params(PyObject *args, ConstraintParams *p) {
+int CPH_ParsePointParams(PyObject *args, CPH_ConstraintParams *p) {
     if (!args || args == Py_None) {
         return 1;
     }
@@ -159,7 +159,7 @@ int parse_point_params(PyObject *args, ConstraintParams *p) {
     return PyArg_ParseTuple(args, "(fff)", &p->px, &p->py, &p->pz);
 }
 
-int parse_hinge_params(PyObject *args, ConstraintParams *p) {
+int CPH_ParseHingeParams(PyObject *args, CPH_ConstraintParams *p) {
     p->limit_min = -JPH_M_PI;
     p->limit_max = JPH_M_PI; // Hinge defaults
     if (!args) {
@@ -170,7 +170,7 @@ int parse_hinge_params(PyObject *args, ConstraintParams *p) {
                             &p->limit_min, &p->limit_max);
 }
 
-int parse_slider_params(PyObject *args, ConstraintParams *p) {
+int CPH_ParseSliderParams(PyObject *args, CPH_ConstraintParams *p) {
     // Slider axis defaults to X usually, but Y is fine. Limits default to free.
     if (!args) {
         return 1;
@@ -179,7 +179,7 @@ int parse_slider_params(PyObject *args, ConstraintParams *p) {
                             &p->limit_min, &p->limit_max);
 }
 
-int parse_cone_params(PyObject *args, ConstraintParams *p) {
+int CPH_ParseConeParams(PyObject *args, CPH_ConstraintParams *p) {
     if (!args) {
         return 1;
     }
@@ -188,7 +188,7 @@ int parse_cone_params(PyObject *args, ConstraintParams *p) {
                             &p->half_cone_angle);
 }
 
-int parse_distance_params(PyObject *args, ConstraintParams *p) {
+int CPH_ParseDistanceParams(PyObject *args, CPH_ConstraintParams *p) {
     // Default: -1.0 can be used as a sentinel in your create_distance
     // logic to say "calculate distance from current positions"
     p->limit_min = -1.0f;
@@ -205,7 +205,7 @@ int parse_distance_params(PyObject *args, ConstraintParams *p) {
 }
 
 // Helper 2: Parse the size object (tuple or float) into a 4-float array
-void parse_body_size(PyObject *py_size, float s[4]) {
+void CPH_ParseBodySize(PyObject *py_size, float s[4]) {
     s[0] = 1.0f;
     s[1] = 1.0f;
     s[2] = 1.0f;
@@ -227,7 +227,7 @@ void parse_body_size(PyObject *py_size, float s[4]) {
     }
 }
 
-int parse_tracks_to_c(PyObject *py_tracks, TrackData *out_data, int *num_out) {
+int CPH_ParseTracksToC(PyObject *py_tracks, CPH_TrackData *out_data, int *num_out) {
     if (!py_tracks || !PyList_Check(py_tracks)) {
         return 0;
     }
@@ -252,7 +252,7 @@ int parse_tracks_to_c(PyObject *py_tracks, TrackData *out_data, int *num_out) {
             }
         }
         // Generic used here for driven wheel
-        out_data[t].driven_idx = (uint32_t)get_py_dict(dict, "driven_wheel", 0L);
+        out_data[t].driven_idx = (uint32_t)CPH_get_py_dict(dict, "driven_wheel", 0L);
     }
     return 1;
 }

@@ -3,7 +3,7 @@
 #include "core/CompilerSpecifics.h"
 
 // Use the project force-inline hint for the FastBuild helpers.
-#define CULV_PY_BUILD_FORCE_INLINE CULV_FORCE_INLINE
+#define CPH_PY_BUILD_FORCE_INLINE CPH_FORCE_INLINE
 
 // (Optional): If you later want to build Vec3 structs directly into PyTuple objects,
 // you would define the function here and inject it like this:
