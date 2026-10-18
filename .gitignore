@@ -32,4 +32,5 @@ compile_commands.json
 messy/
 *.patch
 *.txt
+!CMakeLists.txt
 *.log

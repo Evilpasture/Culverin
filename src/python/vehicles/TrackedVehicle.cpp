@@ -48,14 +48,15 @@ static JPH_WheelSettings *create_track_wheel(PyObject *w_dict) {
         return nullptr;
     }
 
-    float radius         = CPH_get_py_attr(w_dict, "radius", kTrackedWheelRadiusDefault);
-    float width          = CPH_get_py_attr(w_dict, "width", kTrackedWheelWidthDefault);
-    float suspension_len = CPH_get_py_attr(w_dict, "suspension", kTrackedWheelSuspensionDefault);
-    float friction       = CPH_get_py_attr(w_dict, "friction", 1.0f);
+    float radius = CPH::Python::GetAttribute(w_dict, "radius", kTrackedWheelRadiusDefault);
+    float width  = CPH::Python::GetAttribute(w_dict, "width", kTrackedWheelWidthDefault);
+    float suspension_len =
+        CPH::Python::GetAttribute(w_dict, "suspension", kTrackedWheelSuspensionDefault);
+    float friction = CPH::Python::GetAttribute(w_dict, "friction", 1.0f);
 
     // Suspension Spring Properties
-    float freq = CPH_get_py_attr(w_dict, "spring_freq", kTrackedSpringFreqDefault);
-    float damp = CPH_get_py_attr(w_dict, "spring_damp", kTrackedSpringDampDefault);
+    float freq = CPH::Python::GetAttribute(w_dict, "spring_freq", kTrackedSpringFreqDefault);
+    float damp = CPH::Python::GetAttribute(w_dict, "spring_damp", kTrackedSpringDampDefault);
 
     JPH_WheelSettingsTV *w = JPH_WheelSettingsTV_Create();
 

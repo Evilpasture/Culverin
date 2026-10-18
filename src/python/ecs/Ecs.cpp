@@ -714,25 +714,23 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_GetComponentCount(CPH_Registr
     return PyLong_FromSsize_t(self->components[comp_id].count);
 }
 
-#define CPH_REG_FASTCALL(fn, name) CPH_FEAT(fn, name, METH_FASTCALL | METH_KEYWORDS)
-#define CPH_REG_NOARGS(fn, name) CPH_FEAT(fn, name, METH_NOARGS)
-
 static PyMethodDef kRegistryMethods[] = {
 
-    CPH_REG_NOARGS(CPH_PyRegistry_Create, create),
-    CPH_REG_FASTCALL(CPH_PyRegistry_Destroy, destroy),
-    CPH_REG_FASTCALL(CPH_PyRegistry_IsAlive, is_alive),
-    CPH_REG_NOARGS(CPH_PyRegistry_Clear, clear), // Wipes the registry
-    CPH_REG_FASTCALL(CPH_PyRegistry_RegisterComponent, register_component),
-    CPH_REG_FASTCALL(CPH_PyRegistry_Add, add),
-    CPH_REG_FASTCALL(CPH_PyRegistry_Remove, remove),
-    CPH_REG_FASTCALL(CPH_PyRegistry_Has, has),
-    CPH_REG_FASTCALL(CPH_PyRegistry_Get, get), // Single entity data access
-    CPH_REG_FASTCALL(CPH_PyRegistry_GetView, get_view),
-    CPH_REG_FASTCALL(CPH_PyRegistry_GetEntities, get_entities),
-    CPH_REG_FASTCALL(CPH_PyRegistry_SyncFromWorld, sync_from_world),
-    CPH_REG_NOARGS(CPH_PyRegistry_GetActiveCount, get_active_count),         // ECS Statistics
-    CPH_REG_FASTCALL(CPH_PyRegistry_GetComponentCount, get_component_count), // ECS Statistics
+    CPH::Python::NoArgsMethod("create", CPH_PyRegistry_Create),
+    CPH::Python::FastCallMethod("destroy", CPH_PyRegistry_Destroy),
+    CPH::Python::FastCallMethod("is_alive", CPH_PyRegistry_IsAlive),
+    CPH::Python::NoArgsMethod("clear", CPH_PyRegistry_Clear), // Wipes the registry
+    CPH::Python::FastCallMethod("register_component", CPH_PyRegistry_RegisterComponent),
+    CPH::Python::FastCallMethod("add", CPH_PyRegistry_Add),
+    CPH::Python::FastCallMethod("remove", CPH_PyRegistry_Remove),
+    CPH::Python::FastCallMethod("has", CPH_PyRegistry_Has),
+    CPH::Python::FastCallMethod("get", CPH_PyRegistry_Get), // Single entity data access
+    CPH::Python::FastCallMethod("get_view", CPH_PyRegistry_GetView),
+    CPH::Python::FastCallMethod("get_entities", CPH_PyRegistry_GetEntities),
+    CPH::Python::FastCallMethod("sync_from_world", CPH_PyRegistry_SyncFromWorld),
+    CPH::Python::NoArgsMethod("get_active_count", CPH_PyRegistry_GetActiveCount), // ECS Statistics
+    CPH::Python::FastCallMethod("get_component_count",
+                                CPH_PyRegistry_GetComponentCount), // ECS Statistics
     {nullptr, nullptr, 0, nullptr}};
 
 PyType_Spec Registry_spec = {

@@ -1104,20 +1104,16 @@ PyGetSet_DeclareGetter CPH_PyChar_GetHandle(CPH_CharacterObject *self,
     return CPH_PY_BUILD_VALUE(raw_h);
 }
 
-#define CPH_CHAR_FASTCALL(fn, name) CPH_FEAT(fn, name, METH_FASTCALL | METH_KEYWORDS)
-#define CPH_CHAR_NOARGS(fn, name) CPH_FEAT(fn, name, METH_NOARGS)
-#define CPH_CHAR_O(fn, name) CPH_FEAT(fn, name, METH_O)
-
 static PyMethodDef kCharacterMethods[] = {
 
-    CPH_CHAR_FASTCALL(CPH_PyChar_Move, move),
-    CPH_CHAR_NOARGS(CPH_PyChar_GetPosition, get_position),
-    CPH_CHAR_NOARGS(CPH_PyChar_GetLinearVelocity, get_linear_velocity),
-    CPH_CHAR_FASTCALL(CPH_PyChar_SetPosition, set_position),
-    CPH_CHAR_FASTCALL(CPH_PyChar_SetRotation, set_rotation),
-    CPH_CHAR_NOARGS(CPH_PyChar_IsGrounded, is_grounded),
-    CPH_CHAR_FASTCALL(CPH_PyChar_SetStrength, set_strength),
-    CPH_CHAR_O(CPH_PyChar_GetRenderTransform, get_render_transform),
+    CPH::Python::FastCallMethod("move", CPH_PyChar_Move),
+    CPH::Python::NoArgsMethod("get_position", CPH_PyChar_GetPosition),
+    CPH::Python::NoArgsMethod("get_linear_velocity", CPH_PyChar_GetLinearVelocity),
+    CPH::Python::FastCallMethod("set_position", CPH_PyChar_SetPosition),
+    CPH::Python::FastCallMethod("set_rotation", CPH_PyChar_SetRotation),
+    CPH::Python::NoArgsMethod("is_grounded", CPH_PyChar_IsGrounded),
+    CPH::Python::FastCallMethod("set_strength", CPH_PyChar_SetStrength),
+    CPH::Python::OneArgMethod("get_render_transform", CPH_PyChar_GetRenderTransform),
     {nullptr, nullptr, 0, nullptr}};
 
 PyType_Spec Character_spec = {
@@ -1135,7 +1131,7 @@ PyType_Spec Character_spec = {
              .pfunc =
                  (PyGetSetDef[]){
 
-                     CPH_GETSET("handle", CPH_PyChar_GetHandle), {}
+                     CPH::Python::GetSet("handle", CPH_PyChar_GetHandle), {}
 
                  }},
             {}

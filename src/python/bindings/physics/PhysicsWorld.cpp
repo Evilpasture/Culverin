@@ -2579,11 +2579,7 @@ PyType_DeclareSlot_VoidFromModule CPH_PyWorld_Releasebuffer(CPH_PhysicsWorldObje
     CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
 }
 
-// User-facing macros for context methods
-#define CPH_PW_FASTCALL(fn, name) CPH_FEAT(fn, name, METH_FASTCALL | METH_KEYWORDS)
-#define CPH_PW_NOARGS(fn, name) CPH_FEAT(fn, name, METH_NOARGS)
-#define CPH_PW_O(fn, name) CPH_FEAT(fn, name, METH_O)
-
+// Declarations for context methods defined in other translation units.
 PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateVehicle(CPH_PhysicsWorldObject *self,
                                                               PyObject *const *args, size_t nargsf,
                                                               PyObject *kwnames);
@@ -2598,91 +2594,92 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateShip(CPH_PhysicsWorldObjec
 static PyMethodDef kPhysicsWorldMethods[] = {
 
     // --- Lifecycle ---
-    CPH_PW_FASTCALL(CPH_PyWorld_Step, step),
-    CPH_PW_FASTCALL(CPH_PyWorld_CreateBody, create_body),
-    CPH_PW_FASTCALL(CPH_PyWorld_CreateBodiesBatch, create_bodies_batch),
-    CPH_PW_FASTCALL(CPH_PyWorld_DestroyBody, destroy_body),
-    CPH_PW_FASTCALL(CPH_PyWorld_DestroyBodiesBatch, destroy_bodies_batch),
-    CPH_PW_FASTCALL(CPH_PyWorld_CreateMeshBody, create_mesh_body),
-    CPH_PW_FASTCALL(CPH_PyWorld_CreateConstraint, create_constraint),
-    CPH_PW_FASTCALL(CPH_PyWorld_DestroyConstraint, destroy_constraint),
-    CPH_PW_FASTCALL(CPH_PyWorld_GetConstraintType, get_constraint_type),
-    CPH_PW_FASTCALL(CPH_PyWorld_CreateVehicle, create_vehicle),
-    CPH_PW_FASTCALL(CPH_PyWorld_CreateTrackedVehicle, create_tracked_vehicle),
-    CPH_PW_FASTCALL(CPH_PyWorld_CreateShip, create_ship),
-    CPH_PW_FASTCALL(CPH_PyWorld_CreateRagdollSettings, create_ragdoll_settings),
-    CPH_PW_FASTCALL(CPH_PyWorld_CreateRagdoll, create_ragdoll),
-    CPH_PW_FASTCALL(CPH_PyWorld_CreateHeightfield, create_heightfield),
-    CPH_PW_FASTCALL(CPH_PyWorld_CreateConvexHull, create_convex_hull),
-    CPH_PW_FASTCALL(CPH_PyWorld_CreateCompoundBody, create_compound_body),
-    CPH_PW_FASTCALL(CPH_PyWorld_CreateSoftBody, create_soft_body),
+    CPH::Python::FastCallMethod("step", CPH_PyWorld_Step),
+    CPH::Python::FastCallMethod("create_body", CPH_PyWorld_CreateBody),
+    CPH::Python::FastCallMethod("create_bodies_batch", CPH_PyWorld_CreateBodiesBatch),
+    CPH::Python::FastCallMethod("destroy_body", CPH_PyWorld_DestroyBody),
+    CPH::Python::FastCallMethod("destroy_bodies_batch", CPH_PyWorld_DestroyBodiesBatch),
+    CPH::Python::FastCallMethod("create_mesh_body", CPH_PyWorld_CreateMeshBody),
+    CPH::Python::FastCallMethod("create_constraint", CPH_PyWorld_CreateConstraint),
+    CPH::Python::FastCallMethod("destroy_constraint", CPH_PyWorld_DestroyConstraint),
+    CPH::Python::FastCallMethod("get_constraint_type", CPH_PyWorld_GetConstraintType),
+    CPH::Python::FastCallMethod("create_vehicle", CPH_PyWorld_CreateVehicle),
+    CPH::Python::FastCallMethod("create_tracked_vehicle", CPH_PyWorld_CreateTrackedVehicle),
+    CPH::Python::FastCallMethod("create_ship", CPH_PyWorld_CreateShip),
+    CPH::Python::FastCallMethod("create_ragdoll_settings", CPH_PyWorld_CreateRagdollSettings),
+    CPH::Python::FastCallMethod("create_ragdoll", CPH_PyWorld_CreateRagdoll),
+    CPH::Python::FastCallMethod("create_heightfield", CPH_PyWorld_CreateHeightfield),
+    CPH::Python::FastCallMethod("create_convex_hull", CPH_PyWorld_CreateConvexHull),
+    CPH::Python::FastCallMethod("create_compound_body", CPH_PyWorld_CreateCompoundBody),
+    CPH::Python::FastCallMethod("create_soft_body", CPH_PyWorld_CreateSoftBody),
 
     // --- Interaction ---
-    CPH_PW_FASTCALL(CPH_PyWorld_ApplyImpulse, apply_impulse),
-    CPH_PW_FASTCALL(CPH_PyWorld_ApplyAngularImpulse, apply_angular_impulse),
-    CPH_PW_FASTCALL(CPH_PyWorld_ApplyImpulseAt, apply_impulse_at),
-    CPH_PW_FASTCALL(CPH_PyWorld_ApplyForce, apply_force),
-    CPH_PW_FASTCALL(CPH_PyWorld_ApplyTorque, apply_torque),
-    CPH_PW_FASTCALL(CPH_PyWorld_SetGravity, set_gravity),
-    CPH_PW_NOARGS(CPH_PyWorld_GetGravity, get_gravity),
-    CPH_PW_FASTCALL(CPH_PyWorld_ApplyBuoyancy, apply_buoyancy),
-    CPH_PW_FASTCALL(CPH_PyWorld_ApplyBuoyancyBatch, apply_buoyancy_batch),
-    CPH_PW_FASTCALL(CPH_PyWorld_SetPosition, set_position),
-    CPH_PW_FASTCALL(CPH_PyWorld_SetRotation, set_rotation),
-    CPH_PW_FASTCALL(CPH_PyWorld_SetLinearVelocity, set_linear_velocity),
-    CPH_PW_FASTCALL(CPH_PyWorld_SetAngularVelocity, set_angular_velocity),
-    CPH_PW_FASTCALL(CPH_PyWorld_SetTransform, set_transform),
-    CPH_PW_FASTCALL(CPH_PyWorld_SetCollisionFilter, set_collision_filter),
-    CPH_PW_FASTCALL(CPH_PyWorld_RegisterMaterial, register_material),
-    CPH_PW_FASTCALL(CPH_PyWorld_SetConstraintTarget, set_constraint_target),
+    CPH::Python::FastCallMethod("apply_impulse", CPH_PyWorld_ApplyImpulse),
+    CPH::Python::FastCallMethod("apply_angular_impulse", CPH_PyWorld_ApplyAngularImpulse),
+    CPH::Python::FastCallMethod("apply_impulse_at", CPH_PyWorld_ApplyImpulseAt),
+    CPH::Python::FastCallMethod("apply_force", CPH_PyWorld_ApplyForce),
+    CPH::Python::FastCallMethod("apply_torque", CPH_PyWorld_ApplyTorque),
+    CPH::Python::FastCallMethod("set_gravity", CPH_PyWorld_SetGravity),
+    CPH::Python::NoArgsMethod("get_gravity", CPH_PyWorld_GetGravity),
+    CPH::Python::FastCallMethod("apply_buoyancy", CPH_PyWorld_ApplyBuoyancy),
+    CPH::Python::FastCallMethod("apply_buoyancy_batch", CPH_PyWorld_ApplyBuoyancyBatch),
+    CPH::Python::FastCallMethod("set_position", CPH_PyWorld_SetPosition),
+    CPH::Python::FastCallMethod("set_rotation", CPH_PyWorld_SetRotation),
+    CPH::Python::FastCallMethod("set_linear_velocity", CPH_PyWorld_SetLinearVelocity),
+    CPH::Python::FastCallMethod("set_angular_velocity", CPH_PyWorld_SetAngularVelocity),
+    CPH::Python::FastCallMethod("set_transform", CPH_PyWorld_SetTransform),
+    CPH::Python::FastCallMethod("set_collision_filter", CPH_PyWorld_SetCollisionFilter),
+    CPH::Python::FastCallMethod("register_material", CPH_PyWorld_RegisterMaterial),
+    CPH::Python::FastCallMethod("set_constraint_target", CPH_PyWorld_SetConstraintTarget),
 
     // --- Motion Control ---
-    CPH_PW_FASTCALL(CPH_PyWorld_GetMotionType, get_motion_type),
-    CPH_PW_FASTCALL(CPH_PyWorld_SetMotionType, set_motion_type),
-    CPH_PW_FASTCALL(CPH_PyWorld_Activate, activate),
-    CPH_PW_FASTCALL(CPH_PyWorld_Deactivate, deactivate),
-    CPH_PW_FASTCALL(CPH_PyWorld_SetCcd, set_ccd),
+    CPH::Python::FastCallMethod("get_motion_type", CPH_PyWorld_GetMotionType),
+    CPH::Python::FastCallMethod("set_motion_type", CPH_PyWorld_SetMotionType),
+    CPH::Python::FastCallMethod("activate", CPH_PyWorld_Activate),
+    CPH::Python::FastCallMethod("deactivate", CPH_PyWorld_Deactivate),
+    CPH::Python::FastCallMethod("set_ccd", CPH_PyWorld_SetCcd),
 
     // --- Queries ---
-    CPH_PW_FASTCALL(CPH_PyWorld_GetSoftBodyVertices, get_soft_body_vertices),
-    CPH_PW_FASTCALL(CPH_PyWorld_GetSoftBodyVertexCount, get_soft_body_vertex_count),
-    CPH_PW_FASTCALL(CPH_PyWorld_GetSoftBodyVertexPosition, get_soft_body_vertex_position),
-    CPH_PW_FASTCALL(CPH_PyWorld_GetSoftBodyLocalVertices, get_soft_body_local_vertices),
-    CPH_PW_FASTCALL(CPH_PyWorld_Raycast, raycast),
-    CPH_PW_FASTCALL(CPH_PyWorld_RaycastBatch, raycast_batch),
-    CPH_PW_FASTCALL(CPH_PyWorld_Shapecast, shapecast),
-    CPH_PW_FASTCALL(CPH_PyWorld_OverlapSphere, overlap_sphere),
-    CPH_PW_FASTCALL(CPH_PyWorld_OverlapAabb, overlap_aabb),
+    CPH::Python::FastCallMethod("get_soft_body_vertices", CPH_PyWorld_GetSoftBodyVertices),
+    CPH::Python::FastCallMethod("get_soft_body_vertex_count", CPH_PyWorld_GetSoftBodyVertexCount),
+    CPH::Python::FastCallMethod("get_soft_body_vertex_position",
+                                CPH_PyWorld_GetSoftBodyVertexPosition),
+    CPH::Python::FastCallMethod("get_soft_body_local_vertices",
+                                CPH_PyWorld_GetSoftBodyLocalVertices),
+    CPH::Python::FastCallMethod("raycast", CPH_PyWorld_Raycast),
+    CPH::Python::FastCallMethod("raycast_batch", CPH_PyWorld_RaycastBatch),
+    CPH::Python::FastCallMethod("shapecast", CPH_PyWorld_Shapecast),
+    CPH::Python::FastCallMethod("overlap_sphere", CPH_PyWorld_OverlapSphere),
+    CPH::Python::FastCallMethod("overlap_aabb", CPH_PyWorld_OverlapAabb),
 
     // --- Utilities ---
-    CPH_PW_FASTCALL(CPH_PyWorld_GetIndex, get_index),
-    CPH_PW_FASTCALL(CPH_PyWorld_IsAlive, is_alive),
-    CPH_PW_FASTCALL(CPH_PyWorld_IsActive, is_active),
-    CPH_PW_NOARGS(CPH_PyWorld_GetActiveIndices, get_active_indices),
-    CPH_PW_FASTCALL(CPH_PyWorld_GetRenderState, get_render_state),
-    CPH_PW_FASTCALL(CPH_PyWorld_GetDebugData, get_debug_data),
-    CPH_PW_FASTCALL(CPH_PyWorld_GetBodyStats, get_body_stats),
+    CPH::Python::FastCallMethod("get_index", CPH_PyWorld_GetIndex),
+    CPH::Python::FastCallMethod("is_alive", CPH_PyWorld_IsAlive),
+    CPH::Python::FastCallMethod("is_active", CPH_PyWorld_IsActive),
+    CPH::Python::NoArgsMethod("get_active_indices", CPH_PyWorld_GetActiveIndices),
+    CPH::Python::FastCallMethod("get_render_state", CPH_PyWorld_GetRenderState),
+    CPH::Python::FastCallMethod("get_debug_data", CPH_PyWorld_GetDebugData),
+    CPH::Python::FastCallMethod("get_body_stats", CPH_PyWorld_GetBodyStats),
 
     // --- User Data ---
-    CPH_PW_FASTCALL(CPH_PyWorld_GetUserData, get_user_data),
-    CPH_PW_FASTCALL(CPH_PyWorld_SetUserData, set_user_data),
+    CPH::Python::FastCallMethod("get_user_data", CPH_PyWorld_GetUserData),
+    CPH::Python::FastCallMethod("set_user_data", CPH_PyWorld_SetUserData),
 
     // -- Event Logic ---
-    CPH_PW_NOARGS(CPH_PyWorld_GetContactEvents, get_contact_events),
-    CPH_PW_NOARGS(CPH_PyWorld_GetContactEventsEx, get_contact_events_ex),
-    CPH_PW_NOARGS(CPH_PyWorld_GetContactEventsRaw, get_contact_events_raw),
+    CPH::Python::NoArgsMethod("get_contact_events", CPH_PyWorld_GetContactEvents),
+    CPH::Python::NoArgsMethod("get_contact_events_ex", CPH_PyWorld_GetContactEventsEx),
+    CPH::Python::NoArgsMethod("get_contact_events_raw", CPH_PyWorld_GetContactEventsRaw),
 
     // --- State & Advanced ---
-    CPH_PW_NOARGS(CPH_PyWorld_SaveState, save_state),
-    CPH_PW_FASTCALL(CPH_PyWorld_LoadState, load_state),
-    CPH_PW_FASTCALL(CPH_PyWorld_CreateCharacter, create_character),
+    CPH::Python::NoArgsMethod("save_state", CPH_PyWorld_SaveState),
+    CPH::Python::FastCallMethod("load_state", CPH_PyWorld_LoadState),
+    CPH::Python::FastCallMethod("create_character", CPH_PyWorld_CreateCharacter),
 
     // --- Internal/Debug ---
-    // Not for public use, therefore can't use macros
-    {"_benchmark_parse", CPH_CAST(CPH_PyWorld_BenchmarkParse), METH_FASTCALL | METH_KEYWORDS,
-     nullptr},
+    // Private parser/build microbenchmarks.
+    CPH::Python::FastCallMethod("_benchmark_parse", CPH_PyWorld_BenchmarkParse),
 
-    {"_benchmark_build", CPH_CAST(CPH_PyWorld_BenchmarkBuild), METH_NOARGS, nullptr},
+    CPH::Python::NoArgsMethod("_benchmark_build", CPH_PyWorld_BenchmarkBuild),
 
     {nullptr, nullptr, 0, nullptr}};
 
@@ -2715,17 +2712,17 @@ PyType_Spec CPH_PyWorld_Spec = {
              .pfunc =
                  (PyGetSetDef[]){
 
-                     CPH_GETSET("positions", CPH_PyWorld_GetPositions),
-                     CPH_GETSET("rotations", CPH_PyWorld_GetRotations),
-                     CPH_GETSET("velocities", CPH_PyWorld_GetVelocities),
-                     CPH_GETSET("angular_velocities", CPH_PyWorld_GetAngularVelocities),
-                     CPH_GETSET("count", CPH_PyWorld_GetCount),
-                     CPH_GETSET("time", CPH_PyWorld_GetTime),
-                     CPH_GETSET("user_data", CPH_PyWorld_GetUserDataBuffer),
-                     CPH_GETSET("shape_count", CPH_PyWorld_GetShapeCount),
-                     CPH_GETSET("is_step_pending", CPH_PyWorld_GetIsStepPending),
-                     CPH_GETSET("max_bodies", CPH_PyWorld_GetMaxBodies),
-                     CPH_GETSET("remaining_capacity", CPH_PyWorld_GetRemainingCapacity),
+                     CPH::Python::GetSet("positions", CPH_PyWorld_GetPositions),
+                     CPH::Python::GetSet("rotations", CPH_PyWorld_GetRotations),
+                     CPH::Python::GetSet("velocities", CPH_PyWorld_GetVelocities),
+                     CPH::Python::GetSet("angular_velocities", CPH_PyWorld_GetAngularVelocities),
+                     CPH::Python::GetSet("count", CPH_PyWorld_GetCount),
+                     CPH::Python::GetSet("time", CPH_PyWorld_GetTime),
+                     CPH::Python::GetSet("user_data", CPH_PyWorld_GetUserDataBuffer),
+                     CPH::Python::GetSet("shape_count", CPH_PyWorld_GetShapeCount),
+                     CPH::Python::GetSet("is_step_pending", CPH_PyWorld_GetIsStepPending),
+                     CPH::Python::GetSet("max_bodies", CPH_PyWorld_GetMaxBodies),
+                     CPH::Python::GetSet("remaining_capacity", CPH_PyWorld_GetRemainingCapacity),
                      {}
 
                  }},

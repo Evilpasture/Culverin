@@ -1,58 +1,127 @@
 #pragma once
+
 #include <Python.h>
 
+#include <cstddef>
+#include <limits>
+#include <string_view>
 #include <type_traits>
 
-static inline float py_to_float(PyObject *obj) { return static_cast<float>(PyFloat_AsDouble(obj)); }
-static inline double py_to_double(PyObject *obj) { return PyFloat_AsDouble(obj); }
-static inline int py_to_int(PyObject *obj) { return static_cast<int>(PyLong_AsLong(obj)); }
-static inline long py_to_long(PyObject *obj) { return PyLong_AsLong(obj); }
-static inline const char *py_to_str(PyObject *obj) { return PyUnicode_AsUTF8(obj); }
+namespace CPH::Python {
+namespace detail {
 
-template <typename T> [[nodiscard]] static inline T py_to_value(PyObject *obj) {
+template <typename> inline constexpr bool kUnsupportedValue = false;
+
+template <typename Function> struct FastCallMethodTraits {
+    static constexpr bool is_valid = false;
+    static constexpr int flags     = 0;
+};
+template <typename Self, typename ArgCount>
+struct FastCallMethodTraits<PyObject *(*)(Self *, PyObject *const *, ArgCount)> {
+    static constexpr bool is_valid = std::is_integral_v<ArgCount>;
+    static constexpr int flags     = METH_FASTCALL;
+};
+template <typename Self, typename ArgCount>
+struct FastCallMethodTraits<PyObject *(*)(Self *, PyObject *const *, ArgCount, PyObject *)> {
+    static constexpr bool is_valid = std::is_integral_v<ArgCount>;
+    static constexpr int flags     = METH_FASTCALL | METH_KEYWORDS;
+};
+
+template <typename Function> struct IsSimpleMethodFunction : std::false_type {};
+template <typename Self>
+struct IsSimpleMethodFunction<PyObject *(*)(Self *, PyObject *)> : std::true_type {};
+
+template <typename Function> struct IsGetterFunction : std::false_type {};
+template <typename Self> struct IsGetterFunction<PyObject *(*)(Self *, void *)> : std::true_type {};
+
+[[nodiscard]] inline PyObject *MakeName(std::string_view name) noexcept {
+    if (name.size() > static_cast<std::size_t>(std::numeric_limits<Py_ssize_t>::max())) {
+        return nullptr;
+    }
+    const char *data = name.empty() ? "" : name.data();
+    return PyUnicode_FromStringAndSize(data, static_cast<Py_ssize_t>(name.size()));
+}
+
+template <typename T> [[nodiscard]] inline T ConvertValue(PyObject *obj) noexcept {
     if constexpr (std::is_same_v<T, float>) {
-        return py_to_float(obj);
+        return static_cast<float>(PyFloat_AsDouble(obj));
     } else if constexpr (std::is_same_v<T, double>) {
-        return py_to_double(obj);
+        return PyFloat_AsDouble(obj);
     } else if constexpr (std::is_same_v<T, int>) {
-        return py_to_int(obj);
+        return static_cast<int>(PyLong_AsLong(obj));
     } else if constexpr (std::is_same_v<T, long>) {
-        return py_to_long(obj);
+        return PyLong_AsLong(obj);
     } else if constexpr (std::is_same_v<T, const char *>) {
-        return py_to_str(obj);
+        return PyUnicode_AsUTF8(obj);
     } else {
-        static_assert(std::is_same_v<T, void>, "Unsupported Python default-value type");
+        static_assert(kUnsupportedValue<T>, "Unsupported Python value conversion");
     }
 }
 
+} // namespace detail
+
+// A conversion proxy lets the destination type select the Python conversion:
+// `float x = CPH::Python::ToValue(obj);`
+class Value {
+  public:
+    explicit Value(PyObject *obj) noexcept : m_object(obj) {}
+
+    template <typename T> [[nodiscard]] operator T() const noexcept {
+        return detail::ConvertValue<T>(m_object);
+    }
+
+  private:
+    PyObject *m_object;
+};
+
+[[nodiscard]] inline Value ToValue(PyObject *obj) noexcept { return Value{obj}; }
+
 template <typename T>
-[[nodiscard]] static inline T CPH_get_py_attr(PyObject *obj, const char *name, T default_value) {
+[[nodiscard]] inline T GetAttribute(PyObject *obj, std::string_view name,
+                                    T default_value) noexcept {
     if (obj == nullptr || obj == Py_None) {
         return default_value;
     }
 
-    T result       = default_value;
-    PyObject *attr = PyObject_GetAttrString(obj, name);
-    if (attr != nullptr) {
-        const T value = py_to_value<T>(attr);
-        if (!PyErr_Occurred()) {
-            result = value;
-        }
-        Py_DECREF(attr);
+    PyObject *py_name = detail::MakeName(name);
+    if (py_name == nullptr) {
+        PyErr_Clear();
+        return default_value;
     }
-    PyErr_Clear();
-    return result;
+
+    PyObject *attr = PyObject_GetAttr(obj, py_name);
+    Py_DECREF(py_name);
+    if (attr == nullptr) {
+        PyErr_Clear();
+        return default_value;
+    }
+
+    const T value = ToValue(attr);
+    Py_DECREF(attr);
+    if (PyErr_Occurred()) {
+        PyErr_Clear();
+        return default_value;
+    }
+    return value;
 }
 
 template <typename T>
-[[nodiscard]] static inline T CPH_get_py_dict(PyObject *dict, const char *key, T default_value) {
+[[nodiscard]] inline T GetDictionaryItem(PyObject *dict, std::string_view key,
+                                         T default_value) noexcept {
     if (dict == nullptr || !PyDict_Check(dict)) {
         return default_value;
     }
 
-    PyObject *item = PyDict_GetItemString(dict, key);
+    PyObject *py_key = detail::MakeName(key);
+    if (py_key == nullptr) {
+        PyErr_Clear();
+        return default_value;
+    }
+
+    PyObject *item = PyDict_GetItemWithError(dict, py_key);
+    Py_DECREF(py_key);
     if (item != nullptr) {
-        const T value = py_to_value<T>(item);
+        const T value = ToValue(item);
         if (!PyErr_Occurred()) {
             return value;
         }
@@ -61,25 +130,49 @@ template <typename T>
     return default_value;
 }
 
-#define CPH_CAST(m) _PyCFunction_CAST(m)
+template <typename Function>
+[[nodiscard]] constexpr PyMethodDef FastCallMethod(const char *name, Function function) noexcept {
+    using Traits = detail::FastCallMethodTraits<Function>;
+    static_assert(Traits::is_valid,
+                  "FastCallMethod requires (self, args, nargsf[, kwnames]) handler");
+    return {.ml_name  = name,
+            .ml_meth  = _PyCFunction_CAST(function),
+            .ml_flags = Traits::flags,
+            .ml_doc   = nullptr};
+}
 
-#define CPH_FEAT(prefix, name, method_type)                                                        \
-    {.ml_name = #name, .ml_meth = CPH_CAST(prefix), .ml_flags = (method_type), .ml_doc = nullptr}  \
-    // Initialized to nullptr to be filled by stitcher
+template <typename Function>
+[[nodiscard]] constexpr PyMethodDef NoArgsMethod(const char *name, Function function) noexcept {
+    static_assert(detail::IsSimpleMethodFunction<Function>::value,
+                  "NoArgsMethod requires a (self, ignored) handler");
+    return {.ml_name  = name,
+            .ml_meth  = _PyCFunction_CAST(function),
+            .ml_flags = METH_NOARGS,
+            .ml_doc   = nullptr};
+}
 
-#define CPH_FEAT_INTERNAL(prefix, name, method_type)                                               \
-    {.ml_name  = "_" #name,                                                                        \
-     .ml_meth  = CPH_CAST(prefix),                                                                 \
-     .ml_flags = (method_type),                                                                    \
-     .ml_doc   = nullptr}
+template <typename Function>
+[[nodiscard]] constexpr PyMethodDef OneArgMethod(const char *name, Function function) noexcept {
+    static_assert(detail::IsSimpleMethodFunction<Function>::value,
+                  "OneArgMethod requires a (self, arg) handler");
+    return {.ml_name  = name,
+            .ml_meth  = _PyCFunction_CAST(function),
+            .ml_flags = METH_O,
+            .ml_doc   = nullptr};
+}
 
-// Getter/Property macro - concise initialization
-#define CPH_GETSET(name_str, getter_func)                                                          \
-    {.name    = (name_str),                                                                        \
-     .get     = (getter)(getter_func),                                                             \
-     .set     = nullptr,                                                                           \
-     .doc     = nullptr,                                                                           \
-     .closure = nullptr}
+template <typename Function>
+[[nodiscard]] constexpr PyGetSetDef GetSet(const char *name, Function function) noexcept {
+    static_assert(detail::IsGetterFunction<Function>::value,
+                  "GetSet requires a (self, closure) getter");
+    return {.name    = name,
+            .get     = _Py_CAST(getter, _Py_CAST(void (*)(void), function)),
+            .set     = nullptr,
+            .doc     = nullptr,
+            .closure = nullptr};
+}
+
+} // namespace CPH::Python
 
 extern PyType_Spec CPH_PyWorld_Spec;
 extern PyType_Spec Vehicle_spec;

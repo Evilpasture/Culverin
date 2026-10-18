@@ -373,19 +373,10 @@ PyCFunction_DeclareMethodFromModule CPH_PyRagdollSettings_AddPart(CPH_RagdollSet
     Py_RETURN_NONE;
 }
 
-#define CPH_RD_FASTCALL(fn, name) CPH_FEAT(fn, name, METH_FASTCALL | METH_KEYWORDS)
-#define CPH_RD_NOARGS(fn, name) CPH_FEAT(fn, name, METH_NOARGS)
-
-#define CPH_SKEL_FASTCALL(fn, name) CPH_FEAT(fn, name, METH_FASTCALL | METH_KEYWORDS)
-#define CPH_SKEL_NOARGS(fn, name) CPH_FEAT(fn, name, METH_NOARGS)
-
-#define CPH_RDS_FASTCALL(fn, name) CPH_FEAT(fn, name, METH_FASTCALL | METH_KEYWORDS)
-#define CPH_RDS_NOARGS(fn, name) CPH_FEAT(fn, name, METH_NOARGS)
-
 static PyMethodDef kRagdollMethods[] = {
 
-    CPH_RDS_FASTCALL(CPH_PyRagdollSettings_AddPart, add_part),
-    CPH_RDS_NOARGS(CPH_PyRagdollSettings_Stabilize, stabilize),
+    CPH::Python::FastCallMethod("add_part", CPH_PyRagdollSettings_AddPart),
+    CPH::Python::NoArgsMethod("stabilize", CPH_PyRagdollSettings_Stabilize),
     {nullptr, nullptr, 0, nullptr}};
 
 PyType_Spec RagdollSettings_spec = {
@@ -416,9 +407,9 @@ PyType_Spec Skeleton_spec = {
              .pfunc =
                  (PyMethodDef[]){
 
-                     CPH_SKEL_FASTCALL(CPH_PySkeleton_AddJoint, add_joint),
-                     CPH_SKEL_FASTCALL(CPH_PySkeleton_GetJointIndex, get_joint_index),
-                     CPH_SKEL_NOARGS(CPH_PySkeleton_Finalize, finalize),
+                     CPH::Python::FastCallMethod("add_joint", CPH_PySkeleton_AddJoint),
+                     CPH::Python::FastCallMethod("get_joint_index", CPH_PySkeleton_GetJointIndex),
+                     CPH::Python::NoArgsMethod("finalize", CPH_PySkeleton_Finalize),
                      {}
 
                  }},
@@ -438,9 +429,9 @@ PyType_Spec Ragdoll_spec = {
              .pfunc =
                  (PyMethodDef[]){
 
-                     CPH_RD_FASTCALL(CPH_PyRagdoll_DriveToPose, drive_to_pose),
-                     CPH_RD_NOARGS(CPH_PyRagdoll_GetBodyHandles, get_body_handles),
-                     CPH_RD_NOARGS(CPH_PyRagdoll_GetDebugInfo, get_debug_info),
+                     CPH::Python::FastCallMethod("drive_to_pose", CPH_PyRagdoll_DriveToPose),
+                     CPH::Python::NoArgsMethod("get_body_handles", CPH_PyRagdoll_GetBodyHandles),
+                     CPH::Python::NoArgsMethod("get_debug_info", CPH_PyRagdoll_GetDebugInfo),
                      {}
 
                  }},

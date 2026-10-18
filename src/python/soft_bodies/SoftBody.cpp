@@ -449,9 +449,6 @@ CPH_PySbss_GetVertexPosition(CPH_SoftBodySharedSettingsObject *self, PyObject *a
     return CPH_PY_BUILD_TUPLE(vertex.position.x, vertex.position.y, vertex.position.z);
 }
 
-#define CPH_SBSS_FASTCALL(fn, name) CPH_FEAT(fn, name, METH_FASTCALL | METH_KEYWORDS)
-#define CPH_SBSS_NOARGS(fn, name) CPH_FEAT(fn, name, METH_NOARGS)
-#define CPH_SBSS_O(fn, name) CPH_FEAT(fn, name, METH_O)
 
 // The legacy entry remains available for compatibility; its implementation
 // emits the user-facing Python DeprecationWarning when called.
@@ -464,14 +461,14 @@ CPH_PySbss_GetVertexPosition(CPH_SoftBodySharedSettingsObject *self, PyObject *a
 #endif
 static PyMethodDef kSoftBodySharedSettingsMethods[] = {
 
-    CPH_SBSS_FASTCALL(CPH_PySbss_AddVertex, add_vertex),
-    CPH_SBSS_FASTCALL(CPH_PySbss_AddVertices, add_vertices),
-    CPH_SBSS_O(CPH_PySbss_AddPinnedVertex, add_pinned_vertex),
-    CPH_SBSS_O(CPH_PySbss_GetVertexPosition, get_vertex_position),
-    CPH_SBSS_FASTCALL(CPH_PySbss_AddFace, add_face),
-    CPH_SBSS_FASTCALL(CPH_PySbss_AddFaces, add_faces),
-    CPH_SBSS_FASTCALL(CPH_PySbss_CreateConstraints, create_constraints),
-    CPH_SBSS_NOARGS(CPH_PySbss_Optimize, optimize),
+    CPH::Python::FastCallMethod("add_vertex", CPH_PySbss_AddVertex),
+    CPH::Python::FastCallMethod("add_vertices", CPH_PySbss_AddVertices),
+    CPH::Python::OneArgMethod("add_pinned_vertex", CPH_PySbss_AddPinnedVertex),
+    CPH::Python::OneArgMethod("get_vertex_position", CPH_PySbss_GetVertexPosition),
+    CPH::Python::FastCallMethod("add_face", CPH_PySbss_AddFace),
+    CPH::Python::FastCallMethod("add_faces", CPH_PySbss_AddFaces),
+    CPH::Python::FastCallMethod("create_constraints", CPH_PySbss_CreateConstraints),
+    CPH::Python::NoArgsMethod("optimize", CPH_PySbss_Optimize),
     {nullptr, nullptr, 0, nullptr}};
 #if defined(__clang__)
 #    pragma clang diagnostic pop

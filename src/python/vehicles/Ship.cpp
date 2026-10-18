@@ -205,8 +205,7 @@ PyType_DeclareSlot_StatusFromModule CPH_PyShip_Clear(CPH_ShipObject *self) {
     return 0;
 }
 
-#define CPH_SHIP_FASTCALL(fn, name) CPH_FEAT(fn, name, METH_FASTCALL | METH_KEYWORDS)
-static PyMethodDef kShipMethods[] = {CPH_SHIP_FASTCALL(CPH_PyShip_SetInput, set_input),
+static PyMethodDef kShipMethods[] = {CPH::Python::FastCallMethod("set_input", CPH_PyShip_SetInput),
                                      {nullptr, nullptr, 0, nullptr}};
 
 PyType_Spec Ship_spec = {

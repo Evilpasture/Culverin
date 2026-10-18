@@ -138,7 +138,7 @@ void CPH_ParseMotorConfig(PyObject *motor_dict, CPH_ConstraintParams *p) {
     p->has_motor = true;
 
     // Use Generic to fetch string
-    const char *mode = CPH_get_py_dict(motor_dict, "mode", "");
+    const char *mode = CPH::Python::GetDictionaryItem(motor_dict, "mode", "");
     if (strcmp(mode, "velocity") == 0) {
         p->motor_type = 1;
     } else if (strcmp(mode, "position") == 0) {
@@ -146,10 +146,10 @@ void CPH_ParseMotorConfig(PyObject *motor_dict, CPH_ConstraintParams *p) {
     }
 
     // Use Generic to fetch floats
-    p->motor_target = CPH_get_py_dict(motor_dict, "target", 0.0f);
-    p->max_torque   = CPH_get_py_dict(motor_dict, "max_force", 1000.0f);
-    p->frequency    = CPH_get_py_dict(motor_dict, "stiffness", 0.0f);
-    p->damping      = CPH_get_py_dict(motor_dict, "damping", 1.0f);
+    p->motor_target = CPH::Python::GetDictionaryItem(motor_dict, "target", 0.0f);
+    p->max_torque   = CPH::Python::GetDictionaryItem(motor_dict, "max_force", 1000.0f);
+    p->frequency    = CPH::Python::GetDictionaryItem(motor_dict, "stiffness", 0.0f);
+    p->damping      = CPH::Python::GetDictionaryItem(motor_dict, "damping", 1.0f);
 }
 
 int CPH_ParsePointParams(PyObject *args, CPH_ConstraintParams *p) {
@@ -254,7 +254,8 @@ int CPH_ParseTracksToC(PyObject *py_tracks, CPH_TrackData *out_data, int *num_ou
             }
         }
         // Generic used here for driven wheel
-        out_data[t].driven_idx = static_cast<uint32_t>(CPH_get_py_dict(dict, "driven_wheel", 0L));
+        out_data[t].driven_idx =
+            static_cast<uint32_t>(CPH::Python::GetDictionaryItem(dict, "driven_wheel", 0L));
     }
     return 1;
 }

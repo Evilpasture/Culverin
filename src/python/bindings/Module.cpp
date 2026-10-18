@@ -289,17 +289,6 @@ static atomic_int docs_status = 0;
 
 // =============================================================================================
 
-// --- Macros ---
-
-// User-facing macros for module-level methods
-#define CPH_MOD_FASTCALL(fn, name) CPH_FEAT(fn, name, METH_FASTCALL | METH_KEYWORDS)
-#define CPH_MOD_NOARGS(fn, name) CPH_FEAT(fn, name, METH_NOARGS)
-#define CPH_MOD_VARARGS(fn, name) CPH_FEAT(fn, name, METH_VARARGS | METH_KEYWORDS)
-
-#define CPH_MOD_NOARGS_INTERNAL(fn, name) CPH_FEAT_INTERNAL(fn, name, METH_NOARGS)
-#define CPH_MOD_FASTCALL_INTERNAL(fn, name)                                                        \
-    CPH_FEAT_INTERNAL(fn, name, METH_FASTCALL | METH_KEYWORDS)
-
 // --- Module Initialization ---
 
 // Embed the entire TOML file as a static string
@@ -652,8 +641,8 @@ static void culverin_free(void *module) {
 
 static PyMethodDef kModuleMethods[] = {
 
-    CPH_MOD_FASTCALL_INTERNAL(CPH_PyModule_DumpSchemaJson, dump_schema_json),
-    CPH_MOD_FASTCALL(CPH_PyModule_MutateTuple, mutate_tuple),
+    CPH::Python::FastCallMethod("_dump_schema_json", CPH_PyModule_DumpSchemaJson),
+    CPH::Python::FastCallMethod("mutate_tuple", CPH_PyModule_MutateTuple),
     {nullptr, nullptr, 0, nullptr}};
 
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)

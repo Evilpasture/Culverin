@@ -61,13 +61,14 @@ static JPH_WheelSettings *create_single_wheel(PyObject *w_dict, JPH_LinearCurve 
     }
 
     // 2. Parse Float Attributes using consistent helper
-    float radius    = CPH_get_py_attr(w_dict, "radius", kWheelRadiusDefault);
-    float width     = CPH_get_py_attr(w_dict, "width", kWheelWidthDefault);
-    float brake     = CPH_get_py_attr(w_dict, "brake_torque", kWheelBrakeTorqueDefault);
-    float handbrake = CPH_get_py_attr(w_dict, "handbrake_torque", kWheelHandbrakeTorqueDefault);
-    float susp_max  = CPH_get_py_attr(w_dict, "suspension", kWheelSuspensionMaxDefault);
-    float freq      = CPH_get_py_attr(w_dict, "spring_freq", kWheelSpringFreqDefault);
-    float damp      = CPH_get_py_attr(w_dict, "spring_damp", kWheelSpringDampDefault);
+    float radius = CPH::Python::GetAttribute(w_dict, "radius", kWheelRadiusDefault);
+    float width  = CPH::Python::GetAttribute(w_dict, "width", kWheelWidthDefault);
+    float brake  = CPH::Python::GetAttribute(w_dict, "brake_torque", kWheelBrakeTorqueDefault);
+    float handbrake =
+        CPH::Python::GetAttribute(w_dict, "handbrake_torque", kWheelHandbrakeTorqueDefault);
+    float susp_max = CPH::Python::GetAttribute(w_dict, "suspension", kWheelSuspensionMaxDefault);
+    float freq     = CPH::Python::GetAttribute(w_dict, "spring_freq", kWheelSpringFreqDefault);
+    float damp     = CPH::Python::GetAttribute(w_dict, "spring_damp", kWheelSpringDampDefault);
 
     // 3. Jolt Object Setup
     JPH_WheelSettingsWV *w = JPH_WheelSettingsWV_Create();
@@ -194,10 +195,10 @@ static void setup_engine(JPH_WheeledVehicleControllerSettings *v_ctrl, JPH_Linea
     JPH_VehicleEngineSettings_Init(&eng_set);
 
     // Flat execution: no nesting, no hidden macro branches
-    eng_set.maxTorque = CPH_get_py_attr(py_engine, "max_torque", kEngineMaxTorqueDefault);
-    eng_set.maxRPM    = CPH_get_py_attr(py_engine, "max_rpm", kEngineMaxRpmDefault);
-    eng_set.minRPM    = CPH_get_py_attr(py_engine, "min_rpm", kEngineMinRpmDefault);
-    eng_set.inertia   = CPH_get_py_attr(py_engine, "inertia", kEngineInertiaDefault);
+    eng_set.maxTorque = CPH::Python::GetAttribute(py_engine, "max_torque", kEngineMaxTorqueDefault);
+    eng_set.maxRPM    = CPH::Python::GetAttribute(py_engine, "max_rpm", kEngineMaxRpmDefault);
+    eng_set.minRPM    = CPH::Python::GetAttribute(py_engine, "min_rpm", kEngineMinRpmDefault);
+    eng_set.inertia   = CPH::Python::GetAttribute(py_engine, "inertia", kEngineInertiaDefault);
 
     eng_set.normalizedTorque = t_curve;
 
@@ -222,7 +223,7 @@ static void setup_transmission(JPH_WheeledVehicleControllerSettings *v_ctrl,
     JPH_VehicleTransmissionSettings_SetMode(v_trans_set, static_cast<JPH_TransmissionMode>(t_mode));
     JPH_VehicleTransmissionSettings_SetClutchStrength(
         v_trans_set,
-        CPH_get_py_attr(py_trans, "clutch_strength", kTransmissionClutchStrengthDefault));
+        CPH::Python::GetAttribute(py_trans, "clutch_strength", kTransmissionClutchStrengthDefault));
 
     // Extract Gear Ratios from Python list
     if (py_trans && py_trans != Py_None) {
@@ -252,7 +253,8 @@ static void setup_transmission(JPH_WheeledVehicleControllerSettings *v_ctrl,
     }
 
     // Apply Differential Ratio from Python Transmission object
-    float diff_ratio   = CPH_get_py_attr(py_trans, "differential_ratio", kDifferentialRatioDefault);
+    float diff_ratio =
+        CPH::Python::GetAttribute(py_trans, "differential_ratio", kDifferentialRatioDefault);
     uint32_t num_diffs = JPH_WheeledVehicleControllerSettings_GetDifferentialsCount(v_ctrl);
     for (uint32_t d = 0; d < num_diffs; d++) {
         JPH_VehicleDifferentialSettings ds;
@@ -854,8 +856,6 @@ PyGetSet_DeclareGetter CPH_PyVehicle_GetWheelCount(CPH_VehicleObject *self,
     return PyLong_FromUnsignedLong(self->num_wheels);
 }
 
-#define CPH_VEH_FASTCALL(fn, name) CPH_FEAT(fn, name, METH_FASTCALL | METH_KEYWORDS)
-#define CPH_VEH_NOARGS(fn, name) CPH_FEAT(fn, name, METH_NOARGS)
 
 PyCFunction_DeclareMethodFromModule CPH_PyVehicle_SetTankInput(CPH_VehicleObject *self,
                                                                PyObject *const *args, size_t nargsf,
@@ -863,12 +863,12 @@ PyCFunction_DeclareMethodFromModule CPH_PyVehicle_SetTankInput(CPH_VehicleObject
 
 static PyMethodDef kVehicleMethods[] = {
 
-    CPH_VEH_FASTCALL(CPH_PyVehicle_SetInput, set_input),
-    CPH_VEH_FASTCALL(CPH_PyVehicle_SetTankInput, set_tank_input),
-    CPH_VEH_FASTCALL(CPH_PyVehicle_GetWheelTransform, get_wheel_transform),
-    CPH_VEH_FASTCALL(CPH_PyVehicle_GetWheelLocalTransform, get_wheel_local_transform),
-    CPH_VEH_NOARGS(CPH_PyVehicle_Destroy, destroy),
-    CPH_VEH_NOARGS(CPH_PyVehicle_GetDebugState, get_debug_state),
+    CPH::Python::FastCallMethod("set_input", CPH_PyVehicle_SetInput),
+    CPH::Python::FastCallMethod("set_tank_input", CPH_PyVehicle_SetTankInput),
+    CPH::Python::FastCallMethod("get_wheel_transform", CPH_PyVehicle_GetWheelTransform),
+    CPH::Python::FastCallMethod("get_wheel_local_transform", CPH_PyVehicle_GetWheelLocalTransform),
+    CPH::Python::NoArgsMethod("destroy", CPH_PyVehicle_Destroy),
+    CPH::Python::NoArgsMethod("get_debug_state", CPH_PyVehicle_GetDebugState),
     {nullptr, nullptr, 0, nullptr}};
 
 PyType_Spec Vehicle_spec = {
@@ -886,7 +886,7 @@ PyType_Spec Vehicle_spec = {
              .pfunc =
                  (PyGetSetDef[]){
 
-                     CPH_GETSET("wheel_count", CPH_PyVehicle_GetWheelCount), {}
+                     CPH::Python::GetSet("wheel_count", CPH_PyVehicle_GetWheelCount), {}
 
                  }},
             {},
