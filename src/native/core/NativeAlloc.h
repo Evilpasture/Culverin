@@ -9,23 +9,23 @@
 
 // Native heap primitives for state owned by the physics core. Keep these
 // allocations paired with the matching native free instead of CPython's heap.
-static inline void *CulvNative_Malloc(size_t size) {
+static inline void *CPH_Alloc(size_t size) {
     return malloc(size);
 }
 
-static inline void *CulvNative_Calloc(size_t count, size_t size) {
+static inline void *CPH_Calloc(size_t count, size_t size) {
     return calloc(count, size);
 }
 
-static inline void *CulvNative_Realloc(void *ptr, size_t size) {
+static inline void *CPH_Realloc(void *ptr, size_t size) {
     return realloc(ptr, size);
 }
 
-static inline void CulvNative_Free(void *ptr) {
+static inline void CPH_Free(void *ptr) {
     free(ptr);
 }
 
-static inline void *CulvNative_AlignedMalloc(size_t size, size_t alignment) {
+static inline void *CPH_AlignedAlloc(size_t size, size_t alignment) {
     if ((alignment & (alignment - 1)) != 0 || alignment == 0) {
         return nullptr;
     }
@@ -40,7 +40,7 @@ static inline void *CulvNative_AlignedMalloc(size_t size, size_t alignment) {
 #endif
 }
 
-static inline void CulvNative_AlignedFree(void *ptr) {
+static inline void CPH_AlignedFree(void *ptr) {
 #if defined(_WIN32)
     _aligned_free(ptr);
 #else
@@ -48,19 +48,19 @@ static inline void CulvNative_AlignedFree(void *ptr) {
 #endif
 }
 
-static inline void CulvNative_SafeFree(void **ptr) {
+static inline void CPH_SafeFree(void **ptr) {
     if (ptr && *ptr) {
-        CulvNative_Free(*ptr);
+        CPH_Free(*ptr);
         *ptr = nullptr;
     }
 }
 
-static inline void CulvNative_SafeAlignedFree(void **ptr) {
+static inline void CPH_SafeAlignedFree(void **ptr) {
     if (ptr && *ptr) {
-        CulvNative_AlignedFree(*ptr);
+        CPH_AlignedFree(*ptr);
         *ptr = nullptr;
     }
 }
 
-#define CPH_SAFE_FREE(ptr) CulvNative_SafeFree((void **)&(ptr))
-#define CPH_SAFE_FREE_ALIGNED(ptr) CulvNative_SafeAlignedFree((void **)&(ptr))
+#define CPH_SAFE_FREE(ptr) CPH_SafeFree((void **)&(ptr))
+#define CPH_SAFE_FREE_ALIGNED(ptr) CPH_SafeAlignedFree((void **)&(ptr))

@@ -155,7 +155,7 @@ void CPH_CleanupVehicleResources(CPH_VehicleResources *r, uint32_t num_wheels, C
                 JPH_WheelSettings_Destroy(r->w_settings[i]);
             }
         }
-        CULV_RAW_FREE((void *)r->w_settings);
+        CPH_PyFree((void *)r->w_settings);
     }
 
     if (r->f_curve) {
@@ -167,7 +167,7 @@ void CPH_CleanupVehicleResources(CPH_VehicleResources *r, uint32_t num_wheels, C
 }
 
 int CPH_InitVehicleParsers(CPH_VehicleObject *obj) {
-    obj->parsers = (CPH_VehicleParsers *)PyMem_Malloc(sizeof(CPH_VehicleParsers));
+    obj->parsers = (CPH_VehicleParsers *)CPH_PyAlloc(sizeof(CPH_VehicleParsers));
     if (!obj->parsers) {
         return -1;
     }
@@ -217,13 +217,13 @@ static void setup_transmission(JPH_WheeledVehicleControllerSettings *v_ctrl,
         PyObject *py_ratios = PyObject_GetAttrString(py_trans, "ratios");
         if (py_ratios && PyList_Check(py_ratios)) {
             Py_ssize_t n = PyList_Size(py_ratios);
-            float *r     = CULV_RAW_MALLOC((size_t)n * sizeof(float));
+            float *r     = CPH_PyAlloc((size_t)n * sizeof(float));
             if (r) {
                 for (Py_ssize_t i = 0; i < n; i++) {
                     r[i] = (float)PyFloat_AsDouble(PyList_GetItem(py_ratios, i));
                 }
                 JPH_VehicleTransmissionSettings_SetGearRatios(v_trans_set, r, (uint32_t)n);
-                CULV_RAW_FREE(r);
+                CPH_PyFree(r);
             }
         }
         Py_XDECREF(py_ratios);
@@ -270,10 +270,11 @@ static void configure_drivetrain(CPH_VehicleResources *r, PyObject *py_engine, P
 
 // --- Main Function ---
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldCreateVehicle(CPH_PhysicsWorldObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateVehicle(CPH_PhysicsWorldObject *self,
                                                                 PyObject *const *args,
-                                                                Py_ssize_t nargs,
+                                                                size_t nargsf,
                                                                 PyObject *kwnames) {
+    const Py_ssize_t nargs = (Py_ssize_t)PyVectorcall_NARGS(nargsf);
     CPH_CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // --- 1. FAST ARGUMENT PARSING (Unchanged) ---
     uint64_t chassis_h_raw = 0;
@@ -340,7 +341,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldCreateVehicle(CPH_PhysicsW
     JPH_LinearCurve_AddPoint(r.t_curve, 0.0f, 1.0f);
     JPH_LinearCurve_AddPoint(r.t_curve, 1.0f, 1.0f);
 
-    r.w_settings  = (JPH_WheelSettings **)CULV_RAW_CALLOC(num_wheels, sizeof(JPH_WheelSettings *));
+    r.w_settings  = (JPH_WheelSettings **)CPH_PyCalloc(num_wheels, sizeof(JPH_WheelSettings *));
     r.v_ctrl      = JPH_WheeledVehicleControllerSettings_Create();
     r.v_trans_set = JPH_VehicleTransmissionSettings_Create();
 
@@ -451,8 +452,9 @@ python_fail:
 
 // --- Vehicles Methods ---
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-PyCFunction_DeclareMethodFromModule CPH_PyVehicleSetInput(CPH_VehicleObject *self, PyObject *const *args,
-                                                      Py_ssize_t nargs, PyObject *kwnames) {
+PyCFunction_DeclareMethodFromModule CPH_PyVehicle_SetInput(CPH_VehicleObject *self, PyObject *const *args,
+                                                      size_t nargsf, PyObject *kwnames) {
+    const Py_ssize_t nargs = (Py_ssize_t)PyVectorcall_NARGS(nargsf);
     // 1. FAST PARSE (Unchanged)
     float forward   = 0.0f;
     float right     = 0.0f;
@@ -561,10 +563,11 @@ static inline PyObject *pack_transform(double px, double py, double pz, float rx
     return res;
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyVehicleGetWheelTransform(CPH_VehicleObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyVehicle_GetWheelTransform(CPH_VehicleObject *self,
                                                                 PyObject *const *args,
-                                                                Py_ssize_t nargs,
+                                                                size_t nargsf,
                                                                 PyObject *kwnames) {
+    const Py_ssize_t nargs = (Py_ssize_t)PyVectorcall_NARGS(nargsf);
     uint32_t index                                     = 0;
     const void *const restrict targets[WheelIdx_COUNT] = {
         [IDX_WH_INDEX] = (const void *const restrict)&index,
@@ -605,10 +608,11 @@ PyCFunction_DeclareMethodFromModule CPH_PyVehicleGetWheelTransform(CPH_VehicleOb
     return pack_transform(px, py, pz, q->x, q->y, q->z, q->w);
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyVehicleGetWheelLocalTransform(CPH_VehicleObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyVehicle_GetWheelLocalTransform(CPH_VehicleObject *self,
                                                                       PyObject *const *args,
-                                                                      Py_ssize_t nargs,
+                                                                      size_t nargsf,
                                                                       PyObject *kwnames) {
+    const Py_ssize_t nargs = (Py_ssize_t)PyVectorcall_NARGS(nargsf);
     uint32_t index                                     = 0;
     const void *const restrict targets[WheelIdx_COUNT] = {
         [IDX_WH_INDEX] = (const void *const restrict)&index,
@@ -649,7 +653,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyVehicleGetWheelLocalTransform(CPH_Vehi
     return pack_transform(lx, ly, lz, q->x, q->y, q->z, q->w);
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyVehicleGetDebugState([[maybe_unused]] CPH_VehicleObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyVehicle_GetDebugState([[maybe_unused]] CPH_VehicleObject *self,
                                                             PyObject *ignored [[maybe_unused]]) {
 #ifndef CULVERIN_DEBUG
     Py_RETURN_NONE;
@@ -728,19 +732,19 @@ PyCFunction_DeclareMethodFromModule CPH_PyVehicleGetDebugState([[maybe_unused]] 
 }
 
 // --- Vehicle GC Support ---
-PyType_DeclareSlot_StatusFromModule CPH_PyVehicleTraverse(CPH_VehicleObject *self, visitproc visit,
+PyType_DeclareSlot_StatusFromModule CPH_PyVehicle_Traverse(CPH_VehicleObject *self, visitproc visit,
                                                      void *arg) {
     Py_VISIT(self->world);
     return 0;
 }
 
-PyType_DeclareSlot_StatusFromModule CPH_PyVehicleClear(CPH_VehicleObject *self) {
+PyType_DeclareSlot_StatusFromModule CPH_PyVehicle_Clear(CPH_VehicleObject *self) {
     Py_CLEAR(self->world);
     return 0;
 }
 
 // --- Internal C Logic (No Python return value to ignore) ---
-static void Vehicle_internal_cleanup(CPH_VehicleObject *self) {
+static void CPH_PyVehicle_InternalCleanup(CPH_VehicleObject *self) {
     if (!self->world) {
         return;
     }
@@ -799,7 +803,7 @@ static void Vehicle_internal_cleanup(CPH_VehicleObject *self) {
                 JPH_WheelSettings_Destroy(wheels[i]);
             }
         }
-        CULV_RAW_FREE((void *)wheels);
+        CPH_PyFree((void *)wheels);
     }
 
     if (f_curve) {
@@ -812,34 +816,34 @@ static void Vehicle_internal_cleanup(CPH_VehicleObject *self) {
 
 // --- Python Wrapper ---
 // Using [[nodiscard]] on this will now only affect Python callers
-PyCFunction_DeclareMethodFromModule CPH_PyVehicleDestroy(CPH_VehicleObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyVehicle_Destroy(CPH_VehicleObject *self,
                                                     PyObject *ignored [[maybe_unused]]) {
-    Vehicle_internal_cleanup(self);
+    CPH_PyVehicle_InternalCleanup(self);
     if (self->parsers) {
         CPH_CulverinFreeVehicleParsers(self->parsers);
-        PyMem_Free(self->parsers);
+        CPH_PyFree(self->parsers);
     }
     Py_RETURN_NONE;
 }
 
 // --- Dealloc Slot ---
-PyType_DeclareSlot_VoidFromModule CPH_PyVehicleDealloc(CPH_VehicleObject *self) {
+PyType_DeclareSlot_VoidFromModule CPH_PyVehicle_Dealloc(CPH_VehicleObject *self) {
     PyObject_GC_UnTrack(self);
 
     // Call the internal C logic directly
     // This avoids [[nodiscard]] warnings because the return is void
-    Vehicle_internal_cleanup(self);
+    CPH_PyVehicle_InternalCleanup(self);
 
     if (self->parsers) {
         CPH_CulverinFreeVehicleParsers(self->parsers);
-        PyMem_Free(self->parsers);
+        CPH_PyFree(self->parsers);
     }
 
     Py_XDECREF(self->world);
     Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
-PyGetSet_DeclareGetter CPH_PyVehicleGetWheelCount(CPH_VehicleObject *self,
+PyGetSet_DeclareGetter CPH_PyVehicle_GetWheelCount(CPH_VehicleObject *self,
                                                [[maybe_unused]] void *closure) {
     // num_wheels is set at creation and never changes
     return PyLong_FromUnsignedLong(self->num_wheels);
@@ -848,9 +852,19 @@ PyGetSet_DeclareGetter CPH_PyVehicleGetWheelCount(CPH_VehicleObject *self,
 #define CPH_VEH_FASTCALL(fn, name) CPH_FEAT(fn, name, METH_FASTCALL | METH_KEYWORDS)
 #define CPH_VEH_NOARGS(fn, name) CPH_FEAT(fn, name, METH_NOARGS)
 
-PyCFunction_DeclareMethodFromModule CPH_PyVehicleSetTankInput(CPH_VehicleObject *self,
-                                                           PyObject *const *args, Py_ssize_t nargs,
+PyCFunction_DeclareMethodFromModule CPH_PyVehicle_SetTankInput(CPH_VehicleObject *self,
+                                                           PyObject *const *args, size_t nargsf,
                                                            PyObject *kwnames);
+
+static PyMethodDef kVehicleMethods[] = {
+
+                     CPH_VEH_FASTCALL(CPH_PyVehicle_SetInput, set_input),
+                     CPH_VEH_FASTCALL(CPH_PyVehicle_SetTankInput, set_tank_input),
+                     CPH_VEH_FASTCALL(CPH_PyVehicle_GetWheelTransform, get_wheel_transform),
+                     CPH_VEH_FASTCALL(CPH_PyVehicle_GetWheelLocalTransform, get_wheel_local_transform),
+                     CPH_VEH_NOARGS(CPH_PyVehicle_Destroy, destroy),
+                     CPH_VEH_NOARGS(CPH_PyVehicle_GetDebugState, get_debug_state),
+                     {nullptr, nullptr, 0, nullptr}};
 
 PyType_Spec Vehicle_spec = {
     .name      = "culverin._culverin_c.Vehicle",
@@ -859,27 +873,15 @@ PyType_Spec Vehicle_spec = {
     .slots =
         (PyType_Slot[]){
 
-            {.slot = Py_tp_dealloc, .pfunc = CPH_PyVehicleDealloc},
-            {.slot = Py_tp_traverse, .pfunc = CPH_PyVehicleTraverse},
-            {.slot = Py_tp_clear, .pfunc = CPH_PyVehicleClear},
-            {.slot = Py_tp_methods,
-             .pfunc =
-                 (PyMethodDef[]){
-
-                     CPH_VEH_FASTCALL(CPH_PyVehicleSetInput, set_input),
-                     CPH_VEH_FASTCALL(CPH_PyVehicleSetTankInput, set_tank_input),
-                     CPH_VEH_FASTCALL(CPH_PyVehicleGetWheelTransform, get_wheel_transform),
-                     CPH_VEH_FASTCALL(CPH_PyVehicleGetWheelLocalTransform, get_wheel_local_transform),
-                     CPH_VEH_NOARGS(CPH_PyVehicleDestroy, destroy),
-                     CPH_VEH_NOARGS(CPH_PyVehicleGetDebugState, get_debug_state),
-                     {}
-
-                 }},
+            {.slot = Py_tp_dealloc, .pfunc = CPH_PyVehicle_Dealloc},
+            {.slot = Py_tp_traverse, .pfunc = CPH_PyVehicle_Traverse},
+            {.slot = Py_tp_clear, .pfunc = CPH_PyVehicle_Clear},
+            {.slot = Py_tp_methods, .pfunc = kVehicleMethods },
             {.slot = Py_tp_getset,
              .pfunc =
                  (PyGetSetDef[]){
 
-                     CPH_GETSET("wheel_count", CPH_PyVehicleGetWheelCount), {}
+                     CPH_GETSET("wheel_count", CPH_PyVehicle_GetWheelCount), {}
 
                  }},
             {},

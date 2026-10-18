@@ -1,4 +1,5 @@
 #include "soft_bodies/SoftBody.h"
+#include "bindings/BindingCommon.h"
 #include "bindings/parsing/ArgIndices.h"
 #include "core/CompilerSpecifics.h"
 #include "bindings/FastBuild.h"
@@ -6,7 +7,7 @@
 
 // --- SharedSettings Lifecycle ---
 
-PyType_DeclareSlot_StatusFromModule CPH_PySoftBodySharedSettingsInit(CPH_SoftBodySharedSettingsObject *self,
+PyType_DeclareSlot_StatusFromModule CPH_PySbss_Init(CPH_SoftBodySharedSettingsObject *self,
                                                                 [[maybe_unused]] PyObject *args,
                                                                 [[maybe_unused]] PyObject *kwds) {
     self->settings            = JPH_SoftBodySharedSettings_Create();
@@ -19,7 +20,7 @@ PyType_DeclareSlot_StatusFromModule CPH_PySoftBodySharedSettingsInit(CPH_SoftBod
         return -1;
     }
     self->parsers =
-        (CPH_SoftBodySharedSettingsParsers *)PyMem_Malloc(sizeof(CPH_SoftBodySharedSettingsParsers));
+        (CPH_SoftBodySharedSettingsParsers *)CPH_PyAlloc(sizeof(CPH_SoftBodySharedSettingsParsers));
     if (!self->parsers) {
         JPH_SoftBodySharedSettings_Destroy(self->settings);
         PyErr_NoMemory();
@@ -30,14 +31,14 @@ PyType_DeclareSlot_StatusFromModule CPH_PySoftBodySharedSettingsInit(CPH_SoftBod
 }
 
 PyType_DeclareSlot_VoidFromModule
-CPH_PySoftBodySharedSettingsDealloc(CPH_SoftBodySharedSettingsObject *self) {
+CPH_PySbss_Dealloc(CPH_SoftBodySharedSettingsObject *self) {
     if (self->settings) {
         JPH_SoftBodySharedSettings_Destroy(self->settings);
         self->settings = nullptr;
     }
     if (self->parsers) {
         CPH_CulverinFreeSbssParsers(self->parsers);
-        PyMem_Free(self->parsers);
+        CPH_PyFree(self->parsers);
     }
     PyTypeObject *tp = Py_TYPE(self);
     tp->tp_free((PyObject *)self);
@@ -47,8 +48,9 @@ CPH_PySoftBodySharedSettingsDealloc(CPH_SoftBodySharedSettingsObject *self) {
 // --- SharedSettings Topology Methods ---
 
 PyCFunction_DeclareMethodFromModule
-CPH_PySoftBodySharedSettingsAddVertex(CPH_SoftBodySharedSettingsObject *self, PyObject *const *args,
-                                  Py_ssize_t nargs, PyObject *kwnames) {
+CPH_PySbss_AddVertex(CPH_SoftBodySharedSettingsObject *self, PyObject *const *args,
+                                  size_t nargsf, PyObject *kwnames) {
+    const Py_ssize_t nargs = (Py_ssize_t)PyVectorcall_NARGS(nargsf);
     constexpr float default_inv_mass = 1.0F;
 
     PyObject *o_pos = nullptr;
@@ -94,8 +96,9 @@ CPH_PySoftBodySharedSettingsAddVertex(CPH_SoftBodySharedSettingsObject *self, Py
 }
 
 PyCFunction_DeclareMethodFromModule
-CPH_PySoftBodySharedSettingsAddVertices(CPH_SoftBodySharedSettingsObject *self, PyObject *const *args,
-                                    Py_ssize_t nargs, PyObject *kwnames) {
+CPH_PySbss_AddVertices(CPH_SoftBodySharedSettingsObject *self, PyObject *const *args,
+                                    size_t nargsf, PyObject *kwnames) {
+    const Py_ssize_t nargs = (Py_ssize_t)PyVectorcall_NARGS(nargsf);
     auto o_pos  = (PyObject *)nullptr;
     auto o_mass = (PyObject *)nullptr;
     auto o_vel  = (PyObject *)nullptr;
@@ -163,7 +166,7 @@ CPH_PySoftBodySharedSettingsAddVertices(CPH_SoftBodySharedSettingsObject *self, 
     }
 
     // 2. The Interleave Allocation
-    auto staging = (JPH_SoftVertex *)PyMem_Malloc(sizeof(JPH_SoftVertex) * count);
+    auto staging = (JPH_SoftVertex *)CPH_PyAlloc(sizeof(JPH_SoftVertex) * count);
     if (!staging) {
         PyBuffer_Release(&pos_view);
         if (masses) {
@@ -192,7 +195,7 @@ CPH_PySoftBodySharedSettingsAddVertices(CPH_SoftBodySharedSettingsObject *self, 
     JPH_SoftBodySharedSettings_AddVertices(self->settings, staging, count);
     self->num_vertices += count;
 
-    PyMem_Free(staging);
+    CPH_PyFree(staging);
     PyBuffer_Release(&pos_view);
     if (masses) {
         PyBuffer_Release(&mass_view);
@@ -205,8 +208,9 @@ CPH_PySoftBodySharedSettingsAddVertices(CPH_SoftBodySharedSettingsObject *self, 
 }
 
 PyCFunction_DeclareMethodFromModule
-CPH_PySoftBodySharedSettingsAddFace(CPH_SoftBodySharedSettingsObject *self, PyObject *const *args,
-                                Py_ssize_t nargs, PyObject *kwnames) {
+CPH_PySbss_AddFace(CPH_SoftBodySharedSettingsObject *self, PyObject *const *args,
+                                size_t nargsf, PyObject *kwnames) {
+    const Py_ssize_t nargs = (Py_ssize_t)PyVectorcall_NARGS(nargsf);
     uint32_t v1      = 0;
     uint32_t v2      = 0;
     uint32_t v3      = 0;
@@ -253,8 +257,9 @@ CPH_PySoftBodySharedSettingsAddFace(CPH_SoftBodySharedSettingsObject *self, PyOb
 }
 
 PyCFunction_DeclareMethodFromModule
-CPH_PySoftBodySharedSettingsAddFaces(CPH_SoftBodySharedSettingsObject *self, PyObject *const *args,
-                                 Py_ssize_t nargs, PyObject *kwnames) {
+CPH_PySbss_AddFaces(CPH_SoftBodySharedSettingsObject *self, PyObject *const *args,
+                                 size_t nargsf, PyObject *kwnames) {
+    const Py_ssize_t nargs = (Py_ssize_t)PyVectorcall_NARGS(nargsf);
     auto o_ind = (PyObject *)nullptr;
     auto o_mat = (PyObject *)nullptr;
 
@@ -308,7 +313,7 @@ CPH_PySoftBodySharedSettingsAddFaces(CPH_SoftBodySharedSettingsObject *self, PyO
     const auto vertex_count = JPH_SoftBodySharedSettings_GetVertexCount(self->settings);
 
     // 4. Interleave Packing Loop
-    auto staging = (JPH_SoftFace *)PyMem_Malloc(sizeof(JPH_SoftFace) * face_count);
+    auto staging = (JPH_SoftFace *)CPH_PyAlloc(sizeof(JPH_SoftFace) * face_count);
     if (staging == nullptr) {
         PyBuffer_Release(&ind_view);
         if (mats) {
@@ -325,7 +330,7 @@ CPH_PySoftBodySharedSettingsAddFaces(CPH_SoftBodySharedSettingsObject *self, PyO
 
         // Hardware-friendly bounds check
         if (v1 >= vertex_count || v2 >= vertex_count || v3 >= vertex_count) {
-            PyMem_Free(staging);
+            CPH_PyFree(staging);
             PyBuffer_Release(&ind_view);
             if (mats) {
                 PyBuffer_Release(&mat_view);
@@ -345,7 +350,7 @@ CPH_PySoftBodySharedSettingsAddFaces(CPH_SoftBodySharedSettingsObject *self, PyO
     JPH_SoftBodySharedSettings_AddFaces(self->settings, staging, face_count);
 
     // 6. Finalization
-    PyMem_Free(staging);
+    CPH_PyFree(staging);
     PyBuffer_Release(&ind_view);
     if (mats != nullptr) {
         PyBuffer_Release(&mat_view);
@@ -362,7 +367,7 @@ CPH_PySoftBodySharedSettingsAddFaces(CPH_SoftBodySharedSettingsObject *self, PyO
  */
 [[gnu::deprecated("Use add_vertices with inv_mass=0.0 instead")]]
 PyCFunction_DeclareMethodFromModule
-CPH_PySoftBodySharedSettingsAddPinnedVertex(CPH_SoftBodySharedSettingsObject *self, PyObject *arg) {
+CPH_PySbss_AddPinnedVertex(CPH_SoftBodySharedSettingsObject *self, PyObject *arg) {
     // 1. Validate the argument type so we don't break existing logic flows
     const auto index_raw = PyLong_AsLong(arg);
     if (PyErr_Occurred()) {
@@ -397,8 +402,9 @@ static inline bool check_bend_type(int val, int max) {
 
 // Method: settings.create_constraints(compliance, bend_type=1)
 PyCFunction_DeclareMethodFromModule
-CPH_PySoftBodySharedSettingsCreateConstraints(CPH_SoftBodySharedSettingsObject *self, PyObject *const *args,
-                                          Py_ssize_t nargs, PyObject *kwnames) {
+CPH_PySbss_CreateConstraints(CPH_SoftBodySharedSettingsObject *self, PyObject *const *args,
+                                          size_t nargsf, PyObject *kwnames) {
+    const Py_ssize_t nargs = (Py_ssize_t)PyVectorcall_NARGS(nargsf);
     float compliance               = 0.0001f;
     JPH_SoftBodyBendType bend_type = JPH_SoftBodyBendType_Distance; // Default: Distance
 
@@ -426,7 +432,7 @@ CPH_PySoftBodySharedSettingsCreateConstraints(CPH_SoftBodySharedSettingsObject *
 
 // Method: settings.optimize() (METH_NOARGS)
 PyCFunction_DeclareMethodFromModule
-CPH_PySoftBodySharedSettingsOptimize(CPH_SoftBodySharedSettingsObject *self,
+CPH_PySbss_Optimize(CPH_SoftBodySharedSettingsObject *self,
                                 [[maybe_unused]] PyObject *args) {
     if (!self->constraints_created) {
         PyErr_SetString(PyExc_RuntimeError, "create_constraints must be called before optimize");
@@ -439,7 +445,7 @@ CPH_PySoftBodySharedSettingsOptimize(CPH_SoftBodySharedSettingsObject *self,
 
 // Method: settings.get_vertex_position(index) (METH_O) - Returns REST pose
 PyCFunction_DeclareMethodFromModule
-CPH_PySoftBodySharedSettingsGetVertexPosition(CPH_SoftBodySharedSettingsObject *self, PyObject *arg) {
+CPH_PySbss_GetVertexPosition(CPH_SoftBodySharedSettingsObject *self, PyObject *arg) {
     const auto index_raw = PyLong_AsLong(arg);
     if (PyErr_Occurred()) {
         return nullptr;
@@ -471,6 +477,18 @@ CPH_PySoftBodySharedSettingsGetVertexPosition(CPH_SoftBodySharedSettingsObject *
 #define CPH_SBSS_NOARGS(fn, name) CPH_FEAT(fn, name, METH_NOARGS)
 #define CPH_SBSS_O(fn, name) CPH_FEAT(fn, name, METH_O)
 
+static PyMethodDef kSoftBodySharedSettingsMethods[] = {
+
+                     CPH_SBSS_FASTCALL(CPH_PySbss_AddVertex, add_vertex),
+                     CPH_SBSS_FASTCALL(CPH_PySbss_AddVertices, add_vertices),
+                     CPH_SBSS_O(CPH_PySbss_AddPinnedVertex, add_pinned_vertex),
+                     CPH_SBSS_O(CPH_PySbss_GetVertexPosition, get_vertex_position),
+                     CPH_SBSS_FASTCALL(CPH_PySbss_AddFace, add_face),
+                     CPH_SBSS_FASTCALL(CPH_PySbss_AddFaces, add_faces),
+                     CPH_SBSS_FASTCALL(CPH_PySbss_CreateConstraints, create_constraints),
+                     CPH_SBSS_NOARGS(CPH_PySbss_Optimize, optimize),
+                     {nullptr, nullptr, 0, nullptr}};
+
 PyType_Spec SoftBodySharedSettings_spec = {
     .name      = "culverin._culverin_c.SoftBodySharedSettingsObject",
     .basicsize = sizeof(CPH_SoftBodySharedSettingsObject),
@@ -479,23 +497,9 @@ PyType_Spec SoftBodySharedSettings_spec = {
         (PyType_Slot[]){
 
             {.slot = Py_tp_new, .pfunc = PyType_GenericNew},
-            {.slot = Py_tp_init, .pfunc = CPH_PySoftBodySharedSettingsInit},
-            {.slot = Py_tp_dealloc, .pfunc = CPH_PySoftBodySharedSettingsDealloc},
-            {.slot = Py_tp_methods,
-             .pfunc =
-                 (PyMethodDef[]){
-
-                     CPH_SBSS_FASTCALL(CPH_PySoftBodySharedSettingsAddVertex, add_vertex),
-                     CPH_SBSS_FASTCALL(CPH_PySoftBodySharedSettingsAddVertices, add_vertices),
-                     CPH_SBSS_O(CPH_PySoftBodySharedSettingsAddPinnedVertex, add_pinned_vertex),
-                     CPH_SBSS_O(CPH_PySoftBodySharedSettingsGetVertexPosition, get_vertex_position),
-                     CPH_SBSS_FASTCALL(CPH_PySoftBodySharedSettingsAddFace, add_face),
-                     CPH_SBSS_FASTCALL(CPH_PySoftBodySharedSettingsAddFaces, add_faces),
-                     CPH_SBSS_FASTCALL(CPH_PySoftBodySharedSettingsCreateConstraints, create_constraints),
-                     CPH_SBSS_NOARGS(CPH_PySoftBodySharedSettingsOptimize, optimize),
-                     {}
-
-                 }},
+            {.slot = Py_tp_init, .pfunc = CPH_PySbss_Init},
+            {.slot = Py_tp_dealloc, .pfunc = CPH_PySbss_Dealloc},
+            {.slot = Py_tp_methods, .pfunc = kSoftBodySharedSettingsMethods },
             {},
         }
 

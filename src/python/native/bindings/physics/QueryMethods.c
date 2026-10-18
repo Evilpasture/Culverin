@@ -44,7 +44,7 @@ static PyObject *overlap_hits_to_list(const CPH_PhysicsQueryHitBuffer *hits) {
     return result;
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldOverlapSphere(CPH_PhysicsWorldObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyWorld_OverlapSphere(CPH_PhysicsWorldObject *self,
                                                                 PyObject *const *args,
                                                                 size_t nargsf, PyObject *kwnames) {
     PyObject *o_center                                      = nullptr;
@@ -85,7 +85,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldOverlapSphere(CPH_PhysicsW
     return result;
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldOverlapAabb(CPH_PhysicsWorldObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyWorld_OverlapAabb(CPH_PhysicsWorldObject *self,
                                                               PyObject *const *args, size_t nargsf,
                                                               PyObject *kwnames) {
     PyObject *o_min                                       = nullptr;
@@ -130,7 +130,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldOverlapAabb(CPH_PhysicsWor
     return result;
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldRaycast(CPH_PhysicsWorldObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyWorld_Raycast(CPH_PhysicsWorldObject *self,
                                                          PyObject *const *args, size_t nargsf,
                                                          PyObject *kwnames) {
     PyObject *o_start                                 = nullptr;
@@ -180,7 +180,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldRaycast(CPH_PhysicsWorldOb
                                CPH_PY_BUILD_TUPLE(hit.normal.x, hit.normal.y, hit.normal.z));
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldRaycastBatch(CPH_PhysicsWorldObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyWorld_RaycastBatch(CPH_PhysicsWorldObject *self,
                                                                PyObject *const *args, size_t nargsf,
                                                                PyObject *kwnames) {
     PyObject *o_starts                                 = nullptr;
@@ -261,7 +261,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldRaycastBatch(CPH_PhysicsWo
     return result_bytes;
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldShapecast(CPH_PhysicsWorldObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyWorld_Shapecast(CPH_PhysicsWorldObject *self,
                                                            PyObject *const *args, size_t nargsf,
                                                            PyObject *kwnames) {
     int shape_type                                      = 0;

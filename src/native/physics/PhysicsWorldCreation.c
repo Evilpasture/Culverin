@@ -297,7 +297,7 @@ CPH_PhysicsWorldCreateRagdollInstance(CPH_PhysicsWorld *world, JPH_RagdollSettin
         return PHYSICS_WORLD_CREATION_STATUS_OUT_OF_MEMORY;
     }
     JPH_Mat4 *neutral_matrices =
-        joint_count ? CulvNative_Malloc(joint_count * sizeof(JPH_Mat4)) : nullptr;
+        joint_count ? CPH_Alloc(joint_count * sizeof(JPH_Mat4)) : nullptr;
     if (joint_count && !neutral_matrices) {
         JPH_Ragdoll_Destroy(ragdoll);
         CPH_NATIVE_MUTEX_UNLOCK(world->jph_trampoline_lock);
@@ -318,7 +318,7 @@ CPH_PhysicsWorldCreateRagdollInstance(CPH_PhysicsWorld *world, JPH_RagdollSettin
     JPH_Ragdoll_AddToPhysicsSystem(ragdoll, JPH_Activation_Activate, true);
     *out_body_count = (size_t)JPH_Ragdoll_GetBodyCount(ragdoll);
     *out_ragdoll    = ragdoll;
-    CulvNative_Free(neutral_matrices);
+    CPH_Free(neutral_matrices);
     CPH_NATIVE_MUTEX_UNLOCK(world->jph_trampoline_lock);
     return PHYSICS_WORLD_CREATION_STATUS_OK;
 }
@@ -439,7 +439,7 @@ CPH_PhysicsWorldCreateBodiesBatch(CPH_PhysicsWorld *world, const CPH_PosStride *
     *out_native_status = PHYSICS_WORLD_STATUS_OK;
 
     JPH_BodyCreationSettings **settings =
-        CulvNative_Calloc(batch_count, sizeof(JPH_BodyCreationSettings *));
+        CPH_Calloc(batch_count, sizeof(JPH_BodyCreationSettings *));
     if (!settings) {
         return PHYSICS_WORLD_CREATION_STATUS_OUT_OF_MEMORY;
     }
@@ -486,7 +486,7 @@ CPH_PhysicsWorldCreateBodiesBatch(CPH_PhysicsWorld *world, const CPH_PosStride *
                     JPH_BodyCreationSettings_Destroy(settings[i]);
                 }
             }
-            CulvNative_Free(settings);
+            CPH_Free(settings);
             *out_native_status = resize_status;
             return PHYSICS_WORLD_CREATION_STATUS_NATIVE_ERROR;
         }
@@ -500,7 +500,7 @@ CPH_PhysicsWorldCreateBodiesBatch(CPH_PhysicsWorld *world, const CPH_PosStride *
                 JPH_BodyCreationSettings_Destroy(settings[i]);
             }
         }
-        CulvNative_Free(settings);
+        CPH_Free(settings);
         *out_native_status = PHYSICS_WORLD_STATUS_LIMIT_REACHED;
         return PHYSICS_WORLD_CREATION_STATUS_NATIVE_ERROR;
     }
@@ -512,7 +512,7 @@ CPH_PhysicsWorldCreateBodiesBatch(CPH_PhysicsWorld *world, const CPH_PosStride *
                 JPH_BodyCreationSettings_Destroy(settings[i]);
             }
         }
-        CulvNative_Free(settings);
+        CPH_Free(settings);
         *out_native_status = PHYSICS_WORLD_STATUS_OUT_OF_MEMORY;
         return PHYSICS_WORLD_CREATION_STATUS_NATIVE_ERROR;
     }
@@ -552,7 +552,7 @@ CPH_PhysicsWorldCreateBodiesBatch(CPH_PhysicsWorld *world, const CPH_PosStride *
     }
     *out_count = atomic_load_explicit(&world->count, memory_order_relaxed);
     CPH_SHADOW_UNLOCK(&world->shadow_lock);
-    CulvNative_Free(settings);
+    CPH_Free(settings);
     return PHYSICS_WORLD_CREATION_STATUS_OK;
 }
 
@@ -569,7 +569,7 @@ CPH_PhysicsWorldCreateConvexHull(CPH_PhysicsWorld *world, const float *points, s
     }
     *out_native_status = PHYSICS_WORLD_STATUS_OK;
 
-    JPH_Vec3 *jolt_points = CulvNative_Malloc(point_count * sizeof(*jolt_points));
+    JPH_Vec3 *jolt_points = CPH_Alloc(point_count * sizeof(*jolt_points));
     if (!jolt_points) {
         return PHYSICS_WORLD_CREATION_STATUS_OUT_OF_MEMORY;
     }
@@ -579,7 +579,7 @@ CPH_PhysicsWorldCreateConvexHull(CPH_PhysicsWorld *world, const float *points, s
 
     JPH_ConvexHullShapeSettings *hull_settings = JPH_ConvexHullShapeSettings_Create(
         jolt_points, (uint32_t)point_count, kConvexHullTolerance);
-    CulvNative_Free(jolt_points);
+    CPH_Free(jolt_points);
     if (!hull_settings) {
         return PHYSICS_WORLD_CREATION_STATUS_SHAPE_FAILED;
     }
@@ -662,11 +662,11 @@ CPH_PhysicsWorldCreateMeshBody(CPH_PhysicsWorld *world, const float *vertices, s
         vertex_count > SIZE_MAX / sizeof(JPH_Vec3)) {
         return PHYSICS_WORLD_CREATION_STATUS_OUT_OF_MEMORY;
     }
-    JPH_Vec3 *jolt_vertices        = CulvNative_Malloc(vertex_count * sizeof(*jolt_vertices));
-    JPH_IndexedTriangle *triangles = CulvNative_Malloc(triangle_count * sizeof(*triangles));
+    JPH_Vec3 *jolt_vertices        = CPH_Alloc(vertex_count * sizeof(*jolt_vertices));
+    JPH_IndexedTriangle *triangles = CPH_Alloc(triangle_count * sizeof(*triangles));
     if (!jolt_vertices || !triangles) {
-        CulvNative_Free(jolt_vertices);
-        CulvNative_Free(triangles);
+        CPH_Free(jolt_vertices);
+        CPH_Free(triangles);
         return PHYSICS_WORLD_CREATION_STATUS_OUT_OF_MEMORY;
     }
     for (size_t i = 0; i < vertex_count; i++) {
@@ -682,8 +682,8 @@ CPH_PhysicsWorldCreateMeshBody(CPH_PhysicsWorld *world, const float *vertices, s
                 out_bad_indices[1] = i2;
                 out_bad_indices[2] = i3;
             }
-            CulvNative_Free(jolt_vertices);
-            CulvNative_Free(triangles);
+            CPH_Free(jolt_vertices);
+            CPH_Free(triangles);
             return PHYSICS_WORLD_CREATION_STATUS_INVALID_MESH_INDEX;
         }
         triangles[triangle] = (JPH_IndexedTriangle){
@@ -697,8 +697,8 @@ CPH_PhysicsWorldCreateMeshBody(CPH_PhysicsWorld *world, const float *vertices, s
 
     JPH_MeshShapeSettings *mesh_settings = JPH_MeshShapeSettings_Create2(
         jolt_vertices, (uint32_t)vertex_count, triangles, (uint32_t)triangle_count);
-    CulvNative_Free(jolt_vertices);
-    CulvNative_Free(triangles);
+    CPH_Free(jolt_vertices);
+    CPH_Free(triangles);
     if (!mesh_settings) {
         return PHYSICS_WORLD_CREATION_STATUS_SHAPE_FAILED;
     }

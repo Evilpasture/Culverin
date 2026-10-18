@@ -15,15 +15,15 @@ void CPH_WorldRemoveBodySlot(CPH_PhysicsWorld *world, uint32_t slot) {
         (uint32_t)atomic_load_explicit(&world->count, memory_order_acquire) - 1;
 
     if (world->soft_shadows && world->soft_shadows[dense_idx].vertices) {
-        CulvNative_AlignedFree(world->soft_shadows[dense_idx].vertices);
+        CPH_AlignedFree(world->soft_shadows[dense_idx].vertices);
         world->soft_shadows[dense_idx].vertices = nullptr;
 
         if (world->soft_shadows[dense_idx].velocities) {
-            CulvNative_AlignedFree(world->soft_shadows[dense_idx].velocities);
+            CPH_AlignedFree(world->soft_shadows[dense_idx].velocities);
             world->soft_shadows[dense_idx].velocities = nullptr;
         }
         if (world->soft_shadows[dense_idx].normals) {
-            CulvNative_AlignedFree(world->soft_shadows[dense_idx].normals);
+            CPH_AlignedFree(world->soft_shadows[dense_idx].normals);
             world->soft_shadows[dense_idx].normals = nullptr;
         }
         world->soft_shadows[dense_idx].num_vertices = 0;
@@ -99,12 +99,12 @@ static bool grow_queues(CPH_PhysicsWorld *world, size_t new_cap) {
 
     const size_t bytes = new_cap * sizeof(PhysicsCommand);
     PhysicsCommand *new_active =
-        (PhysicsCommand *)CulvNative_AlignedMalloc(bytes, kMemoryAlignmentSize);
+        (PhysicsCommand *)CPH_AlignedAlloc(bytes, kMemoryAlignmentSize);
     PhysicsCommand *new_spare =
-        (PhysicsCommand *)CulvNative_AlignedMalloc(bytes, kMemoryAlignmentSize);
+        (PhysicsCommand *)CPH_AlignedAlloc(bytes, kMemoryAlignmentSize);
     if (!new_active || !new_spare) {
-        CulvNative_AlignedFree(new_active);
-        CulvNative_AlignedFree(new_spare);
+        CPH_AlignedFree(new_active);
+        CPH_AlignedFree(new_spare);
         return false;
     }
 
@@ -115,8 +115,8 @@ static bool grow_queues(CPH_PhysicsWorld *world, size_t new_cap) {
                world->command_count * sizeof(PhysicsCommand));
     }
 
-    CulvNative_AlignedFree(world->command_queue);
-    CulvNative_AlignedFree(world->command_queue_spare);
+    CPH_AlignedFree(world->command_queue);
+    CPH_AlignedFree(world->command_queue_spare);
     world->command_queue       = new_active;
     world->command_queue_spare = new_spare;
     world->command_capacity    = new_cap;
@@ -258,7 +258,7 @@ op_CREATE_SOFT_BODY: {
         // --- ALLOCATE SHADOW VERTEX BUFFER ---
         world->soft_shadows[dense_idx].num_vertices = num_verts;
         world->soft_shadows[dense_idx].vertices =
-            (JPH_Real *)CulvNative_AlignedMalloc(num_verts * sizeof(CPH_PosStride), kAvxAlignment);
+            (JPH_Real *)CPH_AlignedAlloc(num_verts * sizeof(CPH_PosStride), kAvxAlignment);
         world->soft_shadows[dense_idx].velocities = nullptr; // Initialize explicitly
         world->soft_shadows[dense_idx].normals    = nullptr; // Initialize explicitly
 
@@ -523,7 +523,7 @@ op_CREATE_CONSTRAINT: {
             }
         }
     }
-    CulvNative_Free(p); // Important: Free the heap allocation
+    CPH_Free(p); // Important: Free the heap allocation
     CPH_DISPATCH();
 }
 }

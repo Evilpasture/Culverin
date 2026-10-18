@@ -544,7 +544,7 @@ const JPH_CharacterContactListener_Procs kCharListenerProcs = {
     .OnContactSolve              = nullptr,
     .OnCharacterContactSolve     = nullptr};
 
-PyCFunction_DeclareMethodFromModule CPH_PyCharacterMove(CPH_CharacterObject *self, PyObject *const *args,
+PyCFunction_DeclareMethodFromModule CPH_PyChar_Move(CPH_CharacterObject *self, PyObject *const *args,
                                                    size_t nargsf, PyObject *kwnames) {
     // 1. INTEGRATED FAST PARSE (Unchanged)
     CPH_Vec3f v_in = {};
@@ -631,7 +631,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyCharacterMove(CPH_CharacterObject *sel
     Py_RETURN_NONE;
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyCharacterGetPosition(CPH_CharacterObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyChar_GetPosition(CPH_CharacterObject *self,
                                                            PyObject *ignored [[maybe_unused]]) {
     // 1. Aligned stack storage for SIMD
     JPH_STACK_ALLOC(JPH_RVec3, pos);
@@ -655,7 +655,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyCharacterGetPosition(CPH_CharacterObje
 }
 
 PyCFunction_DeclareMethodFromModule
-CPH_PyCharacterGetLinearVelocity(CPH_CharacterObject *self, PyObject *ignored [[maybe_unused]]) {
+CPH_PyChar_GetLinearVelocity(CPH_CharacterObject *self, PyObject *ignored [[maybe_unused]]) {
     JPH_STACK_ALLOC(JPH_Vec3, vel);
 
     CPH_SHADOW_LOCK(&self->world->physics.shadow_lock);
@@ -665,9 +665,10 @@ CPH_PyCharacterGetLinearVelocity(CPH_CharacterObject *self, PyObject *ignored [[
     return CPH_PY_BUILD_TUPLE(vel->x, vel->y, vel->z);
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyCharacterSetPosition(CPH_CharacterObject *self,
-                                                           PyObject *const *args, Py_ssize_t nargs,
+PyCFunction_DeclareMethodFromModule CPH_PyChar_SetPosition(CPH_CharacterObject *self,
+                                                           PyObject *const *args, size_t nargsf,
                                                            PyObject *kwnames) {
+    const Py_ssize_t nargs = (Py_ssize_t)PyVectorcall_NARGS(nargsf);
     CPH_PosStride pos                                        = {};
     const void *const restrict targets[SetPosChar_COUNT] = {
         [IDX_SPC_POS] = (const void *const restrict)&pos,
@@ -700,9 +701,10 @@ PyCFunction_DeclareMethodFromModule CPH_PyCharacterSetPosition(CPH_CharacterObje
     Py_RETURN_NONE;
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyCharacterSetRotation(CPH_CharacterObject *self,
-                                                           PyObject *const *args, Py_ssize_t nargs,
+PyCFunction_DeclareMethodFromModule CPH_PyChar_SetRotation(CPH_CharacterObject *self,
+                                                           PyObject *const *args, size_t nargsf,
                                                            PyObject *kwnames) {
+    const Py_ssize_t nargs = (Py_ssize_t)PyVectorcall_NARGS(nargsf);
     CPH_AuxStride rot = {.x = 0.0f, .y = 0.0f, .z = 0.0f, .w = 1.0f};
 
     const void *const restrict targets[SetRotChar_COUNT] = {
@@ -733,9 +735,10 @@ PyCFunction_DeclareMethodFromModule CPH_PyCharacterSetRotation(CPH_CharacterObje
     Py_RETURN_NONE;
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyCharacterSetStrength(CPH_CharacterObject *self,
-                                                           PyObject *const *args, Py_ssize_t nargs,
+PyCFunction_DeclareMethodFromModule CPH_PyChar_SetStrength(CPH_CharacterObject *self,
+                                                           PyObject *const *args, size_t nargsf,
                                                            PyObject *kwnames) {
+    const Py_ssize_t nargs = (Py_ssize_t)PyVectorcall_NARGS(nargsf);
     float strength = 0.0f;
 
     const void *const restrict targets[SetStrengthChar_COUNT] = {
@@ -757,7 +760,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyCharacterSetStrength(CPH_CharacterObje
     Py_RETURN_NONE;
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyCharacterGetRenderTransform(CPH_CharacterObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyChar_GetRenderTransform(CPH_CharacterObject *self,
                                                                    PyObject *arg) {
     const auto alpha_raw = PyFloat_AsDouble(arg);
     if (alpha_raw == -1.0 && PyErr_Occurred()) {
@@ -796,7 +799,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyCharacterGetRenderTransform(CPH_Charac
                            CPH_PY_BUILD_TUPLE(res_r[0], res_r[1], res_r[2], res_r[3]));
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyCharacterIsGrounded(CPH_CharacterObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyChar_IsGrounded(CPH_CharacterObject *self,
                                                           PyObject *ignored [[maybe_unused]]) {
     CPH_SHADOW_LOCK(&self->world->physics.shadow_lock);
     JPH_GroundState state = JPH_CharacterBase_GetGroundState((JPH_CharacterBase *)self->character);
@@ -809,19 +812,19 @@ PyCFunction_DeclareMethodFromModule CPH_PyCharacterIsGrounded(CPH_CharacterObjec
 }
 
 // NEW: GC Traverse/Clear for Character
-PyType_DeclareSlot_StatusFromModule CPH_PyCharacterTraverse(CPH_CharacterObject *self, visitproc visit,
+PyType_DeclareSlot_StatusFromModule CPH_PyChar_Traverse(CPH_CharacterObject *self, visitproc visit,
                                                        void *arg) {
     Py_VISIT(self->world);
     return 0;
 }
-PyType_DeclareSlot_StatusFromModule CPH_PyCharacterClear(CPH_CharacterObject *self) {
+PyType_DeclareSlot_StatusFromModule CPH_PyChar_Clear(CPH_CharacterObject *self) {
     Py_CLEAR(self->world);
     return 0;
 }
 
 void CPH_CulverinFreeCharParsers(CPH_CharacterParsers *cp);
 
-PyType_DeclareSlot_VoidFromModule CPH_PyCharacterDealloc(CPH_CharacterObject *self) {
+PyType_DeclareSlot_VoidFromModule CPH_PyChar_Dealloc(CPH_CharacterObject *self) {
     PyObject_GC_UnTrack(self);
 
     if (!self->world) {
@@ -872,7 +875,7 @@ PyType_DeclareSlot_VoidFromModule CPH_PyCharacterDealloc(CPH_CharacterObject *se
 finalize:
     if (self->parsers) {
         CPH_CulverinFreeCharParsers(self->parsers);
-        PyMem_Free(self->parsers);
+        CPH_PyFree(self->parsers);
     }
     Py_XDECREF(self->world);
     Py_TYPE(self)->tp_free((PyObject *)self);
@@ -988,7 +991,7 @@ static inline void setup_char_filters(CPH_CharacterObject *obj) {
 void CPH_CulverinInitCharParsers(CPH_CharacterParsers *cp);
 [[nodiscard]]
 static inline int setup_char_parsers(CPH_CharacterObject *obj) {
-    obj->parsers = (CPH_CharacterParsers *)PyMem_Malloc(sizeof(CPH_CharacterParsers));
+    obj->parsers = (CPH_CharacterParsers *)CPH_PyAlloc(sizeof(CPH_CharacterParsers));
     if (!obj->parsers) {
         return -1;
     }
@@ -997,10 +1000,11 @@ static inline int setup_char_parsers(CPH_CharacterObject *obj) {
 }
 
 // Main Orchestrator
-PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldCreateCharacter(CPH_PhysicsWorldObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateCharacter(CPH_PhysicsWorldObject *self,
                                                                   PyObject *const *args,
-                                                                  Py_ssize_t nargs,
+                                                                  size_t nargsf,
                                                                   PyObject *kwnames) {
+    const Py_ssize_t nargs = (Py_ssize_t)PyVectorcall_NARGS(nargsf);
     CPH_PosStride pos                 = {};
     constexpr auto DEFAULT_HEIGHT = 1.8f;
     constexpr auto DEFAULT_RADIUS = 0.4f;
@@ -1029,7 +1033,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldCreateCharacter(CPH_Physic
     size_t available = atomic_load_explicit(&self->physics.free_count, memory_order_acquire);
 
     if (available == 0) {
-        if (CPH_PyPhysicsWorldResize(self, self->physics.capacity * 2) < 0) {
+        if (CPH_PyWorld_Resize(self, self->physics.capacity * 2) < 0) {
             CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
             return nullptr;
         }
@@ -1098,7 +1102,7 @@ fail_jolt:
     return nullptr;
 }
 
-PyGetSet_DeclareGetter CPH_PyCharacterGetHandle(CPH_CharacterObject *self, [[maybe_unused]] void *closure) {
+PyGetSet_DeclareGetter CPH_PyChar_GetHandle(CPH_CharacterObject *self, [[maybe_unused]] void *closure) {
     uint64_t raw_h = atomic_load_explicit(&self->handle, memory_order_relaxed);
     return CPH_PY_BUILD_VALUE(raw_h);
 }
@@ -1107,6 +1111,18 @@ PyGetSet_DeclareGetter CPH_PyCharacterGetHandle(CPH_CharacterObject *self, [[may
 #define CPH_CHAR_NOARGS(fn, name) CPH_FEAT(fn, name, METH_NOARGS)
 #define CPH_CHAR_O(fn, name) CPH_FEAT(fn, name, METH_O)
 
+static PyMethodDef kCharacterMethods[] = {
+
+                     CPH_CHAR_FASTCALL(CPH_PyChar_Move, move),
+                     CPH_CHAR_NOARGS(CPH_PyChar_GetPosition, get_position),
+                     CPH_CHAR_NOARGS(CPH_PyChar_GetLinearVelocity, get_linear_velocity),
+                     CPH_CHAR_FASTCALL(CPH_PyChar_SetPosition, set_position),
+                     CPH_CHAR_FASTCALL(CPH_PyChar_SetRotation, set_rotation),
+                     CPH_CHAR_NOARGS(CPH_PyChar_IsGrounded, is_grounded),
+                     CPH_CHAR_FASTCALL(CPH_PyChar_SetStrength, set_strength),
+                     CPH_CHAR_O(CPH_PyChar_GetRenderTransform, get_render_transform),
+                     {nullptr, nullptr, 0, nullptr}};
+
 PyType_Spec Character_spec = {
     .name      = "culverin._culverin_c.Character",
     .basicsize = sizeof(CPH_CharacterObject),
@@ -1114,29 +1130,15 @@ PyType_Spec Character_spec = {
     .slots =
         (PyType_Slot[]){
 
-            {.slot = Py_tp_dealloc, .pfunc = CPH_PyCharacterDealloc},
-            {.slot = Py_tp_traverse, .pfunc = CPH_PyCharacterTraverse},
-            {.slot = Py_tp_clear, .pfunc = CPH_PyCharacterClear},
-            {.slot = Py_tp_methods,
-             .pfunc =
-                 (PyMethodDef[]){
-
-                     CPH_CHAR_FASTCALL(CPH_PyCharacterMove, move),
-                     CPH_CHAR_NOARGS(CPH_PyCharacterGetPosition, get_position),
-                     CPH_CHAR_NOARGS(CPH_PyCharacterGetLinearVelocity, get_linear_velocity),
-                     CPH_CHAR_FASTCALL(CPH_PyCharacterSetPosition, set_position),
-                     CPH_CHAR_FASTCALL(CPH_PyCharacterSetRotation, set_rotation),
-                     CPH_CHAR_NOARGS(CPH_PyCharacterIsGrounded, is_grounded),
-                     CPH_CHAR_FASTCALL(CPH_PyCharacterSetStrength, set_strength),
-                     CPH_CHAR_O(CPH_PyCharacterGetRenderTransform, get_render_transform),
-                     {}
-
-                 }},
+            {.slot = Py_tp_dealloc, .pfunc = CPH_PyChar_Dealloc},
+            {.slot = Py_tp_traverse, .pfunc = CPH_PyChar_Traverse},
+            {.slot = Py_tp_clear, .pfunc = CPH_PyChar_Clear},
+            {.slot = Py_tp_methods, .pfunc = kCharacterMethods },
             {.slot = Py_tp_getset,
              .pfunc =
                  (PyGetSetDef[]){
 
-                     CPH_GETSET("handle", CPH_PyCharacterGetHandle), {}
+                     CPH_GETSET("handle", CPH_PyChar_GetHandle), {}
 
                  }},
             {}

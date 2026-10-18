@@ -62,7 +62,7 @@ static int get_baked_buffer(PyObject *baked, Py_ssize_t index, size_t expected_s
 }
 
 [[nodiscard]]
-int CPH_PyPhysicsWorldResize(CPH_PhysicsWorldObject *self, size_t new_capacity) {
+int CPH_PyWorld_Resize(CPH_PhysicsWorldObject *self, size_t new_capacity) {
     CPH_PhysicsWorld *world = &self->physics;
     if (atomic_load_explicit(&world->view_export_count, memory_order_relaxed) > 0) {
         PyErr_SetString(PyExc_BufferError, "Cannot resize while memoryview is active.");
@@ -84,7 +84,7 @@ int CPH_PyPhysicsWorldResize(CPH_PhysicsWorldObject *self, size_t new_capacity) 
     return 0;
 }
 
-void CPH_PyPhysicsWorldFreeMembers(CPH_PhysicsWorldObject *self) {
+void CPH_PyWorld_FreeMembers(CPH_PhysicsWorldObject *self) {
     CPH_PhysicsWorldFreeNative(&self->physics);
 }
 

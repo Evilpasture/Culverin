@@ -1631,28 +1631,31 @@ class TestEdgeCases(CulverinTestCase):
             self.world.apply_impulse(h, x=float("inf"), y=0.0, z=0.0)
 
     def test_handle_invalidation_chain(self) -> None:
-        """Test 'Silent Invalidation': deleted bodies return None for all operations."""
+        """Test fail-fast invalidation: deleted bodies raise ValueError for all operations."""
         h = self.world.create_body(pos=(0, 10, 0))
 
         # Verify it works initially
         self.assertTrue(self.world.is_alive(h))
 
-        # Kill the body
+        # Kill the body and flush the destruction so the handle goes fully stale
         self.world.destroy_body(h)
+        self.world.step(0)
 
-        # 1. Mutators: Instead of raising, they now return None (Silent Fail)
-        # This proves the C-layer caught the SLOT_PENDING_DESTROY state.
-        res = self.world.set_position(h, 0, 5, 0)
-        self.assertIsNone(res, "set_position should return None for stale handles")
+        # 1. Mutators: the C-layer catches the stale handle and fails fast
+        # instead of silently returning None.
+        with self.assertRaises(ValueError):
+            self.world.set_position(h, 0, 5, 0)
 
-        # 2. Getters: Consistent return of None
+        # 2. Getters: is_alive/get_index/get_position are tolerant lookups by
+        # design and return soft values instead of raising.
         self.assertFalse(self.world.is_alive(h), "is_alive must be False")
-        self.assertIsNone(self.world.get_index(h), "get_index must be None")
-        self.assertIsNone(self.world.get_position(h), "get_position must be None")
+        self.assertIsNone(self.world.get_index(h), "get_index is a tolerant lookup: None on stale")
+        self.assertIsNone(self.world.get_position(h), "get_position is a tolerant lookup: None on stale")
 
-        # 3. Double-Delete Safety (Idempotency)
-        # Ensure calling destroy again doesn't crash the engine
-        self.world.destroy_body(h)
+        # 3. Double-Delete Safety: fail-fast invalidation raises ValueError
+        # on the stale handle instead of crashing or corrupting state.
+        with self.assertRaises(ValueError):
+            self.world.destroy_body(h)
 
     def test_empty_batch_inputs(self) -> None:
         """Ensure batch methods don't segfault on empty data."""
@@ -2944,9 +2947,9 @@ class TestRobustness(CulverinTestCase):
         # Kill the constraint manually
         self.world.destroy_constraint(c)
 
-        # Querying a destroyed constraint should return None (Silent Invalidation)
-        ctype = self.world.get_constraint_type(c)
-        self.assertIsNone(ctype, "get_constraint_type should return None for destroyed constraints")
+        # Querying a destroyed constraint must fail fast (fail-fast invalidation)
+        with self.assertRaises(ValueError):
+            self.world.get_constraint_type(c)
 
     def test_constraint_automatic_cleanup_check(self) -> None:
         """Check if querying a constraint with a dead body returns None."""

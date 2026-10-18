@@ -7,7 +7,7 @@
 #include "core/NativeAlloc.h"
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldCreateConstraint(CPH_PhysicsWorldObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateConstraint(CPH_PhysicsWorldObject *self,
                                                                    PyObject *const *args,
                                                                    size_t nargsf,
                                                                    PyObject *kwnames) {
@@ -80,7 +80,8 @@ PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldCreateConstraint(CPH_Physi
     if (!unpack_handle(&self->physics, (BodyHandle)h1_raw, &s1) ||
         !unpack_handle(&self->physics, (BodyHandle)h2_raw, &s2)) {
         CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
-        CPH_RAISE_STALE_HANDLE();
+        PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
+        return nullptr;
     }
 
     if (CPH_UNLIKELY(self->physics.free_constraint_count == 0)) {
@@ -89,7 +90,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldCreateConstraint(CPH_Physi
     }
 
     // Allocate heap copy of params for the worker thread
-    CPH_ConstraintParams *p_heap = (CPH_ConstraintParams *)CulvNative_Malloc(sizeof(CPH_ConstraintParams));
+    CPH_ConstraintParams *p_heap = (CPH_ConstraintParams *)CPH_Alloc(sizeof(CPH_ConstraintParams));
     memcpy(p_heap, &p, sizeof(CPH_ConstraintParams));
 
     // Reserve constraint slot
@@ -102,7 +103,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldCreateConstraint(CPH_Physi
 
     // 4. QUEUE ASYNCHRONOUS COMMAND
     if (CPH_UNLIKELY(!CPH_EnsureCommandCapacity(&self->physics))) {
-        CulvNative_Free(p_heap); // DO NOT LEAK MEMORY
+        CPH_Free(p_heap); // DO NOT LEAK MEMORY
         CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
         return PyErr_NoMemory();
     }
@@ -118,7 +119,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldCreateConstraint(CPH_Physi
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldDestroyConstraint(CPH_PhysicsWorldObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyWorld_DestroyConstraint(CPH_PhysicsWorldObject *self,
                                                                     PyObject *const *args,
                                                                     size_t nargsf,
                                                                     PyObject *kwnames) {
@@ -189,7 +190,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldDestroyConstraint(CPH_Phys
     Py_RETURN_NONE;
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldSetConstraintTarget(CPH_PhysicsWorldObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyWorld_SetConstraintTarget(CPH_PhysicsWorldObject *self,
                                                                        PyObject *const *args,
                                                                        size_t nargsf,
                                                                        PyObject *kwnames) {
@@ -264,7 +265,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldSetConstraintTarget(CPH_Ph
     Py_RETURN_NONE;
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldGetConstraintType(CPH_PhysicsWorldObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyWorld_GetConstraintType(CPH_PhysicsWorldObject *self,
                                                                      PyObject *const *args,
                                                                      size_t nargsf,
                                                                      PyObject *kwnames) {
@@ -286,7 +287,8 @@ PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldGetConstraintType(CPH_Phys
     // Validate slot range and generation
     if (CPH_UNLIKELY(slot >= self->physics.constraint_capacity || self->physics.constraint_generations[slot] != gen)) {
         CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
-        CPH_RAISE_STALE_HANDLE();
+        PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
+        return nullptr;
     }
 
     // Load state atomically
@@ -303,7 +305,8 @@ PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldGetConstraintType(CPH_Phys
 
     // If state is SLOT_EMPTY or PENDING_DESTROY
     CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
-    CPH_RAISE_STALE_HANDLE();
+    PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
+    return nullptr;
 }
 
 /*

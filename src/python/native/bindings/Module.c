@@ -48,7 +48,7 @@ static void dump_parser_registry(CPH_CulvFastParser *const *const registry, cons
  * PyCFunction: dump_schema
  * Initializes every known parser group, dumps them to a unified JSON, and cleans up.
  */
-PyCFunction_DeclareMethod culv_dump_schema_json(PyObject *const self, PyObject *const *args,
+PyCFunction_DeclareMethod CPH_PyModule_DumpSchemaJson(PyObject *const self, PyObject *const *args,
                                                 size_t nargsf, PyObject *kwnames) {
     const auto st        = get_culverin_state(self);
     const char *filename = "culverin_schema.json";
@@ -137,7 +137,7 @@ PyCFunction_DeclareMethod culv_dump_schema_json(PyObject *const self, PyObject *
 #include <stdatomic.h>
 #include <tupleobject.h>
 
-PyCFunction_DeclareMethod culv_mutate_tuple([[maybe_unused]] PyObject *self, PyObject *const *args,
+PyCFunction_DeclareMethod CPH_PyModule_MutateTuple([[maybe_unused]] PyObject *self, PyObject *const *args,
                                             Py_ssize_t nargsf) {
     enum : uint8_t { ARG_0, ARG_1, ARG_2, ARG_3, ARG_4 };
     // --- 1. DECLARATIONS (C / goto safety) ---
@@ -621,6 +621,11 @@ PyType_DeclareSlot_Status culverin_clear(PyObject *m) {
     return 0;
 }
 
+static PyMethodDef kModuleMethods[] = {
+
+            CPH_MOD_FASTCALL_INTERNAL(CPH_PyModule_DumpSchemaJson, dump_schema_json), CPH_MOD_FASTCALL(CPH_PyModule_MutateTuple, mutate_tuple),     {nullptr, nullptr, 0, nullptr}
+};
+
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 [[gnu::used]]
 PyModuleDef culverin_module = {
@@ -629,11 +634,7 @@ PyModuleDef culverin_module = {
     .m_doc  = "Culverin Physics Engine Core",
     .m_size = sizeof(CPH_CulverinState),
     .m_methods =
-        (PyMethodDef[]){
-
-            CPH_MOD_FASTCALL_INTERNAL(culv_dump_schema_json, dump_schema_json), CPH_MOD_FASTCALL(culv_mutate_tuple, mutate_tuple), {}
-
-        },
+        kModuleMethods,
     .m_slots =
         (PyModuleDef_Slot[]){
 

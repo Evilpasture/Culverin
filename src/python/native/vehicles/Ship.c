@@ -1,4 +1,5 @@
 #include "vehicles/Ship.h"
+#include "bindings/BindingCommon.h"
 #include "bindings/parsing/ArgIndices.h"
 #include "bindings/ModuleState.h"
 #include "bindings/physics/PhysicsWorld.h"
@@ -88,9 +89,10 @@ static const JPH_PhysicsStepListener_Procs kShipListenerProcs = {.OnStep = Ship_
 
 // --- CREATION ---
 void CPH_CulverinInitShipParsers(CPH_ShipParsers *sp);
-PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldCreateShip(CPH_PhysicsWorldObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateShip(CPH_PhysicsWorldObject *self,
                                                              PyObject *const *args,
-                                                             Py_ssize_t nargs, PyObject *kwnames) {
+                                                             size_t nargsf, PyObject *kwnames) {
+    const Py_ssize_t nargs = (Py_ssize_t)PyVectorcall_NARGS(nargsf);
     uint64_t sled_raw = 0;
     float kp          = 0.0f;
     float kd          = 0.0f;
@@ -129,7 +131,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldCreateShip(CPH_PhysicsWorl
     if (!obj) {
         return nullptr;
     }
-    obj->parsers = (CPH_ShipParsers *)PyMem_Malloc(sizeof(CPH_ShipParsers));
+    obj->parsers = (CPH_ShipParsers *)CPH_PyAlloc(sizeof(CPH_ShipParsers));
     if (!obj->parsers) {
         Py_DECREF(obj);
         PyErr_NoMemory();
@@ -163,8 +165,9 @@ PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldCreateShip(CPH_PhysicsWorl
 
 // --- INPUT (ULTRA FAST) ---
 
-PyCFunction_DeclareMethodFromModule CPH_PyShipSetInput(CPH_ShipObject *self, PyObject *const *args,
-                                                   Py_ssize_t nargs, PyObject *kwnames) {
+PyCFunction_DeclareMethodFromModule CPH_PyShip_SetInput(CPH_ShipObject *self, PyObject *const *args,
+                                                   size_t nargsf, PyObject *kwnames) {
+    const Py_ssize_t nargs = (Py_ssize_t)PyVectorcall_NARGS(nargsf);
     float fwd                                           = 0.0f;
     float right                                         = 0.0f;
     const void *const restrict targets[ShipInput_COUNT] = {
@@ -185,7 +188,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyShipSetInput(CPH_ShipObject *self, PyO
 
 // --- CLEANUP ---
 void CPH_CulverinFreeShipParsers(CPH_ShipParsers *sp);
-PyType_DeclareSlot_VoidFromModule CPH_PyShipDealloc(CPH_ShipObject *self) {
+PyType_DeclareSlot_VoidFromModule CPH_PyShip_Dealloc(CPH_ShipObject *self) {
     PyObject_GC_UnTrack(self);
 
     if (self->world && self->listener) {
@@ -198,32 +201,33 @@ PyType_DeclareSlot_VoidFromModule CPH_PyShipDealloc(CPH_ShipObject *self) {
 
     if (self->parsers) {
         CPH_CulverinFreeShipParsers(self->parsers);
-        PyMem_Free(self->parsers);
+        CPH_PyFree(self->parsers);
     }
 
     Py_XDECREF(self->world);
     Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
-PyType_DeclareSlot_StatusFromModule CPH_PyShipTraverse(CPH_ShipObject *self, visitproc visit, void *arg) {
+PyType_DeclareSlot_StatusFromModule CPH_PyShip_Traverse(CPH_ShipObject *self, visitproc visit, void *arg) {
     Py_VISIT(self->world);
     return 0;
 }
 
-PyType_DeclareSlot_StatusFromModule CPH_PyShipClear(CPH_ShipObject *self) {
+PyType_DeclareSlot_StatusFromModule CPH_PyShip_Clear(CPH_ShipObject *self) {
     Py_CLEAR(self->world);
     return 0;
 }
 
 #define CPH_SHIP_FASTCALL(fn, name) CPH_FEAT(fn, name, METH_FASTCALL | METH_KEYWORDS)
+static PyMethodDef kShipMethods[] = {CPH_SHIP_FASTCALL(CPH_PyShip_SetInput, set_input), {nullptr, nullptr, 0, nullptr}};
+
 PyType_Spec Ship_spec = {
     .name      = "culverin._culverin_c.Ship",
     .basicsize = sizeof(CPH_ShipObject),
     .flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
-    .slots     = (PyType_Slot[]){{.slot = Py_tp_dealloc, .pfunc = CPH_PyShipDealloc},
-                                 {.slot = Py_tp_traverse, .pfunc = CPH_PyShipTraverse},
-                                 {.slot = Py_tp_clear, .pfunc = CPH_PyShipClear},
-                                 {.slot  = Py_tp_methods,
-                                  .pfunc = (PyMethodDef[]){CPH_SHIP_FASTCALL(CPH_PyShipSetInput, set_input), {}}},
+    .slots     = (PyType_Slot[]){{.slot = Py_tp_dealloc, .pfunc = CPH_PyShip_Dealloc},
+                                 {.slot = Py_tp_traverse, .pfunc = CPH_PyShip_Traverse},
+                                 {.slot = Py_tp_clear, .pfunc = CPH_PyShip_Clear},
+                                 {.slot = Py_tp_methods, .pfunc = kShipMethods },
                                  {}},
 };

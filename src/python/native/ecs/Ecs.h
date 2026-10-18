@@ -42,48 +42,48 @@ typedef struct {
 } CPH_RegistryObject;
 
 // Lifecycle
-PyType_DeclareSlot_StatusFromModule CPH_PyRegistryInit(CPH_RegistryObject *self, PyObject *args,
+PyType_DeclareSlot_StatusFromModule CPH_PyRegistry_Init(CPH_RegistryObject *self, PyObject *args,
                                                   PyObject *kwds);
-PyType_DeclareSlot_VoidFromModule CPH_PyRegistryDealloc(CPH_RegistryObject *self);
+PyType_DeclareSlot_VoidFromModule CPH_PyRegistry_Dealloc(CPH_RegistryObject *self);
 
 // Entity Methods
-PyCFunction_DeclareMethodFromModule CPH_PyRegistryCreate(CPH_RegistryObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Create(CPH_RegistryObject *self,
                                                     [[maybe_unused]] PyObject *args);
-PyCFunction_DeclareMethodFromModule CPH_PyRegistryDestroy(CPH_RegistryObject *self, PyObject *const *args,
+PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Destroy(CPH_RegistryObject *self, PyObject *const *args,
                                                      size_t nargsf, PyObject *kwnames);
-PyCFunction_DeclareMethodFromModule CPH_PyRegistryIsAlive(CPH_RegistryObject *self, PyObject *const *args,
+PyCFunction_DeclareMethodFromModule CPH_PyRegistry_IsAlive(CPH_RegistryObject *self, PyObject *const *args,
                                                       size_t nargsf, PyObject *kwnames);
-PyCFunction_DeclareMethodFromModule CPH_PyRegistryClear(CPH_RegistryObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Clear(CPH_RegistryObject *self,
                                                    [[maybe_unused]] PyObject *args);
 
 // Component Methods
-PyCFunction_DeclareMethodFromModule CPH_PyRegistryRegisterComponent(CPH_RegistryObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyRegistry_RegisterComponent(CPH_RegistryObject *self,
                                                                 PyObject *const *args,
                                                                 size_t nargsf, PyObject *kwnames);
-PyCFunction_DeclareMethodFromModule CPH_PyRegistryAdd(CPH_RegistryObject *self, PyObject *const *args,
+PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Add(CPH_RegistryObject *self, PyObject *const *args,
                                                  size_t nargsf, PyObject *kwnames);
-PyCFunction_DeclareMethodFromModule CPH_PyRegistryRemove(CPH_RegistryObject *self, PyObject *const *args,
+PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Remove(CPH_RegistryObject *self, PyObject *const *args,
                                                     size_t nargsf, PyObject *kwnames);
-PyCFunction_DeclareMethodFromModule CPH_PyRegistryHas(CPH_RegistryObject *self, PyObject *const *args,
+PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Has(CPH_RegistryObject *self, PyObject *const *args,
                                                  size_t nargsf, PyObject *kwnames);
 
 // Data Access
-PyCFunction_DeclareMethodFromModule CPH_PyRegistryGet(CPH_RegistryObject *self, PyObject *const *args,
+PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Get(CPH_RegistryObject *self, PyObject *const *args,
                                                  size_t nargsf, PyObject *kwnames);
-PyCFunction_DeclareMethodFromModule CPH_PyRegistryGetView(CPH_RegistryObject *self, PyObject *const *args,
+PyCFunction_DeclareMethodFromModule CPH_PyRegistry_GetView(CPH_RegistryObject *self, PyObject *const *args,
                                                       size_t nargsf, PyObject *kwnames);
-PyCFunction_DeclareMethodFromModule CPH_PyRegistryGetEntities(CPH_RegistryObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyRegistry_GetEntities(CPH_RegistryObject *self,
                                                           PyObject *const *args, size_t nargsf,
                                                           PyObject *kwnames);
 
 // Synchronization
-PyCFunction_DeclareMethodFromModule CPH_PyRegistrySyncFromWorld(CPH_RegistryObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyRegistry_SyncFromWorld(CPH_RegistryObject *self,
                                                              PyObject *const *args, size_t nargsf,
                                                              PyObject *kwnames);
 
 // Stats
-PyCFunction_DeclareMethodFromModule CPH_PyRegistryGetActiveCount(CPH_RegistryObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyRegistry_GetActiveCount(CPH_RegistryObject *self,
                                                               [[maybe_unused]] PyObject *args);
-PyCFunction_DeclareMethodFromModule CPH_PyRegistryGetComponentCount(CPH_RegistryObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyRegistry_GetComponentCount(CPH_RegistryObject *self,
                                                                  PyObject *const *args,
                                                                  size_t nargsf, PyObject *kwnames);

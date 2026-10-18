@@ -46,16 +46,16 @@ PyGetSet_DeclareGetter CPH_GetTime(struct CPH_PhysicsWorldObject *self, [[maybe_
 PyGetSet_DeclareGetter CPH_GetUserDataBuffer(struct CPH_PhysicsWorldObject *self,
                                             [[maybe_unused]] void *c);
 
-PyGetSet_DeclareGetter CPH_PyVehicleGetWheelCount(struct CPH_VehicleObject *self,
+PyGetSet_DeclareGetter CPH_PyVehicle_GetWheelCount(struct CPH_VehicleObject *self,
                                                [[maybe_unused]] void *closure);
 
 PyGetSet_DeclareGetter CPH_GetShapeCount(struct CPH_PhysicsWorldObject *self,
                                        [[maybe_unused]] void *closure);
 
-PyGetSet_DeclareGetter CPH_PyPhysicsWorldGetMaxBodies(struct CPH_PhysicsWorldObject *self,
+PyGetSet_DeclareGetter CPH_PyWorld_GetMaxBodies(struct CPH_PhysicsWorldObject *self,
                                                    [[maybe_unused]] void *closure);
-PyGetSet_DeclareGetter CPH_PyPhysicsWorldGetRemainingCapacity(struct CPH_PhysicsWorldObject *self,
+PyGetSet_DeclareGetter CPH_PyWorld_GetRemainingCapacity(struct CPH_PhysicsWorldObject *self,
                                                            [[maybe_unused]] void *closure);
 PyCFunction_DeclareMethodFromModule
-CPH_PyPhysicsWorldGetSoftBodyVertices(struct CPH_PhysicsWorldObject *self, PyObject *const *args,
+CPH_PyWorld_GetSoftBodyVertices(struct CPH_PhysicsWorldObject *self, PyObject *const *args,
                                     size_t nargsf, PyObject *kwnames);

@@ -57,7 +57,7 @@ static inline bool unpack_viewport(PyObject *obj, int *out) {
 // FASTPARSE WRAPPERS
 // ============================================================================
 
-static PyObject *MathHolderObject_get_perspective(CPH_MathHolderObject *self, PyObject *const *args,
+static PyObject *CPH_PyMath_GetPerspective(CPH_MathHolderObject *self, PyObject *const *args,
                                                   Py_ssize_t nargsf, PyObject *kwnames) {
     float fovy;
     float aspect;
@@ -81,7 +81,7 @@ static PyObject *MathHolderObject_get_perspective(CPH_MathHolderObject *self, Py
                            out[9], out[10], out[11], out[12], out[13], out[14], out[15]);
 }
 
-static PyObject *MathHolderObject_get_ortho(CPH_MathHolderObject *self, PyObject *const *args,
+static PyObject *CPH_PyMath_GetOrtho(CPH_MathHolderObject *self, PyObject *const *args,
                                             Py_ssize_t nargsf, PyObject *kwnames) {
     float left;
     float right;
@@ -109,7 +109,7 @@ static PyObject *MathHolderObject_get_ortho(CPH_MathHolderObject *self, PyObject
                            out[9], out[10], out[11], out[12], out[13], out[14], out[15]);
 }
 
-static PyObject *MathHolderObject_get_look_at(CPH_MathHolderObject *self, PyObject *const *args,
+static PyObject *CPH_PyMath_GetLookAt(CPH_MathHolderObject *self, PyObject *const *args,
                                               Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *eye_obj;
     PyObject *target_obj;
@@ -159,7 +159,7 @@ static PyObject *MathHolderObject_get_look_at(CPH_MathHolderObject *self, PyObje
                            out[9], out[10], out[11], out[12], out[13], out[14], out[15]);
 }
 
-static PyObject *MathHolderObject_get_trs(CPH_MathHolderObject *self, PyObject *const *args,
+static PyObject *CPH_PyMath_GetTrs(CPH_MathHolderObject *self, PyObject *const *args,
                                           Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *pos_obj;
     PyObject *rot_obj;
@@ -217,7 +217,7 @@ static PyObject *MathHolderObject_get_trs(CPH_MathHolderObject *self, PyObject *
                            out[9], out[10], out[11], out[12], out[13], out[14], out[15]);
 }
 
-static PyObject *MathHolderObject_get_trs_batch(CPH_MathHolderObject *self, PyObject *const *args,
+static PyObject *CPH_PyMath_GetTrsBatch(CPH_MathHolderObject *self, PyObject *const *args,
                                                 Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *pos_obj;
     PyObject *rot_obj;
@@ -263,7 +263,7 @@ static PyObject *MathHolderObject_get_trs_batch(CPH_MathHolderObject *self, PyOb
 }
 
 // 1. Matrix Inverse
-static PyObject *MathHolderObject_inverse(CPH_MathHolderObject *self, PyObject *const *args,
+static PyObject *CPH_PyMath_Inverse(CPH_MathHolderObject *self, PyObject *const *args,
                                           Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *mat_obj;
     const void *const restrict targets[MathMat_COUNT] = {[IDX_MMM_MAT] =
@@ -287,7 +287,7 @@ static PyObject *MathHolderObject_inverse(CPH_MathHolderObject *self, PyObject *
 }
 
 // 2. Matrix Multiplication (A * B)
-static PyObject *MathHolderObject_matmul(CPH_MathHolderObject *self, PyObject *const *args,
+static PyObject *CPH_PyMath_Matmul(CPH_MathHolderObject *self, PyObject *const *args,
                                          Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *a_obj;
     PyObject *b_obj;
@@ -313,7 +313,7 @@ static PyObject *MathHolderObject_matmul(CPH_MathHolderObject *self, PyObject *c
 }
 
 // 3. Vector Transform (Mat * Vec3)
-static PyObject *MathHolderObject_transform_vec3(CPH_MathHolderObject *self, PyObject *const *args,
+static PyObject *CPH_PyMath_TransformVec3(CPH_MathHolderObject *self, PyObject *const *args,
                                                  Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *mat_obj;
     PyObject *vec_obj;
@@ -356,7 +356,7 @@ static PyObject *MathHolderObject_transform_vec3(CPH_MathHolderObject *self, PyO
 
 // 4. Batch Matrix Multiply (Single * Batch)
 // Efficient for: MVP_Batch = VP_Matrix * Model_Matrix_Bytes
-static PyObject *MathHolderObject_matmul_batch(CPH_MathHolderObject *self, PyObject *const *args,
+static PyObject *CPH_PyMath_MatmulBatch(CPH_MathHolderObject *self, PyObject *const *args,
                                                Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *mat_obj;
     PyObject *batch_obj;
@@ -391,7 +391,7 @@ static PyObject *MathHolderObject_matmul_batch(CPH_MathHolderObject *self, PyObj
 }
 
 // 5. Single AABB Culling
-static PyObject *MathHolderObject_cull_aabb(CPH_MathHolderObject *self, PyObject *const *args,
+static PyObject *CPH_PyMath_CullAabb(CPH_MathHolderObject *self, PyObject *const *args,
                                             Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *vp_obj;
     PyObject *min_obj;
@@ -432,7 +432,7 @@ static PyObject *MathHolderObject_cull_aabb(CPH_MathHolderObject *self, PyObject
 }
 
 // 6. Batch AABB Culling (Essential for ECS Performance)
-static PyObject *MathHolderObject_cull_aabb_batch(CPH_MathHolderObject *self, PyObject *const *args,
+static PyObject *CPH_PyMath_CullAabbBatch(CPH_MathHolderObject *self, PyObject *const *args,
                                                   Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *vp_obj;
     PyObject *aabbs_obj;
@@ -467,7 +467,7 @@ static PyObject *MathHolderObject_cull_aabb_batch(CPH_MathHolderObject *self, Py
     return result;
 }
 
-static PyObject *MathHolderObject_vec3_normalize_batch(CPH_MathHolderObject *self,
+static PyObject *CPH_PyMath_Vec3NormalizeBatch(CPH_MathHolderObject *self,
                                                        PyObject *const *args, Py_ssize_t nargsf,
                                                        PyObject *kwnames) {
     PyObject *vecs_obj;
@@ -504,7 +504,7 @@ static PyObject *MathHolderObject_vec3_normalize_batch(CPH_MathHolderObject *sel
     return result;
 }
 
-static PyObject *MathHolderObject_quat_from_euler(CPH_MathHolderObject *self, PyObject *const *args,
+static PyObject *CPH_PyMath_QuatFromEuler(CPH_MathHolderObject *self, PyObject *const *args,
                                                   Py_ssize_t nargsf, PyObject *kwnames) {
     float x;
     float y;
@@ -526,7 +526,7 @@ static PyObject *MathHolderObject_quat_from_euler(CPH_MathHolderObject *self, Py
     return CPH_PY_BUILD_TUPLE(out[0], out[1], out[2], out[3]);
 }
 
-static PyObject *MathHolderObject_quat_to_euler(CPH_MathHolderObject *self, PyObject *const *args,
+static PyObject *CPH_PyMath_QuatToEuler(CPH_MathHolderObject *self, PyObject *const *args,
                                                 Py_ssize_t nargsf, PyObject *kwnames) {
     float x;
     float y;
@@ -551,7 +551,7 @@ static PyObject *MathHolderObject_quat_to_euler(CPH_MathHolderObject *self, PyOb
     return CPH_PY_BUILD_TUPLE(out_euler[0], out_euler[1], out_euler[2]);
 }
 
-static PyObject *MathHolderObject_quat_slerp(CPH_MathHolderObject *self, PyObject *const *args,
+static PyObject *CPH_PyMath_QuatSlerp(CPH_MathHolderObject *self, PyObject *const *args,
                                              Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *q1_obj;
     PyObject *q2_obj;
@@ -579,7 +579,7 @@ static PyObject *MathHolderObject_quat_slerp(CPH_MathHolderObject *self, PyObjec
     return CPH_PY_BUILD_TUPLE(out[0], out[1], out[2], out[3]);
 }
 
-static PyObject *MathHolderObject_quat_mul(CPH_MathHolderObject *self, PyObject *const *args,
+static PyObject *CPH_PyMath_QuatMul(CPH_MathHolderObject *self, PyObject *const *args,
                                            Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *a_obj;
     PyObject *b_obj;
@@ -605,7 +605,7 @@ static PyObject *MathHolderObject_quat_mul(CPH_MathHolderObject *self, PyObject 
     return CPH_PY_BUILD_TUPLE(out[0], out[1], out[2], out[3]);
 }
 
-static PyObject *MathHolderObject_vec3_lerp_batch(CPH_MathHolderObject *self, PyObject *const *args,
+static PyObject *CPH_PyMath_Vec3LerpBatch(CPH_MathHolderObject *self, PyObject *const *args,
                                                   Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *a_obj;
     PyObject *b_obj;
@@ -650,7 +650,7 @@ static PyObject *MathHolderObject_vec3_lerp_batch(CPH_MathHolderObject *self, Py
     return result;
 }
 
-static PyObject *MathHolderObject_quat_rotate_vec3(CPH_MathHolderObject *self, PyObject *const *args,
+static PyObject *CPH_PyMath_QuatRotateVec3(CPH_MathHolderObject *self, PyObject *const *args,
                                                    Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *q_obj;
     PyObject *v_obj;
@@ -676,7 +676,7 @@ static PyObject *MathHolderObject_quat_rotate_vec3(CPH_MathHolderObject *self, P
     return CPH_PY_BUILD_TUPLE(out[0], out[1], out[2]);
 }
 
-static PyObject *MathHolderObject_quat_rotate_vec3_batch(CPH_MathHolderObject *self,
+static PyObject *CPH_PyMath_QuatRotateVec3Batch(CPH_MathHolderObject *self,
                                                          PyObject *const *args, Py_ssize_t nargsf,
                                                          PyObject *kwnames) {
     PyObject *q_obj;
@@ -720,7 +720,7 @@ static PyObject *MathHolderObject_quat_rotate_vec3_batch(CPH_MathHolderObject *s
     return result;
 }
 
-static PyObject *MathHolderObject_quat_inverse(CPH_MathHolderObject *self, PyObject *const *args,
+static PyObject *CPH_PyMath_QuatInverse(CPH_MathHolderObject *self, PyObject *const *args,
                                                Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *q_obj;
     const void *const restrict targets[MathQuatOp_COUNT] = {[IDX_MQO_Q] =
@@ -743,7 +743,7 @@ static PyObject *MathHolderObject_quat_inverse(CPH_MathHolderObject *self, PyObj
     return CPH_PY_BUILD_TUPLE(out[0], out[1], out[2], out[3]);
 }
 
-static PyObject *MathHolderObject_project(CPH_MathHolderObject *self, PyObject *const *args,
+static PyObject *CPH_PyMath_Project(CPH_MathHolderObject *self, PyObject *const *args,
                                           Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *v_obj;
     PyObject *mvp_obj;
@@ -775,7 +775,7 @@ static PyObject *MathHolderObject_project(CPH_MathHolderObject *self, PyObject *
     return CPH_PY_BUILD_TUPLE(out[0], out[1], out[2]);
 }
 
-static PyObject *MathHolderObject_unproject(CPH_MathHolderObject *self, PyObject *const *args,
+static PyObject *CPH_PyMath_Unproject(CPH_MathHolderObject *self, PyObject *const *args,
                                             Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *v_obj;
     PyObject *mvp_obj;
@@ -807,7 +807,7 @@ static PyObject *MathHolderObject_unproject(CPH_MathHolderObject *self, PyObject
     return CPH_PY_BUILD_TUPLE(out[0], out[1], out[2]);
 }
 
-static PyObject *MathHolderObject_quat_from_to(CPH_MathHolderObject *self, PyObject *const *args,
+static PyObject *CPH_PyMath_QuatFromTo(CPH_MathHolderObject *self, PyObject *const *args,
                                                Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *v1_obj;
     PyObject *v2_obj;
@@ -833,7 +833,7 @@ static PyObject *MathHolderObject_quat_from_to(CPH_MathHolderObject *self, PyObj
     return CPH_PY_BUILD_TUPLE(out[0], out[1], out[2], out[3]);
 }
 
-static PyObject *MathHolderObject_vec3_dot(CPH_MathHolderObject *self, PyObject *const *args,
+static PyObject *CPH_PyMath_Vec3Dot(CPH_MathHolderObject *self, PyObject *const *args,
                                            Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *v1_obj;
     PyObject *v2_obj;
@@ -859,7 +859,7 @@ static PyObject *MathHolderObject_vec3_dot(CPH_MathHolderObject *self, PyObject 
     return PyFloat_FromDouble((double)result);
 }
 
-static PyObject *MathHolderObject_vec3_cross(CPH_MathHolderObject *self, PyObject *const *args,
+static PyObject *CPH_PyMath_Vec3Cross(CPH_MathHolderObject *self, PyObject *const *args,
                                              Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *v1_obj;
     PyObject *v2_obj;
@@ -885,7 +885,7 @@ static PyObject *MathHolderObject_vec3_cross(CPH_MathHolderObject *self, PyObjec
     return CPH_PY_BUILD_TUPLE(out[0], out[1], out[2]);
 }
 
-static PyObject *MathHolderObject_intersect_ray_plane(CPH_MathHolderObject *self, PyObject *const *args,
+static PyObject *CPH_PyMath_IntersectRayPlane(CPH_MathHolderObject *self, PyObject *const *args,
                                                       Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *ro_obj;
     PyObject *rd_obj;
@@ -922,7 +922,7 @@ static PyObject *MathHolderObject_intersect_ray_plane(CPH_MathHolderObject *self
     return CPH_PY_BUILD_TUPLE(Py_True, out_t, CPH_PY_BUILD_TUPLE(out_p[0], out_p[1], out_p[2]));
 }
 
-static PyObject *MathHolderObject_quat_get_axis_angle(CPH_MathHolderObject *self, PyObject *const *args,
+static PyObject *CPH_PyMath_QuatGetAxisAngle(CPH_MathHolderObject *self, PyObject *const *args,
                                                       Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *q_obj;
     // Reusing MathQuatOp which has [IDX_MQO_Q]
@@ -947,7 +947,7 @@ static PyObject *MathHolderObject_quat_get_axis_angle(CPH_MathHolderObject *self
     return CPH_PY_BUILD_TUPLE(CPH_PY_BUILD_TUPLE(axis[0], axis[1], axis[2]), angle);
 }
 
-static PyObject *MathHolderObject_quat_from_axis_angle(CPH_MathHolderObject *self,
+static PyObject *CPH_PyMath_QuatFromAxisAngle(CPH_MathHolderObject *self,
                                                        PyObject *const *args, Py_ssize_t nargsf,
                                                        PyObject *kwnames) {
     PyObject *axis_obj;
@@ -973,7 +973,7 @@ static PyObject *MathHolderObject_quat_from_axis_angle(CPH_MathHolderObject *sel
     return CPH_PY_BUILD_TUPLE(out[0], out[1], out[2], out[3]);
 }
 
-static PyObject *MathHolderObject_vec3_distance_batch(CPH_MathHolderObject *self, PyObject *const *args,
+static PyObject *CPH_PyMath_Vec3DistanceBatch(CPH_MathHolderObject *self, PyObject *const *args,
                                                       Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *a_obj;
     PyObject *b_obj;
@@ -1017,7 +1017,7 @@ static PyObject *MathHolderObject_vec3_distance_batch(CPH_MathHolderObject *self
     return result;
 }
 
-static PyObject *MathHolderObject_vec3_normalize(CPH_MathHolderObject *self, PyObject *const *args,
+static PyObject *CPH_PyMath_Vec3Normalize(CPH_MathHolderObject *self, PyObject *const *args,
                                                  Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *v_obj;
     const void *const restrict targets[MathVecOp_COUNT] = {[IDX_MVO_V] =
@@ -1040,7 +1040,7 @@ static PyObject *MathHolderObject_vec3_normalize(CPH_MathHolderObject *self, PyO
     return CPH_PY_BUILD_TUPLE(out[0], out[1], out[2]);
 }
 
-static PyObject *MathHolderObject_mat44_get_translation(CPH_MathHolderObject *self,
+static PyObject *CPH_PyMath_Mat44GetTranslation(CPH_MathHolderObject *self,
                                                         PyObject *const *args, Py_ssize_t nargsf,
                                                         PyObject *kwnames) {
     PyObject *mat_obj;
@@ -1064,7 +1064,7 @@ static PyObject *MathHolderObject_mat44_get_translation(CPH_MathHolderObject *se
     return CPH_PY_BUILD_TUPLE(out_vec[0], out_vec[1], out_vec[2]);
 }
 
-static PyObject *MathHolderObject_mat44_get_rotation(CPH_MathHolderObject *self, PyObject *const *args,
+static PyObject *CPH_PyMath_Mat44GetRotation(CPH_MathHolderObject *self, PyObject *const *args,
                                                      Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *mat_obj;
     const void *const restrict targets[MathMat_COUNT] = {[IDX_MMM_MAT] =
@@ -1087,7 +1087,7 @@ static PyObject *MathHolderObject_mat44_get_rotation(CPH_MathHolderObject *self,
     return CPH_PY_BUILD_TUPLE(out_quat[0], out_quat[1], out_quat[2], out_quat[3]);
 }
 
-static PyObject *MathHolderObject_mat44_identity([[maybe_unused]] CPH_MathHolderObject *self,
+static PyObject *CPH_PyMath_Mat44Identity([[maybe_unused]] CPH_MathHolderObject *self,
                                                  PyObject *ignored [[maybe_unused]]) {
     float out[kSixteenFloats];
     culverin_math_mat44_identity(out);
@@ -1096,7 +1096,7 @@ static PyObject *MathHolderObject_mat44_identity([[maybe_unused]] CPH_MathHolder
                            out[9], out[10], out[11], out[12], out[13], out[14], out[15]);
 }
 
-static PyObject *MathHolderObject_vec3_reflect(CPH_MathHolderObject *self, PyObject *const *args,
+static PyObject *CPH_PyMath_Vec3Reflect(CPH_MathHolderObject *self, PyObject *const *args,
                                                Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *v_obj;
     PyObject *n_obj;
@@ -1122,7 +1122,7 @@ static PyObject *MathHolderObject_vec3_reflect(CPH_MathHolderObject *self, PyObj
     return CPH_PY_BUILD_TUPLE(out[0], out[1], out[2]);
 }
 
-static PyObject *MathHolderObject_vec3_distance(CPH_MathHolderObject *self, PyObject *const *args,
+static PyObject *CPH_PyMath_Vec3Distance(CPH_MathHolderObject *self, PyObject *const *args,
                                                 Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *v1_obj;
     PyObject *v2_obj;
@@ -1147,7 +1147,7 @@ static PyObject *MathHolderObject_vec3_distance(CPH_MathHolderObject *self, PyOb
     return PyFloat_FromDouble((double)dist);
 }
 
-static PyObject *MathHolderObject_quat_rotate_vec3_inverse(CPH_MathHolderObject *self,
+static PyObject *CPH_PyMath_QuatRotateVec3Inverse(CPH_MathHolderObject *self,
                                                            PyObject *const *args, Py_ssize_t nargsf,
                                                            PyObject *kwnames) {
     PyObject *q_obj;
@@ -1175,7 +1175,7 @@ static PyObject *MathHolderObject_quat_rotate_vec3_inverse(CPH_MathHolderObject 
 }
 
 // --- Wrapper for single tuple (x, y, z) -> (x, y, z, w) ---
-static PyObject *MathHolderObject_euler_to_quat(CPH_MathHolderObject *self, PyObject *const *args,
+static PyObject *CPH_PyMath_EulerToQuat(CPH_MathHolderObject *self, PyObject *const *args,
                                                 Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *euler_obj;
     const void *const restrict targets[MathEulerVec_COUNT] = {
@@ -1198,7 +1198,7 @@ static PyObject *MathHolderObject_euler_to_quat(CPH_MathHolderObject *self, PyOb
 }
 
 // --- Wrapper for batch conversion (Bytes/Buffer) ---
-static PyObject *MathHolderObject_euler_to_quat_batch(CPH_MathHolderObject *self, PyObject *const *args,
+static PyObject *CPH_PyMath_EulerToQuatBatch(CPH_MathHolderObject *self, PyObject *const *args,
                                                       Py_ssize_t nargsf, PyObject *kwnames) {
     PyObject *eulers_obj;
     const void *const restrict targets[MathEulerBatch_COUNT] = {[IDX_MEB_VECS] =
@@ -1236,7 +1236,7 @@ static PyObject *MathHolderObject_euler_to_quat_batch(CPH_MathHolderObject *self
 void CPH_CulverinMathInitAllParsers(CPH_MathParsers *mp);
 void CPH_CulverinMathFreeAllParsers(CPH_MathParsers *mp);
 
-static PyObject *MathHolderObject_new(PyTypeObject *type, [[maybe_unused]] PyObject *args,
+static PyObject *CPH_PyMath_New(PyTypeObject *type, [[maybe_unused]] PyObject *args,
                                       [[maybe_unused]] PyObject *kwds) {
     CPH_MathHolderObject *self = (CPH_MathHolderObject *)type->tp_alloc(type, 0);
     if (self == nullptr) {
@@ -1254,7 +1254,7 @@ static PyObject *MathHolderObject_new(PyTypeObject *type, [[maybe_unused]] PyObj
     return (PyObject *)self;
 }
 
-static void MathHolderObject_dealloc(CPH_MathHolderObject *self) {
+static void CPH_PyMath_Dealloc(CPH_MathHolderObject *self) {
     if (self->parsers != nullptr) {
         CPH_CulverinMathFreeAllParsers(self->parsers);
         PyMem_Free(self->parsers);
@@ -1271,6 +1271,49 @@ static void MathHolderObject_dealloc(CPH_MathHolderObject *self) {
 #define CPH_MATH_FASTCALL(fn, name) CPH_FEAT(fn, name, METH_FASTCALL | METH_KEYWORDS)
 #define CPH_MATH_NOARGS(fn, name) CPH_FEAT(fn, name, METH_NOARGS)
 
+static PyMethodDef kMathMethods[] = {
+
+                     CPH_MATH_FASTCALL(CPH_PyMath_GetPerspective, get_perspective),
+                     CPH_MATH_FASTCALL(CPH_PyMath_GetOrtho, get_ortho),
+                     CPH_MATH_FASTCALL(CPH_PyMath_GetLookAt, get_look_at),
+                     CPH_MATH_FASTCALL(CPH_PyMath_GetTrs, get_trs),
+                     CPH_MATH_FASTCALL(CPH_PyMath_GetTrsBatch, get_trs_batch),
+                     CPH_MATH_FASTCALL(CPH_PyMath_Inverse, inverse),
+                     CPH_MATH_FASTCALL(CPH_PyMath_Matmul, matmul),
+                     CPH_MATH_FASTCALL(CPH_PyMath_TransformVec3, transform_vec3),
+                     CPH_MATH_FASTCALL(CPH_PyMath_MatmulBatch, matmul_batch),
+                     CPH_MATH_FASTCALL(CPH_PyMath_CullAabb, cull_aabb),
+                     CPH_MATH_FASTCALL(CPH_PyMath_CullAabbBatch, cull_aabb_batch),
+                     CPH_MATH_FASTCALL(CPH_PyMath_Vec3NormalizeBatch, vec3_normalize_batch),
+                     CPH_MATH_FASTCALL(CPH_PyMath_QuatFromEuler, quat_from_euler),
+                     CPH_MATH_FASTCALL(CPH_PyMath_QuatToEuler, quat_to_euler),
+                     CPH_MATH_FASTCALL(CPH_PyMath_QuatSlerp, quat_slerp),
+                     CPH_MATH_FASTCALL(CPH_PyMath_QuatMul, quat_mul),
+                     CPH_MATH_FASTCALL(CPH_PyMath_Vec3LerpBatch, vec3_lerp_batch),
+                     CPH_MATH_FASTCALL(CPH_PyMath_QuatRotateVec3, quat_rotate_vec3),
+                     CPH_MATH_FASTCALL(CPH_PyMath_QuatRotateVec3Batch, quat_rotate_vec3_batch),
+                     CPH_MATH_FASTCALL(CPH_PyMath_QuatInverse, quat_inverse),
+                     CPH_MATH_FASTCALL(CPH_PyMath_Project, project),
+                     CPH_MATH_FASTCALL(CPH_PyMath_Unproject, unproject),
+                     CPH_MATH_FASTCALL(CPH_PyMath_QuatFromTo, quat_from_to),
+                     CPH_MATH_FASTCALL(CPH_PyMath_Vec3Dot, vec3_dot),
+                     CPH_MATH_FASTCALL(CPH_PyMath_Vec3Cross, vec3_cross),
+                     CPH_MATH_FASTCALL(CPH_PyMath_IntersectRayPlane, intersect_ray_plane),
+                     CPH_MATH_FASTCALL(CPH_PyMath_QuatGetAxisAngle, quat_get_axis_angle),
+                     CPH_MATH_FASTCALL(CPH_PyMath_QuatFromAxisAngle, quat_from_axis_angle),
+                     CPH_MATH_FASTCALL(CPH_PyMath_Vec3DistanceBatch, vec3_distance_batch),
+                     CPH_MATH_FASTCALL(CPH_PyMath_Vec3Normalize, vec3_normalize),
+                     CPH_MATH_FASTCALL(CPH_PyMath_Mat44GetTranslation, mat44_get_translation),
+                     CPH_MATH_FASTCALL(CPH_PyMath_Mat44GetRotation, mat44_get_rotation),
+                     CPH_MATH_NOARGS(CPH_PyMath_Mat44Identity, mat44_identity),
+                     CPH_MATH_FASTCALL(CPH_PyMath_Vec3Reflect, vec3_reflect),
+                     CPH_MATH_FASTCALL(CPH_PyMath_Vec3Distance, vec3_distance),
+                     CPH_MATH_FASTCALL(CPH_PyMath_QuatRotateVec3Inverse, quat_rotate_vec3_inverse),
+                     CPH_MATH_FASTCALL(CPH_PyMath_EulerToQuat, euler_to_quat),
+                     CPH_MATH_FASTCALL(CPH_PyMath_EulerToQuatBatch, euler_to_quat_batch),
+                         {nullptr, nullptr, 0, nullptr}
+};
+
 PyType_Spec MathService_spec = {
     .name      = "culverin._culverin_c.MathService",
     .basicsize = sizeof(struct CPH_MathHolderObject),
@@ -1279,58 +1322,12 @@ PyType_Spec MathService_spec = {
         (PyType_Slot[]){
 
             // 1. Add the Constructor logic
-            {.slot = Py_tp_new, .pfunc = (void *)MathHolderObject_new},
+            {.slot = Py_tp_new, .pfunc = (void *)CPH_PyMath_New},
 
             // 2. Add the Destructor logic
-            {.slot = Py_tp_dealloc, .pfunc = (void *)MathHolderObject_dealloc},
+            {.slot = Py_tp_dealloc, .pfunc = (void *)CPH_PyMath_Dealloc},
 
-            {.slot = Py_tp_methods,
-             .pfunc =
-                 (PyMethodDef[]){
-
-                     CPH_MATH_FASTCALL(MathHolderObject_get_perspective, get_perspective),
-                     CPH_MATH_FASTCALL(MathHolderObject_get_ortho, get_ortho),
-                     CPH_MATH_FASTCALL(MathHolderObject_get_look_at, get_look_at),
-                     CPH_MATH_FASTCALL(MathHolderObject_get_trs, get_trs),
-                     CPH_MATH_FASTCALL(MathHolderObject_get_trs_batch, get_trs_batch),
-                     CPH_MATH_FASTCALL(MathHolderObject_inverse, inverse),
-                     CPH_MATH_FASTCALL(MathHolderObject_matmul, matmul),
-                     CPH_MATH_FASTCALL(MathHolderObject_transform_vec3, transform_vec3),
-                     CPH_MATH_FASTCALL(MathHolderObject_matmul_batch, matmul_batch),
-                     CPH_MATH_FASTCALL(MathHolderObject_cull_aabb, cull_aabb),
-                     CPH_MATH_FASTCALL(MathHolderObject_cull_aabb_batch, cull_aabb_batch),
-                     CPH_MATH_FASTCALL(MathHolderObject_vec3_normalize_batch, vec3_normalize_batch),
-                     CPH_MATH_FASTCALL(MathHolderObject_quat_from_euler, quat_from_euler),
-                     CPH_MATH_FASTCALL(MathHolderObject_quat_to_euler, quat_to_euler),
-                     CPH_MATH_FASTCALL(MathHolderObject_quat_slerp, quat_slerp),
-                     CPH_MATH_FASTCALL(MathHolderObject_quat_mul, quat_mul),
-                     CPH_MATH_FASTCALL(MathHolderObject_vec3_lerp_batch, vec3_lerp_batch),
-                     CPH_MATH_FASTCALL(MathHolderObject_quat_rotate_vec3, quat_rotate_vec3),
-                     CPH_MATH_FASTCALL(MathHolderObject_quat_rotate_vec3_batch, quat_rotate_vec3_batch),
-                     CPH_MATH_FASTCALL(MathHolderObject_quat_inverse, quat_inverse),
-                     CPH_MATH_FASTCALL(MathHolderObject_project, project),
-                     CPH_MATH_FASTCALL(MathHolderObject_unproject, unproject),
-                     CPH_MATH_FASTCALL(MathHolderObject_quat_from_to, quat_from_to),
-                     CPH_MATH_FASTCALL(MathHolderObject_vec3_dot, vec3_dot),
-                     CPH_MATH_FASTCALL(MathHolderObject_vec3_cross, vec3_cross),
-                     CPH_MATH_FASTCALL(MathHolderObject_intersect_ray_plane, intersect_ray_plane),
-                     CPH_MATH_FASTCALL(MathHolderObject_quat_get_axis_angle, quat_get_axis_angle),
-                     CPH_MATH_FASTCALL(MathHolderObject_quat_from_axis_angle, quat_from_axis_angle),
-                     CPH_MATH_FASTCALL(MathHolderObject_vec3_distance_batch, vec3_distance_batch),
-                     CPH_MATH_FASTCALL(MathHolderObject_vec3_normalize, vec3_normalize),
-                     CPH_MATH_FASTCALL(MathHolderObject_mat44_get_translation, mat44_get_translation),
-                     CPH_MATH_FASTCALL(MathHolderObject_mat44_get_rotation, mat44_get_rotation),
-                     CPH_MATH_NOARGS(MathHolderObject_mat44_identity, mat44_identity),
-                     CPH_MATH_FASTCALL(MathHolderObject_vec3_reflect, vec3_reflect),
-                     CPH_MATH_FASTCALL(MathHolderObject_vec3_distance, vec3_distance),
-                     CPH_MATH_FASTCALL(MathHolderObject_quat_rotate_vec3_inverse, quat_rotate_vec3_inverse),
-                     CPH_MATH_FASTCALL(MathHolderObject_euler_to_quat, euler_to_quat),
-                     CPH_MATH_FASTCALL(MathHolderObject_euler_to_quat_batch, euler_to_quat_batch),
-                     {},
-
-                 }
-
-            },
+            {.slot = Py_tp_methods, .pfunc = kMathMethods },
             {}
 
         },

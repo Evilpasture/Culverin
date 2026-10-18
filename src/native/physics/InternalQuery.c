@@ -56,7 +56,7 @@ JPH_Shape *CPH_FindOrCreateShapeLocked(CPH_PhysicsWorld *world, int type, const 
     if (world->shape_cache_count >= world->shape_cache_capacity) {
         size_t new_cap = (world->shape_cache_capacity == 0) ? 16 : world->shape_cache_capacity * 2;
         CPH_ShapeEntry *new_ptr =
-            (CPH_ShapeEntry *)CulvNative_Realloc(world->shape_cache, new_cap * sizeof(CPH_ShapeEntry));
+            (CPH_ShapeEntry *)CPH_Realloc(world->shape_cache, new_cap * sizeof(CPH_ShapeEntry));
         if (CPH_UNLIKELY(!new_ptr)) {
             return nullptr;
         }
@@ -135,7 +135,7 @@ void CPH_FreeShapeCache(CPH_PhysicsWorld *world) {
             JPH_Shape_Destroy(world->shape_cache[i].shape);
         }
     }
-    CulvNative_Free(world->shape_cache);
+    CPH_Free(world->shape_cache);
     world->shape_cache       = nullptr;
     world->shape_cache_count = 0;
 }

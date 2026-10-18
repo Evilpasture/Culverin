@@ -245,7 +245,7 @@ int CPH_ParseTracksToC(PyObject *py_tracks, CPH_TrackData *out_data, int *num_ou
         if (py_idxs && PyList_Check(py_idxs)) {
             uint32_t count      = (uint32_t)PyList_Size(py_idxs);
             out_data[t].count   = count;
-            out_data[t].indices = CULV_RAW_MALLOC(count * sizeof(uint32_t));
+            out_data[t].indices = CPH_PyAlloc(count * sizeof(uint32_t));
 
             for (uint32_t k = 0; k < count; k++) {
                 out_data[t].indices[k] = (uint32_t)PyLong_AsLong(PyList_GetItem(py_idxs, k));

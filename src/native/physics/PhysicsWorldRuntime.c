@@ -150,7 +150,7 @@ PhysicsWorldSnapshotStatus CPH_PhysicsWorldSaveSnapshot(CPH_PhysicsWorld *world,
         CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_SNAPSHOT_STATUS_OVERFLOW;
     }
-    uint8_t *snapshot = CulvNative_Malloc(total_size);
+    uint8_t *snapshot = CPH_Alloc(total_size);
     if (!snapshot) {
         CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_SNAPSHOT_STATUS_OUT_OF_MEMORY;
@@ -310,7 +310,7 @@ PhysicsWorldRuntimeStatus CPH_PhysicsWorldTakeContactEvents(CPH_PhysicsWorld *wo
     }
 
     struct CPH_ContactEvent *events =
-        CulvNative_AlignedMalloc(count * sizeof(struct CPH_ContactEvent), kMemoryAlignmentSize);
+        CPH_AlignedAlloc(count * sizeof(struct CPH_ContactEvent), kMemoryAlignmentSize);
     if (!events) {
         CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_RUNTIME_STATUS_OUT_OF_MEMORY;
@@ -485,7 +485,7 @@ PhysicsWorldRuntimeStatus CPH_PhysicsWorldGetSoftBodyLocalVertices(CPH_PhysicsWo
         JPH_BodyLockInterface_UnlockRead(lock_interface, &lock);
         return PHYSICS_WORLD_RUNTIME_STATUS_OVERFLOW;
     }
-    JPH_Vec3 *positions = CulvNative_Malloc(allocation_size);
+    JPH_Vec3 *positions = CPH_Alloc(allocation_size);
     if (!positions && *out_count != 0) {
         JPH_BodyLockInterface_UnlockRead(lock_interface, &lock);
         return PHYSICS_WORLD_RUNTIME_STATUS_OUT_OF_MEMORY;
@@ -551,7 +551,7 @@ PhysicsWorldRuntimeStatus CPH_PhysicsWorldApplyBuoyancyBatch(
         return PHYSICS_WORLD_RUNTIME_STATUS_OVERFLOW;
     }
 
-    JPH_BodyID *body_ids = (JPH_BodyID *)CulvNative_Malloc(handle_count * sizeof(JPH_BodyID));
+    JPH_BodyID *body_ids = (JPH_BodyID *)CPH_Alloc(handle_count * sizeof(JPH_BodyID));
     if (!body_ids) {
         return PHYSICS_WORLD_RUNTIME_STATUS_OUT_OF_MEMORY;
     }
@@ -588,7 +588,7 @@ PhysicsWorldRuntimeStatus CPH_PhysicsWorldApplyBuoyancyBatch(
         CPH_PhysicsWorldQueryEnd(world);
     }
 
-    CulvNative_Free(body_ids);
+    CPH_Free(body_ids);
     return PHYSICS_WORLD_RUNTIME_STATUS_OK;
 }
 
@@ -728,7 +728,7 @@ CPH_PhysicsWorldGetActiveIndices(CPH_PhysicsWorld *world, uint32_t **out_indices
         return PHYSICS_WORLD_RUNTIME_STATUS_OK;
     }
 
-    JPH_BodyID *body_ids = (JPH_BodyID *)CulvNative_Malloc(count * sizeof(JPH_BodyID));
+    JPH_BodyID *body_ids = (JPH_BodyID *)CPH_Alloc(count * sizeof(JPH_BodyID));
     if (!body_ids) {
         CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_RUNTIME_STATUS_OUT_OF_MEMORY;
@@ -736,9 +736,9 @@ CPH_PhysicsWorldGetActiveIndices(CPH_PhysicsWorld *world, uint32_t **out_indices
     memcpy(body_ids, world->body_ids, count * sizeof(JPH_BodyID));
     CPH_SHADOW_UNLOCK(&world->shadow_lock);
 
-    uint32_t *indices = (uint32_t *)CulvNative_Malloc(count * sizeof(uint32_t));
+    uint32_t *indices = (uint32_t *)CPH_Alloc(count * sizeof(uint32_t));
     if (!indices) {
-        CulvNative_Free(body_ids);
+        CPH_Free(body_ids);
         return PHYSICS_WORLD_RUNTIME_STATUS_OUT_OF_MEMORY;
     }
 
@@ -749,7 +749,7 @@ CPH_PhysicsWorldGetActiveIndices(CPH_PhysicsWorld *world, uint32_t **out_indices
             indices[active_count++] = (uint32_t)i;
         }
     }
-    CulvNative_Free(body_ids);
+    CPH_Free(body_ids);
     *out_indices = indices;
     *out_count   = active_count;
     return PHYSICS_WORLD_RUNTIME_STATUS_OK;
@@ -774,7 +774,7 @@ PhysicsWorldRuntimeStatus CPH_PhysicsWorldGetRenderState(CPH_PhysicsWorld *world
         CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_RUNTIME_STATUS_OVERFLOW;
     }
-    float *state = (float *)CulvNative_Malloc(count * 7 * sizeof(float));
+    float *state = (float *)CPH_Alloc(count * 7 * sizeof(float));
     if (!state) {
         CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_RUNTIME_STATUS_OUT_OF_MEMORY;
@@ -840,7 +840,7 @@ PhysicsWorldRuntimeStatus CPH_PhysicsWorldRegisterMaterial(CPH_PhysicsWorld *wor
     if (world->material_count >= world->material_capacity) {
         const size_t new_capacity = world->material_capacity == 0 ? kInitialMaterialCapacity
                                                                   : world->material_capacity * 2;
-        CPH_MaterialData *materials   = (CPH_MaterialData *)CulvNative_Realloc(
+        CPH_MaterialData *materials   = (CPH_MaterialData *)CPH_Realloc(
             world->materials, new_capacity * sizeof(CPH_MaterialData));
         if (CPH_UNLIKELY(!materials)) {
             CPH_SHADOW_UNLOCK(&world->shadow_lock);
@@ -890,12 +890,12 @@ CPH_PhysicsWorldBuildDebugData(CPH_PhysicsWorld *world, bool draw_shapes, bool d
 
     const size_t line_bytes     = world->debug_lines.count * sizeof(CPH_DebugVertex);
     const size_t triangle_bytes = world->debug_triangles.count * sizeof(CPH_DebugVertex);
-    CPH_DebugVertex *lines = line_bytes ? (CPH_DebugVertex *)CulvNative_Malloc(line_bytes) : nullptr;
+    CPH_DebugVertex *lines = line_bytes ? (CPH_DebugVertex *)CPH_Alloc(line_bytes) : nullptr;
     CPH_DebugVertex *triangles =
-        triangle_bytes ? (CPH_DebugVertex *)CulvNative_Malloc(triangle_bytes) : nullptr;
+        triangle_bytes ? (CPH_DebugVertex *)CPH_Alloc(triangle_bytes) : nullptr;
     if ((line_bytes && !lines) || (triangle_bytes && !triangles)) {
-        CulvNative_Free(lines);
-        CulvNative_Free(triangles);
+        CPH_Free(lines);
+        CPH_Free(triangles);
         CPH_SHADOW_UNLOCK(&world->shadow_lock);
         return PHYSICS_WORLD_RUNTIME_STATUS_OUT_OF_MEMORY;
     }

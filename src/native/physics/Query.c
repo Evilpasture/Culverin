@@ -71,7 +71,7 @@ void CPH_PhysicsQueryHitBufferDestroy(CPH_PhysicsQueryHitBuffer *buffer) {
     }
 
     if (buffer->hits && buffer->hits != buffer->inline_hits) {
-        CulvNative_Free(buffer->hits);
+        CPH_Free(buffer->hits);
     }
     buffer->hits     = buffer->inline_hits;
     buffer->count    = 0;
@@ -88,12 +88,12 @@ static bool query_hit_buffer_append(CPH_PhysicsQueryHitBuffer *buffer, BodyHandl
 
         BodyHandle *new_hits;
         if (buffer->hits == buffer->inline_hits) {
-            new_hits = CulvNative_Malloc(new_capacity * sizeof(*new_hits));
+            new_hits = CPH_Alloc(new_capacity * sizeof(*new_hits));
             if (new_hits) {
                 memcpy(new_hits, buffer->hits, buffer->count * sizeof(*new_hits));
             }
         } else {
-            new_hits = CulvNative_Realloc(buffer->hits, new_capacity * sizeof(*new_hits));
+            new_hits = CPH_Realloc(buffer->hits, new_capacity * sizeof(*new_hits));
         }
 
         if (!new_hits) {

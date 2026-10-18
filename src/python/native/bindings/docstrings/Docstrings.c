@@ -1,11 +1,12 @@
 #include "Docstrings.h"
+#include "bindings/BindingCommon.h"
 #include <stdio.h>
 #include <string.h>
 
 static const char *CULV_DOCS_COMMENT_MARKER = "<!--";
 
 static char *culv_docs_allocate_docstring(const char *start, size_t length) {
-    char *doc = (char *)PyMem_RawMalloc(length + 1);
+    char *doc = (char *)CPH_PyAlloc(length + 1);
     if (doc == nullptr) {
         return nullptr;
     }

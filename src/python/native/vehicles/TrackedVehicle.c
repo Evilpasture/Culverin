@@ -110,10 +110,11 @@ extern void CPH_CleanupVehicleResources(CPH_VehicleResources *r, uint32_t num_wh
                                       CPH_PhysicsWorldObject *self);
 
 // Orchestrator
-PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldCreateTrackedVehicle(CPH_PhysicsWorldObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateTrackedVehicle(CPH_PhysicsWorldObject *self,
                                                                         PyObject *const *args,
-                                                                        Py_ssize_t nargs,
+                                                                        size_t nargsf,
                                                                         PyObject *kwnames) {
+    const Py_ssize_t nargs = (Py_ssize_t)PyVectorcall_NARGS(nargsf);
     CPH_CulverinState *st = get_culverin_state(PyType_GetModule(Py_TYPE(self)));
     // --- 1. FAST ARGUMENT PARSING ---
     uint64_t chassis_h_raw = 0;
@@ -170,7 +171,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldCreateTrackedVehicle(CPH_P
     JPH_LinearCurve_AddPoint(r.f_curve, 0.0f, 1.0f);
     JPH_LinearCurve_AddPoint(r.f_curve, 1.0f, 1.0f);
 
-    r.w_settings = (JPH_WheelSettings **)CULV_RAW_CALLOC(num_wheels, sizeof(JPH_WheelSettings *));
+    r.w_settings = (JPH_WheelSettings **)CPH_PyCalloc(num_wheels, sizeof(JPH_WheelSettings *));
     for (uint32_t i = 0; i < num_wheels; i++) {
         r.w_settings[i] = create_track_wheel(PyList_GetItem(py_wheels, i));
         if (!r.w_settings[i]) {
@@ -245,7 +246,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldCreateTrackedVehicle(CPH_P
 
     // --- 5. CLEANUP & WRAP (Unchanged) ---
     for (int t = 0; t < num_tracks; t++) {
-        CULV_RAW_FREE(tracks[t].indices);
+        CPH_PyFree(tracks[t].indices);
     }
 
     auto obj = (CPH_VehicleObject *)PyObject_GC_New(CPH_VehicleObject, (PyTypeObject *)st->VehicleType);
@@ -289,7 +290,7 @@ jolt_fail:
 python_fail:
     for (int t = 0; t < num_tracks; t++) {
         if (tracks[t].indices) {
-            CULV_RAW_FREE(tracks[t].indices);
+            CPH_PyFree(tracks[t].indices);
         }
     }
     CPH_SHADOW_LOCK(&self->physics.shadow_lock);
@@ -299,9 +300,10 @@ python_fail:
 }
 
 // Helper: Set Tank Input
-PyCFunction_DeclareMethodFromModule CPH_PyVehicleSetTankInput(CPH_VehicleObject *self,
-                                                           PyObject *const *args, Py_ssize_t nargs,
+PyCFunction_DeclareMethodFromModule CPH_PyVehicle_SetTankInput(CPH_VehicleObject *self,
+                                                           PyObject *const *args, size_t nargsf,
                                                            PyObject *kwnames) {
+    const Py_ssize_t nargs = (Py_ssize_t)PyVectorcall_NARGS(nargsf);
     // 1. FAST PARSE (Zero-Allocation)
     float left  = 0.0f;
     float right = 0.0f;

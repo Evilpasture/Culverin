@@ -11,7 +11,7 @@ void CPH_DebugBufferEnsure(CPH_DebugBuffer *buf, size_t count_needed) {
             new_cap *= 2;
         }
 
-        void *new_ptr = CulvNative_Realloc(buf->data, new_cap * sizeof(CPH_DebugVertex));
+        void *new_ptr = CPH_Realloc(buf->data, new_cap * sizeof(CPH_DebugVertex));
         if (!new_ptr) {
             return; // Silent fail on OOM for debug info
         }
@@ -34,7 +34,7 @@ void CPH_DebugBufferPush(CPH_DebugBuffer *buf, CPH_DebugCoordinates pos, uint32_
 
 void CPH_DebugBufferFree(CPH_DebugBuffer *buf) {
     if (buf->data) {
-        CulvNative_Free(buf->data);
+        CPH_Free(buf->data);
     }
     buf->data     = nullptr;
     buf->count    = 0;

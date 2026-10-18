@@ -14,8 +14,9 @@ static constexpr float kRagdollDefaultPartMass = 10.0f;
 static constexpr float kRagdollDefaultTwistMin = -0.1f;
 static constexpr float kRagdollDefaultTwistMax = 0.1f;
 
-PyCFunction_DeclareMethodFromModule CPH_PySkeletonAddJoint(CPH_SkeletonObject *self, PyObject *const *args,
-                                                       Py_ssize_t nargs, PyObject *kwnames) {
+PyCFunction_DeclareMethodFromModule CPH_PySkeleton_AddJoint(CPH_SkeletonObject *self, PyObject *const *args,
+                                                       size_t nargsf, PyObject *kwnames) {
+    const Py_ssize_t nargs = (Py_ssize_t)PyVectorcall_NARGS(nargsf);
     // 1. Setup Targets
     PyObject *name_obj = nullptr;
     int parent_idx     = -1; // Default to root
@@ -40,9 +41,10 @@ PyCFunction_DeclareMethodFromModule CPH_PySkeletonAddJoint(CPH_SkeletonObject *s
     return PyLong_FromLong(idx);
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PySkeletonGetJointIndex(CPH_SkeletonObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PySkeleton_GetJointIndex(CPH_SkeletonObject *self,
                                                              PyObject *const *args,
-                                                             Py_ssize_t nargs, PyObject *kwnames) {
+                                                             size_t nargsf, PyObject *kwnames) {
+    const Py_ssize_t nargs = (Py_ssize_t)PyVectorcall_NARGS(nargsf);
     // 1. Setup Targets
     PyObject *name_obj                                    = nullptr;
     const void *const restrict targets[GetJointIdx_COUNT] = {
@@ -65,7 +67,7 @@ PyCFunction_DeclareMethodFromModule CPH_PySkeletonGetJointIndex(CPH_SkeletonObje
     return PyLong_FromLong(idx);
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PySkeletonFinalize(CPH_SkeletonObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PySkeleton_Finalize(CPH_SkeletonObject *self,
                                                       PyObject *args [[maybe_unused]]) {
     if (!CPH_PhysicsRagdollSkeletonFinalize(self->skeleton)) {
         PyErr_SetString(PyExc_RuntimeError,
@@ -75,7 +77,7 @@ PyCFunction_DeclareMethodFromModule CPH_PySkeletonFinalize(CPH_SkeletonObject *s
     Py_RETURN_NONE;
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyRagdollSettingsStabilize(CPH_RagdollSettingsObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyRagdollSettings_Stabilize(CPH_RagdollSettingsObject *self,
                                                               PyObject *args [[maybe_unused]]) {
     if (CPH_PhysicsRagdollSettingsStabilize(self->settings)) {
         Py_RETURN_TRUE;
@@ -83,9 +85,10 @@ PyCFunction_DeclareMethodFromModule CPH_PyRagdollSettingsStabilize(CPH_RagdollSe
     Py_RETURN_FALSE;
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyRagdollDriveToPose(CPH_RagdollObject *self,
-                                                          PyObject *const *args, Py_ssize_t nargs,
+PyCFunction_DeclareMethodFromModule CPH_PyRagdoll_DriveToPose(CPH_RagdollObject *self,
+                                                          PyObject *const *args, size_t nargsf,
                                                           PyObject *kwnames) {
+    const Py_ssize_t nargs = (Py_ssize_t)PyVectorcall_NARGS(nargsf);
     // 1. FAST ARGUMENT PARSING
     CPH_PosStride root_p      = {};
     CPH_AuxStride root_q      = {.w = 1.0f};
@@ -141,7 +144,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyRagdollDriveToPose(CPH_RagdollObject *
     Py_RETURN_NONE;
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyRagdollGetBodyHandles(CPH_RagdollObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyRagdoll_GetBodyHandles(CPH_RagdollObject *self,
                                                              PyObject *args [[maybe_unused]]) {
     if (self->body_count > (size_t)PY_SSIZE_T_MAX ||
         self->body_count > SIZE_MAX / sizeof(CPH_PhysicsRagdollBodyHandleInfo)) {
@@ -155,7 +158,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyRagdollGetBodyHandles(CPH_RagdollObjec
     }
 
     CPH_PhysicsRagdollBodyHandleInfo *handles =
-        body_count ? PyMem_Malloc((size_t)body_count * sizeof(*handles)) : nullptr;
+        body_count ? CPH_PyAlloc((size_t)body_count * sizeof(*handles)) : nullptr;
     if (body_count && !handles) {
         Py_DECREF(list);
         return PyErr_NoMemory();
@@ -167,7 +170,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyRagdollGetBodyHandles(CPH_RagdollObjec
         if (handles[i].alive) {
             PyObject *handle = PyLong_FromUnsignedLongLong((uint64_t)handles[i].handle);
             if (!handle) {
-                PyMem_Free(handles);
+                CPH_PyFree(handles);
                 Py_DECREF(list);
                 return nullptr;
             }
@@ -178,11 +181,11 @@ PyCFunction_DeclareMethodFromModule CPH_PyRagdollGetBodyHandles(CPH_RagdollObjec
         }
     }
 
-    PyMem_Free(handles);
+    CPH_PyFree(handles);
     return list;
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyRagdollGetDebugInfo(CPH_RagdollObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyRagdoll_GetDebugInfo(CPH_RagdollObject *self,
                                                            PyObject *ignored [[maybe_unused]]) {
     if (!self->ragdoll || !self->world) {
         Py_RETURN_NONE;
@@ -199,14 +202,14 @@ PyCFunction_DeclareMethodFromModule CPH_PyRagdollGetDebugInfo(CPH_RagdollObject 
     }
 
     CPH_PhysicsRagdollBodyDebugInfo *info =
-        body_count ? PyMem_Malloc((size_t)body_count * sizeof(*info)) : nullptr;
+        body_count ? CPH_PyAlloc((size_t)body_count * sizeof(*info)) : nullptr;
     if (body_count && !info) {
         Py_DECREF(list);
         return PyErr_NoMemory();
     }
     if (!CPH_PhysicsRagdollCopyDebugInfo(&self->world->physics, self->ragdoll, info,
                                          (size_t)body_count)) {
-        PyMem_Free(info);
+        CPH_PyFree(info);
         Py_DECREF(list);
         return PyErr_Format(PyExc_RuntimeError, "Unable to read ragdoll body state");
     }
@@ -220,7 +223,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyRagdollGetDebugInfo(CPH_RagdollObject 
                                 part->linear_velocity.z));
 
         if (!dict) {
-            PyMem_Free(info);
+            CPH_PyFree(info);
             Py_DECREF(list);
             return nullptr;
         }
@@ -228,23 +231,23 @@ PyCFunction_DeclareMethodFromModule CPH_PyRagdollGetDebugInfo(CPH_RagdollObject 
         PyList_SET_ITEM(list, i, dict);
     }
 
-    PyMem_Free(info);
+    CPH_PyFree(info);
     return list;
 }
 
-PyType_DeclareSlot_VoidFromModule CPH_PySkeletonDealloc(CPH_SkeletonObject *self) {
+PyType_DeclareSlot_VoidFromModule CPH_PySkeleton_Dealloc(CPH_SkeletonObject *self) {
     if (self->skeleton) {
         CPH_PhysicsRagdollSkeletonDestroy(self->skeleton);
     }
     if (self->parsers) {
         CPH_CulverinFreeSkeletonParsers(self->parsers);
-        PyMem_Free(self->parsers);
+        CPH_PyFree(self->parsers);
     }
     Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
 PyType_DeclareSlot_ObjectFromModule
-CPH_PySkeletonNew(PyTypeObject *type, PyObject *args [[maybe_unused]], PyObject *kwds [[maybe_unused]]) {
+CPH_PySkeleton_New(PyTypeObject *type, PyObject *args [[maybe_unused]], PyObject *kwds [[maybe_unused]]) {
     auto self = (CPH_SkeletonObject *)type->tp_alloc(type, 0);
     if (self) {
         self->skeleton = CPH_PhysicsRagdollSkeletonCreate();
@@ -252,7 +255,7 @@ CPH_PySkeletonNew(PyTypeObject *type, PyObject *args [[maybe_unused]], PyObject 
             Py_DECREF(self);
             return PyErr_NoMemory();
         }
-        self->parsers = (CPH_SkeletonParsers *)PyMem_Malloc(sizeof(CPH_SkeletonParsers));
+        self->parsers = (CPH_SkeletonParsers *)CPH_PyAlloc(sizeof(CPH_SkeletonParsers));
         if (!self->parsers) {
             CPH_PhysicsRagdollSkeletonDestroy(self->skeleton);
             self->skeleton = nullptr;
@@ -264,13 +267,13 @@ CPH_PySkeletonNew(PyTypeObject *type, PyObject *args [[maybe_unused]], PyObject 
     return (PyObject *)self;
 }
 
-PyType_DeclareSlot_VoidFromModule CPH_PyRagdollSettingsDealloc(CPH_RagdollSettingsObject *self) {
+PyType_DeclareSlot_VoidFromModule CPH_PyRagdollSettings_Dealloc(CPH_RagdollSettingsObject *self) {
     if (self->settings) {
         CPH_PhysicsRagdollSettingsDestroy(self->settings);
     }
     if (self->parsers) {
         CPH_CulverinFreeRagdollSettingsParsers(self->parsers);
-        PyMem_Free(self->parsers);
+        CPH_PyFree(self->parsers);
     }
     Py_XDECREF(self->world);
     Py_TYPE(self)->tp_free((PyObject *)self);
@@ -279,7 +282,7 @@ PyType_DeclareSlot_VoidFromModule CPH_PyRagdollSettingsDealloc(CPH_RagdollSettin
 // --- Ragdoll Instance Implementation ---
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-PyType_DeclareSlot_VoidFromModule CPH_PyRagdollDealloc(CPH_RagdollObject *self) {
+PyType_DeclareSlot_VoidFromModule CPH_PyRagdoll_Dealloc(CPH_RagdollObject *self) {
     if (self->ragdoll) {
         CPH_PhysicsWorld *world = self->world ? &self->world->physics : nullptr;
         Py_BEGIN_ALLOW_THREADS CPH_PhysicsRagdollDeallocate(world, self->ragdoll, self->body_slots,
@@ -288,22 +291,23 @@ PyType_DeclareSlot_VoidFromModule CPH_PyRagdollDealloc(CPH_RagdollObject *self) 
     }
 
     if (self->body_slots) {
-        CULV_RAW_FREE(self->body_slots);
+        CPH_PyFree(self->body_slots);
         self->body_slots = nullptr;
     }
 
     if (self->parsers) {
         CPH_CulverinFreeRagdollParsers(self->parsers);
-        PyMem_Free(self->parsers);
+        CPH_PyFree(self->parsers);
     }
 
     Py_XDECREF(self->world);
     Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyRagdollSettingsAddPart(CPH_RagdollSettingsObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyRagdollSettings_AddPart(CPH_RagdollSettingsObject *self,
                                                              PyObject *const *args,
-                                                             Py_ssize_t nargs, PyObject *kwnames) {
+                                                             size_t nargsf, PyObject *kwnames) {
+    const Py_ssize_t nargs = (Py_ssize_t)PyVectorcall_NARGS(nargsf);
     // 1. Setup Defaults
     int joint_idx     = 0;
     int parent_idx    = -1;
@@ -398,6 +402,10 @@ PyCFunction_DeclareMethodFromModule CPH_PyRagdollSettingsAddPart(CPH_RagdollSett
 #define CPH_RDS_FASTCALL(fn, name) CPH_FEAT(fn, name, METH_FASTCALL | METH_KEYWORDS)
 #define CPH_RDS_NOARGS(fn, name) CPH_FEAT(fn, name, METH_NOARGS)
 
+static PyMethodDef kRagdollMethods[] = {
+
+                     CPH_RDS_FASTCALL(CPH_PyRagdollSettings_AddPart, add_part), CPH_RDS_NOARGS(CPH_PyRagdollSettings_Stabilize, stabilize), {nullptr, nullptr, 0, nullptr}};
+
 PyType_Spec RagdollSettings_spec = {
     .name      = "culverin._culverin_c.RagdollSettings",
     .basicsize = sizeof(CPH_RagdollSettingsObject),
@@ -405,14 +413,8 @@ PyType_Spec RagdollSettings_spec = {
     .slots =
         (PyType_Slot[]){
 
-            {.slot = Py_tp_dealloc, .pfunc = CPH_PyRagdollSettingsDealloc},
-            {.slot = Py_tp_methods,
-             .pfunc =
-                 (PyMethodDef[]){
-
-                     CPH_RDS_FASTCALL(CPH_PyRagdollSettingsAddPart, add_part), CPH_RDS_NOARGS(CPH_PyRagdollSettingsStabilize, stabilize), {}
-
-                 }},
+            {.slot = Py_tp_dealloc, .pfunc = CPH_PyRagdollSettings_Dealloc},
+            {.slot = Py_tp_methods, .pfunc = kRagdollMethods },
             {},
 
         },
@@ -425,15 +427,15 @@ PyType_Spec Skeleton_spec = {
     .slots =
         (PyType_Slot[]){
 
-            {.slot = Py_tp_new, .pfunc = CPH_PySkeletonNew},
-            {.slot = Py_tp_dealloc, .pfunc = CPH_PySkeletonDealloc},
+            {.slot = Py_tp_new, .pfunc = CPH_PySkeleton_New},
+            {.slot = Py_tp_dealloc, .pfunc = CPH_PySkeleton_Dealloc},
             {.slot = Py_tp_methods,
              .pfunc =
                  (PyMethodDef[]){
 
-                     CPH_SKEL_FASTCALL(CPH_PySkeletonAddJoint, add_joint),
-                     CPH_SKEL_FASTCALL(CPH_PySkeletonGetJointIndex, get_joint_index),
-                     CPH_SKEL_NOARGS(CPH_PySkeletonFinalize, finalize),
+                     CPH_SKEL_FASTCALL(CPH_PySkeleton_AddJoint, add_joint),
+                     CPH_SKEL_FASTCALL(CPH_PySkeleton_GetJointIndex, get_joint_index),
+                     CPH_SKEL_NOARGS(CPH_PySkeleton_Finalize, finalize),
                      {}
 
                  }},
@@ -448,14 +450,14 @@ PyType_Spec Ragdoll_spec = {
     .flags     = Py_TPFLAGS_DEFAULT,
     .slots =
         (PyType_Slot[]){
-            {.slot = Py_tp_dealloc, .pfunc = CPH_PyRagdollDealloc},
+            {.slot = Py_tp_dealloc, .pfunc = CPH_PyRagdoll_Dealloc},
             {.slot = Py_tp_methods,
              .pfunc =
                  (PyMethodDef[]){
 
-                     CPH_RD_FASTCALL(CPH_PyRagdollDriveToPose, drive_to_pose),
-                     CPH_RD_NOARGS(CPH_PyRagdollGetBodyHandles, get_body_handles),
-                     CPH_RD_NOARGS(CPH_PyRagdollGetDebugInfo, get_debug_info),
+                     CPH_RD_FASTCALL(CPH_PyRagdoll_DriveToPose, drive_to_pose),
+                     CPH_RD_NOARGS(CPH_PyRagdoll_GetBodyHandles, get_body_handles),
+                     CPH_RD_NOARGS(CPH_PyRagdoll_GetDebugInfo, get_debug_info),
                      {}
 
                  }},

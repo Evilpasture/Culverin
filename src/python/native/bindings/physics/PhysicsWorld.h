@@ -18,22 +18,16 @@ typedef struct CPH_PhysicsWorldObject {
 // Python/GIL-aware adapter around the native command processor.
 void CPH_SyncAndFlushInternal(CPH_PhysicsWorldObject *self);
 
-// Translate native handle validation into Python exceptions only at the binding boundary.
-#define CPH_CHECK_HANDLE(h_raw, slot_out)                                                              \
-    do {                                                                                           \
-        static_assert(sizeof(CPH_TYPE_OF(h_raw)) == sizeof(uint64_t));                            \
-        static_assert(sizeof(CPH_TYPE_OF(slot_out)) == sizeof(uint32_t));                         \
-        if (CPH_UNLIKELY(!unpack_handle(&self->physics, (BodyHandle)(h_raw), &(slot_out)))) {          \
-            CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);                                            \
-            CPH_RAISE_STALE_HANDLE();                                                                  \
-        }                                                                                          \
-    } while (false)
+// Validate a raw handle against the shadow state. On failure the shadow lock
+// is released and ValueError is raised; the caller must return nullptr.
+[[nodiscard]] static inline bool CPH_ValidateHandle(CPH_PhysicsWorldObject *self, uint64_t h_raw,
+                                                    uint32_t *out_slot) {
+    if (CPH_UNLIKELY(!unpack_handle(&self->physics, (BodyHandle)h_raw, out_slot))) {
+        CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
+        PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
+        return false;
+    }
+    return true;
+}
 
-#define CPH_CHECK_STATE(state_val, slot_mask)                                                          \
-    do {                                                                                           \
-        static_assert(sizeof(state_val) == sizeof(slot_mask));                                     \
-        if (CPH_UNLIKELY(!is_state_valid((state_val), (slot_mask)))) {                                 \
-            CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);                                            \
-            CPH_RAISE_STALE_HANDLE();                                                                  \
-        }                                                                                          \
-    } while (false)
+

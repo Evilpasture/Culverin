@@ -4,22 +4,22 @@
 #include "physics/Query.h"
 #include <Python.h>
 
-PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldOverlapSphere(CPH_PhysicsWorldObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyWorld_OverlapSphere(CPH_PhysicsWorldObject *self,
                                                                 PyObject *const *args,
                                                                 size_t nargsf, PyObject *kwnames);
 
-PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldOverlapAabb(CPH_PhysicsWorldObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyWorld_OverlapAabb(CPH_PhysicsWorldObject *self,
                                                               PyObject *const *args, size_t nargsf,
                                                               PyObject *kwnames);
 
-PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldRaycast(CPH_PhysicsWorldObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyWorld_Raycast(CPH_PhysicsWorldObject *self,
                                                          PyObject *const *args, size_t nargsf,
                                                          PyObject *kwnames);
 
-PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldRaycastBatch(CPH_PhysicsWorldObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyWorld_RaycastBatch(CPH_PhysicsWorldObject *self,
                                                                PyObject *const *args, size_t nargsf,
                                                                PyObject *kwnames);
 
-PyCFunction_DeclareMethodFromModule CPH_PyPhysicsWorldShapecast(CPH_PhysicsWorldObject *self,
+PyCFunction_DeclareMethodFromModule CPH_PyWorld_Shapecast(CPH_PhysicsWorldObject *self,
                                                            PyObject *const *args, size_t nargsf,
                                                            PyObject *kwnames);

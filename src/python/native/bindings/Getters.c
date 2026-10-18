@@ -259,12 +259,12 @@ PyGetSet_DeclareGetter CPH_GetShapeCount(CPH_PhysicsWorldObject *self, [[maybe_u
     return PyLong_FromSize_t(count);
 }
 
-PyGetSet_DeclareGetter CPH_PyPhysicsWorldGetMaxBodies(CPH_PhysicsWorldObject *self,
+PyGetSet_DeclareGetter CPH_PyWorld_GetMaxBodies(CPH_PhysicsWorldObject *self,
                                                    [[maybe_unused]] void *closure) {
     return PyLong_FromUnsignedLong(self->physics.max_jolt_bodies);
 }
 
-PyGetSet_DeclareGetter CPH_PyPhysicsWorldGetRemainingCapacity(CPH_PhysicsWorldObject *self,
+PyGetSet_DeclareGetter CPH_PyWorld_GetRemainingCapacity(CPH_PhysicsWorldObject *self,
                                                            [[maybe_unused]] void *closure) {
     // TSan Fix: Lock-free calculation using atomic count.
     size_t current = atomic_load_explicit(&self->physics.count, memory_order_acquire);

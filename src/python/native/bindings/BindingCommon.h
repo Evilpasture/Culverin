@@ -12,7 +12,7 @@
 // ASAN COMPATIBILITY ALLOCATORS
 // =========================================================================
 [[clang::ownership_returns(culv_mem)]] [[gnu::always_inline]]
-static inline void *CULV_RAW_MALLOC(size_t sz) {
+static inline void *CPH_PyAlloc(size_t sz) {
 #ifdef ENABLE_SANITIZER
     return malloc(sz);
 #else
@@ -20,7 +20,7 @@ static inline void *CULV_RAW_MALLOC(size_t sz) {
 #endif
 }
 [[clang::ownership_returns(culv_mem)]] [[gnu::always_inline]]
-static inline void *CULV_RAW_CALLOC(size_t n, size_t sz) {
+static inline void *CPH_PyCalloc(size_t n, size_t sz) {
 #ifdef ENABLE_SANITIZER
     return calloc(n, sz);
 #else
@@ -29,7 +29,7 @@ static inline void *CULV_RAW_CALLOC(size_t n, size_t sz) {
 }
 [[clang::ownership_takes(culv_mem,
                          1)]] [[clang::ownership_returns(culv_mem)]] [[gnu::always_inline]]
-static inline void *CULV_RAW_REALLOC(void *ptr, size_t sz) {
+static inline void *CPH_PyRealloc(void *ptr, size_t sz) {
 #ifdef ENABLE_SANITIZER
     return realloc(ptr, sz);
 #else
@@ -37,7 +37,7 @@ static inline void *CULV_RAW_REALLOC(void *ptr, size_t sz) {
 #endif
 }
 [[clang::ownership_takes(culv_mem, 1)]] [[gnu::always_inline]]
-static inline void CULV_RAW_FREE(void *ptr) {
+static inline void CPH_PyFree(void *ptr) {
 #ifdef ENABLE_SANITIZER
     free(ptr);
 #else
@@ -185,17 +185,3 @@ static PyObject *culv_raise_finite_err(const char *msg) {
 #define CPH_VALIDATE_FINITE_QUAT(x, y, z, w, name) CPH_VALIDATE_FINITE_CORE(name, x, y, z, w)
 #define CPH_VALIDATE_FINITE_VEC4(x, y, z, w, name) CPH_VALIDATE_FINITE_CORE(name, x, y, z, w)
 
-// DOESN'T DO THE SHADOW UNLOCKING FOR YOU. REMEMBER!
-// DEFINE STRICT_HANDLE_ENABLED IN THE BUILD IF YOU WANT IT TO FAIL FAST
-#if defined(STRICT_HANDLE_ENABLED)
-#    define CPH_RAISE_STALE_HANDLE()                                                                   \
-        do {                                                                                       \
-            PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");                          \
-            return nullptr;                                                                        \
-        } while (false)
-#else
-#    define CPH_RAISE_STALE_HANDLE()                                                                   \
-        do {                                                                                       \
-            Py_RETURN_NONE;                                                                        \
-        } while (false)
-#endif

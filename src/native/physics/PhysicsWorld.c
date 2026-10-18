@@ -197,11 +197,11 @@ int CPH_AllocateConstraints(CPH_PhysicsWorld *world) {
     constexpr uint32_t CONSTRAINT_INITIAL_CAPACITY = 256;
     world->constraint_capacity                      = CONSTRAINT_INITIAL_CAPACITY;
     world->constraints =
-        (JPH_Constraint **)CulvNative_Calloc(CONSTRAINT_INITIAL_CAPACITY, sizeof(JPH_Constraint *));
-    world->constraint_generations = CulvNative_Calloc(CONSTRAINT_INITIAL_CAPACITY, sizeof(uint32_t));
-    world->free_constraint_slots  = CulvNative_Malloc(CONSTRAINT_INITIAL_CAPACITY * sizeof(uint32_t));
-    world->constraint_states      = CulvNative_Calloc(CONSTRAINT_INITIAL_CAPACITY, sizeof(uint8_t));
-    world->constraint_types       = CulvNative_Calloc(CONSTRAINT_INITIAL_CAPACITY, sizeof(int));
+        (JPH_Constraint **)CPH_Calloc(CONSTRAINT_INITIAL_CAPACITY, sizeof(JPH_Constraint *));
+    world->constraint_generations = CPH_Calloc(CONSTRAINT_INITIAL_CAPACITY, sizeof(uint32_t));
+    world->free_constraint_slots  = CPH_Alloc(CONSTRAINT_INITIAL_CAPACITY * sizeof(uint32_t));
+    world->constraint_states      = CPH_Calloc(CONSTRAINT_INITIAL_CAPACITY, sizeof(uint8_t));
+    world->constraint_types       = CPH_Calloc(CONSTRAINT_INITIAL_CAPACITY, sizeof(int));
 
     if (!world->constraints || !world->free_constraint_slots || !world->constraint_generations ||
         !world->constraint_states || !world->constraint_types) {
@@ -369,29 +369,29 @@ static int alloc_new_buffers(CPH_NewBuffers *nb, size_t cap) {
     *nb = (CPH_NewBuffers){};
 
     // SIMD-Heavy Buffers: AVX alignment (Non-atomic)
-    nb->pos  = (JPH_Real *)CulvNative_AlignedMalloc(cap * sizeof(CPH_PosStride), kAvxAlignment);
-    nb->ppos = (JPH_Real *)CulvNative_AlignedMalloc(cap * sizeof(CPH_PosStride), kAvxAlignment);
-    nb->rot  = (float *)CulvNative_AlignedMalloc(cap * sizeof(CPH_AuxStride), kAvxAlignment);
-    nb->prot = (float *)CulvNative_AlignedMalloc(cap * sizeof(CPH_AuxStride), kAvxAlignment);
-    nb->lvel = (float *)CulvNative_AlignedMalloc(cap * sizeof(CPH_AuxStride), kAvxAlignment);
-    nb->avel = (float *)CulvNative_AlignedMalloc(cap * sizeof(CPH_AuxStride), kAvxAlignment);
+    nb->pos  = (JPH_Real *)CPH_AlignedAlloc(cap * sizeof(CPH_PosStride), kAvxAlignment);
+    nb->ppos = (JPH_Real *)CPH_AlignedAlloc(cap * sizeof(CPH_PosStride), kAvxAlignment);
+    nb->rot  = (float *)CPH_AlignedAlloc(cap * sizeof(CPH_AuxStride), kAvxAlignment);
+    nb->prot = (float *)CPH_AlignedAlloc(cap * sizeof(CPH_AuxStride), kAvxAlignment);
+    nb->lvel = (float *)CPH_AlignedAlloc(cap * sizeof(CPH_AuxStride), kAvxAlignment);
+    nb->avel = (float *)CPH_AlignedAlloc(cap * sizeof(CPH_AuxStride), kAvxAlignment);
 
     // ATOMIC Data Buffers
     // gens is CULV_ATOMIC(uint32_t)*
-    nb->gens = (CPH_ATOMIC(uint32_t) *)CulvNative_Malloc(cap * sizeof(CPH_ATOMIC(uint32_t)));
+    nb->gens = (CPH_ATOMIC(uint32_t) *)CPH_Alloc(cap * sizeof(CPH_ATOMIC(uint32_t)));
     // stat is CULV_ATOMIC(uint8_t)*
-    nb->stat = (CPH_ATOMIC(uint8_t) *)CulvNative_Malloc(cap * sizeof(CPH_ATOMIC(uint8_t)));
+    nb->stat = (CPH_ATOMIC(uint8_t) *)CPH_Alloc(cap * sizeof(CPH_ATOMIC(uint8_t)));
 
     // Standard Data Buffers
-    nb->bids  = (JPH_BodyID *)CulvNative_Malloc(cap * sizeof(JPH_BodyID));
-    nb->udat  = (uint64_t *)CulvNative_Calloc(cap, sizeof(uint64_t));
-    nb->s2d   = (uint32_t *)CulvNative_Malloc(cap * sizeof(uint32_t));
-    nb->d2s   = (uint32_t *)CulvNative_Malloc(cap * sizeof(uint32_t));
-    nb->free  = (uint32_t *)CulvNative_Malloc(cap * sizeof(uint32_t));
-    nb->cats  = (uint32_t *)CulvNative_Malloc(cap * sizeof(uint32_t));
-    nb->masks = (uint32_t *)CulvNative_Malloc(cap * sizeof(uint32_t));
-    nb->mats  = (uint32_t *)CulvNative_Calloc(cap, sizeof(uint32_t));
-    nb->softs = (CPH_SoftBodyShadow *)CulvNative_Calloc(cap, sizeof(CPH_SoftBodyShadow));
+    nb->bids  = (JPH_BodyID *)CPH_Alloc(cap * sizeof(JPH_BodyID));
+    nb->udat  = (uint64_t *)CPH_Calloc(cap, sizeof(uint64_t));
+    nb->s2d   = (uint32_t *)CPH_Alloc(cap * sizeof(uint32_t));
+    nb->d2s   = (uint32_t *)CPH_Alloc(cap * sizeof(uint32_t));
+    nb->free  = (uint32_t *)CPH_Alloc(cap * sizeof(uint32_t));
+    nb->cats  = (uint32_t *)CPH_Alloc(cap * sizeof(uint32_t));
+    nb->masks = (uint32_t *)CPH_Alloc(cap * sizeof(uint32_t));
+    nb->mats  = (uint32_t *)CPH_Calloc(cap, sizeof(uint32_t));
+    nb->softs = (CPH_SoftBodyShadow *)CPH_Calloc(cap, sizeof(CPH_SoftBodyShadow));
 
     // Validation
     if (!NewBuffers_check_alloc(nb)) {
@@ -490,66 +490,66 @@ int CPH_AllocateBuffers(CPH_PhysicsWorld *world, int max_bodies, size_t initial_
 
     // SIMD Aligned Buffers (Not atomic, these are the heavy data buffers)
     world->positions =
-        (JPH_Real *)CulvNative_AlignedMalloc(world->capacity * sizeof(CPH_PosStride), kAvxAlignment);
+        (JPH_Real *)CPH_AlignedAlloc(world->capacity * sizeof(CPH_PosStride), kAvxAlignment);
     world->prev_positions =
-        (JPH_Real *)CulvNative_AlignedMalloc(world->capacity * sizeof(CPH_PosStride), kAvxAlignment);
+        (JPH_Real *)CPH_AlignedAlloc(world->capacity * sizeof(CPH_PosStride), kAvxAlignment);
 
     world->rotations =
-        (float *)CulvNative_AlignedMalloc(world->capacity * sizeof(CPH_AuxStride), kAvxAlignment);
+        (float *)CPH_AlignedAlloc(world->capacity * sizeof(CPH_AuxStride), kAvxAlignment);
     world->prev_rotations =
-        (float *)CulvNative_AlignedMalloc(world->capacity * sizeof(CPH_AuxStride), kAvxAlignment);
+        (float *)CPH_AlignedAlloc(world->capacity * sizeof(CPH_AuxStride), kAvxAlignment);
     world->linear_velocities =
-        (float *)CulvNative_AlignedMalloc(world->capacity * sizeof(CPH_AuxStride), kAvxAlignment);
+        (float *)CPH_AlignedAlloc(world->capacity * sizeof(CPH_AuxStride), kAvxAlignment);
     world->angular_velocities =
-        (float *)CulvNative_AlignedMalloc(world->capacity * sizeof(CPH_AuxStride), kAvxAlignment);
+        (float *)CPH_AlignedAlloc(world->capacity * sizeof(CPH_AuxStride), kAvxAlignment);
 
     world->body_ids =
-        (typeof(world->body_ids))CulvNative_Malloc(world->capacity * sizeof(typeof(*world->body_ids)));
+        (typeof(world->body_ids))CPH_Alloc(world->capacity * sizeof(typeof(*world->body_ids)));
     world->user_data =
-        (typeof(world->user_data))CulvNative_Calloc(world->capacity, sizeof(typeof(*world->user_data)));
-    world->categories = (typeof(world->categories))CulvNative_Malloc(world->capacity *
+        (typeof(world->user_data))CPH_Calloc(world->capacity, sizeof(typeof(*world->user_data)));
+    world->categories = (typeof(world->categories))CPH_Alloc(world->capacity *
                                                                  sizeof(typeof(*world->categories)));
     world->masks =
-        (typeof(world->masks))CulvNative_Malloc(world->capacity * sizeof(typeof(*world->masks)));
-    world->material_ids = (typeof(world->material_ids))CulvNative_Calloc(
+        (typeof(world->masks))CPH_Alloc(world->capacity * sizeof(typeof(*world->masks)));
+    world->material_ids = (typeof(world->material_ids))CPH_Calloc(
         world->capacity, sizeof(typeof(*world->material_ids)));
 
-    world->soft_shadows = (typeof(world->soft_shadows))CulvNative_Calloc(
+    world->soft_shadows = (typeof(world->soft_shadows))CPH_Calloc(
         world->capacity, sizeof(typeof(*world->soft_shadows)));
 
     // ATOMIC BUFFER ALLOCATIONS
     // id_to_handle_map is BodyHandle*
-    world->id_to_handle_map = (CPH_ATOMIC(typeof_unqual(*world->id_to_handle_map)) *)CulvNative_Malloc(
+    world->id_to_handle_map = (CPH_ATOMIC(typeof_unqual(*world->id_to_handle_map)) *)CPH_Alloc(
         (world->max_jolt_bodies + 1) * sizeof(typeof_unqual(*world->id_to_handle_map)));
 
-    world->jolt_body_ptrs = (typeof(world->jolt_body_ptrs))CulvNative_Calloc(
+    world->jolt_body_ptrs = (typeof(world->jolt_body_ptrs))CPH_Calloc(
         world->max_jolt_bodies + 1, sizeof(typeof(*world->jolt_body_ptrs)));
 
     // generations is CULV_ATOMIC(uint32_t)*
-    world->generations = (CPH_ATOMIC(uint32_t) *)CulvNative_Malloc(world->slot_capacity *
+    world->generations = (CPH_ATOMIC(uint32_t) *)CPH_Alloc(world->slot_capacity *
                                                                  sizeof(CPH_ATOMIC(uint32_t)));
 
     // slot_states is CULV_ATOMIC(uint8_t)*
-    world->slot_states = (CPH_ATOMIC(typeof_unqual(*world->slot_states)) *)CulvNative_Malloc(
+    world->slot_states = (CPH_ATOMIC(typeof_unqual(*world->slot_states)) *)CPH_Alloc(
         world->slot_capacity * sizeof(CPH_ATOMIC(typeof_unqual(*world->slot_states))));
 
     // Normal Indirection/Mapping Buffers
-    world->slot_to_dense = (uint32_t *)CulvNative_Malloc(world->slot_capacity * sizeof(uint32_t));
-    world->dense_to_slot = (uint32_t *)CulvNative_Malloc(world->slot_capacity * sizeof(uint32_t));
-    world->free_slots    = (uint32_t *)CulvNative_Malloc(world->slot_capacity * sizeof(uint32_t));
+    world->slot_to_dense = (uint32_t *)CPH_Alloc(world->slot_capacity * sizeof(uint32_t));
+    world->dense_to_slot = (uint32_t *)CPH_Alloc(world->slot_capacity * sizeof(uint32_t));
+    world->free_slots    = (uint32_t *)CPH_Alloc(world->slot_capacity * sizeof(uint32_t));
 
-    world->command_queue = (PhysicsCommand *)CulvNative_AlignedMalloc(
+    world->command_queue = (PhysicsCommand *)CPH_AlignedAlloc(
         kCommandQueueInitialCapacity * sizeof(PhysicsCommand), kMemoryAlignmentSize);
-    world->command_queue_spare = (PhysicsCommand *)CulvNative_AlignedMalloc(
+    world->command_queue_spare = (PhysicsCommand *)CPH_AlignedAlloc(
         kCommandQueueInitialCapacity * sizeof(PhysicsCommand), kMemoryAlignmentSize);
     world->command_capacity = kCommandQueueInitialCapacity;
 
     world->trash_capacity = 4;
     world->trash_count    = 0;
-    world->trash_buffers  = (CPH_NewBuffers *)CulvNative_Calloc(world->trash_capacity, sizeof(CPH_NewBuffers));
+    world->trash_buffers  = (CPH_NewBuffers *)CPH_Calloc(world->trash_capacity, sizeof(CPH_NewBuffers));
 
     world->contact_max_capacity = kContactMaxCapacity;
-    world->contact_buffer = (CPH_ContactEvent *)CulvNative_AlignedMalloc(
+    world->contact_buffer = (CPH_ContactEvent *)CPH_AlignedAlloc(
         world->contact_max_capacity * sizeof(CPH_ContactEvent), kMemoryAlignmentSize);
 
     if (!world->positions || !world->prev_positions || !world->rotations ||
@@ -622,7 +622,7 @@ PhysicsWorldStatus CPH_PhysicsWorldResize(CPH_PhysicsWorld *world, size_t new_ca
     // 5. Expand Trash Bin
     if (CPH_UNLIKELY(world->trash_count >= world->trash_capacity)) {
         size_t next_cap = (world->trash_capacity == 0) ? 4 : world->trash_capacity * 2;
-        void *new_trash = CulvNative_Realloc(world->trash_buffers, next_cap * sizeof(CPH_NewBuffers));
+        void *new_trash = CPH_Realloc(world->trash_buffers, next_cap * sizeof(CPH_NewBuffers));
         if (!new_trash) {
             CPH_FreeNewBuffers(&nb);
             return PHYSICS_WORLD_STATUS_OUT_OF_MEMORY;

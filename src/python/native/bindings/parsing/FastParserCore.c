@@ -1,4 +1,5 @@
 #include "FastParserCore.h"
+#include "bindings/BindingCommon.h"
 #include <stdlib.h>
 
 static const CulvFastParseFunc kFastParseMonoStubs[] = {
@@ -584,8 +585,8 @@ void CPH_CulvFastParseInitImpl(CPH_CulvFastParser *fastparser, const CPH_CulvFas
 
     // 1. Allocate Hot and Cold arrays (Data-Oriented Split)
     // Using PyMem_RawMalloc to avoid GIL dependencies during allocation
-    fastparser->hot_specs  = (CPH_CulvFastArgSpecHot *)PyMem_RawMalloc(count * sizeof(CPH_CulvFastArgSpecHot));
-    fastparser->cold_specs = (CPH_CulvFastArgSpecCold *)PyMem_RawMalloc(count * sizeof(CPH_CulvFastArgSpecCold));
+    fastparser->hot_specs  = (CPH_CulvFastArgSpecHot *)CPH_PyAlloc(count * sizeof(CPH_CulvFastArgSpecHot));
+    fastparser->cold_specs = (CPH_CulvFastArgSpecCold *)CPH_PyAlloc(count * sizeof(CPH_CulvFastArgSpecCold));
 
     if (!fastparser->hot_specs || !fastparser->cold_specs) {
         Py_FatalError("Culverin parser: memory allocation failed during initialization.");
@@ -619,7 +620,7 @@ void CPH_CulvFastParseInitImpl(CPH_CulvFastParser *fastparser, const CPH_CulvFas
         }
 
         fastparser->table_mask   = table_size - 1;
-        fastparser->lookup_table = (uint16_t *)PyMem_RawMalloc(table_size * sizeof(uint16_t));
+        fastparser->lookup_table = (uint16_t *)CPH_PyAlloc(table_size * sizeof(uint16_t));
         if (!fastparser->lookup_table) {
             Py_FatalError("Culverin parser: failed to allocate lookup table.");
         }
@@ -674,17 +675,17 @@ void CPH_CulvFastParseDeinit(CPH_CulvFastParser *fastparser) {
             Py_XDECREF(fastparser->hot_specs[i].interned);
             fastparser->hot_specs[i].interned = nullptr;
         }
-        PyMem_RawFree(fastparser->hot_specs);
+        CPH_PyFree(fastparser->hot_specs);
         fastparser->hot_specs = nullptr;
     }
 
     if (fastparser->cold_specs) {
-        PyMem_RawFree(fastparser->cold_specs);
+        CPH_PyFree(fastparser->cold_specs);
         fastparser->cold_specs = nullptr;
     }
 
     if (fastparser->lookup_table) {
-        PyMem_RawFree(fastparser->lookup_table);
+        CPH_PyFree(fastparser->lookup_table);
         fastparser->lookup_table = nullptr;
     }
 }
