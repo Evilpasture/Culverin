@@ -47,10 +47,12 @@ add_custom_command(
 
 install(TARGETS _culverin_c DESTINATION .)
 
-# Install a matching PDB beside the extension on Windows only.
-if(WIN32 AND (MSVC OR CMAKE_CXX_COMPILER_ID MATCHES "Clang"))
+# Install a matching PDB beside the extension on Windows only. CMake selects
+# -gcodeview (PDB) for any compiler targeting the MSVC ABI; OPTIONAL tolerates
+# its absence elsewhere.
+if(WIN32)
     install(FILES $<TARGET_PDB_FILE:_culverin_c> DESTINATION . OPTIONAL)
     message(STATUS "Culverin: Windows PDB installation configured.")
 else()
-    message(STATUS "Culverin: Non-PDB platform/compiler detected, skipping PDB installation.")
+    message(STATUS "Culverin: Non-PDB platform detected, skipping PDB installation.")
 endif()
