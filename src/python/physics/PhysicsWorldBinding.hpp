@@ -2,7 +2,7 @@
 
 #include "bindings/PythonCommon.hpp"
 #include "physics/PhysicsWorldParsers.hpp"
-#include "physics/PhysicsWorldState.h"
+#include "physics/PhysicsWorldState.hpp"
 #include <Python.h>
 
 #include <cstddef>
@@ -30,7 +30,7 @@ void SyncAndFlushInternal(PhysicsWorldObject *self);
 [[nodiscard]] static inline bool ValidateHandle(PhysicsWorldObject *self, uint64_t h_raw,
                                                     uint32_t *out_slot) {
     if (CPH_UNLIKELY(!unpack_handle(&self->physics, static_cast<BodyHandle>(h_raw), out_slot))) {
-        CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
+        (self->physics.shadow_lock).unlock();
         PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
         return false;
     }

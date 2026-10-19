@@ -1,10 +1,11 @@
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
-#include <stdatomic.h>
-#include <stddef.h>
+#include <atomic>
+#include <cstddef>
 
-#include "core/Threading.h"
-#include "physics/CommandBuffer.h"
+#include "core/Threading.hpp"
+#include "physics/CommandBuffer.hpp"
+#include "physics/PhysicsWorld.hpp"
 #include "physics/PhysicsSync.hpp"
 #include "physics/PhysicsWorldBinding.hpp"
 
@@ -18,30 +19,19 @@ void SyncAndFlushInternal(PhysicsWorldObject *self) {
         return;
     }
 
-    atomic_store_explicit(&self->physics.is_stepping, true, memory_order_relaxed);
+    self->physics.is_stepping.store(true, std::memory_order::relaxed);
+    const auto detached = CPH_PhysicsWorldDetachCommands(&self->physics);
+    self->physics.shadow_lock.unlock();
 
-    PhysicsCommand *captured_queue = self->physics.command_queue;
-    size_t captured_count          = self->physics.command_count;
-
-    self->physics.command_queue       = self->physics.command_queue_spare;
-    self->physics.command_queue_spare = captured_queue;
-    self->physics.command_count       = 0;
-
-    CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
-
-    Py_BEGIN_ALLOW_THREADS CPH_NATIVE_MUTEX_LOCK(self->physics.jph_trampoline_lock);
-
-    CPH_FlushCommandsInternal(&self->physics, captured_queue, captured_count);
-
-    CPH_NATIVE_MUTEX_UNLOCK(self->physics.jph_trampoline_lock);
+    Py_BEGIN_ALLOW_THREADS {
+        const std::scoped_lock trampoline(self->physics.jph_trampoline_lock);
+        CPH_FlushCommandsInternal(&self->physics, detached);
+    }
     Py_END_ALLOW_THREADS
 
-        CPH_SHADOW_LOCK(&self->physics.shadow_lock);
-
-    atomic_store_explicit(&self->physics.is_stepping, false, memory_order_release);
-    CPH_NATIVE_MUTEX_LOCK(self->physics.step_sync.mutex);
-    CPH_NATIVE_COND_BROADCAST(self->physics.step_sync.cond);
-    CPH_NATIVE_MUTEX_UNLOCK(self->physics.step_sync.mutex);
+    self->physics.shadow_lock.lock();
+    self->physics.is_stepping.store(false, std::memory_order::release);
+    CPH_NotifyStepSync(&self->physics);
 }
 
 } // namespace CPH::Python

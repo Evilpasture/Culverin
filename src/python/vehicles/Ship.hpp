@@ -1,5 +1,5 @@
 #pragma once
-#include "core/CompilerSpecifics.h"
+#include "core/Compiler.hpp"
 #include "joltc.h"
 #include "physics/PhysicsWorldBinding.hpp"
 #include "vehicles/ShipParsers.hpp"
@@ -15,8 +15,8 @@ struct ShipObject {
     uint64_t sled_h_raw; // Added to store the Python-side handle
 
     // Inputs (Atomics so Python can write while C reads)
-    CPH_ATOMIC(float) input_fwd;
-    CPH_ATOMIC(float) input_right;
+    std::atomic<float> input_fwd;
+    std::atomic<float> input_right;
 
     // Config
     float kp;

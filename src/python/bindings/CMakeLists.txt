@@ -5,7 +5,7 @@ add_library(
     OBJECT
         Getters.cpp
         docstrings/Docstrings.cpp
-        docstrings/Docstrings.h
+        docstrings/Docstrings.hpp
         PythonCommon.hpp
         FastBuild.hpp
         Getters.hpp

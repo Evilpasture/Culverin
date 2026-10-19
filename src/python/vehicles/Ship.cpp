@@ -26,8 +26,8 @@ static void JPH_API_CALL Ship_OnStep(void *userData,
     JPH_BodyInterface_GetRotation(bi, self->sled_bid, &rot);
     JPH_BodyInterface_GetLinearVelocity(bi, self->sled_bid, &lin_vel);
 
-    float fwd_input   = atomic_load_explicit(&self->input_fwd, memory_order_relaxed);
-    float steer_input = atomic_load_explicit(&self->input_right, memory_order_relaxed);
+    float fwd_input   = (self->input_fwd).load(std::memory_order::relaxed);
+    float steer_input = (self->input_right).load(std::memory_order::relaxed);
 
     // 2. PD Stabilizer & Banking
     JPH_Vec3 up_dir = {0, 1.0f, 0};
@@ -107,16 +107,16 @@ static const JPH_PhysicsStepListener_Procs kShipListenerProcs = {.OnStep = Ship_
         return nullptr;
     }
 
-    CPH_SHADOW_LOCK(&self->physics.shadow_lock);
+    (self->physics.shadow_lock).lock();
     SyncAndFlushInternal(self);
 
     uint32_t slot;
     if (!unpack_handle(&self->physics, static_cast<BodyHandle>(sled_raw), &slot)) {
-        CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
+        (self->physics.shadow_lock).unlock();
         return PyErr_Format(PyExc_ValueError, "Invalid sled handle.");
     }
-    JPH_BodyID bid = self->physics.body_ids[self->physics.slot_to_dense[slot]];
-    CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
+    JPH_BodyID bid = self->physics.bodies.body_ids[self->physics.bodies.slot_to_dense[slot]];
+    (self->physics.shadow_lock).unlock();
     ModuleState *st = GetModuleState(PyType_GetModule(Py_TYPE(self)));
     auto obj = PyObject_GC_New(ShipObject, reinterpret_cast<PyTypeObject *>(st->ShipType));
     if (!obj) {
@@ -132,8 +132,8 @@ static const JPH_PhysicsStepListener_Procs kShipListenerProcs = {.OnStep = Ship_
     obj->world      = reinterpret_cast<PhysicsWorldObject *>(Py_NewRef(self));
     obj->sled_bid   = bid;
     obj->sled_h_raw = sled_raw;
-    atomic_init(&obj->input_fwd, 0.0f);
-    atomic_init(&obj->input_right, 0.0f);
+    (obj->input_fwd).store(0.0f, std::memory_order::relaxed);
+    (obj->input_right).store(0.0f, std::memory_order::relaxed);
     obj->kp               = kp;
     obj->kd               = kd;
     obj->throttle_force   = throttle;
@@ -143,11 +143,11 @@ static const JPH_PhysicsStepListener_Procs kShipListenerProcs = {.OnStep = Ship_
     obj->linear_drag      = drag;
 
     // Use global trampoline lock to register listener
-    CPH_NATIVE_MUTEX_LOCK(self->physics.jph_trampoline_lock);
+    (self->physics.jph_trampoline_lock).lock();
     JPH_PhysicsStepListener_SetProcs(&kShipListenerProcs);
     obj->listener = JPH_PhysicsStepListener_Create(obj);
     JPH_PhysicsSystem_AddStepListener(self->physics.system, obj->listener);
-    CPH_NATIVE_MUTEX_UNLOCK(self->physics.jph_trampoline_lock);
+    (self->physics.jph_trampoline_lock).unlock();
 
     PyObject_GC_Track(reinterpret_cast<PyObject *>(obj));
     return reinterpret_cast<PyObject *>(obj);
@@ -167,8 +167,8 @@ static const JPH_PhysicsStepListener_Procs kShipListenerProcs = {.OnStep = Ship_
 
     // No locks! Just update atomics.
     // The C listener running in the Jolt thread will pick these up automatically.
-    atomic_store_explicit(&self->input_fwd, fwd, memory_order_relaxed);
-    atomic_store_explicit(&self->input_right, right, memory_order_relaxed);
+    (self->input_fwd).store(fwd, std::memory_order::relaxed);
+    (self->input_right).store(right, std::memory_order::relaxed);
 
     Py_RETURN_NONE;
 }
@@ -179,10 +179,10 @@ void ShipDealloc(ShipObject *self) {
 
     if (self->world && self->listener) {
         // Protect Jolt system call with trampoline lock
-        CPH_NATIVE_MUTEX_LOCK(self->world->physics.jph_trampoline_lock);
+        (self->world->physics.jph_trampoline_lock).lock();
         JPH_PhysicsSystem_RemoveStepListener(self->world->physics.system, self->listener);
         JPH_PhysicsStepListener_Destroy(self->listener);
-        CPH_NATIVE_MUTEX_UNLOCK(self->world->physics.jph_trampoline_lock);
+        (self->world->physics.jph_trampoline_lock).unlock();
     }
 
     if (self->parsers) {

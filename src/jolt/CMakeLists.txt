@@ -3,9 +3,9 @@ add_library(
     culverin_native_jolt
     OBJECT
         JoltHandler.cpp
-        JoltHandler.h
-        JoltConfig.h
-        JoltUtils.h
+        JoltHandler.hpp
+        JoltConfig.hpp
+        JoltUtils.hpp
 )
 target_link_libraries(
     culverin_native_jolt

@@ -1,6 +1,6 @@
 #pragma once
 #include "joltc.h"
-#include "soft_bodies/SoftBodyCore.h"
+#include "soft_bodies/SoftBodyCore.hpp"
 #include "soft_bodies/SoftBodyParsers.hpp"
 #include <Python.h>
 

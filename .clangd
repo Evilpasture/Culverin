@@ -16,9 +16,9 @@ Diagnostics:
 
 ---
 If:
-  PathMatch: ['.*\.c$', '.*/extern/JoltC/.*\.h$']
+  PathMatch: ['.*/extern/JoltC/.*\.h$']
 CompileFlags:
-  Add: [-std=c23]
+  Add: [-std=c++23]
 
 ---
 If:

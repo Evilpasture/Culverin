@@ -1,4 +1,4 @@
-add_library(culverin_native_math OBJECT Math.cpp MathCore.h)
+add_library(culverin_native_math OBJECT Math.cpp MathCore.hpp)
 target_link_libraries(
     culverin_native_math
     PRIVATE culverin_native_common culverin_native_cpp

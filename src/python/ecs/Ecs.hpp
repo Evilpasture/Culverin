@@ -1,6 +1,6 @@
 #pragma once
-#include "core/CompilerSpecifics.h"
-#include "core/Threading.h"
+#include "core/Compiler.hpp"
+#include "core/Threading.hpp"
 #include "ecs/EcsParsers.hpp"
 #include <Python.h>
 
@@ -35,8 +35,8 @@ struct RegistryObject {
     SparseSet *components;
     uint32_t component_count;
     uint32_t component_capacity;
-    atomic_int view_export_count; // Track how many memoryviews are active
-    ShadowMutex ecs_lock;
+    std::atomic<int> view_export_count; // Track how many memoryviews are active
+    std::mutex ecs_lock;
 
     // Parsers
     CPH::Python::EcsParsers *parsers;

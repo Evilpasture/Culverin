@@ -1,5 +1,5 @@
 #pragma once
-#include "core/CompilerSpecifics.h"
+#include "core/Compiler.hpp"
 #include <Python.h>
 
 namespace CPH::Python {

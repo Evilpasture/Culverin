@@ -1,6 +1,6 @@
-#include "physics/ContactListener.h"
-#include "physics/ContactEventDefinitions.h"
-#include "physics/PhysicsWorldState.h"
+#include "physics/ContactListener.hpp"
+#include "physics/ContactEventDefinitions.hpp"
+#include "physics/PhysicsWorldState.hpp"
 
 // Include native Jolt headers for zero-cost abstractions and SIMD math
 #include <Jolt/Jolt.h>
@@ -10,6 +10,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 
 namespace {
 
@@ -22,29 +23,33 @@ CPH_NO_TSAN inline void RecordContact(CPH_PhysicsWorld *world, uint64_t r1, uint
                                       InfoExtractor &&extract_info) noexcept {
     // 1. Thread-safe Index Allocation
     const size_t idx =
-        std::atomic_fetch_add_explicit(&world->contact_atomic_idx, 1, std::memory_order_relaxed);
+        world->contact_atomic_idx.fetch_add(1, std::memory_order::relaxed);
     if (idx >= world->contact_max_capacity) [[unlikely]] {
         return;
     }
 
-    // 2. Fetch the newly structured 128-byte event
-    CPH_ContactEvent *ev_base   = GetEventAt(world->contact_buffer, idx);
-    CPH_ContactEventSlim *slim  = GetSlimHeader(ev_base);
-    CPH_ContactEventFatExt *fat = GetFatExtension(ev_base);
+    // 2. Fetch the newly structured 128-byte event. The buffer is
+    // allocate_for_overwrite, so zero the claimed slot first: fields this
+    // writer does not set are then defined zeros (legacy exposed
+    // uninitialized bytes here).
+    CPH_ContactEvent &event = world->contact_buffer[idx];
+    std::memset(&event, 0, sizeof(event));
+    CPH_ContactEventSlim *slim  = &event.slim;
+    CPH_ContactEventFatExt *fat = &event.fat;
 
     // 3. Set Event Type
     slim->flags = static_cast<uint32_t>(EventType);
 
     // 4. Canonicalize handles (Always sort lowest-to-highest for determinism)
     const bool swapped = (r1 > r2);
-    std::atomic_store_explicit(&slim->body1, swapped ? r2 : r1, std::memory_order_relaxed);
-    std::atomic_store_explicit(&slim->body2, swapped ? r1 : r2, std::memory_order_relaxed);
+    slim->body1.store(swapped ? r2 : r1, std::memory_order::relaxed);
+    slim->body2.store(swapped ? r1 : r2, std::memory_order::relaxed);
 
     // 5. Inject event-specific logic (Inlined lambda)
     extract_info(slim, fat, swapped);
 
     // 6. Memory Fence to publish the event to the Python extraction thread
-    std::atomic_thread_fence(std::memory_order_release);
+    std::atomic_thread_fence(std::memory_order::release);
 }
 
 // =================================================================================================
@@ -71,12 +76,12 @@ inline void ProcessManifoldEvent(CPH_PhysicsWorld *world, const JPH_Body *c_body
         return;
     }
 
-    const uint32_t idx1 = world->slot_to_dense[slot1];
-    const uint32_t idx2 = world->slot_to_dense[slot2];
+    const uint32_t idx1 = world->bodies.slot_to_dense[slot1];
+    const uint32_t idx2 = world->bodies.slot_to_dense[slot2];
 
     // Collision Bitmask Validation
-    if (!(world->categories[idx1] & world->masks[idx2]) ||
-        !(world->categories[idx2] & world->masks[idx1])) {
+    if (!(world->bodies.categories[idx1] & world->bodies.masks[idx2]) ||
+        !(world->bodies.categories[idx2] & world->bodies.masks[idx1])) {
         return;
     }
 
@@ -118,8 +123,8 @@ inline void ProcessManifoldEvent(CPH_PhysicsWorld *world, const JPH_Body *c_body
                 slim->sliding_speed = dv.LengthSq() - (dot * dot);
             }
 
-            fat->mat1 = world->material_ids[idx1];
-            fat->mat2 = world->material_ids[idx2];
+            fat->mat1 = world->bodies.material_ids[idx1];
+            fat->mat2 = world->bodies.material_ids[idx2];
         });
 }
 
@@ -151,12 +156,12 @@ void JPH_API_CALL OnContactRemoved(void *userData, const JPH_SubShapeIDPair *pai
     uint64_t r1 = 0;
     uint64_t r2 = 0;
 
-    if (world->id_to_handle_map != nullptr) [[likely]] {
+    if (world->id_to_handle_map) [[likely]] {
         if (i1 <= world->max_jolt_bodies) {
-            r1 = std::atomic_load_explicit(&world->id_to_handle_map[i1], std::memory_order_acquire);
+            r1 = world->id_to_handle_map[i1].load(std::memory_order::acquire);
         }
         if (i2 <= world->max_jolt_bodies) {
-            r2 = std::atomic_load_explicit(&world->id_to_handle_map[i2], std::memory_order_acquire);
+            r2 = world->id_to_handle_map[i2].load(std::memory_order::acquire);
         }
     }
 
@@ -198,13 +203,13 @@ auto JPH_API_CALL OnContactValidate(void *userData, const JPH_Body *c_body1,
         return JPH_ValidateResult_RejectContact;
     }
 
-    const uint32_t idx1 = world->slot_to_dense[slot1];
-    const uint32_t idx2 = world->slot_to_dense[slot2];
+    const uint32_t idx1 = world->bodies.slot_to_dense[slot1];
+    const uint32_t idx2 = world->bodies.slot_to_dense[slot2];
 
-    const uint32_t cat1  = world->categories[idx1];
-    const uint32_t mask1 = world->masks[idx1];
-    const uint32_t cat2  = world->categories[idx2];
-    const uint32_t mask2 = world->masks[idx2];
+    const uint32_t cat1  = world->bodies.categories[idx1];
+    const uint32_t mask1 = world->bodies.masks[idx1];
+    const uint32_t cat2  = world->bodies.categories[idx2];
+    const uint32_t mask2 = world->bodies.masks[idx2];
 
     if (((cat1 & mask2) == 0u) || ((cat2 & mask1) == 0u)) {
         return JPH_ValidateResult_RejectContact;
@@ -219,7 +224,7 @@ auto JPH_API_CALL OnContactValidate(void *userData, const JPH_Body *c_body1,
 // EXPORT STRUCTURE
 // =================================================================================================
 
-extern "C" const JPH_ContactListener_Procs contact_procs = {.OnContactValidate = OnContactValidate,
+const JPH_ContactListener_Procs contact_procs = {.OnContactValidate = OnContactValidate,
                                                             .OnContactAdded    = OnContactAdded,
                                                             .OnContactPersisted =
                                                                 OnContactPersisted,

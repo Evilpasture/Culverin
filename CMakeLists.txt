@@ -35,23 +35,23 @@ function(enforce_modern_compiler)
             "  Instruction:\n"
             "  1. Install Ninja (pip install ninja or winget install ninja)\n"
             "  2. Wipe your 'build' folder.\n"
-            "  3. Run: cmake -G \"Ninja\" -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ ..\n"
+            "  3. Run: cmake -G \"Ninja\" -DCMAKE_CXX_COMPILER=clang++ ..\n"
             " ################################################################\n"
         )
     endif()
 
-    # cl.exe (CMAKE_C_COMPILER_ID "MSVC") and clang-cl (cl-syntax dialect) are
+    # cl.exe (compiler ID "MSVC") and clang-cl (cl-syntax dialect) are
     # forbidden. Every supported toolchain speaks GCC-style flags.
-    if(CMAKE_C_COMPILER_ID AND NOT CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
-        find_program(CLANG_PATH NAMES clang)
-        find_program(GCC_PATH NAMES gcc)
+    if(CMAKE_CXX_COMPILER_ID AND NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        find_program(CLANG_PATH NAMES clang++)
+        find_program(GCC_PATH NAMES g++)
 
         string(
             APPEND HELP_MSG
             "\n################################################################\n"
-            " Guard triggered: ${CMAKE_C_COMPILER_ID} is incapable of compiling this project.\n"
+            " Guard triggered: ${CMAKE_CXX_COMPILER_ID} is incapable of compiling this project.\n"
             "################################################################\n"
-            " C23 features and Jolt optimization require the GNU flag dialect.\n"
+            " C++23 and Jolt optimization require the GNU flag dialect.\n"
             " Use clang.exe / clang++.exe (NOT clang-cl!) or GCC:\n"
         )
         if(CLANG_PATH)
@@ -64,7 +64,7 @@ function(enforce_modern_compiler)
             string(
                 APPEND HELP_MSG
                 "\n Instruction: wipe your 'build' folder and run:\n"
-                " cmake -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ ..\n"
+                " cmake -DCMAKE_CXX_COMPILER=clang++ ..\n"
             )
         else()
             string(
@@ -106,7 +106,7 @@ set(ENABLE_ALL_WARNINGS OFF CACHE BOOL "Jolt: no warning escalation" FORCE)
 # --- targets the MSVC ABI; inert everywhere else) ---
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 
-project(culverin LANGUAGES C CXX ASM)
+project(culverin LANGUAGES CXX)
 
 if(WIN32)
     # Apply the Windows SDK's own switches before any header can include Windows.h.
@@ -141,7 +141,7 @@ if(ENABLE_SANITIZER)
     add_link_options("-fsanitize=address" "-fsanitize=undefined")
 
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -fsanitize=undefined")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address -fsanitize=undefined")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -fsanitize=undefined")
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address -fsanitize=undefined")
     set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fsanitize=address -fsanitize=undefined")
 
@@ -164,7 +164,7 @@ if(ENABLE_THREAD_SANITIZER)
     add_link_options("-fsanitize=thread")
 
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=thread")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=thread")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=thread")
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=thread")
     set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fsanitize=thread")
 
@@ -177,9 +177,7 @@ enforce_modern_compiler()
 # ==============================================================================
 # 1.5 CAPABILITY PROBING — "ask what the compiler can do"
 # ==============================================================================
-include(CheckCCompilerFlag)
 include(CheckCXXCompilerFlag)
-include(CheckCSourceCompiles)
 
 # CPH_collect_supported_cxx_flags(<out_var> <flag>...)
 # Appends every flag the C++ compiler accepts to <out_var>.
@@ -195,54 +193,6 @@ function(CPH_collect_supported_cxx_flags out)
     endforeach()
     set(${out} "${_ok}" PARENT_SCOPE)
 endfunction()
-
-function(CPH_collect_supported_c_flags out)
-    set(_ok "")
-    foreach(flag IN LISTS ARGN)
-        string(REGEX REPLACE "[^A-Za-z0-9]" "_" _var "CPH_HAVE_C${flag}")
-        string(TOUPPER "${_var}" _var)
-        check_c_compiler_flag("${flag}" ${_var})
-        if(${_var})
-            list(APPEND _ok "${flag}")
-        endif()
-    endforeach()
-    set(${out} "${_ok}" PARENT_SCOPE)
-endfunction()
-
-# --- VERIFY THE COMPILER REALLY SPEAKS C23 -----------------------------------
-# We use modern C23 (constexpr, static_assert, plain-identifier auto, [[attrs]]).
-# Probe it against each spelling of the standard flag, most modern first.
-set(_CPH_C23_PROBE "
-#include <stdatomic.h>
-[[maybe_unused]] constexpr int CPH_probe_k = 42;
-static_assert(CPH_probe_k == 42, \"C23 static_assert/constexpr required\");
-int main(void) {
-    _Atomic int ready = 0;
-    auto v = CPH_probe_k;  /* plain-identifier auto deduction */
-    return (int)(v == 42) + (int)atomic_exchange(&ready, 1);
-}
-")
-set(CPH_C23_OK OFF)
-foreach(_std_flag "-std=gnu23" "-std=gnu2x")
-    string(REGEX REPLACE "[^A-Za-z0-9]" "_" _var "CPH_PROBE_C23_${_std_flag}")
-    string(TOUPPER "${_var}" _var)
-    set(CMAKE_REQUIRED_FLAGS "${_std_flag} -Werror")
-    check_c_source_compiles("${_CPH_C23_PROBE}" ${_var})
-    unset(CMAKE_REQUIRED_FLAGS)
-    if(${_var})
-        set(CPH_C23_OK ON)
-        message(STATUS "Culverin: C23 verified with ${_std_flag}")
-        break()
-    endif()
-endforeach()
-if(NOT CPH_C23_OK)
-    message(
-        FATAL_ERROR
-        "Culverin requires a C23-capable C compiler (constexpr/static_assert/auto).\n"
-        "Detected: ${CMAKE_C_COMPILER_ID} ${CMAKE_C_COMPILER_VERSION}.\n"
-        "GCC 14+, Clang 19+, or AppleClang 16+ are known to work."
-    )
-endif()
 
 # ==============================================================================
 # ASSERTION LEVEL MAPPING
@@ -260,9 +210,8 @@ set(CPH_ASSERT_DEFS
 )
 
 message(STATUS "--- COMPILER VERIFICATION ---")
-message(STATUS "ID:               ${CMAKE_C_COMPILER_ID}")
-message(STATUS "Flag dialect:     ${CMAKE_C_COMPILER_FRONTEND_VARIANT}")
-message(STATUS "C Compiler:       ${CMAKE_C_COMPILER}")
+message(STATUS "ID:               ${CMAKE_CXX_COMPILER_ID}")
+message(STATUS "Flag dialect:     ${CMAKE_CXX_COMPILER_FRONTEND_VARIANT}")
 message(STATUS "CXX Compiler:     ${CMAKE_CXX_COMPILER}")
 message(STATUS "Version:          ${CMAKE_CXX_COMPILER_VERSION}")
 message(STATUS "-----------------------------")
@@ -276,12 +225,9 @@ if(CPH_FRTTI)
     add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-frtti>")
 endif()
 
-# NATIVE C++23 / C23 (CMake maps these to the correct -std= spelling itself)
+# NATIVE C++23 (CMake maps this to the correct -std= spelling itself)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_C_STANDARD 23)
-set(CMAKE_C_STANDARD_REQUIRED ON)
-set(CMAKE_C_EXTENSIONS ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 add_definitions(-DJPH_DOUBLE_PRECISION)
@@ -296,7 +242,7 @@ set(CULVERIN_LINK_FLAGS "")
 # --- Debug info: CodeView/PDB is the native format on Windows. ---
 set(FLAGS_DEBUG "-g")
 if(WIN32)
-    CPH_collect_supported_c_flags(CPH_CODEVIEW "-gcodeview")
+    CPH_collect_supported_cxx_flags(CPH_CODEVIEW "-gcodeview")
     list(APPEND FLAGS_DEBUG ${CPH_CODEVIEW})
 endif()
 
@@ -308,7 +254,7 @@ CPH_collect_supported_cxx_flags(CPH_X86_PERF "-mavx2" "-mfma" "-mcx16")
 list(APPEND FLAGS_PERF ${CPH_X86_PERF})
 
 # --- LLVM middle-end tuning: these flags live in Clang's own namespace ---
-if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     list(
         APPEND FLAGS_PERF
         "SHELL:-mllvm -unroll-threshold=1000"
@@ -326,7 +272,7 @@ set(FLAGS_STRICT
     "-Wno-shorten-64-to-32"
     "-Wno-double-promotion"
 )
-if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     list(
         APPEND FLAGS_STRICT
         "-Watomic-implicit-seq-cst"
@@ -335,14 +281,14 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang")
         "-Wno-c2x-extensions"
     )
 endif()
-if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     list(APPEND FLAGS_STRICT "-Wno-psabi") # Suppress AVX parameter passing ABI warnings
 endif()
 
 list(APPEND CULVERIN_COMPILE_FLAGS ${FLAGS_DEBUG} ${FLAGS_PERF} ${FLAGS_STRICT})
 
 # --- Colored diagnostics: ask, don't assume ---
-CPH_collect_supported_c_flags(CPH_COLOR "-fcolor-diagnostics" "-fdiagnostics-color=always")
+CPH_collect_supported_cxx_flags(CPH_COLOR "-fcolor-diagnostics" "-fdiagnostics-color=always")
 if(CPH_COLOR)
     # Take only the FIRST supported spelling; GCC and Clang disagree on names.
     list(GET CPH_COLOR 0 CPH_COLOR_FLAG)
@@ -451,6 +397,11 @@ add_library(
     "extern/JoltC/src/joltc.cpp"
     "extern/JoltC/src/joltc_assert.cpp"
     "extern/JoltC/src/joltc.c"
+    )
+    # joltc.c is a one-line `#include "joltc.h"` stub; compiling it as C++
+    # keeps the whole tree single-language.
+    set_source_files_properties(
+        "${PROJECT_SOURCE_DIR}/extern/JoltC/src/joltc.c" PROPERTIES LANGUAGE CXX
 )
 
 # Third-party code: silence warnings (GNU-dialect -w is universal here).
@@ -551,10 +502,10 @@ if(ipo_supported AND NOT ENABLE_SANITIZER AND NOT ENABLE_THREAD_SANITIZER AND NO
     set(LTO_COMPILE_FLAG "")
     set(LTO_LINK_FLAG "")
 
-    if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         set(LTO_COMPILE_FLAG "-flto=thin")
         set(LTO_LINK_FLAG "-flto=thin")
-    elseif(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+    elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         # GCC's LTO fights with PyInit visibility in this build; the IPO pass
         # above is intentionally neutralized for GNU by -fno-lto.
         set(LTO_COMPILE_FLAG "-fno-lto" "-fvisibility=hidden")
@@ -562,7 +513,7 @@ if(ipo_supported AND NOT ENABLE_SANITIZER AND NOT ENABLE_THREAD_SANITIZER AND NO
     endif()
 
     if(LTO_COMPILE_FLAG)
-        message(STATUS "Culverin: Applying ${CMAKE_C_COMPILER_ID} LTO optimizations")
+        message(STATUS "Culverin: Applying ${CMAKE_CXX_COMPILER_ID} LTO optimizations")
         get_property(CULVERIN_COMPILE_TARGETS GLOBAL PROPERTY CULVERIN_COMPILE_TARGETS)
         foreach(target IN LISTS CULVERIN_COMPILE_TARGETS)
             target_compile_options(

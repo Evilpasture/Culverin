@@ -2,7 +2,7 @@
 #include "bindings/PythonCommon.hpp"
 #include "bindings/FastBuild.hpp"
 #include "bindings/PythonSupport.hpp"
-#include "core/CompilerSpecifics.h"
+#include "core/Compiler.hpp"
 
 namespace CPH::Python {
 

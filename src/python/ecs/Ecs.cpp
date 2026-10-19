@@ -42,7 +42,7 @@ static PyObject *make_ecs_proxy(RegistryObject *self, uint32_t comp_id, bool ent
     }
 
     proxy->stride = 1;
-    atomic_fetch_add_explicit(&self->view_export_count, 1, memory_order_relaxed);
+    (self->view_export_count).fetch_add(1, std::memory_order::relaxed);
 
     PyObject_GC_Track(proxy);
     return reinterpret_cast<PyObject *>(proxy);
@@ -103,7 +103,7 @@ static bool SparseSet_EnsureDenseCapacity(RegistryObject *reg, SparseSet *set) {
     }
 
     // 1. PROTECTION CHECK: Must happen before any reallocation logic
-    if (atomic_load_explicit(&reg->view_export_count, memory_order_acquire) > 0) {
+    if ((reg->view_export_count).load(std::memory_order::acquire) > 0) {
         PyErr_SetString(PyExc_BufferError,
                         "Cannot resize ECS component while a memoryview is held. "
                         "Delete the array or view before adding more entities.");
@@ -164,7 +164,7 @@ static bool SparseSet_EnsureDenseCapacity(RegistryObject *reg, SparseSet *set) {
     if (!self->components) {
         return -1;
     }
-    CPH_INIT_LOCK(self->ecs_lock);
+    new (&self->ecs_lock) std::mutex(); // storage comes zeroed from tp_alloc
     self->parsers = CPH::Python::NewParserGroup<CPH::Python::EcsParsers>();
     if (!self->parsers) {
         return -1;
@@ -188,6 +188,9 @@ void RegistryDealloc(RegistryObject *self) {
 
         delete self->parsers;
     }
+    if (self->components != nullptr) {
+        self->ecs_lock.~mutex(); // constructed in RegistryInit after components
+    }
     Py_TYPE(self)->tp_free(reinterpret_cast<PyObject *>(self));
 }
 
@@ -196,7 +199,7 @@ void RegistryDealloc(RegistryObject *self) {
 // Signature updated for METH_NOARGS
 [[nodiscard]] PyObject * RegistryCreate(RegistryObject *self,
                                                           [[maybe_unused]] PyObject *args) {
-    CPH_SHADOW_LOCK(&self->ecs_lock);
+    (self->ecs_lock).lock();
     if (self->free_count == 0) {
         uint32_t new_cap = self->entity_capacity * 2;
         uint32_t *new_gens =
@@ -204,7 +207,7 @@ void RegistryDealloc(RegistryObject *self) {
         uint32_t *new_free =
             static_cast<uint32_t *>(Reallocate(self->free_indices, new_cap * sizeof(uint32_t)));
         if (!new_gens || !new_free) {
-            CPH_SHADOW_UNLOCK(&self->ecs_lock);
+            (self->ecs_lock).unlock();
             return PyErr_NoMemory();
         }
 
@@ -222,7 +225,7 @@ void RegistryDealloc(RegistryObject *self) {
     Entity handle = (static_cast<uint64_t>(gen) << kHandleIndexBits) | index;
     self->active_entities++;
 
-    CPH_SHADOW_UNLOCK(&self->ecs_lock);
+    (self->ecs_lock).unlock();
 
     return PyLong_FromUnsignedLongLong(handle);
 }
@@ -236,13 +239,13 @@ void RegistryDealloc(RegistryObject *self) {
         return nullptr;
     }
 
-    CPH_SHADOW_LOCK(&self->ecs_lock);
+    (self->ecs_lock).lock();
 
     uint32_t index = static_cast<uint32_t>(handle & kHandleIndexMask);
     uint32_t gen   = static_cast<uint32_t>(handle >> kHandleIndexBits);
 
     if (index >= self->entity_capacity || self->generations[index] != gen) {
-        CPH_SHADOW_UNLOCK(&self->ecs_lock);
+        (self->ecs_lock).unlock();
         Py_RETURN_NONE; // Already dead
     }
 
@@ -274,7 +277,7 @@ void RegistryDealloc(RegistryObject *self) {
     self->free_indices[self->free_count++] = index;
     self->active_entities--;
 
-    CPH_SHADOW_UNLOCK(&self->ecs_lock);
+    (self->ecs_lock).unlock();
 
     Py_RETURN_NONE;
 }
@@ -288,14 +291,14 @@ void RegistryDealloc(RegistryObject *self) {
         return nullptr;
     }
 
-    CPH_SHADOW_LOCK(&self->ecs_lock);
+    (self->ecs_lock).lock();
 
     uint32_t index = static_cast<uint32_t>(handle & kHandleIndexMask);
     uint32_t gen   = static_cast<uint32_t>(handle >> kHandleIndexBits);
 
     bool alive = (index < self->entity_capacity && self->generations[index] == gen) != 0;
 
-    CPH_SHADOW_UNLOCK(&self->ecs_lock);
+    (self->ecs_lock).unlock();
 
     if (alive) {
         Py_RETURN_TRUE;
@@ -315,14 +318,14 @@ void RegistryDealloc(RegistryObject *self) {
         return nullptr;
     }
 
-    CPH_SHADOW_LOCK(&self->ecs_lock);
+    (self->ecs_lock).lock();
 
     if (self->component_count >= self->component_capacity) {
         // Manual check for register_component too!
-        if (atomic_load_explicit(&self->view_export_count, memory_order_acquire) > 0) {
+        if ((self->view_export_count).load(std::memory_order::acquire) > 0) {
             PyErr_SetString(PyExc_BufferError,
                             "Cannot register new components while a view is held.");
-            CPH_SHADOW_UNLOCK(&self->ecs_lock);
+            (self->ecs_lock).unlock();
             return nullptr;
         }
 
@@ -330,7 +333,7 @@ void RegistryDealloc(RegistryObject *self) {
         SparseSet *new_comps = static_cast<SparseSet *>(
             Reallocate(self->components, new_cap * sizeof(SparseSet)));
         if (!new_comps) {
-            CPH_SHADOW_UNLOCK(&self->ecs_lock);
+            (self->ecs_lock).unlock();
             return PyErr_NoMemory();
         }
         self->components         = new_comps;
@@ -340,7 +343,7 @@ void RegistryDealloc(RegistryObject *self) {
     uint32_t comp_id = self->component_count++;
     SparseSet_Init(&self->components[comp_id], size);
 
-    CPH_SHADOW_UNLOCK(&self->ecs_lock);
+    (self->ecs_lock).unlock();
 
     return PyLong_FromUnsignedLong(comp_id);
 }
@@ -368,18 +371,18 @@ void RegistryDealloc(RegistryObject *self) {
         return PyErr_Format(PyExc_ValueError, "Invalid component ID");
     }
 
-    CPH_SHADOW_LOCK(&self->ecs_lock);
+    (self->ecs_lock).lock();
 
     SparseSet *set = &self->components[comp_id];
 
     Py_buffer view;
     if (data_obj && data_obj != Py_None) {
         if (PyObject_GetBuffer(data_obj, &view, PyBUF_SIMPLE) != 0) {
-            CPH_SHADOW_UNLOCK(&self->ecs_lock);
+            (self->ecs_lock).unlock();
             return nullptr;
         }
         if (view.len != set->element_size) {
-            CPH_SHADOW_UNLOCK(&self->ecs_lock);
+            (self->ecs_lock).unlock();
             PyBuffer_Release(&view);
             return PyErr_Format(PyExc_ValueError, "Data size mismatch: expected %u, got %zd",
                                 set->element_size, view.len);
@@ -412,12 +415,12 @@ void RegistryDealloc(RegistryObject *self) {
                set->element_size);
     }
 
-    CPH_SHADOW_UNLOCK(&self->ecs_lock);
+    (self->ecs_lock).unlock();
 
     Py_RETURN_NONE;
 
 fail_quiet:
-    CPH_SHADOW_UNLOCK(&self->ecs_lock);
+    (self->ecs_lock).unlock();
     if (data_obj && data_obj != Py_None) {
         PyBuffer_Release(&view);
     }
@@ -440,7 +443,7 @@ fail_quiet:
         return PyErr_Format(PyExc_ValueError, "Invalid component ID");
     }
 
-    CPH_SHADOW_LOCK(&self->ecs_lock);
+    (self->ecs_lock).lock();
 
     SparseSet *set = &self->components[comp_id];
 
@@ -463,7 +466,7 @@ fail_quiet:
         set->count--;
     }
 
-    CPH_SHADOW_UNLOCK(&self->ecs_lock);
+    (self->ecs_lock).unlock();
 
     Py_RETURN_NONE;
 }
@@ -483,10 +486,10 @@ fail_quiet:
     if (comp_id >= self->component_count) {
         return PyErr_Format(PyExc_ValueError, "Invalid component ID");
     }
-    CPH_SHADOW_LOCK(&self->ecs_lock);
+    (self->ecs_lock).lock();
     SparseSet *set = &self->components[comp_id];
     bool has_comp = (index < set->sparse_capacity && set->sparse[index] != kInvalidDenseIndex) != 0;
-    CPH_SHADOW_UNLOCK(&self->ecs_lock);
+    (self->ecs_lock).unlock();
     if (has_comp) {
         Py_RETURN_TRUE;
     }
@@ -509,11 +512,11 @@ fail_quiet:
         return PyErr_Format(PyExc_ValueError, "Invalid component ID");
     }
 
-    CPH_SHADOW_LOCK(&self->ecs_lock);
+    (self->ecs_lock).lock();
     SparseSet *set = &self->components[comp_id];
 
     if (index >= set->sparse_capacity || set->sparse[index] == kInvalidDenseIndex) {
-        CPH_SHADOW_UNLOCK(&self->ecs_lock);
+        (self->ecs_lock).unlock();
         Py_RETURN_NONE;
     }
 
@@ -521,7 +524,7 @@ fail_quiet:
     PyObject *result   = PyBytes_FromStringAndSize(
         reinterpret_cast<char *>(&set->data[static_cast<size_t>(dense_idx) * set->element_size]),
         set->element_size);
-    CPH_SHADOW_UNLOCK(&self->ecs_lock);
+    (self->ecs_lock).unlock();
 
     return result;
 }
@@ -539,9 +542,9 @@ fail_quiet:
         return PyErr_Format(PyExc_ValueError, "Invalid component ID");
     }
 
-    CPH_SHADOW_LOCK(&self->ecs_lock);
+    (self->ecs_lock).lock();
     PyObject *proxy = make_ecs_proxy(self, comp_id, false);
-    CPH_SHADOW_UNLOCK(&self->ecs_lock);
+    (self->ecs_lock).unlock();
     return proxy;
 }
 
@@ -558,10 +561,10 @@ fail_quiet:
         return PyErr_Format(PyExc_ValueError, "Invalid component ID");
     }
 
-    CPH_SHADOW_LOCK(&self->ecs_lock);
+    (self->ecs_lock).lock();
     // make_ecs_proxy(self, comp_id, true) handles the PROXY_ECS_ENTITIES case
     PyObject *proxy = make_ecs_proxy(self, comp_id, true);
-    CPH_SHADOW_UNLOCK(&self->ecs_lock);
+    (self->ecs_lock).unlock();
 
     return proxy;
 }
@@ -606,8 +609,8 @@ fail_quiet:
     }
 
     // Lock both Physics and ECS
-    CPH_SHADOW_LOCK(&world->physics.shadow_lock);
-    CPH_SHADOW_LOCK(&self->ecs_lock);
+    (world->physics.shadow_lock).lock();
+    (self->ecs_lock).lock();
 
     for (uint32_t i = 0; i < h_set->count; i++) {
         Entity ent   = h_set->dense[i];
@@ -618,17 +621,17 @@ fail_quiet:
 
         uint32_t slot;
         if (unpack_handle(&world->physics, handle, &slot)) {
-            uint32_t phys_dense = world->physics.slot_to_dense[slot];
+            uint32_t phys_dense = world->physics.bodies.slot_to_dense[slot];
 
             // 1. Sync Position (Using your PositionVector / PosStride logic)
             if (p_set && ent_idx < p_set->sparse_capacity &&
                 p_set->sparse[ent_idx] != kInvalidDenseIndex) {
                 uint32_t p_dense = p_set->sparse[ent_idx];
 
-                // Assuming world->physics.positions stores 1 PositionVector (or 4 Reals) per entity
+                // Assuming world->physics.bodies.positions stores 1 PositionVector (or 4 Reals) per entity
                 // depending on your stride. Using PosStride as defined in your types header.
                 CPH_PosStride *p =
-                    &(reinterpret_cast<CPH_PosStride *>(world->physics.positions))[phys_dense];
+                    &(world->physics.bodies.positions.data())[phys_dense];
 
                 float *out = reinterpret_cast<float *>(
                     &p_set->data[static_cast<size_t>(p_dense) * sizeof(float) * 3]);
@@ -638,13 +641,14 @@ fail_quiet:
             }
 
             // 2. Sync Rotation
-            // world->physics.rotations is a flat float array (4 floats per quaternion)
+            // world->physics.bodies.rotations is a flat float array (4 floats per quaternion)
             if (r_set && ent_idx < r_set->sparse_capacity &&
                 r_set->sparse[ent_idx] != kInvalidDenseIndex) {
                 uint32_t r_dense = r_set->sparse[ent_idx];
 
-                // Index directly into the float array
-                float *phys_rot = &world->physics.rotations[static_cast<size_t>(phys_dense) * 4];
+                // Index directly into the stride array (4 floats per quaternion)
+                float *phys_rot =
+                    reinterpret_cast<float *>(&world->physics.bodies.rotations[phys_dense]);
                 float *out      = reinterpret_cast<float *>(
                     &r_set->data[static_cast<size_t>(r_dense) * sizeof(float) * 4]);
 
@@ -654,17 +658,17 @@ fail_quiet:
         }
     }
 
-    CPH_SHADOW_UNLOCK(&self->ecs_lock);
-    CPH_SHADOW_UNLOCK(&world->physics.shadow_lock);
+    (self->ecs_lock).unlock();
+    (world->physics.shadow_lock).unlock();
     Py_RETURN_NONE;
 }
 
 [[nodiscard]] PyObject * RegistryClear(RegistryObject *self,
                                                          [[maybe_unused]] PyObject *args) {
-    CPH_SHADOW_LOCK(&self->ecs_lock);
+    (self->ecs_lock).lock();
 
-    if (atomic_load_explicit(&self->view_export_count, memory_order_acquire) > 0) {
-        CPH_SHADOW_UNLOCK(&self->ecs_lock);
+    if ((self->view_export_count).load(std::memory_order::acquire) > 0) {
+        (self->ecs_lock).unlock();
         return PyErr_Format(PyExc_BufferError,
                             "Cannot clear registry while memoryviews are exported.");
     }
@@ -688,7 +692,7 @@ fail_quiet:
     self->free_count      = self->entity_capacity;
     self->active_entities = 0;
 
-    CPH_SHADOW_UNLOCK(&self->ecs_lock);
+    (self->ecs_lock).unlock();
     Py_RETURN_NONE;
 }
 

@@ -30,17 +30,7 @@ add_subdirectory(physics)
 
 # Preserve one reusable Python-independent archive while keeping compilation
 # partitioned by domain. The Jolt RTTI anchor is extension-link glue, not core.
-add_library(
-    culverin_core
-    STATIC
-        threading/Mutex.c
-        threading/Mutex.h
-        threading/Thread.c
-        threading/Thread.h
-        threading/ThreadSwitch.S
-        threading/ThreadAssembly.h
-)
-set_source_files_properties(threading/ThreadSwitch.S PROPERTIES LANGUAGE ASM)
+add_library(culverin_core STATIC)
 target_sources(
     culverin_core
     PRIVATE

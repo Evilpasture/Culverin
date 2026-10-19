@@ -1,6 +1,6 @@
 #pragma once
 
-#include "physics/PhysicsParams.h"
+#include "physics/PhysicsParams.hpp"
 #include <Python.h>
 
 namespace CPH::Python {

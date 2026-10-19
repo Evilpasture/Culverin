@@ -2,9 +2,9 @@
 #include "bindings/PythonCommon.hpp"
 #include "bindings/FastBuild.hpp"
 #include "bindings/PythonSupport.hpp"
-#include "core/CompilerSpecifics.h"
+#include "core/Compiler.hpp"
 #include "physics/PhysicsSync.hpp"
-#include "physics/Ragdoll.h"
+#include "physics/Ragdoll.hpp"
 
 namespace CPH::Python {
 
@@ -116,11 +116,11 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
     const JPH_RVec3 root_position = {root_p.x, root_p.y, root_p.z};
 
     // 3. PHYSICS EXECUTION (Shadow Locked)
-    CPH_SHADOW_LOCK(&self->world->physics.shadow_lock);
+    (self->world->physics.shadow_lock).lock();
     BlockUntilNotStepping(self->world);
     const bool pose_applied =
         CPH_PhysicsRagdollDriveToPose(self->ragdoll, root_position, matrices, joint_count);
-    CPH_SHADOW_UNLOCK(&self->world->physics.shadow_lock);
+    (self->world->physics.shadow_lock).unlock();
 
     // 4. CLEANUP
     PyBuffer_Release(&view);

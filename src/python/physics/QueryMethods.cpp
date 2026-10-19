@@ -2,7 +2,7 @@
 #include "bindings/PythonCommon.hpp"
 #include "bindings/FastBuild.hpp"
 #include "bindings/parsing/Parsers.hpp"
-#include "core/CompilerSpecifics.h"
+#include "core/Compiler.hpp"
 
 namespace CPH::Python {
 
@@ -67,7 +67,6 @@ static PyObject *overlap_hits_to_list(const CPH_PhysicsQueryHitBuffer *hits) {
 
     const JPH_RVec3 center = {cx, cy, cz};
     CPH_PhysicsQueryHitBuffer hits;
-    CPH_PhysicsQueryHitBufferInit(&hits);
 
     PhysicsQueryStatus status;
     Py_BEGIN_ALLOW_THREADS status =
@@ -75,12 +74,10 @@ static PyObject *overlap_hits_to_list(const CPH_PhysicsQueryHitBuffer *hits) {
     Py_END_ALLOW_THREADS
 
         if (status != PHYSICS_QUERY_STATUS_OK) {
-        CPH_PhysicsQueryHitBufferDestroy(&hits);
         return query_status_error(status, "Failed to resolve sphere shape");
     }
 
     PyObject *result = overlap_hits_to_list(&hits);
-    CPH_PhysicsQueryHitBufferDestroy(&hits);
     return result;
 }
 
@@ -109,19 +106,16 @@ static PyObject *overlap_hits_to_list(const CPH_PhysicsQueryHitBuffer *hits) {
     const JPH_RVec3 min = {min_x, min_y, min_z};
     const JPH_RVec3 max = {max_x, max_y, max_z};
     CPH_PhysicsQueryHitBuffer hits;
-    CPH_PhysicsQueryHitBufferInit(&hits);
 
     PhysicsQueryStatus status;
     Py_BEGIN_ALLOW_THREADS status = CPH_PhysicsWorldOverlapAabb(&self->physics, min, max, &hits);
     Py_END_ALLOW_THREADS
 
         if (status != PHYSICS_QUERY_STATUS_OK) {
-        CPH_PhysicsQueryHitBufferDestroy(&hits);
         return query_status_error(status, "overlap_aabb received invalid arguments");
     }
 
     PyObject *result = overlap_hits_to_list(&hits);
-    CPH_PhysicsQueryHitBufferDestroy(&hits);
     return result;
 }
 

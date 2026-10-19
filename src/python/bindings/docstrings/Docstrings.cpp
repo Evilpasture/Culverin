@@ -1,4 +1,4 @@
-#include "Docstrings.h"
+#include "Docstrings.hpp"
 #include "bindings/PythonCommon.hpp"
 
 #include <cstdio>
@@ -95,7 +95,6 @@ inline constexpr std::size_t kDocsBufferSize = 128;
 
 } // namespace CPH::Python::detail
 
-extern "C" {
 
 void CPH_DocsStitchMethods(PyMethodDef *methods, const char *class_name,
                            const char *markdown_content) {
@@ -138,5 +137,3 @@ void CPH_DocsStitchSpec(PyType_Spec *spec, const char *class_name,
         }
     }
 }
-
-} // extern "C"

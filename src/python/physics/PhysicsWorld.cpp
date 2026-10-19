@@ -1,26 +1,28 @@
-#include "physics/PhysicsWorld.h"
+#include "physics/PhysicsWorld.hpp"
 #include "bindings/PythonCommon.hpp"
 #include "bindings/FastBuild.hpp"
 #include "bindings/Getters.hpp"
 #include "bindings/ModuleState.hpp"
 #include "bindings/PythonSupport.hpp"
 #include "characters/Character.hpp" // IWYU pragma: keep
-#include "core/CompilerSpecifics.h"
-#include "core/NativeAlloc.h"
-#include "math/MathCore.h"
+#include "core/Compiler.hpp"
+#include "core/Buffer.hpp"
+#include "math/MathCore.hpp"
 #include "physics/Constraint.hpp" // IWYU pragma: keep
-#include "physics/ContactEventDefinitions.h"
+#include "physics/ContactEventDefinitions.hpp"
 #include "physics/PhysicsSync.hpp"
 #include "physics/PhysicsWorldBinding.hpp"
-#include "physics/PhysicsWorldCreation.h"
-#include "physics/PhysicsWorldOps.h"
-#include "physics/PhysicsWorldRuntime.h"
+#include "physics/PhysicsWorldCreation.hpp"
+#include "physics/PhysicsWorldOps.hpp"
+#include "physics/PhysicsWorldRuntime.hpp"
 #include "physics/QueryMethods.hpp"
-#include "physics/ShadowSync.h"
+#include "physics/ShadowSync.hpp"
 #include "physics/WorldAdapters.hpp"
 #include "ragdolls/Ragdoll.hpp"
 #include "soft_bodies/SoftBody.hpp"
-#include <math.h>
+#include <cmath>
+#include <cstring>
+#include <new>
 
 namespace CPH::Python {
 
@@ -90,8 +92,8 @@ static void WorldDealloc(PhysicsWorldObject *self) {
         delete self->parsers;
     }
 
-    // 3. The "Manual" work
-    WorldFreeMembers(self);
+    // 3. Destroy the native world constructed by WorldNew.
+    self->physics.~CPH_PhysicsWorld();
 
     // 4. Final destruction
     // For Heap Types, we use the type's free function
@@ -101,6 +103,17 @@ static void WorldDealloc(PhysicsWorldObject *self) {
     Py_DECREF(tp);
 }
 // --- Lifecycle: Initialization ---
+
+static PyObject *WorldNew(PyTypeObject *type, PyObject * /*args*/, PyObject * /*kwds*/) {
+    auto *self = reinterpret_cast<PhysicsWorldObject *>(type->tp_alloc(type, 0));
+    if (self == nullptr) {
+        return nullptr;
+    }
+    // tp_alloc zeroes the storage; the embedded native world (mutexes,
+    // atomics, owning buffers) needs real construction before any use.
+    new (&self->physics) CPH_PhysicsWorld();
+    return reinterpret_cast<PyObject *>(self);
+}
 
 // Orchestrator function
 [[nodiscard]] static int WorldInit(PhysicsWorldObject *self, PyObject *args,
@@ -132,8 +145,8 @@ static void WorldDealloc(PhysicsWorldObject *self) {
         return -1;
     }
 
-    // 1. Initial State
-    CPH_PhysicsWorldInitState(&self->physics);
+    // 1. Initial State (native world constructed in WorldNew; a failed
+    // earlier __init__ reset it via WorldFreeMembers).
     self->view_shape[0] = self->view_shape[1] = 0;
     self->view_strides[0] = self->view_strides[1] = 0;
 
@@ -181,22 +194,18 @@ static void WorldDealloc(PhysicsWorldObject *self) {
         goto fail;
     }
 
-    // 4. Constraints & Data Loading
-    if (CPH_AllocateConstraints(&self->physics) < 0) {
-        PyErr_NoMemory();
-        goto fail;
-    }
+    // 4. Data Loading (constraint storage is part of CPH_AllocateBuffers)
 
     if (baked && LoadBakedScene(self, baked.get()) < 0) {
         goto fail;
     }
 
-    start_idx = atomic_load_explicit(&self->physics.count, memory_order_relaxed);
+    start_idx = (self->physics.count).load(std::memory_order::relaxed);
     CPH_InitializeFreeSlots(&self->physics, start_idx);
 
-    CPH_SHADOW_LOCK(&self->physics.shadow_lock);
+    (self->physics.shadow_lock).lock();
     CPH_SyncShadowBuffers(&self->physics);
-    CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
+    (self->physics.shadow_lock).unlock();
     return 0;
 
 fail:
@@ -658,24 +667,18 @@ static PyObject *runtime_status_error(PhysicsWorldRuntimeStatus status,
 
 [[nodiscard]] static PyObject * WorldSaveState(PhysicsWorldObject *self,
                                                 PyObject *unused [[maybe_unused]]) {
-    uint8_t *snapshot    = nullptr;
-    size_t snapshot_size = 0;
+    Buffer<std::uint8_t> snapshot;
     PhysicsWorldSnapshotStatus status;
-    Py_BEGIN_ALLOW_THREADS status =
-        CPH_PhysicsWorldSaveSnapshot(&self->physics, &snapshot, &snapshot_size);
+    Py_BEGIN_ALLOW_THREADS status = CPH_PhysicsWorldSaveSnapshot(&self->physics, snapshot);
     Py_END_ALLOW_THREADS if (status != PHYSICS_WORLD_SNAPSHOT_STATUS_OK) {
         return snapshot_status_error(status, 0, 0);
     }
-    if (snapshot_size > static_cast<size_t>(PY_SSIZE_T_MAX)) {
-        CPH_Free(snapshot);
+    if (snapshot.size() > static_cast<size_t>(PY_SSIZE_T_MAX)) {
         PyErr_SetString(PyExc_OverflowError, "Snapshot is too large for a Python bytes object");
         return nullptr;
     }
-
-    PyObject *bytes = PyBytes_FromStringAndSize(reinterpret_cast<const char *>(snapshot),
-                                                static_cast<Py_ssize_t>(snapshot_size));
-    CPH_Free(snapshot);
-    return bytes;
+    return PyBytes_FromStringAndSize(reinterpret_cast<const char *>(snapshot.data()),
+                                     static_cast<Py_ssize_t>(snapshot.size()));
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
@@ -693,13 +696,13 @@ static PyObject *runtime_status_error(PhysicsWorldRuntimeStatus status,
         return nullptr;
     }
     const size_t data_size = static_cast<size_t>(view.len);
-    uint8_t *snapshot      = static_cast<uint8_t *>(CPH_Alloc(data_size ? data_size : 1));
-    if (!snapshot) {
-        PyBuffer_Release(&view);
-        return PyErr_NoMemory();
-    }
+    Buffer<std::uint8_t> snapshot;
     if (data_size != 0) {
-        memcpy(snapshot, view.buf, data_size);
+        if (!snapshot.allocate(data_size)) {
+            PyBuffer_Release(&view);
+            return PyErr_NoMemory();
+        }
+        std::memcpy(snapshot.data(), view.buf, data_size);
     }
     PyBuffer_Release(&view);
 
@@ -708,8 +711,9 @@ static PyObject *runtime_status_error(PhysicsWorldRuntimeStatus status,
     size_t saved_capacity = 0;
     PhysicsWorldSnapshotStatus status;
     Py_BEGIN_ALLOW_THREADS status = CPH_PhysicsWorldLoadSnapshot(
-        &self->physics, snapshot, data_size, &saved_count, &world_capacity, &saved_capacity);
-    Py_END_ALLOW_THREADS CPH_Free(snapshot);
+        &self->physics, snapshot.data(), data_size, &saved_count, &world_capacity,
+        &saved_capacity);
+    Py_END_ALLOW_THREADS
     if (status != PHYSICS_WORLD_SNAPSHOT_STATUS_OK) {
         return snapshot_status_error(status, world_capacity, saved_capacity);
     }
@@ -734,66 +738,63 @@ static PyObject *runtime_status_error(PhysicsWorldRuntimeStatus status,
     }
 
     // --- PHASE 0: RE-ENTRANCY GUARD ---
-    if (atomic_load_explicit(&self->physics.is_stepping, memory_order_acquire)) {
+    if ((self->physics.is_stepping).load(std::memory_order::acquire)) {
         PyErr_SetString(PyExc_RuntimeError, "Concurrent step detected.");
         return nullptr;
     }
 
     // --- PHASE 1: SHADOW STATE LOCK-DOWN ---
-    CPH_SHADOW_LOCK(&self->physics.shadow_lock);
+    (self->physics.shadow_lock).lock();
 
     // ANTI-STARVATION: Yield to waiting Python threads (Getters/Mutators)
     // This is necessary for performance.
-    while (atomic_load_explicit(&self->physics.waiting_threads, memory_order_relaxed) > 0) {
-        CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
+    while ((self->physics.waiting_threads).load(std::memory_order::relaxed) > 0) {
+        (self->physics.shadow_lock).unlock();
         {
             [[maybe_unused]] ScopedGilRelease release_gil;
             CPH_CpuYield();
         }
-        CPH_SHADOW_LOCK(&self->physics.shadow_lock);
+        (self->physics.shadow_lock).lock();
     }
 
-    atomic_thread_fence(memory_order_acquire);
+    std::atomic_thread_fence(std::memory_order::acquire);
 
     // Raise flags
-    atomic_store_explicit(&self->physics.is_stepping, true, memory_order_relaxed);
-    atomic_store_explicit(&self->physics.step_requested, true, memory_order_relaxed);
+    (self->physics.is_stepping).store(true, std::memory_order::relaxed);
+    (self->physics.step_requested).store(true, std::memory_order::relaxed);
 
     // Drain in-flight queries
-    if (atomic_load_explicit(&self->physics.active_queries, memory_order_acquire) > 0) {
-        CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
+    if ((self->physics.active_queries).load(std::memory_order::acquire) > 0) {
+        (self->physics.shadow_lock).unlock();
         {
             [[maybe_unused]] ScopedGilRelease release_gil;
-            CPH_NATIVE_MUTEX_LOCK(self->physics.step_sync.mutex);
-            while (atomic_load_explicit(&self->physics.active_queries, memory_order_relaxed) > 0) {
-                CPH_NATIVE_COND_WAIT(self->physics.step_sync.cond, self->physics.step_sync.mutex);
-            }
-            CPH_NATIVE_MUTEX_UNLOCK(self->physics.step_sync.mutex);
+            std::unique_lock sync(self->physics.step_sync.mutex);
+            self->physics.step_sync.cond.wait(sync, [&] {
+                return self->physics.active_queries.load(std::memory_order::relaxed) <= 0;
+            });
         }
-        CPH_SHADOW_LOCK(&self->physics.shadow_lock);
+        (self->physics.shadow_lock).lock();
     }
 
     // Transfer the active command queue to the native step core.
-    size_t captured_count = 0;
-    PhysicsCommand *captured_queue =
-        CPH_PhysicsWorldDetachCommandQueue(&self->physics, &captured_count);
+    const auto detached = CPH_PhysicsWorldDetachCommands(&self->physics);
 
-    atomic_store_explicit(&self->physics.contact_atomic_idx, 0, memory_order_relaxed);
-    CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
+    (self->physics.contact_atomic_idx).store(0, std::memory_order::relaxed);
+    (self->physics.shadow_lock).unlock();
 
     // --- PHASE 2: NATIVE JOLT CRUNCH (GIL Released) ---
     {
         [[maybe_unused]] ScopedGilRelease release_gil;
-        CPH_PhysicsWorldStepNative(&self->physics, dt, captured_queue, captured_count);
+        CPH_PhysicsWorldStepNative(&self->physics, dt, detached);
     }
 
     // --- PHASE 3: FINALIZATION ---
-    CPH_SHADOW_LOCK(&self->physics.shadow_lock);
+    (self->physics.shadow_lock).lock();
 
     const size_t final_count = CPH_PhysicsWorldFinalizeStep(&self->physics, dt);
     self->view_shape[0]      = static_cast<Py_ssize_t>(final_count);
 
-    CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
+    (self->physics.shadow_lock).unlock();
 
     Py_RETURN_NONE;
 }
@@ -1760,11 +1761,11 @@ static CPH_PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_
 
 [[nodiscard]] static PyObject * WorldGetActiveIndices(PhysicsWorldObject *self,
                                                        PyObject *args [[maybe_unused]]) {
-    uint32_t *indices   = nullptr;
+    Buffer<std::uint32_t> indices;
     size_t active_count = 0;
     PhysicsWorldRuntimeStatus status;
     Py_BEGIN_ALLOW_THREADS status =
-        CPH_PhysicsWorldGetActiveIndices(&self->physics, &indices, &active_count);
+        CPH_PhysicsWorldGetActiveIndices(&self->physics, indices, active_count);
     Py_END_ALLOW_THREADS
 
         if (status != PHYSICS_WORLD_RUNTIME_STATUS_OK) {
@@ -1772,15 +1773,12 @@ static CPH_PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_
     }
 
     if (active_count > static_cast<size_t>(PY_SSIZE_T_MAX) / sizeof(uint32_t)) {
-        CPH_Free(indices);
         return PyErr_NoMemory();
     }
-    PyObject *bytes_obj =
-        PyBytes_FromStringAndSize(reinterpret_cast<const char *>(indices),
-                                  static_cast<Py_ssize_t>(active_count * sizeof(uint32_t)));
-    CPH_Free(indices);
-    return bytes_obj;
+    return PyBytes_FromStringAndSize(reinterpret_cast<const char *>(indices.data()),
+                                     static_cast<Py_ssize_t>(active_count * sizeof(uint32_t)));
 }
+
 
 [[nodiscard]] static PyObject * WorldGetRenderState(PhysicsWorldObject *self,
                                                      PyObject *const *args, size_t nargsf,
@@ -1791,12 +1789,12 @@ static CPH_PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_
         return nullptr;
     }
 
-    alpha        = fmaxf(0.0f, fminf(1.0f, alpha));
-    float *state = nullptr;
+    alpha = std::fmax(0.0f, std::fmin(1.0f, alpha));
+    Buffer<float> state;
     size_t count = 0;
     PhysicsWorldRuntimeStatus status;
     Py_BEGIN_ALLOW_THREADS status =
-        CPH_PhysicsWorldGetRenderState(&self->physics, alpha, &state, &count);
+        CPH_PhysicsWorldGetRenderState(&self->physics, alpha, state, count);
     Py_END_ALLOW_THREADS
 
         if (status != PHYSICS_WORLD_RUNTIME_STATUS_OK) {
@@ -1805,15 +1803,13 @@ static CPH_PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_
 
     const size_t byte_count = count * 7 * sizeof(float);
     if (byte_count > static_cast<size_t>(PY_SSIZE_T_MAX)) {
-        CPH_Free(state);
         PyErr_SetString(PyExc_OverflowError, "Render state is too large for a Python bytes object");
         return nullptr;
     }
-    PyObject *bytes_obj = PyBytes_FromStringAndSize(reinterpret_cast<const char *>(state),
-                                                    static_cast<Py_ssize_t>(byte_count));
-    CPH_Free(state);
-    return bytes_obj;
+    return PyBytes_FromStringAndSize(reinterpret_cast<const char *>(state.data()),
+                                     static_cast<Py_ssize_t>(byte_count));
 }
+
 
 [[nodiscard]] static PyObject * WorldSetCollisionFilter(PhysicsWorldObject *self,
                                                          PyObject *const *args, size_t nargsf,
@@ -1946,35 +1942,29 @@ static CPH_PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_
         return nullptr;
     }
 
-    CPH_DebugVertex *lines     = nullptr;
-    size_t line_count          = 0;
-    CPH_DebugVertex *triangles = nullptr;
-    size_t triangle_count      = 0;
+    Buffer<CPH_DebugVertex> lines;
+    Buffer<CPH_DebugVertex> triangles;
     PhysicsWorldRuntimeStatus status;
     Py_BEGIN_ALLOW_THREADS status = CPH_PhysicsWorldBuildDebugData(
         &self->physics, draw_shapes, draw_constraints, draw_bounding_box, draw_centers, wireframe,
-        &lines, &line_count, &triangles, &triangle_count);
+        lines, triangles);
     Py_END_ALLOW_THREADS
 
         if (status != PHYSICS_WORLD_RUNTIME_STATUS_OK) {
         return runtime_status_error(status, nullptr);
     }
-    if (line_count > static_cast<size_t>(PY_SSIZE_T_MAX) / sizeof(CPH_DebugVertex) ||
-        triangle_count > static_cast<size_t>(PY_SSIZE_T_MAX) / sizeof(CPH_DebugVertex)) {
-        CPH_Free(lines);
-        CPH_Free(triangles);
+    if (lines.size() > static_cast<size_t>(PY_SSIZE_T_MAX) / sizeof(CPH_DebugVertex) ||
+        triangles.size() > static_cast<size_t>(PY_SSIZE_T_MAX) / sizeof(CPH_DebugVertex)) {
         PyErr_SetString(PyExc_OverflowError, "Debug data is too large for Python bytes objects");
         return nullptr;
     }
 
     PyObject *lines_bytes =
-        PyBytes_FromStringAndSize(reinterpret_cast<const char *>(lines),
-                                  static_cast<Py_ssize_t>(line_count * sizeof(CPH_DebugVertex)));
+        PyBytes_FromStringAndSize(reinterpret_cast<const char *>(lines.data()),
+                                  static_cast<Py_ssize_t>(lines.size() * sizeof(CPH_DebugVertex)));
     PyObject *triangles_bytes = PyBytes_FromStringAndSize(
-        reinterpret_cast<const char *>(triangles),
-        static_cast<Py_ssize_t>(triangle_count * sizeof(CPH_DebugVertex)));
-    CPH_Free(lines);
-    CPH_Free(triangles);
+        reinterpret_cast<const char *>(triangles.data()),
+        static_cast<Py_ssize_t>(triangles.size() * sizeof(CPH_DebugVertex)));
     if (CPH_UNLIKELY(!lines_bytes || !triangles_bytes)) {
         Py_XDECREF(lines_bytes);
         Py_XDECREF(triangles_bytes);
@@ -1986,6 +1976,7 @@ static CPH_PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_
     Py_DECREF(triangles_bytes);
     return result;
 }
+
 
 [[nodiscard]] PyObject * WorldCreateSoftBody(PhysicsWorldObject *self,
                                                                PyObject *const *args, size_t nargsf,
@@ -2141,26 +2132,24 @@ WorldGetSoftBodyLocalVertices(PhysicsWorldObject *self, PyObject *const *args,
         return nullptr;
     }
 
-    JPH_Vec3 *positions = nullptr;
-    uint32_t count      = 0;
+    Buffer<JPH_Vec3> positions;
+    uint32_t count = 0;
     PhysicsWorldRuntimeStatus status;
     Py_BEGIN_ALLOW_THREADS status =
-        CPH_PhysicsWorldGetSoftBodyLocalVertices(&self->physics, handle, &positions, &count);
+        CPH_PhysicsWorldGetSoftBodyLocalVertices(&self->physics, handle, positions, count);
     Py_END_ALLOW_THREADS if (status != PHYSICS_WORLD_RUNTIME_STATUS_OK) {
         return runtime_status_error(status, nullptr);
     }
     if (static_cast<size_t>(count) > static_cast<size_t>(PY_SSIZE_T_MAX) / sizeof(JPH_Vec3)) {
-        CPH_Free(positions);
         PyErr_SetString(PyExc_OverflowError, "Soft body vertex data is too large");
         return nullptr;
     }
 
-    PyObject *bytes = PyBytes_FromStringAndSize(
-        reinterpret_cast<const char *>(positions),
+    return PyBytes_FromStringAndSize(
+        reinterpret_cast<const char *>(positions.data()),
         static_cast<Py_ssize_t>(static_cast<size_t>(count) * sizeof(JPH_Vec3)));
-    CPH_Free(positions);
-    return bytes;
 }
+
 
 [[nodiscard]] PyObject * WorldGetSoftBodyVertices(PhysicsWorldObject *self,
                                                                     PyObject *const *args,
@@ -2172,7 +2161,7 @@ WorldGetSoftBodyLocalVertices(PhysicsWorldObject *self, PyObject *const *args,
         return nullptr;
     }
 
-    CPH_SHADOW_LOCK(&self->physics.shadow_lock);
+    (self->physics.shadow_lock).lock();
     BlockUntilNotStepping(self);
 
     uint32_t slot = 0;
@@ -2181,17 +2170,17 @@ WorldGetSoftBodyLocalVertices(PhysicsWorldObject *self, PyObject *const *args,
     }
 
     const uint8_t state =
-        atomic_load_explicit(&self->physics.slot_states[slot], memory_order_acquire);
+        (self->physics.bodies.slot_states[slot]).load(std::memory_order::acquire);
     if (state != SLOT_SOFT_BODY) {
-        CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
+        (self->physics.shadow_lock).unlock();
         return PyErr_Format(PyExc_TypeError, "Handle does not belong to a soft body");
     }
 
-    uint32_t dense_idx         = self->physics.slot_to_dense[slot];
-    CPH_SoftBodyShadow *shadow = &self->physics.soft_shadows[dense_idx];
+    uint32_t dense_idx         = self->physics.bodies.slot_to_dense[slot];
+    CPH_SoftBodyShadow *shadow = &self->physics.bodies.soft_shadows[dense_idx];
 
     if (!shadow->vertices) {
-        CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
+        (self->physics.shadow_lock).unlock();
         return PyErr_Format(PyExc_RuntimeError, "Soft body shadow buffer missing");
     }
 
@@ -2204,15 +2193,15 @@ WorldGetSoftBodyLocalVertices(PhysicsWorldObject *self, PyObject *const *args,
     Py_INCREF(self);
 
     proxy->buf_type    = PROXY_DYNAMIC;
-    proxy->dynamic_ptr = shadow->vertices;
+    proxy->dynamic_ptr = reinterpret_cast<JPH_Real *>(shadow->vertices.data());
     proxy->format      = JPH_REAL_STRING;
     proxy->itemsize    = sizeof(JPH_Real);
     proxy->stride      = 4; // PosStride
-    proxy->shape[0]    = static_cast<Py_ssize_t>(shadow->num_vertices) * 4;
+    proxy->shape[0]    = static_cast<Py_ssize_t>(shadow->num_vertices()) * 4;
 
-    atomic_fetch_add_explicit(&self->physics.view_export_count, 1, memory_order_relaxed);
+    (self->physics.view_export_count).fetch_add(1, std::memory_order::relaxed);
 
-    CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
+    (self->physics.shadow_lock).unlock();
 
     PyObject_GC_Track(proxy);
     return reinterpret_cast<PyObject *>(proxy);
@@ -2424,12 +2413,10 @@ WorldGetSoftBodyLocalVertices(PhysicsWorldObject *self, PyObject *const *args,
 // Fixed get_contact_events to be safer with locking
 [[nodiscard]] PyObject * WorldGetContactEvents(PhysicsWorldObject *self,
                                                                  PyObject *args [[maybe_unused]]) {
-    CPH_ContactEvent *scratch = nullptr;
-    size_t count              = 0;
+    Buffer<CPH_ContactEvent> scratch;
     PhysicsWorldRuntimeStatus status;
-    Py_BEGIN_ALLOW_THREADS status =
-        CPH_PhysicsWorldTakeContactEvents(&self->physics, &scratch, &count);
-    Py_END_ALLOW_THREADS if (status != PHYSICS_WORLD_RUNTIME_STATUS_OK) {
+    Py_BEGIN_ALLOW_THREADS status = CPH_PhysicsWorldTakeContactEvents(&self->physics, scratch);
+    Py_END_ALLOW_THREADS const size_t count = scratch.size(); if (status != PHYSICS_WORLD_RUNTIME_STATUS_OK) {
         return runtime_status_error(status, nullptr);
     }
     if (count == 0) {
@@ -2439,17 +2426,16 @@ WorldGetSoftBodyLocalVertices(PhysicsWorldObject *self, PyObject *const *args,
     // --- 2. BUILD PHASE (Unlocked & FastBuild Integrated) ---
     PyObject *list = PyList_New(static_cast<Py_ssize_t>(count));
     if (!list) {
-        CPH_AlignedFree(scratch);
         return nullptr;
     }
 
     for (size_t i = 0; i < count; i++) {
-        CPH_ContactEventSlim *slim = GetSlimHeader(&scratch[i]);
+        CPH_ContactEventSlim *slim = &scratch[i].slim;
 
         // TSan Fix: Explicitly load the handles from the atomic members in the struct.
         // We use relaxed because this 'scratch' copy is thread-local and synchronized.
-        uint64_t b1_raw = atomic_load_explicit(&slim->body1, memory_order_relaxed);
-        uint64_t b2_raw = atomic_load_explicit(&slim->body2, memory_order_relaxed);
+        uint64_t b1_raw = (slim->body1).load(std::memory_order::relaxed);
+        uint64_t b2_raw = (slim->body2).load(std::memory_order::relaxed);
 
         /**
          * OPTIMIZATION: BuildTuple
@@ -2461,26 +2447,21 @@ WorldGetSoftBodyLocalVertices(PhysicsWorldObject *self, PyObject *const *args,
 
         if (CPH_UNLIKELY(!item)) {
             Py_DECREF(list);
-            CPH_AlignedFree(scratch);
             return nullptr;
         }
 
         // PyList_SET_ITEM steals the reference from BuildTuple
         PyList_SET_ITEM(list, static_cast<Py_ssize_t>(i), item);
     }
-
-    CPH_AlignedFree(scratch);
     return list;
 }
 
 [[nodiscard]] PyObject *
 WorldGetContactEventsEx(PhysicsWorldObject *self, PyObject *args [[maybe_unused]]) {
-    CPH_ContactEvent *scratch = nullptr;
-    size_t count              = 0;
+    Buffer<CPH_ContactEvent> scratch;
     PhysicsWorldRuntimeStatus status;
-    Py_BEGIN_ALLOW_THREADS status =
-        CPH_PhysicsWorldTakeContactEvents(&self->physics, &scratch, &count);
-    Py_END_ALLOW_THREADS if (status != PHYSICS_WORLD_RUNTIME_STATUS_OK) {
+    Py_BEGIN_ALLOW_THREADS status = CPH_PhysicsWorldTakeContactEvents(&self->physics, scratch);
+    Py_END_ALLOW_THREADS const size_t count = scratch.size(); if (status != PHYSICS_WORLD_RUNTIME_STATUS_OK) {
         return runtime_status_error(status, nullptr);
     }
     if (count == 0) {
@@ -2509,17 +2490,16 @@ WorldGetContactEventsEx(PhysicsWorldObject *self, PyObject *args [[maybe_unused]
     // --- 3. BUILD PHASE (FastBuild Engine) ---
     PyObject *list = PyList_New(static_cast<Py_ssize_t>(count));
     if (!list) {
-        CPH_AlignedFree(scratch);
         return nullptr;
     }
 
     for (size_t i = 0; i < count; i++) {
-        CPH_ContactEventSlim *slim  = GetSlimHeader(&scratch[i]);
-        CPH_ContactEventFatExt *fat = GetFatExtension(&scratch[i]);
+        CPH_ContactEventSlim *slim  = &scratch[i].slim;
+        CPH_ContactEventFatExt *fat = &scratch[i].fat;
 
         // TSan Fix: Explicit relaxed loads for atomic handles
-        uint64_t b1 = atomic_load_explicit(&slim->body1, memory_order_relaxed);
-        uint64_t b2 = atomic_load_explicit(&slim->body2, memory_order_relaxed);
+        uint64_t b1 = (slim->body1).load(std::memory_order::relaxed);
+        uint64_t b2 = (slim->body2).load(std::memory_order::relaxed);
 
         /**
          * OPTIMIZATION: BuildDictionary
@@ -2542,22 +2522,18 @@ WorldGetContactEventsEx(PhysicsWorldObject *self, PyObject *args [[maybe_unused]
         // Steals ref to dict created by FastBuild
         PyList_SET_ITEM(list, static_cast<Py_ssize_t>(i), dict);
     }
-
-    CPH_AlignedFree(scratch);
     return list;
 }
 
 // ContactEvent layout:
 // 128 bytes total (64 Slim Header, 64 Fat Extension)
-// See ContactEventDefinitions.h for exact alignment and padding.
+// See ContactEventDefinitions.hpp for exact alignment and padding.
 [[nodiscard]] PyObject *
 WorldGetContactEventsRaw(PhysicsWorldObject *self, PyObject *args [[maybe_unused]]) {
-    CPH_ContactEvent *events = nullptr;
-    size_t count             = 0;
+    Buffer<CPH_ContactEvent> events;
     PhysicsWorldRuntimeStatus status;
-    Py_BEGIN_ALLOW_THREADS status =
-        CPH_PhysicsWorldTakeContactEvents(&self->physics, &events, &count);
-    Py_END_ALLOW_THREADS if (status != PHYSICS_WORLD_RUNTIME_STATUS_OK) {
+    Py_BEGIN_ALLOW_THREADS status = CPH_PhysicsWorldTakeContactEvents(&self->physics, events);
+    Py_END_ALLOW_THREADS const size_t count = events.size(); if (status != PHYSICS_WORLD_RUNTIME_STATUS_OK) {
         return runtime_status_error(status, nullptr);
     }
     if (count == 0) {
@@ -2570,15 +2546,13 @@ WorldGetContactEventsRaw(PhysicsWorldObject *self, PyObject *args [[maybe_unused
         return view;
     }
     if (count > static_cast<size_t>(PY_SSIZE_T_MAX) / sizeof(CPH_ContactEvent)) {
-        CPH_AlignedFree(events);
         PyErr_SetString(PyExc_OverflowError, "Contact event data is too large");
         return nullptr;
     }
 
     const size_t bytes_size = count * sizeof(CPH_ContactEvent);
-    PyObject *raw_bytes     = PyBytes_FromStringAndSize(reinterpret_cast<const char *>(events),
+    PyObject *raw_bytes     = PyBytes_FromStringAndSize(reinterpret_cast<const char *>(events.data()),
                                                         static_cast<Py_ssize_t>(bytes_size));
-    CPH_AlignedFree(events);
     if (!raw_bytes) {
         return nullptr;
     }
@@ -2589,13 +2563,13 @@ WorldGetContactEventsRaw(PhysicsWorldObject *self, PyObject *args [[maybe_unused
 
 [[nodiscard]] int
 WorldGetbuffer(PhysicsWorldObject *self, Py_buffer *view, [[maybe_unused]] int flags) {
-    CPH_SHADOW_LOCK(&self->physics.shadow_lock);
+    (self->physics.shadow_lock).lock();
 
     // TSan Fix: Read the atomic count safely
-    size_t current_count = atomic_load_explicit(&self->physics.count, memory_order_acquire);
+    size_t current_count = (self->physics.count).load(std::memory_order::acquire);
 
     // We export the positions buffer as the default buffer for the object
-    view->buf        = self->physics.positions;
+    view->buf        = self->physics.bodies.positions.data();
     view->len        = static_cast<Py_ssize_t>(current_count * sizeof(CPH_PosStride));
     view->readonly   = 0;
     view->itemsize   = sizeof(JPH_Real);
@@ -2607,23 +2581,23 @@ WorldGetbuffer(PhysicsWorldObject *self, Py_buffer *view, [[maybe_unused]] int f
     view->internal   = nullptr;
 
     // view_export_count is a standard int protected by shadow_lock
-    atomic_fetch_add_explicit(&self->physics.view_export_count, 1, memory_order_relaxed);
+    (self->physics.view_export_count).fetch_add(1, std::memory_order::relaxed);
 
-    CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
+    (self->physics.shadow_lock).unlock();
     return 0;
 }
 
 // Buffer Release Slot
 void WorldReleasebuffer(PhysicsWorldObject *self,
                                                             Py_buffer *view [[maybe_unused]]) {
-    CPH_SHADOW_LOCK(&self->physics.shadow_lock);
+    (self->physics.shadow_lock).lock();
 
     // Release logic remains simple as no atomic counters are mutated here
-    if (atomic_load_explicit(&self->physics.view_export_count, memory_order_relaxed) > 0) {
-        atomic_fetch_sub_explicit(&self->physics.view_export_count, 1, memory_order_relaxed);
+    if ((self->physics.view_export_count).load(std::memory_order::relaxed) > 0) {
+        (self->physics.view_export_count).fetch_sub(1, std::memory_order::relaxed);
     }
 
-    CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
+    (self->physics.shadow_lock).unlock();
 }
 
 // Declarations for context methods defined in other translation units.
@@ -2758,7 +2732,7 @@ static PyGetSetDef WorldGetSets[] = {
 };
 
 static PyType_Slot WorldSlots[] = {
-    {.slot = Py_tp_new, .pfunc = reinterpret_cast<void *>(PyType_GenericNew)},
+    {.slot = Py_tp_new, .pfunc = reinterpret_cast<void *>(WorldNew)},
     {.slot = Py_tp_init, .pfunc = reinterpret_cast<void *>(WorldInit)},
     {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(WorldDealloc)},
     {.slot = Py_tp_call, .pfunc = nullptr},

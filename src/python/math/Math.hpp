@@ -1,6 +1,6 @@
 #pragma once
 
-#include "math/MathCore.h"
+#include "math/MathCore.hpp"
 #include "math/MathParsers.hpp"
 #include <Python.h>
 

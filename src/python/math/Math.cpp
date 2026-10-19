@@ -2,7 +2,7 @@
 #include "bindings/FastBuild.hpp"
 #include "bindings/PythonSupport.hpp"
 #include "bindings/parsing/FastParser.hpp"
-#include "core/CompilerSpecifics.h"
+#include "core/Compiler.hpp"
 #include <Python.h>
 
 namespace CPH::Python {

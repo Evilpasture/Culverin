@@ -6,25 +6,25 @@
 #include "bindings/Getters.hpp"
 #include "bindings/ModuleState.hpp"
 #include "bindings/PythonSupport.hpp"
-#include "bindings/docstrings/Docstrings.h"
+#include "bindings/docstrings/Docstrings.hpp"
 #include "characters/Character.hpp"
-#include "core/CompilerSpecifics.h"
-#include "core/Profiling.h"
-#include "core/Threading.h"
-#include "debug/DebugRender.h"
+#include "core/Compiler.hpp"
+#include "core/Profiling.hpp"
+#include "core/Threading.hpp"
+#include "debug/DebugRender.hpp"
 #include "ecs/Ecs.hpp"
-#include "jolt/JoltHandler.h"
+#include "jolt/JoltHandler.hpp"
 #include "joltc.h"
 #include "math/Math.hpp"
-#include "physics/ContactListener.h"
-#include "physics/Filters.h"
+#include "physics/ContactListener.hpp"
+#include "physics/Filters.hpp"
 #include "physics/PhysicsWorldBinding.hpp"
 #include "ragdolls/Ragdoll.hpp"
 #include "soft_bodies/SoftBody.hpp"
 #include "vehicles/Ship.hpp"
 #include "vehicles/Vehicle.hpp"
 #include <new>
-#include <stdatomic.h>
+#include <atomic>
 #include <tupleobject.h>
 
 /**
@@ -204,14 +204,13 @@ static void dump_parser_catalog(FastParserCore *const *const parsers, const size
 
         // Cast the item slot to an atomic pointer.
         // This prevents TSan "Data Race" warnings and ensures memory visibility.
-        _Atomic(PyObject *) *atomic_slot =
-            reinterpret_cast<_Atomic(PyObject *) *>(&(t->ob_item[index]));
-        old_val = atomic_exchange_explicit(atomic_slot, new_val, memory_order_acq_rel);
+        auto *atomic_slot = reinterpret_cast<std::atomic<PyObject *> *>(&(t->ob_item[index]));
+        old_val           = atomic_slot->exchange(new_val, std::memory_order::acq_rel);
 
         // Step C: Rehash Cache Bust (Atomic)
 #if PY_VERSION_HEX >= 0x030E0000
-        _Atomic(Py_hash_t) *atomic_hash = reinterpret_cast<_Atomic(Py_hash_t) *>(&t->ob_hash);
-        atomic_store_explicit(atomic_hash, -1, memory_order_relaxed);
+        auto *atomic_hash = reinterpret_cast<std::atomic<Py_hash_t> *>(&t->ob_hash);
+        atomic_hash->store(-1, std::memory_order::relaxed);
 #endif
     }
 
@@ -219,9 +218,9 @@ static void dump_parser_catalog(FastParserCore *const *const parsers, const size
 
     if (final_hash == -1) {
         // Rollback (Atomic)
-        _Atomic(PyObject *) *atomic_slot = reinterpret_cast<_Atomic(PyObject *) *>(
+        auto *atomic_slot = reinterpret_cast<std::atomic<PyObject *> *>(
             &(reinterpret_cast<PyTupleObject *>(target))->ob_item[index]);
-        atomic_store_explicit(atomic_slot, old_val, memory_order_relaxed);
+        atomic_slot->store(old_val, std::memory_order::relaxed);
         Py_DECREF(new_val);
         if (registry) {
             Py_DECREF(target);
@@ -233,9 +232,9 @@ static void dump_parser_catalog(FastParserCore *const *const parsers, const size
     if (registry) {
         if (PyDict_SetItem(registry, key, target) < 0) {
             // Rollback (Atomic)
-            _Atomic(PyObject *) *atomic_slot = reinterpret_cast<_Atomic(PyObject *) *>(
+            auto *atomic_slot = reinterpret_cast<std::atomic<PyObject *> *>(
                 &(reinterpret_cast<PyTupleObject *>(target))->ob_item[index]);
-            atomic_store_explicit(atomic_slot, old_val, memory_order_relaxed);
+            atomic_slot->store(old_val, std::memory_order::relaxed);
             Py_DECREF(new_val);
             Py_DECREF(target);
             final_hash = -1;
@@ -278,7 +277,7 @@ static const unsigned char kAllDocs[] = {
 };
 
 // Global flag to ensure we only stitch once (important for subinterpreters)
-static atomic_int docs_status = 0;
+static std::atomic<int> docs_status = 0;
 
 // =============================================================================================
 
@@ -526,7 +525,7 @@ extern PyModuleDef culverin_module;
 
         if (!JPH_Init()) {
             PyErr_SetString(PyExc_RuntimeError, "Jolt initialization failed");
-            atomic_store_explicit(&docs_status, 0, memory_order_seq_cst);
+            (docs_status).store(0, std::memory_order::seq_cst);
             return -1;
         }
 
@@ -538,13 +537,11 @@ extern PyModuleDef culverin_module;
         JPH_ContactListener_SetProcs(&contact_procs);
         JPH_CharacterContactListener_SetProcs(&kCharListenerProcs);
 
-        CPH_INIT_NATIVE_MUTEX(g_jph_init_lock);
-
-        atomic_store_explicit(&docs_status, 2, memory_order_seq_cst);
+        (docs_status).store(2, std::memory_order::seq_cst);
 
     } else {
         // --- THE LOSERS: Wait for the Winner to finish ---
-        while (atomic_load_explicit(&docs_status, memory_order_acquire) != 2) {
+        while ((docs_status).load(std::memory_order::acquire) != 2) {
             CPH_CpuYield();
         }
     }

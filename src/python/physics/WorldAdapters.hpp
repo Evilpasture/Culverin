@@ -1,7 +1,7 @@
 #pragma once
 
 #include "bindings/PythonCommon.hpp"
-#include "physics/PhysicsWorldState.h"
+#include "physics/PhysicsWorldState.hpp"
 #include <Python.h>
 
 namespace CPH::Python {

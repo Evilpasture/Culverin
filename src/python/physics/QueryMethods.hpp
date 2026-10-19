@@ -1,7 +1,7 @@
 #pragma once
 
 #include "physics/PhysicsWorldBinding.hpp"
-#include "physics/Query.h"
+#include "physics/Query.hpp"
 #include <Python.h>
 
 namespace CPH::Python {

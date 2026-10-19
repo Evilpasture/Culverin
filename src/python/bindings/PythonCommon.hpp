@@ -9,9 +9,9 @@
 #    endif
 #endif
 
-#include "core/Types.h"
-#include "physics/CommandBuffer.h"
-#include "physics/SlotState.h"
+#include "core/Types.hpp"
+#include "physics/CommandBuffer.hpp"
+#include "physics/SlotState.hpp"
 #include <Python.h>
 
 #include <bit>

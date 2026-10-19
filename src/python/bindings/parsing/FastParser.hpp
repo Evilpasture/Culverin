@@ -2,7 +2,7 @@
 
 #include "bindings/parsing/FastParserCore.hpp"
 #include "bindings/parsing/Parsers.hpp"
-#include "core/Types.h"
+#include "core/Types.hpp"
 
 #include <array>
 #include <cstddef>

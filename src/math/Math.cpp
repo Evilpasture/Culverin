@@ -1,4 +1,4 @@
-#include "math/MathCore.h"
+#include "math/MathCore.hpp"
 // clang-format off
 #include <Jolt/Jolt.h>
 #include <Jolt/Geometry/AABox.h>
@@ -11,9 +11,7 @@
 #include "cpp/Cpp.hpp"
 // clang-format on
 
-extern "C" {
-
-// Internal native math operations exposed through the C ABI.
+// Internal native math operations.
 void CPH_MathComputeInterpolationLoop(const CPH_PosStride *CPH_RESTRICT curr_p,
                                          const CPH_PosStride *CPH_RESTRICT prev_p,
                                          const CPH_AuxStride *CPH_RESTRICT curr_r,
@@ -744,5 +742,3 @@ void CPH_MathEulerToQuatBatch(const CPH::Float32 *CPH_RESTRICT eulers, CPH::Size
         q.GetXYZW().StoreFloat4(reinterpret_cast<JPH::Float4 *>(&out_qs[i * 4]));
     }
 }
-
-} // extern "C"

@@ -1,8 +1,8 @@
 #include "physics/Constraint.hpp"
 #include "bindings/PythonCommon.hpp"
-#include "core/NativeAlloc.h"
-#include "core/Types.h"
-#include "physics/ConstraintFactory.h"
+#include "core/Buffer.hpp"
+#include "core/Types.hpp"
+#include "physics/ConstraintFactory.hpp"
 #include "physics/PhysicsSync.hpp"
 
 namespace CPH::Python {
@@ -30,8 +30,7 @@ namespace CPH::Python {
     }
 
     // 2. PARAMS EXTRACTION
-    CPH_ConstraintParams p;
-    CPH_ParamsInit(&p);
+    CPH_ConstraintParams p; // member-initialized defaults
     int parse_ok = 1;
 
     switch (type) {
@@ -65,50 +64,40 @@ namespace CPH::Python {
     }
 
     // 3. RESOURCE RESERVATION (Shadow Lock)
-    CPH_SHADOW_LOCK(&self->physics.shadow_lock);
+    (self->physics.shadow_lock).lock();
     BlockUntilNotStepping(self);
 
     uint32_t s1;
     uint32_t s2;
     if (!unpack_handle(&self->physics, static_cast<BodyHandle>(h1_raw), &s1) ||
         !unpack_handle(&self->physics, static_cast<BodyHandle>(h2_raw), &s2)) {
-        CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
+        (self->physics.shadow_lock).unlock();
         PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
         return nullptr;
     }
 
     if (CPH_UNLIKELY(self->physics.free_constraint_count == 0)) {
-        CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
+        (self->physics.shadow_lock).unlock();
         return PyErr_Format(PyExc_MemoryError, "Max constraints reached");
     }
 
-    // Allocate heap copy of params for the worker thread
-    CPH_ConstraintParams *p_heap =
-        static_cast<CPH_ConstraintParams *>(CPH_Alloc(sizeof(CPH_ConstraintParams)));
-    memcpy(p_heap, &p, sizeof(CPH_ConstraintParams));
-
-    // Reserve constraint slot
-    uint32_t c_slot = self->physics.free_constraint_slots[--self->physics.free_constraint_count];
-    self->physics.constraint_types[c_slot] = type;
-    atomic_store_explicit(&self->physics.constraint_states[c_slot], SLOT_PENDING_CREATE,
-                          memory_order_relaxed);
-    uint32_t gen            = self->physics.constraint_generations[c_slot];
-    ConstraintHandle handle = (static_cast<uint64_t>(gen) << kHandleIndexBits) | c_slot;
-
-    // 4. QUEUE ASYNCHRONOUS COMMAND
+    // 4. QUEUE ASYNCHRONOUS COMMAND (capacity first so failure paths
+    // cannot leak the reserved slot; params travel by value).
     if (CPH_UNLIKELY(!CPH_EnsureCommandCapacity(&self->physics))) {
-        CPH_Free(p_heap); // DO NOT LEAK MEMORY
-        CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
+        (self->physics.shadow_lock).unlock();
         return PyErr_NoMemory();
     }
-    PhysicsCommand *cmd             = &self->physics.command_queue[self->physics.command_count++];
-    cmd->header                     = CMD_HEADER(CMD_CREATE_CONSTRAINT, s1);
-    cmd->constraint.body2_slot      = s2;
-    cmd->constraint.constraint_slot = c_slot;
-    cmd->constraint.type            = type;
-    cmd->constraint.params          = p_heap;
 
-    CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
+    // Reserve constraint slot
+    uint32_t c_slot         = self->physics.free_constraint_slots[--self->physics.free_constraint_count];
+    ConstraintSlot &entry   = self->physics.constraints[c_slot];
+    entry.type              = type;
+    entry.state.store(SLOT_PENDING_CREATE, std::memory_order::relaxed);
+    ConstraintHandle handle = make_handle(c_slot, entry.generation);
+    CPH_EnqueueCommand(&self->physics, s1,
+                       CPH::cmd::CreateConstraint{s2, c_slot, type, p});
+
+    (self->physics.shadow_lock).unlock();
     return PyLong_FromUnsignedLongLong(handle);
 }
 
@@ -129,35 +118,38 @@ namespace CPH::Python {
     JPH_Constraint *c_to_destroy = nullptr;
 
     // 2. RESOLUTION PHASE (Inside Shadow Lock)
-    CPH_SHADOW_LOCK(&self->physics.shadow_lock);
+    (self->physics.shadow_lock).lock();
 
     // RESOLUTION PHASE
     uint32_t slot = static_cast<uint32_t>(h_raw & kHandleIndexMask);
     uint32_t gen  = static_cast<uint32_t>(h_raw >> kHandleIndexBits);
 
-    uint8_t state =
-        atomic_load_explicit(&self->physics.constraint_states[slot], memory_order_relaxed);
+    // Range check before indexing (the legacy order read the state first).
+    if (slot >= self->physics.constraints.size()) {
+        (self->physics.shadow_lock).unlock();
+        PyErr_SetString(PyExc_ValueError, "Invalid or stale constraint handle");
+        return nullptr;
+    }
+    ConstraintSlot &entry = self->physics.constraints[slot];
+    const uint8_t state   = entry.state.load(std::memory_order::relaxed);
 
-    // FIX: Allow destruction of ALIVE OR PENDING_CREATE
-    if (slot >= self->physics.constraint_capacity ||
-        self->physics.constraint_generations[slot] != gen ||
-        (state != SLOT_ALIVE && state != SLOT_PENDING_CREATE)) {
-
-        CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
+    // Allow destruction of ALIVE OR PENDING_CREATE
+    if (entry.generation != gen || (state != SLOT_ALIVE && state != SLOT_PENDING_CREATE)) {
+        (self->physics.shadow_lock).unlock();
         PyErr_SetString(PyExc_ValueError, "Invalid or stale constraint handle");
         return nullptr;
     }
 
-    c_to_destroy = self->physics.constraints[slot];
+    c_to_destroy = entry.constraint;
 
     // Transition to EMPTY immediately.
     // If it was PENDING, the flush worker will see SLOT_EMPTY and skip creation.
-    self->physics.constraints[slot] = nullptr;
-    atomic_store_explicit(&self->physics.constraint_states[slot], SLOT_EMPTY, memory_order_release);
-    self->physics.constraint_generations[slot]++;
+    entry.constraint = nullptr;
+    entry.state.store(SLOT_EMPTY, std::memory_order::release);
+    entry.generation++;
     self->physics.free_constraint_slots[self->physics.free_constraint_count++] = slot;
 
-    CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
+    (self->physics.shadow_lock).unlock();
 
     // 3. JOLT DESTRUCTION PHASE (Outside Shadow Lock)
     if (c_to_destroy) {
@@ -197,22 +189,22 @@ namespace CPH::Python {
     }
 
     // 2. CRITICAL SECTION
-    CPH_SHADOW_LOCK(&self->physics.shadow_lock);
+    (self->physics.shadow_lock).lock();
     BlockUntilNotStepping(self);
 
     uint32_t slot = static_cast<uint32_t>(h_raw & kHandleIndexMask);
     uint32_t gen  = static_cast<uint32_t>(h_raw >> kHandleIndexBits);
 
-    if (CPH_UNLIKELY(slot >= self->physics.constraint_capacity ||
-                     self->physics.constraint_generations[slot] != gen ||
-                     atomic_load_explicit(&self->physics.constraint_states[slot],
-                                          memory_order_relaxed) != SLOT_ALIVE)) {
-        CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
+    if (CPH_UNLIKELY(slot >= self->physics.constraints.size() ||
+                     self->physics.constraints[slot].generation != gen ||
+                     self->physics.constraints[slot].state.load(std::memory_order::relaxed) !=
+                         SLOT_ALIVE)) {
+        (self->physics.shadow_lock).unlock();
         PyErr_SetString(PyExc_ValueError, "Invalid or stale constraint handle");
         return nullptr;
     }
 
-    JPH_Constraint *c         = self->physics.constraints[slot];
+    JPH_Constraint *c = self->physics.constraints[slot].constraint;
     JPH_ConstraintSubType sub = JPH_Constraint_GetSubType(c);
 
     // 3. JPH EXECUTION
@@ -250,7 +242,7 @@ namespace CPH::Python {
         }
     }
 
-    CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
+    (self->physics.shadow_lock).unlock();
     Py_RETURN_NONE;
 }
 
@@ -264,35 +256,34 @@ namespace CPH::Python {
         return nullptr;
     }
 
-    CPH_SHADOW_LOCK(&self->physics.shadow_lock);
+    (self->physics.shadow_lock).lock();
     BlockUntilNotStepping(self);
 
     uint32_t slot = static_cast<uint32_t>(handle_raw & kHandleIndexMask);
     uint32_t gen  = static_cast<uint32_t>(handle_raw >> kHandleIndexBits);
 
     // Validate slot range and generation
-    if (CPH_UNLIKELY(slot >= self->physics.constraint_capacity ||
-                     self->physics.constraint_generations[slot] != gen)) {
-        CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
+    if (CPH_UNLIKELY(slot >= self->physics.constraints.size() ||
+                     self->physics.constraints[slot].generation != gen)) {
+        (self->physics.shadow_lock).unlock();
         PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
         return nullptr;
     }
 
-    // Load state atomically
-    uint8_t state =
-        atomic_load_explicit(&self->physics.constraint_states[slot], memory_order_acquire);
+    const uint8_t state =
+        self->physics.constraints[slot].state.load(std::memory_order::acquire);
 
     // NEW LOGIC: Accept both ALIVE and PENDING_CREATE
     if (state == SLOT_ALIVE || state == SLOT_PENDING_CREATE) {
         // Return from shadow array directly.
         // This is safe even if Jolt hasn't built the object yet.
-        int type = self->physics.constraint_types[slot];
-        CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
+        int type = self->physics.constraints[slot].type;
+        (self->physics.shadow_lock).unlock();
         return PyLong_FromLong(static_cast<long>(type));
     }
 
     // If state is SLOT_EMPTY or PENDING_DESTROY
-    CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
+    (self->physics.shadow_lock).unlock();
     PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
     return nullptr;
 }

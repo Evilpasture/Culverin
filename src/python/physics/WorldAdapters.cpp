@@ -1,7 +1,8 @@
 #include "physics/WorldAdapters.hpp"
+#include <new>
 #include "bindings/ModuleState.hpp"
 #include "physics/PhysicsSync.hpp"
-#include "physics/PhysicsWorld.h"
+#include "physics/PhysicsWorld.hpp"
 
 namespace CPH::Python {
 
@@ -67,7 +68,7 @@ static int get_baked_buffer(PyObject *baked, Py_ssize_t index, size_t expected_s
 [[nodiscard]]
 int WorldResize(PhysicsWorldObject *self, size_t new_capacity) {
     CPH_PhysicsWorld *world = &self->physics;
-    if (atomic_load_explicit(&world->view_export_count, memory_order_relaxed) > 0) {
+    if ((world->view_export_count).load(std::memory_order::relaxed) > 0) {
         PyErr_SetString(PyExc_BufferError, "Cannot resize while memoryview is active.");
         return -1;
     }
@@ -88,7 +89,11 @@ int WorldResize(PhysicsWorldObject *self, size_t new_capacity) {
 }
 
 void WorldFreeMembers(PhysicsWorldObject *self) {
-    CPH_PhysicsWorldFreeNative(&self->physics);
+    // Reset to a fresh native world: the Python object outlives a failed
+    // __init__, so `physics` must always hold a live CPH_PhysicsWorld
+    // (constructed in tp_new, destroyed exactly once in tp_dealloc).
+    self->physics.~CPH_PhysicsWorld();
+    new (&self->physics) CPH_PhysicsWorld();
 }
 
 // helper: Initialize settings via Python helper

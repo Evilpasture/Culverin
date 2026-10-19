@@ -3,7 +3,7 @@
 #include "bindings/ModuleState.hpp"
 #include "bindings/PythonSupport.hpp"
 #include "bindings/parsing/Parsers.hpp"
-#include "core/CompilerSpecifics.h"
+#include "core/Compiler.hpp"
 #include "physics/PhysicsSync.hpp"
 #include <math.h>
 
@@ -315,7 +315,7 @@ static void configure_drivetrain(VehicleResources *r, PyObject *py_engine, PyObj
     PyThreadState *_save = nullptr;
 
     // --- 2. RESOLVE CHASSIS (ATOMIC REFACTOR) ---
-    CPH_SHADOW_LOCK(&self->physics.shadow_lock);
+    (self->physics.shadow_lock).lock();
 
     // Ensure all body creation commands are processed before linking
     SyncAndFlushInternal(self);
@@ -328,16 +328,16 @@ static void configure_drivetrain(VehicleResources *r, PyObject *py_engine, PyObj
     // TSan Fix: Atomic load of state (Acquire ensures visibility of the chassis initialization)
     uint8_t state =
         static_cast<int>(handle_valid)
-            ? atomic_load_explicit(&self->physics.slot_states[slot], memory_order_acquire)
+            ? (self->physics.bodies.slot_states[slot]).load(std::memory_order::acquire)
             : SLOT_EMPTY;
 
     if (!handle_valid || state != SLOT_ALIVE) {
-        CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
+        (self->physics.shadow_lock).unlock();
         return PyErr_Format(PyExc_ValueError, "Invalid chassis handle (Body is dead or pending)");
     }
 
-    JPH_BodyID chassis_bid = self->physics.body_ids[self->physics.slot_to_dense[slot]];
-    CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
+    JPH_BodyID chassis_bid = self->physics.bodies.body_ids[self->physics.bodies.slot_to_dense[slot]];
+    (self->physics.shadow_lock).unlock();
 
     // --- 3. PRE-JOLT RESOURCE ALLOCATION (Unchanged) ---
     VehicleResources r{};
@@ -374,7 +374,7 @@ static void configure_drivetrain(VehicleResources *r, PyObject *py_engine, PyObj
     // --- 4. JOLT COMMIT (No GIL - Unchanged) ---
     Py_UNBLOCK_THREADS;
 
-    CPH_NATIVE_MUTEX_LOCK(self->physics.jph_trampoline_lock);
+    (self->physics.jph_trampoline_lock).lock();
     jolt_locked = true;
 
     lock_iface = JPH_PhysicsSystem_GetBodyLockInterface(self->physics.system);
@@ -409,7 +409,7 @@ static void configure_drivetrain(VehicleResources *r, PyObject *py_engine, PyObj
     r.is_added_to_world = true;
 
     JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
-    CPH_NATIVE_MUTEX_UNLOCK(self->physics.jph_trampoline_lock);
+    (self->physics.jph_trampoline_lock).unlock();
     jolt_locked = false;
     Py_BLOCK_THREADS;
 
@@ -417,15 +417,15 @@ static void configure_drivetrain(VehicleResources *r, PyObject *py_engine, PyObj
     obj = PyObject_GC_New(VehicleObject, reinterpret_cast<PyTypeObject *>(st->VehicleType));
 
     if (!obj) {
-        CPH_SHADOW_LOCK(&self->physics.shadow_lock);
+        (self->physics.shadow_lock).lock();
         CleanupVehicleResources(&r, num_wheels, self);
-        CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
+        (self->physics.shadow_lock).unlock();
         return nullptr;
     }
     if (InitVehicleParsers(obj) < 0) {
-        CPH_SHADOW_LOCK(&self->physics.shadow_lock);
+        (self->physics.shadow_lock).lock();
         CleanupVehicleResources(&r, num_wheels, self);
-        CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
+        (self->physics.shadow_lock).unlock();
         Py_DECREF(obj);
         return nullptr;
     }
@@ -450,14 +450,14 @@ jolt_fail:
         JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
     }
     if (jolt_locked) {
-        CPH_NATIVE_MUTEX_UNLOCK(self->physics.jph_trampoline_lock);
+        (self->physics.jph_trampoline_lock).unlock();
     }
     Py_BLOCK_THREADS;
 
 python_fail:
-    CPH_SHADOW_LOCK(&self->physics.shadow_lock);
+    (self->physics.shadow_lock).lock();
     CleanupVehicleResources(&r, num_wheels, self);
-    CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
+    (self->physics.shadow_lock).unlock();
 
     if (!PyErr_Occurred()) {
         PyErr_SetString(PyExc_RuntimeError, "Jolt vehicle creation failed");
@@ -483,15 +483,15 @@ python_fail:
     }
 
     // 2. STATE MACHINE & JOLT SYNC
-    CPH_SHADOW_LOCK(&self->world->physics.shadow_lock);
+    (self->world->physics.shadow_lock).lock();
 
     // TSan Fix: Explicit relaxed load of is_stepping flag.
     // Since we hold the SHADOW_LOCK, we only need to verify if the Stepper
     // thread has raised the flag to begin a buffer swap.
-    bool stepping = atomic_load_explicit(&self->world->physics.is_stepping, memory_order_relaxed);
+    bool stepping = (self->world->physics.is_stepping).load(std::memory_order::relaxed);
 
     if (CPH_UNLIKELY(stepping || !self->vehicle)) {
-        CPH_SHADOW_UNLOCK(&self->world->physics.shadow_lock);
+        (self->world->physics.shadow_lock).unlock();
         Py_RETURN_NONE;
     }
 
@@ -504,8 +504,10 @@ python_fail:
     JPH_BodyInterface_ActivateBody(bi, chassis_id);
 
     // Get current physics state for arcade drive logic
-    JPH_STACK_ALLOC(JPH_Vec3, linear_vel);
-    JPH_STACK_ALLOC(JPH_Quat, chassis_q);
+    alignas(alignof(JPH_Vec3)) JPH_Vec3 linear_vel_storage{};
+    JPH_Vec3 *linear_vel = &linear_vel_storage;
+    alignas(alignof(JPH_Quat)) JPH_Quat chassis_q_storage{};
+    JPH_Quat *chassis_q = &chassis_q_storage;
     JPH_BodyInterface_GetLinearVelocity(bi, chassis_id, linear_vel);
     JPH_BodyInterface_GetRotation(bi, chassis_id, chassis_q);
 
@@ -557,7 +559,7 @@ python_fail:
     JPH_WheeledVehicleController_SetDriverInput(controller, input_throttle, right, input_brake,
                                                 handbrake);
 
-    CPH_SHADOW_UNLOCK(&self->world->physics.shadow_lock);
+    (self->world->physics.shadow_lock).unlock();
     Py_RETURN_NONE;
 }
 
@@ -585,15 +587,16 @@ static inline PyObject *pack_transform(double px, double py, double pz, float rx
         return nullptr;
     }
 
-    CPH_SHADOW_LOCK(&self->world->physics.shadow_lock);
+    (self->world->physics.shadow_lock).lock();
     BlockUntilNotStepping(self->world);
 
     if (!self->vehicle || index >= self->num_wheels) {
-        CPH_SHADOW_UNLOCK(&self->world->physics.shadow_lock);
+        (self->world->physics.shadow_lock).unlock();
         Py_RETURN_NONE;
     }
 
-    JPH_STACK_ALLOC(JPH_RMat4, transform);
+    alignas(alignof(JPH_RMat4)) JPH_RMat4 transform_storage{};
+    JPH_RMat4 *transform = &transform_storage;
     JPH_Vec3 right = {1.0f, 0.0f, 0.0f};
     JPH_Vec3 up    = {0.0f, 1.0f, 0.0f};
     JPH_VehicleConstraint_GetWheelWorldTransform(self->vehicle, index, &right, &up, transform);
@@ -603,15 +606,17 @@ static inline PyObject *pack_transform(double px, double py, double pz, float rx
     auto py = transform->column3.y;
     auto pz = transform->column3.z;
 
-    JPH_STACK_ALLOC(JPH_Mat4, rot_only_mat);
+    alignas(alignof(JPH_Mat4)) JPH_Mat4 rot_only_mat_storage{};
+    JPH_Mat4 *rot_only_mat = &rot_only_mat_storage;
     rot_only_mat->column[0] = transform->column[0];
     rot_only_mat->column[1] = transform->column[1];
     rot_only_mat->column[2] = transform->column[2];
     rot_only_mat->column[3] = JPH_Vec4{0, 0, 0, 1.0f};
 
-    JPH_STACK_ALLOC(JPH_Quat, q);
+    alignas(alignof(JPH_Quat)) JPH_Quat q_storage{};
+    JPH_Quat *q = &q_storage;
     JPH_Mat4_GetQuaternion(rot_only_mat, q);
-    CPH_SHADOW_UNLOCK(&self->world->physics.shadow_lock);
+    (self->world->physics.shadow_lock).unlock();
 
     return pack_transform(px, py, pz, q->x, q->y, q->z, q->w);
 }
@@ -627,11 +632,11 @@ static inline PyObject *pack_transform(double px, double py, double pz, float rx
         return nullptr;
     }
 
-    CPH_SHADOW_LOCK(&self->world->physics.shadow_lock);
+    (self->world->physics.shadow_lock).lock();
     BlockUntilNotStepping(self->world);
 
     if (!self->vehicle || index >= self->num_wheels) {
-        CPH_SHADOW_UNLOCK(&self->world->physics.shadow_lock);
+        (self->world->physics.shadow_lock).unlock();
         Py_RETURN_NONE;
     }
 
@@ -643,7 +648,8 @@ static inline PyObject *pack_transform(double px, double py, double pz, float rx
     JPH_Vec3 right = {(local_pos_check.x >= 0.0f) ? 1.0f : -1.0f, 0.0f, 0.0f};
     JPH_Vec3 up    = {0.0f, 1.0f, 0.0f};
 
-    JPH_STACK_ALLOC(JPH_Mat4, local_transform);
+    alignas(alignof(JPH_Mat4)) JPH_Mat4 local_transform_storage{};
+    JPH_Mat4 *local_transform = &local_transform_storage;
     JPH_VehicleConstraint_GetWheelLocalTransform(self->vehicle, index, &right, &up,
                                                  local_transform);
 
@@ -651,9 +657,10 @@ static inline PyObject *pack_transform(double px, double py, double pz, float rx
     float ly = local_transform->column[3].y;
     float lz = local_transform->column[3].z;
 
-    JPH_STACK_ALLOC(JPH_Quat, q);
+    alignas(alignof(JPH_Quat)) JPH_Quat q_storage{};
+    JPH_Quat *q = &q_storage;
     JPH_Mat4_GetQuaternion(local_transform, q);
-    CPH_SHADOW_UNLOCK(&self->world->physics.shadow_lock);
+    (self->world->physics.shadow_lock).unlock();
 
     return pack_transform(lx, ly, lz, q->x, q->y, q->z, q->w);
 }
@@ -667,10 +674,10 @@ VehicleGetDebugState([[maybe_unused]] VehicleObject *self,
     // 1. LOCK AND GUARD
     // We need the world lock to ensure the vehicle pointer is stable
     // and the physics step isn't currently mutating these values.
-    CPH_SHADOW_LOCK(&self->world->physics.shadow_lock);
+    (self->world->physics.shadow_lock).lock();
 
     if (self->world->physics.is_stepping) {
-        CPH_SHADOW_UNLOCK(&self->world->physics.shadow_lock);
+        (self->world->physics.shadow_lock).unlock();
         // Debug prints usually shouldn't raise Python errors,
         // so we just log a warning and return.
         DebugLog("Warning: Cannot get debug state while physics is stepping.");
@@ -678,7 +685,7 @@ VehicleGetDebugState([[maybe_unused]] VehicleObject *self,
     }
 
     if (!self->vehicle) {
-        CPH_SHADOW_UNLOCK(&self->world->physics.shadow_lock);
+        (self->world->physics.shadow_lock).unlock();
         DebugLog("Warning: Vehicle has been destroyed.");
         Py_RETURN_NONE;
     }
@@ -687,7 +694,7 @@ VehicleGetDebugState([[maybe_unused]] VehicleObject *self,
     auto controller = reinterpret_cast<JPH_WheeledVehicleController *>(
         JPH_VehicleConstraint_GetController(self->vehicle));
     if (!controller) {
-        CPH_SHADOW_UNLOCK(&self->world->physics.shadow_lock);
+        (self->world->physics.shadow_lock).unlock();
         Py_RETURN_NONE;
     }
 
@@ -731,7 +738,7 @@ VehicleGetDebugState([[maybe_unused]] VehicleObject *self,
     DebugLog("===========================");
 
     // 6. UNLOCK
-    CPH_SHADOW_UNLOCK(&self->world->physics.shadow_lock);
+    (self->world->physics.shadow_lock).unlock();
 
     Py_RETURN_NONE;
 #endif
@@ -755,13 +762,13 @@ static void VehicleInternalCleanup(VehicleObject *self) {
         return;
     }
 
-    CPH_SHADOW_LOCK(&self->world->physics.shadow_lock);
+    (self->world->physics.shadow_lock).lock();
 
     BlockUntilNotStepping(self->world);
     BlockUntilNotQuerying(self->world);
 
     if (!self->vehicle) {
-        CPH_SHADOW_UNLOCK(&self->world->physics.shadow_lock);
+        (self->world->physics.shadow_lock).unlock();
         return;
     }
 
@@ -783,7 +790,7 @@ static void VehicleInternalCleanup(VehicleObject *self) {
     self->friction_curve        = nullptr;
     self->torque_curve          = nullptr;
 
-    CPH_SHADOW_UNLOCK(&self->world->physics.shadow_lock);
+    (self->world->physics.shadow_lock).unlock();
 
     // Safely destroy Jolt objects outside the lock
     if (j_veh) {

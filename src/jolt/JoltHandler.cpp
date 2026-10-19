@@ -1,4 +1,4 @@
-#include "jolt/JoltHandler.h"
+#include "jolt/JoltHandler.hpp"
 #include "cpp/Cpp.hpp"
 #include <array>
 #include <chrono>

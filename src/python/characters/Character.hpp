@@ -2,6 +2,7 @@
 #include "bindings/PythonCommon.hpp"
 #include "characters/CharacterParsers.hpp"
 #include <Python.h>
+#include <atomic>
 
 namespace CPH::Python {
 
@@ -9,7 +10,7 @@ namespace CPH::Python {
 struct CharacterObject {
     PyObject_HEAD JPH_CharacterVirtual *character;
     struct PhysicsWorldObject *world;
-    CPH_ATOMIC(BodyHandle) handle;
+    std::atomic<BodyHandle> handle;
 
     // Filters and listeners
     JPH_BodyFilter *body_filter;
@@ -22,10 +23,10 @@ struct CharacterObject {
     CPH::Python::CharacterParsers *parsers;
 
     // ATOMIC INPUTS: Read by Jolt worker threads in callbacks
-    CPH_ATOMIC(float) push_strength;
-    CPH_ATOMIC(float) last_vx;
-    CPH_ATOMIC(float) last_vy;
-    CPH_ATOMIC(float) last_vz;
+    std::atomic<float> push_strength;
+    std::atomic<float> last_vx;
+    std::atomic<float> last_vy;
+    std::atomic<float> last_vz;
 
     // Non-atomic: Used by main thread only for rendering
     // AVOID FALSE SHARING.

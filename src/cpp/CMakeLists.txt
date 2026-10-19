@@ -7,7 +7,6 @@ target_sources(
     culverin_native_cpp
     INTERFACE
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Cpp.hpp>"
-        "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Loop.hpp>"
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Prefetch.hpp>"
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Span.hpp>"
 )

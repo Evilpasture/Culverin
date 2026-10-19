@@ -1,33 +1,33 @@
 add_library(
     culverin_native_physics
     OBJECT
-        CommandBuffer.c
-        CommandBuffer.h
-        ConstraintFactory.c
-        ConstraintFactory.h
+        CommandBuffer.cpp
+        CommandBuffer.hpp
+        ConstraintFactory.cpp
+        ConstraintFactory.hpp
         ContactListener.cpp
-        ContactListener.h
-        ContactEventDefinitions.h
-        Filters.h
-        InternalQuery.c
-        InternalQuery.h
-        PhysicsParams.h
-        Query.c
-        Query.h
-        PhysicsWorld.c
-        PhysicsWorld.h
-        PhysicsWorldCreation.c
-        PhysicsWorldCreation.h
-        PhysicsWorldOps.c
-        PhysicsWorldOps.h
-        PhysicsWorldRuntime.c
-        PhysicsWorldRuntime.h
-        Ragdoll.c
-        Ragdoll.h
-        PhysicsWorldState.h
+        ContactListener.hpp
+        ContactEventDefinitions.hpp
+        Filters.hpp
+        InternalQuery.cpp
+        InternalQuery.hpp
+        PhysicsParams.hpp
+        Query.cpp
+        Query.hpp
+        PhysicsWorld.cpp
+        PhysicsWorld.hpp
+        PhysicsWorldCreation.cpp
+        PhysicsWorldCreation.hpp
+        PhysicsWorldOps.cpp
+        PhysicsWorldOps.hpp
+        PhysicsWorldRuntime.cpp
+        PhysicsWorldRuntime.hpp
+        Ragdoll.cpp
+        Ragdoll.hpp
+        PhysicsWorldState.hpp
         ShadowSync.cpp
-        ShadowSync.h
-        SlotState.h
+        ShadowSync.hpp
+        SlotState.hpp
 )
 target_link_libraries(
     culverin_native_physics
