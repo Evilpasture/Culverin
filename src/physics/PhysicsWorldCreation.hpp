@@ -26,41 +26,41 @@ struct CPH_PhysicsWorldBodyCreateRequest {
     // (mesh/heightfield paths).
     int shape_type          = 0;
     float shape_params[4]   = {};
-    JPH_RVec3 position;
-    JPH_Quat rotation;
+    JPH_RVec3 position      = {};
+    JPH_Quat rotation       = {0.0f, 0.0f, 0.0f, 1.0f};
     CPH_BodyConfig config;
-    uint32_t category;
-    uint32_t mask;
+    uint32_t category       = kAllLayerBits;
+    uint32_t mask           = kAllLayerBits;
     uint32_t material_id    = 0;
-    uint64_t user_data;
+    uint64_t user_data      = 0;
 };
 
 struct CPH_PhysicsWorldCompoundPart {
-    int shape_type;
-    float shape_params[4];
-    JPH_Vec3 local_position;
-    JPH_Quat local_rotation;
+    int shape_type          = 0;
+    float shape_params[4]   = {};
+    JPH_Vec3 local_position = {};
+    JPH_Quat local_rotation = {0.0f, 0.0f, 0.0f, 1.0f};
 };
 
 struct CPH_PhysicsWorldSoftBodyCreateRequest {
-    JPH_SoftBodySharedSettings *shared_settings;
-    uint32_t vertex_count;
-    JPH_RVec3 position;
-    JPH_Quat rotation;
-    uint64_t user_data;
-    uint32_t category;
-    uint32_t mask;
-    float pressure;
-    float vertex_radius;
-    float linear_damping;
-    uint32_t num_iterations;
-    float max_linear_velocity;
-    float gravity_factor;
-    float friction;
-    float restitution;
-    bool make_rotation_identity;
-    bool update_position;
-    bool faces_double_sided;
+    JPH_SoftBodySharedSettings *shared_settings = nullptr;
+    uint32_t vertex_count                       = 0;
+    JPH_RVec3 position                          = {};
+    JPH_Quat rotation                           = {0.0f, 0.0f, 0.0f, 1.0f};
+    uint64_t user_data                          = 0;
+    uint32_t category                           = kAllLayerBits;
+    uint32_t mask                               = kAllLayerBits;
+    float pressure                              = 0.0f;
+    float vertex_radius                         = 0.0f;
+    float linear_damping                        = 0.0f;
+    uint32_t num_iterations                     = 0;
+    float max_linear_velocity                   = 0.0f;
+    float gravity_factor                        = 0.0f;
+    float friction                              = 0.0f;
+    float restitution                           = 0.0f;
+    bool make_rotation_identity                 = false;
+    bool update_position                        = false;
+    bool faces_double_sided                     = false;
 };
 
 

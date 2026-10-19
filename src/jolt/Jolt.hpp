@@ -30,8 +30,6 @@
 
 #include <type_traits>
 
-namespace culverin::jolt_abi {
-
 // Double-precision Jolt: Real is double, RVec3 is the 32-byte DVec3.
 // ShadowSync streams JPH::Body positions directly into CPH_PosStride
 // (4 doubles) and the Python buffer protocol exposes float64 stride-4.
@@ -40,5 +38,3 @@ static_assert(sizeof(JPH::RVec3) == 32);
 static_assert(sizeof(JPH::ObjectLayer) == 4);
 // BodyBuffers store body IDs in a uint32 SoA array (JPH_BodyID).
 static_assert(sizeof(JPH::BodyID) == 4);
-
-} // namespace culverin::jolt_abi

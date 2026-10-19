@@ -6,6 +6,7 @@ target_sources(
     INTERFACE
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Buffer.hpp>"
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Compiler.hpp>"
+        "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Error.hpp>"
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Profiling.hpp>"
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Threading.hpp>"
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Types.hpp>"

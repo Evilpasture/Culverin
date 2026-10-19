@@ -273,7 +273,7 @@ CPH_SyncShadowBuffers(const CPH_PhysicsWorld *const CPH_RESTRICT world) noexcept
         [[unlikely]] return;
     }
 
-    [[maybe_unused]] static CPH_Stat sync_stats;
+    [[maybe_unused]] static CPH::Stat sync_stats;
 
     CPH_PROFILE_BEGIN(sync);
 
@@ -317,7 +317,7 @@ CPH_SyncShadowBuffers(const CPH_PhysicsWorld *const CPH_RESTRICT world) noexcept
     if (sync_stats.count >= 50) {
         fprintf(stderr, "[culverin] Sync Stat Avg: %" PRIu64 " ns | Max: %" PRIu64 " ns\n",
                 sync_stats.total_ns / sync_stats.count, sync_stats.max_ns);
-        sync_stats = CPH_Stat{};
+        sync_stats = CPH::Stat{};
     }
 #endif
 }

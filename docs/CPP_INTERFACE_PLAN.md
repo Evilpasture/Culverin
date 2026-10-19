@@ -1,7 +1,8 @@
 # Phase 2 Plan: Direct Jolt C++ API + C++ Interfaces Between Subsystems
 
-Status: **A0 landed** (on top of `601b1a2` "convert all to C++");
-A1 next. Prerequisite: the C++23 migration
+Status: **A0 landed** (on top of `601b1a2` "convert all to C++",
+including the `CPH::Error` foundation header); next is the mechanical
+`CPH_` → `CPH::` dissolution patch, then B1. Prerequisite: the C++23 migration
 (`docs/CPP23_MIGRATION.md`) has landed. All acceptance oracles from that
 migration apply unchanged to every phase below: full test suite at
 243 passed / 4 pre-existing failures, 9/9 differential contract tests,
@@ -40,8 +41,8 @@ permanent dual paths: each phase deletes what it replaces.
 
 - **`-fno-exceptions` everywhere.** Jolt's C++ API is exception-free by
   design and already compiles in our TUs (`ShadowSync` proves it).
-  `std::expected` (C++23) works without exceptions and is the error
-  channel for Workstream B.
+  `std::expected<T, CPH::Error>` works without exceptions and is the
+  error channel for Workstream B.
 - **ABI defines must stay uniform**: `JPH_DOUBLE_PRECISION`,
   `JPH_OBJECT_LAYER_BITS=32` (already global `add_definitions`).
   Direct API use makes getting this wrong an ODR/layout bug instead
@@ -94,7 +95,14 @@ explicitly. `JPH_Init()` is **kept for now**: the vendored JoltC is a
 Culverin-patched fork whose init also installs trace forwarding and
 a global temp-allocator policy, so replacing it belongs to A5 with a
 fork-delta audit, not to A0. *Deleted:* `JoltRttiShim.cpp` + target
-(vestigial; see RTTI note above).
+(vestigial; see RTTI note above). A0 also lands `src/core/Error.hpp` —
+the `CPH::Error`/`ErrorCode`/`ErrorCategory` foundation for B1
+(enum-typed categories, 0 = no error, `std::expected<T, CPH::Error>`
+as the consumer idiom) — adopted by nothing yet, and regularizes the
+creation-request structs to all-fields-initialized. Identifiers A0
+introduces live in `CPH::` (e.g. `CPH::Stat`, `CPH::Prof*` in
+`core/Profiling.hpp`); the tree-wide `CPH_` dissolution is the next,
+separate mechanical patch.
 
 **A1 — Core system + stepping** (`PhysicsWorldState.hpp`,
 `PhysicsWorld.cpp`, `ShadowSync` untouched in behavior).
@@ -145,32 +153,41 @@ the submodule pin becomes the single version source).
 
 ## Workstream B — C++ interfaces between subsystems
 
-Do B1 first (it is Jolt-independent), then B2–B4 subsystem by
-subsystem; physics-internal signatures should land *after* the
-matching A phase so they can mention `JPH::` types directly
-(e.g. `expected<JPH::RefConst<JPH::Shape>, Status>`).
+Right after A0 comes the mechanical naming patch (below), then B1
+(it is Jolt-independent), then B2–B4 subsystem by subsystem;
+physics-internal signatures should land *after* the matching A phase
+so they can mention `JPH::` types directly
+(e.g. `expected<JPH::RefConst<JPH::Shape>, CPH::Error>`).
 
-**B1 — One error model.** Collapse the 7 status enums into one
-`enum class culverin::Status` (values a superset; Python-visible
-exception mapping already lives at one boundary and stays bit-exact).
-Native functions return `std::expected<T, Status>` /
-`std::expected<void, Status>`; the creation API's dual
-"return enum + `out_native_status`" pattern disappears. Python layer
-translates `Status` → exception in exactly one function per module.
+**B1 — One error model.** Adopt the `CPH::Error` foundation
+(`src/core/Error.hpp`, landed in A0). The 7 status enums become
+7 error categories: tidy `CPH::` names (`CPH::WorldStatus`, …),
+the `OK = 0` enumerator deleted and the negative values renumbered
+positive (0 means "no error" in every category). Native functions
+return `std::expected<T, CPH::Error>` / `std::expected<void,
+CPH::Error>`; the creation API's dual "return enum +
+`out_native_status`" pattern disappears (one `CPH::Error` carries its
+category with it). The Python layer translates `CPH::Error` →
+exception in exactly one function per module, keying on
+`error.Code().Is<…>()` / `.As<…>()` and using `error.Message()` where
+today's messages are hand-written strings (Python-visible mapping
+stays bit-exact; per-enum `ErrorMessage(E)` ADL hooks provide the
+human text where the enumerator name is not the message). Foreign
+C result domains (JoltC results, errno-style values) register via
+`CPH::RegisterErrorCategory` instead of growing a fake enum.
 
 **B2 — Native API signatures.** `std::span` for array inputs/outputs,
 references where null is not a state, no `*out_` parameters inside
 the native tree (~36 today), `[[nodiscard]]` on all fallible ops.
 `CPH_PhysicsWorld` free functions become member functions where the
 world is the obvious subject (keep free functions that are genuinely
-algorithms over spans, e.g. `ShadowSync`). Naming: keep `CPH_` *type*
-names that appear in wire-adjacent structs; new/changed function
-APIs move to `namespace culverin` — one convention, migrated per
-file, no alias layer left behind.
+algorithms over spans, e.g. `ShadowSync`). By the time B2 runs, the
+naming dissolution (below) has made `CPH::` the single convention,
+so new signatures are written directly in it.
 
-**B3 — Python boundary hygiene.** Introduce `py::Ref` (owning RAII,
-`Py_DECREF` in dtor) and `py::Borrowed` (non-owning, debug-checked)
-in `PythonCommon.hpp`; migrate bindings per file — the 51 remaining
+**B3 — Python boundary hygiene.** Introduce `Ref` (owning RAII,
+`Py_DECREF` in dtor) and `Borrowed` (non-owning, debug-checked)
+in `CPH::Python` (`PythonCommon.hpp`); migrate bindings per file — the 51 remaining
 `goto`s (20 in `FastParserCore.cpp`) are the cleanup idiom this
 replaces. Parsers: `int Parse(obj, &x, &y, &z)` →
 `expected<Vec3, ParseError> parse_vec3(Borrowed obj)`, FastParser
@@ -186,10 +203,25 @@ by CPython allocation) gets wrapped in a small `PyObject`-storage
 helper so the pattern is written once, correctly, instead of being
 re-derived per type.
 
+## Naming: one root, `CPH::`
+
+`CPH` is the project's only namespace root (`CPH::Python` for the
+whole Python layer; `CPH::cmd` stays as is). The `CPH_` prefix
+dissolves into `CPH::` tree-wide in one mechanical patch immediately
+after A0 — tidy names (`CPH_PhysicsWorldStatus` → `CPH::WorldStatus`,
+`CPH_BodyConfig` → `CPH::BodyConfig`, functions likewise). What
+keeps `CPH_`: ALL_CAPS macros (preprocessor has no namespaces) and
+genuine C-linkage names (the JoltHandler callback surface until A3
+deletes it; `PyInit`). Measured size: 181 distinct non-macro
+identifiers, ~1,430 reference sites, 62 files; nothing outside the
+C++ tree references these names (one stale comment in
+`tools/gen_stubs.py`). Doing it before B1/A1 means every later phase
+writes new signatures in final form instead of churning twice.
+
 ## Sequencing, gates, risks
 
-Order: **A0 → B1 → A1 → A2 → B2(physics) → A3 → B3 → A4 → B2/B4(rest)
-→ A5.** Each phase is one patch, gated on: full suite 243/4,
+Order: **A0 → naming dissolution → B1 → A1 → A2 → B2(physics) → A3
+→ B3 → A4 → B2/B4(rest) → A5.** Each phase is one patch, gated on: full suite 243/4,
 differential 9/9, ASan clean, and the interleaved perf table (loop &
 batch create, 10k step, bulk mutation, raycast, snapshot, ctor)
 within noise of the previous phase. TSan build re-run at A1 and A3

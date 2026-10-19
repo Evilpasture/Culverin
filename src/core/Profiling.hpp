@@ -9,7 +9,14 @@
 
 #include <cstdint>
 
-struct CPH_Stat {
+#ifdef CULVERIN_PROFILE_SYNC
+#    include <chrono>
+#    include <cstdio>
+#endif
+
+namespace CPH {
+
+struct Stat {
     std::uint64_t total_ns = 0;
     std::uint64_t min_ns   = UINT64_MAX;
     std::uint64_t max_ns   = 0;
@@ -29,13 +36,9 @@ struct CPH_Stat {
 
 #ifdef CULVERIN_PROFILE_SYNC
 
-#    include <chrono>
-#    include <cstdio>
+using ProfClock = std::chrono::steady_clock;
 
-namespace culverin_prof {
-using Clock = std::chrono::steady_clock;
-
-inline void print_elapsed(const char *label, std::uint64_t elapsed_ns, unsigned int count) {
+inline void ProfPrintElapsed(const char *label, std::uint64_t elapsed_ns, unsigned int count) {
     if (count > 0) {
         std::fprintf(stderr, "[culverin] %s: %llu ns for %u items (%.1f ns/item)\n", label,
                      static_cast<unsigned long long>(elapsed_ns), count,
@@ -46,21 +49,24 @@ inline void print_elapsed(const char *label, std::uint64_t elapsed_ns, unsigned 
     }
 }
 
-inline std::uint64_t elapsed_ns_since(Clock::time_point start) {
+inline std::uint64_t ProfElapsedNsSince(ProfClock::time_point start) {
     return static_cast<std::uint64_t>(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - start).count());
+        std::chrono::duration_cast<std::chrono::nanoseconds>(ProfClock::now() - start).count());
 }
-} // namespace culverin_prof
+
+#endif // CULVERIN_PROFILE_SYNC
+
+} // namespace CPH
+
+#ifdef CULVERIN_PROFILE_SYNC
 
 #    define CPH_INIT_PROFILER() (void)0
-#    define CPH_PROFILE_BEGIN(tag) \
-        const auto _cph_start_##tag = ::culverin_prof::Clock::now()
-#    define CPH_PROFILE_END(tag, label, count)                                        \
-        ::culverin_prof::print_elapsed(label,                                       \
-                                       ::culverin_prof::elapsed_ns_since(_cph_start_##tag), \
-                                       static_cast<unsigned int>(count))
-#    define CPH_PROFILE_ACCUMULATE(tag, stat_ptr) \
-        (stat_ptr)->accumulate(::culverin_prof::elapsed_ns_since(_cph_start_##tag))
+#    define CPH_PROFILE_BEGIN(tag) const auto _cph_start_##tag = ::CPH::ProfClock::now()
+#    define CPH_PROFILE_END(tag, label, count)                                                     \
+        ::CPH::ProfPrintElapsed(label, ::CPH::ProfElapsedNsSince(_cph_start_##tag),                \
+                                static_cast<unsigned int>(count))
+#    define CPH_PROFILE_ACCUMULATE(tag, stat_ptr)                                                  \
+        (stat_ptr)->accumulate(::CPH::ProfElapsedNsSince(_cph_start_##tag))
 
 #else
 
