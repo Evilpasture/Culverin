@@ -531,10 +531,10 @@ static bool JPH_API_CALL char_on_character_contact_validate(
 }
 
 // High-frequency callback: DO NOT allocate memory or lock.
-CPH_NO_TSAN [[maybe_unused]] static void JPH_API_CALL char_on_contact_solve(
+[[maybe_unused]] static void JPH_API_CALL char_on_contact_solve(
     [[maybe_unused]] void *userData, [[maybe_unused]] const JPH_Body *body1,
     [[maybe_unused]] const JPH_Body *body2, [[maybe_unused]] const JPH_ContactManifold *manifold,
-    [[maybe_unused]] JPH_ContactSettings *settings) {
+    [[maybe_unused]] JPH_ContactSettings *settings) CPH_NO_TSAN {
     // Advanced solver overrides here if needed
 }
 
