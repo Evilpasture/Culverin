@@ -2,7 +2,7 @@
 
 /**
  * @file Mutex.h
- * @brief CulvMutex: A High-Performance, Memory-Efficient 1-Byte Mutex.
+ * @brief CPH_Mutex: A High-Performance, Memory-Efficient 1-Byte Mutex.
  *
  * DESIGN GOALS:
  * 1. Minimal Footprint: 1 byte per mutex in Release mode (ideal for ECS/Large Object Graphs).
@@ -13,17 +13,17 @@
  *
  * BASIC USAGE:
  * @code
- *    CulvMutex my_lock = { .bits = CULV_MUTEX_UNLOCKED };
+ *    CPH_Mutex my_lock = { .bits = CPH_MUTEX_UNLOCKED };
  *    // or zero-init is fine
- *    CulvMutex my_lock = {};
+ *    CPH_Mutex my_lock = {};
  *
- *    culv_mutex_lock(&my_lock);
+ *    CPH_mutex_lock(&my_lock);
  *    // ... critical section ...
- *    culv_mutex_unlock(&my_lock);
+ *    CPH_mutex_unlock(&my_lock);
  * @endcode
  *
  * INITIALIZATION:
- * CulvMutex can be zero-initialized or initialized with { .bits = CULV_MUTEX_UNLOCKED }.
+ * CPH_Mutex can be zero-initialized or initialized with { .bits = CPH_MUTEX_UNLOCKED }.
  * In Release mode (NDEBUG defined), the struct is exactly 8 bits. In Debug mode,
  * the struct grows to include ownership and diagnostic metadata.
  */
@@ -70,7 +70,7 @@ using std::memory_order_release;
 #    define CPH_MUTEX_ASSUME(x) (x)
 #endif
 
-#if defined(CULV_MUTEX_EXPORT_INTERNAL) || !defined(__GNUC__) || defined(CULV_MUTEX_BUILDING_TESTS)
+#if defined(CPH_MUTEX_EXPORT_INTERNAL) || !defined(__GNUC__) || defined(CPH_MUTEX_BUILDING_TESTS)
 #    define CPH_MUTEX_INTERNAL [[gnu::visibility("default")]]
 #else
 #    define CPH_MUTEX_INTERNAL [[gnu::visibility("hidden")]]
@@ -92,9 +92,9 @@ using std::memory_order_release;
 #    undef near
 #    undef ERROR
 /* ---------------------- */
-typedef CRITICAL_SECTION culv_platform_mutex_t;
-typedef CONDITION_VARIABLE culv_platform_cond_t;
-typedef DWORD culv_platform_thread_id_t;
+typedef CRITICAL_SECTION CPH_platform_mutex_t;
+typedef CONDITION_VARIABLE CPH_platform_cond_t;
+typedef DWORD CPH_platform_thread_id_t;
 #    define CPH_THREAD_PLATFORM_MUTEX_INIT(mod) InitializeCriticalSection(mod)
 #    define CPH_THREAD_PLATFORM_MUTEX_LOCK(mod) EnterCriticalSection(mod)
 #    define CPH_THREAD_PLATFORM_MUTEX_UNLOCK(mod) LeaveCriticalSection(mod)
@@ -107,9 +107,9 @@ typedef DWORD culv_platform_thread_id_t;
 #else
 #    include <pthread.h>
 #    include <sched.h>
-typedef pthread_mutex_t culv_platform_mutex_t;
-typedef pthread_cond_t culv_platform_cond_t;
-typedef pthread_t culv_platform_thread_id_t;
+typedef pthread_mutex_t CPH_platform_mutex_t;
+typedef pthread_cond_t CPH_platform_cond_t;
+typedef pthread_t CPH_platform_thread_id_t;
 #    define CPH_THREAD_PLATFORM_MUTEX_INIT(mod) pthread_mutex_init(mod, nullptr)
 #    define CPH_THREAD_PLATFORM_MUTEX_LOCK(mod) pthread_mutex_lock(mod)
 #    define CPH_THREAD_PLATFORM_MUTEX_UNLOCK(mod) pthread_mutex_unlock(mod)
@@ -134,18 +134,22 @@ typedef pthread_t culv_platform_thread_id_t;
 #endif
 // NOLINTEND(llvmlibc-restrict-system-libc-headers)
 
-// --- CulvMutex States ---
+// --- CPH_Mutex States ---
 
 constexpr uint8_t kMutexUnlocked    = 0x00;
 constexpr uint8_t kMutexLocked      = 0x01;
 constexpr uint8_t kMutexHasWaiters = 0x02;
 constexpr uint8_t kMutexPoisoned    = 0x04;
 #ifdef CPH_MUTEX_DEBUG
-constexpr uint8_t kMutexDebugAlignment = 32;
+constexpr uint8_t kMutexDebugAlignment = 16;
 #endif
 /**
- * @struct CulvMutex
+ * @struct CPH_Mutex
  * @brief The core mutex structure.
+ *
+ * Limit debug alignment to the allocator's normal 16-byte alignment. The
+ * mutex is embedded in CPython-allocated PhysicsWorld objects, and cache-line
+ * isolation for those containers is provided by explicit padding.
  */
 typedef struct CPH_Mutex {
 #ifdef CPH_MUTEX_DEBUG
@@ -167,15 +171,15 @@ extern "C" {
 // --- Debug Prototypes ---
 
 #ifdef CPH_MUTEX_DEBUG
-void culv_mutex_debug_check_pre_lock(CPH_Mutex *mod);
-void culv_mutex_debug_post_lock(CPH_Mutex *mod);
-void culv_mutex_debug_pre_unlock(CPH_Mutex *mod);
-void culv_mutex_debug_clear_owner(CPH_Mutex *mod);
+void CPH_mutex_debug_check_pre_lock(CPH_Mutex *mod);
+void CPH_mutex_debug_post_lock(CPH_Mutex *mod);
+void CPH_mutex_debug_pre_unlock(CPH_Mutex *mod);
+void CPH_mutex_debug_clear_owner(CPH_Mutex *mod);
 #else
-static inline void culv_mutex_debug_check_pre_lock(CPH_Mutex *mod) { (void)mod; }
-static inline void culv_mutex_debug_post_lock(CPH_Mutex *mod) { (void)mod; }
-static inline void culv_mutex_debug_pre_unlock(CPH_Mutex *mod) { (void)mod; }
-static inline void culv_mutex_debug_clear_owner(CPH_Mutex *mod) { (void)mod; }
+static inline void CPH_mutex_debug_check_pre_lock(CPH_Mutex *mod) { (void)mod; }
+static inline void CPH_mutex_debug_post_lock(CPH_Mutex *mod) { (void)mod; }
+static inline void CPH_mutex_debug_pre_unlock(CPH_Mutex *mod) { (void)mod; }
+static inline void CPH_mutex_debug_clear_owner(CPH_Mutex *mod) { (void)mod; }
 #endif
 
 [[gnu::cold, gnu::noinline, gnu::nonnull(1)]] CPH_MUTEX_INTERNAL
@@ -189,12 +193,12 @@ static inline void culv_mutex_debug_clear_owner(CPH_Mutex *mod) { (void)mod; }
 
 // NOLINTBEGIN(hicpp-no-assembler, cppcoreguidelines-pro-type-inline-assembly)
 /**
- * culv_cpu_relax: Hardware-specific hint to the CPU that we are in a spin-loop.
+ * CPH_cpu_relax: Hardware-specific hint to the CPU that we are in a spin-loop.
  * On ARM64 (Apple Silicon), this uses the 'yield' instruction to save power
  * and potentially allow the other SMT thread to progress.
  */
 // NOLINTNEXTLINE(readability-identifier-naming)
-static inline void culv_cpu_relax() {
+static inline void CPH_cpu_relax() {
 #if defined(__aarch64__)
     __asm__ __volatile__("yield" ::: "memory");
 #elif defined(__x86_64__) || defined(_M_X64)
@@ -209,7 +213,7 @@ static inline void culv_cpu_relax() {
  * @brief Permanently poisons the mutex. Any subsequent lock attempt will abort.
  */
 // NOLINTNEXTLINE(readability-identifier-naming)
-static inline void culv_mutex_poison(CPH_Mutex *mod) {
+static inline void CPH_mutex_poison(CPH_Mutex *mod) {
     atomic_fetch_or_explicit(&mod->bits, kMutexPoisoned, memory_order_release);
 }
 
@@ -219,31 +223,31 @@ static inline void culv_mutex_poison(CPH_Mutex *mod) {
  */
 [[gnu::flatten]] [[gnu::hot]] [[gnu::always_inline]] [[gnu::artificial]]
 // NOLINTNEXTLINE(readability-identifier-naming)
-static inline bool culv_mutex_try_lock(CPH_Mutex *mod) {
-    culv_mutex_debug_check_pre_lock(mod);
+static inline bool CPH_mutex_try_lock(CPH_Mutex *mod) {
+    CPH_mutex_debug_check_pre_lock(mod);
     uint8_t expected = kMutexUnlocked;
     bool success     = CPH_MUTEX_ATOMIC_CX(&mod->bits, &expected, kMutexLocked, memory_order_acquire,
                                      memory_order_relaxed);
     if (success) {
-        culv_mutex_debug_post_lock(mod);
+        CPH_mutex_debug_post_lock(mod);
     }
     return success;
 }
 
 /**
  * @brief Acquires the lock.
- * On ARM64 with CULV_MUTEX_FORCE_CASAL, this emits 'casalb'.
+ * On ARM64 with CPH_MUTEX_FORCE_CASAL, this emits 'casalb'.
  * Otherwise, emits 'casab' (Acquire).
  */
 [[gnu::flatten, gnu::hot, gnu::always_inline, gnu::artificial, gnu::nonnull(1)]]
 // NOLINTNEXTLINE(readability-identifier-naming)
-static inline void culv_mutex_lock(CPH_Mutex *mod) {
-    culv_mutex_debug_check_pre_lock(mod);
+static inline void CPH_mutex_lock(CPH_Mutex *mod) {
+    CPH_mutex_debug_check_pre_lock(mod);
     uint8_t expected = kMutexUnlocked;
 
     if (CPH_MUTEX_LIKELY(CPH_MUTEX_ATOMIC_CX(&mod->bits, &expected, kMutexLocked, CPH_MUTEX_LOCK_ORDER,
                                  memory_order_relaxed))) {
-        culv_mutex_debug_post_lock(mod);
+        CPH_mutex_debug_post_lock(mod);
         return;
     }
     CPH_MutexLockSlow(mod);
@@ -251,14 +255,14 @@ static inline void culv_mutex_lock(CPH_Mutex *mod) {
 
 /**
  * @brief Releases the lock.
- * On ARM64 with CULV_MUTEX_FORCE_CASAL, this emits 'casalb'.
+ * On ARM64 with CPH_MUTEX_FORCE_CASAL, this emits 'casalb'.
  * Otherwise, emits 'caslb' (Release).
  */
 [[gnu::flatten, gnu::hot, gnu::always_inline, gnu::artificial, gnu::nonnull(1)]]
 // NOLINTNEXTLINE(readability-identifier-naming)
-static inline void culv_mutex_unlock(CPH_Mutex *mod) {
-    culv_mutex_debug_pre_unlock(mod);
-    culv_mutex_debug_clear_owner(mod);
+static inline void CPH_mutex_unlock(CPH_Mutex *mod) {
+    CPH_mutex_debug_pre_unlock(mod);
+    CPH_mutex_debug_clear_owner(mod);
 
     uint8_t expected = kMutexLocked;
 
@@ -269,13 +273,13 @@ static inline void culv_mutex_unlock(CPH_Mutex *mod) {
     CPH_MutexUnlockSlow(mod);
 }
 
-// --- CulvCond (Condition Variable) ---
+// --- CPH_Cond (Condition Variable) ---
 
 /**
- * @struct CulvCond
+ * @struct CPH_Cond
  * @brief A 1-Byte Condition Variable.
  *
- * Works seamlessly with CulvMutex. Uses the same parking lot backend to
+ * Works seamlessly with CPH_Mutex. Uses the same parking lot backend to
  * provide ultra-low memory footprint synchronization.
  */
 typedef struct CPH_Cond {
@@ -283,10 +287,10 @@ typedef struct CPH_Cond {
 } CPH_Cond;
 
 /**
- * @brief Initializes a CulvCond.
+ * @brief Initializes a CPH_Cond.
  */
 // NOLINTNEXTLINE(readability-identifier-naming)
-static inline void culv_cond_init(CPH_Cond *condvar) {
+static inline void CPH_cond_init(CPH_Cond *condvar) {
 #ifdef __cplusplus
     condvar->bits.store(0, std::memory_order_relaxed);
 #else

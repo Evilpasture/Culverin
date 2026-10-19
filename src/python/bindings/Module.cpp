@@ -3,34 +3,37 @@
 #    define _CRT_SECURE_NO_WARNINGS
 #endif
 // clang-format on
-#include "bindings/Getters.h"
-#include "bindings/ModuleState.h"
-#include "bindings/PythonSupport.h"
+#include "bindings/Getters.hpp"
+#include "bindings/ModuleState.hpp"
+#include "bindings/PythonSupport.hpp"
 #include "bindings/docstrings/Docstrings.h"
-#include "characters/Character.h"
+#include "characters/Character.hpp"
 #include "core/CompilerSpecifics.h"
 #include "core/Profiling.h"
 #include "core/Threading.h"
 #include "debug/DebugRender.h"
-#include "ecs/Ecs.h"
+#include "ecs/Ecs.hpp"
 #include "jolt/JoltHandler.h"
 #include "joltc.h"
-#include "math/Math.h"
+#include "math/Math.hpp"
 #include "physics/ContactListener.h"
 #include "physics/Filters.h"
-#include "physics/PhysicsWorldBinding.h"
-#include "ragdolls/Ragdoll.h"
-#include "soft_bodies/SoftBody.h"
-#include "vehicles/Ship.h"
-#include "vehicles/Vehicle.h"
+#include "physics/PhysicsWorldBinding.hpp"
+#include "ragdolls/Ragdoll.hpp"
+#include "soft_bodies/SoftBody.hpp"
+#include "vehicles/Ship.hpp"
+#include "vehicles/Vehicle.hpp"
 #include <new>
 #include <stdatomic.h>
+#include <tupleobject.h>
 
 /**
  * INTERNAL HELPER: dump_parser_catalog
  * Iterates through one parser group's self-populated catalog and writes its JSON entries.
  */
-static void dump_parser_catalog(CPH_FastParser *const *const parsers, const size_t count,
+
+namespace CPH::Python {
+static void dump_parser_catalog(FastParserCore *const *const parsers, const size_t count,
                                 FILE *const out, bool *const is_first) {
     for (size_t i = 0; i < count; ++i) {
         const auto fp = parsers[i];
@@ -54,12 +57,12 @@ static void dump_parser_catalog(CPH_FastParser *const *const parsers, const size
  * PyCFunction: dump_schema
  * Constructs each self-describing parser group, dumps their schemas to one JSON, and cleans up.
  */
-PyCFunction_DeclareMethod CPH_PyModule_DumpSchemaJson(PyObject *const self, PyObject *const *args,
+[[nodiscard]] static PyObject * ModuleDumpSchemaJson(PyObject *const self, PyObject *const *args,
                                                       size_t nargsf, PyObject *kwnames) {
-    const auto st        = CPH_GetModuleState(self);
+    const auto st        = GetModuleState(self);
     const char *filename = "culverin_schema.json";
 
-    // 1. Thread-safe, subinterpreter-safe parsing via CulvFastParser
+    // 1. Thread-safe, subinterpreter-safe parsing via FastParser
 
     if (!st->parsers->DumpSchema.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, filename)) {
         return nullptr;
@@ -90,22 +93,20 @@ PyCFunction_DeclareMethod CPH_PyModule_DumpSchemaJson(PyObject *const self, PyOb
     fprintf(f, "{\n");
     bool is_first = true;
 
-#define CPH_DUMP_GROUP(member)                                                                     \
-    dump_parser_catalog(all.member.catalog.Data(), all.member.catalog.Size(), f, &is_first)
-
-    CPH_DUMP_GROUP(world);
-    CPH_DUMP_GROUP(character);
-    CPH_DUMP_GROUP(vehicle);
-    CPH_DUMP_GROUP(ecs);
-    CPH_DUMP_GROUP(skeleton);
-    CPH_DUMP_GROUP(ragdoll);
-    CPH_DUMP_GROUP(ragdoll_settings);
-    CPH_DUMP_GROUP(ship);
-    CPH_DUMP_GROUP(sbss);
-    CPH_DUMP_GROUP(math);
-    CPH_DUMP_GROUP(module);
-
-#undef CPH_DUMP_GROUP
+    const auto dump_group = [&](const auto &group) {
+        dump_parser_catalog(group.catalog.Data(), group.catalog.Size(), f, &is_first);
+    };
+    dump_group(all.world);
+    dump_group(all.character);
+    dump_group(all.vehicle);
+    dump_group(all.ecs);
+    dump_group(all.skeleton);
+    dump_group(all.ragdoll);
+    dump_group(all.ragdoll_settings);
+    dump_group(all.ship);
+    dump_group(all.sbss);
+    dump_group(all.math);
+    dump_group(all.module);
 
     fprintf(f, "\n}\n");
     fclose(f);
@@ -115,10 +116,8 @@ PyCFunction_DeclareMethod CPH_PyModule_DumpSchemaJson(PyObject *const self, PyOb
     Py_RETURN_NONE;
 }
 
-#include <stdatomic.h>
-#include <tupleobject.h>
 
-PyCFunction_DeclareMethod CPH_PyModule_MutateTuple([[maybe_unused]] PyObject *self,
+[[nodiscard]] static PyObject * ModuleMutateTuple([[maybe_unused]] PyObject *self,
                                                    PyObject *const *args, Py_ssize_t nargsf) {
     enum : uint8_t { ARG_0, ARG_1, ARG_2, ARG_3, ARG_4 };
     // --- 1. DECLARATIONS (C / goto safety) ---
@@ -331,27 +330,27 @@ static const char *extract_version_from_toml(void) {
     return version_buffer;
 }
 
-static int init_types(PyObject *m, CPH_ModuleState *st) {
+static int init_types(PyObject *m, ModuleState *st) {
     struct {
         PyType_Spec *spec;
         PyObject **slot;
         const char *name;
     } types[] = {
-        {.spec = (&CPH_PyWorld_Spec), .slot = &st->PhysicsWorldType, .name = "PhysicsWorld"},
-        {.spec = (&Character_spec), .slot = &st->CharacterType, .name = "Character"},
-        {.spec = (&Vehicle_spec), .slot = &st->VehicleType, .name = "Vehicle"},
-        {.spec = (&Ship_spec), .slot = &st->ShipType, .name = "Ship"},
-        {.spec = (&RagdollSettings_spec),
+        {.spec = (&WorldSpec), .slot = &st->PhysicsWorldType, .name = "PhysicsWorld"},
+        {.spec = (&CharacterSpec), .slot = &st->CharacterType, .name = "Character"},
+        {.spec = (&VehicleSpec), .slot = &st->VehicleType, .name = "Vehicle"},
+        {.spec = (&ShipSpec), .slot = &st->ShipType, .name = "Ship"},
+        {.spec = (&RagdollSettingsSpec),
          .slot = &st->RagdollSettingsType,
          .name = "RagdollSettings"},
-        {.spec = (&Ragdoll_spec), .slot = &st->RagdollType, .name = "Ragdoll"},
-        {.spec = (&Skeleton_spec), .slot = &st->SkeletonType, .name = "Skeleton"},
-        {.spec = (&BufferProxy_spec), .slot = &st->BufferProxyType, .name = "BufferProxyObject"},
-        {.spec = (&SoftBodySharedSettings_spec),
+        {.spec = (&RagdollSpec), .slot = &st->RagdollType, .name = "Ragdoll"},
+        {.spec = (&SkeletonSpec), .slot = &st->SkeletonType, .name = "Skeleton"},
+        {.spec = (&BufferProxySpec), .slot = &st->BufferProxyType, .name = "BufferProxyObject"},
+        {.spec = (&SoftBodySharedSettingsSpec),
          .slot = &st->SoftBodySharedSettingsType,
          .name = "SoftBodySharedSettings"},
-        {.spec = (&Registry_spec), .slot = &st->RegistryType, .name = "Registry"},
-        {.spec = (&MathService_spec), .slot = &st->MathServiceType, .name = "MathService"}};
+        {.spec = (&RegistrySpec), .slot = &st->RegistryType, .name = "Registry"},
+        {.spec = (&MathServiceSpec), .slot = &st->MathServiceType, .name = "MathService"}};
 
     for (size_t i = 0; i < sizeof(types) / sizeof(types[0]); i++) {
         auto type = PyType_FromModuleAndSpec(m, types[i].spec, nullptr);
@@ -378,14 +377,14 @@ static int init_constants(PyObject *m) {
     static const struct {
         const char *name;
         int value;
-    } consts[] = {{.name = "SHAPE_BOX", .value = CULV_SHAPE_BOX},
-                  {.name = "SHAPE_SPHERE", .value = CULV_SHAPE_SPHERE},
-                  {.name = "SHAPE_CAPSULE", .value = CULV_SHAPE_CAPSULE},
-                  {.name = "SHAPE_CYLINDER", .value = CULV_SHAPE_CYLINDER},
-                  {.name = "SHAPE_PLANE", .value = CULV_SHAPE_PLANE},
-                  {.name = "SHAPE_MESH", .value = CULV_SHAPE_MESH},
-                  {.name = "SHAPE_HEIGHTFIELD", .value = CULV_SHAPE_HEIGHTFIELD},
-                  {.name = "SHAPE_CONVEX_HULL", .value = CULV_SHAPE_CONVEX_HULL},
+    } consts[] = {{.name = "SHAPE_BOX", .value = CPH_SHAPE_BOX},
+                  {.name = "SHAPE_SPHERE", .value = CPH_SHAPE_SPHERE},
+                  {.name = "SHAPE_CAPSULE", .value = CPH_SHAPE_CAPSULE},
+                  {.name = "SHAPE_CYLINDER", .value = CPH_SHAPE_CYLINDER},
+                  {.name = "SHAPE_PLANE", .value = CPH_SHAPE_PLANE},
+                  {.name = "SHAPE_MESH", .value = CPH_SHAPE_MESH},
+                  {.name = "SHAPE_HEIGHTFIELD", .value = CPH_SHAPE_HEIGHTFIELD},
+                  {.name = "SHAPE_CONVEX_HULL", .value = CPH_SHAPE_CONVEX_HULL},
                   {.name = "MOTION_STATIC", .value = MOTION_STATIC},
                   {.name = "MOTION_KINEMATIC", .value = MOTION_KINEMATIC},
                   {.name = "MOTION_DYNAMIC", .value = MOTION_DYNAMIC},
@@ -449,20 +448,20 @@ static char shared_version[kMagicBuffer];
 
 extern PyModuleDef culverin_module;
 
-PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
-    auto *storage = CPH_GetModuleStateStorage(m);
+[[nodiscard]] static int culverin_exec(PyObject *m) {
+    auto *storage = GetModuleStateStorage(m);
     if (storage == nullptr) {
         PyErr_SetString(PyExc_RuntimeError, "CPython module state is unavailable");
         return -1;
     }
     if (storage->state == nullptr) {
-        storage->state = new (std::nothrow) CPH_ModuleState{};
+        storage->state = new (std::nothrow) ModuleState{};
         if (storage->state == nullptr) {
             PyErr_NoMemory();
             return -1;
         }
     }
-    CPH_ModuleState *st = storage->state;
+    ModuleState *st = storage->state;
     // 1. THE MASTER GATE: Protects all static global memory in the process
     int expected = 0;
     if (atomic_compare_exchange_strong(&docs_status, &expected, 1)) {
@@ -510,16 +509,16 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
         // --- THE WINNER: Run exactly once per process life ---
         const char *docs_str = reinterpret_cast<const char *>(kAllDocs);
         CPH_DocsStitchMethods(culverin_module.m_methods, "Module", docs_str);
-        CPH_DocsStitchSpec(&CPH_PyWorld_Spec, "PhysicsWorld", docs_str);
-        CPH_DocsStitchSpec(&Character_spec, "Character", docs_str);
-        CPH_DocsStitchSpec(&Vehicle_spec, "Vehicle", docs_str);
-        CPH_DocsStitchSpec(&Skeleton_spec, "Skeleton", docs_str);
-        CPH_DocsStitchSpec(&Ragdoll_spec, "Ragdoll", docs_str);
-        CPH_DocsStitchSpec(&RagdollSettings_spec, "RagdollSettings", docs_str);
-        CPH_DocsStitchSpec(&SoftBodySharedSettings_spec, "SoftBodySharedSettings", docs_str);
-        CPH_DocsStitchSpec(&Registry_spec, "Registry", docs_str);
-        CPH_DocsStitchSpec(&MathService_spec, "MathService", docs_str);
-        CPH_DocsStitchSpec(&Ship_spec, "Ship", docs_str);
+        CPH_DocsStitchSpec(&WorldSpec, "PhysicsWorld", docs_str);
+        CPH_DocsStitchSpec(&CharacterSpec, "Character", docs_str);
+        CPH_DocsStitchSpec(&VehicleSpec, "Vehicle", docs_str);
+        CPH_DocsStitchSpec(&SkeletonSpec, "Skeleton", docs_str);
+        CPH_DocsStitchSpec(&RagdollSpec, "Ragdoll", docs_str);
+        CPH_DocsStitchSpec(&RagdollSettingsSpec, "RagdollSettings", docs_str);
+        CPH_DocsStitchSpec(&SoftBodySharedSettingsSpec, "SoftBodySharedSettings", docs_str);
+        CPH_DocsStitchSpec(&RegistrySpec, "Registry", docs_str);
+        CPH_DocsStitchSpec(&MathServiceSpec, "MathService", docs_str);
+        CPH_DocsStitchSpec(&ShipSpec, "Ship", docs_str);
 
         // Gated Handler Registration
         JPH_SetTraceHandler(CPH_JphTrace);
@@ -576,8 +575,8 @@ PyType_DeclareSlot_Status culverin_exec(PyObject *m) {
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-PyType_DeclareSlot_Status culverin_traverse(PyObject *m, visitproc visit, void *arg) {
-    CPH_ModuleState *st = CPH_GetModuleState(m);
+[[nodiscard]] static int culverin_traverse(PyObject *m, visitproc visit, void *arg) {
+    ModuleState *st = GetModuleState(m);
     if (st == nullptr) {
         return 0;
     }
@@ -597,8 +596,8 @@ PyType_DeclareSlot_Status culverin_traverse(PyObject *m, visitproc visit, void *
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-PyType_DeclareSlot_Status culverin_clear(PyObject *m) {
-    CPH_ModuleState *st = CPH_GetModuleState(m);
+[[nodiscard]] static int culverin_clear(PyObject *m) {
+    ModuleState *st = GetModuleState(m);
     if (st == nullptr) {
         return 0;
     }
@@ -620,7 +619,7 @@ PyType_DeclareSlot_Status culverin_clear(PyObject *m) {
 
 static void culverin_free(void *module) {
     auto *py_module = static_cast<PyObject *>(module);
-    auto *storage   = CPH_GetModuleStateStorage(py_module);
+    auto *storage   = GetModuleStateStorage(py_module);
     if (storage == nullptr || storage->state == nullptr) {
         return;
     }
@@ -634,13 +633,13 @@ static void culverin_free(void *module) {
 
 static PyMethodDef kModuleMethods[] = {
 
-    CPH::Python::FastCallMethod("_dump_schema_json", CPH_PyModule_DumpSchemaJson),
-    CPH::Python::FastCallMethod("mutate_tuple", CPH_PyModule_MutateTuple),
+    CPH::Python::FastCallMethod("_dump_schema_json", ModuleDumpSchemaJson),
+    CPH::Python::FastCallMethod("mutate_tuple", ModuleMutateTuple),
     {nullptr, nullptr, 0, nullptr}};
 
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 [[gnu::used]]
-static PyModuleDef_Slot CPH_PyModule_Slots[] = {
+static PyModuleDef_Slot ModuleSlots[] = {
     {.slot = Py_mod_exec, .value = reinterpret_cast<void *>(culverin_exec)},
 
 #if defined(Py_MOD_GIL_NOT_USED)
@@ -663,11 +662,16 @@ PyModuleDef culverin_module = {
     .m_base    = PyModuleDef_HEAD_INIT,
     .m_name    = "_culverin_c",
     .m_doc     = "Culverin Physics Engine Core",
-    .m_size    = sizeof(CPH_ModuleStateStorage),
+    .m_size    = sizeof(ModuleStateStorage),
     .m_methods = kModuleMethods,
-    .m_slots   = CPH_PyModule_Slots,
+    .m_slots   = ModuleSlots,
     .m_traverse = culverin_traverse,
     .m_clear    = culverin_clear,
     .m_free     = culverin_free,
 };
-PyMODINIT_FUNC PyInit__culverin_c(void) { return PyModuleDef_Init(&culverin_module); }
+
+[[nodiscard]] PyObject *InitializeModule() noexcept { return PyModuleDef_Init(&culverin_module); }
+
+} // namespace CPH::Python
+
+PyMODINIT_FUNC PyInit__culverin_c(void) { return CPH::Python::InitializeModule(); }

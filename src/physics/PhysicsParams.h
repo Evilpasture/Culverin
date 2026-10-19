@@ -5,9 +5,9 @@
 
 // Plain native data structures shared by parser adapters and the physics core.
 enum {
-    CULV_BAKED_POSITION_STRIDE = 4,
-    CULV_BAKED_ROTATION_STRIDE = 4,
-    CULV_BAKED_SHAPE_STRIDE    = 5,
+    CPH_BAKED_POSITION_STRIDE = 4,
+    CPH_BAKED_ROTATION_STRIDE = 4,
+    CPH_BAKED_SHAPE_STRIDE    = 5,
 };
 
 typedef struct {

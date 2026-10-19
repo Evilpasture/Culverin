@@ -262,7 +262,7 @@ PhysicsQueryStatus CPH_PhysicsWorldOverlapSphere(CPH_PhysicsWorld *world, JPH_RV
     }
 
     const float shape_params[4] = {radius, 0.0f, 0.0f, 0.0f};
-    JPH_Shape *shape = query_begin_with_shape(world, CULV_SHAPE_SPHERE, shape_params, nullptr, 0);
+    JPH_Shape *shape = query_begin_with_shape(world, CPH_SHAPE_SPHERE, shape_params, nullptr, 0);
     if (!shape) {
         return PHYSICS_QUERY_STATUS_SHAPE_FAILURE;
     }

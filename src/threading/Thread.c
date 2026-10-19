@@ -79,9 +79,9 @@ void CPH_ThreadInitMain(void) {
 
 CPH_Thread *CPH_ThreadCreate(size_t stack_size, CPH_ThreadFunc func, void *arg) {
     size_t page_size         = CPH_ThreadGetPageSize();
-    constexpr size_t CULV_THREAD_ONE_MIB = 1024ULL * 1024ULL;
+    constexpr size_t CPH_THREAD_ONE_MIB = 1024ULL * 1024ULL;
     if (stack_size == 0) {
-        stack_size = CULV_THREAD_ONE_MIB;
+        stack_size = CPH_THREAD_ONE_MIB;
     }
     stack_size        = (stack_size + page_size - 1) & ~(page_size - 1);
     size_t total_size = stack_size + ((long long)page_size * 2);
@@ -101,10 +101,10 @@ CPH_Thread *CPH_ThreadCreate(size_t stack_size, CPH_ThreadFunc func, void *arg) 
     }
     mprotect(map, page_size, PROT_NONE);
 #endif
-    constexpr size_t CULV_THREAD_STACK_ALIGNMENT  = 16ULL;
-    constexpr size_t CULV_THREAD_STACK_ALIGN_MASK = CULV_THREAD_STACK_ALIGNMENT - 1ULL;
+    constexpr size_t CPH_THREAD_STACK_ALIGNMENT  = 16ULL;
+    constexpr size_t CPH_THREAD_STACK_ALIGN_MASK = CPH_THREAD_STACK_ALIGNMENT - 1ULL;
     uintptr_t end_addr                = (uintptr_t)map + total_size;
-    uintptr_t thread_addr             = (end_addr - sizeof(CPH_Thread)) & ~CULV_THREAD_STACK_ALIGN_MASK;
+    uintptr_t thread_addr             = (end_addr - sizeof(CPH_Thread)) & ~CPH_THREAD_STACK_ALIGN_MASK;
     CPH_Thread *thread                 = nullptr;
     memcpy((void *)&thread, &thread_addr, sizeof(CPH_Thread *));
 
@@ -127,7 +127,7 @@ CPH_Thread *CPH_ThreadCreate(size_t stack_size, CPH_ThreadFunc func, void *arg) 
     // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers, readability-magic-numbers)
     static_assert(
         alignof(CPH_Thread) % 16 == 0,
-        "CulvThread struct alignment must be a multiple of 16 to ensure the stack starts aligned");
+        "CPH_Thread struct alignment must be a multiple of 16 to ensure the stack starts aligned");
     constexpr size_t GPR_SIZE = 8ULL; // Each general-purpose register is 8 bytes
 #if defined(_WIN32) && (defined(__x86_64__) || defined(_M_X64))
                                       // Symmetry: 8 (Ret) + 8 (Dummy) + 64 (GPR) + 160 (XMM) = 240

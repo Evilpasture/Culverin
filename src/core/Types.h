@@ -72,16 +72,16 @@ typedef enum MotionType : uint8_t {
     MOTION_DYNAMIC   = JPH_MotionType_Dynamic,
 } MotionType;
 
-typedef enum CulvShapeType : uint8_t {
-    CULV_SHAPE_BOX         = 0,
-    CULV_SHAPE_SPHERE      = 1,
-    CULV_SHAPE_CAPSULE     = 2,
-    CULV_SHAPE_CYLINDER    = 3,
-    CULV_SHAPE_PLANE       = 4,
-    CULV_SHAPE_MESH        = 5,
-    CULV_SHAPE_HEIGHTFIELD = 6,
-    CULV_SHAPE_CONVEX_HULL = 7
-} CulvShapeType;
+typedef enum CPH_ShapeType : uint8_t {
+    CPH_SHAPE_BOX         = 0,
+    CPH_SHAPE_SPHERE      = 1,
+    CPH_SHAPE_CAPSULE     = 2,
+    CPH_SHAPE_CYLINDER    = 3,
+    CPH_SHAPE_PLANE       = 4,
+    CPH_SHAPE_MESH        = 5,
+    CPH_SHAPE_HEIGHTFIELD = 6,
+    CPH_SHAPE_CONVEX_HULL = 7
+} CPH_ShapeType;
 
 typedef struct {
     float mass;

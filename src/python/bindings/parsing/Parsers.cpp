@@ -1,6 +1,8 @@
-#include "bindings/parsing/Parsers.h"
-#include "bindings/BindingCommon.h"
-#include "bindings/PythonSupport.h"
+#include "bindings/parsing/Parsers.hpp"
+#include "bindings/PythonCommon.hpp"
+#include "bindings/PythonSupport.hpp"
+
+namespace CPH::Python {
 
 static int parse_sequence_internal(PyObject *obj, void *out, int count, bool is_double) {
     if (!obj || obj == Py_None) {
@@ -74,7 +76,7 @@ static int parse_sequence_internal(PyObject *obj, void *out, int count, bool is_
     return 1;
 }
 
-int CPH_ParseVec3F32(PyObject *obj, float *x, float *y, float *z) {
+int ParseVec3F32(PyObject *obj, float *x, float *y, float *z) {
     float res[3];
     if (parse_sequence_internal(obj, res, 3, false)) {
         *x = res[0];
@@ -85,7 +87,7 @@ int CPH_ParseVec3F32(PyObject *obj, float *x, float *y, float *z) {
     return 0;
 }
 
-int CPH_ParseVec3R64(PyObject *obj, double *x, double *y, double *z) {
+int ParseVec3R64(PyObject *obj, double *x, double *y, double *z) {
     double res[3];
     if (parse_sequence_internal(obj, res, 3, true)) {
         *x = res[0];
@@ -96,7 +98,7 @@ int CPH_ParseVec3R64(PyObject *obj, double *x, double *y, double *z) {
     return 0;
 }
 
-int CPH_ParseQuatF32(PyObject *obj, float *x, float *y, float *z, float *w) {
+int ParseQuatF32(PyObject *obj, float *x, float *y, float *z, float *w) {
     float res[4];
     if (parse_sequence_internal(obj, res, 4, false)) {
         *x = res[0];
@@ -108,7 +110,7 @@ int CPH_ParseQuatF32(PyObject *obj, float *x, float *y, float *z, float *w) {
     return 0;
 }
 
-int CPH_ParseQuatR64(PyObject *obj, double *x, double *y, double *z, double *w) {
+int ParseQuatR64(PyObject *obj, double *x, double *y, double *z, double *w) {
     double res[4];
     if (parse_sequence_internal(obj, res, 4, true)) {
         *x = res[0];
@@ -120,17 +122,17 @@ int CPH_ParseQuatR64(PyObject *obj, double *x, double *y, double *z, double *w) 
     return 0;
 }
 
-int CPH_ParsePyVec3f(PyObject *obj, CPH_Vec3f *out) {
+int ParsePyVec3f(PyObject *obj, CPH_Vec3f *out) {
     return parse_sequence_internal(obj, out, 3, false);
 }
-int CPH_ParsePyVec3Pos(PyObject *obj, CPH_PosStride *out) {
+int ParsePyVec3Pos(PyObject *obj, CPH_PosStride *out) {
     return parse_sequence_internal(obj, out, 3, (sizeof(JPH_Real) == 8));
 }
-int CPH_ParsePyVec3Aux(PyObject *obj, CPH_AuxStride *out) {
+int ParsePyVec3Aux(PyObject *obj, CPH_AuxStride *out) {
     return parse_sequence_internal(obj, out, 4, false);
 }
 
-void CPH_ParseMotorConfig(PyObject *motor_dict, CPH_ConstraintParams *p) {
+void ParseMotorConfig(PyObject *motor_dict, CPH_ConstraintParams *p) {
     if (!motor_dict || motor_dict == Py_None) {
         return;
     }
@@ -152,7 +154,7 @@ void CPH_ParseMotorConfig(PyObject *motor_dict, CPH_ConstraintParams *p) {
     p->damping      = CPH::Python::GetDictionaryItem(motor_dict, "damping", 1.0f);
 }
 
-int CPH_ParsePointParams(PyObject *args, CPH_ConstraintParams *p) {
+int ParsePointParams(PyObject *args, CPH_ConstraintParams *p) {
     if (!args || args == Py_None) {
         return 1;
     }
@@ -160,7 +162,7 @@ int CPH_ParsePointParams(PyObject *args, CPH_ConstraintParams *p) {
     return PyArg_ParseTuple(args, "(fff)", &p->px, &p->py, &p->pz);
 }
 
-int CPH_ParseHingeParams(PyObject *args, CPH_ConstraintParams *p) {
+int ParseHingeParams(PyObject *args, CPH_ConstraintParams *p) {
     p->limit_min = -JPH_M_PI;
     p->limit_max = JPH_M_PI; // Hinge defaults
     if (!args) {
@@ -171,7 +173,7 @@ int CPH_ParseHingeParams(PyObject *args, CPH_ConstraintParams *p) {
                             &p->limit_min, &p->limit_max);
 }
 
-int CPH_ParseSliderParams(PyObject *args, CPH_ConstraintParams *p) {
+int ParseSliderParams(PyObject *args, CPH_ConstraintParams *p) {
     // Slider axis defaults to X usually, but Y is fine. Limits default to free.
     if (!args) {
         return 1;
@@ -180,7 +182,7 @@ int CPH_ParseSliderParams(PyObject *args, CPH_ConstraintParams *p) {
                             &p->limit_min, &p->limit_max);
 }
 
-int CPH_ParseConeParams(PyObject *args, CPH_ConstraintParams *p) {
+int ParseConeParams(PyObject *args, CPH_ConstraintParams *p) {
     if (!args) {
         return 1;
     }
@@ -189,7 +191,7 @@ int CPH_ParseConeParams(PyObject *args, CPH_ConstraintParams *p) {
                             &p->half_cone_angle);
 }
 
-int CPH_ParseDistanceParams(PyObject *args, CPH_ConstraintParams *p) {
+int ParseDistanceParams(PyObject *args, CPH_ConstraintParams *p) {
     // Default: -1.0 can be used as a sentinel in your create_distance
     // logic to say "calculate distance from current positions"
     p->limit_min = -1.0f;
@@ -206,7 +208,7 @@ int CPH_ParseDistanceParams(PyObject *args, CPH_ConstraintParams *p) {
 }
 
 // Helper 2: Parse the size object (tuple or float) into a 4-float array
-void CPH_ParseBodySize(PyObject *py_size, float s[4]) {
+void ParseBodySize(PyObject *py_size, float s[4]) {
     s[0] = 1.0f;
     s[1] = 1.0f;
     s[2] = 1.0f;
@@ -228,7 +230,7 @@ void CPH_ParseBodySize(PyObject *py_size, float s[4]) {
     }
 }
 
-int CPH_ParseTracksToC(PyObject *py_tracks, CPH_TrackData *out_data, int *num_out) {
+int ParseTracksToC(PyObject *py_tracks, CPH_TrackData *out_data, int *num_out) {
     if (!py_tracks || !PyList_Check(py_tracks)) {
         return 0;
     }
@@ -246,7 +248,7 @@ int CPH_ParseTracksToC(PyObject *py_tracks, CPH_TrackData *out_data, int *num_ou
         if (py_idxs && PyList_Check(py_idxs)) {
             uint32_t count      = static_cast<uint32_t>(PyList_Size(py_idxs));
             out_data[t].count   = count;
-            out_data[t].indices = static_cast<uint32_t *>(CPH_PyAlloc(count * sizeof(uint32_t)));
+            out_data[t].indices = static_cast<uint32_t *>(Allocate(count * sizeof(uint32_t)));
 
             for (uint32_t k = 0; k < count; k++) {
                 out_data[t].indices[k] =
@@ -259,3 +261,5 @@ int CPH_ParseTracksToC(PyObject *py_tracks, CPH_TrackData *out_data, int *num_ou
     }
     return 1;
 }
+
+} // namespace CPH::Python

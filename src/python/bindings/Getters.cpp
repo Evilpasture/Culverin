@@ -1,36 +1,38 @@
-#include "bindings/Getters.h"
-#include "bindings/ModuleState.h"
-#include "ecs/Ecs.h"
-#include "physics/PhysicsSync.h"
+#include "bindings/Getters.hpp"
+#include "bindings/ModuleState.hpp"
+#include "ecs/Ecs.hpp"
+#include "physics/PhysicsSync.hpp"
 #include <Python.h>
 
-static Py_ssize_t BufferProxy_length(CPH_BufferProxyObject *self) {
+namespace CPH::Python {
+
+static Py_ssize_t BufferProxy_length(BufferProxyObject *self) {
     // Return the cached shape. Since we update shape[0] in the
     // constructor and in getbuffer, this is always accurate
     // to the count at the time of the last sync/query.
     return self->shape[0];
 }
 
-PyType_DeclareSlot_Status BufferProxy_traverse(CPH_BufferProxyObject *self, visitproc visit,
+[[nodiscard]] static int BufferProxy_traverse(BufferProxyObject *self, visitproc visit,
                                                void *arg) {
     Py_VISIT(self->owner);
     return 0;
 }
 
 // Inside BufferProxy_clear
-PyType_DeclareSlot_Status BufferProxy_clear(CPH_BufferProxyObject *self) {
-    CPH_ModuleState *st = CPH_GetModuleState(PyType_GetModule(Py_TYPE(self)));
+[[nodiscard]] static int BufferProxy_clear(BufferProxyObject *self) {
+    ModuleState *st = GetModuleState(PyType_GetModule(Py_TYPE(self)));
     if (self->owner) {
         // We know that both PhysicsWorld and Registry have the export count at a fixed offset
         // or we can switch based on type.
         if (PyObject_TypeCheck(self->owner,
                                reinterpret_cast<PyTypeObject *>(st->PhysicsWorldType))) {
-            atomic_fetch_sub_explicit(&(reinterpret_cast<CPH_PhysicsWorldObject *>(self->owner))
+            atomic_fetch_sub_explicit(&(reinterpret_cast<PhysicsWorldObject *>(self->owner))
                                            ->physics.view_export_count,
                                       1, memory_order_relaxed);
         } else {
             atomic_fetch_sub_explicit(
-                &(reinterpret_cast<CPH_RegistryObject *>(self->owner))->view_export_count, 1,
+                &(reinterpret_cast<RegistryObject *>(self->owner))->view_export_count, 1,
                 memory_order_relaxed);
         }
         Py_CLEAR(self->owner);
@@ -38,7 +40,7 @@ PyType_DeclareSlot_Status BufferProxy_clear(CPH_BufferProxyObject *self) {
     return 0;
 }
 
-PyType_DeclareSlot_Void BufferProxy_dealloc(CPH_BufferProxyObject *self) {
+static void BufferProxy_dealloc(BufferProxyObject *self) {
     PyObject_GC_UnTrack(self);
     [[maybe_unused]] auto cleared = BufferProxy_clear(self);
     // For heap types, we must release our reference to the type itself
@@ -47,17 +49,17 @@ PyType_DeclareSlot_Void BufferProxy_dealloc(CPH_BufferProxyObject *self) {
     Py_DECREF(tp);
 }
 
-PyType_DeclareSlot_Status BufferProxy_getbuffer(CPH_BufferProxyObject *self, Py_buffer *view,
+[[nodiscard]] static int BufferProxy_getbuffer(BufferProxyObject *self, Py_buffer *view,
                                                 [[maybe_unused]] int flags) {
     // Determine the lock and target based on the buffer type category
     void *target_ptr = nullptr;
 
     if (self->buf_type < PROXY_ECS_DATA) {
         /* --- CATEGORY: Physics World Buffers --- */
-        CPH_PhysicsWorldObject *world = reinterpret_cast<CPH_PhysicsWorldObject *>(self->owner);
+        PhysicsWorldObject *world = reinterpret_cast<PhysicsWorldObject *>(self->owner);
 
         CPH_SHADOW_LOCK(&world->physics.shadow_lock);
-        CPH_BLOCK_UNTIL_NOT_STEPPING(world);
+        BlockUntilNotStepping(world);
 
         switch (self->buf_type) {
         case PROXY_POSITIONS:
@@ -98,7 +100,7 @@ PyType_DeclareSlot_Status BufferProxy_getbuffer(CPH_BufferProxyObject *self, Py_
 
     } else {
         /* --- CATEGORY: ECS Registry Buffers --- */
-        CPH_RegistryObject *reg = reinterpret_cast<CPH_RegistryObject *>(self->owner);
+        RegistryObject *reg = reinterpret_cast<RegistryObject *>(self->owner);
 
         CPH_SHADOW_LOCK(&reg->ecs_lock);
 
@@ -138,11 +140,11 @@ PyType_DeclareSlot_Status BufferProxy_getbuffer(CPH_BufferProxyObject *self, Py_
     return 0;
 }
 
-PyType_DeclareSlot_Void BufferProxy_releasebuffer([[maybe_unused]] CPH_BufferProxyObject *self,
+static void BufferProxy_releasebuffer([[maybe_unused]] BufferProxyObject *self,
                                                   [[maybe_unused]] Py_buffer *view) {
 // Let NumPy hold the world buffer permanently.
 #if defined(STRICT_THREAD_SAFETY)
-    CPH_PhysicsWorldObject *world = self->world;
+    PhysicsWorldObject *world = self->world;
 
     // 4. Mark query finished
     // Use 'release' barrier to ensure Numpy reads are finished before Stepper writes
@@ -158,7 +160,7 @@ PyType_DeclareSlot_Void BufferProxy_releasebuffer([[maybe_unused]] CPH_BufferPro
 }
 
 // --- Heap Type Specification ---
-PyType_Slot BufferProxy_slots[] = {
+PyType_Slot BufferProxySlots[] = {
     {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(BufferProxy_dealloc)},
     {.slot = Py_tp_traverse, .pfunc = reinterpret_cast<void *>(BufferProxy_traverse)},
     {.slot = Py_tp_clear, .pfunc = reinterpret_cast<void *>(BufferProxy_clear)},
@@ -167,19 +169,19 @@ PyType_Slot BufferProxy_slots[] = {
     {.slot = Py_sq_length, .pfunc = reinterpret_cast<void *>(BufferProxy_length)},
     {}};
 
-PyType_Spec BufferProxy_spec = {.name      = "culverin.BufferProxy",
-                                .basicsize = sizeof(CPH_BufferProxyObject),
+PyType_Spec BufferProxySpec = {.name      = "culverin.BufferProxy",
+                                .basicsize = sizeof(BufferProxyObject),
                                 .flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
-                                .slots     = BufferProxy_slots};
+                                .slots     = BufferProxySlots};
 
 // --- Updated make_proxy helper ---
-static PyObject *make_proxy(CPH_PhysicsWorldObject *self, ProxyBufferType type, const char *format,
+static PyObject *make_proxy(PhysicsWorldObject *self, ProxyBufferType type, const char *format,
                             size_t itemsize, int stride) {
-    CPH_ModuleState *st = CPH_GetModuleState(PyType_GetModule(Py_TYPE(self)));
+    ModuleState *st = GetModuleState(PyType_GetModule(Py_TYPE(self)));
 
     // Allocation
-    CPH_BufferProxyObject *proxy = PyObject_GC_New(
-        CPH_BufferProxyObject, reinterpret_cast<PyTypeObject *>(st->BufferProxyType));
+    BufferProxyObject *proxy = PyObject_GC_New(
+        BufferProxyObject, reinterpret_cast<PyTypeObject *>(st->BufferProxyType));
     if (!proxy) {
         return nullptr;
     }
@@ -205,7 +207,7 @@ static PyObject *make_proxy(CPH_PhysicsWorldObject *self, ProxyBufferType type, 
 }
 
 // --- Advanced getters for lock and thread management ---
-PyGetSet_DeclareGetter CPH_PyWorld_GetIsStepPending(CPH_PhysicsWorldObject *self,
+[[nodiscard]] PyObject * WorldGetIsStepPending(PhysicsWorldObject *self,
                                                     [[maybe_unused]] void *closure) {
     if (atomic_load_explicit(&self->physics.step_requested, memory_order_acquire)) {
         Py_RETURN_TRUE;
@@ -215,32 +217,32 @@ PyGetSet_DeclareGetter CPH_PyWorld_GetIsStepPending(CPH_PhysicsWorldObject *self
 
 /* --- Shadow Buffer Getters --- */
 
-PyGetSet_DeclareGetter CPH_PyWorld_GetPositions(CPH_PhysicsWorldObject *self,
+[[nodiscard]] PyObject * WorldGetPositions(PhysicsWorldObject *self,
                                                 [[maybe_unused]] void *c) {
     // Positions are Stride 4 (X, Y, Z, W)
     return make_proxy(self, PROXY_POSITIONS, JPH_REAL_STRING, sizeof(JPH_Real), 4);
 }
 
-PyGetSet_DeclareGetter CPH_PyWorld_GetRotations(CPH_PhysicsWorldObject *self,
+[[nodiscard]] PyObject * WorldGetRotations(PhysicsWorldObject *self,
                                                 [[maybe_unused]] void *c) {
     // Rotations are Stride 4 (X, Y, Z, W)
     return make_proxy(self, PROXY_ROTATIONS, "f", sizeof(float), 4);
 }
 
-PyGetSet_DeclareGetter CPH_PyWorld_GetVelocities(CPH_PhysicsWorldObject *self,
+[[nodiscard]] PyObject * WorldGetVelocities(PhysicsWorldObject *self,
                                                  [[maybe_unused]] void *c) {
     // Velocities are Stride 4 (X, Y, Z, Pad)
     return make_proxy(self, PROXY_LINEAR_VELOCITIES, "f", sizeof(float), 4);
 }
 
-PyGetSet_DeclareGetter CPH_PyWorld_GetAngularVelocities(CPH_PhysicsWorldObject *self,
+[[nodiscard]] PyObject * WorldGetAngularVelocities(PhysicsWorldObject *self,
                                                         [[maybe_unused]] void *c) {
     return make_proxy(self, PROXY_ANGULAR_VELOCITIES, "f", sizeof(float), 4);
 }
 
 /* --- Mutable Metadata Getters (Hardened with Locks) --- */
 
-PyGetSet_DeclareGetter CPH_PyWorld_GetCount(CPH_PhysicsWorldObject *self,
+[[nodiscard]] PyObject * WorldGetCount(PhysicsWorldObject *self,
                                             [[maybe_unused]] void *c) {
     // TSan Fix: Lock-free atomic read.
     // Acquire ensures we see the final state of any bodies recently added/removed.
@@ -248,20 +250,20 @@ PyGetSet_DeclareGetter CPH_PyWorld_GetCount(CPH_PhysicsWorldObject *self,
     return PyLong_FromSize_t(val);
 }
 
-PyGetSet_DeclareGetter CPH_PyWorld_GetTime(CPH_PhysicsWorldObject *self, [[maybe_unused]] void *c) {
+[[nodiscard]] PyObject * WorldGetTime(PhysicsWorldObject *self, [[maybe_unused]] void *c) {
     CPH_SHADOW_LOCK(&self->physics.shadow_lock);
     double val = self->physics.time;
     CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
     return PyFloat_FromDouble(val);
 }
 
-PyGetSet_DeclareGetter CPH_PyWorld_GetUserDataBuffer(CPH_PhysicsWorldObject *self,
+[[nodiscard]] PyObject * WorldGetUserDataBuffer(PhysicsWorldObject *self,
                                                      [[maybe_unused]] void *c) {
     // User data is Stride 1 (One uint64 per body)
     return make_proxy(self, PROXY_USER_DATA, "Q", sizeof(uint64_t), 1);
 }
 
-PyGetSet_DeclareGetter CPH_PyWorld_GetShapeCount(CPH_PhysicsWorldObject *self,
+[[nodiscard]] PyObject * WorldGetShapeCount(PhysicsWorldObject *self,
                                                  [[maybe_unused]] void *closure) {
     // Protected because resize() could move shape_cache
     CPH_SHADOW_LOCK(&self->physics.shadow_lock);
@@ -270,12 +272,12 @@ PyGetSet_DeclareGetter CPH_PyWorld_GetShapeCount(CPH_PhysicsWorldObject *self,
     return PyLong_FromSize_t(count);
 }
 
-PyGetSet_DeclareGetter CPH_PyWorld_GetMaxBodies(CPH_PhysicsWorldObject *self,
+[[nodiscard]] PyObject * WorldGetMaxBodies(PhysicsWorldObject *self,
                                                 [[maybe_unused]] void *closure) {
     return PyLong_FromUnsignedLong(self->physics.max_jolt_bodies);
 }
 
-PyGetSet_DeclareGetter CPH_PyWorld_GetRemainingCapacity(CPH_PhysicsWorldObject *self,
+[[nodiscard]] PyObject * WorldGetRemainingCapacity(PhysicsWorldObject *self,
                                                         [[maybe_unused]] void *closure) {
     // TSan Fix: Lock-free calculation using atomic count.
     size_t current = atomic_load_explicit(&self->physics.count, memory_order_acquire);
@@ -286,3 +288,5 @@ PyGetSet_DeclareGetter CPH_PyWorld_GetRemainingCapacity(CPH_PhysicsWorldObject *
 
     return PyLong_FromSize_t(rem);
 }
+
+} // namespace CPH::Python

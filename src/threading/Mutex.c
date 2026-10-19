@@ -22,74 +22,74 @@ static constexpr size_t kMutexBucketCount = 256;
 #    endif
 #endif
 
-static_assert(ATOMIC_INT_LOCK_FREE == 2, "CulvMutex requires always-lock-free atomics!");
-static_assert(ATOMIC_POINTER_LOCK_FREE == 2, "CulvMutex parking lot requires lock-free pointers!");
+static_assert(ATOMIC_INT_LOCK_FREE == 2, "CPH_Mutex requires always-lock-free atomics!");
+static_assert(ATOMIC_POINTER_LOCK_FREE == 2, "CPH_Mutex parking lot requires lock-free pointers!");
 
 #ifdef CPH_MUTEX_DEBUG
 static constexpr size_t kMutexMaxDebugEdges = 4096;
 static constexpr size_t kMutexMaxHeldLocks  = 64;
 
-static culv_platform_mutex_t culv_mutex_debug_graph_lock;
+static CPH_platform_mutex_t CPH_mutex_debug_graph_lock;
 static struct {
     const CPH_Mutex *from;
     const CPH_Mutex *to;
-} culv_mutex_debug_lock_edges[kMutexMaxDebugEdges];
-static size_t culv_mutex_debug_lock_edge_count = 0;
+} CPH_mutex_debug_lock_edges[kMutexMaxDebugEdges];
+static size_t CPH_mutex_debug_lock_edge_count = 0;
 
-static thread_local const CPH_Mutex *culv_mutex_debug_held_locks[kMutexMaxHeldLocks];
-static thread_local size_t culv_mutex_debug_held_lock_count = 0;
+static thread_local const CPH_Mutex *CPH_mutex_debug_held_locks[kMutexMaxHeldLocks];
+static thread_local size_t CPH_mutex_debug_held_lock_count = 0;
 
-static inline uintptr_t culv_mutex_get_current_id(void) {
+static inline uintptr_t CPH_mutex_get_current_id(void) {
     CPH_Thread *fiber = CPH_ThreadGetCurrent();
     // If we are in a fiber context, the fiber pointer is our unique ID.
     if (fiber) {
         return (uintptr_t)fiber;
     }
-    // Fallback for raw OS threads not managed by CulvThread
+    // Fallback for raw OS threads not managed by CPH_Thread
     return (uintptr_t)CPH_THREAD_PLATFORM_CURRENT_ID();
 }
 
-static bool culv_mutex_debug_dfs_check_cycle(const CPH_Mutex *current, const CPH_Mutex *target) {
+static bool CPH_mutex_debug_dfs_check_cycle(const CPH_Mutex *current, const CPH_Mutex *target) {
     if (current == target)
         return true;
-    for (size_t i = 0; i < culv_mutex_debug_lock_edge_count; i++) {
-        if (culv_mutex_debug_lock_edges[i].from == current) {
-            if (culv_mutex_debug_dfs_check_cycle(culv_mutex_debug_lock_edges[i].to, target))
+    for (size_t i = 0; i < CPH_mutex_debug_lock_edge_count; i++) {
+        if (CPH_mutex_debug_lock_edges[i].from == current) {
+            if (CPH_mutex_debug_dfs_check_cycle(CPH_mutex_debug_lock_edges[i].to, target))
                 return true;
         }
     }
     return false;
 }
 
-static void culv_mutex_debug_add_lock_edge(const CPH_Mutex *from, const CPH_Mutex *to) {
-    CPH_THREAD_PLATFORM_MUTEX_LOCK(&culv_mutex_debug_graph_lock);
+static void CPH_mutex_debug_add_lock_edge(const CPH_Mutex *from, const CPH_Mutex *to) {
+    CPH_THREAD_PLATFORM_MUTEX_LOCK(&CPH_mutex_debug_graph_lock);
 
-    for (size_t i = 0; i < culv_mutex_debug_lock_edge_count; i++) {
-        if (culv_mutex_debug_lock_edges[i].from == from && culv_mutex_debug_lock_edges[i].to == to) {
-            CPH_THREAD_PLATFORM_MUTEX_UNLOCK(&culv_mutex_debug_graph_lock);
+    for (size_t i = 0; i < CPH_mutex_debug_lock_edge_count; i++) {
+        if (CPH_mutex_debug_lock_edges[i].from == from && CPH_mutex_debug_lock_edges[i].to == to) {
+            CPH_THREAD_PLATFORM_MUTEX_UNLOCK(&CPH_mutex_debug_graph_lock);
             return;
         }
     }
 
-    if (culv_mutex_debug_dfs_check_cycle(to, from)) {
-        CPH_THREAD_PLATFORM_MUTEX_UNLOCK(&culv_mutex_debug_graph_lock);
+    if (CPH_mutex_debug_dfs_check_cycle(to, from)) {
+        CPH_THREAD_PLATFORM_MUTEX_UNLOCK(&CPH_mutex_debug_graph_lock);
         assert(false && "DEADLOCK DETECTED: Lock order cycle/inversion!");
         abort();
     }
 
-    if (culv_mutex_debug_lock_edge_count < kMutexMaxDebugEdges) {
-        culv_mutex_debug_lock_edges[culv_mutex_debug_lock_edge_count].from = from;
-        culv_mutex_debug_lock_edges[culv_mutex_debug_lock_edge_count].to   = to;
-        culv_mutex_debug_lock_edge_count++;
+    if (CPH_mutex_debug_lock_edge_count < kMutexMaxDebugEdges) {
+        CPH_mutex_debug_lock_edges[CPH_mutex_debug_lock_edge_count].from = from;
+        CPH_mutex_debug_lock_edges[CPH_mutex_debug_lock_edge_count].to   = to;
+        CPH_mutex_debug_lock_edge_count++;
     }
-    CPH_THREAD_PLATFORM_MUTEX_UNLOCK(&culv_mutex_debug_graph_lock);
+    CPH_THREAD_PLATFORM_MUTEX_UNLOCK(&CPH_mutex_debug_graph_lock);
 }
 
-void culv_mutex_debug_clear_owner(CPH_Mutex *mod) {
+void CPH_mutex_debug_clear_owner(CPH_Mutex *mod) {
     atomic_store_explicit(&mod->has_owner, false, memory_order_release);
 }
 
-void culv_mutex_debug_check_pre_lock(CPH_Mutex *mod) {
+void CPH_mutex_debug_check_pre_lock(CPH_Mutex *mod) {
     uint8_t bits = atomic_load_explicit(&mod->bits, memory_order_relaxed);
     if (bits & kMutexPoisoned) {
         assert(false && "FATAL: Attempting to lock a POISONED mutex!");
@@ -98,7 +98,7 @@ void culv_mutex_debug_check_pre_lock(CPH_Mutex *mod) {
 
     if (bits & kMutexLocked) {
         if (atomic_load_explicit(&mod->has_owner, memory_order_acquire)) {
-            uintptr_t current = culv_mutex_get_current_id(); // <--- Fiber-aware ID
+            uintptr_t current = CPH_mutex_get_current_id(); // <--- Fiber-aware ID
             uintptr_t owner   = atomic_load_explicit(&mod->owner, memory_order_relaxed);
 
             if (current == owner) {
@@ -109,25 +109,25 @@ void culv_mutex_debug_check_pre_lock(CPH_Mutex *mod) {
     }
 }
 
-void culv_mutex_debug_post_lock(CPH_Mutex *mod) {
-    atomic_store_explicit(&mod->owner, culv_mutex_get_current_id(), memory_order_relaxed);
+void CPH_mutex_debug_post_lock(CPH_Mutex *mod) {
+    atomic_store_explicit(&mod->owner, CPH_mutex_get_current_id(), memory_order_relaxed);
     atomic_store_explicit(&mod->has_owner, true, memory_order_release);
 
-    for (size_t i = 0; i < culv_mutex_debug_held_lock_count; i++) {
-        culv_mutex_debug_add_lock_edge(culv_mutex_debug_held_locks[i], mod);
+    for (size_t i = 0; i < CPH_mutex_debug_held_lock_count; i++) {
+        CPH_mutex_debug_add_lock_edge(CPH_mutex_debug_held_locks[i], mod);
     }
-    if (culv_mutex_debug_held_lock_count < kMutexMaxHeldLocks) {
-        culv_mutex_debug_held_locks[culv_mutex_debug_held_lock_count++] = mod;
+    if (CPH_mutex_debug_held_lock_count < kMutexMaxHeldLocks) {
+        CPH_mutex_debug_held_locks[CPH_mutex_debug_held_lock_count++] = mod;
     }
 }
 
-void culv_mutex_debug_pre_unlock(CPH_Mutex *mod) {
+void CPH_mutex_debug_pre_unlock(CPH_Mutex *mod) {
     if (!atomic_load_explicit(&mod->has_owner, memory_order_acquire)) {
         assert(false && "FATAL: Unlocking a mutex that has no owner!");
         abort();
     }
 
-    uintptr_t current = culv_mutex_get_current_id(); // <--- Fiber-aware ID
+    uintptr_t current = CPH_mutex_get_current_id(); // <--- Fiber-aware ID
     uintptr_t owner   = atomic_load_explicit(&mod->owner, memory_order_relaxed);
 
     if (current != owner) {
@@ -135,12 +135,12 @@ void culv_mutex_debug_pre_unlock(CPH_Mutex *mod) {
         abort();
     }
 
-    for (size_t i = culv_mutex_debug_held_lock_count - 1; i < culv_mutex_debug_held_lock_count; i--) {
-        if (culv_mutex_debug_held_locks[i] == mod) {
-            for (size_t j = i; j < culv_mutex_debug_held_lock_count - 1; j++) {
-                culv_mutex_debug_held_locks[j] = culv_mutex_debug_held_locks[j + 1];
+    for (size_t i = CPH_mutex_debug_held_lock_count - 1; i < CPH_mutex_debug_held_lock_count; i--) {
+        if (CPH_mutex_debug_held_locks[i] == mod) {
+            for (size_t j = i; j < CPH_mutex_debug_held_lock_count - 1; j++) {
+                CPH_mutex_debug_held_locks[j] = CPH_mutex_debug_held_locks[j + 1];
             }
-            culv_mutex_debug_held_lock_count--;
+            CPH_mutex_debug_held_lock_count--;
             break;
         }
     }
@@ -156,8 +156,8 @@ struct CPH_MutexWaiter {
     CPH_Thread *fiber;
     CPH_MutexWaiter *next;
 
-    // culv_platform_cond_t size varies by OS, but we keep it here
-    culv_platform_cond_t cond;
+    // CPH_platform_cond_t size varies by OS, but we keep it here
+    CPH_platform_cond_t cond;
 
     // 1-byte atomic at the end
     CPH_MUTEX_ATOMIC(bool) signaled;
@@ -166,26 +166,26 @@ struct CPH_MutexWaiter {
 // Padded 128-byte cacheline bucket to completely eliminate false sharing.
 static constexpr size_t kMutexBucketAlignment = 128;
 typedef struct {
-    alignas(kMutexBucketAlignment) culv_platform_mutex_t mutex;
+    alignas(kMutexBucketAlignment) CPH_platform_mutex_t mutex;
     CPH_MutexWaiter *head;
-    uint8_t _pad[kMutexBucketAlignment - (sizeof(culv_platform_mutex_t) + sizeof(void *))];
+    uint8_t _pad[kMutexBucketAlignment - (sizeof(CPH_platform_mutex_t) + sizeof(void *))];
 } CPH_MutexBucket;
 
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
-alignas(kMutexBucketAlignment) static CPH_MutexBucket culv_mutex_parking_lot[kMutexBucketCount];
+alignas(kMutexBucketAlignment) static CPH_MutexBucket CPH_mutex_parking_lot[kMutexBucketCount];
 
-static_assert(sizeof(CPH_MutexBucket) == kMutexBucketAlignment, "CulvMutexBucket must be exactly 128 bytes!");
+static_assert(sizeof(CPH_MutexBucket) == kMutexBucketAlignment, "CPH_MutexBucket must be exactly 128 bytes!");
 
 [[gnu::constructor]]
-static void culv_mutex_init_parking_lot() {
+static void CPH_mutex_init_parking_lot() {
 #pragma unroll 4
     for (size_t i = 0; i < kMutexBucketCount; i++) {
-        CPH_THREAD_PLATFORM_MUTEX_INIT(&culv_mutex_parking_lot[i].mutex);
-        culv_mutex_parking_lot[i].head = nullptr;
+        CPH_THREAD_PLATFORM_MUTEX_INIT(&CPH_mutex_parking_lot[i].mutex);
+        CPH_mutex_parking_lot[i].head = nullptr;
     }
 }
 
-static inline size_t culv_mutex_hash_address(const void *addr) {
+static inline size_t CPH_mutex_hash_address(const void *addr) {
     // MurmurHash3 constants for 64-bit finalizer
     constexpr uint64_t MURMUR_MIXER         = 0xff51afd7ed558ccdULL;
     constexpr unsigned int MURMUR_BIT_SHIFT = 33U;
@@ -201,11 +201,11 @@ static inline size_t culv_mutex_hash_address(const void *addr) {
 }
 
 [[gnu::cold, gnu::noinline, gnu::nonnull(1)]] CPH_MUTEX_INTERNAL void CPH_MutexLockSlow(CPH_Mutex *mod) {
-    size_t hash    = culv_mutex_hash_address(mod);
-    CPH_MutexBucket *bucket = &culv_mutex_parking_lot[hash];
+    size_t hash    = CPH_mutex_hash_address(mod);
+    CPH_MutexBucket *bucket = &CPH_mutex_parking_lot[hash];
 
     // --- PHASE 1: Adaptive Exponential Backoff Spin ---
-    // We increase the number of culv_cpu_relax() calls per iteration.
+    // We increase the number of CPH_cpu_relax() calls per iteration.
     // On ARM64/Apple Silicon, 'yield' is very cheap, so we need a significant count.
     size_t backoff_limit = 1;
 
@@ -216,7 +216,7 @@ static inline size_t culv_mutex_hash_address(const void *addr) {
         if (!(val & kMutexLocked)) {
             if (atomic_compare_exchange_weak_explicit(&mod->bits, &val, val | kMutexLocked,
                                                       memory_order_acquire, memory_order_relaxed)) {
-                culv_mutex_debug_post_lock(mod);
+                CPH_mutex_debug_post_lock(mod);
 #ifdef CPH_MUTEX_DEBUG
                 atomic_fetch_add_explicit(&mod->spin_success_count, 1, memory_order_relaxed);
 #endif
@@ -230,7 +230,7 @@ static inline size_t culv_mutex_hash_address(const void *addr) {
 
         // Perform the exponential backoff
         for (size_t j = 0; j < backoff_limit; j++) {
-            culv_cpu_relax();
+            CPH_cpu_relax();
         }
 
         // Cap the backoff to prevent excessive spinning if the lock is held long-term
@@ -247,13 +247,13 @@ static inline size_t culv_mutex_hash_address(const void *addr) {
         if (!(val & kMutexLocked)) {
             if (atomic_compare_exchange_weak_explicit(&mod->bits, &val, val | kMutexLocked,
                                                       memory_order_acquire, memory_order_relaxed)) {
-                culv_mutex_debug_post_lock(mod);
+                CPH_mutex_debug_post_lock(mod);
                 return;
             }
             continue;
         }
 
-        // Ensure the CULV_MUTEX_HAS_WAITERS bit is set before we actually sleep.
+        // Ensure the CPH_MUTEX_HAS_WAITERS bit is set before we actually sleep.
         if (!(val & kMutexHasWaiters)) {
             if (!atomic_compare_exchange_weak_explicit(&mod->bits, &val, val | kMutexHasWaiters,
                                                        memory_order_relaxed,
@@ -325,8 +325,8 @@ static inline size_t culv_mutex_hash_address(const void *addr) {
         }
     }
 
-    size_t hash    = culv_mutex_hash_address(mod);
-    CPH_MutexBucket *bucket = &culv_mutex_parking_lot[hash];
+    size_t hash    = CPH_mutex_hash_address(mod);
+    CPH_MutexBucket *bucket = &CPH_mutex_parking_lot[hash];
     CPH_THREAD_PLATFORM_MUTEX_LOCK(&bucket->mutex);
 
     CPH_MutexWaiter **curr   = &bucket->head;
@@ -368,12 +368,12 @@ static inline size_t culv_mutex_hash_address(const void *addr) {
 }
 
 // ============================================================================
-// CulvCond Implementation
+// CPH_Cond Implementation
 // ============================================================================
 
 void CPH_CondWait(CPH_Cond *condvar, CPH_Mutex *mod) {
-    size_t hash    = culv_mutex_hash_address(condvar);
-    CPH_MutexBucket *bucket = &culv_mutex_parking_lot[hash];
+    size_t hash    = CPH_mutex_hash_address(condvar);
+    CPH_MutexBucket *bucket = &CPH_mutex_parking_lot[hash];
 
     CPH_Thread *current_thread = CPH_ThreadGetCurrent();
     bool is_fiber             = (bool)(current_thread != nullptr && !current_thread->is_main);
@@ -397,7 +397,7 @@ void CPH_CondWait(CPH_Cond *condvar, CPH_Mutex *mod) {
     if (!is_fiber) {
         // === OS THREAD PATH ===
         CPH_THREAD_PLATFORM_MUTEX_UNLOCK(&bucket->mutex);
-        culv_mutex_unlock(mod); // Unlock user's mutex
+        CPH_mutex_unlock(mod); // Unlock user's mutex
 
         CPH_THREAD_PLATFORM_MUTEX_LOCK(&bucket->mutex);
         while (!atomic_load_explicit(&node.signaled, memory_order_acquire)) {
@@ -408,7 +408,7 @@ void CPH_CondWait(CPH_Cond *condvar, CPH_Mutex *mod) {
     } else {
         // === FIBER PATH ===
         CPH_THREAD_PLATFORM_MUTEX_UNLOCK(&bucket->mutex); // Drop bucket lock immediately
-        culv_mutex_unlock(mod);            // Unlock user's mutex
+        CPH_mutex_unlock(mod);            // Unlock user's mutex
 
         while (!atomic_load_explicit(&node.signaled, memory_order_acquire)) {
             CPH_ThreadYield(); // Yield CPU to other fibers
@@ -416,7 +416,7 @@ void CPH_CondWait(CPH_Cond *condvar, CPH_Mutex *mod) {
     }
 
     // Step 4: Re-acquire the user's mutex before returning
-    culv_mutex_lock(mod);
+    CPH_mutex_lock(mod);
 }
 
 void CPH_CondSignal(CPH_Cond *condvar) {
@@ -426,8 +426,8 @@ void CPH_CondSignal(CPH_Cond *condvar) {
         return;
     }
 
-    size_t hash    = culv_mutex_hash_address(condvar);
-    CPH_MutexBucket *bucket = &culv_mutex_parking_lot[hash];
+    size_t hash    = CPH_mutex_hash_address(condvar);
+    CPH_MutexBucket *bucket = &CPH_mutex_parking_lot[hash];
     CPH_THREAD_PLATFORM_MUTEX_LOCK(&bucket->mutex);
 
     CPH_MutexWaiter **curr   = &bucket->head;
@@ -465,8 +465,8 @@ void CPH_CondBroadcast(CPH_Cond *condvar) {
         return;
     }
 
-    size_t hash    = culv_mutex_hash_address(condvar);
-    CPH_MutexBucket *bucket = &culv_mutex_parking_lot[hash];
+    size_t hash    = CPH_mutex_hash_address(condvar);
+    CPH_MutexBucket *bucket = &CPH_mutex_parking_lot[hash];
     CPH_THREAD_PLATFORM_MUTEX_LOCK(&bucket->mutex);
 
     CPH_MutexWaiter **curr     = &bucket->head;

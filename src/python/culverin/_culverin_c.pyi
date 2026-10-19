@@ -50,7 +50,7 @@ class WorldSettings(TypedDict, total=False):
     num_threads: int  # Default: 4
 
 class BodyDefinition(TypedDict, total=False):
-    shape: int  # One of CULV_SHAPE_* constants
+    shape: int  # One of the SHAPE_* constants
     pos: Vec3  # (x, y, z)
     rot: Vec3  # (x, y, z, w) quaternion
     size: float | Sequence[float]  # radius, (x,y,z) extents, or (nx,ny,nz,c)

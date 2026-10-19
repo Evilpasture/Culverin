@@ -29,7 +29,7 @@ bool CPH_JphAssert(const char *inExpression, const char *inMessage, const char *
 
 #if !defined(CPH_ASSERT_LEVEL)
 #    if defined(NDEBUG)
-#        if defined(CULV_AGGRESSIVE_OPTIMIZATION)
+#        if defined(CPH_AGGRESSIVE_OPTIMIZATION)
 #            define CPH_ASSERT_LEVEL 0
 #        else
 #            define CPH_ASSERT_LEVEL 1
@@ -40,7 +40,7 @@ bool CPH_JphAssert(const char *inExpression, const char *inMessage, const char *
 #endif
 
 // --- Backend Crash Logic ---
-[[gnu::always_inline]] static inline void culv_internal_break() {
+[[gnu::always_inline]] static inline void CPH_internal_break() {
 #if __has_builtin(__builtin_debugtrap)
     __builtin_debugtrap();
 #elif __has_builtin(__builtin_trap)
@@ -72,7 +72,7 @@ panic(std::string_view expression, std::string_view message = "",
     CPH_JphTrace(msg.c_str());
 
     if (CPH_JphAssert(expression.data(), message.data(), loc.file_name(), loc.line())) {
-        culv_internal_break();
+        CPH_internal_break();
     }
 
     std::terminate();
@@ -98,7 +98,7 @@ panic(std::string_view expression, std::string_view message = "",
 #        include <stdlib.h>
 
 [[gnu::always_inline, gnu::format(printf, 5, 6)]] static inline void
-culv_internal_panic_c(const char *expr, const char *file, uint32_t line, const char *func,
+CPH_internal_panic_c(const char *expr, const char *file, uint32_t line, const char *func,
                       const char *fmt, ...) {
     char user_msg[512] = {0};
     if (fmt != nullptr) {
@@ -117,7 +117,7 @@ culv_internal_panic_c(const char *expr, const char *file, uint32_t line, const c
             expr, user_msg, file, line, func);
 
     if (CPH_JphAssert(expr, user_msg, file, line)) {
-        culv_internal_break();
+        CPH_internal_break();
     }
     abort();
 }
@@ -127,7 +127,7 @@ culv_internal_panic_c(const char *expr, const char *file, uint32_t line, const c
 #        define CPH_ASSERT(expr, ...)                                                             \
             do {                                                                                   \
                 if (!(expr)) [[unlikely]] {                                                        \
-                    culv_internal_panic_c(#expr, __FILE__, __LINE__, __func__,                     \
+                    CPH_internal_panic_c(#expr, __FILE__, __LINE__, __func__,                     \
                                           __VA_OPT__(__VA_ARGS__) __VA_OPT__(, ) nullptr);         \
                 }                                                                                  \
             } while (false)
@@ -144,7 +144,7 @@ culv_internal_panic_c(const char *expr, const char *file, uint32_t line, const c
 #    define CPH_ASSERT(expr, ...)                                                                 \
         do {                                                                                       \
             if (!(expr)) [[unlikely]] {                                                            \
-                culv_internal_break();                                                             \
+                CPH_internal_break();                                                             \
             }                                                                                      \
         } while (false)
 

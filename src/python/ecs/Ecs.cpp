@@ -1,10 +1,12 @@
-#include "ecs/Ecs.h"
-#include "bindings/BindingCommon.h"
-#include "bindings/Getters.h"
-#include "bindings/ModuleState.h"
-#include "bindings/PythonSupport.h"
-#include "physics/PhysicsWorldBinding.h"
+#include "ecs/Ecs.hpp"
+#include "bindings/PythonCommon.hpp"
+#include "bindings/Getters.hpp"
+#include "bindings/ModuleState.hpp"
+#include "bindings/PythonSupport.hpp"
+#include "physics/PhysicsWorldBinding.hpp"
 #include <stddef.h>
+
+namespace CPH::Python {
 
 // --- INTERNAL HELPERS ---
 static constexpr uint32_t kInvalidDenseIndex    = 0xFFFFFFFF;
@@ -12,12 +14,12 @@ static constexpr auto kInitialEntityCapacity    = 1024;
 static constexpr auto kInitialSparseCapacity    = 1024;
 static constexpr auto kInitialComponentCapacity = 16;
 
-static PyObject *make_ecs_proxy(CPH_RegistryObject *self, uint32_t comp_id, bool entities) {
-    CPH_ModuleState *st = CPH_GetModuleState(PyType_GetModule(Py_TYPE(self)));
-    CPH_SparseSet *set  = &self->components[comp_id];
+static PyObject *make_ecs_proxy(RegistryObject *self, uint32_t comp_id, bool entities) {
+    ModuleState *st = GetModuleState(PyType_GetModule(Py_TYPE(self)));
+    SparseSet *set  = &self->components[comp_id];
 
-    CPH_BufferProxyObject *proxy = PyObject_GC_New(
-        CPH_BufferProxyObject, reinterpret_cast<PyTypeObject *>(st->BufferProxyType));
+    BufferProxyObject *proxy = PyObject_GC_New(
+        BufferProxyObject, reinterpret_cast<PyTypeObject *>(st->BufferProxyType));
     if (!proxy) {
         return nullptr;
     }
@@ -46,7 +48,7 @@ static PyObject *make_ecs_proxy(CPH_RegistryObject *self, uint32_t comp_id, bool
     return reinterpret_cast<PyObject *>(proxy);
 }
 
-static void SparseSet_Init(CPH_SparseSet *set, uint32_t element_size) {
+static void SparseSet_Init(SparseSet *set, uint32_t element_size) {
     set->sparse          = nullptr;
     set->dense           = nullptr;
     set->data            = nullptr;
@@ -56,19 +58,19 @@ static void SparseSet_Init(CPH_SparseSet *set, uint32_t element_size) {
     set->sparse_capacity = 0;
 }
 
-static void SparseSet_Destroy(CPH_SparseSet *set) {
+static void SparseSet_Destroy(SparseSet *set) {
     if (set->sparse) {
-        CPH_PyFree(set->sparse);
+        Deallocate(set->sparse);
     }
     if (set->dense) {
-        CPH_PyFree(set->dense);
+        Deallocate(set->dense);
     }
     if (set->data) {
-        CPH_PyFree(set->data);
+        Deallocate(set->data);
     }
 }
 
-static bool SparseSet_EnsureSparseCapacity(CPH_SparseSet *set, uint32_t required_capacity) {
+static bool SparseSet_EnsureSparseCapacity(SparseSet *set, uint32_t required_capacity) {
     if (set->sparse_capacity >= required_capacity) {
         return true;
     }
@@ -80,7 +82,7 @@ static bool SparseSet_EnsureSparseCapacity(CPH_SparseSet *set, uint32_t required
     }
 
     uint32_t *new_sparse =
-        static_cast<uint32_t *>(CPH_PyRealloc(set->sparse, new_cap * sizeof(uint32_t)));
+        static_cast<uint32_t *>(Reallocate(set->sparse, new_cap * sizeof(uint32_t)));
     if (!new_sparse) {
         PyErr_NoMemory(); // Set error here
         return false;
@@ -95,7 +97,7 @@ static bool SparseSet_EnsureSparseCapacity(CPH_SparseSet *set, uint32_t required
     return true;
 }
 
-static bool SparseSet_EnsureDenseCapacity(CPH_RegistryObject *reg, CPH_SparseSet *set) {
+static bool SparseSet_EnsureDenseCapacity(RegistryObject *reg, SparseSet *set) {
     if (set->count < set->dense_capacity) {
         return true;
     }
@@ -111,15 +113,15 @@ static bool SparseSet_EnsureDenseCapacity(CPH_RegistryObject *reg, CPH_SparseSet
     constexpr auto FIRST_DENSE_CAPACITY = 64;
     uint32_t new_cap = set->dense_capacity == 0 ? FIRST_DENSE_CAPACITY : set->dense_capacity * 2;
 
-    CPH_Entity *new_dense =
-        static_cast<CPH_Entity *>(CPH_PyRealloc(set->dense, new_cap * sizeof(CPH_Entity)));
+    Entity *new_dense =
+        static_cast<Entity *>(Reallocate(set->dense, new_cap * sizeof(Entity)));
     if (!new_dense) {
         PyErr_NoMemory(); // Set error here
         return false;
     }
 
     uint8_t *new_data = static_cast<uint8_t *>(
-        CPH_PyRealloc(set->data, static_cast<size_t>(new_cap) * set->element_size));
+        Reallocate(set->data, static_cast<size_t>(new_cap) * set->element_size));
     if (!new_data) {
         // Fallback: we failed data, but dense was already realloc'd.
         // In a real engine we'd roll back, but here we just error.
@@ -134,15 +136,15 @@ static bool SparseSet_EnsureDenseCapacity(CPH_RegistryObject *reg, CPH_SparseSet
 }
 
 // --- LIFECYCLE ---
-PyType_DeclareSlot_StatusFromModule CPH_PyRegistry_Init(CPH_RegistryObject *self,
+[[nodiscard]] int RegistryInit(RegistryObject *self,
                                                         [[maybe_unused]] PyObject *args,
                                                         [[maybe_unused]] PyObject *kwds) {
     self->entity_capacity = kInitialEntityCapacity;
     self->active_entities = 0;
     self->generations =
-        static_cast<uint32_t *>(CPH_PyCalloc(self->entity_capacity, sizeof(uint32_t)));
+        static_cast<uint32_t *>(AllocateZeroed(self->entity_capacity, sizeof(uint32_t)));
     self->free_indices =
-        static_cast<uint32_t *>(CPH_PyAlloc(self->entity_capacity * sizeof(uint32_t)));
+        static_cast<uint32_t *>(Allocate(self->entity_capacity * sizeof(uint32_t)));
 
     if (!self->generations || !self->free_indices) {
         return -1;
@@ -157,7 +159,7 @@ PyType_DeclareSlot_StatusFromModule CPH_PyRegistry_Init(CPH_RegistryObject *self
     self->component_capacity = kInitialComponentCapacity;
     self->component_count    = 0;
     self->components =
-        static_cast<CPH_SparseSet *>(CPH_PyAlloc(self->component_capacity * sizeof(CPH_SparseSet)));
+        static_cast<SparseSet *>(Allocate(self->component_capacity * sizeof(SparseSet)));
 
     if (!self->components) {
         return -1;
@@ -169,18 +171,18 @@ PyType_DeclareSlot_StatusFromModule CPH_PyRegistry_Init(CPH_RegistryObject *self
     }
     return 0;
 }
-PyType_DeclareSlot_VoidFromModule CPH_PyRegistry_Dealloc(CPH_RegistryObject *self) {
+void RegistryDealloc(RegistryObject *self) {
     if (self->generations) {
-        CPH_PyFree(self->generations);
+        Deallocate(self->generations);
     }
     if (self->free_indices) {
-        CPH_PyFree(self->free_indices);
+        Deallocate(self->free_indices);
     }
     if (self->components) {
         for (uint32_t i = 0; i < self->component_count; i++) {
             SparseSet_Destroy(&self->components[i]);
         }
-        CPH_PyFree(self->components);
+        Deallocate(self->components);
     }
     if (self->parsers) {
 
@@ -192,15 +194,15 @@ PyType_DeclareSlot_VoidFromModule CPH_PyRegistry_Dealloc(CPH_RegistryObject *sel
 // --- ENTITY MANAGEMENT ---
 
 // Signature updated for METH_NOARGS
-PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Create(CPH_RegistryObject *self,
+[[nodiscard]] PyObject * RegistryCreate(RegistryObject *self,
                                                           [[maybe_unused]] PyObject *args) {
     CPH_SHADOW_LOCK(&self->ecs_lock);
     if (self->free_count == 0) {
         uint32_t new_cap = self->entity_capacity * 2;
         uint32_t *new_gens =
-            static_cast<uint32_t *>(CPH_PyRealloc(self->generations, new_cap * sizeof(uint32_t)));
+            static_cast<uint32_t *>(Reallocate(self->generations, new_cap * sizeof(uint32_t)));
         uint32_t *new_free =
-            static_cast<uint32_t *>(CPH_PyRealloc(self->free_indices, new_cap * sizeof(uint32_t)));
+            static_cast<uint32_t *>(Reallocate(self->free_indices, new_cap * sizeof(uint32_t)));
         if (!new_gens || !new_free) {
             CPH_SHADOW_UNLOCK(&self->ecs_lock);
             return PyErr_NoMemory();
@@ -217,7 +219,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Create(CPH_RegistryObject *se
 
     uint32_t index    = self->free_indices[--self->free_count];
     uint32_t gen      = self->generations[index];
-    CPH_Entity handle = (static_cast<uint64_t>(gen) << kHandleIndexBits) | index;
+    Entity handle = (static_cast<uint64_t>(gen) << kHandleIndexBits) | index;
     self->active_entities++;
 
     CPH_SHADOW_UNLOCK(&self->ecs_lock);
@@ -225,7 +227,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Create(CPH_RegistryObject *se
     return PyLong_FromUnsignedLongLong(handle);
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Destroy(CPH_RegistryObject *self,
+[[nodiscard]] PyObject * RegistryDestroy(RegistryObject *self,
                                                            PyObject *const *args, size_t nargsf,
                                                            PyObject *kwnames) {
     uint64_t handle;
@@ -246,14 +248,14 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Destroy(CPH_RegistryObject *s
 
     // 1. Remove entity from all components
     for (uint32_t i = 0; i < self->component_count; i++) {
-        CPH_SparseSet *set = &self->components[i];
+        SparseSet *set = &self->components[i];
         if (index < set->sparse_capacity && set->sparse[index] != kInvalidDenseIndex) {
             uint32_t dense_idx = set->sparse[index];
             uint32_t last_idx  = set->count - 1;
 
             if (dense_idx != last_idx) {
                 // Swap and pop
-                CPH_Entity last_entity   = set->dense[last_idx];
+                Entity last_entity   = set->dense[last_idx];
                 uint32_t last_entity_idx = static_cast<uint32_t>(last_entity & kHandleIndexMask);
 
                 set->dense[dense_idx]        = last_entity;
@@ -277,7 +279,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Destroy(CPH_RegistryObject *s
     Py_RETURN_NONE;
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyRegistry_IsAlive(CPH_RegistryObject *self,
+[[nodiscard]] PyObject * RegistryIsAlive(RegistryObject *self,
                                                            PyObject *const *args, size_t nargsf,
                                                            PyObject *kwnames) {
     uint64_t handle;
@@ -303,7 +305,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_IsAlive(CPH_RegistryObject *s
 
 // --- COMPONENT MANAGEMENT ---
 
-PyCFunction_DeclareMethodFromModule CPH_PyRegistry_RegisterComponent(CPH_RegistryObject *self,
+[[nodiscard]] PyObject * RegistryRegisterComponent(RegistryObject *self,
                                                                      PyObject *const *args,
                                                                      size_t nargsf,
                                                                      PyObject *kwnames) {
@@ -325,8 +327,8 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_RegisterComponent(CPH_Registr
         }
 
         uint32_t new_cap         = self->component_capacity * 2;
-        CPH_SparseSet *new_comps = static_cast<CPH_SparseSet *>(
-            CPH_PyRealloc(self->components, new_cap * sizeof(CPH_SparseSet)));
+        SparseSet *new_comps = static_cast<SparseSet *>(
+            Reallocate(self->components, new_cap * sizeof(SparseSet)));
         if (!new_comps) {
             CPH_SHADOW_UNLOCK(&self->ecs_lock);
             return PyErr_NoMemory();
@@ -343,7 +345,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_RegisterComponent(CPH_Registr
     return PyLong_FromUnsignedLong(comp_id);
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Add(CPH_RegistryObject *self,
+[[nodiscard]] PyObject * RegistryAdd(RegistryObject *self,
                                                        PyObject *const *args, size_t nargsf,
                                                        PyObject *kwnames) {
     uint64_t handle;
@@ -368,7 +370,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Add(CPH_RegistryObject *self,
 
     CPH_SHADOW_LOCK(&self->ecs_lock);
 
-    CPH_SparseSet *set = &self->components[comp_id];
+    SparseSet *set = &self->components[comp_id];
 
     Py_buffer view;
     if (data_obj && data_obj != Py_None) {
@@ -422,7 +424,7 @@ fail_quiet:
     return nullptr; // Return the error already set in the helper
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Remove(CPH_RegistryObject *self,
+[[nodiscard]] PyObject * RegistryRemove(RegistryObject *self,
                                                           PyObject *const *args, size_t nargsf,
                                                           PyObject *kwnames) {
     uint64_t handle;
@@ -440,7 +442,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Remove(CPH_RegistryObject *se
 
     CPH_SHADOW_LOCK(&self->ecs_lock);
 
-    CPH_SparseSet *set = &self->components[comp_id];
+    SparseSet *set = &self->components[comp_id];
 
     if (index < set->sparse_capacity && set->sparse[index] != kInvalidDenseIndex) {
         uint32_t dense_idx = set->sparse[index];
@@ -448,7 +450,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Remove(CPH_RegistryObject *se
 
         if (dense_idx != last_idx) {
             // Swap and pop
-            CPH_Entity last_entity   = set->dense[last_idx];
+            Entity last_entity   = set->dense[last_idx];
             uint32_t last_entity_idx = static_cast<uint32_t>(last_entity & kHandleIndexMask);
 
             set->dense[dense_idx]        = last_entity;
@@ -466,7 +468,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Remove(CPH_RegistryObject *se
     Py_RETURN_NONE;
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Has(CPH_RegistryObject *self,
+[[nodiscard]] PyObject * RegistryHas(RegistryObject *self,
                                                        PyObject *const *args, size_t nargsf,
                                                        PyObject *kwnames) {
     uint64_t handle;
@@ -482,7 +484,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Has(CPH_RegistryObject *self,
         return PyErr_Format(PyExc_ValueError, "Invalid component ID");
     }
     CPH_SHADOW_LOCK(&self->ecs_lock);
-    CPH_SparseSet *set = &self->components[comp_id];
+    SparseSet *set = &self->components[comp_id];
     bool has_comp = (index < set->sparse_capacity && set->sparse[index] != kInvalidDenseIndex) != 0;
     CPH_SHADOW_UNLOCK(&self->ecs_lock);
     if (has_comp) {
@@ -491,7 +493,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Has(CPH_RegistryObject *self,
     Py_RETURN_FALSE;
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Get(CPH_RegistryObject *self,
+[[nodiscard]] PyObject * RegistryGet(RegistryObject *self,
                                                        PyObject *const *args, size_t nargsf,
                                                        PyObject *kwnames) {
     uint64_t handle;
@@ -508,7 +510,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Get(CPH_RegistryObject *self,
     }
 
     CPH_SHADOW_LOCK(&self->ecs_lock);
-    CPH_SparseSet *set = &self->components[comp_id];
+    SparseSet *set = &self->components[comp_id];
 
     if (index >= set->sparse_capacity || set->sparse[index] == kInvalidDenseIndex) {
         CPH_SHADOW_UNLOCK(&self->ecs_lock);
@@ -524,7 +526,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Get(CPH_RegistryObject *self,
     return result;
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyRegistry_GetView(CPH_RegistryObject *self,
+[[nodiscard]] PyObject * RegistryGetView(RegistryObject *self,
                                                            PyObject *const *args, size_t nargsf,
                                                            PyObject *kwnames) {
     uint32_t comp_id;
@@ -543,7 +545,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_GetView(CPH_RegistryObject *s
     return proxy;
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyRegistry_GetEntities(CPH_RegistryObject *self,
+[[nodiscard]] PyObject * RegistryGetEntities(RegistryObject *self,
                                                                PyObject *const *args, size_t nargsf,
                                                                PyObject *kwnames) {
     uint32_t comp_id;
@@ -564,7 +566,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_GetEntities(CPH_RegistryObjec
     return proxy;
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyRegistry_SyncFromWorld(CPH_RegistryObject *self,
+[[nodiscard]] PyObject * RegistrySyncFromWorld(RegistryObject *self,
                                                                  PyObject *const *args,
                                                                  size_t nargsf, PyObject *kwnames) {
     PyObject *world_obj = nullptr;
@@ -577,18 +579,18 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_SyncFromWorld(CPH_RegistryObj
         return nullptr;
     }
 
-    CPH_PhysicsWorldObject *world = reinterpret_cast<CPH_PhysicsWorldObject *>(world_obj);
+    PhysicsWorldObject *world = reinterpret_cast<PhysicsWorldObject *>(world_obj);
 
     if (h_comp_id >= self->component_count) {
         return PyErr_Format(PyExc_ValueError, "Invalid handle component ID");
     }
 
-    CPH_SparseSet *h_set = &self->components[h_comp_id];
-    CPH_SparseSet *p_set =
+    SparseSet *h_set = &self->components[h_comp_id];
+    SparseSet *p_set =
         (p_comp_id >= 0 && static_cast<uint32_t>(p_comp_id) < self->component_count)
             ? &self->components[p_comp_id]
             : nullptr;
-    CPH_SparseSet *r_set =
+    SparseSet *r_set =
         (r_comp_id >= 0 && static_cast<uint32_t>(r_comp_id) < self->component_count)
             ? &self->components[r_comp_id]
             : nullptr;
@@ -608,7 +610,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_SyncFromWorld(CPH_RegistryObj
     CPH_SHADOW_LOCK(&self->ecs_lock);
 
     for (uint32_t i = 0; i < h_set->count; i++) {
-        CPH_Entity ent   = h_set->dense[i];
+        Entity ent   = h_set->dense[i];
         uint32_t ent_idx = static_cast<uint32_t>(ent & kHandleIndexMask);
 
         uint64_t handle;
@@ -657,7 +659,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_SyncFromWorld(CPH_RegistryObj
     Py_RETURN_NONE;
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Clear(CPH_RegistryObject *self,
+[[nodiscard]] PyObject * RegistryClear(RegistryObject *self,
                                                          [[maybe_unused]] PyObject *args) {
     CPH_SHADOW_LOCK(&self->ecs_lock);
 
@@ -690,12 +692,12 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_Clear(CPH_RegistryObject *sel
     Py_RETURN_NONE;
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyRegistry_GetActiveCount(CPH_RegistryObject *self,
+[[nodiscard]] PyObject * RegistryGetActiveCount(RegistryObject *self,
                                                                   [[maybe_unused]] PyObject *args) {
     return PyLong_FromUnsignedLong(self->active_entities);
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyRegistry_GetComponentCount(CPH_RegistryObject *self,
+[[nodiscard]] PyObject * RegistryGetComponentCount(RegistryObject *self,
                                                                      PyObject *const *args,
                                                                      size_t nargsf,
                                                                      PyObject *kwnames) {
@@ -714,34 +716,36 @@ PyCFunction_DeclareMethodFromModule CPH_PyRegistry_GetComponentCount(CPH_Registr
 
 static PyMethodDef kRegistryMethods[] = {
 
-    CPH::Python::NoArgsMethod("create", CPH_PyRegistry_Create),
-    CPH::Python::FastCallMethod("destroy", CPH_PyRegistry_Destroy),
-    CPH::Python::FastCallMethod("is_alive", CPH_PyRegistry_IsAlive),
-    CPH::Python::NoArgsMethod("clear", CPH_PyRegistry_Clear), // Wipes the registry
-    CPH::Python::FastCallMethod("register_component", CPH_PyRegistry_RegisterComponent),
-    CPH::Python::FastCallMethod("add", CPH_PyRegistry_Add),
-    CPH::Python::FastCallMethod("remove", CPH_PyRegistry_Remove),
-    CPH::Python::FastCallMethod("has", CPH_PyRegistry_Has),
-    CPH::Python::FastCallMethod("get", CPH_PyRegistry_Get), // Single entity data access
-    CPH::Python::FastCallMethod("get_view", CPH_PyRegistry_GetView),
-    CPH::Python::FastCallMethod("get_entities", CPH_PyRegistry_GetEntities),
-    CPH::Python::FastCallMethod("sync_from_world", CPH_PyRegistry_SyncFromWorld),
-    CPH::Python::NoArgsMethod("get_active_count", CPH_PyRegistry_GetActiveCount), // ECS Statistics
+    CPH::Python::NoArgsMethod("create", RegistryCreate),
+    CPH::Python::FastCallMethod("destroy", RegistryDestroy),
+    CPH::Python::FastCallMethod("is_alive", RegistryIsAlive),
+    CPH::Python::NoArgsMethod("clear", RegistryClear), // Wipes the registry
+    CPH::Python::FastCallMethod("register_component", RegistryRegisterComponent),
+    CPH::Python::FastCallMethod("add", RegistryAdd),
+    CPH::Python::FastCallMethod("remove", RegistryRemove),
+    CPH::Python::FastCallMethod("has", RegistryHas),
+    CPH::Python::FastCallMethod("get", RegistryGet), // Single entity data access
+    CPH::Python::FastCallMethod("get_view", RegistryGetView),
+    CPH::Python::FastCallMethod("get_entities", RegistryGetEntities),
+    CPH::Python::FastCallMethod("sync_from_world", RegistrySyncFromWorld),
+    CPH::Python::NoArgsMethod("get_active_count", RegistryGetActiveCount), // ECS Statistics
     CPH::Python::FastCallMethod("get_component_count",
-                                CPH_PyRegistry_GetComponentCount), // ECS Statistics
+                                RegistryGetComponentCount), // ECS Statistics
     {nullptr, nullptr, 0, nullptr}};
 
-static PyType_Slot CPH_PyRegistry_Slots[] = {
+static PyType_Slot RegistrySlots[] = {
     {.slot = Py_tp_new, .pfunc = reinterpret_cast<void *>(PyType_GenericNew)},
-    {.slot = Py_tp_init, .pfunc = reinterpret_cast<void *>(CPH_PyRegistry_Init)},
-    {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(CPH_PyRegistry_Dealloc)},
+    {.slot = Py_tp_init, .pfunc = reinterpret_cast<void *>(RegistryInit)},
+    {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(RegistryDealloc)},
     {.slot = Py_tp_methods, .pfunc = reinterpret_cast<void *>(kRegistryMethods)},
     {},
 };
 
-PyType_Spec Registry_spec = {
+PyType_Spec RegistrySpec = {
     .name      = "culverin._culverin_c.Registry",
-    .basicsize = sizeof(CPH_RegistryObject),
+    .basicsize = sizeof(RegistryObject),
     .flags     = Py_TPFLAGS_DEFAULT,
-    .slots     = CPH_PyRegistry_Slots,
+    .slots     = RegistrySlots,
 };
+
+} // namespace CPH::Python

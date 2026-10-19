@@ -5,12 +5,14 @@
 
 #include "core/Threading.h"
 #include "physics/CommandBuffer.h"
-#include "physics/PhysicsSync.h"
-#include "physics/PhysicsWorldBinding.h"
+#include "physics/PhysicsSync.hpp"
+#include "physics/PhysicsWorldBinding.hpp"
 
-void CPH_SyncAndFlushInternal(CPH_PhysicsWorldObject *self) {
-    CPH_BLOCK_UNTIL_NOT_STEPPING(self);
-    CPH_BLOCK_UNTIL_NOT_QUERYING(self);
+namespace CPH::Python {
+
+void SyncAndFlushInternal(PhysicsWorldObject *self) {
+    BlockUntilNotStepping(self);
+    BlockUntilNotQuerying(self);
 
     if (self->physics.command_count == 0) {
         return;
@@ -41,3 +43,5 @@ void CPH_SyncAndFlushInternal(CPH_PhysicsWorldObject *self) {
     CPH_NATIVE_COND_BROADCAST(self->physics.step_sync.cond);
     CPH_NATIVE_MUTEX_UNLOCK(self->physics.step_sync.mutex);
 }
+
+} // namespace CPH::Python

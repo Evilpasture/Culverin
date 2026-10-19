@@ -53,7 +53,7 @@ static inline void CPH_CpuRelax() {
 }
 
 /* ============================================================================
- * 2. UNIFIED LOCK API (Directly mapping to CulvMutex/CulvCond)
+ * 2. UNIFIED LOCK API (Directly mapping to CPH_Mutex/CPH_Cond)
  * ============================================================================ */
 
 typedef CPH_Mutex NativeMutex;
@@ -63,11 +63,11 @@ typedef CPH_Mutex ShadowMutex;
 // Mutex Operations
 #define CPH_INIT_NATIVE_MUTEX(m) atomic_init(&(m).bits, kMutexUnlocked)
 #define CPH_FREE_NATIVE_MUTEX(m) (void)(m)
-#define CPH_NATIVE_MUTEX_LOCK(m) culv_mutex_lock(&(m))
-#define CPH_NATIVE_MUTEX_UNLOCK(m) culv_mutex_unlock(&(m))
+#define CPH_NATIVE_MUTEX_LOCK(m) CPH_mutex_lock(&(m))
+#define CPH_NATIVE_MUTEX_UNLOCK(m) CPH_mutex_unlock(&(m))
 
 // Condition Variable Operations
-#define CPH_INIT_NATIVE_COND(c) culv_cond_init(&(c))
+#define CPH_INIT_NATIVE_COND(c) CPH_cond_init(&(c))
 #define CPH_FREE_NATIVE_COND(c) (void)(c)
 #define CPH_NATIVE_COND_WAIT(c, m) CPH_CondWait(&(c), &(m))
 #define CPH_NATIVE_COND_BROADCAST(c) CPH_CondBroadcast(&(c))
@@ -75,8 +75,8 @@ typedef CPH_Mutex ShadowMutex;
 // Shadow Mutex Operations (Maps directly to Native operations)
 #define CPH_INIT_LOCK(m) atomic_init(&(m).bits, kMutexUnlocked)
 #define CPH_FREE_LOCK(m) (void)(m)
-#define CPH_SHADOW_LOCK(m) culv_mutex_lock(m)
-#define CPH_SHADOW_UNLOCK(m) culv_mutex_unlock(m)
+#define CPH_SHADOW_LOCK(m) CPH_mutex_lock(m)
+#define CPH_SHADOW_UNLOCK(m) CPH_mutex_unlock(m)
 
 /* ============================================================================
  * 3. STRUCTURES & CACHE ISOLATION

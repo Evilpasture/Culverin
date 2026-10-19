@@ -6,14 +6,12 @@ add_library(
         Getters.cpp
         docstrings/Docstrings.cpp
         docstrings/Docstrings.h
-        BindingCommon.h
-        FastBuild.h
-        FastBuildCore.h
-        Getters.h
-        ModuleState.h
+        PythonCommon.hpp
+        FastBuild.hpp
+        Getters.hpp
+        ModuleState.hpp
         ModuleParsers.hpp
-        PythonDeclarations.h
-        PythonSupport.h
+        PythonSupport.hpp
 )
 culverin_configure_python_target(culverin_python_bindings)
 

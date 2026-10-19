@@ -18,18 +18,18 @@
 #endif
 
 #if defined(__cplusplus)
-using culv_u23 = uint32_t;
-using culv_u1  = uint8_t;
-using culv_u5  = uint8_t;
+using CPH_u23 = uint32_t;
+using CPH_u1  = uint8_t;
+using CPH_u5  = uint8_t;
 #elif (defined(__GNUC__) && __GNUC__ < 14)
-typedef uint32_t culv_u23;
-typedef uint8_t culv_u1;
-typedef uint8_t culv_u5;
+typedef uint32_t CPH_u23;
+typedef uint8_t CPH_u1;
+typedef uint8_t CPH_u5;
 #else
 // Native C23
-typedef unsigned _BitInt(23) culv_u23;
-typedef unsigned _BitInt(1) culv_u1;
-typedef unsigned _BitInt(5) culv_u5;
+typedef unsigned _BitInt(23) CPH_u23;
+typedef unsigned _BitInt(1) CPH_u1;
+typedef unsigned _BitInt(5) CPH_u5;
 #endif
 
 // #define CULVERIN_DEBUG

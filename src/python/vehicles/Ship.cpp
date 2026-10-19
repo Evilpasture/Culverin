@@ -1,15 +1,17 @@
-#include "vehicles/Ship.h"
-#include "bindings/BindingCommon.h"
-#include "bindings/ModuleState.h"
-#include "bindings/PythonSupport.h"
-#include "physics/PhysicsWorldBinding.h"
+#include "vehicles/Ship.hpp"
+#include "bindings/PythonCommon.hpp"
+#include "bindings/ModuleState.hpp"
+#include "bindings/PythonSupport.hpp"
+#include "physics/PhysicsWorldBinding.hpp"
 #include <math.h>
+
+namespace CPH::Python {
 
 // --- THE HOT PATH (No Locks, No GIL) ---
 
 static void JPH_API_CALL Ship_OnStep(void *userData,
                                      const JPH_PhysicsStepListenerContext *inContext) {
-    CPH_ShipObject *self  = static_cast<CPH_ShipObject *>(userData);
+    ShipObject *self  = static_cast<ShipObject *>(userData);
     JPH_BodyInterface *bi = JPH_PhysicsSystem_GetBodyInterfaceNoLock(inContext->physicsSystem);
 
     if (self->sled_bid == kJphInvalidBodyId) {
@@ -87,7 +89,7 @@ static void JPH_API_CALL Ship_OnStep(void *userData,
 static const JPH_PhysicsStepListener_Procs kShipListenerProcs = {.OnStep = Ship_OnStep};
 
 // --- CREATION ---
-PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateShip(CPH_PhysicsWorldObject *self,
+[[nodiscard]] PyObject * WorldCreateShip(PhysicsWorldObject *self,
                                                            PyObject *const *args, size_t nargsf,
                                                            PyObject *kwnames) {
     const Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
@@ -106,7 +108,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateShip(CPH_PhysicsWorldObjec
     }
 
     CPH_SHADOW_LOCK(&self->physics.shadow_lock);
-    CPH_SyncAndFlushInternal(self);
+    SyncAndFlushInternal(self);
 
     uint32_t slot;
     if (!unpack_handle(&self->physics, static_cast<BodyHandle>(sled_raw), &slot)) {
@@ -115,8 +117,8 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateShip(CPH_PhysicsWorldObjec
     }
     JPH_BodyID bid = self->physics.body_ids[self->physics.slot_to_dense[slot]];
     CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
-    CPH_ModuleState *st = CPH_GetModuleState(PyType_GetModule(Py_TYPE(self)));
-    auto obj = PyObject_GC_New(CPH_ShipObject, reinterpret_cast<PyTypeObject *>(st->ShipType));
+    ModuleState *st = GetModuleState(PyType_GetModule(Py_TYPE(self)));
+    auto obj = PyObject_GC_New(ShipObject, reinterpret_cast<PyTypeObject *>(st->ShipType));
     if (!obj) {
         return nullptr;
     }
@@ -127,7 +129,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateShip(CPH_PhysicsWorldObjec
         return nullptr;
     }
 
-    obj->world      = reinterpret_cast<CPH_PhysicsWorldObject *>(Py_NewRef(self));
+    obj->world      = reinterpret_cast<PhysicsWorldObject *>(Py_NewRef(self));
     obj->sled_bid   = bid;
     obj->sled_h_raw = sled_raw;
     atomic_init(&obj->input_fwd, 0.0f);
@@ -153,7 +155,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateShip(CPH_PhysicsWorldObjec
 
 // --- INPUT (ULTRA FAST) ---
 
-PyCFunction_DeclareMethodFromModule CPH_PyShip_SetInput(CPH_ShipObject *self, PyObject *const *args,
+[[nodiscard]] PyObject * ShipSetInput(ShipObject *self, PyObject *const *args,
                                                         size_t nargsf, PyObject *kwnames) {
     const Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
     float fwd              = 0.0f;
@@ -172,7 +174,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyShip_SetInput(CPH_ShipObject *self, Py
 }
 
 // --- CLEANUP ---
-PyType_DeclareSlot_VoidFromModule CPH_PyShip_Dealloc(CPH_ShipObject *self) {
+void ShipDealloc(ShipObject *self) {
     PyObject_GC_UnTrack(self);
 
     if (self->world && self->listener) {
@@ -192,31 +194,33 @@ PyType_DeclareSlot_VoidFromModule CPH_PyShip_Dealloc(CPH_ShipObject *self) {
     Py_TYPE(self)->tp_free(reinterpret_cast<PyObject *>(self));
 }
 
-PyType_DeclareSlot_StatusFromModule CPH_PyShip_Traverse(CPH_ShipObject *self, visitproc visit,
+[[nodiscard]] int ShipTraverse(ShipObject *self, visitproc visit,
                                                         void *arg) {
     Py_VISIT(self->world);
     return 0;
 }
 
-PyType_DeclareSlot_StatusFromModule CPH_PyShip_Clear(CPH_ShipObject *self) {
+[[nodiscard]] int ShipClear(ShipObject *self) {
     Py_CLEAR(self->world);
     return 0;
 }
 
-static PyMethodDef kShipMethods[] = {CPH::Python::FastCallMethod("set_input", CPH_PyShip_SetInput),
+static PyMethodDef kShipMethods[] = {CPH::Python::FastCallMethod("set_input", ShipSetInput),
                                      {nullptr, nullptr, 0, nullptr}};
 
-static PyType_Slot CPH_PyShip_Slots[] = {
-    {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(CPH_PyShip_Dealloc)},
-    {.slot = Py_tp_traverse, .pfunc = reinterpret_cast<void *>(CPH_PyShip_Traverse)},
-    {.slot = Py_tp_clear, .pfunc = reinterpret_cast<void *>(CPH_PyShip_Clear)},
+static PyType_Slot ShipSlots[] = {
+    {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(ShipDealloc)},
+    {.slot = Py_tp_traverse, .pfunc = reinterpret_cast<void *>(ShipTraverse)},
+    {.slot = Py_tp_clear, .pfunc = reinterpret_cast<void *>(ShipClear)},
     {.slot = Py_tp_methods, .pfunc = reinterpret_cast<void *>(kShipMethods)},
     {},
 };
 
-PyType_Spec Ship_spec = {
+PyType_Spec ShipSpec = {
     .name      = "culverin._culverin_c.Ship",
-    .basicsize = sizeof(CPH_ShipObject),
+    .basicsize = sizeof(ShipObject),
     .flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
-    .slots     = CPH_PyShip_Slots,
+    .slots     = ShipSlots,
 };
+
+} // namespace CPH::Python

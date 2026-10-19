@@ -16,7 +16,7 @@ JPH_Shape *CPH_FindOrCreateShapeLocked(CPH_PhysicsWorld *world, int type, const 
     float p3;
     float p4;
 
-    if (type == CULV_SHAPE_PLANE) {
+    if (type == CPH_SHAPE_PLANE) {
         // Plane normal components must represent a unit vector.
         // We defensively normalize them and avoid clamping zero-components.
         float nx     = params[0];
@@ -67,7 +67,7 @@ JPH_Shape *CPH_FindOrCreateShapeLocked(CPH_PhysicsWorld *world, int type, const 
     // 4. JOLT CREATION (Type-Specific Dispatch)
     JPH_Shape *shape = nullptr;
     switch (type) {
-    case CULV_SHAPE_BOX: {
+    case CPH_SHAPE_BOX: {
         JPH_Vec3 half_extents = {p1, p2, p3};
         auto s                = JPH_BoxShapeSettings_Create(&half_extents, 0.05f);
         if (s) {
@@ -76,7 +76,7 @@ JPH_Shape *CPH_FindOrCreateShapeLocked(CPH_PhysicsWorld *world, int type, const 
         }
         break;
     }
-    case CULV_SHAPE_SPHERE: {
+    case CPH_SHAPE_SPHERE: {
         auto s = JPH_SphereShapeSettings_Create(p1);
         if (s) {
             shape = (JPH_Shape *)JPH_SphereShapeSettings_CreateShape(s);
@@ -84,7 +84,7 @@ JPH_Shape *CPH_FindOrCreateShapeLocked(CPH_PhysicsWorld *world, int type, const 
         }
         break;
     }
-    case CULV_SHAPE_CAPSULE: {
+    case CPH_SHAPE_CAPSULE: {
         auto s = JPH_CapsuleShapeSettings_Create(p1, p2);
         if (s) {
             shape = (JPH_Shape *)JPH_CapsuleShapeSettings_CreateShape(s);
@@ -92,7 +92,7 @@ JPH_Shape *CPH_FindOrCreateShapeLocked(CPH_PhysicsWorld *world, int type, const 
         }
         break;
     }
-    case CULV_SHAPE_CYLINDER: {
+    case CPH_SHAPE_CYLINDER: {
         auto s = JPH_CylinderShapeSettings_Create(p1, p2, 0.05f);
         if (s) {
             shape = (JPH_Shape *)JPH_CylinderShapeSettings_CreateShape(s);
@@ -100,7 +100,7 @@ JPH_Shape *CPH_FindOrCreateShapeLocked(CPH_PhysicsWorld *world, int type, const 
         }
         break;
     }
-    case CULV_SHAPE_PLANE: {
+    case CPH_SHAPE_PLANE: {
         JPH_Plane plane = {{p1, p2, p3}, p4};
         auto s          = JPH_PlaneShapeSettings_Create(&plane, nullptr, 1000.0f);
         if (s) {

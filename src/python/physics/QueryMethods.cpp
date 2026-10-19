@@ -1,8 +1,10 @@
-#include "physics/QueryMethods.h"
-#include "bindings/BindingCommon.h"
-#include "bindings/FastBuild.h"
-#include "bindings/parsing/Parsers.h"
+#include "physics/QueryMethods.hpp"
+#include "bindings/PythonCommon.hpp"
+#include "bindings/FastBuild.hpp"
+#include "bindings/parsing/Parsers.hpp"
 #include "core/CompilerSpecifics.h"
+
+namespace CPH::Python {
 
 static constexpr size_t kCqmVec3StrideBytes = 3 * sizeof(float);
 
@@ -45,7 +47,7 @@ static PyObject *overlap_hits_to_list(const CPH_PhysicsQueryHitBuffer *hits) {
     return result;
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyWorld_OverlapSphere(CPH_PhysicsWorldObject *self,
+[[nodiscard]] PyObject * WorldOverlapSphere(PhysicsWorldObject *self,
                                                               PyObject *const *args, size_t nargsf,
                                                               PyObject *kwnames) {
     PyObject *o_center = nullptr;
@@ -59,7 +61,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_OverlapSphere(CPH_PhysicsWorldOb
     JPH_Real cx;
     JPH_Real cy;
     JPH_Real cz;
-    if (!CPH_parse_vec3_direct(o_center, &cx, &cy, &cz)) {
+    if (!parse_vec3_direct(o_center, &cx, &cy, &cz)) {
         return nullptr;
     }
 
@@ -82,7 +84,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_OverlapSphere(CPH_PhysicsWorldOb
     return result;
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyWorld_OverlapAabb(CPH_PhysicsWorldObject *self,
+[[nodiscard]] PyObject * WorldOverlapAabb(PhysicsWorldObject *self,
                                                             PyObject *const *args, size_t nargsf,
                                                             PyObject *kwnames) {
     PyObject *o_min = nullptr;
@@ -99,8 +101,8 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_OverlapAabb(CPH_PhysicsWorldObje
     JPH_Real max_x;
     JPH_Real max_y;
     JPH_Real max_z;
-    if (!CPH_parse_vec3_direct(o_min, &min_x, &min_y, &min_z) ||
-        !CPH_parse_vec3_direct(o_max, &max_x, &max_y, &max_z)) {
+    if (!parse_vec3_direct(o_min, &min_x, &min_y, &min_z) ||
+        !parse_vec3_direct(o_max, &max_x, &max_y, &max_z)) {
         return nullptr;
     }
 
@@ -123,7 +125,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_OverlapAabb(CPH_PhysicsWorldObje
     return result;
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyWorld_Raycast(CPH_PhysicsWorldObject *self,
+[[nodiscard]] PyObject * WorldRaycast(PhysicsWorldObject *self,
                                                         PyObject *const *args, size_t nargsf,
                                                         PyObject *kwnames) {
     PyObject *o_start      = nullptr;
@@ -142,8 +144,8 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_Raycast(CPH_PhysicsWorldObject *
     float direction_x;
     float direction_y;
     float direction_z;
-    if (!CPH_parse_vec3_direct(o_start, &start_x, &start_y, &start_z) ||
-        !CPH_parse_vec3_direct(o_direction, &direction_x, &direction_y, &direction_z)) {
+    if (!parse_vec3_direct(o_start, &start_x, &start_y, &start_z) ||
+        !parse_vec3_direct(o_direction, &direction_x, &direction_y, &direction_z)) {
         return nullptr;
     }
 
@@ -164,11 +166,11 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_Raycast(CPH_PhysicsWorldObject *
         Py_RETURN_NONE;
     }
 
-    return CPH_PY_BUILD_TUPLE((unsigned long long)hit.handle, hit.fraction,
-                              CPH_PY_BUILD_TUPLE(hit.normal.x, hit.normal.y, hit.normal.z));
+    return BuildTuple((unsigned long long)hit.handle, hit.fraction,
+                              BuildTuple(hit.normal.x, hit.normal.y, hit.normal.z));
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyWorld_RaycastBatch(CPH_PhysicsWorldObject *self,
+[[nodiscard]] PyObject * WorldRaycastBatch(PhysicsWorldObject *self,
                                                              PyObject *const *args, size_t nargsf,
                                                              PyObject *kwnames) {
     PyObject *o_starts     = nullptr;
@@ -246,7 +248,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_RaycastBatch(CPH_PhysicsWorldObj
     return result_bytes;
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyWorld_Shapecast(CPH_PhysicsWorldObject *self,
+[[nodiscard]] PyObject * WorldShapecast(PhysicsWorldObject *self,
                                                           PyObject *const *args, size_t nargsf,
                                                           PyObject *kwnames) {
     int shape_type         = 0;
@@ -273,12 +275,12 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_Shapecast(CPH_PhysicsWorldObject
     float direction_y;
     float direction_z;
     float size[4];
-    if (!CPH_parse_vec3_direct(o_position, &position_x, &position_y, &position_z) ||
-        !CPH_parse_quat_direct(o_rotation, &rotation_x, &rotation_y, &rotation_z, &rotation_w) ||
-        !CPH_parse_vec3_direct(o_direction, &direction_x, &direction_y, &direction_z)) {
+    if (!parse_vec3_direct(o_position, &position_x, &position_y, &position_z) ||
+        !parse_quat_direct(o_rotation, &rotation_x, &rotation_y, &rotation_z, &rotation_w) ||
+        !parse_vec3_direct(o_direction, &direction_x, &direction_y, &direction_z)) {
         return nullptr;
     }
-    CPH_ParseBodySize(o_size, size);
+    ParseBodySize(o_size, size);
 
     const JPH_RVec3 position    = {position_x, position_y, position_z};
     const JPH_Quat rotation     = {rotation_x, rotation_y, rotation_z, rotation_w};
@@ -298,7 +300,9 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_Shapecast(CPH_PhysicsWorldObject
         Py_RETURN_NONE;
     }
 
-    return CPH_PY_BUILD_TUPLE((unsigned long long)hit.handle, hit.fraction,
-                              CPH_PY_BUILD_TUPLE(hit.point.x, hit.point.y, hit.point.z),
-                              CPH_PY_BUILD_TUPLE(hit.normal.x, hit.normal.y, hit.normal.z));
+    return BuildTuple((unsigned long long)hit.handle, hit.fraction,
+                              BuildTuple(hit.point.x, hit.point.y, hit.point.z),
+                              BuildTuple(hit.normal.x, hit.normal.y, hit.normal.z));
 }
+
+} // namespace CPH::Python

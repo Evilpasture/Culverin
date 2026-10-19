@@ -1,28 +1,28 @@
-#include "FastParserCore.h"
-#include "bindings/BindingCommon.h"
+#include "FastParserCore.hpp"
+#include "bindings/PythonCommon.hpp"
 #include <stdlib.h>
 
-static const CulvFastParseFunc kFastParseMonoStubs[] = {
-    culv_fast_parse_speculate_p0,       culv_fast_parse_speculate_p1_naked,
-    culv_fast_parse_speculate_p2_naked, culv_fast_parse_speculate_p3_naked,
-    culv_fast_parse_speculate_p4_naked, culv_fast_parse_speculate_p5_naked,
-    culv_fast_parse_speculate_p6_naked, culv_fast_parse_speculate_p7_naked,
-    culv_fast_parse_speculate_p8_naked};
+namespace CPH::Python {
+
+static constexpr FastParseFunc kFastParseMonoStubs[] = {
+    fast_parse_speculate_p0, fast_parse_speculate_p1, fast_parse_speculate_p2,
+    fast_parse_speculate_p3, fast_parse_speculate_p4, fast_parse_speculate_p5,
+    fast_parse_speculate_p6, fast_parse_speculate_p7, fast_parse_speculate_p8};
 
 static constexpr size_t kFastParseStubsSize = 9;
-static_assert(sizeof(kFastParseMonoStubs) / sizeof(CulvFastParseFunc) == kFastParseStubsSize,
-              "CULV_FAST_PARSE_MONO_STUBS table must contain exactly 9 stubs (0-8 args)");
+static_assert(sizeof(kFastParseMonoStubs) / sizeof(FastParseFunc) == kFastParseStubsSize,
+              "FAST_PARSE_MONO_STUBS table must contain exactly 9 stubs (0-8 args)");
 
 /**
- * COLD PATH: culv_fast_parse_warn_uninterned_slow
+ * COLD PATH: fast_parse_warn_uninterned_slow
  *
  * This function handles the expensive string formatting and warning emission
  * for non-interned keywords. By marking it 'noinline' and 'cold', we ensure
- * that Clang keeps this code away from the high-speed 'culv_fast_parse_find_keyword_index'
+ * that Clang keeps this code away from the high-speed 'fast_parse_find_keyword_index'
  * instruction cache zone.
  */
 [[gnu::noinline, gnu::cold, nodiscard]]
-bool CPH_FastParseWarnUninternedSlow(PyObject *key, const char *pname) {
+bool FastParseWarnUninternedSlow(PyObject *key, const char *pname) {
     int result = PyErr_WarnFormat(PyExc_RuntimeWarning, 1,
                                   "Priority Alert: Keyword '%U' in parser '%s' is not interned.\n"
                                   "This forces a slow string comparison. To resolve this, use "
@@ -32,9 +32,9 @@ bool CPH_FastParseWarnUninternedSlow(PyObject *key, const char *pname) {
 }
 
 [[gnu::noinline, gnu::cold, nodiscard]]
-size_t CPH_FastParseCmpSlow(PyObject *key, const CPH_FastParser *fastparse) {
+size_t FastParseCmpSlow(PyObject *key, const FastParserCore *fastparse) {
     const size_t count              = fastparse->count;
-    const CPH_FastArgSpecHot *specs = fastparse->hot_specs;
+    const FastArgSpecHot *specs = fastparse->hot_specs;
 
     for (size_t j = 0; j < count; ++j) {
         // 1. Is it the exact same pointer that just slipped past the hash table?
@@ -45,8 +45,8 @@ size_t CPH_FastParseCmpSlow(PyObject *key, const CPH_FastParser *fastparse) {
         // 2. Slow string content comparison
         if (PyUnicode_Compare(key, specs[j].interned) == 0) {
             if ((fastparse->warned_mask & (1ULL << j)) == 0) {
-                (const_cast<CPH_FastParser *>(fastparse))->warned_mask |= (1ULL << j);
-                if (!CPH_FastParseWarnUninternedSlow(key, fastparse->parser_name)) {
+                (const_cast<FastParserCore *>(fastparse))->warned_mask |= (1ULL << j);
+                if (!FastParseWarnUninternedSlow(key, fastparse->parser_name)) {
                     return kFastParseEmptySlot;
                 }
             }
@@ -57,14 +57,14 @@ size_t CPH_FastParseCmpSlow(PyObject *key, const CPH_FastParser *fastparse) {
 }
 
 [[gnu::noinline, gnu::cold, nodiscard]]
-bool CPH_FastParseReportMissing(const CPH_FastParser *fastparser, uint64_t provided_mask) {
+bool FastParseReportMissing(const FastParserCore *fastparser, uint64_t provided_mask) {
     const char *pname = fastparser->parser_name ? fastparser->parser_name : "function";
 
     PyObject *missing_details = PyList_New(0);
     PyObject *signature_parts = PyList_New(0);
 
     // If we can't allocate lists for the fancy error, fall back to a basic error
-    if (CPH_FAST_PARSE_UNLIKELY(!missing_details || !signature_parts)) {
+    if (Unlikely(!missing_details || !signature_parts)) {
         Py_XDECREF(missing_details);
         Py_XDECREF(signature_parts);
         PyErr_Format(PyExc_TypeError, "%s() missing required positional arguments", pname);
@@ -75,8 +75,8 @@ bool CPH_FastParseReportMissing(const CPH_FastParser *fastparser, uint64_t provi
         // DATA-ORIENTED SPLIT:
         // cold_specs has the strings (name, type_name)
         // hot_specs has the runtime objects (type_guard)
-        const CPH_FastArgSpecCold *cold = &fastparser->cold_specs[i];
-        const CPH_FastArgSpecHot *hot   = &fastparser->hot_specs[i];
+        const FastArgSpecCold *cold = &fastparser->cold_specs[i];
+        const FastArgSpecHot *hot   = &fastparser->hot_specs[i];
 
         bool is_required = (fastparser->required_mask & (1ULL << i)) != 0;
         bool is_provided = (provided_mask & (1ULL << i)) != 0;
@@ -135,9 +135,9 @@ bool CPH_FastParseReportMissing(const CPH_FastParser *fastparser, uint64_t provi
     return false;
 }
 [[gnu::noinline, nodiscard]]
-bool CPH_FastParseReportTypeError(const CPH_FastParser *fastparser, size_t index, PyObject *val) {
-    const CPH_FastArgSpecCold *cold_spec = &fastparser->cold_specs[index];
-    const CPH_FastArgSpecHot *hot_spec   = &fastparser->hot_specs[index];
+bool FastParseReportTypeError(const FastParserCore *fastparser, size_t index, PyObject *val) {
+    const FastArgSpecCold *cold_spec = &fastparser->cold_specs[index];
+    const FastArgSpecHot *hot_spec   = &fastparser->hot_specs[index];
     const char *pname = fastparser->parser_name ? fastparser->parser_name : "function";
 
     // Resolve the "expected" type name: use type_name string if available,
@@ -152,7 +152,7 @@ bool CPH_FastParseReportTypeError(const CPH_FastParser *fastparser, size_t index
 
     // 1. Safe Repr Acquisition (Truncated to avoid overwhelming the error message)
     val_repr = PyObject_Repr(val);
-    if (CPH_FAST_PARSE_UNLIKELY(!val_repr)) {
+    if (Unlikely(!val_repr)) {
         PyErr_Clear(); // Clear OOM from Repr to set our TypeError
         val_repr = PyUnicode_FromString("<repr unavailable>");
     } else if (PyUnicode_GetLength(val_repr) > 100) {
@@ -170,13 +170,13 @@ bool CPH_FastParseReportTypeError(const CPH_FastParser *fastparser, size_t index
     // 2. Diagnostic Signature Construction: (e.g. "func(arg1: int, !!! arg2: str !!!, [arg3:
     // float])")
     signature_parts = PyList_New(0);
-    if (CPH_FAST_PARSE_UNLIKELY(!signature_parts)) {
+    if (Unlikely(!signature_parts)) {
         goto basic_error;
     }
 
     for (size_t i = 0; i < fastparser->count; i++) {
-        const CPH_FastArgSpecCold *s_cold = &fastparser->cold_specs[i];
-        const CPH_FastArgSpecHot *s_hot   = &fastparser->hot_specs[i];
+        const FastArgSpecCold *s_cold = &fastparser->cold_specs[i];
+        const FastArgSpecHot *s_hot   = &fastparser->hot_specs[i];
 
         bool is_required = (fastparser->required_mask & (1ULL << i)) != 0;
 
@@ -195,12 +195,12 @@ bool CPH_FastParseReportTypeError(const CPH_FastParser *fastparser, size_t index
     }
 
     comma = PyUnicode_FromString(", ");
-    if (CPH_FAST_PARSE_UNLIKELY(!comma)) {
+    if (Unlikely(!comma)) {
         goto basic_error;
     }
 
     joined_sig = PyUnicode_Join(comma, signature_parts);
-    if (CPH_FAST_PARSE_UNLIKELY(!joined_sig)) {
+    if (Unlikely(!joined_sig)) {
         goto basic_error;
     }
 
@@ -226,7 +226,7 @@ cleanup:
     return false;
 }
 [[gnu::noinline, nodiscard]]
-bool CPH_FastParseReportMultiple(const CPH_FastParser *fastparser, size_t index) {
+bool FastParseReportMultiple(const FastParserCore *fastparser, size_t index) {
     const char *pname    = fastparser->parser_name ? fastparser->parser_name : "function";
     const char *arg_name = fastparser->cold_specs[index].name;
 
@@ -236,7 +236,7 @@ bool CPH_FastParseReportMultiple(const CPH_FastParser *fastparser, size_t index)
 
     // 1. Diagnostic Signature Construction
     parts = PyList_New(0);
-    if (CPH_FAST_PARSE_UNLIKELY(!parts)) {
+    if (Unlikely(!parts)) {
         goto basic_error;
     }
 
@@ -251,12 +251,12 @@ bool CPH_FastParseReportMultiple(const CPH_FastParser *fastparser, size_t index)
     }
 
     comma = PyUnicode_FromString(", ");
-    if (CPH_FAST_PARSE_UNLIKELY(!comma)) {
+    if (Unlikely(!comma)) {
         goto basic_error;
     }
 
     sig = PyUnicode_Join(comma, parts);
-    if (CPH_FAST_PARSE_UNLIKELY(!sig)) {
+    if (Unlikely(!sig)) {
         goto basic_error;
     }
 
@@ -279,7 +279,7 @@ cleanup:
     return false;
 }
 [[gnu::noinline]]
-bool CPH_FastParseReportTooMany(const CPH_FastParser *fastparser, Py_ssize_t nargs) {
+bool FastParseReportTooMany(const FastParserCore *fastparser, Py_ssize_t nargs) {
     const char *pname = fastparser->parser_name ? fastparser->parser_name : "function";
 
     PyObject *parts = nullptr;
@@ -301,7 +301,7 @@ bool CPH_FastParseReportTooMany(const CPH_FastParser *fastparser, Py_ssize_t nar
 
     // 2. Diagnostic Signature Construction (Using Cold Spec names)
     parts = PyList_New(0);
-    if (CPH_FAST_PARSE_UNLIKELY(!parts)) {
+    if (Unlikely(!parts)) {
         goto basic_error;
     }
 
@@ -315,12 +315,12 @@ bool CPH_FastParseReportTooMany(const CPH_FastParser *fastparser, Py_ssize_t nar
     }
 
     comma = PyUnicode_FromString(", ");
-    if (CPH_FAST_PARSE_UNLIKELY(!comma)) {
+    if (Unlikely(!comma)) {
         goto basic_error;
     }
 
     sig = PyUnicode_Join(comma, parts);
-    if (CPH_FAST_PARSE_UNLIKELY(!sig)) {
+    if (Unlikely(!sig)) {
         goto basic_error;
     }
 
@@ -345,12 +345,12 @@ cleanup:
 }
 
 [[gnu::always_inline, gnu::const]]
-static inline int culv_fast_parse_min3(int a, int b, int c) {
+static inline int fast_parse_min3(int a, int b, int c) {
     int m = a < b ? a : b;
     return m < c ? m : c;
 }
 
-static int culv_fast_parse_levenshtein(const char *s1, const char *s2) {
+static int fast_parse_levenshtein(const char *s1, const char *s2) {
     // Assume s1 is the user input, s2 is the candidate from specs
     // Strip prefixes like 'ob_' or '_' if your interning logic needs it
     int len1 = static_cast<int>(strlen(s1));
@@ -388,7 +388,7 @@ static int culv_fast_parse_levenshtein(const char *s1, const char *s2) {
             uint8_t cost       = (s1[x - 1] != s2[y - 1]);
 
             // Branchless min if your compiler doesn't do it automatically
-            column[y] = culv_fast_parse_min3(column[y] + 1,     // Deletion
+            column[y] = fast_parse_min3(column[y] + 1,     // Deletion
                                              column[y - 1] + 1, // Insertion
                                              last_diag + cost); // Substitution
             last_diag = old_column;
@@ -397,7 +397,7 @@ static int culv_fast_parse_levenshtein(const char *s1, const char *s2) {
     return static_cast<int>(column[len2]);
 }
 [[gnu::noinline]]
-bool CPH_FastParseReportUnknownKeyword(const CPH_FastParser *fastparser, PyObject *key) {
+bool FastParseReportUnknownKeyword(const FastParserCore *fastparser, PyObject *key) {
     const char *actual_name = PyUnicode_AsUTF8(key);
     if (!actual_name) {
         return false;
@@ -419,7 +419,7 @@ bool CPH_FastParseReportUnknownKeyword(const CPH_FastParser *fastparser, PyObjec
             continue;
         }
 
-        int dist = culv_fast_parse_levenshtein(actual_name, cand);
+        int dist = fast_parse_levenshtein(actual_name, cand);
         if (dist < best_dist) {
             best_dist  = dist;
             best_match = cand;
@@ -428,13 +428,13 @@ bool CPH_FastParseReportUnknownKeyword(const CPH_FastParser *fastparser, PyObjec
 
     // 2. Diagnostic Message Construction (Building the list of valid options)
     valid_args_list = PyList_New(0);
-    if (CPH_FAST_PARSE_UNLIKELY(!valid_args_list)) {
+    if (Unlikely(!valid_args_list)) {
         goto basic_error;
     }
 
     for (size_t i = 0; i < fastparser->count; i++) {
-        const CPH_FastArgSpecCold *cold = &fastparser->cold_specs[i];
-        const CPH_FastArgSpecHot *hot   = &fastparser->hot_specs[i];
+        const FastArgSpecCold *cold = &fastparser->cold_specs[i];
+        const FastArgSpecHot *hot   = &fastparser->hot_specs[i];
 
         if (!cold->name) {
             continue;
@@ -455,12 +455,12 @@ bool CPH_FastParseReportUnknownKeyword(const CPH_FastParser *fastparser, PyObjec
     }
 
     newline = PyUnicode_FromString("\n");
-    if (CPH_FAST_PARSE_UNLIKELY(!newline)) {
+    if (Unlikely(!newline)) {
         goto basic_error;
     }
 
     joined = PyUnicode_Join(newline, valid_args_list);
-    if (CPH_FAST_PARSE_UNLIKELY(!joined)) {
+    if (Unlikely(!joined)) {
         goto basic_error;
     }
 
@@ -497,11 +497,11 @@ cleanup:
 }
 
 [[gnu::noinline]]
-bool CPH_FastParseReportConversionError(const CPH_FastParser *fastparser, size_t index,
+bool FastParseReportConversionError(const FastParserCore *fastparser, size_t index,
                                         PyObject *val) {
     // 1. Capture the original "dry" error (e.g., OverflowError: "can't convert...")
     PyObject *exc = PyErr_GetRaisedException();
-    if (CPH_FAST_PARSE_UNLIKELY(!exc)) {
+    if (Unlikely(!exc)) {
         return false;
     }
 
@@ -510,7 +510,7 @@ bool CPH_FastParseReportConversionError(const CPH_FastParser *fastparser, size_t
 
     // 2. Best-effort acquisition of Value Repr
     PyObject *val_repr = PyObject_Repr(val);
-    if (CPH_FAST_PARSE_UNLIKELY(!val_repr)) {
+    if (Unlikely(!val_repr)) {
         PyErr_Clear(); // Clear OOM from repr attempt
         val_repr = PyUnicode_FromString("<repr unavailable>");
     }
@@ -523,7 +523,7 @@ bool CPH_FastParseReportConversionError(const CPH_FastParser *fastparser, size_t
     PyObject *new_msg = nullptr;
 
     // If we failed basic allocations, jump to the safety fallback
-    if (CPH_FAST_PARSE_UNLIKELY(!parts || !comma || !exc_str)) {
+    if (Unlikely(!parts || !comma || !exc_str)) {
         goto oom_fallback;
     }
 
@@ -540,7 +540,7 @@ bool CPH_FastParseReportConversionError(const CPH_FastParser *fastparser, size_t
     }
 
     sig = PyUnicode_Join(comma, parts);
-    if (CPH_FAST_PARSE_UNLIKELY(!sig)) {
+    if (Unlikely(!sig)) {
         goto oom_fallback;
     }
 
@@ -550,7 +550,7 @@ bool CPH_FastParseReportConversionError(const CPH_FastParser *fastparser, size_t
                                    "Signature context:\n  %s(%U)",
                                    pname, arg_name, exc_str, val_repr, pname, sig);
 
-    if (CPH_FAST_PARSE_LIKELY(new_msg)) {
+    if (Likely(new_msg)) {
         PyErr_SetObject(reinterpret_cast<PyObject *>(Py_TYPE(exc)), new_msg);
         Py_DECREF(exc); // Handled by SetObject creating a new instance
     } else {
@@ -574,7 +574,7 @@ cleanup:
     return false;
 }
 
-void CPH_FastParseInitImpl(CPH_FastParser *fastparser, const CPH_FastArgDef *defs, size_t count) {
+void FastParseInitImpl(FastParserCore *fastparser, const FastArgDef *defs, size_t count) {
     if (count > 64) {
         Py_FatalError("Culverin parser: argument count exceeds 64.");
     }
@@ -588,9 +588,9 @@ void CPH_FastParseInitImpl(CPH_FastParser *fastparser, const CPH_FastArgDef *def
     // 1. Allocate Hot and Cold arrays (Data-Oriented Split)
     // Using PyMem_RawMalloc to avoid GIL dependencies during allocation
     fastparser->hot_specs =
-        static_cast<CPH_FastArgSpecHot *>(CPH_PyAlloc(count * sizeof(CPH_FastArgSpecHot)));
+        static_cast<FastArgSpecHot *>(Allocate(count * sizeof(FastArgSpecHot)));
     fastparser->cold_specs =
-        static_cast<CPH_FastArgSpecCold *>(CPH_PyAlloc(count * sizeof(CPH_FastArgSpecCold)));
+        static_cast<FastArgSpecCold *>(Allocate(count * sizeof(FastArgSpecCold)));
 
     if (!fastparser->hot_specs || !fastparser->cold_specs) {
         Py_FatalError("Culverin parser: memory allocation failed during initialization.");
@@ -625,7 +625,7 @@ void CPH_FastParseInitImpl(CPH_FastParser *fastparser, const CPH_FastArgDef *def
 
         fastparser->table_mask = table_size - 1;
         fastparser->lookup_table =
-            static_cast<uint16_t *>(CPH_PyAlloc(table_size * sizeof(uint16_t)));
+            static_cast<uint16_t *>(Allocate(table_size * sizeof(uint16_t)));
         if (!fastparser->lookup_table) {
             Py_FatalError("Culverin parser: failed to allocate lookup table.");
         }
@@ -636,7 +636,7 @@ void CPH_FastParseInitImpl(CPH_FastParser *fastparser, const CPH_FastArgDef *def
 
         for (size_t i = 0; i < count; i++) {
             size_t hash =
-                culv_fast_parse_hash_ptr(fastparser->hot_specs[i].interned, fastparser->table_mask);
+                fast_parse_hash_ptr(fastparser->hot_specs[i].interned, fastparser->table_mask);
             while (fastparser->lookup_table[hash] != kFastParseEmptySlot) {
                 hash = (hash + 1) & fastparser->table_mask;
             }
@@ -645,19 +645,19 @@ void CPH_FastParseInitImpl(CPH_FastParser *fastparser, const CPH_FastArgDef *def
     }
 
     // 3. Path Selection
-    fastparser->hot_path = culv_fast_parse_vector;
+    fastparser->hot_path = fast_parse_vector;
 
     // Optimization: If all args are required and no type guards are present,
     // we can use the specialized monomorphic stubs.
     uint64_t all_required = (count >= 64) ? ~0ULL : ((1ULL << count) - 1);
     if (fastparser->required_mask == all_required && all_required != 0) {
-        if (count < (sizeof(kFastParseMonoStubs) / sizeof(CulvFastParseFunc))) {
+        if (count < (sizeof(kFastParseMonoStubs) / sizeof(FastParseFunc))) {
             fastparser->hot_path = kFastParseMonoStubs[count];
         }
     }
 #if defined(CULVERIN_DEBUG)
-    if (fastparser->hot_path == culv_fast_parse_vector) {
-        PySys_WriteStderr("Culverin parser [%s]: hot_path fell back to culv_fast_parse_vector "
+    if (fastparser->hot_path == fast_parse_vector) {
+        PySys_WriteStderr("Culverin parser [%s]: hot_path fell back to fast_parse_vector "
                           "(count=%zu, required_mask=0x%016llx, all_required=0x%016llx)\n",
                           fastparser->parser_name ? fastparser->parser_name : "?",
                           fastparser->count, (unsigned long long)fastparser->required_mask,
@@ -670,7 +670,7 @@ void CPH_FastParseInitImpl(CPH_FastParser *fastparser, const CPH_FastArgDef *def
 #endif
 }
 
-void CPH_FastParseDeinit(CPH_FastParser *fastparser) {
+void FastParseDeinit(FastParserCore *fastparser) {
     if (!fastparser) {
         return;
     }
@@ -681,17 +681,17 @@ void CPH_FastParseDeinit(CPH_FastParser *fastparser) {
             Py_XDECREF(fastparser->hot_specs[i].interned);
             fastparser->hot_specs[i].interned = nullptr;
         }
-        CPH_PyFree(fastparser->hot_specs);
+        Deallocate(fastparser->hot_specs);
         fastparser->hot_specs = nullptr;
     }
 
     if (fastparser->cold_specs) {
-        CPH_PyFree(fastparser->cold_specs);
+        Deallocate(fastparser->cold_specs);
         fastparser->cold_specs = nullptr;
     }
 
     if (fastparser->lookup_table) {
-        CPH_PyFree(fastparser->lookup_table);
+        Deallocate(fastparser->lookup_table);
         fastparser->lookup_table = nullptr;
     }
 }
@@ -700,22 +700,22 @@ void CPH_FastParseDeinit(CPH_FastParser *fastparser) {
 
 [[gnu::always_inline]]
 static inline bool
-culv_fast_parse_process_pos_legacy(const CPH_FastParser *fastparse, PyObject *args,
+fast_parse_process_pos_legacy(const FastParserCore *fastparse, PyObject *args,
                                    Py_ssize_t nargs,
-                                   const void *const CPH_FAST_PARSE_RESTRICT *targets) {
+                                   const void *const  *targets) {
 #pragma unroll 2
     for (Py_ssize_t i = 0; i < nargs; ++i) {
         PyObject *val                  = PyTuple_GET_ITEM(args, i);
-        const CPH_FastArgSpecHot *spec = &fastparse->hot_specs[i];
+        const FastArgSpecHot *spec = &fastparse->hot_specs[i];
 
         // 1. Type Guard Check (Hot path metadata)
-        if (!culv_fast_parse_check_type_guard(spec, val)) {
+        if (!fast_parse_check_type_guard(spec, val)) {
             // Error reporting handles the hop to Cold specs
-            return CPH_FastParseReportTypeError(fastparse, static_cast<size_t>(i), val);
+            return FastParseReportTypeError(fastparse, static_cast<size_t>(i), val);
         }
 
         // 2. Conversion (Hot path function pointer)
-        if (CPH_FAST_PARSE_UNLIKELY(!spec->convert(val, targets[i]))) {
+        if (Unlikely(!spec->convert(val, targets[i]))) {
             return false;
         }
     }
@@ -724,8 +724,8 @@ culv_fast_parse_process_pos_legacy(const CPH_FastParser *fastparse, PyObject *ar
 
 [[gnu::always_inline]]
 static inline bool
-culv_fast_parse_process_kw_legacy(const CPH_FastParser *fastparse, PyObject *kwargs, uint64_t *mask,
-                                  const void *const CPH_FAST_PARSE_RESTRICT *targets) {
+fast_parse_process_kw_legacy(const FastParserCore *fastparse, PyObject *kwargs, uint64_t *mask,
+                                  const void *const  *targets) {
     PyObject *key;
     PyObject *val;
     Py_ssize_t pos = 0;
@@ -733,26 +733,26 @@ culv_fast_parse_process_kw_legacy(const CPH_FastParser *fastparse, PyObject *kwa
     // Standard dictionary iteration
     while (PyDict_Next(kwargs, &pos, &key, &val)) {
         // Find index using hash table or linear search (interned pointer match)
-        size_t idx = culv_fast_parse_find_keyword_index(key, fastparse);
+        size_t idx = fast_parse_find_keyword_index(key, fastparse);
 
-        if (CPH_FAST_PARSE_UNLIKELY(idx == kFastParseEmptySlot)) {
-            return CPH_FastParseReportUnknownKeyword(fastparse, key);
+        if (Unlikely(idx == kFastParseEmptySlot)) {
+            return FastParseReportUnknownKeyword(fastparse, key);
         }
 
         // Check if this argument was already provided via positionals
-        if (CPH_FAST_PARSE_UNLIKELY(*mask & (1ULL << idx))) {
-            return CPH_FastParseReportMultiple(fastparse, idx);
+        if (Unlikely(*mask & (1ULL << idx))) {
+            return FastParseReportMultiple(fastparse, idx);
         }
 
-        const CPH_FastArgSpecHot *spec = &fastparse->hot_specs[idx];
+        const FastArgSpecHot *spec = &fastparse->hot_specs[idx];
 
         // 1. Type Guard Check (Hot path metadata)
-        if (!culv_fast_parse_check_type_guard(spec, val)) {
-            return CPH_FastParseReportTypeError(fastparse, idx, val);
+        if (!fast_parse_check_type_guard(spec, val)) {
+            return FastParseReportTypeError(fastparse, idx, val);
         }
 
         // 2. Conversion (Hot path function pointer)
-        if (CPH_FAST_PARSE_UNLIKELY(!spec->convert(val, targets[idx]))) {
+        if (Unlikely(!spec->convert(val, targets[idx]))) {
             return false;
         }
 
@@ -765,39 +765,41 @@ culv_fast_parse_process_kw_legacy(const CPH_FastParser *fastparse, PyObject *kwa
 /** --- ORCHESTRATOR --- **/
 
 [[nodiscard, gnu::hot, gnu::nonnull(4, 5), gnu::no_stack_protector, gnu::flatten, gnu::noinline]]
-bool CPH_FastParseLegacy(PyObject *args, PyObject *kwargs, [[maybe_unused]] PyObject *unused,
-                         const CPH_FastParser *fastparser,
-                         const void *const CPH_FAST_PARSE_RESTRICT targets[1]) {
+bool FastParseLegacy(PyObject *args, PyObject *kwargs, [[maybe_unused]] PyObject *unused,
+                         const FastParserCore *fastparser,
+                         const void *const  targets[1]) {
 
     Py_ssize_t nargs = args ? PyTuple_GET_SIZE(args) : 0;
 
     // 1. Pre-flight Check
-    if (CPH_FAST_PARSE_UNLIKELY(nargs > static_cast<Py_ssize_t>(fastparser->count))) {
-        return CPH_FastParseReportTooMany(fastparser, nargs);
+    if (Unlikely(nargs > static_cast<Py_ssize_t>(fastparser->count))) {
+        return FastParseReportTooMany(fastparser, nargs);
     }
 
     // 2. Handle Positionals
     if (nargs > 0) {
-        if (CPH_FAST_PARSE_UNLIKELY(
-                !culv_fast_parse_process_pos_legacy(fastparser, args, nargs, targets))) {
+        if (Unlikely(
+                !fast_parse_process_pos_legacy(fastparser, args, nargs, targets))) {
             return false;
         }
     }
 
     // 3. Setup Mask & Handle Keywords
-    uint64_t mask = culv_fast_parse_make_mask(static_cast<size_t>(nargs));
+    uint64_t mask = fast_parse_make_mask(static_cast<size_t>(nargs));
 
     if (kwargs && PyDict_GET_SIZE(kwargs) > 0) {
-        if (CPH_FAST_PARSE_UNLIKELY(
-                !culv_fast_parse_process_kw_legacy(fastparser, kwargs, &mask, targets))) {
+        if (Unlikely(
+                !fast_parse_process_kw_legacy(fastparser, kwargs, &mask, targets))) {
             return false;
         }
     }
 
     // 4. Final Verification
-    if (CPH_FAST_PARSE_UNLIKELY((mask & fastparser->required_mask) != fastparser->required_mask)) {
-        return CPH_FastParseReportMissing(fastparser, mask);
+    if (Unlikely((mask & fastparser->required_mask) != fastparser->required_mask)) {
+        return FastParseReportMissing(fastparser, mask);
     }
 
     return true;
 }
+
+} // namespace CPH::Python

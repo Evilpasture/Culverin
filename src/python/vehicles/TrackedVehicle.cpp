@@ -1,11 +1,13 @@
-#include "vehicles/TrackedVehicle.h"
-#include "bindings/BindingCommon.h"
-#include "bindings/ModuleState.h"
-#include "bindings/PythonSupport.h"
-#include "bindings/parsing/Parsers.h"
+#include "vehicles/TrackedVehicle.hpp"
+#include "bindings/PythonCommon.hpp"
+#include "bindings/ModuleState.hpp"
+#include "bindings/PythonSupport.hpp"
+#include "bindings/parsing/Parsers.hpp"
 #include "core/CompilerSpecifics.h"
-#include "physics/PhysicsSync.h"
+#include "physics/PhysicsSync.hpp"
 #include <math.h>
+
+namespace CPH::Python {
 
 // --- Tracked Vehicle Constants ---
 
@@ -43,7 +45,7 @@ static constexpr float kTrackedThrottleKickstartThreshold = 0.01f;
 
 static JPH_WheelSettings *create_track_wheel(PyObject *w_dict) {
     CPH_Vec3f pos;
-    if (!CPH_parse_py_vec3(PyDict_GetItemString(w_dict, "pos"), &pos)) {
+    if (!parse_py_vec3(PyDict_GetItemString(w_dict, "pos"), &pos)) {
         return nullptr;
     }
 
@@ -80,7 +82,7 @@ static JPH_WheelSettings *create_track_wheel(PyObject *w_dict) {
 
 // Helper 1: Setup Engine, Transmission, and Controller settings
 static JPH_TrackedVehicleControllerSettings *
-init_tracked_controller_settings(CPH_TrackedEngineConfig config,
+init_tracked_controller_settings(TrackedEngineConfig config,
                                  JPH_VehicleTransmissionSettings **out_trans) {
 
     auto t_ctrl = JPH_TrackedVehicleControllerSettings_Create();
@@ -107,18 +109,18 @@ init_tracked_controller_settings(CPH_TrackedEngineConfig config,
     *out_trans = trans;
     return t_ctrl;
 }
-int CPH_InitVehicleParsers(CPH_VehicleObject *obj);
+int InitVehicleParsers(VehicleObject *obj);
 
-extern void CPH_CleanupVehicleResources(CPH_VehicleResources *r, uint32_t num_wheels,
-                                        CPH_PhysicsWorldObject *self);
+extern void CleanupVehicleResources(VehicleResources *r, uint32_t num_wheels,
+                                        PhysicsWorldObject *self);
 
 // Orchestrator
-PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateTrackedVehicle(CPH_PhysicsWorldObject *self,
+[[nodiscard]] PyObject * WorldCreateTrackedVehicle(PhysicsWorldObject *self,
                                                                      PyObject *const *args,
                                                                      size_t nargsf,
                                                                      PyObject *kwnames) {
     const Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
-    CPH_ModuleState *st    = CPH_GetModuleState(PyType_GetModule(Py_TYPE(self)));
+    ModuleState *st    = GetModuleState(PyType_GetModule(Py_TYPE(self)));
     // --- 1. FAST ARGUMENT PARSING ---
     uint64_t chassis_h_raw = 0;
     PyObject *py_wheels    = nullptr;
@@ -136,7 +138,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateTrackedVehicle(CPH_Physics
     CPH_SHADOW_LOCK(&self->physics.shadow_lock);
 
     // Ensure all pending creation commands are flushed before we try to link a constraint
-    CPH_SyncAndFlushInternal(self);
+    SyncAndFlushInternal(self);
 
     uint32_t slot = 0;
     // TSan Fix: Cast raw uint64 to atomic BodyHandle for verification
@@ -159,7 +161,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateTrackedVehicle(CPH_Physics
     CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
 
     // --- 3. PRE-JOLT RESOURCE ALLOCATION (Unchanged) ---
-    CPH_VehicleResources r{};
+    VehicleResources r{};
     auto num_wheels = static_cast<uint32_t>(PyList_Size(py_wheels));
     CPH_TrackData tracks[2];
     memset(tracks, 0, sizeof(tracks));
@@ -168,11 +170,11 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateTrackedVehicle(CPH_Physics
     PyThreadState *_save                    = nullptr;
     const JPH_BodyLockInterface *lock_iface = nullptr;
     JPH_BodyLockWrite lock{};
-    CPH_TrackedEngineConfig eng_cfg{};
+    TrackedEngineConfig eng_cfg{};
     JPH_VehicleTransmissionSettings *v_trans     = nullptr;
     JPH_TrackedVehicleControllerSettings *t_ctrl = nullptr;
     JPH_VehicleConstraintSettings v_set{};
-    CPH_VehicleObject *obj = nullptr;
+    VehicleObject *obj = nullptr;
     JPH_Vec3 tester_up{0, 1.0f, 0};
 
     r.f_curve = JPH_LinearCurve_Create();
@@ -180,7 +182,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateTrackedVehicle(CPH_Physics
     JPH_LinearCurve_AddPoint(r.f_curve, 1.0f, 1.0f);
 
     r.w_settings =
-        static_cast<JPH_WheelSettings **>(CPH_PyCalloc(num_wheels, sizeof(JPH_WheelSettings *)));
+        static_cast<JPH_WheelSettings **>(AllocateZeroed(num_wheels, sizeof(JPH_WheelSettings *)));
     for (uint32_t i = 0; i < num_wheels; i++) {
         r.w_settings[i] = create_track_wheel(PyList_GetItem(py_wheels, i));
         if (!r.w_settings[i]) {
@@ -188,7 +190,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateTrackedVehicle(CPH_Physics
         }
     }
 
-    if (!CPH_ParseTracksToC(py_tracks, tracks, &num_tracks)) {
+    if (!ParseTracksToC(py_tracks, tracks, &num_tracks)) {
         goto python_fail;
     }
 
@@ -250,20 +252,20 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateTrackedVehicle(CPH_Physics
 
     // --- 5. CLEANUP & WRAP (Unchanged) ---
     for (int t = 0; t < num_tracks; t++) {
-        CPH_PyFree(tracks[t].indices);
+        Deallocate(tracks[t].indices);
     }
 
-    obj = PyObject_GC_New(CPH_VehicleObject, reinterpret_cast<PyTypeObject *>(st->VehicleType));
+    obj = PyObject_GC_New(VehicleObject, reinterpret_cast<PyTypeObject *>(st->VehicleType));
     if (!obj) {
         CPH_SHADOW_LOCK(&self->physics.shadow_lock);
-        CPH_CleanupVehicleResources(&r, num_wheels, self);
+        CleanupVehicleResources(&r, num_wheels, self);
         CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
         return nullptr;
     }
 
-    if (CPH_InitVehicleParsers(obj) < 0) {
+    if (InitVehicleParsers(obj) < 0) {
         CPH_SHADOW_LOCK(&self->physics.shadow_lock);
-        CPH_CleanupVehicleResources(&r, num_wheels, self);
+        CleanupVehicleResources(&r, num_wheels, self);
         CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
         Py_DECREF(obj);
         return nullptr;
@@ -271,7 +273,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateTrackedVehicle(CPH_Physics
 
     obj->vehicle               = r.j_veh;
     obj->tester                = reinterpret_cast<JPH_VehicleCollisionTester *>(r.tester);
-    obj->world                 = reinterpret_cast<CPH_PhysicsWorldObject *>(Py_NewRef(self));
+    obj->world                 = reinterpret_cast<PhysicsWorldObject *>(Py_NewRef(self));
     obj->num_wheels            = num_wheels;
     obj->wheel_settings        = r.w_settings;
     obj->controller_settings   = reinterpret_cast<JPH_VehicleControllerSettings *>(t_ctrl);
@@ -294,17 +296,17 @@ jolt_fail:
 python_fail:
     for (int t = 0; t < num_tracks; t++) {
         if (tracks[t].indices) {
-            CPH_PyFree(tracks[t].indices);
+            Deallocate(tracks[t].indices);
         }
     }
     CPH_SHADOW_LOCK(&self->physics.shadow_lock);
-    CPH_CleanupVehicleResources(&r, num_wheels, self);
+    CleanupVehicleResources(&r, num_wheels, self);
     CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
     return PyErr_Format(PyExc_RuntimeError, "Tracked vehicle creation failed");
 }
 
 // Helper: Set Tank Input
-PyCFunction_DeclareMethodFromModule CPH_PyVehicle_SetTankInput(CPH_VehicleObject *self,
+[[nodiscard]] PyObject * VehicleSetTankInput(VehicleObject *self,
                                                                PyObject *const *args, size_t nargsf,
                                                                PyObject *kwnames) {
     const Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
@@ -324,7 +326,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyVehicle_SetTankInput(CPH_VehicleObject
 
     // 2. STATE SNAPSHOT & JOLT ACTIVATION
     CPH_SHADOW_LOCK(&self->world->physics.shadow_lock);
-    CPH_BLOCK_UNTIL_NOT_STEPPING(self->world);
+    BlockUntilNotStepping(self->world);
 
     auto t_ctrl = reinterpret_cast<JPH_TrackedVehicleController *>(
         JPH_VehicleConstraint_GetController(self->vehicle));
@@ -359,3 +361,5 @@ PyCFunction_DeclareMethodFromModule CPH_PyVehicle_SetTankInput(CPH_VehicleObject
     CPH_SHADOW_UNLOCK(&self->world->physics.shadow_lock);
     Py_RETURN_NONE;
 }
+
+} // namespace CPH::Python

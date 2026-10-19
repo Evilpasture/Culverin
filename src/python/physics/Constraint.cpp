@@ -1,12 +1,14 @@
-#include "physics/Constraint.h"
-#include "bindings/BindingCommon.h"
+#include "physics/Constraint.hpp"
+#include "bindings/PythonCommon.hpp"
 #include "core/NativeAlloc.h"
 #include "core/Types.h"
 #include "physics/ConstraintFactory.h"
-#include "physics/PhysicsSync.h"
+#include "physics/PhysicsSync.hpp"
+
+namespace CPH::Python {
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateConstraint(CPH_PhysicsWorldObject *self,
+[[nodiscard]] PyObject * WorldCreateConstraint(PhysicsWorldObject *self,
                                                                  PyObject *const *args,
                                                                  size_t nargsf, PyObject *kwnames) {
 
@@ -36,19 +38,19 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateConstraint(CPH_PhysicsWorl
     case CONSTRAINT_FIXED:
         break;
     case CONSTRAINT_POINT:
-        parse_ok = CPH_ParsePointParams(o_params, &p);
+        parse_ok = ParsePointParams(o_params, &p);
         break;
     case CONSTRAINT_HINGE:
-        parse_ok = CPH_ParseHingeParams(o_params, &p);
+        parse_ok = ParseHingeParams(o_params, &p);
         break;
     case CONSTRAINT_SLIDER:
-        parse_ok = CPH_ParseSliderParams(o_params, &p);
+        parse_ok = ParseSliderParams(o_params, &p);
         break;
     case CONSTRAINT_CONE:
-        parse_ok = CPH_ParseConeParams(o_params, &p);
+        parse_ok = ParseConeParams(o_params, &p);
         break;
     case CONSTRAINT_DISTANCE:
-        parse_ok = CPH_ParseDistanceParams(o_params, &p);
+        parse_ok = ParseDistanceParams(o_params, &p);
         break;
     default:
         PyErr_SetString(PyExc_ValueError, "Unknown constraint type");
@@ -59,12 +61,12 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateConstraint(CPH_PhysicsWorl
         return nullptr; // PyErr set by helpers
     }
     if (o_motor) {
-        CPH_ParseMotorConfig(o_motor, &p);
+        ParseMotorConfig(o_motor, &p);
     }
 
     // 3. RESOURCE RESERVATION (Shadow Lock)
     CPH_SHADOW_LOCK(&self->physics.shadow_lock);
-    CPH_BLOCK_UNTIL_NOT_STEPPING(self);
+    BlockUntilNotStepping(self);
 
     uint32_t s1;
     uint32_t s2;
@@ -111,7 +113,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateConstraint(CPH_PhysicsWorl
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-PyCFunction_DeclareMethodFromModule CPH_PyWorld_DestroyConstraint(CPH_PhysicsWorldObject *self,
+[[nodiscard]] PyObject * WorldDestroyConstraint(PhysicsWorldObject *self,
                                                                   PyObject *const *args,
                                                                   size_t nargsf,
                                                                   PyObject *kwnames) {
@@ -181,7 +183,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_DestroyConstraint(CPH_PhysicsWor
     Py_RETURN_NONE;
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyWorld_SetConstraintTarget(CPH_PhysicsWorldObject *self,
+[[nodiscard]] PyObject * WorldSetConstraintTarget(PhysicsWorldObject *self,
                                                                     PyObject *const *args,
                                                                     size_t nargsf,
                                                                     PyObject *kwnames) {
@@ -196,7 +198,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_SetConstraintTarget(CPH_PhysicsW
 
     // 2. CRITICAL SECTION
     CPH_SHADOW_LOCK(&self->physics.shadow_lock);
-    CPH_BLOCK_UNTIL_NOT_STEPPING(self);
+    BlockUntilNotStepping(self);
 
     uint32_t slot = static_cast<uint32_t>(h_raw & kHandleIndexMask);
     uint32_t gen  = static_cast<uint32_t>(h_raw >> kHandleIndexBits);
@@ -252,7 +254,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_SetConstraintTarget(CPH_PhysicsW
     Py_RETURN_NONE;
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyWorld_GetConstraintType(CPH_PhysicsWorldObject *self,
+[[nodiscard]] PyObject * WorldGetConstraintType(PhysicsWorldObject *self,
                                                                   PyObject *const *args,
                                                                   size_t nargsf,
                                                                   PyObject *kwnames) {
@@ -263,7 +265,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_GetConstraintType(CPH_PhysicsWor
     }
 
     CPH_SHADOW_LOCK(&self->physics.shadow_lock);
-    CPH_BLOCK_UNTIL_NOT_STEPPING(self);
+    BlockUntilNotStepping(self);
 
     uint32_t slot = static_cast<uint32_t>(handle_raw & kHandleIndexMask);
     uint32_t gen  = static_cast<uint32_t>(handle_raw >> kHandleIndexBits);
@@ -303,3 +305,5 @@ def set_slider_motor(self, handle: int, target_velocity: float, max_force: float
 def set_constraint_enabled(self, handle: int, enabled: bool) -> None: ...
 
 */
+
+} // namespace CPH::Python

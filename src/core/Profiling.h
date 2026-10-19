@@ -150,11 +150,11 @@ static inline uint64_t CPH_ReadEnd(void) {
 /* ── Public macros ──────────────────────────────────────────────────────────
  *
  * Usage:
- *   CULV_INIT_PROFILER();               // once at startup (ARM only needs it)
+ *   CPH_INIT_PROFILER();               // once at startup (ARM only needs it)
  *
- *   CULV_PROFILE_BEGIN(tag);
+ *   CPH_PROFILE_BEGIN(tag);
  *   ... work ...
- *   CULV_PROFILE_END(tag, label, count);
+ *   CPH_PROFILE_END(tag, label, count);
  *
  * `tag` is a plain identifier — must be unique within the scope.
  * `count` is the body/item count for cyc/body output; pass 0 to suppress.

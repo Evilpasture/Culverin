@@ -1,26 +1,28 @@
 #include "physics/PhysicsWorld.h"
-#include "bindings/BindingCommon.h"
-#include "bindings/FastBuild.h"
-#include "bindings/Getters.h"
-#include "bindings/ModuleState.h"
-#include "bindings/PythonSupport.h"
-#include "characters/Character.h" // IWYU pragma: keep
+#include "bindings/PythonCommon.hpp"
+#include "bindings/FastBuild.hpp"
+#include "bindings/Getters.hpp"
+#include "bindings/ModuleState.hpp"
+#include "bindings/PythonSupport.hpp"
+#include "characters/Character.hpp" // IWYU pragma: keep
 #include "core/CompilerSpecifics.h"
 #include "core/NativeAlloc.h"
 #include "math/MathCore.h"
-#include "physics/Constraint.h" // IWYU pragma: keep
+#include "physics/Constraint.hpp" // IWYU pragma: keep
 #include "physics/ContactEventDefinitions.h"
-#include "physics/PhysicsSync.h"
-#include "physics/PhysicsWorldBinding.h"
+#include "physics/PhysicsSync.hpp"
+#include "physics/PhysicsWorldBinding.hpp"
 #include "physics/PhysicsWorldCreation.h"
 #include "physics/PhysicsWorldOps.h"
 #include "physics/PhysicsWorldRuntime.h"
-#include "physics/QueryMethods.h"
+#include "physics/QueryMethods.hpp"
 #include "physics/ShadowSync.h"
-#include "physics/WorldAdapters.h"
-#include "ragdolls/Ragdoll.h"
-#include "soft_bodies/SoftBody.h"
+#include "physics/WorldAdapters.hpp"
+#include "ragdolls/Ragdoll.hpp"
+#include "soft_bodies/SoftBody.hpp"
 #include <math.h>
+
+namespace CPH::Python {
 
 // ============================================================================
 // Semantic Constants - Magic Number Replacements
@@ -52,7 +54,7 @@ static constexpr uint32_t kJoltAllLayerBits = 0xFFFF;
 // Buffer allocation increments
 
 // --- Lifecycle: Deallocation ---
-PyType_DeclareSlot_Status CPH_PyWorld_Traverse(CPH_PhysicsWorldObject *self, visitproc visit,
+[[nodiscard]] static int WorldTraverse(PhysicsWorldObject *self, visitproc visit,
                                                void *arg) {
     // 1. Visit the type itself (Required for all heap types)
     Py_VISIT(Py_TYPE(self));
@@ -63,12 +65,12 @@ PyType_DeclareSlot_Status CPH_PyWorld_Traverse(CPH_PhysicsWorldObject *self, vis
     return 0;
 }
 
-PyType_DeclareSlot_Status CPH_PyWorld_Clear([[maybe_unused]] CPH_PhysicsWorldObject *self) {
+[[nodiscard]] static int WorldClear([[maybe_unused]] PhysicsWorldObject *self) {
     // Currently nothing to clear.
     return 0;
 }
 
-PyType_DeclareSlot_Void CPH_PyWorld_Dealloc(CPH_PhysicsWorldObject *self) {
+static void WorldDealloc(PhysicsWorldObject *self) {
     auto tp = Py_TYPE(self);
 
     // 1. The GC "Safety Shield"
@@ -89,7 +91,7 @@ PyType_DeclareSlot_Void CPH_PyWorld_Dealloc(CPH_PhysicsWorldObject *self) {
     }
 
     // 3. The "Manual" work
-    CPH_PyWorld_FreeMembers(self);
+    WorldFreeMembers(self);
 
     // 4. Final destruction
     // For Heap Types, we use the type's free function
@@ -101,7 +103,7 @@ PyType_DeclareSlot_Void CPH_PyWorld_Dealloc(CPH_PhysicsWorldObject *self) {
 // --- Lifecycle: Initialization ---
 
 // Orchestrator function
-PyType_DeclareSlot_Status CPH_PyWorld_Init(CPH_PhysicsWorldObject *self, PyObject *args,
+[[nodiscard]] static int WorldInit(PhysicsWorldObject *self, PyObject *args,
                                            PyObject *kwds) {
     if (self->physics.system != nullptr) {
         // Please don't call __init__() again.
@@ -120,7 +122,7 @@ PyType_DeclareSlot_Status CPH_PyWorld_Init(CPH_PhysicsWorldObject *self, PyObjec
 
     PyObject *settings_dict         = nullptr;
     PyObject *bodies_list           = nullptr;
-    CPH_AUTO_DECREF PyObject *baked = nullptr;
+    OwnedPyObject baked{};
     size_t baked_count              = 0;
     CPH_GravityVector gravity;
     CPH_WorldSettings settings;
@@ -136,7 +138,7 @@ PyType_DeclareSlot_Status CPH_PyWorld_Init(CPH_PhysicsWorldObject *self, PyObjec
     self->view_strides[0] = self->view_strides[1] = 0;
 
     // 2. Settings & Jolt Init
-    if (CPH_InitSettings(self, settings_dict, &gravity, &settings) < 0) {
+    if (InitSettings(self, settings_dict, &gravity, &settings) < 0) {
         goto fail;
     }
 
@@ -160,13 +162,16 @@ PyType_DeclareSlot_Status CPH_PyWorld_Init(CPH_PhysicsWorldObject *self, PyObjec
 
     // 3. Bake & Buffers
     if (bodies_list && bodies_list != Py_None) {
-        PyObject *st_helper = CPH_GetModuleState(PyType_GetModule(Py_TYPE(self)))->helper;
-        CPH_AUTO_DECREF PyObject *bake_func = PyObject_GetAttrString(st_helper, "bake_scene");
-        baked = PyObject_CallFunctionObjArgs(bake_func, bodies_list, nullptr);
+        PyObject *st_helper = GetModuleState(PyType_GetModule(Py_TYPE(self)))->helper;
+        OwnedPyObject bake_func{PyObject_GetAttrString(st_helper, "bake_scene")};
+        if (!bake_func) {
+            goto fail;
+        }
+        baked = PyObject_CallFunctionObjArgs(bake_func.get(), bodies_list, nullptr);
         if (!baked) {
             goto fail;
         }
-        if (CPH_GetBakedSceneCount(baked, &baked_count) < 0) {
+        if (GetBakedSceneCount(baked.get(), &baked_count) < 0) {
             goto fail;
         }
     }
@@ -182,7 +187,7 @@ PyType_DeclareSlot_Status CPH_PyWorld_Init(CPH_PhysicsWorldObject *self, PyObjec
         goto fail;
     }
 
-    if (baked && CPH_LoadBakedScene(self, baked) < 0) {
+    if (baked && LoadBakedScene(self, baked.get()) < 0) {
         goto fail;
     }
 
@@ -195,11 +200,11 @@ PyType_DeclareSlot_Status CPH_PyWorld_Init(CPH_PhysicsWorldObject *self, PyObjec
     return 0;
 
 fail:
-    CPH_PyWorld_FreeMembers(self);
+    WorldFreeMembers(self);
     return -1;
 }
 // Translate native status codes into Python exceptions at the binding boundary.
-static void set_physics_world_error(CPH_PhysicsWorldObject *self, PhysicsWorldStatus status) {
+static void set_physics_world_error(PhysicsWorldObject *self, PhysicsWorldStatus status) {
     switch (status) {
     case PHYSICS_WORLD_STATUS_OUT_OF_MEMORY:
         PyErr_NoMemory();
@@ -234,14 +239,14 @@ static PyObject *body_operation_status_result(PhysicsBodyOperationStatus status)
     return nullptr;
 }
 
-static PyObject *run_body_operation(CPH_PhysicsWorldObject *self,
+static PyObject *run_body_operation(PhysicsWorldObject *self,
                                     const CPH_PhysicsBodyOperation *operation) {
     PhysicsBodyOperationStatus status;
     Py_BEGIN_ALLOW_THREADS status = CPH_PhysicsWorldApplyBodyOperation(&self->physics, operation);
     Py_END_ALLOW_THREADS return body_operation_status_result(status);
 }
 
-static void set_creation_error(CPH_PhysicsWorldObject *self, PhysicsWorldCreationStatus status,
+static void set_creation_error(PhysicsWorldObject *self, PhysicsWorldCreationStatus status,
                                PhysicsWorldStatus native_status, const char *shape_message,
                                const char *settings_message) {
     switch (status) {
@@ -343,7 +348,7 @@ static PyObject *runtime_status_error(PhysicsWorldRuntimeStatus status,
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-PyCFunction_DeclareMethod CPH_PyWorld_ApplyImpulse(CPH_PhysicsWorldObject *self,
+[[nodiscard]] static PyObject * WorldApplyImpulse(PhysicsWorldObject *self,
                                                    PyObject *const *args, size_t nargsf,
                                                    PyObject *kwnames) {
     uint64_t h_raw;
@@ -354,7 +359,9 @@ PyCFunction_DeclareMethod CPH_PyWorld_ApplyImpulse(CPH_PhysicsWorldObject *self,
     if (!self->parsers->Impulse.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, x, y, z)) {
         return nullptr;
     }
-    CPH_VALIDATE_FINITE_VEC3(x, y, z, "Impulse");
+    if (!ValidateFinite("Impulse", x, y, z)) {
+        return nullptr;
+    }
 
     const CPH_PhysicsBodyOperation operation = {
         .type   = PHYSICS_BODY_OP_APPLY_IMPULSE,
@@ -364,7 +371,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_ApplyImpulse(CPH_PhysicsWorldObject *self,
     return run_body_operation(self, &operation);
 }
 
-PyCFunction_DeclareMethod CPH_PyWorld_ApplyImpulseAt(CPH_PhysicsWorldObject *self,
+[[nodiscard]] static PyObject * WorldApplyImpulseAt(PhysicsWorldObject *self,
                                                      PyObject *const *args, size_t nargsf,
                                                      PyObject *kwnames) {
     uint64_t h_raw;
@@ -380,8 +387,12 @@ PyCFunction_DeclareMethod CPH_PyWorld_ApplyImpulseAt(CPH_PhysicsWorldObject *sel
         return nullptr;
     }
 
-    CPH_VALIDATE_FINITE_VEC3(ix, iy, iz, "Impulse");
-    CPH_VALIDATE_FINITE_VEC3(px, py, pz, "Impulse position");
+    if (!ValidateFinite("Impulse", ix, iy, iz)) {
+        return nullptr;
+    }
+    if (!ValidateFinite("Impulse position", px, py, pz)) {
+        return nullptr;
+    }
 
     const CPH_PhysicsBodyOperation operation = {
         .type     = PHYSICS_BODY_OP_APPLY_IMPULSE_AT,
@@ -392,7 +403,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_ApplyImpulseAt(CPH_PhysicsWorldObject *sel
     return run_body_operation(self, &operation);
 }
 
-PyCFunction_DeclareMethod CPH_PyWorld_ApplyAngularImpulse(CPH_PhysicsWorldObject *self,
+[[nodiscard]] static PyObject * WorldApplyAngularImpulse(PhysicsWorldObject *self,
                                                           PyObject *const *args, size_t nargsf,
                                                           PyObject *kwnames) {
     uint64_t h_raw;
@@ -404,7 +415,9 @@ PyCFunction_DeclareMethod CPH_PyWorld_ApplyAngularImpulse(CPH_PhysicsWorldObject
                                          z)) {
         return nullptr;
     }
-    CPH_VALIDATE_FINITE_VEC3(x, y, z, "Angular impulse");
+    if (!ValidateFinite("Angular impulse", x, y, z)) {
+        return nullptr;
+    }
 
     const CPH_PhysicsBodyOperation operation = {
         .type   = PHYSICS_BODY_OP_APPLY_ANGULAR_IMPULSE,
@@ -414,7 +427,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_ApplyAngularImpulse(CPH_PhysicsWorldObject
     return run_body_operation(self, &operation);
 }
 
-PyCFunction_DeclareMethod CPH_PyWorld_ApplyForce(CPH_PhysicsWorldObject *self,
+[[nodiscard]] static PyObject * WorldApplyForce(PhysicsWorldObject *self,
                                                  PyObject *const *args, size_t nargsf,
                                                  PyObject *kwnames) {
 
@@ -427,7 +440,9 @@ PyCFunction_DeclareMethod CPH_PyWorld_ApplyForce(CPH_PhysicsWorldObject *self,
     if (!self->parsers->Force.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, x, y, z)) {
         return nullptr;
     }
-    CPH_VALIDATE_FINITE_VEC3(x, y, z, "Force");
+    if (!ValidateFinite("Force", x, y, z)) {
+        return nullptr;
+    }
 
     // 2. ENGINE OPERATION
     const CPH_PhysicsBodyOperation operation = {
@@ -438,7 +453,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_ApplyForce(CPH_PhysicsWorldObject *self,
     return run_body_operation(self, &operation);
 }
 
-PyCFunction_DeclareMethod CPH_PyWorld_ApplyTorque(CPH_PhysicsWorldObject *self,
+[[nodiscard]] static PyObject * WorldApplyTorque(PhysicsWorldObject *self,
                                                   PyObject *const *args, size_t nargsf,
                                                   PyObject *kwnames) {
 
@@ -451,7 +466,9 @@ PyCFunction_DeclareMethod CPH_PyWorld_ApplyTorque(CPH_PhysicsWorldObject *self,
     if (!self->parsers->Torque.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, x, y, z)) {
         return nullptr;
     }
-    CPH_VALIDATE_FINITE_VEC3(x, y, z, "Torque");
+    if (!ValidateFinite("Torque", x, y, z)) {
+        return nullptr;
+    }
 
     // 2. ENGINE OPERATION
     const CPH_PhysicsBodyOperation operation = {
@@ -462,7 +479,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_ApplyTorque(CPH_PhysicsWorldObject *self,
     return run_body_operation(self, &operation);
 }
 
-PyCFunction_DeclareMethod CPH_PyWorld_SetGravity(CPH_PhysicsWorldObject *self,
+[[nodiscard]] static PyObject * WorldSetGravity(PhysicsWorldObject *self,
                                                  PyObject *const *args, size_t nargsf,
                                                  PyObject *kwnames) {
     float x;
@@ -472,7 +489,9 @@ PyCFunction_DeclareMethod CPH_PyWorld_SetGravity(CPH_PhysicsWorldObject *self,
     if (!self->parsers->Gravity.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, x, y, z)) {
         return nullptr;
     }
-    CPH_VALIDATE_FINITE_VEC3(x, y, z, "Gravity");
+    if (!ValidateFinite("Gravity", x, y, z)) {
+        return nullptr;
+    }
 
     const JPH_Vec3 gravity = {x, y, z};
     PhysicsWorldRuntimeStatus status;
@@ -485,7 +504,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_SetGravity(CPH_PhysicsWorldObject *self,
     Py_RETURN_NONE;
 }
 
-PyCFunction_DeclareMethod CPH_PyWorld_GetGravity(CPH_PhysicsWorldObject *self,
+[[nodiscard]] static PyObject * WorldGetGravity(PhysicsWorldObject *self,
                                                  PyObject *ignored [[maybe_unused]]) {
     JPH_Vec3 gravity;
     PhysicsWorldRuntimeStatus status;
@@ -495,11 +514,11 @@ PyCFunction_DeclareMethod CPH_PyWorld_GetGravity(CPH_PhysicsWorldObject *self,
         if (status != PHYSICS_WORLD_RUNTIME_STATUS_OK) {
         return runtime_status_error(status, nullptr);
     }
-    return CPH_PY_BUILD_TUPLE(CPH_PY_BUILD_VALUE(gravity.x), CPH_PY_BUILD_VALUE(gravity.y),
-                              CPH_PY_BUILD_VALUE(gravity.z));
+    return BuildTuple(BuildValue(gravity.x), BuildValue(gravity.y),
+                              BuildValue(gravity.z));
 }
 
-PyCFunction_DeclareMethod CPH_PyWorld_GetBodyStats(CPH_PhysicsWorldObject *self,
+[[nodiscard]] static PyObject * WorldGetBodyStats(PhysicsWorldObject *self,
                                                    PyObject *const *args, size_t nargsf,
                                                    PyObject *kwnames) {
     uint64_t h_raw;
@@ -518,13 +537,13 @@ PyCFunction_DeclareMethod CPH_PyWorld_GetBodyStats(CPH_PhysicsWorldObject *self,
         return runtime_status_error(status, nullptr);
     }
 
-    return CPH_PY_BUILD_TUPLE(
-        CPH_PY_BUILD_TUPLE(stats.position.x, stats.position.y, stats.position.z),
-        CPH_PY_BUILD_TUPLE(stats.rotation.x, stats.rotation.y, stats.rotation.z, stats.rotation.w),
-        CPH_PY_BUILD_TUPLE(stats.linear_velocity.x, stats.linear_velocity.y,
+    return BuildTuple(
+        BuildTuple(stats.position.x, stats.position.y, stats.position.z),
+        BuildTuple(stats.rotation.x, stats.rotation.y, stats.rotation.z, stats.rotation.w),
+        BuildTuple(stats.linear_velocity.x, stats.linear_velocity.y,
                            stats.linear_velocity.z));
 }
-PyCFunction_DeclareMethod CPH_PyWorld_ApplyBuoyancy(CPH_PhysicsWorldObject *self,
+[[nodiscard]] static PyObject * WorldApplyBuoyancy(PhysicsWorldObject *self,
                                                     PyObject *const *args, size_t nargsf,
                                                     PyObject *kwnames) {
     uint64_t h_raw;
@@ -540,19 +559,29 @@ PyCFunction_DeclareMethod CPH_PyWorld_ApplyBuoyancy(CPH_PhysicsWorldObject *self
         return nullptr;
     }
 
-    CPH_VALIDATE_FINITE_FLOAT(buoyancy, "buoyancy");
-    CPH_VALIDATE_FINITE_FLOAT(lin_drag, "linear drag");
-    CPH_VALIDATE_FINITE_FLOAT(ang_drag, "angular drag");
-    CPH_VALIDATE_FINITE_FLOAT(dt, "dt");
+    if (!ValidateFinite("buoyancy", buoyancy)) {
+        return nullptr;
+    }
+    if (!ValidateFinite("linear drag", lin_drag)) {
+        return nullptr;
+    }
+    if (!ValidateFinite("angular drag", ang_drag)) {
+        return nullptr;
+    }
+    if (!ValidateFinite("dt", dt)) {
+        return nullptr;
+    }
 
     float vx = 0.0f;
     float vy = 0.0f;
     float vz = 0.0f;
     if (o_vel && o_vel != Py_None) {
-        if (!CPH_parse_vec3_direct(o_vel, &vx, &vy, &vz)) {
+        if (!parse_vec3_direct(o_vel, &vx, &vy, &vz)) {
             return nullptr;
         }
-        CPH_VALIDATE_FINITE_VEC3(vx, vy, vz, "fluid velocity");
+        if (!ValidateFinite("fluid velocity", vx, vy, vz)) {
+        return nullptr;
+    }
     }
 
     const JPH_Vec3 fluid_velocity = {vx, vy, vz};
@@ -567,7 +596,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_ApplyBuoyancy(CPH_PhysicsWorldObject *self
     return PyBool_FromLong(static_cast<int>(submerged));
 }
 
-PyCFunction_DeclareMethod CPH_PyWorld_ApplyBuoyancyBatch(CPH_PhysicsWorldObject *self,
+[[nodiscard]] static PyObject * WorldApplyBuoyancyBatch(PhysicsWorldObject *self,
                                                          PyObject *const *args, size_t nargsf,
                                                          PyObject *kwnames) {
     PyObject *o_handles = nullptr;
@@ -596,7 +625,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_ApplyBuoyancyBatch(CPH_PhysicsWorldObject 
     float vx = 0.0f;
     float vy = 0.0f;
     float vz = 0.0f;
-    if (o_vel && o_vel != Py_None && !CPH_parse_vec3_direct(o_vel, &vx, &vy, &vz)) {
+    if (o_vel && o_vel != Py_None && !parse_vec3_direct(o_vel, &vx, &vy, &vz)) {
         PyBuffer_Release(&handles_view);
         return nullptr;
     }
@@ -607,7 +636,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_ApplyBuoyancyBatch(CPH_PhysicsWorldObject 
         Py_RETURN_NONE;
     }
 
-    BodyHandle *handles = static_cast<BodyHandle *>(CPH_PyAlloc(handle_count * sizeof(BodyHandle)));
+    BodyHandle *handles = static_cast<BodyHandle *>(Allocate(handle_count * sizeof(BodyHandle)));
     if (!handles) {
         PyBuffer_Release(&handles_view);
         return PyErr_NoMemory();
@@ -620,14 +649,14 @@ PyCFunction_DeclareMethod CPH_PyWorld_ApplyBuoyancyBatch(CPH_PhysicsWorldObject 
     Py_BEGIN_ALLOW_THREADS status =
         CPH_PhysicsWorldApplyBuoyancyBatch(&self->physics, handles, handle_count, surface_y,
                                            buoyancy, lin_drag, ang_drag, fluid_velocity, dt);
-    Py_END_ALLOW_THREADS CPH_PyFree(handles);
+    Py_END_ALLOW_THREADS Deallocate(handles);
     if (status != PHYSICS_WORLD_RUNTIME_STATUS_OK) {
         return runtime_status_error(status, nullptr);
     }
     Py_RETURN_NONE;
 }
 
-PyCFunction_DeclareMethod CPH_PyWorld_SaveState(CPH_PhysicsWorldObject *self,
+[[nodiscard]] static PyObject * WorldSaveState(PhysicsWorldObject *self,
                                                 PyObject *unused [[maybe_unused]]) {
     uint8_t *snapshot    = nullptr;
     size_t snapshot_size = 0;
@@ -650,7 +679,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_SaveState(CPH_PhysicsWorldObject *self,
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-PyCFunction_DeclareMethod CPH_PyWorld_LoadState(CPH_PhysicsWorldObject *self, PyObject *const *args,
+[[nodiscard]] static PyObject * WorldLoadState(PhysicsWorldObject *self, PyObject *const *args,
                                                 size_t nargsf, PyObject *kwnames) {
     const Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
     PyObject *state_obj    = nullptr;
@@ -689,26 +718,9 @@ PyCFunction_DeclareMethod CPH_PyWorld_LoadState(CPH_PhysicsWorldObject *self, Py
     Py_RETURN_NONE;
 }
 
-typedef struct {
-    PyThreadState *tstate;
-    bool once;
-} CPH_PyThreadCtx;
-
-[[gnu::always_inline]]
-static inline void internal_auto_gil_restore(CPH_PyThreadCtx *ctx) {
-    if (ctx->tstate) {
-        PyEval_RestoreThread(ctx->tstate);
-        ctx->tstate = nullptr;
-    }
-}
-
-#define CPH_WITH_ALLOW_THREADS                                                                     \
-    for ([[gnu::cleanup(internal_auto_gil_restore)]] CPH_PyThreadCtx _ctx = {PyEval_SaveThread(),  \
-                                                                             true};                \
-         _ctx.once; _ctx.once                                             = false)
 
 [[gnu::flatten]]
-PyCFunction_DeclareMethod CPH_PyWorld_Step(CPH_PhysicsWorldObject *self, PyObject *const *args,
+[[nodiscard]] static PyObject * WorldStep(PhysicsWorldObject *self, PyObject *const *args,
                                            size_t nargsf, PyObject *kwnames) {
     float dt = kDefaultFrameTime;
 
@@ -717,7 +729,9 @@ PyCFunction_DeclareMethod CPH_PyWorld_Step(CPH_PhysicsWorldObject *self, PyObjec
         return nullptr;
     }
 
-    CPH_VALIDATE_FINITE_FLOAT(dt, "dt");
+    if (!ValidateFinite("dt", dt)) {
+        return nullptr;
+    }
 
     // --- PHASE 0: RE-ENTRANCY GUARD ---
     if (atomic_load_explicit(&self->physics.is_stepping, memory_order_acquire)) {
@@ -732,7 +746,10 @@ PyCFunction_DeclareMethod CPH_PyWorld_Step(CPH_PhysicsWorldObject *self, PyObjec
     // This is necessary for performance.
     while (atomic_load_explicit(&self->physics.waiting_threads, memory_order_relaxed) > 0) {
         CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
-        CPH_WITH_ALLOW_THREADS { CPH_CpuYield(); }
+        {
+            [[maybe_unused]] ScopedGilRelease release_gil;
+            CPH_CpuYield();
+        }
         CPH_SHADOW_LOCK(&self->physics.shadow_lock);
     }
 
@@ -745,7 +762,8 @@ PyCFunction_DeclareMethod CPH_PyWorld_Step(CPH_PhysicsWorldObject *self, PyObjec
     // Drain in-flight queries
     if (atomic_load_explicit(&self->physics.active_queries, memory_order_acquire) > 0) {
         CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
-        CPH_WITH_ALLOW_THREADS {
+        {
+            [[maybe_unused]] ScopedGilRelease release_gil;
             CPH_NATIVE_MUTEX_LOCK(self->physics.step_sync.mutex);
             while (atomic_load_explicit(&self->physics.active_queries, memory_order_relaxed) > 0) {
                 CPH_NATIVE_COND_WAIT(self->physics.step_sync.cond, self->physics.step_sync.mutex);
@@ -764,7 +782,8 @@ PyCFunction_DeclareMethod CPH_PyWorld_Step(CPH_PhysicsWorldObject *self, PyObjec
     CPH_SHADOW_UNLOCK(&self->physics.shadow_lock);
 
     // --- PHASE 2: NATIVE JOLT CRUNCH (GIL Released) ---
-    CPH_WITH_ALLOW_THREADS {
+    {
+        [[maybe_unused]] ScopedGilRelease release_gil;
         CPH_PhysicsWorldStepNative(&self->physics, dt, captured_queue, captured_count);
     }
 
@@ -779,7 +798,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_Step(CPH_PhysicsWorldObject *self, PyObjec
     Py_RETURN_NONE;
 }
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-PyCFunction_DeclareMethod CPH_PyWorld_CreateConvexHull(CPH_PhysicsWorldObject *self,
+[[nodiscard]] static PyObject * WorldCreateConvexHull(PhysicsWorldObject *self,
                                                        PyObject *const *args, size_t nargsf,
                                                        PyObject *kwnames) {
 
@@ -812,13 +831,17 @@ PyCFunction_DeclareMethod CPH_PyWorld_CreateConvexHull(CPH_PhysicsWorldObject *s
     float ry;
     float rz;
     float rw;
-    if (!CPH_parse_vec3_direct(o_pos, &px, &py, &pz) ||
-        !CPH_parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) {
+    if (!parse_vec3_direct(o_pos, &px, &py, &pz) ||
+        !parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) {
         return nullptr;
     }
 
-    CPH_VALIDATE_FINITE_VEC3(px, py, pz, "Position");
-    CPH_VALIDATE_FINITE_QUAT(rx, ry, rz, rw, "Rotation");
+    if (!ValidateFinite("Position", px, py, pz)) {
+        return nullptr;
+    }
+    if (!ValidateFinite("Rotation", rx, ry, rz, rw)) {
+        return nullptr;
+    }
 
     Py_buffer points_view;
     if (PyObject_GetBuffer(o_points, &points_view, PyBUF_SIMPLE) != 0) {
@@ -877,7 +900,7 @@ static CPH_PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_
     }
 
     CPH_PhysicsWorldCompoundPart *buffer = static_cast<CPH_PhysicsWorldCompoundPart *>(
-        CPH_PyAlloc(static_cast<size_t>(part_count) * sizeof(CPH_PhysicsWorldCompoundPart)));
+        Allocate(static_cast<size_t>(part_count) * sizeof(CPH_PhysicsWorldCompoundPart)));
     if (!buffer) {
         PyErr_NoMemory();
         return nullptr;
@@ -886,7 +909,7 @@ static CPH_PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_
     for (Py_ssize_t i = 0; i < part_count; i++) {
         PyObject *item = PyList_GET_ITEM(parts, i);
         if (!PyTuple_Check(item) || PyTuple_GET_SIZE(item) < 4) {
-            CPH_PyFree(buffer);
+            Deallocate(buffer);
             PyErr_Format(PyExc_ValueError, "Part %zd must be a tuple(pos, rot, type, size)", i);
             return nullptr;
         }
@@ -896,7 +919,7 @@ static CPH_PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_
         const long type         = PyLong_AsLong(PyTuple_GET_ITEM(item, 2));
         PyObject *part_size     = PyTuple_GET_ITEM(item, 3);
         if (PyErr_Occurred()) {
-            CPH_PyFree(buffer);
+            Deallocate(buffer);
             return nullptr;
         }
 
@@ -933,7 +956,7 @@ static CPH_PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_
     }
 
     if (PyErr_Occurred()) {
-        CPH_PyFree(buffer);
+        Deallocate(buffer);
         return nullptr;
     }
     *out_count = static_cast<size_t>(part_count);
@@ -941,7 +964,7 @@ static CPH_PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_
 }
 
 // Orchestrator
-PyCFunction_DeclareMethod CPH_PyWorld_CreateCompoundBody(CPH_PhysicsWorldObject *self,
+[[nodiscard]] static PyObject * WorldCreateCompoundBody(PhysicsWorldObject *self,
                                                          PyObject *const *args, size_t nargsf,
                                                          PyObject *kwnames) {
 
@@ -974,8 +997,8 @@ PyCFunction_DeclareMethod CPH_PyWorld_CreateCompoundBody(CPH_PhysicsWorldObject 
     float ry;
     float rz;
     float rw;
-    if (!CPH_parse_vec3_direct(o_pos, &px, &py, &pz) ||
-        !CPH_parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) {
+    if (!parse_vec3_direct(o_pos, &px, &py, &pz) ||
+        !parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) {
         return nullptr;
     }
     if (CPH_UNLIKELY(!PyList_Check(o_parts))) {
@@ -1005,7 +1028,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_CreateCompoundBody(CPH_PhysicsWorldObject 
     PhysicsWorldCreationStatus status;
     Py_BEGIN_ALLOW_THREADS status = CPH_PhysicsWorldCreateCompoundBody(
         &self->physics, parts, part_count, &request, &handle, &body_count, &native_status);
-    Py_END_ALLOW_THREADS CPH_PyFree(parts);
+    Py_END_ALLOW_THREADS Deallocate(parts);
 
     if (status != PHYSICS_WORLD_CREATION_STATUS_OK) {
         set_creation_error(self, status, native_status, "Failed to create compound shape",
@@ -1017,7 +1040,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_CreateCompoundBody(CPH_PhysicsWorldObject 
 }
 
 // Main Orchestrator
-PyCFunction_DeclareMethod CPH_PyWorld_CreateBody(CPH_PhysicsWorldObject *self,
+[[nodiscard]] static PyObject * WorldCreateBody(PhysicsWorldObject *self,
                                                  PyObject *const *args, size_t nargsf,
                                                  PyObject *kwnames) {
     auto nargs = PyVectorcall_NARGS(nargsf);
@@ -1059,18 +1082,22 @@ PyCFunction_DeclareMethod CPH_PyWorld_CreateBody(CPH_PhysicsWorldObject *self,
 
     // 4. CONVERT COMPLEX TYPES
     if (o_pos && o_pos != Py_None) {
-        if (!CPH_parse_vec3_direct(o_pos, &px, &py, &pz)) {
+        if (!parse_vec3_direct(o_pos, &px, &py, &pz)) {
             return nullptr; // PyErr already set
         }
         // GUARD: This is the exact point test_numerical_stability checks
-        CPH_VALIDATE_FINITE_VEC3(px, py, pz, "Position");
+        if (!ValidateFinite("Position", px, py, pz)) {
+        return nullptr;
+    }
     }
 
     if (o_rot && o_rot != Py_None) {
-        if (!CPH_parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) {
+        if (!parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) {
             return nullptr;
         }
-        CPH_VALIDATE_FINITE_QUAT(rx, ry, rz, rw, "Rotation");
+        if (!ValidateFinite("Rotation", rx, ry, rz, rw)) {
+        return nullptr;
+    }
     }
 
     // Validation
@@ -1080,13 +1107,19 @@ PyCFunction_DeclareMethod CPH_PyWorld_CreateBody(CPH_PhysicsWorldObject *self,
 
     // GUARD: Floats (Only check if they aren't the 'unset' -1.0 default)
     if (mass != -1.0f) {
-        CPH_VALIDATE_FINITE_FLOAT(mass, "mass");
+        if (!ValidateFinite("mass", mass)) {
+        return nullptr;
+    }
     }
     if (friction != -1.0f) {
-        CPH_VALIDATE_FINITE_FLOAT(friction, "friction");
+        if (!ValidateFinite("friction", friction)) {
+        return nullptr;
+    }
     }
     if (restitution != -1.0f) {
-        CPH_VALIDATE_FINITE_FLOAT(restitution, "restitution");
+        if (!ValidateFinite("restitution", restitution)) {
+        return nullptr;
+    }
     }
 
     // Resolve defaults and retain parsed size data at the Python boundary.
@@ -1095,8 +1128,10 @@ PyCFunction_DeclareMethod CPH_PyWorld_CreateBody(CPH_PhysicsWorldObject *self,
     CPH_PhysicsWorldResolveMaterial(&self->physics, material_id, friction, restitution,
                                     &resolved_friction, &resolved_restitution);
     float size[4] = {kDefaultBodySize, kDefaultBodySize, kDefaultBodySize, 0.0f};
-    CPH_ParseBodySize(o_size, size);
-    CPH_VALIDATE_FINITE_VEC4(size[0], size[1], size[2], size[3], "Shape size");
+    ParseBodySize(o_size, size);
+    if (!ValidateFinite("Shape size", size[0], size[1], size[2], size[3])) {
+        return nullptr;
+    }
 
     const CPH_PhysicsWorldBodyCreateRequest request = {
         .shape_type   = shape_type,
@@ -1136,7 +1171,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_CreateBody(CPH_PhysicsWorldObject *self,
     return PyLong_FromUnsignedLongLong(handle);
 }
 
-PyCFunction_DeclareMethod CPH_PyWorld_CreateBodiesBatch(CPH_PhysicsWorldObject *self,
+[[nodiscard]] static PyObject * WorldCreateBodiesBatch(PhysicsWorldObject *self,
                                                         PyObject *const *args, size_t nargsf,
                                                         PyObject *kwnames) {
 
@@ -1169,7 +1204,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_CreateBodiesBatch(CPH_PhysicsWorldObject *
     if (static_cast<size_t>(batch_count) > SIZE_MAX / item_size) {
         return PyErr_Format(PyExc_OverflowError, "Batch is too large");
     }
-    void *arena = CPH_PyAlloc(static_cast<size_t>(batch_count) * item_size);
+    void *arena = Allocate(static_cast<size_t>(batch_count) * item_size);
     if (CPH_UNLIKELY(!arena)) {
         return PyErr_NoMemory();
     }
@@ -1179,13 +1214,13 @@ PyCFunction_DeclareMethod CPH_PyWorld_CreateBodiesBatch(CPH_PhysicsWorldObject *
     BodyHandle *handles      = reinterpret_cast<BodyHandle *>(sizes + batch_count);
     PyObject **results       = reinterpret_cast<PyObject **>(handles + batch_count);
     for (Py_ssize_t i = 0; i < batch_count; i++) {
-        if (!CPH_parse_py_vec3(PyList_GET_ITEM(py_pos, i), &positions[i])) {
-            CPH_PyFree(arena);
+        if (!parse_py_vec3(PyList_GET_ITEM(py_pos, i), &positions[i])) {
+            Deallocate(arena);
             return nullptr;
         }
-        CPH_ParseBodySize(PyList_GET_ITEM(py_sizes, i), sizes[i].p);
+        ParseBodySize(PyList_GET_ITEM(py_sizes, i), sizes[i].p);
         if (PyErr_Occurred()) {
-            CPH_PyFree(arena);
+            Deallocate(arena);
             return nullptr;
         }
     }
@@ -1197,7 +1232,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_CreateBodiesBatch(CPH_PhysicsWorldObject *
         &self->physics, positions, sizes, static_cast<size_t>(batch_count), shape_type, motion_type,
         handles, &body_count, &native_status);
     Py_END_ALLOW_THREADS if (status != PHYSICS_WORLD_CREATION_STATUS_OK) {
-        CPH_PyFree(arena);
+        Deallocate(arena);
         if (status == PHYSICS_WORLD_CREATION_STATUS_NATIVE_ERROR &&
             native_status == PHYSICS_WORLD_STATUS_LIMIT_REACHED) {
             PyErr_SetString(PyExc_RuntimeError, "Batch exceeds world limit");
@@ -1209,10 +1244,10 @@ PyCFunction_DeclareMethod CPH_PyWorld_CreateBodiesBatch(CPH_PhysicsWorldObject *
     self->view_shape[0] = static_cast<Py_ssize_t>(body_count);
 
     for (Py_ssize_t i = 0; i < batch_count; i++) {
-        results[i] = handles[i] ? CPH_PY_BUILD_VALUE(handles[i]) : CPH_PY_BUILD_VALUE(nullptr);
+        results[i] = handles[i] ? BuildValue(handles[i]) : BuildValue(nullptr);
     }
-    PyObject *result_list = CPH_PyBuildPackList(static_cast<size_t>(batch_count), results);
-    CPH_PyFree(arena);
+    PyObject *result_list = PackList(static_cast<size_t>(batch_count), results);
+    Deallocate(arena);
     return result_list;
 }
 
@@ -1221,7 +1256,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_CreateBodiesBatch(CPH_PhysicsWorldObject *
  */
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-PyCFunction_DeclareMethod CPH_PyWorld_CreateMeshBody(CPH_PhysicsWorldObject *self,
+[[nodiscard]] static PyObject * WorldCreateMeshBody(PhysicsWorldObject *self,
                                                      PyObject *const *args, size_t nargsf,
                                                      PyObject *kwnames) {
     // 1. FAST PARSE
@@ -1246,8 +1281,8 @@ PyCFunction_DeclareMethod CPH_PyWorld_CreateMeshBody(CPH_PhysicsWorldObject *sel
     float ry;
     float rz;
     float rw;
-    if (!CPH_parse_vec3_direct(o_pos, &px, &py, &pz) ||
-        !CPH_parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) {
+    if (!parse_vec3_direct(o_pos, &px, &py, &pz) ||
+        !parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) {
         return nullptr;
     }
 
@@ -1299,7 +1334,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_CreateMeshBody(CPH_PhysicsWorldObject *sel
     return PyLong_FromUnsignedLongLong(handle);
 }
 
-PyCFunction_DeclareMethod CPH_PyWorld_DestroyBody(CPH_PhysicsWorldObject *self,
+[[nodiscard]] static PyObject * WorldDestroyBody(PhysicsWorldObject *self,
                                                   PyObject *const *args, size_t nargsf,
                                                   PyObject *kwnames) {
     uint64_t raw_handle;
@@ -1314,7 +1349,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_DestroyBody(CPH_PhysicsWorldObject *self,
     Py_END_ALLOW_THREADS return body_operation_status_result(status);
 }
 
-PyCFunction_DeclareMethod CPH_PyWorld_DestroyBodiesBatch(CPH_PhysicsWorldObject *self,
+[[nodiscard]] static PyObject * WorldDestroyBodiesBatch(PhysicsWorldObject *self,
                                                          PyObject *const *args, size_t nargsf,
                                                          PyObject *kwnames) {
     PyObject *py_handles = nullptr;
@@ -1338,7 +1373,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_DestroyBodiesBatch(CPH_PhysicsWorldObject 
     }
 
     BodyHandle *handles = static_cast<BodyHandle *>(
-        CPH_PyAlloc(static_cast<size_t>(input_count) * sizeof(BodyHandle)));
+        Allocate(static_cast<size_t>(input_count) * sizeof(BodyHandle)));
     if (!handles) {
         Py_DECREF(sequence);
         return PyErr_NoMemory();
@@ -1358,11 +1393,11 @@ PyCFunction_DeclareMethod CPH_PyWorld_DestroyBodiesBatch(CPH_PhysicsWorldObject 
     PhysicsBodyOperationStatus status;
     Py_BEGIN_ALLOW_THREADS status =
         CPH_PhysicsWorldQueueBodyDestroyBatch(&self->physics, handles, handle_count);
-    Py_END_ALLOW_THREADS CPH_PyFree(handles);
+    Py_END_ALLOW_THREADS Deallocate(handles);
     return body_operation_status_result(status);
 }
 
-PyCFunction_DeclareMethod CPH_PyWorld_SetPosition(CPH_PhysicsWorldObject *self,
+[[nodiscard]] static PyObject * WorldSetPosition(PhysicsWorldObject *self,
                                                   PyObject *const *args, size_t nargsf,
                                                   PyObject *kwnames) {
 
@@ -1375,7 +1410,9 @@ PyCFunction_DeclareMethod CPH_PyWorld_SetPosition(CPH_PhysicsWorldObject *self,
     if (!self->parsers->SetPos.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, x, y, z)) {
         return nullptr;
     }
-    CPH_VALIDATE_FINITE_VEC3(x, y, z, "SetPosition");
+    if (!ValidateFinite("SetPosition", x, y, z)) {
+        return nullptr;
+    }
 
     // 2. ENGINE OPERATION
     const CPH_PhysicsBodyOperation operation = {
@@ -1386,7 +1423,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_SetPosition(CPH_PhysicsWorldObject *self,
     return run_body_operation(self, &operation);
 }
 
-PyCFunction_DeclareMethod CPH_PyWorld_SetRotation(CPH_PhysicsWorldObject *self,
+[[nodiscard]] static PyObject * WorldSetRotation(PhysicsWorldObject *self,
                                                   PyObject *const *args, size_t nargsf,
                                                   PyObject *kwnames) {
 
@@ -1401,7 +1438,9 @@ PyCFunction_DeclareMethod CPH_PyWorld_SetRotation(CPH_PhysicsWorldObject *self,
                                      w)) {
         return nullptr;
     }
-    CPH_VALIDATE_FINITE_QUAT(x, y, z, w, "SetRotation");
+    if (!ValidateFinite("SetRotation", x, y, z, w)) {
+        return nullptr;
+    }
 
     // 2. ENGINE OPERATION
     const CPH_PhysicsBodyOperation operation = {
@@ -1412,7 +1451,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_SetRotation(CPH_PhysicsWorldObject *self,
     return run_body_operation(self, &operation);
 }
 
-PyCFunction_DeclareMethod CPH_PyWorld_SetLinearVelocity(CPH_PhysicsWorldObject *self,
+[[nodiscard]] static PyObject * WorldSetLinearVelocity(PhysicsWorldObject *self,
                                                         PyObject *const *args, size_t nargsf,
                                                         PyObject *kwnames) {
 
@@ -1426,7 +1465,9 @@ PyCFunction_DeclareMethod CPH_PyWorld_SetLinearVelocity(CPH_PhysicsWorldObject *
                                         z)) {
         return nullptr;
     }
-    CPH_VALIDATE_FINITE_VEC3(x, y, z, "LinearVelocity");
+    if (!ValidateFinite("LinearVelocity", x, y, z)) {
+        return nullptr;
+    }
 
     // 2. ENGINE OPERATION
     const CPH_PhysicsBodyOperation operation = {
@@ -1437,7 +1478,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_SetLinearVelocity(CPH_PhysicsWorldObject *
     return run_body_operation(self, &operation);
 }
 
-PyCFunction_DeclareMethod CPH_PyWorld_SetAngularVelocity(CPH_PhysicsWorldObject *self,
+[[nodiscard]] static PyObject * WorldSetAngularVelocity(PhysicsWorldObject *self,
                                                          PyObject *const *args, size_t nargsf,
                                                          PyObject *kwnames) {
 
@@ -1451,7 +1492,9 @@ PyCFunction_DeclareMethod CPH_PyWorld_SetAngularVelocity(CPH_PhysicsWorldObject 
                                         z)) {
         return nullptr;
     }
-    CPH_VALIDATE_FINITE_VEC3(x, y, z, "AngularVelocity");
+    if (!ValidateFinite("AngularVelocity", x, y, z)) {
+        return nullptr;
+    }
 
     // 2. ENGINE OPERATION
     const CPH_PhysicsBodyOperation operation = {
@@ -1462,7 +1505,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_SetAngularVelocity(CPH_PhysicsWorldObject 
     return run_body_operation(self, &operation);
 }
 
-PyCFunction_DeclareMethod CPH_PyWorld_GetMotionType(CPH_PhysicsWorldObject *self,
+[[nodiscard]] static PyObject * WorldGetMotionType(PhysicsWorldObject *self,
                                                     PyObject *const *args, size_t nargsf,
                                                     PyObject *kwnames) {
     uint64_t h_raw;
@@ -1484,7 +1527,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_GetMotionType(CPH_PhysicsWorldObject *self
     return PyLong_FromLong(static_cast<long>(motion_type));
 }
 
-PyCFunction_DeclareMethod CPH_PyWorld_SetMotionType(CPH_PhysicsWorldObject *self,
+[[nodiscard]] static PyObject * WorldSetMotionType(PhysicsWorldObject *self,
                                                     PyObject *const *args, size_t nargsf,
                                                     PyObject *kwnames) {
 
@@ -1506,7 +1549,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_SetMotionType(CPH_PhysicsWorldObject *self
     return run_body_operation(self, &operation);
 }
 
-PyCFunction_DeclareMethod CPH_PyWorld_SetUserData(CPH_PhysicsWorldObject *self,
+[[nodiscard]] static PyObject * WorldSetUserData(PhysicsWorldObject *self,
                                                   PyObject *const *args, size_t nargsf,
                                                   PyObject *kwnames) {
 
@@ -1528,7 +1571,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_SetUserData(CPH_PhysicsWorldObject *self,
     return run_body_operation(self, &operation);
 }
 
-PyCFunction_DeclareMethod CPH_PyWorld_GetUserData(CPH_PhysicsWorldObject *self,
+[[nodiscard]] static PyObject * WorldGetUserData(PhysicsWorldObject *self,
                                                   PyObject *const *args, size_t nargsf,
                                                   PyObject *kwnames) {
     uint64_t h_raw;
@@ -1549,7 +1592,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_GetUserData(CPH_PhysicsWorldObject *self,
     return PyLong_FromUnsignedLongLong(user_data);
 }
 
-PyCFunction_DeclareMethod CPH_PyWorld_Activate(CPH_PhysicsWorldObject *self, PyObject *const *args,
+[[nodiscard]] static PyObject * WorldActivate(PhysicsWorldObject *self, PyObject *const *args,
                                                size_t nargsf, PyObject *kwnames) {
 
     // 1. FAST PARSE & VALIDATION
@@ -1567,7 +1610,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_Activate(CPH_PhysicsWorldObject *self, PyO
     return run_body_operation(self, &operation);
 }
 
-PyCFunction_DeclareMethod CPH_PyWorld_Deactivate(CPH_PhysicsWorldObject *self,
+[[nodiscard]] static PyObject * WorldDeactivate(PhysicsWorldObject *self,
                                                  PyObject *const *args, size_t nargsf,
                                                  PyObject *kwnames) {
 
@@ -1587,7 +1630,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_Deactivate(CPH_PhysicsWorldObject *self,
     return run_body_operation(self, &operation);
 }
 
-PyCFunction_DeclareMethod CPH_PyWorld_SetTransform(CPH_PhysicsWorldObject *self,
+[[nodiscard]] static PyObject * WorldSetTransform(PhysicsWorldObject *self,
                                                    PyObject *const *args, size_t nargsf,
                                                    PyObject *kwnames) {
 
@@ -1609,15 +1652,19 @@ PyCFunction_DeclareMethod CPH_PyWorld_SetTransform(CPH_PhysicsWorldObject *self,
     float ry;
     float rz;
     float rw;
-    if (!CPH_parse_vec3_direct(o_pos, &px, &py, &pz)) {
+    if (!parse_vec3_direct(o_pos, &px, &py, &pz)) {
         return nullptr;
     }
-    if (!CPH_parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) {
+    if (!parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) {
         return nullptr;
     }
 
-    CPH_VALIDATE_FINITE_VEC3(px, py, pz, "SetTransform position");
-    CPH_VALIDATE_FINITE_QUAT(rx, ry, rz, rw, "SetTransform rotation");
+    if (!ValidateFinite("SetTransform position", px, py, pz)) {
+        return nullptr;
+    }
+    if (!ValidateFinite("SetTransform rotation", rx, ry, rz, rw)) {
+        return nullptr;
+    }
 
     // 3. ENGINE OPERATION
     const CPH_PhysicsBodyOperation operation = {
@@ -1629,7 +1676,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_SetTransform(CPH_PhysicsWorldObject *self,
     return run_body_operation(self, &operation);
 }
 
-PyCFunction_DeclareMethod CPH_PyWorld_SetCcd(CPH_PhysicsWorldObject *self, PyObject *const *args,
+[[nodiscard]] static PyObject * WorldSetCcd(PhysicsWorldObject *self, PyObject *const *args,
                                              size_t nargsf, PyObject *kwnames) {
 
     // 1. FAST PARSE & VALIDATION
@@ -1649,7 +1696,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_SetCcd(CPH_PhysicsWorldObject *self, PyObj
     return run_body_operation(self, &operation);
 }
 
-PyCFunction_DeclareMethod CPH_PyWorld_GetIndex(CPH_PhysicsWorldObject *self, PyObject *const *args,
+[[nodiscard]] static PyObject * WorldGetIndex(PhysicsWorldObject *self, PyObject *const *args,
                                                size_t nargsf, PyObject *kwnames) {
     uint64_t h_raw;
 
@@ -1669,7 +1716,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_GetIndex(CPH_PhysicsWorldObject *self, PyO
     return PyLong_FromUnsignedLong(index);
 }
 
-PyCFunction_DeclareMethod CPH_PyWorld_IsAlive(CPH_PhysicsWorldObject *self, PyObject *const *args,
+[[nodiscard]] static PyObject * WorldIsAlive(PhysicsWorldObject *self, PyObject *const *args,
                                               size_t nargsf, PyObject *kwnames) {
     uint64_t h_raw;
 
@@ -1688,7 +1735,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_IsAlive(CPH_PhysicsWorldObject *self, PyOb
     Py_RETURN_FALSE;
 }
 
-PyCFunction_DeclareMethod CPH_PyWorld_IsActive(CPH_PhysicsWorldObject *self, PyObject *const *args,
+[[nodiscard]] static PyObject * WorldIsActive(PhysicsWorldObject *self, PyObject *const *args,
                                                size_t nargsf, PyObject *kwnames) {
     uint64_t h_raw;
 
@@ -1711,7 +1758,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_IsActive(CPH_PhysicsWorldObject *self, PyO
     Py_RETURN_FALSE;
 }
 
-PyCFunction_DeclareMethod CPH_PyWorld_GetActiveIndices(CPH_PhysicsWorldObject *self,
+[[nodiscard]] static PyObject * WorldGetActiveIndices(PhysicsWorldObject *self,
                                                        PyObject *args [[maybe_unused]]) {
     uint32_t *indices   = nullptr;
     size_t active_count = 0;
@@ -1735,7 +1782,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_GetActiveIndices(CPH_PhysicsWorldObject *s
     return bytes_obj;
 }
 
-PyCFunction_DeclareMethod CPH_PyWorld_GetRenderState(CPH_PhysicsWorldObject *self,
+[[nodiscard]] static PyObject * WorldGetRenderState(PhysicsWorldObject *self,
                                                      PyObject *const *args, size_t nargsf,
                                                      PyObject *kwnames) {
     float alpha;
@@ -1768,7 +1815,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_GetRenderState(CPH_PhysicsWorldObject *sel
     return bytes_obj;
 }
 
-PyCFunction_DeclareMethod CPH_PyWorld_SetCollisionFilter(CPH_PhysicsWorldObject *self,
+[[nodiscard]] static PyObject * WorldSetCollisionFilter(PhysicsWorldObject *self,
                                                          PyObject *const *args, size_t nargsf,
                                                          PyObject *kwnames) {
     uint64_t h_raw;
@@ -1792,7 +1839,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_SetCollisionFilter(CPH_PhysicsWorldObject 
     Py_RETURN_NONE;
 }
 
-PyCFunction_DeclareMethod CPH_PyWorld_RegisterMaterial(CPH_PhysicsWorldObject *self,
+[[nodiscard]] static PyObject * WorldRegisterMaterial(PhysicsWorldObject *self,
                                                        PyObject *const *args, size_t nargsf,
                                                        PyObject *kwnames) {
     uint32_t id;
@@ -1815,7 +1862,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_RegisterMaterial(CPH_PhysicsWorldObject *s
     Py_RETURN_NONE;
 }
 
-PyCFunction_DeclareMethod CPH_PyWorld_CreateHeightfield(CPH_PhysicsWorldObject *self,
+[[nodiscard]] static PyObject * WorldCreateHeightfield(PhysicsWorldObject *self,
                                                         PyObject *const *args, size_t nargsf,
                                                         PyObject *kwnames) {
 
@@ -1848,9 +1895,9 @@ PyCFunction_DeclareMethod CPH_PyWorld_CreateHeightfield(CPH_PhysicsWorldObject *
     float sx;
     float sy;
     float sz;
-    if (!CPH_parse_vec3_direct(o_pos, &px, &py, &pz) ||
-        !CPH_parse_quat_direct(o_rot, &rx, &ry, &rz, &rw) ||
-        !CPH_parse_vec3_direct(o_scale, &sx, &sy, &sz)) {
+    if (!parse_vec3_direct(o_pos, &px, &py, &pz) ||
+        !parse_quat_direct(o_rot, &rx, &ry, &rz, &rw) ||
+        !parse_vec3_direct(o_scale, &sx, &sy, &sz)) {
         return nullptr;
     }
 
@@ -1884,7 +1931,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_CreateHeightfield(CPH_PhysicsWorldObject *
     return PyLong_FromUnsignedLongLong(handle);
 }
 
-PyCFunction_DeclareMethod CPH_PyWorld_GetDebugData(CPH_PhysicsWorldObject *self,
+[[nodiscard]] static PyObject * WorldGetDebugData(PhysicsWorldObject *self,
                                                    PyObject *const *args, size_t nargsf,
                                                    PyObject *kwnames) {
     bool draw_shapes       = true;
@@ -1940,7 +1987,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_GetDebugData(CPH_PhysicsWorldObject *self,
     return result;
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateSoftBody(CPH_PhysicsWorldObject *self,
+[[nodiscard]] PyObject * WorldCreateSoftBody(PhysicsWorldObject *self,
                                                                PyObject *const *args, size_t nargsf,
                                                                PyObject *kwnames) {
 
@@ -1979,21 +2026,25 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateSoftBody(CPH_PhysicsWorldO
     float ry;
     float rz;
     float rw;
-    if (!CPH_parse_vec3_direct(o_pos, &px, &py, &pz) ||
-        !CPH_parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) {
+    if (!parse_vec3_direct(o_pos, &px, &py, &pz) ||
+        !parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) {
         return nullptr;
     }
 
-    CPH_VALIDATE_FINITE_VEC3(px, py, pz, "Position");
-    CPH_VALIDATE_FINITE_QUAT(rx, ry, rz, rw, "Rotation");
+    if (!ValidateFinite("Position", px, py, pz)) {
+        return nullptr;
+    }
+    if (!ValidateFinite("Rotation", rx, ry, rz, rw)) {
+        return nullptr;
+    }
 
-    CPH_ModuleState *state = CPH_GetModuleState(PyType_GetModule(Py_TYPE(self)));
+    ModuleState *state = GetModuleState(PyType_GetModule(Py_TYPE(self)));
     if (!PyObject_TypeCheck(o_shared,
                             reinterpret_cast<PyTypeObject *>(state->SoftBodySharedSettingsType))) {
         PyErr_SetString(PyExc_TypeError, "shared must be a SoftBodySharedSettings object");
         return nullptr;
     }
-    auto py_shared = reinterpret_cast<CPH_SoftBodySharedSettingsObject *>(o_shared);
+    auto py_shared = reinterpret_cast<SoftBodySharedSettingsObject *>(o_shared);
 
     // 3. Native Jolt settings construction and world staging.
     const CPH_PhysicsWorldSoftBodyCreateRequest request = {
@@ -2035,7 +2086,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateSoftBody(CPH_PhysicsWorldO
 
 // Getters
 
-PyCFunction_DeclareMethodFromModule CPH_PyWorld_GetSoftBodyVertexCount(CPH_PhysicsWorldObject *self,
+[[nodiscard]] PyObject * WorldGetSoftBodyVertexCount(PhysicsWorldObject *self,
                                                                        PyObject *const *args,
                                                                        size_t nargsf,
                                                                        PyObject *kwnames) {
@@ -2055,8 +2106,8 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_GetSoftBodyVertexCount(CPH_Physi
     return PyLong_FromUnsignedLong(count);
 }
 
-PyCFunction_DeclareMethodFromModule
-CPH_PyWorld_GetSoftBodyVertexPosition(CPH_PhysicsWorldObject *self, PyObject *const *args,
+[[nodiscard]] PyObject *
+WorldGetSoftBodyVertexPosition(PhysicsWorldObject *self, PyObject *const *args,
                                       size_t nargsf, PyObject *kwnames) {
     uint64_t handle;
     uint32_t index;
@@ -2078,11 +2129,11 @@ CPH_PyWorld_GetSoftBodyVertexPosition(CPH_PhysicsWorldObject *self, PyObject *co
     if (status != PHYSICS_WORLD_RUNTIME_STATUS_OK) {
         return runtime_status_error(status, nullptr);
     }
-    return CPH_PY_BUILD_TUPLE(position.x, position.y, position.z);
+    return BuildTuple(position.x, position.y, position.z);
 }
 
-PyCFunction_DeclareMethodFromModule
-CPH_PyWorld_GetSoftBodyLocalVertices(CPH_PhysicsWorldObject *self, PyObject *const *args,
+[[nodiscard]] PyObject *
+WorldGetSoftBodyLocalVertices(PhysicsWorldObject *self, PyObject *const *args,
                                      size_t nargsf, PyObject *kwnames) {
     uint64_t handle;
 
@@ -2111,7 +2162,7 @@ CPH_PyWorld_GetSoftBodyLocalVertices(CPH_PhysicsWorldObject *self, PyObject *con
     return bytes;
 }
 
-PyCFunction_DeclareMethodFromModule CPH_PyWorld_GetSoftBodyVertices(CPH_PhysicsWorldObject *self,
+[[nodiscard]] PyObject * WorldGetSoftBodyVertices(PhysicsWorldObject *self,
                                                                     PyObject *const *args,
                                                                     size_t nargsf,
                                                                     PyObject *kwnames) {
@@ -2122,10 +2173,10 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_GetSoftBodyVertices(CPH_PhysicsW
     }
 
     CPH_SHADOW_LOCK(&self->physics.shadow_lock);
-    CPH_BLOCK_UNTIL_NOT_STEPPING(self);
+    BlockUntilNotStepping(self);
 
     uint32_t slot = 0;
-    if (!CPH_ValidateHandle(self, h_raw, &slot)) {
+    if (!ValidateHandle(self, h_raw, &slot)) {
         return nullptr;
     }
 
@@ -2146,9 +2197,9 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_GetSoftBodyVertices(CPH_PhysicsW
 
     // We can reuse BufferProxyObject, but we need to tell it to use THIS specific pointer
     // and THIS specific length, rather than the global positions array.
-    CPH_ModuleState *st          = CPH_GetModuleState(PyType_GetModule(Py_TYPE(self)));
-    CPH_BufferProxyObject *proxy = PyObject_GC_New(
-        CPH_BufferProxyObject, reinterpret_cast<PyTypeObject *>(st->BufferProxyType));
+    ModuleState *st          = GetModuleState(PyType_GetModule(Py_TYPE(self)));
+    BufferProxyObject *proxy = PyObject_GC_New(
+        BufferProxyObject, reinterpret_cast<PyTypeObject *>(st->BufferProxyType));
     proxy->owner = reinterpret_cast<PyObject *>(self);
     Py_INCREF(self);
 
@@ -2167,7 +2218,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_GetSoftBodyVertices(CPH_PhysicsW
     return reinterpret_cast<PyObject *>(proxy);
 }
 
-PyCFunction_DeclareMethod CPH_PyWorld_BenchmarkParse([[maybe_unused]] CPH_PhysicsWorldObject *self,
+[[nodiscard]] static PyObject * WorldBenchmarkParse([[maybe_unused]] PhysicsWorldObject *self,
                                                      PyObject *const *args, size_t nargsf,
                                                      PyObject *kwnames) {
     constexpr size_t NUM_ARGS = 64;
@@ -2192,11 +2243,11 @@ PyCFunction_DeclareMethod CPH_PyWorld_BenchmarkParse([[maybe_unused]] CPH_Physic
 }
 
 /**
- * Benchmark for CULV_PY_BUILD_TUPLE using METH_NOARGS.
+ * Benchmark for BuildTuple using METH_NOARGS.
  * This eliminates all argument parsing overhead to isolate the
  * performance of the Culverin Fast Build engine.
  */
-PyCFunction_DeclareMethod CPH_PyWorld_BenchmarkBuild([[maybe_unused]] PyObject *self,
+[[nodiscard]] static PyObject * WorldBenchmarkBuild([[maybe_unused]] PyObject *self,
                                                      [[maybe_unused]] PyObject *args) {
     // 1. Define dummy C data to be "built" into Python
     constexpr int trash         = 42;
@@ -2213,19 +2264,19 @@ PyCFunction_DeclareMethod CPH_PyWorld_BenchmarkBuild([[maybe_unused]] PyObject *
     bool b_val = true;
 
     // 2. Execute the Build
-    // CULV_PY_BUILD_TUPLE uses CULV_PY_BUILD_VAL to route types at compile-time.
-    // It then uses CPH_PyBuildPackTuple to perform O(1) allocation and
+    // BuildTuple uses BuildValue to route types at compile-time.
+    // It then uses PackTuple to perform O(1) allocation and
     // O(N) reference stealing.
     constexpr float stfu = 200.0f;
     PyObject *result =
-        CPH_PY_BUILD_TUPLE(i_val, f_val, d_val, s_val, b_val, 100, stfu,
+        BuildTuple(i_val, f_val, d_val, s_val, b_val, 100, stfu,
                            "Lorem ipsum dolor sit amet consectetur adipiscing elit, sed do eiusmod "
                            "tempor incididunt ut labore et dolore magna aliqua.",
                            false);
 
     // 3. Error handling
     if (CPH_UNLIKELY(!result)) {
-        // CPH_PyBuildPackTuple handles internal cleanup on failure
+        // PackTuple handles internal cleanup on failure
         return nullptr;
     }
 
@@ -2234,7 +2285,7 @@ PyCFunction_DeclareMethod CPH_PyWorld_BenchmarkBuild([[maybe_unused]] PyObject *
 }
 
 // --- Ragdoll Settings Implementation ---
-PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateRagdollSettings(CPH_PhysicsWorldObject *self,
+[[nodiscard]] PyObject * WorldCreateRagdollSettings(PhysicsWorldObject *self,
                                                                       PyObject *const *args,
                                                                       size_t nargsf,
                                                                       PyObject *kwnames) {
@@ -2249,15 +2300,15 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateRagdollSettings(CPH_Physic
     // --- 2. TYPE VALIDATION ---
 
     // Manual type check (replaces O! format string)
-    CPH_ModuleState *st = CPH_GetModuleState(PyType_GetModule(Py_TYPE(self)));
+    ModuleState *st = GetModuleState(PyType_GetModule(Py_TYPE(self)));
     if (!PyObject_TypeCheck(py_skel_obj, reinterpret_cast<PyTypeObject *>(st->SkeletonType))) {
         PyErr_SetString(PyExc_TypeError, "skeleton must be a Skeleton object");
         return nullptr;
     }
-    CPH_SkeletonObject *py_skel = reinterpret_cast<CPH_SkeletonObject *>(py_skel_obj);
+    SkeletonObject *py_skel = reinterpret_cast<SkeletonObject *>(py_skel_obj);
 
     // --- 3. OBJECT CREATION ---
-    auto obj = PyObject_New(CPH_RagdollSettingsObject,
+    auto obj = PyObject_New(RagdollSettingsObject,
                             reinterpret_cast<PyTypeObject *>(st->RagdollSettingsType));
     if (!obj) {
         return PyErr_NoMemory();
@@ -2280,7 +2331,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateRagdollSettings(CPH_Physic
 
     return reinterpret_cast<PyObject *>(obj);
 }
-PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateRagdoll(CPH_PhysicsWorldObject *self,
+[[nodiscard]] PyObject * WorldCreateRagdoll(PhysicsWorldObject *self,
                                                               PyObject *const *args, size_t nargsf,
                                                               PyObject *kwnames) {
     const Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
@@ -2299,13 +2350,13 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateRagdoll(CPH_PhysicsWorldOb
     }
 
     // Type Safety Check (Replaces original O! logic)
-    CPH_ModuleState *st = CPH_GetModuleState(PyType_GetModule(Py_TYPE(self)));
+    ModuleState *st = GetModuleState(PyType_GetModule(Py_TYPE(self)));
     if (!PyObject_TypeCheck(settings_obj,
                             reinterpret_cast<PyTypeObject *>(st->RagdollSettingsType))) {
         PyErr_SetString(PyExc_TypeError, "settings must be a RagdollSettings object");
         return nullptr;
     }
-    auto py_settings = reinterpret_cast<CPH_RagdollSettingsObject *>(settings_obj);
+    auto py_settings = reinterpret_cast<RagdollSettingsObject *>(settings_obj);
 
     // --- 2. Native Jolt creation and pose setup ---
     JPH_Ragdoll *j_rag = nullptr;
@@ -2324,14 +2375,14 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateRagdoll(CPH_PhysicsWorldOb
 
     uint32_t *body_slots = nullptr;
     if (body_count > SIZE_MAX / sizeof(uint32_t) ||
-        !(body_slots = static_cast<uint32_t *>(CPH_PyAlloc(body_count * sizeof(uint32_t))))) {
+        !(body_slots = static_cast<uint32_t *>(Allocate(body_count * sizeof(uint32_t))))) {
         Py_BEGIN_ALLOW_THREADS CPH_PhysicsWorldDestroyRagdoll(&self->physics, j_rag);
         Py_END_ALLOW_THREADS return PyErr_NoMemory();
     }
 
-    auto obj = PyObject_New(CPH_RagdollObject, reinterpret_cast<PyTypeObject *>(st->RagdollType));
+    auto obj = PyObject_New(RagdollObject, reinterpret_cast<PyTypeObject *>(st->RagdollType));
     if (!obj) {
-        CPH_PyFree(body_slots);
+        Deallocate(body_slots);
         Py_BEGIN_ALLOW_THREADS CPH_PhysicsWorldDestroyRagdoll(&self->physics, j_rag);
         Py_END_ALLOW_THREADS return nullptr;
     }
@@ -2371,7 +2422,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateRagdoll(CPH_PhysicsWorldOb
 }
 
 // Fixed get_contact_events to be safer with locking
-PyCFunction_DeclareMethodFromModule CPH_PyWorld_GetContactEvents(CPH_PhysicsWorldObject *self,
+[[nodiscard]] PyObject * WorldGetContactEvents(PhysicsWorldObject *self,
                                                                  PyObject *args [[maybe_unused]]) {
     CPH_ContactEvent *scratch = nullptr;
     size_t count              = 0;
@@ -2401,12 +2452,12 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_GetContactEvents(CPH_PhysicsWorl
         uint64_t b2_raw = atomic_load_explicit(&slim->body2, memory_order_relaxed);
 
         /**
-         * OPTIMIZATION: CULV_PY_BUILD_TUPLE
-         * 1. CPH_PyBuildFromU64 converts b1_raw and b2_raw
-         * 2. CPH_PyBuildFromFloat converts impulse and sliding_speed
-         * 3. CPH_PyBuildPackTuple performs a single O(1) allocation
+         * OPTIMIZATION: BuildTuple
+         * 1. BuildFromUnsignedLongLong converts b1_raw and b2_raw
+         * 2. BuildFromFloat converts impulse and sliding_speed
+         * 3. PackTuple performs a single O(1) allocation
          */
-        PyObject *item = CPH_PY_BUILD_TUPLE(b1_raw, b2_raw, slim->impulse, slim->sliding_speed);
+        PyObject *item = BuildTuple(b1_raw, b2_raw, slim->impulse, slim->sliding_speed);
 
         if (CPH_UNLIKELY(!item)) {
             Py_DECREF(list);
@@ -2414,7 +2465,7 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_GetContactEvents(CPH_PhysicsWorl
             return nullptr;
         }
 
-        // PyList_SET_ITEM steals the reference from CULV_PY_BUILD_TUPLE
+        // PyList_SET_ITEM steals the reference from BuildTuple
         PyList_SET_ITEM(list, static_cast<Py_ssize_t>(i), item);
     }
 
@@ -2422,8 +2473,8 @@ PyCFunction_DeclareMethodFromModule CPH_PyWorld_GetContactEvents(CPH_PhysicsWorl
     return list;
 }
 
-PyCFunction_DeclareMethodFromModule
-CPH_PyWorld_GetContactEventsEx(CPH_PhysicsWorldObject *self, PyObject *args [[maybe_unused]]) {
+[[nodiscard]] PyObject *
+WorldGetContactEventsEx(PhysicsWorldObject *self, PyObject *args [[maybe_unused]]) {
     CPH_ContactEvent *scratch = nullptr;
     size_t count              = 0;
     PhysicsWorldRuntimeStatus status;
@@ -2471,15 +2522,15 @@ CPH_PyWorld_GetContactEventsEx(CPH_PhysicsWorldObject *self, PyObject *args [[ma
         uint64_t b2 = atomic_load_explicit(&slim->body2, memory_order_relaxed);
 
         /**
-         * OPTIMIZATION: CULV_PY_BUILD_DICT
+         * OPTIMIZATION: BuildDictionary
          * We compose the nested tuples (pos, normal, bodies, mats)
          * and the dictionary in a single, readable expression.
          */
         PyObject *dict =
-            CPH_PY_BUILD_DICT(k_bodies, CPH_PY_BUILD_TUPLE(b1, b2), k_pos,
-                              CPH_PY_BUILD_TUPLE(slim->px, slim->py, slim->pz), k_norm,
-                              CPH_PY_BUILD_TUPLE(slim->nx, slim->ny, slim->nz), k_mat,
-                              CPH_PY_BUILD_TUPLE(fat->mat1, fat->mat2), k_str, slim->impulse,
+            BuildDictionary(k_bodies, BuildTuple(b1, b2), k_pos,
+                              BuildTuple(slim->px, slim->py, slim->pz), k_norm,
+                              BuildTuple(slim->nx, slim->ny, slim->nz), k_mat,
+                              BuildTuple(fat->mat1, fat->mat2), k_str, slim->impulse,
                               k_slide, slim->sliding_speed, k_type, slim->flags);
 
         if (CPH_UNLIKELY(!dict)) {
@@ -2499,8 +2550,8 @@ CPH_PyWorld_GetContactEventsEx(CPH_PhysicsWorldObject *self, PyObject *args [[ma
 // ContactEvent layout:
 // 128 bytes total (64 Slim Header, 64 Fat Extension)
 // See ContactEventDefinitions.h for exact alignment and padding.
-PyCFunction_DeclareMethodFromModule
-CPH_PyWorld_GetContactEventsRaw(CPH_PhysicsWorldObject *self, PyObject *args [[maybe_unused]]) {
+[[nodiscard]] PyObject *
+WorldGetContactEventsRaw(PhysicsWorldObject *self, PyObject *args [[maybe_unused]]) {
     CPH_ContactEvent *events = nullptr;
     size_t count             = 0;
     PhysicsWorldRuntimeStatus status;
@@ -2536,8 +2587,8 @@ CPH_PyWorld_GetContactEventsRaw(CPH_PhysicsWorldObject *self, PyObject *args [[m
     return view;
 }
 
-PyType_DeclareSlot_StatusFromModule
-CPH_PyWorld_Getbuffer(CPH_PhysicsWorldObject *self, Py_buffer *view, [[maybe_unused]] int flags) {
+[[nodiscard]] int
+WorldGetbuffer(PhysicsWorldObject *self, Py_buffer *view, [[maybe_unused]] int flags) {
     CPH_SHADOW_LOCK(&self->physics.shadow_lock);
 
     // TSan Fix: Read the atomic count safely
@@ -2563,7 +2614,7 @@ CPH_PyWorld_Getbuffer(CPH_PhysicsWorldObject *self, Py_buffer *view, [[maybe_unu
 }
 
 // Buffer Release Slot
-PyType_DeclareSlot_VoidFromModule CPH_PyWorld_Releasebuffer(CPH_PhysicsWorldObject *self,
+void WorldReleasebuffer(PhysicsWorldObject *self,
                                                             Py_buffer *view [[maybe_unused]]) {
     CPH_SHADOW_LOCK(&self->physics.shadow_lock);
 
@@ -2576,155 +2627,157 @@ PyType_DeclareSlot_VoidFromModule CPH_PyWorld_Releasebuffer(CPH_PhysicsWorldObje
 }
 
 // Declarations for context methods defined in other translation units.
-PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateVehicle(CPH_PhysicsWorldObject *self,
+[[nodiscard]] PyObject * WorldCreateVehicle(PhysicsWorldObject *self,
                                                               PyObject *const *args, size_t nargsf,
                                                               PyObject *kwnames);
 
-PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateTrackedVehicle(CPH_PhysicsWorldObject *self,
+[[nodiscard]] PyObject * WorldCreateTrackedVehicle(PhysicsWorldObject *self,
                                                                      PyObject *const *args,
                                                                      size_t nargsf,
                                                                      PyObject *kwnames);
-PyCFunction_DeclareMethodFromModule CPH_PyWorld_CreateShip(CPH_PhysicsWorldObject *self,
+[[nodiscard]] PyObject * WorldCreateShip(PhysicsWorldObject *self,
                                                            PyObject *const *args, size_t nargsf,
                                                            PyObject *kwnames);
 static PyMethodDef kPhysicsWorldMethods[] = {
 
     // --- Lifecycle ---
-    CPH::Python::FastCallMethod("step", CPH_PyWorld_Step),
-    CPH::Python::FastCallMethod("create_body", CPH_PyWorld_CreateBody),
-    CPH::Python::FastCallMethod("create_bodies_batch", CPH_PyWorld_CreateBodiesBatch),
-    CPH::Python::FastCallMethod("destroy_body", CPH_PyWorld_DestroyBody),
-    CPH::Python::FastCallMethod("destroy_bodies_batch", CPH_PyWorld_DestroyBodiesBatch),
-    CPH::Python::FastCallMethod("create_mesh_body", CPH_PyWorld_CreateMeshBody),
-    CPH::Python::FastCallMethod("create_constraint", CPH_PyWorld_CreateConstraint),
-    CPH::Python::FastCallMethod("destroy_constraint", CPH_PyWorld_DestroyConstraint),
-    CPH::Python::FastCallMethod("get_constraint_type", CPH_PyWorld_GetConstraintType),
-    CPH::Python::FastCallMethod("create_vehicle", CPH_PyWorld_CreateVehicle),
-    CPH::Python::FastCallMethod("create_tracked_vehicle", CPH_PyWorld_CreateTrackedVehicle),
-    CPH::Python::FastCallMethod("create_ship", CPH_PyWorld_CreateShip),
-    CPH::Python::FastCallMethod("create_ragdoll_settings", CPH_PyWorld_CreateRagdollSettings),
-    CPH::Python::FastCallMethod("create_ragdoll", CPH_PyWorld_CreateRagdoll),
-    CPH::Python::FastCallMethod("create_heightfield", CPH_PyWorld_CreateHeightfield),
-    CPH::Python::FastCallMethod("create_convex_hull", CPH_PyWorld_CreateConvexHull),
-    CPH::Python::FastCallMethod("create_compound_body", CPH_PyWorld_CreateCompoundBody),
-    CPH::Python::FastCallMethod("create_soft_body", CPH_PyWorld_CreateSoftBody),
+    CPH::Python::FastCallMethod("step", WorldStep),
+    CPH::Python::FastCallMethod("create_body", WorldCreateBody),
+    CPH::Python::FastCallMethod("create_bodies_batch", WorldCreateBodiesBatch),
+    CPH::Python::FastCallMethod("destroy_body", WorldDestroyBody),
+    CPH::Python::FastCallMethod("destroy_bodies_batch", WorldDestroyBodiesBatch),
+    CPH::Python::FastCallMethod("create_mesh_body", WorldCreateMeshBody),
+    CPH::Python::FastCallMethod("create_constraint", WorldCreateConstraint),
+    CPH::Python::FastCallMethod("destroy_constraint", WorldDestroyConstraint),
+    CPH::Python::FastCallMethod("get_constraint_type", WorldGetConstraintType),
+    CPH::Python::FastCallMethod("create_vehicle", WorldCreateVehicle),
+    CPH::Python::FastCallMethod("create_tracked_vehicle", WorldCreateTrackedVehicle),
+    CPH::Python::FastCallMethod("create_ship", WorldCreateShip),
+    CPH::Python::FastCallMethod("create_ragdoll_settings", WorldCreateRagdollSettings),
+    CPH::Python::FastCallMethod("create_ragdoll", WorldCreateRagdoll),
+    CPH::Python::FastCallMethod("create_heightfield", WorldCreateHeightfield),
+    CPH::Python::FastCallMethod("create_convex_hull", WorldCreateConvexHull),
+    CPH::Python::FastCallMethod("create_compound_body", WorldCreateCompoundBody),
+    CPH::Python::FastCallMethod("create_soft_body", WorldCreateSoftBody),
 
     // --- Interaction ---
-    CPH::Python::FastCallMethod("apply_impulse", CPH_PyWorld_ApplyImpulse),
-    CPH::Python::FastCallMethod("apply_angular_impulse", CPH_PyWorld_ApplyAngularImpulse),
-    CPH::Python::FastCallMethod("apply_impulse_at", CPH_PyWorld_ApplyImpulseAt),
-    CPH::Python::FastCallMethod("apply_force", CPH_PyWorld_ApplyForce),
-    CPH::Python::FastCallMethod("apply_torque", CPH_PyWorld_ApplyTorque),
-    CPH::Python::FastCallMethod("set_gravity", CPH_PyWorld_SetGravity),
-    CPH::Python::NoArgsMethod("get_gravity", CPH_PyWorld_GetGravity),
-    CPH::Python::FastCallMethod("apply_buoyancy", CPH_PyWorld_ApplyBuoyancy),
-    CPH::Python::FastCallMethod("apply_buoyancy_batch", CPH_PyWorld_ApplyBuoyancyBatch),
-    CPH::Python::FastCallMethod("set_position", CPH_PyWorld_SetPosition),
-    CPH::Python::FastCallMethod("set_rotation", CPH_PyWorld_SetRotation),
-    CPH::Python::FastCallMethod("set_linear_velocity", CPH_PyWorld_SetLinearVelocity),
-    CPH::Python::FastCallMethod("set_angular_velocity", CPH_PyWorld_SetAngularVelocity),
-    CPH::Python::FastCallMethod("set_transform", CPH_PyWorld_SetTransform),
-    CPH::Python::FastCallMethod("set_collision_filter", CPH_PyWorld_SetCollisionFilter),
-    CPH::Python::FastCallMethod("register_material", CPH_PyWorld_RegisterMaterial),
-    CPH::Python::FastCallMethod("set_constraint_target", CPH_PyWorld_SetConstraintTarget),
+    CPH::Python::FastCallMethod("apply_impulse", WorldApplyImpulse),
+    CPH::Python::FastCallMethod("apply_angular_impulse", WorldApplyAngularImpulse),
+    CPH::Python::FastCallMethod("apply_impulse_at", WorldApplyImpulseAt),
+    CPH::Python::FastCallMethod("apply_force", WorldApplyForce),
+    CPH::Python::FastCallMethod("apply_torque", WorldApplyTorque),
+    CPH::Python::FastCallMethod("set_gravity", WorldSetGravity),
+    CPH::Python::NoArgsMethod("get_gravity", WorldGetGravity),
+    CPH::Python::FastCallMethod("apply_buoyancy", WorldApplyBuoyancy),
+    CPH::Python::FastCallMethod("apply_buoyancy_batch", WorldApplyBuoyancyBatch),
+    CPH::Python::FastCallMethod("set_position", WorldSetPosition),
+    CPH::Python::FastCallMethod("set_rotation", WorldSetRotation),
+    CPH::Python::FastCallMethod("set_linear_velocity", WorldSetLinearVelocity),
+    CPH::Python::FastCallMethod("set_angular_velocity", WorldSetAngularVelocity),
+    CPH::Python::FastCallMethod("set_transform", WorldSetTransform),
+    CPH::Python::FastCallMethod("set_collision_filter", WorldSetCollisionFilter),
+    CPH::Python::FastCallMethod("register_material", WorldRegisterMaterial),
+    CPH::Python::FastCallMethod("set_constraint_target", WorldSetConstraintTarget),
 
     // --- Motion Control ---
-    CPH::Python::FastCallMethod("get_motion_type", CPH_PyWorld_GetMotionType),
-    CPH::Python::FastCallMethod("set_motion_type", CPH_PyWorld_SetMotionType),
-    CPH::Python::FastCallMethod("activate", CPH_PyWorld_Activate),
-    CPH::Python::FastCallMethod("deactivate", CPH_PyWorld_Deactivate),
-    CPH::Python::FastCallMethod("set_ccd", CPH_PyWorld_SetCcd),
+    CPH::Python::FastCallMethod("get_motion_type", WorldGetMotionType),
+    CPH::Python::FastCallMethod("set_motion_type", WorldSetMotionType),
+    CPH::Python::FastCallMethod("activate", WorldActivate),
+    CPH::Python::FastCallMethod("deactivate", WorldDeactivate),
+    CPH::Python::FastCallMethod("set_ccd", WorldSetCcd),
 
     // --- Queries ---
-    CPH::Python::FastCallMethod("get_soft_body_vertices", CPH_PyWorld_GetSoftBodyVertices),
-    CPH::Python::FastCallMethod("get_soft_body_vertex_count", CPH_PyWorld_GetSoftBodyVertexCount),
+    CPH::Python::FastCallMethod("get_soft_body_vertices", WorldGetSoftBodyVertices),
+    CPH::Python::FastCallMethod("get_soft_body_vertex_count", WorldGetSoftBodyVertexCount),
     CPH::Python::FastCallMethod("get_soft_body_vertex_position",
-                                CPH_PyWorld_GetSoftBodyVertexPosition),
+                                WorldGetSoftBodyVertexPosition),
     CPH::Python::FastCallMethod("get_soft_body_local_vertices",
-                                CPH_PyWorld_GetSoftBodyLocalVertices),
-    CPH::Python::FastCallMethod("raycast", CPH_PyWorld_Raycast),
-    CPH::Python::FastCallMethod("raycast_batch", CPH_PyWorld_RaycastBatch),
-    CPH::Python::FastCallMethod("shapecast", CPH_PyWorld_Shapecast),
-    CPH::Python::FastCallMethod("overlap_sphere", CPH_PyWorld_OverlapSphere),
-    CPH::Python::FastCallMethod("overlap_aabb", CPH_PyWorld_OverlapAabb),
+                                WorldGetSoftBodyLocalVertices),
+    CPH::Python::FastCallMethod("raycast", WorldRaycast),
+    CPH::Python::FastCallMethod("raycast_batch", WorldRaycastBatch),
+    CPH::Python::FastCallMethod("shapecast", WorldShapecast),
+    CPH::Python::FastCallMethod("overlap_sphere", WorldOverlapSphere),
+    CPH::Python::FastCallMethod("overlap_aabb", WorldOverlapAabb),
 
     // --- Utilities ---
-    CPH::Python::FastCallMethod("get_index", CPH_PyWorld_GetIndex),
-    CPH::Python::FastCallMethod("is_alive", CPH_PyWorld_IsAlive),
-    CPH::Python::FastCallMethod("is_active", CPH_PyWorld_IsActive),
-    CPH::Python::NoArgsMethod("get_active_indices", CPH_PyWorld_GetActiveIndices),
-    CPH::Python::FastCallMethod("get_render_state", CPH_PyWorld_GetRenderState),
-    CPH::Python::FastCallMethod("get_debug_data", CPH_PyWorld_GetDebugData),
-    CPH::Python::FastCallMethod("get_body_stats", CPH_PyWorld_GetBodyStats),
+    CPH::Python::FastCallMethod("get_index", WorldGetIndex),
+    CPH::Python::FastCallMethod("is_alive", WorldIsAlive),
+    CPH::Python::FastCallMethod("is_active", WorldIsActive),
+    CPH::Python::NoArgsMethod("get_active_indices", WorldGetActiveIndices),
+    CPH::Python::FastCallMethod("get_render_state", WorldGetRenderState),
+    CPH::Python::FastCallMethod("get_debug_data", WorldGetDebugData),
+    CPH::Python::FastCallMethod("get_body_stats", WorldGetBodyStats),
 
     // --- User Data ---
-    CPH::Python::FastCallMethod("get_user_data", CPH_PyWorld_GetUserData),
-    CPH::Python::FastCallMethod("set_user_data", CPH_PyWorld_SetUserData),
+    CPH::Python::FastCallMethod("get_user_data", WorldGetUserData),
+    CPH::Python::FastCallMethod("set_user_data", WorldSetUserData),
 
     // -- Event Logic ---
-    CPH::Python::NoArgsMethod("get_contact_events", CPH_PyWorld_GetContactEvents),
-    CPH::Python::NoArgsMethod("get_contact_events_ex", CPH_PyWorld_GetContactEventsEx),
-    CPH::Python::NoArgsMethod("get_contact_events_raw", CPH_PyWorld_GetContactEventsRaw),
+    CPH::Python::NoArgsMethod("get_contact_events", WorldGetContactEvents),
+    CPH::Python::NoArgsMethod("get_contact_events_ex", WorldGetContactEventsEx),
+    CPH::Python::NoArgsMethod("get_contact_events_raw", WorldGetContactEventsRaw),
 
     // --- State & Advanced ---
-    CPH::Python::NoArgsMethod("save_state", CPH_PyWorld_SaveState),
-    CPH::Python::FastCallMethod("load_state", CPH_PyWorld_LoadState),
-    CPH::Python::FastCallMethod("create_character", CPH_PyWorld_CreateCharacter),
+    CPH::Python::NoArgsMethod("save_state", WorldSaveState),
+    CPH::Python::FastCallMethod("load_state", WorldLoadState),
+    CPH::Python::FastCallMethod("create_character", WorldCreateCharacter),
 
     // --- Internal/Debug ---
     // Private parser/build microbenchmarks.
-    CPH::Python::FastCallMethod("_benchmark_parse", CPH_PyWorld_BenchmarkParse),
+    CPH::Python::FastCallMethod("_benchmark_parse", WorldBenchmarkParse),
 
-    CPH::Python::NoArgsMethod("_benchmark_build", CPH_PyWorld_BenchmarkBuild),
+    CPH::Python::NoArgsMethod("_benchmark_build", WorldBenchmarkBuild),
 
     {nullptr, nullptr, 0, nullptr}};
 
 // CPython retains these tables for the lifetime of the heap type. Keep their
 // storage static: GNU C++ compound literals here create temporaries, leaving
 // dangling PyType_Slot data and causing "invalid slot offset" during import.
-static PyMemberDef CPH_PyWorld_Members[] = {
+static PyMemberDef WorldMembers[] = {
     {.name   = "__weaklistoffset__",
      .type   = Py_T_PYSSIZET,
-     .offset = offsetof(CPH_PhysicsWorldObject, weakreflist),
+     .offset = offsetof(PhysicsWorldObject, weakreflist),
      .flags  = Py_READONLY,
      .doc    = nullptr},
     {},
 };
 
-static PyGetSetDef CPH_PyWorld_GetSets[] = {
-    CPH::Python::GetSet("positions", CPH_PyWorld_GetPositions),
-    CPH::Python::GetSet("rotations", CPH_PyWorld_GetRotations),
-    CPH::Python::GetSet("velocities", CPH_PyWorld_GetVelocities),
-    CPH::Python::GetSet("angular_velocities", CPH_PyWorld_GetAngularVelocities),
-    CPH::Python::GetSet("count", CPH_PyWorld_GetCount),
-    CPH::Python::GetSet("time", CPH_PyWorld_GetTime),
-    CPH::Python::GetSet("user_data", CPH_PyWorld_GetUserDataBuffer),
-    CPH::Python::GetSet("shape_count", CPH_PyWorld_GetShapeCount),
-    CPH::Python::GetSet("is_step_pending", CPH_PyWorld_GetIsStepPending),
-    CPH::Python::GetSet("max_bodies", CPH_PyWorld_GetMaxBodies),
-    CPH::Python::GetSet("remaining_capacity", CPH_PyWorld_GetRemainingCapacity),
+static PyGetSetDef WorldGetSets[] = {
+    CPH::Python::GetSet("positions", WorldGetPositions),
+    CPH::Python::GetSet("rotations", WorldGetRotations),
+    CPH::Python::GetSet("velocities", WorldGetVelocities),
+    CPH::Python::GetSet("angular_velocities", WorldGetAngularVelocities),
+    CPH::Python::GetSet("count", WorldGetCount),
+    CPH::Python::GetSet("time", WorldGetTime),
+    CPH::Python::GetSet("user_data", WorldGetUserDataBuffer),
+    CPH::Python::GetSet("shape_count", WorldGetShapeCount),
+    CPH::Python::GetSet("is_step_pending", WorldGetIsStepPending),
+    CPH::Python::GetSet("max_bodies", WorldGetMaxBodies),
+    CPH::Python::GetSet("remaining_capacity", WorldGetRemainingCapacity),
     {},
 };
 
-static PyType_Slot CPH_PyWorld_Slots[] = {
+static PyType_Slot WorldSlots[] = {
     {.slot = Py_tp_new, .pfunc = reinterpret_cast<void *>(PyType_GenericNew)},
-    {.slot = Py_tp_init, .pfunc = reinterpret_cast<void *>(CPH_PyWorld_Init)},
-    {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(CPH_PyWorld_Dealloc)},
+    {.slot = Py_tp_init, .pfunc = reinterpret_cast<void *>(WorldInit)},
+    {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(WorldDealloc)},
     {.slot = Py_tp_call, .pfunc = nullptr},
     {.slot = Py_tp_methods, .pfunc = reinterpret_cast<void *>(kPhysicsWorldMethods)},
-    {.slot = Py_tp_members, .pfunc = reinterpret_cast<void *>(CPH_PyWorld_Members)},
-    {.slot = Py_tp_getset, .pfunc = reinterpret_cast<void *>(CPH_PyWorld_GetSets)},
-    {.slot = Py_bf_getbuffer, .pfunc = reinterpret_cast<void *>(CPH_PyWorld_Getbuffer)},
-    {.slot = Py_bf_releasebuffer, .pfunc = reinterpret_cast<void *>(CPH_PyWorld_Releasebuffer)},
-    {.slot = Py_tp_traverse, .pfunc = reinterpret_cast<void *>(CPH_PyWorld_Traverse)},
-    {.slot = Py_tp_clear, .pfunc = reinterpret_cast<void *>(CPH_PyWorld_Clear)},
+    {.slot = Py_tp_members, .pfunc = reinterpret_cast<void *>(WorldMembers)},
+    {.slot = Py_tp_getset, .pfunc = reinterpret_cast<void *>(WorldGetSets)},
+    {.slot = Py_bf_getbuffer, .pfunc = reinterpret_cast<void *>(WorldGetbuffer)},
+    {.slot = Py_bf_releasebuffer, .pfunc = reinterpret_cast<void *>(WorldReleasebuffer)},
+    {.slot = Py_tp_traverse, .pfunc = reinterpret_cast<void *>(WorldTraverse)},
+    {.slot = Py_tp_clear, .pfunc = reinterpret_cast<void *>(WorldClear)},
     {},
 };
 
-PyType_Spec CPH_PyWorld_Spec = {
+PyType_Spec WorldSpec = {
     .name      = "culverin._culverin_c.PhysicsWorld",
-    .basicsize = sizeof(CPH_PhysicsWorldObject),
+    .basicsize = sizeof(PhysicsWorldObject),
     .flags =
         Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC | Py_TPFLAGS_MANAGED_DICT,
-    .slots = CPH_PyWorld_Slots,
+    .slots = WorldSlots,
 };
+
+} // namespace CPH::Python

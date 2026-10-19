@@ -9,10 +9,10 @@ static inline bool is_state_valid(uint8_t state, uint8_t mask) {
 }
 
 typedef struct {
-    culv_u1 is_immediate : 1;
-    culv_u1 is_deferred : 1;
-    culv_u1 is_executable : 1;
-    culv_u5 _unused : 5;
+    CPH_u1 is_immediate : 1;
+    CPH_u1 is_deferred : 1;
+    CPH_u1 is_executable : 1;
+    CPH_u5 _unused : 5;
 } CPH_SlotPredicate;
 
 static_assert(sizeof(CPH_SlotPredicate) == sizeof(uint8_t));
@@ -29,11 +29,11 @@ static constexpr uint32_t kMaskDestructible =
 get_slot_predicate(uint8_t state, uint32_t imm_mask) {
     const uint32_t state_bit = 1U << (state & 7);
 
-    const culv_u1 imm = (culv_u1)!!(bool)(state_bit & imm_mask);
-    const culv_u1 def = (culv_u1)!!(bool)(state_bit & kMaskDeferred);
+    const CPH_u1 imm = (CPH_u1)!!(bool)(state_bit & imm_mask);
+    const CPH_u1 def = (CPH_u1)!!(bool)(state_bit & kMaskDeferred);
 
     return (CPH_SlotPredicate){.is_immediate = imm,
                            .is_deferred = def,
-                           .is_executable = (culv_u1)(imm | def),
+                           .is_executable = (CPH_u1)(imm | def),
                            ._unused = 0};
 }

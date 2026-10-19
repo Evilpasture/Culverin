@@ -253,7 +253,7 @@ PhysicsWorldStatus CPH_PhysicsWorldLoadBakedScene(CPH_PhysicsWorld *world,
     CPH_SHADOW_LOCK(&world->shadow_lock);
     CPH_NATIVE_MUTEX_LOCK(world->jph_trampoline_lock);
     for (size_t i = 0; i < scene->count; ++i) {
-        const float *const shape_data = &scene->shapes[i * CULV_BAKED_SHAPE_STRIDE];
+        const float *const shape_data = &scene->shapes[i * CPH_BAKED_SHAPE_STRIDE];
         const float params[4]  = {shape_data[1], shape_data[2], shape_data[3], shape_data[4]};
         JPH_Shape *const shape = CPH_FindOrCreateShapeLocked(world, (int)shape_data[0], params);
         if (CPH_UNLIKELY(shape == nullptr)) {
@@ -261,8 +261,8 @@ PhysicsWorldStatus CPH_PhysicsWorldLoadBakedScene(CPH_PhysicsWorld *world,
             break;
         }
 
-        const size_t pos_idx = i * CULV_BAKED_POSITION_STRIDE;
-        const size_t rot_idx = i * CULV_BAKED_ROTATION_STRIDE;
+        const size_t pos_idx = i * CPH_BAKED_POSITION_STRIDE;
+        const size_t rot_idx = i * CPH_BAKED_ROTATION_STRIDE;
         shadow_pos[i].x      = scene->positions[pos_idx + 0];
         shadow_pos[i].y      = scene->positions[pos_idx + 1];
         shadow_pos[i].z      = scene->positions[pos_idx + 2];
@@ -338,8 +338,8 @@ void CPH_FreeNewBuffers(CPH_NewBuffers *nb) {
     CPH_SAFE_FREE(nb->udat);
 
     // 3. ATOMIC Buffer Cleanup
-    // nb->gens is CULV_ATOMIC(uint32_t)*
-    // nb->stat is CULV_ATOMIC(uint8_t)*
+    // nb->gens is CPH_ATOMIC(uint32_t)*
+    // nb->stat is CPH_ATOMIC(uint8_t)*
     // We cast to (void*) to ensure standard C-library free works without warnings
     CPH_SAFE_FREE(nb->gens);
     CPH_SAFE_FREE(nb->stat);
@@ -377,9 +377,9 @@ static int alloc_new_buffers(CPH_NewBuffers *nb, size_t cap) {
     nb->avel = (float *)CPH_AlignedAlloc(cap * sizeof(CPH_AuxStride), kAvxAlignment);
 
     // ATOMIC Data Buffers
-    // gens is CULV_ATOMIC(uint32_t)*
+    // gens is CPH_ATOMIC(uint32_t)*
     nb->gens = (CPH_ATOMIC(uint32_t) *)CPH_Alloc(cap * sizeof(CPH_ATOMIC(uint32_t)));
-    // stat is CULV_ATOMIC(uint8_t)*
+    // stat is CPH_ATOMIC(uint8_t)*
     nb->stat = (CPH_ATOMIC(uint8_t) *)CPH_Alloc(cap * sizeof(CPH_ATOMIC(uint8_t)));
 
     // Standard Data Buffers
@@ -525,11 +525,11 @@ int CPH_AllocateBuffers(CPH_PhysicsWorld *world, int max_bodies, size_t initial_
     world->jolt_body_ptrs = (typeof(world->jolt_body_ptrs))CPH_Calloc(
         world->max_jolt_bodies + 1, sizeof(typeof(*world->jolt_body_ptrs)));
 
-    // generations is CULV_ATOMIC(uint32_t)*
+    // generations is CPH_ATOMIC(uint32_t)*
     world->generations = (CPH_ATOMIC(uint32_t) *)CPH_Alloc(world->slot_capacity *
                                                                  sizeof(CPH_ATOMIC(uint32_t)));
 
-    // slot_states is CULV_ATOMIC(uint8_t)*
+    // slot_states is CPH_ATOMIC(uint8_t)*
     world->slot_states = (CPH_ATOMIC(typeof_unqual(*world->slot_states)) *)CPH_Alloc(
         world->slot_capacity * sizeof(CPH_ATOMIC(typeof_unqual(*world->slot_states))));
 
@@ -802,8 +802,8 @@ void CPH_FreeShadowBuffers(CPH_PhysicsWorld *world) {
     CPH_SAFE_FREE_ALIGNED(world->angular_velocities);
 
     // 2. ATOMIC buffers
-    // Generations is CULV_ATOMIC(uint32_t)*
-    // Slot States is CULV_ATOMIC(uint8_t)*
+    // Generations is CPH_ATOMIC(uint32_t)*
+    // Slot States is CPH_ATOMIC(uint8_t)*
     CPH_SAFE_FREE(world->generations);
     CPH_SAFE_FREE(world->slot_states);
 

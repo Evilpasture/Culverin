@@ -1,7 +1,9 @@
-#include "physics/WorldAdapters.h"
-#include "bindings/ModuleState.h"
-#include "physics/PhysicsSync.h"
+#include "physics/WorldAdapters.hpp"
+#include "bindings/ModuleState.hpp"
+#include "physics/PhysicsSync.hpp"
 #include "physics/PhysicsWorld.h"
+
+namespace CPH::Python {
 
 // Baked scene tuple layout produced by culverin.bake_scene.
 enum {
@@ -15,7 +17,7 @@ enum {
 };
 
 [[nodiscard]]
-int CPH_GetBakedSceneCount(PyObject *baked, size_t *out_count) {
+int GetBakedSceneCount(PyObject *baked, size_t *out_count) {
     if (out_count == nullptr || !PyTuple_Check(baked) ||
         PyTuple_GET_SIZE(baked) < BAKED_TUPLE_SIZE) {
         PyErr_SetString(PyExc_ValueError, "Invalid baked scene tuple");
@@ -63,15 +65,15 @@ static int get_baked_buffer(PyObject *baked, Py_ssize_t index, size_t expected_s
 }
 
 [[nodiscard]]
-int CPH_PyWorld_Resize(CPH_PhysicsWorldObject *self, size_t new_capacity) {
+int WorldResize(PhysicsWorldObject *self, size_t new_capacity) {
     CPH_PhysicsWorld *world = &self->physics;
     if (atomic_load_explicit(&world->view_export_count, memory_order_relaxed) > 0) {
         PyErr_SetString(PyExc_BufferError, "Cannot resize while memoryview is active.");
         return -1;
     }
 
-    CPH_BLOCK_UNTIL_NOT_STEPPING(self);
-    CPH_BLOCK_UNTIL_NOT_QUERYING(self);
+    BlockUntilNotStepping(self);
+    BlockUntilNotQuerying(self);
 
     const PhysicsWorldStatus status = CPH_PhysicsWorldResize(world, new_capacity);
     if (status == PHYSICS_WORLD_STATUS_BUFFER_EXPORTED) {
@@ -85,16 +87,16 @@ int CPH_PyWorld_Resize(CPH_PhysicsWorldObject *self, size_t new_capacity) {
     return 0;
 }
 
-void CPH_PyWorld_FreeMembers(CPH_PhysicsWorldObject *self) {
+void WorldFreeMembers(PhysicsWorldObject *self) {
     CPH_PhysicsWorldFreeNative(&self->physics);
 }
 
 // helper: Initialize settings via Python helper
 [[nodiscard]]
-int CPH_InitSettings(CPH_PhysicsWorldObject *self, PyObject *settings_dict,
+int InitSettings(PhysicsWorldObject *self, PyObject *settings_dict,
                      CPH_GravityVector *gravity, CPH_WorldSettings *settings) {
     PyObject *st_module = PyType_GetModule(Py_TYPE(self));
-    CPH_ModuleState *st = CPH_GetModuleState(st_module);
+    ModuleState *st = GetModuleState(st_module);
     PyObject *val_func  = PyObject_GetAttrString(st->helper, "validate_settings");
     if (!val_func) {
         return -1;
@@ -118,9 +120,9 @@ int CPH_InitSettings(CPH_PhysicsWorldObject *self, PyObject *settings_dict,
 
 // Decode Python-owned byte buffers, then hand the plain data contract to native physics.
 [[nodiscard]]
-int CPH_LoadBakedScene(CPH_PhysicsWorldObject *self, PyObject *baked) {
+int LoadBakedScene(PhysicsWorldObject *self, PyObject *baked) {
     size_t count;
-    if (CPH_GetBakedSceneCount(baked, &count) < 0) {
+    if (GetBakedSceneCount(baked, &count) < 0) {
         return -1;
     }
 
@@ -131,7 +133,7 @@ int CPH_LoadBakedScene(CPH_PhysicsWorldObject *self, PyObject *baked) {
     size_t user_data_size;
     if (baked_buffer_size(count, sizeof(CPH_PosStride), &positions_size) < 0 ||
         baked_buffer_size(count, sizeof(CPH_AuxStride), &rotations_size) < 0 ||
-        baked_buffer_size(count, CULV_BAKED_SHAPE_STRIDE * sizeof(float), &shapes_size) < 0 ||
+        baked_buffer_size(count, CPH_BAKED_SHAPE_STRIDE * sizeof(float), &shapes_size) < 0 ||
         baked_buffer_size(count, sizeof(uint8_t), &byte_array_size) < 0 ||
         baked_buffer_size(count, sizeof(uint64_t), &user_data_size) < 0) {
         return -1;
@@ -186,3 +188,5 @@ int CPH_LoadBakedScene(CPH_PhysicsWorldObject *self, PyObject *baked) {
     }
     return -1;
 }
+
+} // namespace CPH::Python

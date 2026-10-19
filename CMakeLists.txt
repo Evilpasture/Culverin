@@ -84,7 +84,7 @@ endfunction()
 # ==============================================================================
 option(ENABLE_SANITIZER "Enable Clang Sanitizers (ASan/UBSan)" OFF)
 option(ENABLE_THREAD_SANITIZER "Enable Thread Sanitizer (TSan)" OFF)
-option(CULV_AGGRESSIVE_OPTIMIZATION "Enable aggressive __builtin_assume for assertions in Release" OFF)
+option(CPH_AGGRESSIVE_OPTIMIZATION "Enable aggressive __builtin_assume for assertions in Release" OFF)
 
 # Jolt build knobs — read by extern/JoltPhysics/Build/CMakeLists.txt and must be
 # forced BEFORE add_subdirectory(Jolt). Every supported compiler speaks the GNU
@@ -181,12 +181,12 @@ include(CheckCCompilerFlag)
 include(CheckCXXCompilerFlag)
 include(CheckCSourceCompiles)
 
-# culv_collect_supported_cxx_flags(<out_var> <flag>...)
+# CPH_collect_supported_cxx_flags(<out_var> <flag>...)
 # Appends every flag the C++ compiler accepts to <out_var>.
-function(culv_collect_supported_cxx_flags out)
+function(CPH_collect_supported_cxx_flags out)
     set(_ok "")
     foreach(flag IN LISTS ARGN)
-        string(REGEX REPLACE "[^A-Za-z0-9]" "_" _var "CULV_HAVE_CXX${flag}")
+        string(REGEX REPLACE "[^A-Za-z0-9]" "_" _var "CPH_HAVE_CXX${flag}")
         string(TOUPPER "${_var}" _var)
         check_cxx_compiler_flag("${flag}" ${_var})
         if(${_var})
@@ -196,10 +196,10 @@ function(culv_collect_supported_cxx_flags out)
     set(${out} "${_ok}" PARENT_SCOPE)
 endfunction()
 
-function(culv_collect_supported_c_flags out)
+function(CPH_collect_supported_c_flags out)
     set(_ok "")
     foreach(flag IN LISTS ARGN)
-        string(REGEX REPLACE "[^A-Za-z0-9]" "_" _var "CULV_HAVE_C${flag}")
+        string(REGEX REPLACE "[^A-Za-z0-9]" "_" _var "CPH_HAVE_C${flag}")
         string(TOUPPER "${_var}" _var)
         check_c_compiler_flag("${flag}" ${_var})
         if(${_var})
@@ -212,30 +212,30 @@ endfunction()
 # --- VERIFY THE COMPILER REALLY SPEAKS C23 -----------------------------------
 # We use modern C23 (constexpr, static_assert, plain-identifier auto, [[attrs]]).
 # Probe it against each spelling of the standard flag, most modern first.
-set(_CULV_C23_PROBE "
+set(_CPH_C23_PROBE "
 #include <stdatomic.h>
-[[maybe_unused]] constexpr int culv_probe_k = 42;
-static_assert(culv_probe_k == 42, \"C23 static_assert/constexpr required\");
+[[maybe_unused]] constexpr int CPH_probe_k = 42;
+static_assert(CPH_probe_k == 42, \"C23 static_assert/constexpr required\");
 int main(void) {
     _Atomic int ready = 0;
-    auto v = culv_probe_k;  /* plain-identifier auto deduction */
+    auto v = CPH_probe_k;  /* plain-identifier auto deduction */
     return (int)(v == 42) + (int)atomic_exchange(&ready, 1);
 }
 ")
-set(CULV_C23_OK OFF)
+set(CPH_C23_OK OFF)
 foreach(_std_flag "-std=gnu23" "-std=gnu2x")
-    string(REGEX REPLACE "[^A-Za-z0-9]" "_" _var "CULV_PROBE_C23_${_std_flag}")
+    string(REGEX REPLACE "[^A-Za-z0-9]" "_" _var "CPH_PROBE_C23_${_std_flag}")
     string(TOUPPER "${_var}" _var)
     set(CMAKE_REQUIRED_FLAGS "${_std_flag} -Werror")
-    check_c_source_compiles("${_CULV_C23_PROBE}" ${_var})
+    check_c_source_compiles("${_CPH_C23_PROBE}" ${_var})
     unset(CMAKE_REQUIRED_FLAGS)
     if(${_var})
-        set(CULV_C23_OK ON)
+        set(CPH_C23_OK ON)
         message(STATUS "Culverin: C23 verified with ${_std_flag}")
         break()
     endif()
 endforeach()
-if(NOT CULV_C23_OK)
+if(NOT CPH_C23_OK)
     message(
         FATAL_ERROR
         "Culverin requires a C23-capable C compiler (constexpr/static_assert/auto).\n"
@@ -252,11 +252,11 @@ endif()
 # - If Sanitizers are ON: Level 2 (Full) - sanitizers imply a debug context
 # - If Aggressive Opt is ON and config is Release: Level 0 (Assume)
 # - Default (RelWithDebInfo / Release / MinSizeRel): Level 1 (Trap)
-set(CULV_ASSERT_DEFS
-    $<$<OR:$<CONFIG:Debug>,$<BOOL:${ENABLE_SANITIZER}>,$<BOOL:${ENABLE_THREAD_SANITIZER}>>:CULV_ASSERT_LEVEL=2>
-    $<$<AND:$<CONFIG:Release>,$<BOOL:${CULV_AGGRESSIVE_OPTIMIZATION}>>:CULV_ASSERT_LEVEL=0>
+set(CPH_ASSERT_DEFS
+    $<$<OR:$<CONFIG:Debug>,$<BOOL:${ENABLE_SANITIZER}>,$<BOOL:${ENABLE_THREAD_SANITIZER}>>:CPH_ASSERT_LEVEL=2>
+    $<$<AND:$<CONFIG:Release>,$<BOOL:${CPH_AGGRESSIVE_OPTIMIZATION}>>:CPH_ASSERT_LEVEL=0>
     # Catch-all: optimized builds default to Level 1 (Safe Trap).
-    $<$<AND:$<NOT:$<CONFIG:Debug>>,$<NOT:$<BOOL:${ENABLE_SANITIZER}>>,$<NOT:$<BOOL:${ENABLE_THREAD_SANITIZER}>>,$<NOT:$<AND:$<CONFIG:Release>,$<BOOL:${CULV_AGGRESSIVE_OPTIMIZATION}>>>>:CULV_ASSERT_LEVEL=1>
+    $<$<AND:$<NOT:$<CONFIG:Debug>>,$<NOT:$<BOOL:${ENABLE_SANITIZER}>>,$<NOT:$<BOOL:${ENABLE_THREAD_SANITIZER}>>,$<NOT:$<AND:$<CONFIG:Release>,$<BOOL:${CPH_AGGRESSIVE_OPTIMIZATION}>>>>:CPH_ASSERT_LEVEL=1>
 )
 
 message(STATUS "--- COMPILER VERIFICATION ---")
@@ -271,8 +271,8 @@ message(STATUS "-----------------------------")
 # 2. LANGUAGE STANDARDS + GLOBAL RUNTIME TRAITS
 # ==============================================================================
 # RTTI everywhere — one probed flag, no dialect branches.
-culv_collect_supported_cxx_flags(CULV_FRTTI "-frtti")
-if(CULV_FRTTI)
+CPH_collect_supported_cxx_flags(CPH_FRTTI "-frtti")
+if(CPH_FRTTI)
     add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-frtti>")
 endif()
 
@@ -296,16 +296,16 @@ set(CULVERIN_LINK_FLAGS "")
 # --- Debug info: CodeView/PDB is the native format on Windows. ---
 set(FLAGS_DEBUG "-g")
 if(WIN32)
-    culv_collect_supported_c_flags(CULV_CODEVIEW "-gcodeview")
-    list(APPEND FLAGS_DEBUG ${CULV_CODEVIEW})
+    CPH_collect_supported_c_flags(CPH_CODEVIEW "-gcodeview")
+    list(APPEND FLAGS_DEBUG ${CPH_CODEVIEW})
 endif()
 
 # --- Performance baseline (valid on every supported target) ---
 set(FLAGS_PERF "-O3" "-ffast-math" "-fomit-frame-pointer")
 
 # --- x86 SIMD/FMA/compressed-exchange: probe, don't assume the ISA ---
-culv_collect_supported_cxx_flags(CULV_X86_PERF "-mavx2" "-mfma" "-mcx16")
-list(APPEND FLAGS_PERF ${CULV_X86_PERF})
+CPH_collect_supported_cxx_flags(CPH_X86_PERF "-mavx2" "-mfma" "-mcx16")
+list(APPEND FLAGS_PERF ${CPH_X86_PERF})
 
 # --- LLVM middle-end tuning: these flags live in Clang's own namespace ---
 if(CMAKE_C_COMPILER_ID MATCHES "Clang")
@@ -342,11 +342,11 @@ endif()
 list(APPEND CULVERIN_COMPILE_FLAGS ${FLAGS_DEBUG} ${FLAGS_PERF} ${FLAGS_STRICT})
 
 # --- Colored diagnostics: ask, don't assume ---
-culv_collect_supported_c_flags(CULV_COLOR "-fcolor-diagnostics" "-fdiagnostics-color=always")
-if(CULV_COLOR)
+CPH_collect_supported_c_flags(CPH_COLOR "-fcolor-diagnostics" "-fdiagnostics-color=always")
+if(CPH_COLOR)
     # Take only the FIRST supported spelling; GCC and Clang disagree on names.
-    list(GET CULV_COLOR 0 CULV_COLOR_FLAG)
-    list(APPEND CULVERIN_COMPILE_FLAGS "${CULV_COLOR_FLAG}")
+    list(GET CPH_COLOR 0 CPH_COLOR_FLAG)
+    list(APPEND CULVERIN_COMPILE_FLAGS "${CPH_COLOR_FLAG}")
 endif()
 
 # ==============================================================================
@@ -363,7 +363,7 @@ function(culverin_configure_compile_target target)
             "$<$<COMPILE_LANGUAGE:C,CXX>:${CULVERIN_COMPILE_FLAGS}>"
             "$<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>"
     )
-    target_compile_definitions(${target} PRIVATE ${CULV_ASSERT_DEFS} JPH_DEBUG_RENDERER)
+    target_compile_definitions(${target} PRIVATE ${CPH_ASSERT_DEFS} JPH_DEBUG_RENDERER)
 
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         target_compile_definitions(${target} PRIVATE _GNU_SOURCE)
@@ -429,13 +429,13 @@ else()
         # Uniform optimization for Jolt on every platform, composed from what
         # this compiler actually accepts (--march and -ffast-math probed).
         set_property(TARGET Jolt PROPERTY COMPILE_OPTIONS "")
-        culv_collect_supported_cxx_flags(CULV_JOLT_ARCH "-march=x86-64-v3")
-        culv_collect_supported_cxx_flags(CULV_JOLT_PERF "-ffast-math" "-fomit-frame-pointer")
+        CPH_collect_supported_cxx_flags(CPH_JOLT_ARCH "-march=x86-64-v3")
+        CPH_collect_supported_cxx_flags(CPH_JOLT_PERF "-ffast-math" "-fomit-frame-pointer")
         target_compile_options(
             Jolt
             PRIVATE
-                ${CULV_JOLT_ARCH}
-                ${CULV_JOLT_PERF}
+                ${CPH_JOLT_ARCH}
+                ${CPH_JOLT_PERF}
                 "$<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>"
         )
     endif()
@@ -463,7 +463,7 @@ target_include_directories(
     ${JOLTC_TARGET}
     PUBLIC "extern/JoltC/include" "${JOLT_DIR}"
 )
-target_compile_definitions(${JOLTC_TARGET} PRIVATE ${CULV_ASSERT_DEFS})
+target_compile_definitions(${JOLTC_TARGET} PRIVATE ${CPH_ASSERT_DEFS})
 target_link_libraries(${JOLTC_TARGET} PRIVATE Jolt::Jolt)
 
 # C++ engine targets are declared next to their sources under src/.

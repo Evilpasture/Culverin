@@ -218,7 +218,7 @@ op_CREATE_BODY: {
             const uint32_t gen =
                 atomic_load_explicit(&world->generations[slot], memory_order_relaxed);
 
-            // BodyHandle is CULV_ATOMIC(uint64_t)
+            // BodyHandle is CPH_ATOMIC(uint64_t)
             const BodyHandle h = make_handle(slot, gen);
 
             // TSan Fix: Extract raw uint64_t to avoid implicit seq_cst load overhead

@@ -2,10 +2,10 @@ add_library(
     culverin_python_parsing
     OBJECT
         FastParserCore.cpp
-        FastParserCore.h
+        FastParserCore.hpp
         FastParser.hpp
         Parsers.cpp
-        Parsers.h
-        DefaultConfig.h
+        Parsers.hpp
+        DefaultConfig.hpp
 )
 culverin_configure_python_target(culverin_python_parsing)
