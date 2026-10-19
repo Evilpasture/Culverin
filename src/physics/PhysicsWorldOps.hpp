@@ -1,9 +1,11 @@
 #pragma once
 
+#include "core/Error.hpp"
 #include "physics/PhysicsWorldState.hpp"
 
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 
 
 namespace CPH {
@@ -36,22 +38,21 @@ struct PhysicsBodyOperation {
     int value;
 };
 
-enum PhysicsBodyOperationStatus : int {
-    PHYSICS_BODY_OPERATION_STATUS_OK               = 0,
-    PHYSICS_BODY_OPERATION_STATUS_OUT_OF_MEMORY    = -1,
-    PHYSICS_BODY_OPERATION_STATUS_STALE_HANDLE     = -2,
-    PHYSICS_BODY_OPERATION_STATUS_INVALID_ARGUMENT = -3,
+enum class BodyOperationError : std::uint32_t {
+    OutOfMemory     = 1,
+    StaleHandle     = 2,
+    InvalidArgument = 3,
 };
 
 // Executes an engine-side body mutation: command staging, shadow-buffer
 // mirroring, and immediate Jolt application for impulse-style ops on
 // already-live bodies. Stale-handle errors are translated by the binding.
-PhysicsBodyOperationStatus
+[[nodiscard]] std::expected<void, Error>
 PhysicsWorldApplyBodyOperation(PhysicsWorld *world,
                                    const PhysicsBodyOperation *operation);
-PhysicsBodyOperationStatus PhysicsWorldQueueBodyDestroy(PhysicsWorld *world,
+[[nodiscard]] std::expected<void, Error> PhysicsWorldQueueBodyDestroy(PhysicsWorld *world,
                                                             BodyHandle handle);
-PhysicsBodyOperationStatus
+[[nodiscard]] std::expected<void, Error>
 PhysicsWorldQueueBodyDestroyBatch(PhysicsWorld *world, const BodyHandle *handles,
                                        std::size_t handle_count);
 

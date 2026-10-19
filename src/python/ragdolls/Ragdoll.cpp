@@ -357,16 +357,16 @@ void RagdollDealloc(RagdollObject *self) {
         .position     = position,
     };
     int joint_count = 0;
-    const PhysicsRagdollStatus status =
+    const std::expected<void, Error> status =
         PhysicsRagdollSettingsAddPart(self->settings, shape, &request, &joint_count);
 
-    if (status == PHYSICS_RAGDOLL_STATUS_INVALID_SHAPE) {
+    if (!status && status.error().Code().Is(RagdollError::InvalidShape)) {
         return PyErr_Format(PyExc_ValueError, "Invalid shape configuration");
     }
-    if (status == PHYSICS_RAGDOLL_STATUS_JOINT_OUT_OF_RANGE) {
+    if (!status && status.error().Code().Is(RagdollError::JointOutOfRange)) {
         return PyErr_Format(PyExc_IndexError, "Joint index %d out of bounds", joint_idx);
     }
-    if (status != PHYSICS_RAGDOLL_STATUS_OK) {
+    if (!status) {
         return PyErr_Format(PyExc_RuntimeError, "Invalid ragdoll settings state");
     }
 

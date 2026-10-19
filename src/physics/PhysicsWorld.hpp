@@ -1,15 +1,17 @@
 #pragma once
 
 // Core world lifecycle and stepping. Native operations never call the
-// Python API; the CPython binding translates status codes to exceptions.
+// Python API; the CPython binding translates errors to exceptions.
 // Construction/destruction of PhysicsWorld itself (member state, Jolt
 // handle teardown) is the struct's constructor/destructor.
 
+#include "core/Error.hpp"
 #include "physics/CommandBuffer.hpp"
 #include "physics/PhysicsParams.hpp"
 #include "physics/PhysicsWorldState.hpp"
 
 #include <cstddef>
+#include <expected>
 #include <span>
 
 // Allocates body/constraint/contact storage for `max_bodies`, with room
@@ -22,15 +24,16 @@ void InitializeFreeSlots(PhysicsWorld *world, std::size_t start_idx);
 
 int PhysicsWorldInitJolt(PhysicsWorld *world, WorldSettings settings,
                              GravityVector gravity);
-PhysicsWorldStatus PhysicsWorldLoadBakedScene(PhysicsWorld *world,
+[[nodiscard]] std::expected<void, Error> PhysicsWorldLoadBakedScene(PhysicsWorld *world,
                                                   const BakedSceneData *scene);
 
 // Slot and resize mutations require shadow_lock and a non-stepping world.
-PhysicsWorldStatus PhysicsWorldResize(PhysicsWorld *world, std::size_t new_capacity);
-PhysicsWorldStatus PhysicsWorldCommitCreate(PhysicsWorld *world,
+[[nodiscard]] std::expected<void, Error> PhysicsWorldResize(PhysicsWorld *world,
+                                                            std::size_t new_capacity);
+[[nodiscard]] std::expected<void, Error> PhysicsWorldCommitCreate(PhysicsWorld *world,
                                                  JPH_BodyCreationSettings *settings,
                                                  std::uint32_t slot_state, BodyHandle *out_handle);
-PhysicsWorldStatus PhysicsWorldCommitCreateSoft(PhysicsWorld *world,
+[[nodiscard]] std::expected<void, Error> PhysicsWorldCommitCreateSoft(PhysicsWorld *world,
                                                      JPH_SoftBodyCreationSettings *settings,
                                                      std::uint32_t slot_state,
                                                      BodyHandle *out_handle);

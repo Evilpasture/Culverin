@@ -1,11 +1,13 @@
 #pragma once
 
+#include "core/Error.hpp"
 #include "core/Types.hpp"
 #include <joltc.h>
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <new>
 
 
@@ -16,11 +18,10 @@ struct PhysicsWorld;
 inline constexpr float kPhysicsQueryDefaultMaxDistance = 1000.0F;
 inline constexpr std::size_t kPhysicsQueryInlineHitCapacity = 64;
 
-enum PhysicsQueryStatus : int {
-    PHYSICS_QUERY_STATUS_OK               = 0,
-    PHYSICS_QUERY_STATUS_OUT_OF_MEMORY    = -1,
-    PHYSICS_QUERY_STATUS_INVALID_ARGUMENT = -2,
-    PHYSICS_QUERY_STATUS_SHAPE_FAILURE    = -3,
+enum class QueryError : std::uint32_t {
+    OutOfMemory     = 1,
+    InvalidArgument = 2,
+    ShapeFailure    = 3,
 };
 
 // Hit list with small-buffer optimization: overlap queries construct one
@@ -107,17 +108,18 @@ struct PhysicsShapecastHit {
 // the query entry points (also used by native ops that register as queries).
 void PhysicsWorldQueryEnd(PhysicsWorld *world);
 
-PhysicsQueryStatus PhysicsWorldOverlapSphere(PhysicsWorld *world, JPH_RVec3 center,
-                                                 float radius, PhysicsQueryHitBuffer *hits);
-PhysicsQueryStatus PhysicsWorldOverlapAabb(PhysicsWorld *world, JPH_RVec3 min,
+[[nodiscard]] std::expected<void, Error>
+PhysicsWorldOverlapSphere(PhysicsWorld *world, JPH_RVec3 center, float radius,
+                          PhysicsQueryHitBuffer *hits);
+[[nodiscard]] std::expected<void, Error> PhysicsWorldOverlapAabb(PhysicsWorld *world, JPH_RVec3 min,
                                                JPH_RVec3 max, PhysicsQueryHitBuffer *hits);
-PhysicsQueryStatus PhysicsWorldRaycast(PhysicsWorld *world, JPH_RVec3 origin,
+[[nodiscard]] std::expected<void, Error> PhysicsWorldRaycast(PhysicsWorld *world, JPH_RVec3 origin,
                                            JPH_Vec3 direction, float max_distance,
                                            BodyHandle ignore_handle, PhysicsRaycastHit *hit);
-PhysicsQueryStatus PhysicsWorldRaycastBatch(PhysicsWorld *world, const float *starts,
-                                                const float *directions, std::size_t count,
-                                                float max_distance, RayCastBatchResult *results);
-PhysicsQueryStatus PhysicsWorldShapecast(PhysicsWorld *world, int shape_type,
+[[nodiscard]] std::expected<void, Error>
+PhysicsWorldRaycastBatch(PhysicsWorld *world, const float *starts, const float *directions,
+                         std::size_t count, float max_distance, RayCastBatchResult *results);
+[[nodiscard]] std::expected<void, Error> PhysicsWorldShapecast(PhysicsWorld *world, int shape_type,
                                               JPH_RVec3 position, JPH_Quat rotation,
                                               JPH_Vec3 sweep_direction, const float size[4],
                                               BodyHandle ignore_handle,

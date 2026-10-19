@@ -1,15 +1,17 @@
 #pragma once
 
+#include "core/Error.hpp"
 #include "physics/PhysicsWorldState.hpp"
+
+#include <expected>
 
 
 namespace CPH {
 
-enum PhysicsRagdollStatus : int {
-    PHYSICS_RAGDOLL_STATUS_OK                 = 0,
-    PHYSICS_RAGDOLL_STATUS_INVALID_ARGUMENT   = -1,
-    PHYSICS_RAGDOLL_STATUS_INVALID_SHAPE      = -2,
-    PHYSICS_RAGDOLL_STATUS_JOINT_OUT_OF_RANGE = -3,
+enum class RagdollError : std::uint32_t {
+    InvalidArgument = 1,
+    InvalidShape    = 2,
+    JointOutOfRange = 3,
 };
 
 struct PhysicsRagdollPartRequest {
@@ -47,10 +49,9 @@ void PhysicsRagdollSettingsDestroy(JPH_RagdollSettings *settings);
 bool PhysicsRagdollSettingsStabilize(JPH_RagdollSettings *settings);
 JPH_Shape *PhysicsRagdollFindOrCreateShape(PhysicsWorld *world, int shape_type,
                                                 const float shape_params[4]);
-PhysicsRagdollStatus PhysicsRagdollSettingsAddPart(JPH_RagdollSettings *settings,
-                                                           JPH_Shape *shape,
-                                                           const PhysicsRagdollPartRequest *request,
-                                                           int *out_joint_count);
+[[nodiscard]] std::expected<void, Error>
+PhysicsRagdollSettingsAddPart(JPH_RagdollSettings *settings, JPH_Shape *shape,
+                              const PhysicsRagdollPartRequest *request, int *out_joint_count);
 
 int PhysicsRagdollGetJointCount(JPH_Ragdoll *ragdoll);
 bool PhysicsRagdollDriveToPose(JPH_Ragdoll *ragdoll, JPH_RVec3 root_position,

@@ -74,12 +74,12 @@ int WorldResize(PhysicsWorldObject *self, size_t new_capacity) {
     BlockUntilNotStepping(self);
     BlockUntilNotQuerying(self);
 
-    const PhysicsWorldStatus status = PhysicsWorldResize(world, new_capacity);
-    if (status == PHYSICS_WORLD_STATUS_BUFFER_EXPORTED) {
+    const std::expected<void, Error> status = PhysicsWorldResize(world, new_capacity);
+    if (!status && status.error().Code().Is(WorldError::BufferExported)) {
         PyErr_SetString(PyExc_BufferError, "Cannot resize while memoryview is active.");
         return -1;
     }
-    if (status != PHYSICS_WORLD_STATUS_OK) {
+    if (!status) {
         PyErr_NoMemory();
         return -1;
     }
@@ -170,19 +170,20 @@ int LoadBakedScene(PhysicsWorldObject *self, PyObject *baked) {
         .user_data     = static_cast<const uint64_t *>(user_data),
     };
 
-    const PhysicsWorldStatus status = PhysicsWorldLoadBakedScene(&self->physics, &scene);
-    switch (status) {
-    case PHYSICS_WORLD_STATUS_OK:
+    const std::expected<void, Error> status = PhysicsWorldLoadBakedScene(&self->physics, &scene);
+    if (status) {
         return 0;
-    case PHYSICS_WORLD_STATUS_OUT_OF_MEMORY:
+    }
+    switch (status.error().Code().As<WorldError>()) {
+    case WorldError::OutOfMemory:
         PyErr_NoMemory();
         break;
-    case PHYSICS_WORLD_STATUS_LIMIT_REACHED:
+    case WorldError::LimitReached:
         PyErr_Format(PyExc_ValueError,
                      "Initial scene contains %zu bodies, exceeding max_bodies (%u).", count,
                      self->physics.max_jolt_bodies);
         break;
-    case PHYSICS_WORLD_STATUS_INVALID_ARGUMENT:
+    case WorldError::InvalidArgument:
         PyErr_SetString(PyExc_ValueError, "Invalid baked scene data");
         break;
     default:

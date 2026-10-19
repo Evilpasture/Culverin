@@ -54,25 +54,25 @@ JPH_Shape *PhysicsRagdollFindOrCreateShape(PhysicsWorld *world, int shape_type,
     return FindOrCreateShapeLocked(world, shape_type, shape_params);
 }
 
-PhysicsRagdollStatus PhysicsRagdollSettingsAddPart(JPH_RagdollSettings *settings,
+std::expected<void, Error> PhysicsRagdollSettingsAddPart(JPH_RagdollSettings *settings,
                                                            JPH_Shape *shape,
                                                            const PhysicsRagdollPartRequest *request,
                                                            int *out_joint_count) {
     if (!settings || !request || !out_joint_count) {
-        return PHYSICS_RAGDOLL_STATUS_INVALID_ARGUMENT;
+        return std::unexpected(RagdollError::InvalidArgument);
     }
     if (!shape) {
-        return PHYSICS_RAGDOLL_STATUS_INVALID_SHAPE;
+        return std::unexpected(RagdollError::InvalidShape);
     }
 
     const JPH_Skeleton *skeleton = JPH_RagdollSettings_GetSkeleton(settings);
     if (!skeleton) {
-        return PHYSICS_RAGDOLL_STATUS_INVALID_ARGUMENT;
+        return std::unexpected(RagdollError::InvalidArgument);
     }
     const int joint_count = JPH_Skeleton_GetJointCount(skeleton);
     *out_joint_count      = joint_count;
     if (request->joint_index < 0 || request->joint_index >= joint_count) {
-        return PHYSICS_RAGDOLL_STATUS_JOINT_OUT_OF_RANGE;
+        return std::unexpected(RagdollError::JointOutOfRange);
     }
 
     if (JPH_RagdollSettings_GetPartCount(settings) <= request->joint_index) {
@@ -105,7 +105,7 @@ PhysicsRagdollStatus PhysicsRagdollSettingsAddPart(JPH_RagdollSettings *settings
         JPH_RagdollSettings_SetPartToParent(settings, request->joint_index, &constraint);
     }
 
-    return PHYSICS_RAGDOLL_STATUS_OK;
+    return {};
 }
 
 int PhysicsRagdollGetJointCount(JPH_Ragdoll *ragdoll) {

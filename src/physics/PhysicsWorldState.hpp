@@ -43,12 +43,11 @@ struct GravityVector {
     float gz;
 };
 
-enum PhysicsWorldStatus : int {
-    PHYSICS_WORLD_STATUS_OK                = 0,
-    PHYSICS_WORLD_STATUS_OUT_OF_MEMORY     = -1,
-    PHYSICS_WORLD_STATUS_LIMIT_REACHED     = -2,
-    PHYSICS_WORLD_STATUS_BUFFER_EXPORTED   = -3,
-    PHYSICS_WORLD_STATUS_INVALID_ARGUMENT  = -4,
+enum class WorldError : std::uint32_t {
+    OutOfMemory     = 1,
+    LimitReached    = 2,
+    BufferExported  = 3,
+    InvalidArgument = 4,
 };
 
 struct MaterialData {

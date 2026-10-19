@@ -154,11 +154,11 @@ void execute_now(PhysicsWorld *world, JPH_BodyID body_id,
 
 } // namespace
 
-PhysicsBodyOperationStatus
+std::expected<void, Error>
 PhysicsWorldApplyBodyOperation(PhysicsWorld *world,
                                    const PhysicsBodyOperation *operation) {
     if (!world || !operation || operation->type > PhysicsBodyOperationType::SetCcd) {
-        return PHYSICS_BODY_OPERATION_STATUS_INVALID_ARGUMENT;
+        return std::unexpected(BodyOperationError::InvalidArgument);
     }
     const PhysicsBodyOperation &op = *operation;
 
@@ -169,23 +169,23 @@ PhysicsWorldApplyBodyOperation(PhysicsWorld *world,
 
         std::uint32_t slot = 0;
         if (!unpack_handle(world, op.handle, &slot)) {
-            return PHYSICS_BODY_OPERATION_STATUS_STALE_HANDLE;
+            return std::unexpected(BodyOperationError::StaleHandle);
         }
         const auto state = static_cast<SlotState>(
             world->bodies.slot_states[slot].load(std::memory_order::acquire));
         const SlotPredicate predicate = get_slot_predicate(std::to_underlying(state), immediate_mask(op.type));
         if (!predicate.is_executable()) {
-            return PHYSICS_BODY_OPERATION_STATUS_STALE_HANDLE;
+            return std::unexpected(BodyOperationError::StaleHandle);
         }
         if (CPH_UNLIKELY(!EnsureCommandCapacity(world))) {
-            return PHYSICS_BODY_OPERATION_STATUS_OUT_OF_MEMORY;
+            return std::unexpected(BodyOperationError::OutOfMemory);
         }
 
         // Impulse-class ops on live bodies run straight against Jolt below
         // instead of being deferred; everything else defers.
         execute_immediately = is_immediate_jolt_action(op.type) && predicate.is_immediate;
         if (!execute_immediately && !enqueue_operation(world, slot, op)) {
-            return PHYSICS_BODY_OPERATION_STATUS_INVALID_ARGUMENT;
+            return std::unexpected(BodyOperationError::InvalidArgument);
         }
         mirror_to_shadow(world, slot, op);
         if (execute_immediately) {
@@ -196,22 +196,22 @@ PhysicsWorldApplyBodyOperation(PhysicsWorld *world,
     if (execute_immediately) {
         execute_now(world, body_id, op);
     }
-    return PHYSICS_BODY_OPERATION_STATUS_OK;
+    return {};
 }
 
-PhysicsBodyOperationStatus PhysicsWorldQueueBodyDestroy(PhysicsWorld *world,
+std::expected<void, Error> PhysicsWorldQueueBodyDestroy(PhysicsWorld *world,
                                                             BodyHandle handle) {
     if (!world) {
-        return PHYSICS_BODY_OPERATION_STATUS_INVALID_ARGUMENT;
+        return std::unexpected(BodyOperationError::InvalidArgument);
     }
     const auto shadow = LockShadowNotStepping(world);
 
     std::uint32_t slot = 0;
     if (!unpack_handle(world, handle, &slot)) {
-        return PHYSICS_BODY_OPERATION_STATUS_STALE_HANDLE;
+        return std::unexpected(BodyOperationError::StaleHandle);
     }
     if (!EnsureCommandCapacity(world)) {
-        return PHYSICS_BODY_OPERATION_STATUS_OUT_OF_MEMORY;
+        return std::unexpected(BodyOperationError::OutOfMemory);
     }
     const auto state = static_cast<SlotState>(
         world->bodies.slot_states[slot].load(std::memory_order::acquire));
@@ -219,21 +219,21 @@ PhysicsBodyOperationStatus PhysicsWorldQueueBodyDestroy(PhysicsWorld *world,
         EnqueueCommand(world, slot, DestroyBody{});
         world->bodies.slot_states[slot].store(std::to_underlying(SlotState::PendingDestroy), std::memory_order::release);
     }
-    return PHYSICS_BODY_OPERATION_STATUS_OK;
+    return {};
 }
 
-PhysicsBodyOperationStatus PhysicsWorldQueueBodyDestroyBatch(PhysicsWorld *world,
+std::expected<void, Error> PhysicsWorldQueueBodyDestroyBatch(PhysicsWorld *world,
                                                                   const BodyHandle *handles,
                                                                   std::size_t handle_count) {
     if (!world || (handle_count != 0 && !handles)) {
-        return PHYSICS_BODY_OPERATION_STATUS_INVALID_ARGUMENT;
+        return std::unexpected(BodyOperationError::InvalidArgument);
     }
     if (handle_count == 0) {
-        return PHYSICS_BODY_OPERATION_STATUS_OK;
+        return {};
     }
     const auto shadow = LockShadowNotStepping(world);
     if (!EnsureCommandBulkCapacity(world, handle_count)) {
-        return PHYSICS_BODY_OPERATION_STATUS_OUT_OF_MEMORY;
+        return std::unexpected(BodyOperationError::OutOfMemory);
     }
     for (std::size_t i = 0; i < handle_count; ++i) {
         std::uint32_t slot = 0;
@@ -248,7 +248,7 @@ PhysicsBodyOperationStatus PhysicsWorldQueueBodyDestroyBatch(PhysicsWorld *world
                                                   std::memory_order::release);
         }
     }
-    return PHYSICS_BODY_OPERATION_STATUS_OK;
+    return {};
 }
 
 } // namespace CPH

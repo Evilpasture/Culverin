@@ -1,8 +1,7 @@
 # Phase 2 Plan: Direct Jolt C++ API + C++ Interfaces Between Subsystems
 
-Status: **A0 + naming dissolution landed** (A0 on top of `601b1a2`
-"convert all to C++", including the `CPH::Error` foundation header;
-the `CPH_` → `CPH::` dissolution on top of `07d6f5d`); B1 next.
+Status: **A0, naming dissolution, enum-class sweep, and B1 landed**
+(B1 on top of `73276cf`); A1 next.
 Prerequisite: the C++23 migration
 (`docs/CPP23_MIGRATION.md`) has landed. All acceptance oracles from that
 migration apply unchanged to every phase below: full test suite at
@@ -99,7 +98,7 @@ fork-delta audit, not to A0. *Deleted:* `JoltRttiShim.cpp` + target
 (vestigial; see RTTI note above). A0 also lands `src/core/Error.hpp` —
 the `CPH::Error`/`ErrorCode`/`ErrorCategory` foundation for B1
 (enum-typed categories, 0 = no error, `std::expected<T, CPH::Error>`
-as the consumer idiom) — adopted by nothing yet, and regularizes the
+as the consumer idiom), and regularizes the
 creation-request structs to all-fields-initialized. Identifiers A0
 introduces live in `CPH::` (e.g. `CPH::Stat`, `CPH::Prof*` in
 `core/Profiling.hpp`); the tree-wide `CPH_` dissolution is the next,
@@ -160,21 +159,22 @@ physics-internal signatures should land *after* the matching A phase
 so they can mention `JPH::` types directly
 (e.g. `expected<JPH::RefConst<JPH::Shape>, CPH::Error>`).
 
-**B1 — One error model.** Adopt the `CPH::Error` foundation
-(`src/core/Error.hpp`, landed in A0). The 7 status enums become
-7 error categories: tidy `CPH::` names (`CPH::WorldStatus`, …),
-the `OK = 0` enumerator deleted and the negative values renumbered
-positive (0 means "no error" in every category). Native functions
-return `std::expected<T, CPH::Error>` / `std::expected<void,
-CPH::Error>`; the creation API's dual "return enum +
-`out_native_status`" pattern disappears (one `CPH::Error` carries its
-category with it). The Python layer translates `CPH::Error` →
-exception in exactly one function per module, keying on
-`error.Code().Is<…>()` / `.As<…>()` and using `error.Message()` where
-today's messages are hand-written strings (Python-visible mapping
-stays bit-exact; per-enum `ErrorMessage(E)` ADL hooks provide the
-human text where the enumerator name is not the message). Foreign
-C result domains (JoltC results, errno-style values) register via
+**B1 — One error model. (Done.)** Adopt the `CPH::Error` foundation
+(`src/core/Error.hpp`, landed in A0). The 7 status enums are now
+7 error-only categories in `CPH::` (`WorldError`,
+`WorldCreationError`, `WorldRuntimeError`, `WorldSnapshotError`,
+`QueryError`, `RagdollError`, and `BodyOperationError`): the
+`OK = 0` enumerator is deleted and the negative values are renumbered
+positive (0 means "no error" in every category). Native fallible
+functions return `std::expected<T, CPH::Error>` /
+`std::expected<void, CPH::Error>`; the creation API's dual "return
+enum + `out_native_status`" pattern is gone because lower-level
+errors propagate with their original category intact. The Python
+layer's domain translators take `CPH::Error` and key on
+`error.Code().Is<…>()` / `.As<…>()`; their existing exception types
+and messages, including caller- and world-specific context, remain
+the Python-visible contract. Foreign C result domains (JoltC
+results, errno-style values) register via
 `CPH::RegisterErrorCategory` instead of growing a fake enum.
 
 **B2 — Native API signatures.** `std::span` for array inputs/outputs,

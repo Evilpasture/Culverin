@@ -266,9 +266,9 @@ void InitializeFreeSlots(PhysicsWorld *world, std::size_t start_idx) {
     }
 }
 
-PhysicsWorldStatus PhysicsWorldResize(PhysicsWorld *world, std::size_t new_capacity) {
+std::expected<void, Error> PhysicsWorldResize(PhysicsWorld *world, std::size_t new_capacity) {
     if (world->view_export_count.load(std::memory_order::relaxed) > 0) {
-        return PHYSICS_WORLD_STATUS_BUFFER_EXPORTED;
+        return std::unexpected(WorldError::BufferExported);
     }
 
     // Retire the previous epoch now, in the mutator thread, before
@@ -279,7 +279,7 @@ PhysicsWorldStatus PhysicsWorldResize(PhysicsWorld *world, std::size_t new_capac
         new_capacity = world->max_jolt_bodies;
     }
     if (new_capacity <= world->capacity) {
-        return PHYSICS_WORLD_STATUS_OK;
+        return {};
     }
 
     BodyBuffers next;
@@ -289,7 +289,7 @@ PhysicsWorldStatus PhysicsWorldResize(PhysicsWorld *world, std::size_t new_capac
     // of elements × 17 arrays is exactly the work legacy C's plain malloc
     // did not do, and it dominated resize cost).
     if (!next.allocate(new_capacity, true)) {
-        return PHYSICS_WORLD_STATUS_OUT_OF_MEMORY;
+        return std::unexpected(WorldError::OutOfMemory);
     }
 
     BodyBuffers &current            = world->bodies;
@@ -360,30 +360,30 @@ PhysicsWorldStatus PhysicsWorldResize(PhysicsWorld *world, std::size_t new_capac
     world->free_count.store(free_count, std::memory_order::release);
     world->capacity      = new_capacity;
     world->slot_capacity = new_capacity;
-    return PHYSICS_WORLD_STATUS_OK;
+    return {};
 }
 
 // --- Baked scene loading ---
 
-PhysicsWorldStatus PhysicsWorldLoadBakedScene(PhysicsWorld *world,
+std::expected<void, Error> PhysicsWorldLoadBakedScene(PhysicsWorld *world,
                                                   const BakedSceneData *scene) {
     if (world == nullptr || scene == nullptr) {
-        return PHYSICS_WORLD_STATUS_INVALID_ARGUMENT;
+        return std::unexpected(WorldError::InvalidArgument);
     }
     if (scene->count == 0) {
-        return PHYSICS_WORLD_STATUS_OK;
+        return {};
     }
     if (scene->positions == nullptr || scene->rotations == nullptr || scene->shapes == nullptr ||
         scene->motion_types == nullptr || scene->object_layers == nullptr ||
         scene->user_data == nullptr || world->body_interface == nullptr) {
-        return PHYSICS_WORLD_STATUS_INVALID_ARGUMENT;
+        return std::unexpected(WorldError::InvalidArgument);
     }
     if (scene->count > world->capacity || scene->count > world->slot_capacity ||
         scene->count > world->max_jolt_bodies) {
-        return PHYSICS_WORLD_STATUS_LIMIT_REACHED;
+        return std::unexpected(WorldError::LimitReached);
     }
 
-    PhysicsWorldStatus status = PHYSICS_WORLD_STATUS_OK;
+    Error error;
     {
         const std::scoped_lock shadow(world->shadow_lock);
         const std::scoped_lock trampoline(world->jph_trampoline_lock);
@@ -393,7 +393,7 @@ PhysicsWorldStatus PhysicsWorldLoadBakedScene(PhysicsWorld *world,
             JPH_Shape *const shape =
                 FindOrCreateShapeLocked(world, static_cast<int>(shape_data[0]), params);
             if (CPH_UNLIKELY(shape == nullptr)) {
-                status = PHYSICS_WORLD_STATUS_OUT_OF_MEMORY;
+                error = WorldError::OutOfMemory;
                 break;
             }
 
@@ -413,7 +413,7 @@ PhysicsWorldStatus PhysicsWorldLoadBakedScene(PhysicsWorld *world,
                 shape, &j_pos, &j_rot, static_cast<JPH_MotionType>(motion_type),
                 static_cast<JPH_ObjectLayer>(scene->object_layers[i])));
             if (CPH_UNLIKELY(!creation)) {
-                status = PHYSICS_WORLD_STATUS_OUT_OF_MEMORY;
+                error = WorldError::OutOfMemory;
                 break;
             }
 
@@ -427,7 +427,7 @@ PhysicsWorldStatus PhysicsWorldLoadBakedScene(PhysicsWorld *world,
             const JPH_BodyID body_id = JPH_BodyInterface_CreateAndAddBody(
                 world->body_interface, creation.get(), JPH_Activation_Activate);
             if (CPH_UNLIKELY(body_id == kJphInvalidBodyId)) {
-                status = PHYSICS_WORLD_STATUS_OUT_OF_MEMORY;
+                error = WorldError::OutOfMemory;
                 break;
             }
 
@@ -443,24 +443,27 @@ PhysicsWorldStatus PhysicsWorldLoadBakedScene(PhysicsWorld *world,
         }
     }
 
-    if (status == PHYSICS_WORLD_STATUS_OK) {
+    if (!error) {
         // Publish the initial body count only after every body was created.
         world->count.store(scene->count, std::memory_order::relaxed);
     }
-    return status;
+    if (error) {
+        return std::unexpected(error);
+    }
+    return {};
 }
 
 // --- Slot reservation for deferred creation ---
 
 namespace {
 
-PhysicsWorldStatus reserve_body_slot(PhysicsWorld *world, std::uint32_t slot_state,
+std::expected<void, Error> reserve_body_slot(PhysicsWorld *world, std::uint32_t slot_state,
                                      BodyHandle *handle_out) {
     const std::size_t current_count = world->count.load(std::memory_order::acquire);
     std::size_t available           = world->free_count.load(std::memory_order::acquire);
 
     if (CPH_UNLIKELY(current_count >= world->max_jolt_bodies)) {
-        return PHYSICS_WORLD_STATUS_LIMIT_REACHED;
+        return std::unexpected(WorldError::LimitReached);
     }
     if (CPH_UNLIKELY(available == 0 || current_count + 1 > world->capacity)) {
         std::size_t next_capacity =
@@ -468,18 +471,18 @@ PhysicsWorldStatus reserve_body_slot(PhysicsWorld *world, std::uint32_t slot_sta
         if (next_capacity > world->max_jolt_bodies) {
             next_capacity = world->max_jolt_bodies;
         }
-        const PhysicsWorldStatus resize_status = PhysicsWorldResize(world, next_capacity);
-        if (resize_status != PHYSICS_WORLD_STATUS_OK) {
+        const std::expected<void, Error> resize_status = PhysicsWorldResize(world, next_capacity);
+        if (!resize_status) {
             return resize_status;
         }
         available = world->free_count.load(std::memory_order::acquire);
         if (CPH_UNLIKELY(available == 0)) {
-            return PHYSICS_WORLD_STATUS_LIMIT_REACHED;
+            return std::unexpected(WorldError::LimitReached);
         }
     }
 
     if (CPH_UNLIKELY(!EnsureCommandCapacity(world))) {
-        return PHYSICS_WORLD_STATUS_OUT_OF_MEMORY;
+        return std::unexpected(WorldError::OutOfMemory);
     }
 
     const std::uint32_t slot = world->bodies.free_slots[--available];
@@ -507,46 +510,46 @@ PhysicsWorldStatus reserve_body_slot(PhysicsWorld *world, std::uint32_t slot_sta
                                           std::memory_order::release);
 
     *handle_out = handle;
-    return PHYSICS_WORLD_STATUS_OK;
+    return {};
 }
 
 } // namespace
 
-PhysicsWorldStatus PhysicsWorldCommitCreate(PhysicsWorld *world,
+std::expected<void, Error> PhysicsWorldCommitCreate(PhysicsWorld *world,
                                                  JPH_BodyCreationSettings *settings,
                                                  std::uint32_t slot_state, BodyHandle *out_handle) {
     if (!world || !settings || !out_handle) {
-        return PHYSICS_WORLD_STATUS_INVALID_ARGUMENT;
+        return std::unexpected(WorldError::InvalidArgument);
     }
     *out_handle = 0;
 
     BodyHandle handle = 0;
-    const PhysicsWorldStatus status = reserve_body_slot(world, slot_state, &handle);
-    if (status != PHYSICS_WORLD_STATUS_OK) {
+    const std::expected<void, Error> status = reserve_body_slot(world, slot_state, &handle);
+    if (!status) {
         return status;
     }
     JPH_BodyCreationSettings_SetUserData(settings, handle);
     *out_handle = handle;
-    return PHYSICS_WORLD_STATUS_OK;
+    return {};
 }
 
-PhysicsWorldStatus PhysicsWorldCommitCreateSoft(PhysicsWorld *world,
+std::expected<void, Error> PhysicsWorldCommitCreateSoft(PhysicsWorld *world,
                                                      JPH_SoftBodyCreationSettings *settings,
                                                      std::uint32_t slot_state,
                                                      BodyHandle *out_handle) {
     if (!world || !settings || !out_handle) {
-        return PHYSICS_WORLD_STATUS_INVALID_ARGUMENT;
+        return std::unexpected(WorldError::InvalidArgument);
     }
     *out_handle = 0;
 
     BodyHandle handle = 0;
-    const PhysicsWorldStatus status = reserve_body_slot(world, slot_state, &handle);
-    if (status != PHYSICS_WORLD_STATUS_OK) {
+    const std::expected<void, Error> status = reserve_body_slot(world, slot_state, &handle);
+    if (!status) {
         return status;
     }
     JPH_SoftBodyCreationSettings_SetUserData(settings, handle);
     *out_handle = handle;
-    return PHYSICS_WORLD_STATUS_OK;
+    return {};
 }
 
 // --- Jolt bring-up ---
