@@ -13,16 +13,16 @@ namespace {
 using namespace CPH::cmd;
 
 bool is_immediate_jolt_action(PhysicsBodyOperationType type) {
-    return type == PHYSICS_BODY_OP_APPLY_IMPULSE || type == PHYSICS_BODY_OP_APPLY_IMPULSE_AT ||
-           type == PHYSICS_BODY_OP_APPLY_ANGULAR_IMPULSE || type == PHYSICS_BODY_OP_APPLY_FORCE ||
-           type == PHYSICS_BODY_OP_APPLY_TORQUE;
+    return type == PhysicsBodyOperationType::ApplyImpulse || type == PhysicsBodyOperationType::ApplyImpulseAt ||
+           type == PhysicsBodyOperationType::ApplyAngularImpulse || type == PhysicsBodyOperationType::ApplyForce ||
+           type == PhysicsBodyOperationType::ApplyTorque;
 }
 
 std::uint32_t immediate_mask(PhysicsBodyOperationType type) {
     switch (type) {
-    case PHYSICS_BODY_OP_APPLY_ANGULAR_IMPULSE:
-    case PHYSICS_BODY_OP_SET_ANGULAR_VELOCITY:
-    case PHYSICS_BODY_OP_SET_MOTION_TYPE:
+    case PhysicsBodyOperationType::ApplyAngularImpulse:
+    case PhysicsBodyOperationType::SetAngularVelocity:
+    case PhysicsBodyOperationType::SetMotionType:
         return kMaskImmStrict;
     default:
         return kMaskImmStandard;
@@ -33,49 +33,49 @@ std::uint32_t immediate_mask(PhysicsBodyOperationType type) {
 bool enqueue_operation(PhysicsWorld *world, std::uint32_t slot,
                        const PhysicsBodyOperation &op) {
     switch (op.type) {
-    case PHYSICS_BODY_OP_APPLY_IMPULSE:
+    case PhysicsBodyOperationType::ApplyImpulse:
         EnqueueCommand(world, slot, ApplyImpulse{op.vector});
         return true;
-    case PHYSICS_BODY_OP_APPLY_IMPULSE_AT:
+    case PhysicsBodyOperationType::ApplyImpulseAt:
         EnqueueCommand(world, slot, ApplyImpulseAt{op.vector, op.position});
         return true;
-    case PHYSICS_BODY_OP_APPLY_ANGULAR_IMPULSE:
+    case PhysicsBodyOperationType::ApplyAngularImpulse:
         EnqueueCommand(world, slot, ApplyAngularImpulse{op.vector});
         return true;
-    case PHYSICS_BODY_OP_APPLY_FORCE:
+    case PhysicsBodyOperationType::ApplyForce:
         EnqueueCommand(world, slot, ApplyForce{op.vector});
         return true;
-    case PHYSICS_BODY_OP_APPLY_TORQUE:
+    case PhysicsBodyOperationType::ApplyTorque:
         EnqueueCommand(world, slot, ApplyTorque{op.vector});
         return true;
-    case PHYSICS_BODY_OP_SET_POSITION:
+    case PhysicsBodyOperationType::SetPosition:
         EnqueueCommand(world, slot, SetPosition{op.position});
         return true;
-    case PHYSICS_BODY_OP_SET_ROTATION:
+    case PhysicsBodyOperationType::SetRotation:
         EnqueueCommand(world, slot, SetRotation{op.rotation});
         return true;
-    case PHYSICS_BODY_OP_SET_LINEAR_VELOCITY:
+    case PhysicsBodyOperationType::SetLinearVelocity:
         EnqueueCommand(world, slot, SetLinearVelocity{op.vector});
         return true;
-    case PHYSICS_BODY_OP_SET_ANGULAR_VELOCITY:
+    case PhysicsBodyOperationType::SetAngularVelocity:
         EnqueueCommand(world, slot, SetAngularVelocity{op.vector});
         return true;
-    case PHYSICS_BODY_OP_SET_MOTION_TYPE:
+    case PhysicsBodyOperationType::SetMotionType:
         EnqueueCommand(world, slot, SetMotionType{op.value});
         return true;
-    case PHYSICS_BODY_OP_ACTIVATE:
+    case PhysicsBodyOperationType::Activate:
         EnqueueCommand(world, slot, Activate{});
         return true;
-    case PHYSICS_BODY_OP_DEACTIVATE:
+    case PhysicsBodyOperationType::Deactivate:
         EnqueueCommand(world, slot, Deactivate{});
         return true;
-    case PHYSICS_BODY_OP_SET_USER_DATA:
+    case PhysicsBodyOperationType::SetUserData:
         // Shadow-only; nothing to flush (user data never reaches Jolt).
         return true;
-    case PHYSICS_BODY_OP_SET_TRANSFORM:
+    case PhysicsBodyOperationType::SetTransform:
         EnqueueCommand(world, slot, SetTransform{op.position, op.rotation});
         return true;
-    case PHYSICS_BODY_OP_SET_CCD:
+    case PhysicsBodyOperationType::SetCcd:
         EnqueueCommand(world, slot, SetCcd{op.value});
         return true;
     default:
@@ -87,29 +87,29 @@ void mirror_to_shadow(PhysicsWorld *world, std::uint32_t slot,
                       const PhysicsBodyOperation &op) {
     const std::uint32_t dense = world->bodies.slot_to_dense[slot];
     switch (op.type) {
-    case PHYSICS_BODY_OP_SET_POSITION: {
+    case PhysicsBodyOperationType::SetPosition: {
         const PosStride position = {op.position.x, op.position.y, op.position.z, 0.0};
         world->bodies.positions[dense]      = position;
         world->bodies.prev_positions[dense] = position;
         break;
     }
-    case PHYSICS_BODY_OP_SET_ROTATION: {
+    case PhysicsBodyOperationType::SetRotation: {
         const AuxStride rotation = {op.rotation.x, op.rotation.y, op.rotation.z,
                                         op.rotation.w};
         world->bodies.rotations[dense]      = rotation;
         world->bodies.prev_rotations[dense] = rotation;
         break;
     }
-    case PHYSICS_BODY_OP_SET_LINEAR_VELOCITY:
+    case PhysicsBodyOperationType::SetLinearVelocity:
         world->bodies.linear_velocities[dense] = {op.vector.x, op.vector.y, op.vector.z, 0.0F};
         break;
-    case PHYSICS_BODY_OP_SET_ANGULAR_VELOCITY:
+    case PhysicsBodyOperationType::SetAngularVelocity:
         world->bodies.angular_velocities[dense] = {op.vector.x, op.vector.y, op.vector.z, 0.0F};
         break;
-    case PHYSICS_BODY_OP_SET_USER_DATA:
+    case PhysicsBodyOperationType::SetUserData:
         world->bodies.user_data[dense] = op.user_data;
         break;
-    case PHYSICS_BODY_OP_SET_TRANSFORM: {
+    case PhysicsBodyOperationType::SetTransform: {
         const PosStride position = {op.position.x, op.position.y, op.position.z, 0.0};
         const AuxStride rotation = {op.rotation.x, op.rotation.y, op.rotation.z,
                                         op.rotation.w};
@@ -129,21 +129,21 @@ void execute_now(PhysicsWorld *world, JPH_BodyID body_id,
     JPH_BodyInterface *bi = world->body_interface;
     JPH_Vec3 vector       = op.vector;
     switch (op.type) {
-    case PHYSICS_BODY_OP_APPLY_IMPULSE:
+    case PhysicsBodyOperationType::ApplyImpulse:
         JPH_BodyInterface_AddImpulse(bi, body_id, &vector);
         break;
-    case PHYSICS_BODY_OP_APPLY_IMPULSE_AT: {
+    case PhysicsBodyOperationType::ApplyImpulseAt: {
         JPH_RVec3 position = op.position;
         JPH_BodyInterface_AddImpulse2(bi, body_id, &vector, &position);
         break;
     }
-    case PHYSICS_BODY_OP_APPLY_ANGULAR_IMPULSE:
+    case PhysicsBodyOperationType::ApplyAngularImpulse:
         JPH_BodyInterface_AddAngularImpulse(bi, body_id, &vector);
         break;
-    case PHYSICS_BODY_OP_APPLY_FORCE:
+    case PhysicsBodyOperationType::ApplyForce:
         JPH_BodyInterface_AddForce(bi, body_id, &vector);
         break;
-    case PHYSICS_BODY_OP_APPLY_TORQUE:
+    case PhysicsBodyOperationType::ApplyTorque:
         JPH_BodyInterface_AddTorque(bi, body_id, &vector);
         break;
     default:
@@ -157,7 +157,7 @@ void execute_now(PhysicsWorld *world, JPH_BodyID body_id,
 PhysicsBodyOperationStatus
 PhysicsWorldApplyBodyOperation(PhysicsWorld *world,
                                    const PhysicsBodyOperation *operation) {
-    if (!world || !operation || operation->type > PHYSICS_BODY_OP_SET_CCD) {
+    if (!world || !operation || operation->type > PhysicsBodyOperationType::SetCcd) {
         return PHYSICS_BODY_OPERATION_STATUS_INVALID_ARGUMENT;
     }
     const PhysicsBodyOperation &op = *operation;
@@ -173,7 +173,7 @@ PhysicsWorldApplyBodyOperation(PhysicsWorld *world,
         }
         const auto state = static_cast<SlotState>(
             world->bodies.slot_states[slot].load(std::memory_order::acquire));
-        const SlotPredicate predicate = get_slot_predicate(state, immediate_mask(op.type));
+        const SlotPredicate predicate = get_slot_predicate(std::to_underlying(state), immediate_mask(op.type));
         if (!predicate.is_executable()) {
             return PHYSICS_BODY_OPERATION_STATUS_STALE_HANDLE;
         }
@@ -215,9 +215,9 @@ PhysicsBodyOperationStatus PhysicsWorldQueueBodyDestroy(PhysicsWorld *world,
     }
     const auto state = static_cast<SlotState>(
         world->bodies.slot_states[slot].load(std::memory_order::acquire));
-    if (get_slot_predicate(state, kMaskDestructible).is_executable()) {
+    if (get_slot_predicate(std::to_underlying(state), kMaskDestructible).is_executable()) {
         EnqueueCommand(world, slot, DestroyBody{});
-        world->bodies.slot_states[slot].store(SLOT_PENDING_DESTROY, std::memory_order::release);
+        world->bodies.slot_states[slot].store(std::to_underlying(SlotState::PendingDestroy), std::memory_order::release);
     }
     return PHYSICS_BODY_OPERATION_STATUS_OK;
 }
@@ -242,9 +242,9 @@ PhysicsBodyOperationStatus PhysicsWorldQueueBodyDestroyBatch(PhysicsWorld *world
         }
         const auto state = static_cast<SlotState>(
             world->bodies.slot_states[slot].load(std::memory_order::acquire));
-        if (get_slot_predicate(state, kMaskDestructible).is_executable()) {
+        if (get_slot_predicate(std::to_underlying(state), kMaskDestructible).is_executable()) {
             EnqueueCommand(world, slot, DestroyBody{});
-            world->bodies.slot_states[slot].store(SLOT_PENDING_DESTROY,
+            world->bodies.slot_states[slot].store(std::to_underlying(SlotState::PendingDestroy),
                                                   std::memory_order::release);
         }
     }

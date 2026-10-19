@@ -12,11 +12,9 @@
 
 namespace CPH {
 
-enum {
-    BAKED_POSITION_STRIDE = 4,
-    BAKED_ROTATION_STRIDE = 4,
-    BAKED_SHAPE_STRIDE    = 5,
-};
+inline constexpr std::size_t kBakedPositionStride = 4;
+inline constexpr std::size_t kBakedRotationStride = 4;
+inline constexpr std::size_t kBakedShapeStride    = 5;
 
 struct BakedSceneData {
     std::size_t count;

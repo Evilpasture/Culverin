@@ -103,7 +103,7 @@ struct BodyBuffers {
 struct ConstraintSlot {
     JPH_Constraint *constraint = nullptr;
     std::uint32_t generation   = 1;
-    std::atomic<std::uint8_t> state{SLOT_EMPTY};
+    std::atomic<std::uint8_t> state{std::to_underlying(SlotState::Empty)};
     int type = 0;
 };
 

@@ -64,7 +64,7 @@ char_on_contact_validate(void *userData, [[maybe_unused]] const JPH_CharacterVir
     // Check states to ensure both slots are in use
     uint8_t state1 = (world->physics.bodies.slot_states[slot1]).load(std::memory_order::relaxed);
     uint8_t state2 = (world->physics.bodies.slot_states[slot2]).load(std::memory_order::relaxed);
-    if (state1 == SLOT_EMPTY || state2 == SLOT_EMPTY) {
+    if (state1 == std::to_underlying(SlotState::Empty) || state2 == std::to_underlying(SlotState::Empty)) {
         return true;
     }
 
@@ -214,7 +214,7 @@ static void JPH_API_CALL char_on_character_contact_added(
     }
 
     report_char_vs_char(self, contact->characterB, &contact->contactNormal, &contact->position,
-                        EVENT_ADDED);
+                        ContactEventType::Added);
 }
 
 static void apply_character_impulse(CharacterObject *self, JPH_BodyID bodyID2,
@@ -270,7 +270,7 @@ static void JPH_API_CALL char_on_contact_added(
 
     // Record Event
     record_character_contact(self, contact->bodyB, &contact->position, &contact->contactNormal,
-                             EVENT_ADDED);
+                             ContactEventType::Added);
 
     // Apply Impulse
     apply_character_impulse(self, contact->bodyB, &contact->contactNormal);
@@ -290,7 +290,7 @@ static void JPH_API_CALL char_on_contact_persisted(
 
     // Record Event
     record_character_contact(self, contact->bodyB, &contact->position, &contact->contactNormal,
-                             EVENT_PERSISTED);
+                             ContactEventType::Persisted);
 
     // Apply Impulse
     apply_character_impulse(self, contact->bodyB, &contact->contactNormal);
@@ -330,7 +330,7 @@ static void JPH_API_CALL char_on_contact_removed(void *userData,
         std::memset(&world->physics.contact_buffer[idx], 0, sizeof(ContactEvent));
         ContactEventSlim *slim = &world->physics.contact_buffer[idx].slim;
 
-        slim->flags = EVENT_REMOVED;
+        slim->flags = std::to_underlying(ContactEventType::Removed);
 
         // TSan Fix: Canonicalize using raw registers
         if (h1_raw < h2_raw) {
@@ -369,7 +369,7 @@ static void JPH_API_CALL char_on_character_contact_persisted(
     }
 
     report_char_vs_char(self, contact->characterB, &contact->contactNormal, &contact->position,
-                        EVENT_PERSISTED);
+                        ContactEventType::Persisted);
 }
 
 static void JPH_API_CALL char_on_character_contact_removed(
@@ -402,7 +402,7 @@ static void JPH_API_CALL char_on_character_contact_removed(
         std::memset(&world->physics.contact_buffer[idx], 0, sizeof(ContactEvent));
         ContactEventSlim *slim = &world->physics.contact_buffer[idx].slim;
 
-        slim->flags = EVENT_REMOVED;
+        slim->flags = std::to_underlying(ContactEventType::Removed);
 
         // TSan Fix: Canonicalize using standard integer registers
         if (h1_raw < h2_raw) {
@@ -627,7 +627,7 @@ const JPH_CharacterContactListener_Procs kCharListenerProcs = {
 
     (self->world->physics.jph_trampoline_lock).lock();
     Py_BEGIN_ALLOW_THREADS JPH_CharacterVirtual_ExtendedUpdate(
-        self->character, dt, &update_settings, OBJECT_LAYER_DYNAMIC, self->world->physics.system,
+        self->character, dt, &update_settings, std::to_underlying(ObjectLayer::Dynamic), self->world->physics.system,
         self->body_filter, self->shape_filter);
     Py_END_ALLOW_THREADS (self->world->physics.jph_trampoline_lock).unlock();
 
@@ -985,7 +985,7 @@ static inline void register_char(PhysicsWorldObject *self, CharacterObject *obj,
         self->physics.bodies.soft_shadows[dense_idx].vertices.reset();
     }
 
-    (self->physics.bodies.slot_states[slot]).store(SLOT_CHARACTER, std::memory_order::release);
+    (self->physics.bodies.slot_states[slot]).store(std::to_underlying(SlotState::Character), std::memory_order::release);
     (self->physics.count).fetch_add(1, std::memory_order::release);
 
     size_t final_count  = (self->physics.count).load(std::memory_order::relaxed);
@@ -1054,7 +1054,7 @@ static inline int setup_char_parsers(CharacterObject *obj) {
     uint32_t char_slot = self->physics.bodies.free_slots[available - 1];
     (self->physics.free_count).store(available - 1, std::memory_order::release);
 
-    (self->physics.bodies.slot_states[char_slot]).store(SLOT_PENDING_CREATE, std::memory_order::release);
+    (self->physics.bodies.slot_states[char_slot]).store(std::to_underlying(SlotState::PendingCreate), std::memory_order::release);
 
     (self->physics.shadow_lock).unlock();
 
@@ -1105,7 +1105,7 @@ fail_py:
 fail_jolt:
     (self->physics.shadow_lock).lock();
 
-    (self->physics.bodies.slot_states[char_slot]).store(SLOT_EMPTY, std::memory_order::relaxed);
+    (self->physics.bodies.slot_states[char_slot]).store(std::to_underlying(SlotState::Empty), std::memory_order::relaxed);
 
     size_t f_idx = (self->physics.free_count).fetch_add(1, std::memory_order::relaxed);
     self->physics.bodies.free_slots[f_idx] = char_slot;

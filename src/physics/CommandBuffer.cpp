@@ -89,7 +89,7 @@ void WorldRemoveBodySlot(PhysicsWorld *world, std::uint32_t slot) {
     // push onto the free stack, then publish the new count (release: the
     // data moves above must be visible before a reader sees the count).
     bodies.generations[slot].fetch_add(1, std::memory_order::relaxed);
-    bodies.slot_states[slot].store(SLOT_EMPTY, std::memory_order::relaxed);
+    bodies.slot_states[slot].store(std::to_underlying(SlotState::Empty), std::memory_order::relaxed);
     const std::size_t free_index = world->free_count.fetch_add(1, std::memory_order::relaxed);
     bodies.free_slots[free_index] = slot;
     world->count.fetch_sub(1, std::memory_order::release);
@@ -131,7 +131,7 @@ struct FlushContext {
         }
         world->bodies.body_ids[world->bodies.slot_to_dense[slot]] = new_bid;
         publish_handle(slot, new_bid);
-        world->bodies.slot_states[slot].store(SLOT_ALIVE, std::memory_order::release);
+        world->bodies.slot_states[slot].store(std::to_underlying(SlotState::Alive), std::memory_order::release);
     }
 
     void operator()(CreateSoftBody &cmd) const {
@@ -149,7 +149,7 @@ struct FlushContext {
                 // getters report 0 vertices instead of reading stale data.
             }
             publish_handle(slot, new_bid);
-            world->bodies.slot_states[slot].store(SLOT_SOFT_BODY, std::memory_order::release);
+            world->bodies.slot_states[slot].store(std::to_underlying(SlotState::SoftBody), std::memory_order::release);
         }
         cmd.settings.reset();
     }
@@ -236,7 +236,7 @@ struct FlushContext {
         ConstraintSlot &c_entry    = world->constraints[c_slot];
 
         // destroy_constraint() may have run while this was queued.
-        if (c_entry.state.load(std::memory_order::acquire) != SLOT_PENDING_CREATE) {
+        if (c_entry.state.load(std::memory_order::acquire) != std::to_underlying(SlotState::PendingCreate)) {
             return;
         }
 
@@ -270,9 +270,9 @@ struct FlushContext {
         if (constraint) {
             JPH_PhysicsSystem_AddConstraint(world->system, constraint);
             c_entry.constraint = constraint;
-            c_entry.state.store(SLOT_ALIVE, std::memory_order::release);
+            c_entry.state.store(std::to_underlying(SlotState::Alive), std::memory_order::release);
         } else {
-            c_entry.state.store(SLOT_EMPTY, std::memory_order::relaxed);
+            c_entry.state.store(std::to_underlying(SlotState::Empty), std::memory_order::relaxed);
             world->free_constraint_slots[world->free_constraint_count++] = c_slot;
         }
     }
@@ -305,7 +305,7 @@ void FlushCommandsInternal(PhysicsWorld *world, std::span<PhysicsCommand> queue)
 
         // Stale commands (body destroyed while queued, create superseded)
         // are dropped; resetting the command still destroys payloads.
-        if (state < 32 && ((1U << state) & kValidBidMask) &&
+        if (std::to_underlying(state) < 32 && ((slot_state_bit(state) & kValidBidMask) != 0) &&
             (is_create || bid != kJphInvalidBodyId)) {
             std::visit(FlushContext{world, world->body_interface, slot, bid}, command.payload);
         }

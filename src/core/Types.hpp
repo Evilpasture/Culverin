@@ -8,6 +8,7 @@
 #include <joltc.h>
 
 #include <cstdint>
+#include <utility>
 
 // --- Jolt precision compatibility ---
 #ifndef JPH_Real
@@ -59,43 +60,43 @@ inline constexpr std::uint64_t kHandleIndexMask = 0xFFFFFFFF;
 
 // --- Public enumerations (values are part of the Python API) ---
 
-enum ConstraintType : std::uint8_t {
-    CONSTRAINT_FIXED    = 0,
-    CONSTRAINT_POINT    = 1,
-    CONSTRAINT_HINGE    = 2,
-    CONSTRAINT_SLIDER   = 3,
-    CONSTRAINT_DISTANCE = 4,
-    CONSTRAINT_CONE     = 5
+enum class ConstraintType : std::uint8_t {
+    Fixed    = 0,
+    Point    = 1,
+    Hinge    = 2,
+    Slider   = 3,
+    Distance = 4,
+    Cone     = 5
 };
 
-enum ContactEventType : std::uint8_t {
-    EVENT_ADDED     = 0,
-    EVENT_PERSISTED = 1,
-    EVENT_REMOVED   = 2
+enum class ContactEventType : std::uint8_t {
+    Added     = 0,
+    Persisted = 1,
+    Removed   = 2
 };
 
-enum MotionType : std::uint8_t {
-    MOTION_STATIC    = JPH_MotionType_Static,
-    MOTION_KINEMATIC = JPH_MotionType_Kinematic,
-    MOTION_DYNAMIC   = JPH_MotionType_Dynamic,
+enum class MotionType : std::uint8_t {
+    Static    = JPH_MotionType_Static,
+    Kinematic = JPH_MotionType_Kinematic,
+    Dynamic   = JPH_MotionType_Dynamic,
 };
 
-enum ShapeType : std::uint8_t {
-    SHAPE_BOX         = 0,
-    SHAPE_SPHERE      = 1,
-    SHAPE_CAPSULE     = 2,
-    SHAPE_CYLINDER    = 3,
-    SHAPE_PLANE       = 4,
-    SHAPE_MESH        = 5,
-    SHAPE_HEIGHTFIELD = 6,
-    SHAPE_CONVEX_HULL = 7
+enum class ShapeType : std::uint8_t {
+    Box         = 0,
+    Sphere      = 1,
+    Capsule     = 2,
+    Cylinder    = 3,
+    Plane       = 4,
+    Mesh        = 5,
+    Heightfield = 6,
+    ConvexHull  = 7
 };
 
-enum ObjectLayer : std::uint32_t {
-    OBJECT_LAYER_STATIC = 0,
-    OBJECT_LAYER_DYNAMIC,
-    OBJECT_LAYER_VEHICLE, // For raycasts/sensors that shouldn't hit the vehicle itself
-    OBJECT_LAYER_COUNT
+enum class ObjectLayer : std::uint32_t {
+    Static = 0,
+    Dynamic,
+    Vehicle, // For raycasts/sensors that shouldn't hit the vehicle itself
+    Count
 };
 
 struct BodyCreationProps {

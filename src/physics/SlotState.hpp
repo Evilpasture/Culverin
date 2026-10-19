@@ -6,32 +6,40 @@
 // created), or must be rejected.
 
 #include <cstdint>
+#include <utility>
 
 
 namespace CPH {
 
-enum SlotState : std::uint8_t {
-    SLOT_EMPTY = 0,
-    SLOT_PENDING_CREATE,
-    SLOT_ALIVE,
-    SLOT_PENDING_DESTROY,
-    SLOT_CHARACTER,
-    SLOT_SOFT_BODY,
-    SLOT_COUNT,
+enum class SlotState : std::uint8_t {
+    Empty = 0,
+    PendingCreate,
+    Alive,
+    PendingDestroy,
+    Character,
+    SoftBody,
+    Count,
 };
+
+[[nodiscard]] constexpr std::uint32_t slot_state_bit(SlotState state) noexcept {
+    return 1U << std::to_underlying(state);
+}
 
 // Bit masks over SlotState values, one per admission policy.
 // States in which a deferred command may resolve a body ID (flush guard).
 inline constexpr std::uint32_t kValidBidMask =
-    (1U << SLOT_ALIVE) | (1U << SLOT_PENDING_CREATE) | (1U << SLOT_PENDING_DESTROY) |
-    (1U << SLOT_CHARACTER) | (1U << SLOT_SOFT_BODY);
+    slot_state_bit(SlotState::Alive) | slot_state_bit(SlotState::PendingCreate) |
+    slot_state_bit(SlotState::PendingDestroy) | slot_state_bit(SlotState::Character) |
+    slot_state_bit(SlotState::SoftBody);
 inline constexpr std::uint32_t kMaskImmStandard =
-    (1U << SLOT_ALIVE) | (1U << SLOT_CHARACTER) | (1U << SLOT_SOFT_BODY);
-inline constexpr std::uint32_t kMaskImmStrict = (1U << SLOT_ALIVE) | (1U << SLOT_SOFT_BODY);
-inline constexpr std::uint32_t kMaskDeferred  = (1U << SLOT_PENDING_CREATE);
+    slot_state_bit(SlotState::Alive) | slot_state_bit(SlotState::Character) |
+    slot_state_bit(SlotState::SoftBody);
+inline constexpr std::uint32_t kMaskImmStrict =
+    slot_state_bit(SlotState::Alive) | slot_state_bit(SlotState::SoftBody);
+inline constexpr std::uint32_t kMaskDeferred = slot_state_bit(SlotState::PendingCreate);
 inline constexpr std::uint32_t kMaskDestructible =
-    (1U << SLOT_ALIVE) | (1U << SLOT_PENDING_CREATE) | (1U << SLOT_CHARACTER) |
-    (1U << SLOT_SOFT_BODY);
+    slot_state_bit(SlotState::Alive) | slot_state_bit(SlotState::PendingCreate) |
+    slot_state_bit(SlotState::Character) | slot_state_bit(SlotState::SoftBody);
 
 struct SlotPredicate {
     bool is_immediate; // Body exists in Jolt: act now.

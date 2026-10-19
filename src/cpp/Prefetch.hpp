@@ -8,7 +8,7 @@
 #endif
 
 namespace CPH {
-enum class CacheLevel : Unsigned8 { L1 = 3, L2 = 2, L3 = 1, stream = 0 };
+enum class CacheLevel : Unsigned8 { L1 = 3, L2 = 2, L3 = 1, Stream = 0 };
 enum class AccessType : Unsigned8 { Read = 0, Write = 1 };
 
 template <AccessType Access = AccessType::Read, CacheLevel Level = CacheLevel::L1>

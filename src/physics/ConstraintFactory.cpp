@@ -202,17 +202,17 @@ JPH_Constraint *create_distance(const ConstraintParams &p, JPH_Body *b1, JPH_Bod
 JPH_Constraint *CreateConstraint(ConstraintType type, const ConstraintParams &params,
                                      JPH_Body *body1, JPH_Body *body2) {
     switch (type) {
-    case CONSTRAINT_FIXED:
+    case ConstraintType::Fixed:
         return create_fixed(params, body1, body2);
-    case CONSTRAINT_POINT:
+    case ConstraintType::Point:
         return create_point(params, body1, body2);
-    case CONSTRAINT_HINGE:
+    case ConstraintType::Hinge:
         return create_hinge(params, body1, body2);
-    case CONSTRAINT_SLIDER:
+    case ConstraintType::Slider:
         return create_slider(params, body1, body2);
-    case CONSTRAINT_CONE:
+    case ConstraintType::Cone:
         return create_cone(params, body1, body2);
-    case CONSTRAINT_DISTANCE:
+    case ConstraintType::Distance:
         return create_distance(params, body1, body2);
     default:
         return nullptr;

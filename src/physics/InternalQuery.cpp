@@ -12,6 +12,8 @@
 namespace CPH {
 
 JPH_Shape *FindOrCreateShapeLocked(PhysicsWorld *world, int type, const float *params) {
+    const ShapeType shape_type = static_cast<ShapeType>(type);
+
     // 1. KEY NORMALIZATION & SANITIZATION
     // Defensive clamping
     float p1;
@@ -19,7 +21,7 @@ JPH_Shape *FindOrCreateShapeLocked(PhysicsWorld *world, int type, const float *p
     float p3;
     float p4;
 
-    if (type == SHAPE_PLANE) {
+    if (shape_type == ShapeType::Plane) {
         // Plane normal components must represent a unit vector.
         // We defensively normalize them and avoid clamping zero-components.
         float nx     = params[0];
@@ -65,8 +67,8 @@ JPH_Shape *FindOrCreateShapeLocked(PhysicsWorld *world, int type, const float *p
 
     // 4. JOLT CREATION (Type-Specific Dispatch)
     JPH_Shape *shape = nullptr;
-    switch (type) {
-    case SHAPE_BOX: {
+    switch (shape_type) {
+    case ShapeType::Box: {
         JPH_Vec3 half_extents = {p1, p2, p3};
         auto s                = JPH_BoxShapeSettings_Create(&half_extents, 0.05f);
         if (s) {
@@ -75,7 +77,7 @@ JPH_Shape *FindOrCreateShapeLocked(PhysicsWorld *world, int type, const float *p
         }
         break;
     }
-    case SHAPE_SPHERE: {
+    case ShapeType::Sphere: {
         auto s = JPH_SphereShapeSettings_Create(p1);
         if (s) {
             shape = (JPH_Shape *)JPH_SphereShapeSettings_CreateShape(s);
@@ -83,7 +85,7 @@ JPH_Shape *FindOrCreateShapeLocked(PhysicsWorld *world, int type, const float *p
         }
         break;
     }
-    case SHAPE_CAPSULE: {
+    case ShapeType::Capsule: {
         auto s = JPH_CapsuleShapeSettings_Create(p1, p2);
         if (s) {
             shape = (JPH_Shape *)JPH_CapsuleShapeSettings_CreateShape(s);
@@ -91,7 +93,7 @@ JPH_Shape *FindOrCreateShapeLocked(PhysicsWorld *world, int type, const float *p
         }
         break;
     }
-    case SHAPE_CYLINDER: {
+    case ShapeType::Cylinder: {
         auto s = JPH_CylinderShapeSettings_Create(p1, p2, 0.05f);
         if (s) {
             shape = (JPH_Shape *)JPH_CylinderShapeSettings_CreateShape(s);
@@ -99,7 +101,7 @@ JPH_Shape *FindOrCreateShapeLocked(PhysicsWorld *world, int type, const float *p
         }
         break;
     }
-    case SHAPE_PLANE: {
+    case ShapeType::Plane: {
         JPH_Plane plane = {{p1, p2, p3}, p4};
         auto s          = JPH_PlaneShapeSettings_Create(&plane, nullptr, 1000.0f);
         if (s) {

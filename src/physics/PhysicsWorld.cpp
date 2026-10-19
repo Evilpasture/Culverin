@@ -54,7 +54,7 @@ void ConfigureBodySettings(JPH_BodyCreationSettings *settings, JPH_Shape *shape,
     if (cfg.use_ccd) {
         JPH_BodyCreationSettings_SetMotionQuality(settings, JPH_MotionQuality_LinearCast);
     }
-    if (cfg.motion_type == MOTION_DYNAMIC) {
+    if (cfg.motion_type == std::to_underlying(MotionType::Dynamic)) {
         JPH_BodyCreationSettings_SetAllowSleeping(settings, true);
     }
     if (cfg.allowed_dofs != 0U) {
@@ -141,7 +141,7 @@ PhysicsWorld::~PhysicsWorld() {
     // Constraints must leave the physics system before it is destroyed.
     for (auto &slot : constraints) {
         if (slot.constraint != nullptr &&
-            slot.state.load(std::memory_order::relaxed) == SLOT_ALIVE) {
+            slot.state.load(std::memory_order::relaxed) == std::to_underlying(SlotState::Alive)) {
             if (system != nullptr) {
                 JPH_PhysicsSystem_RemoveConstraint(system, slot.constraint);
             }
@@ -345,7 +345,7 @@ PhysicsWorldStatus PhysicsWorldResize(PhysicsWorld *world, std::size_t new_capac
     std::size_t free_count = current_free;
     for (std::size_t i = world->slot_capacity; i < new_capacity; ++i) {
         next.generations[i].store(1, std::memory_order::relaxed);
-        next.slot_states[i].store(SLOT_EMPTY, std::memory_order::relaxed);
+        next.slot_states[i].store(std::to_underlying(SlotState::Empty), std::memory_order::relaxed);
         next.slot_to_dense[i]         = 0;
         next.free_slots[free_count++] = static_cast<std::uint32_t>(i);
     }
@@ -388,7 +388,7 @@ PhysicsWorldStatus PhysicsWorldLoadBakedScene(PhysicsWorld *world,
         const std::scoped_lock shadow(world->shadow_lock);
         const std::scoped_lock trampoline(world->jph_trampoline_lock);
         for (std::size_t i = 0; i < scene->count; ++i) {
-            const float *const shape_data = &scene->shapes[i * BAKED_SHAPE_STRIDE];
+            const float *const shape_data = &scene->shapes[i * kBakedShapeStride];
             const float params[4] = {shape_data[1], shape_data[2], shape_data[3], shape_data[4]};
             JPH_Shape *const shape =
                 FindOrCreateShapeLocked(world, static_cast<int>(shape_data[0]), params);
@@ -397,8 +397,8 @@ PhysicsWorldStatus PhysicsWorldLoadBakedScene(PhysicsWorld *world,
                 break;
             }
 
-            const std::size_t pos_idx = i * BAKED_POSITION_STRIDE;
-            const std::size_t rot_idx = i * BAKED_ROTATION_STRIDE;
+            const std::size_t pos_idx = i * kBakedPositionStride;
+            const std::size_t rot_idx = i * kBakedRotationStride;
             PosStride &shadow_pos = world->bodies.positions[i];
             AuxStride &shadow_rot = world->bodies.rotations[i];
             shadow_pos = {scene->positions[pos_idx + 0], scene->positions[pos_idx + 1],
@@ -420,7 +420,7 @@ PhysicsWorldStatus PhysicsWorldLoadBakedScene(PhysicsWorld *world,
             world->bodies.generations[i].store(1, std::memory_order::relaxed);
             const BodyHandle handle = make_handle(static_cast<std::uint32_t>(i), 1);
             JPH_BodyCreationSettings_SetUserData(creation.get(), handle);
-            if (motion_type == MOTION_DYNAMIC) {
+            if (motion_type == std::to_underlying(MotionType::Dynamic)) {
                 JPH_BodyCreationSettings_SetAllowSleeping(creation.get(), true);
             }
 
@@ -438,7 +438,7 @@ PhysicsWorldStatus PhysicsWorldLoadBakedScene(PhysicsWorld *world,
             }
             world->bodies.slot_to_dense[i] = static_cast<std::uint32_t>(i);
             world->bodies.dense_to_slot[i] = static_cast<std::uint32_t>(i);
-            world->bodies.slot_states[i].store(SLOT_ALIVE, std::memory_order::relaxed);
+            world->bodies.slot_states[i].store(std::to_underlying(SlotState::Alive), std::memory_order::relaxed);
             world->bodies.user_data[i] = scene->user_data[i];
         }
     }
@@ -582,16 +582,16 @@ int PhysicsWorldInitJolt(PhysicsWorld *world, WorldSettings settings,
     }
 
     // 3 layers: 0=Static, 1=Dynamic, 2=VehicleRay.
-    world->bp_interface = JPH_BroadPhaseLayerInterfaceTable_Create(OBJECT_LAYER_COUNT, 3);
+    world->bp_interface = JPH_BroadPhaseLayerInterfaceTable_Create(std::to_underlying(ObjectLayer::Count), 3);
     if (!world->bp_interface) {
         return -1;
     }
     JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(world->bp_interface,
-                                                                 OBJECT_LAYER_STATIC, 0);
+                                                                 std::to_underlying(ObjectLayer::Static), 0);
     JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(world->bp_interface,
-                                                                 OBJECT_LAYER_DYNAMIC, 1);
+                                                                 std::to_underlying(ObjectLayer::Dynamic), 1);
     JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(world->bp_interface,
-                                                                 OBJECT_LAYER_VEHICLE, 2);
+                                                                 std::to_underlying(ObjectLayer::Vehicle), 2);
 
     world->pair_filter = JPH_ObjectLayerPairFilterTable_Create(3);
     if (!world->pair_filter) {

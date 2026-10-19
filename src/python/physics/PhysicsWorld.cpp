@@ -373,7 +373,7 @@ static PyObject *runtime_status_error(PhysicsWorldRuntimeStatus status,
     }
 
     const PhysicsBodyOperation operation = {
-        .type   = PHYSICS_BODY_OP_APPLY_IMPULSE,
+        .type   = PhysicsBodyOperationType::ApplyImpulse,
         .handle = static_cast<BodyHandle>(h_raw),
         .vector = {x, y, z},
     };
@@ -404,7 +404,7 @@ static PyObject *runtime_status_error(PhysicsWorldRuntimeStatus status,
     }
 
     const PhysicsBodyOperation operation = {
-        .type     = PHYSICS_BODY_OP_APPLY_IMPULSE_AT,
+        .type     = PhysicsBodyOperationType::ApplyImpulseAt,
         .handle   = static_cast<BodyHandle>(h_raw),
         .position = {px, py, pz},
         .vector   = {ix, iy, iz},
@@ -429,7 +429,7 @@ static PyObject *runtime_status_error(PhysicsWorldRuntimeStatus status,
     }
 
     const PhysicsBodyOperation operation = {
-        .type   = PHYSICS_BODY_OP_APPLY_ANGULAR_IMPULSE,
+        .type   = PhysicsBodyOperationType::ApplyAngularImpulse,
         .handle = static_cast<BodyHandle>(h_raw),
         .vector = {x, y, z},
     };
@@ -455,7 +455,7 @@ static PyObject *runtime_status_error(PhysicsWorldRuntimeStatus status,
 
     // 2. ENGINE OPERATION
     const PhysicsBodyOperation operation = {
-        .type   = PHYSICS_BODY_OP_APPLY_FORCE,
+        .type   = PhysicsBodyOperationType::ApplyForce,
         .handle = static_cast<BodyHandle>(h_raw),
         .vector = {x, y, z},
     };
@@ -481,7 +481,7 @@ static PyObject *runtime_status_error(PhysicsWorldRuntimeStatus status,
 
     // 2. ENGINE OPERATION
     const PhysicsBodyOperation operation = {
-        .type   = PHYSICS_BODY_OP_APPLY_TORQUE,
+        .type   = PhysicsBodyOperationType::ApplyTorque,
         .handle = static_cast<BodyHandle>(h_raw),
         .vector = {x, y, z},
     };
@@ -1417,7 +1417,7 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
 
     // 2. ENGINE OPERATION
     const PhysicsBodyOperation operation = {
-        .type     = PHYSICS_BODY_OP_SET_POSITION,
+        .type     = PhysicsBodyOperationType::SetPosition,
         .handle   = static_cast<BodyHandle>(h_raw),
         .position = {x, y, z},
     };
@@ -1445,7 +1445,7 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
 
     // 2. ENGINE OPERATION
     const PhysicsBodyOperation operation = {
-        .type     = PHYSICS_BODY_OP_SET_ROTATION,
+        .type     = PhysicsBodyOperationType::SetRotation,
         .handle   = static_cast<BodyHandle>(h_raw),
         .rotation = {x, y, z, w},
     };
@@ -1472,7 +1472,7 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
 
     // 2. ENGINE OPERATION
     const PhysicsBodyOperation operation = {
-        .type   = PHYSICS_BODY_OP_SET_LINEAR_VELOCITY,
+        .type   = PhysicsBodyOperationType::SetLinearVelocity,
         .handle = static_cast<BodyHandle>(h_raw),
         .vector = {x, y, z},
     };
@@ -1499,7 +1499,7 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
 
     // 2. ENGINE OPERATION
     const PhysicsBodyOperation operation = {
-        .type   = PHYSICS_BODY_OP_SET_ANGULAR_VELOCITY,
+        .type   = PhysicsBodyOperationType::SetAngularVelocity,
         .handle = static_cast<BodyHandle>(h_raw),
         .vector = {x, y, z},
     };
@@ -1543,7 +1543,7 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
 
     // 2. ENGINE OPERATION
     const PhysicsBodyOperation operation = {
-        .type   = PHYSICS_BODY_OP_SET_MOTION_TYPE,
+        .type   = PhysicsBodyOperationType::SetMotionType,
         .handle = static_cast<BodyHandle>(h_raw),
         .value  = motion_type,
     };
@@ -1565,7 +1565,7 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
 
     // 2. ENGINE OPERATION
     const PhysicsBodyOperation operation = {
-        .type      = PHYSICS_BODY_OP_SET_USER_DATA,
+        .type      = PhysicsBodyOperationType::SetUserData,
         .handle    = static_cast<BodyHandle>(h_raw),
         .user_data = data_raw,
     };
@@ -1605,7 +1605,7 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
 
     // 2. ENGINE OPERATION
     const PhysicsBodyOperation operation = {
-        .type   = PHYSICS_BODY_OP_ACTIVATE,
+        .type   = PhysicsBodyOperationType::Activate,
         .handle = static_cast<BodyHandle>(h_raw),
     };
     return run_body_operation(self, &operation);
@@ -1625,7 +1625,7 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
 
     // 2. ENGINE OPERATION
     const PhysicsBodyOperation operation = {
-        .type   = PHYSICS_BODY_OP_DEACTIVATE,
+        .type   = PhysicsBodyOperationType::Deactivate,
         .handle = static_cast<BodyHandle>(h_raw),
     };
     return run_body_operation(self, &operation);
@@ -1669,7 +1669,7 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
 
     // 3. ENGINE OPERATION
     const PhysicsBodyOperation operation = {
-        .type     = PHYSICS_BODY_OP_SET_TRANSFORM,
+        .type     = PhysicsBodyOperationType::SetTransform,
         .handle   = static_cast<BodyHandle>(h_raw),
         .position = {px, py, pz},
         .rotation = {rx, ry, rz, rw},
@@ -1690,7 +1690,7 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
 
     // 2. ENGINE OPERATION
     const PhysicsBodyOperation operation = {
-        .type   = PHYSICS_BODY_OP_SET_CCD,
+        .type   = PhysicsBodyOperationType::SetCcd,
         .handle = static_cast<BodyHandle>(h_raw),
         .value  = static_cast<int>(enabled),
     };
@@ -2171,7 +2171,7 @@ WorldGetSoftBodyLocalVertices(PhysicsWorldObject *self, PyObject *const *args,
 
     const uint8_t state =
         (self->physics.bodies.slot_states[slot]).load(std::memory_order::acquire);
-    if (state != SLOT_SOFT_BODY) {
+    if (state != std::to_underlying(SlotState::SoftBody)) {
         (self->physics.shadow_lock).unlock();
         return PyErr_Format(PyExc_TypeError, "Handle does not belong to a soft body");
     }
@@ -2192,7 +2192,7 @@ WorldGetSoftBodyLocalVertices(PhysicsWorldObject *self, PyObject *const *args,
     proxy->owner = reinterpret_cast<PyObject *>(self);
     Py_INCREF(self);
 
-    proxy->buf_type    = PROXY_DYNAMIC;
+    proxy->buf_type    = ProxyBufferType::Dynamic;
     proxy->dynamic_ptr = reinterpret_cast<JPH_Real *>(shadow->vertices.data());
     proxy->format      = JPH_REAL_STRING;
     proxy->itemsize    = sizeof(JPH_Real);

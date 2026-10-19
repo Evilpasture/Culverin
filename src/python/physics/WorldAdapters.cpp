@@ -7,20 +7,18 @@
 namespace CPH::Python {
 
 // Baked scene tuple layout produced by culverin.bake_scene.
-enum {
-    BAKED_INDEX_POS = 1,
-    BAKED_INDEX_ROT,
-    BAKED_INDEX_SHAPE,
-    BAKED_INDEX_MOT,
-    BAKED_INDEX_LAYER,
-    BAKED_INDEX_USERDATA,
-    BAKED_TUPLE_SIZE,
-};
+constexpr Py_ssize_t kBakedIndexPos      = 1;
+constexpr Py_ssize_t kBakedIndexRot      = 2;
+constexpr Py_ssize_t kBakedIndexShape    = 3;
+constexpr Py_ssize_t kBakedIndexMotion   = 4;
+constexpr Py_ssize_t kBakedIndexLayer    = 5;
+constexpr Py_ssize_t kBakedIndexUserData = 6;
+constexpr Py_ssize_t kBakedTupleSize     = 7;
 
 [[nodiscard]]
 int GetBakedSceneCount(PyObject *baked, size_t *out_count) {
     if (out_count == nullptr || !PyTuple_Check(baked) ||
-        PyTuple_GET_SIZE(baked) < BAKED_TUPLE_SIZE) {
+        PyTuple_GET_SIZE(baked) < kBakedTupleSize) {
         PyErr_SetString(PyExc_ValueError, "Invalid baked scene tuple");
         return -1;
     }
@@ -138,7 +136,7 @@ int LoadBakedScene(PhysicsWorldObject *self, PyObject *baked) {
     size_t user_data_size;
     if (baked_buffer_size(count, sizeof(PosStride), &positions_size) < 0 ||
         baked_buffer_size(count, sizeof(AuxStride), &rotations_size) < 0 ||
-        baked_buffer_size(count, BAKED_SHAPE_STRIDE * sizeof(float), &shapes_size) < 0 ||
+        baked_buffer_size(count, kBakedShapeStride * sizeof(float), &shapes_size) < 0 ||
         baked_buffer_size(count, sizeof(uint8_t), &byte_array_size) < 0 ||
         baked_buffer_size(count, sizeof(uint64_t), &user_data_size) < 0) {
         return -1;
@@ -150,14 +148,14 @@ int LoadBakedScene(PhysicsWorldObject *self, PyObject *baked) {
     const void *motion_types;
     const void *object_layers;
     const void *user_data;
-    if (get_baked_buffer(baked, BAKED_INDEX_POS, positions_size, "position", &positions) < 0 ||
-        get_baked_buffer(baked, BAKED_INDEX_ROT, rotations_size, "rotation", &rotations) < 0 ||
-        get_baked_buffer(baked, BAKED_INDEX_SHAPE, shapes_size, "shape", &shapes) < 0 ||
-        get_baked_buffer(baked, BAKED_INDEX_MOT, byte_array_size, "motion type", &motion_types) <
+    if (get_baked_buffer(baked, kBakedIndexPos, positions_size, "position", &positions) < 0 ||
+        get_baked_buffer(baked, kBakedIndexRot, rotations_size, "rotation", &rotations) < 0 ||
+        get_baked_buffer(baked, kBakedIndexShape, shapes_size, "shape", &shapes) < 0 ||
+        get_baked_buffer(baked, kBakedIndexMotion, byte_array_size, "motion type", &motion_types) <
             0 ||
-        get_baked_buffer(baked, BAKED_INDEX_LAYER, byte_array_size, "object layer",
+        get_baked_buffer(baked, kBakedIndexLayer, byte_array_size, "object layer",
                          &object_layers) < 0 ||
-        get_baked_buffer(baked, BAKED_INDEX_USERDATA, user_data_size, "user data", &user_data) <
+        get_baked_buffer(baked, kBakedIndexUserData, user_data_size, "user data", &user_data) <
             0) {
         return -1;
     }

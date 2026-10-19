@@ -9,15 +9,15 @@ struct PhysicsWorldObject;
 struct CharacterObject;
 struct VehicleObject;
 
-enum ProxyBufferType : uint8_t {
-    PROXY_POSITIONS,
-    PROXY_ROTATIONS,
-    PROXY_LINEAR_VELOCITIES,
-    PROXY_ANGULAR_VELOCITIES,
-    PROXY_USER_DATA,
-    PROXY_DYNAMIC,
-    PROXY_ECS_DATA,    // Contiguous component data
-    PROXY_ECS_ENTITIES // Dense entity handle array
+enum class ProxyBufferType : uint8_t {
+    Positions,
+    Rotations,
+    LinearVelocities,
+    AngularVelocities,
+    UserData,
+    Dynamic,
+    EcsData,   // Contiguous component data
+    EcsEntities // Dense entity handle array
 };
 
 struct BufferProxyObject {

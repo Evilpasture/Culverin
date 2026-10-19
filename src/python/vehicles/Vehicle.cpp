@@ -329,9 +329,9 @@ static void configure_drivetrain(VehicleResources *r, PyObject *py_engine, PyObj
     uint8_t state =
         static_cast<int>(handle_valid)
             ? (self->physics.bodies.slot_states[slot]).load(std::memory_order::acquire)
-            : SLOT_EMPTY;
+            : std::to_underlying(SlotState::Empty);
 
-    if (!handle_valid || state != SLOT_ALIVE) {
+    if (!handle_valid || state != std::to_underlying(SlotState::Alive)) {
         (self->physics.shadow_lock).unlock();
         return PyErr_Format(PyExc_ValueError, "Invalid chassis handle (Body is dead or pending)");
     }

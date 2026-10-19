@@ -28,13 +28,13 @@ static PyObject *make_ecs_proxy(RegistryObject *self, uint32_t comp_id, bool ent
     Py_INCREF(self);
 
     if (entities) {
-        proxy->buf_type    = PROXY_ECS_ENTITIES;
+        proxy->buf_type    = ProxyBufferType::EcsEntities;
         proxy->dynamic_ptr = set->dense;
         proxy->format      = "Q"; // uint64
         proxy->itemsize    = sizeof(uint64_t);
         proxy->shape[0]    = set->count;
     } else {
-        proxy->buf_type    = PROXY_ECS_DATA;
+        proxy->buf_type    = ProxyBufferType::EcsData;
         proxy->dynamic_ptr = set->data;
         proxy->format      = "B"; // Generic bytes, user casts in NumPy
         proxy->itemsize    = 1;
@@ -562,7 +562,7 @@ fail_quiet:
     }
 
     (self->ecs_lock).lock();
-    // make_ecs_proxy(self, comp_id, true) handles the PROXY_ECS_ENTITIES case
+    // make_ecs_proxy(self, comp_id, true) handles the ProxyBufferType::EcsEntities case
     PyObject *proxy = make_ecs_proxy(self, comp_id, true);
     (self->ecs_lock).unlock();
 

@@ -138,14 +138,14 @@ inline void ProcessManifoldEvent(PhysicsWorld *world, const JPH_Body *c_body1,
 void JPH_API_CALL OnContactAdded(void *userData, const JPH_Body *body1, const JPH_Body *body2,
                                  const JPH_ContactManifold *manifold,
                                  JPH_ContactSettings * /*unused*/) noexcept {
-    ProcessManifoldEvent<EVENT_ADDED>(static_cast<PhysicsWorld *>(userData), body1, body2,
+    ProcessManifoldEvent<ContactEventType::Added>(static_cast<PhysicsWorld *>(userData), body1, body2,
                                       manifold);
 }
 
 void JPH_API_CALL OnContactPersisted(void *userData, const JPH_Body *body1, const JPH_Body *body2,
                                      const JPH_ContactManifold *manifold,
                                      JPH_ContactSettings * /*unused*/) noexcept {
-    ProcessManifoldEvent<EVENT_PERSISTED>(static_cast<PhysicsWorld *>(userData), body1, body2,
+    ProcessManifoldEvent<ContactEventType::Persisted>(static_cast<PhysicsWorld *>(userData), body1, body2,
                                           manifold);
 }
 
@@ -173,7 +173,7 @@ void JPH_API_CALL OnContactRemoved(void *userData, const JPH_SubShapeIDPair *pai
     }
 
     // Removed bodies only receive a subset of the data
-    RecordContact<EVENT_REMOVED>(
+    RecordContact<ContactEventType::Removed>(
         world, r1, r2,
         [](ContactEventSlim *slim, ContactEventFatExt * /*fat*/, bool /*swapped*/) -> void {
             slim->px            = 0.0f;

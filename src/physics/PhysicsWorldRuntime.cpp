@@ -233,7 +233,7 @@ PhysicsWorldSnapshotStatus PhysicsWorldLoadSnapshot(PhysicsWorld *world, const u
 
     size_t free_count = 0;
     for (uint32_t i = 0; i < saved_capacity; i++) {
-        if ((world->bodies.slot_states[i]).load(std::memory_order::relaxed) == SLOT_EMPTY) {
+        if ((world->bodies.slot_states[i]).load(std::memory_order::relaxed) == std::to_underlying(SlotState::Empty)) {
             world->bodies.free_slots[free_count++] = i;
         }
     }
@@ -533,7 +533,7 @@ PhysicsWorldRuntimeStatus PhysicsWorldGetMotionType(PhysicsWorld *world, BodyHan
         *out_motion_type = JPH_BodyInterface_GetMotionType(world->body_interface, body_id);
         return PHYSICS_WORLD_RUNTIME_STATUS_OK;
     }
-    if (state == SLOT_PENDING_CREATE) {
+    if (state == std::to_underlying(SlotState::PendingCreate)) {
         return PHYSICS_WORLD_RUNTIME_STATUS_PENDING_CREATE;
     }
     return PHYSICS_WORLD_RUNTIME_STATUS_STALE_HANDLE;
@@ -709,7 +709,7 @@ PhysicsWorldRuntimeStatus PhysicsWorldSetCollisionFilter(PhysicsWorld *world, Bo
         world->bodies.masks[dense]      = mask;
         return PHYSICS_WORLD_RUNTIME_STATUS_OK;
     }
-    if (state == SLOT_PENDING_CREATE) {
+    if (state == std::to_underlying(SlotState::PendingCreate)) {
         return PHYSICS_WORLD_RUNTIME_STATUS_PENDING_CREATE;
     }
     return PHYSICS_WORLD_RUNTIME_STATUS_STALE_HANDLE;

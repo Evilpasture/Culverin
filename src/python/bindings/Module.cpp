@@ -119,7 +119,11 @@ static void dump_parser_catalog(FastParserCore *const *const parsers, const size
 
 [[nodiscard]] static PyObject * ModuleMutateTuple([[maybe_unused]] PyObject *self,
                                                    PyObject *const *args, Py_ssize_t nargsf) {
-    enum : uint8_t { ARG_0, ARG_1, ARG_2, ARG_3, ARG_4 };
+    constexpr Py_ssize_t kArg0 = 0;
+    constexpr Py_ssize_t kArg1 = 1;
+    constexpr Py_ssize_t kArg2 = 2;
+    constexpr Py_ssize_t kArg3 = 3;
+    constexpr Py_ssize_t kArg4 = 4;
     // --- 1. DECLARATIONS (C / goto safety) ---
     auto nargs              = PyVectorcall_NARGS(nargsf);
     constexpr auto MIN_ARGS = 3;
@@ -142,14 +146,14 @@ static void dump_parser_catalog(FastParserCore *const *const parsers, const size
         return nullptr;
     }
 
-    target  = args[ARG_0];
-    new_val = args[ARG_2];
+    target  = args[kArg0];
+    new_val = args[kArg2];
     if (!PyTuple_Check(target)) {
         PyErr_SetString(PyExc_TypeError, "arg 0 must be a tuple");
         return nullptr;
     }
 
-    index = PyLong_AsSsize_t(args[ARG_1]);
+    index = PyLong_AsSsize_t(args[kArg1]);
     if (index == -1 && PyErr_Occurred()) {
         return nullptr;
     }
@@ -164,8 +168,8 @@ static void dump_parser_catalog(FastParserCore *const *const parsers, const size
     }
 
     if (nargs == MAX_ARGS) {
-        registry = args[ARG_3];
-        key      = args[ARG_4];
+        registry = args[kArg3];
+        key      = args[kArg4];
         if (!PyDict_Check(registry)) {
             PyErr_SetString(PyExc_TypeError, "arg 3 must be a dict");
             return nullptr;
@@ -376,17 +380,17 @@ static int init_constants(PyObject *m) {
     static const struct {
         const char *name;
         int value;
-    } consts[] = {{.name = "SHAPE_BOX", .value = SHAPE_BOX},
-                  {.name = "SHAPE_SPHERE", .value = SHAPE_SPHERE},
-                  {.name = "SHAPE_CAPSULE", .value = SHAPE_CAPSULE},
-                  {.name = "SHAPE_CYLINDER", .value = SHAPE_CYLINDER},
-                  {.name = "SHAPE_PLANE", .value = SHAPE_PLANE},
-                  {.name = "SHAPE_MESH", .value = SHAPE_MESH},
-                  {.name = "SHAPE_HEIGHTFIELD", .value = SHAPE_HEIGHTFIELD},
-                  {.name = "SHAPE_CONVEX_HULL", .value = SHAPE_CONVEX_HULL},
-                  {.name = "MOTION_STATIC", .value = MOTION_STATIC},
-                  {.name = "MOTION_KINEMATIC", .value = MOTION_KINEMATIC},
-                  {.name = "MOTION_DYNAMIC", .value = MOTION_DYNAMIC},
+    } consts[] = {{.name = "SHAPE_BOX", .value = std::to_underlying(ShapeType::Box)},
+                  {.name = "SHAPE_SPHERE", .value = std::to_underlying(ShapeType::Sphere)},
+                  {.name = "SHAPE_CAPSULE", .value = std::to_underlying(ShapeType::Capsule)},
+                  {.name = "SHAPE_CYLINDER", .value = std::to_underlying(ShapeType::Cylinder)},
+                  {.name = "SHAPE_PLANE", .value = std::to_underlying(ShapeType::Plane)},
+                  {.name = "SHAPE_MESH", .value = std::to_underlying(ShapeType::Mesh)},
+                  {.name = "SHAPE_HEIGHTFIELD", .value = std::to_underlying(ShapeType::Heightfield)},
+                  {.name = "SHAPE_CONVEX_HULL", .value = std::to_underlying(ShapeType::ConvexHull)},
+                  {.name = "MOTION_STATIC", .value = std::to_underlying(MotionType::Static)},
+                  {.name = "MOTION_KINEMATIC", .value = std::to_underlying(MotionType::Kinematic)},
+                  {.name = "MOTION_DYNAMIC", .value = std::to_underlying(MotionType::Dynamic)},
                   {.name = "DOF_TRANSLATION_X", .value = JPH_AllowedDOFs_TranslationX},
                   {.name = "DOF_TRANSLATION_Y", .value = JPH_AllowedDOFs_TranslationY},
                   {.name = "DOF_TRANSLATION_Z", .value = JPH_AllowedDOFs_TranslationZ},
@@ -399,15 +403,15 @@ static int init_constants(PyObject *m) {
                   {.name  = "DOF_PLANE_XY",
                    .value = JPH_AllowedDOFs_TranslationX | JPH_AllowedDOFs_TranslationY},
                   {.name = "DOF_PLANE_2D", .value = JPH_AllowedDOFs_Plane2D},
-                  {.name = "CONSTRAINT_FIXED", .value = CONSTRAINT_FIXED},
-                  {.name = "CONSTRAINT_POINT", .value = CONSTRAINT_POINT},
-                  {.name = "CONSTRAINT_HINGE", .value = CONSTRAINT_HINGE},
-                  {.name = "CONSTRAINT_SLIDER", .value = CONSTRAINT_SLIDER},
-                  {.name = "CONSTRAINT_DISTANCE", .value = CONSTRAINT_DISTANCE},
-                  {.name = "CONSTRAINT_CONE", .value = CONSTRAINT_CONE},
-                  {.name = "EVENT_ADDED", .value = EVENT_ADDED},
-                  {.name = "EVENT_PERSISTED", .value = EVENT_PERSISTED},
-                  {.name = "EVENT_REMOVED", .value = EVENT_REMOVED},
+                  {.name = "CONSTRAINT_FIXED", .value = std::to_underlying(ConstraintType::Fixed)},
+                  {.name = "CONSTRAINT_POINT", .value = std::to_underlying(ConstraintType::Point)},
+                  {.name = "CONSTRAINT_HINGE", .value = std::to_underlying(ConstraintType::Hinge)},
+                  {.name = "CONSTRAINT_SLIDER", .value = std::to_underlying(ConstraintType::Slider)},
+                  {.name = "CONSTRAINT_DISTANCE", .value = std::to_underlying(ConstraintType::Distance)},
+                  {.name = "CONSTRAINT_CONE", .value = std::to_underlying(ConstraintType::Cone)},
+                  {.name = "EVENT_ADDED", .value = std::to_underlying(ContactEventType::Added)},
+                  {.name = "EVENT_PERSISTED", .value = std::to_underlying(ContactEventType::Persisted)},
+                  {.name = "EVENT_REMOVED", .value = std::to_underlying(ContactEventType::Removed)},
 // Build Metadata
 #if defined(JPH_DOUBLE_PRECISION)
                   {.name = "USE_DOUBLE_PRECISION", .value = 1},

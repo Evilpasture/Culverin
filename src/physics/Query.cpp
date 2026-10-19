@@ -186,7 +186,8 @@ PhysicsQueryStatus PhysicsWorldOverlapSphere(PhysicsWorld *world, JPH_RVec3 cent
     }
 
     const float shape_params[4] = {radius, 0.0f, 0.0f, 0.0f};
-    JPH_Shape *shape = query_begin_with_shape(world, SHAPE_SPHERE, shape_params, nullptr, 0);
+    JPH_Shape *shape = query_begin_with_shape(world, std::to_underlying(ShapeType::Sphere),
+                                                shape_params, nullptr, 0);
     if (!shape) {
         return PHYSICS_QUERY_STATUS_SHAPE_FAILURE;
     }

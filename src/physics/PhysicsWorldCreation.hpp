@@ -17,11 +17,11 @@ enum PhysicsWorldCreationStatus : int {
     PHYSICS_WORLD_CREATION_STATUS_RAGDOLL_FAILED       = -7,
 };
 
-enum PhysicsWorldBodySetup : uint8_t {
-    PHYSICS_WORLD_BODY_SETUP_CONFIGURED,
-    PHYSICS_WORLD_BODY_SETUP_CREATION_PROPS,
-    PHYSICS_WORLD_BODY_SETUP_MATERIAL_ONLY,
-    PHYSICS_WORLD_BODY_SETUP_NONE,
+enum class PhysicsWorldBodySetup : uint8_t {
+    Configured,
+    CreationProps,
+    MaterialOnly,
+    None,
 };
 
 struct PhysicsWorldBodyCreateRequest {

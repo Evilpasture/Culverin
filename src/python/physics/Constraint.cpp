@@ -34,21 +34,21 @@ namespace CPH::Python {
     int parse_ok = 1;
 
     switch (type) {
-    case CONSTRAINT_FIXED:
+    case std::to_underlying(ConstraintType::Fixed):
         break;
-    case CONSTRAINT_POINT:
+    case std::to_underlying(ConstraintType::Point):
         parse_ok = ParsePointParams(o_params, &p);
         break;
-    case CONSTRAINT_HINGE:
+    case std::to_underlying(ConstraintType::Hinge):
         parse_ok = ParseHingeParams(o_params, &p);
         break;
-    case CONSTRAINT_SLIDER:
+    case std::to_underlying(ConstraintType::Slider):
         parse_ok = ParseSliderParams(o_params, &p);
         break;
-    case CONSTRAINT_CONE:
+    case std::to_underlying(ConstraintType::Cone):
         parse_ok = ParseConeParams(o_params, &p);
         break;
-    case CONSTRAINT_DISTANCE:
+    case std::to_underlying(ConstraintType::Distance):
         parse_ok = ParseDistanceParams(o_params, &p);
         break;
     default:
@@ -92,7 +92,7 @@ namespace CPH::Python {
     uint32_t c_slot         = self->physics.free_constraint_slots[--self->physics.free_constraint_count];
     ConstraintSlot &entry   = self->physics.constraints[c_slot];
     entry.type              = type;
-    entry.state.store(SLOT_PENDING_CREATE, std::memory_order::relaxed);
+    entry.state.store(std::to_underlying(SlotState::PendingCreate), std::memory_order::relaxed);
     ConstraintHandle handle = make_handle(c_slot, entry.generation);
     EnqueueCommand(&self->physics, s1,
                        CPH::cmd::CreateConstraint{s2, c_slot, type, p});
@@ -134,7 +134,7 @@ namespace CPH::Python {
     const uint8_t state   = entry.state.load(std::memory_order::relaxed);
 
     // Allow destruction of ALIVE OR PENDING_CREATE
-    if (entry.generation != gen || (state != SLOT_ALIVE && state != SLOT_PENDING_CREATE)) {
+    if (entry.generation != gen || (state != std::to_underlying(SlotState::Alive) && state != std::to_underlying(SlotState::PendingCreate))) {
         (self->physics.shadow_lock).unlock();
         PyErr_SetString(PyExc_ValueError, "Invalid or stale constraint handle");
         return nullptr;
@@ -143,9 +143,9 @@ namespace CPH::Python {
     c_to_destroy = entry.constraint;
 
     // Transition to EMPTY immediately.
-    // If it was PENDING, the flush worker will see SLOT_EMPTY and skip creation.
+    // If it was PENDING, the flush worker will see SlotState::Empty and skip creation.
     entry.constraint = nullptr;
-    entry.state.store(SLOT_EMPTY, std::memory_order::release);
+    entry.state.store(std::to_underlying(SlotState::Empty), std::memory_order::release);
     entry.generation++;
     self->physics.free_constraint_slots[self->physics.free_constraint_count++] = slot;
 
@@ -198,7 +198,7 @@ namespace CPH::Python {
     if (CPH_UNLIKELY(slot >= self->physics.constraints.size() ||
                      self->physics.constraints[slot].generation != gen ||
                      self->physics.constraints[slot].state.load(std::memory_order::relaxed) !=
-                         SLOT_ALIVE)) {
+                         std::to_underlying(SlotState::Alive))) {
         (self->physics.shadow_lock).unlock();
         PyErr_SetString(PyExc_ValueError, "Invalid or stale constraint handle");
         return nullptr;
@@ -274,7 +274,7 @@ namespace CPH::Python {
         self->physics.constraints[slot].state.load(std::memory_order::acquire);
 
     // NEW LOGIC: Accept both ALIVE and PENDING_CREATE
-    if (state == SLOT_ALIVE || state == SLOT_PENDING_CREATE) {
+    if (state == std::to_underlying(SlotState::Alive) || state == std::to_underlying(SlotState::PendingCreate)) {
         // Return from shadow array directly.
         // This is safe even if Jolt hasn't built the object yet.
         int type = self->physics.constraints[slot].type;
@@ -282,7 +282,7 @@ namespace CPH::Python {
         return PyLong_FromLong(static_cast<long>(type));
     }
 
-    // If state is SLOT_EMPTY or PENDING_DESTROY
+    // If state is SlotState::Empty or PENDING_DESTROY
     (self->physics.shadow_lock).unlock();
     PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
     return nullptr;

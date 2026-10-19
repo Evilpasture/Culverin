@@ -213,13 +213,13 @@ ExecuteSyncPass(const Unsigned32 active_count, const JPH_PhysicsSystem *const CP
         const Unsigned32 current_gen = map.generations[safe_slot].load(std::memory_order::relaxed);
 
         // --- BRANCHLESS VALIDATION ---
-        [[assume(state < SLOT_COUNT)]];
+        [[assume(state < std::to_underlying(SlotState::Count))]];
         const Unsigned32 state_bad = [state]() -> Unsigned32 {
             if constexpr (TType == JPH::EBodyType::RigidBody) {
                 // Create a mask of the bits we want (bit 1 and bit 2)
                 // (1 << 2) | (1 << 4) is not correct because the values are 2 and 4, not bit
                 // positions. We use the values directly:
-                constexpr Unsigned8 mask = (1 << SLOT_ALIVE) | (1 << SLOT_CHARACTER);
+                constexpr Unsigned8 mask = (1 << std::to_underlying(SlotState::Alive)) | (1 << std::to_underlying(SlotState::Character));
 
                 // Use the state as a shift amount to index into our 'valid' bitmask
                 // If state is 2 or 4, (mask >> state) & 1 will be 1.
@@ -227,7 +227,7 @@ ExecuteSyncPass(const Unsigned32 active_count, const JPH_PhysicsSystem *const CP
                 return ((mask >> state) & 1) ^ 1;
             } else {
                 // For SoftBody, just check if state == 5
-                return (state != SLOT_SOFT_BODY);
+                return (state != std::to_underlying(SlotState::SoftBody));
             }
         }();
         const Unsigned32 bad   = static_cast<const Unsigned32>(slot >= map.slot_capacity) |

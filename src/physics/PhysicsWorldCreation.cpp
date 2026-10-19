@@ -43,7 +43,7 @@ enqueue_body_settings(PhysicsWorld *world, JPH_BodyCreationSettings *settings,
     auto shadow = LockShadowNotStepping(world);
     BodyHandle handle = 0;
     const PhysicsWorldStatus native_status =
-        PhysicsWorldCommitCreate(world, settings, SLOT_PENDING_CREATE, &handle);
+        PhysicsWorldCommitCreate(world, settings, std::to_underlying(SlotState::PendingCreate), &handle);
     if (native_status != PHYSICS_WORLD_STATUS_OK) {
         shadow.unlock();
         JPH_BodyCreationSettings_Destroy(settings);
@@ -88,10 +88,10 @@ create_body_from_shape(PhysicsWorld *world, JPH_Shape *shape, bool owns_shape,
     }
 
     switch (setup) {
-    case PHYSICS_WORLD_BODY_SETUP_CONFIGURED:
+    case PhysicsWorldBodySetup::Configured:
         ConfigureBodySettings(settings, shape, request->config);
         break;
-    case PHYSICS_WORLD_BODY_SETUP_CREATION_PROPS: {
+    case PhysicsWorldBodySetup::CreationProps: {
         const BodyCreationProps props = {
             request->config.mass,      request->config.friction, request->config.restitution,
             request->config.is_sensor, request->config.use_ccd,
@@ -99,11 +99,11 @@ create_body_from_shape(PhysicsWorld *world, JPH_Shape *shape, bool owns_shape,
         ApplyBodyCreationProps(settings, shape, props);
         break;
     }
-    case PHYSICS_WORLD_BODY_SETUP_MATERIAL_ONLY:
+    case PhysicsWorldBodySetup::MaterialOnly:
         JPH_BodyCreationSettings_SetFriction(settings, request->config.friction);
         JPH_BodyCreationSettings_SetRestitution(settings, request->config.restitution);
         break;
-    case PHYSICS_WORLD_BODY_SETUP_NONE:
+    case PhysicsWorldBodySetup::None:
         break;
     }
 
@@ -155,13 +155,13 @@ PhysicsWorldCreationStatus PhysicsWorldCreateBody(PhysicsWorld *world,
         return PHYSICS_WORLD_CREATION_STATUS_BODY_SETTINGS_FAILED;
     }
 
-    const uint32_t object_layer = request->config.motion_type == MOTION_KINEMATIC ||
-                                          request->config.motion_type == MOTION_STATIC
-                                      ? OBJECT_LAYER_STATIC
-                                      : OBJECT_LAYER_DYNAMIC;
+    const uint32_t object_layer = request->config.motion_type == std::to_underlying(MotionType::Kinematic) ||
+                                          request->config.motion_type == std::to_underlying(MotionType::Static)
+                                      ? std::to_underlying(ObjectLayer::Static)
+                                      : std::to_underlying(ObjectLayer::Dynamic);
     return create_body_from_shape(
         world, shape, false, request, (JPH_MotionType)request->config.motion_type, object_layer,
-        PHYSICS_WORLD_BODY_SETUP_CONFIGURED, out_handle, out_count, out_native_status);
+        PhysicsWorldBodySetup::Configured, out_handle, out_count, out_native_status);
 }
 
 PhysicsWorldCreationStatus PhysicsWorldCreateSoftBody(
@@ -194,7 +194,7 @@ PhysicsWorldCreationStatus PhysicsWorldCreateSoftBody(
     JPH_Quat rotation  = request->rotation;
     JPH_SoftBodyCreationSettings_SetPosition(settings, &position);
     JPH_SoftBodyCreationSettings_SetRotation(settings, &rotation);
-    JPH_SoftBodyCreationSettings_SetObjectLayer(settings, OBJECT_LAYER_DYNAMIC);
+    JPH_SoftBodyCreationSettings_SetObjectLayer(settings, std::to_underlying(ObjectLayer::Dynamic));
     JPH_SoftBodyCreationSettings_SetAllowSleeping(settings, true);
     JPH_SoftBodyCreationSettings_SetMakeRotationIdentity(settings, request->make_rotation_identity);
     JPH_SoftBodyCreationSettings_SetUpdatePosition(settings, request->update_position);
@@ -203,7 +203,7 @@ PhysicsWorldCreationStatus PhysicsWorldCreateSoftBody(
     auto shadow = LockShadowNotStepping(world);
     BodyHandle handle = 0;
     const PhysicsWorldStatus native_status =
-        PhysicsWorldCommitCreateSoft(world, settings, SLOT_PENDING_CREATE, &handle);
+        PhysicsWorldCommitCreateSoft(world, settings, std::to_underlying(SlotState::PendingCreate), &handle);
     if (native_status != PHYSICS_WORLD_STATUS_OK) {
         JPH_SoftBodyCreationSettings_Destroy(settings);
         *out_native_status = native_status;
@@ -364,7 +364,7 @@ PhysicsWorldCreationStatus PhysicsWorldRegisterRagdollBodies(
             (world->id_to_handle_map[jolt_index]).store(handle, std::memory_order::release);
         }
         JPH_BodyInterface_SetUserData(body_interface, body_id, handle);
-        (world->bodies.slot_states[slot]).store(SLOT_ALIVE, std::memory_order::release);
+        (world->bodies.slot_states[slot]).store(std::to_underlying(SlotState::Alive), std::memory_order::release);
         world->bodies.user_data[dense]    = user_data;
         world->bodies.categories[dense]   = category;
         world->bodies.masks[dense]        = mask;
@@ -421,7 +421,7 @@ PhysicsWorldCreateBodiesBatch(PhysicsWorld *world, const PosStride *positions,
             JPH_RVec3 position = {positions[i].x, positions[i].y, positions[i].z};
             JPH_Quat rotation  = {0, 0, 0, 1};
             const uint32_t object_layer =
-                motion_type == MOTION_STATIC ? OBJECT_LAYER_STATIC : OBJECT_LAYER_DYNAMIC;
+                motion_type == std::to_underlying(MotionType::Static) ? std::to_underlying(ObjectLayer::Static) : std::to_underlying(ObjectLayer::Dynamic);
             settings[i].reset(JPH_BodyCreationSettings_Create3(
                 shape, &position, &rotation, (JPH_MotionType)motion_type, object_layer));
         }
@@ -497,7 +497,7 @@ PhysicsWorldCreateBodiesBatch(PhysicsWorld *world, const PosStride *positions,
         world->bodies.categories[dense]         = 0;
         world->bodies.masks[dense]              = 0;
         world->bodies.material_ids[dense]       = 0;
-        (world->bodies.slot_states[slot]).store(SLOT_PENDING_CREATE, std::memory_order::release);
+        (world->bodies.slot_states[slot]).store(std::to_underlying(SlotState::PendingCreate), std::memory_order::release);
 
         EnqueueCommand(world, slot,
                            CPH::cmd::CreateBody{std::move(settings[i])});
@@ -540,10 +540,10 @@ PhysicsWorldCreateConvexHull(PhysicsWorld *world, const float *points, size_t po
     }
 
     const uint32_t object_layer =
-        request->config.motion_type == MOTION_STATIC ? OBJECT_LAYER_STATIC : OBJECT_LAYER_DYNAMIC;
+        request->config.motion_type == std::to_underlying(MotionType::Static) ? std::to_underlying(ObjectLayer::Static) : std::to_underlying(ObjectLayer::Dynamic);
     return create_body_from_shape(
         world, shape, true, request, (JPH_MotionType)request->config.motion_type, object_layer,
-        PHYSICS_WORLD_BODY_SETUP_CONFIGURED, out_handle, out_count, out_native_status);
+        PhysicsWorldBodySetup::Configured, out_handle, out_count, out_native_status);
 }
 
 static JPH_Shape *create_compound_shape(PhysicsWorld *world, const PhysicsWorldCompoundPart *parts,
@@ -590,10 +590,10 @@ PhysicsWorldCreateCompoundBody(PhysicsWorld *world, const PhysicsWorldCompoundPa
     }
 
     const uint32_t object_layer =
-        request->config.motion_type == MOTION_STATIC ? OBJECT_LAYER_STATIC : OBJECT_LAYER_DYNAMIC;
+        request->config.motion_type == std::to_underlying(MotionType::Static) ? std::to_underlying(ObjectLayer::Static) : std::to_underlying(ObjectLayer::Dynamic);
     return create_body_from_shape(
         world, shape, true, request, (JPH_MotionType)request->config.motion_type, object_layer,
-        PHYSICS_WORLD_BODY_SETUP_CREATION_PROPS, out_handle, out_count, out_native_status);
+        PhysicsWorldBodySetup::CreationProps, out_handle, out_count, out_native_status);
 }
 
 PhysicsWorldCreationStatus
@@ -656,13 +656,13 @@ PhysicsWorldCreateMeshBody(PhysicsWorld *world, const float *vertices, size_t ve
     const PhysicsWorldBodyCreateRequest request = {
         .position  = position,
         .rotation  = rotation,
-        .config    = {.motion_type = MOTION_STATIC},
+        .config    = {.motion_type = std::to_underlying(MotionType::Static)},
         .category  = category,
         .mask      = mask,
         .user_data = user_data,
     };
     return create_body_from_shape(world, shape, true, &request, JPH_MotionType_Static,
-                                  OBJECT_LAYER_STATIC, PHYSICS_WORLD_BODY_SETUP_NONE, out_handle,
+                                  std::to_underlying(ObjectLayer::Static), PhysicsWorldBodySetup::None, out_handle,
                                   out_count, out_native_status);
 }
 
@@ -693,14 +693,14 @@ PhysicsWorldCreationStatus PhysicsWorldCreateHeightfieldBody(
     const PhysicsWorldBodyCreateRequest request = {
         .position = position,
         .rotation = rotation,
-        .config = {.friction = friction, .restitution = restitution, .motion_type = MOTION_STATIC},
+        .config = {.friction = friction, .restitution = restitution, .motion_type = std::to_underlying(MotionType::Static)},
         .category    = category,
         .mask        = mask,
         .material_id = material_id,
         .user_data   = user_data,
     };
     return create_body_from_shape(world, shape, true, &request, JPH_MotionType_Static,
-                                  OBJECT_LAYER_STATIC, PHYSICS_WORLD_BODY_SETUP_MATERIAL_ONLY,
+                                  std::to_underlying(ObjectLayer::Static), PhysicsWorldBodySetup::MaterialOnly,
                                   out_handle, out_count, out_native_status);
 }
 

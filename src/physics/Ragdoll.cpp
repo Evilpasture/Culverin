@@ -167,7 +167,7 @@ void PhysicsRagdollCopyBodyHandles(PhysicsWorld *world, const uint32_t *body_slo
             continue;
         }
         const uint8_t state = (world->bodies.slot_states[slot]).load(std::memory_order::acquire);
-        if (state != SLOT_ALIVE) {
+        if (state != std::to_underlying(SlotState::Alive)) {
             continue;
         }
         const uint32_t generation =
@@ -219,7 +219,7 @@ void PhysicsRagdollDeallocate(PhysicsWorld *world, JPH_Ragdoll *ragdoll,
                 }
                 const uint8_t state =
                     (world->bodies.slot_states[slot]).load(std::memory_order::acquire);
-                if (state == SLOT_ALIVE) {
+                if (state == std::to_underlying(SlotState::Alive)) {
                     WorldRemoveBodySlot(world, slot);
                 }
             }
