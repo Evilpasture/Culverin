@@ -23,7 +23,6 @@ target_link_libraries(
     _culverin_c
     PRIVATE
         culverin_core
-        culverin_native_jolt_rtti
         culverin_python_bindings
         culverin_python_parsing
         culverin_python_physics

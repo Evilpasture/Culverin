@@ -90,6 +90,11 @@ option(CPH_AGGRESSIVE_OPTIMIZATION "Enable aggressive __builtin_assume for asser
 # forced BEFORE add_subdirectory(Jolt). Every supported compiler speaks the GNU
 # flag dialect, so only knobs whose effect reaches the GNU arm are listed here.
 set(DOUBLE_PRECISION ON CACHE BOOL "Use double precision math" FORCE)
+# ObjectLayer is uint32 across Culverin's handles/settings. This must be a
+# Jolt build option (Jolt exports it as a PUBLIC compile definition on the
+# Jolt::Jolt target); a global -D would fight Jolt's own =16 default on the
+# same command lines.
+set(OBJECT_LAYER_BITS 32 CACHE STRING "Jolt: ObjectLayer width" FORCE)
 set(GENERATE_SAMPLES OFF CACHE BOOL "" FORCE)
 set(GENERATE_UNIT_TESTS OFF CACHE BOOL "" FORCE)
 set(USE_VULKAN OFF CACHE BOOL "" FORCE)
@@ -230,8 +235,11 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-add_definitions(-DJPH_DOUBLE_PRECISION)
-add_definitions(-DJPH_OBJECT_LAYER_BITS=32)
+# JPH_DOUBLE_PRECISION / JPH_OBJECT_LAYER_BITS are intentionally NOT global
+# definitions: they are Jolt build options (forced above) that Jolt exports
+# as PUBLIC compile definitions on Jolt::Jolt, and every Culverin target
+# reaches them through culverin_native_support. src/jolt/Jolt.hpp
+# static-asserts the resulting ABI wherever the native API is used.
 
 # ==============================================================================
 # 3. COMPILER-SPECIFIC FLAGS (probed where the answer varies)
@@ -329,7 +337,8 @@ get_filename_component(
     "${CMAKE_CURRENT_SOURCE_DIR}/extern/JoltPhysics"
     ABSOLUTE
 )
-add_definitions(-DJPH_DEBUG_RENDERER)
+# JPH_DEBUG_RENDERER likewise comes from Jolt's PUBLIC definitions once this
+# knob is on (no global -D).
 set(DEBUG_RENDERER_IN_DEBUG_AND_RELEASE ON CACHE BOOL "" FORCE)
 
 if(DEFINED JOLT_PREBUILT_DIR)
@@ -354,6 +363,14 @@ if(DEFINED JOLT_PREBUILT_DIR)
     set_target_properties(
         Jolt::Jolt
         PROPERTIES IMPORTED_LOCATION "${_CULVERIN_JOLT_LOCATION}"
+    )
+    # A prebuilt Jolt was compiled outside our option control; state the
+    # consumer side of the ABI explicitly. The archive MUST have been built
+    # with the same settings (double precision, 32-bit object layers, debug
+    # renderer) — src/jolt/Jolt.hpp static-asserts the visible result.
+    target_compile_definitions(
+        Jolt::Jolt
+        INTERFACE JPH_DOUBLE_PRECISION JPH_OBJECT_LAYER_BITS=32 JPH_DEBUG_RENDERER
     )
 else()
     add_subdirectory("${JOLT_DIR}/Build" jolt_physics_build)

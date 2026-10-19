@@ -1,6 +1,6 @@
 #include "math/MathCore.hpp"
 // clang-format off
-#include <Jolt/Jolt.h>
+#include "jolt/Jolt.hpp"
 #include <Jolt/Geometry/AABox.h>
 #include <Jolt/Geometry/Plane.h>
 #include <Jolt/Math/Mat44.h>

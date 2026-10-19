@@ -3,7 +3,7 @@
 #include "physics/PhysicsWorldState.hpp"
 
 // Include native Jolt headers for zero-cost abstractions and SIMD math
-#include <Jolt/Jolt.h>
+#include "jolt/Jolt.hpp"
 #include <Jolt/Physics/Body/Body.h>
 #include <Jolt/Physics/Collision/ContactListener.h>
 

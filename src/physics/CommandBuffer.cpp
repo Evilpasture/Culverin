@@ -140,7 +140,11 @@ struct FlushContext {
         } else {
             const std::uint32_t dense = world->bodies.slot_to_dense[slot];
             world->bodies.body_ids[dense] = new_bid;
-            world->bodies.soft_shadows[dense].vertices.allocate(cmd.num_vertices);
+            if (!world->bodies.soft_shadows[dense].vertices.allocate(cmd.num_vertices)) {
+                // OOM: flush has no error channel. The body still
+                // simulates in Jolt; its (empty) shadow makes vertex
+                // getters report 0 vertices instead of reading stale data.
+            }
             publish_handle(slot, new_bid);
             world->bodies.slot_states[slot].store(SLOT_SOFT_BODY, std::memory_order::release);
         }

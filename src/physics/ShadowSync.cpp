@@ -6,7 +6,7 @@
 #include "cpp/Span.hpp"
 
 // Include native Jolt headers for ultra-fast C++ bypass
-#include <Jolt/Jolt.h>
+#include "jolt/Jolt.hpp"
 #include <Jolt/Physics/Body/Body.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/Physics/SoftBody/SoftBodyMotionProperties.h>

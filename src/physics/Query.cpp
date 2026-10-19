@@ -445,8 +445,8 @@ PhysicsQueryStatus CPH_PhysicsWorldShapecast(CPH_PhysicsWorld *world, int shape_
 
     JPH_RMat4 transform;
     JPH_RMat4_RotationTranslation(&transform, &rotation, &position);
-    CPH_CastShapeContext context = {.has_hit = false};
-    context.hit.fraction     = 1.0f;
+    CPH_CastShapeContext context{}; // has_hit = false
+    context.hit.fraction = 1.0f;
 
     if (!CPH_ShapecastExecuteInternal(world, shape, &transform, &sweep_direction, ignore_body,
                                     &context)) {

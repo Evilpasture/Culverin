@@ -104,11 +104,11 @@ struct CPH_BodyCreationProps {
 };
 
 struct CPH_BodyConfig {
-    float mass;
-    float friction;
-    float restitution;
-    int is_sensor;
-    int use_ccd;
-    int motion_type;
-    std::uint32_t allowed_dofs;
+    float mass                   = 0.0f;
+    float friction               = 0.0f;
+    float restitution            = 0.0f;
+    int is_sensor                = 0;
+    int use_ccd                  = 0;
+    int motion_type              = 0;
+    std::uint32_t allowed_dofs   = 0;
 };

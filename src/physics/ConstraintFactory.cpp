@@ -5,7 +5,6 @@
 static constexpr float kCcfDefaultFrequency = 20.0f;
 static constexpr float kCcfDefaultDamping = 1.0f;
 static constexpr float kCcfMaxTorque = 1e6f;
-static constexpr float kCcfMaxForce = 1e6f;
 static constexpr float kCcfEpsilon = 1e-6f;
 static constexpr float kCcfTinyEpsilon = 1e-9f;
 
@@ -13,7 +12,7 @@ static constexpr float kCcfTinyEpsilon = 1e-9f;
 
 namespace {
 
-JPH_Constraint *create_fixed(const CPH_ConstraintParams &p, JPH_Body *b1, JPH_Body *b2) {
+JPH_Constraint *create_fixed(const CPH_ConstraintParams & /*unused*/, JPH_Body *b1, JPH_Body *b2) {
     JPH_FixedConstraintSettings s;
     JPH_FixedConstraintSettings_Init(&s);
     s.base.enabled    = true;

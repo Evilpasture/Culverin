@@ -22,14 +22,16 @@ enum PhysicsWorldBodySetup : uint8_t {
 };
 
 struct CPH_PhysicsWorldBodyCreateRequest {
-    int shape_type;
-    float shape_params[4];
+    // Shape-cache key; unused (0) when the caller creates the shape itself
+    // (mesh/heightfield paths).
+    int shape_type          = 0;
+    float shape_params[4]   = {};
     JPH_RVec3 position;
     JPH_Quat rotation;
     CPH_BodyConfig config;
     uint32_t category;
     uint32_t mask;
-    uint32_t material_id;
+    uint32_t material_id    = 0;
     uint64_t user_data;
 };
 

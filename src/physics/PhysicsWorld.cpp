@@ -606,10 +606,12 @@ int CPH_PhysicsWorldInitJolt(CPH_PhysicsWorld *world, CPH_WorldSettings settings
     }
 
     const JPH_PhysicsSystemSettings phys_settings = {
-        .maxBodies    = static_cast<std::uint32_t>(settings.max_bodies),
-        .maxBodyPairs = static_cast<std::uint32_t>(settings.max_pairs),
+        .maxBodies             = static_cast<std::uint32_t>(settings.max_bodies),
+        .numBodyMutexes        = 0, // 0 = Jolt default
+        .maxBodyPairs          = static_cast<std::uint32_t>(settings.max_pairs),
         .maxContactConstraints =
             static_cast<std::uint32_t>(settings.max_contact_constraints),
+        ._padding                      = 0,
         .broadPhaseLayerInterface      = world->bp_interface,
         .objectLayerPairFilter         = world->pair_filter,
         .objectVsBroadPhaseLayerFilter = world->bp_filter};
