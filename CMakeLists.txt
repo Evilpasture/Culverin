@@ -389,12 +389,20 @@ if(DEFINED JOLT_PREBUILT_DIR)
         PATHS "${JOLT_PREBUILT_DIR}"
         NO_DEFAULT_PATH
     )
-    # IMPORTED_LOCATION_RELEASE only matches config "Release" exactly.
-    # scikit-build-core may use a different config name, so set it unconditionally.
+    # Use the library location exported by Jolt instead of assuming a Unix
+    # archive name. The exported path carries the platform's actual suffix
+    # (for example, .lib on Windows and .a on Unix).
+    get_target_property(_CULVERIN_JOLT_LOCATION Jolt::Jolt IMPORTED_LOCATION_RELEASE)
+    if(NOT _CULVERIN_JOLT_LOCATION)
+        get_target_property(_CULVERIN_JOLT_LOCATION Jolt::Jolt IMPORTED_LOCATION)
+    endif()
+    if(NOT _CULVERIN_JOLT_LOCATION)
+        message(FATAL_ERROR "Jolt::Jolt does not export an imported library location")
+    endif()
+    message(STATUS "Culverin: Using prebuilt Jolt at ${_CULVERIN_JOLT_LOCATION}")
     set_target_properties(
         Jolt::Jolt
-        PROPERTIES
-            IMPORTED_LOCATION "${JOLT_PREBUILT_DIR}/../../../lib/libJolt.a"
+        PROPERTIES IMPORTED_LOCATION "${_CULVERIN_JOLT_LOCATION}"
     )
 else()
     add_subdirectory("${JOLT_DIR}/Build" jolt_physics_build)
@@ -465,7 +473,7 @@ add_subdirectory("src/python")
 # ==============================================================================
 include(CheckIPOSupported)
 check_ipo_supported(RESULT ipo_supported OUTPUT error)
-if(ipo_supported)
+if(ipo_supported AND NOT APPLE AND NOT WIN32)
     message(STATUS "Culverin: LTO/IPO is supported and ENABLED")
     get_property(CULVERIN_COMPILE_TARGETS GLOBAL PROPERTY CULVERIN_COMPILE_TARGETS)
     foreach(target IN LISTS CULVERIN_COMPILE_TARGETS)
@@ -476,6 +484,11 @@ if(ipo_supported)
     if(TARGET Jolt AND NOT DEFINED JOLT_PREBUILT_DIR)
         set_property(TARGET Jolt PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
     endif()
+elseif(APPLE OR WIN32)
+    # The macOS and Windows wheel builds use different linkers/driver modes
+    # (Apple ld and the MSVC ABI). Keep optimization at -O3 but avoid relying
+    # on a linker-plugin configuration that varies between hosted runners.
+    message(STATUS "Culverin: Skipping IPO/LTO on ${CMAKE_SYSTEM_NAME}")
 else()
     message(WARNING "Culverin: LTO/IPO not supported: ${error}")
 endif()
@@ -528,7 +541,8 @@ target_include_directories(_culverin_c PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/gene
 # ==============================================================================
 # 7. GLOBAL LTO FLAGS (compiler-identity keyed: these ARE the toolchain's name)
 # ==============================================================================
-if(NOT ENABLE_SANITIZER AND NOT ENABLE_THREAD_SANITIZER)
+# Only add explicit linker-plugin flags when CMake's IPO probe succeeded.
+if(ipo_supported AND NOT ENABLE_SANITIZER AND NOT ENABLE_THREAD_SANITIZER AND NOT APPLE AND NOT WIN32)
     set(LTO_COMPILE_FLAG "")
     set(LTO_LINK_FLAG "")
 
@@ -590,7 +604,7 @@ if(APPLE)
         ${JOLTC_TARGET}
         PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:-frtti>"
     )
-    target_link_options(_culverin_c PRIVATE "-Wl,-all_load,-object_path_lto,culverin.o")
+    target_link_options(_culverin_c PRIVATE "-Wl,-all_load")
 endif()
 
 # ==============================================================================

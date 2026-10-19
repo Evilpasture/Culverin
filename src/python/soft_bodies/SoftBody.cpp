@@ -474,19 +474,17 @@ static PyMethodDef kSoftBodySharedSettingsMethods[] = {
 #    pragma GCC diagnostic pop
 #endif
 
+static PyType_Slot CPH_PySoftBodySharedSettings_Slots[] = {
+    {.slot = Py_tp_new, .pfunc = reinterpret_cast<void *>(PyType_GenericNew)},
+    {.slot = Py_tp_init, .pfunc = reinterpret_cast<void *>(CPH_PySbss_Init)},
+    {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(CPH_PySbss_Dealloc)},
+    {.slot = Py_tp_methods, .pfunc = reinterpret_cast<void *>(kSoftBodySharedSettingsMethods)},
+    {},
+};
+
 PyType_Spec SoftBodySharedSettings_spec = {
     .name      = "culverin._culverin_c.SoftBodySharedSettingsObject",
     .basicsize = sizeof(CPH_SoftBodySharedSettingsObject),
     .flags     = Py_TPFLAGS_DEFAULT,
-    .slots =
-        (PyType_Slot[]){
-
-            {.slot = Py_tp_new, .pfunc = reinterpret_cast<void *>(PyType_GenericNew)},
-            {.slot = Py_tp_init, .pfunc = reinterpret_cast<void *>(CPH_PySbss_Init)},
-            {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(CPH_PySbss_Dealloc)},
-            {.slot  = Py_tp_methods,
-             .pfunc = reinterpret_cast<void *>(kSoftBodySharedSettingsMethods)},
-            {},
-        }
-
+    .slots     = CPH_PySoftBodySharedSettings_Slots,
 };

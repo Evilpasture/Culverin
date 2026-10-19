@@ -731,18 +731,17 @@ static PyMethodDef kRegistryMethods[] = {
                                 CPH_PyRegistry_GetComponentCount), // ECS Statistics
     {nullptr, nullptr, 0, nullptr}};
 
+static PyType_Slot CPH_PyRegistry_Slots[] = {
+    {.slot = Py_tp_new, .pfunc = reinterpret_cast<void *>(PyType_GenericNew)},
+    {.slot = Py_tp_init, .pfunc = reinterpret_cast<void *>(CPH_PyRegistry_Init)},
+    {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(CPH_PyRegistry_Dealloc)},
+    {.slot = Py_tp_methods, .pfunc = reinterpret_cast<void *>(kRegistryMethods)},
+    {},
+};
+
 PyType_Spec Registry_spec = {
     .name      = "culverin._culverin_c.Registry",
     .basicsize = sizeof(CPH_RegistryObject),
     .flags     = Py_TPFLAGS_DEFAULT,
-    .slots =
-        (PyType_Slot[]){
-
-            {.slot = Py_tp_new, .pfunc = reinterpret_cast<void *>(PyType_GenericNew)},
-            {.slot = Py_tp_init, .pfunc = reinterpret_cast<void *>(CPH_PyRegistry_Init)},
-            {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(CPH_PyRegistry_Dealloc)},
-            {.slot = Py_tp_methods, .pfunc = reinterpret_cast<void *>(kRegistryMethods)},
-            {},
-
-        },
+    .slots     = CPH_PyRegistry_Slots,
 };

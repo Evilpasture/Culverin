@@ -1114,25 +1114,23 @@ static PyMethodDef kCharacterMethods[] = {
     CPH::Python::OneArgMethod("get_render_transform", CPH_PyChar_GetRenderTransform),
     {nullptr, nullptr, 0, nullptr}};
 
+static PyGetSetDef CPH_PyCharacter_GetSets[] = {
+    CPH::Python::GetSet("handle", CPH_PyChar_GetHandle),
+    {},
+};
+
+static PyType_Slot CPH_PyCharacter_Slots[] = {
+    {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(CPH_PyChar_Dealloc)},
+    {.slot = Py_tp_traverse, .pfunc = reinterpret_cast<void *>(CPH_PyChar_Traverse)},
+    {.slot = Py_tp_clear, .pfunc = reinterpret_cast<void *>(CPH_PyChar_Clear)},
+    {.slot = Py_tp_methods, .pfunc = reinterpret_cast<void *>(kCharacterMethods)},
+    {.slot = Py_tp_getset, .pfunc = reinterpret_cast<void *>(CPH_PyCharacter_GetSets)},
+    {},
+};
+
 PyType_Spec Character_spec = {
     .name      = "culverin._culverin_c.Character",
     .basicsize = sizeof(CPH_CharacterObject),
     .flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
-    .slots =
-        (PyType_Slot[]){
-
-            {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(CPH_PyChar_Dealloc)},
-            {.slot = Py_tp_traverse, .pfunc = reinterpret_cast<void *>(CPH_PyChar_Traverse)},
-            {.slot = Py_tp_clear, .pfunc = reinterpret_cast<void *>(CPH_PyChar_Clear)},
-            {.slot = Py_tp_methods, .pfunc = reinterpret_cast<void *>(kCharacterMethods)},
-            {.slot = Py_tp_getset,
-             .pfunc =
-                 (PyGetSetDef[]){
-
-                     CPH::Python::GetSet("handle", CPH_PyChar_GetHandle), {}
-
-                 }},
-            {}
-
-        },
+    .slots     = CPH_PyCharacter_Slots,
 };

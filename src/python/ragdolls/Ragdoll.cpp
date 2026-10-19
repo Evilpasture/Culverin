@@ -377,63 +377,57 @@ static PyMethodDef kRagdollMethods[] = {
     CPH::Python::NoArgsMethod("stabilize", CPH_PyRagdollSettings_Stabilize),
     {nullptr, nullptr, 0, nullptr}};
 
+static PyType_Slot CPH_PyRagdollSettings_Slots[] = {
+    {.slot = Py_tp_dealloc,
+     .pfunc = reinterpret_cast<void *>(CPH_PyRagdollSettings_Dealloc)},
+    {.slot = Py_tp_methods, .pfunc = reinterpret_cast<void *>(kRagdollMethods)},
+    {},
+};
+
 PyType_Spec RagdollSettings_spec = {
     .name      = "culverin._culverin_c.RagdollSettings",
     .basicsize = sizeof(CPH_RagdollSettingsObject),
     .flags     = Py_TPFLAGS_DEFAULT,
-    .slots =
-        (PyType_Slot[]){
+    .slots     = CPH_PyRagdollSettings_Slots,
+};
 
-            {.slot  = Py_tp_dealloc,
-             .pfunc = reinterpret_cast<void *>(CPH_PyRagdollSettings_Dealloc)},
-            {.slot = Py_tp_methods, .pfunc = reinterpret_cast<void *>(kRagdollMethods)},
-            {},
+static PyMethodDef CPH_PySkeleton_Methods[] = {
+    CPH::Python::FastCallMethod("add_joint", CPH_PySkeleton_AddJoint),
+    CPH::Python::FastCallMethod("get_joint_index", CPH_PySkeleton_GetJointIndex),
+    CPH::Python::NoArgsMethod("finalize", CPH_PySkeleton_Finalize),
+    {},
+};
 
-        },
+static PyType_Slot CPH_PySkeleton_Slots[] = {
+    {.slot = Py_tp_new, .pfunc = reinterpret_cast<void *>(CPH_PySkeleton_New)},
+    {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(CPH_PySkeleton_Dealloc)},
+    {.slot = Py_tp_methods, .pfunc = reinterpret_cast<void *>(CPH_PySkeleton_Methods)},
+    {},
 };
 
 PyType_Spec Skeleton_spec = {
     .name      = "culverin._culverin_c.Skeleton",
     .basicsize = sizeof(CPH_SkeletonObject),
     .flags     = Py_TPFLAGS_DEFAULT,
-    .slots =
-        (PyType_Slot[]){
+    .slots     = CPH_PySkeleton_Slots,
+};
 
-            {.slot = Py_tp_new, .pfunc = reinterpret_cast<void *>(CPH_PySkeleton_New)},
-            {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(CPH_PySkeleton_Dealloc)},
-            {.slot = Py_tp_methods,
-             .pfunc =
-                 (PyMethodDef[]){
+static PyMethodDef CPH_PyRagdoll_Methods[] = {
+    CPH::Python::FastCallMethod("drive_to_pose", CPH_PyRagdoll_DriveToPose),
+    CPH::Python::NoArgsMethod("get_body_handles", CPH_PyRagdoll_GetBodyHandles),
+    CPH::Python::NoArgsMethod("get_debug_info", CPH_PyRagdoll_GetDebugInfo),
+    {},
+};
 
-                     CPH::Python::FastCallMethod("add_joint", CPH_PySkeleton_AddJoint),
-                     CPH::Python::FastCallMethod("get_joint_index", CPH_PySkeleton_GetJointIndex),
-                     CPH::Python::NoArgsMethod("finalize", CPH_PySkeleton_Finalize),
-                     {}
-
-                 }},
-            {},
-
-        },
+static PyType_Slot CPH_PyRagdoll_Slots[] = {
+    {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(CPH_PyRagdoll_Dealloc)},
+    {.slot = Py_tp_methods, .pfunc = reinterpret_cast<void *>(CPH_PyRagdoll_Methods)},
+    {},
 };
 
 PyType_Spec Ragdoll_spec = {
     .name      = "culverin._culverin_c.Ragdoll",
     .basicsize = sizeof(CPH_RagdollObject),
     .flags     = Py_TPFLAGS_DEFAULT,
-    .slots =
-        (PyType_Slot[]){
-            {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(CPH_PyRagdoll_Dealloc)},
-            {.slot = Py_tp_methods,
-             .pfunc =
-                 (PyMethodDef[]){
-
-                     CPH::Python::FastCallMethod("drive_to_pose", CPH_PyRagdoll_DriveToPose),
-                     CPH::Python::NoArgsMethod("get_body_handles", CPH_PyRagdoll_GetBodyHandles),
-                     CPH::Python::NoArgsMethod("get_debug_info", CPH_PyRagdoll_GetDebugInfo),
-                     {}
-
-                 }},
-            {},
-
-        },
+    .slots     = CPH_PyRagdoll_Slots,
 };

@@ -640,34 +640,32 @@ static PyMethodDef kModuleMethods[] = {
 
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 [[gnu::used]]
+static PyModuleDef_Slot CPH_PyModule_Slots[] = {
+    {.slot = Py_mod_exec, .value = reinterpret_cast<void *>(culverin_exec)},
+
+#if defined(Py_MOD_GIL_NOT_USED)
+    {.slot = Py_mod_gil, .value = Py_MOD_GIL_NOT_USED},
+#endif
+
+    {.slot = Py_mod_multiple_interpreters,
+#if PY_VERSION_HEX >= 0x030D0000
+     .value = Py_MOD_MULTIPLE_INTERPRETERS_SUPPORTED
+#else
+     .value = Py_MOD_PER_INTERPRETER_GIL_SUPPORTED
+#endif
+    },
+    {},
+};
+
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+[[gnu::used]]
 PyModuleDef culverin_module = {
     .m_base    = PyModuleDef_HEAD_INIT,
     .m_name    = "_culverin_c",
     .m_doc     = "Culverin Physics Engine Core",
     .m_size    = sizeof(CPH_ModuleStateStorage),
     .m_methods = kModuleMethods,
-    .m_slots =
-        (PyModuleDef_Slot[]){
-
-            {.slot = Py_mod_exec, .value = reinterpret_cast<void *>(culverin_exec)},
-
-// 1. Handle the Free-threaded (No GIL) declaration (3.13+)
-#if defined(Py_MOD_GIL_NOT_USED)
-            {.slot = Py_mod_gil, .value = Py_MOD_GIL_NOT_USED},
-#endif
-
-            // 2. Handle Subinterpreter support
-            {.slot = Py_mod_multiple_interpreters,
-#if PY_VERSION_HEX >= 0x030D0000
-             .value = Py_MOD_MULTIPLE_INTERPRETERS_SUPPORTED
-#else
-             .value = Py_MOD_PER_INTERPRETER_GIL_SUPPORTED
-#endif
-            },
-
-            {}
-
-        },
+    .m_slots   = CPH_PyModule_Slots,
     .m_traverse = culverin_traverse,
     .m_clear    = culverin_clear,
     .m_free     = culverin_free,

@@ -35,7 +35,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: jolt-install
-          key: jolt-${{ matrix.os }}-${{ steps.jolt_hash.outputs.hash }}-v13
+          key: jolt-${{ matrix.os }}-${{ runner.arch }}-${{ steps.jolt_hash.outputs.hash }}-v13
 
       - name: Install deps (Linux)
         if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Linux'

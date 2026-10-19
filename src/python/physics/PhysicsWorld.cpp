@@ -2679,55 +2679,52 @@ static PyMethodDef kPhysicsWorldMethods[] = {
 
     {nullptr, nullptr, 0, nullptr}};
 
+// CPython retains these tables for the lifetime of the heap type. Keep their
+// storage static: GNU C++ compound literals here create temporaries, leaving
+// dangling PyType_Slot data and causing "invalid slot offset" during import.
+static PyMemberDef CPH_PyWorld_Members[] = {
+    {.name   = "__weaklistoffset__",
+     .type   = Py_T_PYSSIZET,
+     .offset = offsetof(CPH_PhysicsWorldObject, weakreflist),
+     .flags  = Py_READONLY,
+     .doc    = nullptr},
+    {},
+};
+
+static PyGetSetDef CPH_PyWorld_GetSets[] = {
+    CPH::Python::GetSet("positions", CPH_PyWorld_GetPositions),
+    CPH::Python::GetSet("rotations", CPH_PyWorld_GetRotations),
+    CPH::Python::GetSet("velocities", CPH_PyWorld_GetVelocities),
+    CPH::Python::GetSet("angular_velocities", CPH_PyWorld_GetAngularVelocities),
+    CPH::Python::GetSet("count", CPH_PyWorld_GetCount),
+    CPH::Python::GetSet("time", CPH_PyWorld_GetTime),
+    CPH::Python::GetSet("user_data", CPH_PyWorld_GetUserDataBuffer),
+    CPH::Python::GetSet("shape_count", CPH_PyWorld_GetShapeCount),
+    CPH::Python::GetSet("is_step_pending", CPH_PyWorld_GetIsStepPending),
+    CPH::Python::GetSet("max_bodies", CPH_PyWorld_GetMaxBodies),
+    CPH::Python::GetSet("remaining_capacity", CPH_PyWorld_GetRemainingCapacity),
+    {},
+};
+
+static PyType_Slot CPH_PyWorld_Slots[] = {
+    {.slot = Py_tp_new, .pfunc = reinterpret_cast<void *>(PyType_GenericNew)},
+    {.slot = Py_tp_init, .pfunc = reinterpret_cast<void *>(CPH_PyWorld_Init)},
+    {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(CPH_PyWorld_Dealloc)},
+    {.slot = Py_tp_call, .pfunc = nullptr},
+    {.slot = Py_tp_methods, .pfunc = reinterpret_cast<void *>(kPhysicsWorldMethods)},
+    {.slot = Py_tp_members, .pfunc = reinterpret_cast<void *>(CPH_PyWorld_Members)},
+    {.slot = Py_tp_getset, .pfunc = reinterpret_cast<void *>(CPH_PyWorld_GetSets)},
+    {.slot = Py_bf_getbuffer, .pfunc = reinterpret_cast<void *>(CPH_PyWorld_Getbuffer)},
+    {.slot = Py_bf_releasebuffer, .pfunc = reinterpret_cast<void *>(CPH_PyWorld_Releasebuffer)},
+    {.slot = Py_tp_traverse, .pfunc = reinterpret_cast<void *>(CPH_PyWorld_Traverse)},
+    {.slot = Py_tp_clear, .pfunc = reinterpret_cast<void *>(CPH_PyWorld_Clear)},
+    {},
+};
+
 PyType_Spec CPH_PyWorld_Spec = {
     .name      = "culverin._culverin_c.PhysicsWorld",
     .basicsize = sizeof(CPH_PhysicsWorldObject),
     .flags =
         Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC | Py_TPFLAGS_MANAGED_DICT,
-    .slots =
-        (PyType_Slot[]){
-
-            {.slot = Py_tp_new, .pfunc = reinterpret_cast<void *>(PyType_GenericNew)},
-            {.slot = Py_tp_init, .pfunc = reinterpret_cast<void *>(CPH_PyWorld_Init)},
-            {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(CPH_PyWorld_Dealloc)},
-            {.slot = Py_tp_call, .pfunc = nullptr},
-            {.slot = Py_tp_methods, .pfunc = reinterpret_cast<void *>(kPhysicsWorldMethods)},
-            {.slot = Py_tp_members,
-             .pfunc =
-                 (PyMemberDef[]){
-
-                     {.name   = "__weaklistoffset__",
-                      .type   = Py_T_PYSSIZET,
-                      .offset = offsetof(CPH_PhysicsWorldObject, weakreflist),
-                      .flags  = Py_READONLY,
-                      .doc    = nullptr},
-                     {}
-
-                 }},
-            {.slot = Py_tp_getset,
-             .pfunc =
-                 (PyGetSetDef[]){
-
-                     CPH::Python::GetSet("positions", CPH_PyWorld_GetPositions),
-                     CPH::Python::GetSet("rotations", CPH_PyWorld_GetRotations),
-                     CPH::Python::GetSet("velocities", CPH_PyWorld_GetVelocities),
-                     CPH::Python::GetSet("angular_velocities", CPH_PyWorld_GetAngularVelocities),
-                     CPH::Python::GetSet("count", CPH_PyWorld_GetCount),
-                     CPH::Python::GetSet("time", CPH_PyWorld_GetTime),
-                     CPH::Python::GetSet("user_data", CPH_PyWorld_GetUserDataBuffer),
-                     CPH::Python::GetSet("shape_count", CPH_PyWorld_GetShapeCount),
-                     CPH::Python::GetSet("is_step_pending", CPH_PyWorld_GetIsStepPending),
-                     CPH::Python::GetSet("max_bodies", CPH_PyWorld_GetMaxBodies),
-                     CPH::Python::GetSet("remaining_capacity", CPH_PyWorld_GetRemainingCapacity),
-                     {}
-
-                 }},
-            {.slot = Py_bf_getbuffer, .pfunc = reinterpret_cast<void *>(CPH_PyWorld_Getbuffer)},
-            {.slot  = Py_bf_releasebuffer,
-             .pfunc = reinterpret_cast<void *>(CPH_PyWorld_Releasebuffer)},
-            {.slot = Py_tp_traverse, .pfunc = reinterpret_cast<void *>(CPH_PyWorld_Traverse)},
-            {.slot = Py_tp_clear, .pfunc = reinterpret_cast<void *>(CPH_PyWorld_Clear)},
-            {},
-
-        },
+    .slots = CPH_PyWorld_Slots,
 };

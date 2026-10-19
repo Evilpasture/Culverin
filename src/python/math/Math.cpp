@@ -1171,21 +1171,16 @@ static PyMethodDef kMathMethods[] = {
     CPH::Python::FastCallMethod("euler_to_quat_batch", CPH_PyMath_EulerToQuatBatch),
     {nullptr, nullptr, 0, nullptr}};
 
+static PyType_Slot CPH_PyMathService_Slots[] = {
+    {.slot = Py_tp_new, .pfunc = reinterpret_cast<void *>(CPH_PyMath_New)},
+    {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(CPH_PyMath_Dealloc)},
+    {.slot = Py_tp_methods, .pfunc = reinterpret_cast<void *>(kMathMethods)},
+    {},
+};
+
 PyType_Spec MathService_spec = {
     .name      = "culverin._culverin_c.MathService",
     .basicsize = sizeof(struct CPH_MathHolderObject),
     .flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
-    .slots =
-        (PyType_Slot[]){
-
-            // 1. Add the Constructor logic
-            {.slot = Py_tp_new, .pfunc = reinterpret_cast<void *>(CPH_PyMath_New)},
-
-            // 2. Add the Destructor logic
-            {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(CPH_PyMath_Dealloc)},
-
-            {.slot = Py_tp_methods, .pfunc = reinterpret_cast<void *>(kMathMethods)},
-            {}
-
-        },
+    .slots     = CPH_PyMathService_Slots,
 };

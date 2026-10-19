@@ -206,15 +206,17 @@ PyType_DeclareSlot_StatusFromModule CPH_PyShip_Clear(CPH_ShipObject *self) {
 static PyMethodDef kShipMethods[] = {CPH::Python::FastCallMethod("set_input", CPH_PyShip_SetInput),
                                      {nullptr, nullptr, 0, nullptr}};
 
+static PyType_Slot CPH_PyShip_Slots[] = {
+    {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(CPH_PyShip_Dealloc)},
+    {.slot = Py_tp_traverse, .pfunc = reinterpret_cast<void *>(CPH_PyShip_Traverse)},
+    {.slot = Py_tp_clear, .pfunc = reinterpret_cast<void *>(CPH_PyShip_Clear)},
+    {.slot = Py_tp_methods, .pfunc = reinterpret_cast<void *>(kShipMethods)},
+    {},
+};
+
 PyType_Spec Ship_spec = {
     .name      = "culverin._culverin_c.Ship",
     .basicsize = sizeof(CPH_ShipObject),
     .flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
-    .slots =
-        (PyType_Slot[]){
-            {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(CPH_PyShip_Dealloc)},
-            {.slot = Py_tp_traverse, .pfunc = reinterpret_cast<void *>(CPH_PyShip_Traverse)},
-            {.slot = Py_tp_clear, .pfunc = reinterpret_cast<void *>(CPH_PyShip_Clear)},
-            {.slot = Py_tp_methods, .pfunc = reinterpret_cast<void *>(kShipMethods)},
-            {}},
+    .slots     = CPH_PyShip_Slots,
 };

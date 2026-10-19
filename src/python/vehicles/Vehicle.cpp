@@ -868,25 +868,23 @@ static PyMethodDef kVehicleMethods[] = {
     CPH::Python::NoArgsMethod("get_debug_state", CPH_PyVehicle_GetDebugState),
     {nullptr, nullptr, 0, nullptr}};
 
+static PyGetSetDef CPH_PyVehicle_GetSets[] = {
+    CPH::Python::GetSet("wheel_count", CPH_PyVehicle_GetWheelCount),
+    {},
+};
+
+static PyType_Slot CPH_PyVehicle_Slots[] = {
+    {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(CPH_PyVehicle_Dealloc)},
+    {.slot = Py_tp_traverse, .pfunc = reinterpret_cast<void *>(CPH_PyVehicle_Traverse)},
+    {.slot = Py_tp_clear, .pfunc = reinterpret_cast<void *>(CPH_PyVehicle_Clear)},
+    {.slot = Py_tp_methods, .pfunc = reinterpret_cast<void *>(kVehicleMethods)},
+    {.slot = Py_tp_getset, .pfunc = reinterpret_cast<void *>(CPH_PyVehicle_GetSets)},
+    {},
+};
+
 PyType_Spec Vehicle_spec = {
     .name      = "culverin._culverin_c.Vehicle",
     .basicsize = sizeof(CPH_VehicleObject),
     .flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
-    .slots =
-        (PyType_Slot[]){
-
-            {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(CPH_PyVehicle_Dealloc)},
-            {.slot = Py_tp_traverse, .pfunc = reinterpret_cast<void *>(CPH_PyVehicle_Traverse)},
-            {.slot = Py_tp_clear, .pfunc = reinterpret_cast<void *>(CPH_PyVehicle_Clear)},
-            {.slot = Py_tp_methods, .pfunc = reinterpret_cast<void *>(kVehicleMethods)},
-            {.slot = Py_tp_getset,
-             .pfunc =
-                 (PyGetSetDef[]){
-
-                     CPH::Python::GetSet("wheel_count", CPH_PyVehicle_GetWheelCount), {}
-
-                 }},
-            {},
-
-        },
+    .slots     = CPH_PyVehicle_Slots,
 };
