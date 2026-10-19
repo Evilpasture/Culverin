@@ -213,7 +213,6 @@ ExecuteSyncPass(const Unsigned32 active_count, const JPH_PhysicsSystem *const CP
         const Unsigned32 current_gen = map.generations[safe_slot].load(std::memory_order::relaxed);
 
         // --- BRANCHLESS VALIDATION ---
-        [[assume(state < std::to_underlying(SlotState::Count))]];
         const Unsigned32 state_bad = [state]() -> Unsigned32 {
             if constexpr (TType == JPH::EBodyType::RigidBody) {
                 // Create a mask of the bits we want (bit 1 and bit 2)
