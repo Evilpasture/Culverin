@@ -8,7 +8,10 @@
  * creation. This helper does not access the physics system and does not require
  * jph_trampoline_lock.
  */
-JPH_Shape *CPH_FindOrCreateShapeLocked(CPH_PhysicsWorld *world, int type, const float *params) {
+
+namespace CPH {
+
+JPH_Shape *FindOrCreateShapeLocked(PhysicsWorld *world, int type, const float *params) {
     // 1. KEY NORMALIZATION & SANITIZATION
     // Defensive clamping
     float p1;
@@ -16,7 +19,7 @@ JPH_Shape *CPH_FindOrCreateShapeLocked(CPH_PhysicsWorld *world, int type, const 
     float p3;
     float p4;
 
-    if (type == CPH_SHAPE_PLANE) {
+    if (type == SHAPE_PLANE) {
         // Plane normal components must represent a unit vector.
         // We defensively normalize them and avoid clamping zero-components.
         float nx     = params[0];
@@ -45,7 +48,7 @@ JPH_Shape *CPH_FindOrCreateShapeLocked(CPH_PhysicsWorld *world, int type, const 
     }
     // 2. CACHE LOOKUP
     for (size_t i = 0; i < world->shape_cache_count; ++i) {
-        const CPH_ShapeKey *cached = &world->shape_cache[i].key;
+        const ShapeKey *cached = &world->shape_cache[i].key;
         if (cached->type == (uint32_t)type && cached->p1 == p1 && cached->p2 == p2 &&
             cached->p3 == p3 && cached->p4 == p4) {
             return world->shape_cache[i].shape;
@@ -63,7 +66,7 @@ JPH_Shape *CPH_FindOrCreateShapeLocked(CPH_PhysicsWorld *world, int type, const 
     // 4. JOLT CREATION (Type-Specific Dispatch)
     JPH_Shape *shape = nullptr;
     switch (type) {
-    case CPH_SHAPE_BOX: {
+    case SHAPE_BOX: {
         JPH_Vec3 half_extents = {p1, p2, p3};
         auto s                = JPH_BoxShapeSettings_Create(&half_extents, 0.05f);
         if (s) {
@@ -72,7 +75,7 @@ JPH_Shape *CPH_FindOrCreateShapeLocked(CPH_PhysicsWorld *world, int type, const 
         }
         break;
     }
-    case CPH_SHAPE_SPHERE: {
+    case SHAPE_SPHERE: {
         auto s = JPH_SphereShapeSettings_Create(p1);
         if (s) {
             shape = (JPH_Shape *)JPH_SphereShapeSettings_CreateShape(s);
@@ -80,7 +83,7 @@ JPH_Shape *CPH_FindOrCreateShapeLocked(CPH_PhysicsWorld *world, int type, const 
         }
         break;
     }
-    case CPH_SHAPE_CAPSULE: {
+    case SHAPE_CAPSULE: {
         auto s = JPH_CapsuleShapeSettings_Create(p1, p2);
         if (s) {
             shape = (JPH_Shape *)JPH_CapsuleShapeSettings_CreateShape(s);
@@ -88,7 +91,7 @@ JPH_Shape *CPH_FindOrCreateShapeLocked(CPH_PhysicsWorld *world, int type, const 
         }
         break;
     }
-    case CPH_SHAPE_CYLINDER: {
+    case SHAPE_CYLINDER: {
         auto s = JPH_CylinderShapeSettings_Create(p1, p2, 0.05f);
         if (s) {
             shape = (JPH_Shape *)JPH_CylinderShapeSettings_CreateShape(s);
@@ -96,7 +99,7 @@ JPH_Shape *CPH_FindOrCreateShapeLocked(CPH_PhysicsWorld *world, int type, const 
         }
         break;
     }
-    case CPH_SHAPE_PLANE: {
+    case SHAPE_PLANE: {
         JPH_Plane plane = {{p1, p2, p3}, p4};
         auto s          = JPH_PlaneShapeSettings_Create(&plane, nullptr, 1000.0f);
         if (s) {
@@ -114,8 +117,8 @@ JPH_Shape *CPH_FindOrCreateShapeLocked(CPH_PhysicsWorld *world, int type, const 
     }
 
     // 5. CACHE COMMIT
-    CPH_ShapeEntry &entry = world->shape_cache[world->shape_cache_count++];
-    entry.key   = CPH_ShapeKey{.type = (uint32_t)type, .p1 = p1, .p2 = p2, .p3 = p3, .p4 = p4};
+    ShapeEntry &entry = world->shape_cache[world->shape_cache_count++];
+    entry.key   = ShapeKey{.type = (uint32_t)type, .p1 = p1, .p2 = p2, .p3 = p3, .p4 = p4};
     entry.shape = shape;
 
     return shape;
@@ -124,13 +127,13 @@ JPH_Shape *CPH_FindOrCreateShapeLocked(CPH_PhysicsWorld *world, int type, const 
 
 // Execute one native shapecast. The caller owns query registration and holds
 // the shape alive for the duration of this call.
-bool CPH_ShapecastExecuteInternal(CPH_PhysicsWorld *world, const JPH_Shape *shape,
+bool ShapecastExecuteInternal(PhysicsWorld *world, const JPH_Shape *shape,
                                 const JPH_RMat4 *transform, const JPH_Vec3 *sweep_dir,
-                                JPH_BodyID ignore_bid, CPH_CastShapeContext *ctx) {
+                                JPH_BodyID ignore_bid, CastShapeContext *ctx) {
     JPH_BroadPhaseLayerFilter *bp_f = JPH_BroadPhaseLayerFilter_Create(nullptr);
     JPH_ObjectLayerFilter *obj_f    = JPH_ObjectLayerFilter_Create(nullptr);
 
-    CPH_CastShapeFilter filter_ctx = {ignore_bid};
+    CastShapeFilter filter_ctx = {ignore_bid};
     JPH_BodyFilter *bf         = JPH_BodyFilter_Create(&filter_ctx);
 
     if (!bp_f || !obj_f || !bf) {
@@ -163,3 +166,5 @@ bool CPH_ShapecastExecuteInternal(CPH_PhysicsWorld *world, const JPH_Shape *shap
     JPH_ObjectLayerFilter_Destroy(obj_f);
     return true;
 }
+
+} // namespace CPH

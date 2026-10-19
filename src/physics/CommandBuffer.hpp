@@ -21,9 +21,12 @@
 #include <span>
 #include <variant>
 
-struct CPH_PhysicsWorld;
 
-namespace CPH::cmd {
+namespace CPH {
+
+struct PhysicsWorld;
+
+namespace cmd {
 
 using BodySettingsPtr =
     JoltPtr<JPH_BodyCreationSettings, JPH_BodyCreationSettings_Destroy>;
@@ -82,10 +85,10 @@ struct CreateConstraint {
     std::uint32_t body2_slot;
     std::uint32_t constraint_slot;
     int type;
-    CPH_ConstraintParams params;
+    ConstraintParams params;
 };
 
-} // namespace CPH::cmd
+} // namespace cmd
 
 struct PhysicsCommand {
     std::uint32_t slot = 0;
@@ -101,14 +104,16 @@ struct PhysicsCommand {
 
 // Swap-remove `slot` from the dense body arrays and recycle it.
 // Caller holds shadow_lock.
-void CPH_WorldRemoveBodySlot(CPH_PhysicsWorld *world, std::uint32_t slot);
+void WorldRemoveBodySlot(PhysicsWorld *world, std::uint32_t slot);
 
 // Queue growth; caller holds shadow_lock and the world is not stepping.
-[[nodiscard]] bool CPH_EnsureCommandCapacity(CPH_PhysicsWorld *world);
-[[nodiscard]] bool CPH_EnsureCommandBulkCapacity(CPH_PhysicsWorld *world, std::size_t batch_size);
+[[nodiscard]] bool EnsureCommandCapacity(PhysicsWorld *world);
+[[nodiscard]] bool EnsureCommandBulkCapacity(PhysicsWorld *world, std::size_t batch_size);
 
 // Executes and clears each command. Caller holds jph_trampoline_lock.
-void CPH_FlushCommandsInternal(CPH_PhysicsWorld *world, std::span<PhysicsCommand> queue);
+void FlushCommandsInternal(PhysicsWorld *world, std::span<PhysicsCommand> queue);
 
 // Drops pending commands, destroying payloads they own.
-void CPH_ClearCommandQueue(CPH_PhysicsWorld *world);
+void ClearCommandQueue(PhysicsWorld *world);
+
+} // namespace CPH

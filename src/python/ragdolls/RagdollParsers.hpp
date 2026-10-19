@@ -15,8 +15,8 @@ struct SkeletonParsers {
 struct RagdollParsers {
     ParserCatalog catalog{};
 
-    Parser<"RagdollDrive", Arg<"root_pos", CPH_PosStride, true>,
-           Arg<"root_rot", CPH_AuxStride, true>, Arg<"matrices", PyObject *, true>>
+    Parser<"RagdollDrive", Arg<"root_pos", PosStride, true>,
+           Arg<"root_rot", AuxStride, true>, Arg<"matrices", PyObject *, true>>
         RagdollDrive{catalog};
 };
 
@@ -27,7 +27,7 @@ struct RagdollSettingsParsers {
            Arg<"size", PyObject *, true>, Arg<"mass", float, false>,
            Arg<"parent_index", int, false>, Arg<"twist_min", float, false>,
            Arg<"twist_max", float, false>, Arg<"cone_angle", float, false>,
-           Arg<"axis", CPH_Vec3f, false>, Arg<"normal", CPH_Vec3f, false>,
+           Arg<"axis", Vec3f, false>, Arg<"normal", Vec3f, false>,
            Arg<"pos", PyObject *, false>>
         RagdollAddPart{catalog};
 };

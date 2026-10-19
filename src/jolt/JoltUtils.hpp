@@ -6,6 +6,9 @@
 #include <cstdint>
 #include <memory>
 
+
+namespace CPH {
+
 inline constexpr std::uint32_t kJphInvalidBodyId = 0xFFFFFFFF;
 
 // Jolt BodyID layout: [8-bit sequence | 24-bit index]; the index is masked
@@ -27,3 +30,5 @@ struct JoltDeleter {
 
 template <class T, auto Destroy>
 using JoltPtr = std::unique_ptr<T, JoltDeleter<T, Destroy>>;
+
+} // namespace CPH

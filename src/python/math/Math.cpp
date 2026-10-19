@@ -71,7 +71,7 @@ static PyObject *MathGetPerspective(MathHolderObject *self, PyObject *const *arg
     }
 
     float out[kSixteenFloats];
-    CPH_MathGetPerspective(fovy, aspect, near_p, far_p, out);
+    CPH::MathGetPerspective(fovy, aspect, near_p, far_p, out);
 
     return BuildTuple(out[0], out[1], out[2], out[3], out[4], out[5], out[6], out[7],
                               out[8], out[9], out[10], out[11], out[12], out[13], out[14], out[15]);
@@ -92,7 +92,7 @@ static PyObject *MathGetOrtho(MathHolderObject *self, PyObject *const *args,
     }
 
     float out[kSixteenFloats];
-    CPH_MathGetOrtho(left, right, bottom, top, near_p, far_p, out);
+    CPH::MathGetOrtho(left, right, bottom, top, near_p, far_p, out);
 
     return BuildTuple(out[0], out[1], out[2], out[3], out[4], out[5], out[6], out[7],
                               out[8], out[9], out[10], out[11], out[12], out[13], out[14], out[15]);
@@ -138,7 +138,7 @@ static PyObject *MathGetLookAt(MathHolderObject *self, PyObject *const *args,
     }
 
     alignas(kSimdAlignment) float out[kSixteenFloats];
-    CPH_MathGetLookAt(eye, target, up, out);
+    CPH::MathGetLookAt(eye, target, up, out);
 
     return BuildTuple(out[0], out[1], out[2], out[3], out[4], out[5], out[6], out[7],
                               out[8], out[9], out[10], out[11], out[12], out[13], out[14], out[15]);
@@ -192,7 +192,7 @@ static PyObject *MathGetTrs(MathHolderObject *self, PyObject *const *args,
     }
 
     alignas(kSimdAlignment) float out[kSixteenFloats];
-    CPH_MathGetTrs(p, r, s, out);
+    CPH::MathGetTrs(p, r, s, out);
 
     return BuildTuple(out[0], out[1], out[2], out[3], out[4], out[5], out[6], out[7],
                               out[8], out[9], out[10], out[11], out[12], out[13], out[14], out[15]);
@@ -229,7 +229,7 @@ static PyObject *MathGetTrsBatch(MathHolderObject *self, PyObject *const *args,
     PyObject *result = PyBytes_FromStringAndSize(
         nullptr, count * kSixteenFloats * static_cast<Py_ssize_t>(sizeof(float)));
     if (result) {
-        CPH_MathGetTrsBatch(count, static_cast<float *>(p_buf.buf), static_cast<float *>(r_buf.buf),
+        CPH::MathGetTrsBatch(count, static_cast<float *>(p_buf.buf), static_cast<float *>(r_buf.buf),
                             static_cast<float *>(s_buf.buf),
                             reinterpret_cast<float *>(PyBytes_AsString(result)));
     }
@@ -256,7 +256,7 @@ static PyObject *MathInverse(MathHolderObject *self, PyObject *const *args,
         return nullptr;
     }
 
-    CPH_MathMat44Inverse(in, out);
+    CPH::MathMat44Inverse(in, out);
     return BuildTuple(out[0], out[1], out[2], out[3], out[4], out[5], out[6], out[7],
                               out[8], out[9], out[10], out[11], out[12], out[13], out[14], out[15]);
 }
@@ -279,7 +279,7 @@ static PyObject *MathMatmul(MathHolderObject *self, PyObject *const *args,
         return nullptr;
     }
 
-    CPH_MathMat44Mul(a, b, out);
+    CPH::MathMat44Mul(a, b, out);
     return BuildTuple(out[0], out[1], out[2], out[3], out[4], out[5], out[6], out[7],
                               out[8], out[9], out[10], out[11], out[12], out[13], out[14], out[15]);
 }
@@ -317,7 +317,7 @@ static PyObject *MathTransformVec3(MathHolderObject *self, PyObject *const *args
     }
 
     float out[3];
-    CPH_MathTransformVec3(m, v, out);
+    CPH::MathTransformVec3(m, v, out);
 
     // FastBuild is significantly faster than Py_BuildValue
     return BuildTuple(out[0], out[1], out[2]);
@@ -348,7 +348,7 @@ static PyObject *MathMatmulBatch(MathHolderObject *self, PyObject *const *args,
     size_t count     = view.len / (kSixteenFloats * sizeof(float));
     PyObject *result = PyBytes_FromStringAndSize(nullptr, view.len);
     if (result) {
-        CPH_MathMat44MulBatch(m, static_cast<float *>(view.buf), count,
+        CPH::MathMat44MulBatch(m, static_cast<float *>(view.buf), count,
                               reinterpret_cast<float *>(PyBytes_AsString(result)));
     }
 
@@ -389,7 +389,7 @@ static PyObject *MathCullAabb(MathHolderObject *self, PyObject *const *args,
         return nullptr;
     }
 
-    int visible = CPH_MathCullAabb(vp, a_min, a_max);
+    int visible = CPH::MathCullAabb(vp, a_min, a_max);
     return BuildValue(static_cast<bool>(visible));
 }
 
@@ -418,7 +418,7 @@ static PyObject *MathCullAabbBatch(MathHolderObject *self, PyObject *const *args
     Py_ssize_t count = view.len / (6 * static_cast<Py_ssize_t>(sizeof(float)));
     PyObject *result = PyByteArray_FromStringAndSize(nullptr, count);
     if (result) {
-        CPH_MathCullAabbBatch(vp, static_cast<float *>(view.buf), count,
+        CPH::MathCullAabbBatch(vp, static_cast<float *>(view.buf), count,
                               reinterpret_cast<uint8_t *>(PyByteArray_AsString(result)));
     }
 
@@ -451,7 +451,7 @@ static PyObject *MathVec3NormalizeBatch(MathHolderObject *self, PyObject *const 
     PyObject *result = PyBytes_FromStringAndSize(nullptr, view.len);
 
     if (result) {
-        CPH_MathVec3NormalizeBatch(static_cast<const float *>(view.buf), count,
+        CPH::MathVec3NormalizeBatch(static_cast<const float *>(view.buf), count,
                                    reinterpret_cast<float *>(PyBytes_AsString(result)));
     }
 
@@ -470,7 +470,7 @@ static PyObject *MathQuatFromEuler(MathHolderObject *self, PyObject *const *args
     }
 
     float out[4]; // quat: x, y, z, w
-    CPH_MathQuatFromEuler(x, y, z, out);
+    CPH::MathQuatFromEuler(x, y, z, out);
 
     // BuildTuple is optimized for returning fixed-size math results
     return BuildTuple(out[0], out[1], out[2], out[3]);
@@ -490,7 +490,7 @@ static PyObject *MathQuatToEuler(MathHolderObject *self, PyObject *const *args,
     float in_q[4] = {x, y, z, w};
     float out_euler[3];
 
-    CPH_MathQuatToEuler(in_q, out_euler);
+    CPH::MathQuatToEuler(in_q, out_euler);
 
     return BuildTuple(out_euler[0], out_euler[1], out_euler[2]);
 }
@@ -514,7 +514,7 @@ static PyObject *MathQuatSlerp(MathHolderObject *self, PyObject *const *args,
         return nullptr;
     }
 
-    CPH_MathQuatSlerp(q1, q2, t, out);
+    CPH::MathQuatSlerp(q1, q2, t, out);
 
     return BuildTuple(out[0], out[1], out[2], out[3]);
 }
@@ -537,7 +537,7 @@ static PyObject *MathQuatMul(MathHolderObject *self, PyObject *const *args,
         return nullptr;
     }
 
-    CPH_MathQuatMul(a, b, out);
+    CPH::MathQuatMul(a, b, out);
 
     return BuildTuple(out[0], out[1], out[2], out[3]);
 }
@@ -574,7 +574,7 @@ static PyObject *MathVec3LerpBatch(MathHolderObject *self, PyObject *const *args
     PyObject *result = PyBytes_FromStringAndSize(nullptr, view_a.len);
 
     if (result) {
-        CPH_MathVec3LerpBatch(static_cast<const float *>(view_a.buf),
+        CPH::MathVec3LerpBatch(static_cast<const float *>(view_a.buf),
                               static_cast<const float *>(view_b.buf), alpha, count,
                               reinterpret_cast<float *>(PyBytes_AsString(result)));
     }
@@ -602,7 +602,7 @@ static PyObject *MathQuatRotateVec3(MathHolderObject *self, PyObject *const *arg
         return nullptr;
     }
 
-    CPH_MathQuatRotateVec3(q, v, out);
+    CPH::MathQuatRotateVec3(q, v, out);
 
     return BuildTuple(out[0], out[1], out[2]);
 }
@@ -639,7 +639,7 @@ static PyObject *MathQuatRotateVec3Batch(MathHolderObject *self, PyObject *const
     PyObject *result = PyBytes_FromStringAndSize(nullptr, view.len);
 
     if (result) {
-        CPH_MathQuatRotateVec3Batch(q, static_cast<const float *>(view.buf), count,
+        CPH::MathQuatRotateVec3Batch(q, static_cast<const float *>(view.buf), count,
                                     reinterpret_cast<float *>(PyBytes_AsString(result)));
     }
 
@@ -662,7 +662,7 @@ static PyObject *MathQuatInverse(MathHolderObject *self, PyObject *const *args,
         return nullptr;
     }
 
-    CPH_MathQuatInverse(q, out);
+    CPH::MathQuatInverse(q, out);
 
     return BuildTuple(out[0], out[1], out[2], out[3]);
 }
@@ -690,7 +690,7 @@ static PyObject *MathProject(MathHolderObject *self, PyObject *const *args,
         return nullptr;
     }
 
-    CPH_MathProject(v, mvp, viewport, out);
+    CPH::MathProject(v, mvp, viewport, out);
 
     return BuildTuple(out[0], out[1], out[2]);
 }
@@ -718,7 +718,7 @@ static PyObject *MathUnproject(MathHolderObject *self, PyObject *const *args,
         return nullptr;
     }
 
-    CPH_MathUnproject(v, mvp, viewport, out);
+    CPH::MathUnproject(v, mvp, viewport, out);
 
     return BuildTuple(out[0], out[1], out[2]);
 }
@@ -741,7 +741,7 @@ static PyObject *MathQuatFromTo(MathHolderObject *self, PyObject *const *args,
         return nullptr;
     }
 
-    CPH_MathQuatFromTo(v1, v2, out);
+    CPH::MathQuatFromTo(v1, v2, out);
 
     return BuildTuple(out[0], out[1], out[2], out[3]);
 }
@@ -764,7 +764,7 @@ static PyObject *MathVec3Dot(MathHolderObject *self, PyObject *const *args,
         return nullptr;
     }
 
-    float result = CPH_MathVec3Dot(v1, v2);
+    float result = CPH::MathVec3Dot(v1, v2);
 
     return PyFloat_FromDouble(static_cast<double>(result));
 }
@@ -787,7 +787,7 @@ static PyObject *MathVec3Cross(MathHolderObject *self, PyObject *const *args,
         return nullptr;
     }
 
-    CPH_MathVec3Cross(v1, v2, out);
+    CPH::MathVec3Cross(v1, v2, out);
 
     return BuildTuple(out[0], out[1], out[2]);
 }
@@ -815,7 +815,7 @@ static PyObject *MathIntersectRayPlane(MathHolderObject *self, PyObject *const *
         return nullptr;
     }
 
-    int hit = CPH_MathIntersectRayPlane(ro, rd, po, pn, &out_t, out_p);
+    int hit = CPH::MathIntersectRayPlane(ro, rd, po, pn, &out_t, out_p);
 
     if (!hit) {
         return BuildTuple(Py_False, 0.0f, Py_None);
@@ -840,7 +840,7 @@ static PyObject *MathQuatGetAxisAngle(MathHolderObject *self, PyObject *const *a
         return nullptr;
     }
 
-    CPH_MathQuatGetAxisAngle(q, axis, &angle);
+    CPH::MathQuatGetAxisAngle(q, axis, &angle);
 
     return BuildTuple(BuildTuple(axis[0], axis[1], axis[2]), angle);
 }
@@ -862,7 +862,7 @@ static PyObject *MathQuatFromAxisAngle(MathHolderObject *self, PyObject *const *
         return nullptr;
     }
 
-    CPH_MathQuatFromAxisAngle(axis, angle, out);
+    CPH::MathQuatFromAxisAngle(axis, angle, out);
 
     return BuildTuple(out[0], out[1], out[2], out[3]);
 }
@@ -900,7 +900,7 @@ static PyObject *MathVec3DistanceBatch(MathHolderObject *self, PyObject *const *
         PyBytes_FromStringAndSize(nullptr, static_cast<Py_ssize_t>(count * sizeof(float)));
 
     if (result) {
-        CPH_MathVec3DistanceBatch(static_cast<const float *>(view_a.buf),
+        CPH::MathVec3DistanceBatch(static_cast<const float *>(view_a.buf),
                                   static_cast<const float *>(view_b.buf), count,
                                   reinterpret_cast<float *>(PyBytes_AsString(result)));
     }
@@ -925,7 +925,7 @@ static PyObject *MathVec3Normalize(MathHolderObject *self, PyObject *const *args
         return nullptr;
     }
 
-    CPH_MathVec3Normalize(v, out);
+    CPH::MathVec3Normalize(v, out);
 
     return BuildTuple(out[0], out[1], out[2]);
 }
@@ -945,7 +945,7 @@ static PyObject *MathMat44GetTranslation(MathHolderObject *self, PyObject *const
     }
 
     float out_vec[3];
-    CPH_MathMat44GetTranslation(in_mat, out_vec);
+    CPH::MathMat44GetTranslation(in_mat, out_vec);
 
     return BuildTuple(out_vec[0], out_vec[1], out_vec[2]);
 }
@@ -965,7 +965,7 @@ static PyObject *MathMat44GetRotation(MathHolderObject *self, PyObject *const *a
     }
 
     float out_quat[4];
-    CPH_MathMat44GetRotation(in_mat, out_quat);
+    CPH::MathMat44GetRotation(in_mat, out_quat);
 
     return BuildTuple(out_quat[0], out_quat[1], out_quat[2], out_quat[3]);
 }
@@ -973,7 +973,7 @@ static PyObject *MathMat44GetRotation(MathHolderObject *self, PyObject *const *a
 static PyObject *MathMat44Identity([[maybe_unused]] MathHolderObject *self,
                                           PyObject *ignored [[maybe_unused]]) {
     float out[kSixteenFloats];
-    CPH_MathMat44Identity(out);
+    CPH::MathMat44Identity(out);
 
     return BuildTuple(out[0], out[1], out[2], out[3], out[4], out[5], out[6], out[7],
                               out[8], out[9], out[10], out[11], out[12], out[13], out[14], out[15]);
@@ -997,7 +997,7 @@ static PyObject *MathVec3Reflect(MathHolderObject *self, PyObject *const *args,
         return nullptr;
     }
 
-    CPH_MathVec3Reflect(v, n, out);
+    CPH::MathVec3Reflect(v, n, out);
 
     return BuildTuple(out[0], out[1], out[2]);
 }
@@ -1019,7 +1019,7 @@ static PyObject *MathVec3Distance(MathHolderObject *self, PyObject *const *args,
         return nullptr;
     }
 
-    float dist = CPH_MathVec3Distance(v1, v2);
+    float dist = CPH::MathVec3Distance(v1, v2);
 
     return PyFloat_FromDouble(static_cast<double>(dist));
 }
@@ -1042,7 +1042,7 @@ static PyObject *MathQuatRotateVec3Inverse(MathHolderObject *self, PyObject *con
         return nullptr;
     }
 
-    CPH_MathQuatRotateVec3Inverse(q, v, out);
+    CPH::MathQuatRotateVec3Inverse(q, v, out);
 
     return BuildTuple(out[0], out[1], out[2]);
 }
@@ -1063,7 +1063,7 @@ static PyObject *MathEulerToQuat(MathHolderObject *self, PyObject *const *args,
         return nullptr;
     }
 
-    CPH_MathEulerToQuat(euler, q);
+    CPH::MathEulerToQuat(euler, q);
     return BuildTuple(q[0], q[1], q[2], q[3]);
 }
 
@@ -1093,7 +1093,7 @@ static PyObject *MathEulerToQuatBatch(MathHolderObject *self, PyObject *const *a
         nullptr, static_cast<Py_ssize_t>(count * 16)); // 4 floats per quat
 
     if (result) {
-        CPH_MathEulerToQuatBatch(static_cast<const float *>(view.buf), count,
+        CPH::MathEulerToQuatBatch(static_cast<const float *>(view.buf), count,
                                  reinterpret_cast<float *>(PyBytes_AsString(result)));
     }
 

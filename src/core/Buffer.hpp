@@ -20,6 +20,9 @@
 #include <span>
 #include <utility>
 
+
+namespace CPH {
+
 template <class T, std::size_t Alignment = alignof(T)>
 class Buffer {
     static constexpr std::size_t kAlignment =
@@ -143,3 +146,5 @@ template <class T>
 [[nodiscard]] inline std::unique_ptr<T[]> make_array(std::size_t count) noexcept {
     return std::unique_ptr<T[]>(new (std::nothrow) T[count]());
 }
+
+} // namespace CPH

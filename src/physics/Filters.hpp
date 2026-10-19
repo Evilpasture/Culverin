@@ -6,6 +6,9 @@
 #include "physics/InternalQuery.hpp"
 #include <joltc.h>
 
+
+namespace CPH {
+
 namespace {
 
 [[maybe_unused]] bool JPH_API_CALL
@@ -30,3 +33,5 @@ inline const JPH_ObjectLayerFilter_Procs kGlobalObjProcs = {
     .ShouldCollide = filter_allow_all_obj};
 inline const JPH_BodyFilter_Procs kGlobalBfProcs  = {.ShouldCollide = UnifiedBodyFilter};
 inline const JPH_ShapeFilter_Procs kGlobalSfProcs = {.ShouldCollide = filter_true_shape};
+
+} // namespace CPH

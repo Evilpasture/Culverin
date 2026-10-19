@@ -2,11 +2,14 @@
 
 #include "physics/PhysicsWorldState.hpp"
 
+
+namespace CPH {
+
 namespace {
 
 void JPH_API_CALL OnDebugDrawLine(void *userData, const JPH_RVec3 *from, const JPH_RVec3 *to,
                                   JPH_Color color) {
-    auto *world = static_cast<CPH_PhysicsWorld *>(userData);
+    auto *world = static_cast<PhysicsWorld *>(userData);
     if (!world->debug_lines.ensure(2)) {
         return;
     }
@@ -19,7 +22,7 @@ void JPH_API_CALL OnDebugDrawLine(void *userData, const JPH_RVec3 *from, const J
 void JPH_API_CALL OnDebugDrawTriangle(void *userData, const JPH_RVec3 *v1, const JPH_RVec3 *v2,
                                       const JPH_RVec3 *v3, JPH_Color color,
                                       [[maybe_unused]] JPH_DebugRenderer_CastShadow castShadow) {
-    auto *world = static_cast<CPH_PhysicsWorld *>(userData);
+    auto *world = static_cast<PhysicsWorld *>(userData);
     if (!world->debug_triangles.ensure(3)) {
         return;
     }
@@ -43,3 +46,5 @@ void JPH_API_CALL OnDebugDrawText([[maybe_unused]] void *userData,
 const JPH_DebugRenderer_Procs kDebugProcs = {.DrawLine     = OnDebugDrawLine,
                                              .DrawTriangle = OnDebugDrawTriangle,
                                              .DrawText3D   = OnDebugDrawText};
+
+} // namespace CPH

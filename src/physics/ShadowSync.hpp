@@ -4,5 +4,10 @@
 
 // Mirrors active Jolt bodies into the dense shadow buffers (previous <=
 // current <= Jolt). Called under jph_trampoline_lock during a step.
+
+namespace CPH {
+
 [[gnu::flatten, gnu::hot]]
-void CPH_SyncShadowBuffers(const CPH_PhysicsWorld *world) noexcept;
+void SyncShadowBuffers(const PhysicsWorld *world) noexcept;
+
+} // namespace CPH

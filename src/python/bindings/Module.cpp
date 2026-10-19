@@ -376,14 +376,14 @@ static int init_constants(PyObject *m) {
     static const struct {
         const char *name;
         int value;
-    } consts[] = {{.name = "SHAPE_BOX", .value = CPH_SHAPE_BOX},
-                  {.name = "SHAPE_SPHERE", .value = CPH_SHAPE_SPHERE},
-                  {.name = "SHAPE_CAPSULE", .value = CPH_SHAPE_CAPSULE},
-                  {.name = "SHAPE_CYLINDER", .value = CPH_SHAPE_CYLINDER},
-                  {.name = "SHAPE_PLANE", .value = CPH_SHAPE_PLANE},
-                  {.name = "SHAPE_MESH", .value = CPH_SHAPE_MESH},
-                  {.name = "SHAPE_HEIGHTFIELD", .value = CPH_SHAPE_HEIGHTFIELD},
-                  {.name = "SHAPE_CONVEX_HULL", .value = CPH_SHAPE_CONVEX_HULL},
+    } consts[] = {{.name = "SHAPE_BOX", .value = SHAPE_BOX},
+                  {.name = "SHAPE_SPHERE", .value = SHAPE_SPHERE},
+                  {.name = "SHAPE_CAPSULE", .value = SHAPE_CAPSULE},
+                  {.name = "SHAPE_CYLINDER", .value = SHAPE_CYLINDER},
+                  {.name = "SHAPE_PLANE", .value = SHAPE_PLANE},
+                  {.name = "SHAPE_MESH", .value = SHAPE_MESH},
+                  {.name = "SHAPE_HEIGHTFIELD", .value = SHAPE_HEIGHTFIELD},
+                  {.name = "SHAPE_CONVEX_HULL", .value = SHAPE_CONVEX_HULL},
                   {.name = "MOTION_STATIC", .value = MOTION_STATIC},
                   {.name = "MOTION_KINEMATIC", .value = MOTION_KINEMATIC},
                   {.name = "MOTION_DYNAMIC", .value = MOTION_DYNAMIC},
@@ -507,17 +507,17 @@ extern PyModuleDef culverin_module;
 
         // --- THE WINNER: Run exactly once per process life ---
         const char *docs_str = reinterpret_cast<const char *>(kAllDocs);
-        CPH_DocsStitchMethods(culverin_module.m_methods, "Module", docs_str);
-        CPH_DocsStitchSpec(&WorldSpec, "PhysicsWorld", docs_str);
-        CPH_DocsStitchSpec(&CharacterSpec, "Character", docs_str);
-        CPH_DocsStitchSpec(&VehicleSpec, "Vehicle", docs_str);
-        CPH_DocsStitchSpec(&SkeletonSpec, "Skeleton", docs_str);
-        CPH_DocsStitchSpec(&RagdollSpec, "Ragdoll", docs_str);
-        CPH_DocsStitchSpec(&RagdollSettingsSpec, "RagdollSettings", docs_str);
-        CPH_DocsStitchSpec(&SoftBodySharedSettingsSpec, "SoftBodySharedSettings", docs_str);
-        CPH_DocsStitchSpec(&RegistrySpec, "Registry", docs_str);
-        CPH_DocsStitchSpec(&MathServiceSpec, "MathService", docs_str);
-        CPH_DocsStitchSpec(&ShipSpec, "Ship", docs_str);
+        DocsStitchMethods(culverin_module.m_methods, "Module", docs_str);
+        DocsStitchSpec(&WorldSpec, "PhysicsWorld", docs_str);
+        DocsStitchSpec(&CharacterSpec, "Character", docs_str);
+        DocsStitchSpec(&VehicleSpec, "Vehicle", docs_str);
+        DocsStitchSpec(&SkeletonSpec, "Skeleton", docs_str);
+        DocsStitchSpec(&RagdollSpec, "Ragdoll", docs_str);
+        DocsStitchSpec(&RagdollSettingsSpec, "RagdollSettings", docs_str);
+        DocsStitchSpec(&SoftBodySharedSettingsSpec, "SoftBodySharedSettings", docs_str);
+        DocsStitchSpec(&RegistrySpec, "Registry", docs_str);
+        DocsStitchSpec(&MathServiceSpec, "MathService", docs_str);
+        DocsStitchSpec(&ShipSpec, "Ship", docs_str);
 
         // Gated Handler Registration
         JPH_SetTraceHandler(CPH_JphTrace);
@@ -542,7 +542,7 @@ extern PyModuleDef culverin_module;
     } else {
         // --- THE LOSERS: Wait for the Winner to finish ---
         while ((docs_status).load(std::memory_order::acquire) != 2) {
-            CPH_CpuYield();
+            CpuYield();
         }
     }
     // --- 2. PER-INTERPRETER SETUP (Runs for every import) ---

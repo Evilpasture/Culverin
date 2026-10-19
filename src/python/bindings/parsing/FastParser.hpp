@@ -69,34 +69,34 @@ template <> struct FastParseTrait<PyObject *> {
 
 namespace detail {
 [[nodiscard]] static inline bool fast_parse_conv_vec3f(PyObject *obj, const void *target) {
-    auto *value = const_cast<CPH_Vec3f *>(static_cast<const CPH_Vec3f *>(target));
+    auto *value = const_cast<Vec3f *>(static_cast<const Vec3f *>(target));
     return ParseVec3F32(obj, &value->x, &value->y, &value->z) != 0;
 }
 
 [[nodiscard]] static inline bool fast_parse_conv_pos_stride(PyObject *obj, const void *target) {
-    auto *value = const_cast<CPH_PosStride *>(static_cast<const CPH_PosStride *>(target));
+    auto *value = const_cast<PosStride *>(static_cast<const PosStride *>(target));
     return ParseVec3R64(obj, &value->x, &value->y, &value->z) != 0;
 }
 
 [[nodiscard]] static inline bool fast_parse_conv_aux_stride(PyObject *obj, const void *target) {
-    auto *value = const_cast<CPH_AuxStride *>(static_cast<const CPH_AuxStride *>(target));
+    auto *value = const_cast<AuxStride *>(static_cast<const AuxStride *>(target));
     return ParseQuatF32(obj, &value->x, &value->y, &value->z, &value->w) != 0;
 }
 } // namespace detail
 
-template <> struct FastParseTrait<CPH_Vec3f> {
+template <> struct FastParseTrait<Vec3f> {
     static constexpr const char *type_name    = "Vector3";
     static constexpr auto converter           = detail::fast_parse_conv_vec3f;
     static constexpr PyTypeObject *type_guard = nullptr;
 };
 
-template <> struct FastParseTrait<CPH_PosStride> {
+template <> struct FastParseTrait<PosStride> {
     static constexpr const char *type_name    = "Vector3";
     static constexpr auto converter           = detail::fast_parse_conv_pos_stride;
     static constexpr PyTypeObject *type_guard = nullptr;
 };
 
-template <> struct FastParseTrait<CPH_AuxStride> {
+template <> struct FastParseTrait<AuxStride> {
     static constexpr const char *type_name    = "Quaternion";
     static constexpr auto converter           = detail::fast_parse_conv_aux_stride;
     static constexpr PyTypeObject *type_guard = nullptr;

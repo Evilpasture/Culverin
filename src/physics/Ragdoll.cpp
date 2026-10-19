@@ -2,29 +2,32 @@
 #include "physics/CommandBuffer.hpp"
 #include "physics/InternalQuery.hpp"
 
-JPH_Skeleton *CPH_PhysicsRagdollSkeletonCreate(void) { return JPH_Skeleton_Create(); }
 
-void CPH_PhysicsRagdollSkeletonDestroy(JPH_Skeleton *skeleton) {
+namespace CPH {
+
+JPH_Skeleton *PhysicsRagdollSkeletonCreate(void) { return JPH_Skeleton_Create(); }
+
+void PhysicsRagdollSkeletonDestroy(JPH_Skeleton *skeleton) {
     if (skeleton) {
         JPH_Skeleton_Destroy(skeleton);
     }
 }
 
-int CPH_PhysicsRagdollSkeletonAddJoint(JPH_Skeleton *skeleton, const char *name, int parent_index) {
+int PhysicsRagdollSkeletonAddJoint(JPH_Skeleton *skeleton, const char *name, int parent_index) {
     if (!skeleton || !name) {
         return -1;
     }
     return (int)JPH_Skeleton_AddJoint2(skeleton, name, parent_index);
 }
 
-int CPH_PhysicsRagdollSkeletonGetJointIndex(JPH_Skeleton *skeleton, const char *name) {
+int PhysicsRagdollSkeletonGetJointIndex(JPH_Skeleton *skeleton, const char *name) {
     if (!skeleton || !name) {
         return -1;
     }
     return JPH_Skeleton_GetJointIndex(skeleton, name);
 }
 
-bool CPH_PhysicsRagdollSkeletonFinalize(JPH_Skeleton *skeleton) {
+bool PhysicsRagdollSkeletonFinalize(JPH_Skeleton *skeleton) {
     if (!skeleton) {
         return false;
     }
@@ -32,28 +35,28 @@ bool CPH_PhysicsRagdollSkeletonFinalize(JPH_Skeleton *skeleton) {
     return JPH_Skeleton_AreJointsCorrectlyOrdered(skeleton);
 }
 
-void CPH_PhysicsRagdollSettingsDestroy(JPH_RagdollSettings *settings) {
+void PhysicsRagdollSettingsDestroy(JPH_RagdollSettings *settings) {
     if (settings) {
         JPH_RagdollSettings_Destroy(settings);
     }
 }
 
-bool CPH_PhysicsRagdollSettingsStabilize(JPH_RagdollSettings *settings) {
+bool PhysicsRagdollSettingsStabilize(JPH_RagdollSettings *settings) {
     return settings && JPH_RagdollSettings_Stabilize(settings);
 }
 
-JPH_Shape *CPH_PhysicsRagdollFindOrCreateShape(CPH_PhysicsWorld *world, int shape_type,
+JPH_Shape *PhysicsRagdollFindOrCreateShape(PhysicsWorld *world, int shape_type,
                                                 const float shape_params[4]) {
     if (!world || !shape_params) {
         return nullptr;
     }
     const std::scoped_lock shadow(world->shadow_lock);
-    return CPH_FindOrCreateShapeLocked(world, shape_type, shape_params);
+    return FindOrCreateShapeLocked(world, shape_type, shape_params);
 }
 
-PhysicsRagdollStatus CPH_PhysicsRagdollSettingsAddPart(JPH_RagdollSettings *settings,
+PhysicsRagdollStatus PhysicsRagdollSettingsAddPart(JPH_RagdollSettings *settings,
                                                            JPH_Shape *shape,
-                                                           const CPH_PhysicsRagdollPartRequest *request,
+                                                           const PhysicsRagdollPartRequest *request,
                                                            int *out_joint_count) {
     if (!settings || !request || !out_joint_count) {
         return PHYSICS_RAGDOLL_STATUS_INVALID_ARGUMENT;
@@ -105,7 +108,7 @@ PhysicsRagdollStatus CPH_PhysicsRagdollSettingsAddPart(JPH_RagdollSettings *sett
     return PHYSICS_RAGDOLL_STATUS_OK;
 }
 
-int CPH_PhysicsRagdollGetJointCount(JPH_Ragdoll *ragdoll) {
+int PhysicsRagdollGetJointCount(JPH_Ragdoll *ragdoll) {
     if (!ragdoll) {
         return 0;
     }
@@ -117,7 +120,7 @@ int CPH_PhysicsRagdollGetJointCount(JPH_Ragdoll *ragdoll) {
     return skeleton ? JPH_Skeleton_GetJointCount(skeleton) : 0;
 }
 
-bool CPH_PhysicsRagdollDriveToPose(JPH_Ragdoll *ragdoll, JPH_RVec3 root_position,
+bool PhysicsRagdollDriveToPose(JPH_Ragdoll *ragdoll, JPH_RVec3 root_position,
                                    const JPH_Mat4 *matrices, int joint_count) {
     if (!ragdoll || !matrices || joint_count < 0) {
         return false;
@@ -145,20 +148,20 @@ bool CPH_PhysicsRagdollDriveToPose(JPH_Ragdoll *ragdoll, JPH_RVec3 root_position
     return true;
 }
 
-int CPH_PhysicsRagdollGetBodyCount(JPH_Ragdoll *ragdoll) {
+int PhysicsRagdollGetBodyCount(JPH_Ragdoll *ragdoll) {
     return ragdoll ? JPH_Ragdoll_GetBodyCount(ragdoll) : 0;
 }
 
-void CPH_PhysicsRagdollCopyBodyHandles(CPH_PhysicsWorld *world, const uint32_t *body_slots,
+void PhysicsRagdollCopyBodyHandles(PhysicsWorld *world, const uint32_t *body_slots,
                                        size_t body_count,
-                                       CPH_PhysicsRagdollBodyHandleInfo *out_handles) {
+                                       PhysicsRagdollBodyHandleInfo *out_handles) {
     if (!world || (body_count && (!body_slots || !out_handles))) {
         return;
     }
 
     const std::scoped_lock shadow(world->shadow_lock);
     for (size_t i = 0; i < body_count; ++i) {
-        out_handles[i]      = CPH_PhysicsRagdollBodyHandleInfo{.handle = 0, .alive = false};
+        out_handles[i]      = PhysicsRagdollBodyHandleInfo{.handle = 0, .alive = false};
         const uint32_t slot = body_slots[i];
         if (slot >= world->slot_capacity || !world->bodies.slot_states || !world->bodies.generations) {
             continue;
@@ -169,15 +172,15 @@ void CPH_PhysicsRagdollCopyBodyHandles(CPH_PhysicsWorld *world, const uint32_t *
         }
         const uint32_t generation =
             (world->bodies.generations[slot]).load(std::memory_order::relaxed);
-        out_handles[i] = CPH_PhysicsRagdollBodyHandleInfo{
+        out_handles[i] = PhysicsRagdollBodyHandleInfo{
             .handle = make_handle(slot, generation),
             .alive  = true,
         };
     }
 }
 
-bool CPH_PhysicsRagdollCopyDebugInfo(CPH_PhysicsWorld *world, JPH_Ragdoll *ragdoll,
-                                     CPH_PhysicsRagdollBodyDebugInfo *out_info, size_t body_count) {
+bool PhysicsRagdollCopyDebugInfo(PhysicsWorld *world, JPH_Ragdoll *ragdoll,
+                                     PhysicsRagdollBodyDebugInfo *out_info, size_t body_count) {
     if (!world || !ragdoll || (body_count && !out_info) || !world->body_interface) {
         return false;
     }
@@ -197,15 +200,15 @@ bool CPH_PhysicsRagdollCopyDebugInfo(CPH_PhysicsWorld *world, JPH_Ragdoll *ragdo
     return true;
 }
 
-void CPH_PhysicsRagdollDeallocate(CPH_PhysicsWorld *world, JPH_Ragdoll *ragdoll,
+void PhysicsRagdollDeallocate(PhysicsWorld *world, JPH_Ragdoll *ragdoll,
                                 const uint32_t *body_slots, size_t body_count) {
     if (!ragdoll) {
         return;
     }
 
     if (world) {
-        auto shadow = CPH_LockShadowNotStepping(world);
-        CPH_WaitUntilNotQuerying(world, shadow);
+        auto shadow = LockShadowNotStepping(world);
+        WaitUntilNotQuerying(world, shadow);
         JPH_Ragdoll_RemoveFromPhysicsSystem(ragdoll, true);
 
         if (body_slots && world->bodies.slot_states) {
@@ -217,7 +220,7 @@ void CPH_PhysicsRagdollDeallocate(CPH_PhysicsWorld *world, JPH_Ragdoll *ragdoll,
                 const uint8_t state =
                     (world->bodies.slot_states[slot]).load(std::memory_order::acquire);
                 if (state == SLOT_ALIVE) {
-                    CPH_WorldRemoveBodySlot(world, slot);
+                    WorldRemoveBodySlot(world, slot);
                 }
             }
         }
@@ -230,3 +233,5 @@ void CPH_PhysicsRagdollDeallocate(CPH_PhysicsWorld *world, JPH_Ragdoll *ragdoll,
 
     JPH_Ragdoll_Destroy(ragdoll);
 }
+
+} // namespace CPH

@@ -7,10 +7,13 @@
 #include <cmath>
 #include <cstring>
 
+
+namespace CPH {
+
 static constexpr float kQueryDirectionEpsilonSquared = 1e-12f;
 static constexpr float kQueryDirectionUnitTolerance  = 1e-4f;
 
-static void wait_until_can_query(CPH_PhysicsWorld *world, std::unique_lock<std::mutex> &shadow) {
+static void wait_until_can_query(PhysicsWorld *world, std::unique_lock<std::mutex> &shadow) {
     const auto blocked = [&] {
         return world->is_stepping.load(std::memory_order::relaxed) ||
                world->step_requested.load(std::memory_order::relaxed);
@@ -30,7 +33,7 @@ static void wait_until_can_query(CPH_PhysicsWorld *world, std::unique_lock<std::
     }
 }
 
-static void query_begin(CPH_PhysicsWorld *world) {
+static void query_begin(PhysicsWorld *world) {
     std::unique_lock shadow(world->shadow_lock);
     wait_until_can_query(world, shadow);
     // The gate check and this increment are one critical section, so a
@@ -38,7 +41,7 @@ static void query_begin(CPH_PhysicsWorld *world) {
     world->active_queries.fetch_add(1, std::memory_order::acquire);
 }
 
-void CPH_PhysicsWorldQueryEnd(CPH_PhysicsWorld *world) {
+void PhysicsWorldQueryEnd(PhysicsWorld *world) {
     if (!world) {
         return;
     }
@@ -49,7 +52,7 @@ void CPH_PhysicsWorldQueryEnd(CPH_PhysicsWorld *world) {
 }
 
 
-static bool query_handle_is_valid_locked(CPH_PhysicsWorld *world, BodyHandle handle,
+static bool query_handle_is_valid_locked(PhysicsWorld *world, BodyHandle handle,
                                          uint32_t *slot_out) {
     if (!handle) {
         return false;
@@ -71,7 +74,7 @@ static bool query_handle_is_valid_locked(CPH_PhysicsWorld *world, BodyHandle han
     return true;
 }
 
-static void filter_query_hits(CPH_PhysicsWorld *world, CPH_PhysicsQueryHitBuffer *hits) {
+static void filter_query_hits(PhysicsWorld *world, PhysicsQueryHitBuffer *hits) {
     const std::scoped_lock shadow(world->shadow_lock);
     size_t write_index = 0;
     for (size_t i = 0; i < hits->count; ++i) {
@@ -82,14 +85,14 @@ static void filter_query_hits(CPH_PhysicsWorld *world, CPH_PhysicsQueryHitBuffer
     hits->count = write_index;
 }
 
-static JPH_Shape *query_begin_with_shape(CPH_PhysicsWorld *world, int shape_type, const float params[4],
+static JPH_Shape *query_begin_with_shape(PhysicsWorld *world, int shape_type, const float params[4],
                                          JPH_BodyID *ignore_body, BodyHandle ignore_handle) {
     std::unique_lock shadow(world->shadow_lock);
     wait_until_can_query(world, shadow);
 
     // The shadow lock serializes cache access. Avoid taking jph_trampoline_lock
     // here: other native paths may hold it while waiting for shadow_lock.
-    JPH_Shape *shape = CPH_FindOrCreateShapeLocked(world, shape_type, params);
+    JPH_Shape *shape = FindOrCreateShapeLocked(world, shape_type, params);
 
     if (shape && ignore_body) {
         *ignore_body         = kJphInvalidBodyId;
@@ -111,7 +114,7 @@ static JPH_Shape *query_begin_with_shape(CPH_PhysicsWorld *world, int shape_type
     return shape;
 }
 
-static JPH_BodyID query_begin_with_ignore(CPH_PhysicsWorld *world, BodyHandle ignore_handle) {
+static JPH_BodyID query_begin_with_ignore(PhysicsWorld *world, BodyHandle ignore_handle) {
     std::unique_lock shadow(world->shadow_lock);
     wait_until_can_query(world, shadow);
 
@@ -129,13 +132,13 @@ static JPH_BodyID query_begin_with_ignore(CPH_PhysicsWorld *world, BodyHandle ig
     return ignore_body;
 }
 
-struct CPH_QueryFilters {
+struct QueryFilters {
     JoltPtr<JPH_BroadPhaseLayerFilter, JPH_BroadPhaseLayerFilter_Destroy> broad_phase;
     JoltPtr<JPH_ObjectLayerFilter, JPH_ObjectLayerFilter_Destroy> object_layer;
     JoltPtr<JPH_BodyFilter, JPH_BodyFilter_Destroy> body;
 };
 
-static PhysicsQueryStatus create_query_filters(CPH_QueryFilters &filters, bool with_body_filter,
+static PhysicsQueryStatus create_query_filters(QueryFilters &filters, bool with_body_filter,
                                                void *body_user_data) {
     filters.broad_phase.reset(JPH_BroadPhaseLayerFilter_Create(nullptr));
     filters.object_layer.reset(JPH_ObjectLayerFilter_Create(nullptr));
@@ -148,13 +151,13 @@ static PhysicsQueryStatus create_query_filters(CPH_QueryFilters &filters, bool w
     return PHYSICS_QUERY_STATUS_OK;
 }
 
-struct CPH_OverlapContext {
-    CPH_PhysicsWorld *world;
-    CPH_PhysicsQueryHitBuffer *hits;
+struct OverlapContext {
+    PhysicsWorld *world;
+    PhysicsQueryHitBuffer *hits;
     PhysicsQueryStatus status;
 };
 
-static void overlap_record_hit(CPH_OverlapContext *context, JPH_BodyID body_id) {
+static void overlap_record_hit(OverlapContext *context, JPH_BodyID body_id) {
     if (context->status != PHYSICS_QUERY_STATUS_OK) {
         return;
     }
@@ -167,31 +170,31 @@ static void overlap_record_hit(CPH_OverlapContext *context, JPH_BodyID body_id) 
 }
 
 static float overlap_callback_narrow(void *user_data, const JPH_CollideShapeResult *result) {
-    overlap_record_hit(static_cast<CPH_OverlapContext *>(user_data), result->bodyID2);
+    overlap_record_hit(static_cast<OverlapContext *>(user_data), result->bodyID2);
     return 1.0f;
 }
 
 static float overlap_callback_broad(void *user_data, JPH_BodyID body_id) {
-    overlap_record_hit(static_cast<CPH_OverlapContext *>(user_data), body_id);
+    overlap_record_hit(static_cast<OverlapContext *>(user_data), body_id);
     return 1.0f;
 }
 
-PhysicsQueryStatus CPH_PhysicsWorldOverlapSphere(CPH_PhysicsWorld *world, JPH_RVec3 center, float radius,
-                                                CPH_PhysicsQueryHitBuffer *hits) {
+PhysicsQueryStatus PhysicsWorldOverlapSphere(PhysicsWorld *world, JPH_RVec3 center, float radius,
+                                                PhysicsQueryHitBuffer *hits) {
     if (!world || !hits || !hits->hits) {
         return PHYSICS_QUERY_STATUS_INVALID_ARGUMENT;
     }
 
     const float shape_params[4] = {radius, 0.0f, 0.0f, 0.0f};
-    JPH_Shape *shape = query_begin_with_shape(world, CPH_SHAPE_SPHERE, shape_params, nullptr, 0);
+    JPH_Shape *shape = query_begin_with_shape(world, SHAPE_SPHERE, shape_params, nullptr, 0);
     if (!shape) {
         return PHYSICS_QUERY_STATUS_SHAPE_FAILURE;
     }
 
-    CPH_QueryFilters filters      = {};
+    QueryFilters filters      = {};
     PhysicsQueryStatus status = create_query_filters(filters, true, nullptr);
     if (status != PHYSICS_QUERY_STATUS_OK) {
-        CPH_PhysicsWorldQueryEnd(world);
+        PhysicsWorldQueryEnd(world);
         return status;
     }
 
@@ -204,7 +207,7 @@ PhysicsQueryStatus CPH_PhysicsWorldOverlapSphere(CPH_PhysicsWorld *world, JPH_RV
     JPH_CollideShapeSettings settings;
     JPH_CollideShapeSettings_Init(&settings);
 
-    CPH_OverlapContext context = {.world = world, .hits = hits, .status = PHYSICS_QUERY_STATUS_OK};
+    OverlapContext context = {.world = world, .hits = hits, .status = PHYSICS_QUERY_STATUS_OK};
     const JPH_NarrowPhaseQuery *query = JPH_PhysicsSystem_GetNarrowPhaseQuery(world->system);
     JPH_NarrowPhaseQuery_CollideShape(query, shape, &scale, &transform, &settings, &base_offset,
                                       overlap_callback_narrow, &context, filters.broad_phase.get(),
@@ -212,22 +215,22 @@ PhysicsQueryStatus CPH_PhysicsWorldOverlapSphere(CPH_PhysicsWorld *world, JPH_RV
     if (context.status == PHYSICS_QUERY_STATUS_OK) {
         filter_query_hits(world, hits);
     }
-    CPH_PhysicsWorldQueryEnd(world);
+    PhysicsWorldQueryEnd(world);
     return context.status;
 }
 
-PhysicsQueryStatus CPH_PhysicsWorldOverlapAabb(CPH_PhysicsWorld *world, JPH_RVec3 min, JPH_RVec3 max,
-                                              CPH_PhysicsQueryHitBuffer *hits) {
+PhysicsQueryStatus PhysicsWorldOverlapAabb(PhysicsWorld *world, JPH_RVec3 min, JPH_RVec3 max,
+                                              PhysicsQueryHitBuffer *hits) {
     if (!world || !hits || !hits->hits) {
         return PHYSICS_QUERY_STATUS_INVALID_ARGUMENT;
     }
 
     query_begin(world);
 
-    CPH_QueryFilters filters      = {};
+    QueryFilters filters      = {};
     PhysicsQueryStatus status = create_query_filters(filters, false, nullptr);
     if (status != PHYSICS_QUERY_STATUS_OK) {
-        CPH_PhysicsWorldQueryEnd(world);
+        PhysicsWorldQueryEnd(world);
         return status;
     }
 
@@ -235,14 +238,14 @@ PhysicsQueryStatus CPH_PhysicsWorldOverlapAabb(CPH_PhysicsWorld *world, JPH_RVec
     box.min = JPH_Vec3{(float)min.x, (float)min.y, (float)min.z};
     box.max = JPH_Vec3{(float)max.x, (float)max.y, (float)max.z};
 
-    CPH_OverlapContext context = {.world = world, .hits = hits, .status = PHYSICS_QUERY_STATUS_OK};
+    OverlapContext context = {.world = world, .hits = hits, .status = PHYSICS_QUERY_STATUS_OK};
     const JPH_BroadPhaseQuery *query = JPH_PhysicsSystem_GetBroadPhaseQuery(world->system);
     JPH_BroadPhaseQuery_CollideAABox(query, &box, overlap_callback_broad, &context,
                                      filters.broad_phase.get(), filters.object_layer.get());
     if (context.status == PHYSICS_QUERY_STATUS_OK) {
         filter_query_hits(world, hits);
     }
-    CPH_PhysicsWorldQueryEnd(world);
+    PhysicsWorldQueryEnd(world);
     return context.status;
 }
 
@@ -256,16 +259,16 @@ static float ray_direction_scale(JPH_Vec3 direction, float max_distance, float *
     if (std::fabs(length_sq - 1.0f) < kQueryDirectionUnitTolerance) {
         return max_distance;
     }
-    return max_distance * CPH_FastRsqrt(length_sq);
+    return max_distance * FastRsqrt(length_sq);
 }
 
-PhysicsQueryStatus CPH_PhysicsWorldRaycast(CPH_PhysicsWorld *world, JPH_RVec3 origin, JPH_Vec3 direction,
+PhysicsQueryStatus PhysicsWorldRaycast(PhysicsWorld *world, JPH_RVec3 origin, JPH_Vec3 direction,
                                          float max_distance, BodyHandle ignore_handle,
-                                         CPH_PhysicsRaycastHit *out_hit) {
+                                         PhysicsRaycastHit *out_hit) {
     if (!world || !out_hit) {
         return PHYSICS_QUERY_STATUS_INVALID_ARGUMENT;
     }
-    *out_hit = CPH_PhysicsRaycastHit{};
+    *out_hit = PhysicsRaycastHit{};
 
     float magnitude_sq = 0.0f;
     const float scale  = ray_direction_scale(direction, max_distance, &magnitude_sq);
@@ -275,11 +278,11 @@ PhysicsQueryStatus CPH_PhysicsWorldRaycast(CPH_PhysicsWorld *world, JPH_RVec3 or
 
     // A missing/stale ignored handle intentionally means "ignore nothing".
     const JPH_BodyID ignore_body   = query_begin_with_ignore(world, ignore_handle);
-    CPH_CastShapeFilter filter_context = {ignore_body};
-    CPH_QueryFilters filters           = {};
+    CastShapeFilter filter_context = {ignore_body};
+    QueryFilters filters           = {};
     PhysicsQueryStatus status      = create_query_filters(filters, true, &filter_context);
     if (status != PHYSICS_QUERY_STATUS_OK) {
-        CPH_PhysicsWorldQueryEnd(world);
+        PhysicsWorldQueryEnd(world);
         return status;
     }
 
@@ -321,11 +324,11 @@ PhysicsQueryStatus CPH_PhysicsWorldRaycast(CPH_PhysicsWorld *world, JPH_RVec3 or
             out_hit->has_hit  = true;
         }
     }
-    CPH_PhysicsWorldQueryEnd(world);
+    PhysicsWorldQueryEnd(world);
     return PHYSICS_QUERY_STATUS_OK;
 }
 
-PhysicsQueryStatus CPH_PhysicsWorldRaycastBatch(CPH_PhysicsWorld *world, const float *starts,
+PhysicsQueryStatus PhysicsWorldRaycastBatch(PhysicsWorld *world, const float *starts,
                                                const float *directions, size_t count,
                                                float max_distance, RayCastBatchResult *results) {
     if (!world || (count && (!starts || !directions || !results)) ||
@@ -415,18 +418,18 @@ PhysicsQueryStatus CPH_PhysicsWorldRaycastBatch(CPH_PhysicsWorld *world, const f
         }
     }
 
-    CPH_PhysicsWorldQueryEnd(world);
+    PhysicsWorldQueryEnd(world);
     return PHYSICS_QUERY_STATUS_OK;
 }
 
-PhysicsQueryStatus CPH_PhysicsWorldShapecast(CPH_PhysicsWorld *world, int shape_type, JPH_RVec3 position,
+PhysicsQueryStatus PhysicsWorldShapecast(PhysicsWorld *world, int shape_type, JPH_RVec3 position,
                                            JPH_Quat rotation, JPH_Vec3 sweep_direction,
                                            const float size[4], BodyHandle ignore_handle,
-                                           CPH_PhysicsShapecastHit *out_hit) {
+                                           PhysicsShapecastHit *out_hit) {
     if (!world || !size || !out_hit) {
         return PHYSICS_QUERY_STATUS_INVALID_ARGUMENT;
     }
-    *out_hit = CPH_PhysicsShapecastHit{};
+    *out_hit = PhysicsShapecastHit{};
 
     const float magnitude_sq = sweep_direction.x * sweep_direction.x +
                                sweep_direction.y * sweep_direction.y +
@@ -445,12 +448,12 @@ PhysicsQueryStatus CPH_PhysicsWorldShapecast(CPH_PhysicsWorld *world, int shape_
 
     JPH_RMat4 transform;
     JPH_RMat4_RotationTranslation(&transform, &rotation, &position);
-    CPH_CastShapeContext context{}; // has_hit = false
+    CastShapeContext context{}; // has_hit = false
     context.hit.fraction = 1.0f;
 
-    if (!CPH_ShapecastExecuteInternal(world, shape, &transform, &sweep_direction, ignore_body,
+    if (!ShapecastExecuteInternal(world, shape, &transform, &sweep_direction, ignore_body,
                                     &context)) {
-        CPH_PhysicsWorldQueryEnd(world);
+        PhysicsWorldQueryEnd(world);
         return PHYSICS_QUERY_STATUS_OUT_OF_MEMORY;
     }
 
@@ -469,7 +472,7 @@ PhysicsQueryStatus CPH_PhysicsWorldShapecast(CPH_PhysicsWorld *world, int shape_
             float nz                     = -context.hit.penetrationAxis.z;
             const float normal_length_sq = nx * nx + ny * ny + nz * nz;
             if (normal_length_sq > kQueryDirectionEpsilonSquared) {
-                const float inverse_length = CPH_FastRsqrt(normal_length_sq);
+                const float inverse_length = FastRsqrt(normal_length_sq);
                 nx *= inverse_length;
                 ny *= inverse_length;
                 nz *= inverse_length;
@@ -483,6 +486,8 @@ PhysicsQueryStatus CPH_PhysicsWorldShapecast(CPH_PhysicsWorld *world, int shape_
         }
     }
 
-    CPH_PhysicsWorldQueryEnd(world);
+    PhysicsWorldQueryEnd(world);
     return PHYSICS_QUERY_STATUS_OK;
 }
+
+} // namespace CPH

@@ -113,10 +113,10 @@ static void record_character_contact(CharacterObject *self, JPH_BodyID bodyID2,
 
     if (idx < world->physics.contact_max_capacity) {
         // ContactEvent_ Refactor
-        CPH_ContactEvent &event     = world->physics.contact_buffer[idx];
+        ContactEvent &event     = world->physics.contact_buffer[idx];
         std::memset(&event, 0, sizeof(event)); // buffer is allocate_for_overwrite
-        CPH_ContactEventSlim *slim  = &event.slim;
-        CPH_ContactEventFatExt *fat = &event.fat;
+        ContactEventSlim *slim  = &event.slim;
+        ContactEventFatExt *fat = &event.fat;
 
         slim->flags = static_cast<uint32_t>(type);
 
@@ -169,10 +169,10 @@ static void report_char_vs_char(CharacterObject *self, const JPH_CharacterVirtua
         (world->physics.contact_atomic_idx).fetch_add(1, std::memory_order::relaxed);
     if (idx < world->physics.contact_max_capacity) {
         // ContactEvent_ Refactor
-        CPH_ContactEvent &event     = world->physics.contact_buffer[idx];
+        ContactEvent &event     = world->physics.contact_buffer[idx];
         std::memset(&event, 0, sizeof(event)); // buffer is allocate_for_overwrite
-        CPH_ContactEventSlim *slim  = &event.slim;
-        CPH_ContactEventFatExt *fat = &event.fat;
+        ContactEventSlim *slim  = &event.slim;
+        ContactEventFatExt *fat = &event.fat;
 
         slim->flags = static_cast<uint32_t>(type);
 
@@ -327,8 +327,8 @@ static void JPH_API_CALL char_on_contact_removed(void *userData,
     if (idx < world->physics.contact_max_capacity) {
         // Buffer is allocate_for_overwrite: define the whole slot
         // (incl. fat fields) before filling slim.
-        std::memset(&world->physics.contact_buffer[idx], 0, sizeof(CPH_ContactEvent));
-        CPH_ContactEventSlim *slim = &world->physics.contact_buffer[idx].slim;
+        std::memset(&world->physics.contact_buffer[idx], 0, sizeof(ContactEvent));
+        ContactEventSlim *slim = &world->physics.contact_buffer[idx].slim;
 
         slim->flags = EVENT_REMOVED;
 
@@ -399,8 +399,8 @@ static void JPH_API_CALL char_on_character_contact_removed(
     if (idx < world->physics.contact_max_capacity) {
         // Buffer is allocate_for_overwrite: define the whole slot
         // (incl. fat fields) before filling slim.
-        std::memset(&world->physics.contact_buffer[idx], 0, sizeof(CPH_ContactEvent));
-        CPH_ContactEventSlim *slim = &world->physics.contact_buffer[idx].slim;
+        std::memset(&world->physics.contact_buffer[idx], 0, sizeof(ContactEvent));
+        ContactEventSlim *slim = &world->physics.contact_buffer[idx].slim;
 
         slim->flags = EVENT_REMOVED;
 
@@ -563,7 +563,7 @@ const JPH_CharacterContactListener_Procs kCharListenerProcs = {
                                                     PyObject *const *args, size_t nargsf,
                                                     PyObject *kwnames) {
     // 1. INTEGRATED FAST PARSE (Unchanged)
-    CPH_Vec3f v_in = {};
+    Vec3f v_in = {};
     float dt       = 0.0f;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
@@ -642,8 +642,8 @@ const JPH_CharacterContactListener_Procs kCharListenerProcs = {
     JPH_CharacterVirtual_GetRotation(self->character, current_r);
 
     // Sync non-atomic shadow buffers
-    shadow_pos[dense] = CPH_PosStride{current_p->x, current_p->y, current_p->z, 0.0};
-    shadow_rot[dense] = CPH_AuxStride{current_r->x, current_r->y, current_r->z, current_r->w};
+    shadow_pos[dense] = PosStride{current_p->x, current_p->y, current_p->z, 0.0};
+    shadow_rot[dense] = AuxStride{current_r->x, current_r->y, current_r->z, current_r->w};
 
     (self->world->physics.shadow_lock).unlock();
     Py_RETURN_NONE;
@@ -689,7 +689,7 @@ CharacterGetLinearVelocity(CharacterObject *self, PyObject *ignored [[maybe_unus
                                                            PyObject *const *args, size_t nargsf,
                                                            PyObject *kwnames) {
     const Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
-    CPH_PosStride pos      = {};
+    PosStride pos      = {};
 
     if (!self->parsers->SetPosChar.Parse(args, nargs, kwnames, pos)) {
         return nullptr;
@@ -710,7 +710,7 @@ CharacterGetLinearVelocity(CharacterObject *self, PyObject *ignored [[maybe_unus
     auto shadow_pos  = self->world->physics.bodies.positions.data();
     auto shadow_ppos = self->world->physics.bodies.prev_positions.data();
 
-    CPH_PosStride p_val = {pos.x, pos.y, pos.z, 0.0};
+    PosStride p_val = {pos.x, pos.y, pos.z, 0.0};
     shadow_pos[dense]   = p_val;
     shadow_ppos[dense]  = p_val;
 
@@ -722,7 +722,7 @@ CharacterGetLinearVelocity(CharacterObject *self, PyObject *ignored [[maybe_unus
                                                            PyObject *const *args, size_t nargsf,
                                                            PyObject *kwnames) {
     const Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
-    CPH_AuxStride rot      = {.x = 0.0f, .y = 0.0f, .z = 0.0f, .w = 1.0f};
+    AuxStride rot      = {.x = 0.0f, .y = 0.0f, .z = 0.0f, .w = 1.0f};
 
     if (!self->parsers->SetRotChar.Parse(args, nargs, kwnames, rot)) {
         return nullptr;
@@ -801,7 +801,7 @@ CharacterGetLinearVelocity(CharacterObject *self, PyObject *ignored [[maybe_unus
     JPH_CharacterVirtual_GetPosition(self->character, end_p);
     JPH_CharacterVirtual_GetRotation(self->character, end_r);
 
-    CPH_MathInterpolateCharacterTransform(&shadow_ppos[dense], &shadow_prot[dense], end_p, end_r,
+    MathInterpolateCharacterTransform(&shadow_ppos[dense], &shadow_prot[dense], end_p, end_r,
                                           alpha, res_p, res_r);
 
     (self->world->physics.shadow_lock).unlock();
@@ -850,7 +850,7 @@ void CharacterDealloc(CharacterObject *self) {
     h_raw = (self->handle).load(std::memory_order::relaxed);
     slot  = static_cast<uint32_t>(h_raw & kHandleIndexMask);
 
-    CPH_WorldRemoveBodySlot(&self->world->physics, slot);
+    WorldRemoveBodySlot(&self->world->physics, slot);
 
     (self->world->physics.shadow_lock).unlock();
 
@@ -969,17 +969,17 @@ static inline void register_char(PhysicsWorldObject *self, CharacterObject *obj,
     JPH_CharacterVirtual_GetPosition(j_char, p);
     JPH_CharacterVirtual_GetRotation(j_char, q);
 
-    CPH_PosStride p_val = {p->x, p->y, p->z, 0.0};
-    CPH_AuxStride r_val = {q->x, q->y, q->z, q->w};
+    PosStride p_val = {p->x, p->y, p->z, 0.0};
+    AuxStride r_val = {q->x, q->y, q->z, q->w};
 
     (self->physics.bodies.positions.data())[dense_idx]      = p_val;
     (self->physics.bodies.prev_positions.data())[dense_idx] = p_val;
     (self->physics.bodies.rotations.data())[dense_idx]      = r_val;
     (self->physics.bodies.prev_rotations.data())[dense_idx] = r_val;
     (self->physics.bodies.linear_velocities.data())[dense_idx] =
-        CPH_AuxStride{};
+        AuxStride{};
     (self->physics.bodies.angular_velocities.data())[dense_idx] =
-        CPH_AuxStride{};
+        AuxStride{};
 
     if (self->physics.bodies.soft_shadows) {
         self->physics.bodies.soft_shadows[dense_idx].vertices.reset();
@@ -1022,7 +1022,7 @@ static inline int setup_char_parsers(CharacterObject *obj) {
                                                                 PyObject *const *args,
                                                                 size_t nargsf, PyObject *kwnames) {
     const Py_ssize_t nargs        = PyVectorcall_NARGS(nargsf);
-    CPH_PosStride pos             = {};
+    PosStride pos             = {};
     constexpr auto DEFAULT_HEIGHT = 1.8f;
     constexpr auto DEFAULT_RADIUS = 0.4f;
     constexpr auto DEFUALT_STEP_H = 0.4f;

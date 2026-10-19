@@ -5,6 +5,9 @@
 
 #include <utility>
 
+
+namespace CPH {
+
 namespace {
 
 using namespace CPH::cmd;
@@ -27,71 +30,71 @@ std::uint32_t immediate_mask(PhysicsBodyOperationType type) {
 }
 
 // Returns false only for an unknown operation type.
-bool enqueue_operation(CPH_PhysicsWorld *world, std::uint32_t slot,
-                       const CPH_PhysicsBodyOperation &op) {
+bool enqueue_operation(PhysicsWorld *world, std::uint32_t slot,
+                       const PhysicsBodyOperation &op) {
     switch (op.type) {
     case PHYSICS_BODY_OP_APPLY_IMPULSE:
-        CPH_EnqueueCommand(world, slot, ApplyImpulse{op.vector});
+        EnqueueCommand(world, slot, ApplyImpulse{op.vector});
         return true;
     case PHYSICS_BODY_OP_APPLY_IMPULSE_AT:
-        CPH_EnqueueCommand(world, slot, ApplyImpulseAt{op.vector, op.position});
+        EnqueueCommand(world, slot, ApplyImpulseAt{op.vector, op.position});
         return true;
     case PHYSICS_BODY_OP_APPLY_ANGULAR_IMPULSE:
-        CPH_EnqueueCommand(world, slot, ApplyAngularImpulse{op.vector});
+        EnqueueCommand(world, slot, ApplyAngularImpulse{op.vector});
         return true;
     case PHYSICS_BODY_OP_APPLY_FORCE:
-        CPH_EnqueueCommand(world, slot, ApplyForce{op.vector});
+        EnqueueCommand(world, slot, ApplyForce{op.vector});
         return true;
     case PHYSICS_BODY_OP_APPLY_TORQUE:
-        CPH_EnqueueCommand(world, slot, ApplyTorque{op.vector});
+        EnqueueCommand(world, slot, ApplyTorque{op.vector});
         return true;
     case PHYSICS_BODY_OP_SET_POSITION:
-        CPH_EnqueueCommand(world, slot, SetPosition{op.position});
+        EnqueueCommand(world, slot, SetPosition{op.position});
         return true;
     case PHYSICS_BODY_OP_SET_ROTATION:
-        CPH_EnqueueCommand(world, slot, SetRotation{op.rotation});
+        EnqueueCommand(world, slot, SetRotation{op.rotation});
         return true;
     case PHYSICS_BODY_OP_SET_LINEAR_VELOCITY:
-        CPH_EnqueueCommand(world, slot, SetLinearVelocity{op.vector});
+        EnqueueCommand(world, slot, SetLinearVelocity{op.vector});
         return true;
     case PHYSICS_BODY_OP_SET_ANGULAR_VELOCITY:
-        CPH_EnqueueCommand(world, slot, SetAngularVelocity{op.vector});
+        EnqueueCommand(world, slot, SetAngularVelocity{op.vector});
         return true;
     case PHYSICS_BODY_OP_SET_MOTION_TYPE:
-        CPH_EnqueueCommand(world, slot, SetMotionType{op.value});
+        EnqueueCommand(world, slot, SetMotionType{op.value});
         return true;
     case PHYSICS_BODY_OP_ACTIVATE:
-        CPH_EnqueueCommand(world, slot, Activate{});
+        EnqueueCommand(world, slot, Activate{});
         return true;
     case PHYSICS_BODY_OP_DEACTIVATE:
-        CPH_EnqueueCommand(world, slot, Deactivate{});
+        EnqueueCommand(world, slot, Deactivate{});
         return true;
     case PHYSICS_BODY_OP_SET_USER_DATA:
         // Shadow-only; nothing to flush (user data never reaches Jolt).
         return true;
     case PHYSICS_BODY_OP_SET_TRANSFORM:
-        CPH_EnqueueCommand(world, slot, SetTransform{op.position, op.rotation});
+        EnqueueCommand(world, slot, SetTransform{op.position, op.rotation});
         return true;
     case PHYSICS_BODY_OP_SET_CCD:
-        CPH_EnqueueCommand(world, slot, SetCcd{op.value});
+        EnqueueCommand(world, slot, SetCcd{op.value});
         return true;
     default:
         return false;
     }
 }
 
-void mirror_to_shadow(CPH_PhysicsWorld *world, std::uint32_t slot,
-                      const CPH_PhysicsBodyOperation &op) {
+void mirror_to_shadow(PhysicsWorld *world, std::uint32_t slot,
+                      const PhysicsBodyOperation &op) {
     const std::uint32_t dense = world->bodies.slot_to_dense[slot];
     switch (op.type) {
     case PHYSICS_BODY_OP_SET_POSITION: {
-        const CPH_PosStride position = {op.position.x, op.position.y, op.position.z, 0.0};
+        const PosStride position = {op.position.x, op.position.y, op.position.z, 0.0};
         world->bodies.positions[dense]      = position;
         world->bodies.prev_positions[dense] = position;
         break;
     }
     case PHYSICS_BODY_OP_SET_ROTATION: {
-        const CPH_AuxStride rotation = {op.rotation.x, op.rotation.y, op.rotation.z,
+        const AuxStride rotation = {op.rotation.x, op.rotation.y, op.rotation.z,
                                         op.rotation.w};
         world->bodies.rotations[dense]      = rotation;
         world->bodies.prev_rotations[dense] = rotation;
@@ -107,8 +110,8 @@ void mirror_to_shadow(CPH_PhysicsWorld *world, std::uint32_t slot,
         world->bodies.user_data[dense] = op.user_data;
         break;
     case PHYSICS_BODY_OP_SET_TRANSFORM: {
-        const CPH_PosStride position = {op.position.x, op.position.y, op.position.z, 0.0};
-        const CPH_AuxStride rotation = {op.rotation.x, op.rotation.y, op.rotation.z,
+        const PosStride position = {op.position.x, op.position.y, op.position.z, 0.0};
+        const AuxStride rotation = {op.rotation.x, op.rotation.y, op.rotation.z,
                                         op.rotation.w};
         world->bodies.positions[dense]      = position;
         world->bodies.prev_positions[dense] = position;
@@ -121,8 +124,8 @@ void mirror_to_shadow(CPH_PhysicsWorld *world, std::uint32_t slot,
     }
 }
 
-void execute_now(CPH_PhysicsWorld *world, JPH_BodyID body_id,
-                 const CPH_PhysicsBodyOperation &op) {
+void execute_now(PhysicsWorld *world, JPH_BodyID body_id,
+                 const PhysicsBodyOperation &op) {
     JPH_BodyInterface *bi = world->body_interface;
     JPH_Vec3 vector       = op.vector;
     switch (op.type) {
@@ -152,17 +155,17 @@ void execute_now(CPH_PhysicsWorld *world, JPH_BodyID body_id,
 } // namespace
 
 PhysicsBodyOperationStatus
-CPH_PhysicsWorldApplyBodyOperation(CPH_PhysicsWorld *world,
-                                   const CPH_PhysicsBodyOperation *operation) {
+PhysicsWorldApplyBodyOperation(PhysicsWorld *world,
+                                   const PhysicsBodyOperation *operation) {
     if (!world || !operation || operation->type > PHYSICS_BODY_OP_SET_CCD) {
         return PHYSICS_BODY_OPERATION_STATUS_INVALID_ARGUMENT;
     }
-    const CPH_PhysicsBodyOperation &op = *operation;
+    const PhysicsBodyOperation &op = *operation;
 
     bool execute_immediately = false;
     JPH_BodyID body_id       = kJphInvalidBodyId;
     {
-        const auto shadow = CPH_LockShadowNotStepping(world);
+        const auto shadow = LockShadowNotStepping(world);
 
         std::uint32_t slot = 0;
         if (!unpack_handle(world, op.handle, &slot)) {
@@ -170,11 +173,11 @@ CPH_PhysicsWorldApplyBodyOperation(CPH_PhysicsWorld *world,
         }
         const auto state = static_cast<SlotState>(
             world->bodies.slot_states[slot].load(std::memory_order::acquire));
-        const CPH_SlotPredicate predicate = get_slot_predicate(state, immediate_mask(op.type));
+        const SlotPredicate predicate = get_slot_predicate(state, immediate_mask(op.type));
         if (!predicate.is_executable()) {
             return PHYSICS_BODY_OPERATION_STATUS_STALE_HANDLE;
         }
-        if (CPH_UNLIKELY(!CPH_EnsureCommandCapacity(world))) {
+        if (CPH_UNLIKELY(!EnsureCommandCapacity(world))) {
             return PHYSICS_BODY_OPERATION_STATUS_OUT_OF_MEMORY;
         }
 
@@ -196,30 +199,30 @@ CPH_PhysicsWorldApplyBodyOperation(CPH_PhysicsWorld *world,
     return PHYSICS_BODY_OPERATION_STATUS_OK;
 }
 
-PhysicsBodyOperationStatus CPH_PhysicsWorldQueueBodyDestroy(CPH_PhysicsWorld *world,
+PhysicsBodyOperationStatus PhysicsWorldQueueBodyDestroy(PhysicsWorld *world,
                                                             BodyHandle handle) {
     if (!world) {
         return PHYSICS_BODY_OPERATION_STATUS_INVALID_ARGUMENT;
     }
-    const auto shadow = CPH_LockShadowNotStepping(world);
+    const auto shadow = LockShadowNotStepping(world);
 
     std::uint32_t slot = 0;
     if (!unpack_handle(world, handle, &slot)) {
         return PHYSICS_BODY_OPERATION_STATUS_STALE_HANDLE;
     }
-    if (!CPH_EnsureCommandCapacity(world)) {
+    if (!EnsureCommandCapacity(world)) {
         return PHYSICS_BODY_OPERATION_STATUS_OUT_OF_MEMORY;
     }
     const auto state = static_cast<SlotState>(
         world->bodies.slot_states[slot].load(std::memory_order::acquire));
     if (get_slot_predicate(state, kMaskDestructible).is_executable()) {
-        CPH_EnqueueCommand(world, slot, DestroyBody{});
+        EnqueueCommand(world, slot, DestroyBody{});
         world->bodies.slot_states[slot].store(SLOT_PENDING_DESTROY, std::memory_order::release);
     }
     return PHYSICS_BODY_OPERATION_STATUS_OK;
 }
 
-PhysicsBodyOperationStatus CPH_PhysicsWorldQueueBodyDestroyBatch(CPH_PhysicsWorld *world,
+PhysicsBodyOperationStatus PhysicsWorldQueueBodyDestroyBatch(PhysicsWorld *world,
                                                                   const BodyHandle *handles,
                                                                   std::size_t handle_count) {
     if (!world || (handle_count != 0 && !handles)) {
@@ -228,8 +231,8 @@ PhysicsBodyOperationStatus CPH_PhysicsWorldQueueBodyDestroyBatch(CPH_PhysicsWorl
     if (handle_count == 0) {
         return PHYSICS_BODY_OPERATION_STATUS_OK;
     }
-    const auto shadow = CPH_LockShadowNotStepping(world);
-    if (!CPH_EnsureCommandBulkCapacity(world, handle_count)) {
+    const auto shadow = LockShadowNotStepping(world);
+    if (!EnsureCommandBulkCapacity(world, handle_count)) {
         return PHYSICS_BODY_OPERATION_STATUS_OUT_OF_MEMORY;
     }
     for (std::size_t i = 0; i < handle_count; ++i) {
@@ -240,10 +243,12 @@ PhysicsBodyOperationStatus CPH_PhysicsWorldQueueBodyDestroyBatch(CPH_PhysicsWorl
         const auto state = static_cast<SlotState>(
             world->bodies.slot_states[slot].load(std::memory_order::acquire));
         if (get_slot_predicate(state, kMaskDestructible).is_executable()) {
-            CPH_EnqueueCommand(world, slot, DestroyBody{});
+            EnqueueCommand(world, slot, DestroyBody{});
             world->bodies.slot_states[slot].store(SLOT_PENDING_DESTROY,
                                                   std::memory_order::release);
         }
     }
     return PHYSICS_BODY_OPERATION_STATUS_OK;
 }
+
+} // namespace CPH

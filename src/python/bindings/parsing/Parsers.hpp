@@ -27,28 +27,28 @@ int ParseQuatR64(PyObject *obj, double *x, double *y, double *z, double *w);
     return ParseQuatR64(obj, x, y, z, w);
 }
 
-int ParsePyVec3f(PyObject *obj, CPH_Vec3f *out);
-int ParsePyVec3Pos(PyObject *obj, CPH_PosStride *out);
-int ParsePyVec3Aux(PyObject *obj, CPH_AuxStride *out);
+int ParsePyVec3f(PyObject *obj, Vec3f *out);
+int ParsePyVec3Pos(PyObject *obj, PosStride *out);
+int ParsePyVec3Aux(PyObject *obj, AuxStride *out);
 
-[[nodiscard]] static inline int parse_py_vec3(PyObject *obj, CPH_Vec3f *out) {
+[[nodiscard]] static inline int parse_py_vec3(PyObject *obj, Vec3f *out) {
     return ParsePyVec3f(obj, out);
 }
-[[nodiscard]] static inline int parse_py_vec3(PyObject *obj, CPH_PosStride *out) {
+[[nodiscard]] static inline int parse_py_vec3(PyObject *obj, PosStride *out) {
     return ParsePyVec3Pos(obj, out);
 }
-[[nodiscard]] static inline int parse_py_vec3(PyObject *obj, CPH_AuxStride *out) {
+[[nodiscard]] static inline int parse_py_vec3(PyObject *obj, AuxStride *out) {
     return ParsePyVec3Aux(obj, out);
 }
 
-void ParseMotorConfig(PyObject *motor_dict, CPH_ConstraintParams *p);
-int ParsePointParams(PyObject *args, CPH_ConstraintParams *p);
-int ParseHingeParams(PyObject *args, CPH_ConstraintParams *p);
-int ParseSliderParams(PyObject *args, CPH_ConstraintParams *p);
-int ParseConeParams(PyObject *args, CPH_ConstraintParams *p);
-int ParseDistanceParams(PyObject *args, CPH_ConstraintParams *p);
+void ParseMotorConfig(PyObject *motor_dict, ConstraintParams *p);
+int ParsePointParams(PyObject *args, ConstraintParams *p);
+int ParseHingeParams(PyObject *args, ConstraintParams *p);
+int ParseSliderParams(PyObject *args, ConstraintParams *p);
+int ParseConeParams(PyObject *args, ConstraintParams *p);
+int ParseDistanceParams(PyObject *args, ConstraintParams *p);
 void ParseBodySize(PyObject *py_size, float s[4]);
 
-[[nodiscard]] int ParseTracksToC(PyObject *py_tracks, CPH_TrackData *out_data, int *num_out);
+[[nodiscard]] int ParseTracksToC(PyObject *py_tracks, TrackData *out_data, int *num_out);
 
 } // namespace CPH::Python

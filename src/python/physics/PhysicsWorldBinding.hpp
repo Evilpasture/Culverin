@@ -13,7 +13,7 @@ namespace CPH::Python {
 // Python-only buffer-protocol metadata and parser state live outside PhysicsWorld.
 struct PhysicsWorldObject {
     PyObject_HEAD PyObject *weakreflist;
-    CPH_PhysicsWorld physics;
+    PhysicsWorld physics;
     Py_ssize_t view_shape[2];
     Py_ssize_t view_strides[2];
     CPH::Python::WorldParsers *parsers;

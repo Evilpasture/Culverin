@@ -9,11 +9,14 @@
 #include <utility>
 #include <variant>
 
+
+namespace CPH {
+
 namespace {
 
 constexpr std::size_t kInitialQueueCapacity = 64;
 
-bool grow_queue(CPH_PhysicsWorld *world, std::size_t new_capacity) {
+bool grow_queue(PhysicsWorld *world, std::size_t new_capacity) {
     // for_overwrite: queue slots past command_count are only ever
     // move-assigned into, never read — default construction (variant at
     // its first alternative) is all they need.
@@ -29,7 +32,7 @@ bool grow_queue(CPH_PhysicsWorld *world, std::size_t new_capacity) {
 
 } // namespace
 
-bool CPH_EnsureCommandBulkCapacity(CPH_PhysicsWorld *world, std::size_t batch_size) {
+bool EnsureCommandBulkCapacity(PhysicsWorld *world, std::size_t batch_size) {
     if (batch_size > std::numeric_limits<std::size_t>::max() - world->command_count) {
         return false;
     }
@@ -48,11 +51,11 @@ bool CPH_EnsureCommandBulkCapacity(CPH_PhysicsWorld *world, std::size_t batch_si
     return true;
 }
 
-bool CPH_EnsureCommandCapacity(CPH_PhysicsWorld *world) {
-    return CPH_EnsureCommandBulkCapacity(world, 1);
+bool EnsureCommandCapacity(PhysicsWorld *world) {
+    return EnsureCommandBulkCapacity(world, 1);
 }
 
-void CPH_WorldRemoveBodySlot(CPH_PhysicsWorld *world, std::uint32_t slot) {
+void WorldRemoveBodySlot(PhysicsWorld *world, std::uint32_t slot) {
     BodyBuffers &bodies = world->bodies;
     const std::uint32_t dense = bodies.slot_to_dense[slot];
     const std::uint32_t last =
@@ -79,7 +82,7 @@ void CPH_WorldRemoveBodySlot(CPH_PhysicsWorld *world, std::uint32_t slot) {
         // leaves the tail shadow empty (no double free).
         bodies.soft_shadows[dense] = std::move(bodies.soft_shadows[last]);
     } else {
-        bodies.soft_shadows[dense] = CPH_SoftBodyShadow{};
+        bodies.soft_shadows[dense] = SoftBodyShadow{};
     }
 
     // Recycle the slot: bump generation so stale handles fail, mark empty,
@@ -92,7 +95,7 @@ void CPH_WorldRemoveBodySlot(CPH_PhysicsWorld *world, std::uint32_t slot) {
     world->count.fetch_sub(1, std::memory_order::release);
 }
 
-void CPH_ClearCommandQueue(CPH_PhysicsWorld *world) {
+void ClearCommandQueue(PhysicsWorld *world) {
     // Resetting each command destroys the payload (body settings, etc.)
     // it owns. The legacy loop freed only creation settings and leaked
     // heap constraint parameters.
@@ -109,7 +112,7 @@ namespace {
 using namespace CPH::cmd;
 
 struct FlushContext {
-    CPH_PhysicsWorld *world;
+    PhysicsWorld *world;
     JPH_BodyInterface *bi;
     std::uint32_t slot;
     JPH_BodyID bid; // resolved body ID (invalid for creates)
@@ -123,7 +126,7 @@ struct FlushContext {
 
         const std::scoped_lock shadow(world->shadow_lock);
         if (CPH_UNLIKELY(new_bid == kJphInvalidBodyId)) {
-            CPH_WorldRemoveBodySlot(world, slot);
+            WorldRemoveBodySlot(world, slot);
             return;
         }
         world->bodies.body_ids[world->bodies.slot_to_dense[slot]] = new_bid;
@@ -136,7 +139,7 @@ struct FlushContext {
                                                                           JPH_Activation_Activate);
         const std::scoped_lock shadow(world->shadow_lock);
         if (CPH_UNLIKELY(new_bid == kJphInvalidBodyId)) {
-            CPH_WorldRemoveBodySlot(world, slot);
+            WorldRemoveBodySlot(world, slot);
         } else {
             const std::uint32_t dense = world->bodies.slot_to_dense[slot];
             world->bodies.body_ids[dense] = new_bid;
@@ -161,7 +164,7 @@ struct FlushContext {
         JPH_BodyInterface_RemoveBody(bi, bid);
         JPH_BodyInterface_DestroyBody(bi, bid);
         const std::scoped_lock shadow(world->shadow_lock);
-        CPH_WorldRemoveBodySlot(world, slot);
+        WorldRemoveBodySlot(world, slot);
     }
 
     void operator()(SetPosition &cmd) const {
@@ -228,7 +231,7 @@ struct FlushContext {
         JPH_BodyInterface_ActivateBody(bi, bid);
     }
 
-    void operator()(CreateConstraint &cmd) const {
+    void operator()(cmd::CreateConstraint &cmd) const {
         const std::uint32_t c_slot = cmd.constraint_slot;
         ConstraintSlot &c_entry    = world->constraints[c_slot];
 
@@ -261,7 +264,7 @@ struct FlushContext {
         JPH_Body *const b2 = lock_body(bid2);
 
         JPH_Constraint *constraint =
-            (b1 && b2) ? CPH_CreateConstraint(static_cast<ConstraintType>(cmd.type), cmd.params,
+            (b1 && b2) ? CPH::CreateConstraint(static_cast<ConstraintType>(cmd.type), cmd.params,
                                               b1, b2)
                        : nullptr;
         if (constraint) {
@@ -290,7 +293,7 @@ struct FlushContext {
 
 } // namespace
 
-void CPH_FlushCommandsInternal(CPH_PhysicsWorld *world, std::span<PhysicsCommand> queue) {
+void FlushCommandsInternal(PhysicsWorld *world, std::span<PhysicsCommand> queue) {
     for (auto &command : queue) {
         const std::uint32_t slot = command.slot;
         const SlotState state =
@@ -309,3 +312,5 @@ void CPH_FlushCommandsInternal(CPH_PhysicsWorld *world, std::span<PhysicsCommand
         command = PhysicsCommand{};
     }
 }
+
+} // namespace CPH

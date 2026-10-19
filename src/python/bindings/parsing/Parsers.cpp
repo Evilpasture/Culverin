@@ -122,17 +122,17 @@ int ParseQuatR64(PyObject *obj, double *x, double *y, double *z, double *w) {
     return 0;
 }
 
-int ParsePyVec3f(PyObject *obj, CPH_Vec3f *out) {
+int ParsePyVec3f(PyObject *obj, Vec3f *out) {
     return parse_sequence_internal(obj, out, 3, false);
 }
-int ParsePyVec3Pos(PyObject *obj, CPH_PosStride *out) {
+int ParsePyVec3Pos(PyObject *obj, PosStride *out) {
     return parse_sequence_internal(obj, out, 3, (sizeof(JPH_Real) == 8));
 }
-int ParsePyVec3Aux(PyObject *obj, CPH_AuxStride *out) {
+int ParsePyVec3Aux(PyObject *obj, AuxStride *out) {
     return parse_sequence_internal(obj, out, 4, false);
 }
 
-void ParseMotorConfig(PyObject *motor_dict, CPH_ConstraintParams *p) {
+void ParseMotorConfig(PyObject *motor_dict, ConstraintParams *p) {
     if (!motor_dict || motor_dict == Py_None) {
         return;
     }
@@ -154,7 +154,7 @@ void ParseMotorConfig(PyObject *motor_dict, CPH_ConstraintParams *p) {
     p->damping      = CPH::Python::GetDictionaryItem(motor_dict, "damping", 1.0f);
 }
 
-int ParsePointParams(PyObject *args, CPH_ConstraintParams *p) {
+int ParsePointParams(PyObject *args, ConstraintParams *p) {
     if (!args || args == Py_None) {
         return 1;
     }
@@ -162,7 +162,7 @@ int ParsePointParams(PyObject *args, CPH_ConstraintParams *p) {
     return PyArg_ParseTuple(args, "(fff)", &p->px, &p->py, &p->pz);
 }
 
-int ParseHingeParams(PyObject *args, CPH_ConstraintParams *p) {
+int ParseHingeParams(PyObject *args, ConstraintParams *p) {
     p->limit_min = -JPH_M_PI;
     p->limit_max = JPH_M_PI; // Hinge defaults
     if (!args) {
@@ -173,7 +173,7 @@ int ParseHingeParams(PyObject *args, CPH_ConstraintParams *p) {
                             &p->limit_min, &p->limit_max);
 }
 
-int ParseSliderParams(PyObject *args, CPH_ConstraintParams *p) {
+int ParseSliderParams(PyObject *args, ConstraintParams *p) {
     // Slider axis defaults to X usually, but Y is fine. Limits default to free.
     if (!args) {
         return 1;
@@ -182,7 +182,7 @@ int ParseSliderParams(PyObject *args, CPH_ConstraintParams *p) {
                             &p->limit_min, &p->limit_max);
 }
 
-int ParseConeParams(PyObject *args, CPH_ConstraintParams *p) {
+int ParseConeParams(PyObject *args, ConstraintParams *p) {
     if (!args) {
         return 1;
     }
@@ -191,7 +191,7 @@ int ParseConeParams(PyObject *args, CPH_ConstraintParams *p) {
                             &p->half_cone_angle);
 }
 
-int ParseDistanceParams(PyObject *args, CPH_ConstraintParams *p) {
+int ParseDistanceParams(PyObject *args, ConstraintParams *p) {
     // Default: -1.0 can be used as a sentinel in your create_distance
     // logic to say "calculate distance from current positions"
     p->limit_min = -1.0f;
@@ -230,7 +230,7 @@ void ParseBodySize(PyObject *py_size, float s[4]) {
     }
 }
 
-int ParseTracksToC(PyObject *py_tracks, CPH_TrackData *out_data, int *num_out) {
+int ParseTracksToC(PyObject *py_tracks, TrackData *out_data, int *num_out) {
     if (!py_tracks || !PyList_Check(py_tracks)) {
         return 0;
     }

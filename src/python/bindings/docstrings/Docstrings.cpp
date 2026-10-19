@@ -96,7 +96,9 @@ inline constexpr std::size_t kDocsBufferSize = 128;
 } // namespace CPH::Python::detail
 
 
-void CPH_DocsStitchMethods(PyMethodDef *methods, const char *class_name,
+namespace CPH::Python {
+
+void DocsStitchMethods(PyMethodDef *methods, const char *class_name,
                            const char *markdown_content) {
     if (methods == nullptr || markdown_content == nullptr) {
         return;
@@ -109,7 +111,7 @@ void CPH_DocsStitchMethods(PyMethodDef *methods, const char *class_name,
     }
 }
 
-void CPH_DocsStitchGetset(PyGetSetDef *getset, const char *class_name,
+void DocsStitchGetset(PyGetSetDef *getset, const char *class_name,
                           const char *markdown_content) {
     if (getset == nullptr || markdown_content == nullptr) {
         return;
@@ -122,18 +124,20 @@ void CPH_DocsStitchGetset(PyGetSetDef *getset, const char *class_name,
     }
 }
 
-void CPH_DocsStitchSpec(PyType_Spec *spec, const char *class_name,
+void DocsStitchSpec(PyType_Spec *spec, const char *class_name,
                         const char *markdown_content) {
     if (spec == nullptr || spec->slots == nullptr || markdown_content == nullptr) {
         return;
     }
     for (const PyType_Slot *slot = spec->slots; slot->slot != 0; ++slot) {
         if (slot->slot == Py_tp_methods) {
-            CPH_DocsStitchMethods(static_cast<PyMethodDef *>(slot->pfunc), class_name,
+            DocsStitchMethods(static_cast<PyMethodDef *>(slot->pfunc), class_name,
                                   markdown_content);
         } else if (slot->slot == Py_tp_getset) {
-            CPH_DocsStitchGetset(static_cast<PyGetSetDef *>(slot->pfunc), class_name,
+            DocsStitchGetset(static_cast<PyGetSetDef *>(slot->pfunc), class_name,
                                  markdown_content);
         }
     }
 }
+
+} // namespace CPH::Python

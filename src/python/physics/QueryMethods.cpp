@@ -24,7 +24,7 @@ static PyObject *query_status_error(PhysicsQueryStatus status, const char *messa
     return nullptr;
 }
 
-static PyObject *overlap_hits_to_list(const CPH_PhysicsQueryHitBuffer *hits) {
+static PyObject *overlap_hits_to_list(const PhysicsQueryHitBuffer *hits) {
     if (hits->count > static_cast<size_t>(PY_SSIZE_T_MAX)) {
         PyErr_SetString(PyExc_OverflowError, "Overlap query returned too many results");
         return nullptr;
@@ -66,11 +66,11 @@ static PyObject *overlap_hits_to_list(const CPH_PhysicsQueryHitBuffer *hits) {
     }
 
     const JPH_RVec3 center = {cx, cy, cz};
-    CPH_PhysicsQueryHitBuffer hits;
+    PhysicsQueryHitBuffer hits;
 
     PhysicsQueryStatus status;
     Py_BEGIN_ALLOW_THREADS status =
-        CPH_PhysicsWorldOverlapSphere(&self->physics, center, radius, &hits);
+        PhysicsWorldOverlapSphere(&self->physics, center, radius, &hits);
     Py_END_ALLOW_THREADS
 
         if (status != PHYSICS_QUERY_STATUS_OK) {
@@ -105,10 +105,10 @@ static PyObject *overlap_hits_to_list(const CPH_PhysicsQueryHitBuffer *hits) {
 
     const JPH_RVec3 min = {min_x, min_y, min_z};
     const JPH_RVec3 max = {max_x, max_y, max_z};
-    CPH_PhysicsQueryHitBuffer hits;
+    PhysicsQueryHitBuffer hits;
 
     PhysicsQueryStatus status;
-    Py_BEGIN_ALLOW_THREADS status = CPH_PhysicsWorldOverlapAabb(&self->physics, min, max, &hits);
+    Py_BEGIN_ALLOW_THREADS status = PhysicsWorldOverlapAabb(&self->physics, min, max, &hits);
     Py_END_ALLOW_THREADS
 
         if (status != PHYSICS_QUERY_STATUS_OK) {
@@ -145,11 +145,11 @@ static PyObject *overlap_hits_to_list(const CPH_PhysicsQueryHitBuffer *hits) {
 
     const JPH_RVec3 origin    = {start_x, start_y, start_z};
     const JPH_Vec3 direction  = {direction_x, direction_y, direction_z};
-    CPH_PhysicsRaycastHit hit = {};
+    PhysicsRaycastHit hit = {};
 
     PhysicsQueryStatus status;
     Py_BEGIN_ALLOW_THREADS status =
-        CPH_PhysicsWorldRaycast(&self->physics, origin, direction, max_distance,
+        PhysicsWorldRaycast(&self->physics, origin, direction, max_distance,
                                 static_cast<BodyHandle>(ignore_handle), &hit);
     Py_END_ALLOW_THREADS
 
@@ -227,7 +227,7 @@ static PyObject *overlap_hits_to_list(const CPH_PhysicsQueryHitBuffer *hits) {
     }
 
     PhysicsQueryStatus status;
-    Py_BEGIN_ALLOW_THREADS status = CPH_PhysicsWorldRaycastBatch(
+    Py_BEGIN_ALLOW_THREADS status = PhysicsWorldRaycastBatch(
         &self->physics, static_cast<const float *>(starts_buffer.buf),
         static_cast<const float *>(directions_buffer.buf), count, max_distance, results);
     Py_END_ALLOW_THREADS
@@ -279,11 +279,11 @@ static PyObject *overlap_hits_to_list(const CPH_PhysicsQueryHitBuffer *hits) {
     const JPH_RVec3 position    = {position_x, position_y, position_z};
     const JPH_Quat rotation     = {rotation_x, rotation_y, rotation_z, rotation_w};
     const JPH_Vec3 direction    = {direction_x, direction_y, direction_z};
-    CPH_PhysicsShapecastHit hit = {};
+    PhysicsShapecastHit hit = {};
 
     PhysicsQueryStatus status;
     Py_BEGIN_ALLOW_THREADS status =
-        CPH_PhysicsWorldShapecast(&self->physics, shape_type, position, rotation, direction, size,
+        PhysicsWorldShapecast(&self->physics, shape_type, position, rotation, direction, size,
                                   static_cast<BodyHandle>(ignore_handle), &hit);
     Py_END_ALLOW_THREADS
 

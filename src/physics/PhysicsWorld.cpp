@@ -10,12 +10,15 @@
 #include <cstring>
 #include <utility>
 
+
+namespace CPH {
+
 namespace {
 
 constexpr std::size_t kCommandQueueInitialCapacity = 64;
 constexpr std::size_t kInitialBodyCapacity         = 1024;
 constexpr std::size_t kConstraintInitialCapacity   = 256;
-constexpr std::size_t kContactMaxCapacity          = sizeof(CPH_ContactEvent) * 8 << 5;
+constexpr std::size_t kContactMaxCapacity          = sizeof(ContactEvent) * 8 << 5;
 
 constexpr JPH_Real kVerifyAbiPosX    = 10.0;
 constexpr JPH_Real kVerifyAbiPosY    = 20.0;
@@ -43,8 +46,8 @@ void set_scaled_mass(JPH_BodyCreationSettings *settings, JPH_MassProperties &pro
 
 // --- Body settings helpers ---
 
-void CPH_ConfigureBodySettings(JPH_BodyCreationSettings *settings, JPH_Shape *shape,
-                               CPH_BodyConfig cfg) {
+void ConfigureBodySettings(JPH_BodyCreationSettings *settings, JPH_Shape *shape,
+                               BodyConfig cfg) {
     if (cfg.is_sensor) {
         JPH_BodyCreationSettings_SetIsSensor(settings, true);
     }
@@ -69,8 +72,8 @@ void CPH_ConfigureBodySettings(JPH_BodyCreationSettings *settings, JPH_Shape *sh
     }
 }
 
-void CPH_ApplyBodyCreationProps(JPH_BodyCreationSettings *settings, JPH_Shape *shape,
-                                CPH_BodyCreationProps props) {
+void ApplyBodyCreationProps(JPH_BodyCreationSettings *settings, JPH_Shape *shape,
+                                BodyCreationProps props) {
     if (props.mass > 0.0F) {
         JPH_MassProperties properties;
         JPH_Shape_GetMassProperties(shape, &properties);
@@ -91,7 +94,7 @@ void CPH_ApplyBodyCreationProps(JPH_BodyCreationSettings *settings, JPH_Shape *s
 
 // --- Synchronization helpers (see core/Threading.hpp) ---
 
-std::unique_lock<std::mutex> CPH_LockShadowNotStepping(CPH_PhysicsWorld *world) {
+std::unique_lock<std::mutex> LockShadowNotStepping(PhysicsWorld *world) {
     std::unique_lock shadow(world->shadow_lock);
     if (!world->is_stepping.load(std::memory_order::relaxed)) {
         return shadow;
@@ -112,7 +115,7 @@ std::unique_lock<std::mutex> CPH_LockShadowNotStepping(CPH_PhysicsWorld *world) 
     return shadow;
 }
 
-void CPH_WaitUntilNotQuerying(CPH_PhysicsWorld *world,
+void WaitUntilNotQuerying(PhysicsWorld *world,
                               std::unique_lock<std::mutex> &shadow) {
     while (world->active_queries.load(std::memory_order::acquire) > 0) {
         shadow.unlock();
@@ -128,12 +131,12 @@ void CPH_WaitUntilNotQuerying(CPH_PhysicsWorld *world,
 
 // --- Construction / destruction ---
 
-CPH_PhysicsWorld::CPH_PhysicsWorld() {
+PhysicsWorld::PhysicsWorld() {
     debug_renderer = JPH_DebugRenderer_Create(this);
 }
 
-CPH_PhysicsWorld::~CPH_PhysicsWorld() {
-    CPH_ClearCommandQueue(this);
+PhysicsWorld::~PhysicsWorld() {
+    ClearCommandQueue(this);
 
     // Constraints must leave the physics system before it is destroyed.
     for (auto &slot : constraints) {
@@ -209,7 +212,7 @@ bool BodyBuffers::allocate(std::size_t capacity, bool for_overwrite) noexcept {
     return true;
 }
 
-int CPH_AllocateBuffers(CPH_PhysicsWorld *world, int max_bodies, std::size_t initial_count) {
+int AllocateBuffers(PhysicsWorld *world, int max_bodies, std::size_t initial_count) {
     const std::size_t max_capacity = max_bodies > 0 ? static_cast<std::size_t>(max_bodies) : 0;
     world->max_jolt_bodies         = static_cast<std::uint32_t>(max_bodies);
 
@@ -253,7 +256,7 @@ int CPH_AllocateBuffers(CPH_PhysicsWorld *world, int max_bodies, std::size_t ini
     return 0;
 }
 
-void CPH_InitializeFreeSlots(CPH_PhysicsWorld *world, std::size_t start_idx) {
+void InitializeFreeSlots(PhysicsWorld *world, std::size_t start_idx) {
     for (auto i = static_cast<std::uint32_t>(start_idx);
          i < static_cast<std::uint32_t>(world->slot_capacity); ++i) {
         world->bodies.generations[i].store(1, std::memory_order::relaxed);
@@ -263,7 +266,7 @@ void CPH_InitializeFreeSlots(CPH_PhysicsWorld *world, std::size_t start_idx) {
     }
 }
 
-PhysicsWorldStatus CPH_PhysicsWorldResize(CPH_PhysicsWorld *world, std::size_t new_capacity) {
+PhysicsWorldStatus PhysicsWorldResize(PhysicsWorld *world, std::size_t new_capacity) {
     if (world->view_export_count.load(std::memory_order::relaxed) > 0) {
         return PHYSICS_WORLD_STATUS_BUFFER_EXPORTED;
     }
@@ -296,17 +299,17 @@ PhysicsWorldStatus CPH_PhysicsWorldResize(CPH_PhysicsWorld *world, std::size_t n
     // Dense data for live bodies.
     if (count > 0) {
         std::memcpy(next.positions.data(), current.positions.data(),
-                    count * sizeof(CPH_PosStride));
+                    count * sizeof(PosStride));
         std::memcpy(next.prev_positions.data(), current.prev_positions.data(),
-                    count * sizeof(CPH_PosStride));
+                    count * sizeof(PosStride));
         std::memcpy(next.rotations.data(), current.rotations.data(),
-                    count * sizeof(CPH_AuxStride));
+                    count * sizeof(AuxStride));
         std::memcpy(next.prev_rotations.data(), current.prev_rotations.data(),
-                    count * sizeof(CPH_AuxStride));
+                    count * sizeof(AuxStride));
         std::memcpy(next.linear_velocities.data(), current.linear_velocities.data(),
-                    count * sizeof(CPH_AuxStride));
+                    count * sizeof(AuxStride));
         std::memcpy(next.angular_velocities.data(), current.angular_velocities.data(),
-                    count * sizeof(CPH_AuxStride));
+                    count * sizeof(AuxStride));
         std::memcpy(next.body_ids.data(), current.body_ids.data(), count * sizeof(JPH_BodyID));
         std::memcpy(next.user_data.data(), current.user_data.data(),
                     count * sizeof(std::uint64_t));
@@ -351,7 +354,7 @@ PhysicsWorldStatus CPH_PhysicsWorldResize(CPH_PhysicsWorld *world, std::size_t n
     // defines all of its fields before the body becomes visible — paths
     // that don't take explicit values write creation defaults at claim
     // time (reserve_body_slot for single/soft creates, the batch loop in
-    // CPH_PhysicsWorldCreateBodiesBatch for batch creates).
+    // PhysicsWorldCreateBodiesBatch for batch creates).
 
     world->retired_bodies = std::exchange(world->bodies, std::move(next));
     world->free_count.store(free_count, std::memory_order::release);
@@ -362,8 +365,8 @@ PhysicsWorldStatus CPH_PhysicsWorldResize(CPH_PhysicsWorld *world, std::size_t n
 
 // --- Baked scene loading ---
 
-PhysicsWorldStatus CPH_PhysicsWorldLoadBakedScene(CPH_PhysicsWorld *world,
-                                                  const CPH_BakedSceneData *scene) {
+PhysicsWorldStatus PhysicsWorldLoadBakedScene(PhysicsWorld *world,
+                                                  const BakedSceneData *scene) {
     if (world == nullptr || scene == nullptr) {
         return PHYSICS_WORLD_STATUS_INVALID_ARGUMENT;
     }
@@ -385,19 +388,19 @@ PhysicsWorldStatus CPH_PhysicsWorldLoadBakedScene(CPH_PhysicsWorld *world,
         const std::scoped_lock shadow(world->shadow_lock);
         const std::scoped_lock trampoline(world->jph_trampoline_lock);
         for (std::size_t i = 0; i < scene->count; ++i) {
-            const float *const shape_data = &scene->shapes[i * CPH_BAKED_SHAPE_STRIDE];
+            const float *const shape_data = &scene->shapes[i * BAKED_SHAPE_STRIDE];
             const float params[4] = {shape_data[1], shape_data[2], shape_data[3], shape_data[4]};
             JPH_Shape *const shape =
-                CPH_FindOrCreateShapeLocked(world, static_cast<int>(shape_data[0]), params);
+                FindOrCreateShapeLocked(world, static_cast<int>(shape_data[0]), params);
             if (CPH_UNLIKELY(shape == nullptr)) {
                 status = PHYSICS_WORLD_STATUS_OUT_OF_MEMORY;
                 break;
             }
 
-            const std::size_t pos_idx = i * CPH_BAKED_POSITION_STRIDE;
-            const std::size_t rot_idx = i * CPH_BAKED_ROTATION_STRIDE;
-            CPH_PosStride &shadow_pos = world->bodies.positions[i];
-            CPH_AuxStride &shadow_rot = world->bodies.rotations[i];
+            const std::size_t pos_idx = i * BAKED_POSITION_STRIDE;
+            const std::size_t rot_idx = i * BAKED_ROTATION_STRIDE;
+            PosStride &shadow_pos = world->bodies.positions[i];
+            AuxStride &shadow_rot = world->bodies.rotations[i];
             shadow_pos = {scene->positions[pos_idx + 0], scene->positions[pos_idx + 1],
                           scene->positions[pos_idx + 2], 0.0};
             shadow_rot = {scene->rotations[rot_idx + 0], scene->rotations[rot_idx + 1],
@@ -451,7 +454,7 @@ PhysicsWorldStatus CPH_PhysicsWorldLoadBakedScene(CPH_PhysicsWorld *world,
 
 namespace {
 
-PhysicsWorldStatus reserve_body_slot(CPH_PhysicsWorld *world, std::uint32_t slot_state,
+PhysicsWorldStatus reserve_body_slot(PhysicsWorld *world, std::uint32_t slot_state,
                                      BodyHandle *handle_out) {
     const std::size_t current_count = world->count.load(std::memory_order::acquire);
     std::size_t available           = world->free_count.load(std::memory_order::acquire);
@@ -465,7 +468,7 @@ PhysicsWorldStatus reserve_body_slot(CPH_PhysicsWorld *world, std::uint32_t slot
         if (next_capacity > world->max_jolt_bodies) {
             next_capacity = world->max_jolt_bodies;
         }
-        const PhysicsWorldStatus resize_status = CPH_PhysicsWorldResize(world, next_capacity);
+        const PhysicsWorldStatus resize_status = PhysicsWorldResize(world, next_capacity);
         if (resize_status != PHYSICS_WORLD_STATUS_OK) {
             return resize_status;
         }
@@ -475,7 +478,7 @@ PhysicsWorldStatus reserve_body_slot(CPH_PhysicsWorld *world, std::uint32_t slot
         }
     }
 
-    if (CPH_UNLIKELY(!CPH_EnsureCommandCapacity(world))) {
+    if (CPH_UNLIKELY(!EnsureCommandCapacity(world))) {
         return PHYSICS_WORLD_STATUS_OUT_OF_MEMORY;
     }
 
@@ -509,7 +512,7 @@ PhysicsWorldStatus reserve_body_slot(CPH_PhysicsWorld *world, std::uint32_t slot
 
 } // namespace
 
-PhysicsWorldStatus CPH_PhysicsWorldCommitCreate(CPH_PhysicsWorld *world,
+PhysicsWorldStatus PhysicsWorldCommitCreate(PhysicsWorld *world,
                                                  JPH_BodyCreationSettings *settings,
                                                  std::uint32_t slot_state, BodyHandle *out_handle) {
     if (!world || !settings || !out_handle) {
@@ -527,7 +530,7 @@ PhysicsWorldStatus CPH_PhysicsWorldCommitCreate(CPH_PhysicsWorld *world,
     return PHYSICS_WORLD_STATUS_OK;
 }
 
-PhysicsWorldStatus CPH_PhysicsWorldCommitCreateSoft(CPH_PhysicsWorld *world,
+PhysicsWorldStatus PhysicsWorldCommitCreateSoft(PhysicsWorld *world,
                                                      JPH_SoftBodyCreationSettings *settings,
                                                      std::uint32_t slot_state,
                                                      BodyHandle *out_handle) {
@@ -548,8 +551,8 @@ PhysicsWorldStatus CPH_PhysicsWorldCommitCreateSoft(CPH_PhysicsWorld *world,
 
 // --- Jolt bring-up ---
 
-int CPH_PhysicsWorldInitJolt(CPH_PhysicsWorld *world, CPH_WorldSettings settings,
-                             CPH_GravityVector gravity) {
+int PhysicsWorldInitJolt(PhysicsWorld *world, WorldSettings settings,
+                             GravityVector gravity) {
     int num_workers = settings.num_threads;
 #if defined(__SANITIZE_THREAD__) || defined(ENABLE_SANITIZER)
     // TSan cannot model Jolt's lock-free job queues; run Jolt synchronously
@@ -634,21 +637,21 @@ int CPH_PhysicsWorldInitJolt(CPH_PhysicsWorld *world, CPH_WorldSettings settings
 
 // --- Stepping ---
 
-std::span<PhysicsCommand> CPH_PhysicsWorldDetachCommands(CPH_PhysicsWorld *world) {
+std::span<PhysicsCommand> PhysicsWorldDetachCommands(PhysicsWorld *world) {
     const std::size_t captured = world->command_count;
     std::swap(world->command_queue, world->command_queue_spare);
     world->command_count = 0;
     return {world->command_queue_spare.data(), captured};
 }
 
-void CPH_PhysicsWorldStepNative(CPH_PhysicsWorld *world, float dt,
+void PhysicsWorldStepNative(PhysicsWorld *world, float dt,
                                 std::span<PhysicsCommand> commands) {
     const std::scoped_lock trampoline(world->jph_trampoline_lock);
 
     CPH_PROFILE_BEGIN(jolt_step);
 
     if (!commands.empty()) {
-        CPH_FlushCommandsInternal(world, commands);
+        FlushCommandsInternal(world, commands);
         world->needs_optimization = true;
     }
 
@@ -670,12 +673,12 @@ void CPH_PhysicsWorldStepNative(CPH_PhysicsWorld *world, float dt,
             sync, [&] { return world->active_queries.load(std::memory_order::acquire) <= 0; });
     }
 
-    CPH_SyncShadowBuffers(world);
+    SyncShadowBuffers(world);
 
     CPH_PROFILE_END(jolt_step, "Jolt Physics Crunch", static_cast<unsigned int>(commands.size()));
 }
 
-std::size_t CPH_PhysicsWorldFinalizeStep(CPH_PhysicsWorld *world, float dt) {
+std::size_t PhysicsWorldFinalizeStep(PhysicsWorld *world, float dt) {
     const std::size_t contact_count =
         world->contact_atomic_idx.load(std::memory_order::acquire);
     world->contact_count = std::min(contact_count, world->contact_max_capacity);
@@ -685,11 +688,11 @@ std::size_t CPH_PhysicsWorldFinalizeStep(CPH_PhysicsWorld *world, float dt) {
 
     world->is_stepping.store(false, std::memory_order::release);
     world->step_requested.store(false, std::memory_order::release);
-    CPH_NotifyStepSync(world);
+    NotifyStepSync(world);
     return body_count;
 }
 
-int CPH_VerifyAbiAlignment(JPH_BodyInterface *body_interface) {
+int VerifyAbiAlignment(JPH_BodyInterface *body_interface) {
     JPH_Vec3 half_extents = {1, 1, 1};
     const ShapeSettingsPtr box_settings(
         reinterpret_cast<JPH_ShapeSettings *>(JPH_BoxShapeSettings_Create(&half_extents, 0.0F)));
@@ -727,3 +730,5 @@ int CPH_VerifyAbiAlignment(JPH_BodyInterface *body_interface) {
     }
     return 0;
 }
+
+} // namespace CPH

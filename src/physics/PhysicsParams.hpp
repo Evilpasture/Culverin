@@ -9,13 +9,16 @@
 #include <cstdint>
 #include <limits>
 
+
+namespace CPH {
+
 enum {
-    CPH_BAKED_POSITION_STRIDE = 4,
-    CPH_BAKED_ROTATION_STRIDE = 4,
-    CPH_BAKED_SHAPE_STRIDE    = 5,
+    BAKED_POSITION_STRIDE = 4,
+    BAKED_ROTATION_STRIDE = 4,
+    BAKED_SHAPE_STRIDE    = 5,
 };
 
-struct CPH_BakedSceneData {
+struct BakedSceneData {
     std::size_t count;
     const JPH_Real *positions;
     const float *rotations;
@@ -25,11 +28,11 @@ struct CPH_BakedSceneData {
     const std::uint64_t *user_data;
 };
 
-struct CPH_ShapeParams {
+struct ShapeParams {
     float p[4];
 };
 
-struct CPH_TrackData {
+struct TrackData {
     std::uint32_t *indices;
     std::uint32_t count;
     std::uint32_t driven_idx;
@@ -38,7 +41,7 @@ struct CPH_TrackData {
 // Constraint parameters. Default member initializers carry the sane
 // defaults the old CPH_ParamsInit() applied (20 Hz / critically damped
 // motors, unlimited limits), so a value-initialized struct is ready to use.
-struct CPH_ConstraintParams {
+struct ConstraintParams {
     float px = 0.0F, py = 0.0F, pz = 0.0F;
     float ax = 0.0F, ay = 1.0F, az = 0.0F;
     float limit_min       = -std::numeric_limits<float>::max();
@@ -52,3 +55,5 @@ struct CPH_ConstraintParams {
     float damping         = 1.0F;
     float max_force       = 1e6F;
 };
+
+} // namespace CPH

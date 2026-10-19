@@ -12,7 +12,10 @@
 #include <cstddef>
 #include <cstdint>
 
-struct CPH_ContactEventSlim {
+
+namespace CPH {
+
+struct ContactEventSlim {
     std::atomic<BodyHandle> body1; // 8
     std::atomic<BodyHandle> body2; // 8
     JPH_Real px, py, pz;           // 24/12
@@ -25,9 +28,9 @@ struct CPH_ContactEventSlim {
 #endif
 };
 
-static_assert(sizeof(CPH_ContactEventSlim) == kMemoryAlignmentSize);
+static_assert(sizeof(ContactEventSlim) == kMemoryAlignmentSize);
 
-struct CPH_ContactEventFatExt {
+struct ContactEventFatExt {
     std::uint64_t udata1; // 8
     std::uint64_t udata2; // 8
 
@@ -44,13 +47,15 @@ struct CPH_ContactEventFatExt {
     std::uint32_t padding[3]; // 12 (Total 64)
 };
 
-static_assert(sizeof(CPH_ContactEventFatExt) == kMemoryAlignmentSize);
+static_assert(sizeof(ContactEventFatExt) == kMemoryAlignmentSize);
 
-struct CPH_ContactEvent {
-    alignas(kMemoryAlignmentSize) CPH_ContactEventSlim slim; // Offset 0
-    CPH_ContactEventFatExt fat;                              // Offset 64
+struct ContactEvent {
+    alignas(kMemoryAlignmentSize) ContactEventSlim slim; // Offset 0
+    ContactEventFatExt fat;                              // Offset 64
 };
 
-static_assert(sizeof(CPH_ContactEvent) == kMemoryAlignmentSize * 2);
-static_assert(alignof(CPH_ContactEvent) == kMemoryAlignmentSize);
-static_assert(offsetof(CPH_ContactEvent, fat) == kMemoryAlignmentSize);
+static_assert(sizeof(ContactEvent) == kMemoryAlignmentSize * 2);
+static_assert(alignof(ContactEvent) == kMemoryAlignmentSize);
+static_assert(offsetof(ContactEvent, fat) == kMemoryAlignmentSize);
+
+} // namespace CPH

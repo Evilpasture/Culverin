@@ -5,6 +5,9 @@
 #include <cstddef>
 #include <cstdint>
 
+
+namespace CPH {
+
 enum PhysicsBodyOperationType : std::uint8_t {
     PHYSICS_BODY_OP_APPLY_IMPULSE,
     PHYSICS_BODY_OP_APPLY_IMPULSE_AT,
@@ -23,7 +26,7 @@ enum PhysicsBodyOperationType : std::uint8_t {
     PHYSICS_BODY_OP_SET_CCD,
 };
 
-struct CPH_PhysicsBodyOperation {
+struct PhysicsBodyOperation {
     PhysicsBodyOperationType type;
     BodyHandle handle;
     JPH_RVec3 position;
@@ -44,10 +47,12 @@ enum PhysicsBodyOperationStatus : int {
 // mirroring, and immediate Jolt application for impulse-style ops on
 // already-live bodies. Stale-handle errors are translated by the binding.
 PhysicsBodyOperationStatus
-CPH_PhysicsWorldApplyBodyOperation(CPH_PhysicsWorld *world,
-                                   const CPH_PhysicsBodyOperation *operation);
-PhysicsBodyOperationStatus CPH_PhysicsWorldQueueBodyDestroy(CPH_PhysicsWorld *world,
+PhysicsWorldApplyBodyOperation(PhysicsWorld *world,
+                                   const PhysicsBodyOperation *operation);
+PhysicsBodyOperationStatus PhysicsWorldQueueBodyDestroy(PhysicsWorld *world,
                                                             BodyHandle handle);
 PhysicsBodyOperationStatus
-CPH_PhysicsWorldQueueBodyDestroyBatch(CPH_PhysicsWorld *world, const BodyHandle *handles,
+PhysicsWorldQueueBodyDestroyBatch(PhysicsWorld *world, const BodyHandle *handles,
                                        std::size_t handle_count);
+
+} // namespace CPH

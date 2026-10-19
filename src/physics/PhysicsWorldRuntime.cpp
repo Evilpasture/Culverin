@@ -7,9 +7,12 @@
 #include <cstring>
 #include <limits>
 
+
+namespace CPH {
+
 static constexpr size_t kInitialMaterialCapacity = 16;
 
-bool CPH_PhysicsWorldAttachContactListener(CPH_PhysicsWorld *world) {
+bool PhysicsWorldAttachContactListener(PhysicsWorld *world) {
     if (!world || !world->system) {
         return false;
     }
@@ -21,17 +24,17 @@ bool CPH_PhysicsWorldAttachContactListener(CPH_PhysicsWorld *world) {
     return true;
 }
 
-void CPH_PhysicsWorldSyncLoadedState(CPH_PhysicsWorld *world, size_t saved_count) {
+void PhysicsWorldSyncLoadedState(PhysicsWorld *world, size_t saved_count) {
     if (!world) {
         return;
     }
 
     JPH_BodyID *CPH_RESTRICT body_ids              = world->bodies.body_ids.data();
     JPH_BodyInterface *CPH_RESTRICT body_interface = world->body_interface;
-    CPH_PosStride *CPH_RESTRICT positions              = world->bodies.positions.data();
-    CPH_AuxStride *CPH_RESTRICT rotations              = world->bodies.rotations.data();
-    CPH_AuxStride *CPH_RESTRICT linear_velocities      = world->bodies.linear_velocities.data();
-    CPH_AuxStride *CPH_RESTRICT angular_velocities     = world->bodies.angular_velocities.data();
+    PosStride *CPH_RESTRICT positions              = world->bodies.positions.data();
+    AuxStride *CPH_RESTRICT rotations              = world->bodies.rotations.data();
+    AuxStride *CPH_RESTRICT linear_velocities      = world->bodies.linear_velocities.data();
+    AuxStride *CPH_RESTRICT angular_velocities     = world->bodies.angular_velocities.data();
 
     for (size_t i = 0; i < saved_count; i++) {
         const JPH_BodyID body_id = body_ids[i];
@@ -72,8 +75,8 @@ static bool calculate_snapshot_size(size_t body_count, size_t slot_capacity, siz
     size_t mapping_size         = 0;
     size_t three_auxiliary_size = 0;
     size_t total_size           = header_size;
-    if (__builtin_mul_overflow(body_count, sizeof(CPH_PosStride), &positions_size) ||
-        __builtin_mul_overflow(body_count, sizeof(CPH_AuxStride), &auxiliary_size) ||
+    if (__builtin_mul_overflow(body_count, sizeof(PosStride), &positions_size) ||
+        __builtin_mul_overflow(body_count, sizeof(AuxStride), &auxiliary_size) ||
         __builtin_mul_overflow(slot_capacity, sizeof(uint32_t) * 3 + sizeof(uint8_t),
                                &mapping_size) ||
         __builtin_mul_overflow(auxiliary_size, (size_t)3, &three_auxiliary_size) ||
@@ -97,15 +100,15 @@ static bool calculate_snapshot_size(size_t body_count, size_t slot_capacity, siz
     return true;
 }
 
-PhysicsWorldSnapshotStatus CPH_PhysicsWorldSaveSnapshot(CPH_PhysicsWorld *world,
+PhysicsWorldSnapshotStatus PhysicsWorldSaveSnapshot(PhysicsWorld *world,
                                                        Buffer<std::uint8_t> &out_data) {
     if (!world) {
         return PHYSICS_WORLD_SNAPSHOT_STATUS_INVALID_ARGUMENT;
     }
     out_data.reset();
 
-    auto shadow = CPH_LockShadowNotStepping(world);
-    CPH_WaitUntilNotQuerying(world, shadow);
+    auto shadow = LockShadowNotStepping(world);
+    WaitUntilNotQuerying(world, shadow);
     const std::size_t body_count    = world->count.load(std::memory_order::acquire);
     const std::size_t slot_capacity = world->slot_capacity;
     const double saved_time         = world->time;
@@ -153,7 +156,7 @@ PhysicsWorldSnapshotStatus CPH_PhysicsWorldSaveSnapshot(CPH_PhysicsWorld *world,
 }
 
 
-PhysicsWorldSnapshotStatus CPH_PhysicsWorldLoadSnapshot(CPH_PhysicsWorld *world, const uint8_t *data,
+PhysicsWorldSnapshotStatus PhysicsWorldLoadSnapshot(PhysicsWorld *world, const uint8_t *data,
                                                        size_t data_size, size_t *out_saved_count,
                                                        size_t *out_world_capacity,
                                                        size_t *out_saved_capacity) {
@@ -164,8 +167,8 @@ PhysicsWorldSnapshotStatus CPH_PhysicsWorldLoadSnapshot(CPH_PhysicsWorld *world,
     *out_world_capacity = 0;
     *out_saved_capacity = 0;
 
-    auto shadow = CPH_LockShadowNotStepping(world);
-    CPH_WaitUntilNotQuerying(world, shadow);
+    auto shadow = LockShadowNotStepping(world);
+    WaitUntilNotQuerying(world, shadow);
     const size_t header_size = sizeof(size_t) + sizeof(double) + sizeof(size_t);
     if (data_size < header_size) {
         return PHYSICS_WORLD_SNAPSHOT_STATUS_TRUNCATED;
@@ -236,19 +239,19 @@ PhysicsWorldSnapshotStatus CPH_PhysicsWorldLoadSnapshot(CPH_PhysicsWorld *world,
     }
     (world->free_count).store(free_count, std::memory_order::release);
 
-    CPH_PhysicsWorldSyncLoadedState(world, saved_count);
+    PhysicsWorldSyncLoadedState(world, saved_count);
     *out_saved_count = saved_count;
     return PHYSICS_WORLD_SNAPSHOT_STATUS_OK;
 }
 
 PhysicsWorldRuntimeStatus
-CPH_PhysicsWorldTakeContactEvents(CPH_PhysicsWorld *world, Buffer<CPH_ContactEvent> &out_events) {
+PhysicsWorldTakeContactEvents(PhysicsWorld *world, Buffer<ContactEvent> &out_events) {
     if (!world) {
         return PHYSICS_WORLD_RUNTIME_STATUS_INVALID_ARGUMENT;
     }
     out_events.reset();
 
-    const auto shadow = CPH_LockShadowNotStepping(world);
+    const auto shadow = LockShadowNotStepping(world);
     std::size_t count = world->contact_atomic_idx.load(std::memory_order::acquire);
     if (count > world->contact_max_capacity) {
         count = world->contact_max_capacity;
@@ -262,18 +265,18 @@ CPH_PhysicsWorldTakeContactEvents(CPH_PhysicsWorld *world, Buffer<CPH_ContactEve
     // Contact events contain atomics; the wire copy is a byte transfer,
     // same as the legacy implementation.
     std::memcpy(out_events.data(), world->contact_buffer.data(),
-                count * sizeof(CPH_ContactEvent));
+                count * sizeof(ContactEvent));
     world->contact_atomic_idx.store(0, std::memory_order::relaxed);
     return PHYSICS_WORLD_RUNTIME_STATUS_OK;
 }
 
 
-PhysicsWorldRuntimeStatus CPH_PhysicsWorldSetGravity(CPH_PhysicsWorld *world, JPH_Vec3 gravity) {
+PhysicsWorldRuntimeStatus PhysicsWorldSetGravity(PhysicsWorld *world, JPH_Vec3 gravity) {
     if (!world) {
         return PHYSICS_WORLD_RUNTIME_STATUS_INVALID_ARGUMENT;
     }
 
-    auto shadow = CPH_LockShadowNotStepping(world);
+    auto shadow = LockShadowNotStepping(world);
     const size_t current_count = (world->count).load(std::memory_order::acquire);
     JPH_PhysicsSystem_SetGravity(world->system, &gravity);
 
@@ -288,7 +291,7 @@ PhysicsWorldRuntimeStatus CPH_PhysicsWorldSetGravity(CPH_PhysicsWorld *world, JP
     return PHYSICS_WORLD_RUNTIME_STATUS_OK;
 }
 
-PhysicsWorldRuntimeStatus CPH_PhysicsWorldGetGravity(CPH_PhysicsWorld *world, JPH_Vec3 *out_gravity) {
+PhysicsWorldRuntimeStatus PhysicsWorldGetGravity(PhysicsWorld *world, JPH_Vec3 *out_gravity) {
     if (!world || !out_gravity) {
         return PHYSICS_WORLD_RUNTIME_STATUS_INVALID_ARGUMENT;
     }
@@ -298,13 +301,13 @@ PhysicsWorldRuntimeStatus CPH_PhysicsWorldGetGravity(CPH_PhysicsWorld *world, JP
     return PHYSICS_WORLD_RUNTIME_STATUS_OK;
 }
 
-PhysicsWorldRuntimeStatus CPH_PhysicsWorldGetBodyStats(CPH_PhysicsWorld *world, BodyHandle handle,
-                                                       CPH_PhysicsBodyStats *out_stats) {
+PhysicsWorldRuntimeStatus PhysicsWorldGetBodyStats(PhysicsWorld *world, BodyHandle handle,
+                                                       PhysicsBodyStats *out_stats) {
     if (!world || !out_stats) {
         return PHYSICS_WORLD_RUNTIME_STATUS_INVALID_ARGUMENT;
     }
 
-    auto shadow = CPH_LockShadowNotStepping(world);
+    auto shadow = LockShadowNotStepping(world);
     uint32_t slot = 0;
     if (!unpack_handle(world, handle, &slot)) {
         return PHYSICS_WORLD_RUNTIME_STATUS_STALE_HANDLE;
@@ -323,13 +326,13 @@ PhysicsWorldRuntimeStatus CPH_PhysicsWorldGetBodyStats(CPH_PhysicsWorld *world, 
 }
 
 static PhysicsWorldRuntimeStatus
-lock_soft_body_for_read(CPH_PhysicsWorld *world, BodyHandle handle, JPH_BodyLockRead *out_lock,
+lock_soft_body_for_read(PhysicsWorld *world, BodyHandle handle, JPH_BodyLockRead *out_lock,
                         const JPH_BodyLockInterface **out_interface, uint32_t *out_count) {
     if (!world || !out_lock || !out_interface || !out_count || !world->system) {
         return PHYSICS_WORLD_RUNTIME_STATUS_INVALID_ARGUMENT;
     }
 
-    auto shadow = CPH_LockShadowNotStepping(world);
+    auto shadow = LockShadowNotStepping(world);
     uint32_t slot = 0;
     if (!unpack_handle(world, handle, &slot)) {
         return PHYSICS_WORLD_RUNTIME_STATUS_STALE_HANDLE;
@@ -357,7 +360,7 @@ lock_soft_body_for_read(CPH_PhysicsWorld *world, BodyHandle handle, JPH_BodyLock
     return PHYSICS_WORLD_RUNTIME_STATUS_OK;
 }
 
-PhysicsWorldRuntimeStatus CPH_PhysicsWorldGetSoftBodyVertexCount(CPH_PhysicsWorld *world,
+PhysicsWorldRuntimeStatus PhysicsWorldGetSoftBodyVertexCount(PhysicsWorld *world,
                                                                    BodyHandle handle,
                                                                    uint32_t *out_count) {
     if (!out_count) {
@@ -373,7 +376,7 @@ PhysicsWorldRuntimeStatus CPH_PhysicsWorldGetSoftBodyVertexCount(CPH_PhysicsWorl
     return status;
 }
 
-PhysicsWorldRuntimeStatus CPH_PhysicsWorldGetSoftBodyVertexPosition(CPH_PhysicsWorld *world,
+PhysicsWorldRuntimeStatus PhysicsWorldGetSoftBodyVertexPosition(PhysicsWorld *world,
                                                                       BodyHandle handle,
                                                                       uint32_t vertex_index,
                                                                       JPH_Vec3 *out_position,
@@ -397,8 +400,8 @@ PhysicsWorldRuntimeStatus CPH_PhysicsWorldGetSoftBodyVertexPosition(CPH_PhysicsW
     return PHYSICS_WORLD_RUNTIME_STATUS_OK;
 }
 
-PhysicsWorldRuntimeStatus CPH_PhysicsWorldGetSoftBodyLocalVertices(
-    CPH_PhysicsWorld *world, BodyHandle handle, Buffer<JPH_Vec3> &out_positions,
+PhysicsWorldRuntimeStatus PhysicsWorldGetSoftBodyLocalVertices(
+    PhysicsWorld *world, BodyHandle handle, Buffer<JPH_Vec3> &out_positions,
     std::uint32_t &out_count) {
     out_positions.reset();
     out_count = 0;
@@ -422,7 +425,7 @@ PhysicsWorldRuntimeStatus CPH_PhysicsWorldGetSoftBodyLocalVertices(
 }
 
 
-PhysicsWorldRuntimeStatus CPH_PhysicsWorldApplyBuoyancy(CPH_PhysicsWorld *world, BodyHandle handle,
+PhysicsWorldRuntimeStatus PhysicsWorldApplyBuoyancy(PhysicsWorld *world, BodyHandle handle,
                                                        JPH_Real surface_y, float buoyancy,
                                                        float linear_drag, float angular_drag,
                                                        JPH_Vec3 fluid_velocity, float dt,
@@ -432,7 +435,7 @@ PhysicsWorldRuntimeStatus CPH_PhysicsWorldApplyBuoyancy(CPH_PhysicsWorld *world,
     }
     *out_submerged = false;
 
-    auto shadow = CPH_LockShadowNotStepping(world);
+    auto shadow = LockShadowNotStepping(world);
     uint32_t slot = 0;
     if (!unpack_handle(world, handle, &slot)) {
         return PHYSICS_WORLD_RUNTIME_STATUS_OK;
@@ -455,12 +458,12 @@ PhysicsWorldRuntimeStatus CPH_PhysicsWorldApplyBuoyancy(CPH_PhysicsWorld *world,
     *out_submerged             = JPH_BodyInterface_ApplyBuoyancyImpulse(
         world->body_interface, body_id, &surface_position, &surface_normal, buoyancy, linear_drag,
         angular_drag, &fluid_velocity, &gravity, dt);
-    CPH_PhysicsWorldQueryEnd(world);
+    PhysicsWorldQueryEnd(world);
     return PHYSICS_WORLD_RUNTIME_STATUS_OK;
 }
 
-PhysicsWorldRuntimeStatus CPH_PhysicsWorldApplyBuoyancyBatch(
-    CPH_PhysicsWorld *world, const BodyHandle *handles, size_t handle_count, JPH_Real surface_y,
+PhysicsWorldRuntimeStatus PhysicsWorldApplyBuoyancyBatch(
+    PhysicsWorld *world, const BodyHandle *handles, size_t handle_count, JPH_Real surface_y,
     float buoyancy, float linear_drag, float angular_drag, JPH_Vec3 fluid_velocity, float dt) {
     if (!world || (handle_count > 0 && !handles)) {
         return PHYSICS_WORLD_RUNTIME_STATUS_INVALID_ARGUMENT;
@@ -478,7 +481,7 @@ PhysicsWorldRuntimeStatus CPH_PhysicsWorldApplyBuoyancyBatch(
     }
 
     size_t valid_count = 0;
-    auto shadow = CPH_LockShadowNotStepping(world);
+    auto shadow = LockShadowNotStepping(world);
     for (size_t i = 0; i < handle_count; i++) {
         uint32_t slot = 0;
         if (!unpack_handle(world, handles[i], &slot)) {
@@ -505,19 +508,19 @@ PhysicsWorldRuntimeStatus CPH_PhysicsWorldApplyBuoyancyBatch(
                 world->body_interface, body_ids[i], &surface_position, &surface_normal, buoyancy,
                 linear_drag, angular_drag, &fluid_velocity, &gravity, dt);
         }
-        CPH_PhysicsWorldQueryEnd(world);
+        PhysicsWorldQueryEnd(world);
     }
 
     return PHYSICS_WORLD_RUNTIME_STATUS_OK;
 }
 
-PhysicsWorldRuntimeStatus CPH_PhysicsWorldGetMotionType(CPH_PhysicsWorld *world, BodyHandle handle,
+PhysicsWorldRuntimeStatus PhysicsWorldGetMotionType(PhysicsWorld *world, BodyHandle handle,
                                                         JPH_MotionType *out_motion_type) {
     if (!world || !out_motion_type) {
         return PHYSICS_WORLD_RUNTIME_STATUS_INVALID_ARGUMENT;
     }
 
-    auto shadow = CPH_LockShadowNotStepping(world);
+    auto shadow = LockShadowNotStepping(world);
     uint32_t slot = 0;
     if (!unpack_handle(world, handle, &slot)) {
         return PHYSICS_WORLD_RUNTIME_STATUS_STALE_HANDLE;
@@ -536,13 +539,13 @@ PhysicsWorldRuntimeStatus CPH_PhysicsWorldGetMotionType(CPH_PhysicsWorld *world,
     return PHYSICS_WORLD_RUNTIME_STATUS_STALE_HANDLE;
 }
 
-PhysicsWorldRuntimeStatus CPH_PhysicsWorldGetUserData(CPH_PhysicsWorld *world, BodyHandle handle,
+PhysicsWorldRuntimeStatus PhysicsWorldGetUserData(PhysicsWorld *world, BodyHandle handle,
                                                       uint64_t *out_user_data) {
     if (!world || !out_user_data) {
         return PHYSICS_WORLD_RUNTIME_STATUS_INVALID_ARGUMENT;
     }
 
-    auto shadow = CPH_LockShadowNotStepping(world);
+    auto shadow = LockShadowNotStepping(world);
     uint32_t slot = 0;
     if (!unpack_handle(world, handle, &slot)) {
         return PHYSICS_WORLD_RUNTIME_STATUS_STALE_HANDLE;
@@ -558,13 +561,13 @@ PhysicsWorldRuntimeStatus CPH_PhysicsWorldGetUserData(CPH_PhysicsWorld *world, B
     return PHYSICS_WORLD_RUNTIME_STATUS_OK;
 }
 
-PhysicsWorldRuntimeStatus CPH_PhysicsWorldGetIndex(CPH_PhysicsWorld *world, BodyHandle handle,
+PhysicsWorldRuntimeStatus PhysicsWorldGetIndex(PhysicsWorld *world, BodyHandle handle,
                                                   uint32_t *out_index) {
     if (!world || !out_index) {
         return PHYSICS_WORLD_RUNTIME_STATUS_INVALID_ARGUMENT;
     }
 
-    auto shadow = CPH_LockShadowNotStepping(world);
+    auto shadow = LockShadowNotStepping(world);
     uint32_t slot = 0;
     if (!unpack_handle(world, handle, &slot)) {
         return PHYSICS_WORLD_RUNTIME_STATUS_STALE_HANDLE;
@@ -579,12 +582,12 @@ PhysicsWorldRuntimeStatus CPH_PhysicsWorldGetIndex(CPH_PhysicsWorld *world, Body
     return PHYSICS_WORLD_RUNTIME_STATUS_OK;
 }
 
-bool CPH_PhysicsWorldIsAlive(CPH_PhysicsWorld *world, BodyHandle handle) {
+bool PhysicsWorldIsAlive(PhysicsWorld *world, BodyHandle handle) {
     if (!world) {
         return false;
     }
 
-    auto shadow = CPH_LockShadowNotStepping(world);
+    auto shadow = LockShadowNotStepping(world);
     uint32_t slot = 0;
     bool alive    = false;
     if (unpack_handle(world, handle, &slot)) {
@@ -594,13 +597,13 @@ bool CPH_PhysicsWorldIsAlive(CPH_PhysicsWorld *world, BodyHandle handle) {
     return alive;
 }
 
-PhysicsWorldRuntimeStatus CPH_PhysicsWorldIsActive(CPH_PhysicsWorld *world, BodyHandle handle,
+PhysicsWorldRuntimeStatus PhysicsWorldIsActive(PhysicsWorld *world, BodyHandle handle,
                                                   bool *out_active) {
     if (!world || !out_active) {
         return PHYSICS_WORLD_RUNTIME_STATUS_INVALID_ARGUMENT;
     }
 
-    auto shadow = CPH_LockShadowNotStepping(world);
+    auto shadow = LockShadowNotStepping(world);
     uint32_t slot = 0;
     if (!unpack_handle(world, handle, &slot)) {
         return PHYSICS_WORLD_RUNTIME_STATUS_STALE_HANDLE;
@@ -619,7 +622,7 @@ PhysicsWorldRuntimeStatus CPH_PhysicsWorldIsActive(CPH_PhysicsWorld *world, Body
 }
 
 PhysicsWorldRuntimeStatus
-CPH_PhysicsWorldGetActiveIndices(CPH_PhysicsWorld *world, Buffer<std::uint32_t> &out_indices,
+PhysicsWorldGetActiveIndices(PhysicsWorld *world, Buffer<std::uint32_t> &out_indices,
                                   std::size_t &out_count) {
     if (!world) {
         return PHYSICS_WORLD_RUNTIME_STATUS_INVALID_ARGUMENT;
@@ -630,7 +633,7 @@ CPH_PhysicsWorldGetActiveIndices(CPH_PhysicsWorld *world, Buffer<std::uint32_t> 
     Buffer<JPH_BodyID> body_ids;
     std::size_t count = 0;
     {
-        const auto shadow = CPH_LockShadowNotStepping(world);
+        const auto shadow = LockShadowNotStepping(world);
         count             = world->count.load(std::memory_order::acquire);
         if (count == 0) {
             return PHYSICS_WORLD_RUNTIME_STATUS_OK;
@@ -656,7 +659,7 @@ CPH_PhysicsWorldGetActiveIndices(CPH_PhysicsWorld *world, Buffer<std::uint32_t> 
 }
 
 
-PhysicsWorldRuntimeStatus CPH_PhysicsWorldGetRenderState(CPH_PhysicsWorld *world, float alpha,
+PhysicsWorldRuntimeStatus PhysicsWorldGetRenderState(PhysicsWorld *world, float alpha,
                                                           Buffer<float> &out_state,
                                                           std::size_t &out_count) {
     if (!world) {
@@ -665,7 +668,7 @@ PhysicsWorldRuntimeStatus CPH_PhysicsWorldGetRenderState(CPH_PhysicsWorld *world
     out_state.reset();
     out_count = 0;
 
-    const auto shadow  = CPH_LockShadowNotStepping(world);
+    const auto shadow  = LockShadowNotStepping(world);
     const std::size_t count = world->count.load(std::memory_order::acquire);
     if (count == 0) {
         return PHYSICS_WORLD_RUNTIME_STATUS_OK;
@@ -676,7 +679,7 @@ PhysicsWorldRuntimeStatus CPH_PhysicsWorldGetRenderState(CPH_PhysicsWorld *world
     if (!out_state.allocate(count * 7)) {
         return PHYSICS_WORLD_RUNTIME_STATUS_OUT_OF_MEMORY;
     }
-    CPH_MathComputeInterpolationLoop(world->bodies.positions.data(),
+    MathComputeInterpolationLoop(world->bodies.positions.data(),
                                      world->bodies.prev_positions.data(),
                                      world->bodies.rotations.data(),
                                      world->bodies.prev_rotations.data(), alpha,
@@ -686,14 +689,14 @@ PhysicsWorldRuntimeStatus CPH_PhysicsWorldGetRenderState(CPH_PhysicsWorld *world
 }
 
 
-PhysicsWorldRuntimeStatus CPH_PhysicsWorldSetCollisionFilter(CPH_PhysicsWorld *world, BodyHandle handle,
+PhysicsWorldRuntimeStatus PhysicsWorldSetCollisionFilter(PhysicsWorld *world, BodyHandle handle,
                                                              uint32_t category, uint32_t mask) {
     if (!world) {
         return PHYSICS_WORLD_RUNTIME_STATUS_INVALID_ARGUMENT;
     }
 
-    auto shadow = CPH_LockShadowNotStepping(world);
-    CPH_WaitUntilNotQuerying(world, shadow);
+    auto shadow = LockShadowNotStepping(world);
+    WaitUntilNotQuerying(world, shadow);
     uint32_t slot = 0;
     if (!unpack_handle(world, handle, &slot)) {
         return PHYSICS_WORLD_RUNTIME_STATUS_STALE_HANDLE;
@@ -712,14 +715,14 @@ PhysicsWorldRuntimeStatus CPH_PhysicsWorldSetCollisionFilter(CPH_PhysicsWorld *w
     return PHYSICS_WORLD_RUNTIME_STATUS_STALE_HANDLE;
 }
 
-PhysicsWorldRuntimeStatus CPH_PhysicsWorldRegisterMaterial(CPH_PhysicsWorld *world, uint32_t id,
+PhysicsWorldRuntimeStatus PhysicsWorldRegisterMaterial(PhysicsWorld *world, uint32_t id,
                                                           float friction, float restitution) {
     if (!world) {
         return PHYSICS_WORLD_RUNTIME_STATUS_INVALID_ARGUMENT;
     }
 
-    auto shadow = CPH_LockShadowNotStepping(world);
-    CPH_WaitUntilNotQuerying(world, shadow);
+    auto shadow = LockShadowNotStepping(world);
+    WaitUntilNotQuerying(world, shadow);
 
     for (size_t i = 0; i < world->material_count; i++) {
         if (world->materials[i].id == id) {
@@ -737,22 +740,22 @@ PhysicsWorldRuntimeStatus CPH_PhysicsWorldRegisterMaterial(CPH_PhysicsWorld *wor
         }
     }
 
-    world->materials[world->material_count++] = CPH_MaterialData{id, friction, restitution};
+    world->materials[world->material_count++] = MaterialData{id, friction, restitution};
     return PHYSICS_WORLD_RUNTIME_STATUS_OK;
 }
 
 PhysicsWorldRuntimeStatus
-CPH_PhysicsWorldBuildDebugData(CPH_PhysicsWorld *world, bool draw_shapes, bool draw_constraints,
+PhysicsWorldBuildDebugData(PhysicsWorld *world, bool draw_shapes, bool draw_constraints,
                                 bool draw_bounding_box, bool draw_centers, bool wireframe,
-                                Buffer<CPH_DebugVertex> &out_lines,
-                                Buffer<CPH_DebugVertex> &out_triangles) {
+                                Buffer<DebugVertex> &out_lines,
+                                Buffer<DebugVertex> &out_triangles) {
     if (!world) {
         return PHYSICS_WORLD_RUNTIME_STATUS_INVALID_ARGUMENT;
     }
     out_lines.reset();
     out_triangles.reset();
 
-    const auto shadow = CPH_LockShadowNotStepping(world);
+    const auto shadow = LockShadowNotStepping(world);
     world->debug_lines.clear();
     world->debug_triangles.clear();
 
@@ -771,14 +774,14 @@ CPH_PhysicsWorldBuildDebugData(CPH_PhysicsWorld *world, bool draw_shapes, bool d
         JPH_PhysicsSystem_DrawConstraintLimits(world->system, world->debug_renderer);
     }
 
-    const auto copy_out = [](const CPH_DebugBuffer &source, Buffer<CPH_DebugVertex> &out) {
+    const auto copy_out = [](const DebugBuffer &source, Buffer<DebugVertex> &out) {
         if (source.count == 0) {
             return true;
         }
         if (!out.allocate(source.count)) {
             return false;
         }
-        std::memcpy(out.data(), source.data.data(), source.count * sizeof(CPH_DebugVertex));
+        std::memcpy(out.data(), source.data.data(), source.count * sizeof(DebugVertex));
         return true;
     };
     if (!copy_out(world->debug_lines, out_lines) ||
@@ -789,3 +792,5 @@ CPH_PhysicsWorldBuildDebugData(CPH_PhysicsWorld *world, bool draw_shapes, bool d
     }
     return PHYSICS_WORLD_RUNTIME_STATUS_OK;
 }
+
+} // namespace CPH

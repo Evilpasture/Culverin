@@ -133,7 +133,7 @@ struct WorldParsers {
         CreateConstr{catalog};
     Parser<"DestroyConstr", Arg<"handle", ParseBodyHandle, true>> DestroyConstr{catalog};
     Parser<"Step", Arg<"dt", float, false>> Step{catalog};
-    Parser<"CreateChar", Arg<"pos", CPH_PosStride, true>, Arg<"height", float, false>,
+    Parser<"CreateChar", Arg<"pos", PosStride, true>, Arg<"height", float, false>,
            Arg<"radius", float, false>, Arg<"step_height", float, false>,
            Arg<"max_slope", float, false>>
         CreateChar{catalog};
@@ -146,8 +146,8 @@ struct WorldParsers {
            Arg<"tracks", PyObject *, true>, Arg<"max_torque", float, false>,
            Arg<"max_rpm", float, false>>
         CreateTracked{catalog};
-    Parser<"CreateRagdoll", Arg<"settings", PyObject *, true>, Arg<"pos", CPH_PosStride, true>,
-           Arg<"rot", CPH_AuxStride, false>, Arg<"user_data", uint64_t, false>,
+    Parser<"CreateRagdoll", Arg<"settings", PyObject *, true>, Arg<"pos", PosStride, true>,
+           Arg<"rot", AuxStride, false>, Arg<"user_data", uint64_t, false>,
            Arg<"category", uint32_t, false>, Arg<"mask", uint32_t, false>,
            Arg<"material_id", uint32_t, false>>
         CreateRagdoll{catalog};

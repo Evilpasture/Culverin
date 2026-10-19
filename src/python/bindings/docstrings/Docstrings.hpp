@@ -2,6 +2,7 @@
 
 #include <Python.h>
 
+namespace CPH::Python {
 
 /**
  * Stitches Markdown docstrings directly into an array of PyMethodDef.
@@ -13,17 +14,19 @@
  * @param class_name The name of the class as defined in the Markdown headers.
  * @param markdown_content The null-terminated Markdown string.
  */
-void CPH_DocsStitchMethods(PyMethodDef *methods, const char *class_name,
+void DocsStitchMethods(PyMethodDef *methods, const char *class_name,
                            const char *markdown_content);
 
 /**
  * Stitches Markdown docstrings directly into an array of PyGetSetDef.
  */
-void CPH_DocsStitchGetset(PyGetSetDef *getset, const char *class_name,
+void DocsStitchGetset(PyGetSetDef *getset, const char *class_name,
                           const char *markdown_content);
 
 /**
  * Iterates through a PyType_Spec and stitches Markdown docstrings into its
  * methods and getsets.
  */
-void CPH_DocsStitchSpec(PyType_Spec *spec, const char *class_name, const char *markdown_content);
+void DocsStitchSpec(PyType_Spec *spec, const char *class_name, const char *markdown_content);
+
+} // namespace CPH::Python

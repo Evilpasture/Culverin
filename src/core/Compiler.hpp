@@ -8,6 +8,9 @@
 #include <cstdlib>
 #include <utility>
 
+
+namespace CPH {
+
 #define CPH_GLUE(a, b) a##b
 #define CPH_CONCAT(a, b) CPH_GLUE(a, b)
 
@@ -30,7 +33,7 @@
 #    define CPH_RESTRICT __restrict__
 #endif
 
-[[noreturn]] inline void CPH_Unreachable() {
+[[noreturn]] inline void Unreachable() {
 #if defined(CULVERIN_DEBUG)
     std::abort();
 #else
@@ -65,3 +68,5 @@ inline constexpr std::size_t kAvxAlignment        = 32;
 #else
 #    define CPH_UNROLL_LOOP(n)
 #endif
+
+} // namespace CPH

@@ -2,6 +2,9 @@
 #include <cmath>
 
 // Named constants to avoid magic numbers
+
+namespace CPH {
+
 static constexpr float kCcfDefaultFrequency = 20.0f;
 static constexpr float kCcfDefaultDamping = 1.0f;
 static constexpr float kCcfMaxTorque = 1e6f;
@@ -12,7 +15,7 @@ static constexpr float kCcfTinyEpsilon = 1e-9f;
 
 namespace {
 
-JPH_Constraint *create_fixed(const CPH_ConstraintParams & /*unused*/, JPH_Body *b1, JPH_Body *b2) {
+JPH_Constraint *create_fixed(const ConstraintParams & /*unused*/, JPH_Body *b1, JPH_Body *b2) {
     JPH_FixedConstraintSettings s;
     JPH_FixedConstraintSettings_Init(&s);
     s.base.enabled    = true;
@@ -20,7 +23,7 @@ JPH_Constraint *create_fixed(const CPH_ConstraintParams & /*unused*/, JPH_Body *
     return (JPH_Constraint *)JPH_FixedConstraint_Create(&s, b1, b2);
 }
 
-JPH_Constraint *create_point(const CPH_ConstraintParams &p, JPH_Body *b1, JPH_Body *b2) {
+JPH_Constraint *create_point(const ConstraintParams &p, JPH_Body *b1, JPH_Body *b2) {
     JPH_PointConstraintSettings s;
     JPH_PointConstraintSettings_Init(&s);
     s.base.enabled = true;
@@ -32,7 +35,7 @@ JPH_Constraint *create_point(const CPH_ConstraintParams &p, JPH_Body *b1, JPH_Bo
     return (JPH_Constraint *)JPH_PointConstraint_Create(&s, b1, b2);
 }
 
-JPH_Constraint *create_hinge(const CPH_ConstraintParams &p, JPH_Body *b1, JPH_Body *b2) {
+JPH_Constraint *create_hinge(const ConstraintParams &p, JPH_Body *b1, JPH_Body *b2) {
     JPH_HingeConstraintSettings s;
     JPH_HingeConstraintSettings_Init(&s);
     s.base.enabled = true;
@@ -104,7 +107,7 @@ JPH_Constraint *create_hinge(const CPH_ConstraintParams &p, JPH_Body *b1, JPH_Bo
     return (JPH_Constraint *)c;
 }
 
-JPH_Constraint *create_slider(const CPH_ConstraintParams &p, JPH_Body *b1, JPH_Body *b2) {
+JPH_Constraint *create_slider(const ConstraintParams &p, JPH_Body *b1, JPH_Body *b2) {
     JPH_SliderConstraintSettings s;
     JPH_SliderConstraintSettings_Init(&s);
     s.base.enabled = true;
@@ -141,7 +144,7 @@ JPH_Constraint *create_slider(const CPH_ConstraintParams &p, JPH_Body *b1, JPH_B
     return (JPH_Constraint *)JPH_SliderConstraint_Create(&s, b1, b2);
 }
 
-JPH_Constraint *create_cone(const CPH_ConstraintParams &p, JPH_Body *b1, JPH_Body *b2) {
+JPH_Constraint *create_cone(const ConstraintParams &p, JPH_Body *b1, JPH_Body *b2) {
     JPH_ConeConstraintSettings s;
     JPH_ConeConstraintSettings_Init(&s);
     s.base.enabled = true;
@@ -171,7 +174,7 @@ JPH_Constraint *create_cone(const CPH_ConstraintParams &p, JPH_Body *b1, JPH_Bod
     return (JPH_Constraint *)JPH_ConeConstraint_Create(&s, b1, b2);
 }
 
-JPH_Constraint *create_distance(const CPH_ConstraintParams &p, JPH_Body *b1, JPH_Body *b2) {
+JPH_Constraint *create_distance(const ConstraintParams &p, JPH_Body *b1, JPH_Body *b2) {
     JPH_DistanceConstraintSettings s;
     JPH_DistanceConstraintSettings_Init(&s);
     s.base.enabled = true;
@@ -196,7 +199,7 @@ JPH_Constraint *create_distance(const CPH_ConstraintParams &p, JPH_Body *b1, JPH
 }
 } // namespace
 
-JPH_Constraint *CPH_CreateConstraint(ConstraintType type, const CPH_ConstraintParams &params,
+JPH_Constraint *CreateConstraint(ConstraintType type, const ConstraintParams &params,
                                      JPH_Body *body1, JPH_Body *body2) {
     switch (type) {
     case CONSTRAINT_FIXED:
@@ -215,3 +218,5 @@ JPH_Constraint *CPH_CreateConstraint(ConstraintType type, const CPH_ConstraintPa
         return nullptr;
     }
 }
+
+} // namespace CPH

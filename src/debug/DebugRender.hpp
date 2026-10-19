@@ -8,17 +8,20 @@
 #include <cstdint>
 
 // 16-byte strided vertex for easy GPU upload: [X, Y, Z, Color(u32)]
-struct CPH_DebugVertex {
+
+namespace CPH {
+
+struct DebugVertex {
     float x, y, z;
     std::uint32_t color;
 };
 
-static_assert(sizeof(CPH_DebugVertex) == 16);
+static_assert(sizeof(DebugVertex) == 16);
 
 // Append-only vertex stream filled by Jolt debug-draw callbacks. Growth
 // failure drops vertices silently: debug output must never fail a step.
-struct CPH_DebugBuffer {
-    Buffer<CPH_DebugVertex> data;
+struct DebugBuffer {
+    Buffer<DebugVertex> data;
     std::size_t count = 0;
 
     void clear() noexcept { count = 0; }
@@ -42,3 +45,5 @@ struct CPH_DebugBuffer {
 };
 
 extern const JPH_DebugRenderer_Procs kDebugProcs;
+
+} // namespace CPH

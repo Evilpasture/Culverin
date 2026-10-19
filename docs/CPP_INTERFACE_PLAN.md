@@ -1,8 +1,9 @@
 # Phase 2 Plan: Direct Jolt C++ API + C++ Interfaces Between Subsystems
 
-Status: **A0 landed** (on top of `601b1a2` "convert all to C++",
-including the `CPH::Error` foundation header); next is the mechanical
-`CPH_` → `CPH::` dissolution patch, then B1. Prerequisite: the C++23 migration
+Status: **A0 + naming dissolution landed** (A0 on top of `601b1a2`
+"convert all to C++", including the `CPH::Error` foundation header;
+the `CPH_` → `CPH::` dissolution on top of `07d6f5d`); B1 next.
+Prerequisite: the C++23 migration
 (`docs/CPP23_MIGRATION.md`) has landed. All acceptance oracles from that
 migration apply unchanged to every phase below: full test suite at
 243 passed / 4 pre-existing failures, 9/9 differential contract tests,

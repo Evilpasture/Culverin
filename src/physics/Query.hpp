@@ -8,7 +8,10 @@
 #include <cstdint>
 #include <new>
 
-struct CPH_PhysicsWorld;
+
+namespace CPH {
+
+struct PhysicsWorld;
 
 inline constexpr float kPhysicsQueryDefaultMaxDistance = 1000.0F;
 inline constexpr std::size_t kPhysicsQueryInlineHitCapacity = 64;
@@ -23,21 +26,21 @@ enum PhysicsQueryStatus : int {
 // Hit list with small-buffer optimization: overlap queries construct one
 // per call, and the common case fits in the 64 inline handles without a
 // heap allocation.
-struct CPH_PhysicsQueryHitBuffer {
+struct PhysicsQueryHitBuffer {
     std::array<BodyHandle, kPhysicsQueryInlineHitCapacity> inline_hits{};
     BodyHandle *hits                    = inline_hits.data();
     std::size_t count                   = 0;
     std::size_t capacity                = kPhysicsQueryInlineHitCapacity;
 
-    CPH_PhysicsQueryHitBuffer() = default;
-    ~CPH_PhysicsQueryHitBuffer() {
+    PhysicsQueryHitBuffer() = default;
+    ~PhysicsQueryHitBuffer() {
         if (hits != inline_hits.data()) {
             delete[] hits;
         }
     }
 
-    CPH_PhysicsQueryHitBuffer(const CPH_PhysicsQueryHitBuffer &)            = delete;
-    CPH_PhysicsQueryHitBuffer &operator=(const CPH_PhysicsQueryHitBuffer &) = delete;
+    PhysicsQueryHitBuffer(const PhysicsQueryHitBuffer &)            = delete;
+    PhysicsQueryHitBuffer &operator=(const PhysicsQueryHitBuffer &) = delete;
 
     [[nodiscard]] bool append(BodyHandle handle) noexcept {
         if (count >= capacity) {
@@ -85,14 +88,14 @@ struct
 inline constexpr std::size_t kRaycastResultSize = 48;
 static_assert(sizeof(RayCastBatchResult) == kRaycastResultSize);
 
-struct CPH_PhysicsRaycastHit {
+struct PhysicsRaycastHit {
     BodyHandle handle;
     float fraction;
     JPH_Vec3 normal;
     bool has_hit;
 };
 
-struct CPH_PhysicsShapecastHit {
+struct PhysicsShapecastHit {
     BodyHandle handle;
     float fraction;
     JPH_Vec3 point;
@@ -102,20 +105,22 @@ struct CPH_PhysicsShapecastHit {
 
 // Query lifetime: balances the active_queries registration performed by
 // the query entry points (also used by native ops that register as queries).
-void CPH_PhysicsWorldQueryEnd(CPH_PhysicsWorld *world);
+void PhysicsWorldQueryEnd(PhysicsWorld *world);
 
-PhysicsQueryStatus CPH_PhysicsWorldOverlapSphere(CPH_PhysicsWorld *world, JPH_RVec3 center,
-                                                 float radius, CPH_PhysicsQueryHitBuffer *hits);
-PhysicsQueryStatus CPH_PhysicsWorldOverlapAabb(CPH_PhysicsWorld *world, JPH_RVec3 min,
-                                               JPH_RVec3 max, CPH_PhysicsQueryHitBuffer *hits);
-PhysicsQueryStatus CPH_PhysicsWorldRaycast(CPH_PhysicsWorld *world, JPH_RVec3 origin,
+PhysicsQueryStatus PhysicsWorldOverlapSphere(PhysicsWorld *world, JPH_RVec3 center,
+                                                 float radius, PhysicsQueryHitBuffer *hits);
+PhysicsQueryStatus PhysicsWorldOverlapAabb(PhysicsWorld *world, JPH_RVec3 min,
+                                               JPH_RVec3 max, PhysicsQueryHitBuffer *hits);
+PhysicsQueryStatus PhysicsWorldRaycast(PhysicsWorld *world, JPH_RVec3 origin,
                                            JPH_Vec3 direction, float max_distance,
-                                           BodyHandle ignore_handle, CPH_PhysicsRaycastHit *hit);
-PhysicsQueryStatus CPH_PhysicsWorldRaycastBatch(CPH_PhysicsWorld *world, const float *starts,
+                                           BodyHandle ignore_handle, PhysicsRaycastHit *hit);
+PhysicsQueryStatus PhysicsWorldRaycastBatch(PhysicsWorld *world, const float *starts,
                                                 const float *directions, std::size_t count,
                                                 float max_distance, RayCastBatchResult *results);
-PhysicsQueryStatus CPH_PhysicsWorldShapecast(CPH_PhysicsWorld *world, int shape_type,
+PhysicsQueryStatus PhysicsWorldShapecast(PhysicsWorld *world, int shape_type,
                                               JPH_RVec3 position, JPH_Quat rotation,
                                               JPH_Vec3 sweep_direction, const float size[4],
                                               BodyHandle ignore_handle,
-                                              CPH_PhysicsShapecastHit *hit);
+                                              PhysicsShapecastHit *hit);
+
+} // namespace CPH

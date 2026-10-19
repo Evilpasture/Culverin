@@ -78,7 +78,7 @@ static void BufferProxy_dealloc(BufferProxyObject *self) {
             target_ptr = self->dynamic_ptr;
             break; // Soft Body Verts
         default:
-            CPH_Unreachable();
+            Unreachable();
         }
 
         if (!target_ptr) {

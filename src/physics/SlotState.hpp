@@ -7,6 +7,9 @@
 
 #include <cstdint>
 
+
+namespace CPH {
+
 enum SlotState : std::uint8_t {
     SLOT_EMPTY = 0,
     SLOT_PENDING_CREATE,
@@ -30,7 +33,7 @@ inline constexpr std::uint32_t kMaskDestructible =
     (1U << SLOT_ALIVE) | (1U << SLOT_PENDING_CREATE) | (1U << SLOT_CHARACTER) |
     (1U << SLOT_SOFT_BODY);
 
-struct CPH_SlotPredicate {
+struct SlotPredicate {
     bool is_immediate; // Body exists in Jolt: act now.
     bool is_deferred;  // Body pending creation: queue for the step flush.
 
@@ -39,9 +42,11 @@ struct CPH_SlotPredicate {
     }
 };
 
-[[nodiscard]] constexpr CPH_SlotPredicate
+[[nodiscard]] constexpr SlotPredicate
 get_slot_predicate(std::uint8_t state, std::uint32_t imm_mask) noexcept {
     const std::uint32_t state_bit = 1U << (state & 7);
     return {.is_immediate = (state_bit & imm_mask) != 0,
             .is_deferred  = (state_bit & kMaskDeferred) != 0};
 }
+
+} // namespace CPH

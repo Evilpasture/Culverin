@@ -23,7 +23,10 @@
 #include <cstdint>
 #include <mutex>
 
-struct CPH_WorldSettings {
+
+namespace CPH {
+
+struct WorldSettings {
     int max_bodies;
     int max_pairs;
     int max_contact_constraints;
@@ -34,7 +37,7 @@ struct CPH_WorldSettings {
     float penetration_slop;
 };
 
-struct CPH_GravityVector {
+struct GravityVector {
     float gx;
     float gy;
     float gz;
@@ -48,7 +51,7 @@ enum PhysicsWorldStatus : int {
     PHYSICS_WORLD_STATUS_INVALID_ARGUMENT  = -4,
 };
 
-struct CPH_MaterialData {
+struct MaterialData {
     std::uint32_t id;
     float friction;
     float restitution;
@@ -57,7 +60,7 @@ struct CPH_MaterialData {
 // All per-body storage that resizes together. Dense arrays (positions …
 // soft_shadows) are indexed by dense index [0, count); the maps
 // (slot_to_dense, generations, slot_states, free_slots) are indexed by
-// sparse slot. capacity == slot_capacity in CPH_PhysicsWorld, so every
+// sparse slot. capacity == slot_capacity in PhysicsWorld, so every
 // array here has the same size.
 //
 // The SoA layout is a public contract (Python buffer protocol) and the
@@ -69,18 +72,18 @@ struct CPH_MaterialData {
 inline constexpr std::uint32_t kAllLayerBits = 0xFFFFU;
 
 struct BodyBuffers {
-    Buffer<CPH_PosStride, kAvxAlignment> positions;
-    Buffer<CPH_PosStride, kAvxAlignment> prev_positions;
-    Buffer<CPH_AuxStride, kAvxAlignment> rotations;
-    Buffer<CPH_AuxStride, kAvxAlignment> prev_rotations;
-    Buffer<CPH_AuxStride, kAvxAlignment> linear_velocities;
-    Buffer<CPH_AuxStride, kAvxAlignment> angular_velocities;
+    Buffer<PosStride, kAvxAlignment> positions;
+    Buffer<PosStride, kAvxAlignment> prev_positions;
+    Buffer<AuxStride, kAvxAlignment> rotations;
+    Buffer<AuxStride, kAvxAlignment> prev_rotations;
+    Buffer<AuxStride, kAvxAlignment> linear_velocities;
+    Buffer<AuxStride, kAvxAlignment> angular_velocities;
     Buffer<JPH_BodyID> body_ids;
     Buffer<std::uint64_t> user_data;
     Buffer<std::uint32_t> categories;
     Buffer<std::uint32_t> masks;
     Buffer<std::uint32_t> material_ids;
-    Buffer<CPH_SoftBodyShadow> soft_shadows;
+    Buffer<SoftBodyShadow> soft_shadows;
 
     Buffer<std::uint32_t> slot_to_dense;
     Buffer<std::uint32_t> dense_to_slot;
@@ -104,21 +107,21 @@ struct ConstraintSlot {
     int type = 0;
 };
 
-// Cache isolation via explicit padding: CPH_PhysicsWorld lives inside a
+// Cache isolation via explicit padding: PhysicsWorld lives inside a
 // CPython-allocated object, whose allocator does not respect 64-byte
 // alignment of the containing struct.
 #define CPH_CACHE_LINE_SPACER std::uint8_t CPH_CONCAT(_unused_pad_, __LINE__)[64]
 
-struct CPH_PhysicsWorld {
-    CPH_PhysicsWorld();
-    ~CPH_PhysicsWorld();
+struct PhysicsWorld {
+    PhysicsWorld();
+    ~PhysicsWorld();
 
-    CPH_PhysicsWorld(const CPH_PhysicsWorld &)            = delete;
-    CPH_PhysicsWorld &operator=(const CPH_PhysicsWorld &) = delete;
-    CPH_PhysicsWorld(CPH_PhysicsWorld &&)                 = delete;
-    CPH_PhysicsWorld &operator=(CPH_PhysicsWorld &&)      = delete;
+    PhysicsWorld(const PhysicsWorld &)            = delete;
+    PhysicsWorld &operator=(const PhysicsWorld &) = delete;
+    PhysicsWorld(PhysicsWorld &&)                 = delete;
+    PhysicsWorld &operator=(PhysicsWorld &&)      = delete;
 
-    // --- Jolt handles (owned; destroyed by ~CPH_PhysicsWorld) ---
+    // --- Jolt handles (owned; destroyed by ~PhysicsWorld) ---
     JPH_PhysicsSystem *system                                 = nullptr;
     JPH_BodyInterface *body_interface                         = nullptr;
     JPH_JobSystem *job_system                                 = nullptr;
@@ -149,7 +152,7 @@ struct CPH_PhysicsWorld {
     CPH_CACHE_LINE_SPACER;
 
     // --- Synchronization (see core/Threading.hpp for the hierarchy) ---
-    CPH_ShadowSync step_sync;
+    ShadowSync step_sync;
 
     CPH_CACHE_LINE_SPACER;
 
@@ -174,14 +177,14 @@ struct CPH_PhysicsWorld {
     CPH_CACHE_LINE_SPACER;
 
     // --- Contacts, materials, shapes ---
-    Buffer<CPH_ContactEvent> contact_buffer;
+    Buffer<ContactEvent> contact_buffer;
     std::atomic<std::size_t> contact_atomic_idx{0};
     std::size_t contact_count = 0;
 
-    Buffer<CPH_MaterialData> materials;
+    Buffer<MaterialData> materials;
     std::size_t material_count = 0;
 
-    Buffer<CPH_ShapeEntry> shape_cache;
+    Buffer<ShapeEntry> shape_cache;
     std::size_t shape_cache_count = 0;
 
     // Indexed by Jolt BodyID index (size max_jolt_bodies + 1).
@@ -199,8 +202,8 @@ struct CPH_PhysicsWorld {
 
     // --- Debug output ---
     JPH_DebugRenderer *debug_renderer = nullptr;
-    CPH_DebugBuffer debug_lines;
-    CPH_DebugBuffer debug_triangles;
+    DebugBuffer debug_lines;
+    DebugBuffer debug_triangles;
 };
 
 // --- Native handle helpers ---
@@ -210,7 +213,7 @@ struct CPH_PhysicsWorld {
 }
 
 // Resolves a handle to its slot if the generation still matches.
-[[nodiscard]] inline bool unpack_handle(CPH_PhysicsWorld *world, BodyHandle handle,
+[[nodiscard]] inline bool unpack_handle(PhysicsWorld *world, BodyHandle handle,
                                         std::uint32_t *slot) noexcept {
     *slot              = static_cast<std::uint32_t>(handle & kHandleIndexMask);
     const auto gen     = static_cast<std::uint32_t>(handle >> kHandleIndexBits);
@@ -226,22 +229,24 @@ struct CPH_PhysicsWorld {
 // Returns the held lock; structured bindings / named locals only — never
 // call this as a temporary.
 [[nodiscard]] std::unique_lock<std::mutex>
-CPH_LockShadowNotStepping(CPH_PhysicsWorld *world);
+LockShadowNotStepping(PhysicsWorld *world);
 
 // With shadow_lock held (via `shadow`), waits until no query is active.
-void CPH_WaitUntilNotQuerying(CPH_PhysicsWorld *world,
+void WaitUntilNotQuerying(PhysicsWorld *world,
                               std::unique_lock<std::mutex> &shadow);
 
 // Wakes every thread parked on step_sync.cond.
 // Append a command; capacity must already be ensured via
-// CPH_EnsureCommandCapacity. Caller holds shadow_lock.
+// EnsureCommandCapacity. Caller holds shadow_lock.
 template <typename Payload>
-inline void CPH_EnqueueCommand(CPH_PhysicsWorld *world, std::uint32_t slot, Payload &&payload) {
+inline void EnqueueCommand(PhysicsWorld *world, std::uint32_t slot, Payload &&payload) {
     world->command_queue[world->command_count++] =
         PhysicsCommand{slot, std::forward<Payload>(payload)};
 }
 
-inline void CPH_NotifyStepSync(CPH_PhysicsWorld *world) {
+inline void NotifyStepSync(PhysicsWorld *world) {
     const std::scoped_lock lock(world->step_sync.mutex);
     world->step_sync.cond.notify_all();
 }
+
+} // namespace CPH

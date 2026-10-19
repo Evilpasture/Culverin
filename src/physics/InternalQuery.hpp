@@ -5,37 +5,40 @@
 
 #include <cstdint>
 
-struct CPH_PhysicsWorld;
+
+namespace CPH {
+
+struct PhysicsWorld;
 
 // --- Shape caching ---
 
-struct CPH_ShapeKey {
-    std::uint32_t type; // CPH_ShapeType
+struct ShapeKey {
+    std::uint32_t type; // ShapeType
     float p1, p2, p3, p4;
 
-    [[nodiscard]] friend bool operator==(const CPH_ShapeKey &, const CPH_ShapeKey &) = default;
+    [[nodiscard]] friend bool operator==(const ShapeKey &, const ShapeKey &) = default;
 };
 
 // Owning cache entry: the shape is destroyed with the entry.
-struct CPH_ShapeEntry {
-    CPH_ShapeKey key{};
+struct ShapeEntry {
+    ShapeKey key{};
     JPH_Shape *shape = nullptr;
 
-    CPH_ShapeEntry() = default;
-    ~CPH_ShapeEntry() {
+    ShapeEntry() = default;
+    ~ShapeEntry() {
         if (shape != nullptr) {
             JPH_Shape_Destroy(shape);
         }
     }
 
-    CPH_ShapeEntry(const CPH_ShapeEntry &)            = delete;
-    CPH_ShapeEntry &operator=(const CPH_ShapeEntry &) = delete;
+    ShapeEntry(const ShapeEntry &)            = delete;
+    ShapeEntry &operator=(const ShapeEntry &) = delete;
 
-    CPH_ShapeEntry(CPH_ShapeEntry &&other) noexcept
+    ShapeEntry(ShapeEntry &&other) noexcept
         : key(other.key), shape(other.shape) {
         other.shape = nullptr;
     }
-    CPH_ShapeEntry &operator=(CPH_ShapeEntry &&other) noexcept {
+    ShapeEntry &operator=(ShapeEntry &&other) noexcept {
         if (this != &other) {
             if (shape != nullptr) {
                 JPH_Shape_Destroy(shape);
@@ -49,27 +52,27 @@ struct CPH_ShapeEntry {
 };
 
 // REQUIRES: shadow_lock held (documented at the definition).
-JPH_Shape *CPH_FindOrCreateShapeLocked(CPH_PhysicsWorld *world, int type,
+JPH_Shape *FindOrCreateShapeLocked(PhysicsWorld *world, int type,
                                        const float *params);
 
 // --- Shapecast execution shared with the query layer ---
 
-struct CPH_CastShapeContext {
+struct CastShapeContext {
     JPH_ShapeCastResult hit;
     bool has_hit;
 };
 
-struct CPH_CastShapeFilter {
+struct CastShapeFilter {
     JPH_BodyID ignore_id;
 };
 
-bool CPH_ShapecastExecuteInternal(CPH_PhysicsWorld *world, const JPH_Shape *shape,
+bool ShapecastExecuteInternal(PhysicsWorld *world, const JPH_Shape *shape,
                                   const JPH_RMat4 *transform, const JPH_Vec3 *sweep_dir,
-                                  JPH_BodyID ignore_bid, CPH_CastShapeContext *ctx);
+                                  JPH_BodyID ignore_bid, CastShapeContext *ctx);
 
 // Jolt collector: keeps the closest hit. Signature fixed by joltc.h.
 inline float CastShape_ClosestCollector(void *context, const JPH_ShapeCastResult *result) {
-    auto *ctx = static_cast<CPH_CastShapeContext *>(context);
+    auto *ctx = static_cast<CastShapeContext *>(context);
     if (result->fraction < ctx->hit.fraction) {
         ctx->hit     = *result;
         ctx->has_hit = true;
@@ -82,6 +85,8 @@ inline bool JPH_API_CALL UnifiedBodyFilter(void *userData, JPH_BodyID bodyID) {
     if (userData == nullptr) {
         return true;
     }
-    const auto *ctx = static_cast<CPH_CastShapeFilter *>(userData);
+    const auto *ctx = static_cast<CastShapeFilter *>(userData);
     return ctx->ignore_id == 0 || bodyID != ctx->ignore_id;
 }
+
+} // namespace CPH

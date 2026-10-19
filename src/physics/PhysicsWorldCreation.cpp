@@ -7,25 +7,28 @@
 #include <cstring>
 #include <limits>
 
+
+namespace CPH {
+
 static constexpr float kDefaultMaterialFriction      = 0.2f;
 static constexpr float kConvexHullTolerance          = 0.05f;
 static constexpr size_t kInitialBodyCapacity         = 1024;
 static constexpr size_t kRagdollBodyBufferIncrement = 1024;
 
-static void initialize_body_shadow(CPH_PhysicsWorld *world, BodyHandle handle,
-                                   const CPH_PhysicsWorldBodyCreateRequest *request) {
+static void initialize_body_shadow(PhysicsWorld *world, BodyHandle handle,
+                                   const PhysicsWorldBodyCreateRequest *request) {
     const uint32_t slot      = (uint32_t)(handle & kHandleIndexMask);
     const uint32_t dense     = world->bodies.slot_to_dense[slot];
-    const CPH_PosStride position = {request->position.x, request->position.y, request->position.z, 0.0};
-    const CPH_AuxStride rotation = {request->rotation.x, request->rotation.y, request->rotation.z,
+    const PosStride position = {request->position.x, request->position.y, request->position.z, 0.0};
+    const AuxStride rotation = {request->rotation.x, request->rotation.y, request->rotation.z,
                                 request->rotation.w};
 
     world->bodies.positions[dense]          = position;
     world->bodies.prev_positions[dense]     = position;
     world->bodies.rotations[dense]          = rotation;
     world->bodies.prev_rotations[dense]     = rotation;
-    world->bodies.linear_velocities[dense]  = CPH_AuxStride{};
-    world->bodies.angular_velocities[dense] = CPH_AuxStride{};
+    world->bodies.linear_velocities[dense]  = AuxStride{};
+    world->bodies.angular_velocities[dense] = AuxStride{};
     world->bodies.categories[dense]                        = request->category;
     world->bodies.masks[dense]                             = request->mask;
     world->bodies.material_ids[dense]                      = request->material_id;
@@ -33,14 +36,14 @@ static void initialize_body_shadow(CPH_PhysicsWorld *world, BodyHandle handle,
 }
 
 static PhysicsWorldCreationStatus
-enqueue_body_settings(CPH_PhysicsWorld *world, JPH_BodyCreationSettings *settings,
-                      JPH_Shape *owned_shape, const CPH_PhysicsWorldBodyCreateRequest *request,
+enqueue_body_settings(PhysicsWorld *world, JPH_BodyCreationSettings *settings,
+                      JPH_Shape *owned_shape, const PhysicsWorldBodyCreateRequest *request,
                       BodyHandle *out_handle, size_t *out_count,
                       PhysicsWorldStatus *out_native_status) {
-    auto shadow = CPH_LockShadowNotStepping(world);
+    auto shadow = LockShadowNotStepping(world);
     BodyHandle handle = 0;
     const PhysicsWorldStatus native_status =
-        CPH_PhysicsWorldCommitCreate(world, settings, SLOT_PENDING_CREATE, &handle);
+        PhysicsWorldCommitCreate(world, settings, SLOT_PENDING_CREATE, &handle);
     if (native_status != PHYSICS_WORLD_STATUS_OK) {
         shadow.unlock();
         JPH_BodyCreationSettings_Destroy(settings);
@@ -53,7 +56,7 @@ enqueue_body_settings(CPH_PhysicsWorld *world, JPH_BodyCreationSettings *setting
 
     initialize_body_shadow(world, handle, request);
     const uint32_t slot = (uint32_t)(handle & kHandleIndexMask);
-    CPH_EnqueueCommand(world, slot, CPH::cmd::CreateBody{CPH::cmd::BodySettingsPtr{settings}});
+    EnqueueCommand(world, slot, CPH::cmd::CreateBody{CPH::cmd::BodySettingsPtr{settings}});
 
     *out_handle = handle;
     *out_count  = (world->count).load(std::memory_order::relaxed);
@@ -65,8 +68,8 @@ enqueue_body_settings(CPH_PhysicsWorld *world, JPH_BodyCreationSettings *setting
 }
 
 static PhysicsWorldCreationStatus
-create_body_from_shape(CPH_PhysicsWorld *world, JPH_Shape *shape, bool owns_shape,
-                       const CPH_PhysicsWorldBodyCreateRequest *request, JPH_MotionType motion_type,
+create_body_from_shape(PhysicsWorld *world, JPH_Shape *shape, bool owns_shape,
+                       const PhysicsWorldBodyCreateRequest *request, JPH_MotionType motion_type,
                        uint32_t object_layer, PhysicsWorldBodySetup setup, BodyHandle *out_handle,
                        size_t *out_count, PhysicsWorldStatus *out_native_status) {
     if (!shape) {
@@ -86,14 +89,14 @@ create_body_from_shape(CPH_PhysicsWorld *world, JPH_Shape *shape, bool owns_shap
 
     switch (setup) {
     case PHYSICS_WORLD_BODY_SETUP_CONFIGURED:
-        CPH_ConfigureBodySettings(settings, shape, request->config);
+        ConfigureBodySettings(settings, shape, request->config);
         break;
     case PHYSICS_WORLD_BODY_SETUP_CREATION_PROPS: {
-        const CPH_BodyCreationProps props = {
+        const BodyCreationProps props = {
             request->config.mass,      request->config.friction, request->config.restitution,
             request->config.is_sensor, request->config.use_ccd,
         };
-        CPH_ApplyBodyCreationProps(settings, shape, props);
+        ApplyBodyCreationProps(settings, shape, props);
         break;
     }
     case PHYSICS_WORLD_BODY_SETUP_MATERIAL_ONLY:
@@ -108,7 +111,7 @@ create_body_from_shape(CPH_PhysicsWorld *world, JPH_Shape *shape, bool owns_shap
                                  out_count, out_native_status);
 }
 
-void CPH_PhysicsWorldResolveMaterial(CPH_PhysicsWorld *world, uint32_t material_id, float input_friction,
+void PhysicsWorldResolveMaterial(PhysicsWorld *world, uint32_t material_id, float input_friction,
                                     float input_restitution, float *out_friction,
                                     float *out_restitution) {
     if (!world || !out_friction || !out_restitution) {
@@ -132,8 +135,8 @@ void CPH_PhysicsWorldResolveMaterial(CPH_PhysicsWorld *world, uint32_t material_
     *out_restitution = input_restitution >= 0.0f ? input_restitution : restitution;
 }
 
-PhysicsWorldCreationStatus CPH_PhysicsWorldCreateBody(CPH_PhysicsWorld *world,
-                                                     const CPH_PhysicsWorldBodyCreateRequest *request,
+PhysicsWorldCreationStatus PhysicsWorldCreateBody(PhysicsWorld *world,
+                                                     const PhysicsWorldBodyCreateRequest *request,
                                                      BodyHandle *out_handle, size_t *out_count,
                                                      PhysicsWorldStatus *out_native_status) {
     if (!world || !request || !out_handle || !out_count || !out_native_status) {
@@ -146,7 +149,7 @@ PhysicsWorldCreationStatus CPH_PhysicsWorldCreateBody(CPH_PhysicsWorld *world,
     JPH_Shape *shape;
     {
         const std::scoped_lock guard(world->shadow_lock);
-        shape = CPH_FindOrCreateShapeLocked(world, request->shape_type, request->shape_params);
+        shape = FindOrCreateShapeLocked(world, request->shape_type, request->shape_params);
     }
     if (!shape) {
         return PHYSICS_WORLD_CREATION_STATUS_BODY_SETTINGS_FAILED;
@@ -161,8 +164,8 @@ PhysicsWorldCreationStatus CPH_PhysicsWorldCreateBody(CPH_PhysicsWorld *world,
         PHYSICS_WORLD_BODY_SETUP_CONFIGURED, out_handle, out_count, out_native_status);
 }
 
-PhysicsWorldCreationStatus CPH_PhysicsWorldCreateSoftBody(
-    CPH_PhysicsWorld *world, const CPH_PhysicsWorldSoftBodyCreateRequest *request, BodyHandle *out_handle,
+PhysicsWorldCreationStatus PhysicsWorldCreateSoftBody(
+    PhysicsWorld *world, const PhysicsWorldSoftBodyCreateRequest *request, BodyHandle *out_handle,
     size_t *out_count, PhysicsWorldStatus *out_native_status) {
     if (!world || !request || !request->shared_settings || !out_handle || !out_count ||
         !out_native_status) {
@@ -197,10 +200,10 @@ PhysicsWorldCreationStatus CPH_PhysicsWorldCreateSoftBody(
     JPH_SoftBodyCreationSettings_SetUpdatePosition(settings, request->update_position);
     JPH_SoftBodyCreationSettings_SetFacesDoubleSided(settings, request->faces_double_sided);
 
-    auto shadow = CPH_LockShadowNotStepping(world);
+    auto shadow = LockShadowNotStepping(world);
     BodyHandle handle = 0;
     const PhysicsWorldStatus native_status =
-        CPH_PhysicsWorldCommitCreateSoft(world, settings, SLOT_PENDING_CREATE, &handle);
+        PhysicsWorldCommitCreateSoft(world, settings, SLOT_PENDING_CREATE, &handle);
     if (native_status != PHYSICS_WORLD_STATUS_OK) {
         JPH_SoftBodyCreationSettings_Destroy(settings);
         *out_native_status = native_status;
@@ -209,9 +212,9 @@ PhysicsWorldCreationStatus CPH_PhysicsWorldCreateSoftBody(
 
     const uint32_t slot                         = (uint32_t)(handle & kHandleIndexMask);
     const uint32_t dense                        = world->bodies.slot_to_dense[slot];
-    const CPH_PosStride position_shadow             = {request->position.x, request->position.y,
+    const PosStride position_shadow             = {request->position.x, request->position.y,
                                                    request->position.z, 0.0};
-    const CPH_AuxStride rotation_shadow             = {request->rotation.x, request->rotation.y,
+    const AuxStride rotation_shadow             = {request->rotation.x, request->rotation.y,
                                                    request->rotation.z, request->rotation.w};
     world->bodies.positions[dense]      = position_shadow;
     world->bodies.prev_positions[dense] = position_shadow;
@@ -221,7 +224,7 @@ PhysicsWorldCreationStatus CPH_PhysicsWorldCreateSoftBody(
     world->bodies.masks[dense]                         = request->mask;
     world->bodies.user_data[dense]                     = request->user_data;
 
-    CPH_EnqueueCommand(world, slot,
+    EnqueueCommand(world, slot,
                        CPH::cmd::CreateSoftBody{CPH::cmd::SoftBodySettingsPtr{settings},
                                                 request->vertex_count});
 
@@ -230,7 +233,7 @@ PhysicsWorldCreationStatus CPH_PhysicsWorldCreateSoftBody(
     return PHYSICS_WORLD_CREATION_STATUS_OK;
 }
 
-JPH_RagdollSettings *CPH_PhysicsWorldCreateRagdollSettings(JPH_Skeleton *skeleton) {
+JPH_RagdollSettings *PhysicsWorldCreateRagdollSettings(JPH_Skeleton *skeleton) {
     if (!skeleton) {
         return nullptr;
     }
@@ -242,7 +245,7 @@ JPH_RagdollSettings *CPH_PhysicsWorldCreateRagdollSettings(JPH_Skeleton *skeleto
 }
 
 PhysicsWorldCreationStatus
-CPH_PhysicsWorldCreateRagdollInstance(CPH_PhysicsWorld *world, JPH_RagdollSettings *settings,
+PhysicsWorldCreateRagdollInstance(PhysicsWorld *world, JPH_RagdollSettings *settings,
                                       JPH_RVec3 position, JPH_Quat rotation, uint64_t user_data,
                                       JPH_Ragdoll **out_ragdoll, size_t *out_body_count) {
     if (!world || !settings || !out_ragdoll || !out_body_count || !world->system) {
@@ -284,8 +287,8 @@ CPH_PhysicsWorldCreateRagdollInstance(CPH_PhysicsWorld *world, JPH_RagdollSettin
     return PHYSICS_WORLD_CREATION_STATUS_OK;
 }
 
-PhysicsWorldCreationStatus CPH_PhysicsWorldRegisterRagdollBodies(
-    CPH_PhysicsWorld *world, JPH_Ragdoll *ragdoll, size_t body_count, uint64_t user_data,
+PhysicsWorldCreationStatus PhysicsWorldRegisterRagdollBodies(
+    PhysicsWorld *world, JPH_Ragdoll *ragdoll, size_t body_count, uint64_t user_data,
     uint32_t category, uint32_t mask, uint32_t material_id, uint32_t *body_slots,
     size_t *out_world_count, PhysicsWorldStatus *out_native_status) {
     if (!world || !ragdoll || !body_slots || !out_world_count || !out_native_status) {
@@ -294,7 +297,7 @@ PhysicsWorldCreationStatus CPH_PhysicsWorldRegisterRagdollBodies(
     *out_world_count   = 0;
     *out_native_status = PHYSICS_WORLD_STATUS_OK;
 
-    auto shadow = CPH_LockShadowNotStepping(world);
+    auto shadow = LockShadowNotStepping(world);
     const size_t current_count = (world->count).load(std::memory_order::acquire);
     size_t available           = (world->free_count).load(std::memory_order::acquire);
     if (current_count > world->max_jolt_bodies ||
@@ -311,7 +314,7 @@ PhysicsWorldCreationStatus CPH_PhysicsWorldRegisterRagdollBodies(
         if (capacity > world->max_jolt_bodies) {
             capacity = world->max_jolt_bodies;
         }
-        const PhysicsWorldStatus resize_status = CPH_PhysicsWorldResize(world, capacity);
+        const PhysicsWorldStatus resize_status = PhysicsWorldResize(world, capacity);
         if (resize_status != PHYSICS_WORLD_STATUS_OK) {
             *out_native_status = resize_status;
             return PHYSICS_WORLD_CREATION_STATUS_NATIVE_ERROR;
@@ -324,12 +327,12 @@ PhysicsWorldCreationStatus CPH_PhysicsWorldRegisterRagdollBodies(
     }
 
     JPH_BodyInterface *body_interface = world->body_interface;
-    CPH_PosStride *positions              = world->bodies.positions.data();
-    CPH_PosStride *previous_positions     = world->bodies.prev_positions.data();
-    CPH_AuxStride *rotations              = world->bodies.rotations.data();
-    CPH_AuxStride *previous_rotations     = world->bodies.prev_rotations.data();
-    CPH_AuxStride *linear_velocities      = world->bodies.linear_velocities.data();
-    CPH_AuxStride *angular_velocities     = world->bodies.angular_velocities.data();
+    PosStride *positions              = world->bodies.positions.data();
+    PosStride *previous_positions     = world->bodies.prev_positions.data();
+    AuxStride *rotations              = world->bodies.rotations.data();
+    AuxStride *previous_rotations     = world->bodies.prev_rotations.data();
+    AuxStride *linear_velocities      = world->bodies.linear_velocities.data();
+    AuxStride *angular_velocities     = world->bodies.angular_velocities.data();
     for (size_t i = 0; i < body_count; i++) {
         const JPH_BodyID body_id = JPH_Ragdoll_GetBodyID(ragdoll, (int)i);
         const size_t free_index =
@@ -343,12 +346,12 @@ PhysicsWorldCreationStatus CPH_PhysicsWorldRegisterRagdollBodies(
         JPH_BodyInterface_GetPosition(body_interface, body_id, &position);
         JPH_BodyInterface_GetRotation(body_interface, body_id, &rotation);
 
-        positions[dense]            = CPH_PosStride{position.x, position.y, position.z, 0.0};
+        positions[dense]            = PosStride{position.x, position.y, position.z, 0.0};
         previous_positions[dense]   = positions[dense];
-        rotations[dense]            = CPH_AuxStride{rotation.x, rotation.y, rotation.z, rotation.w};
+        rotations[dense]            = AuxStride{rotation.x, rotation.y, rotation.z, rotation.w};
         previous_rotations[dense]   = rotations[dense];
-        linear_velocities[dense]    = CPH_AuxStride{};
-        angular_velocities[dense]   = CPH_AuxStride{};
+        linear_velocities[dense]    = AuxStride{};
+        angular_velocities[dense]   = AuxStride{};
         world->bodies.body_ids[dense]      = body_id;
         world->bodies.slot_to_dense[slot]  = dense;
         world->bodies.dense_to_slot[dense] = slot;
@@ -372,7 +375,7 @@ PhysicsWorldCreationStatus CPH_PhysicsWorldRegisterRagdollBodies(
     return PHYSICS_WORLD_CREATION_STATUS_OK;
 }
 
-void CPH_PhysicsWorldDestroyRagdoll(CPH_PhysicsWorld *world, JPH_Ragdoll *ragdoll) {
+void PhysicsWorldDestroyRagdoll(PhysicsWorld *world, JPH_Ragdoll *ragdoll) {
     if (!world || !ragdoll) {
         return;
     }
@@ -381,8 +384,8 @@ void CPH_PhysicsWorldDestroyRagdoll(CPH_PhysicsWorld *world, JPH_Ragdoll *ragdol
 }
 
 PhysicsWorldCreationStatus
-CPH_PhysicsWorldCreateBodiesBatch(CPH_PhysicsWorld *world, const CPH_PosStride *positions,
-                                  const CPH_ShapeParams *sizes, size_t batch_count, int shape_type,
+PhysicsWorldCreateBodiesBatch(PhysicsWorld *world, const PosStride *positions,
+                                  const ShapeParams *sizes, size_t batch_count, int shape_type,
                                   int motion_type, BodyHandle *out_handles, size_t *out_count,
                                   PhysicsWorldStatus *out_native_status) {
     if (!world || !positions || !sizes || !out_handles || !out_count || !out_native_status ||
@@ -398,8 +401,8 @@ CPH_PhysicsWorldCreateBodiesBatch(CPH_PhysicsWorld *world, const CPH_PosStride *
     }
 
     JPH_Shape *last_shape      = nullptr;
-    const CPH_ShapeParams sentinel = {.p = {-1.0f, -1.0f, -1.0f, -1.0f}};
-    CPH_ShapeParams last_size      = sentinel;
+    const ShapeParams sentinel = {.p = {-1.0f, -1.0f, -1.0f, -1.0f}};
+    ShapeParams last_size      = sentinel;
     for (size_t i = 0; i < batch_count; i++) {
         JPH_Shape *shape      = last_shape;
         const float *current  = sizes[i].p;
@@ -408,7 +411,7 @@ CPH_PhysicsWorldCreateBodiesBatch(CPH_PhysicsWorld *world, const CPH_PosStride *
             current[3] != previous[3]) {
             {
                 const std::scoped_lock guard(world->shadow_lock);
-                shape = CPH_FindOrCreateShapeLocked(world, shape_type, current);
+                shape = FindOrCreateShapeLocked(world, shape_type, current);
             }
             last_shape = shape;
             last_size  = sizes[i];
@@ -424,7 +427,7 @@ CPH_PhysicsWorldCreateBodiesBatch(CPH_PhysicsWorld *world, const CPH_PosStride *
         }
     }
 
-    auto shadow = CPH_LockShadowNotStepping(world);
+    auto shadow = LockShadowNotStepping(world);
     size_t current_count = (world->count).load(std::memory_order::acquire);
     size_t available     = (world->free_count).load(std::memory_order::acquire);
     if (available < batch_count || current_count + batch_count > world->capacity) {
@@ -432,7 +435,7 @@ CPH_PhysicsWorldCreateBodiesBatch(CPH_PhysicsWorld *world, const CPH_PosStride *
         if (needed > world->max_jolt_bodies) {
             needed = world->max_jolt_bodies;
         }
-        const PhysicsWorldStatus resize_status = CPH_PhysicsWorldResize(world, needed);
+        const PhysicsWorldStatus resize_status = PhysicsWorldResize(world, needed);
         if (resize_status != PHYSICS_WORLD_STATUS_OK) {
             *out_native_status = resize_status;
             return PHYSICS_WORLD_CREATION_STATUS_NATIVE_ERROR;
@@ -445,7 +448,7 @@ CPH_PhysicsWorldCreateBodiesBatch(CPH_PhysicsWorld *world, const CPH_PosStride *
         return PHYSICS_WORLD_CREATION_STATUS_NATIVE_ERROR;
     }
 
-    if (!CPH_EnsureCommandBulkCapacity(world, batch_count)) {
+    if (!EnsureCommandBulkCapacity(world, batch_count)) {
         *out_native_status = PHYSICS_WORLD_STATUS_OUT_OF_MEMORY;
         return PHYSICS_WORLD_CREATION_STATUS_NATIVE_ERROR;
     }
@@ -470,12 +473,12 @@ CPH_PhysicsWorldCreateBodiesBatch(CPH_PhysicsWorld *world, const CPH_PosStride *
         world->bodies.dense_to_slot[dense] = slot;
         world->bodies.body_ids[dense]      = kJphInvalidBodyId;
 
-        CPH_PosStride position                          = positions[i];
+        PosStride position                          = positions[i];
         position.w                                  = 0.0;
         world->bodies.positions[dense]      = position;
         world->bodies.prev_positions[dense] = position;
-        world->bodies.rotations[dense]      = CPH_AuxStride{0, 0, 0, 1};
-        world->bodies.prev_rotations[dense] = CPH_AuxStride{0, 0, 0, 1};
+        world->bodies.rotations[dense]      = AuxStride{0, 0, 0, 1};
+        world->bodies.prev_rotations[dense] = AuxStride{0, 0, 0, 1};
         // Creation defaults for the fields resize leaves indeterminate
         // (batch creation takes no per-body values for these). Legacy
         // left categories/masks uninitialized here, and resize dropped
@@ -488,15 +491,15 @@ CPH_PhysicsWorldCreateBodiesBatch(CPH_PhysicsWorld *world, const CPH_PosStride *
         // the migration preserves it deliberately. Changing this to
         // kAllLayerBits is a one-line follow-up fix; see
         // docs/CPP23_MIGRATION.md ("Discovered legacy defect").
-        world->bodies.linear_velocities[dense]  = CPH_AuxStride{};
-        world->bodies.angular_velocities[dense] = CPH_AuxStride{};
+        world->bodies.linear_velocities[dense]  = AuxStride{};
+        world->bodies.angular_velocities[dense] = AuxStride{};
         world->bodies.user_data[dense]          = 0;
         world->bodies.categories[dense]         = 0;
         world->bodies.masks[dense]              = 0;
         world->bodies.material_ids[dense]       = 0;
         (world->bodies.slot_states[slot]).store(SLOT_PENDING_CREATE, std::memory_order::release);
 
-        CPH_EnqueueCommand(world, slot,
+        EnqueueCommand(world, slot,
                            CPH::cmd::CreateBody{std::move(settings[i])});
         out_handles[i]           = handle;
     }
@@ -505,8 +508,8 @@ CPH_PhysicsWorldCreateBodiesBatch(CPH_PhysicsWorld *world, const CPH_PosStride *
 }
 
 PhysicsWorldCreationStatus
-CPH_PhysicsWorldCreateConvexHull(CPH_PhysicsWorld *world, const float *points, size_t point_count,
-                                 const CPH_PhysicsWorldBodyCreateRequest *request,
+PhysicsWorldCreateConvexHull(PhysicsWorld *world, const float *points, size_t point_count,
+                                 const PhysicsWorldBodyCreateRequest *request,
                                  BodyHandle *out_handle, size_t *out_count,
                                  PhysicsWorldStatus *out_native_status) {
     if (!world || !points || !request || !out_handle || !out_count || !out_native_status) {
@@ -543,7 +546,7 @@ CPH_PhysicsWorldCreateConvexHull(CPH_PhysicsWorld *world, const float *points, s
         PHYSICS_WORLD_BODY_SETUP_CONFIGURED, out_handle, out_count, out_native_status);
 }
 
-static JPH_Shape *create_compound_shape(CPH_PhysicsWorld *world, const CPH_PhysicsWorldCompoundPart *parts,
+static JPH_Shape *create_compound_shape(PhysicsWorld *world, const PhysicsWorldCompoundPart *parts,
                                         size_t part_count) {
     const std::scoped_lock trampoline(world->jph_trampoline_lock);
     JPH_StaticCompoundShapeSettings *compound_settings = JPH_StaticCompoundShapeSettings_Create();
@@ -556,7 +559,7 @@ static JPH_Shape *create_compound_shape(CPH_PhysicsWorld *world, const CPH_Physi
         {
             const std::scoped_lock guard(world->shadow_lock);
             sub_shape =
-                CPH_FindOrCreateShapeLocked(world, parts[i].shape_type, parts[i].shape_params);
+                FindOrCreateShapeLocked(world, parts[i].shape_type, parts[i].shape_params);
         }
         if (sub_shape) {
             JPH_Vec3 local_position = parts[i].local_position;
@@ -572,8 +575,8 @@ static JPH_Shape *create_compound_shape(CPH_PhysicsWorld *world, const CPH_Physi
 }
 
 PhysicsWorldCreationStatus
-CPH_PhysicsWorldCreateCompoundBody(CPH_PhysicsWorld *world, const CPH_PhysicsWorldCompoundPart *parts,
-                                   size_t part_count, const CPH_PhysicsWorldBodyCreateRequest *request,
+PhysicsWorldCreateCompoundBody(PhysicsWorld *world, const PhysicsWorldCompoundPart *parts,
+                                   size_t part_count, const PhysicsWorldBodyCreateRequest *request,
                                    BodyHandle *out_handle, size_t *out_count,
                                    PhysicsWorldStatus *out_native_status) {
     if (!world || !parts || part_count == 0 || !request || !out_handle || !out_count ||
@@ -594,7 +597,7 @@ CPH_PhysicsWorldCreateCompoundBody(CPH_PhysicsWorld *world, const CPH_PhysicsWor
 }
 
 PhysicsWorldCreationStatus
-CPH_PhysicsWorldCreateMeshBody(CPH_PhysicsWorld *world, const float *vertices, size_t vertex_count,
+PhysicsWorldCreateMeshBody(PhysicsWorld *world, const float *vertices, size_t vertex_count,
                                const uint32_t *indices, size_t triangle_count, JPH_RVec3 position,
                                JPH_Quat rotation, uint32_t category, uint32_t mask,
                                uint64_t user_data, BodyHandle *out_handle, size_t *out_count,
@@ -650,7 +653,7 @@ CPH_PhysicsWorldCreateMeshBody(CPH_PhysicsWorld *world, const float *vertices, s
         return PHYSICS_WORLD_CREATION_STATUS_SHAPE_FAILED;
     }
 
-    const CPH_PhysicsWorldBodyCreateRequest request = {
+    const PhysicsWorldBodyCreateRequest request = {
         .position  = position,
         .rotation  = rotation,
         .config    = {.motion_type = MOTION_STATIC},
@@ -663,8 +666,8 @@ CPH_PhysicsWorldCreateMeshBody(CPH_PhysicsWorld *world, const float *vertices, s
                                   out_count, out_native_status);
 }
 
-PhysicsWorldCreationStatus CPH_PhysicsWorldCreateHeightfieldBody(
-    CPH_PhysicsWorld *world, const float *heights, size_t grid_size, JPH_Vec3 scale, JPH_RVec3 position,
+PhysicsWorldCreationStatus PhysicsWorldCreateHeightfieldBody(
+    PhysicsWorld *world, const float *heights, size_t grid_size, JPH_Vec3 scale, JPH_RVec3 position,
     JPH_Quat rotation, float friction, float restitution, uint32_t category, uint32_t mask,
     uint32_t material_id, uint64_t user_data, BodyHandle *out_handle, size_t *out_count,
     PhysicsWorldStatus *out_native_status) {
@@ -687,7 +690,7 @@ PhysicsWorldCreationStatus CPH_PhysicsWorldCreateHeightfieldBody(
         return PHYSICS_WORLD_CREATION_STATUS_SHAPE_FAILED;
     }
 
-    const CPH_PhysicsWorldBodyCreateRequest request = {
+    const PhysicsWorldBodyCreateRequest request = {
         .position = position,
         .rotation = rotation,
         .config = {.friction = friction, .restitution = restitution, .motion_type = MOTION_STATIC},
@@ -700,3 +703,5 @@ PhysicsWorldCreationStatus CPH_PhysicsWorldCreateHeightfieldBody(
                                   OBJECT_LAYER_STATIC, PHYSICS_WORLD_BODY_SETUP_MATERIAL_ONLY,
                                   out_handle, out_count, out_native_status);
 }
+
+} // namespace CPH

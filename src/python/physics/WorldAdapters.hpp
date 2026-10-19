@@ -14,7 +14,7 @@ int WorldResize(struct PhysicsWorldObject *self, size_t new_capacity);
 void WorldFreeMembers(struct PhysicsWorldObject *self);
 
 int InitSettings(struct PhysicsWorldObject *self, PyObject *settings_dict,
-                     CPH_GravityVector *gravity, CPH_WorldSettings *settings);
+                     GravityVector *gravity, WorldSettings *settings);
 int GetBakedSceneCount(PyObject *baked, size_t *out_count);
 int LoadBakedScene(struct PhysicsWorldObject *self, PyObject *baked);
 

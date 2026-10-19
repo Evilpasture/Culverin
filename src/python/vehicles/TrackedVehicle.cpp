@@ -44,7 +44,7 @@ static constexpr float kTrackedThrottleKickstartThreshold = 0.01f;
 // --- Tracked Vehicle Implementation ---
 
 static JPH_WheelSettings *create_track_wheel(PyObject *w_dict) {
-    CPH_Vec3f pos;
+    Vec3f pos;
     if (!parse_py_vec3(PyDict_GetItemString(w_dict, "pos"), &pos)) {
         return nullptr;
     }
@@ -163,7 +163,7 @@ extern void CleanupVehicleResources(VehicleResources *r, uint32_t num_wheels,
     // --- 3. PRE-JOLT RESOURCE ALLOCATION (Unchanged) ---
     VehicleResources r{};
     auto num_wheels = static_cast<uint32_t>(PyList_Size(py_wheels));
-    CPH_TrackData tracks[2];
+    TrackData tracks[2];
     memset(tracks, 0, sizeof(tracks));
     int num_tracks                          = 0;
     bool jolt_locked                        = false;

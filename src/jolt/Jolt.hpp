@@ -31,7 +31,7 @@
 #include <type_traits>
 
 // Double-precision Jolt: Real is double, RVec3 is the 32-byte DVec3.
-// ShadowSync streams JPH::Body positions directly into CPH_PosStride
+// ShadowSync streams JPH::Body positions directly into PosStride
 // (4 doubles) and the Python buffer protocol exposes float64 stride-4.
 static_assert(std::is_same_v<JPH::Real, double>);
 static_assert(sizeof(JPH::RVec3) == 32);

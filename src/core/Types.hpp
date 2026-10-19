@@ -22,10 +22,13 @@ using JPH_Real = float;
 #    endif
 #endif
 
+
+namespace CPH {
+
 // --- Shadow-buffer record layouts (stride 4, SIMD-aligned) ---
 
 // Positions: float64 in double-precision builds, w is padding (0.0).
-struct CPH_PosStride {
+struct PosStride {
     alignas(32) JPH_Real x;
     JPH_Real y;
     JPH_Real z;
@@ -33,19 +36,19 @@ struct CPH_PosStride {
 };
 
 // Rotations (x, y, z, w) and velocities (x, y, z, pad).
-struct CPH_AuxStride {
+struct AuxStride {
     alignas(16) float x;
     float y, z, w;
 };
 
-struct CPH_Vec3f {
+struct Vec3f {
     float x;
     float y;
     float z;
 };
 
-static_assert(sizeof(CPH_PosStride) == sizeof(JPH_Real) * 4);
-static_assert(sizeof(CPH_AuxStride) == sizeof(float) * 4);
+static_assert(sizeof(PosStride) == sizeof(JPH_Real) * 4);
+static_assert(sizeof(AuxStride) == sizeof(float) * 4);
 
 // --- Generational handles: (generation << 32) | slot index ---
 using BodyHandle       = std::uint64_t;
@@ -77,15 +80,15 @@ enum MotionType : std::uint8_t {
     MOTION_DYNAMIC   = JPH_MotionType_Dynamic,
 };
 
-enum CPH_ShapeType : std::uint8_t {
-    CPH_SHAPE_BOX         = 0,
-    CPH_SHAPE_SPHERE      = 1,
-    CPH_SHAPE_CAPSULE     = 2,
-    CPH_SHAPE_CYLINDER    = 3,
-    CPH_SHAPE_PLANE       = 4,
-    CPH_SHAPE_MESH        = 5,
-    CPH_SHAPE_HEIGHTFIELD = 6,
-    CPH_SHAPE_CONVEX_HULL = 7
+enum ShapeType : std::uint8_t {
+    SHAPE_BOX         = 0,
+    SHAPE_SPHERE      = 1,
+    SHAPE_CAPSULE     = 2,
+    SHAPE_CYLINDER    = 3,
+    SHAPE_PLANE       = 4,
+    SHAPE_MESH        = 5,
+    SHAPE_HEIGHTFIELD = 6,
+    SHAPE_CONVEX_HULL = 7
 };
 
 enum ObjectLayer : std::uint32_t {
@@ -95,7 +98,7 @@ enum ObjectLayer : std::uint32_t {
     OBJECT_LAYER_COUNT
 };
 
-struct CPH_BodyCreationProps {
+struct BodyCreationProps {
     float mass;
     float friction;
     float restitution;
@@ -103,7 +106,7 @@ struct CPH_BodyCreationProps {
     int use_ccd;
 };
 
-struct CPH_BodyConfig {
+struct BodyConfig {
     float mass                   = 0.0f;
     float friction               = 0.0f;
     float restitution            = 0.0f;
@@ -112,3 +115,5 @@ struct CPH_BodyConfig {
     int motion_type              = 0;
     std::uint32_t allowed_dofs   = 0;
 };
+
+} // namespace CPH

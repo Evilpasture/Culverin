@@ -2,6 +2,9 @@
 
 #include "physics/PhysicsWorldState.hpp"
 
+
+namespace CPH {
+
 enum PhysicsRagdollStatus : int {
     PHYSICS_RAGDOLL_STATUS_OK                 = 0,
     PHYSICS_RAGDOLL_STATUS_INVALID_ARGUMENT   = -1,
@@ -9,7 +12,7 @@ enum PhysicsRagdollStatus : int {
     PHYSICS_RAGDOLL_STATUS_JOINT_OUT_OF_RANGE = -3,
 };
 
-struct CPH_PhysicsRagdollPartRequest {
+struct PhysicsRagdollPartRequest {
     int joint_index;
     int parent_index;
     float mass;
@@ -22,41 +25,43 @@ struct CPH_PhysicsRagdollPartRequest {
     JPH_RVec3 position;
 };
 
-struct CPH_PhysicsRagdollBodyHandleInfo {
+struct PhysicsRagdollBodyHandleInfo {
     BodyHandle handle;
     bool alive;
 };
 
-struct CPH_PhysicsRagdollBodyDebugInfo {
+struct PhysicsRagdollBodyDebugInfo {
     JPH_RVec3 position;
     JPH_Quat rotation;
     JPH_Vec3 linear_velocity;
 };
 
 
-JPH_Skeleton *CPH_PhysicsRagdollSkeletonCreate(void);
-void CPH_PhysicsRagdollSkeletonDestroy(JPH_Skeleton *skeleton);
-int CPH_PhysicsRagdollSkeletonAddJoint(JPH_Skeleton *skeleton, const char *name, int parent_index);
-int CPH_PhysicsRagdollSkeletonGetJointIndex(JPH_Skeleton *skeleton, const char *name);
-bool CPH_PhysicsRagdollSkeletonFinalize(JPH_Skeleton *skeleton);
+JPH_Skeleton *PhysicsRagdollSkeletonCreate(void);
+void PhysicsRagdollSkeletonDestroy(JPH_Skeleton *skeleton);
+int PhysicsRagdollSkeletonAddJoint(JPH_Skeleton *skeleton, const char *name, int parent_index);
+int PhysicsRagdollSkeletonGetJointIndex(JPH_Skeleton *skeleton, const char *name);
+bool PhysicsRagdollSkeletonFinalize(JPH_Skeleton *skeleton);
 
-void CPH_PhysicsRagdollSettingsDestroy(JPH_RagdollSettings *settings);
-bool CPH_PhysicsRagdollSettingsStabilize(JPH_RagdollSettings *settings);
-JPH_Shape *CPH_PhysicsRagdollFindOrCreateShape(CPH_PhysicsWorld *world, int shape_type,
+void PhysicsRagdollSettingsDestroy(JPH_RagdollSettings *settings);
+bool PhysicsRagdollSettingsStabilize(JPH_RagdollSettings *settings);
+JPH_Shape *PhysicsRagdollFindOrCreateShape(PhysicsWorld *world, int shape_type,
                                                 const float shape_params[4]);
-PhysicsRagdollStatus CPH_PhysicsRagdollSettingsAddPart(JPH_RagdollSettings *settings,
+PhysicsRagdollStatus PhysicsRagdollSettingsAddPart(JPH_RagdollSettings *settings,
                                                            JPH_Shape *shape,
-                                                           const CPH_PhysicsRagdollPartRequest *request,
+                                                           const PhysicsRagdollPartRequest *request,
                                                            int *out_joint_count);
 
-int CPH_PhysicsRagdollGetJointCount(JPH_Ragdoll *ragdoll);
-bool CPH_PhysicsRagdollDriveToPose(JPH_Ragdoll *ragdoll, JPH_RVec3 root_position,
+int PhysicsRagdollGetJointCount(JPH_Ragdoll *ragdoll);
+bool PhysicsRagdollDriveToPose(JPH_Ragdoll *ragdoll, JPH_RVec3 root_position,
                                    const JPH_Mat4 *matrices, int joint_count);
-int CPH_PhysicsRagdollGetBodyCount(JPH_Ragdoll *ragdoll);
-void CPH_PhysicsRagdollCopyBodyHandles(CPH_PhysicsWorld *world, const uint32_t *body_slots,
+int PhysicsRagdollGetBodyCount(JPH_Ragdoll *ragdoll);
+void PhysicsRagdollCopyBodyHandles(PhysicsWorld *world, const uint32_t *body_slots,
                                        size_t body_count,
-                                       CPH_PhysicsRagdollBodyHandleInfo *out_handles);
-bool CPH_PhysicsRagdollCopyDebugInfo(CPH_PhysicsWorld *world, JPH_Ragdoll *ragdoll,
-                                     CPH_PhysicsRagdollBodyDebugInfo *out_info, size_t body_count);
-void CPH_PhysicsRagdollDeallocate(CPH_PhysicsWorld *world, JPH_Ragdoll *ragdoll,
+                                       PhysicsRagdollBodyHandleInfo *out_handles);
+bool PhysicsRagdollCopyDebugInfo(PhysicsWorld *world, JPH_Ragdoll *ragdoll,
+                                     PhysicsRagdollBodyDebugInfo *out_info, size_t body_count);
+void PhysicsRagdollDeallocate(PhysicsWorld *world, JPH_Ragdoll *ragdoll,
                                 const uint32_t *body_slots, size_t body_count);
+
+} // namespace CPH

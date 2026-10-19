@@ -30,7 +30,7 @@ namespace CPH::Python {
     }
 
     // 2. PARAMS EXTRACTION
-    CPH_ConstraintParams p; // member-initialized defaults
+    ConstraintParams p; // member-initialized defaults
     int parse_ok = 1;
 
     switch (type) {
@@ -83,7 +83,7 @@ namespace CPH::Python {
 
     // 4. QUEUE ASYNCHRONOUS COMMAND (capacity first so failure paths
     // cannot leak the reserved slot; params travel by value).
-    if (CPH_UNLIKELY(!CPH_EnsureCommandCapacity(&self->physics))) {
+    if (CPH_UNLIKELY(!EnsureCommandCapacity(&self->physics))) {
         (self->physics.shadow_lock).unlock();
         return PyErr_NoMemory();
     }
@@ -94,7 +94,7 @@ namespace CPH::Python {
     entry.type              = type;
     entry.state.store(SLOT_PENDING_CREATE, std::memory_order::relaxed);
     ConstraintHandle handle = make_handle(c_slot, entry.generation);
-    CPH_EnqueueCommand(&self->physics, s1,
+    EnqueueCommand(&self->physics, s1,
                        CPH::cmd::CreateConstraint{s2, c_slot, type, p});
 
     (self->physics.shadow_lock).unlock();

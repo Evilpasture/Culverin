@@ -25,6 +25,9 @@
 #include <cstdint>
 #include <mutex>
 
+
+namespace CPH {
+
 #if defined(_WIN32)
 #    ifndef WIN32_LEAN_AND_MEAN
 #        define WIN32_LEAN_AND_MEAN
@@ -42,7 +45,7 @@
 #endif
 
 // Processor-level hint to save power during spin-waits.
-inline void CPH_CpuRelax() noexcept {
+inline void CpuRelax() noexcept {
 #if defined(__GNUC__) || defined(__clang__)
 #    if defined(__i386__) || defined(__x86_64__)
     __asm__ __volatile__("pause");
@@ -52,9 +55,9 @@ inline void CPH_CpuRelax() noexcept {
 #endif
 }
 
-inline void CPH_CpuYield() noexcept {
+inline void CpuYield() noexcept {
     for (int i = 0; i < 100; i++) {
-        CPH_CpuRelax();
+        CpuRelax();
     }
 #if defined(_WIN32)
     if (SwitchToThread() == FALSE) {
@@ -66,9 +69,9 @@ inline void CPH_CpuYield() noexcept {
 }
 
 // Parking/waking endpoint for step and query arbitration. Cache isolation
-// is provided by the spacer members around it in CPH_PhysicsWorld (the
+// is provided by the spacer members around it in PhysicsWorld (the
 // world lives in CPython-allocated storage, so it cannot be over-aligned).
-struct CPH_ShadowSync {
+struct ShadowSync {
     std::mutex mutex;
     std::condition_variable cond;
 };
@@ -77,3 +80,5 @@ struct CPH_ShadowSync {
 // lets Jolt's internal lazy statics initialize safely). Inline variable:
 // exactly one instance, constructed before first use, no init call needed.
 inline std::mutex g_jph_init_lock;
+
+} // namespace CPH

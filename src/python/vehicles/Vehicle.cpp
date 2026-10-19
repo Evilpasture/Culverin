@@ -53,7 +53,7 @@ static constexpr float kRollingResistanceCoasting   = 0.05f;
 
 // --- Refactored Wheel Creation (Complexity: 2) ---
 static JPH_WheelSettings *create_single_wheel(PyObject *w_dict, JPH_LinearCurve *f_curve) {
-    CPH_PosStride pos;
+    PosStride pos;
 
     // 1. Parse Position using helper
     if (!parse_py_vec3(PyDict_GetItemString(w_dict, "pos"), &pos)) {

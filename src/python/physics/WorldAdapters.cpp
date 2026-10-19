@@ -67,7 +67,7 @@ static int get_baked_buffer(PyObject *baked, Py_ssize_t index, size_t expected_s
 
 [[nodiscard]]
 int WorldResize(PhysicsWorldObject *self, size_t new_capacity) {
-    CPH_PhysicsWorld *world = &self->physics;
+    PhysicsWorld *world = &self->physics;
     if ((world->view_export_count).load(std::memory_order::relaxed) > 0) {
         PyErr_SetString(PyExc_BufferError, "Cannot resize while memoryview is active.");
         return -1;
@@ -76,7 +76,7 @@ int WorldResize(PhysicsWorldObject *self, size_t new_capacity) {
     BlockUntilNotStepping(self);
     BlockUntilNotQuerying(self);
 
-    const PhysicsWorldStatus status = CPH_PhysicsWorldResize(world, new_capacity);
+    const PhysicsWorldStatus status = PhysicsWorldResize(world, new_capacity);
     if (status == PHYSICS_WORLD_STATUS_BUFFER_EXPORTED) {
         PyErr_SetString(PyExc_BufferError, "Cannot resize while memoryview is active.");
         return -1;
@@ -90,16 +90,16 @@ int WorldResize(PhysicsWorldObject *self, size_t new_capacity) {
 
 void WorldFreeMembers(PhysicsWorldObject *self) {
     // Reset to a fresh native world: the Python object outlives a failed
-    // __init__, so `physics` must always hold a live CPH_PhysicsWorld
+    // __init__, so `physics` must always hold a live PhysicsWorld
     // (constructed in tp_new, destroyed exactly once in tp_dealloc).
-    self->physics.~CPH_PhysicsWorld();
-    new (&self->physics) CPH_PhysicsWorld();
+    self->physics.~PhysicsWorld();
+    new (&self->physics) PhysicsWorld();
 }
 
 // helper: Initialize settings via Python helper
 [[nodiscard]]
 int InitSettings(PhysicsWorldObject *self, PyObject *settings_dict,
-                     CPH_GravityVector *gravity, CPH_WorldSettings *settings) {
+                     GravityVector *gravity, WorldSettings *settings) {
     PyObject *st_module = PyType_GetModule(Py_TYPE(self));
     ModuleState *st = GetModuleState(st_module);
     PyObject *val_func  = PyObject_GetAttrString(st->helper, "validate_settings");
@@ -136,9 +136,9 @@ int LoadBakedScene(PhysicsWorldObject *self, PyObject *baked) {
     size_t shapes_size;
     size_t byte_array_size;
     size_t user_data_size;
-    if (baked_buffer_size(count, sizeof(CPH_PosStride), &positions_size) < 0 ||
-        baked_buffer_size(count, sizeof(CPH_AuxStride), &rotations_size) < 0 ||
-        baked_buffer_size(count, CPH_BAKED_SHAPE_STRIDE * sizeof(float), &shapes_size) < 0 ||
+    if (baked_buffer_size(count, sizeof(PosStride), &positions_size) < 0 ||
+        baked_buffer_size(count, sizeof(AuxStride), &rotations_size) < 0 ||
+        baked_buffer_size(count, BAKED_SHAPE_STRIDE * sizeof(float), &shapes_size) < 0 ||
         baked_buffer_size(count, sizeof(uint8_t), &byte_array_size) < 0 ||
         baked_buffer_size(count, sizeof(uint64_t), &user_data_size) < 0) {
         return -1;
@@ -162,7 +162,7 @@ int LoadBakedScene(PhysicsWorldObject *self, PyObject *baked) {
         return -1;
     }
 
-    const CPH_BakedSceneData scene = {
+    const BakedSceneData scene = {
         .count         = count,
         .positions     = static_cast<const JPH_Real *>(positions),
         .rotations     = static_cast<const float *>(rotations),
@@ -172,7 +172,7 @@ int LoadBakedScene(PhysicsWorldObject *self, PyObject *baked) {
         .user_data     = static_cast<const uint64_t *>(user_data),
     };
 
-    const PhysicsWorldStatus status = CPH_PhysicsWorldLoadBakedScene(&self->physics, &scene);
+    const PhysicsWorldStatus status = PhysicsWorldLoadBakedScene(&self->physics, &scene);
     switch (status) {
     case PHYSICS_WORLD_STATUS_OK:
         return 0;

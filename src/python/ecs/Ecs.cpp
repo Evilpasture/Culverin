@@ -630,7 +630,7 @@ fail_quiet:
 
                 // Assuming world->physics.bodies.positions stores 1 PositionVector (or 4 Reals) per entity
                 // depending on your stride. Using PosStride as defined in your types header.
-                CPH_PosStride *p =
+                PosStride *p =
                     &(world->physics.bodies.positions.data())[phys_dense];
 
                 float *out = reinterpret_cast<float *>(
