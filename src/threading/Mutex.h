@@ -78,11 +78,11 @@ using std::memory_order_release;
 
 // NOLINTBEGIN(readability-identifier-naming)
 #if defined(_WIN32)
-#    ifndef CPH_WIN32_LEAN_AND_MEAN
-#        define CPH_WIN32_LEAN_AND_MEAN
+#    ifndef WIN32_LEAN_AND_MEAN
+#        define WIN32_LEAN_AND_MEAN
 #    endif
-#    ifndef CPH_NOMINMAX
-#        define CPH_NOMINMAX
+#    ifndef NOMINMAX
+#        define NOMINMAX
 #    endif
 #    include <windows.h>
 

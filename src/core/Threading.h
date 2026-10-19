@@ -2,6 +2,9 @@
 #include "core/CompilerSpecifics.h"
 #include "threading/Mutex.h" // Native mutex and condition primitives
 #include <stdatomic.h>
+#if !defined(_WIN32)
+#    include <sched.h>
+#endif
 
 /**
  * Culverin Threading Invariants & Lock Hierarchy
@@ -44,10 +47,8 @@ static inline void CPH_CpuRelax() {
 #if defined(_WIN32)
     if (SwitchToThread() == FALSE)
         Sleep(0);
-#elif defined(__APPLE__)
-    usleep(0);
 #else
-    sched_yield();
+    (void)sched_yield();
 #endif
 }
 

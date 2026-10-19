@@ -1,5 +1,14 @@
 #pragma once
 
+#ifdef _WIN32
+#    ifndef NOMINMAX
+#        define NOMINMAX
+#    endif
+#    ifndef WIN32_LEAN_AND_MEAN
+#        define WIN32_LEAN_AND_MEAN
+#    endif
+#endif
+
 #define PY_SSIZE_T_CLEAN
 #include "bindings/PythonDeclarations.h"
 #include "core/CompilerSpecifics.h"
@@ -73,12 +82,8 @@ static inline PyObject *test_function() {
 #include <type_traits>
 
 #ifdef _WIN32
-#    ifndef CPH_NOMINMAX
-#        define CPH_NOMINMAX
-#    endif
-#    define CPH_WIN32_LEAN_AND_MEAN
 #    include <windows.h>
-#elif defined(__linux__) || defined(__apple__)
+#elif defined(__linux__) || defined(__APPLE__)
 #    include <sched.h>
 #    include <unistd.h>
 #endif

@@ -108,6 +108,11 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 
 project(culverin LANGUAGES C CXX ASM)
 
+if(WIN32)
+    # Apply the Windows SDK's own switches before any header can include Windows.h.
+    add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()
+
 # 1.1 FORCE BUILD TYPE (RelWithDebInfo is the sweet spot for ASan)
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES AND ENABLE_SANITIZER)
     message(
