@@ -9,6 +9,7 @@
 #include "core/Threading.hpp"
 #include "core/Types.hpp"
 #include "debug/DebugRender.hpp"
+#include "jolt/Jolt.hpp"
 #include "jolt/JoltConfig.hpp"
 #include "jolt/JoltUtils.hpp"
 #include "physics/CommandBuffer.hpp"
@@ -16,11 +17,16 @@
 #include "physics/InternalQuery.hpp"
 #include "physics/SlotState.hpp"
 #include "soft_bodies/SoftBodyCore.hpp"
+#include <Jolt/Core/JobSystemThreadPool.h>
+#include <Jolt/Core/TempAllocator.h>
+#include <Jolt/Physics/Character/CharacterVirtual.h>
+#include <Jolt/Physics/PhysicsSystem.h>
 #include <joltc.h>
 
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 
 
@@ -120,18 +126,12 @@ struct PhysicsWorld {
     PhysicsWorld(PhysicsWorld &&)                 = delete;
     PhysicsWorld &operator=(PhysicsWorld &&)      = delete;
 
-    // --- Jolt handles (owned; destroyed by ~PhysicsWorld) ---
-    JPH_PhysicsSystem *system                                 = nullptr;
-    JPH_BodyInterface *body_interface                         = nullptr;
-    JPH_JobSystem *job_system                                 = nullptr;
-    JPH_BroadPhaseLayerInterface *bp_interface                = nullptr;
-    JPH_ObjectLayerPairFilter *pair_filter                    = nullptr;
-    JPH_ObjectVsBroadPhaseLayerFilter *bp_filter              = nullptr;
-    JPH_ContactListener *contact_listener                     = nullptr;
-    JPH_TempAllocator *temp_allocator                         = nullptr;
-    JPH_CharacterVsCharacterCollision *char_vs_char_manager   = nullptr;
-    std::uint32_t max_jolt_bodies                             = 0;
-    std::size_t contact_max_capacity                          = 0;
+    // JoltC view of physics_system.GetBodyInterface(), retained until the
+    // body-operation subsystems move to the direct Jolt API in A2/B2.
+    JPH_BodyInterface *body_interface   = nullptr;
+    JPH_ContactListener *contact_listener = nullptr;
+    std::uint32_t max_jolt_bodies       = 0;
+    std::size_t contact_max_capacity    = 0;
 
     CPH_CACHE_LINE_SPACER;
 
@@ -203,6 +203,17 @@ struct PhysicsWorld {
     JPH_DebugRenderer *debug_renderer = nullptr;
     DebugBuffer debug_lines;
     DebugBuffer debug_triangles;
+
+    // --- Direct Jolt core ---
+    // Declared last so member destruction tears physics_system down before
+    // the body, shape, and constraint storage declared above. The thread
+    // pool is heap-owned: JobSystemThreadPool requires 64-byte alignment,
+    // which CPython allocation of the enclosing world object cannot provide.
+    JPH::CharacterVsCharacterCollisionSimple character_vs_character;
+    std::unique_ptr<JPH::TempAllocator> temp_allocator;
+    std::unique_ptr<JPH::JobSystemThreadPool> job_system;
+    JPH::PhysicsSystem physics_system;
+    bool jolt_initialized = false;
 };
 
 // --- Native handle helpers ---

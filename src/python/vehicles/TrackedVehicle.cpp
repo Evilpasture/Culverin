@@ -200,7 +200,8 @@ extern void CleanupVehicleResources(VehicleResources *r, uint32_t num_wheels,
     (self->physics.jph_trampoline_lock).lock();
     jolt_locked = true;
 
-    lock_iface = JPH_PhysicsSystem_GetBodyLockInterface(self->physics.system);
+    lock_iface = reinterpret_cast<const JPH_BodyLockInterface *>(
+        &self->physics.physics_system.GetBodyLockInterface());
     JPH_BodyLockInterface_LockWrite(lock_iface, chassis_bid, &lock);
 
     if (CPH_UNLIKELY(!lock.body)) {
@@ -239,10 +240,9 @@ extern void CleanupVehicleResources(VehicleResources *r, uint32_t num_wheels,
 
     JPH_VehicleConstraint_SetVehicleCollisionTester(
         r.j_veh, reinterpret_cast<JPH_VehicleCollisionTester *>(r.tester));
-    JPH_PhysicsSystem_AddConstraint(self->physics.system,
-                                    reinterpret_cast<JPH_Constraint *>(r.j_veh));
-    JPH_PhysicsSystem_AddStepListener(self->physics.system,
-                                      JPH_VehicleConstraint_AsPhysicsStepListener(r.j_veh));
+    self->physics.physics_system.AddConstraint(reinterpret_cast<JPH::Constraint *>(r.j_veh));
+    self->physics.physics_system.AddStepListener(reinterpret_cast<JPH::PhysicsStepListener *>(
+        JPH_VehicleConstraint_AsPhysicsStepListener(r.j_veh)));
     r.is_added_to_world = true;
 
     JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);

@@ -158,7 +158,8 @@ bool ShapecastExecuteInternal(PhysicsWorld *world, const JPH_Shape *shape,
     settings->backFaceModeConvex    = JPH_BackFaceMode_IgnoreBackFaces;
 
     JPH_RVec3 base_offset          = {0, 0, 0};
-    const JPH_NarrowPhaseQuery *nq = JPH_PhysicsSystem_GetNarrowPhaseQuery(world->system);
+    const JPH_NarrowPhaseQuery *nq = reinterpret_cast<const JPH_NarrowPhaseQuery *>(
+        &world->physics_system.GetNarrowPhaseQuery());
 
     JPH_NarrowPhaseQuery_CastShape(nq, shape, transform, sweep_dir, settings, &base_offset,
                                    CastShape_ClosestCollector, ctx, bp_f, obj_f, bf, nullptr);

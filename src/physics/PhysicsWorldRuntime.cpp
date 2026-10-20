@@ -12,15 +12,21 @@ namespace CPH {
 
 static constexpr size_t kInitialMaterialCapacity = 16;
 
+static void get_gravity(PhysicsWorld *world, JPH_Vec3 *out_gravity) {
+    const JPH::Vec3 gravity = world->physics_system.GetGravity();
+    *out_gravity             = {gravity.GetX(), gravity.GetY(), gravity.GetZ()};
+}
+
 bool PhysicsWorldAttachContactListener(PhysicsWorld *world) {
-    if (!world || !world->system) {
+    if (!world || !world->jolt_initialized) {
         return false;
     }
     world->contact_listener = JPH_ContactListener_Create(world);
     if (!world->contact_listener) {
         return false;
     }
-    JPH_PhysicsSystem_SetContactListener(world->system, world->contact_listener);
+    world->physics_system.SetContactListener(
+        reinterpret_cast<JPH::ContactListener *>(world->contact_listener));
     return true;
 }
 
@@ -278,7 +284,7 @@ std::expected<void, Error> PhysicsWorldSetGravity(PhysicsWorld *world, JPH_Vec3 
 
     auto shadow = LockShadowNotStepping(world);
     const size_t current_count = (world->count).load(std::memory_order::acquire);
-    JPH_PhysicsSystem_SetGravity(world->system, &gravity);
+    world->physics_system.SetGravity(JPH::Vec3(gravity.x, gravity.y, gravity.z));
 
     if (CPH_UNLIKELY(current_count > UINT32_MAX)) {
         return std::unexpected(WorldRuntimeError::Overflow);
@@ -297,7 +303,7 @@ std::expected<void, Error> PhysicsWorldGetGravity(PhysicsWorld *world, JPH_Vec3 
     }
 
     const std::scoped_lock shadow(world->shadow_lock);
-    JPH_PhysicsSystem_GetGravity(world->system, out_gravity);
+    get_gravity(world, out_gravity);
     return {};
 }
 
@@ -328,7 +334,7 @@ std::expected<void, Error> PhysicsWorldGetBodyStats(PhysicsWorld *world, BodyHan
 static std::expected<void, Error>
 lock_soft_body_for_read(PhysicsWorld *world, BodyHandle handle, JPH_BodyLockRead *out_lock,
                         const JPH_BodyLockInterface **out_interface, uint32_t *out_count) {
-    if (!world || !out_lock || !out_interface || !out_count || !world->system) {
+    if (!world || !out_lock || !out_interface || !out_count || !world->jolt_initialized) {
         return std::unexpected(WorldRuntimeError::InvalidArgument);
     }
 
@@ -345,7 +351,8 @@ lock_soft_body_for_read(PhysicsWorld *world, BodyHandle handle, JPH_BodyLockRead
     const JPH_BodyID body_id = world->bodies.body_ids[dense];
 
     const JPH_BodyLockInterface *lock_interface =
-        JPH_PhysicsSystem_GetBodyLockInterface(world->system);
+        reinterpret_cast<const JPH_BodyLockInterface *>(
+            &world->physics_system.GetBodyLockInterface());
     JPH_BodyLockInterface_LockRead(lock_interface, body_id, out_lock);
     if (!out_lock->body) {
         return std::unexpected(WorldRuntimeError::StaleHandle);
@@ -452,7 +459,7 @@ std::expected<void, Error> PhysicsWorldApplyBuoyancy(PhysicsWorld *world, BodyHa
 
     JPH_BodyInterface_ActivateBody(world->body_interface, body_id);
     JPH_Vec3 gravity;
-    JPH_PhysicsSystem_GetGravity(world->system, &gravity);
+    get_gravity(world, &gravity);
     JPH_RVec3 surface_position = {0, surface_y, 0};
     JPH_Vec3 surface_normal    = {0, 1.0f, 0};
     *out_submerged             = JPH_BodyInterface_ApplyBuoyancyImpulse(
@@ -499,7 +506,7 @@ std::expected<void, Error> PhysicsWorldApplyBuoyancyBatch(
 
     if (valid_count > 0) {
         JPH_Vec3 gravity;
-        JPH_PhysicsSystem_GetGravity(world->system, &gravity);
+        get_gravity(world, &gravity);
         JPH_RVec3 surface_position = {0, surface_y, 0};
         JPH_Vec3 surface_normal    = {0, 1.0f, 0};
         for (size_t i = 0; i < valid_count; i++) {
@@ -759,19 +766,19 @@ PhysicsWorldBuildDebugData(PhysicsWorld *world, bool draw_shapes, bool draw_cons
     world->debug_lines.clear();
     world->debug_triangles.clear();
 
-    JPH_DrawSettings settings;
-    JPH_DrawSettings_InitDefault(&settings);
-    settings.drawShape                 = draw_shapes;
-    settings.drawShapeWireframe        = wireframe;
-    settings.drawBoundingBox           = draw_bounding_box;
-    settings.drawCenterOfMassTransform = draw_centers;
+    JPH::BodyManager::DrawSettings settings;
+    settings.mDrawShape                 = draw_shapes;
+    settings.mDrawShapeWireframe        = wireframe;
+    settings.mDrawBoundingBox           = draw_bounding_box;
+    settings.mDrawCenterOfMassTransform = draw_centers;
 
+    auto *debug_renderer = reinterpret_cast<JPH::DebugRenderer *>(world->debug_renderer);
     if (draw_shapes || draw_bounding_box || draw_centers) {
-        JPH_PhysicsSystem_DrawBodies(world->system, &settings, world->debug_renderer, nullptr);
+        world->physics_system.DrawBodies(settings, debug_renderer, nullptr);
     }
     if (draw_constraints) {
-        JPH_PhysicsSystem_DrawConstraints(world->system, world->debug_renderer);
-        JPH_PhysicsSystem_DrawConstraintLimits(world->system, world->debug_renderer);
+        world->physics_system.DrawConstraints(debug_renderer);
+        world->physics_system.DrawConstraintLimits(debug_renderer);
     }
 
     const auto copy_out = [](const DebugBuffer &source, Buffer<DebugVertex> &out) {

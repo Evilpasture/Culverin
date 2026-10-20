@@ -168,16 +168,14 @@ inline auto ProcessBatch(const WorldDataCreateInfo world,
 // =================================================================================================
 template <JPH::EBodyType TType>
 [[gnu::always_inline, gnu::flatten, gnu::nonnull(2)]] inline auto
-ExecuteSyncPass(const Unsigned32 active_count, const JPH_PhysicsSystem *const CPH_RESTRICT system,
+ExecuteSyncPass(const Unsigned32 active_count, const JPH::PhysicsSystem *const CPH_RESTRICT system,
                 MappingDataCreateInfo map, const WorldDataCreateInfo world) noexcept -> void {
     if (active_count == 0) {
         return;
     }
 
-    constexpr JPH_BodyType body_type =
-        TType == JPH::EBodyType::RigidBody ? JPH_BodyType_Rigid : JPH_BodyType_Soft;
-    const JPH_BodyID *const CPH_RESTRICT active_ids =
-        JPH_PhysicsSystem_GetActiveBodiesUnsafe(system, body_type);
+    const auto *const CPH_RESTRICT active_ids = reinterpret_cast<const JPH_BodyID *const CPH_RESTRICT>(
+        system->GetActiveBodiesUnsafe(TType));
     if (active_ids == nullptr) {
         [[unlikely]] return;
     }
@@ -195,9 +193,7 @@ ExecuteSyncPass(const Unsigned32 active_count, const JPH_PhysicsSystem *const CP
 
         [[clang::always_inline]] if (b == nullptr || b->GetID().GetIndexAndSequenceNumber() !=
                                                          raw_jolt_id) [[unlikely]] {
-            const JPH_Body *const c_body =
-                JPH_PhysicsSystem_GetBodyPtr(system, raw_jolt_id);
-            b = reinterpret_cast<const JPH::Body *>(c_body);
+            b = system->GetBodyLockInterface().TryGetBody(JPH::BodyID(raw_jolt_id));
             map.body_ptrs[j_idx] = b;
         }
         if (b == nullptr) [[unlikely]] {
@@ -261,13 +257,11 @@ ExecuteSyncPass(const Unsigned32 active_count, const JPH_PhysicsSystem *const CP
 [[gnu::flatten, gnu::hot, gnu::nonnull(1)]] auto
 SyncShadowBuffers(const PhysicsWorld *const CPH_RESTRICT world) noexcept -> void {
     using namespace CPH;
-    // Use upstream JoltC's public API instead of the fork-only raw PhysicsSystem accessor.
-    const JPH_PhysicsSystem *const CPH_RESTRICT system = world->system;
+    const JPH::PhysicsSystem *const CPH_RESTRICT system = &world->physics_system;
 
     const Unsigned32 active_rigid_count =
-        JPH_PhysicsSystem_GetNumActiveBodies(system, JPH_BodyType_Rigid);
-    const Unsigned32 active_soft_count =
-        JPH_PhysicsSystem_GetNumActiveBodies(system, JPH_BodyType_Soft);
+        system->GetNumActiveBodies(JPH::EBodyType::RigidBody);
+    const Unsigned32 active_soft_count = system->GetNumActiveBodies(JPH::EBodyType::SoftBody);
 
     if ((active_rigid_count == 0U) && (active_soft_count == 0U)) {
         [[unlikely]] return;

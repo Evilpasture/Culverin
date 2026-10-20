@@ -168,7 +168,8 @@ namespace CPH::Python {
             }
         }
 
-        JPH_PhysicsSystem_RemoveConstraint(self->physics.system, c_to_destroy);
+        self->physics.physics_system.RemoveConstraint(
+            reinterpret_cast<JPH::Constraint *>(c_to_destroy));
         JPH_Constraint_Destroy(c_to_destroy);
     }
 

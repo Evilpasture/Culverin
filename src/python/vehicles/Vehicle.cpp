@@ -142,11 +142,11 @@ void CleanupVehicleResources(VehicleResources *r, uint32_t num_wheels,
                                  PhysicsWorldObject *self) {
     if (r->j_veh) {
         // If it was already added to Jolt, we MUST remove it before destroying it
-        if (static_cast<int>(r->is_added_to_world) && self && self->physics.system) {
-            JPH_PhysicsSystem_RemoveStepListener(
-                self->physics.system, JPH_VehicleConstraint_AsPhysicsStepListener(r->j_veh));
-            JPH_PhysicsSystem_RemoveConstraint(self->physics.system,
-                                               reinterpret_cast<JPH_Constraint *>(r->j_veh));
+        if (static_cast<int>(r->is_added_to_world) && self && self->physics.jolt_initialized) {
+            self->physics.physics_system.RemoveStepListener(reinterpret_cast<JPH::PhysicsStepListener *>(
+                JPH_VehicleConstraint_AsPhysicsStepListener(r->j_veh)));
+            self->physics.physics_system.RemoveConstraint(
+                reinterpret_cast<JPH::Constraint *>(r->j_veh));
         }
         JPH_Constraint_Destroy(reinterpret_cast<JPH_Constraint *>(r->j_veh));
     }
@@ -377,7 +377,8 @@ static void configure_drivetrain(VehicleResources *r, PyObject *py_engine, PyObj
     (self->physics.jph_trampoline_lock).lock();
     jolt_locked = true;
 
-    lock_iface = JPH_PhysicsSystem_GetBodyLockInterface(self->physics.system);
+    lock_iface = reinterpret_cast<const JPH_BodyLockInterface *>(
+        &self->physics.physics_system.GetBodyLockInterface());
     JPH_BodyLockInterface_LockWrite(lock_iface, chassis_bid, &lock);
 
     if (CPH_UNLIKELY(!lock.body)) {
@@ -402,10 +403,9 @@ static void configure_drivetrain(VehicleResources *r, PyObject *py_engine, PyObj
 
     JPH_VehicleConstraint_SetVehicleCollisionTester(
         r.j_veh, reinterpret_cast<JPH_VehicleCollisionTester *>(r.tester));
-    JPH_PhysicsSystem_AddConstraint(self->physics.system,
-                                    reinterpret_cast<JPH_Constraint *>(r.j_veh));
-    JPH_PhysicsSystem_AddStepListener(self->physics.system,
-                                      JPH_VehicleConstraint_AsPhysicsStepListener(r.j_veh));
+    self->physics.physics_system.AddConstraint(reinterpret_cast<JPH::Constraint *>(r.j_veh));
+    self->physics.physics_system.AddStepListener(reinterpret_cast<JPH::PhysicsStepListener *>(
+        JPH_VehicleConstraint_AsPhysicsStepListener(r.j_veh)));
     r.is_added_to_world = true;
 
     JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
@@ -795,9 +795,10 @@ static void VehicleInternalCleanup(VehicleObject *self) {
     // Safely destroy Jolt objects outside the lock
     if (j_veh) {
         JPH_PhysicsStepListener *step_listener = JPH_VehicleConstraint_AsPhysicsStepListener(j_veh);
-        JPH_PhysicsSystem_RemoveStepListener(self->world->physics.system, step_listener);
-        JPH_PhysicsSystem_RemoveConstraint(self->world->physics.system,
-                                           reinterpret_cast<JPH_Constraint *>(j_veh));
+        self->world->physics.physics_system.RemoveStepListener(
+            reinterpret_cast<JPH::PhysicsStepListener *>(step_listener));
+        self->world->physics.physics_system.RemoveConstraint(
+            reinterpret_cast<JPH::Constraint *>(j_veh));
         JPH_Constraint_Destroy(reinterpret_cast<JPH_Constraint *>(j_veh));
     }
 

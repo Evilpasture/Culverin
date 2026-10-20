@@ -118,7 +118,7 @@ static PyObject *WorldNew(PyTypeObject *type, PyObject * /*args*/, PyObject * /*
 // Orchestrator function
 [[nodiscard]] static int WorldInit(PhysicsWorldObject *self, PyObject *args,
                                            PyObject *kwds) {
-    if (self->physics.system != nullptr) {
+    if (self->physics.jolt_initialized) {
         // Please don't call __init__() again.
         PyErr_SetString(PyExc_RuntimeError,
                         "PhysicsWorld instance has already been initialized and "

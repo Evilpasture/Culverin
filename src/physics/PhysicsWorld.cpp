@@ -4,6 +4,7 @@
 #include "physics/ContactEventDefinitions.hpp"
 #include "physics/InternalQuery.hpp"
 #include "physics/ShadowSync.hpp"
+#include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
 
 #include <algorithm>
 #include <cmath>
@@ -41,6 +42,72 @@ void set_scaled_mass(JPH_BodyCreationSettings *settings, JPH_MassProperties &pro
     JPH_BodyCreationSettings_SetOverrideMassProperties(
         settings, JPH_OverrideMassProperties_CalculateInertia);
 }
+
+// Culverin has three object layers and uses the identical numbering for
+// broadphase layers. The pair matrix is fixed: Static collides with Dynamic
+// and Vehicle, and Dynamic collides with itself. The remaining pairs
+// (Static/Static, Dynamic/Vehicle, Vehicle/Vehicle) do not collide.
+[[nodiscard]] constexpr bool object_layers_collide(std::uint32_t layer1,
+                                                   std::uint32_t layer2) noexcept {
+    if (layer1 > layer2) {
+        const std::uint32_t temporary = layer1;
+        layer1                        = layer2;
+        layer2                        = temporary;
+    }
+    return (layer1 == std::to_underlying(ObjectLayer::Static) &&
+            (layer2 == std::to_underlying(ObjectLayer::Dynamic) ||
+             layer2 == std::to_underlying(ObjectLayer::Vehicle))) ||
+           (layer1 == std::to_underlying(ObjectLayer::Dynamic) &&
+            layer2 == std::to_underlying(ObjectLayer::Dynamic));
+}
+
+class WorldBroadPhaseLayerInterface final : public JPH::BroadPhaseLayerInterface {
+  public:
+    [[nodiscard]] JPH::uint GetNumBroadPhaseLayers() const override {
+        return std::to_underlying(ObjectLayer::Count);
+    }
+
+    [[nodiscard]] JPH::BroadPhaseLayer
+    GetBroadPhaseLayer(JPH::ObjectLayer layer) const override {
+        return layer < std::to_underlying(ObjectLayer::Count)
+                   ? JPH::BroadPhaseLayer(static_cast<JPH::BroadPhaseLayer::Type>(layer))
+                   : JPH::cBroadPhaseLayerInvalid;
+    }
+
+#if defined(JPH_EXTERNAL_PROFILE) || defined(JPH_PROFILE_ENABLED)
+    [[nodiscard]] const char *GetBroadPhaseLayerName(JPH::BroadPhaseLayer layer) const override {
+        switch (static_cast<std::uint32_t>(layer.GetValue())) {
+        case std::to_underlying(ObjectLayer::Static):
+            return "Static";
+        case std::to_underlying(ObjectLayer::Dynamic):
+            return "Dynamic";
+        case std::to_underlying(ObjectLayer::Vehicle):
+            return "Vehicle";
+        default:
+            return "Invalid";
+        }
+    }
+#endif
+};
+
+class WorldObjectLayerPairFilter final : public JPH::ObjectLayerPairFilter {
+  public:
+    [[nodiscard]] bool ShouldCollide(JPH::ObjectLayer layer1,
+                                     JPH::ObjectLayer layer2) const override {
+        return object_layers_collide(static_cast<std::uint32_t>(layer1),
+                                     static_cast<std::uint32_t>(layer2));
+    }
+};
+
+class WorldObjectVsBroadPhaseLayerFilter final : public JPH::ObjectVsBroadPhaseLayerFilter {
+  public:
+    [[nodiscard]] bool ShouldCollide(JPH::ObjectLayer layer,
+                                     JPH::BroadPhaseLayer broadphase_layer) const override {
+        // Broadphase numbering is identical to object-layer numbering.
+        return object_layers_collide(static_cast<std::uint32_t>(layer),
+                                     static_cast<std::uint32_t>(broadphase_layer.GetValue()));
+    }
+};
 
 } // namespace
 
@@ -142,44 +209,21 @@ PhysicsWorld::~PhysicsWorld() {
     for (auto &slot : constraints) {
         if (slot.constraint != nullptr &&
             slot.state.load(std::memory_order::relaxed) == std::to_underlying(SlotState::Alive)) {
-            if (system != nullptr) {
-                JPH_PhysicsSystem_RemoveConstraint(system, slot.constraint);
+            if (jolt_initialized) {
+                physics_system.RemoveConstraint(
+                    reinterpret_cast<JPH::Constraint *>(slot.constraint));
             }
             JPH_Constraint_Destroy(slot.constraint);
             slot.constraint = nullptr;
         }
     }
 
-    if (system != nullptr) {
-        JPH_PhysicsSystem_Destroy(system);
-        system = nullptr;
-        body_interface = nullptr;
-        // Ownership of these three interfaces transferred to the system at
-        // creation time.
-        bp_interface = nullptr;
-        pair_filter  = nullptr;
-        bp_filter    = nullptr;
-    } else {
-        // Initialization failed before ownership transferred.
-        if (bp_filter != nullptr) {
-            JPH_ObjectVsBroadPhaseLayerFilter_Destroy(bp_filter);
-        }
-        if (pair_filter != nullptr) {
-            JPH_ObjectLayerPairFilter_Destroy(pair_filter);
-        }
-        if (bp_interface != nullptr) {
-            JPH_BroadPhaseLayerInterface_Destroy(bp_interface);
-        }
+    if (jolt_initialized && contact_listener != nullptr) {
+        physics_system.SetContactListener(nullptr);
     }
-    if (char_vs_char_manager != nullptr) {
-        JPH_CharacterVsCharacterCollision_Destroy(char_vs_char_manager);
-    }
-    if (job_system != nullptr) {
-        JPH_JobSystem_Destroy(job_system);
-    }
-    if (temp_allocator != nullptr) {
-        JPH_TempAllocator_Destroy(temp_allocator);
-    }
+    body_interface   = nullptr;
+    jolt_initialized = false;
+
     if (debug_renderer != nullptr) {
         JPH_DebugRenderer_Destroy(debug_renderer);
     }
@@ -556,86 +600,63 @@ std::expected<void, Error> PhysicsWorldCommitCreateSoft(PhysicsWorld *world,
 
 int PhysicsWorldInitJolt(PhysicsWorld *world, WorldSettings settings,
                              GravityVector gravity) {
-    int num_workers = settings.num_threads;
+    if (world == nullptr || world->jolt_initialized) {
+        return -1;
+    }
+
+    int num_workers = settings.num_threads > 0 ? settings.num_threads : -1;
 #if defined(__SANITIZE_THREAD__) || defined(ENABLE_SANITIZER)
     // TSan cannot model Jolt's lock-free job queues; run Jolt synchronously
     // so TSan focuses on Culverin's own synchronization.
     num_workers = 0;
 #endif
-    const JobSystemThreadPoolConfig job_cfg = {
-        .maxJobs     = static_cast<std::uint32_t>(settings.max_physics_jobs),
-        .maxBarriers = static_cast<std::uint32_t>(settings.max_physics_barriers),
-        .numThreads  = num_workers};
 
-    // Serialize first PhysicsSystem creation (Jolt lazy statics, see TSan note).
-    std::unique_lock init_guard(g_jph_init_lock);
+    const auto max_jobs = settings.max_physics_jobs > 0
+                              ? static_cast<JPH::uint>(settings.max_physics_jobs)
+                              : JPH::cMaxPhysicsJobs;
+    const auto max_barriers = settings.max_physics_barriers > 0
+                                  ? static_cast<JPH::uint>(settings.max_physics_barriers)
+                                  : JPH::cMaxPhysicsBarriers;
+    const auto max_bodies =
+        settings.max_bodies > 0 ? static_cast<JPH::uint>(settings.max_bodies) : 10240U;
+    const auto max_pairs =
+        settings.max_pairs > 0 ? static_cast<JPH::uint>(settings.max_pairs) : 65536U;
+    const auto max_contact_constraints = settings.max_contact_constraints > 0
+                                             ? static_cast<JPH::uint>(settings.max_contact_constraints)
+                                             : 10240U;
 
-    world->job_system = JPH_JobSystemThreadPool_Create(&job_cfg);
-    if (!world->job_system) {
-        return -1;
-    }
+    // Serialize PhysicsSystem initialization across worlds. Direct Jolt
+    // initialization still reaches process-wide lazy state, and TSan cannot
+    // prove those first-touch paths race-free; retaining the established
+    // bring-up lock preserves Culverin's initialization guarantee.
+    const std::scoped_lock init_guard(g_jph_init_lock);
+
+    world->job_system =
+        std::make_unique<JPH::JobSystemThreadPool>(max_jobs, max_barriers, num_workers);
 
 #if defined(__SANITIZE_THREAD__) || defined(ENABLE_SANITIZER)
-    world->temp_allocator = JPH_TempAllocatorMalloc_Create();
+    world->temp_allocator = std::make_unique<JPH::TempAllocatorMalloc>();
 #else
-    world->temp_allocator = JPH_TempAllocator_Create(static_cast<std::uint32_t>(settings.temp_allocator_size));
+    // WithMallocFallback preserves the previous allocator behavior: the
+    // fixed buffer serves normal steps, and overflow falls back to malloc
+    // instead of failing the step.
+    world->temp_allocator = std::make_unique<JPH::TempAllocatorImplWithMallocFallback>(
+        settings.temp_allocator_size > 0 ? static_cast<std::size_t>(settings.temp_allocator_size)
+                                         : 0U);
 #endif
-    if (!world->temp_allocator) {
-        return -1;
-    }
 
-    // 3 layers: 0=Static, 1=Dynamic, 2=VehicleRay.
-    world->bp_interface = JPH_BroadPhaseLayerInterfaceTable_Create(std::to_underlying(ObjectLayer::Count), 3);
-    if (!world->bp_interface) {
-        return -1;
-    }
-    JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(world->bp_interface,
-                                                                 std::to_underlying(ObjectLayer::Static), 0);
-    JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(world->bp_interface,
-                                                                 std::to_underlying(ObjectLayer::Dynamic), 1);
-    JPH_BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(world->bp_interface,
-                                                                 std::to_underlying(ObjectLayer::Vehicle), 2);
+    static const WorldBroadPhaseLayerInterface broadphase_layer_interface;
+    static const WorldObjectLayerPairFilter object_layer_pair_filter;
+    static const WorldObjectVsBroadPhaseLayerFilter object_vs_broadphase_filter;
 
-    world->pair_filter = JPH_ObjectLayerPairFilterTable_Create(3);
-    if (!world->pair_filter) {
-        return -1;
-    }
-    JPH_ObjectLayerPairFilterTable_EnableCollision(world->pair_filter, 0, 1);
-    JPH_ObjectLayerPairFilterTable_EnableCollision(world->pair_filter, 0, 2);
-    JPH_ObjectLayerPairFilterTable_EnableCollision(world->pair_filter, 1, 1);
-    JPH_ObjectLayerPairFilterTable_DisableCollision(world->pair_filter, 1, 2);
-
-    world->bp_filter = JPH_ObjectVsBroadPhaseLayerFilterTable_Create(world->bp_interface, 3,
-                                                                     world->pair_filter, 3);
-    if (!world->bp_filter) {
-        return -1;
-    }
-
-    const JPH_PhysicsSystemSettings phys_settings = {
-        .maxBodies             = static_cast<std::uint32_t>(settings.max_bodies),
-        .numBodyMutexes        = 0, // 0 = Jolt default
-        .maxBodyPairs          = static_cast<std::uint32_t>(settings.max_pairs),
-        .maxContactConstraints =
-            static_cast<std::uint32_t>(settings.max_contact_constraints),
-        ._padding                      = 0,
-        .broadPhaseLayerInterface      = world->bp_interface,
-        .objectLayerPairFilter         = world->pair_filter,
-        .objectVsBroadPhaseLayerFilter = world->bp_filter};
-
-    world->system = JPH_PhysicsSystem_Create(&phys_settings);
-    init_guard.unlock();
-    if (!world->system) {
-        return -1;
-    }
-
-    world->char_vs_char_manager = JPH_CharacterVsCharacterCollision_CreateSimple();
-    if (!world->char_vs_char_manager) {
-        return -1;
-    }
-    JPH_Vec3 jolt_gravity = {gravity.gx, gravity.gy, gravity.gz};
-    JPH_PhysicsSystem_SetGravity(world->system, &jolt_gravity);
-    world->body_interface = JPH_PhysicsSystem_GetBodyInterface(world->system);
-    return world->body_interface ? 0 : -1;
+    world->physics_system.Init(max_bodies, 0, max_pairs, max_contact_constraints,
+                               broadphase_layer_interface, object_vs_broadphase_filter,
+                               object_layer_pair_filter);
+    world->physics_system.SetGravity(JPH::Vec3(gravity.gx, gravity.gy, gravity.gz));
+    world->body_interface = reinterpret_cast<JPH_BodyInterface *>(
+        &world->physics_system.GetBodyInterface());
+    world->jolt_initialized = true;
+    return 0;
 }
 
 // --- Stepping ---
@@ -659,12 +680,14 @@ void PhysicsWorldStepNative(PhysicsWorld *world, float dt,
     }
 
     if (dt <= 0.0F) {
-        JPH_PhysicsSystem_OptimizeBroadPhase(world->system);
+        world->physics_system.OptimizeBroadPhase();
         world->needs_optimization = false;
     } else {
-        JPH_PhysicsSystem_Update2(world->system, dt, 1, world->temp_allocator, world->job_system);
+        [[maybe_unused]] const JPH::EPhysicsUpdateError update_error =
+            world->physics_system.Update(dt, 1, world->temp_allocator.get(),
+                                         world->job_system.get());
         if (world->needs_optimization) {
-            JPH_PhysicsSystem_OptimizeBroadPhase(world->system);
+            world->physics_system.OptimizeBroadPhase();
             world->needs_optimization = false;
         }
     }

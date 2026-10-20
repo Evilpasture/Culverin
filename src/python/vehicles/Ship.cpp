@@ -10,13 +10,14 @@ namespace CPH::Python {
 // --- THE HOT PATH (No Locks, No GIL) ---
 
 static void JPH_API_CALL Ship_OnStep(void *userData,
-                                     const JPH_PhysicsStepListenerContext *inContext) {
-    ShipObject *self  = static_cast<ShipObject *>(userData);
-    JPH_BodyInterface *bi = JPH_PhysicsSystem_GetBodyInterfaceNoLock(inContext->physicsSystem);
-
+                                     const JPH_PhysicsStepListenerContext *inContext [[maybe_unused]]) {
+    ShipObject *self = static_cast<ShipObject *>(userData);
     if (self->sled_bid == kJphInvalidBodyId) {
         return;
     }
+
+    auto *bi = reinterpret_cast<JPH_BodyInterface *>(
+        &self->world->physics.physics_system.GetBodyInterfaceNoLock());
 
     // 1. Get current state
     JPH_Vec3 ang_vel;
@@ -146,7 +147,8 @@ static const JPH_PhysicsStepListener_Procs kShipListenerProcs = {.OnStep = Ship_
     (self->physics.jph_trampoline_lock).lock();
     JPH_PhysicsStepListener_SetProcs(&kShipListenerProcs);
     obj->listener = JPH_PhysicsStepListener_Create(obj);
-    JPH_PhysicsSystem_AddStepListener(self->physics.system, obj->listener);
+    self->physics.physics_system.AddStepListener(
+        reinterpret_cast<JPH::PhysicsStepListener *>(obj->listener));
     (self->physics.jph_trampoline_lock).unlock();
 
     PyObject_GC_Track(reinterpret_cast<PyObject *>(obj));
@@ -180,7 +182,8 @@ void ShipDealloc(ShipObject *self) {
     if (self->world && self->listener) {
         // Protect Jolt system call with trampoline lock
         (self->world->physics.jph_trampoline_lock).lock();
-        JPH_PhysicsSystem_RemoveStepListener(self->world->physics.system, self->listener);
+        self->world->physics.physics_system.RemoveStepListener(
+            reinterpret_cast<JPH::PhysicsStepListener *>(self->listener));
         JPH_PhysicsStepListener_Destroy(self->listener);
         (self->world->physics.jph_trampoline_lock).unlock();
     }

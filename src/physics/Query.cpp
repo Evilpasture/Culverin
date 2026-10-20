@@ -209,7 +209,8 @@ std::expected<void, Error> PhysicsWorldOverlapSphere(PhysicsWorld *world, JPH_RV
     JPH_CollideShapeSettings_Init(&settings);
 
     OverlapContext context = {.world = world, .hits = hits, .error = {}};
-    const JPH_NarrowPhaseQuery *query = JPH_PhysicsSystem_GetNarrowPhaseQuery(world->system);
+    const JPH_NarrowPhaseQuery *query = reinterpret_cast<const JPH_NarrowPhaseQuery *>(
+        &world->physics_system.GetNarrowPhaseQuery());
     JPH_NarrowPhaseQuery_CollideShape(query, shape, &scale, &transform, &settings, &base_offset,
                                       overlap_callback_narrow, &context, filters.broad_phase.get(),
                                       filters.object_layer.get(), filters.body.get(), nullptr);
@@ -243,7 +244,8 @@ std::expected<void, Error> PhysicsWorldOverlapAabb(PhysicsWorld *world, JPH_RVec
     box.max = JPH_Vec3{(float)max.x, (float)max.y, (float)max.z};
 
     OverlapContext context = {.world = world, .hits = hits, .error = {}};
-    const JPH_BroadPhaseQuery *query = JPH_PhysicsSystem_GetBroadPhaseQuery(world->system);
+    const JPH_BroadPhaseQuery *query = reinterpret_cast<const JPH_BroadPhaseQuery *>(
+        &world->physics_system.GetBroadPhaseQuery());
     JPH_BroadPhaseQuery_CollideAABox(query, &box, overlap_callback_broad, &context,
                                      filters.broad_phase.get(), filters.object_layer.get());
     if (!context.error) {
@@ -295,7 +297,8 @@ std::expected<void, Error> PhysicsWorldRaycast(PhysicsWorld *world, JPH_RVec3 or
 
     const JPH_Vec3 ray_direction = {direction.x * scale, direction.y * scale, direction.z * scale};
     JPH_RayCastResult ray_hit = {.bodyID = kJphInvalidBodyId, .fraction = 1.0f, .subShapeID2 = 0};
-    const JPH_NarrowPhaseQuery *query = JPH_PhysicsSystem_GetNarrowPhaseQuery(world->system);
+    const JPH_NarrowPhaseQuery *query = reinterpret_cast<const JPH_NarrowPhaseQuery *>(
+        &world->physics_system.GetNarrowPhaseQuery());
     const bool has_hit =
         JPH_NarrowPhaseQuery_CastRay(query, &origin, &ray_direction, &ray_hit, filters.broad_phase.get(),
                                      filters.object_layer.get(), filters.body.get());
@@ -312,7 +315,8 @@ std::expected<void, Error> PhysicsWorldRaycast(PhysicsWorld *world, JPH_RVec3 or
         if (valid_handle) {
             JPH_Vec3 normal = {};
             const JPH_BodyLockInterface *lock_interface =
-                JPH_PhysicsSystem_GetBodyLockInterfaceNoLock(world->system);
+                reinterpret_cast<const JPH_BodyLockInterface *>(
+                    &world->physics_system.GetBodyLockInterfaceNoLock());
             JPH_BodyLockRead body_lock;
             JPH_BodyLockInterface_LockRead(lock_interface, ray_hit.bodyID, &body_lock);
             if (body_lock.body) {
@@ -349,9 +353,11 @@ std::expected<void, Error> PhysicsWorldRaycastBatch(PhysicsWorld *world, const f
     std::memset(results, 0, count * sizeof(*results));
     query_begin(world);
 
-    const JPH_NarrowPhaseQuery *query = JPH_PhysicsSystem_GetNarrowPhaseQuery(world->system);
+    const JPH_NarrowPhaseQuery *query = reinterpret_cast<const JPH_NarrowPhaseQuery *>(
+        &world->physics_system.GetNarrowPhaseQuery());
     const JPH_BodyLockInterface *lock_interface =
-        JPH_PhysicsSystem_GetBodyLockInterfaceNoLock(world->system);
+        reinterpret_cast<const JPH_BodyLockInterface *>(
+            &world->physics_system.GetBodyLockInterfaceNoLock());
     JPH_BodyInterface *body_interface = world->body_interface;
 
     for (size_t i = 0; i < count; ++i) {

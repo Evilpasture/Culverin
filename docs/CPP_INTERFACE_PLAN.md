@@ -1,7 +1,7 @@
 # Phase 2 Plan: Direct Jolt C++ API + C++ Interfaces Between Subsystems
 
-Status: **A0, naming dissolution, enum-class sweep, and B1 landed**
-(B1 on top of `73276cf`); A1 next.
+Status: **A0, naming dissolution, enum-class sweep, B1, and A1 landed**
+(A1 on top of `5aefa8e`); A2 next.
 Prerequisite: the C++23 migration
 (`docs/CPP23_MIGRATION.md`) has landed. All acceptance oracles from that
 migration apply unchanged to every phase below: full test suite at
@@ -49,11 +49,16 @@ permanent dual paths: each phase deletes what it replaces.
   of a link error, so Phase A0 moves the defines onto the Jolt CMake
   target as `PUBLIC` compile definitions and static-asserts
   `sizeof(JPH::RVec3)`, `JPH::ObjectLayer` width, etc. in one place.
-- **Jolt handles already *are* the C++ objects.** JoltC's opaque
+- **Most Jolt handles already *are* the C++ objects.** JoltC's opaque
   pointers are the native pointers (our `ContactListener` relies on
-  this today). Migration can therefore be file-by-file with both APIs
-  linking against the same `libJolt` — but JoltC is deleted at the
-  end (Phase A5), not kept as a fallback.
+  this today), so migration can be file-by-file with both APIs
+  linking against the same `libJolt`. The one exception, discovered
+  in A1: `JPH_PhysicsSystem` is a JoltC *wrapper* (three filter
+  pointers + a `JPH::PhysicsSystem*`, registered in a private
+  native→wrapper reverse map), so a directly owned system can never
+  be passed to a `JPH_PhysicsSystem_*` function; every system
+  consumer had to convert in A1 rather than alias. JoltC is still
+  deleted at the end (Phase A5), not kept as a fallback.
 - **RTTI** (resolved in A0): Jolt was already built with its own
   `CPP_RTTI_ENABLED=ON` option, and nothing in Culverin uses
   `typeid`/`dynamic_cast` on Jolt types. `JoltRttiShim.cpp` was
@@ -72,7 +77,7 @@ Handle mapping (representative):
 | --- | --- |
 | `JPH_PhysicsSystem*` + `JPH_PhysicsSystem_Create/Destroy` | `JPH::PhysicsSystem` member (value) |
 | `JPH_BodyInterface*` | `JPH::BodyInterface&` from the system — never null, never owned |
-| `JPH_JobSystem*`, `JPH_TempAllocator*` | `JPH::JobSystemThreadPool`, `JPH::TempAllocatorImpl` members |
+| `JPH_JobSystem*`, `JPH_TempAllocator*` | `std::unique_ptr<JPH::JobSystemThreadPool>` (64-byte alignment exceeds what CPython world-object allocation guarantees), `std::unique_ptr<JPH::TempAllocator>` over `TempAllocatorImplWithMallocFallback` |
 | `JPH_BodyCreationSettings*` + 10 setter calls | `JPH::BodyCreationSettings` value, public fields |
 | `JPH_Shape*`/`JPH_ShapeSettings*` + manual `_Destroy` | `JPH::RefConst<JPH::Shape>`; settings values, `->Create()` |
 | `JPH_Constraint*` | `JPH::Ref<JPH::Constraint>`; per-type settings values |
@@ -104,15 +109,32 @@ introduces live in `CPH::` (e.g. `CPH::Stat`, `CPH::Prof*` in
 `core/Profiling.hpp`); the tree-wide `CPH_` dissolution is the next,
 separate mechanical patch.
 
-**A1 — Core system + stepping** (`PhysicsWorldState.hpp`,
-`PhysicsWorld.cpp`, `ShadowSync` untouched in behavior).
-`CPH_PhysicsWorld` owns `PhysicsSystem`/`JobSystemThreadPool`/
-`TempAllocatorImpl` by value; own layer/filter classes replace the
-three Table helpers; `CharacterVsCharacterCollisionSimple` member.
-*Deletes:* `JPH_PhysicsWorldInitJolt`'s create/destroy plumbing, the
-dtor's ownership-transfer branches, `g_jph_init_lock` rationale
-re-checked against direct `PhysicsSystem::Init` (keep the lock if
-Jolt lazy statics still need it under TSan — verify, document).
+**A1 — Core system + stepping. (Done.)** `PhysicsWorld` owns
+`JPH::PhysicsSystem` and `JPH::CharacterVsCharacterCollisionSimple`
+by value, declared last so member destruction tears the system down
+before all body/shape/constraint storage; the job system and temp
+allocator are `unique_ptr`-owned natives (the thread pool needs
+64-byte alignment CPython allocation cannot promise, and the
+allocator keeps JoltC's `ImplWithMallocFallback` overflow behavior).
+Stateless `final` layer/filter classes in `PhysicsWorld.cpp` replace
+the three Table helpers with the exact fixed 3-layer matrix. Because
+`JPH_PhysicsSystem` is a wrapper (see Constraints), A1 converted
+*every* system consumer, not just init/step: stepping, gravity,
+contact-listener attach, constraint add/remove, body-lock/narrow/
+broad query getters, ShadowSync active-body access, debug drawing,
+Ship/Vehicle step listeners (Ship's callback now takes the no-lock
+body interface from its own world — JoltC's reverse map cannot see a
+direct system), `CharacterVirtual` construction + `ExtendedUpdate`
+(system default layer filters, world temp allocator), and ragdoll
+creation. `body_interface` remains as a JoltC view of
+`physics_system.GetBodyInterface()` until A2/B2; no
+`JPH_PhysicsSystem_*` call remains anywhere. `g_jph_init_lock` is
+**kept**: direct `PhysicsSystem::Init` still reaches process-wide
+lazy state that TSan cannot prove race-free across worlds, so
+bring-up stays serialized and the comment says why. One deliberate
+fix falls out: sanitizer builds now pass 0 worker threads to the
+pool directly — JoltC used to translate that 0 into auto-detect, so
+the intended synchronous TSan stepping never actually happened.
 
 **A2 — Body creation & shapes** (`PhysicsWorldCreation`,
 `CommandBuffer`, shape cache). Settings become values;

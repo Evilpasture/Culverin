@@ -4,6 +4,7 @@
 #include "physics/InternalQuery.hpp"
 #include "physics/PhysicsWorld.hpp"
 #include "physics/SlotState.hpp"
+#include <Jolt/Physics/Ragdoll/Ragdoll.h>
 #include <cstring>
 #include <limits>
 
@@ -241,7 +242,7 @@ std::expected<void, Error>
 PhysicsWorldCreateRagdollInstance(PhysicsWorld *world, JPH_RagdollSettings *settings,
                                       JPH_RVec3 position, JPH_Quat rotation, uint64_t user_data,
                                       JPH_Ragdoll **out_ragdoll, size_t *out_body_count) {
-    if (!world || !settings || !out_ragdoll || !out_body_count || !world->system) {
+    if (!world || !settings || !out_ragdoll || !out_body_count || !world->jolt_initialized) {
         return std::unexpected(WorldCreationError::InvalidArgument);
     }
     *out_ragdoll    = nullptr;
@@ -250,10 +251,14 @@ PhysicsWorldCreateRagdollInstance(PhysicsWorld *world, JPH_RagdollSettings *sett
     const std::scoped_lock trampoline(world->jph_trampoline_lock);
     JPH_RagdollSettings_CalculateBodyIndexToConstraintIndex(settings);
     JPH_RagdollSettings_CalculateConstraintIndexToBodyIdxPair(settings);
-    JPH_Ragdoll *ragdoll = JPH_RagdollSettings_CreateRagdoll(settings, world->system, 0, user_data);
-    if (!ragdoll) {
+    auto *native_settings = reinterpret_cast<JPH::RagdollSettings *>(settings);
+    JPH::Ragdoll *native_ragdoll =
+        native_settings->CreateRagdoll(0, user_data, &world->physics_system);
+    if (!native_ragdoll) {
         return std::unexpected(WorldCreationError::RagdollFailed);
     }
+    native_ragdoll->AddRef();
+    auto *ragdoll = reinterpret_cast<JPH_Ragdoll *>(native_ragdoll);
 
     const size_t joint_count =
         (size_t)JPH_Skeleton_GetJointCount(JPH_RagdollSettings_GetSkeleton(settings));

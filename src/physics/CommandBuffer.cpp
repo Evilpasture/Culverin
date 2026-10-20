@@ -247,7 +247,8 @@ struct FlushContext {
         }
 
         const JPH_BodyLockInterface *li =
-            JPH_PhysicsSystem_GetBodyLockInterface(world->system);
+            reinterpret_cast<const JPH_BodyLockInterface *>(
+                &world->physics_system.GetBodyLockInterface());
         // Lock each body in a separate scope: Jolt hashes BodyIDs onto a
         // small mutex array, so holding two write locks can recurse one
         // mutex and abort (EDEADLK). The world is quiesced here, so the
@@ -268,7 +269,7 @@ struct FlushContext {
                                               b1, b2)
                        : nullptr;
         if (constraint) {
-            JPH_PhysicsSystem_AddConstraint(world->system, constraint);
+            world->physics_system.AddConstraint(reinterpret_cast<JPH::Constraint *>(constraint));
             c_entry.constraint = constraint;
             c_entry.state.store(std::to_underlying(SlotState::Alive), std::memory_order::release);
         } else {

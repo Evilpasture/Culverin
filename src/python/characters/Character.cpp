@@ -618,17 +618,28 @@ const JPH_CharacterContactListener_Procs kCharListenerProcs = {
 
     JPH_CharacterVirtual_SetLinearVelocity(self->character, &j_v);
 
-    JPH_ExtendedUpdateSettings update_settings       = {};
-    update_settings.stickToFloorStepDown             = JPH_Vec3{0.0f, -0.5f, 0.0f};
-    update_settings.walkStairsStepUp                 = JPH_Vec3{0.0f, 0.4f, 0.0f};
-    update_settings.walkStairsMinStepForward         = 0.02f;
-    update_settings.walkStairsStepForwardTest        = 0.15f;
-    update_settings.walkStairsCosAngleForwardContact = 0.996f;
+    const JPH::CharacterVirtual::ExtendedUpdateSettings update_settings{
+        .mStickToFloorStepDown             = JPH::Vec3(0.0f, -0.5f, 0.0f),
+        .mWalkStairsStepUp                 = JPH::Vec3(0.0f, 0.4f, 0.0f),
+        .mWalkStairsMinStepForward         = 0.02f,
+        .mWalkStairsStepForwardTest        = 0.15f,
+        .mWalkStairsCosAngleForwardContact = 0.996f,
+        .mWalkStairsStepDownExtra          = JPH::Vec3::sZero()};
+
+    auto *native_character = reinterpret_cast<JPH::CharacterVirtual *>(self->character);
+    auto &physics_system   = self->world->physics.physics_system;
+    constexpr auto character_layer =
+        static_cast<JPH::ObjectLayer>(std::to_underlying(ObjectLayer::Dynamic));
+    const auto &body_filter  = *reinterpret_cast<const JPH::BodyFilter *>(self->body_filter);
+    const auto &shape_filter = *reinterpret_cast<const JPH::ShapeFilter *>(self->shape_filter);
+    auto *temp_allocator     = self->world->physics.temp_allocator.get();
 
     (self->world->physics.jph_trampoline_lock).lock();
-    Py_BEGIN_ALLOW_THREADS JPH_CharacterVirtual_ExtendedUpdate(
-        self->character, dt, &update_settings, std::to_underlying(ObjectLayer::Dynamic), self->world->physics.system,
-        self->body_filter, self->shape_filter);
+    Py_BEGIN_ALLOW_THREADS native_character->ExtendedUpdate(
+        dt, physics_system.GetGravity(), update_settings,
+        physics_system.GetDefaultBroadPhaseLayerFilter(character_layer),
+        physics_system.GetDefaultLayerFilter(character_layer), body_filter, shape_filter,
+        *temp_allocator);
     Py_END_ALLOW_THREADS (self->world->physics.jph_trampoline_lock).unlock();
 
     // 4. POST-MOVE SYNC
@@ -857,9 +868,9 @@ void CharacterDealloc(CharacterObject *self) {
     // --- 2. JOLT DESTRUCTION (Hard Serialized) ---
     (self->world->physics.jph_trampoline_lock).lock();
 
-    if (self->world->physics.char_vs_char_manager && self->character) {
-        JPH_CharacterVsCharacterCollisionSimple_RemoveCharacter(
-            self->world->physics.char_vs_char_manager, self->character);
+    if (self->character) {
+        self->world->physics.character_vs_character.Remove(
+            reinterpret_cast<JPH::CharacterVirtual *>(self->character));
     }
 
     if (self->character) {
@@ -904,30 +915,21 @@ alloc_j_char(PhysicsWorldObject *self, PositionVector pos, CharacterParams param
         return nullptr;
     }
 
-    JPH_CharacterVirtualSettings settings;
-    JPH_CharacterVirtualSettings_Init(&settings);
-    settings.base.shape                         = shape;
+    JPH::CharacterVirtualSettings settings;
+    settings.mShape                             = reinterpret_cast<JPH::Shape *>(shape);
     static constexpr float DegreesPerSemiCircle = 180.0f;
-    settings.base.maxSlopeAngle = params.max_slope * (JPH_M_PI / DegreesPerSemiCircle);
+    settings.mMaxSlopeAngle = params.max_slope * (JPH_M_PI / DegreesPerSemiCircle);
 
-    JPH_RVec3 initial_position{static_cast<double>(pos.x), static_cast<double>(pos.y),
-                               static_cast<double>(pos.z)};
-    JPH_Quat initial_rotation{0, 0, 0, 1};
-    JPH_CharacterVirtual *j_char = JPH_CharacterVirtual_Create(
-        &settings, &initial_position, &initial_rotation, 1, self->physics.system);
+    const JPH::RVec3 initial_position(pos.x, pos.y, pos.z);
+    auto *native_character =
+        new JPH::CharacterVirtual(&settings, initial_position, JPH::Quat::sIdentity(), 1,
+                                  &self->physics.physics_system);
 
     JPH_Shape_Destroy(shape);
-    if (!j_char) {
-        return nullptr;
-    }
 
-    if (self->physics.char_vs_char_manager) {
-        JPH_CharacterVsCharacterCollisionSimple_AddCharacter(self->physics.char_vs_char_manager,
-                                                             j_char);
-        JPH_CharacterVirtual_SetCharacterVsCharacterCollision(j_char,
-                                                              self->physics.char_vs_char_manager);
-    }
-    return j_char;
+    self->physics.character_vs_character.Add(native_character);
+    native_character->SetCharacterVsCharacterCollision(&self->physics.character_vs_character);
+    return reinterpret_cast<JPH_CharacterVirtual *>(native_character);
 }
 
 // Helper 2: Shadow Buffer Registration (Atomic Commit)
