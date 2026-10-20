@@ -57,18 +57,16 @@ size_t FastParseCmpSlow(PyObject *key, const FastParserCore *fastparse) {
 }
 
 [[gnu::noinline, gnu::cold, nodiscard]]
-bool FastParseReportMissing(const FastParserCore *fastparser, uint64_t provided_mask) {
+ParseError FastParseReportMissing(const FastParserCore *fastparser, uint64_t provided_mask) {
     const char *pname = fastparser->parser_name ? fastparser->parser_name : "function";
 
-    PyObject *missing_details = PyList_New(0);
-    PyObject *signature_parts = PyList_New(0);
+    Ref missing_details{PyList_New(0)};
+    Ref signature_parts{PyList_New(0)};
 
     // If we can't allocate lists for the fancy error, fall back to a basic error
     if (Unlikely(!missing_details || !signature_parts)) {
-        Py_XDECREF(missing_details);
-        Py_XDECREF(signature_parts);
         PyErr_Format(PyExc_TypeError, "%s() missing required positional arguments", pname);
-        return false;
+        return CaptureError();
     }
 
     for (size_t i = 0; i < fastparser->count; i++) {
@@ -87,55 +85,47 @@ bool FastParseReportMissing(const FastParserCore *fastparser, uint64_t provided_
 
         // 1. Log specifically which ones are missing
         if (is_required && !is_provided) {
-            PyObject *m = PyUnicode_FromFormat("    - %s (%s)", cold->name, type_info);
-            if (m) {
-                PyList_Append(missing_details, m);
-                Py_DECREF(m);
+            Ref detail{PyUnicode_FromFormat("    - %s (%s)", cold->name, type_info)};
+            if (detail) {
+                PyList_Append(missing_details.get(), detail.get());
             }
         }
 
         // 2. Build the full signature context [arg: type]
-        PyObject *sig_part = static_cast<int>(is_required)
-                                 ? PyUnicode_FromFormat("%s: %s", cold->name, type_info)
-                                 : PyUnicode_FromFormat("[%s: %s]", cold->name, type_info);
+        Ref sig_part{static_cast<int>(is_required)
+                         ? PyUnicode_FromFormat("%s: %s", cold->name, type_info)
+                         : PyUnicode_FromFormat("[%s: %s]", cold->name, type_info)};
 
         if (sig_part) {
-            PyList_Append(signature_parts, sig_part);
-            Py_DECREF(sig_part);
+            PyList_Append(signature_parts.get(), sig_part.get());
         }
     }
 
-    Py_ssize_t num_missing = PyList_Size(missing_details);
-    PyObject *newline      = PyUnicode_FromString("\n");
-    PyObject *comma        = PyUnicode_FromString(", ");
+    Py_ssize_t num_missing = PyList_Size(missing_details.get());
+    Ref newline{PyUnicode_FromString("\n")};
+    Ref comma{PyUnicode_FromString(", ")};
 
     // Check for NULL before joining (OOM protection)
-    PyObject *joined_missing = (newline) ? PyUnicode_Join(newline, missing_details) : nullptr;
-    PyObject *joined_sig     = (comma) ? PyUnicode_Join(comma, signature_parts) : nullptr;
+    Ref joined_missing{newline ? PyUnicode_Join(newline.get(), missing_details.get()) : nullptr};
+    Ref joined_sig{comma ? PyUnicode_Join(comma.get(), signature_parts.get()) : nullptr};
 
     if (joined_missing && joined_sig) {
         PyErr_Format(
             PyExc_TypeError,
             "%s() missing %zd required positional argument%s:\n%U\n\nExpected signature:\n  %s(%U)",
-            pname, num_missing, num_missing == 1 ? "" : "s", joined_missing, pname, joined_sig);
+            pname, num_missing, num_missing == 1 ? "" : "s", joined_missing.get(), pname,
+            joined_sig.get());
     } else {
         // Fallback if string joining failed due to memory pressure
         PyErr_Format(PyExc_TypeError, "%s() missing %zd required positional arguments", pname,
                      num_missing);
     }
 
-    // Cleanup: Py_XDECREF is safe for nullptrs
-    Py_XDECREF(newline);
-    Py_XDECREF(comma);
-    Py_XDECREF(joined_missing);
-    Py_XDECREF(joined_sig);
-    Py_XDECREF(missing_details);
-    Py_XDECREF(signature_parts);
-
-    return false;
+    return CaptureError();
 }
+
 [[gnu::noinline, nodiscard]]
-bool FastParseReportTypeError(const FastParserCore *fastparser, size_t index, PyObject *val) {
+ParseError FastParseReportTypeError(const FastParserCore *fastparser, size_t index, PyObject *val) {
     const FastArgSpecCold *cold_spec = &fastparser->cold_specs[index];
     const FastArgSpecHot *hot_spec   = &fastparser->hot_specs[index];
     const char *pname = fastparser->parser_name ? fastparser->parser_name : "function";
@@ -145,33 +135,33 @@ bool FastParseReportTypeError(const FastParserCore *fastparser, size_t index, Py
     const char *fallback_name = (hot_spec->type_guard) ? hot_spec->type_guard->tp_name : "object";
     const char *expected      = (cold_spec->type_name) ? cold_spec->type_name : fallback_name;
 
-    PyObject *val_repr        = nullptr;
-    PyObject *signature_parts = nullptr;
-    PyObject *comma           = nullptr;
-    PyObject *joined_sig      = nullptr;
+    // The compact message is both the OOM fallback and the last line of defence.
+    const auto basic_error = [&]() {
+        PyErr_Format(PyExc_TypeError, "%s() argument '%s' must be %s, not %s", pname,
+                     cold_spec->name, expected, Py_TYPE(val)->tp_name);
+        return CaptureError();
+    };
 
     // 1. Safe Repr Acquisition (Truncated to avoid overwhelming the error message)
-    val_repr = PyObject_Repr(val);
+    Ref val_repr{PyObject_Repr(val)};
     if (Unlikely(!val_repr)) {
         PyErr_Clear(); // Clear OOM from Repr to set our TypeError
         val_repr = PyUnicode_FromString("<repr unavailable>");
-    } else if (PyUnicode_GetLength(val_repr) > 100) {
-        PyObject *truncated = PyUnicode_Substring(val_repr, 0, 97);
+    } else if (PyUnicode_GetLength(val_repr.get()) > 100) {
+        Ref truncated{PyUnicode_Substring(val_repr.get(), 0, 97)};
         if (truncated) {
-            PyObject *fmt = PyUnicode_FromFormat("%U...", truncated);
-            Py_DECREF(truncated);
-            if (fmt) {
-                Py_DECREF(val_repr);
-                val_repr = fmt;
+            Ref formatted{PyUnicode_FromFormat("%U...", truncated.get())};
+            if (formatted) {
+                val_repr = std::move(formatted);
             }
         }
     }
 
     // 2. Diagnostic Signature Construction: (e.g. "func(arg1: int, !!! arg2: str !!!, [arg3:
     // float])")
-    signature_parts = PyList_New(0);
+    Ref signature_parts{PyList_New(0)};
     if (Unlikely(!signature_parts)) {
-        goto basic_error;
+        return basic_error();
     }
 
     for (size_t i = 0; i < fastparser->count; i++) {
@@ -187,21 +177,20 @@ bool FastParseReportTypeError(const FastParserCore *fastparser, size_t index, Py
         // Highlight the offending argument with exclamation marks
         const char *fmt = (i == index) ? "!!! %s: %s !!!" : FMT_MAP[static_cast<int>(is_required)];
 
-        PyObject *part = PyUnicode_FromFormat(fmt, s_cold->name, t);
+        Ref part{PyUnicode_FromFormat(fmt, s_cold->name, t)};
         if (part) {
-            PyList_Append(signature_parts, part);
-            Py_DECREF(part);
+            PyList_Append(signature_parts.get(), part.get());
         }
     }
 
-    comma = PyUnicode_FromString(", ");
+    Ref comma{PyUnicode_FromString(", ")};
     if (Unlikely(!comma)) {
-        goto basic_error;
+        return basic_error();
     }
 
-    joined_sig = PyUnicode_Join(comma, signature_parts);
+    Ref joined_sig{PyUnicode_Join(comma.get(), signature_parts.get())};
     if (Unlikely(!joined_sig)) {
-        goto basic_error;
+        return basic_error();
     }
 
     // 3. Final Fancy Format
@@ -210,54 +199,45 @@ bool FastParseReportTypeError(const FastParserCore *fastparser, size_t index, Py
                  "Received value: %U\n"
                  "Signature context:\n  %s(%U)",
                  pname, cold_spec->name, expected, Py_TYPE(val)->tp_name,
-                 val_repr ? val_repr : Py_None, pname, joined_sig);
-    goto cleanup;
-
-basic_error:
-    // If we ran out of memory making the fancy message, give the standard Python-style one
-    PyErr_Format(PyExc_TypeError, "%s() argument '%s' must be %s, not %s", pname, cold_spec->name,
-                 expected, Py_TYPE(val)->tp_name);
-
-cleanup:
-    Py_XDECREF(comma);
-    Py_XDECREF(joined_sig);
-    Py_XDECREF(signature_parts);
-    Py_XDECREF(val_repr);
-    return false;
+                 val_repr ? val_repr.get() : Py_None, pname, joined_sig.get());
+    return CaptureError();
 }
+
 [[gnu::noinline, nodiscard]]
-bool FastParseReportMultiple(const FastParserCore *fastparser, size_t index) {
+ParseError FastParseReportMultiple(const FastParserCore *fastparser, size_t index) {
     const char *pname    = fastparser->parser_name ? fastparser->parser_name : "function";
     const char *arg_name = fastparser->cold_specs[index].name;
 
-    PyObject *parts = nullptr;
-    PyObject *comma = nullptr;
-    PyObject *sig   = nullptr;
+    const auto basic_error = [&]() {
+        // Fallback if we can't allocate the fancy message
+        PyErr_Format(PyExc_TypeError, "%s() got multiple values for argument '%s'", pname,
+                     arg_name);
+        return CaptureError();
+    };
 
     // 1. Diagnostic Signature Construction
-    parts = PyList_New(0);
+    Ref parts{PyList_New(0)};
     if (Unlikely(!parts)) {
-        goto basic_error;
+        return basic_error();
     }
 
     for (size_t i = 0; i < fastparser->count; i++) {
         const char *name = fastparser->cold_specs[i].name;
-        PyObject *p =
-            (i == index) ? PyUnicode_FromFormat("!!! %s !!!", name) : PyUnicode_FromString(name);
-        if (p) {
-            PyList_Append(parts, p);
-            Py_DECREF(p);
+        Ref part{(i == index) ? PyUnicode_FromFormat("!!! %s !!!", name)
+                              : PyUnicode_FromString(name)};
+        if (part) {
+            PyList_Append(parts.get(), part.get());
         }
     }
 
-    comma = PyUnicode_FromString(", ");
+    Ref comma{PyUnicode_FromString(", ")};
     if (Unlikely(!comma)) {
-        goto basic_error;
+        return basic_error();
     }
 
-    sig = PyUnicode_Join(comma, parts);
+    Ref sig{PyUnicode_Join(comma.get(), parts.get())};
     if (Unlikely(!sig)) {
-        goto basic_error;
+        return basic_error();
     }
 
     // 2. Final Fancy Format
@@ -265,26 +245,13 @@ bool FastParseReportMultiple(const FastParserCore *fastparser, size_t index) {
                  "%s() got multiple values for argument '%s'.\n"
                  "It was provided both as a positional argument and as a keyword argument.\n\n"
                  "Signature context:\n  %s(%U)",
-                 pname, arg_name, pname, sig);
-    goto cleanup;
-
-basic_error:
-    // Fallback if we can't allocate the fancy message
-    PyErr_Format(PyExc_TypeError, "%s() got multiple values for argument '%s'", pname, arg_name);
-
-cleanup:
-    Py_XDECREF(comma);
-    Py_XDECREF(sig);
-    Py_XDECREF(parts);
-    return false;
+                 pname, arg_name, pname, sig.get());
+    return CaptureError();
 }
-[[gnu::noinline]]
-bool FastParseReportTooMany(const FastParserCore *fastparser, Py_ssize_t nargs) {
-    const char *pname = fastparser->parser_name ? fastparser->parser_name : "function";
 
-    PyObject *parts = nullptr;
-    PyObject *comma = nullptr;
-    PyObject *sig   = nullptr;
+[[gnu::noinline]]
+ParseError FastParseReportTooMany(const FastParserCore *fastparser, Py_ssize_t nargs) {
+    const char *pname = fastparser->parser_name ? fastparser->parser_name : "function";
 
     // 1. Calculate counts using the bitmask
     // We count set bits in required_mask to find how many args are mandatory.
@@ -299,29 +266,35 @@ bool FastParseReportTooMany(const FastParserCore *fastparser, Py_ssize_t nargs) 
         snprintf(count_str, sizeof(count_str), "from %zu to %zu", req_count, total_count);
     }
 
+    const auto basic_error = [&]() {
+        // Fallback if we can't allocate the fancy message strings
+        PyErr_Format(PyExc_TypeError, "%s() takes %s positional arguments but %zd were given",
+                     pname, count_str, nargs);
+        return CaptureError();
+    };
+
     // 2. Diagnostic Signature Construction (Using Cold Spec names)
-    parts = PyList_New(0);
+    Ref parts{PyList_New(0)};
     if (Unlikely(!parts)) {
-        goto basic_error;
+        return basic_error();
     }
 
     for (size_t i = 0; i < total_count; i++) {
         // Names are stored in the Cold specs to keep the Hot path lean
-        PyObject *p = PyUnicode_FromString(fastparser->cold_specs[i].name);
-        if (p) {
-            PyList_Append(parts, p);
-            Py_DECREF(p);
+        Ref part{PyUnicode_FromString(fastparser->cold_specs[i].name)};
+        if (part) {
+            PyList_Append(parts.get(), part.get());
         }
     }
 
-    comma = PyUnicode_FromString(", ");
+    Ref comma{PyUnicode_FromString(", ")};
     if (Unlikely(!comma)) {
-        goto basic_error;
+        return basic_error();
     }
 
-    sig = PyUnicode_Join(comma, parts);
+    Ref sig{PyUnicode_Join(comma.get(), parts.get())};
     if (Unlikely(!sig)) {
-        goto basic_error;
+        return basic_error();
     }
 
     // 3. Final Fancy Format
@@ -329,19 +302,8 @@ bool FastParseReportTooMany(const FastParserCore *fastparser, Py_ssize_t nargs) 
                  "%s() takes %s positional arguments but %zd were given.\n\n"
                  "This function does not accept variable positional arguments (*args).\n"
                  "Expected sequence:\n  %s(%U)",
-                 pname, count_str, nargs, pname, sig);
-    goto cleanup;
-
-basic_error:
-    // Fallback if we can't allocate the fancy message strings
-    PyErr_Format(PyExc_TypeError, "%s() takes %s positional arguments but %zd were given", pname,
-                 count_str, nargs);
-
-cleanup:
-    Py_XDECREF(comma);
-    Py_XDECREF(sig);
-    Py_XDECREF(parts);
-    return false;
+                 pname, count_str, nargs, pname, sig.get());
+    return CaptureError();
 }
 
 [[gnu::always_inline, gnu::const]]
@@ -350,32 +312,17 @@ static inline int fast_parse_min3(int a, int b, int c) {
     return m < c ? m : c;
 }
 
+[[gnu::noinline, gnu::cold, nodiscard]]
 static int fast_parse_levenshtein(const char *s1, const char *s2) {
-    // Assume s1 is the user input, s2 is the candidate from specs
-    // Strip prefixes like 'ob_' or '_' if your interning logic needs it
-    int len1 = static_cast<int>(strlen(s1));
-    int len2 = static_cast<int>(strlen(s2));
+    const int len1     = static_cast<int>(strlen(s1));
+    const int len2     = static_cast<int>(strlen(s2));
+    constexpr auto max_len = 64;
 
-    // Swap to ensure len1 >= len2 for smaller stack usage
-    if (len1 < len2) {
-        const char *tmp = s1;
-        s1              = s2;
-        s2              = tmp;
-        int t           = len1;
-        len1            = len2;
-        len2            = t;
+    if (len1 >= max_len || len2 >= max_len) {
+        return max_len;
     }
 
-    if (len2 == 0) {
-        return len1;
-    }
-    if (len1 > 64) {
-        len1 = 64; // Cap for safety
-    }
-
-    // uint8_t is enough for distance on 64-char strings
-    alignas(16) uint8_t column[65];
-#pragma unroll 4
+    uint8_t column[max_len + 1];
     for (int i = 0; i <= len2; i++) {
         column[i] = static_cast<uint8_t>(i);
     }
@@ -389,28 +336,25 @@ static int fast_parse_levenshtein(const char *s1, const char *s2) {
 
             // Branchless min if your compiler doesn't do it automatically
             column[y] = fast_parse_min3(column[y] + 1,     // Deletion
-                                             column[y - 1] + 1, // Insertion
-                                             last_diag + cost); // Substitution
+                                        column[y - 1] + 1, // Insertion
+                                        last_diag + cost); // Substitution
             last_diag = old_column;
         }
     }
     return static_cast<int>(column[len2]);
 }
+
 [[gnu::noinline]]
-bool FastParseReportUnknownKeyword(const FastParserCore *fastparser, PyObject *key) {
+ParseError FastParseReportUnknownKeyword(const FastParserCore *fastparser, PyObject *key) {
     const char *actual_name = PyUnicode_AsUTF8(key);
     if (!actual_name) {
-        return false;
+        return CaptureError();
     }
     constexpr auto max_dist          = 3;
     const char *best_match           = nullptr;
     constexpr auto initial_best_dist = 100;
     int best_dist                    = initial_best_dist;
     const char *pname = fastparser->parser_name ? fastparser->parser_name : "function";
-
-    PyObject *valid_args_list = nullptr;
-    PyObject *newline         = nullptr;
-    PyObject *joined          = nullptr;
 
     // 1. Find the best fuzzy match (Scanning Cold names)
     for (size_t i = 0; i < fastparser->count; i++) {
@@ -426,10 +370,23 @@ bool FastParseReportUnknownKeyword(const FastParserCore *fastparser, PyObject *k
         }
     }
 
+    // Fallback logic for low-memory situations (and for the "no suggestion" case).
+    const auto basic_error = [&]() {
+        if (best_match && best_dist < max_dist) {
+            PyErr_Format(PyExc_TypeError,
+                         "'%s' is an invalid keyword argument for %s(); did you mean '%s'?",
+                         actual_name, pname, best_match);
+        } else {
+            PyErr_Format(PyExc_TypeError, "'%s' is an invalid keyword argument for %s()",
+                         actual_name, pname);
+        }
+        return CaptureError();
+    };
+
     // 2. Diagnostic Message Construction (Building the list of valid options)
-    valid_args_list = PyList_New(0);
+    Ref valid_args_list{PyList_New(0)};
     if (Unlikely(!valid_args_list)) {
-        goto basic_error;
+        return basic_error();
     }
 
     for (size_t i = 0; i < fastparser->count; i++) {
@@ -446,22 +403,21 @@ bool FastParseReportUnknownKeyword(const FastParserCore *fastparser, PyObject *k
         const char *fb = hot->type_guard ? hot->type_guard->tp_name : "object";
         const char *t  = cold->type_name ? cold->type_name : fb;
 
-        PyObject *info = PyUnicode_FromFormat("    - %s: %s%s", cold->name, t,
-                                              static_cast<int>(is_required) ? " [required]" : "");
+        Ref info{PyUnicode_FromFormat("    - %s: %s%s", cold->name, t,
+                                      static_cast<int>(is_required) ? " [required]" : "")};
         if (info) {
-            PyList_Append(valid_args_list, info);
-            Py_DECREF(info);
+            PyList_Append(valid_args_list.get(), info.get());
         }
     }
 
-    newline = PyUnicode_FromString("\n");
+    Ref newline{PyUnicode_FromString("\n")};
     if (Unlikely(!newline)) {
-        goto basic_error;
+        return basic_error();
     }
 
-    joined = PyUnicode_Join(newline, valid_args_list);
+    Ref joined{PyUnicode_Join(newline.get(), valid_args_list.get())};
     if (Unlikely(!joined)) {
-        goto basic_error;
+        return basic_error();
     }
 
     // 3. Format "Did you mean" suggestion
@@ -475,56 +431,44 @@ bool FastParseReportUnknownKeyword(const FastParserCore *fastparser, PyObject *k
     // 4. Final Fancy Format
     PyErr_Format(PyExc_TypeError,
                  "'%s' is an invalid keyword argument for %s().%s\nValid arguments are:\n%U",
-                 actual_name, pname, suggestion, joined);
-    goto cleanup;
-
-basic_error:
-    // Fallback logic for low-memory situations
-    if (best_match && best_dist < max_dist) {
-        PyErr_Format(PyExc_TypeError,
-                     "'%s' is an invalid keyword argument for %s(); did you mean '%s'?",
-                     actual_name, pname, best_match);
-    } else {
-        PyErr_Format(PyExc_TypeError, "'%s' is an invalid keyword argument for %s()", actual_name,
-                     pname);
-    }
-
-cleanup:
-    Py_XDECREF(newline);
-    Py_XDECREF(joined);
-    Py_XDECREF(valid_args_list);
-    return false;
+                 actual_name, pname, suggestion, joined.get());
+    return CaptureError();
 }
 
 [[gnu::noinline]]
-bool FastParseReportConversionError(const FastParserCore *fastparser, size_t index,
-                                        PyObject *val) {
+ParseError FastParseReportConversionError(const FastParserCore *fastparser, size_t index,
+                                          PyObject *val) {
     // 1. Capture the original "dry" error (e.g., OverflowError: "can't convert...")
-    PyObject *exc = PyErr_GetRaisedException();
+    Ref exc{PyErr_GetRaisedException()};
     if (Unlikely(!exc)) {
-        return false;
+        return CaptureError();
     }
 
     const char *pname    = fastparser->parser_name ? fastparser->parser_name : "function";
     const char *arg_name = fastparser->cold_specs[index].name;
 
+    // Safety valve: if any allocation below fails, re-raise the original
+    // exception so the user still sees the dry error rather than an OOM.
+    const auto oom_fallback = [&]() {
+        PyErr_SetRaisedException(exc.release());
+        return CaptureError();
+    };
+
     // 2. Best-effort acquisition of Value Repr
-    PyObject *val_repr = PyObject_Repr(val);
+    Ref val_repr{PyObject_Repr(val)};
     if (Unlikely(!val_repr)) {
         PyErr_Clear(); // Clear OOM from repr attempt
         val_repr = PyUnicode_FromString("<repr unavailable>");
     }
 
-    // 3. Setup diagnostics components (OOM-vulnerable block)
-    PyObject *parts   = PyList_New(0);
-    PyObject *comma   = PyUnicode_FromString(", ");
-    PyObject *sig     = nullptr;
-    PyObject *exc_str = PyObject_Str(exc);
-    PyObject *new_msg = nullptr;
+    // 3. Setup diagnostics components
+    Ref parts{PyList_New(0)};
+    Ref comma{PyUnicode_FromString(", ")};
+    Ref exc_str{PyObject_Str(exc.get())};
 
-    // If we failed basic allocations, jump to the safety fallback
+    // If we failed basic allocations, fall back to the original exception
     if (Unlikely(!parts || !comma || !exc_str)) {
-        goto oom_fallback;
+        return oom_fallback();
     }
 
     // Build the fancy signature context
@@ -532,46 +476,30 @@ bool FastParseReportConversionError(const FastParserCore *fastparser, size_t ind
         const char *name = fastparser->cold_specs[i].name;
         const char *type = fastparser->cold_specs[i].type_name;
         const char *fmt  = (i == index) ? "!!! %s: %s !!!" : "%s: %s";
-        PyObject *p      = PyUnicode_FromFormat(fmt, name, type ? type : "object");
-        if (p) {
-            PyList_Append(parts, p);
-            Py_DECREF(p);
+        Ref part{PyUnicode_FromFormat(fmt, name, type ? type : "object")};
+        if (part) {
+            PyList_Append(parts.get(), part.get());
         }
     }
 
-    sig = PyUnicode_Join(comma, parts);
+    Ref sig{PyUnicode_Join(comma.get(), parts.get())};
     if (Unlikely(!sig)) {
-        goto oom_fallback;
+        return oom_fallback();
     }
 
     // 4. Final assembly of the high-fidelity message
-    new_msg = PyUnicode_FromFormat("%s() argument '%s': %U\n"
-                                   "Received value: %U\n\n"
-                                   "Signature context:\n  %s(%U)",
-                                   pname, arg_name, exc_str, val_repr, pname, sig);
+    Ref new_msg{PyUnicode_FromFormat("%s() argument '%s': %U\n"
+                                     "Received value: %U\n\n"
+                                     "Signature context:\n  %s(%U)",
+                                     pname, arg_name, exc_str.get(), val_repr.get(), pname,
+                                     sig.get())};
 
-    if (Likely(new_msg)) {
-        PyErr_SetObject(reinterpret_cast<PyObject *>(Py_TYPE(exc)), new_msg);
-        Py_DECREF(exc); // Handled by SetObject creating a new instance
-    } else {
-        goto oom_fallback;
+    if (Unlikely(!new_msg)) {
+        return oom_fallback();
     }
 
-    goto cleanup;
-
-oom_fallback:
-    // Safety Valve: If any allocation failed, re-raise the original exception.
-    // This ensures the user still sees the dry error rather than an OOM error.
-    PyErr_SetRaisedException(exc);
-
-cleanup:
-    Py_XDECREF(val_repr);
-    Py_XDECREF(parts);
-    Py_XDECREF(comma);
-    Py_XDECREF(sig);
-    Py_XDECREF(exc_str);
-    Py_XDECREF(new_msg);
-    return false;
+    PyErr_SetObject(reinterpret_cast<PyObject *>(Py_TYPE(exc.get())), new_msg.get());
+    return CaptureError();
 }
 
 void FastParseInitImpl(FastParserCore *fastparser, const FastArgDef *defs, size_t count) {
@@ -699,33 +627,34 @@ void FastParseDeinit(FastParserCore *fastparser) {
 /** --- LEGACY HELPERS --- **/
 
 [[gnu::always_inline]]
-static inline bool
-fast_parse_process_pos_legacy(const FastParserCore *fastparse, PyObject *args,
-                                   Py_ssize_t nargs,
-                                   const void *const  *targets) {
+static inline ParseResult fast_parse_process_pos_legacy(const FastParserCore *fastparse,
+                                                        PyObject *args, Py_ssize_t nargs,
+                                                        const void *const *targets) {
 #pragma unroll 2
     for (Py_ssize_t i = 0; i < nargs; ++i) {
-        PyObject *val                  = PyTuple_GET_ITEM(args, i);
+        PyObject *val              = PyTuple_GET_ITEM(args, i);
         const FastArgSpecHot *spec = &fastparse->hot_specs[i];
 
         // 1. Type Guard Check (Hot path metadata)
         if (!fast_parse_check_type_guard(spec, val)) {
             // Error reporting handles the hop to Cold specs
-            return FastParseReportTypeError(fastparse, static_cast<size_t>(i), val);
+            return std::unexpected(
+                FastParseReportTypeError(fastparse, static_cast<size_t>(i), val));
         }
 
         // 2. Conversion (Hot path function pointer)
+        // Undecorated on purpose -- matches the pre-B3 behaviour of this path.
         if (Unlikely(!spec->convert(val, targets[i]))) {
-            return false;
+            return CaptureFailure();
         }
     }
-    return true;
+    return {};
 }
 
 [[gnu::always_inline]]
-static inline bool
-fast_parse_process_kw_legacy(const FastParserCore *fastparse, PyObject *kwargs, uint64_t *mask,
-                                  const void *const  *targets) {
+static inline ParseResult fast_parse_process_kw_legacy(const FastParserCore *fastparse,
+                                                       PyObject *kwargs, uint64_t *mask,
+                                                       const void *const *targets) {
     PyObject *key;
     PyObject *val;
     Py_ssize_t pos = 0;
@@ -736,51 +665,52 @@ fast_parse_process_kw_legacy(const FastParserCore *fastparse, PyObject *kwargs, 
         size_t idx = fast_parse_find_keyword_index(key, fastparse);
 
         if (Unlikely(idx == kFastParseEmptySlot)) {
-            return FastParseReportUnknownKeyword(fastparse, key);
+            return std::unexpected(FastParseReportUnknownKeyword(fastparse, key));
         }
 
         // Check if this argument was already provided via positionals
         if (Unlikely(*mask & (1ULL << idx))) {
-            return FastParseReportMultiple(fastparse, idx);
+            return std::unexpected(FastParseReportMultiple(fastparse, idx));
         }
 
         const FastArgSpecHot *spec = &fastparse->hot_specs[idx];
 
         // 1. Type Guard Check (Hot path metadata)
         if (!fast_parse_check_type_guard(spec, val)) {
-            return FastParseReportTypeError(fastparse, idx, val);
+            return std::unexpected(FastParseReportTypeError(fastparse, idx, val));
         }
 
         // 2. Conversion (Hot path function pointer)
+        // Undecorated on purpose -- matches the pre-B3 behaviour of this path.
         if (Unlikely(!spec->convert(val, targets[idx]))) {
-            return false;
+            return CaptureFailure();
         }
 
         // Mark as provided
         *mask |= (1ULL << idx);
     }
-    return true;
+    return {};
 }
 
 /** --- ORCHESTRATOR --- **/
 
 [[nodiscard, gnu::hot, gnu::nonnull(4, 5), gnu::no_stack_protector, gnu::flatten, gnu::noinline]]
-bool FastParseLegacy(PyObject *args, PyObject *kwargs, [[maybe_unused]] PyObject *unused,
-                         const FastParserCore *fastparser,
-                         const void *const  targets[1]) {
+ParseResult FastParseLegacy(PyObject *args, PyObject *kwargs, [[maybe_unused]] PyObject *unused,
+                            const FastParserCore *fastparser, const void *const targets[1]) {
 
     Py_ssize_t nargs = args ? PyTuple_GET_SIZE(args) : 0;
 
     // 1. Pre-flight Check
     if (Unlikely(nargs > static_cast<Py_ssize_t>(fastparser->count))) {
-        return FastParseReportTooMany(fastparser, nargs);
+        return std::unexpected(FastParseReportTooMany(fastparser, nargs));
     }
 
     // 2. Handle Positionals
     if (nargs > 0) {
-        if (Unlikely(
-                !fast_parse_process_pos_legacy(fastparser, args, nargs, targets))) {
-            return false;
+        if (ParseResult positionals =
+                fast_parse_process_pos_legacy(fastparser, args, nargs, targets);
+            Unlikely(!positionals)) {
+            return positionals;
         }
     }
 
@@ -788,18 +718,18 @@ bool FastParseLegacy(PyObject *args, PyObject *kwargs, [[maybe_unused]] PyObject
     uint64_t mask = fast_parse_make_mask(static_cast<size_t>(nargs));
 
     if (kwargs && PyDict_GET_SIZE(kwargs) > 0) {
-        if (Unlikely(
-                !fast_parse_process_kw_legacy(fastparser, kwargs, &mask, targets))) {
-            return false;
+        if (ParseResult keywords = fast_parse_process_kw_legacy(fastparser, kwargs, &mask, targets);
+            Unlikely(!keywords)) {
+            return keywords;
         }
     }
 
     // 4. Final Verification
     if (Unlikely((mask & fastparser->required_mask) != fastparser->required_mask)) {
-        return FastParseReportMissing(fastparser, mask);
+        return std::unexpected(FastParseReportMissing(fastparser, mask));
     }
 
-    return true;
+    return {};
 }
 
 } // namespace CPH::Python

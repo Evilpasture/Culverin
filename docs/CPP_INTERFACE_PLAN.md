@@ -1,8 +1,8 @@
 # Phase 2 Plan: Direct Jolt C++ API + C++ Interfaces Between Subsystems
 
 Status: **A0, naming dissolution, enum-class sweep, B1, A1, A2,
-B2(physics), and A3 landed** (A3 on top of the lock-order fix `ee5076d`);
-B3 next.
+B2(physics), A3, and B3 landed** (A3 and B3 on top of the lock-order fix
+`ee5076d`); A4 next.
 Prerequisite: the C++23 migration
 (`docs/CPP23_MIGRATION.md`) has landed. All acceptance oracles from that
 migration apply unchanged to every phase below: full test suite at
@@ -269,15 +269,50 @@ still use the JoltC `JPH_RVec3`/`JPH_Vec3` value types until A4
 converts the query implementation itself. B2 for the remaining
 subsystems rides with B4.
 
-**B3 — Python boundary hygiene.** Introduce `Ref` (owning RAII,
-`Py_DECREF` in dtor) and `Borrowed` (non-owning, debug-checked)
-in `CPH::Python` (`PythonCommon.hpp`); migrate bindings per file — the 51 remaining
-`goto`s (20 in `FastParserCore.cpp`) are the cleanup idiom this
-replaces. Parsers: `int Parse(obj, &x, &y, &z)` →
-`expected<Vec3, ParseError> parse_vec3(Borrowed obj)`, FastParser
-traits return `expected<T, ParseError>`; `ParseError` materializes
-into the *identical* Python exception (type + message) at the call
-boundary — `test_diagnostics.py` is the oracle that pins this.
+**B3 — Python boundary hygiene (landed).** `Ref` (owning RAII,
+`Py_XDECREF` in dtor) and `Borrowed` (non-owning, debug-checked
+dereference) now live in `CPH::Python` (`PythonCommon.hpp`); `Ref`
+subsumes the old `OwnedPyObject`, and its `Ref(PyObject*)` /
+`Ref::New(Borrowed)` split states the adopt-vs-copy distinction that
+the raw C API leaves to comments. Parsers: `int ParseVec3F32(obj, &x,
+&y, &z)` → `ParseResult parse_vec3_into(Borrowed, float&, float&,
+float&)` plus value forms `parse_vec3` / `parse_position` /
+`parse_rotation` returning `expected<Vec3f|PosStride|AuxStride,
+ParseError>`; `ParseError` owns the exact exception instance the
+diagnostic builder produced, and `RaiseParseError` reinstates it
+verbatim at the boundary — `test_diagnostics.py` is the oracle that
+pins this.
+
+Two deliberate deviations from the shape sketched above:
+
+1. *The converter contract stays in-place.* `FastArgSpecHot::convert`
+   is still `bool (PyObject *, const void *)` and
+   `FastParser<Ts...>::Parse` still returns `ParseResult`
+   (`expected<void, ParseError>`) rather than
+   `expected<tuple<Ts...>, ParseError>`. The engine is type-erased
+   behind a function pointer and writes into caller-owned argument
+   slots; returning values would add a move per argument to the
+   hot path (the 64-argument stress parser is the extreme case). The
+   `_into` spelling is therefore the canonical one and the
+   value-returning forms exist for non-hot call sites.
+2. *`goto` count 51 → 31, not 0.* All 20 `goto`s in
+   `FastParserCore.cpp` (the diagnostic builders' `basic_error` /
+   `oom_fallback` / `cleanup` ladders) are gone — `Ref` replaced them
+   wholesale. The remaining 31 are resource-cleanup labels
+   (PhysicsWorld 9, Module 6, TrackedVehicle 5, Vehicle 4, Character 4,
+   Ecs 2, CommandBuffer.hpp 1): `python_fail` / `jolt_fail` / `fail_py`
+   ladders that unwind Jolt allocations, JoltC handles and locks. Their
+   unwind blocks stop being needed when A4 removes the JoltC handles and
+   B4 wraps the ECS placement-new storage.
+
+Behaviour preserved verbatim, including three pre-existing quirks that
+a diagnostics change would have "fixed" by accident: `fast_parse_process_pos`
+and `fast_parse_process_kw` decorate a conversion error with the
+signature context, while the monomorphic stubs and the two legacy
+helpers return the converter's raw error (so they still do);
+`parse_sequence_internal` treats `None` as a failure that
+reports no exception; and `Ragdoll.Create`'s malformed-`pos` path
+carries on with the error pending. Each is marked in the source.
 Vectorcall fast paths stay; measure `test_fastparse_*` A/B.
 
 **B4 — Adapters/ECS/math/debug.** `WorldAdapters`, `PhysicsSync`,
@@ -317,5 +352,7 @@ silent ABI drift via defines (A0 asserts), `Ref<>` lifetimes inside
 the command queue (A2 measurement gate), filter-matrix transcription
 errors when hand-writing the layer tables (A1: port the exact matrix,
 covered by contact/differential tests), and FastParse message drift
-(B3: diagnostics tests as oracle). Version coupling does not
+(B3: diagnostics tests as oracle — landed, see the B3 section for the
+three pre-existing diagnostic quirks it deliberately reproduces).
+Version coupling does not
 increase: JoltC was already version-locked to the same Jolt pin.

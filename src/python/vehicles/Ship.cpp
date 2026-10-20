@@ -103,8 +103,11 @@ static const JPH_PhysicsStepListener_Procs kShipListenerProcs = {.OnStep = Ship_
     float grip             = 500.0f;
     float drag             = 10.0f;
 
-    if (!self->parsers->CreateShip.Parse(args, nargs, kwnames, sled_raw, kp, kd, throttle, steer,
-                                         banking, grip, drag)) {
+    const ParseResult parsed =
+        self->parsers->CreateShip.Parse(args, nargs, kwnames, sled_raw, kp, kd, throttle, steer,
+                                         banking, grip, drag);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -165,7 +168,10 @@ static const JPH_PhysicsStepListener_Procs kShipListenerProcs = {.OnStep = Ship_
     float fwd              = 0.0f;
     float right            = 0.0f;
 
-    if (!self->parsers->ShipInput.Parse(args, nargs, kwnames, fwd, right)) {
+    const ParseResult parsed =
+        self->parsers->ShipInput.Parse(args, nargs, kwnames, fwd, right);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 

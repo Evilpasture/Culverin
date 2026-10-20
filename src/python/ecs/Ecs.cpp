@@ -235,7 +235,10 @@ void RegistryDealloc(RegistryObject *self) {
                                                            PyObject *kwnames) {
     uint64_t handle;
 
-    if (!self->parsers->RegEntityOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle)) {
+    const ParseResult parsed =
+        self->parsers->RegEntityOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -287,7 +290,10 @@ void RegistryDealloc(RegistryObject *self) {
                                                            PyObject *kwnames) {
     uint64_t handle;
 
-    if (!self->parsers->RegEntityOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle)) {
+    const ParseResult parsed =
+        self->parsers->RegEntityOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -314,7 +320,10 @@ void RegistryDealloc(RegistryObject *self) {
                                                                      PyObject *kwnames) {
     uint32_t size;
 
-    if (!self->parsers->RegRegComp.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, size)) {
+    const ParseResult parsed =
+        self->parsers->RegRegComp.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, size);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -355,8 +364,11 @@ void RegistryDealloc(RegistryObject *self) {
     uint32_t comp_id;
     PyObject *data_obj = nullptr;
 
-    if (!self->parsers->RegAdd.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle, comp_id,
-                                     data_obj)) {
+    const ParseResult parsed =
+        self->parsers->RegAdd.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle, comp_id,
+                                     data_obj);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -433,8 +445,11 @@ fail_quiet:
     uint64_t handle;
     uint32_t comp_id;
 
-    if (!self->parsers->RegEntComp.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle,
-                                         comp_id)) {
+    const ParseResult parsed =
+        self->parsers->RegEntComp.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle,
+                                         comp_id);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -477,8 +492,11 @@ fail_quiet:
     uint64_t handle;
     uint32_t comp_id;
 
-    if (!self->parsers->RegEntComp.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle,
-                                         comp_id)) {
+    const ParseResult parsed =
+        self->parsers->RegEntComp.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle,
+                                         comp_id);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -502,8 +520,11 @@ fail_quiet:
     uint64_t handle;
     uint32_t comp_id;
 
-    if (!self->parsers->RegEntComp.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle,
-                                         comp_id)) {
+    const ParseResult parsed =
+        self->parsers->RegEntComp.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle,
+                                         comp_id);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -534,7 +555,10 @@ fail_quiet:
                                                            PyObject *kwnames) {
     uint32_t comp_id;
 
-    if (!self->parsers->RegCompOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, comp_id)) {
+    const ParseResult parsed =
+        self->parsers->RegCompOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, comp_id);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -553,7 +577,10 @@ fail_quiet:
                                                                PyObject *kwnames) {
     uint32_t comp_id;
 
-    if (!self->parsers->RegCompOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, comp_id)) {
+    const ParseResult parsed =
+        self->parsers->RegCompOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, comp_id);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -577,8 +604,11 @@ fail_quiet:
     int p_comp_id = -1;
     int r_comp_id = -1; // -1 means ignore
 
-    if (!self->parsers->RegSyncPhys.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, world_obj,
-                                          h_comp_id, p_comp_id, r_comp_id)) {
+    const ParseResult parsed =
+        self->parsers->RegSyncPhys.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, world_obj,
+                                          h_comp_id, p_comp_id, r_comp_id);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -708,7 +738,10 @@ fail_quiet:
                                                                      PyObject *kwnames) {
     uint32_t comp_id;
 
-    if (!self->parsers->RegCompOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, comp_id)) {
+    const ParseResult parsed =
+        self->parsers->RegCompOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, comp_id);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 

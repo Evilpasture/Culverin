@@ -1,54 +1,72 @@
 #pragma once
 
+// Typed argument parsers (Phase 2, step B3).
+//
+// The pre-B3 API was `int ParseVec3F32(PyObject *obj, float *x, float *y,
+// float *z)`: an int that means "1 ok / 0 failed", out-parameters, and a
+// Python exception left in the thread state for the caller to notice. The
+// replacements return `ParseResult` (see ParseError.hpp) and take `Borrowed`,
+// which makes ownership explicit at every call site and lets the failure carry
+// the diagnostic instead of hiding it in global state.
+//
+// The `_into` forms still write through references on purpose: the fast-parse
+// trait table (FastParser.hpp) writes directly into the caller's argument
+// slots, and the whole point of that table is to avoid copies on the hot path.
+
+#include "bindings/PythonCommon.hpp"
+#include "bindings/parsing/ParseError.hpp"
+#include "core/Types.hpp"
 #include "physics/PhysicsParams.hpp"
-#include <Python.h>
+
+#include <expected>
 
 namespace CPH::Python {
 
-int ParseVec3F32(PyObject *obj, float *x, float *y, float *z);
-int ParseVec3R64(PyObject *obj, double *x, double *y, double *z);
-int ParseQuatF32(PyObject *obj, float *x, float *y, float *z, float *w);
-int ParseQuatR64(PyObject *obj, double *x, double *y, double *z, double *w);
+// --- Sequence-valued arguments: (x, y, z) / (x, y, z, w) -------------------
+// Accepts any buffer-protocol object of the exact size, then falls back to a
+// sequence of exactly `count` numbers.
 
-[[nodiscard]] static inline int parse_vec3_direct(PyObject *obj, float *x, float *y, float *z) {
-    return ParseVec3F32(obj, x, y, z);
-}
-[[nodiscard]] static inline int parse_vec3_direct(PyObject *obj, double *x, double *y,
-                                                      double *z) {
-    return ParseVec3R64(obj, x, y, z);
-}
+[[nodiscard]] ParseResult parse_vec3_into(Borrowed obj, float &x, float &y, float &z);
+[[nodiscard]] ParseResult parse_vec3_into(Borrowed obj, double &x, double &y, double &z);
+[[nodiscard]] ParseResult parse_quat_into(Borrowed obj, float &x, float &y, float &z, float &w);
+[[nodiscard]] ParseResult parse_quat_into(Borrowed obj, double &x, double &y, double &z,
+                                          double &w);
 
-[[nodiscard]] static inline int parse_quat_direct(PyObject *obj, float *x, float *y, float *z,
-                                                      float *w) {
-    return ParseQuatF32(obj, x, y, z, w);
-}
-[[nodiscard]] static inline int parse_quat_direct(PyObject *obj, double *x, double *y,
-                                                      double *z, double *w) {
-    return ParseQuatR64(obj, x, y, z, w);
-}
+// Stride types used by the shadow buffers.
+[[nodiscard]] ParseResult parse_vec3_into(Borrowed obj, Vec3f &out);
+[[nodiscard]] ParseResult parse_vec3_into(Borrowed obj, PosStride &out);
+[[nodiscard]] ParseResult parse_quat_into(Borrowed obj, AuxStride &out);
 
-int ParsePyVec3f(PyObject *obj, Vec3f *out);
-int ParsePyVec3Pos(PyObject *obj, PosStride *out);
-int ParsePyVec3Aux(PyObject *obj, AuxStride *out);
+// Value forms for call sites that want the result rather than an out-param.
+[[nodiscard]] std::expected<Vec3f, ParseError> parse_vec3(Borrowed obj);
+[[nodiscard]] std::expected<PosStride, ParseError> parse_position(Borrowed obj);
+[[nodiscard]] std::expected<AuxStride, ParseError> parse_rotation(Borrowed obj);
 
-[[nodiscard]] static inline int parse_py_vec3(PyObject *obj, Vec3f *out) {
-    return ParsePyVec3f(obj, out);
-}
-[[nodiscard]] static inline int parse_py_vec3(PyObject *obj, PosStride *out) {
-    return ParsePyVec3Pos(obj, out);
-}
-[[nodiscard]] static inline int parse_py_vec3(PyObject *obj, AuxStride *out) {
-    return ParsePyVec3Aux(obj, out);
-}
+// --- Keyword/dictionary helpers -------------------------------------------
+// `ParseMotorConfig` and `ParseBodySize` cannot fail (missing keys fall back to
+// defaults), so they keep their signatures; they only lose the raw pointer.
 
-void ParseMotorConfig(PyObject *motor_dict, ConstraintParams *p);
-int ParsePointParams(PyObject *args, ConstraintParams *p);
-int ParseHingeParams(PyObject *args, ConstraintParams *p);
-int ParseSliderParams(PyObject *args, ConstraintParams *p);
-int ParseConeParams(PyObject *args, ConstraintParams *p);
-int ParseDistanceParams(PyObject *args, ConstraintParams *p);
-void ParseBodySize(PyObject *py_size, float s[4]);
+void ParseMotorConfig(Borrowed motor_dict, ConstraintParams &params);
+void ParseBodySize(Borrowed py_size, float size[4]);
 
-[[nodiscard]] int ParseTracksToC(PyObject *py_tracks, TrackData *out_data, int *num_out);
+// --- Constraint parameter tuples ------------------------------------------
+// These wrap PyArg_ParseTuple; the tuple-format strings are part of the
+// Python-visible contract.
+
+[[nodiscard]] ParseResult ParsePointParams(Borrowed args, ConstraintParams &params);
+[[nodiscard]] ParseResult ParseHingeParams(Borrowed args, ConstraintParams &params);
+[[nodiscard]] ParseResult ParseSliderParams(Borrowed args, ConstraintParams &params);
+[[nodiscard]] ParseResult ParseConeParams(Borrowed args, ConstraintParams &params);
+[[nodiscard]] ParseResult ParseDistanceParams(Borrowed args, ConstraintParams &params);
+
+// --- Tracked-vehicle tracks ------------------------------------------------
+// `out_data` must hold TrackData for every entry in `py_tracks`; the parsed
+// count is returned alongside it.
+struct ParsedTracks {
+    int count = 0;
+};
+
+[[nodiscard]] std::expected<ParsedTracks, ParseError> ParseTracksToC(Borrowed py_tracks,
+                                                                     TrackData *out_data);
 
 } // namespace CPH::Python

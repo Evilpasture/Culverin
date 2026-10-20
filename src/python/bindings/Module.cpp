@@ -64,7 +64,10 @@ static void dump_parser_catalog(FastParserCore *const *const parsers, const size
 
     // 1. Thread-safe, subinterpreter-safe parsing via FastParser
 
-    if (!st->parsers->DumpSchema.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, filename)) {
+    const ParseResult parsed =
+        st->parsers->DumpSchema.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, filename);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 

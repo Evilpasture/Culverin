@@ -1,6 +1,7 @@
 #pragma once
 
 #include "bindings/parsing/FastParserCore.hpp"
+#include "bindings/parsing/ParseError.hpp"
 #include "bindings/parsing/Parsers.hpp"
 #include "core/Types.hpp"
 
@@ -68,19 +69,37 @@ template <> struct FastParseTrait<PyObject *> {
 };
 
 namespace detail {
+// The converter contract is still `bool` + ambient PyErr: the typed parsers
+// hand back a captured ParseError, so each adapter raises it again before
+// returning false. FastParseReportConversionError then decorates that
+// exception exactly as it always has.
+template <typename T, typename ParseInto>
+[[nodiscard]] static inline bool convert_stride(PyObject *obj, const void *target,
+                                                ParseInto parse_into) {
+    auto *value = const_cast<T *>(static_cast<const T *>(target));
+    if (ParseResult parsed = parse_into(Borrowed{obj}, *value); !parsed) {
+        RaiseParseError(parsed.error());
+        return false;
+    }
+    return true;
+}
+
 [[nodiscard]] static inline bool fast_parse_conv_vec3f(PyObject *obj, const void *target) {
-    auto *value = const_cast<Vec3f *>(static_cast<const Vec3f *>(target));
-    return ParseVec3F32(obj, &value->x, &value->y, &value->z) != 0;
+    return convert_stride<Vec3f>(obj, target, [](Borrowed o, Vec3f &v) {
+        return parse_vec3_into(o, v);
+    });
 }
 
 [[nodiscard]] static inline bool fast_parse_conv_pos_stride(PyObject *obj, const void *target) {
-    auto *value = const_cast<PosStride *>(static_cast<const PosStride *>(target));
-    return ParseVec3R64(obj, &value->x, &value->y, &value->z) != 0;
+    return convert_stride<PosStride>(obj, target, [](Borrowed o, PosStride &v) {
+        return parse_vec3_into(o, v);
+    });
 }
 
 [[nodiscard]] static inline bool fast_parse_conv_aux_stride(PyObject *obj, const void *target) {
-    auto *value = const_cast<AuxStride *>(static_cast<const AuxStride *>(target));
-    return ParseQuatF32(obj, &value->x, &value->y, &value->z, &value->w) != 0;
+    return convert_stride<AuxStride>(obj, target, [](Borrowed o, AuxStride &v) {
+        return parse_quat_into(o, v);
+    });
 }
 } // namespace detail
 
@@ -196,8 +215,8 @@ template <typename... Ts> class FastParser {
         initialized_      = true;
     }
 
-    [[nodiscard, gnu::always_inline]] bool Parse(PyObject *const *args, Py_ssize_t nargs,
-                                                 PyObject *kwnames, Ts &...targets) const {
+    [[nodiscard, gnu::always_inline]] ParseResult Parse(PyObject *const *args, Py_ssize_t nargs,
+                                                        PyObject *kwnames, Ts &...targets) const {
         if constexpr (sizeof...(Ts) == 0) {
             return core_.hot_path(args, nargs, kwnames, &core_, nullptr);
         } else {
@@ -208,8 +227,8 @@ template <typename... Ts> class FastParser {
         }
     }
 
-    [[nodiscard, gnu::always_inline]] bool Parse(PyObject *args, PyObject *kwargs,
-                                                 Ts &...targets) const {
+    [[nodiscard, gnu::always_inline]] ParseResult Parse(PyObject *args, PyObject *kwargs,
+                                                        Ts &...targets) const {
         if constexpr (sizeof...(Ts) == 0) {
             return FastParseLegacy(args, kwargs, nullptr, &core_, nullptr);
         } else {

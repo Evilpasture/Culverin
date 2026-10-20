@@ -56,7 +56,11 @@ static JPH_WheelSettings *create_single_wheel(PyObject *w_dict, JPH_LinearCurve 
     PosStride pos;
 
     // 1. Parse Position using helper
-    if (!parse_py_vec3(PyDict_GetItemString(w_dict, "pos"), &pos)) {
+    if (ParseResult parsed =
+            parse_vec3_into(PyDict_GetItemString(w_dict, "pos"), pos);
+        !parsed) {
+        // Deliberate message override: the wheel dict is user data, and this
+        // diagnostic is what callers see for a malformed wheel entry.
         PyErr_SetString(PyExc_ValueError, "Wheel 'pos' must be a sequence of 3 real numbers");
         return nullptr;
     }
@@ -298,8 +302,11 @@ static void configure_drivetrain(VehicleResources *r, PyObject *py_engine, PyObj
     PyObject *py_trans     = nullptr;
     const char *drive_str  = "RWD";
 
-    if (!self->parsers->CreateVehicle.Parse(args, nargs, kwnames, chassis_h_raw, py_wheels,
-                                            py_drive, py_engine, py_trans)) {
+    const ParseResult parsed =
+        self->parsers->CreateVehicle.Parse(args, nargs, kwnames, chassis_h_raw, py_wheels,
+                                            py_drive, py_engine, py_trans);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -478,8 +485,11 @@ python_fail:
     float brake     = 0.0f;
     float handbrake = 0.0f;
 
-    if (!self->parsers->VehicleInput.Parse(args, nargs, kwnames, forward, right, brake,
-                                           handbrake)) {
+    const ParseResult parsed =
+        self->parsers->VehicleInput.Parse(args, nargs, kwnames, forward, right, brake,
+                                           handbrake);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -584,7 +594,10 @@ static inline PyObject *pack_transform(double px, double py, double pz, float rx
     const Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
     uint32_t index         = 0;
 
-    if (!self->world->parsers->WheelIdx.Parse(args, nargs, kwnames, index)) {
+    const ParseResult parsed =
+        self->world->parsers->WheelIdx.Parse(args, nargs, kwnames, index);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -629,7 +642,10 @@ static inline PyObject *pack_transform(double px, double py, double pz, float rx
     const Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
     uint32_t index         = 0;
 
-    if (!self->world->parsers->WheelIdx.Parse(args, nargs, kwnames, index)) {
+    const ParseResult parsed =
+        self->world->parsers->WheelIdx.Parse(args, nargs, kwnames, index);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 

@@ -93,19 +93,69 @@ class ScopedGilRelease {
     PyThreadState *m_thread_state;
 };
 
-class OwnedPyObject {
+// --- Reference vocabulary (Phase 2, step B3) ---
+//
+// Two names, two meanings, no ambiguity at a call site:
+//
+//   Borrowed  a pointer this code does NOT own. Never decrefs. Debug builds
+//             trap on dereferencing a null borrow.
+//   Ref       this code owns exactly one reference and will decref it. The
+//             constructors differ on purpose:
+//               Ref(PyObject*)      adopts a reference the caller already
+//                                   owns (a "new reference" from the C API)
+//               Ref::New(Borrowed)  takes an additional reference to
+//                                   something we only borrow
+//
+// Both are trivially cheap; the previous `OwnedPyObject` is this `Ref`.
+
+class Borrowed {
   public:
-    OwnedPyObject() noexcept = default;
-    explicit OwnedPyObject(PyObject *object) noexcept : m_object(object) {}
+    constexpr Borrowed() noexcept = default;
+    // Implicit on purpose: every non-owning use is a borrow, and spelling
+    // `Borrowed{obj}` at hundreds of call sites adds noise without adding
+    // safety. What matters is that nothing here can *steal* a reference.
+    constexpr Borrowed(PyObject *object) noexcept : m_object(object) {}
 
-    ~OwnedPyObject() { Py_XDECREF(m_object); }
+    [[nodiscard]] constexpr PyObject *get() const noexcept { return m_object; }
+    [[nodiscard]] constexpr explicit operator bool() const noexcept { return m_object != nullptr; }
 
-    OwnedPyObject(const OwnedPyObject &)            = delete;
-    OwnedPyObject &operator=(const OwnedPyObject &) = delete;
+    // Shortcut for `obj == Py_None` / `obj != Py_None`.
+    [[nodiscard]] constexpr bool is_none() const noexcept { return m_object == Py_None; }
 
-    OwnedPyObject(OwnedPyObject &&other) noexcept : m_object(std::exchange(other.m_object, nullptr)) {}
+    [[nodiscard]] PyObject *operator->() const noexcept {
+        debug_check();
+        return m_object;
+    }
 
-    OwnedPyObject &operator=(OwnedPyObject &&other) noexcept {
+    // Implicit on purpose: every CPython entry point takes `PyObject *`, and
+    // making this explicit would bury the call sites in get() noise.
+    [[nodiscard]] constexpr operator PyObject *() const noexcept { return m_object; }
+
+  private:
+    void debug_check() const noexcept {
+#if defined(CULVERIN_DEBUG)
+        if (m_object == nullptr) {
+            Py_FatalError("CPH::Python::Borrowed: dereferenced a null borrow");
+        }
+#endif
+    }
+
+    PyObject *m_object = nullptr;
+};
+
+class Ref {
+  public:
+    Ref() noexcept = default;
+    // Adopts an already-owned reference (a C API "new reference").
+    explicit Ref(PyObject *object) noexcept : m_object(object) {}
+    ~Ref() { Py_XDECREF(m_object); }
+
+    Ref(const Ref &)            = delete;
+    Ref &operator=(const Ref &) = delete;
+
+    Ref(Ref &&other) noexcept : m_object(std::exchange(other.m_object, nullptr)) {}
+
+    Ref &operator=(Ref &&other) noexcept {
         if (this != &other) {
             Py_XDECREF(m_object);
             m_object = std::exchange(other.m_object, nullptr);
@@ -113,7 +163,7 @@ class OwnedPyObject {
         return *this;
     }
 
-    OwnedPyObject &operator=(PyObject *object) noexcept {
+    Ref &operator=(PyObject *object) noexcept {
         if (m_object != object) {
             Py_XDECREF(m_object);
             m_object = object;
@@ -121,9 +171,21 @@ class OwnedPyObject {
         return *this;
     }
 
+    // Takes an additional reference to a pointer we only borrow.
+    [[nodiscard]] static Ref New(Borrowed object) noexcept {
+        Py_XINCREF(object.get());
+        return Ref{object.get()};
+    }
+
     [[nodiscard]] PyObject *get() const noexcept { return m_object; }
     [[nodiscard]] PyObject *release() noexcept { return std::exchange(m_object, nullptr); }
+    [[nodiscard]] Borrowed borrow() const noexcept { return Borrowed{m_object}; }
     [[nodiscard]] explicit operator bool() const noexcept { return m_object != nullptr; }
+
+    void reset() noexcept {
+        Py_XDECREF(m_object);
+        m_object = nullptr;
+    }
 
   private:
     PyObject *m_object = nullptr;

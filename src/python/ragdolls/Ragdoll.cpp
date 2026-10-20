@@ -24,7 +24,10 @@ static constexpr float kRagdollDefaultTwistMax = 0.1f;
     int parent_idx     = -1; // Default to root
 
     // 2. High Speed Parse
-    if (!self->parsers->AddJoint.Parse(args, nargs, kwnames, name_obj, parent_idx)) {
+    const ParseResult parsed =
+        self->parsers->AddJoint.Parse(args, nargs, kwnames, name_obj, parent_idx);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -46,7 +49,10 @@ static constexpr float kRagdollDefaultTwistMax = 0.1f;
     PyObject *name_obj = nullptr;
 
     // 2. High Speed Parse
-    if (!self->parsers->GetJointIdx.Parse(args, nargs, kwnames, name_obj)) {
+    const ParseResult parsed =
+        self->parsers->GetJointIdx.Parse(args, nargs, kwnames, name_obj);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -87,7 +93,10 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
     AuxStride root_q  = {.w = 1.0f};
     PyObject *py_matrices = nullptr;
 
-    if (!self->parsers->RagdollDrive.Parse(args, nargs, kwnames, root_p, root_q, py_matrices)) {
+    const ParseResult parsed =
+        self->parsers->RagdollDrive.Parse(args, nargs, kwnames, root_p, root_q, py_matrices);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -319,9 +328,12 @@ void RagdollDealloc(RagdollObject *self) {
     Vec3f normal = {.x = 0.0f, .y = 1.0f, .z = 0.0f};
 
     // 2. High Speed Parse
-    if (!self->parsers->RagdollAddPart.Parse(args, nargs, kwnames, joint_idx, shape_type, py_size,
+    const ParseResult parsed =
+        self->parsers->RagdollAddPart.Parse(args, nargs, kwnames, joint_idx, shape_type, py_size,
                                              mass, parent_idx, twist_min, twist_max, cone_angle,
-                                             axis, normal, py_pos)) {
+                                             axis, normal, py_pos);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -343,9 +355,17 @@ void RagdollDealloc(RagdollObject *self) {
     JPH_RVec3 position = {0, 0, 0};
     if (py_pos && py_pos != Py_None) {
         PosStride p_stride = {};
-        if (ParsePyVec3Pos(py_pos, &p_stride)) {
+        // Preserved quirk: a malformed `pos` is not fatal here — the position
+        // is simply left unset and the call carries on, *with the exception
+        // still pending* (CPython then reports the NULL/exception-set
+        // mismatch). That is the pre-B3 behaviour verbatim; the pending error
+        // has to be reinstated because ParseError owns it now.
+        const ParseResult parsed = parse_vec3_into(py_pos, p_stride);
+        if (parsed) {
             position     = JPH_RVec3{p_stride.x, p_stride.y, p_stride.z};
             has_position = true;
+        } else {
+            RaiseParseError(parsed.error());
         }
     }
 

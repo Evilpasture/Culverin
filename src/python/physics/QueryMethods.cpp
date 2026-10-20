@@ -53,15 +53,19 @@ static PyObject *overlap_hits_to_list(const PhysicsQueryHitBuffer *hits) {
     PyObject *o_center = nullptr;
     float radius       = 1.0f;
 
-    if (!self->parsers->OverlapSphere.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_center,
-                                            radius)) {
+    const ParseResult parsed =
+        self->parsers->OverlapSphere.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_center,
+                                            radius);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
     JPH_Real cx;
     JPH_Real cy;
     JPH_Real cz;
-    if (!parse_vec3_direct(o_center, &cx, &cy, &cz)) {
+    if (ParseResult parsed = parse_vec3_into(o_center, cx, cy, cz); !parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -86,8 +90,11 @@ static PyObject *overlap_hits_to_list(const PhysicsQueryHitBuffer *hits) {
     PyObject *o_min = nullptr;
     PyObject *o_max = nullptr;
 
-    if (!self->parsers->OverlapAABB.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_min,
-                                          o_max)) {
+    const ParseResult parsed =
+        self->parsers->OverlapAABB.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_min,
+                                          o_max);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -97,8 +104,12 @@ static PyObject *overlap_hits_to_list(const PhysicsQueryHitBuffer *hits) {
     JPH_Real max_x;
     JPH_Real max_y;
     JPH_Real max_z;
-    if (!parse_vec3_direct(o_min, &min_x, &min_y, &min_z) ||
-        !parse_vec3_direct(o_max, &max_x, &max_y, &max_z)) {
+    if (ParseResult parsed = parse_vec3_into(o_min, min_x, min_y, min_z); !parsed) {
+        RaiseParseError(parsed.error());
+        return nullptr;
+    }
+    if (ParseResult parsed = parse_vec3_into(o_max, max_x, max_y, max_z); !parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -126,8 +137,11 @@ static PyObject *overlap_hits_to_list(const PhysicsQueryHitBuffer *hits) {
     float max_distance     = kPhysicsQueryDefaultMaxDistance;
     uint64_t ignore_handle = 0;
 
-    if (!self->parsers->Raycast.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_start,
-                                      o_direction, max_distance, ignore_handle)) {
+    const ParseResult parsed =
+        self->parsers->Raycast.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_start,
+                                      o_direction, max_distance, ignore_handle);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -137,8 +151,12 @@ static PyObject *overlap_hits_to_list(const PhysicsQueryHitBuffer *hits) {
     float direction_x;
     float direction_y;
     float direction_z;
-    if (!parse_vec3_direct(o_start, &start_x, &start_y, &start_z) ||
-        !parse_vec3_direct(o_direction, &direction_x, &direction_y, &direction_z)) {
+    if (ParseResult parsed = parse_vec3_into(o_start, start_x, start_y, start_z); !parsed) {
+        RaiseParseError(parsed.error());
+        return nullptr;
+    }
+    if (ParseResult parsed = parse_vec3_into(o_direction, direction_x, direction_y, direction_z); !parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -169,8 +187,11 @@ static PyObject *overlap_hits_to_list(const PhysicsQueryHitBuffer *hits) {
     PyObject *o_directions = nullptr;
     float max_distance     = kPhysicsQueryDefaultMaxDistance;
 
-    if (!self->parsers->RayBatch.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_starts,
-                                       o_directions, max_distance)) {
+    const ParseResult parsed =
+        self->parsers->RayBatch.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_starts,
+                                       o_directions, max_distance);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -251,9 +272,12 @@ static PyObject *overlap_hits_to_list(const PhysicsQueryHitBuffer *hits) {
     PyObject *o_size       = nullptr;
     uint64_t ignore_handle = 0;
 
-    if (!self->parsers->Shapecast.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, shape_type,
+    const ParseResult parsed =
+        self->parsers->Shapecast.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, shape_type,
                                         o_position, o_rotation, o_direction, o_size,
-                                        ignore_handle)) {
+                                        ignore_handle);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -268,9 +292,16 @@ static PyObject *overlap_hits_to_list(const PhysicsQueryHitBuffer *hits) {
     float direction_y;
     float direction_z;
     float size[4];
-    if (!parse_vec3_direct(o_position, &position_x, &position_y, &position_z) ||
-        !parse_quat_direct(o_rotation, &rotation_x, &rotation_y, &rotation_z, &rotation_w) ||
-        !parse_vec3_direct(o_direction, &direction_x, &direction_y, &direction_z)) {
+    if (ParseResult parsed = parse_vec3_into(o_position, position_x, position_y, position_z); !parsed) {
+        RaiseParseError(parsed.error());
+        return nullptr;
+    }
+    if (ParseResult parsed = parse_quat_into(o_rotation, rotation_x, rotation_y, rotation_z, rotation_w); !parsed) {
+        RaiseParseError(parsed.error());
+        return nullptr;
+    }
+    if (ParseResult parsed = parse_vec3_into(o_direction, direction_x, direction_y, direction_z); !parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
     ParseBodySize(o_size, size);

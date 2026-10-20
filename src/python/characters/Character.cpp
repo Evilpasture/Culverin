@@ -573,7 +573,10 @@ const JPH_CharacterContactListener_Procs kCharListenerProcs = {
     float dt       = 0.0f;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!self->parsers->CharMove.Parse(args, nargs, kwnames, v_in, dt)) {
+    const ParseResult parsed =
+        self->parsers->CharMove.Parse(args, nargs, kwnames, v_in, dt);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -708,7 +711,10 @@ CharacterGetLinearVelocity(CharacterObject *self, PyObject *ignored [[maybe_unus
     const Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
     PosStride pos      = {};
 
-    if (!self->parsers->SetPosChar.Parse(args, nargs, kwnames, pos)) {
+    const ParseResult parsed =
+        self->parsers->SetPosChar.Parse(args, nargs, kwnames, pos);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -741,7 +747,10 @@ CharacterGetLinearVelocity(CharacterObject *self, PyObject *ignored [[maybe_unus
     const Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
     AuxStride rot      = {.x = 0.0f, .y = 0.0f, .z = 0.0f, .w = 1.0f};
 
-    if (!self->parsers->SetRotChar.Parse(args, nargs, kwnames, rot)) {
+    const ParseResult parsed =
+        self->parsers->SetRotChar.Parse(args, nargs, kwnames, rot);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -771,7 +780,10 @@ CharacterGetLinearVelocity(CharacterObject *self, PyObject *ignored [[maybe_unus
     const Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
     float strength         = 0.0f;
 
-    if (!self->parsers->SetStrengthChar.Parse(args, nargs, kwnames, strength)) {
+    const ParseResult parsed =
+        self->parsers->SetStrengthChar.Parse(args, nargs, kwnames, strength);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -1040,8 +1052,11 @@ static inline int setup_char_parsers(CharacterObject *obj) {
     float step_h                  = DEFUALT_STEP_H;
     float slope                   = DEFAULT_SLOPE;
 
-    if (!self->parsers->CreateChar.Parse(args, nargs, kwnames, pos, height, radius, step_h,
-                                         slope)) {
+    const ParseResult parsed =
+        self->parsers->CreateChar.Parse(args, nargs, kwnames, pos, height, radius, step_h,
+                                         slope);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 

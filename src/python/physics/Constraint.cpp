@@ -19,8 +19,11 @@ namespace CPH::Python {
     PyObject *o_params = nullptr;
     PyObject *o_motor  = nullptr;
 
-    if (!self->parsers->CreateConstr.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, type, h1_raw,
-                                           h2_raw, o_params, o_motor)) {
+    const ParseResult parsed =
+        self->parsers->CreateConstr.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, type, h1_raw,
+                                           h2_raw, o_params, o_motor);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -31,36 +34,37 @@ namespace CPH::Python {
 
     // 2. PARAMS EXTRACTION
     ConstraintParams p; // member-initialized defaults
-    int parse_ok = 1;
+    ParseResult parse_result{};
 
     switch (type) {
     case std::to_underlying(ConstraintType::Fixed):
         break;
     case std::to_underlying(ConstraintType::Point):
-        parse_ok = ParsePointParams(o_params, &p);
+        parse_result = ParsePointParams(o_params, p);
         break;
     case std::to_underlying(ConstraintType::Hinge):
-        parse_ok = ParseHingeParams(o_params, &p);
+        parse_result = ParseHingeParams(o_params, p);
         break;
     case std::to_underlying(ConstraintType::Slider):
-        parse_ok = ParseSliderParams(o_params, &p);
+        parse_result = ParseSliderParams(o_params, p);
         break;
     case std::to_underlying(ConstraintType::Cone):
-        parse_ok = ParseConeParams(o_params, &p);
+        parse_result = ParseConeParams(o_params, p);
         break;
     case std::to_underlying(ConstraintType::Distance):
-        parse_ok = ParseDistanceParams(o_params, &p);
+        parse_result = ParseDistanceParams(o_params, p);
         break;
     default:
         PyErr_SetString(PyExc_ValueError, "Unknown constraint type");
         return nullptr;
     }
 
-    if (!parse_ok) {
-        return nullptr; // PyErr set by helpers
+    if (!parse_result) {
+        RaiseParseError(parse_result.error());
+        return nullptr;
     }
     if (o_motor) {
-        ParseMotorConfig(o_motor, &p);
+        ParseMotorConfig(o_motor, p);
     }
 
     // 3. RESOURCE RESERVATION (Shadow Lock)
@@ -113,7 +117,10 @@ namespace CPH::Python {
     uint64_t h_raw;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!self->parsers->DestroyConstr.Parse(args, nargs, kwnames, h_raw)) {
+    const ParseResult parsed =
+        self->parsers->DestroyConstr.Parse(args, nargs, kwnames, h_raw);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -187,7 +194,10 @@ namespace CPH::Python {
     float target;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!self->parsers->SetConstrTarget.Parse(args, nargs, kwnames, h_raw, target)) {
+    const ParseResult parsed =
+        self->parsers->SetConstrTarget.Parse(args, nargs, kwnames, h_raw, target);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -255,7 +265,10 @@ namespace CPH::Python {
                                                                   PyObject *kwnames) {
     uint64_t handle_raw;
 
-    if (!self->parsers->HOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle_raw)) {
+    const ParseResult parsed =
+        self->parsers->HOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle_raw);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 

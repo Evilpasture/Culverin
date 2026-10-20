@@ -45,7 +45,9 @@ static constexpr float kTrackedThrottleKickstartThreshold = 0.01f;
 
 static JPH_WheelSettings *create_track_wheel(PyObject *w_dict) {
     Vec3f pos;
-    if (!parse_py_vec3(PyDict_GetItemString(w_dict, "pos"), &pos)) {
+    if (ParseResult parsed = parse_vec3_into(PyDict_GetItemString(w_dict, "pos"), pos);
+        !parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -129,8 +131,11 @@ extern void CleanupVehicleResources(VehicleResources *r, uint32_t num_wheels,
     float max_rpm          = kTrackedEngineMaxRpmDefault;
     float min_rpm          = kTrackedEngineMinRpmDefault;
 
-    if (!self->parsers->CreateTracked.Parse(args, nargs, kwnames, chassis_h_raw, py_wheels,
-                                            py_tracks, max_torque, max_rpm)) {
+    const ParseResult parsed =
+        self->parsers->CreateTracked.Parse(args, nargs, kwnames, chassis_h_raw, py_wheels,
+                                            py_tracks, max_torque, max_rpm);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -191,8 +196,14 @@ extern void CleanupVehicleResources(VehicleResources *r, uint32_t num_wheels,
         }
     }
 
-    if (!ParseTracksToC(py_tracks, tracks, &num_tracks)) {
-        goto python_fail;
+    {
+        const std::expected<ParsedTracks, ParseError> parsed_tracks =
+            ParseTracksToC(py_tracks, tracks);
+        if (!parsed_tracks) {
+            RaiseParseError(parsed_tracks.error());
+            goto python_fail;
+        }
+        num_tracks = parsed_tracks->count;
     }
 
     // --- 4. JOLT COMMIT (No GIL - Unchanged) ---
@@ -316,7 +327,10 @@ python_fail:
     float right = 0.0f;
     float brake = 0.0f;
 
-    if (!self->parsers->TankInput.Parse(args, nargs, kwnames, left, right, brake)) {
+    const ParseResult parsed =
+        self->parsers->TankInput.Parse(args, nargs, kwnames, left, right, brake);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 

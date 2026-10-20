@@ -135,13 +135,16 @@ static PyObject *WorldNew(PyTypeObject *type, PyObject * /*args*/, PyObject * /*
 
     PyObject *settings_dict         = nullptr;
     PyObject *bodies_list           = nullptr;
-    OwnedPyObject baked{};
+    Ref baked{};
     size_t baked_count              = 0;
     GravityVector gravity;
     WorldSettings settings;
     size_t start_idx = 0;
 
-    if (!self->parsers->WorldInit.Parse(args, kwds, settings_dict, bodies_list)) {
+    const ParseResult parsed =
+        self->parsers->WorldInit.Parse(args, kwds, settings_dict, bodies_list);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return -1;
     }
 
@@ -176,7 +179,7 @@ static PyObject *WorldNew(PyTypeObject *type, PyObject * /*args*/, PyObject * /*
     // 3. Bake & Buffers
     if (bodies_list && bodies_list != Py_None) {
         PyObject *st_helper = GetModuleState(PyType_GetModule(Py_TYPE(self)))->helper;
-        OwnedPyObject bake_func{PyObject_GetAttrString(st_helper, "bake_scene")};
+        Ref bake_func{PyObject_GetAttrString(st_helper, "bake_scene")};
         if (!bake_func) {
             goto fail;
         }
@@ -359,7 +362,10 @@ static PyObject *runtime_status_error(Error error, const char *pending_create_me
     float y;
     float z;
 
-    if (!self->parsers->Impulse.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, x, y, z)) {
+    const ParseResult parsed =
+        self->parsers->Impulse.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, x, y, z);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
     if (!ValidateFinite("Impulse", x, y, z)) {
@@ -385,8 +391,11 @@ static PyObject *runtime_status_error(Error error, const char *pending_create_me
     JPH_Real py;
     JPH_Real pz;
 
-    if (!self->parsers->ImpulseAt.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, ix, iy,
-                                        iz, px, py, pz)) {
+    const ParseResult parsed =
+        self->parsers->ImpulseAt.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, ix, iy,
+                                        iz, px, py, pz);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -414,8 +423,11 @@ static PyObject *runtime_status_error(Error error, const char *pending_create_me
     float y;
     float z;
 
-    if (!self->parsers->AngImpulse.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, x, y,
-                                         z)) {
+    const ParseResult parsed =
+        self->parsers->AngImpulse.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, x, y,
+                                         z);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
     if (!ValidateFinite("Angular impulse", x, y, z)) {
@@ -440,7 +452,10 @@ static PyObject *runtime_status_error(Error error, const char *pending_create_me
     float y;
     float z;
 
-    if (!self->parsers->Force.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, x, y, z)) {
+    const ParseResult parsed =
+        self->parsers->Force.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, x, y, z);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
     if (!ValidateFinite("Force", x, y, z)) {
@@ -466,7 +481,10 @@ static PyObject *runtime_status_error(Error error, const char *pending_create_me
     float y;
     float z;
 
-    if (!self->parsers->Torque.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, x, y, z)) {
+    const ParseResult parsed =
+        self->parsers->Torque.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, x, y, z);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
     if (!ValidateFinite("Torque", x, y, z)) {
@@ -489,7 +507,10 @@ static PyObject *runtime_status_error(Error error, const char *pending_create_me
     float y;
     float z;
 
-    if (!self->parsers->Gravity.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, x, y, z)) {
+    const ParseResult parsed =
+        self->parsers->Gravity.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, x, y, z);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
     if (!ValidateFinite("Gravity", x, y, z)) {
@@ -520,7 +541,10 @@ static PyObject *runtime_status_error(Error error, const char *pending_create_me
                                                    PyObject *kwnames) {
     uint64_t h_raw;
 
-    if (!self->parsers->HOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw)) {
+    const ParseResult parsed =
+        self->parsers->HOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -551,8 +575,11 @@ static PyObject *runtime_status_error(Error error, const char *pending_create_me
     float dt        = kDefaultFrameTime;
     PyObject *o_vel = nullptr;
 
-    if (!self->parsers->Buoy.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, surface_y,
-                                   buoyancy, lin_drag, ang_drag, dt, o_vel)) {
+    const ParseResult parsed =
+        self->parsers->Buoy.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, surface_y,
+                                   buoyancy, lin_drag, ang_drag, dt, o_vel);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -573,7 +600,8 @@ static PyObject *runtime_status_error(Error error, const char *pending_create_me
     float vy = 0.0f;
     float vz = 0.0f;
     if (o_vel && o_vel != Py_None) {
-        if (!parse_vec3_direct(o_vel, &vx, &vy, &vz)) {
+        if (ParseResult parsed = parse_vec3_into(o_vel, vx, vy, vz); !parsed) {
+            RaiseParseError(parsed.error());
             return nullptr;
         }
         if (!ValidateFinite("fluid velocity", vx, vy, vz)) {
@@ -602,8 +630,11 @@ static PyObject *runtime_status_error(Error error, const char *pending_create_me
     float ang_drag      = kDefaultAngularDrag;
     float dt            = kDefaultFrameTime;
 
-    if (!self->parsers->BatchBuoy.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_handles,
-                                        surface_y, buoyancy, lin_drag, ang_drag, dt, o_vel)) {
+    const ParseResult parsed =
+        self->parsers->BatchBuoy.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_handles,
+                                        surface_y, buoyancy, lin_drag, ang_drag, dt, o_vel);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -620,9 +651,12 @@ static PyObject *runtime_status_error(Error error, const char *pending_create_me
     float vx = 0.0f;
     float vy = 0.0f;
     float vz = 0.0f;
-    if (o_vel && o_vel != Py_None && !parse_vec3_direct(o_vel, &vx, &vy, &vz)) {
-        PyBuffer_Release(&handles_view);
-        return nullptr;
+    if (o_vel && o_vel != Py_None) {
+        if (ParseResult parsed = parse_vec3_into(o_vel, vx, vy, vz); !parsed) {
+            RaiseParseError(parsed.error());
+            PyBuffer_Release(&handles_view);
+            return nullptr;
+        }
     }
 
     const size_t handle_count = static_cast<size_t>(handles_view.len) / sizeof(BodyHandle);
@@ -672,7 +706,10 @@ static PyObject *runtime_status_error(Error error, const char *pending_create_me
     const Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
     PyObject *state_obj    = nullptr;
 
-    if (!self->parsers->LoadState.Parse(args, nargs, kwnames, state_obj)) {
+    const ParseResult parsed =
+        self->parsers->LoadState.Parse(args, nargs, kwnames, state_obj);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -713,7 +750,10 @@ static PyObject *runtime_status_error(Error error, const char *pending_create_me
     float dt = kDefaultFrameTime;
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (!self->parsers->Step.Parse(args, nargs, kwnames, dt)) {
+    const ParseResult parsed =
+        self->parsers->Step.Parse(args, nargs, kwnames, dt);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -802,9 +842,12 @@ static PyObject *runtime_status_error(Error error, const char *pending_create_me
     bool is_sensor       = false;
     bool use_ccd         = false;
 
-    if (!self->parsers->ConvexHull.Parse(
+    const ParseResult parsed =
+        self->parsers->ConvexHull.Parse(
             args, PyVectorcall_NARGS(nargsf), kwnames, o_pos, o_rot, o_points, motion_type, mass,
-            user_data, is_sensor, category, mask, material_id, friction, restitution, use_ccd)) {
+            user_data, is_sensor, category, mask, material_id, friction, restitution, use_ccd);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -816,8 +859,12 @@ static PyObject *runtime_status_error(Error error, const char *pending_create_me
     float ry;
     float rz;
     float rw;
-    if (!parse_vec3_direct(o_pos, &px, &py, &pz) ||
-        !parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) {
+    if (ParseResult parsed = parse_vec3_into(o_pos, px, py, pz); !parsed) {
+        RaiseParseError(parsed.error());
+        return nullptr;
+    }
+    if (ParseResult parsed = parse_quat_into(o_rot, rx, ry, rz, rw); !parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -964,9 +1011,12 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
     bool is_sensor       = false;
     bool use_ccd         = false;
 
-    if (!self->parsers->Compound.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_pos, o_rot,
+    const ParseResult parsed =
+        self->parsers->Compound.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_pos, o_rot,
                                        o_parts, motion_type, mass, user_data, is_sensor, category,
-                                       mask, material_id, friction, restitution, use_ccd)) {
+                                       mask, material_id, friction, restitution, use_ccd);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -978,8 +1028,12 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
     float ry;
     float rz;
     float rw;
-    if (!parse_vec3_direct(o_pos, &px, &py, &pz) ||
-        !parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) {
+    if (ParseResult parsed = parse_vec3_into(o_pos, px, py, pz); !parsed) {
+        RaiseParseError(parsed.error());
+        return nullptr;
+    }
+    if (ParseResult parsed = parse_quat_into(o_rot, rx, ry, rz, rw); !parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
     if (CPH_UNLIKELY(!PyList_Check(o_parts))) {
@@ -1052,15 +1106,19 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
 
     // 3. THE FAST PARSE
     // We pass the global 'BodyParser' defined in the God Init helper
-    if (!self->parsers->Body.Parse(args, nargs, kwnames, o_pos, o_rot, o_size, shape_type,
+    const ParseResult parsed =
+        self->parsers->Body.Parse(args, nargs, kwnames, o_pos, o_rot, o_size, shape_type,
                                    motion_type, user_data, is_sensor, mass, category, mask,
-                                   friction, restitution, material_id, use_ccd, allowed_dofs)) {
+                                   friction, restitution, material_id, use_ccd, allowed_dofs);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
     // 4. CONVERT COMPLEX TYPES
     if (o_pos && o_pos != Py_None) {
-        if (!parse_vec3_direct(o_pos, &px, &py, &pz)) {
+        if (ParseResult parsed = parse_vec3_into(o_pos, px, py, pz); !parsed) {
+            RaiseParseError(parsed.error());
             return nullptr; // PyErr already set
         }
         // GUARD: This is the exact point test_numerical_stability checks
@@ -1070,7 +1128,8 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
     }
 
     if (o_rot && o_rot != Py_None) {
-        if (!parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) {
+        if (ParseResult parsed = parse_quat_into(o_rot, rx, ry, rz, rw); !parsed) {
+            RaiseParseError(parsed.error());
             return nullptr;
         }
         if (!ValidateFinite("Rotation", rx, ry, rz, rw)) {
@@ -1155,8 +1214,11 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
     int shape_type     = 0;
     int motion_type    = 2;
 
-    if (!self->parsers->BatchCreate.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, py_pos,
-                                          py_sizes, shape_type, motion_type)) {
+    const ParseResult parsed =
+        self->parsers->BatchCreate.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, py_pos,
+                                          py_sizes, shape_type, motion_type);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -1188,7 +1250,9 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
     BodyHandle *handles      = reinterpret_cast<BodyHandle *>(sizes + batch_count);
     PyObject **results       = reinterpret_cast<PyObject **>(handles + batch_count);
     for (Py_ssize_t i = 0; i < batch_count; i++) {
-        if (!parse_py_vec3(PyList_GET_ITEM(py_pos, i), &positions[i])) {
+        if (ParseResult parsed = parse_vec3_into(PyList_GET_ITEM(py_pos, i), positions[i]);
+            !parsed) {
+            RaiseParseError(parsed.error());
             Deallocate(arena);
             return nullptr;
         }
@@ -1240,8 +1304,11 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
     uint32_t cat        = kCollisionFilterAllCategories;
     uint32_t mask       = kCollisionFilterAllMasks;
 
-    if (!self->parsers->Mesh.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_pos, o_rot, o_verts,
-                                   o_indices, user_data, cat, mask)) {
+    const ParseResult parsed =
+        self->parsers->Mesh.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_pos, o_rot, o_verts,
+                                   o_indices, user_data, cat, mask);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -1253,8 +1320,12 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
     float ry;
     float rz;
     float rw;
-    if (!parse_vec3_direct(o_pos, &px, &py, &pz) ||
-        !parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) {
+    if (ParseResult parsed = parse_vec3_into(o_pos, px, py, pz); !parsed) {
+        RaiseParseError(parsed.error());
+        return nullptr;
+    }
+    if (ParseResult parsed = parse_quat_into(o_rot, rx, ry, rz, rw); !parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -1317,7 +1388,10 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
                                                   PyObject *kwnames) {
     uint64_t raw_handle;
 
-    if (!self->parsers->Destroy.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, raw_handle)) {
+    const ParseResult parsed =
+        self->parsers->Destroy.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, raw_handle);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -1332,7 +1406,10 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
                                                          PyObject *kwnames) {
     PyObject *py_handles = nullptr;
 
-    if (!self->parsers->BatchDestroy.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, py_handles)) {
+    const ParseResult parsed =
+        self->parsers->BatchDestroy.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, py_handles);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -1385,7 +1462,10 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
     JPH_Real y;
     JPH_Real z;
 
-    if (!self->parsers->SetPos.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, x, y, z)) {
+    const ParseResult parsed =
+        self->parsers->SetPos.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, x, y, z);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
     if (!ValidateFinite("SetPosition", x, y, z)) {
@@ -1412,8 +1492,11 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
     float z;
     float w;
 
-    if (!self->parsers->SetRot.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, x, y, z,
-                                     w)) {
+    const ParseResult parsed =
+        self->parsers->SetRot.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, x, y, z,
+                                     w);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
     if (!ValidateFinite("SetRotation", x, y, z, w)) {
@@ -1439,8 +1522,11 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
     float y;
     float z;
 
-    if (!self->parsers->SetLinVel.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, x, y,
-                                        z)) {
+    const ParseResult parsed =
+        self->parsers->SetLinVel.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, x, y,
+                                        z);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
     if (!ValidateFinite("LinearVelocity", x, y, z)) {
@@ -1466,8 +1552,11 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
     float y;
     float z;
 
-    if (!self->parsers->SetAngVel.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, x, y,
-                                        z)) {
+    const ParseResult parsed =
+        self->parsers->SetAngVel.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, x, y,
+                                        z);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
     if (!ValidateFinite("AngularVelocity", x, y, z)) {
@@ -1488,7 +1577,10 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
                                                     PyObject *kwnames) {
     uint64_t h_raw;
 
-    if (!self->parsers->GetMotion.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw)) {
+    const ParseResult parsed =
+        self->parsers->GetMotion.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -1513,8 +1605,11 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
     uint64_t h_raw;
     int motion_type;
 
-    if (!self->parsers->SetMotion.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw,
-                                        motion_type)) {
+    const ParseResult parsed =
+        self->parsers->SetMotion.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw,
+                                        motion_type);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -1535,8 +1630,11 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
     uint64_t h_raw;
     uint64_t data_raw;
 
-    if (!self->parsers->SetUserData.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw,
-                                          data_raw)) {
+    const ParseResult parsed =
+        self->parsers->SetUserData.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw,
+                                          data_raw);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -1554,7 +1652,10 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
                                                   PyObject *kwnames) {
     uint64_t h_raw;
 
-    if (!self->parsers->GetUserData.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw)) {
+    const ParseResult parsed =
+        self->parsers->GetUserData.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -1575,7 +1676,10 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
     // 1. FAST PARSE & VALIDATION
     uint64_t h_raw;
 
-    if (!self->parsers->Activate.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw)) {
+    const ParseResult parsed =
+        self->parsers->Activate.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -1595,7 +1699,10 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
     uint64_t h_raw;
 
     // Note: Reusing ActivateParser as the schema is identical (single handle)
-    if (!self->parsers->Activate.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw)) {
+    const ParseResult parsed =
+        self->parsers->Activate.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -1616,8 +1723,11 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
     PyObject *o_pos = nullptr;
     PyObject *o_rot = nullptr;
 
-    if (!self->parsers->SetTrns.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, o_pos,
-                                      o_rot)) {
+    const ParseResult parsed =
+        self->parsers->SetTrns.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, o_pos,
+                                      o_rot);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -1629,10 +1739,12 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
     float ry;
     float rz;
     float rw;
-    if (!parse_vec3_direct(o_pos, &px, &py, &pz)) {
+    if (ParseResult parsed = parse_vec3_into(o_pos, px, py, pz); !parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
-    if (!parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) {
+    if (ParseResult parsed = parse_quat_into(o_rot, rx, ry, rz, rw); !parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -1660,7 +1772,10 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
     uint64_t h_raw;
     bool enabled;
 
-    if (!self->parsers->CCD.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, enabled)) {
+    const ParseResult parsed =
+        self->parsers->CCD.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, enabled);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -1677,7 +1792,10 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
                                                size_t nargsf, PyObject *kwnames) {
     uint64_t h_raw;
 
-    if (!self->parsers->Activate.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw)) {
+    const ParseResult parsed =
+        self->parsers->Activate.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -1695,7 +1813,10 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
                                               size_t nargsf, PyObject *kwnames) {
     uint64_t h_raw;
 
-    if (!self->parsers->Activate.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw)) {
+    const ParseResult parsed =
+        self->parsers->Activate.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -1714,7 +1835,10 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
                                                size_t nargsf, PyObject *kwnames) {
     uint64_t h_raw;
 
-    if (!self->parsers->Activate.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw)) {
+    const ParseResult parsed =
+        self->parsers->Activate.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -1756,7 +1880,10 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
                                                      PyObject *kwnames) {
     float alpha;
 
-    if (!self->parsers->Render.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, alpha)) {
+    const ParseResult parsed =
+        self->parsers->Render.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, alpha);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -1787,8 +1914,11 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
     uint32_t category;
     uint32_t mask;
 
-    if (!self->parsers->ColFilter.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, category,
-                                        mask)) {
+    const ParseResult parsed =
+        self->parsers->ColFilter.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, category,
+                                        mask);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -1812,8 +1942,11 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
     float friction    = kRestitutionBuffer;
     float restitution = 0.0f;
 
-    if (!self->parsers->RegMat.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, id, friction,
-                                     restitution)) {
+    const ParseResult parsed =
+        self->parsers->RegMat.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, id, friction,
+                                     restitution);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -1844,9 +1977,12 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
     float friction       = kDefaultFriction;
     float restitution    = 0.0f;
 
-    if (!self->parsers->Heightfield.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_pos, o_rot,
+    const ParseResult parsed =
+        self->parsers->Heightfield.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_pos, o_rot,
                                           o_scale, o_heights, grid_size, user_data, category, mask,
-                                          material_id, friction, restitution)) {
+                                          material_id, friction, restitution);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -1860,9 +1996,16 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
     float sx;
     float sy;
     float sz;
-    if (!parse_vec3_direct(o_pos, &px, &py, &pz) ||
-        !parse_quat_direct(o_rot, &rx, &ry, &rz, &rw) ||
-        !parse_vec3_direct(o_scale, &sx, &sy, &sz)) {
+    if (ParseResult parsed = parse_vec3_into(o_pos, px, py, pz); !parsed) {
+        RaiseParseError(parsed.error());
+        return nullptr;
+    }
+    if (ParseResult parsed = parse_quat_into(o_rot, rx, ry, rz, rw); !parsed) {
+        RaiseParseError(parsed.error());
+        return nullptr;
+    }
+    if (ParseResult parsed = parse_vec3_into(o_scale, sx, sy, sz); !parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -1903,9 +2046,12 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
     bool draw_centers      = false;
     bool wireframe         = true;
 
-    if (!self->parsers->DebugData.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, draw_shapes,
+    const ParseResult parsed =
+        self->parsers->DebugData.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, draw_shapes,
                                         draw_constraints, draw_bounding_box, draw_centers,
-                                        wireframe)) {
+                                        wireframe);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -1967,11 +2113,14 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
     bool update_position      = true; // Jolt default is usually true
     bool faces_double_sided   = false;
 
-    if (!self->parsers->CreateSoftBody.Parse(
+    const ParseResult parsed =
+        self->parsers->CreateSoftBody.Parse(
             args, PyVectorcall_NARGS(nargsf), kwnames, o_shared, o_pos, o_rot, user_data, category,
             mask, pressure, vertex_radius, linear_damping, num_iterations, max_linear_velocity,
             gravity_factor, friction, restitution, make_rot_identity, update_position,
-            faces_double_sided)) {
+            faces_double_sided);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -1983,8 +2132,12 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
     float ry;
     float rz;
     float rw;
-    if (!parse_vec3_direct(o_pos, &px, &py, &pz) ||
-        !parse_quat_direct(o_rot, &rx, &ry, &rz, &rw)) {
+    if (ParseResult parsed = parse_vec3_into(o_pos, px, py, pz); !parsed) {
+        RaiseParseError(parsed.error());
+        return nullptr;
+    }
+    if (ParseResult parsed = parse_quat_into(o_rot, rx, ry, rz, rw); !parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -2045,7 +2198,10 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
                                                                        PyObject *kwnames) {
     uint64_t handle;
 
-    if (!self->parsers->HOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle)) {
+    const ParseResult parsed =
+        self->parsers->HOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -2063,8 +2219,11 @@ WorldGetSoftBodyVertexPosition(PhysicsWorldObject *self, PyObject *const *args,
     uint64_t handle;
     uint32_t index;
 
-    if (!self->parsers->GetSbVertex.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle,
-                                          index)) {
+    const ParseResult parsed =
+        self->parsers->GetSbVertex.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle,
+                                          index);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -2092,7 +2251,10 @@ WorldGetSoftBodyLocalVertices(PhysicsWorldObject *self, PyObject *const *args,
                                      size_t nargsf, PyObject *kwnames) {
     uint64_t handle;
 
-    if (!self->parsers->HOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle)) {
+    const ParseResult parsed =
+        self->parsers->HOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -2119,7 +2281,10 @@ WorldGetSoftBodyLocalVertices(PhysicsWorldObject *self, PyObject *const *args,
                                                                     PyObject *kwnames) {
     uint64_t h_raw;
 
-    if (!self->parsers->HOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw)) {
+    const ParseResult parsed =
+        self->parsers->HOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -2177,7 +2342,7 @@ WorldGetSoftBodyLocalVertices(PhysicsWorldObject *self, PyObject *const *args,
     uint64_t values[NUM_ARGS] = {};
 
     auto nargs = PyVectorcall_NARGS(nargsf);
-    if (CPH_UNLIKELY(!self->parsers->StressTest.Parse(
+    const ParseResult parsed = self->parsers->StressTest.Parse(
             args, nargs, kwnames, values[0], values[1], values[2], values[3], values[4], values[5],
             values[6], values[7], values[8], values[9], values[10], values[11], values[12],
             values[13], values[14], values[15], values[16], values[17], values[18], values[19],
@@ -2187,7 +2352,9 @@ WorldGetSoftBodyLocalVertices(PhysicsWorldObject *self, PyObject *const *args,
             values[41], values[42], values[43], values[44], values[45], values[46], values[47],
             values[48], values[49], values[50], values[51], values[52], values[53], values[54],
             values[55], values[56], values[57], values[58], values[59], values[60], values[61],
-            values[62], values[63]))) {
+            values[62], values[63]);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -2245,7 +2412,10 @@ WorldGetSoftBodyLocalVertices(PhysicsWorldObject *self, PyObject *const *args,
     // --- 1. FAST ARGUMENT PARSING ---
     PyObject *py_skel_obj = nullptr;
 
-    if (!self->parsers->RagdollSettings.Parse(args, nargs, kwnames, py_skel_obj)) {
+    const ParseResult parsed =
+        self->parsers->RagdollSettings.Parse(args, nargs, kwnames, py_skel_obj);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -2296,8 +2466,11 @@ WorldGetSoftBodyLocalVertices(PhysicsWorldObject *self, PyObject *const *args,
     uint32_t mask        = kJoltAllLayerBits;
     uint32_t material_id = 0;
 
-    if (!self->parsers->CreateRagdoll.Parse(args, nargs, kwnames, settings_obj, pos, rot, user_data,
-                                            category, mask, material_id)) {
+    const ParseResult parsed =
+        self->parsers->CreateRagdoll.Parse(args, nargs, kwnames, settings_obj, pos, rot, user_data,
+                                            category, mask, material_id);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 

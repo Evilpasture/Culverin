@@ -55,7 +55,10 @@ void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
     PyObject *o_vel = nullptr;
     float inv_mass  = default_inv_mass;
 
-    if (!self->parsers->SbssAddVertex.Parse(args, nargs, kwnames, o_pos, inv_mass, o_vel)) {
+    const ParseResult parsed =
+        self->parsers->SbssAddVertex.Parse(args, nargs, kwnames, o_pos, inv_mass, o_vel);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -66,14 +69,16 @@ void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
 
     // 1. Parse Position (Required)
     JPH_Vec3 pos = {};
-    if (!parse_vec3_direct(o_pos, &pos.x, &pos.y, &pos.z)) {
+    if (ParseResult parsed = parse_vec3_into(o_pos, pos.x, pos.y, pos.z); !parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
     // 2. Parse Velocity (Optional)
     JPH_Vec3 vel = {};
     if (o_vel && o_vel != Py_None) {
-        if (!parse_vec3_direct(o_vel, &vel.x, &vel.y, &vel.z)) {
+        if (ParseResult parsed = parse_vec3_into(o_vel, vel.x, vel.y, vel.z); !parsed) {
+            RaiseParseError(parsed.error());
             return nullptr;
         }
     }
@@ -96,7 +101,10 @@ void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
     PyObject *o_mass       = nullptr;
     PyObject *o_vel        = nullptr;
 
-    if (!self->parsers->SbssAddVertices.Parse(args, nargs, kwnames, o_pos, o_mass, o_vel)) {
+    const ParseResult parsed =
+        self->parsers->SbssAddVertices.Parse(args, nargs, kwnames, o_pos, o_mass, o_vel);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
     if (self->optimized) {
@@ -204,7 +212,10 @@ void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
     uint32_t v3            = 0;
     uint32_t mat_idx       = 0;
 
-    if (!self->parsers->SbssAddFace.Parse(args, nargs, kwnames, v1, v2, v3, mat_idx)) {
+    const ParseResult parsed =
+        self->parsers->SbssAddFace.Parse(args, nargs, kwnames, v1, v2, v3, mat_idx);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -245,7 +256,10 @@ void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
     PyObject *o_ind        = nullptr;
     PyObject *o_mat        = nullptr;
 
-    if (!self->parsers->SbssAddFaces.Parse(args, nargs, kwnames, o_ind, o_mat)) {
+    const ParseResult parsed =
+        self->parsers->SbssAddFaces.Parse(args, nargs, kwnames, o_ind, o_mat);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
 
@@ -386,7 +400,10 @@ SoftBodySharedSettingsCreateConstraints(SoftBodySharedSettingsObject *self, PyOb
     float compliance       = 0.0001f;
     int bend_type          = JPH_SoftBodyBendType_Distance; // Default: Distance
 
-    if (!self->parsers->SbssCreateConstraints.Parse(args, nargs, kwnames, compliance, bend_type)) {
+    const ParseResult parsed =
+        self->parsers->SbssCreateConstraints.Parse(args, nargs, kwnames, compliance, bend_type);
+    if (!parsed) {
+        RaiseParseError(parsed.error());
         return nullptr;
     }
     if (!check_bend_type(bend_type, 3)) {
