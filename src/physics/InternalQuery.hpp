@@ -1,6 +1,8 @@
 #pragma once
 
 #include "core/Types.hpp"
+#include "jolt/Jolt.hpp"
+#include <Jolt/Physics/Collision/Shape/Shape.h>
 #include <joltc.h>
 
 #include <cstdint>
@@ -19,41 +21,16 @@ struct ShapeKey {
     [[nodiscard]] friend bool operator==(const ShapeKey &, const ShapeKey &) = default;
 };
 
-// Owning cache entry: the shape is destroyed with the entry.
+// Owning cache entry: the refcounted shape lives with the entry.
 struct ShapeEntry {
     ShapeKey key{};
-    JPH_Shape *shape = nullptr;
-
-    ShapeEntry() = default;
-    ~ShapeEntry() {
-        if (shape != nullptr) {
-            JPH_Shape_Destroy(shape);
-        }
-    }
-
-    ShapeEntry(const ShapeEntry &)            = delete;
-    ShapeEntry &operator=(const ShapeEntry &) = delete;
-
-    ShapeEntry(ShapeEntry &&other) noexcept
-        : key(other.key), shape(other.shape) {
-        other.shape = nullptr;
-    }
-    ShapeEntry &operator=(ShapeEntry &&other) noexcept {
-        if (this != &other) {
-            if (shape != nullptr) {
-                JPH_Shape_Destroy(shape);
-            }
-            key         = other.key;
-            shape       = other.shape;
-            other.shape = nullptr;
-        }
-        return *this;
-    }
+    JPH::ShapeRefC shape;
 };
 
 // REQUIRES: shadow_lock held (documented at the definition).
-JPH_Shape *FindOrCreateShapeLocked(PhysicsWorld *world, int type,
-                                       const float *params);
+// Returns an empty ref on failure.
+JPH::ShapeRefC FindOrCreateShapeLocked(PhysicsWorld *world, int type,
+                                           const float *params);
 
 // --- Shapecast execution shared with the query layer ---
 

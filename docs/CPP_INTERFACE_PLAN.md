@@ -1,7 +1,7 @@
 # Phase 2 Plan: Direct Jolt C++ API + C++ Interfaces Between Subsystems
 
-Status: **A0, naming dissolution, enum-class sweep, B1, and A1 landed**
-(A1 on top of `5aefa8e`); A2 next.
+Status: **A0, naming dissolution, enum-class sweep, B1, A1, and A2
+landed** (A2 on top of `3930146`); B2(physics) next.
 Prerequisite: the C++23 migration
 (`docs/CPP23_MIGRATION.md`) has landed. All acceptance oracles from that
 migration apply unchanged to every phase below: full test suite at
@@ -78,7 +78,7 @@ Handle mapping (representative):
 | `JPH_PhysicsSystem*` + `JPH_PhysicsSystem_Create/Destroy` | `JPH::PhysicsSystem` member (value) |
 | `JPH_BodyInterface*` | `JPH::BodyInterface&` from the system — never null, never owned |
 | `JPH_JobSystem*`, `JPH_TempAllocator*` | `std::unique_ptr<JPH::JobSystemThreadPool>` (64-byte alignment exceeds what CPython world-object allocation guarantees), `std::unique_ptr<JPH::TempAllocator>` over `TempAllocatorImplWithMallocFallback` |
-| `JPH_BodyCreationSettings*` + 10 setter calls | `JPH::BodyCreationSettings` value, public fields |
+| `JPH_BodyCreationSettings*` + 10 setter calls | `JPH::BodyCreationSettings` value, public fields; boxed in command payloads (`unique_ptr`) so the 256-byte settings don't set the size of every command |
 | `JPH_Shape*`/`JPH_ShapeSettings*` + manual `_Destroy` | `JPH::RefConst<JPH::Shape>`; settings values, `->Create()` |
 | `JPH_Constraint*` | `JPH::Ref<JPH::Constraint>`; per-type settings values |
 | `…Table_Create` filters | ~80 lines of own `final` classes (fixed 3-layer matrix as `constexpr` tables; stateless, can be function-local statics — the ownership-transfer dance in `~CPH_PhysicsWorld` disappears) |
@@ -136,14 +136,26 @@ fix falls out: sanitizer builds now pass 0 worker threads to the
 pool directly — JoltC used to translate that 0 into auto-detect, so
 the intended synchronous TSan stepping never actually happened.
 
-**A2 — Body creation & shapes** (`PhysicsWorldCreation`,
-`CommandBuffer`, shape cache). Settings become values;
-`CPH_ConfigureBodySettings` becomes field assignment on a
-`JPH::BodyCreationSettings&`. Shape cache stores `RefConst<Shape>`.
-Command payloads: hold `BodyCreationSettings` by value if the
-variant size/perf A/B allows (measure flush-heavy bulk test), else
-`std::unique_ptr`. *Deletes:* `JoltPtr` settings deleters,
-`CPH_ParamsInit`-era remains in creation, shape `_Destroy` loops.
+**A2 — Body creation & shapes. (Done.)** All body/soft-body
+creation is direct: `JPH::BodyCreationSettings` /
+`JPH::SoftBodyCreationSettings` values configured by field
+assignment (`ConfigureBodySettings`/`ApplyBodyCreationProps` keep
+their exact semantics, including the scaled mass-properties override
+with per-column XYZ inertia scaling), created and added through
+`physics_system.GetBodyInterface()`. Shapes are built from native
+settings values (`Box/Sphere/Capsule/Cylinder/Plane` primitives,
+convex hull, mesh, heightfield, static compound) and held as
+`JPH::ShapeRefC`; the shape cache stores `ShapeRefC`, which reduces
+`ShapeEntry` to a plain aggregate, and the `owns_shape` destroy dance
+in creation is just refcounting now. Command payloads box the
+settings in `std::unique_ptr` — at 256 bytes, `BodyCreationSettings`
+would otherwise dictate the size of every command slot, and the
+allocation count is unchanged from the JoltC heap settings. Boundary
+consumers (`Query` shapecast shape, ragdoll part shapes) borrow the
+cache-owned shape pointer exactly as before. *Deleted:* the `JoltPtr`
+settings/shape aliases, every `JPH_*ShapeSettings_Create/CreateShape`
+and `JPH_Shape_Destroy` call in the creation files, and the
+settings-destroy error paths that JoltC's never-null `new` made dead.
 
 **A3 — Listeners, filters, debug rendering** (`ContactListener`,
 `Filters.hpp`, `DebugRender`, `JoltHandler`). All 8 proc tables

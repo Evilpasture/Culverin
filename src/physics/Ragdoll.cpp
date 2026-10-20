@@ -51,7 +51,10 @@ JPH_Shape *PhysicsRagdollFindOrCreateShape(PhysicsWorld *world, int shape_type,
         return nullptr;
     }
     const std::scoped_lock shadow(world->shadow_lock);
-    return FindOrCreateShapeLocked(world, shape_type, shape_params);
+    // The cache owns the shape for the world's lifetime; ragdoll setup
+    // borrows it.
+    const JPH::ShapeRefC shape = FindOrCreateShapeLocked(world, shape_type, shape_params);
+    return reinterpret_cast<JPH_Shape *>(const_cast<JPH::Shape *>(shape.GetPtr()));
 }
 
 std::expected<void, Error> PhysicsRagdollSettingsAddPart(JPH_RagdollSettings *settings,

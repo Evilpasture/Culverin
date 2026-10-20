@@ -30,16 +30,15 @@ int PhysicsWorldInitJolt(PhysicsWorld *world, WorldSettings settings,
 // Slot and resize mutations require shadow_lock and a non-stepping world.
 [[nodiscard]] std::expected<void, Error> PhysicsWorldResize(PhysicsWorld *world,
                                                             std::size_t new_capacity);
-[[nodiscard]] std::expected<void, Error> PhysicsWorldCommitCreate(PhysicsWorld *world,
-                                                 JPH_BodyCreationSettings *settings,
-                                                 std::uint32_t slot_state, BodyHandle *out_handle);
-[[nodiscard]] std::expected<void, Error> PhysicsWorldCommitCreateSoft(PhysicsWorld *world,
-                                                     JPH_SoftBodyCreationSettings *settings,
-                                                     std::uint32_t slot_state,
-                                                     BodyHandle *out_handle);
-void ConfigureBodySettings(JPH_BodyCreationSettings *settings, JPH_Shape *shape,
+[[nodiscard]] std::expected<void, Error> PhysicsWorldCommitCreate(
+    PhysicsWorld *world, JPH::BodyCreationSettings &settings, std::uint32_t slot_state,
+    BodyHandle *out_handle);
+[[nodiscard]] std::expected<void, Error> PhysicsWorldCommitCreateSoft(
+    PhysicsWorld *world, JPH::SoftBodyCreationSettings &settings, std::uint32_t slot_state,
+    BodyHandle *out_handle);
+void ConfigureBodySettings(JPH::BodyCreationSettings &settings, const JPH::Shape *shape,
                                BodyConfig config);
-void ApplyBodyCreationProps(JPH_BodyCreationSettings *settings, JPH_Shape *shape,
+void ApplyBodyCreationProps(JPH::BodyCreationSettings &settings, const JPH::Shape *shape,
                                 BodyCreationProps props);
 
 // Caller holds shadow_lock. Swaps the active command queue with the spare

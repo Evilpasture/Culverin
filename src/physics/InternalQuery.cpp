@@ -1,6 +1,11 @@
 #include "physics/InternalQuery.hpp"
 #include "core/Buffer.hpp"
 #include "physics/PhysicsWorldState.hpp"
+#include <Jolt/Physics/Collision/Shape/BoxShape.h>
+#include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/CylinderShape.h>
+#include <Jolt/Physics/Collision/Shape/PlaneShape.h>
+#include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <cmath>
 
 /**
@@ -11,7 +16,16 @@
 
 namespace CPH {
 
-JPH_Shape *FindOrCreateShapeLocked(PhysicsWorld *world, int type, const float *params) {
+namespace {
+
+[[nodiscard]] JPH::ShapeRefC create_shape(const JPH::ShapeSettings &settings) {
+    const auto result = settings.Create();
+    return result.IsValid() ? JPH::ShapeRefC(result.Get()) : JPH::ShapeRefC{};
+}
+
+} // namespace
+
+JPH::ShapeRefC FindOrCreateShapeLocked(PhysicsWorld *world, int type, const float *params) {
     const ShapeType shape_type = static_cast<ShapeType>(type);
 
     // 1. KEY NORMALIZATION & SANITIZATION
@@ -49,10 +63,9 @@ JPH_Shape *FindOrCreateShapeLocked(PhysicsWorld *world, int type, const float *p
         p4 = 0.0f;
     }
     // 2. CACHE LOOKUP
+    const ShapeKey key{.type = (uint32_t)type, .p1 = p1, .p2 = p2, .p3 = p3, .p4 = p4};
     for (size_t i = 0; i < world->shape_cache_count; ++i) {
-        const ShapeKey *cached = &world->shape_cache[i].key;
-        if (cached->type == (uint32_t)type && cached->p1 == p1 && cached->p2 == p2 &&
-            cached->p3 == p3 && cached->p4 == p4) {
+        if (world->shape_cache[i].key == key) {
             return world->shape_cache[i].shape;
         }
     }
@@ -61,67 +74,41 @@ JPH_Shape *FindOrCreateShapeLocked(PhysicsWorld *world, int type, const float *p
     if (world->shape_cache_count >= world->shape_cache.size()) {
         const std::size_t new_cap = world->shape_cache.size() == 0 ? 16 : world->shape_cache.size() * 2;
         if (CPH_UNLIKELY(!world->shape_cache.reallocate(new_cap))) {
-            return nullptr;
+            return {};
         }
     }
 
     // 4. JOLT CREATION (Type-Specific Dispatch)
-    JPH_Shape *shape = nullptr;
+    JPH::ShapeRefC shape;
     switch (shape_type) {
-    case ShapeType::Box: {
-        JPH_Vec3 half_extents = {p1, p2, p3};
-        auto s                = JPH_BoxShapeSettings_Create(&half_extents, 0.05f);
-        if (s) {
-            shape = (JPH_Shape *)JPH_BoxShapeSettings_CreateShape(s);
-            JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);
-        }
+    case ShapeType::Box:
+        shape = create_shape(JPH::BoxShapeSettings(JPH::Vec3(p1, p2, p3), 0.05f));
         break;
-    }
-    case ShapeType::Sphere: {
-        auto s = JPH_SphereShapeSettings_Create(p1);
-        if (s) {
-            shape = (JPH_Shape *)JPH_SphereShapeSettings_CreateShape(s);
-            JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);
-        }
+    case ShapeType::Sphere:
+        shape = create_shape(JPH::SphereShapeSettings(p1));
         break;
-    }
-    case ShapeType::Capsule: {
-        auto s = JPH_CapsuleShapeSettings_Create(p1, p2);
-        if (s) {
-            shape = (JPH_Shape *)JPH_CapsuleShapeSettings_CreateShape(s);
-            JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);
-        }
+    case ShapeType::Capsule:
+        shape = create_shape(JPH::CapsuleShapeSettings(p1, p2));
         break;
-    }
-    case ShapeType::Cylinder: {
-        auto s = JPH_CylinderShapeSettings_Create(p1, p2, 0.05f);
-        if (s) {
-            shape = (JPH_Shape *)JPH_CylinderShapeSettings_CreateShape(s);
-            JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);
-        }
+    case ShapeType::Cylinder:
+        shape = create_shape(JPH::CylinderShapeSettings(p1, p2, 0.05f));
         break;
-    }
-    case ShapeType::Plane: {
-        JPH_Plane plane = {{p1, p2, p3}, p4};
-        auto s          = JPH_PlaneShapeSettings_Create(&plane, nullptr, 1000.0f);
-        if (s) {
-            shape = (JPH_Shape *)JPH_PlaneShapeSettings_CreateShape(s);
-            JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)s);
-        }
+    case ShapeType::Plane:
+        shape = create_shape(
+            JPH::PlaneShapeSettings(JPH::Plane(JPH::Vec3(p1, p2, p3), p4), nullptr, 1000.0f));
         break;
-    }
     default:
         break;
     }
 
-    if (CPH_UNLIKELY(!shape)) {
-        return nullptr;
+    if (CPH_UNLIKELY(shape == nullptr)) {
+        return {};
     }
 
     // 5. CACHE COMMIT
     ShapeEntry &entry = world->shape_cache[world->shape_cache_count++];
-    entry.key   = ShapeKey{.type = (uint32_t)type, .p1 = p1, .p2 = p2, .p3 = p3, .p4 = p4};
-    entry.shape = shape;
+    entry.key         = key;
+    entry.shape       = shape;
 
     return shape;
 }

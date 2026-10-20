@@ -11,13 +11,16 @@
 // magnitude, and the typed payloads own their Jolt settings so queue
 // teardown can no longer leak them.
 
+#include "jolt/Jolt.hpp"
 #include "jolt/JoltConfig.hpp"
-#include "jolt/JoltUtils.hpp"
 #include "physics/PhysicsParams.hpp"
+#include <Jolt/Physics/Body/BodyCreationSettings.h>
+#include <Jolt/Physics/SoftBody/SoftBodyCreationSettings.h>
 #include <joltc.h>
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <variant>
 
@@ -28,10 +31,10 @@ struct PhysicsWorld;
 
 namespace cmd {
 
-using BodySettingsPtr =
-    JoltPtr<JPH_BodyCreationSettings, JPH_BodyCreationSettings_Destroy>;
-using SoftBodySettingsPtr =
-    JoltPtr<JPH_SoftBodyCreationSettings, JPH_SoftBodyCreationSettings_Destroy>;
+// Creation settings are boxed: BodyCreationSettings alone is 256 bytes,
+// and holding it by value would inflate every command slot to that size.
+using BodySettingsPtr     = std::unique_ptr<JPH::BodyCreationSettings>;
+using SoftBodySettingsPtr = std::unique_ptr<JPH::SoftBodyCreationSettings>;
 
 struct CreateBody {
     BodySettingsPtr settings;

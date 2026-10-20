@@ -120,8 +120,9 @@ struct FlushContext {
     void operator()(std::monostate) const {}
 
     void operator()(CreateBody &cmd) const {
-        const JPH_BodyID new_bid =
-            JPH_BodyInterface_CreateAndAddBody(bi, cmd.settings.get(), JPH_Activation_Activate);
+        const JPH_BodyID new_bid = world->physics_system.GetBodyInterface()
+                                       .CreateAndAddBody(*cmd.settings, JPH::EActivation::Activate)
+                                       .GetIndexAndSequenceNumber();
         cmd.settings.reset();
 
         const std::scoped_lock shadow(world->shadow_lock);
@@ -135,8 +136,10 @@ struct FlushContext {
     }
 
     void operator()(CreateSoftBody &cmd) const {
-        const JPH_BodyID new_bid = JPH_BodyInterface_CreateAndAddSoftBody(bi, cmd.settings.get(),
-                                                                          JPH_Activation_Activate);
+        const JPH_BodyID new_bid =
+            world->physics_system.GetBodyInterface()
+                .CreateAndAddSoftBody(*cmd.settings, JPH::EActivation::Activate)
+                .GetIndexAndSequenceNumber();
         const std::scoped_lock shadow(world->shadow_lock);
         if (CPH_UNLIKELY(new_bid == kJphInvalidBodyId)) {
             WorldRemoveBodySlot(world, slot);

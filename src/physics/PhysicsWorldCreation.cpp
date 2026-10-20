@@ -4,12 +4,25 @@
 #include "physics/InternalQuery.hpp"
 #include "physics/PhysicsWorld.hpp"
 #include "physics/SlotState.hpp"
+#include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
+#include <Jolt/Physics/Collision/Shape/HeightFieldShape.h>
+#include <Jolt/Physics/Collision/Shape/MeshShape.h>
+#include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
 #include <Jolt/Physics/Ragdoll/Ragdoll.h>
 #include <cstring>
 #include <limits>
+#include <memory>
 
 
 namespace CPH {
+
+[[nodiscard]] static JPH::RVec3 to_rvec3(const JPH_RVec3 &position) {
+    return {position.x, position.y, position.z};
+}
+
+[[nodiscard]] static JPH::Quat to_quat(const JPH_Quat &rotation) {
+    return {rotation.x, rotation.y, rotation.z, rotation.w};
+}
 
 static constexpr float kDefaultMaterialFriction      = 0.2f;
 static constexpr float kConvexHullTolerance          = 0.05f;
@@ -37,77 +50,60 @@ static void initialize_body_shadow(PhysicsWorld *world, BodyHandle handle,
 }
 
 static std::expected<void, Error>
-enqueue_body_settings(PhysicsWorld *world, JPH_BodyCreationSettings *settings,
-                      JPH_Shape *owned_shape, const PhysicsWorldBodyCreateRequest *request,
-                      BodyHandle *out_handle, size_t *out_count) {
+enqueue_body_settings(PhysicsWorld *world, CPH::cmd::BodySettingsPtr settings,
+                      const PhysicsWorldBodyCreateRequest *request, BodyHandle *out_handle,
+                      size_t *out_count) {
     auto shadow = LockShadowNotStepping(world);
     BodyHandle handle = 0;
-    const std::expected<void, Error> commit_result =
-        PhysicsWorldCommitCreate(world, settings, std::to_underlying(SlotState::PendingCreate), &handle);
+    const std::expected<void, Error> commit_result = PhysicsWorldCommitCreate(
+        world, *settings, std::to_underlying(SlotState::PendingCreate), &handle);
     if (!commit_result) {
-        shadow.unlock();
-        JPH_BodyCreationSettings_Destroy(settings);
-        if (owned_shape) {
-            JPH_Shape_Destroy(owned_shape);
-        }
         return commit_result;
     }
 
     initialize_body_shadow(world, handle, request);
     const uint32_t slot = (uint32_t)(handle & kHandleIndexMask);
-    EnqueueCommand(world, slot, CPH::cmd::CreateBody{CPH::cmd::BodySettingsPtr{settings}});
+    EnqueueCommand(world, slot, CPH::cmd::CreateBody{std::move(settings)});
 
     *out_handle = handle;
     *out_count  = (world->count).load(std::memory_order::relaxed);
-    shadow.unlock();
-    if (owned_shape) {
-        JPH_Shape_Destroy(owned_shape);
-    }
     return {};
 }
 
 static std::expected<void, Error>
-create_body_from_shape(PhysicsWorld *world, JPH_Shape *shape, bool owns_shape,
-                       const PhysicsWorldBodyCreateRequest *request, JPH_MotionType motion_type,
-                       uint32_t object_layer, PhysicsWorldBodySetup setup, BodyHandle *out_handle,
-                       size_t *out_count) {
+create_body_from_shape(PhysicsWorld *world, const JPH::Shape *shape,
+                       const PhysicsWorldBodyCreateRequest *request,
+                       JPH::EMotionType motion_type, uint32_t object_layer,
+                       PhysicsWorldBodySetup setup, BodyHandle *out_handle, size_t *out_count) {
     if (!shape) {
         return std::unexpected(WorldCreationError::ShapeFailed);
     }
 
-    JPH_RVec3 position = request->position;
-    JPH_Quat rotation  = request->rotation;
-    JPH_BodyCreationSettings *settings =
-        JPH_BodyCreationSettings_Create3(shape, &position, &rotation, motion_type, object_layer);
-    if (!settings) {
-        if (owns_shape) {
-            JPH_Shape_Destroy(shape);
-        }
-        return std::unexpected(WorldCreationError::BodySettingsFailed);
-    }
+    auto settings = std::make_unique<JPH::BodyCreationSettings>(
+        shape, to_rvec3(request->position), to_quat(request->rotation), motion_type,
+        static_cast<JPH::ObjectLayer>(object_layer));
 
     switch (setup) {
     case PhysicsWorldBodySetup::Configured:
-        ConfigureBodySettings(settings, shape, request->config);
+        ConfigureBodySettings(*settings, shape, request->config);
         break;
     case PhysicsWorldBodySetup::CreationProps: {
         const BodyCreationProps props = {
             request->config.mass,      request->config.friction, request->config.restitution,
             request->config.is_sensor, request->config.use_ccd,
         };
-        ApplyBodyCreationProps(settings, shape, props);
+        ApplyBodyCreationProps(*settings, shape, props);
         break;
     }
     case PhysicsWorldBodySetup::MaterialOnly:
-        JPH_BodyCreationSettings_SetFriction(settings, request->config.friction);
-        JPH_BodyCreationSettings_SetRestitution(settings, request->config.restitution);
+        settings->mFriction    = request->config.friction;
+        settings->mRestitution = request->config.restitution;
         break;
     case PhysicsWorldBodySetup::None:
         break;
     }
 
-    return enqueue_body_settings(world, settings, owns_shape ? shape : nullptr, request, out_handle,
-                                 out_count);
+    return enqueue_body_settings(world, std::move(settings), request, out_handle, out_count);
 }
 
 void PhysicsWorldResolveMaterial(PhysicsWorld *world, uint32_t material_id, float input_friction,
@@ -143,12 +139,12 @@ std::expected<void, Error> PhysicsWorldCreateBody(PhysicsWorld *world,
     *out_handle        = 0;
     *out_count         = 0;
 
-    JPH_Shape *shape;
+    JPH::ShapeRefC shape;
     {
         const std::scoped_lock guard(world->shadow_lock);
         shape = FindOrCreateShapeLocked(world, request->shape_type, request->shape_params);
     }
-    if (!shape) {
+    if (shape == nullptr) {
         return std::unexpected(WorldCreationError::BodySettingsFailed);
     }
 
@@ -157,7 +153,8 @@ std::expected<void, Error> PhysicsWorldCreateBody(PhysicsWorld *world,
                                       ? std::to_underlying(ObjectLayer::Static)
                                       : std::to_underlying(ObjectLayer::Dynamic);
     return create_body_from_shape(
-        world, shape, false, request, (JPH_MotionType)request->config.motion_type, object_layer,
+        world, shape.GetPtr(), request,
+        static_cast<JPH::EMotionType>(request->config.motion_type), object_layer,
         PhysicsWorldBodySetup::Configured, out_handle, out_count);
 }
 
@@ -170,37 +167,30 @@ std::expected<void, Error> PhysicsWorldCreateSoftBody(
     *out_handle        = 0;
     *out_count         = 0;
 
-    JPH_SoftBodyCreationSettings *settings = JPH_SoftBodyCreationSettings_Create();
-    if (!settings) {
-        return std::unexpected(WorldCreationError::BodySettingsFailed);
-    }
-    JPH_SoftBodyCreationSettings_SetSettings(settings, request->shared_settings);
-    JPH_SoftBodyCreationSettings_SetPressure(settings, request->pressure);
-    JPH_SoftBodyCreationSettings_SetVertexRadius(settings, request->vertex_radius);
-    JPH_SoftBodyCreationSettings_SetLinearDamping(settings, request->linear_damping);
-    JPH_SoftBodyCreationSettings_SetNumIterations(settings, request->num_iterations);
-    JPH_SoftBodyCreationSettings_SetMaxLinearVelocity(settings, request->max_linear_velocity);
-    JPH_SoftBodyCreationSettings_SetGravityFactor(settings, request->gravity_factor);
-    JPH_SoftBodyCreationSettings_SetFriction(settings, request->friction);
-    JPH_SoftBodyCreationSettings_SetRestitution(settings, request->restitution);
-    JPH_SoftBodyCreationSettings_SetMakeRotationIdentity(settings, request->make_rotation_identity);
-
-    JPH_RVec3 position = request->position;
-    JPH_Quat rotation  = request->rotation;
-    JPH_SoftBodyCreationSettings_SetPosition(settings, &position);
-    JPH_SoftBodyCreationSettings_SetRotation(settings, &rotation);
-    JPH_SoftBodyCreationSettings_SetObjectLayer(settings, std::to_underlying(ObjectLayer::Dynamic));
-    JPH_SoftBodyCreationSettings_SetAllowSleeping(settings, true);
-    JPH_SoftBodyCreationSettings_SetMakeRotationIdentity(settings, request->make_rotation_identity);
-    JPH_SoftBodyCreationSettings_SetUpdatePosition(settings, request->update_position);
-    JPH_SoftBodyCreationSettings_SetFacesDoubleSided(settings, request->faces_double_sided);
+    auto settings          = std::make_unique<JPH::SoftBodyCreationSettings>();
+    settings->mSettings    = reinterpret_cast<const JPH::SoftBodySharedSettings *>(
+        request->shared_settings);
+    settings->mPosition              = to_rvec3(request->position);
+    settings->mRotation              = to_quat(request->rotation);
+    settings->mObjectLayer           = std::to_underlying(ObjectLayer::Dynamic);
+    settings->mNumIterations         = request->num_iterations;
+    settings->mLinearDamping         = request->linear_damping;
+    settings->mMaxLinearVelocity     = request->max_linear_velocity;
+    settings->mRestitution           = request->restitution;
+    settings->mFriction              = request->friction;
+    settings->mPressure              = request->pressure;
+    settings->mGravityFactor         = request->gravity_factor;
+    settings->mVertexRadius          = request->vertex_radius;
+    settings->mUpdatePosition        = request->update_position;
+    settings->mMakeRotationIdentity  = request->make_rotation_identity;
+    settings->mAllowSleeping         = true;
+    settings->mFacesDoubleSided      = request->faces_double_sided;
 
     auto shadow = LockShadowNotStepping(world);
     BodyHandle handle = 0;
-    const std::expected<void, Error> commit_result =
-        PhysicsWorldCommitCreateSoft(world, settings, std::to_underlying(SlotState::PendingCreate), &handle);
+    const std::expected<void, Error> commit_result = PhysicsWorldCommitCreateSoft(
+        world, *settings, std::to_underlying(SlotState::PendingCreate), &handle);
     if (!commit_result) {
-        JPH_SoftBodyCreationSettings_Destroy(settings);
         return commit_result;
     }
 
@@ -219,8 +209,7 @@ std::expected<void, Error> PhysicsWorldCreateSoftBody(
     world->bodies.user_data[dense]                     = request->user_data;
 
     EnqueueCommand(world, slot,
-                       CPH::cmd::CreateSoftBody{CPH::cmd::SoftBodySettingsPtr{settings},
-                                                request->vertex_count});
+                       CPH::cmd::CreateSoftBody{std::move(settings), request->vertex_count});
 
     *out_handle = handle;
     *out_count  = (world->count).load(std::memory_order::relaxed);
@@ -381,7 +370,7 @@ PhysicsWorldCreateBodiesBatch(PhysicsWorld *world, const PosStride *positions,
                                   const ShapeParams *sizes, size_t batch_count, int shape_type,
                                   int motion_type, BodyHandle *out_handles, size_t *out_count) {
     if (!world || !positions || !sizes || !out_handles || !out_count ||
-        batch_count == 0 || batch_count > SIZE_MAX / sizeof(JPH_BodyCreationSettings *)) {
+        batch_count == 0 || batch_count > SIZE_MAX / sizeof(CPH::cmd::BodySettingsPtr)) {
         return std::unexpected(WorldCreationError::InvalidArgument);
     }
     *out_count         = 0;
@@ -391,11 +380,11 @@ PhysicsWorldCreateBodiesBatch(PhysicsWorld *world, const PosStride *positions,
         return std::unexpected(WorldCreationError::OutOfMemory);
     }
 
-    JPH_Shape *last_shape      = nullptr;
+    JPH::ShapeRefC last_shape;
     const ShapeParams sentinel = {.p = {-1.0f, -1.0f, -1.0f, -1.0f}};
     ShapeParams last_size      = sentinel;
     for (size_t i = 0; i < batch_count; i++) {
-        JPH_Shape *shape      = last_shape;
+        JPH::ShapeRefC shape  = last_shape;
         const float *current  = sizes[i].p;
         const float *previous = last_size.p;
         if (current[0] != previous[0] || current[1] != previous[1] || current[2] != previous[2] ||
@@ -408,13 +397,13 @@ PhysicsWorldCreateBodiesBatch(PhysicsWorld *world, const PosStride *positions,
             last_size  = sizes[i];
         }
 
-        if (shape) {
-            JPH_RVec3 position = {positions[i].x, positions[i].y, positions[i].z};
-            JPH_Quat rotation  = {0, 0, 0, 1};
+        if (shape != nullptr) {
             const uint32_t object_layer =
                 motion_type == std::to_underlying(MotionType::Static) ? std::to_underlying(ObjectLayer::Static) : std::to_underlying(ObjectLayer::Dynamic);
-            settings[i].reset(JPH_BodyCreationSettings_Create3(
-                shape, &position, &rotation, (JPH_MotionType)motion_type, object_layer));
+            settings[i] = std::make_unique<JPH::BodyCreationSettings>(
+                shape.GetPtr(), JPH::RVec3(positions[i].x, positions[i].y, positions[i].z),
+                JPH::Quat::sIdentity(), static_cast<JPH::EMotionType>(motion_type),
+                static_cast<JPH::ObjectLayer>(object_layer));
         }
     }
 
@@ -456,7 +445,7 @@ PhysicsWorldCreateBodiesBatch(PhysicsWorld *world, const PosStride *positions,
         const uint32_t generation =
             (world->bodies.generations[slot]).load(std::memory_order::relaxed);
         const BodyHandle handle = make_handle(slot, generation);
-        JPH_BodyCreationSettings_SetUserData(settings[i].get(), handle);
+        settings[i]->mUserData  = handle;
         world->bodies.slot_to_dense[slot]  = dense;
         world->bodies.dense_to_slot[dense] = slot;
         world->bodies.body_ids[dense]      = kJphInvalidBodyId;
@@ -506,58 +495,53 @@ PhysicsWorldCreateConvexHull(PhysicsWorld *world, const float *points, size_t po
         return std::unexpected(WorldCreationError::InvalidArgument);
     }
 
-    Buffer<JPH_Vec3> jolt_points;
+    Buffer<JPH::Vec3> jolt_points;
     if (!jolt_points.allocate(point_count)) {
         return std::unexpected(WorldCreationError::OutOfMemory);
     }
     for (size_t i = 0; i < point_count; i++) {
-        jolt_points[i] = JPH_Vec3{points[i * 3], points[i * 3 + 1], points[i * 3 + 2]};
+        jolt_points[i] = JPH::Vec3(points[i * 3], points[i * 3 + 1], points[i * 3 + 2]);
     }
 
-    JPH_ConvexHullShapeSettings *hull_settings = JPH_ConvexHullShapeSettings_Create(
-        jolt_points.data(), (uint32_t)point_count, kConvexHullTolerance);
-    if (!hull_settings) {
+    const JPH::ConvexHullShapeSettings hull_settings(
+        jolt_points.data(), static_cast<int>(point_count), kConvexHullTolerance);
+    const auto shape_result = hull_settings.Create();
+    if (!shape_result.IsValid()) {
         return std::unexpected(WorldCreationError::ShapeFailed);
     }
-    JPH_Shape *shape = (JPH_Shape *)JPH_ConvexHullShapeSettings_CreateShape(hull_settings);
-    JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)hull_settings);
-    if (!shape) {
-        return std::unexpected(WorldCreationError::ShapeFailed);
-    }
+    const JPH::ShapeRefC shape = shape_result.Get();
 
     const uint32_t object_layer =
         request->config.motion_type == std::to_underlying(MotionType::Static) ? std::to_underlying(ObjectLayer::Static) : std::to_underlying(ObjectLayer::Dynamic);
     return create_body_from_shape(
-        world, shape, true, request, (JPH_MotionType)request->config.motion_type, object_layer,
+        world, shape.GetPtr(), request,
+        static_cast<JPH::EMotionType>(request->config.motion_type), object_layer,
         PhysicsWorldBodySetup::Configured, out_handle, out_count);
 }
 
-static JPH_Shape *create_compound_shape(PhysicsWorld *world, const PhysicsWorldCompoundPart *parts,
-                                        size_t part_count) {
+static JPH::ShapeRefC create_compound_shape(PhysicsWorld *world,
+                                            const PhysicsWorldCompoundPart *parts,
+                                            size_t part_count) {
     const std::scoped_lock trampoline(world->jph_trampoline_lock);
-    JPH_StaticCompoundShapeSettings *compound_settings = JPH_StaticCompoundShapeSettings_Create();
-    if (!compound_settings) {
-        return nullptr;
-    }
+    JPH::StaticCompoundShapeSettings compound_settings;
 
     for (size_t i = 0; i < part_count; i++) {
-        JPH_Shape *sub_shape;
+        JPH::ShapeRefC sub_shape;
         {
             const std::scoped_lock guard(world->shadow_lock);
             sub_shape =
                 FindOrCreateShapeLocked(world, parts[i].shape_type, parts[i].shape_params);
         }
-        if (sub_shape) {
-            JPH_Vec3 local_position = parts[i].local_position;
-            JPH_Quat local_rotation = parts[i].local_rotation;
-            JPH_CompoundShapeSettings_AddShape2((JPH_CompoundShapeSettings *)compound_settings,
-                                                &local_position, &local_rotation, sub_shape, 0);
+        if (sub_shape != nullptr) {
+            const JPH_Vec3 &local_position = parts[i].local_position;
+            compound_settings.AddShape(
+                JPH::Vec3(local_position.x, local_position.y, local_position.z),
+                to_quat(parts[i].local_rotation), sub_shape.GetPtr(), 0);
         }
     }
 
-    JPH_Shape *shape = (JPH_Shape *)JPH_StaticCompoundShape_Create(compound_settings);
-    JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)compound_settings);
-    return shape;
+    const auto shape_result = compound_settings.Create();
+    return shape_result.IsValid() ? JPH::ShapeRefC(shape_result.Get()) : JPH::ShapeRefC{};
 }
 
 std::expected<void, Error>
@@ -567,15 +551,16 @@ PhysicsWorldCreateCompoundBody(PhysicsWorld *world, const PhysicsWorldCompoundPa
     if (!world || !parts || part_count == 0 || !request || !out_handle || !out_count) {
         return std::unexpected(WorldCreationError::InvalidArgument);
     }
-    JPH_Shape *shape   = create_compound_shape(world, parts, part_count);
-    if (!shape) {
+    const JPH::ShapeRefC shape = create_compound_shape(world, parts, part_count);
+    if (shape == nullptr) {
         return std::unexpected(WorldCreationError::ShapeFailed);
     }
 
     const uint32_t object_layer =
         request->config.motion_type == std::to_underlying(MotionType::Static) ? std::to_underlying(ObjectLayer::Static) : std::to_underlying(ObjectLayer::Dynamic);
     return create_body_from_shape(
-        world, shape, true, request, (JPH_MotionType)request->config.motion_type, object_layer,
+        world, shape.GetPtr(), request,
+        static_cast<JPH::EMotionType>(request->config.motion_type), object_layer,
         PhysicsWorldBodySetup::CreationProps, out_handle, out_count);
 }
 
@@ -589,18 +574,17 @@ PhysicsWorldCreateMeshBody(PhysicsWorld *world, const float *vertices, size_t ve
         triangle_count > UINT32_MAX) {
         return std::unexpected(WorldCreationError::InvalidArgument);
     }
-    if (triangle_count > SIZE_MAX / sizeof(JPH_IndexedTriangle) ||
-        vertex_count > SIZE_MAX / sizeof(JPH_Vec3)) {
+    if (triangle_count > SIZE_MAX / sizeof(JPH::IndexedTriangle) ||
+        vertex_count > SIZE_MAX / sizeof(JPH::Float3)) {
         return std::unexpected(WorldCreationError::OutOfMemory);
     }
-    Buffer<JPH_Vec3> jolt_vertices;
-    Buffer<JPH_IndexedTriangle> triangles;
-    if (!jolt_vertices.allocate(vertex_count) || !triangles.allocate(triangle_count)) {
-        return std::unexpected(WorldCreationError::OutOfMemory);
-    }
+    JPH::VertexList jolt_vertices;
+    jolt_vertices.reserve(vertex_count);
     for (size_t i = 0; i < vertex_count; i++) {
-        jolt_vertices[i] = JPH_Vec3{vertices[i * 3], vertices[i * 3 + 1], vertices[i * 3 + 2]};
+        jolt_vertices.emplace_back(vertices[i * 3], vertices[i * 3 + 1], vertices[i * 3 + 2]);
     }
+    JPH::IndexedTriangleList triangles;
+    triangles.reserve(triangle_count);
     for (size_t triangle = 0; triangle < triangle_count; triangle++) {
         const uint32_t i1 = indices[triangle * 3];
         const uint32_t i2 = indices[(triangle * 3) + 1];
@@ -613,26 +597,15 @@ PhysicsWorldCreateMeshBody(PhysicsWorld *world, const float *vertices, size_t ve
             }
             return std::unexpected(WorldCreationError::InvalidMeshIndex);
         }
-        triangles[triangle] = JPH_IndexedTriangle{
-            .i1            = i1,
-            .i2            = i2,
-            .i3            = i3,
-            .materialIndex = 0,
-            .userData      = 0,
-        };
+        triangles.emplace_back(i1, i2, i3, 0, 0);
     }
 
-    JPH_MeshShapeSettings *mesh_settings = JPH_MeshShapeSettings_Create2(
-        jolt_vertices.data(), (uint32_t)vertex_count, triangles.data(),
-        (uint32_t)triangle_count);
-    if (!mesh_settings) {
+    const JPH::MeshShapeSettings mesh_settings(std::move(jolt_vertices), std::move(triangles));
+    const auto shape_result = mesh_settings.Create();
+    if (!shape_result.IsValid()) {
         return std::unexpected(WorldCreationError::ShapeFailed);
     }
-    JPH_Shape *shape = (JPH_Shape *)JPH_MeshShapeSettings_CreateShape(mesh_settings);
-    JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)mesh_settings);
-    if (!shape) {
-        return std::unexpected(WorldCreationError::ShapeFailed);
-    }
+    const JPH::ShapeRefC shape = shape_result.Get();
 
     const PhysicsWorldBodyCreateRequest request = {
         .position  = position,
@@ -642,7 +615,7 @@ PhysicsWorldCreateMeshBody(PhysicsWorld *world, const float *vertices, size_t ve
         .mask      = mask,
         .user_data = user_data,
     };
-    return create_body_from_shape(world, shape, true, &request, JPH_MotionType_Static,
+    return create_body_from_shape(world, shape.GetPtr(), &request, JPH::EMotionType::Static,
                                   std::to_underlying(ObjectLayer::Static), PhysicsWorldBodySetup::None, out_handle,
                                   out_count);
 }
@@ -657,17 +630,14 @@ std::expected<void, Error> PhysicsWorldCreateHeightfieldBody(
         return std::unexpected(WorldCreationError::InvalidArgument);
     }
 
-    JPH_Vec3 offset = {};
-    JPH_HeightFieldShapeSettings *heightfield_settings =
-        JPH_HeightFieldShapeSettings_Create(heights, &offset, &scale, (uint32_t)grid_size, nullptr);
-    if (!heightfield_settings) {
+    const JPH::HeightFieldShapeSettings heightfield_settings(
+        heights, JPH::Vec3::sZero(), JPH::Vec3(scale.x, scale.y, scale.z),
+        static_cast<JPH::uint32>(grid_size));
+    const auto shape_result = heightfield_settings.Create();
+    if (!shape_result.IsValid()) {
         return std::unexpected(WorldCreationError::ShapeFailed);
     }
-    JPH_Shape *shape = (JPH_Shape *)JPH_HeightFieldShapeSettings_CreateShape(heightfield_settings);
-    JPH_ShapeSettings_Destroy((JPH_ShapeSettings *)heightfield_settings);
-    if (!shape) {
-        return std::unexpected(WorldCreationError::ShapeFailed);
-    }
+    const JPH::ShapeRefC shape = shape_result.Get();
 
     const PhysicsWorldBodyCreateRequest request = {
         .position = position,
@@ -678,7 +648,7 @@ std::expected<void, Error> PhysicsWorldCreateHeightfieldBody(
         .material_id = material_id,
         .user_data   = user_data,
     };
-    return create_body_from_shape(world, shape, true, &request, JPH_MotionType_Static,
+    return create_body_from_shape(world, shape.GetPtr(), &request, JPH::EMotionType::Static,
                                   std::to_underlying(ObjectLayer::Static), PhysicsWorldBodySetup::MaterialOnly,
                                   out_handle, out_count);
 }

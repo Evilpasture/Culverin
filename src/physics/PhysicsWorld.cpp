@@ -5,6 +5,7 @@
 #include "physics/InternalQuery.hpp"
 #include "physics/ShadowSync.hpp"
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
+#include <Jolt/Physics/Collision/Shape/BoxShape.h>
 
 #include <algorithm>
 #include <cmath>
@@ -26,21 +27,17 @@ constexpr JPH_Real kVerifyAbiPosY    = 20.0;
 constexpr JPH_Real kVerifyAbiPosZ    = 30.0;
 constexpr double kVerifyAbiTolerance = 0.1;
 
-using ShapeSettingsPtr = JoltPtr<JPH_ShapeSettings, JPH_ShapeSettings_Destroy>;
-using ShapePtr         = JoltPtr<JPH_Shape, JPH_Shape_Destroy>;
-using BodySettingsPtr  = JoltPtr<JPH_BodyCreationSettings, JPH_BodyCreationSettings_Destroy>;
-
-void set_scaled_mass(JPH_BodyCreationSettings *settings, JPH_MassProperties &properties,
+void set_scaled_mass(JPH::BodyCreationSettings &settings, JPH::MassProperties properties,
                      float mass, float scale) {
-    properties.mass = mass;
-    for (auto &column : properties.inertia.column) {
-        column.x *= scale;
-        column.y *= scale;
-        column.z *= scale;
+    properties.mMass = mass;
+    for (JPH::uint column = 0; column < 4; ++column) {
+        const JPH::Vec4 value = properties.mInertia.GetColumn4(column);
+        properties.mInertia.SetColumn4(
+            column, JPH::Vec4(value.GetX() * scale, value.GetY() * scale, value.GetZ() * scale,
+                              value.GetW()));
     }
-    JPH_BodyCreationSettings_SetMassPropertiesOverride(settings, &properties);
-    JPH_BodyCreationSettings_SetOverrideMassProperties(
-        settings, JPH_OverrideMassProperties_CalculateInertia);
+    settings.mMassPropertiesOverride = properties;
+    settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
 }
 
 // Culverin has three object layers and uses the identical numbering for
@@ -113,50 +110,47 @@ class WorldObjectVsBroadPhaseLayerFilter final : public JPH::ObjectVsBroadPhaseL
 
 // --- Body settings helpers ---
 
-void ConfigureBodySettings(JPH_BodyCreationSettings *settings, JPH_Shape *shape,
+void ConfigureBodySettings(JPH::BodyCreationSettings &settings, const JPH::Shape *shape,
                                BodyConfig cfg) {
     if (cfg.is_sensor) {
-        JPH_BodyCreationSettings_SetIsSensor(settings, true);
+        settings.mIsSensor = true;
     }
     if (cfg.use_ccd) {
-        JPH_BodyCreationSettings_SetMotionQuality(settings, JPH_MotionQuality_LinearCast);
+        settings.mMotionQuality = JPH::EMotionQuality::LinearCast;
     }
     if (cfg.motion_type == std::to_underlying(MotionType::Dynamic)) {
-        JPH_BodyCreationSettings_SetAllowSleeping(settings, true);
+        settings.mAllowSleeping = true;
     }
     if (cfg.allowed_dofs != 0U) {
-        JPH_BodyCreationSettings_SetAllowedDOFs(settings,
-                                                static_cast<JPH_AllowedDOFs>(cfg.allowed_dofs));
+        settings.mAllowedDOFs = static_cast<JPH::EAllowedDOFs>(cfg.allowed_dofs);
     }
-    JPH_BodyCreationSettings_SetFriction(settings, cfg.friction);
-    JPH_BodyCreationSettings_SetRestitution(settings, cfg.restitution);
+    settings.mFriction    = cfg.friction;
+    settings.mRestitution = cfg.restitution;
 
     if (cfg.mass > 0.0F) {
-        JPH_MassProperties properties;
-        JPH_Shape_GetMassProperties(shape, &properties);
+        const JPH::MassProperties properties = shape->GetMassProperties();
         set_scaled_mass(settings, properties, cfg.mass,
-                        cfg.mass / std::fmax(properties.mass, 1e-6F));
+                        cfg.mass / std::fmax(properties.mMass, 1e-6F));
     }
 }
 
-void ApplyBodyCreationProps(JPH_BodyCreationSettings *settings, JPH_Shape *shape,
+void ApplyBodyCreationProps(JPH::BodyCreationSettings &settings, const JPH::Shape *shape,
                                 BodyCreationProps props) {
     if (props.mass > 0.0F) {
-        JPH_MassProperties properties;
-        JPH_Shape_GetMassProperties(shape, &properties);
-        if (properties.mass > 1e-6F) {
-            set_scaled_mass(settings, properties, props.mass, props.mass / properties.mass);
+        const JPH::MassProperties properties = shape->GetMassProperties();
+        if (properties.mMass > 1e-6F) {
+            set_scaled_mass(settings, properties, props.mass, props.mass / properties.mMass);
         }
     }
     if (props.is_sensor) {
-        JPH_BodyCreationSettings_SetIsSensor(settings, true);
+        settings.mIsSensor = true;
     }
     if (props.use_ccd) {
-        JPH_BodyCreationSettings_SetMotionQuality(settings, JPH_MotionQuality_LinearCast);
+        settings.mMotionQuality = JPH::EMotionQuality::LinearCast;
     }
-    JPH_BodyCreationSettings_SetAllowSleeping(settings, true);
-    JPH_BodyCreationSettings_SetFriction(settings, props.friction);
-    JPH_BodyCreationSettings_SetRestitution(settings, props.restitution);
+    settings.mAllowSleeping = true;
+    settings.mFriction      = props.friction;
+    settings.mRestitution   = props.restitution;
 }
 
 // --- Synchronization helpers (see core/Threading.hpp) ---
@@ -434,7 +428,7 @@ std::expected<void, Error> PhysicsWorldLoadBakedScene(PhysicsWorld *world,
         for (std::size_t i = 0; i < scene->count; ++i) {
             const float *const shape_data = &scene->shapes[i * kBakedShapeStride];
             const float params[4] = {shape_data[1], shape_data[2], shape_data[3], shape_data[4]};
-            JPH_Shape *const shape =
+            const JPH::ShapeRefC shape =
                 FindOrCreateShapeLocked(world, static_cast<int>(shape_data[0]), params);
             if (CPH_UNLIKELY(shape == nullptr)) {
                 error = WorldError::OutOfMemory;
@@ -450,26 +444,24 @@ std::expected<void, Error> PhysicsWorldLoadBakedScene(PhysicsWorld *world,
             shadow_rot = {scene->rotations[rot_idx + 0], scene->rotations[rot_idx + 1],
                           scene->rotations[rot_idx + 2], scene->rotations[rot_idx + 3]};
 
-            JPH_RVec3 j_pos = {shadow_pos.x, shadow_pos.y, shadow_pos.z};
-            JPH_Quat j_rot  = {shadow_rot.x, shadow_rot.y, shadow_rot.z, shadow_rot.w};
             const std::uint8_t motion_type = scene->motion_types[i];
-            const BodySettingsPtr creation(JPH_BodyCreationSettings_Create3(
-                shape, &j_pos, &j_rot, static_cast<JPH_MotionType>(motion_type),
-                static_cast<JPH_ObjectLayer>(scene->object_layers[i])));
-            if (CPH_UNLIKELY(!creation)) {
-                error = WorldError::OutOfMemory;
-                break;
-            }
+            JPH::BodyCreationSettings creation(
+                shape.GetPtr(), JPH::RVec3(shadow_pos.x, shadow_pos.y, shadow_pos.z),
+                JPH::Quat(shadow_rot.x, shadow_rot.y, shadow_rot.z, shadow_rot.w),
+                static_cast<JPH::EMotionType>(motion_type),
+                static_cast<JPH::ObjectLayer>(scene->object_layers[i]));
 
             world->bodies.generations[i].store(1, std::memory_order::relaxed);
             const BodyHandle handle = make_handle(static_cast<std::uint32_t>(i), 1);
-            JPH_BodyCreationSettings_SetUserData(creation.get(), handle);
+            creation.mUserData      = handle;
             if (motion_type == std::to_underlying(MotionType::Dynamic)) {
-                JPH_BodyCreationSettings_SetAllowSleeping(creation.get(), true);
+                creation.mAllowSleeping = true;
             }
 
-            const JPH_BodyID body_id = JPH_BodyInterface_CreateAndAddBody(
-                world->body_interface, creation.get(), JPH_Activation_Activate);
+            const JPH_BodyID body_id =
+                world->physics_system.GetBodyInterface()
+                    .CreateAndAddBody(creation, JPH::EActivation::Activate)
+                    .GetIndexAndSequenceNumber();
             if (CPH_UNLIKELY(body_id == kJphInvalidBodyId)) {
                 error = WorldError::OutOfMemory;
                 break;
@@ -560,9 +552,10 @@ std::expected<void, Error> reserve_body_slot(PhysicsWorld *world, std::uint32_t 
 } // namespace
 
 std::expected<void, Error> PhysicsWorldCommitCreate(PhysicsWorld *world,
-                                                 JPH_BodyCreationSettings *settings,
-                                                 std::uint32_t slot_state, BodyHandle *out_handle) {
-    if (!world || !settings || !out_handle) {
+                                                    JPH::BodyCreationSettings &settings,
+                                                    std::uint32_t slot_state,
+                                                    BodyHandle *out_handle) {
+    if (!world || !out_handle) {
         return std::unexpected(WorldError::InvalidArgument);
     }
     *out_handle = 0;
@@ -572,16 +565,16 @@ std::expected<void, Error> PhysicsWorldCommitCreate(PhysicsWorld *world,
     if (!status) {
         return status;
     }
-    JPH_BodyCreationSettings_SetUserData(settings, handle);
-    *out_handle = handle;
+    settings.mUserData = handle;
+    *out_handle        = handle;
     return {};
 }
 
 std::expected<void, Error> PhysicsWorldCommitCreateSoft(PhysicsWorld *world,
-                                                     JPH_SoftBodyCreationSettings *settings,
-                                                     std::uint32_t slot_state,
-                                                     BodyHandle *out_handle) {
-    if (!world || !settings || !out_handle) {
+                                                        JPH::SoftBodyCreationSettings &settings,
+                                                        std::uint32_t slot_state,
+                                                        BodyHandle *out_handle) {
+    if (!world || !out_handle) {
         return std::unexpected(WorldError::InvalidArgument);
     }
     *out_handle = 0;
@@ -591,8 +584,8 @@ std::expected<void, Error> PhysicsWorldCommitCreateSoft(PhysicsWorld *world,
     if (!status) {
         return status;
     }
-    JPH_SoftBodyCreationSettings_SetUserData(settings, handle);
-    *out_handle = handle;
+    settings.mUserData = handle;
+    *out_handle        = handle;
     return {};
 }
 
@@ -719,28 +712,22 @@ std::size_t PhysicsWorldFinalizeStep(PhysicsWorld *world, float dt) {
 }
 
 int VerifyAbiAlignment(JPH_BodyInterface *body_interface) {
-    JPH_Vec3 half_extents = {1, 1, 1};
-    const ShapeSettingsPtr box_settings(
-        reinterpret_cast<JPH_ShapeSettings *>(JPH_BoxShapeSettings_Create(&half_extents, 0.0F)));
-    if (!box_settings) {
+    const JPH::BoxShapeSettings box_settings(JPH::Vec3(1.0f, 1.0f, 1.0f), 0.0f);
+    const auto shape_result = box_settings.Create();
+    if (!shape_result.IsValid()) {
         return -1;
     }
-    const ShapePtr shape(reinterpret_cast<JPH_Shape *>(
-        JPH_BoxShapeSettings_CreateShape(reinterpret_cast<JPH_BoxShapeSettings *>(box_settings.get()))));
-    if (!shape) {
-        return -1;
-    }
+    const JPH::ShapeRefC shape = shape_result.Get();
 
-    JPH_RVec3 position = {kVerifyAbiPosX, kVerifyAbiPosY, kVerifyAbiPosZ};
-    JPH_Quat rotation  = {0, 0, 0, 1};
-    const BodySettingsPtr settings(JPH_BodyCreationSettings_Create3(
-        shape.get(), &position, &rotation, JPH_MotionType_Static, 0));
-    if (!settings) {
-        return -1;
-    }
+    JPH::BodyCreationSettings settings(shape.GetPtr(),
+                                       JPH::RVec3(kVerifyAbiPosX, kVerifyAbiPosY, kVerifyAbiPosZ),
+                                       JPH::Quat::sIdentity(), JPH::EMotionType::Static, 0);
 
-    const JPH_BodyID bid =
-        JPH_BodyInterface_CreateAndAddBody(body_interface, settings.get(), JPH_Activation_Activate);
+    // Create through the C API on purpose: the read-back below verifies
+    // that the C JPH_RVec3 layout still matches the native one.
+    const JPH_BodyID bid = JPH_BodyInterface_CreateAndAddBody(
+        body_interface, reinterpret_cast<JPH_BodyCreationSettings *>(&settings),
+        JPH_Activation_Activate);
     if (bid == kJphInvalidBodyId) {
         return -1;
     }

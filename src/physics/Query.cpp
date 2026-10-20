@@ -92,7 +92,10 @@ static JPH_Shape *query_begin_with_shape(PhysicsWorld *world, int shape_type, co
 
     // The shadow lock serializes cache access. Avoid taking jph_trampoline_lock
     // here: other native paths may hold it while waiting for shadow_lock.
-    JPH_Shape *shape = FindOrCreateShapeLocked(world, shape_type, params);
+    // The cache owns the shape for the world's lifetime, so the borrowed
+    // pointer stays valid for the query after this ref is released.
+    const JPH::ShapeRefC shape_ref = FindOrCreateShapeLocked(world, shape_type, params);
+    JPH_Shape *shape = reinterpret_cast<JPH_Shape *>(const_cast<JPH::Shape *>(shape_ref.GetPtr()));
 
     if (shape && ignore_body) {
         *ignore_body         = kJphInvalidBodyId;
