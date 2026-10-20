@@ -25,7 +25,7 @@ namespace {
 
 } // namespace
 
-JPH::ShapeRefC FindOrCreateShapeLocked(PhysicsWorld *world, int type, const float *params) {
+JPH::ShapeRefC PhysicsWorld::FindOrCreateShapeLocked(int type, std::span<const float, 4> params) {
     const ShapeType shape_type = static_cast<ShapeType>(type);
 
     // 1. KEY NORMALIZATION & SANITIZATION
@@ -64,16 +64,16 @@ JPH::ShapeRefC FindOrCreateShapeLocked(PhysicsWorld *world, int type, const floa
     }
     // 2. CACHE LOOKUP
     const ShapeKey key{.type = (uint32_t)type, .p1 = p1, .p2 = p2, .p3 = p3, .p4 = p4};
-    for (size_t i = 0; i < world->shape_cache_count; ++i) {
-        if (world->shape_cache[i].key == key) {
-            return world->shape_cache[i].shape;
+    for (size_t i = 0; i < shape_cache_count; ++i) {
+        if (shape_cache[i].key == key) {
+            return shape_cache[i].shape;
         }
     }
 
     // 3. PRE-ALLOCATION CHECK (Fail early before expensive Jolt work)
-    if (world->shape_cache_count >= world->shape_cache.size()) {
-        const std::size_t new_cap = world->shape_cache.size() == 0 ? 16 : world->shape_cache.size() * 2;
-        if (CPH_UNLIKELY(!world->shape_cache.reallocate(new_cap))) {
+    if (shape_cache_count >= shape_cache.size()) {
+        const std::size_t new_cap = shape_cache.size() == 0 ? 16 : shape_cache.size() * 2;
+        if (CPH_UNLIKELY(!shape_cache.reallocate(new_cap))) {
             return {};
         }
     }
@@ -106,7 +106,7 @@ JPH::ShapeRefC FindOrCreateShapeLocked(PhysicsWorld *world, int type, const floa
     }
 
     // 5. CACHE COMMIT
-    ShapeEntry &entry = world->shape_cache[world->shape_cache_count++];
+    ShapeEntry &entry = shape_cache[shape_cache_count++];
     entry.key         = key;
     entry.shape       = shape;
 
@@ -114,9 +114,14 @@ JPH::ShapeRefC FindOrCreateShapeLocked(PhysicsWorld *world, int type, const floa
 }
 
 
+JPH::ShapeRefC PhysicsWorld::FindOrCreateShape(int type, std::span<const float, 4> params) {
+    const std::scoped_lock guard(shadow_lock);
+    return FindOrCreateShapeLocked(type, params);
+}
+
 // Execute one native shapecast. The caller owns query registration and holds
 // the shape alive for the duration of this call.
-bool ShapecastExecuteInternal(PhysicsWorld *world, const JPH_Shape *shape,
+bool ShapecastExecuteInternal(PhysicsWorld &world, const JPH_Shape *shape,
                                 const JPH_RMat4 *transform, const JPH_Vec3 *sweep_dir,
                                 JPH_BodyID ignore_bid, CastShapeContext *ctx) {
     JPH_BroadPhaseLayerFilter *bp_f = JPH_BroadPhaseLayerFilter_Create(nullptr);
@@ -146,7 +151,7 @@ bool ShapecastExecuteInternal(PhysicsWorld *world, const JPH_Shape *shape,
 
     JPH_RVec3 base_offset          = {0, 0, 0};
     const JPH_NarrowPhaseQuery *nq = reinterpret_cast<const JPH_NarrowPhaseQuery *>(
-        &world->physics_system.GetNarrowPhaseQuery());
+        &world.physics_system.GetNarrowPhaseQuery());
 
     JPH_NarrowPhaseQuery_CastShape(nq, shape, transform, sweep_dir, settings, &base_offset,
                                    CastShape_ClosestCollector, ctx, bp_f, obj_f, bf, nullptr);

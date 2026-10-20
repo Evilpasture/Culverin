@@ -1,7 +1,7 @@
 # Phase 2 Plan: Direct Jolt C++ API + C++ Interfaces Between Subsystems
 
-Status: **A0, naming dissolution, enum-class sweep, B1, A1, and A2
-landed** (A2 on top of `3930146`); B2(physics) next.
+Status: **A0, naming dissolution, enum-class sweep, B1, A1, A2, and
+B2(physics) landed** (B2 on top of `4028737`); A3 next.
 Prerequisite: the C++23 migration
 (`docs/CPP23_MIGRATION.md`) has landed. All acceptance oracles from that
 migration apply unchanged to every phase below: full test suite at
@@ -211,14 +211,37 @@ the Python-visible contract. Foreign C result domains (JoltC
 results, errno-style values) register via
 `CPH::RegisterErrorCategory` instead of growing a fake enum.
 
-**B2 — Native API signatures.** `std::span` for array inputs/outputs,
-references where null is not a state, no `*out_` parameters inside
-the native tree (~36 today), `[[nodiscard]]` on all fallible ops.
-`CPH_PhysicsWorld` free functions become member functions where the
-world is the obvious subject (keep free functions that are genuinely
-algorithms over spans, e.g. `ShadowSync`). By the time B2 runs, the
-naming dissolution (below) has made `CPH::` the single convention,
-so new signatures are written directly in it.
+**B2 — Native API signatures. (Physics done.)** `std::span` for
+array inputs/outputs, references where null is not a state, no
+`*out_` parameters inside the native tree (~36 today),
+`[[nodiscard]]` on all fallible ops. `CPH_PhysicsWorld` free
+functions become member functions where the world is the obvious
+subject (keep free functions that are genuinely algorithms over
+spans, e.g. `ShadowSync`). By the time B2 runs, the naming
+dissolution (below) has made `CPH::` the single convention, so new
+signatures are written directly in it. The physics pass moved every
+world operation onto `PhysicsWorld` (declared in
+`PhysicsWorldState.hpp`): creations return
+`expected<BodyHandle, Error>`, always-full buffers
+(`TakeContactEvents`, `SaveSnapshot`, `GetRenderState`, soft-body
+vertices, `BuildDebugData`) are returned by value, only the
+prefix-filled `GetActiveIndices` keeps a workspace buffer and
+returns its valid count, `UnpackHandle` is a const
+`std::optional<std::uint32_t>`, and snapshot load returns the
+restored body count with `ReadSnapshotHeader` exposed for the
+binding's capacity-mismatch message. What stayed free, on purpose:
+`SyncShadowBuffers` (restrict-qualified hot algorithm), the
+settings-value helpers (`ConfigureBodySettings` /
+`ApplyBodyCreationProps`), `PhysicsWorldCreateRagdollSettings`
+and the ragdoll skeleton/settings/drive functions (their subject is
+not a world; they move onto direct Jolt types in A4),
+`PhysicsRagdollDeallocate` (null world is a real state when the
+owning Python object dies first), `FindInvalidMeshTriangle` (pure
+span scan the binding pre-checks so its error can name the bad
+triangle), and `ShapecastExecuteInternal`. Query vector parameters
+still use the JoltC `JPH_RVec3`/`JPH_Vec3` value types until A4
+converts the query implementation itself. B2 for the remaining
+subsystems rides with B4.
 
 **B3 — Python boundary hygiene.** Introduce `Ref` (owning RAII,
 `Py_DECREF` in dtor) and `Borrowed` (non-owning, debug-checked)

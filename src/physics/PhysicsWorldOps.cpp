@@ -1,6 +1,7 @@
 #include "physics/PhysicsWorldOps.hpp"
 
 #include "physics/CommandBuffer.hpp"
+#include "physics/PhysicsWorldState.hpp"
 #include "physics/SlotState.hpp"
 
 #include <utility>
@@ -34,49 +35,49 @@ bool enqueue_operation(PhysicsWorld *world, std::uint32_t slot,
                        const PhysicsBodyOperation &op) {
     switch (op.type) {
     case PhysicsBodyOperationType::ApplyImpulse:
-        EnqueueCommand(world, slot, ApplyImpulse{op.vector});
+        world->EnqueueCommand(slot, ApplyImpulse{op.vector});
         return true;
     case PhysicsBodyOperationType::ApplyImpulseAt:
-        EnqueueCommand(world, slot, ApplyImpulseAt{op.vector, op.position});
+        world->EnqueueCommand(slot, ApplyImpulseAt{op.vector, op.position});
         return true;
     case PhysicsBodyOperationType::ApplyAngularImpulse:
-        EnqueueCommand(world, slot, ApplyAngularImpulse{op.vector});
+        world->EnqueueCommand(slot, ApplyAngularImpulse{op.vector});
         return true;
     case PhysicsBodyOperationType::ApplyForce:
-        EnqueueCommand(world, slot, ApplyForce{op.vector});
+        world->EnqueueCommand(slot, ApplyForce{op.vector});
         return true;
     case PhysicsBodyOperationType::ApplyTorque:
-        EnqueueCommand(world, slot, ApplyTorque{op.vector});
+        world->EnqueueCommand(slot, ApplyTorque{op.vector});
         return true;
     case PhysicsBodyOperationType::SetPosition:
-        EnqueueCommand(world, slot, SetPosition{op.position});
+        world->EnqueueCommand(slot, SetPosition{op.position});
         return true;
     case PhysicsBodyOperationType::SetRotation:
-        EnqueueCommand(world, slot, SetRotation{op.rotation});
+        world->EnqueueCommand(slot, SetRotation{op.rotation});
         return true;
     case PhysicsBodyOperationType::SetLinearVelocity:
-        EnqueueCommand(world, slot, SetLinearVelocity{op.vector});
+        world->EnqueueCommand(slot, SetLinearVelocity{op.vector});
         return true;
     case PhysicsBodyOperationType::SetAngularVelocity:
-        EnqueueCommand(world, slot, SetAngularVelocity{op.vector});
+        world->EnqueueCommand(slot, SetAngularVelocity{op.vector});
         return true;
     case PhysicsBodyOperationType::SetMotionType:
-        EnqueueCommand(world, slot, SetMotionType{op.value});
+        world->EnqueueCommand(slot, SetMotionType{op.value});
         return true;
     case PhysicsBodyOperationType::Activate:
-        EnqueueCommand(world, slot, Activate{});
+        world->EnqueueCommand(slot, Activate{});
         return true;
     case PhysicsBodyOperationType::Deactivate:
-        EnqueueCommand(world, slot, Deactivate{});
+        world->EnqueueCommand(slot, Deactivate{});
         return true;
     case PhysicsBodyOperationType::SetUserData:
         // Shadow-only; nothing to flush (user data never reaches Jolt).
         return true;
     case PhysicsBodyOperationType::SetTransform:
-        EnqueueCommand(world, slot, SetTransform{op.position, op.rotation});
+        world->EnqueueCommand(slot, SetTransform{op.position, op.rotation});
         return true;
     case PhysicsBodyOperationType::SetCcd:
-        EnqueueCommand(world, slot, SetCcd{op.value});
+        world->EnqueueCommand(slot, SetCcd{op.value});
         return true;
     default:
         return false;
@@ -155,97 +156,90 @@ void execute_now(PhysicsWorld *world, JPH_BodyID body_id,
 } // namespace
 
 std::expected<void, Error>
-PhysicsWorldApplyBodyOperation(PhysicsWorld *world,
-                                   const PhysicsBodyOperation *operation) {
-    if (!world || !operation || operation->type > PhysicsBodyOperationType::SetCcd) {
+PhysicsWorld::ApplyBodyOperation(const PhysicsBodyOperation &op) {
+    if (op.type > PhysicsBodyOperationType::SetCcd) {
         return std::unexpected(BodyOperationError::InvalidArgument);
     }
-    const PhysicsBodyOperation &op = *operation;
 
     bool execute_immediately = false;
     JPH_BodyID body_id       = kJphInvalidBodyId;
     {
-        const auto shadow = LockShadowNotStepping(world);
+        const auto shadow = LockShadowNotStepping();
 
-        std::uint32_t slot = 0;
-        if (!unpack_handle(world, op.handle, &slot)) {
+        const std::optional<std::uint32_t> resolved = UnpackHandle(op.handle);
+        if (!resolved) {
             return std::unexpected(BodyOperationError::StaleHandle);
         }
+        const std::uint32_t slot = *resolved;
         const auto state = static_cast<SlotState>(
-            world->bodies.slot_states[slot].load(std::memory_order::acquire));
+            bodies.slot_states[slot].load(std::memory_order::acquire));
         const SlotPredicate predicate = get_slot_predicate(std::to_underlying(state), immediate_mask(op.type));
         if (!predicate.is_executable()) {
             return std::unexpected(BodyOperationError::StaleHandle);
         }
-        if (CPH_UNLIKELY(!EnsureCommandCapacity(world))) {
+        if (CPH_UNLIKELY(!EnsureCommandCapacity())) {
             return std::unexpected(BodyOperationError::OutOfMemory);
         }
 
         // Impulse-class ops on live bodies run straight against Jolt below
         // instead of being deferred; everything else defers.
         execute_immediately = is_immediate_jolt_action(op.type) && predicate.is_immediate;
-        if (!execute_immediately && !enqueue_operation(world, slot, op)) {
+        if (!execute_immediately && !enqueue_operation(this, slot, op)) {
             return std::unexpected(BodyOperationError::InvalidArgument);
         }
-        mirror_to_shadow(world, slot, op);
+        mirror_to_shadow(this, slot, op);
         if (execute_immediately) {
-            body_id = world->bodies.body_ids[world->bodies.slot_to_dense[slot]];
+            body_id = bodies.body_ids[bodies.slot_to_dense[slot]];
         }
     }
 
     if (execute_immediately) {
-        execute_now(world, body_id, op);
+        execute_now(this, body_id, op);
     }
     return {};
 }
 
-std::expected<void, Error> PhysicsWorldQueueBodyDestroy(PhysicsWorld *world,
-                                                            BodyHandle handle) {
-    if (!world) {
-        return std::unexpected(BodyOperationError::InvalidArgument);
-    }
-    const auto shadow = LockShadowNotStepping(world);
+std::expected<void, Error> PhysicsWorld::QueueBodyDestroy(BodyHandle handle) {
+    const auto shadow = LockShadowNotStepping();
 
-    std::uint32_t slot = 0;
-    if (!unpack_handle(world, handle, &slot)) {
+    const std::optional<std::uint32_t> resolved = UnpackHandle(handle);
+    if (!resolved) {
         return std::unexpected(BodyOperationError::StaleHandle);
     }
-    if (!EnsureCommandCapacity(world)) {
+    const std::uint32_t slot = *resolved;
+    if (!EnsureCommandCapacity()) {
         return std::unexpected(BodyOperationError::OutOfMemory);
     }
     const auto state = static_cast<SlotState>(
-        world->bodies.slot_states[slot].load(std::memory_order::acquire));
+        bodies.slot_states[slot].load(std::memory_order::acquire));
     if (get_slot_predicate(std::to_underlying(state), kMaskDestructible).is_executable()) {
-        EnqueueCommand(world, slot, DestroyBody{});
-        world->bodies.slot_states[slot].store(std::to_underlying(SlotState::PendingDestroy), std::memory_order::release);
+        EnqueueCommand(slot, DestroyBody{});
+        bodies.slot_states[slot].store(std::to_underlying(SlotState::PendingDestroy), std::memory_order::release);
     }
     return {};
 }
 
-std::expected<void, Error> PhysicsWorldQueueBodyDestroyBatch(PhysicsWorld *world,
-                                                                  const BodyHandle *handles,
-                                                                  std::size_t handle_count) {
-    if (!world || (handle_count != 0 && !handles)) {
-        return std::unexpected(BodyOperationError::InvalidArgument);
-    }
-    if (handle_count == 0) {
+std::expected<void, Error>
+PhysicsWorld::QueueBodyDestroyBatch(std::span<const BodyHandle> handles) {
+    if (handles.empty()) {
         return {};
     }
-    const auto shadow = LockShadowNotStepping(world);
-    if (!EnsureCommandBulkCapacity(world, handle_count)) {
+    const auto shadow = LockShadowNotStepping();
+    if (!EnsureCommandBulkCapacity(handles.size())) {
         return std::unexpected(BodyOperationError::OutOfMemory);
     }
-    for (std::size_t i = 0; i < handle_count; ++i) {
-        std::uint32_t slot = 0;
-        if (!unpack_handle(world, handles[i], &slot)) {
+    for (const BodyHandle handle : handles) {
+        const std::optional<std::uint32_t> resolved = UnpackHandle(handle);
+        if (!resolved) {
             continue;
         }
+        const std::uint32_t slot = *resolved;
         const auto state = static_cast<SlotState>(
-            world->bodies.slot_states[slot].load(std::memory_order::acquire));
+            bodies.slot_states[slot].load(std::memory_order::acquire));
         if (get_slot_predicate(std::to_underlying(state), kMaskDestructible).is_executable()) {
-            EnqueueCommand(world, slot, DestroyBody{});
-            world->bodies.slot_states[slot].store(std::to_underlying(SlotState::PendingDestroy),
-                                                  std::memory_order::release);
+            EnqueueCommand(slot, DestroyBody{});
+            bodies.slot_states[slot].store(std::to_underlying(SlotState::PendingDestroy),
+                                           std::memory_order::release);
         }
     }
     return {};

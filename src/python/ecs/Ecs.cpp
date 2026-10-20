@@ -619,8 +619,9 @@ fail_quiet:
         uint64_t handle;
         memcpy(&handle, &h_set->data[static_cast<size_t>(i) * sizeof(uint64_t)], sizeof(uint64_t));
 
-        uint32_t slot;
-        if (unpack_handle(&world->physics, handle, &slot)) {
+        if (const std::optional<std::uint32_t> resolved =
+                world->physics.UnpackHandle(handle)) {
+            const uint32_t slot = *resolved;
             uint32_t phys_dense = world->physics.bodies.slot_to_dense[slot];
 
             // 1. Sync Position (Using your PositionVector / PosStride logic)

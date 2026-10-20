@@ -32,34 +32,34 @@ bool grow_queue(PhysicsWorld *world, std::size_t new_capacity) {
 
 } // namespace
 
-bool EnsureCommandBulkCapacity(PhysicsWorld *world, std::size_t batch_size) {
-    if (batch_size > std::numeric_limits<std::size_t>::max() - world->command_count) {
+bool PhysicsWorld::EnsureCommandBulkCapacity(std::size_t batch_size) {
+    if (batch_size > std::numeric_limits<std::size_t>::max() - command_count) {
         return false;
     }
-    const std::size_t required = world->command_count + batch_size;
-    if (CPH_UNLIKELY(required > world->command_queue.size())) {
+    const std::size_t required = command_count + batch_size;
+    if (CPH_UNLIKELY(required > command_queue.size())) {
         std::size_t new_capacity =
-            world->command_queue.size() == 0 ? kInitialQueueCapacity : world->command_queue.size();
+            command_queue.size() == 0 ? kInitialQueueCapacity : command_queue.size();
         while (new_capacity < required) {
             if (new_capacity > std::numeric_limits<std::size_t>::max() / 2) {
                 return false;
             }
             new_capacity *= 2;
         }
-        return grow_queue(world, new_capacity);
+        return grow_queue(this, new_capacity);
     }
     return true;
 }
 
-bool EnsureCommandCapacity(PhysicsWorld *world) {
-    return EnsureCommandBulkCapacity(world, 1);
+bool PhysicsWorld::EnsureCommandCapacity() {
+    return EnsureCommandBulkCapacity(1);
 }
 
-void WorldRemoveBodySlot(PhysicsWorld *world, std::uint32_t slot) {
-    BodyBuffers &bodies = world->bodies;
+void PhysicsWorld::RemoveBodySlot(std::uint32_t slot) {
+    BodyBuffers &bodies = this->bodies;
     const std::uint32_t dense = bodies.slot_to_dense[slot];
     const std::uint32_t last =
-        static_cast<std::uint32_t>(world->count.load(std::memory_order::acquire)) - 1;
+        static_cast<std::uint32_t>(count.load(std::memory_order::acquire)) - 1;
 
     if (dense != last) {
         bodies.positions[dense]          = bodies.positions[last];
@@ -90,19 +90,19 @@ void WorldRemoveBodySlot(PhysicsWorld *world, std::uint32_t slot) {
     // data moves above must be visible before a reader sees the count).
     bodies.generations[slot].fetch_add(1, std::memory_order::relaxed);
     bodies.slot_states[slot].store(std::to_underlying(SlotState::Empty), std::memory_order::relaxed);
-    const std::size_t free_index = world->free_count.fetch_add(1, std::memory_order::relaxed);
+    const std::size_t free_index = free_count.fetch_add(1, std::memory_order::relaxed);
     bodies.free_slots[free_index] = slot;
-    world->count.fetch_sub(1, std::memory_order::release);
+    count.fetch_sub(1, std::memory_order::release);
 }
 
-void ClearCommandQueue(PhysicsWorld *world) {
+void PhysicsWorld::ClearCommandQueue() {
     // Resetting each command destroys the payload (body settings, etc.)
     // it owns. The legacy loop freed only creation settings and leaked
     // heap constraint parameters.
-    for (std::size_t i = 0; i < world->command_count; ++i) {
-        world->command_queue[i] = PhysicsCommand{};
+    for (std::size_t i = 0; i < command_count; ++i) {
+        command_queue[i] = PhysicsCommand{};
     }
-    world->command_count = 0;
+    command_count = 0;
 }
 
 // --- Flush ---
@@ -127,7 +127,7 @@ struct FlushContext {
 
         const std::scoped_lock shadow(world->shadow_lock);
         if (CPH_UNLIKELY(new_bid == kJphInvalidBodyId)) {
-            WorldRemoveBodySlot(world, slot);
+            world->RemoveBodySlot(slot);
             return;
         }
         world->bodies.body_ids[world->bodies.slot_to_dense[slot]] = new_bid;
@@ -142,7 +142,7 @@ struct FlushContext {
                 .GetIndexAndSequenceNumber();
         const std::scoped_lock shadow(world->shadow_lock);
         if (CPH_UNLIKELY(new_bid == kJphInvalidBodyId)) {
-            WorldRemoveBodySlot(world, slot);
+            world->RemoveBodySlot(slot);
         } else {
             const std::uint32_t dense = world->bodies.slot_to_dense[slot];
             world->bodies.body_ids[dense] = new_bid;
@@ -167,7 +167,7 @@ struct FlushContext {
         JPH_BodyInterface_RemoveBody(bi, bid);
         JPH_BodyInterface_DestroyBody(bi, bid);
         const std::scoped_lock shadow(world->shadow_lock);
-        WorldRemoveBodySlot(world, slot);
+        world->RemoveBodySlot(slot);
     }
 
     void operator()(SetPosition &cmd) const {
@@ -297,21 +297,21 @@ struct FlushContext {
 
 } // namespace
 
-void FlushCommandsInternal(PhysicsWorld *world, std::span<PhysicsCommand> queue) {
+void PhysicsWorld::FlushCommands(std::span<PhysicsCommand> queue) {
     for (auto &command : queue) {
         const std::uint32_t slot = command.slot;
         const SlotState state =
-            static_cast<SlotState>(world->bodies.slot_states[slot].load(std::memory_order::acquire));
+            static_cast<SlotState>(bodies.slot_states[slot].load(std::memory_order::acquire));
 
-        const bool is_create = std::holds_alternative<CreateBody>(command.payload) ||
-                               std::holds_alternative<CreateSoftBody>(command.payload);
-        const JPH_BodyID bid = world->bodies.body_ids[world->bodies.slot_to_dense[slot]];
+        const bool is_create = std::holds_alternative<cmd::CreateBody>(command.payload) ||
+                               std::holds_alternative<cmd::CreateSoftBody>(command.payload);
+        const JPH_BodyID bid = bodies.body_ids[bodies.slot_to_dense[slot]];
 
         // Stale commands (body destroyed while queued, create superseded)
         // are dropped; resetting the command still destroys payloads.
         if (std::to_underlying(state) < 32 && ((slot_state_bit(state) & kValidBidMask) != 0) &&
             (is_create || bid != kJphInvalidBodyId)) {
-            std::visit(FlushContext{world, world->body_interface, slot, bid}, command.payload);
+            std::visit(FlushContext{this, body_interface, slot, bid}, command.payload);
         }
         command = PhysicsCommand{};
     }

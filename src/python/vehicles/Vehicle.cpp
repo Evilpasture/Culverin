@@ -320,10 +320,11 @@ static void configure_drivetrain(VehicleResources *r, PyObject *py_engine, PyObj
     // Ensure all body creation commands are processed before linking
     SyncAndFlushInternal(self);
 
-    uint32_t slot = 0;
     // TSan Fix: Cast to atomic type for handle verification
-    bool handle_valid =
-        unpack_handle(&self->physics, static_cast<BodyHandle>(chassis_h_raw), &slot);
+    const std::optional<std::uint32_t> resolved =
+        self->physics.UnpackHandle(static_cast<BodyHandle>(chassis_h_raw));
+    const uint32_t slot        = resolved.value_or(0);
+    const bool handle_valid    = resolved.has_value();
 
     // TSan Fix: Atomic load of state (Acquire ensures visibility of the chassis initialization)
     uint8_t state =

@@ -74,7 +74,7 @@ int WorldResize(PhysicsWorldObject *self, size_t new_capacity) {
     BlockUntilNotStepping(self);
     BlockUntilNotQuerying(self);
 
-    const std::expected<void, Error> status = PhysicsWorldResize(world, new_capacity);
+    const std::expected<void, Error> status = world->Resize(new_capacity);
     if (!status && status.error().Code().Is(WorldError::BufferExported)) {
         PyErr_SetString(PyExc_BufferError, "Cannot resize while memoryview is active.");
         return -1;
@@ -170,7 +170,7 @@ int LoadBakedScene(PhysicsWorldObject *self, PyObject *baked) {
         .user_data     = static_cast<const uint64_t *>(user_data),
     };
 
-    const std::expected<void, Error> status = PhysicsWorldLoadBakedScene(&self->physics, &scene);
+    const std::expected<void, Error> status = self->physics.LoadBakedScene(scene);
     if (status) {
         return 0;
     }

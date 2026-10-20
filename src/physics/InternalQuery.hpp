@@ -27,10 +27,6 @@ struct ShapeEntry {
     JPH::ShapeRefC shape;
 };
 
-// REQUIRES: shadow_lock held (documented at the definition).
-// Returns an empty ref on failure.
-JPH::ShapeRefC FindOrCreateShapeLocked(PhysicsWorld *world, int type,
-                                           const float *params);
 
 // --- Shapecast execution shared with the query layer ---
 
@@ -43,7 +39,7 @@ struct CastShapeFilter {
     JPH_BodyID ignore_id;
 };
 
-bool ShapecastExecuteInternal(PhysicsWorld *world, const JPH_Shape *shape,
+bool ShapecastExecuteInternal(PhysicsWorld &world, const JPH_Shape *shape,
                                   const JPH_RMat4 *transform, const JPH_Vec3 *sweep_dir,
                                   JPH_BodyID ignore_bid, CastShapeContext *ctx);
 

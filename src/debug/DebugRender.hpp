@@ -44,6 +44,12 @@ struct DebugBuffer {
     }
 };
 
+// One frame of debug geometry produced by PhysicsWorld::BuildDebugData.
+struct DebugData {
+    Buffer<DebugVertex> lines;
+    Buffer<DebugVertex> triangles;
+};
+
 extern const JPH_DebugRenderer_Procs kDebugProcs;
 
 } // namespace CPH

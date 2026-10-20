@@ -6,6 +6,7 @@
 #include <Python.h>
 
 #include <cstddef>
+#include <optional>
 
 namespace CPH::Python {
 
@@ -27,14 +28,16 @@ void SyncAndFlushInternal(PhysicsWorldObject *self);
 
 // Validate a raw handle against the shadow state. On failure the shadow lock
 // is released and ValueError is raised; the caller must return nullptr.
-[[nodiscard]] static inline bool ValidateHandle(PhysicsWorldObject *self, uint64_t h_raw,
-                                                    uint32_t *out_slot) {
-    if (CPH_UNLIKELY(!unpack_handle(&self->physics, static_cast<BodyHandle>(h_raw), out_slot))) {
+[[nodiscard]] static inline std::optional<std::uint32_t> ValidateHandle(PhysicsWorldObject *self,
+                                                                        uint64_t h_raw) {
+    const std::optional<std::uint32_t> slot =
+        self->physics.UnpackHandle(static_cast<BodyHandle>(h_raw));
+    if (CPH_UNLIKELY(!slot)) {
         (self->physics.shadow_lock).unlock();
         PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
-        return false;
+        return std::nullopt;
     }
-    return true;
+    return slot;
 }
 
 } // namespace CPH::Python

@@ -119,7 +119,8 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
     (self->world->physics.shadow_lock).lock();
     BlockUntilNotStepping(self->world);
     const bool pose_applied =
-        PhysicsRagdollDriveToPose(self->ragdoll, root_position, matrices, joint_count);
+        PhysicsRagdollDriveToPose(self->ragdoll, root_position,
+                                      {matrices, static_cast<size_t>(joint_count)});
     (self->world->physics.shadow_lock).unlock();
 
     // 4. CLEANUP
@@ -152,8 +153,9 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
         return PyErr_NoMemory();
     }
 
-    PhysicsRagdollCopyBodyHandles(&self->world->physics, self->body_slots,
-                                      static_cast<size_t>(body_count), handles);
+    self->world->physics.CopyRagdollBodyHandles(
+        {self->body_slots, static_cast<size_t>(body_count)},
+        {handles, static_cast<size_t>(body_count)});
     for (Py_ssize_t i = 0; i < body_count; ++i) {
         if (handles[i].alive) {
             PyObject *handle =
@@ -199,8 +201,8 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
         Py_DECREF(list);
         return PyErr_NoMemory();
     }
-    if (!PhysicsRagdollCopyDebugInfo(&self->world->physics, self->ragdoll, info,
-                                         static_cast<size_t>(body_count))) {
+    if (!self->world->physics.CopyRagdollDebugInfo(
+            *self->ragdoll, {info, static_cast<size_t>(body_count)})) {
         Deallocate(info);
         Py_DECREF(list);
         return PyErr_Format(PyExc_RuntimeError, "Unable to read ragdoll body state");
@@ -277,8 +279,8 @@ void RagdollSettingsDealloc(RagdollSettingsObject *self) {
 void RagdollDealloc(RagdollObject *self) {
     if (self->ragdoll) {
         PhysicsWorld *world = self->world ? &self->world->physics : nullptr;
-        Py_BEGIN_ALLOW_THREADS PhysicsRagdollDeallocate(world, self->ragdoll, self->body_slots,
-                                                            self->body_count);
+        Py_BEGIN_ALLOW_THREADS PhysicsRagdollDeallocate(
+            world, self->ragdoll, {self->body_slots, static_cast<size_t>(self->body_count)});
         Py_END_ALLOW_THREADS self->ragdoll = nullptr;
     }
 
@@ -327,10 +329,13 @@ void RagdollDealloc(RagdollObject *self) {
     float shape_params[4];
     ParseBodySize(py_size, shape_params);
 
-    JPH_Shape *shape             = nullptr;
-    Py_BEGIN_ALLOW_THREADS shape = PhysicsRagdollFindOrCreateShape(
-        self->world ? &self->world->physics : nullptr, shape_type, shape_params);
-    Py_END_ALLOW_THREADS if (!shape) {
+    JPH::ShapeRefC shape;
+    if (self->world) {
+        Py_BEGIN_ALLOW_THREADS shape =
+            self->world->physics.FindOrCreateShape(shape_type, shape_params);
+        Py_END_ALLOW_THREADS
+    }
+    if (!shape) {
         return PyErr_Format(PyExc_ValueError, "Invalid shape configuration");
     }
 
@@ -356,9 +361,8 @@ void RagdollDealloc(RagdollObject *self) {
         .has_position = has_position,
         .position     = position,
     };
-    int joint_count = 0;
-    const std::expected<void, Error> status =
-        PhysicsRagdollSettingsAddPart(self->settings, shape, &request, &joint_count);
+    const std::expected<int, Error> status =
+        PhysicsRagdollSettingsAddPart(self->settings, shape.GetPtr(), request);
 
     if (!status && status.error().Code().Is(RagdollError::InvalidShape)) {
         return PyErr_Format(PyExc_ValueError, "Invalid shape configuration");

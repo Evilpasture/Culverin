@@ -6,6 +6,7 @@
 
 #include "core/Buffer.hpp"
 #include "core/Compiler.hpp"
+#include "core/Error.hpp"
 #include "core/Threading.hpp"
 #include "core/Types.hpp"
 #include "debug/DebugRender.hpp"
@@ -15,6 +16,7 @@
 #include "physics/CommandBuffer.hpp"
 #include "physics/ContactEventDefinitions.hpp"
 #include "physics/InternalQuery.hpp"
+#include "physics/Query.hpp"
 #include "physics/SlotState.hpp"
 #include "soft_bodies/SoftBodyCore.hpp"
 #include <Jolt/Core/JobSystemThreadPool.h>
@@ -26,8 +28,11 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <span>
 
 
 namespace CPH {
@@ -74,7 +79,6 @@ struct MaterialData {
 
 // Default collision category/mask: a body collides with everything until
 // told otherwise.
-inline constexpr std::uint32_t kAllLayerBits = 0xFFFFU;
 
 struct BodyBuffers {
     Buffer<PosStride, kAvxAlignment> positions;
@@ -125,6 +129,207 @@ struct PhysicsWorld {
     PhysicsWorld &operator=(const PhysicsWorld &) = delete;
     PhysicsWorld(PhysicsWorld &&)                 = delete;
     PhysicsWorld &operator=(PhysicsWorld &&)      = delete;
+
+    // --- Lifecycle & stepping (PhysicsWorld.cpp) ---
+
+    // Allocates body/constraint/contact storage for `max_bodies`, with room
+    // for `initial_count` bodies available immediately.
+    [[nodiscard]] std::expected<void, Error> AllocateBuffers(int max_bodies,
+                                                             std::size_t initial_count);
+    void InitializeFreeSlots(std::size_t start_idx);
+    [[nodiscard]] bool InitJolt(WorldSettings settings, GravityVector gravity);
+    [[nodiscard]] std::expected<void, Error> LoadBakedScene(const BakedSceneData &scene);
+    // Slot and resize mutations require shadow_lock and a non-stepping world.
+    [[nodiscard]] std::expected<void, Error> Resize(std::size_t new_capacity);
+    [[nodiscard]] std::expected<BodyHandle, Error>
+    CommitCreate(JPH::BodyCreationSettings &settings, std::uint32_t slot_state);
+    [[nodiscard]] std::expected<BodyHandle, Error>
+    CommitCreateSoft(JPH::SoftBodyCreationSettings &settings, std::uint32_t slot_state);
+    // Caller holds shadow_lock. Swaps the active command queue with the spare
+    // and returns the captured commands (still owned by the spare buffer;
+    // flush them before the next detach).
+    [[nodiscard]] std::span<PhysicsCommand> DetachCommands();
+    // Called with the GIL released after the binding marked the world
+    // stepping and detached the commands; flushes commands, steps Jolt,
+    // syncs shadows.
+    void StepNative(float dt, std::span<PhysicsCommand> commands);
+    // Caller holds shadow_lock; finalizes step counters/flags and wakes
+    // waiters. Returns the live body count.
+    std::size_t FinalizeStep(float dt);
+
+    // --- Command queue (CommandBuffer.cpp) ---
+
+    // Swap-remove `slot` from the dense body arrays and recycle it.
+    // Caller holds shadow_lock.
+    void RemoveBodySlot(std::uint32_t slot);
+    // Queue growth; caller holds shadow_lock and the world is not stepping.
+    [[nodiscard]] bool EnsureCommandCapacity();
+    [[nodiscard]] bool EnsureCommandBulkCapacity(std::size_t batch_size);
+    // Executes and clears each command. Caller holds jph_trampoline_lock.
+    void FlushCommands(std::span<PhysicsCommand> queue);
+    // Drops pending commands, destroying payloads they own.
+    void ClearCommandQueue();
+    // Append a command; capacity must already be ensured via
+    // EnsureCommandCapacity. Caller holds shadow_lock.
+    template <typename Payload>
+    void EnqueueCommand(std::uint32_t slot, Payload &&payload) {
+        command_queue[command_count++] = PhysicsCommand{slot, std::forward<Payload>(payload)};
+    }
+
+    // --- Step/query arbitration (PhysicsWorld.cpp) ---
+
+    // Acquires shadow_lock, parking on step_sync while a step is in
+    // progress. Returns the held lock; named locals only — never call
+    // this as a temporary.
+    [[nodiscard]] std::unique_lock<std::mutex> LockShadowNotStepping();
+    // With shadow_lock held (via `shadow`), waits until no query is active.
+    void WaitUntilNotQuerying(std::unique_lock<std::mutex> &shadow);
+    // Wakes every thread parked on step_sync.cond.
+    void NotifyStepSync() {
+        const std::scoped_lock lock(step_sync.mutex);
+        step_sync.cond.notify_all();
+    }
+    // Resolves a handle to its slot if the generation still matches.
+    [[nodiscard]] std::optional<std::uint32_t> UnpackHandle(BodyHandle handle) const noexcept {
+        const auto slot = static_cast<std::uint32_t>(handle & kHandleIndexMask);
+        const auto gen  = static_cast<std::uint32_t>(handle >> kHandleIndexBits);
+        if (CPH_UNLIKELY(slot >= slot_capacity)) {
+            return std::nullopt;
+        }
+        if (bodies.generations[slot].load(std::memory_order::acquire) != gen) {
+            return std::nullopt;
+        }
+        return slot;
+    }
+
+    // --- Shape cache (InternalQuery.cpp) ---
+
+    // REQUIRES: shadow_lock held (documented at the definition).
+    // Returns an empty ref on failure.
+    [[nodiscard]] JPH::ShapeRefC
+    FindOrCreateShapeLocked(int type, std::span<const float, 4> params);
+    // Locking wrapper around FindOrCreateShapeLocked.
+    [[nodiscard]] JPH::ShapeRefC FindOrCreateShape(int type, std::span<const float, 4> params);
+
+    // --- Body creation (PhysicsWorldCreation.cpp) ---
+
+    [[nodiscard]] ResolvedMaterial ResolveMaterial(std::uint32_t material_id, float input_friction,
+                                                   float input_restitution);
+    [[nodiscard]] std::expected<BodyHandle, Error>
+    CreateBody(const PhysicsWorldBodyCreateRequest &request);
+    // `out_handles` must have the same length as `positions`/`sizes`;
+    // failed entries are set to 0.
+    [[nodiscard]] std::expected<void, Error>
+    CreateBodiesBatch(std::span<const PosStride> positions, std::span<const ShapeParams> sizes,
+                      int shape_type, int motion_type, std::span<BodyHandle> out_handles);
+    [[nodiscard]] std::expected<BodyHandle, Error>
+    CreateSoftBody(const PhysicsWorldSoftBodyCreateRequest &request);
+    [[nodiscard]] std::expected<RagdollInstance, Error>
+    CreateRagdollInstance(JPH_RagdollSettings *settings, JPH_RVec3 position, JPH_Quat rotation,
+                            std::uint64_t user_data);
+    // `body_slots` must have room for the ragdoll's body count.
+    // Returns the world body count after registration.
+    [[nodiscard]] std::expected<std::size_t, Error>
+    RegisterRagdollBodies(JPH_Ragdoll *ragdoll, std::span<std::uint32_t> body_slots,
+                          std::uint64_t user_data, std::uint32_t category, std::uint32_t mask,
+                          std::uint32_t material_id);
+    void DestroyRagdoll(JPH_Ragdoll *ragdoll);
+    // `points` is flat XYZ triples.
+    [[nodiscard]] std::expected<BodyHandle, Error>
+    CreateConvexHull(std::span<const float> points, const PhysicsWorldBodyCreateRequest &request);
+    [[nodiscard]] std::expected<BodyHandle, Error>
+    CreateCompoundBody(std::span<const PhysicsWorldCompoundPart> parts,
+                       const PhysicsWorldBodyCreateRequest &request);
+    // `vertices` is flat XYZ triples, `indices` flat triangle triples.
+    [[nodiscard]] std::expected<BodyHandle, Error>
+    CreateMeshBody(std::span<const float> vertices, std::span<const std::uint32_t> indices,
+                   JPH_RVec3 position, JPH_Quat rotation, std::uint32_t category,
+                   std::uint32_t mask, std::uint64_t user_data);
+    [[nodiscard]] std::expected<BodyHandle, Error>
+    CreateHeightfieldBody(std::span<const float> heights, std::size_t grid_size, JPH_Vec3 scale,
+                          JPH_RVec3 position, JPH_Quat rotation, float friction, float restitution,
+                          std::uint32_t category, std::uint32_t mask, std::uint32_t material_id,
+                          std::uint64_t user_data);
+
+    // --- Body operations (PhysicsWorldOps.cpp) ---
+
+    // Executes an engine-side body mutation: command staging, shadow-buffer
+    // mirroring, and immediate Jolt application for impulse-style ops on
+    // already-live bodies. Stale-handle errors are translated by the binding.
+    [[nodiscard]] std::expected<void, Error>
+    ApplyBodyOperation(const PhysicsBodyOperation &operation);
+    [[nodiscard]] std::expected<void, Error> QueueBodyDestroy(BodyHandle handle);
+    [[nodiscard]] std::expected<void, Error>
+    QueueBodyDestroyBatch(std::span<const BodyHandle> handles);
+
+    // --- Runtime operations (PhysicsWorldRuntime.cpp) ---
+
+    [[nodiscard]] bool AttachContactListener();
+    void SyncLoadedState(std::size_t saved_count);
+    [[nodiscard]] std::expected<Buffer<ContactEvent>, Error> TakeContactEvents();
+    [[nodiscard]] std::expected<Buffer<std::uint8_t>, Error> SaveSnapshot();
+    // Returns the number of bodies restored.
+    [[nodiscard]] std::expected<std::size_t, Error> LoadSnapshot(std::span<const std::uint8_t> data);
+    [[nodiscard]] std::expected<void, Error> SetGravity(JPH::Vec3 gravity);
+    [[nodiscard]] JPH::Vec3 GetGravity();
+    [[nodiscard]] std::expected<PhysicsBodyStats, Error> GetBodyStats(BodyHandle handle);
+    [[nodiscard]] std::expected<std::uint32_t, Error> GetSoftBodyVertexCount(BodyHandle handle);
+    [[nodiscard]] std::expected<SoftBodyVertexPosition, Error>
+    GetSoftBodyVertexPosition(BodyHandle handle, std::uint32_t vertex_index);
+    [[nodiscard]] std::expected<Buffer<JPH_Vec3>, Error>
+    GetSoftBodyLocalVertices(BodyHandle handle);
+    // Returns whether the body is submerged; a stale handle reports
+    // "not submerged" rather than an error (legacy behavior).
+    [[nodiscard]] std::expected<bool, Error>
+    ApplyBuoyancy(BodyHandle handle, JPH_Real surface_y, float buoyancy, float linear_drag,
+                  float angular_drag, JPH::Vec3 fluid_velocity, float dt);
+    [[nodiscard]] std::expected<void, Error>
+    ApplyBuoyancyBatch(std::span<const BodyHandle> handles, JPH_Real surface_y, float buoyancy,
+                       float linear_drag, float angular_drag, JPH::Vec3 fluid_velocity, float dt);
+    [[nodiscard]] std::expected<MotionType, Error> GetMotionType(BodyHandle handle);
+    [[nodiscard]] std::expected<std::uint64_t, Error> GetUserData(BodyHandle handle);
+    [[nodiscard]] std::expected<std::uint32_t, Error> GetIndex(BodyHandle handle);
+    [[nodiscard]] bool IsAlive(BodyHandle handle);
+    [[nodiscard]] std::expected<bool, Error> IsActive(BodyHandle handle);
+    // Fills `indices` (resized as needed) and returns how many entries
+    // are valid.
+    [[nodiscard]] std::expected<std::size_t, Error>
+    GetActiveIndices(Buffer<std::uint32_t> &indices);
+    // Interpolated render state: 7 floats per body (position + quaternion).
+    [[nodiscard]] std::expected<Buffer<float>, Error> GetRenderState(float alpha);
+    [[nodiscard]] std::expected<void, Error>
+    SetCollisionFilter(BodyHandle handle, std::uint32_t category, std::uint32_t mask);
+    [[nodiscard]] std::expected<void, Error>
+    RegisterMaterial(std::uint32_t id, float friction, float restitution);
+    [[nodiscard]] std::expected<DebugData, Error>
+    BuildDebugData(bool draw_shapes, bool draw_constraints, bool draw_bounding_box,
+                   bool draw_centers, bool wireframe);
+
+    // --- Spatial queries (Query.cpp) ---
+
+    // Balances the active_queries registration performed by the query
+    // entry points (also used by native ops that register as queries).
+    void QueryEnd();
+    [[nodiscard]] std::expected<void, Error>
+    OverlapSphere(JPH_RVec3 center, float radius, PhysicsQueryHitBuffer &hits);
+    [[nodiscard]] std::expected<void, Error>
+    OverlapAabb(JPH_RVec3 min, JPH_RVec3 max, PhysicsQueryHitBuffer &hits);
+    [[nodiscard]] std::expected<PhysicsRaycastHit, Error>
+    Raycast(JPH_RVec3 origin, JPH_Vec3 direction, float max_distance, BodyHandle ignore_handle);
+    // `starts`/`directions` are flat XYZ triples, one per result.
+    [[nodiscard]] std::expected<void, Error>
+    RaycastBatch(std::span<const float> starts, std::span<const float> directions,
+                 float max_distance, std::span<RayCastBatchResult> results);
+    [[nodiscard]] std::expected<PhysicsShapecastHit, Error>
+    Shapecast(int shape_type, JPH_RVec3 position, JPH_Quat rotation, JPH_Vec3 sweep_direction,
+              std::span<const float, 4> size, BodyHandle ignore_handle);
+
+    // --- Ragdoll bookkeeping (Ragdoll.cpp) ---
+
+    void CopyRagdollBodyHandles(std::span<const std::uint32_t> body_slots,
+                                 std::span<PhysicsRagdollBodyHandleInfo> out_handles);
+    [[nodiscard]] bool CopyRagdollDebugInfo(JPH_Ragdoll &ragdoll,
+                                            std::span<PhysicsRagdollBodyDebugInfo> out_info);
 
     // JoltC view of physics_system.GetBodyInterface(), retained until the
     // body-operation subsystems move to the direct Jolt API in A2/B2.
@@ -220,43 +425,6 @@ struct PhysicsWorld {
 
 [[nodiscard]] inline BodyHandle make_handle(std::uint32_t slot, std::uint32_t gen) noexcept {
     return (static_cast<std::uint64_t>(gen) << kHandleIndexBits) | slot;
-}
-
-// Resolves a handle to its slot if the generation still matches.
-[[nodiscard]] inline bool unpack_handle(PhysicsWorld *world, BodyHandle handle,
-                                        std::uint32_t *slot) noexcept {
-    *slot              = static_cast<std::uint32_t>(handle & kHandleIndexMask);
-    const auto gen     = static_cast<std::uint32_t>(handle >> kHandleIndexBits);
-    if (CPH_UNLIKELY(*slot >= world->slot_capacity)) {
-        return false;
-    }
-    return world->bodies.generations[*slot].load(std::memory_order::acquire) == gen;
-}
-
-// --- Shared step/query arbitration (defined in PhysicsWorld.cpp) ---
-
-// Acquires shadow_lock, parking on step_sync while a step is in progress.
-// Returns the held lock; structured bindings / named locals only — never
-// call this as a temporary.
-[[nodiscard]] std::unique_lock<std::mutex>
-LockShadowNotStepping(PhysicsWorld *world);
-
-// With shadow_lock held (via `shadow`), waits until no query is active.
-void WaitUntilNotQuerying(PhysicsWorld *world,
-                              std::unique_lock<std::mutex> &shadow);
-
-// Wakes every thread parked on step_sync.cond.
-// Append a command; capacity must already be ensured via
-// EnsureCommandCapacity. Caller holds shadow_lock.
-template <typename Payload>
-inline void EnqueueCommand(PhysicsWorld *world, std::uint32_t slot, Payload &&payload) {
-    world->command_queue[world->command_count++] =
-        PhysicsCommand{slot, std::forward<Payload>(payload)};
-}
-
-inline void NotifyStepSync(PhysicsWorld *world) {
-    const std::scoped_lock lock(world->step_sync.mutex);
-    world->step_sync.cond.notify_all();
 }
 
 } // namespace CPH

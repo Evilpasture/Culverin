@@ -49,12 +49,15 @@ char_on_contact_validate(void *userData, [[maybe_unused]] const JPH_CharacterVir
     }
 
     // 2. Safely Resolve Slots with Generation Checking
-    uint32_t slot1 = 0;
-    uint32_t slot2 = 0;
-    if (!unpack_handle(&world->physics, static_cast<BodyHandle>(h1_raw), &slot1) ||
-        !unpack_handle(&world->physics, static_cast<BodyHandle>(h2_raw), &slot2)) {
+    const std::optional<std::uint32_t> resolved1 =
+        world->physics.UnpackHandle(static_cast<BodyHandle>(h1_raw));
+    const std::optional<std::uint32_t> resolved2 =
+        world->physics.UnpackHandle(static_cast<BodyHandle>(h2_raw));
+    if (!resolved1 || !resolved2) {
         return true; // Collide on handle verification mismatches
     }
+    const uint32_t slot1 = *resolved1;
+    const uint32_t slot2 = *resolved2;
 
     // Safety checks for array bounds
     if (slot1 >= world->physics.slot_capacity || slot2 >= world->physics.slot_capacity) {
@@ -508,12 +511,15 @@ static bool JPH_API_CALL char_on_character_contact_validate(
     }
 
     // 2. Resolve Slots
-    uint32_t slot1 = 0;
-    uint32_t slot2 = 0;
-    if (!unpack_handle(&world->physics, static_cast<BodyHandle>(h1_raw), &slot1) ||
-        !unpack_handle(&world->physics, static_cast<BodyHandle>(h2_raw), &slot2)) {
+    const std::optional<std::uint32_t> resolved1 =
+        world->physics.UnpackHandle(static_cast<BodyHandle>(h1_raw));
+    const std::optional<std::uint32_t> resolved2 =
+        world->physics.UnpackHandle(static_cast<BodyHandle>(h2_raw));
+    if (!resolved1 || !resolved2) {
         return true;
     }
+    const uint32_t slot1 = *resolved1;
+    const uint32_t slot2 = *resolved2;
 
     if (slot1 >= world->physics.slot_capacity || slot2 >= world->physics.slot_capacity) {
         return true;
@@ -861,7 +867,7 @@ void CharacterDealloc(CharacterObject *self) {
     h_raw = (self->handle).load(std::memory_order::relaxed);
     slot  = static_cast<uint32_t>(h_raw & kHandleIndexMask);
 
-    WorldRemoveBodySlot(&self->world->physics, slot);
+    self->world->physics.RemoveBodySlot(slot);
 
     (self->world->physics.shadow_lock).unlock();
 

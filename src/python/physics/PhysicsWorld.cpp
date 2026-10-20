@@ -155,7 +155,7 @@ static PyObject *WorldNew(PyTypeObject *type, PyObject * /*args*/, PyObject * /*
         goto fail;
     }
 
-    if (PhysicsWorldInitJolt(&self->physics, settings, gravity) < 0) {
+    if (!self->physics.InitJolt(settings, gravity)) {
         if (!PyErr_Occurred()) {
             PyErr_SetString(PyExc_RuntimeError,
                             "Failed to initialize native Jolt world resources.");
@@ -168,7 +168,7 @@ static PyObject *WorldNew(PyTypeObject *type, PyObject * /*args*/, PyObject * /*
         goto fail;
     }
 
-    if (!PhysicsWorldAttachContactListener(&self->physics)) {
+    if (!self->physics.AttachContactListener()) {
         PyErr_NoMemory();
         goto fail;
     }
@@ -189,7 +189,7 @@ static PyObject *WorldNew(PyTypeObject *type, PyObject * /*args*/, PyObject * /*
         }
     }
 
-    if (AllocateBuffers(&self->physics, settings.max_bodies, baked_count) < 0) {
+    if (!self->physics.AllocateBuffers(settings.max_bodies, baked_count)) {
         PyErr_NoMemory();
         goto fail;
     }
@@ -201,7 +201,7 @@ static PyObject *WorldNew(PyTypeObject *type, PyObject * /*args*/, PyObject * /*
     }
 
     start_idx = (self->physics.count).load(std::memory_order::relaxed);
-    InitializeFreeSlots(&self->physics, start_idx);
+    self->physics.InitializeFreeSlots(start_idx);
 
     (self->physics.shadow_lock).lock();
     SyncShadowBuffers(&self->physics);
@@ -252,7 +252,7 @@ static PyObject *body_operation_status_result(const std::expected<void, Error> &
 static PyObject *run_body_operation(PhysicsWorldObject *self,
                                     const PhysicsBodyOperation *operation) {
     std::expected<void, Error> status;
-    Py_BEGIN_ALLOW_THREADS status = PhysicsWorldApplyBodyOperation(&self->physics, operation);
+    Py_BEGIN_ALLOW_THREADS status = self->physics.ApplyBodyOperation(*operation);
     Py_END_ALLOW_THREADS return body_operation_status_result(status);
 }
 
@@ -496,9 +496,8 @@ static PyObject *runtime_status_error(Error error, const char *pending_create_me
         return nullptr;
     }
 
-    const JPH_Vec3 gravity = {x, y, z};
     std::expected<void, Error> status;
-    Py_BEGIN_ALLOW_THREADS status = PhysicsWorldSetGravity(&self->physics, gravity);
+    Py_BEGIN_ALLOW_THREADS status = self->physics.SetGravity(JPH::Vec3(x, y, z));
     Py_END_ALLOW_THREADS
 
         if (!status) {
@@ -509,16 +508,11 @@ static PyObject *runtime_status_error(Error error, const char *pending_create_me
 
 [[nodiscard]] static PyObject * WorldGetGravity(PhysicsWorldObject *self,
                                                  PyObject *ignored [[maybe_unused]]) {
-    JPH_Vec3 gravity;
-    std::expected<void, Error> status;
-    Py_BEGIN_ALLOW_THREADS status = PhysicsWorldGetGravity(&self->physics, &gravity);
+    JPH::Vec3 gravity;
+    Py_BEGIN_ALLOW_THREADS gravity = self->physics.GetGravity();
     Py_END_ALLOW_THREADS
-
-        if (!status) {
-        return runtime_status_error(status.error(), nullptr);
-    }
-    return BuildTuple(BuildValue(gravity.x), BuildValue(gravity.y),
-                              BuildValue(gravity.z));
+    return BuildTuple(BuildValue(gravity.GetX()), BuildValue(gravity.GetY()),
+                              BuildValue(gravity.GetZ()));
 }
 
 [[nodiscard]] static PyObject * WorldGetBodyStats(PhysicsWorldObject *self,
@@ -530,15 +524,15 @@ static PyObject *runtime_status_error(Error error, const char *pending_create_me
         return nullptr;
     }
 
-    PhysicsBodyStats stats;
-    std::expected<void, Error> status;
+    std::expected<PhysicsBodyStats, Error> status;
     Py_BEGIN_ALLOW_THREADS status =
-        PhysicsWorldGetBodyStats(&self->physics, static_cast<BodyHandle>(h_raw), &stats);
+        self->physics.GetBodyStats(static_cast<BodyHandle>(h_raw));
     Py_END_ALLOW_THREADS
 
         if (!status) {
         return runtime_status_error(status.error(), nullptr);
     }
+    const PhysicsBodyStats &stats = *status;
 
     return BuildTuple(
         BuildTuple(stats.position.x, stats.position.y, stats.position.z),
@@ -587,16 +581,14 @@ static PyObject *runtime_status_error(Error error, const char *pending_create_me
     }
     }
 
-    const JPH_Vec3 fluid_velocity = {vx, vy, vz};
-    bool submerged                = false;
-    std::expected<void, Error> status;
-    Py_BEGIN_ALLOW_THREADS status = PhysicsWorldApplyBuoyancy(
-        &self->physics, static_cast<BodyHandle>(h_raw), static_cast<JPH_Real>(surface_y), buoyancy,
-        lin_drag, ang_drag, fluid_velocity, dt, &submerged);
+    std::expected<bool, Error> status;
+    Py_BEGIN_ALLOW_THREADS status = self->physics.ApplyBuoyancy(
+        static_cast<BodyHandle>(h_raw), static_cast<JPH_Real>(surface_y), buoyancy, lin_drag,
+        ang_drag, JPH::Vec3(vx, vy, vz), dt);
     Py_END_ALLOW_THREADS if (!status) {
         return runtime_status_error(status.error(), nullptr);
     }
-    return PyBool_FromLong(static_cast<int>(submerged));
+    return PyBool_FromLong(static_cast<int>(*status));
 }
 
 [[nodiscard]] static PyObject * WorldApplyBuoyancyBatch(PhysicsWorldObject *self,
@@ -647,11 +639,10 @@ static PyObject *runtime_status_error(Error error, const char *pending_create_me
     memcpy(handles, handles_view.buf, handle_count * sizeof(BodyHandle));
     PyBuffer_Release(&handles_view);
 
-    const JPH_Vec3 fluid_velocity = {vx, vy, vz};
     std::expected<void, Error> status;
-    Py_BEGIN_ALLOW_THREADS status =
-        PhysicsWorldApplyBuoyancyBatch(&self->physics, handles, handle_count, surface_y,
-                                           buoyancy, lin_drag, ang_drag, fluid_velocity, dt);
+    Py_BEGIN_ALLOW_THREADS status = self->physics.ApplyBuoyancyBatch(
+        {handles, handle_count}, surface_y, buoyancy, lin_drag, ang_drag,
+        JPH::Vec3(vx, vy, vz), dt);
     Py_END_ALLOW_THREADS Deallocate(handles);
     if (!status) {
         return runtime_status_error(status.error(), nullptr);
@@ -661,12 +652,12 @@ static PyObject *runtime_status_error(Error error, const char *pending_create_me
 
 [[nodiscard]] static PyObject * WorldSaveState(PhysicsWorldObject *self,
                                                 PyObject *unused [[maybe_unused]]) {
-    Buffer<std::uint8_t> snapshot;
-    std::expected<void, Error> status;
-    Py_BEGIN_ALLOW_THREADS status = PhysicsWorldSaveSnapshot(&self->physics, snapshot);
+    std::expected<Buffer<std::uint8_t>, Error> status;
+    Py_BEGIN_ALLOW_THREADS status = self->physics.SaveSnapshot();
     Py_END_ALLOW_THREADS if (!status) {
         return snapshot_status_error(status.error(), 0, 0);
     }
+    const Buffer<std::uint8_t> &snapshot = *status;
     if (snapshot.size() > static_cast<size_t>(PY_SSIZE_T_MAX)) {
         PyErr_SetString(PyExc_OverflowError, "Snapshot is too large for a Python bytes object");
         return nullptr;
@@ -700,19 +691,18 @@ static PyObject *runtime_status_error(Error error, const char *pending_create_me
     }
     PyBuffer_Release(&view);
 
-    size_t saved_count    = 0;
-    size_t world_capacity = 0;
-    size_t saved_capacity = 0;
-    std::expected<void, Error> status;
-    Py_BEGIN_ALLOW_THREADS status = PhysicsWorldLoadSnapshot(
-        &self->physics, snapshot.data(), data_size, &saved_count, &world_capacity,
-        &saved_capacity);
+    std::expected<std::size_t, Error> status;
+    Py_BEGIN_ALLOW_THREADS status =
+        self->physics.LoadSnapshot({snapshot.data(), data_size});
     Py_END_ALLOW_THREADS
     if (!status) {
-        return snapshot_status_error(status.error(), world_capacity, saved_capacity);
+        const std::optional<SnapshotHeader> header =
+            ReadSnapshotHeader({snapshot.data(), data_size});
+        return snapshot_status_error(status.error(), self->physics.slot_capacity,
+                                     header ? header->slot_capacity : 0);
     }
 
-    self->view_shape[0] = static_cast<Py_ssize_t>(saved_count);
+    self->view_shape[0] = static_cast<Py_ssize_t>(*status);
     Py_RETURN_NONE;
 }
 
@@ -771,7 +761,7 @@ static PyObject *runtime_status_error(Error error, const char *pending_create_me
     }
 
     // Transfer the active command queue to the native step core.
-    const auto detached = PhysicsWorldDetachCommands(&self->physics);
+    const auto detached = self->physics.DetachCommands();
 
     (self->physics.contact_atomic_idx).store(0, std::memory_order::relaxed);
     (self->physics.shadow_lock).unlock();
@@ -779,13 +769,13 @@ static PyObject *runtime_status_error(Error error, const char *pending_create_me
     // --- PHASE 2: NATIVE JOLT CRUNCH (GIL Released) ---
     {
         [[maybe_unused]] ScopedGilRelease release_gil;
-        PhysicsWorldStepNative(&self->physics, dt, detached);
+        self->physics.StepNative(dt, detached);
     }
 
     // --- PHASE 3: FINALIZATION ---
     (self->physics.shadow_lock).lock();
 
-    const size_t final_count = PhysicsWorldFinalizeStep(&self->physics, dt);
+    const size_t final_count = self->physics.FinalizeStep(dt);
     self->view_shape[0]      = static_cast<Py_ssize_t>(final_count);
 
     (self->physics.shadow_lock).unlock();
@@ -859,12 +849,9 @@ static PyObject *runtime_status_error(Error error, const char *pending_create_me
         .material_id = material_id,
         .user_data   = user_data,
     };
-    BodyHandle handle;
-    size_t body_count;
-    std::expected<void, Error> status;
-    Py_BEGIN_ALLOW_THREADS status = PhysicsWorldCreateConvexHull(
-        &self->physics, static_cast<const float *>(points_view.buf), num_points, &request, &handle,
-        &body_count);
+    std::expected<BodyHandle, Error> status;
+    Py_BEGIN_ALLOW_THREADS status = self->physics.CreateConvexHull(
+        {static_cast<const float *>(points_view.buf), num_points * 3}, request);
     Py_END_ALLOW_THREADS PyBuffer_Release(&points_view);
 
     if (!status) {
@@ -872,8 +859,8 @@ static PyObject *runtime_status_error(Error error, const char *pending_create_me
                            "Failed to create BodySettings");
         return nullptr;
     }
-    self->view_shape[0] = static_cast<Py_ssize_t>(body_count);
-    return PyLong_FromUnsignedLongLong(handle);
+    self->view_shape[0] = static_cast<Py_ssize_t>((self->physics.count).load(std::memory_order::relaxed));
+    return PyLong_FromUnsignedLongLong(*status);
 }
 
 // Parse Python compound-part objects into a native request buffer.
@@ -1016,11 +1003,9 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
         .material_id = material_id,
         .user_data   = user_data,
     };
-    BodyHandle handle;
-    size_t body_count;
-    std::expected<void, Error> status;
-    Py_BEGIN_ALLOW_THREADS status = PhysicsWorldCreateCompoundBody(
-        &self->physics, parts, part_count, &request, &handle, &body_count);
+    std::expected<BodyHandle, Error> status;
+    Py_BEGIN_ALLOW_THREADS status =
+        self->physics.CreateCompoundBody({parts, part_count}, request);
     Py_END_ALLOW_THREADS Deallocate(parts);
 
     if (!status) {
@@ -1028,8 +1013,8 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
                            "Failed to create compound BodySettings");
         return nullptr;
     }
-    self->view_shape[0] = static_cast<Py_ssize_t>(body_count);
-    return PyLong_FromUnsignedLongLong(handle);
+    self->view_shape[0] = static_cast<Py_ssize_t>((self->physics.count).load(std::memory_order::relaxed));
+    return PyLong_FromUnsignedLongLong(*status);
 }
 
 // Main Orchestrator
@@ -1116,10 +1101,10 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
     }
 
     // Resolve defaults and retain parsed size data at the Python boundary.
-    float resolved_friction;
-    float resolved_restitution;
-    PhysicsWorldResolveMaterial(&self->physics, material_id, friction, restitution,
-                                    &resolved_friction, &resolved_restitution);
+    const ResolvedMaterial resolved =
+        self->physics.ResolveMaterial(material_id, friction, restitution);
+    const float resolved_friction    = resolved.friction;
+    const float resolved_restitution = resolved.restitution;
     float size[4] = {kDefaultBodySize, kDefaultBodySize, kDefaultBodySize, 0.0f};
     ParseBodySize(o_size, size);
     if (!ValidateFinite("Shape size", size[0], size[1], size[2], size[3])) {
@@ -1139,11 +1124,8 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
         .user_data    = user_data,
     };
 
-    BodyHandle handle;
-    size_t body_count;
-    std::expected<void, Error> status;
-    Py_BEGIN_ALLOW_THREADS status =
-        PhysicsWorldCreateBody(&self->physics, &request, &handle, &body_count);
+    std::expected<BodyHandle, Error> status;
+    Py_BEGIN_ALLOW_THREADS status = self->physics.CreateBody(request);
     Py_END_ALLOW_THREADS
 
     if (!status && status.error().Code().Is(WorldCreationError::BodySettingsFailed)) {
@@ -1159,8 +1141,8 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
     }
 
     // Update exported buffer shape only after native body data is stable.
-    self->view_shape[0] = static_cast<Py_ssize_t>(body_count);
-    return PyLong_FromUnsignedLongLong(handle);
+    self->view_shape[0] = static_cast<Py_ssize_t>((self->physics.count).load(std::memory_order::relaxed));
+    return PyLong_FromUnsignedLongLong(*status);
 }
 
 [[nodiscard]] static PyObject * WorldCreateBodiesBatch(PhysicsWorldObject *self,
@@ -1217,11 +1199,11 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
         }
     }
 
-    size_t body_count = 0;
     std::expected<void, Error> status;
-    Py_BEGIN_ALLOW_THREADS status = PhysicsWorldCreateBodiesBatch(
-        &self->physics, positions, sizes, static_cast<size_t>(batch_count), shape_type, motion_type,
-        handles, &body_count);
+    Py_BEGIN_ALLOW_THREADS status = self->physics.CreateBodiesBatch(
+        {positions, static_cast<size_t>(batch_count)},
+        {sizes, static_cast<size_t>(batch_count)}, shape_type, motion_type,
+        {handles, static_cast<size_t>(batch_count)});
     Py_END_ALLOW_THREADS if (!status) {
         Deallocate(arena);
         if (status.error().Code().Is(WorldError::LimitReached)) {
@@ -1231,7 +1213,7 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
         }
         return nullptr;
     }
-    self->view_shape[0] = static_cast<Py_ssize_t>(body_count);
+    self->view_shape[0] = static_cast<Py_ssize_t>((self->physics.count).load(std::memory_order::relaxed));
 
     for (Py_ssize_t i = 0; i < batch_count; i++) {
         results[i] = handles[i] ? BuildValue(handles[i]) : BuildValue(nullptr);
@@ -1295,32 +1277,39 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
     }
 
     // 3. Native mesh shape construction and world staging (buffers stay pinned).
-    BodyHandle handle;
-    size_t body_count;
-    std::expected<void, Error> status;
-    uint32_t bad_indices[3]       = {};
-    const size_t vertex_count     = (v_view.len / kVertexStrideBytes);
-    const size_t triangle_count   = (i_view.len / kVertexStrideBytes);
-    Py_BEGIN_ALLOW_THREADS status = PhysicsWorldCreateMeshBody(
-        &self->physics, static_cast<const float *>(v_view.buf), vertex_count,
-        static_cast<const uint32_t *>(i_view.buf), triangle_count, JPH_RVec3{px, py, pz},
-        JPH_Quat{rx, ry, rz, rw}, cat, mask, user_data, &handle, &body_count,
-        bad_indices);
+    const size_t vertex_count   = (v_view.len / kVertexStrideBytes);
+    const size_t triangle_count = (i_view.len / kVertexStrideBytes);
+    const auto *index_data      = static_cast<const uint32_t *>(i_view.buf);
+
+    // Pre-check so the error can name the offending triangle; the native
+    // call re-validates and reports InvalidMeshIndex on its own.
+    if (const std::optional<std::array<std::uint32_t, 3>> bad =
+            FindInvalidMeshTriangle({index_data, triangle_count * 3}, vertex_count)) {
+        PyBuffer_Release(&v_view);
+        PyBuffer_Release(&i_view);
+        return PyErr_Format(PyExc_ValueError, "Mesh index out of range: %u/%u/%u >= %zu",
+                            (*bad)[0], (*bad)[1], (*bad)[2], vertex_count);
+    }
+
+    std::expected<BodyHandle, Error> status;
+    Py_BEGIN_ALLOW_THREADS status = self->physics.CreateMeshBody(
+        {static_cast<const float *>(v_view.buf), vertex_count * 3},
+        {index_data, triangle_count * 3}, JPH_RVec3{px, py, pz}, JPH_Quat{rx, ry, rz, rw}, cat,
+        mask, user_data);
     Py_END_ALLOW_THREADS
 
         PyBuffer_Release(&v_view);
     PyBuffer_Release(&i_view);
     if (!status && status.error().Code().Is(WorldCreationError::InvalidMeshIndex)) {
-        return PyErr_Format(PyExc_ValueError, "Mesh index out of range: %u/%u/%u >= %zu",
-                            bad_indices[0], bad_indices[1], bad_indices[2], vertex_count);
+        return PyErr_Format(PyExc_ValueError, "Mesh index out of range");
     }
     if (!status) {
         set_creation_error(self, status.error(),
                            "Jolt Mesh BVH build failed (Triangle data degenerate?)", nullptr);
         return nullptr;
     }
-    self->view_shape[0] = static_cast<Py_ssize_t>(body_count);
-    return PyLong_FromUnsignedLongLong(handle);
+    self->view_shape[0] = static_cast<Py_ssize_t>((self->physics.count).load(std::memory_order::relaxed));
+    return PyLong_FromUnsignedLongLong(*status);
 }
 
 [[nodiscard]] static PyObject * WorldDestroyBody(PhysicsWorldObject *self,
@@ -1334,7 +1323,7 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
 
     std::expected<void, Error> status;
     Py_BEGIN_ALLOW_THREADS status =
-        PhysicsWorldQueueBodyDestroy(&self->physics, static_cast<BodyHandle>(raw_handle));
+        self->physics.QueueBodyDestroy(static_cast<BodyHandle>(raw_handle));
     Py_END_ALLOW_THREADS return body_operation_status_result(status);
 }
 
@@ -1381,7 +1370,7 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
 
     std::expected<void, Error> status;
     Py_BEGIN_ALLOW_THREADS status =
-        PhysicsWorldQueueBodyDestroyBatch(&self->physics, handles, handle_count);
+        self->physics.QueueBodyDestroyBatch({handles, handle_count});
     Py_END_ALLOW_THREADS Deallocate(handles);
     return body_operation_status_result(status);
 }
@@ -1503,10 +1492,9 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
         return nullptr;
     }
 
-    JPH_MotionType motion_type;
-    std::expected<void, Error> status;
+    std::expected<MotionType, Error> status;
     Py_BEGIN_ALLOW_THREADS status =
-        PhysicsWorldGetMotionType(&self->physics, static_cast<BodyHandle>(h_raw), &motion_type);
+        self->physics.GetMotionType(static_cast<BodyHandle>(h_raw));
     Py_END_ALLOW_THREADS
 
         if (!status) {
@@ -1514,7 +1502,7 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
             status.error(),
             "Cannot query motion type of a body that has not been flushed to Jolt yet");
     }
-    return PyLong_FromLong(static_cast<long>(motion_type));
+    return PyLong_FromLong(static_cast<long>(std::to_underlying(*status)));
 }
 
 [[nodiscard]] static PyObject * WorldSetMotionType(PhysicsWorldObject *self,
@@ -1570,16 +1558,15 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
         return nullptr;
     }
 
-    uint64_t user_data;
-    std::expected<void, Error> status;
+    std::expected<std::uint64_t, Error> status;
     Py_BEGIN_ALLOW_THREADS status =
-        PhysicsWorldGetUserData(&self->physics, static_cast<BodyHandle>(h_raw), &user_data);
+        self->physics.GetUserData(static_cast<BodyHandle>(h_raw));
     Py_END_ALLOW_THREADS
 
         if (!status) {
         return runtime_status_error(status.error(), nullptr);
     }
-    return PyLong_FromUnsignedLongLong(user_data);
+    return PyLong_FromUnsignedLongLong(*status);
 }
 
 [[nodiscard]] static PyObject * WorldActivate(PhysicsWorldObject *self, PyObject *const *args,
@@ -1694,16 +1681,14 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
         return nullptr;
     }
 
-    uint32_t index;
-    std::expected<void, Error> status;
-    Py_BEGIN_ALLOW_THREADS status =
-        PhysicsWorldGetIndex(&self->physics, static_cast<BodyHandle>(h_raw), &index);
+    std::expected<std::uint32_t, Error> status;
+    Py_BEGIN_ALLOW_THREADS status = self->physics.GetIndex(static_cast<BodyHandle>(h_raw));
     Py_END_ALLOW_THREADS
 
         if (!status) {
         return runtime_status_error(status.error(), nullptr);
     }
-    return PyLong_FromUnsignedLong(index);
+    return PyLong_FromUnsignedLong(*status);
 }
 
 [[nodiscard]] static PyObject * WorldIsAlive(PhysicsWorldObject *self, PyObject *const *args,
@@ -1716,7 +1701,7 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
 
     bool alive;
     Py_BEGIN_ALLOW_THREADS alive =
-        PhysicsWorldIsAlive(&self->physics, static_cast<BodyHandle>(h_raw));
+        self->physics.IsAlive(static_cast<BodyHandle>(h_raw));
     Py_END_ALLOW_THREADS
 
         if (alive) {
@@ -1733,16 +1718,14 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
         return nullptr;
     }
 
-    bool active;
-    std::expected<void, Error> status;
-    Py_BEGIN_ALLOW_THREADS status =
-        PhysicsWorldIsActive(&self->physics, static_cast<BodyHandle>(h_raw), &active);
+    std::expected<bool, Error> status;
+    Py_BEGIN_ALLOW_THREADS status = self->physics.IsActive(static_cast<BodyHandle>(h_raw));
     Py_END_ALLOW_THREADS
 
         if (!status) {
         return runtime_status_error(status.error(), nullptr);
     }
-    if (active) {
+    if (*status) {
         Py_RETURN_TRUE;
     }
     Py_RETURN_FALSE;
@@ -1751,15 +1734,14 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
 [[nodiscard]] static PyObject * WorldGetActiveIndices(PhysicsWorldObject *self,
                                                        PyObject *args [[maybe_unused]]) {
     Buffer<std::uint32_t> indices;
-    size_t active_count = 0;
-    std::expected<void, Error> status;
-    Py_BEGIN_ALLOW_THREADS status =
-        PhysicsWorldGetActiveIndices(&self->physics, indices, active_count);
+    std::expected<std::size_t, Error> status;
+    Py_BEGIN_ALLOW_THREADS status = self->physics.GetActiveIndices(indices);
     Py_END_ALLOW_THREADS
 
         if (!status) {
         return runtime_status_error(status.error(), nullptr);
     }
+    const size_t active_count = *status;
 
     if (active_count > static_cast<size_t>(PY_SSIZE_T_MAX) / sizeof(uint32_t)) {
         return PyErr_NoMemory();
@@ -1779,18 +1761,16 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
     }
 
     alpha = std::fmax(0.0f, std::fmin(1.0f, alpha));
-    Buffer<float> state;
-    size_t count = 0;
-    std::expected<void, Error> status;
-    Py_BEGIN_ALLOW_THREADS status =
-        PhysicsWorldGetRenderState(&self->physics, alpha, state, count);
+    std::expected<Buffer<float>, Error> status;
+    Py_BEGIN_ALLOW_THREADS status = self->physics.GetRenderState(alpha);
     Py_END_ALLOW_THREADS
 
         if (!status) {
         return runtime_status_error(status.error(), nullptr);
     }
+    const Buffer<float> &state = *status;
 
-    const size_t byte_count = count * 7 * sizeof(float);
+    const size_t byte_count = state.size() * sizeof(float);
     if (byte_count > static_cast<size_t>(PY_SSIZE_T_MAX)) {
         PyErr_SetString(PyExc_OverflowError, "Render state is too large for a Python bytes object");
         return nullptr;
@@ -1813,8 +1793,8 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
     }
 
     std::expected<void, Error> status;
-    Py_BEGIN_ALLOW_THREADS status = PhysicsWorldSetCollisionFilter(
-        &self->physics, static_cast<BodyHandle>(h_raw), category, mask);
+    Py_BEGIN_ALLOW_THREADS status =
+        self->physics.SetCollisionFilter(static_cast<BodyHandle>(h_raw), category, mask);
     Py_END_ALLOW_THREADS
 
         if (!status) {
@@ -1838,8 +1818,7 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
     }
 
     std::expected<void, Error> status;
-    Py_BEGIN_ALLOW_THREADS status =
-        PhysicsWorldRegisterMaterial(&self->physics, id, friction, restitution);
+    Py_BEGIN_ALLOW_THREADS status = self->physics.RegisterMaterial(id, friction, restitution);
     Py_END_ALLOW_THREADS
 
         if (!status) {
@@ -1898,13 +1877,12 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
     }
 
     // 2. Native heightfield construction and world staging (buffer stays pinned).
-    BodyHandle handle;
-    size_t body_count;
-    std::expected<void, Error> status;
-    Py_BEGIN_ALLOW_THREADS status = PhysicsWorldCreateHeightfieldBody(
-        &self->physics, static_cast<const float *>(h_view.buf), static_cast<size_t>(grid_size),
-        JPH_Vec3{sx, sy, sz}, JPH_RVec3{px, py, pz}, JPH_Quat{rx, ry, rz, rw}, friction,
-        restitution, category, mask, material_id, user_data, &handle, &body_count);
+    std::expected<BodyHandle, Error> status;
+    Py_BEGIN_ALLOW_THREADS status = self->physics.CreateHeightfieldBody(
+        {static_cast<const float *>(h_view.buf),
+         static_cast<size_t>(grid_size) * static_cast<size_t>(grid_size)},
+        static_cast<size_t>(grid_size), JPH_Vec3{sx, sy, sz}, JPH_RVec3{px, py, pz},
+        JPH_Quat{rx, ry, rz, rw}, friction, restitution, category, mask, material_id, user_data);
     Py_END_ALLOW_THREADS PyBuffer_Release(&h_view);
 
     if (!status) {
@@ -1912,8 +1890,8 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
                            "Failed to create HeightField BodySettings");
         return nullptr;
     }
-    self->view_shape[0] = static_cast<Py_ssize_t>(body_count);
-    return PyLong_FromUnsignedLongLong(handle);
+    self->view_shape[0] = static_cast<Py_ssize_t>((self->physics.count).load(std::memory_order::relaxed));
+    return PyLong_FromUnsignedLongLong(*status);
 }
 
 [[nodiscard]] static PyObject * WorldGetDebugData(PhysicsWorldObject *self,
@@ -1931,17 +1909,16 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
         return nullptr;
     }
 
-    Buffer<DebugVertex> lines;
-    Buffer<DebugVertex> triangles;
-    std::expected<void, Error> status;
-    Py_BEGIN_ALLOW_THREADS status = PhysicsWorldBuildDebugData(
-        &self->physics, draw_shapes, draw_constraints, draw_bounding_box, draw_centers, wireframe,
-        lines, triangles);
+    std::expected<DebugData, Error> status;
+    Py_BEGIN_ALLOW_THREADS status = self->physics.BuildDebugData(
+        draw_shapes, draw_constraints, draw_bounding_box, draw_centers, wireframe);
     Py_END_ALLOW_THREADS
 
         if (!status) {
         return runtime_status_error(status.error(), nullptr);
     }
+    const Buffer<DebugVertex> &lines     = status->lines;
+    const Buffer<DebugVertex> &triangles = status->triangles;
     if (lines.size() > static_cast<size_t>(PY_SSIZE_T_MAX) / sizeof(DebugVertex) ||
         triangles.size() > static_cast<size_t>(PY_SSIZE_T_MAX) / sizeof(DebugVertex)) {
         PyErr_SetString(PyExc_OverflowError, "Debug data is too large for Python bytes objects");
@@ -2047,11 +2024,8 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
         .update_position        = update_position,
         .faces_double_sided     = faces_double_sided,
     };
-    BodyHandle handle;
-    size_t body_count;
-    std::expected<void, Error> status;
-    Py_BEGIN_ALLOW_THREADS status = PhysicsWorldCreateSoftBody(
-        &self->physics, &request, &handle, &body_count);
+    std::expected<BodyHandle, Error> status;
+    Py_BEGIN_ALLOW_THREADS status = self->physics.CreateSoftBody(request);
     Py_END_ALLOW_THREADS
 
         if (!status) {
@@ -2059,8 +2033,8 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
                            "Failed to create SoftBodyCreationSettings");
         return nullptr;
     }
-    self->view_shape[0] = static_cast<Py_ssize_t>(body_count);
-    return PyLong_FromUnsignedLongLong(handle);
+    self->view_shape[0] = static_cast<Py_ssize_t>((self->physics.count).load(std::memory_order::relaxed));
+    return PyLong_FromUnsignedLongLong(*status);
 }
 
 // Getters
@@ -2075,14 +2049,12 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
         return nullptr;
     }
 
-    uint32_t count = 0;
-    std::expected<void, Error> status;
-    Py_BEGIN_ALLOW_THREADS status =
-        PhysicsWorldGetSoftBodyVertexCount(&self->physics, handle, &count);
+    std::expected<std::uint32_t, Error> status;
+    Py_BEGIN_ALLOW_THREADS status = self->physics.GetSoftBodyVertexCount(handle);
     Py_END_ALLOW_THREADS if (!status) {
         return runtime_status_error(status.error(), nullptr);
     }
-    return PyLong_FromUnsignedLong(count);
+    return PyLong_FromUnsignedLong(*status);
 }
 
 [[nodiscard]] PyObject *
@@ -2096,18 +2068,22 @@ WorldGetSoftBodyVertexPosition(PhysicsWorldObject *self, PyObject *const *args,
         return nullptr;
     }
 
-    JPH_Vec3 position;
-    uint32_t count = 0;
-    std::expected<void, Error> status;
-    Py_BEGIN_ALLOW_THREADS status =
-        PhysicsWorldGetSoftBodyVertexPosition(&self->physics, handle, index, &position, &count);
+    std::expected<SoftBodyVertexPosition, Error> status;
+    Py_BEGIN_ALLOW_THREADS status = self->physics.GetSoftBodyVertexPosition(handle, index);
     Py_END_ALLOW_THREADS if (!status && status.error().Code().Is(WorldRuntimeError::OutOfRange)) {
+        std::uint32_t count = 0;
+        std::expected<std::uint32_t, Error> count_status;
+        Py_BEGIN_ALLOW_THREADS count_status = self->physics.GetSoftBodyVertexCount(handle);
+        Py_END_ALLOW_THREADS if (count_status) {
+            count = *count_status;
+        }
         return PyErr_Format(PyExc_IndexError, "Vertex index %u out of bounds (count: %u)", index,
                             count);
     }
     if (!status) {
         return runtime_status_error(status.error(), nullptr);
     }
+    const JPH_Vec3 &position = status->position;
     return BuildTuple(position.x, position.y, position.z);
 }
 
@@ -2120,22 +2096,20 @@ WorldGetSoftBodyLocalVertices(PhysicsWorldObject *self, PyObject *const *args,
         return nullptr;
     }
 
-    Buffer<JPH_Vec3> positions;
-    uint32_t count = 0;
-    std::expected<void, Error> status;
-    Py_BEGIN_ALLOW_THREADS status =
-        PhysicsWorldGetSoftBodyLocalVertices(&self->physics, handle, positions, count);
+    std::expected<Buffer<JPH_Vec3>, Error> status;
+    Py_BEGIN_ALLOW_THREADS status = self->physics.GetSoftBodyLocalVertices(handle);
     Py_END_ALLOW_THREADS if (!status) {
         return runtime_status_error(status.error(), nullptr);
     }
-    if (static_cast<size_t>(count) > static_cast<size_t>(PY_SSIZE_T_MAX) / sizeof(JPH_Vec3)) {
+    const Buffer<JPH_Vec3> &positions = *status;
+    if (positions.size() > static_cast<size_t>(PY_SSIZE_T_MAX) / sizeof(JPH_Vec3)) {
         PyErr_SetString(PyExc_OverflowError, "Soft body vertex data is too large");
         return nullptr;
     }
 
     return PyBytes_FromStringAndSize(
         reinterpret_cast<const char *>(positions.data()),
-        static_cast<Py_ssize_t>(static_cast<size_t>(count) * sizeof(JPH_Vec3)));
+        static_cast<Py_ssize_t>(positions.size() * sizeof(JPH_Vec3)));
 }
 
 
@@ -2152,10 +2126,11 @@ WorldGetSoftBodyLocalVertices(PhysicsWorldObject *self, PyObject *const *args,
     (self->physics.shadow_lock).lock();
     BlockUntilNotStepping(self);
 
-    uint32_t slot = 0;
-    if (!ValidateHandle(self, h_raw, &slot)) {
+    const std::optional<std::uint32_t> resolved = ValidateHandle(self, h_raw);
+    if (!resolved) {
         return nullptr;
     }
+    const uint32_t slot = *resolved;
 
     const uint8_t state =
         (self->physics.bodies.slot_states[slot]).load(std::memory_order::acquire);
@@ -2336,31 +2311,30 @@ WorldGetSoftBodyLocalVertices(PhysicsWorldObject *self, PyObject *const *args,
     auto py_settings = reinterpret_cast<RagdollSettingsObject *>(settings_obj);
 
     // --- 2. Native Jolt creation and pose setup ---
-    JPH_Ragdoll *j_rag = nullptr;
-    size_t body_count  = 0;
-    std::expected<void, Error> creation_status;
+    std::expected<RagdollInstance, Error> creation_status;
     JPH_RVec3 initial_position{pos.x, pos.y, pos.z};
     JPH_Quat initial_rotation{rot.x, rot.y, rot.z, rot.w};
-    Py_BEGIN_ALLOW_THREADS creation_status = PhysicsWorldCreateRagdollInstance(
-        &self->physics, py_settings->settings, initial_position, initial_rotation, user_data,
-        &j_rag, &body_count);
+    Py_BEGIN_ALLOW_THREADS creation_status = self->physics.CreateRagdollInstance(
+        py_settings->settings, initial_position, initial_rotation, user_data);
     Py_END_ALLOW_THREADS if (!creation_status) {
         set_creation_error(self, creation_status.error(),
                            "Jolt failed to create Ragdoll instance", nullptr);
         return nullptr;
     }
+    JPH_Ragdoll *j_rag       = creation_status->ragdoll;
+    const size_t body_count  = creation_status->body_count;
 
     uint32_t *body_slots = nullptr;
     if (body_count > SIZE_MAX / sizeof(uint32_t) ||
         !(body_slots = static_cast<uint32_t *>(Allocate(body_count * sizeof(uint32_t))))) {
-        Py_BEGIN_ALLOW_THREADS PhysicsWorldDestroyRagdoll(&self->physics, j_rag);
+        Py_BEGIN_ALLOW_THREADS self->physics.DestroyRagdoll(j_rag);
         Py_END_ALLOW_THREADS return PyErr_NoMemory();
     }
 
     auto obj = PyObject_New(RagdollObject, reinterpret_cast<PyTypeObject *>(st->RagdollType));
     if (!obj) {
         Deallocate(body_slots);
-        Py_BEGIN_ALLOW_THREADS PhysicsWorldDestroyRagdoll(&self->physics, j_rag);
+        Py_BEGIN_ALLOW_THREADS self->physics.DestroyRagdoll(j_rag);
         Py_END_ALLOW_THREADS return nullptr;
     }
     obj->ragdoll    = nullptr;
@@ -2371,7 +2345,7 @@ WorldGetSoftBodyLocalVertices(PhysicsWorldObject *self, PyObject *const *args,
     obj->parsers    = CPH::Python::NewParserGroup<CPH::Python::RagdollParsers>();
     if (!obj->parsers) {
         Py_DECREF(obj);
-        Py_BEGIN_ALLOW_THREADS PhysicsWorldDestroyRagdoll(&self->physics, j_rag);
+        Py_BEGIN_ALLOW_THREADS self->physics.DestroyRagdoll(j_rag);
         Py_END_ALLOW_THREADS return PyErr_NoMemory();
     }
 
@@ -2380,32 +2354,32 @@ WorldGetSoftBodyLocalVertices(PhysicsWorldObject *self, PyObject *const *args,
     Py_INCREF(self);
     obj->body_count = body_count;
 
-    size_t world_count                     = 0;
-    Py_BEGIN_ALLOW_THREADS creation_status = PhysicsWorldRegisterRagdollBodies(
-        &self->physics, j_rag, body_count, user_data, category, mask, material_id, body_slots,
-        &world_count);
-    Py_END_ALLOW_THREADS if (!creation_status) {
+    std::expected<std::size_t, Error> register_status;
+    Py_BEGIN_ALLOW_THREADS register_status = self->physics.RegisterRagdollBodies(
+        j_rag, {body_slots, body_count}, user_data, category, mask, material_id);
+    Py_END_ALLOW_THREADS if (!register_status) {
         obj->ragdoll = nullptr;
         Py_DECREF(obj);
-        Py_BEGIN_ALLOW_THREADS PhysicsWorldDestroyRagdoll(&self->physics, j_rag);
-        Py_END_ALLOW_THREADS set_creation_error(self, creation_status.error(), nullptr,
+        Py_BEGIN_ALLOW_THREADS self->physics.DestroyRagdoll(j_rag);
+        Py_END_ALLOW_THREADS set_creation_error(self, register_status.error(), nullptr,
                                                 nullptr);
         return nullptr;
     }
 
-    self->view_shape[0] = static_cast<Py_ssize_t>(world_count);
+    self->view_shape[0] = static_cast<Py_ssize_t>(*register_status);
     return reinterpret_cast<PyObject *>(obj);
 }
 
 // Fixed get_contact_events to be safer with locking
 [[nodiscard]] PyObject * WorldGetContactEvents(PhysicsWorldObject *self,
                                                                  PyObject *args [[maybe_unused]]) {
-    Buffer<ContactEvent> scratch;
-    std::expected<void, Error> status;
-    Py_BEGIN_ALLOW_THREADS status = PhysicsWorldTakeContactEvents(&self->physics, scratch);
-    Py_END_ALLOW_THREADS const size_t count = scratch.size(); if (!status) {
+    std::expected<Buffer<ContactEvent>, Error> status;
+    Py_BEGIN_ALLOW_THREADS status = self->physics.TakeContactEvents();
+    Py_END_ALLOW_THREADS if (!status) {
         return runtime_status_error(status.error(), nullptr);
     }
+    Buffer<ContactEvent> &scratch = *status;
+    const size_t count            = scratch.size();
     if (count == 0) {
         return PyList_New(0);
     }
@@ -2445,12 +2419,13 @@ WorldGetSoftBodyLocalVertices(PhysicsWorldObject *self, PyObject *const *args,
 
 [[nodiscard]] PyObject *
 WorldGetContactEventsEx(PhysicsWorldObject *self, PyObject *args [[maybe_unused]]) {
-    Buffer<ContactEvent> scratch;
-    std::expected<void, Error> status;
-    Py_BEGIN_ALLOW_THREADS status = PhysicsWorldTakeContactEvents(&self->physics, scratch);
-    Py_END_ALLOW_THREADS const size_t count = scratch.size(); if (!status) {
+    std::expected<Buffer<ContactEvent>, Error> status;
+    Py_BEGIN_ALLOW_THREADS status = self->physics.TakeContactEvents();
+    Py_END_ALLOW_THREADS if (!status) {
         return runtime_status_error(status.error(), nullptr);
     }
+    Buffer<ContactEvent> &scratch = *status;
+    const size_t count            = scratch.size();
     if (count == 0) {
         return PyList_New(0);
     }
@@ -2517,12 +2492,13 @@ WorldGetContactEventsEx(PhysicsWorldObject *self, PyObject *args [[maybe_unused]
 // See ContactEventDefinitions.hpp for exact alignment and padding.
 [[nodiscard]] PyObject *
 WorldGetContactEventsRaw(PhysicsWorldObject *self, PyObject *args [[maybe_unused]]) {
-    Buffer<ContactEvent> events;
-    std::expected<void, Error> status;
-    Py_BEGIN_ALLOW_THREADS status = PhysicsWorldTakeContactEvents(&self->physics, events);
-    Py_END_ALLOW_THREADS const size_t count = events.size(); if (!status) {
+    std::expected<Buffer<ContactEvent>, Error> status;
+    Py_BEGIN_ALLOW_THREADS status = self->physics.TakeContactEvents();
+    Py_END_ALLOW_THREADS if (!status) {
         return runtime_status_error(status.error(), nullptr);
     }
+    Buffer<ContactEvent> &events = *status;
+    const size_t count           = events.size();
     if (count == 0) {
         PyObject *empty = PyBytes_FromStringAndSize("", 0);
         if (!empty) {

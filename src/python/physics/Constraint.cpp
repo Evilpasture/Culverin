@@ -67,14 +67,17 @@ namespace CPH::Python {
     (self->physics.shadow_lock).lock();
     BlockUntilNotStepping(self);
 
-    uint32_t s1;
-    uint32_t s2;
-    if (!unpack_handle(&self->physics, static_cast<BodyHandle>(h1_raw), &s1) ||
-        !unpack_handle(&self->physics, static_cast<BodyHandle>(h2_raw), &s2)) {
+    const std::optional<std::uint32_t> resolved1 =
+        self->physics.UnpackHandle(static_cast<BodyHandle>(h1_raw));
+    const std::optional<std::uint32_t> resolved2 =
+        self->physics.UnpackHandle(static_cast<BodyHandle>(h2_raw));
+    if (!resolved1 || !resolved2) {
         (self->physics.shadow_lock).unlock();
         PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
         return nullptr;
     }
+    const uint32_t s1 = *resolved1;
+    const uint32_t s2 = *resolved2;
 
     if (CPH_UNLIKELY(self->physics.free_constraint_count == 0)) {
         (self->physics.shadow_lock).unlock();
@@ -83,7 +86,7 @@ namespace CPH::Python {
 
     // 4. QUEUE ASYNCHRONOUS COMMAND (capacity first so failure paths
     // cannot leak the reserved slot; params travel by value).
-    if (CPH_UNLIKELY(!EnsureCommandCapacity(&self->physics))) {
+    if (CPH_UNLIKELY(!self->physics.EnsureCommandCapacity())) {
         (self->physics.shadow_lock).unlock();
         return PyErr_NoMemory();
     }
@@ -94,8 +97,7 @@ namespace CPH::Python {
     entry.type              = type;
     entry.state.store(std::to_underlying(SlotState::PendingCreate), std::memory_order::relaxed);
     ConstraintHandle handle = make_handle(c_slot, entry.generation);
-    EnqueueCommand(&self->physics, s1,
-                       CPH::cmd::CreateConstraint{s2, c_slot, type, p});
+    self->physics.EnqueueCommand(s1, CPH::cmd::CreateConstraint{s2, c_slot, type, p});
 
     (self->physics.shadow_lock).unlock();
     return PyLong_FromUnsignedLongLong(handle);

@@ -111,11 +111,13 @@ static const JPH_PhysicsStepListener_Procs kShipListenerProcs = {.OnStep = Ship_
     (self->physics.shadow_lock).lock();
     SyncAndFlushInternal(self);
 
-    uint32_t slot;
-    if (!unpack_handle(&self->physics, static_cast<BodyHandle>(sled_raw), &slot)) {
+    const std::optional<std::uint32_t> resolved =
+        self->physics.UnpackHandle(static_cast<BodyHandle>(sled_raw));
+    if (!resolved) {
         (self->physics.shadow_lock).unlock();
         return PyErr_Format(PyExc_ValueError, "Invalid sled handle.");
     }
+    const uint32_t slot = *resolved;
     JPH_BodyID bid = self->physics.bodies.body_ids[self->physics.bodies.slot_to_dense[slot]];
     (self->physics.shadow_lock).unlock();
     ModuleState *st = GetModuleState(PyType_GetModule(Py_TYPE(self)));

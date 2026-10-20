@@ -105,18 +105,4 @@ struct PhysicsCommand {
         payload;
 };
 
-// Swap-remove `slot` from the dense body arrays and recycle it.
-// Caller holds shadow_lock.
-void WorldRemoveBodySlot(PhysicsWorld *world, std::uint32_t slot);
-
-// Queue growth; caller holds shadow_lock and the world is not stepping.
-[[nodiscard]] bool EnsureCommandCapacity(PhysicsWorld *world);
-[[nodiscard]] bool EnsureCommandBulkCapacity(PhysicsWorld *world, std::size_t batch_size);
-
-// Executes and clears each command. Caller holds jph_trampoline_lock.
-void FlushCommandsInternal(PhysicsWorld *world, std::span<PhysicsCommand> queue);
-
-// Drops pending commands, destroying payloads they own.
-void ClearCommandQueue(PhysicsWorld *world);
-
 } // namespace CPH

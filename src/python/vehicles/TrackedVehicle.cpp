@@ -140,10 +140,11 @@ extern void CleanupVehicleResources(VehicleResources *r, uint32_t num_wheels,
     // Ensure all pending creation commands are flushed before we try to link a constraint
     SyncAndFlushInternal(self);
 
-    uint32_t slot = 0;
     // TSan Fix: Cast raw uint64 to atomic BodyHandle for verification
-    bool handle_valid =
-        unpack_handle(&self->physics, static_cast<BodyHandle>(chassis_h_raw), &slot);
+    const std::optional<std::uint32_t> resolved =
+        self->physics.UnpackHandle(static_cast<BodyHandle>(chassis_h_raw));
+    const uint32_t slot        = resolved.value_or(0);
+    const bool handle_valid    = resolved.has_value();
 
     // TSan Fix: Atomic load of the slot state (Acquire ensures chassis data is visible)
     uint8_t state =

@@ -1,4 +1,5 @@
 #include "physics/PhysicsWorldRuntime.hpp"
+#include "physics/PhysicsWorldState.hpp"
 #include "core/Buffer.hpp"
 #include "math/MathCore.hpp"
 #include "physics/ContactEventDefinitions.hpp"
@@ -12,35 +13,31 @@ namespace CPH {
 
 static constexpr size_t kInitialMaterialCapacity = 16;
 
-static void get_gravity(PhysicsWorld *world, JPH_Vec3 *out_gravity) {
-    const JPH::Vec3 gravity = world->physics_system.GetGravity();
-    *out_gravity             = {gravity.GetX(), gravity.GetY(), gravity.GetZ()};
+static JPH_Vec3 get_gravity(const PhysicsWorld &world) {
+    const JPH::Vec3 gravity = world.physics_system.GetGravity();
+    return {gravity.GetX(), gravity.GetY(), gravity.GetZ()};
 }
 
-bool PhysicsWorldAttachContactListener(PhysicsWorld *world) {
-    if (!world || !world->jolt_initialized) {
+bool PhysicsWorld::AttachContactListener() {
+    if (!jolt_initialized) {
         return false;
     }
-    world->contact_listener = JPH_ContactListener_Create(world);
-    if (!world->contact_listener) {
+    contact_listener = JPH_ContactListener_Create(this);
+    if (!contact_listener) {
         return false;
     }
-    world->physics_system.SetContactListener(
-        reinterpret_cast<JPH::ContactListener *>(world->contact_listener));
+    physics_system.SetContactListener(
+        reinterpret_cast<JPH::ContactListener *>(contact_listener));
     return true;
 }
 
-void PhysicsWorldSyncLoadedState(PhysicsWorld *world, size_t saved_count) {
-    if (!world) {
-        return;
-    }
-
-    JPH_BodyID *CPH_RESTRICT body_ids              = world->bodies.body_ids.data();
-    JPH_BodyInterface *CPH_RESTRICT body_interface = world->body_interface;
-    PosStride *CPH_RESTRICT positions              = world->bodies.positions.data();
-    AuxStride *CPH_RESTRICT rotations              = world->bodies.rotations.data();
-    AuxStride *CPH_RESTRICT linear_velocities      = world->bodies.linear_velocities.data();
-    AuxStride *CPH_RESTRICT angular_velocities     = world->bodies.angular_velocities.data();
+void PhysicsWorld::SyncLoadedState(size_t saved_count) {
+    JPH_BodyID *CPH_RESTRICT body_ids              = bodies.body_ids.data();
+    JPH_BodyInterface *CPH_RESTRICT body_interface = this->body_interface;
+    PosStride *CPH_RESTRICT positions              = bodies.positions.data();
+    AuxStride *CPH_RESTRICT rotations              = bodies.rotations.data();
+    AuxStride *CPH_RESTRICT linear_velocities      = bodies.linear_velocities.data();
+    AuxStride *CPH_RESTRICT angular_velocities     = bodies.angular_velocities.data();
 
     for (size_t i = 0; i < saved_count; i++) {
         const JPH_BodyID body_id = body_ids[i];
@@ -59,22 +56,28 @@ void PhysicsWorldSyncLoadedState(PhysicsWorld *world, size_t saved_count) {
         JPH_BodyInterface_SetLinearVelocity(body_interface, body_id, &linear_velocity);
         JPH_BodyInterface_SetAngularVelocity(body_interface, body_id, &angular_velocity);
 
-        const uint32_t slot = world->bodies.dense_to_slot[i];
+        const uint32_t slot = bodies.dense_to_slot[i];
         const uint32_t generation =
-            (world->bodies.generations[slot]).load(std::memory_order::relaxed);
+            (bodies.generations[slot]).load(std::memory_order::relaxed);
         const uint64_t raw_handle = make_handle(slot, generation);
         JPH_BodyInterface_SetUserData(body_interface, body_id, raw_handle);
 
         const uint32_t jolt_index = JPH_ID_TO_INDEX(body_id);
-        if (world->id_to_handle_map && jolt_index <= world->max_jolt_bodies) {
-            (world->id_to_handle_map[jolt_index]).store(raw_handle, std::memory_order::relaxed);
+        if (id_to_handle_map && jolt_index <= max_jolt_bodies) {
+            (id_to_handle_map[jolt_index]).store(raw_handle, std::memory_order::relaxed);
         }
     }
 }
 
-static bool calculate_snapshot_size(size_t body_count, size_t slot_capacity, size_t *out_size,
-                                    size_t *out_positions_size, size_t *out_auxiliary_size,
-                                    size_t *out_mapping_size) {
+struct SnapshotSizes {
+    size_t total;
+    size_t positions;
+    size_t auxiliary;
+    size_t mapping;
+};
+
+static std::optional<SnapshotSizes> calculate_snapshot_size(size_t body_count,
+                                                            size_t slot_capacity) {
     const size_t header_size    = sizeof(size_t) + sizeof(double) + sizeof(size_t);
     size_t positions_size       = 0;
     size_t auxiliary_size       = 0;
@@ -89,44 +92,44 @@ static bool calculate_snapshot_size(size_t body_count, size_t slot_capacity, siz
         __builtin_add_overflow(total_size, positions_size, &total_size) ||
         __builtin_add_overflow(total_size, three_auxiliary_size, &total_size) ||
         __builtin_add_overflow(total_size, mapping_size, &total_size)) {
-        return false;
+        return std::nullopt;
     }
-    if (out_size) {
-        *out_size = total_size;
-    }
-    if (out_positions_size) {
-        *out_positions_size = positions_size;
-    }
-    if (out_auxiliary_size) {
-        *out_auxiliary_size = auxiliary_size;
-    }
-    if (out_mapping_size) {
-        *out_mapping_size = mapping_size;
-    }
-    return true;
+    return SnapshotSizes{.total     = total_size,
+                         .positions = positions_size,
+                         .auxiliary = auxiliary_size,
+                         .mapping   = mapping_size};
 }
 
-std::expected<void, Error> PhysicsWorldSaveSnapshot(PhysicsWorld *world,
-                                                       Buffer<std::uint8_t> &out_data) {
-    if (!world) {
-        return std::unexpected(WorldSnapshotError::InvalidArgument);
+std::optional<SnapshotHeader> ReadSnapshotHeader(std::span<const std::uint8_t> data) {
+    if (data.size() < sizeof(std::size_t) + sizeof(double) + sizeof(std::size_t)) {
+        return std::nullopt;
     }
-    out_data.reset();
+    SnapshotHeader header;
+    const std::uint8_t *cursor = data.data();
+    std::memcpy(&header.body_count, cursor, sizeof(header.body_count));
+    cursor += sizeof(header.body_count);
+    std::memcpy(&header.time, cursor, sizeof(header.time));
+    cursor += sizeof(header.time);
+    std::memcpy(&header.slot_capacity, cursor, sizeof(header.slot_capacity));
+    return header;
+}
 
-    auto shadow = LockShadowNotStepping(world);
-    WaitUntilNotQuerying(world, shadow);
-    const std::size_t body_count    = world->count.load(std::memory_order::acquire);
-    const std::size_t slot_capacity = world->slot_capacity;
-    const double saved_time         = world->time;
-    std::size_t total_size          = 0;
-    std::size_t position_size       = 0;
-    std::size_t auxiliary_size      = 0;
-    std::size_t mapping_size        = 0;
-    if (!calculate_snapshot_size(body_count, slot_capacity, &total_size, &position_size,
-                                 &auxiliary_size, &mapping_size)) {
+std::expected<Buffer<std::uint8_t>, Error> PhysicsWorld::SaveSnapshot() {
+    Buffer<std::uint8_t> out_data;
+
+    auto shadow = LockShadowNotStepping();
+    WaitUntilNotQuerying(shadow);
+    const std::size_t body_count          = count.load(std::memory_order::acquire);
+    const std::size_t saved_slot_capacity = slot_capacity;
+    const double saved_time               = time;
+    const std::optional<SnapshotSizes> sizes =
+        calculate_snapshot_size(body_count, saved_slot_capacity);
+    if (!sizes) {
         return std::unexpected(WorldSnapshotError::Overflow);
     }
-    if (!out_data.allocate(total_size)) {
+    const std::size_t position_size  = sizes->positions;
+    const std::size_t auxiliary_size = sizes->auxiliary;
+    if (!out_data.allocate(sizes->total)) {
         return std::unexpected(WorldSnapshotError::OutOfMemory);
     }
 
@@ -135,346 +138,289 @@ std::expected<void, Error> PhysicsWorldSaveSnapshot(PhysicsWorld *world,
     cursor += sizeof(body_count);
     std::memcpy(cursor, &saved_time, sizeof(saved_time));
     cursor += sizeof(saved_time);
-    std::memcpy(cursor, &slot_capacity, sizeof(slot_capacity));
-    cursor += sizeof(slot_capacity);
-    std::memcpy(cursor, world->bodies.positions.data(), position_size);
+    std::memcpy(cursor, &saved_slot_capacity, sizeof(saved_slot_capacity));
+    cursor += sizeof(saved_slot_capacity);
+    std::memcpy(cursor, bodies.positions.data(), position_size);
     cursor += position_size;
-    std::memcpy(cursor, world->bodies.rotations.data(), auxiliary_size);
+    std::memcpy(cursor, bodies.rotations.data(), auxiliary_size);
     cursor += auxiliary_size;
-    std::memcpy(cursor, world->bodies.linear_velocities.data(), auxiliary_size);
+    std::memcpy(cursor, bodies.linear_velocities.data(), auxiliary_size);
     cursor += auxiliary_size;
-    std::memcpy(cursor, world->bodies.angular_velocities.data(), auxiliary_size);
+    std::memcpy(cursor, bodies.angular_velocities.data(), auxiliary_size);
     cursor += auxiliary_size;
 
     auto *out_generations = reinterpret_cast<std::uint32_t *>(cursor);
-    for (std::size_t i = 0; i < slot_capacity; i++) {
-        out_generations[i] = world->bodies.generations[i].load(std::memory_order::relaxed);
+    for (std::size_t i = 0; i < saved_slot_capacity; i++) {
+        out_generations[i] = bodies.generations[i].load(std::memory_order::relaxed);
     }
-    cursor += slot_capacity * sizeof(std::uint32_t);
-    std::memcpy(cursor, world->bodies.slot_to_dense.data(), slot_capacity * sizeof(std::uint32_t));
-    cursor += slot_capacity * sizeof(std::uint32_t);
-    std::memcpy(cursor, world->bodies.dense_to_slot.data(), slot_capacity * sizeof(std::uint32_t));
-    cursor += slot_capacity * sizeof(std::uint32_t);
-    for (std::size_t i = 0; i < slot_capacity; i++) {
-        cursor[i] = world->bodies.slot_states[i].load(std::memory_order::relaxed);
+    cursor += saved_slot_capacity * sizeof(std::uint32_t);
+    std::memcpy(cursor, bodies.slot_to_dense.data(), saved_slot_capacity * sizeof(std::uint32_t));
+    cursor += saved_slot_capacity * sizeof(std::uint32_t);
+    std::memcpy(cursor, bodies.dense_to_slot.data(), saved_slot_capacity * sizeof(std::uint32_t));
+    cursor += saved_slot_capacity * sizeof(std::uint32_t);
+    for (std::size_t i = 0; i < saved_slot_capacity; i++) {
+        cursor[i] = bodies.slot_states[i].load(std::memory_order::relaxed);
     }
-    return {};
+    return out_data;
 }
 
-
-std::expected<void, Error> PhysicsWorldLoadSnapshot(PhysicsWorld *world, const uint8_t *data,
-                                                       size_t data_size, size_t *out_saved_count,
-                                                       size_t *out_world_capacity,
-                                                       size_t *out_saved_capacity) {
-    if (!world || !data || !out_saved_count || !out_world_capacity || !out_saved_capacity) {
-        return std::unexpected(WorldSnapshotError::InvalidArgument);
-    }
-    *out_saved_count    = 0;
-    *out_world_capacity = 0;
-    *out_saved_capacity = 0;
-
-    auto shadow = LockShadowNotStepping(world);
-    WaitUntilNotQuerying(world, shadow);
-    const size_t header_size = sizeof(size_t) + sizeof(double) + sizeof(size_t);
-    if (data_size < header_size) {
+std::expected<std::size_t, Error> PhysicsWorld::LoadSnapshot(std::span<const std::uint8_t> data) {
+    auto shadow = LockShadowNotStepping();
+    WaitUntilNotQuerying(shadow);
+    const std::optional<SnapshotHeader> header = ReadSnapshotHeader(data);
+    if (!header) {
         return std::unexpected(WorldSnapshotError::Truncated);
     }
+    const size_t saved_count    = header->body_count;
+    const double saved_time     = header->time;
+    const size_t saved_capacity = header->slot_capacity;
+    const uint8_t *cursor =
+        data.data() + sizeof(size_t) + sizeof(double) + sizeof(size_t);
 
-    const uint8_t *cursor = data;
-    size_t saved_count    = 0;
-    double saved_time     = 0.0;
-    size_t saved_capacity = 0;
-    memcpy(&saved_count, cursor, sizeof(saved_count));
-    cursor += sizeof(saved_count);
-    memcpy(&saved_time, cursor, sizeof(saved_time));
-    cursor += sizeof(saved_time);
-    memcpy(&saved_capacity, cursor, sizeof(saved_capacity));
-    cursor += sizeof(saved_capacity);
-
-    *out_world_capacity = world->slot_capacity;
-    *out_saved_capacity = saved_capacity;
-    if (saved_capacity != world->slot_capacity) {
+    if (saved_capacity != slot_capacity) {
         return std::unexpected(WorldSnapshotError::CapacityMismatch);
     }
-    if (saved_count > saved_capacity || saved_count > world->max_jolt_bodies) {
+    if (saved_count > saved_capacity || saved_count > max_jolt_bodies) {
         return std::unexpected(WorldSnapshotError::Truncated);
     }
 
-    size_t expected_size  = 0;
-    size_t position_size  = 0;
-    size_t auxiliary_size = 0;
-    size_t mapping_size   = 0;
-    if (!calculate_snapshot_size(saved_count, saved_capacity, &expected_size, &position_size,
-                                 &auxiliary_size, &mapping_size)) {
+    const std::optional<SnapshotSizes> sizes =
+        calculate_snapshot_size(saved_count, saved_capacity);
+    if (!sizes) {
         return std::unexpected(WorldSnapshotError::Truncated);
     }
-    if (data_size != expected_size) {
+    const size_t position_size  = sizes->positions;
+    const size_t auxiliary_size = sizes->auxiliary;
+    if (data.size() != sizes->total) {
         return std::unexpected(WorldSnapshotError::Truncated);
     }
 
-    (world->count).store(saved_count, std::memory_order::relaxed);
-    world->time = saved_time;
-    memcpy(world->bodies.positions.data(), cursor, position_size);
+    (count).store(saved_count, std::memory_order::relaxed);
+    time = saved_time;
+    memcpy(bodies.positions.data(), cursor, position_size);
     cursor += position_size;
-    memcpy(world->bodies.rotations.data(), cursor, auxiliary_size);
+    memcpy(bodies.rotations.data(), cursor, auxiliary_size);
     cursor += auxiliary_size;
-    memcpy(world->bodies.linear_velocities.data(), cursor, auxiliary_size);
+    memcpy(bodies.linear_velocities.data(), cursor, auxiliary_size);
     cursor += auxiliary_size;
-    memcpy(world->bodies.angular_velocities.data(), cursor, auxiliary_size);
+    memcpy(bodies.angular_velocities.data(), cursor, auxiliary_size);
     cursor += auxiliary_size;
 
     const uint32_t *in_generations = (const uint32_t *)cursor;
     for (size_t i = 0; i < saved_capacity; i++) {
-        (world->bodies.generations[i]).store(in_generations[i], std::memory_order::relaxed);
+        (bodies.generations[i]).store(in_generations[i], std::memory_order::relaxed);
     }
     cursor += saved_capacity * sizeof(uint32_t);
-    memcpy(world->bodies.slot_to_dense.data(), cursor, saved_capacity * sizeof(uint32_t));
+    memcpy(bodies.slot_to_dense.data(), cursor, saved_capacity * sizeof(uint32_t));
     cursor += saved_capacity * sizeof(uint32_t);
-    memcpy(world->bodies.dense_to_slot.data(), cursor, saved_capacity * sizeof(uint32_t));
+    memcpy(bodies.dense_to_slot.data(), cursor, saved_capacity * sizeof(uint32_t));
     cursor += saved_capacity * sizeof(uint32_t);
     const uint8_t *in_states = cursor;
     for (size_t i = 0; i < saved_capacity; i++) {
-        (world->bodies.slot_states[i]).store(in_states[i], std::memory_order::relaxed);
+        (bodies.slot_states[i]).store(in_states[i], std::memory_order::relaxed);
     }
 
-    size_t free_count = 0;
+    size_t rebuilt_free_count = 0;
     for (uint32_t i = 0; i < saved_capacity; i++) {
-        if ((world->bodies.slot_states[i]).load(std::memory_order::relaxed) == std::to_underlying(SlotState::Empty)) {
-            world->bodies.free_slots[free_count++] = i;
+        if ((bodies.slot_states[i]).load(std::memory_order::relaxed) == std::to_underlying(SlotState::Empty)) {
+            bodies.free_slots[rebuilt_free_count++] = i;
         }
     }
-    (world->free_count).store(free_count, std::memory_order::release);
+    free_count.store(rebuilt_free_count, std::memory_order::release);
 
-    PhysicsWorldSyncLoadedState(world, saved_count);
-    *out_saved_count = saved_count;
-    return {};
+    SyncLoadedState(saved_count);
+    return saved_count;
 }
 
-std::expected<void, Error>
-PhysicsWorldTakeContactEvents(PhysicsWorld *world, Buffer<ContactEvent> &out_events) {
-    if (!world) {
-        return std::unexpected(WorldRuntimeError::InvalidArgument);
-    }
-    out_events.reset();
+std::expected<Buffer<ContactEvent>, Error> PhysicsWorld::TakeContactEvents() {
+    Buffer<ContactEvent> out_events;
 
-    const auto shadow = LockShadowNotStepping(world);
-    std::size_t count = world->contact_atomic_idx.load(std::memory_order::acquire);
-    if (count > world->contact_max_capacity) {
-        count = world->contact_max_capacity;
+    const auto shadow = LockShadowNotStepping();
+    std::size_t count = contact_atomic_idx.load(std::memory_order::acquire);
+    if (count > contact_max_capacity) {
+        count = contact_max_capacity;
     }
     if (count == 0) {
-        return {};
+        return out_events;
     }
     if (!out_events.allocate(count)) {
         return std::unexpected(WorldRuntimeError::OutOfMemory);
     }
     // Contact events contain atomics; the wire copy is a byte transfer,
     // same as the legacy implementation.
-    std::memcpy(out_events.data(), world->contact_buffer.data(),
+    std::memcpy(out_events.data(), contact_buffer.data(),
                 count * sizeof(ContactEvent));
-    world->contact_atomic_idx.store(0, std::memory_order::relaxed);
-    return {};
+    contact_atomic_idx.store(0, std::memory_order::relaxed);
+    return out_events;
 }
 
 
-std::expected<void, Error> PhysicsWorldSetGravity(PhysicsWorld *world, JPH_Vec3 gravity) {
-    if (!world) {
-        return std::unexpected(WorldRuntimeError::InvalidArgument);
-    }
-
-    auto shadow = LockShadowNotStepping(world);
-    const size_t current_count = (world->count).load(std::memory_order::acquire);
-    world->physics_system.SetGravity(JPH::Vec3(gravity.x, gravity.y, gravity.z));
+std::expected<void, Error> PhysicsWorld::SetGravity(JPH::Vec3 gravity) {
+    auto shadow = LockShadowNotStepping();
+    const size_t current_count = (count).load(std::memory_order::acquire);
+    physics_system.SetGravity(gravity);
 
     if (CPH_UNLIKELY(current_count > UINT32_MAX)) {
         return std::unexpected(WorldRuntimeError::Overflow);
     }
 
     if (current_count > 0) {
-        JPH_BodyInterface_ActivateBodies(world->body_interface, world->bodies.body_ids.data(),
+        JPH_BodyInterface_ActivateBodies(body_interface, bodies.body_ids.data(),
                                          (uint32_t)current_count);
     }
     return {};
 }
 
-std::expected<void, Error> PhysicsWorldGetGravity(PhysicsWorld *world, JPH_Vec3 *out_gravity) {
-    if (!world || !out_gravity) {
-        return std::unexpected(WorldRuntimeError::InvalidArgument);
-    }
-
-    const std::scoped_lock shadow(world->shadow_lock);
-    get_gravity(world, out_gravity);
-    return {};
+JPH::Vec3 PhysicsWorld::GetGravity() {
+    const std::scoped_lock shadow(shadow_lock);
+    return physics_system.GetGravity();
 }
 
-std::expected<void, Error> PhysicsWorldGetBodyStats(PhysicsWorld *world, BodyHandle handle,
-                                                       PhysicsBodyStats *out_stats) {
-    if (!world || !out_stats) {
-        return std::unexpected(WorldRuntimeError::InvalidArgument);
-    }
-
-    auto shadow = LockShadowNotStepping(world);
-    uint32_t slot = 0;
-    if (!unpack_handle(world, handle, &slot)) {
+std::expected<PhysicsBodyStats, Error> PhysicsWorld::GetBodyStats(BodyHandle handle) {
+    auto shadow = LockShadowNotStepping();
+    const std::optional<std::uint32_t> resolved = UnpackHandle(handle);
+    if (!resolved) {
         return std::unexpected(WorldRuntimeError::StaleHandle);
     }
+    const std::uint32_t slot = *resolved;
 
-    const uint8_t state = (world->bodies.slot_states[slot]).load(std::memory_order::acquire);
+    const uint8_t state = (bodies.slot_states[slot]).load(std::memory_order::acquire);
     if (!get_slot_predicate(state, kMaskImmStandard).is_immediate) {
         return std::unexpected(WorldRuntimeError::StaleHandle);
     }
 
-    const uint32_t dense       = world->bodies.slot_to_dense[slot];
-    out_stats->position        = (world->bodies.positions.data())[dense];
-    out_stats->rotation        = (world->bodies.rotations.data())[dense];
-    out_stats->linear_velocity = (world->bodies.linear_velocities.data())[dense];
-    return {};
+    const uint32_t dense = bodies.slot_to_dense[slot];
+    return PhysicsBodyStats{.position        = (bodies.positions.data())[dense],
+                            .rotation        = (bodies.rotations.data())[dense],
+                            .linear_velocity = (bodies.linear_velocities.data())[dense]};
 }
 
-static std::expected<void, Error>
-lock_soft_body_for_read(PhysicsWorld *world, BodyHandle handle, JPH_BodyLockRead *out_lock,
-                        const JPH_BodyLockInterface **out_interface, uint32_t *out_count) {
-    if (!world || !out_lock || !out_interface || !out_count || !world->jolt_initialized) {
+struct SoftBodyReadLock {
+    JPH_BodyLockRead lock;
+    const JPH_BodyLockInterface *lock_interface;
+    std::uint32_t vertex_count;
+};
+
+static std::expected<SoftBodyReadLock, Error>
+lock_soft_body_for_read(PhysicsWorld &world, BodyHandle handle) {
+    if (!world.jolt_initialized) {
         return std::unexpected(WorldRuntimeError::InvalidArgument);
     }
 
-    auto shadow = LockShadowNotStepping(world);
-    uint32_t slot = 0;
-    if (!unpack_handle(world, handle, &slot)) {
+    auto shadow = world.LockShadowNotStepping();
+    const std::optional<std::uint32_t> resolved = world.UnpackHandle(handle);
+    if (!resolved) {
         return std::unexpected(WorldRuntimeError::StaleHandle);
     }
-    const uint8_t state = (world->bodies.slot_states[slot]).load(std::memory_order::acquire);
+    const std::uint32_t slot = *resolved;
+    const uint8_t state = (world.bodies.slot_states[slot]).load(std::memory_order::acquire);
     if (!get_slot_predicate(state, kMaskImmStrict).is_immediate) {
         return std::unexpected(WorldRuntimeError::StaleHandle);
     }
-    const uint32_t dense     = world->bodies.slot_to_dense[slot];
-    const JPH_BodyID body_id = world->bodies.body_ids[dense];
+    const uint32_t dense     = world.bodies.slot_to_dense[slot];
+    const JPH_BodyID body_id = world.bodies.body_ids[dense];
 
-    const JPH_BodyLockInterface *lock_interface =
-        reinterpret_cast<const JPH_BodyLockInterface *>(
-            &world->physics_system.GetBodyLockInterface());
-    JPH_BodyLockInterface_LockRead(lock_interface, body_id, out_lock);
-    if (!out_lock->body) {
+    SoftBodyReadLock result;
+    result.lock_interface = reinterpret_cast<const JPH_BodyLockInterface *>(
+        &world.physics_system.GetBodyLockInterface());
+    JPH_BodyLockInterface_LockRead(result.lock_interface, body_id, &result.lock);
+    if (!result.lock.body) {
         return std::unexpected(WorldRuntimeError::StaleHandle);
     }
-    if (!JPH_Body_IsSoftBody(out_lock->body)) {
-        JPH_BodyLockInterface_UnlockRead(lock_interface, out_lock);
+    if (!JPH_Body_IsSoftBody(result.lock.body)) {
+        JPH_BodyLockInterface_UnlockRead(result.lock_interface, &result.lock);
         return std::unexpected(WorldRuntimeError::WrongBodyType);
     }
-
-    *out_count     = JPH_Body_GetSoftBodyVertexCount(out_lock->body);
-    *out_interface = lock_interface;
-    return {};
+    result.vertex_count = JPH_Body_GetSoftBodyVertexCount(result.lock.body);
+    return result;
 }
 
-std::expected<void, Error> PhysicsWorldGetSoftBodyVertexCount(PhysicsWorld *world,
-                                                                   BodyHandle handle,
-                                                                   uint32_t *out_count) {
-    if (!out_count) {
-        return std::unexpected(WorldRuntimeError::InvalidArgument);
+std::expected<std::uint32_t, Error>
+PhysicsWorld::GetSoftBodyVertexCount(BodyHandle handle) {
+    std::expected<SoftBodyReadLock, Error> locked = lock_soft_body_for_read(*this, handle);
+    if (!locked) {
+        return std::unexpected(locked.error());
     }
-    JPH_BodyLockRead lock;
-    const JPH_BodyLockInterface *lock_interface = nullptr;
-    std::expected<void, Error> status =
-        lock_soft_body_for_read(world, handle, &lock, &lock_interface, out_count);
-    if (status) {
-        JPH_BodyLockInterface_UnlockRead(lock_interface, &lock);
-    }
-    return status;
+    const std::uint32_t count = locked->vertex_count;
+    JPH_BodyLockInterface_UnlockRead(locked->lock_interface, &locked->lock);
+    return count;
 }
 
-std::expected<void, Error> PhysicsWorldGetSoftBodyVertexPosition(PhysicsWorld *world,
-                                                                      BodyHandle handle,
-                                                                      uint32_t vertex_index,
-                                                                      JPH_Vec3 *out_position,
-                                                                      uint32_t *out_count) {
-    if (!out_position || !out_count) {
-        return std::unexpected(WorldRuntimeError::InvalidArgument);
+std::expected<SoftBodyVertexPosition, Error>
+PhysicsWorld::GetSoftBodyVertexPosition(BodyHandle handle, uint32_t vertex_index) {
+    std::expected<SoftBodyReadLock, Error> locked = lock_soft_body_for_read(*this, handle);
+    if (!locked) {
+        return std::unexpected(locked.error());
     }
-    JPH_BodyLockRead lock;
-    const JPH_BodyLockInterface *lock_interface = nullptr;
-    const std::expected<void, Error> status =
-        lock_soft_body_for_read(world, handle, &lock, &lock_interface, out_count);
-    if (!status) {
-        return status;
-    }
-    if (vertex_index >= *out_count) {
-        JPH_BodyLockInterface_UnlockRead(lock_interface, &lock);
+    if (vertex_index >= locked->vertex_count) {
+        JPH_BodyLockInterface_UnlockRead(locked->lock_interface, &locked->lock);
         return std::unexpected(WorldRuntimeError::OutOfRange);
     }
-    JPH_Body_GetSoftBodyVertexPosition(lock.body, vertex_index, out_position);
-    JPH_BodyLockInterface_UnlockRead(lock_interface, &lock);
-    return {};
+    SoftBodyVertexPosition result{.position = {}, .vertex_count = locked->vertex_count};
+    JPH_Body_GetSoftBodyVertexPosition(locked->lock.body, vertex_index, &result.position);
+    JPH_BodyLockInterface_UnlockRead(locked->lock_interface, &locked->lock);
+    return result;
 }
 
-std::expected<void, Error> PhysicsWorldGetSoftBodyLocalVertices(
-    PhysicsWorld *world, BodyHandle handle, Buffer<JPH_Vec3> &out_positions,
-    std::uint32_t &out_count) {
-    out_positions.reset();
-    out_count = 0;
-    JPH_BodyLockRead lock;
-    const JPH_BodyLockInterface *lock_interface = nullptr;
-    const std::expected<void, Error> status =
-        lock_soft_body_for_read(world, handle, &lock, &lock_interface, &out_count);
-    if (!status) {
-        return status;
+std::expected<Buffer<JPH_Vec3>, Error>
+PhysicsWorld::GetSoftBodyLocalVertices(BodyHandle handle) {
+    Buffer<JPH_Vec3> out_positions;
+    std::expected<SoftBodyReadLock, Error> locked = lock_soft_body_for_read(*this, handle);
+    if (!locked) {
+        return std::unexpected(locked.error());
     }
-    if (out_count != 0 && !out_positions.allocate(out_count)) {
-        JPH_BodyLockInterface_UnlockRead(lock_interface, &lock);
-        out_count = 0;
+    const std::uint32_t count = locked->vertex_count;
+    if (count != 0 && !out_positions.allocate(count)) {
+        JPH_BodyLockInterface_UnlockRead(locked->lock_interface, &locked->lock);
         return std::unexpected(WorldRuntimeError::OutOfMemory);
     }
+    // The body is read-locked, so the count Jolt reports here is the count
+    // lock_soft_body_for_read just validated; the buffer is exact-size.
     std::uint32_t result_count = 0;
-    JPH_Body_GetSoftBodyVertexPositions(lock.body, out_positions.data(), out_count, &result_count);
-    JPH_BodyLockInterface_UnlockRead(lock_interface, &lock);
-    out_count = result_count;
-    return {};
+    JPH_Body_GetSoftBodyVertexPositions(locked->lock.body, out_positions.data(), count,
+                                        &result_count);
+    JPH_BodyLockInterface_UnlockRead(locked->lock_interface, &locked->lock);
+    return out_positions;
 }
 
+std::expected<bool, Error>
+PhysicsWorld::ApplyBuoyancy(BodyHandle handle, JPH_Real surface_y, float buoyancy,
+                              float linear_drag, float angular_drag, JPH::Vec3 fluid_velocity,
+                              float dt) {
 
-std::expected<void, Error> PhysicsWorldApplyBuoyancy(PhysicsWorld *world, BodyHandle handle,
-                                                       JPH_Real surface_y, float buoyancy,
-                                                       float linear_drag, float angular_drag,
-                                                       JPH_Vec3 fluid_velocity, float dt,
-                                                       bool *out_submerged) {
-    if (!world || !out_submerged) {
-        return std::unexpected(WorldRuntimeError::InvalidArgument);
+    auto shadow = LockShadowNotStepping();
+    const std::optional<std::uint32_t> resolved = UnpackHandle(handle);
+    if (!resolved) {
+        return false;
     }
-    *out_submerged = false;
+    const std::uint32_t slot = *resolved;
 
-    auto shadow = LockShadowNotStepping(world);
-    uint32_t slot = 0;
-    if (!unpack_handle(world, handle, &slot)) {
-        return {};
-    }
-
-    const uint8_t state = (world->bodies.slot_states[slot]).load(std::memory_order::acquire);
+    const uint8_t state = (bodies.slot_states[slot]).load(std::memory_order::acquire);
     if (!get_slot_predicate(state, kMaskImmStrict).is_immediate) {
-        return {};
+        return false;
     }
 
-    const uint32_t dense     = world->bodies.slot_to_dense[slot];
-    const JPH_BodyID body_id = world->bodies.body_ids[dense];
-    (world->active_queries).fetch_add(1, std::memory_order::acquire);
+    const uint32_t dense     = bodies.slot_to_dense[slot];
+    const JPH_BodyID body_id = bodies.body_ids[dense];
+    (active_queries).fetch_add(1, std::memory_order::acquire);
 
-    JPH_BodyInterface_ActivateBody(world->body_interface, body_id);
-    JPH_Vec3 gravity;
-    get_gravity(world, &gravity);
+    JPH_BodyInterface_ActivateBody(body_interface, body_id);
+    JPH_Vec3 gravity = get_gravity(*this);
     JPH_RVec3 surface_position = {0, surface_y, 0};
     JPH_Vec3 surface_normal    = {0, 1.0f, 0};
-    *out_submerged             = JPH_BodyInterface_ApplyBuoyancyImpulse(
-        world->body_interface, body_id, &surface_position, &surface_normal, buoyancy, linear_drag,
-        angular_drag, &fluid_velocity, &gravity, dt);
-    PhysicsWorldQueryEnd(world);
-    return {};
+    JPH_Vec3 fluid             = {fluid_velocity.GetX(), fluid_velocity.GetY(),
+                      fluid_velocity.GetZ()};
+    const bool submerged       = JPH_BodyInterface_ApplyBuoyancyImpulse(
+        body_interface, body_id, &surface_position, &surface_normal, buoyancy, linear_drag,
+        angular_drag, &fluid, &gravity, dt);
+    QueryEnd();
+    return submerged;
 }
 
-std::expected<void, Error> PhysicsWorldApplyBuoyancyBatch(
-    PhysicsWorld *world, const BodyHandle *handles, size_t handle_count, JPH_Real surface_y,
-    float buoyancy, float linear_drag, float angular_drag, JPH_Vec3 fluid_velocity, float dt) {
-    if (!world || (handle_count > 0 && !handles)) {
-        return std::unexpected(WorldRuntimeError::InvalidArgument);
-    }
+std::expected<void, Error> PhysicsWorld::ApplyBuoyancyBatch(
+    std::span<const BodyHandle> handles, JPH_Real surface_y, float buoyancy, float linear_drag,
+    float angular_drag, JPH::Vec3 fluid_velocity, float dt) {
+    const size_t handle_count = handles.size();
     if (handle_count == 0) {
         return {};
     }
@@ -488,57 +434,56 @@ std::expected<void, Error> PhysicsWorldApplyBuoyancyBatch(
     }
 
     size_t valid_count = 0;
-    auto shadow = LockShadowNotStepping(world);
+    auto shadow = LockShadowNotStepping();
     for (size_t i = 0; i < handle_count; i++) {
-        uint32_t slot = 0;
-        if (!unpack_handle(world, handles[i], &slot)) {
+        const std::optional<std::uint32_t> resolved = UnpackHandle(handles[i]);
+        if (!resolved) {
             continue;
         }
-        const uint8_t state = (world->bodies.slot_states[slot]).load(std::memory_order::acquire);
+        const std::uint32_t slot = *resolved;
+        const uint8_t state = (bodies.slot_states[slot]).load(std::memory_order::acquire);
         if (get_slot_predicate(state, kMaskImmStrict).is_immediate) {
-            body_ids[valid_count++] = world->bodies.body_ids[world->bodies.slot_to_dense[slot]];
+            body_ids[valid_count++] = bodies.body_ids[bodies.slot_to_dense[slot]];
         }
     }
 
     if (valid_count > 0) {
-        (world->active_queries).fetch_add(1, std::memory_order::acquire);
+        (active_queries).fetch_add(1, std::memory_order::acquire);
     }
 
     if (valid_count > 0) {
-        JPH_Vec3 gravity;
-        get_gravity(world, &gravity);
+        JPH_Vec3 gravity = get_gravity(*this);
         JPH_RVec3 surface_position = {0, surface_y, 0};
         JPH_Vec3 surface_normal    = {0, 1.0f, 0};
+        JPH_Vec3 fluid             = {fluid_velocity.GetX(), fluid_velocity.GetY(),
+                          fluid_velocity.GetZ()};
         for (size_t i = 0; i < valid_count; i++) {
-            JPH_BodyInterface_ActivateBody(world->body_interface, body_ids[i]);
+            JPH_BodyInterface_ActivateBody(body_interface, body_ids[i]);
             JPH_BodyInterface_ApplyBuoyancyImpulse(
-                world->body_interface, body_ids[i], &surface_position, &surface_normal, buoyancy,
-                linear_drag, angular_drag, &fluid_velocity, &gravity, dt);
+                body_interface, body_ids[i], &surface_position, &surface_normal, buoyancy,
+                linear_drag, angular_drag, &fluid, &gravity, dt);
         }
-        PhysicsWorldQueryEnd(world);
+        QueryEnd();
     }
 
     return {};
 }
 
-std::expected<void, Error> PhysicsWorldGetMotionType(PhysicsWorld *world, BodyHandle handle,
-                                                        JPH_MotionType *out_motion_type) {
-    if (!world || !out_motion_type) {
-        return std::unexpected(WorldRuntimeError::InvalidArgument);
-    }
+std::expected<MotionType, Error> PhysicsWorld::GetMotionType(BodyHandle handle) {
 
-    auto shadow = LockShadowNotStepping(world);
-    uint32_t slot = 0;
-    if (!unpack_handle(world, handle, &slot)) {
+    auto shadow = LockShadowNotStepping();
+    const std::optional<std::uint32_t> resolved = UnpackHandle(handle);
+    if (!resolved) {
         return std::unexpected(WorldRuntimeError::StaleHandle);
     }
+    const std::uint32_t slot = *resolved;
 
-    const uint8_t state = (world->bodies.slot_states[slot]).load(std::memory_order::acquire);
+    const uint8_t state = (bodies.slot_states[slot]).load(std::memory_order::acquire);
     if (get_slot_predicate(state, kMaskImmStandard).is_immediate) {
-        const uint32_t dense     = world->bodies.slot_to_dense[slot];
-        const JPH_BodyID body_id = world->bodies.body_ids[dense];
-        *out_motion_type = JPH_BodyInterface_GetMotionType(world->body_interface, body_id);
-        return {};
+        const uint32_t dense     = bodies.slot_to_dense[slot];
+        const JPH_BodyID body_id = bodies.body_ids[dense];
+        return static_cast<MotionType>(
+            JPH_BodyInterface_GetMotionType(body_interface, body_id));
     }
     if (state == std::to_underlying(SlotState::PendingCreate)) {
         return std::unexpected(WorldRuntimeError::PendingCreate);
@@ -546,109 +491,86 @@ std::expected<void, Error> PhysicsWorldGetMotionType(PhysicsWorld *world, BodyHa
     return std::unexpected(WorldRuntimeError::StaleHandle);
 }
 
-std::expected<void, Error> PhysicsWorldGetUserData(PhysicsWorld *world, BodyHandle handle,
-                                                      uint64_t *out_user_data) {
-    if (!world || !out_user_data) {
-        return std::unexpected(WorldRuntimeError::InvalidArgument);
-    }
+std::expected<std::uint64_t, Error> PhysicsWorld::GetUserData(BodyHandle handle) {
 
-    auto shadow = LockShadowNotStepping(world);
-    uint32_t slot = 0;
-    if (!unpack_handle(world, handle, &slot)) {
+    auto shadow = LockShadowNotStepping();
+    const std::optional<std::uint32_t> resolved = UnpackHandle(handle);
+    if (!resolved) {
         return std::unexpected(WorldRuntimeError::StaleHandle);
     }
+    const std::uint32_t slot = *resolved;
 
-    const uint8_t state = (world->bodies.slot_states[slot]).load(std::memory_order::acquire);
+    const uint8_t state = (bodies.slot_states[slot]).load(std::memory_order::acquire);
     if (!get_slot_predicate(state, kMaskImmStandard).is_executable()) {
         return std::unexpected(WorldRuntimeError::StaleHandle);
     }
 
-    const uint32_t dense = world->bodies.slot_to_dense[slot];
-    *out_user_data       = world->bodies.user_data[dense];
-    return {};
+    const uint32_t dense = bodies.slot_to_dense[slot];
+    return bodies.user_data[dense];
 }
 
-std::expected<void, Error> PhysicsWorldGetIndex(PhysicsWorld *world, BodyHandle handle,
-                                                  uint32_t *out_index) {
-    if (!world || !out_index) {
-        return std::unexpected(WorldRuntimeError::InvalidArgument);
-    }
+std::expected<std::uint32_t, Error> PhysicsWorld::GetIndex(BodyHandle handle) {
 
-    auto shadow = LockShadowNotStepping(world);
-    uint32_t slot = 0;
-    if (!unpack_handle(world, handle, &slot)) {
+    auto shadow = LockShadowNotStepping();
+    const std::optional<std::uint32_t> resolved = UnpackHandle(handle);
+    if (!resolved) {
         return std::unexpected(WorldRuntimeError::StaleHandle);
     }
+    const std::uint32_t slot = *resolved;
 
-    const uint8_t state = (world->bodies.slot_states[slot]).load(std::memory_order::acquire);
+    const uint8_t state = (bodies.slot_states[slot]).load(std::memory_order::acquire);
     if (!get_slot_predicate(state, kMaskImmStandard).is_immediate) {
         return std::unexpected(WorldRuntimeError::StaleHandle);
     }
 
-    *out_index = world->bodies.slot_to_dense[slot];
-    return {};
+    return bodies.slot_to_dense[slot];
 }
 
-bool PhysicsWorldIsAlive(PhysicsWorld *world, BodyHandle handle) {
-    if (!world) {
+bool PhysicsWorld::IsAlive(BodyHandle handle) {
+    auto shadow = LockShadowNotStepping();
+    const std::optional<std::uint32_t> resolved = UnpackHandle(handle);
+    if (!resolved) {
+        return false;
+    }
+    const uint8_t state = (bodies.slot_states[*resolved]).load(std::memory_order::acquire);
+    return get_slot_predicate(state, kMaskImmStandard).is_executable();
+}
+
+std::expected<bool, Error> PhysicsWorld::IsActive(BodyHandle handle) {
+
+    auto shadow = LockShadowNotStepping();
+    const std::optional<std::uint32_t> resolved = UnpackHandle(handle);
+    if (!resolved) {
+        return std::unexpected(WorldRuntimeError::StaleHandle);
+    }
+    const std::uint32_t slot = *resolved;
+
+    const uint8_t state = (bodies.slot_states[slot]).load(std::memory_order::acquire);
+    if (!get_slot_predicate(state, kMaskImmStandard).is_immediate) {
         return false;
     }
 
-    auto shadow = LockShadowNotStepping(world);
-    uint32_t slot = 0;
-    bool alive    = false;
-    if (unpack_handle(world, handle, &slot)) {
-        const uint8_t state = (world->bodies.slot_states[slot]).load(std::memory_order::acquire);
-        alive               = get_slot_predicate(state, kMaskImmStandard).is_executable();
-    }
-    return alive;
+    const uint32_t dense     = bodies.slot_to_dense[slot];
+    const JPH_BodyID body_id = bodies.body_ids[dense];
+    return JPH_BodyInterface_IsActive(body_interface, body_id);
 }
 
-std::expected<void, Error> PhysicsWorldIsActive(PhysicsWorld *world, BodyHandle handle,
-                                                  bool *out_active) {
-    if (!world || !out_active) {
-        return std::unexpected(WorldRuntimeError::InvalidArgument);
-    }
-
-    auto shadow = LockShadowNotStepping(world);
-    uint32_t slot = 0;
-    if (!unpack_handle(world, handle, &slot)) {
-        return std::unexpected(WorldRuntimeError::StaleHandle);
-    }
-
-    const uint8_t state = (world->bodies.slot_states[slot]).load(std::memory_order::acquire);
-    if (!get_slot_predicate(state, kMaskImmStandard).is_immediate) {
-        *out_active = false;
-        return {};
-    }
-
-    const uint32_t dense     = world->bodies.slot_to_dense[slot];
-    const JPH_BodyID body_id = world->bodies.body_ids[dense];
-    *out_active = JPH_BodyInterface_IsActive(world->body_interface, body_id);
-    return {};
-}
-
-std::expected<void, Error>
-PhysicsWorldGetActiveIndices(PhysicsWorld *world, Buffer<std::uint32_t> &out_indices,
-                                  std::size_t &out_count) {
-    if (!world) {
-        return std::unexpected(WorldRuntimeError::InvalidArgument);
-    }
+std::expected<std::size_t, Error>
+PhysicsWorld::GetActiveIndices(Buffer<std::uint32_t> &out_indices) {
     out_indices.reset();
-    out_count = 0;
 
     Buffer<JPH_BodyID> body_ids;
     std::size_t count = 0;
     {
-        const auto shadow = LockShadowNotStepping(world);
-        count             = world->count.load(std::memory_order::acquire);
+        const auto shadow = LockShadowNotStepping();
+        count             = this->count.load(std::memory_order::acquire);
         if (count == 0) {
-            return {};
+            return std::size_t{0};
         }
         if (!body_ids.allocate(count)) {
             return std::unexpected(WorldRuntimeError::OutOfMemory);
         }
-        std::memcpy(body_ids.data(), world->bodies.body_ids.data(), count * sizeof(JPH_BodyID));
+        std::memcpy(body_ids.data(), bodies.body_ids.data(), count * sizeof(JPH_BodyID));
     }
 
     if (!out_indices.allocate(count)) {
@@ -657,28 +579,21 @@ PhysicsWorldGetActiveIndices(PhysicsWorld *world, Buffer<std::uint32_t> &out_ind
     std::size_t active_count = 0;
     for (std::size_t i = 0; i < count; i++) {
         if (body_ids[i] != kJphInvalidBodyId &&
-            JPH_BodyInterface_IsActive(world->body_interface, body_ids[i])) {
+            JPH_BodyInterface_IsActive(body_interface, body_ids[i])) {
             out_indices[active_count++] = static_cast<std::uint32_t>(i);
         }
     }
-    out_count = active_count;
-    return {};
+    return active_count;
 }
 
 
-std::expected<void, Error> PhysicsWorldGetRenderState(PhysicsWorld *world, float alpha,
-                                                          Buffer<float> &out_state,
-                                                          std::size_t &out_count) {
-    if (!world) {
-        return std::unexpected(WorldRuntimeError::InvalidArgument);
-    }
-    out_state.reset();
-    out_count = 0;
+std::expected<Buffer<float>, Error> PhysicsWorld::GetRenderState(float alpha) {
+    Buffer<float> out_state;
 
-    const auto shadow  = LockShadowNotStepping(world);
-    const std::size_t count = world->count.load(std::memory_order::acquire);
+    const auto shadow       = LockShadowNotStepping();
+    const std::size_t count = this->count.load(std::memory_order::acquire);
     if (count == 0) {
-        return {};
+        return out_state;
     }
     if (CPH_UNLIKELY(count > std::numeric_limits<std::size_t>::max() / 7)) {
         return std::unexpected(WorldRuntimeError::Overflow);
@@ -686,34 +601,31 @@ std::expected<void, Error> PhysicsWorldGetRenderState(PhysicsWorld *world, float
     if (!out_state.allocate(count * 7)) {
         return std::unexpected(WorldRuntimeError::OutOfMemory);
     }
-    MathComputeInterpolationLoop(world->bodies.positions.data(),
-                                     world->bodies.prev_positions.data(),
-                                     world->bodies.rotations.data(),
-                                     world->bodies.prev_rotations.data(), alpha,
+    MathComputeInterpolationLoop(bodies.positions.data(),
+                                     bodies.prev_positions.data(),
+                                     bodies.rotations.data(),
+                                     bodies.prev_rotations.data(), alpha,
                                      out_state.data(), count);
-    out_count = count;
-    return {};
+    return out_state;
 }
 
 
-std::expected<void, Error> PhysicsWorldSetCollisionFilter(PhysicsWorld *world, BodyHandle handle,
+std::expected<void, Error> PhysicsWorld::SetCollisionFilter(BodyHandle handle,
                                                              uint32_t category, uint32_t mask) {
-    if (!world) {
-        return std::unexpected(WorldRuntimeError::InvalidArgument);
-    }
 
-    auto shadow = LockShadowNotStepping(world);
-    WaitUntilNotQuerying(world, shadow);
-    uint32_t slot = 0;
-    if (!unpack_handle(world, handle, &slot)) {
+    auto shadow = LockShadowNotStepping();
+    WaitUntilNotQuerying(shadow);
+    const std::optional<std::uint32_t> resolved = UnpackHandle(handle);
+    if (!resolved) {
         return std::unexpected(WorldRuntimeError::StaleHandle);
     }
+    const std::uint32_t slot = *resolved;
 
-    const uint8_t state = (world->bodies.slot_states[slot]).load(std::memory_order::acquire);
+    const uint8_t state = (bodies.slot_states[slot]).load(std::memory_order::acquire);
     if (get_slot_predicate(state, kMaskImmStandard).is_immediate) {
-        const uint32_t dense     = world->bodies.slot_to_dense[slot];
-        world->bodies.categories[dense] = category;
-        world->bodies.masks[dense]      = mask;
+        const uint32_t dense     = bodies.slot_to_dense[slot];
+        bodies.categories[dense] = category;
+        bodies.masks[dense]      = mask;
         return {};
     }
     if (state == std::to_underlying(SlotState::PendingCreate)) {
@@ -722,49 +634,42 @@ std::expected<void, Error> PhysicsWorldSetCollisionFilter(PhysicsWorld *world, B
     return std::unexpected(WorldRuntimeError::StaleHandle);
 }
 
-std::expected<void, Error> PhysicsWorldRegisterMaterial(PhysicsWorld *world, uint32_t id,
-                                                          float friction, float restitution) {
-    if (!world) {
-        return std::unexpected(WorldRuntimeError::InvalidArgument);
-    }
+std::expected<void, Error> PhysicsWorld::RegisterMaterial(uint32_t id, float friction,
+                                                          float restitution) {
 
-    auto shadow = LockShadowNotStepping(world);
-    WaitUntilNotQuerying(world, shadow);
+    auto shadow = LockShadowNotStepping();
+    WaitUntilNotQuerying(shadow);
 
-    for (size_t i = 0; i < world->material_count; i++) {
-        if (world->materials[i].id == id) {
-            world->materials[i].friction    = friction;
-            world->materials[i].restitution = restitution;
+    for (size_t i = 0; i < material_count; i++) {
+        if (materials[i].id == id) {
+            materials[i].friction    = friction;
+            materials[i].restitution = restitution;
             return {};
         }
     }
 
-    if (world->material_count >= world->materials.size()) {
-        const size_t new_capacity = world->materials.size() == 0 ? kInitialMaterialCapacity
-                                                                  : world->materials.size() * 2;
-        if (CPH_UNLIKELY(!world->materials.reallocate(new_capacity))) {
+    if (material_count >= materials.size()) {
+        const size_t new_capacity = materials.size() == 0 ? kInitialMaterialCapacity
+                                                                  : materials.size() * 2;
+        if (CPH_UNLIKELY(!materials.reallocate(new_capacity))) {
             return std::unexpected(WorldRuntimeError::OutOfMemory);
         }
     }
 
-    world->materials[world->material_count++] = MaterialData{id, friction, restitution};
+    materials[material_count++] = MaterialData{id, friction, restitution};
     return {};
 }
 
-std::expected<void, Error>
-PhysicsWorldBuildDebugData(PhysicsWorld *world, bool draw_shapes, bool draw_constraints,
-                                bool draw_bounding_box, bool draw_centers, bool wireframe,
-                                Buffer<DebugVertex> &out_lines,
-                                Buffer<DebugVertex> &out_triangles) {
-    if (!world) {
-        return std::unexpected(WorldRuntimeError::InvalidArgument);
-    }
-    out_lines.reset();
-    out_triangles.reset();
+std::expected<DebugData, Error>
+PhysicsWorld::BuildDebugData(bool draw_shapes, bool draw_constraints, bool draw_bounding_box,
+                                bool draw_centers, bool wireframe) {
+    DebugData out;
+    Buffer<DebugVertex> &out_lines     = out.lines;
+    Buffer<DebugVertex> &out_triangles = out.triangles;
 
-    const auto shadow = LockShadowNotStepping(world);
-    world->debug_lines.clear();
-    world->debug_triangles.clear();
+    const auto shadow = LockShadowNotStepping();
+    debug_lines.clear();
+    debug_triangles.clear();
 
     JPH::BodyManager::DrawSettings settings;
     settings.mDrawShape                 = draw_shapes;
@@ -772,13 +677,13 @@ PhysicsWorldBuildDebugData(PhysicsWorld *world, bool draw_shapes, bool draw_cons
     settings.mDrawBoundingBox           = draw_bounding_box;
     settings.mDrawCenterOfMassTransform = draw_centers;
 
-    auto *debug_renderer = reinterpret_cast<JPH::DebugRenderer *>(world->debug_renderer);
+    auto *renderer = reinterpret_cast<JPH::DebugRenderer *>(debug_renderer);
     if (draw_shapes || draw_bounding_box || draw_centers) {
-        world->physics_system.DrawBodies(settings, debug_renderer, nullptr);
+        physics_system.DrawBodies(settings, renderer, nullptr);
     }
     if (draw_constraints) {
-        world->physics_system.DrawConstraints(debug_renderer);
-        world->physics_system.DrawConstraintLimits(debug_renderer);
+        physics_system.DrawConstraints(renderer);
+        physics_system.DrawConstraintLimits(renderer);
     }
 
     const auto copy_out = [](const DebugBuffer &source, Buffer<DebugVertex> &out) {
@@ -791,13 +696,10 @@ PhysicsWorldBuildDebugData(PhysicsWorld *world, bool draw_shapes, bool draw_cons
         std::memcpy(out.data(), source.data.data(), source.count * sizeof(DebugVertex));
         return true;
     };
-    if (!copy_out(world->debug_lines, out_lines) ||
-        !copy_out(world->debug_triangles, out_triangles)) {
-        out_lines.reset();
-        out_triangles.reset();
+    if (!copy_out(debug_lines, out_lines) || !copy_out(debug_triangles, out_triangles)) {
         return std::unexpected(WorldRuntimeError::OutOfMemory);
     }
-    return {};
+    return out;
 }
 
 } // namespace CPH

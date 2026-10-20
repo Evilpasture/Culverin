@@ -13,8 +13,6 @@
 
 namespace CPH {
 
-struct PhysicsWorld;
-
 inline constexpr float kPhysicsQueryDefaultMaxDistance = 1000.0F;
 inline constexpr std::size_t kPhysicsQueryInlineHitCapacity = 64;
 
@@ -103,26 +101,5 @@ struct PhysicsShapecastHit {
     JPH_Vec3 normal;
     bool has_hit;
 };
-
-// Query lifetime: balances the active_queries registration performed by
-// the query entry points (also used by native ops that register as queries).
-void PhysicsWorldQueryEnd(PhysicsWorld *world);
-
-[[nodiscard]] std::expected<void, Error>
-PhysicsWorldOverlapSphere(PhysicsWorld *world, JPH_RVec3 center, float radius,
-                          PhysicsQueryHitBuffer *hits);
-[[nodiscard]] std::expected<void, Error> PhysicsWorldOverlapAabb(PhysicsWorld *world, JPH_RVec3 min,
-                                               JPH_RVec3 max, PhysicsQueryHitBuffer *hits);
-[[nodiscard]] std::expected<void, Error> PhysicsWorldRaycast(PhysicsWorld *world, JPH_RVec3 origin,
-                                           JPH_Vec3 direction, float max_distance,
-                                           BodyHandle ignore_handle, PhysicsRaycastHit *hit);
-[[nodiscard]] std::expected<void, Error>
-PhysicsWorldRaycastBatch(PhysicsWorld *world, const float *starts, const float *directions,
-                         std::size_t count, float max_distance, RayCastBatchResult *results);
-[[nodiscard]] std::expected<void, Error> PhysicsWorldShapecast(PhysicsWorld *world, int shape_type,
-                                              JPH_RVec3 position, JPH_Quat rotation,
-                                              JPH_Vec3 sweep_direction, const float size[4],
-                                              BodyHandle ignore_handle,
-                                              PhysicsShapecastHit *hit);
 
 } // namespace CPH

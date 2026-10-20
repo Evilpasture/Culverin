@@ -20,18 +20,18 @@ void SyncAndFlushInternal(PhysicsWorldObject *self) {
     }
 
     self->physics.is_stepping.store(true, std::memory_order::relaxed);
-    const auto detached = PhysicsWorldDetachCommands(&self->physics);
+    const auto detached = self->physics.DetachCommands();
     self->physics.shadow_lock.unlock();
 
     Py_BEGIN_ALLOW_THREADS {
         const std::scoped_lock trampoline(self->physics.jph_trampoline_lock);
-        FlushCommandsInternal(&self->physics, detached);
+        self->physics.FlushCommands(detached);
     }
     Py_END_ALLOW_THREADS
 
     self->physics.shadow_lock.lock();
     self->physics.is_stepping.store(false, std::memory_order::release);
-    NotifyStepSync(&self->physics);
+    self->physics.NotifyStepSync();
 }
 
 } // namespace CPH::Python
