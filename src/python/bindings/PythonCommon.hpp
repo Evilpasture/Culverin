@@ -26,22 +26,6 @@
 
 namespace CPH::Python {
 
-[[nodiscard]] inline bool Likely(bool condition) noexcept {
-#if defined(__GNUC__) || defined(__clang__)
-    return __builtin_expect(condition, true);
-#else
-    return condition;
-#endif
-}
-
-[[nodiscard]] inline bool Unlikely(bool condition) noexcept {
-#if defined(__GNUC__) || defined(__clang__)
-    return __builtin_expect(condition, false);
-#else
-    return condition;
-#endif
-}
-
 [[nodiscard]] inline void *Allocate(std::size_t size) noexcept {
 #ifdef ENABLE_SANITIZER
     return std::malloc(size);

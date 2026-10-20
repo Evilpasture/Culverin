@@ -206,10 +206,9 @@ PhysicsWorld::~PhysicsWorld() {
         if (slot.constraint != nullptr &&
             slot.state.load(std::memory_order::relaxed) == std::to_underlying(SlotState::Alive)) {
             if (jolt_initialized) {
-                physics_system.RemoveConstraint(
-                    reinterpret_cast<JPH::Constraint *>(slot.constraint));
+                physics_system.RemoveConstraint(slot.constraint);
             }
-            JPH_Constraint_Destroy(slot.constraint);
+            slot.constraint->Release();
             slot.constraint = nullptr;
         }
     }

@@ -64,7 +64,7 @@ ParseError FastParseReportMissing(const FastParserCore *fastparser, uint64_t pro
     Ref signature_parts{PyList_New(0)};
 
     // If we can't allocate lists for the fancy error, fall back to a basic error
-    if (Unlikely(!missing_details || !signature_parts)) {
+    if (!missing_details || !signature_parts) [[unlikely]] {
         PyErr_Format(PyExc_TypeError, "%s() missing required positional arguments", pname);
         return CaptureError();
     }
@@ -144,7 +144,7 @@ ParseError FastParseReportTypeError(const FastParserCore *fastparser, size_t ind
 
     // 1. Safe Repr Acquisition (Truncated to avoid overwhelming the error message)
     Ref val_repr{PyObject_Repr(val)};
-    if (Unlikely(!val_repr)) {
+    if (!val_repr) [[unlikely]] {
         PyErr_Clear(); // Clear OOM from Repr to set our TypeError
         val_repr = PyUnicode_FromString("<repr unavailable>");
     } else if (PyUnicode_GetLength(val_repr.get()) > 100) {
@@ -160,7 +160,7 @@ ParseError FastParseReportTypeError(const FastParserCore *fastparser, size_t ind
     // 2. Diagnostic Signature Construction: (e.g. "func(arg1: int, !!! arg2: str !!!, [arg3:
     // float])")
     Ref signature_parts{PyList_New(0)};
-    if (Unlikely(!signature_parts)) {
+    if (!signature_parts) [[unlikely]] {
         return basic_error();
     }
 
@@ -184,12 +184,12 @@ ParseError FastParseReportTypeError(const FastParserCore *fastparser, size_t ind
     }
 
     Ref comma{PyUnicode_FromString(", ")};
-    if (Unlikely(!comma)) {
+    if (!comma) [[unlikely]] {
         return basic_error();
     }
 
     Ref joined_sig{PyUnicode_Join(comma.get(), signature_parts.get())};
-    if (Unlikely(!joined_sig)) {
+    if (!joined_sig) [[unlikely]] {
         return basic_error();
     }
 
@@ -217,7 +217,7 @@ ParseError FastParseReportMultiple(const FastParserCore *fastparser, size_t inde
 
     // 1. Diagnostic Signature Construction
     Ref parts{PyList_New(0)};
-    if (Unlikely(!parts)) {
+    if (!parts) [[unlikely]] {
         return basic_error();
     }
 
@@ -231,12 +231,12 @@ ParseError FastParseReportMultiple(const FastParserCore *fastparser, size_t inde
     }
 
     Ref comma{PyUnicode_FromString(", ")};
-    if (Unlikely(!comma)) {
+    if (!comma) [[unlikely]] {
         return basic_error();
     }
 
     Ref sig{PyUnicode_Join(comma.get(), parts.get())};
-    if (Unlikely(!sig)) {
+    if (!sig) [[unlikely]] {
         return basic_error();
     }
 
@@ -275,7 +275,7 @@ ParseError FastParseReportTooMany(const FastParserCore *fastparser, Py_ssize_t n
 
     // 2. Diagnostic Signature Construction (Using Cold Spec names)
     Ref parts{PyList_New(0)};
-    if (Unlikely(!parts)) {
+    if (!parts) [[unlikely]] {
         return basic_error();
     }
 
@@ -288,12 +288,12 @@ ParseError FastParseReportTooMany(const FastParserCore *fastparser, Py_ssize_t n
     }
 
     Ref comma{PyUnicode_FromString(", ")};
-    if (Unlikely(!comma)) {
+    if (!comma) [[unlikely]] {
         return basic_error();
     }
 
     Ref sig{PyUnicode_Join(comma.get(), parts.get())};
-    if (Unlikely(!sig)) {
+    if (!sig) [[unlikely]] {
         return basic_error();
     }
 
@@ -385,7 +385,7 @@ ParseError FastParseReportUnknownKeyword(const FastParserCore *fastparser, PyObj
 
     // 2. Diagnostic Message Construction (Building the list of valid options)
     Ref valid_args_list{PyList_New(0)};
-    if (Unlikely(!valid_args_list)) {
+    if (!valid_args_list) [[unlikely]] {
         return basic_error();
     }
 
@@ -411,12 +411,12 @@ ParseError FastParseReportUnknownKeyword(const FastParserCore *fastparser, PyObj
     }
 
     Ref newline{PyUnicode_FromString("\n")};
-    if (Unlikely(!newline)) {
+    if (!newline) [[unlikely]] {
         return basic_error();
     }
 
     Ref joined{PyUnicode_Join(newline.get(), valid_args_list.get())};
-    if (Unlikely(!joined)) {
+    if (!joined) [[unlikely]] {
         return basic_error();
     }
 
@@ -440,7 +440,7 @@ ParseError FastParseReportConversionError(const FastParserCore *fastparser, size
                                           PyObject *val) {
     // 1. Capture the original "dry" error (e.g., OverflowError: "can't convert...")
     Ref exc{PyErr_GetRaisedException()};
-    if (Unlikely(!exc)) {
+    if (!exc) [[unlikely]] {
         return CaptureError();
     }
 
@@ -456,7 +456,7 @@ ParseError FastParseReportConversionError(const FastParserCore *fastparser, size
 
     // 2. Best-effort acquisition of Value Repr
     Ref val_repr{PyObject_Repr(val)};
-    if (Unlikely(!val_repr)) {
+    if (!val_repr) [[unlikely]] {
         PyErr_Clear(); // Clear OOM from repr attempt
         val_repr = PyUnicode_FromString("<repr unavailable>");
     }
@@ -467,7 +467,7 @@ ParseError FastParseReportConversionError(const FastParserCore *fastparser, size
     Ref exc_str{PyObject_Str(exc.get())};
 
     // If we failed basic allocations, fall back to the original exception
-    if (Unlikely(!parts || !comma || !exc_str)) {
+    if (!parts || !comma || !exc_str) [[unlikely]] {
         return oom_fallback();
     }
 
@@ -483,7 +483,7 @@ ParseError FastParseReportConversionError(const FastParserCore *fastparser, size
     }
 
     Ref sig{PyUnicode_Join(comma.get(), parts.get())};
-    if (Unlikely(!sig)) {
+    if (!sig) [[unlikely]] {
         return oom_fallback();
     }
 
@@ -494,7 +494,7 @@ ParseError FastParseReportConversionError(const FastParserCore *fastparser, size
                                      pname, arg_name, exc_str.get(), val_repr.get(), pname,
                                      sig.get())};
 
-    if (Unlikely(!new_msg)) {
+    if (!new_msg) [[unlikely]] {
         return oom_fallback();
     }
 
@@ -644,7 +644,7 @@ static inline ParseResult fast_parse_process_pos_legacy(const FastParserCore *fa
 
         // 2. Conversion (Hot path function pointer)
         // Undecorated on purpose -- matches the pre-B3 behaviour of this path.
-        if (Unlikely(!spec->convert(val, targets[i]))) {
+        if (!spec->convert(val, targets[i])) [[unlikely]] {
             return CaptureFailure();
         }
     }
@@ -664,12 +664,12 @@ static inline ParseResult fast_parse_process_kw_legacy(const FastParserCore *fas
         // Find index using hash table or linear search (interned pointer match)
         size_t idx = fast_parse_find_keyword_index(key, fastparse);
 
-        if (Unlikely(idx == kFastParseEmptySlot)) {
+        if (idx == kFastParseEmptySlot) [[unlikely]] {
             return std::unexpected(FastParseReportUnknownKeyword(fastparse, key));
         }
 
         // Check if this argument was already provided via positionals
-        if (Unlikely(*mask & (1ULL << idx))) {
+        if (*mask & (1ULL << idx)) [[unlikely]] {
             return std::unexpected(FastParseReportMultiple(fastparse, idx));
         }
 
@@ -682,7 +682,7 @@ static inline ParseResult fast_parse_process_kw_legacy(const FastParserCore *fas
 
         // 2. Conversion (Hot path function pointer)
         // Undecorated on purpose -- matches the pre-B3 behaviour of this path.
-        if (Unlikely(!spec->convert(val, targets[idx]))) {
+        if (!spec->convert(val, targets[idx])) [[unlikely]] {
             return CaptureFailure();
         }
 
@@ -701,7 +701,7 @@ ParseResult FastParseLegacy(PyObject *args, PyObject *kwargs, [[maybe_unused]] P
     Py_ssize_t nargs = args ? PyTuple_GET_SIZE(args) : 0;
 
     // 1. Pre-flight Check
-    if (Unlikely(nargs > static_cast<Py_ssize_t>(fastparser->count))) {
+    if (nargs > static_cast<Py_ssize_t>(fastparser->count)) [[unlikely]] {
         return std::unexpected(FastParseReportTooMany(fastparser, nargs));
     }
 
@@ -709,7 +709,7 @@ ParseResult FastParseLegacy(PyObject *args, PyObject *kwargs, [[maybe_unused]] P
     if (nargs > 0) {
         if (ParseResult positionals =
                 fast_parse_process_pos_legacy(fastparser, args, nargs, targets);
-            Unlikely(!positionals)) {
+            !positionals) [[unlikely]] {
             return positionals;
         }
     }
@@ -719,13 +719,13 @@ ParseResult FastParseLegacy(PyObject *args, PyObject *kwargs, [[maybe_unused]] P
 
     if (kwargs && PyDict_GET_SIZE(kwargs) > 0) {
         if (ParseResult keywords = fast_parse_process_kw_legacy(fastparser, kwargs, &mask, targets);
-            Unlikely(!keywords)) {
+            !keywords) [[unlikely]] {
             return keywords;
         }
     }
 
     // 4. Final Verification
-    if (Unlikely((mask & fastparser->required_mask) != fastparser->required_mask)) {
+    if ((mask & fastparser->required_mask) != fastparser->required_mask) [[unlikely]] {
         return std::unexpected(FastParseReportMissing(fastparser, mask));
     }
 

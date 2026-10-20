@@ -219,10 +219,34 @@ query. `UnifiedBodyFilter`, `CastShapeContext`, `CastShapeFilter` and
 (`PhysicsWorldState.hpp`) and `QueryMethods.cpp` speak `JPH::RVec3`,
 `JPH::Vec3` and `JPH::Quat` instead of the JoltC value types.
 
-Remaining A4 work: `ConstraintFactory`, `CommandBuffer`,
-`PhysicsWorldRuntime`/`PhysicsWorldCreation`, the character, vehicle,
-ragdoll and soft-body bindings, and the `JPH_BodyInterface` field
-those still read.
+*Landed so far — constraints.* The constraint subsystem no longer
+touches JoltC either. `ConstraintFactory.cpp` builds native
+`{Fixed,Point,Hinge,Slider,Cone,Distance}ConstraintSettings` and calls
+`Settings::Create(Body &, Body &)`, which replaces the six
+`JPH_*ConstraintSettings_Init` + `JPH_*Constraint_Create` pairs and the
+`(JPH_Constraint *)` downcast on every return path. Two things got
+strictly simpler: `mEnabled` and `mSpace` already default to `true` and
+`WorldSpace` in Jolt's settings structs, so eight assignments that only
+restated a default are gone; and `mFrequency`/`mDamping` are real
+members instead of JoltC's `frequencyOrStiffness` union tag. The
+axis sanitisation and the hinge's pivot-to-body-2 normal projection
+are unchanged arithmetic — they are what make `angle = 0` mean "body 2
+at its initial position", and they stay bit-identical so recorded-scene
+replays do not drift. `ConstraintSlot::constraint` is now
+`JPH::Constraint *`; `JPH_Constraint_Destroy` becomes
+`Constraint::Release()`, `JPH_Constraint_GetType/GetSubType` become
+virtual `GetType()/GetSubType()`, and the motor retargeting path calls
+`HingeConstraint::SetTargetAngle` / `SliderConstraint::SetTargetPosition`
+directly instead of through `reinterpret_cast`. The `CreateConstraint`
+command handler locks bodies with RAII `BodyLockWrite`, still one body
+per scope for the same EDEADLK reason, and passes the constraint to
+`AddConstraint` without a cast.
+
+Remaining A4 work: `PhysicsWorldRuntime`/`PhysicsWorldCreation`, the
+character, vehicle, ragdoll and soft-body bindings, and the
+`JPH_BodyInterface` field those still read. `Vehicle.cpp` still holds
+two `JPH_Constraint_Destroy` calls on the vehicle constraint itself;
+they move with the vehicle slice.
 
 **A5 — Remove JoltC.** First, audit the fork: `extern/JoltC` carries
 Culverin-local patches (at minimum `JPH_Init`'s trace forwarding and

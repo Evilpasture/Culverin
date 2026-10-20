@@ -5,6 +5,8 @@
 #include "physics/PhysicsWorldState.hpp"
 #include "physics/SlotState.hpp"
 
+#include <Jolt/Physics/Body/BodyLock.h>
+
 #include <limits>
 #include <utility>
 #include <variant>
@@ -249,30 +251,26 @@ struct FlushContext {
             return;
         }
 
-        const JPH_BodyLockInterface *li =
-            reinterpret_cast<const JPH_BodyLockInterface *>(
-                &world->physics_system.GetBodyLockInterface());
+        const JPH::BodyLockInterface &li = world->physics_system.GetBodyLockInterface();
         // Lock each body in a separate scope: Jolt hashes BodyIDs onto a
         // small mutex array, so holding two write locks can recurse one
         // mutex and abort (EDEADLK). The world is quiesced here, so the
         // stable body pointers remain valid after unlocking.
-        const auto lock_body = [li](JPH_BodyID id) -> JPH_Body * {
-            JPH_BodyLockWrite lock;
-            JPH_BodyLockInterface_LockWrite(li, id, &lock);
-            JPH_Body *body =
-                (lock.body && JPH_Body_GetID(lock.body) == id) ? lock.body : nullptr;
-            JPH_BodyLockInterface_UnlockWrite(li, &lock);
-            return body;
+        const auto lock_body = [&li](JPH_BodyID id) -> JPH::Body * {
+            const JPH::BodyID body_id(id);
+            const JPH::BodyLockWrite lock(li, body_id);
+            return (lock.Succeeded() && lock.GetBody().GetID() == body_id) ? &lock.GetBody()
+                                                                           : nullptr;
         };
-        JPH_Body *const b1 = lock_body(bid);
-        JPH_Body *const b2 = lock_body(bid2);
+        JPH::Body *const b1 = lock_body(bid);
+        JPH::Body *const b2 = lock_body(bid2);
 
-        JPH_Constraint *constraint =
+        JPH::Constraint *constraint =
             (b1 && b2) ? CPH::CreateConstraint(static_cast<ConstraintType>(cmd.type), cmd.params,
-                                              b1, b2)
+                                              *b1, *b2)
                        : nullptr;
         if (constraint) {
-            world->physics_system.AddConstraint(reinterpret_cast<JPH::Constraint *>(constraint));
+            world->physics_system.AddConstraint(constraint);
             c_entry.constraint = constraint;
             c_entry.state.store(std::to_underlying(SlotState::Alive), std::memory_order::release);
         } else {

@@ -4,8 +4,24 @@
 #include "core/Types.hpp"
 #include "physics/ConstraintFactory.hpp"
 #include "physics/PhysicsSync.hpp"
+#include <Jolt/Physics/Body/Body.h>
+#include <Jolt/Physics/Constraints/HingeConstraint.h>
+#include <Jolt/Physics/Constraints/SliderConstraint.h>
+#include <Jolt/Physics/Constraints/TwoBodyConstraint.h>
 
 namespace CPH::Python {
+namespace {
+
+/// Wakes a body whose constraint was just created, destroyed, or retargeted.
+/// Prevents bodies from floating once their joint is gone. ActivateBody is
+/// thread-safe in Jolt.
+void ActivateBody(JPH_BodyInterface *bi, JPH::Body *body) {
+    if (body) {
+        JPH_BodyInterface_ActivateBody(bi, body->GetID().GetIndexAndSequenceNumber());
+    }
+}
+
+} // namespace
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 [[nodiscard]] PyObject * WorldCreateConstraint(PhysicsWorldObject *self,
@@ -124,7 +140,7 @@ namespace CPH::Python {
         return nullptr;
     }
 
-    JPH_Constraint *c_to_destroy = nullptr;
+    JPH::Constraint *c_to_destroy = nullptr;
 
     // 2. RESOLUTION PHASE (Inside Shadow Lock)
     (self->physics.shadow_lock).lock();
@@ -164,22 +180,14 @@ namespace CPH::Python {
     if (c_to_destroy) {
         // Automatic Body Wake-up: Prevents bodies from floating if their joint is deleted.
         // ActivateBody is thread-safe in Jolt.
-        if (JPH_Constraint_GetType(c_to_destroy) == JPH_ConstraintType_TwoBodyConstraint) {
-            auto tbc     = reinterpret_cast<JPH_TwoBodyConstraint *>(c_to_destroy);
-            JPH_Body *b1 = JPH_TwoBodyConstraint_GetBody1(tbc);
-            JPH_Body *b2 = JPH_TwoBodyConstraint_GetBody2(tbc);
-
-            if (b1) {
-                JPH_BodyInterface_ActivateBody(self->physics.body_interface, JPH_Body_GetID(b1));
-            }
-            if (b2) {
-                JPH_BodyInterface_ActivateBody(self->physics.body_interface, JPH_Body_GetID(b2));
-            }
+        if (c_to_destroy->GetType() == JPH::EConstraintType::TwoBodyConstraint) {
+            auto *tbc = static_cast<JPH::TwoBodyConstraint *>(c_to_destroy);
+            ActivateBody(self->physics.body_interface, tbc->GetBody1());
+            ActivateBody(self->physics.body_interface, tbc->GetBody2());
         }
 
-        self->physics.physics_system.RemoveConstraint(
-            reinterpret_cast<JPH::Constraint *>(c_to_destroy));
-        JPH_Constraint_Destroy(c_to_destroy);
+        self->physics.physics_system.RemoveConstraint(c_to_destroy);
+        c_to_destroy->Release();
     }
 
     Py_RETURN_NONE;
@@ -217,42 +225,35 @@ namespace CPH::Python {
         return nullptr;
     }
 
-    JPH_Constraint *c = self->physics.constraints[slot].constraint;
-    JPH_ConstraintSubType sub = JPH_Constraint_GetSubType(c);
+    JPH::Constraint *c                = self->physics.constraints[slot].constraint;
+    const JPH::EConstraintSubType sub = c->GetSubType();
 
     // 3. JPH EXECUTION
-    if (sub == JPH_ConstraintSubType_Hinge) {
-        auto hc = reinterpret_cast<JPH_HingeConstraint *>(c);
-        JPH_HingeConstraint_SetMotorState(hc, JPH_MotorState_Position);
-        JPH_HingeConstraint_SetTargetAngle(hc, target);
-    } else if (sub == JPH_ConstraintSubType_Slider) {
-        auto sc              = reinterpret_cast<JPH_SliderConstraint *>(c);
-        JPH_MotorState state = JPH_SliderConstraint_GetMotorState(sc);
+    if (sub == JPH::EConstraintSubType::Hinge) {
+        auto *hc = static_cast<JPH::HingeConstraint *>(c);
+        hc->SetMotorState(JPH::EMotorState::Position);
+        hc->SetTargetAngle(target);
+    } else if (sub == JPH::EConstraintSubType::Slider) {
+        auto *sc           = static_cast<JPH::SliderConstraint *>(c);
+        JPH::EMotorState state = sc->GetMotorState();
 
-        if (state == JPH_MotorState_Off) {
-            state = JPH_MotorState_Position;
-            JPH_SliderConstraint_SetMotorState(sc, state);
+        if (state == JPH::EMotorState::Off) {
+            state = JPH::EMotorState::Position;
+            sc->SetMotorState(state);
         }
 
-        if (state == JPH_MotorState_Velocity) {
-            JPH_SliderConstraint_SetTargetVelocity(sc, target);
+        if (state == JPH::EMotorState::Velocity) {
+            sc->SetTargetVelocity(target);
         } else {
-            JPH_SliderConstraint_SetTargetPosition(sc, target);
+            sc->SetTargetPosition(target);
         }
     }
 
     // 4. WAKE UP BODIES (Locked sequence)
-    JPH_ConstraintType type = JPH_Constraint_GetType(c);
-    if (type == JPH_ConstraintType_TwoBodyConstraint) {
-        JPH_Body *b1 = JPH_TwoBodyConstraint_GetBody1(reinterpret_cast<JPH_TwoBodyConstraint *>(c));
-        JPH_Body *b2 = JPH_TwoBodyConstraint_GetBody2(reinterpret_cast<JPH_TwoBodyConstraint *>(c));
-
-        if (b1) {
-            JPH_BodyInterface_ActivateBody(self->physics.body_interface, JPH_Body_GetID(b1));
-        }
-        if (b2) {
-            JPH_BodyInterface_ActivateBody(self->physics.body_interface, JPH_Body_GetID(b2));
-        }
+    if (c->GetType() == JPH::EConstraintType::TwoBodyConstraint) {
+        auto *tbc = static_cast<JPH::TwoBodyConstraint *>(c);
+        ActivateBody(self->physics.body_interface, tbc->GetBody1());
+        ActivateBody(self->physics.body_interface, tbc->GetBody2());
     }
 
     (self->physics.shadow_lock).unlock();

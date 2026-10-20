@@ -23,6 +23,7 @@
 #include <Jolt/Core/JobSystemThreadPool.h>
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Physics/Character/CharacterVirtual.h>
+#include <Jolt/Physics/Constraints/Constraint.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <joltc.h>
 
@@ -111,7 +112,9 @@ struct BodyBuffers {
 };
 
 struct ConstraintSlot {
-    JPH_Constraint *constraint = nullptr;
+    // Owning reference to the Jolt constraint: PhysicsSystem::AddConstraint
+    // takes its own, so this is released with Constraint::Release().
+    JPH::Constraint *constraint = nullptr;
     std::uint32_t generation   = 1;
     std::atomic<std::uint8_t> state{std::to_underlying(SlotState::Empty)};
     int type = 0;
