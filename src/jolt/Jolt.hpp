@@ -17,6 +17,14 @@
 #ifndef JPH_DOUBLE_PRECISION
 #error "Culverin requires JPH_DOUBLE_PRECISION (positions are float64 on the wire). Check the DOUBLE_PRECISION Jolt option."
 #endif
+
+// Debug drawing is a shipped feature (world.build_debug_data), not a
+// debug-build convenience, so JPH::DebugRenderer must exist in every
+// configuration. Checked here so the failure names the CMake option instead
+// of surfacing as DebugRendererSimple.h's own #error.
+#ifndef JPH_DEBUG_RENDERER
+#error "Culverin requires JPH_DEBUG_RENDERER (debug draw is part of the Python API). Check the DEBUG_RENDERER_IN_DEBUG_AND_RELEASE Jolt option."
+#endif
 #if JPH_OBJECT_LAYER_BITS != 32
 #error "Culverin requires JPH_OBJECT_LAYER_BITS=32 (ObjectLayer is uint32 in handles/settings)."
 #endif

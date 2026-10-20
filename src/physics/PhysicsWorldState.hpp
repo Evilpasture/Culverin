@@ -15,6 +15,7 @@
 #include "jolt/JoltUtils.hpp"
 #include "physics/CommandBuffer.hpp"
 #include "physics/ContactEventDefinitions.hpp"
+#include "physics/ContactListener.hpp"
 #include "physics/InternalQuery.hpp"
 #include "physics/Query.hpp"
 #include "physics/SlotState.hpp"
@@ -332,11 +333,14 @@ struct PhysicsWorld {
                                             std::span<PhysicsRagdollBodyDebugInfo> out_info);
 
     // JoltC view of physics_system.GetBodyInterface(), retained until the
-    // body-operation subsystems move to the direct Jolt API in A2/B2.
-    JPH_BodyInterface *body_interface   = nullptr;
-    JPH_ContactListener *contact_listener = nullptr;
-    std::uint32_t max_jolt_bodies       = 0;
-    std::size_t contact_max_capacity    = 0;
+    // body-operation subsystems move to the direct Jolt API in A4/A5.
+    JPH_BodyInterface *body_interface = nullptr;
+    // Native listener, constructed with `this` (A3). Jolt only stores the
+    // pointer, so it must outlive physics_system — it does: declared here,
+    // physics_system is declared last and therefore destroyed first.
+    WorldContactListener contact_listener;
+    std::uint32_t max_jolt_bodies    = 0;
+    std::size_t contact_max_capacity = 0;
 
     CPH_CACHE_LINE_SPACER;
 
@@ -407,7 +411,13 @@ struct PhysicsWorld {
     CPH_CACHE_LINE_SPACER;
 
     // --- Debug output ---
-    JPH_DebugRenderer *debug_renderer = nullptr;
+    // Heap-owned, not a value member: JPH::DebugRendererSimple stores an
+    // RVec3 (32-byte aligned in double precision), which would force
+    // PhysicsWorld itself to alignof 32 — and the world lives inside a
+    // CPython-allocated object that only guarantees max_align_t. Same reason
+    // the job system is heap-owned. One allocation per world, exactly like
+    // the JoltC renderer it replaces.
+    std::unique_ptr<WorldDebugRenderer> debug_renderer;
     DebugBuffer debug_lines;
     DebugBuffer debug_triangles;
 

@@ -1,11 +1,11 @@
 #include "physics/ContactListener.hpp"
+
 #include "physics/ContactEventDefinitions.hpp"
 #include "physics/PhysicsWorldState.hpp"
 
-// Include native Jolt headers for zero-cost abstractions and SIMD math
-#include "jolt/Jolt.hpp"
+// Native Jolt headers for zero-cost abstractions and SIMD math.
 #include <Jolt/Physics/Body/Body.h>
-#include <Jolt/Physics/Collision/ContactListener.h>
+#include <Jolt/Physics/Collision/Shape/SubShapeIDPair.h>
 
 #include <atomic>
 #include <cmath>
@@ -60,17 +60,11 @@ CPH_NO_TSAN inline void RecordContact(PhysicsWorld *world, uint64_t r1, uint64_t
 // Leverages native JPH::Vec3 math for vectorized AVX/SSE acceleration.
 // =================================================================================================
 template <auto EventType>
-inline void ProcessManifoldEvent(PhysicsWorld *world, const JPH_Body *c_body1,
-                                 const JPH_Body *c_body2,
-                                 const JPH_ContactManifold *c_manifold) noexcept {
-
-    // Zero-cost cast to native Jolt objects
-    const auto *body1    = reinterpret_cast<const JPH::Body *>(c_body1);
-    const auto *body2    = reinterpret_cast<const JPH::Body *>(c_body2);
-    const auto *manifold = reinterpret_cast<const JPH::ContactManifold *>(c_manifold);
-
-    const uint64_t r1 = body1->GetUserData();
-    const uint64_t r2 = body2->GetUserData();
+inline void ProcessManifoldEvent(PhysicsWorld *world, const JPH::Body &body1,
+                                 const JPH::Body &body2,
+                                 const JPH::ContactManifold &manifold) noexcept {
+    const uint64_t r1 = body1.GetUserData();
+    const uint64_t r2 = body2.GetUserData();
 
     const auto slot1 = static_cast<uint32_t>(r1 & kHandleIndexMask);
     const auto slot2 = static_cast<uint32_t>(r2 & kHandleIndexMask);
@@ -93,7 +87,7 @@ inline void ProcessManifoldEvent(PhysicsWorld *world, const JPH_Body *c_body1,
         world, r1, r2,
         [&](ContactEventSlim *slim, ContactEventFatExt *fat, bool swapped) -> auto {
             // Native SIMD Vector Loading
-            JPH::Vec3 n = manifold->mWorldSpaceNormal;
+            JPH::Vec3 n = manifold.mWorldSpaceNormal;
             if (swapped) {
                 n = -n;
             }
@@ -102,21 +96,21 @@ inline void ProcessManifoldEvent(PhysicsWorld *world, const JPH_Body *c_body1,
             slim->ny = n.GetY();
             slim->nz = n.GetZ();
 
-            const JPH::RVec3 p = manifold->GetWorldSpaceContactPointOn1(0);
+            const JPH::RVec3 p = manifold.GetWorldSpaceContactPointOn1(0);
 
             slim->px = static_cast<JPH::Real>(p.GetX());
             slim->py = static_cast<JPH::Real>(p.GetY());
             slim->pz = static_cast<JPH::Real>(p.GetZ());
 
-            if (body1->IsSensor() || body2->IsSensor()) {
+            if (body1.IsSensor() || body2.IsSensor()) {
                 slim->impulse       = 0.0f;
                 slim->sliding_speed = 0.0f;
             } else {
                 // Native Branchless Velocity Math
                 const JPH::Vec3 v1 =
-                    body1->IsStatic() ? JPH::Vec3::sZero() : body1->GetLinearVelocity();
+                    body1.IsStatic() ? JPH::Vec3::sZero() : body1.GetLinearVelocity();
                 const JPH::Vec3 v2 =
-                    body2->IsStatic() ? JPH::Vec3::sZero() : body2->GetLinearVelocity();
+                    body2.IsStatic() ? JPH::Vec3::sZero() : body2.GetLinearVelocity();
 
                 const JPH::Vec3 dv = swapped ? (v2 - v1) : (v1 - v2);
 
@@ -131,40 +125,68 @@ inline void ProcessManifoldEvent(PhysicsWorld *world, const JPH_Body *c_body1,
         });
 }
 
+} // namespace
+
 // =================================================================================================
-// JOLT CALLBACK TARGETS
+// LISTENER ENTRY POINTS
 // =================================================================================================
 
-void JPH_API_CALL OnContactAdded(void *userData, const JPH_Body *body1, const JPH_Body *body2,
-                                 const JPH_ContactManifold *manifold,
-                                 JPH_ContactSettings * /*unused*/) noexcept {
-    ProcessManifoldEvent<ContactEventType::Added>(static_cast<PhysicsWorld *>(userData), body1, body2,
-                                      manifold);
+JPH::ValidateResult
+WorldContactListener::OnContactValidate(const JPH::Body &inBody1, const JPH::Body &inBody2,
+                                        [[maybe_unused]] JPH::RVec3Arg inBaseOffset,
+                                        [[maybe_unused]] const JPH::CollideShapeResult
+                                            &inCollisionResult) noexcept {
+    const uint64_t r1 = inBody1.GetUserData();
+    const uint64_t r2 = inBody2.GetUserData();
+
+    const auto slot1 = static_cast<uint32_t>(r1 & kHandleIndexMask);
+    const auto slot2 = static_cast<uint32_t>(r2 & kHandleIndexMask);
+
+    if (slot1 >= world_->slot_capacity || slot2 >= world_->slot_capacity) [[unlikely]] {
+        return JPH::ValidateResult::RejectContact;
+    }
+
+    const uint32_t idx1 = world_->bodies.slot_to_dense[slot1];
+    const uint32_t idx2 = world_->bodies.slot_to_dense[slot2];
+
+    const uint32_t cat1  = world_->bodies.categories[idx1];
+    const uint32_t mask1 = world_->bodies.masks[idx1];
+    const uint32_t cat2  = world_->bodies.categories[idx2];
+    const uint32_t mask2 = world_->bodies.masks[idx2];
+
+    if (((cat1 & mask2) == 0u) || ((cat2 & mask1) == 0u)) {
+        return JPH::ValidateResult::RejectContact;
+    }
+
+    return JPH::ValidateResult::AcceptContact;
 }
 
-void JPH_API_CALL OnContactPersisted(void *userData, const JPH_Body *body1, const JPH_Body *body2,
-                                     const JPH_ContactManifold *manifold,
-                                     JPH_ContactSettings * /*unused*/) noexcept {
-    ProcessManifoldEvent<ContactEventType::Persisted>(static_cast<PhysicsWorld *>(userData), body1, body2,
-                                          manifold);
+void WorldContactListener::OnContactAdded(const JPH::Body &inBody1, const JPH::Body &inBody2,
+                                          const JPH::ContactManifold &inManifold,
+                                          [[maybe_unused]] JPH::ContactSettings &ioSettings) noexcept {
+    ProcessManifoldEvent<ContactEventType::Added>(world_, inBody1, inBody2, inManifold);
+}
+
+void WorldContactListener::OnContactPersisted(const JPH::Body &inBody1, const JPH::Body &inBody2,
+                                              const JPH::ContactManifold &inManifold,
+                                              [[maybe_unused]] JPH::ContactSettings &ioSettings) noexcept {
+    ProcessManifoldEvent<ContactEventType::Persisted>(world_, inBody1, inBody2, inManifold);
 }
 
 CPH_NO_TSAN
-void JPH_API_CALL OnContactRemoved(void *userData, const JPH_SubShapeIDPair *pair) noexcept {
-    auto *world = static_cast<PhysicsWorld *>(userData);
-
-    const uint32_t i1 = pair->Body1ID & JPH::BodyID::cMaxBodyIndex;
-    const uint32_t i2 = pair->Body2ID & JPH::BodyID::cMaxBodyIndex;
+void WorldContactListener::OnContactRemoved(const JPH::SubShapeIDPair &inSubShapePair) noexcept {
+    const uint32_t i1 = inSubShapePair.GetBody1ID().GetIndex();
+    const uint32_t i2 = inSubShapePair.GetBody2ID().GetIndex();
 
     uint64_t r1 = 0;
     uint64_t r2 = 0;
 
-    if (world->id_to_handle_map) [[likely]] {
-        if (i1 <= world->max_jolt_bodies) {
-            r1 = world->id_to_handle_map[i1].load(std::memory_order::acquire);
+    if (world_->id_to_handle_map) [[likely]] {
+        if (i1 <= world_->max_jolt_bodies) {
+            r1 = world_->id_to_handle_map[i1].load(std::memory_order::acquire);
         }
-        if (i2 <= world->max_jolt_bodies) {
-            r2 = world->id_to_handle_map[i2].load(std::memory_order::acquire);
+        if (i2 <= world_->max_jolt_bodies) {
+            r2 = world_->id_to_handle_map[i2].load(std::memory_order::acquire);
         }
     }
 
@@ -174,7 +196,7 @@ void JPH_API_CALL OnContactRemoved(void *userData, const JPH_SubShapeIDPair *pai
 
     // Removed bodies only receive a subset of the data
     RecordContact<ContactEventType::Removed>(
-        world, r1, r2,
+        world_, r1, r2,
         [](ContactEventSlim *slim, ContactEventFatExt * /*fat*/, bool /*swapped*/) -> void {
             slim->px            = 0.0f;
             slim->py            = 0.0f;
@@ -186,51 +208,5 @@ void JPH_API_CALL OnContactRemoved(void *userData, const JPH_SubShapeIDPair *pai
             slim->sliding_speed = 0.0f;
         });
 }
-
-auto JPH_API_CALL OnContactValidate(void *userData, const JPH_Body *c_body1,
-                                    const JPH_Body *c_body2, const JPH_RVec3 * /*unused*/,
-                                    const JPH_CollideShapeResult * /*unused*/) noexcept
-    -> JPH_ValidateResult {
-    auto *world = static_cast<PhysicsWorld *>(userData);
-
-    const auto *body1 = reinterpret_cast<const JPH::Body *>(c_body1);
-    const auto *body2 = reinterpret_cast<const JPH::Body *>(c_body2);
-
-    const uint64_t r1 = body1->GetUserData();
-    const uint64_t r2 = body2->GetUserData();
-
-    const auto slot1 = static_cast<uint32_t>(r1 & kHandleIndexMask);
-    const auto slot2 = static_cast<uint32_t>(r2 & kHandleIndexMask);
-
-    if (slot1 >= world->slot_capacity || slot2 >= world->slot_capacity) [[unlikely]] {
-        return JPH_ValidateResult_RejectContact;
-    }
-
-    const uint32_t idx1 = world->bodies.slot_to_dense[slot1];
-    const uint32_t idx2 = world->bodies.slot_to_dense[slot2];
-
-    const uint32_t cat1  = world->bodies.categories[idx1];
-    const uint32_t mask1 = world->bodies.masks[idx1];
-    const uint32_t cat2  = world->bodies.categories[idx2];
-    const uint32_t mask2 = world->bodies.masks[idx2];
-
-    if (((cat1 & mask2) == 0u) || ((cat2 & mask1) == 0u)) {
-        return JPH_ValidateResult_RejectContact;
-    }
-
-    return JPH_ValidateResult_AcceptContact;
-}
-
-} // namespace
-
-// =================================================================================================
-// EXPORT STRUCTURE
-// =================================================================================================
-
-const JPH_ContactListener_Procs contact_procs = {.OnContactValidate = OnContactValidate,
-                                                            .OnContactAdded    = OnContactAdded,
-                                                            .OnContactPersisted =
-                                                                OnContactPersisted,
-                                                            .OnContactRemoved = OnContactRemoved};
 
 } // namespace CPH

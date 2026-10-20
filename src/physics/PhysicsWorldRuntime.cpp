@@ -22,12 +22,7 @@ bool PhysicsWorld::AttachContactListener() {
     if (!jolt_initialized) {
         return false;
     }
-    contact_listener = JPH_ContactListener_Create(this);
-    if (!contact_listener) {
-        return false;
-    }
-    physics_system.SetContactListener(
-        reinterpret_cast<JPH::ContactListener *>(contact_listener));
+    physics_system.SetContactListener(&contact_listener);
     return true;
 }
 
@@ -677,7 +672,7 @@ PhysicsWorld::BuildDebugData(bool draw_shapes, bool draw_constraints, bool draw_
     settings.mDrawBoundingBox           = draw_bounding_box;
     settings.mDrawCenterOfMassTransform = draw_centers;
 
-    auto *renderer = reinterpret_cast<JPH::DebugRenderer *>(debug_renderer);
+    JPH::DebugRenderer *const renderer = debug_renderer.get();
     if (draw_shapes || draw_bounding_box || draw_centers) {
         physics_system.DrawBodies(settings, renderer, nullptr);
     }

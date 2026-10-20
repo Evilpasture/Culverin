@@ -13,7 +13,7 @@
 #include "core/Threading.hpp"
 #include "debug/DebugRender.hpp"
 #include "ecs/Ecs.hpp"
-#include "jolt/JoltHandler.hpp"
+#include "jolt/JoltLog.hpp"
 #include "joltc.h"
 #include "math/Math.hpp"
 #include "physics/ContactListener.hpp"
@@ -523,22 +523,23 @@ extern PyModuleDef culverin_module;
         DocsStitchSpec(&MathServiceSpec, "MathService", docs_str);
         DocsStitchSpec(&ShipSpec, "Ship", docs_str);
 
-        // Gated Handler Registration
-        JPH_SetTraceHandler(CPH_JphTrace);
-        JPH_SetAssertFailureHandler(CPH_JphAssert);
-
         if (!JPH_Init()) {
             PyErr_SetString(PyExc_RuntimeError, "Jolt initialization failed");
             (docs_status).store(0, std::memory_order::seq_cst);
             return -1;
         }
 
+        // Trace/assert hooks are Jolt function pointers now (A3). They must be
+        // installed AFTER JPH_Init(), which assigns both itself; see
+        // jolt/JoltLog.hpp. The contact listener and debug renderer are native
+        // subclasses owned by each world, so no proc tables are registered for
+        // them either — what remains here are the query-filter tables, which
+        // move with the query layer in A4.
+        CPH::InstallJoltLogging();
         JPH_BroadPhaseLayerFilter_SetProcs(&kGlobalBpProcs);
         JPH_ObjectLayerFilter_SetProcs(&kGlobalObjProcs);
         JPH_BodyFilter_SetProcs(&kGlobalBfProcs);
         JPH_ShapeFilter_SetProcs(&kGlobalSfProcs);
-        JPH_DebugRenderer_SetProcs(&kDebugProcs);
-        JPH_ContactListener_SetProcs(&contact_procs);
         JPH_CharacterContactListener_SetProcs(&kCharListenerProcs);
 
         (docs_status).store(2, std::memory_order::seq_cst);

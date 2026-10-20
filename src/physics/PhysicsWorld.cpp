@@ -191,9 +191,12 @@ void PhysicsWorld::WaitUntilNotQuerying(std::unique_lock<std::mutex> &shadow) {
 
 // --- Construction / destruction ---
 
-PhysicsWorld::PhysicsWorld() {
-    debug_renderer = JPH_DebugRenderer_Create(this);
-}
+// Both listeners back-point at the world, so the world is fully wired the
+// moment its storage exists — no create/destroy pair and no null checks
+// downstream. The renderer is heap-owned for alignment reasons (see the
+// member declaration).
+PhysicsWorld::PhysicsWorld()
+    : contact_listener(this), debug_renderer(std::make_unique<WorldDebugRenderer>(this)) {}
 
 PhysicsWorld::~PhysicsWorld() {
     ClearCommandQueue();
@@ -211,20 +214,18 @@ PhysicsWorld::~PhysicsWorld() {
         }
     }
 
-    if (jolt_initialized && contact_listener != nullptr) {
+    // Unlink the listener before the system goes away; the listener object
+    // itself is a member and dies with the rest of the storage below.
+    if (jolt_initialized) {
         physics_system.SetContactListener(nullptr);
     }
     body_interface   = nullptr;
     jolt_initialized = false;
 
-    if (debug_renderer != nullptr) {
-        JPH_DebugRenderer_Destroy(debug_renderer);
-    }
-    if (contact_listener != nullptr) {
-        JPH_ContactListener_Destroy(contact_listener);
-    }
-    // Buffers, shape cache entries, and debug streams free themselves as
-    // members (declaration-reverse order) after this body runs.
+    // Buffers, shape cache entries, debug streams, the debug renderer
+    // (DebugRenderer's singleton bookkeeping), and the contact listener free
+    // themselves as members (declaration-reverse order) after this body runs.
+    // physics_system is declared last, so it is torn down first.
 }
 
 // --- Storage ---

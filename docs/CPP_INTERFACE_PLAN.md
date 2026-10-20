@@ -1,7 +1,8 @@
 # Phase 2 Plan: Direct Jolt C++ API + C++ Interfaces Between Subsystems
 
-Status: **A0, naming dissolution, enum-class sweep, B1, A1, A2, and
-B2(physics) landed** (B2 on top of `4028737`); A3 next.
+Status: **A0, naming dissolution, enum-class sweep, B1, A1, A2,
+B2(physics), and A3 landed** (A3 on top of the lock-order fix `ee5076d`);
+B3 next.
 Prerequisite: the C++23 migration
 (`docs/CPP23_MIGRATION.md`) has landed. All acceptance oracles from that
 migration apply unchanged to every phase below: full test suite at
@@ -157,12 +158,37 @@ settings/shape aliases, every `JPH_*ShapeSettings_Create/CreateShape`
 and `JPH_Shape_Destroy` call in the creation files, and the
 settings-destroy error paths that JoltC's never-null `new` made dead.
 
-**A3 — Listeners, filters, debug rendering** (`ContactListener`,
-`Filters.hpp`, `DebugRender`, `JoltHandler`). All 8 proc tables
-become subclasses; `JoltHandler.{hpp,cpp}` is deleted wholesale.
-Contact listener loses its `reinterpret_cast`s (callbacks receive
-`JPH::Body&` natively). *Deletes:* every remaining `extern "C"`
-except `PyInit`, `contact_procs`, `kGlobal*Procs`.
+**A3 — Listeners, debug rendering, logging. (Done.)** The contact
+listener is `CPH::WorldContactListener`, a value member of
+`PhysicsWorld` constructed with `this` and registered directly with
+`PhysicsSystem::SetContactListener`; callbacks now receive
+`JPH::Body`/`ContactManifold`/`SubShapeIDPair` natively, so the five
+`reinterpret_cast`s in the hot contact path are gone and the 128-byte
+event records are written exactly as before. The debug renderer is
+`CPH::WorldDebugRenderer : JPH::DebugRendererSimple` (only
+`DrawLine`/`DrawTriangle`/`DrawText3D` are overridden; the batch and
+`DrawGeometry` machinery is inherited and unused), also a value
+member — `BuildDebugData` passes it directly and drops its
+`reinterpret_cast`. `jolt/JoltHandler.{hpp,cpp}` is deleted and
+replaced by `jolt/JoltLog.{hpp,cpp}`: `InstallJoltLogging()` assigns
+`JPH::Trace` (a *variadic* `void(*)(const char*, ...)`, so the bridge
+does its own bounded `vsnprintf` into the existing pretty-printer) and
+`JPH::AssertFailed` under `JPH_ENABLE_ASSERTS`. Both assignments must
+happen **after** `JPH_Init()`, which sets the same two pointers
+itself; A5 deletes `JPH_Init()` and turns this into the only
+initialization path. `Jolt.hpp` now also `#error`s when
+`JPH_DEBUG_RENDERER` is missing, since debug draw is a shipped API.
+
+*Scope note (deviation from the phase text):* the four query-filter
+proc tables stay in `Filters.hpp` until A4. JoltC's filter wrappers
+are not standalone — `JPH_*Filter_Create` objects can only be consumed
+by `JPH_*Query_*` functions — so converting them forces the whole
+query layer (cast/collide collectors, `NarrowPhaseQuery`,
+`BroadPhaseQuery`, shapecast) to the direct API in the same patch,
+which is A4's work item, not this one's. A3 therefore deletes the
+contact, debug-renderer, and both `extern "C"` blocks, leaving
+`PyInit` as the only C-linkage symbol besides the character-contact
+and step-listener proc tables, which belong to the files A4 rewrites.
 
 **A4 — Queries, constraints, characters, vehicles, ragdolls, soft
 bodies** (largest call-site count; vehicles alone are 171).
@@ -282,8 +308,9 @@ Order: **A0 → naming dissolution → B1 → A1 → A2 → B2(physics) → A3
 → B3 → A4 → B2/B4(rest) → A5.** Each phase is one patch, gated on: full suite 243/4,
 differential 9/9, ASan clean, and the interleaved perf table (loop &
 batch create, 10k step, bulk mutation, raycast, snapshot, ctor)
-within noise of the previous phase. TSan build re-run at A1 and A3
-(the locking-sensitive phases).
+within noise of the previous phase. TSan build re-run at A1, A3, and
+A4 (the locking-sensitive phases; the contact listener and the debug
+renderer both run inside the step).
 
 Main risks, with mitigations already built into the phases:
 silent ABI drift via defines (A0 asserts), `Ref<>` lifetimes inside

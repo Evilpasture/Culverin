@@ -2,8 +2,8 @@
 add_library(
     culverin_native_jolt
     OBJECT
-        JoltHandler.cpp
-        JoltHandler.hpp
+        JoltLog.cpp
+        JoltLog.hpp
         Jolt.hpp
         JoltConfig.hpp
         JoltUtils.hpp

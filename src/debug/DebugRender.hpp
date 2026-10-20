@@ -1,8 +1,8 @@
 #pragma once
 
 #include "core/Buffer.hpp"
-#include "jolt/JoltConfig.hpp"
-#include <joltc.h>
+#include "jolt/Jolt.hpp"
+#include <Jolt/Renderer/DebugRendererSimple.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -50,6 +50,30 @@ struct DebugData {
     Buffer<DebugVertex> triangles;
 };
 
-extern const JPH_DebugRenderer_Procs kDebugProcs;
+struct PhysicsWorld;
+
+// Native debug renderer (Phase 2, step A3). Only the three draw calls Culverin
+// batches are overridden; DebugRendererSimple supplies the triangle-batch /
+// DrawGeometry machinery that BuildDebugData never reaches.
+//
+// Jolt treats DebugRenderer as a process-wide singleton by contract
+// (JPH_ASSERT(sInstance == nullptr) in its constructor). Culverin keeps one
+// renderer per world — exactly what the JoltC wrapper did before this change —
+// so assert-enabled builds still see the assert when a second world is alive;
+// release builds are unaffected. Resolving that (a shared renderer with a
+// current-world pointer) is a separate design change, not part of this phase.
+class WorldDebugRenderer final : public JPH::DebugRendererSimple {
+public:
+    explicit WorldDebugRenderer(PhysicsWorld *world) noexcept : world_(world) {}
+
+    void DrawLine(JPH::RVec3Arg inFrom, JPH::RVec3Arg inTo, JPH::ColorArg inColor) override;
+    void DrawTriangle(JPH::RVec3Arg inV1, JPH::RVec3Arg inV2, JPH::RVec3Arg inV3,
+                      JPH::ColorArg inColor, ECastShadow inCastShadow) override;
+    void DrawText3D(JPH::RVec3Arg inPosition, const JPH::string_view &inString,
+                    JPH::ColorArg inColor, float inHeight) override;
+
+private:
+    PhysicsWorld *world_;
+};
 
 } // namespace CPH

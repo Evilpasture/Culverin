@@ -5,46 +5,37 @@
 
 namespace CPH {
 
-namespace {
-
-void JPH_API_CALL OnDebugDrawLine(void *userData, const JPH_RVec3 *from, const JPH_RVec3 *to,
-                                  JPH_Color color) {
-    auto *world = static_cast<PhysicsWorld *>(userData);
-    if (!world->debug_lines.ensure(2)) {
+void WorldDebugRenderer::DrawLine(JPH::RVec3Arg inFrom, JPH::RVec3Arg inTo,
+                                  JPH::ColorArg inColor) {
+    if (!world_->debug_lines.ensure(2)) {
         return;
     }
-    world->debug_lines.push(static_cast<float>(from->x), static_cast<float>(from->y),
-                            static_cast<float>(from->z), color);
-    world->debug_lines.push(static_cast<float>(to->x), static_cast<float>(to->y),
-                            static_cast<float>(to->z), color);
+    const std::uint32_t color = inColor.GetUInt32();
+    world_->debug_lines.push(static_cast<float>(inFrom.GetX()), static_cast<float>(inFrom.GetY()),
+                             static_cast<float>(inFrom.GetZ()), color);
+    world_->debug_lines.push(static_cast<float>(inTo.GetX()), static_cast<float>(inTo.GetY()),
+                             static_cast<float>(inTo.GetZ()), color);
 }
 
-void JPH_API_CALL OnDebugDrawTriangle(void *userData, const JPH_RVec3 *v1, const JPH_RVec3 *v2,
-                                      const JPH_RVec3 *v3, JPH_Color color,
-                                      [[maybe_unused]] JPH_DebugRenderer_CastShadow castShadow) {
-    auto *world = static_cast<PhysicsWorld *>(userData);
-    if (!world->debug_triangles.ensure(3)) {
+void WorldDebugRenderer::DrawTriangle(JPH::RVec3Arg inV1, JPH::RVec3Arg inV2, JPH::RVec3Arg inV3,
+                                      JPH::ColorArg inColor,
+                                      [[maybe_unused]] ECastShadow inCastShadow) {
+    if (!world_->debug_triangles.ensure(3)) {
         return;
     }
-    const JPH_RVec3 *verts[3] = {v1, v2, v3};
-    for (const JPH_RVec3 *v : verts) {
-        world->debug_triangles.push(static_cast<float>(v->x), static_cast<float>(v->y),
-                                    static_cast<float>(v->z), color);
+    const std::uint32_t color = inColor.GetUInt32();
+    const JPH::RVec3 vertices[3] = {inV1, inV2, inV3};
+    for (const JPH::RVec3 &v : vertices) {
+        world_->debug_triangles.push(static_cast<float>(v.GetX()), static_cast<float>(v.GetY()),
+                                     static_cast<float>(v.GetZ()), color);
     }
 }
 
-void JPH_API_CALL OnDebugDrawText([[maybe_unused]] void *userData,
-                                  [[maybe_unused]] const JPH_RVec3 *position,
-                                  [[maybe_unused]] const char *str,
-                                  [[maybe_unused]] JPH_Color color,
-                                  [[maybe_unused]] float height) {
+void WorldDebugRenderer::DrawText3D([[maybe_unused]] JPH::RVec3Arg inPosition,
+                                    [[maybe_unused]] const JPH::string_view &inString,
+                                    [[maybe_unused]] JPH::ColorArg inColor,
+                                    [[maybe_unused]] float inHeight) {
     // Text is not batched to Python bytes.
 }
-
-} // namespace
-
-const JPH_DebugRenderer_Procs kDebugProcs = {.DrawLine     = OnDebugDrawLine,
-                                             .DrawTriangle = OnDebugDrawTriangle,
-                                             .DrawText3D   = OnDebugDrawText};
 
 } // namespace CPH

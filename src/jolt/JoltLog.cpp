@@ -1,7 +1,12 @@
-#include "jolt/JoltHandler.hpp"
+#include "jolt/JoltLog.hpp"
+
 #include "cpp/Cpp.hpp"
+#include <Jolt/Core/IssueReporting.h>
+
+#include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstdarg>
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
@@ -21,6 +26,8 @@
 #    include <unistd.h>
 #    define IS_ATTY isatty(fileno(stderr))
 #endif
+
+namespace CPH {
 
 namespace {
 enum class LogLevel : CPH::Unsigned8 { Info, Warn, Error };
@@ -102,19 +109,12 @@ auto detect_level(std::string_view msg) noexcept -> LogLevel {
     }
     return LogLevel::Info;
 }
-} // namespace
 
-extern "C" {
-
-/**
- * JPH Trace Bridge
- */
-void CPH_JphTrace(const char *const inString) {
-    if (inString == nullptr || *inString == '\0') [[unlikely]] {
+// Pretty-prints one already-formatted Jolt message to stderr.
+void write_trace_message(std::string_view msg) noexcept {
+    if (msg.empty()) [[unlikely]] {
         return;
     }
-
-    auto msg = std::string_view{inString};
 
     // 1. Clean Jolt's trailing whitespace/newlines
     while (!msg.empty() && (msg.back() == '\n' || msg.back() == '\r' || msg.back() == ' ')) {
@@ -159,12 +159,29 @@ void CPH_JphTrace(const char *const inString) {
     (void)std::fwrite(buffer.data(), sizeof(char), buffer.size(), stderr);
 }
 
-/**
- * JPH Assert Bridge
- */
-auto CPH_JphAssert(const char *const inExpression, const char *const inMessage,
-                     const char *const inFile, const CPH::Unsigned32 inLine) -> bool {
+// JPH::Trace is variadic: format first (bounded), then hand the text to the
+// pretty-printer. Same 1024-byte budget JoltC's TraceImpl used.
+void trace_bridge(const char *const inFMT, ...) noexcept {
+    if (inFMT == nullptr) [[unlikely]] {
+        return;
+    }
 
+    std::array<char, 1024> raw{};
+    va_list args;
+    va_start(args, inFMT);
+    const int written = std::vsnprintf(raw.data(), raw.size(), inFMT, args);
+    va_end(args);
+
+    if (written <= 0) [[unlikely]] {
+        return;
+    }
+    const auto length = std::min(static_cast<std::size_t>(written), raw.size() - 1);
+    write_trace_message(std::string_view(raw.data(), length));
+}
+
+#ifdef JPH_ENABLE_ASSERTS
+bool assert_bridge(const char *const inExpression, const char *const inMessage,
+                   const char *const inFile, const JPH::uint inLine) noexcept {
     const auto atty         = static_cast<bool>(IS_ATTY);
     const auto *const color = atty ? "\033[1;41m" : "";
     const auto reset        = atty ? ANSI_RESET : "";
@@ -188,5 +205,15 @@ auto CPH_JphAssert(const char *const inExpression, const char *const inMessage,
 
     return true;
 }
+#endif // JPH_ENABLE_ASSERTS
 
-} // extern "C"
+} // namespace
+
+void InstallJoltLogging() noexcept {
+    JPH::Trace = trace_bridge;
+#ifdef JPH_ENABLE_ASSERTS
+    JPH::AssertFailed = assert_bridge;
+#endif
+}
+
+} // namespace CPH
