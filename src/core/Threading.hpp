@@ -2,9 +2,20 @@
 
 // Culverin Threading Invariants & Lock Hierarchy
 // ---------------------------------------------
-// 1. HIERARCHY: shadow_lock (High) -> step_sync.mutex (Low).
-//    Always acquire shadow_lock BEFORE step_sync.mutex, and release
-//    shadow_lock before blocking on step_sync.cond.
+// 1. HIERARCHY (acquire outermost first, never the other way around):
+//
+//        jph_trampoline_lock  ->  shadow_lock  ->  step_sync.mutex
+//
+//    - jph_trampoline_lock BEFORE shadow_lock. The step and flush paths
+//      (StepNative -> FlushCommands, SyncAndFlushInternal, ragdoll and
+//      compound construction) hold the trampoline and then take shadow_lock
+//      while executing each command. Any path that takes shadow_lock first
+//      and then waits for the trampoline closes a cycle: TSan reports it as
+//      "lock-order-inversion (potential deadlock)", and under contention it
+//      is a real deadlock (holder of the trampoline waits for shadow_lock
+//      while the other thread waits for the trampoline).
+//    - shadow_lock BEFORE step_sync.mutex, and release shadow_lock before
+//      blocking on step_sync.cond.
 // 2. OWNERSHIP:
 //    - shadow_lock protects the command queue, slot states, and shadow buffers.
 //    - step_sync handles thread arbitration (parking/waking).
@@ -14,7 +25,8 @@
 //    - is_stepping = false => external threads may read shadow buffers under shadow_lock.
 // 4. DOUBLE-BUFFERING:
 //    - Command queues are swapped under shadow_lock but flushed under
-//      jph_trampoline_lock.
+//      jph_trampoline_lock, which then re-acquires shadow_lock per command
+//      (see rule 1 for why the trampoline has to be the outer lock).
 //
 // Synchronization uses std::mutex / std::condition_variable / std::atomic.
 // The legacy 1-byte custom mutex optimized per-mutex footprint, but a world

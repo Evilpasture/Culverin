@@ -360,6 +360,8 @@ struct PhysicsWorld {
 
     CPH_CACHE_LINE_SPACER;
 
+    // Acquisition order is jph_trampoline_lock -> shadow_lock -> step_sync
+    // (step_sync lives in the block above). See core/Threading.hpp.
     std::mutex shadow_lock;
     std::mutex jph_trampoline_lock;
 

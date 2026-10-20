@@ -419,8 +419,16 @@ std::expected<void, Error> PhysicsWorld::LoadBakedScene(const BakedSceneData &sc
 
     Error error;
     {
-        const std::scoped_lock shadow(shadow_lock);
+        // Lock order (core/Threading.hpp): jph_trampoline_lock is outermost,
+        // shadow_lock nests inside it. Every other path that needs both takes
+        // the trampoline first (StepNative/FlushCommands, SyncAndFlushInternal,
+        // ragdoll and compound construction), so taking shadow_lock first here
+        // closed a cycle that TSan reports as lock-order-inversion:
+        //   shadow_lock -> jph_trampoline_lock (this function)
+        //   jph_trampoline_lock -> shadow_lock (FlushCommands, per command)
+        // The cycle is a genuine deadlock as soon as a scene load races a step.
         const std::scoped_lock trampoline(jph_trampoline_lock);
+        const std::scoped_lock shadow(shadow_lock);
         for (std::size_t i = 0; i < scene.count; ++i) {
             const float *const shape_data = &scene.shapes[i * kBakedShapeStride];
             const float params[4] = {shape_data[1], shape_data[2], shape_data[3], shape_data[4]};
