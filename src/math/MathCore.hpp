@@ -2,7 +2,9 @@
 #include <cmath>
 #include "core/Compiler.hpp"
 #include "core/Types.hpp"
+#include "jolt/Jolt.hpp"
 #include "joltc.h"
+#include <Jolt/Math/Quat.h>
 
 
 namespace CPH {
@@ -52,11 +54,10 @@ void MathComputeInterpolationLoop(const PosStride *__restrict curr_p,
                                          float *__restrict out, size_t count);
 
 void MathInterpolateCharacterTransform(const PosStride *__restrict start_p,
-                                                   const AuxStride *__restrict start_r,
-                                                   const JPH_RVec3 *__restrict end_p,
-                                                   const JPH_Quat *__restrict end_r, float alpha,
-                                                   float *__restrict out_p,
-                                                   float *__restrict out_r);
+                                       const AuxStride *__restrict start_r,
+                                       const JPH::RVec3 &end_p, const JPH::Quat &end_r,
+                                       float alpha, float *__restrict out_p,
+                                       float *__restrict out_r);
 void MathGetPerspective(float fovy_rad, float aspect, float near_p, float far_p,
                                    float *__restrict out);
 void MathGetOrtho(float left, float right, float bottom, float top, float near_p,

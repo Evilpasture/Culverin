@@ -69,7 +69,7 @@ void MathComputeInterpolationLoop(const PosStride *CPH_RESTRICT curr_p,
 [[gnu::hot, gnu::nonnull]]
 void MathInterpolateCharacterTransform(
     const PosStride *CPH_RESTRICT start_p, const AuxStride *CPH_RESTRICT start_r,
-    const JPH_RVec3 *CPH_RESTRICT end_p, const JPH_Quat *CPH_RESTRICT end_r,
+    const JPH::RVec3 &end_p, const JPH::Quat &end_r,
     const CPH::Float32 alpha, CPH::Float32 *CPH_RESTRICT out_p, CPH::Float32 *CPH_RESTRICT out_r) {
     using namespace JPH;
 
@@ -80,8 +80,8 @@ void MathInterpolateCharacterTransform(
     const RVec3 p1(static_cast<Real>(start_p->x), static_cast<Real>(start_p->y),
                    static_cast<Real>(start_p->z));
 
-    const RVec3 p2(static_cast<Real>(end_p->x), static_cast<Real>(end_p->y),
-                   static_cast<Real>(end_p->z));
+    const RVec3 p2(static_cast<Real>(end_p.GetX()), static_cast<Real>(end_p.GetY()),
+                   static_cast<Real>(end_p.GetZ()));
 
     const auto p_res = p1 + (p2 - p1) * static_cast<Real>(alpha);
 
@@ -89,10 +89,8 @@ void MathInterpolateCharacterTransform(
     // start_r is AuxStride (CPH::Float32[4], 16 bytes). sLoadFloat4 is safe here.
     const auto v1 = Vec4::sLoadFloat4(reinterpret_cast<const Float4 *>(start_r));
 
-    // end_r is JPH_Quat (CPH::Float32[4], 16 bytes).
-    // Construct explicitly to avoid any potential AVX-512 over-reads.
     const Quat q1(v1);
-    const Quat q2(end_r->x, end_r->y, end_r->z, end_r->w);
+    const Quat &q2 = end_r;
 
     const auto v2          = q2.mValue;
     const CPH::Float32 dot = v1.Dot(v2);

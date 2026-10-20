@@ -535,10 +535,10 @@ extern PyModuleDef culverin_module;
         // installed AFTER JPH_Init(), which assigns both itself; see
         // jolt/JoltLog.hpp. The contact listener and debug renderer are native
         // subclasses owned by each world, and the query filters are native
-        // Jolt::BodyFilter &c. constructed per query, so no proc tables are
-        // registered for them either — the character listener is the last one.
+        // Jolt::BodyFilter &c. constructed per query, and each character owns a
+        // native CharacterContactListener subclass, so no proc tables are
+        // registered at all.
         CPH::InstallJoltLogging();
-        JPH_CharacterContactListener_SetProcs(&kCharListenerProcs);
 
         (docs_status).store(2, std::memory_order::seq_cst);
 

@@ -242,11 +242,41 @@ command handler locks bodies with RAII `BodyLockWrite`, still one body
 per scope for the same EDEADLK reason, and passes the constraint to
 `AddConstraint` without a cast.
 
+*Landed so far — characters.* The character bindings no longer touch
+JoltC. The largest win is structural: `kCharListenerProcs` is gone, and
+with it the last character-side proc table. JoltC's
+`JPH_CharacterContactListener_SetProcs` installed *one process-wide*
+procs pointer that every character shared, with each callback recovering
+its owner from a `void *userData` — which is why creating a listener had
+to be serialized behind the trampoline lock. `CharacterListener` is now
+a `JPH::CharacterContactListener` subclass owned per character, so there
+is no shared state left to serialize and `setup_char_filters` no longer
+takes the lock at all. The four heap-allocated JoltC filters go with it:
+`body_filter` and `shape_filter` become default-constructed stack locals
+in `CharacterMove` (`ManagedBodyFilter::ShouldCollide` falls through to
+`return true` when no procs are installed, so a default `JPH::BodyFilter`
+is the exact equivalent), and `bp_filter`/`obj_filter` are deleted
+outright — they were constructed and destroyed but never passed to
+anything, since `ExtendedUpdate` already takes the system's default
+broad-phase and layer filters. `CharacterObject::character` is
+`JPH::CharacterVirtual *`, which retires the
+`reinterpret_cast<JPH_CharacterBase *>` on every ground-state read; the
+`alignas(alignof(JPH_RVec3))` out-parameter staging disappears with the
+accessors, and the `const_cast<JPH_Body *>` calls in the velocity
+callback are gone because `Body::GetUserData`, `GetAngularVelocity` and
+`GetPosition` are all `const`. `alloc_j_char` builds a
+`CapsuleShapeSettings` on the stack and checks `ShapeResult::IsValid()`
+instead of juggling `JPH_ShapeSettings_Destroy`/`JPH_Shape_Destroy`
+around a raw pointer, and `DegreesToRadians` replaces the hand-rolled
+`JPH_M_PI / 180.0f` (identical constant, identical expression).
+`MathInterpolateCharacterTransform` takes `const JPH::RVec3 &` and
+`const JPH::Quat &`.
+
 Remaining A4 work: `PhysicsWorldRuntime`/`PhysicsWorldCreation`, the
-character, vehicle, ragdoll and soft-body bindings, and the
-`JPH_BodyInterface` field those still read. `Vehicle.cpp` still holds
-two `JPH_Constraint_Destroy` calls on the vehicle constraint itself;
-they move with the vehicle slice.
+vehicle, ragdoll and soft-body bindings, and the `JPH_BodyInterface`
+field those still read. `Vehicle.cpp` still holds two
+`JPH_Constraint_Destroy` calls on the vehicle constraint itself; they
+move with the vehicle slice.
 
 **A5 — Remove JoltC.** First, audit the fork: `extern/JoltC` carries
 Culverin-local patches (at minimum `JPH_Init`'s trace forwarding and
