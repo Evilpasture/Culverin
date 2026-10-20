@@ -17,7 +17,6 @@
 #include "joltc.h"
 #include "math/Math.hpp"
 #include "physics/ContactListener.hpp"
-#include "physics/Filters.hpp"
 #include "physics/PhysicsWorldBinding.hpp"
 #include "ragdolls/Ragdoll.hpp"
 #include "soft_bodies/SoftBody.hpp"
@@ -535,14 +534,10 @@ extern PyModuleDef culverin_module;
         // Trace/assert hooks are Jolt function pointers now (A3). They must be
         // installed AFTER JPH_Init(), which assigns both itself; see
         // jolt/JoltLog.hpp. The contact listener and debug renderer are native
-        // subclasses owned by each world, so no proc tables are registered for
-        // them either — what remains here are the query-filter tables, which
-        // move with the query layer in A4.
+        // subclasses owned by each world, and the query filters are native
+        // Jolt::BodyFilter &c. constructed per query, so no proc tables are
+        // registered for them either — the character listener is the last one.
         CPH::InstallJoltLogging();
-        JPH_BroadPhaseLayerFilter_SetProcs(&kGlobalBpProcs);
-        JPH_ObjectLayerFilter_SetProcs(&kGlobalObjProcs);
-        JPH_BodyFilter_SetProcs(&kGlobalBfProcs);
-        JPH_ShapeFilter_SetProcs(&kGlobalSfProcs);
         JPH_CharacterContactListener_SetProcs(&kCharListenerProcs);
 
         (docs_status).store(2, std::memory_order::seq_cst);

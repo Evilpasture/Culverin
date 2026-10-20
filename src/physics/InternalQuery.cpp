@@ -1,6 +1,8 @@
 #include "physics/InternalQuery.hpp"
 #include "core/Buffer.hpp"
 #include "physics/PhysicsWorldState.hpp"
+#include <Jolt/Physics/Body/BodyFilter.h>
+#include <Jolt/Physics/Collision/NarrowPhaseQuery.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/CylinderShape.h>
@@ -121,45 +123,23 @@ JPH::ShapeRefC PhysicsWorld::FindOrCreateShape(int type, std::span<const float, 
 
 // Execute one native shapecast. The caller owns query registration and holds
 // the shape alive for the duration of this call.
-bool ShapecastExecuteInternal(PhysicsWorld &world, const JPH_Shape *shape,
-                                const JPH_RMat4 *transform, const JPH_Vec3 *sweep_dir,
-                                JPH_BodyID ignore_bid, CastShapeContext *ctx) {
-    JPH_BroadPhaseLayerFilter *bp_f = JPH_BroadPhaseLayerFilter_Create(nullptr);
-    JPH_ObjectLayerFilter *obj_f    = JPH_ObjectLayerFilter_Create(nullptr);
+void ShapecastExecuteInternal(PhysicsWorld &world, const JPH::Shape *shape,
+                              JPH::RMat44Arg transform, JPH::Vec3Arg sweep_dir,
+                              JPH::BodyID ignore_bid, JPH::CastShapeCollector &collector) {
+    // Scale rides in the world transform, so the cast shape is unscaled here --
+    // the same construction the JoltC wrapper performed.
+    const JPH::RShapeCast shape_cast = JPH::RShapeCast::sFromWorldTransform(
+        shape, JPH::Vec3::sReplicate(1.0f), transform, sweep_dir);
 
-    CastShapeFilter filter_ctx = {ignore_bid};
-    JPH_BodyFilter *bf         = JPH_BodyFilter_Create(&filter_ctx);
+    JPH::ShapeCastSettings settings;
+    // IgnoreBackFaces is Jolt's default for both modes; stated so the intent
+    // survives an upstream default change.
+    settings.SetBackFaceMode(JPH::EBackFaceMode::IgnoreBackFaces);
 
-    if (!bp_f || !obj_f || !bf) {
-        if (bf) {
-            JPH_BodyFilter_Destroy(bf);
-        }
-        if (bp_f) {
-            JPH_BroadPhaseLayerFilter_Destroy(bp_f);
-        }
-        if (obj_f) {
-            JPH_ObjectLayerFilter_Destroy(obj_f);
-        }
-        return false;
-    }
-
-    JPH_ShapeCastSettings shape_cast_settings{};
-    JPH_ShapeCastSettings *settings = &shape_cast_settings;
-    JPH_ShapeCastSettings_Init(settings);
-    settings->backFaceModeTriangles = JPH_BackFaceMode_IgnoreBackFaces;
-    settings->backFaceModeConvex    = JPH_BackFaceMode_IgnoreBackFaces;
-
-    JPH_RVec3 base_offset          = {0, 0, 0};
-    const JPH_NarrowPhaseQuery *nq = reinterpret_cast<const JPH_NarrowPhaseQuery *>(
-        &world.physics_system.GetNarrowPhaseQuery());
-
-    JPH_NarrowPhaseQuery_CastShape(nq, shape, transform, sweep_dir, settings, &base_offset,
-                                   CastShape_ClosestCollector, ctx, bp_f, obj_f, bf, nullptr);
-
-    JPH_BodyFilter_Destroy(bf);
-    JPH_BroadPhaseLayerFilter_Destroy(bp_f);
-    JPH_ObjectLayerFilter_Destroy(obj_f);
-    return true;
+    // An invalid BodyID matches no real body, so this is "ignore nothing".
+    const JPH::IgnoreSingleBodyFilter body_filter(ignore_bid);
+    world.physics_system.GetNarrowPhaseQuery().CastShape(shape_cast, settings, JPH::RVec3::sZero(),
+                                                         collector, {}, {}, body_filter);
 }
 
 } // namespace CPH

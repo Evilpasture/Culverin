@@ -3,7 +3,7 @@
 #include "core/Types.hpp"
 #include "jolt/Jolt.hpp"
 #include <Jolt/Physics/Collision/Shape/Shape.h>
-#include <joltc.h>
+#include <Jolt/Physics/Collision/ShapeCast.h>
 
 #include <cstdint>
 
@@ -30,36 +30,46 @@ struct ShapeEntry {
 
 // --- Shapecast execution shared with the query layer ---
 
-struct CastShapeContext {
-    JPH_ShapeCastResult hit;
-    bool has_hit;
+// Closest-hit collector for shape casts.
+//
+// Jolt ships ClosestHitCollisionCollector, but it ranks hits by
+// ShapeCastResult::GetEarlyOutFraction(), which switches to -penetrationDepth
+// for a cast that starts inside a shape. The pre-A4 C collector compared the
+// raw cast fraction instead, so this reproduces that ordering -- including the
+// fact that a hit at exactly fraction 1.0 was never recorded, because the
+// comparison started from 1.0f.
+class ClosestFractionCastShapeCollector final : public JPH::CastShapeCollector {
+  public:
+    ClosestFractionCastShapeCollector() noexcept {
+        // ShapeCastResult leaves mFraction uninitialized; seed it the way the
+        // C version did so the first comparison is against 1.0f.
+        m_hit.mFraction = 1.0f;
+    }
+
+    void AddHit(const JPH::ShapeCastResult &inResult) override {
+        if (inResult.mFraction < m_hit.mFraction) {
+            m_hit     = inResult;
+            m_has_hit = true;
+        }
+        UpdateEarlyOutFraction(inResult.mFraction);
+    }
+
+    [[nodiscard]] bool has_hit() const noexcept { return m_has_hit; }
+    [[nodiscard]] const JPH::ShapeCastResult &hit() const noexcept { return m_hit; }
+
+  private:
+    JPH::ShapeCastResult m_hit{};
+    bool m_has_hit = false;
 };
 
-struct CastShapeFilter {
-    JPH_BodyID ignore_id;
-};
-
-bool ShapecastExecuteInternal(PhysicsWorld &world, const JPH_Shape *shape,
-                                  const JPH_RMat4 *transform, const JPH_Vec3 *sweep_dir,
-                                  JPH_BodyID ignore_bid, CastShapeContext *ctx);
-
-// Jolt collector: keeps the closest hit. Signature fixed by joltc.h.
-inline float CastShape_ClosestCollector(void *context, const JPH_ShapeCastResult *result) {
-    auto *ctx = static_cast<CastShapeContext *>(context);
-    if (result->fraction < ctx->hit.fraction) {
-        ctx->hit     = *result;
-        ctx->has_hit = true;
-    }
-    return result->fraction;
-}
-
-// Jolt body filter: allows everything except an optional ignored body.
-inline bool JPH_API_CALL UnifiedBodyFilter(void *userData, JPH_BodyID bodyID) {
-    if (userData == nullptr) {
-        return true;
-    }
-    const auto *ctx = static_cast<CastShapeFilter *>(userData);
-    return ctx->ignore_id == 0 || bodyID != ctx->ignore_id;
-}
+// Executes one shape cast against the world's narrow-phase query.
+//
+// The filters are stack objects: Jolt's filter base classes allow everything
+// by default, so the only filter with behaviour is the single-body ignore.
+// `ignore_bid` may be invalid (0xFFFFFFFF), which ignores nothing. The caller
+// owns query registration and keeps `shape` alive for the duration.
+void ShapecastExecuteInternal(PhysicsWorld &world, const JPH::Shape *shape,
+                              JPH::RMat44Arg transform, JPH::Vec3Arg sweep_dir,
+                              JPH::BodyID ignore_bid, JPH::CastShapeCollector &collector);
 
 } // namespace CPH

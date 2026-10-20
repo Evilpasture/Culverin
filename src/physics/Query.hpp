@@ -2,7 +2,7 @@
 
 #include "core/Error.hpp"
 #include "core/Types.hpp"
-#include <joltc.h>
+#include "jolt/Jolt.hpp"
 
 #include <array>
 #include <cstddef>
@@ -90,15 +90,15 @@ static_assert(sizeof(RayCastBatchResult) == kRaycastResultSize);
 struct PhysicsRaycastHit {
     BodyHandle handle;
     float fraction;
-    JPH_Vec3 normal;
+    JPH::Vec3 normal;
     bool has_hit;
 };
 
 struct PhysicsShapecastHit {
     BodyHandle handle;
     float fraction;
-    JPH_Vec3 point;
-    JPH_Vec3 normal;
+    JPH::Vec3 point;
+    JPH::Vec3 normal;
     bool has_hit;
 };
 

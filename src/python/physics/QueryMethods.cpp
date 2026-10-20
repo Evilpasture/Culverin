@@ -3,6 +3,7 @@
 #include "bindings/FastBuild.hpp"
 #include "bindings/parsing/Parsers.hpp"
 #include "core/Compiler.hpp"
+#include "jolt/Jolt.hpp"
 
 namespace CPH::Python {
 
@@ -61,15 +62,15 @@ static PyObject *overlap_hits_to_list(const PhysicsQueryHitBuffer *hits) {
         return nullptr;
     }
 
-    JPH_Real cx;
-    JPH_Real cy;
-    JPH_Real cz;
+    JPH::Real cx;
+    JPH::Real cy;
+    JPH::Real cz;
     if (ParseResult parsed = parse_vec3_into(o_center, cx, cy, cz); !parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
     }
 
-    const JPH_RVec3 center = {cx, cy, cz};
+    const JPH::RVec3 center(cx, cy, cz);
     PhysicsQueryHitBuffer hits;
 
     std::expected<void, Error> status;
@@ -98,12 +99,12 @@ static PyObject *overlap_hits_to_list(const PhysicsQueryHitBuffer *hits) {
         return nullptr;
     }
 
-    JPH_Real min_x;
-    JPH_Real min_y;
-    JPH_Real min_z;
-    JPH_Real max_x;
-    JPH_Real max_y;
-    JPH_Real max_z;
+    JPH::Real min_x;
+    JPH::Real min_y;
+    JPH::Real min_z;
+    JPH::Real max_x;
+    JPH::Real max_y;
+    JPH::Real max_z;
     if (ParseResult parsed = parse_vec3_into(o_min, min_x, min_y, min_z); !parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
@@ -113,8 +114,8 @@ static PyObject *overlap_hits_to_list(const PhysicsQueryHitBuffer *hits) {
         return nullptr;
     }
 
-    const JPH_RVec3 min = {min_x, min_y, min_z};
-    const JPH_RVec3 max = {max_x, max_y, max_z};
+    const JPH::RVec3 min(min_x, min_y, min_z);
+    const JPH::RVec3 max(max_x, max_y, max_z);
     PhysicsQueryHitBuffer hits;
 
     std::expected<void, Error> status;
@@ -145,9 +146,9 @@ static PyObject *overlap_hits_to_list(const PhysicsQueryHitBuffer *hits) {
         return nullptr;
     }
 
-    JPH_Real start_x;
-    JPH_Real start_y;
-    JPH_Real start_z;
+    JPH::Real start_x;
+    JPH::Real start_y;
+    JPH::Real start_z;
     float direction_x;
     float direction_y;
     float direction_z;
@@ -160,8 +161,8 @@ static PyObject *overlap_hits_to_list(const PhysicsQueryHitBuffer *hits) {
         return nullptr;
     }
 
-    const JPH_RVec3 origin    = {start_x, start_y, start_z};
-    const JPH_Vec3 direction  = {direction_x, direction_y, direction_z};
+    const JPH::RVec3 origin(start_x, start_y, start_z);
+    const JPH::Vec3 direction(direction_x, direction_y, direction_z);
     std::expected<PhysicsRaycastHit, Error> status;
     Py_BEGIN_ALLOW_THREADS status =
         self->physics.Raycast(origin, direction, max_distance,
@@ -177,7 +178,7 @@ static PyObject *overlap_hits_to_list(const PhysicsQueryHitBuffer *hits) {
     }
 
     return BuildTuple((unsigned long long)hit.handle, hit.fraction,
-                              BuildTuple(hit.normal.x, hit.normal.y, hit.normal.z));
+                              BuildTuple(hit.normal.GetX(), hit.normal.GetY(), hit.normal.GetZ()));
 }
 
 [[nodiscard]] PyObject * WorldRaycastBatch(PhysicsWorldObject *self,
@@ -281,9 +282,9 @@ static PyObject *overlap_hits_to_list(const PhysicsQueryHitBuffer *hits) {
         return nullptr;
     }
 
-    JPH_Real position_x;
-    JPH_Real position_y;
-    JPH_Real position_z;
+    JPH::Real position_x;
+    JPH::Real position_y;
+    JPH::Real position_z;
     float rotation_x;
     float rotation_y;
     float rotation_z;
@@ -306,9 +307,9 @@ static PyObject *overlap_hits_to_list(const PhysicsQueryHitBuffer *hits) {
     }
     ParseBodySize(o_size, size);
 
-    const JPH_RVec3 position    = {position_x, position_y, position_z};
-    const JPH_Quat rotation     = {rotation_x, rotation_y, rotation_z, rotation_w};
-    const JPH_Vec3 direction    = {direction_x, direction_y, direction_z};
+    const JPH::RVec3 position(position_x, position_y, position_z);
+    const JPH::Quat rotation(rotation_x, rotation_y, rotation_z, rotation_w);
+    const JPH::Vec3 direction(direction_x, direction_y, direction_z);
     std::expected<PhysicsShapecastHit, Error> status;
     Py_BEGIN_ALLOW_THREADS status =
         self->physics.Shapecast(shape_type, position, rotation, direction, size,
@@ -324,8 +325,8 @@ static PyObject *overlap_hits_to_list(const PhysicsQueryHitBuffer *hits) {
     }
 
     return BuildTuple((unsigned long long)hit.handle, hit.fraction,
-                              BuildTuple(hit.point.x, hit.point.y, hit.point.z),
-                              BuildTuple(hit.normal.x, hit.normal.y, hit.normal.z));
+                              BuildTuple(hit.point.GetX(), hit.point.GetY(), hit.point.GetZ()),
+                              BuildTuple(hit.normal.GetX(), hit.normal.GetY(), hit.normal.GetZ()));
 }
 
 } // namespace CPH::Python

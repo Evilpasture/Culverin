@@ -312,17 +312,17 @@ struct PhysicsWorld {
     // entry points (also used by native ops that register as queries).
     void QueryEnd();
     [[nodiscard]] std::expected<void, Error>
-    OverlapSphere(JPH_RVec3 center, float radius, PhysicsQueryHitBuffer &hits);
+    OverlapSphere(JPH::RVec3 center, float radius, PhysicsQueryHitBuffer &hits);
     [[nodiscard]] std::expected<void, Error>
-    OverlapAabb(JPH_RVec3 min, JPH_RVec3 max, PhysicsQueryHitBuffer &hits);
+    OverlapAabb(JPH::RVec3 min, JPH::RVec3 max, PhysicsQueryHitBuffer &hits);
     [[nodiscard]] std::expected<PhysicsRaycastHit, Error>
-    Raycast(JPH_RVec3 origin, JPH_Vec3 direction, float max_distance, BodyHandle ignore_handle);
+    Raycast(JPH::RVec3 origin, JPH::Vec3 direction, float max_distance, BodyHandle ignore_handle);
     // `starts`/`directions` are flat XYZ triples, one per result.
     [[nodiscard]] std::expected<void, Error>
     RaycastBatch(std::span<const float> starts, std::span<const float> directions,
                  float max_distance, std::span<RayCastBatchResult> results);
     [[nodiscard]] std::expected<PhysicsShapecastHit, Error>
-    Shapecast(int shape_type, JPH_RVec3 position, JPH_Quat rotation, JPH_Vec3 sweep_direction,
+    Shapecast(int shape_type, JPH::RVec3 position, JPH::Quat rotation, JPH::Vec3 sweep_direction,
               std::span<const float, 4> size, BodyHandle ignore_handle);
 
     // --- Ragdoll bookkeeping (Ragdoll.cpp) ---

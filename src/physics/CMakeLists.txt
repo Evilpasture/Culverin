@@ -8,7 +8,6 @@ add_library(
         ContactListener.cpp
         ContactListener.hpp
         ContactEventDefinitions.hpp
-        Filters.hpp
         InternalQuery.cpp
         InternalQuery.hpp
         PhysicsParams.hpp

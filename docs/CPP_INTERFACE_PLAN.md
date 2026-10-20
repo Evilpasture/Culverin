@@ -2,7 +2,11 @@
 
 Status: **A0, naming dissolution, enum-class sweep, B1, A1, A2,
 B2(physics), A3, and B3 landed** (A3 and B3 on top of the lock-order fix
-`ee5076d`); A4 next.
+`ee5076d`), plus the `[[likely]]`/`[[unlikely]]` cleanup, which deleted
+`CPH::Python::Likely`/`Unlikely` in favour of the standard statement
+attributes. **A4 is in progress: the query layer and its filters are on
+the direct Jolt API; constraints, characters, vehicles, ragdolls and
+soft bodies remain.**
 Prerequisite: the C++23 migration
 (`docs/CPP23_MIGRATION.md`) has landed. All acceptance oracles from that
 migration apply unchanged to every phase below: full test suite at
@@ -198,6 +202,28 @@ typed values; `ConstraintSlot` holds `Ref<Constraint>`. *Deletes:*
 the per-type `CPH_CreateConstraint` setter switch in favor of
 settings structs, character/vehicle proc structs.
 
+*Landed so far — queries and filters.* The query layer no longer
+touches JoltC. `Filters.hpp` is deleted outright: its four proc tables
+existed only to reproduce Jolt's own defaults, and every
+`JPH::*Filter::ShouldCollide` already returns `true`, so "allow all"
+is now a default-constructed base class and the single-body ignore is
+`JPH::IgnoreSingleBodyFilter`. `Query.cpp` and `InternalQuery.cpp`
+call `NarrowPhaseQuery::{CastRay, CollideShape, CastShape}`,
+`BroadPhaseQuery::CollideAABox`, `BodyLockRead` and
+`BodyInterface::GetUserData` directly, and the two C overlap callbacks
+plus the shapecast collector callback are now `CollisionCollector`
+subclasses that stream into the caller's `PhysicsQueryHitBuffer`.
+That removes two or three heap-allocated JoltC filter objects per
+query. `UnifiedBodyFilter`, `CastShapeContext`, `CastShapeFilter` and
+`CastShape_ClosestCollector` are gone, and the query entry points
+(`PhysicsWorldState.hpp`) and `QueryMethods.cpp` speak `JPH::RVec3`,
+`JPH::Vec3` and `JPH::Quat` instead of the JoltC value types.
+
+Remaining A4 work: `ConstraintFactory`, `CommandBuffer`,
+`PhysicsWorldRuntime`/`PhysicsWorldCreation`, the character, vehicle,
+ragdoll and soft-body bindings, and the `JPH_BodyInterface` field
+those still read.
+
 **A5 — Remove JoltC.** First, audit the fork: `extern/JoltC` carries
 Culverin-local patches (at minimum `JPH_Init`'s trace forwarding and
 global `s_TempAllocator` with its TSan fallback — diff against
@@ -265,9 +291,10 @@ not a world; they move onto direct Jolt types in A4),
 owning Python object dies first), `FindInvalidMeshTriangle` (pure
 span scan the binding pre-checks so its error can name the bad
 triangle), and `ShapecastExecuteInternal`. Query vector parameters
-still use the JoltC `JPH_RVec3`/`JPH_Vec3` value types until A4
-converts the query implementation itself. B2 for the remaining
-subsystems rides with B4.
+still used the JoltC `JPH_RVec3`/`JPH_Vec3` value types when this
+landed; A4's query slice moved them, and `ShapecastExecuteInternal`
+with them, onto `JPH::RVec3`/`JPH::Vec3`/`JPH::Quat`. B2 for the
+remaining subsystems rides with B4.
 
 **B3 — Python boundary hygiene (landed).** `Ref` (owning RAII,
 `Py_XDECREF` in dtor) and `Borrowed` (non-owning, debug-checked
