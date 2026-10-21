@@ -694,6 +694,13 @@ std::size_t PhysicsWorld::FinalizeStep(float dt) {
     return body_count;
 }
 
+// Deliberately still on the JoltC API. This is the startup canary that raises
+// "JoltC ABI mismatch: position precision check failed" when the linked JoltC
+// disagrees with the extension it was compiled against (a JPH_REAL_IS_DOUBLE
+// mismatch between the two is otherwise silent corruption). Rewriting it
+// against JPH::BodyInterface would make it a native-to-native round-trip that
+// can never fail for the reason it exists, so it stays on the C boundary until
+// JoltC itself is dropped. It runs once per world, not on any hot path.
 int VerifyAbiAlignment(JPH_BodyInterface *body_interface) {
     const JPH::BoxShapeSettings box_settings(JPH::Vec3(1.0f, 1.0f, 1.0f), 0.0f);
     const auto shape_result = box_settings.Create();

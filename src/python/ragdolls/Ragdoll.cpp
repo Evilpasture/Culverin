@@ -6,6 +6,8 @@
 #include "physics/PhysicsSync.hpp"
 #include "physics/Ragdoll.hpp"
 
+#include <cstdint>
+
 namespace CPH::Python {
 
 // Default mass
@@ -204,31 +206,45 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
         return nullptr;
     }
 
-    PhysicsRagdollBodyDebugInfo *info =
-        body_count ? static_cast<PhysicsRagdollBodyDebugInfo *>(
-                         Allocate(static_cast<size_t>(body_count) * sizeof(*info)))
-                   : nullptr;
-    if (body_count && !info) {
+    // PhysicsRagdollBodyDebugInfo now holds Jolt's SIMD vector types, so
+    // alignof is 32, while Allocate() (PyMem_RawMalloc) only promises
+    // alignof(max_align_t). Over-allocate and hand-align, keeping the block
+    // base for Deallocate(). Stays on Allocate() rather than std::vector
+    // because the build is -fno-exceptions: a vector resize failure would
+    // std::terminate instead of returning PyErr_NoMemory().
+    constexpr std::size_t info_align = alignof(PhysicsRagdollBodyDebugInfo);
+    static_assert((info_align & (info_align - 1)) == 0, "alignment must be a power of two");
+
+    void *info_block =
+        Allocate(static_cast<size_t>(body_count) * sizeof(PhysicsRagdollBodyDebugInfo) +
+                 info_align);
+    if (body_count && !info_block) {
         Py_DECREF(list);
         return PyErr_NoMemory();
     }
+    auto *info = reinterpret_cast<PhysicsRagdollBodyDebugInfo *>(
+        (reinterpret_cast<std::uintptr_t>(info_block) + (info_align - 1)) & ~(info_align - 1));
+
     if (!self->world->physics.CopyRagdollDebugInfo(
             *self->ragdoll, {info, static_cast<size_t>(body_count)})) {
-        Deallocate(info);
+        Deallocate(info_block);
         Py_DECREF(list);
         return PyErr_Format(PyExc_RuntimeError, "Unable to read ragdoll body state");
     }
 
     for (int i = 0; i < body_count; ++i) {
         const PhysicsRagdollBodyDebugInfo *part = &info[i];
-        PyObject *dict                              = BuildDictionary(
+        // TODO(smell): `part->rotation` is fetched from Jolt on every call but
+        // never surfaced in the returned dict -- only "pos" and "vel" are.
+        // Pre-existing; left as-is to keep the Python payload unchanged.
+        PyObject *dict = BuildDictionary(
             "index", i, "pos",
-            BuildTuple(part->position.x, part->position.y, part->position.z), "vel",
-            BuildTuple(part->linear_velocity.x, part->linear_velocity.y,
-                                                            part->linear_velocity.z));
+            BuildTuple(part->position.GetX(), part->position.GetY(), part->position.GetZ()), "vel",
+            BuildTuple(part->linear_velocity.GetX(), part->linear_velocity.GetY(),
+                       part->linear_velocity.GetZ()));
 
         if (!dict) {
-            Deallocate(info);
+            Deallocate(info_block);
             Py_DECREF(list);
             return nullptr;
         }
@@ -236,7 +252,7 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
         PyList_SET_ITEM(list, i, dict);
     }
 
-    Deallocate(info);
+    Deallocate(info_block);
     return list;
 }
 

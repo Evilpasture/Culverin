@@ -15,9 +15,13 @@ index-sequence templates. **A4 is in progress: the query layer and its
 filters,
 constraints, characters, vehicles, ships, ragdolls and soft bodies are on
 the direct Jolt API, and the body-operation paths (immediate and deferred)
-are off `JPH_BodyInterface` too. What remains is the rest of the
-body-interface layer -- `PhysicsWorldRuntime`, `PhysicsWorldCreation`,
-`PhysicsWorld.cpp`, `Ragdoll.cpp` and `Constraint.cpp` -- plus `JPH_BodyID`
+are off `JPH_BodyInterface` too, and so are the ragdoll, buoyancy,
+activation, motion-type and constraint-wake paths. The only
+`JPH_BodyInterface_*` calls left anywhere are the four inside
+`VerifyAbiAlignment`, which stay on the C boundary on purpose -- that
+function is the startup canary that detects a JoltC/extension precision
+mismatch, and rewriting it natively would make it unable to fail. What
+remains is `JPH_BodyID`
 itself as the shadow buffer's storage type.** With ships done, all eight
 global proc tables are gone.
 Prerequisite: the C++23 migration

@@ -205,15 +205,17 @@ bool PhysicsWorld::CopyRagdollDebugInfo(JPH::Ragdoll &ragdoll,
         return false;
     }
 
+    // Same locking interface that `body_interface` aliases. ragdoll.GetBodyID
+    // already hands back a JPH::BodyID, so the pack/unpack round-trip through
+    // GetIndexAndSequenceNumber() is gone.
+    JPH::BodyInterface &bi = physics_system.GetBodyInterface();
+
     const std::scoped_lock shadow(shadow_lock);
     for (int i = 0; i < ragdoll_body_count; ++i) {
-        // body_interface is still a JPH_BodyInterface (the body-ID/body-interface
-        // slice is separate work), and JPH_BodyID is typedef uint32_t, so hand it
-        // the packed index-and-generation word.
-        const JPH_BodyID body_id = ragdoll.GetBodyID(i).GetIndexAndSequenceNumber();
-        JPH_BodyInterface_GetPosition(body_interface, body_id, &out_info[i].position);
-        JPH_BodyInterface_GetRotation(body_interface, body_id, &out_info[i].rotation);
-        JPH_BodyInterface_GetLinearVelocity(body_interface, body_id, &out_info[i].linear_velocity);
+        const JPH::BodyID body_id = ragdoll.GetBodyID(i);
+        out_info[i].position        = bi.GetPosition(body_id);
+        out_info[i].rotation        = bi.GetRotation(body_id);
+        out_info[i].linear_velocity = bi.GetLinearVelocity(body_id);
     }
     return true;
 }

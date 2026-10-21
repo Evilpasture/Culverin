@@ -15,9 +15,9 @@ namespace {
 /// Wakes a body whose constraint was just created, destroyed, or retargeted.
 /// Prevents bodies from floating once their joint is gone. ActivateBody is
 /// thread-safe in Jolt.
-void ActivateBody(JPH_BodyInterface *bi, JPH::Body *body) {
+void ActivateBody(JPH::BodyInterface &bi, JPH::Body *body) {
     if (body) {
-        JPH_BodyInterface_ActivateBody(bi, body->GetID().GetIndexAndSequenceNumber());
+        bi.ActivateBody(body->GetID());
     }
 }
 
@@ -182,8 +182,9 @@ void ActivateBody(JPH_BodyInterface *bi, JPH::Body *body) {
         // ActivateBody is thread-safe in Jolt.
         if (c_to_destroy->GetType() == JPH::EConstraintType::TwoBodyConstraint) {
             auto *tbc = static_cast<JPH::TwoBodyConstraint *>(c_to_destroy);
-            ActivateBody(self->physics.body_interface, tbc->GetBody1());
-            ActivateBody(self->physics.body_interface, tbc->GetBody2());
+            JPH::BodyInterface &bi = self->physics.physics_system.GetBodyInterface();
+            ActivateBody(bi, tbc->GetBody1());
+            ActivateBody(bi, tbc->GetBody2());
         }
 
         self->physics.physics_system.RemoveConstraint(c_to_destroy);
@@ -252,8 +253,9 @@ void ActivateBody(JPH_BodyInterface *bi, JPH::Body *body) {
     // 4. WAKE UP BODIES (Locked sequence)
     if (c->GetType() == JPH::EConstraintType::TwoBodyConstraint) {
         auto *tbc = static_cast<JPH::TwoBodyConstraint *>(c);
-        ActivateBody(self->physics.body_interface, tbc->GetBody1());
-        ActivateBody(self->physics.body_interface, tbc->GetBody2());
+        JPH::BodyInterface &bi = self->physics.physics_system.GetBodyInterface();
+        ActivateBody(bi, tbc->GetBody1());
+        ActivateBody(bi, tbc->GetBody2());
     }
 
     (self->physics.shadow_lock).unlock();

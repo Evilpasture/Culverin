@@ -282,7 +282,7 @@ std::expected<std::size_t, Error> PhysicsWorld::RegisterRagdollBodies(
         }
     }
 
-    JPH_BodyInterface *body_interface = this->body_interface;
+    JPH::BodyInterface &bi = physics_system.GetBodyInterface();
     PosStride *positions              = bodies.positions.data();
     PosStride *previous_positions     = bodies.prev_positions.data();
     AuxStride *rotations              = bodies.rotations.data();
@@ -290,36 +290,36 @@ std::expected<std::size_t, Error> PhysicsWorld::RegisterRagdollBodies(
     AuxStride *linear_velocities      = bodies.linear_velocities.data();
     AuxStride *angular_velocities     = bodies.angular_velocities.data();
     for (size_t i = 0; i < body_count; i++) {
-        const JPH_BodyID body_id = ragdoll->GetBodyID((int)i).GetIndexAndSequenceNumber();
+        const JPH::BodyID body_id = ragdoll->GetBodyID((int)i);
         const size_t free_index =
             (free_count).fetch_sub(1, std::memory_order::relaxed) - 1;
         const uint32_t slot = bodies.free_slots[free_index];
         body_slots[i]       = slot;
         const uint32_t dense =
             (uint32_t)(count).fetch_add(1, std::memory_order::relaxed);
-        JPH_RVec3 position;
-        JPH_Quat rotation;
-        JPH_BodyInterface_GetPosition(body_interface, body_id, &position);
-        JPH_BodyInterface_GetRotation(body_interface, body_id, &rotation);
+        const JPH::RVec3 position = bi.GetPosition(body_id);
+        const JPH::Quat rotation  = bi.GetRotation(body_id);
 
-        positions[dense]            = PosStride{position.x, position.y, position.z, 0.0};
+        positions[dense]            = PosStride{position.GetX(), position.GetY(), position.GetZ(),
+                                                0.0};
         previous_positions[dense]   = positions[dense];
-        rotations[dense]            = AuxStride{rotation.x, rotation.y, rotation.z, rotation.w};
+        rotations[dense]            = AuxStride{rotation.GetX(), rotation.GetY(), rotation.GetZ(),
+                                                rotation.GetW()};
         previous_rotations[dense]   = rotations[dense];
         linear_velocities[dense]    = AuxStride{};
         angular_velocities[dense]   = AuxStride{};
-        bodies.body_ids[dense]      = body_id;
+        bodies.body_ids[dense]      = body_id.GetIndexAndSequenceNumber();
         bodies.slot_to_dense[slot]  = dense;
         bodies.dense_to_slot[dense] = slot;
 
         const uint32_t generation =
             (bodies.generations[slot]).load(std::memory_order::relaxed);
         const BodyHandle handle   = make_handle(slot, generation);
-        const uint32_t jolt_index = (body_id & JPH::BodyID::cMaxBodyIndex);
+        const uint32_t jolt_index = body_id.GetIndex();
         if (id_to_handle_map && jolt_index < max_jolt_bodies) {
             (id_to_handle_map[jolt_index]).store(handle, std::memory_order::release);
         }
-        JPH_BodyInterface_SetUserData(body_interface, body_id, handle);
+        bi.SetUserData(body_id, handle);
         (bodies.slot_states[slot]).store(std::to_underlying(SlotState::Alive), std::memory_order::release);
         bodies.user_data[dense]    = user_data;
         bodies.categories[dense]   = category;

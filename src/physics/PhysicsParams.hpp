@@ -196,9 +196,9 @@ struct PhysicsRagdollBodyHandleInfo {
 };
 
 struct PhysicsRagdollBodyDebugInfo {
-    JPH_RVec3 position;
-    JPH_Quat rotation;
-    JPH_Vec3 linear_velocity;
+    JPH::RVec3 position;
+    JPH::Quat rotation;
+    JPH::Vec3 linear_velocity;
 };
 
 } // namespace CPH

@@ -13,11 +13,6 @@ namespace CPH {
 
 static constexpr size_t kInitialMaterialCapacity = 16;
 
-static JPH_Vec3 get_gravity(const PhysicsWorld &world) {
-    const JPH::Vec3 gravity = world.physics_system.GetGravity();
-    return {gravity.GetX(), gravity.GetY(), gravity.GetZ()};
-}
-
 bool PhysicsWorld::AttachContactListener() {
     if (!jolt_initialized) {
         return false;
@@ -28,36 +23,35 @@ bool PhysicsWorld::AttachContactListener() {
 
 void PhysicsWorld::SyncLoadedState(size_t saved_count) {
     JPH_BodyID *CPH_RESTRICT body_ids              = bodies.body_ids.data();
-    JPH_BodyInterface *CPH_RESTRICT body_interface = this->body_interface;
+    JPH::BodyInterface &bi                         = physics_system.GetBodyInterface();
     PosStride *CPH_RESTRICT positions              = bodies.positions.data();
     AuxStride *CPH_RESTRICT rotations              = bodies.rotations.data();
     AuxStride *CPH_RESTRICT linear_velocities      = bodies.linear_velocities.data();
     AuxStride *CPH_RESTRICT angular_velocities     = bodies.angular_velocities.data();
 
     for (size_t i = 0; i < saved_count; i++) {
-        const JPH_BodyID body_id = body_ids[i];
-        if (body_id == JPH::BodyID::cInvalidBodyID) {
+        if (body_ids[i] == JPH::BodyID::cInvalidBodyID) {
             continue;
         }
+        const JPH::BodyID body_id(body_ids[i]);
 
-        JPH_RVec3 position       = {positions[i].x, positions[i].y, positions[i].z};
-        JPH_Quat rotation        = {rotations[i].x, rotations[i].y, rotations[i].z, rotations[i].w};
-        JPH_Vec3 linear_velocity = {linear_velocities[i].x, linear_velocities[i].y,
-                                    linear_velocities[i].z};
-        JPH_Vec3 angular_velocity = {angular_velocities[i].x, angular_velocities[i].y,
-                                     angular_velocities[i].z};
-        JPH_BodyInterface_SetPositionAndRotation(body_interface, body_id, &position, &rotation,
-                                                 JPH_Activation_Activate);
-        JPH_BodyInterface_SetLinearVelocity(body_interface, body_id, &linear_velocity);
-        JPH_BodyInterface_SetAngularVelocity(body_interface, body_id, &angular_velocity);
+        const JPH::RVec3 position(positions[i].x, positions[i].y, positions[i].z);
+        const JPH::Quat rotation(rotations[i].x, rotations[i].y, rotations[i].z, rotations[i].w);
+        const JPH::Vec3 linear_velocity(linear_velocities[i].x, linear_velocities[i].y,
+                                        linear_velocities[i].z);
+        const JPH::Vec3 angular_velocity(angular_velocities[i].x, angular_velocities[i].y,
+                                         angular_velocities[i].z);
+        bi.SetPositionAndRotation(body_id, position, rotation, JPH::EActivation::Activate);
+        bi.SetLinearVelocity(body_id, linear_velocity);
+        bi.SetAngularVelocity(body_id, angular_velocity);
 
         const uint32_t slot = bodies.dense_to_slot[i];
         const uint32_t generation =
             (bodies.generations[slot]).load(std::memory_order::relaxed);
         const uint64_t raw_handle = make_handle(slot, generation);
-        JPH_BodyInterface_SetUserData(body_interface, body_id, raw_handle);
+        bi.SetUserData(body_id, raw_handle);
 
-        const uint32_t jolt_index = (body_id & JPH::BodyID::cMaxBodyIndex);
+        const uint32_t jolt_index = body_id.GetIndex();
         if (id_to_handle_map && jolt_index <= max_jolt_bodies) {
             (id_to_handle_map[jolt_index]).store(raw_handle, std::memory_order::relaxed);
         }
@@ -260,8 +254,16 @@ std::expected<void, Error> PhysicsWorld::SetGravity(JPH::Vec3 gravity) {
     }
 
     if (current_count > 0) {
-        JPH_BodyInterface_ActivateBodies(body_interface, bodies.body_ids.data(),
-                                         (uint32_t)current_count);
+        // JPH::BodyID is a standard-layout, trivially-copyable single-uint32
+        // wrapper, so the shadow buffer's uint32 array is layout-identical to a
+        // BodyID array. JoltC copied it into a fresh Array<BodyID> on every
+        // call; the cast drops that allocation. This becomes a plain typed
+        // pointer once body_ids is itself JPH::BodyID.
+        static_assert(sizeof(JPH::BodyID) == sizeof(JPH_BodyID));
+        static_assert(std::is_trivially_copyable_v<JPH::BodyID>);
+        physics_system.GetBodyInterface().ActivateBodies(
+            reinterpret_cast<const JPH::BodyID *>(bodies.body_ids.data()),
+            (uint32_t)current_count);
     }
     return {};
 }
@@ -396,18 +398,17 @@ PhysicsWorld::ApplyBuoyancy(BodyHandle handle, JPH_Real surface_y, float buoyanc
     }
 
     const uint32_t dense     = bodies.slot_to_dense[slot];
-    const JPH_BodyID body_id = bodies.body_ids[dense];
+    const JPH::BodyID body_id(bodies.body_ids[dense]);
     (active_queries).fetch_add(1, std::memory_order::acquire);
 
-    JPH_BodyInterface_ActivateBody(body_interface, body_id);
-    JPH_Vec3 gravity = get_gravity(*this);
-    JPH_RVec3 surface_position = {0, surface_y, 0};
-    JPH_Vec3 surface_normal    = {0, 1.0f, 0};
-    JPH_Vec3 fluid             = {fluid_velocity.GetX(), fluid_velocity.GetY(),
-                      fluid_velocity.GetZ()};
-    const bool submerged       = JPH_BodyInterface_ApplyBuoyancyImpulse(
-        body_interface, body_id, &surface_position, &surface_normal, buoyancy, linear_drag,
-        angular_drag, &fluid, &gravity, dt);
+    JPH::BodyInterface &bi        = physics_system.GetBodyInterface();
+    const JPH::Vec3 gravity       = physics_system.GetGravity();
+    const JPH::RVec3 surface_position(0, surface_y, 0);
+    const JPH::Vec3 surface_normal(0, 1.0f, 0);
+    bi.ActivateBody(body_id);
+    const bool submerged =
+        bi.ApplyBuoyancyImpulse(body_id, surface_position, surface_normal, buoyancy, linear_drag,
+                                angular_drag, fluid_velocity, gravity, dt);
     QueryEnd();
     return submerged;
 }
@@ -447,16 +448,15 @@ std::expected<void, Error> PhysicsWorld::ApplyBuoyancyBatch(
     }
 
     if (valid_count > 0) {
-        JPH_Vec3 gravity = get_gravity(*this);
-        JPH_RVec3 surface_position = {0, surface_y, 0};
-        JPH_Vec3 surface_normal    = {0, 1.0f, 0};
-        JPH_Vec3 fluid             = {fluid_velocity.GetX(), fluid_velocity.GetY(),
-                          fluid_velocity.GetZ()};
+        JPH::BodyInterface &bi        = physics_system.GetBodyInterface();
+        const JPH::Vec3 gravity       = physics_system.GetGravity();
+        const JPH::RVec3 surface_position(0, surface_y, 0);
+        const JPH::Vec3 surface_normal(0, 1.0f, 0);
         for (size_t i = 0; i < valid_count; i++) {
-            JPH_BodyInterface_ActivateBody(body_interface, body_ids[i]);
-            JPH_BodyInterface_ApplyBuoyancyImpulse(
-                body_interface, body_ids[i], &surface_position, &surface_normal, buoyancy,
-                linear_drag, angular_drag, &fluid, &gravity, dt);
+            const JPH::BodyID body_id(body_ids[i]);
+            bi.ActivateBody(body_id);
+            bi.ApplyBuoyancyImpulse(body_id, surface_position, surface_normal, buoyancy,
+                                    linear_drag, angular_drag, fluid_velocity, gravity, dt);
         }
         QueryEnd();
     }
@@ -476,9 +476,9 @@ std::expected<MotionType, Error> PhysicsWorld::GetMotionType(BodyHandle handle) 
     const uint8_t state = (bodies.slot_states[slot]).load(std::memory_order::acquire);
     if (get_slot_predicate(state, kMaskImmStandard).is_immediate) {
         const uint32_t dense     = bodies.slot_to_dense[slot];
-        const JPH_BodyID body_id = bodies.body_ids[dense];
+        const JPH::BodyID body_id(bodies.body_ids[dense]);
         return static_cast<MotionType>(
-            JPH_BodyInterface_GetMotionType(body_interface, body_id));
+            physics_system.GetBodyInterface().GetMotionType(body_id));
     }
     if (state == std::to_underlying(SlotState::PendingCreate)) {
         return std::unexpected(WorldRuntimeError::PendingCreate);
@@ -546,8 +546,8 @@ std::expected<bool, Error> PhysicsWorld::IsActive(BodyHandle handle) {
     }
 
     const uint32_t dense     = bodies.slot_to_dense[slot];
-    const JPH_BodyID body_id = bodies.body_ids[dense];
-    return JPH_BodyInterface_IsActive(body_interface, body_id);
+    const JPH::BodyID body_id(bodies.body_ids[dense]);
+    return physics_system.GetBodyInterface().IsActive(body_id);
 }
 
 std::expected<std::size_t, Error>
@@ -571,10 +571,11 @@ PhysicsWorld::GetActiveIndices(Buffer<std::uint32_t> &out_indices) {
     if (!out_indices.allocate(count)) {
         return std::unexpected(WorldRuntimeError::OutOfMemory);
     }
+    JPH::BodyInterface &bi = physics_system.GetBodyInterface();
     std::size_t active_count = 0;
     for (std::size_t i = 0; i < count; i++) {
         if (body_ids[i] != JPH::BodyID::cInvalidBodyID &&
-            JPH_BodyInterface_IsActive(body_interface, body_ids[i])) {
+            bi.IsActive(JPH::BodyID(body_ids[i]))) {
             out_indices[active_count++] = static_cast<std::uint32_t>(i);
         }
     }
