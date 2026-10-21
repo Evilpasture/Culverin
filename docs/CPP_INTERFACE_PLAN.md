@@ -272,11 +272,67 @@ around a raw pointer, and `DegreesToRadians` replaces the hand-rolled
 `MathInterpolateCharacterTransform` takes `const JPH::RVec3 &` and
 `const JPH::Quat &`.
 
-Remaining A4 work: `PhysicsWorldRuntime`/`PhysicsWorldCreation`, the
-vehicle, ragdoll and soft-body bindings, and the `JPH_BodyInterface`
-field those still read. `Vehicle.cpp` still holds two
-`JPH_Constraint_Destroy` calls on the vehicle constraint itself; they
-move with the vehicle slice.
+*Landed so far — wheeled and tracked vehicles.* `Vehicle.cpp`,
+`TrackedVehicle.cpp` and `Vehicle.hpp` no longer touch JoltC: 238 JoltC
+lines out, net −150. The largest win is lifetime, not syntax.
+`VehicleResources` and its `CleanupVehicleResources` teardown walk are
+gone entirely, along with five ownership pointers on `VehicleObject`.
+They existed only to free the settings objects later, but nothing needs
+to: `Wheel` holds a `RefConst<WheelSettings>`, so wheel settings live as
+long as the constraint does, and
+`WheeledVehicleControllerSettings`/`TrackedVehicleControllerSettings`
+hold `VehicleEngineSettings` and `VehicleTransmissionSettings` *by
+value*, copied at construction. `LinearCurve` is likewise a value type,
+so the shared friction/torque curves become locals. Everything is
+`Ref<>`-counted and released on scope exit, which also collapses the
+`goto jolt_fail` unwind into one `jolt_created_fail` path that only has
+to undo `AddConstraint`/`AddStepListener`. `AsPhysicsStepListener`
+disappears because `VehicleConstraint` already derives from
+`PhysicsStepListener`. Both `const_cast<JPH_VehicleTransmission *>`
+calls go away: `GetController()` and `GetTransmission()` have non-const
+overloads, and `VehicleTransmission` derives from
+`VehicleTransmissionSettings`, which is how `SetMode` ever worked — it
+writes `mMode` on the runtime object. The two wheel-transform getters
+shrink considerably: `RMat44::GetQuaternion()` already rotates only the
+3×3 part, which is what the code was doing by hand (copy three columns
+into a `Mat44`, zero the translation, convert), and `alignas(alignof(...))`
+out-parameter staging goes with it.
+
+Three pre-existing defects were found and **deliberately preserved**,
+each marked `TODO` at the site:
+
+- `create_vehicle(transmission=...)` has never had any effect on a
+  wheeled vehicle. The code builds a standalone transmission settings
+  object, configures mode/clutch/gear ratios/differential ratio on it,
+  stores it on the wrapper, and only ever frees it — it is never copied
+  into the controller settings (joltc's
+  `JPH_WheeledVehicleControllerSettings_SetTransmission` exists and is
+  never called). The controller therefore runs on Jolt's defaults: Auto
+  mode and ratios `{2.66, 1.78, 1.3, 1.0, 0.74}`, not the six built here.
+  Wiring it up is one assignment and a behaviour change. The tracked
+  path does *not* have this bug — it writes straight through to
+  `mTransmission`.
+- `WorldCreateVehicle` takes a world reference with `Py_NewRef` and then
+  calls `Py_INCREF(self)` again, while `VehicleDealloc` releases one.
+  Each wheeled vehicle leaks a world reference; the tracked constructor
+  does not do this.
+- `TrackedVehicleController::SetDriverInput` asserts
+  `inLeftRatio != 0 && inRightRatio != 0`, but `set_tank_input(0, 0, 0)`
+  reaches it. Release builds compile the assert out, so it has never
+  fired.
+
+Also preserved and marked: `kVehicleCollisionTesterScale = 2.0f` is
+named "scale" but is passed as the tester's max slope angle in radians
+(~114.6°, i.e. effectively unconstrained); steering is inferred from the
+sign of a wheel's local Z, so a −Z layout gets no steering wheels;
+`mMaxSteerAngle` is written twice in `create_single_wheel`; and
+`pack_transform` leaks its seven `PyFloat_FromDouble` references because
+`PyTuple_Pack` already increfs.
+
+Remaining A4 work: `Ship.cpp` (the last global proc table,
+`kShipListenerProcs`), `PhysicsWorldRuntime`/`PhysicsWorldCreation`, the
+ragdoll and soft-body bindings, and the `JPH_BodyInterface` field those
+still read.
 
 **A5 — Remove JoltC.** First, audit the fork: `extern/JoltC` carries
 Culverin-local patches (at minimum `JPH_Init`'s trace forwarding and

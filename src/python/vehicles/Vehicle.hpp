@@ -1,6 +1,8 @@
 #pragma once
-#include "joltc.h"
+#include "jolt/Jolt.hpp"
 #include "vehicles/VehicleParsers.hpp"
+#include <Jolt/Physics/Vehicle/VehicleCollisionTester.h>
+#include <Jolt/Physics/Vehicle/VehicleConstraint.h>
 #include <Python.h>
 
 namespace CPH::Python {
@@ -9,28 +11,19 @@ constexpr uint32_t kLayerStatic  = 1;
 constexpr uint32_t kLayerDynamic = 2;
 constexpr uint32_t kLayerSpecial = 3;
 
-struct VehicleResources {
-    JPH_LinearCurve *f_curve;
-    JPH_LinearCurve *t_curve;
-    JPH_WheelSettings **w_settings;
-    JPH_WheeledVehicleControllerSettings *v_ctrl;
-    JPH_VehicleTransmissionSettings *v_trans_set;
-    JPH_VehicleCollisionTesterRay *tester;
-    JPH_VehicleConstraint *j_veh;
-    bool is_added_to_world;
-};
-
+// Wheel, engine and transmission settings are deliberately NOT stored here.
+// WheelSettings are held by the constraint itself (Wheel keeps a
+// RefConst<WheelSettings>), and the engine/transmission settings are copied by
+// value into the controller at construction, so nothing needs to be kept alive
+// past WorldCreateVehicle. The five ownership pointers this struct used to
+// carry existed only to free those objects during teardown.
 struct VehicleObject {
-    PyObject_HEAD JPH_VehicleConstraint *vehicle;
-    JPH_VehicleCollisionTester *tester;
-    struct PhysicsWorldObject *world;
+    PyObject_HEAD JPH::VehicleConstraint *vehicle;
 
-    // Ownership tracking for cleanup
-    JPH_WheelSettings **wheel_settings;
-    JPH_VehicleControllerSettings *controller_settings;
-    JPH_VehicleTransmissionSettings *transmission_settings; // NEW: Keep alive
-    JPH_LinearCurve *friction_curve;
-    JPH_LinearCurve *torque_curve;
+    // Creation reference to the collision tester. VehicleConstraint keeps its
+    // own RefConst, so this is dropped with Release() during cleanup.
+    JPH::VehicleCollisionTester *tester;
+    struct PhysicsWorldObject *world;
     CPH::Python::VehicleParsers *parsers;
 
     uint32_t num_wheels;

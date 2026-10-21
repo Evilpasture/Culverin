@@ -5,6 +5,12 @@
 #include "bindings/parsing/Parsers.hpp"
 #include "core/Compiler.hpp"
 #include "physics/PhysicsSync.hpp"
+#include <Jolt/Physics/Body/Body.h>
+#include <Jolt/Physics/Body/BodyInterface.h>
+#include <Jolt/Physics/Body/BodyLock.h>
+#include <Jolt/Physics/Vehicle/TrackedVehicleController.h>
+#include <Jolt/Physics/Vehicle/VehicleCollisionTester.h>
+#include <Jolt/Physics/Vehicle/VehicleTrack.h>
 #include <math.h>
 
 namespace CPH::Python {
@@ -43,7 +49,7 @@ static constexpr float kTrackedThrottleKickstartThreshold = 0.01f;
 
 // --- Tracked Vehicle Implementation ---
 
-static JPH_WheelSettings *create_track_wheel(PyObject *w_dict) {
+static JPH::Ref<JPH::WheelSettingsTV> create_track_wheel(PyObject *w_dict) {
     Vec3f pos;
     if (ParseResult parsed = parse_vec3_into(PyDict_GetItemString(w_dict, "pos"), pos);
         !parsed) {
@@ -61,60 +67,47 @@ static JPH_WheelSettings *create_track_wheel(PyObject *w_dict) {
     float freq = CPH::Python::GetAttribute(w_dict, "spring_freq", kTrackedSpringFreqDefault);
     float damp = CPH::Python::GetAttribute(w_dict, "spring_damp", kTrackedSpringDampDefault);
 
-    JPH_WheelSettingsTV *w = JPH_WheelSettingsTV_Create();
+    JPH::Ref<JPH::WheelSettingsTV> w = new JPH::WheelSettingsTV;
 
-    JPH_Vec3 wheel_position{pos.x, pos.y, pos.z};
-    JPH_WheelSettings_SetPosition(reinterpret_cast<JPH_WheelSettings *>(w), &wheel_position);
-    JPH_WheelSettings_SetRadius(reinterpret_cast<JPH_WheelSettings *>(w), radius);
-    JPH_WheelSettings_SetWidth(reinterpret_cast<JPH_WheelSettings *>(w), width);
+    w->mPosition            = JPH::Vec3(pos.x, pos.y, pos.z);
+    w->mRadius              = radius;
+    w->mWidth               = width;
+    w->mSuspensionMinLength = kTrackedSuspensionMinLength;
+    w->mSuspensionMaxLength = suspension_len;
+    w->mSuspensionSpring =
+        JPH::SpringSettings(JPH::ESpringMode::FrequencyAndDamping, freq, damp);
 
-    JPH_WheelSettings_SetSuspensionMinLength(reinterpret_cast<JPH_WheelSettings *>(w),
-                                             kTrackedSuspensionMinLength);
-    JPH_WheelSettings_SetSuspensionMaxLength(reinterpret_cast<JPH_WheelSettings *>(w),
-                                             suspension_len);
+    w->mLongitudinalFriction = friction;
+    w->mLateralFriction      = friction;
 
-    JPH_SpringSettings spring = {JPH_SpringMode_FrequencyAndDamping, freq, damp};
-    JPH_WheelSettings_SetSuspensionSpring(reinterpret_cast<JPH_WheelSettings *>(w), &spring);
-
-    JPH_WheelSettingsTV_SetLongitudinalFriction(w, friction);
-    JPH_WheelSettingsTV_SetLateralFriction(w, friction);
-
-    return reinterpret_cast<JPH_WheelSettings *>(w);
+    return w;
 }
 
 // Helper 1: Setup Engine, Transmission, and Controller settings
-static JPH_TrackedVehicleControllerSettings *
-init_tracked_controller_settings(TrackedEngineConfig config,
-                                 JPH_VehicleTransmissionSettings **out_trans) {
+static JPH::Ref<JPH::TrackedVehicleControllerSettings>
+init_tracked_controller_settings(TrackedEngineConfig config) {
 
-    auto t_ctrl = JPH_TrackedVehicleControllerSettings_Create();
+    JPH::Ref<JPH::TrackedVehicleControllerSettings> t_ctrl =
+        new JPH::TrackedVehicleControllerSettings;
 
-    JPH_VehicleEngineSettings eng;
-    JPH_VehicleEngineSettings_Init(&eng);
+    t_ctrl->mEngine.mMaxTorque = config.torque;
+    t_ctrl->mEngine.mMaxRPM    = config.max_rpm;
+    t_ctrl->mEngine.mMinRPM    = config.min_rpm;
 
-    eng.maxTorque = config.torque;
-    eng.maxRPM    = config.max_rpm;
-    eng.minRPM    = config.min_rpm;
+    // VehicleTransmissionSettings is a member of the controller settings, so this
+    // is written straight through -- unlike the wheeled path, a tracked vehicle's
+    // transmission really does reach the controller.
+    t_ctrl->mTransmission.mMode = JPH::ETransmissionMode::Auto;
 
-    JPH_TrackedVehicleControllerSettings_SetEngine(t_ctrl, &eng);
+    const float gears[] = {kTrackedGearRatio1, kTrackedGearRatio2, kTrackedGearRatio3,
+                           kTrackedGearRatio4};
+    t_ctrl->mTransmission.mGearRatios.assign(gears, gears + 4);
+    const float reverse[] = {kTrackedReverseGearRatio};
+    t_ctrl->mTransmission.mReverseGearRatios.assign(reverse, reverse + 1);
 
-    auto trans = JPH_VehicleTransmissionSettings_Create();
-    JPH_VehicleTransmissionSettings_SetMode(trans, JPH_TransmissionMode_Auto);
-
-    float gears[] = {kTrackedGearRatio1, kTrackedGearRatio2, kTrackedGearRatio3,
-                     kTrackedGearRatio4};
-    JPH_VehicleTransmissionSettings_SetGearRatios(trans, gears, 4);
-    float reverse[] = {kTrackedReverseGearRatio};
-    JPH_VehicleTransmissionSettings_SetReverseGearRatios(trans, reverse, 1);
-
-    JPH_TrackedVehicleControllerSettings_SetTransmission(t_ctrl, trans);
-    *out_trans = trans;
     return t_ctrl;
 }
 int InitVehicleParsers(VehicleObject *obj);
-
-extern void CleanupVehicleResources(VehicleResources *r, uint32_t num_wheels,
-                                        PhysicsWorldObject *self);
 
 // Orchestrator
 [[nodiscard]] PyObject * WorldCreateTrackedVehicle(PhysicsWorldObject *self,
@@ -166,34 +159,30 @@ extern void CleanupVehicleResources(VehicleResources *r, uint32_t num_wheels,
     JPH_BodyID chassis_bid = self->physics.bodies.body_ids[self->physics.bodies.slot_to_dense[slot]];
     (self->physics.shadow_lock).unlock();
 
-    // --- 3. PRE-JOLT RESOURCE ALLOCATION (Unchanged) ---
-    VehicleResources r{};
+    // --- 3. PRE-JOLT RESOURCE ALLOCATION ---
+    // All RefCounted, and declared before any goto: crossing the initialization
+    // of a Ref<> on a forward jump is ill-formed.
     auto num_wheels = static_cast<uint32_t>(PyList_Size(py_wheels));
     TrackData tracks[2];
     memset(tracks, 0, sizeof(tracks));
-    int num_tracks                          = 0;
-    bool jolt_locked                        = false;
-    PyThreadState *_save                    = nullptr;
-    const JPH_BodyLockInterface *lock_iface = nullptr;
-    JPH_BodyLockWrite lock{};
+    int num_tracks       = 0;
+    PyThreadState *_save = nullptr;
     TrackedEngineConfig eng_cfg{};
-    JPH_VehicleTransmissionSettings *v_trans     = nullptr;
-    JPH_TrackedVehicleControllerSettings *t_ctrl = nullptr;
-    JPH_VehicleConstraintSettings v_set{};
+    JPH::Ref<JPH::TrackedVehicleControllerSettings> t_ctrl;
+    JPH::VehicleConstraintSettings v_set;
+    JPH::Ref<JPH::VehicleConstraint> j_veh;
+    JPH::Ref<JPH::VehicleCollisionTester> tester;
     VehicleObject *obj = nullptr;
-    JPH_Vec3 tester_up{0, 1.0f, 0};
 
-    r.f_curve = JPH_LinearCurve_Create();
-    JPH_LinearCurve_AddPoint(r.f_curve, 0.0f, 1.0f);
-    JPH_LinearCurve_AddPoint(r.f_curve, 1.0f, 1.0f);
-
-    r.w_settings =
-        static_cast<JPH_WheelSettings **>(AllocateZeroed(num_wheels, sizeof(JPH_WheelSettings *)));
+    // WheelSettingsTV carries friction as a plain float, so there is no
+    // LinearCurve to build here.
+    v_set.mWheels.reserve(num_wheels);
     for (uint32_t i = 0; i < num_wheels; i++) {
-        r.w_settings[i] = create_track_wheel(PyList_GetItem(py_wheels, i));
-        if (!r.w_settings[i]) {
+        JPH::Ref<JPH::WheelSettingsTV> wheel = create_track_wheel(PyList_GetItem(py_wheels, i));
+        if (!wheel) {
             goto python_fail;
         }
+        v_set.mWheels.push_back(wheel.GetPtr());
     }
 
     {
@@ -206,114 +195,85 @@ extern void CleanupVehicleResources(VehicleResources *r, uint32_t num_wheels,
         num_tracks = parsed_tracks->count;
     }
 
-    // --- 4. JOLT COMMIT (No GIL - Unchanged) ---
+    // --- 4. JOLT COMMIT (No GIL) ---
     Py_UNBLOCK_THREADS;
 
     (self->physics.jph_trampoline_lock).lock();
-    jolt_locked = true;
+    {
+        const JPH::BodyLockInterface &lock_iface =
+            self->physics.physics_system.GetBodyLockInterface();
+        const JPH::BodyLockWrite lock(lock_iface, JPH::BodyID(chassis_bid));
 
-    lock_iface = reinterpret_cast<const JPH_BodyLockInterface *>(
-        &self->physics.physics_system.GetBodyLockInterface());
-    JPH_BodyLockInterface_LockWrite(lock_iface, chassis_bid, &lock);
+        if (CPH_UNLIKELY(!lock.Succeeded())) {
+            (self->physics.jph_trampoline_lock).unlock();
+            Py_BLOCK_THREADS;
+            goto python_fail;
+        }
 
-    if (CPH_UNLIKELY(!lock.body)) {
-        goto jolt_fail;
+        eng_cfg = {.torque = max_torque, .max_rpm = max_rpm, .min_rpm = min_rpm};
+        t_ctrl  = init_tracked_controller_settings(eng_cfg);
+
+        // VehicleTrackSettings::mWheels is an Array, so the parsed index buffers
+        // are copied in and the temporaries can go straight back.
+        for (int t = 0; t < num_tracks; t++) {
+            JPH::VehicleTrackSettings &track_set = t_ctrl->mTracks[static_cast<size_t>(t)];
+            track_set.mWheels.assign(tracks[t].indices, tracks[t].indices + tracks[t].count);
+            track_set.mDrivenWheel = tracks[t].driven_idx;
+        }
+
+        v_set.mController = t_ctrl;
+        j_veh             = new JPH::VehicleConstraint(lock.GetBody(), v_set);
+
+        tester = new JPH::VehicleCollisionTesterRay(
+            kTrackedLayerDrivable, JPH::Vec3(0, 1.0f, 0), kTrackedCollisionTesterScale);
+
+        j_veh->SetVehicleCollisionTester(tester);
+        self->physics.physics_system.AddConstraint(j_veh);
+        // VehicleConstraint derives from PhysicsStepListener, so no
+        // AsPhysicsStepListener() trampoline is needed.
+        self->physics.physics_system.AddStepListener(j_veh);
     }
-
-    eng_cfg       = {.torque = max_torque, .max_rpm = max_rpm, .min_rpm = min_rpm};
-    t_ctrl        = init_tracked_controller_settings(eng_cfg, &v_trans);
-    r.v_ctrl      = reinterpret_cast<JPH_WheeledVehicleControllerSettings *>(t_ctrl);
-    r.v_trans_set = v_trans;
-
-    for (int t = 0; t < num_tracks; t++) {
-        JPH_VehicleTrackSettings track_set;
-        JPH_VehicleTrackSettings_Init(&track_set);
-        track_set.wheels      = tracks[t].indices;
-        track_set.wheelsCount = tracks[t].count;
-        track_set.drivenWheel = tracks[t].driven_idx;
-        JPH_TrackedVehicleControllerSettings_SetTrack(t_ctrl, static_cast<uint32_t>(t), &track_set);
-    }
-
-    JPH_VehicleConstraintSettings_Init(&v_set);
-    v_set.wheelsCount = num_wheels;
-    v_set.wheels      = r.w_settings;
-    v_set.controller  = reinterpret_cast<JPH_VehicleControllerSettings *>(t_ctrl);
-
-    r.j_veh = JPH_VehicleConstraint_Create(lock.body, &v_set);
-    if (!r.j_veh) {
-        goto jolt_fail;
-    }
-
-    r.tester = JPH_VehicleCollisionTesterRay_Create(kTrackedLayerDrivable, &tester_up,
-                                                    kTrackedCollisionTesterScale);
-    if (!r.tester) {
-        goto jolt_fail;
-    }
-
-    JPH_VehicleConstraint_SetVehicleCollisionTester(
-        r.j_veh, reinterpret_cast<JPH_VehicleCollisionTester *>(r.tester));
-    self->physics.physics_system.AddConstraint(reinterpret_cast<JPH::Constraint *>(r.j_veh));
-    self->physics.physics_system.AddStepListener(reinterpret_cast<JPH::PhysicsStepListener *>(
-        JPH_VehicleConstraint_AsPhysicsStepListener(r.j_veh)));
-    r.is_added_to_world = true;
-
-    JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
     (self->physics.jph_trampoline_lock).unlock();
-    jolt_locked = false;
     Py_BLOCK_THREADS;
 
-    // --- 5. CLEANUP & WRAP (Unchanged) ---
+    // --- 5. CLEANUP & WRAP ---
     for (int t = 0; t < num_tracks; t++) {
         Deallocate(tracks[t].indices);
     }
+    num_tracks = 0;
 
     obj = PyObject_GC_New(VehicleObject, reinterpret_cast<PyTypeObject *>(st->VehicleType));
     if (!obj) {
-        (self->physics.shadow_lock).lock();
-        CleanupVehicleResources(&r, num_wheels, self);
-        (self->physics.shadow_lock).unlock();
-        return nullptr;
+        goto jolt_created_fail;
     }
 
     if (InitVehicleParsers(obj) < 0) {
-        (self->physics.shadow_lock).lock();
-        CleanupVehicleResources(&r, num_wheels, self);
-        (self->physics.shadow_lock).unlock();
         Py_DECREF(obj);
-        return nullptr;
+        goto jolt_created_fail;
     }
 
-    obj->vehicle               = r.j_veh;
-    obj->tester                = reinterpret_cast<JPH_VehicleCollisionTester *>(r.tester);
-    obj->world                 = reinterpret_cast<PhysicsWorldObject *>(Py_NewRef(self));
-    obj->num_wheels            = num_wheels;
-    obj->wheel_settings        = r.w_settings;
-    obj->controller_settings   = reinterpret_cast<JPH_VehicleControllerSettings *>(t_ctrl);
-    obj->transmission_settings = r.v_trans_set;
-    obj->friction_curve        = r.f_curve;
-    obj->torque_curve          = nullptr;
+    obj->vehicle    = j_veh.GetPtr();
+    obj->tester     = tester.GetPtr();
+    obj->world      = reinterpret_cast<PhysicsWorldObject *>(Py_NewRef(self));
+    obj->num_wheels = num_wheels;
+
+    // Hand the creation references over to the wrapper; it releases them.
+    j_veh  = nullptr;
+    tester = nullptr;
 
     PyObject_GC_Track(reinterpret_cast<PyObject *>(obj));
     return reinterpret_cast<PyObject *>(obj);
 
-jolt_fail:
-    if (lock.body) {
-        JPH_BodyLockInterface_UnlockWrite(lock_iface, &lock);
-    }
-    if (jolt_locked) {
-        (self->physics.jph_trampoline_lock).unlock();
-    }
-    Py_BLOCK_THREADS;
+jolt_created_fail:
+    (self->physics.shadow_lock).lock();
+    self->physics.physics_system.RemoveStepListener(j_veh);
+    self->physics.physics_system.RemoveConstraint(j_veh);
+    (self->physics.shadow_lock).unlock();
 
 python_fail:
     for (int t = 0; t < num_tracks; t++) {
-        if (tracks[t].indices) {
-            Deallocate(tracks[t].indices);
-        }
+        Deallocate(tracks[t].indices);
     }
-    (self->physics.shadow_lock).lock();
-    CleanupVehicleResources(&r, num_wheels, self);
-    (self->physics.shadow_lock).unlock();
     return PyErr_Format(PyExc_RuntimeError, "Tracked vehicle creation failed");
 }
 
@@ -343,16 +303,15 @@ python_fail:
     (self->world->physics.shadow_lock).lock();
     BlockUntilNotStepping(self->world);
 
-    auto t_ctrl = reinterpret_cast<JPH_TrackedVehicleController *>(
-        JPH_VehicleConstraint_GetController(self->vehicle));
-    JPH_BodyID bid = JPH_Body_GetID(JPH_VehicleConstraint_GetVehicleBody(self->vehicle));
+    auto *t_ctrl = static_cast<JPH::TrackedVehicleController *>(self->vehicle->GetController());
+    const JPH::BodyID bid = self->vehicle->GetVehicleBody()->GetID();
 
     // Wake up the tank to process inputs
-    JPH_BodyInterface_ActivateBody(self->world->physics.body_interface, bid);
+    self->world->physics.physics_system.GetBodyInterface().ActivateBody(bid);
 
-    auto trans =
-        const_cast<JPH_VehicleTransmission *>(JPH_TrackedVehicleController_GetTransmission(t_ctrl));
-    int gear = JPH_VehicleTransmission_GetCurrentGear(trans);
+    // GetController() has a non-const overload, so no const_cast is needed.
+    JPH::VehicleTransmission &trans = t_ctrl->GetTransmission();
+    const int gear                  = trans.GetCurrentGear();
 
     // 3. TANK DRIVE LOGIC
     // Throttle for a tracked vehicle is typically the max absolute power requested from either side
@@ -361,17 +320,22 @@ python_fail:
     // Simple Kickstart Logic: Auto-shift from Neutral to Gear 1 when throttle is applied
     if (throttle > kTrackedThrottleKickstartThreshold) {
         if (gear == 0) {
-            JPH_VehicleTransmission_Set(trans, 1, 1.0f);
+            trans.Set(1, 1.0f);
         }
     } else {
         // Force Neutral when no input is detected to prevent "crawling"
         if (gear != 0) {
-            JPH_VehicleTransmission_Set(trans, 0, 0.0f);
+            trans.Set(0, 0.0f);
         }
     }
 
     // 4. Final Application
-    JPH_TrackedVehicleController_SetDriverInput(t_ctrl, throttle, left, right, brake);
+    // TODO(smell): TrackedVehicleController::SetDriverInput asserts
+    // inLeftRatio != 0 && inRightRatio != 0, but set_tank_input(0, 0, 0) is a
+    // perfectly reasonable Python call and reaches this line. Release builds
+    // compile the assert out, so it has never fired; preserved as-is rather than
+    // silently clamping.
+    t_ctrl->SetDriverInput(throttle, left, right, brake);
 
     (self->world->physics.shadow_lock).unlock();
     Py_RETURN_NONE;
