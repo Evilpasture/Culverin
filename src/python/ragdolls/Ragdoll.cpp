@@ -107,6 +107,11 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
         return nullptr;
     }
 
+    // TODO(smell): a ragdoll object cannot be built without both of these, so
+    // this branch is unreachable unless construction half-failed -- and if it
+    // ever is reached it reports success by returning None, which is the one
+    // place in this API that treats a missing native object as a non-error.
+    // get_body_handles and get_debug_info carry the same early return.
     if (!self->ragdoll || !self->world) [[unlikely]] {
         Py_RETURN_NONE;
     }
@@ -366,11 +371,13 @@ void RagdollDealloc(RagdollObject *self) {
     JPH::RVec3 position = JPH::RVec3::sZero();
     if (py_pos && py_pos != Py_None) {
         PosStride p_stride = {};
-        // Preserved quirk: a malformed `pos` is not fatal here — the position
-        // is simply left unset and the call carries on, *with the exception
-        // still pending* (CPython then reports the NULL/exception-set
-        // mismatch). That is the pre-B3 behaviour verbatim; the pending error
-        // has to be reinstated because ParseError owns it now.
+        // TODO(bug): a malformed `pos` is not fatal here -- the position is
+        // simply left unset and the call carries on *with the exception still
+        // pending*, so CPython reports the NULL/exception-set mismatch at the
+        // frame boundary rather than this call returning NULL. That is the
+        // pre-B3 behaviour verbatim; the pending error has to be reinstated
+        // because ParseError owns it now. Returning nullptr here is the fix,
+        // and it is a behaviour change: the part would no longer be added.
         const ParseResult parsed_pos = ParseVec3Into(py_pos, p_stride);
         if (parsed_pos) {
             position     = JPH::RVec3(p_stride.x, p_stride.y, p_stride.z);

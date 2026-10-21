@@ -146,6 +146,12 @@ template <std::size_t N> struct FixedString {
     [[nodiscard]] constexpr const char *c_str() const noexcept { return value; }
 };
 
+// TODO(smell): `Arg` carries the name and the required flag but not the
+// default value. Every call site sets its default on its own local before
+// `Parse`, and a missing optional argument leaves the target untouched -- so
+// no generic wrapper can reproduce a method with defaults, which is why
+// Thunk.hpp is limited to all-required parsers and why the wide parsers keep
+// their hand-written locals. Giving `Arg` a default value is the fix.
 template <FixedString Name, typename T, bool Required = false> struct Arg {
     using ValueType = T;
 

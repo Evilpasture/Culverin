@@ -31,6 +31,12 @@ void SyncAndFlushInternal(PhysicsWorldObject *self);
 
 // Validate a raw handle against the shadow state. On failure the shadow lock
 // is released and ValueError is raised; the caller must return nullptr.
+//
+// TODO(smell): the helper releases a lock it never took, so every caller has
+// to hold shadow_lock before calling it and nothing verifies that. A caller
+// that validates without the lock unlocks an unowned mutex (UB). The fix is
+// for the caller's scoped lock to own the release, not for the validator to
+// reach into it.
 [[nodiscard]] static inline std::optional<std::uint32_t> ValidateHandle(PhysicsWorldObject *self,
                                                                         uint64_t h_raw) {
     const std::optional<std::uint32_t> slot =

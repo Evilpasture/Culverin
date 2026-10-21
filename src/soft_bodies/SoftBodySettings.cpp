@@ -74,6 +74,10 @@ std::expected<void, Error> SoftBodySettings::AddFaces(std::span<const std::uint3
         *out_bad_face = 0;
     }
 
+    // TODO(bug): `materials` is indexed by face, so a non-empty span shorter
+    // than face_count reads past its end. The Python binding rejects a
+    // mismatch and is the only caller, so this is unreachable today; it is a
+    // precondition this API states nowhere and checks nowhere.
     constexpr std::size_t kStride     = 3;
     const std::size_t     face_count  = indices.size() / kStride;
     const std::uint32_t   vertex_count_now = vertex_count();

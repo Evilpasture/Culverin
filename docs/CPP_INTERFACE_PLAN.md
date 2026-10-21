@@ -957,6 +957,31 @@ The `culverin_native_ecs`, `culverin_native_vehicles`,
 `culverin_core`, and `culverin_native_physics` no longer links
 `culverin_native_soft_bodies` at all — the dependency runs one way.
 
+*Bug markers added after the fact.* A pass over the findings of this whole
+migration added `TODO(bug)` / `TODO(smell)` markers wherever a preserved
+behaviour had been written down in prose but not flagged in the source. Seven
+were missing, all now marked at the site:
+
+- `RagdollSettingsAddPart` carries on with a *pending* exception when `pos`
+  is malformed (`TODO(bug)`; the old comment said "preserved quirk" but not
+  that it is a CPython contract violation).
+- `drive_to_pose` (and the same early return in `get_body_handles` /
+  `get_debug_info`) reports success with `None` for a ragdoll whose native
+  object is missing (`TODO(smell)`).
+- The two divergent "modified after optimize" strings in the soft-body
+  binding had a comment but no marker (`TODO(smell)`).
+- `add_pinned_vertex`'s stated reason for being a no-op died with JoltC; the
+  array is writable now (`TODO(smell)`).
+- `CPH::SoftBodySettings::AddFaces` indexes `materials` by face without stating
+  that a non-empty span must be exactly `face_count` long (`TODO(bug)`,
+  unreachable from Python because the binding checks).
+- `Arg` carries no default value, which is what limits `Thunk.hpp` to
+  all-required parsers (`TODO(smell)`).
+- `ValidateHandle` releases a lock it never took (`TODO(smell)`).
+
+Nothing was fixed in that pass: each marker is a behaviour change waiting for
+a decision, and the gates stayed where they were.
+
 ## Sequencing, gates, risks
 
 Order: **A0 → naming dissolution → B1 → A1 → A2 → B2(physics) → A3

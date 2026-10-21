@@ -15,9 +15,12 @@ namespace CPH::Python {
 
 namespace {
 
-// The two "modified after optimize" diagnostics have always differed between
-// add_vertex/add_face/add_faces and add_vertices. They are raised here so the
-// strings stay put.
+// TODO(smell): the two "modified after optimize" diagnostics have always
+// differed -- add_vertex/add_face/add_faces say "Cannot modify settings after
+// optimize()" and add_vertices says "Cannot modify after optimize()" -- and
+// nothing in the history says why. They live in named constants so the
+// difference cannot drift by accident; unifying them is user-visible and
+// needs a deprecation, not a drive-by edit.
 constexpr const char *kOptimizedMessageSingle = "Cannot modify settings after optimize()";
 constexpr const char *kOptimizedMessageBatch  = "Cannot modify after optimize()";
 
@@ -306,6 +309,12 @@ void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
  * @deprecated Use add_vertices with an inverse mass of 0.0 instead.
  * This method is now a no-op because the underlying Jolt wrapper does not
  * support post-insertion vertex modification.
+ *
+ * TODO(smell): that reason died with JoltC. The settings are a native
+ * CPH::SoftBodySettings now and the vertex array is writable
+ * (mVertices[index].mInvMass = 0 is the pin), so the no-op is kept only
+ * because making it work would contradict the DeprecationWarning this same
+ * function raises -- a decision for whoever owns the API, not a bug fix.
  */
 [[gnu::deprecated("Use add_vertices with inv_mass=0.0 instead")]]
 [[nodiscard]] PyObject *
