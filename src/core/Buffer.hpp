@@ -13,6 +13,31 @@
 // A Buffer is fixed-capacity; growth is an explicit reallocate() so the
 // failure case stays visible at the call site. Like std::unique_ptr,
 // a const Buffer still yields mutable elements through data().
+//
+// Why not JPH::Array<T> either? Same two problems, and they were measured
+// rather than assumed. JPH::Array is NOT std::vector here -- Jolt only
+// aliases it to std::vector under JPH_USE_STD_VECTOR, which this build does
+// not define, so it is Jolt's hand-rolled container ("No exception safety"
+// per its own header).
+//
+//   1. It has no failure channel at all. Array::reallocate() assigns
+//      mElements = ptr with no null check, so a failed resize() RETURNS
+//      SUCCESSFULLY with size() == the requested count and data() == nullptr.
+//      Measured with the allocation hooks installed: resize(1 << 48) reports
+//      size() 281474976710656 backed by a null pointer. Every later element
+//      access is a null dereference and nothing upstream can detect it.
+//      Buffer::allocate() returns false and leaves the buffer empty.
+//   2. It cannot express over-alignment. STLAllocator only aligns to
+//      alignof(T), and needs_aligned_allocate is false unless
+//      alignof(T) > JPH_DEFAULT_ALLOCATE_ALIGNMENT (16). PosStride has
+//      alignof 8, so JPH::Array<PosStride> comes back 16-byte aligned --
+//      measured -- while the seven Buffer<T, kAvxAlignment> shadow buffers
+//      (positions, prev_positions, rotations, prev_rotations,
+//      linear_velocities, angular_velocities, soft-body vertices) need 32.
+//
+// JPH::Array stays correct at the Jolt API boundary, where Jolt hands us one
+// or expects one back (SoftBodySharedSettings, GetVertices, mGearRatios).
+// What it cannot be is this project's owning storage.
 
 #include <cstddef>
 #include <memory>
