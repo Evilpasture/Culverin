@@ -29,25 +29,6 @@
 #error "Culverin requires JPH_OBJECT_LAYER_BITS=32 (ObjectLayer is uint32 in handles/settings)."
 #endif
 
-// --- MSVC ABI prelude: pin the narrow-ctype declaration set ---------------
-// MSVC's <cctype> is nothing but `using _CSTD isalnum; ...` — it projects the
-// C library's character names out of the global namespace and does not declare
-// them itself. UCRT's <ctype.h> declares them under `#if !defined __midl &&
-// !defined RC_INVOKED`, behind a guard that is *only* `#pragma once`, so the
-// first inclusion of that header decides the rest of the translation unit:
-// include it once where the narrow block is skipped and every later inclusion
-// is a no-op, leaving <cctype> to fail with "no member named 'isalnum' in the
-// global namespace" while the wide names survive — <corecrt_wctype.h> is
-// included ahead of the guard, so iswalnum & co. are always visible.
-//
-// Jolt's Core.h reaches <cctype> through <sstream>, deep inside its own
-// warning-suppression and namespace machinery; Culverin cannot reorder that.
-// What it can do is make the first inclusion happen at the one place every
-// translation unit is guaranteed to pass through with nothing open, above.
-#if defined(_MSC_VER)
-#    include <cctype>
-#endif
-
 #include <Jolt/Jolt.h>
 
 // Foundational ID/layer types referenced by the ABI checks below (and by

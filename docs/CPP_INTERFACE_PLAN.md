@@ -1020,13 +1020,31 @@ derives from `_MSC_VER` *without* `__clang__` — so clang.exe/clang-cl on the
 MSVC ABI, the only Windows toolchain this project supports, never got it while
 every target was compiled `-fno-exceptions`. `_HAS_EXCEPTIONS` is now a
 directory-scope definition on `WIN32`, so Jolt and Culverin take the same branch
-of the STL's conditionals instead of one each. `Jolt.hpp` additionally pins the
-first, global-scope inclusion of `<cctype>` on that ABI: MSVC's `<cctype>` only
-re-exports names UCRT's `<ctype.h>` must have declared, and that header guards
-its narrow declarations behind `#if !defined __midl && !defined RC_INVOKED`
-under a bare `#pragma once`, so the first inclusion decides the whole
-translation unit — Jolt reaches it through `<sstream>`, far from anything
-Culverin controls.
+of the STL's conditionals instead of one each.
+
+**A system header must never be included inside a namespace.** The `cctype`
+error that started this — "no member named 'isalnum' in the global namespace",
+reached through Jolt's `<sstream>`, three thousand lines from the cause — was
+not a Jolt problem at all. `core/Threading.hpp` opened `namespace CPH` and then
+included `<windows.h>`, and `<windows.h>` is not self-contained: `winnt.h`
+includes `<ctype.h>` on its fourth line. Every declaration those headers make
+landed in `CPH`, so `::isalnum` did not exist and `CPH::isalnum` did. The
+compiler's suggestion, `iswalnum`, was the red herring that made this look like
+a UCRT guard problem: `<cwchar>` had declared the wide names at global scope
+earlier. The include block now sits above the namespace, and a scan for the same
+mistake elsewhere in `src/` finds nothing.
+
+**Two C-library details that only bite clang on the MSVC ABI.** UCRT's
+`<stddef.h>` defines `offsetof` as a `reinterpret_cast` expression whenever
+`_MSC_VER` is defined, which is a constant expression to cl.exe (an accepted
+extension) and is not one to clang — so every `static_assert(offsetof(...))`,
+including the one guarding the contact-event wire layout, compiles under MSVC
+and fails under clang. And the CPython headers mark `PyBool_Type`
+`__declspec(dllimport)`, whose address resolves through the import table and is
+therefore not a constant expression either, which is why
+`FastParseTrait<bool>::type_guard` is an inline variable rather than a
+`constexpr` one. `_CRT_USE_BUILTIN_OFFSETOF` is now a `WIN32` directory-scope
+definition; the `type_guard` change is local to the trait.
 
 ## Sequencing, gates, risks
 

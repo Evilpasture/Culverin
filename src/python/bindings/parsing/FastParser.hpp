@@ -51,9 +51,17 @@ template <> struct FastParseTrait<Py_ssize_t> {
 };
 
 template <> struct FastParseTrait<bool> {
-    static constexpr const char *type_name    = "bool";
-    static constexpr auto converter           = FastParseConvBool;
-    static constexpr PyTypeObject *type_guard = &PyBool_Type;
+    static constexpr const char *type_name = "bool";
+    static constexpr auto converter        = FastParseConvBool;
+
+    // Not constexpr, and it cannot be: on the MSVC ABI the CPython headers
+    // declare PyBool_Type __declspec(dllimport), so its address resolves
+    // through the import table and is not a constant expression to clang
+    // ("constexpr variable 'type_guard' must be initialized by a constant
+    // expression"). Every other trait's guard is a null pointer, which is.
+    // The value is only ever read at call time (MakeSpec below), so an inline
+    // variable initialised at load is the same thing at runtime.
+    static inline PyTypeObject *const type_guard = &PyBool_Type;
 };
 
 template <> struct FastParseTrait<const char *> {

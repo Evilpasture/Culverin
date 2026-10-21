@@ -37,9 +37,17 @@
 #include <cstdint>
 #include <mutex>
 
-
-namespace CPH {
-
+// Platform headers must be included at global scope, never inside namespace
+// CPH. <windows.h> is not self-contained: winnt.h includes <ctype.h> (line 34)
+// and windef.h a dozen others, and every name those headers declare lands in
+// whichever namespace is open at the include site. Wrapping the include opened
+// CPH::isalnum, CPH::isalpha, CPH::isdigit ... while leaving the global
+// namespace empty, which MSVC's <cctype> — a header that is nothing but
+// `using ::isalnum;` — cannot survive. The reported failure was three thousand
+// lines away ("no member named 'isalnum' in the global namespace", reached
+// through Jolt's <sstream>), and the compiler's suggestion of iswalnum, which
+// <cwchar> had declared at global scope earlier, pointed at the wrong header
+// entirely.
 #if defined(_WIN32)
 #    ifndef WIN32_LEAN_AND_MEAN
 #        define WIN32_LEAN_AND_MEAN
@@ -55,6 +63,8 @@ namespace CPH {
 #else
 #    include <sched.h>
 #endif
+
+namespace CPH {
 
 // Processor-level hint to save power during spin-waits.
 inline void CpuRelax() noexcept {

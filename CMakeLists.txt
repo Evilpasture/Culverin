@@ -129,6 +129,18 @@ if(WIN32)
     # taking each branch of the STL's _HAS_EXCEPTIONS conditionals is an ODR
     # violation, not just a compile error.
     add_compile_definitions(_HAS_EXCEPTIONS=0)
+
+    # UCRT's <stddef.h> picks its offsetof implementation with
+    # `#if defined(_MSC_VER) && !defined(_CRT_USE_BUILTIN_OFFSETOF)`, and the
+    # fallback is `((size_t)&reinterpret_cast<char const volatile&>(...))`.
+    # That is a constant expression to cl.exe, which accepts the cast as an
+    # extension, and is not one to clang, which follows the language: every
+    # `static_assert(offsetof(...))` on the MSVC ABI therefore compiles with
+    # MSVC and fails with clang. Culverin has one guarding the contact-event
+    # wire layout (ContactEventDefinitions.hpp), which is a public contract with
+    # Python. Opting into the builtin restores the standard definition and makes
+    # the static_assert mean the same thing on every compiler.
+    add_compile_definitions(_CRT_USE_BUILTIN_OFFSETOF)
 endif()
 
 # 1.1 FORCE BUILD TYPE (RelWithDebInfo is the sweet spot for ASan)
