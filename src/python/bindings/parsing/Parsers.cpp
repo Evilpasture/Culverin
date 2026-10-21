@@ -11,7 +11,7 @@ namespace {
 
 // Shared implementation for every fixed-length numeric sequence argument.
 // `out` receives `count` values of `element_size` bytes.
-[[nodiscard]] ParseResult parse_sequence_into(Borrowed obj, void *out, int count,
+[[nodiscard]] ParseResult ParseSequenceInto(Borrowed obj, void *out, int count,
                                               bool is_double) {
     if (!obj || obj.is_none()) {
         // Legacy contract: None is a *failure* here, and one that reports no
@@ -86,9 +86,9 @@ namespace {
 
 } // namespace
 
-ParseResult parse_vec3_into(Borrowed obj, float &x, float &y, float &z) {
+ParseResult ParseVec3Into(Borrowed obj, float &x, float &y, float &z) {
     float res[3];
-    if (ParseResult parsed = parse_sequence_into(obj, res, 3, false); !parsed) {
+    if (ParseResult parsed = ParseSequenceInto(obj, res, 3, false); !parsed) {
         return parsed;
     }
     x = res[0];
@@ -97,9 +97,9 @@ ParseResult parse_vec3_into(Borrowed obj, float &x, float &y, float &z) {
     return {};
 }
 
-ParseResult parse_vec3_into(Borrowed obj, double &x, double &y, double &z) {
+ParseResult ParseVec3Into(Borrowed obj, double &x, double &y, double &z) {
     double res[3];
-    if (ParseResult parsed = parse_sequence_into(obj, res, 3, true); !parsed) {
+    if (ParseResult parsed = ParseSequenceInto(obj, res, 3, true); !parsed) {
         return parsed;
     }
     x = res[0];
@@ -108,9 +108,9 @@ ParseResult parse_vec3_into(Borrowed obj, double &x, double &y, double &z) {
     return {};
 }
 
-ParseResult parse_quat_into(Borrowed obj, float &x, float &y, float &z, float &w) {
+ParseResult ParseQuatInto(Borrowed obj, float &x, float &y, float &z, float &w) {
     float res[4];
-    if (ParseResult parsed = parse_sequence_into(obj, res, 4, false); !parsed) {
+    if (ParseResult parsed = ParseSequenceInto(obj, res, 4, false); !parsed) {
         return parsed;
     }
     x = res[0];
@@ -120,9 +120,9 @@ ParseResult parse_quat_into(Borrowed obj, float &x, float &y, float &z, float &w
     return {};
 }
 
-ParseResult parse_quat_into(Borrowed obj, double &x, double &y, double &z, double &w) {
+ParseResult ParseQuatInto(Borrowed obj, double &x, double &y, double &z, double &w) {
     double res[4];
-    if (ParseResult parsed = parse_sequence_into(obj, res, 4, true); !parsed) {
+    if (ParseResult parsed = ParseSequenceInto(obj, res, 4, true); !parsed) {
         return parsed;
     }
     x = res[0];
@@ -132,37 +132,37 @@ ParseResult parse_quat_into(Borrowed obj, double &x, double &y, double &z, doubl
     return {};
 }
 
-ParseResult parse_vec3_into(Borrowed obj, JPH::Float3 &out) {
-    return parse_vec3_into(obj, out.x, out.y, out.z);
+ParseResult ParseVec3Into(Borrowed obj, JPH::Float3 &out) {
+    return ParseVec3Into(obj, out.x, out.y, out.z);
 }
 
-ParseResult parse_vec3_into(Borrowed obj, PosStride &out) {
-    return parse_vec3_into(obj, out.x, out.y, out.z);
+ParseResult ParseVec3Into(Borrowed obj, PosStride &out) {
+    return ParseVec3Into(obj, out.x, out.y, out.z);
 }
 
-ParseResult parse_quat_into(Borrowed obj, AuxStride &out) {
-    return parse_quat_into(obj, out.x, out.y, out.z, out.w);
+ParseResult ParseQuatInto(Borrowed obj, AuxStride &out) {
+    return ParseQuatInto(obj, out.x, out.y, out.z, out.w);
 }
 
-std::expected<JPH::Float3, ParseError> parse_vec3(Borrowed obj) {
+std::expected<JPH::Float3, ParseError> ParseVec3(Borrowed obj) {
     JPH::Float3 value{0.0f, 0.0f, 0.0f};
-    if (ParseResult parsed = parse_vec3_into(obj, value); !parsed) {
+    if (ParseResult parsed = ParseVec3Into(obj, value); !parsed) {
         return std::unexpected(std::move(parsed.error()));
     }
     return value;
 }
 
-std::expected<PosStride, ParseError> parse_position(Borrowed obj) {
+std::expected<PosStride, ParseError> ParsePosition(Borrowed obj) {
     PosStride value{};
-    if (ParseResult parsed = parse_vec3_into(obj, value); !parsed) {
+    if (ParseResult parsed = ParseVec3Into(obj, value); !parsed) {
         return std::unexpected(std::move(parsed.error()));
     }
     return value;
 }
 
-std::expected<AuxStride, ParseError> parse_rotation(Borrowed obj) {
+std::expected<AuxStride, ParseError> ParseRotation(Borrowed obj) {
     AuxStride value{};
-    if (ParseResult parsed = parse_quat_into(obj, value); !parsed) {
+    if (ParseResult parsed = ParseQuatInto(obj, value); !parsed) {
         return std::unexpected(std::move(parsed.error()));
     }
     return value;

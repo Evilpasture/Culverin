@@ -49,9 +49,9 @@ static constexpr float kTrackedThrottleKickstartThreshold = 0.01f;
 
 // --- Tracked Vehicle Implementation ---
 
-static JPH::Ref<JPH::WheelSettingsTV> create_track_wheel(PyObject *w_dict) {
+static JPH::Ref<JPH::WheelSettingsTV> CreateTrackWheel(PyObject *w_dict) {
     JPH::Float3 pos;
-    if (ParseResult parsed = parse_vec3_into(PyDict_GetItemString(w_dict, "pos"), pos);
+    if (ParseResult parsed = ParseVec3Into(PyDict_GetItemString(w_dict, "pos"), pos);
         !parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
@@ -85,7 +85,7 @@ static JPH::Ref<JPH::WheelSettingsTV> create_track_wheel(PyObject *w_dict) {
 
 // Helper 1: Setup Engine, Transmission, and Controller settings
 static JPH::Ref<JPH::TrackedVehicleControllerSettings>
-init_tracked_controller_settings(TrackedEngineConfig config) {
+InitTrackedControllerSettings(TrackedEngineConfig config) {
 
     JPH::Ref<JPH::TrackedVehicleControllerSettings> t_ctrl =
         new JPH::TrackedVehicleControllerSettings;
@@ -140,7 +140,7 @@ int InitVehicleParsers(VehicleObject *obj);
 
     // TSan Fix: Cast raw uint64 to atomic BodyHandle for verification
     const std::optional<std::uint32_t> resolved =
-        self->physics.UnpackHandle(static_cast<BodyHandle>(chassis_h_raw));
+        self->physics.Resolve(static_cast<BodyHandle>(chassis_h_raw));
     const uint32_t slot        = resolved.value_or(0);
     const bool handle_valid    = resolved.has_value();
 
@@ -178,7 +178,7 @@ int InitVehicleParsers(VehicleObject *obj);
     // LinearCurve to build here.
     v_set.mWheels.reserve(num_wheels);
     for (uint32_t i = 0; i < num_wheels; i++) {
-        JPH::Ref<JPH::WheelSettingsTV> wheel = create_track_wheel(PyList_GetItem(py_wheels, i));
+        JPH::Ref<JPH::WheelSettingsTV> wheel = CreateTrackWheel(PyList_GetItem(py_wheels, i));
         if (!wheel) {
             goto python_fail;
         }
@@ -211,7 +211,7 @@ int InitVehicleParsers(VehicleObject *obj);
         }
 
         eng_cfg = {.torque = max_torque, .max_rpm = max_rpm, .min_rpm = min_rpm};
-        t_ctrl  = init_tracked_controller_settings(eng_cfg);
+        t_ctrl  = InitTrackedControllerSettings(eng_cfg);
 
         // VehicleTrackSettings::mWheels is an Array, so the parsed index buffers
         // are copied in and the temporaries can go straight back.

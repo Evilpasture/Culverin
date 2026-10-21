@@ -20,7 +20,7 @@ namespace CPH {
 static constexpr float kQueryDirectionEpsilonSquared = 1e-12f;
 static constexpr float kQueryDirectionUnitTolerance  = 1e-4f;
 
-static void wait_until_can_query(PhysicsWorld *world, std::unique_lock<std::mutex> &shadow) {
+static void WaitUntilCanQuery(PhysicsWorld *world, std::unique_lock<std::mutex> &shadow) {
     const auto blocked = [&] {
         return world->is_stepping.load(std::memory_order::relaxed) ||
                world->step_requested.load(std::memory_order::relaxed);
@@ -40,9 +40,9 @@ static void wait_until_can_query(PhysicsWorld *world, std::unique_lock<std::mute
     }
 }
 
-static void query_begin(PhysicsWorld *world) {
+static void QueryBegin(PhysicsWorld *world) {
     std::unique_lock shadow(world->shadow_lock);
-    wait_until_can_query(world, shadow);
+    WaitUntilCanQuery(world, shadow);
     // The gate check and this increment are one critical section, so a
     // step cannot start between them.
     world->active_queries.fetch_add(1, std::memory_order::acquire);
@@ -57,27 +57,27 @@ void PhysicsWorld::QueryEnd() {
 
 
 static std::optional<uint32_t>
-query_handle_is_valid_locked(const PhysicsWorld &world, BodyHandle handle) {
+QueryHandleIsValidLocked(const PhysicsWorld &world, BodyHandle handle) {
     if (!handle) {
         return std::nullopt;
     }
-    const std::optional<std::uint32_t> slot = world.UnpackHandle(handle);
+    const std::optional<std::uint32_t> slot = world.Resolve(handle);
     if (!slot) {
         return std::nullopt;
     }
 
     const uint8_t state = (world.bodies.slot_states[*slot]).load(std::memory_order::acquire);
-    if (!get_slot_predicate(state, kMaskImmStandard).is_immediate) {
+    if (!GetSlotPredicate(state, kMaskImmStandard).is_immediate) {
         return std::nullopt;
     }
     return slot;
 }
 
-static void filter_query_hits(PhysicsWorld *world, PhysicsQueryHitBuffer &hits) {
+static void FilterQueryHits(PhysicsWorld *world, PhysicsQueryHitBuffer &hits) {
     const std::scoped_lock shadow(world->shadow_lock);
     size_t write_index = 0;
     for (size_t i = 0; i < hits.count; ++i) {
-        if (query_handle_is_valid_locked(*world, hits.hits[i])) {
+        if (QueryHandleIsValidLocked(*world, hits.hits[i])) {
             hits.hits[write_index++] = hits.hits[i];
         }
     }
@@ -87,9 +87,9 @@ static void filter_query_hits(PhysicsWorld *world, PhysicsQueryHitBuffer &hits) 
 // Maps an ignore handle to the body it names. A missing or stale handle yields
 // an invalid BodyID (0xFFFFFFFF), which is how a query spells "ignore nothing":
 // no real body ever carries that value.
-static JPH::BodyID resolve_ignore_body_locked(const PhysicsWorld &world, BodyHandle ignore_handle) {
+static JPH::BodyID ResolveIgnoreBodyLocked(const PhysicsWorld &world, BodyHandle ignore_handle) {
     if (const std::optional<uint32_t> ignore_slot =
-            query_handle_is_valid_locked(world, ignore_handle)) {
+            QueryHandleIsValidLocked(world, ignore_handle)) {
         const size_t body_count = (world.count).load(std::memory_order::relaxed);
         const uint32_t dense    = world.bodies.slot_to_dense[*ignore_slot];
         if (dense < body_count) {
@@ -99,11 +99,11 @@ static JPH::BodyID resolve_ignore_body_locked(const PhysicsWorld &world, BodyHan
     return JPH::BodyID();
 }
 
-static JPH::ShapeRefC query_begin_with_shape(PhysicsWorld *world, int shape_type,
+static JPH::ShapeRefC QueryBeginWithShape(PhysicsWorld *world, int shape_type,
                                              std::span<const float, 4> params,
                                              JPH::BodyID *ignore_body, BodyHandle ignore_handle) {
     std::unique_lock shadow(world->shadow_lock);
-    wait_until_can_query(world, shadow);
+    WaitUntilCanQuery(world, shadow);
 
     // The shadow lock serializes cache access. Avoid taking jph_trampoline_lock
     // here: other native paths may hold it while waiting for shadow_lock.
@@ -111,7 +111,7 @@ static JPH::ShapeRefC query_begin_with_shape(PhysicsWorld *world, int shape_type
     const JPH::ShapeRefC shape = world->FindOrCreateShapeLocked(shape_type, params);
 
     if (shape && ignore_body) {
-        *ignore_body = resolve_ignore_body_locked(*world, ignore_handle);
+        *ignore_body = ResolveIgnoreBodyLocked(*world, ignore_handle);
     }
 
     // Match the binding's former lock scope: shape/ignore resolution and query
@@ -122,11 +122,11 @@ static JPH::ShapeRefC query_begin_with_shape(PhysicsWorld *world, int shape_type
     return shape;
 }
 
-static JPH::BodyID query_begin_with_ignore(PhysicsWorld *world, BodyHandle ignore_handle) {
+static JPH::BodyID QueryBeginWithIgnore(PhysicsWorld *world, BodyHandle ignore_handle) {
     std::unique_lock shadow(world->shadow_lock);
-    wait_until_can_query(world, shadow);
+    WaitUntilCanQuery(world, shadow);
 
-    const JPH::BodyID ignore_body = resolve_ignore_body_locked(*world, ignore_handle);
+    const JPH::BodyID ignore_body = ResolveIgnoreBodyLocked(*world, ignore_handle);
 
     (world->active_queries).fetch_add(1, std::memory_order::acquire);
     return ignore_body;
@@ -138,7 +138,7 @@ struct OverlapContext {
     Error error;
 };
 
-static void overlap_record_hit(OverlapContext &context, JPH::BodyID body_id) {
+static void OverlapRecordHit(OverlapContext &context, JPH::BodyID body_id) {
     if (context.error) {
         return;
     }
@@ -159,7 +159,7 @@ class OverlapShapeCollector final : public JPH::CollideShapeCollector {
     explicit OverlapShapeCollector(OverlapContext &context) : m_context(context) {}
 
     void AddHit(const JPH::CollideShapeResult &inResult) override {
-        overlap_record_hit(m_context, inResult.mBodyID2);
+        OverlapRecordHit(m_context, inResult.mBodyID2);
     }
 
   private:
@@ -171,7 +171,7 @@ class OverlapBodyCollector final : public JPH::CollideShapeBodyCollector {
   public:
     explicit OverlapBodyCollector(OverlapContext &context) : m_context(context) {}
 
-    void AddHit(const JPH::BodyID &inBodyID) override { overlap_record_hit(m_context, inBodyID); }
+    void AddHit(const JPH::BodyID &inBodyID) override { OverlapRecordHit(m_context, inBodyID); }
 
   private:
     OverlapContext &m_context;
@@ -184,9 +184,9 @@ PhysicsWorld::OverlapSphere(JPH::RVec3 center, float radius, PhysicsQueryHitBuff
     }
 
     const float shape_params[4] = {radius, 0.0f, 0.0f, 0.0f};
-    const JPH::ShapeRefC shape = query_begin_with_shape(
+    const JPH::ShapeRefC shape = QueryBeginWithShape(
         this, std::to_underlying(ShapeType::Sphere), std::span<const float, 4>(shape_params, 4),
-        nullptr, 0);
+        nullptr, BodyHandle{});
     if (!shape) {
         return std::unexpected(QueryError::ShapeFailure);
     }
@@ -201,7 +201,7 @@ PhysicsWorld::OverlapSphere(JPH::RVec3 center, float radius, PhysicsQueryHitBuff
     physics_system.GetNarrowPhaseQuery().CollideShape(
         shape, JPH::Vec3::sReplicate(1.0f), transform, settings, JPH::RVec3::sZero(), collector);
     if (!context.error) {
-        filter_query_hits(this, hits);
+        FilterQueryHits(this, hits);
     }
     QueryEnd();
     if (context.error) {
@@ -216,7 +216,7 @@ PhysicsWorld::OverlapAabb(JPH::RVec3 min, JPH::RVec3 max, PhysicsQueryHitBuffer 
         return std::unexpected(QueryError::InvalidArgument);
     }
 
-    query_begin(this);
+    QueryBegin(this);
 
     // Jolt rounds the double-precision corners outward to float, which keeps the
     // box a superset of the requested one.
@@ -226,7 +226,7 @@ PhysicsWorld::OverlapAabb(JPH::RVec3 min, JPH::RVec3 max, PhysicsQueryHitBuffer 
     OverlapBodyCollector collector(context);
     physics_system.GetBroadPhaseQuery().CollideAABox(box, collector);
     if (!context.error) {
-        filter_query_hits(this, hits);
+        FilterQueryHits(this, hits);
     }
     QueryEnd();
     if (context.error) {
@@ -235,7 +235,7 @@ PhysicsWorld::OverlapAabb(JPH::RVec3 min, JPH::RVec3 max, PhysicsQueryHitBuffer 
     return {};
 }
 
-static float ray_direction_scale(JPH::Vec3Arg direction, float max_distance, float *magnitude_sq) {
+static float RayDirectionScale(JPH::Vec3Arg direction, float max_distance, float *magnitude_sq) {
     const float length_sq = direction.GetX() * direction.GetX() +
                             direction.GetY() * direction.GetY() +
                             direction.GetZ() * direction.GetZ();
@@ -254,13 +254,13 @@ std::expected<PhysicsRaycastHit, Error> PhysicsWorld::Raycast(
     PhysicsRaycastHit hit{};
 
     float magnitude_sq = 0.0f;
-    const float scale  = ray_direction_scale(direction, max_distance, &magnitude_sq);
+    const float scale  = RayDirectionScale(direction, max_distance, &magnitude_sq);
     if (magnitude_sq < kQueryDirectionEpsilonSquared) {
         return hit;
     }
 
     // A missing/stale ignored handle intentionally means "ignore nothing".
-    const JPH::BodyID ignore_body      = query_begin_with_ignore(this, ignore_handle);
+    const JPH::BodyID ignore_body      = QueryBeginWithIgnore(this, ignore_handle);
     const JPH::IgnoreSingleBodyFilter body_filter(ignore_body);
 
     const JPH::Vec3 ray_direction(direction.GetX() * scale, direction.GetY() * scale,
@@ -276,7 +276,7 @@ std::expected<PhysicsRaycastHit, Error> PhysicsWorld::Raycast(
         bool valid_handle = false;
         if (handle) {
             const std::scoped_lock shadow(shadow_lock);
-            valid_handle = query_handle_is_valid_locked(*this, handle).has_value();
+            valid_handle = QueryHandleIsValidLocked(*this, handle).has_value();
         }
 
         if (valid_handle) {
@@ -311,7 +311,7 @@ std::expected<void, Error> PhysicsWorld::RaycastBatch(
     }
 
     std::memset(results.data(), 0, count * sizeof(RayCastBatchResult));
-    query_begin(this);
+    QueryBegin(this);
 
     const JPH::NarrowPhaseQuery &query      = physics_system.GetNarrowPhaseQuery();
     const JPH::BodyLockInterface &lock_interface = physics_system.GetBodyLockInterfaceNoLock();
@@ -322,7 +322,7 @@ std::expected<void, Error> PhysicsWorld::RaycastBatch(
         const JPH::Vec3 direction(directions[offset], directions[offset + 1],
                                   directions[offset + 2]);
         float magnitude_sq = 0.0f;
-        const float scale  = ray_direction_scale(direction, max_distance, &magnitude_sq);
+        const float scale  = RayDirectionScale(direction, max_distance, &magnitude_sq);
         if (magnitude_sq < kQueryDirectionEpsilonSquared) {
             continue;
         }
@@ -346,7 +346,7 @@ std::expected<void, Error> PhysicsWorld::RaycastBatch(
         }
 
         RayCastBatchResult *result = &results[i];
-        result->handle             = handle;
+        result->handle             = handle.Raw();
         result->fraction           = ray_hit.mFraction;
         result->subShapeID         = ray_hit.mSubShapeID2.GetValue();
 
@@ -371,7 +371,7 @@ std::expected<void, Error> PhysicsWorld::RaycastBatch(
     const size_t body_count = this->count.load(std::memory_order::relaxed);
     for (size_t i = 0; i < results.size(); ++i) {
         RayCastBatchResult *result = &results[i];
-        const std::optional<uint32_t> slot = query_handle_is_valid_locked(*this, result->handle);
+        const std::optional<uint32_t> slot = QueryHandleIsValidLocked(*this, BodyHandle(result->handle));
         if (!slot) {
             std::memset(result, 0, sizeof(*result));
             continue;
@@ -401,7 +401,7 @@ std::expected<PhysicsShapecastHit, Error> PhysicsWorld::Shapecast(
 
     JPH::BodyID ignore_body; // invalid until resolved: "ignore nothing"
     const JPH::ShapeRefC shape =
-        query_begin_with_shape(this, shape_type, size, &ignore_body, ignore_handle);
+        QueryBeginWithShape(this, shape_type, size, &ignore_body, ignore_handle);
     if (!shape) {
         return std::unexpected(QueryError::ShapeFailure);
     }
@@ -417,7 +417,7 @@ std::expected<PhysicsShapecastHit, Error> PhysicsWorld::Shapecast(
         bool valid_handle = false;
         if (handle) {
             const std::scoped_lock shadow(shadow_lock);
-            valid_handle = query_handle_is_valid_locked(*this, handle).has_value();
+            valid_handle = QueryHandleIsValidLocked(*this, handle).has_value();
         }
 
         if (valid_handle) {

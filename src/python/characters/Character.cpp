@@ -27,7 +27,7 @@ static void RecordCharacterContact(CharacterObject *self, JPH::BodyID body_id2, 
                                    JPH::Vec3Arg norm, ContactEventType type) {
     auto *world          = self->world;
     const uint32_t j_idx = body_id2.GetIndex();
-    BodyHandle h2        = 0;
+    BodyHandle h2;
 
     if (world->physics.id_to_handle_map && j_idx <= world->physics.max_jolt_bodies) {
         // TSan Fix: Atomic load from the shared handle map.
@@ -36,13 +36,13 @@ static void RecordCharacterContact(CharacterObject *self, JPH::BodyID body_id2, 
     }
 
     // Extract raw value for liveness check
-    const uint64_t h2_raw = h2;
-    if (h2_raw == 0) {
+    const BodyHandle h2_raw = h2;
+    if (!h2_raw.IsValid()) {
         return;
     }
 
     // TSan Fix: Atomic load of the character's own handle
-    const uint64_t h1_raw = (self->handle).load(std::memory_order::relaxed);
+    const BodyHandle h1_raw = (self->handle).load(std::memory_order::relaxed);
 
     const size_t idx =
         (world->physics.contact_atomic_idx).fetch_add(1, std::memory_order::relaxed);
@@ -66,9 +66,9 @@ static void RecordCharacterContact(CharacterObject *self, JPH::BodyID body_id2, 
         }
 
         // Geometry
-        slim->px            = static_cast<JPH_Real>(pos.GetX());
-        slim->py            = static_cast<JPH_Real>(pos.GetY());
-        slim->pz            = static_cast<JPH_Real>(pos.GetZ());
+        slim->px            = static_cast<JPH::Real>(pos.GetX());
+        slim->py            = static_cast<JPH::Real>(pos.GetY());
+        slim->pz            = static_cast<JPH::Real>(pos.GetZ());
         slim->nx            = norm.GetX();
         slim->ny            = norm.GetY();
         slim->nz            = norm.GetZ();
@@ -76,7 +76,7 @@ static void RecordCharacterContact(CharacterObject *self, JPH::BodyID body_id2, 
         slim->sliding_speed = 0.0f;
 
         // Metadata lookups
-        auto slot2      = static_cast<uint32_t>(h2_raw & kHandleIndexMask);
+        auto slot2      = h2_raw.Index();
         uint32_t dense2 = world->physics.bodies.slot_to_dense[slot2];
         fat->mat1       = 0;
         fat->mat2       = world->physics.bodies.material_ids[dense2];
@@ -92,13 +92,13 @@ static void RecordCharacterContact(CharacterObject *self, JPH::BodyID body_id2, 
 static void ReportCharVsChar(CharacterObject *self, const JPH::CharacterVirtual *other,
                              JPH::Vec3Arg normal, JPH::RVec3Arg pos, ContactEventType type) {
     auto *world             = self->world;
-    const uint64_t h1_raw   = (self->handle).load(std::memory_order::relaxed);
+    const BodyHandle h1_raw   = (self->handle).load(std::memory_order::relaxed);
 
     // Retrieve the handle directly from the other character's UserData.
     // This is 100% reliable and avoids map boundary checks.
-    const uint64_t h2_raw = other->GetUserData();
+    const BodyHandle h2_raw(other->GetUserData());
 
-    if (h2_raw == 0) {
+    if (!h2_raw.IsValid()) {
         return; // Still 0? Probably a Jolt internal body.
     }
 
@@ -126,9 +126,9 @@ static void ReportCharVsChar(CharacterObject *self, const JPH::CharacterVirtual 
         slim->nx            = normal.GetX();
         slim->ny            = normal.GetY();
         slim->nz            = normal.GetZ();
-        slim->px            = static_cast<JPH_Real>(pos.GetX());
-        slim->py            = static_cast<JPH_Real>(pos.GetY());
-        slim->pz            = static_cast<JPH_Real>(pos.GetZ());
+        slim->px            = static_cast<JPH::Real>(pos.GetX());
+        slim->py            = static_cast<JPH::Real>(pos.GetY());
+        slim->pz            = static_cast<JPH::Real>(pos.GetZ());
         slim->impulse       = 1.0f;
         fat->mat1           = 0;
         fat->mat2           = 0;
@@ -200,9 +200,9 @@ class CharacterListener final : public JPH::CharacterContactListener {
         }
 
         // 1. Get Platform/Friction Data
-        const uint64_t h2_raw = body2.GetUserData();
+        const BodyHandle h2_raw(body2.GetUserData());
         float friction        = 1.0f;
-        auto slot2            = static_cast<uint32_t>(h2_raw & kHandleIndexMask);
+        auto slot2            = h2_raw.Index();
         if (slot2 < self->world->physics.slot_capacity) {
             uint32_t dense2 = self->world->physics.bodies.slot_to_dense[slot2];
             uint32_t mat_id = self->world->physics.bodies.material_ids[dense2];
@@ -249,30 +249,30 @@ class CharacterListener final : public JPH::CharacterContactListener {
         PhysicsWorldObject *world = self->world;
 
         // 1. Get Culverin Handles
-        const uint64_t h1_raw = (self->handle).load(std::memory_order::relaxed);
+        const BodyHandle h1_raw = (self->handle).load(std::memory_order::relaxed);
 
         // Direct thread-safe lookup of the other body's UserData from contact
-        uint64_t h2_raw = contact.mUserData;
-        if (h2_raw == 0 && world->physics.body_interface) {
-            h2_raw = world->physics.physics_system.GetBodyInterface().GetUserData(contact.mBodyB);
+        BodyHandle h2_raw = BodyHandle(contact.mUserData);
+        if (!h2_raw.IsValid() && world->physics.body_interface) {
+            h2_raw = BodyHandle(world->physics.physics_system.GetBodyInterface().GetUserData(contact.mBodyB));
         }
         // Fallback to safe lock-free id-to-handle map lookup
-        if (h2_raw == 0 && world->physics.id_to_handle_map) {
+        if (!h2_raw.IsValid() && world->physics.id_to_handle_map) {
             const uint32_t j_idx = contact.mBodyB.GetIndex();
             if (j_idx <= world->physics.max_jolt_bodies) {
                 h2_raw = (world->physics.id_to_handle_map[j_idx]).load(std::memory_order::acquire);
             }
         }
 
-        if (h2_raw == 0) {
+        if (!h2_raw.IsValid()) {
             return true; // Collide by default if handle is missing (e.g. static environment)
         }
 
         // 2. Safely Resolve Slots with Generation Checking
         const std::optional<std::uint32_t> resolved1 =
-            world->physics.UnpackHandle(static_cast<BodyHandle>(h1_raw));
+            world->physics.Resolve(static_cast<BodyHandle>(h1_raw));
         const std::optional<std::uint32_t> resolved2 =
-            world->physics.UnpackHandle(static_cast<BodyHandle>(h2_raw));
+            world->physics.Resolve(static_cast<BodyHandle>(h2_raw));
         if (!resolved1 || !resolved2) {
             return true; // Collide on handle verification mismatches
         }
@@ -319,24 +319,24 @@ class CharacterListener final : public JPH::CharacterContactListener {
         PhysicsWorldObject *world = self->world;
 
         // 1. Get Culverin Handles
-        const uint64_t h1_raw = (self->handle).load(std::memory_order::relaxed);
+        const BodyHandle h1_raw = (self->handle).load(std::memory_order::relaxed);
 
         // In CharacterContact the other character's handle is stored in mUserData,
         // or falls back to the peer character's own user data.
-        uint64_t h2_raw = contact.mUserData;
-        if (h2_raw == 0 && contact.mCharacterB) {
-            h2_raw = contact.mCharacterB->GetUserData();
+        BodyHandle h2_raw = BodyHandle(contact.mUserData);
+        if (!h2_raw.IsValid() && contact.mCharacterB) {
+            h2_raw = BodyHandle(contact.mCharacterB->GetUserData());
         }
 
-        if (h2_raw == 0) {
+        if (!h2_raw.IsValid()) {
             return true; // Collide by default if handle is missing
         }
 
         // 2. Resolve Slots
         const std::optional<std::uint32_t> resolved1 =
-            world->physics.UnpackHandle(static_cast<BodyHandle>(h1_raw));
+            world->physics.Resolve(static_cast<BodyHandle>(h1_raw));
         const std::optional<std::uint32_t> resolved2 =
-            world->physics.UnpackHandle(static_cast<BodyHandle>(h2_raw));
+            world->physics.Resolve(static_cast<BodyHandle>(h2_raw));
         if (!resolved1 || !resolved2) {
             return true;
         }
@@ -415,14 +415,14 @@ class CharacterListener final : public JPH::CharacterContactListener {
         const uint32_t j_idx        = body_id2.GetIndex();
 
         // TSan Fix: Explicitly load raw values to avoid seq_cst overhead
-        const uint64_t h1_raw = (self->handle).load(std::memory_order::relaxed);
-        uint64_t h2_raw       = 0;
+        const BodyHandle h1_raw = (self->handle).load(std::memory_order::relaxed);
+        BodyHandle h2_raw;
 
         if (world->physics.id_to_handle_map && j_idx <= world->physics.max_jolt_bodies) {
             h2_raw = (world->physics.id_to_handle_map[j_idx]).load(std::memory_order::acquire);
         }
 
-        if (h2_raw == 0) {
+        if (!h2_raw.IsValid()) {
             return;
         }
 
@@ -497,17 +497,17 @@ class CharacterListener final : public JPH::CharacterContactListener {
         auto *world           = self->world;
 
         // TSan Fix: Explicit relaxed load of own handle
-        const uint64_t h1_raw = (self->handle).load(std::memory_order::relaxed);
+        const BodyHandle h1_raw = (self->handle).load(std::memory_order::relaxed);
 
         // We have to use the CharacterID to find the handle.
         const uint32_t j_idx = (other_character_id.GetValue() & JPH::BodyID::cMaxBodyIndex);
-        uint64_t h2_raw      = 0;
+        BodyHandle h2_raw;
 
         if (world->physics.id_to_handle_map && j_idx <= world->physics.max_jolt_bodies) {
             h2_raw = (world->physics.id_to_handle_map[j_idx]).load(std::memory_order::acquire);
         }
 
-        if (h2_raw == 0) {
+        if (!h2_raw.IsValid()) {
             return;
         }
 
@@ -582,8 +582,8 @@ class CharacterListener final : public JPH::CharacterContactListener {
     (self->last_vz).store(v_in.z, std::memory_order::relaxed);
 
     // TSan Fix: Load handle atomically to resolve indices
-    uint64_t h_raw = (self->handle).load(std::memory_order::relaxed);
-    uint32_t slot  = static_cast<uint32_t>(h_raw & kHandleIndexMask);
+    const BodyHandle h_raw = (self->handle).load(std::memory_order::relaxed);
+    uint32_t slot  = h_raw.Index();
     uint32_t dense = self->world->physics.bodies.slot_to_dense[slot];
 
     // Snapshot current state to prev for interpolation
@@ -701,8 +701,8 @@ CharacterGetLinearVelocity(CharacterObject *self, PyObject *ignored [[maybe_unus
     self->character->SetPosition(JPH::RVec3(pos.x, pos.y, pos.z));
 
     // Update Shadow Buffers
-    uint64_t h_raw = (self->handle).load(std::memory_order::relaxed);
-    uint32_t slot  = static_cast<uint32_t>(h_raw & kHandleIndexMask);
+    const BodyHandle h_raw = (self->handle).load(std::memory_order::relaxed);
+    uint32_t slot  = h_raw.Index();
     uint32_t dense = self->world->physics.bodies.slot_to_dense[slot];
 
     auto shadow_pos  = self->world->physics.bodies.positions.data();
@@ -736,9 +736,9 @@ CharacterGetLinearVelocity(CharacterObject *self, PyObject *ignored [[maybe_unus
     const JPH::Quat q(rot.x, rot.y, rot.z, rot.w);
     self->character->SetRotation(q);
 
-    uint64_t raw_h = (self->handle).load(std::memory_order::relaxed);
+    const BodyHandle raw_h = (self->handle).load(std::memory_order::relaxed);
 
-    auto slot          = static_cast<uint32_t>(raw_h & kHandleIndexMask);
+    auto slot          = raw_h.Index();
     uint32_t dense_idx = self->world->physics.bodies.slot_to_dense[slot];
     size_t off         = static_cast<size_t>(dense_idx) * 4;
 
@@ -792,7 +792,7 @@ CharacterGetLinearVelocity(CharacterObject *self, PyObject *ignored [[maybe_unus
     BlockUntilNotStepping(self->world);
 
     const auto h_raw = (self->handle).load(std::memory_order::relaxed);
-    const auto slot  = static_cast<uint32_t>(h_raw & kHandleIndexMask);
+    const auto slot  = h_raw.Index();
     const auto dense = self->world->physics.bodies.slot_to_dense[slot];
 
     const auto shadow_ppos = self->world->physics.bodies.prev_positions.data();
@@ -835,8 +835,8 @@ CharacterGetLinearVelocity(CharacterObject *self, PyObject *ignored [[maybe_unus
 void CharacterDealloc(CharacterObject *self) {
     PyObject_GC_UnTrack(self);
 
-    uint64_t h_raw = 0;
-    uint32_t slot  = 0;
+    BodyHandle h_raw;
+    uint32_t slot = 0;
     if (!self->world) {
         goto finalize;
     }
@@ -847,7 +847,7 @@ void CharacterDealloc(CharacterObject *self) {
     BlockUntilNotQuerying(self->world);
 
     h_raw = (self->handle).load(std::memory_order::relaxed);
-    slot  = static_cast<uint32_t>(h_raw & kHandleIndexMask);
+    slot  = h_raw.Index();
 
     self->world->physics.RemoveBodySlot(slot);
 
@@ -880,7 +880,7 @@ finalize:
 
 // Helper 1: Jolt-side allocation and Collision Manager linking
 static inline JPH::CharacterVirtual *
-alloc_j_char(PhysicsWorldObject *self, PositionVector pos, CharacterParams params) {
+AllocJChar(PhysicsWorldObject *self, PositionVector pos, CharacterParams params) {
 
     const float half_h = fmaxf((params.height - 2.0f * params.radius) * 0.5f, 0.1f);
     const JPH::ShapeSettings::ShapeResult shape_result = JPH::CapsuleShapeSettings(half_h, params.radius).Create();
@@ -903,15 +903,14 @@ alloc_j_char(PhysicsWorldObject *self, PositionVector pos, CharacterParams param
 }
 
 // Helper 2: Shadow Buffer Registration (Atomic Commit)
-static inline void register_char(PhysicsWorldObject *self, CharacterObject *obj,
+static inline void RegisterChar(PhysicsWorldObject *self, CharacterObject *obj,
                                  JPH::CharacterVirtual *j_char, uint32_t slot) {
     (self->physics.shadow_lock).lock();
 
     uint32_t gen = (self->physics.bodies.generations[slot]).load(std::memory_order::relaxed);
-    BodyHandle h = make_handle(slot, gen);
+    BodyHandle h = BodyHandle::FromParts(slot, gen);
 
-    uint64_t raw_h = h;
-    (obj->handle).store(raw_h, std::memory_order::relaxed);
+    (obj->handle).store(h, std::memory_order::relaxed);
 
     auto dense_idx =
         static_cast<uint32_t>((self->physics.count).load(std::memory_order::relaxed));
@@ -919,7 +918,7 @@ static inline void register_char(PhysicsWorldObject *self, CharacterObject *obj,
     uint32_t j_idx        = bid.GetIndex();
 
     if (j_idx <= self->physics.max_jolt_bodies) {
-        (self->physics.id_to_handle_map[j_idx]).store(raw_h, std::memory_order::release);
+        (self->physics.id_to_handle_map[j_idx]).store(h, std::memory_order::release);
     }
 
     self->physics.bodies.body_ids[dense_idx]      = bid;
@@ -959,8 +958,8 @@ static inline void register_char(PhysicsWorldObject *self, CharacterObject *obj,
     size_t final_count  = (self->physics.count).load(std::memory_order::relaxed);
     self->view_shape[0] = static_cast<Py_ssize_t>(final_count);
 
-    self->physics.physics_system.GetBodyInterface().SetUserData(bid, raw_h);
-    j_char->SetUserData(raw_h);
+    self->physics.physics_system.GetBodyInterface().SetUserData(bid, h.Raw());
+    j_char->SetUserData(h.Raw());
 
     (self->physics.shadow_lock).unlock();
 }
@@ -970,12 +969,12 @@ static inline void register_char(PhysicsWorldObject *self, CharacterObject *obj,
 // No trampoline lock: the JoltC version installed one process-wide procs table
 // (JPH_CharacterContactListener_SetProcs) that every character shared, so
 // creating a listener mutated global state. The listener is per-character now.
-static inline void setup_char_listener(CharacterObject *obj) {
+static inline void SetupCharListener(CharacterObject *obj) {
     obj->listener = new CharacterListener(obj);
     obj->character->SetListener(obj->listener);
 }
 [[nodiscard]]
-static inline int setup_char_parsers(CharacterObject *obj) {
+static inline int SetupCharParsers(CharacterObject *obj) {
     obj->parsers = CPH::Python::NewParserGroup<CPH::Python::CharacterParsers>();
     if (!obj->parsers) {
         return -1;
@@ -989,14 +988,14 @@ static inline int setup_char_parsers(CharacterObject *obj) {
                                                                 size_t nargsf, PyObject *kwnames) {
     const Py_ssize_t nargs        = PyVectorcall_NARGS(nargsf);
     PosStride pos             = {};
-    constexpr auto DEFAULT_HEIGHT = 1.8f;
-    constexpr auto DEFAULT_RADIUS = 0.4f;
-    constexpr auto DEFUALT_STEP_H = 0.4f;
-    constexpr auto DEFAULT_SLOPE  = 45.0f;
-    float height                  = DEFAULT_HEIGHT;
-    float radius                  = DEFAULT_RADIUS;
-    float step_h                  = DEFUALT_STEP_H;
-    float slope                   = DEFAULT_SLOPE;
+    constexpr auto kDefaultHeight = 1.8f;
+    constexpr auto kDefaultRadius = 0.4f;
+    constexpr auto kDefaultStepH = 0.4f;
+    constexpr auto kDefaultSlope  = 45.0f;
+    float height                  = kDefaultHeight;
+    float radius                  = kDefaultRadius;
+    float step_h                  = kDefaultStepH;
+    float slope                   = kDefaultSlope;
 
     const ParseResult parsed =
         self->parsers->CreateChar.Parse(args, nargs, kwnames, pos, height, radius, step_h,
@@ -1031,7 +1030,7 @@ static inline int setup_char_parsers(CharacterObject *obj) {
     CharacterParams char_params = {height, radius, slope};
 
     CharacterObject *obj = nullptr;
-    JPH::CharacterVirtual *j_char = alloc_j_char(self, pos_vec, char_params);
+    JPH::CharacterVirtual *j_char = AllocJChar(self, pos_vec, char_params);
     if (!j_char) {
         goto fail_jolt;
     }
@@ -1043,7 +1042,7 @@ static inline int setup_char_parsers(CharacterObject *obj) {
         goto fail_py;
     }
 
-    if (setup_char_parsers(obj) < 0) {
+    if (SetupCharParsers(obj) < 0) {
         goto fail_py;
     }
 
@@ -1066,8 +1065,8 @@ static inline int setup_char_parsers(CharacterObject *obj) {
     (obj->last_vy).store(0.0f, std::memory_order::relaxed);
     (obj->last_vz).store(0.0f, std::memory_order::relaxed);
 
-    register_char(self, obj, j_char, char_slot);
-    setup_char_listener(obj);
+    RegisterChar(self, obj, j_char, char_slot);
+    SetupCharListener(obj);
 
     PyObject_GC_Track(reinterpret_cast<PyObject *>(obj));
     return reinterpret_cast<PyObject *>(obj);
@@ -1088,7 +1087,7 @@ fail_jolt:
 
 [[nodiscard]] PyObject * CharacterGetHandle(CharacterObject *self,
                                             [[maybe_unused]] void *closure) {
-    uint64_t raw_h = (self->handle).load(std::memory_order::relaxed);
+    const BodyHandle raw_h = (self->handle).load(std::memory_order::relaxed);
     return BuildValue(raw_h);
 }
 

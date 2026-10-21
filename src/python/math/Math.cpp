@@ -13,7 +13,7 @@ struct MathHolderObject {
 static constexpr int kSixteenFloats = 16;
 static constexpr int kSimdAlignment = 16;
 // Helper for extracting 16 floats from a Python Tuple
-static inline bool unpack_mat44(PyObject *obj, float *out) {
+static inline bool UnpackMat44(PyObject *obj, float *out) {
 
     if (!PyTuple_Check(obj) || PyTuple_GET_SIZE(obj) < kSixteenFloats) {
         return false;
@@ -24,7 +24,7 @@ static inline bool unpack_mat44(PyObject *obj, float *out) {
     return !PyErr_Occurred();
 }
 
-static inline bool unpack_quat(PyObject *obj, float *out) {
+static inline bool UnpackQuat(PyObject *obj, float *out) {
     if (!PyTuple_Check(obj) || PyTuple_GET_SIZE(obj) < 4) {
         return false;
     }
@@ -34,7 +34,7 @@ static inline bool unpack_quat(PyObject *obj, float *out) {
     return !PyErr_Occurred();
 }
 
-static inline bool unpack_vec3(PyObject *obj, float *out) {
+static inline bool UnpackVec3(PyObject *obj, float *out) {
     if (!PyTuple_Check(obj) || PyTuple_GET_SIZE(obj) < 3) {
         return false;
     }
@@ -44,7 +44,7 @@ static inline bool unpack_vec3(PyObject *obj, float *out) {
     return !PyErr_Occurred();
 }
 
-static inline bool unpack_viewport(PyObject *obj, int *out) {
+static inline bool UnpackViewport(PyObject *obj, int *out) {
     if (!PyTuple_Check(obj) || PyTuple_GET_SIZE(obj) < 4) {
         return false;
     }
@@ -269,7 +269,7 @@ static PyObject *MathInverse(MathHolderObject *self, PyObject *const *args,
 
     alignas(kSimdAlignment) float in[kSixteenFloats];
     alignas(kSimdAlignment) float out[kSixteenFloats];
-    if (!unpack_mat44(mat_obj, in)) {
+    if (!UnpackMat44(mat_obj, in)) {
         PyErr_SetString(PyExc_TypeError, "Matrix must be a tuple of 16 floats");
         return nullptr;
     }
@@ -296,7 +296,7 @@ static PyObject *MathMatmul(MathHolderObject *self, PyObject *const *args,
     alignas(kSimdAlignment) float a[kSixteenFloats];
     alignas(kSimdAlignment) float b[kSixteenFloats];
     alignas(kSimdAlignment) float out[kSixteenFloats];
-    if (!unpack_mat44(a_obj, a) || !unpack_mat44(b_obj, b)) {
+    if (!UnpackMat44(a_obj, a) || !UnpackMat44(b_obj, b)) {
         return nullptr;
     }
 
@@ -321,7 +321,7 @@ static PyObject *MathTransformVec3(MathHolderObject *self, PyObject *const *args
 
     // Standard engine constants for readability or use raw numbers
     alignas(kSimdAlignment) float m[kSixteenFloats];
-    if (!unpack_mat44(mat_obj, m)) {
+    if (!UnpackMat44(mat_obj, m)) {
         PyErr_SetString(PyExc_TypeError, "Matrix must be a tuple of 16 floats");
         return nullptr;
     }
@@ -363,7 +363,7 @@ static PyObject *MathMatmulBatch(MathHolderObject *self, PyObject *const *args,
     }
 
     alignas(kSimdAlignment) float m[kSixteenFloats];
-    if (!unpack_mat44(mat_obj, m)) {
+    if (!UnpackMat44(mat_obj, m)) {
         return nullptr;
     }
 
@@ -399,7 +399,7 @@ static PyObject *MathCullAabb(MathHolderObject *self, PyObject *const *args,
     }
 
     alignas(kSimdAlignment) float vp[kSixteenFloats];
-    if (!unpack_mat44(vp_obj, vp)) {
+    if (!UnpackMat44(vp_obj, vp)) {
         return nullptr;
     }
 
@@ -438,7 +438,7 @@ static PyObject *MathCullAabbBatch(MathHolderObject *self, PyObject *const *args
     }
 
     alignas(kSimdAlignment) float vp[kSixteenFloats];
-    if (!unpack_mat44(vp_obj, vp)) {
+    if (!UnpackMat44(vp_obj, vp)) {
         return nullptr;
     }
 
@@ -554,7 +554,7 @@ static PyObject *MathQuatSlerp(MathHolderObject *self, PyObject *const *args,
     float q1[4];
     float q2[4];
     float out[4];
-    if (!unpack_quat(q1_obj, q1) || !unpack_quat(q2_obj, q2)) {
+    if (!UnpackQuat(q1_obj, q1) || !UnpackQuat(q2_obj, q2)) {
         PyErr_SetString(PyExc_TypeError, "Quaternions must be tuples of 4 floats");
         return nullptr;
     }
@@ -580,7 +580,7 @@ static PyObject *MathQuatMul(MathHolderObject *self, PyObject *const *args,
     float a[4];
     float b[4];
     float out[4];
-    if (!unpack_quat(a_obj, a) || !unpack_quat(b_obj, b)) {
+    if (!UnpackQuat(a_obj, a) || !UnpackQuat(b_obj, b)) {
         PyErr_SetString(PyExc_TypeError, "Quaternions must be tuples of 4 floats");
         return nullptr;
     }
@@ -651,7 +651,7 @@ static PyObject *MathQuatRotateVec3(MathHolderObject *self, PyObject *const *arg
     float q[4];
     float v[3];
     float out[3];
-    if (!unpack_quat(q_obj, q) || !unpack_vec3(v_obj, v)) {
+    if (!UnpackQuat(q_obj, q) || !UnpackVec3(v_obj, v)) {
         PyErr_SetString(PyExc_TypeError, "Inputs must be tuples of floats (Quat=4, Vec3=3)");
         return nullptr;
     }
@@ -675,7 +675,7 @@ static PyObject *MathQuatRotateVec3Batch(MathHolderObject *self, PyObject *const
     }
 
     float q[4];
-    if (!unpack_quat(q_obj, q)) {
+    if (!UnpackQuat(q_obj, q)) {
         PyErr_SetString(PyExc_TypeError, "Quaternion must be a tuple of 4 floats");
         return nullptr;
     }
@@ -717,7 +717,7 @@ static PyObject *MathQuatInverse(MathHolderObject *self, PyObject *const *args,
 
     float q[4];
     float out[4];
-    if (!unpack_quat(q_obj, q)) {
+    if (!UnpackQuat(q_obj, q)) {
         PyErr_SetString(PyExc_TypeError, "Quaternion must be a tuple of 4 floats");
         return nullptr;
     }
@@ -746,8 +746,8 @@ static PyObject *MathProject(MathHolderObject *self, PyObject *const *args,
     float out[3];
     int viewport[4];
 
-    if (!unpack_vec3(v_obj, v) || !unpack_mat44(mvp_obj, mvp) ||
-        !unpack_viewport(vp_obj, viewport)) {
+    if (!UnpackVec3(v_obj, v) || !UnpackMat44(mvp_obj, mvp) ||
+        !UnpackViewport(vp_obj, viewport)) {
         PyErr_SetString(PyExc_TypeError,
                         "Invalid arguments for project (Vec3, Mat44, ViewportTuple)");
         return nullptr;
@@ -777,8 +777,8 @@ static PyObject *MathUnproject(MathHolderObject *self, PyObject *const *args,
     float out[3];
     int viewport[4];
 
-    if (!unpack_vec3(v_obj, v) || !unpack_mat44(mvp_obj, mvp) ||
-        !unpack_viewport(vp_obj, viewport)) {
+    if (!UnpackVec3(v_obj, v) || !UnpackMat44(mvp_obj, mvp) ||
+        !UnpackViewport(vp_obj, viewport)) {
         PyErr_SetString(PyExc_TypeError,
                         "Invalid arguments for unproject (Vec3, Mat44, ViewportTuple)");
         return nullptr;
@@ -805,7 +805,7 @@ static PyObject *MathQuatFromTo(MathHolderObject *self, PyObject *const *args,
     float v1[3];
     float v2[3];
     float out[4];
-    if (!unpack_vec3(v1_obj, v1) || !unpack_vec3(v2_obj, v2)) {
+    if (!UnpackVec3(v1_obj, v1) || !UnpackVec3(v2_obj, v2)) {
         PyErr_SetString(PyExc_TypeError, "v1 and v2 must be tuples of 3 floats");
         return nullptr;
     }
@@ -831,7 +831,7 @@ static PyObject *MathVec3Dot(MathHolderObject *self, PyObject *const *args,
 
     float v1[3];
     float v2[3];
-    if (!unpack_vec3(v1_obj, v1) || !unpack_vec3(v2_obj, v2)) {
+    if (!UnpackVec3(v1_obj, v1) || !UnpackVec3(v2_obj, v2)) {
         PyErr_SetString(PyExc_TypeError, "v1 and v2 must be tuples of 3 floats");
         return nullptr;
     }
@@ -857,7 +857,7 @@ static PyObject *MathVec3Cross(MathHolderObject *self, PyObject *const *args,
     float v1[3];
     float v2[3];
     float out[3];
-    if (!unpack_vec3(v1_obj, v1) || !unpack_vec3(v2_obj, v2)) {
+    if (!UnpackVec3(v1_obj, v1) || !UnpackVec3(v2_obj, v2)) {
         PyErr_SetString(PyExc_TypeError, "v1 and v2 must be tuples of 3 floats");
         return nullptr;
     }
@@ -888,8 +888,8 @@ static PyObject *MathIntersectRayPlane(MathHolderObject *self, PyObject *const *
     float pn[3];
     float out_p[3];
     float out_t;
-    if (!unpack_vec3(ro_obj, ro) || !unpack_vec3(rd_obj, rd) || !unpack_vec3(po_obj, po) ||
-        !unpack_vec3(pn_obj, pn)) {
+    if (!UnpackVec3(ro_obj, ro) || !UnpackVec3(rd_obj, rd) || !UnpackVec3(po_obj, po) ||
+        !UnpackVec3(pn_obj, pn)) {
         return nullptr;
     }
 
@@ -916,7 +916,7 @@ static PyObject *MathQuatGetAxisAngle(MathHolderObject *self, PyObject *const *a
     float q[4];
     float axis[3];
     float angle;
-    if (!unpack_quat(q_obj, q)) {
+    if (!UnpackQuat(q_obj, q)) {
         PyErr_SetString(PyExc_TypeError, "Quaternion must be a tuple of 4 floats");
         return nullptr;
     }
@@ -941,7 +941,7 @@ static PyObject *MathQuatFromAxisAngle(MathHolderObject *self, PyObject *const *
 
     float axis[3];
     float out[4];
-    if (!unpack_vec3(axis_obj, axis)) {
+    if (!UnpackVec3(axis_obj, axis)) {
         PyErr_SetString(PyExc_TypeError, "Axis must be a tuple of 3 floats");
         return nullptr;
     }
@@ -1010,7 +1010,7 @@ static PyObject *MathVec3Normalize(MathHolderObject *self, PyObject *const *args
 
     float v[3];
     float out[3];
-    if (!unpack_vec3(v_obj, v)) {
+    if (!UnpackVec3(v_obj, v)) {
         PyErr_SetString(PyExc_TypeError, "v must be a tuple of 3 floats");
         return nullptr;
     }
@@ -1032,7 +1032,7 @@ static PyObject *MathMat44GetTranslation(MathHolderObject *self, PyObject *const
     }
 
     alignas(kSimdAlignment) float in_mat[kSixteenFloats];
-    if (!unpack_mat44(mat_obj, in_mat)) {
+    if (!UnpackMat44(mat_obj, in_mat)) {
         PyErr_SetString(PyExc_TypeError, "Matrix must be a tuple of 16 floats");
         return nullptr;
     }
@@ -1055,7 +1055,7 @@ static PyObject *MathMat44GetRotation(MathHolderObject *self, PyObject *const *a
     }
 
     alignas(kSimdAlignment) float in_mat[kSixteenFloats];
-    if (!unpack_mat44(mat_obj, in_mat)) {
+    if (!UnpackMat44(mat_obj, in_mat)) {
         PyErr_SetString(PyExc_TypeError, "Matrix must be a tuple of 16 floats");
         return nullptr;
     }
@@ -1091,7 +1091,7 @@ static PyObject *MathVec3Reflect(MathHolderObject *self, PyObject *const *args,
     float v[3];
     float n[3];
     float out[3];
-    if (!unpack_vec3(v_obj, v) || !unpack_vec3(n_obj, n)) {
+    if (!UnpackVec3(v_obj, v) || !UnpackVec3(n_obj, n)) {
         PyErr_SetString(PyExc_TypeError, "v and normal must be tuples of 3 floats");
         return nullptr;
     }
@@ -1116,7 +1116,7 @@ static PyObject *MathVec3Distance(MathHolderObject *self, PyObject *const *args,
 
     float v1[3];
     float v2[3];
-    if (!unpack_vec3(v1_obj, v1) || !unpack_vec3(v2_obj, v2)) {
+    if (!UnpackVec3(v1_obj, v1) || !UnpackVec3(v2_obj, v2)) {
         PyErr_SetString(PyExc_TypeError, "v1 and v2 must be tuples of 3 floats");
         return nullptr;
     }
@@ -1142,7 +1142,7 @@ static PyObject *MathQuatRotateVec3Inverse(MathHolderObject *self, PyObject *con
     float q[4];
     float v[3];
     float out[3];
-    if (!unpack_quat(q_obj, q) || !unpack_vec3(v_obj, v)) {
+    if (!UnpackQuat(q_obj, q) || !UnpackVec3(v_obj, v)) {
         PyErr_SetString(PyExc_TypeError, "Inputs must be tuples of floats (Quat=4, Vec3=3)");
         return nullptr;
     }
@@ -1166,7 +1166,7 @@ static PyObject *MathEulerToQuat(MathHolderObject *self, PyObject *const *args,
 
     float euler[3];
     float q[4];
-    if (!unpack_vec3(euler_obj, euler)) {
+    if (!UnpackVec3(euler_obj, euler)) {
         PyErr_SetString(PyExc_TypeError, "Euler must be a tuple of 3 floats");
         return nullptr;
     }

@@ -193,10 +193,12 @@ struct PhysicsWorld {
         const std::scoped_lock lock(step_sync.mutex);
         step_sync.cond.notify_all();
     }
-    // Resolves a handle to its slot if the generation still matches.
-    [[nodiscard]] std::optional<std::uint32_t> UnpackHandle(BodyHandle handle) const noexcept {
-        const auto slot = static_cast<std::uint32_t>(handle & kHandleIndexMask);
-        const auto gen  = static_cast<std::uint32_t>(handle >> kHandleIndexBits);
+    // Resolves a typed handle to its slot, but only while the generation
+    // still matches -- a handle to a recycled body resolves to nullopt
+    // even though its index is in range.
+    [[nodiscard]] std::optional<std::uint32_t> Resolve(BodyHandle handle) const noexcept {
+        const auto slot = handle.Index();
+        const auto gen  = handle.Generation();
         if (slot >= slot_capacity) [[unlikely]] {
             return std::nullopt;
         }
@@ -285,10 +287,10 @@ struct PhysicsWorld {
     // Returns whether the body is submerged; a stale handle reports
     // "not submerged" rather than an error (legacy behavior).
     [[nodiscard]] std::expected<bool, Error>
-    ApplyBuoyancy(BodyHandle handle, JPH_Real surface_y, float buoyancy, float linear_drag,
+    ApplyBuoyancy(BodyHandle handle, JPH::Real surface_y, float buoyancy, float linear_drag,
                   float angular_drag, JPH::Vec3 fluid_velocity, float dt);
     [[nodiscard]] std::expected<void, Error>
-    ApplyBuoyancyBatch(std::span<const BodyHandle> handles, JPH_Real surface_y, float buoyancy,
+    ApplyBuoyancyBatch(std::span<const BodyHandle> handles, JPH::Real surface_y, float buoyancy,
                        float linear_drag, float angular_drag, JPH::Vec3 fluid_velocity, float dt);
     [[nodiscard]] std::expected<MotionType, Error> GetMotionType(BodyHandle handle);
     [[nodiscard]] std::expected<std::uint64_t, Error> GetUserData(BodyHandle handle);
@@ -437,11 +439,5 @@ struct PhysicsWorld {
     JPH::PhysicsSystem physics_system;
     bool jolt_initialized = false;
 };
-
-// --- Native handle helpers ---
-
-[[nodiscard]] inline BodyHandle make_handle(std::uint32_t slot, std::uint32_t gen) noexcept {
-    return (static_cast<std::uint64_t>(gen) << kHandleIndexBits) | slot;
-}
 
 } // namespace CPH

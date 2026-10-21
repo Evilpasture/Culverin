@@ -24,7 +24,7 @@ inline constexpr std::uint32_t kAllLayerBits = 0xFFFFU;
 
 struct BakedSceneData {
     std::size_t count;
-    const JPH_Real *positions;
+    const JPH::Real *positions;
     const float *rotations;
     const float *shapes;
     const std::uint8_t *motion_types;

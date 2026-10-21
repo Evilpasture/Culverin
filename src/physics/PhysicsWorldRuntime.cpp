@@ -52,12 +52,12 @@ void PhysicsWorld::SyncLoadedState(size_t saved_count) {
         const uint32_t slot = bodies.dense_to_slot[i];
         const uint32_t generation =
             (bodies.generations[slot]).load(std::memory_order::relaxed);
-        const uint64_t raw_handle = make_handle(slot, generation);
-        bi.SetUserData(body_id, raw_handle);
+        const BodyHandle handle = BodyHandle::FromParts(slot, generation);
+        bi.SetUserData(body_id, handle.Raw());
 
         const uint32_t jolt_index = body_id.GetIndex();
         if (id_to_handle_map && jolt_index <= max_jolt_bodies) {
-            (id_to_handle_map[jolt_index]).store(raw_handle, std::memory_order::relaxed);
+            (id_to_handle_map[jolt_index]).store(handle, std::memory_order::relaxed);
         }
     }
 }
@@ -69,7 +69,7 @@ struct SnapshotSizes {
     size_t mapping;
 };
 
-static std::optional<SnapshotSizes> calculate_snapshot_size(size_t body_count,
+static std::optional<SnapshotSizes> CalculateSnapshotSize(size_t body_count,
                                                             size_t slot_capacity) {
     const size_t header_size    = sizeof(size_t) + sizeof(double) + sizeof(size_t);
     size_t positions_size       = 0;
@@ -116,7 +116,7 @@ std::expected<Buffer<std::uint8_t>, Error> PhysicsWorld::SaveSnapshot() {
     const std::size_t saved_slot_capacity = slot_capacity;
     const double saved_time               = time;
     const std::optional<SnapshotSizes> sizes =
-        calculate_snapshot_size(body_count, saved_slot_capacity);
+        CalculateSnapshotSize(body_count, saved_slot_capacity);
     if (!sizes) {
         return std::unexpected(WorldSnapshotError::Overflow);
     }
@@ -178,7 +178,7 @@ std::expected<std::size_t, Error> PhysicsWorld::LoadSnapshot(std::span<const std
     }
 
     const std::optional<SnapshotSizes> sizes =
-        calculate_snapshot_size(saved_count, saved_capacity);
+        CalculateSnapshotSize(saved_count, saved_capacity);
     if (!sizes) {
         return std::unexpected(WorldSnapshotError::Truncated);
     }
@@ -273,14 +273,14 @@ JPH::Vec3 PhysicsWorld::GetGravity() {
 
 std::expected<PhysicsBodyStats, Error> PhysicsWorld::GetBodyStats(BodyHandle handle) {
     auto shadow = LockShadowNotStepping();
-    const std::optional<std::uint32_t> resolved = UnpackHandle(handle);
+    const std::optional<std::uint32_t> resolved = Resolve(handle);
     if (!resolved) {
         return std::unexpected(WorldRuntimeError::StaleHandle);
     }
     const std::uint32_t slot = *resolved;
 
     const uint8_t state = (bodies.slot_states[slot]).load(std::memory_order::acquire);
-    if (!get_slot_predicate(state, kMaskImmStandard).is_immediate) {
+    if (!GetSlotPredicate(state, kMaskImmStandard).is_immediate) {
         return std::unexpected(WorldRuntimeError::StaleHandle);
     }
 
@@ -316,14 +316,14 @@ static auto WithSoftBodyRead(PhysicsWorld &world, BodyHandle handle, Fn &&fn)
     JPH::BodyID body_id;
     {
         auto shadow = world.LockShadowNotStepping();
-        const std::optional<std::uint32_t> resolved = world.UnpackHandle(handle);
+        const std::optional<std::uint32_t> resolved = world.Resolve(handle);
         if (!resolved) {
             return std::unexpected(WorldRuntimeError::StaleHandle);
         }
         const std::uint32_t slot = *resolved;
         const uint8_t state =
             (world.bodies.slot_states[slot]).load(std::memory_order::acquire);
-        if (!get_slot_predicate(state, kMaskImmStrict).is_immediate) {
+        if (!GetSlotPredicate(state, kMaskImmStrict).is_immediate) {
             return std::unexpected(WorldRuntimeError::StaleHandle);
         }
         const uint32_t dense = world.bodies.slot_to_dense[slot];
@@ -415,19 +415,19 @@ PhysicsWorld::GetSoftBodyLocalVertices(BodyHandle handle) {
 }
 
 std::expected<bool, Error>
-PhysicsWorld::ApplyBuoyancy(BodyHandle handle, JPH_Real surface_y, float buoyancy,
+PhysicsWorld::ApplyBuoyancy(BodyHandle handle, JPH::Real surface_y, float buoyancy,
                               float linear_drag, float angular_drag, JPH::Vec3 fluid_velocity,
                               float dt) {
 
     auto shadow = LockShadowNotStepping();
-    const std::optional<std::uint32_t> resolved = UnpackHandle(handle);
+    const std::optional<std::uint32_t> resolved = Resolve(handle);
     if (!resolved) {
         return false;
     }
     const std::uint32_t slot = *resolved;
 
     const uint8_t state = (bodies.slot_states[slot]).load(std::memory_order::acquire);
-    if (!get_slot_predicate(state, kMaskImmStrict).is_immediate) {
+    if (!GetSlotPredicate(state, kMaskImmStrict).is_immediate) {
         return false;
     }
 
@@ -448,7 +448,7 @@ PhysicsWorld::ApplyBuoyancy(BodyHandle handle, JPH_Real surface_y, float buoyanc
 }
 
 std::expected<void, Error> PhysicsWorld::ApplyBuoyancyBatch(
-    std::span<const BodyHandle> handles, JPH_Real surface_y, float buoyancy, float linear_drag,
+    std::span<const BodyHandle> handles, JPH::Real surface_y, float buoyancy, float linear_drag,
     float angular_drag, JPH::Vec3 fluid_velocity, float dt) {
     const size_t handle_count = handles.size();
     if (handle_count == 0) {
@@ -466,13 +466,13 @@ std::expected<void, Error> PhysicsWorld::ApplyBuoyancyBatch(
     size_t valid_count = 0;
     auto shadow = LockShadowNotStepping();
     for (size_t i = 0; i < handle_count; i++) {
-        const std::optional<std::uint32_t> resolved = UnpackHandle(handles[i]);
+        const std::optional<std::uint32_t> resolved = Resolve(handles[i]);
         if (!resolved) {
             continue;
         }
         const std::uint32_t slot = *resolved;
         const uint8_t state = (bodies.slot_states[slot]).load(std::memory_order::acquire);
-        if (get_slot_predicate(state, kMaskImmStrict).is_immediate) {
+        if (GetSlotPredicate(state, kMaskImmStrict).is_immediate) {
             body_ids[valid_count++] = bodies.body_ids[bodies.slot_to_dense[slot]];
         }
     }
@@ -501,14 +501,14 @@ std::expected<void, Error> PhysicsWorld::ApplyBuoyancyBatch(
 std::expected<MotionType, Error> PhysicsWorld::GetMotionType(BodyHandle handle) {
 
     auto shadow = LockShadowNotStepping();
-    const std::optional<std::uint32_t> resolved = UnpackHandle(handle);
+    const std::optional<std::uint32_t> resolved = Resolve(handle);
     if (!resolved) {
         return std::unexpected(WorldRuntimeError::StaleHandle);
     }
     const std::uint32_t slot = *resolved;
 
     const uint8_t state = (bodies.slot_states[slot]).load(std::memory_order::acquire);
-    if (get_slot_predicate(state, kMaskImmStandard).is_immediate) {
+    if (GetSlotPredicate(state, kMaskImmStandard).is_immediate) {
         const uint32_t dense     = bodies.slot_to_dense[slot];
         const JPH::BodyID body_id(bodies.body_ids[dense]);
         return static_cast<MotionType>(
@@ -523,14 +523,14 @@ std::expected<MotionType, Error> PhysicsWorld::GetMotionType(BodyHandle handle) 
 std::expected<std::uint64_t, Error> PhysicsWorld::GetUserData(BodyHandle handle) {
 
     auto shadow = LockShadowNotStepping();
-    const std::optional<std::uint32_t> resolved = UnpackHandle(handle);
+    const std::optional<std::uint32_t> resolved = Resolve(handle);
     if (!resolved) {
         return std::unexpected(WorldRuntimeError::StaleHandle);
     }
     const std::uint32_t slot = *resolved;
 
     const uint8_t state = (bodies.slot_states[slot]).load(std::memory_order::acquire);
-    if (!get_slot_predicate(state, kMaskImmStandard).is_executable()) {
+    if (!GetSlotPredicate(state, kMaskImmStandard).is_executable()) {
         return std::unexpected(WorldRuntimeError::StaleHandle);
     }
 
@@ -541,14 +541,14 @@ std::expected<std::uint64_t, Error> PhysicsWorld::GetUserData(BodyHandle handle)
 std::expected<std::uint32_t, Error> PhysicsWorld::GetIndex(BodyHandle handle) {
 
     auto shadow = LockShadowNotStepping();
-    const std::optional<std::uint32_t> resolved = UnpackHandle(handle);
+    const std::optional<std::uint32_t> resolved = Resolve(handle);
     if (!resolved) {
         return std::unexpected(WorldRuntimeError::StaleHandle);
     }
     const std::uint32_t slot = *resolved;
 
     const uint8_t state = (bodies.slot_states[slot]).load(std::memory_order::acquire);
-    if (!get_slot_predicate(state, kMaskImmStandard).is_immediate) {
+    if (!GetSlotPredicate(state, kMaskImmStandard).is_immediate) {
         return std::unexpected(WorldRuntimeError::StaleHandle);
     }
 
@@ -557,25 +557,25 @@ std::expected<std::uint32_t, Error> PhysicsWorld::GetIndex(BodyHandle handle) {
 
 bool PhysicsWorld::IsAlive(BodyHandle handle) {
     auto shadow = LockShadowNotStepping();
-    const std::optional<std::uint32_t> resolved = UnpackHandle(handle);
+    const std::optional<std::uint32_t> resolved = Resolve(handle);
     if (!resolved) {
         return false;
     }
     const uint8_t state = (bodies.slot_states[*resolved]).load(std::memory_order::acquire);
-    return get_slot_predicate(state, kMaskImmStandard).is_executable();
+    return GetSlotPredicate(state, kMaskImmStandard).is_executable();
 }
 
 std::expected<bool, Error> PhysicsWorld::IsActive(BodyHandle handle) {
 
     auto shadow = LockShadowNotStepping();
-    const std::optional<std::uint32_t> resolved = UnpackHandle(handle);
+    const std::optional<std::uint32_t> resolved = Resolve(handle);
     if (!resolved) {
         return std::unexpected(WorldRuntimeError::StaleHandle);
     }
     const std::uint32_t slot = *resolved;
 
     const uint8_t state = (bodies.slot_states[slot]).load(std::memory_order::acquire);
-    if (!get_slot_predicate(state, kMaskImmStandard).is_immediate) {
+    if (!GetSlotPredicate(state, kMaskImmStandard).is_immediate) {
         return false;
     }
 
@@ -644,14 +644,14 @@ std::expected<void, Error> PhysicsWorld::SetCollisionFilter(BodyHandle handle,
 
     auto shadow = LockShadowNotStepping();
     WaitUntilNotQuerying(shadow);
-    const std::optional<std::uint32_t> resolved = UnpackHandle(handle);
+    const std::optional<std::uint32_t> resolved = Resolve(handle);
     if (!resolved) {
         return std::unexpected(WorldRuntimeError::StaleHandle);
     }
     const std::uint32_t slot = *resolved;
 
     const uint8_t state = (bodies.slot_states[slot]).load(std::memory_order::acquire);
-    if (get_slot_predicate(state, kMaskImmStandard).is_immediate) {
+    if (GetSlotPredicate(state, kMaskImmStandard).is_immediate) {
         const uint32_t dense     = bodies.slot_to_dense[slot];
         bodies.categories[dense] = category;
         bodies.masks[dense]      = mask;

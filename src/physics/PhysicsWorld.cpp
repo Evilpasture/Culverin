@@ -27,7 +27,7 @@ constexpr JPH::Real kVerifyAbiPosY    = 20.0;
 constexpr JPH::Real kVerifyAbiPosZ    = 30.0;
 constexpr double kVerifyAbiTolerance  = 0.1;
 
-void set_scaled_mass(JPH::BodyCreationSettings &settings, JPH::MassProperties properties,
+void SetScaledMass(JPH::BodyCreationSettings &settings, JPH::MassProperties properties,
                      float mass, float scale) {
     properties.mMass = mass;
     for (JPH::uint column = 0; column < 4; ++column) {
@@ -44,7 +44,7 @@ void set_scaled_mass(JPH::BodyCreationSettings &settings, JPH::MassProperties pr
 // broadphase layers. The pair matrix is fixed: Static collides with Dynamic
 // and Vehicle, and Dynamic collides with itself. The remaining pairs
 // (Static/Static, Dynamic/Vehicle, Vehicle/Vehicle) do not collide.
-[[nodiscard]] constexpr bool object_layers_collide(std::uint32_t layer1,
+[[nodiscard]] constexpr bool ObjectLayersCollide(std::uint32_t layer1,
                                                    std::uint32_t layer2) noexcept {
     if (layer1 > layer2) {
         const std::uint32_t temporary = layer1;
@@ -91,7 +91,7 @@ class WorldObjectLayerPairFilter final : public JPH::ObjectLayerPairFilter {
   public:
     [[nodiscard]] bool ShouldCollide(JPH::ObjectLayer layer1,
                                      JPH::ObjectLayer layer2) const override {
-        return object_layers_collide(static_cast<std::uint32_t>(layer1),
+        return ObjectLayersCollide(static_cast<std::uint32_t>(layer1),
                                      static_cast<std::uint32_t>(layer2));
     }
 };
@@ -101,7 +101,7 @@ class WorldObjectVsBroadPhaseLayerFilter final : public JPH::ObjectVsBroadPhaseL
     [[nodiscard]] bool ShouldCollide(JPH::ObjectLayer layer,
                                      JPH::BroadPhaseLayer broadphase_layer) const override {
         // Broadphase numbering is identical to object-layer numbering.
-        return object_layers_collide(static_cast<std::uint32_t>(layer),
+        return ObjectLayersCollide(static_cast<std::uint32_t>(layer),
                                      static_cast<std::uint32_t>(broadphase_layer.GetValue()));
     }
 };
@@ -129,7 +129,7 @@ void ConfigureBodySettings(JPH::BodyCreationSettings &settings, const JPH::Shape
 
     if (cfg.mass > 0.0F) {
         const JPH::MassProperties properties = shape->GetMassProperties();
-        set_scaled_mass(settings, properties, cfg.mass,
+        SetScaledMass(settings, properties, cfg.mass,
                         cfg.mass / std::fmax(properties.mMass, 1e-6F));
     }
 }
@@ -139,7 +139,7 @@ void ApplyBodyCreationProps(JPH::BodyCreationSettings &settings, const JPH::Shap
     if (props.mass > 0.0F) {
         const JPH::MassProperties properties = shape->GetMassProperties();
         if (properties.mMass > 1e-6F) {
-            set_scaled_mass(settings, properties, props.mass, props.mass / properties.mMass);
+            SetScaledMass(settings, properties, props.mass, props.mass / properties.mMass);
         }
     }
     if (props.is_sensor) {
@@ -391,7 +391,7 @@ std::expected<void, Error> PhysicsWorld::Resize(std::size_t new_capacity) {
     // purpose (see allocate above): every path that claims a dense index
     // defines all of its fields before the body becomes visible — paths
     // that don't take explicit values write creation defaults at claim
-    // time (reserve_body_slot for single/soft creates, the batch loop in
+    // time (ReserveBodySlot for single/soft creates, the batch loop in
     // CreateBodiesBatch for batch creates).
 
     retired_bodies = std::exchange(bodies, std::move(next));
@@ -456,8 +456,8 @@ std::expected<void, Error> PhysicsWorld::LoadBakedScene(const BakedSceneData &sc
                 static_cast<JPH::ObjectLayer>(scene.object_layers[i]));
 
             bodies.generations[i].store(1, std::memory_order::relaxed);
-            const BodyHandle handle = make_handle(static_cast<std::uint32_t>(i), 1);
-            creation.mUserData      = handle;
+            const BodyHandle handle = BodyHandle::FromParts(static_cast<std::uint32_t>(i), 1);
+            creation.mUserData      = handle.Raw();
             if (motion_type == std::to_underlying(MotionType::Dynamic)) {
                 creation.mAllowSleeping = true;
             }
@@ -495,7 +495,7 @@ std::expected<void, Error> PhysicsWorld::LoadBakedScene(const BakedSceneData &sc
 
 namespace {
 
-std::expected<void, Error> reserve_body_slot(PhysicsWorld *world, std::uint32_t slot_state,
+std::expected<void, Error> ReserveBodySlot(PhysicsWorld *world, std::uint32_t slot_state,
                                      BodyHandle *handle_out) {
     const std::size_t current_count = world->count.load(std::memory_order::acquire);
     std::size_t available           = world->free_count.load(std::memory_order::acquire);
@@ -530,7 +530,7 @@ std::expected<void, Error> reserve_body_slot(PhysicsWorld *world, std::uint32_t 
 
     const std::uint32_t generation =
         world->bodies.generations[slot].load(std::memory_order::relaxed);
-    const BodyHandle handle = make_handle(slot, generation);
+    const BodyHandle handle = BodyHandle::FromParts(slot, generation);
 
     world->bodies.slot_to_dense[slot]  = dense;
     world->bodies.dense_to_slot[dense] = slot;
@@ -555,24 +555,24 @@ std::expected<void, Error> reserve_body_slot(PhysicsWorld *world, std::uint32_t 
 
 std::expected<BodyHandle, Error>
 PhysicsWorld::CommitCreate(JPH::BodyCreationSettings &settings, std::uint32_t slot_state) {
-    BodyHandle handle = 0;
-    const std::expected<void, Error> status = reserve_body_slot(this, slot_state, &handle);
+    BodyHandle handle;
+    const std::expected<void, Error> status = ReserveBodySlot(this, slot_state, &handle);
     if (!status) {
         return std::unexpected(status.error());
     }
-    settings.mUserData = handle;
+    settings.mUserData = handle.Raw();
     return handle;
 }
 
 std::expected<BodyHandle, Error>
 PhysicsWorld::CommitCreateSoft(JPH::SoftBodyCreationSettings &settings,
                                std::uint32_t slot_state) {
-    BodyHandle handle = 0;
-    const std::expected<void, Error> status = reserve_body_slot(this, slot_state, &handle);
+    BodyHandle handle;
+    const std::expected<void, Error> status = ReserveBodySlot(this, slot_state, &handle);
     if (!status) {
         return std::unexpected(status.error());
     }
-    settings.mUserData = handle;
+    settings.mUserData = handle.Raw();
     return handle;
 }
 

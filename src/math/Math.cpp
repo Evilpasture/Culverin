@@ -64,7 +64,7 @@ void MathComputeInterpolationLoop(const PosStride *CPH_RESTRICT curr_p,
 
 /**
  * @brief SIMD Interpolation for Character Transforms.
- * start_p is JPH_Real (potentially CPH::Float64), start_r is CPH::Float32.
+ * start_p is JPH::Real (potentially CPH::Float64), start_r is CPH::Float32.
  */
 [[gnu::hot, gnu::nonnull]]
 void MathInterpolateCharacterTransform(

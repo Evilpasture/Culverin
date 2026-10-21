@@ -42,7 +42,23 @@ is pinned by a `static_assert` next to `GetSoftBodyLocalVertices` because
 that size is the wire format. With ships done, all eight global proc
 tables are gone.
 
-**A5 is done: JoltC is gone.** `extern/JoltC`, the `joltc_double` static
+**A5 is done: JoltC is gone.** A follow-up sweep finished the
+standardisation it started: the project-local `JPH_Real` typedef and its
+`JPH_REAL_CHAR`/`JPH_REAL_STRING` macros are replaced by `JPH::Real` plus the
+typed `CPH::kRealFormatString` (`JPH_REAL_CHAR` had no users at all), so
+Culverin no longer defines a single `JPH_*` macro of its own. `BodyHandle`
+and `ConstraintHandle` are no longer `using = std::uint64_t`: they are
+`CPH::GenerationalHandle<Tag>` instantiations (core/Handle.hpp) with
+`Index()`, `Generation()`, `Raw()`, `IsValid()` and `FromParts()`, so a body
+handle can no longer be passed where a constraint handle is expected. The
+whole legacy helper set -- `make_handle`, `kHandleIndexBits`,
+`kHandleIndexMask` and every hand-written `& mask` / `>> bits` -- is gone,
+including in the ECS, whose `Entity` is the same instantiation.
+`readability-identifier-naming` is now enforced: 273 findings across 32 TUs
+when the sweep started, 0 now, with the exceptions written into `.clang-tidy`
+rather than left implicit (third-party headers, CPython C slots, Jolt's
+`in*` override parameters, `Buffer<T>`'s STL-compatible member names, and
+the two deliberate constant conventions). `extern/JoltC`, the `joltc_double` static
 archive, the `joltc.c`-compiled-as-C++ hack, the last `joltc.h` include
 and `src/jolt/JoltUtils.hpp` (whose `JoltPtr`/`JoltDeleter`/`ToJoltBodyId`
 shims had no callers) are all deleted; nothing under `src/` names a

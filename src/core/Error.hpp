@@ -145,11 +145,11 @@ constexpr auto MakeEnumNames() noexcept {
 }
 
 template <typename E>
-inline constexpr auto EnumNames = MakeEnumNames<E>();
+inline constexpr auto kEnumNames = MakeEnumNames<E>();
 
 template <typename E>
 std::string_view EnumToName(std::uint32_t value) noexcept {
-    for (const auto &entry : EnumNames<E>) {
+    for (const auto &entry : kEnumNames<E>) {
         if (static_cast<std::uint32_t>(entry.value) == value) {
             return entry.name;
         }

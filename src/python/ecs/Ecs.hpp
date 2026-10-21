@@ -6,8 +6,10 @@
 
 namespace CPH::Python {
 
-// A 64-bit Entity Handle: [32-bit Generation | 32-bit Index]
-using Entity = std::uint64_t;
+// A 64-bit entity handle: [32-bit generation | 32-bit index]. Same layout and
+// same class template as BodyHandle/ConstraintHandle (core/Handle.hpp), so the
+// packing helpers are shared rather than re-derived here.
+using Entity = CPH::GenerationalHandle<CPH::EntityTag>;
 
 // The Sparse Set: Maps sparse Entity IDs to dense, contiguous data arrays.
 struct SparseSet {

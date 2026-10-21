@@ -68,7 +68,7 @@ static_assert(sizeof(struct FastParserCore) == static_cast<size_t>(kFastParseAli
 static_assert(alignof(struct FastParserCore) == kFastParseAlignmentSize);
 
 // Forward declaration of the generic fallback
-[[nodiscard]] static inline ParseResult fast_parse_vector(
+[[nodiscard]] static inline ParseResult FastParseVector(
     PyObject *const *args,
     Py_ssize_t nargs,
     PyObject *kwnames,
@@ -105,11 +105,11 @@ extern void FastParseDeinit(FastParserCore *fastparser);
 /** --- 3. SPECULATIVE STUBS (Monomorphic fast-paths) --- **/
 
 [[gnu::always_inline]]
-static inline bool fast_parse_dispatch_conv(bool (*conv)(PyObject *, const void *),
+static inline bool FastParseDispatchConv(bool (*conv)(PyObject *, const void *),
                                             PyObject *obj, const void *target);
 
 [[nodiscard, gnu::always_inline]]
-static inline ParseResult fast_parse_spec_check_and_conv(const FastArgSpecHot *spec,
+static inline ParseResult FastParseSpecCheckAndConv(const FastArgSpecHot *spec,
                                                          std::size_t index, PyObject *value,
                                                          const void *target,
                                                          const FastParserCore *fastparser) {
@@ -120,9 +120,9 @@ static inline ParseResult fast_parse_spec_check_and_conv(const FastArgSpecHot *s
             }
         }
     }
-    if (!fast_parse_dispatch_conv(spec->convert, value, target)) [[unlikely]] {
+    if (!FastParseDispatchConv(spec->convert, value, target)) [[unlikely]] {
         // Deliberately undecorated: the monomorphic stubs have always returned
-        // the converter's raw error, while only fast_parse_process_pos adds the
+        // the converter's raw error, while only FastParseProcessPos adds the
         // signature context. Unifying them would change the diagnostics these
         // hot-path calls produce, which is a behaviour change rather than a
         // refactor -- flagged for a follow-up, not done here.
@@ -132,252 +132,252 @@ static inline ParseResult fast_parse_spec_check_and_conv(const FastArgSpecHot *s
 }
 
 [[gnu::noinline]] static inline ParseResult
-fast_parse_fallback(PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames,
+FastParseFallback(PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames,
                     const FastParserCore *fastparser, const void *const *targets) {
-    return fast_parse_vector(args, nargs, kwnames, fastparser, targets);
+    return FastParseVector(args, nargs, kwnames, fastparser, targets);
 }
 
 [[nodiscard, gnu::always_inline]] static inline ParseResult
-fast_parse_speculate_p0(PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames,
+FastParseSpeculateP0(PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames,
                         const FastParserCore *fastparser, const void *const *targets) {
     if (nargs == 0 && kwnames == nullptr) [[likely]] {
         return {};
     }
-    return fast_parse_fallback(args, nargs, kwnames, fastparser, targets);
+    return FastParseFallback(args, nargs, kwnames, fastparser, targets);
 }
 
 [[nodiscard, gnu::always_inline]] static inline ParseResult
-fast_parse_speculate_p1(PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames,
+FastParseSpeculateP1(PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames,
                         const FastParserCore *fastparser, const void *const *targets) {
     if (nargs == 1 && kwnames == nullptr) [[likely]] {
-        return fast_parse_spec_check_and_conv(&fastparser->hot_specs[0], 0,
+        return FastParseSpecCheckAndConv(&fastparser->hot_specs[0], 0,
                                               args[0], targets[0], fastparser);
     }
-    return fast_parse_fallback(args, nargs, kwnames, fastparser, targets);
+    return FastParseFallback(args, nargs, kwnames, fastparser, targets);
 }
 
 [[nodiscard, gnu::always_inline]] static inline ParseResult
-fast_parse_speculate_p2(PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames,
+FastParseSpeculateP2(PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames,
                         const FastParserCore *fastparser, const void *const *targets) {
     if (nargs == 2 && kwnames == nullptr) [[likely]] {
-        if (ParseResult step = fast_parse_spec_check_and_conv(
+        if (ParseResult step = FastParseSpecCheckAndConv(
                 &fastparser->hot_specs[0], 0, args[0], targets[0], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
-        return fast_parse_spec_check_and_conv(&fastparser->hot_specs[1], 1,
+        return FastParseSpecCheckAndConv(&fastparser->hot_specs[1], 1,
                                               args[1], targets[1], fastparser);
     }
-    return fast_parse_fallback(args, nargs, kwnames, fastparser, targets);
+    return FastParseFallback(args, nargs, kwnames, fastparser, targets);
 }
 
 [[nodiscard, gnu::always_inline]] static inline ParseResult
-fast_parse_speculate_p3(PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames,
+FastParseSpeculateP3(PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames,
                         const FastParserCore *fastparser, const void *const *targets) {
     if (nargs == 3 && kwnames == nullptr) [[likely]] {
-        if (ParseResult step = fast_parse_spec_check_and_conv(
+        if (ParseResult step = FastParseSpecCheckAndConv(
                 &fastparser->hot_specs[0], 0, args[0], targets[0], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
-        if (ParseResult step = fast_parse_spec_check_and_conv(
+        if (ParseResult step = FastParseSpecCheckAndConv(
                 &fastparser->hot_specs[1], 1, args[1], targets[1], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
-        return fast_parse_spec_check_and_conv(&fastparser->hot_specs[2], 2,
+        return FastParseSpecCheckAndConv(&fastparser->hot_specs[2], 2,
                                               args[2], targets[2], fastparser);
     }
-    return fast_parse_fallback(args, nargs, kwnames, fastparser, targets);
+    return FastParseFallback(args, nargs, kwnames, fastparser, targets);
 }
 
 [[nodiscard, gnu::always_inline]] static inline ParseResult
-fast_parse_speculate_p4(PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames,
+FastParseSpeculateP4(PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames,
                         const FastParserCore *fastparser, const void *const *targets) {
     if (nargs == 4 && kwnames == nullptr) [[likely]] {
-        if (ParseResult step = fast_parse_spec_check_and_conv(
+        if (ParseResult step = FastParseSpecCheckAndConv(
                 &fastparser->hot_specs[0], 0, args[0], targets[0], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
-        if (ParseResult step = fast_parse_spec_check_and_conv(
+        if (ParseResult step = FastParseSpecCheckAndConv(
                 &fastparser->hot_specs[1], 1, args[1], targets[1], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
-        if (ParseResult step = fast_parse_spec_check_and_conv(
+        if (ParseResult step = FastParseSpecCheckAndConv(
                 &fastparser->hot_specs[2], 2, args[2], targets[2], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
-        return fast_parse_spec_check_and_conv(&fastparser->hot_specs[3], 3,
+        return FastParseSpecCheckAndConv(&fastparser->hot_specs[3], 3,
                                               args[3], targets[3], fastparser);
     }
-    return fast_parse_fallback(args, nargs, kwnames, fastparser, targets);
+    return FastParseFallback(args, nargs, kwnames, fastparser, targets);
 }
 
 [[nodiscard, gnu::always_inline]] static inline ParseResult
-fast_parse_speculate_p5(PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames,
+FastParseSpeculateP5(PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames,
                         const FastParserCore *fastparser, const void *const *targets) {
     if (nargs == 5 && kwnames == nullptr) [[likely]] {
-        if (ParseResult step = fast_parse_spec_check_and_conv(
+        if (ParseResult step = FastParseSpecCheckAndConv(
                 &fastparser->hot_specs[0], 0, args[0], targets[0], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
-        if (ParseResult step = fast_parse_spec_check_and_conv(
+        if (ParseResult step = FastParseSpecCheckAndConv(
                 &fastparser->hot_specs[1], 1, args[1], targets[1], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
-        if (ParseResult step = fast_parse_spec_check_and_conv(
+        if (ParseResult step = FastParseSpecCheckAndConv(
                 &fastparser->hot_specs[2], 2, args[2], targets[2], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
-        if (ParseResult step = fast_parse_spec_check_and_conv(
+        if (ParseResult step = FastParseSpecCheckAndConv(
                 &fastparser->hot_specs[3], 3, args[3], targets[3], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
-        return fast_parse_spec_check_and_conv(&fastparser->hot_specs[4], 4,
+        return FastParseSpecCheckAndConv(&fastparser->hot_specs[4], 4,
                                               args[4], targets[4], fastparser);
     }
-    return fast_parse_fallback(args, nargs, kwnames, fastparser, targets);
+    return FastParseFallback(args, nargs, kwnames, fastparser, targets);
 }
 
 [[nodiscard, gnu::always_inline]] static inline ParseResult
-fast_parse_speculate_p6(PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames,
+FastParseSpeculateP6(PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames,
                         const FastParserCore *fastparser, const void *const *targets) {
     if (nargs == 6 && kwnames == nullptr) [[likely]] {
-        if (ParseResult step = fast_parse_spec_check_and_conv(
+        if (ParseResult step = FastParseSpecCheckAndConv(
                 &fastparser->hot_specs[0], 0, args[0], targets[0], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
-        if (ParseResult step = fast_parse_spec_check_and_conv(
+        if (ParseResult step = FastParseSpecCheckAndConv(
                 &fastparser->hot_specs[1], 1, args[1], targets[1], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
-        if (ParseResult step = fast_parse_spec_check_and_conv(
+        if (ParseResult step = FastParseSpecCheckAndConv(
                 &fastparser->hot_specs[2], 2, args[2], targets[2], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
-        if (ParseResult step = fast_parse_spec_check_and_conv(
+        if (ParseResult step = FastParseSpecCheckAndConv(
                 &fastparser->hot_specs[3], 3, args[3], targets[3], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
-        if (ParseResult step = fast_parse_spec_check_and_conv(
+        if (ParseResult step = FastParseSpecCheckAndConv(
                 &fastparser->hot_specs[4], 4, args[4], targets[4], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
-        return fast_parse_spec_check_and_conv(&fastparser->hot_specs[5], 5,
+        return FastParseSpecCheckAndConv(&fastparser->hot_specs[5], 5,
                                               args[5], targets[5], fastparser);
     }
-    return fast_parse_fallback(args, nargs, kwnames, fastparser, targets);
+    return FastParseFallback(args, nargs, kwnames, fastparser, targets);
 }
 
 [[nodiscard, gnu::always_inline]] static inline ParseResult
-fast_parse_speculate_p7(PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames,
+FastParseSpeculateP7(PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames,
                         const FastParserCore *fastparser, const void *const *targets) {
     if (nargs == 7 && kwnames == nullptr) [[likely]] {
-        if (ParseResult step = fast_parse_spec_check_and_conv(
+        if (ParseResult step = FastParseSpecCheckAndConv(
                 &fastparser->hot_specs[0], 0, args[0], targets[0], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
-        if (ParseResult step = fast_parse_spec_check_and_conv(
+        if (ParseResult step = FastParseSpecCheckAndConv(
                 &fastparser->hot_specs[1], 1, args[1], targets[1], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
-        if (ParseResult step = fast_parse_spec_check_and_conv(
+        if (ParseResult step = FastParseSpecCheckAndConv(
                 &fastparser->hot_specs[2], 2, args[2], targets[2], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
-        if (ParseResult step = fast_parse_spec_check_and_conv(
+        if (ParseResult step = FastParseSpecCheckAndConv(
                 &fastparser->hot_specs[3], 3, args[3], targets[3], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
-        if (ParseResult step = fast_parse_spec_check_and_conv(
+        if (ParseResult step = FastParseSpecCheckAndConv(
                 &fastparser->hot_specs[4], 4, args[4], targets[4], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
-        if (ParseResult step = fast_parse_spec_check_and_conv(
+        if (ParseResult step = FastParseSpecCheckAndConv(
                 &fastparser->hot_specs[5], 5, args[5], targets[5], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
-        return fast_parse_spec_check_and_conv(&fastparser->hot_specs[6], 6,
+        return FastParseSpecCheckAndConv(&fastparser->hot_specs[6], 6,
                                               args[6], targets[6], fastparser);
     }
-    return fast_parse_fallback(args, nargs, kwnames, fastparser, targets);
+    return FastParseFallback(args, nargs, kwnames, fastparser, targets);
 }
 
 [[nodiscard, gnu::always_inline]] static inline ParseResult
-fast_parse_speculate_p8(PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames,
+FastParseSpeculateP8(PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames,
                         const FastParserCore *fastparser, const void *const *targets) {
     if (nargs == 8 && kwnames == nullptr) [[likely]] {
-        if (ParseResult step = fast_parse_spec_check_and_conv(
+        if (ParseResult step = FastParseSpecCheckAndConv(
                 &fastparser->hot_specs[0], 0, args[0], targets[0], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
-        if (ParseResult step = fast_parse_spec_check_and_conv(
+        if (ParseResult step = FastParseSpecCheckAndConv(
                 &fastparser->hot_specs[1], 1, args[1], targets[1], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
-        if (ParseResult step = fast_parse_spec_check_and_conv(
+        if (ParseResult step = FastParseSpecCheckAndConv(
                 &fastparser->hot_specs[2], 2, args[2], targets[2], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
-        if (ParseResult step = fast_parse_spec_check_and_conv(
+        if (ParseResult step = FastParseSpecCheckAndConv(
                 &fastparser->hot_specs[3], 3, args[3], targets[3], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
-        if (ParseResult step = fast_parse_spec_check_and_conv(
+        if (ParseResult step = FastParseSpecCheckAndConv(
                 &fastparser->hot_specs[4], 4, args[4], targets[4], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
-        if (ParseResult step = fast_parse_spec_check_and_conv(
+        if (ParseResult step = FastParseSpecCheckAndConv(
                 &fastparser->hot_specs[5], 5, args[5], targets[5], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
-        if (ParseResult step = fast_parse_spec_check_and_conv(
+        if (ParseResult step = FastParseSpecCheckAndConv(
                 &fastparser->hot_specs[6], 6, args[6], targets[6], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
-        return fast_parse_spec_check_and_conv(&fastparser->hot_specs[7], 7,
+        return FastParseSpecCheckAndConv(&fastparser->hot_specs[7], 7,
                                               args[7], targets[7], fastparser);
     }
-    return fast_parse_fallback(args, nargs, kwnames, fastparser, targets);
+    return FastParseFallback(args, nargs, kwnames, fastparser, targets);
 }
 
 /** --- 3. CONVERTER DISPATCH --- **/
 
 template <typename T>
-[[nodiscard]] static inline T *fast_parse_target(const void *target) noexcept {
+[[nodiscard]] static inline T *FastParseTarget(const void *target) noexcept {
     return static_cast<T *>(const_cast<void *>(target));
 }
 
 [[nodiscard, gnu::always_inline]] static inline bool
-fast_parse_conv_float(PyObject *obj, const void *target) {
+FastParseConvFloat(PyObject *obj, const void *target) {
     // HOT PATH: Exact float match (Pointer comparison)
     if (PyFloat_CheckExact(obj)) {
-        *fast_parse_target<float>(target) =
+        *FastParseTarget<float>(target) =
             static_cast<float>((reinterpret_cast<PyFloatObject *>(obj))->ob_fval);
         return true;
     }
@@ -387,16 +387,16 @@ fast_parse_conv_float(PyObject *obj, const void *target) {
     if (val == -1.0 && PyErr_Occurred()) [[unlikely]] {
         return false;
     }
-    *fast_parse_target<float>(target) = static_cast<float>(val);
+    *FastParseTarget<float>(target) = static_cast<float>(val);
     return true;
 }
 
 [[nodiscard, gnu::always_inline]] static inline bool
-fast_parse_conv_double(PyObject *obj, const void *target) {
+FastParseConvDouble(PyObject *obj, const void *target) {
     // HOT PATH: Exact float match
     // Bypasses the overhead of PyFloat_AsDouble (magic method checks, int conversion logic)
     if (PyFloat_CheckExact(obj)) {
-        *fast_parse_target<double>(target) = (reinterpret_cast<PyFloatObject *>(obj))->ob_fval;
+        *FastParseTarget<double>(target) = (reinterpret_cast<PyFloatObject *>(obj))->ob_fval;
         return true;
     }
 
@@ -410,19 +410,19 @@ fast_parse_conv_double(PyObject *obj, const void *target) {
     if (val == -1.0 && PyErr_Occurred()) [[unlikely]] {
         return false;
     }
-    *fast_parse_target<double>(target) = val;
+    *FastParseTarget<double>(target) = val;
     return true;
 }
 
-[[nodiscard, gnu::always_inline]] static inline bool fast_parse_conv_int(PyObject *obj,
+[[nodiscard, gnu::always_inline]] static inline bool FastParseConvInt(PyObject *obj,
                                                                               const void *target) {
     // 1. Singletons (Pointer identity is the fastest possible check)
     if (obj == Py_True) {
-        *fast_parse_target<int>(target) = 1;
+        *FastParseTarget<int>(target) = 1;
         return true;
     }
     if (obj == Py_False) {
-        *fast_parse_target<int>(target) = 0;
+        *FastParseTarget<int>(target) = 0;
         return true;
     }
 
@@ -437,7 +437,7 @@ fast_parse_conv_double(PyObject *obj, const void *target) {
 
     // 4. Hot Path: 99.9% of integers in physics/logic are not -1
     if (val != -1) [[likely]] {
-        *fast_parse_target<int>(target) = static_cast<int>(val);
+        *FastParseTarget<int>(target) = static_cast<int>(val);
         return true;
     }
 
@@ -446,18 +446,18 @@ fast_parse_conv_double(PyObject *obj, const void *target) {
         return false;
     }
 
-    *fast_parse_target<int>(target) = -1;
+    *FastParseTarget<int>(target) = -1;
     return true;
 }
 
-[[nodiscard, gnu::always_inline]] static inline bool fast_parse_conv_u32(PyObject *obj,
+[[nodiscard, gnu::always_inline]] static inline bool FastParseConvU32(PyObject *obj,
                                                                               const void *target) {
     if (obj == Py_True) {
-        *fast_parse_target<uint32_t>(target) = 1;
+        *FastParseTarget<uint32_t>(target) = 1;
         return true;
     }
     if (obj == Py_False) {
-        *fast_parse_target<uint32_t>(target) = 0;
+        *FastParseTarget<uint32_t>(target) = 0;
         return true;
     }
     if (obj == Py_None) [[unlikely]] {
@@ -468,7 +468,7 @@ fast_parse_conv_double(PyObject *obj, const void *target) {
     unsigned long val = PyLong_AsUnsignedLong(obj);
 
     if (val != (unsigned long)-1) [[likely]] {
-        *fast_parse_target<uint32_t>(target) = static_cast<uint32_t>(val);
+        *FastParseTarget<uint32_t>(target) = static_cast<uint32_t>(val);
         return true;
     }
 
@@ -476,30 +476,30 @@ fast_parse_conv_double(PyObject *obj, const void *target) {
         return false;
     }
 
-    *fast_parse_target<uint32_t>(target) = static_cast<uint32_t>(-1);
+    *FastParseTarget<uint32_t>(target) = static_cast<uint32_t>(-1);
     return true;
 }
 
-[[nodiscard, gnu::always_inline]] static inline bool fast_parse_conv_u64(PyObject *obj,
+[[nodiscard, gnu::always_inline]] static inline bool FastParseConvU64(PyObject *obj,
                                                                               const void *target) {
     if (obj == Py_True) {
-        *fast_parse_target<uint64_t>(target) = 1;
+        *FastParseTarget<uint64_t>(target) = 1;
         return true;
     }
     if (obj == Py_False) {
-        *fast_parse_target<uint64_t>(target) = 0;
+        *FastParseTarget<uint64_t>(target) = 0;
         return true;
     }
     // u64 often used for handles, which might be None
     if (obj == Py_None) {
-        *fast_parse_target<uint64_t>(target) = 0;
+        *FastParseTarget<uint64_t>(target) = 0;
         return true;
     }
 
     unsigned long long val = PyLong_AsUnsignedLongLong(obj);
 
     if (val != (unsigned long long)-1) [[likely]] {
-        *fast_parse_target<uint64_t>(target) = static_cast<uint64_t>(val);
+        *FastParseTarget<uint64_t>(target) = static_cast<uint64_t>(val);
         return true;
     }
 
@@ -507,19 +507,19 @@ fast_parse_conv_double(PyObject *obj, const void *target) {
         return false;
     }
 
-    *fast_parse_target<uint64_t>(target) = static_cast<uint64_t>(-1);
+    *FastParseTarget<uint64_t>(target) = static_cast<uint64_t>(-1);
     return true;
 }
 
-[[nodiscard, gnu::always_inline]] static inline bool fast_parse_conv_bool(PyObject *obj,
+[[nodiscard, gnu::always_inline]] static inline bool FastParseConvBool(PyObject *obj,
                                                                                const void *target) {
     // Exact pointer check for the singletons
     if (obj == Py_True) {
-        *fast_parse_target<bool>(target) = true;
+        *FastParseTarget<bool>(target) = true;
         return true;
     }
     if (obj == Py_False) {
-        *fast_parse_target<bool>(target) = false;
+        *FastParseTarget<bool>(target) = false;
         return true;
     }
 
@@ -528,17 +528,17 @@ fast_parse_conv_double(PyObject *obj, const void *target) {
     if (val == -1) [[unlikely]] {
         return false;
     }
-    *fast_parse_target<bool>(target) = static_cast<bool>(val);
+    *FastParseTarget<bool>(target) = static_cast<bool>(val);
     return true;
 }
 
 [[nodiscard, gnu::always_inline]] static inline bool
-fast_parse_conv_pyobj(PyObject *obj, const void *target) {
-    *fast_parse_target<PyObject *>(target) = obj;
+FastParseConvPyobj(PyObject *obj, const void *target) {
+    *FastParseTarget<PyObject *>(target) = obj;
     return true;
 }
 
-[[nodiscard, gnu::always_inline]] static inline bool fast_parse_conv_str(PyObject *obj,
+[[nodiscard, gnu::always_inline]] static inline bool FastParseConvStr(PyObject *obj,
                                                                               const void *target) {
     if (!PyUnicode_Check(obj)) [[unlikely]] {
         PyErr_Format(PyExc_TypeError, "expected str, got %s", Py_TYPE(obj)->tp_name);
@@ -548,18 +548,18 @@ fast_parse_conv_pyobj(PyObject *obj, const void *target) {
     if (str == nullptr) [[unlikely]] {
         return false;
     }
-    *fast_parse_target<const char *>(target) = str;
+    *FastParseTarget<const char *>(target) = str;
     return true;
 }
 
 [[nodiscard, gnu::always_inline]] static inline bool
-fast_parse_conv_ssize(PyObject *obj, const void *target) {
+FastParseConvSsize(PyObject *obj, const void *target) {
     // HOT PATH: Exact integer match
     if (PyLong_CheckExact(obj)) [[likely]] {
         Py_ssize_t val = PyLong_AsSsize_t(obj);
         // Optimization: Values like buffer sizes and counts are rarely exactly -1.
         if (val != -1) [[likely]] {
-            *fast_parse_target<Py_ssize_t>(target) = val;
+            *FastParseTarget<Py_ssize_t>(target) = val;
             return true;
         }
     }
@@ -574,32 +574,32 @@ fast_parse_conv_ssize(PyObject *obj, const void *target) {
     if (val == -1 && PyErr_Occurred()) {
         return false;
     }
-    *fast_parse_target<Py_ssize_t>(target) = val;
+    *FastParseTarget<Py_ssize_t>(target) = val;
     return true;
 }
 
 [[gnu::always_inline, nodiscard]]
-static inline bool fast_parse_dispatch_conv(bool (*conv)(PyObject *, const void *),
+static inline bool FastParseDispatchConv(bool (*conv)(PyObject *, const void *),
                                                  PyObject *obj, const void *target) {
     // These comparisons are just address checks (extremely fast)
     // If a match is found, the compiler inlines the specific converter.
-    if (conv == fast_parse_conv_float) {
-        return fast_parse_conv_float(obj, target);
+    if (conv == FastParseConvFloat) {
+        return FastParseConvFloat(obj, target);
     }
-    if (conv == fast_parse_conv_int) {
-        return fast_parse_conv_int(obj, target);
+    if (conv == FastParseConvInt) {
+        return FastParseConvInt(obj, target);
     }
-    if (conv == fast_parse_conv_u64) {
-        return fast_parse_conv_u64(obj, target);
+    if (conv == FastParseConvU64) {
+        return FastParseConvU64(obj, target);
     }
-    if (conv == fast_parse_conv_ssize) {
-        return fast_parse_conv_ssize(obj, target);
+    if (conv == FastParseConvSsize) {
+        return FastParseConvSsize(obj, target);
     }
-    if (conv == fast_parse_conv_bool) {
-        return fast_parse_conv_bool(obj, target);
+    if (conv == FastParseConvBool) {
+        return FastParseConvBool(obj, target);
     }
-    if (conv == fast_parse_conv_pyobj) {
-        return fast_parse_conv_pyobj(obj, target);
+    if (conv == FastParseConvPyobj) {
+        return FastParseConvPyobj(obj, target);
     }
 
     // Fallback for custom or less common converters
@@ -608,7 +608,7 @@ static inline bool fast_parse_dispatch_conv(bool (*conv)(PyObject *, const void 
 
 /** --- 4. THE HOT PATH --- **/
 [[gnu::always_inline, gnu::const, maybe_unused, nodiscard]]
-static inline size_t fast_parse_hash_ptr(PyObject *ptr, size_t mask) {
+static inline size_t FastParseHashPtr(PyObject *ptr, size_t mask) {
     auto val = reinterpret_cast<uintptr_t>(ptr);
     // Golden ratio multiplier spreads pointer bits effectively
     constexpr auto gratio     = 11400714819323198485ULL;
@@ -616,7 +616,7 @@ static inline size_t fast_parse_hash_ptr(PyObject *ptr, size_t mask) {
     return ((val * gratio) >> shift_bits) & mask;
 }
 [[gnu::always_inline, nodiscard]]
-static inline bool fast_parse_check_type_guard(
+static inline bool FastParseCheckTypeGuard(
     const FastArgSpecHot *spec,
     PyObject *val) {
     PyTypeObject *guard = spec->type_guard;
@@ -638,7 +638,7 @@ static inline bool fast_parse_check_type_guard(
 extern bool FastParseWarnUninternedSlow(PyObject key[], const char pname[]);
 
 /**
- * COLD FALLBACK: fast_parse_cmp_slow
+ * COLD FALLBACK: FastParseCmpSlow
  * Separated to keep the instruction cache lean for interned keys.
  */
 [[gnu::noinline, gnu::cold]]
@@ -647,14 +647,14 @@ extern size_t FastParseCmpSlow(
     const FastParserCore *fastparse);
 
 [[gnu::always_inline, nodiscard]]
-static inline size_t fast_parse_find_keyword_index(
+static inline size_t FastParseFindKeywordIndex(
     PyObject *key,
     const FastParserCore *fastparse) {
     const FastArgSpecHot *specs = fastparse->hot_specs;
     const uint16_t *ltable          = fastparse->lookup_table;
 
     if (ltable != nullptr) [[likely]] {
-        size_t hash = fast_parse_hash_ptr(key, fastparse->table_mask);
+        size_t hash = FastParseHashPtr(key, fastparse->table_mask);
 
         // THE FIX: Probe until we hit an empty slot (table is 50% empty, so this is fast)
         // We use table_mask as a safe upper bound to prevent infinite loops.
@@ -680,7 +680,7 @@ static inline size_t fast_parse_find_keyword_index(
 }
 
 [[gnu::always_inline]]
-static inline ParseResult fast_parse_process_pos(
+static inline ParseResult FastParseProcessPos(
     const FastParserCore *fastparse,
     PyObject *const *args,
     Py_ssize_t nargs,
@@ -693,7 +693,7 @@ static inline ParseResult fast_parse_process_pos(
 
         // 1. Safety check (Type Guard)
         // We use the helper to keep the "Happy Path" linear.
-        if (!fast_parse_check_type_guard(spec, args[i])) [[unlikely]] {
+        if (!FastParseCheckTypeGuard(spec, args[i])) [[unlikely]] {
             return std::unexpected(
                 FastParseReportTypeError(fastparse, static_cast<size_t>(i), args[i]));
         }
@@ -707,7 +707,7 @@ static inline ParseResult fast_parse_process_pos(
     return {};
 }
 [[gnu::always_inline, nodiscard]]
-static inline ParseResult fast_parse_process_kw(
+static inline ParseResult FastParseProcessKw(
     const FastParserCore *fastparse,
     PyObject *const *args,
     Py_ssize_t nargs,
@@ -724,7 +724,7 @@ static inline ParseResult fast_parse_process_kw(
 #pragma unroll 4
     for (Py_ssize_t i = 0; i < nkw; ++i) {
         PyObject *key = PyTuple_GET_ITEM(kwnames, i);
-        size_t idx    = fast_parse_find_keyword_index(key, fastparse);
+        size_t idx    = FastParseFindKeywordIndex(key, fastparse);
 
         if (idx == kFastParseEmptySlot) [[unlikely]] {
             return std::unexpected(FastParseReportUnknownKeyword(fastparse, key));
@@ -735,7 +735,7 @@ static inline ParseResult fast_parse_process_kw(
         }
 
         // UPDATED: Now only takes 2 arguments
-        if (!fast_parse_check_type_guard(&fastparse->hot_specs[idx], kw_vals[i])) {
+        if (!FastParseCheckTypeGuard(&fastparse->hot_specs[idx], kw_vals[i])) {
             return std::unexpected(FastParseReportTypeError(fastparse, idx, kw_vals[i]));
         }
 
@@ -748,12 +748,12 @@ static inline ParseResult fast_parse_process_kw(
 }
 
 [[gnu::always_inline, gnu::const, nodiscard]]
-static inline uint64_t fast_parse_make_mask(size_t n) {
+static inline uint64_t FastParseMakeMask(size_t n) {
     if (n == 0) {
         return 0;
     }
-    static constexpr uint64_t FULL_BITS = 64;
-    if (n >= FULL_BITS) {
+    static constexpr uint64_t kFullBits = 64;
+    if (n >= kFullBits) {
         return ~static_cast<uint64_t>(0);
     }
     return (n >= 64) ? ~static_cast<uint64_t>(0) : (1ULL << n) - 1;
@@ -762,7 +762,7 @@ static inline uint64_t fast_parse_make_mask(size_t n) {
 // unadulterated speed!!!
 [[nodiscard, gnu::always_inline, gnu::hot, gnu::no_stack_protector,
   gnu::nonnull(1, 4, 5)]] static inline ParseResult
-fast_parse_vector(
+FastParseVector(
     PyObject *const *args,
     Py_ssize_t nargs,
     PyObject *kwnames,
@@ -774,16 +774,16 @@ fast_parse_vector(
     }
 
     // 2. Handle Positionals
-    if (ParseResult positionals = fast_parse_process_pos(fastparse, args, nargs, targets);
+    if (ParseResult positionals = FastParseProcessPos(fastparse, args, nargs, targets);
         !positionals) [[unlikely]] {
         return positionals;
     }
 
     // 3. Setup Mask & Handle Keywords
 
-    uint64_t mask = fast_parse_make_mask(nargs);
+    uint64_t mask = FastParseMakeMask(nargs);
     if (ParseResult keywords =
-            fast_parse_process_kw(fastparse, args, nargs, kwnames, &mask, targets);
+            FastParseProcessKw(fastparse, args, nargs, kwnames, &mask, targets);
         !keywords) [[unlikely]] {
         return keywords;
     }

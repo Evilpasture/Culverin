@@ -178,7 +178,7 @@ void PhysicsWorld::CopyRagdollBodyHandles(std::span<const std::uint32_t> body_sl
 
     const std::scoped_lock shadow(shadow_lock);
     for (size_t i = 0; i < body_slots.size(); ++i) {
-        out_handles[i]      = PhysicsRagdollBodyHandleInfo{.handle = 0, .alive = false};
+        out_handles[i]      = PhysicsRagdollBodyHandleInfo{.handle = BodyHandle{}, .alive = false};
         const uint32_t slot = body_slots[i];
         if (slot >= slot_capacity || !bodies.slot_states || !bodies.generations) {
             continue;
@@ -189,7 +189,7 @@ void PhysicsWorld::CopyRagdollBodyHandles(std::span<const std::uint32_t> body_sl
         }
         const uint32_t generation = (bodies.generations[slot]).load(std::memory_order::relaxed);
         out_handles[i] = PhysicsRagdollBodyHandleInfo{
-            .handle = make_handle(slot, generation),
+            .handle = BodyHandle::FromParts(slot, generation),
             .alive  = true,
         };
     }

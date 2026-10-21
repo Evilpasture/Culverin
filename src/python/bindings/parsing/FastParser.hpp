@@ -16,55 +16,55 @@ template <typename T> struct FastParseTrait;
 
 template <> struct FastParseTrait<float> {
     static constexpr const char *type_name    = "float";
-    static constexpr auto converter           = fast_parse_conv_float;
+    static constexpr auto converter           = FastParseConvFloat;
     static constexpr PyTypeObject *type_guard = nullptr;
 };
 
 template <> struct FastParseTrait<double> {
     static constexpr const char *type_name    = "float";
-    static constexpr auto converter           = fast_parse_conv_double;
+    static constexpr auto converter           = FastParseConvDouble;
     static constexpr PyTypeObject *type_guard = nullptr;
 };
 
 template <> struct FastParseTrait<int> {
     static constexpr const char *type_name    = "int";
-    static constexpr auto converter           = fast_parse_conv_int;
+    static constexpr auto converter           = FastParseConvInt;
     static constexpr PyTypeObject *type_guard = nullptr;
 };
 
 template <> struct FastParseTrait<uint32_t> {
     static constexpr const char *type_name    = "int";
-    static constexpr auto converter           = fast_parse_conv_u32;
+    static constexpr auto converter           = FastParseConvU32;
     static constexpr PyTypeObject *type_guard = nullptr;
 };
 
 template <> struct FastParseTrait<uint64_t> {
     static constexpr const char *type_name    = "int";
-    static constexpr auto converter           = fast_parse_conv_u64;
+    static constexpr auto converter           = FastParseConvU64;
     static constexpr PyTypeObject *type_guard = nullptr;
 };
 
 template <> struct FastParseTrait<Py_ssize_t> {
     static constexpr const char *type_name    = "int";
-    static constexpr auto converter           = fast_parse_conv_ssize;
+    static constexpr auto converter           = FastParseConvSsize;
     static constexpr PyTypeObject *type_guard = nullptr;
 };
 
 template <> struct FastParseTrait<bool> {
     static constexpr const char *type_name    = "bool";
-    static constexpr auto converter           = fast_parse_conv_bool;
+    static constexpr auto converter           = FastParseConvBool;
     static constexpr PyTypeObject *type_guard = &PyBool_Type;
 };
 
 template <> struct FastParseTrait<const char *> {
     static constexpr const char *type_name    = "str";
-    static constexpr auto converter           = fast_parse_conv_str;
+    static constexpr auto converter           = FastParseConvStr;
     static constexpr PyTypeObject *type_guard = nullptr;
 };
 
 template <> struct FastParseTrait<PyObject *> {
     static constexpr const char *type_name    = "object";
-    static constexpr auto converter           = fast_parse_conv_pyobj;
+    static constexpr auto converter           = FastParseConvPyobj;
     static constexpr PyTypeObject *type_guard = nullptr;
 };
 
@@ -74,7 +74,7 @@ namespace detail {
 // returning false. FastParseReportConversionError then decorates that
 // exception exactly as it always has.
 template <typename T, typename ParseInto>
-[[nodiscard]] static inline bool convert_stride(PyObject *obj, const void *target,
+[[nodiscard]] static inline bool ConvertStride(PyObject *obj, const void *target,
                                                 ParseInto parse_into) {
     auto *value = const_cast<T *>(static_cast<const T *>(target));
     if (ParseResult parsed = parse_into(Borrowed{obj}, *value); !parsed) {
@@ -84,40 +84,40 @@ template <typename T, typename ParseInto>
     return true;
 }
 
-[[nodiscard]] static inline bool fast_parse_conv_float3(PyObject *obj, const void *target) {
-    return convert_stride<JPH::Float3>(obj, target, [](Borrowed o, JPH::Float3 &v) {
-        return parse_vec3_into(o, v);
+[[nodiscard]] static inline bool FastParseConvFloat3(PyObject *obj, const void *target) {
+    return ConvertStride<JPH::Float3>(obj, target, [](Borrowed o, JPH::Float3 &v) {
+        return ParseVec3Into(o, v);
     });
 }
 
-[[nodiscard]] static inline bool fast_parse_conv_pos_stride(PyObject *obj, const void *target) {
-    return convert_stride<PosStride>(obj, target, [](Borrowed o, PosStride &v) {
-        return parse_vec3_into(o, v);
+[[nodiscard]] static inline bool FastParseConvPosStride(PyObject *obj, const void *target) {
+    return ConvertStride<PosStride>(obj, target, [](Borrowed o, PosStride &v) {
+        return ParseVec3Into(o, v);
     });
 }
 
-[[nodiscard]] static inline bool fast_parse_conv_aux_stride(PyObject *obj, const void *target) {
-    return convert_stride<AuxStride>(obj, target, [](Borrowed o, AuxStride &v) {
-        return parse_quat_into(o, v);
+[[nodiscard]] static inline bool FastParseConvAuxStride(PyObject *obj, const void *target) {
+    return ConvertStride<AuxStride>(obj, target, [](Borrowed o, AuxStride &v) {
+        return ParseQuatInto(o, v);
     });
 }
 } // namespace detail
 
 template <> struct FastParseTrait<JPH::Float3> {
     static constexpr const char *type_name    = "Vector3";
-    static constexpr auto converter           = detail::fast_parse_conv_float3;
+    static constexpr auto converter           = detail::FastParseConvFloat3;
     static constexpr PyTypeObject *type_guard = nullptr;
 };
 
 template <> struct FastParseTrait<PosStride> {
     static constexpr const char *type_name    = "Vector3";
-    static constexpr auto converter           = detail::fast_parse_conv_pos_stride;
+    static constexpr auto converter           = detail::FastParseConvPosStride;
     static constexpr PyTypeObject *type_guard = nullptr;
 };
 
 template <> struct FastParseTrait<AuxStride> {
     static constexpr const char *type_name    = "Quaternion";
-    static constexpr auto converter           = detail::fast_parse_conv_aux_stride;
+    static constexpr auto converter           = detail::FastParseConvAuxStride;
     static constexpr PyTypeObject *type_guard = nullptr;
 };
 

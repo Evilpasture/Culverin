@@ -37,16 +37,16 @@ struct WorldParsers {
            Arg<"y", float, true>, Arg<"z", float, true>>
         SetAngVel{catalog};
     Parser<"ImpulseAt", Arg<"handle", ParseBodyHandle, true>, Arg<"ix", float, true>,
-           Arg<"iy", float, true>, Arg<"iz", float, true>, Arg<"px", JPH_Real, true>,
-           Arg<"py", JPH_Real, true>, Arg<"pz", JPH_Real, true>>
+           Arg<"iy", float, true>, Arg<"iz", float, true>, Arg<"px", JPH::Real, true>,
+           Arg<"py", JPH::Real, true>, Arg<"pz", JPH::Real, true>>
         ImpulseAt{catalog};
     Parser<"HOnly", Arg<"handle", ParseBodyHandle, true>> HOnly{catalog};
     Parser<"Destroy", Arg<"handle", ParseBodyHandle, true>> Destroy{catalog};
     Parser<"Activate", Arg<"handle", ParseBodyHandle, true>> Activate{catalog};
     Parser<"Gravity", Arg<"x", float, true>, Arg<"y", float, true>, Arg<"z", float, true>> Gravity{
         catalog};
-    Parser<"SetPos", Arg<"handle", ParseBodyHandle, true>, Arg<"x", JPH_Real, true>,
-           Arg<"y", JPH_Real, true>, Arg<"z", JPH_Real, true>>
+    Parser<"SetPos", Arg<"handle", ParseBodyHandle, true>, Arg<"x", JPH::Real, true>,
+           Arg<"y", JPH::Real, true>, Arg<"z", JPH::Real, true>>
         SetPos{catalog};
     Parser<"Buoy", Arg<"handle", ParseBodyHandle, true>, Arg<"surface_y", double, true>,
            Arg<"buoyancy", float, false>, Arg<"linear_drag", float, false>,

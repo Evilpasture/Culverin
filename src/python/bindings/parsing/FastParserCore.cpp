@@ -5,20 +5,20 @@
 namespace CPH::Python {
 
 static constexpr FastParseFunc kFastParseMonoStubs[] = {
-    fast_parse_speculate_p0, fast_parse_speculate_p1, fast_parse_speculate_p2,
-    fast_parse_speculate_p3, fast_parse_speculate_p4, fast_parse_speculate_p5,
-    fast_parse_speculate_p6, fast_parse_speculate_p7, fast_parse_speculate_p8};
+    FastParseSpeculateP0, FastParseSpeculateP1, FastParseSpeculateP2,
+    FastParseSpeculateP3, FastParseSpeculateP4, FastParseSpeculateP5,
+    FastParseSpeculateP6, FastParseSpeculateP7, FastParseSpeculateP8};
 
 static constexpr size_t kFastParseStubsSize = 9;
 static_assert(sizeof(kFastParseMonoStubs) / sizeof(FastParseFunc) == kFastParseStubsSize,
               "FAST_PARSE_MONO_STUBS table must contain exactly 9 stubs (0-8 args)");
 
 /**
- * COLD PATH: fast_parse_warn_uninterned_slow
+ * COLD PATH: FastParseWarnUninternedSlow
  *
  * This function handles the expensive string formatting and warning emission
  * for non-interned keywords. By marking it 'noinline' and 'cold', we ensure
- * that Clang keeps this code away from the high-speed 'fast_parse_find_keyword_index'
+ * that Clang keeps this code away from the high-speed 'FastParseFindKeywordIndex'
  * instruction cache zone.
  */
 [[gnu::noinline, gnu::cold, nodiscard]]
@@ -307,13 +307,13 @@ ParseError FastParseReportTooMany(const FastParserCore *fastparser, Py_ssize_t n
 }
 
 [[gnu::always_inline, gnu::const]]
-static inline int fast_parse_min3(int a, int b, int c) {
+static inline int FastParseMin3(int a, int b, int c) {
     int m = a < b ? a : b;
     return m < c ? m : c;
 }
 
 [[gnu::noinline, gnu::cold, nodiscard]]
-static int fast_parse_levenshtein(const char *s1, const char *s2) {
+static int FastParseLevenshtein(const char *s1, const char *s2) {
     const int len1     = static_cast<int>(strlen(s1));
     const int len2     = static_cast<int>(strlen(s2));
     constexpr auto max_len = 64;
@@ -335,7 +335,7 @@ static int fast_parse_levenshtein(const char *s1, const char *s2) {
             uint8_t cost       = (s1[x - 1] != s2[y - 1]);
 
             // Branchless min if your compiler doesn't do it automatically
-            column[y] = fast_parse_min3(column[y] + 1,     // Deletion
+            column[y] = FastParseMin3(column[y] + 1,     // Deletion
                                         column[y - 1] + 1, // Insertion
                                         last_diag + cost); // Substitution
             last_diag = old_column;
@@ -363,7 +363,7 @@ ParseError FastParseReportUnknownKeyword(const FastParserCore *fastparser, PyObj
             continue;
         }
 
-        int dist = fast_parse_levenshtein(actual_name, cand);
+        int dist = FastParseLevenshtein(actual_name, cand);
         if (dist < best_dist) {
             best_dist  = dist;
             best_match = cand;
@@ -564,7 +564,7 @@ void FastParseInitImpl(FastParserCore *fastparser, const FastArgDef *defs, size_
 
         for (size_t i = 0; i < count; i++) {
             size_t hash =
-                fast_parse_hash_ptr(fastparser->hot_specs[i].interned, fastparser->table_mask);
+                FastParseHashPtr(fastparser->hot_specs[i].interned, fastparser->table_mask);
             while (fastparser->lookup_table[hash] != kFastParseEmptySlot) {
                 hash = (hash + 1) & fastparser->table_mask;
             }
@@ -573,7 +573,7 @@ void FastParseInitImpl(FastParserCore *fastparser, const FastArgDef *defs, size_
     }
 
     // 3. Path Selection
-    fastparser->hot_path = fast_parse_vector;
+    fastparser->hot_path = FastParseVector;
 
     // Optimization: If all args are required and no type guards are present,
     // we can use the specialized monomorphic stubs.
@@ -584,8 +584,8 @@ void FastParseInitImpl(FastParserCore *fastparser, const FastArgDef *defs, size_
         }
     }
 #if defined(CULVERIN_DEBUG)
-    if (fastparser->hot_path == fast_parse_vector) {
-        PySys_WriteStderr("Culverin parser [%s]: hot_path fell back to fast_parse_vector "
+    if (fastparser->hot_path == FastParseVector) {
+        PySys_WriteStderr("Culverin parser [%s]: hot_path fell back to FastParseVector "
                           "(count=%zu, required_mask=0x%016llx, all_required=0x%016llx)\n",
                           fastparser->parser_name ? fastparser->parser_name : "?",
                           fastparser->count, (unsigned long long)fastparser->required_mask,
@@ -627,7 +627,7 @@ void FastParseDeinit(FastParserCore *fastparser) {
 /** --- LEGACY HELPERS --- **/
 
 [[gnu::always_inline]]
-static inline ParseResult fast_parse_process_pos_legacy(const FastParserCore *fastparse,
+static inline ParseResult FastParseProcessPosLegacy(const FastParserCore *fastparse,
                                                         PyObject *args, Py_ssize_t nargs,
                                                         const void *const *targets) {
 #pragma unroll 2
@@ -636,7 +636,7 @@ static inline ParseResult fast_parse_process_pos_legacy(const FastParserCore *fa
         const FastArgSpecHot *spec = &fastparse->hot_specs[i];
 
         // 1. Type Guard Check (Hot path metadata)
-        if (!fast_parse_check_type_guard(spec, val)) {
+        if (!FastParseCheckTypeGuard(spec, val)) {
             // Error reporting handles the hop to Cold specs
             return std::unexpected(
                 FastParseReportTypeError(fastparse, static_cast<size_t>(i), val));
@@ -652,7 +652,7 @@ static inline ParseResult fast_parse_process_pos_legacy(const FastParserCore *fa
 }
 
 [[gnu::always_inline]]
-static inline ParseResult fast_parse_process_kw_legacy(const FastParserCore *fastparse,
+static inline ParseResult FastParseProcessKwLegacy(const FastParserCore *fastparse,
                                                        PyObject *kwargs, uint64_t *mask,
                                                        const void *const *targets) {
     PyObject *key;
@@ -662,7 +662,7 @@ static inline ParseResult fast_parse_process_kw_legacy(const FastParserCore *fas
     // Standard dictionary iteration
     while (PyDict_Next(kwargs, &pos, &key, &val)) {
         // Find index using hash table or linear search (interned pointer match)
-        size_t idx = fast_parse_find_keyword_index(key, fastparse);
+        size_t idx = FastParseFindKeywordIndex(key, fastparse);
 
         if (idx == kFastParseEmptySlot) [[unlikely]] {
             return std::unexpected(FastParseReportUnknownKeyword(fastparse, key));
@@ -676,7 +676,7 @@ static inline ParseResult fast_parse_process_kw_legacy(const FastParserCore *fas
         const FastArgSpecHot *spec = &fastparse->hot_specs[idx];
 
         // 1. Type Guard Check (Hot path metadata)
-        if (!fast_parse_check_type_guard(spec, val)) {
+        if (!FastParseCheckTypeGuard(spec, val)) {
             return std::unexpected(FastParseReportTypeError(fastparse, idx, val));
         }
 
@@ -708,17 +708,17 @@ ParseResult FastParseLegacy(PyObject *args, PyObject *kwargs, [[maybe_unused]] P
     // 2. Handle Positionals
     if (nargs > 0) {
         if (ParseResult positionals =
-                fast_parse_process_pos_legacy(fastparser, args, nargs, targets);
+                FastParseProcessPosLegacy(fastparser, args, nargs, targets);
             !positionals) [[unlikely]] {
             return positionals;
         }
     }
 
     // 3. Setup Mask & Handle Keywords
-    uint64_t mask = fast_parse_make_mask(static_cast<size_t>(nargs));
+    uint64_t mask = FastParseMakeMask(static_cast<size_t>(nargs));
 
     if (kwargs && PyDict_GET_SIZE(kwargs) > 0) {
-        if (ParseResult keywords = fast_parse_process_kw_legacy(fastparser, kwargs, &mask, targets);
+        if (ParseResult keywords = FastParseProcessKwLegacy(fastparser, kwargs, &mask, targets);
             !keywords) [[unlikely]] {
             return keywords;
         }

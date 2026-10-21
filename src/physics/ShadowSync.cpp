@@ -25,7 +25,7 @@ static_assert(alignof(AuxStride) == 16);
 static_assert(sizeof(PosStride) % 32 == 0);
 
 
-constexpr Unsigned32 BATCH_SIZE = 128;
+constexpr Unsigned32 kBatchSize = 128;
 struct SyncWorkItem {
     const JPH::Body *body;
     Unsigned32 dense_idx;
@@ -147,7 +147,7 @@ inline auto ProcessBatch(const WorldDataCreateInfo world,
                          RestrictSpan<const CPH::SyncWorkItem> items) noexcept -> void {
 
     const SizeType count = items.size();
-    [[assume(count > 0), assume(count <= BATCH_SIZE)]];
+    [[assume(count > 0), assume(count <= kBatchSize)]];
 
     UnrollLoop<4>(count, [&](Unsigned32 j) {
         if (j + 2 < count) {
@@ -179,7 +179,7 @@ ExecuteSyncPass(const Unsigned32 active_count, const JPH::PhysicsSystem *const C
         [[unlikely]] return;
     }
 
-    alignas(kMemoryAlignmentSize) std::array<SyncWorkItem, BATCH_SIZE> worklist;
+    alignas(kMemoryAlignmentSize) std::array<SyncWorkItem, kBatchSize> worklist;
 
     Unsigned32 work_ptr = 0;
 
@@ -198,9 +198,9 @@ ExecuteSyncPass(const Unsigned32 active_count, const JPH::PhysicsSystem *const C
             continue;
         }
 
-        const Unsigned64 handle    = b->GetUserData();
-        const auto slot            = static_cast<const Unsigned32>(handle & kHandleIndexMask);
-        const auto gen             = static_cast<const Unsigned32>(handle >> kHandleIndexBits);
+        const BodyHandle handle    = BodyHandle(b->GetUserData());
+        const auto slot            = handle.Index();
+        const auto gen             = handle.Generation();
         const Unsigned32 safe_slot = (slot < map.slot_capacity) ? slot : 0;
 
         const Unsigned8 state        = map.slot_states[safe_slot].load(std::memory_order::relaxed);
@@ -228,13 +228,13 @@ ExecuteSyncPass(const Unsigned32 active_count, const JPH::PhysicsSystem *const C
         const Unsigned32 d_idx = map.slot_to_dense[safe_slot];
         const auto is_valid    = static_cast<Unsigned32>(bad == 0);
 
-        [[assume(work_ptr < BATCH_SIZE)]];
+        [[assume(work_ptr < kBatchSize)]];
         worklist[work_ptr].body      = b;
         worklist[work_ptr].dense_idx = d_idx;
         work_ptr += is_valid;
 
-        if (work_ptr == BATCH_SIZE) {
-            // "Convert worklist to span, then take the first BATCH_SIZE items"
+        if (work_ptr == kBatchSize) {
+            // "Convert worklist to span, then take the first kBatchSize items"
             ProcessBatch<TType>(world, CPH::RestrictSpan(worklist));
             work_ptr = 0;
         }

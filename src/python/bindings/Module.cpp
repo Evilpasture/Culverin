@@ -31,12 +31,12 @@
 #include <tupleobject.h>
 
 /**
- * INTERNAL HELPER: dump_parser_catalog
+ * INTERNAL HELPER: DumpParserCatalog
  * Iterates through one parser group's self-populated catalog and writes its JSON entries.
  */
 
 namespace CPH::Python {
-static void dump_parser_catalog(FastParserCore *const *const parsers, const size_t count,
+static void DumpParserCatalog(FastParserCore *const *const parsers, const size_t count,
                                 FILE *const out, bool *const is_first) {
     for (size_t i = 0; i < count; ++i) {
         const auto fp = parsers[i];
@@ -100,7 +100,7 @@ static void dump_parser_catalog(FastParserCore *const *const parsers, const size
     bool is_first = true;
 
     const auto dump_group = [&](const auto &group) {
-        dump_parser_catalog(group.catalog.Data(), group.catalog.Size(), f, &is_first);
+        DumpParserCatalog(group.catalog.Data(), group.catalog.Size(), f, &is_first);
     };
     dump_group(all.world);
     dump_group(all.character);
@@ -132,8 +132,8 @@ static void dump_parser_catalog(FastParserCore *const *const parsers, const size
     constexpr Py_ssize_t kArg4 = 4;
     // --- 1. DECLARATIONS (C / goto safety) ---
     auto nargs              = PyVectorcall_NARGS(nargsf);
-    constexpr auto MIN_ARGS = 3;
-    constexpr auto MAX_ARGS = 5;
+    constexpr auto kMinArgs = 3;
+    constexpr auto kMaxArgs = 5;
 
     PyObject *target   = nullptr;
     PyObject *new_val  = nullptr;
@@ -147,7 +147,7 @@ static void dump_parser_catalog(FastParserCore *const *const parsers, const size
     int success          = 0;
 
     // --- 2. PRE-FLIGHT CHECKS ---
-    if (nargs != MIN_ARGS && nargs != MAX_ARGS) {
+    if (nargs != kMinArgs && nargs != kMaxArgs) {
         PyErr_Format(PyExc_TypeError, "mutate_tuple() takes 3 or 5 arguments (%zd given)", nargs);
         return nullptr;
     }
@@ -173,7 +173,7 @@ static void dump_parser_catalog(FastParserCore *const *const parsers, const size
         return nullptr;
     }
 
-    if (nargs == MAX_ARGS) {
+    if (nargs == kMaxArgs) {
         registry = args[kArg3];
         key      = args[kArg4];
         if (!PyDict_Check(registry)) {
@@ -308,7 +308,7 @@ static const unsigned char kPyprojectToml[] = {
 };
 
 // Helper function to extract the version string at runtime
-static const char *extract_version_from_toml(void) {
+static const char *ExtractVersionFromToml(void) {
     // Look for the specific pattern 'version = "'
     const char *key = "version = \"";
     auto start      = strstr(reinterpret_cast<const char *>(kPyprojectToml), key);
@@ -326,8 +326,8 @@ static const char *extract_version_from_toml(void) {
     }
 
     // Create a static buffer to hold the version (e.g., "0.4.0")
-    static constexpr size_t VERSION_BUFFER = 32;
-    static char version_buffer[VERSION_BUFFER];
+    static constexpr size_t kVersionBuffer = 32;
+    static char version_buffer[kVersionBuffer];
     size_t len = end - start;
     if (len >= sizeof(version_buffer)) {
         len = sizeof(version_buffer) - 1;
@@ -339,7 +339,7 @@ static const char *extract_version_from_toml(void) {
     return version_buffer;
 }
 
-static int init_types(PyObject *m, ModuleState *st) {
+static int InitTypes(PyObject *m, ModuleState *st) {
     struct {
         PyType_Spec *spec;
         PyObject **slot;
@@ -382,7 +382,7 @@ static int init_types(PyObject *m, ModuleState *st) {
     return 0;
 }
 
-static int init_constants(PyObject *m) {
+static int InitConstants(PyObject *m) {
     static const struct {
         const char *name;
         int value;
@@ -477,7 +477,7 @@ extern PyModuleDef culverin_module;
     int expected = 0;
     if (atomic_compare_exchange_strong(&docs_status, &expected, 1)) {
         // --- 1A. VERSION & BUILD METADATA ---
-        const char *ver_temp = extract_version_from_toml();
+        const char *ver_temp = ExtractVersionFromToml();
 
         const char *gil_status =
 #if defined(Py_GIL_DISABLED) && Py_GIL_DISABLED
@@ -582,10 +582,10 @@ extern PyModuleDef culverin_module;
         }
     }
 
-    if (init_types(m, st) < 0) {
+    if (InitTypes(m, st) < 0) {
         return -1;
     }
-    if (init_constants(m) < 0) {
+    if (InitConstants(m) < 0) {
         return -1;
     }
     return 0;

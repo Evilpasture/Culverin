@@ -76,7 +76,59 @@ CheckOptions:
   readability-identifier-naming.MethodCase: CamelCase
   readability-identifier-naming.ParameterCase: lower_case
   readability-identifier-naming.VariableCase: lower_case
+  # Two constant conventions coexist deliberately and are both enforced:
+  # ordinary constants are lower_case, and compile-time constants are
+  # kPascalCase (kAvxAlignment, kTrackedGearRatio1, kDefaultRadius). clang-tidy
+  # has no single style covering both, so the k-prefixed form is an explicit,
+  # documented exception rather than an unchecked free-for-all.
   readability-identifier-naming.LocalConstantCase: lower_case
+  readability-identifier-naming.LocalConstantIgnoredRegexp: '^k[A-Z].*$'
+  readability-identifier-naming.GlobalConstantIgnoredRegexp: '^k[A-Z].*$'
+  readability-identifier-naming.NamespaceConstantIgnoredRegexp: '^k[A-Z].*$'
+  readability-identifier-naming.ClassConstantIgnoredRegexp: '^k[A-Z].*$'
+  readability-identifier-naming.StaticConstantIgnoredRegexp: '^k[A-Z].*$'
+  # File-scope constants are kCamelCase throughout (kAvxAlignment,
+  # kTrackedGearRatio1, ...) and the module spec tables are PascalCase
+  # (WorldSpec, VehicleSpec, ...). Declaring both is what makes the rule
+  # enforceable instead of perpetually violated.
+  readability-identifier-naming.GlobalConstantCase: lower_case
+  readability-identifier-naming.NamespaceConstantCase: lower_case
+  readability-identifier-naming.ClassConstantCase: lower_case
+  readability-identifier-naming.StaticConstantCase: lower_case
+  readability-identifier-naming.TypedefCase: CamelCase
+  readability-identifier-naming.TypeAliasCase: CamelCase
+  # Container/iterator trait aliases must keep the names generic code looks
+  # for (value_type, pointer, reference, element_type, ...).
+  readability-identifier-naming.TypeAliasIgnoredRegexp: '^(value_type|pointer|reference|element_type|difference_type|size_type|const_pointer|const_reference|iterator|const_iterator)$'
+  readability-identifier-naming.StructCase: CamelCase
+
+  # Third-party is the standing exception. Everything vendored lives under
+  # extern/ and is excluded by HeaderFilterRegex above; this covers the two
+  # places where foreign naming still legitimately reaches into our TUs.
+  #
+  #   in*/io*    Jolt's own parameter names, kept verbatim in overrides of
+  #              Jolt virtuals (OnContactAdded(const Body &inBody1, ...)) so
+  #              that an override reads exactly like the declaration it
+  #              implements.
+  readability-identifier-naming.ParameterIgnoredRegexp: '(in[A-Z].*|io[A-Z].*|D)'
+  #
+  #   CPython C slots and the C entry point. These are looked up by name at
+  #   runtime by CPython's type machinery and ABI -- PyInit__culverin_c, the
+  #   BufferProxy_* slots, the module's culverin_* slots, and the SparseSet_*
+  #   helpers mirroring them -- so renaming them breaks the extension.
+  readability-identifier-naming.FunctionIgnoredRegexp: '((BufferProxy|SparseSet|culverin|PyInit)_.*|PyInit_.*|PyInit__culverin_c)'
+
+  # Module-level definition tables. These are the CPython slots arrays and
+  # per-type spec tables (WorldSlots, VehicleSpec, kShipMethods, ...). They are
+  # non-const arrays consumed by CPython, so they land in Variable rather than
+  # GlobalConstant, but they follow the same PascalCase/kCamelCase convention
+  # as every other file-scope table.
+  readability-identifier-naming.VariableIgnoredRegexp: '^(.*(Slots|Spec|Methods|Members|GetSets)|FMT_MAP|_save|v[AB])$'
+
+  # Buffer<T> is a container and keeps STL-compatible member names so that
+  # range-for, std::size-style generic code and ordinary reader expectations
+  # all work. Renaming begin/end would break range-for outright.
+  readability-identifier-naming.MethodIgnoredRegexp: '^(allocate.*|append.*|begin|end|size|data|span|const_span|empty|push|clear|reset|reallocate.*|borrow|c_str|ensure|get|release|valid|first|exception|is_none|is_executable|has_hit|hit|num_vertices|publish_handle|debug_check|accumulate)$'
 
   # Magic numbers: only allow 0, 1 and 2.
   # Powers of 2 must be named constants (e.g. CACHE_LINE_SIZE).

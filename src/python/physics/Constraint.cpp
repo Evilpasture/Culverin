@@ -88,9 +88,9 @@ void ActivateBody(JPH::BodyInterface &bi, JPH::Body *body) {
     BlockUntilNotStepping(self);
 
     const std::optional<std::uint32_t> resolved1 =
-        self->physics.UnpackHandle(static_cast<BodyHandle>(h1_raw));
+        self->physics.Resolve(static_cast<BodyHandle>(h1_raw));
     const std::optional<std::uint32_t> resolved2 =
-        self->physics.UnpackHandle(static_cast<BodyHandle>(h2_raw));
+        self->physics.Resolve(static_cast<BodyHandle>(h2_raw));
     if (!resolved1 || !resolved2) {
         (self->physics.shadow_lock).unlock();
         PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
@@ -116,11 +116,11 @@ void ActivateBody(JPH::BodyInterface &bi, JPH::Body *body) {
     ConstraintSlot &entry   = self->physics.constraints[c_slot];
     entry.type              = type;
     entry.state.store(std::to_underlying(SlotState::PendingCreate), std::memory_order::relaxed);
-    ConstraintHandle handle = make_handle(c_slot, entry.generation);
+    ConstraintHandle handle = ConstraintHandle::FromParts(c_slot, entry.generation);
     self->physics.EnqueueCommand(s1, CPH::cmd::CreateConstraint{s2, c_slot, type, p});
 
     (self->physics.shadow_lock).unlock();
-    return PyLong_FromUnsignedLongLong(handle);
+    return PyLong_FromUnsignedLongLong(handle.Raw());
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
@@ -146,8 +146,9 @@ void ActivateBody(JPH::BodyInterface &bi, JPH::Body *body) {
     (self->physics.shadow_lock).lock();
 
     // RESOLUTION PHASE
-    uint32_t slot = static_cast<uint32_t>(h_raw & kHandleIndexMask);
-    uint32_t gen  = static_cast<uint32_t>(h_raw >> kHandleIndexBits);
+    const ConstraintHandle handle(h_raw);
+    uint32_t slot = handle.Index();
+    uint32_t gen  = handle.Generation();
 
     // Range check before indexing (the legacy order read the state first).
     if (slot >= self->physics.constraints.size()) {
@@ -214,8 +215,9 @@ void ActivateBody(JPH::BodyInterface &bi, JPH::Body *body) {
     (self->physics.shadow_lock).lock();
     BlockUntilNotStepping(self);
 
-    uint32_t slot = static_cast<uint32_t>(h_raw & kHandleIndexMask);
-    uint32_t gen  = static_cast<uint32_t>(h_raw >> kHandleIndexBits);
+    const ConstraintHandle handle(h_raw);
+    uint32_t slot = handle.Index();
+    uint32_t gen  = handle.Generation();
 
     if (slot >= self->physics.constraints.size() ||
                      self->physics.constraints[slot].generation != gen ||
@@ -278,8 +280,9 @@ void ActivateBody(JPH::BodyInterface &bi, JPH::Body *body) {
     (self->physics.shadow_lock).lock();
     BlockUntilNotStepping(self);
 
-    uint32_t slot = static_cast<uint32_t>(handle_raw & kHandleIndexMask);
-    uint32_t gen  = static_cast<uint32_t>(handle_raw >> kHandleIndexBits);
+    const ConstraintHandle handle(handle_raw);
+    uint32_t slot = handle.Index();
+    uint32_t gen  = handle.Generation();
 
     // Validate slot range and generation
     if (slot >= self->physics.constraints.size() ||

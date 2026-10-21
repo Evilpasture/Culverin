@@ -90,6 +90,10 @@ template <typename T>
         return BuildFromBool(value);
     } else if constexpr (std::is_same_v<Value, std::nullptr_t>) {
         return BuildFromNone(value);
+    } else if constexpr (CPH::kIsGenerationalHandle<Value>) {
+        // BodyHandle / ConstraintHandle / Entity. Python has always seen the
+        // raw 64-bit value here; hiding the type is a C++-side change only.
+        return BuildFromUnsignedLongLong(value.Raw());
     } else if constexpr (std::is_same_v<Value, PyObject *>) {
         return BuildFromOwnedObject(value);
     } else if constexpr (std::is_convertible_v<T &&, const char *>) {

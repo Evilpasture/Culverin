@@ -168,7 +168,7 @@ class Buffer {
 // Owning nothrow array for short-lived temporaries whose size is not part
 // of a struct contract. `buf.get() == nullptr` signals allocation failure.
 template <class T>
-[[nodiscard]] inline std::unique_ptr<T[]> make_array(std::size_t count) noexcept {
+[[nodiscard]] inline std::unique_ptr<T[]> MakeArray(std::size_t count) noexcept {
     return std::unique_ptr<T[]>(new (std::nothrow) T[count]());
 }
 

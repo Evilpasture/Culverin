@@ -85,7 +85,7 @@ void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
 
     // 1. Parse Position (Required)
     JPH::Float3 pos = {};
-    if (ParseResult parsed = parse_vec3_into(o_pos, pos.x, pos.y, pos.z); !parsed) {
+    if (ParseResult parsed = ParseVec3Into(o_pos, pos.x, pos.y, pos.z); !parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
     }
@@ -93,7 +93,7 @@ void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
     // 2. Parse Velocity (Optional)
     JPH::Float3 vel = {};
     if (o_vel && o_vel != Py_None) {
-        if (ParseResult parsed = parse_vec3_into(o_vel, vel.x, vel.y, vel.z); !parsed) {
+        if (ParseResult parsed = ParseVec3Into(o_vel, vel.x, vel.y, vel.z); !parsed) {
             RaiseParseError(parsed.error());
             return nullptr;
         }
@@ -335,11 +335,11 @@ void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
         return PyErr_NoMemory();
     }
 
-    constexpr uint32_t STRIDE = 3;
+    constexpr uint32_t kStride = 3;
     for (uint32_t i = 0; i < face_count; ++i) {
-        const auto v1 = inds[(i * STRIDE) + 0];
-        const auto v2 = inds[(i * STRIDE) + 1];
-        const auto v3 = inds[(i * STRIDE) + 2];
+        const auto v1 = inds[(i * kStride) + 0];
+        const auto v2 = inds[(i * kStride) + 1];
+        const auto v3 = inds[(i * kStride) + 2];
 
         // Hardware-friendly bounds check
         if (v1 >= vertex_count || v2 >= vertex_count || v3 >= vertex_count) {
@@ -412,7 +412,7 @@ SoftBodySharedSettingsAddPinnedVertex(SoftBodySharedSettingsObject *self, PyObje
     Py_RETURN_NONE;
 }
 [[gnu::const]]
-static inline bool check_bend_type(int val, int max) {
+static inline bool CheckBendType(int val, int max) {
     return ((val) >= 0 && (val) < (max));
 }
 
@@ -430,7 +430,7 @@ SoftBodySharedSettingsCreateConstraints(SoftBodySharedSettingsObject *self, PyOb
         RaiseParseError(parsed.error());
         return nullptr;
     }
-    if (!check_bend_type(bend_type, 3)) {
+    if (!CheckBendType(bend_type, 3)) {
         PyErr_Format(PyExc_ValueError,
                      "bend_type must be 0 (None), 1 (Distance), or 2 (Dihedral), got %d",
                      bend_type);

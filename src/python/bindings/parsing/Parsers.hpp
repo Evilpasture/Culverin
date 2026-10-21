@@ -26,21 +26,21 @@ namespace CPH::Python {
 // Accepts any buffer-protocol object of the exact size, then falls back to a
 // sequence of exactly `count` numbers.
 
-[[nodiscard]] ParseResult parse_vec3_into(Borrowed obj, float &x, float &y, float &z);
-[[nodiscard]] ParseResult parse_vec3_into(Borrowed obj, double &x, double &y, double &z);
-[[nodiscard]] ParseResult parse_quat_into(Borrowed obj, float &x, float &y, float &z, float &w);
-[[nodiscard]] ParseResult parse_quat_into(Borrowed obj, double &x, double &y, double &z,
+[[nodiscard]] ParseResult ParseVec3Into(Borrowed obj, float &x, float &y, float &z);
+[[nodiscard]] ParseResult ParseVec3Into(Borrowed obj, double &x, double &y, double &z);
+[[nodiscard]] ParseResult ParseQuatInto(Borrowed obj, float &x, float &y, float &z, float &w);
+[[nodiscard]] ParseResult ParseQuatInto(Borrowed obj, double &x, double &y, double &z,
                                           double &w);
 
 // Stride types used by the shadow buffers.
-[[nodiscard]] ParseResult parse_vec3_into(Borrowed obj, JPH::Float3 &out);
-[[nodiscard]] ParseResult parse_vec3_into(Borrowed obj, PosStride &out);
-[[nodiscard]] ParseResult parse_quat_into(Borrowed obj, AuxStride &out);
+[[nodiscard]] ParseResult ParseVec3Into(Borrowed obj, JPH::Float3 &out);
+[[nodiscard]] ParseResult ParseVec3Into(Borrowed obj, PosStride &out);
+[[nodiscard]] ParseResult ParseQuatInto(Borrowed obj, AuxStride &out);
 
 // Value forms for call sites that want the result rather than an out-param.
-[[nodiscard]] std::expected<JPH::Float3, ParseError> parse_vec3(Borrowed obj);
-[[nodiscard]] std::expected<PosStride, ParseError> parse_position(Borrowed obj);
-[[nodiscard]] std::expected<AuxStride, ParseError> parse_rotation(Borrowed obj);
+[[nodiscard]] std::expected<JPH::Float3, ParseError> ParseVec3(Borrowed obj);
+[[nodiscard]] std::expected<PosStride, ParseError> ParsePosition(Borrowed obj);
+[[nodiscard]] std::expected<AuxStride, ParseError> ParseRotation(Borrowed obj);
 
 // --- Keyword/dictionary helpers -------------------------------------------
 // `ParseMotorConfig` and `ParseBodySize` cannot fail (missing keys fall back to

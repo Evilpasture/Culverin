@@ -18,7 +18,7 @@ namespace {
 
 constexpr std::size_t kInitialQueueCapacity = 64;
 
-bool grow_queue(PhysicsWorld *world, std::size_t new_capacity) {
+bool GrowQueue(PhysicsWorld *world, std::size_t new_capacity) {
     // for_overwrite: queue slots past command_count are only ever
     // move-assigned into, never read — default construction (variant at
     // its first alternative) is all they need.
@@ -48,7 +48,7 @@ bool PhysicsWorld::EnsureCommandBulkCapacity(std::size_t batch_size) {
             }
             new_capacity *= 2;
         }
-        return grow_queue(this, new_capacity);
+        return GrowQueue(this, new_capacity);
     }
     return true;
 }
@@ -291,7 +291,7 @@ struct FlushContext {
                 world->bodies.generations[body_slot].load(std::memory_order::relaxed);
             // Release: the body_ids write must be visible to any thread
             // that reads this handle.
-            world->id_to_handle_map[j_idx].store(make_handle(body_slot, gen),
+            world->id_to_handle_map[j_idx].store(BodyHandle::FromParts(body_slot, gen),
                                                  std::memory_order::release);
         }
     }
@@ -311,7 +311,7 @@ void PhysicsWorld::FlushCommands(std::span<PhysicsCommand> queue) {
 
         // Stale commands (body destroyed while queued, create superseded)
         // are dropped; resetting the command still destroys payloads.
-        if (std::to_underlying(state) < 32 && ((slot_state_bit(state) & kValidBidMask) != 0) &&
+        if (std::to_underlying(state) < 32 && ((SlotStateBit(state) & kValidBidMask) != 0) &&
             (is_create || !bid.IsInvalid())) {
             std::visit(FlushContext{this, physics_system.GetBodyInterface(), slot, bid},
                        command.payload);

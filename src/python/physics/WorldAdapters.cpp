@@ -31,7 +31,7 @@ int GetBakedSceneCount(PyObject *baked, size_t *out_count) {
     return 0;
 }
 
-static int baked_buffer_size(size_t count, size_t bytes_per_body, size_t *out_size) {
+static int BakedBufferSize(size_t count, size_t bytes_per_body, size_t *out_size) {
     if (count > SIZE_MAX / bytes_per_body ||
         count > static_cast<size_t>(PY_SSIZE_T_MAX) / bytes_per_body) {
         PyErr_SetString(PyExc_OverflowError, "Baked scene buffer size is too large");
@@ -41,7 +41,7 @@ static int baked_buffer_size(size_t count, size_t bytes_per_body, size_t *out_si
     return 0;
 }
 
-static int get_baked_buffer(PyObject *baked, Py_ssize_t index, size_t expected_size,
+static int GetBakedBuffer(PyObject *baked, Py_ssize_t index, size_t expected_size,
                             const char *name, const void **out_buffer) {
     PyObject *item = PyTuple_GetItem(baked, index);
     if (item == nullptr) {
@@ -134,11 +134,11 @@ int LoadBakedScene(PhysicsWorldObject *self, PyObject *baked) {
     size_t shapes_size;
     size_t byte_array_size;
     size_t user_data_size;
-    if (baked_buffer_size(count, sizeof(PosStride), &positions_size) < 0 ||
-        baked_buffer_size(count, sizeof(AuxStride), &rotations_size) < 0 ||
-        baked_buffer_size(count, kBakedShapeStride * sizeof(float), &shapes_size) < 0 ||
-        baked_buffer_size(count, sizeof(uint8_t), &byte_array_size) < 0 ||
-        baked_buffer_size(count, sizeof(uint64_t), &user_data_size) < 0) {
+    if (BakedBufferSize(count, sizeof(PosStride), &positions_size) < 0 ||
+        BakedBufferSize(count, sizeof(AuxStride), &rotations_size) < 0 ||
+        BakedBufferSize(count, kBakedShapeStride * sizeof(float), &shapes_size) < 0 ||
+        BakedBufferSize(count, sizeof(uint8_t), &byte_array_size) < 0 ||
+        BakedBufferSize(count, sizeof(uint64_t), &user_data_size) < 0) {
         return -1;
     }
 
@@ -148,21 +148,21 @@ int LoadBakedScene(PhysicsWorldObject *self, PyObject *baked) {
     const void *motion_types;
     const void *object_layers;
     const void *user_data;
-    if (get_baked_buffer(baked, kBakedIndexPos, positions_size, "position", &positions) < 0 ||
-        get_baked_buffer(baked, kBakedIndexRot, rotations_size, "rotation", &rotations) < 0 ||
-        get_baked_buffer(baked, kBakedIndexShape, shapes_size, "shape", &shapes) < 0 ||
-        get_baked_buffer(baked, kBakedIndexMotion, byte_array_size, "motion type", &motion_types) <
+    if (GetBakedBuffer(baked, kBakedIndexPos, positions_size, "position", &positions) < 0 ||
+        GetBakedBuffer(baked, kBakedIndexRot, rotations_size, "rotation", &rotations) < 0 ||
+        GetBakedBuffer(baked, kBakedIndexShape, shapes_size, "shape", &shapes) < 0 ||
+        GetBakedBuffer(baked, kBakedIndexMotion, byte_array_size, "motion type", &motion_types) <
             0 ||
-        get_baked_buffer(baked, kBakedIndexLayer, byte_array_size, "object layer",
+        GetBakedBuffer(baked, kBakedIndexLayer, byte_array_size, "object layer",
                          &object_layers) < 0 ||
-        get_baked_buffer(baked, kBakedIndexUserData, user_data_size, "user data", &user_data) <
+        GetBakedBuffer(baked, kBakedIndexUserData, user_data_size, "user data", &user_data) <
             0) {
         return -1;
     }
 
     const BakedSceneData scene = {
         .count         = count,
-        .positions     = static_cast<const JPH_Real *>(positions),
+        .positions     = static_cast<const JPH::Real *>(positions),
         .rotations     = static_cast<const float *>(rotations),
         .shapes        = static_cast<const float *>(shapes),
         .motion_types  = static_cast<const uint8_t *>(motion_types),

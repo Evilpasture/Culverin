@@ -59,13 +59,13 @@ static constexpr float kSpeedDirectionThreshold     = 0.5f;
 static constexpr float kSpeedMinThreshold           = 0.1f;
 static constexpr float kRollingResistanceCoasting   = 0.05f;
 
-static JPH::Ref<JPH::WheelSettingsWV> create_single_wheel(PyObject *w_dict,
+static JPH::Ref<JPH::WheelSettingsWV> CreateSingleWheel(PyObject *w_dict,
                                                          const JPH::LinearCurve &f_curve) {
     PosStride pos;
 
     // 1. Parse Position using helper
     if (ParseResult parsed =
-            parse_vec3_into(PyDict_GetItemString(w_dict, "pos"), pos);
+            ParseVec3Into(PyDict_GetItemString(w_dict, "pos"), pos);
         !parsed) {
         // Deliberate message override: the wheel dict is user data, and this
         // diagnostic is what callers see for a malformed wheel entry.
@@ -137,7 +137,7 @@ static JPH::Ref<JPH::WheelSettingsWV> create_single_wheel(PyObject *w_dict,
 
 // --- Internal Helpers for Vehicle Construction ---
 
-static void setup_vehicle_differentials(JPH::WheeledVehicleControllerSettings &v_ctrl,
+static void SetupVehicleDifferentials(JPH::WheeledVehicleControllerSettings &v_ctrl,
                                         const char *drive_str, uint32_t num_wheels) {
     if (strcmp(drive_str, "FWD") == 0) {
         v_ctrl.mDifferentials.push_back(JPH::VehicleDifferentialSettings(0, 1));
@@ -161,7 +161,7 @@ int InitVehicleParsers(VehicleObject *obj) {
 }
 
 // --- Sub-helper: Engine Configuration ---
-static void setup_engine(JPH::WheeledVehicleControllerSettings &v_ctrl,
+static void SetupEngine(JPH::WheeledVehicleControllerSettings &v_ctrl,
                          const JPH::LinearCurve &t_curve, PyObject *py_engine) {
     JPH::VehicleEngineSettings eng_set;
 
@@ -178,7 +178,7 @@ static void setup_engine(JPH::WheeledVehicleControllerSettings &v_ctrl,
 
 // --- Sub-helper: Transmission Configuration ---
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-static void setup_transmission(JPH::WheeledVehicleControllerSettings &v_ctrl,
+static void SetupTransmission(JPH::WheeledVehicleControllerSettings &v_ctrl,
                                JPH::VehicleTransmissionSettings &v_trans_set, PyObject *py_trans) {
     // Determine mode
     auto t_mode = 1; // Default Manual
@@ -228,18 +228,18 @@ static void setup_transmission(JPH::WheeledVehicleControllerSettings &v_ctrl,
 }
 
 // --- Main coordinate function (Complexity: 1) ---
-static void configure_drivetrain(JPH::WheeledVehicleControllerSettings &v_ctrl,
+static void ConfigureDrivetrain(JPH::WheeledVehicleControllerSettings &v_ctrl,
                                  JPH::VehicleTransmissionSettings &v_trans_set,
                                  const JPH::LinearCurve &t_curve, PyObject *py_engine,
                                  PyObject *py_trans, const char *drive_str, uint32_t num_wheels) {
     // 1. Setup Diffs FIRST so they exist when we want to set ratios
-    setup_vehicle_differentials(v_ctrl, drive_str, num_wheels);
+    SetupVehicleDifferentials(v_ctrl, drive_str, num_wheels);
 
     // 2. Setup Engine
-    setup_engine(v_ctrl, t_curve, py_engine);
+    SetupEngine(v_ctrl, t_curve, py_engine);
 
     // 3. Setup Transmission (Now can find the diffs to apply the ratio)
-    setup_transmission(v_ctrl, v_trans_set, py_trans);
+    SetupTransmission(v_ctrl, v_trans_set, py_trans);
 }
 
 // --- Main Function ---
@@ -284,7 +284,7 @@ static void configure_drivetrain(JPH::WheeledVehicleControllerSettings &v_ctrl,
 
     // TSan Fix: Cast to atomic type for handle verification
     const std::optional<std::uint32_t> resolved =
-        self->physics.UnpackHandle(static_cast<BodyHandle>(chassis_h_raw));
+        self->physics.Resolve(static_cast<BodyHandle>(chassis_h_raw));
     const uint32_t slot        = resolved.value_or(0);
     const bool handle_valid    = resolved.has_value();
 
@@ -325,14 +325,14 @@ static void configure_drivetrain(JPH::WheeledVehicleControllerSettings &v_ctrl,
     v_set.mWheels.reserve(num_wheels);
     for (auto i = 0u; i < num_wheels; i++) {
         JPH::Ref<JPH::WheelSettingsWV> wheel =
-            create_single_wheel(PyList_GetItem(py_wheels, i), friction_curve);
+            CreateSingleWheel(PyList_GetItem(py_wheels, i), friction_curve);
         if (!wheel) {
             goto python_fail;
         }
         v_set.mWheels.push_back(wheel.GetPtr());
     }
 
-    configure_drivetrain(*v_ctrl, v_trans_set, torque_curve, py_engine, py_trans, drive_str,
+    ConfigureDrivetrain(*v_ctrl, v_trans_set, torque_curve, py_engine, py_trans, drive_str,
                          num_wheels);
 
     // TODO(bug): v_trans_set is configured from the caller's transmission object
@@ -520,7 +520,7 @@ python_fail:
 // references from PyFloat_FromDouble are leaked on every call. Switching to
 // PyTuple_SET_ITEM (which steals) fixes it, but that changes observable
 // refcounts, so it is left for a dedicated fix.
-static inline PyObject *pack_transform(double px, double py, double pz, float rx, float ry,
+static inline PyObject *PackTransform(double px, double py, double pz, float rx, float ry,
                                        float rz, float rw) {
     PyObject *pos =
         PyTuple_Pack(3, PyFloat_FromDouble(px), PyFloat_FromDouble(py), PyFloat_FromDouble(pz));
@@ -564,7 +564,7 @@ static inline PyObject *pack_transform(double px, double py, double pz, float rx
     const JPH::Quat q  = transform.GetQuaternion();
     (self->world->physics.shadow_lock).unlock();
 
-    return pack_transform(p.GetX(), p.GetY(), p.GetZ(), q.GetX(), q.GetY(), q.GetZ(), q.GetW());
+    return PackTransform(p.GetX(), p.GetY(), p.GetZ(), q.GetX(), q.GetY(), q.GetZ(), q.GetW());
 }
 
 [[nodiscard]] PyObject * VehicleGetWheelLocalTransform(VehicleObject *self,
@@ -604,7 +604,7 @@ static inline PyObject *pack_transform(double px, double py, double pz, float rx
     const JPH::Quat q = local_transform.GetQuaternion();
     (self->world->physics.shadow_lock).unlock();
 
-    return pack_transform(t.GetX(), t.GetY(), t.GetZ(), q.GetX(), q.GetY(), q.GetZ(), q.GetW());
+    return PackTransform(t.GetX(), t.GetY(), t.GetZ(), q.GetX(), q.GetY(), q.GetZ(), q.GetW());
 }
 
 [[nodiscard]] PyObject *

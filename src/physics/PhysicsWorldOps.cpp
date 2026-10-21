@@ -13,13 +13,13 @@ namespace {
 
 using namespace CPH::cmd;
 
-bool is_immediate_jolt_action(PhysicsBodyOperationType type) {
+bool IsImmediateJoltAction(PhysicsBodyOperationType type) {
     return type == PhysicsBodyOperationType::ApplyImpulse || type == PhysicsBodyOperationType::ApplyImpulseAt ||
            type == PhysicsBodyOperationType::ApplyAngularImpulse || type == PhysicsBodyOperationType::ApplyForce ||
            type == PhysicsBodyOperationType::ApplyTorque;
 }
 
-std::uint32_t immediate_mask(PhysicsBodyOperationType type) {
+std::uint32_t ImmediateMask(PhysicsBodyOperationType type) {
     switch (type) {
     case PhysicsBodyOperationType::ApplyAngularImpulse:
     case PhysicsBodyOperationType::SetAngularVelocity:
@@ -31,7 +31,7 @@ std::uint32_t immediate_mask(PhysicsBodyOperationType type) {
 }
 
 // Returns false only for an unknown operation type.
-bool enqueue_operation(PhysicsWorld *world, std::uint32_t slot,
+bool EnqueueOperation(PhysicsWorld *world, std::uint32_t slot,
                        const PhysicsBodyOperation &op) {
     switch (op.type) {
     case PhysicsBodyOperationType::ApplyImpulse:
@@ -84,7 +84,7 @@ bool enqueue_operation(PhysicsWorld *world, std::uint32_t slot,
     }
 }
 
-void mirror_to_shadow(PhysicsWorld *world, std::uint32_t slot,
+void MirrorToShadow(PhysicsWorld *world, std::uint32_t slot,
                       const PhysicsBodyOperation &op) {
     const std::uint32_t dense = world->bodies.slot_to_dense[slot];
     switch (op.type) {
@@ -125,7 +125,7 @@ void mirror_to_shadow(PhysicsWorld *world, std::uint32_t slot,
     }
 }
 
-void execute_now(PhysicsWorld *world, const JPH::BodyID &id,
+void ExecuteNow(PhysicsWorld *world, const JPH::BodyID &id,
                  const PhysicsBodyOperation &op) {
     // world->body_interface is a reinterpret_cast of
     // physics_system.GetBodyInterface() -- the *locking* interface (see
@@ -170,14 +170,14 @@ PhysicsWorld::ApplyBodyOperation(const PhysicsBodyOperation &op) {
     {
         const auto shadow = LockShadowNotStepping();
 
-        const std::optional<std::uint32_t> resolved = UnpackHandle(op.handle);
+        const std::optional<std::uint32_t> resolved = Resolve(op.handle);
         if (!resolved) {
             return std::unexpected(BodyOperationError::StaleHandle);
         }
         const std::uint32_t slot = *resolved;
         const auto state = static_cast<SlotState>(
             bodies.slot_states[slot].load(std::memory_order::acquire));
-        const SlotPredicate predicate = get_slot_predicate(std::to_underlying(state), immediate_mask(op.type));
+        const SlotPredicate predicate = GetSlotPredicate(std::to_underlying(state), ImmediateMask(op.type));
         if (!predicate.is_executable()) {
             return std::unexpected(BodyOperationError::StaleHandle);
         }
@@ -187,18 +187,18 @@ PhysicsWorld::ApplyBodyOperation(const PhysicsBodyOperation &op) {
 
         // Impulse-class ops on live bodies run straight against Jolt below
         // instead of being deferred; everything else defers.
-        execute_immediately = is_immediate_jolt_action(op.type) && predicate.is_immediate;
-        if (!execute_immediately && !enqueue_operation(this, slot, op)) {
+        execute_immediately = IsImmediateJoltAction(op.type) && predicate.is_immediate;
+        if (!execute_immediately && !EnqueueOperation(this, slot, op)) {
             return std::unexpected(BodyOperationError::InvalidArgument);
         }
-        mirror_to_shadow(this, slot, op);
+        MirrorToShadow(this, slot, op);
         if (execute_immediately) {
             body_id = bodies.body_ids[bodies.slot_to_dense[slot]];
         }
     }
 
     if (execute_immediately) {
-        execute_now(this, body_id, op);
+        ExecuteNow(this, body_id, op);
     }
     return {};
 }
@@ -206,7 +206,7 @@ PhysicsWorld::ApplyBodyOperation(const PhysicsBodyOperation &op) {
 std::expected<void, Error> PhysicsWorld::QueueBodyDestroy(BodyHandle handle) {
     const auto shadow = LockShadowNotStepping();
 
-    const std::optional<std::uint32_t> resolved = UnpackHandle(handle);
+    const std::optional<std::uint32_t> resolved = Resolve(handle);
     if (!resolved) {
         return std::unexpected(BodyOperationError::StaleHandle);
     }
@@ -216,7 +216,7 @@ std::expected<void, Error> PhysicsWorld::QueueBodyDestroy(BodyHandle handle) {
     }
     const auto state = static_cast<SlotState>(
         bodies.slot_states[slot].load(std::memory_order::acquire));
-    if (get_slot_predicate(std::to_underlying(state), kMaskDestructible).is_executable()) {
+    if (GetSlotPredicate(std::to_underlying(state), kMaskDestructible).is_executable()) {
         EnqueueCommand(slot, DestroyBody{});
         bodies.slot_states[slot].store(std::to_underlying(SlotState::PendingDestroy), std::memory_order::release);
     }
@@ -233,14 +233,14 @@ PhysicsWorld::QueueBodyDestroyBatch(std::span<const BodyHandle> handles) {
         return std::unexpected(BodyOperationError::OutOfMemory);
     }
     for (const BodyHandle handle : handles) {
-        const std::optional<std::uint32_t> resolved = UnpackHandle(handle);
+        const std::optional<std::uint32_t> resolved = Resolve(handle);
         if (!resolved) {
             continue;
         }
         const std::uint32_t slot = *resolved;
         const auto state = static_cast<SlotState>(
             bodies.slot_states[slot].load(std::memory_order::acquire));
-        if (get_slot_predicate(std::to_underlying(state), kMaskDestructible).is_executable()) {
+        if (GetSlotPredicate(std::to_underlying(state), kMaskDestructible).is_executable()) {
             EnqueueCommand(slot, DestroyBody{});
             bodies.slot_states[slot].store(std::to_underlying(SlotState::PendingDestroy),
                                            std::memory_order::release);

@@ -195,9 +195,9 @@ inline void DebugLog(const char *format, ...) noexcept {
 }
 
 struct PositionVector {
-    JPH_Real x;
-    JPH_Real y;
-    JPH_Real z;
+    JPH::Real x;
+    JPH::Real y;
+    JPH::Real z;
 };
 
 struct MaterialSettings {

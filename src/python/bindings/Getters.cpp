@@ -102,7 +102,7 @@ static void BufferProxy_dealloc(BufferProxyObject *self) {
 
         (reg->ecs_lock).lock();
 
-        // For ECS, the pointer was stored in dynamic_ptr during make_ecs_proxy
+        // For ECS, the pointer was stored in dynamic_ptr during MakeEcsProxy
         target_ptr = self->dynamic_ptr;
 
         if (!target_ptr) {
@@ -172,8 +172,8 @@ PyType_Spec BufferProxySpec = {.name      = "culverin.BufferProxy",
                                 .flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
                                 .slots     = BufferProxySlots};
 
-// --- Updated make_proxy helper ---
-static PyObject *make_proxy(PhysicsWorldObject *self, ProxyBufferType type, const char *format,
+// --- Updated MakeProxy helper ---
+static PyObject *MakeProxy(PhysicsWorldObject *self, ProxyBufferType type, const char *format,
                             size_t itemsize, int stride) {
     ModuleState *st = GetModuleState(PyType_GetModule(Py_TYPE(self)));
 
@@ -218,24 +218,24 @@ static PyObject *make_proxy(PhysicsWorldObject *self, ProxyBufferType type, cons
 [[nodiscard]] PyObject * WorldGetPositions(PhysicsWorldObject *self,
                                                 [[maybe_unused]] void *c) {
     // Positions are Stride 4 (X, Y, Z, W)
-    return make_proxy(self, ProxyBufferType::Positions, JPH_REAL_STRING, sizeof(JPH_Real), 4);
+    return MakeProxy(self, ProxyBufferType::Positions, CPH::kRealFormatString, sizeof(JPH::Real), 4);
 }
 
 [[nodiscard]] PyObject * WorldGetRotations(PhysicsWorldObject *self,
                                                 [[maybe_unused]] void *c) {
     // Rotations are Stride 4 (X, Y, Z, W)
-    return make_proxy(self, ProxyBufferType::Rotations, "f", sizeof(float), 4);
+    return MakeProxy(self, ProxyBufferType::Rotations, "f", sizeof(float), 4);
 }
 
 [[nodiscard]] PyObject * WorldGetVelocities(PhysicsWorldObject *self,
                                                  [[maybe_unused]] void *c) {
     // Velocities are Stride 4 (X, Y, Z, Pad)
-    return make_proxy(self, ProxyBufferType::LinearVelocities, "f", sizeof(float), 4);
+    return MakeProxy(self, ProxyBufferType::LinearVelocities, "f", sizeof(float), 4);
 }
 
 [[nodiscard]] PyObject * WorldGetAngularVelocities(PhysicsWorldObject *self,
                                                         [[maybe_unused]] void *c) {
-    return make_proxy(self, ProxyBufferType::AngularVelocities, "f", sizeof(float), 4);
+    return MakeProxy(self, ProxyBufferType::AngularVelocities, "f", sizeof(float), 4);
 }
 
 /* --- Mutable Metadata Getters (Hardened with Locks) --- */
@@ -258,7 +258,7 @@ static PyObject *make_proxy(PhysicsWorldObject *self, ProxyBufferType type, cons
 [[nodiscard]] PyObject * WorldGetUserDataBuffer(PhysicsWorldObject *self,
                                                      [[maybe_unused]] void *c) {
     // User data is Stride 1 (One uint64 per body)
-    return make_proxy(self, ProxyBufferType::UserData, "Q", sizeof(uint64_t), 1);
+    return MakeProxy(self, ProxyBufferType::UserData, "Q", sizeof(uint64_t), 1);
 }
 
 [[nodiscard]] PyObject * WorldGetShapeCount(PhysicsWorldObject *self,

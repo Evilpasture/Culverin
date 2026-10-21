@@ -133,7 +133,7 @@ class ShipStepListener final : public JPH::PhysicsStepListener {
     SyncAndFlushInternal(self);
 
     const std::optional<std::uint32_t> resolved =
-        self->physics.UnpackHandle(static_cast<BodyHandle>(sled_raw));
+        self->physics.Resolve(static_cast<BodyHandle>(sled_raw));
     if (!resolved) {
         (self->physics.shadow_lock).unlock();
         return PyErr_Format(PyExc_ValueError, "Invalid sled handle.");

@@ -20,7 +20,7 @@ namespace CPH {
 
 namespace {
 
-[[nodiscard]] JPH::ShapeRefC create_shape(const JPH::ShapeSettings &settings) {
+[[nodiscard]] JPH::ShapeRefC CreateShape(const JPH::ShapeSettings &settings) {
     const auto result = settings.Create();
     return result.IsValid() ? JPH::ShapeRefC(result.Get()) : JPH::ShapeRefC{};
 }
@@ -84,19 +84,19 @@ JPH::ShapeRefC PhysicsWorld::FindOrCreateShapeLocked(int type, std::span<const f
     JPH::ShapeRefC shape;
     switch (shape_type) {
     case ShapeType::Box:
-        shape = create_shape(JPH::BoxShapeSettings(JPH::Vec3(p1, p2, p3), 0.05f));
+        shape = CreateShape(JPH::BoxShapeSettings(JPH::Vec3(p1, p2, p3), 0.05f));
         break;
     case ShapeType::Sphere:
-        shape = create_shape(JPH::SphereShapeSettings(p1));
+        shape = CreateShape(JPH::SphereShapeSettings(p1));
         break;
     case ShapeType::Capsule:
-        shape = create_shape(JPH::CapsuleShapeSettings(p1, p2));
+        shape = CreateShape(JPH::CapsuleShapeSettings(p1, p2));
         break;
     case ShapeType::Cylinder:
-        shape = create_shape(JPH::CylinderShapeSettings(p1, p2, 0.05f));
+        shape = CreateShape(JPH::CylinderShapeSettings(p1, p2, 0.05f));
         break;
     case ShapeType::Plane:
-        shape = create_shape(
+        shape = CreateShape(
             JPH::PlaneShapeSettings(JPH::Plane(JPH::Vec3(p1, p2, p3), p4), nullptr, 1000.0f));
         break;
     default:

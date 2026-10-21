@@ -9,7 +9,7 @@ namespace CPH::Python {
 
 static constexpr size_t kCqmVec3StrideBytes = 3 * sizeof(float);
 
-static PyObject *query_status_error(Error error, const char *message) {
+static PyObject *QueryStatusError(Error error, const char *message) {
     if (error.Code().Is(QueryError::OutOfMemory)) {
         return PyErr_NoMemory();
     }
@@ -25,7 +25,7 @@ static PyObject *query_status_error(Error error, const char *message) {
     return nullptr;
 }
 
-static PyObject *overlap_hits_to_list(const PhysicsQueryHitBuffer *hits) {
+static PyObject *OverlapHitsToList(const PhysicsQueryHitBuffer *hits) {
     if (hits->count > static_cast<size_t>(PY_SSIZE_T_MAX)) {
         PyErr_SetString(PyExc_OverflowError, "Overlap query returned too many results");
         return nullptr;
@@ -38,7 +38,7 @@ static PyObject *overlap_hits_to_list(const PhysicsQueryHitBuffer *hits) {
 
     for (size_t i = 0; i < hits->count; ++i) {
         PyObject *handle =
-            PyLong_FromUnsignedLongLong(static_cast<unsigned long long>(hits->hits[i]));
+            PyLong_FromUnsignedLongLong(hits->hits[i].Raw());
         if (!handle) {
             Py_DECREF(result);
             return nullptr;
@@ -65,7 +65,7 @@ static PyObject *overlap_hits_to_list(const PhysicsQueryHitBuffer *hits) {
     JPH::Real cx;
     JPH::Real cy;
     JPH::Real cz;
-    if (ParseResult parsed = parse_vec3_into(o_center, cx, cy, cz); !parsed) {
+    if (ParseResult parsed = ParseVec3Into(o_center, cx, cy, cz); !parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
     }
@@ -78,10 +78,10 @@ static PyObject *overlap_hits_to_list(const PhysicsQueryHitBuffer *hits) {
     Py_END_ALLOW_THREADS
 
         if (!status) {
-        return query_status_error(status.error(), "Failed to resolve sphere shape");
+        return QueryStatusError(status.error(), "Failed to resolve sphere shape");
     }
 
-    PyObject *result = overlap_hits_to_list(&hits);
+    PyObject *result = OverlapHitsToList(&hits);
     return result;
 }
 
@@ -105,11 +105,11 @@ static PyObject *overlap_hits_to_list(const PhysicsQueryHitBuffer *hits) {
     JPH::Real max_x;
     JPH::Real max_y;
     JPH::Real max_z;
-    if (ParseResult parsed = parse_vec3_into(o_min, min_x, min_y, min_z); !parsed) {
+    if (ParseResult parsed = ParseVec3Into(o_min, min_x, min_y, min_z); !parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
     }
-    if (ParseResult parsed = parse_vec3_into(o_max, max_x, max_y, max_z); !parsed) {
+    if (ParseResult parsed = ParseVec3Into(o_max, max_x, max_y, max_z); !parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
     }
@@ -123,10 +123,10 @@ static PyObject *overlap_hits_to_list(const PhysicsQueryHitBuffer *hits) {
     Py_END_ALLOW_THREADS
 
         if (!status) {
-        return query_status_error(status.error(), "overlap_aabb received invalid arguments");
+        return QueryStatusError(status.error(), "overlap_aabb received invalid arguments");
     }
 
-    PyObject *result = overlap_hits_to_list(&hits);
+    PyObject *result = OverlapHitsToList(&hits);
     return result;
 }
 
@@ -152,11 +152,11 @@ static PyObject *overlap_hits_to_list(const PhysicsQueryHitBuffer *hits) {
     float direction_x;
     float direction_y;
     float direction_z;
-    if (ParseResult parsed = parse_vec3_into(o_start, start_x, start_y, start_z); !parsed) {
+    if (ParseResult parsed = ParseVec3Into(o_start, start_x, start_y, start_z); !parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
     }
-    if (ParseResult parsed = parse_vec3_into(o_direction, direction_x, direction_y, direction_z); !parsed) {
+    if (ParseResult parsed = ParseVec3Into(o_direction, direction_x, direction_y, direction_z); !parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
     }
@@ -170,14 +170,14 @@ static PyObject *overlap_hits_to_list(const PhysicsQueryHitBuffer *hits) {
     Py_END_ALLOW_THREADS
 
         if (!status) {
-        return query_status_error(status.error(), "raycast received invalid arguments");
+        return QueryStatusError(status.error(), "raycast received invalid arguments");
     }
     const PhysicsRaycastHit &hit = *status;
     if (!hit.has_hit) {
         Py_RETURN_NONE;
     }
 
-    return BuildTuple((unsigned long long)hit.handle, hit.fraction,
+    return BuildTuple(hit.handle.Raw(), hit.fraction,
                               BuildTuple(hit.normal.GetX(), hit.normal.GetY(), hit.normal.GetZ()));
 }
 
@@ -258,7 +258,7 @@ static PyObject *overlap_hits_to_list(const PhysicsQueryHitBuffer *hits) {
 
     if (!status) {
         Py_DECREF(result_bytes);
-        return query_status_error(status.error(), "raycast_batch received invalid buffers");
+        return QueryStatusError(status.error(), "raycast_batch received invalid buffers");
     }
     return result_bytes;
 }
@@ -293,15 +293,15 @@ static PyObject *overlap_hits_to_list(const PhysicsQueryHitBuffer *hits) {
     float direction_y;
     float direction_z;
     float size[4];
-    if (ParseResult parsed = parse_vec3_into(o_position, position_x, position_y, position_z); !parsed) {
+    if (ParseResult parsed = ParseVec3Into(o_position, position_x, position_y, position_z); !parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
     }
-    if (ParseResult parsed = parse_quat_into(o_rotation, rotation_x, rotation_y, rotation_z, rotation_w); !parsed) {
+    if (ParseResult parsed = ParseQuatInto(o_rotation, rotation_x, rotation_y, rotation_z, rotation_w); !parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
     }
-    if (ParseResult parsed = parse_vec3_into(o_direction, direction_x, direction_y, direction_z); !parsed) {
+    if (ParseResult parsed = ParseVec3Into(o_direction, direction_x, direction_y, direction_z); !parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
     }
@@ -317,14 +317,14 @@ static PyObject *overlap_hits_to_list(const PhysicsQueryHitBuffer *hits) {
     Py_END_ALLOW_THREADS
 
         if (!status) {
-        return query_status_error(status.error(), "Invalid shape parameters or cache failure");
+        return QueryStatusError(status.error(), "Invalid shape parameters or cache failure");
     }
     const PhysicsShapecastHit &hit = *status;
     if (!hit.has_hit) {
         Py_RETURN_NONE;
     }
 
-    return BuildTuple((unsigned long long)hit.handle, hit.fraction,
+    return BuildTuple(hit.handle.Raw(), hit.fraction,
                               BuildTuple(hit.point.GetX(), hit.point.GetY(), hit.point.GetZ()),
                               BuildTuple(hit.normal.GetX(), hit.normal.GetY(), hit.normal.GetZ()));
 }

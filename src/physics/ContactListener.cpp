@@ -22,7 +22,7 @@ namespace {
 // Isolates thread synchronization, bounds checking, and canonicalization into a single template.
 // =================================================================================================
 template <auto EventType, typename InfoExtractor>
-CPH_NO_TSAN inline void RecordContact(PhysicsWorld *world, uint64_t r1, uint64_t r2,
+CPH_NO_TSAN inline void RecordContact(PhysicsWorld *world, BodyHandle r1, BodyHandle r2,
                                       InfoExtractor &&extract_info) noexcept {
     // 1. Thread-safe Index Allocation
     const size_t idx =
@@ -63,11 +63,11 @@ template <auto EventType>
 inline void ProcessManifoldEvent(PhysicsWorld *world, const JPH::Body &body1,
                                  const JPH::Body &body2,
                                  const JPH::ContactManifold &manifold) noexcept {
-    const uint64_t r1 = body1.GetUserData();
-    const uint64_t r2 = body2.GetUserData();
+    const BodyHandle r1(body1.GetUserData());
+    const BodyHandle r2(body2.GetUserData());
 
-    const auto slot1 = static_cast<uint32_t>(r1 & kHandleIndexMask);
-    const auto slot2 = static_cast<uint32_t>(r2 & kHandleIndexMask);
+    const auto slot1 = r1.Index();
+    const auto slot2 = r2.Index();
 
     if (slot1 >= world->slot_capacity || slot2 >= world->slot_capacity) [[unlikely]] {
         return;
@@ -136,11 +136,11 @@ WorldContactListener::OnContactValidate(const JPH::Body &inBody1, const JPH::Bod
                                         [[maybe_unused]] JPH::RVec3Arg inBaseOffset,
                                         [[maybe_unused]] const JPH::CollideShapeResult
                                             &inCollisionResult) noexcept {
-    const uint64_t r1 = inBody1.GetUserData();
-    const uint64_t r2 = inBody2.GetUserData();
+    const BodyHandle r1(inBody1.GetUserData());
+    const BodyHandle r2(inBody2.GetUserData());
 
-    const auto slot1 = static_cast<uint32_t>(r1 & kHandleIndexMask);
-    const auto slot2 = static_cast<uint32_t>(r2 & kHandleIndexMask);
+    const auto slot1 = r1.Index();
+    const auto slot2 = r2.Index();
 
     if (slot1 >= world_->slot_capacity || slot2 >= world_->slot_capacity) [[unlikely]] {
         return JPH::ValidateResult::RejectContact;
@@ -178,8 +178,8 @@ void WorldContactListener::OnContactRemoved(const JPH::SubShapeIDPair &inSubShap
     const uint32_t i1 = inSubShapePair.GetBody1ID().GetIndex();
     const uint32_t i2 = inSubShapePair.GetBody2ID().GetIndex();
 
-    uint64_t r1 = 0;
-    uint64_t r2 = 0;
+    BodyHandle r1;
+    BodyHandle r2;
 
     if (world_->id_to_handle_map) [[likely]] {
         if (i1 <= world_->max_jolt_bodies) {
@@ -190,7 +190,7 @@ void WorldContactListener::OnContactRemoved(const JPH::SubShapeIDPair &inSubShap
         }
     }
 
-    if (r1 == 0 || r2 == 0) [[unlikely]] {
+    if (!r1.IsValid() || !r2.IsValid()) [[unlikely]] {
         return;
     }
 

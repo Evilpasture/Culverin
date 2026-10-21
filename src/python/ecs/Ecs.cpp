@@ -14,7 +14,7 @@ static constexpr auto kInitialEntityCapacity    = 1024;
 static constexpr auto kInitialSparseCapacity    = 1024;
 static constexpr auto kInitialComponentCapacity = 16;
 
-static PyObject *make_ecs_proxy(RegistryObject *self, uint32_t comp_id, bool entities) {
+static PyObject *MakeEcsProxy(RegistryObject *self, uint32_t comp_id, bool entities) {
     ModuleState *st = GetModuleState(PyType_GetModule(Py_TYPE(self)));
     SparseSet *set  = &self->components[comp_id];
 
@@ -110,8 +110,8 @@ static bool SparseSet_EnsureDenseCapacity(RegistryObject *reg, SparseSet *set) {
         return false;
     }
 
-    constexpr auto FIRST_DENSE_CAPACITY = 64;
-    uint32_t new_cap = set->dense_capacity == 0 ? FIRST_DENSE_CAPACITY : set->dense_capacity * 2;
+    constexpr auto kFirstDenseCapacity = 64;
+    uint32_t new_cap = set->dense_capacity == 0 ? kFirstDenseCapacity : set->dense_capacity * 2;
 
     Entity *new_dense =
         static_cast<Entity *>(Reallocate(set->dense, new_cap * sizeof(Entity)));
@@ -222,30 +222,32 @@ void RegistryDealloc(RegistryObject *self) {
 
     uint32_t index    = self->free_indices[--self->free_count];
     uint32_t gen      = self->generations[index];
-    Entity handle = (static_cast<uint64_t>(gen) << kHandleIndexBits) | index;
+    const Entity handle = Entity::FromParts(index, gen);
     self->active_entities++;
 
     (self->ecs_lock).unlock();
 
-    return PyLong_FromUnsignedLongLong(handle);
+    return PyLong_FromUnsignedLongLong(handle.Raw());
 }
 
 [[nodiscard]] PyObject * RegistryDestroy(RegistryObject *self,
                                                            PyObject *const *args, size_t nargsf,
                                                            PyObject *kwnames) {
-    uint64_t handle;
+    uint64_t handle_raw;
 
     const ParseResult parsed =
-        self->parsers->RegEntityOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle);
+        self->parsers->RegEntityOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle_raw);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
     }
 
+    const Entity handle(handle_raw);
+
     (self->ecs_lock).lock();
 
-    uint32_t index = static_cast<uint32_t>(handle & kHandleIndexMask);
-    uint32_t gen   = static_cast<uint32_t>(handle >> kHandleIndexBits);
+    uint32_t index = handle.Index();
+    uint32_t gen   = handle.Generation();
 
     if (index >= self->entity_capacity || self->generations[index] != gen) {
         (self->ecs_lock).unlock();
@@ -262,7 +264,7 @@ void RegistryDealloc(RegistryObject *self) {
             if (dense_idx != last_idx) {
                 // Swap and pop
                 Entity last_entity   = set->dense[last_idx];
-                uint32_t last_entity_idx = static_cast<uint32_t>(last_entity & kHandleIndexMask);
+                uint32_t last_entity_idx = last_entity.Index();
 
                 set->dense[dense_idx]        = last_entity;
                 set->sparse[last_entity_idx] = dense_idx;
@@ -288,19 +290,21 @@ void RegistryDealloc(RegistryObject *self) {
 [[nodiscard]] PyObject * RegistryIsAlive(RegistryObject *self,
                                                            PyObject *const *args, size_t nargsf,
                                                            PyObject *kwnames) {
-    uint64_t handle;
+    uint64_t handle_raw;
 
     const ParseResult parsed =
-        self->parsers->RegEntityOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle);
+        self->parsers->RegEntityOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle_raw);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
     }
 
+    const Entity handle(handle_raw);
+
     (self->ecs_lock).lock();
 
-    uint32_t index = static_cast<uint32_t>(handle & kHandleIndexMask);
-    uint32_t gen   = static_cast<uint32_t>(handle >> kHandleIndexBits);
+    uint32_t index = handle.Index();
+    uint32_t gen   = handle.Generation();
 
     bool alive = (index < self->entity_capacity && self->generations[index] == gen) != 0;
 
@@ -360,20 +364,22 @@ void RegistryDealloc(RegistryObject *self) {
 [[nodiscard]] PyObject * RegistryAdd(RegistryObject *self,
                                                        PyObject *const *args, size_t nargsf,
                                                        PyObject *kwnames) {
-    uint64_t handle;
+    uint64_t handle_raw;
     uint32_t comp_id;
     PyObject *data_obj = nullptr;
 
     const ParseResult parsed =
-        self->parsers->RegAdd.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle, comp_id,
+        self->parsers->RegAdd.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle_raw, comp_id,
                                      data_obj);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
     }
 
-    uint32_t index = static_cast<uint32_t>(handle & kHandleIndexMask);
-    uint32_t gen   = static_cast<uint32_t>(handle >> kHandleIndexBits);
+    const Entity handle(handle_raw);
+
+    uint32_t index = handle.Index();
+    uint32_t gen   = handle.Generation();
 
     if (index >= self->entity_capacity || self->generations[index] != gen) {
         return PyErr_Format(PyExc_ValueError, "Invalid or stale entity handle");
@@ -442,18 +448,20 @@ fail_quiet:
 [[nodiscard]] PyObject * RegistryRemove(RegistryObject *self,
                                                           PyObject *const *args, size_t nargsf,
                                                           PyObject *kwnames) {
-    uint64_t handle;
+    uint64_t handle_raw;
     uint32_t comp_id;
 
     const ParseResult parsed =
-        self->parsers->RegEntComp.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle,
+        self->parsers->RegEntComp.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle_raw,
                                          comp_id);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
     }
 
-    uint32_t index = static_cast<uint32_t>(handle & kHandleIndexMask);
+    const Entity handle(handle_raw);
+
+    uint32_t index = handle.Index();
     if (comp_id >= self->component_count) {
         return PyErr_Format(PyExc_ValueError, "Invalid component ID");
     }
@@ -469,7 +477,7 @@ fail_quiet:
         if (dense_idx != last_idx) {
             // Swap and pop
             Entity last_entity   = set->dense[last_idx];
-            uint32_t last_entity_idx = static_cast<uint32_t>(last_entity & kHandleIndexMask);
+            uint32_t last_entity_idx = last_entity.Index();
 
             set->dense[dense_idx]        = last_entity;
             set->sparse[last_entity_idx] = dense_idx;
@@ -489,18 +497,20 @@ fail_quiet:
 [[nodiscard]] PyObject * RegistryHas(RegistryObject *self,
                                                        PyObject *const *args, size_t nargsf,
                                                        PyObject *kwnames) {
-    uint64_t handle;
+    uint64_t handle_raw;
     uint32_t comp_id;
 
     const ParseResult parsed =
-        self->parsers->RegEntComp.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle,
+        self->parsers->RegEntComp.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle_raw,
                                          comp_id);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
     }
 
-    uint32_t index = static_cast<uint32_t>(handle & kHandleIndexMask);
+    const Entity handle(handle_raw);
+
+    uint32_t index = handle.Index();
     if (comp_id >= self->component_count) {
         return PyErr_Format(PyExc_ValueError, "Invalid component ID");
     }
@@ -517,18 +527,20 @@ fail_quiet:
 [[nodiscard]] PyObject * RegistryGet(RegistryObject *self,
                                                        PyObject *const *args, size_t nargsf,
                                                        PyObject *kwnames) {
-    uint64_t handle;
+    uint64_t handle_raw;
     uint32_t comp_id;
 
     const ParseResult parsed =
-        self->parsers->RegEntComp.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle,
+        self->parsers->RegEntComp.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle_raw,
                                          comp_id);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
     }
 
-    uint32_t index = static_cast<uint32_t>(handle & kHandleIndexMask);
+    const Entity handle(handle_raw);
+
+    uint32_t index = handle.Index();
     if (comp_id >= self->component_count) {
         return PyErr_Format(PyExc_ValueError, "Invalid component ID");
     }
@@ -567,7 +579,7 @@ fail_quiet:
     }
 
     (self->ecs_lock).lock();
-    PyObject *proxy = make_ecs_proxy(self, comp_id, false);
+    PyObject *proxy = MakeEcsProxy(self, comp_id, false);
     (self->ecs_lock).unlock();
     return proxy;
 }
@@ -589,8 +601,8 @@ fail_quiet:
     }
 
     (self->ecs_lock).lock();
-    // make_ecs_proxy(self, comp_id, true) handles the ProxyBufferType::EcsEntities case
-    PyObject *proxy = make_ecs_proxy(self, comp_id, true);
+    // MakeEcsProxy(self, comp_id, true) handles the ProxyBufferType::EcsEntities case
+    PyObject *proxy = MakeEcsProxy(self, comp_id, true);
     (self->ecs_lock).unlock();
 
     return proxy;
@@ -644,13 +656,13 @@ fail_quiet:
 
     for (uint32_t i = 0; i < h_set->count; i++) {
         Entity ent   = h_set->dense[i];
-        uint32_t ent_idx = static_cast<uint32_t>(ent & kHandleIndexMask);
+        uint32_t ent_idx = ent.Index();
 
-        uint64_t handle;
-        memcpy(&handle, &h_set->data[static_cast<size_t>(i) * sizeof(uint64_t)], sizeof(uint64_t));
+        BodyHandle body_handle;
+        memcpy(&body_handle, &h_set->data[static_cast<size_t>(i) * sizeof(uint64_t)], sizeof(uint64_t));
 
         if (const std::optional<std::uint32_t> resolved =
-                world->physics.UnpackHandle(handle)) {
+                world->physics.Resolve(body_handle)) {
             const uint32_t slot = *resolved;
             uint32_t phys_dense = world->physics.bodies.slot_to_dense[slot];
 

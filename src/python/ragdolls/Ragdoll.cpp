@@ -172,7 +172,7 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
     for (Py_ssize_t i = 0; i < body_count; ++i) {
         if (handles[i].alive) {
             PyObject *handle =
-                PyLong_FromUnsignedLongLong(static_cast<uint64_t>(handles[i].handle));
+                PyLong_FromUnsignedLongLong(handles[i].handle.Raw());
             if (!handle) {
                 Deallocate(handles);
                 Py_DECREF(list);
@@ -378,7 +378,7 @@ void RagdollDealloc(RagdollObject *self) {
         // still pending* (CPython then reports the NULL/exception-set
         // mismatch). That is the pre-B3 behaviour verbatim; the pending error
         // has to be reinstated because ParseError owns it now.
-        const ParseResult parsed = parse_vec3_into(py_pos, p_stride);
+        const ParseResult parsed = ParseVec3Into(py_pos, p_stride);
         if (parsed) {
             position     = JPH::RVec3(p_stride.x, p_stride.y, p_stride.z);
             has_position = true;

@@ -28,7 +28,7 @@ struct CharacterObject {
 
     // Non-atomic: Used by main thread only for rendering
     // AVOID FALSE SHARING.
-    JPH_Real prev_px, prev_py, prev_pz;
+    JPH::Real prev_px, prev_py, prev_pz;
     float prev_rx, prev_ry, prev_rz, prev_rw;
 };
 

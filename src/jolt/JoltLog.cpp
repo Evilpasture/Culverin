@@ -37,7 +37,7 @@ struct LogTheme {
     std::string_view tag;
 };
 
-constexpr std::string_view ANSI_RESET = "\033[0m";
+constexpr std::string_view kAnsiReset = "\033[0m";
 
 template <std::size_t Capacity>
 class StackBuffer {
@@ -75,7 +75,7 @@ private:
 };
 
 [[nodiscard]]
-constexpr auto get_theme(LogLevel level, bool use_color) noexcept -> LogTheme {
+constexpr auto GetTheme(LogLevel level, bool use_color) noexcept -> LogTheme {
     if (!use_color) {
         switch (level) {
             using enum LogLevel;
@@ -100,7 +100,7 @@ constexpr auto get_theme(LogLevel level, bool use_color) noexcept -> LogTheme {
 }
 
 [[nodiscard]]
-auto detect_level(std::string_view msg) noexcept -> LogLevel {
+auto DetectLevel(std::string_view msg) noexcept -> LogLevel {
     if (msg.contains("Error") || msg.contains("fail")) {
         return LogLevel::Error;
     }
@@ -111,7 +111,7 @@ auto detect_level(std::string_view msg) noexcept -> LogLevel {
 }
 
 // Pretty-prints one already-formatted Jolt message to stderr.
-void write_trace_message(std::string_view msg) noexcept {
+void WriteTraceMessage(std::string_view msg) noexcept {
     if (msg.empty()) [[unlikely]] {
         return;
     }
@@ -126,9 +126,9 @@ void write_trace_message(std::string_view msg) noexcept {
     }
 
     // 2. Metadata extraction
-    const auto level        = detect_level(msg);
+    const auto level        = DetectLevel(msg);
     const auto atty         = static_cast<bool>(IS_ATTY);
-    const auto [color, tag] = get_theme(level, atty);
+    const auto [color, tag] = GetTheme(level, atty);
 
     // Format UTC as HH:MM:SS without std::format, whose libc++ implementation
     // instantiates floating-point to_chars unavailable at the macOS 13.3 target.
@@ -151,7 +151,7 @@ void write_trace_message(std::string_view msg) noexcept {
     buffer.append("] ");
     buffer.append(color);
     buffer.append(tag);
-    buffer.append(atty ? ANSI_RESET : std::string_view{});
+    buffer.append(atty ? kAnsiReset : std::string_view{});
     buffer.append(atty ? std::string_view{} : std::string_view{":"});
     buffer.append(" ");
     buffer.append(msg);
@@ -161,7 +161,7 @@ void write_trace_message(std::string_view msg) noexcept {
 
 // JPH::Trace is variadic: format first (bounded), then hand the text to the
 // pretty-printer. Same 1024-byte budget JoltC's TraceImpl used.
-void trace_bridge(const char *const inFMT, ...) noexcept {
+void TraceBridge(const char *const inFMT, ...) noexcept {
     if (inFMT == nullptr) [[unlikely]] {
         return;
     }
@@ -176,7 +176,7 @@ void trace_bridge(const char *const inFMT, ...) noexcept {
         return;
     }
     const auto length = std::min(static_cast<std::size_t>(written), raw.size() - 1);
-    write_trace_message(std::string_view(raw.data(), length));
+    WriteTraceMessage(std::string_view(raw.data(), length));
 }
 
 #ifdef JPH_ENABLE_ASSERTS
@@ -184,7 +184,7 @@ bool assert_bridge(const char *const inExpression, const char *const inMessage,
                    const char *const inFile, const JPH::uint inLine) noexcept {
     const auto atty         = static_cast<bool>(IS_ATTY);
     const auto *const color = atty ? "\033[1;41m" : "";
-    const auto reset        = atty ? ANSI_RESET : "";
+    const auto reset        = atty ? kAnsiReset : "";
 
     // Asserts are rare and critical; keep their output bounded and allocation-free too.
     StackBuffer<1024> buffer;
@@ -210,7 +210,7 @@ bool assert_bridge(const char *const inExpression, const char *const inMessage,
 } // namespace
 
 void InstallJoltLogging() noexcept {
-    JPH::Trace = trace_bridge;
+    JPH::Trace = TraceBridge;
 #ifdef JPH_ENABLE_ASSERTS
     JPH::AssertFailed = assert_bridge;
 #endif

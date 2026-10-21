@@ -4,6 +4,7 @@
 // contracts: Python exposes them zero-copy through the buffer protocol.
 
 #include "core/Compiler.hpp"
+#include "core/Handle.hpp"
 #include "jolt/Jolt.hpp"
 #include "jolt/JoltConfig.hpp"
 #include <Jolt/Physics/Body/MotionType.h>
@@ -11,30 +12,29 @@
 #include <cstdint>
 #include <utility>
 
-// --- Jolt precision compatibility ---
-#ifndef JPH_Real
-#    ifdef JPH_DOUBLE_PRECISION
-using JPH_Real = double;
-#        define JPH_REAL_CHAR 'd'
-#        define JPH_REAL_STRING "d"
-#    else
-using JPH_Real = float;
-#        define JPH_REAL_CHAR 'f'
-#        define JPH_REAL_STRING "f"
-#    endif
-#endif
-
-
 namespace CPH {
+
+// --- Jolt precision ---
+
+// Jolt's own precision alias is JPH::Real (double under JPH_DOUBLE_PRECISION,
+// float otherwise). This header used to declare a project-local `JPH::Real`
+// typedef in the global scope plus the `JPH_REAL_CHAR` / `CPH::kRealFormatString`
+// macros, duplicating a type Jolt already defines and planting `JPH_`-prefixed
+// macros outside Jolt's control. The typedef is gone in favour of JPH::Real;
+// `JPH_REAL_CHAR` had no users at all and is deleted; the string form becomes
+// the typed constant below, which is the only remaining caller. No `JPH_*`
+// macro is defined by Culverin any more.
+inline constexpr const char *kRealFormatString =
+    sizeof(JPH::Real) == sizeof(double) ? "d" : "f";
 
 // --- Shadow-buffer record layouts (stride 4, SIMD-aligned) ---
 
 // Positions: float64 in double-precision builds, w is padding (0.0).
 struct PosStride {
-    alignas(32) JPH_Real x;
-    JPH_Real y;
-    JPH_Real z;
-    JPH_Real w;
+    alignas(32) JPH::Real x;
+    JPH::Real y;
+    JPH::Real z;
+    JPH::Real w;
 };
 
 // Rotations (x, y, z, w) and velocities (x, y, z, pad).
@@ -43,15 +43,12 @@ struct AuxStride {
     float y, z, w;
 };
 
-static_assert(sizeof(PosStride) == sizeof(JPH_Real) * 4);
+static_assert(sizeof(PosStride) == sizeof(JPH::Real) * 4);
 static_assert(sizeof(AuxStride) == sizeof(float) * 4);
 
-// --- Generational handles: (generation << 32) | slot index ---
-using BodyHandle       = std::uint64_t;
-using ConstraintHandle = std::uint64_t;
-
-inline constexpr std::uint32_t kHandleIndexBits = 32;
-inline constexpr std::uint64_t kHandleIndexMask = 0xFFFFFFFF;
+// BodyHandle and ConstraintHandle are strongly-typed 64-bit generational
+// handles; see core/Handle.hpp. Layout, and therefore the Python-visible
+// integer, is unchanged.
 
 // --- Public enumerations (values are part of the Python API) ---
 

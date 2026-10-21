@@ -18,7 +18,7 @@ namespace CPH {
 struct ContactEventSlim {
     std::atomic<BodyHandle> body1; // 8
     std::atomic<BodyHandle> body2; // 8
-    JPH_Real px, py, pz;           // 24/12
+    JPH::Real px, py, pz;           // 24/12
     float nx, ny, nz;              // 12
     float impulse;                 // 4
     float sliding_speed;           // 4

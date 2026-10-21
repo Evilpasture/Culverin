@@ -38,7 +38,7 @@ template <typename T> struct RestrictSpan {
     constexpr RestrictSpan(std::array<std::remove_const_t<T>, N> &arr) noexcept
         : _ptr(arr.data()), _len(N) {}
 
-    // 4. Subspan helper (Crucial for your BATCH_SIZE logic)
+    // 4. Subspan helper (Crucial for your kBatchSize logic)
     [[nodiscard, gnu::always_inline]]
     constexpr auto first(SizeType count) const noexcept -> RestrictSpan<T> {
         return RestrictSpan<T>(_ptr, count);
