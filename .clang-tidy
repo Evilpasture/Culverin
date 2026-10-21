@@ -1,45 +1,87 @@
-Checks: >
+# Naming and low-level sanity checks for the Culverin tree.
+#
+# Two things were silently broken here and are now fixed:
+#
+#   1. readability-identifier-naming.*Case does not accept the value
+#      "snake_case" -- the valid spelling is "lower_case". clang-tidy rejected
+#      all three options with "invalid configuration value" and enforced
+#      nothing at all.
+#   2. "Checks: >" is a YAML *folded scalar*, so the "#" lines inside it were
+#      not comments: they were folded into the check list as literal text.
+#      "--dump-config" showed entries such as
+#      "# Crucial for cache/memory cppcoreguidelines-pro-type-member-init",
+#      which matched no check. That silently swallowed
+#      cppcoreguidelines-pro-type-member-init and the entire misc-* family.
+#      YAML has no comment syntax inside a block scalar, so the comments now
+#      live outside it.
+#
+# misc-* is revived, but three of its checks are excluded because they are
+# architecturally wrong for this codebase rather than merely unmet:
+#   -misc-non-private-member-variables-in-classes  (569 hits on 8 TUs -- the
+#       CPython extension structs are public-field POD by design, they start
+#       with PyObject_HEAD)
+#   -misc-include-cleaner   (378 hits -- the project has no IWYU policy)
+#   -misc-const-correctness (211 hits -- mechanical churn, no correctness gain)
+# Re-enabling any of them is a one-line change if that changes.
+
+Checks: >-
   -*,
   bugprone-*,
   -bugprone-easily-swappable-parameters,
   clang-analyzer-*,
   performance-*,
   modernize-*,
-  
-  performance-unnecessary-copy-initialization,
-  performance-unnecessary-value-param,
-  performance-move-const-arg,
-  performance-no-automatic-move,
-  performance-inefficient-vector-operation,
-  performance-inefficient-string-concatenation,
-  performance-trivially-destructible,
-  
-  # Crucial for cache/memory
   cppcoreguidelines-pro-type-member-init,
   cppcoreguidelines-no-malloc,
-  modernize-pass-by-value,
-  modernize-use-emplace,
-  
-  # Low-level sanity
   misc-*,
   -misc-unused-parameters,
+  -misc-non-private-member-variables-in-classes,
+  -misc-include-cleaner,
+  -misc-const-correctness,
   readability-*,
   -readability-identifier-length,
   -readability-function-cognitive-complexity
 
+# Without this, clang-tidy lints Jolt and CPython as well: a single TU produced
+# 3847 findings, including 486 modernize-macro-to-enum and 420
+# readability-uppercase-literal-suffix from vendored headers.
+HeaderFilterRegex: '(^|/)src/'
+
 CheckOptions:
   # High-performance threshold: keep functions smaller to encourage inlining
   readability-function-size.LineThreshold: 200
-  
-  # Strict snake_case for the C-API interface
-  readability-identifier-naming.VariableCase: snake_case
-  readability-identifier-naming.FunctionCase: snake_case
-  readability-identifier-naming.ParameterCase: snake_case
-  
-  # Magic numbers: Only allow 0, 1, and 2. 
-  # Powers of 2 must be named constants (e.g., CACHE_LINE_SIZE)
+
+  # Naming, measured on the tree rather than imposed on it. Counts below are
+  # unique symbols flagged across all 32 TUs in src/.
+  #
+  #   free functions   PascalCase. 130 non-conforming, all snake_case helpers
+  #                    (make_array, get_theme, detect_level, ...) plus the 11
+  #                    CPython slot callbacks that must keep their C names
+  #                    (BufferProxy_length, BufferProxy_dealloc, ...).
+  #   member functions PascalCase. 84 conform against 34 that do not, so
+  #                    CamelCase is the majority. MethodCase has to be set
+  #                    explicitly: FunctionCase also covers member functions,
+  #                    and leaving it out flags every method in the tree.
+  #   parameters       lower_case. 21 non-conforming, 20 of them Jolt's
+  #                    inFrom/inTo/inColor style leaking through adapters.
+  #   variables        lower_case.
+  #   local constants  lower_case.
+  #
+  # Deliberately NOT enforced: file-scope variables and constants. The tree has
+  # two competing conventions there -- kCamelCase tables (kModuleMethods,
+  # kShipMethods, kVehicleMethods) and PascalCase spec objects (WorldSpec,
+  # BufferProxySlots, VehicleSpec) -- and neither is clearly dominant, so
+  # picking one would flag the other ~30 sites for no gain.
+  readability-identifier-naming.FunctionCase: CamelCase
+  readability-identifier-naming.MethodCase: CamelCase
+  readability-identifier-naming.ParameterCase: lower_case
+  readability-identifier-naming.VariableCase: lower_case
+  readability-identifier-naming.LocalConstantCase: lower_case
+
+  # Magic numbers: only allow 0, 1 and 2.
+  # Powers of 2 must be named constants (e.g. CACHE_LINE_SIZE).
   readability-magic-numbers.IgnoredIntegerValues: "0;1;2"
   readability-magic-numbers.IgnorePowersOfTwoValue: false
 
-  # Vector optimization: Flag if we don't reserve space
+  # Vector optimization: flag if we don't reserve space.
   performance-inefficient-vector-operation.EnableImplicitConverters: true
