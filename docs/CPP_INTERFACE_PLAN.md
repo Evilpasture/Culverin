@@ -472,9 +472,11 @@ belonged to a different slice — and converted at the boundary. That
 later slice has landed: the parameters are native now and the boundary
 conversion is gone.
 
-`JPH_BodyID` survives in `CopyRagdollDebugInfo` because `body_interface`
-is still a `JPH_BodyInterface *`; `GetBodyID(i).GetIndexAndSequenceNumber()`
-hands it the same packed word joltc did.
+`JPH_BodyID` survived in `CopyRagdollDebugInfo` while `body_interface`
+was still a `JPH_BodyInterface *`, handing it the same packed word joltc
+did. The layering phase below removes that too: `body_interface` is a
+`JPH::BodyInterface *` now, so the reads go through
+`GetPosition`/`GetRotation`/`GetLinearVelocity` on it.
 
 One pre-existing defect found and **preserved**, marked `TODO(bug)`:
 `JPH_RagdollSettings_SetPartToParent` copies fifteen fields but never
@@ -846,9 +848,85 @@ Status of the migration:
   raises the wheel message. Every single-fault diagnostic is unchanged, byte
   for byte.
 
-The `culverin_native_ecs`, `culverin_native_vehicles` and
-`culverin_native_characters` targets carry the migrated code behind
-`culverin_core`.
+* **Ragdolls — migrated.** `CPH::Skeleton`, `CPH::RagdollSettings` and
+  `CPH::Ragdoll` (src/ragdolls/Ragdoll.hpp/.cpp) own the skeleton bookkeeping,
+  the part layout and the instance, including the world-side slot table.
+  `CPH::Ragdoll::Create` runs instantiate -> register -> teardown-on-failure in
+  one call, so a half-built ragdoll can no longer reach a Python object.
+  `PhysicsWorld::CopyRagdollBodyHandles` and `CopyRagdollDebugInfo` are gone;
+  the equivalents read the slot table and the bodies through their own ragdoll.
+  `python/ragdolls/Ragdoll.cpp` only parses, calls and packs, and
+  `python/ragdolls/Ragdoll.hpp` became `RagdollBinding.hpp`.
+
+* **Soft bodies — migrated.** `CPH::SoftBodySettings`
+  (src/soft_bodies/SoftBodySettings.hpp/.cpp) owns the vertices, the faces and
+  the constraint generation; `python/soft_bodies/SoftBody.cpp` keeps the buffer
+  acquisition, the float32-triplet checks and every diagnostic string, because
+  two of those strings deliberately differ between `add_vertex` and
+  `add_vertices`. `python/soft_bodies/SoftBody.hpp` became `SoftBodyBinding.hpp`;
+  the cached `num_vertices`/`constraints_created`/`optimized` fields it carried
+  are derived from the native object now instead of being mirrored by hand.
+
+*Landed so far — ragdolls and soft bodies leave `python/`.* This is the
+one-way dependency rule turned on the last two domains that still broke
+it. `src/python/ragdolls/` and `src/python/soft_bodies/` no longer own
+any Jolt state or any algorithm; they are `RagdollBinding.hpp` +
+`Ragdoll.cpp` and `SoftBodyBinding.hpp` + `SoftBody.cpp`, and they do
+three things only: parse Python arguments into native structs, call one
+method on a native object, and wrap the result.
+
+What moved:
+
+- `src/ragdolls/{Ragdoll.hpp,Ragdoll.cpp}` — new
+  `CPH::Skeleton`, `CPH::RagdollSettings` and `CPH::Ragdoll`. The
+  skeleton's AddRef/release accounting, the part layout (including the
+  `CalculateInertia`-not-`MassAndInertia` mass override, the
+  `mParts.resize(joint_count)` widening and the default-constructed
+  `SwingTwistConstraintSettings`), the pose clamp in `DriveToPose`, the
+  slot teardown and both debug reads live here. `RagdollError` moved
+  with them.
+- `src/soft_bodies/SoftBodySettings.{hpp,cpp}` — `CPH::SoftBodySettings`.
+  `AddVertices`/`AddFaces` keep joltc's reserve-once and zero-count early
+  return, `AddFaces` keeps validating inside the packing loop so a bad
+  face leaves the earlier ones pushed, and `CreateConstraints` keeps the
+  `VertexAttributes` array with only `mCompliance`/`mShearCompliance`
+  set. `SoftBodySettingsError` carries the five failure kinds; the
+  Python-visible strings stay in the binding, because two of them
+  deliberately differ (`add_vertex` says "Cannot modify settings after
+  optimize()", `add_vertices` says "Cannot modify after optimize()").
+- `CPH::Ragdoll::Create` replaces the three-step
+  create/register/fail-and-teardown dance that `WorldCreateRagdoll` used
+  to spell out, so a half-built ragdoll can no longer escape into a
+  Python object.
+- `PhysicsWorld::CopyRagdollBodyHandles` and `CopyRagdollDebugInfo` are
+  gone; the equivalents are `CPH::Ragdoll::CopyBodyHandles` and
+  `CopyDebugInfo`, which own the slot table they read. The debug read
+  now goes through `JPH::BodyInterface` rather than `JPH_BodyInterface_*`
+  — same three getters, same lock (`shadow_lock`, not
+  `LockShadowNotStepping`, because the original only ever took the
+  plain lock).
+- The dead free function `PhysicsWorldCreateRagdollSettings` is deleted;
+  `CPH::RagdollSettings::Create` is the factory and still takes its own
+  skeleton reference.
+
+Preserved quirk-for-quirk, all now commented at the site:
+
+- a malformed `pos` in `RagdollSettingsAddPart` is *not* fatal: the
+  position is left unset, the call continues, and the exception stays
+  pending so CPython reports the NULL/exception-set mismatch. Re-raising
+  it through `ParseError` instead would have been a behaviour change;
+- `get_debug_info` still fetches `rotation` and still never surfaces it;
+- the debug-info block is still over-allocated by `alignof(…)` and
+  hand-aligned, because `Allocate()` is `PyMem_RawMalloc` and
+  `PhysicsRagdollBodyDebugInfo` holds SIMD types (`alignof` 32);
+- `drive_to_pose` still returns `None` when the ragdoll or its world is
+  gone, and still reports a failed apply as `MemoryError`.
+
+The `culverin_native_ecs`, `culverin_native_vehicles`,
+`culverin_native_characters`, `culverin_native_ragdolls` and
+`culverin_native_soft_bodies` targets carry the migrated code behind
+`culverin_core`, and `culverin_native_physics` no longer links
+`culverin_native_soft_bodies` at all — the dependency runs one way.
 
 ## Sequencing, gates, risks
 

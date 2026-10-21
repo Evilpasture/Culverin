@@ -1,10 +1,15 @@
-#include "ragdolls/Ragdoll.hpp"
+// Python adapter for skeletons, ragdoll settings and ragdoll instances.
+//
+// The skeleton bookkeeping, the part layout, the world-side slot teardown and
+// the pose driving all live in src/ragdolls/Ragdoll.cpp. Everything below
+// parses arguments, calls a native method and packs the result.
+
+#include "ragdolls/RagdollBinding.hpp"
 #include "bindings/PythonCommon.hpp"
 #include "bindings/FastBuild.hpp"
 #include "bindings/PythonSupport.hpp"
 #include "core/Compiler.hpp"
 #include "physics/PhysicsSync.hpp"
-#include "physics/Ragdoll.hpp"
 
 #include <cstdint>
 
@@ -39,7 +44,7 @@ static constexpr float kRagdollDefaultTwistMax = 0.1f;
         return nullptr;
     }
 
-    const int idx = PhysicsRagdollSkeletonAddJoint(self->skeleton, name, parent_idx);
+    const int idx = self->skeleton->AddJoint(name, parent_idx);
     return PyLong_FromLong(idx);
 }
 
@@ -64,13 +69,13 @@ static constexpr float kRagdollDefaultTwistMax = 0.1f;
         return nullptr;
     }
 
-    const int idx = PhysicsRagdollSkeletonGetJointIndex(self->skeleton, name);
+    const int idx = self->skeleton->GetJointIndex(name);
     return PyLong_FromLong(idx);
 }
 
 [[nodiscard]] PyObject * SkeletonFinalize(SkeletonObject *self,
                                                             PyObject *args [[maybe_unused]]) {
-    if (!PhysicsRagdollSkeletonFinalize(self->skeleton)) {
+    if (!self->skeleton->Finalize()) {
         PyErr_SetString(PyExc_RuntimeError,
                         "Skeleton joints are out of order (parent must be added before child)");
         return nullptr;
@@ -80,7 +85,7 @@ static constexpr float kRagdollDefaultTwistMax = 0.1f;
 
 [[nodiscard]] PyObject *
 RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unused]]) {
-    if (PhysicsRagdollSettingsStabilize(self->settings)) {
+    if (self->settings->Stabilize()) {
         Py_RETURN_TRUE;
     }
     Py_RETURN_FALSE;
@@ -107,7 +112,7 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
     }
 
     // 2. RESOURCE ACQUISITION
-    const int joint_count = PhysicsRagdollGetJointCount(self->ragdoll);
+    const int joint_count = self->ragdoll->JointCount();
 
     // Validate Buffer Size
     Py_buffer view;
@@ -125,16 +130,12 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
 
     // The caller's float32 buffer is 4 column-major Vec4 per joint (64 bytes),
     // which is exactly JPH::Mat44's layout, so it is read in place.
-    JPH::Mat44 *matrices           = static_cast<JPH::Mat44 *>(view.buf);
+    auto *matrices                 = static_cast<JPH::Mat44 *>(view.buf);
     const JPH::RVec3 root_position = JPH::RVec3(root_p.x, root_p.y, root_p.z);
 
-    // 3. PHYSICS EXECUTION (Shadow Locked)
-    (self->world->physics.shadow_lock).lock();
-    BlockUntilNotStepping(self->world);
+    // 3. PHYSICS EXECUTION (the native ragdoll parks on the shadow lock)
     const bool pose_applied =
-        PhysicsRagdollDriveToPose(self->ragdoll, root_position,
-                                      {matrices, static_cast<size_t>(joint_count)});
-    (self->world->physics.shadow_lock).unlock();
+        self->ragdoll->DriveToPose(root_position, {matrices, static_cast<size_t>(joint_count)});
 
     // 4. CLEANUP
     PyBuffer_Release(&view);
@@ -146,33 +147,36 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
 
 [[nodiscard]] PyObject * RagdollGetBodyHandles(RagdollObject *self,
                                                                  PyObject *args [[maybe_unused]]) {
-    if (self->body_count > static_cast<size_t>(PY_SSIZE_T_MAX) ||
-        self->body_count > SIZE_MAX / sizeof(PhysicsRagdollBodyHandleInfo)) {
+    if (!self->ragdoll) {
+        Py_RETURN_NONE;
+    }
+
+    const int body_count = self->ragdoll->BodyCount();
+    if (body_count < 0 ||
+        static_cast<size_t>(body_count) > static_cast<size_t>(PY_SSIZE_T_MAX) ||
+        static_cast<size_t>(body_count) > SIZE_MAX / sizeof(PhysicsRagdollBodyHandleInfo)) {
         return PyErr_NoMemory();
     }
 
-    const Py_ssize_t body_count = static_cast<Py_ssize_t>(self->body_count);
-    PyObject *list              = PyList_New(body_count);
+    const Py_ssize_t count = static_cast<Py_ssize_t>(body_count);
+    PyObject *list         = PyList_New(count);
     if (!list) {
         return nullptr;
     }
 
     PhysicsRagdollBodyHandleInfo *handles =
-        body_count ? static_cast<PhysicsRagdollBodyHandleInfo *>(
-                         Allocate(static_cast<size_t>(body_count) * sizeof(*handles)))
-                   : nullptr;
-    if (body_count && !handles) {
+        count ? static_cast<PhysicsRagdollBodyHandleInfo *>(
+                    Allocate(static_cast<size_t>(count) * sizeof(*handles)))
+              : nullptr;
+    if (count && !handles) {
         Py_DECREF(list);
         return PyErr_NoMemory();
     }
 
-    self->world->physics.CopyRagdollBodyHandles(
-        {self->body_slots, static_cast<size_t>(body_count)},
-        {handles, static_cast<size_t>(body_count)});
-    for (Py_ssize_t i = 0; i < body_count; ++i) {
+    self->ragdoll->CopyBodyHandles({handles, static_cast<size_t>(count)});
+    for (Py_ssize_t i = 0; i < count; ++i) {
         if (handles[i].alive) {
-            PyObject *handle =
-                PyLong_FromUnsignedLongLong(handles[i].handle.Raw());
+            PyObject *handle = PyLong_FromUnsignedLongLong(handles[i].handle.Raw());
             if (!handle) {
                 Deallocate(handles);
                 Py_DECREF(list);
@@ -195,7 +199,7 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
         Py_RETURN_NONE;
     }
 
-    const int body_count = PhysicsRagdollGetBodyCount(self->ragdoll);
+    const int body_count = self->ragdoll->BodyCount();
     if (body_count < 0 ||
         static_cast<size_t>(body_count) > SIZE_MAX / sizeof(PhysicsRagdollBodyDebugInfo)) {
         return PyErr_NoMemory();
@@ -206,12 +210,12 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
         return nullptr;
     }
 
-    // PhysicsRagdollBodyDebugInfo now holds Jolt's SIMD vector types, so
-    // alignof is 32, while Allocate() (PyMem_RawMalloc) only promises
-    // alignof(max_align_t). Over-allocate and hand-align, keeping the block
-    // base for Deallocate(). Stays on Allocate() rather than std::vector
-    // because the build is -fno-exceptions: a vector resize failure would
-    // std::terminate instead of returning PyErr_NoMemory().
+    // PhysicsRagdollBodyDebugInfo holds Jolt's SIMD vector types, so alignof is
+    // 32, while Allocate() (PyMem_RawMalloc) only promises alignof(max_align_t).
+    // Over-allocate and hand-align, keeping the block base for Deallocate().
+    // Stays on Allocate() rather than std::vector because the build is
+    // -fno-exceptions: a vector resize failure would std::terminate instead of
+    // returning PyErr_NoMemory().
     constexpr std::size_t info_align = alignof(PhysicsRagdollBodyDebugInfo);
     static_assert((info_align & (info_align - 1)) == 0, "alignment must be a power of two");
 
@@ -225,8 +229,7 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
     auto *info = reinterpret_cast<PhysicsRagdollBodyDebugInfo *>(
         (reinterpret_cast<std::uintptr_t>(info_block) + (info_align - 1)) & ~(info_align - 1));
 
-    if (!self->world->physics.CopyRagdollDebugInfo(
-            *self->ragdoll, {info, static_cast<size_t>(body_count)})) {
+    if (!self->ragdoll->CopyDebugInfo({info, static_cast<size_t>(body_count)})) {
         Deallocate(info_block);
         Py_DECREF(list);
         return PyErr_Format(PyExc_RuntimeError, "Unable to read ragdoll body state");
@@ -257,13 +260,12 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
 }
 
 void SkeletonDealloc(SkeletonObject *self) {
-    if (self->skeleton) {
-        PhysicsRagdollSkeletonDestroy(self->skeleton);
-    }
-    if (self->parsers) {
+    delete self->skeleton;
+    self->skeleton = nullptr;
 
-        delete self->parsers;
-    }
+    delete self->parsers;
+    self->parsers = nullptr;
+
     Py_TYPE(self)->tp_free(reinterpret_cast<PyObject *>(self));
 }
 
@@ -272,54 +274,45 @@ void SkeletonDealloc(SkeletonObject *self) {
                                                        PyObject *kwds [[maybe_unused]]) {
     auto self = reinterpret_cast<SkeletonObject *>(type->tp_alloc(type, 0));
     if (self) {
-        self->skeleton = PhysicsRagdollSkeletonCreate();
-        if (!self->skeleton) {
+        self->skeleton = nullptr;
+        self->parsers  = nullptr;
+
+        std::unique_ptr<CPH::Skeleton> skeleton = CPH::Skeleton::Create();
+        if (!skeleton) {
             Py_DECREF(self);
             return PyErr_NoMemory();
         }
         self->parsers = CPH::Python::NewParserGroup<CPH::Python::SkeletonParsers>();
         if (!self->parsers) {
-            PhysicsRagdollSkeletonDestroy(self->skeleton);
-            self->skeleton = nullptr;
             Py_DECREF(self);
             return PyErr_NoMemory();
         }
+        self->skeleton = skeleton.release();
     }
     return reinterpret_cast<PyObject *>(self);
 }
 
 void RagdollSettingsDealloc(RagdollSettingsObject *self) {
-    if (self->settings) {
-        PhysicsRagdollSettingsDestroy(self->settings);
-    }
-    if (self->parsers) {
+    delete self->settings;
+    self->settings = nullptr;
 
-        delete self->parsers;
-    }
+    delete self->parsers;
+    self->parsers = nullptr;
+
     Py_XDECREF(self->world);
     Py_TYPE(self)->tp_free(reinterpret_cast<PyObject *>(self));
 }
 
 // --- Ragdoll Instance Implementation ---
 
-// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void RagdollDealloc(RagdollObject *self) {
-    if (self->ragdoll) {
-        PhysicsWorld *world = self->world ? &self->world->physics : nullptr;
-        Py_BEGIN_ALLOW_THREADS PhysicsRagdollDeallocate(
-            world, self->ragdoll, {self->body_slots, static_cast<size_t>(self->body_count)});
-        Py_END_ALLOW_THREADS self->ragdoll = nullptr;
-    }
+    // Destroying the native ragdoll takes it out of the physics system and
+    // releases its body slots; it has to happen before the world reference goes.
+    delete self->ragdoll;
+    self->ragdoll = nullptr;
 
-    if (self->body_slots) {
-        Deallocate(self->body_slots);
-        self->body_slots = nullptr;
-    }
-
-    if (self->parsers) {
-
-        delete self->parsers;
-    }
+    delete self->parsers;
+    self->parsers = nullptr;
 
     Py_XDECREF(self->world);
     Py_TYPE(self)->tp_free(reinterpret_cast<PyObject *>(self));
@@ -378,12 +371,12 @@ void RagdollDealloc(RagdollObject *self) {
         // still pending* (CPython then reports the NULL/exception-set
         // mismatch). That is the pre-B3 behaviour verbatim; the pending error
         // has to be reinstated because ParseError owns it now.
-        const ParseResult parsed = ParseVec3Into(py_pos, p_stride);
-        if (parsed) {
+        const ParseResult parsed_pos = ParseVec3Into(py_pos, p_stride);
+        if (parsed_pos) {
             position     = JPH::RVec3(p_stride.x, p_stride.y, p_stride.z);
             has_position = true;
         } else {
-            RaiseParseError(parsed.error());
+            RaiseParseError(parsed_pos.error());
         }
     }
 
@@ -399,8 +392,7 @@ void RagdollDealloc(RagdollObject *self) {
         .has_position = has_position,
         .position     = position,
     };
-    const std::expected<int, Error> status =
-        PhysicsRagdollSettingsAddPart(self->settings, shape.GetPtr(), request);
+    const std::expected<int, Error> status = self->settings->AddPart(shape.GetPtr(), request);
 
     if (!status && status.error().Code().Is(RagdollError::InvalidShape)) {
         return PyErr_Format(PyExc_ValueError, "Invalid shape configuration");

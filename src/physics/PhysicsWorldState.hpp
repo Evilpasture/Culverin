@@ -330,13 +330,6 @@ struct PhysicsWorld {
     Shapecast(int shape_type, JPH::RVec3 position, JPH::Quat rotation, JPH::Vec3 sweep_direction,
               std::span<const float, 4> size, BodyHandle ignore_handle);
 
-    // --- Ragdoll bookkeeping (Ragdoll.cpp) ---
-
-    void CopyRagdollBodyHandles(std::span<const std::uint32_t> body_slots,
-                                 std::span<PhysicsRagdollBodyHandleInfo> out_handles);
-    [[nodiscard]] bool CopyRagdollDebugInfo(JPH::Ragdoll &ragdoll,
-                                            std::span<PhysicsRagdollBodyDebugInfo> out_info);
-
     // Alias for physics_system.GetBodyInterface(). It was a JoltC view until
     // A5; it is a plain Jolt reference now, but it is still nullable and the
     // world's "is it initialized" gate for several call sites, so it stays a

@@ -18,8 +18,8 @@
 #include "physics/QueryMethods.hpp"
 #include "physics/ShadowSync.hpp"
 #include "physics/WorldAdapters.hpp"
-#include "ragdolls/Ragdoll.hpp"
-#include "soft_bodies/SoftBody.hpp"
+#include "ragdolls/RagdollBinding.hpp"
+#include "soft_bodies/SoftBodyBinding.hpp"
 #include <cmath>
 #include <cstring>
 #include <new>
@@ -2162,8 +2162,8 @@ static PhysicsWorldCompoundPart *ParseCompoundParts(PyObject *parts, size_t *out
 
     // 3. Native Jolt settings construction and world staging.
     const PhysicsWorldSoftBodyCreateRequest request = {
-        .shared_settings        = py_shared->settings,
-        .vertex_count           = py_shared->num_vertices,
+        .shared_settings        = py_shared->settings->raw(),
+        .vertex_count           = py_shared->settings->vertex_count(),
         .position               = {px, py, pz},
         .rotation               = {rx, ry, rz, rw},
         .user_data              = user_data,
@@ -2445,18 +2445,28 @@ WorldGetSoftBodyLocalVertices(PhysicsWorldObject *self, PyObject *const *args,
     if (!obj) {
         return PyErr_NoMemory();
     }
+    // PyObject_New hands back uninitialised storage; every field has to hold a
+    // value the dealloc path can release before the first failing call.
+    obj->settings = nullptr;
+    obj->world    = nullptr;
+    obj->parsers  = nullptr;
+
     obj->parsers = CPH::Python::NewParserGroup<CPH::Python::RagdollSettingsParsers>();
     if (!obj->parsers) {
         Py_DECREF(obj);
         return PyErr_NoMemory();
     }
 
-    // Create native Jolt settings without crossing the Python boundary from core code.
-    Py_BEGIN_ALLOW_THREADS obj->settings = PhysicsWorldCreateRagdollSettings(py_skel->skeleton);
-    Py_END_ALLOW_THREADS if (!obj->settings) {
+    // Create native Jolt settings without crossing the Python boundary from core
+    // code. The native object takes its own reference to the skeleton, exactly
+    // as the free function it replaces did.
+    std::unique_ptr<CPH::RagdollSettings> settings;
+    Py_BEGIN_ALLOW_THREADS settings = CPH::RagdollSettings::Create(py_skel->skeleton->raw());
+    Py_END_ALLOW_THREADS if (!settings) {
         Py_DECREF(obj);
         return PyErr_NoMemory();
     }
+    obj->settings = settings.release();
 
     obj->world = self;
     Py_INCREF(self);
@@ -2494,62 +2504,45 @@ WorldGetSoftBodyLocalVertices(PhysicsWorldObject *self, PyObject *const *args,
     auto py_settings = reinterpret_cast<RagdollSettingsObject *>(settings_obj);
 
     // --- 2. Native Jolt creation and pose setup ---
-    std::expected<RagdollInstance, Error> creation_status;
+    // One native call now runs instantiate -> slot registration -> teardown on
+    // failure, so the binding never holds a half-built ragdoll.
+    std::expected<std::unique_ptr<CPH::Ragdoll>, Error> created;
     JPH::RVec3 initial_position(pos.x, pos.y, pos.z);
     JPH::Quat initial_rotation(rot.x, rot.y, rot.z, rot.w);
-    Py_BEGIN_ALLOW_THREADS creation_status = self->physics.CreateRagdollInstance(
-        py_settings->settings, initial_position, initial_rotation, user_data);
-    Py_END_ALLOW_THREADS if (!creation_status) {
-        SetCreationError(self, creation_status.error(),
-                           "Jolt failed to create Ragdoll instance", nullptr);
+    Py_BEGIN_ALLOW_THREADS created = CPH::Ragdoll::Create(
+        self->physics, *py_settings->settings, initial_position, initial_rotation, user_data,
+        category, mask, material_id);
+    Py_END_ALLOW_THREADS if (!created) {
+        // The instantiate step has always reported its own message; every later
+        // failure (slot registration, slot allocation) reports with the default.
+        if (created.error().Code().Is(WorldCreationError::RagdollFailed)) {
+            SetCreationError(self, created.error(), "Jolt failed to create Ragdoll instance",
+                             nullptr);
+        } else {
+            SetCreationError(self, created.error(), nullptr, nullptr);
+        }
         return nullptr;
-    }
-    JPH::Ragdoll *j_rag      = creation_status->ragdoll;
-    const size_t body_count  = creation_status->body_count;
-
-    uint32_t *body_slots = nullptr;
-    if (body_count > SIZE_MAX / sizeof(uint32_t) ||
-        !(body_slots = static_cast<uint32_t *>(Allocate(body_count * sizeof(uint32_t))))) {
-        Py_BEGIN_ALLOW_THREADS self->physics.DestroyRagdoll(j_rag);
-        Py_END_ALLOW_THREADS return PyErr_NoMemory();
     }
 
     auto obj = PyObject_New(RagdollObject, reinterpret_cast<PyTypeObject *>(st->RagdollType));
     if (!obj) {
-        Deallocate(body_slots);
-        Py_BEGIN_ALLOW_THREADS self->physics.DestroyRagdoll(j_rag);
-        Py_END_ALLOW_THREADS return nullptr;
+        return PyErr_NoMemory();
     }
-    obj->ragdoll    = nullptr;
-    obj->world      = nullptr;
-    obj->body_count = 0;
-    obj->body_slots = body_slots;
-    obj->parsers    = nullptr;
-    obj->parsers    = CPH::Python::NewParserGroup<CPH::Python::RagdollParsers>();
+    obj->ragdoll = nullptr;
+    obj->world   = nullptr;
+    obj->parsers = nullptr;
+
+    obj->parsers = CPH::Python::NewParserGroup<CPH::Python::RagdollParsers>();
     if (!obj->parsers) {
         Py_DECREF(obj);
-        Py_BEGIN_ALLOW_THREADS self->physics.DestroyRagdoll(j_rag);
-        Py_END_ALLOW_THREADS return PyErr_NoMemory();
+        return PyErr_NoMemory();
     }
 
-    obj->ragdoll = j_rag;
+    obj->ragdoll = created->release();
     obj->world   = self;
     Py_INCREF(self);
-    obj->body_count = body_count;
 
-    std::expected<std::size_t, Error> register_status;
-    Py_BEGIN_ALLOW_THREADS register_status = self->physics.RegisterRagdollBodies(
-        j_rag, {body_slots, body_count}, user_data, category, mask, material_id);
-    Py_END_ALLOW_THREADS if (!register_status) {
-        obj->ragdoll = nullptr;
-        Py_DECREF(obj);
-        Py_BEGIN_ALLOW_THREADS self->physics.DestroyRagdoll(j_rag);
-        Py_END_ALLOW_THREADS SetCreationError(self, register_status.error(), nullptr,
-                                                nullptr);
-        return nullptr;
-    }
-
-    self->view_shape[0] = static_cast<Py_ssize_t>(*register_status);
+    self->view_shape[0] = static_cast<Py_ssize_t>(obj->ragdoll->registered_body_count());
     return reinterpret_cast<PyObject *>(obj);
 }
 

@@ -191,17 +191,6 @@ PhysicsWorld::CreateSoftBody(const PhysicsWorldSoftBodyCreateRequest &request) {
     return handle;
 }
 
-JPH::RagdollSettings *PhysicsWorldCreateRagdollSettings(JPH::Skeleton *skeleton) {
-    if (!skeleton) {
-        return nullptr;
-    }
-    // joltc's JPH_RagdollSettings_Create returned an already-AddRef'd object.
-    JPH::RagdollSettings *settings = new JPH::RagdollSettings();
-    settings->AddRef();
-    settings->mSkeleton = skeleton; // Ref<> assignment takes its own reference
-    return settings;
-}
-
 std::expected<RagdollInstance, Error>
 PhysicsWorld::CreateRagdollInstance(JPH::RagdollSettings *settings, JPH::RVec3 position,
                                       JPH::Quat rotation, uint64_t user_data) {

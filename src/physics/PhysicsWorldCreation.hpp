@@ -38,8 +38,5 @@ FindInvalidMeshTriangle(std::span<const std::uint32_t> indices, std::size_t vert
     return std::nullopt;
 }
 
-// Ragdoll settings factory (the skeleton/settings pair is the subject,
-// not a world). Defined in PhysicsWorldCreation.cpp.
-JPH::RagdollSettings *PhysicsWorldCreateRagdollSettings(JPH::Skeleton *skeleton);
 
 } // namespace CPH

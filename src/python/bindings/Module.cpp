@@ -17,8 +17,8 @@
 #include "math/Math.hpp"
 #include "physics/ContactListener.hpp"
 #include "physics/PhysicsWorldBinding.hpp"
-#include "ragdolls/Ragdoll.hpp"
-#include "soft_bodies/SoftBody.hpp"
+#include "ragdolls/RagdollBinding.hpp"
+#include "soft_bodies/SoftBodyBinding.hpp"
 #include "vehicles/ShipBinding.hpp"
 #include "vehicles/VehicleBinding.hpp"
 #include <Jolt/Core/Factory.h>

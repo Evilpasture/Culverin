@@ -25,8 +25,6 @@ add_library(
         PhysicsWorldOps.hpp
         PhysicsWorldRuntime.cpp
         PhysicsWorldRuntime.hpp
-        Ragdoll.cpp
-        Ragdoll.hpp
         PhysicsWorldState.hpp
         ShadowSync.cpp
         ShadowSync.hpp
@@ -37,6 +35,5 @@ target_link_libraries(
     PRIVATE
         culverin_native_common
         culverin_native_cpp
-        culverin_native_soft_bodies
 )
 culverin_configure_compile_target(culverin_native_physics)
