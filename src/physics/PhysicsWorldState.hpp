@@ -91,7 +91,7 @@ struct BodyBuffers {
     Buffer<AuxStride, kAvxAlignment> prev_rotations;
     Buffer<AuxStride, kAvxAlignment> linear_velocities;
     Buffer<AuxStride, kAvxAlignment> angular_velocities;
-    Buffer<JPH_BodyID> body_ids;
+    Buffer<JPH::BodyID> body_ids;
     Buffer<std::uint64_t> user_data;
     Buffer<std::uint32_t> categories;
     Buffer<std::uint32_t> masks;

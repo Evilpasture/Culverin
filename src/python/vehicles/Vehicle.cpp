@@ -299,7 +299,7 @@ static void configure_drivetrain(JPH::WheeledVehicleControllerSettings &v_ctrl,
         return PyErr_Format(PyExc_ValueError, "Invalid chassis handle (Body is dead or pending)");
     }
 
-    JPH_BodyID chassis_bid = self->physics.bodies.body_ids[self->physics.bodies.slot_to_dense[slot]];
+    JPH::BodyID chassis_bid = self->physics.bodies.body_ids[self->physics.bodies.slot_to_dense[slot]];
     (self->physics.shadow_lock).unlock();
 
     // --- 3. PRE-JOLT RESOURCE ALLOCATION ---
@@ -352,7 +352,7 @@ static void configure_drivetrain(JPH::WheeledVehicleControllerSettings &v_ctrl,
     {
         const JPH::BodyLockInterface &lock_iface =
             self->physics.physics_system.GetBodyLockInterface();
-        const JPH::BodyLockWrite lock(lock_iface, JPH::BodyID(chassis_bid));
+        const JPH::BodyLockWrite lock(lock_iface, chassis_bid);
 
         if (!lock.Succeeded()) [[unlikely]] {
             (self->physics.jph_trampoline_lock).unlock();

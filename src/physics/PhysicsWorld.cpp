@@ -285,7 +285,7 @@ std::expected<void, Error> PhysicsWorld::AllocateBuffers(int max_bodies,
     for (std::size_t i = 0; i < capacity; ++i) {
         bodies.categories[i] = kAllLayerBits;
         bodies.masks[i]      = kAllLayerBits;
-        bodies.body_ids[i]   = JPH::BodyID::cInvalidBodyID;
+        bodies.body_ids[i]   = JPH::BodyID(); // default ctor == cInvalidBodyID
     }
     for (std::uint32_t i = 0; i < kConstraintInitialCapacity; ++i) {
         free_constraint_slots[i] = i;
@@ -348,7 +348,7 @@ std::expected<void, Error> PhysicsWorld::Resize(std::size_t new_capacity) {
                     live_count * sizeof(AuxStride));
         std::memcpy(next.angular_velocities.data(), current.angular_velocities.data(),
                     live_count * sizeof(AuxStride));
-        std::memcpy(next.body_ids.data(), current.body_ids.data(), live_count * sizeof(JPH_BodyID));
+        std::memcpy(next.body_ids.data(), current.body_ids.data(), live_count * sizeof(JPH::BodyID));
         std::memcpy(next.user_data.data(), current.user_data.data(),
                     live_count * sizeof(std::uint64_t));
         std::memcpy(next.categories.data(), current.categories.data(),
@@ -462,17 +462,15 @@ std::expected<void, Error> PhysicsWorld::LoadBakedScene(const BakedSceneData &sc
                 creation.mAllowSleeping = true;
             }
 
-            const JPH_BodyID body_id =
-                physics_system.GetBodyInterface()
-                    .CreateAndAddBody(creation, JPH::EActivation::Activate)
-                    .GetIndexAndSequenceNumber();
-            if (body_id == JPH::BodyID::cInvalidBodyID) [[unlikely]] {
+            const JPH::BodyID body_id = physics_system.GetBodyInterface().CreateAndAddBody(
+                creation, JPH::EActivation::Activate);
+            if (body_id.IsInvalid()) [[unlikely]] {
                 error = WorldError::OutOfMemory;
                 break;
             }
 
             bodies.body_ids[i] = body_id;
-            const std::uint32_t jolt_idx = (body_id & JPH::BodyID::cMaxBodyIndex);
+            const std::uint32_t jolt_idx = body_id.GetIndex();
             if (id_to_handle_map && jolt_idx < max_jolt_bodies) {
                 id_to_handle_map[jolt_idx].store(handle, std::memory_order::relaxed);
             }
@@ -536,7 +534,7 @@ std::expected<void, Error> reserve_body_slot(PhysicsWorld *world, std::uint32_t 
 
     world->bodies.slot_to_dense[slot]  = dense;
     world->bodies.dense_to_slot[dense] = slot;
-    world->bodies.body_ids[dense]      = JPH::BodyID::cInvalidBodyID;
+    world->bodies.body_ids[dense]      = JPH::BodyID();
     // Creation defaults for the fields resize leaves indeterminate. The
     // single-body path overwrites all of these from its request; the
     // soft-body path overwrites categories/masks/user_data only.

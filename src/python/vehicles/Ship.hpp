@@ -14,7 +14,7 @@ struct ShipObject {
     // so this is deleted after RemoveStepListener.
     JPH::PhysicsStepListener *listener;
     CPH::Python::ShipParsers *parsers;
-    JPH_BodyID sled_bid; // Resolved ID for the heavy part
+    JPH::BodyID sled_bid; // Resolved ID for the heavy part
     uint64_t sled_h_raw; // Added to store the Python-side handle
 
     // Inputs (Atomics so Python can write while C reads)

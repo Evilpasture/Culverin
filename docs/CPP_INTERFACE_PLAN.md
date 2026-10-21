@@ -20,10 +20,13 @@ activation, motion-type and constraint-wake paths. The only
 `JPH_BodyInterface_*` calls left anywhere are the four inside
 `VerifyAbiAlignment`, which stay on the C boundary on purpose -- that
 function is the startup canary that detects a JoltC/extension precision
-mismatch, and rewriting it natively would make it unable to fail. What
-remains is `JPH_BodyID`
-itself as the shadow buffer's storage type.** With ships done, all eight
-global proc tables are gone.
+mismatch, and rewriting it natively would make it unable to fail. It goes
+when JoltC goes.** The shadow buffer's element type is now `JPH::BodyID`
+rather than a raw uint32, so the pack/unpack round-trips, the
+`ActivateBodies` reinterpret_cast and `FlushContext::BodyId()` are all
+gone. What remains on the C side is the `JPH_BodyLockInterface_*` /
+`JPH_Body_*` surface used by the soft-body read path. With ships done,
+all eight global proc tables are gone.
 Prerequisite: the C++23 migration
 (`docs/CPP23_MIGRATION.md`) has landed. All acceptance oracles from that
 migration apply unchanged to every phase below: full test suite at

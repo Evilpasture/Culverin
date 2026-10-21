@@ -25,11 +25,11 @@ class ShipStepListener final : public JPH::PhysicsStepListener {
 
     void OnStep([[maybe_unused]] const JPH::PhysicsStepListenerContext &context) override {
         ShipObject *self = owner_;
-        if (self->sled_bid == JPH::BodyID::cInvalidBodyID) {
+        if (self->sled_bid.IsInvalid()) {
             return;
         }
 
-        const JPH::BodyID sled_id(self->sled_bid);
+        const JPH::BodyID &sled_id = self->sled_bid;
         // OnStep runs while every body mutex is held, so this has to be the
         // no-lock interface; the locking one would deadlock.
         JPH::BodyInterface &bi = self->world->physics.physics_system.GetBodyInterfaceNoLock();
@@ -139,7 +139,7 @@ class ShipStepListener final : public JPH::PhysicsStepListener {
         return PyErr_Format(PyExc_ValueError, "Invalid sled handle.");
     }
     const uint32_t slot = *resolved;
-    JPH_BodyID bid = self->physics.bodies.body_ids[self->physics.bodies.slot_to_dense[slot]];
+    JPH::BodyID bid = self->physics.bodies.body_ids[self->physics.bodies.slot_to_dense[slot]];
     (self->physics.shadow_lock).unlock();
     ModuleState *st = GetModuleState(PyType_GetModule(Py_TYPE(self)));
     auto obj = PyObject_GC_New(ShipObject, reinterpret_cast<PyTypeObject *>(st->ShipType));

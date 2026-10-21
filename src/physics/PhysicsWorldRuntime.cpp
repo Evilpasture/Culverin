@@ -22,7 +22,7 @@ bool PhysicsWorld::AttachContactListener() {
 }
 
 void PhysicsWorld::SyncLoadedState(size_t saved_count) {
-    JPH_BodyID *CPH_RESTRICT body_ids              = bodies.body_ids.data();
+    JPH::BodyID *CPH_RESTRICT body_ids             = bodies.body_ids.data();
     JPH::BodyInterface &bi                         = physics_system.GetBodyInterface();
     PosStride *CPH_RESTRICT positions              = bodies.positions.data();
     AuxStride *CPH_RESTRICT rotations              = bodies.rotations.data();
@@ -30,10 +30,10 @@ void PhysicsWorld::SyncLoadedState(size_t saved_count) {
     AuxStride *CPH_RESTRICT angular_velocities     = bodies.angular_velocities.data();
 
     for (size_t i = 0; i < saved_count; i++) {
-        if (body_ids[i] == JPH::BodyID::cInvalidBodyID) {
+        if (body_ids[i].IsInvalid()) {
             continue;
         }
-        const JPH::BodyID body_id(body_ids[i]);
+        const JPH::BodyID body_id = body_ids[i];
 
         const JPH::RVec3 position(positions[i].x, positions[i].y, positions[i].z);
         const JPH::Quat rotation(rotations[i].x, rotations[i].y, rotations[i].z, rotations[i].w);
@@ -254,16 +254,10 @@ std::expected<void, Error> PhysicsWorld::SetGravity(JPH::Vec3 gravity) {
     }
 
     if (current_count > 0) {
-        // JPH::BodyID is a standard-layout, trivially-copyable single-uint32
-        // wrapper, so the shadow buffer's uint32 array is layout-identical to a
-        // BodyID array. JoltC copied it into a fresh Array<BodyID> on every
-        // call; the cast drops that allocation. This becomes a plain typed
-        // pointer once body_ids is itself JPH::BodyID.
-        static_assert(sizeof(JPH::BodyID) == sizeof(JPH_BodyID));
-        static_assert(std::is_trivially_copyable_v<JPH::BodyID>);
-        physics_system.GetBodyInterface().ActivateBodies(
-            reinterpret_cast<const JPH::BodyID *>(bodies.body_ids.data()),
-            (uint32_t)current_count);
+        // body_ids is JPH::BodyID now, so this is a plain typed pointer --
+        // JoltC used to copy the whole array into a fresh Array<BodyID> here.
+        physics_system.GetBodyInterface().ActivateBodies(bodies.body_ids.data(),
+                                                        (uint32_t)current_count);
     }
     return {};
 }
@@ -315,12 +309,17 @@ lock_soft_body_for_read(PhysicsWorld &world, BodyHandle handle) {
         return std::unexpected(WorldRuntimeError::StaleHandle);
     }
     const uint32_t dense     = world.bodies.slot_to_dense[slot];
-    const JPH_BodyID body_id = world.bodies.body_ids[dense];
+    const JPH::BodyID body_id = world.bodies.body_ids[dense];
 
     SoftBodyReadLock result;
+    // TODO(A4): this whole block is still on JoltC's JPH_BodyLockInterface /
+    // JPH_Body surface (a separate C layer from JPH_BodyInterface), so it takes
+    // the packed uint32 rather than the JPH::BodyID. Convert when that layer
+    // goes native.
     result.lock_interface = reinterpret_cast<const JPH_BodyLockInterface *>(
         &world.physics_system.GetBodyLockInterface());
-    JPH_BodyLockInterface_LockRead(result.lock_interface, body_id, &result.lock);
+    JPH_BodyLockInterface_LockRead(result.lock_interface, body_id.GetIndexAndSequenceNumber(),
+                                   &result.lock);
     if (!result.lock.body) {
         return std::unexpected(WorldRuntimeError::StaleHandle);
     }
@@ -420,11 +419,11 @@ std::expected<void, Error> PhysicsWorld::ApplyBuoyancyBatch(
     if (handle_count == 0) {
         return {};
     }
-    if (handle_count > SIZE_MAX / sizeof(JPH_BodyID)) [[unlikely]] {
+    if (handle_count > SIZE_MAX / sizeof(JPH::BodyID)) [[unlikely]] {
         return std::unexpected(WorldRuntimeError::Overflow);
     }
 
-    Buffer<JPH_BodyID> body_ids;
+    Buffer<JPH::BodyID> body_ids;
     if (!body_ids.allocate(handle_count)) {
         return std::unexpected(WorldRuntimeError::OutOfMemory);
     }
@@ -453,7 +452,7 @@ std::expected<void, Error> PhysicsWorld::ApplyBuoyancyBatch(
         const JPH::RVec3 surface_position(0, surface_y, 0);
         const JPH::Vec3 surface_normal(0, 1.0f, 0);
         for (size_t i = 0; i < valid_count; i++) {
-            const JPH::BodyID body_id(body_ids[i]);
+            const JPH::BodyID body_id = body_ids[i];
             bi.ActivateBody(body_id);
             bi.ApplyBuoyancyImpulse(body_id, surface_position, surface_normal, buoyancy,
                                     linear_drag, angular_drag, fluid_velocity, gravity, dt);
@@ -554,7 +553,7 @@ std::expected<std::size_t, Error>
 PhysicsWorld::GetActiveIndices(Buffer<std::uint32_t> &out_indices) {
     out_indices.reset();
 
-    Buffer<JPH_BodyID> body_ids;
+    Buffer<JPH::BodyID> body_ids;
     std::size_t count = 0;
     {
         const auto shadow = LockShadowNotStepping();
@@ -565,7 +564,7 @@ PhysicsWorld::GetActiveIndices(Buffer<std::uint32_t> &out_indices) {
         if (!body_ids.allocate(count)) {
             return std::unexpected(WorldRuntimeError::OutOfMemory);
         }
-        std::memcpy(body_ids.data(), bodies.body_ids.data(), count * sizeof(JPH_BodyID));
+        std::memcpy(body_ids.data(), bodies.body_ids.data(), count * sizeof(JPH::BodyID));
     }
 
     if (!out_indices.allocate(count)) {
@@ -574,8 +573,7 @@ PhysicsWorld::GetActiveIndices(Buffer<std::uint32_t> &out_indices) {
     JPH::BodyInterface &bi = physics_system.GetBodyInterface();
     std::size_t active_count = 0;
     for (std::size_t i = 0; i < count; i++) {
-        if (body_ids[i] != JPH::BodyID::cInvalidBodyID &&
-            bi.IsActive(JPH::BodyID(body_ids[i]))) {
+        if (!body_ids[i].IsInvalid() && bi.IsActive(body_ids[i])) {
             out_indices[active_count++] = static_cast<std::uint32_t>(i);
         }
     }

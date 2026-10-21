@@ -44,5 +44,7 @@
 static_assert(std::is_same_v<JPH::Real, double>);
 static_assert(sizeof(JPH::RVec3) == 32);
 static_assert(sizeof(JPH::ObjectLayer) == 4);
-// BodyBuffers store body IDs in a uint32 SoA array (JPH_BodyID).
+// BodyBuffers store body IDs directly as JPH::BodyID, a standard-layout
+// single-uint32 wrapper, so the SoA array stays 4 bytes per body.
 static_assert(sizeof(JPH::BodyID) == 4);
+static_assert(std::is_standard_layout_v<JPH::BodyID>);

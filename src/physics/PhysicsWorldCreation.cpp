@@ -308,7 +308,7 @@ std::expected<std::size_t, Error> PhysicsWorld::RegisterRagdollBodies(
         previous_rotations[dense]   = rotations[dense];
         linear_velocities[dense]    = AuxStride{};
         angular_velocities[dense]   = AuxStride{};
-        bodies.body_ids[dense]      = body_id.GetIndexAndSequenceNumber();
+        bodies.body_ids[dense]      = body_id;
         bodies.slot_to_dense[slot]  = dense;
         bodies.dense_to_slot[dense] = slot;
 
@@ -420,7 +420,7 @@ std::expected<void, Error> PhysicsWorld::CreateBodiesBatch(
         settings[i]->mUserData  = handle;
         bodies.slot_to_dense[slot]  = dense;
         bodies.dense_to_slot[dense] = slot;
-        bodies.body_ids[dense]      = JPH::BodyID::cInvalidBodyID;
+        bodies.body_ids[dense]      = JPH::BodyID();
 
         PosStride position                          = positions[i];
         position.w                                  = 0.0;

@@ -172,8 +172,9 @@ ExecuteSyncPass(const Unsigned32 active_count, const JPH::PhysicsSystem *const C
         return;
     }
 
-    const auto *const CPH_RESTRICT active_ids = reinterpret_cast<const JPH_BodyID *const CPH_RESTRICT>(
-        system->GetActiveBodiesUnsafe(TType));
+    // GetActiveBodiesUnsafe already returns const JPH::BodyID *; this used to
+     // reinterpret_cast it down to uint32 and re-wrap every element.
+    const JPH::BodyID *const CPH_RESTRICT active_ids = system->GetActiveBodiesUnsafe(TType);
     if (active_ids == nullptr) {
         [[unlikely]] return;
     }
@@ -183,15 +184,14 @@ ExecuteSyncPass(const Unsigned32 active_count, const JPH::PhysicsSystem *const C
     Unsigned32 work_ptr = 0;
 
     for (Unsigned32 i = 0; i < active_count; i++) {
-        const JPH_BodyID raw_jolt_id = active_ids[i];
-        const Unsigned32 j_idx       = raw_jolt_id & JPH::BodyID::cMaxBodyIndex;
+        const JPH::BodyID raw_jolt_id = active_ids[i];
+        const Unsigned32 j_idx        = raw_jolt_id.GetIndex();
 
         const auto *CPH_RESTRICT b =
             static_cast<const JPH::Body * CPH_RESTRICT>(map.body_ptrs[j_idx]);
 
-        [[clang::always_inline]] if (b == nullptr || b->GetID().GetIndexAndSequenceNumber() !=
-                                                         raw_jolt_id) [[unlikely]] {
-            b = system->GetBodyLockInterface().TryGetBody(JPH::BodyID(raw_jolt_id));
+        [[clang::always_inline]] if (b == nullptr || b->GetID() != raw_jolt_id) [[unlikely]] {
+            b = system->GetBodyLockInterface().TryGetBody(raw_jolt_id);
             map.body_ptrs[j_idx] = b;
         }
         if (b == nullptr) [[unlikely]] {

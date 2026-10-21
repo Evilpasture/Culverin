@@ -120,21 +120,17 @@ struct FlushContext {
     // replaced was a reinterpret_cast of (PhysicsWorld.cpp:637).
     JPH::BodyInterface &bi;
     std::uint32_t slot;
-    JPH_BodyID bid; // resolved body ID (invalid for creates)
-
-    // JPH_BodyID is typedef uint32_t; Jolt wants the packed word wrapped.
-    [[nodiscard]] JPH::BodyID BodyId() const noexcept { return ToJoltBodyId(bid); }
+    JPH::BodyID bid; // resolved body ID (invalid for creates)
 
     void operator()(std::monostate) const {}
 
     void operator()(CreateBody &cmd) const {
-        const JPH_BodyID new_bid = world->physics_system.GetBodyInterface()
-                                       .CreateAndAddBody(*cmd.settings, JPH::EActivation::Activate)
-                                       .GetIndexAndSequenceNumber();
+        const JPH::BodyID new_bid = world->physics_system.GetBodyInterface().CreateAndAddBody(
+            *cmd.settings, JPH::EActivation::Activate);
         cmd.settings.reset();
 
         const std::scoped_lock shadow(world->shadow_lock);
-        if (new_bid == JPH::BodyID::cInvalidBodyID) [[unlikely]] {
+        if (new_bid.IsInvalid()) [[unlikely]] {
             world->RemoveBodySlot(slot);
             return;
         }
@@ -144,12 +140,10 @@ struct FlushContext {
     }
 
     void operator()(CreateSoftBody &cmd) const {
-        const JPH_BodyID new_bid =
-            world->physics_system.GetBodyInterface()
-                .CreateAndAddSoftBody(*cmd.settings, JPH::EActivation::Activate)
-                .GetIndexAndSequenceNumber();
+        const JPH::BodyID new_bid = world->physics_system.GetBodyInterface().CreateAndAddSoftBody(
+            *cmd.settings, JPH::EActivation::Activate);
         const std::scoped_lock shadow(world->shadow_lock);
-        if (new_bid == JPH::BodyID::cInvalidBodyID) [[unlikely]] {
+        if (new_bid.IsInvalid()) [[unlikely]] {
             world->RemoveBodySlot(slot);
         } else {
             const std::uint32_t dense = world->bodies.slot_to_dense[slot];
@@ -168,41 +162,41 @@ struct FlushContext {
     void operator()(DestroyBody &) const {
         // Clear the body-pointer cache first so shadow sync cannot chase
         // a freed JPH_Body next frame.
-        const std::uint32_t j_idx = (bid & JPH::BodyID::cMaxBodyIndex);
+        const std::uint32_t j_idx = bid.GetIndex();
         if (world->jolt_body_ptrs && j_idx <= world->max_jolt_bodies) {
             world->jolt_body_ptrs[j_idx] = nullptr;
         }
-        bi.RemoveBody(BodyId());
-        bi.DestroyBody(BodyId());
+        bi.RemoveBody(bid);
+        bi.DestroyBody(bid);
         const std::scoped_lock shadow(world->shadow_lock);
         world->RemoveBodySlot(slot);
     }
 
     void operator()(SetPosition &cmd) const {
-        const bool active = bi.IsActive(BodyId());
-        bi.SetPosition(BodyId(), ToJolt(cmd.position),
+        const bool active = bi.IsActive(bid);
+        bi.SetPosition(bid, ToJolt(cmd.position),
                        active ? JPH::EActivation::DontActivate : JPH::EActivation::Activate);
     }
 
     void operator()(SetRotation &cmd) const {
-        bi.SetRotation(BodyId(), ToJolt(cmd.rotation), JPH::EActivation::Activate);
+        bi.SetRotation(bid, ToJolt(cmd.rotation), JPH::EActivation::Activate);
     }
 
     void operator()(SetTransform &cmd) const {
-        bi.SetPositionAndRotation(BodyId(), ToJolt(cmd.position), ToJolt(cmd.rotation),
+        bi.SetPositionAndRotation(bid, ToJolt(cmd.position), ToJolt(cmd.rotation),
                                   JPH::EActivation::Activate);
     }
 
     void operator()(SetLinearVelocity &cmd) const {
-        bi.SetLinearVelocity(BodyId(), ToJolt(cmd.velocity));
+        bi.SetLinearVelocity(bid, ToJolt(cmd.velocity));
     }
 
     void operator()(SetAngularVelocity &cmd) const {
-        bi.SetAngularVelocity(BodyId(), ToJolt(cmd.velocity));
+        bi.SetAngularVelocity(bid, ToJolt(cmd.velocity));
     }
 
     void operator()(SetMotionType &cmd) const {
-        bi.SetMotionType(BodyId(), static_cast<JPH::EMotionType>(cmd.motion_type),
+        bi.SetMotionType(bid, static_cast<JPH::EMotionType>(cmd.motion_type),
                          JPH::EActivation::Activate);
         // TODO(smell): the object layer is derived from the motion type rather
         // than carried on the command -- SetMotionType only has a motion_type
@@ -211,41 +205,41 @@ struct FlushContext {
         // but conflates motion type with collision layer, and can never select
         // ObjectLayer::Vehicle. Preserved verbatim; fixing it means widening the
         // command, which is a behaviour change.
-        bi.SetObjectLayer(BodyId(),
+        bi.SetObjectLayer(bid,
                           static_cast<JPH::ObjectLayer>(cmd.motion_type == 0 ? 0 : 1));
     }
 
-    void operator()(Activate &) const { bi.ActivateBody(BodyId()); }
-    void operator()(Deactivate &) const { bi.DeactivateBody(BodyId()); }
+    void operator()(Activate &) const { bi.ActivateBody(bid); }
+    void operator()(Deactivate &) const { bi.DeactivateBody(bid); }
 
     void operator()(SetCcd &cmd) const {
-        bi.SetMotionQuality(BodyId(), cmd.enabled ? JPH::EMotionQuality::LinearCast
+        bi.SetMotionQuality(bid, cmd.enabled ? JPH::EMotionQuality::LinearCast
                                               : JPH::EMotionQuality::Discrete);
     }
 
     void operator()(ApplyImpulse &cmd) const {
-        bi.AddImpulse(BodyId(), ToJolt(cmd.impulse));
-        bi.ActivateBody(BodyId());
+        bi.AddImpulse(bid, ToJolt(cmd.impulse));
+        bi.ActivateBody(bid);
     }
 
     void operator()(ApplyForce &cmd) const {
-        bi.AddForce(BodyId(), ToJolt(cmd.force));
-        bi.ActivateBody(BodyId());
+        bi.AddForce(bid, ToJolt(cmd.force));
+        bi.ActivateBody(bid);
     }
 
     void operator()(ApplyTorque &cmd) const {
-        bi.AddTorque(BodyId(), ToJolt(cmd.torque));
-        bi.ActivateBody(BodyId());
+        bi.AddTorque(bid, ToJolt(cmd.torque));
+        bi.ActivateBody(bid);
     }
 
     void operator()(ApplyAngularImpulse &cmd) const {
-        bi.AddAngularImpulse(BodyId(), ToJolt(cmd.impulse));
-        bi.ActivateBody(BodyId());
+        bi.AddAngularImpulse(bid, ToJolt(cmd.impulse));
+        bi.ActivateBody(bid);
     }
 
     void operator()(ApplyImpulseAt &cmd) const {
-        bi.AddImpulse(BodyId(), ToJolt(cmd.impulse), ToJolt(cmd.position));
-        bi.ActivateBody(BodyId());
+        bi.AddImpulse(bid, ToJolt(cmd.impulse), ToJolt(cmd.position));
+        bi.ActivateBody(bid);
     }
 
     void operator()(cmd::CreateConstraint &cmd) const {
@@ -257,9 +251,9 @@ struct FlushContext {
             return;
         }
 
-        const JPH_BodyID bid2 =
+        const JPH::BodyID bid2 =
             world->bodies.body_ids[world->bodies.slot_to_dense[cmd.body2_slot]];
-        if (bid == JPH::BodyID::cInvalidBodyID || bid2 == JPH::BodyID::cInvalidBodyID) {
+        if (bid.IsInvalid() || bid2.IsInvalid()) {
             return;
         }
 
@@ -268,8 +262,7 @@ struct FlushContext {
         // small mutex array, so holding two write locks can recurse one
         // mutex and abort (EDEADLK). The world is quiesced here, so the
         // stable body pointers remain valid after unlocking.
-        const auto lock_body = [&li](JPH_BodyID id) -> JPH::Body * {
-            const JPH::BodyID body_id(id);
+        const auto lock_body = [&li](const JPH::BodyID &body_id) -> JPH::Body * {
             const JPH::BodyLockWrite lock(li, body_id);
             return (lock.Succeeded() && lock.GetBody().GetID() == body_id) ? &lock.GetBody()
                                                                            : nullptr;
@@ -292,8 +285,8 @@ struct FlushContext {
     }
 
   private:
-    void publish_handle(std::uint32_t body_slot, JPH_BodyID new_bid) const {
-        const std::uint32_t j_idx = (new_bid & JPH::BodyID::cMaxBodyIndex);
+    void publish_handle(std::uint32_t body_slot, const JPH::BodyID &new_bid) const {
+        const std::uint32_t j_idx = new_bid.GetIndex();
         if (world->id_to_handle_map && j_idx <= world->max_jolt_bodies) {
             const std::uint32_t gen =
                 world->bodies.generations[body_slot].load(std::memory_order::relaxed);
@@ -315,12 +308,12 @@ void PhysicsWorld::FlushCommands(std::span<PhysicsCommand> queue) {
 
         const bool is_create = std::holds_alternative<cmd::CreateBody>(command.payload) ||
                                std::holds_alternative<cmd::CreateSoftBody>(command.payload);
-        const JPH_BodyID bid = bodies.body_ids[bodies.slot_to_dense[slot]];
+        const JPH::BodyID bid = bodies.body_ids[bodies.slot_to_dense[slot]];
 
         // Stale commands (body destroyed while queued, create superseded)
         // are dropped; resetting the command still destroys payloads.
         if (std::to_underlying(state) < 32 && ((slot_state_bit(state) & kValidBidMask) != 0) &&
-            (is_create || bid != JPH::BodyID::cInvalidBodyID)) {
+            (is_create || !bid.IsInvalid())) {
             std::visit(FlushContext{this, physics_system.GetBodyInterface(), slot, bid},
                        command.payload);
         }

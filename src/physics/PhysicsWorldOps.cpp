@@ -126,14 +126,13 @@ void mirror_to_shadow(PhysicsWorld *world, std::uint32_t slot,
     }
 }
 
-void execute_now(PhysicsWorld *world, JPH_BodyID body_id,
+void execute_now(PhysicsWorld *world, const JPH::BodyID &id,
                  const PhysicsBodyOperation &op) {
     // world->body_interface is a reinterpret_cast of
     // physics_system.GetBodyInterface() -- the *locking* interface (see
     // PhysicsWorld.cpp:637) -- so go to the same one rather than the NoLock
     // variant. These run outside a step, under the shadow lock only.
     JPH::BodyInterface &bi = world->physics_system.GetBodyInterface();
-    const JPH::BodyID id(body_id);
     const JPH::Vec3 vector = ToJolt(op.vector);
     switch (op.type) {
     case PhysicsBodyOperationType::ApplyImpulse:
@@ -168,7 +167,7 @@ PhysicsWorld::ApplyBodyOperation(const PhysicsBodyOperation &op) {
     }
 
     bool execute_immediately = false;
-    JPH_BodyID body_id       = JPH::BodyID::cInvalidBodyID;
+    JPH::BodyID body_id; // default ctor == cInvalidBodyID
     {
         const auto shadow = LockShadowNotStepping();
 
