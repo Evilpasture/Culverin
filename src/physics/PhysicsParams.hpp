@@ -8,7 +8,6 @@
 #include <Jolt/Math/Vec3.h>
 #include <Jolt/Physics/Ragdoll/Ragdoll.h>
 #include <Jolt/Physics/SoftBody/SoftBodySharedSettings.h>
-#include <joltc.h>
 
 #include <cstddef>
 #include <cstdint>

@@ -22,10 +22,10 @@ constexpr std::size_t kInitialBodyCapacity         = 1024;
 constexpr std::size_t kConstraintInitialCapacity   = 256;
 constexpr std::size_t kContactMaxCapacity          = sizeof(ContactEvent) * 8 << 5;
 
-constexpr JPH_Real kVerifyAbiPosX    = 10.0;
-constexpr JPH_Real kVerifyAbiPosY    = 20.0;
-constexpr JPH_Real kVerifyAbiPosZ    = 30.0;
-constexpr double kVerifyAbiTolerance = 0.1;
+constexpr JPH::Real kVerifyAbiPosX    = 10.0;
+constexpr JPH::Real kVerifyAbiPosY    = 20.0;
+constexpr JPH::Real kVerifyAbiPosZ    = 30.0;
+constexpr double kVerifyAbiTolerance  = 0.1;
 
 void set_scaled_mass(JPH::BodyCreationSettings &settings, JPH::MassProperties properties,
                      float mass, float scale) {
@@ -632,8 +632,7 @@ bool PhysicsWorld::InitJolt(WorldSettings settings, GravityVector gravity) {
                                broadphase_layer_interface, object_vs_broadphase_filter,
                                object_layer_pair_filter);
     physics_system.SetGravity(JPH::Vec3(gravity.gx, gravity.gy, gravity.gz));
-    body_interface = reinterpret_cast<JPH_BodyInterface *>(
-        &physics_system.GetBodyInterface());
+    body_interface = &physics_system.GetBodyInterface();
     jolt_initialized = true;
     return true;
 }
@@ -692,14 +691,18 @@ std::size_t PhysicsWorld::FinalizeStep(float dt) {
     return body_count;
 }
 
-// Deliberately still on the JoltC API. This is the startup canary that raises
-// "JoltC ABI mismatch: position precision check failed" when the linked JoltC
-// disagrees with the extension it was compiled against (a JPH_REAL_IS_DOUBLE
-// mismatch between the two is otherwise silent corruption). Rewriting it
-// against JPH::BodyInterface would make it a native-to-native round-trip that
-// can never fail for the reason it exists, so it stays on the C boundary until
-// JoltC itself is dropped. It runs once per world, not on any hot path.
-int VerifyAbiAlignment(JPH_BodyInterface *body_interface) {
+// See the declaration in PhysicsWorld.hpp. Two things about this function are
+// load-bearing beyond the obvious check:
+//
+//   1. It must run BEFORE the caller creates any body. Creating and destroying
+//      a body here advances Jolt's BodyID free-list and touches the broadphase,
+//      which changes the BodyID every later body receives. Body order feeds the
+//      solver, so removing this call changes ragdoll and soft-body numerics
+//      (~888 lines of ragdoll_probe.py output moved when it was dropped) even
+//      though nothing about the simulation logic changed. Keep the call, and
+//      keep it before the first user body.
+//   2. It was never a pure check: prefer to fix it rather than delete it.
+int VerifyAbiAlignment(JPH::BodyInterface &body_interface) {
     const JPH::BoxShapeSettings box_settings(JPH::Vec3(1.0f, 1.0f, 1.0f), 0.0f);
     const auto shape_result = box_settings.Create();
     if (!shape_result.IsValid()) {
@@ -711,22 +714,17 @@ int VerifyAbiAlignment(JPH_BodyInterface *body_interface) {
                                        JPH::RVec3(kVerifyAbiPosX, kVerifyAbiPosY, kVerifyAbiPosZ),
                                        JPH::Quat::sIdentity(), JPH::EMotionType::Static, 0);
 
-    // Create through the C API on purpose: the read-back below verifies
-    // that the C JPH_RVec3 layout still matches the native one.
-    const JPH_BodyID bid = JPH_BodyInterface_CreateAndAddBody(
-        body_interface, reinterpret_cast<JPH_BodyCreationSettings *>(&settings),
-        JPH_Activation_Activate);
-    if (bid == JPH::BodyID::cInvalidBodyID) {
+    const JPH::BodyID bid = body_interface.CreateAndAddBody(settings, JPH::EActivation::Activate);
+    if (bid.IsInvalid()) {
         return -1;
     }
 
-    alignas(kAvxAlignment) JPH_RVec3 check{};
-    JPH_BodyInterface_GetPosition(body_interface, bid, &check);
-    JPH_BodyInterface_RemoveBody(body_interface, bid);
-    JPH_BodyInterface_DestroyBody(body_interface, bid);
+    const JPH::RVec3 check = body_interface.GetPosition(bid);
+    body_interface.RemoveBody(bid);
+    body_interface.DestroyBody(bid);
 
-    if (std::fabs(check.x - kVerifyAbiPosX) > kVerifyAbiTolerance ||
-        std::fabs(check.y - kVerifyAbiPosY) > kVerifyAbiTolerance) {
+    if (std::fabs(check.GetX() - kVerifyAbiPosX) > kVerifyAbiTolerance ||
+        std::fabs(check.GetY() - kVerifyAbiPosY) > kVerifyAbiTolerance) {
         return -1;
     }
     return 0;

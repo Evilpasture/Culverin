@@ -4,8 +4,9 @@
 // contracts: Python exposes them zero-copy through the buffer protocol.
 
 #include "core/Compiler.hpp"
+#include "jolt/Jolt.hpp"
 #include "jolt/JoltConfig.hpp"
-#include <joltc.h>
+#include <Jolt/Physics/Body/MotionType.h>
 
 #include <cstdint>
 #include <utility>
@@ -69,10 +70,13 @@ enum class ContactEventType : std::uint8_t {
     Removed   = 2
 };
 
+// Values are Jolt's own EMotionType ordinals (Static=0, Kinematic=1,
+// Dynamic=2), cast to the wire-width underlying type. The cast is explicit
+// because EMotionType is a scoped enum and this one is 8-bit.
 enum class MotionType : std::uint8_t {
-    Static    = JPH_MotionType_Static,
-    Kinematic = JPH_MotionType_Kinematic,
-    Dynamic   = JPH_MotionType_Dynamic,
+    Static    = static_cast<std::uint8_t>(JPH::EMotionType::Static),
+    Kinematic = static_cast<std::uint8_t>(JPH::EMotionType::Kinematic),
+    Dynamic   = static_cast<std::uint8_t>(JPH::EMotionType::Dynamic),
 };
 
 enum class ShapeType : std::uint8_t {

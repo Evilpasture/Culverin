@@ -202,8 +202,11 @@ ParseResult ParsePointParams(Borrowed args, ConstraintParams &params) {
 }
 
 ParseResult ParseHingeParams(Borrowed args, ConstraintParams &params) {
-    params.limit_min = -JPH_M_PI;
-    params.limit_max = JPH_M_PI; // Hinge defaults
+    // JPH_M_PI was joltc's float copy of Jolt's JPH_PI (its header says as
+    // much: "To avoid collision with JPH_PI"); the literal is identical, so
+    // these hinge defaults are unchanged bit for bit.
+    params.limit_min = -JPH::JPH_PI;
+    params.limit_max = JPH::JPH_PI;
     if (!args) {
         return {};
     }

@@ -1,7 +1,3 @@
 [submodule "extern/JoltPhysics"]
 	path = extern/JoltPhysics
 	url = https://github.com/jrouwe/JoltPhysics.git
-[submodule "extern/JoltC"]
-	path = extern/JoltC
-	url = https://github.com/amerkoleci/joltc.git
-	branch = main

@@ -1,6 +1,5 @@
 #pragma once
 #include "core/Compiler.hpp"
-#include "joltc.h"
 #include "physics/PhysicsWorldBinding.hpp"
 #include "vehicles/ShipParsers.hpp"
 #include <Jolt/Physics/PhysicsStepListener.h>

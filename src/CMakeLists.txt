@@ -6,15 +6,11 @@ target_include_directories(
     culverin_native_support
     INTERFACE "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>"
 )
-target_include_directories(
-    culverin_native_support
-    SYSTEM INTERFACE
-        "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/extern/JoltC/include>"
-        "$<BUILD_INTERFACE:${JOLT_DIR}>"
-)
+# Jolt::Jolt is the single source of Jolt's include path and compile
+# definitions; the JoltC archive that used to sit beside it is gone.
 target_link_libraries(
     culverin_native_support
-    INTERFACE ${JOLTC_TARGET} Jolt::Jolt
+    INTERFACE Jolt::Jolt
 )
 
 # Header-only utility and shared-contract targets.

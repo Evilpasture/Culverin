@@ -1,6 +1,5 @@
 #include "physics/PhysicsWorldOps.hpp"
 
-#include "jolt/JoltUtils.hpp"
 #include "physics/CommandBuffer.hpp"
 #include "physics/PhysicsWorldState.hpp"
 #include "physics/SlotState.hpp"

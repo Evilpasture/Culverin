@@ -166,7 +166,11 @@ static PyObject *WorldNew(PyTypeObject *type, PyObject * /*args*/, PyObject * /*
         goto fail;
     }
 
-    if (VerifyAbiAlignment(self->physics.body_interface) < 0) {
+    if (VerifyAbiAlignment(*self->physics.body_interface) < 0) {
+        // Historical wording: this used to compare Culverin's JoltC build
+        // against the linked JoltC archive. JoltC is gone, so the check is now
+        // a native round-trip (see VerifyAbiAlignment). The message is kept
+        // verbatim so any downstream string matching keeps working.
         PyErr_SetString(PyExc_RuntimeError, "JoltC ABI mismatch: position precision check failed.");
         goto fail;
     }

@@ -39,9 +39,23 @@ padding. It is `JPH::Float3` now: Jolt already ships the tight, unpadded
 `Float2`/`Float3`/`Float4` storage types, so there is no need for a
 project-local `CPH::Vec3f`, which is deleted. `sizeof(JPH::Float3) == 12`
 is pinned by a `static_assert` next to `GetSoftBodyLocalVertices` because
-that size is the wire format. **What remains on the C side is
-`VerifyAbiAlignment` alone.** With ships done,
-all eight global proc tables are gone.
+that size is the wire format. With ships done, all eight global proc
+tables are gone.
+
+**A5 is done: JoltC is gone.** `extern/JoltC`, the `joltc_double` static
+archive, the `joltc.c`-compiled-as-C++ hack, the last `joltc.h` include
+and `src/jolt/JoltUtils.hpp` (whose `JoltPtr`/`JoltDeleter`/`ToJoltBodyId`
+shims had no callers) are all deleted; nothing under `src/` names a
+`JPH_*` symbol and the built extension contains none. The 14 enum values
+Python sees (`DOF_*`, `BEND_*`) were re-pointed at
+`JPH::EAllowedDOFs`, `JPH::SoftBodySharedSettings::EBendType` and
+`JPH::EMotionType` only after a program proved every one is numerically
+identical, so no constant changed. `JPH_M_PI` became `JPH::JPH_PI`: the
+old macro was a float copy of the same literal (its own comment said "to
+avoid collision with JPH_PI"), so the hinge defaults are bit-identical.
+`JPH_Init()` is inlined as `RegisterDefaultAllocator` + `Factory` +
+`RegisterTypes` behind an idempotence guard; its process-global
+`TempAllocator` was never used because every world owns one.
 Prerequisite: the C++23 migration
 (`docs/CPP23_MIGRATION.md`) has landed. All acceptance oracles from that
 migration apply unchanged to every phase below: full test suite at
@@ -537,7 +551,7 @@ Remaining A4 work: the rest of the `JPH_BodyInterface` sites (23) in
 `Ragdoll.cpp` and `Constraint.cpp`, then `JPH_BodyID` as the shadow
 buffer's storage type.
 
-**A5 — Remove JoltC.** First, audit the fork: `extern/JoltC` carries
+**A5 — Remove JoltC. (Done.)** First, audit the fork: `extern/JoltC` carries
 Culverin-local patches (at minimum `JPH_Init`'s trace forwarding and
 global `s_TempAllocator` with its TSan fallback — diff against
 upstream joltc at the pinned base to enumerate all of them), and port
@@ -549,6 +563,21 @@ whatever is still needed. Replace `JPH_Init()` with explicit
 expect ~500 wrapper call sites gone and one less vendored dependency
 whose release cadence we no longer track (JoltC lags Jolt releases;
 the submodule pin becomes the single version source).
+
+`VerifyAbiAlignment` was the one place that could not simply be deleted.
+It existed to catch a C/native double-precision mismatch, which is
+structurally impossible once both sides are the same headers, so it was
+rewritten natively and kept -- not for the check, which is now only a
+runtime round-trip assertion, but because it is not side-effect free:
+creating and destroying a body advances Jolt's `BodyID` free-list and
+touches the broadphase, which changes the `BodyID` every later body
+receives, and body order feeds the solver. Deleting the call left every
+test green but moved 888 lines of `ragdoll_probe.py` output; restoring
+the create/destroy sequence natively restored the baseline byte for byte.
+The function and its `RuntimeError` wording are therefore kept verbatim,
+with a comment in `PhysicsWorld.cpp` explaining why it must stay ahead of
+the first user body. It is the last "JoltC" string in `src/`, and it is
+historical only.
 
 ## Workstream B — C++ interfaces between subsystems
 

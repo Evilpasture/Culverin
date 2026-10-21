@@ -6,7 +6,6 @@ add_library(
         JoltLog.hpp
         Jolt.hpp
         JoltConfig.hpp
-        JoltUtils.hpp
 )
 target_link_libraries(
     culverin_native_jolt

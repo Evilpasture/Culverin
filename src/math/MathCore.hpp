@@ -3,7 +3,6 @@
 #include "core/Compiler.hpp"
 #include "core/Types.hpp"
 #include "jolt/Jolt.hpp"
-#include "joltc.h"
 #include <Jolt/Math/Quat.h>
 
 

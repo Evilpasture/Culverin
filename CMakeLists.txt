@@ -99,7 +99,7 @@ set(GENERATE_SAMPLES OFF CACHE BOOL "" FORCE)
 set(GENERATE_UNIT_TESTS OFF CACHE BOOL "" FORCE)
 set(USE_VULKAN OFF CACHE BOOL "" FORCE)
 # Jolt defaults RTTI off (-fno-rtti); our extension needs RTTI across the
-# Jolt/joltc boundary. Use Jolt's own option — no source patching anywhere.
+# Jolt RTTI. Use Jolt's own option — no source patching anywhere.
 set(CPP_RTTI_ENABLED ON CACHE BOOL "Jolt: enable RTTI" FORCE)
 # No C++ exception handling is used; keep Jolt in the same no-exceptions mode.
 set(CPP_EXCEPTIONS_ENABLED OFF CACHE BOOL "Jolt: disable C++ exceptions" FORCE)
@@ -405,34 +405,13 @@ else()
 endif()
 
 # ==============================================================================
-# 5. BUILD JOLTC & EXTENSION DOMAINS
+# 5. EXTENSION DOMAINS
 # ==============================================================================
-set(JOLTC_TARGET joltc_double)
-add_library(
-    ${JOLTC_TARGET}
-    STATIC
-    "extern/JoltC/src/joltc.cpp"
-    "extern/JoltC/src/joltc_assert.cpp"
-    "extern/JoltC/src/joltc.c"
-    )
-    # joltc.c is a one-line `#include "joltc.h"` stub; compiling it as C++
-    # keeps the whole tree single-language.
-    set_source_files_properties(
-        "${PROJECT_SOURCE_DIR}/extern/JoltC/src/joltc.c" PROPERTIES LANGUAGE CXX
-)
-
-# Third-party code: silence warnings (GNU-dialect -w is universal here).
-target_compile_options(
-    ${JOLTC_TARGET}
-    PRIVATE -w "$<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>"
-)
-
-target_include_directories(
-    ${JOLTC_TARGET}
-    PUBLIC "extern/JoltC/include" "${JOLT_DIR}"
-)
-target_compile_definitions(${JOLTC_TARGET} PRIVATE ${CPH_ASSERT_DEFS})
-target_link_libraries(${JOLTC_TARGET} PRIVATE Jolt::Jolt)
+# JoltC used to be built here as a static archive (joltc_double) and linked
+# into every native target. Nothing under src/ calls the C API any more, so
+# the archive, its include directory and the extern/JoltC submodule are gone.
+# Jolt itself is still reached through the Jolt::Jolt imported target, whose
+# INTERFACE properties carry ${JOLT_DIR} and Jolt's own compile definitions.
 
 # C++ engine targets are declared next to their sources under src/.
 add_subdirectory("src")
@@ -453,7 +432,6 @@ if(ipo_supported AND NOT APPLE AND NOT WIN32)
         set_property(TARGET ${target} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
     endforeach()
     set_property(TARGET culverin_core PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
-    set_property(TARGET ${JOLTC_TARGET} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
     if(TARGET Jolt AND NOT DEFINED JOLT_PREBUILT_DIR)
         set_property(TARGET Jolt PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
     endif()
@@ -541,7 +519,6 @@ if(ipo_supported AND NOT ENABLE_SANITIZER AND NOT ENABLE_THREAD_SANITIZER AND NO
         if(LTO_LINK_FLAG)
             target_link_options(_culverin_c PRIVATE ${LTO_LINK_FLAG})
         endif()
-        target_compile_options(${JOLTC_TARGET} PRIVATE ${LTO_COMPILE_FLAG})
 
         if(TARGET Jolt AND NOT DEFINED JOLT_PREBUILT_DIR)
             target_compile_options(Jolt PRIVATE ${LTO_COMPILE_FLAG})
@@ -573,21 +550,14 @@ if(APPLE)
             PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:-frtti>"
         )
     endforeach()
-    target_compile_options(
-        ${JOLTC_TARGET}
-        PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:-frtti>"
-    )
     target_link_options(_culverin_c PRIVATE "-Wl,-all_load")
 endif()
 
 # ==============================================================================
 # 9. UNIFIED INCLUDES (DRY)
 # ==============================================================================
-# SYSTEM for Jolt to suppress C++ warnings bleeding into our C23 build
-target_include_directories(
-    ${JOLTC_TARGET}
-    SYSTEM PRIVATE "extern/JoltC/include" "${JOLT_DIR}"
-)
+# Jolt's include path and SYSTEM-ness now arrive with the Jolt::Jolt imported
+# target (see src/CMakeLists.txt), so there is no per-target include block here.
 
 target_compile_definitions(
     _culverin_c
@@ -605,10 +575,6 @@ set_target_properties(
 
 # MSVC-ABI runtime for our two archives. The property is honored only when the
 # compiler targets the MSVC ABI; it is inert for GCC/Clang-on-ELF.
-set_property(
-    TARGET ${JOLTC_TARGET}
-    PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL"
-)
 set_property(
     TARGET _culverin_c
     PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL"

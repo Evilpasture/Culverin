@@ -16,7 +16,6 @@
 #include "physics/PhysicsParams.hpp"
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/SoftBody/SoftBodyCreationSettings.h>
-#include <joltc.h>
 
 #include <cstddef>
 #include <cstdint>

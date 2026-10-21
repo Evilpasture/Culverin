@@ -12,7 +12,6 @@
 #include "debug/DebugRender.hpp"
 #include "jolt/Jolt.hpp"
 #include "jolt/JoltConfig.hpp"
-#include "jolt/JoltUtils.hpp"
 #include "physics/CommandBuffer.hpp"
 #include "physics/ContactEventDefinitions.hpp"
 #include "physics/ContactListener.hpp"
@@ -26,7 +25,6 @@
 #include <Jolt/Physics/Constraints/Constraint.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/Physics/Ragdoll/Ragdoll.h>
-#include <joltc.h>
 
 
 #include <atomic>
@@ -337,9 +335,11 @@ struct PhysicsWorld {
     [[nodiscard]] bool CopyRagdollDebugInfo(JPH::Ragdoll &ragdoll,
                                             std::span<PhysicsRagdollBodyDebugInfo> out_info);
 
-    // JoltC view of physics_system.GetBodyInterface(), retained until the
-    // body-operation subsystems move to the direct Jolt API in A4/A5.
-    JPH_BodyInterface *body_interface = nullptr;
+    // Alias for physics_system.GetBodyInterface(). It was a JoltC view until
+    // A5; it is a plain Jolt reference now, but it is still nullable and the
+    // world's "is it initialized" gate for several call sites, so it stays a
+    // pointer rather than a reference.
+    JPH::BodyInterface *body_interface = nullptr;
     // Native listener, constructed with `this` (A3). Jolt only stores the
     // pointer, so it must outlive physics_system — it does: declared here,
     // physics_system is declared last and therefore destroyed first.

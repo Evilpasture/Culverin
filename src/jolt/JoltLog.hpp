@@ -19,11 +19,10 @@ namespace CPH {
 
 // Installs both hooks.
 //
-// ORDER MATTERS while JoltC is still linked: JPH_Init() assigns
-// JPH::Trace = TraceImpl and JPH::AssertFailed = AssertFailedImpl itself, so
-// calling this before JPH_Init() is silently undone (trace output would fall
-// back to raw stdout). Call it after Jolt initialization. Step A5 deletes
-// JPH_Init(), at which point this becomes the only initialization path.
+// This is now the only path that installs them. (Historically it had to run
+// after JPH_Init(), which assigned Jolt's defaults and would silently undo an
+// earlier call; A5 removed JoltC and with it JPH_Init(), and the inlined
+// RegisterTypes sequence in Module.cpp does not touch either hook.)
 void InstallJoltLogging() noexcept;
 
 } // namespace CPH

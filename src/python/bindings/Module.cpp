@@ -14,7 +14,6 @@
 #include "debug/DebugRender.hpp"
 #include "ecs/Ecs.hpp"
 #include "jolt/JoltLog.hpp"
-#include "joltc.h"
 #include "math/Math.hpp"
 #include "physics/ContactListener.hpp"
 #include "physics/PhysicsWorldBinding.hpp"
@@ -22,8 +21,13 @@
 #include "soft_bodies/SoftBody.hpp"
 #include "vehicles/Ship.hpp"
 #include "vehicles/Vehicle.hpp"
-#include <new>
+#include <Jolt/Core/Factory.h>
+#include <Jolt/Core/Memory.h>
+#include <Jolt/Physics/Body/AllowedDOFs.h>
+#include <Jolt/Physics/SoftBody/SoftBodySharedSettings.h>
+#include <Jolt/RegisterTypes.h>
 #include <atomic>
+#include <new>
 #include <tupleobject.h>
 
 /**
@@ -393,18 +397,20 @@ static int init_constants(PyObject *m) {
                   {.name = "MOTION_STATIC", .value = std::to_underlying(MotionType::Static)},
                   {.name = "MOTION_KINEMATIC", .value = std::to_underlying(MotionType::Kinematic)},
                   {.name = "MOTION_DYNAMIC", .value = std::to_underlying(MotionType::Dynamic)},
-                  {.name = "DOF_TRANSLATION_X", .value = JPH_AllowedDOFs_TranslationX},
-                  {.name = "DOF_TRANSLATION_Y", .value = JPH_AllowedDOFs_TranslationY},
-                  {.name = "DOF_TRANSLATION_Z", .value = JPH_AllowedDOFs_TranslationZ},
-                  {.name = "DOF_ROTATION_X", .value = JPH_AllowedDOFs_RotationX},
-                  {.name = "DOF_ROTATION_Y", .value = JPH_AllowedDOFs_RotationY},
-                  {.name = "DOF_ROTATION_Z", .value = JPH_AllowedDOFs_RotationZ},
-                  {.name = "DOF_ALL", .value = JPH_AllowedDOFs_All},
+                  {.name = "DOF_TRANSLATION_X", .value = static_cast<int>(JPH::EAllowedDOFs::TranslationX)},
+                  {.name = "DOF_TRANSLATION_Y", .value = static_cast<int>(JPH::EAllowedDOFs::TranslationY)},
+                  {.name = "DOF_TRANSLATION_Z", .value = static_cast<int>(JPH::EAllowedDOFs::TranslationZ)},
+                  {.name = "DOF_ROTATION_X", .value = static_cast<int>(JPH::EAllowedDOFs::RotationX)},
+                  {.name = "DOF_ROTATION_Y", .value = static_cast<int>(JPH::EAllowedDOFs::RotationY)},
+                  {.name = "DOF_ROTATION_Z", .value = static_cast<int>(JPH::EAllowedDOFs::RotationZ)},
+                  {.name = "DOF_ALL", .value = static_cast<int>(JPH::EAllowedDOFs::All)},
                   {.name  = "DOF_TRANSLATE_XY",
-                   .value = JPH_AllowedDOFs_TranslationX | JPH_AllowedDOFs_TranslationY},
+                   .value = static_cast<int>(JPH::EAllowedDOFs::TranslationX |
+                                                JPH::EAllowedDOFs::TranslationY)},
                   {.name  = "DOF_PLANE_XY",
-                   .value = JPH_AllowedDOFs_TranslationX | JPH_AllowedDOFs_TranslationY},
-                  {.name = "DOF_PLANE_2D", .value = JPH_AllowedDOFs_Plane2D},
+                   .value = static_cast<int>(JPH::EAllowedDOFs::TranslationX |
+                                                JPH::EAllowedDOFs::TranslationY)},
+                  {.name = "DOF_PLANE_2D", .value = static_cast<int>(JPH::EAllowedDOFs::Plane2D)},
                   {.name = "CONSTRAINT_FIXED", .value = std::to_underlying(ConstraintType::Fixed)},
                   {.name = "CONSTRAINT_POINT", .value = std::to_underlying(ConstraintType::Point)},
                   {.name = "CONSTRAINT_HINGE", .value = std::to_underlying(ConstraintType::Hinge)},
@@ -436,9 +442,9 @@ static int init_constants(PyObject *m) {
                        0
 #endif
                   },
-                  {.name = "BEND_DIHEDRAL", .value = JPH_SoftBodyBendType_Dihedral},
-                  {.name = "BEND_DISTANCE", .value = JPH_SoftBodyBendType_Distance},
-                  {.name = "BEND_NONE", .value = JPH_SoftBodyBendType_None}};
+                  {.name = "BEND_DIHEDRAL", .value = static_cast<int>(JPH::SoftBodySharedSettings::EBendType::Dihedral)},
+                  {.name = "BEND_DISTANCE", .value = static_cast<int>(JPH::SoftBodySharedSettings::EBendType::Distance)},
+                  {.name = "BEND_NONE", .value = static_cast<int>(JPH::SoftBodySharedSettings::EBendType::None)}};
 
     for (size_t i = 0; i < sizeof(consts) / sizeof(consts[0]); i++) {
         if (PyModule_AddIntConstant(m, consts[i].name, consts[i].value) < 0) {
@@ -525,15 +531,26 @@ extern PyModuleDef culverin_module;
         DocsStitchSpec(&MathServiceSpec, "MathService", docs_str);
         DocsStitchSpec(&ShipSpec, "Ship", docs_str);
 
-        if (!JPH_Init()) {
-            PyErr_SetString(PyExc_RuntimeError, "Jolt initialization failed");
-            (docs_status).store(0, std::memory_order::seq_cst);
-            return -1;
+        // Was JPH_Init(). joltc implemented that as exactly these three calls
+        // plus a process-global TempAllocatorImplWithMallocFallback that
+        // Culverin never used: every PhysicsWorld owns its own temp allocator
+        // (PhysicsWorld::InitJolt). Jolt's own integration guide prescribes this
+        // order -- allocator, factory, type registration -- so the sequence is
+        // inlined here rather than shimmed. The guard reproduces JPH_Init's
+        // idempotence: module init re-runs under sub-interpreters, and calling
+        // RegisterTypes twice would double-register into the factory.
+        static bool s_jolt_types_registered = false;
+        if (!s_jolt_types_registered) {
+            JPH::RegisterDefaultAllocator();
+            JPH::Factory::sInstance = new JPH::Factory();
+            JPH::RegisterTypes();
+            s_jolt_types_registered = true;
         }
 
-        // Trace/assert hooks are Jolt function pointers now (A3). They must be
-        // installed AFTER JPH_Init(), which assigns both itself; see
-        // jolt/JoltLog.hpp. The contact listener and debug renderer are native
+        // Trace/assert hooks are Jolt function pointers now (A3). A5 deleted
+        // JPH_Init(), whose only remaining relevance was that it used to assign
+        // both hooks itself and so silently undid an earlier install; the
+        // inlined sequence above does not touch them. See jolt/JoltLog.hpp. The contact listener and debug renderer are native
         // subclasses owned by each world, and the query filters are native
         // Jolt::BodyFilter &c. constructed per query, and each character owns a
         // native CharacterContactListener subclass, so no proc tables are
