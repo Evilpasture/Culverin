@@ -5,11 +5,11 @@ B2(physics), A3, and B3 landed** (A3 and B3 on top of the lock-order fix
 `ee5076d`), plus the `[[likely]]`/`[[unlikely]]` cleanup, which deleted
 `CPH::Python::Likely`/`Unlikely` in favour of the standard statement
 attributes. **A4 is in progress: the query layer and its filters,
-constraints, characters, vehicles, ships and ragdolls are on the direct
-Jolt API; soft bodies remain, along with the
-`PhysicsWorldRuntime`/`PhysicsWorldCreation` and `JPH_BodyID`/
-`JPH_BodyInterface` sites those still touch.** With ships done, all
-eight global proc tables are gone.
+constraints, characters, vehicles, ships, ragdolls and soft bodies are on
+the direct Jolt API; what remains is the body-ID/body-interface layer --
+the `JPH_BodyID`/`JPH_BodyInterface` sites spread through
+`PhysicsWorldRuntime`, `CommandBuffer` and `PhysicsWorld.cpp`.** With
+ships done, all eight global proc tables are gone.
 Prerequisite: the C++23 migration
 (`docs/CPP23_MIGRATION.md`) has landed. All acceptance oracles from that
 migration apply unchanged to every phase below: full test suite at
@@ -420,8 +420,49 @@ One pre-existing defect found and **preserved**, marked `TODO(bug)`:
 defaults to `true` (`Constraint.h:15`). Left unset; wiring it up would be
 a no-op today and a behaviour change if that default ever moved.
 
-Remaining A4 work: soft bodies, `PhysicsWorldRuntime`/`PhysicsWorldCreation`,
-and the `JPH_BodyID`/`JPH_BodyInterface` sites those still touch.
+*Landed so far — soft bodies.* `SoftBody.{hpp,cpp}` and the soft-body half
+of `PhysicsWorldCreation.cpp` are on the direct Jolt API; that completes
+the per-subsystem work in A4. `JPH_SoftVertex`/`JPH_SoftFace` were
+JoltC's C mirrors of `SoftBodySharedSettings::Vertex`/`::Face`, and every
+`JPH_SoftBodySharedSettings_*` call was a thin wrapper around a public
+member, so all eleven of them collapse into direct access.
+
+Three things about the JoltC wrappers had to be reproduced rather than
+approximated, because they are not obvious from the signatures:
+
+- `JPH_SoftBodySharedSettings_Create` did not just allocate. It pushed
+  `JPH::PhysicsMaterial::sDefault` into `mMaterials` — joltc's own comment
+  says Jolt requires at least one material to resolve face collisions —
+  and then `AddRef`'d. Dropping either would change behaviour.
+- `AddVertices`/`AddFaces` early-return on a zero count and `reserve` once
+  for the batch rather than per element. Both kept, including the
+  staging buffer: `add_faces` validates vertex indices *inside* its
+  packing loop, and writing straight into `mFaces` would leave partially
+  populated settings on the error path.
+- `CreateConstraints` builds a `VertexAttributes` array sized to the
+  vertex count with only `mCompliance` and `mShearCompliance` set, so
+  `mBendCompliance` keeps its `FLT_MAX` default and the LRA fields keep
+  theirs. Setting all of them "properly" would have changed the
+  constraints.
+
+`Vertex::mPosition`/`mVelocity` are `Float3`, not `Vec3`, so the packing
+loops construct `JPH::Float3` directly. `JPH_SoftBodyBendType` was a
+C mirror of `EBendType` with matching enumerators, so the integer that
+crosses the parser boundary is unchanged and the cast is the only edit.
+
+`PhysicsWorldSoftBodyCreateRequest::shared_settings` is now
+`const JPH::SoftBodySharedSettings *`, which removes the
+`reinterpret_cast` in `CreateSoftBody` — `SoftBodyCreationSettings::mSettings`
+already held it read-only.
+
+Observed but not investigated: `world.get_soft_body_vertices` returns a
+stride-8 float buffer whose slot 2 holds a structured non-position value
+(exact powers of two, stable across runs). It is unchanged by this patch
+and the probe compares the whole buffer either way.
+
+Remaining A4 work: the body-ID/body-interface layer — the `JPH_BodyID`
+and `JPH_BodyInterface` sites spread through `PhysicsWorldRuntime`,
+`CommandBuffer` and `PhysicsWorld.cpp`.
 
 **A5 — Remove JoltC.** First, audit the fork: `extern/JoltC` carries
 Culverin-local patches (at minimum `JPH_Init`'s trace forwarding and

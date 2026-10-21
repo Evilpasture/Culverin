@@ -7,6 +7,7 @@
 #include <Jolt/Math/Mat44.h>
 #include <Jolt/Math/Vec3.h>
 #include <Jolt/Physics/Ragdoll/Ragdoll.h>
+#include <Jolt/Physics/SoftBody/SoftBodySharedSettings.h>
 #include <joltc.h>
 
 #include <cstddef>
@@ -84,7 +85,9 @@ struct PhysicsWorldCompoundPart {
 };
 
 struct PhysicsWorldSoftBodyCreateRequest {
-    JPH_SoftBodySharedSettings *shared_settings = nullptr;
+    // Const: SoftBodyCreationSettings::mSettings holds it read-only, which is
+    // why the old code needed a reinterpret_cast here.
+    const JPH::SoftBodySharedSettings *shared_settings = nullptr;
     uint32_t vertex_count                       = 0;
     JPH_RVec3 position                          = {};
     JPH_Quat rotation                           = {0.0f, 0.0f, 0.0f, 1.0f};

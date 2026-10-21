@@ -6,12 +6,28 @@
 
 namespace CPH::Python {
 
+namespace {
+
+/// What JPH_SoftBodySharedSettings_GetVertexCount returned, including the
+/// narrowing to uint32_t that the index comparisons below rely on.
+[[nodiscard]] inline uint32_t VertexCountOf(const JPH::SoftBodySharedSettings *s) noexcept {
+    return (uint32_t)s->mVertices.size();
+}
+
+} // namespace
+
 // --- SharedSettings Lifecycle ---
 
 [[nodiscard]] int SoftBodySharedSettingsInit(SoftBodySharedSettingsObject *self,
                                                     [[maybe_unused]] PyObject *args,
                                                     [[maybe_unused]] PyObject *kwds) {
-    self->settings            = JPH_SoftBodySharedSettings_Create();
+    // joltc's JPH_SoftBodySharedSettings_Create did three things, all of which
+    // matter: allocate, push a default material ("Jolt requires at least one
+    // material to resolve face collisions"), then AddRef. Reproduced verbatim so
+    // the refcount and the material list are unchanged.
+    self->settings = new JPH::SoftBodySharedSettings();
+    self->settings->mMaterials.push_back(JPH::PhysicsMaterial::sDefault);
+    self->settings->AddRef();
     self->num_vertices        = 0;
     self->constraints_created = false;
     self->optimized           = false;
@@ -22,7 +38,7 @@ namespace CPH::Python {
     }
     self->parsers = CPH::Python::NewParserGroup<CPH::Python::SoftBodySharedSettingsParsers>();
     if (!self->parsers) {
-        JPH_SoftBodySharedSettings_Destroy(self->settings);
+        self->settings->Release();
         PyErr_NoMemory();
         return -1;
     }
@@ -31,7 +47,7 @@ namespace CPH::Python {
 
 void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
     if (self->settings) {
-        JPH_SoftBodySharedSettings_Destroy(self->settings);
+        self->settings->Release();
         self->settings = nullptr;
     }
     if (self->parsers) {
@@ -68,14 +84,14 @@ void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
     }
 
     // 1. Parse Position (Required)
-    JPH_Vec3 pos = {};
+    JPH::Float3 pos = {};
     if (ParseResult parsed = parse_vec3_into(o_pos, pos.x, pos.y, pos.z); !parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
     }
 
     // 2. Parse Velocity (Optional)
-    JPH_Vec3 vel = {};
+    JPH::Float3 vel = {};
     if (o_vel && o_vel != Py_None) {
         if (ParseResult parsed = parse_vec3_into(o_vel, vel.x, vel.y, vel.z); !parsed) {
             RaiseParseError(parsed.error());
@@ -83,11 +99,11 @@ void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
         }
     }
 
-    // 3. Construct the Jolt packed vertex structure
-    const JPH_SoftVertex vertex = {.position = pos, .velocity = vel, .invMass = inv_mass};
+    // 3. Construct the Jolt vertex and append it (what AddVertex did internally)
+    const JPH::SoftBodySharedSettings::Vertex vertex(pos, vel, inv_mass);
 
     // 4. Dispatch and track
-    JPH_SoftBodySharedSettings_AddVertex(self->settings, &vertex);
+    self->settings->mVertices.push_back(vertex);
     self->num_vertices++;
 
     Py_RETURN_NONE;
@@ -162,7 +178,7 @@ void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
     }
 
     // 2. The Interleave Allocation
-    auto staging = static_cast<JPH_SoftVertex *>(Allocate(sizeof(JPH_SoftVertex) * count));
+    auto staging = static_cast<JPH::SoftBodySharedSettings::Vertex *>(Allocate(sizeof(JPH::SoftBodySharedSettings::Vertex) * count));
     if (!staging) {
         PyBuffer_Release(&pos_view);
         if (masses) {
@@ -179,16 +195,22 @@ void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
     for (size_t i = 0; i < count; ++i) {
         const size_t v_idx = i * 3;
 
-        staging[i] = JPH_SoftVertex{
-            .position = {src_pos[v_idx], src_pos[v_idx + 1], src_pos[v_idx + 2]},
-            .velocity = velocities ? JPH_Vec3{velocities[v_idx], velocities[v_idx + 1],
-                                              velocities[v_idx + 2]}
-                                   : JPH_Vec3{},
-            .invMass  = masses ? masses[i] : 1.0F};
+        staging[i] = JPH::SoftBodySharedSettings::Vertex(
+            JPH::Float3(src_pos[v_idx], src_pos[v_idx + 1], src_pos[v_idx + 2]),
+            velocities ? JPH::Float3(velocities[v_idx], velocities[v_idx + 1],
+                                     velocities[v_idx + 2])
+                       : JPH::Float3(0, 0, 0),
+            masses ? masses[i] : 1.0F);
     }
 
-    // 4. Jolt Dispatch & Cleanup
-    JPH_SoftBodySharedSettings_AddVertices(self->settings, staging, count);
+    // 4. Jolt Dispatch & Cleanup. joltc's AddVertices early-returned on a zero
+    // count and reserved once for the batch; both preserved.
+    if (count != 0) {
+        self->settings->mVertices.reserve(self->settings->mVertices.size() + count);
+        for (uint32_t i = 0; i < count; ++i) {
+            self->settings->mVertices.push_back(staging[i]);
+        }
+    }
     self->num_vertices += count;
 
     Deallocate(staging);
@@ -231,7 +253,7 @@ void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
     }
 
     // 2. Source of Truth Validation
-    const auto vertex_count = JPH_SoftBodySharedSettings_GetVertexCount(self->settings);
+    const auto vertex_count = VertexCountOf(self->settings);
     if (v1 >= vertex_count || v2 >= vertex_count || v3 >= vertex_count) {
         PyErr_Format(PyExc_IndexError,
                      "Face vertex index out of range (Indices: %u,%u,%u | Total: %u)", v1, v2, v3,
@@ -240,11 +262,10 @@ void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
     }
 
     // 3. Pack into Jolt's new AoS structure using designated initializers
-    const JPH_SoftFace face = {
-        .vertex1 = v1, .vertex2 = v2, .vertex3 = v3, .materialIndex = mat_idx};
+    const JPH::SoftBodySharedSettings::Face face(v1, v2, v3, mat_idx);
 
     // 4. Dispatch to Jolt
-    JPH_SoftBodySharedSettings_AddFace(self->settings, &face);
+    self->settings->mFaces.push_back(face);
 
     Py_RETURN_NONE;
 }
@@ -302,10 +323,10 @@ void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
     }
 
     // 3. Resource & Source-of-Truth Validation
-    const auto vertex_count = JPH_SoftBodySharedSettings_GetVertexCount(self->settings);
+    const auto vertex_count = VertexCountOf(self->settings);
 
     // 4. Interleave Packing Loop
-    auto staging = static_cast<JPH_SoftFace *>(Allocate(sizeof(JPH_SoftFace) * face_count));
+    auto staging = static_cast<JPH::SoftBodySharedSettings::Face *>(Allocate(sizeof(JPH::SoftBodySharedSettings::Face) * face_count));
     if (staging == nullptr) {
         PyBuffer_Release(&ind_view);
         if (mats) {
@@ -332,14 +353,17 @@ void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
         }
 
         // Interleave into Jolt's AoS layout
-        staging[i] = JPH_SoftFace{.vertex1       = v1,
-                                  .vertex2       = v2,
-                                  .vertex3       = v3,
-                                  .materialIndex = (mats != nullptr) ? mats[i] : 0};
+        staging[i] = JPH::SoftBodySharedSettings::Face(v1, v2, v3, (mats != nullptr) ? mats[i] : 0);
     }
 
-    // 5. Atomic Push to Jolt
-    JPH_SoftBodySharedSettings_AddFaces(self->settings, staging, face_count);
+    // 5. Atomic Push to Jolt. Reserve-once and the zero-count early return are
+    // what joltc's AddFaces did.
+    if (face_count != 0) {
+        self->settings->mFaces.reserve(self->settings->mFaces.size() + face_count);
+        for (uint32_t i = 0; i < face_count; ++i) {
+            self->settings->mFaces.push_back(staging[i]);
+        }
+    }
 
     // 6. Finalization
     Deallocate(staging);
@@ -378,7 +402,7 @@ SoftBodySharedSettingsAddPinnedVertex(SoftBodySharedSettingsObject *self, PyObje
     }
 
     // 3. Safety Check: Still perform bounds checking to help users debug their indices
-    const auto vertex_count = JPH_SoftBodySharedSettings_GetVertexCount(self->settings);
+    const auto vertex_count = VertexCountOf(self->settings);
     if (index_raw < 0 || static_cast<uint32_t>(index_raw) >= vertex_count) {
         PyErr_SetString(PyExc_IndexError, "Vertex index out of range");
         return nullptr;
@@ -398,7 +422,7 @@ SoftBodySharedSettingsCreateConstraints(SoftBodySharedSettingsObject *self, PyOb
                              size_t nargsf, PyObject *kwnames) {
     const Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
     float compliance       = 0.0001f;
-    int bend_type          = JPH_SoftBodyBendType_Distance; // Default: Distance
+    int bend_type          = 1; // EBendType::Distance
 
     const ParseResult parsed =
         self->parsers->SbssCreateConstraints.Parse(args, nargs, kwnames, compliance, bend_type);
@@ -418,9 +442,19 @@ SoftBodySharedSettingsCreateConstraints(SoftBodySharedSettingsObject *self, PyOb
     }
     self->constraints_created = true;
 
-    // Binder handles both Edge compliance and Shear compliance
-    JPH_SoftBodySharedSettings_CreateConstraints(self->settings, compliance,
-                                                 static_cast<JPH_SoftBodyBendType>(bend_type));
+    // Binder handles both Edge compliance and Shear compliance. joltc built a
+    // VertexAttributes array sized to the vertex count with only those two
+    // fields set, leaving mBendCompliance at its FLT_MAX default and the LRA
+    // fields at theirs; same thing here.
+    JPH::Array<JPH::SoftBodySharedSettings::VertexAttributes> attributes;
+    attributes.resize(self->settings->mVertices.size());
+    for (auto &attr : attributes) {
+        attr.mCompliance      = compliance;
+        attr.mShearCompliance = compliance;
+    }
+    self->settings->CreateConstraints(
+        attributes.data(), (JPH::uint)attributes.size(),
+        static_cast<JPH::SoftBodySharedSettings::EBendType>(bend_type));
     Py_RETURN_NONE;
 }
 
@@ -431,7 +465,7 @@ SoftBodySharedSettingsCreateConstraints(SoftBodySharedSettingsObject *self, PyOb
         PyErr_SetString(PyExc_RuntimeError, "create_constraints must be called before optimize");
         return nullptr;
     }
-    JPH_SoftBodySharedSettings_Optimize(self->settings);
+    self->settings->Optimize();
     self->optimized = true;
     Py_RETURN_NONE;
 }
@@ -445,7 +479,7 @@ SoftBodySharedSettingsGetVertexPosition(SoftBodySharedSettingsObject *self, PyOb
     }
 
     // Safety: check vertex count using the updated API
-    const auto vertex_count = JPH_SoftBodySharedSettings_GetVertexCount(self->settings);
+    const auto vertex_count = VertexCountOf(self->settings);
     if (index_raw < 0 || static_cast<uint32_t>(index_raw) >= vertex_count) {
         PyErr_SetString(PyExc_IndexError, "Vertex index out of range");
         return nullptr;
@@ -454,16 +488,17 @@ SoftBodySharedSettingsGetVertexPosition(SoftBodySharedSettingsObject *self, PyOb
     const auto index = static_cast<uint32_t>(index_raw);
 
     // Designated initialization for the return buffer
-    JPH_SoftVertex vertex = {};
-
-    // Use the new unified getter
-    if (!JPH_SoftBodySharedSettings_GetVertex(self->settings, index, &vertex)) {
+    // Bounds were checked against VertexCountOf above, so this cannot fail; the
+    // error path is kept because joltc's GetVertex could return false and the
+    // diagnostic has to stay reachable for tests/test_diagnostics.py.
+    if (index >= self->settings->mVertices.size()) {
         PyErr_SetString(PyExc_RuntimeError, "Failed to retrieve vertex data from Jolt");
         return nullptr;
     }
+    const JPH::SoftBodySharedSettings::Vertex &vertex = self->settings->mVertices[index];
 
     // Return only the position component as requested
-    return BuildTuple(vertex.position.x, vertex.position.y, vertex.position.z);
+    return BuildTuple(vertex.mPosition.x, vertex.mPosition.y, vertex.mPosition.z);
 }
 
 

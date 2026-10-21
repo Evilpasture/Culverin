@@ -155,9 +155,8 @@ PhysicsWorld::CreateSoftBody(const PhysicsWorldSoftBodyCreateRequest &request) {
         return std::unexpected(WorldCreationError::InvalidArgument);
     }
 
-    auto settings          = std::make_unique<JPH::SoftBodyCreationSettings>();
-    settings->mSettings    = reinterpret_cast<const JPH::SoftBodySharedSettings *>(
-        request.shared_settings);
+    auto settings       = std::make_unique<JPH::SoftBodyCreationSettings>();
+    settings->mSettings = request.shared_settings;
     settings->mPosition              = to_rvec3(request.position);
     settings->mRotation              = to_quat(request.rotation);
     settings->mObjectLayer           = std::to_underlying(ObjectLayer::Dynamic);
