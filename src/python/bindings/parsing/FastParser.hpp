@@ -84,8 +84,8 @@ template <typename T, typename ParseInto>
     return true;
 }
 
-[[nodiscard]] static inline bool fast_parse_conv_vec3f(PyObject *obj, const void *target) {
-    return convert_stride<Vec3f>(obj, target, [](Borrowed o, Vec3f &v) {
+[[nodiscard]] static inline bool fast_parse_conv_float3(PyObject *obj, const void *target) {
+    return convert_stride<JPH::Float3>(obj, target, [](Borrowed o, JPH::Float3 &v) {
         return parse_vec3_into(o, v);
     });
 }
@@ -103,9 +103,9 @@ template <typename T, typename ParseInto>
 }
 } // namespace detail
 
-template <> struct FastParseTrait<Vec3f> {
+template <> struct FastParseTrait<JPH::Float3> {
     static constexpr const char *type_name    = "Vector3";
-    static constexpr auto converter           = detail::fast_parse_conv_vec3f;
+    static constexpr auto converter           = detail::fast_parse_conv_float3;
     static constexpr PyTypeObject *type_guard = nullptr;
 };
 

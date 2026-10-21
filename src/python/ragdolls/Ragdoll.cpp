@@ -342,8 +342,8 @@ void RagdollDealloc(RagdollObject *self) {
     float cone_angle  = 0.0f;
 
     // Default orientation: Axis=X, Normal=Y
-    Vec3f axis   = {.x = 1.0f, .y = 0.0f, .z = 0.0f};
-    Vec3f normal = {.x = 0.0f, .y = 1.0f, .z = 0.0f};
+    JPH::Float3 axis{1.0f, 0.0f, 0.0f};
+    JPH::Float3 normal{0.0f, 1.0f, 0.0f};
 
     // 2. High Speed Parse
     const ParseResult parsed =

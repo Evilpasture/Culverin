@@ -132,7 +132,7 @@ ParseResult parse_quat_into(Borrowed obj, double &x, double &y, double &z, doubl
     return {};
 }
 
-ParseResult parse_vec3_into(Borrowed obj, Vec3f &out) {
+ParseResult parse_vec3_into(Borrowed obj, JPH::Float3 &out) {
     return parse_vec3_into(obj, out.x, out.y, out.z);
 }
 
@@ -144,8 +144,8 @@ ParseResult parse_quat_into(Borrowed obj, AuxStride &out) {
     return parse_quat_into(obj, out.x, out.y, out.z, out.w);
 }
 
-std::expected<Vec3f, ParseError> parse_vec3(Borrowed obj) {
-    Vec3f value{};
+std::expected<JPH::Float3, ParseError> parse_vec3(Borrowed obj) {
+    JPH::Float3 value{0.0f, 0.0f, 0.0f};
     if (ParseResult parsed = parse_vec3_into(obj, value); !parsed) {
         return std::unexpected(std::move(parsed.error()));
     }

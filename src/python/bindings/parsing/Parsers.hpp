@@ -33,12 +33,12 @@ namespace CPH::Python {
                                           double &w);
 
 // Stride types used by the shadow buffers.
-[[nodiscard]] ParseResult parse_vec3_into(Borrowed obj, Vec3f &out);
+[[nodiscard]] ParseResult parse_vec3_into(Borrowed obj, JPH::Float3 &out);
 [[nodiscard]] ParseResult parse_vec3_into(Borrowed obj, PosStride &out);
 [[nodiscard]] ParseResult parse_quat_into(Borrowed obj, AuxStride &out);
 
 // Value forms for call sites that want the result rather than an out-param.
-[[nodiscard]] std::expected<Vec3f, ParseError> parse_vec3(Borrowed obj);
+[[nodiscard]] std::expected<JPH::Float3, ParseError> parse_vec3(Borrowed obj);
 [[nodiscard]] std::expected<PosStride, ParseError> parse_position(Borrowed obj);
 [[nodiscard]] std::expected<AuxStride, ParseError> parse_rotation(Borrowed obj);
 

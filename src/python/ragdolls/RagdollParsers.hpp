@@ -27,7 +27,7 @@ struct RagdollSettingsParsers {
            Arg<"size", PyObject *, true>, Arg<"mass", float, false>,
            Arg<"parent_index", int, false>, Arg<"twist_min", float, false>,
            Arg<"twist_max", float, false>, Arg<"cone_angle", float, false>,
-           Arg<"axis", Vec3f, false>, Arg<"normal", Vec3f, false>,
+           Arg<"axis", JPH::Float3, false>, Arg<"normal", JPH::Float3, false>,
            Arg<"pos", PyObject *, false>>
         RagdollAddPart{catalog};
 };

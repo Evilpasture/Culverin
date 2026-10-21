@@ -50,7 +50,7 @@ static constexpr float kTrackedThrottleKickstartThreshold = 0.01f;
 // --- Tracked Vehicle Implementation ---
 
 static JPH::Ref<JPH::WheelSettingsTV> create_track_wheel(PyObject *w_dict) {
-    Vec3f pos;
+    JPH::Float3 pos;
     if (ParseResult parsed = parse_vec3_into(PyDict_GetItemString(w_dict, "pos"), pos);
         !parsed) {
         RaiseParseError(parsed.error());

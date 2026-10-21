@@ -42,12 +42,6 @@ struct AuxStride {
     float y, z, w;
 };
 
-struct Vec3f {
-    float x;
-    float y;
-    float z;
-};
-
 static_assert(sizeof(PosStride) == sizeof(JPH_Real) * 4);
 static_assert(sizeof(AuxStride) == sizeof(float) * 4);
 

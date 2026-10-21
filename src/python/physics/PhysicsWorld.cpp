@@ -2258,20 +2258,20 @@ WorldGetSoftBodyLocalVertices(PhysicsWorldObject *self, PyObject *const *args,
         return nullptr;
     }
 
-    std::expected<Buffer<Vec3f>, Error> status;
+    std::expected<Buffer<JPH::Float3>, Error> status;
     Py_BEGIN_ALLOW_THREADS status = self->physics.GetSoftBodyLocalVertices(handle);
     Py_END_ALLOW_THREADS if (!status) {
         return runtime_status_error(status.error(), nullptr);
     }
-    const Buffer<Vec3f> &positions = *status;
-    if (positions.size() > static_cast<size_t>(PY_SSIZE_T_MAX) / sizeof(Vec3f)) {
+    const Buffer<JPH::Float3> &positions = *status;
+    if (positions.size() > static_cast<size_t>(PY_SSIZE_T_MAX) / sizeof(JPH::Float3)) {
         PyErr_SetString(PyExc_OverflowError, "Soft body vertex data is too large");
         return nullptr;
     }
 
     return PyBytes_FromStringAndSize(
         reinterpret_cast<const char *>(positions.data()),
-        static_cast<Py_ssize_t>(positions.size() * sizeof(Vec3f)));
+        static_cast<Py_ssize_t>(positions.size() * sizeof(JPH::Float3)));
 }
 
 

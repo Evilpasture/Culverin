@@ -33,10 +33,14 @@ hand-written `UnlockRead` calls. The C value types are gone too: every
 command payload, body-creation request and body operation now holds a
 native `JPH::Vec3`/`JPH::RVec3`/`JPH::Quat`, the `ToJolt` shim that
 bridged the two had no callers left and is deleted, and the soft-body
-local-vertex buffer moved to `CPH::Vec3f` -- the project's own tight
-12-byte triple -- because that buffer is copied straight into a Python
-`bytes` object and `JPH::Vec3` is 16 bytes with padding. **What remains
-on the C side is `VerifyAbiAlignment` alone.** With ships done,
+local-vertex buffer moved off `JPH_Vec3` because that buffer is copied
+straight into a Python `bytes` object and `JPH::Vec3` is 16 bytes with
+padding. It is `JPH::Float3` now: Jolt already ships the tight, unpadded
+`Float2`/`Float3`/`Float4` storage types, so there is no need for a
+project-local `CPH::Vec3f`, which is deleted. `sizeof(JPH::Float3) == 12`
+is pinned by a `static_assert` next to `GetSoftBodyLocalVertices` because
+that size is the wire format. **What remains on the C side is
+`VerifyAbiAlignment` alone.** With ships done,
 all eight global proc tables are gone.
 Prerequisite: the C++23 migration
 (`docs/CPP23_MIGRATION.md`) has landed. All acceptance oracles from that
@@ -613,8 +617,9 @@ subsumes the old `OwnedPyObject`, and its `Ref(PyObject*)` /
 the raw C API leaves to comments. Parsers: `int ParseVec3F32(obj, &x,
 &y, &z)` → `ParseResult parse_vec3_into(Borrowed, float&, float&,
 float&)` plus value forms `parse_vec3` / `parse_position` /
-`parse_rotation` returning `expected<Vec3f|PosStride|AuxStride,
-ParseError>`; `ParseError` owns the exact exception instance the
+`parse_rotation` returning `expected<JPH::Float3|PosStride|AuxStride,
+ParseError>` (`Vec3f` was the project's own tight triple and is gone in
+favour of Jolt's `Float3`); `ParseError` owns the exact exception instance the
 diagnostic builder produced, and `RaiseParseError` reinstates it
 verbatim at the boundary — `test_diagnostics.py` is the oracle that
 pins this.

@@ -557,7 +557,7 @@ class CharacterListener final : public JPH::CharacterContactListener {
                                                     PyObject *const *args, size_t nargsf,
                                                     PyObject *kwnames) {
     // 1. INTEGRATED FAST PARSE (Unchanged)
-    Vec3f v_in = {};
+    JPH::Float3 v_in{0.0f, 0.0f, 0.0f};
     float dt       = 0.0f;
 
     auto nargs = PyVectorcall_NARGS(nargsf);

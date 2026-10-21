@@ -375,13 +375,24 @@ PhysicsWorld::GetSoftBodyVertexPosition(BodyHandle handle, uint32_t vertex_index
         });
 }
 
-std::expected<Buffer<Vec3f>, Error>
+// This buffer IS a wire format: the binding hands its bytes straight to Python
+// via PyBytes_FromStringAndSize over the whole allocation, and the caller reads
+// them back with np.frombuffer(dtype=float32).reshape(-1, 3). JPH::Float3 is
+// the right element type precisely because it stays a tight, unpadded triple --
+// JPH::Vec3 would be 16 bytes with padding and would silently corrupt every
+// vertex. Pin it so a future Jolt change cannot shift the layout unnoticed.
+static_assert(sizeof(JPH::Float3) == 3 * sizeof(float),
+              "soft-body local vertices are exposed to Python as packed float32 triples");
+static_assert(alignof(JPH::Float3) == alignof(float),
+              "soft-body local vertices must not gain padding between elements");
+
+std::expected<Buffer<JPH::Float3>, Error>
 PhysicsWorld::GetSoftBodyLocalVertices(BodyHandle handle) {
     return WithSoftBodyRead(
         *this, handle,
         [](const JPH::Body &body,
-           std::uint32_t vertex_count) -> std::expected<Buffer<Vec3f>, Error> {
-            Buffer<Vec3f> out_positions;
+           std::uint32_t vertex_count) -> std::expected<Buffer<JPH::Float3>, Error> {
+            Buffer<JPH::Float3> out_positions;
             if (vertex_count != 0 && !out_positions.allocate(vertex_count)) {
                 return std::unexpected(WorldRuntimeError::OutOfMemory);
             }

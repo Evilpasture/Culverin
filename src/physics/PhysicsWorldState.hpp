@@ -282,7 +282,7 @@ struct PhysicsWorld {
     [[nodiscard]] std::expected<std::uint32_t, Error> GetSoftBodyVertexCount(BodyHandle handle);
     [[nodiscard]] std::expected<SoftBodyVertexPosition, Error>
     GetSoftBodyVertexPosition(BodyHandle handle, std::uint32_t vertex_index);
-    [[nodiscard]] std::expected<Buffer<Vec3f>, Error>
+    [[nodiscard]] std::expected<Buffer<JPH::Float3>, Error>
     GetSoftBodyLocalVertices(BodyHandle handle);
     // Returns whether the body is submerged; a stale handle reports
     // "not submerged" rather than an error (legacy behavior).
