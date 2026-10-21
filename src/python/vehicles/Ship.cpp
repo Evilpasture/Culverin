@@ -3,91 +3,109 @@
 #include "bindings/ModuleState.hpp"
 #include "bindings/PythonSupport.hpp"
 #include "physics/PhysicsWorldBinding.hpp"
+#include <Jolt/Physics/Body/BodyInterface.h>
 #include <math.h>
 
 namespace CPH::Python {
 
 // --- THE HOT PATH (No Locks, No GIL) ---
 
-static void JPH_API_CALL Ship_OnStep(void *userData,
-                                     const JPH_PhysicsStepListenerContext *inContext [[maybe_unused]]) {
-    ShipObject *self = static_cast<ShipObject *>(userData);
-    if (self->sled_bid == kJphInvalidBodyId) {
-        return;
+namespace {
+
+/// Per-ship physics step listener.
+///
+/// This replaces the last global proc table in the tree. JoltC's
+/// JPH_PhysicsStepListener_SetProcs installed one process-wide s_Procs pointer
+/// shared by every ship, with OnStep recovering its owner from a void
+/// *userData; each ship now owns its listener, so there is no shared state and
+/// no C trampoline.
+class ShipStepListener final : public JPH::PhysicsStepListener {
+  public:
+    explicit ShipStepListener(ShipObject *owner) : owner_(owner) {}
+
+    void OnStep([[maybe_unused]] const JPH::PhysicsStepListenerContext &context) override {
+        ShipObject *self = owner_;
+        if (self->sled_bid == kJphInvalidBodyId) {
+            return;
+        }
+
+        const JPH::BodyID sled_id(self->sled_bid);
+        // OnStep runs while every body mutex is held, so this has to be the
+        // no-lock interface; the locking one would deadlock.
+        JPH::BodyInterface &bi = self->world->physics.physics_system.GetBodyInterfaceNoLock();
+
+        // 1. Get current state
+        const JPH::Vec3 ang_vel = bi.GetAngularVelocity(sled_id);
+        const JPH::Quat rot     = bi.GetRotation(sled_id);
+        const JPH::Vec3 lin_vel = bi.GetLinearVelocity(sled_id);
+
+        const float fwd_input   = (self->input_fwd).load(std::memory_order::relaxed);
+        const float steer_input = (self->input_right).load(std::memory_order::relaxed);
+
+        // 2. PD Stabilizer & Banking
+        const JPH::Vec3 current_up = rot * JPH::Vec3(0, 1.0f, 0);
+
+        const float target_roll_z = -steer_input * self->banking_strength;
+
+        // Torque X corrects Pitch, Torque Z corrects Roll (plus banking target)
+        const float tx = (-current_up.GetZ() * self->kp) - (ang_vel.GetX() * self->kd);
+        const float tz =
+            ((current_up.GetX() - target_roll_z) * self->kp) - (ang_vel.GetZ() * self->kd);
+
+        // 3. Torque Steering (Yaw)
+        const float current_yaw_vel = ang_vel.GetY();
+        const float target_yaw_vel  = steer_input * self->steer_speed;
+        const float ty              = (target_yaw_vel - current_yaw_vel) * (self->kp * 0.5f);
+
+        bi.AddTorque(sled_id, JPH::Vec3(tx, ty, tz));
+
+        // 4. Forward Movement (Throttle)
+        if (fabsf(fwd_input) > 0.01f) {
+            const JPH::Vec3 current_fwd = rot * JPH::Vec3(0, 0, 1.0f);
+
+            const JPH::Vec3 force(current_fwd.GetX() * fwd_input * self->throttle_force, 0.0f,
+                                  current_fwd.GetZ() * fwd_input * self->throttle_force);
+            bi.AddForce(sled_id, force);
+        }
+
+        // 5. Lateral Friction (Anti-Drift / Keel effect)
+        const JPH::Vec3 current_right = rot * JPH::Vec3(1.0f, 0, 0);
+
+        // Dots and the drag division are kept as explicit scalar arithmetic
+        // rather than Vec3::Dot / operator/: this runs every step, Jolt's Dot
+        // reorders the adds, and its scalar division multiplies by a reciprocal.
+        // Either would drift the recorded-scene replays.
+        const float lateral_speed = (lin_vel.GetX() * current_right.GetX()) +
+                                    (lin_vel.GetY() * current_right.GetY()) +
+                                    (lin_vel.GetZ() * current_right.GetZ());
+        const float lateral_force_mag = -lateral_speed * self->lateral_grip;
+
+        if (fabsf(lateral_force_mag) > 0.01f) {
+            const JPH::Vec3 side_force(current_right.GetX() * lateral_force_mag,
+                                       current_right.GetY() * lateral_force_mag,
+                                       current_right.GetZ() * lateral_force_mag);
+            bi.AddForce(sled_id, side_force);
+        }
+
+        // 6. Quadratic Drag (Speed Limiter)
+        const float speed_sq = (lin_vel.GetX() * lin_vel.GetX()) +
+                               (lin_vel.GetY() * lin_vel.GetY()) +
+                               (lin_vel.GetZ() * lin_vel.GetZ());
+        if (speed_sq > 0.01f) {
+            const float speed    = sqrtf(speed_sq);
+            const float drag_mag = speed_sq * self->linear_drag;
+            const JPH::Vec3 drag_force(-(lin_vel.GetX() / speed) * drag_mag,
+                                       -(lin_vel.GetY() / speed) * drag_mag,
+                                       -(lin_vel.GetZ() / speed) * drag_mag);
+            bi.AddForce(sled_id, drag_force);
+        }
     }
 
-    auto *bi = reinterpret_cast<JPH_BodyInterface *>(
-        &self->world->physics.physics_system.GetBodyInterfaceNoLock());
+  private:
+    ShipObject *owner_;
+};
 
-    // 1. Get current state
-    JPH_Vec3 ang_vel;
-    JPH_Quat rot;
-    JPH_Vec3 lin_vel;
-    JPH_BodyInterface_GetAngularVelocity(bi, self->sled_bid, &ang_vel);
-    JPH_BodyInterface_GetRotation(bi, self->sled_bid, &rot);
-    JPH_BodyInterface_GetLinearVelocity(bi, self->sled_bid, &lin_vel);
-
-    float fwd_input   = (self->input_fwd).load(std::memory_order::relaxed);
-    float steer_input = (self->input_right).load(std::memory_order::relaxed);
-
-    // 2. PD Stabilizer & Banking
-    JPH_Vec3 up_dir = {0, 1.0f, 0};
-    JPH_Vec3 current_up;
-    JPH_Quat_Rotate(&rot, &up_dir, &current_up);
-
-    float target_roll_z = -steer_input * self->banking_strength;
-
-    // Torque X corrects Pitch, Torque Z corrects Roll (plus banking target)
-    float tx = (-current_up.z * self->kp) - (ang_vel.x * self->kd);
-    float tz = ((current_up.x - target_roll_z) * self->kp) - (ang_vel.z * self->kd);
-
-    // 3. Torque Steering (Yaw)
-    float current_yaw_vel = ang_vel.y;
-    float target_yaw_vel  = steer_input * self->steer_speed;
-    float ty              = (target_yaw_vel - current_yaw_vel) * (self->kp * 0.5f);
-
-    JPH_Vec3 torque = {tx, ty, tz};
-    JPH_BodyInterface_AddTorque(bi, self->sled_bid, &torque);
-
-    // 4. Forward Movement (Throttle)
-    if (fabsf(fwd_input) > 0.01f) {
-        JPH_Vec3 fwd_dir = {0, 0, 1.0f};
-        JPH_Vec3 current_fwd;
-        JPH_Quat_Rotate(&rot, &fwd_dir, &current_fwd);
-
-        JPH_Vec3 force = {current_fwd.x * fwd_input * self->throttle_force, 0.0f,
-                          current_fwd.z * fwd_input * self->throttle_force};
-        JPH_BodyInterface_AddForce(bi, self->sled_bid, &force);
-    }
-
-    // 5. Lateral Friction (Anti-Drift / Keel effect)
-    JPH_Vec3 right_dir = {1.0f, 0, 0};
-    JPH_Vec3 current_right;
-    JPH_Quat_Rotate(&rot, &right_dir, &current_right);
-
-    float lateral_speed = (lin_vel.x * current_right.x) + (lin_vel.y * current_right.y) +
-                          (lin_vel.z * current_right.z);
-    float lateral_force_mag = -lateral_speed * self->lateral_grip;
-
-    if (fabsf(lateral_force_mag) > 0.01f) {
-        JPH_Vec3 side_force = {current_right.x * lateral_force_mag,
-                               current_right.y * lateral_force_mag,
-                               current_right.z * lateral_force_mag};
-        JPH_BodyInterface_AddForce(bi, self->sled_bid, &side_force);
-    }
-
-    // 6. Quadratic Drag (Speed Limiter)
-    float speed_sq = (lin_vel.x * lin_vel.x) + (lin_vel.y * lin_vel.y) + (lin_vel.z * lin_vel.z);
-    if (speed_sq > 0.01f) {
-        float speed         = sqrtf(speed_sq);
-        float drag_mag      = speed_sq * self->linear_drag;
-        JPH_Vec3 drag_force = {-(lin_vel.x / speed) * drag_mag, -(lin_vel.y / speed) * drag_mag,
-                               -(lin_vel.z / speed) * drag_mag};
-        JPH_BodyInterface_AddForce(bi, self->sled_bid, &drag_force);
-    }
-}
-
-static const JPH_PhysicsStepListener_Procs kShipListenerProcs = {.OnStep = Ship_OnStep};
+} // namespace
 
 // --- CREATION ---
 [[nodiscard]] PyObject * WorldCreateShip(PhysicsWorldObject *self,
@@ -148,12 +166,12 @@ static const JPH_PhysicsStepListener_Procs kShipListenerProcs = {.OnStep = Ship_
     obj->lateral_grip     = grip;
     obj->linear_drag      = drag;
 
-    // Use global trampoline lock to register listener
+    // The trampoline lock stays: it is part of the documented acquisition order
+    // (jph_trampoline_lock -> shadow_lock -> step_sync), not just protection for
+    // the proc table that is now gone.
     (self->physics.jph_trampoline_lock).lock();
-    JPH_PhysicsStepListener_SetProcs(&kShipListenerProcs);
-    obj->listener = JPH_PhysicsStepListener_Create(obj);
-    self->physics.physics_system.AddStepListener(
-        reinterpret_cast<JPH::PhysicsStepListener *>(obj->listener));
+    obj->listener = new ShipStepListener(obj);
+    self->physics.physics_system.AddStepListener(obj->listener);
     (self->physics.jph_trampoline_lock).unlock();
 
     PyObject_GC_Track(reinterpret_cast<PyObject *>(obj));
@@ -190,9 +208,9 @@ void ShipDealloc(ShipObject *self) {
     if (self->world && self->listener) {
         // Protect Jolt system call with trampoline lock
         (self->world->physics.jph_trampoline_lock).lock();
-        self->world->physics.physics_system.RemoveStepListener(
-            reinterpret_cast<JPH::PhysicsStepListener *>(self->listener));
-        JPH_PhysicsStepListener_Destroy(self->listener);
+        self->world->physics.physics_system.RemoveStepListener(self->listener);
+        delete self->listener;
+        self->listener = nullptr;
         (self->world->physics.jph_trampoline_lock).unlock();
     }
 

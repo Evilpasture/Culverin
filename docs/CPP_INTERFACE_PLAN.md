@@ -4,9 +4,12 @@ Status: **A0, naming dissolution, enum-class sweep, B1, A1, A2,
 B2(physics), A3, and B3 landed** (A3 and B3 on top of the lock-order fix
 `ee5076d`), plus the `[[likely]]`/`[[unlikely]]` cleanup, which deleted
 `CPH::Python::Likely`/`Unlikely` in favour of the standard statement
-attributes. **A4 is in progress: the query layer and its filters are on
-the direct Jolt API; constraints, characters, vehicles, ragdolls and
-soft bodies remain.**
+attributes. **A4 is in progress: the query layer and its filters,
+constraints, characters, vehicles and ships are on the direct Jolt API;
+ragdolls and soft bodies remain, along with the
+`PhysicsWorldRuntime`/`PhysicsWorldCreation` and `JPH_BodyID`/
+`JPH_BodyInterface` sites those still touch.** With ships done, all
+eight global proc tables are gone.
 Prerequisite: the C++23 migration
 (`docs/CPP23_MIGRATION.md`) has landed. All acceptance oracles from that
 migration apply unchanged to every phase below: full test suite at
@@ -329,8 +332,46 @@ sign of a wheel's local Z, so a −Z layout gets no steering wheels;
 `pack_transform` leaks its seven `PyFloat_FromDouble` references because
 `PyTuple_Pack` already increfs.
 
-Remaining A4 work: `Ship.cpp` (the last global proc table,
-`kShipListenerProcs`), `PhysicsWorldRuntime`/`PhysicsWorldCreation`, the
+*Landed so far — ships, and with them the last global proc table.*
+`Ship.cpp` no longer touches JoltC's listener machinery. JoltC's
+`JPH_PhysicsStepListener_SetProcs` installed **one process-wide
+`s_Procs` pointer** shared by every ship in every world, with `OnStep`
+recovering its owner from a `void *userData`. That is the last instance
+of the pattern in the tree (`kCharListenerProcs` went with characters),
+and it is replaced by `ShipStepListener : public JPH::PhysicsStepListener`
+in an anonymous namespace holding a `ShipObject *`. Each ship now owns
+its listener outright, so the shared trampoline table, the C callback
+and the `reinterpret_cast` on both ends are gone, and
+`JPH_PhysicsStepListener_Destroy` becomes a plain `delete`.
+
+`Ship.hpp` keeps `#include "joltc.h"` deliberately: `sled_bid` is still a
+`JPH_BodyID`, which is `typedef uint32_t` — the raw packed
+index-and-generation word, not a Jolt type. That field belongs to the
+body-ID slice, not this one. Constructing `JPH::BodyID(self->sled_bid)`
+at the use site is exactly what joltc did internally
+(`joltc.cpp:6285-6288`), so the conversion is unchanged.
+
+Two things were preserved on purpose rather than "improved":
+
+- `jph_trampoline_lock` is still taken around
+  `AddStepListener`/`RemoveStepListener` even though the proc table it
+  existed for is gone. It is part of the documented acquisition order
+  `jph_trampoline_lock -> shadow_lock -> step_sync`
+  (`PhysicsWorldState.hpp:370-373`); dropping it is a concurrency change
+  nobody asked for. `PhysicsSystem::AddStepListener`/`RemoveStepListener`
+  take `mStepListenersMutex` themselves, so this is a lock we hold on top,
+  not a missing one.
+- Both dot products and the drag division stay as explicit scalar
+  arithmetic instead of `Vec3::Dot` and `operator/`. `Dot` is SIMD and
+  reorders the adds, and Jolt's scalar `operator/` multiplies by a
+  reciprocal instead of dividing. This runs every step, so either would
+  drift recorded-scene replays. Marked at the site.
+
+`OnStep` runs with every body mutex held, so it uses
+`GetBodyInterfaceNoLock()` — the locking interface would deadlock. That
+was true before and is now commented rather than implied.
+
+Remaining A4 work: `PhysicsWorldRuntime`/`PhysicsWorldCreation`, the
 ragdoll and soft-body bindings, and the `JPH_BodyInterface` field those
 still read.
 
