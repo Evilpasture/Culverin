@@ -365,23 +365,23 @@ PhysicsWorld::GetSoftBodyVertexPosition(BodyHandle handle, uint32_t vertex_index
                 static_cast<const JPH::SoftBodyMotionProperties *>(body.GetMotionProperties());
             // Matches JoltC's JPH_Body_GetSoftBodyVertexPosition: the local
             // vertex position transformed by the centre-of-mass transform,
-            // then narrowed to float for the JPH_Vec3 payload.
+            // then narrowed to float for the caller.
             const JPH::RVec3 world_pos =
                 body.GetCenterOfMassTransform() * mp->GetVertices()[vertex_index].mPosition;
-            result.position.x = static_cast<float>(world_pos.GetX());
-            result.position.y = static_cast<float>(world_pos.GetY());
-            result.position.z = static_cast<float>(world_pos.GetZ());
+            result.position.SetX(static_cast<float>(world_pos.GetX()));
+            result.position.SetY(static_cast<float>(world_pos.GetY()));
+            result.position.SetZ(static_cast<float>(world_pos.GetZ()));
             return result;
         });
 }
 
-std::expected<Buffer<JPH_Vec3>, Error>
+std::expected<Buffer<Vec3f>, Error>
 PhysicsWorld::GetSoftBodyLocalVertices(BodyHandle handle) {
     return WithSoftBodyRead(
         *this, handle,
         [](const JPH::Body &body,
-           std::uint32_t vertex_count) -> std::expected<Buffer<JPH_Vec3>, Error> {
-            Buffer<JPH_Vec3> out_positions;
+           std::uint32_t vertex_count) -> std::expected<Buffer<Vec3f>, Error> {
+            Buffer<Vec3f> out_positions;
             if (vertex_count != 0 && !out_positions.allocate(vertex_count)) {
                 return std::unexpected(WorldRuntimeError::OutOfMemory);
             }

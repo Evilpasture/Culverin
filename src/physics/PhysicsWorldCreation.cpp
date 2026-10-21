@@ -17,14 +17,6 @@
 
 namespace CPH {
 
-[[nodiscard]] static JPH::RVec3 to_rvec3(const JPH_RVec3 &position) {
-    return {position.x, position.y, position.z};
-}
-
-[[nodiscard]] static JPH::Quat to_quat(const JPH_Quat &rotation) {
-    return {rotation.x, rotation.y, rotation.z, rotation.w};
-}
-
 static constexpr float kDefaultMaterialFriction      = 0.2f;
 static constexpr float kConvexHullTolerance          = 0.05f;
 static constexpr size_t kInitialBodyCapacity         = 1024;
@@ -41,9 +33,9 @@ static void initialize_body_shadow(PhysicsWorld &world, BodyHandle handle,
                                    const PhysicsWorldBodyCreateRequest &request) {
     const uint32_t slot      = (uint32_t)(handle & kHandleIndexMask);
     const uint32_t dense     = world.bodies.slot_to_dense[slot];
-    const PosStride position = {request.position.x, request.position.y, request.position.z, 0.0};
-    const AuxStride rotation = {request.rotation.x, request.rotation.y, request.rotation.z,
-                                request.rotation.w};
+    const PosStride position = {request.position.GetX(), request.position.GetY(), request.position.GetZ(), 0.0};
+    const AuxStride rotation = {request.rotation.GetX(), request.rotation.GetY(), request.rotation.GetZ(),
+                                request.rotation.GetW()};
 
     world.bodies.positions[dense]          = position;
     world.bodies.prev_positions[dense]     = position;
@@ -83,7 +75,7 @@ create_body_from_shape(PhysicsWorld &world, const JPH::Shape *shape,
     }
 
     auto settings = std::make_unique<JPH::BodyCreationSettings>(
-        shape, to_rvec3(request.position), to_quat(request.rotation), motion_type,
+        shape, request.position, request.rotation, motion_type,
         static_cast<JPH::ObjectLayer>(object_layer));
 
     switch (setup) {
@@ -157,8 +149,8 @@ PhysicsWorld::CreateSoftBody(const PhysicsWorldSoftBodyCreateRequest &request) {
 
     auto settings       = std::make_unique<JPH::SoftBodyCreationSettings>();
     settings->mSettings = request.shared_settings;
-    settings->mPosition              = to_rvec3(request.position);
-    settings->mRotation              = to_quat(request.rotation);
+    settings->mPosition              = request.position;
+    settings->mRotation              = request.rotation;
     settings->mObjectLayer           = std::to_underlying(ObjectLayer::Dynamic);
     settings->mNumIterations         = request.num_iterations;
     settings->mLinearDamping         = request.linear_damping;
@@ -183,10 +175,10 @@ PhysicsWorld::CreateSoftBody(const PhysicsWorldSoftBodyCreateRequest &request) {
 
     const uint32_t slot                         = (uint32_t)(handle & kHandleIndexMask);
     const uint32_t dense                        = bodies.slot_to_dense[slot];
-    const PosStride position_shadow             = {request.position.x, request.position.y,
-                                                   request.position.z, 0.0};
-    const AuxStride rotation_shadow             = {request.rotation.x, request.rotation.y,
-                                                   request.rotation.z, request.rotation.w};
+    const PosStride position_shadow             = {request.position.GetX(), request.position.GetY(),
+                                                   request.position.GetZ(), 0.0};
+    const AuxStride rotation_shadow             = {request.rotation.GetX(), request.rotation.GetY(),
+                                                   request.rotation.GetZ(), request.rotation.GetW()};
     bodies.positions[dense]      = position_shadow;
     bodies.prev_positions[dense] = position_shadow;
     bodies.rotations[dense]      = rotation_shadow;
@@ -211,8 +203,8 @@ JPH::RagdollSettings *PhysicsWorldCreateRagdollSettings(JPH::Skeleton *skeleton)
 }
 
 std::expected<RagdollInstance, Error>
-PhysicsWorld::CreateRagdollInstance(JPH::RagdollSettings *settings, JPH_RVec3 position,
-                                      JPH_Quat rotation, uint64_t user_data) {
+PhysicsWorld::CreateRagdollInstance(JPH::RagdollSettings *settings, JPH::RVec3 position,
+                                      JPH::Quat rotation, uint64_t user_data) {
     if (!settings || !jolt_initialized) {
         return std::unexpected(WorldCreationError::InvalidArgument);
     }
@@ -235,15 +227,12 @@ PhysicsWorld::CreateRagdollInstance(JPH::RagdollSettings *settings, JPH_RVec3 po
 
     JPH::RVec3 zero_root = JPH::RVec3::sZero();
     ragdoll->GetPose(zero_root, neutral_matrices.data(), true);
-    // JPH_Quat/JPH_RVec3 stay plain value types (shared with the body-creation
-    // path); convert at the boundary rather than changing the request struct.
-    const JPH::Mat44 rotation_matrix =
-        JPH::Mat44::sRotation(JPH::Quat(rotation.x, rotation.y, rotation.z, rotation.w));
+    const JPH::Mat44 rotation_matrix = JPH::Mat44::sRotation(rotation);
     for (size_t i = 0; i < joint_count; i++) {
         neutral_matrices[i] = rotation_matrix * neutral_matrices[i];
     }
 
-    ragdoll->SetPose(JPH::RVec3(position.x, position.y, position.z), neutral_matrices.data(), true);
+    ragdoll->SetPose(position, neutral_matrices.data(), true);
     ragdoll->AddToPhysicsSystem(JPH::EActivation::Activate, true);
     return RagdollInstance{.ragdoll    = ragdoll,
                            .body_count = (size_t)ragdoll->GetBodyCount()};
@@ -501,10 +490,8 @@ static JPH::ShapeRefC create_compound_shape(PhysicsWorld &world,
             sub_shape = world.FindOrCreateShapeLocked(part.shape_type, part.shape_params);
         }
         if (sub_shape != nullptr) {
-            const JPH_Vec3 &local_position = part.local_position;
-            compound_settings.AddShape(
-                JPH::Vec3(local_position.x, local_position.y, local_position.z),
-                to_quat(part.local_rotation), sub_shape.GetPtr(), 0);
+            compound_settings.AddShape(part.local_position, part.local_rotation,
+                                       sub_shape.GetPtr(), 0);
         }
     }
 
@@ -533,8 +520,8 @@ PhysicsWorld::CreateCompoundBody(std::span<const PhysicsWorldCompoundPart> parts
 
 std::expected<BodyHandle, Error>
 PhysicsWorld::CreateMeshBody(std::span<const float> vertices,
-                               std::span<const std::uint32_t> indices, JPH_RVec3 position,
-                               JPH_Quat rotation, uint32_t category, uint32_t mask,
+                               std::span<const std::uint32_t> indices, JPH::RVec3 position,
+                               JPH::Quat rotation, uint32_t category, uint32_t mask,
                                uint64_t user_data) {
     if (vertices.size() % 3 != 0 || indices.size() % 3 != 0) {
         return std::unexpected(WorldCreationError::InvalidArgument);
@@ -584,8 +571,8 @@ PhysicsWorld::CreateMeshBody(std::span<const float> vertices,
 }
 
 std::expected<BodyHandle, Error> PhysicsWorld::CreateHeightfieldBody(
-    std::span<const float> heights, size_t grid_size, JPH_Vec3 scale, JPH_RVec3 position,
-    JPH_Quat rotation, float friction, float restitution, uint32_t category, uint32_t mask,
+    std::span<const float> heights, size_t grid_size, JPH::Vec3 scale, JPH::RVec3 position,
+    JPH::Quat rotation, float friction, float restitution, uint32_t category, uint32_t mask,
     uint32_t material_id, uint64_t user_data) {
     if (grid_size == 0 || grid_size > UINT32_MAX || grid_size > SIZE_MAX / grid_size ||
         grid_size * grid_size > SIZE_MAX / sizeof(float) ||
@@ -594,7 +581,7 @@ std::expected<BodyHandle, Error> PhysicsWorld::CreateHeightfieldBody(
     }
 
     const JPH::HeightFieldShapeSettings heightfield_settings(
-        heights.data(), JPH::Vec3::sZero(), JPH::Vec3(scale.x, scale.y, scale.z),
+        heights.data(), JPH::Vec3::sZero(), JPH::Vec3(scale.GetX(), scale.GetY(), scale.GetZ()),
         static_cast<JPH::uint32>(grid_size));
     const auto shape_result = heightfield_settings.Create();
     if (!shape_result.IsValid()) {

@@ -20,33 +20,6 @@ inline float FastRsqrtF(float number) { return 1.0f / std::sqrt(number); }
 [[nodiscard]] inline float FastRsqrt(float number) noexcept { return FastRsqrtF(number); }
 [[nodiscard]] inline double FastRsqrt(double number) noexcept { return FastRsqrtD(number); }
 
-// Helper to find an arbitrary vector perpendicular to 'in'
-inline void vec3_get_perpendicular(const JPH_Vec3 *CPH_RESTRICT in,
-                                          JPH_Vec3 *CPH_RESTRICT out) {
-    if (std::fabs(in->x) > std::fabs(in->z)) {
-        out->x = -in->y;
-        out->y = in->x;
-        out->z = 0.0f; // Cross(in, Z)
-    } else {
-        out->x = 0.0f;
-        out->y = -in->z;
-        out->z = in->y; // Cross(in, X)
-    }
-    // Normalize
-    float len = std::sqrt(out->x * out->x + out->y * out->y + out->z * out->z);
-    if (len > 1e-6f) {
-        float inv = 1.0f / len;
-        out->x *= inv;
-        out->y *= inv;
-        out->z *= inv;
-    } else {
-        // Fallback if 'in' is zero
-        out->x = 1.0f;
-        out->y = 0.0f;
-        out->z = 0.0f;
-    }
-}
-
 void MathComputeInterpolationLoop(const PosStride *__restrict curr_p,
                                          const PosStride *__restrict prev_p,
                                          const AuxStride *__restrict curr_r,

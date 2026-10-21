@@ -90,31 +90,31 @@ void mirror_to_shadow(PhysicsWorld *world, std::uint32_t slot,
     const std::uint32_t dense = world->bodies.slot_to_dense[slot];
     switch (op.type) {
     case PhysicsBodyOperationType::SetPosition: {
-        const PosStride position = {op.position.x, op.position.y, op.position.z, 0.0};
+        const PosStride position = {op.position.GetX(), op.position.GetY(), op.position.GetZ(), 0.0};
         world->bodies.positions[dense]      = position;
         world->bodies.prev_positions[dense] = position;
         break;
     }
     case PhysicsBodyOperationType::SetRotation: {
-        const AuxStride rotation = {op.rotation.x, op.rotation.y, op.rotation.z,
-                                        op.rotation.w};
+        const AuxStride rotation = {op.rotation.GetX(), op.rotation.GetY(), op.rotation.GetZ(),
+                                        op.rotation.GetW()};
         world->bodies.rotations[dense]      = rotation;
         world->bodies.prev_rotations[dense] = rotation;
         break;
     }
     case PhysicsBodyOperationType::SetLinearVelocity:
-        world->bodies.linear_velocities[dense] = {op.vector.x, op.vector.y, op.vector.z, 0.0F};
+        world->bodies.linear_velocities[dense] = {op.vector.GetX(), op.vector.GetY(), op.vector.GetZ(), 0.0F};
         break;
     case PhysicsBodyOperationType::SetAngularVelocity:
-        world->bodies.angular_velocities[dense] = {op.vector.x, op.vector.y, op.vector.z, 0.0F};
+        world->bodies.angular_velocities[dense] = {op.vector.GetX(), op.vector.GetY(), op.vector.GetZ(), 0.0F};
         break;
     case PhysicsBodyOperationType::SetUserData:
         world->bodies.user_data[dense] = op.user_data;
         break;
     case PhysicsBodyOperationType::SetTransform: {
-        const PosStride position = {op.position.x, op.position.y, op.position.z, 0.0};
-        const AuxStride rotation = {op.rotation.x, op.rotation.y, op.rotation.z,
-                                        op.rotation.w};
+        const PosStride position = {op.position.GetX(), op.position.GetY(), op.position.GetZ(), 0.0};
+        const AuxStride rotation = {op.rotation.GetX(), op.rotation.GetY(), op.rotation.GetZ(),
+                                        op.rotation.GetW()};
         world->bodies.positions[dense]      = position;
         world->bodies.prev_positions[dense] = position;
         world->bodies.rotations[dense]      = rotation;
@@ -133,13 +133,13 @@ void execute_now(PhysicsWorld *world, const JPH::BodyID &id,
     // PhysicsWorld.cpp:637) -- so go to the same one rather than the NoLock
     // variant. These run outside a step, under the shadow lock only.
     JPH::BodyInterface &bi = world->physics_system.GetBodyInterface();
-    const JPH::Vec3 vector = ToJolt(op.vector);
+    const JPH::Vec3 &vector = op.vector;
     switch (op.type) {
     case PhysicsBodyOperationType::ApplyImpulse:
         bi.AddImpulse(id, vector);
         break;
     case PhysicsBodyOperationType::ApplyImpulseAt: {
-        const JPH::RVec3 position = ToJolt(op.position);
+        const JPH::RVec3 &position = op.position;
         bi.AddImpulse(id, vector, position);
         break;
     }

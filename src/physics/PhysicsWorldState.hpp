@@ -231,7 +231,7 @@ struct PhysicsWorld {
     [[nodiscard]] std::expected<BodyHandle, Error>
     CreateSoftBody(const PhysicsWorldSoftBodyCreateRequest &request);
     [[nodiscard]] std::expected<RagdollInstance, Error>
-    CreateRagdollInstance(JPH::RagdollSettings *settings, JPH_RVec3 position, JPH_Quat rotation,
+    CreateRagdollInstance(JPH::RagdollSettings *settings, JPH::RVec3 position, JPH::Quat rotation,
                             std::uint64_t user_data);
     // `body_slots` must have room for the ragdoll's body count.
     // Returns the world body count after registration.
@@ -249,11 +249,11 @@ struct PhysicsWorld {
     // `vertices` is flat XYZ triples, `indices` flat triangle triples.
     [[nodiscard]] std::expected<BodyHandle, Error>
     CreateMeshBody(std::span<const float> vertices, std::span<const std::uint32_t> indices,
-                   JPH_RVec3 position, JPH_Quat rotation, std::uint32_t category,
+                   JPH::RVec3 position, JPH::Quat rotation, std::uint32_t category,
                    std::uint32_t mask, std::uint64_t user_data);
     [[nodiscard]] std::expected<BodyHandle, Error>
-    CreateHeightfieldBody(std::span<const float> heights, std::size_t grid_size, JPH_Vec3 scale,
-                          JPH_RVec3 position, JPH_Quat rotation, float friction, float restitution,
+    CreateHeightfieldBody(std::span<const float> heights, std::size_t grid_size, JPH::Vec3 scale,
+                          JPH::RVec3 position, JPH::Quat rotation, float friction, float restitution,
                           std::uint32_t category, std::uint32_t mask, std::uint32_t material_id,
                           std::uint64_t user_data);
 
@@ -282,7 +282,7 @@ struct PhysicsWorld {
     [[nodiscard]] std::expected<std::uint32_t, Error> GetSoftBodyVertexCount(BodyHandle handle);
     [[nodiscard]] std::expected<SoftBodyVertexPosition, Error>
     GetSoftBodyVertexPosition(BodyHandle handle, std::uint32_t vertex_index);
-    [[nodiscard]] std::expected<Buffer<JPH_Vec3>, Error>
+    [[nodiscard]] std::expected<Buffer<Vec3f>, Error>
     GetSoftBodyLocalVertices(BodyHandle handle);
     // Returns whether the body is submerged; a stale handle reports
     // "not submerged" rather than an error (legacy behavior).

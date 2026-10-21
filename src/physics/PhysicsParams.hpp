@@ -68,8 +68,8 @@ struct PhysicsWorldBodyCreateRequest {
     // (mesh/heightfield paths).
     int shape_type          = 0;
     float shape_params[4]   = {};
-    JPH_RVec3 position      = {};
-    JPH_Quat rotation       = {0.0f, 0.0f, 0.0f, 1.0f};
+    JPH::RVec3 position     = JPH::RVec3::sZero();
+    JPH::Quat rotation      = JPH::Quat::sIdentity();
     BodyConfig config;
     uint32_t category       = kAllLayerBits;
     uint32_t mask           = kAllLayerBits;
@@ -80,8 +80,8 @@ struct PhysicsWorldBodyCreateRequest {
 struct PhysicsWorldCompoundPart {
     int shape_type          = 0;
     float shape_params[4]   = {};
-    JPH_Vec3 local_position = {};
-    JPH_Quat local_rotation = {0.0f, 0.0f, 0.0f, 1.0f};
+    JPH::Vec3 local_position = JPH::Vec3::sZero();
+    JPH::Quat local_rotation = JPH::Quat::sIdentity();
 };
 
 struct PhysicsWorldSoftBodyCreateRequest {
@@ -89,8 +89,8 @@ struct PhysicsWorldSoftBodyCreateRequest {
     // why the old code needed a reinterpret_cast here.
     const JPH::SoftBodySharedSettings *shared_settings = nullptr;
     uint32_t vertex_count                       = 0;
-    JPH_RVec3 position                          = {};
-    JPH_Quat rotation                           = {0.0f, 0.0f, 0.0f, 1.0f};
+    JPH::RVec3 position                         = JPH::RVec3::sZero();
+    JPH::Quat rotation                          = JPH::Quat::sIdentity();
     uint64_t user_data                          = 0;
     uint32_t category                           = kAllLayerBits;
     uint32_t mask                               = kAllLayerBits;
@@ -146,9 +146,9 @@ enum class PhysicsBodyOperationType : std::uint8_t {
 struct PhysicsBodyOperation {
     PhysicsBodyOperationType type;
     BodyHandle handle;
-    JPH_RVec3 position;
-    JPH_Vec3 vector;
-    JPH_Quat rotation;
+    JPH::RVec3 position;
+    JPH::Vec3 vector;
+    JPH::Quat rotation;
     std::uint64_t user_data;
     int value;
 };
@@ -164,7 +164,7 @@ struct PhysicsBodyStats {
 // One soft-body vertex read: the position, plus the body's vertex count
 // so callers can range-check without a second call.
 struct SoftBodyVertexPosition {
-    JPH_Vec3 position;
+    JPH::Vec3 position;
     std::uint32_t vertex_count;
 };
 

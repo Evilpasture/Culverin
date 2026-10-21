@@ -123,8 +123,8 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
                             required_size, joint_count, view.len);
     }
 
-    // JPH_Mat4 and JPH::Mat44 are both 4 column-major Vec4 (64 bytes), so the
-    // caller's float32 buffer is read exactly as before.
+    // The caller's float32 buffer is 4 column-major Vec4 per joint (64 bytes),
+    // which is exactly JPH::Mat44's layout, so it is read in place.
     JPH::Mat44 *matrices           = static_cast<JPH::Mat44 *>(view.buf);
     const JPH::RVec3 root_position = JPH::RVec3(root_p.x, root_p.y, root_p.z);
 

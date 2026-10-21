@@ -14,18 +14,11 @@ namespace CPH {
 // cMaxBodyIndex); there is no C-binding equivalent to mirror, so the C
 // interface must not re-declare them.
 
-// JoltC's value types are NOT layout-compatible with Jolt's: JPH_Vec3 is 12
-// bytes against JPH::Vec3's 16, and JPH_RVec3 is 24 against JPH::RVec3's 32.
-// Convert field by field; a reinterpret_cast would read past the end.
-[[nodiscard]] inline JPH::Vec3 ToJolt(const JPH_Vec3 &v) noexcept {
-    return JPH::Vec3(v.x, v.y, v.z);
-}
-[[nodiscard]] inline JPH::RVec3 ToJolt(const JPH_RVec3 &v) noexcept {
-    return JPH::RVec3(v.x, v.y, v.z);
-}
-[[nodiscard]] inline JPH::Quat ToJolt(const JPH_Quat &q) noexcept {
-    return JPH::Quat(q.x, q.y, q.z, q.w);
-}
+// The JoltC value types (JPH_Vec3/JPH_RVec3/JPH_Quat) are gone from the C++
+// paths: every payload is a native JPH::Vec3/JPH::RVec3/JPH::Quat now, so the
+// field-by-field ToJolt() shim that bridged the two had no callers left. They
+// were never layout-compatible (12 bytes vs 16, 24 vs 32), which is exactly why
+// the bridge had to copy component-wise rather than reinterpret_cast.
 [[nodiscard]] inline JPH::BodyID ToJoltBodyId(std::uint32_t packed) noexcept {
     return JPH::BodyID(packed);
 }

@@ -45,20 +45,20 @@ struct CreateSoftBody {
 };
 struct DestroyBody {};
 struct SetPosition {
-    JPH_RVec3 position;
+    JPH::RVec3 position;
 };
 struct SetRotation {
-    JPH_Quat rotation;
+    JPH::Quat rotation;
 };
 struct SetTransform {
-    JPH_RVec3 position;
-    JPH_Quat rotation;
+    JPH::RVec3 position;
+    JPH::Quat rotation;
 };
 struct SetLinearVelocity {
-    JPH_Vec3 velocity;
+    JPH::Vec3 velocity;
 };
 struct SetAngularVelocity {
-    JPH_Vec3 velocity;
+    JPH::Vec3 velocity;
 };
 struct SetMotionType {
     std::int32_t motion_type;
@@ -69,20 +69,20 @@ struct SetCcd {
     std::int32_t enabled;
 };
 struct ApplyImpulse {
-    JPH_Vec3 impulse;
+    JPH::Vec3 impulse;
 };
 struct ApplyForce {
-    JPH_Vec3 force;
+    JPH::Vec3 force;
 };
 struct ApplyTorque {
-    JPH_Vec3 torque;
+    JPH::Vec3 torque;
 };
 struct ApplyAngularImpulse {
-    JPH_Vec3 impulse;
+    JPH::Vec3 impulse;
 };
 struct ApplyImpulseAt {
-    JPH_Vec3 impulse;
-    JPH_RVec3 position;
+    JPH::Vec3 impulse;
+    JPH::RVec3 position;
 };
 struct CreateConstraint {
     std::uint32_t body2_slot;

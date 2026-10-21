@@ -29,8 +29,14 @@ soft-body read path sat on is gone too: `lock_soft_body_for_read` became
 `WithSoftBodyRead`, a scoped callback, because `JPH::BodyLockRead` is
 neither movable nor default-constructible and so cannot be returned the
 way JoltC's placement-new'd byte-blob could be. That also removed the six
-hand-written `UnlockRead` calls. What remains on the C side is
-`VerifyAbiAlignment` and the C value types. With ships done,
+hand-written `UnlockRead` calls. The C value types are gone too: every
+command payload, body-creation request and body operation now holds a
+native `JPH::Vec3`/`JPH::RVec3`/`JPH::Quat`, the `ToJolt` shim that
+bridged the two had no callers left and is deleted, and the soft-body
+local-vertex buffer moved to `CPH::Vec3f` -- the project's own tight
+12-byte triple -- because that buffer is copied straight into a Python
+`bytes` object and `JPH::Vec3` is 16 bytes with padding. **What remains
+on the C side is `VerifyAbiAlignment` alone.** With ships done,
 all eight global proc tables are gone.
 Prerequisite: the C++23 migration
 (`docs/CPP23_MIGRATION.md`) has landed. All acceptance oracles from that
@@ -426,9 +432,11 @@ Two equivalences were checked against joltc's source rather than assumed:
 `JPH_Vec3`/`JPH_RVec3` are **not** layout-compatible with
 `JPH::Vec3`/`JPH::RVec3` (12 vs 16 and 24 vs 32 bytes), so
 `PhysicsRagdollPartRequest` converts at construction instead of casting.
-`CreateRagdollInstance` keeps its `JPH_RVec3`/`JPH_Quat` parameters —
-those are shared value types on the body-creation path and belong to a
-different slice — and converts at the boundary.
+`CreateRagdollInstance` kept its `JPH_RVec3`/`JPH_Quat` parameters at
+this point — those are shared value types on the body-creation path and
+belonged to a different slice — and converted at the boundary. That
+later slice has landed: the parameters are native now and the boundary
+conversion is gone.
 
 `JPH_BodyID` survives in `CopyRagdollDebugInfo` because `body_interface`
 is still a `JPH_BodyInterface *`; `GetBodyID(i).GetIndexAndSequenceNumber()`
@@ -505,6 +513,11 @@ was mixed before and is consistent now.
 against `JPH::RVec3`'s 32, so a `reinterpret_cast` would read past the
 end of the source object. The remaining call sites in the next slice
 should use these rather than open-coding the field copies.
+
+_Superseded_: the value-type slice converted the payloads themselves, so
+all three `ToJolt` value overloads lost their callers and are deleted.
+`ToJoltBodyId` remains but is likewise caller-free now that the shadow
+buffer stores `JPH::BodyID` directly.
 
 One pre-existing smell found and **preserved**, marked `TODO(smell)`:
 `CommandBuffer`'s `SetMotionType` handler derives the object layer from

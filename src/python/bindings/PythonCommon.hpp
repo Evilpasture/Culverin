@@ -206,8 +206,8 @@ struct MaterialSettings {
 };
 
 struct CompoundPart {
-    JPH_Vec3 local_position;
-    JPH_Quat local_rotation;
+    JPH::Vec3 local_position;
+    JPH::Quat local_rotation;
     float params[4];
     int type;
 };

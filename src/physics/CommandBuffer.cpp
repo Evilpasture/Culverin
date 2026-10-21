@@ -174,25 +174,25 @@ struct FlushContext {
 
     void operator()(SetPosition &cmd) const {
         const bool active = bi.IsActive(bid);
-        bi.SetPosition(bid, ToJolt(cmd.position),
+        bi.SetPosition(bid, cmd.position,
                        active ? JPH::EActivation::DontActivate : JPH::EActivation::Activate);
     }
 
     void operator()(SetRotation &cmd) const {
-        bi.SetRotation(bid, ToJolt(cmd.rotation), JPH::EActivation::Activate);
+        bi.SetRotation(bid, cmd.rotation, JPH::EActivation::Activate);
     }
 
     void operator()(SetTransform &cmd) const {
-        bi.SetPositionAndRotation(bid, ToJolt(cmd.position), ToJolt(cmd.rotation),
+        bi.SetPositionAndRotation(bid, cmd.position, cmd.rotation,
                                   JPH::EActivation::Activate);
     }
 
     void operator()(SetLinearVelocity &cmd) const {
-        bi.SetLinearVelocity(bid, ToJolt(cmd.velocity));
+        bi.SetLinearVelocity(bid, cmd.velocity);
     }
 
     void operator()(SetAngularVelocity &cmd) const {
-        bi.SetAngularVelocity(bid, ToJolt(cmd.velocity));
+        bi.SetAngularVelocity(bid, cmd.velocity);
     }
 
     void operator()(SetMotionType &cmd) const {
@@ -218,27 +218,27 @@ struct FlushContext {
     }
 
     void operator()(ApplyImpulse &cmd) const {
-        bi.AddImpulse(bid, ToJolt(cmd.impulse));
+        bi.AddImpulse(bid, cmd.impulse);
         bi.ActivateBody(bid);
     }
 
     void operator()(ApplyForce &cmd) const {
-        bi.AddForce(bid, ToJolt(cmd.force));
+        bi.AddForce(bid, cmd.force);
         bi.ActivateBody(bid);
     }
 
     void operator()(ApplyTorque &cmd) const {
-        bi.AddTorque(bid, ToJolt(cmd.torque));
+        bi.AddTorque(bid, cmd.torque);
         bi.ActivateBody(bid);
     }
 
     void operator()(ApplyAngularImpulse &cmd) const {
-        bi.AddAngularImpulse(bid, ToJolt(cmd.impulse));
+        bi.AddAngularImpulse(bid, cmd.impulse);
         bi.ActivateBody(bid);
     }
 
     void operator()(ApplyImpulseAt &cmd) const {
-        bi.AddImpulse(bid, ToJolt(cmd.impulse), ToJolt(cmd.position));
+        bi.AddImpulse(bid, cmd.impulse, cmd.position);
         bi.ActivateBody(bid);
     }
 

@@ -953,24 +953,24 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
 
         buffer[i] = PhysicsWorldCompoundPart{.shape_type = static_cast<int>(type)};
         if (PyTuple_Check(part_position) && PyTuple_GET_SIZE(part_position) == 3) {
-            buffer[i].local_position.x =
-                static_cast<float>(PyFloat_AsDouble(PyTuple_GET_ITEM(part_position, 0)));
-            buffer[i].local_position.y =
-                static_cast<float>(PyFloat_AsDouble(PyTuple_GET_ITEM(part_position, 1)));
-            buffer[i].local_position.z =
-                static_cast<float>(PyFloat_AsDouble(PyTuple_GET_ITEM(part_position, 2)));
+            buffer[i].local_position.SetX(
+                static_cast<float>(PyFloat_AsDouble(PyTuple_GET_ITEM(part_position, 0))));
+            buffer[i].local_position.SetY(
+                static_cast<float>(PyFloat_AsDouble(PyTuple_GET_ITEM(part_position, 1))));
+            buffer[i].local_position.SetZ(
+                static_cast<float>(PyFloat_AsDouble(PyTuple_GET_ITEM(part_position, 2))));
         }
         if (PyTuple_Check(part_rotation) && PyTuple_GET_SIZE(part_rotation) == 4) {
-            buffer[i].local_rotation.x =
-                static_cast<float>(PyFloat_AsDouble(PyTuple_GET_ITEM(part_rotation, 0)));
-            buffer[i].local_rotation.y =
-                static_cast<float>(PyFloat_AsDouble(PyTuple_GET_ITEM(part_rotation, 1)));
-            buffer[i].local_rotation.z =
-                static_cast<float>(PyFloat_AsDouble(PyTuple_GET_ITEM(part_rotation, 2)));
-            buffer[i].local_rotation.w =
-                static_cast<float>(PyFloat_AsDouble(PyTuple_GET_ITEM(part_rotation, 3)));
+            buffer[i].local_rotation.SetX(
+                static_cast<float>(PyFloat_AsDouble(PyTuple_GET_ITEM(part_rotation, 0))));
+            buffer[i].local_rotation.SetY(
+                static_cast<float>(PyFloat_AsDouble(PyTuple_GET_ITEM(part_rotation, 1))));
+            buffer[i].local_rotation.SetZ(
+                static_cast<float>(PyFloat_AsDouble(PyTuple_GET_ITEM(part_rotation, 2))));
+            buffer[i].local_rotation.SetW(
+                static_cast<float>(PyFloat_AsDouble(PyTuple_GET_ITEM(part_rotation, 3))));
         } else {
-            buffer[i].local_rotation.w = 1.0f;
+            buffer[i].local_rotation.SetW(1.0f);
         }
         if (PyTuple_Check(part_size)) {
             const Py_ssize_t size_count = PyTuple_GET_SIZE(part_size);
@@ -1365,7 +1365,7 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
     std::expected<BodyHandle, Error> status;
     Py_BEGIN_ALLOW_THREADS status = self->physics.CreateMeshBody(
         {static_cast<const float *>(v_view.buf), vertex_count * 3},
-        {index_data, triangle_count * 3}, JPH_RVec3{px, py, pz}, JPH_Quat{rx, ry, rz, rw}, cat,
+        {index_data, triangle_count * 3}, JPH::RVec3(px, py, pz), JPH::Quat(rx, ry, rz, rw), cat,
         mask, user_data);
     Py_END_ALLOW_THREADS
 
@@ -2024,8 +2024,8 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
     Py_BEGIN_ALLOW_THREADS status = self->physics.CreateHeightfieldBody(
         {static_cast<const float *>(h_view.buf),
          static_cast<size_t>(grid_size) * static_cast<size_t>(grid_size)},
-        static_cast<size_t>(grid_size), JPH_Vec3{sx, sy, sz}, JPH_RVec3{px, py, pz},
-        JPH_Quat{rx, ry, rz, rw}, friction, restitution, category, mask, material_id, user_data);
+        static_cast<size_t>(grid_size), JPH::Vec3(sx, sy, sz), JPH::RVec3(px, py, pz),
+        JPH::Quat(rx, ry, rz, rw), friction, restitution, category, mask, material_id, user_data);
     Py_END_ALLOW_THREADS PyBuffer_Release(&h_view);
 
     if (!status) {
@@ -2242,8 +2242,8 @@ WorldGetSoftBodyVertexPosition(PhysicsWorldObject *self, PyObject *const *args,
     if (!status) {
         return runtime_status_error(status.error(), nullptr);
     }
-    const JPH_Vec3 &position = status->position;
-    return BuildTuple(position.x, position.y, position.z);
+    const JPH::Vec3 &position = status->position;
+    return BuildTuple(position.GetX(), position.GetY(), position.GetZ());
 }
 
 [[nodiscard]] PyObject *
@@ -2258,20 +2258,20 @@ WorldGetSoftBodyLocalVertices(PhysicsWorldObject *self, PyObject *const *args,
         return nullptr;
     }
 
-    std::expected<Buffer<JPH_Vec3>, Error> status;
+    std::expected<Buffer<Vec3f>, Error> status;
     Py_BEGIN_ALLOW_THREADS status = self->physics.GetSoftBodyLocalVertices(handle);
     Py_END_ALLOW_THREADS if (!status) {
         return runtime_status_error(status.error(), nullptr);
     }
-    const Buffer<JPH_Vec3> &positions = *status;
-    if (positions.size() > static_cast<size_t>(PY_SSIZE_T_MAX) / sizeof(JPH_Vec3)) {
+    const Buffer<Vec3f> &positions = *status;
+    if (positions.size() > static_cast<size_t>(PY_SSIZE_T_MAX) / sizeof(Vec3f)) {
         PyErr_SetString(PyExc_OverflowError, "Soft body vertex data is too large");
         return nullptr;
     }
 
     return PyBytes_FromStringAndSize(
         reinterpret_cast<const char *>(positions.data()),
-        static_cast<Py_ssize_t>(positions.size() * sizeof(JPH_Vec3)));
+        static_cast<Py_ssize_t>(positions.size() * sizeof(Vec3f)));
 }
 
 
@@ -2485,8 +2485,8 @@ WorldGetSoftBodyLocalVertices(PhysicsWorldObject *self, PyObject *const *args,
 
     // --- 2. Native Jolt creation and pose setup ---
     std::expected<RagdollInstance, Error> creation_status;
-    JPH_RVec3 initial_position{pos.x, pos.y, pos.z};
-    JPH_Quat initial_rotation{rot.x, rot.y, rot.z, rot.w};
+    JPH::RVec3 initial_position(pos.x, pos.y, pos.z);
+    JPH::Quat initial_rotation(rot.x, rot.y, rot.z, rot.w);
     Py_BEGIN_ALLOW_THREADS creation_status = self->physics.CreateRagdollInstance(
         py_settings->settings, initial_position, initial_rotation, user_data);
     Py_END_ALLOW_THREADS if (!creation_status) {
