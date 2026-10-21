@@ -24,8 +24,13 @@ mismatch, and rewriting it natively would make it unable to fail. It goes
 when JoltC goes.** The shadow buffer's element type is now `JPH::BodyID`
 rather than a raw uint32, so the pack/unpack round-trips, the
 `ActivateBodies` reinterpret_cast and `FlushContext::BodyId()` are all
-gone. What remains on the C side is the `JPH_BodyLockInterface_*` /
-`JPH_Body_*` surface used by the soft-body read path. With ships done,
+gone. The `JPH_BodyLockInterface_*` / `JPH_Body_*` surface that the
+soft-body read path sat on is gone too: `lock_soft_body_for_read` became
+`WithSoftBodyRead`, a scoped callback, because `JPH::BodyLockRead` is
+neither movable nor default-constructible and so cannot be returned the
+way JoltC's placement-new'd byte-blob could be. That also removed the six
+hand-written `UnlockRead` calls. What remains on the C side is
+`VerifyAbiAlignment` and the C value types. With ships done,
 all eight global proc tables are gone.
 Prerequisite: the C++23 migration
 (`docs/CPP23_MIGRATION.md`) has landed. All acceptance oracles from that

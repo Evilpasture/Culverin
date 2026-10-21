@@ -5,8 +5,12 @@
 #include "physics/ContactEventDefinitions.hpp"
 #include "physics/Query.hpp"
 #include "physics/SlotState.hpp"
+#include <Jolt/Physics/Body/BodyLock.h>
+#include <Jolt/Physics/SoftBody/SoftBodyMotionProperties.h>
+#include <Jolt/Physics/SoftBody/SoftBodyVertex.h>
 #include <cstring>
 #include <limits>
+#include <type_traits>
 
 
 namespace CPH {
@@ -286,97 +290,117 @@ std::expected<PhysicsBodyStats, Error> PhysicsWorld::GetBodyStats(BodyHandle han
                             .linear_velocity = (bodies.linear_velocities.data())[dense]};
 }
 
-struct SoftBodyReadLock {
-    JPH_BodyLockRead lock;
-    const JPH_BodyLockInterface *lock_interface;
-    std::uint32_t vertex_count;
-};
-
-static std::expected<SoftBodyReadLock, Error>
-lock_soft_body_for_read(PhysicsWorld &world, BodyHandle handle) {
+// Runs `fn(body, vertex_count)` while holding a Jolt read lock on a soft
+// body, then releases it and returns fn's result.
+//
+// JPH::BodyLockRead is NonCopyable with a user-declared destructor, so it is
+// neither movable nor default-constructible (verified with
+// is_move_constructible / is_default_constructible). It therefore cannot be
+// returned out of a helper the way JoltC's JPH_BodyLockRead byte-blob could
+// be -- JoltC placement-news the native object into caller-owned storage
+// precisely to get around this. The lock has to be scoped, so the work that
+// needs it is passed in as a callback. A side benefit: the six hand-written
+// JPH_BodyLockInterface_UnlockRead calls, each an opportunity to leak the
+// lock from a newly added early return, are gone.
+//
+// The shadow lock is deliberately released before the body lock is taken,
+// matching the previous two-step behaviour where lock_soft_body_for_read
+// returned (dropping the shadow lock) and only the body lock stayed held.
+template <class Fn>
+static auto WithSoftBodyRead(PhysicsWorld &world, BodyHandle handle, Fn &&fn)
+    -> std::invoke_result_t<Fn, const JPH::Body &, std::uint32_t> {
     if (!world.jolt_initialized) {
         return std::unexpected(WorldRuntimeError::InvalidArgument);
     }
 
-    auto shadow = world.LockShadowNotStepping();
-    const std::optional<std::uint32_t> resolved = world.UnpackHandle(handle);
-    if (!resolved) {
-        return std::unexpected(WorldRuntimeError::StaleHandle);
+    JPH::BodyID body_id;
+    {
+        auto shadow = world.LockShadowNotStepping();
+        const std::optional<std::uint32_t> resolved = world.UnpackHandle(handle);
+        if (!resolved) {
+            return std::unexpected(WorldRuntimeError::StaleHandle);
+        }
+        const std::uint32_t slot = *resolved;
+        const uint8_t state =
+            (world.bodies.slot_states[slot]).load(std::memory_order::acquire);
+        if (!get_slot_predicate(state, kMaskImmStrict).is_immediate) {
+            return std::unexpected(WorldRuntimeError::StaleHandle);
+        }
+        const uint32_t dense = world.bodies.slot_to_dense[slot];
+        body_id              = world.bodies.body_ids[dense];
     }
-    const std::uint32_t slot = *resolved;
-    const uint8_t state = (world.bodies.slot_states[slot]).load(std::memory_order::acquire);
-    if (!get_slot_predicate(state, kMaskImmStrict).is_immediate) {
-        return std::unexpected(WorldRuntimeError::StaleHandle);
-    }
-    const uint32_t dense     = world.bodies.slot_to_dense[slot];
-    const JPH::BodyID body_id = world.bodies.body_ids[dense];
 
-    SoftBodyReadLock result;
-    // TODO(A4): this whole block is still on JoltC's JPH_BodyLockInterface /
-    // JPH_Body surface (a separate C layer from JPH_BodyInterface), so it takes
-    // the packed uint32 rather than the JPH::BodyID. Convert when that layer
-    // goes native.
-    result.lock_interface = reinterpret_cast<const JPH_BodyLockInterface *>(
-        &world.physics_system.GetBodyLockInterface());
-    JPH_BodyLockInterface_LockRead(result.lock_interface, body_id.GetIndexAndSequenceNumber(),
-                                   &result.lock);
-    if (!result.lock.body) {
+    const JPH::BodyLockRead lock(world.physics_system.GetBodyLockInterface(), body_id);
+    if (!lock.Succeeded()) {
         return std::unexpected(WorldRuntimeError::StaleHandle);
     }
-    if (!JPH_Body_IsSoftBody(result.lock.body)) {
-        JPH_BodyLockInterface_UnlockRead(result.lock_interface, &result.lock);
+    const JPH::Body &body = lock.GetBody();
+    if (!body.IsSoftBody()) {
         return std::unexpected(WorldRuntimeError::WrongBodyType);
     }
-    result.vertex_count = JPH_Body_GetSoftBodyVertexCount(result.lock.body);
-    return result;
+    const auto *mp =
+        static_cast<const JPH::SoftBodyMotionProperties *>(body.GetMotionProperties());
+    const std::uint32_t vertex_count = static_cast<std::uint32_t>(mp->GetVertices().size());
+    return std::forward<Fn>(fn)(body, vertex_count);
 }
 
 std::expected<std::uint32_t, Error>
 PhysicsWorld::GetSoftBodyVertexCount(BodyHandle handle) {
-    std::expected<SoftBodyReadLock, Error> locked = lock_soft_body_for_read(*this, handle);
-    if (!locked) {
-        return std::unexpected(locked.error());
-    }
-    const std::uint32_t count = locked->vertex_count;
-    JPH_BodyLockInterface_UnlockRead(locked->lock_interface, &locked->lock);
-    return count;
+    return WithSoftBodyRead(*this, handle,
+                            [](const JPH::Body &, std::uint32_t vertex_count)
+                                -> std::expected<std::uint32_t, Error> { return vertex_count; });
 }
 
 std::expected<SoftBodyVertexPosition, Error>
 PhysicsWorld::GetSoftBodyVertexPosition(BodyHandle handle, uint32_t vertex_index) {
-    std::expected<SoftBodyReadLock, Error> locked = lock_soft_body_for_read(*this, handle);
-    if (!locked) {
-        return std::unexpected(locked.error());
-    }
-    if (vertex_index >= locked->vertex_count) {
-        JPH_BodyLockInterface_UnlockRead(locked->lock_interface, &locked->lock);
-        return std::unexpected(WorldRuntimeError::OutOfRange);
-    }
-    SoftBodyVertexPosition result{.position = {}, .vertex_count = locked->vertex_count};
-    JPH_Body_GetSoftBodyVertexPosition(locked->lock.body, vertex_index, &result.position);
-    JPH_BodyLockInterface_UnlockRead(locked->lock_interface, &locked->lock);
-    return result;
+    return WithSoftBodyRead(
+        *this, handle,
+        [vertex_index](const JPH::Body &body,
+                       std::uint32_t vertex_count) -> std::expected<SoftBodyVertexPosition, Error> {
+            if (vertex_index >= vertex_count) {
+                return std::unexpected(WorldRuntimeError::OutOfRange);
+            }
+            SoftBodyVertexPosition result{.position = {}, .vertex_count = vertex_count};
+            const auto *mp =
+                static_cast<const JPH::SoftBodyMotionProperties *>(body.GetMotionProperties());
+            // Matches JoltC's JPH_Body_GetSoftBodyVertexPosition: the local
+            // vertex position transformed by the centre-of-mass transform,
+            // then narrowed to float for the JPH_Vec3 payload.
+            const JPH::RVec3 world_pos =
+                body.GetCenterOfMassTransform() * mp->GetVertices()[vertex_index].mPosition;
+            result.position.x = static_cast<float>(world_pos.GetX());
+            result.position.y = static_cast<float>(world_pos.GetY());
+            result.position.z = static_cast<float>(world_pos.GetZ());
+            return result;
+        });
 }
 
 std::expected<Buffer<JPH_Vec3>, Error>
 PhysicsWorld::GetSoftBodyLocalVertices(BodyHandle handle) {
-    Buffer<JPH_Vec3> out_positions;
-    std::expected<SoftBodyReadLock, Error> locked = lock_soft_body_for_read(*this, handle);
-    if (!locked) {
-        return std::unexpected(locked.error());
-    }
-    const std::uint32_t count = locked->vertex_count;
-    if (count != 0 && !out_positions.allocate(count)) {
-        JPH_BodyLockInterface_UnlockRead(locked->lock_interface, &locked->lock);
-        return std::unexpected(WorldRuntimeError::OutOfMemory);
-    }
-    // The body is read-locked, so the count Jolt reports here is the count
-    // lock_soft_body_for_read just validated; the buffer is exact-size.
-    std::uint32_t result_count = 0;
-    JPH_Body_GetSoftBodyVertexPositions(locked->lock.body, out_positions.data(), count,
-                                        &result_count);
-    JPH_BodyLockInterface_UnlockRead(locked->lock_interface, &locked->lock);
-    return out_positions;
+    return WithSoftBodyRead(
+        *this, handle,
+        [](const JPH::Body &body,
+           std::uint32_t vertex_count) -> std::expected<Buffer<JPH_Vec3>, Error> {
+            Buffer<JPH_Vec3> out_positions;
+            if (vertex_count != 0 && !out_positions.allocate(vertex_count)) {
+                return std::unexpected(WorldRuntimeError::OutOfMemory);
+            }
+            const auto *mp =
+                static_cast<const JPH::SoftBodyMotionProperties *>(body.GetMotionProperties());
+            const JPH::Array<JPH::SoftBodyVertex> &vertices = mp->GetVertices();
+            // The body is read-locked, so this is the count the lock helper
+            // just validated and the buffer is exact-size: JoltC's capacity
+            // clamp can never bite here. Its outCount reported the true count
+            // but the caller never read it, so there is nothing to reproduce.
+            const JPH::RMat44 com_transform = body.GetCenterOfMassTransform();
+            for (std::uint32_t i = 0; i < vertex_count; ++i) {
+                const JPH::RVec3 world_pos = com_transform * vertices[i].mPosition;
+                out_positions[i].x         = static_cast<float>(world_pos.GetX());
+                out_positions[i].y         = static_cast<float>(world_pos.GetY());
+                out_positions[i].z         = static_cast<float>(world_pos.GetZ());
+            }
+            return out_positions;
+        });
 }
 
 std::expected<bool, Error>
