@@ -5,9 +5,8 @@ add_library(
         ShipBinding.hpp
         ShipParsers.hpp
         TrackedVehicle.cpp
-        TrackedVehicle.hpp
         Vehicle.cpp
-        Vehicle.hpp
+        VehicleBinding.hpp
         VehicleParsers.hpp
 )
 culverin_configure_python_target(culverin_python_vehicles)

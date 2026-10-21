@@ -1,343 +1,197 @@
-#include "vehicles/TrackedVehicle.hpp"
-#include "bindings/PythonCommon.hpp"
+// Python adapter for tracked vehicles.
+//
+// The wheel and track settings become plain config structs here; the tank's
+// kickstart-and-neutral transmission logic lives in src/vehicles/Vehicle.cpp.
+
+#include "vehicles/VehicleBinding.hpp"
 #include "bindings/ModuleState.hpp"
+#include "bindings/PythonCommon.hpp"
 #include "bindings/PythonSupport.hpp"
 #include "bindings/parsing/Parsers.hpp"
-#include "core/Compiler.hpp"
 #include "physics/PhysicsSync.hpp"
-#include <Jolt/Physics/Body/Body.h>
-#include <Jolt/Physics/Body/BodyInterface.h>
-#include <Jolt/Physics/Body/BodyLock.h>
-#include <Jolt/Physics/Vehicle/TrackedVehicleController.h>
-#include <Jolt/Physics/Vehicle/VehicleCollisionTester.h>
-#include <Jolt/Physics/Vehicle/VehicleTrack.h>
-#include <math.h>
+#include <cstring>
+#include <mutex>
 
 namespace CPH::Python {
 
-// --- Tracked Vehicle Constants ---
+namespace {
 
-// Wheel configuration defaults
-static constexpr float kTrackedWheelRadiusDefault     = 0.4f;
-static constexpr float kTrackedWheelWidthDefault      = 0.2f;
-static constexpr float kTrackedWheelSuspensionDefault = 0.5f;
+// Every failure on the tracked path has always surfaced as this one message,
+// including malformed wheel dictionaries: create_track_wheel raised its parse
+// error, the caller's `python_fail` label overwrote it, and the last write wins.
+PyObject *RaiseTrackedCreationFailed() {
+    return PyErr_Format(PyExc_RuntimeError, "Tracked vehicle creation failed");
+}
 
-// Suspension parameters
-static constexpr float kTrackedSuspensionMinLength = 0.05f;
-
-// Spring properties
-static constexpr float kTrackedSpringFreqDefault = 2.0f;
-static constexpr float kTrackedSpringDampDefault = 0.5f;
-
-// Transmission gear ratios
-static constexpr float kTrackedGearRatio1       = 2.0f;
-static constexpr float kTrackedGearRatio2       = 1.4f;
-static constexpr float kTrackedGearRatio3       = 1.0f;
-static constexpr float kTrackedGearRatio4       = 0.7f;
-static constexpr float kTrackedReverseGearRatio = -1.5f;
-
-// Engine parameters (RPM and torque)
-static constexpr float kTrackedEngineMaxRpmDefault    = 6000.0f;
-static constexpr float kTrackedEngineMinRpmDefault    = 500.0f;
-static constexpr float kTrackedEngineMaxTorqueDefault = 5000.0f;
-
-// Collision tester parameters
-static constexpr float kTrackedCollisionTesterScale = 2.0f;
-
-// Throttle activation threshold
-static constexpr float kTrackedThrottleKickstartThreshold = 0.01f;
-
-// --- Tracked Vehicle Implementation ---
-
-static JPH::Ref<JPH::WheelSettingsTV> CreateTrackWheel(PyObject *w_dict) {
-    JPH::Float3 pos;
-    if (ParseResult parsed = ParseVec3Into(PyDict_GetItemString(w_dict, "pos"), pos);
+bool ParseTrackWheelConfig(PyObject *dict, CPH::TrackWheelConfig &out) {
+    PosStride position{};
+    if (ParseResult parsed = ParseVec3Into(PyDict_GetItemString(dict, "pos"), position);
         !parsed) {
-        RaiseParseError(parsed.error());
-        return nullptr;
+        return false;
     }
 
-    float radius = CPH::Python::GetAttribute(w_dict, "radius", kTrackedWheelRadiusDefault);
-    float width  = CPH::Python::GetAttribute(w_dict, "width", kTrackedWheelWidthDefault);
-    float suspension_len =
-        CPH::Python::GetAttribute(w_dict, "suspension", kTrackedWheelSuspensionDefault);
-    float friction = CPH::Python::GetAttribute(w_dict, "friction", 1.0f);
+    out.x = static_cast<float>(position.x);
+    out.y = static_cast<float>(position.y);
+    out.z = static_cast<float>(position.z);
 
-    // Suspension Spring Properties
-    float freq = CPH::Python::GetAttribute(w_dict, "spring_freq", kTrackedSpringFreqDefault);
-    float damp = CPH::Python::GetAttribute(w_dict, "spring_damp", kTrackedSpringDampDefault);
-
-    JPH::Ref<JPH::WheelSettingsTV> w = new JPH::WheelSettingsTV;
-
-    w->mPosition            = JPH::Vec3(pos.x, pos.y, pos.z);
-    w->mRadius              = radius;
-    w->mWidth               = width;
-    w->mSuspensionMinLength = kTrackedSuspensionMinLength;
-    w->mSuspensionMaxLength = suspension_len;
-    w->mSuspensionSpring =
-        JPH::SpringSettings(JPH::ESpringMode::FrequencyAndDamping, freq, damp);
-
-    w->mLongitudinalFriction = friction;
-    w->mLateralFriction      = friction;
-
-    return w;
+    out.radius      = GetAttribute(dict, "radius", out.radius);
+    out.width       = GetAttribute(dict, "width", out.width);
+    out.suspension  = GetAttribute(dict, "suspension", out.suspension);
+    out.friction    = GetAttribute(dict, "friction", out.friction);
+    out.spring_freq = GetAttribute(dict, "spring_freq", out.spring_freq);
+    out.spring_damp = GetAttribute(dict, "spring_damp", out.spring_damp);
+    return true;
 }
 
-// Helper 1: Setup Engine, Transmission, and Controller settings
-static JPH::Ref<JPH::TrackedVehicleControllerSettings>
-InitTrackedControllerSettings(TrackedEngineConfig config) {
+// Converts the parsed track table into the native config and frees the index
+// buffers the parser allocated.
+bool ParseTracks(PyObject *py_tracks, std::vector<CPH::TrackConfig> &out) {
+    TrackData tracks[2];
+    std::memset(tracks, 0, sizeof(tracks));
 
-    JPH::Ref<JPH::TrackedVehicleControllerSettings> t_ctrl =
-        new JPH::TrackedVehicleControllerSettings;
+    const std::expected<ParsedTracks, ParseError> parsed_tracks =
+        ParseTracksToC(py_tracks, tracks);
 
-    t_ctrl->mEngine.mMaxTorque = config.torque;
-    t_ctrl->mEngine.mMaxRPM    = config.max_rpm;
-    t_ctrl->mEngine.mMinRPM    = config.min_rpm;
+    if (!parsed_tracks) {
+        for (TrackData &track : tracks) {
+            if (track.indices != nullptr) {
+                Deallocate(track.indices);
+                track.indices = nullptr;
+            }
+        }
+        return false;
+    }
 
-    // VehicleTransmissionSettings is a member of the controller settings, so this
-    // is written straight through -- unlike the wheeled path, a tracked vehicle's
-    // transmission really does reach the controller.
-    t_ctrl->mTransmission.mMode = JPH::ETransmissionMode::Auto;
+    out.clear();
+    out.reserve(static_cast<std::size_t>(parsed_tracks->count));
+    for (int t = 0; t < parsed_tracks->count; t++) {
+        CPH::TrackConfig track;
+        track.wheels.reserve(tracks[t].count);
+        for (std::uint32_t k = 0; k < tracks[t].count; k++) {
+            track.wheels.push_back(static_cast<int>(tracks[t].indices[k]));
+        }
+        track.driven_wheel = static_cast<int>(tracks[t].driven_idx);
+        out.push_back(std::move(track));
 
-    const float gears[] = {kTrackedGearRatio1, kTrackedGearRatio2, kTrackedGearRatio3,
-                           kTrackedGearRatio4};
-    t_ctrl->mTransmission.mGearRatios.assign(gears, gears + 4);
-    const float reverse[] = {kTrackedReverseGearRatio};
-    t_ctrl->mTransmission.mReverseGearRatios.assign(reverse, reverse + 1);
-
-    return t_ctrl;
+        Deallocate(tracks[t].indices);
+        tracks[t].indices = nullptr;
+    }
+    return true;
 }
-int InitVehicleParsers(VehicleObject *obj);
 
-// Orchestrator
-[[nodiscard]] PyObject * WorldCreateTrackedVehicle(PhysicsWorldObject *self,
-                                                                     PyObject *const *args,
-                                                                     size_t nargsf,
-                                                                     PyObject *kwnames) {
+} // namespace
+
+[[nodiscard]] PyObject *WorldCreateTrackedVehicle(PhysicsWorldObject *self,
+                                                  PyObject *const *args, size_t nargsf,
+                                                  PyObject *kwnames) {
     const Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
-    ModuleState *st    = GetModuleState(PyType_GetModule(Py_TYPE(self)));
-    // --- 1. FAST ARGUMENT PARSING ---
-    uint64_t chassis_h_raw = 0;
-    PyObject *py_wheels    = nullptr;
-    PyObject *py_tracks    = nullptr;
-    float max_torque       = kTrackedEngineMaxTorqueDefault;
-    float max_rpm          = kTrackedEngineMaxRpmDefault;
-    float min_rpm          = kTrackedEngineMinRpmDefault;
 
-    const ParseResult parsed =
-        self->parsers->CreateTracked.Parse(args, nargs, kwnames, chassis_h_raw, py_wheels,
-                                            py_tracks, max_torque, max_rpm);
+    uint64_t  chassis_raw = 0;
+    PyObject *py_wheels   = nullptr;
+    PyObject *py_tracks   = nullptr;
+    // The parser only writes these when the keyword is supplied, so the
+    // defaults have to be here; 5000 Nm / 6000 rpm are what a tracked vehicle
+    // has always been built with.
+    float     max_torque  = 5000.0f;
+    float     max_rpm     = 6000.0f;
+
+    const ParseResult parsed = self->parsers->CreateTracked.Parse(
+        args, nargs, kwnames, chassis_raw, py_wheels, py_tracks, max_torque, max_rpm);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
     }
 
-    // --- 2. RESOLVE CHASSIS (ATOMIC REFACTOR) ---
-    (self->physics.shadow_lock).lock();
-
-    // Ensure all pending creation commands are flushed before we try to link a constraint
-    SyncAndFlushInternal(self);
-
-    // TSan Fix: Cast raw uint64 to atomic BodyHandle for verification
-    const std::optional<std::uint32_t> resolved =
-        self->physics.Resolve(static_cast<BodyHandle>(chassis_h_raw));
-    const uint32_t slot        = resolved.value_or(0);
-    const bool handle_valid    = resolved.has_value();
-
-    // TSan Fix: Atomic load of the slot state (Acquire ensures chassis data is visible)
-    uint8_t state =
-        static_cast<int>(handle_valid)
-            ? (self->physics.bodies.slot_states[slot]).load(std::memory_order::acquire)
-            : std::to_underlying(SlotState::Empty);
-
-    if (!handle_valid || state != std::to_underlying(SlotState::Alive)) {
-        (self->physics.shadow_lock).unlock();
-        return PyErr_Format(PyExc_ValueError, "Invalid chassis handle (Body is dead or pending)");
+    if (!PyList_Check(py_wheels)) {
+        return RaiseTrackedCreationFailed();
     }
 
-    // Access non-atomic dense buffer while holding shadow_lock
-    JPH::BodyID chassis_bid = self->physics.bodies.body_ids[self->physics.bodies.slot_to_dense[slot]];
-    (self->physics.shadow_lock).unlock();
+    CPH::TrackedVehicleConfig config;
+    config.engine.max_torque = max_torque;
+    config.engine.max_rpm    = max_rpm;
+    // min_rpm is not part of the tracked signature, and a tracked engine idles
+    // lower than a car's: 500 rpm, not EngineConfig's 1000 rpm default.
+    config.engine.min_rpm    = 500.0f;
 
-    // --- 3. PRE-JOLT RESOURCE ALLOCATION ---
-    // All RefCounted, and declared before any goto: crossing the initialization
-    // of a Ref<> on a forward jump is ill-formed.
-    auto num_wheels = static_cast<uint32_t>(PyList_Size(py_wheels));
-    TrackData tracks[2];
-    memset(tracks, 0, sizeof(tracks));
-    int num_tracks       = 0;
-    PyThreadState *_save = nullptr;
-    TrackedEngineConfig eng_cfg{};
-    JPH::Ref<JPH::TrackedVehicleControllerSettings> t_ctrl;
-    JPH::VehicleConstraintSettings v_set;
-    JPH::Ref<JPH::VehicleConstraint> j_veh;
-    JPH::Ref<JPH::VehicleCollisionTester> tester;
-    VehicleObject *obj = nullptr;
-
-    // WheelSettingsTV carries friction as a plain float, so there is no
-    // LinearCurve to build here.
-    v_set.mWheels.reserve(num_wheels);
-    for (uint32_t i = 0; i < num_wheels; i++) {
-        JPH::Ref<JPH::WheelSettingsTV> wheel = CreateTrackWheel(PyList_GetItem(py_wheels, i));
-        if (!wheel) {
-            goto python_fail;
+    const Py_ssize_t wheel_count = PyList_Size(py_wheels);
+    config.wheels.resize(static_cast<std::size_t>(wheel_count));
+    for (Py_ssize_t i = 0; i < wheel_count; i++) {
+        if (!ParseTrackWheelConfig(PyList_GetItem(py_wheels, i),
+                                   config.wheels[static_cast<std::size_t>(i)])) {
+            return RaiseTrackedCreationFailed();
         }
-        v_set.mWheels.push_back(wheel.GetPtr());
     }
 
+    if (!ParseTracks(py_tracks, config.tracks)) {
+        return RaiseTrackedCreationFailed();
+    }
+
+    // Pending body-creation commands have to run before the chassis handle can
+    // resolve to a live body.
     {
-        const std::expected<ParsedTracks, ParseError> parsed_tracks =
-            ParseTracksToC(py_tracks, tracks);
-        if (!parsed_tracks) {
-            RaiseParseError(parsed_tracks.error());
-            goto python_fail;
+        const std::scoped_lock lock(self->physics.shadow_lock);
+        SyncAndFlushInternal(self);
+    }
+
+    std::expected<std::unique_ptr<CPH::Vehicle>, CPH::Error> created =
+        std::unexpected(CPH::Error{CPH::VehicleError::TrackedCreationFailed});
+    Py_BEGIN_ALLOW_THREADS
+    created = CPH::Vehicle::CreateTracked(self->physics, BodyHandle(chassis_raw), config);
+    Py_END_ALLOW_THREADS
+
+    if (!created) {
+        if (created.error().Code().Is(CPH::VehicleError::InvalidChassis)) {
+            return PyErr_Format(PyExc_ValueError,
+                                "Invalid chassis handle (Body is dead or pending)");
         }
-        num_tracks = parsed_tracks->count;
+        return RaiseTrackedCreationFailed();
     }
 
-    // --- 4. JOLT COMMIT (No GIL) ---
-    Py_UNBLOCK_THREADS;
-
-    (self->physics.jph_trampoline_lock).lock();
-    {
-        const JPH::BodyLockInterface &lock_iface =
-            self->physics.physics_system.GetBodyLockInterface();
-        const JPH::BodyLockWrite lock(lock_iface, chassis_bid);
-
-        if (!lock.Succeeded()) [[unlikely]] {
-            (self->physics.jph_trampoline_lock).unlock();
-            Py_BLOCK_THREADS;
-            goto python_fail;
-        }
-
-        eng_cfg = {.torque = max_torque, .max_rpm = max_rpm, .min_rpm = min_rpm};
-        t_ctrl  = InitTrackedControllerSettings(eng_cfg);
-
-        // VehicleTrackSettings::mWheels is an Array, so the parsed index buffers
-        // are copied in and the temporaries can go straight back.
-        for (int t = 0; t < num_tracks; t++) {
-            JPH::VehicleTrackSettings &track_set = t_ctrl->mTracks[static_cast<size_t>(t)];
-            track_set.mWheels.assign(tracks[t].indices, tracks[t].indices + tracks[t].count);
-            track_set.mDrivenWheel = tracks[t].driven_idx;
-        }
-
-        v_set.mController = t_ctrl;
-        j_veh             = new JPH::VehicleConstraint(lock.GetBody(), v_set);
-
-        tester = new JPH::VehicleCollisionTesterRay(
-            kTrackedLayerDrivable, JPH::Vec3(0, 1.0f, 0), kTrackedCollisionTesterScale);
-
-        j_veh->SetVehicleCollisionTester(tester);
-        self->physics.physics_system.AddConstraint(j_veh);
-        // VehicleConstraint derives from PhysicsStepListener, so no
-        // AsPhysicsStepListener() trampoline is needed.
-        self->physics.physics_system.AddStepListener(j_veh);
+    ModuleState *state = GetModuleState(PyType_GetModule(Py_TYPE(self)));
+    auto         *obj =
+        PyObject_GC_New(VehicleObject, reinterpret_cast<PyTypeObject *>(state->VehicleType));
+    if (obj == nullptr) {
+        return nullptr;
     }
-    (self->physics.jph_trampoline_lock).unlock();
-    Py_BLOCK_THREADS;
+    // GC_New leaves the storage uninitialised, and the failure path below
+    // decrefs the object, so every field is set before anything can fail.
+    obj->world   = nullptr;
+    obj->vehicle = nullptr;
+    obj->parsers = nullptr;
 
-    // --- 5. CLEANUP & WRAP ---
-    for (int t = 0; t < num_tracks; t++) {
-        Deallocate(tracks[t].indices);
-    }
-    num_tracks = 0;
-
-    obj = PyObject_GC_New(VehicleObject, reinterpret_cast<PyTypeObject *>(st->VehicleType));
-    if (!obj) {
-        goto jolt_created_fail;
+    obj->parsers = CPH::Python::NewParserGroup<CPH::Python::VehicleParsers>();
+    if (obj->parsers == nullptr) {
+        Py_DECREF(reinterpret_cast<PyObject *>(obj));
+        return PyErr_NoMemory();
     }
 
-    if (InitVehicleParsers(obj) < 0) {
-        Py_DECREF(obj);
-        goto jolt_created_fail;
-    }
-
-    obj->vehicle    = j_veh.GetPtr();
-    obj->tester     = tester.GetPtr();
-    obj->world      = reinterpret_cast<PhysicsWorldObject *>(Py_NewRef(self));
-    obj->num_wheels = num_wheels;
-
-    // Hand the creation references over to the wrapper; it releases them.
-    j_veh  = nullptr;
-    tester = nullptr;
+    obj->vehicle = created->release();
+    obj->world   = reinterpret_cast<PhysicsWorldObject *>(Py_NewRef(self));
 
     PyObject_GC_Track(reinterpret_cast<PyObject *>(obj));
     return reinterpret_cast<PyObject *>(obj);
-
-jolt_created_fail:
-    (self->physics.shadow_lock).lock();
-    self->physics.physics_system.RemoveStepListener(j_veh);
-    self->physics.physics_system.RemoveConstraint(j_veh);
-    (self->physics.shadow_lock).unlock();
-
-python_fail:
-    for (int t = 0; t < num_tracks; t++) {
-        Deallocate(tracks[t].indices);
-    }
-    return PyErr_Format(PyExc_RuntimeError, "Tracked vehicle creation failed");
 }
 
-// Helper: Set Tank Input
-[[nodiscard]] PyObject * VehicleSetTankInput(VehicleObject *self,
-                                                               PyObject *const *args, size_t nargsf,
-                                                               PyObject *kwnames) {
+// --- Controls ----------------------------------------------------------------
+
+[[nodiscard]] PyObject *VehicleSetTankInput(VehicleObject *self, PyObject *const *args,
+                                            size_t nargsf, PyObject *kwnames) {
     const Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
-    // 1. FAST PARSE (Zero-Allocation)
+
     float left  = 0.0f;
     float right = 0.0f;
     float brake = 0.0f;
 
-    const ParseResult parsed =
-        self->parsers->TankInput.Parse(args, nargs, kwnames, left, right, brake);
+    const ParseResult parsed = self->parsers->TankInput.Parse(args, nargs, kwnames, left, right,
+                                                              brake);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
     }
 
-    // Safety check outside lock
-    if (!self->vehicle || !self->world) [[unlikely]] {
-        Py_RETURN_NONE;
+    if (self->vehicle != nullptr) {
+        self->vehicle->SetTankInput(left, right, brake);
     }
-
-    // 2. STATE SNAPSHOT & JOLT ACTIVATION
-    (self->world->physics.shadow_lock).lock();
-    BlockUntilNotStepping(self->world);
-
-    auto *t_ctrl = static_cast<JPH::TrackedVehicleController *>(self->vehicle->GetController());
-    const JPH::BodyID bid = self->vehicle->GetVehicleBody()->GetID();
-
-    // Wake up the tank to process inputs
-    self->world->physics.physics_system.GetBodyInterface().ActivateBody(bid);
-
-    // GetController() has a non-const overload, so no const_cast is needed.
-    JPH::VehicleTransmission &trans = t_ctrl->GetTransmission();
-    const int gear                  = trans.GetCurrentGear();
-
-    // 3. TANK DRIVE LOGIC
-    // Throttle for a tracked vehicle is typically the max absolute power requested from either side
-    float throttle = fmaxf(fabsf(left), fabsf(right));
-
-    // Simple Kickstart Logic: Auto-shift from Neutral to Gear 1 when throttle is applied
-    if (throttle > kTrackedThrottleKickstartThreshold) {
-        if (gear == 0) {
-            trans.Set(1, 1.0f);
-        }
-    } else {
-        // Force Neutral when no input is detected to prevent "crawling"
-        if (gear != 0) {
-            trans.Set(0, 0.0f);
-        }
-    }
-
-    // 4. Final Application
-    // TODO(smell): TrackedVehicleController::SetDriverInput asserts
-    // inLeftRatio != 0 && inRightRatio != 0, but set_tank_input(0, 0, 0) is a
-    // perfectly reasonable Python call and reaches this line. Release builds
-    // compile the assert out, so it has never fired; preserved as-is rather than
-    // silently clamping.
-    t_ctrl->SetDriverInput(throttle, left, right, brake);
-
-    (self->world->physics.shadow_lock).unlock();
     Py_RETURN_NONE;
 }
 

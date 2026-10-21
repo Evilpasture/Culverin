@@ -801,11 +801,50 @@ Status of the migration:
   and clobbered a neighbouring slot. And the four write-only `prev_*` fields on
   `CharacterObject` were dead, so they are gone.
 
-* **Vehicles — not migrated.** `python/vehicles/Vehicle.cpp` and
-  `TrackedVehicle.cpp` still build wheeled/tracked vehicle controllers and read
-  `JPH::WheeledVehicleController` state directly. They implement no Jolt
-  listener, so this is a smaller violation than the character listener was, but
-  it is still physics inside the adapter.
+* **Vehicles — migrated.** `CPH::Vehicle` (src/vehicles/Vehicle.hpp/.cpp) owns
+  the `JPH::VehicleConstraint`, so the constraint is both the vehicle and its
+  own step listener. Configuration is plain structs -- `WheelConfig`,
+  `EngineConfig`, `TransmissionConfig`, `WheeledVehicleConfig`, and the tracked
+  `TrackWheelConfig`/`TrackConfig`/`TrackedVehicleConfig` pair -- and the two
+  factories (`CreateWheeled`, `CreateTracked`) build the Jolt settings, take the
+  chassis body lock under the trampoline lock, register the constraint and
+  attach the ray collision tester. The arcade transmission state machine moved
+  with it: gear engagement, the rolling-resistance brake while coasting, the
+  "still rolling the wrong way, brake first" override, and the tank's
+  kickstart-out-of-neutral are `Vehicle::SetInput`/`SetTankInput`, as are the
+  wheel-world/local transforms and the drivetrain debug dump. The layer keeps
+  the split the two paths always had -- a wheeled vehicle drops input that
+  arrives mid-step, a tank waits for the step to finish -- because that
+  difference is observable in the replays.
+  `python/vehicles/Vehicle.cpp` and `TrackedVehicle.cpp` now only parse wheel,
+  engine and transmission dictionaries into those structs, call the factory and
+  pack the result; `python/vehicles/Vehicle.hpp` became `VehicleBinding.hpp`
+  and `TrackedVehicle.hpp` (four constants and an engine struct with no
+  readers) is gone.
+
+  Four defects were fixed in the port, all disclosed: the wrapper's
+  `tester` ownership was dead -- `VehicleConstraint` keeps its own
+  `RefConst<VehicleCollisionTester>`, so the creation reference is simply
+  released when the factory returns -- and the field is gone; the
+  `PyObject_GC_New` storage is now initialised before anything can fail, so the
+  parser-group failure path no longer decrefs an object full of indeterminate
+  pointers; `destroy()` no longer deletes the parser group that `tp_dealloc`
+  deletes again, which was a double free for any caller that destroyed a
+  vehicle and then let it be collected; and teardown removes the constraint and
+  its listener under `jph_trampoline_lock` (after parking on the shadow lock,
+  never holding both in the inverted order) instead of mutating the physics
+  system after the lock was already released.
+
+  Preserved and marked with `TODO`s: `create_vehicle(transmission=...)` still
+  never reaches the controller (the settings are built and then discarded, so
+  the wheeled path runs Jolt's defaults); `WorldCreateVehicle` still takes the
+  extra world reference; `set_tank_input(0, 0, 0)` still reaches Jolt's
+  `inLeftRatio != 0` assert; the tester's 2.0 is still a slope angle rather
+  than a scale; steering is still inferred from the sign of a wheel's local Z.
+  One ordering nuance: a malformed wheel dictionary is now rejected before the
+  chassis handle is resolved rather than after, so a call that gets both wrong
+  raises the wheel message. Every single-fault diagnostic is unchanged, byte
+  for byte.
 
 The `culverin_native_ecs`, `culverin_native_vehicles` and
 `culverin_native_characters` targets carry the migrated code behind

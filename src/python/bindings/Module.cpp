@@ -20,7 +20,7 @@
 #include "ragdolls/Ragdoll.hpp"
 #include "soft_bodies/SoftBody.hpp"
 #include "vehicles/ShipBinding.hpp"
-#include "vehicles/Vehicle.hpp"
+#include "vehicles/VehicleBinding.hpp"
 #include <Jolt/Core/Factory.h>
 #include <Jolt/Core/Memory.h>
 #include <Jolt/Physics/Body/AllowedDOFs.h>
