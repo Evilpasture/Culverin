@@ -740,6 +740,14 @@ path.
 
 Status of the migration:
 
+* **`-Winvalid-offsetof`.** `PhysicsWorld` published `__weaklistoffset__`
+  through `offsetof(PhysicsWorldObject, weakreflist)`, which is diagnosed by
+  Clang on a non-standard-layout type. The type now sets
+  `Py_TPFLAGS_MANAGED_WEAKREF` (Python >= 3.12, already the project floor)
+  alongside the `MANAGED_DICT` it already used, so CPython owns the weakref
+  list: the `weakreflist` member and the members table are gone, and the
+  dealloc clears weakrefs unconditionally.
+
 * **Profiling.** `CPH_PROFILE_BEGIN`/`CPH_PROFILE_END`/`CPH_PROFILE_ACCUMULATE`
   and the no-op `CPH_INIT_PROFILER` are gone, replaced by RAII
   `CPH::ProfileScope` and `CPH::ProfileAccumulator` (core/Profiling.hpp). A
@@ -772,19 +780,36 @@ Status of the migration:
   became `ShipBinding.hpp` so it cannot shadow `src/vehicles/Ship.hpp` on the
   include path.
 
-* **Characters — not yet migrated.** `python/characters/Character.cpp` still
-  defines `CharacterListener` (~530 lines: `OnAdjustBodyVelocity`,
-  `OnContactValidate`, `OnCharacterContactValidate`, `OnContactAdded/Removed`
-  and `ApplyCharacterImpulse`) against `CharacterObject`. This is the last
-  Jolt listener implementation left outside `src/`, and the last violation of
-  the invariant above; it needs a native `CPH::Character` owning a
-  `CharacterContactState` and a listener-owning wrapper before it can move.
-  The same applies to `python/vehicles/Vehicle.cpp` and `TrackedVehicle.cpp`,
-  which still construct vehicle controllers and read `JPH::WheeledVehicleController`
-  state directly.
+* **Characters — migrated.** `CPH::Character` (src/characters/Character.cpp)
+  owns the `JPH::CharacterVirtual`, its contact listener, and the atomics the
+  listener reads (own handle, push strength, last velocity). The listener moved
+  wholesale: `OnAdjustBodyVelocity` (friction-scaled platform-velocity
+  inheritance), `OnContactValidate`, `OnCharacterContactValidate`, the
+  Added/Persisted/Removed callbacks for bodies and for characters, and
+  `ApplyImpulse`. `CPH::Character::Move` runs the extended update, including
+  ground-velocity inheritance. `python/characters/Character.cpp` parses
+  arguments and builds return values; `python/characters/Character.hpp` became
+  `CharacterBinding.hpp` so it cannot shadow the native header.
 
-A new build target, `culverin_native_ecs`, and a new `culverin_native_vehicles`
-target carry the migrated code behind `culverin_core`.
+  There are now **no `JPH::*Listener` implementations under `python/`**.
+
+  Two defects were fixed in the port rather than carried over, both disclosed:
+  `CharacterSetRotation` indexed `bodies.rotations` as `dense * 4`, a leftover
+  from when that storage was a flat float array -- with `Buffer<AuxStride>`
+  (already four floats per element) the write landed at four times the intended
+  offset, so rotating any character but the first left its shadow rotation stale
+  and clobbered a neighbouring slot. And the four write-only `prev_*` fields on
+  `CharacterObject` were dead, so they are gone.
+
+* **Vehicles — not migrated.** `python/vehicles/Vehicle.cpp` and
+  `TrackedVehicle.cpp` still build wheeled/tracked vehicle controllers and read
+  `JPH::WheeledVehicleController` state directly. They implement no Jolt
+  listener, so this is a smaller violation than the character listener was, but
+  it is still physics inside the adapter.
+
+The `culverin_native_ecs`, `culverin_native_vehicles` and
+`culverin_native_characters` targets carry the migrated code behind
+`culverin_core`.
 
 ## Sequencing, gates, risks
 

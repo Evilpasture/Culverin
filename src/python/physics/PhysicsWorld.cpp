@@ -4,7 +4,7 @@
 #include "bindings/Getters.hpp"
 #include "bindings/ModuleState.hpp"
 #include "bindings/PythonSupport.hpp"
-#include "characters/Character.hpp" // IWYU pragma: keep
+#include "characters/CharacterBinding.hpp" // IWYU pragma: keep
 #include "core/Compiler.hpp"
 #include "core/Buffer.hpp"
 #include "math/MathCore.hpp"
@@ -82,9 +82,9 @@ static void WorldDealloc(PhysicsWorldObject *self) {
     }
 
     // 2. Weakref cleanup
-    if (self->weakreflist != nullptr) {
-        PyObject_ClearWeakRefs(reinterpret_cast<PyObject *>(self));
-    }
+    // With Py_TPFLAGS_MANAGED_WEAKREF there is no weakreflist field to test:
+    // CPython owns the list, and clearing is a no-op when nobody subscribed.
+    PyObject_ClearWeakRefs(reinterpret_cast<PyObject *>(self));
 
     // Clean up local parsers
     if (self->parsers != nullptr) {
@@ -2850,18 +2850,6 @@ static PyMethodDef kPhysicsWorldMethods[] = {
 
     {nullptr, nullptr, 0, nullptr}};
 
-// CPython retains these tables for the lifetime of the heap type. Keep their
-// storage static: GNU C++ compound literals here create temporaries, leaving
-// dangling PyType_Slot data and causing "invalid slot offset" during import.
-static PyMemberDef WorldMembers[] = {
-    {.name   = "__weaklistoffset__",
-     .type   = Py_T_PYSSIZET,
-     .offset = offsetof(PhysicsWorldObject, weakreflist),
-     .flags  = Py_READONLY,
-     .doc    = nullptr},
-    {},
-};
-
 static PyGetSetDef WorldGetSets[] = {
     CPH::Python::GetSet("positions", WorldGetPositions),
     CPH::Python::GetSet("rotations", WorldGetRotations),
@@ -2883,7 +2871,6 @@ static PyType_Slot WorldSlots[] = {
     {.slot = Py_tp_dealloc, .pfunc = reinterpret_cast<void *>(WorldDealloc)},
     {.slot = Py_tp_call, .pfunc = nullptr},
     {.slot = Py_tp_methods, .pfunc = reinterpret_cast<void *>(kPhysicsWorldMethods)},
-    {.slot = Py_tp_members, .pfunc = reinterpret_cast<void *>(WorldMembers)},
     {.slot = Py_tp_getset, .pfunc = reinterpret_cast<void *>(WorldGetSets)},
     {.slot = Py_bf_getbuffer, .pfunc = reinterpret_cast<void *>(WorldGetbuffer)},
     {.slot = Py_bf_releasebuffer, .pfunc = reinterpret_cast<void *>(WorldReleasebuffer)},
@@ -2895,8 +2882,12 @@ static PyType_Slot WorldSlots[] = {
 PyType_Spec WorldSpec = {
     .name      = "culverin._culverin_c.PhysicsWorld",
     .basicsize = sizeof(PhysicsWorldObject),
-    .flags =
-        Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC | Py_TPFLAGS_MANAGED_DICT,
+    // MANAGED_WEAKREF lets CPython own the weakref list, so the type needs no
+    // __weaklistoffset__ member -- and therefore no offsetof() over a
+    // non-standard-layout class, which is what -Winvalid-offsetof flagged.
+    // Requires Python >= 3.12, which pyproject.toml already pins.
+    .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC |
+             Py_TPFLAGS_MANAGED_DICT | Py_TPFLAGS_MANAGED_WEAKREF,
     .slots = WorldSlots,
 };
 

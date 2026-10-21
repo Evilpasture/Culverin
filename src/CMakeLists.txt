@@ -25,6 +25,7 @@ add_subdirectory(debug)
 add_subdirectory(physics)
 add_subdirectory(ecs)
 add_subdirectory(vehicles)
+add_subdirectory(characters)
 
 # Preserve one reusable Python-independent archive while keeping compilation
 # partitioned by domain. The Jolt RTTI anchor is extension-link glue, not core.
@@ -38,6 +39,7 @@ target_sources(
         $<TARGET_OBJECTS:culverin_native_physics>
         $<TARGET_OBJECTS:culverin_native_ecs>
         $<TARGET_OBJECTS:culverin_native_vehicles>
+        $<TARGET_OBJECTS:culverin_native_characters>
 )
 target_link_libraries(
     culverin_core

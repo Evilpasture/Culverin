@@ -7,7 +7,7 @@
 #include "bindings/ModuleState.hpp"
 #include "bindings/PythonSupport.hpp"
 #include "bindings/docstrings/Docstrings.hpp"
-#include "characters/Character.hpp"
+#include "characters/CharacterBinding.hpp"
 #include "core/Compiler.hpp"
 #include "core/Profiling.hpp"
 #include "core/Threading.hpp"

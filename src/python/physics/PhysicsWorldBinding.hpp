@@ -13,7 +13,10 @@ namespace CPH::Python {
 // --- CPython entry-point object ---
 // Python-only buffer-protocol metadata and parser state live outside PhysicsWorld.
 struct PhysicsWorldObject {
-    PyObject_HEAD PyObject *weakreflist;
+    // No weakreflist member: the type opts into Py_TPFLAGS_MANAGED_WEAKREF,
+    // so CPython stores the weakref list itself. That is what makes the type
+    // layout independent of offsetof -- see the flags in WorldSpec.
+    PyObject_HEAD
     PhysicsWorld physics;
     Py_ssize_t view_shape[2];
     Py_ssize_t view_strides[2];
