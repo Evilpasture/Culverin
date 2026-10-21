@@ -267,7 +267,7 @@ SyncShadowBuffers(const PhysicsWorld *const CPH_RESTRICT world) noexcept -> void
 
     [[maybe_unused]] static CPH::Stat sync_stats;
 
-    CPH_PROFILE_BEGIN(sync);
+    [[maybe_unused]] const CPH::ProfileAccumulator profile_pass(sync_stats);
 
     const CPH::WorldDataCreateInfo world_data = {
         .shadow_pos = std::assume_aligned<sizeof(PosStride)>(
@@ -304,7 +304,6 @@ SyncShadowBuffers(const PhysicsWorld *const CPH_RESTRICT world) noexcept -> void
         ExecuteSyncPass<JPH::EBodyType::SoftBody>(active_soft_count, system, mapping_data, world_data);
     }
 
-    CPH_PROFILE_ACCUMULATE(sync, &sync_stats);
 #ifdef CULVERIN_PROFILE_SYNC
     if (sync_stats.count >= 50) {
         fprintf(stderr, "[culverin] Sync Stat Avg: %" PRIu64 " ns | Max: %" PRIu64 " ns\n",

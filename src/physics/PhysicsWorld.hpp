@@ -23,7 +23,7 @@ void ApplyBodyCreationProps(JPH::BodyCreationSettings &settings, const JPH::Shap
 // mismatch; with JoltC gone both sides are the same headers, so what remains
 // is a runtime assertion that positions really round-trip at the configured
 // precision (i.e. that DOUBLE_PRECISION took effect). Returns 0 or -1.
-int VerifyAbiAlignment(JPH::BodyInterface &body_interface);
+bool PrimeBodyIdFreeList(JPH::BodyInterface &body_interface);
 
 
 } // namespace CPH

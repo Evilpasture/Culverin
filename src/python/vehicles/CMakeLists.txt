@@ -2,7 +2,7 @@ add_library(
     culverin_python_vehicles
     OBJECT
         Ship.cpp
-        Ship.hpp
+        ShipBinding.hpp
         ShipParsers.hpp
         TrackedVehicle.cpp
         TrackedVehicle.hpp

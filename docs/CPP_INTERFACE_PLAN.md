@@ -723,6 +723,69 @@ C++ tree references these names (one stale comment in
 `tools/gen_stubs.py`). Doing it before B1/A1 means every later phase
 writes new signatures in final form instead of churning twice.
 
+## B5 — the boundary invariant
+
+`python/` is an adapter, not an engine. Files under `python/` may only:
+
+1. parse Python arguments and dictionaries into native structs (`FastParser`);
+2. call a method on a native C++ object in `src/`;
+3. wrap native return values, spans and buffers into Python objects
+   (`FastBuild`, `BufferProxy`).
+
+Zero physics simulation, zero data-structure algorithms and zero Jolt
+listener implementations belong in `python/`. The point is that
+`culverin_core` is usable headless: every behaviour the Python module
+exposes must be reachable from C++ without `PyObject` anywhere in the call
+path.
+
+Status of the migration:
+
+* **Profiling.** `CPH_PROFILE_BEGIN`/`CPH_PROFILE_END`/`CPH_PROFILE_ACCUMULATE`
+  and the no-op `CPH_INIT_PROFILER` are gone, replaced by RAII
+  `CPH::ProfileScope` and `CPH::ProfileAccumulator` (core/Profiling.hpp). A
+  scope cannot be left open on an early return the way a paired macro could.
+
+* **Startup ABI probe renamed.** `VerifyAbiAlignment` is
+  `CPH::PrimeBodyIdFreeList`. The old name claimed a pure check; the function
+  is a primitive that also advances Jolt's BodyID free list, and the recorded
+  ragdoll/soft-body numerics depend on that side effect. It now returns bool
+  and its comment says which half is the check and which half is the prime.
+
+* **ECS — migrated.** `src/ecs/EcsTypes.hpp`, `SparseSet.hpp`, `Registry.hpp/.cpp`
+  hold the generational entity bookkeeping and the sparse-set component
+  stores. All manual allocate/reallocate/free is `CPH::Buffer`; every fallible
+  operation returns `std::expected<T, CPH::Error>` with an `EcsError` code, and
+  no `PyErr_SetString` remains in the data structure. `python/ecs/Ecs.cpp` is
+  a parse/call/wrap adapter. The one operation that needs both halves --
+  copying body transforms into components -- is `CPH::SyncEcsTransforms` in
+  `src/physics/EcsSync.cpp`, so `src/ecs/` stays free of Jolt.
+
+* **Constraints — migrated.** The sub-type dispatch (`Hinge` / `Slider`), the
+  motor-state machine and the two-body wake-up are `CPH::SetConstraintTarget`
+  in `src/physics/ConstraintOps.cpp`. `WorldSetConstraintTarget` parses two
+  arguments, calls it with the GIL released, and maps the failure.
+
+* **Ships — migrated.** `CPH::Ship` (src/vehicles/Ship.cpp) owns its
+  `JPH::PhysicsStepListener`, its input atomics and its sled resolution; the
+  flight model is `ShipConfig` plus the step body, unchanged bit for bit.
+  `python/vehicles/Ship.cpp` parses and forwards. `src/python/vehicles/Ship.hpp`
+  became `ShipBinding.hpp` so it cannot shadow `src/vehicles/Ship.hpp` on the
+  include path.
+
+* **Characters — not yet migrated.** `python/characters/Character.cpp` still
+  defines `CharacterListener` (~530 lines: `OnAdjustBodyVelocity`,
+  `OnContactValidate`, `OnCharacterContactValidate`, `OnContactAdded/Removed`
+  and `ApplyCharacterImpulse`) against `CharacterObject`. This is the last
+  Jolt listener implementation left outside `src/`, and the last violation of
+  the invariant above; it needs a native `CPH::Character` owning a
+  `CharacterContactState` and a listener-owning wrapper before it can move.
+  The same applies to `python/vehicles/Vehicle.cpp` and `TrackedVehicle.cpp`,
+  which still construct vehicle controllers and read `JPH::WheeledVehicleController`
+  state directly.
+
+A new build target, `culverin_native_ecs`, and a new `culverin_native_vehicles`
+target carry the migrated code behind `culverin_core`.
+
 ## Sequencing, gates, risks
 
 Order: **A0 → naming dissolution → B1 → A1 → A2 → B2(physics) → A3

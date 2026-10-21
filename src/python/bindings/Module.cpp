@@ -19,7 +19,7 @@
 #include "physics/PhysicsWorldBinding.hpp"
 #include "ragdolls/Ragdoll.hpp"
 #include "soft_bodies/SoftBody.hpp"
-#include "vehicles/Ship.hpp"
+#include "vehicles/ShipBinding.hpp"
 #include "vehicles/Vehicle.hpp"
 #include <Jolt/Core/Factory.h>
 #include <Jolt/Core/Memory.h>
@@ -569,7 +569,6 @@ extern PyModuleDef culverin_module;
     if (PyModule_AddStringConstant(m, "__version__", shared_version) < 0) {
         return -1;
     }
-    CPH_INIT_PROFILER();
 
     st->helper = PyImport_ImportModule("culverin._culverin");
     if (!st->helper) {

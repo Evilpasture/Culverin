@@ -31,7 +31,7 @@ static Py_ssize_t BufferProxy_length(BufferProxyObject *self) {
             ((reinterpret_cast<PhysicsWorldObject *>(self->owner))
                                            ->physics.view_export_count).fetch_sub(1, std::memory_order::relaxed);
         } else {
-            ((reinterpret_cast<RegistryObject *>(self->owner))->view_export_count).fetch_sub(1, std::memory_order::relaxed);
+            reinterpret_cast<RegistryObject *>(self->owner)->registry->OnViewReleased();
         }
         Py_CLEAR(self->owner);
     }
@@ -98,11 +98,10 @@ static void BufferProxy_dealloc(BufferProxyObject *self) {
 
     } else {
         /* --- CATEGORY: ECS Registry Buffers --- */
-        RegistryObject *reg = reinterpret_cast<RegistryObject *>(self->owner);
-
-        (reg->ecs_lock).lock();
-
-        // For ECS, the pointer was stored in dynamic_ptr during MakeEcsProxy
+        // For ECS, the pointer was stored in dynamic_ptr when the proxy was
+        // built. Nothing mutable is read here: the registry refuses to grow a
+        // component set while a view is exported, so the address and the shape
+        // stay valid for the proxy's whole life.
         target_ptr = self->dynamic_ptr;
 
         if (!target_ptr) {
@@ -112,10 +111,8 @@ static void BufferProxy_dealloc(BufferProxyObject *self) {
             target_ptr               = &empty_buffer;
         }
 
-        // ECS shape is pinned at creation because we block reallocs while views are held
-        // No need to update self->shape[0] here.
-
-        (reg->ecs_lock).unlock();
+        // ECS shape is pinned at creation because we block reallocs while views
+        // are held, so self->shape[0] needs no refresh here.
     }
 
     // --- Standard Buffer Protocol Population ---

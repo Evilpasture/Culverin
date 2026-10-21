@@ -6,7 +6,11 @@ add_library(
         ConstraintFactory.cpp
         ConstraintFactory.hpp
         ContactListener.cpp
+        ConstraintOps.cpp
+        ConstraintOps.hpp
         ContactListener.hpp
+        EcsSync.cpp
+        EcsSync.hpp
         ContactEventDefinitions.hpp
         InternalQuery.cpp
         InternalQuery.hpp

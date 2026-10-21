@@ -649,7 +649,9 @@ std::span<PhysicsCommand> PhysicsWorld::DetachCommands() {
 void PhysicsWorld::StepNative(float dt, std::span<PhysicsCommand> commands) {
     const std::scoped_lock trampoline(jph_trampoline_lock);
 
-    CPH_PROFILE_BEGIN(jolt_step);
+    // Reports "Jolt Physics Crunch" for the whole step on scope exit.
+    [[maybe_unused]] const CPH::ProfileScope profile(
+        "Jolt Physics Crunch", static_cast<unsigned int>(commands.size()));
 
     if (!commands.empty()) {
         FlushCommands(commands);
@@ -678,7 +680,6 @@ void PhysicsWorld::StepNative(float dt, std::span<PhysicsCommand> commands) {
 
     SyncShadowBuffers(this);
 
-    CPH_PROFILE_END(jolt_step, "Jolt Physics Crunch", static_cast<unsigned int>(commands.size()));
 }
 
 std::size_t PhysicsWorld::FinalizeStep(float dt) {
@@ -691,8 +692,10 @@ std::size_t PhysicsWorld::FinalizeStep(float dt) {
     return body_count;
 }
 
-// See the declaration in PhysicsWorld.hpp. Two things about this function are
-// load-bearing beyond the obvious check:
+// See the declaration in PhysicsWorld.hpp.
+//
+// Despite reading like an assertion, this is a PRIMING step whose side effect
+// the recorded numerics depend on:
 //
 //   1. It must run BEFORE the caller creates any body. Creating and destroying
 //      a body here advances Jolt's BodyID free-list and touches the broadphase,
@@ -701,12 +704,16 @@ std::size_t PhysicsWorld::FinalizeStep(float dt) {
 //      (~888 lines of ragdoll_probe.py output moved when it was dropped) even
 //      though nothing about the simulation logic changed. Keep the call, and
 //      keep it before the first user body.
-//   2. It was never a pure check: prefer to fix it rather than delete it.
-int VerifyAbiAlignment(JPH::BodyInterface &body_interface) {
+//   2. The bool it returns is real: the created body is read back and compared
+//      against the position it was created at, so a precision or layout
+//      mismatch at the RVec3 boundary fails world construction instead of
+//      showing up later as silently wrong physics. It is a check bolted onto a
+//      prime, not a pure check -- never "simplify" it to a static_assert.
+bool PrimeBodyIdFreeList(JPH::BodyInterface &body_interface) {
     const JPH::BoxShapeSettings box_settings(JPH::Vec3(1.0f, 1.0f, 1.0f), 0.0f);
     const auto shape_result = box_settings.Create();
     if (!shape_result.IsValid()) {
-        return -1;
+        return false;
     }
     const JPH::ShapeRefC shape = shape_result.Get();
 
@@ -716,7 +723,7 @@ int VerifyAbiAlignment(JPH::BodyInterface &body_interface) {
 
     const JPH::BodyID bid = body_interface.CreateAndAddBody(settings, JPH::EActivation::Activate);
     if (bid.IsInvalid()) {
-        return -1;
+        return false;
     }
 
     const JPH::RVec3 check = body_interface.GetPosition(bid);
@@ -725,9 +732,9 @@ int VerifyAbiAlignment(JPH::BodyInterface &body_interface) {
 
     if (std::fabs(check.GetX() - kVerifyAbiPosX) > kVerifyAbiTolerance ||
         std::fabs(check.GetY() - kVerifyAbiPosY) > kVerifyAbiTolerance) {
-        return -1;
+        return false;
     }
-    return 0;
+    return true;
 }
 
 } // namespace CPH

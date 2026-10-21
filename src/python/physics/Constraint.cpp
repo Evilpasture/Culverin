@@ -3,6 +3,7 @@
 #include "core/Buffer.hpp"
 #include "core/Types.hpp"
 #include "physics/ConstraintFactory.hpp"
+#include "physics/ConstraintOps.hpp"
 #include "physics/PhysicsSync.hpp"
 #include <Jolt/Physics/Body/Body.h>
 #include <Jolt/Physics/Constraints/HingeConstraint.h>
@@ -199,68 +200,29 @@ void ActivateBody(JPH::BodyInterface &bi, JPH::Body *body) {
                                                                     PyObject *const *args,
                                                                     size_t nargsf,
                                                                     PyObject *kwnames) {
-    // 1. FAST PARSE (Unchanged)
     uint64_t h_raw;
     float target;
 
-    auto nargs = PyVectorcall_NARGS(nargsf);
     const ParseResult parsed =
-        self->parsers->SetConstrTarget.Parse(args, nargs, kwnames, h_raw, target);
+        self->parsers->SetConstrTarget.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw,
+                                              target);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
     }
 
-    // 2. CRITICAL SECTION
-    (self->physics.shadow_lock).lock();
-    BlockUntilNotStepping(self);
+    // The sub-type dispatch, the motor state machine and the body wake-ups are
+    // all in CPH::SetConstraintTarget (src/physics/ConstraintOps.cpp); the GIL
+    // is dropped for the call because it parks while a step is in flight.
+    std::expected<void, CPH::Error> applied;
+    Py_BEGIN_ALLOW_THREADS
+    applied = CPH::SetConstraintTarget(self->physics, ConstraintHandle(h_raw), target);
+    Py_END_ALLOW_THREADS
 
-    const ConstraintHandle handle(h_raw);
-    uint32_t slot = handle.Index();
-    uint32_t gen  = handle.Generation();
-
-    if (slot >= self->physics.constraints.size() ||
-                     self->physics.constraints[slot].generation != gen ||
-                     self->physics.constraints[slot].state.load(std::memory_order::relaxed) !=
-                         std::to_underlying(SlotState::Alive)) [[unlikely]] {
-        (self->physics.shadow_lock).unlock();
+    if (!applied) {
         PyErr_SetString(PyExc_ValueError, "Invalid or stale constraint handle");
         return nullptr;
     }
-
-    JPH::Constraint *c                = self->physics.constraints[slot].constraint;
-    const JPH::EConstraintSubType sub = c->GetSubType();
-
-    // 3. JPH EXECUTION
-    if (sub == JPH::EConstraintSubType::Hinge) {
-        auto *hc = static_cast<JPH::HingeConstraint *>(c);
-        hc->SetMotorState(JPH::EMotorState::Position);
-        hc->SetTargetAngle(target);
-    } else if (sub == JPH::EConstraintSubType::Slider) {
-        auto *sc           = static_cast<JPH::SliderConstraint *>(c);
-        JPH::EMotorState state = sc->GetMotorState();
-
-        if (state == JPH::EMotorState::Off) {
-            state = JPH::EMotorState::Position;
-            sc->SetMotorState(state);
-        }
-
-        if (state == JPH::EMotorState::Velocity) {
-            sc->SetTargetVelocity(target);
-        } else {
-            sc->SetTargetPosition(target);
-        }
-    }
-
-    // 4. WAKE UP BODIES (Locked sequence)
-    if (c->GetType() == JPH::EConstraintType::TwoBodyConstraint) {
-        auto *tbc = static_cast<JPH::TwoBodyConstraint *>(c);
-        JPH::BodyInterface &bi = self->physics.physics_system.GetBodyInterface();
-        ActivateBody(bi, tbc->GetBody1());
-        ActivateBody(bi, tbc->GetBody2());
-    }
-
-    (self->physics.shadow_lock).unlock();
     Py_RETURN_NONE;
 }
 
