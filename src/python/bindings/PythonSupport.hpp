@@ -27,6 +27,13 @@ struct FastCallMethodTraits<PyObject *(*)(Self *, PyObject *const *, ArgCount, P
     static constexpr int flags     = METH_FASTCALL | METH_KEYWORDS;
 };
 
+// A thunk is the fixed METH_FASTCALL|METH_KEYWORDS shape, templated on its
+// self type so it can take the concrete binding object.
+template <typename Function> struct IsThunkFunction : std::false_type {};
+template <typename Self>
+struct IsThunkFunction<PyObject *(*)(Self *, PyObject *const *, size_t, PyObject *)>
+    : std::true_type {};
+
 template <typename Function> struct IsSimpleMethodFunction : std::false_type {};
 template <typename Self>
 struct IsSimpleMethodFunction<PyObject *(*)(Self *, PyObject *)> : std::true_type {};
@@ -138,6 +145,20 @@ template <typename Function>
     return {.ml_name  = name,
             .ml_meth  = _PyCFunction_CAST(function),
             .ml_flags = Traits::flags,
+            .ml_doc   = nullptr};
+}
+
+// A table entry built straight from a thunk instantiation. The signature is
+// the fixed METH_FASTCALL|METH_KEYWORDS one, so unlike FastCallMethod there is
+// nothing to deduce; the point is to let a family of adapters exist as one
+// template rather than one named function per method.
+template <auto ThunkFn>
+[[nodiscard]] constexpr PyMethodDef MakeThunkMethod(const char *name) noexcept {
+    static_assert(detail::IsThunkFunction<decltype(ThunkFn)>::value,
+                  "MakeThunkMethod requires a (self, args, nargsf, kwnames) thunk");
+    return {.ml_name  = name,
+            .ml_meth  = _PyCFunction_CAST(ThunkFn),
+            .ml_flags = METH_FASTCALL | METH_KEYWORDS,
             .ml_doc   = nullptr};
 }
 

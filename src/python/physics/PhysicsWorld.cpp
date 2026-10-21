@@ -4,6 +4,7 @@
 #include "bindings/Getters.hpp"
 #include "bindings/ModuleState.hpp"
 #include "bindings/PythonSupport.hpp"
+#include "bindings/parsing/Thunk.hpp"
 #include "characters/CharacterBinding.hpp" // IWYU pragma: keep
 #include "core/Compiler.hpp"
 #include "core/Buffer.hpp"
@@ -358,30 +359,35 @@ static PyObject *RuntimeStatusError(Error error, const char *pending_create_mess
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-[[nodiscard]] static PyObject * WorldApplyImpulse(PhysicsWorldObject *self,
-                                                   PyObject *const *args, size_t nargsf,
-                                                   PyObject *kwnames) {
-    uint64_t h_raw;
-    float x;
-    float y;
-    float z;
 
-    const ParseResult parsed =
-        self->parsers->Impulse.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, x, y, z);
-    if (!parsed) {
-        RaiseParseError(parsed.error());
-        return nullptr;
-    }
-    if (!ValidateFinite("Impulse", x, y, z)) {
-        return nullptr;
-    }
+// ============================================================================
+// Vector body-operation thunks
+// ============================================================================
+//
+// Six methods share one shape: parse (handle, x, y, z), reject a non-finite
+// scalar with the family's label, build the operation, run it. Only the
+// operation type, the parser and the label differ, so they are the template
+// arguments and the six bodies are gone. All four arguments are required, which
+// is what makes the thunk's value-initialised tuple safe here.
 
-    const PhysicsBodyOperation operation = {
-        .type   = PhysicsBodyOperationType::ApplyImpulse,
-        .handle = static_cast<BodyHandle>(h_raw),
-        .vector = {x, y, z},
-    };
-    return RunBodyOperation(self, &operation);
+template <PhysicsBodyOperationType OpType, auto ParserMember, FixedString Label>
+[[nodiscard]] PyObject *DispatchVectorOp(PhysicsWorldObject *self, PyObject *const *args,
+                                         size_t nargsf, PyObject *kwnames) {
+    return InvokeThunk<ParserMember>(
+        self, args, nargsf, kwnames,
+        [](PhysicsWorldObject *world, ParseBodyHandle h_raw, float x, float y, float z)
+            -> PyObject * {
+            if (!ValidateFinite(Label.c_str(), x, y, z)) {
+                return nullptr;
+            }
+
+            const PhysicsBodyOperation operation = {
+                .type   = OpType,
+                .handle = static_cast<BodyHandle>(h_raw),
+                .vector = {x, y, z},
+            };
+            return RunBodyOperation(world, &operation);
+        });
 }
 
 [[nodiscard]] static PyObject * WorldApplyImpulseAt(PhysicsWorldObject *self,
@@ -419,90 +425,8 @@ static PyObject *RuntimeStatusError(Error error, const char *pending_create_mess
     return RunBodyOperation(self, &operation);
 }
 
-[[nodiscard]] static PyObject * WorldApplyAngularImpulse(PhysicsWorldObject *self,
-                                                          PyObject *const *args, size_t nargsf,
-                                                          PyObject *kwnames) {
-    uint64_t h_raw;
-    float x;
-    float y;
-    float z;
 
-    const ParseResult parsed =
-        self->parsers->AngImpulse.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, x, y,
-                                         z);
-    if (!parsed) {
-        RaiseParseError(parsed.error());
-        return nullptr;
-    }
-    if (!ValidateFinite("Angular impulse", x, y, z)) {
-        return nullptr;
-    }
 
-    const PhysicsBodyOperation operation = {
-        .type   = PhysicsBodyOperationType::ApplyAngularImpulse,
-        .handle = static_cast<BodyHandle>(h_raw),
-        .vector = {x, y, z},
-    };
-    return RunBodyOperation(self, &operation);
-}
-
-[[nodiscard]] static PyObject * WorldApplyForce(PhysicsWorldObject *self,
-                                                 PyObject *const *args, size_t nargsf,
-                                                 PyObject *kwnames) {
-
-    // 1. FAST PARSE & VALIDATION
-    uint64_t h_raw;
-    float x;
-    float y;
-    float z;
-
-    const ParseResult parsed =
-        self->parsers->Force.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, x, y, z);
-    if (!parsed) {
-        RaiseParseError(parsed.error());
-        return nullptr;
-    }
-    if (!ValidateFinite("Force", x, y, z)) {
-        return nullptr;
-    }
-
-    // 2. ENGINE OPERATION
-    const PhysicsBodyOperation operation = {
-        .type   = PhysicsBodyOperationType::ApplyForce,
-        .handle = static_cast<BodyHandle>(h_raw),
-        .vector = {x, y, z},
-    };
-    return RunBodyOperation(self, &operation);
-}
-
-[[nodiscard]] static PyObject * WorldApplyTorque(PhysicsWorldObject *self,
-                                                  PyObject *const *args, size_t nargsf,
-                                                  PyObject *kwnames) {
-
-    // 1. FAST PARSE & VALIDATION
-    uint64_t h_raw;
-    float x;
-    float y;
-    float z;
-
-    const ParseResult parsed =
-        self->parsers->Torque.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, x, y, z);
-    if (!parsed) {
-        RaiseParseError(parsed.error());
-        return nullptr;
-    }
-    if (!ValidateFinite("Torque", x, y, z)) {
-        return nullptr;
-    }
-
-    // 2. ENGINE OPERATION
-    const PhysicsBodyOperation operation = {
-        .type   = PhysicsBodyOperationType::ApplyTorque,
-        .handle = static_cast<BodyHandle>(h_raw),
-        .vector = {x, y, z},
-    };
-    return RunBodyOperation(self, &operation);
-}
 
 [[nodiscard]] static PyObject * WorldSetGravity(PhysicsWorldObject *self,
                                                  PyObject *const *args, size_t nargsf,
@@ -1516,65 +1440,7 @@ static PhysicsWorldCompoundPart *ParseCompoundParts(PyObject *parts, size_t *out
     return RunBodyOperation(self, &operation);
 }
 
-[[nodiscard]] static PyObject * WorldSetLinearVelocity(PhysicsWorldObject *self,
-                                                        PyObject *const *args, size_t nargsf,
-                                                        PyObject *kwnames) {
 
-    // 1. FAST PARSE & VALIDATION
-    uint64_t h_raw;
-    float x;
-    float y;
-    float z;
-
-    const ParseResult parsed =
-        self->parsers->SetLinVel.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, x, y,
-                                        z);
-    if (!parsed) {
-        RaiseParseError(parsed.error());
-        return nullptr;
-    }
-    if (!ValidateFinite("LinearVelocity", x, y, z)) {
-        return nullptr;
-    }
-
-    // 2. ENGINE OPERATION
-    const PhysicsBodyOperation operation = {
-        .type   = PhysicsBodyOperationType::SetLinearVelocity,
-        .handle = static_cast<BodyHandle>(h_raw),
-        .vector = {x, y, z},
-    };
-    return RunBodyOperation(self, &operation);
-}
-
-[[nodiscard]] static PyObject * WorldSetAngularVelocity(PhysicsWorldObject *self,
-                                                         PyObject *const *args, size_t nargsf,
-                                                         PyObject *kwnames) {
-
-    // 1. FAST PARSE & VALIDATION
-    uint64_t h_raw;
-    float x;
-    float y;
-    float z;
-
-    const ParseResult parsed =
-        self->parsers->SetAngVel.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw, x, y,
-                                        z);
-    if (!parsed) {
-        RaiseParseError(parsed.error());
-        return nullptr;
-    }
-    if (!ValidateFinite("AngularVelocity", x, y, z)) {
-        return nullptr;
-    }
-
-    // 2. ENGINE OPERATION
-    const PhysicsBodyOperation operation = {
-        .type   = PhysicsBodyOperationType::SetAngularVelocity,
-        .handle = static_cast<BodyHandle>(h_raw),
-        .vector = {x, y, z},
-    };
-    return RunBodyOperation(self, &operation);
-}
 
 [[nodiscard]] static PyObject * WorldGetMotionType(PhysicsWorldObject *self,
                                                     PyObject *const *args, size_t nargsf,
@@ -2774,19 +2640,30 @@ static PyMethodDef kPhysicsWorldMethods[] = {
     CPH::Python::FastCallMethod("create_soft_body", WorldCreateSoftBody),
 
     // --- Interaction ---
-    CPH::Python::FastCallMethod("apply_impulse", WorldApplyImpulse),
-    CPH::Python::FastCallMethod("apply_angular_impulse", WorldApplyAngularImpulse),
+    CPH::Python::MakeThunkMethod<DispatchVectorOp<PhysicsBodyOperationType::ApplyImpulse,
+                                                  &WorldParsers::Impulse, "Impulse">>(
+        "apply_impulse"),
+    CPH::Python::MakeThunkMethod<DispatchVectorOp<PhysicsBodyOperationType::ApplyAngularImpulse,
+                                                  &WorldParsers::AngImpulse, "Angular impulse">>(
+        "apply_angular_impulse"),
     CPH::Python::FastCallMethod("apply_impulse_at", WorldApplyImpulseAt),
-    CPH::Python::FastCallMethod("apply_force", WorldApplyForce),
-    CPH::Python::FastCallMethod("apply_torque", WorldApplyTorque),
+    CPH::Python::MakeThunkMethod<DispatchVectorOp<PhysicsBodyOperationType::ApplyForce,
+                                                  &WorldParsers::Force, "Force">>("apply_force"),
+    CPH::Python::MakeThunkMethod<DispatchVectorOp<PhysicsBodyOperationType::ApplyTorque,
+                                                  &WorldParsers::Torque, "Torque">>(
+        "apply_torque"),
     CPH::Python::FastCallMethod("set_gravity", WorldSetGravity),
     CPH::Python::NoArgsMethod("get_gravity", WorldGetGravity),
     CPH::Python::FastCallMethod("apply_buoyancy", WorldApplyBuoyancy),
     CPH::Python::FastCallMethod("apply_buoyancy_batch", WorldApplyBuoyancyBatch),
     CPH::Python::FastCallMethod("set_position", WorldSetPosition),
     CPH::Python::FastCallMethod("set_rotation", WorldSetRotation),
-    CPH::Python::FastCallMethod("set_linear_velocity", WorldSetLinearVelocity),
-    CPH::Python::FastCallMethod("set_angular_velocity", WorldSetAngularVelocity),
+    CPH::Python::MakeThunkMethod<DispatchVectorOp<PhysicsBodyOperationType::SetLinearVelocity,
+                                                  &WorldParsers::SetLinVel, "LinearVelocity">>(
+        "set_linear_velocity"),
+    CPH::Python::MakeThunkMethod<DispatchVectorOp<PhysicsBodyOperationType::SetAngularVelocity,
+                                                  &WorldParsers::SetAngVel, "AngularVelocity">>(
+        "set_angular_velocity"),
     CPH::Python::FastCallMethod("set_transform", WorldSetTransform),
     CPH::Python::FastCallMethod("set_collision_filter", WorldSetCollisionFilter),
     CPH::Python::FastCallMethod("register_material", WorldRegisterMaterial),

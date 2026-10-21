@@ -703,6 +703,35 @@ reports no exception; and `Ragdoll.Create`'s malformed-`pos` path
 carries on with the error pending. Each is marked in the source.
 Vectorcall fast paths stay; measure `test_fastparse_*` A/B.
 
+**Vectorcall thunks (landed).** `bindings/parsing/Thunk.hpp` turns the
+parser's own type into the argument list. `ParserSignature<FastParser<Ts...>>`
+exposes `std::tuple<Ts...>`, so `InvokeThunk<&WorldParsers::Impulse>(...)`
+allocates the locals as one tuple, runs the parse and — on failure — hands the
+captured error to the same `RaiseParseError` the hand-written adapters called,
+which is why the diagnostics move not one byte. The action receives the values
+already converted; `PyObject*`, `bool` and `void` returns are marshalled, and
+anything else is rejected at the call site rather than being converted through
+one of them.
+
+The first family converted is the six vector body operations
+(`apply_impulse`, `apply_angular_impulse`, `apply_force`, `apply_torque`,
+`set_linear_velocity`, `set_angular_velocity`). Each was 26 lines of identical
+code differing only in the parser, the operation type and the `ValidateFinite`
+label; the label is the third template argument now, and
+`MakeThunkMethod<...>(name)` writes the table entry straight from the
+instantiation, so the six named functions are gone from the file. The order of
+operations is unchanged — parse, then the finite check, then build the
+operation, then `RunBodyOperation` — including the `Py_BEGIN_ALLOW_THREADS`
+around the native call, which happens inside `RunBodyOperation` where it always
+did.
+
+One restriction, stated at the top of the header: the tuple is
+value-initialised and `Arg<Name, T, Required>` carries no default — every
+hand-written site set its default on its own local before `Parse`. A parser
+with an optional argument would therefore silently pick up zeroes, so those
+methods keep their wrapper until `Arg` grows a default value. All four
+arguments of the six converted operations are required.
+
 **B4 — Adapters/ECS/math/debug.** `WorldAdapters`, `PhysicsSync`,
 ECS registry, and the math service adopt the same patterns
 (expected/span/Ref); ECS's placement-new mutex (a Phase-1 wart forced
