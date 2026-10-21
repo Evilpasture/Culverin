@@ -204,7 +204,7 @@ int InitVehicleParsers(VehicleObject *obj);
             self->physics.physics_system.GetBodyLockInterface();
         const JPH::BodyLockWrite lock(lock_iface, JPH::BodyID(chassis_bid));
 
-        if (CPH_UNLIKELY(!lock.Succeeded())) {
+        if (!lock.Succeeded()) [[unlikely]] {
             (self->physics.jph_trampoline_lock).unlock();
             Py_BLOCK_THREADS;
             goto python_fail;
@@ -295,7 +295,7 @@ python_fail:
     }
 
     // Safety check outside lock
-    if (CPH_UNLIKELY(!self->vehicle || !self->world)) {
+    if (!self->vehicle || !self->world) [[unlikely]] {
         Py_RETURN_NONE;
     }
 

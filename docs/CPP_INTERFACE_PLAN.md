@@ -4,7 +4,15 @@ Status: **A0, naming dissolution, enum-class sweep, B1, A1, A2,
 B2(physics), A3, and B3 landed** (A3 and B3 on top of the lock-order fix
 `ee5076d`), plus the `[[likely]]`/`[[unlikely]]` cleanup, which deleted
 `CPH::Python::Likely`/`Unlikely` in favour of the standard statement
-attributes. **A4 is in progress: the query layer and its filters,
+attributes, plus a compiler-support sweep that removed the remaining
+obsolete `CPH_*` macros: `kJphInvalidBodyId` and `JPH_ID_TO_INDEX`
+duplicated `JPH::BodyID::cInvalidBodyID`/`cMaxBodyIndex` and are gone in
+favour of Jolt's own constants, `CPH_LIKELY`/`CPH_UNLIKELY` are now
+`[[likely]]`/`[[unlikely]]` statement attributes, `Unreachable()` is
+`std::unreachable()`, `CPH_NO_TSAN` is spelled as a C++ attribute, and
+`CPH_UNROLL_LOOP` is replaced by `Unroll`/`UnrollLoop`/`Repeat`
+index-sequence templates. **A4 is in progress: the query layer and its
+filters,
 constraints, characters, vehicles, ships, ragdolls and soft bodies are on
 the direct Jolt API, and the body-operation paths (immediate and deferred)
 are off `JPH_BodyInterface` too. What remains is the rest of the

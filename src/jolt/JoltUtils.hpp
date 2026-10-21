@@ -10,13 +10,9 @@
 
 namespace CPH {
 
-inline constexpr std::uint32_t kJphInvalidBodyId = 0xFFFFFFFF;
-
-// Jolt BodyID layout: [8-bit sequence | 24-bit index]; the index is masked
-// to 23 bits in practice (the top bit of the low 24 is a flag).
-[[nodiscard]] constexpr std::uint32_t JPH_ID_TO_INDEX(std::uint32_t id) noexcept {
-    return id & 0x007FFFFF;
-}
+// Body IDs use Jolt's own constants (JPH::BodyID::cInvalidBodyID /
+// cMaxBodyIndex); there is no C-binding equivalent to mirror, so the C
+// interface must not re-declare them.
 
 // JoltC's value types are NOT layout-compatible with Jolt's: JPH_Vec3 is 12
 // bytes against JPH::Vec3's 16, and JPH_RVec3 is 24 against JPH::RVec3's 32.

@@ -75,7 +75,7 @@ JPH::ShapeRefC PhysicsWorld::FindOrCreateShapeLocked(int type, std::span<const f
     // 3. PRE-ALLOCATION CHECK (Fail early before expensive Jolt work)
     if (shape_cache_count >= shape_cache.size()) {
         const std::size_t new_cap = shape_cache.size() == 0 ? 16 : shape_cache.size() * 2;
-        if (CPH_UNLIKELY(!shape_cache.reallocate(new_cap))) {
+        if (!shape_cache.reallocate(new_cap)) [[unlikely]] {
             return {};
         }
     }
@@ -103,7 +103,7 @@ JPH::ShapeRefC PhysicsWorld::FindOrCreateShapeLocked(int type, std::span<const f
         break;
     }
 
-    if (CPH_UNLIKELY(shape == nullptr)) {
+    if (shape == nullptr) [[unlikely]] {
         return {};
     }
 

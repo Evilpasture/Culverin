@@ -9,6 +9,7 @@
 #include <Jolt/Math/Vec4.h>
 #include <cmath>
 #include "cpp/Cpp.hpp"
+#include "core/Compiler.hpp"
 // clang-format on
 
 // Internal native math operations.
@@ -23,8 +24,7 @@ void MathComputeInterpolationLoop(const PosStride *CPH_RESTRICT curr_p,
     const auto d_alpha         = static_cast<CPH::Float64>(alpha);
     const CPH::Float32 f_alpha = alpha;
 
-    CPH_UNROLL_LOOP(4)
-    for (CPH::SizeType i = 0; i < count; ++i) {
+    UnrollLoop<4>(count, [&](CPH::SizeType i) {
         const uint32_t base_idx = i * 7;
 
         // 1. Position Interpolation
@@ -59,7 +59,7 @@ void MathComputeInterpolationLoop(const PosStride *CPH_RESTRICT curr_p,
         // Store Rotation (4 floats starting at index 3)
         // Cast the output pointer to Float4* to satisfy Jolt's Store method
         q_interp.GetXYZW().StoreFloat4(reinterpret_cast<JPH::Float4 *>(&out[base_idx + 3]));
-    }
+        });
 }
 
 /**

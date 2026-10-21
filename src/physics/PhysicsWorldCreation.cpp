@@ -315,7 +315,7 @@ std::expected<std::size_t, Error> PhysicsWorld::RegisterRagdollBodies(
         const uint32_t generation =
             (bodies.generations[slot]).load(std::memory_order::relaxed);
         const BodyHandle handle   = make_handle(slot, generation);
-        const uint32_t jolt_index = JPH_ID_TO_INDEX(body_id);
+        const uint32_t jolt_index = (body_id & JPH::BodyID::cMaxBodyIndex);
         if (id_to_handle_map && jolt_index < max_jolt_bodies) {
             (id_to_handle_map[jolt_index]).store(handle, std::memory_order::release);
         }
@@ -420,7 +420,7 @@ std::expected<void, Error> PhysicsWorld::CreateBodiesBatch(
         settings[i]->mUserData  = handle;
         bodies.slot_to_dense[slot]  = dense;
         bodies.dense_to_slot[dense] = slot;
-        bodies.body_ids[dense]      = kJphInvalidBodyId;
+        bodies.body_ids[dense]      = JPH::BodyID::cInvalidBodyID;
 
         PosStride position                          = positions[i];
         position.w                                  = 0.0;

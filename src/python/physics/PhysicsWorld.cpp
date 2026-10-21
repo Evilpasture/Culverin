@@ -642,7 +642,7 @@ static PyObject *runtime_status_error(Error error, const char *pending_create_me
     if (PyObject_GetBuffer(o_handles, &handles_view, PyBUF_SIMPLE) != 0) {
         return nullptr;
     }
-    if (CPH_UNLIKELY(handles_view.itemsize != 8 && handles_view.len % 8 != 0)) {
+    if (handles_view.itemsize != 8 && handles_view.len % 8 != 0) [[unlikely]] {
         PyBuffer_Release(&handles_view);
         PyErr_SetString(PyExc_ValueError, "Handle buffer must be uint64 array");
         return nullptr;
@@ -880,7 +880,7 @@ static PyObject *runtime_status_error(Error error, const char *pending_create_me
         return nullptr;
     }
     size_t num_points = points_view.len / kVertexStrideBytes;
-    if (CPH_UNLIKELY(num_points < 3)) {
+    if (num_points < 3) [[unlikely]] {
         PyBuffer_Release(&points_view);
         return PyErr_Format(PyExc_ValueError, "Need >= 3 points");
     }
@@ -1036,7 +1036,7 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
         RaiseParseError(parsed.error());
         return nullptr;
     }
-    if (CPH_UNLIKELY(!PyList_Check(o_parts))) {
+    if (!PyList_Check(o_parts)) [[unlikely]] {
         PyErr_SetString(PyExc_TypeError, "'parts' must be list");
         return nullptr;
     }
@@ -1241,7 +1241,7 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
         return PyErr_Format(PyExc_OverflowError, "Batch is too large");
     }
     void *arena = Allocate(static_cast<size_t>(batch_count) * item_size);
-    if (CPH_UNLIKELY(!arena)) {
+    if (!arena) [[unlikely]] {
         return PyErr_NoMemory();
     }
 
@@ -1339,8 +1339,8 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
         return nullptr;
     }
 
-    if (CPH_UNLIKELY(v_view.len % kVertexStrideBytes != 0 ||
-                     i_view.len % kVertexStrideBytes != 0)) {
+    if (v_view.len % kVertexStrideBytes != 0 ||
+                     i_view.len % kVertexStrideBytes != 0) [[unlikely]] {
         PyBuffer_Release(&v_view);
         PyBuffer_Release(&i_view);
         PyErr_SetString(PyExc_ValueError, "Buffer size mismatch");
@@ -2013,8 +2013,8 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
     if (PyObject_GetBuffer(o_heights, &h_view, PyBUF_SIMPLE) != 0) {
         return nullptr;
     }
-    if (CPH_UNLIKELY(h_view.len != static_cast<Py_ssize_t>(static_cast<Py_ssize_t>(grid_size) *
-                                                           grid_size * sizeof(float)))) {
+    if (h_view.len != static_cast<Py_ssize_t>(static_cast<Py_ssize_t>(grid_size) *
+                                                           grid_size * sizeof(float))) [[unlikely]] {
         PyBuffer_Release(&h_view);
         return PyErr_Format(PyExc_ValueError, "Height buffer size mismatch");
     }
@@ -2077,7 +2077,7 @@ static PhysicsWorldCompoundPart *parse_compound_parts(PyObject *parts, size_t *o
     PyObject *triangles_bytes = PyBytes_FromStringAndSize(
         reinterpret_cast<const char *>(triangles.data()),
         static_cast<Py_ssize_t>(triangles.size() * sizeof(DebugVertex)));
-    if (CPH_UNLIKELY(!lines_bytes || !triangles_bytes)) {
+    if (!lines_bytes || !triangles_bytes) [[unlikely]] {
         Py_XDECREF(lines_bytes);
         Py_XDECREF(triangles_bytes);
         return nullptr;
@@ -2394,7 +2394,7 @@ WorldGetSoftBodyLocalVertices(PhysicsWorldObject *self, PyObject *const *args,
                            false);
 
     // 3. Error handling
-    if (CPH_UNLIKELY(!result)) {
+    if (!result) [[unlikely]] {
         // PackTuple handles internal cleanup on failure
         return nullptr;
     }
@@ -2579,7 +2579,7 @@ WorldGetSoftBodyLocalVertices(PhysicsWorldObject *self, PyObject *const *args,
          */
         PyObject *item = BuildTuple(b1_raw, b2_raw, slim->impulse, slim->sliding_speed);
 
-        if (CPH_UNLIKELY(!item)) {
+        if (!item) [[unlikely]] {
             Py_DECREF(list);
             return nullptr;
         }
@@ -2612,7 +2612,7 @@ WorldGetContactEventsEx(PhysicsWorldObject *self, PyObject *args [[maybe_unused]
     static PyObject *k_mat    = nullptr;
     static PyObject *k_type   = nullptr;
 
-    if (CPH_UNLIKELY(!k_bodies)) {
+    if (!k_bodies) [[unlikely]] {
         k_bodies = PyUnicode_InternFromString("bodies");
         k_pos    = PyUnicode_InternFromString("position");
         k_norm   = PyUnicode_InternFromString("normal");
@@ -2648,7 +2648,7 @@ WorldGetContactEventsEx(PhysicsWorldObject *self, PyObject *args [[maybe_unused]
                               BuildTuple(fat->mat1, fat->mat2), k_str, slim->impulse,
                               k_slide, slim->sliding_speed, k_type, slim->flags);
 
-        if (CPH_UNLIKELY(!dict)) {
+        if (!dict) [[unlikely]] {
             Py_INCREF(Py_None);
             PyList_SET_ITEM(list, static_cast<Py_ssize_t>(i), Py_None);
             continue;

@@ -43,7 +43,7 @@ void ActivateBody(JPH_BodyInterface *bi, JPH::Body *body) {
         return nullptr;
     }
 
-    if (CPH_UNLIKELY(h1_raw == h2_raw)) {
+    if (h1_raw == h2_raw) [[unlikely]] {
         PyErr_SetString(PyExc_ValueError, "Cannot create a constraint between a body and itself");
         return nullptr;
     }
@@ -99,14 +99,14 @@ void ActivateBody(JPH_BodyInterface *bi, JPH::Body *body) {
     const uint32_t s1 = *resolved1;
     const uint32_t s2 = *resolved2;
 
-    if (CPH_UNLIKELY(self->physics.free_constraint_count == 0)) {
+    if (self->physics.free_constraint_count == 0) [[unlikely]] {
         (self->physics.shadow_lock).unlock();
         return PyErr_Format(PyExc_MemoryError, "Max constraints reached");
     }
 
     // 4. QUEUE ASYNCHRONOUS COMMAND (capacity first so failure paths
     // cannot leak the reserved slot; params travel by value).
-    if (CPH_UNLIKELY(!self->physics.EnsureCommandCapacity())) {
+    if (!self->physics.EnsureCommandCapacity()) [[unlikely]] {
         (self->physics.shadow_lock).unlock();
         return PyErr_NoMemory();
     }
@@ -216,10 +216,10 @@ void ActivateBody(JPH_BodyInterface *bi, JPH::Body *body) {
     uint32_t slot = static_cast<uint32_t>(h_raw & kHandleIndexMask);
     uint32_t gen  = static_cast<uint32_t>(h_raw >> kHandleIndexBits);
 
-    if (CPH_UNLIKELY(slot >= self->physics.constraints.size() ||
+    if (slot >= self->physics.constraints.size() ||
                      self->physics.constraints[slot].generation != gen ||
                      self->physics.constraints[slot].state.load(std::memory_order::relaxed) !=
-                         std::to_underlying(SlotState::Alive))) {
+                         std::to_underlying(SlotState::Alive)) [[unlikely]] {
         (self->physics.shadow_lock).unlock();
         PyErr_SetString(PyExc_ValueError, "Invalid or stale constraint handle");
         return nullptr;
@@ -280,8 +280,8 @@ void ActivateBody(JPH_BodyInterface *bi, JPH::Body *body) {
     uint32_t gen  = static_cast<uint32_t>(handle_raw >> kHandleIndexBits);
 
     // Validate slot range and generation
-    if (CPH_UNLIKELY(slot >= self->physics.constraints.size() ||
-                     self->physics.constraints[slot].generation != gen)) {
+    if (slot >= self->physics.constraints.size() ||
+                     self->physics.constraints[slot].generation != gen) [[unlikely]] {
         (self->physics.shadow_lock).unlock();
         PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
         return nullptr;

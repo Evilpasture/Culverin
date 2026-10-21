@@ -168,7 +168,7 @@ PhysicsWorld::ApplyBodyOperation(const PhysicsBodyOperation &op) {
     }
 
     bool execute_immediately = false;
-    JPH_BodyID body_id       = kJphInvalidBodyId;
+    JPH_BodyID body_id       = JPH::BodyID::cInvalidBodyID;
     {
         const auto shadow = LockShadowNotStepping();
 
@@ -183,7 +183,7 @@ PhysicsWorld::ApplyBodyOperation(const PhysicsBodyOperation &op) {
         if (!predicate.is_executable()) {
             return std::unexpected(BodyOperationError::StaleHandle);
         }
-        if (CPH_UNLIKELY(!EnsureCommandCapacity())) {
+        if (!EnsureCommandCapacity()) [[unlikely]] {
             return std::unexpected(BodyOperationError::OutOfMemory);
         }
 

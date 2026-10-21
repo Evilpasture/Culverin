@@ -36,7 +36,7 @@ void PhysicsWorld::SyncLoadedState(size_t saved_count) {
 
     for (size_t i = 0; i < saved_count; i++) {
         const JPH_BodyID body_id = body_ids[i];
-        if (body_id == kJphInvalidBodyId) {
+        if (body_id == JPH::BodyID::cInvalidBodyID) {
             continue;
         }
 
@@ -57,7 +57,7 @@ void PhysicsWorld::SyncLoadedState(size_t saved_count) {
         const uint64_t raw_handle = make_handle(slot, generation);
         JPH_BodyInterface_SetUserData(body_interface, body_id, raw_handle);
 
-        const uint32_t jolt_index = JPH_ID_TO_INDEX(body_id);
+        const uint32_t jolt_index = (body_id & JPH::BodyID::cMaxBodyIndex);
         if (id_to_handle_map && jolt_index <= max_jolt_bodies) {
             (id_to_handle_map[jolt_index]).store(raw_handle, std::memory_order::relaxed);
         }
@@ -255,7 +255,7 @@ std::expected<void, Error> PhysicsWorld::SetGravity(JPH::Vec3 gravity) {
     const size_t current_count = (count).load(std::memory_order::acquire);
     physics_system.SetGravity(gravity);
 
-    if (CPH_UNLIKELY(current_count > UINT32_MAX)) {
+    if (current_count > UINT32_MAX) [[unlikely]] {
         return std::unexpected(WorldRuntimeError::Overflow);
     }
 
@@ -419,7 +419,7 @@ std::expected<void, Error> PhysicsWorld::ApplyBuoyancyBatch(
     if (handle_count == 0) {
         return {};
     }
-    if (CPH_UNLIKELY(handle_count > SIZE_MAX / sizeof(JPH_BodyID))) {
+    if (handle_count > SIZE_MAX / sizeof(JPH_BodyID)) [[unlikely]] {
         return std::unexpected(WorldRuntimeError::Overflow);
     }
 
@@ -573,7 +573,7 @@ PhysicsWorld::GetActiveIndices(Buffer<std::uint32_t> &out_indices) {
     }
     std::size_t active_count = 0;
     for (std::size_t i = 0; i < count; i++) {
-        if (body_ids[i] != kJphInvalidBodyId &&
+        if (body_ids[i] != JPH::BodyID::cInvalidBodyID &&
             JPH_BodyInterface_IsActive(body_interface, body_ids[i])) {
             out_indices[active_count++] = static_cast<std::uint32_t>(i);
         }
@@ -590,7 +590,7 @@ std::expected<Buffer<float>, Error> PhysicsWorld::GetRenderState(float alpha) {
     if (count == 0) {
         return out_state;
     }
-    if (CPH_UNLIKELY(count > std::numeric_limits<std::size_t>::max() / 7)) {
+    if (count > std::numeric_limits<std::size_t>::max() / 7) [[unlikely]] {
         return std::unexpected(WorldRuntimeError::Overflow);
     }
     if (!out_state.allocate(count * 7)) {
@@ -646,7 +646,7 @@ std::expected<void, Error> PhysicsWorld::RegisterMaterial(uint32_t id, float fri
     if (material_count >= materials.size()) {
         const size_t new_capacity = materials.size() == 0 ? kInitialMaterialCapacity
                                                                   : materials.size() * 2;
-        if (CPH_UNLIKELY(!materials.reallocate(new_capacity))) {
+        if (!materials.reallocate(new_capacity)) [[unlikely]] {
             return std::unexpected(WorldRuntimeError::OutOfMemory);
         }
     }

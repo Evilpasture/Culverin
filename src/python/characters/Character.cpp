@@ -26,7 +26,7 @@ namespace CPH::Python {
 static void RecordCharacterContact(CharacterObject *self, JPH::BodyID body_id2, JPH::RVec3Arg pos,
                                    JPH::Vec3Arg norm, ContactEventType type) {
     auto *world          = self->world;
-    const uint32_t j_idx = JPH_ID_TO_INDEX(body_id2.GetIndexAndSequenceNumber());
+    const uint32_t j_idx = (body_id2.GetIndexAndSequenceNumber() & JPH::BodyID::cMaxBodyIndex);
     BodyHandle h2        = 0;
 
     if (world->physics.id_to_handle_map && j_idx <= world->physics.max_jolt_bodies) {
@@ -258,7 +258,7 @@ class CharacterListener final : public JPH::CharacterContactListener {
         }
         // Fallback to safe lock-free id-to-handle map lookup
         if (h2_raw == 0 && world->physics.id_to_handle_map) {
-            const uint32_t j_idx = JPH_ID_TO_INDEX(contact.mBodyB.GetIndexAndSequenceNumber());
+            const uint32_t j_idx = (contact.mBodyB.GetIndexAndSequenceNumber() & JPH::BodyID::cMaxBodyIndex);
             if (j_idx <= world->physics.max_jolt_bodies) {
                 h2_raw = (world->physics.id_to_handle_map[j_idx]).load(std::memory_order::acquire);
             }
@@ -412,7 +412,7 @@ class CharacterListener final : public JPH::CharacterContactListener {
         }
 
         PhysicsWorldObject *world   = self->world;
-        const uint32_t j_idx        = JPH_ID_TO_INDEX(body_id2.GetIndexAndSequenceNumber());
+        const uint32_t j_idx        = (body_id2.GetIndexAndSequenceNumber() & JPH::BodyID::cMaxBodyIndex);
 
         // TSan Fix: Explicitly load raw values to avoid seq_cst overhead
         const uint64_t h1_raw = (self->handle).load(std::memory_order::relaxed);
@@ -500,7 +500,7 @@ class CharacterListener final : public JPH::CharacterContactListener {
         const uint64_t h1_raw = (self->handle).load(std::memory_order::relaxed);
 
         // We have to use the CharacterID to find the handle.
-        const uint32_t j_idx = JPH_ID_TO_INDEX(other_character_id.GetValue());
+        const uint32_t j_idx = (other_character_id.GetValue() & JPH::BodyID::cMaxBodyIndex);
         uint64_t h2_raw      = 0;
 
         if (world->physics.id_to_handle_map && j_idx <= world->physics.max_jolt_bodies) {
@@ -916,7 +916,7 @@ static inline void register_char(PhysicsWorldObject *self, CharacterObject *obj,
     auto dense_idx =
         static_cast<uint32_t>((self->physics.count).load(std::memory_order::relaxed));
     const JPH::BodyID bid = j_char->GetInnerBodyID();
-    uint32_t j_idx        = JPH_ID_TO_INDEX(bid.GetIndexAndSequenceNumber());
+    uint32_t j_idx        = (bid.GetIndexAndSequenceNumber() & JPH::BodyID::cMaxBodyIndex);
 
     if (j_idx <= self->physics.max_jolt_bodies) {
         (self->physics.id_to_handle_map[j_idx]).store(raw_h, std::memory_order::release);

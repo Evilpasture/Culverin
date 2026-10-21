@@ -100,7 +100,7 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
         return nullptr;
     }
 
-    if (CPH_UNLIKELY(!self->ragdoll || !self->world)) {
+    if (!self->ragdoll || !self->world) [[unlikely]] {
         Py_RETURN_NONE;
     }
 
@@ -114,7 +114,7 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
     }
 
     const size_t required_size = static_cast<size_t>(joint_count) * sizeof(JPH::Mat44);
-    if (CPH_UNLIKELY(static_cast<size_t>(view.len) < required_size)) {
+    if (static_cast<size_t>(view.len) < required_size) [[unlikely]] {
         PyBuffer_Release(&view);
         return PyErr_Format(PyExc_ValueError,
                             "Matrices buffer too small. Expected %zu bytes for %d joints, got %zd",

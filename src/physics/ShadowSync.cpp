@@ -114,8 +114,7 @@ ProcessItem(const Unsigned32 D, const JPH::Body *const CPH_RESTRICT b,
             shadow.vertices.data();
 
         const SizeType num_v = shadow.vertices.size();
-        CPH_UNROLL_LOOP(8)
-        for (SizeType v = 0; v < num_v; ++v) {
+        UnrollLoop<8>(num_v, [&](SizeType v) {
             if (v + 8 < num_v) {
                 CPH::Prefetch<CPH::AccessType::Write>(&dst_verts[v + 8]);
             }
@@ -134,7 +133,7 @@ ProcessItem(const Unsigned32 D, const JPH::Body *const CPH_RESTRICT b,
                 [[clang::always_inline]] JPH::Vec4(world_pos, 0.0F)
                     .StoreFloat4(reinterpret_cast<JPH::Float4 *const CPH_RESTRICT>(&dst_verts[v]));
             }
-        }
+                });
     }
 }
 
@@ -150,8 +149,7 @@ inline auto ProcessBatch(const WorldDataCreateInfo world,
     const SizeType count = items.size();
     [[assume(count > 0), assume(count <= BATCH_SIZE)]];
 
-    CPH_UNROLL_LOOP(4)
-    for (Unsigned32 j = 0; j < count; j++) {
+    UnrollLoop<4>(count, [&](Unsigned32 j) {
         if (j + 2 < count) {
             const Unsigned32 next_idx = items[j + 2].dense_idx;
             CPH::Prefetch<CPH::AccessType::Write>(&world.shadow_pos[next_idx]);
@@ -159,7 +157,7 @@ inline auto ProcessBatch(const WorldDataCreateInfo world,
         }
 
         ProcessItem<TType>(items[j].dense_idx, items[j].body, world);
-    }
+        });
 }
 
 // =================================================================================================

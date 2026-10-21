@@ -199,7 +199,7 @@ struct PhysicsWorld {
     [[nodiscard]] std::optional<std::uint32_t> UnpackHandle(BodyHandle handle) const noexcept {
         const auto slot = static_cast<std::uint32_t>(handle & kHandleIndexMask);
         const auto gen  = static_cast<std::uint32_t>(handle >> kHandleIndexBits);
-        if (CPH_UNLIKELY(slot >= slot_capacity)) {
+        if (slot >= slot_capacity) [[unlikely]] {
             return std::nullopt;
         }
         if (bodies.generations[slot].load(std::memory_order::acquire) != gen) {

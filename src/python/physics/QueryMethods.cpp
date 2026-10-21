@@ -198,16 +198,16 @@ static PyObject *overlap_hits_to_list(const PhysicsQueryHitBuffer *hits) {
 
     Py_buffer starts_buffer     = {};
     Py_buffer directions_buffer = {};
-    if (CPH_UNLIKELY(PyObject_GetBuffer(o_starts, &starts_buffer, PyBUF_SIMPLE) < 0)) {
+    if (PyObject_GetBuffer(o_starts, &starts_buffer, PyBUF_SIMPLE) < 0) [[unlikely]] {
         return nullptr;
     }
-    if (CPH_UNLIKELY(PyObject_GetBuffer(o_directions, &directions_buffer, PyBUF_SIMPLE) < 0)) {
+    if (PyObject_GetBuffer(o_directions, &directions_buffer, PyBUF_SIMPLE) < 0) [[unlikely]] {
         PyBuffer_Release(&starts_buffer);
         return nullptr;
     }
 
-    if (CPH_UNLIKELY(starts_buffer.len != directions_buffer.len ||
-                     starts_buffer.len % static_cast<Py_ssize_t>(kCqmVec3StrideBytes) != 0)) {
+    if (starts_buffer.len != directions_buffer.len ||
+                     starts_buffer.len % static_cast<Py_ssize_t>(kCqmVec3StrideBytes) != 0) [[unlikely]] {
         PyErr_SetString(PyExc_ValueError, "Buffer size mismatch");
         PyBuffer_Release(&starts_buffer);
         PyBuffer_Release(&directions_buffer);
@@ -231,7 +231,7 @@ static PyObject *overlap_hits_to_list(const PhysicsQueryHitBuffer *hits) {
 
     const Py_ssize_t output_size = static_cast<Py_ssize_t>(count * sizeof(RayCastBatchResult));
     PyObject *result_bytes       = PyBytes_FromStringAndSize(nullptr, output_size);
-    if (CPH_UNLIKELY(!result_bytes)) {
+    if (!result_bytes) [[unlikely]] {
         PyBuffer_Release(&starts_buffer);
         PyBuffer_Release(&directions_buffer);
         return nullptr;
@@ -239,7 +239,7 @@ static PyObject *overlap_hits_to_list(const PhysicsQueryHitBuffer *hits) {
 
     RayCastBatchResult *results =
         reinterpret_cast<RayCastBatchResult *>(PyBytes_AsString(result_bytes));
-    if (CPH_UNLIKELY(!results)) {
+    if (!results) [[unlikely]] {
         Py_DECREF(result_bytes);
         PyBuffer_Release(&starts_buffer);
         PyBuffer_Release(&directions_buffer);

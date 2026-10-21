@@ -32,7 +32,7 @@ void SyncAndFlushInternal(PhysicsWorldObject *self);
                                                                         uint64_t h_raw) {
     const std::optional<std::uint32_t> slot =
         self->physics.UnpackHandle(static_cast<BodyHandle>(h_raw));
-    if (CPH_UNLIKELY(!slot)) {
+    if (!slot) [[unlikely]] {
         (self->physics.shadow_lock).unlock();
         PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
         return std::nullopt;

@@ -25,7 +25,7 @@ class ShipStepListener final : public JPH::PhysicsStepListener {
 
     void OnStep([[maybe_unused]] const JPH::PhysicsStepListenerContext &context) override {
         ShipObject *self = owner_;
-        if (self->sled_bid == kJphInvalidBodyId) {
+        if (self->sled_bid == JPH::BodyID::cInvalidBodyID) {
             return;
         }
 

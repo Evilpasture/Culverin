@@ -40,7 +40,7 @@ bool PhysicsWorld::EnsureCommandBulkCapacity(std::size_t batch_size) {
         return false;
     }
     const std::size_t required = command_count + batch_size;
-    if (CPH_UNLIKELY(required > command_queue.size())) {
+    if (required > command_queue.size()) [[unlikely]] {
         std::size_t new_capacity =
             command_queue.size() == 0 ? kInitialQueueCapacity : command_queue.size();
         while (new_capacity < required) {
@@ -134,7 +134,7 @@ struct FlushContext {
         cmd.settings.reset();
 
         const std::scoped_lock shadow(world->shadow_lock);
-        if (CPH_UNLIKELY(new_bid == kJphInvalidBodyId)) {
+        if (new_bid == JPH::BodyID::cInvalidBodyID) [[unlikely]] {
             world->RemoveBodySlot(slot);
             return;
         }
@@ -149,7 +149,7 @@ struct FlushContext {
                 .CreateAndAddSoftBody(*cmd.settings, JPH::EActivation::Activate)
                 .GetIndexAndSequenceNumber();
         const std::scoped_lock shadow(world->shadow_lock);
-        if (CPH_UNLIKELY(new_bid == kJphInvalidBodyId)) {
+        if (new_bid == JPH::BodyID::cInvalidBodyID) [[unlikely]] {
             world->RemoveBodySlot(slot);
         } else {
             const std::uint32_t dense = world->bodies.slot_to_dense[slot];
@@ -168,7 +168,7 @@ struct FlushContext {
     void operator()(DestroyBody &) const {
         // Clear the body-pointer cache first so shadow sync cannot chase
         // a freed JPH_Body next frame.
-        const std::uint32_t j_idx = JPH_ID_TO_INDEX(bid);
+        const std::uint32_t j_idx = (bid & JPH::BodyID::cMaxBodyIndex);
         if (world->jolt_body_ptrs && j_idx <= world->max_jolt_bodies) {
             world->jolt_body_ptrs[j_idx] = nullptr;
         }
@@ -259,7 +259,7 @@ struct FlushContext {
 
         const JPH_BodyID bid2 =
             world->bodies.body_ids[world->bodies.slot_to_dense[cmd.body2_slot]];
-        if (bid == kJphInvalidBodyId || bid2 == kJphInvalidBodyId) {
+        if (bid == JPH::BodyID::cInvalidBodyID || bid2 == JPH::BodyID::cInvalidBodyID) {
             return;
         }
 
@@ -293,7 +293,7 @@ struct FlushContext {
 
   private:
     void publish_handle(std::uint32_t body_slot, JPH_BodyID new_bid) const {
-        const std::uint32_t j_idx = JPH_ID_TO_INDEX(new_bid);
+        const std::uint32_t j_idx = (new_bid & JPH::BodyID::cMaxBodyIndex);
         if (world->id_to_handle_map && j_idx <= world->max_jolt_bodies) {
             const std::uint32_t gen =
                 world->bodies.generations[body_slot].load(std::memory_order::relaxed);
@@ -320,7 +320,7 @@ void PhysicsWorld::FlushCommands(std::span<PhysicsCommand> queue) {
         // Stale commands (body destroyed while queued, create superseded)
         // are dropped; resetting the command still destroys payloads.
         if (std::to_underlying(state) < 32 && ((slot_state_bit(state) & kValidBidMask) != 0) &&
-            (is_create || bid != kJphInvalidBodyId)) {
+            (is_create || bid != JPH::BodyID::cInvalidBodyID)) {
             std::visit(FlushContext{this, physics_system.GetBodyInterface(), slot, bid},
                        command.payload);
         }

@@ -3,6 +3,7 @@
 #include "ecs/Ecs.hpp"
 #include "physics/PhysicsSync.hpp"
 #include <Python.h>
+#include <utility>
 
 namespace CPH::Python {
 
@@ -78,7 +79,7 @@ static void BufferProxy_dealloc(BufferProxyObject *self) {
             target_ptr = self->dynamic_ptr;
             break; // Soft Body Verts
         default:
-            Unreachable();
+            std::unreachable();
         }
 
         if (!target_ptr) {

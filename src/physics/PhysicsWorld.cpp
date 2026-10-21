@@ -285,7 +285,7 @@ std::expected<void, Error> PhysicsWorld::AllocateBuffers(int max_bodies,
     for (std::size_t i = 0; i < capacity; ++i) {
         bodies.categories[i] = kAllLayerBits;
         bodies.masks[i]      = kAllLayerBits;
-        bodies.body_ids[i]   = kJphInvalidBodyId;
+        bodies.body_ids[i]   = JPH::BodyID::cInvalidBodyID;
     }
     for (std::uint32_t i = 0; i < kConstraintInitialCapacity; ++i) {
         free_constraint_slots[i] = i;
@@ -434,7 +434,7 @@ std::expected<void, Error> PhysicsWorld::LoadBakedScene(const BakedSceneData &sc
             const float params[4] = {shape_data[1], shape_data[2], shape_data[3], shape_data[4]};
             const JPH::ShapeRefC shape =
                 FindOrCreateShapeLocked(static_cast<int>(shape_data[0]), params);
-            if (CPH_UNLIKELY(shape == nullptr)) {
+            if (shape == nullptr) [[unlikely]] {
                 error = WorldError::OutOfMemory;
                 break;
             }
@@ -466,13 +466,13 @@ std::expected<void, Error> PhysicsWorld::LoadBakedScene(const BakedSceneData &sc
                 physics_system.GetBodyInterface()
                     .CreateAndAddBody(creation, JPH::EActivation::Activate)
                     .GetIndexAndSequenceNumber();
-            if (CPH_UNLIKELY(body_id == kJphInvalidBodyId)) {
+            if (body_id == JPH::BodyID::cInvalidBodyID) [[unlikely]] {
                 error = WorldError::OutOfMemory;
                 break;
             }
 
             bodies.body_ids[i] = body_id;
-            const std::uint32_t jolt_idx = JPH_ID_TO_INDEX(body_id);
+            const std::uint32_t jolt_idx = (body_id & JPH::BodyID::cMaxBodyIndex);
             if (id_to_handle_map && jolt_idx < max_jolt_bodies) {
                 id_to_handle_map[jolt_idx].store(handle, std::memory_order::relaxed);
             }
@@ -502,10 +502,10 @@ std::expected<void, Error> reserve_body_slot(PhysicsWorld *world, std::uint32_t 
     const std::size_t current_count = world->count.load(std::memory_order::acquire);
     std::size_t available           = world->free_count.load(std::memory_order::acquire);
 
-    if (CPH_UNLIKELY(current_count >= world->max_jolt_bodies)) {
+    if (current_count >= world->max_jolt_bodies) [[unlikely]] {
         return std::unexpected(WorldError::LimitReached);
     }
-    if (CPH_UNLIKELY(available == 0 || current_count + 1 > world->capacity)) {
+    if (available == 0 || current_count + 1 > world->capacity) [[unlikely]] {
         std::size_t next_capacity =
             world->capacity == 0 ? kInitialBodyCapacity : world->capacity * 2;
         if (next_capacity > world->max_jolt_bodies) {
@@ -516,12 +516,12 @@ std::expected<void, Error> reserve_body_slot(PhysicsWorld *world, std::uint32_t 
             return resize_status;
         }
         available = world->free_count.load(std::memory_order::acquire);
-        if (CPH_UNLIKELY(available == 0)) {
+        if (available == 0) [[unlikely]] {
             return std::unexpected(WorldError::LimitReached);
         }
     }
 
-    if (CPH_UNLIKELY(!world->EnsureCommandCapacity())) {
+    if (!world->EnsureCommandCapacity()) [[unlikely]] {
         return std::unexpected(WorldError::OutOfMemory);
     }
 
@@ -536,7 +536,7 @@ std::expected<void, Error> reserve_body_slot(PhysicsWorld *world, std::uint32_t 
 
     world->bodies.slot_to_dense[slot]  = dense;
     world->bodies.dense_to_slot[dense] = slot;
-    world->bodies.body_ids[dense]      = kJphInvalidBodyId;
+    world->bodies.body_ids[dense]      = JPH::BodyID::cInvalidBodyID;
     // Creation defaults for the fields resize leaves indeterminate. The
     // single-body path overwrites all of these from its request; the
     // soft-body path overwrites categories/masks/user_data only.
@@ -711,7 +711,7 @@ int VerifyAbiAlignment(JPH_BodyInterface *body_interface) {
     const JPH_BodyID bid = JPH_BodyInterface_CreateAndAddBody(
         body_interface, reinterpret_cast<JPH_BodyCreationSettings *>(&settings),
         JPH_Activation_Activate);
-    if (bid == kJphInvalidBodyId) {
+    if (bid == JPH::BodyID::cInvalidBodyID) {
         return -1;
     }
 

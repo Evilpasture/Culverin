@@ -354,7 +354,7 @@ static void configure_drivetrain(JPH::WheeledVehicleControllerSettings &v_ctrl,
             self->physics.physics_system.GetBodyLockInterface();
         const JPH::BodyLockWrite lock(lock_iface, JPH::BodyID(chassis_bid));
 
-        if (CPH_UNLIKELY(!lock.Succeeded())) {
+        if (!lock.Succeeded()) [[unlikely]] {
             (self->physics.jph_trampoline_lock).unlock();
             Py_BLOCK_THREADS;
             goto python_fail;
@@ -448,7 +448,7 @@ python_fail:
     // thread has raised the flag to begin a buffer swap.
     bool stepping = (self->world->physics.is_stepping).load(std::memory_order::relaxed);
 
-    if (CPH_UNLIKELY(stepping || !self->vehicle)) {
+    if (stepping || !self->vehicle) [[unlikely]] {
         (self->world->physics.shadow_lock).unlock();
         Py_RETURN_NONE;
     }
