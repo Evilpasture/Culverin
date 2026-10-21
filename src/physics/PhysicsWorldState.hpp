@@ -25,7 +25,9 @@
 #include <Jolt/Physics/Character/CharacterVirtual.h>
 #include <Jolt/Physics/Constraints/Constraint.h>
 #include <Jolt/Physics/PhysicsSystem.h>
+#include <Jolt/Physics/Ragdoll/Ragdoll.h>
 #include <joltc.h>
+
 
 #include <atomic>
 #include <cstddef>
@@ -229,15 +231,15 @@ struct PhysicsWorld {
     [[nodiscard]] std::expected<BodyHandle, Error>
     CreateSoftBody(const PhysicsWorldSoftBodyCreateRequest &request);
     [[nodiscard]] std::expected<RagdollInstance, Error>
-    CreateRagdollInstance(JPH_RagdollSettings *settings, JPH_RVec3 position, JPH_Quat rotation,
+    CreateRagdollInstance(JPH::RagdollSettings *settings, JPH_RVec3 position, JPH_Quat rotation,
                             std::uint64_t user_data);
     // `body_slots` must have room for the ragdoll's body count.
     // Returns the world body count after registration.
     [[nodiscard]] std::expected<std::size_t, Error>
-    RegisterRagdollBodies(JPH_Ragdoll *ragdoll, std::span<std::uint32_t> body_slots,
+    RegisterRagdollBodies(JPH::Ragdoll *ragdoll, std::span<std::uint32_t> body_slots,
                           std::uint64_t user_data, std::uint32_t category, std::uint32_t mask,
                           std::uint32_t material_id);
-    void DestroyRagdoll(JPH_Ragdoll *ragdoll);
+    void DestroyRagdoll(JPH::Ragdoll *ragdoll);
     // `points` is flat XYZ triples.
     [[nodiscard]] std::expected<BodyHandle, Error>
     CreateConvexHull(std::span<const float> points, const PhysicsWorldBodyCreateRequest &request);
@@ -332,7 +334,7 @@ struct PhysicsWorld {
 
     void CopyRagdollBodyHandles(std::span<const std::uint32_t> body_slots,
                                  std::span<PhysicsRagdollBodyHandleInfo> out_handles);
-    [[nodiscard]] bool CopyRagdollDebugInfo(JPH_Ragdoll &ragdoll,
+    [[nodiscard]] bool CopyRagdollDebugInfo(JPH::Ragdoll &ragdoll,
                                             std::span<PhysicsRagdollBodyDebugInfo> out_info);
 
     // JoltC view of physics_system.GetBodyInterface(), retained until the

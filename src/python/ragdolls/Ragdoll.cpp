@@ -113,7 +113,7 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
         return nullptr;
     }
 
-    const size_t required_size = static_cast<size_t>(joint_count) * sizeof(JPH_Mat4);
+    const size_t required_size = static_cast<size_t>(joint_count) * sizeof(JPH::Mat44);
     if (CPH_UNLIKELY(static_cast<size_t>(view.len) < required_size)) {
         PyBuffer_Release(&view);
         return PyErr_Format(PyExc_ValueError,
@@ -121,8 +121,10 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
                             required_size, joint_count, view.len);
     }
 
-    JPH_Mat4 *matrices            = static_cast<JPH_Mat4 *>(view.buf);
-    const JPH_RVec3 root_position = {root_p.x, root_p.y, root_p.z};
+    // JPH_Mat4 and JPH::Mat44 are both 4 column-major Vec4 (64 bytes), so the
+    // caller's float32 buffer is read exactly as before.
+    JPH::Mat44 *matrices           = static_cast<JPH::Mat44 *>(view.buf);
+    const JPH::RVec3 root_position = JPH::RVec3(root_p.x, root_p.y, root_p.z);
 
     // 3. PHYSICS EXECUTION (Shadow Locked)
     (self->world->physics.shadow_lock).lock();
@@ -351,8 +353,8 @@ void RagdollDealloc(RagdollObject *self) {
         return PyErr_Format(PyExc_ValueError, "Invalid shape configuration");
     }
 
-    bool has_position  = false;
-    JPH_RVec3 position = {0, 0, 0};
+    bool has_position = false;
+    JPH::RVec3 position = JPH::RVec3::sZero();
     if (py_pos && py_pos != Py_None) {
         PosStride p_stride = {};
         // Preserved quirk: a malformed `pos` is not fatal here — the position
@@ -362,7 +364,7 @@ void RagdollDealloc(RagdollObject *self) {
         // has to be reinstated because ParseError owns it now.
         const ParseResult parsed = parse_vec3_into(py_pos, p_stride);
         if (parsed) {
-            position     = JPH_RVec3{p_stride.x, p_stride.y, p_stride.z};
+            position     = JPH::RVec3(p_stride.x, p_stride.y, p_stride.z);
             has_position = true;
         } else {
             RaiseParseError(parsed.error());
@@ -376,8 +378,8 @@ void RagdollDealloc(RagdollObject *self) {
         .twist_min    = twist_min,
         .twist_max    = twist_max,
         .cone_angle   = cone_angle,
-        .axis         = {axis.x, axis.y, axis.z},
-        .normal       = {normal.x, normal.y, normal.z},
+        .axis         = JPH::Vec3(axis.x, axis.y, axis.z),
+        .normal       = JPH::Vec3(normal.x, normal.y, normal.z),
         .has_position = has_position,
         .position     = position,
     };

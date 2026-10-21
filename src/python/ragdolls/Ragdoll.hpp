@@ -1,25 +1,27 @@
 #pragma once
 #include "ragdolls/RagdollParsers.hpp"
+#include "jolt/Jolt.hpp"
+#include <Jolt/Physics/Ragdoll/Ragdoll.h>
+#include <Jolt/Skeleton/Skeleton.h>
 #include <Python.h>
-#include <joltc.h>
 
 namespace CPH::Python {
 
 // --- Ragdoll Structures ---
 
 struct SkeletonObject {
-    PyObject_HEAD JPH_Skeleton *skeleton;
+    PyObject_HEAD JPH::Skeleton *skeleton;
     CPH::Python::SkeletonParsers *parsers;
 };
 
 struct RagdollSettingsObject {
-    PyObject_HEAD JPH_RagdollSettings *settings;
+    PyObject_HEAD JPH::RagdollSettings *settings;
     struct PhysicsWorldObject *world; // Kept to access Shape Cache
     CPH::Python::RagdollSettingsParsers *parsers;
 };
 
 struct RagdollObject {
-    PyObject_HEAD JPH_Ragdoll *ragdoll;
+    PyObject_HEAD JPH::Ragdoll *ragdoll;
     struct PhysicsWorldObject *world;
 
     // We must track the handles of the parts so we can

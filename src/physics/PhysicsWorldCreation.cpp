@@ -200,62 +200,58 @@ PhysicsWorld::CreateSoftBody(const PhysicsWorldSoftBodyCreateRequest &request) {
     return handle;
 }
 
-JPH_RagdollSettings *PhysicsWorldCreateRagdollSettings(JPH_Skeleton *skeleton) {
+JPH::RagdollSettings *PhysicsWorldCreateRagdollSettings(JPH::Skeleton *skeleton) {
     if (!skeleton) {
         return nullptr;
     }
-    JPH_RagdollSettings *settings = JPH_RagdollSettings_Create();
-    if (settings) {
-        JPH_RagdollSettings_SetSkeleton(settings, skeleton);
-    }
+    // joltc's JPH_RagdollSettings_Create returned an already-AddRef'd object.
+    JPH::RagdollSettings *settings = new JPH::RagdollSettings();
+    settings->AddRef();
+    settings->mSkeleton = skeleton; // Ref<> assignment takes its own reference
     return settings;
 }
 
 std::expected<RagdollInstance, Error>
-PhysicsWorld::CreateRagdollInstance(JPH_RagdollSettings *settings, JPH_RVec3 position,
+PhysicsWorld::CreateRagdollInstance(JPH::RagdollSettings *settings, JPH_RVec3 position,
                                       JPH_Quat rotation, uint64_t user_data) {
     if (!settings || !jolt_initialized) {
         return std::unexpected(WorldCreationError::InvalidArgument);
     }
 
     const std::scoped_lock trampoline(jph_trampoline_lock);
-    JPH_RagdollSettings_CalculateBodyIndexToConstraintIndex(settings);
-    JPH_RagdollSettings_CalculateConstraintIndexToBodyIdxPair(settings);
-    auto *native_settings = reinterpret_cast<JPH::RagdollSettings *>(settings);
-    JPH::Ragdoll *native_ragdoll =
-        native_settings->CreateRagdoll(0, user_data, &physics_system);
-    if (!native_ragdoll) {
+    settings->CalculateBodyIndexToConstraintIndex();
+    settings->CalculateConstraintIndexToBodyIdxPair();
+    JPH::Ragdoll *ragdoll = settings->CreateRagdoll(0, user_data, &physics_system);
+    if (!ragdoll) {
         return std::unexpected(WorldCreationError::RagdollFailed);
     }
-    native_ragdoll->AddRef();
-    auto *ragdoll = reinterpret_cast<JPH_Ragdoll *>(native_ragdoll);
+    ragdoll->AddRef();
 
-    const size_t joint_count =
-        (size_t)JPH_Skeleton_GetJointCount(JPH_RagdollSettings_GetSkeleton(settings));
-    Buffer<JPH_Mat4> neutral_matrices;
+    const size_t joint_count = (size_t)settings->GetSkeleton()->GetJointCount();
+    Buffer<JPH::Mat44> neutral_matrices;
     if (joint_count && !neutral_matrices.allocate(joint_count)) {
-        JPH_Ragdoll_Destroy(ragdoll);
+        ragdoll->Release();
         return std::unexpected(WorldCreationError::OutOfMemory);
     }
 
-    JPH_RVec3 zero_root = {0, 0, 0};
-    JPH_Ragdoll_GetPose2(ragdoll, &zero_root, neutral_matrices.data(), true);
-    JPH_Mat4 rotation_matrix;
-    JPH_Mat4_Rotation(&rotation_matrix, &rotation);
+    JPH::RVec3 zero_root = JPH::RVec3::sZero();
+    ragdoll->GetPose(zero_root, neutral_matrices.data(), true);
+    // JPH_Quat/JPH_RVec3 stay plain value types (shared with the body-creation
+    // path); convert at the boundary rather than changing the request struct.
+    const JPH::Mat44 rotation_matrix =
+        JPH::Mat44::sRotation(JPH::Quat(rotation.x, rotation.y, rotation.z, rotation.w));
     for (size_t i = 0; i < joint_count; i++) {
-        JPH_Mat4 result;
-        JPH_Mat4_Multiply(&rotation_matrix, &neutral_matrices[i], &result);
-        neutral_matrices[i] = result;
+        neutral_matrices[i] = rotation_matrix * neutral_matrices[i];
     }
 
-    JPH_Ragdoll_SetPose2(ragdoll, &position, neutral_matrices.data(), true);
-    JPH_Ragdoll_AddToPhysicsSystem(ragdoll, JPH_Activation_Activate, true);
+    ragdoll->SetPose(JPH::RVec3(position.x, position.y, position.z), neutral_matrices.data(), true);
+    ragdoll->AddToPhysicsSystem(JPH::EActivation::Activate, true);
     return RagdollInstance{.ragdoll    = ragdoll,
-                             .body_count = (size_t)JPH_Ragdoll_GetBodyCount(ragdoll)};
+                           .body_count = (size_t)ragdoll->GetBodyCount()};
 }
 
 std::expected<std::size_t, Error> PhysicsWorld::RegisterRagdollBodies(
-    JPH_Ragdoll *ragdoll, std::span<std::uint32_t> body_slots, uint64_t user_data,
+    JPH::Ragdoll *ragdoll, std::span<std::uint32_t> body_slots, uint64_t user_data,
     uint32_t category, uint32_t mask, uint32_t material_id) {
     if (!ragdoll) {
         return std::unexpected(WorldCreationError::InvalidArgument);
@@ -295,7 +291,7 @@ std::expected<std::size_t, Error> PhysicsWorld::RegisterRagdollBodies(
     AuxStride *linear_velocities      = bodies.linear_velocities.data();
     AuxStride *angular_velocities     = bodies.angular_velocities.data();
     for (size_t i = 0; i < body_count; i++) {
-        const JPH_BodyID body_id = JPH_Ragdoll_GetBodyID(ragdoll, (int)i);
+        const JPH_BodyID body_id = ragdoll->GetBodyID((int)i).GetIndexAndSequenceNumber();
         const size_t free_index =
             (free_count).fetch_sub(1, std::memory_order::relaxed) - 1;
         const uint32_t slot = bodies.free_slots[free_index];
@@ -335,12 +331,12 @@ std::expected<std::size_t, Error> PhysicsWorld::RegisterRagdollBodies(
     return (count).load(std::memory_order::relaxed);
 }
 
-void PhysicsWorld::DestroyRagdoll(JPH_Ragdoll *ragdoll) {
+void PhysicsWorld::DestroyRagdoll(JPH::Ragdoll *ragdoll) {
     if (!ragdoll) {
         return;
     }
     const std::scoped_lock trampoline(jph_trampoline_lock);
-    JPH_Ragdoll_Destroy(ragdoll);
+    ragdoll->Release();
 }
 
 std::expected<void, Error> PhysicsWorld::CreateBodiesBatch(

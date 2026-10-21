@@ -4,7 +4,8 @@
 #include "jolt/Jolt.hpp"
 #include <Jolt/Physics/Collision/Shape/Shape.h>
 #include "physics/PhysicsParams.hpp"
-#include <joltc.h>
+#include <Jolt/Physics/Ragdoll/Ragdoll.h>
+#include <Jolt/Skeleton/Skeleton.h>
 
 #include <expected>
 #include <span>
@@ -22,28 +23,31 @@ enum class RagdollError : std::uint32_t {
 // (no world involved); world-side ragdoll bookkeeping is declared as
 // PhysicsWorld members in PhysicsWorldState.hpp.
 
-JPH_Skeleton *PhysicsRagdollSkeletonCreate(void);
-void PhysicsRagdollSkeletonDestroy(JPH_Skeleton *skeleton);
-int PhysicsRagdollSkeletonAddJoint(JPH_Skeleton *skeleton, const char *name, int parent_index);
-int PhysicsRagdollSkeletonGetJointIndex(JPH_Skeleton *skeleton, const char *name);
-bool PhysicsRagdollSkeletonFinalize(JPH_Skeleton *skeleton);
+// All three object types are Jolt RefTargets. The pointers below are
+// non-owning views: creation AddRef's exactly once (matching what joltc's
+// JPH_*_Create did) and the matching Destroy Release's it.
+JPH::Skeleton *PhysicsRagdollSkeletonCreate(void);
+void PhysicsRagdollSkeletonDestroy(JPH::Skeleton *skeleton);
+int PhysicsRagdollSkeletonAddJoint(JPH::Skeleton *skeleton, const char *name, int parent_index);
+int PhysicsRagdollSkeletonGetJointIndex(JPH::Skeleton *skeleton, const char *name);
+bool PhysicsRagdollSkeletonFinalize(JPH::Skeleton *skeleton);
 
-void PhysicsRagdollSettingsDestroy(JPH_RagdollSettings *settings);
-bool PhysicsRagdollSettingsStabilize(JPH_RagdollSettings *settings);
+void PhysicsRagdollSettingsDestroy(JPH::RagdollSettings *settings);
+bool PhysicsRagdollSettingsStabilize(JPH::RagdollSettings *settings);
 // Returns the joint count after the part is added.
 [[nodiscard]] std::expected<int, Error>
-PhysicsRagdollSettingsAddPart(JPH_RagdollSettings *settings, const JPH::Shape *shape,
+PhysicsRagdollSettingsAddPart(JPH::RagdollSettings *settings, const JPH::Shape *shape,
                               const PhysicsRagdollPartRequest &request);
 
-int PhysicsRagdollGetJointCount(JPH_Ragdoll *ragdoll);
-bool PhysicsRagdollDriveToPose(JPH_Ragdoll *ragdoll, JPH_RVec3 root_position,
-                                   std::span<const JPH_Mat4> matrices);
-int PhysicsRagdollGetBodyCount(JPH_Ragdoll *ragdoll);
+int PhysicsRagdollGetJointCount(JPH::Ragdoll *ragdoll);
+bool PhysicsRagdollDriveToPose(JPH::Ragdoll *ragdoll, JPH::RVec3 root_position,
+                               std::span<const JPH::Mat44> matrices);
+int PhysicsRagdollGetBodyCount(JPH::Ragdoll *ragdoll);
 
 struct PhysicsWorld;
 // World may be null when the owning world object is gone; then the
 // ragdoll is destroyed without shadow cleanup.
-void PhysicsRagdollDeallocate(PhysicsWorld *world, JPH_Ragdoll *ragdoll,
+void PhysicsRagdollDeallocate(PhysicsWorld *world, JPH::Ragdoll *ragdoll,
                               std::span<const std::uint32_t> body_slots);
 
 } // namespace CPH

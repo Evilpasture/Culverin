@@ -2494,7 +2494,7 @@ WorldGetSoftBodyLocalVertices(PhysicsWorldObject *self, PyObject *const *args,
                            "Jolt failed to create Ragdoll instance", nullptr);
         return nullptr;
     }
-    JPH_Ragdoll *j_rag       = creation_status->ragdoll;
+    JPH::Ragdoll *j_rag      = creation_status->ragdoll;
     const size_t body_count  = creation_status->body_count;
 
     uint32_t *body_slots = nullptr;

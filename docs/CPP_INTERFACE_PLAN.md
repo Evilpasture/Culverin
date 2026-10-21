@@ -5,8 +5,8 @@ B2(physics), A3, and B3 landed** (A3 and B3 on top of the lock-order fix
 `ee5076d`), plus the `[[likely]]`/`[[unlikely]]` cleanup, which deleted
 `CPH::Python::Likely`/`Unlikely` in favour of the standard statement
 attributes. **A4 is in progress: the query layer and its filters,
-constraints, characters, vehicles and ships are on the direct Jolt API;
-ragdolls and soft bodies remain, along with the
+constraints, characters, vehicles, ships and ragdolls are on the direct
+Jolt API; soft bodies remain, along with the
 `PhysicsWorldRuntime`/`PhysicsWorldCreation` and `JPH_BodyID`/
 `JPH_BodyInterface` sites those still touch.** With ships done, all
 eight global proc tables are gone.
@@ -371,9 +371,57 @@ Two things were preserved on purpose rather than "improved":
 `GetBodyInterfaceNoLock()` — the locking interface would deadlock. That
 was true before and is now commented rather than implied.
 
-Remaining A4 work: `PhysicsWorldRuntime`/`PhysicsWorldCreation`, the
-ragdoll and soft-body bindings, and the `JPH_BodyInterface` field those
-still read.
+*Landed so far — ragdolls.* The ragdoll subsystem is on the direct Jolt
+API: `Ragdoll.{hpp,cpp}`, the ragdoll half of `PhysicsWorldCreation.cpp`,
+the three declarations in `PhysicsWorldState.hpp`, the ragdoll structs in
+`PhysicsParams.hpp`, and the Python object types in
+`src/python/ragdolls/`. `JPH_Skeleton`/`JPH_RagdollSettings`/`JPH_Ragdoll`
+become `JPH::Skeleton`/`JPH::RagdollSettings`/`JPH::Ragdoll`, and the two
+`reinterpret_cast` bridges that the code was already using to reach
+`RagdollSettings::CreateRagdoll` are gone with them.
+
+Lifetime is unchanged because it was already correct: all three are
+`RefTarget`s, and joltc's `JPH_*_Create` did `new T()` + `AddRef()` while
+`JPH_*_Destroy` did `Release()`. The conversion reproduces that exactly
+rather than switching to `Ref<>`, so the Python side's ownership
+accounting does not move.
+
+Two equivalences were checked against joltc's source rather than assumed:
+
+- `JPH_SwingTwistConstraintSettings_Init` memsets the C struct and then
+  copies the defaults back out of a default-constructed native
+  `SwingTwistConstraintSettings`; `FromJolt` mirrors every field that
+  `SetPartToParent` later reads. So a native
+  `new SwingTwistConstraintSettings()` plus only the overrides the code
+  actually sets is equivalent field for field, and the eleven
+  `JPH_RagdollSettings_SetPart*` calls collapse into direct writes to
+  `RagdollSettings::Part` (which derives from `BodyCreationSettings`).
+- `JPH_Mat4` and `JPH::Mat44` are both four column-major `Vec4` — 64 bytes
+  each, verified with `sizeof` — so the caller's float32 matrices buffer
+  is still read through a `static_cast`, and `sizeof(JPH_Mat4)` in the
+  "buffer too small" message keeps the same value.
+
+`JPH_Vec3`/`JPH_RVec3` are **not** layout-compatible with
+`JPH::Vec3`/`JPH::RVec3` (12 vs 16 and 24 vs 32 bytes), so
+`PhysicsRagdollPartRequest` converts at construction instead of casting.
+`CreateRagdollInstance` keeps its `JPH_RVec3`/`JPH_Quat` parameters —
+those are shared value types on the body-creation path and belong to a
+different slice — and converts at the boundary.
+
+`JPH_BodyID` survives in `CopyRagdollDebugInfo` because `body_interface`
+is still a `JPH_BodyInterface *`; `GetBodyID(i).GetIndexAndSequenceNumber()`
+hands it the same packed word joltc did.
+
+One pre-existing defect found and **preserved**, marked `TODO(bug)`:
+`JPH_RagdollSettings_SetPartToParent` copies fifteen fields but never
+`base` — so `constraint.base.enabled = true` was a dead write, as were
+`constraintPriority`, both step-count overrides, `drawConstraintSize` and
+`userData`. It was harmless only because `ConstraintSettings::mEnabled`
+defaults to `true` (`Constraint.h:15`). Left unset; wiring it up would be
+a no-op today and a behaviour change if that default ever moved.
+
+Remaining A4 work: soft bodies, `PhysicsWorldRuntime`/`PhysicsWorldCreation`,
+and the `JPH_BodyID`/`JPH_BodyInterface` sites those still touch.
 
 **A5 — Remove JoltC.** First, audit the fork: `extern/JoltC` carries
 Culverin-local patches (at minimum `JPH_Init`'s trace forwarding and

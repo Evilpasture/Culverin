@@ -3,6 +3,10 @@
 // Plain native data shared by the parser adapters and the physics core.
 
 #include "core/Types.hpp"
+#include "jolt/Jolt.hpp"
+#include <Jolt/Math/Mat44.h>
+#include <Jolt/Math/Vec3.h>
+#include <Jolt/Physics/Ragdoll/Ragdoll.h>
 #include <joltc.h>
 
 #include <cstddef>
@@ -110,7 +114,9 @@ struct ResolvedMaterial {
 // Result of ragdoll instantiation: the Jolt ragdoll and how many bodies
 // it added.
 struct RagdollInstance {
-    JPH_Ragdoll *ragdoll;
+    // Non-owning: the caller AddRef'd it via CreateRagdollInstance and releases
+    // it through PhysicsWorld::DestroyRagdoll.
+    JPH::Ragdoll *ragdoll;
     std::size_t body_count;
 };
 
@@ -175,10 +181,10 @@ struct PhysicsRagdollPartRequest {
     float twist_min;
     float twist_max;
     float cone_angle;
-    JPH_Vec3 axis;
-    JPH_Vec3 normal;
+    JPH::Vec3 axis;
+    JPH::Vec3 normal;
     bool has_position;
-    JPH_RVec3 position;
+    JPH::RVec3 position;
 };
 
 struct PhysicsRagdollBodyHandleInfo {
