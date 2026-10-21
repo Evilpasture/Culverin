@@ -6,10 +6,12 @@ B2(physics), A3, and B3 landed** (A3 and B3 on top of the lock-order fix
 `CPH::Python::Likely`/`Unlikely` in favour of the standard statement
 attributes. **A4 is in progress: the query layer and its filters,
 constraints, characters, vehicles, ships, ragdolls and soft bodies are on
-the direct Jolt API; what remains is the body-ID/body-interface layer --
-the `JPH_BodyID`/`JPH_BodyInterface` sites spread through
-`PhysicsWorldRuntime`, `CommandBuffer` and `PhysicsWorld.cpp`.** With
-ships done, all eight global proc tables are gone.
+the direct Jolt API, and the body-operation paths (immediate and deferred)
+are off `JPH_BodyInterface` too. What remains is the rest of the
+body-interface layer -- `PhysicsWorldRuntime`, `PhysicsWorldCreation`,
+`PhysicsWorld.cpp`, `Ragdoll.cpp` and `Constraint.cpp` -- plus `JPH_BodyID`
+itself as the shadow buffer's storage type.** With ships done, all eight
+global proc tables are gone.
 Prerequisite: the C++23 migration
 (`docs/CPP23_MIGRATION.md`) has landed. All acceptance oracles from that
 migration apply unchanged to every phase below: full test suite at
@@ -460,9 +462,43 @@ stride-8 float buffer whose slot 2 holds a structured non-position value
 (exact powers of two, stable across runs). It is unchanged by this patch
 and the probe compares the whole buffer either way.
 
-Remaining A4 work: the body-ID/body-interface layer — the `JPH_BodyID`
-and `JPH_BodyInterface` sites spread through `PhysicsWorldRuntime`,
-`CommandBuffer` and `PhysicsWorld.cpp`.
+*Landed so far — body operations on the direct `BodyInterface`.* The two
+paths that turn a `PhysicsBodyOperation` into a Jolt call —
+`execute_now` in `PhysicsWorldOps.cpp` and the `FlushContext` visitor in
+`CommandBuffer.cpp` — no longer go through `JPH_BodyInterface`. That is
+29 of the 52 call sites.
+
+`world->body_interface` is a `reinterpret_cast` of
+`physics_system.GetBodyInterface()` (`PhysicsWorld.cpp:637`), i.e. the
+**locking** interface, so both conversions go to that same one rather
+than `GetBodyInterfaceNoLock()`. Worth recording because the two are not
+interchangeable and nothing in the JoltC signature said which was in use.
+
+`FlushContext::bi` becomes a `JPH::BodyInterface &`, which converts every
+handler in the visitor at once; `CreateBody` in that same struct was
+already calling `physics_system.GetBodyInterface()` natively, so the file
+was mixed before and is consistent now.
+
+`JoltUtils.hpp` gains `ToJolt` overloads for `JPH_Vec3`/`JPH_RVec3`/
+`JPH_Quat` and a `ToJoltBodyId`. These are conversions, not casts:
+`JPH_Vec3` is 12 bytes against `JPH::Vec3`'s 16 and `JPH_RVec3` is 24
+against `JPH::RVec3`'s 32, so a `reinterpret_cast` would read past the
+end of the source object. The remaining call sites in the next slice
+should use these rather than open-coding the field copies.
+
+One pre-existing smell found and **preserved**, marked `TODO(smell)`:
+`CommandBuffer`'s `SetMotionType` handler derives the object layer from
+the motion type — `cmd.motion_type == 0 ? 0 : 1` — because the command
+only carries a motion type. `Static` maps to `ObjectLayer::Static` and
+both `Kinematic` and `Dynamic` map to `ObjectLayer::Dynamic`, which
+matches `Types.hpp:95-100` today, but it conflates motion type with
+collision layer and can never select `ObjectLayer::Vehicle`. Fixing it
+means widening the command, which is a behaviour change.
+
+Remaining A4 work: the rest of the `JPH_BodyInterface` sites (23) in
+`PhysicsWorldRuntime`, `PhysicsWorldCreation`, `PhysicsWorld.cpp`,
+`Ragdoll.cpp` and `Constraint.cpp`, then `JPH_BodyID` as the shadow
+buffer's storage type.
 
 **A5 — Remove JoltC.** First, audit the fork: `extern/JoltC` carries
 Culverin-local patches (at minimum `JPH_Init`'s trace forwarding and

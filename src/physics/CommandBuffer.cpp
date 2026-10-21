@@ -1,3 +1,4 @@
+#include "jolt/JoltUtils.hpp"
 #include "physics/CommandBuffer.hpp"
 
 #include "core/Buffer.hpp"
@@ -115,9 +116,14 @@ using namespace CPH::cmd;
 
 struct FlushContext {
     PhysicsWorld *world;
-    JPH_BodyInterface *bi;
+    // The locking BodyInterface, which is what the JPH_BodyInterface * this
+    // replaced was a reinterpret_cast of (PhysicsWorld.cpp:637).
+    JPH::BodyInterface &bi;
     std::uint32_t slot;
     JPH_BodyID bid; // resolved body ID (invalid for creates)
+
+    // JPH_BodyID is typedef uint32_t; Jolt wants the packed word wrapped.
+    [[nodiscard]] JPH::BodyID BodyId() const noexcept { return ToJoltBodyId(bid); }
 
     void operator()(std::monostate) const {}
 
@@ -166,74 +172,80 @@ struct FlushContext {
         if (world->jolt_body_ptrs && j_idx <= world->max_jolt_bodies) {
             world->jolt_body_ptrs[j_idx] = nullptr;
         }
-        JPH_BodyInterface_RemoveBody(bi, bid);
-        JPH_BodyInterface_DestroyBody(bi, bid);
+        bi.RemoveBody(BodyId());
+        bi.DestroyBody(BodyId());
         const std::scoped_lock shadow(world->shadow_lock);
         world->RemoveBodySlot(slot);
     }
 
     void operator()(SetPosition &cmd) const {
-        const bool active = JPH_BodyInterface_IsActive(bi, bid);
-        JPH_BodyInterface_SetPosition(
-            bi, bid, &cmd.position,
-            active ? JPH_Activation_DontActivate : JPH_Activation_Activate);
+        const bool active = bi.IsActive(BodyId());
+        bi.SetPosition(BodyId(), ToJolt(cmd.position),
+                       active ? JPH::EActivation::DontActivate : JPH::EActivation::Activate);
     }
 
     void operator()(SetRotation &cmd) const {
-        JPH_BodyInterface_SetRotation(bi, bid, &cmd.rotation, JPH_Activation_Activate);
+        bi.SetRotation(BodyId(), ToJolt(cmd.rotation), JPH::EActivation::Activate);
     }
 
     void operator()(SetTransform &cmd) const {
-        JPH_BodyInterface_SetPositionAndRotation(bi, bid, &cmd.position, &cmd.rotation,
-                                                 JPH_Activation_Activate);
+        bi.SetPositionAndRotation(BodyId(), ToJolt(cmd.position), ToJolt(cmd.rotation),
+                                  JPH::EActivation::Activate);
     }
 
     void operator()(SetLinearVelocity &cmd) const {
-        JPH_BodyInterface_SetLinearVelocity(bi, bid, &cmd.velocity);
+        bi.SetLinearVelocity(BodyId(), ToJolt(cmd.velocity));
     }
 
     void operator()(SetAngularVelocity &cmd) const {
-        JPH_BodyInterface_SetAngularVelocity(bi, bid, &cmd.velocity);
+        bi.SetAngularVelocity(BodyId(), ToJolt(cmd.velocity));
     }
 
     void operator()(SetMotionType &cmd) const {
-        JPH_BodyInterface_SetMotionType(bi, bid, static_cast<JPH_MotionType>(cmd.motion_type),
-                                        JPH_Activation_Activate);
-        JPH_BodyInterface_SetObjectLayer(
-            bi, bid, static_cast<JPH_ObjectLayer>(cmd.motion_type == 0 ? 0 : 1));
+        bi.SetMotionType(BodyId(), static_cast<JPH::EMotionType>(cmd.motion_type),
+                         JPH::EActivation::Activate);
+        // TODO(smell): the object layer is derived from the motion type rather
+        // than carried on the command -- SetMotionType only has a motion_type
+        // field. Static(0) -> ObjectLayer::Static(0), Kinematic(1)/Dynamic(2) ->
+        // ObjectLayer::Dynamic(1). That happens to match Types.hpp:95-100 today
+        // but conflates motion type with collision layer, and can never select
+        // ObjectLayer::Vehicle. Preserved verbatim; fixing it means widening the
+        // command, which is a behaviour change.
+        bi.SetObjectLayer(BodyId(),
+                          static_cast<JPH::ObjectLayer>(cmd.motion_type == 0 ? 0 : 1));
     }
 
-    void operator()(Activate &) const { JPH_BodyInterface_ActivateBody(bi, bid); }
-    void operator()(Deactivate &) const { JPH_BodyInterface_DeactivateBody(bi, bid); }
+    void operator()(Activate &) const { bi.ActivateBody(BodyId()); }
+    void operator()(Deactivate &) const { bi.DeactivateBody(BodyId()); }
 
     void operator()(SetCcd &cmd) const {
-        JPH_BodyInterface_SetMotionQuality(
-            bi, bid, cmd.enabled ? JPH_MotionQuality_LinearCast : JPH_MotionQuality_Discrete);
+        bi.SetMotionQuality(BodyId(), cmd.enabled ? JPH::EMotionQuality::LinearCast
+                                              : JPH::EMotionQuality::Discrete);
     }
 
     void operator()(ApplyImpulse &cmd) const {
-        JPH_BodyInterface_AddImpulse(bi, bid, &cmd.impulse);
-        JPH_BodyInterface_ActivateBody(bi, bid);
+        bi.AddImpulse(BodyId(), ToJolt(cmd.impulse));
+        bi.ActivateBody(BodyId());
     }
 
     void operator()(ApplyForce &cmd) const {
-        JPH_BodyInterface_AddForce(bi, bid, &cmd.force);
-        JPH_BodyInterface_ActivateBody(bi, bid);
+        bi.AddForce(BodyId(), ToJolt(cmd.force));
+        bi.ActivateBody(BodyId());
     }
 
     void operator()(ApplyTorque &cmd) const {
-        JPH_BodyInterface_AddTorque(bi, bid, &cmd.torque);
-        JPH_BodyInterface_ActivateBody(bi, bid);
+        bi.AddTorque(BodyId(), ToJolt(cmd.torque));
+        bi.ActivateBody(BodyId());
     }
 
     void operator()(ApplyAngularImpulse &cmd) const {
-        JPH_BodyInterface_AddAngularImpulse(bi, bid, &cmd.impulse);
-        JPH_BodyInterface_ActivateBody(bi, bid);
+        bi.AddAngularImpulse(BodyId(), ToJolt(cmd.impulse));
+        bi.ActivateBody(BodyId());
     }
 
     void operator()(ApplyImpulseAt &cmd) const {
-        JPH_BodyInterface_AddImpulse2(bi, bid, &cmd.impulse, &cmd.position);
-        JPH_BodyInterface_ActivateBody(bi, bid);
+        bi.AddImpulse(BodyId(), ToJolt(cmd.impulse), ToJolt(cmd.position));
+        bi.ActivateBody(BodyId());
     }
 
     void operator()(cmd::CreateConstraint &cmd) const {
@@ -309,7 +321,8 @@ void PhysicsWorld::FlushCommands(std::span<PhysicsCommand> queue) {
         // are dropped; resetting the command still destroys payloads.
         if (std::to_underlying(state) < 32 && ((slot_state_bit(state) & kValidBidMask) != 0) &&
             (is_create || bid != kJphInvalidBodyId)) {
-            std::visit(FlushContext{this, body_interface, slot, bid}, command.payload);
+            std::visit(FlushContext{this, physics_system.GetBodyInterface(), slot, bid},
+                       command.payload);
         }
         command = PhysicsCommand{};
     }

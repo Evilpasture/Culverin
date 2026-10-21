@@ -1,5 +1,6 @@
 #include "physics/PhysicsWorldOps.hpp"
 
+#include "jolt/JoltUtils.hpp"
 #include "physics/CommandBuffer.hpp"
 #include "physics/PhysicsWorldState.hpp"
 #include "physics/SlotState.hpp"
@@ -127,30 +128,35 @@ void mirror_to_shadow(PhysicsWorld *world, std::uint32_t slot,
 
 void execute_now(PhysicsWorld *world, JPH_BodyID body_id,
                  const PhysicsBodyOperation &op) {
-    JPH_BodyInterface *bi = world->body_interface;
-    JPH_Vec3 vector       = op.vector;
+    // world->body_interface is a reinterpret_cast of
+    // physics_system.GetBodyInterface() -- the *locking* interface (see
+    // PhysicsWorld.cpp:637) -- so go to the same one rather than the NoLock
+    // variant. These run outside a step, under the shadow lock only.
+    JPH::BodyInterface &bi = world->physics_system.GetBodyInterface();
+    const JPH::BodyID id(body_id);
+    const JPH::Vec3 vector = ToJolt(op.vector);
     switch (op.type) {
     case PhysicsBodyOperationType::ApplyImpulse:
-        JPH_BodyInterface_AddImpulse(bi, body_id, &vector);
+        bi.AddImpulse(id, vector);
         break;
     case PhysicsBodyOperationType::ApplyImpulseAt: {
-        JPH_RVec3 position = op.position;
-        JPH_BodyInterface_AddImpulse2(bi, body_id, &vector, &position);
+        const JPH::RVec3 position = ToJolt(op.position);
+        bi.AddImpulse(id, vector, position);
         break;
     }
     case PhysicsBodyOperationType::ApplyAngularImpulse:
-        JPH_BodyInterface_AddAngularImpulse(bi, body_id, &vector);
+        bi.AddAngularImpulse(id, vector);
         break;
     case PhysicsBodyOperationType::ApplyForce:
-        JPH_BodyInterface_AddForce(bi, body_id, &vector);
+        bi.AddForce(id, vector);
         break;
     case PhysicsBodyOperationType::ApplyTorque:
-        JPH_BodyInterface_AddTorque(bi, body_id, &vector);
+        bi.AddTorque(id, vector);
         break;
     default:
         return;
     }
-    JPH_BodyInterface_ActivateBody(bi, body_id);
+    bi.ActivateBody(id);
 }
 
 } // namespace
