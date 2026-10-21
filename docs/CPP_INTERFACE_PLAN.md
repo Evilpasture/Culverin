@@ -982,6 +982,52 @@ were missing, all now marked at the site:
 Nothing was fixed in that pass: each marker is a behaviour change waiting for
 a decision, and the gates stayed where they were.
 
+## Cross-platform build invariants
+
+The migration moved every subsystem onto one native ABI, which made the build
+depend on three things that only the Linux Release job happened to satisfy.
+Each is now an invariant the build states, not a property of the box it ran on.
+
+**Jolt's feature defines must be configuration-independent in the consumer.**
+Culverin's targets carry a plain `-DJPH_DEBUG_RENDERER` because debug draw is
+part of the Python API. Jolt's own CMake offers that macro two ways: a
+generator expression over `Debug;Release;ReleaseASAN;ReleaseUBSAN;ReleaseTSAN`
+(`DEBUG_RENDERER_IN_DEBUG_AND_RELEASE`, the default) or an unguarded definition
+(`DEBUG_RENDERER_IN_DISTRIBUTION`). Any build type outside that list —
+`RelWithDebInfo`, which is exactly what the sanitizer wheel job passes — landed
+between them: `DebugRenderer.cpp` compiled to an empty translation unit while
+Culverin still declared `JPH::DebugRenderer`. A shared library links with
+unresolved symbols, so nothing failed until `import culverin`, which reported
+`undefined symbol: _ZN3JPH13DebugRendererD2Ev`. Both knobs are now forced on
+and the consumer has no configuration-dependent define left.
+
+**Nothing reachable from the CPython object may demand more than
+`alignof(std::max_align_t)`.** CPython allocates the type's storage; the
+strongest alignment it promises is `max_align_t`, which is 16 on Linux x86-64
+and 8 on macOS arm64 because `long double` is 8 bytes wide there. `PhysicsWorld`
+kept `JPH::PhysicsSystem` as a value member — alignof 16, from its `RVec3`
+storage — so `alignof(PhysicsWorldObject)` was 16 and the binding's
+`static_assert` in `PhysicsWorldBinding.hpp` fired only on Apple silicon. It is
+now heap-owned like `JobSystemThreadPool` and the debug renderer, behind a
+reference member so call sites are unchanged; `alignof(PhysicsWorld)` is 8 on
+both platforms and the assert is a real check again rather than a
+platform-dependent one.
+
+**The STL and the flag set must agree about exception handling.** MSVC's STL
+requires `_HAS_EXCEPTIONS=0` when exceptions are off. Jolt's `Core.h` defines it
+for that reason, but only when it has defined `JPH_COMPILER_MSVC`, which it
+derives from `_MSC_VER` *without* `__clang__` — so clang.exe/clang-cl on the
+MSVC ABI, the only Windows toolchain this project supports, never got it while
+every target was compiled `-fno-exceptions`. `_HAS_EXCEPTIONS` is now a
+directory-scope definition on `WIN32`, so Jolt and Culverin take the same branch
+of the STL's conditionals instead of one each. `Jolt.hpp` additionally pins the
+first, global-scope inclusion of `<cctype>` on that ABI: MSVC's `<cctype>` only
+re-exports names UCRT's `<ctype.h>` must have declared, and that header guards
+its narrow declarations behind `#if !defined __midl && !defined RC_INVOKED`
+under a bare `#pragma once`, so the first inclusion decides the whole
+translation unit — Jolt reaches it through `<sstream>`, far from anything
+Culverin controls.
+
 ## Sequencing, gates, risks
 
 Order: **A0 → naming dissolution → B1 → A1 → A2 → B2(physics) → A3

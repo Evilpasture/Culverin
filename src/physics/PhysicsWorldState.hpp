@@ -429,7 +429,19 @@ struct PhysicsWorld {
     JPH::CharacterVsCharacterCollisionSimple character_vs_character;
     std::unique_ptr<JPH::TempAllocator> temp_allocator;
     std::unique_ptr<JPH::JobSystemThreadPool> job_system;
-    JPH::PhysicsSystem physics_system;
+
+    // PhysicsSystem is heap-owned for the same reason the job system is, and
+    // for a subtler one: it carries alignof 16 (its RVec3 storage), while the
+    // guarantee CPython's allocator makes is alignof(std::max_align_t). Those
+    // coincide on Linux x86-64 (16) and do not on any 64-bit platform whose
+    // long double is 8 bytes wide — macOS arm64, where max_align_t is 8. As a
+    // value member it made alignof(PhysicsWorldObject) 16 and tripped the
+    // binding's allocator static_assert. Factory-allocated (not a bare `new`)
+    // so -fno-exceptions terminates on OOM exactly as it does for the two
+    // allocations above; `physics_system` stays a reference so the ~70 call
+    // sites that spell `world.physics_system.X()` are untouched.
+    std::unique_ptr<JPH::PhysicsSystem> physics_system_storage;
+    JPH::PhysicsSystem &physics_system;
     bool jolt_initialized = false;
 };
 

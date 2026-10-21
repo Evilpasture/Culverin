@@ -116,6 +116,19 @@ project(culverin LANGUAGES CXX)
 if(WIN32)
     # Apply the Windows SDK's own switches before any header can include Windows.h.
     add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
+
+    # MSVC's STL refuses to agree with itself unless _HAS_EXCEPTIONS matches the
+    # /EH state of the translation unit; Jolt's Core.h says as much ("MSVC STL
+    # requires _HAS_EXCEPTIONS=0 if exceptions are turned off") but its guard is
+    # keyed on JPH_COMPILER_MSVC, which Jolt defines from _MSC_VER only when
+    # __clang__ is NOT set. Every Culverin and Jolt target is compiled with
+    # -fno-exceptions (see culverin_configure_compile_target and
+    # CPP_EXCEPTIONS_ENABLED OFF), so on a clang.exe/clang-cl MSVC-ABI build the
+    # flag and the header disagreed on every single TU. Stated once, at directory
+    # scope, so Jolt sees exactly what Culverin sees — half the translation units
+    # taking each branch of the STL's _HAS_EXCEPTIONS conditionals is an ODR
+    # violation, not just a compile error.
+    add_compile_definitions(_HAS_EXCEPTIONS=0)
 endif()
 
 # 1.1 FORCE BUILD TYPE (RelWithDebInfo is the sweet spot for ASan)
@@ -337,8 +350,21 @@ get_filename_component(
     "${CMAKE_CURRENT_SOURCE_DIR}/extern/JoltPhysics"
     ABSOLUTE
 )
-# JPH_DEBUG_RENDERER likewise comes from Jolt's PUBLIC definitions once this
-# knob is on (no global -D).
+# JPH_DEBUG_RENDERER likewise comes from Jolt's PUBLIC definitions once one of
+# these knobs is on (no global -D).
+#
+# DISTRIBUTION, not DEBUG_AND_RELEASE: the latter defines JPH_DEBUG_RENDERER
+# through a generator expression that names Debug/Release/ReleaseASAN/
+# ReleaseUBSAN/ReleaseTSAN only. Culverin's own targets carry a plain
+# -DJPH_DEBUG_RENDERER (see culverin_configure_compile_target), so any other
+# build type — RelWithDebInfo above all, which is exactly what the sanitizer
+# wheel job asks for — compiled Jolt's DebugRenderer.cpp with its body
+# #ifdef'd out while Culverin still declared JPH::DebugRenderer. The library
+# then linked against a DebugRenderer destructor that no object file defined,
+# and the failure only surfaced at import time ("undefined symbol:
+# _ZN3JPH13DebugRendererD2Ev"). DISTRIBUTION is the only setting that emits a
+# plain, unguarded definition, so the macro can never disagree between the two.
+set(DEBUG_RENDERER_IN_DISTRIBUTION ON CACHE BOOL "" FORCE)
 set(DEBUG_RENDERER_IN_DEBUG_AND_RELEASE ON CACHE BOOL "" FORCE)
 
 if(DEFINED JOLT_PREBUILT_DIR)

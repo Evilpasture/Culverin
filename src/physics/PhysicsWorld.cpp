@@ -196,7 +196,10 @@ void PhysicsWorld::WaitUntilNotQuerying(std::unique_lock<std::mutex> &shadow) {
 // downstream. The renderer is heap-owned for alignment reasons (see the
 // member declaration).
 PhysicsWorld::PhysicsWorld()
-    : contact_listener(this), debug_renderer(std::make_unique<WorldDebugRenderer>(this)) {}
+    : contact_listener(this),
+      debug_renderer(std::make_unique<WorldDebugRenderer>(this)),
+      physics_system_storage(std::make_unique<JPH::PhysicsSystem>()),
+      physics_system(*physics_system_storage) {}
 
 PhysicsWorld::~PhysicsWorld() {
     ClearCommandQueue();
