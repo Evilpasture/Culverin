@@ -139,7 +139,12 @@ static void BufferProxy_releasebuffer([[maybe_unused]] BufferProxyObject *self,
                                                   [[maybe_unused]] Py_buffer *view) {
 // Let NumPy hold the world buffer permanently.
 #if defined(STRICT_THREAD_SAFETY)
-    PhysicsWorldObject *world = self->world;
+    // The proxy keeps the world alive through `owner`, the same way the
+    // getbuffer path above does. This branch has never been compiled -- it
+    // named a `world` member that BufferProxyObject does not have -- so treat
+    // it as reviewed-but-unexercised until someone builds with
+    // STRICT_THREAD_SAFETY.
+    PhysicsWorldObject *world = reinterpret_cast<PhysicsWorldObject *>(self->owner);
 
     // 4. Mark query finished
     // Use 'release' barrier to ensure Numpy reads are finished before Stepper writes

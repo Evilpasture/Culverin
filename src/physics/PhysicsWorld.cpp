@@ -626,7 +626,7 @@ bool PhysicsWorld::InitJolt(WorldSettings settings, JPH::Float3 gravity) {
         std::make_unique<JPH::JobSystemThreadPool>(max_jobs, max_barriers, num_workers);
 
 #if defined(__SANITIZE_THREAD__) || defined(ENABLE_SANITIZER)
-    temp_allocator = std::make_unique<JPH::TempAllocatorMalloc>();
+    tempAllocator = std::make_unique<JPH::TempAllocatorMalloc>();
 #else
     // WithMallocFallback preserves the previous allocator behavior: the
     // fixed buffer serves normal steps, and overflow falls back to malloc

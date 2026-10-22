@@ -261,7 +261,7 @@ public:
             }
         } else {
 #if defined(CULVERIN_DEBUG)
-            if (m_value == 0) {
+            if (mValue == 0) {
                 std::abort(); // a zero value leaked in through a cast or deserialization
             }
 #endif

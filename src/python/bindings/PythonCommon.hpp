@@ -119,7 +119,7 @@ class Borrowed {
   private:
     void debug_check() const noexcept {
 #if defined(CULVERIN_DEBUG)
-        if (m_object == nullptr) {
+        if (mObject == nullptr) {
             Py_FatalError("CPH::Python::Borrowed: dereferenced a null borrow");
         }
 #endif
