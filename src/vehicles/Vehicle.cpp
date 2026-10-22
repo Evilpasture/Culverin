@@ -359,12 +359,18 @@ void Vehicle::Detach() {
     {
         const std::scoped_lock trampoline(world_->jph_trampoline_lock);
         world_->physics_system.RemoveStepListener(constraint);
+
+        // The physics system owns the constraint's only reference: AddConstraint
+        // took it, so RemoveConstraint releases it and the constraint is already
+        // destroyed when this returns. `constraint` is a borrowed pointer from
+        // here on -- releasing it (as this function used to, one statement
+        // below, with a comment claiming the destructor needed to run outside
+        // the locks) decrements the reference count of a freed block. That stray
+        // 4-byte write landed in the allocator's free list and took out an
+        // unrelated later allocation, which is why the crash surfaced as a
+        // SIGSEGV inside realloc on a DebugRenderer rather than here.
         world_->physics_system.RemoveConstraint(constraint);
     }
-
-    // Released outside both locks: this may run the vehicle's destructor, which
-    // is not something to do while holding the world.
-    constraint->Release();
 }
 
 Vehicle::~Vehicle() { Detach(); }

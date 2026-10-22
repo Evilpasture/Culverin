@@ -112,8 +112,9 @@ struct BodyBuffers {
 };
 
 struct ConstraintSlot {
-    // Owning reference to the Jolt constraint: PhysicsSystem::AddConstraint
-    // takes its own, so this is released with Constraint::Release().
+    // Borrowed pointer to a Jolt constraint owned by the physics system:
+    // AddConstraint takes the only reference and RemoveConstraint releases it.
+    // Use the slot to look the constraint up, never to end its lifetime.
     JPH::Constraint *constraint = nullptr;
     std::uint32_t generation   = 1;
     std::atomic<std::uint8_t> state{std::to_underlying(SlotState::Empty)};

@@ -2,6 +2,7 @@
 
 #include "physics/CommandBuffer.hpp"
 #include "physics/PhysicsWorldState.hpp"
+#include "physics/RotationSanitize.hpp"
 #include "physics/SlotState.hpp"
 
 #include <utility>
@@ -165,19 +166,34 @@ PhysicsWorld::ApplyBodyOperation(const PhysicsBodyOperation &op) {
         return std::unexpected(BodyOperationError::InvalidArgument);
     }
 
+    // SetRotation and SetTransform carry an API-supplied quaternion that is
+    // enqueued as a command and mirrored into the shadow buffers. Normalizing it
+    // once, here, keeps those two in agreement and keeps Jolt's unit-length
+    // precondition intact (see RotationSanitize.hpp). Every other operation
+    // leaves `rotation` alone, so ops that never use it stay untouched.
+    PhysicsBodyOperation sanitized = op;
+    switch (sanitized.type) {
+    case PhysicsBodyOperationType::SetRotation:
+    case PhysicsBodyOperationType::SetTransform:
+        sanitized.rotation = SanitizeRotation(op.rotation);
+        break;
+    default:
+        break;
+    }
+
     bool execute_immediately = false;
     JPH::BodyID body_id; // default ctor == cInvalidBodyID
     {
         const auto shadow = LockShadowNotStepping();
 
-        const std::optional<std::uint32_t> resolved = Resolve(op.handle);
+        const std::optional<std::uint32_t> resolved = Resolve(sanitized.handle);
         if (!resolved) {
             return std::unexpected(BodyOperationError::StaleHandle);
         }
         const std::uint32_t slot = *resolved;
         const auto state = static_cast<SlotState>(
             bodies.slot_states[slot].load(std::memory_order::acquire));
-        const SlotPredicate predicate = GetSlotPredicate(std::to_underlying(state), ImmediateMask(op.type));
+        const SlotPredicate predicate = GetSlotPredicate(std::to_underlying(state), ImmediateMask(sanitized.type));
         if (!predicate.is_executable()) {
             return std::unexpected(BodyOperationError::StaleHandle);
         }
@@ -187,18 +203,18 @@ PhysicsWorld::ApplyBodyOperation(const PhysicsBodyOperation &op) {
 
         // Impulse-class ops on live bodies run straight against Jolt below
         // instead of being deferred; everything else defers.
-        execute_immediately = IsImmediateJoltAction(op.type) && predicate.is_immediate;
-        if (!execute_immediately && !EnqueueOperation(this, slot, op)) {
+        execute_immediately = IsImmediateJoltAction(sanitized.type) && predicate.is_immediate;
+        if (!execute_immediately && !EnqueueOperation(this, slot, sanitized)) {
             return std::unexpected(BodyOperationError::InvalidArgument);
         }
-        MirrorToShadow(this, slot, op);
+        MirrorToShadow(this, slot, sanitized);
         if (execute_immediately) {
             body_id = bodies.body_ids[bodies.slot_to_dense[slot]];
         }
     }
 
     if (execute_immediately) {
-        ExecuteNow(this, body_id, op);
+        ExecuteNow(this, body_id, sanitized);
     }
     return {};
 }

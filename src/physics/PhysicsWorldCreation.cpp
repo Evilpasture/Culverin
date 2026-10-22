@@ -4,6 +4,7 @@
 #include "physics/InternalQuery.hpp"
 #include "physics/PhysicsWorld.hpp"
 #include "physics/PhysicsWorldState.hpp"
+#include "physics/RotationSanitize.hpp"
 #include "physics/SlotState.hpp"
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/HeightFieldShape.h>
@@ -74,31 +75,38 @@ CreateBodyFromShape(PhysicsWorld &world, const JPH::Shape *shape,
         return std::unexpected(WorldCreationError::ShapeFailed);
     }
 
+    // Every body-creation path funnels through here, and the same request seeds
+    // both the Jolt settings and the shadow buffers, so sanitize the rotation
+    // once, up front, and use that copy below. See RotationSanitize.hpp for why
+    // a raw (x, y, z, w) tuple cannot be handed to Jolt as-is.
+    PhysicsWorldBodyCreateRequest sanitized = request;
+    sanitized.rotation                      = SanitizeRotation(request.rotation);
+
     auto settings = std::make_unique<JPH::BodyCreationSettings>(
-        shape, request.position, request.rotation, motion_type,
+        shape, sanitized.position, sanitized.rotation, motion_type,
         static_cast<JPH::ObjectLayer>(object_layer));
 
     switch (setup) {
     case BodySetup::Configured:
-        ConfigureBodySettings(*settings, shape, request.config);
+        ConfigureBodySettings(*settings, shape, sanitized.config);
         break;
     case BodySetup::CreationProps: {
         const BodyCreationProps props = {
-            request.config.mass,      request.config.friction, request.config.restitution,
-            request.config.is_sensor, request.config.use_ccd,
+            sanitized.config.mass,      sanitized.config.friction, sanitized.config.restitution,
+            sanitized.config.is_sensor, sanitized.config.use_ccd,
         };
         ApplyBodyCreationProps(*settings, shape, props);
         break;
     }
     case BodySetup::MaterialOnly:
-        settings->mFriction    = request.config.friction;
-        settings->mRestitution = request.config.restitution;
+        settings->mFriction    = sanitized.config.friction;
+        settings->mRestitution = sanitized.config.restitution;
         break;
     case BodySetup::None:
         break;
     }
 
-    return EnqueueBodySettings(world, std::move(settings), request);
+    return EnqueueBodySettings(world, std::move(settings), sanitized);
 }
 
 ResolvedMaterial PhysicsWorld::ResolveMaterial(uint32_t material_id, float input_friction,
@@ -150,7 +158,9 @@ PhysicsWorld::CreateSoftBody(const PhysicsWorldSoftBodyCreateRequest &request) {
     auto settings       = std::make_unique<JPH::SoftBodyCreationSettings>();
     settings->mSettings = request.shared_settings;
     settings->mPosition              = request.position;
-    settings->mRotation              = request.rotation;
+    // Sanitized before it reaches both Jolt and the shadow buffers below.
+    const JPH::Quat rotation         = SanitizeRotation(request.rotation);
+    settings->mRotation              = rotation;
     settings->mObjectLayer           = std::to_underlying(ObjectLayer::Dynamic);
     settings->mNumIterations         = request.num_iterations;
     settings->mLinearDamping         = request.linear_damping;
@@ -177,8 +187,8 @@ PhysicsWorld::CreateSoftBody(const PhysicsWorldSoftBodyCreateRequest &request) {
     const uint32_t dense                        = bodies.slot_to_dense[slot];
     const PosStride position_shadow             = {request.position.GetX(), request.position.GetY(),
                                                    request.position.GetZ(), 0.0};
-    const AuxStride rotation_shadow             = {request.rotation.GetX(), request.rotation.GetY(),
-                                                   request.rotation.GetZ(), request.rotation.GetW()};
+    const AuxStride rotation_shadow             = {rotation.GetX(), rotation.GetY(),
+                                                   rotation.GetZ(), rotation.GetW()};
     bodies.positions[dense]      = position_shadow;
     bodies.prev_positions[dense] = position_shadow;
     bodies.rotations[dense]      = rotation_shadow;
@@ -479,7 +489,10 @@ static JPH::ShapeRefC CreateCompoundShape(PhysicsWorld &world,
             sub_shape = world.FindOrCreateShapeLocked(part.shape_type, part.shape_params);
         }
         if (sub_shape != nullptr) {
-            compound_settings.AddShape(part.local_position, part.local_rotation,
+            // A non-unit part rotation does not trip a Jolt assert, it silently
+            // bakes a skewed sub-shape into the compound, so normalize it here
+            // just like the body's own rotation.
+            compound_settings.AddShape(part.local_position, SanitizeRotation(part.local_rotation),
                                        sub_shape.GetPtr(), 0);
         }
     }

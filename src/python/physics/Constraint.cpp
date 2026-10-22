@@ -189,8 +189,10 @@ void ActivateBody(JPH::BodyInterface &bi, JPH::Body *body) {
             ActivateBody(bi, tbc->GetBody2());
         }
 
+        // Removes and frees the constraint: the physics system owns its only
+        // reference. Releasing it afterwards (as this did) drops the refcount of
+        // a freed block.
         self->physics.physics_system.RemoveConstraint(c_to_destroy);
-        c_to_destroy->Release();
     }
 
     Py_RETURN_NONE;

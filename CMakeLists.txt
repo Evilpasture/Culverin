@@ -568,15 +568,20 @@ endif()
 # 8. PLATFORM LINKER & LIBRARY FLAGS
 # ==============================================================================
 if(WIN32)
-    # GNU-driver spelling of the MSVC-linker switches; CMake itself forwards
-    # these to lld-link/link.exe via the driver's -Xlinker mechanism.
-    target_link_options(
-        _culverin_c
-        PRIVATE
-            "-Xlinker" "/DEBUG"
-            "-Xlinker" "/OPT:REF"
-            "-Xlinker" "/OPT:ICF"
-    )
+    # GNU-driver spelling of the MSVC-linker switches. -Wl, rather than a list
+    # of "-Xlinker" "<flag>" pairs, because CMake DE-DUPLICATES link options:
+    # three identical "-Xlinker" entries collapse into one, and the flags that
+    # followed it become bare arguments. The driver then reads "/OPT:REF" and
+    # "/OPT:ICF" as input files --
+    #
+    #     clang++: error: no such file or directory: '/OPT:REF'
+    #
+    # -- and never reaches the linker. -Wl, hands the driver a single argument
+    # it expands itself, so there is nothing for the de-duplication to fold.
+    # (Verified against a two-line MODULE target: the "-Xlinker" form produces
+    # `-Xlinker /DEBUG /OPT:REF /OPT:ICF` and fails to link; this form
+    # produces the three switches and links a real .dll.)
+    target_link_options(_culverin_c PRIVATE "-Wl,/DEBUG,/OPT:REF,/OPT:ICF")
 endif()
 
 if(APPLE)

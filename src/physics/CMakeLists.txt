@@ -26,6 +26,7 @@ add_library(
         PhysicsWorldRuntime.cpp
         PhysicsWorldRuntime.hpp
         PhysicsWorldState.hpp
+        RotationSanitize.hpp
         ShadowSync.cpp
         ShadowSync.hpp
         SlotState.hpp

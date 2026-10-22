@@ -2,6 +2,7 @@
 #include "core/Types.hpp"
 #include "physics/ContactEventDefinitions.hpp"
 #include "physics/PhysicsWorldState.hpp"
+#include "physics/RotationSanitize.hpp"
 #include "physics/SlotState.hpp"
 
 #include <Jolt/Physics/Character/CharacterVirtual.h>
@@ -658,7 +659,12 @@ void Character::SetPosition(const JPH::RVec3 &position) {
 void Character::SetRotation(const JPH::Quat &rotation) {
     std::unique_lock shadow = world_->LockShadowNotStepping();
 
-    virtual_->SetRotation(rotation);
+    // CharacterVirtual::SetRotation only stores the value and forwards it to the
+    // inner body through SetPositionAndRotation, which is exactly where Jolt
+    // requires a unit quaternion (see RotationSanitize.hpp). Normalize once and
+    // use the same value for the shadow buffers.
+    const JPH::Quat sanitized = SanitizeRotation(rotation);
+    virtual_->SetRotation(sanitized);
 
     // AuxStride is already four floats, so the dense index indexes it directly.
     // The pre-migration binding carried a stale `dense * 4` here from when this
@@ -666,7 +672,7 @@ void Character::SetRotation(const JPH::Quat &rotation) {
     // bytes at four times the intended offset, corrupting a neighbouring
     // body's rotation for any character past the first.
     const std::uint32_t dense = DenseIndexLocked();
-    const AuxStride r_val{rotation.GetX(), rotation.GetY(), rotation.GetZ(), rotation.GetW()};
+    const AuxStride r_val{sanitized.GetX(), sanitized.GetY(), sanitized.GetZ(), sanitized.GetW()};
     world_->bodies.rotations[dense]      = r_val;
     world_->bodies.prev_rotations[dense] = r_val;
 }

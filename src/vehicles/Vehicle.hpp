@@ -172,7 +172,10 @@ class Vehicle {
     [[nodiscard]] static std::expected<JPH::BodyID, Error>
     ResolveChassis(PhysicsWorld &world, BodyHandle chassis);
 
-    PhysicsWorld           *world_;
+    PhysicsWorld *world_;
+    // Borrowed: the physics system owns the constraint's only reference and
+    // RemoveConstraint destroys it. Never Release() this pointer -- see
+    // Vehicle::Detach().
     JPH::VehicleConstraint *constraint_ = nullptr;
     std::uint32_t           num_wheels_ = 0;
     bool                    wheeled_    = true;

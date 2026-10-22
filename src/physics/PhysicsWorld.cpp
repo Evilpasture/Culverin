@@ -3,6 +3,7 @@
 #include "core/Profiling.hpp"
 #include "physics/ContactEventDefinitions.hpp"
 #include "physics/InternalQuery.hpp"
+#include "physics/RotationSanitize.hpp"
 #include "physics/ShadowSync.hpp"
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
@@ -209,9 +210,12 @@ PhysicsWorld::~PhysicsWorld() {
         if (slot.constraint != nullptr &&
             slot.state.load(std::memory_order::relaxed) == std::to_underlying(SlotState::Alive)) {
             if (jolt_initialized) {
+                // AddConstraint took the constraint's only reference, so
+                // RemoveConstraint releases it and frees the constraint. The
+                // slot is a borrowed pointer from then on: Release() here (as
+                // this dtor used to do) would decrement a freed refcount.
                 physics_system.RemoveConstraint(slot.constraint);
             }
-            slot.constraint->Release();
             slot.constraint = nullptr;
         }
     }
@@ -448,13 +452,18 @@ std::expected<void, Error> PhysicsWorld::LoadBakedScene(const BakedSceneData &sc
             AuxStride &shadow_rot = bodies.rotations[i];
             shadow_pos = {scene.positions[pos_idx + 0], scene.positions[pos_idx + 1],
                           scene.positions[pos_idx + 2], 0.0};
-            shadow_rot = {scene.rotations[rot_idx + 0], scene.rotations[rot_idx + 1],
-                          scene.rotations[rot_idx + 2], scene.rotations[rot_idx + 3]};
+
+            // A baked scene carries the same raw quaternions an API caller would,
+            // so it gets the same treatment: sanitize once, store the sanitized
+            // value in the shadow buffer and hand that same value to Jolt.
+            const JPH::Quat rotation = SanitizeRotation(JPH::Quat(
+                scene.rotations[rot_idx + 0], scene.rotations[rot_idx + 1],
+                scene.rotations[rot_idx + 2], scene.rotations[rot_idx + 3]));
+            shadow_rot = {rotation.GetX(), rotation.GetY(), rotation.GetZ(), rotation.GetW()};
 
             const std::uint8_t motion_type = scene.motion_types[i];
             JPH::BodyCreationSettings creation(
-                shape.GetPtr(), JPH::RVec3(shadow_pos.x, shadow_pos.y, shadow_pos.z),
-                JPH::Quat(shadow_rot.x, shadow_rot.y, shadow_rot.z, shadow_rot.w),
+                shape.GetPtr(), JPH::RVec3(shadow_pos.x, shadow_pos.y, shadow_pos.z), rotation,
                 static_cast<JPH::EMotionType>(motion_type),
                 static_cast<JPH::ObjectLayer>(scene.object_layers[i]));
 
