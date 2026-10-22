@@ -437,28 +437,72 @@ jobs:
 
       - name: Smoke Test GCC Wheel
         run: |
-          # 1. Setup environment
+          set -euo pipefail
+
+          # 1. Setup environment. The interpreter is pinned rather than reached
+          #    through `uv run` because the version check below is fed on stdin.
           uv venv --python 3.14t
-          
+          PYTHON="$PWD/.venv/bin/python"
+
           # 2. Force install ONLY the wheel we built, plus dependencies
           # --no-index ensures it doesn't try to look at the local source folder
           uv pip install dist/*.whl numpy
-          
+
           # 3. CRITICAL: Move to a directory that has NO pyproject.toml or src/
           # This ensures 'import culverin' loads from site-packages, not the current folder.
           mkdir test_jail
           cd test_jail
-          
-          # 4. Run tests using 'uv run --no-project'
-          VERSION_INFO=$(uv run --no-project python -c "import culverin; print(culverin.__version__)")
-          echo "Built version: $VERSION_INFO"
-          
-          if [[ "$VERSION_INFO" != *"GCC"* ]]; then
-            echo "Error: Metadata check failed. Expected GCC in version string."
-            exit 1
-          fi
-          
-          uv run --no-project python -c "import culverin; w=culverin.PhysicsWorld(); print('World created safely')"
+
+          # 4. Version metadata. The three places the version appears -- the
+          #    built artifact, the package metadata, and the string compiled
+          #    into the extension -- have to agree, and pyproject.toml is the
+          #    one that decides. The previous check only looked for the word
+          #    "GCC" anywhere in __version__, which the build suffix always
+          #    carries, so it passed for any version at all and could not catch
+          #    a wheel that was built before a bump.
+          "$PYTHON" - "$GITHUB_WORKSPACE" <<'PY'
+          import glob
+          import pathlib
+          import sys
+          import tomllib
+
+          repo = pathlib.Path(sys.argv[1])
+          declared = tomllib.loads((repo / "pyproject.toml").read_text(encoding="utf-8"))["project"][
+              "version"
+          ]
+
+          import culverin
+
+          build_string = culverin.__version__
+          compiled = build_string.split(" ", 1)[0]
+
+          wheels = sorted(glob.glob(str(repo / "dist" / "culverin-*.whl")))
+          wheel_versions = sorted({pathlib.Path(w).name.split("-")[1].split("+")[0] for w in wheels})
+
+          print(f"pyproject.toml : {declared}")
+          print(f"wheel metadata : {', '.join(wheel_versions) or '<none>'}")
+          print(f"__version__    : {build_string}")
+
+          problems = []
+          if not wheels:
+              problems.append("no culverin wheel found in dist/")
+          elif wheel_versions != [declared]:
+              problems.append(
+                  f"wheel version {wheel_versions} does not match pyproject.toml ({declared})"
+              )
+          if compiled != declared:
+              problems.append(
+                  f"compiled __version__ {compiled!r} does not match pyproject.toml ({declared!r})"
+              )
+
+          for problem in problems:
+              print(f"::error::{problem}")
+          if problems:
+              sys.exit(1)
+          print("version metadata is consistent")
+          PY
+
+          "$PYTHON" -c "import culverin; w=culverin.PhysicsWorld(); print('World created safely')"
   
   # ===========================================================================
   # JOB 3.5: SANITY CHECKS

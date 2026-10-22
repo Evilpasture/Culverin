@@ -27,6 +27,8 @@
 #include <Jolt/Physics/SoftBody/SoftBodySharedSettings.h>
 #include <Jolt/RegisterTypes.h>
 #include <atomic>
+#include <cstdio>
+#include <cstring>
 #include <new>
 #include <tupleobject.h>
 
@@ -307,35 +309,135 @@ static const unsigned char kPyprojectToml[] = {
 #endif
 };
 
-// Helper function to extract the version string at runtime
+// --- Reading the version out of the embedded pyproject.toml -----------------
+//
+// Deliberately not a TOML parser: this reads a file the project owns and only
+// has to be right for the [project] table we write ourselves. What it must NOT
+// do is take the first `version = "` anywhere in the document, which is what
+// this used to do -- one `[tool.cibuildwheel] version = "..."` or any other
+// table carrying that key above [project] would silently retag every build
+// while the wheel kept its real version. Nothing but the [project] table may
+// influence `culverin.__version__`.
+
+// A table header is a line whose first non-blank character is '['. A string
+// value can never start a line that way once the key has been consumed, so
+// scanning by lines finds table boundaries without understanding quotes.
+[[nodiscard]] static bool FindTableBody(const char *doc, const char *header,
+                                        const char **body_begin, const char **body_end) {
+    const size_t length             = std::strlen(doc);
+    const char *const limit         = doc + length;
+    const size_t header_length      = std::strlen(header);
+    const char *cursor              = doc;
+    bool found                      = false;
+
+    while (cursor < limit) {
+        const char *line_start = cursor;
+        const char *newline = static_cast<const char *>(
+            std::memchr(line_start, '\n', static_cast<size_t>(limit - line_start)));
+        const char *line_end = (newline != nullptr) ? newline : limit;
+
+        const char *content = line_start;
+        while (content < line_end && (*content == ' ' || *content == '\t')) {
+            ++content;
+        }
+
+        if (content < line_end && *content == '[') {
+            if (found) {
+                *body_end = line_start;
+                return true;
+            }
+            // `header` already carries its brackets, so a match is the whole
+            // string; the byte after it must end the header, not continue the
+            // name -- and may be '\r' when the file was checked out CRLF.
+            const auto line_length = static_cast<size_t>(line_end - content);
+            const bool matches     = line_length >= header_length &&
+                                 std::memcmp(content, header, header_length) == 0 &&
+                                 (line_length == header_length || content[header_length] == ' ' ||
+                                  content[header_length] == '\t' ||
+                                  content[header_length] == '\r' || content[header_length] == '#');
+            if (matches) {
+                found     = true;
+                *body_begin = (newline != nullptr) ? newline + 1 : limit;
+            }
+        }
+
+        cursor = (newline != nullptr) ? newline + 1 : limit;
+    }
+
+    if (found) {
+        *body_end = limit;
+        return true;
+    }
+    return false;
+}
+
+// Copies the value out of the first `key = "value"` line in [begin, end).
+// A line that spells the key but is not that shape is skipped rather than
+// treated as the answer, so `version_scheme = ...` cannot hide `version`.
+[[nodiscard]] static bool FindTableString(const char *begin, const char *end, const char *key,
+                                          char *out, size_t capacity) {
+    const size_t key_length = std::strlen(key);
+    const char *cursor      = begin;
+
+    while (cursor < end) {
+        const char *line_start = cursor;
+        const char *newline = static_cast<const char *>(
+            std::memchr(line_start, '\n', static_cast<size_t>(end - line_start)));
+        const char *line_end = (newline != nullptr) ? newline : end;
+
+        const char *content = line_start;
+        while (content < line_end && (*content == ' ' || *content == '\t')) {
+            ++content;
+        }
+
+        if (static_cast<size_t>(line_end - content) > key_length &&
+            std::memcmp(content, key, key_length) == 0) {
+            content += key_length;
+            while (content < line_end && (*content == ' ' || *content == '\t')) {
+                ++content;
+            }
+            if (content < line_end && *content == '=') {
+                ++content;
+                while (content < line_end && (*content == ' ' || *content == '\t')) {
+                    ++content;
+                }
+                if (content < line_end && *content == '"') {
+                    ++content;
+                    const char *close = static_cast<const char *>(
+                        std::memchr(content, '"', static_cast<size_t>(line_end - content)));
+                    if (close != nullptr) {
+                        size_t value_length = static_cast<size_t>(close - content);
+                        if (value_length >= capacity) {
+                            value_length = capacity - 1;
+                        }
+                        std::memcpy(out, content, value_length);
+                        out[value_length] = '\0';
+                        return true;
+                    }
+                }
+            }
+        }
+
+        cursor = (newline != nullptr) ? newline + 1 : end;
+    }
+    return false;
+}
+
+// The version reported by `culverin.__version__`.
 static const char *ExtractVersionFromToml(void) {
-    // Look for the specific pattern 'version = "'
-    const char *key = "version = \"";
-    auto start      = strstr(reinterpret_cast<const char *>(kPyprojectToml), key);
-
-    if (!start) {
-        return "0.0.0-unknown";
-    }
-
-    start += strlen(key); // Move pointer to the start of the actual version number
-
-    // Find the closing quote
-    const char *end = strchr(start, '\"');
-    if (!end) {
-        return "0.0.0-malformed";
-    }
-
-    // Create a static buffer to hold the version (e.g., "0.4.0")
     static constexpr size_t kVersionBuffer = 32;
     static char version_buffer[kVersionBuffer];
-    size_t len = end - start;
-    if (len >= sizeof(version_buffer)) {
-        len = sizeof(version_buffer) - 1;
+
+    const char *doc   = reinterpret_cast<const char *>(kPyprojectToml);
+    const char *begin = nullptr;
+    const char *end   = nullptr;
+
+    if (!FindTableBody(doc, "[project]", &begin, &end)) {
+        return "0.0.0-unknown"; // no [project] table at all
     }
-
-    strncpy(version_buffer, start, len);
-    version_buffer[len] = '\0';
-
+    if (!FindTableString(begin, end, "version", version_buffer, sizeof(version_buffer))) {
+        return "0.0.0-malformed"; // the table exists but has no readable version
+    }
     return version_buffer;
 }
 
