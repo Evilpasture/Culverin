@@ -82,6 +82,7 @@ def render_thread():
 ## Stability
 
 * **The Hard Serializer**: self->jph_trampoline_lock (Native OS Mutex) ensures Jolt's internal C++ state is never accessed by two threads at once.
+* **The Lock Order**: `jph_trampoline_lock` -> `shadow_lock` -> `step_sync.mutex`, outermost first. The step and flush paths hold the trampoline and take `shadow_lock` per command, so anything that grabs `shadow_lock` and then waits for the trampoline is a lock-order inversion (TSan reports it as a potential deadlock, and it is a real one under contention).
 * **The Priority Escalator**: step_requested ensures that queries immediately yield to the simulation, preventing the "Raycast Starvation" deadlock.
 * **The Condition Variable**: Native Condition Variables replaced busy-waiting, reducing CPU overhead and making the "wait" logic instant and reliable.
 * **The GIL-Native Handshake**: By releasing the GIL before requesting the Native Lock, the Priority Inversion Deadlock(Triangle of Death) between the Python interpreter and the OS scheduler is eliminated.

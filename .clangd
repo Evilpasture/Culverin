@@ -1,0 +1,27 @@
+# Use CMake's local compilation database for compiler, SDK, Python/Jolt include
+# paths, and build-specific definitions. Keep machine-specific paths out of this file.
+CompileFlags:
+  CompilationDatabase: build
+  Add:
+    - -Wall
+    - -Wextra
+    - -Watomic-implicit-seq-cst
+    - -Watomic-alignment
+    - -Wthread-safety
+    - -Wshadow
+    - -ferror-limit=0
+
+Diagnostics:
+  UnusedIncludes: Strict
+
+---
+If:
+  PathMatch: ['.*/extern/JoltC/.*\.h$']
+CompileFlags:
+  Add: [-std=c++23]
+
+---
+If:
+  PathMatch: ['.*\.(cpp|hpp|cc)$']
+CompileFlags:
+  Add: [-std=c++23, -frtti, -fno-exceptions]

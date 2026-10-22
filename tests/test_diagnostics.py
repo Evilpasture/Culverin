@@ -22,7 +22,7 @@ class TestFastParseDiagnostics(unittest.TestCase):
         print('=' * (42 + len(test_name)))
 
     def test_missing_required_args_formatting(self) -> None:
-        """Trigger fp_report_missing with signature reconstruction."""
+        """Trigger FastParseReportMissing with signature reconstruction."""
         try:
             # create_body requires at least 'pos'
             self.world.create_body()
@@ -33,7 +33,7 @@ class TestFastParseDiagnostics(unittest.TestCase):
             self.assertIn("Expected signature:", str(e))
 
     def test_type_error_with_repr(self) -> None:
-        """Trigger fp_report_type_error using a field that has a type guard."""
+        """Trigger FastParseReportTypeError using a field that has a type guard."""
         try:
             # 'is_sensor' has a 'bool' type guard in your C spec.
             # We use this to test the high-fidelity type error.
@@ -45,7 +45,7 @@ class TestFastParseDiagnostics(unittest.TestCase):
             self.assertIn("!!! is_sensor: bool !!!", str(e))
 
     def test_fuzzy_keyword_matching(self) -> None:
-        """Trigger fp_report_unknown_keyword fuzzy 'Did you mean?' logic."""
+        """Trigger FastParseReportUnknownKeyword fuzzy 'Did you mean?' logic."""
         try:
             # 'pso' is 1 distance away from 'pos'
             self.world.create_body(pso=(0, 10, 0)) # type: ignore
@@ -56,7 +56,7 @@ class TestFastParseDiagnostics(unittest.TestCase):
             self.assertIn("Valid arguments are:", str(e))
 
     def test_multiple_values_error(self) -> None:
-        """Trigger fp_report_multiple (positional + keyword conflict)."""
+        """Trigger FastParseReportMultiple (positional + keyword conflict)."""
         try:
             # First arg is pos, then we provide pos again as keyword
             self.world.create_body((0, 0, 0), pos=(1, 1, 1)) # type: ignore
@@ -66,7 +66,7 @@ class TestFastParseDiagnostics(unittest.TestCase):
             self.assertIn("provided both as a positional argument and as a keyword", str(e))
 
     def test_too_many_positional_args(self) -> None:
-        """Trigger fp_report_too_many with capacity guide."""
+        """Trigger FastParseReportTooMany with capacity guide."""
         try:
             # create_body takes many args, but let's send 50 to be sure
             args = [(0,0,0)] * 50
@@ -77,7 +77,7 @@ class TestFastParseDiagnostics(unittest.TestCase):
             self.assertIn("does not accept variable positional arguments (*args)", str(e))
 
     def test_boolean_optimization_and_strictness(self) -> None:
-        """Verify the fp_conv_bool pointer check vs string conversion."""
+        """Verify the fast_parse_conv_bool pointer check vs string conversion."""
         # 1. This should work (optimized pointer path)
         self.world.create_body(pos=(0,0,0), is_sensor=True)
 

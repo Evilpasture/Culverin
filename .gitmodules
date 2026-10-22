@@ -1,16 +1,3 @@
 [submodule "extern/JoltPhysics"]
 	path = extern/JoltPhysics
 	url = https://github.com/jrouwe/JoltPhysics.git
-[submodule "extern/JoltC"]
-	path = extern/JoltC
-    url = https://github.com/Evilpasture/JoltC.git
-    branch = physics-system-getter
-[submodule "extern/mag-mutex"]
-	path = extern/mag-mutex
-	url = https://github.com/Evilpasture/mag-mutex.git
-[submodule "extern/fast-capi"]
-	path = extern/fast-capi
-	url = https://github.com/Evilpasture/fast-capi.git
-[submodule "extern/docs-embedder"]
-	path = extern/docs-embedder
-	url = https://github.com/Evilpasture/docs-embedder.git

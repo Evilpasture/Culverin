@@ -1,111 +1,148 @@
-cmake_minimum_required(VERSION 3.21)
+# ==============================================================================
+# Culverin — capability-driven build configuration
+# ==============================================================================
+# One driver model everywhere: the GNU command line. GCC on Linux, Clang on
+# Linux/macOS, and on Windows clang.exe FROM THE LLVM INSTALLER, which targets
+# the MSVC *ABI* (same CRT as official CPython) while speaking the GNU *flag
+# language*. cl.exe and clang-cl are both forbidden.
+#
+# Corollary: no MSVC-keyed compiler branches anywhere in this file. Compiler
+# decisions are made from
+#   1. platform          (WIN32 / APPLE / Linux)
+#   2. probed capability (check_*_compiler_flag / check_*_source_compiles)
+#   3. toolchain feature namespace (e.g. -mllvm flags are Clang's own)
+# ABI-level Windows details are delegated to CMake's FRONTEND_VARIANT-aware
+# machinery (CMAKE_MSVC_RUNTIME_LIBRARY / CMAKE_MSVC_DEBUG_INFORMATION_FORMAT),
+# which CMake translates into GNU-driver flags itself. It simply asks what the
+# compiler can do.
+# ==============================================================================
+cmake_minimum_required(VERSION 3.26)
 
 # ==============================================================================
 # 0. THE COMPILER ENFORCER
 # ==============================================================================
 function(enforce_modern_compiler)
     # --- ANTI-MSBUILD / ANTI-VS GENERATOR GUARD ---
-    # MSBuild is the bane of build systems. We need a modern/reliable generator (Ninja/Make).
     if(CMAKE_GENERATOR MATCHES "Visual Studio")
         message(
             FATAL_ERROR
             "\n ################################################################\n"
             "  GENERATOR ERROR - HALTED: Visual Studio / MSBuild detected.\n"
             " ################################################################\n"
-            "  Culverin's build system is incompatible with the \n"
-            "  Visual Studio project system's rigid toolchain handling.\n"
-            "  - The reason being: The MSBuild generator will default to cl.exe, \n"
-            "  which is currently forbidden from compiling this project. \n"
-            "\n"
-            "  I DEMAND you to use the 'Ninja' generator for Clang to work correctly.\n"
+            "  Culverin's build system is incompatible with the Visual Studio\n"
+            "  project system (it defaults to cl.exe, which is forbidden).\n"
             "\n"
             "  Instruction:\n"
             "  1. Install Ninja (pip install ninja or winget install ninja)\n"
             "  2. Wipe your 'build' folder.\n"
-            "  3. Run: cmake -G \"Ninja\" -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ ..\n"
+            "  3. Run: cmake -G \"Ninja\" -DCMAKE_CXX_COMPILER=clang++ ..\n"
             " ################################################################\n"
         )
     endif()
-    if(CMAKE_C_COMPILER_ID AND NOT CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
-        message(STATUS "Detected Compiler ID: ${CMAKE_C_COMPILER_ID}")
-        message(STATUS "Culverin: MSVC detected. Searching for alternatives...")
 
-        find_program(CLANG_PATH NAMES clang clang-cl)
-        find_program(GCC_PATH NAMES gcc)
+    # cl.exe (compiler ID "MSVC") and clang-cl (cl-syntax dialect) are
+    # forbidden. Every supported toolchain speaks GCC-style flags.
+    if(CMAKE_CXX_COMPILER_ID AND NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        find_program(CLANG_PATH NAMES clang++)
+        find_program(GCC_PATH NAMES g++)
 
-        set(HELP_MSG
+        string(
+            APPEND HELP_MSG
             "\n################################################################\n"
-        )
-        string(
-            APPEND HELP_MSG
-            " Guard triggered: MSVC (cl.exe) is incapable of compilation.\n"
-        )
-        string(
-            APPEND HELP_MSG
+            " Guard triggered: ${CMAKE_CXX_COMPILER_ID} is incapable of compiling this project.\n"
             "################################################################\n"
+            " C++23 and Jolt optimization require the GNU flag dialect.\n"
+            " Use clang.exe / clang++.exe (NOT clang-cl!) or GCC:\n"
         )
-        string(
-            APPEND HELP_MSG
-            " C23 features and Jolt optimization require Clang or GCC.\n\n"
-        )
-
+        if(CLANG_PATH)
+            string(APPEND HELP_MSG "  - Clang's emplacement: ${CLANG_PATH}\n")
+        endif()
+        if(GCC_PATH)
+            string(APPEND HELP_MSG "  - GCC's emplacement:   ${GCC_PATH}\n")
+        endif()
         if(CLANG_PATH OR GCC_PATH)
-            string(APPEND HELP_MSG " Alternatives on your :\n")
-            if(CLANG_PATH)
-                string(
-                    APPEND HELP_MSG
-                    "  - Clang's emplacement: ${CLANG_PATH}\n"
-                )
-            endif()
-            if(GCC_PATH)
-                string(APPEND HELP_MSG "  - GCC's emplacement:   ${GCC_PATH}\n")
-            endif()
             string(
                 APPEND HELP_MSG
-                "\n Instruction: Decimate your 'build' folder and run:\n"
-            )
-            string(
-                APPEND HELP_MSG
-                " cmake -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ ..\n"
+                "\n Instruction: wipe your 'build' folder and run:\n"
+                " cmake -DCMAKE_CXX_COMPILER=clang++ ..\n"
             )
         else()
             string(
                 APPEND HELP_MSG
-                " NO SUITABLE COMPILER FOUND in system PATH.\n"
-            )
-            string(
-                APPEND HELP_MSG
+                "\n NO SUITABLE COMPILER FOUND in system PATH.\n"
                 " Please download and install LLVM (Clang) from:\n"
-            )
-            string(
-                APPEND HELP_MSG
                 " https://github.com/llvm/llvm-project/releases\n"
             )
         endif()
-
-        string(
-            APPEND HELP_MSG
-            "################################################################\n"
-        )
+        string(APPEND HELP_MSG "################################################################\n")
         message(FATAL_ERROR "${HELP_MSG}")
     endif()
 endfunction()
 
+# ==============================================================================
 # 1. THE NUCLEAR INITIALIZATION
-option(ENABLE_SANITIZER "Enable Clang Sanitizers (ASan/TSan/UBSan)" OFF)
+# ==============================================================================
+option(ENABLE_SANITIZER "Enable Clang Sanitizers (ASan/UBSan)" OFF)
 option(ENABLE_THREAD_SANITIZER "Enable Thread Sanitizer (TSan)" OFF)
-option(CULV_AGGRESSIVE_OPTIMIZATION "Enable aggressive __builtin_assume for assertions in Release" OFF)
+option(CPH_AGGRESSIVE_OPTIMIZATION "Enable aggressive __builtin_assume for assertions in Release" OFF)
 
+# Jolt build knobs — read by extern/JoltPhysics/Build/CMakeLists.txt and must be
+# forced BEFORE add_subdirectory(Jolt). Every supported compiler speaks the GNU
+# flag dialect, so only knobs whose effect reaches the GNU arm are listed here.
 set(DOUBLE_PRECISION ON CACHE BOOL "Use double precision math" FORCE)
+# ObjectLayer is uint32 across Culverin's handles/settings. This must be a
+# Jolt build option (Jolt exports it as a PUBLIC compile definition on the
+# Jolt::Jolt target); a global -D would fight Jolt's own =16 default on the
+# same command lines.
+set(OBJECT_LAYER_BITS 32 CACHE STRING "Jolt: ObjectLayer width" FORCE)
 set(GENERATE_SAMPLES OFF CACHE BOOL "" FORCE)
 set(GENERATE_UNIT_TESTS OFF CACHE BOOL "" FORCE)
-set(USE_STATIC_MSVC_RUNTIME OFF CACHE BOOL "" FORCE)
-set(FORCE_MT_RUNTIME OFF CACHE BOOL "" FORCE)
 set(USE_VULKAN OFF CACHE BOOL "" FORCE)
+# Jolt defaults RTTI off (-fno-rtti); our extension needs RTTI across the
+# Jolt RTTI. Use Jolt's own option — no source patching anywhere.
+set(CPP_RTTI_ENABLED ON CACHE BOOL "Jolt: enable RTTI" FORCE)
+# No C++ exception handling is used; keep Jolt in the same no-exceptions mode.
+set(CPP_EXCEPTIONS_ENABLED OFF CACHE BOOL "Jolt: disable C++ exceptions" FORCE)
+# Third-party -Werror must not gate our superbuild (Jolt adds -Wall -Werror
+# on its GNU arm when this is ON).
+set(ENABLE_ALL_WARNINGS OFF CACHE BOOL "Jolt: no warning escalation" FORCE)
 
-set(FORCE_RTTI ON CACHE BOOL "Force RTTI on" FORCE)
+# --- MSVC-ABI knobs, delegating to CMake (honored only when the compiler ---
+# --- targets the MSVC ABI; inert everywhere else) ---
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 
-project(culverin LANGUAGES C CXX ASM)
+project(culverin LANGUAGES CXX)
+
+if(WIN32)
+    # Apply the Windows SDK's own switches before any header can include Windows.h.
+    add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
+
+    # MSVC's STL refuses to agree with itself unless _HAS_EXCEPTIONS matches the
+    # /EH state of the translation unit; Jolt's Core.h says as much ("MSVC STL
+    # requires _HAS_EXCEPTIONS=0 if exceptions are turned off") but its guard is
+    # keyed on JPH_COMPILER_MSVC, which Jolt defines from _MSC_VER only when
+    # __clang__ is NOT set. Every Culverin and Jolt target is compiled with
+    # -fno-exceptions (see culverin_configure_compile_target and
+    # CPP_EXCEPTIONS_ENABLED OFF), so on a clang.exe/clang-cl MSVC-ABI build the
+    # flag and the header disagreed on every single TU. Stated once, at directory
+    # scope, so Jolt sees exactly what Culverin sees — half the translation units
+    # taking each branch of the STL's _HAS_EXCEPTIONS conditionals is an ODR
+    # violation, not just a compile error.
+    add_compile_definitions(_HAS_EXCEPTIONS=0)
+
+    # UCRT's <stddef.h> picks its offsetof implementation with
+    # `#if defined(_MSC_VER) && !defined(_CRT_USE_BUILTIN_OFFSETOF)`, and the
+    # fallback is `((size_t)&reinterpret_cast<char const volatile&>(...))`.
+    # That is a constant expression to cl.exe, which accepts the cast as an
+    # extension, and is not one to clang, which follows the language: every
+    # `static_assert(offsetof(...))` on the MSVC ABI therefore compiles with
+    # MSVC and fails with clang. Culverin has one guarding the contact-event
+    # wire layout (ContactEventDefinitions.hpp), which is a public contract with
+    # Python. Opting into the builtin restores the standard definition and makes
+    # the static_assert mean the same thing on every compiler.
+    add_compile_definitions(_CRT_USE_BUILTIN_OFFSETOF)
+endif()
+
 # 1.1 FORCE BUILD TYPE (RelWithDebInfo is the sweet spot for ASan)
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES AND ENABLE_SANITIZER)
     message(
@@ -120,62 +157,47 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES AND ENABLE_SANITIZER)
     )
 endif()
 
-# 1.2 ENSURE PDBs ARE GENERATED FOR CLANG-CL/MSVC
-if(MSVC OR (WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang"))
-    # This ensures .pdb files are created even in Release/RelWithDebInfo
-    if(ENABLE_SANITIZER OR ENABLE_THREAD_SANITIZER)
-        message(
-            STATUS
-            "Culverin: Enabling debug information for sanitizers (PDB generation)"
-        )
-        set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT
-            "ProgramDatabase"
-            CACHE STRING
-            ""
-            FORCE
-        )
-    endif()
+# Sanitizers carry full debug info; on the MSVC ABI CMake translates this to
+# -gcodeview (PDBs). Inert elsewhere.
+if(ENABLE_SANITIZER OR ENABLE_THREAD_SANITIZER)
+    message(STATUS "Culverin: Enabling debug information for sanitizers")
+    set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "ProgramDatabase" CACHE STRING "" FORCE)
 endif()
+
 if(ENABLE_SANITIZER)
     message(STATUS "Culverin: FORCING Global Sanitizers for all targets")
 
-    # 1. Standard approach (works for most)
     add_compile_options("-fsanitize=address" "-fsanitize=undefined")
     add_link_options("-fsanitize=address" "-fsanitize=undefined")
 
-    # 2. The Sledgehammer (Force it into the global CXX flags for subdirectories)
-    set(CMAKE_CXX_FLAGS
-        "${CMAKE_CXX_FLAGS} -fsanitize=address -fsanitize=undefined"
-    )
-    set(CMAKE_C_FLAGS
-        "${CMAKE_C_FLAGS} -fsanitize=address -fsanitize=undefined"
-    )
-    set(CMAKE_EXE_LINKER_FLAGS
-        "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address -fsanitize=undefined"
-    )
-    set(CMAKE_SHARED_LINKER_FLAGS
-        "${CMAKE_SHARED_LINKER_FLAGS} -fsanitize=address -fsanitize=undefined"
-    )
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -fsanitize=undefined")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -fsanitize=undefined")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address -fsanitize=undefined")
+    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fsanitize=address -fsanitize=undefined")
 
-    # 3. Specifically tell Jolt to use them if it has its own toggle
     set(JPH_ADDRESS_SANITIZER ON CACHE BOOL "" FORCE)
 endif()
+
 if(ENABLE_THREAD_SANITIZER)
+    # There is no TSan runtime for any Windows target, driver choice notwithstanding.
+    if(WIN32)
+        message(
+            FATAL_ERROR
+            "Culverin: Thread Sanitizer is not available on Windows targets.\n"
+            "Run the TSan validation on Linux (see check_tsan in build_wheels.yml)."
+        )
+    endif()
+
     message(STATUS "Culverin: FORCING Thread Sanitizer for all targets")
 
-    # 1. Standard approach (works for most)
     add_compile_options("-fsanitize=thread")
     add_link_options("-fsanitize=thread")
 
-    # 2. The Sledgehammer (Force it into the global CXX flags for subdirectories)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=thread")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=thread")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=thread")
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=thread")
-    set(CMAKE_SHARED_LINKER_FLAGS
-        "${CMAKE_SHARED_LINKER_FLAGS} -fsanitize=thread"
-    )
+    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fsanitize=thread")
 
-    # 3. Specifically tell Jolt to use them if it has its own toggle
     set(JPH_THREAD_SANITIZER ON CACHE BOOL "" FORCE)
 endif()
 
@@ -183,162 +205,178 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 enforce_modern_compiler()
 
 # ==============================================================================
+# 1.5 CAPABILITY PROBING — "ask what the compiler can do"
+# ==============================================================================
+include(CheckCXXCompilerFlag)
+
+# CPH_collect_supported_cxx_flags(<out_var> <flag>...)
+# Appends every flag the C++ compiler accepts to <out_var>.
+function(CPH_collect_supported_cxx_flags out)
+    set(_ok "")
+    foreach(flag IN LISTS ARGN)
+        string(REGEX REPLACE "[^A-Za-z0-9]" "_" _var "CPH_HAVE_CXX${flag}")
+        string(TOUPPER "${_var}" _var)
+        check_cxx_compiler_flag("${flag}" ${_var})
+        if(${_var})
+            list(APPEND _ok "${flag}")
+        endif()
+    endforeach()
+    set(${out} "${_ok}" PARENT_SCOPE)
+endfunction()
+
+# ==============================================================================
 # ASSERTION LEVEL MAPPING
 # ==============================================================================
 # Logic:
 # - If config is Debug: Level 2 (Full)
-# - If Sanitizers are ON: Level 2 (Full) - because sanitizers imply a debug context
+# - If Sanitizers are ON: Level 2 (Full) - sanitizers imply a debug context
 # - If Aggressive Opt is ON and config is Release: Level 0 (Assume)
 # - Default (RelWithDebInfo / Release / MinSizeRel): Level 1 (Trap)
-set(CULV_ASSERT_DEFS
-    $<$<OR:$<CONFIG:Debug>,$<BOOL:${ENABLE_SANITIZER}>,$<BOOL:${ENABLE_THREAD_SANITIZER}>>:CULV_ASSERT_LEVEL=2>
-    $<$<AND:$<CONFIG:Release>,$<BOOL:${CULV_AGGRESSIVE_OPTIMIZATION}>>:CULV_ASSERT_LEVEL=0>
-    # This catch-all ensures optimized builds default to Level 1 (Safe Trap) 
-    # if not explicitly caught by the rules above.
-    $<$<AND:$<NOT:$<CONFIG:Debug>>,$<NOT:$<BOOL:${ENABLE_SANITIZER}>>,$<NOT:$<BOOL:${ENABLE_THREAD_SANITIZER}>>,$<NOT:$<AND:$<CONFIG:Release>,$<BOOL:${CULV_AGGRESSIVE_OPTIMIZATION}>>>>:CULV_ASSERT_LEVEL=1>
+set(CPH_ASSERT_DEFS
+    $<$<OR:$<CONFIG:Debug>,$<BOOL:${ENABLE_SANITIZER}>,$<BOOL:${ENABLE_THREAD_SANITIZER}>>:CPH_ASSERT_LEVEL=2>
+    $<$<AND:$<CONFIG:Release>,$<BOOL:${CPH_AGGRESSIVE_OPTIMIZATION}>>:CPH_ASSERT_LEVEL=0>
+    # Catch-all: optimized builds default to Level 1 (Safe Trap).
+    $<$<AND:$<NOT:$<CONFIG:Debug>>,$<NOT:$<BOOL:${ENABLE_SANITIZER}>>,$<NOT:$<BOOL:${ENABLE_THREAD_SANITIZER}>>,$<NOT:$<AND:$<CONFIG:Release>,$<BOOL:${CPH_AGGRESSIVE_OPTIMIZATION}>>>>:CPH_ASSERT_LEVEL=1>
 )
 
 message(STATUS "--- COMPILER VERIFICATION ---")
-message(STATUS "ID:           ${CMAKE_C_COMPILER_ID}")
-message(STATUS "C Compiler:   ${CMAKE_C_COMPILER}")
-message(STATUS "CXX Compiler: ${CMAKE_CXX_COMPILER}")
-message(STATUS "Version:      ${CMAKE_CXX_COMPILER_VERSION}")
+message(STATUS "ID:               ${CMAKE_CXX_COMPILER_ID}")
+message(STATUS "Flag dialect:     ${CMAKE_CXX_COMPILER_FRONTEND_VARIANT}")
+message(STATUS "CXX Compiler:     ${CMAKE_CXX_COMPILER}")
+message(STATUS "Version:          ${CMAKE_CXX_COMPILER_VERSION}")
 message(STATUS "-----------------------------")
 
-if(NOT MSVC)
+# ==============================================================================
+# 2. LANGUAGE STANDARDS + GLOBAL RUNTIME TRAITS
+# ==============================================================================
+# RTTI everywhere — one probed flag, no dialect branches.
+CPH_collect_supported_cxx_flags(CPH_FRTTI "-frtti")
+if(CPH_FRTTI)
     add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-frtti>")
 endif()
 
-# NATIVE C++23 SUPPORT
+# NATIVE C++23 (CMake maps this to the correct -std= spelling itself)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-# NATIVE C23 SUPPORT
-if(MSVC AND CMAKE_C_COMPILER_ID MATCHES "Clang")
-    # THE CLANG-CL PROBLEM: MSVC doesn't have a /std:c23 flag, so CMake lacks the mapping
-    # for Clang-CL. We must bypass CMake's checking here and manually inject it below.
-    message(
-        STATUS
-        "Culverin: Bypassing native C_STANDARD detection for Clang-CL (Missing CMake mapping)"
-    )
-else()
-    # The normal human being way for GCC and standard Clang (Linux/Mac/MinGW)
-    set(CMAKE_C_STANDARD 23)
-    set(CMAKE_C_STANDARD_REQUIRED ON)
-    set(CMAKE_C_EXTENSIONS ON)
-endif()
-
-add_definitions(-DJPH_DOUBLE_PRECISION)
-add_definitions(-DJPH_OBJECT_LAYER_BITS=32)
+# JPH_DOUBLE_PRECISION / JPH_OBJECT_LAYER_BITS are intentionally NOT global
+# definitions: they are Jolt build options (forced above) that Jolt exports
+# as PUBLIC compile definitions on Jolt::Jolt, and every Culverin target
+# reaches them through culverin_native_support. src/jolt/Jolt.hpp
+# static-asserts the resulting ABI wherever the native API is used.
 
 # ==============================================================================
-# 2. COMPILER SPECIFIC FLAGS
+# 3. COMPILER-SPECIFIC FLAGS (probed where the answer varies)
 # ==============================================================================
 set(CULVERIN_COMPILE_FLAGS "")
 set(CULVERIN_LINK_FLAGS "")
 
-if(MSVC)
-    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+# --- Debug info: CodeView/PDB is the native format on Windows. ---
+set(FLAGS_DEBUG "-g")
+if(WIN32)
+    CPH_collect_supported_cxx_flags(CPH_CODEVIEW "-gcodeview")
+    list(APPEND FLAGS_DEBUG ${CPH_CODEVIEW})
+endif()
 
-    if(CMAKE_C_COMPILER_ID MATCHES "Clang")
-        message(STATUS "Culverin: Detected Clang-CL (MSVC-like)")
+# --- Performance baseline (valid on every supported target) ---
+set(FLAGS_PERF "-O3" "-ffast-math" "-fomit-frame-pointer")
 
-        # Inject C23 directly to the LLVM frontend behind MSVC's back
-        add_compile_options(
-            "$<$<COMPILE_LANGUAGE:C>:/clang:-std=gnu23>"
-            "$<$<COMPILE_LANGUAGE:C>:-Wno-c23-extensions>"
-            "$<$<COMPILE_LANGUAGE:C>:-Wno-c2x-extensions>"
-        )
+# --- x86 SIMD/FMA/compressed-exchange: probe, don't assume the ISA ---
+CPH_collect_supported_cxx_flags(CPH_X86_PERF "-mavx2" "-mfma" "-mcx16")
+list(APPEND FLAGS_PERF ${CPH_X86_PERF})
 
-        add_compile_options(/arch:AVX2)
-        set(RELEASE_FLAGS
-            "/clang:-O3 /clang:-ffast-math /clang:-fstrict-aliasing /Ob2 /Oi /Ot"
-        )
-    else()
-        message(STATUS "Culverin: Detected Pure MSVC")
-        set(RELEASE_FLAGS "/Ox /Ot /Ob2 /Oi")
-    endif()
-
-    set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} ${RELEASE_FLAGS}")
-    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} ${RELEASE_FLAGS}")
-else()
-    message(STATUS "Culverin: Configuring GNU-like flags...")
-
-    set(FLAGS_DEBUG "-g")
-    if(CMAKE_C_COMPILER_ID MATCHES "Clang")
-        list(APPEND FLAGS_DEBUG "-gcodeview")
-    endif()
-
-    set(FLAGS_PERF "-O3" "-ffast-math" "-fomit-frame-pointer")
-    if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
-        list(APPEND FLAGS_PERF "-mavx2" "-mfma" "-mcx16")
-    endif()
-
-    if(CMAKE_C_COMPILER_ID STREQUAL "GNU" AND WIN32)
-        # -ffast-math breaks stdatomic memory ordering on MinGW
-        set(FLAGS_PERF_C "-O3" "-fomit-frame-pointer")
-    else()
-        set(FLAGS_PERF_C ${FLAGS_PERF})
-    endif()
-
-
-    if(CMAKE_C_COMPILER_ID MATCHES "Clang")
-        list(
-            APPEND FLAGS_PERF
-            "SHELL:-mllvm -unroll-threshold=1000"
-            "SHELL:-mllvm -inline-threshold=2000"
-            "SHELL:-mllvm -unroll-allow-partial"
-            "SHELL:-mllvm -force-vector-width=8"
-        )
-        list(APPEND FLAGS_STRICT "-Wno-c23-extensions" "-Wno-c2x-extensions")
-    endif()
-
-    set(FLAGS_STRICT
-        "-Wall"
-        "-Wextra"
-        "-Wno-sign-conversion"
-        "-Wno-shorten-64-to-32"
-        "-Wno-double-promotion"
-    )
-
-    if(CMAKE_C_COMPILER_ID MATCHES "Clang")
-        list(
-            APPEND FLAGS_STRICT
-            "-Watomic-implicit-seq-cst"
-            "-Wsync-fetch-and-nand-semantics-changed"
-            "-Wno-c23-extensions"
-            "-Wno-c2x-extensions"
-        )
-    endif()
-
-    if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
-        list(APPEND FLAGS_STRICT "-Wno-psabi") # Suppress AVX parameter passing ABI warnings
-    endif()
-
+# --- LLVM middle-end tuning: these flags live in Clang's own namespace ---
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     list(
-        APPEND CULVERIN_COMPILE_FLAGS
-        ${FLAGS_DEBUG}
-        ${FLAGS_PERF_C}
-        ${FLAGS_STRICT}
+        APPEND FLAGS_PERF
+        "SHELL:-mllvm -unroll-threshold=1000"
+        "SHELL:-mllvm -inline-threshold=2000"
+        "SHELL:-mllvm -unroll-allow-partial"
+        "SHELL:-mllvm -force-vector-width=8"
     )
+endif()
 
-    if(CMAKE_C_COMPILER_ID MATCHES "Clang")
-        list(APPEND CULVERIN_COMPILE_FLAGS "-fcolor-diagnostics")
-    else()
-        list(APPEND CULVERIN_COMPILE_FLAGS "-fdiagnostics-color=always")
-    endif()
+# --- Warning discipline ---
+set(FLAGS_STRICT
+    "-Wall"
+    "-Wextra"
+    "-Wno-sign-conversion"
+    "-Wno-shorten-64-to-32"
+    "-Wno-double-promotion"
+)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    list(
+        APPEND FLAGS_STRICT
+        "-Watomic-implicit-seq-cst"
+        "-Wsync-fetch-and-nand-semantics-changed"
+        "-Wno-c23-extensions"
+        "-Wno-c2x-extensions"
+    )
+endif()
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    list(APPEND FLAGS_STRICT "-Wno-psabi") # Suppress AVX parameter passing ABI warnings
+endif()
+
+list(APPEND CULVERIN_COMPILE_FLAGS ${FLAGS_DEBUG} ${FLAGS_PERF} ${FLAGS_STRICT})
+
+# --- Colored diagnostics: ask, don't assume ---
+CPH_collect_supported_cxx_flags(CPH_COLOR "-fcolor-diagnostics" "-fdiagnostics-color=always")
+if(CPH_COLOR)
+    # Take only the FIRST supported spelling; GCC and Clang disagree on names.
+    list(GET CPH_COLOR 0 CPH_COLOR_FLAG)
+    list(APPEND CULVERIN_COMPILE_FLAGS "${CPH_COLOR_FLAG}")
 endif()
 
 # ==============================================================================
-# 3. BUILD JOLT PHYSICS
+# 3.1 SHARED TARGET CONFIGURATION
+# ==============================================================================
+# Centralize flags shared by the project-owned compile targets. Domain targets
+# call this helper in their local CMakeLists.txt; IPO/LTO is applied after all
+# targets have been declared.
+function(culverin_configure_compile_target target)
+    # Most flags are C/C++-specific; keep them off assembly translation units.
+    target_compile_options(
+        ${target}
+        PRIVATE
+            "$<$<COMPILE_LANGUAGE:C,CXX>:${CULVERIN_COMPILE_FLAGS}>"
+            "$<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>"
+    )
+    target_compile_definitions(${target} PRIVATE ${CPH_ASSERT_DEFS} JPH_DEBUG_RENDERER)
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_compile_definitions(${target} PRIVATE _GNU_SOURCE)
+    elseif(WIN32)
+        # MSVC CRT: allow POSIX-ish names (target ABI property, not a compiler branch).
+        target_compile_definitions(${target} PRIVATE _CRT_DECLARE_NONSTDC_NAMES=1)
+    endif()
+
+    set_property(GLOBAL APPEND PROPERTY CULVERIN_COMPILE_TARGETS "${target}")
+endfunction()
+
+# ==============================================================================
+# 4. BUILD JOLT PHYSICS
 # ==============================================================================
 get_filename_component(
     JOLT_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/extern/JoltPhysics"
     ABSOLUTE
 )
-add_definitions(-DJPH_DEBUG_RENDERER)
+# JPH_DEBUG_RENDERER likewise comes from Jolt's PUBLIC definitions once one of
+# these knobs is on (no global -D).
+#
+# DISTRIBUTION, not DEBUG_AND_RELEASE: the latter defines JPH_DEBUG_RENDERER
+# through a generator expression that names Debug/Release/ReleaseASAN/
+# ReleaseUBSAN/ReleaseTSAN only. Culverin's own targets carry a plain
+# -DJPH_DEBUG_RENDERER (see culverin_configure_compile_target), so any other
+# build type — RelWithDebInfo above all, which is exactly what the sanitizer
+# wheel job asks for — compiled Jolt's DebugRenderer.cpp with its body
+# #ifdef'd out while Culverin still declared JPH::DebugRenderer. The library
+# then linked against a DebugRenderer destructor that no object file defined,
+# and the failure only surfaced at import time ("undefined symbol:
+# _ZN3JPH13DebugRendererD2Ev"). DISTRIBUTION is the only setting that emits a
+# plain, unguarded definition, so the macro can never disagree between the two.
+set(DEBUG_RENDERER_IN_DISTRIBUTION ON CACHE BOOL "" FORCE)
 set(DEBUG_RENDERER_IN_DEBUG_AND_RELEASE ON CACHE BOOL "" FORCE)
 
 if(DEFINED JOLT_PREBUILT_DIR)
@@ -349,207 +387,106 @@ if(DEFINED JOLT_PREBUILT_DIR)
         PATHS "${JOLT_PREBUILT_DIR}"
         NO_DEFAULT_PATH
     )
-    # IMPORTED_LOCATION_RELEASE only matches config "Release" exactly.
-    # scikit-build-core may use a different config name, so set it unconditionally.
+    # Use the library location exported by Jolt instead of assuming a Unix
+    # archive name. The exported path carries the platform's actual suffix
+    # (for example, .lib on Windows and .a on Unix).
+    get_target_property(_CULVERIN_JOLT_LOCATION Jolt::Jolt IMPORTED_LOCATION_RELEASE)
+    if(NOT _CULVERIN_JOLT_LOCATION)
+        get_target_property(_CULVERIN_JOLT_LOCATION Jolt::Jolt IMPORTED_LOCATION)
+    endif()
+    if(NOT _CULVERIN_JOLT_LOCATION)
+        message(FATAL_ERROR "Jolt::Jolt does not export an imported library location")
+    endif()
+    message(STATUS "Culverin: Using prebuilt Jolt at ${_CULVERIN_JOLT_LOCATION}")
     set_target_properties(
         Jolt::Jolt
-        PROPERTIES
-            IMPORTED_LOCATION "${JOLT_PREBUILT_DIR}/../../../lib/libJolt.a"
+        PROPERTIES IMPORTED_LOCATION "${_CULVERIN_JOLT_LOCATION}"
+    )
+    # A prebuilt Jolt was compiled outside our option control; state the
+    # consumer side of the ABI explicitly. The archive MUST have been built
+    # with the same settings (double precision, 32-bit object layers, debug
+    # renderer) — src/jolt/Jolt.hpp static-asserts the visible result.
+    target_compile_definitions(
+        Jolt::Jolt
+        INTERFACE JPH_DOUBLE_PRECISION JPH_OBJECT_LAYER_BITS=32 JPH_DEBUG_RENDERER
     )
 else()
-    # Force standard globally BEFORE add_subdirectory
-    set(CMAKE_CXX_STANDARD 23)
-    set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
     add_subdirectory("${JOLT_DIR}/Build" jolt_physics_build)
 
-    if(MSVC OR (WIN32 AND CMAKE_C_COMPILER_ID MATCHES "Clang"))
-        foreach(t Jolt)
-            if(TARGET ${t})
-                set_property(
-                    TARGET ${t}
-                    PROPERTY
-                        MSVC_RUNTIME_LIBRARY
-                            "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL"
-                )
-                set_target_properties(
-                    ${t}
-                    PROPERTIES
-                        CXX_STANDARD 23
-                        CXX_STANDARD_REQUIRED ON
-                        CXX_EXTENSIONS OFF
-                )
-                if(CMAKE_C_COMPILER_ID MATCHES "Clang")
-                    set_property(TARGET ${t} PROPERTY COMPILE_OPTIONS "")
-                    if(MSVC)
-                        target_compile_options(${t} PRIVATE /arch:AVX2 /fp:fast)
-                    else()
-                        target_compile_options(
-                            ${t}
-                            PRIVATE
-                                -march=x86-64-v3
-                                -ffast-math
-                                -fomit-frame-pointer
-                        )
-                    endif()
-                endif()
-            endif()
-        endforeach()
+    if(TARGET Jolt)
+        # Dynamic CRT to match the extension (translated by CMake only when the
+        # target is the MSVC ABI; inert elsewhere).
+        set_property(
+            TARGET Jolt
+            PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL"
+        )
+        set_target_properties(
+            Jolt
+            PROPERTIES
+                CXX_STANDARD 23
+                CXX_STANDARD_REQUIRED ON
+                CXX_EXTENSIONS OFF
+        )
+        # Uniform optimization for Jolt on every platform, composed from what
+        # this compiler actually accepts (--march and -ffast-math probed).
+        set_property(TARGET Jolt PROPERTY COMPILE_OPTIONS "")
+        CPH_collect_supported_cxx_flags(CPH_JOLT_ARCH "-march=x86-64-v3")
+        CPH_collect_supported_cxx_flags(CPH_JOLT_PERF "-ffast-math" "-fomit-frame-pointer")
+        target_compile_options(
+            Jolt
+            PRIVATE
+                ${CPH_JOLT_ARCH}
+                ${CPH_JOLT_PERF}
+                "$<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>"
+        )
     endif()
 endif()
 
 # ==============================================================================
-# 4. BUILD JOLTC, MAG-MUTEX & EXTENSION
+# 5. EXTENSION DOMAINS
 # ==============================================================================
-set(JOLTC_TARGET joltc_double)
-add_library(
-    ${JOLTC_TARGET}
-    STATIC
-    "extern/JoltC/src/joltc.cpp"
-    "extern/JoltC/src/joltc_assert.cpp"
-    "extern/JoltC/src/joltc.c"
-)
+# JoltC used to be built here as a static archive (joltc_double) and linked
+# into every native target. Nothing under src/ calls the C API any more, so
+# the archive, its include directory and the extern/JoltC submodule are gone.
+# Jolt itself is still reached through the Jolt::Jolt imported target, whose
+# INTERFACE properties carry ${JOLT_DIR} and Jolt's own compile definitions.
 
-if(MSVC)
-    target_compile_options(${JOLTC_TARGET} PRIVATE /W0)
-else()
-    target_compile_options(${JOLTC_TARGET} PRIVATE -w)
-endif()
+# C++ engine targets are declared next to their sources under src/.
+add_subdirectory("src")
 
-target_include_directories(
-    ${JOLTC_TARGET}
-    PUBLIC "extern/JoltC/include" "${JOLT_DIR}"
-)
-target_compile_definitions(${JOLTC_TARGET} PRIVATE ${CULV_ASSERT_DEFS})
-target_link_libraries(${JOLTC_TARGET} PRIVATE Jolt::Jolt)
-
+# Python discovery and extension domains come after the engine core boundary.
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
+add_subdirectory("src/python")
 
-if(CMAKE_C_COMPILER_ID STREQUAL "GNU" AND WIN32)
-    find_program(GCC_AR NAMES gcc-ar)
-    find_program(GCC_RANLIB NAMES gcc-ranlib)
-    if(GCC_AR)
-        set(CMAKE_AR "${GCC_AR}")
-    endif()
-    if(GCC_RANLIB)
-        set(CMAKE_RANLIB "${GCC_RANLIB}")
-    endif()
-endif()
-
-add_subdirectory("extern/mag-mutex")
-
-python_add_library(
-    _culverin_c
-    MODULE
-    src/culverin/culverin.c
-    src/culverin/culverin_shadow_sync.cpp
-    src/culverin/culverin_debug_render.c
-    src/culverin/culverin_getters.c
-    src/culverin/culverin_character.c
-    src/culverin/culverin_contact_listener.cpp
-    src/culverin/culverin_parsers.c
-    src/culverin/culverin_vehicle.c
-    src/culverin/culverin_command_buffer.c
-    src/culverin/culverin_tracked_vehicle.c
-    src/culverin/culverin_ragdoll.c
-    src/culverin/culverin_internal_query.c
-    src/culverin/culverin_physics_world_internal.c
-    src/culverin/culverin_query_methods.c
-    src/culverin/culverin_constraint.c
-    src/culverin/culverin_constraint_factory.c
-    src/culverin/culverin_arg_indices.c
-    src/culverin/culverin_handler.cpp
-    src/culverin/culverin_soft_body.c
-    src/culverin/culverin_math.cpp
-    src/culverin/culverin_math.c
-    src/culverin/culverin_ecs.c
-    src/culverin/culverin_ship.c
-    src/culverin/culverin_physics_world.c
-)
-
-target_sources(_culverin_c PRIVATE src/culverin/culverin_jph_rtti_shim.cpp)
-if(MSVC)
-    set_source_files_properties(
-        src/culverin/culverin_jph_rtti_shim.cpp
-        PROPERTIES COMPILE_OPTIONS "/GR"
-    )
-else()
-    set_source_files_properties(
-        src/culverin/culverin_jph_rtti_shim.cpp
-        PROPERTIES COMPILE_OPTIONS "-frtti"
-    )
-endif()
-
-target_compile_options(_culverin_c PRIVATE ${CULVERIN_COMPILE_FLAGS})
-target_compile_definitions(_culverin_c PRIVATE ${CULV_ASSERT_DEFS})
-
-# In section 4, guard IPO for GCC on Windows:
+# ==============================================================================
+# 6. INTERPROCEDURAL OPTIMIZATION (ask CMake whether the toolchain can)
+# ==============================================================================
 include(CheckIPOSupported)
 check_ipo_supported(RESULT ipo_supported OUTPUT error)
-if(ipo_supported)
-    # GCC LTO on Windows (MinGW/LLD) is broken for Python extensions.
-    # The INTERPROCEDURAL_OPTIMIZATION property fights with our -fno-lto workaround
-    # and PyInit_ visibility gets lost at link time.
-    if(CMAKE_C_COMPILER_ID STREQUAL "GNU" AND WIN32)
-        message(STATUS "Culverin: GCC+Windows detected — skipping CMake IPO to avoid PyInit_ visibility loss")
-    else()
-        message(STATUS "Culverin: LTO/IPO is supported and ENABLED")
-        set_property(TARGET _culverin_c PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
-        set_property(TARGET ${JOLTC_TARGET} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
-        if(TARGET Jolt AND NOT DEFINED JOLT_PREBUILT_DIR)
-            set_property(TARGET Jolt PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
-        endif()
+if(ipo_supported AND NOT APPLE AND NOT WIN32)
+    message(STATUS "Culverin: LTO/IPO is supported and ENABLED")
+    get_property(CULVERIN_COMPILE_TARGETS GLOBAL PROPERTY CULVERIN_COMPILE_TARGETS)
+    foreach(target IN LISTS CULVERIN_COMPILE_TARGETS)
+        set_property(TARGET ${target} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+    endforeach()
+    set_property(TARGET culverin_core PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+    if(TARGET Jolt AND NOT DEFINED JOLT_PREBUILT_DIR)
+        set_property(TARGET Jolt PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
     endif()
+elseif(APPLE OR WIN32)
+    # The macOS and Windows wheel builds use different linkers/driver modes
+    # (Apple ld and the MSVC ABI). Keep optimization at -O3 but avoid relying
+    # on a linker-plugin configuration that varies between hosted runners.
+    message(STATUS "Culverin: Skipping IPO/LTO on ${CMAKE_SYSTEM_NAME}")
 else()
     message(WARNING "Culverin: LTO/IPO not supported: ${error}")
 endif()
 
-add_custom_command(
-    TARGET _culverin_c
-    POST_BUILD
-    COMMAND
-        ${CMAKE_COMMAND} -E echo
-        "Extension built at: $<TARGET_FILE:_culverin_c>"
-)
-
-# ==============================================================================
-# 4.1 BUILD FAST-CAPI (Via Submodule CMake)
-# ==============================================================================
-# 1. Use the submodule's own CMake logic
-add_subdirectory("extern/fast-capi")
-
-# 2. Extract the target name from the submodule (it's called 'fast_capi_core')
-set(FAST_CAPI_TARGET fast_capi_core)
-
-# 3. Apply Culverin's high-performance flags to the submodule target
-target_compile_options(${FAST_CAPI_TARGET} PRIVATE ${CULVERIN_COMPILE_FLAGS})
-target_compile_definitions(${FAST_CAPI_TARGET} PRIVATE ${CULV_ASSERT_DEFS})
-
-# 4. Enforce IPO/LTO if supported
-if(ipo_supported AND NOT (CMAKE_C_COMPILER_ID STREQUAL "GNU" AND WIN32))
-    set_property(TARGET ${FAST_CAPI_TARGET} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
-endif()
-
-# ==============================================================================
-# 4.2 BUILD DOCS-EMBEDDER (Via Submodule CMake)
-# ==============================================================================
-add_subdirectory("extern/docs-embedder")
-
-# Apply Culverin's high-performance flags to the submodule
-target_compile_options(docs_embedder PRIVATE ${CULVERIN_COMPILE_FLAGS})
-target_compile_definitions(docs_embedder PRIVATE ${CULV_ASSERT_DEFS})
-
-# Enforce IPO/LTO if supported
-if(ipo_supported AND NOT (CMAKE_C_COMPILER_ID STREQUAL "GNU" AND WIN32))
-    set_property(TARGET docs_embedder PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
-endif()
-
 # --- #embed Fallback Generator for Ancient Compilers which are probably older than me ---
-# 1. Ensure the generated directory exists immediately because sometimes it wouldn't work on other environments or compilers
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
-# 2. Correct paths relative to the project root (where pyproject.toml lives)
-set(EMBED_FILES 
+# Paths relative to the project root (where pyproject.toml lives)
+set(EMBED_FILES
     "PYPROJECT_TOML:pyproject.toml"
     "ALL_DOCS:docs/DOCS.md"
 )
@@ -558,15 +495,15 @@ foreach(entry ${EMBED_FILES})
     string(REPLACE ":" ";" pair ${entry})
     list(GET pair 0 var_name)
     list(GET pair 1 file_path)
-    
+
     set(absolute_src "${CMAKE_CURRENT_SOURCE_DIR}/${file_path}")
     set(inc_file "${CMAKE_CURRENT_BINARY_DIR}/generated/${var_name}.inc")
-    
-    # 3. Defensive check: only create the rule if the file actually exists
+
+    # Defensive check: only create the rule if the file actually exists
     if(EXISTS "${absolute_src}")
         add_custom_command(
             OUTPUT "${inc_file}"
-            COMMAND ${Python_EXECUTABLE} -c 
+            COMMAND ${Python_EXECUTABLE} -c
             "import sys; data=open(sys.argv[1], 'rb').read(); open(sys.argv[2], 'w').write(','.join(map(str, data)) + ',0')"
             "${absolute_src}" "${inc_file}"
             DEPENDS "${absolute_src}"
@@ -579,38 +516,48 @@ foreach(entry ${EMBED_FILES})
     endif()
 endforeach()
 
-# Attach to the target
-target_sources(_culverin_c PRIVATE ${FALLBACK_HEADERS})
+# Make the generated headers explicit build dependencies. Their .inc suffix is
+# intentionally non-compilable, so listing them as target sources alone does not
+# reliably schedule the custom commands with every generator.
+if(FALLBACK_HEADERS)
+    set_source_files_properties(${FALLBACK_HEADERS} PROPERTIES GENERATED TRUE HEADER_FILE_ONLY TRUE)
+    add_custom_target(culverin_embed_fallbacks DEPENDS ${FALLBACK_HEADERS})
+    add_dependencies(_culverin_c culverin_embed_fallbacks)
+    target_sources(_culverin_c PRIVATE ${FALLBACK_HEADERS})
+endif()
 target_include_directories(_culverin_c PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
 # ==============================================================================
-# 5. GLOBAL LTO / IPO CONFIGURATION (Compiler Agnostic)
+# 7. GLOBAL LTO FLAGS (compiler-identity keyed: these ARE the toolchain's name)
 # ==============================================================================
-if(NOT ENABLE_SANITIZER AND NOT ENABLE_THREAD_SANITIZER)
+# Only add explicit linker-plugin flags when CMake's IPO probe succeeded.
+if(ipo_supported AND NOT ENABLE_SANITIZER AND NOT ENABLE_THREAD_SANITIZER AND NOT APPLE AND NOT WIN32)
     set(LTO_COMPILE_FLAG "")
     set(LTO_LINK_FLAG "")
 
-    if(CMAKE_C_COMPILER_ID MATCHES "Clang")
-        # LLVM / Clang-CL specific ThinLTO
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         set(LTO_COMPILE_FLAG "-flto=thin")
-        if(MSVC)
-            set(LTO_LINK_FLAG "/opt:lldlto=2")
-        else()
-            set(LTO_LINK_FLAG "-flto=thin")
-        endif()
-    elseif(CMAKE_C_COMPILER_ID STREQUAL "GNU")
-        # GCC LTO on Windows often breaks PyInit visibility. 
-        # Disable it for now to confirm the fix, or use the "fat" workaround:
-        set(LTO_COMPILE_FLAG "-fno-lto" "-fvisibility=hidden") 
+        set(LTO_LINK_FLAG "-flto=thin")
+    elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        # GCC's LTO fights with PyInit visibility in this build; the IPO pass
+        # above is intentionally neutralized for GNU by -fno-lto.
+        set(LTO_COMPILE_FLAG "-fno-lto" "-fvisibility=hidden")
         set(LTO_LINK_FLAG "")
     endif()
 
     if(LTO_COMPILE_FLAG)
-        message(STATUS "Culverin: Applying ${CMAKE_C_COMPILER_ID} LTO optimizations")
-        target_compile_options(_culverin_c PRIVATE ${LTO_COMPILE_FLAG})
-        target_link_options(_culverin_c PRIVATE ${LTO_LINK_FLAG})
-        target_compile_options(${JOLTC_TARGET} PRIVATE ${LTO_COMPILE_FLAG})
-        
+        message(STATUS "Culverin: Applying ${CMAKE_CXX_COMPILER_ID} LTO optimizations")
+        get_property(CULVERIN_COMPILE_TARGETS GLOBAL PROPERTY CULVERIN_COMPILE_TARGETS)
+        foreach(target IN LISTS CULVERIN_COMPILE_TARGETS)
+            target_compile_options(
+                ${target}
+                PRIVATE "$<$<COMPILE_LANGUAGE:C,CXX>:${LTO_COMPILE_FLAG}>"
+            )
+        endforeach()
+        if(LTO_LINK_FLAG)
+            target_link_options(_culverin_c PRIVATE ${LTO_LINK_FLAG})
+        endif()
+
         if(TARGET Jolt AND NOT DEFINED JOLT_PREBUILT_DIR)
             target_compile_options(Jolt PRIVATE ${LTO_COMPILE_FLAG})
         endif()
@@ -618,76 +565,42 @@ if(NOT ENABLE_SANITIZER AND NOT ENABLE_THREAD_SANITIZER)
 endif()
 
 # ==============================================================================
-# 6. PLATFORM & LINKER FLAGS
+# 8. PLATFORM LINKER & LIBRARY FLAGS
 # ==============================================================================
-if(MSVC)
-    # --- MSVC / Clang-CL PERFORMANCE & DEBUG FLAGS ---
-    target_compile_options(_culverin_c PRIVATE /Zi /fp:fast)
-    target_link_options(_culverin_c PRIVATE /DEBUG /OPT:REF /OPT:ICF)
-    target_compile_definitions(_culverin_c PRIVATE _CRT_DECLARE_NONSTDC_NAMES=1)
-else()
-    # --- GNU / MinGW LINKER FLAGS ---
-    if(WIN32)
-        set(WIN_LINK_FLAGS "")
-        
-        if(CMAKE_C_COMPILER_ID MATCHES "Clang")
-            # Only Clang on Windows uses this MSVC-style nodefaultlib format via lld
-            list(APPEND WIN_LINK_FLAGS "-Wl,-nodefaultlib:libcmt")
-        else()
-            # 1. Use LLD if available for speed
-            list(APPEND WIN_LINK_FLAGS "-fuse-ld=lld")
+if(WIN32)
+    # GNU-driver spelling of the MSVC-linker switches. -Wl, rather than a list
+    # of "-Xlinker" "<flag>" pairs, because CMake DE-DUPLICATES link options:
+    # three identical "-Xlinker" entries collapse into one, and the flags that
+    # followed it become bare arguments. The driver then reads "/OPT:REF" and
+    # "/OPT:ICF" as input files --
+    #
+    #     clang++: error: no such file or directory: '/OPT:REF'
+    #
+    # -- and never reaches the linker. -Wl, hands the driver a single argument
+    # it expands itself, so there is nothing for the de-duplication to fold.
+    # (Verified against a two-line MODULE target: the "-Xlinker" form produces
+    # `-Xlinker /DEBUG /OPT:REF /OPT:ICF` and fails to link; this form
+    # produces the three switches and links a real .dll.)
+    target_link_options(_culverin_c PRIVATE "-Wl,/DEBUG,/OPT:REF,/OPT:ICF")
+endif()
 
-            # 2. Static GCC/C++ Runtimes
-            list(APPEND WIN_LINK_FLAGS "-static-libgcc")
-            list(APPEND WIN_LINK_FLAGS "-static-libstdc++")
-
-            # 3. THE MAGIC TRICK: Link winpthread statically without breaking the CRT
-            # This tells the linker: "Start linking statically now"
-            list(APPEND WIN_LINK_FLAGS "-Wl,-Bstatic")
-            list(APPEND WIN_LINK_FLAGS "-lwinpthread")
-            # This tells the linker: "Go back to dynamic linking for everything else"
-            list(APPEND WIN_LINK_FLAGS "-Wl,-Bdynamic")
-
-            # 4. Standard Windows Multimedia (already dynamic)
-            list(APPEND WIN_LINK_FLAGS "-lwinmm")
-        endif()
-
-        if(ENABLE_SANITIZER OR ENABLE_THREAD_SANITIZER)
-            list(APPEND WIN_LINK_FLAGS "-Wl,-debug")
-        endif()
-
-        target_link_options(
-            _culverin_c
-            PRIVATE ${WIN_LINK_FLAGS} ${CULVERIN_LINK_FLAGS}
+if(APPLE)
+    message(STATUS "Culverin: Enforcing Strong Symbol Export")
+    get_property(CULVERIN_COMPILE_TARGETS GLOBAL PROPERTY CULVERIN_COMPILE_TARGETS)
+    foreach(target IN LISTS CULVERIN_COMPILE_TARGETS)
+        target_compile_options(
+            ${target}
+            PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:-frtti>"
         )
-    endif()
+    endforeach()
+    target_link_options(_culverin_c PRIVATE "-Wl,-all_load")
 endif()
 
 # ==============================================================================
-# 7. UNIFIED INCLUDES (DRY)
+# 9. UNIFIED INCLUDES (DRY)
 # ==============================================================================
-# We use SYSTEM for Jolt to suppress C++ warnings bleeding into our C23 build
-target_include_directories(
-    _culverin_c
-    SYSTEM PRIVATE "extern/JoltC/include" "${JOLT_DIR}"
-)
-target_include_directories(
-    ${JOLTC_TARGET}
-    SYSTEM PRIVATE "extern/JoltC/include" "${JOLT_DIR}"
-)
-
-target_compile_definitions(
-    _culverin_c
-    PRIVATE $<$<NOT:$<BOOL:${MSVC}>>:_GNU_SOURCE>
-)
-
-target_include_directories(
-    _culverin_c
-    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" 
-    "src/culverin"
-    "extern/mag-mutex/include"
-    ${Python_INCLUDE_DIRS}
-)
+# Jolt's include path and SYSTEM-ness now arrive with the Jolt::Jolt imported
+# target (see src/CMakeLists.txt), so there is no per-target include block here.
 
 target_compile_definitions(
     _culverin_c
@@ -697,45 +610,28 @@ target_compile_definitions(
 if(WIN32)
     target_link_libraries(_culverin_c PRIVATE Winmm.lib)
 endif()
-target_compile_definitions(_culverin_c PRIVATE JPH_DEBUG_RENDERER)
-target_link_libraries(_culverin_c PRIVATE mag_mutex_lib ${JOLTC_TARGET} fast_capi_core Jolt::Jolt docs_embedder)
-
-if(APPLE)
-    message(STATUS "Culverin: Enforcing Strong Symbol Export")
-    target_compile_options(${JOLTC_TARGET} PRIVATE "-frtti")
-    target_compile_options(_culverin_c PRIVATE "-frtti")
-    target_link_options(_culverin_c PRIVATE "-Wl,-all_load,-object_path_lto,culverin.o")
-endif()
 
 set_target_properties(
     _culverin_c
     PROPERTIES OUTPUT_NAME "_culverin_c" PREFIX ""
 )
 
-set_property(
-    TARGET ${JOLTC_TARGET}
-    PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL"
-)
+# MSVC-ABI runtime for our two archives. The property is honored only when the
+# compiler targets the MSVC ABI; it is inert for GCC/Clang-on-ELF.
 set_property(
     TARGET _culverin_c
     PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL"
 )
 
 # ==============================================================================
-# 8. INSTALLATION
+# 10. INSTALLATION
 # ==============================================================================
-install(TARGETS _culverin_c DESTINATION .)
-
-# Only attempt to evaluate PDB generator expressions on Windows.
-# Even with OPTIONAL, Linux linkers will fail the generation phase if they see this GenEx.
-if(WIN32 AND (MSVC OR CMAKE_CXX_COMPILER_ID MATCHES "Clang"))
-    install(FILES $<TARGET_PDB_FILE:_culverin_c> 
-            DESTINATION . 
-            OPTIONAL) 
-    message(STATUS "Culverin: Windows PDB installation configured.")
-else()
-    message(STATUS "Culverin: Non-PDB platform/compiler detected, skipping PDB installation.")
-endif()
-
-
-install(FILES src/culverin/__init__.py src/culverin/_culverin.py DESTINATION .)
+install(
+    FILES
+        src/python/culverin/__init__.py
+        src/python/culverin/_culverin.py
+        src/python/culverin/__init__.pyi
+        src/python/culverin/_culverin_c.pyi
+        src/python/culverin/py.typed
+    DESTINATION .
+)

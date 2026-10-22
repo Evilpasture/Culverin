@@ -5,8 +5,6 @@ import sys
 import time
 from pathlib import Path
 
-# --- IMPORT YOUR CONFIG GEN ---
-import clangd_config_gen
 from scikit_build_core.build import build_wheel
 
 # --- SMART PATHING ---
@@ -14,42 +12,34 @@ TOOLS_DIR = Path(__file__).parent.resolve()
 PROJECT_ROOT = TOOLS_DIR.parent
 DIST_DIR = PROJECT_ROOT / "dist"
 BUILD_DIR = PROJECT_ROOT / "build"
-TARGET_DIR = PROJECT_ROOT / "src" / "culverin"
+TARGET_DIR = PROJECT_ROOT / "src" / "python" / "culverin"
 
 IS_CI = os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS")
 cpu_count = os.cpu_count() or 4
 
 
-def update_dev_tooling() -> None:
-    """Regenerates .clangd and links compile_commands.json for IDE support."""
-    print(">>> Updating development tooling (clangd/compile_commands)...")
+def update_compile_commands() -> None:
+    """Expose CMake's compilation database at the repository root for IDEs."""
+    print(">>> Updating compile_commands.json for IDE support...")
 
-    # 1. Regenerate .clangd
-    try:
-        clangd_config_gen.generate_clangd()
-    except Exception as e:
-        print(f"Warning: Failed to regenerate .clangd: {e}")
-
-    # 2. Link compile_commands.json
-    # scikit-build-core usually puts this in the root of the build folder
     source_cc = BUILD_DIR / "compile_commands.json"
     target_cc = PROJECT_ROOT / "compile_commands.json"
 
-    if source_cc.exists():
-        # Remove old link/file if it exists
-        if target_cc.exists() or target_cc.is_symlink():
-            target_cc.unlink()
-
-        try:
-            # Try to symlink (Best for dev, changes in build reflected instantly)
-            os.symlink(source_cc, target_cc)
-            print(f"Link created: {target_cc} -> {source_cc}")
-        except OSError:
-            # Fallback to copy (Windows without Dev Mode or different drives)
-            shutil.copy2(source_cc, target_cc)
-            print(f"File copied: {target_cc} (Symlink not supported)")
-    else:
+    if not source_cc.exists():
         print("Warning: compile_commands.json not found in build directory.")
+        return
+
+    if target_cc.exists() or target_cc.is_symlink():
+        target_cc.unlink()
+
+    try:
+        # A symlink keeps the root database in sync with CMake's build directory.
+        os.symlink(source_cc, target_cc)
+        print(f"Link created: {target_cc} -> {source_cc}")
+    except OSError:
+        # Windows without Developer Mode or across drives may not allow symlinks.
+        shutil.copy2(source_cc, target_cc)
+        print(f"File copied: {target_cc} (symlink unavailable)")
 
 
 def alert(success: bool = True) -> None:
@@ -149,8 +139,7 @@ def build_extension() -> None:
             shutil.copy2(pdb, TARGET_DIR / pdb.name)
             print(f">>> Deployed symbols: {pdb.name}")
 
-        # --- NEW STEPS ---
-        update_dev_tooling()
+        update_compile_commands()
         install_package()
 
         print(f"\n{GREEN}========================================{RESET}")

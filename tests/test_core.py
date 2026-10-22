@@ -1,3 +1,4 @@
+import array
 import contextlib
 import math
 import re
@@ -150,6 +151,37 @@ class TestWorldInitialization(unittest.TestCase):
                     self.assertAlmostEqual(pos[1], 0.0)
             else:
                 self.fail(f"Handle {h} (slot {i}) is stale!")
+
+    def test_baked_scene_exceeds_initial_slot_capacity(self) -> None:
+        """Initial bodies should size native storage beyond the small default slot batch."""
+        initial_bodies: list[culverin.BodyDefinition] = [
+            {
+                "pos": (float(i), 0.0, 0.0),
+                "shape": culverin.SHAPE_SPHERE,
+                "size": 0.5,
+            }
+            for i in range(65)
+        ]
+
+        world = culverin.PhysicsWorld(settings={"max_bodies": 128}, bodies=initial_bodies)
+
+        self.assertEqual(world.count, len(initial_bodies))
+        last_body = world.get_position((1 << 32) | (len(initial_bodies) - 1))
+        self.assertEqual(last_body, (64.0, 0.0, 0.0))
+
+    def test_baked_scene_over_max_bodies_fails_cleanly(self) -> None:
+        """Reject an initial scene larger than max_bodies before native writes."""
+        initial_bodies: list[culverin.BodyDefinition] = [
+            {
+                "pos": (float(i), 0.0, 0.0),
+                "shape": culverin.SHAPE_SPHERE,
+                "size": 0.5,
+            }
+            for i in range(65)
+        ]
+
+        with self.assertRaisesRegex(ValueError, "exceeding max_bodies"):
+            culverin.PhysicsWorld(settings={"max_bodies": 64}, bodies=initial_bodies)
 
     def test_reinitialization_guard(self) -> None:
         """Ensure __init__ cannot be called a second time on an active world."""
@@ -416,6 +448,18 @@ class TestCoreMechanics(CulverinTestCase):
         ang = self.world.get_angular_velocity(h)
         self.assertEqual(ang, (0.0, 0.0, 0.0), "Manual velocity override failed")
 
+    def test_set_transform_updates_shadow_buffers(self) -> None:
+        h = self.world.create_body(pos=(0, 0, 0))
+        self.world.step(0)
+
+        self.world.set_transform(h, pos=(3.0, 4.0, 5.0), rot=(0.0, 0.0, 0.0, 1.0))
+
+        stats = self.world.get_body_stats(h)
+        self.assertIsNotNone(stats)
+        assert stats is not None
+        self.assertEqual(stats[0], (3.0, 4.0, 5.0))
+        self.assertEqual(stats[1], (0.0, 0.0, 0.0, 1.0))
+
     def test_torque_proportionality(self) -> None:
         """Verify that hitting further from the center produces more torque."""
         # Body 1: Kick near center (0.1 offset)
@@ -651,6 +695,22 @@ class TestQueries(CulverinTestCase):
 
         hits = self.world.overlap_aabb(min=(-2, 3, -2), max=(2, 7, 2))
         self.assertIn(b1, hits)
+
+    def test_overlap_collectors_grow_beyond_inline_capacity(self) -> None:
+        handles = [
+            self.world.create_body(
+                pos=(index * 0.05, 5, 0),
+                size=(0.1, 0.1, 0.1),
+                motion=culverin.MOTION_STATIC,
+            )
+            for index in range(70)
+        ]
+        self.world.step(0)
+
+        sphere_hits = self.world.overlap_sphere(center=(1.75, 5, 0), radius=4.0)
+        aabb_hits = self.world.overlap_aabb(min=(-1, 4, -1), max=(5, 6, 1))
+        self.assertTrue(set(handles).issubset(sphere_hits))
+        self.assertTrue(set(handles).issubset(aabb_hits))
 
     def test_get_body_stats(self) -> None:
         # 1. Test Valid Body
@@ -1571,28 +1631,31 @@ class TestEdgeCases(CulverinTestCase):
             self.world.apply_impulse(h, x=float("inf"), y=0.0, z=0.0)
 
     def test_handle_invalidation_chain(self) -> None:
-        """Test 'Silent Invalidation': deleted bodies return None for all operations."""
+        """Test fail-fast invalidation: deleted bodies raise ValueError for all operations."""
         h = self.world.create_body(pos=(0, 10, 0))
 
         # Verify it works initially
         self.assertTrue(self.world.is_alive(h))
 
-        # Kill the body
+        # Kill the body and flush the destruction so the handle goes fully stale
         self.world.destroy_body(h)
+        self.world.step(0)
 
-        # 1. Mutators: Instead of raising, they now return None (Silent Fail)
-        # This proves the C-layer caught the SLOT_PENDING_DESTROY state.
-        res = self.world.set_position(h, 0, 5, 0)
-        self.assertIsNone(res, "set_position should return None for stale handles")
+        # 1. Mutators: the C-layer catches the stale handle and fails fast
+        # instead of silently returning None.
+        with self.assertRaises(ValueError):
+            self.world.set_position(h, 0, 5, 0)
 
-        # 2. Getters: Consistent return of None
+        # 2. Getters: is_alive/get_index/get_position are tolerant lookups by
+        # design and return soft values instead of raising.
         self.assertFalse(self.world.is_alive(h), "is_alive must be False")
-        self.assertIsNone(self.world.get_index(h), "get_index must be None")
-        self.assertIsNone(self.world.get_position(h), "get_position must be None")
+        self.assertIsNone(self.world.get_index(h), "get_index is a tolerant lookup: None on stale")
+        self.assertIsNone(self.world.get_position(h), "get_position is a tolerant lookup: None on stale")
 
-        # 3. Double-Delete Safety (Idempotency)
-        # Ensure calling destroy again doesn't crash the engine
-        self.world.destroy_body(h)
+        # 3. Double-Delete Safety: fail-fast invalidation raises ValueError
+        # on the stale handle instead of crashing or corrupting state.
+        with self.assertRaises(ValueError):
+            self.world.destroy_body(h)
 
     def test_empty_batch_inputs(self) -> None:
         """Ensure batch methods don't segfault on empty data."""
@@ -1603,6 +1666,17 @@ class TestEdgeCases(CulverinTestCase):
         # 2. Empty body creation
         handles = self.world.create_bodies_batch([], [])
         self.assertEqual(len(handles), 0)
+
+        # 3. Batch destroy tolerates stale inputs while destroying valid bodies.
+        created = self.world.create_bodies_batch(
+            positions=[(0, 5, 0), (1, 5, 0)],
+            sizes=[(1, 1, 1), (1, 1, 1)],
+            shape_type=culverin.SHAPE_BOX,
+        )
+        self.world.step(0)
+        self.world.destroy_bodies_batch([*created, 999999])
+        self.world.step(0)
+        self.assertTrue(all(not self.world.is_alive(handle) for handle in created))
 
     def test_zero_scale_shapes(self) -> None:
         """Jolt usually dislikes zero-volume shapes. We should handle it gracefully."""
@@ -1654,6 +1728,21 @@ class TestComplexShapes(CulverinTestCase):
         )
         self.world.step(0)
         self.assertTrue(self.world.is_alive(hull))
+
+    def test_mesh_body_creation_and_index_validation(self) -> None:
+        vertices = array.array("f", [0, 0, 0, 1, 0, 0, 0, 1, 0]).tobytes()
+        indices = array.array("I", [0, 1, 2]).tobytes()
+        mesh = self.world.create_mesh_body(
+            pos=(0, 0, 0), rot=(0, 0, 0, 1), vertices=vertices, indices=indices
+        )
+        self.world.step(0)
+        self.assertTrue(self.world.is_alive(mesh))
+
+        invalid_indices = array.array("I", [0, 1, 99]).tobytes()
+        with self.assertRaisesRegex(ValueError, "Mesh index out of range"):
+            self.world.create_mesh_body(
+                pos=(0, 0, 0), rot=(0, 0, 0, 1), vertices=vertices, indices=invalid_indices
+            )
 
 
 class TestConstraints(CulverinTestCase):
@@ -1909,6 +1998,9 @@ class TestRagdollsAndSkeletons(CulverinTestCase):
         matrices = np.eye(4, dtype=np.float32)
         mats_buffer = np.stack([matrices, matrices]).tobytes()  # 2 joints
         ragdoll.drive_to_pose(root_pos=(0, 5, 0), root_rot=(0, 0, 0, 1), matrices=mats_buffer)
+
+        del ragdoll
+        self.assertTrue(all(not self.world.is_alive(handle) for handle in handles))
 
     def test_ragdoll_get_debug_info(self) -> None:
         import culverin
@@ -2617,7 +2709,7 @@ class TestAdvancedPhysics(CulverinTestCase):
 
         # 2. Create high-speed projectiles
         bullet = self.world.create_body(
-            pos=(0, 0, 0), size=(0.2, 0.2, 0.2), motion=culverin.MOTION_DYNAMIC, ccd=True
+            pos=(0, 0, 0), size=(0.2, 0.2, 0.2), motion=culverin.MOTION_DYNAMIC, ccd=False
         )
 
         ghost = self.world.create_body(
@@ -2626,8 +2718,9 @@ class TestAdvancedPhysics(CulverinTestCase):
 
         self.world.step(0)  # Flush creation
 
-        # 3. Launch at 400 m/s (below the 500m/s default cap)
+        # 3. Enable CCD at runtime and launch at 400 m/s (below the 500m/s default cap).
         # In 1/60s, they travel ~6.6m. The wall is at X=2.
+        self.world.set_ccd(bullet, enabled=True)
         self.world.set_linear_velocity(bullet, x=400.0, y=0, z=0)
         self.world.set_linear_velocity(ghost, x=400.0, y=0, z=0)
 
@@ -2642,6 +2735,18 @@ class TestAdvancedPhysics(CulverinTestCase):
 
         # Non-CCD bullet (ghost) should have tunneled (ended up near X=6.6)
         self.assertGreater(pos_ghost[0], 4.0, "Non-CCD Bullet was unexpectedly stopped")
+
+    def test_activate_and_deactivate_body(self) -> None:
+        handle = self.world.create_body(pos=(0, 5, 0))
+        self.world.step(0)
+
+        self.world.deactivate(handle)
+        self.world.step(0)
+        self.assertFalse(self.world.is_active(handle))
+
+        self.world.activate(handle)
+        self.world.step(0)
+        self.assertTrue(self.world.is_active(handle))
 
     def test_linear_and_angular_damping(self) -> None:
         """Verify that damping slows down bodies over time in a vacuum."""
@@ -2842,9 +2947,9 @@ class TestRobustness(CulverinTestCase):
         # Kill the constraint manually
         self.world.destroy_constraint(c)
 
-        # Querying a destroyed constraint should return None (Silent Invalidation)
-        ctype = self.world.get_constraint_type(c)
-        self.assertIsNone(ctype, "get_constraint_type should return None for destroyed constraints")
+        # Querying a destroyed constraint must fail fast (fail-fast invalidation)
+        with self.assertRaises(ValueError):
+            self.world.get_constraint_type(c)
 
     def test_constraint_automatic_cleanup_check(self) -> None:
         """Check if querying a constraint with a dead body returns None."""

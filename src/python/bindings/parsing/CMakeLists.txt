@@ -1,0 +1,12 @@
+add_library(
+    culverin_python_parsing
+    OBJECT
+        ParserCore.cpp
+        ParserCore.hpp
+        Parser.hpp
+        ParserTraits.hpp
+        Parsers.cpp
+        Parsers.hpp
+        DefaultConfig.hpp
+)
+culverin_configure_python_target(culverin_python_parsing)

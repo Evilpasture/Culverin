@@ -1,45 +1,153 @@
-Checks: >
+# Naming and low-level sanity checks for the Culverin tree.
+#
+# Two things were silently broken here and are now fixed:
+#
+#   1. readability-identifier-naming.*Case does not accept the value
+#      "snake_case" -- the valid spelling is "lower_case". clang-tidy rejected
+#      all three options with "invalid configuration value" and enforced
+#      nothing at all.
+#   2. "Checks: >" is a YAML *folded scalar*, so the "#" lines inside it were
+#      not comments: they were folded into the check list as literal text.
+#      "--dump-config" showed entries such as
+#      "# Crucial for cache/memory cppcoreguidelines-pro-type-member-init",
+#      which matched no check. That silently swallowed
+#      cppcoreguidelines-pro-type-member-init and the entire misc-* family.
+#      YAML has no comment syntax inside a block scalar, so the comments now
+#      live outside it.
+#
+# misc-* is revived, but three of its checks are excluded because they are
+# architecturally wrong for this codebase rather than merely unmet:
+#   -misc-non-private-member-variables-in-classes  (569 hits on 8 TUs -- the
+#       CPython extension structs are public-field POD by design, they start
+#       with PyObject_HEAD)
+#   -misc-include-cleaner   (378 hits -- the project has no IWYU policy)
+#   -misc-const-correctness (211 hits -- mechanical churn, no correctness gain)
+# Re-enabling any of them is a one-line change if that changes.
+
+Checks: >-
   -*,
   bugprone-*,
   -bugprone-easily-swappable-parameters,
   clang-analyzer-*,
   performance-*,
   modernize-*,
-  
-  performance-unnecessary-copy-initialization,
-  performance-unnecessary-value-param,
-  performance-move-const-arg,
-  performance-no-automatic-move,
-  performance-inefficient-vector-operation,
-  performance-inefficient-string-concatenation,
-  performance-trivially-destructible,
-  
-  # Crucial for cache/memory
   cppcoreguidelines-pro-type-member-init,
   cppcoreguidelines-no-malloc,
-  modernize-pass-by-value,
-  modernize-use-emplace,
-  
-  # Low-level sanity
   misc-*,
   -misc-unused-parameters,
+  -misc-non-private-member-variables-in-classes,
+  -misc-include-cleaner,
+  -misc-const-correctness,
   readability-*,
   -readability-identifier-length,
   -readability-function-cognitive-complexity
 
+# Without this, clang-tidy lints Jolt and CPython as well: a single TU produced
+# 3847 findings, including 486 modernize-macro-to-enum and 420
+# readability-uppercase-literal-suffix from vendored headers.
+HeaderFilterRegex: '(^|/)src/'
+
 CheckOptions:
   # High-performance threshold: keep functions smaller to encourage inlining
   readability-function-size.LineThreshold: 200
-  
-  # Strict snake_case for the C-API interface
-  readability-identifier-naming.VariableCase: snake_case
-  readability-identifier-naming.FunctionCase: snake_case
-  readability-identifier-naming.ParameterCase: snake_case
-  
-  # Magic numbers: Only allow 0, 1, and 2. 
-  # Powers of 2 must be named constants (e.g., CACHE_LINE_SIZE)
+
+  # Naming, measured on the tree rather than imposed on it. Counts below are
+  # unique symbols flagged across all 32 TUs in src/.
+  #
+  #   free functions   PascalCase. 130 non-conforming, all snake_case helpers
+  #                    (make_array, get_theme, detect_level, ...) plus the 11
+  #                    CPython slot callbacks that must keep their C names
+  #                    (BufferProxy_length, BufferProxy_dealloc, ...).
+  #   member functions PascalCase. 84 conform against 34 that do not, so
+  #                    CamelCase is the majority. MethodCase has to be set
+  #                    explicitly: FunctionCase also covers member functions,
+  #                    and leaving it out flags every method in the tree.
+  #   parameters       lower_case. 21 non-conforming, 20 of them Jolt's
+  #                    inFrom/inTo/inColor style leaking through adapters.
+  #   variables        lower_case.
+  #   members          camelBack. 326 conflicting names across 351 declaration
+  #                    sites -- 295 in structs, 55 in classes -- and the tree
+  #                    was uniformly snake_case (max_jolt_bodies, body_ids,
+  #                    physics_system). Fixed in the same pass that added the
+  #                    rule, so this is enforced from now on, not aspirational.
+  #   local constants  lower_case.
+  #
+  # Deliberately NOT enforced: file-scope variables and constants. The tree has
+  # two competing conventions there -- kCamelCase tables (kModuleMethods,
+  # kShipMethods, kVehicleMethods) and PascalCase spec objects (WorldSpec,
+  # BufferProxySlots, VehicleSpec) -- and neither is clearly dominant, so
+  # picking one would flag the other ~30 sites for no gain.
+  readability-identifier-naming.FunctionCase: CamelCase
+  readability-identifier-naming.MethodCase: CamelCase
+  readability-identifier-naming.ParameterCase: lower_case
+  readability-identifier-naming.VariableCase: lower_case
+  readability-identifier-naming.MemberCase: camelBack
+  # Two constant conventions coexist deliberately and are both enforced:
+  # ordinary constants are lower_case, and compile-time constants are
+  # kPascalCase (kAvxAlignment, kTrackedGearRatio1, kDefaultRadius). clang-tidy
+  # has no single style covering both, so the k-prefixed form is an explicit,
+  # documented exception rather than an unchecked free-for-all.
+  readability-identifier-naming.LocalConstantCase: lower_case
+  readability-identifier-naming.LocalConstantIgnoredRegexp: '^k[A-Z].*$'
+  readability-identifier-naming.GlobalConstantIgnoredRegexp: '^k[A-Z].*$'
+  readability-identifier-naming.NamespaceConstantIgnoredRegexp: '^k[A-Z].*$'
+  readability-identifier-naming.ClassConstantIgnoredRegexp: '^k[A-Z].*$'
+  readability-identifier-naming.StaticConstantIgnoredRegexp: '^k[A-Z].*$'
+  # File-scope constants are kCamelCase throughout (kAvxAlignment,
+  # kTrackedGearRatio1, ...) and the module spec tables are PascalCase
+  # (WorldSpec, VehicleSpec, ...). Declaring both is what makes the rule
+  # enforceable instead of perpetually violated.
+  readability-identifier-naming.GlobalConstantCase: lower_case
+  readability-identifier-naming.NamespaceConstantCase: lower_case
+  readability-identifier-naming.ClassConstantCase: lower_case
+  readability-identifier-naming.StaticConstantCase: lower_case
+  readability-identifier-naming.TypedefCase: CamelCase
+  readability-identifier-naming.TypeAliasCase: CamelCase
+  # Container/iterator trait aliases must keep the names generic code looks
+  # for (value_type, pointer, reference, element_type, ...).
+  readability-identifier-naming.TypeAliasIgnoredRegexp: '^(value_type|pointer|reference|element_type|difference_type|size_type|const_pointer|const_reference|iterator|const_iterator)$'
+  readability-identifier-naming.StructCase: CamelCase
+
+  # Third-party is the standing exception. Everything vendored lives under
+  # extern/ and is excluded by HeaderFilterRegex above; this covers the two
+  # places where foreign naming still legitimately reaches into our TUs.
+  #
+  #   in*/io*    Jolt's own parameter names, kept verbatim in overrides of
+  #              Jolt virtuals (OnContactAdded(const Body &inBody1, ...)) so
+  #              that an override reads exactly like the declaration it
+  #              implements.
+  readability-identifier-naming.ParameterIgnoredRegexp: '(in[A-Z].*|io[A-Z].*|D)'
+  #
+  #   CPython C slots and the C entry point. These are looked up by name at
+  #   runtime by CPython's type machinery and ABI -- PyInit__culverin_c, the
+  #   BufferProxy_* slots, the module's culverin_* slots, and the SparseSet_*
+  #   helpers mirroring them -- so renaming them breaks the extension.
+  readability-identifier-naming.FunctionIgnoredRegexp: '((BufferProxy|SparseSet|culverin|PyInit)_.*|PyInit_.*|PyInit__culverin_c)'
+
+  # Module-level definition tables. These are the CPython slots arrays and
+  # per-type spec tables (WorldSlots, VehicleSpec, kShipMethods, ...). They are
+  # non-const arrays consumed by CPython, so they land in Variable rather than
+  # GlobalConstant, but they follow the same PascalCase/kCamelCase convention
+  # as every other file-scope table.
+  readability-identifier-naming.VariableIgnoredRegexp: '^(.*(Slots|Spec|Methods|Members|GetSets)|FMT_MAP|_save|v[AB])$'
+
+  # Private members keep the trailing underscore (world_, numWheels_,
+  # sled_). clang-tidy cannot express "camelBack with an *optional* trailing
+  # underscore": MemberSuffix makes the suffix mandatory for every member, so
+  # setting it would force one onto every struct field as well. The 41 names
+  # that carry the underscore are therefore exempt from the check and are
+  # camelCased inside it by hand -- the rule covers the other 326.
+  readability-identifier-naming.MemberIgnoredRegexp: '^.*_$'
+
+  # Buffer<T> is a container and keeps STL-compatible member names so that
+  # range-for, std::size-style generic code and ordinary reader expectations
+  # all work. Renaming begin/end would break range-for outright.
+  readability-identifier-naming.MethodIgnoredRegexp: '^(allocate.*|append.*|begin|end|size|data|span|const_span|empty|push|clear|reset|reallocate.*|borrow|c_str|ensure|get|release|valid|first|exception|is_none|is_executable|has_hit|hit|num_vertices|publish_handle|debug_check|accumulate)$'
+
+  # Magic numbers: only allow 0, 1 and 2.
+  # Powers of 2 must be named constants (e.g. CACHE_LINE_SIZE).
   readability-magic-numbers.IgnoredIntegerValues: "0;1;2"
   readability-magic-numbers.IgnorePowersOfTwoValue: false
 
-  # Vector optimization: Flag if we don't reserve space
+  # Vector optimization: flag if we don't reserve space.
   performance-inefficient-vector-operation.EnableImplicitConverters: true

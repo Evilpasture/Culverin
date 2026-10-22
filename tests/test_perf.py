@@ -316,13 +316,13 @@ class TestPerformanceRegression(unittest.TestCase):
     def test_fastparse_morphism_overhead(self) -> None:
         """
         Benchmark the Monomorphic stubs (Speculative) vs the Generic parser (Fallback).
-        - Positional: Hits the 'fp_speculate_p4_naked' stub (O(1) direct call).
-        - Keywords: Bails to 'fp_parse_vector' (Generic loop).
+        - Positional: Hits the 'fast_parse_speculate_p4' stub (O(1) direct call).
+        - Keywords: Bails to 'fast_parse_vector' (Generic loop).
         """
         h = self.world.create_body(pos=(0, 0, 0))
         iterations = 1_000_000
 
-        # 1. Benchmark Positional (Targeting fp_speculate_p4_naked)
+        # 1. Benchmark Positional (Targeting fast_parse_speculate_p4)
         t0 = time.perf_counter()
         calls_pos = 0
         for _ in range(iterations):
@@ -330,7 +330,7 @@ class TestPerformanceRegression(unittest.TestCase):
             calls_pos += 1
         t_pos = time.perf_counter() - t0
 
-        # 2. Benchmark Keywords (Targeting fp_parse_vector fallback)
+        # 2. Benchmark Keywords (Targeting fast_parse_vector fallback)
         t0 = time.perf_counter()
         calls_kw = 0
         for _ in range(iterations):

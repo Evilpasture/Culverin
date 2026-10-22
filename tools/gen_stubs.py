@@ -9,7 +9,7 @@ from pathlib import Path
 # --- CONFIGURATION ---
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
-SOURCE_ROOT = PROJECT_ROOT / "src" / "culverin"
+SOURCE_ROOT = PROJECT_ROOT / "src" / "python" / "culverin"
 
 # We force the C code to execute inside SOURCE_ROOT, so it dumps here
 SCHEMA_JSON_PATH = SOURCE_ROOT / "culverin_schema.json"
@@ -76,7 +76,7 @@ ARG_HINTS = {
     "Skeleton.finalize": "",  # Fixed syntax error
 }
 
-# Maps Python method names to the C `FastParser` registry name
+# Maps Python method names to the parser registry name
 CLASS_METHOD_TO_PARSER = {
     "PhysicsWorld.create_body": "Body",
     "PhysicsWorld.apply_impulse": "Impulse",

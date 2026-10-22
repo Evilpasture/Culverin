@@ -1,0 +1,16 @@
+add_library(
+    culverin_python_physics
+    OBJECT
+        CommandBufferBinding.cpp
+        Constraint.cpp
+        Constraint.hpp
+        PhysicsSync.hpp
+        PhysicsWorld.cpp
+        PhysicsWorldBinding.hpp
+        PhysicsWorldParsers.hpp
+        QueryMethods.cpp
+        QueryMethods.hpp
+        WorldAdapters.cpp
+        WorldAdapters.hpp
+)
+culverin_configure_python_target(culverin_python_physics)

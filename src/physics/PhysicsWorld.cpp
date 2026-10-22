@@ -1,0 +1,752 @@
+#include "physics/PhysicsWorld.hpp"
+
+#include "core/Profiling.hpp"
+#include "physics/ContactEventDefinitions.hpp"
+#include "physics/InternalQuery.hpp"
+#include "physics/RotationSanitize.hpp"
+#include "physics/ShadowSync.hpp"
+#include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
+#include <Jolt/Physics/Collision/Shape/BoxShape.h>
+
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <utility>
+
+
+namespace CPH {
+
+namespace {
+
+constexpr std::size_t kCommandQueueInitialCapacity = 64;
+constexpr std::size_t kInitialBodyCapacity         = 1024;
+constexpr std::size_t kConstraintInitialCapacity   = 256;
+constexpr std::size_t kContactMaxCapacity          = sizeof(ContactEvent) * 8 << 5;
+
+constexpr JPH::Real kVerifyAbiPosX    = 10.0;
+constexpr JPH::Real kVerifyAbiPosY    = 20.0;
+constexpr JPH::Real kVerifyAbiPosZ    = 30.0;
+constexpr double kVerifyAbiTolerance  = 0.1;
+
+void SetScaledMass(JPH::BodyCreationSettings &settings, JPH::MassProperties properties,
+                     float mass, float scale) {
+    properties.mMass = mass;
+    for (JPH::uint column = 0; column < 4; ++column) {
+        const JPH::Vec4 value = properties.mInertia.GetColumn4(column);
+        properties.mInertia.SetColumn4(
+            column, JPH::Vec4(value.GetX() * scale, value.GetY() * scale, value.GetZ() * scale,
+                              value.GetW()));
+    }
+    settings.mMassPropertiesOverride = properties;
+    settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
+}
+
+// Culverin has three object layers and uses the identical numbering for
+// broadphase layers. The pair matrix is fixed: Static collides with Dynamic
+// and Vehicle, and Dynamic collides with itself. The remaining pairs
+// (Static/Static, Dynamic/Vehicle, Vehicle/Vehicle) do not collide.
+[[nodiscard]] constexpr bool ObjectLayersCollide(std::uint32_t layer1,
+                                                   std::uint32_t layer2) noexcept {
+    if (layer1 > layer2) {
+        const std::uint32_t temporary = layer1;
+        layer1                        = layer2;
+        layer2                        = temporary;
+    }
+    return (layer1 == std::to_underlying(ObjectLayer::Static) &&
+            (layer2 == std::to_underlying(ObjectLayer::Dynamic) ||
+             layer2 == std::to_underlying(ObjectLayer::Vehicle))) ||
+           (layer1 == std::to_underlying(ObjectLayer::Dynamic) &&
+            layer2 == std::to_underlying(ObjectLayer::Dynamic));
+}
+
+class WorldBroadPhaseLayerInterface final : public JPH::BroadPhaseLayerInterface {
+  public:
+    [[nodiscard]] JPH::uint GetNumBroadPhaseLayers() const override {
+        return std::to_underlying(ObjectLayer::Count);
+    }
+
+    [[nodiscard]] JPH::BroadPhaseLayer
+    GetBroadPhaseLayer(JPH::ObjectLayer layer) const override {
+        return layer < std::to_underlying(ObjectLayer::Count)
+                   ? JPH::BroadPhaseLayer(static_cast<JPH::BroadPhaseLayer::Type>(layer))
+                   : JPH::cBroadPhaseLayerInvalid;
+    }
+
+#if defined(JPH_EXTERNAL_PROFILE) || defined(JPH_PROFILE_ENABLED)
+    [[nodiscard]] const char *GetBroadPhaseLayerName(JPH::BroadPhaseLayer layer) const override {
+        switch (static_cast<std::uint32_t>(layer.GetValue())) {
+        case std::to_underlying(ObjectLayer::Static):
+            return "Static";
+        case std::to_underlying(ObjectLayer::Dynamic):
+            return "Dynamic";
+        case std::to_underlying(ObjectLayer::Vehicle):
+            return "Vehicle";
+        default:
+            return "Invalid";
+        }
+    }
+#endif
+};
+
+class WorldObjectLayerPairFilter final : public JPH::ObjectLayerPairFilter {
+  public:
+    [[nodiscard]] bool ShouldCollide(JPH::ObjectLayer layer1,
+                                     JPH::ObjectLayer layer2) const override {
+        return ObjectLayersCollide(static_cast<std::uint32_t>(layer1),
+                                     static_cast<std::uint32_t>(layer2));
+    }
+};
+
+class WorldObjectVsBroadPhaseLayerFilter final : public JPH::ObjectVsBroadPhaseLayerFilter {
+  public:
+    [[nodiscard]] bool ShouldCollide(JPH::ObjectLayer layer,
+                                     JPH::BroadPhaseLayer broadphase_layer) const override {
+        // Broadphase numbering is identical to object-layer numbering.
+        return ObjectLayersCollide(static_cast<std::uint32_t>(layer),
+                                     static_cast<std::uint32_t>(broadphase_layer.GetValue()));
+    }
+};
+
+} // namespace
+
+// --- Body settings helpers ---
+
+void ConfigureBodySettings(JPH::BodyCreationSettings &settings, const JPH::Shape *shape,
+                               BodyConfig cfg) {
+    if (cfg.isSensor) {
+        settings.mIsSensor = true;
+    }
+    if (cfg.useCcd) {
+        settings.mMotionQuality = JPH::EMotionQuality::LinearCast;
+    }
+    if (cfg.motionType == std::to_underlying(MotionType::Dynamic)) {
+        settings.mAllowSleeping = true;
+    }
+    if (cfg.allowedDofs != 0U) {
+        settings.mAllowedDOFs = static_cast<JPH::EAllowedDOFs>(cfg.allowedDofs);
+    }
+    settings.mFriction    = cfg.friction;
+    settings.mRestitution = cfg.restitution;
+
+    if (cfg.mass > 0.0F) {
+        const JPH::MassProperties properties = shape->GetMassProperties();
+        SetScaledMass(settings, properties, cfg.mass,
+                        cfg.mass / std::fmax(properties.mMass, 1e-6F));
+    }
+}
+
+void ApplyBodyCreationProps(JPH::BodyCreationSettings &settings, const JPH::Shape *shape,
+                                BodyCreationProps props) {
+    if (props.mass > 0.0F) {
+        const JPH::MassProperties properties = shape->GetMassProperties();
+        if (properties.mMass > 1e-6F) {
+            SetScaledMass(settings, properties, props.mass, props.mass / properties.mMass);
+        }
+    }
+    if (props.isSensor) {
+        settings.mIsSensor = true;
+    }
+    if (props.useCcd) {
+        settings.mMotionQuality = JPH::EMotionQuality::LinearCast;
+    }
+    settings.mAllowSleeping = true;
+    settings.mFriction      = props.friction;
+    settings.mRestitution   = props.restitution;
+}
+
+// --- Synchronization helpers (see core/Threading.hpp) ---
+
+std::unique_lock<std::mutex> PhysicsWorld::LockShadowNotStepping() {
+    std::unique_lock shadow(shadowLock);
+    if (!isStepping.load(std::memory_order::relaxed)) {
+        return shadow;
+    }
+
+    waitingThreads.fetch_add(1, std::memory_order::relaxed);
+    while (isStepping.load(std::memory_order::relaxed)) {
+        shadow.unlock();
+        {
+            std::unique_lock sync(stepSync.mutex);
+            stepSync.cond.wait(sync, [&] {
+                return !isStepping.load(std::memory_order::relaxed);
+            });
+        }
+        shadow.lock();
+    }
+    waitingThreads.fetch_sub(1, std::memory_order::relaxed);
+    return shadow;
+}
+
+void PhysicsWorld::WaitUntilNotQuerying(std::unique_lock<std::mutex> &shadow) {
+    while (activeQueries.load(std::memory_order::acquire) > 0) {
+        shadow.unlock();
+        {
+            std::unique_lock sync(stepSync.mutex);
+            stepSync.cond.wait(sync, [&] {
+                return activeQueries.load(std::memory_order::relaxed) <= 0;
+            });
+        }
+        shadow.lock();
+    }
+}
+
+// --- Construction / destruction ---
+
+// Both listeners back-point at the world, so the world is fully wired the
+// moment its storage exists — no create/destroy pair and no null checks
+// downstream. The renderer is heap-owned for alignment reasons (see the
+// member declaration).
+PhysicsWorld::PhysicsWorld()
+    : contactListener(this),
+      debugRenderer(std::make_unique<WorldDebugRenderer>(this)),
+      physicsSystemStorage(std::make_unique<JPH::PhysicsSystem>()),
+      physicsSystem(*physicsSystemStorage) {}
+
+PhysicsWorld::~PhysicsWorld() {
+    ClearCommandQueue();
+
+    // Constraints must leave the physics system before it is destroyed.
+    for (auto &slot : constraints) {
+        if (slot.constraint != nullptr &&
+            slot.state.load(std::memory_order::relaxed) == std::to_underlying(SlotState::Alive)) {
+            if (joltInitialized) {
+                // AddConstraint took the constraint's only reference, so
+                // RemoveConstraint releases it and frees the constraint. The
+                // slot is a borrowed pointer from then on: Release() here (as
+                // this dtor used to do) would decrement a freed refcount.
+                physicsSystem.RemoveConstraint(slot.constraint);
+            }
+            slot.constraint = nullptr;
+        }
+    }
+
+    // Unlink the listener before the system goes away; the listener object
+    // itself is a member and dies with the rest of the storage below.
+    if (joltInitialized) {
+        physicsSystem.SetContactListener(nullptr);
+    }
+    bodyInterface   = nullptr;
+    joltInitialized = false;
+
+    // Buffers, shape cache entries, debug streams, the debug renderer
+    // (DebugRenderer's singleton bookkeeping), and the contact listener free
+    // themselves as members (declaration-reverse order) after this body runs.
+    // physics_system is declared last, so it is torn down first.
+}
+
+// --- Storage ---
+
+bool BodyBuffers::allocate(std::size_t capacity, bool for_overwrite) noexcept {
+    BodyBuffers next;
+    const auto alloc = [capacity, for_overwrite](auto &buffer) {
+        return for_overwrite ? buffer.allocate_for_overwrite(capacity)
+                             : buffer.allocate(capacity);
+    };
+    const bool ok =
+        alloc(next.positions) && alloc(next.prevPositions) && alloc(next.rotations) &&
+        alloc(next.prevRotations) && alloc(next.linearVelocities) &&
+        alloc(next.angularVelocities) && alloc(next.bodyIds) && alloc(next.userData) &&
+        alloc(next.categories) && alloc(next.masks) && alloc(next.materialIds) &&
+        alloc(next.softShadows) && alloc(next.slotToDense) && alloc(next.denseToSlot) &&
+        alloc(next.freeSlots) && alloc(next.generations) && alloc(next.slotStates);
+    if (!ok) {
+        return false;
+    }
+    *this = std::move(next);
+    return true;
+}
+
+std::expected<void, Error> PhysicsWorld::AllocateBuffers(int max_bodies,
+                                                         std::size_t initial_count) {
+    const std::size_t max_capacity = max_bodies > 0 ? static_cast<std::size_t>(max_bodies) : 0;
+    maxJoltBodies         = static_cast<std::uint32_t>(max_bodies);
+
+    constexpr std::size_t kInitialSlotCapacity = 64;
+    std::size_t initial_capacity =
+        max_capacity < kInitialSlotCapacity ? max_capacity : kInitialSlotCapacity;
+    if (initial_count > initial_capacity && initial_count <= max_capacity) {
+        initial_capacity = initial_count;
+    }
+    capacity      = initial_capacity;
+    slotCapacity = initial_capacity;
+
+    if (!bodies.allocate(initial_capacity) ||
+        !idToHandleMap.allocate(maxJoltBodies + 1) ||
+        !joltBodyPtrs.allocate(maxJoltBodies + 1) ||
+        !commandQueue.allocate(kCommandQueueInitialCapacity) ||
+        !commandQueueSpare.allocate(kCommandQueueInitialCapacity) ||
+        !constraints.allocate(kConstraintInitialCapacity) ||
+        !freeConstraintSlots.allocate(kConstraintInitialCapacity)) {
+        return std::unexpected(WorldError::OutOfMemory);
+    }
+
+    contactMaxCapacity = kContactMaxCapacity;
+    // for_overwrite: value-initializing 32k events (4 MB) dominated world
+    // construction time, and the bytes are never read before being
+    // written — every event writer zeroes its claimed slot before filling
+    // it, and TakeContactEvents only copies slots a writer claimed.
+    if (!contactBuffer.allocate_for_overwrite(contactMaxCapacity)) {
+        return std::unexpected(WorldError::OutOfMemory);
+    }
+
+    for (std::size_t i = 0; i < capacity; ++i) {
+        bodies.categories[i] = kAllLayerBits;
+        bodies.masks[i]      = kAllLayerBits;
+        bodies.bodyIds[i]   = JPH::BodyID(); // default ctor == cInvalidBodyID
+    }
+    for (std::uint32_t i = 0; i < kConstraintInitialCapacity; ++i) {
+        freeConstraintSlots[i] = i;
+    }
+    freeConstraintCount = kConstraintInitialCapacity;
+    return {};
+}
+
+void PhysicsWorld::InitializeFreeSlots(std::size_t start_idx) {
+    for (auto i = static_cast<std::uint32_t>(start_idx);
+         i < static_cast<std::uint32_t>(slotCapacity); ++i) {
+        bodies.generations[i].store(1, std::memory_order::relaxed);
+        const std::size_t free_index =
+            freeCount.fetch_add(1, std::memory_order::relaxed);
+        bodies.freeSlots[free_index] = i;
+    }
+}
+
+std::expected<void, Error> PhysicsWorld::Resize(std::size_t new_capacity) {
+    if (viewExportCount.load(std::memory_order::relaxed) > 0) {
+        return std::unexpected(WorldError::BufferExported);
+    }
+
+    // Retire the previous epoch now, in the mutator thread, before
+    // allocating the replacement storage.
+    retiredBodies = BodyBuffers{};
+
+    if (new_capacity > maxJoltBodies) {
+        new_capacity = maxJoltBodies;
+    }
+    if (new_capacity <= capacity) {
+        return {};
+    }
+
+    BodyBuffers next;
+    // for_overwrite: live ranges are memcpy'd below and the newly exposed
+    // dense range is deliberately not touched here (fresh pages fault in
+    // lazily as bodies are created — value-initializing tens of thousands
+    // of elements × 17 arrays is exactly the work legacy C's plain malloc
+    // did not do, and it dominated resize cost).
+    if (!next.allocate(new_capacity, true)) {
+        return std::unexpected(WorldError::OutOfMemory);
+    }
+
+    BodyBuffers &current            = bodies;
+    const std::size_t live_count    = count.load(std::memory_order::acquire);
+    const std::size_t current_free  = freeCount.load(std::memory_order::acquire);
+
+    // Dense data for live bodies.
+    if (live_count > 0) {
+        std::memcpy(next.positions.data(), current.positions.data(),
+                    live_count * sizeof(PosStride));
+        std::memcpy(next.prevPositions.data(), current.prevPositions.data(),
+                    live_count * sizeof(PosStride));
+        std::memcpy(next.rotations.data(), current.rotations.data(),
+                    live_count * sizeof(AuxStride));
+        std::memcpy(next.prevRotations.data(), current.prevRotations.data(),
+                    live_count * sizeof(AuxStride));
+        std::memcpy(next.linearVelocities.data(), current.linearVelocities.data(),
+                    live_count * sizeof(AuxStride));
+        std::memcpy(next.angularVelocities.data(), current.angularVelocities.data(),
+                    live_count * sizeof(AuxStride));
+        std::memcpy(next.bodyIds.data(), current.bodyIds.data(), live_count * sizeof(JPH::BodyID));
+        std::memcpy(next.userData.data(), current.userData.data(),
+                    live_count * sizeof(std::uint64_t));
+        std::memcpy(next.categories.data(), current.categories.data(),
+                    live_count * sizeof(std::uint32_t));
+        std::memcpy(next.masks.data(), current.masks.data(), live_count * sizeof(std::uint32_t));
+        std::memcpy(next.materialIds.data(), current.materialIds.data(),
+                    live_count * sizeof(std::uint32_t));
+        std::memcpy(next.denseToSlot.data(), current.denseToSlot.data(),
+                    live_count * sizeof(std::uint32_t));
+        for (std::size_t i = 0; i < live_count; ++i) {
+            next.softShadows[i] = std::move(current.softShadows[i]);
+        }
+    }
+
+    // Slot maps. Atomic arrays are copied element-wise.
+    for (std::size_t i = 0; i < slotCapacity; ++i) {
+        next.generations[i].store(current.generations[i].load(std::memory_order::relaxed),
+                                   std::memory_order::relaxed);
+        next.slotStates[i].store(current.slotStates[i].load(std::memory_order::relaxed),
+                                  std::memory_order::relaxed);
+    }
+    if (slotCapacity > 0) {
+        std::memcpy(next.slotToDense.data(), current.slotToDense.data(),
+                    slotCapacity * sizeof(std::uint32_t));
+    }
+    if (current_free > 0) {
+        std::memcpy(next.freeSlots.data(), current.freeSlots.data(),
+                    current_free * sizeof(std::uint32_t));
+    }
+
+    // Expanded slots start empty at generation 1, on the free stack.
+    std::size_t new_free_count = current_free;
+    for (std::size_t i = slotCapacity; i < new_capacity; ++i) {
+        next.generations[i].store(1, std::memory_order::relaxed);
+        next.slotStates[i].store(std::to_underlying(SlotState::Empty), std::memory_order::relaxed);
+        next.slotToDense[i]         = 0;
+        next.freeSlots[new_free_count++] = static_cast<std::uint32_t>(i);
+    }
+    // The expanded dense range [live_count, new_capacity) stays untouched on
+    // purpose (see allocate above): every path that claims a dense index
+    // defines all of its fields before the body becomes visible — paths
+    // that don't take explicit values write creation defaults at claim
+    // time (ReserveBodySlot for single/soft creates, the batch loop in
+    // CreateBodiesBatch for batch creates).
+
+    retiredBodies = std::exchange(bodies, std::move(next));
+    freeCount.store(new_free_count, std::memory_order::release);
+    capacity      = new_capacity;
+    slotCapacity = new_capacity;
+    return {};
+}
+
+// --- Baked scene loading ---
+
+std::expected<void, Error> PhysicsWorld::LoadBakedScene(const BakedSceneData &scene) {
+    if (scene.count == 0) {
+        return {};
+    }
+    if (scene.positions == nullptr || scene.rotations == nullptr || scene.shapes == nullptr ||
+        scene.motionTypes == nullptr || scene.objectLayers == nullptr ||
+        scene.userData == nullptr || bodyInterface == nullptr) {
+        return std::unexpected(WorldError::InvalidArgument);
+    }
+    if (scene.count > capacity || scene.count > slotCapacity ||
+        scene.count > maxJoltBodies) {
+        return std::unexpected(WorldError::LimitReached);
+    }
+
+    Error error;
+    {
+        // Lock order (core/Threading.hpp): jph_trampoline_lock is outermost,
+        // shadow_lock nests inside it. Every other path that needs both takes
+        // the trampoline first (StepNative/FlushCommands, SyncAndFlushInternal,
+        // ragdoll and compound construction), so taking shadow_lock first here
+        // closed a cycle that TSan reports as lock-order-inversion:
+        //   shadow_lock -> jph_trampoline_lock (this function)
+        //   jph_trampoline_lock -> shadow_lock (FlushCommands, per command)
+        // The cycle is a genuine deadlock as soon as a scene load races a step.
+        const std::scoped_lock trampoline(jphTrampolineLock);
+        const std::scoped_lock shadow(shadowLock);
+        for (std::size_t i = 0; i < scene.count; ++i) {
+            const float *const shape_data = &scene.shapes[i * kBakedShapeStride];
+            const float params[4] = {shape_data[1], shape_data[2], shape_data[3], shape_data[4]};
+            const JPH::ShapeRefC shape =
+                FindOrCreateShapeLocked(static_cast<int>(shape_data[0]), params);
+            if (shape == nullptr) [[unlikely]] {
+                error = WorldError::OutOfMemory;
+                break;
+            }
+
+            const std::size_t pos_idx = i * kBakedPositionStride;
+            const std::size_t rot_idx = i * kBakedRotationStride;
+            PosStride &shadow_pos = bodies.positions[i];
+            AuxStride &shadow_rot = bodies.rotations[i];
+            shadow_pos = {scene.positions[pos_idx + 0], scene.positions[pos_idx + 1],
+                          scene.positions[pos_idx + 2], 0.0};
+
+            // A baked scene carries the same raw quaternions an API caller would,
+            // so it gets the same treatment: sanitize once, store the sanitized
+            // value in the shadow buffer and hand that same value to Jolt.
+            const JPH::Quat rotation = SanitizeRotation(JPH::Quat(
+                scene.rotations[rot_idx + 0], scene.rotations[rot_idx + 1],
+                scene.rotations[rot_idx + 2], scene.rotations[rot_idx + 3]));
+            shadow_rot = {rotation.GetX(), rotation.GetY(), rotation.GetZ(), rotation.GetW()};
+
+            const std::uint8_t motion_type = scene.motionTypes[i];
+            JPH::BodyCreationSettings creation(
+                shape.GetPtr(), JPH::RVec3(shadow_pos.x, shadow_pos.y, shadow_pos.z), rotation,
+                static_cast<JPH::EMotionType>(motion_type),
+                static_cast<JPH::ObjectLayer>(scene.objectLayers[i]));
+
+            bodies.generations[i].store(1, std::memory_order::relaxed);
+            const BodyHandle handle = BodyHandle::FromParts(static_cast<std::uint32_t>(i), 1);
+            creation.mUserData      = handle.Raw();
+            if (motion_type == std::to_underlying(MotionType::Dynamic)) {
+                creation.mAllowSleeping = true;
+            }
+
+            const JPH::BodyID body_id = physicsSystem.GetBodyInterface().CreateAndAddBody(
+                creation, JPH::EActivation::Activate);
+            if (body_id.IsInvalid()) [[unlikely]] {
+                error = WorldError::OutOfMemory;
+                break;
+            }
+
+            bodies.bodyIds[i] = body_id;
+            const std::uint32_t jolt_idx = body_id.GetIndex();
+            if (idToHandleMap && jolt_idx < maxJoltBodies) {
+                idToHandleMap[jolt_idx].store(handle, std::memory_order::relaxed);
+            }
+            bodies.slotToDense[i] = static_cast<std::uint32_t>(i);
+            bodies.denseToSlot[i] = static_cast<std::uint32_t>(i);
+            bodies.slotStates[i].store(std::to_underlying(SlotState::Alive), std::memory_order::relaxed);
+            bodies.userData[i] = scene.userData[i];
+        }
+    }
+
+    if (!error) {
+        // Publish the initial body count only after every body was created.
+        count.store(scene.count, std::memory_order::relaxed);
+    }
+    if (error) {
+        return std::unexpected(error);
+    }
+    return {};
+}
+
+// --- Slot reservation for deferred creation ---
+
+namespace {
+
+std::expected<void, Error> ReserveBodySlot(PhysicsWorld *world, std::uint32_t slot_state,
+                                     BodyHandle *handle_out) {
+    const std::size_t current_count = world->count.load(std::memory_order::acquire);
+    std::size_t available           = world->freeCount.load(std::memory_order::acquire);
+
+    if (current_count >= world->maxJoltBodies) [[unlikely]] {
+        return std::unexpected(WorldError::LimitReached);
+    }
+    if (available == 0 || current_count + 1 > world->capacity) [[unlikely]] {
+        std::size_t next_capacity =
+            world->capacity == 0 ? kInitialBodyCapacity : world->capacity * 2;
+        if (next_capacity > world->maxJoltBodies) {
+            next_capacity = world->maxJoltBodies;
+        }
+        const std::expected<void, Error> resize_status = world->Resize(next_capacity);
+        if (!resize_status) {
+            return resize_status;
+        }
+        available = world->freeCount.load(std::memory_order::acquire);
+        if (available == 0) [[unlikely]] {
+            return std::unexpected(WorldError::LimitReached);
+        }
+    }
+
+    if (!world->EnsureCommandCapacity()) [[unlikely]] {
+        return std::unexpected(WorldError::OutOfMemory);
+    }
+
+    const std::uint32_t slot = world->bodies.freeSlots[--available];
+    const auto dense = static_cast<std::uint32_t>(
+        world->count.fetch_add(1, std::memory_order::relaxed));
+    world->freeCount.store(available, std::memory_order::release);
+
+    const std::uint32_t generation =
+        world->bodies.generations[slot].load(std::memory_order::relaxed);
+    const BodyHandle handle = BodyHandle::FromParts(slot, generation);
+
+    world->bodies.slotToDense[slot]  = dense;
+    world->bodies.denseToSlot[dense] = slot;
+    world->bodies.bodyIds[dense]      = JPH::BodyID();
+    // Creation defaults for the fields resize leaves indeterminate. The
+    // single-body path overwrites all of these from its request; the
+    // soft-body path overwrites categories/masks/user_data only.
+    world->bodies.linearVelocities[dense]  = {};
+    world->bodies.angularVelocities[dense] = {};
+    world->bodies.userData[dense]          = 0;
+    world->bodies.categories[dense]         = kAllLayerBits;
+    world->bodies.masks[dense]              = kAllLayerBits;
+    world->bodies.materialIds[dense]       = 0;
+    world->bodies.slotStates[slot].store(static_cast<std::uint8_t>(slot_state),
+                                          std::memory_order::release);
+
+    *handle_out = handle;
+    return {};
+}
+
+} // namespace
+
+std::expected<BodyHandle, Error>
+PhysicsWorld::CommitCreate(JPH::BodyCreationSettings &settings, std::uint32_t slot_state) {
+    BodyHandle handle;
+    const std::expected<void, Error> status = ReserveBodySlot(this, slot_state, &handle);
+    if (!status) {
+        return std::unexpected(status.error());
+    }
+    settings.mUserData = handle.Raw();
+    return handle;
+}
+
+std::expected<BodyHandle, Error>
+PhysicsWorld::CommitCreateSoft(JPH::SoftBodyCreationSettings &settings,
+                               std::uint32_t slot_state) {
+    BodyHandle handle;
+    const std::expected<void, Error> status = ReserveBodySlot(this, slot_state, &handle);
+    if (!status) {
+        return std::unexpected(status.error());
+    }
+    settings.mUserData = handle.Raw();
+    return handle;
+}
+
+// --- Jolt bring-up ---
+
+bool PhysicsWorld::InitJolt(WorldSettings settings, JPH::Float3 gravity) {
+    if (joltInitialized) {
+        return false;
+    }
+
+    int num_workers = settings.numThreads > 0 ? settings.numThreads : -1;
+#if defined(__SANITIZE_THREAD__) || defined(ENABLE_SANITIZER)
+    // TSan cannot model Jolt's lock-free job queues; run Jolt synchronously
+    // so TSan focuses on Culverin's own synchronization.
+    num_workers = 0;
+#endif
+
+    const auto max_jobs = settings.maxPhysicsJobs > 0
+                              ? static_cast<JPH::uint>(settings.maxPhysicsJobs)
+                              : JPH::cMaxPhysicsJobs;
+    const auto max_barriers = settings.maxPhysicsBarriers > 0
+                                  ? static_cast<JPH::uint>(settings.maxPhysicsBarriers)
+                                  : JPH::cMaxPhysicsBarriers;
+    const auto max_bodies =
+        settings.maxBodies > 0 ? static_cast<JPH::uint>(settings.maxBodies) : 10240U;
+    const auto max_pairs =
+        settings.maxPairs > 0 ? static_cast<JPH::uint>(settings.maxPairs) : 65536U;
+    const auto max_contact_constraints = settings.maxContactConstraints > 0
+                                             ? static_cast<JPH::uint>(settings.maxContactConstraints)
+                                             : 10240U;
+
+    // Serialize PhysicsSystem initialization across worlds. Direct Jolt
+    // initialization still reaches process-wide lazy state, and TSan cannot
+    // prove those first-touch paths race-free; retaining the established
+    // bring-up lock preserves Culverin's initialization guarantee.
+    const std::scoped_lock init_guard(Global::jph_init_lock);
+
+    jobSystem =
+        std::make_unique<JPH::JobSystemThreadPool>(max_jobs, max_barriers, num_workers);
+
+#if defined(__SANITIZE_THREAD__) || defined(ENABLE_SANITIZER)
+    tempAllocator = std::make_unique<JPH::TempAllocatorMalloc>();
+#else
+    // WithMallocFallback preserves the previous allocator behavior: the
+    // fixed buffer serves normal steps, and overflow falls back to malloc
+    // instead of failing the step.
+    tempAllocator = std::make_unique<JPH::TempAllocatorImplWithMallocFallback>(
+        settings.tempAllocatorSize > 0 ? static_cast<std::size_t>(settings.tempAllocatorSize)
+                                         : 0U);
+#endif
+
+    static const WorldBroadPhaseLayerInterface broadphase_layer_interface;
+    static const WorldObjectLayerPairFilter object_layer_pair_filter;
+    static const WorldObjectVsBroadPhaseLayerFilter object_vs_broadphase_filter;
+
+    physicsSystem.Init(max_bodies, 0, max_pairs, max_contact_constraints,
+                               broadphase_layer_interface, object_vs_broadphase_filter,
+                               object_layer_pair_filter);
+    physicsSystem.SetGravity(JPH::Vec3(gravity.x, gravity.y, gravity.z));
+    bodyInterface = &physicsSystem.GetBodyInterface();
+    joltInitialized = true;
+    return true;
+}
+
+// --- Stepping ---
+
+std::span<PhysicsCommand> PhysicsWorld::DetachCommands() {
+    const std::size_t captured = commandCount;
+    std::swap(commandQueue, commandQueueSpare);
+    commandCount = 0;
+    return {commandQueueSpare.data(), captured};
+}
+
+void PhysicsWorld::StepNative(float dt, std::span<PhysicsCommand> commands) {
+    const std::scoped_lock trampoline(jphTrampolineLock);
+
+    // Reports "Jolt Physics Crunch" for the whole step on scope exit.
+    [[maybe_unused]] const CPH::ProfileScope profile(
+        "Jolt Physics Crunch", static_cast<unsigned int>(commands.size()));
+
+    if (!commands.empty()) {
+        FlushCommands(commands);
+        needsOptimization = true;
+    }
+
+    if (dt <= 0.0F) {
+        physicsSystem.OptimizeBroadPhase();
+        needsOptimization = false;
+    } else {
+        [[maybe_unused]] const JPH::EPhysicsUpdateError update_error =
+            physicsSystem.Update(dt, 1, tempAllocator.get(),
+                                         jobSystem.get());
+        if (needsOptimization) {
+            physicsSystem.OptimizeBroadPhase();
+            needsOptimization = false;
+        }
+    }
+
+    // Shadow buffers are written only once in-flight queries have drained.
+    {
+        std::unique_lock sync(stepSync.mutex);
+        stepSync.cond.wait(
+            sync, [&] { return activeQueries.load(std::memory_order::acquire) <= 0; });
+    }
+
+    SyncShadowBuffers(this);
+
+}
+
+std::size_t PhysicsWorld::FinalizeStep(float dt) {
+    const std::size_t body_count = count.load(std::memory_order::acquire);
+    time += static_cast<double>(dt);
+
+    isStepping.store(false, std::memory_order::release);
+    stepRequested.store(false, std::memory_order::release);
+    NotifyStepSync();
+    return body_count;
+}
+
+// See the declaration in PhysicsWorld.hpp.
+//
+// Despite reading like an assertion, this is a PRIMING step whose side effect
+// the recorded numerics depend on:
+//
+//   1. It must run BEFORE the caller creates any body. Creating and destroying
+//      a body here advances Jolt's BodyID free-list and touches the broadphase,
+//      which changes the BodyID every later body receives. Body order feeds the
+//      solver, so removing this call changes ragdoll and soft-body numerics
+//      (~888 lines of ragdoll_probe.py output moved when it was dropped) even
+//      though nothing about the simulation logic changed. Keep the call, and
+//      keep it before the first user body.
+//   2. The bool it returns is real: the created body is read back and compared
+//      against the position it was created at, so a precision or layout
+//      mismatch at the RVec3 boundary fails world construction instead of
+//      showing up later as silently wrong physics. It is a check bolted onto a
+//      prime, not a pure check -- never "simplify" it to a static_assert.
+bool PrimeBodyIdFreeList(JPH::BodyInterface &body_interface) {
+    const JPH::BoxShapeSettings box_settings(JPH::Vec3(1.0f, 1.0f, 1.0f), 0.0f);
+    const auto shape_result = box_settings.Create();
+    if (!shape_result.IsValid()) {
+        return false;
+    }
+    const JPH::ShapeRefC shape = shape_result.Get();
+
+    JPH::BodyCreationSettings settings(shape.GetPtr(),
+                                       JPH::RVec3(kVerifyAbiPosX, kVerifyAbiPosY, kVerifyAbiPosZ),
+                                       JPH::Quat::sIdentity(), JPH::EMotionType::Static, 0);
+
+    const JPH::BodyID bid = body_interface.CreateAndAddBody(settings, JPH::EActivation::Activate);
+    if (bid.IsInvalid()) {
+        return false;
+    }
+
+    const JPH::RVec3 check = body_interface.GetPosition(bid);
+    body_interface.RemoveBody(bid);
+    body_interface.DestroyBody(bid);
+
+    if (std::fabs(check.GetX() - kVerifyAbiPosX) > kVerifyAbiTolerance ||
+        std::fabs(check.GetY() - kVerifyAbiPosY) > kVerifyAbiTolerance) {
+        return false;
+    }
+    return true;
+}
+
+} // namespace CPH

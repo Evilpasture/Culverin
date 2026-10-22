@@ -1,0 +1,40 @@
+add_library(
+    culverin_native_physics
+    OBJECT
+        CommandBuffer.cpp
+        CommandBuffer.hpp
+        ConstraintFactory.cpp
+        ConstraintFactory.hpp
+        ContactListener.cpp
+        ConstraintOps.cpp
+        ConstraintOps.hpp
+        ContactListener.hpp
+        EcsSync.cpp
+        EcsSync.hpp
+        ContactEventDefinitions.hpp
+        InternalQuery.cpp
+        InternalQuery.hpp
+        PhysicsParams.hpp
+        Query.cpp
+        Query.hpp
+        PhysicsWorld.cpp
+        PhysicsWorld.hpp
+        PhysicsWorldCreation.cpp
+        PhysicsWorldCreation.hpp
+        PhysicsWorldOps.cpp
+        PhysicsWorldOps.hpp
+        PhysicsWorldRuntime.cpp
+        PhysicsWorldRuntime.hpp
+        PhysicsWorldState.hpp
+        RotationSanitize.hpp
+        ShadowSync.cpp
+        ShadowSync.hpp
+        SlotState.hpp
+)
+target_link_libraries(
+    culverin_native_physics
+    PRIVATE
+        culverin_native_common
+        culverin_native_cpp
+)
+culverin_configure_compile_target(culverin_native_physics)
