@@ -10,7 +10,7 @@
 // the diagnostic instead of hiding it in global state.
 //
 // The `_into` forms still write through references on purpose: the fast-parse
-// trait table (FastParser.hpp) writes directly into the caller's argument
+// trait table (ParserTraits.hpp) writes directly into the caller's argument
 // slots, and the whole point of that table is to avoid copies on the hot path.
 
 #include "bindings/PythonCommon.hpp"

@@ -2,7 +2,7 @@
 
 // A vectorcall thunk: let the parser's own type carry the argument list.
 //
-// A parser is `FastParser<Ts...>` with `Parse(args, nargs, kwnames, Ts&...)`,
+// A parser is `Parser<Name, Args...>` with `Parse(args, nargs, kwnames, ...)`,
 // so the set of locals a binding method needs is already known at compile
 // time. `InvokeThunk` allocates those locals as one tuple, runs the parse,
 // raises the captured error through the same `RaiseParseError` channel the
@@ -18,7 +18,7 @@
 // silently change such a method's behaviour. Those keep their hand-written
 // wrapper until `Arg` grows a default.
 
-#include "bindings/parsing/FastParser.hpp"
+#include "bindings/parsing/Parser.hpp"
 #include "bindings/parsing/ParseError.hpp"
 
 #include <cstddef>
@@ -28,39 +28,32 @@
 
 namespace CPH::Python {
 
-// The value types behind a parser, for both the raw `FastParser<Ts...>` and the
-// `Parser<Name, Args...>` that derives from it.
+// The value types behind a parser: one local per declared argument.
 template <typename T> struct ParserSignature {
     static constexpr bool is_parser = false;
 };
 
-template <typename... Ts> struct ParserSignature<FastParser<Ts...>> {
+template <FixedString Name, typename... Args>
+struct ParserSignature<Parser<Name, Args...>> {
     static constexpr bool is_parser    = true;
-    using Tuple                        = std::tuple<Ts...>;
-    using FastParserType               = FastParser<Ts...>;
-    static constexpr std::size_t Arity = sizeof...(Ts);
+    using Tuple                        = std::tuple<typename Args::ValueType...>;
+    using ParserType                   = Parser<Name, Args...>;
+    static constexpr std::size_t kArity = sizeof...(Args);
 
     template <std::size_t... Is>
-    [[nodiscard]] static ParseResult ParseTuple(const FastParserType &parser, PyObject *const *args,
+    [[nodiscard]] static ParseResult ParseTuple(const ParserType &parser, PyObject *const *args,
                                                 Py_ssize_t nargs, PyObject *kwnames, Tuple &values,
                                                 std::index_sequence<Is...>) {
         return parser.Parse(args, nargs, kwnames, std::get<Is>(values)...);
     }
 
-    // Spelled out rather than forwarding a `std::index_sequence<...>` template
-    // argument, because the zero-argument case has to reach the parser's own
-    // `sizeof...(Ts) == 0` branch and not an empty pack expansion.
-    [[nodiscard]] static ParseResult ParseTuple(const FastParserType &parser, PyObject *const *args,
-                                                Py_ssize_t nargs, PyObject *kwnames,
-                                                Tuple &values) {
-        return ParseTuple(parser, args, nargs, kwnames, values,
-                          std::make_index_sequence<Arity>{});
+    // An empty pack is fine here: `Parser` handles arity zero in its own
+    // vectorcall overload, so the zero-argument case needs no special spelling.
+    [[nodiscard]] static ParseResult ParseTuple(const ParserType &parser, PyObject *const *args,
+                                                Py_ssize_t nargs, PyObject *kwnames, Tuple &values) {
+        return ParseTuple(parser, args, nargs, kwnames, values, std::make_index_sequence<kArity>{});
     }
 };
-
-template <FixedString Name, typename... Args>
-struct ParserSignature<Parser<Name, Args...>>
-    : ParserSignature<FastParser<typename Args::ValueType...>> {};
 
 // The two return shapes a thunk action may use. Anything else is rejected at
 // the call site rather than being converted through one of these.
@@ -77,7 +70,7 @@ template <auto ParserMember, typename Self, typename Action>
                                            PyObject *kwnames, Action &&action) {
     using ParserType = std::remove_cvref_t<decltype(self->parsers->*ParserMember)>;
     using Sig        = ParserSignature<ParserType>;
-    static_assert(Sig::is_parser, "the member must be a FastParser/Parser declared in the group");
+    static_assert(Sig::is_parser, "the member must be a Parser declared in the group");
 
     // Every argument starts value-initialised; see the header comment for why
     // that restricts this to all-required parsers.

@@ -2,7 +2,7 @@
 #include "bindings/BufferView.hpp"
 #include "bindings/FastBuild.hpp"
 #include "bindings/PythonSupport.hpp"
-#include "bindings/parsing/FastParser.hpp"
+#include "bindings/parsing/Parser.hpp"
 #include "core/Compiler.hpp"
 #include <Python.h>
 

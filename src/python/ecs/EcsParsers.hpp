@@ -1,6 +1,6 @@
 #pragma once
 
-#include "bindings/parsing/FastParser.hpp"
+#include "bindings/parsing/Parser.hpp"
 
 namespace CPH::Python {
 

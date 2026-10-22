@@ -36,7 +36,7 @@
  */
 
 namespace CPH::Python {
-static void DumpParserCatalog(FastParserCore *const *const parsers, const size_t count,
+static void DumpParserCatalog(ParserCore *const *const parsers, const size_t count,
                                 FILE *const out, bool *const is_first) {
     for (size_t i = 0; i < count; ++i) {
         const auto fp = parsers[i];
@@ -65,7 +65,7 @@ static void DumpParserCatalog(FastParserCore *const *const parsers, const size_t
     const auto st        = GetModuleState(self);
     const char *filename = "culverin_schema.json";
 
-    // 1. Thread-safe, subinterpreter-safe parsing via FastParser
+    // 1. Thread-safe, subinterpreter-safe parsing via Parser
 
     const ParseResult parsed =
         st->parsers->dumpSchema.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, filename);

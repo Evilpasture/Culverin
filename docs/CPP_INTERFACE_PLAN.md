@@ -135,7 +135,7 @@ permanent dual paths: each phase deletes what it replaces.
   vestigial and is deleted (link + full suite verified without it).
 - **Wire/behavior contracts are untouched**: Python API, buffer
   strides, handle format, snapshot bytes, 128 B contact events,
-  FastParse diagnostic strings (`tests/test_diagnostics.py` pins
+  parser diagnostic strings (`tests/test_diagnostics.py` pins
   them), and the batch-create `0/0` category default discovered in
   Phase 1.
 
@@ -673,16 +673,15 @@ pins this.
 
 Two deliberate deviations from the shape sketched above:
 
-1. *The converter contract stays in-place.* `FastArgSpecHot::convert`
-   is still `bool (PyObject *, const void *)` and
-   `FastParser<Ts...>::Parse` still returns `ParseResult`
-   (`expected<void, ParseError>`) rather than
-   `expected<tuple<Ts...>, ParseError>`. The engine is type-erased
-   behind a function pointer and writes into caller-owned argument
-   slots; returning values would add a move per argument to the
-   hot path (the 64-argument stress parser is the extreme case). The
-   `_into` spelling is therefore the canonical one and the
-   value-returning forms exist for non-hot call sites.
+1. *The converter contract stays in-place.* `Parser<Name, Args...>::Parse`
+   returns `ParseResult` (`expected<void, ParseError>`) rather than
+   `expected<tuple<Ts...>, ParseError>`, and it still writes into
+   caller-owned argument slots; returning values would add a move per
+   argument to the hot path (the 64-argument stress parser is the extreme
+   case). The `_into` spelling is therefore the canonical one and the
+   value-returning forms exist for non-hot call sites. The *mechanism* has
+   since changed -- see the parser-engine note below -- but the contract has
+   not.
 2. *`goto` count 51 → 31, not 0.* All 20 `goto`s in
    `FastParserCore.cpp` (the diagnostic builders' `basic_error` /
    `oom_fallback` / `cleanup` ladders) are gone — `Ref` replaced them
@@ -692,6 +691,19 @@ Two deliberate deviations from the shape sketched above:
    ladders that unwind Jolt allocations, JoltC handles and locks. Their
    unwind blocks stop being needed when A4 removes the JoltC handles and
    B4 wraps the ECS placement-new storage.
+
+**Parser engine (landed after B3).** The type erasure is gone from the hot
+path. `ParserTraits.hpp` holds one `ParserTrait<T>` per argument type whose
+`convert` is a `constexpr` lambda taking `T &`; `Parser<Name, Args...>` runs a
+fold over `std::index_sequence` that calls it directly, so each conversion
+inlines into the caller and the engine never materialises the
+`const void *target_ptrs[]` array that used to be built on every call. The
+`hotPath` function pointer, the `FastParseDispatchConv` pointer-equality ladder
+and the nine hand-written speculative stubs (arity 0..8) are deleted: the
+argument count is a compile-time constant, so there is nothing to speculate
+about. Keyword calls leave the fold for `ParseSlow`, which looks the index up
+at runtime and dispatches it through a compile-time binary split -- still no
+erased converter. `ParserCore` now holds metadata only.
 
 Behaviour preserved verbatim, including three pre-existing quirks that
 a diagnostics change would have "fixed" by accident: `fast_parse_process_pos`
@@ -704,8 +716,8 @@ carries on with the error pending. Each is marked in the source.
 Vectorcall fast paths stay; measure `test_fastparse_*` A/B.
 
 **Vectorcall thunks (landed).** `bindings/parsing/Thunk.hpp` turns the
-parser's own type into the argument list. `ParserSignature<FastParser<Ts...>>`
-exposes `std::tuple<Ts...>`, so `InvokeThunk<&WorldParsers::Impulse>(...)`
+parser's own type into the argument list. `ParserSignature<Parser<Name, Args...>>`
+exposes `std::tuple<typename Args::ValueType...>`, so `InvokeThunk<&WorldParsers::Impulse>(...)`
 allocates the locals as one tuple, runs the parse and — on failure — hands the
 captured error to the same `RaiseParseError` the hand-written adapters called,
 which is why the diagnostics move not one byte. The action receives the values
@@ -758,7 +770,7 @@ writes new signatures in final form instead of churning twice.
 
 `python/` is an adapter, not an engine. Files under `python/` may only:
 
-1. parse Python arguments and dictionaries into native structs (`FastParser`);
+1. parse Python arguments and dictionaries into native structs (`Parser`);
 2. call a method on a native C++ object in `src/`;
 3. wrap native return values, spans and buffers into Python objects
    (`FastBuild`, `BufferProxy`).
@@ -1042,7 +1054,7 @@ including the one guarding the contact-event wire layout, compiles under MSVC
 and fails under clang. And the CPython headers mark `PyBool_Type`
 `__declspec(dllimport)`, whose address resolves through the import table and is
 therefore not a constant expression either, which is why
-`FastParseTrait<bool>::type_guard` is an inline variable rather than a
+`ParserTrait<bool>::typeGuard` is an inline variable rather than a
 `constexpr` one. `_CRT_USE_BUILTIN_OFFSETOF` is now a `WIN32` directory-scope
 definition; the `type_guard` change is local to the trait.
 
@@ -1060,7 +1072,7 @@ Main risks, with mitigations already built into the phases:
 silent ABI drift via defines (A0 asserts), `Ref<>` lifetimes inside
 the command queue (A2 measurement gate), filter-matrix transcription
 errors when hand-writing the layer tables (A1: port the exact matrix,
-covered by contact/differential tests), and FastParse message drift
+covered by contact/differential tests), and parser message drift
 (B3: diagnostics tests as oracle — landed, see the B3 section for the
 three pre-existing diagnostic quirks it deliberately reproduces).
 Version coupling does not
