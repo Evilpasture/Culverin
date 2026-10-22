@@ -21,7 +21,7 @@ struct ContactEventSlim {
     JPH::Real px, py, pz;           // 24/12
     float nx, ny, nz;              // 12
     float impulse;                 // 4
-    float sliding_speed;           // 4
+    float slidingSpeed;           // 4
     std::uint32_t flags;           // 4
 #if !defined(JPH_DOUBLE_PRECISION)
     std::uint32_t padding_magic[3];

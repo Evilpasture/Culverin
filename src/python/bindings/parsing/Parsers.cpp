@@ -173,19 +173,19 @@ void ParseMotorConfig(Borrowed motor_dict, ConstraintParams &params) {
         return;
     }
 
-    params.has_motor = true;
+    params.hasMotor = true;
 
     // Use Generic to fetch string
     const char *mode = GetDictionaryItem(motor_dict, "mode", "");
     if (std::strcmp(mode, "velocity") == 0) {
-        params.motor_type = 1;
+        params.motorType = 1;
     } else if (std::strcmp(mode, "position") == 0) {
-        params.motor_type = 2;
+        params.motorType = 2;
     }
 
     // Use Generic to fetch floats
-    params.motor_target = GetDictionaryItem(motor_dict, "target", 0.0f);
-    params.max_torque   = GetDictionaryItem(motor_dict, "max_force", 1000.0f);
+    params.motorTarget = GetDictionaryItem(motor_dict, "target", 0.0f);
+    params.maxTorque   = GetDictionaryItem(motor_dict, "max_force", 1000.0f);
     params.frequency    = GetDictionaryItem(motor_dict, "stiffness", 0.0f);
     params.damping      = GetDictionaryItem(motor_dict, "damping", 1.0f);
 }
@@ -205,14 +205,14 @@ ParseResult ParseHingeParams(Borrowed args, ConstraintParams &params) {
     // JPH_M_PI was joltc's float copy of Jolt's JPH_PI (its header says as
     // much: "To avoid collision with JPH_PI"); the literal is identical, so
     // these hinge defaults are unchanged bit for bit.
-    params.limit_min = -JPH::JPH_PI;
-    params.limit_max = JPH::JPH_PI;
+    params.limitMin = -JPH::JPH_PI;
+    params.limitMax = JPH::JPH_PI;
     if (!args) {
         return {};
     }
     // (Pivot), (Axis), [Min, Max]
     if (PyArg_ParseTuple(args, "(fff)(fff)|ff", &params.px, &params.py, &params.pz, &params.ax,
-                         &params.ay, &params.az, &params.limit_min, &params.limit_max) == 0) {
+                         &params.ay, &params.az, &params.limitMin, &params.limitMax) == 0) {
         return CaptureFailure();
     }
     return {};
@@ -224,7 +224,7 @@ ParseResult ParseSliderParams(Borrowed args, ConstraintParams &params) {
         return {};
     }
     if (PyArg_ParseTuple(args, "(fff)(fff)|ff", &params.px, &params.py, &params.pz, &params.ax,
-                         &params.ay, &params.az, &params.limit_min, &params.limit_max) == 0) {
+                         &params.ay, &params.az, &params.limitMin, &params.limitMax) == 0) {
         return CaptureFailure();
     }
     return {};
@@ -236,7 +236,7 @@ ParseResult ParseConeParams(Borrowed args, ConstraintParams &params) {
     }
     // (Pivot), (TwistAxis), HalfAngle
     if (PyArg_ParseTuple(args, "(fff)(fff)f", &params.px, &params.py, &params.pz, &params.ax,
-                         &params.ay, &params.az, &params.half_cone_angle) == 0) {
+                         &params.ay, &params.az, &params.halfConeAngle) == 0) {
         return CaptureFailure();
     }
     return {};
@@ -245,8 +245,8 @@ ParseResult ParseConeParams(Borrowed args, ConstraintParams &params) {
 ParseResult ParseDistanceParams(Borrowed args, ConstraintParams &params) {
     // Default: -1.0 can be used as a sentinel in create_distance
     // logic to say "calculate distance from current positions"
-    params.limit_min = -1.0f;
-    params.limit_max = -1.0f;
+    params.limitMin = -1.0f;
+    params.limitMax = -1.0f;
 
     if (!args || args.is_none()) {
         return {};
@@ -255,7 +255,7 @@ ParseResult ParseDistanceParams(Borrowed args, ConstraintParams &params) {
     // Pattern: (Pivot1_xyz), (Pivot2_xyz), [optional min_dist, optional max_dist]
     // This now matches the format used by Hinge and Slider.
     if (PyArg_ParseTuple(args, "(fff)(fff)|ff", &params.px, &params.py, &params.pz, &params.ax,
-                         &params.ay, &params.az, &params.limit_min, &params.limit_max) == 0) {
+                         &params.ay, &params.az, &params.limitMin, &params.limitMax) == 0) {
         return CaptureFailure();
     }
     return {};
@@ -311,7 +311,7 @@ std::expected<ParsedTracks, ParseError> ParseTracksToC(Borrowed py_tracks, Track
             }
         }
         // Generic used here for driven wheel
-        out_data[t].driven_idx =
+        out_data[t].drivenIdx =
             static_cast<uint32_t>(GetDictionaryItem(dict, "driven_wheel", 0L));
     }
     return ParsedTracks{.count = num};

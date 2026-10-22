@@ -79,8 +79,8 @@ JPH::Constraint *CreateHinge(const ConstraintParams &p, JPH::Body &body1, JPH::B
     s.mHingeAxis2  = axis;
     s.mNormalAxis1 = norm;
     s.mNormalAxis2 = norm;
-    s.mLimitsMin   = p.limit_min;
-    s.mLimitsMax   = p.limit_max;
+    s.mLimitsMin   = p.limitMin;
+    s.mLimitsMax   = p.limitMax;
 
     s.mMotorSettings.mSpringSettings.mMode      = JPH::ESpringMode::FrequencyAndDamping;
     s.mMotorSettings.mSpringSettings.mFrequency = p.frequency > 0 ? p.frequency : kCcfDefaultFrequency;
@@ -90,13 +90,13 @@ JPH::Constraint *CreateHinge(const ConstraintParams &p, JPH::Body &body1, JPH::B
 
     JPH::HingeConstraint *c = static_cast<JPH::HingeConstraint *>(s.Create(body1, body2));
 
-    if (p.has_motor && p.motor_type > 0) {
-        c->SetMotorState(static_cast<JPH::EMotorState>(p.motor_type));
-        if (p.motor_type == 1) {
-            c->SetTargetAngularVelocity(p.motor_target);
+    if (p.hasMotor && p.motorType > 0) {
+        c->SetMotorState(static_cast<JPH::EMotorState>(p.motorType));
+        if (p.motorType == 1) {
+            c->SetTargetAngularVelocity(p.motorTarget);
         }
-        if (p.motor_type == 2) {
-            c->SetTargetAngle(p.motor_target);
+        if (p.motorType == 2) {
+            c->SetTargetAngle(p.motorTarget);
         }
     }
 
@@ -115,15 +115,15 @@ JPH::Constraint *CreateSlider(const ConstraintParams &p, JPH::Body &body1, JPH::
     s.mSliderAxis2 = axis;
     s.mNormalAxis1 = norm;
     s.mNormalAxis2 = norm;
-    s.mLimitsMin   = p.limit_min;
-    s.mLimitsMax   = p.limit_max;
+    s.mLimitsMin   = p.limitMin;
+    s.mLimitsMax   = p.limitMax;
 
     // --- Motor Support ---
     s.mMotorSettings.mSpringSettings.mMode      = JPH::ESpringMode::FrequencyAndDamping;
     s.mMotorSettings.mSpringSettings.mFrequency = p.frequency;
     s.mMotorSettings.mSpringSettings.mDamping   = p.damping;
-    s.mMotorSettings.mMaxForceLimit             = p.max_force;
-    s.mMotorSettings.mMinForceLimit             = -p.max_force;
+    s.mMotorSettings.mMaxForceLimit             = p.maxForce;
+    s.mMotorSettings.mMinForceLimit             = -p.maxForce;
 
     return s.Create(body1, body2);
 }
@@ -147,7 +147,7 @@ JPH::Constraint *CreateCone(const ConstraintParams &p, JPH::Body &body1, JPH::Bo
 
     s.mTwistAxis1    = axis;
     s.mTwistAxis2    = axis;
-    s.mHalfConeAngle = p.half_cone_angle;
+    s.mHalfConeAngle = p.halfConeAngle;
 
     return s.Create(body1, body2);
 }
@@ -165,8 +165,8 @@ JPH::Constraint *CreateDistance(const ConstraintParams &p, JPH::Body &body1, JPH
         s.mPoint2 = body2.GetPosition();
     }
 
-    s.mMinDistance = p.limit_min;
-    s.mMaxDistance = p.limit_max;
+    s.mMinDistance = p.limitMin;
+    s.mMaxDistance = p.limitMax;
 
     return s.Create(body1, body2);
 }

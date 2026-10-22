@@ -35,27 +35,27 @@ struct WheelConfig {
 
     float radius           = 0.4f;
     float width            = 0.2f;
-    float brake_torque     = 1500.0f;
-    float handbrake_torque = 4000.0f;
+    float brakeTorque     = 1500.0f;
+    float handbrakeTorque = 4000.0f;
     float suspension       = 0.3f;
-    float spring_freq      = 1.5f;
-    float spring_damp      = 0.5f;
+    float springFreq      = 1.5f;
+    float springDamp      = 0.5f;
 };
 
 enum class DriveMode : std::uint8_t { Fwd = 1, Rwd = 2, Awd = 3 };
 
 struct EngineConfig {
-    float max_torque = 500.0f;
-    float max_rpm    = 7000.0f;
-    float min_rpm    = 1000.0f;
+    float maxTorque = 500.0f;
+    float maxRpm    = 7000.0f;
+    float minRpm    = 1000.0f;
     float inertia    = 0.5f;
 };
 
 struct TransmissionConfig {
     int                mode            = 1; // JPH::ETransmissionMode
-    float              clutch_strength = 2000.0f;
-    float              differential_ratio = 3.42f;
-    std::vector<float> gear_ratios;        // empty means "use the defaults"
+    float              clutchStrength = 2000.0f;
+    float              differentialRatio = 3.42f;
+    std::vector<float> gearRatios;        // empty means "use the defaults"
 };
 
 struct WheeledVehicleConfig {
@@ -76,13 +76,13 @@ struct TrackWheelConfig {
     float width      = 0.2f;
     float suspension = 0.5f;
     float friction   = 1.0f;
-    float spring_freq = 2.0f;
-    float spring_damp = 0.5f;
+    float springFreq = 2.0f;
+    float springDamp = 0.5f;
 };
 
 struct TrackConfig {
     std::vector<int> wheels;      // indices into TrackedVehicleConfig::wheels
-    int              driven_wheel = 0;
+    int              drivenWheel = 0;
 };
 
 struct TrackedVehicleConfig {
@@ -153,7 +153,7 @@ class Vehicle {
     [[nodiscard]] std::optional<WheelTransform> GetWheelTransform(std::uint32_t index) const;
     [[nodiscard]] std::optional<WheelTransform> GetWheelLocalTransform(std::uint32_t index) const;
 
-    [[nodiscard]] std::uint32_t wheel_count() const noexcept { return num_wheels_; }
+    [[nodiscard]] std::uint32_t wheel_count() const noexcept { return numWheels_; }
 
     // Writes the engine/transmission/wheel state to the debug log. Compiled
     // out unless CULVERIN_DEBUG.
@@ -177,7 +177,7 @@ class Vehicle {
     // RemoveConstraint destroys it. Never Release() this pointer -- see
     // Vehicle::Detach().
     JPH::VehicleConstraint *constraint_ = nullptr;
-    std::uint32_t           num_wheels_ = 0;
+    std::uint32_t           numWheels_ = 0;
     bool                    wheeled_    = true;
 };
 

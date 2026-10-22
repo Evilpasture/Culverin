@@ -66,7 +66,7 @@ class Registry {
     [[nodiscard]] std::expected<void, Error> Clear();
 
     [[nodiscard]] std::uint32_t active_entity_count() const noexcept {
-        return active_entities_;
+        return activeEntities_;
     }
 
     // --- Components -------------------------------------------------------
@@ -92,7 +92,7 @@ class Registry {
 
     [[nodiscard]] std::uint32_t ComponentElementSize(ComponentId component) const noexcept;
 
-    [[nodiscard]] std::uint32_t component_count() const noexcept { return component_count_; }
+    [[nodiscard]] std::uint32_t component_count() const noexcept { return componentCount_; }
 
     // --- View bookkeeping -------------------------------------------------
 
@@ -101,7 +101,7 @@ class Registry {
         Entity        *entities;
         std::byte     *data;
         std::uint32_t  count;
-        std::uint32_t  element_size;
+        std::uint32_t  elementSize;
     };
 
     [[nodiscard]] std::expected<ComponentView, Error> View(ComponentId component);
@@ -110,10 +110,10 @@ class Registry {
     // memory a proxy hands out. The binding increments on export and
     // decrements on release.
     void OnViewExported() noexcept {
-        view_exports_.fetch_add(1, std::memory_order_relaxed);
+        viewExports_.fetch_add(1, std::memory_order_relaxed);
     }
     void OnViewReleased() noexcept {
-        view_exports_.fetch_sub(1, std::memory_order_relaxed);
+        viewExports_.fetch_sub(1, std::memory_order_relaxed);
     }
 
   private:
@@ -129,14 +129,14 @@ class Registry {
 
     mutable std::mutex    mutex_;
     Buffer<std::uint32_t> generations_;
-    Buffer<std::uint32_t> free_indices_;
-    std::uint32_t         free_count_      = 0;
-    std::uint32_t         active_entities_ = 0;
+    Buffer<std::uint32_t> freeIndices_;
+    std::uint32_t         freeCount_      = 0;
+    std::uint32_t         activeEntities_ = 0;
 
     Buffer<SparseSet> components_;
-    std::uint32_t     component_count_ = 0;
+    std::uint32_t     componentCount_ = 0;
 
-    std::atomic<std::uint32_t> view_exports_{0};
+    std::atomic<std::uint32_t> viewExports_{0};
 };
 
 } // namespace CPH

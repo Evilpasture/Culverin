@@ -35,11 +35,11 @@ bool ParseWheelConfig(PyObject *dict, CPH::WheelConfig &out) {
 
     out.radius           = GetAttribute(dict, "radius", out.radius);
     out.width            = GetAttribute(dict, "width", out.width);
-    out.brake_torque     = GetAttribute(dict, "brake_torque", out.brake_torque);
-    out.handbrake_torque = GetAttribute(dict, "handbrake_torque", out.handbrake_torque);
+    out.brakeTorque     = GetAttribute(dict, "brake_torque", out.brakeTorque);
+    out.handbrakeTorque = GetAttribute(dict, "handbrake_torque", out.handbrakeTorque);
     out.suspension       = GetAttribute(dict, "suspension", out.suspension);
-    out.spring_freq      = GetAttribute(dict, "spring_freq", out.spring_freq);
-    out.spring_damp      = GetAttribute(dict, "spring_damp", out.spring_damp);
+    out.springFreq      = GetAttribute(dict, "spring_freq", out.springFreq);
+    out.springDamp      = GetAttribute(dict, "spring_damp", out.springDamp);
     return true;
 }
 
@@ -62,9 +62,9 @@ CPH::DriveMode ParseDriveMode(PyObject *py_drive) {
 }
 
 void ParseEngine(PyObject *py_engine, CPH::EngineConfig &out) {
-    out.max_torque = GetAttribute(py_engine, "max_torque", out.max_torque);
-    out.max_rpm    = GetAttribute(py_engine, "max_rpm", out.max_rpm);
-    out.min_rpm    = GetAttribute(py_engine, "min_rpm", out.min_rpm);
+    out.maxTorque = GetAttribute(py_engine, "max_torque", out.maxTorque);
+    out.maxRpm    = GetAttribute(py_engine, "max_rpm", out.maxRpm);
+    out.minRpm    = GetAttribute(py_engine, "min_rpm", out.minRpm);
     out.inertia    = GetAttribute(py_engine, "inertia", out.inertia);
 }
 
@@ -79,10 +79,10 @@ void ParseTransmission(PyObject *py_transmission, CPH::TransmissionConfig &out) 
         PyObject *ratios = PyObject_GetAttrString(py_transmission, "ratios");
         if (ratios != nullptr && PyList_Check(ratios)) {
             const Py_ssize_t count = PyList_Size(ratios);
-            out.gear_ratios.clear();
-            out.gear_ratios.reserve(static_cast<std::size_t>(count));
+            out.gearRatios.clear();
+            out.gearRatios.reserve(static_cast<std::size_t>(count));
             for (Py_ssize_t i = 0; i < count; i++) {
-                out.gear_ratios.push_back(
+                out.gearRatios.push_back(
                     static_cast<float>(PyFloat_AsDouble(PyList_GetItem(ratios, i))));
             }
         }
@@ -90,10 +90,10 @@ void ParseTransmission(PyObject *py_transmission, CPH::TransmissionConfig &out) 
         PyErr_Clear();
     }
 
-    out.clutch_strength    = GetAttribute(py_transmission, "clutch_strength",
-                                          out.clutch_strength);
-    out.differential_ratio = GetAttribute(py_transmission, "differential_ratio",
-                                          out.differential_ratio);
+    out.clutchStrength    = GetAttribute(py_transmission, "clutch_strength",
+                                          out.clutchStrength);
+    out.differentialRatio = GetAttribute(py_transmission, "differential_ratio",
+                                          out.differentialRatio);
 }
 
 // (position, rotation) pair, the shape both wheel queries have always returned.
@@ -154,7 +154,7 @@ bool ParseWheelConfigs(PyObject *py_wheels, std::vector<CPH::WheelConfig> &out) 
     PyObject *py_engine   = nullptr;
     PyObject *py_trans    = nullptr;
 
-    const ParseResult parsed = self->parsers->CreateVehicle.Parse(
+    const ParseResult parsed = self->parsers->createVehicle.Parse(
         args, nargs, kwnames, chassis_raw, py_wheels, py_drive, py_engine, py_trans);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -176,7 +176,7 @@ bool ParseWheelConfigs(PyObject *py_wheels, std::vector<CPH::WheelConfig> &out) 
     // Pending body-creation commands have to run before the chassis handle can
     // resolve to a live body.
     {
-        const std::scoped_lock lock(self->physics.shadow_lock);
+        const std::scoped_lock lock(self->physics.shadowLock);
         SyncAndFlushInternal(self);
     }
 
@@ -192,7 +192,7 @@ bool ParseWheelConfigs(PyObject *py_wheels, std::vector<CPH::WheelConfig> &out) 
 
     ModuleState *state = GetModuleState(PyType_GetModule(Py_TYPE(self)));
     auto         *obj  = PyObject_GC_New(VehicleObject,
-                                         reinterpret_cast<PyTypeObject *>(state->VehicleType));
+                                         reinterpret_cast<PyTypeObject *>(state->vehicleType));
     if (obj == nullptr) {
         return nullptr;
     }
@@ -234,7 +234,7 @@ bool ParseWheelConfigs(PyObject *py_wheels, std::vector<CPH::WheelConfig> &out) 
     float handbrake = 0.0f;
 
     const ParseResult parsed =
-        self->parsers->VehicleInput.Parse(args, nargs, kwnames, forward, right, brake, handbrake);
+        self->parsers->vehicleInput.Parse(args, nargs, kwnames, forward, right, brake, handbrake);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
@@ -260,7 +260,7 @@ PyObject *WheelQuery(VehicleObject *self, PyObject *const *args, size_t nargsf, 
     }
 
     const ParseResult parsed =
-        self->world->parsers->WheelIdx.Parse(args, nargs, kwnames, index);
+        self->world->parsers->wheelIdx.Parse(args, nargs, kwnames, index);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;

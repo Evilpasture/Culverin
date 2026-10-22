@@ -16,11 +16,11 @@ std::uint32_t LiveViewExports(const std::atomic<std::uint32_t> &counter) noexcep
 } // namespace
 
 const SparseSet *Registry::SetAt(ComponentId component) const noexcept {
-    return component < component_count_ ? &components_[component] : nullptr;
+    return component < componentCount_ ? &components_[component] : nullptr;
 }
 
 SparseSet *Registry::SetAt(ComponentId component) noexcept {
-    return component < component_count_ ? &components_[component] : nullptr;
+    return component < componentCount_ ? &components_[component] : nullptr;
 }
 
 // --- Entities -------------------------------------------------------------
@@ -36,30 +36,30 @@ bool Registry::GrowEntities() {
     }
     for (std::uint32_t i = 0; i < old_cap; ++i) {
         next_generations[i] = generations_[i];
-        next_free[i]        = free_indices_[i];
+        next_free[i]        = freeIndices_[i];
     }
     // New slots start at generation 1 and are pushed onto the free list in
     // descending order, so popping from the back yields ascending indices.
     for (std::uint32_t i = old_cap; i < new_cap; ++i) {
         next_generations[i]           = 1;
-        next_free[free_count_++]      = (new_cap - 1) - (i - old_cap);
+        next_free[freeCount_++]      = (new_cap - 1) - (i - old_cap);
     }
 
     generations_  = std::move(next_generations);
-    free_indices_ = std::move(next_free);
+    freeIndices_ = std::move(next_free);
     return true;
 }
 
 Entity Registry::Create() {
     const std::scoped_lock lock(mutex_);
 
-    if (free_count_ == 0 && !GrowEntities()) {
+    if (freeCount_ == 0 && !GrowEntities()) {
         return Entity{}; // caller reports OOM; an invalid handle is the signal
     }
 
-    const std::uint32_t index = free_indices_[--free_count_];
+    const std::uint32_t index = freeIndices_[--freeCount_];
     const std::uint32_t generation = generations_[index];
-    active_entities_++;
+    activeEntities_++;
     return Entity::FromParts(index, generation);
 }
 
@@ -71,13 +71,13 @@ void Registry::Destroy(Entity entity) {
         return; // already dead
     }
 
-    for (std::uint32_t i = 0; i < component_count_; ++i) {
+    for (std::uint32_t i = 0; i < componentCount_; ++i) {
         components_[i].Erase(entity);
     }
 
     generations_[index]++;
-    free_indices_[free_count_++] = index;
-    active_entities_--;
+    freeIndices_[freeCount_++] = index;
+    activeEntities_--;
 }
 
 bool Registry::IsAlive(Entity entity) const {
@@ -89,21 +89,21 @@ bool Registry::IsAlive(Entity entity) const {
 std::expected<void, Error> Registry::Clear() {
     const std::scoped_lock lock(mutex_);
 
-    if (LiveViewExports(view_exports_) > 0) {
+    if (LiveViewExports(viewExports_) > 0) {
         return std::unexpected(EcsError::ClearWhileViewed);
     }
 
-    for (std::uint32_t i = 0; i < component_count_; ++i) {
+    for (std::uint32_t i = 0; i < componentCount_; ++i) {
         components_[i].EraseAll();
     }
 
     const std::uint32_t capacity = static_cast<std::uint32_t>(generations_.size());
     for (std::uint32_t i = 0; i < capacity; ++i) {
-        free_indices_[i] = (capacity - 1) - i;
+        freeIndices_[i] = (capacity - 1) - i;
         generations_[i]++;
     }
-    free_count_      = capacity;
-    active_entities_ = 0;
+    freeCount_      = capacity;
+    activeEntities_ = 0;
     return {};
 }
 
@@ -113,10 +113,10 @@ std::expected<Registry::ComponentId, Error>
 Registry::RegisterComponent(std::uint32_t element_size) {
     const std::scoped_lock lock(mutex_);
 
-    if (component_count_ >= components_.size()) {
+    if (componentCount_ >= components_.size()) {
         // Registering reallocates the component bank, which would move the
         // sets a live proxy is pointing into.
-        if (LiveViewExports(view_exports_) > 0) {
+        if (LiveViewExports(viewExports_) > 0) {
             return std::unexpected(EcsError::RegisterWhileViewed);
         }
         const std::uint32_t old_cap = static_cast<std::uint32_t>(components_.size());
@@ -127,13 +127,13 @@ Registry::RegisterComponent(std::uint32_t element_size) {
         if (!next.allocate(new_cap)) {
             return std::unexpected(EcsError::OutOfMemory);
         }
-        for (std::uint32_t i = 0; i < component_count_; ++i) {
+        for (std::uint32_t i = 0; i < componentCount_; ++i) {
             next[i] = std::move(components_[i]);
         }
         components_ = std::move(next);
     }
 
-    const ComponentId id = component_count_++;
+    const ComponentId id = componentCount_++;
     components_[id]      = SparseSet(element_size);
     return id;
 }
@@ -148,7 +148,7 @@ Registry::Add(Entity entity, ComponentId component,
     if (index >= generations_.size() || generations_[index] != entity.Generation()) {
         return std::unexpected(EcsError::InvalidEntity);
     }
-    if (component >= component_count_) {
+    if (component >= componentCount_) {
         return std::unexpected(EcsError::InvalidComponent);
     }
 
@@ -161,12 +161,12 @@ Registry::Add(Entity entity, ComponentId component,
         }
         bytes = *payload;
     }
-    return set.Insert(entity, bytes, LiveViewExports(view_exports_));
+    return set.Insert(entity, bytes, LiveViewExports(viewExports_));
 }
 
 std::expected<void, Error> Registry::Remove(Entity entity, ComponentId component) {
     const std::scoped_lock lock(mutex_);
-    if (component >= component_count_) {
+    if (component >= componentCount_) {
         return std::unexpected(EcsError::InvalidComponent);
     }
     // A stale entity simply has nothing to remove; this has never raised.
@@ -176,7 +176,7 @@ std::expected<void, Error> Registry::Remove(Entity entity, ComponentId component
 
 std::expected<bool, Error> Registry::Has(Entity entity, ComponentId component) const {
     const std::scoped_lock lock(mutex_);
-    if (component >= component_count_) {
+    if (component >= componentCount_) {
         return std::unexpected(EcsError::InvalidComponent);
     }
     return components_[component].Has(entity);
@@ -185,7 +185,7 @@ std::expected<bool, Error> Registry::Has(Entity entity, ComponentId component) c
 std::expected<std::optional<std::span<const std::byte>>, Error>
 Registry::Get(Entity entity, ComponentId component) const {
     const std::scoped_lock lock(mutex_);
-    if (component >= component_count_) {
+    if (component >= componentCount_) {
         return std::unexpected(EcsError::InvalidComponent);
     }
     const SparseSet &set = components_[component];
@@ -217,7 +217,7 @@ std::expected<Registry::ComponentView, Error> Registry::View(ComponentId compone
     return ComponentView{.entities     = set->dense_entities(),
                          .data         = set->element_data(),
                          .count        = set->count(),
-                         .element_size = set->element_size()};
+                         .elementSize = set->element_size()};
 }
 
 } // namespace CPH

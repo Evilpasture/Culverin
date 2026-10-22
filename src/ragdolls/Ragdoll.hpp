@@ -112,7 +112,7 @@ class Ragdoll {
     // The world body count after the parts were registered. The binding
     // publishes it to the shape view, as it always has.
     [[nodiscard]] std::size_t registered_body_count() const noexcept {
-        return registered_body_count_;
+        return registeredBodyCount_;
     }
 
     // Drives the ragdoll towards a pose described by one matrix per joint.
@@ -137,8 +137,8 @@ class Ragdoll {
 
     PhysicsWorld         *world_ = nullptr;
     JPH::Ragdoll         *ragdoll_ = nullptr;
-    Buffer<std::uint32_t> body_slots_;
-    std::size_t           registered_body_count_ = 0;
+    Buffer<std::uint32_t> bodySlots_;
+    std::size_t           registeredBodyCount_ = 0;
 };
 
 } // namespace CPH

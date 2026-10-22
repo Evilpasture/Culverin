@@ -25,7 +25,7 @@ namespace CPH::Python {
     float grip             = 500.0f;
     float drag             = 10.0f;
 
-    const ParseResult parsed = self->parsers->CreateShip.Parse(
+    const ParseResult parsed = self->parsers->createShip.Parse(
         args, nargs, kwnames, sled_raw, kp, kd, throttle, steer, banking, grip, drag);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -34,18 +34,18 @@ namespace CPH::Python {
 
     // Pending commands have to be applied before the sled handle can resolve.
     {
-        const std::scoped_lock lock(self->physics.shadow_lock);
+        const std::scoped_lock lock(self->physics.shadowLock);
         SyncAndFlushInternal(self);
     }
 
-    const CPH::ShipConfig config{.sled_handle      = BodyHandle(sled_raw),
+    const CPH::ShipConfig config{.sledHandle      = BodyHandle(sled_raw),
                                  .kp               = kp,
                                  .kd               = kd,
-                                 .throttle_force   = throttle,
-                                 .steer_speed      = steer,
-                                 .banking_strength = banking,
-                                 .lateral_grip     = grip,
-                                 .linear_drag      = drag};
+                                 .throttleForce   = throttle,
+                                 .steerSpeed      = steer,
+                                 .bankingStrength = banking,
+                                 .lateralGrip     = grip,
+                                 .linearDrag      = drag};
 
     std::unique_ptr<CPH::Ship> ship;
     Py_BEGIN_ALLOW_THREADS
@@ -57,7 +57,7 @@ namespace CPH::Python {
     }
 
     ModuleState *st = GetModuleState(PyType_GetModule(Py_TYPE(self)));
-    auto obj = PyObject_GC_New(ShipObject, reinterpret_cast<PyTypeObject *>(st->ShipType));
+    auto obj = PyObject_GC_New(ShipObject, reinterpret_cast<PyTypeObject *>(st->shipType));
     if (!obj) {
         return nullptr;
     }
@@ -84,7 +84,7 @@ namespace CPH::Python {
     float fwd              = 0.0f;
     float right            = 0.0f;
 
-    const ParseResult parsed = self->parsers->ShipInput.Parse(args, nargs, kwnames, fwd, right);
+    const ParseResult parsed = self->parsers->shipInput.Parse(args, nargs, kwnames, fwd, right);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;

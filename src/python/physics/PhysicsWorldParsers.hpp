@@ -8,7 +8,7 @@ struct WorldParsers {
     ParserCatalog catalog{};
 
     Parser<"WorldInit", Arg<"settings", PyObject *, false>, Arg<"bodies", PyObject *, false>>
-        WorldInit{catalog};
+        worldInit{catalog};
     Parser<"Body", Arg<"pos", PyObject *, false>, Arg<"rot", PyObject *, false>,
            Arg<"size", PyObject *, false>, Arg<"shape", int, false>, Arg<"motion", int, false>,
            Arg<"user_data", uint64_t, false>, Arg<"is_sensor", bool, false>,
@@ -16,142 +16,142 @@ struct WorldParsers {
            Arg<"mask", uint32_t, false>, Arg<"friction", float, false>,
            Arg<"restitution", float, false>, Arg<"material_id", uint32_t, false>,
            Arg<"ccd", bool, false>, Arg<"allowed_dofs", uint32_t, false>>
-        Body{catalog};
+        body{catalog};
     Parser<"Impulse", Arg<"handle", ParseBodyHandle, true>, Arg<"x", float, true>,
            Arg<"y", float, true>, Arg<"z", float, true>>
-        Impulse{catalog};
-    Parser<"WheelIdx", Arg<"index", uint32_t, true>> WheelIdx{catalog};
+        impulse{catalog};
+    Parser<"WheelIdx", Arg<"index", uint32_t, true>> wheelIdx{catalog};
     Parser<"AngImpulse", Arg<"handle", ParseBodyHandle, true>, Arg<"x", float, true>,
            Arg<"y", float, true>, Arg<"z", float, true>>
-        AngImpulse{catalog};
+        angImpulse{catalog};
     Parser<"Force", Arg<"handle", ParseBodyHandle, true>, Arg<"x", float, true>,
            Arg<"y", float, true>, Arg<"z", float, true>>
-        Force{catalog};
+        force{catalog};
     Parser<"Torque", Arg<"handle", ParseBodyHandle, true>, Arg<"x", float, true>,
            Arg<"y", float, true>, Arg<"z", float, true>>
-        Torque{catalog};
+        torque{catalog};
     Parser<"SetLinVel", Arg<"handle", ParseBodyHandle, true>, Arg<"x", float, true>,
            Arg<"y", float, true>, Arg<"z", float, true>>
-        SetLinVel{catalog};
+        setLinVel{catalog};
     Parser<"SetAngVel", Arg<"handle", ParseBodyHandle, true>, Arg<"x", float, true>,
            Arg<"y", float, true>, Arg<"z", float, true>>
-        SetAngVel{catalog};
+        setAngVel{catalog};
     Parser<"ImpulseAt", Arg<"handle", ParseBodyHandle, true>, Arg<"ix", float, true>,
            Arg<"iy", float, true>, Arg<"iz", float, true>, Arg<"px", JPH::Real, true>,
            Arg<"py", JPH::Real, true>, Arg<"pz", JPH::Real, true>>
-        ImpulseAt{catalog};
-    Parser<"HOnly", Arg<"handle", ParseBodyHandle, true>> HOnly{catalog};
-    Parser<"Destroy", Arg<"handle", ParseBodyHandle, true>> Destroy{catalog};
-    Parser<"Activate", Arg<"handle", ParseBodyHandle, true>> Activate{catalog};
-    Parser<"Gravity", Arg<"x", float, true>, Arg<"y", float, true>, Arg<"z", float, true>> Gravity{
+        impulseAt{catalog};
+    Parser<"HOnly", Arg<"handle", ParseBodyHandle, true>> hOnly{catalog};
+    Parser<"Destroy", Arg<"handle", ParseBodyHandle, true>> destroy{catalog};
+    Parser<"Activate", Arg<"handle", ParseBodyHandle, true>> activate{catalog};
+    Parser<"Gravity", Arg<"x", float, true>, Arg<"y", float, true>, Arg<"z", float, true>> gravity{
         catalog};
     Parser<"SetPos", Arg<"handle", ParseBodyHandle, true>, Arg<"x", JPH::Real, true>,
            Arg<"y", JPH::Real, true>, Arg<"z", JPH::Real, true>>
-        SetPos{catalog};
+        setPos{catalog};
     Parser<"Buoy", Arg<"handle", ParseBodyHandle, true>, Arg<"surface_y", double, true>,
            Arg<"buoyancy", float, false>, Arg<"linear_drag", float, false>,
            Arg<"angular_drag", float, false>, Arg<"dt", float, false>,
            Arg<"fluid_velocity", PyObject *, false>>
-        Buoy{catalog};
+        buoy{catalog};
     Parser<"BatchBuoy", Arg<"handles", PyObject *, true>, Arg<"surface_y", double, true>,
            Arg<"buoyancy", float, false>, Arg<"linear_drag", float, false>,
            Arg<"angular_drag", float, false>, Arg<"dt", float, false>,
            Arg<"fluid_velocity", PyObject *, false>>
-        BatchBuoy{catalog};
+        batchBuoy{catalog};
     Parser<"Mesh", Arg<"pos", PyObject *, true>, Arg<"rot", PyObject *, true>,
            Arg<"vertices", PyObject *, true>, Arg<"indices", PyObject *, true>,
            Arg<"user_data", uint64_t, false>, Arg<"category", uint32_t, false>,
            Arg<"mask", uint32_t, false>>
-        Mesh{catalog};
+        mesh{catalog};
     Parser<"SetTrns", Arg<"handle", ParseBodyHandle, true>, Arg<"pos", PyObject *, true>,
            Arg<"rot", PyObject *, true>>
-        SetTrns{catalog};
-    Parser<"CCD", Arg<"handle", ParseBodyHandle, true>, Arg<"enabled", bool, true>> CCD{catalog};
+        setTrns{catalog};
+    Parser<"CCD", Arg<"handle", ParseBodyHandle, true>, Arg<"enabled", bool, true>> ccd{catalog};
     Parser<"ConvexHull", Arg<"pos", PyObject *, true>, Arg<"rot", PyObject *, true>,
            Arg<"points", PyObject *, true>, Arg<"motion", int, false>, Arg<"mass", float, false>,
            Arg<"user_data", uint64_t, false>, Arg<"is_sensor", bool, false>,
            Arg<"category", uint32_t, false>, Arg<"mask", uint32_t, false>,
            Arg<"material_id", uint32_t, false>, Arg<"friction", float, false>,
            Arg<"restitution", float, false>, Arg<"ccd", bool, false>>
-        ConvexHull{catalog};
+        convexHull{catalog};
     Parser<"Compound", Arg<"pos", PyObject *, true>, Arg<"rot", PyObject *, true>,
            Arg<"parts", PyObject *, true>, Arg<"motion", int, false>, Arg<"mass", float, false>,
            Arg<"user_data", uint64_t, false>, Arg<"is_sensor", bool, false>,
            Arg<"category", uint32_t, false>, Arg<"mask", uint32_t, false>,
            Arg<"material_id", uint32_t, false>, Arg<"friction", float, false>,
            Arg<"restitution", float, false>, Arg<"ccd", bool, false>>
-        Compound{catalog};
+        compound{catalog};
     Parser<"BatchCreate", Arg<"positions", PyObject *, true>, Arg<"sizes", PyObject *, true>,
            Arg<"shape_type", int, false>, Arg<"motion_type", int, false>>
-        BatchCreate{catalog};
-    Parser<"BatchDestroy", Arg<"handles", PyObject *, true>> BatchDestroy{catalog};
+        batchCreate{catalog};
+    Parser<"BatchDestroy", Arg<"handles", PyObject *, true>> batchDestroy{catalog};
     Parser<"SetRot", Arg<"handle", ParseBodyHandle, true>, Arg<"x", float, true>,
            Arg<"y", float, true>, Arg<"z", float, true>, Arg<"w", float, true>>
-        SetRot{catalog};
-    Parser<"Render", Arg<"alpha", float, true>> Render{catalog};
+        setRot{catalog};
+    Parser<"Render", Arg<"alpha", float, true>> render{catalog};
     Parser<"Raycast", Arg<"start", PyObject *, true>, Arg<"direction", PyObject *, true>,
            Arg<"max_dist", float, false>, Arg<"ignore", ParseBodyHandle, false>>
-        Raycast{catalog};
+        raycast{catalog};
     Parser<"RayBatch", Arg<"starts", PyObject *, true>, Arg<"directions", PyObject *, true>,
            Arg<"max_dist", float, false>>
-        RayBatch{catalog};
+        rayBatch{catalog};
     Parser<"Shapecast", Arg<"shape", int, true>, Arg<"pos", PyObject *, true>,
            Arg<"rot", PyObject *, true>, Arg<"dir", PyObject *, true>,
            Arg<"size", PyObject *, false>, Arg<"ignore", ParseBodyHandle, false>>
-        Shapecast{catalog};
+        shapecast{catalog};
     Parser<"OverlapSphere", Arg<"center", PyObject *, true>, Arg<"radius", float, true>>
-        OverlapSphere{catalog};
-    Parser<"OverlapAABB", Arg<"min", PyObject *, true>, Arg<"max", PyObject *, true>> OverlapAABB{
+        overlapSphere{catalog};
+    Parser<"OverlapAABB", Arg<"min", PyObject *, true>, Arg<"max", PyObject *, true>> overlapAabb{
         catalog};
     Parser<"SetUserData", Arg<"handle", ParseBodyHandle, true>, Arg<"data", uint64_t, true>>
-        SetUserData{catalog};
-    Parser<"GetUserData", Arg<"handle", ParseBodyHandle, true>> GetUserData{catalog};
-    Parser<"GetMotion", Arg<"handle", ParseBodyHandle, true>> GetMotion{catalog};
-    Parser<"SetMotion", Arg<"handle", ParseBodyHandle, true>, Arg<"motion", int, true>> SetMotion{
+        setUserData{catalog};
+    Parser<"GetUserData", Arg<"handle", ParseBodyHandle, true>> getUserData{catalog};
+    Parser<"GetMotion", Arg<"handle", ParseBodyHandle, true>> getMotion{catalog};
+    Parser<"SetMotion", Arg<"handle", ParseBodyHandle, true>, Arg<"motion", int, true>> setMotion{
         catalog};
     Parser<"ColFilter", Arg<"handle", ParseBodyHandle, true>, Arg<"category", uint32_t, true>,
            Arg<"mask", uint32_t, true>>
-        ColFilter{catalog};
+        colFilter{catalog};
     Parser<"RegMat", Arg<"id", uint32_t, true>, Arg<"friction", float, false>,
            Arg<"restitution", float, false>>
-        RegMat{catalog};
+        regMat{catalog};
     Parser<"SetConstrTarget", Arg<"handle", uint64_t, true>, Arg<"target", float, true>>
-        SetConstrTarget{catalog};
+        setConstrTarget{catalog};
     Parser<"Heightfield", Arg<"pos", PyObject *, true>, Arg<"rot", PyObject *, true>,
            Arg<"scale", PyObject *, true>, Arg<"heights", PyObject *, true>,
            Arg<"grid_size", int, true>, Arg<"user_data", uint64_t, false>,
            Arg<"category", uint32_t, false>, Arg<"mask", uint32_t, false>,
            Arg<"material_id", uint32_t, false>, Arg<"friction", float, false>,
            Arg<"restitution", float, false>>
-        Heightfield{catalog};
+        heightfield{catalog};
     Parser<"DebugData", Arg<"shapes", bool, false>, Arg<"constraints", bool, false>,
            Arg<"bbox", bool, false>, Arg<"centers", bool, false>, Arg<"wireframe", bool, false>>
-        DebugData{catalog};
+        debugData{catalog};
     Parser<"CreateConstr", Arg<"type", int, true>, Arg<"body1", ParseBodyHandle, true>,
            Arg<"body2", ParseBodyHandle, true>, Arg<"params", PyObject *, false>,
            Arg<"motor", PyObject *, false>>
-        CreateConstr{catalog};
-    Parser<"DestroyConstr", Arg<"handle", ParseBodyHandle, true>> DestroyConstr{catalog};
-    Parser<"Step", Arg<"dt", float, false>> Step{catalog};
+        createConstr{catalog};
+    Parser<"DestroyConstr", Arg<"handle", ParseBodyHandle, true>> destroyConstr{catalog};
+    Parser<"Step", Arg<"dt", float, false>> step{catalog};
     Parser<"CreateChar", Arg<"pos", PosStride, true>, Arg<"height", float, false>,
            Arg<"radius", float, false>, Arg<"step_height", float, false>,
            Arg<"max_slope", float, false>>
-        CreateChar{catalog};
-    Parser<"LoadState", Arg<"state", PyObject *, true>> LoadState{catalog};
+        createChar{catalog};
+    Parser<"LoadState", Arg<"state", PyObject *, true>> loadState{catalog};
     Parser<"CreateVehicle", Arg<"chassis", uint64_t, true>, Arg<"wheels", PyObject *, true>,
            Arg<"drive", PyObject *, false>, Arg<"engine", PyObject *, false>,
            Arg<"transmission", PyObject *, false>>
-        CreateVehicle{catalog};
+        createVehicle{catalog};
     Parser<"CreateTracked", Arg<"chassis", uint64_t, true>, Arg<"wheels", PyObject *, true>,
            Arg<"tracks", PyObject *, true>, Arg<"max_torque", float, false>,
            Arg<"max_rpm", float, false>>
-        CreateTracked{catalog};
+        createTracked{catalog};
     Parser<"CreateRagdoll", Arg<"settings", PyObject *, true>, Arg<"pos", PosStride, true>,
            Arg<"rot", AuxStride, false>, Arg<"user_data", uint64_t, false>,
            Arg<"category", uint32_t, false>, Arg<"mask", uint32_t, false>,
            Arg<"material_id", uint32_t, false>>
-        CreateRagdoll{catalog};
-    Parser<"RagdollSettings", Arg<"skeleton", PyObject *, true>> RagdollSettings{catalog};
+        createRagdoll{catalog};
+    Parser<"RagdollSettings", Arg<"skeleton", PyObject *, true>> ragdollSettings{catalog};
     Parser<"CreateSoftBody", Arg<"shared_settings", PyObject *, true>, Arg<"pos", PyObject *, true>,
            Arg<"rot", PyObject *, true>, Arg<"user_data", uint64_t, false>,
            Arg<"category", uint32_t, false>, Arg<"mask", uint32_t, false>,
@@ -161,9 +161,9 @@ struct WorldParsers {
            Arg<"friction", float, false>, Arg<"restitution", float, false>,
            Arg<"make_rotation_identity", bool, false>, Arg<"update_position", bool, false>,
            Arg<"faces_double_sided", bool, false>>
-        CreateSoftBody{catalog};
+        createSoftBody{catalog};
     Parser<"GetSbVertex", Arg<"handle", ParseBodyHandle, true>, Arg<"index", uint32_t, true>>
-        GetSbVertex{catalog};
+        getSbVertex{catalog};
     Parser<"StressTest", Arg<"a0", uint64_t, false>, Arg<"a1", uint64_t, false>,
            Arg<"a2", uint64_t, false>, Arg<"a3", uint64_t, false>, Arg<"a4", uint64_t, false>,
            Arg<"a5", uint64_t, false>, Arg<"a6", uint64_t, false>, Arg<"a7", uint64_t, false>,
@@ -186,12 +186,12 @@ struct WorldParsers {
            Arg<"a56", uint64_t, false>, Arg<"a57", uint64_t, false>, Arg<"a58", uint64_t, false>,
            Arg<"a59", uint64_t, false>, Arg<"a60", uint64_t, false>, Arg<"a61", uint64_t, false>,
            Arg<"a62", uint64_t, false>, Arg<"a63", uint64_t, false>>
-        StressTest{catalog};
+        stressTest{catalog};
     Parser<"CreateShip", Arg<"sled", ParseBodyHandle, true>, Arg<"kp", float, true>,
            Arg<"kd", float, true>, Arg<"throttle_force", float, true>,
            Arg<"steer_speed", float, true>, Arg<"banking", float, false>,
            Arg<"lateral_grip", float, false>, Arg<"linear_drag", float, false>>
-        CreateShip{catalog};
+        createShip{catalog};
 };
 
 } // namespace CPH::Python

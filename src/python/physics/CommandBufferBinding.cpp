@@ -15,22 +15,22 @@ void SyncAndFlushInternal(PhysicsWorldObject *self) {
     BlockUntilNotStepping(self);
     BlockUntilNotQuerying(self);
 
-    if (self->physics.command_count == 0) {
+    if (self->physics.commandCount == 0) {
         return;
     }
 
-    self->physics.is_stepping.store(true, std::memory_order::relaxed);
+    self->physics.isStepping.store(true, std::memory_order::relaxed);
     const auto detached = self->physics.DetachCommands();
-    self->physics.shadow_lock.unlock();
+    self->physics.shadowLock.unlock();
 
     Py_BEGIN_ALLOW_THREADS {
-        const std::scoped_lock trampoline(self->physics.jph_trampoline_lock);
+        const std::scoped_lock trampoline(self->physics.jphTrampolineLock);
         self->physics.FlushCommands(detached);
     }
     Py_END_ALLOW_THREADS
 
-    self->physics.shadow_lock.lock();
-    self->physics.is_stepping.store(false, std::memory_order::release);
+    self->physics.shadowLock.lock();
+    self->physics.isStepping.store(false, std::memory_order::release);
     self->physics.NotifyStepSync();
 }
 

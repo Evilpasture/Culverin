@@ -43,23 +43,23 @@ class ClosestFractionCastShapeCollector final : public JPH::CastShapeCollector {
     ClosestFractionCastShapeCollector() noexcept {
         // ShapeCastResult leaves mFraction uninitialized; seed it the way the
         // C version did so the first comparison is against 1.0f.
-        m_hit.mFraction = 1.0f;
+        mHit.mFraction = 1.0f;
     }
 
     void AddHit(const JPH::ShapeCastResult &inResult) override {
-        if (inResult.mFraction < m_hit.mFraction) {
-            m_hit     = inResult;
-            m_has_hit = true;
+        if (inResult.mFraction < mHit.mFraction) {
+            mHit     = inResult;
+            mHasHit = true;
         }
         UpdateEarlyOutFraction(inResult.mFraction);
     }
 
-    [[nodiscard]] bool has_hit() const noexcept { return m_has_hit; }
-    [[nodiscard]] const JPH::ShapeCastResult &hit() const noexcept { return m_hit; }
+    [[nodiscard]] bool has_hit() const noexcept { return mHasHit; }
+    [[nodiscard]] const JPH::ShapeCastResult &hit() const noexcept { return mHit; }
 
   private:
-    JPH::ShapeCastResult m_hit{};
-    bool m_has_hit = false;
+    JPH::ShapeCastResult mHit{};
+    bool mHasHit = false;
 };
 
 // Executes one shape cast against the world's narrow-phase query.

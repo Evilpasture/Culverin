@@ -7,7 +7,7 @@ namespace CPH::Python {
 struct ShipParsers {
     ParserCatalog catalog{};
 
-    Parser<"ShipInput", Arg<"forward", float, true>, Arg<"right", float, true>> ShipInput{catalog};
+    Parser<"ShipInput", Arg<"forward", float, true>, Arg<"right", float, true>> shipInput{catalog};
 };
 
 } // namespace CPH::Python

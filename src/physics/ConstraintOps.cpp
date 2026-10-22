@@ -20,18 +20,18 @@ void ActivateBody(JPH::BodyInterface &body_interface, JPH::Body *body) {
 // re-acquired before returning. The binding wraps the whole call in
 // Py_BEGIN_ALLOW_THREADS so the GIL is not held across this wait.
 void WaitUntilNotStepping(std::unique_lock<std::mutex> &shadow, PhysicsWorld &world) {
-    if (!world.is_stepping.load(std::memory_order::relaxed)) {
+    if (!world.isStepping.load(std::memory_order::relaxed)) {
         return;
     }
-    world.waiting_threads.fetch_add(1, std::memory_order::relaxed);
+    world.waitingThreads.fetch_add(1, std::memory_order::relaxed);
     shadow.unlock();
     {
-        std::unique_lock sync(world.step_sync.mutex);
-        world.step_sync.cond.wait(
-            sync, [&world] { return !world.is_stepping.load(std::memory_order::relaxed); });
+        std::unique_lock sync(world.stepSync.mutex);
+        world.stepSync.cond.wait(
+            sync, [&world] { return !world.isStepping.load(std::memory_order::relaxed); });
     }
     shadow.lock();
-    world.waiting_threads.fetch_sub(1, std::memory_order::relaxed);
+    world.waitingThreads.fetch_sub(1, std::memory_order::relaxed);
 }
 
 } // namespace
@@ -39,7 +39,7 @@ void WaitUntilNotStepping(std::unique_lock<std::mutex> &shadow, PhysicsWorld &wo
 std::expected<void, Error> SetConstraintTarget(PhysicsWorld   &world,
                                                 ConstraintHandle handle,
                                                 float            target) {
-    std::unique_lock shadow(world.shadow_lock);
+    std::unique_lock shadow(world.shadowLock);
     WaitUntilNotStepping(shadow, world);
 
     const std::uint32_t slot = handle.Index();
@@ -79,7 +79,7 @@ std::expected<void, Error> SetConstraintTarget(PhysicsWorld   &world,
     // A constraint change is invisible until the bodies are awake.
     if (constraint->GetType() == JPH::EConstraintType::TwoBodyConstraint) {
         auto *two_body             = static_cast<JPH::TwoBodyConstraint *>(constraint);
-        JPH::BodyInterface &bodies = world.physics_system.GetBodyInterface();
+        JPH::BodyInterface &bodies = world.physicsSystem.GetBodyInterface();
         ActivateBody(bodies, two_body->GetBody1());
         ActivateBody(bodies, two_body->GetBody2());
     }

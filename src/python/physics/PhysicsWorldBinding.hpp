@@ -18,8 +18,8 @@ struct PhysicsWorldObject {
     // layout independent of offsetof -- see the flags in WorldSpec.
     PyObject_HEAD
     PhysicsWorld physics;
-    Py_ssize_t view_shape[2];
-    Py_ssize_t view_strides[2];
+    Py_ssize_t viewShape[2];
+    Py_ssize_t viewStrides[2];
     CPH::Python::WorldParsers *parsers;
 };
 
@@ -42,7 +42,7 @@ void SyncAndFlushInternal(PhysicsWorldObject *self);
     const std::optional<std::uint32_t> slot =
         self->physics.Resolve(static_cast<BodyHandle>(h_raw));
     if (!slot) [[unlikely]] {
-        (self->physics.shadow_lock).unlock();
+        (self->physics.shadowLock).unlock();
         PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
         return std::nullopt;
     }

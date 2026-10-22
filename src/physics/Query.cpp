@@ -22,36 +22,36 @@ static constexpr float kQueryDirectionUnitTolerance  = 1e-4f;
 
 static void WaitUntilCanQuery(PhysicsWorld *world, std::unique_lock<std::mutex> &shadow) {
     const auto blocked = [&] {
-        return world->is_stepping.load(std::memory_order::relaxed) ||
-               world->step_requested.load(std::memory_order::relaxed);
+        return world->isStepping.load(std::memory_order::relaxed) ||
+               world->stepRequested.load(std::memory_order::relaxed);
     };
     if (blocked()) {
-        world->waiting_threads.fetch_add(1, std::memory_order::relaxed);
+        world->waitingThreads.fetch_add(1, std::memory_order::relaxed);
         while (blocked()) {
             // Never hold shadow_lock while parked on the condition.
             shadow.unlock();
             {
-                std::unique_lock sync(world->step_sync.mutex);
-                world->step_sync.cond.wait(sync, [&] { return !blocked(); });
+                std::unique_lock sync(world->stepSync.mutex);
+                world->stepSync.cond.wait(sync, [&] { return !blocked(); });
             }
             shadow.lock();
         }
-        world->waiting_threads.fetch_sub(1, std::memory_order::relaxed);
+        world->waitingThreads.fetch_sub(1, std::memory_order::relaxed);
     }
 }
 
 static void QueryBegin(PhysicsWorld *world) {
-    std::unique_lock shadow(world->shadow_lock);
+    std::unique_lock shadow(world->shadowLock);
     WaitUntilCanQuery(world, shadow);
     // The gate check and this increment are one critical section, so a
     // step cannot start between them.
-    world->active_queries.fetch_add(1, std::memory_order::acquire);
+    world->activeQueries.fetch_add(1, std::memory_order::acquire);
 }
 
 void PhysicsWorld::QueryEnd() {
-    const std::scoped_lock sync(step_sync.mutex);
-    if (active_queries.fetch_sub(1, std::memory_order::acq_rel) == 1) {
-        step_sync.cond.notify_all();
+    const std::scoped_lock sync(stepSync.mutex);
+    if (activeQueries.fetch_sub(1, std::memory_order::acq_rel) == 1) {
+        stepSync.cond.notify_all();
     }
 }
 
@@ -66,15 +66,15 @@ QueryHandleIsValidLocked(const PhysicsWorld &world, BodyHandle handle) {
         return std::nullopt;
     }
 
-    const uint8_t state = (world.bodies.slot_states[*slot]).load(std::memory_order::acquire);
-    if (!GetSlotPredicate(state, kMaskImmStandard).is_immediate) {
+    const uint8_t state = (world.bodies.slotStates[*slot]).load(std::memory_order::acquire);
+    if (!GetSlotPredicate(state, kMaskImmStandard).isImmediate) {
         return std::nullopt;
     }
     return slot;
 }
 
 static void FilterQueryHits(PhysicsWorld *world, PhysicsQueryHitBuffer &hits) {
-    const std::scoped_lock shadow(world->shadow_lock);
+    const std::scoped_lock shadow(world->shadowLock);
     size_t write_index = 0;
     for (size_t i = 0; i < hits.count; ++i) {
         if (QueryHandleIsValidLocked(*world, hits.hits[i])) {
@@ -91,9 +91,9 @@ static JPH::BodyID ResolveIgnoreBodyLocked(const PhysicsWorld &world, BodyHandle
     if (const std::optional<uint32_t> ignore_slot =
             QueryHandleIsValidLocked(world, ignore_handle)) {
         const size_t body_count = (world.count).load(std::memory_order::relaxed);
-        const uint32_t dense    = world.bodies.slot_to_dense[*ignore_slot];
+        const uint32_t dense    = world.bodies.slotToDense[*ignore_slot];
         if (dense < body_count) {
-            return JPH::BodyID(world.bodies.body_ids[dense]);
+            return JPH::BodyID(world.bodies.bodyIds[dense]);
         }
     }
     return JPH::BodyID();
@@ -102,7 +102,7 @@ static JPH::BodyID ResolveIgnoreBodyLocked(const PhysicsWorld &world, BodyHandle
 static JPH::ShapeRefC QueryBeginWithShape(PhysicsWorld *world, int shape_type,
                                              std::span<const float, 4> params,
                                              JPH::BodyID *ignore_body, BodyHandle ignore_handle) {
-    std::unique_lock shadow(world->shadow_lock);
+    std::unique_lock shadow(world->shadowLock);
     WaitUntilCanQuery(world, shadow);
 
     // The shadow lock serializes cache access. Avoid taking jph_trampoline_lock
@@ -117,18 +117,18 @@ static JPH::ShapeRefC QueryBeginWithShape(PhysicsWorld *world, int shape_type,
     // Match the binding's former lock scope: shape/ignore resolution and query
     // registration are atomic with respect to step flags and shadow mutations.
     if (shape) {
-        (world->active_queries).fetch_add(1, std::memory_order::acquire);
+        (world->activeQueries).fetch_add(1, std::memory_order::acquire);
     }
     return shape;
 }
 
 static JPH::BodyID QueryBeginWithIgnore(PhysicsWorld *world, BodyHandle ignore_handle) {
-    std::unique_lock shadow(world->shadow_lock);
+    std::unique_lock shadow(world->shadowLock);
     WaitUntilCanQuery(world, shadow);
 
     const JPH::BodyID ignore_body = ResolveIgnoreBodyLocked(*world, ignore_handle);
 
-    (world->active_queries).fetch_add(1, std::memory_order::acquire);
+    (world->activeQueries).fetch_add(1, std::memory_order::acquire);
     return ignore_body;
 }
 
@@ -144,7 +144,7 @@ static void OverlapRecordHit(OverlapContext &context, JPH::BodyID body_id) {
     }
 
     const BodyHandle handle = static_cast<BodyHandle>(
-        context.world.physics_system.GetBodyInterface().GetUserData(body_id));
+        context.world.physicsSystem.GetBodyInterface().GetUserData(body_id));
     if (handle && !context.hits.append(handle)) {
         context.error = QueryError::OutOfMemory;
     }
@@ -156,25 +156,25 @@ static void OverlapRecordHit(OverlapContext &context, JPH::BodyID body_id) {
 // result, in query order.
 class OverlapShapeCollector final : public JPH::CollideShapeCollector {
   public:
-    explicit OverlapShapeCollector(OverlapContext &context) : m_context(context) {}
+    explicit OverlapShapeCollector(OverlapContext &context) : mContext(context) {}
 
     void AddHit(const JPH::CollideShapeResult &inResult) override {
-        OverlapRecordHit(m_context, inResult.mBodyID2);
+        OverlapRecordHit(mContext, inResult.mBodyID2);
     }
 
   private:
-    OverlapContext &m_context;
+    OverlapContext &mContext;
 };
 
 // Same, for the broad-phase query, which reports bare body IDs.
 class OverlapBodyCollector final : public JPH::CollideShapeBodyCollector {
   public:
-    explicit OverlapBodyCollector(OverlapContext &context) : m_context(context) {}
+    explicit OverlapBodyCollector(OverlapContext &context) : mContext(context) {}
 
-    void AddHit(const JPH::BodyID &inBodyID) override { OverlapRecordHit(m_context, inBodyID); }
+    void AddHit(const JPH::BodyID &inBodyID) override { OverlapRecordHit(mContext, inBodyID); }
 
   private:
-    OverlapContext &m_context;
+    OverlapContext &mContext;
 };
 
 std::expected<void, Error>
@@ -198,7 +198,7 @@ PhysicsWorld::OverlapSphere(JPH::RVec3 center, float radius, PhysicsQueryHitBuff
     // No filters: every layer is queried and an overlap has no body to ignore.
     OverlapContext context = {.world = *this, .hits = hits, .error = {}};
     OverlapShapeCollector collector(context);
-    physics_system.GetNarrowPhaseQuery().CollideShape(
+    physicsSystem.GetNarrowPhaseQuery().CollideShape(
         shape, JPH::Vec3::sReplicate(1.0f), transform, settings, JPH::RVec3::sZero(), collector);
     if (!context.error) {
         FilterQueryHits(this, hits);
@@ -224,7 +224,7 @@ PhysicsWorld::OverlapAabb(JPH::RVec3 min, JPH::RVec3 max, PhysicsQueryHitBuffer 
 
     OverlapContext context = {.world = *this, .hits = hits, .error = {}};
     OverlapBodyCollector collector(context);
-    physics_system.GetBroadPhaseQuery().CollideAABox(box, collector);
+    physicsSystem.GetBroadPhaseQuery().CollideAABox(box, collector);
     if (!context.error) {
         FilterQueryHits(this, hits);
     }
@@ -267,21 +267,21 @@ std::expected<PhysicsRaycastHit, Error> PhysicsWorld::Raycast(
                                   direction.GetZ() * scale);
     const JPH::RRayCast ray(origin, ray_direction);
     JPH::RayCastResult ray_hit;
-    const bool has_hit = physics_system.GetNarrowPhaseQuery().CastRay(ray, ray_hit, {}, {},
+    const bool has_hit = physicsSystem.GetNarrowPhaseQuery().CastRay(ray, ray_hit, {}, {},
                                                                       body_filter);
 
     if (has_hit) {
         const BodyHandle handle = static_cast<BodyHandle>(
-            physics_system.GetBodyInterface().GetUserData(ray_hit.mBodyID));
+            physicsSystem.GetBodyInterface().GetUserData(ray_hit.mBodyID));
         bool valid_handle = false;
         if (handle) {
-            const std::scoped_lock shadow(shadow_lock);
+            const std::scoped_lock shadow(shadowLock);
             valid_handle = QueryHandleIsValidLocked(*this, handle).has_value();
         }
 
         if (valid_handle) {
             JPH::Vec3 normal;
-            const JPH::BodyLockRead body_lock(physics_system.GetBodyLockInterfaceNoLock(),
+            const JPH::BodyLockRead body_lock(physicsSystem.GetBodyLockInterfaceNoLock(),
                                               ray_hit.mBodyID);
             if (body_lock.Succeeded()) {
                 const JPH::RVec3 hit_position = ray.GetPointOnRay(ray_hit.mFraction);
@@ -292,7 +292,7 @@ std::expected<PhysicsRaycastHit, Error> PhysicsWorld::Raycast(
             hit.handle   = handle;
             hit.fraction = ray_hit.mFraction;
             hit.normal   = normal;
-            hit.has_hit  = true;
+            hit.hasHit  = true;
         }
     }
     QueryEnd();
@@ -313,9 +313,9 @@ std::expected<void, Error> PhysicsWorld::RaycastBatch(
     std::memset(results.data(), 0, count * sizeof(RayCastBatchResult));
     QueryBegin(this);
 
-    const JPH::NarrowPhaseQuery &query      = physics_system.GetNarrowPhaseQuery();
-    const JPH::BodyLockInterface &lock_interface = physics_system.GetBodyLockInterfaceNoLock();
-    JPH::BodyInterface &body_interface       = physics_system.GetBodyInterface();
+    const JPH::NarrowPhaseQuery &query      = physicsSystem.GetNarrowPhaseQuery();
+    const JPH::BodyLockInterface &lock_interface = physicsSystem.GetBodyLockInterfaceNoLock();
+    JPH::BodyInterface &body_interface       = physicsSystem.GetBodyInterface();
 
     for (size_t i = 0; i < count; ++i) {
         const size_t offset = i * 3;
@@ -367,7 +367,7 @@ std::expected<void, Error> PhysicsWorld::RaycastBatch(
     // Validate all collected body handles and resolve their material IDs while
     // the slot map is protected. active_queries prevents step/resize from
     // invalidating this batch while the Jolt queries are in flight.
-    const std::scoped_lock shadow(shadow_lock);
+    const std::scoped_lock shadow(shadowLock);
     const size_t body_count = this->count.load(std::memory_order::relaxed);
     for (size_t i = 0; i < results.size(); ++i) {
         RayCastBatchResult *result = &results[i];
@@ -377,9 +377,9 @@ std::expected<void, Error> PhysicsWorld::RaycastBatch(
             continue;
         }
 
-        const uint32_t dense = bodies.slot_to_dense[*slot];
-        if (dense < body_count && bodies.material_ids) {
-            result->material_id = bodies.material_ids[dense];
+        const uint32_t dense = bodies.slotToDense[*slot];
+        if (dense < body_count && bodies.materialIds) {
+            result->materialId = bodies.materialIds[dense];
         }
     }
 
@@ -413,10 +413,10 @@ std::expected<PhysicsShapecastHit, Error> PhysicsWorld::Shapecast(
     if (collector.has_hit()) {
         const JPH::ShapeCastResult &cast_hit = collector.hit();
         const BodyHandle handle = static_cast<BodyHandle>(
-            physics_system.GetBodyInterface().GetUserData(cast_hit.mBodyID2));
+            physicsSystem.GetBodyInterface().GetUserData(cast_hit.mBodyID2));
         bool valid_handle = false;
         if (handle) {
-            const std::scoped_lock shadow(shadow_lock);
+            const std::scoped_lock shadow(shadowLock);
             valid_handle = QueryHandleIsValidLocked(*this, handle).has_value();
         }
 
@@ -436,7 +436,7 @@ std::expected<PhysicsShapecastHit, Error> PhysicsWorld::Shapecast(
             hit.fraction = cast_hit.mFraction;
             hit.point    = cast_hit.mContactPointOn2;
             hit.normal   = JPH::Vec3(nx, ny, nz);
-            hit.has_hit  = true;
+            hit.hasHit  = true;
         }
     }
 

@@ -66,7 +66,7 @@ static int GetBakedBuffer(PyObject *baked, Py_ssize_t index, size_t expected_siz
 [[nodiscard]]
 int WorldResize(PhysicsWorldObject *self, size_t new_capacity) {
     PhysicsWorld *world = &self->physics;
-    if ((world->view_export_count).load(std::memory_order::relaxed) > 0) {
+    if ((world->viewExportCount).load(std::memory_order::relaxed) > 0) {
         PyErr_SetString(PyExc_BufferError, "Cannot resize while memoryview is active.");
         return -1;
     }
@@ -113,10 +113,10 @@ int InitSettings(PhysicsWorldObject *self, PyObject *settings_dict,
     }
 
     int ok = PyArg_ParseTuple(norm, "ffffiiiiiii", &gravity->gx, &gravity->gy, &gravity->gz,
-                              &settings->penetration_slop, &settings->max_bodies,
-                              &settings->max_pairs, &settings->max_contact_constraints,
-                              &settings->temp_allocator_size, &settings->max_physics_jobs,
-                              &settings->max_physics_barriers, &settings->num_threads);
+                              &settings->penetrationSlop, &settings->maxBodies,
+                              &settings->maxPairs, &settings->maxContactConstraints,
+                              &settings->tempAllocatorSize, &settings->maxPhysicsJobs,
+                              &settings->maxPhysicsBarriers, &settings->numThreads);
     Py_DECREF(norm);
     return ok ? 0 : -1;
 }
@@ -165,9 +165,9 @@ int LoadBakedScene(PhysicsWorldObject *self, PyObject *baked) {
         .positions     = static_cast<const JPH::Real *>(positions),
         .rotations     = static_cast<const float *>(rotations),
         .shapes        = static_cast<const float *>(shapes),
-        .motion_types  = static_cast<const uint8_t *>(motion_types),
-        .object_layers = static_cast<const uint8_t *>(object_layers),
-        .user_data     = static_cast<const uint64_t *>(user_data),
+        .motionTypes  = static_cast<const uint8_t *>(motion_types),
+        .objectLayers = static_cast<const uint8_t *>(object_layers),
+        .userData     = static_cast<const uint64_t *>(user_data),
     };
 
     const std::expected<void, Error> status = self->physics.LoadBakedScene(scene);
@@ -181,7 +181,7 @@ int LoadBakedScene(PhysicsWorldObject *self, PyObject *baked) {
     case WorldError::LimitReached:
         PyErr_Format(PyExc_ValueError,
                      "Initial scene contains %zu bodies, exceeding max_bodies (%u).", count,
-                     self->physics.max_jolt_bodies);
+                     self->physics.maxJoltBodies);
         break;
     case WorldError::InvalidArgument:
         PyErr_SetString(PyExc_ValueError, "Invalid baked scene data");

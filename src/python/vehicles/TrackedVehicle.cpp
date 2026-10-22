@@ -38,8 +38,8 @@ bool ParseTrackWheelConfig(PyObject *dict, CPH::TrackWheelConfig &out) {
     out.width       = GetAttribute(dict, "width", out.width);
     out.suspension  = GetAttribute(dict, "suspension", out.suspension);
     out.friction    = GetAttribute(dict, "friction", out.friction);
-    out.spring_freq = GetAttribute(dict, "spring_freq", out.spring_freq);
-    out.spring_damp = GetAttribute(dict, "spring_damp", out.spring_damp);
+    out.springFreq = GetAttribute(dict, "spring_freq", out.springFreq);
+    out.springDamp = GetAttribute(dict, "spring_damp", out.springDamp);
     return true;
 }
 
@@ -70,7 +70,7 @@ bool ParseTracks(PyObject *py_tracks, std::vector<CPH::TrackConfig> &out) {
         for (std::uint32_t k = 0; k < tracks[t].count; k++) {
             track.wheels.push_back(static_cast<int>(tracks[t].indices[k]));
         }
-        track.driven_wheel = static_cast<int>(tracks[t].driven_idx);
+        track.drivenWheel = static_cast<int>(tracks[t].drivenIdx);
         out.push_back(std::move(track));
 
         Deallocate(tracks[t].indices);
@@ -95,7 +95,7 @@ bool ParseTracks(PyObject *py_tracks, std::vector<CPH::TrackConfig> &out) {
     float     max_torque  = 5000.0f;
     float     max_rpm     = 6000.0f;
 
-    const ParseResult parsed = self->parsers->CreateTracked.Parse(
+    const ParseResult parsed = self->parsers->createTracked.Parse(
         args, nargs, kwnames, chassis_raw, py_wheels, py_tracks, max_torque, max_rpm);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -107,11 +107,11 @@ bool ParseTracks(PyObject *py_tracks, std::vector<CPH::TrackConfig> &out) {
     }
 
     CPH::TrackedVehicleConfig config;
-    config.engine.max_torque = max_torque;
-    config.engine.max_rpm    = max_rpm;
+    config.engine.maxTorque = max_torque;
+    config.engine.maxRpm    = max_rpm;
     // min_rpm is not part of the tracked signature, and a tracked engine idles
     // lower than a car's: 500 rpm, not EngineConfig's 1000 rpm default.
-    config.engine.min_rpm    = 500.0f;
+    config.engine.minRpm    = 500.0f;
 
     const Py_ssize_t wheel_count = PyList_Size(py_wheels);
     config.wheels.resize(static_cast<std::size_t>(wheel_count));
@@ -129,7 +129,7 @@ bool ParseTracks(PyObject *py_tracks, std::vector<CPH::TrackConfig> &out) {
     // Pending body-creation commands have to run before the chassis handle can
     // resolve to a live body.
     {
-        const std::scoped_lock lock(self->physics.shadow_lock);
+        const std::scoped_lock lock(self->physics.shadowLock);
         SyncAndFlushInternal(self);
     }
 
@@ -149,7 +149,7 @@ bool ParseTracks(PyObject *py_tracks, std::vector<CPH::TrackConfig> &out) {
 
     ModuleState *state = GetModuleState(PyType_GetModule(Py_TYPE(self)));
     auto         *obj =
-        PyObject_GC_New(VehicleObject, reinterpret_cast<PyTypeObject *>(state->VehicleType));
+        PyObject_GC_New(VehicleObject, reinterpret_cast<PyTypeObject *>(state->vehicleType));
     if (obj == nullptr) {
         return nullptr;
     }
@@ -182,7 +182,7 @@ bool ParseTracks(PyObject *py_tracks, std::vector<CPH::TrackConfig> &out) {
     float right = 0.0f;
     float brake = 0.0f;
 
-    const ParseResult parsed = self->parsers->TankInput.Parse(args, nargs, kwnames, left, right,
+    const ParseResult parsed = self->parsers->tankInput.Parse(args, nargs, kwnames, left, right,
                                                               brake);
     if (!parsed) {
         RaiseParseError(parsed.error());

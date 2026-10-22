@@ -9,10 +9,10 @@ struct VehicleParsers {
 
     Parser<"VehicleInput", Arg<"forward", float, false>, Arg<"right", float, false>,
            Arg<"brake", float, false>, Arg<"handbrake", float, false>>
-        VehicleInput{catalog};
+        vehicleInput{catalog};
     Parser<"TankInput", Arg<"left", float, true>, Arg<"right", float, true>,
            Arg<"brake", float, false>>
-        TankInput{catalog};
+        tankInput{catalog};
 };
 
 } // namespace CPH::Python

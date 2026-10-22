@@ -66,16 +66,16 @@ JPH::ShapeRefC PhysicsWorld::FindOrCreateShapeLocked(int type, std::span<const f
     }
     // 2. CACHE LOOKUP
     const ShapeKey key{.type = (uint32_t)type, .p1 = p1, .p2 = p2, .p3 = p3, .p4 = p4};
-    for (size_t i = 0; i < shape_cache_count; ++i) {
-        if (shape_cache[i].key == key) {
-            return shape_cache[i].shape;
+    for (size_t i = 0; i < shapeCacheCount; ++i) {
+        if (shapeCache[i].key == key) {
+            return shapeCache[i].shape;
         }
     }
 
     // 3. PRE-ALLOCATION CHECK (Fail early before expensive Jolt work)
-    if (shape_cache_count >= shape_cache.size()) {
-        const std::size_t new_cap = shape_cache.size() == 0 ? 16 : shape_cache.size() * 2;
-        if (!shape_cache.reallocate(new_cap)) [[unlikely]] {
+    if (shapeCacheCount >= shapeCache.size()) {
+        const std::size_t new_cap = shapeCache.size() == 0 ? 16 : shapeCache.size() * 2;
+        if (!shapeCache.reallocate(new_cap)) [[unlikely]] {
             return {};
         }
     }
@@ -108,7 +108,7 @@ JPH::ShapeRefC PhysicsWorld::FindOrCreateShapeLocked(int type, std::span<const f
     }
 
     // 5. CACHE COMMIT
-    ShapeEntry &entry = shape_cache[shape_cache_count++];
+    ShapeEntry &entry = shapeCache[shapeCacheCount++];
     entry.key         = key;
     entry.shape       = shape;
 
@@ -117,7 +117,7 @@ JPH::ShapeRefC PhysicsWorld::FindOrCreateShapeLocked(int type, std::span<const f
 
 
 JPH::ShapeRefC PhysicsWorld::FindOrCreateShape(int type, std::span<const float, 4> params) {
-    const std::scoped_lock guard(shadow_lock);
+    const std::scoped_lock guard(shadowLock);
     return FindOrCreateShapeLocked(type, params);
 }
 
@@ -138,7 +138,7 @@ void ShapecastExecuteInternal(PhysicsWorld &world, const JPH::Shape *shape,
 
     // An invalid BodyID matches no real body, so this is "ignore nothing".
     const JPH::IgnoreSingleBodyFilter body_filter(ignore_bid);
-    world.physics_system.GetNarrowPhaseQuery().CastShape(shape_cast, settings, JPH::RVec3::sZero(),
+    world.physicsSystem.GetNarrowPhaseQuery().CastShape(shape_cast, settings, JPH::RVec3::sZero(),
                                                          collector, {}, {}, body_filter);
 }
 

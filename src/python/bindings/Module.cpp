@@ -45,11 +45,11 @@ static void DumpParserCatalog(FastParserCore *const *const parsers, const size_t
         }
         *is_first = false;
 
-        fprintf(out, "  \"%s\": [\n", fp->parser_name);
+        fprintf(out, "  \"%s\": [\n", fp->parserName);
         for (size_t j = 0; j < fp->count; ++j) {
-            const bool is_req = (fp->required_mask & (1ULL << j)) != 0;
+            const bool is_req = (fp->requiredMask & (1ULL << j)) != 0;
             fprintf(out, "    {\"name\": \"%s\", \"type\": \"%s\", \"required\": %s}%s\n",
-                    fp->cold_specs[j].name, fp->cold_specs[j].type_name, is_req ? "true" : "false",
+                    fp->coldSpecs[j].name, fp->coldSpecs[j].typeName, is_req ? "true" : "false",
                     (j == fp->count - 1) ? "" : ",");
         }
         fprintf(out, "  ]");
@@ -68,7 +68,7 @@ static void DumpParserCatalog(FastParserCore *const *const parsers, const size_t
     // 1. Thread-safe, subinterpreter-safe parsing via FastParser
 
     const ParseResult parsed =
-        st->parsers->DumpSchema.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, filename);
+        st->parsers->dumpSchema.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, filename);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
@@ -88,7 +88,7 @@ static void DumpParserCatalog(FastParserCore *const *const parsers, const size_t
         CPH::Python::EcsParsers ecs;
         CPH::Python::SkeletonParsers skeleton;
         CPH::Python::RagdollParsers ragdoll;
-        CPH::Python::RagdollSettingsParsers ragdoll_settings;
+        CPH::Python::RagdollSettingsParsers ragdollSettings;
         CPH::Python::ShipParsers ship;
         CPH::Python::SoftBodySharedSettingsParsers sbss;
         CPH::Python::MathParsers math;
@@ -108,7 +108,7 @@ static void DumpParserCatalog(FastParserCore *const *const parsers, const size_t
     dump_group(all.ecs);
     dump_group(all.skeleton);
     dump_group(all.ragdoll);
-    dump_group(all.ragdoll_settings);
+    dump_group(all.ragdollSettings);
     dump_group(all.ship);
     dump_group(all.sbss);
     dump_group(all.math);
@@ -345,21 +345,21 @@ static int InitTypes(PyObject *m, ModuleState *st) {
         PyObject **slot;
         const char *name;
     } types[] = {
-        {.spec = (&WorldSpec), .slot = &st->PhysicsWorldType, .name = "PhysicsWorld"},
-        {.spec = (&CharacterSpec), .slot = &st->CharacterType, .name = "Character"},
-        {.spec = (&VehicleSpec), .slot = &st->VehicleType, .name = "Vehicle"},
-        {.spec = (&ShipSpec), .slot = &st->ShipType, .name = "Ship"},
+        {.spec = (&WorldSpec), .slot = &st->physicsWorldType, .name = "PhysicsWorld"},
+        {.spec = (&CharacterSpec), .slot = &st->characterType, .name = "Character"},
+        {.spec = (&VehicleSpec), .slot = &st->vehicleType, .name = "Vehicle"},
+        {.spec = (&ShipSpec), .slot = &st->shipType, .name = "Ship"},
         {.spec = (&RagdollSettingsSpec),
-         .slot = &st->RagdollSettingsType,
+         .slot = &st->ragdollSettingsType,
          .name = "RagdollSettings"},
-        {.spec = (&RagdollSpec), .slot = &st->RagdollType, .name = "Ragdoll"},
-        {.spec = (&SkeletonSpec), .slot = &st->SkeletonType, .name = "Skeleton"},
-        {.spec = (&BufferProxySpec), .slot = &st->BufferProxyType, .name = "BufferProxyObject"},
+        {.spec = (&RagdollSpec), .slot = &st->ragdollType, .name = "Ragdoll"},
+        {.spec = (&SkeletonSpec), .slot = &st->skeletonType, .name = "Skeleton"},
+        {.spec = (&BufferProxySpec), .slot = &st->bufferProxyType, .name = "BufferProxyObject"},
         {.spec = (&SoftBodySharedSettingsSpec),
-         .slot = &st->SoftBodySharedSettingsType,
+         .slot = &st->softBodySharedSettingsType,
          .name = "SoftBodySharedSettings"},
-        {.spec = (&RegistrySpec), .slot = &st->RegistryType, .name = "Registry"},
-        {.spec = (&MathServiceSpec), .slot = &st->MathServiceType, .name = "MathService"}};
+        {.spec = (&RegistrySpec), .slot = &st->registryType, .name = "Registry"},
+        {.spec = (&MathServiceSpec), .slot = &st->mathServiceType, .name = "MathService"}};
 
     for (size_t i = 0; i < sizeof(types) / sizeof(types[0]); i++) {
         auto type = PyType_FromModuleAndSpec(m, types[i].spec, nullptr);
@@ -597,17 +597,17 @@ extern PyModuleDef culverin_module;
         return 0;
     }
     Py_VISIT(st->helper);
-    Py_VISIT(st->PhysicsWorldType);
-    Py_VISIT(st->CharacterType);
-    Py_VISIT(st->VehicleType);
-    Py_VISIT(st->RagdollSettingsType);
-    Py_VISIT(st->RagdollType);
-    Py_VISIT(st->SkeletonType);
-    Py_VISIT(st->ShipType);
-    Py_VISIT(st->BufferProxyType);
-    Py_VISIT(st->RegistryType);
-    Py_VISIT(st->MathServiceType);
-    Py_VISIT(st->SoftBodySharedSettingsType);
+    Py_VISIT(st->physicsWorldType);
+    Py_VISIT(st->characterType);
+    Py_VISIT(st->vehicleType);
+    Py_VISIT(st->ragdollSettingsType);
+    Py_VISIT(st->ragdollType);
+    Py_VISIT(st->skeletonType);
+    Py_VISIT(st->shipType);
+    Py_VISIT(st->bufferProxyType);
+    Py_VISIT(st->registryType);
+    Py_VISIT(st->mathServiceType);
+    Py_VISIT(st->softBodySharedSettingsType);
     return 0;
 }
 
@@ -618,17 +618,17 @@ extern PyModuleDef culverin_module;
         return 0;
     }
     Py_CLEAR(st->helper);
-    Py_CLEAR(st->PhysicsWorldType);
-    Py_CLEAR(st->CharacterType);
-    Py_CLEAR(st->VehicleType);
-    Py_CLEAR(st->RagdollSettingsType);
-    Py_CLEAR(st->RagdollType);
-    Py_CLEAR(st->SkeletonType);
-    Py_CLEAR(st->ShipType);
-    Py_CLEAR(st->BufferProxyType);
-    Py_CLEAR(st->RegistryType);
-    Py_CLEAR(st->MathServiceType);
-    Py_CLEAR(st->SoftBodySharedSettingsType);
+    Py_CLEAR(st->physicsWorldType);
+    Py_CLEAR(st->characterType);
+    Py_CLEAR(st->vehicleType);
+    Py_CLEAR(st->ragdollSettingsType);
+    Py_CLEAR(st->ragdollType);
+    Py_CLEAR(st->skeletonType);
+    Py_CLEAR(st->shipType);
+    Py_CLEAR(st->bufferProxyType);
+    Py_CLEAR(st->registryType);
+    Py_CLEAR(st->mathServiceType);
+    Py_CLEAR(st->softBodySharedSettingsType);
     st->parsers.reset();
     return 0;
 }

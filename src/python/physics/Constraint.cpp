@@ -37,7 +37,7 @@ void ActivateBody(JPH::BodyInterface &bi, JPH::Body *body) {
     PyObject *o_motor  = nullptr;
 
     const ParseResult parsed =
-        self->parsers->CreateConstr.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, type, h1_raw,
+        self->parsers->createConstr.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, type, h1_raw,
                                            h2_raw, o_params, o_motor);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -85,7 +85,7 @@ void ActivateBody(JPH::BodyInterface &bi, JPH::Body *body) {
     }
 
     // 3. RESOURCE RESERVATION (Shadow Lock)
-    (self->physics.shadow_lock).lock();
+    (self->physics.shadowLock).lock();
     BlockUntilNotStepping(self);
 
     const std::optional<std::uint32_t> resolved1 =
@@ -93,34 +93,34 @@ void ActivateBody(JPH::BodyInterface &bi, JPH::Body *body) {
     const std::optional<std::uint32_t> resolved2 =
         self->physics.Resolve(static_cast<BodyHandle>(h2_raw));
     if (!resolved1 || !resolved2) {
-        (self->physics.shadow_lock).unlock();
+        (self->physics.shadowLock).unlock();
         PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
         return nullptr;
     }
     const uint32_t s1 = *resolved1;
     const uint32_t s2 = *resolved2;
 
-    if (self->physics.free_constraint_count == 0) [[unlikely]] {
-        (self->physics.shadow_lock).unlock();
+    if (self->physics.freeConstraintCount == 0) [[unlikely]] {
+        (self->physics.shadowLock).unlock();
         return PyErr_Format(PyExc_MemoryError, "Max constraints reached");
     }
 
     // 4. QUEUE ASYNCHRONOUS COMMAND (capacity first so failure paths
     // cannot leak the reserved slot; params travel by value).
     if (!self->physics.EnsureCommandCapacity()) [[unlikely]] {
-        (self->physics.shadow_lock).unlock();
+        (self->physics.shadowLock).unlock();
         return PyErr_NoMemory();
     }
 
     // Reserve constraint slot
-    uint32_t c_slot         = self->physics.free_constraint_slots[--self->physics.free_constraint_count];
+    uint32_t c_slot         = self->physics.freeConstraintSlots[--self->physics.freeConstraintCount];
     ConstraintSlot &entry   = self->physics.constraints[c_slot];
     entry.type              = type;
     entry.state.store(std::to_underlying(SlotState::PendingCreate), std::memory_order::relaxed);
     ConstraintHandle handle = ConstraintHandle::FromParts(c_slot, entry.generation);
     self->physics.EnqueueCommand(s1, CPH::cmd::CreateConstraint{s2, c_slot, type, p});
 
-    (self->physics.shadow_lock).unlock();
+    (self->physics.shadowLock).unlock();
     return PyLong_FromUnsignedLongLong(handle.Raw());
 }
 
@@ -135,7 +135,7 @@ void ActivateBody(JPH::BodyInterface &bi, JPH::Body *body) {
 
     auto nargs = PyVectorcall_NARGS(nargsf);
     const ParseResult parsed =
-        self->parsers->DestroyConstr.Parse(args, nargs, kwnames, h_raw);
+        self->parsers->destroyConstr.Parse(args, nargs, kwnames, h_raw);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
@@ -144,7 +144,7 @@ void ActivateBody(JPH::BodyInterface &bi, JPH::Body *body) {
     JPH::Constraint *c_to_destroy = nullptr;
 
     // 2. RESOLUTION PHASE (Inside Shadow Lock)
-    (self->physics.shadow_lock).lock();
+    (self->physics.shadowLock).lock();
 
     // RESOLUTION PHASE
     const ConstraintHandle handle(h_raw);
@@ -153,7 +153,7 @@ void ActivateBody(JPH::BodyInterface &bi, JPH::Body *body) {
 
     // Range check before indexing (the legacy order read the state first).
     if (slot >= self->physics.constraints.size()) {
-        (self->physics.shadow_lock).unlock();
+        (self->physics.shadowLock).unlock();
         PyErr_SetString(PyExc_ValueError, "Invalid or stale constraint handle");
         return nullptr;
     }
@@ -162,7 +162,7 @@ void ActivateBody(JPH::BodyInterface &bi, JPH::Body *body) {
 
     // Allow destruction of ALIVE OR PENDING_CREATE
     if (entry.generation != gen || (state != std::to_underlying(SlotState::Alive) && state != std::to_underlying(SlotState::PendingCreate))) {
-        (self->physics.shadow_lock).unlock();
+        (self->physics.shadowLock).unlock();
         PyErr_SetString(PyExc_ValueError, "Invalid or stale constraint handle");
         return nullptr;
     }
@@ -174,9 +174,9 @@ void ActivateBody(JPH::BodyInterface &bi, JPH::Body *body) {
     entry.constraint = nullptr;
     entry.state.store(std::to_underlying(SlotState::Empty), std::memory_order::release);
     entry.generation++;
-    self->physics.free_constraint_slots[self->physics.free_constraint_count++] = slot;
+    self->physics.freeConstraintSlots[self->physics.freeConstraintCount++] = slot;
 
-    (self->physics.shadow_lock).unlock();
+    (self->physics.shadowLock).unlock();
 
     // 3. JOLT DESTRUCTION PHASE (Outside Shadow Lock)
     if (c_to_destroy) {
@@ -184,7 +184,7 @@ void ActivateBody(JPH::BodyInterface &bi, JPH::Body *body) {
         // ActivateBody is thread-safe in Jolt.
         if (c_to_destroy->GetType() == JPH::EConstraintType::TwoBodyConstraint) {
             auto *tbc = static_cast<JPH::TwoBodyConstraint *>(c_to_destroy);
-            JPH::BodyInterface &bi = self->physics.physics_system.GetBodyInterface();
+            JPH::BodyInterface &bi = self->physics.physicsSystem.GetBodyInterface();
             ActivateBody(bi, tbc->GetBody1());
             ActivateBody(bi, tbc->GetBody2());
         }
@@ -192,7 +192,7 @@ void ActivateBody(JPH::BodyInterface &bi, JPH::Body *body) {
         // Removes and frees the constraint: the physics system owns its only
         // reference. Releasing it afterwards (as this did) drops the refcount of
         // a freed block.
-        self->physics.physics_system.RemoveConstraint(c_to_destroy);
+        self->physics.physicsSystem.RemoveConstraint(c_to_destroy);
     }
 
     Py_RETURN_NONE;
@@ -206,7 +206,7 @@ void ActivateBody(JPH::BodyInterface &bi, JPH::Body *body) {
     float target;
 
     const ParseResult parsed =
-        self->parsers->SetConstrTarget.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw,
+        self->parsers->setConstrTarget.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, h_raw,
                                               target);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -235,13 +235,13 @@ void ActivateBody(JPH::BodyInterface &bi, JPH::Body *body) {
     uint64_t handle_raw;
 
     const ParseResult parsed =
-        self->parsers->HOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle_raw);
+        self->parsers->hOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle_raw);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
     }
 
-    (self->physics.shadow_lock).lock();
+    (self->physics.shadowLock).lock();
     BlockUntilNotStepping(self);
 
     const ConstraintHandle handle(handle_raw);
@@ -251,7 +251,7 @@ void ActivateBody(JPH::BodyInterface &bi, JPH::Body *body) {
     // Validate slot range and generation
     if (slot >= self->physics.constraints.size() ||
                      self->physics.constraints[slot].generation != gen) [[unlikely]] {
-        (self->physics.shadow_lock).unlock();
+        (self->physics.shadowLock).unlock();
         PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
         return nullptr;
     }
@@ -264,12 +264,12 @@ void ActivateBody(JPH::BodyInterface &bi, JPH::Body *body) {
         // Return from shadow array directly.
         // This is safe even if Jolt hasn't built the object yet.
         int type = self->physics.constraints[slot].type;
-        (self->physics.shadow_lock).unlock();
+        (self->physics.shadowLock).unlock();
         return PyLong_FromLong(static_cast<long>(type));
     }
 
     // If state is SlotState::Empty or PENDING_DESTROY
-    (self->physics.shadow_lock).unlock();
+    (self->physics.shadowLock).unlock();
     PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
     return nullptr;
 }

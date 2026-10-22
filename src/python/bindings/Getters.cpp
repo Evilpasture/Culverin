@@ -27,9 +27,9 @@ static Py_ssize_t BufferProxy_length(BufferProxyObject *self) {
         // We know that both PhysicsWorld and Registry have the export count at a fixed offset
         // or we can switch based on type.
         if (PyObject_TypeCheck(self->owner,
-                               reinterpret_cast<PyTypeObject *>(st->PhysicsWorldType))) {
+                               reinterpret_cast<PyTypeObject *>(st->physicsWorldType))) {
             ((reinterpret_cast<PhysicsWorldObject *>(self->owner))
-                                           ->physics.view_export_count).fetch_sub(1, std::memory_order::relaxed);
+                                           ->physics.viewExportCount).fetch_sub(1, std::memory_order::relaxed);
         } else {
             reinterpret_cast<RegistryObject *>(self->owner)->registry->OnViewReleased();
         }
@@ -52,14 +52,14 @@ static void BufferProxy_dealloc(BufferProxyObject *self) {
     // Determine the lock and target based on the buffer type category
     void *target_ptr = nullptr;
 
-    if (self->buf_type < ProxyBufferType::EcsData) {
+    if (self->bufType < ProxyBufferType::EcsData) {
         /* --- CATEGORY: Physics World Buffers --- */
         PhysicsWorldObject *world = reinterpret_cast<PhysicsWorldObject *>(self->owner);
 
-        (world->physics.shadow_lock).lock();
+        (world->physics.shadowLock).lock();
         BlockUntilNotStepping(world);
 
-        switch (self->buf_type) {
+        switch (self->bufType) {
         case ProxyBufferType::Positions:
             target_ptr = world->physics.bodies.positions.data();
             break;
@@ -67,34 +67,34 @@ static void BufferProxy_dealloc(BufferProxyObject *self) {
             target_ptr = world->physics.bodies.rotations.data();
             break;
         case ProxyBufferType::LinearVelocities:
-            target_ptr = world->physics.bodies.linear_velocities.data();
+            target_ptr = world->physics.bodies.linearVelocities.data();
             break;
         case ProxyBufferType::AngularVelocities:
-            target_ptr = world->physics.bodies.angular_velocities.data();
+            target_ptr = world->physics.bodies.angularVelocities.data();
             break;
         case ProxyBufferType::UserData:
-            target_ptr = world->physics.bodies.user_data.data();
+            target_ptr = world->physics.bodies.userData.data();
             break;
         case ProxyBufferType::Dynamic:
-            target_ptr = self->dynamic_ptr;
+            target_ptr = self->dynamicPtr;
             break; // Soft Body Verts
         default:
             std::unreachable();
         }
 
         if (!target_ptr) {
-            (world->physics.shadow_lock).unlock();
+            (world->physics.shadowLock).unlock();
             PyErr_SetString(PyExc_RuntimeError, "Physics buffer not allocated");
             return -1;
         }
 
         // Auto-update shape based on current body count for non-dynamic buffers
-        if (self->buf_type != ProxyBufferType::Dynamic) {
+        if (self->bufType != ProxyBufferType::Dynamic) {
             size_t count   = (world->physics.count).load(std::memory_order::acquire);
             self->shape[0] = static_cast<Py_ssize_t>(count * self->stride);
         }
 
-        (world->physics.shadow_lock).unlock();
+        (world->physics.shadowLock).unlock();
 
     } else {
         /* --- CATEGORY: ECS Registry Buffers --- */
@@ -102,7 +102,7 @@ static void BufferProxy_dealloc(BufferProxyObject *self) {
         // built. Nothing mutable is read here: the registry refuses to grow a
         // component set while a view is exported, so the address and the shape
         // stay valid for the proxy's whole life.
-        target_ptr = self->dynamic_ptr;
+        target_ptr = self->dynamicPtr;
 
         if (!target_ptr) {
             // A zero-length view still needs a non-null address for the buffer
@@ -123,7 +123,7 @@ static void BufferProxy_dealloc(BufferProxyObject *self) {
     Py_INCREF(self);
 
     view->len        = self->shape[0] * self->strides[0];
-    view->readonly   = (self->buf_type == ProxyBufferType::EcsEntities) ? 1 : 0; // Entities are read-only
+    view->readonly   = (self->bufType == ProxyBufferType::EcsEntities) ? 1 : 0; // Entities are read-only
     view->itemsize   = static_cast<Py_ssize_t>(self->itemsize);
     view->format     = const_cast<char *>(self->format);
     view->ndim       = 1;
@@ -143,13 +143,13 @@ static void BufferProxy_releasebuffer([[maybe_unused]] BufferProxyObject *self,
 
     // 4. Mark query finished
     // Use 'release' barrier to ensure Numpy reads are finished before Stepper writes
-    if ((world->physics.active_queries).fetch_sub(1, std::memory_order::release) == 1) {
+    if ((world->physics.activeQueries).fetch_sub(1, std::memory_order::release) == 1) {
 
         // 5. If we were the last ones, wake up the Stepper!
         // We use the internal sync mutex/cond here
-        (world->physics.step_sync.mutex).lock();
-        (world->physics.step_sync.cond).notify_all();
-        (world->physics.step_sync.mutex).unlock();
+        (world->physics.stepSync.mutex).lock();
+        (world->physics.stepSync.cond).notify_all();
+        (world->physics.stepSync.mutex).unlock();
     }
 #endif
 }
@@ -176,7 +176,7 @@ static PyObject *MakeProxy(PhysicsWorldObject *self, ProxyBufferType type, const
 
     // Allocation
     BufferProxyObject *proxy = PyObject_GC_New(
-        BufferProxyObject, reinterpret_cast<PyTypeObject *>(st->BufferProxyType));
+        BufferProxyObject, reinterpret_cast<PyTypeObject *>(st->bufferProxyType));
     if (!proxy) {
         return nullptr;
     }
@@ -184,7 +184,7 @@ static PyObject *MakeProxy(PhysicsWorldObject *self, ProxyBufferType type, const
     // Initialization
     proxy->owner = reinterpret_cast<PyObject *>(self);
     Py_INCREF(self);
-    proxy->buf_type = type;
+    proxy->bufType = type;
     proxy->format   = format;
     proxy->itemsize = itemsize;
     proxy->stride   = stride;
@@ -195,7 +195,7 @@ static PyObject *MakeProxy(PhysicsWorldObject *self, ProxyBufferType type, const
     proxy->shape[0]   = static_cast<Py_ssize_t>(count * stride);
     proxy->strides[0] = static_cast<Py_ssize_t>(itemsize);
 
-    (self->physics.view_export_count).fetch_add(1, std::memory_order::relaxed);
+    (self->physics.viewExportCount).fetch_add(1, std::memory_order::relaxed);
 
     PyObject_GC_Track(proxy);
     return reinterpret_cast<PyObject *>(proxy);
@@ -204,7 +204,7 @@ static PyObject *MakeProxy(PhysicsWorldObject *self, ProxyBufferType type, const
 // --- Advanced getters for lock and thread management ---
 [[nodiscard]] PyObject * WorldGetIsStepPending(PhysicsWorldObject *self,
                                                     [[maybe_unused]] void *closure) {
-    if ((self->physics.step_requested).load(std::memory_order::acquire)) {
+    if ((self->physics.stepRequested).load(std::memory_order::acquire)) {
         Py_RETURN_TRUE;
     }
     Py_RETURN_FALSE;
@@ -246,9 +246,9 @@ static PyObject *MakeProxy(PhysicsWorldObject *self, ProxyBufferType type, const
 }
 
 [[nodiscard]] PyObject * WorldGetTime(PhysicsWorldObject *self, [[maybe_unused]] void *c) {
-    (self->physics.shadow_lock).lock();
+    (self->physics.shadowLock).lock();
     double val = self->physics.time;
-    (self->physics.shadow_lock).unlock();
+    (self->physics.shadowLock).unlock();
     return PyFloat_FromDouble(val);
 }
 
@@ -261,15 +261,15 @@ static PyObject *MakeProxy(PhysicsWorldObject *self, ProxyBufferType type, const
 [[nodiscard]] PyObject * WorldGetShapeCount(PhysicsWorldObject *self,
                                                  [[maybe_unused]] void *closure) {
     // Protected because resize() could move shape_cache
-    (self->physics.shadow_lock).lock();
-    size_t count = self->physics.shape_cache_count;
-    (self->physics.shadow_lock).unlock();
+    (self->physics.shadowLock).lock();
+    size_t count = self->physics.shapeCacheCount;
+    (self->physics.shadowLock).unlock();
     return PyLong_FromSize_t(count);
 }
 
 [[nodiscard]] PyObject * WorldGetMaxBodies(PhysicsWorldObject *self,
                                                 [[maybe_unused]] void *closure) {
-    return PyLong_FromUnsignedLong(self->physics.max_jolt_bodies);
+    return PyLong_FromUnsignedLong(self->physics.maxJoltBodies);
 }
 
 [[nodiscard]] PyObject * WorldGetRemainingCapacity(PhysicsWorldObject *self,
@@ -278,7 +278,7 @@ static PyObject *MakeProxy(PhysicsWorldObject *self, ProxyBufferType type, const
     size_t current = (self->physics.count).load(std::memory_order::acquire);
 
     // max_jolt_bodies is immutable after world initialization
-    size_t limit = self->physics.max_jolt_bodies;
+    size_t limit = self->physics.maxJoltBodies;
     size_t rem   = (current >= limit) ? 0 : (limit - current);
 
     return PyLong_FromSize_t(rem);

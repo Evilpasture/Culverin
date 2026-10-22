@@ -24,25 +24,25 @@ std::expected<void, Error> SyncEcsTransforms(PhysicsWorld      &world,
     {
         const std::scoped_lock registry_lock(registry.mutex_);
 
-        if (config.handle_component >= registry.component_count_) {
+        if (config.handleComponent >= registry.componentCount_) {
             return std::unexpected(EcsError::InvalidHandleComponent);
         }
-        const SparseSet &handle_set = registry.components_[config.handle_component];
+        const SparseSet &handle_set = registry.components_[config.handleComponent];
         if (handle_set.element_size() != kHandleElementSize) {
             return std::unexpected(EcsError::HandleComponentSize);
         }
 
         const auto valid_index = [&](int component) {
             return component >= 0 &&
-                   static_cast<std::uint32_t>(component) < registry.component_count_;
+                   static_cast<std::uint32_t>(component) < registry.componentCount_;
         };
-        if (valid_index(config.position_component) &&
-            registry.components_[config.position_component].element_size() !=
+        if (valid_index(config.positionComponent) &&
+            registry.components_[config.positionComponent].element_size() !=
                 kPositionElementSize) {
             return std::unexpected(EcsError::PositionComponentSize);
         }
-        if (valid_index(config.rotation_component) &&
-            registry.components_[config.rotation_component].element_size() !=
+        if (valid_index(config.rotationComponent) &&
+            registry.components_[config.rotationComponent].element_size() !=
                 kRotationElementSize) {
             return std::unexpected(EcsError::RotationComponentSize);
         }
@@ -50,16 +50,16 @@ std::expected<void, Error> SyncEcsTransforms(PhysicsWorld      &world,
 
     // Acquisition order is part of the engine's contract: shadow_lock before
     // the registry mutex, never the other way round.
-    const std::scoped_lock shadow_lock(world.shadow_lock);
+    const std::scoped_lock shadow_lock(world.shadowLock);
     const std::scoped_lock registry_lock(registry.mutex_);
 
     const auto valid_index = [&](int component) {
         return component >= 0 &&
-               static_cast<std::uint32_t>(component) < registry.component_count_;
+               static_cast<std::uint32_t>(component) < registry.componentCount_;
     };
-    const std::uint32_t handle_component = config.handle_component;
-    const int position_component = config.position_component;
-    const int rotation_component = config.rotation_component;
+    const std::uint32_t handle_component = config.handleComponent;
+    const int position_component = config.positionComponent;
+    const int rotation_component = config.rotationComponent;
 
     const SparseSet &handle_set = registry.components_[handle_component];
     const SparseSet *position_set =
@@ -77,7 +77,7 @@ std::expected<void, Error> SyncEcsTransforms(PhysicsWorld      &world,
         if (!resolved) {
             continue; // stale handle: the body is gone, the component stays
         }
-        const std::uint32_t dense = world.bodies.slot_to_dense[*resolved];
+        const std::uint32_t dense = world.bodies.slotToDense[*resolved];
 
         if (position_set != nullptr) {
             const std::optional<std::uint32_t> target = position_set->DenseIndexOf(entity);

@@ -45,7 +45,7 @@ class SoftBodySettings {
 
     [[nodiscard]] std::uint32_t vertex_count() const noexcept;
     [[nodiscard]] bool optimized() const noexcept { return optimized_; }
-    [[nodiscard]] bool constraints_created() const noexcept { return constraints_created_; }
+    [[nodiscard]] bool constraints_created() const noexcept { return constraintsCreated_; }
 
     void AddVertex(JPH::Float3 position, JPH::Float3 velocity, float inv_mass);
     // `inv_masses` and `velocities` may be empty, meaning "1.0 for every
@@ -74,7 +74,7 @@ class SoftBodySettings {
     SoftBodySettings() = default;
 
     JPH::SoftBodySharedSettings *settings_       = nullptr;
-    bool                         constraints_created_ = false;
+    bool                         constraintsCreated_ = false;
     bool                         optimized_           = false;
 };
 

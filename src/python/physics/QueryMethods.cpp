@@ -55,7 +55,7 @@ static PyObject *OverlapHitsToList(const PhysicsQueryHitBuffer *hits) {
     float radius       = 1.0f;
 
     const ParseResult parsed =
-        self->parsers->OverlapSphere.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_center,
+        self->parsers->overlapSphere.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_center,
                                             radius);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -92,7 +92,7 @@ static PyObject *OverlapHitsToList(const PhysicsQueryHitBuffer *hits) {
     PyObject *o_max = nullptr;
 
     const ParseResult parsed =
-        self->parsers->OverlapAABB.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_min,
+        self->parsers->overlapAabb.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_min,
                                           o_max);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -139,7 +139,7 @@ static PyObject *OverlapHitsToList(const PhysicsQueryHitBuffer *hits) {
     uint64_t ignore_handle = 0;
 
     const ParseResult parsed =
-        self->parsers->Raycast.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_start,
+        self->parsers->raycast.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_start,
                                       o_direction, max_distance, ignore_handle);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -173,7 +173,7 @@ static PyObject *OverlapHitsToList(const PhysicsQueryHitBuffer *hits) {
         return QueryStatusError(status.error(), "raycast received invalid arguments");
     }
     const PhysicsRaycastHit &hit = *status;
-    if (!hit.has_hit) {
+    if (!hit.hasHit) {
         Py_RETURN_NONE;
     }
 
@@ -189,7 +189,7 @@ static PyObject *OverlapHitsToList(const PhysicsQueryHitBuffer *hits) {
     float max_distance     = kPhysicsQueryDefaultMaxDistance;
 
     const ParseResult parsed =
-        self->parsers->RayBatch.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_starts,
+        self->parsers->rayBatch.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, o_starts,
                                        o_directions, max_distance);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -274,7 +274,7 @@ static PyObject *OverlapHitsToList(const PhysicsQueryHitBuffer *hits) {
     uint64_t ignore_handle = 0;
 
     const ParseResult parsed =
-        self->parsers->Shapecast.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, shape_type,
+        self->parsers->shapecast.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, shape_type,
                                         o_position, o_rotation, o_direction, o_size,
                                         ignore_handle);
     if (!parsed) {
@@ -320,7 +320,7 @@ static PyObject *OverlapHitsToList(const PhysicsQueryHitBuffer *hits) {
         return QueryStatusError(status.error(), "Invalid shape parameters or cache failure");
     }
     const PhysicsShapecastHit &hit = *status;
-    if (!hit.has_hit) {
+    if (!hit.hasHit) {
         Py_RETURN_NONE;
     }
 

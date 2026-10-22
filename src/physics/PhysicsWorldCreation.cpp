@@ -33,21 +33,21 @@ enum class BodySetup : uint8_t {
 static void InitializeBodyShadow(PhysicsWorld &world, BodyHandle handle,
                                    const PhysicsWorldBodyCreateRequest &request) {
     const uint32_t slot      = handle.Index();
-    const uint32_t dense     = world.bodies.slot_to_dense[slot];
+    const uint32_t dense     = world.bodies.slotToDense[slot];
     const PosStride position = {request.position.GetX(), request.position.GetY(), request.position.GetZ(), 0.0};
     const AuxStride rotation = {request.rotation.GetX(), request.rotation.GetY(), request.rotation.GetZ(),
                                 request.rotation.GetW()};
 
     world.bodies.positions[dense]          = position;
-    world.bodies.prev_positions[dense]     = position;
+    world.bodies.prevPositions[dense]     = position;
     world.bodies.rotations[dense]          = rotation;
-    world.bodies.prev_rotations[dense]     = rotation;
-    world.bodies.linear_velocities[dense]  = AuxStride{};
-    world.bodies.angular_velocities[dense] = AuxStride{};
+    world.bodies.prevRotations[dense]     = rotation;
+    world.bodies.linearVelocities[dense]  = AuxStride{};
+    world.bodies.angularVelocities[dense] = AuxStride{};
     world.bodies.categories[dense]                        = request.category;
     world.bodies.masks[dense]                             = request.mask;
-    world.bodies.material_ids[dense]                      = request.material_id;
-    world.bodies.user_data[dense]                         = request.user_data;
+    world.bodies.materialIds[dense]                      = request.materialId;
+    world.bodies.userData[dense]                         = request.userData;
 }
 
 static std::expected<BodyHandle, Error>
@@ -93,7 +93,7 @@ CreateBodyFromShape(PhysicsWorld &world, const JPH::Shape *shape,
     case BodySetup::CreationProps: {
         const BodyCreationProps props = {
             sanitized.config.mass,      sanitized.config.friction, sanitized.config.restitution,
-            sanitized.config.is_sensor, sanitized.config.use_ccd,
+            sanitized.config.isSensor, sanitized.config.useCcd,
         };
         ApplyBodyCreationProps(*settings, shape, props);
         break;
@@ -114,8 +114,8 @@ ResolvedMaterial PhysicsWorld::ResolveMaterial(uint32_t material_id, float input
     float friction    = kDefaultMaterialFriction;
     float restitution = 0.0f;
     if (material_id > 0) {
-        const std::scoped_lock guard(shadow_lock);
-        for (size_t i = 0; i < material_count; i++) {
+        const std::scoped_lock guard(shadowLock);
+        for (size_t i = 0; i < materialCount; i++) {
             if (materials[i].id == material_id) {
                 friction    = materials[i].friction;
                 restitution = materials[i].restitution;
@@ -132,48 +132,48 @@ std::expected<BodyHandle, Error>
 PhysicsWorld::CreateBody(const PhysicsWorldBodyCreateRequest &request) {
     JPH::ShapeRefC shape;
     {
-        const std::scoped_lock guard(shadow_lock);
-        shape = FindOrCreateShapeLocked(request.shape_type, request.shape_params);
+        const std::scoped_lock guard(shadowLock);
+        shape = FindOrCreateShapeLocked(request.shapeType, request.shapeParams);
     }
     if (shape == nullptr) {
         return std::unexpected(WorldCreationError::BodySettingsFailed);
     }
 
-    const uint32_t object_layer = request.config.motion_type == std::to_underlying(MotionType::Kinematic) ||
-                                          request.config.motion_type == std::to_underlying(MotionType::Static)
+    const uint32_t object_layer = request.config.motionType == std::to_underlying(MotionType::Kinematic) ||
+                                          request.config.motionType == std::to_underlying(MotionType::Static)
                                       ? std::to_underlying(ObjectLayer::Static)
                                       : std::to_underlying(ObjectLayer::Dynamic);
     return CreateBodyFromShape(
         *this, shape.GetPtr(), request,
-        static_cast<JPH::EMotionType>(request.config.motion_type), object_layer,
+        static_cast<JPH::EMotionType>(request.config.motionType), object_layer,
         BodySetup::Configured);
 }
 
 std::expected<BodyHandle, Error>
 PhysicsWorld::CreateSoftBody(const PhysicsWorldSoftBodyCreateRequest &request) {
-    if (!request.shared_settings) {
+    if (!request.sharedSettings) {
         return std::unexpected(WorldCreationError::InvalidArgument);
     }
 
     auto settings       = std::make_unique<JPH::SoftBodyCreationSettings>();
-    settings->mSettings = request.shared_settings;
+    settings->mSettings = request.sharedSettings;
     settings->mPosition              = request.position;
     // Sanitized before it reaches both Jolt and the shadow buffers below.
     const JPH::Quat rotation         = SanitizeRotation(request.rotation);
     settings->mRotation              = rotation;
     settings->mObjectLayer           = std::to_underlying(ObjectLayer::Dynamic);
-    settings->mNumIterations         = request.num_iterations;
-    settings->mLinearDamping         = request.linear_damping;
-    settings->mMaxLinearVelocity     = request.max_linear_velocity;
+    settings->mNumIterations         = request.numIterations;
+    settings->mLinearDamping         = request.linearDamping;
+    settings->mMaxLinearVelocity     = request.maxLinearVelocity;
     settings->mRestitution           = request.restitution;
     settings->mFriction              = request.friction;
     settings->mPressure              = request.pressure;
-    settings->mGravityFactor         = request.gravity_factor;
-    settings->mVertexRadius          = request.vertex_radius;
-    settings->mUpdatePosition        = request.update_position;
-    settings->mMakeRotationIdentity  = request.make_rotation_identity;
+    settings->mGravityFactor         = request.gravityFactor;
+    settings->mVertexRadius          = request.vertexRadius;
+    settings->mUpdatePosition        = request.updatePosition;
+    settings->mMakeRotationIdentity  = request.makeRotationIdentity;
     settings->mAllowSleeping         = true;
-    settings->mFacesDoubleSided      = request.faces_double_sided;
+    settings->mFacesDoubleSided      = request.facesDoubleSided;
 
     auto shadow = LockShadowNotStepping();
     const std::expected<BodyHandle, Error> commit_result =
@@ -184,34 +184,34 @@ PhysicsWorld::CreateSoftBody(const PhysicsWorldSoftBodyCreateRequest &request) {
     const BodyHandle handle = *commit_result;
 
     const uint32_t slot                         = handle.Index();
-    const uint32_t dense                        = bodies.slot_to_dense[slot];
+    const uint32_t dense                        = bodies.slotToDense[slot];
     const PosStride position_shadow             = {request.position.GetX(), request.position.GetY(),
                                                    request.position.GetZ(), 0.0};
     const AuxStride rotation_shadow             = {rotation.GetX(), rotation.GetY(),
                                                    rotation.GetZ(), rotation.GetW()};
     bodies.positions[dense]      = position_shadow;
-    bodies.prev_positions[dense] = position_shadow;
+    bodies.prevPositions[dense] = position_shadow;
     bodies.rotations[dense]      = rotation_shadow;
-    bodies.prev_rotations[dense] = rotation_shadow;
+    bodies.prevRotations[dense] = rotation_shadow;
     bodies.categories[dense]                    = request.category;
     bodies.masks[dense]                         = request.mask;
-    bodies.user_data[dense]                     = request.user_data;
+    bodies.userData[dense]                     = request.userData;
 
-    EnqueueCommand(slot, CPH::cmd::CreateSoftBody{std::move(settings), request.vertex_count});
+    EnqueueCommand(slot, CPH::cmd::CreateSoftBody{std::move(settings), request.vertexCount});
     return handle;
 }
 
 std::expected<RagdollInstance, Error>
 PhysicsWorld::CreateRagdollInstance(JPH::RagdollSettings *settings, JPH::RVec3 position,
                                       JPH::Quat rotation, uint64_t user_data) {
-    if (!settings || !jolt_initialized) {
+    if (!settings || !joltInitialized) {
         return std::unexpected(WorldCreationError::InvalidArgument);
     }
 
-    const std::scoped_lock trampoline(jph_trampoline_lock);
+    const std::scoped_lock trampoline(jphTrampolineLock);
     settings->CalculateBodyIndexToConstraintIndex();
     settings->CalculateConstraintIndexToBodyIdxPair();
-    JPH::Ragdoll *ragdoll = settings->CreateRagdoll(0, user_data, &physics_system);
+    JPH::Ragdoll *ragdoll = settings->CreateRagdoll(0, user_data, &physicsSystem);
     if (!ragdoll) {
         return std::unexpected(WorldCreationError::RagdollFailed);
     }
@@ -234,7 +234,7 @@ PhysicsWorld::CreateRagdollInstance(JPH::RagdollSettings *settings, JPH::RVec3 p
     ragdoll->SetPose(position, neutral_matrices.data(), true);
     ragdoll->AddToPhysicsSystem(JPH::EActivation::Activate, true);
     return RagdollInstance{.ragdoll    = ragdoll,
-                           .body_count = (size_t)ragdoll->GetBodyCount()};
+                           .bodyCount = (size_t)ragdoll->GetBodyCount()};
 }
 
 std::expected<std::size_t, Error> PhysicsWorld::RegisterRagdollBodies(
@@ -247,9 +247,9 @@ std::expected<std::size_t, Error> PhysicsWorld::RegisterRagdollBodies(
 
     auto shadow = LockShadowNotStepping();
     const size_t current_count = (count).load(std::memory_order::acquire);
-    size_t available           = (free_count).load(std::memory_order::acquire);
-    if (current_count > max_jolt_bodies ||
-        body_count > max_jolt_bodies - current_count) {
+    size_t available           = (freeCount).load(std::memory_order::acquire);
+    if (current_count > maxJoltBodies ||
+        body_count > maxJoltBodies - current_count) {
         return std::unexpected(WorldError::LimitReached);
     }
     if (available < body_count) {
@@ -257,31 +257,31 @@ std::expected<std::size_t, Error> PhysicsWorld::RegisterRagdollBodies(
             return std::unexpected(WorldError::OutOfMemory);
         }
         size_t new_capacity = capacity + body_count + kRagdollBodyBufferIncrement;
-        if (new_capacity > max_jolt_bodies) {
-            new_capacity = max_jolt_bodies;
+        if (new_capacity > maxJoltBodies) {
+            new_capacity = maxJoltBodies;
         }
         const std::expected<void, Error> resize_status = Resize(new_capacity);
         if (!resize_status) {
             return std::unexpected(resize_status.error());
         }
-        available = (free_count).load(std::memory_order::acquire);
+        available = (freeCount).load(std::memory_order::acquire);
         if (available < body_count) {
             return std::unexpected(WorldError::LimitReached);
         }
     }
 
-    JPH::BodyInterface &bi = physics_system.GetBodyInterface();
+    JPH::BodyInterface &bi = physicsSystem.GetBodyInterface();
     PosStride *positions              = bodies.positions.data();
-    PosStride *previous_positions     = bodies.prev_positions.data();
+    PosStride *previous_positions     = bodies.prevPositions.data();
     AuxStride *rotations              = bodies.rotations.data();
-    AuxStride *previous_rotations     = bodies.prev_rotations.data();
-    AuxStride *linear_velocities      = bodies.linear_velocities.data();
-    AuxStride *angular_velocities     = bodies.angular_velocities.data();
+    AuxStride *previous_rotations     = bodies.prevRotations.data();
+    AuxStride *linear_velocities      = bodies.linearVelocities.data();
+    AuxStride *angular_velocities     = bodies.angularVelocities.data();
     for (size_t i = 0; i < body_count; i++) {
         const JPH::BodyID body_id = ragdoll->GetBodyID((int)i);
         const size_t free_index =
-            (free_count).fetch_sub(1, std::memory_order::relaxed) - 1;
-        const uint32_t slot = bodies.free_slots[free_index];
+            (freeCount).fetch_sub(1, std::memory_order::relaxed) - 1;
+        const uint32_t slot = bodies.freeSlots[free_index];
         body_slots[i]       = slot;
         const uint32_t dense =
             (uint32_t)(count).fetch_add(1, std::memory_order::relaxed);
@@ -296,23 +296,23 @@ std::expected<std::size_t, Error> PhysicsWorld::RegisterRagdollBodies(
         previous_rotations[dense]   = rotations[dense];
         linear_velocities[dense]    = AuxStride{};
         angular_velocities[dense]   = AuxStride{};
-        bodies.body_ids[dense]      = body_id;
-        bodies.slot_to_dense[slot]  = dense;
-        bodies.dense_to_slot[dense] = slot;
+        bodies.bodyIds[dense]      = body_id;
+        bodies.slotToDense[slot]  = dense;
+        bodies.denseToSlot[dense] = slot;
 
         const uint32_t generation =
             (bodies.generations[slot]).load(std::memory_order::relaxed);
         const BodyHandle handle   = BodyHandle::FromParts(slot, generation);
         const uint32_t jolt_index = body_id.GetIndex();
-        if (id_to_handle_map && jolt_index < max_jolt_bodies) {
-            (id_to_handle_map[jolt_index]).store(handle, std::memory_order::release);
+        if (idToHandleMap && jolt_index < maxJoltBodies) {
+            (idToHandleMap[jolt_index]).store(handle, std::memory_order::release);
         }
         bi.SetUserData(body_id, handle.Raw());
-        (bodies.slot_states[slot]).store(std::to_underlying(SlotState::Alive), std::memory_order::release);
-        bodies.user_data[dense]    = user_data;
+        (bodies.slotStates[slot]).store(std::to_underlying(SlotState::Alive), std::memory_order::release);
+        bodies.userData[dense]    = user_data;
         bodies.categories[dense]   = category;
         bodies.masks[dense]        = mask;
-        bodies.material_ids[dense] = material_id;
+        bodies.materialIds[dense] = material_id;
     }
 
     return (count).load(std::memory_order::relaxed);
@@ -322,7 +322,7 @@ void PhysicsWorld::DestroyRagdoll(JPH::Ragdoll *ragdoll) {
     if (!ragdoll) {
         return;
     }
-    const std::scoped_lock trampoline(jph_trampoline_lock);
+    const std::scoped_lock trampoline(jphTrampolineLock);
     ragdoll->Release();
 }
 
@@ -350,7 +350,7 @@ std::expected<void, Error> PhysicsWorld::CreateBodiesBatch(
         if (current[0] != previous[0] || current[1] != previous[1] || current[2] != previous[2] ||
             current[3] != previous[3]) {
             {
-                const std::scoped_lock guard(shadow_lock);
+                const std::scoped_lock guard(shadowLock);
                 shape = FindOrCreateShapeLocked(shape_type, std::span<const float, 4>(current, 4));
             }
             last_shape = shape;
@@ -369,20 +369,20 @@ std::expected<void, Error> PhysicsWorld::CreateBodiesBatch(
 
     auto shadow = LockShadowNotStepping();
     size_t current_count = (count).load(std::memory_order::acquire);
-    size_t available     = (free_count).load(std::memory_order::acquire);
+    size_t available     = (freeCount).load(std::memory_order::acquire);
     if (available < batch_count || current_count + batch_count > capacity) {
         size_t needed = current_count + batch_count + kInitialBodyCapacity;
-        if (needed > max_jolt_bodies) {
-            needed = max_jolt_bodies;
+        if (needed > maxJoltBodies) {
+            needed = maxJoltBodies;
         }
         const std::expected<void, Error> resize_status = Resize(needed);
         if (!resize_status) {
             return resize_status;
         }
-        available = (free_count).load(std::memory_order::acquire);
+        available = (freeCount).load(std::memory_order::acquire);
     }
 
-    if (current_count + batch_count > max_jolt_bodies) {
+    if (current_count + batch_count > maxJoltBodies) {
         return std::unexpected(WorldError::LimitReached);
     }
 
@@ -393,29 +393,29 @@ std::expected<void, Error> PhysicsWorld::CreateBodiesBatch(
     const uint32_t base_dense =
         (uint32_t)(count).fetch_add(batch_count, std::memory_order::relaxed);
     const size_t free_head = available - batch_count;
-    (free_count).store(free_head, std::memory_order::release);
+    (freeCount).store(free_head, std::memory_order::release);
     for (size_t i = 0; i < batch_count; i++) {
         if (!settings[i]) {
             out_handles[i] = BodyHandle{};
             continue;
         }
 
-        const uint32_t slot  = bodies.free_slots[free_head + i];
+        const uint32_t slot  = bodies.freeSlots[free_head + i];
         const uint32_t dense = base_dense + (uint32_t)i;
         const uint32_t generation =
             (bodies.generations[slot]).load(std::memory_order::relaxed);
         const BodyHandle handle = BodyHandle::FromParts(slot, generation);
         settings[i]->mUserData  = handle.Raw();
-        bodies.slot_to_dense[slot]  = dense;
-        bodies.dense_to_slot[dense] = slot;
-        bodies.body_ids[dense]      = JPH::BodyID();
+        bodies.slotToDense[slot]  = dense;
+        bodies.denseToSlot[dense] = slot;
+        bodies.bodyIds[dense]      = JPH::BodyID();
 
         PosStride position                          = positions[i];
         position.w                                  = 0.0;
         bodies.positions[dense]      = position;
-        bodies.prev_positions[dense] = position;
+        bodies.prevPositions[dense] = position;
         bodies.rotations[dense]      = AuxStride{0, 0, 0, 1};
-        bodies.prev_rotations[dense] = AuxStride{0, 0, 0, 1};
+        bodies.prevRotations[dense] = AuxStride{0, 0, 0, 1};
         // Creation defaults for the fields resize leaves indeterminate
         // (batch creation takes no per-body values for these). Legacy
         // left categories/masks uninitialized here, and resize dropped
@@ -428,13 +428,13 @@ std::expected<void, Error> PhysicsWorld::CreateBodiesBatch(
         // the migration preserves it deliberately. Changing this to
         // kAllLayerBits is a one-line follow-up fix; see
         // docs/CPP23_MIGRATION.md ("Discovered legacy defect").
-        bodies.linear_velocities[dense]  = AuxStride{};
-        bodies.angular_velocities[dense] = AuxStride{};
-        bodies.user_data[dense]          = 0;
+        bodies.linearVelocities[dense]  = AuxStride{};
+        bodies.angularVelocities[dense] = AuxStride{};
+        bodies.userData[dense]          = 0;
         bodies.categories[dense]         = 0;
         bodies.masks[dense]              = 0;
-        bodies.material_ids[dense]       = 0;
-        (bodies.slot_states[slot]).store(std::to_underlying(SlotState::PendingCreate), std::memory_order::release);
+        bodies.materialIds[dense]       = 0;
+        (bodies.slotStates[slot]).store(std::to_underlying(SlotState::PendingCreate), std::memory_order::release);
 
         EnqueueCommand(slot, CPH::cmd::CreateBody{std::move(settings[i])});
         out_handles[i] = handle;
@@ -470,29 +470,29 @@ PhysicsWorld::CreateConvexHull(std::span<const float> points,
     const JPH::ShapeRefC shape = shape_result.Get();
 
     const uint32_t object_layer =
-        request.config.motion_type == std::to_underlying(MotionType::Static) ? std::to_underlying(ObjectLayer::Static) : std::to_underlying(ObjectLayer::Dynamic);
+        request.config.motionType == std::to_underlying(MotionType::Static) ? std::to_underlying(ObjectLayer::Static) : std::to_underlying(ObjectLayer::Dynamic);
     return CreateBodyFromShape(
         *this, shape.GetPtr(), request,
-        static_cast<JPH::EMotionType>(request.config.motion_type), object_layer,
+        static_cast<JPH::EMotionType>(request.config.motionType), object_layer,
         BodySetup::Configured);
 }
 
 static JPH::ShapeRefC CreateCompoundShape(PhysicsWorld &world,
                                             std::span<const PhysicsWorldCompoundPart> parts) {
-    const std::scoped_lock trampoline(world.jph_trampoline_lock);
+    const std::scoped_lock trampoline(world.jphTrampolineLock);
     JPH::StaticCompoundShapeSettings compound_settings;
 
     for (const auto &part : parts) {
         JPH::ShapeRefC sub_shape;
         {
-            const std::scoped_lock guard(world.shadow_lock);
-            sub_shape = world.FindOrCreateShapeLocked(part.shape_type, part.shape_params);
+            const std::scoped_lock guard(world.shadowLock);
+            sub_shape = world.FindOrCreateShapeLocked(part.shapeType, part.shapeParams);
         }
         if (sub_shape != nullptr) {
             // A non-unit part rotation does not trip a Jolt assert, it silently
             // bakes a skewed sub-shape into the compound, so normalize it here
             // just like the body's own rotation.
-            compound_settings.AddShape(part.local_position, SanitizeRotation(part.local_rotation),
+            compound_settings.AddShape(part.localPosition, SanitizeRotation(part.localRotation),
                                        sub_shape.GetPtr(), 0);
         }
     }
@@ -513,10 +513,10 @@ PhysicsWorld::CreateCompoundBody(std::span<const PhysicsWorldCompoundPart> parts
     }
 
     const uint32_t object_layer =
-        request.config.motion_type == std::to_underlying(MotionType::Static) ? std::to_underlying(ObjectLayer::Static) : std::to_underlying(ObjectLayer::Dynamic);
+        request.config.motionType == std::to_underlying(MotionType::Static) ? std::to_underlying(ObjectLayer::Static) : std::to_underlying(ObjectLayer::Dynamic);
     return CreateBodyFromShape(
         *this, shape.GetPtr(), request,
-        static_cast<JPH::EMotionType>(request.config.motion_type), object_layer,
+        static_cast<JPH::EMotionType>(request.config.motionType), object_layer,
         BodySetup::CreationProps);
 }
 
@@ -563,10 +563,10 @@ PhysicsWorld::CreateMeshBody(std::span<const float> vertices,
     const PhysicsWorldBodyCreateRequest request = {
         .position  = position,
         .rotation  = rotation,
-        .config    = {.motion_type = std::to_underlying(MotionType::Static)},
+        .config    = {.motionType = std::to_underlying(MotionType::Static)},
         .category  = category,
         .mask      = mask,
-        .user_data = user_data,
+        .userData = user_data,
     };
     return CreateBodyFromShape(*this, shape.GetPtr(), request, JPH::EMotionType::Static,
                                   std::to_underlying(ObjectLayer::Static), BodySetup::None);
@@ -594,11 +594,11 @@ std::expected<BodyHandle, Error> PhysicsWorld::CreateHeightfieldBody(
     const PhysicsWorldBodyCreateRequest request = {
         .position = position,
         .rotation = rotation,
-        .config = {.friction = friction, .restitution = restitution, .motion_type = std::to_underlying(MotionType::Static)},
+        .config = {.friction = friction, .restitution = restitution, .motionType = std::to_underlying(MotionType::Static)},
         .category    = category,
         .mask        = mask,
-        .material_id = material_id,
-        .user_data   = user_data,
+        .materialId = material_id,
+        .userData   = user_data,
     };
     return CreateBodyFromShape(*this, shape.GetPtr(), request, JPH::EMotionType::Static,
                                   std::to_underlying(ObjectLayer::Static), BodySetup::MaterialOnly);

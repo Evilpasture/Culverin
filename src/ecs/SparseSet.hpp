@@ -25,14 +25,14 @@ class SparseSet {
     static constexpr std::uint32_t kInvalidDenseIndex = 0xFFFFFFFFu;
 
     SparseSet() = default;
-    explicit SparseSet(std::uint32_t element_size) noexcept : element_size_(element_size) {}
+    explicit SparseSet(std::uint32_t element_size) noexcept : elementSize_(element_size) {}
 
     SparseSet(const SparseSet &)                    = delete;
     SparseSet &operator=(const SparseSet &)         = delete;
     SparseSet(SparseSet &&) noexcept                = default;
     SparseSet &operator=(SparseSet &&) noexcept     = default;
 
-    [[nodiscard]] std::uint32_t element_size() const noexcept { return element_size_; }
+    [[nodiscard]] std::uint32_t element_size() const noexcept { return elementSize_; }
 
     // Number of live components.
     [[nodiscard]] std::uint32_t count() const noexcept { return count_; }
@@ -61,7 +61,7 @@ class SparseSet {
         if (dense >= count_) {
             return {};
         }
-        return {data_.data() + static_cast<std::size_t>(dense) * element_size_, element_size_};
+        return {data_.data() + static_cast<std::size_t>(dense) * elementSize_, elementSize_};
     }
 
     // Inserts `entity`, or overwrites its payload if it is already present.
@@ -94,11 +94,11 @@ class SparseSet {
             sparse_[index] = dense;
         }
 
-        std::byte *dst = data_.data() + static_cast<std::size_t>(dense) * element_size_;
+        std::byte *dst = data_.data() + static_cast<std::size_t>(dense) * elementSize_;
         if (payload.empty()) {
-            std::memset(dst, 0, element_size_);
+            std::memset(dst, 0, elementSize_);
         } else {
-            std::memcpy(dst, payload.data(), element_size_);
+            std::memcpy(dst, payload.data(), elementSize_);
         }
         return {};
     }
@@ -119,9 +119,9 @@ class SparseSet {
             const Entity last_entity = dense_[last];
             dense_[dense]                 = last_entity;
             sparse_[last_entity.Index()]  = dense;
-            std::memcpy(data_.data() + static_cast<std::size_t>(dense) * element_size_,
-                        data_.data() + static_cast<std::size_t>(last) * element_size_,
-                        element_size_);
+            std::memcpy(data_.data() + static_cast<std::size_t>(dense) * elementSize_,
+                        data_.data() + static_cast<std::size_t>(last) * elementSize_,
+                        elementSize_);
         }
         sparse_[index] = kInvalidDenseIndex;
         count_--;
@@ -167,7 +167,7 @@ class SparseSet {
         if (!dense_.reallocate(new_cap)) {
             return false;
         }
-        return data_.reallocate(new_cap * element_size_);
+        return data_.reallocate(new_cap * elementSize_);
     }
 
     static constexpr std::size_t kInitialSparseCapacity = 1024;
@@ -176,7 +176,7 @@ class SparseSet {
     Buffer<std::uint32_t> sparse_;
     Buffer<Entity>        dense_;
     Buffer<std::byte>     data_;
-    std::uint32_t         element_size_ = 0;
+    std::uint32_t         elementSize_ = 0;
     std::uint32_t         count_        = 0;
 };
 

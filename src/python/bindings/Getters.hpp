@@ -22,9 +22,9 @@ enum class ProxyBufferType : uint8_t {
 
 struct BufferProxyObject {
     PyObject_HEAD PyObject *owner;
-    ProxyBufferType buf_type;
+    ProxyBufferType bufType;
     const char *format;
-    void *dynamic_ptr;
+    void *dynamicPtr;
     size_t itemsize;
     int stride;
     // Buffer protocol metadata storage

@@ -66,7 +66,7 @@ static PyObject *MathGetPerspective(MathHolderObject *self, PyObject *const *arg
     float far_p;
 
     const ParseResult parsed =
-        self->parsers->MathPersp.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, fovy, aspect,
+        self->parsers->mathPersp.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, fovy, aspect,
                                         near_p, far_p);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -90,7 +90,7 @@ static PyObject *MathGetOrtho(MathHolderObject *self, PyObject *const *args,
     float far_p;
 
     const ParseResult parsed =
-        self->parsers->MathOrtho.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, left, right,
+        self->parsers->mathOrtho.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, left, right,
                                         bottom, top, near_p, far_p);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -111,7 +111,7 @@ static PyObject *MathGetLookAt(MathHolderObject *self, PyObject *const *args,
     PyObject *up_obj;
 
     const ParseResult parsed =
-        self->parsers->MathLookAt.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, eye_obj,
+        self->parsers->mathLookAt.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, eye_obj,
                                          target_obj, up_obj);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -160,7 +160,7 @@ static PyObject *MathGetTrs(MathHolderObject *self, PyObject *const *args,
     PyObject *scale_obj;
 
     const ParseResult parsed =
-        self->parsers->MathTRS.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, pos_obj, rot_obj,
+        self->parsers->mathTrs.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, pos_obj, rot_obj,
                                       scale_obj);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -217,7 +217,7 @@ static PyObject *MathGetTrsBatch(MathHolderObject *self, PyObject *const *args,
     PyObject *scale_obj;
 
     const ParseResult parsed =
-        self->parsers->MathTRSBatch.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, pos_obj,
+        self->parsers->mathTrsBatch.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, pos_obj,
                                            rot_obj, scale_obj);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -261,7 +261,7 @@ static PyObject *MathInverse(MathHolderObject *self, PyObject *const *args,
     PyObject *mat_obj;
 
     const ParseResult parsed =
-        self->parsers->MathMat.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, mat_obj);
+        self->parsers->mathMat.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, mat_obj);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
@@ -286,7 +286,7 @@ static PyObject *MathMatmul(MathHolderObject *self, PyObject *const *args,
     PyObject *b_obj;
 
     const ParseResult parsed =
-        self->parsers->MathMatPair.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, a_obj,
+        self->parsers->mathMatPair.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, a_obj,
                                           b_obj);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -312,7 +312,7 @@ static PyObject *MathTransformVec3(MathHolderObject *self, PyObject *const *args
     PyObject *vec_obj;
 
     const ParseResult parsed =
-        self->parsers->MathMatVec.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, mat_obj,
+        self->parsers->mathMatVec.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, mat_obj,
                                          vec_obj);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -355,7 +355,7 @@ static PyObject *MathMatmulBatch(MathHolderObject *self, PyObject *const *args,
     PyObject *batch_obj;
 
     const ParseResult parsed =
-        self->parsers->MathMatBatch.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, mat_obj,
+        self->parsers->mathMatBatch.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, mat_obj,
                                            batch_obj);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -391,7 +391,7 @@ static PyObject *MathCullAabb(MathHolderObject *self, PyObject *const *args,
     PyObject *max_obj;
 
     const ParseResult parsed =
-        self->parsers->MathCull.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, vp_obj, min_obj,
+        self->parsers->mathCull.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, vp_obj, min_obj,
                                        max_obj);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -430,7 +430,7 @@ static PyObject *MathCullAabbBatch(MathHolderObject *self, PyObject *const *args
     PyObject *aabbs_obj;
 
     const ParseResult parsed =
-        self->parsers->MathCullBatch.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, vp_obj,
+        self->parsers->mathCullBatch.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, vp_obj,
                                             aabbs_obj);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -464,7 +464,7 @@ static PyObject *MathVec3NormalizeBatch(MathHolderObject *self, PyObject *const 
     PyObject *vecs_obj;
 
     const ParseResult parsed =
-        self->parsers->MathVec3Batch.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, vecs_obj);
+        self->parsers->mathVec3Batch.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, vecs_obj);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
@@ -502,7 +502,7 @@ static PyObject *MathQuatFromEuler(MathHolderObject *self, PyObject *const *args
     float z;
 
     const ParseResult parsed =
-        self->parsers->MathEuler.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, x, y, z);
+        self->parsers->mathEuler.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, x, y, z);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
@@ -523,7 +523,7 @@ static PyObject *MathQuatToEuler(MathHolderObject *self, PyObject *const *args,
     float w;
 
     const ParseResult parsed =
-        self->parsers->MathQuat.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, x, y, z, w);
+        self->parsers->mathQuat.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, x, y, z, w);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
@@ -544,7 +544,7 @@ static PyObject *MathQuatSlerp(MathHolderObject *self, PyObject *const *args,
     float t;
 
     const ParseResult parsed =
-        self->parsers->MathSlerp.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, q1_obj, q2_obj,
+        self->parsers->mathSlerp.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, q1_obj, q2_obj,
                                         t);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -570,7 +570,7 @@ static PyObject *MathQuatMul(MathHolderObject *self, PyObject *const *args,
     PyObject *b_obj;
 
     const ParseResult parsed =
-        self->parsers->MathQuatPair.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, a_obj,
+        self->parsers->mathQuatPair.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, a_obj,
                                            b_obj);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -597,7 +597,7 @@ static PyObject *MathVec3LerpBatch(MathHolderObject *self, PyObject *const *args
     float alpha;
 
     const ParseResult parsed =
-        self->parsers->MathLerpBatch.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, a_obj, b_obj,
+        self->parsers->mathLerpBatch.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, a_obj, b_obj,
                                             alpha);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -641,7 +641,7 @@ static PyObject *MathQuatRotateVec3(MathHolderObject *self, PyObject *const *arg
     PyObject *v_obj;
 
     const ParseResult parsed =
-        self->parsers->MathQuatVec.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, q_obj,
+        self->parsers->mathQuatVec.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, q_obj,
                                           v_obj);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -667,7 +667,7 @@ static PyObject *MathQuatRotateVec3Batch(MathHolderObject *self, PyObject *const
     PyObject *vecs_obj;
 
     const ParseResult parsed =
-        self->parsers->MathQuatVecBatch.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, q_obj,
+        self->parsers->mathQuatVecBatch.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, q_obj,
                                                vecs_obj);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -709,7 +709,7 @@ static PyObject *MathQuatInverse(MathHolderObject *self, PyObject *const *args,
     PyObject *q_obj;
 
     const ParseResult parsed =
-        self->parsers->MathQuatOp.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, q_obj);
+        self->parsers->mathQuatOp.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, q_obj);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
@@ -734,7 +734,7 @@ static PyObject *MathProject(MathHolderObject *self, PyObject *const *args,
     PyObject *vp_obj;
 
     const ParseResult parsed =
-        self->parsers->MathProject.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, v_obj, mvp_obj,
+        self->parsers->mathProject.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, v_obj, mvp_obj,
                                           vp_obj);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -765,7 +765,7 @@ static PyObject *MathUnproject(MathHolderObject *self, PyObject *const *args,
     PyObject *vp_obj;
 
     const ParseResult parsed =
-        self->parsers->MathUnproject.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, v_obj,
+        self->parsers->mathUnproject.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, v_obj,
                                             mvp_obj, vp_obj);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -795,7 +795,7 @@ static PyObject *MathQuatFromTo(MathHolderObject *self, PyObject *const *args,
     PyObject *v2_obj;
 
     const ParseResult parsed =
-        self->parsers->MathVecPair.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, v1_obj,
+        self->parsers->mathVecPair.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, v1_obj,
                                           v2_obj);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -822,7 +822,7 @@ static PyObject *MathVec3Dot(MathHolderObject *self, PyObject *const *args,
 
     // Reusing the parser from quat_from_to
     const ParseResult parsed =
-        self->parsers->MathVecPair.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, v1_obj,
+        self->parsers->mathVecPair.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, v1_obj,
                                           v2_obj);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -847,7 +847,7 @@ static PyObject *MathVec3Cross(MathHolderObject *self, PyObject *const *args,
     PyObject *v2_obj;
 
     const ParseResult parsed =
-        self->parsers->MathVecPair.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, v1_obj,
+        self->parsers->mathVecPair.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, v1_obj,
                                           v2_obj);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -875,7 +875,7 @@ static PyObject *MathIntersectRayPlane(MathHolderObject *self, PyObject *const *
     PyObject *pn_obj;
 
     const ParseResult parsed =
-        self->parsers->MathRayPlane.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, ro_obj,
+        self->parsers->mathRayPlane.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, ro_obj,
                                            rd_obj, po_obj, pn_obj);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -907,7 +907,7 @@ static PyObject *MathQuatGetAxisAngle(MathHolderObject *self, PyObject *const *a
     PyObject *q_obj;
 
     const ParseResult parsed =
-        self->parsers->MathQuatOp.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, q_obj);
+        self->parsers->mathQuatOp.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, q_obj);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
@@ -932,7 +932,7 @@ static PyObject *MathQuatFromAxisAngle(MathHolderObject *self, PyObject *const *
     float angle;
 
     const ParseResult parsed =
-        self->parsers->MathAxisAngle.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, axis_obj,
+        self->parsers->mathAxisAngle.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, axis_obj,
                                             angle);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -957,7 +957,7 @@ static PyObject *MathVec3DistanceBatch(MathHolderObject *self, PyObject *const *
     PyObject *b_obj;
 
     const ParseResult parsed =
-        self->parsers->MathDistBatch.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, a_obj,
+        self->parsers->mathDistBatch.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, a_obj,
                                             b_obj);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -1002,7 +1002,7 @@ static PyObject *MathVec3Normalize(MathHolderObject *self, PyObject *const *args
     PyObject *v_obj;
 
     const ParseResult parsed =
-        self->parsers->MathVecOp.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, v_obj);
+        self->parsers->mathVecOp.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, v_obj);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
@@ -1025,7 +1025,7 @@ static PyObject *MathMat44GetTranslation(MathHolderObject *self, PyObject *const
     PyObject *mat_obj;
 
     const ParseResult parsed =
-        self->parsers->MathMat.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, mat_obj);
+        self->parsers->mathMat.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, mat_obj);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
@@ -1048,7 +1048,7 @@ static PyObject *MathMat44GetRotation(MathHolderObject *self, PyObject *const *a
     PyObject *mat_obj;
 
     const ParseResult parsed =
-        self->parsers->MathMat.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, mat_obj);
+        self->parsers->mathMat.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, mat_obj);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
@@ -1081,7 +1081,7 @@ static PyObject *MathVec3Reflect(MathHolderObject *self, PyObject *const *args,
     PyObject *n_obj;
 
     const ParseResult parsed =
-        self->parsers->MathReflect.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, v_obj,
+        self->parsers->mathReflect.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, v_obj,
                                           n_obj);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -1107,7 +1107,7 @@ static PyObject *MathVec3Distance(MathHolderObject *self, PyObject *const *args,
     PyObject *v2_obj;
 
     const ParseResult parsed =
-        self->parsers->MathVecPair.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, v1_obj,
+        self->parsers->mathVecPair.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, v1_obj,
                                           v2_obj);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -1132,7 +1132,7 @@ static PyObject *MathQuatRotateVec3Inverse(MathHolderObject *self, PyObject *con
     PyObject *v_obj;
 
     const ParseResult parsed =
-        self->parsers->MathQuatVec.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, q_obj,
+        self->parsers->mathQuatVec.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, q_obj,
                                           v_obj);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -1158,7 +1158,7 @@ static PyObject *MathEulerToQuat(MathHolderObject *self, PyObject *const *args,
     PyObject *euler_obj;
 
     const ParseResult parsed =
-        self->parsers->MathEulerVec.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, euler_obj);
+        self->parsers->mathEulerVec.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, euler_obj);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
@@ -1181,7 +1181,7 @@ static PyObject *MathEulerToQuatBatch(MathHolderObject *self, PyObject *const *a
     PyObject *eulers_obj;
 
     const ParseResult parsed =
-        self->parsers->MathEulerBatch.Parse(args, PyVectorcall_NARGS(nargsf), kwnames,
+        self->parsers->mathEulerBatch.Parse(args, PyVectorcall_NARGS(nargsf), kwnames,
                                              eulers_obj);
     if (!parsed) {
         RaiseParseError(parsed.error());

@@ -12,17 +12,17 @@ namespace CPH::Python {
 // so non-trivial members must not be placed directly in that storage.
 struct ModuleState {
     PyObject *helper{}; // Reference to culverin._culverin module
-    PyObject *PhysicsWorldType{};
-    PyObject *CharacterType{};
-    PyObject *VehicleType{};
-    PyObject *ShipType{};
-    PyObject *SkeletonType{};
-    PyObject *RagdollSettingsType{};
-    PyObject *SoftBodySharedSettingsType{};
-    PyObject *RagdollType{};
-    PyObject *BufferProxyType{};
-    PyObject *RegistryType{};
-    PyObject *MathServiceType{};
+    PyObject *physicsWorldType{};
+    PyObject *characterType{};
+    PyObject *vehicleType{};
+    PyObject *shipType{};
+    PyObject *skeletonType{};
+    PyObject *ragdollSettingsType{};
+    PyObject *softBodySharedSettingsType{};
+    PyObject *ragdollType{};
+    PyObject *bufferProxyType{};
+    PyObject *registryType{};
+    PyObject *mathServiceType{};
 
     // RAII-owned parser group for top-level module functions.
     std::unique_ptr<CPH::Python::ModuleParsers> parsers{};

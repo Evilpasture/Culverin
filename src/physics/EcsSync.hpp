@@ -16,9 +16,9 @@ struct PhysicsWorld;
 class Registry;
 
 struct EcsSyncConfig {
-    std::uint32_t handle_component   = 0;
-    int           position_component = -1; // <0 means "do not sync positions"
-    int           rotation_component = -1; // <0 means "do not sync rotations"
+    std::uint32_t handleComponent   = 0;
+    int           positionComponent = -1; // <0 means "do not sync positions"
+    int           rotationComponent = -1; // <0 means "do not sync rotations"
 };
 
 // Walks the handle component, resolves each body handle and writes the live

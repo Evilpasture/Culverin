@@ -22,14 +22,14 @@ struct PhysicsWorld;
 // Everything that configures a ship's flight model. Defaults are the values
 // the Python API documents.
 struct ShipConfig {
-    BodyHandle sled_handle;
+    BodyHandle sledHandle;
     float      kp               = 0.0f;
     float      kd               = 0.0f;
-    float      throttle_force   = 0.0f;
-    float      steer_speed      = 0.0f;
-    float      banking_strength = 0.15f;
-    float      lateral_grip     = 500.0f;
-    float      linear_drag      = 10.0f;
+    float      throttleForce   = 0.0f;
+    float      steerSpeed      = 0.0f;
+    float      bankingStrength = 0.15f;
+    float      lateralGrip     = 500.0f;
+    float      linearDrag      = 10.0f;
 };
 
 enum class ShipError : std::uint8_t {
@@ -59,7 +59,7 @@ class Ship {
     // from the physics step, so they are atomics and never locked.
     void SetInput(float forward, float right) noexcept;
 
-    [[nodiscard]] BodyHandle SledHandle() const noexcept { return config_.sled_handle; }
+    [[nodiscard]] BodyHandle SledHandle() const noexcept { return config_.sledHandle; }
 
   private:
     class StepListener;
@@ -71,8 +71,8 @@ class Ship {
     JPH::BodyID              sled_;
     std::unique_ptr<StepListener> listener_;
 
-    std::atomic<float>       input_forward_{0.0f};
-    std::atomic<float>       input_right_{0.0f};
+    std::atomic<float>       inputForward_{0.0f};
+    std::atomic<float>       inputRight_{0.0f};
 };
 
 } // namespace CPH

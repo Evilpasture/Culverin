@@ -23,13 +23,13 @@ static constexpr int kFastParseEmptySlot = 0xFFFF;
 
 struct FastArgSpecHot {
     PyObject *interned;                        // For keyword matching
-    PyTypeObject *type_guard;                  // For type checking
+    PyTypeObject *typeGuard;                  // For type checking
     bool (*convert)(PyObject *, const void *); // The workhorse
 };                          // 24 bytes
 
 struct FastArgSpecCold {
     const char *name;
-    const char *type_name;
+    const char *typeName;
 }; // 16 bytes
 
 struct FastParserCore;
@@ -45,23 +45,23 @@ using FastParseFunc = ParseResult (*)(PyObject *const *args, Py_ssize_t nargs, P
 static constexpr auto kFastParseAlignmentSize = 64;
 struct FastArgDef {
     const char *name;
-    const char *type_name;
-    PyTypeObject *type_guard;
+    const char *typeName;
+    PyTypeObject *typeGuard;
     bool (*convert)(PyObject *, const void *);
     bool required;
 };
 
 struct FastParserCore {
-    alignas(kFastParseAlignmentSize) const char *parser_name;
-    FastArgSpecHot *hot_specs;
-    FastArgSpecCold *cold_specs;
-    uint16_t *lookup_table;
-    FastParseFunc hot_path;
+    alignas(kFastParseAlignmentSize) const char *parserName;
+    FastArgSpecHot *hotSpecs;
+    FastArgSpecCold *coldSpecs;
+    uint16_t *lookupTable;
+    FastParseFunc hotPath;
     size_t count;
-    size_t table_mask;
-    uint64_t required_mask;
-    uint64_t type_guard_mask;
-    uint64_t warned_mask;
+    size_t tableMask;
+    uint64_t requiredMask;
+    uint64_t typeGuardMask;
+    uint64_t warnedMask;
 };
 
 static_assert(sizeof(struct FastParserCore) == static_cast<size_t>(kFastParseAlignmentSize) * 2);
@@ -113,9 +113,9 @@ static inline ParseResult FastParseSpecCheckAndConv(const FastArgSpecHot *spec,
                                                          std::size_t index, PyObject *value,
                                                          const void *target,
                                                          const FastParserCore *fastparser) {
-    if (spec->type_guard) {
-        if (Py_TYPE(value) != spec->type_guard) [[likely]] {
-            if (!PyObject_TypeCheck(value, spec->type_guard)) [[unlikely]] {
+    if (spec->typeGuard) {
+        if (Py_TYPE(value) != spec->typeGuard) [[likely]] {
+            if (!PyObject_TypeCheck(value, spec->typeGuard)) [[unlikely]] {
                 return std::unexpected(FastParseReportTypeError(fastparser, index, value));
             }
         }
@@ -150,7 +150,7 @@ FastParseSpeculateP0(PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames,
 FastParseSpeculateP1(PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames,
                         const FastParserCore *fastparser, const void *const *targets) {
     if (nargs == 1 && kwnames == nullptr) [[likely]] {
-        return FastParseSpecCheckAndConv(&fastparser->hot_specs[0], 0,
+        return FastParseSpecCheckAndConv(&fastparser->hotSpecs[0], 0,
                                               args[0], targets[0], fastparser);
     }
     return FastParseFallback(args, nargs, kwnames, fastparser, targets);
@@ -161,11 +161,11 @@ FastParseSpeculateP2(PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames,
                         const FastParserCore *fastparser, const void *const *targets) {
     if (nargs == 2 && kwnames == nullptr) [[likely]] {
         if (ParseResult step = FastParseSpecCheckAndConv(
-                &fastparser->hot_specs[0], 0, args[0], targets[0], fastparser);
+                &fastparser->hotSpecs[0], 0, args[0], targets[0], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
-        return FastParseSpecCheckAndConv(&fastparser->hot_specs[1], 1,
+        return FastParseSpecCheckAndConv(&fastparser->hotSpecs[1], 1,
                                               args[1], targets[1], fastparser);
     }
     return FastParseFallback(args, nargs, kwnames, fastparser, targets);
@@ -176,16 +176,16 @@ FastParseSpeculateP3(PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames,
                         const FastParserCore *fastparser, const void *const *targets) {
     if (nargs == 3 && kwnames == nullptr) [[likely]] {
         if (ParseResult step = FastParseSpecCheckAndConv(
-                &fastparser->hot_specs[0], 0, args[0], targets[0], fastparser);
+                &fastparser->hotSpecs[0], 0, args[0], targets[0], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
         if (ParseResult step = FastParseSpecCheckAndConv(
-                &fastparser->hot_specs[1], 1, args[1], targets[1], fastparser);
+                &fastparser->hotSpecs[1], 1, args[1], targets[1], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
-        return FastParseSpecCheckAndConv(&fastparser->hot_specs[2], 2,
+        return FastParseSpecCheckAndConv(&fastparser->hotSpecs[2], 2,
                                               args[2], targets[2], fastparser);
     }
     return FastParseFallback(args, nargs, kwnames, fastparser, targets);
@@ -196,21 +196,21 @@ FastParseSpeculateP4(PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames,
                         const FastParserCore *fastparser, const void *const *targets) {
     if (nargs == 4 && kwnames == nullptr) [[likely]] {
         if (ParseResult step = FastParseSpecCheckAndConv(
-                &fastparser->hot_specs[0], 0, args[0], targets[0], fastparser);
+                &fastparser->hotSpecs[0], 0, args[0], targets[0], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
         if (ParseResult step = FastParseSpecCheckAndConv(
-                &fastparser->hot_specs[1], 1, args[1], targets[1], fastparser);
+                &fastparser->hotSpecs[1], 1, args[1], targets[1], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
         if (ParseResult step = FastParseSpecCheckAndConv(
-                &fastparser->hot_specs[2], 2, args[2], targets[2], fastparser);
+                &fastparser->hotSpecs[2], 2, args[2], targets[2], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
-        return FastParseSpecCheckAndConv(&fastparser->hot_specs[3], 3,
+        return FastParseSpecCheckAndConv(&fastparser->hotSpecs[3], 3,
                                               args[3], targets[3], fastparser);
     }
     return FastParseFallback(args, nargs, kwnames, fastparser, targets);
@@ -221,26 +221,26 @@ FastParseSpeculateP5(PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames,
                         const FastParserCore *fastparser, const void *const *targets) {
     if (nargs == 5 && kwnames == nullptr) [[likely]] {
         if (ParseResult step = FastParseSpecCheckAndConv(
-                &fastparser->hot_specs[0], 0, args[0], targets[0], fastparser);
+                &fastparser->hotSpecs[0], 0, args[0], targets[0], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
         if (ParseResult step = FastParseSpecCheckAndConv(
-                &fastparser->hot_specs[1], 1, args[1], targets[1], fastparser);
+                &fastparser->hotSpecs[1], 1, args[1], targets[1], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
         if (ParseResult step = FastParseSpecCheckAndConv(
-                &fastparser->hot_specs[2], 2, args[2], targets[2], fastparser);
+                &fastparser->hotSpecs[2], 2, args[2], targets[2], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
         if (ParseResult step = FastParseSpecCheckAndConv(
-                &fastparser->hot_specs[3], 3, args[3], targets[3], fastparser);
+                &fastparser->hotSpecs[3], 3, args[3], targets[3], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
-        return FastParseSpecCheckAndConv(&fastparser->hot_specs[4], 4,
+        return FastParseSpecCheckAndConv(&fastparser->hotSpecs[4], 4,
                                               args[4], targets[4], fastparser);
     }
     return FastParseFallback(args, nargs, kwnames, fastparser, targets);
@@ -251,31 +251,31 @@ FastParseSpeculateP6(PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames,
                         const FastParserCore *fastparser, const void *const *targets) {
     if (nargs == 6 && kwnames == nullptr) [[likely]] {
         if (ParseResult step = FastParseSpecCheckAndConv(
-                &fastparser->hot_specs[0], 0, args[0], targets[0], fastparser);
+                &fastparser->hotSpecs[0], 0, args[0], targets[0], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
         if (ParseResult step = FastParseSpecCheckAndConv(
-                &fastparser->hot_specs[1], 1, args[1], targets[1], fastparser);
+                &fastparser->hotSpecs[1], 1, args[1], targets[1], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
         if (ParseResult step = FastParseSpecCheckAndConv(
-                &fastparser->hot_specs[2], 2, args[2], targets[2], fastparser);
+                &fastparser->hotSpecs[2], 2, args[2], targets[2], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
         if (ParseResult step = FastParseSpecCheckAndConv(
-                &fastparser->hot_specs[3], 3, args[3], targets[3], fastparser);
+                &fastparser->hotSpecs[3], 3, args[3], targets[3], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
         if (ParseResult step = FastParseSpecCheckAndConv(
-                &fastparser->hot_specs[4], 4, args[4], targets[4], fastparser);
+                &fastparser->hotSpecs[4], 4, args[4], targets[4], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
-        return FastParseSpecCheckAndConv(&fastparser->hot_specs[5], 5,
+        return FastParseSpecCheckAndConv(&fastparser->hotSpecs[5], 5,
                                               args[5], targets[5], fastparser);
     }
     return FastParseFallback(args, nargs, kwnames, fastparser, targets);
@@ -286,36 +286,36 @@ FastParseSpeculateP7(PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames,
                         const FastParserCore *fastparser, const void *const *targets) {
     if (nargs == 7 && kwnames == nullptr) [[likely]] {
         if (ParseResult step = FastParseSpecCheckAndConv(
-                &fastparser->hot_specs[0], 0, args[0], targets[0], fastparser);
+                &fastparser->hotSpecs[0], 0, args[0], targets[0], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
         if (ParseResult step = FastParseSpecCheckAndConv(
-                &fastparser->hot_specs[1], 1, args[1], targets[1], fastparser);
+                &fastparser->hotSpecs[1], 1, args[1], targets[1], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
         if (ParseResult step = FastParseSpecCheckAndConv(
-                &fastparser->hot_specs[2], 2, args[2], targets[2], fastparser);
+                &fastparser->hotSpecs[2], 2, args[2], targets[2], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
         if (ParseResult step = FastParseSpecCheckAndConv(
-                &fastparser->hot_specs[3], 3, args[3], targets[3], fastparser);
+                &fastparser->hotSpecs[3], 3, args[3], targets[3], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
         if (ParseResult step = FastParseSpecCheckAndConv(
-                &fastparser->hot_specs[4], 4, args[4], targets[4], fastparser);
+                &fastparser->hotSpecs[4], 4, args[4], targets[4], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
         if (ParseResult step = FastParseSpecCheckAndConv(
-                &fastparser->hot_specs[5], 5, args[5], targets[5], fastparser);
+                &fastparser->hotSpecs[5], 5, args[5], targets[5], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
-        return FastParseSpecCheckAndConv(&fastparser->hot_specs[6], 6,
+        return FastParseSpecCheckAndConv(&fastparser->hotSpecs[6], 6,
                                               args[6], targets[6], fastparser);
     }
     return FastParseFallback(args, nargs, kwnames, fastparser, targets);
@@ -326,41 +326,41 @@ FastParseSpeculateP8(PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames,
                         const FastParserCore *fastparser, const void *const *targets) {
     if (nargs == 8 && kwnames == nullptr) [[likely]] {
         if (ParseResult step = FastParseSpecCheckAndConv(
-                &fastparser->hot_specs[0], 0, args[0], targets[0], fastparser);
+                &fastparser->hotSpecs[0], 0, args[0], targets[0], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
         if (ParseResult step = FastParseSpecCheckAndConv(
-                &fastparser->hot_specs[1], 1, args[1], targets[1], fastparser);
+                &fastparser->hotSpecs[1], 1, args[1], targets[1], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
         if (ParseResult step = FastParseSpecCheckAndConv(
-                &fastparser->hot_specs[2], 2, args[2], targets[2], fastparser);
+                &fastparser->hotSpecs[2], 2, args[2], targets[2], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
         if (ParseResult step = FastParseSpecCheckAndConv(
-                &fastparser->hot_specs[3], 3, args[3], targets[3], fastparser);
+                &fastparser->hotSpecs[3], 3, args[3], targets[3], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
         if (ParseResult step = FastParseSpecCheckAndConv(
-                &fastparser->hot_specs[4], 4, args[4], targets[4], fastparser);
+                &fastparser->hotSpecs[4], 4, args[4], targets[4], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
         if (ParseResult step = FastParseSpecCheckAndConv(
-                &fastparser->hot_specs[5], 5, args[5], targets[5], fastparser);
+                &fastparser->hotSpecs[5], 5, args[5], targets[5], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
         if (ParseResult step = FastParseSpecCheckAndConv(
-                &fastparser->hot_specs[6], 6, args[6], targets[6], fastparser);
+                &fastparser->hotSpecs[6], 6, args[6], targets[6], fastparser);
             !step) {
             return std::unexpected(std::move(step.error()));
         }
-        return FastParseSpecCheckAndConv(&fastparser->hot_specs[7], 7,
+        return FastParseSpecCheckAndConv(&fastparser->hotSpecs[7], 7,
                                               args[7], targets[7], fastparser);
     }
     return FastParseFallback(args, nargs, kwnames, fastparser, targets);
@@ -619,7 +619,7 @@ static inline size_t FastParseHashPtr(PyObject *ptr, size_t mask) {
 static inline bool FastParseCheckTypeGuard(
     const FastArgSpecHot *spec,
     PyObject *val) {
-    PyTypeObject *guard = spec->type_guard;
+    PyTypeObject *guard = spec->typeGuard;
 
     // If no guard is defined (NULL), this branch is perfectly predicted as "not taken"
     if (guard == nullptr) [[likely]] {
@@ -650,16 +650,16 @@ extern size_t FastParseCmpSlow(
 static inline size_t FastParseFindKeywordIndex(
     PyObject *key,
     const FastParserCore *fastparse) {
-    const FastArgSpecHot *specs = fastparse->hot_specs;
-    const uint16_t *ltable          = fastparse->lookup_table;
+    const FastArgSpecHot *specs = fastparse->hotSpecs;
+    const uint16_t *ltable          = fastparse->lookupTable;
 
     if (ltable != nullptr) [[likely]] {
-        size_t hash = FastParseHashPtr(key, fastparse->table_mask);
+        size_t hash = FastParseHashPtr(key, fastparse->tableMask);
 
         // THE FIX: Probe until we hit an empty slot (table is 50% empty, so this is fast)
         // We use table_mask as a safe upper bound to prevent infinite loops.
-        for (size_t i = 0; i <= fastparse->table_mask; i++) {
-            size_t slot = ltable[(hash + i) & fastparse->table_mask];
+        for (size_t i = 0; i <= fastparse->tableMask; i++) {
+            size_t slot = ltable[(hash + i) & fastparse->tableMask];
             if (slot == kFastParseEmptySlot) {
                 break;
             }
@@ -689,7 +689,7 @@ static inline ParseResult FastParseProcessPos(
     for (Py_ssize_t i = 0; i < nargs; ++i) {
         // spec is 24 bytes, targets[i] is 8 bytes.
         // We are touching very little memory here.
-        const FastArgSpecHot *spec = &fastparse->hot_specs[i];
+        const FastArgSpecHot *spec = &fastparse->hotSpecs[i];
 
         // 1. Safety check (Type Guard)
         // We use the helper to keep the "Happy Path" linear.
@@ -735,11 +735,11 @@ static inline ParseResult FastParseProcessKw(
         }
 
         // UPDATED: Now only takes 2 arguments
-        if (!FastParseCheckTypeGuard(&fastparse->hot_specs[idx], kw_vals[i])) {
+        if (!FastParseCheckTypeGuard(&fastparse->hotSpecs[idx], kw_vals[i])) {
             return std::unexpected(FastParseReportTypeError(fastparse, idx, kw_vals[i]));
         }
 
-        if (!fastparse->hot_specs[idx].convert(kw_vals[i], targets[idx])) [[unlikely]] {
+        if (!fastparse->hotSpecs[idx].convert(kw_vals[i], targets[idx])) [[unlikely]] {
             return std::unexpected(FastParseReportConversionError(fastparse, idx, kw_vals[i]));
         }
         *mask |= (1ULL << idx);
@@ -789,7 +789,7 @@ FastParseVector(
     }
 
     // 4. Final Verification
-    if ((mask & fastparse->required_mask) != fastparse->required_mask) [[unlikely]] {
+    if ((mask & fastparse->requiredMask) != fastparse->requiredMask) [[unlikely]] {
         return std::unexpected(FastParseReportMissing(fastparse, mask));
     }
 

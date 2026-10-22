@@ -34,7 +34,7 @@ bool FastParseWarnUninternedSlow(PyObject *key, const char *pname) {
 [[gnu::noinline, gnu::cold, nodiscard]]
 size_t FastParseCmpSlow(PyObject *key, const FastParserCore *fastparse) {
     const size_t count              = fastparse->count;
-    const FastArgSpecHot *specs = fastparse->hot_specs;
+    const FastArgSpecHot *specs = fastparse->hotSpecs;
 
     for (size_t j = 0; j < count; ++j) {
         // 1. Is it the exact same pointer that just slipped past the hash table?
@@ -44,9 +44,9 @@ size_t FastParseCmpSlow(PyObject *key, const FastParserCore *fastparse) {
 
         // 2. Slow string content comparison
         if (PyUnicode_Compare(key, specs[j].interned) == 0) {
-            if ((fastparse->warned_mask & (1ULL << j)) == 0) {
-                (const_cast<FastParserCore *>(fastparse))->warned_mask |= (1ULL << j);
-                if (!FastParseWarnUninternedSlow(key, fastparse->parser_name)) {
+            if ((fastparse->warnedMask & (1ULL << j)) == 0) {
+                (const_cast<FastParserCore *>(fastparse))->warnedMask |= (1ULL << j);
+                if (!FastParseWarnUninternedSlow(key, fastparse->parserName)) {
                     return kFastParseEmptySlot;
                 }
             }
@@ -58,7 +58,7 @@ size_t FastParseCmpSlow(PyObject *key, const FastParserCore *fastparse) {
 
 [[gnu::noinline, gnu::cold, nodiscard]]
 ParseError FastParseReportMissing(const FastParserCore *fastparser, uint64_t provided_mask) {
-    const char *pname = fastparser->parser_name ? fastparser->parser_name : "function";
+    const char *pname = fastparser->parserName ? fastparser->parserName : "function";
 
     Ref missing_details{PyList_New(0)};
     Ref signature_parts{PyList_New(0)};
@@ -73,15 +73,15 @@ ParseError FastParseReportMissing(const FastParserCore *fastparser, uint64_t pro
         // DATA-ORIENTED SPLIT:
         // cold_specs has the strings (name, type_name)
         // hot_specs has the runtime objects (type_guard)
-        const FastArgSpecCold *cold = &fastparser->cold_specs[i];
-        const FastArgSpecHot *hot   = &fastparser->hot_specs[i];
+        const FastArgSpecCold *cold = &fastparser->coldSpecs[i];
+        const FastArgSpecHot *hot   = &fastparser->hotSpecs[i];
 
-        bool is_required = (fastparser->required_mask & (1ULL << i)) != 0;
+        bool is_required = (fastparser->requiredMask & (1ULL << i)) != 0;
         bool is_provided = (provided_mask & (1ULL << i)) != 0;
 
         // Resolve type information
-        const char *fallback_name = hot->type_guard ? hot->type_guard->tp_name : "object";
-        const char *type_info     = cold->type_name ? cold->type_name : fallback_name;
+        const char *fallback_name = hot->typeGuard ? hot->typeGuard->tp_name : "object";
+        const char *type_info     = cold->typeName ? cold->typeName : fallback_name;
 
         // 1. Log specifically which ones are missing
         if (is_required && !is_provided) {
@@ -126,14 +126,14 @@ ParseError FastParseReportMissing(const FastParserCore *fastparser, uint64_t pro
 
 [[gnu::noinline, nodiscard]]
 ParseError FastParseReportTypeError(const FastParserCore *fastparser, size_t index, PyObject *val) {
-    const FastArgSpecCold *cold_spec = &fastparser->cold_specs[index];
-    const FastArgSpecHot *hot_spec   = &fastparser->hot_specs[index];
-    const char *pname = fastparser->parser_name ? fastparser->parser_name : "function";
+    const FastArgSpecCold *cold_spec = &fastparser->coldSpecs[index];
+    const FastArgSpecHot *hot_spec   = &fastparser->hotSpecs[index];
+    const char *pname = fastparser->parserName ? fastparser->parserName : "function";
 
     // Resolve the "expected" type name: use type_name string if available,
     // else peek into the hot type_guard's tp_name.
-    const char *fallback_name = (hot_spec->type_guard) ? hot_spec->type_guard->tp_name : "object";
-    const char *expected      = (cold_spec->type_name) ? cold_spec->type_name : fallback_name;
+    const char *fallback_name = (hot_spec->typeGuard) ? hot_spec->typeGuard->tp_name : "object";
+    const char *expected      = (cold_spec->typeName) ? cold_spec->typeName : fallback_name;
 
     // The compact message is both the OOM fallback and the last line of defence.
     const auto basic_error = [&]() {
@@ -165,13 +165,13 @@ ParseError FastParseReportTypeError(const FastParserCore *fastparser, size_t ind
     }
 
     for (size_t i = 0; i < fastparser->count; i++) {
-        const FastArgSpecCold *s_cold = &fastparser->cold_specs[i];
-        const FastArgSpecHot *s_hot   = &fastparser->hot_specs[i];
+        const FastArgSpecCold *s_cold = &fastparser->coldSpecs[i];
+        const FastArgSpecHot *s_hot   = &fastparser->hotSpecs[i];
 
-        bool is_required = (fastparser->required_mask & (1ULL << i)) != 0;
+        bool is_required = (fastparser->requiredMask & (1ULL << i)) != 0;
 
-        const char *fb = s_hot->type_guard ? s_hot->type_guard->tp_name : "object";
-        const char *t  = s_cold->type_name ? s_cold->type_name : fb;
+        const char *fb = s_hot->typeGuard ? s_hot->typeGuard->tp_name : "object";
+        const char *t  = s_cold->typeName ? s_cold->typeName : fb;
 
         static const char *FMT_MAP[] = {"[%s: %s]", "%s: %s"};
         // Highlight the offending argument with exclamation marks
@@ -205,8 +205,8 @@ ParseError FastParseReportTypeError(const FastParserCore *fastparser, size_t ind
 
 [[gnu::noinline, nodiscard]]
 ParseError FastParseReportMultiple(const FastParserCore *fastparser, size_t index) {
-    const char *pname    = fastparser->parser_name ? fastparser->parser_name : "function";
-    const char *arg_name = fastparser->cold_specs[index].name;
+    const char *pname    = fastparser->parserName ? fastparser->parserName : "function";
+    const char *arg_name = fastparser->coldSpecs[index].name;
 
     const auto basic_error = [&]() {
         // Fallback if we can't allocate the fancy message
@@ -222,7 +222,7 @@ ParseError FastParseReportMultiple(const FastParserCore *fastparser, size_t inde
     }
 
     for (size_t i = 0; i < fastparser->count; i++) {
-        const char *name = fastparser->cold_specs[i].name;
+        const char *name = fastparser->coldSpecs[i].name;
         Ref part{(i == index) ? PyUnicode_FromFormat("!!! %s !!!", name)
                               : PyUnicode_FromString(name)};
         if (part) {
@@ -251,12 +251,12 @@ ParseError FastParseReportMultiple(const FastParserCore *fastparser, size_t inde
 
 [[gnu::noinline]]
 ParseError FastParseReportTooMany(const FastParserCore *fastparser, Py_ssize_t nargs) {
-    const char *pname = fastparser->parser_name ? fastparser->parser_name : "function";
+    const char *pname = fastparser->parserName ? fastparser->parserName : "function";
 
     // 1. Calculate counts using the bitmask
     // We count set bits in required_mask to find how many args are mandatory.
     // Count set bits in the 64-bit mask using hardware instruction
-    size_t req_count   = static_cast<size_t>(__builtin_popcountll(fastparser->required_mask));
+    size_t req_count   = static_cast<size_t>(__builtin_popcountll(fastparser->requiredMask));
     size_t total_count = fastparser->count;
 
     char count_str[64];
@@ -281,7 +281,7 @@ ParseError FastParseReportTooMany(const FastParserCore *fastparser, Py_ssize_t n
 
     for (size_t i = 0; i < total_count; i++) {
         // Names are stored in the Cold specs to keep the Hot path lean
-        Ref part{PyUnicode_FromString(fastparser->cold_specs[i].name)};
+        Ref part{PyUnicode_FromString(fastparser->coldSpecs[i].name)};
         if (part) {
             PyList_Append(parts.get(), part.get());
         }
@@ -354,11 +354,11 @@ ParseError FastParseReportUnknownKeyword(const FastParserCore *fastparser, PyObj
     const char *best_match           = nullptr;
     constexpr auto initial_best_dist = 100;
     int best_dist                    = initial_best_dist;
-    const char *pname = fastparser->parser_name ? fastparser->parser_name : "function";
+    const char *pname = fastparser->parserName ? fastparser->parserName : "function";
 
     // 1. Find the best fuzzy match (Scanning Cold names)
     for (size_t i = 0; i < fastparser->count; i++) {
-        const char *cand = fastparser->cold_specs[i].name;
+        const char *cand = fastparser->coldSpecs[i].name;
         if (!cand) {
             continue;
         }
@@ -390,18 +390,18 @@ ParseError FastParseReportUnknownKeyword(const FastParserCore *fastparser, PyObj
     }
 
     for (size_t i = 0; i < fastparser->count; i++) {
-        const FastArgSpecCold *cold = &fastparser->cold_specs[i];
-        const FastArgSpecHot *hot   = &fastparser->hot_specs[i];
+        const FastArgSpecCold *cold = &fastparser->coldSpecs[i];
+        const FastArgSpecHot *hot   = &fastparser->hotSpecs[i];
 
         if (!cold->name) {
             continue;
         }
 
-        bool is_required = (fastparser->required_mask & (1ULL << i)) != 0;
+        bool is_required = (fastparser->requiredMask & (1ULL << i)) != 0;
 
         // Resolve type name: Cold string preferred, fallback to Hot type_guard info
-        const char *fb = hot->type_guard ? hot->type_guard->tp_name : "object";
-        const char *t  = cold->type_name ? cold->type_name : fb;
+        const char *fb = hot->typeGuard ? hot->typeGuard->tp_name : "object";
+        const char *t  = cold->typeName ? cold->typeName : fb;
 
         Ref info{PyUnicode_FromFormat("    - %s: %s%s", cold->name, t,
                                       static_cast<int>(is_required) ? " [required]" : "")};
@@ -444,8 +444,8 @@ ParseError FastParseReportConversionError(const FastParserCore *fastparser, size
         return CaptureError();
     }
 
-    const char *pname    = fastparser->parser_name ? fastparser->parser_name : "function";
-    const char *arg_name = fastparser->cold_specs[index].name;
+    const char *pname    = fastparser->parserName ? fastparser->parserName : "function";
+    const char *arg_name = fastparser->coldSpecs[index].name;
 
     // Safety valve: if any allocation below fails, re-raise the original
     // exception so the user still sees the dry error rather than an OOM.
@@ -473,8 +473,8 @@ ParseError FastParseReportConversionError(const FastParserCore *fastparser, size
 
     // Build the fancy signature context
     for (size_t i = 0; i < fastparser->count; i++) {
-        const char *name = fastparser->cold_specs[i].name;
-        const char *type = fastparser->cold_specs[i].type_name;
+        const char *name = fastparser->coldSpecs[i].name;
+        const char *type = fastparser->coldSpecs[i].typeName;
         const char *fmt  = (i == index) ? "!!! %s: %s !!!" : "%s: %s";
         Ref part{PyUnicode_FromFormat(fmt, name, type ? type : "object")};
         if (part) {
@@ -508,39 +508,39 @@ void FastParseInitImpl(FastParserCore *fastparser, const FastArgDef *defs, size_
     }
 
     fastparser->count           = count;
-    fastparser->required_mask   = 0;
-    fastparser->type_guard_mask = 0;
-    fastparser->lookup_table    = nullptr;
-    fastparser->warned_mask     = 0;
+    fastparser->requiredMask   = 0;
+    fastparser->typeGuardMask = 0;
+    fastparser->lookupTable    = nullptr;
+    fastparser->warnedMask     = 0;
 
     // 1. Allocate Hot and Cold arrays (Data-Oriented Split)
     // Using PyMem_RawMalloc to avoid GIL dependencies during allocation
-    fastparser->hot_specs =
+    fastparser->hotSpecs =
         static_cast<FastArgSpecHot *>(Allocate(count * sizeof(FastArgSpecHot)));
-    fastparser->cold_specs =
+    fastparser->coldSpecs =
         static_cast<FastArgSpecCold *>(Allocate(count * sizeof(FastArgSpecCold)));
 
-    if (!fastparser->hot_specs || !fastparser->cold_specs) {
+    if (!fastparser->hotSpecs || !fastparser->coldSpecs) {
         Py_FatalError("Culverin parser: memory allocation failed during initialization.");
     }
 
     for (size_t i = 0; i < count; i++) {
         // Populate Hot (Accessed every call)
-        fastparser->hot_specs[i].interned =
+        fastparser->hotSpecs[i].interned =
             defs[i].name ? PyUnicode_InternFromString(defs[i].name) : nullptr;
-        fastparser->hot_specs[i].convert    = defs[i].convert;
-        fastparser->hot_specs[i].type_guard = defs[i].type_guard;
+        fastparser->hotSpecs[i].convert    = defs[i].convert;
+        fastparser->hotSpecs[i].typeGuard = defs[i].typeGuard;
 
         // Populate Cold (Accessed only on error)
-        fastparser->cold_specs[i].name      = defs[i].name;
-        fastparser->cold_specs[i].type_name = defs[i].type_name;
+        fastparser->coldSpecs[i].name      = defs[i].name;
+        fastparser->coldSpecs[i].typeName = defs[i].typeName;
 
         // Setup Masks for branchless/mask-based checks
         if (defs[i].required) {
-            fastparser->required_mask |= (1ULL << i);
+            fastparser->requiredMask |= (1ULL << i);
         }
-        if (defs[i].type_guard) {
-            fastparser->type_guard_mask |= (1ULL << i);
+        if (defs[i].typeGuard) {
+            fastparser->typeGuardMask |= (1ULL << i);
         }
     }
 
@@ -551,48 +551,48 @@ void FastParseInitImpl(FastParserCore *fastparser, const FastArgDef *defs, size_
             table_size <<= 1UL;
         }
 
-        fastparser->table_mask = table_size - 1;
-        fastparser->lookup_table =
+        fastparser->tableMask = table_size - 1;
+        fastparser->lookupTable =
             static_cast<uint16_t *>(Allocate(table_size * sizeof(uint16_t)));
-        if (!fastparser->lookup_table) {
+        if (!fastparser->lookupTable) {
             Py_FatalError("Culverin parser: failed to allocate lookup table.");
         }
 
         for (size_t i = 0; i < table_size; i++) {
-            fastparser->lookup_table[i] = kFastParseEmptySlot;
+            fastparser->lookupTable[i] = kFastParseEmptySlot;
         }
 
         for (size_t i = 0; i < count; i++) {
             size_t hash =
-                FastParseHashPtr(fastparser->hot_specs[i].interned, fastparser->table_mask);
-            while (fastparser->lookup_table[hash] != kFastParseEmptySlot) {
-                hash = (hash + 1) & fastparser->table_mask;
+                FastParseHashPtr(fastparser->hotSpecs[i].interned, fastparser->tableMask);
+            while (fastparser->lookupTable[hash] != kFastParseEmptySlot) {
+                hash = (hash + 1) & fastparser->tableMask;
             }
-            fastparser->lookup_table[hash] = static_cast<uint16_t>(i);
+            fastparser->lookupTable[hash] = static_cast<uint16_t>(i);
         }
     }
 
     // 3. Path Selection
-    fastparser->hot_path = FastParseVector;
+    fastparser->hotPath = FastParseVector;
 
     // Optimization: If all args are required and no type guards are present,
     // we can use the specialized monomorphic stubs.
     uint64_t all_required = (count >= 64) ? ~0ULL : ((1ULL << count) - 1);
-    if (fastparser->required_mask == all_required && all_required != 0) {
+    if (fastparser->requiredMask == all_required && all_required != 0) {
         if (count < (sizeof(kFastParseMonoStubs) / sizeof(FastParseFunc))) {
-            fastparser->hot_path = kFastParseMonoStubs[count];
+            fastparser->hotPath = kFastParseMonoStubs[count];
         }
     }
 #if defined(CULVERIN_DEBUG)
-    if (fastparser->hot_path == FastParseVector) {
+    if (fastparser->hotPath == FastParseVector) {
         PySys_WriteStderr("Culverin parser [%s]: hot_path fell back to FastParseVector "
                           "(count=%zu, required_mask=0x%016llx, all_required=0x%016llx)\n",
-                          fastparser->parser_name ? fastparser->parser_name : "?",
-                          fastparser->count, (unsigned long long)fastparser->required_mask,
+                          fastparser->parserName ? fastparser->parserName : "?",
+                          fastparser->count, (unsigned long long)fastparser->requiredMask,
                           (unsigned long long)all_required);
     } else {
         PySys_WriteStderr("Culverin parser [%s]: hot_path -> MONO_STUB[%zu]\n",
-                          fastparser->parser_name ? fastparser->parser_name : "?",
+                          fastparser->parserName ? fastparser->parserName : "?",
                           fastparser->count);
     }
 #endif
@@ -603,24 +603,24 @@ void FastParseDeinit(FastParserCore *fastparser) {
         return;
     }
 
-    if (fastparser->hot_specs) {
+    if (fastparser->hotSpecs) {
 #pragma unroll 2
         for (size_t i = 0; i < fastparser->count; i++) {
-            Py_XDECREF(fastparser->hot_specs[i].interned);
-            fastparser->hot_specs[i].interned = nullptr;
+            Py_XDECREF(fastparser->hotSpecs[i].interned);
+            fastparser->hotSpecs[i].interned = nullptr;
         }
-        Deallocate(fastparser->hot_specs);
-        fastparser->hot_specs = nullptr;
+        Deallocate(fastparser->hotSpecs);
+        fastparser->hotSpecs = nullptr;
     }
 
-    if (fastparser->cold_specs) {
-        Deallocate(fastparser->cold_specs);
-        fastparser->cold_specs = nullptr;
+    if (fastparser->coldSpecs) {
+        Deallocate(fastparser->coldSpecs);
+        fastparser->coldSpecs = nullptr;
     }
 
-    if (fastparser->lookup_table) {
-        Deallocate(fastparser->lookup_table);
-        fastparser->lookup_table = nullptr;
+    if (fastparser->lookupTable) {
+        Deallocate(fastparser->lookupTable);
+        fastparser->lookupTable = nullptr;
     }
 }
 
@@ -633,7 +633,7 @@ static inline ParseResult FastParseProcessPosLegacy(const FastParserCore *fastpa
 #pragma unroll 2
     for (Py_ssize_t i = 0; i < nargs; ++i) {
         PyObject *val              = PyTuple_GET_ITEM(args, i);
-        const FastArgSpecHot *spec = &fastparse->hot_specs[i];
+        const FastArgSpecHot *spec = &fastparse->hotSpecs[i];
 
         // 1. Type Guard Check (Hot path metadata)
         if (!FastParseCheckTypeGuard(spec, val)) {
@@ -673,7 +673,7 @@ static inline ParseResult FastParseProcessKwLegacy(const FastParserCore *fastpar
             return std::unexpected(FastParseReportMultiple(fastparse, idx));
         }
 
-        const FastArgSpecHot *spec = &fastparse->hot_specs[idx];
+        const FastArgSpecHot *spec = &fastparse->hotSpecs[idx];
 
         // 1. Type Guard Check (Hot path metadata)
         if (!FastParseCheckTypeGuard(spec, val)) {
@@ -725,7 +725,7 @@ ParseResult FastParseLegacy(PyObject *args, PyObject *kwargs, [[maybe_unused]] P
     }
 
     // 4. Final Verification
-    if ((mask & fastparser->required_mask) != fastparser->required_mask) [[unlikely]] {
+    if ((mask & fastparser->requiredMask) != fastparser->requiredMask) [[unlikely]] {
         return std::unexpected(FastParseReportMissing(fastparser, mask));
     }
 

@@ -87,38 +87,38 @@ bool EnqueueOperation(PhysicsWorld *world, std::uint32_t slot,
 
 void MirrorToShadow(PhysicsWorld *world, std::uint32_t slot,
                       const PhysicsBodyOperation &op) {
-    const std::uint32_t dense = world->bodies.slot_to_dense[slot];
+    const std::uint32_t dense = world->bodies.slotToDense[slot];
     switch (op.type) {
     case PhysicsBodyOperationType::SetPosition: {
         const PosStride position = {op.position.GetX(), op.position.GetY(), op.position.GetZ(), 0.0};
         world->bodies.positions[dense]      = position;
-        world->bodies.prev_positions[dense] = position;
+        world->bodies.prevPositions[dense] = position;
         break;
     }
     case PhysicsBodyOperationType::SetRotation: {
         const AuxStride rotation = {op.rotation.GetX(), op.rotation.GetY(), op.rotation.GetZ(),
                                         op.rotation.GetW()};
         world->bodies.rotations[dense]      = rotation;
-        world->bodies.prev_rotations[dense] = rotation;
+        world->bodies.prevRotations[dense] = rotation;
         break;
     }
     case PhysicsBodyOperationType::SetLinearVelocity:
-        world->bodies.linear_velocities[dense] = {op.vector.GetX(), op.vector.GetY(), op.vector.GetZ(), 0.0F};
+        world->bodies.linearVelocities[dense] = {op.vector.GetX(), op.vector.GetY(), op.vector.GetZ(), 0.0F};
         break;
     case PhysicsBodyOperationType::SetAngularVelocity:
-        world->bodies.angular_velocities[dense] = {op.vector.GetX(), op.vector.GetY(), op.vector.GetZ(), 0.0F};
+        world->bodies.angularVelocities[dense] = {op.vector.GetX(), op.vector.GetY(), op.vector.GetZ(), 0.0F};
         break;
     case PhysicsBodyOperationType::SetUserData:
-        world->bodies.user_data[dense] = op.user_data;
+        world->bodies.userData[dense] = op.userData;
         break;
     case PhysicsBodyOperationType::SetTransform: {
         const PosStride position = {op.position.GetX(), op.position.GetY(), op.position.GetZ(), 0.0};
         const AuxStride rotation = {op.rotation.GetX(), op.rotation.GetY(), op.rotation.GetZ(),
                                         op.rotation.GetW()};
         world->bodies.positions[dense]      = position;
-        world->bodies.prev_positions[dense] = position;
+        world->bodies.prevPositions[dense] = position;
         world->bodies.rotations[dense]      = rotation;
-        world->bodies.prev_rotations[dense] = rotation;
+        world->bodies.prevRotations[dense] = rotation;
         break;
     }
     default:
@@ -132,7 +132,7 @@ void ExecuteNow(PhysicsWorld *world, const JPH::BodyID &id,
     // physics_system.GetBodyInterface() -- the *locking* interface (see
     // PhysicsWorld.cpp:637) -- so go to the same one rather than the NoLock
     // variant. These run outside a step, under the shadow lock only.
-    JPH::BodyInterface &bi = world->physics_system.GetBodyInterface();
+    JPH::BodyInterface &bi = world->physicsSystem.GetBodyInterface();
     const JPH::Vec3 &vector = op.vector;
     switch (op.type) {
     case PhysicsBodyOperationType::ApplyImpulse:
@@ -192,7 +192,7 @@ PhysicsWorld::ApplyBodyOperation(const PhysicsBodyOperation &op) {
         }
         const std::uint32_t slot = *resolved;
         const auto state = static_cast<SlotState>(
-            bodies.slot_states[slot].load(std::memory_order::acquire));
+            bodies.slotStates[slot].load(std::memory_order::acquire));
         const SlotPredicate predicate = GetSlotPredicate(std::to_underlying(state), ImmediateMask(sanitized.type));
         if (!predicate.is_executable()) {
             return std::unexpected(BodyOperationError::StaleHandle);
@@ -203,13 +203,13 @@ PhysicsWorld::ApplyBodyOperation(const PhysicsBodyOperation &op) {
 
         // Impulse-class ops on live bodies run straight against Jolt below
         // instead of being deferred; everything else defers.
-        execute_immediately = IsImmediateJoltAction(sanitized.type) && predicate.is_immediate;
+        execute_immediately = IsImmediateJoltAction(sanitized.type) && predicate.isImmediate;
         if (!execute_immediately && !EnqueueOperation(this, slot, sanitized)) {
             return std::unexpected(BodyOperationError::InvalidArgument);
         }
         MirrorToShadow(this, slot, sanitized);
         if (execute_immediately) {
-            body_id = bodies.body_ids[bodies.slot_to_dense[slot]];
+            body_id = bodies.bodyIds[bodies.slotToDense[slot]];
         }
     }
 
@@ -231,10 +231,10 @@ std::expected<void, Error> PhysicsWorld::QueueBodyDestroy(BodyHandle handle) {
         return std::unexpected(BodyOperationError::OutOfMemory);
     }
     const auto state = static_cast<SlotState>(
-        bodies.slot_states[slot].load(std::memory_order::acquire));
+        bodies.slotStates[slot].load(std::memory_order::acquire));
     if (GetSlotPredicate(std::to_underlying(state), kMaskDestructible).is_executable()) {
         EnqueueCommand(slot, DestroyBody{});
-        bodies.slot_states[slot].store(std::to_underlying(SlotState::PendingDestroy), std::memory_order::release);
+        bodies.slotStates[slot].store(std::to_underlying(SlotState::PendingDestroy), std::memory_order::release);
     }
     return {};
 }
@@ -255,10 +255,10 @@ PhysicsWorld::QueueBodyDestroyBatch(std::span<const BodyHandle> handles) {
         }
         const std::uint32_t slot = *resolved;
         const auto state = static_cast<SlotState>(
-            bodies.slot_states[slot].load(std::memory_order::acquire));
+            bodies.slotStates[slot].load(std::memory_order::acquire));
         if (GetSlotPredicate(std::to_underlying(state), kMaskDestructible).is_executable()) {
             EnqueueCommand(slot, DestroyBody{});
-            bodies.slot_states[slot].store(std::to_underlying(SlotState::PendingDestroy),
+            bodies.slotStates[slot].store(std::to_underlying(SlotState::PendingDestroy),
                                            std::memory_order::release);
         }
     }

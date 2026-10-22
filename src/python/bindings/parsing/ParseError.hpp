@@ -32,16 +32,16 @@ namespace CPH::Python {
 class ParseError {
   public:
     ParseError() noexcept = default;
-    explicit ParseError(Ref exception) noexcept : m_exception(std::move(exception)) {}
+    explicit ParseError(Ref exception) noexcept : mException(std::move(exception)) {}
 
-    [[nodiscard]] bool valid() const noexcept { return static_cast<bool>(m_exception); }
-    [[nodiscard]] PyObject *exception() const noexcept { return m_exception.get(); }
+    [[nodiscard]] bool valid() const noexcept { return static_cast<bool>(mException); }
+    [[nodiscard]] PyObject *exception() const noexcept { return mException.get(); }
 
     // Hands the exception back out (used when a decorator re-wraps it).
-    [[nodiscard]] Ref release() noexcept { return std::move(m_exception); }
+    [[nodiscard]] Ref release() noexcept { return std::move(mException); }
 
   private:
-    Ref m_exception;
+    Ref mException;
 };
 
 using ParseResult = std::expected<void, ParseError>;

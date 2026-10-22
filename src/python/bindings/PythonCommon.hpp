@@ -60,11 +60,11 @@ inline void Deallocate(void *memory) noexcept {
 
 class ScopedGilRelease {
   public:
-    ScopedGilRelease() noexcept : m_thread_state(PyEval_SaveThread()) {}
+    ScopedGilRelease() noexcept : mThreadState(PyEval_SaveThread()) {}
 
     ~ScopedGilRelease() {
-        if (m_thread_state != nullptr) {
-            PyEval_RestoreThread(m_thread_state);
+        if (mThreadState != nullptr) {
+            PyEval_RestoreThread(mThreadState);
         }
     }
 
@@ -74,7 +74,7 @@ class ScopedGilRelease {
     ScopedGilRelease &operator=(ScopedGilRelease &&)      = delete;
 
   private:
-    PyThreadState *m_thread_state;
+    PyThreadState *mThreadState;
 };
 
 // --- Reference vocabulary (Phase 2, step B3) ---
@@ -98,22 +98,22 @@ class Borrowed {
     // Implicit on purpose: every non-owning use is a borrow, and spelling
     // `Borrowed{obj}` at hundreds of call sites adds noise without adding
     // safety. What matters is that nothing here can *steal* a reference.
-    constexpr Borrowed(PyObject *object) noexcept : m_object(object) {}
+    constexpr Borrowed(PyObject *object) noexcept : mObject(object) {}
 
-    [[nodiscard]] constexpr PyObject *get() const noexcept { return m_object; }
-    [[nodiscard]] constexpr explicit operator bool() const noexcept { return m_object != nullptr; }
+    [[nodiscard]] constexpr PyObject *get() const noexcept { return mObject; }
+    [[nodiscard]] constexpr explicit operator bool() const noexcept { return mObject != nullptr; }
 
     // Shortcut for `obj == Py_None` / `obj != Py_None`.
-    [[nodiscard]] constexpr bool is_none() const noexcept { return m_object == Py_None; }
+    [[nodiscard]] constexpr bool is_none() const noexcept { return mObject == Py_None; }
 
     [[nodiscard]] PyObject *operator->() const noexcept {
         debug_check();
-        return m_object;
+        return mObject;
     }
 
     // Implicit on purpose: every CPython entry point takes `PyObject *`, and
     // making this explicit would bury the call sites in get() noise.
-    [[nodiscard]] constexpr operator PyObject *() const noexcept { return m_object; }
+    [[nodiscard]] constexpr operator PyObject *() const noexcept { return mObject; }
 
   private:
     void debug_check() const noexcept {
@@ -124,33 +124,33 @@ class Borrowed {
 #endif
     }
 
-    PyObject *m_object = nullptr;
+    PyObject *mObject = nullptr;
 };
 
 class Ref {
   public:
     Ref() noexcept = default;
     // Adopts an already-owned reference (a C API "new reference").
-    explicit Ref(PyObject *object) noexcept : m_object(object) {}
-    ~Ref() { Py_XDECREF(m_object); }
+    explicit Ref(PyObject *object) noexcept : mObject(object) {}
+    ~Ref() { Py_XDECREF(mObject); }
 
     Ref(const Ref &)            = delete;
     Ref &operator=(const Ref &) = delete;
 
-    Ref(Ref &&other) noexcept : m_object(std::exchange(other.m_object, nullptr)) {}
+    Ref(Ref &&other) noexcept : mObject(std::exchange(other.mObject, nullptr)) {}
 
     Ref &operator=(Ref &&other) noexcept {
         if (this != &other) {
-            Py_XDECREF(m_object);
-            m_object = std::exchange(other.m_object, nullptr);
+            Py_XDECREF(mObject);
+            mObject = std::exchange(other.mObject, nullptr);
         }
         return *this;
     }
 
     Ref &operator=(PyObject *object) noexcept {
-        if (m_object != object) {
-            Py_XDECREF(m_object);
-            m_object = object;
+        if (mObject != object) {
+            Py_XDECREF(mObject);
+            mObject = object;
         }
         return *this;
     }
@@ -161,18 +161,18 @@ class Ref {
         return Ref{object.get()};
     }
 
-    [[nodiscard]] PyObject *get() const noexcept { return m_object; }
-    [[nodiscard]] PyObject *release() noexcept { return std::exchange(m_object, nullptr); }
-    [[nodiscard]] Borrowed borrow() const noexcept { return Borrowed{m_object}; }
-    [[nodiscard]] explicit operator bool() const noexcept { return m_object != nullptr; }
+    [[nodiscard]] PyObject *get() const noexcept { return mObject; }
+    [[nodiscard]] PyObject *release() noexcept { return std::exchange(mObject, nullptr); }
+    [[nodiscard]] Borrowed borrow() const noexcept { return Borrowed{mObject}; }
+    [[nodiscard]] explicit operator bool() const noexcept { return mObject != nullptr; }
 
     void reset() noexcept {
-        Py_XDECREF(m_object);
-        m_object = nullptr;
+        Py_XDECREF(mObject);
+        mObject = nullptr;
     }
 
   private:
-    PyObject *m_object = nullptr;
+    PyObject *mObject = nullptr;
 };
 
 #if defined(CULVERIN_DEBUG)
@@ -206,15 +206,15 @@ struct MaterialSettings {
 };
 
 struct CompoundPart {
-    JPH::Vec3 local_position;
-    JPH::Quat local_rotation;
+    JPH::Vec3 localPosition;
+    JPH::Quat localRotation;
     float params[4];
     int type;
 };
 
 struct MeshBounds {
-    std::uint32_t triangle_count;
-    std::uint32_t vertex_count;
+    std::uint32_t triangleCount;
+    std::uint32_t vertexCount;
 };
 
 [[nodiscard]] inline bool IsFinite(float value) noexcept {

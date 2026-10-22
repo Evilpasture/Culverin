@@ -42,19 +42,19 @@ inline constexpr std::uint32_t kMaskDestructible =
     SlotStateBit(SlotState::Character) | SlotStateBit(SlotState::SoftBody);
 
 struct SlotPredicate {
-    bool is_immediate; // Body exists in Jolt: act now.
-    bool is_deferred;  // Body pending creation: queue for the step flush.
+    bool isImmediate; // Body exists in Jolt: act now.
+    bool isDeferred;  // Body pending creation: queue for the step flush.
 
     [[nodiscard]] constexpr bool is_executable() const noexcept {
-        return is_immediate || is_deferred;
+        return isImmediate || isDeferred;
     }
 };
 
 [[nodiscard]] constexpr SlotPredicate
 GetSlotPredicate(std::uint8_t state, std::uint32_t imm_mask) noexcept {
     const std::uint32_t state_bit = 1U << (state & 7);
-    return {.is_immediate = (state_bit & imm_mask) != 0,
-            .is_deferred  = (state_bit & kMaskDeferred) != 0};
+    return {.isImmediate = (state_bit & imm_mask) != 0,
+            .isDeferred  = (state_bit & kMaskDeferred) != 0};
 }
 
 } // namespace CPH

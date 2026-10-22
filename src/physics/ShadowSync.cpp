@@ -28,25 +28,25 @@ static_assert(sizeof(PosStride) % 32 == 0);
 constexpr Unsigned32 kBatchSize = 128;
 struct SyncWorkItem {
     const JPH::Body *body;
-    Unsigned32 dense_idx;
+    Unsigned32 denseIdx;
 };
 
 struct WorldDataCreateInfo {
-    PosStride *const CPH_RESTRICT shadow_pos;
-    PosStride *const CPH_RESTRICT shadow_ppos;
-    AuxStride *const CPH_RESTRICT shadow_rot;
-    AuxStride *const CPH_RESTRICT shadow_prot;
-    AuxStride *const CPH_RESTRICT shadow_lvel;
-    AuxStride *const CPH_RESTRICT shadow_avel;
-    const SoftBodyShadow *const CPH_RESTRICT soft_shadows;
+    PosStride *const CPH_RESTRICT shadowPos;
+    PosStride *const CPH_RESTRICT shadowPpos;
+    AuxStride *const CPH_RESTRICT shadowRot;
+    AuxStride *const CPH_RESTRICT shadowProt;
+    AuxStride *const CPH_RESTRICT shadowLvel;
+    AuxStride *const CPH_RESTRICT shadowAvel;
+    const SoftBodyShadow *const CPH_RESTRICT softShadows;
 };
 
 struct MappingDataCreateInfo {
-    const void *CPH_RESTRICT *const CPH_RESTRICT body_ptrs;
-    const std::atomic<Unsigned8> *const CPH_RESTRICT slot_states;
+    const void *CPH_RESTRICT *const CPH_RESTRICT bodyPtrs;
+    const std::atomic<Unsigned8> *const CPH_RESTRICT slotStates;
     const std::atomic<Unsigned32> *const CPH_RESTRICT generations;
-    const SizeType slot_capacity;
-    const Unsigned32 *const CPH_RESTRICT slot_to_dense;
+    const SizeType slotCapacity;
+    const Unsigned32 *const CPH_RESTRICT slotToDense;
 };
 
 static_assert(std::atomic<Unsigned8>::is_always_lock_free);
@@ -71,11 +71,11 @@ ProcessItem(const Unsigned32 D, const JPH::Body *const CPH_RESTRICT b,
             const WorldDataCreateInfo world) noexcept -> void {
 
     // 1. Snapshot previous state
-    world.shadow_ppos[D] = world.shadow_pos[D];
-    world.shadow_prot[D] = world.shadow_rot[D];
+    world.shadowPpos[D] = world.shadowPos[D];
+    world.shadowProt[D] = world.shadowRot[D];
 
     // 2. Write Current COM
-    auto *const target = &world.shadow_pos[D];
+    auto *const target = &world.shadowPos[D];
 
     const auto &rotation    = b->GetRotation();
     const auto &translation = b->GetCenterOfMassPosition();
@@ -91,20 +91,20 @@ ProcessItem(const Unsigned32 D, const JPH::Body *const CPH_RESTRICT b,
     // 3. Write Current Rotation
 
     [[clang::always_inline]] rotation.GetXYZW().StoreFloat4(
-        reinterpret_cast<AuxPointerType>(&world.shadow_rot[D]));
+        reinterpret_cast<AuxPointerType>(&world.shadowRot[D]));
 
     // 4. Type-Specific Sub-Data
     if constexpr (TType == JPH::EBodyType::RigidBody) {
         [[clang::always_inline]] JPH::Vec4(b->GetLinearVelocity(), 0.0F)
-            .StoreFloat4(reinterpret_cast<AuxPointerType>(&world.shadow_lvel[D]));
+            .StoreFloat4(reinterpret_cast<AuxPointerType>(&world.shadowLvel[D]));
         [[clang::always_inline]] JPH::Vec4(b->GetAngularVelocity(), 0.0F)
-            .StoreFloat4(reinterpret_cast<AuxPointerType>(&world.shadow_avel[D]));
+            .StoreFloat4(reinterpret_cast<AuxPointerType>(&world.shadowAvel[D]));
     } else if constexpr (TType == JPH::EBodyType::SoftBody) {
         const auto *const CPH_RESTRICT soft_mp =
             static_cast<const JPH::SoftBodyMotionProperties *const CPH_RESTRICT>(
                 b->GetMotionProperties());
         const JPH::Array<JPH::SoftBodyVertex> &jolt_verts = soft_mp->GetVertices();
-        const SoftBodyShadow &shadow                      = world.soft_shadows[D];
+        const SoftBodyShadow &shadow                      = world.softShadows[D];
 
         if (!shadow.vertices || shadow.vertices.size() != jolt_verts.size()) [[unlikely]] {
             return;
@@ -151,12 +151,12 @@ inline auto ProcessBatch(const WorldDataCreateInfo world,
 
     UnrollLoop<4>(count, [&](Unsigned32 j) {
         if (j + 2 < count) {
-            const Unsigned32 next_idx = items[j + 2].dense_idx;
-            CPH::Prefetch<CPH::AccessType::Write>(&world.shadow_pos[next_idx]);
-            CPH::Prefetch<CPH::AccessType::Write>(&world.shadow_rot[next_idx]);
+            const Unsigned32 next_idx = items[j + 2].denseIdx;
+            CPH::Prefetch<CPH::AccessType::Write>(&world.shadowPos[next_idx]);
+            CPH::Prefetch<CPH::AccessType::Write>(&world.shadowRot[next_idx]);
         }
 
-        ProcessItem<TType>(items[j].dense_idx, items[j].body, world);
+        ProcessItem<TType>(items[j].denseIdx, items[j].body, world);
         });
 }
 
@@ -188,11 +188,11 @@ ExecuteSyncPass(const Unsigned32 active_count, const JPH::PhysicsSystem *const C
         const Unsigned32 j_idx        = raw_jolt_id.GetIndex();
 
         const auto *CPH_RESTRICT b =
-            static_cast<const JPH::Body * CPH_RESTRICT>(map.body_ptrs[j_idx]);
+            static_cast<const JPH::Body * CPH_RESTRICT>(map.bodyPtrs[j_idx]);
 
         [[clang::always_inline]] if (b == nullptr || b->GetID() != raw_jolt_id) [[unlikely]] {
             b = system->GetBodyLockInterface().TryGetBody(raw_jolt_id);
-            map.body_ptrs[j_idx] = b;
+            map.bodyPtrs[j_idx] = b;
         }
         if (b == nullptr) [[unlikely]] {
             continue;
@@ -201,9 +201,9 @@ ExecuteSyncPass(const Unsigned32 active_count, const JPH::PhysicsSystem *const C
         const BodyHandle handle    = BodyHandle(b->GetUserData());
         const auto slot            = handle.Index();
         const auto gen             = handle.Generation();
-        const Unsigned32 safe_slot = (slot < map.slot_capacity) ? slot : 0;
+        const Unsigned32 safe_slot = (slot < map.slotCapacity) ? slot : 0;
 
-        const Unsigned8 state        = map.slot_states[safe_slot].load(std::memory_order::relaxed);
+        const Unsigned8 state        = map.slotStates[safe_slot].load(std::memory_order::relaxed);
         const Unsigned32 current_gen = map.generations[safe_slot].load(std::memory_order::relaxed);
 
         // --- BRANCHLESS VALIDATION ---
@@ -223,14 +223,14 @@ ExecuteSyncPass(const Unsigned32 active_count, const JPH::PhysicsSystem *const C
                 return (state != std::to_underlying(SlotState::SoftBody));
             }
         }();
-        const Unsigned32 bad   = static_cast<const Unsigned32>(slot >= map.slot_capacity) |
+        const Unsigned32 bad   = static_cast<const Unsigned32>(slot >= map.slotCapacity) |
                                  (current_gen ^ gen) | state_bad;
-        const Unsigned32 d_idx = map.slot_to_dense[safe_slot];
+        const Unsigned32 d_idx = map.slotToDense[safe_slot];
         const auto is_valid    = static_cast<Unsigned32>(bad == 0);
 
         [[assume(work_ptr < kBatchSize)]];
         worklist[work_ptr].body      = b;
-        worklist[work_ptr].dense_idx = d_idx;
+        worklist[work_ptr].denseIdx = d_idx;
         work_ptr += is_valid;
 
         if (work_ptr == kBatchSize) {
@@ -255,7 +255,7 @@ ExecuteSyncPass(const Unsigned32 active_count, const JPH::PhysicsSystem *const C
 [[gnu::flatten, gnu::hot, gnu::nonnull(1)]] auto
 SyncShadowBuffers(const PhysicsWorld *const CPH_RESTRICT world) noexcept -> void {
     using namespace CPH;
-    const JPH::PhysicsSystem *const CPH_RESTRICT system = &world->physics_system;
+    const JPH::PhysicsSystem *const CPH_RESTRICT system = &world->physicsSystem;
 
     const Unsigned32 active_rigid_count =
         system->GetNumActiveBodies(JPH::EBodyType::RigidBody);
@@ -270,44 +270,44 @@ SyncShadowBuffers(const PhysicsWorld *const CPH_RESTRICT world) noexcept -> void
     [[maybe_unused]] const CPH::ProfileAccumulator profile_pass(sync_stats);
 
     const CPH::WorldDataCreateInfo world_data = {
-        .shadow_pos = std::assume_aligned<sizeof(PosStride)>(
+        .shadowPos = std::assume_aligned<sizeof(PosStride)>(
             reinterpret_cast<PosStride *const CPH_RESTRICT>(world->bodies.positions.data())),
 
-        .shadow_ppos = std::assume_aligned<sizeof(PosStride)>(
-            reinterpret_cast<PosStride *const CPH_RESTRICT>(world->bodies.prev_positions.data())),
+        .shadowPpos = std::assume_aligned<sizeof(PosStride)>(
+            reinterpret_cast<PosStride *const CPH_RESTRICT>(world->bodies.prevPositions.data())),
 
-        .shadow_rot = std::assume_aligned<sizeof(AuxStride)>(
+        .shadowRot = std::assume_aligned<sizeof(AuxStride)>(
             reinterpret_cast<AuxStride *const CPH_RESTRICT>(world->bodies.rotations.data())),
 
-        .shadow_prot = std::assume_aligned<sizeof(AuxStride)>(
-            reinterpret_cast<AuxStride *const CPH_RESTRICT>(world->bodies.prev_rotations.data())),
+        .shadowProt = std::assume_aligned<sizeof(AuxStride)>(
+            reinterpret_cast<AuxStride *const CPH_RESTRICT>(world->bodies.prevRotations.data())),
 
-        .shadow_lvel = std::assume_aligned<sizeof(AuxStride)>(
-            reinterpret_cast<AuxStride *const CPH_RESTRICT>(world->bodies.linear_velocities.data())),
+        .shadowLvel = std::assume_aligned<sizeof(AuxStride)>(
+            reinterpret_cast<AuxStride *const CPH_RESTRICT>(world->bodies.linearVelocities.data())),
 
-        .shadow_avel = std::assume_aligned<sizeof(AuxStride)>(
-            reinterpret_cast<AuxStride *const CPH_RESTRICT>(world->bodies.angular_velocities.data())),
+        .shadowAvel = std::assume_aligned<sizeof(AuxStride)>(
+            reinterpret_cast<AuxStride *const CPH_RESTRICT>(world->bodies.angularVelocities.data())),
 
-        .soft_shadows = world->bodies.soft_shadows.data()};
+        .softShadows = world->bodies.softShadows.data()};
 
     const CPH::MappingDataCreateInfo mapping_data = {
-        .body_ptrs     = world->jolt_body_ptrs.data(),
-        .slot_states   = world->bodies.slot_states.data(),
+        .bodyPtrs     = world->joltBodyPtrs.data(),
+        .slotStates   = world->bodies.slotStates.data(),
         .generations   = world->bodies.generations.data(),
-        .slot_capacity = world->slot_capacity,
-        .slot_to_dense = world->bodies.slot_to_dense.data(),
+        .slotCapacity = world->slotCapacity,
+        .slotToDense = world->bodies.slotToDense.data(),
     };
 
     ExecuteSyncPass<JPH::EBodyType::RigidBody>(active_rigid_count, system, mapping_data, world_data);
 
-    if (world->bodies.soft_shadows) {
+    if (world->bodies.softShadows) {
         ExecuteSyncPass<JPH::EBodyType::SoftBody>(active_soft_count, system, mapping_data, world_data);
     }
 
 #ifdef CULVERIN_PROFILE_SYNC
     if (sync_stats.count >= 50) {
         fprintf(stderr, "[culverin] Sync Stat Avg: %" PRIu64 " ns | Max: %" PRIu64 " ns\n",
-                sync_stats.total_ns / sync_stats.count, sync_stats.max_ns);
+                sync_stats.totalNs / sync_stats.count, sync_stats.maxNs);
         sync_stats = CPH::Stat{};
     }
 #endif

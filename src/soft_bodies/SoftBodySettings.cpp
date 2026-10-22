@@ -108,10 +108,10 @@ std::expected<void, Error> SoftBodySettings::AddFaces(std::span<const std::uint3
 }
 
 std::expected<void, Error> SoftBodySettings::CreateConstraints(float compliance, int bend_type) {
-    if (constraints_created_) {
+    if (constraintsCreated_) {
         return std::unexpected(SoftBodySettingsError::ConstraintsAlreadyCreated);
     }
-    constraints_created_ = true;
+    constraintsCreated_ = true;
 
     // The binder handles both Edge compliance and Shear compliance. joltc built
     // a VertexAttributes array sized to the vertex count with only those two
@@ -130,7 +130,7 @@ std::expected<void, Error> SoftBodySettings::CreateConstraints(float compliance,
 }
 
 std::expected<void, Error> SoftBodySettings::Optimize() {
-    if (!constraints_created_) {
+    if (!constraintsCreated_) {
         return std::unexpected(SoftBodySettingsError::ConstraintsMissing);
     }
     settings_->Optimize();

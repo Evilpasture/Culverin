@@ -40,14 +40,14 @@
 namespace CPH {
 
 struct WorldSettings {
-    int max_bodies;
-    int max_pairs;
-    int max_contact_constraints;
-    int temp_allocator_size;
-    int max_physics_jobs;
-    int max_physics_barriers;
-    int num_threads;
-    float penetration_slop;
+    int maxBodies;
+    int maxPairs;
+    int maxContactConstraints;
+    int tempAllocatorSize;
+    int maxPhysicsJobs;
+    int maxPhysicsBarriers;
+    int numThreads;
+    float penetrationSlop;
 };
 
 struct GravityVector {
@@ -84,23 +84,23 @@ struct MaterialData {
 
 struct BodyBuffers {
     Buffer<PosStride, kAvxAlignment> positions;
-    Buffer<PosStride, kAvxAlignment> prev_positions;
+    Buffer<PosStride, kAvxAlignment> prevPositions;
     Buffer<AuxStride, kAvxAlignment> rotations;
-    Buffer<AuxStride, kAvxAlignment> prev_rotations;
-    Buffer<AuxStride, kAvxAlignment> linear_velocities;
-    Buffer<AuxStride, kAvxAlignment> angular_velocities;
-    Buffer<JPH::BodyID> body_ids;
-    Buffer<std::uint64_t> user_data;
+    Buffer<AuxStride, kAvxAlignment> prevRotations;
+    Buffer<AuxStride, kAvxAlignment> linearVelocities;
+    Buffer<AuxStride, kAvxAlignment> angularVelocities;
+    Buffer<JPH::BodyID> bodyIds;
+    Buffer<std::uint64_t> userData;
     Buffer<std::uint32_t> categories;
     Buffer<std::uint32_t> masks;
-    Buffer<std::uint32_t> material_ids;
-    Buffer<SoftBodyShadow> soft_shadows;
+    Buffer<std::uint32_t> materialIds;
+    Buffer<SoftBodyShadow> softShadows;
 
-    Buffer<std::uint32_t> slot_to_dense;
-    Buffer<std::uint32_t> dense_to_slot;
-    Buffer<std::uint32_t> free_slots;
+    Buffer<std::uint32_t> slotToDense;
+    Buffer<std::uint32_t> denseToSlot;
+    Buffer<std::uint32_t> freeSlots;
     Buffer<std::atomic<std::uint32_t>> generations;
-    Buffer<std::atomic<std::uint8_t>> slot_states;
+    Buffer<std::atomic<std::uint8_t>> slotStates;
 
     // All-or-nothing: on failure *this is unchanged and false is returned.
     // With for_overwrite, elements are default-constructed only (see
@@ -178,7 +178,7 @@ struct PhysicsWorld {
     // EnsureCommandCapacity. Caller holds shadow_lock.
     template <typename Payload>
     void EnqueueCommand(std::uint32_t slot, Payload &&payload) {
-        command_queue[command_count++] = PhysicsCommand{slot, std::forward<Payload>(payload)};
+        commandQueue[commandCount++] = PhysicsCommand{slot, std::forward<Payload>(payload)};
     }
 
     // --- Step/query arbitration (PhysicsWorld.cpp) ---
@@ -191,8 +191,8 @@ struct PhysicsWorld {
     void WaitUntilNotQuerying(std::unique_lock<std::mutex> &shadow);
     // Wakes every thread parked on step_sync.cond.
     void NotifyStepSync() {
-        const std::scoped_lock lock(step_sync.mutex);
-        step_sync.cond.notify_all();
+        const std::scoped_lock lock(stepSync.mutex);
+        stepSync.cond.notify_all();
     }
     // Resolves a typed handle to its slot, but only while the generation
     // still matches -- a handle to a recycled body resolves to nullopt
@@ -200,7 +200,7 @@ struct PhysicsWorld {
     [[nodiscard]] std::optional<std::uint32_t> Resolve(BodyHandle handle) const noexcept {
         const auto slot = handle.Index();
         const auto gen  = handle.Generation();
-        if (slot >= slot_capacity) [[unlikely]] {
+        if (slot >= slotCapacity) [[unlikely]] {
             return std::nullopt;
         }
         if (bodies.generations[slot].load(std::memory_order::acquire) != gen) {
@@ -335,13 +335,13 @@ struct PhysicsWorld {
     // A5; it is a plain Jolt reference now, but it is still nullable and the
     // world's "is it initialized" gate for several call sites, so it stays a
     // pointer rather than a reference.
-    JPH::BodyInterface *body_interface = nullptr;
+    JPH::BodyInterface *bodyInterface = nullptr;
     // Native listener, constructed with `this` (A3). Jolt only stores the
     // pointer, so it must outlive physics_system — it does: declared here,
     // physics_system is declared last and therefore destroyed first.
-    WorldContactListener contact_listener;
-    std::uint32_t max_jolt_bodies    = 0;
-    std::size_t contact_max_capacity = 0;
+    WorldContactListener contactListener;
+    std::uint32_t maxJoltBodies    = 0;
+    std::size_t contactMaxCapacity = 0;
 
     CPH_CACHE_LINE_SPACER;
 
@@ -349,65 +349,65 @@ struct PhysicsWorld {
     double time = 0.0;
     std::atomic<std::size_t> count{0};
     std::size_t capacity      = 0; // == slot_capacity == bodies.size()
-    std::size_t slot_capacity = 0;
-    std::atomic<std::size_t> free_count{0};
+    std::size_t slotCapacity = 0;
+    std::atomic<std::size_t> freeCount{0};
 
     BodyBuffers bodies;
     // Storage retired by the most recent resize. Released at the next
     // resize (or teardown) so a lock-free reader of the previous frame's
     // shadow buffers can never observe freed memory.
-    BodyBuffers retired_bodies;
+    BodyBuffers retiredBodies;
 
     CPH_CACHE_LINE_SPACER;
 
     // --- Synchronization (see core/Threading.hpp for the hierarchy) ---
-    ShadowSync step_sync;
+    ShadowSync stepSync;
 
     CPH_CACHE_LINE_SPACER;
 
     // Acquisition order is jph_trampoline_lock -> shadow_lock -> step_sync
     // (step_sync lives in the block above). See core/Threading.hpp.
-    std::mutex shadow_lock;
-    std::mutex jph_trampoline_lock;
+    std::mutex shadowLock;
+    std::mutex jphTrampolineLock;
 
-    Buffer<PhysicsCommand> command_queue;
-    Buffer<PhysicsCommand> command_queue_spare;
-    std::size_t command_count = 0;
-
-    CPH_CACHE_LINE_SPACER;
-    std::atomic<bool> is_stepping{false};
-    std::atomic<bool> step_requested{false};
-    CPH_CACHE_LINE_SPACER;
-    std::atomic<int> waiting_threads{0};
+    Buffer<PhysicsCommand> commandQueue;
+    Buffer<PhysicsCommand> commandQueueSpare;
+    std::size_t commandCount = 0;
 
     CPH_CACHE_LINE_SPACER;
-    std::atomic<int> active_queries{0};
-    std::atomic<int> view_export_count{0};
-    bool needs_optimization = false;
+    std::atomic<bool> isStepping{false};
+    std::atomic<bool> stepRequested{false};
+    CPH_CACHE_LINE_SPACER;
+    std::atomic<int> waitingThreads{0};
+
+    CPH_CACHE_LINE_SPACER;
+    std::atomic<int> activeQueries{0};
+    std::atomic<int> viewExportCount{0};
+    bool needsOptimization = false;
 
     CPH_CACHE_LINE_SPACER;
 
     // --- Contacts, materials, shapes ---
-    Buffer<ContactEvent> contact_buffer;
-    std::atomic<std::size_t> contact_atomic_idx{0};
-    std::size_t contact_count = 0;
+    Buffer<ContactEvent> contactBuffer;
+    std::atomic<std::size_t> contactAtomicIdx{0};
+    std::size_t contactCount = 0;
 
     Buffer<MaterialData> materials;
-    std::size_t material_count = 0;
+    std::size_t materialCount = 0;
 
-    Buffer<ShapeEntry> shape_cache;
-    std::size_t shape_cache_count = 0;
+    Buffer<ShapeEntry> shapeCache;
+    std::size_t shapeCacheCount = 0;
 
     // Indexed by Jolt BodyID index (size max_jolt_bodies + 1).
-    Buffer<const void *> jolt_body_ptrs;
-    Buffer<std::atomic<BodyHandle>> id_to_handle_map;
+    Buffer<const void *> joltBodyPtrs;
+    Buffer<std::atomic<BodyHandle>> idToHandleMap;
 
     CPH_CACHE_LINE_SPACER;
 
     // --- Constraints ---
     Buffer<ConstraintSlot> constraints;
-    Buffer<std::uint32_t> free_constraint_slots;
-    std::size_t free_constraint_count = 0;
+    Buffer<std::uint32_t> freeConstraintSlots;
+    std::size_t freeConstraintCount = 0;
 
     CPH_CACHE_LINE_SPACER;
 
@@ -418,18 +418,18 @@ struct PhysicsWorld {
     // CPython-allocated object that only guarantees max_align_t. Same reason
     // the job system is heap-owned. One allocation per world, exactly like
     // the JoltC renderer it replaces.
-    std::unique_ptr<WorldDebugRenderer> debug_renderer;
-    DebugBuffer debug_lines;
-    DebugBuffer debug_triangles;
+    std::unique_ptr<WorldDebugRenderer> debugRenderer;
+    DebugBuffer debugLines;
+    DebugBuffer debugTriangles;
 
     // --- Direct Jolt core ---
     // Declared last so member destruction tears physics_system down before
     // the body, shape, and constraint storage declared above. The thread
     // pool is heap-owned: JobSystemThreadPool requires 64-byte alignment,
     // which CPython allocation of the enclosing world object cannot provide.
-    JPH::CharacterVsCharacterCollisionSimple character_vs_character;
-    std::unique_ptr<JPH::TempAllocator> temp_allocator;
-    std::unique_ptr<JPH::JobSystemThreadPool> job_system;
+    JPH::CharacterVsCharacterCollisionSimple characterVsCharacter;
+    std::unique_ptr<JPH::TempAllocator> tempAllocator;
+    std::unique_ptr<JPH::JobSystemThreadPool> jobSystem;
 
     // PhysicsSystem is heap-owned for the same reason the job system is, and
     // for a subtler one: it carries alignof 16 (its RVec3 storage), while the
@@ -441,9 +441,9 @@ struct PhysicsWorld {
     // so -fno-exceptions terminates on OOM exactly as it does for the two
     // allocations above; `physics_system` stays a reference so the ~70 call
     // sites that spell `world.physics_system.X()` are untouched.
-    std::unique_ptr<JPH::PhysicsSystem> physics_system_storage;
-    JPH::PhysicsSystem &physics_system;
-    bool jolt_initialized = false;
+    std::unique_ptr<JPH::PhysicsSystem> physicsSystemStorage;
+    JPH::PhysicsSystem &physicsSystem;
+    bool joltInitialized = false;
 };
 
 } // namespace CPH

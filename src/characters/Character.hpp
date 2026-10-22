@@ -25,7 +25,7 @@ struct PhysicsWorld;
 struct CharacterParams {
     float height    = 1.8f;
     float radius    = 0.4f;
-    float max_slope = 45.0f; // degrees
+    float maxSlope = 45.0f; // degrees
 };
 
 class Character {
@@ -90,10 +90,10 @@ class Character {
     // Read by the contact listener on Jolt worker threads, written by the
     // owning thread, so they are atomics and never locked.
     std::atomic<BodyHandle> handle_{};
-    std::atomic<float>      push_strength_{0.0f};
-    std::atomic<float>      last_vx_{0.0f};
-    std::atomic<float>      last_vy_{0.0f};
-    std::atomic<float>      last_vz_{0.0f};
+    std::atomic<float>      pushStrength_{0.0f};
+    std::atomic<float>      lastVx_{0.0f};
+    std::atomic<float>      lastVy_{0.0f};
+    std::atomic<float>      lastVz_{0.0f};
 };
 
 } // namespace CPH

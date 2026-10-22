@@ -21,18 +21,18 @@
 namespace CPH {
 
 struct Stat {
-    std::uint64_t total_ns = 0;
-    std::uint64_t min_ns   = UINT64_MAX;
-    std::uint64_t max_ns   = 0;
+    std::uint64_t totalNs = 0;
+    std::uint64_t minNs   = UINT64_MAX;
+    std::uint64_t maxNs   = 0;
     std::uint32_t count    = 0;
 
     void accumulate(std::uint64_t elapsed_ns) noexcept {
-        total_ns += elapsed_ns;
-        if (elapsed_ns < min_ns) {
-            min_ns = elapsed_ns;
+        totalNs += elapsed_ns;
+        if (elapsed_ns < minNs) {
+            minNs = elapsed_ns;
         }
-        if (elapsed_ns > max_ns) {
-            max_ns = elapsed_ns;
+        if (elapsed_ns > maxNs) {
+            maxNs = elapsed_ns;
         }
         count++;
     }

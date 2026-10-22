@@ -39,8 +39,8 @@ class Error;
 
 struct ErrorCategory {
     std::string_view name;
-    std::string_view (*to_string)(std::uint32_t value); // human message
-    std::string_view (*to_name)(std::uint32_t value);   // enumerator-style name
+    std::string_view (*toString)(std::uint32_t value); // human message
+    std::string_view (*toName)(std::uint32_t value);   // enumerator-style name
 };
 
 namespace detail {
@@ -177,7 +177,7 @@ std::string_view EnumToMessage(std::uint32_t value) {
 // no cross-binary sharing needed. Entries live for the process duration.
 
 struct CategoryNode {
-    std::uint32_t                 category_hash;
+    std::uint32_t                 categoryHash;
     const ErrorCategory          *category;
     std::atomic<CategoryNode *>   next;
 };
@@ -195,7 +195,7 @@ inline void RegisterCategoryNode(CategoryNode &node) noexcept {
 inline const ErrorCategory *FindCategory(std::uint32_t category_hash) noexcept {
     for (const CategoryNode *node = g_category_head.load(std::memory_order_acquire); node;
          node                      = node->next.load(std::memory_order_acquire)) {
-        if (node->category_hash == category_hash) {
+        if (node->categoryHash == category_hash) {
             return node->category;
         }
     }
@@ -223,26 +223,26 @@ void ErrorCodeCannotBeZero() noexcept;
 // (category hash, value) — implicitly constructible from any error enum.
 // Default-constructed, and value 0 in general, means "no error".
 class ErrorCode {
-    std::uint32_t m_category = 0;
-    std::uint32_t m_value    = 0;
+    std::uint32_t mCategory = 0;
+    std::uint32_t mValue    = 0;
 
 public:
     constexpr ErrorCode() noexcept = default;
 
     constexpr ErrorCode(std::uint32_t category_hash, std::uint32_t value) noexcept
-        : m_category(category_hash), m_value(value) {}
+        : mCategory(category_hash), mValue(value) {}
 
     template <typename E>
         requires std::is_enum_v<E>
     constexpr ErrorCode(E value) noexcept
-        : m_category(detail::Hash32(detail::TypeName<E>())),
-          m_value(static_cast<std::uint32_t>(static_cast<std::underlying_type_t<E>>(value))) {
+        : mCategory(detail::Hash32(detail::TypeName<E>())),
+          mValue(static_cast<std::uint32_t>(static_cast<std::underlying_type_t<E>>(value))) {
         static_assert(sizeof(std::underlying_type_t<E>) <= sizeof(std::uint32_t),
                       "CPH::Error enums must fit in 32 bits (use a fixed underlying type)");
         static_assert(detail::EnumeratorName<E, 0>().empty(),
                       "CPH::Error enums must not declare a 0 enumerator (0 means no error)");
         if consteval {
-            if (m_value == 0) {
+            if (mValue == 0) {
                 detail::ErrorCodeCannotBeZero();
             }
         } else {
@@ -258,13 +258,13 @@ public:
     template <typename E>
         requires std::is_enum_v<E>
     [[nodiscard]] constexpr bool Is() const noexcept {
-        return m_category == detail::Hash32(detail::TypeName<E>());
+        return mCategory == detail::Hash32(detail::TypeName<E>());
     }
 
     template <typename E>
         requires std::is_enum_v<E>
     [[nodiscard]] constexpr bool Is(E value) const noexcept {
-        return Is<E>() && m_value == static_cast<std::uint32_t>(
+        return Is<E>() && mValue == static_cast<std::uint32_t>(
                                          static_cast<std::underlying_type_t<E>>(value));
     }
 
@@ -272,12 +272,12 @@ public:
     template <typename E>
         requires std::is_enum_v<E>
     [[nodiscard]] constexpr E As() const noexcept {
-        return static_cast<E>(static_cast<std::underlying_type_t<E>>(m_value));
+        return static_cast<E>(static_cast<std::underlying_type_t<E>>(mValue));
     }
 
-    [[nodiscard]] constexpr explicit operator bool() const noexcept { return m_value != 0; }
-    [[nodiscard]] constexpr std::uint32_t CategoryHash() const noexcept { return m_category; }
-    [[nodiscard]] constexpr std::uint32_t Value() const noexcept { return m_value; }
+    [[nodiscard]] constexpr explicit operator bool() const noexcept { return mValue != 0; }
+    [[nodiscard]] constexpr std::uint32_t CategoryHash() const noexcept { return mCategory; }
+    [[nodiscard]] constexpr std::uint32_t Value() const noexcept { return mValue; }
     [[nodiscard]] Error                   ToError() const noexcept;
 
     [[nodiscard]] friend constexpr bool operator==(const ErrorCode &,
@@ -290,44 +290,44 @@ static_assert(sizeof(ErrorCode) == 8 && std::is_standard_layout_v<ErrorCode> &&
 // The error itself: an ErrorCode plus category-resolved descriptions.
 // Default-constructed means no error.
 class Error {
-    ErrorCode m_code{};
+    ErrorCode mCode{};
 
 public:
     constexpr Error() noexcept = default;
-    constexpr Error(ErrorCode code) noexcept : m_code(code) {}
+    constexpr Error(ErrorCode code) noexcept : mCode(code) {}
 
     template <typename E>
         requires std::is_enum_v<E>
-    constexpr Error(E value) noexcept : m_code(value) {}
+    constexpr Error(E value) noexcept : mCode(value) {}
 
-    [[nodiscard]] constexpr ErrorCode  Code() const noexcept { return m_code; }
+    [[nodiscard]] constexpr ErrorCode  Code() const noexcept { return mCode; }
     [[nodiscard]] constexpr explicit operator bool() const noexcept {
-        return static_cast<bool>(m_code);
+        return static_cast<bool>(mCode);
     }
 
     [[nodiscard]] std::string_view Category() const noexcept {
-        if (!m_code) {
+        if (!mCode) {
             return "None";
         }
-        const ErrorCategory *category = detail::FindCategory(m_code.CategoryHash());
+        const ErrorCategory *category = detail::FindCategory(mCode.CategoryHash());
         return category ? category->name : std::string_view{"Unknown"};
     }
 
     [[nodiscard]] std::string_view Name() const noexcept {
-        if (!m_code) {
+        if (!mCode) {
             return "None";
         }
-        const ErrorCategory *category = detail::FindCategory(m_code.CategoryHash());
-        return (category && category->to_name) ? category->to_name(m_code.Value())
+        const ErrorCategory *category = detail::FindCategory(mCode.CategoryHash());
+        return (category && category->toName) ? category->toName(mCode.Value())
                                                 : std::string_view{"Unknown"};
     }
 
     [[nodiscard]] std::string_view Message() const {
-        if (!m_code) {
+        if (!mCode) {
             return "None";
         }
-        const ErrorCategory *category = detail::FindCategory(m_code.CategoryHash());
-        return (category && category->to_string) ? category->to_string(m_code.Value())
+        const ErrorCategory *category = detail::FindCategory(mCode.CategoryHash());
+        return (category && category->toString) ? category->toString(mCode.Value())
                                                   : std::string_view{"Unknown"};
     }
 

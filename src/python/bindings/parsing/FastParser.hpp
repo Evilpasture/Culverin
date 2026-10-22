@@ -215,8 +215,8 @@ template <typename... Ts> class FastParser {
             const std::array<FastArgDef, sizeof...(Ts)> c_defs{{
                 FastArgDef{
                     .name       = args.name,
-                    .type_name  = FastParseTrait<Ts>::type_name,
-                    .type_guard = FastParseTrait<Ts>::type_guard,
+                    .typeName  = FastParseTrait<Ts>::type_name,
+                    .typeGuard = FastParseTrait<Ts>::type_guard,
                     .convert    = FastParseTrait<Ts>::converter,
                     .required   = args.required,
                 }...,
@@ -225,19 +225,19 @@ template <typename... Ts> class FastParser {
         } else {
             FastParseInitImpl(&core_, nullptr, 0);
         }
-        core_.parser_name = parser_name;
+        core_.parserName = parser_name;
         initialized_      = true;
     }
 
     [[nodiscard, gnu::always_inline]] ParseResult Parse(PyObject *const *args, Py_ssize_t nargs,
                                                         PyObject *kwnames, Ts &...targets) const {
         if constexpr (sizeof...(Ts) == 0) {
-            return core_.hot_path(args, nargs, kwnames, &core_, nullptr);
+            return core_.hotPath(args, nargs, kwnames, &core_, nullptr);
         } else {
             const void *const target_ptrs[] = {
                 reinterpret_cast<const void *>(&targets)...,
             };
-            return core_.hot_path(args, nargs, kwnames, &core_, target_ptrs);
+            return core_.hotPath(args, nargs, kwnames, &core_, target_ptrs);
         }
     }
 

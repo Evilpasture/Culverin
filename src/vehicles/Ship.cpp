@@ -24,20 +24,20 @@ class Ship::StepListener final : public JPH::PhysicsStepListener {
 
         const JPH::BodyID &sled = ship.sled_;
         JPH::BodyInterface &bodies =
-            ship.world_.physics_system.GetBodyInterfaceNoLock();
+            ship.world_.physicsSystem.GetBodyInterfaceNoLock();
 
         // 1. Current state.
         const JPH::Vec3 ang_vel = bodies.GetAngularVelocity(sled);
         const JPH::Quat rot     = bodies.GetRotation(sled);
         const JPH::Vec3 lin_vel = bodies.GetLinearVelocity(sled);
 
-        const float fwd_input   = ship.input_forward_.load(std::memory_order::relaxed);
-        const float steer_input = ship.input_right_.load(std::memory_order::relaxed);
+        const float fwd_input   = ship.inputForward_.load(std::memory_order::relaxed);
+        const float steer_input = ship.inputRight_.load(std::memory_order::relaxed);
 
         // 2. PD stabiliser and banking.
         const JPH::Vec3 current_up = rot * JPH::Vec3(0, 1.0f, 0);
 
-        const float target_roll_z = -steer_input * ship.config_.banking_strength;
+        const float target_roll_z = -steer_input * ship.config_.bankingStrength;
 
         // Torque X corrects pitch, torque Z corrects roll (plus the banking
         // target).
@@ -48,7 +48,7 @@ class Ship::StepListener final : public JPH::PhysicsStepListener {
 
         // 3. Yaw torque.
         const float current_yaw_vel = ang_vel.GetY();
-        const float target_yaw_vel  = steer_input * ship.config_.steer_speed;
+        const float target_yaw_vel  = steer_input * ship.config_.steerSpeed;
         const float ty = (target_yaw_vel - current_yaw_vel) * (ship.config_.kp * 0.5f);
 
         bodies.AddTorque(sled, JPH::Vec3(tx, ty, tz));
@@ -56,9 +56,9 @@ class Ship::StepListener final : public JPH::PhysicsStepListener {
         // 4. Thrust.
         if (std::fabs(fwd_input) > 0.01f) {
             const JPH::Vec3 current_fwd = rot * JPH::Vec3(0, 0, 1.0f);
-            const JPH::Vec3 force(current_fwd.GetX() * fwd_input * ship.config_.throttle_force,
+            const JPH::Vec3 force(current_fwd.GetX() * fwd_input * ship.config_.throttleForce,
                                   0.0f,
-                                  current_fwd.GetZ() * fwd_input * ship.config_.throttle_force);
+                                  current_fwd.GetZ() * fwd_input * ship.config_.throttleForce);
             bodies.AddForce(sled, force);
         }
 
@@ -72,7 +72,7 @@ class Ship::StepListener final : public JPH::PhysicsStepListener {
         const float lateral_speed = (lin_vel.GetX() * current_right.GetX()) +
                                     (lin_vel.GetY() * current_right.GetY()) +
                                     (lin_vel.GetZ() * current_right.GetZ());
-        const float lateral_force_mag = -lateral_speed * ship.config_.lateral_grip;
+        const float lateral_force_mag = -lateral_speed * ship.config_.lateralGrip;
 
         if (std::fabs(lateral_force_mag) > 0.01f) {
             const JPH::Vec3 side_force(current_right.GetX() * lateral_force_mag,
@@ -87,7 +87,7 @@ class Ship::StepListener final : public JPH::PhysicsStepListener {
                                (lin_vel.GetZ() * lin_vel.GetZ());
         if (speed_sq > 0.01f) {
             const float speed    = std::sqrt(speed_sq);
-            const float drag_mag = speed_sq * ship.config_.linear_drag;
+            const float drag_mag = speed_sq * ship.config_.linearDrag;
             const JPH::Vec3 drag_force(-(lin_vel.GetX() / speed) * drag_mag,
                                        -(lin_vel.GetY() / speed) * drag_mag,
                                        -(lin_vel.GetZ() / speed) * drag_mag);
@@ -107,38 +107,38 @@ std::unique_ptr<Ship> Ship::Create(PhysicsWorld &world, const ShipConfig &config
     // by another thread the moment it is released.
     std::uint32_t dense = 0;
     {
-        const std::scoped_lock shadow(world.shadow_lock);
-        const std::optional<std::uint32_t> slot = world.Resolve(config.sled_handle);
+        const std::scoped_lock shadow(world.shadowLock);
+        const std::optional<std::uint32_t> slot = world.Resolve(config.sledHandle);
         if (!slot) {
             return nullptr;
         }
-        dense = world.bodies.slot_to_dense[*slot];
+        dense = world.bodies.slotToDense[*slot];
     }
 
-    std::unique_ptr<Ship> ship(new Ship(world, world.bodies.body_ids[dense], config));
+    std::unique_ptr<Ship> ship(new Ship(world, world.bodies.bodyIds[dense], config));
 
     // Registration is a Jolt-system mutation, so it takes the trampoline lock
     // like every other such call. Acquisition order is
     // jph_trampoline_lock -> shadow_lock -> step_sync.
     {
-        const std::scoped_lock trampoline(world.jph_trampoline_lock);
+        const std::scoped_lock trampoline(world.jphTrampolineLock);
         ship->listener_ = std::make_unique<StepListener>(*ship);
-        world.physics_system.AddStepListener(ship->listener_.get());
+        world.physicsSystem.AddStepListener(ship->listener_.get());
     }
     return ship;
 }
 
 Ship::~Ship() {
     if (listener_ != nullptr) {
-        const std::scoped_lock trampoline(world_.jph_trampoline_lock);
-        world_.physics_system.RemoveStepListener(listener_.get());
+        const std::scoped_lock trampoline(world_.jphTrampolineLock);
+        world_.physicsSystem.RemoveStepListener(listener_.get());
         listener_.reset();
     }
 }
 
 void Ship::SetInput(float forward, float right) noexcept {
-    input_forward_.store(forward, std::memory_order::relaxed);
-    input_right_.store(right, std::memory_order::relaxed);
+    inputForward_.store(forward, std::memory_order::relaxed);
+    inputRight_.store(right, std::memory_order::relaxed);
 }
 
 } // namespace CPH

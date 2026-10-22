@@ -90,15 +90,15 @@ std::expected<int, Error> RagdollSettings::AddPart(const JPH::Shape *shape,
         return std::unexpected(RagdollError::InvalidArgument);
     }
     const int joint_count = skeleton->GetJointCount();
-    if (request.joint_index < 0 || request.joint_index >= joint_count) {
+    if (request.jointIndex < 0 || request.jointIndex >= joint_count) {
         return std::unexpected(RagdollError::JointOutOfRange);
     }
 
-    if (static_cast<int>(settings_->mParts.size()) <= request.joint_index) {
+    if (static_cast<int>(settings_->mParts.size()) <= request.jointIndex) {
         settings_->mParts.resize(joint_count);
     }
 
-    JPH::RagdollSettings::Part &part = settings_->mParts[request.joint_index];
+    JPH::RagdollSettings::Part &part = settings_->mParts[request.jointIndex];
     part.SetShape(shape);
     // joltc set CalculateInertia, not MassAndInertia: the mass is overridden but
     // the inertia tensor is still derived from the shape.
@@ -107,11 +107,11 @@ std::expected<int, Error> RagdollSettings::AddPart(const JPH::Shape *shape,
     part.mObjectLayer                  = 1;
     part.mMotionType                   = JPH::EMotionType::Dynamic;
 
-    if (request.has_position) {
+    if (request.hasPosition) {
         part.mPosition = request.position;
     }
 
-    if (request.parent_index >= 0) {
+    if (request.parentIndex >= 0) {
         // A fresh SwingTwistConstraintSettings carries Jolt's defaults, which is
         // exactly what the JoltC path produced: JPH_SwingTwistConstraintSettings_Init
         // memset the struct and then copied the defaults back out of a
@@ -132,10 +132,10 @@ std::expected<int, Error> RagdollSettings::AddPart(const JPH::Shape *shape,
         constraint->mTwistAxis2          = request.axis;
         constraint->mPlaneAxis1          = request.normal;
         constraint->mPlaneAxis2          = request.normal;
-        constraint->mNormalHalfConeAngle = request.cone_angle;
-        constraint->mPlaneHalfConeAngle  = request.cone_angle;
-        constraint->mTwistMinAngle       = request.twist_min;
-        constraint->mTwistMaxAngle       = request.twist_max;
+        constraint->mNormalHalfConeAngle = request.coneAngle;
+        constraint->mPlaneHalfConeAngle  = request.coneAngle;
+        constraint->mTwistMinAngle       = request.twistMin;
+        constraint->mTwistMaxAngle       = request.twistMax;
         part.mToParent                   = constraint;
     }
 
@@ -149,7 +149,7 @@ bool RagdollSettings::Stabilize() {
 // --- Ragdoll -----------------------------------------------------------------
 
 Ragdoll::Ragdoll(PhysicsWorld &world, JPH::Ragdoll *ragdoll, Buffer<std::uint32_t> body_slots)
-    : world_(&world), ragdoll_(ragdoll), body_slots_(std::move(body_slots)) {}
+    : world_(&world), ragdoll_(ragdoll), bodySlots_(std::move(body_slots)) {}
 
 std::expected<std::unique_ptr<Ragdoll>, Error>
 Ragdoll::Create(PhysicsWorld &world, RagdollSettings &settings, JPH::RVec3 position,
@@ -162,13 +162,13 @@ Ragdoll::Create(PhysicsWorld &world, RagdollSettings &settings, JPH::RVec3 posit
     }
 
     Buffer<std::uint32_t> body_slots;
-    if (instance->body_count != 0 && !body_slots.allocate(instance->body_count)) {
+    if (instance->bodyCount != 0 && !body_slots.allocate(instance->bodyCount)) {
         world.DestroyRagdoll(instance->ragdoll);
         return std::unexpected(WorldCreationError::OutOfMemory);
     }
 
     const std::expected<std::size_t, Error> registered = world.RegisterRagdollBodies(
-        instance->ragdoll, {body_slots.data(), instance->body_count}, user_data, category, mask,
+        instance->ragdoll, {body_slots.data(), instance->bodyCount}, user_data, category, mask,
         material_id);
     if (!registered) {
         // DestroyRagdoll takes the instance back out of the system and releases
@@ -179,7 +179,7 @@ Ragdoll::Create(PhysicsWorld &world, RagdollSettings &settings, JPH::RVec3 posit
 
     std::unique_ptr<Ragdoll> ragdoll(
         new Ragdoll(world, instance->ragdoll, std::move(body_slots)));
-    ragdoll->registered_body_count_ = *registered;
+    ragdoll->registeredBodyCount_ = *registered;
     return ragdoll;
 }
 
@@ -202,14 +202,14 @@ void Ragdoll::Detach() {
 
         ragdoll->RemoveFromPhysicsSystem(true);
 
-        if (world_->bodies.slot_states.data() != nullptr) {
-            for (std::size_t i = 0; i < body_slots_.size(); ++i) {
-                const std::uint32_t slot = body_slots_[i];
-                if (slot >= world_->slot_capacity) {
+        if (world_->bodies.slotStates.data() != nullptr) {
+            for (std::size_t i = 0; i < bodySlots_.size(); ++i) {
+                const std::uint32_t slot = bodySlots_[i];
+                if (slot >= world_->slotCapacity) {
                     continue;
                 }
                 const std::uint8_t state =
-                    world_->bodies.slot_states[slot].load(std::memory_order::acquire);
+                    world_->bodies.slotStates[slot].load(std::memory_order::acquire);
                 if (state == std::to_underlying(SlotState::Alive)) {
                     world_->RemoveBodySlot(slot);
                 }
@@ -219,7 +219,7 @@ void Ragdoll::Detach() {
 
     // A Jolt-system mutation, so it takes the trampoline lock alone: holding
     // the shadow lock here would invert the documented order.
-    const std::scoped_lock trampoline(world_->jph_trampoline_lock);
+    const std::scoped_lock trampoline(world_->jphTrampolineLock);
     ragdoll->Release();
 }
 
@@ -281,7 +281,7 @@ bool Ragdoll::DriveToPose(JPH::RVec3 root_position, std::span<const JPH::Mat44> 
 
 void Ragdoll::CopyBodyHandles(std::span<PhysicsRagdollBodyHandleInfo> out) const {
     // Mismatched sizes used to leave the caller's buffer untouched; keep that.
-    if (body_slots_.size() != out.size()) {
+    if (bodySlots_.size() != out.size()) {
         return;
     }
 
@@ -293,16 +293,16 @@ void Ragdoll::CopyBodyHandles(std::span<PhysicsRagdollBodyHandleInfo> out) const
         return;
     }
 
-    const std::scoped_lock shadow(world_->shadow_lock);
-    for (std::size_t i = 0; i < body_slots_.size(); ++i) {
+    const std::scoped_lock shadow(world_->shadowLock);
+    for (std::size_t i = 0; i < bodySlots_.size(); ++i) {
         out[i]              = PhysicsRagdollBodyHandleInfo{.handle = BodyHandle{}, .alive = false};
-        const std::uint32_t slot = body_slots_[i];
-        if (slot >= world_->slot_capacity || world_->bodies.slot_states.data() == nullptr ||
+        const std::uint32_t slot = bodySlots_[i];
+        if (slot >= world_->slotCapacity || world_->bodies.slotStates.data() == nullptr ||
             world_->bodies.generations.data() == nullptr) {
             continue;
         }
         const std::uint8_t state =
-            world_->bodies.slot_states[slot].load(std::memory_order::acquire);
+            world_->bodies.slotStates[slot].load(std::memory_order::acquire);
         if (state != std::to_underlying(SlotState::Alive)) {
             continue;
         }
@@ -316,7 +316,7 @@ void Ragdoll::CopyBodyHandles(std::span<PhysicsRagdollBodyHandleInfo> out) const
 }
 
 bool Ragdoll::CopyDebugInfo(std::span<PhysicsRagdollBodyDebugInfo> out) const {
-    if (ragdoll_ == nullptr || world_ == nullptr || world_->body_interface == nullptr) {
+    if (ragdoll_ == nullptr || world_ == nullptr || world_->bodyInterface == nullptr) {
         return false;
     }
 
@@ -326,15 +326,15 @@ bool Ragdoll::CopyDebugInfo(std::span<PhysicsRagdollBodyDebugInfo> out) const {
         return false;
     }
 
-    const std::scoped_lock shadow(world_->shadow_lock);
-    JPH::BodyInterface &bodies = *world_->body_interface;
+    const std::scoped_lock shadow(world_->shadowLock);
+    JPH::BodyInterface &bodies = *world_->bodyInterface;
     for (int i = 0; i < ragdoll_body_count; ++i) {
         const JPH::BodyID body_id = ragdoll_->GetBodyID(i);
         out[i].position           = bodies.GetPosition(body_id);
         // TODO(smell): rotation is fetched and stored, but no caller has ever
         // surfaced it; preserved verbatim from the C path.
         out[i].rotation        = bodies.GetRotation(body_id);
-        out[i].linear_velocity = bodies.GetLinearVelocity(body_id);
+        out[i].linearVelocity = bodies.GetLinearVelocity(body_id);
     }
     return true;
 }

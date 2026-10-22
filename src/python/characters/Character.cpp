@@ -26,7 +26,7 @@ namespace CPH::Python {
     float dt = 0.0f;
 
     const ParseResult parsed =
-        self->parsers->CharMove.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, v_in, dt);
+        self->parsers->charMove.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, v_in, dt);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
@@ -74,7 +74,7 @@ namespace CPH::Python {
     PosStride pos = {};
 
     const ParseResult parsed =
-        self->parsers->SetPosChar.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, pos);
+        self->parsers->setPosChar.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, pos);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
@@ -92,7 +92,7 @@ namespace CPH::Python {
     AuxStride rot = {.x = 0.0f, .y = 0.0f, .z = 0.0f, .w = 1.0f};
 
     const ParseResult parsed =
-        self->parsers->SetRotChar.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, rot);
+        self->parsers->setRotChar.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, rot);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
@@ -110,7 +110,7 @@ namespace CPH::Python {
     float strength = 0.0f;
 
     const ParseResult parsed =
-        self->parsers->SetStrengthChar.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, strength);
+        self->parsers->setStrengthChar.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, strength);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
@@ -139,14 +139,14 @@ namespace CPH::Python {
     alignas(16) float result_r[4];
 
     {
-        const std::scoped_lock shadow(self->world->physics.shadow_lock);
+        const std::scoped_lock shadow(self->world->physics.shadowLock);
         BlockUntilNotStepping(self->world);
 
         const std::uint32_t slot  = self->character->Handle().Index();
-        const std::uint32_t dense = self->world->physics.bodies.slot_to_dense[slot];
+        const std::uint32_t dense = self->world->physics.bodies.slotToDense[slot];
 
-        const auto *prev_p = &self->world->physics.bodies.prev_positions[dense];
-        const auto *prev_r = &self->world->physics.bodies.prev_rotations[dense];
+        const auto *prev_p = &self->world->physics.bodies.prevPositions[dense];
+        const auto *prev_r = &self->world->physics.bodies.prevRotations[dense];
 
         const JPH::RVec3 end_p = self->character->Virtual()->GetPosition();
         const JPH::Quat end_r  = self->character->Virtual()->GetRotation();
@@ -208,7 +208,7 @@ void CharacterDealloc(CharacterObject *self) {
     float step_h  = 0.4f;
     float slope   = 45.0f;
 
-    const ParseResult parsed = self->parsers->CreateChar.Parse(args, PyVectorcall_NARGS(nargsf),
+    const ParseResult parsed = self->parsers->createChar.Parse(args, PyVectorcall_NARGS(nargsf),
                                                                kwnames, pos, height, radius,
                                                                step_h, slope);
     if (!parsed) {
@@ -216,7 +216,7 @@ void CharacterDealloc(CharacterObject *self) {
         return nullptr;
     }
 
-    const CPH::CharacterParams params{.height = height, .radius = radius, .max_slope = slope};
+    const CPH::CharacterParams params{.height = height, .radius = radius, .maxSlope = slope};
     const JPH::RVec3 position(pos.x, pos.y, pos.z);
 
     std::unique_ptr<CPH::Character> character;
@@ -233,7 +233,7 @@ void CharacterDealloc(CharacterObject *self) {
     auto *obj = PyObject_GC_New(
         CharacterObject,
         reinterpret_cast<PyTypeObject *>(GetModuleState(PyType_GetModule(Py_TYPE(self)))
-                                             ->CharacterType));
+                                             ->characterType));
     if (!obj) {
         return nullptr;
     }
@@ -250,7 +250,7 @@ void CharacterDealloc(CharacterObject *self) {
 
     // A created character may have grown the world, so an exported buffer's
     // shape has to follow the new body count.
-    self->view_shape[0] =
+    self->viewShape[0] =
         static_cast<Py_ssize_t>(self->physics.count.load(std::memory_order::relaxed));
 
     PyObject_GC_Track(reinterpret_cast<PyObject *>(obj));

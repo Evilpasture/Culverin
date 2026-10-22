@@ -71,14 +71,14 @@ template <typename T> [[nodiscard]] inline T ConvertValue(PyObject *obj) noexcep
 // `float x = CPH::Python::ToValue(obj);`
 class Value {
   public:
-    explicit Value(PyObject *obj) noexcept : m_object(obj) {}
+    explicit Value(PyObject *obj) noexcept : mObject(obj) {}
 
     template <typename T> [[nodiscard]] operator T() const noexcept {
-        return detail::ConvertValue<T>(m_object);
+        return detail::ConvertValue<T>(mObject);
     }
 
   private:
-    PyObject *m_object;
+    PyObject *mObject;
 };
 
 [[nodiscard]] inline Value ToValue(PyObject *obj) noexcept { return Value{obj}; }

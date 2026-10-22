@@ -26,8 +26,8 @@ CPH_NO_TSAN inline void RecordContact(PhysicsWorld *world, BodyHandle r1, BodyHa
                                       InfoExtractor &&extract_info) noexcept {
     // 1. Thread-safe Index Allocation
     const size_t idx =
-        world->contact_atomic_idx.fetch_add(1, std::memory_order::relaxed);
-    if (idx >= world->contact_max_capacity) [[unlikely]] {
+        world->contactAtomicIdx.fetch_add(1, std::memory_order::relaxed);
+    if (idx >= world->contactMaxCapacity) [[unlikely]] {
         return;
     }
 
@@ -35,7 +35,7 @@ CPH_NO_TSAN inline void RecordContact(PhysicsWorld *world, BodyHandle r1, BodyHa
     // allocate_for_overwrite, so zero the claimed slot first: fields this
     // writer does not set are then defined zeros (legacy exposed
     // uninitialized bytes here).
-    ContactEvent &event = world->contact_buffer[idx];
+    ContactEvent &event = world->contactBuffer[idx];
     std::memset(&event, 0, sizeof(event));
     ContactEventSlim *slim  = &event.slim;
     ContactEventFatExt *fat = &event.fat;
@@ -69,12 +69,12 @@ inline void ProcessManifoldEvent(PhysicsWorld *world, const JPH::Body &body1,
     const auto slot1 = r1.Index();
     const auto slot2 = r2.Index();
 
-    if (slot1 >= world->slot_capacity || slot2 >= world->slot_capacity) [[unlikely]] {
+    if (slot1 >= world->slotCapacity || slot2 >= world->slotCapacity) [[unlikely]] {
         return;
     }
 
-    const uint32_t idx1 = world->bodies.slot_to_dense[slot1];
-    const uint32_t idx2 = world->bodies.slot_to_dense[slot2];
+    const uint32_t idx1 = world->bodies.slotToDense[slot1];
+    const uint32_t idx2 = world->bodies.slotToDense[slot2];
 
     // Collision Bitmask Validation
     if (!(world->bodies.categories[idx1] & world->bodies.masks[idx2]) ||
@@ -104,7 +104,7 @@ inline void ProcessManifoldEvent(PhysicsWorld *world, const JPH::Body &body1,
 
             if (body1.IsSensor() || body2.IsSensor()) {
                 slim->impulse       = 0.0f;
-                slim->sliding_speed = 0.0f;
+                slim->slidingSpeed = 0.0f;
             } else {
                 // Native Branchless Velocity Math
                 const JPH::Vec3 v1 =
@@ -117,11 +117,11 @@ inline void ProcessManifoldEvent(PhysicsWorld *world, const JPH::Body &body1,
                 // SIMD Dot Product & Length
                 const float dot     = dv.Dot(n);
                 slim->impulse       = std::abs(dot);
-                slim->sliding_speed = dv.LengthSq() - (dot * dot);
+                slim->slidingSpeed = dv.LengthSq() - (dot * dot);
             }
 
-            fat->mat1 = world->bodies.material_ids[idx1];
-            fat->mat2 = world->bodies.material_ids[idx2];
+            fat->mat1 = world->bodies.materialIds[idx1];
+            fat->mat2 = world->bodies.materialIds[idx2];
         });
 }
 
@@ -142,12 +142,12 @@ WorldContactListener::OnContactValidate(const JPH::Body &inBody1, const JPH::Bod
     const auto slot1 = r1.Index();
     const auto slot2 = r2.Index();
 
-    if (slot1 >= world_->slot_capacity || slot2 >= world_->slot_capacity) [[unlikely]] {
+    if (slot1 >= world_->slotCapacity || slot2 >= world_->slotCapacity) [[unlikely]] {
         return JPH::ValidateResult::RejectContact;
     }
 
-    const uint32_t idx1 = world_->bodies.slot_to_dense[slot1];
-    const uint32_t idx2 = world_->bodies.slot_to_dense[slot2];
+    const uint32_t idx1 = world_->bodies.slotToDense[slot1];
+    const uint32_t idx2 = world_->bodies.slotToDense[slot2];
 
     const uint32_t cat1  = world_->bodies.categories[idx1];
     const uint32_t mask1 = world_->bodies.masks[idx1];
@@ -181,12 +181,12 @@ void WorldContactListener::OnContactRemoved(const JPH::SubShapeIDPair &inSubShap
     BodyHandle r1;
     BodyHandle r2;
 
-    if (world_->id_to_handle_map) [[likely]] {
-        if (i1 <= world_->max_jolt_bodies) {
-            r1 = world_->id_to_handle_map[i1].load(std::memory_order::acquire);
+    if (world_->idToHandleMap) [[likely]] {
+        if (i1 <= world_->maxJoltBodies) {
+            r1 = world_->idToHandleMap[i1].load(std::memory_order::acquire);
         }
-        if (i2 <= world_->max_jolt_bodies) {
-            r2 = world_->id_to_handle_map[i2].load(std::memory_order::acquire);
+        if (i2 <= world_->maxJoltBodies) {
+            r2 = world_->idToHandleMap[i2].load(std::memory_order::acquire);
         }
     }
 
@@ -205,7 +205,7 @@ void WorldContactListener::OnContactRemoved(const JPH::SubShapeIDPair &inSubShap
             slim->ny            = 0.0f;
             slim->nz            = 0.0f;
             slim->impulse       = 0.0f;
-            slim->sliding_speed = 0.0f;
+            slim->slidingSpeed = 0.0f;
         });
 }
 

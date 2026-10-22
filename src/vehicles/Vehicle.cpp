@@ -53,20 +53,20 @@ JPH::Ref<JPH::WheelSettingsWV> MakeWheeledWheel(const WheelConfig &config,
     wheel->mSuspensionMinLength = kWheelSuspensionMin;
     wheel->mSuspensionMaxLength = config.suspension;
     wheel->mSuspensionSpring    = JPH::SpringSettings(JPH::ESpringMode::FrequencyAndDamping,
-                                                      config.spring_freq, config.spring_damp);
+                                                      config.springFreq, config.springDamp);
 
     wheel->mSteeringAxis        = JPH::Vec3(0, 1.0f, 0);
     wheel->mWheelUp             = JPH::Vec3(0, 1.0f, 0);
     wheel->mWheelForward        = JPH::Vec3(0, 0, 1.0f);
     wheel->mSuspensionDirection = JPH::Vec3(0, -1.0f, 0);
-    wheel->mMaxBrakeTorque      = config.brake_torque;
+    wheel->mMaxBrakeTorque      = config.brakeTorque;
 
     if (config.z > kWheelSteerThreshold) {
         wheel->mMaxSteerAngle      = kWheelMaxSteerAngle;
         wheel->mMaxHandBrakeTorque = 0.0f;
     } else {
         wheel->mMaxSteerAngle      = 0.0f;
-        wheel->mMaxHandBrakeTorque = config.handbrake_torque;
+        wheel->mMaxHandBrakeTorque = config.handbrakeTorque;
     }
 
     wheel->mPosition = JPH::Vec3(config.x, config.y, config.z);
@@ -95,7 +95,7 @@ JPH::Ref<JPH::WheelSettingsTV> MakeTrackWheel(const TrackWheelConfig &config) {
     wheel->mSuspensionMinLength  = kSuspensionMinLength;
     wheel->mSuspensionMaxLength  = config.suspension;
     wheel->mSuspensionSpring     = JPH::SpringSettings(JPH::ESpringMode::FrequencyAndDamping,
-                                                       config.spring_freq, config.spring_damp);
+                                                       config.springFreq, config.springDamp);
     wheel->mLongitudinalFriction = config.friction;
     wheel->mLateralFriction      = config.friction;
     return wheel;
@@ -136,11 +136,11 @@ std::expected<JPH::BodyID, Error> Vehicle::ResolveChassis(PhysicsWorld &world,
         return std::unexpected(VehicleError::InvalidChassis);
     }
     const std::uint32_t slot = *resolved;
-    const std::uint8_t  state = world.bodies.slot_states[slot].load(std::memory_order::acquire);
+    const std::uint8_t  state = world.bodies.slotStates[slot].load(std::memory_order::acquire);
     if (state != std::to_underlying(SlotState::Alive)) {
         return std::unexpected(VehicleError::InvalidChassis);
     }
-    return world.bodies.body_ids[world.bodies.slot_to_dense[slot]];
+    return world.bodies.bodyIds[world.bodies.slotToDense[slot]];
 }
 
 std::expected<JPH::Ref<JPH::VehicleConstraint>, Error>
@@ -149,8 +149,8 @@ Vehicle::CommitConstraint(PhysicsWorld &world, JPH::BodyID chassis,
                           float tester_scale) {
     JPH::Ref<JPH::VehicleConstraint> constraint;
 
-    const std::scoped_lock trampoline(world.jph_trampoline_lock);
-    const JPH::BodyLockInterface &lock_interface = world.physics_system.GetBodyLockInterface();
+    const std::scoped_lock trampoline(world.jphTrampolineLock);
+    const JPH::BodyLockInterface &lock_interface = world.physicsSystem.GetBodyLockInterface();
     const JPH::BodyLockWrite      lock(lock_interface, chassis);
     if (!lock.Succeeded()) [[unlikely]] {
         return std::unexpected(VehicleError::CreationFailed);
@@ -164,9 +164,9 @@ Vehicle::CommitConstraint(PhysicsWorld &world, JPH::BodyID chassis,
         new JPH::VehicleCollisionTesterRay(tester_layer, JPH::Vec3(0, 1.0f, 0), tester_scale);
 
     constraint->SetVehicleCollisionTester(tester);
-    world.physics_system.AddConstraint(constraint);
+    world.physicsSystem.AddConstraint(constraint);
     // VehicleConstraint derives from PhysicsStepListener.
-    world.physics_system.AddStepListener(constraint);
+    world.physicsSystem.AddStepListener(constraint);
 
     return constraint;
 }
@@ -175,7 +175,7 @@ Vehicle::CommitConstraint(PhysicsWorld &world, JPH::BodyID chassis,
 
 Vehicle::Vehicle(PhysicsWorld &world, JPH::VehicleConstraint *constraint,
                  std::uint32_t num_wheels)
-    : world_(&world), constraint_(constraint), num_wheels_(num_wheels) {}
+    : world_(&world), constraint_(constraint), numWheels_(num_wheels) {}
 
 std::expected<std::unique_ptr<Vehicle>, Error>
 Vehicle::CreateWheeled(PhysicsWorld &world, BodyHandle chassis,
@@ -189,7 +189,7 @@ Vehicle::CreateWheeled(PhysicsWorld &world, BodyHandle chassis,
     // lock has to be gone before the trampoline lock is taken.
     std::expected<JPH::BodyID, Error> chassis_id = std::unexpected(VehicleError::InvalidChassis);
     {
-        const std::scoped_lock shadow(world.shadow_lock);
+        const std::scoped_lock shadow(world.shadowLock);
         chassis_id = ResolveChassis(world, chassis);
     }
     if (!chassis_id) {
@@ -220,9 +220,9 @@ Vehicle::CreateWheeled(PhysicsWorld &world, BodyHandle chassis,
     SetupDifferentials(*controller, config.drive, num_wheels);
 
     // 2. Engine.
-    controller->mEngine.mMaxTorque         = config.engine.max_torque;
-    controller->mEngine.mMaxRPM            = config.engine.max_rpm;
-    controller->mEngine.mMinRPM            = config.engine.min_rpm;
+    controller->mEngine.mMaxTorque         = config.engine.maxTorque;
+    controller->mEngine.mMaxRPM            = config.engine.maxRpm;
+    controller->mEngine.mMinRPM            = config.engine.minRpm;
     controller->mEngine.mInertia           = config.engine.inertia;
     controller->mEngine.mNormalizedTorque  = torque_curve;
 
@@ -236,20 +236,20 @@ Vehicle::CreateWheeled(PhysicsWorld &world, BodyHandle chassis,
     // `controller->mTransmission = transmission;` and is a behaviour change.
     JPH::VehicleTransmissionSettings transmission;
     transmission.mMode           = static_cast<JPH::ETransmissionMode>(config.transmission.mode);
-    transmission.mClutchStrength = config.transmission.clutch_strength;
-    if (config.transmission.gear_ratios.empty()) {
+    transmission.mClutchStrength = config.transmission.clutchStrength;
+    if (config.transmission.gearRatios.empty()) {
         transmission.mGearRatios.assign(std::begin(kTransmissionGearRatios),
                                         std::end(kTransmissionGearRatios));
     } else {
-        transmission.mGearRatios.assign(config.transmission.gear_ratios.begin(),
-                                        config.transmission.gear_ratios.end());
+        transmission.mGearRatios.assign(config.transmission.gearRatios.begin(),
+                                        config.transmission.gearRatios.end());
     }
     (void)transmission;
 
     // The differential ratio is the one transmission setting that does reach
     // the controller, because it lives on the differentials.
     for (JPH::VehicleDifferentialSettings &differential : controller->mDifferentials) {
-        differential.mDifferentialRatio = config.transmission.differential_ratio;
+        differential.mDifferentialRatio = config.transmission.differentialRatio;
     }
 
     settings.mController = controller;
@@ -278,7 +278,7 @@ Vehicle::CreateTracked(PhysicsWorld &world, BodyHandle chassis,
 
     std::expected<JPH::BodyID, Error> chassis_id = std::unexpected(VehicleError::InvalidChassis);
     {
-        const std::scoped_lock shadow(world.shadow_lock);
+        const std::scoped_lock shadow(world.shadowLock);
         chassis_id = ResolveChassis(world, chassis);
     }
     if (!chassis_id) {
@@ -288,9 +288,9 @@ Vehicle::CreateTracked(PhysicsWorld &world, BodyHandle chassis,
     JPH::Ref<JPH::TrackedVehicleControllerSettings> controller =
         new JPH::TrackedVehicleControllerSettings;
 
-    controller->mEngine.mMaxTorque = config.engine.max_torque;
-    controller->mEngine.mMaxRPM    = config.engine.max_rpm;
-    controller->mEngine.mMinRPM    = config.engine.min_rpm;
+    controller->mEngine.mMaxTorque = config.engine.maxTorque;
+    controller->mEngine.mMaxRPM    = config.engine.maxRpm;
+    controller->mEngine.mMinRPM    = config.engine.minRpm;
     controller->mEngine.mInertia   = config.engine.inertia;
 
     // Unlike the wheeled path, a tracked vehicle's transmission really is a
@@ -309,7 +309,7 @@ Vehicle::CreateTracked(PhysicsWorld &world, BodyHandle chassis,
     for (std::size_t t = 0; t < track_count; ++t) {
         JPH::VehicleTrackSettings &track = controller->mTracks[t];
         track.mWheels.assign(config.tracks[t].wheels.begin(), config.tracks[t].wheels.end());
-        track.mDrivenWheel = static_cast<JPH::uint>(config.tracks[t].driven_wheel);
+        track.mDrivenWheel = static_cast<JPH::uint>(config.tracks[t].drivenWheel);
     }
 
     JPH::VehicleConstraintSettings settings;
@@ -357,8 +357,8 @@ void Vehicle::Detach() {
     // documented order (jph_trampoline_lock outermost), and parking on
     // step_sync while holding the trampoline would deadlock against a step.
     {
-        const std::scoped_lock trampoline(world_->jph_trampoline_lock);
-        world_->physics_system.RemoveStepListener(constraint);
+        const std::scoped_lock trampoline(world_->jphTrampolineLock);
+        world_->physicsSystem.RemoveStepListener(constraint);
 
         // The physics system owns the constraint's only reference: AddConstraint
         // took it, so RemoveConstraint releases it and the constraint is already
@@ -369,7 +369,7 @@ void Vehicle::Detach() {
         // 4-byte write landed in the allocator's free list and took out an
         // unrelated later allocation, which is why the crash surfaced as a
         // SIGSEGV inside realloc on a DebugRenderer rather than here.
-        world_->physics_system.RemoveConstraint(constraint);
+        world_->physicsSystem.RemoveConstraint(constraint);
     }
 }
 
@@ -389,14 +389,14 @@ void Vehicle::SetInput(float forward, float right, float brake, float handbrake)
 
     // Unlike the tank, a wheeled vehicle does not wait for a step to finish:
     // input arriving mid-step is dropped.
-    std::unique_lock shadow(world_->shadow_lock);
-    if (world_->is_stepping.load(std::memory_order::relaxed) || constraint_ == nullptr) {
+    std::unique_lock shadow(world_->shadowLock);
+    if (world_->isStepping.load(std::memory_order::relaxed) || constraint_ == nullptr) {
         return;
     }
 
     auto *controller = static_cast<JPH::WheeledVehicleController *>(constraint_->GetController());
     const JPH::BodyID    chassis     = constraint_->GetVehicleBody()->GetID();
-    JPH::BodyInterface  &bodies      = world_->physics_system.GetBodyInterface();
+    JPH::BodyInterface  &bodies      = world_->physicsSystem.GetBodyInterface();
 
     // A sleeping vehicle ignores input.
     bodies.ActivateBody(chassis);
@@ -460,7 +460,7 @@ void Vehicle::SetTankInput(float left, float right, float brake) {
     const JPH::BodyID chassis = constraint_->GetVehicleBody()->GetID();
 
     // Wake up the tank to process inputs.
-    world_->physics_system.GetBodyInterface().ActivateBody(chassis);
+    world_->physicsSystem.GetBodyInterface().ActivateBody(chassis);
 
     JPH::VehicleTransmission &transmission = controller->GetTransmission();
     const int                 gear         = transmission.GetCurrentGear();
@@ -489,7 +489,7 @@ void Vehicle::SetTankInput(float left, float right, float brake) {
 // --- Queries -----------------------------------------------------------------
 
 std::optional<WheelTransform> Vehicle::GetWheelTransform(std::uint32_t index) const {
-    if (world_ == nullptr || constraint_ == nullptr || index >= num_wheels_) {
+    if (world_ == nullptr || constraint_ == nullptr || index >= numWheels_) {
         return std::nullopt;
     }
 
@@ -511,7 +511,7 @@ std::optional<WheelTransform> Vehicle::GetWheelTransform(std::uint32_t index) co
 }
 
 std::optional<WheelTransform> Vehicle::GetWheelLocalTransform(std::uint32_t index) const {
-    if (world_ == nullptr || constraint_ == nullptr || index >= num_wheels_) {
+    if (world_ == nullptr || constraint_ == nullptr || index >= numWheels_) {
         return std::nullopt;
     }
 
@@ -545,8 +545,8 @@ void Vehicle::LogDebugState() const {
         return;
     }
 
-    std::unique_lock shadow(world_->shadow_lock);
-    if (world_->is_stepping.load(std::memory_order::relaxed)) {
+    std::unique_lock shadow(world_->shadowLock);
+    if (world_->isStepping.load(std::memory_order::relaxed)) {
         DebugLog("Warning: Cannot get debug state while physics is stepping.");
         return;
     }
@@ -580,7 +580,7 @@ void Vehicle::LogDebugState() const {
     DebugLog("  Engine: %.2f RPM | Torque: %.2f Nm", rpm, torque);
     DebugLog("  Trans : Gear %d | Clutch Friction: %.2f", gear, clutch);
 
-    for (std::uint32_t i = 0; i < num_wheels_; i++) {
+    for (std::uint32_t i = 0; i < numWheels_; i++) {
         const JPH::Wheel         *wheel    = constraint_->GetWheel(i);
         const JPH::WheelSettings *settings = wheel->GetSettings();
 

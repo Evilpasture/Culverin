@@ -9,57 +9,57 @@ namespace CPH::Python {
 // and re-acquired before returning, mirroring the native wait loops.
 template <typename Predicate>
 static inline void WaitForPhysicsSync(PhysicsWorldObject *self, Predicate &&blocked) {
-    self->physics.shadow_lock.unlock();
+    self->physics.shadowLock.unlock();
 
     Py_BEGIN_ALLOW_THREADS {
-        std::unique_lock sync(self->physics.step_sync.mutex);
-        self->physics.step_sync.cond.wait(sync, [&] { return !blocked(); });
+        std::unique_lock sync(self->physics.stepSync.mutex);
+        self->physics.stepSync.cond.wait(sync, [&] { return !blocked(); });
     }
     Py_END_ALLOW_THREADS
 
-    self->physics.shadow_lock.lock();
+    self->physics.shadowLock.lock();
 }
 
 [[gnu::always_inline]]
 static inline void BlockUntilNotStepping(PhysicsWorldObject *self) {
-    if (self->physics.is_stepping.load(std::memory_order::relaxed)) {
-        self->physics.waiting_threads.fetch_add(1, std::memory_order::relaxed);
+    if (self->physics.isStepping.load(std::memory_order::relaxed)) {
+        self->physics.waitingThreads.fetch_add(1, std::memory_order::relaxed);
         WaitForPhysicsSync(self, [&] {
-            return self->physics.is_stepping.load(std::memory_order::relaxed);
+            return self->physics.isStepping.load(std::memory_order::relaxed);
         });
-        self->physics.waiting_threads.fetch_sub(1, std::memory_order::relaxed);
+        self->physics.waitingThreads.fetch_sub(1, std::memory_order::relaxed);
     }
 }
 
 [[gnu::always_inline]]
 static inline void BlockUntilNotQuerying(PhysicsWorldObject *self) {
-    if (self->physics.active_queries.load(std::memory_order::acquire) > 0) {
+    if (self->physics.activeQueries.load(std::memory_order::acquire) > 0) {
         WaitForPhysicsSync(self, [&] {
-            return self->physics.active_queries.load(std::memory_order::relaxed) > 0;
+            return self->physics.activeQueries.load(std::memory_order::relaxed) > 0;
         });
     }
 }
 
 static inline void BlockIfStepPending(PhysicsWorldObject *self) {
-    if (self->physics.step_requested.load(std::memory_order::relaxed)) {
-        self->physics.waiting_threads.fetch_add(1, std::memory_order::relaxed);
+    if (self->physics.stepRequested.load(std::memory_order::relaxed)) {
+        self->physics.waitingThreads.fetch_add(1, std::memory_order::relaxed);
         WaitForPhysicsSync(self, [&] {
-            return self->physics.step_requested.load(std::memory_order::relaxed);
+            return self->physics.stepRequested.load(std::memory_order::relaxed);
         });
-        self->physics.waiting_threads.fetch_sub(1, std::memory_order::relaxed);
+        self->physics.waitingThreads.fetch_sub(1, std::memory_order::relaxed);
     }
 }
 
 [[gnu::always_inline]]
 static inline void BlockUntilCanQuery(PhysicsWorldObject *self) {
     const auto blocked = [&] {
-        return self->physics.is_stepping.load(std::memory_order::relaxed) ||
-               self->physics.step_requested.load(std::memory_order::relaxed);
+        return self->physics.isStepping.load(std::memory_order::relaxed) ||
+               self->physics.stepRequested.load(std::memory_order::relaxed);
     };
     if (blocked()) {
-        self->physics.waiting_threads.fetch_add(1, std::memory_order::relaxed);
+        self->physics.waitingThreads.fetch_add(1, std::memory_order::relaxed);
         WaitForPhysicsSync(self, blocked);
-        self->physics.waiting_threads.fetch_sub(1, std::memory_order::relaxed);
+        self->physics.waitingThreads.fetch_sub(1, std::memory_order::relaxed);
     }
 }
 

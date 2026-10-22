@@ -78,7 +78,7 @@ void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
     float inv_mass  = default_inv_mass;
 
     const ParseResult parsed =
-        self->parsers->SbssAddVertex.Parse(args, nargs, kwnames, o_pos, inv_mass, o_vel);
+        self->parsers->sbssAddVertex.Parse(args, nargs, kwnames, o_pos, inv_mass, o_vel);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
@@ -119,7 +119,7 @@ void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
     PyObject *o_vel        = nullptr;
 
     const ParseResult parsed =
-        self->parsers->SbssAddVertices.Parse(args, nargs, kwnames, o_pos, o_mass, o_vel);
+        self->parsers->sbssAddVertices.Parse(args, nargs, kwnames, o_pos, o_mass, o_vel);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
@@ -207,7 +207,7 @@ void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
     uint32_t mat_idx       = 0;
 
     const ParseResult parsed =
-        self->parsers->SbssAddFace.Parse(args, nargs, kwnames, v1, v2, v3, mat_idx);
+        self->parsers->sbssAddFace.Parse(args, nargs, kwnames, v1, v2, v3, mat_idx);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
@@ -241,7 +241,7 @@ void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
     PyObject *o_mat        = nullptr;
 
     const ParseResult parsed =
-        self->parsers->SbssAddFaces.Parse(args, nargs, kwnames, o_ind, o_mat);
+        self->parsers->sbssAddFaces.Parse(args, nargs, kwnames, o_ind, o_mat);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
@@ -360,7 +360,7 @@ SoftBodySharedSettingsCreateConstraints(SoftBodySharedSettingsObject *self, PyOb
     int bend_type          = 1; // EBendType::Distance
 
     const ParseResult parsed =
-        self->parsers->SbssCreateConstraints.Parse(args, nargs, kwnames, compliance, bend_type);
+        self->parsers->sbssCreateConstraints.Parse(args, nargs, kwnames, compliance, bend_type);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;

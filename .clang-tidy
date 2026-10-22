@@ -65,6 +65,11 @@ CheckOptions:
   #   parameters       lower_case. 21 non-conforming, 20 of them Jolt's
   #                    inFrom/inTo/inColor style leaking through adapters.
   #   variables        lower_case.
+  #   members          camelBack. 326 conflicting names across 351 declaration
+  #                    sites -- 295 in structs, 55 in classes -- and the tree
+  #                    was uniformly snake_case (max_jolt_bodies, body_ids,
+  #                    physics_system). Fixed in the same pass that added the
+  #                    rule, so this is enforced from now on, not aspirational.
   #   local constants  lower_case.
   #
   # Deliberately NOT enforced: file-scope variables and constants. The tree has
@@ -76,6 +81,7 @@ CheckOptions:
   readability-identifier-naming.MethodCase: CamelCase
   readability-identifier-naming.ParameterCase: lower_case
   readability-identifier-naming.VariableCase: lower_case
+  readability-identifier-naming.MemberCase: camelBack
   # Two constant conventions coexist deliberately and are both enforced:
   # ordinary constants are lower_case, and compile-time constants are
   # kPascalCase (kAvxAlignment, kTrackedGearRatio1, kDefaultRadius). clang-tidy
@@ -124,6 +130,14 @@ CheckOptions:
   # GlobalConstant, but they follow the same PascalCase/kCamelCase convention
   # as every other file-scope table.
   readability-identifier-naming.VariableIgnoredRegexp: '^(.*(Slots|Spec|Methods|Members|GetSets)|FMT_MAP|_save|v[AB])$'
+
+  # Private members keep the trailing underscore (world_, numWheels_,
+  # sled_). clang-tidy cannot express "camelBack with an *optional* trailing
+  # underscore": MemberSuffix makes the suffix mandatory for every member, so
+  # setting it would force one onto every struct field as well. The 41 names
+  # that carry the underscore are therefore exempt from the check and are
+  # camelCased inside it by hand -- the rule covers the other 326.
+  readability-identifier-naming.MemberIgnoredRegexp: '^.*_$'
 
   # Buffer<T> is a container and keeps STL-compatible member names so that
   # range-for, std::size-style generic code and ordinary reader expectations

@@ -40,7 +40,7 @@ struct CreateBody {
 };
 struct CreateSoftBody {
     SoftBodySettingsPtr settings;
-    std::uint32_t num_vertices = 0;
+    std::uint32_t numVertices = 0;
 };
 struct DestroyBody {};
 struct SetPosition {
@@ -60,7 +60,7 @@ struct SetAngularVelocity {
     JPH::Vec3 velocity;
 };
 struct SetMotionType {
-    std::int32_t motion_type;
+    std::int32_t motionType;
 };
 struct Activate {};
 struct Deactivate {};
@@ -84,8 +84,8 @@ struct ApplyImpulseAt {
     JPH::RVec3 position;
 };
 struct CreateConstraint {
-    std::uint32_t body2_slot;
-    std::uint32_t constraint_slot;
+    std::uint32_t body2Slot;
+    std::uint32_t constraintSlot;
     int type;
     ConstraintParams params;
 };

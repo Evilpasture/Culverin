@@ -26,14 +26,14 @@ enum class QueryError : std::uint32_t {
 // per call, and the common case fits in the 64 inline handles without a
 // heap allocation.
 struct PhysicsQueryHitBuffer {
-    std::array<BodyHandle, kPhysicsQueryInlineHitCapacity> inline_hits{};
-    BodyHandle *hits                    = inline_hits.data();
+    std::array<BodyHandle, kPhysicsQueryInlineHitCapacity> inlineHits{};
+    BodyHandle *hits                    = inlineHits.data();
     std::size_t count                   = 0;
     std::size_t capacity                = kPhysicsQueryInlineHitCapacity;
 
     PhysicsQueryHitBuffer() = default;
     ~PhysicsQueryHitBuffer() {
-        if (hits != inline_hits.data()) {
+        if (hits != inlineHits.data()) {
             delete[] hits;
         }
     }
@@ -53,7 +53,7 @@ struct PhysicsQueryHitBuffer {
                 for (std::size_t i = 0; i < count; ++i) {
                     new_hits[i] = hits[i];
                 }
-                if (hits != inline_hits.data()) {
+                if (hits != inlineHits.data()) {
                     delete[] hits;
                 }
             }
@@ -80,8 +80,8 @@ struct
     float nx, ny, nz;
     float px, py, pz;
     std::uint32_t subShapeID;
-    std::uint32_t material_id;
-    std::uint32_t _pad;
+    std::uint32_t materialId;
+    std::uint32_t pad;
 };
 
 inline constexpr std::size_t kRaycastResultSize = 48;
@@ -91,7 +91,7 @@ struct PhysicsRaycastHit {
     BodyHandle handle;
     float fraction;
     JPH::Vec3 normal;
-    bool has_hit;
+    bool hasHit;
 };
 
 struct PhysicsShapecastHit {
@@ -99,7 +99,7 @@ struct PhysicsShapecastHit {
     float fraction;
     JPH::Vec3 point;
     JPH::Vec3 normal;
-    bool has_hit;
+    bool hasHit;
 };
 
 } // namespace CPH

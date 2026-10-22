@@ -32,7 +32,7 @@ static constexpr float kRagdollDefaultTwistMax = 0.1f;
 
     // 2. High Speed Parse
     const ParseResult parsed =
-        self->parsers->AddJoint.Parse(args, nargs, kwnames, name_obj, parent_idx);
+        self->parsers->addJoint.Parse(args, nargs, kwnames, name_obj, parent_idx);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
@@ -57,7 +57,7 @@ static constexpr float kRagdollDefaultTwistMax = 0.1f;
 
     // 2. High Speed Parse
     const ParseResult parsed =
-        self->parsers->GetJointIdx.Parse(args, nargs, kwnames, name_obj);
+        self->parsers->getJointIdx.Parse(args, nargs, kwnames, name_obj);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
@@ -101,7 +101,7 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
     PyObject *py_matrices = nullptr;
 
     const ParseResult parsed =
-        self->parsers->RagdollDrive.Parse(args, nargs, kwnames, root_p, root_q, py_matrices);
+        self->parsers->ragdollDrive.Parse(args, nargs, kwnames, root_p, root_q, py_matrices);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
@@ -248,8 +248,8 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
         PyObject *dict = BuildDictionary(
             "index", i, "pos",
             BuildTuple(part->position.GetX(), part->position.GetY(), part->position.GetZ()), "vel",
-            BuildTuple(part->linear_velocity.GetX(), part->linear_velocity.GetY(),
-                       part->linear_velocity.GetZ()));
+            BuildTuple(part->linearVelocity.GetX(), part->linearVelocity.GetY(),
+                       part->linearVelocity.GetZ()));
 
         if (!dict) {
             Deallocate(info_block);
@@ -345,7 +345,7 @@ void RagdollDealloc(RagdollObject *self) {
 
     // 2. High Speed Parse
     const ParseResult parsed =
-        self->parsers->RagdollAddPart.Parse(args, nargs, kwnames, joint_idx, shape_type, py_size,
+        self->parsers->ragdollAddPart.Parse(args, nargs, kwnames, joint_idx, shape_type, py_size,
                                              mass, parent_idx, twist_min, twist_max, cone_angle,
                                              axis, normal, py_pos);
     if (!parsed) {
@@ -388,15 +388,15 @@ void RagdollDealloc(RagdollObject *self) {
     }
 
     const PhysicsRagdollPartRequest request = {
-        .joint_index  = joint_idx,
-        .parent_index = parent_idx,
+        .jointIndex  = joint_idx,
+        .parentIndex = parent_idx,
         .mass         = mass,
-        .twist_min    = twist_min,
-        .twist_max    = twist_max,
-        .cone_angle   = cone_angle,
+        .twistMin    = twist_min,
+        .twistMax    = twist_max,
+        .coneAngle   = cone_angle,
         .axis         = JPH::Vec3(axis.x, axis.y, axis.z),
         .normal       = JPH::Vec3(normal.x, normal.y, normal.z),
-        .has_position = has_position,
+        .hasPosition = has_position,
         .position     = position,
     };
     const std::expected<int, Error> status = self->settings->AddPart(shape.GetPtr(), request);

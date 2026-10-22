@@ -60,7 +60,7 @@ PyObject *MakeEcsProxy(RegistryObject *self, std::uint32_t comp_id, bool entitie
     }
 
     BufferProxyObject *proxy =
-        PyObject_GC_New(BufferProxyObject, reinterpret_cast<PyTypeObject *>(st->BufferProxyType));
+        PyObject_GC_New(BufferProxyObject, reinterpret_cast<PyTypeObject *>(st->bufferProxyType));
     if (!proxy) {
         return nullptr;
     }
@@ -69,17 +69,17 @@ PyObject *MakeEcsProxy(RegistryObject *self, std::uint32_t comp_id, bool entitie
     Py_INCREF(self);
 
     if (entities) {
-        proxy->buf_type    = ProxyBufferType::EcsEntities;
-        proxy->dynamic_ptr = view->entities;
+        proxy->bufType    = ProxyBufferType::EcsEntities;
+        proxy->dynamicPtr = view->entities;
         proxy->format      = "Q"; // uint64
         proxy->itemsize    = sizeof(std::uint64_t);
         proxy->shape[0]    = view->count;
     } else {
-        proxy->buf_type    = ProxyBufferType::EcsData;
-        proxy->dynamic_ptr = view->data;
+        proxy->bufType    = ProxyBufferType::EcsData;
+        proxy->dynamicPtr = view->data;
         proxy->format      = "B"; // Generic bytes, user casts in NumPy
         proxy->itemsize    = 1;
-        proxy->shape[0]    = static_cast<Py_ssize_t>(view->count) * view->element_size;
+        proxy->shape[0]    = static_cast<Py_ssize_t>(view->count) * view->elementSize;
     }
 
     proxy->stride = 1;
@@ -125,7 +125,7 @@ void RegistryDealloc(RegistryObject *self) {
     uint64_t handle_raw;
 
     const ParseResult parsed =
-        self->parsers->RegEntityOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle_raw);
+        self->parsers->regEntityOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle_raw);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
@@ -140,7 +140,7 @@ void RegistryDealloc(RegistryObject *self) {
     uint64_t handle_raw;
 
     const ParseResult parsed =
-        self->parsers->RegEntityOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle_raw);
+        self->parsers->regEntityOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, handle_raw);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
@@ -167,7 +167,7 @@ void RegistryDealloc(RegistryObject *self) {
     uint32_t size;
 
     const ParseResult parsed =
-        self->parsers->RegRegComp.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, size);
+        self->parsers->regRegComp.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, size);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
@@ -187,7 +187,7 @@ void RegistryDealloc(RegistryObject *self) {
     uint32_t comp_id;
     PyObject *data_obj = nullptr;
 
-    const ParseResult parsed = self->parsers->RegAdd.Parse(
+    const ParseResult parsed = self->parsers->regAdd.Parse(
         args, PyVectorcall_NARGS(nargsf), kwnames, handle_raw, comp_id, data_obj);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -236,7 +236,7 @@ void RegistryDealloc(RegistryObject *self) {
     uint64_t handle_raw;
     uint32_t comp_id;
 
-    const ParseResult parsed = self->parsers->RegEntComp.Parse(
+    const ParseResult parsed = self->parsers->regEntComp.Parse(
         args, PyVectorcall_NARGS(nargsf), kwnames, handle_raw, comp_id);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -256,7 +256,7 @@ void RegistryDealloc(RegistryObject *self) {
     uint64_t handle_raw;
     uint32_t comp_id;
 
-    const ParseResult parsed = self->parsers->RegEntComp.Parse(
+    const ParseResult parsed = self->parsers->regEntComp.Parse(
         args, PyVectorcall_NARGS(nargsf), kwnames, handle_raw, comp_id);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -281,7 +281,7 @@ void RegistryDealloc(RegistryObject *self) {
     uint64_t handle_raw;
     uint32_t comp_id;
 
-    const ParseResult parsed = self->parsers->RegEntComp.Parse(
+    const ParseResult parsed = self->parsers->regEntComp.Parse(
         args, PyVectorcall_NARGS(nargsf), kwnames, handle_raw, comp_id);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -305,7 +305,7 @@ void RegistryDealloc(RegistryObject *self) {
     uint32_t comp_id;
 
     const ParseResult parsed =
-        self->parsers->RegCompOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, comp_id);
+        self->parsers->regCompOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, comp_id);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
@@ -318,7 +318,7 @@ void RegistryDealloc(RegistryObject *self) {
     uint32_t comp_id;
 
     const ParseResult parsed =
-        self->parsers->RegCompOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, comp_id);
+        self->parsers->regCompOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, comp_id);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;
@@ -335,7 +335,7 @@ void RegistryDealloc(RegistryObject *self) {
     int p_comp_id = -1;
     int r_comp_id = -1; // -1 means ignore
 
-    const ParseResult parsed = self->parsers->RegSyncPhys.Parse(
+    const ParseResult parsed = self->parsers->regSyncPhys.Parse(
         args, PyVectorcall_NARGS(nargsf), kwnames, world_obj, h_comp_id, p_comp_id, r_comp_id);
     if (!parsed) {
         RaiseParseError(parsed.error());
@@ -344,9 +344,9 @@ void RegistryDealloc(RegistryObject *self) {
 
     PhysicsWorldObject *world = reinterpret_cast<PhysicsWorldObject *>(world_obj);
 
-    const CPH::EcsSyncConfig config{.handle_component   = h_comp_id,
-                                    .position_component = p_comp_id,
-                                    .rotation_component = r_comp_id};
+    const CPH::EcsSyncConfig config{.handleComponent   = h_comp_id,
+                                    .positionComponent = p_comp_id,
+                                    .rotationComponent = r_comp_id};
 
     const std::expected<void, CPH::Error> synced =
         CPH::SyncEcsTransforms(world->physics, *self->registry, config);
@@ -368,7 +368,7 @@ void RegistryDealloc(RegistryObject *self) {
     uint32_t comp_id;
 
     const ParseResult parsed =
-        self->parsers->RegCompOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, comp_id);
+        self->parsers->regCompOnly.Parse(args, PyVectorcall_NARGS(nargsf), kwnames, comp_id);
     if (!parsed) {
         RaiseParseError(parsed.error());
         return nullptr;

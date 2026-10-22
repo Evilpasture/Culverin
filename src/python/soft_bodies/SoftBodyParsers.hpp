@@ -9,17 +9,17 @@ struct SoftBodySharedSettingsParsers {
 
     Parser<"SbssAddVertex", Arg<"pos", PyObject *, true>, Arg<"inv_mass", float, false>,
            Arg<"velocity", PyObject *, false>>
-        SbssAddVertex{catalog};
+        sbssAddVertex{catalog};
     Parser<"SbssAddFace", Arg<"v1", uint32_t, true>, Arg<"v2", uint32_t, true>,
            Arg<"v3", uint32_t, true>, Arg<"material_index", uint32_t, false>>
-        SbssAddFace{catalog};
+        sbssAddFace{catalog};
     Parser<"SbssAddVertices", Arg<"positions", PyObject *, true>,
            Arg<"inv_masses", PyObject *, false>, Arg<"velocities", PyObject *, false>>
-        SbssAddVertices{catalog};
+        sbssAddVertices{catalog};
     Parser<"SbssAddFaces", Arg<"indices", PyObject *, true>, Arg<"materials", PyObject *, false>>
-        SbssAddFaces{catalog};
+        sbssAddFaces{catalog};
     Parser<"SbssCreateConstraints", Arg<"compliance", float, true>, Arg<"bend_type", int, false>>
-        SbssCreateConstraints{catalog};
+        sbssCreateConstraints{catalog};
 };
 
 } // namespace CPH::Python

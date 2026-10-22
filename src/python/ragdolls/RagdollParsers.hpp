@@ -7,9 +7,9 @@ namespace CPH::Python {
 struct SkeletonParsers {
     ParserCatalog catalog{};
 
-    Parser<"AddJoint", Arg<"name", PyObject *, true>, Arg<"parent_index", int, false>> AddJoint{
+    Parser<"AddJoint", Arg<"name", PyObject *, true>, Arg<"parent_index", int, false>> addJoint{
         catalog};
-    Parser<"GetJointIdx", Arg<"name", PyObject *, true>> GetJointIdx{catalog};
+    Parser<"GetJointIdx", Arg<"name", PyObject *, true>> getJointIdx{catalog};
 };
 
 struct RagdollParsers {
@@ -17,7 +17,7 @@ struct RagdollParsers {
 
     Parser<"RagdollDrive", Arg<"root_pos", PosStride, true>,
            Arg<"root_rot", AuxStride, true>, Arg<"matrices", PyObject *, true>>
-        RagdollDrive{catalog};
+        ragdollDrive{catalog};
 };
 
 struct RagdollSettingsParsers {
@@ -29,7 +29,7 @@ struct RagdollSettingsParsers {
            Arg<"twist_max", float, false>, Arg<"cone_angle", float, false>,
            Arg<"axis", JPH::Float3, false>, Arg<"normal", JPH::Float3, false>,
            Arg<"pos", PyObject *, false>>
-        RagdollAddPart{catalog};
+        ragdollAddPart{catalog};
 };
 
 } // namespace CPH::Python

@@ -22,11 +22,11 @@ constexpr float kMinimumHalfHeight = 0.1f;
 // is the same shape: bump the atomic cursor, and only touch the slot if the
 // bump landed inside the buffer.
 ContactEvent *ClaimContactEvent(PhysicsWorld &world, size_t &out_index) {
-    out_index = world.contact_atomic_idx.fetch_add(1, std::memory_order::relaxed);
-    if (out_index >= world.contact_max_capacity) {
+    out_index = world.contactAtomicIdx.fetch_add(1, std::memory_order::relaxed);
+    if (out_index >= world.contactMaxCapacity) {
         return nullptr;
     }
-    return &world.contact_buffer[out_index];
+    return &world.contactBuffer[out_index];
 }
 
 // Canonical body ordering: the smaller handle first, so a pair is recorded
@@ -62,10 +62,10 @@ class Character::Listener final : public JPH::CharacterContactListener {
         const BodyHandle platform_handle(body2.GetUserData());
         float friction = 1.0f;
         const auto slot = platform_handle.Index();
-        if (slot < world.slot_capacity) {
-            const std::uint32_t dense = world.bodies.slot_to_dense[slot];
-            const std::uint32_t material = world.bodies.material_ids[dense];
-            for (std::size_t i = 0; i < world.material_count; i++) {
+        if (slot < world.slotCapacity) {
+            const std::uint32_t dense = world.bodies.slotToDense[slot];
+            const std::uint32_t material = world.bodies.materialIds[dense];
+            for (std::size_t i = 0; i < world.materialCount; i++) {
                 if (world.materials[i].id == material) {
                     friction = world.materials[i].friction;
                     break;
@@ -103,13 +103,13 @@ class Character::Listener final : public JPH::CharacterContactListener {
         // The other body's handle, from user data, then the body interface,
         // then the lock-free id -> handle map.
         BodyHandle other(contact.mUserData);
-        if (!other.IsValid() && world.body_interface) {
-            other = BodyHandle(world.physics_system.GetBodyInterface().GetUserData(contact.mBodyB));
+        if (!other.IsValid() && world.bodyInterface) {
+            other = BodyHandle(world.physicsSystem.GetBodyInterface().GetUserData(contact.mBodyB));
         }
-        if (!other.IsValid() && world.id_to_handle_map) {
+        if (!other.IsValid() && world.idToHandleMap) {
             const std::uint32_t j_idx = contact.mBodyB.GetIndex();
-            if (j_idx <= world.max_jolt_bodies) {
-                other = world.id_to_handle_map[j_idx].load(std::memory_order::acquire);
+            if (j_idx <= world.maxJoltBodies) {
+                other = world.idToHandleMap[j_idx].load(std::memory_order::acquire);
             }
         }
         if (!other.IsValid()) {
@@ -160,8 +160,8 @@ class Character::Listener final : public JPH::CharacterContactListener {
         const std::uint32_t j_idx = body_id2.GetIndex();
 
         BodyHandle other;
-        if (world.id_to_handle_map && j_idx <= world.max_jolt_bodies) {
-            other = world.id_to_handle_map[j_idx].load(std::memory_order::acquire);
+        if (world.idToHandleMap && j_idx <= world.maxJoltBodies) {
+            other = world.idToHandleMap[j_idx].load(std::memory_order::acquire);
         }
         if (!other.IsValid()) {
             return;
@@ -182,7 +182,7 @@ class Character::Listener final : public JPH::CharacterContactListener {
         slim->ny            = 0.0f;
         slim->nz            = 0.0f;
         slim->impulse       = 0.0f;
-        slim->sliding_speed = 0.0f;
+        slim->slidingSpeed = 0.0f;
         std::atomic_thread_fence(std::memory_order::release);
     }
 
@@ -212,8 +212,8 @@ class Character::Listener final : public JPH::CharacterContactListener {
 
         const std::uint32_t j_idx = (other_character_id.GetValue() & JPH::BodyID::cMaxBodyIndex);
         BodyHandle other;
-        if (world.id_to_handle_map && j_idx <= world.max_jolt_bodies) {
-            other = world.id_to_handle_map[j_idx].load(std::memory_order::acquire);
+        if (world.idToHandleMap && j_idx <= world.maxJoltBodies) {
+            other = world.idToHandleMap[j_idx].load(std::memory_order::acquire);
         }
         if (!other.IsValid()) {
             return;
@@ -234,7 +234,7 @@ class Character::Listener final : public JPH::CharacterContactListener {
         slim->ny            = 0.0f;
         slim->nz            = 0.0f;
         slim->impulse       = 0.0f;
-        slim->sliding_speed = 0.0f;
+        slim->slidingSpeed = 0.0f;
         std::atomic_thread_fence(std::memory_order::release);
     }
 
@@ -250,8 +250,8 @@ class Character::Listener final : public JPH::CharacterContactListener {
         const std::uint32_t j_idx = body_id2.GetIndex();
 
         BodyHandle other;
-        if (world.id_to_handle_map && j_idx <= world.max_jolt_bodies) {
-            other = world.id_to_handle_map[j_idx].load(std::memory_order::acquire);
+        if (world.idToHandleMap && j_idx <= world.maxJoltBodies) {
+            other = world.idToHandleMap[j_idx].load(std::memory_order::acquire);
         }
         if (!other.IsValid()) {
             return;
@@ -277,11 +277,11 @@ class Character::Listener final : public JPH::CharacterContactListener {
         slim->ny            = normal.GetY();
         slim->nz            = normal.GetZ();
         slim->impulse       = 1.0f;
-        slim->sliding_speed = 0.0f;
+        slim->slidingSpeed = 0.0f;
 
-        const std::uint32_t dense = world.bodies.slot_to_dense[other.Index()];
+        const std::uint32_t dense = world.bodies.slotToDense[other.Index()];
         fat->mat1                 = 0;
-        fat->mat2                 = world.bodies.material_ids[dense];
+        fat->mat2                 = world.bodies.materialIds[dense];
 
         std::atomic_thread_fence(std::memory_order::release);
     }
@@ -319,7 +319,7 @@ class Character::Listener final : public JPH::CharacterContactListener {
         slim->ny            = normal.GetY();
         slim->nz            = normal.GetZ();
         slim->impulse       = 1.0f;
-        slim->sliding_speed = 0.0f;
+        slim->slidingSpeed = 0.0f;
         fat->mat1           = 0;
         fat->mat2           = 0;
 
@@ -330,17 +330,17 @@ class Character::Listener final : public JPH::CharacterContactListener {
     // contact normal, scaled by how fast the character is moving into it.
     void ApplyImpulse(JPH::BodyID body_id2, JPH::Vec3Arg contact_normal) {
         PhysicsWorld &world = *owner_.world_;
-        JPH::BodyInterface &bodies = world.physics_system.GetBodyInterface();
+        JPH::BodyInterface &bodies = world.physicsSystem.GetBodyInterface();
 
         if (bodies.IsSensor(body_id2) ||
             bodies.GetMotionType(body_id2) != JPH::EMotionType::Dynamic) {
             return;
         }
 
-        const float vx = owner_.last_vx_.load(std::memory_order::relaxed);
-        const float vy = owner_.last_vy_.load(std::memory_order::relaxed);
-        const float vz = owner_.last_vz_.load(std::memory_order::relaxed);
-        const float strength = owner_.push_strength_.load(std::memory_order::relaxed);
+        const float vx = owner_.lastVx_.load(std::memory_order::relaxed);
+        const float vy = owner_.lastVy_.load(std::memory_order::relaxed);
+        const float vz = owner_.lastVz_.load(std::memory_order::relaxed);
+        const float strength = owner_.pushStrength_.load(std::memory_order::relaxed);
 
         const float dot =
             vx * contact_normal.GetX() + vy * contact_normal.GetY() + vz * contact_normal.GetZ();
@@ -380,31 +380,31 @@ std::unique_ptr<Character> Character::Create(PhysicsWorld &world, const Characte
         std::unique_lock shadow = world.LockShadowNotStepping();
         world.WaitUntilNotQuerying(shadow);
 
-        std::size_t available = world.free_count.load(std::memory_order::acquire);
+        std::size_t available = world.freeCount.load(std::memory_order::acquire);
         if (available == 0) {
             const std::expected<void, Error> grown = world.Resize(world.capacity * 2);
             if (!grown) {
                 return nullptr;
             }
-            available = world.free_count.load(std::memory_order::acquire);
+            available = world.freeCount.load(std::memory_order::acquire);
         }
         if (available == 0) {
             return nullptr;
         }
 
-        slot = world.bodies.free_slots[available - 1];
-        world.free_count.store(available - 1, std::memory_order::release);
-        world.bodies.slot_states[slot].store(std::to_underlying(SlotState::PendingCreate),
+        slot = world.bodies.freeSlots[available - 1];
+        world.freeCount.store(available - 1, std::memory_order::release);
+        world.bodies.slotStates[slot].store(std::to_underlying(SlotState::PendingCreate),
                                              std::memory_order::release);
     }
 
     // From here on, any failure has to hand the slot back.
     const auto release_slot = [&world, slot]() {
-        const std::scoped_lock shadow(world.shadow_lock);
-        world.bodies.slot_states[slot].store(std::to_underlying(SlotState::Empty),
+        const std::scoped_lock shadow(world.shadowLock);
+        world.bodies.slotStates[slot].store(std::to_underlying(SlotState::Empty),
                                              std::memory_order::relaxed);
-        const std::size_t free_index = world.free_count.fetch_add(1, std::memory_order::relaxed);
-        world.bodies.free_slots[free_index] = slot;
+        const std::size_t free_index = world.freeCount.fetch_add(1, std::memory_order::relaxed);
+        world.bodies.freeSlots[free_index] = slot;
     };
 
     // --- 2. Build the Jolt character -------------------------------------
@@ -419,18 +419,18 @@ std::unique_ptr<Character> Character::Create(PhysicsWorld &world, const Characte
 
     JPH::CharacterVirtualSettings settings;
     settings.mShape         = shape_result.Get();
-    settings.mMaxSlopeAngle = JPH::DegreesToRadians(params.max_slope);
+    settings.mMaxSlopeAngle = JPH::DegreesToRadians(params.maxSlope);
 
     std::unique_ptr<Character> character(
         new Character(world, new JPH::CharacterVirtual(&settings, position, JPH::Quat::sIdentity(),
-                                                       1, &world.physics_system)));
+                                                       1, &world.physicsSystem)));
 
-    world.character_vs_character.Add(character->virtual_);
-    character->virtual_->SetCharacterVsCharacterCollision(&world.character_vs_character);
+    world.characterVsCharacter.Add(character->virtual_);
+    character->virtual_->SetCharacterVsCharacterCollision(&world.characterVsCharacter);
 
     // --- 3. Publish into the world's shadow state -------------------------
     {
-        const std::scoped_lock shadow(world.shadow_lock);
+        const std::scoped_lock shadow(world.shadowLock);
 
         const std::uint32_t generation =
             world.bodies.generations[slot].load(std::memory_order::relaxed);
@@ -440,20 +440,20 @@ std::unique_ptr<Character> Character::Create(PhysicsWorld &world, const Characte
         const auto dense = static_cast<std::uint32_t>(world.count.load(std::memory_order::relaxed));
         const JPH::BodyID inner = character->virtual_->GetInnerBodyID();
         const std::uint32_t j_idx = inner.GetIndex();
-        if (j_idx <= world.max_jolt_bodies) {
-            world.id_to_handle_map[j_idx].store(handle, std::memory_order::release);
+        if (j_idx <= world.maxJoltBodies) {
+            world.idToHandleMap[j_idx].store(handle, std::memory_order::release);
         }
 
-        world.bodies.body_ids[dense]      = inner;
-        world.bodies.slot_to_dense[slot]  = dense;
-        world.bodies.dense_to_slot[dense] = slot;
-        world.bodies.user_data[dense]     = 0;
+        world.bodies.bodyIds[dense]      = inner;
+        world.bodies.slotToDense[slot]  = dense;
+        world.bodies.denseToSlot[dense] = slot;
+        world.bodies.userData[dense]     = 0;
 
         constexpr auto kCollisionFilterAllCategories = 0xFFFF;
         constexpr auto kCollisionFilterAllMasks      = 0xFFFF;
         world.bodies.categories[dense]   = kCollisionFilterAllCategories;
         world.bodies.masks[dense]        = kCollisionFilterAllMasks;
-        world.bodies.material_ids[dense] = 0;
+        world.bodies.materialIds[dense] = 0;
 
         const JPH::RVec3 p = character->virtual_->GetPosition();
         const JPH::Quat q  = character->virtual_->GetRotation();
@@ -461,21 +461,21 @@ std::unique_ptr<Character> Character::Create(PhysicsWorld &world, const Characte
         const AuxStride r_val{q.GetX(), q.GetY(), q.GetZ(), q.GetW()};
 
         world.bodies.positions[dense]            = p_val;
-        world.bodies.prev_positions[dense]       = p_val;
+        world.bodies.prevPositions[dense]       = p_val;
         world.bodies.rotations[dense]            = r_val;
-        world.bodies.prev_rotations[dense]       = r_val;
-        world.bodies.linear_velocities[dense]    = AuxStride{};
-        world.bodies.angular_velocities[dense]   = AuxStride{};
+        world.bodies.prevRotations[dense]       = r_val;
+        world.bodies.linearVelocities[dense]    = AuxStride{};
+        world.bodies.angularVelocities[dense]   = AuxStride{};
 
-        if (world.bodies.soft_shadows) {
-            world.bodies.soft_shadows[dense].vertices.reset();
+        if (world.bodies.softShadows) {
+            world.bodies.softShadows[dense].vertices.reset();
         }
 
-        world.bodies.slot_states[slot].store(std::to_underlying(SlotState::Character),
+        world.bodies.slotStates[slot].store(std::to_underlying(SlotState::Character),
                                              std::memory_order::release);
         world.count.fetch_add(1, std::memory_order::release);
 
-        world.physics_system.GetBodyInterface().SetUserData(inner, handle.Raw());
+        world.physicsSystem.GetBodyInterface().SetUserData(inner, handle.Raw());
         character->virtual_->SetUserData(handle.Raw());
     }
 
@@ -501,9 +501,9 @@ Character::~Character() {
     }
 
     // 2. Destroy the Jolt character under the trampoline lock.
-    const std::scoped_lock trampoline(world_->jph_trampoline_lock);
+    const std::scoped_lock trampoline(world_->jphTrampolineLock);
     if (virtual_ != nullptr) {
-        world_->character_vs_character.Remove(virtual_);
+        world_->characterVsCharacter.Remove(virtual_);
         // The listener holds a raw back-pointer to this Character, so it must
         // stop being called before it is destroyed.
         virtual_->SetListener(nullptr);
@@ -523,7 +523,7 @@ void Character::PublishTransformLocked() const {
 
 std::uint32_t Character::DenseIndexLocked() const noexcept {
     const std::uint32_t slot = handle_.load(std::memory_order::relaxed).Index();
-    return world_->bodies.slot_to_dense[slot];
+    return world_->bodies.slotToDense[slot];
 }
 
 bool Character::LayersAllow(BodyHandle self, BodyHandle other) const noexcept {
@@ -536,21 +536,21 @@ bool Character::LayersAllow(BodyHandle self, BodyHandle other) const noexcept {
     }
     const std::uint32_t slot_self  = *resolved_self;
     const std::uint32_t slot_other = *resolved_other;
-    if (slot_self >= world.slot_capacity || slot_other >= world.slot_capacity) {
+    if (slot_self >= world.slotCapacity || slot_other >= world.slotCapacity) {
         return true;
     }
 
     const std::uint8_t state_self =
-        world.bodies.slot_states[slot_self].load(std::memory_order::relaxed);
+        world.bodies.slotStates[slot_self].load(std::memory_order::relaxed);
     const std::uint8_t state_other =
-        world.bodies.slot_states[slot_other].load(std::memory_order::relaxed);
+        world.bodies.slotStates[slot_other].load(std::memory_order::relaxed);
     if (state_self == std::to_underlying(SlotState::Empty) ||
         state_other == std::to_underlying(SlotState::Empty)) {
         return true;
     }
 
-    const std::uint32_t dense_self  = world.bodies.slot_to_dense[slot_self];
-    const std::uint32_t dense_other = world.bodies.slot_to_dense[slot_other];
+    const std::uint32_t dense_self  = world.bodies.slotToDense[slot_self];
+    const std::uint32_t dense_other = world.bodies.slotToDense[slot_other];
     const std::size_t active = world.count.load(std::memory_order::relaxed);
     if (dense_self >= active || dense_other >= active) {
         return true;
@@ -569,7 +569,7 @@ void Character::SetStrength(float strength) {
     std::unique_lock shadow = world_->LockShadowNotStepping();
     world_->WaitUntilNotQuerying(shadow);
 
-    push_strength_.store(strength, std::memory_order::relaxed);
+    pushStrength_.store(strength, std::memory_order::relaxed);
     virtual_->SetMaxStrength(strength);
 }
 
@@ -579,13 +579,13 @@ void Character::Move(float vx, float vy, float vz, float dt) {
     {
         std::unique_lock shadow = world_->LockShadowNotStepping();
 
-        last_vx_.store(vx, std::memory_order::relaxed);
-        last_vy_.store(vy, std::memory_order::relaxed);
-        last_vz_.store(vz, std::memory_order::relaxed);
+        lastVx_.store(vx, std::memory_order::relaxed);
+        lastVy_.store(vy, std::memory_order::relaxed);
+        lastVz_.store(vz, std::memory_order::relaxed);
 
         const std::uint32_t dense = DenseIndexLocked();
-        world_->bodies.prev_positions[dense] = world_->bodies.positions[dense];
-        world_->bodies.prev_rotations[dense] = world_->bodies.rotations[dense];
+        world_->bodies.prevPositions[dense] = world_->bodies.positions[dense];
+        world_->bodies.prevRotations[dense] = world_->bodies.rotations[dense];
     }
 
     // 2. Inherit the ground platform's horizontal velocity.
@@ -615,30 +615,30 @@ void Character::Move(float vx, float vy, float vz, float dt) {
     const JPH::ShapeFilter shape_filter;
 
     {
-        const std::scoped_lock trampoline(world_->jph_trampoline_lock);
-        virtual_->ExtendedUpdate(dt, world_->physics_system.GetGravity(), update_settings,
-                                 world_->physics_system.GetDefaultBroadPhaseLayerFilter(character_layer),
-                                 world_->physics_system.GetDefaultLayerFilter(character_layer),
-                                 body_filter, shape_filter, *world_->temp_allocator.get());
+        const std::scoped_lock trampoline(world_->jphTrampolineLock);
+        virtual_->ExtendedUpdate(dt, world_->physicsSystem.GetGravity(), update_settings,
+                                 world_->physicsSystem.GetDefaultBroadPhaseLayerFilter(character_layer),
+                                 world_->physicsSystem.GetDefaultLayerFilter(character_layer),
+                                 body_filter, shape_filter, *world_->tempAllocator.get());
     }
 
     // 3. Republish.
-    const std::scoped_lock shadow(world_->shadow_lock);
+    const std::scoped_lock shadow(world_->shadowLock);
     PublishTransformLocked();
 }
 
 JPH::RVec3 Character::GetPosition() const {
-    const std::scoped_lock shadow(world_->shadow_lock);
+    const std::scoped_lock shadow(world_->shadowLock);
     return virtual_->GetPosition();
 }
 
 JPH::Quat Character::GetRotation() const {
-    const std::scoped_lock shadow(world_->shadow_lock);
+    const std::scoped_lock shadow(world_->shadowLock);
     return virtual_->GetRotation();
 }
 
 JPH::Vec3 Character::GetLinearVelocity() const {
-    const std::scoped_lock shadow(world_->shadow_lock);
+    const std::scoped_lock shadow(world_->shadowLock);
     return virtual_->GetLinearVelocity();
 }
 
@@ -653,7 +653,7 @@ void Character::SetPosition(const JPH::RVec3 &position) {
     const std::uint32_t dense = DenseIndexLocked();
     const PosStride p_val{position.GetX(), position.GetY(), position.GetZ(), 0.0};
     world_->bodies.positions[dense]      = p_val;
-    world_->bodies.prev_positions[dense] = p_val;
+    world_->bodies.prevPositions[dense] = p_val;
 }
 
 void Character::SetRotation(const JPH::Quat &rotation) {
@@ -674,11 +674,11 @@ void Character::SetRotation(const JPH::Quat &rotation) {
     const std::uint32_t dense = DenseIndexLocked();
     const AuxStride r_val{sanitized.GetX(), sanitized.GetY(), sanitized.GetZ(), sanitized.GetW()};
     world_->bodies.rotations[dense]      = r_val;
-    world_->bodies.prev_rotations[dense] = r_val;
+    world_->bodies.prevRotations[dense] = r_val;
 }
 
 bool Character::IsGrounded() const {
-    const std::scoped_lock shadow(world_->shadow_lock);
+    const std::scoped_lock shadow(world_->shadowLock);
     return virtual_->GetGroundState() == JPH::CharacterBase::EGroundState::OnGround;
 }
 

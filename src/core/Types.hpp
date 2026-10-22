@@ -98,18 +98,18 @@ struct BodyCreationProps {
     float mass;
     float friction;
     float restitution;
-    int is_sensor;
-    int use_ccd;
+    int isSensor;
+    int useCcd;
 };
 
 struct BodyConfig {
     float mass                   = 0.0f;
     float friction               = 0.0f;
     float restitution            = 0.0f;
-    int is_sensor                = 0;
-    int use_ccd                  = 0;
-    int motion_type              = 0;
-    std::uint32_t allowed_dofs   = 0;
+    int isSensor                = 0;
+    int useCcd                  = 0;
+    int motionType              = 0;
+    std::uint32_t allowedDofs   = 0;
 };
 
 } // namespace CPH

@@ -29,19 +29,19 @@ bool GrowQueue(PhysicsWorld *world, std::size_t new_capacity) {
     // would default-construct tens of thousands of variants that a
     // create-without-step workload never touches (legacy's spare was a
     // bare malloc whose pages were never faulted until used).
-    return world->command_queue.reallocate_for_overwrite(new_capacity);
+    return world->commandQueue.reallocate_for_overwrite(new_capacity);
 }
 
 } // namespace
 
 bool PhysicsWorld::EnsureCommandBulkCapacity(std::size_t batch_size) {
-    if (batch_size > std::numeric_limits<std::size_t>::max() - command_count) {
+    if (batch_size > std::numeric_limits<std::size_t>::max() - commandCount) {
         return false;
     }
-    const std::size_t required = command_count + batch_size;
-    if (required > command_queue.size()) [[unlikely]] {
+    const std::size_t required = commandCount + batch_size;
+    if (required > commandQueue.size()) [[unlikely]] {
         std::size_t new_capacity =
-            command_queue.size() == 0 ? kInitialQueueCapacity : command_queue.size();
+            commandQueue.size() == 0 ? kInitialQueueCapacity : commandQueue.size();
         while (new_capacity < required) {
             if (new_capacity > std::numeric_limits<std::size_t>::max() / 2) {
                 return false;
@@ -59,41 +59,41 @@ bool PhysicsWorld::EnsureCommandCapacity() {
 
 void PhysicsWorld::RemoveBodySlot(std::uint32_t slot) {
     BodyBuffers &bodies = this->bodies;
-    const std::uint32_t dense = bodies.slot_to_dense[slot];
+    const std::uint32_t dense = bodies.slotToDense[slot];
     const std::uint32_t last =
         static_cast<std::uint32_t>(count.load(std::memory_order::acquire)) - 1;
 
     if (dense != last) {
         bodies.positions[dense]          = bodies.positions[last];
-        bodies.prev_positions[dense]     = bodies.prev_positions[last];
+        bodies.prevPositions[dense]     = bodies.prevPositions[last];
         bodies.rotations[dense]          = bodies.rotations[last];
-        bodies.prev_rotations[dense]     = bodies.prev_rotations[last];
-        bodies.linear_velocities[dense]  = bodies.linear_velocities[last];
-        bodies.angular_velocities[dense] = bodies.angular_velocities[last];
-        bodies.body_ids[dense]           = bodies.body_ids[last];
-        bodies.user_data[dense]          = bodies.user_data[last];
+        bodies.prevRotations[dense]     = bodies.prevRotations[last];
+        bodies.linearVelocities[dense]  = bodies.linearVelocities[last];
+        bodies.angularVelocities[dense] = bodies.angularVelocities[last];
+        bodies.bodyIds[dense]           = bodies.bodyIds[last];
+        bodies.userData[dense]          = bodies.userData[last];
         bodies.categories[dense]         = bodies.categories[last];
         bodies.masks[dense]              = bodies.masks[last];
-        bodies.material_ids[dense]       = bodies.material_ids[last];
+        bodies.materialIds[dense]       = bodies.materialIds[last];
 
-        const std::uint32_t mover = bodies.dense_to_slot[last];
-        bodies.slot_to_dense[mover] = dense;
-        bodies.dense_to_slot[dense] = mover;
+        const std::uint32_t mover = bodies.denseToSlot[last];
+        bodies.slotToDense[mover] = dense;
+        bodies.denseToSlot[dense] = mover;
 
         // Move assignment releases the removed body's vertex buffer and
         // leaves the tail shadow empty (no double free).
-        bodies.soft_shadows[dense] = std::move(bodies.soft_shadows[last]);
+        bodies.softShadows[dense] = std::move(bodies.softShadows[last]);
     } else {
-        bodies.soft_shadows[dense] = SoftBodyShadow{};
+        bodies.softShadows[dense] = SoftBodyShadow{};
     }
 
     // Recycle the slot: bump generation so stale handles fail, mark empty,
     // push onto the free stack, then publish the new count (release: the
     // data moves above must be visible before a reader sees the count).
     bodies.generations[slot].fetch_add(1, std::memory_order::relaxed);
-    bodies.slot_states[slot].store(std::to_underlying(SlotState::Empty), std::memory_order::relaxed);
-    const std::size_t free_index = free_count.fetch_add(1, std::memory_order::relaxed);
-    bodies.free_slots[free_index] = slot;
+    bodies.slotStates[slot].store(std::to_underlying(SlotState::Empty), std::memory_order::relaxed);
+    const std::size_t free_index = freeCount.fetch_add(1, std::memory_order::relaxed);
+    bodies.freeSlots[free_index] = slot;
     count.fetch_sub(1, std::memory_order::release);
 }
 
@@ -101,10 +101,10 @@ void PhysicsWorld::ClearCommandQueue() {
     // Resetting each command destroys the payload (body settings, etc.)
     // it owns. The legacy loop freed only creation settings and leaked
     // heap constraint parameters.
-    for (std::size_t i = 0; i < command_count; ++i) {
-        command_queue[i] = PhysicsCommand{};
+    for (std::size_t i = 0; i < commandCount; ++i) {
+        commandQueue[i] = PhysicsCommand{};
     }
-    command_count = 0;
+    commandCount = 0;
 }
 
 // --- Flush ---
@@ -124,36 +124,36 @@ struct FlushContext {
     void operator()(std::monostate) const {}
 
     void operator()(CreateBody &cmd) const {
-        const JPH::BodyID new_bid = world->physics_system.GetBodyInterface().CreateAndAddBody(
+        const JPH::BodyID new_bid = world->physicsSystem.GetBodyInterface().CreateAndAddBody(
             *cmd.settings, JPH::EActivation::Activate);
         cmd.settings.reset();
 
-        const std::scoped_lock shadow(world->shadow_lock);
+        const std::scoped_lock shadow(world->shadowLock);
         if (new_bid.IsInvalid()) [[unlikely]] {
             world->RemoveBodySlot(slot);
             return;
         }
-        world->bodies.body_ids[world->bodies.slot_to_dense[slot]] = new_bid;
+        world->bodies.bodyIds[world->bodies.slotToDense[slot]] = new_bid;
         publish_handle(slot, new_bid);
-        world->bodies.slot_states[slot].store(std::to_underlying(SlotState::Alive), std::memory_order::release);
+        world->bodies.slotStates[slot].store(std::to_underlying(SlotState::Alive), std::memory_order::release);
     }
 
     void operator()(CreateSoftBody &cmd) const {
-        const JPH::BodyID new_bid = world->physics_system.GetBodyInterface().CreateAndAddSoftBody(
+        const JPH::BodyID new_bid = world->physicsSystem.GetBodyInterface().CreateAndAddSoftBody(
             *cmd.settings, JPH::EActivation::Activate);
-        const std::scoped_lock shadow(world->shadow_lock);
+        const std::scoped_lock shadow(world->shadowLock);
         if (new_bid.IsInvalid()) [[unlikely]] {
             world->RemoveBodySlot(slot);
         } else {
-            const std::uint32_t dense = world->bodies.slot_to_dense[slot];
-            world->bodies.body_ids[dense] = new_bid;
-            if (!world->bodies.soft_shadows[dense].vertices.allocate(cmd.num_vertices)) {
+            const std::uint32_t dense = world->bodies.slotToDense[slot];
+            world->bodies.bodyIds[dense] = new_bid;
+            if (!world->bodies.softShadows[dense].vertices.allocate(cmd.numVertices)) {
                 // OOM: flush has no error channel. The body still
                 // simulates in Jolt; its (empty) shadow makes vertex
                 // getters report 0 vertices instead of reading stale data.
             }
             publish_handle(slot, new_bid);
-            world->bodies.slot_states[slot].store(std::to_underlying(SlotState::SoftBody), std::memory_order::release);
+            world->bodies.slotStates[slot].store(std::to_underlying(SlotState::SoftBody), std::memory_order::release);
         }
         cmd.settings.reset();
     }
@@ -162,12 +162,12 @@ struct FlushContext {
         // Clear the body-pointer cache first so shadow sync cannot chase
         // a freed JPH_Body next frame.
         const std::uint32_t j_idx = bid.GetIndex();
-        if (world->jolt_body_ptrs && j_idx <= world->max_jolt_bodies) {
-            world->jolt_body_ptrs[j_idx] = nullptr;
+        if (world->joltBodyPtrs && j_idx <= world->maxJoltBodies) {
+            world->joltBodyPtrs[j_idx] = nullptr;
         }
         bi.RemoveBody(bid);
         bi.DestroyBody(bid);
-        const std::scoped_lock shadow(world->shadow_lock);
+        const std::scoped_lock shadow(world->shadowLock);
         world->RemoveBodySlot(slot);
     }
 
@@ -195,7 +195,7 @@ struct FlushContext {
     }
 
     void operator()(SetMotionType &cmd) const {
-        bi.SetMotionType(bid, static_cast<JPH::EMotionType>(cmd.motion_type),
+        bi.SetMotionType(bid, static_cast<JPH::EMotionType>(cmd.motionType),
                          JPH::EActivation::Activate);
         // TODO(smell): the object layer is derived from the motion type rather
         // than carried on the command -- SetMotionType only has a motion_type
@@ -205,7 +205,7 @@ struct FlushContext {
         // ObjectLayer::Vehicle. Preserved verbatim; fixing it means widening the
         // command, which is a behaviour change.
         bi.SetObjectLayer(bid,
-                          static_cast<JPH::ObjectLayer>(cmd.motion_type == 0 ? 0 : 1));
+                          static_cast<JPH::ObjectLayer>(cmd.motionType == 0 ? 0 : 1));
     }
 
     void operator()(Activate &) const { bi.ActivateBody(bid); }
@@ -242,7 +242,7 @@ struct FlushContext {
     }
 
     void operator()(cmd::CreateConstraint &cmd) const {
-        const std::uint32_t c_slot = cmd.constraint_slot;
+        const std::uint32_t c_slot = cmd.constraintSlot;
         ConstraintSlot &c_entry    = world->constraints[c_slot];
 
         // destroy_constraint() may have run while this was queued.
@@ -251,12 +251,12 @@ struct FlushContext {
         }
 
         const JPH::BodyID bid2 =
-            world->bodies.body_ids[world->bodies.slot_to_dense[cmd.body2_slot]];
+            world->bodies.bodyIds[world->bodies.slotToDense[cmd.body2Slot]];
         if (bid.IsInvalid() || bid2.IsInvalid()) {
             return;
         }
 
-        const JPH::BodyLockInterface &li = world->physics_system.GetBodyLockInterface();
+        const JPH::BodyLockInterface &li = world->physicsSystem.GetBodyLockInterface();
         // Lock each body in a separate scope: Jolt hashes BodyIDs onto a
         // small mutex array, so holding two write locks can recurse one
         // mutex and abort (EDEADLK). The world is quiesced here, so the
@@ -274,24 +274,24 @@ struct FlushContext {
                                               *b1, *b2)
                        : nullptr;
         if (constraint) {
-            world->physics_system.AddConstraint(constraint);
+            world->physicsSystem.AddConstraint(constraint);
             c_entry.constraint = constraint;
             c_entry.state.store(std::to_underlying(SlotState::Alive), std::memory_order::release);
         } else {
             c_entry.state.store(std::to_underlying(SlotState::Empty), std::memory_order::relaxed);
-            world->free_constraint_slots[world->free_constraint_count++] = c_slot;
+            world->freeConstraintSlots[world->freeConstraintCount++] = c_slot;
         }
     }
 
   private:
     void publish_handle(std::uint32_t body_slot, const JPH::BodyID &new_bid) const {
         const std::uint32_t j_idx = new_bid.GetIndex();
-        if (world->id_to_handle_map && j_idx <= world->max_jolt_bodies) {
+        if (world->idToHandleMap && j_idx <= world->maxJoltBodies) {
             const std::uint32_t gen =
                 world->bodies.generations[body_slot].load(std::memory_order::relaxed);
             // Release: the body_ids write must be visible to any thread
             // that reads this handle.
-            world->id_to_handle_map[j_idx].store(BodyHandle::FromParts(body_slot, gen),
+            world->idToHandleMap[j_idx].store(BodyHandle::FromParts(body_slot, gen),
                                                  std::memory_order::release);
         }
     }
@@ -303,17 +303,17 @@ void PhysicsWorld::FlushCommands(std::span<PhysicsCommand> queue) {
     for (auto &command : queue) {
         const std::uint32_t slot = command.slot;
         const SlotState state =
-            static_cast<SlotState>(bodies.slot_states[slot].load(std::memory_order::acquire));
+            static_cast<SlotState>(bodies.slotStates[slot].load(std::memory_order::acquire));
 
         const bool is_create = std::holds_alternative<cmd::CreateBody>(command.payload) ||
                                std::holds_alternative<cmd::CreateSoftBody>(command.payload);
-        const JPH::BodyID bid = bodies.body_ids[bodies.slot_to_dense[slot]];
+        const JPH::BodyID bid = bodies.bodyIds[bodies.slotToDense[slot]];
 
         // Stale commands (body destroyed while queued, create superseded)
         // are dropped; resetting the command still destroys payloads.
         if (std::to_underlying(state) < 32 && ((SlotStateBit(state) & kValidBidMask) != 0) &&
             (is_create || !bid.IsInvalid())) {
-            std::visit(FlushContext{this, physics_system.GetBodyInterface(), slot, bid},
+            std::visit(FlushContext{this, physicsSystem.GetBodyInterface(), slot, bid},
                        command.payload);
         }
         command = PhysicsCommand{};
