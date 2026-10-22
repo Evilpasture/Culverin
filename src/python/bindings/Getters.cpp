@@ -1,17 +1,16 @@
 #include "bindings/Getters.hpp"
 #include "bindings/ModuleState.hpp"
-#include "ecs/Ecs.hpp"
-#include "physics/PhysicsSync.hpp"
+#include "physics/PhysicsWorldBinding.hpp"
 #include <Python.h>
+#include <expected>
 #include <utility>
 
 namespace CPH::Python {
 
 static Py_ssize_t BufferProxy_length(BufferProxyObject *self) {
-    // Return the cached shape. Since we update shape[0] in the
-    // constructor and in getbuffer, this is always accurate
-    // to the count at the time of the last sync/query.
-    return self->shape[0];
+    // The element count the proxy last saw: the body count it was built with,
+    // refreshed by every successful acquisition.
+    return static_cast<Py_ssize_t>(self->Proxy().Length());
 }
 
 [[nodiscard]] static int BufferProxy_traverse(BufferProxyObject *self, visitproc visit,
@@ -20,19 +19,12 @@ static Py_ssize_t BufferProxy_length(BufferProxyObject *self) {
     return 0;
 }
 
-// Inside BufferProxy_clear
 [[nodiscard]] static int BufferProxy_clear(BufferProxyObject *self) {
-    ModuleState *st = GetModuleState(PyType_GetModule(Py_TYPE(self)));
     if (self->owner) {
-        // We know that both PhysicsWorld and Registry have the export count at a fixed offset
-        // or we can switch based on type.
-        if (PyObject_TypeCheck(self->owner,
-                               reinterpret_cast<PyTypeObject *>(st->physicsWorldType))) {
-            ((reinterpret_cast<PhysicsWorldObject *>(self->owner))
-                                           ->physics.viewExportCount).fetch_sub(1, std::memory_order::relaxed);
-        } else {
-            reinterpret_cast<RegistryObject *>(self->owner)->registry->OnViewReleased();
-        }
+        // Give the export back to whichever domain issued it. The adapter used
+        // to answer that with a PyObject_TypeCheck against the world type and a
+        // fall-through to the registry; the proxy knows its own domain.
+        self->Proxy().ReleaseExport();
         Py_CLEAR(self->owner);
     }
     return 0;
@@ -41,6 +33,8 @@ static Py_ssize_t BufferProxy_length(BufferProxyObject *self) {
 static void BufferProxy_dealloc(BufferProxyObject *self) {
     PyObject_GC_UnTrack(self);
     [[maybe_unused]] auto cleared = BufferProxy_clear(self);
+    // PyObject_GC_New handed us raw storage; close the C++ object explicitly.
+    self->Proxy().~BufferProxy();
     // For heap types, we must release our reference to the type itself
     PyTypeObject *tp = Py_TYPE(self);
     tp->tp_free(reinterpret_cast<PyObject *>(self));
@@ -49,83 +43,32 @@ static void BufferProxy_dealloc(BufferProxyObject *self) {
 
 [[nodiscard]] static int BufferProxy_getbuffer(BufferProxyObject *self, Py_buffer *view,
                                                 [[maybe_unused]] int flags) {
-    // Determine the lock and target based on the buffer type category
-    void *target_ptr = nullptr;
-
-    if (self->bufType < ProxyBufferType::EcsData) {
-        /* --- CATEGORY: Physics World Buffers --- */
-        PhysicsWorldObject *world = reinterpret_cast<PhysicsWorldObject *>(self->owner);
-
-        (world->physics.shadowLock).lock();
-        BlockUntilNotStepping(world);
-
-        switch (self->bufType) {
-        case ProxyBufferType::Positions:
-            target_ptr = world->physics.bodies.positions.data();
-            break;
-        case ProxyBufferType::Rotations:
-            target_ptr = world->physics.bodies.rotations.data();
-            break;
-        case ProxyBufferType::LinearVelocities:
-            target_ptr = world->physics.bodies.linearVelocities.data();
-            break;
-        case ProxyBufferType::AngularVelocities:
-            target_ptr = world->physics.bodies.angularVelocities.data();
-            break;
-        case ProxyBufferType::UserData:
-            target_ptr = world->physics.bodies.userData.data();
-            break;
-        case ProxyBufferType::Dynamic:
-            target_ptr = self->dynamicPtr;
-            break; // Soft Body Verts
-        default:
-            std::unreachable();
-        }
-
-        if (!target_ptr) {
-            (world->physics.shadowLock).unlock();
-            PyErr_SetString(PyExc_RuntimeError, "Physics buffer not allocated");
-            return -1;
-        }
-
-        // Auto-update shape based on current body count for non-dynamic buffers
-        if (self->bufType != ProxyBufferType::Dynamic) {
-            size_t count   = (world->physics.count).load(std::memory_order::acquire);
-            self->shape[0] = static_cast<Py_ssize_t>(count * self->stride);
-        }
-
-        (world->physics.shadowLock).unlock();
-
-    } else {
-        /* --- CATEGORY: ECS Registry Buffers --- */
-        // For ECS, the pointer was stored in dynamic_ptr when the proxy was
-        // built. Nothing mutable is read here: the registry refuses to grow a
-        // component set while a view is exported, so the address and the shape
-        // stay valid for the proxy's whole life.
-        target_ptr = self->dynamicPtr;
-
-        if (!target_ptr) {
-            // A zero-length view still needs a non-null address for the buffer
-            // protocol; its size is zero, so this sentinel is never dereferenced.
-            static char empty_buffer = '\0';
-            target_ptr               = &empty_buffer;
-        }
-
-        // ECS shape is pinned at creation because we block reallocs while views
-        // are held, so self->shape[0] needs no refresh here.
+    // Everything domain-shaped is the proxy's: which array, whether the address
+    // is re-read, what lock it needs, how wide an item is, whether the consumer
+    // may write. This function's whole job is to move those facts into the
+    // struct CPython asked for.
+    const std::expected<BufferDescriptor, const char *> described = self->Proxy().Describe();
+    if (!described) {
+        PyErr_SetString(PyExc_RuntimeError, described.error());
+        return -1;
     }
+    const BufferDescriptor &buffer = *described;
 
-    // --- Standard Buffer Protocol Population ---
-    self->strides[0] = static_cast<Py_ssize_t>(self->itemsize);
+    // An empty view still needs an address the buffer protocol considers valid;
+    // nothing is ever read through it, because the length is zero.
+    static char empty_buffer = '\0';
+    void       *target_ptr   = buffer.data != nullptr ? buffer.data : &empty_buffer;
 
-    view->buf = target_ptr;
-    view->obj = reinterpret_cast<PyObject *>(self);
+    self->shape[0]   = static_cast<Py_ssize_t>(self->Proxy().Length());
+    self->strides[0] = static_cast<Py_ssize_t>(buffer.itemSize);
+
+    view->buf        = target_ptr;
+    view->obj        = reinterpret_cast<PyObject *>(self);
     Py_INCREF(self);
-
-    view->len        = self->shape[0] * self->strides[0];
-    view->readonly   = (self->bufType == ProxyBufferType::EcsEntities) ? 1 : 0; // Entities are read-only
-    view->itemsize   = static_cast<Py_ssize_t>(self->itemsize);
-    view->format     = const_cast<char *>(self->format);
+    view->len        = static_cast<Py_ssize_t>(buffer.bytes);
+    view->readonly   = buffer.readonly ? 1 : 0;
+    view->itemsize   = static_cast<Py_ssize_t>(buffer.itemSize);
+    view->format     = const_cast<char *>(buffer.format);
     view->ndim       = 1;
     view->shape      = self->shape;
     view->strides    = self->strides;
@@ -135,28 +78,10 @@ static void BufferProxy_dealloc(BufferProxyObject *self) {
     return 0;
 }
 
-static void BufferProxy_releasebuffer([[maybe_unused]] BufferProxyObject *self,
-                                                  [[maybe_unused]] Py_buffer *view) {
-// Let NumPy hold the world buffer permanently.
-#if defined(STRICT_THREAD_SAFETY)
-    // The proxy keeps the world alive through `owner`, the same way the
-    // getbuffer path above does. This branch has never been compiled -- it
-    // named a `world` member that BufferProxyObject does not have -- so treat
-    // it as reviewed-but-unexercised until someone builds with
-    // STRICT_THREAD_SAFETY.
-    PhysicsWorldObject *world = reinterpret_cast<PhysicsWorldObject *>(self->owner);
-
-    // 4. Mark query finished
-    // Use 'release' barrier to ensure Numpy reads are finished before Stepper writes
-    if ((world->physics.activeQueries).fetch_sub(1, std::memory_order::release) == 1) {
-
-        // 5. If we were the last ones, wake up the Stepper!
-        // We use the internal sync mutex/cond here
-        (world->physics.stepSync.mutex).lock();
-        (world->physics.stepSync.cond).notify_all();
-        (world->physics.stepSync.mutex).unlock();
-    }
-#endif
+static void BufferProxy_releasebuffer(BufferProxyObject *self, [[maybe_unused]] Py_buffer *view) {
+    // Let NumPy hold the world buffer permanently: the release hook is the
+    // proxy's too, and for the registry it is a no-op.
+    self->Proxy().OnBufferReleased();
 }
 
 // --- Heap Type Specification ---
@@ -174,36 +99,37 @@ PyType_Spec BufferProxySpec = {.name      = "culverin.BufferProxy",
                                 .flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
                                 .slots     = BufferProxySlots};
 
-// --- Updated MakeProxy helper ---
-static PyObject *MakeProxy(PhysicsWorldObject *self, ProxyBufferType type, const char *format,
-                            size_t itemsize, int stride) {
-    ModuleState *st = GetModuleState(PyType_GetModule(Py_TYPE(self)));
+// --- Proxy construction ---
 
-    // Allocation
-    BufferProxyObject *proxy = PyObject_GC_New(
-        BufferProxyObject, reinterpret_cast<PyTypeObject *>(st->bufferProxyType));
+PyObject *NewBufferProxy(PyObject *owner, BufferProxyPayload payload) {
+    ModuleState *st = GetModuleState(PyType_GetModule(Py_TYPE(owner)));
+
+    BufferProxyObject *proxy =
+        PyObject_GC_New(BufferProxyObject, reinterpret_cast<PyTypeObject *>(st->bufferProxyType));
     if (!proxy) {
         return nullptr;
     }
 
-    // Initialization
-    proxy->owner = reinterpret_cast<PyObject *>(self);
-    Py_INCREF(self);
-    proxy->bufType = type;
-    proxy->format   = format;
-    proxy->itemsize = itemsize;
-    proxy->stride   = stride;
+    // The storage PyObject_GC_New returned is zeroed but has never held a
+    // C++ object, so this is where the variant comes into existence.
+    new (proxy->proxyStorage) BufferProxy(std::move(payload));
+    proxy->owner = owner;
+    Py_INCREF(owner);
 
-    // INITIALIZE SHAPE IMMEDIATELY
-    // This allows len(proxy) to work even before a buffer is requested
-    size_t count      = (self->physics.count).load(std::memory_order::acquire);
-    proxy->shape[0]   = static_cast<Py_ssize_t>(count * stride);
-    proxy->strides[0] = static_cast<Py_ssize_t>(itemsize);
-
-    (self->physics.viewExportCount).fetch_add(1, std::memory_order::relaxed);
+    // The length is already cached, so len(proxy) works before anyone asks for
+    // a buffer; the export is counted from here until clear(). shape/strides
+    // are provisional -- Py_sq_length reads Length(), and the exported Py_buffer
+    // can only point at them after getbuffer has filled them in.
+    proxy->shape[0]   = static_cast<Py_ssize_t>(proxy->Proxy().Length());
+    proxy->strides[0] = 1;
+    proxy->Proxy().AcquireExport();
 
     PyObject_GC_Track(proxy);
     return reinterpret_cast<PyObject *>(proxy);
+}
+
+static PyObject *MakeProxy(PhysicsWorldObject *self, WorldChannel channel) {
+    return NewBufferProxy(reinterpret_cast<PyObject *>(self), WorldBuffer(self->physics, channel));
 }
 
 // --- Advanced getters for lock and thread management ---
@@ -220,24 +146,24 @@ static PyObject *MakeProxy(PhysicsWorldObject *self, ProxyBufferType type, const
 [[nodiscard]] PyObject * WorldGetPositions(PhysicsWorldObject *self,
                                                 [[maybe_unused]] void *c) {
     // Positions are Stride 4 (X, Y, Z, W)
-    return MakeProxy(self, ProxyBufferType::Positions, CPH::kRealFormatString, sizeof(JPH::Real), 4);
+    return MakeProxy(self, WorldChannel::Positions);
 }
 
 [[nodiscard]] PyObject * WorldGetRotations(PhysicsWorldObject *self,
                                                 [[maybe_unused]] void *c) {
     // Rotations are Stride 4 (X, Y, Z, W)
-    return MakeProxy(self, ProxyBufferType::Rotations, "f", sizeof(float), 4);
+    return MakeProxy(self, WorldChannel::Rotations);
 }
 
 [[nodiscard]] PyObject * WorldGetVelocities(PhysicsWorldObject *self,
                                                  [[maybe_unused]] void *c) {
     // Velocities are Stride 4 (X, Y, Z, Pad)
-    return MakeProxy(self, ProxyBufferType::LinearVelocities, "f", sizeof(float), 4);
+    return MakeProxy(self, WorldChannel::LinearVelocities);
 }
 
 [[nodiscard]] PyObject * WorldGetAngularVelocities(PhysicsWorldObject *self,
                                                         [[maybe_unused]] void *c) {
-    return MakeProxy(self, ProxyBufferType::AngularVelocities, "f", sizeof(float), 4);
+    return MakeProxy(self, WorldChannel::AngularVelocities);
 }
 
 /* --- Mutable Metadata Getters (Hardened with Locks) --- */
@@ -260,7 +186,7 @@ static PyObject *MakeProxy(PhysicsWorldObject *self, ProxyBufferType type, const
 [[nodiscard]] PyObject * WorldGetUserDataBuffer(PhysicsWorldObject *self,
                                                      [[maybe_unused]] void *c) {
     // User data is Stride 1 (One uint64 per body)
-    return MakeProxy(self, ProxyBufferType::UserData, "Q", sizeof(uint64_t), 1);
+    return MakeProxy(self, WorldChannel::UserData);
 }
 
 [[nodiscard]] PyObject * WorldGetShapeCount(PhysicsWorldObject *self,

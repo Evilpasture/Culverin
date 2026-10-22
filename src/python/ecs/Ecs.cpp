@@ -52,42 +52,21 @@ PyObject *RaiseEcsError(const CPH::Error &error) {
 }
 
 PyObject *MakeEcsProxy(RegistryObject *self, std::uint32_t comp_id, bool entities) {
-    ModuleState *st = GetModuleState(PyType_GetModule(Py_TYPE(self)));
-
     const std::expected<CPH::Registry::ComponentView, CPH::Error> view =
         self->registry->View(comp_id);
     if (!view) {
         return RaiseEcsError(view.error());
     }
 
-    BufferProxyObject *proxy =
-        PyObject_GC_New(BufferProxyObject, reinterpret_cast<PyTypeObject *>(st->bufferProxyType));
-    if (!proxy) {
-        return nullptr;
-    }
-
-    proxy->owner = reinterpret_cast<PyObject *>(self);
-    Py_INCREF(self);
-
-    if (entities) {
-        proxy->bufType    = ProxyBufferType::EcsEntities;
-        proxy->dynamicPtr = view->entities;
-        proxy->format      = "Q"; // uint64
-        proxy->itemsize    = sizeof(std::uint64_t);
-        proxy->shape[0]    = view->count;
-    } else {
-        proxy->bufType    = ProxyBufferType::EcsData;
-        proxy->dynamicPtr = view->data;
-        proxy->format      = "B"; // Generic bytes, user casts in NumPy
-        proxy->itemsize    = 1;
-        proxy->shape[0]    = static_cast<Py_ssize_t>(view->count) * view->elementSize;
-    }
-
-    proxy->stride = 1;
-    self->registry->OnViewExported();
-
-    PyObject_GC_Track(proxy);
-    return reinterpret_cast<PyObject *>(proxy);
+    // The registry pins the dense arrays while an export is outstanding, so the
+    // addresses below cannot move before the proxy is released.
+    return NewBufferProxy(
+        reinterpret_cast<PyObject *>(self),
+        RegistryBuffer(*self->registry,
+                       entities ? RegistryChannel::EntityHandles : RegistryChannel::ComponentData,
+                       entities ? static_cast<void *>(view->entities)
+                                : static_cast<void *>(view->data),
+                       view->count, view->elementSize));
 }
 
 } // namespace

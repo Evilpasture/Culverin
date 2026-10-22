@@ -2256,27 +2256,17 @@ WorldGetSoftBodyLocalVertices(PhysicsWorldObject *self, PyObject *const *args,
         return PyErr_Format(PyExc_RuntimeError, "Soft body shadow buffer missing");
     }
 
-    // We can reuse BufferProxyObject, but we need to tell it to use THIS specific pointer
-    // and THIS specific length, rather than the global positions array.
-    ModuleState *st          = GetModuleState(PyType_GetModule(Py_TYPE(self)));
-    BufferProxyObject *proxy = PyObject_GC_New(
-        BufferProxyObject, reinterpret_cast<PyTypeObject *>(st->bufferProxyType));
-    proxy->owner = reinterpret_cast<PyObject *>(self);
-    Py_INCREF(self);
-
-    proxy->bufType    = ProxyBufferType::Dynamic;
-    proxy->dynamicPtr = reinterpret_cast<JPH::Real *>(shadow->vertices.data());
-    proxy->format      = CPH::kRealFormatString;
-    proxy->itemsize    = sizeof(JPH::Real);
-    proxy->stride      = 4; // PosStride
-    proxy->shape[0]    = static_cast<Py_ssize_t>(shadow->num_vertices()) * 4;
-
-    (self->physics.viewExportCount).fetch_add(1, std::memory_order::relaxed);
+    // A buffer of its own rather than one of the world's SoA channels: this
+    // body's private vertex block, pinned to this proxy for its lifetime.
+    PyObject *proxy = NewBufferProxy(
+        reinterpret_cast<PyObject *>(self),
+        WorldBuffer(self->physics, WorldChannel::SoftBodyVertices,
+                    static_cast<void *>(shadow->vertices.data()),
+                    static_cast<std::size_t>(shadow->num_vertices()) * 4 * sizeof(JPH::Real)));
 
     (self->physics.shadowLock).unlock();
 
-    PyObject_GC_Track(proxy);
-    return reinterpret_cast<PyObject *>(proxy);
+    return proxy;
 }
 
 [[nodiscard]] static PyObject * WorldBenchmarkParse([[maybe_unused]] PhysicsWorldObject *self,
