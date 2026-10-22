@@ -2,6 +2,7 @@
 #include "bindings/BufferProxy.hpp"
 #include "core/Compiler.hpp"
 #include <cstddef>
+#include <new>
 #include <Python.h>
 
 namespace CPH::Python {

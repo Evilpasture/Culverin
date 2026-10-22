@@ -6,7 +6,10 @@
 #include <variant>
 
 namespace CPH {
-class PhysicsWorld;
+// The tag has to match the definition: `PhysicsWorld` is a struct, `Registry`
+// is a class. Mismatching is only a warning, but under the MSVC ABI it can
+// pick a different mangled name for members that mention the type.
+struct PhysicsWorld;
 class Registry;
 } // namespace CPH
 
