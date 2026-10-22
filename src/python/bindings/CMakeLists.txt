@@ -3,6 +3,7 @@ add_subdirectory(parsing)
 add_library(
     culverin_python_bindings
     OBJECT
+        BufferView.hpp
         Getters.cpp
         docstrings/Docstrings.cpp
         docstrings/Docstrings.hpp

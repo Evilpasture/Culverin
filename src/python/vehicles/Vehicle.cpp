@@ -6,6 +6,7 @@
 
 #include "vehicles/VehicleBinding.hpp"
 #include "bindings/ModuleState.hpp"
+#include "bindings/ThreadState.hpp"
 #include "bindings/PythonCommon.hpp"
 #include "bindings/PythonSupport.hpp"
 #include "bindings/parsing/Parsers.hpp"
@@ -182,9 +183,10 @@ bool ParseWheelConfigs(PyObject *py_wheels, std::vector<CPH::WheelConfig> &out) 
 
     std::expected<std::unique_ptr<CPH::Vehicle>, CPH::Error> created =
         std::unexpected(CPH::Error{CPH::VehicleError::CreationFailed});
-    Py_BEGIN_ALLOW_THREADS
+    {
+        const AllowThreads allow;
     created = CPH::Vehicle::CreateWheeled(self->physics, BodyHandle(chassis_raw), config);
-    Py_END_ALLOW_THREADS
+    }
 
     if (!created) {
         return RaiseVehicleError(created.error());

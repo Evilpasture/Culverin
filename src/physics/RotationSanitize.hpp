@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/FloatBits.hpp"
+
 #include <Jolt/Jolt.h>
 
 #include <Jolt/Math/Quat.h>
@@ -32,7 +34,7 @@ namespace CPH {
 [[nodiscard]] inline auto SanitizeRotation(const JPH::Quat &rotation) noexcept -> JPH::Quat {
     const float length_sq = rotation.LengthSq();
 
-    if (!std::isfinite(length_sq) || length_sq <= 1.0e-12F) {
+    if (!IsFinite(length_sq) || length_sq <= 1.0e-12F) {
         // Degenerate input (all-zero or non-finite): fall back to a well-formed
         // rotation rather than propagate NaNs through every later frame. Same
         // policy as the plane-normal sanitizer in InternalQuery.cpp.

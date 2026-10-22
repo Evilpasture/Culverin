@@ -6,6 +6,7 @@
 
 #include "ragdolls/RagdollBinding.hpp"
 #include "bindings/PythonCommon.hpp"
+#include "bindings/ThreadState.hpp"
 #include "bindings/FastBuild.hpp"
 #include "bindings/PythonSupport.hpp"
 #include "core/Compiler.hpp"
@@ -359,9 +360,11 @@ void RagdollDealloc(RagdollObject *self) {
 
     JPH::ShapeRefC shape;
     if (self->world) {
-        Py_BEGIN_ALLOW_THREADS shape =
+        {
+            const AllowThreads allow;
+            shape =
             self->world->physics.FindOrCreateShape(shape_type, shape_params);
-        Py_END_ALLOW_THREADS
+        }
     }
     if (!shape) {
         return PyErr_Format(PyExc_ValueError, "Invalid shape configuration");

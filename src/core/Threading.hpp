@@ -98,9 +98,17 @@ struct ShadowSync {
     std::condition_variable cond;
 };
 
-// Serializes first-time Jolt PhysicsSystem creation across worlds (TSan:
-// lets Jolt's internal lazy statics initialize safely). Inline variable:
-// exactly one instance, constructed before first use, no init call needed.
-inline std::mutex g_jph_init_lock;
+namespace Global {
+
+// Serializes first-time Jolt PhysicsSystem creation across worlds (TSan: lets
+// Jolt's internal lazy statics initialize safely).
+//
+// Declared here and defined in Threading.cpp, not as an inline variable: an
+// `inline` global is still a global, and this is the only place in the tree
+// that needs one in a header. Everything with static storage duration in the
+// first-party engine lives in CPH::Global and has exactly one definition.
+extern std::mutex jph_init_lock;
+
+} // namespace Global
 
 } // namespace CPH

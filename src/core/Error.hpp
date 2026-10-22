@@ -170,30 +170,44 @@ std::string_view EnumToMessage(std::uint32_t value) {
     }
 }
 
+} // namespace detail
+
 // --- category registry -------------------------------------------------
 // A lock-free singly-linked list of categories, prepended once per enum
 // type (plus manual foreign registrations). Culverin is a single
-// extension module, so a header-local list head is the whole registry —
-// no cross-binary sharing needed. Entries live for the process duration.
+// extension module, so a single list head is the whole registry -- no
+// cross-binary sharing needed. Entries live for the process duration.
+//
+// The node type and the list head sit at CPH scope rather than in `detail`
+// because the head is global state, and global state belongs in CPH::Global
+// where it can be found without walking into an implementation namespace.
 
 struct CategoryNode {
-    std::uint32_t                 categoryHash;
-    const ErrorCategory          *category;
-    std::atomic<CategoryNode *>   next;
+    std::uint32_t               categoryHash;
+    const ErrorCategory        *category;
+    std::atomic<CategoryNode *> next;
 };
 
-inline std::atomic<CategoryNode *> g_category_head{nullptr};
+namespace Global {
+
+// Head of the process-wide error-category list; defined in Error.cpp. See the
+// note in Threading.hpp on why this is not an inline variable.
+extern std::atomic<CategoryNode *> category_head;
+
+} // namespace Global
+
+namespace detail {
 
 inline void RegisterCategoryNode(CategoryNode &node) noexcept {
-    CategoryNode *head = g_category_head.load(std::memory_order_relaxed);
+    CategoryNode *head = Global::category_head.load(std::memory_order_relaxed);
     do {
         node.next.store(head, std::memory_order_relaxed);
-    } while (!g_category_head.compare_exchange_weak(head, &node, std::memory_order_release,
-                                                    std::memory_order_relaxed));
+    } while (!Global::category_head.compare_exchange_weak(head, &node, std::memory_order_release,
+                                                          std::memory_order_relaxed));
 }
 
 inline const ErrorCategory *FindCategory(std::uint32_t category_hash) noexcept {
-    for (const CategoryNode *node = g_category_head.load(std::memory_order_acquire); node;
+    for (const CategoryNode *node = Global::category_head.load(std::memory_order_acquire); node;
          node                      = node->next.load(std::memory_order_acquire)) {
         if (node->categoryHash == category_hash) {
             return node->category;
@@ -347,7 +361,7 @@ inline std::uint32_t RegisterErrorCategory(std::string_view                name,
                                            std::string_view (*to_name)(std::uint32_t)) {
     const std::uint32_t hash     = detail::Hash32(name);
     auto               *category = new ErrorCategory{name, to_string, to_name};
-    auto               *node     = new detail::CategoryNode{hash, category, nullptr};
+    auto               *node     = new CategoryNode{hash, category, nullptr};
     detail::RegisterCategoryNode(*node);
     return hash;
 }

@@ -1,5 +1,6 @@
 #include "physics/Constraint.hpp"
 #include "bindings/PythonCommon.hpp"
+#include "bindings/ThreadState.hpp"
 #include "core/Buffer.hpp"
 #include "core/Types.hpp"
 #include "physics/ConstraintFactory.hpp"
@@ -217,9 +218,10 @@ void ActivateBody(JPH::BodyInterface &bi, JPH::Body *body) {
     // all in CPH::SetConstraintTarget (src/physics/ConstraintOps.cpp); the GIL
     // is dropped for the call because it parks while a step is in flight.
     std::expected<void, CPH::Error> applied;
-    Py_BEGIN_ALLOW_THREADS
+    {
+        const AllowThreads allow;
     applied = CPH::SetConstraintTarget(self->physics, ConstraintHandle(h_raw), target);
-    Py_END_ALLOW_THREADS
+    }
 
     if (!applied) {
         PyErr_SetString(PyExc_ValueError, "Invalid or stale constraint handle");

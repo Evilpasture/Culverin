@@ -1,5 +1,6 @@
 #include "physics/QueryMethods.hpp"
 #include "bindings/PythonCommon.hpp"
+#include "bindings/ThreadState.hpp"
 #include "bindings/FastBuild.hpp"
 #include "bindings/parsing/Parsers.hpp"
 #include "core/Compiler.hpp"
@@ -74,8 +75,10 @@ static PyObject *OverlapHitsToList(const PhysicsQueryHitBuffer *hits) {
     PhysicsQueryHitBuffer hits;
 
     std::expected<void, Error> status;
-    Py_BEGIN_ALLOW_THREADS status = self->physics.OverlapSphere(center, radius, hits);
-    Py_END_ALLOW_THREADS
+    {
+        const AllowThreads allow;
+        status = self->physics.OverlapSphere(center, radius, hits);
+    }
 
         if (!status) {
         return QueryStatusError(status.error(), "Failed to resolve sphere shape");
@@ -119,8 +122,10 @@ static PyObject *OverlapHitsToList(const PhysicsQueryHitBuffer *hits) {
     PhysicsQueryHitBuffer hits;
 
     std::expected<void, Error> status;
-    Py_BEGIN_ALLOW_THREADS status = self->physics.OverlapAabb(min, max, hits);
-    Py_END_ALLOW_THREADS
+    {
+        const AllowThreads allow;
+        status = self->physics.OverlapAabb(min, max, hits);
+    }
 
         if (!status) {
         return QueryStatusError(status.error(), "overlap_aabb received invalid arguments");
@@ -164,10 +169,12 @@ static PyObject *OverlapHitsToList(const PhysicsQueryHitBuffer *hits) {
     const JPH::RVec3 origin(start_x, start_y, start_z);
     const JPH::Vec3 direction(direction_x, direction_y, direction_z);
     std::expected<PhysicsRaycastHit, Error> status;
-    Py_BEGIN_ALLOW_THREADS status =
+    {
+        const AllowThreads allow;
+        status =
         self->physics.Raycast(origin, direction, max_distance,
                                 static_cast<BodyHandle>(ignore_handle));
-    Py_END_ALLOW_THREADS
+    }
 
         if (!status) {
         return QueryStatusError(status.error(), "raycast received invalid arguments");
@@ -247,11 +254,13 @@ static PyObject *OverlapHitsToList(const PhysicsQueryHitBuffer *hits) {
     }
 
     std::expected<void, Error> status;
-    Py_BEGIN_ALLOW_THREADS status = self->physics.RaycastBatch(
+    {
+        const AllowThreads allow;
+        status = self->physics.RaycastBatch(
         {static_cast<const float *>(starts_buffer.buf), count * 3},
         {static_cast<const float *>(directions_buffer.buf), count * 3}, max_distance,
         {results, count});
-    Py_END_ALLOW_THREADS
+    }
 
         PyBuffer_Release(&starts_buffer);
     PyBuffer_Release(&directions_buffer);
@@ -311,10 +320,12 @@ static PyObject *OverlapHitsToList(const PhysicsQueryHitBuffer *hits) {
     const JPH::Quat rotation(rotation_x, rotation_y, rotation_z, rotation_w);
     const JPH::Vec3 direction(direction_x, direction_y, direction_z);
     std::expected<PhysicsShapecastHit, Error> status;
-    Py_BEGIN_ALLOW_THREADS status =
+    {
+        const AllowThreads allow;
+        status =
         self->physics.Shapecast(shape_type, position, rotation, direction, size,
                                   static_cast<BodyHandle>(ignore_handle));
-    Py_END_ALLOW_THREADS
+    }
 
         if (!status) {
         return QueryStatusError(status.error(), "Invalid shape parameters or cache failure");

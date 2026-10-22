@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstddef>
 
+#include "bindings/ThreadState.hpp"
 #include "core/Threading.hpp"
 #include "physics/CommandBuffer.hpp"
 #include "physics/PhysicsWorld.hpp"
@@ -23,11 +24,11 @@ void SyncAndFlushInternal(PhysicsWorldObject *self) {
     const auto detached = self->physics.DetachCommands();
     self->physics.shadowLock.unlock();
 
-    Py_BEGIN_ALLOW_THREADS {
+    {
+        const AllowThreads allow;
         const std::scoped_lock trampoline(self->physics.jphTrampolineLock);
         self->physics.FlushCommands(detached);
     }
-    Py_END_ALLOW_THREADS
 
     self->physics.shadowLock.lock();
     self->physics.isStepping.store(false, std::memory_order::release);

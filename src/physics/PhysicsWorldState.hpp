@@ -50,12 +50,6 @@ struct WorldSettings {
     float penetrationSlop;
 };
 
-struct GravityVector {
-    float gx;
-    float gy;
-    float gz;
-};
-
 enum class WorldError : std::uint32_t {
     OutOfMemory     = 1,
     LimitReached    = 2,
@@ -142,7 +136,7 @@ struct PhysicsWorld {
     [[nodiscard]] std::expected<void, Error> AllocateBuffers(int max_bodies,
                                                              std::size_t initial_count);
     void InitializeFreeSlots(std::size_t start_idx);
-    [[nodiscard]] bool InitJolt(WorldSettings settings, GravityVector gravity);
+    [[nodiscard]] bool InitJolt(WorldSettings settings, JPH::Float3 gravity);
     [[nodiscard]] std::expected<void, Error> LoadBakedScene(const BakedSceneData &scene);
     // Slot and resize mutations require shadow_lock and a non-stepping world.
     [[nodiscard]] std::expected<void, Error> Resize(std::size_t new_capacity);

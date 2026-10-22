@@ -6,6 +6,7 @@
 
 #include "characters/CharacterBinding.hpp"
 #include "bindings/FastBuild.hpp"
+#include "bindings/ThreadState.hpp"
 #include "bindings/ModuleState.hpp"
 #include "bindings/PythonCommon.hpp"
 #include "bindings/PythonSupport.hpp"
@@ -39,9 +40,10 @@ namespace CPH::Python {
     // The GIL is dropped for the call: the native move parks on the step-sync
     // condition while a step is in flight, and holding the GIL there would
     // deadlock against the stepping thread.
-    Py_BEGIN_ALLOW_THREADS
+    {
+        const AllowThreads allow;
     self->character->Move(v_in.x, v_in.y, v_in.z, dt);
-    Py_END_ALLOW_THREADS
+    }
 
     Py_RETURN_NONE;
 }
@@ -80,9 +82,10 @@ namespace CPH::Python {
         return nullptr;
     }
 
-    Py_BEGIN_ALLOW_THREADS
+    {
+        const AllowThreads allow;
     self->character->SetPosition(JPH::RVec3(pos.x, pos.y, pos.z));
-    Py_END_ALLOW_THREADS
+    }
 
     Py_RETURN_NONE;
 }
@@ -98,9 +101,10 @@ namespace CPH::Python {
         return nullptr;
     }
 
-    Py_BEGIN_ALLOW_THREADS
+    {
+        const AllowThreads allow;
     self->character->SetRotation(JPH::Quat(rot.x, rot.y, rot.z, rot.w));
-    Py_END_ALLOW_THREADS
+    }
 
     Py_RETURN_NONE;
 }
@@ -116,9 +120,10 @@ namespace CPH::Python {
         return nullptr;
     }
 
-    Py_BEGIN_ALLOW_THREADS
+    {
+        const AllowThreads allow;
     self->character->SetStrength(strength);
-    Py_END_ALLOW_THREADS
+    }
 
     Py_RETURN_NONE;
 }
@@ -220,9 +225,10 @@ void CharacterDealloc(CharacterObject *self) {
     const JPH::RVec3 position(pos.x, pos.y, pos.z);
 
     std::unique_ptr<CPH::Character> character;
-    Py_BEGIN_ALLOW_THREADS
+    {
+        const AllowThreads allow;
     character = CPH::Character::Create(self->physics, params, position);
-    Py_END_ALLOW_THREADS
+    }
 
     if (!character) {
         // Either the capsule shape failed or the world could not grow. Both

@@ -97,7 +97,7 @@ void WorldFreeMembers(PhysicsWorldObject *self) {
 // helper: Initialize settings via Python helper
 [[nodiscard]]
 int InitSettings(PhysicsWorldObject *self, PyObject *settings_dict,
-                     GravityVector *gravity, WorldSettings *settings) {
+                     JPH::Float3 *gravity, WorldSettings *settings) {
     PyObject *st_module = PyType_GetModule(Py_TYPE(self));
     ModuleState *st = GetModuleState(st_module);
     PyObject *val_func  = PyObject_GetAttrString(st->helper, "validate_settings");
@@ -112,7 +112,7 @@ int InitSettings(PhysicsWorldObject *self, PyObject *settings_dict,
         return -1;
     }
 
-    int ok = PyArg_ParseTuple(norm, "ffffiiiiiii", &gravity->gx, &gravity->gy, &gravity->gz,
+    int ok = PyArg_ParseTuple(norm, "ffffiiiiiii", &gravity->x, &gravity->y, &gravity->z,
                               &settings->penetrationSlop, &settings->maxBodies,
                               &settings->maxPairs, &settings->maxContactConstraints,
                               &settings->tempAllocatorSize, &settings->maxPhysicsJobs,

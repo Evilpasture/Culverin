@@ -6,6 +6,7 @@
 
 #include "vehicles/ShipBinding.hpp"
 #include "bindings/ModuleState.hpp"
+#include "bindings/ThreadState.hpp"
 #include "bindings/PythonCommon.hpp"
 #include "bindings/PythonSupport.hpp"
 #include "physics/PhysicsSync.hpp"
@@ -48,9 +49,10 @@ namespace CPH::Python {
                                  .linearDrag      = drag};
 
     std::unique_ptr<CPH::Ship> ship;
-    Py_BEGIN_ALLOW_THREADS
+    {
+        const AllowThreads allow;
     ship = CPH::Ship::Create(self->physics, config);
-    Py_END_ALLOW_THREADS
+    }
 
     if (!ship) {
         return PyErr_Format(PyExc_ValueError, "Invalid sled handle.");

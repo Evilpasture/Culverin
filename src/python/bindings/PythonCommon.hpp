@@ -9,6 +9,7 @@
 #    endif
 #endif
 
+#include "core/FloatBits.hpp"
 #include "core/Types.hpp"
 #include "physics/CommandBuffer.hpp"
 #include "physics/SlotState.hpp"
@@ -217,32 +218,9 @@ struct MeshBounds {
     std::uint32_t vertexCount;
 };
 
-[[nodiscard]] inline bool IsFinite(float value) noexcept {
-    constexpr std::uint32_t exponent_mask = 0x7F800000U;
-    // The build enables -ffast-math; volatile integer bits keep LTO from
-    // assuming the input is finite and folding this check away.
-    volatile std::uint32_t bits = std::bit_cast<std::uint32_t>(value);
-    return (bits & exponent_mask) != exponent_mask;
-}
-
-[[nodiscard]] inline bool IsFinite(double value) noexcept {
-    constexpr std::uint64_t exponent_mask = 0x7FF0000000000000ULL;
-    volatile std::uint64_t bits = std::bit_cast<std::uint64_t>(value);
-    return (bits & exponent_mask) != exponent_mask;
-}
-
-template <typename T>
-[[nodiscard]] inline bool IsFinite(T value) noexcept {
-    if constexpr (std::is_same_v<std::remove_cv_t<T>, float>) {
-        return IsFinite(static_cast<float>(value));
-    } else if constexpr (std::is_same_v<std::remove_cv_t<T>, double>) {
-        return IsFinite(static_cast<double>(value));
-    } else {
-        static_assert(std::is_arithmetic_v<T>, "finite checks require an arithmetic type");
-        return true;
-    }
-}
-
+// IsFinite lives in core/FloatBits.hpp: the bit-level test is shared with the
+// native sanitizers, and CPH::Python resolves it through the enclosing CPH
+// namespace.
 template <typename... Values>
 [[nodiscard]] inline bool ValidateFinite(const char *name, Values... values) noexcept {
     if ((IsFinite(values) && ...)) {

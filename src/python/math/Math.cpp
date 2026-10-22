@@ -1,4 +1,5 @@
 #include "math/Math.hpp"
+#include "bindings/BufferView.hpp"
 #include "bindings/FastBuild.hpp"
 #include "bindings/PythonSupport.hpp"
 #include "bindings/parsing/FastParser.hpp"
@@ -12,6 +13,11 @@ struct MathHolderObject {
 };
 static constexpr int kSixteenFloats = 16;
 static constexpr int kSimdAlignment = 16;
+// TODO: a non-tuple argument makes these two helpers return false without
+// setting an exception, so the caller's `return nullptr` reaches Python as
+// "SystemError: returned NULL without setting an exception". Pre-existing
+// (unrelated to the buffer handling below) and deliberately not fixed here:
+// the error text a caller sees would change.
 // Helper for extracting 16 floats from a Python Tuple
 static inline bool UnpackMat44(PyObject *obj, float *out) {
 
@@ -224,34 +230,28 @@ static PyObject *MathGetTrsBatch(MathHolderObject *self, PyObject *const *args,
         return nullptr;
     }
 
-    Py_buffer p_buf;
-    Py_buffer r_buf;
-    Py_buffer s_buf;
-    if (PyObject_GetBuffer(pos_obj, &p_buf, PyBUF_SIMPLE) < 0) {
+    const auto positions = BufferView::Acquire(pos_obj);
+    if (!positions) {
         return nullptr;
     }
-    if (PyObject_GetBuffer(rot_obj, &r_buf, PyBUF_SIMPLE) < 0) {
-        PyBuffer_Release(&p_buf);
+    const auto rotations = BufferView::Acquire(rot_obj);
+    if (!rotations) {
         return nullptr;
     }
-    if (PyObject_GetBuffer(scale_obj, &s_buf, PyBUF_SIMPLE) < 0) {
-        PyBuffer_Release(&p_buf);
-        PyBuffer_Release(&r_buf);
+    const auto scales = BufferView::Acquire(scale_obj);
+    if (!scales) {
         return nullptr;
     }
 
-    Py_ssize_t count = p_buf.len / (3 * static_cast<Py_ssize_t>(sizeof(float)));
-    PyObject *result = PyBytes_FromStringAndSize(
-        nullptr, count * kSixteenFloats * static_cast<Py_ssize_t>(sizeof(float)));
+    const std::span<const float> packed_positions = positions->Float32();
+    const size_t                 count            = packed_positions.size() / 3;
+    PyObject                    *result           = PyBytes_FromStringAndSize(
+        nullptr, static_cast<Py_ssize_t>(count * kSixteenFloats * sizeof(float)));
     if (result) {
-        CPH::MathGetTrsBatch(count, static_cast<float *>(p_buf.buf), static_cast<float *>(r_buf.buf),
-                            static_cast<float *>(s_buf.buf),
+        CPH::MathGetTrsBatch(count, packed_positions.data(), rotations->Float32().data(),
+                            scales->Float32().data(),
                             reinterpret_cast<float *>(PyBytes_AsString(result)));
     }
-
-    PyBuffer_Release(&p_buf);
-    PyBuffer_Release(&r_buf);
-    PyBuffer_Release(&s_buf);
     return result;
 }
 
@@ -367,19 +367,19 @@ static PyObject *MathMatmulBatch(MathHolderObject *self, PyObject *const *args,
         return nullptr;
     }
 
-    Py_buffer view;
-    if (PyObject_GetBuffer(batch_obj, &view, PyBUF_SIMPLE) < 0) {
+    const auto batch = BufferView::Acquire(batch_obj);
+    if (!batch) {
         return nullptr;
     }
 
-    size_t count     = view.len / (kSixteenFloats * sizeof(float));
-    PyObject *result = PyBytes_FromStringAndSize(nullptr, view.len);
+    const std::span<const float> packed_matrices = batch->Float32();
+    const size_t                 count           = packed_matrices.size() / kSixteenFloats;
+    PyObject                    *result = PyBytes_FromStringAndSize(
+        nullptr, static_cast<Py_ssize_t>(batch->Bytes().size()));
     if (result) {
-        CPH::MathMat44MulBatch(m, static_cast<float *>(view.buf), count,
+        CPH::MathMat44MulBatch(m, packed_matrices.data(), count,
                               reinterpret_cast<float *>(PyBytes_AsString(result)));
     }
-
-    PyBuffer_Release(&view);
     return result;
 }
 
@@ -442,20 +442,19 @@ static PyObject *MathCullAabbBatch(MathHolderObject *self, PyObject *const *args
         return nullptr;
     }
 
-    Py_buffer view;
-    if (PyObject_GetBuffer(aabbs_obj, &view, PyBUF_SIMPLE) < 0) {
+    const auto aabbs = BufferView::Acquire(aabbs_obj);
+    if (!aabbs) {
         return nullptr;
     }
 
     // aabb_data is expected as [minX, minY, minZ, maxX, maxY, maxZ, ...]
-    Py_ssize_t count = view.len / (6 * static_cast<Py_ssize_t>(sizeof(float)));
-    PyObject *result = PyByteArray_FromStringAndSize(nullptr, count);
+    const std::span<const float> packed_boxes = aabbs->Float32();
+    const size_t                 count        = packed_boxes.size() / 6;
+    PyObject *result = PyByteArray_FromStringAndSize(nullptr, static_cast<Py_ssize_t>(count));
     if (result) {
-        CPH::MathCullAabbBatch(vp, static_cast<float *>(view.buf), count,
+        CPH::MathCullAabbBatch(vp, packed_boxes.data(), count,
                               reinterpret_cast<uint8_t *>(PyByteArray_AsString(result)));
     }
-
-    PyBuffer_Release(&view);
     return result;
 }
 
@@ -470,28 +469,27 @@ static PyObject *MathVec3NormalizeBatch(MathHolderObject *self, PyObject *const 
         return nullptr;
     }
 
-    Py_buffer view;
-    if (PyObject_GetBuffer(vecs_obj, &view, PyBUF_SIMPLE) < 0) {
+    const auto vectors = BufferView::Acquire(vecs_obj);
+    if (!vectors) {
         return nullptr; // PyErr_SetString already called by GetBuffer
     }
 
     // Verify we have enough bytes for float3 vectors
-    const size_t vec3_bytes = 3 * sizeof(float);
-    if (view.len % vec3_bytes != 0) {
-        PyBuffer_Release(&view);
-        PyErr_SetString(PyExc_ValueError, "Buffer length must be a multiple of 12 (3 floats)");
+    constexpr size_t kVec3Bytes = 3 * sizeof(float);
+    if (!vectors->RequireMultipleOf(kVec3Bytes,
+                                    "Buffer length must be a multiple of 12 (3 floats)")) {
         return nullptr;
     }
 
-    size_t count     = view.len / vec3_bytes;
-    PyObject *result = PyBytes_FromStringAndSize(nullptr, view.len);
+    const std::span<const float> packed_vectors = vectors->Float32();
+    const size_t                 count          = packed_vectors.size() / 3;
+    PyObject                    *result         = PyBytes_FromStringAndSize(
+        nullptr, static_cast<Py_ssize_t>(vectors->Bytes().size()));
 
     if (result) {
-        CPH::MathVec3NormalizeBatch(static_cast<const float *>(view.buf), count,
+        CPH::MathVec3NormalizeBatch(packed_vectors.data(), count,
                                    reinterpret_cast<float *>(PyBytes_AsString(result)));
     }
-
-    PyBuffer_Release(&view);
     return result;
 }
 
@@ -604,34 +602,30 @@ static PyObject *MathVec3LerpBatch(MathHolderObject *self, PyObject *const *args
         return nullptr;
     }
 
-    Py_buffer view_a;
-    Py_buffer view_b;
-    if (PyObject_GetBuffer(a_obj, &view_a, PyBUF_SIMPLE) < 0) {
+    const auto a_vectors = BufferView::Acquire(a_obj);
+    if (!a_vectors) {
         return nullptr;
     }
-    if (PyObject_GetBuffer(b_obj, &view_b, PyBUF_SIMPLE) < 0) {
-        PyBuffer_Release(&view_a);
-        return nullptr;
-    }
-
-    if (view_a.len != view_b.len || (view_a.len % 12 != 0)) {
-        PyBuffer_Release(&view_a);
-        PyBuffer_Release(&view_b);
-        PyErr_SetString(PyExc_ValueError, "Buffers must be equal size and multiples of 12 bytes");
+    const auto b_vectors = BufferView::Acquire(b_obj);
+    if (!b_vectors) {
         return nullptr;
     }
 
-    size_t count     = view_a.len / 12;
-    PyObject *result = PyBytes_FromStringAndSize(nullptr, view_a.len);
+    constexpr const char *kShapeError = "Buffers must be equal size and multiples of 12 bytes";
+    if (!a_vectors->RequireSameSizeAs(*b_vectors, kShapeError) ||
+        !a_vectors->RequireMultipleOf(12, kShapeError)) {
+        return nullptr;
+    }
+
+    const std::span<const float> packed_a = a_vectors->Float32();
+    const size_t                 count    = packed_a.size() / 3;
+    PyObject                    *result   = PyBytes_FromStringAndSize(
+        nullptr, static_cast<Py_ssize_t>(a_vectors->Bytes().size()));
 
     if (result) {
-        CPH::MathVec3LerpBatch(static_cast<const float *>(view_a.buf),
-                              static_cast<const float *>(view_b.buf), alpha, count,
+        CPH::MathVec3LerpBatch(packed_a.data(), b_vectors->Float32().data(), alpha, count,
                               reinterpret_cast<float *>(PyBytes_AsString(result)));
     }
-
-    PyBuffer_Release(&view_a);
-    PyBuffer_Release(&view_b);
     return result;
 }
 
@@ -680,27 +674,24 @@ static PyObject *MathQuatRotateVec3Batch(MathHolderObject *self, PyObject *const
         return nullptr;
     }
 
-    Py_buffer view;
-    if (PyObject_GetBuffer(vecs_obj, &view, PyBUF_SIMPLE) < 0) {
+    const auto vectors = BufferView::Acquire(vecs_obj);
+    if (!vectors) {
         return nullptr;
     }
 
-    if (view.len % 12 != 0) {
-        PyBuffer_Release(&view);
-        PyErr_SetString(PyExc_ValueError,
-                        "Vector buffer must be a multiple of 12 bytes (3 floats)");
+    if (!vectors->RequireMultipleOf(12, "Vector buffer must be a multiple of 12 bytes (3 floats)")) {
         return nullptr;
     }
 
-    size_t count     = view.len / 12;
-    PyObject *result = PyBytes_FromStringAndSize(nullptr, view.len);
+    const std::span<const float> packed_vectors = vectors->Float32();
+    const size_t                 count          = packed_vectors.size() / 3;
+    PyObject                    *result         = PyBytes_FromStringAndSize(
+        nullptr, static_cast<Py_ssize_t>(vectors->Bytes().size()));
 
     if (result) {
-        CPH::MathQuatRotateVec3Batch(q, static_cast<const float *>(view.buf), count,
+        CPH::MathQuatRotateVec3Batch(q, packed_vectors.data(), count,
                                     reinterpret_cast<float *>(PyBytes_AsString(result)));
     }
-
-    PyBuffer_Release(&view);
     return result;
 }
 
@@ -964,36 +955,31 @@ static PyObject *MathVec3DistanceBatch(MathHolderObject *self, PyObject *const *
         return nullptr;
     }
 
-    Py_buffer view_a;
-    Py_buffer view_b;
-    if (PyObject_GetBuffer(a_obj, &view_a, PyBUF_SIMPLE) < 0) {
+    const auto a_vectors = BufferView::Acquire(a_obj);
+    if (!a_vectors) {
         return nullptr;
     }
-    if (PyObject_GetBuffer(b_obj, &view_b, PyBUF_SIMPLE) < 0) {
-        PyBuffer_Release(&view_a);
-        return nullptr;
-    }
-
-    if (view_a.len != view_b.len || (view_a.len % 12 != 0)) {
-        PyBuffer_Release(&view_a);
-        PyBuffer_Release(&view_b);
-        PyErr_SetString(PyExc_ValueError, "Buffers must be equal size and multiples of 12 bytes");
+    const auto b_vectors = BufferView::Acquire(b_obj);
+    if (!b_vectors) {
         return nullptr;
     }
 
-    size_t count = view_a.len / 12;
+    constexpr const char *kShapeError = "Buffers must be equal size and multiples of 12 bytes";
+    if (!a_vectors->RequireSameSizeAs(*b_vectors, kShapeError) ||
+        !a_vectors->RequireMultipleOf(12, kShapeError)) {
+        return nullptr;
+    }
+
+    const std::span<const float> packed_a = a_vectors->Float32();
+    const size_t                 count    = packed_a.size() / 3;
     // Result is a flat array of floats (4 bytes per distance)
     PyObject *result =
         PyBytes_FromStringAndSize(nullptr, static_cast<Py_ssize_t>(count * sizeof(float)));
 
     if (result) {
-        CPH::MathVec3DistanceBatch(static_cast<const float *>(view_a.buf),
-                                  static_cast<const float *>(view_b.buf), count,
+        CPH::MathVec3DistanceBatch(packed_a.data(), b_vectors->Float32().data(), count,
                                   reinterpret_cast<float *>(PyBytes_AsString(result)));
     }
-
-    PyBuffer_Release(&view_a);
-    PyBuffer_Release(&view_b);
     return result;
 }
 
@@ -1188,27 +1174,24 @@ static PyObject *MathEulerToQuatBatch(MathHolderObject *self, PyObject *const *a
         return nullptr;
     }
 
-    Py_buffer view;
-    if (PyObject_GetBuffer(eulers_obj, &view, PyBUF_SIMPLE) < 0) {
+    const auto eulers = BufferView::Acquire(eulers_obj);
+    if (!eulers) {
         return nullptr;
     }
 
-    if (view.len % 12 != 0) {
-        PyBuffer_Release(&view);
-        PyErr_SetString(PyExc_ValueError, "Buffer must be multiple of 12 bytes (3 floats)");
+    if (!eulers->RequireMultipleOf(12, "Buffer must be multiple of 12 bytes (3 floats)")) {
         return nullptr;
     }
 
-    size_t count     = view.len / 12;
-    PyObject *result = PyBytes_FromStringAndSize(
+    const std::span<const float> packed_eulers = eulers->Float32();
+    const size_t                 count         = packed_eulers.size() / 3;
+    PyObject                    *result        = PyBytes_FromStringAndSize(
         nullptr, static_cast<Py_ssize_t>(count * 16)); // 4 floats per quat
 
     if (result) {
-        CPH::MathEulerToQuatBatch(static_cast<const float *>(view.buf), count,
+        CPH::MathEulerToQuatBatch(packed_eulers.data(), count,
                                  reinterpret_cast<float *>(PyBytes_AsString(result)));
     }
-
-    PyBuffer_Release(&view);
     return result;
 }
 static PyObject *MathNew(PyTypeObject *type, [[maybe_unused]] PyObject *args,

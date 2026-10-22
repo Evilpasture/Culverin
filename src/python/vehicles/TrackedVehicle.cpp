@@ -5,6 +5,7 @@
 
 #include "vehicles/VehicleBinding.hpp"
 #include "bindings/ModuleState.hpp"
+#include "bindings/ThreadState.hpp"
 #include "bindings/PythonCommon.hpp"
 #include "bindings/PythonSupport.hpp"
 #include "bindings/parsing/Parsers.hpp"
@@ -135,9 +136,10 @@ bool ParseTracks(PyObject *py_tracks, std::vector<CPH::TrackConfig> &out) {
 
     std::expected<std::unique_ptr<CPH::Vehicle>, CPH::Error> created =
         std::unexpected(CPH::Error{CPH::VehicleError::TrackedCreationFailed});
-    Py_BEGIN_ALLOW_THREADS
+    {
+        const AllowThreads allow;
     created = CPH::Vehicle::CreateTracked(self->physics, BodyHandle(chassis_raw), config);
-    Py_END_ALLOW_THREADS
+    }
 
     if (!created) {
         if (created.error().Code().Is(CPH::VehicleError::InvalidChassis)) {

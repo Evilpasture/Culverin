@@ -13,7 +13,7 @@ target_link_libraries(
     INTERFACE Jolt::Jolt
 )
 
-# Header-only utility and shared-contract targets.
+# Utility, shared-contract and global-state targets.
 add_subdirectory(cpp)
 add_subdirectory(core)
 add_subdirectory(soft_bodies)
@@ -34,6 +34,7 @@ add_library(culverin_core STATIC)
 target_sources(
     culverin_core
     PRIVATE
+        $<TARGET_OBJECTS:culverin_native_core>
         $<TARGET_OBJECTS:culverin_native_jolt>
         $<TARGET_OBJECTS:culverin_native_math>
         $<TARGET_OBJECTS:culverin_native_debug>

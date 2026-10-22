@@ -590,7 +590,7 @@ PhysicsWorld::CommitCreateSoft(JPH::SoftBodyCreationSettings &settings,
 
 // --- Jolt bring-up ---
 
-bool PhysicsWorld::InitJolt(WorldSettings settings, GravityVector gravity) {
+bool PhysicsWorld::InitJolt(WorldSettings settings, JPH::Float3 gravity) {
     if (joltInitialized) {
         return false;
     }
@@ -620,7 +620,7 @@ bool PhysicsWorld::InitJolt(WorldSettings settings, GravityVector gravity) {
     // initialization still reaches process-wide lazy state, and TSan cannot
     // prove those first-touch paths race-free; retaining the established
     // bring-up lock preserves Culverin's initialization guarantee.
-    const std::scoped_lock init_guard(g_jph_init_lock);
+    const std::scoped_lock init_guard(Global::jph_init_lock);
 
     jobSystem =
         std::make_unique<JPH::JobSystemThreadPool>(max_jobs, max_barriers, num_workers);
@@ -643,7 +643,7 @@ bool PhysicsWorld::InitJolt(WorldSettings settings, GravityVector gravity) {
     physicsSystem.Init(max_bodies, 0, max_pairs, max_contact_constraints,
                                broadphase_layer_interface, object_vs_broadphase_filter,
                                object_layer_pair_filter);
-    physicsSystem.SetGravity(JPH::Vec3(gravity.gx, gravity.gy, gravity.gz));
+    physicsSystem.SetGravity(JPH::Vec3(gravity.x, gravity.y, gravity.z));
     bodyInterface = &physicsSystem.GetBodyInterface();
     joltInitialized = true;
     return true;
