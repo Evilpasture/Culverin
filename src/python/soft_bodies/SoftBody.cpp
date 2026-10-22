@@ -7,6 +7,7 @@
 
 #include "soft_bodies/SoftBodyBinding.hpp"
 #include "bindings/FastBuild.hpp"
+#include "bindings/BufferView.hpp"
 #include "bindings/PythonSupport.hpp"
 #include "bindings/parsing/Parsers.hpp"
 #include "core/Compiler.hpp"
@@ -129,70 +130,56 @@ void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
     }
 
     // 1. Buffer Acquisitions
-    Py_buffer pos_view;
-    if (PyObject_GetBuffer(o_pos, &pos_view, PyBUF_SIMPLE) != 0) {
+    const auto pos_view = BufferView::Acquire(o_pos);
+    if (!pos_view) {
         return nullptr;
     }
 
     constexpr auto vec3_size = 3 * sizeof(float);
-    if (pos_view.len % vec3_size != 0) {
-        PyBuffer_Release(&pos_view);
+    if (!pos_view->RequireMultipleOf(vec3_size, "positions must be float32 triplets")) {
         return PyErr_Format(PyExc_ValueError, "positions must be float32 triplets");
     }
 
-    const auto count = static_cast<uint32_t>(pos_view.len / vec3_size);
+    const auto count = static_cast<uint32_t>(pos_view->SizeBytes() / vec3_size);
 
-    Py_buffer mass_view = {};
-    float *masses       = nullptr;
+    std::optional<BufferView> mass_view;
     if (o_mass && o_mass != Py_None) {
-        if (PyObject_GetBuffer(o_mass, &mass_view, PyBUF_SIMPLE) != 0) {
-            PyBuffer_Release(&pos_view);
+        mass_view = BufferView::Acquire(o_mass);
+        if (!mass_view) {
             return nullptr;
         }
-        if (mass_view.len / sizeof(float) != count) {
-            PyBuffer_Release(&pos_view);
-            PyBuffer_Release(&mass_view);
+        // Integer division on purpose: the hand written check compared
+        // len / sizeof(float) against the count, so a short remainder still
+        // passed. Preserved rather than tightened.
+        if (mass_view->SizeBytes() / sizeof(float) != count) {
             return PyErr_Format(PyExc_ValueError, "inv_masses length must match vertex count");
         }
-        masses = static_cast<float *>(mass_view.buf);
     }
 
-    Py_buffer vel_view = {};
-    float *velocities  = nullptr;
+    std::optional<BufferView> vel_view;
     if (o_vel && o_vel != Py_None) {
-        if (PyObject_GetBuffer(o_vel, &vel_view, PyBUF_SIMPLE) != 0) {
-            PyBuffer_Release(&pos_view);
-            if (masses) {
-                PyBuffer_Release(&mass_view);
-            }
+        vel_view = BufferView::Acquire(o_vel);
+        if (!vel_view) {
             return nullptr;
         }
-        if (vel_view.len / vec3_size != count) {
-            PyBuffer_Release(&pos_view);
-            if (masses) {
-                PyBuffer_Release(&mass_view);
-            }
-            PyBuffer_Release(&vel_view);
+        if (vel_view->SizeBytes() / vec3_size != count) {
             return PyErr_Format(PyExc_ValueError, "velocities length must match vertex count");
         }
-        velocities = static_cast<float *>(vel_view.buf);
     }
 
     // 2. Native packing (reserve-once and the zero-count early return are what
     // joltc's AddVertices did and are preserved inside the native method).
-    const std::size_t float_count = static_cast<std::size_t>(pos_view.len) / sizeof(float);
+    const std::span<const float> packed_positions =
+        pos_view->Float32();
+    const std::size_t float_count = pos_view->SizeBytes() / sizeof(float);
     const std::size_t vert_count  = static_cast<std::size_t>(count);
-    self->settings->AddVertices({static_cast<const float *>(pos_view.buf), float_count},
-                                {masses, masses != nullptr ? vert_count : 0},
-                                {velocities, velocities != nullptr ? vert_count * 3 : 0});
-
-    PyBuffer_Release(&pos_view);
-    if (masses) {
-        PyBuffer_Release(&mass_view);
-    }
-    if (velocities) {
-        PyBuffer_Release(&vel_view);
-    }
+    const std::span<const float> masses =
+        mass_view ? mass_view->Float32() : std::span<const float>{};
+    const std::span<const float> velocities =
+        vel_view ? vel_view->Float32() : std::span<const float>{};
+    self->settings->AddVertices({packed_positions.data(), float_count},
+                                {masses.data(), masses.empty() ? 0 : vert_count},
+                                {velocities.data(), velocities.empty() ? 0 : vert_count * 3});
 
     Py_RETURN_NONE;
 }
@@ -255,47 +242,37 @@ void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
     // 1. Index Buffer Acquisition
     constexpr auto triplet_size = 3 * sizeof(uint32_t);
 
-    Py_buffer ind_view;
-    if (PyObject_GetBuffer(o_ind, &ind_view, PyBUF_SIMPLE) != 0) {
+    const auto ind_view = BufferView::Acquire(o_ind);
+    if (!ind_view) {
         return nullptr;
     }
-    if (ind_view.len % triplet_size != 0) {
-        PyBuffer_Release(&ind_view);
-        PyErr_SetString(PyExc_ValueError, "indices buffer must be uint32 triplets");
+    if (!ind_view->RequireMultipleOf(triplet_size, "indices buffer must be uint32 triplets")) {
         return nullptr;
     }
 
-    const auto face_count = static_cast<uint32_t>(ind_view.len / triplet_size);
-    const auto inds       = static_cast<const uint32_t *>(ind_view.buf);
+    const std::span<const std::uint32_t> inds = ind_view->Uint32();
+    const auto face_count = static_cast<uint32_t>(ind_view->SizeBytes() / triplet_size);
 
     // 2. Optional Material Buffer Acquisition
-    Py_buffer mat_view   = {};
-    const uint32_t *mats = nullptr;
+    std::optional<BufferView> mat_view;
     if (o_mat && o_mat != Py_None) {
-        if (PyObject_GetBuffer(o_mat, &mat_view, PyBUF_SIMPLE) != 0) {
-            PyBuffer_Release(&ind_view);
+        mat_view = BufferView::Acquire(o_mat);
+        if (!mat_view) {
             return nullptr;
         }
-        if (mat_view.len / sizeof(uint32_t) != face_count) {
-            PyBuffer_Release(&ind_view);
-            PyBuffer_Release(&mat_view);
-            PyErr_SetString(PyExc_ValueError, "materials length must match face count");
-            return nullptr;
+        if (mat_view->SizeBytes() / sizeof(uint32_t) != face_count) {
+            return PyErr_Format(PyExc_ValueError, "materials length must match face count");
         }
-        mats = static_cast<const uint32_t *>(mat_view.buf);
     }
 
     // 3. Native packing and validation
+    const std::span<const std::uint32_t> mats =
+        mat_view ? mat_view->Uint32() : std::span<const std::uint32_t>{};
     const std::size_t index_count = static_cast<std::size_t>(face_count) * 3;
-    const std::size_t mat_count   = mats != nullptr ? static_cast<std::size_t>(face_count) : 0;
+    const std::size_t mat_count   = mats.empty() ? 0 : static_cast<std::size_t>(face_count);
     uint32_t bad_face             = 0;
     const std::expected<void, Error> added =
-        self->settings->AddFaces({inds, index_count}, {mats, mat_count}, &bad_face);
-
-    PyBuffer_Release(&ind_view);
-    if (mats != nullptr) {
-        PyBuffer_Release(&mat_view);
-    }
+        self->settings->AddFaces({inds.data(), index_count}, {mats.data(), mat_count}, &bad_face);
 
     if (!added) {
         return PyErr_Format(PyExc_IndexError, "Face %u uses out-of-range vertex index", bad_face);

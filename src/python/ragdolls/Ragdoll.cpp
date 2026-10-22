@@ -6,6 +6,7 @@
 
 #include "ragdolls/RagdollBinding.hpp"
 #include "bindings/PythonCommon.hpp"
+#include "bindings/BufferView.hpp"
 #include "bindings/ThreadState.hpp"
 #include "bindings/FastBuild.hpp"
 #include "bindings/PythonSupport.hpp"
@@ -121,30 +122,27 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
     const int joint_count = self->ragdoll->JointCount();
 
     // Validate Buffer Size
-    Py_buffer view;
-    if (PyObject_GetBuffer(py_matrices, &view, PyBUF_SIMPLE) < 0) {
+    const auto matrices_view = BufferView::Acquire(py_matrices);
+    if (!matrices_view) {
         return nullptr;
     }
 
     const size_t required_size = static_cast<size_t>(joint_count) * sizeof(JPH::Mat44);
-    if (static_cast<size_t>(view.len) < required_size) [[unlikely]] {
-        PyBuffer_Release(&view);
-        return PyErr_Format(PyExc_ValueError,
-                            "Matrices buffer too small. Expected %zu bytes for %d joints, got %zd",
-                            required_size, joint_count, view.len);
+    const Py_ssize_t matrices_bytes = static_cast<Py_ssize_t>(matrices_view->SizeBytes());
+    if (!matrices_view->RequireAtLeast(
+            required_size, "Matrices buffer too small. Expected %zu bytes for %d joints, got %zd",
+            required_size, joint_count, matrices_bytes)) [[unlikely]] {
+        return nullptr;
     }
 
     // The caller's float32 buffer is 4 column-major Vec4 per joint (64 bytes),
     // which is exactly JPH::Mat44's layout, so it is read in place.
-    auto *matrices                 = static_cast<JPH::Mat44 *>(view.buf);
+    const std::span<const JPH::Mat44> matrices = matrices_view->As<JPH::Mat44>();
     const JPH::RVec3 root_position = JPH::RVec3(root_p.x, root_p.y, root_p.z);
 
     // 3. PHYSICS EXECUTION (the native ragdoll parks on the shadow lock)
-    const bool pose_applied =
-        self->ragdoll->DriveToPose(root_position, {matrices, static_cast<size_t>(joint_count)});
-
-    // 4. CLEANUP
-    PyBuffer_Release(&view);
+    const bool pose_applied = self->ragdoll->DriveToPose(
+        root_position, {matrices.data(), static_cast<size_t>(joint_count)});
     if (!pose_applied) {
         return PyErr_NoMemory();
     }

@@ -7,6 +7,7 @@
 
 #include "ecs/Ecs.hpp"
 #include "bindings/Getters.hpp"
+#include "bindings/BufferView.hpp"
 #include "bindings/ModuleState.hpp"
 #include "bindings/PythonCommon.hpp"
 #include "bindings/PythonSupport.hpp"
@@ -196,27 +197,27 @@ void RegistryDealloc(RegistryObject *self) {
 
     // The payload arrives as a Python buffer; this is the one place the
     // adapter looks at its bytes, and only to hand the registry a span.
-    Py_buffer view{};
-    bool have_view       = false;
-    Py_ssize_t view_len  = 0;
-    std::optional<std::span<const std::byte>> payload;
-
+    std::optional<BufferView> payload_view;
     if (data_obj != nullptr && data_obj != Py_None) {
-        if (PyObject_GetBuffer(data_obj, &view, PyBUF_SIMPLE) != 0) {
+        payload_view = BufferView::Acquire(data_obj);
+        if (!payload_view) {
             return nullptr;
         }
-        have_view = true;
-        view_len  = view.len;
-        payload   = std::span<const std::byte>(static_cast<const std::byte *>(view.buf),
-                                               static_cast<std::size_t>(view.len));
+    }
+
+    // Captured before the view dies: the size-mismatch diagnostic below is
+    // raised after the registry has already decided, by which point the
+    // buffer is gone.
+    const Py_ssize_t view_len =
+        payload_view ? static_cast<Py_ssize_t>(payload_view->SizeBytes()) : 0;
+
+    std::optional<std::span<const std::byte>> payload;
+    if (payload_view) {
+        payload = payload_view->Bytes();
     }
 
     const std::expected<void, CPH::Error> added =
         self->registry->Add(CPH::Entity(handle_raw), comp_id, payload);
-
-    if (have_view) {
-        PyBuffer_Release(&view);
-    }
 
     if (!added) {
         if (added.error().Code().Is(CPH::EcsError::ComponentSizeMismatch)) {

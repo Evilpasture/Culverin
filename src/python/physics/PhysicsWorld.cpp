@@ -1,5 +1,6 @@
 #include "physics/PhysicsWorld.hpp"
 #include "bindings/PythonCommon.hpp"
+#include "bindings/BufferView.hpp"
 #include "bindings/ThreadState.hpp"
 #include "bindings/FastBuild.hpp"
 #include "bindings/Getters.hpp"
@@ -579,13 +580,12 @@ template <PhysicsBodyOperationType OpType, auto ParserMember, FixedString Label>
         return nullptr;
     }
 
-    Py_buffer handles_view;
-    if (PyObject_GetBuffer(o_handles, &handles_view, PyBUF_SIMPLE) != 0) {
+    const auto handle_view = BufferView::Acquire(o_handles);
+    if (!handle_view) {
         return nullptr;
     }
-    if (handles_view.itemsize != 8 && handles_view.len % 8 != 0) [[unlikely]] {
-        PyBuffer_Release(&handles_view);
-        PyErr_SetString(PyExc_ValueError, "Handle buffer must be uint64 array");
+    if (!handle_view->RequireElementsOf(sizeof(BodyHandle), "Handle buffer must be uint64 array"))
+        [[unlikely]] {
         return nullptr;
     }
 
@@ -595,24 +595,24 @@ template <PhysicsBodyOperationType OpType, auto ParserMember, FixedString Label>
     if (o_vel && o_vel != Py_None) {
         if (ParseResult parsed = ParseVec3Into(o_vel, vx, vy, vz); !parsed) {
             RaiseParseError(parsed.error());
-            PyBuffer_Release(&handles_view);
             return nullptr;
         }
     }
 
-    const size_t handle_count = static_cast<size_t>(handles_view.len) / sizeof(BodyHandle);
+    const size_t handle_count = handle_view->SizeBytes() / sizeof(BodyHandle);
     if (handle_count == 0) {
-        PyBuffer_Release(&handles_view);
         Py_RETURN_NONE;
     }
 
+    // Copied out before the GIL is dropped: the batch call runs unlocked and
+    // must not read through a buffer whose exporter a concurrent thread could
+    // still be holding a view on.
     BodyHandle *handles = static_cast<BodyHandle *>(Allocate(handle_count * sizeof(BodyHandle)));
     if (!handles) {
-        PyBuffer_Release(&handles_view);
         return PyErr_NoMemory();
     }
-    memcpy(handles, handles_view.buf, handle_count * sizeof(BodyHandle));
-    PyBuffer_Release(&handles_view);
+    const std::span<const std::uint64_t> packed_handles = handle_view->Uint64();
+    memcpy(handles, packed_handles.data(), handle_count * sizeof(BodyHandle));
 
     std::expected<void, Error> status;
     {
@@ -660,20 +660,18 @@ template <PhysicsBodyOperationType OpType, auto ParserMember, FixedString Label>
         return nullptr;
     }
 
-    Py_buffer view{};
-    if (PyObject_GetBuffer(state_obj, &view, PyBUF_SIMPLE) != 0) {
+    const auto state_view = BufferView::Acquire(state_obj);
+    if (!state_view) {
         return nullptr;
     }
-    const size_t data_size = static_cast<size_t>(view.len);
+    const size_t         data_size = state_view->SizeBytes();
     Buffer<std::uint8_t> snapshot;
     if (data_size != 0) {
         if (!snapshot.allocate(data_size)) {
-            PyBuffer_Release(&view);
             return PyErr_NoMemory();
         }
-        std::memcpy(snapshot.data(), view.buf, data_size);
+        std::memcpy(snapshot.data(), state_view->Bytes().data(), data_size);
     }
-    PyBuffer_Release(&view);
 
     std::expected<std::size_t, Error> status;
     {
@@ -824,13 +822,17 @@ template <PhysicsBodyOperationType OpType, auto ParserMember, FixedString Label>
         return nullptr;
     }
 
-    Py_buffer points_view;
-    if (PyObject_GetBuffer(o_points, &points_view, PyBUF_SIMPLE) != 0) {
+    const auto points_view = BufferView::Acquire(o_points);
+    if (!points_view) {
         return nullptr;
     }
-    size_t num_points = points_view.len / kVertexStrideBytes;
+    const std::span<const float> packed_points = points_view->Float32();
+    // Whole triplets only: a trailing partial vertex is not a point.
+    if (!points_view->RequireMultipleOf(kVertexStrideBytes, "Need >= 3 points")) [[unlikely]] {
+        return nullptr;
+    }
+    const size_t num_points = points_view->SizeBytes() / kVertexStrideBytes;
     if (num_points < 3) [[unlikely]] {
-        PyBuffer_Release(&points_view);
         return PyErr_Format(PyExc_ValueError, "Need >= 3 points");
     }
 
@@ -848,10 +850,8 @@ template <PhysicsBodyOperationType OpType, auto ParserMember, FixedString Label>
     std::expected<BodyHandle, Error> status;
     {
         const AllowThreads allow;
-        status = self->physics.CreateConvexHull(
-        {static_cast<const float *>(points_view.buf), num_points * 3}, request);
+        status = self->physics.CreateConvexHull({packed_points.data(), num_points * 3}, request);
     }
-    PyBuffer_Release(&points_view);
 
     if (!status) {
         SetCreationError(self, status.error(), "Convex Hull build failed",
@@ -1289,35 +1289,31 @@ static PhysicsWorldCompoundPart *ParseCompoundParts(PyObject *parts, size_t *out
         return nullptr;
     }
 
-    Py_buffer v_view{};
-    Py_buffer i_view{};
-    if (PyObject_GetBuffer(o_verts, &v_view, PyBUF_SIMPLE) != 0 ||
-        PyObject_GetBuffer(o_indices, &i_view, PyBUF_SIMPLE) != 0) {
-        if (v_view.buf) {
-            PyBuffer_Release(&v_view);
-        }
+    const auto vertex_view = BufferView::Acquire(o_verts);
+    if (!vertex_view) {
+        return nullptr;
+    }
+    const auto index_view = BufferView::Acquire(o_indices);
+    if (!index_view) {
         return nullptr;
     }
 
-    if (v_view.len % kVertexStrideBytes != 0 ||
-                     i_view.len % kVertexStrideBytes != 0) [[unlikely]] {
-        PyBuffer_Release(&v_view);
-        PyBuffer_Release(&i_view);
-        PyErr_SetString(PyExc_ValueError, "Buffer size mismatch");
+    if (!vertex_view->RequireMultipleOf(kVertexStrideBytes, "Buffer size mismatch") ||
+        !index_view->RequireMultipleOf(kVertexStrideBytes, "Buffer size mismatch")) [[unlikely]] {
         return nullptr;
     }
 
     // 3. Native mesh shape construction and world staging (buffers stay pinned).
-    const size_t vertex_count   = (v_view.len / kVertexStrideBytes);
-    const size_t triangle_count = (i_view.len / kVertexStrideBytes);
-    const auto *index_data      = static_cast<const uint32_t *>(i_view.buf);
+    const std::span<const float>         packed_vertices = vertex_view->Float32();
+    const std::span<const std::uint32_t> packed_indices  = index_view->Uint32();
+    const size_t vertex_count   = vertex_view->SizeBytes() / kVertexStrideBytes;
+    const size_t triangle_count = index_view->SizeBytes() / kVertexStrideBytes;
+    const auto  *index_data     = packed_indices.data();
 
     // Pre-check so the error can name the offending triangle; the native
     // call re-validates and reports InvalidMeshIndex on its own.
     if (const std::optional<std::array<std::uint32_t, 3>> bad =
             FindInvalidMeshTriangle({index_data, triangle_count * 3}, vertex_count)) {
-        PyBuffer_Release(&v_view);
-        PyBuffer_Release(&i_view);
         return PyErr_Format(PyExc_ValueError, "Mesh index out of range: %u/%u/%u >= %zu",
                             (*bad)[0], (*bad)[1], (*bad)[2], vertex_count);
     }
@@ -1325,14 +1321,10 @@ static PhysicsWorldCompoundPart *ParseCompoundParts(PyObject *parts, size_t *out
     std::expected<BodyHandle, Error> status;
     {
         const AllowThreads allow;
-        status = self->physics.CreateMeshBody(
-        {static_cast<const float *>(v_view.buf), vertex_count * 3},
+        status = self->physics.CreateMeshBody({packed_vertices.data(), vertex_count * 3},
         {index_data, triangle_count * 3}, JPH::RVec3(px, py, pz), JPH::Quat(rx, ry, rz, rw), cat,
         mask, user_data);
     }
-
-        PyBuffer_Release(&v_view);
-    PyBuffer_Release(&i_view);
     if (!status && status.error().Code().Is(WorldCreationError::InvalidMeshIndex)) {
         return PyErr_Format(PyExc_ValueError, "Mesh index out of range");
     }
@@ -1937,27 +1929,26 @@ static PhysicsWorldCompoundPart *ParseCompoundParts(PyObject *parts, size_t *out
         return nullptr;
     }
 
-    Py_buffer h_view;
-    if (PyObject_GetBuffer(o_heights, &h_view, PyBUF_SIMPLE) != 0) {
+    const auto height_view = BufferView::Acquire(o_heights);
+    if (!height_view) {
         return nullptr;
     }
-    if (h_view.len != static_cast<Py_ssize_t>(static_cast<Py_ssize_t>(grid_size) *
-                                                           grid_size * sizeof(float))) [[unlikely]] {
-        PyBuffer_Release(&h_view);
-        return PyErr_Format(PyExc_ValueError, "Height buffer size mismatch");
+    if (!height_view->RequireExactly(static_cast<std::size_t>(grid_size) * grid_size *
+                                         sizeof(float),
+                                     "Height buffer size mismatch")) [[unlikely]] {
+        return nullptr;
     }
+    const std::span<const float> packed_heights = height_view->Float32();
 
     // 2. Native heightfield construction and world staging (buffer stays pinned).
     std::expected<BodyHandle, Error> status;
     {
         const AllowThreads allow;
         status = self->physics.CreateHeightfieldBody(
-        {static_cast<const float *>(h_view.buf),
-         static_cast<size_t>(grid_size) * static_cast<size_t>(grid_size)},
+        {packed_heights.data(), static_cast<size_t>(grid_size) * static_cast<size_t>(grid_size)},
         static_cast<size_t>(grid_size), JPH::Vec3(sx, sy, sz), JPH::RVec3(px, py, pz),
         JPH::Quat(rx, ry, rz, rw), friction, restitution, category, mask, material_id, user_data);
     }
-    PyBuffer_Release(&h_view);
 
     if (!status) {
         SetCreationError(self, status.error(), "HeightField build failed",

@@ -1,5 +1,6 @@
 #include "bindings/parsing/Parsers.hpp"
 
+#include "bindings/BufferView.hpp"
 #include "bindings/PythonCommon.hpp"
 #include "bindings/PythonSupport.hpp"
 
@@ -23,16 +24,15 @@ namespace {
     // 1. Optimized Buffer Path (NumPy, array.array, bytes)
     // Use PyObject_CheckBuffer to avoid triggering a TypeError on lists/tuples
     if (PyObject_CheckBuffer(obj)) {
-        Py_buffer view;
-        if (PyObject_GetBuffer(obj, &view, PyBUF_SIMPLE) == 0) {
+        // The view dies at the end of this block on every path, including the
+        // one that declines to take it.
+        if (const auto view = BufferView::Acquire(obj)) {
             const size_t expected_size =
                 static_cast<size_t>(count) * (is_double ? sizeof(double) : sizeof(float));
-            if (static_cast<size_t>(view.len) == expected_size) {
-                std::memcpy(out, view.buf, expected_size);
-                PyBuffer_Release(&view);
+            if (view->SizeBytes() == expected_size) {
+                std::memcpy(out, view->Bytes().data(), expected_size);
                 return {};
             }
-            PyBuffer_Release(&view);
             // If size didn't match, we don't clear error (none was set)
             // and fall through to sequence logic which will likely fail.
         } else {

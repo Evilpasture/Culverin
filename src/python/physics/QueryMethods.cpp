@@ -1,5 +1,6 @@
 #include "physics/QueryMethods.hpp"
 #include "bindings/PythonCommon.hpp"
+#include "bindings/BufferView.hpp"
 #include "bindings/ThreadState.hpp"
 #include "bindings/FastBuild.hpp"
 #include "bindings/parsing/Parsers.hpp"
@@ -203,44 +204,36 @@ static PyObject *OverlapHitsToList(const PhysicsQueryHitBuffer *hits) {
         return nullptr;
     }
 
-    Py_buffer starts_buffer     = {};
-    Py_buffer directions_buffer = {};
-    if (PyObject_GetBuffer(o_starts, &starts_buffer, PyBUF_SIMPLE) < 0) [[unlikely]] {
+    const auto starts_view = BufferView::Acquire(o_starts);
+    if (!starts_view) [[unlikely]] {
         return nullptr;
     }
-    if (PyObject_GetBuffer(o_directions, &directions_buffer, PyBUF_SIMPLE) < 0) [[unlikely]] {
-        PyBuffer_Release(&starts_buffer);
-        return nullptr;
-    }
-
-    if (starts_buffer.len != directions_buffer.len ||
-                     starts_buffer.len % static_cast<Py_ssize_t>(kCqmVec3StrideBytes) != 0) [[unlikely]] {
-        PyErr_SetString(PyExc_ValueError, "Buffer size mismatch");
-        PyBuffer_Release(&starts_buffer);
-        PyBuffer_Release(&directions_buffer);
+    const auto directions_view = BufferView::Acquire(o_directions);
+    if (!directions_view) [[unlikely]] {
         return nullptr;
     }
 
-    const size_t count =
-        static_cast<size_t>(starts_buffer.len / static_cast<Py_ssize_t>(kCqmVec3StrideBytes));
+    constexpr const char *kSizeMismatch = "Buffer size mismatch";
+    if (!starts_view->RequireSameSizeAs(*directions_view, kSizeMismatch) ||
+        !starts_view->RequireMultipleOf(kCqmVec3StrideBytes, kSizeMismatch)) [[unlikely]] {
+        return nullptr;
+    }
+
+    const std::span<const float> packed_starts     = starts_view->Float32();
+    const std::span<const float> packed_directions = directions_view->Float32();
+    const size_t                 count             = starts_view->SizeBytes() / kCqmVec3StrideBytes;
     if (count == 0) {
-        PyBuffer_Release(&starts_buffer);
-        PyBuffer_Release(&directions_buffer);
         return PyBytes_FromStringAndSize(nullptr, 0);
     }
 
     if (count > static_cast<size_t>(PY_SSIZE_T_MAX) / sizeof(RayCastBatchResult)) {
         PyErr_SetString(PyExc_OverflowError, "Batch raycast result is too large");
-        PyBuffer_Release(&starts_buffer);
-        PyBuffer_Release(&directions_buffer);
         return nullptr;
     }
 
     const Py_ssize_t output_size = static_cast<Py_ssize_t>(count * sizeof(RayCastBatchResult));
     PyObject *result_bytes       = PyBytes_FromStringAndSize(nullptr, output_size);
     if (!result_bytes) [[unlikely]] {
-        PyBuffer_Release(&starts_buffer);
-        PyBuffer_Release(&directions_buffer);
         return nullptr;
     }
 
@@ -248,22 +241,15 @@ static PyObject *OverlapHitsToList(const PhysicsQueryHitBuffer *hits) {
         reinterpret_cast<RayCastBatchResult *>(PyBytes_AsString(result_bytes));
     if (!results) [[unlikely]] {
         Py_DECREF(result_bytes);
-        PyBuffer_Release(&starts_buffer);
-        PyBuffer_Release(&directions_buffer);
         return nullptr;
     }
 
     std::expected<void, Error> status;
     {
         const AllowThreads allow;
-        status = self->physics.RaycastBatch(
-        {static_cast<const float *>(starts_buffer.buf), count * 3},
-        {static_cast<const float *>(directions_buffer.buf), count * 3}, max_distance,
-        {results, count});
+        status = self->physics.RaycastBatch({packed_starts.data(), count * 3},
+        {packed_directions.data(), count * 3}, max_distance, {results, count});
     }
-
-        PyBuffer_Release(&starts_buffer);
-    PyBuffer_Release(&directions_buffer);
 
     if (!status) {
         Py_DECREF(result_bytes);
