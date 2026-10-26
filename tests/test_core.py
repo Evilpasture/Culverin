@@ -1489,22 +1489,39 @@ class TestThreadSafety(CulverinTestCase):
 
         self.assertGreater(success, 0, "Mutations should block and succeed")
 
-    def test_resize_memoryview_lock(self) -> None:
-        """Ensure world cannot resize while a memoryview is held."""
-        # Create a world that resizes after 64 bodies
+    def test_create_bodies_while_memoryview_held(self) -> None:
+        """Fixed-capacity, double-buffered storage: a held memoryview stays
+        valid across body creation (the old resize/BufferExported workaround is
+        gone). Storage is allocated once at max_bodies and never moves, so the
+        pinned pointer is never invalidated and no BufferError is raised."""
         world = culverin.PhysicsWorld(settings={"max_bodies": 200})
 
-        # Fill the initial 64-slot capacity
         for _ in range(64):
             world.create_body(pos=(0, 0, 0))
         world.step(0)
 
-        # Export a buffer to lock the current C arrays
-        _view = world.positions
+        # memoryview() calls getbuffer once, pinning a raw pointer and a fixed
+        # length. In the old design the 65th create reallocated that array.
+        view = memoryview(world.positions)
+        pinned_len = view.nbytes
+        _ = bytes(view)
 
-        # Adding the 65th body triggers PhysicsWorld_resize in C
-        with self.assertRaises(BufferError):
-            world.create_body(pos=(1, 2, 3))
+        # Creating well beyond the old 64-slot growth boundary must succeed
+        # without reallocating (and without raising).
+        for i in range(64, 130):
+            world.create_body(pos=(float(i), 2, 3))
+        world.step(1 / 60)
+
+        # The pinned view is still valid and readable: fixed-capacity storage
+        # never moves, so its length is unchanged and reads never fault.
+        self.assertEqual(view.nbytes, pinned_len)
+        _ = bytes(view)
+        self.assertEqual(world.count, 130)
+        # A freshly exported view re-reads the current count from the
+        # published frame.
+        self.assertEqual(memoryview(world.positions).nbytes, 130 * 4 * 8)
+        view.release()
+        del view
 
 
 class TestInterpolation(CulverinTestCase):

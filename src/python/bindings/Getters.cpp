@@ -177,9 +177,9 @@ static PyObject *MakeProxy(PhysicsWorldObject *self, WorldChannel channel) {
 }
 
 [[nodiscard]] PyObject * WorldGetTime(PhysicsWorldObject *self, [[maybe_unused]] void *c) {
-    (self->physics.shadowLock).lock();
-    double val = self->physics.time;
-    (self->physics.shadowLock).unlock();
+    // Zero-lock read (smoking gun #2): world.time is atomic, so reading the
+    // simulation clock no longer competes with a step for shadowLock.
+    const double val = self->physics.time.load(std::memory_order::acquire);
     return PyFloat_FromDouble(val);
 }
 

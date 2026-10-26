@@ -466,6 +466,7 @@ std::unique_ptr<Character> Character::Create(PhysicsWorld &world, const Characte
         world.bodies.prevRotations[dense]       = r_val;
         world.bodies.linearVelocities[dense]    = AuxStride{};
         world.bodies.angularVelocities[dense]   = AuxStride{};
+        world.PublishTransformSlot(dense);
 
         if (world.bodies.softShadows) {
             world.bodies.softShadows[dense].vertices.reset();
@@ -477,6 +478,7 @@ std::unique_ptr<Character> Character::Create(PhysicsWorld &world, const Characte
 
         world.physicsSystem.GetBodyInterface().SetUserData(inner, handle.Raw());
         character->virtual_->SetUserData(handle.Raw());
+        character->CacheState();
     }
 
     // --- 4. Install the listener ------------------------------------------
@@ -513,12 +515,32 @@ Character::~Character() {
     listener_.reset();
 }
 
+void Character::CacheState() {
+    CharacterState &snapshot = state_.Back();
+    const JPH::RVec3 p       = virtual_->GetPosition();
+    const JPH::Quat q        = virtual_->GetRotation();
+    const JPH::Vec3 v        = virtual_->GetLinearVelocity();
+    snapshot.px              = p.GetX();
+    snapshot.py              = p.GetY();
+    snapshot.pz              = p.GetZ();
+    snapshot.qx              = q.GetX();
+    snapshot.qy              = q.GetY();
+    snapshot.qz              = q.GetZ();
+    snapshot.qw              = q.GetW();
+    snapshot.vx              = v.GetX();
+    snapshot.vy              = v.GetY();
+    snapshot.vz              = v.GetZ();
+    snapshot.grounded = virtual_->GetGroundState() == JPH::CharacterBase::EGroundState::OnGround;
+    state_.Publish();
+}
+
 void Character::PublishTransformLocked() const {
     const std::uint32_t dense = DenseIndexLocked();
     const JPH::RVec3 p = virtual_->GetPosition();
     const JPH::Quat  q = virtual_->GetRotation();
     world_->bodies.positions[dense]      = PosStride{p.GetX(), p.GetY(), p.GetZ(), 0.0};
     world_->bodies.rotations[dense]      = AuxStride{q.GetX(), q.GetY(), q.GetZ(), q.GetW()};
+    world_->PublishTransformSlot(dense);
 }
 
 std::uint32_t Character::DenseIndexLocked() const noexcept {
@@ -625,21 +647,23 @@ void Character::Move(float vx, float vy, float vz, float dt) {
     // 3. Republish.
     const std::scoped_lock shadow(world_->shadowLock);
     PublishTransformLocked();
+    CacheState();
 }
 
 JPH::RVec3 Character::GetPosition() const {
-    const std::scoped_lock shadow(world_->shadowLock);
-    return virtual_->GetPosition();
+    // Zero-lock read of the character's own published state (Step 4).
+    const CharacterState &state = state_.Front();
+    return JPH::RVec3(state.px, state.py, state.pz);
 }
 
 JPH::Quat Character::GetRotation() const {
-    const std::scoped_lock shadow(world_->shadowLock);
-    return virtual_->GetRotation();
+    const CharacterState &state = state_.Front();
+    return JPH::Quat(state.qx, state.qy, state.qz, state.qw);
 }
 
 JPH::Vec3 Character::GetLinearVelocity() const {
-    const std::scoped_lock shadow(world_->shadowLock);
-    return virtual_->GetLinearVelocity();
+    const CharacterState &state = state_.Front();
+    return JPH::Vec3(state.vx, state.vy, state.vz);
 }
 
 void Character::SetPosition(const JPH::RVec3 &position) {
@@ -654,6 +678,8 @@ void Character::SetPosition(const JPH::RVec3 &position) {
     const PosStride p_val{position.GetX(), position.GetY(), position.GetZ(), 0.0};
     world_->bodies.positions[dense]      = p_val;
     world_->bodies.prevPositions[dense] = p_val;
+    world_->PublishTransformSlot(dense);
+    CacheState();
 }
 
 void Character::SetRotation(const JPH::Quat &rotation) {
@@ -675,11 +701,14 @@ void Character::SetRotation(const JPH::Quat &rotation) {
     const AuxStride r_val{sanitized.GetX(), sanitized.GetY(), sanitized.GetZ(), sanitized.GetW()};
     world_->bodies.rotations[dense]      = r_val;
     world_->bodies.prevRotations[dense] = r_val;
+    world_->PublishTransformSlot(dense);
+    CacheState();
 }
 
 bool Character::IsGrounded() const {
-    const std::scoped_lock shadow(world_->shadowLock);
-    return virtual_->GetGroundState() == JPH::CharacterBase::EGroundState::OnGround;
+    // Zero-lock read (smoking gun #2): querying grounded state no longer
+    // contends with a step for the world's global shadowLock.
+    return state_.Front().grounded;
 }
 
 } // namespace CPH

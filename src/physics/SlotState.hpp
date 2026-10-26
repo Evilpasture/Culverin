@@ -1,9 +1,11 @@
 #pragma once
 
 // Slot lifecycle state machine. A slot is the sparse, stable identity of a
-// body; its state decides which operations may run immediately against Jolt
-// (body exists), must be deferred to the command queue (body is being
-// created), or must be rejected.
+// body; its state decides which operations are admissible against a body.
+// Since the pure-async refactor, ALL admissible operations are deferred to
+// the CommandMailbox (no "immediate" Jolt application from a producer), so
+// these masks gate admission/execution-at-flush only -- they no longer select
+// between an immediate and a deferred execution path.
 
 #include <cstdint>
 #include <utility>

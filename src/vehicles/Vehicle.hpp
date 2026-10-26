@@ -13,8 +13,9 @@
 #include "core/Error.hpp"
 #include "core/Handle.hpp"
 #include "jolt/Jolt.hpp"
-#include <Jolt/Physics/Vehicle/VehicleConstraint.h>
 #include <Jolt/Physics/Vehicle/VehicleCollisionTester.h>
+#include <Jolt/Physics/Vehicle/VehicleConstraint.h>
+#include <atomic>
 #include <cstdint>
 #include <expected>
 #include <memory>
@@ -144,7 +145,9 @@ class Vehicle {
 
     // Wheeled controls: forward/right/brake/handbrake, with the arcade
     // transmission state machine deciding gear engagement and rolling
-    // resistance. A no-op while the world is stepping.
+    // resistance. Inputs are published to atomics (Ship-style own-lifecycle
+    // channel) so a control thread need not take the world shadowLock; the
+    // physics step consumes them. A no-op while the world is stepping.
     void SetInput(float forward, float right, float brake, float handbrake);
 
     // Tracked controls: independent left/right track ratios plus a brake.
@@ -179,6 +182,16 @@ class Vehicle {
     JPH::VehicleConstraint *constraint_ = nullptr;
     std::uint32_t           numWheels_ = 0;
     bool                    wheeled_    = true;
+
+    // Lock-free control inputs (Step 4). SetInput/SetTankInput publish these
+    // atomically; the VehicleConstraint step listener consumes them during the
+    // physics step, so steering never competes for the world's global mutex.
+    std::atomic<float> inputForward_{0.0f};
+    std::atomic<float> inputRight_{0.0f};
+    std::atomic<float> inputBrake_{0.0f};
+    std::atomic<float> inputHandbrake_{0.0f};
+    std::atomic<float> inputTankLeft_{0.0f};
+    std::atomic<float> inputTankRight_{0.0f};
 };
 
 } // namespace CPH

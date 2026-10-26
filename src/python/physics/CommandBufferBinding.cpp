@@ -16,7 +16,7 @@ void SyncAndFlushInternal(PhysicsWorldObject *self) {
     BlockUntilNotStepping(self);
     BlockUntilNotQuerying(self);
 
-    if (self->physics.commandCount == 0) {
+    if (self->physics.mailbox.Empty()) {
         return;
     }
 

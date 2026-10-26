@@ -222,6 +222,10 @@ std::expected<std::size_t, Error> PhysicsWorld::LoadSnapshot(std::span<const std
     freeCount.store(rebuilt_free_count, std::memory_order::release);
 
     SyncLoadedState(saved_count);
+    // The snapshot restored the canonical transform channels; refresh every
+    // published frame so bytes(world.positions) reflects the loaded state
+    // immediately (snapshot round-trip contract), with no step in between.
+    RepublishAllTransforms();
     return saved_count;
 }
 

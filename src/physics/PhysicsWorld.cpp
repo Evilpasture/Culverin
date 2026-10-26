@@ -261,24 +261,27 @@ std::expected<void, Error> PhysicsWorld::AllocateBuffers(int max_bodies,
     const std::size_t max_capacity = max_bodies > 0 ? static_cast<std::size_t>(max_bodies) : 0;
     maxJoltBodies         = static_cast<std::uint32_t>(max_bodies);
 
-    constexpr std::size_t kInitialSlotCapacity = 64;
-    std::size_t initial_capacity =
-        max_capacity < kInitialSlotCapacity ? max_capacity : kInitialSlotCapacity;
-    if (initial_count > initial_capacity && initial_count <= max_capacity) {
-        initial_capacity = initial_count;
-    }
-    capacity      = initial_capacity;
-    slotCapacity = initial_capacity;
+    // Fixed-capacity ownership (Step 1): Jolt already pins max_bodies at
+    // PhysicsSystem::Init, so allocate every per-body array once at that
+    // ceiling. capacity/slotCapacity never change, the slot tables never
+    // move, and there is no Resize / retired-buffer epoch. initial_count is
+    // accepted for API compatibility but no longer sizes the allocation.
+    (void)initial_count;
+    capacity     = max_capacity;
+    slotCapacity = max_capacity;
 
-    if (!bodies.allocate(initial_capacity) ||
-        !idToHandleMap.allocate(maxJoltBodies + 1) ||
+    if (!bodies.allocate(max_capacity) || !transforms.Init(max_capacity) ||
+        !mailbox.Init(kCommandQueueInitialCapacity) || !idToHandleMap.allocate(maxJoltBodies + 1) ||
         !joltBodyPtrs.allocate(maxJoltBodies + 1) ||
-        !commandQueue.allocate(kCommandQueueInitialCapacity) ||
-        !commandQueueSpare.allocate(kCommandQueueInitialCapacity) ||
         !constraints.allocate(kConstraintInitialCapacity) ||
         !freeConstraintSlots.allocate(kConstraintInitialCapacity)) {
         return std::unexpected(WorldError::OutOfMemory);
     }
+
+    // Bind the lock-free registry to the now-immovable slot tables. The
+    // pointers stay valid for the world's lifetime because capacity is fixed.
+    registry.Bind(bodies.generations.data(), bodies.slotStates.data(), bodies.slotToDense.data(),
+                  static_cast<std::uint32_t>(max_capacity));
 
     contactMaxCapacity = kContactMaxCapacity;
     // for_overwrite: value-initializing 32k events (4 MB) dominated world
@@ -312,99 +315,13 @@ void PhysicsWorld::InitializeFreeSlots(std::size_t start_idx) {
 }
 
 std::expected<void, Error> PhysicsWorld::Resize(std::size_t new_capacity) {
-    if (viewExportCount.load(std::memory_order::relaxed) > 0) {
-        return std::unexpected(WorldError::BufferExported);
-    }
-
-    // Retire the previous epoch now, in the mutator thread, before
-    // allocating the replacement storage.
-    retiredBodies = BodyBuffers{};
-
-    if (new_capacity > maxJoltBodies) {
-        new_capacity = maxJoltBodies;
-    }
-    if (new_capacity <= capacity) {
-        return {};
-    }
-
-    BodyBuffers next;
-    // for_overwrite: live ranges are memcpy'd below and the newly exposed
-    // dense range is deliberately not touched here (fresh pages fault in
-    // lazily as bodies are created — value-initializing tens of thousands
-    // of elements × 17 arrays is exactly the work legacy C's plain malloc
-    // did not do, and it dominated resize cost).
-    if (!next.allocate(new_capacity, true)) {
-        return std::unexpected(WorldError::OutOfMemory);
-    }
-
-    BodyBuffers &current            = bodies;
-    const std::size_t live_count    = count.load(std::memory_order::acquire);
-    const std::size_t current_free  = freeCount.load(std::memory_order::acquire);
-
-    // Dense data for live bodies.
-    if (live_count > 0) {
-        std::memcpy(next.positions.data(), current.positions.data(),
-                    live_count * sizeof(PosStride));
-        std::memcpy(next.prevPositions.data(), current.prevPositions.data(),
-                    live_count * sizeof(PosStride));
-        std::memcpy(next.rotations.data(), current.rotations.data(),
-                    live_count * sizeof(AuxStride));
-        std::memcpy(next.prevRotations.data(), current.prevRotations.data(),
-                    live_count * sizeof(AuxStride));
-        std::memcpy(next.linearVelocities.data(), current.linearVelocities.data(),
-                    live_count * sizeof(AuxStride));
-        std::memcpy(next.angularVelocities.data(), current.angularVelocities.data(),
-                    live_count * sizeof(AuxStride));
-        std::memcpy(next.bodyIds.data(), current.bodyIds.data(), live_count * sizeof(JPH::BodyID));
-        std::memcpy(next.userData.data(), current.userData.data(),
-                    live_count * sizeof(std::uint64_t));
-        std::memcpy(next.categories.data(), current.categories.data(),
-                    live_count * sizeof(std::uint32_t));
-        std::memcpy(next.masks.data(), current.masks.data(), live_count * sizeof(std::uint32_t));
-        std::memcpy(next.materialIds.data(), current.materialIds.data(),
-                    live_count * sizeof(std::uint32_t));
-        std::memcpy(next.denseToSlot.data(), current.denseToSlot.data(),
-                    live_count * sizeof(std::uint32_t));
-        for (std::size_t i = 0; i < live_count; ++i) {
-            next.softShadows[i] = std::move(current.softShadows[i]);
-        }
-    }
-
-    // Slot maps. Atomic arrays are copied element-wise.
-    for (std::size_t i = 0; i < slotCapacity; ++i) {
-        next.generations[i].store(current.generations[i].load(std::memory_order::relaxed),
-                                   std::memory_order::relaxed);
-        next.slotStates[i].store(current.slotStates[i].load(std::memory_order::relaxed),
-                                  std::memory_order::relaxed);
-    }
-    if (slotCapacity > 0) {
-        std::memcpy(next.slotToDense.data(), current.slotToDense.data(),
-                    slotCapacity * sizeof(std::uint32_t));
-    }
-    if (current_free > 0) {
-        std::memcpy(next.freeSlots.data(), current.freeSlots.data(),
-                    current_free * sizeof(std::uint32_t));
-    }
-
-    // Expanded slots start empty at generation 1, on the free stack.
-    std::size_t new_free_count = current_free;
-    for (std::size_t i = slotCapacity; i < new_capacity; ++i) {
-        next.generations[i].store(1, std::memory_order::relaxed);
-        next.slotStates[i].store(std::to_underlying(SlotState::Empty), std::memory_order::relaxed);
-        next.slotToDense[i]         = 0;
-        next.freeSlots[new_free_count++] = static_cast<std::uint32_t>(i);
-    }
-    // The expanded dense range [live_count, new_capacity) stays untouched on
-    // purpose (see allocate above): every path that claims a dense index
-    // defines all of its fields before the body becomes visible — paths
-    // that don't take explicit values write creation defaults at claim
-    // time (ReserveBodySlot for single/soft creates, the batch loop in
-    // CreateBodiesBatch for batch creates).
-
-    retiredBodies = std::exchange(bodies, std::move(next));
-    freeCount.store(new_free_count, std::memory_order::release);
-    capacity      = new_capacity;
-    slotCapacity = new_capacity;
+    // Fixed-capacity world (Step 1 / smoking gun #4): every per-body array was
+    // allocated once at max_bodies in AllocateBuffers. There is nothing to
+    // grow, no retired epoch to keep alive, and no dangling-pointer window to
+    // paper over. Creation paths already enforce maxJoltBodies, so a request
+    // beyond the ceiling is a no-op, not an error. Retained as a symbol for
+    // callers not yet migrated off the old Resize() contract.
+    (void)new_capacity;
     return {};
 }
 
@@ -496,6 +413,9 @@ std::expected<void, Error> PhysicsWorld::LoadBakedScene(const BakedSceneData &sc
     if (!error) {
         // Publish the initial body count only after every body was created.
         count.store(scene.count, std::memory_order::relaxed);
+        // Publish the baked scene into every transform frame so the first
+        // zero-copy read (before any step) sees the loaded transforms.
+        RepublishAllTransforms();
     }
     if (error) {
         return std::unexpected(error);
@@ -556,6 +476,10 @@ std::expected<void, Error> ReserveBodySlot(PhysicsWorld *world, std::uint32_t sl
     world->bodies.categories[dense]         = kAllLayerBits;
     world->bodies.masks[dense]              = kAllLayerBits;
     world->bodies.materialIds[dense]       = 0;
+    // No PublishTransformSlot here: both callers (InitializeBodyShadow and
+    // CreateSoftBody) write the real position/rotation immediately afterwards
+    // and publish then. Publishing now would mirror a stale/indeterminate
+    // transform from a recycled dense slot into the exported frame.
     world->bodies.slotStates[slot].store(static_cast<std::uint8_t>(slot_state),
                                           std::memory_order::release);
 
@@ -651,12 +575,7 @@ bool PhysicsWorld::InitJolt(WorldSettings settings, JPH::Float3 gravity) {
 
 // --- Stepping ---
 
-std::span<PhysicsCommand> PhysicsWorld::DetachCommands() {
-    const std::size_t captured = commandCount;
-    std::swap(commandQueue, commandQueueSpare);
-    commandCount = 0;
-    return {commandQueueSpare.data(), captured};
-}
+std::span<PhysicsCommand> PhysicsWorld::DetachCommands() { return mailbox.Detach(); }
 
 void PhysicsWorld::StepNative(float dt, std::span<PhysicsCommand> commands) {
     const std::scoped_lock trampoline(jphTrampolineLock);
@@ -692,11 +611,18 @@ void PhysicsWorld::StepNative(float dt, std::span<PhysicsCommand> commands) {
 
     SyncShadowBuffers(this);
 
+    // Publish a coherent, tear-free snapshot of this frame's transforms to the
+    // double buffer that zero-copy readers (memoryview/NumPy/render) hold.
+    // Runs on the step thread with the GIL released; the flip is one atomic
+    // release-store. This is the sole point at which readers observe a new
+    // frame (Step 2 / smoking gun #5).
+    PublishTransforms(this);
 }
 
 std::size_t PhysicsWorld::FinalizeStep(float dt) {
     const std::size_t body_count = count.load(std::memory_order::acquire);
-    time += static_cast<double>(dt);
+    time.store(time.load(std::memory_order::relaxed) + static_cast<double>(dt),
+               std::memory_order::relaxed);
 
     isStepping.store(false, std::memory_order::release);
     stepRequested.store(false, std::memory_order::release);

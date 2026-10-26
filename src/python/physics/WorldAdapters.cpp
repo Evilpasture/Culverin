@@ -65,24 +65,13 @@ static int GetBakedBuffer(PyObject *baked, Py_ssize_t index, size_t expected_siz
 
 [[nodiscard]]
 int WorldResize(PhysicsWorldObject *self, size_t new_capacity) {
-    PhysicsWorld *world = &self->physics;
-    if ((world->viewExportCount).load(std::memory_order::relaxed) > 0) {
-        PyErr_SetString(PyExc_BufferError, "Cannot resize while memoryview is active.");
-        return -1;
-    }
-
-    BlockUntilNotStepping(self);
-    BlockUntilNotQuerying(self);
-
-    const std::expected<void, Error> status = world->Resize(new_capacity);
-    if (!status && status.error().Code().Is(WorldError::BufferExported)) {
-        PyErr_SetString(PyExc_BufferError, "Cannot resize while memoryview is active.");
-        return -1;
-    }
-    if (!status) {
-        PyErr_NoMemory();
-        return -1;
-    }
+    // Fixed-capacity world (Step 1): all per-body storage is allocated once at
+    // max_bodies during init, so there is nothing to resize and no exported
+    // buffer can be invalidated by a reallocation. resize() is retained as a
+    // no-op for API compatibility; capacity is bounded by max_bodies. The old
+    // viewExportCount guard, BlockUntil* waits, and Resize call are gone.
+    (void)self;
+    (void)new_capacity;
     return 0;
 }
 

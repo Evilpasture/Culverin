@@ -378,6 +378,15 @@ Vehicle::~Vehicle() { Detach(); }
 // --- Drive logic -------------------------------------------------------------
 
 void Vehicle::SetInput(float forward, float right, float brake, float handbrake) {
+    // Publish inputs lock-free first (own lifecycle, Step 4). The physics step
+    // consumes these atomics; a control thread no longer needs the world mutex
+    // just to steer. The controller application below is retained for the
+    // arcade transmission state machine, which still needs current Jolt state.
+    inputForward_.store(forward, std::memory_order::relaxed);
+    inputRight_.store(right, std::memory_order::relaxed);
+    inputBrake_.store(brake, std::memory_order::relaxed);
+    inputHandbrake_.store(handbrake, std::memory_order::relaxed);
+
     constexpr float kThrottleThreshold         = 0.01f;
     constexpr float kSpeedDirectionThreshold   = 0.5f;
     constexpr float kSpeedMinThreshold         = 0.1f;
@@ -444,6 +453,10 @@ void Vehicle::SetInput(float forward, float right, float brake, float handbrake)
 }
 
 void Vehicle::SetTankInput(float left, float right, float brake) {
+    // Publish tracked inputs lock-free (own lifecycle, Step 4).
+    inputTankLeft_.store(left, std::memory_order::relaxed);
+    inputTankRight_.store(right, std::memory_order::relaxed);
+    inputBrake_.store(brake, std::memory_order::relaxed);
     constexpr float kKickstartThreshold = 0.01f;
 
     if (world_ == nullptr || constraint_ == nullptr) {

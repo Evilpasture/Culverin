@@ -12,12 +12,15 @@
 #include "debug/DebugRender.hpp"
 #include "jolt/Jolt.hpp"
 #include "jolt/JoltConfig.hpp"
+#include "physics/BodyRegistry.hpp"
 #include "physics/CommandBuffer.hpp"
+#include "physics/CommandMailbox.hpp"
 #include "physics/ContactEventDefinitions.hpp"
 #include "physics/ContactListener.hpp"
 #include "physics/InternalQuery.hpp"
 #include "physics/Query.hpp"
 #include "physics/SlotState.hpp"
+#include "physics/TransformBuffer.hpp"
 #include "soft_bodies/SoftBodyCore.hpp"
 #include <Jolt/Core/JobSystemThreadPool.h>
 #include <Jolt/Core/TempAllocator.h>
@@ -25,7 +28,6 @@
 #include <Jolt/Physics/Constraints/Constraint.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/Physics/Ragdoll/Ragdoll.h>
-
 
 #include <atomic>
 #include <cstddef>
@@ -138,7 +140,8 @@ struct PhysicsWorld {
     void InitializeFreeSlots(std::size_t start_idx);
     [[nodiscard]] bool InitJolt(WorldSettings settings, JPH::Float3 gravity);
     [[nodiscard]] std::expected<void, Error> LoadBakedScene(const BakedSceneData &scene);
-    // Slot and resize mutations require shadow_lock and a non-stepping world.
+    // Fixed-capacity world: storage is allocated once at max_bodies, so
+    // Resize is retained only as a compatibility no-op (always succeeds).
     [[nodiscard]] std::expected<void, Error> Resize(std::size_t new_capacity);
     [[nodiscard]] std::expected<BodyHandle, Error>
     CommitCreate(JPH::BodyCreationSettings &settings, std::uint32_t slot_state);
@@ -168,11 +171,32 @@ struct PhysicsWorld {
     void FlushCommands(std::span<PhysicsCommand> queue);
     // Drops pending commands, destroying payloads they own.
     void ClearCommandQueue();
-    // Append a command; capacity must already be ensured via
-    // EnsureCommandCapacity. Caller holds shadow_lock.
+    // Append a command to the pure-async mailbox. Push grows the active
+    // buffer on demand; bulk paths pre-Reserve via EnsureCommandCapacity.
+    // Caller holds shadow_lock for the surrounding slot-state mutation.
     template <typename Payload>
     void EnqueueCommand(std::uint32_t slot, Payload &&payload) {
-        commandQueue[commandCount++] = PhysicsCommand{slot, std::forward<Payload>(payload)};
+        mailbox.Push(PhysicsCommand{slot, std::forward<Payload>(payload)});
+    }
+
+    // Reflect one dense body's transform from the canonical shadow buffers
+    // into the published transform frames. Every out-of-step writer of
+    // bodies.positions/rotations/*Velocities (creation, teleports, character
+    // moves, snapshot restore) must call this so a zero-copy memoryview sees
+    // the change immediately. Caller holds shadowLock; the step is not running.
+    void PublishTransformSlot(std::uint32_t dense) noexcept {
+        transforms.WriteSlot(dense, bodies.positions[dense], bodies.rotations[dense],
+                             bodies.linearVelocities[dense], bodies.angularVelocities[dense]);
+    }
+
+    // Refresh ALL live transforms from canonical into every published frame
+    // (e.g. after a bulk snapshot restore, batch creation, or baked-scene
+    // load). Used only with the world quiesced, so no step is writing the back
+    // frame. O(count) memcpy per frame; no flip.
+    void RepublishAllTransforms() noexcept {
+        const std::size_t n = count.load(std::memory_order::acquire);
+        transforms.WriteAll(bodies.positions.data(), bodies.rotations.data(),
+                            bodies.linearVelocities.data(), bodies.angularVelocities.data(), n);
     }
 
     // --- Step/query arbitration (PhysicsWorld.cpp) ---
@@ -191,16 +215,11 @@ struct PhysicsWorld {
     // Resolves a typed handle to its slot, but only while the generation
     // still matches -- a handle to a recycled body resolves to nullopt
     // even though its index is in range.
+    // Zero-lock handle resolution via the fixed-capacity registry. The old
+    // implementation read slotCapacity + generations directly; delegating to
+    // BodyRegistry keeps the lock-free fast path in one ownership domain.
     [[nodiscard]] std::optional<std::uint32_t> Resolve(BodyHandle handle) const noexcept {
-        const auto slot = handle.Index();
-        const auto gen  = handle.Generation();
-        if (slot >= slotCapacity) [[unlikely]] {
-            return std::nullopt;
-        }
-        if (bodies.generations[slot].load(std::memory_order::acquire) != gen) {
-            return std::nullopt;
-        }
-        return slot;
+        return registry.Resolve(handle);
     }
 
     // --- Shape cache (InternalQuery.cpp) ---
@@ -340,17 +359,21 @@ struct PhysicsWorld {
     CPH_CACHE_LINE_SPACER;
 
     // --- Hot simulation state ---
-    double time = 0.0;
+    // Atomic so WorldGetTime is a zero-lock read (smoking gun #2); the CPython
+    // binding no longer needs shadow_lock just to read the simulation clock.
+    std::atomic<double> time{0.0};
     std::atomic<std::size_t> count{0};
     std::size_t capacity      = 0; // == slot_capacity == bodies.size()
     std::size_t slotCapacity = 0;
     std::atomic<std::size_t> freeCount{0};
 
     BodyBuffers bodies;
-    // Storage retired by the most recent resize. Released at the next
-    // resize (or teardown) so a lock-free reader of the previous frame's
-    // shadow buffers can never observe freed memory.
-    BodyBuffers retiredBodies;
+    // Subsystem ownership domains (allocated once at max_bodies in
+    // AllocateBuffers): a fixed-capacity, lock-free handle registry and a
+    // double-buffered transform output. There is no resize and therefore no
+    // retired-buffer epoch -- the arrays never move for the world's lifetime.
+    BodyRegistry registry;
+    TransformBuffer<PosStride, AuxStride> transforms;
 
     CPH_CACHE_LINE_SPACER;
 
@@ -364,9 +387,10 @@ struct PhysicsWorld {
     std::mutex shadowLock;
     std::mutex jphTrampolineLock;
 
-    Buffer<PhysicsCommand> commandQueue;
-    Buffer<PhysicsCommand> commandQueueSpare;
-    std::size_t commandCount = 0;
+    // Pure-asynchronous command mailbox. Producers stage every mutation
+    // here; the step thread Detach()es and flushes before Jolt Update().
+    // Replaces the raw commandQueue/Spare/commandCount triple.
+    CommandMailbox<PhysicsCommand> mailbox;
 
     CPH_CACHE_LINE_SPACER;
     std::atomic<bool> isStepping{false};

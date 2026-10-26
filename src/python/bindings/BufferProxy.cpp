@@ -47,14 +47,18 @@ constexpr std::size_t kScalarStride = 1;
 [[nodiscard]] void *SoaDataFor(CPH::PhysicsWorld &world, WorldChannel channel) noexcept {
     switch (channel) {
     case WorldChannel::Positions:
-        return world.bodies.positions.data();
+        // Transform channels are exported from the double-buffered front
+        // frame, which the step never writes (it writes the back frame and
+        // flips an atomic index). This is what removes data tearing.
+        return world.transforms.Front().positions.data();
     case WorldChannel::Rotations:
-        return world.bodies.rotations.data();
+        return world.transforms.Front().rotations.data();
     case WorldChannel::LinearVelocities:
-        return world.bodies.linearVelocities.data();
+        return world.transforms.Front().linearVelocities.data();
     case WorldChannel::AngularVelocities:
-        return world.bodies.angularVelocities.data();
+        return world.transforms.Front().angularVelocities.data();
     case WorldChannel::UserData:
+        // User data is never rewritten by a step, so it stays canonical.
         return world.bodies.userData.data();
     case WorldChannel::SoftBodyVertices:
         break;
@@ -85,23 +89,26 @@ std::size_t WorldBuffer::ElementCount() const noexcept {
 std::expected<BufferDescriptor, const char *> WorldBuffer::Describe() {
     const ChannelSpec spec = SpecFor(channel_);
 
-    // Read under the shadow lock, with any in-flight step waited out: body
-    // creation can reallocate the arrays, and a step writes them from another
-    // thread. `BlockUntilNotStepping` parks on the step condition and drops the
-    // GIL while it waits; its own unlock/lock of the shadow mutex is balanced,
-    // so the unique_lock below still owns it when this scope ends -- including
-    // on the failure return.
-    std::unique_lock shadow(world_->shadowLock);
-    BlockUntilNotStepping(*world_);
-
+    // Zero-lock read (Step 2 / smoking gun #5). Transform channels live in a
+    // double buffer whose Front() frame is never written by the step; the step
+    // writes Back() and flips an atomic index in PublishTransforms. The arrays
+    // are fixed-capacity, so their addresses never move. That makes a
+    // memoryview export lock-free and tear-free: no shadowLock, no
+    // BlockUntilNotStepping, no waiting on a step for these channels.
     void        *data  = nullptr;
     std::size_t length = 0;
     if (channel_ == WorldChannel::SoftBodyVertices) {
-        // Pinned when the proxy was made: one body's block, which cannot move
-        // while the export is outstanding.
+        // Pinned per-body vertex block: not double-buffered, still guarded.
+        const std::unique_lock shadow(world_->shadowLock);
+        BlockUntilNotStepping(*world_);
         data   = pinned_;
         length = pinnedElements_;
+    } else if (channel_ == WorldChannel::UserData) {
+        const std::unique_lock shadow(world_->shadowLock);
+        data   = SoaDataFor(*world_, channel_);
+        length = world_->count.load(std::memory_order::acquire) * spec.stride;
     } else {
+        // Positions / rotations / velocities: published, stable frame.
         data   = SoaDataFor(*world_, channel_);
         length = world_->count.load(std::memory_order::acquire) * spec.stride;
     }

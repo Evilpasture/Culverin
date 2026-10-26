@@ -14,12 +14,6 @@ namespace {
 
 using namespace CPH::cmd;
 
-bool IsImmediateJoltAction(PhysicsBodyOperationType type) {
-    return type == PhysicsBodyOperationType::ApplyImpulse || type == PhysicsBodyOperationType::ApplyImpulseAt ||
-           type == PhysicsBodyOperationType::ApplyAngularImpulse || type == PhysicsBodyOperationType::ApplyForce ||
-           type == PhysicsBodyOperationType::ApplyTorque;
-}
-
 std::uint32_t ImmediateMask(PhysicsBodyOperationType type) {
     switch (type) {
     case PhysicsBodyOperationType::ApplyAngularImpulse:
@@ -88,6 +82,10 @@ bool EnqueueOperation(PhysicsWorld *world, std::uint32_t slot,
 void MirrorToShadow(PhysicsWorld *world, std::uint32_t slot,
                       const PhysicsBodyOperation &op) {
     const std::uint32_t dense = world->bodies.slotToDense[slot];
+    // Set ops update the canonical bodies.* arrays (single source of truth for
+    // Jolt sync and interpolation). The single PublishTransformSlot call below
+    // mirrors the four exported channels into the published transform frames,
+    // so a zero-copy memoryview observes the set immediately.
     switch (op.type) {
     case PhysicsBodyOperationType::SetPosition: {
         const PosStride position = {op.position.GetX(), op.position.GetY(), op.position.GetZ(), 0.0};
@@ -109,8 +107,9 @@ void MirrorToShadow(PhysicsWorld *world, std::uint32_t slot,
         world->bodies.angularVelocities[dense] = {op.vector.GetX(), op.vector.GetY(), op.vector.GetZ(), 0.0F};
         break;
     case PhysicsBodyOperationType::SetUserData:
+        // Shadow-only; nothing transform-related to publish.
         world->bodies.userData[dense] = op.userData;
-        break;
+        return;
     case PhysicsBodyOperationType::SetTransform: {
         const PosStride position = {op.position.GetX(), op.position.GetY(), op.position.GetZ(), 0.0};
         const AuxStride rotation = {op.rotation.GetX(), op.rotation.GetY(), op.rotation.GetZ(),
@@ -122,40 +121,9 @@ void MirrorToShadow(PhysicsWorld *world, std::uint32_t slot,
         break;
     }
     default:
-        break;
-    }
-}
-
-void ExecuteNow(PhysicsWorld *world, const JPH::BodyID &id,
-                 const PhysicsBodyOperation &op) {
-    // world->body_interface is a reinterpret_cast of
-    // physics_system.GetBodyInterface() -- the *locking* interface (see
-    // PhysicsWorld.cpp:637) -- so go to the same one rather than the NoLock
-    // variant. These run outside a step, under the shadow lock only.
-    JPH::BodyInterface &bi = world->physicsSystem.GetBodyInterface();
-    const JPH::Vec3 &vector = op.vector;
-    switch (op.type) {
-    case PhysicsBodyOperationType::ApplyImpulse:
-        bi.AddImpulse(id, vector);
-        break;
-    case PhysicsBodyOperationType::ApplyImpulseAt: {
-        const JPH::RVec3 &position = op.position;
-        bi.AddImpulse(id, vector, position);
-        break;
-    }
-    case PhysicsBodyOperationType::ApplyAngularImpulse:
-        bi.AddAngularImpulse(id, vector);
-        break;
-    case PhysicsBodyOperationType::ApplyForce:
-        bi.AddForce(id, vector);
-        break;
-    case PhysicsBodyOperationType::ApplyTorque:
-        bi.AddTorque(id, vector);
-        break;
-    default:
         return;
     }
-    bi.ActivateBody(id);
+    world->PublishTransformSlot(dense);
 }
 
 } // namespace
@@ -181,8 +149,6 @@ PhysicsWorld::ApplyBodyOperation(const PhysicsBodyOperation &op) {
         break;
     }
 
-    bool execute_immediately = false;
-    JPH::BodyID body_id; // default ctor == cInvalidBodyID
     {
         const auto shadow = LockShadowNotStepping();
 
@@ -193,7 +159,8 @@ PhysicsWorld::ApplyBodyOperation(const PhysicsBodyOperation &op) {
         const std::uint32_t slot = *resolved;
         const auto state = static_cast<SlotState>(
             bodies.slotStates[slot].load(std::memory_order::acquire));
-        const SlotPredicate predicate = GetSlotPredicate(std::to_underlying(state), ImmediateMask(sanitized.type));
+        const SlotPredicate predicate =
+            GetSlotPredicate(std::to_underlying(state), ImmediateMask(sanitized.type));
         if (!predicate.is_executable()) {
             return std::unexpected(BodyOperationError::StaleHandle);
         }
@@ -201,20 +168,15 @@ PhysicsWorld::ApplyBodyOperation(const PhysicsBodyOperation &op) {
             return std::unexpected(BodyOperationError::OutOfMemory);
         }
 
-        // Impulse-class ops on live bodies run straight against Jolt below
-        // instead of being deferred; everything else defers.
-        execute_immediately = IsImmediateJoltAction(sanitized.type) && predicate.isImmediate;
-        if (!execute_immediately && !EnqueueOperation(this, slot, sanitized)) {
+        // Pure-asynchronous command queue (Step 3): every mutation -- even
+        // impulses and forces -- is staged in the mailbox and applied by the
+        // step thread before PhysicsSystem::Update(). No op reaches Jolt from
+        // an arbitrary Python thread, so there is no immediate/deferred split
+        // and no jph_trampoline_lock needed to protect it.
+        if (!EnqueueOperation(this, slot, sanitized)) {
             return std::unexpected(BodyOperationError::InvalidArgument);
         }
         MirrorToShadow(this, slot, sanitized);
-        if (execute_immediately) {
-            body_id = bodies.bodyIds[bodies.slotToDense[slot]];
-        }
-    }
-
-    if (execute_immediately) {
-        ExecuteNow(this, body_id, sanitized);
     }
     return {};
 }

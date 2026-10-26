@@ -215,6 +215,7 @@ static PyObject *WorldNew(PyTypeObject *type, PyObject * /*args*/, PyObject * /*
 
     (self->physics.shadowLock).lock();
     SyncShadowBuffers(&self->physics);
+    PublishTransforms(&self->physics);
     (self->physics.shadowLock).unlock();
     return 0;
 
@@ -717,17 +718,10 @@ template <PhysicsBodyOperationType OpType, auto ParserMember, FixedString Label>
     // --- PHASE 1: SHADOW STATE LOCK-DOWN ---
     (self->physics.shadowLock).lock();
 
-    // ANTI-STARVATION: Yield to waiting Python threads (Getters/Mutators)
-    // This is necessary for performance.
-    while ((self->physics.waitingThreads).load(std::memory_order::relaxed) > 0) {
-        (self->physics.shadowLock).unlock();
-        {
-            [[maybe_unused]] ScopedGilRelease release_gil;
-            CpuYield();
-        }
-        (self->physics.shadowLock).lock();
-    }
-
+    // Anti-starvation spin removed (Step 2 / smoking gun #1). With lock-free
+    // double-buffered transform reads there is no getter/mutator backlog to
+    // yield to: external readers never wait on shadowLock, so a step cannot
+    // starve them and the CpuYield()/sched_yield() spin loop is unnecessary.
     std::atomic_thread_fence(std::memory_order::acquire);
 
     // Raise flags
@@ -2647,7 +2641,7 @@ WorldGetbuffer(PhysicsWorldObject *self, Py_buffer *view, [[maybe_unused]] int f
     size_t current_count = (self->physics.count).load(std::memory_order::acquire);
 
     // We export the positions buffer as the default buffer for the object
-    view->buf        = self->physics.bodies.positions.data();
+    view->buf        = self->physics.transforms.Front().positions.data();
     view->len        = static_cast<Py_ssize_t>(current_count * sizeof(PosStride));
     view->readonly   = 0;
     view->itemsize   = sizeof(JPH::Real);

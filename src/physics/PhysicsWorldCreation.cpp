@@ -48,6 +48,7 @@ static void InitializeBodyShadow(PhysicsWorld &world, BodyHandle handle,
     world.bodies.masks[dense]                             = request.mask;
     world.bodies.materialIds[dense]                      = request.materialId;
     world.bodies.userData[dense]                         = request.userData;
+    world.PublishTransformSlot(dense);
 }
 
 static std::expected<BodyHandle, Error>
@@ -196,6 +197,7 @@ PhysicsWorld::CreateSoftBody(const PhysicsWorldSoftBodyCreateRequest &request) {
     bodies.categories[dense]                    = request.category;
     bodies.masks[dense]                         = request.mask;
     bodies.userData[dense]                     = request.userData;
+    PublishTransformSlot(dense);
 
     EnqueueCommand(slot, CPH::cmd::CreateSoftBody{std::move(settings), request.vertexCount});
     return handle;
@@ -314,6 +316,7 @@ std::expected<std::size_t, Error> PhysicsWorld::RegisterRagdollBodies(
         bodies.masks[dense]        = mask;
         bodies.materialIds[dense] = material_id;
     }
+    RepublishAllTransforms();
 
     return (count).load(std::memory_order::relaxed);
 }
@@ -439,6 +442,7 @@ std::expected<void, Error> PhysicsWorld::CreateBodiesBatch(
         EnqueueCommand(slot, CPH::cmd::CreateBody{std::move(settings[i])});
         out_handles[i] = handle;
     }
+    RepublishAllTransforms();
     return {};
 }
 

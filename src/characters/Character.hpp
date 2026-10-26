@@ -11,6 +11,7 @@
 //
 // One instance owns one listener, so characters share no contact state.
 
+#include "core/DoubleBuffer.hpp"
 #include "core/Handle.hpp"
 #include "jolt/Jolt.hpp"
 #include <Jolt/Physics/Character/CharacterVirtual.h>
@@ -26,6 +27,16 @@ struct CharacterParams {
     float height    = 1.8f;
     float radius    = 0.4f;
     float maxSlope = 45.0f; // degrees
+};
+
+// Cached, published character transform. Getters read the front frame
+// lock-free; Move()/setters refresh the back frame and publish. This is the
+// character's own lifecycle state, decoupled from the world's shadowLock.
+struct CharacterState {
+    double px = 0.0, py = 0.0, pz = 0.0;
+    float qx = 0.0f, qy = 0.0f, qz = 0.0f, qw = 1.0f;
+    float vx = 0.0f, vy = 0.0f, vz = 0.0f;
+    bool grounded = false;
 };
 
 class Character {
@@ -76,6 +87,11 @@ class Character {
     // Caller holds shadow_lock.
     void PublishTransformLocked() const;
 
+    // Refresh the cached CharacterState (own lifecycle) from virtual_ and
+    // publish a new front frame. Called from Create/Move/setters while the
+    // writer holds shadow_lock; readers need no lock at all.
+    void CacheState();
+
     [[nodiscard]] std::uint32_t DenseIndexLocked() const noexcept;
 
     // True when both bodies are live and each one's mask admits the other's
@@ -94,6 +110,9 @@ class Character {
     std::atomic<float>      lastVx_{0.0f};
     std::atomic<float>      lastVy_{0.0f};
     std::atomic<float>      lastVz_{0.0f};
+
+    // Double-buffered cached state for zero-lock getters (Step 4).
+    DoubleBuffer<CharacterState, 3> state_;
 };
 
 } // namespace CPH

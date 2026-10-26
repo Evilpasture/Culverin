@@ -313,4 +313,14 @@ SyncShadowBuffers(const PhysicsWorld *const CPH_RESTRICT world) noexcept -> void
 #endif
 }
 
+// Snapshot the canonical transform channels into the back frame and publish.
+// Called on the step thread right after SyncShadowBuffers; the flip is the
+// single publication point that zero-copy readers observe.
+void PublishTransforms(PhysicsWorld *world) noexcept {
+    const std::size_t count = world->count.load(std::memory_order::acquire);
+    world->transforms.Publish(world->bodies.positions.data(), world->bodies.rotations.data(),
+                              world->bodies.linearVelocities.data(),
+                              world->bodies.angularVelocities.data(), count);
+}
+
 } // namespace CPH

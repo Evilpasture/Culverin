@@ -1,32 +1,36 @@
 #pragma once
 
-// Culverin Threading Invariants & Lock Hierarchy
-// ---------------------------------------------
-// 1. HIERARCHY (acquire outermost first, never the other way around):
+// Culverin Threading Invariants & Ownership Domains
+// -------------------------------------------------
+// The concurrency model is now organised around three isolated ownership
+// domains (see docs/SUBSYSTEM_REFACTOR.md for the full rationale):
+//
+//   * CommandMailbox  - every Python-visible mutation is staged here and
+//     flushed, in order, by the step thread before PhysicsSystem::Update().
+//     Producers take only a lightweight push mutex; they never touch Jolt.
+//   * BodyRegistry    - fixed-capacity slot/generation tables. Because they
+//     are allocated once at max_bodies and never move, Resolve(handle) is a
+//     zero-lock bounds check + one acquire load.
+//   * TransformBuffer - double-buffered transform output. The step writes the
+//     back frame and flips an atomic index; zero-copy memoryviews always read
+//     the stable front frame. Readers never wait on writers.
+//
+// With transform reads lock-free and every mutation deferred, the coarse
+// shadow_lock is demoted from a "universal gate" to a narrow mutex that only
+// serialises the mailbox push / slot-table structural changes and the Jolt
+// query & step arbitration below. The following hierarchy still documents the
+// locks that remain for Jolt-touching operations; it is deliberately no
+// longer on the transform-read hot path:
 //
 //        jph_trampoline_lock  ->  shadow_lock  ->  step_sync.mutex
 //
-//    - jph_trampoline_lock BEFORE shadow_lock. The step and flush paths
-//      (StepNative -> FlushCommands, SyncAndFlushInternal, ragdoll and
-//      compound construction) hold the trampoline and then take shadow_lock
-//      while executing each command. Any path that takes shadow_lock first
-//      and then waits for the trampoline closes a cycle: TSan reports it as
-//      "lock-order-inversion (potential deadlock)", and under contention it
-//      is a real deadlock (holder of the trampoline waits for shadow_lock
-//      while the other thread waits for the trampoline).
-//    - shadow_lock BEFORE step_sync.mutex, and release shadow_lock before
+//    - jph_trampoline_lock BEFORE shadow_lock for the few synchronous Jolt
+//      structural operations (scene load, ragdoll/compound construction,
+//      vehicle/character creation) that have not yet migrated to the mailbox.
+//    - shadow_lock BEFORE step_sync.mutex; release shadow_lock before
 //      blocking on step_sync.cond.
-// 2. OWNERSHIP:
-//    - shadow_lock protects the command queue, slot states, and shadow buffers.
-//    - step_sync handles thread arbitration (parking/waking).
-//    - jph_trampoline_lock protects the non-thread-safe JPH PhysicsSystem.
-// 3. STEPPING INVARIANT:
-//    - is_stepping = true  => no external thread may read/write shadow buffers.
-//    - is_stepping = false => external threads may read shadow buffers under shadow_lock.
-// 4. DOUBLE-BUFFERING:
-//    - Command queues are swapped under shadow_lock but flushed under
-//      jph_trampoline_lock, which then re-acquires shadow_lock per command
-//      (see rule 1 for why the trampoline has to be the outer lock).
+//    - step_sync is a narrow arbitration endpoint for step/query overlap of
+//      non-transform operations, not a gate on reading positions/rotations.
 //
 // Synchronization uses std::mutex / std::condition_variable / std::atomic.
 // The legacy 1-byte custom mutex optimized per-mutex footprint, but a world

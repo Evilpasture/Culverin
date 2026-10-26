@@ -14,43 +14,9 @@
 
 namespace CPH {
 
-namespace {
-
-constexpr std::size_t kInitialQueueCapacity = 64;
-
-bool GrowQueue(PhysicsWorld *world, std::size_t new_capacity) {
-    // for_overwrite: queue slots past command_count are only ever
-    // move-assigned into, never read — default construction (variant at
-    // its first alternative) is all they need.
-    //
-    // Only the active queue grows. The spare keeps its current size:
-    // detach is a plain swap, and the next enqueue grows the (now active)
-    // ex-spare on demand if it is too small. Growing both queues here
-    // would default-construct tens of thousands of variants that a
-    // create-without-step workload never touches (legacy's spare was a
-    // bare malloc whose pages were never faulted until used).
-    return world->commandQueue.reallocate_for_overwrite(new_capacity);
-}
-
-} // namespace
-
 bool PhysicsWorld::EnsureCommandBulkCapacity(std::size_t batch_size) {
-    if (batch_size > std::numeric_limits<std::size_t>::max() - commandCount) {
-        return false;
-    }
-    const std::size_t required = commandCount + batch_size;
-    if (required > commandQueue.size()) [[unlikely]] {
-        std::size_t new_capacity =
-            commandQueue.size() == 0 ? kInitialQueueCapacity : commandQueue.size();
-        while (new_capacity < required) {
-            if (new_capacity > std::numeric_limits<std::size_t>::max() / 2) {
-                return false;
-            }
-            new_capacity *= 2;
-        }
-        return GrowQueue(this, new_capacity);
-    }
-    return true;
+    // The mailbox owns the active buffer and grows it under its own mutex.
+    return mailbox.Reserve(batch_size);
 }
 
 bool PhysicsWorld::EnsureCommandCapacity() {
@@ -83,6 +49,12 @@ void PhysicsWorld::RemoveBodySlot(std::uint32_t slot) {
         // Move assignment releases the removed body's vertex buffer and
         // leaves the tail shadow empty (no double free).
         bodies.softShadows[dense] = std::move(bodies.softShadows[last]);
+
+        // A swap-remove moved `last` into `dense`; mirror that transform into
+        // the published frames so a zero-copy view sees the same packed dense
+        // layout as the canonical buffers (the C arrays used to be one and the
+        // same). Caller holds shadowLock with the world quiesced.
+        PublishTransformSlot(dense);
     } else {
         bodies.softShadows[dense] = SoftBodyShadow{};
     }
@@ -98,13 +70,8 @@ void PhysicsWorld::RemoveBodySlot(std::uint32_t slot) {
 }
 
 void PhysicsWorld::ClearCommandQueue() {
-    // Resetting each command destroys the payload (body settings, etc.)
-    // it owns. The legacy loop freed only creation settings and leaked
-    // heap constraint parameters.
-    for (std::size_t i = 0; i < commandCount; ++i) {
-        commandQueue[i] = PhysicsCommand{};
-    }
-    commandCount = 0;
+    // Destroy any pending payloads (body settings, etc.) via the mailbox.
+    mailbox.Clear();
 }
 
 // --- Flush ---
