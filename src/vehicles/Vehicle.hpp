@@ -41,6 +41,13 @@ struct WheelConfig {
     float suspension       = 0.3f;
     float springFreq      = 1.5f;
     float springDamp      = 0.5f;
+
+    // Whether this wheel steers, decided by the config rather than inferred
+    // from the sign of z. Inferring it meant a chassis modelled along -Z (whose
+    // front wheels sit at negative z) produced a vehicle with no steering
+    // wheels at all. The caller leaves this unset to keep the historical
+    // front-by-+Z behaviour; see ResolveSteers().
+    std::optional<bool> steers;
 };
 
 enum class DriveMode : std::uint8_t { Fwd = 1, Rwd = 2, Awd = 3 };

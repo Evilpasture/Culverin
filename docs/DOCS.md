@@ -209,10 +209,12 @@ Creates a fully simulated, drivable wheeled vehicle (Car, Truck, etc.). Unlike p
 **Arguments:**
 - **`chassis` (int):** The generational handle of the rigid body that acts as the car's frame.
 - **`wheels` (list[dict]):** A list of dictionaries, one per wheel.
-    - **`pos` (tuple):** Local position relative to the chassis.
-    - **`radius` / `width` (float):** Physical dimensions of the tire.
-    - **`suspension` (float):** Maximum suspension travel distance.
-    - **`friction` (float):** Tire grip multiplier (default: 1.0).
+    - **`pos` (tuple):** Local position relative to the chassis. Required.
+    - **`radius` / `width` (float):** Physical dimensions of the tire (defaults: `0.4` / `0.2`).
+    - **`suspension` (float):** Maximum suspension travel distance (default: `0.3`).
+    - **`spring_freq` / `spring_damp` (float):** Suspension spring frequency and damping (defaults: `1.5` / `0.5`).
+    - **`brake_torque` / `handbrake_torque` (float):** Braking strength for this wheel (defaults: `1500.0` / `4000.0`).
+    - **`steers` (bool, optional):** Whether this wheel steers. Leaving it out keeps the arcade rule described below. There is no per-wheel `friction` key — tire grip is a property of the contact material, not the wheel.
 - **`drive` (str):** Drivetrain layout. Options: `"AWD"` (All-Wheel), `"RWD"` (Rear), `"FWD"` (Front).
 - **`engine` (Engine, optional):** An `Engine` config object defining torque and RPM curves.
 - **`transmission` (Transmission, optional):** A `Manual` or `Automatic` config object defining gear ratios.
@@ -220,7 +222,7 @@ Creates a fully simulated, drivable wheeled vehicle (Car, Truck, etc.). Unlike p
 **Simulation Details:**
 - **Raycast Suspension:** Culverin automatically attaches a `VehicleCollisionTesterRay` to the vehicle. This simulates suspension by casting rays from the chassis toward the ground, ensuring high-performance wheel-to-terrain interaction.
 - **Drivetrain Logic:** The vehicle includes a simulated differential, engine inertia, and a multi-gear transmission.
-- **Arcade Steering:** By default, Culverin identifies wheels with positive `Z` local coordinates as "steering wheels" and those with negative `Z` as "drive wheels" for simplified setup, though this can be overridden.
+- **Arcade Steering:** By default, Culverin identifies wheels with positive `Z` local coordinates as "steering wheels" and those with negative `Z` as "drive wheels" for simplified setup. Set `steers` on a wheel to state it outright — this is the only way to get steering wheels on a chassis modelled along `-Z`, whose front wheels sit at negative `Z`.
 - **Thread Safety:** If the chassis body was created in the same frame, Culverin will automatically flush the world's command buffer to ensure the vehicle constraint can link to the underlying physics body.
 
 
@@ -1546,6 +1548,69 @@ Calculates the character's smooth, sub-frame position and rotation for the curre
 - **Efficiency:** Retrieves the "Previous" state from Culverin's internal C-arrays and the "Current" state directly from the Jolt virtual character object in a single synchronized C-API call.
 
 
+## class Engine
+
+### __init__(...)
+
+Defines the physical properties of a simulated internal combustion engine, passed to `create_vehicle` or `create_tracked_vehicle` as `engine=`.
+
+**Arguments:**
+- **`max_torque` (float):** Peak torque in Nm (default: `500.0`).
+- **`max_rpm` (float):** Redline (default: `7000.0`).
+- **`min_rpm` (float):** Idle speed (default: `1000.0`).
+- **`inertia` (float):** Rotational inertia of the engine (default: `0.5`).
+
+All four are readable and writable after construction.
+
+**Not a dict:** `engine=` reads attributes, so a plain dictionary is accepted and silently ignored. Build one of these.
+
+
+## class Transmission
+
+### __init__(...)
+
+Base configuration for vehicle gearboxes, defining mechanical advantage and clutch properties. `Automatic` and `Manual` derive from it.
+
+**Arguments:**
+- **`gears` (int):** A **count**, not a list (default: `5`). It selects the first `gears` entries of the built-in stack `[2.66, 1.78, 1.30, 1.00, 0.74, 0.50]`. Assign `trans.ratios = [...]` afterwards to use your own.
+- **`clutch_strength` (float):** Maximum torque the clutch transmits before slipping (default: `2000.0`).
+- **`differential_ratio` (float):** The final drive ratio (default: `3.42`).
+
+**Attributes:** `ratios`, `reverse_ratios` (default `[-2.90]`), plus the three above.
+
+
+## class Automatic
+
+### __init__(...)
+
+An automated gearbox configuration. Automatically handles gear transitions based on engine RPM.
+
+**Arguments:**
+- **`gears` (int):** A count, as above (default: `5`).
+- **`clutch_strength` (float):** Default `2000.0`.
+- **`differential_ratio` (float):** Default `3.42`.
+- **`shift_up_rpm` (float):** RPM at which the gearbox upshifts (default: `5000.0`).
+- **`shift_down_rpm` (float):** RPM at which it downshifts (default: `2000.0`).
+
+**Attributes:** all of `Transmission`'s, plus `shift_up_rpm`, `shift_down_rpm` and `mode == 0`.
+
+
+## class Manual
+
+### __init__(...)
+
+A manual gearbox configuration.
+
+**Arguments:**
+- **`gears` (int):** A count, as above (default: `5`).
+- **`clutch_strength` (float):** Default **`5000.0`** — deliberately higher than `Transmission`'s `2000.0`, for firmer shifts.
+- **`differential_ratio` (float):** Default `3.42`.
+
+**Attributes:** all of `Transmission`'s, plus `mode == 1`.
+
+**On `mode`:** Jolt reads `Transmission::mode` only while serialising a wheeled vehicle, so an `Automatic` and a `Manual` drive identically there. The tracked path does use it.
+
+
 ## class Vehicle
 
 ### wheel_count (property)
@@ -1597,6 +1662,7 @@ Applies specialized driver inputs to a tracked vehicle (e.g., Tanks, Bulldozers)
 - **Kickstart Transmission Logic:** Tracked vehicles in Culverin include an automated gearbox. To prevent the vehicle from "crawling" when idle, the transmission defaults to Neutral. The moment the total throttle exceeds a minimal threshold, the engine automatically engages 1st gear to begin movement.
 - **Automatic Wake-up:** Like wheeled vehicles, calling this method automatically wakes up the vehicle’s hull. This ensures the tank remains physically active and responsive to control inputs.
 - **Neutral Safety:** If no input is detected on either track, the vehicle automatically shifts back to Neutral, allowing it to remain stationary on slopes without burning simulated fuel or jittering.
+- **Zero-Vector Safety:** `set_tank_input(0, 0, brake)` is treated as neutral. Both ratios are clamped away from zero before they reach Jolt, whose track synchronisation divides left by right — feeding it `0, 0` produced `0/0` and wrote `NaN` into both tracks' angular velocities.
 
 **Simulation Tip:**
 For heavy machinery, abrupt changes from full forward to full reverse can cause the vehicle to "buck" due to the high simulated torque. For smooth movement, interpolate your input values over a few frames to simulate a human driver's throttle response.
@@ -1774,6 +1840,7 @@ Retrieves a detailed snapshot of the physical state for every limb in the ragdol
 - **`info` (list[dict]):** A list of dictionaries, one per limb, containing:
     - **`index` (int):** The joint index within the ragdoll.
     - **`pos` (tuple):** The current `(x, y, z)` world-space position of the limb.
+    - **`rot` (tuple):** The current `(x, y, z, w)` world-space orientation of the limb, unit length.
     - **`vel` (tuple):** The current `(vx, vy, vz)` linear velocity of the limb.
 
 **Operational Features:**
@@ -1799,6 +1866,7 @@ Assigns a physical body and a mechanical joint to a specific skeleton bone. This
 - **`twist_min` / `twist_max` (float):** The rotation limits (in radians) around the limb's primary axis.
 - **`cone_angle` (float):** The half-angle limit for the limb's "swing" motion.
 - **`axis` / `normal` (tuple):** Vector pairs defining the local orientation of the joint's constraint.
+- **`pos` (tuple, optional):** Local position of the part within the ragdoll. A malformed value is a `ValueError` and the part is not added — the call never leaves a half-added part behind.
 
 **Operational Features:**
 - **Automatic Scaling:** Culverin calculates the correct inertia tensor for each limb based on its shape and mass.

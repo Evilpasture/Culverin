@@ -27,6 +27,7 @@ enum class SoftBodySettingsError : std::uint32_t {
     VertexOutOfRange,
     ConstraintsAlreadyCreated,
     ConstraintsMissing,
+    MaterialSpanMismatch,
 };
 
 class SoftBodySettings {

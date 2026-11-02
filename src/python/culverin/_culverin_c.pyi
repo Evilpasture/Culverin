@@ -23,20 +23,49 @@ class Engine:
     max_rpm: float
     min_rpm: float
     inertia: float
+    def __init__(
+        self,
+        max_torque: float = 500.0,
+        max_rpm: float = 7000.0,
+        min_rpm: float = 1000.0,
+        inertia: float = 0.5,
+    ) -> None: ...
 
 class Transmission:
     clutch_strength: float
     differential_ratio: float
     ratios: list[float]
     reverse_ratios: list[float]
+    # `gears` is a count, not a list: it selects the first `gears` entries of
+    # [2.66, 1.78, 1.30, 1.00, 0.74, 0.50]. Assign `.ratios` to override.
+    def __init__(
+        self,
+        gears: int = 5,
+        clutch_strength: float = 2000.0,
+        differential_ratio: float = 3.42,
+    ) -> None: ...
 
 class Automatic(Transmission):
-    mode: int
+    mode: int  # Always 0. Jolt reads it only when serialising a wheeled vehicle.
     shift_up_rpm: float
     shift_down_rpm: float
+    def __init__(
+        self,
+        gears: int = 5,
+        clutch_strength: float = 2000.0,
+        differential_ratio: float = 3.42,
+        shift_up_rpm: float = 5000.0,
+        shift_down_rpm: float = 2000.0,
+    ) -> None: ...
 
 class Manual(Transmission):
-    mode: int
+    mode: int  # Always 1.
+    def __init__(
+        self,
+        gears: int = 5,
+        clutch_strength: float = 5000.0,  # Note: 5000, not Transmission's 2000.
+        differential_ratio: float = 3.42,
+    ) -> None: ...
 
 class WorldSettings(TypedDict, total=False):
     gravity: Vec3  # Default: (0.0, -9.81, 0.0)
@@ -124,9 +153,19 @@ type Matrix4x4 = tuple[
     float,
 ]
 
-class WheelConfig(TypedDict):
-    pos: tuple[float, float, float]
-    radius: float
+class WheelConfig(TypedDict, total=False):
+    pos: tuple[float, float, float]  # Required in practice; local to the chassis
+    radius: float  # Default: 0.4
+    width: float  # Default: 0.2
+    brake_torque: float  # Default: 1500.0
+    handbrake_torque: float  # Default: 4000.0
+    suspension: float  # Default: 0.3 (max travel)
+    spring_freq: float  # Default: 1.5
+    spring_damp: float  # Default: 0.5
+    # Whether this wheel steers. Omit to keep the historical "steers if its
+    # local z is positive" rule, which leaves a -Z-facing chassis with no
+    # steering wheels at all.
+    steers: bool
 
 class TrackConfig(TypedDict):
     indices: list[int]  # The indices of the wheels this track wraps

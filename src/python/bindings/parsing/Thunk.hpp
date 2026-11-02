@@ -16,7 +16,8 @@
 // each call site sets it on its own local before `Parse` -- and a missing
 // optional argument leaves the target untouched, so a tuple of zeroes would
 // silently change such a method's behaviour. Those keep their hand-written
-// wrapper until `Arg` grows a default.
+// wrapper. Relaxing this means giving `Arg` a default or seeding the tuple
+// from the caller; see the note on `Arg` in Parser.hpp.
 
 #include "bindings/parsing/Parser.hpp"
 #include "bindings/parsing/ParseError.hpp"

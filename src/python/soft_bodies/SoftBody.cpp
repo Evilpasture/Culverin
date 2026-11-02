@@ -16,14 +16,18 @@ namespace CPH::Python {
 
 namespace {
 
-// TODO(smell): the two "modified after optimize" diagnostics have always
-// differed -- add_vertex/add_face/add_faces say "Cannot modify settings after
-// optimize()" and add_vertices says "Cannot modify after optimize()" -- and
-// nothing in the history says why. They live in named constants so the
-// difference cannot drift by accident; unifying them is user-visible and
-// needs a deprecation, not a drive-by edit.
+// The "modified after optimize" diagnostics.
+//
+// These used to differ: add_vertex/add_face/add_faces said "Cannot modify
+// settings after optimize()" while add_vertices said "Cannot modify after
+// optimize()". Nothing in the history recorded why, and no test asserted
+// either string, so the difference was drift rather than contract.
+//
+// They are now one message. Both names stay so the call sites keep reading as
+// "the single-argument entry points" versus "the batch entry point", and so a
+// future divergence is a one-line change rather than a re-derivation.
 constexpr const char *kOptimizedMessageSingle = "Cannot modify settings after optimize()";
-constexpr const char *kOptimizedMessageBatch  = "Cannot modify after optimize()";
+constexpr const char *kOptimizedMessageBatch  = kOptimizedMessageSingle;
 
 } // namespace
 
@@ -284,14 +288,20 @@ void SoftBodySharedSettingsDealloc(SoftBodySharedSettingsObject *self) {
 // Method: settings.add_pinned_vertex(index) (METH_O)
 /**
  * @deprecated Use add_vertices with an inverse mass of 0.0 instead.
- * This method is now a no-op because the underlying Jolt wrapper does not
- * support post-insertion vertex modification.
+ * This method is a no-op. It is kept -- still deprecated, still warning --
+ * so that code written against it keeps running.
  *
- * TODO(smell): that reason died with JoltC. The settings are a native
- * CPH::SoftBodySettings now and the vertex array is writable
- * (mVertices[index].mInvMass = 0 is the pin), so the no-op is kept only
- * because making it work would contradict the DeprecationWarning this same
- * function raises -- a decision for whoever owns the API, not a bug fix.
+ * The no-op used to be forced: the JoltC wrapper offered no post-insertion
+ * vertex modification. That constraint is gone. `CPH::SoftBodySettings` is
+ * native now and the vertex array is writable, so `mVertices[index].mInvMass
+ * = 0.0f` would actually pin the vertex.
+ *
+ * It is deliberately not implemented: this function raises a
+ * DeprecationWarning on every call, so honouring the pin would mean the
+ * deprecated spelling works better than the one it tells callers to migrate
+ * to, and the warning would be promising a removal that changes results.
+ * Whether the deprecated path stays inert or starts working is a call for
+ * whoever owns the API; it is not a bug fix.
  */
 [[gnu::deprecated("Use add_vertices with inv_mass=0.0 instead")]]
 [[nodiscard]] PyObject *

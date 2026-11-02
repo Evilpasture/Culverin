@@ -119,13 +119,15 @@ std::expected<int, Error> RagdollSettings::AddPart(const JPH::Shape *shape,
         // field SetPartToParent later read. So default-constructing here and
         // applying only the overrides below is equivalent field for field.
         auto *constraint = new JPH::SwingTwistConstraintSettings();
-        // TODO(bug): the JoltC path wrote constraint.base.enabled = true, but
-        // JPH_RagdollSettings_SetPartToParent never copied `base` across (nor
-        // constraintPriority, the step-count overrides, drawConstraintSize or
-        // userData), so that write was dead. It was harmless only because
-        // ConstraintSettings::mEnabled defaults to true (Constraint.h:15). Left
-        // unset here to match observable behaviour; setting it would be a no-op
-        // today and a behaviour change if that default ever moved.
+        // Stated rather than inherited. The JoltC path set base.enabled = true
+        // but JPH_RagdollSettings_SetPartToParent never copied `base` across,
+        // so that write was dead and the constraint was enabled only because
+        // ConstraintSettings::mEnabled happens to default to true
+        // (Constraint.h:78). Relying on an upstream default for a value this
+        // code is responsible for is exactly the kind of thing that turns into
+        // a silent change when the dependency moves; say it out loud instead.
+        // Today this is a no-op.
+        constraint->mEnabled             = true;
         constraint->mPosition1           = JPH::RVec3::sZero();
         constraint->mPosition2           = JPH::RVec3::sZero();
         constraint->mTwistAxis1          = request.axis;
@@ -331,8 +333,10 @@ bool Ragdoll::CopyDebugInfo(std::span<PhysicsRagdollBodyDebugInfo> out) const {
     for (int i = 0; i < ragdoll_body_count; ++i) {
         const JPH::BodyID body_id = ragdoll_->GetBodyID(i);
         out[i].position           = bodies.GetPosition(body_id);
-        // TODO(smell): rotation is fetched and stored, but no caller has ever
-        // surfaced it; preserved verbatim from the C path.
+        // Kept to preserve the struct's layout: PhysicsRagdollBodyDebugInfo is
+        // filled through a caller-owned span of this type. The field itself is
+        // surfaced by the binding -- get_debug_info reports it as "rot" -- so
+        // it is not the dead fetch the C path left behind.
         out[i].rotation        = bodies.GetRotation(body_id);
         out[i].linearVelocity = bodies.GetLinearVelocity(body_id);
     }

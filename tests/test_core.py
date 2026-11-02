@@ -2,11 +2,13 @@ import array
 import contextlib
 import math
 import re
+import struct
 import textwrap
 import threading
 import time
 import types
 import unittest
+import warnings
 from pathlib import Path
 from types import CodeType, SimpleNamespace
 from typing import Any, Literal, Protocol
@@ -998,6 +1000,24 @@ class TestMultiWorldConcurrency(unittest.TestCase):
 
 
 class TestCharactersAndVehicles(CulverinTestCase):
+    def test_character_teleport_lands_exactly_where_set(self) -> None:
+        """set_position must rewrite the previous frame too, not only the current one.
+
+        Left stale, the previous position feeds motion integration and the
+        character is dragged back toward where it used to be on the next step.
+        """
+        self.world.create_body(pos=(0, -1, 0), size=(100, 1, 100), motion=culverin.MOTION_STATIC)
+        character = self.world.create_character(pos=(0, 2, 0))
+        self.world.step(1 / 60.0)
+
+        character.set_position((7.0, 3.0, -2.0))
+        self.world.step(0)
+
+        x, y, z = character.get_position()
+        self.assertAlmostEqual(x, 7.0, places=4)
+        self.assertAlmostEqual(y, 3.0, places=3)
+        self.assertAlmostEqual(z, -2.0, places=4)
+
     def test_character_lifecycle_and_movement(self) -> None:
         char = self.world.create_character(pos=(0, 2, 0), height=1.8, radius=0.4)
         self.assertTrue(self.world.is_alive(char.handle))
@@ -2555,9 +2575,18 @@ class TestDocumentation(unittest.TestCase):
                 # 3. Extract Docstring
                 actual_doc = member.__doc__
 
+                # A missing docstring here is almost never a missing docstring:
+                # it is DOCS.md being newer than the *installed* package. The
+                # staleness check below is separate so this failure names the
+                # real cause instead of sending you looking for a typo.
                 self.assertIsNotNone(
                     actual_doc,
-                    f"STITCHING FAILURE: {key} exists in DOCS.md but has no runtime __doc__",
+                    f"STITCHING FAILURE: {key} exists in DOCS.md but has no runtime __doc__\n"
+                    f"  importing culverin from: {culverin.__file__}\n"
+                    f"  version {getattr(culverin, '__version__', 'unknown')}\n"
+                    f"  If that path is a site-packages copy, the tests are running "
+                    f"against an installed build that predates DOCS.md. "
+                    f"Reinstall the package (or put src/python on PYTHONPATH) and retry.",
                 )
 
                 # 4. Content Match
@@ -2673,6 +2702,33 @@ class TestKinematics(CulverinTestCase):
 
         assert (v := self.get_pos(h)) is not None
         self.assertLess(v[1], 10.0, "Body did not start falling after switching to dynamic")
+
+    def test_motion_type_switches_carry_the_right_layer(self) -> None:
+        """Each motion type set at runtime must behave as that type afterwards.
+
+        The queued command carries the layer it was issued with; if a switch
+        were re-derived from the body's previous state instead, a body would
+        keep its old gravity behaviour after the change.
+        """
+        h = self.world.create_body(pos=(0, 5, 0), size=(1, 1, 1), mass=1.0)
+        self.world.step(0)
+
+        for motion, should_fall in (
+            (culverin.MOTION_STATIC, False),
+            (culverin.MOTION_KINEMATIC, False),
+            (culverin.MOTION_DYNAMIC, True),
+        ):
+            self.world.set_motion_type(h, motion)
+            if motion is culverin.MOTION_DYNAMIC:
+                self.world.set_position(h, 0, 5, 0)
+            self.world.step(0)
+            start = self.world.get_position(h)
+            assert start is not None
+            for _ in range(30):
+                self.world.step(1 / 60.0)
+            end = self.world.get_position(h)
+            assert end is not None
+            self.assertEqual(end[1] < start[1] - 1e-3, should_fall, f"{motion}: {start} -> {end}")
 
     def test_kinematic_rotation_interaction(self) -> None:
         """Kinematic rotation should apply tangential velocity to dynamic objects."""
@@ -3640,6 +3696,111 @@ class TestCharacterInteractions(CulverinTestCase):
             displacement_sq, 0.1, f"Character failed to orbit. Start={start_pos}, End={end_pos}"
         )
         self.assertTrue(char_sticky.is_grounded(), f"Character fell off platform. Y={end_pos[1]}")
+
+
+class TestSoftBodyDiagnostics(unittest.TestCase):
+
+
+    def _optimized_settings(self) -> culverin.SoftBodySharedSettings:
+        settings = culverin.SoftBodySharedSettings()
+        settings.add_vertex((0, 0, 0), inv_mass=1.0)
+        settings.create_constraints(0.0001)
+        settings.optimize()
+        return settings
+
+    def test_both_paths_report_one_message(self) -> None:
+        settings = self._optimized_settings()
+        messages: set[str] = set()
+        for call in (
+            lambda: settings.add_vertex((1, 0, 0), inv_mass=1.0),
+            lambda: settings.add_vertices([((1, 0, 0), 1.0)]),
+        ):
+            with self.assertRaises(RuntimeError) as caught:
+                call()
+            messages.add(str(caught.exception))
+        self.assertEqual(len(messages), 1, f"diagnostics diverged: {messages}")
+        self.assertIn("optimize()", messages.pop())
+
+    def test_add_pinned_vertex_still_warns_and_stays_inert(self) -> None:
+        """The no-op is deliberate; see the note on the binding."""
+        settings = culverin.SoftBodySharedSettings()
+        settings.add_vertex((0, 0, 0), inv_mass=1.0)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            settings.add_pinned_vertex(0)
+        self.assertEqual(len(caught), 1)
+        self.assertTrue(issubclass(caught[-1].category, DeprecationWarning))
+        self.assertIn("add_vertices", str(caught[-1].message))
+
+
+class TestSoftBodyMaterialSpan(unittest.TestCase):
+    """src/soft_bodies/SoftBodySettings.cpp -- unchecked ``materials`` span.
+
+    The binding rejects a mismatched span before it reaches the native call, so
+    the Python-visible behaviour here is unchanged; the fix is that the native
+    ``AddFaces`` now states and checks its own precondition instead of relying
+    on every caller to re-state it. These tests lock the Python contract down,
+    which is what protects the fix from being "simplified" away.
+    """
+
+    def _settings(self, corners=((0, 0, 0), (1, 0, 0), (0, 1, 0))) -> culverin.SoftBodySharedSettings:
+        settings = culverin.SoftBodySharedSettings()
+        for corner in corners:
+            settings.add_vertex(corner, inv_mass=1.0)
+        return settings
+
+    @staticmethod
+    def _u32(*values: int) -> bytes:
+        return struct.pack(f"<{len(values)}I", *values)
+
+    def test_matched_materials_accepted(self) -> None:
+        settings = self._settings()
+        settings.add_faces(self._u32(0, 1, 2), self._u32(7))
+        self.assertIsNotNone(settings)
+
+    def test_materials_omitted_accepted(self) -> None:
+        settings = self._settings()
+        settings.add_faces(self._u32(0, 1, 2))
+        self.assertIsNotNone(settings)
+
+    def test_mismatched_materials_rejected(self) -> None:
+
+        settings = self._settings(((0, 0, 0), (1, 0, 0), (0, 1, 0), (1, 1, 0)))
+        with self.assertRaises(ValueError) as caught:
+            settings.add_faces(self._u32(0, 1, 2, 0, 2, 3), self._u32(7))
+        self.assertIn("materials length must match face count", str(caught.exception))
+
+    def test_indices_must_be_triplets(self) -> None:
+        settings = self._settings()
+        with self.assertRaises(ValueError):
+            settings.add_faces(b"\x00\x01\x00\x00\x02\x00\x00")  # 7 bytes
+
+
+class TestBufferValidation(unittest.TestCase):
+    """Validation of caller-supplied buffer views.
+
+    RequireElementsOf / RequireMultipleOf decide which buffers are rejected;
+    the message and the boundary are part of what callers see.
+    """
+
+    def test_handle_buffer_validation_message_is_unchanged(self) -> None:
+        """A handle buffer that is not a whole number of handles is rejected
+        with this exact message."""
+        world = culverin.PhysicsWorld(settings={"max_bodies": 64})
+        world = culverin.PhysicsWorld(settings={"max_bodies": 64})
+        handle = world.create_body(pos=(0, 0, 0), size=(1, 1, 1), mass=1.0)
+        world.step(0)
+        bad = (handle.to_bytes(8, "little") + b"\x00\x00\x00") * 3  # 27 bytes
+        with self.assertRaises(ValueError) as caught:
+            world.apply_buoyancy_batch(bad, 0.0)
+        self.assertIn("Handle buffer must be uint64 array", str(caught.exception))
+
+    def test_aligned_handle_buffer_is_still_accepted(self) -> None:
+        """The same buffer, padded to a multiple of 8, passes the check."""
+        world = culverin.PhysicsWorld(settings={"max_bodies": 64})
+        handle = world.create_body(pos=(0, 0, -100), size=(1, 1, 1), mass=1.0)
+        world.step(0)
+        world.apply_buoyancy_batch(handle.to_bytes(8, "little") + b"\x00" * 8, 0.0)
 
 
 if __name__ == "__main__":

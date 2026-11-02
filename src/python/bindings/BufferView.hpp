@@ -140,13 +140,13 @@ class BufferView final {
 
     /// Tells the view the caller reads it as `element_bytes`-wide elements.
     ///
-    /// The predicate is "the exporter does not declare that item size *and*
-    /// the length is not a whole number of them", which is what the hand
-    /// written handle check did. TODO(smell): the itemsize half is close to
-    /// dead -- an exporter that declares 8-byte items and a length that is not
-    /// a multiple of 8 is malformed -- so this is effectively a multiple-of-N
-    /// check wearing a costume. Preserved as-is because loosening it changes
-    /// which buffers are rejected.
+    /// Equivalent to `RequireMultipleOf`: the exporter's declared `itemsize` is
+    /// not consulted. It cannot make a difference -- a buffer that declares
+    /// `element_bytes`-wide items and whose length is not a multiple of
+    /// `element_bytes` is malformed, so for every well-formed exporter the
+    /// length check and the old "declared size *or* divides evenly" predicate
+    /// agree. This spelling is kept because it is the name the one call site
+    /// reads best with; new call sites should use `RequireMultipleOf`.
     [[nodiscard]] bool RequireElementsOf(std::size_t element_bytes, const char *message)
         const noexcept;
 
@@ -181,18 +181,13 @@ inline bool BufferView::RequireAtLeast(std::size_t minimum_bytes, const char *me
 
 inline bool BufferView::RequireElementsOf(std::size_t element_bytes, const char *message)
     const noexcept {
-    if (element_bytes == 0) {
-        return true;
-    }
-    // Accept if the exporter declares this item size, *or* the length divides
-    // evenly -- the disjunction, not the conjunction. Kept verbatim from the
-    // hand written check this replaces.
-    const std::size_t item_size = view_.itemsize > 0 ? static_cast<std::size_t>(view_.itemsize) : 0;
-    if (item_size == element_bytes || SizeBytes() % element_bytes == 0) {
-        return true;
-    }
-    PyErr_SetString(PyExc_ValueError, message);
-    return false;
+    // A multiple-of-N check, and nothing else. The hand-written handle check
+    // this replaced accepted "the exporter declared this item size *or* the
+    // length divides evenly"; the declared half is redundant for a well-formed
+    // exporter (see the declaration) and is not needed to keep behaviour.
+    // An empty view is a multiple of everything, which is the same answer the
+    // old predicate gave.
+    return RequireMultipleOf(element_bytes, message);
 }
 
 inline std::optional<BufferView> BufferView::Acquire(PyObject *owner) noexcept {

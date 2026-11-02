@@ -134,15 +134,17 @@ void WorldBuffer::ReleaseExport() noexcept {
 
 void WorldBuffer::OnBufferReleased() noexcept {
 #if defined(STRICT_THREAD_SAFETY)
-    // TODO(smell): nothing increments `activeQueries` for a proxy read, so this
-    // decrement is unbalanced -- it exists because the getbuffer path used to
-    // count a query, and the branch it lives in has never been compiled. Kept
-    // verbatim (it now at least compiles) rather than deleted, so whoever
-    // re-enables STRICT_THREAD_SAFETY sees the accounting they must fix.
-    if (world_->activeQueries.fetch_sub(1, std::memory_order::release) == 1) {
-        const std::scoped_lock notify(world_->stepSync.mutex);
-        world_->stepSync.cond.notify_all();
-    }
+    // No query accounting here. The getbuffer path used to take a query
+    // (`activeQueries.fetch_add`) and this branch used to give it back, but
+    // nothing has incremented `activeQueries` for a proxy read since the
+    // exporter moved to the published shadow buffers -- the decrement was
+    // therefore unbalanced, driving the counter negative and waking
+    // step_sync's waiters spuriously.
+    //
+    // Re-enabling STRICT_THREAD_SAFETY means fixing the accounting on both
+    // sides: whatever increments `activeQueries` for an export must also be
+    // what this branch decrements. Until such an increment exists there is
+    // nothing to release, so the correct body for this callback is empty.
 #endif
 }
 

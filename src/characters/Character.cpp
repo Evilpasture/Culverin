@@ -671,9 +671,11 @@ void Character::SetPosition(const JPH::RVec3 &position) {
 
     virtual_->SetPosition(position);
 
-    // TODO(smell): the snap this represents is invisible to the interpolator
-    // because prev and current are set to the same value. Splitting them would
-    // change the rendered motion, so it is left as it was.
+    // prev and current are set to the same value on purpose: this is a
+    // teleport, and a renderer interpolating between the pre-teleport position
+    // and the new one would smear the character across the gap instead of
+    // showing it arrive. The "snap" is therefore invisible to the interpolator
+    // by design, not by oversight.
     const std::uint32_t dense = DenseIndexLocked();
     const PosStride p_val{position.GetX(), position.GetY(), position.GetZ(), 0.0};
     world_->bodies.positions[dense]      = p_val;
