@@ -189,5 +189,58 @@ class TestResizeContracts(unittest.TestCase):
         self.assertEqual(memoryview(world.positions).nbytes, 200 * 4 * 8)
 
 
+class TestArgumentDiagnosticContracts(unittest.TestCase):
+    """The text and shape of argument-parsing diagnostics.
+
+    These are the observable contract of the parser layer: which errors are
+    decorated with a signature and which are not, and the wording callers may
+    have matched on. They exist so a refactor of the parser cannot quietly
+    change what a user sees.
+    """
+
+    def test_argument_diagnostics_still_distinguish_the_shapes(self) -> None:
+        """A stubbed parser keeps the converter's raw error on a full-arity call.
+
+        Parser.hpp's kStubbed flag is deliberate bug-compatibility: an
+        all-required parser reached by full-arity positionals reports the
+        converter's raw error, every other path decorates it. Flipping that
+        flag fails here first.
+        VectorOp is all-required with arity 5 -> a stubbed parser.
+        """
+        world = culverin.PhysicsWorld(settings={"max_bodies": 64})
+        handle = world.create_body(pos=(0, 10, 0), size=(1, 1, 1), mass=1.0)
+        world.step(0)
+
+        # Full-arity positional call: the converter's own error, undecorated.
+        with self.assertRaises(TypeError) as full:
+            world.apply_impulse(handle, "x", 0.0, 0.0)
+        raw = str(full.exception)
+        self.assertEqual(raw, "must be real number, not str")
+        self.assertNotIn("Signature context", raw)
+
+        # The same conversion reached by keyword carries the signature.
+        with self.assertRaises(TypeError) as keyword:
+            world.apply_impulse(handle=handle, x="x", y=0.0, z=0.0)
+        decorated = str(keyword.exception)
+        self.assertIn("Signature context", decorated)
+        self.assertNotEqual(raw, decorated)
+
+    def test_guard_and_conversion_diagnostics_are_contractual(self) -> None:
+        """The two diagnostic channels keep their wording and their parts."""
+        world = culverin.PhysicsWorld(settings={"max_bodies": 64})
+        with self.assertRaises(TypeError) as guard:
+            world.create_body(is_sensor="NotABool")
+        message = str(guard.exception)
+        self.assertIn("must be bool, not str", message)
+        self.assertIn("Received value: 'NotABool'", message)
+
+        with self.assertRaises(TypeError) as missing:
+            world.apply_impulse()
+        message = str(missing.exception)
+        self.assertIn("missing 4 required positional arguments", message)
+        self.assertIn("- handle (int)", message)
+        self.assertIn("Expected signature:", message)
+
+
 if __name__ == "__main__":
     unittest.main()

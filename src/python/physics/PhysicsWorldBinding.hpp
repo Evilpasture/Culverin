@@ -29,20 +29,30 @@ static_assert(alignof(PhysicsWorldObject) <= alignof(std::max_align_t),
 // Python/GIL-aware adapter around the native command processor.
 void SyncAndFlushInternal(PhysicsWorldObject *self);
 
-// Validate a raw handle against the shadow state. On failure the shadow lock
-// is released and ValueError is raised; the caller must return nullptr.
+// Validate a raw handle against the shadow state. Raises ValueError and returns
+// nullopt when the handle is stale; the caller must return nullptr.
 //
-// TODO(smell): the helper releases a lock it never took, so every caller has
-// to hold shadow_lock before calling it and nothing verifies that. A caller
-// that validates without the lock unlocks an unowned mutex (UB). The fix is
-// for the caller's scoped lock to own the release, not for the validator to
-// reach into it.
+// This function takes and releases no lock. Resolution goes through
+// BodyRegistry, whose generation check is a lock-free acquire load, so
+// validation does not need the shadow lock to be correct -- it only observes
+// the registry.
+//
+// It used to unlock `shadowLock` on the failure path, which meant every caller
+// had to hold that lock before calling it and nothing verified that a caller
+// did. A caller that validated without the lock unlocked an unowned mutex,
+// which is undefined behaviour, and the requirement was documented in prose
+// only. Lock ownership now belongs entirely to the caller's scoped lock: this
+// helper can no longer unlock anything, so it cannot unlock something it does
+// not own.
+//
+// On the success path the caller still holds the shadow lock it took before
+// calling (see WorldGetSoftBodyVertices), and the slot stays stable because
+// retiring a slot requires that same lock.
 [[nodiscard]] static inline std::optional<std::uint32_t> ValidateHandle(PhysicsWorldObject *self,
-                                                                        uint64_t h_raw) {
+                                                                        uint64_t h_raw) noexcept {
     const std::optional<std::uint32_t> slot =
         self->physics.Resolve(static_cast<BodyHandle>(h_raw));
     if (!slot) [[unlikely]] {
-        (self->physics.shadowLock).unlock();
         PyErr_SetString(PyExc_ValueError, "Invalid or stale handle");
         return std::nullopt;
     }

@@ -164,15 +164,12 @@ struct FlushContext {
     void operator()(SetMotionType &cmd) const {
         bi.SetMotionType(bid, static_cast<JPH::EMotionType>(cmd.motionType),
                          JPH::EActivation::Activate);
-        // TODO(smell): the object layer is derived from the motion type rather
-        // than carried on the command -- SetMotionType only has a motion_type
-        // field. Static(0) -> ObjectLayer::Static(0), Kinematic(1)/Dynamic(2) ->
-        // ObjectLayer::Dynamic(1). That happens to match Types.hpp:95-100 today
-        // but conflates motion type with collision layer, and can never select
-        // ObjectLayer::Vehicle. Preserved verbatim; fixing it means widening the
-        // command, which is a behaviour change.
-        bi.SetObjectLayer(bid,
-                          static_cast<JPH::ObjectLayer>(cmd.motionType == 0 ? 0 : 1));
+        // The layer travels with the command. This used to be derived as
+        // `cmd.motionType == 0 ? 0 : 1`, which happened to match the layer
+        // table but conflated motion type with collision layer and could never
+        // name ObjectLayer::Vehicle. It is now the layer the caller asked for,
+        // which is what the enqueuing side resolves from the motion type.
+        bi.SetObjectLayer(bid, static_cast<JPH::ObjectLayer>(cmd.objectLayer));
     }
 
     void operator()(Activate &) const { bi.ActivateBody(bid); }

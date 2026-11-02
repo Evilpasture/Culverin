@@ -10,6 +10,7 @@ target_sources(
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Error.hpp>"
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/FloatBits.hpp>"
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Handle.hpp>"
+        "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Log.hpp>"
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Profiling.hpp>"
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Threading.hpp>"
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Types.hpp>"

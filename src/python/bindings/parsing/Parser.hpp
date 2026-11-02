@@ -48,12 +48,20 @@ template <std::size_t N> struct FixedString {
     [[nodiscard]] constexpr const char *c_str() const noexcept { return value; }
 };
 
-// TODO(smell): `Arg` carries the name and the required flag but not the
-// default value. Every call site sets its default on its own local before
-// `Parse`, and a missing optional argument leaves the target untouched -- so
-// no generic wrapper can reproduce a method with defaults, which is why
-// Thunk.hpp is limited to all-required parsers and why the wide parsers keep
-// their hand-written locals. Giving `Arg` a default value is the fix.
+// Argument declarations for `Parser<Name, Args...>`.
+//
+// `Arg` carries the name, the value type and the required flag. It
+// deliberately does not carry a default value: Python-visible defaults are
+// not the value-initialised ones (a wheel's `radius` defaults to 0.4, not
+// 0.0), and the parser can only ever see a local the caller already seeded.
+// Each call site therefore sets its default on its own local before `Parse`,
+// and the parser leaves an unsupplied optional argument untouched.
+//
+// That is what limits `Thunk.hpp` to all-required parsers: a thunk allocates
+// its locals value-initialised, so it can only be used where every argument is
+// supplied. Reproducing a method's defaults generically would need `Arg` to
+// carry the default, or the thunk to take the seeded tuple from the caller.
+// The wide parsers keep their hand-written locals until then.
 template <FixedString Name, typename T, bool Required = false> struct Arg {
     using ValueType = T;
 
@@ -167,8 +175,14 @@ template <FixedString Name, typename... Args> class Parser final {
     // otherwise unobservable -- but it is observable in the text of a
     // TypeError, so it is preserved here rather than changed under the banner
     // of a refactor.
-    // TODO(smell): unify on the decorated message; tests/test_diagnostics.py
-    // pins neither form, so this is a deliberate, disclosed choice.
+    //
+    // Substituting the decorated message here is a user-visible text change,
+    // so no test asserted either form: tests/test_diagnostics.py checks the
+    // parts of the diagnostic that are contractual (the signature, the type
+    // name, the repr) and not which of the two conversion strings appears.
+    // tests/test_differential_contracts.py now pins both shapes, so switching
+    // this flag starts failing there first. Do that deliberately, with the
+    // release notes in hand.
     static constexpr bool kStubbed = kArity >= 1 && kArity <= 8 && kAllRequired;
     static constexpr detail::ConversionDiagnostics kPositionalDiagnostics =
         kStubbed ? detail::ConversionDiagnostics::RawWhenStubbed

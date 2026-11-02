@@ -5,6 +5,8 @@
 #include "physics/RotationSanitize.hpp"
 #include "physics/SlotState.hpp"
 
+#include <bit>
+#include <cstdint>
 #include <utility>
 
 
@@ -13,6 +15,21 @@ namespace CPH {
 namespace {
 
 using namespace CPH::cmd;
+
+// The collision layer that goes with a motion type.
+//
+// This is the one place the mapping is written down now. It reproduces the
+// relationship the flush side used to derive inline -- Static maps to the
+// static layer, Kinematic and Dynamic both map to the dynamic layer -- so a
+// body that is switched to another motion type keeps landing in the layer it
+// always has. ObjectLayer::Vehicle stays reserved for vehicles, which is why
+// the layer is now carried on the command instead of being re-derived from the
+// motion type at flush time.
+std::uint32_t LayerForMotionType(std::int32_t motion_type) noexcept {
+    return motion_type == static_cast<std::int32_t>(JPH::EMotionType::Static)
+               ? std::to_underlying(ObjectLayer::Static)
+               : std::to_underlying(ObjectLayer::Dynamic);
+}
 
 std::uint32_t ImmediateMask(PhysicsBodyOperationType type) {
     switch (type) {
@@ -57,7 +74,7 @@ bool EnqueueOperation(PhysicsWorld *world, std::uint32_t slot,
         world->EnqueueCommand(slot, SetAngularVelocity{op.vector});
         return true;
     case PhysicsBodyOperationType::SetMotionType:
-        world->EnqueueCommand(slot, SetMotionType{op.value});
+        world->EnqueueCommand(slot, SetMotionType{op.value, LayerForMotionType(op.value)});
         return true;
     case PhysicsBodyOperationType::Activate:
         world->EnqueueCommand(slot, Activate{});

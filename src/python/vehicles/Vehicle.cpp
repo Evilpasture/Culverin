@@ -41,6 +41,21 @@ bool ParseWheelConfig(PyObject *dict, CPH::WheelConfig &out) {
     out.suspension       = GetAttribute(dict, "suspension", out.suspension);
     out.springFreq      = GetAttribute(dict, "spring_freq", out.springFreq);
     out.springDamp      = GetAttribute(dict, "spring_damp", out.springDamp);
+
+    // Optional. Absent leaves the flag unset, which keeps the historical
+    // "steers if its local z is positive" inference; present says so outright,
+    // and is the only way to make a wheel on a -Z-facing chassis steer.
+    if (PyObject *steers = PyDict_GetItemString(dict, "steers"); steers != nullptr) {
+        if (steers == Py_True) {
+            out.steers = true;
+        } else if (steers == Py_False) {
+            out.steers = false;
+        } else {
+            PyErr_SetString(PyExc_TypeError, "Wheel 'steers' must be a bool");
+            return false;
+        }
+    }
+
     return true;
 }
 
@@ -99,18 +114,48 @@ void ParseTransmission(PyObject *py_transmission, CPH::TransmissionConfig &out) 
 
 // (position, rotation) pair, the shape both wheel queries have always returned.
 //
-// TODO(smell): PyTuple_Pack already increfs each element, so the fresh
-// references from PyFloat_FromDouble leak on every call. Switching to
-// PyTuple_SET_ITEM (which steals) fixes it but changes observable refcounts, so
-// it is left for a dedicated fix.
+// Every float is built with PyFloat_FromDouble and handed straight to
+// PyTuple_SET_ITEM, which *steals* the reference. The previous spelling passed
+// those fresh references to PyTuple_Pack, which increfs instead of stealing, so
+// seven float objects leaked on every get_wheel_transform /
+// get_wheel_local_transform call. The leak was invisible to callers -- the
+// returned tuples are identical either way -- so it is fixed here rather than
+// preserved.
+// Element type is the caller's, not float: WheelTransform keeps world
+// positions in double precision (px/py/pz are double) and only the rotation in
+// float, so a float buffer here would quietly round the translation.
+template <typename T>
+PyObject *PackFloats(const T *values, int count) {
+    PyObject *tuple = PyTuple_New(count);
+    if (tuple == nullptr) [[unlikely]] {
+        return nullptr;
+    }
+    for (int i = 0; i < count; ++i) {
+        PyObject *item = PyFloat_FromDouble(values[i]);
+        if (item == nullptr) [[unlikely]] {
+            // SET_ITEM stole every reference stored so far; the untouched
+            // slots are NULL, which Py_DECREF tolerates.
+            Py_DECREF(tuple);
+            return nullptr;
+        }
+        PyTuple_SET_ITEM(tuple, i, item);
+    }
+    return tuple;
+}
+
 PyObject *PackTransform(const CPH::WheelTransform &transform) {
-    PyObject *position = PyTuple_Pack(3, PyFloat_FromDouble(transform.px),
-                                      PyFloat_FromDouble(transform.py),
-                                      PyFloat_FromDouble(transform.pz));
-    PyObject *rotation = PyTuple_Pack(4, PyFloat_FromDouble(transform.rx),
-                                      PyFloat_FromDouble(transform.ry),
-                                      PyFloat_FromDouble(transform.rz),
-                                      PyFloat_FromDouble(transform.rw));
+    const double position_values[3] = {transform.px, transform.py, transform.pz};
+    const float  rotation_values[4] = {transform.rx, transform.ry, transform.rz, transform.rw};
+
+    PyObject *position = PackFloats(position_values, 3);
+    if (position == nullptr) [[unlikely]] {
+        return nullptr;
+    }
+    PyObject *rotation = PackFloats(rotation_values, 4);
+    if (rotation == nullptr) [[unlikely]] {
+        Py_DECREF(position);
+        return nullptr;
+    }
     PyObject *result = PyTuple_Pack(2, position, rotation);
     Py_DECREF(position);
     Py_DECREF(rotation);
@@ -211,14 +256,14 @@ bool ParseWheelConfigs(PyObject *py_wheels, std::vector<CPH::WheelConfig> &out) 
     }
 
     obj->vehicle = created->release();
-    obj->world   = reinterpret_cast<PhysicsWorldObject *>(Py_NewRef(self));
 
-    // TODO(bug): obj->world already took a strong reference via Py_NewRef above,
-    // and VehicleDealloc releases exactly one, so this extra INCREF leaks a world
-    // reference per vehicle and keeps the world alive as long as any vehicle
-    // object exists. WorldCreateTrackedVehicle does not do this. Preserved as-is;
-    // dropping the line is the fix and is a lifecycle change.
-    Py_INCREF(self);
+    // Exactly one strong reference to the world, released exactly once by
+    // VehicleDealloc (Py_XDECREF(self->world)). There used to be a second
+    // Py_INCREF(self) here, which nothing balanced: every wheeled vehicle
+    // leaked a whole PhysicsWorld reference, so the world -- and everything it
+    // owned -- stayed alive as long as any vehicle object existed. Tracked
+    // vehicles never did this, so the two paths disagreed.
+    obj->world = reinterpret_cast<PhysicsWorldObject *>(Py_NewRef(self));
 
     PyObject_GC_Track(reinterpret_cast<PyObject *>(obj));
     return reinterpret_cast<PyObject *>(obj);

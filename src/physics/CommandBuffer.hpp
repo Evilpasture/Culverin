@@ -61,6 +61,11 @@ struct SetAngularVelocity {
 };
 struct SetMotionType {
     std::int32_t motionType;
+    // Carried rather than derived from motionType. ObjectLayer and
+    // JPH::EMotionType are different vocabularies that only coincide by
+    // accident (Static==0; Kinematic and Dynamic both land on Dynamic), and
+    // deriving them made ObjectLayer::Vehicle unreachable.
+    std::uint32_t objectLayer;
 };
 struct Activate {};
 struct Deactivate {};

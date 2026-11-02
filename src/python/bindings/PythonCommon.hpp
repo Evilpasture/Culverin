@@ -10,13 +10,13 @@
 #endif
 
 #include "core/FloatBits.hpp"
+#include "core/Log.hpp"
 #include "core/Types.hpp"
 #include "physics/CommandBuffer.hpp"
 #include "physics/SlotState.hpp"
 #include <Python.h>
 
 #include <bit>
-#include <cstdarg>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -176,24 +176,11 @@ class Ref {
     PyObject *mObject = nullptr;
 };
 
-#if defined(CULVERIN_DEBUG)
-inline constexpr bool kDebugLogging = true;
-#else
-inline constexpr bool kDebugLogging = false;
-#endif
-
-inline void DebugLog(const char *format, ...) noexcept {
-    if constexpr (kDebugLogging) {
-        std::fputs("[Culverin] ", stderr);
-        va_list args;
-        va_start(args, format);
-        std::vfprintf(stderr, format, args);
-        va_end(args);
-        std::fputc('\n', stderr);
-    } else {
-        (void)format;
-    }
-}
+// The debug logger lives in src/core/Log.hpp so the native side can use the
+// same one; see the note there. Both spellings stay visible from this header
+// because binding code has always reached for them here.
+using ::CPH::DebugLog;
+using ::CPH::kDebugLogging;
 
 struct PositionVector {
     JPH::Real x;

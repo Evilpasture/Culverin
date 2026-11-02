@@ -74,13 +74,19 @@ std::expected<void, Error> SoftBodySettings::AddFaces(std::span<const std::uint3
         *out_bad_face = 0;
     }
 
-    // TODO(bug): `materials` is indexed by face, so a non-empty span shorter
-    // than face_count reads past its end. The Python binding rejects a
-    // mismatch and is the only caller, so this is unreachable today; it is a
-    // precondition this API states nowhere and checks nowhere.
     constexpr std::size_t kStride     = 3;
     const std::size_t     face_count  = indices.size() / kStride;
     const std::uint32_t   vertex_count_now = vertex_count();
+
+    // `materials` is indexed by face, so a non-empty span must be exactly
+    // face_count long. This used to be an unstated, unchecked precondition:
+    // a shorter span read past its end once per missing face. The Python
+    // binding validates first and is the only caller, which made that
+    // unreachable rather than correct. Rejecting it here means the API states
+    // its own precondition instead of relying on every caller to re-state it.
+    if (!materials.empty() && materials.size() != face_count) {
+        return std::unexpected(SoftBodySettingsError::MaterialSpanMismatch);
+    }
 
     // joltc's AddFaces reserved once and pushed each face; the zero-count early
     // return is part of that behaviour.

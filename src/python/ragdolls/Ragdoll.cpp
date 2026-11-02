@@ -109,13 +109,15 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
         return nullptr;
     }
 
-    // TODO(smell): a ragdoll object cannot be built without both of these, so
-    // this branch is unreachable unless construction half-failed -- and if it
-    // ever is reached it reports success by returning None, which is the one
-    // place in this API that treats a missing native object as a non-error.
-    // get_body_handles and get_debug_info carry the same early return.
+    // A ragdoll cannot be constructed without both of these, so this only
+    // fires if construction half-failed. It raises rather than returning None:
+    // reporting success for a call that did nothing is the one thing a
+    // half-constructed object must not do, and it is indistinguishable from
+    // "the pose was applied" at the Python boundary.
     if (!self->ragdoll || !self->world) [[unlikely]] {
-        Py_RETURN_NONE;
+        PyErr_SetString(PyExc_RuntimeError,
+                        "Ragdoll is not attached to a world (construction failed)");
+        return nullptr;
     }
 
     // 2. RESOURCE ACQUISITION
@@ -151,8 +153,12 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
 
 [[nodiscard]] PyObject * RagdollGetBodyHandles(RagdollObject *self,
                                                                  PyObject *args [[maybe_unused]]) {
-    if (!self->ragdoll) {
-        Py_RETURN_NONE;
+    // Same contract as drive_to_pose and get_debug_info: a missing native
+    // ragdoll is an error, not an empty answer.
+    if (!self->ragdoll) [[unlikely]] {
+        PyErr_SetString(PyExc_RuntimeError,
+                        "Ragdoll is not attached to a world (construction failed)");
+        return nullptr;
     }
 
     const int body_count = self->ragdoll->BodyCount();
@@ -199,8 +205,10 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
 
 [[nodiscard]] PyObject * RagdollGetDebugInfo(RagdollObject *self,
                                                                PyObject *ignored [[maybe_unused]]) {
-    if (!self->ragdoll || !self->world) {
-        Py_RETURN_NONE;
+    if (!self->ragdoll || !self->world) [[unlikely]] {
+        PyErr_SetString(PyExc_RuntimeError,
+                        "Ragdoll is not attached to a world (construction failed)");
+        return nullptr;
     }
 
     const int body_count = self->ragdoll->BodyCount();
@@ -241,12 +249,17 @@ RagdollSettingsStabilize(RagdollSettingsObject *self, PyObject *args [[maybe_unu
 
     for (int i = 0; i < body_count; ++i) {
         const PhysicsRagdollBodyDebugInfo *part = &info[i];
-        // TODO(smell): `part->rotation` is fetched from Jolt on every call but
-        // never surfaced in the returned dict -- only "pos" and "vel" are.
-        // Pre-existing; left as-is to keep the Python payload unchanged.
+        // "rot" is reported alongside "pos" and "vel". CopyDebugInfo has
+        // always fetched the body's rotation, but this dict dropped it, so the
+        // only consumer of a rotation it went to the trouble of reading was
+        // nothing. The key is additive: "index", "pos" and "vel" keep their
+        // names, types and order, so existing readers are unaffected.
         PyObject *dict = BuildDictionary(
             "index", i, "pos",
-            BuildTuple(part->position.GetX(), part->position.GetY(), part->position.GetZ()), "vel",
+            BuildTuple(part->position.GetX(), part->position.GetY(), part->position.GetZ()), "rot",
+            BuildTuple(part->rotation.GetX(), part->rotation.GetY(), part->rotation.GetZ(),
+                       part->rotation.GetW()),
+            "vel",
             BuildTuple(part->linearVelocity.GetX(), part->linearVelocity.GetY(),
                        part->linearVelocity.GetZ()));
 
@@ -372,20 +385,19 @@ void RagdollDealloc(RagdollObject *self) {
     JPH::RVec3 position = JPH::RVec3::sZero();
     if (py_pos && py_pos != Py_None) {
         PosStride p_stride = {};
-        // TODO(bug): a malformed `pos` is not fatal here -- the position is
-        // simply left unset and the call carries on *with the exception still
-        // pending*, so CPython reports the NULL/exception-set mismatch at the
-        // frame boundary rather than this call returning NULL. That is the
-        // pre-B3 behaviour verbatim; the pending error has to be reinstated
-        // because ParseError owns it now. Returning nullptr here is the fix,
-        // and it is a behaviour change: the part would no longer be added.
+        // A malformed `pos` is fatal. This used to raise the parse error and
+        // then carry on anyway, leaving the exception pending while the part
+        // went on to be added: the caller got a part it was told had failed,
+        // and CPython's frame boundary reported the mismatch as a SystemError
+        // rather than the ValueError the user caused. Returning nullptr here
+        // means the part is not added and the user sees their own error.
         const ParseResult parsed_pos = ParseVec3Into(py_pos, p_stride);
-        if (parsed_pos) {
-            position     = JPH::RVec3(p_stride.x, p_stride.y, p_stride.z);
-            has_position = true;
-        } else {
+        if (!parsed_pos) [[unlikely]] {
             RaiseParseError(parsed_pos.error());
+            return nullptr;
         }
+        position     = JPH::RVec3(p_stride.x, p_stride.y, p_stride.z);
+        has_position = true;
     }
 
     const PhysicsRagdollPartRequest request = {

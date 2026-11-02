@@ -1,4 +1,5 @@
 #include "vehicles/Vehicle.hpp"
+#include "core/Log.hpp"
 #include "physics/PhysicsWorldState.hpp"
 
 #include <Jolt/Physics/Body/Body.h>
@@ -10,8 +11,6 @@
 #include <Jolt/Physics/Vehicle/WheeledVehicleController.h>
 #include <algorithm>
 #include <cmath>
-#include <cstdarg>
-#include <cstdio>
 #include <mutex>
 #include <utility>
 
@@ -19,32 +18,33 @@ namespace CPH {
 
 namespace {
 
-// TODO(smell): PythonCommon.hpp has an identical DebugLog, but that header is
-// binding glue and nothing under src/ may include it. A shared native logger
-// belongs in src/core/; until then this is a local copy with the same format.
-void DebugLog(const char *format, ...) noexcept {
-#if defined(CULVERIN_DEBUG)
-    std::fputs("[Culverin] ", stderr);
-    va_list args;
-    va_start(args, format);
-    std::vfprintf(stderr, format, args);
-    va_end(args);
-    std::fputc('\n', stderr);
-#else
-    (void)format;
-#endif
-}
-
 // --- Wheeled wheel construction ---------------------------------------------
+
+// The maximum slope a wheel's ray may treat as drivable ground, in radians --
+// which is the unit Jolt's VehicleCollisionTesterRay takes (`inMaxSlopeAngle`,
+// default 80 degrees). Both call sites used to pass a bare 2.0f, i.e. 2 rad =
+// 114.6 degrees, past vertical, so cos(angle) went negative and the tester's
+// slope rejection could never fire: wheels happily found "ground" on vertical
+// walls. 80 degrees is Jolt's own default and keeps flat driving identical.
+constexpr float kMaxWheelSlopeAngle = JPH::DegreesToRadians(80.0f);
 
 constexpr float kWheelInertiaDefault = 0.5f;
 constexpr float kWheelSuspensionMin  = 0.05f;
 constexpr float kWheelSteerThreshold = 0.1f;
 constexpr float kWheelMaxSteerAngle  = 0.5f;
 
-// TODO(smell): "does this wheel steer" is inferred from the sign of the wheel's
-// local Z position, so a vehicle laid out along -Z gets no steering wheels at
-// all. Preserved as-is; the wheel config should say so explicitly.
+// Whether a wheel steers. The wheel config may say so explicitly; when it does
+// not, the historical inference applies -- a wheel with local z above the
+// threshold steers, everything else does not.
+//
+// The inference is what used to be the only rule, and it silently produced a
+// vehicle with no steering wheels whenever the chassis was laid out along -Z.
+// `steers=True` is how such a model now opts in, so no existing layout changes
+// meaning until it says so.
+bool WheelSteers(const WheelConfig &config) noexcept {
+    return config.steers.value_or(config.z > kWheelSteerThreshold);
+}
+
 JPH::Ref<JPH::WheelSettingsWV> MakeWheeledWheel(const WheelConfig &config,
                                                 const JPH::LinearCurve &friction_curve) {
     JPH::Ref<JPH::WheelSettingsWV> wheel = new JPH::WheelSettingsWV;
@@ -61,7 +61,11 @@ JPH::Ref<JPH::WheelSettingsWV> MakeWheeledWheel(const WheelConfig &config,
     wheel->mSuspensionDirection = JPH::Vec3(0, -1.0f, 0);
     wheel->mMaxBrakeTorque      = config.brakeTorque;
 
-    if (config.z > kWheelSteerThreshold) {
+    // Both members are set in one branch each, and nothing rewrites them
+    // afterwards. This used to re-assign mMaxSteerAngle below the branch,
+    // which recomputed the value the branch had already chosen and left
+    // mMaxHandBrakeTorque alone -- a dead store that read like intent.
+    if (WheelSteers(config)) {
         wheel->mMaxSteerAngle      = kWheelMaxSteerAngle;
         wheel->mMaxHandBrakeTorque = 0.0f;
     } else {
@@ -76,11 +80,6 @@ JPH::Ref<JPH::WheelSettingsWV> MakeWheeledWheel(const WheelConfig &config,
     // LinearCurve is a value type, so each wheel gets its own copy.
     wheel->mLongitudinalFriction = friction_curve;
     wheel->mLateralFriction      = friction_curve;
-
-    // TODO(smell): this rewrites mMaxSteerAngle with the value the branch above
-    // already chose and does not re-touch mMaxHandBrakeTorque. Harmless today,
-    // kept so the port stays reviewable.
-    wheel->mMaxSteerAngle = (config.z > kWheelSteerThreshold) ? kWheelMaxSteerAngle : 0.0f;
 
     return wheel;
 }
@@ -123,7 +122,6 @@ void SetupDifferentials(JPH::WheeledVehicleControllerSettings &controller, Drive
     controller.mDifferentials.push_back(JPH::VehicleDifferentialSettings(first, second));
 }
 
-constexpr float kTransmissionGearRatios[] = {2.66f, 1.78f, 1.30f, 1.00f, 0.74f, 0.50f};
 
 } // namespace
 
@@ -228,23 +226,25 @@ Vehicle::CreateWheeled(PhysicsWorld &world, BodyHandle chassis,
 
     // 3. Transmission.
     //
-    // TODO(bug): the caller's transmission settings are assembled here and then
-    // never copied into controller->mTransmission, exactly as before the port.
-    // The controller therefore runs on Jolt's defaults (Auto mode, Jolt's own
-    // gear ratios), so `transmission=` has never affected a wheeled vehicle.
-    // Preserved deliberately so replays stay identical; wiring it up is
-    // `controller->mTransmission = transmission;` and is a behaviour change.
-    JPH::VehicleTransmissionSettings transmission;
-    transmission.mMode           = static_cast<JPH::ETransmissionMode>(config.transmission.mode);
-    transmission.mClutchStrength = config.transmission.clutchStrength;
+    // This used to assemble the caller's settings into a local and then drop
+    // them on the floor -- the local was even cast to void to silence the
+    // unused warning -- so `transmission=` never reached the controller and a
+    // wheeled vehicle always ran on Jolt's defaults (Auto mode, Jolt's five
+    // stock gear ratios). WheeledVehicleController copies
+    // inSettings.mTransmission member-by-member in its constructor, so the
+    // assignment below is the whole fix.
+    controller->mTransmission.mMode = static_cast<JPH::ETransmissionMode>(
+        config.transmission.mode);
+    controller->mTransmission.mClutchStrength = config.transmission.clutchStrength;
     if (config.transmission.gearRatios.empty()) {
-        transmission.mGearRatios.assign(std::begin(kTransmissionGearRatios),
-                                        std::end(kTransmissionGearRatios));
+        // Empty means "the defaults". Jolt's own mGearRatios are now the
+        // source of truth instead of a Culverin-side copy of them, so this
+        // cannot drift from the engine again.
+        controller->mTransmission.mGearRatios = JPH::VehicleTransmissionSettings{}.mGearRatios;
     } else {
-        transmission.mGearRatios.assign(config.transmission.gearRatios.begin(),
-                                        config.transmission.gearRatios.end());
+        controller->mTransmission.mGearRatios.assign(config.transmission.gearRatios.begin(),
+                                                     config.transmission.gearRatios.end());
     }
-    (void)transmission;
 
     // The differential ratio is the one transmission setting that does reach
     // the controller, because it lives on the differentials.
@@ -255,13 +255,9 @@ Vehicle::CreateWheeled(PhysicsWorld &world, BodyHandle chassis,
     settings.mController = controller;
 
     constexpr auto kLayerDynamic = static_cast<JPH::ObjectLayer>(2);
-    // TODO(smell): the value is passed as the ray tester's maximum slope angle
-    // in radians, i.e. ~114.6 degrees -- past vertical, so the tester accepts
-    // essentially any surface normal. Preserved as-is.
-    constexpr float kCollisionTesterScale = 2.0f;
 
     const std::expected<JPH::Ref<JPH::VehicleConstraint>, Error> constraint =
-        CommitConstraint(world, *chassis_id, settings, kLayerDynamic, kCollisionTesterScale);
+        CommitConstraint(world, *chassis_id, settings, kLayerDynamic, kMaxWheelSlopeAngle);
     if (!constraint) {
         return std::unexpected(constraint.error());
     }
@@ -320,7 +316,7 @@ Vehicle::CreateTracked(PhysicsWorld &world, BodyHandle chassis,
     settings.mController = controller;
 
     constexpr auto kTrackedLayerDrivable = static_cast<JPH::ObjectLayer>(2);
-    constexpr float kTrackedCollisionTesterScale = 2.0f;
+    constexpr float kTrackedCollisionTesterScale = kMaxWheelSlopeAngle;
 
     const std::expected<JPH::Ref<JPH::VehicleConstraint>, Error> constraint =
         CommitConstraint(world, *chassis_id, settings, kTrackedLayerDrivable,
@@ -491,12 +487,26 @@ void Vehicle::SetTankInput(float left, float right, float brake) {
         transmission.Set(0, 0.0f);
     }
 
-    // TODO(smell): TrackedVehicleController::SetDriverInput asserts
-    // inLeftRatio != 0 && inRightRatio != 0, but set_tank_input(0, 0, 0) is a
-    // perfectly reasonable call and reaches this line. Release builds compile
-    // the assert out, so it has never fired; preserved as-is rather than
-    // silently clamped.
-    controller->SetDriverInput(throttle, left, right, brake);
+    // Jolt asserts that neither track ratio is zero, and it asserts for a
+    // reason: SyncLeftRightTracks divides by (left * right) when the two have
+    // opposite signs and by (right - left) otherwise, so a zero on both sides
+    // is 0/0 and stores NaN into both tracks' angular velocities. Release
+    // builds compile the assert out, so set_tank_input(0, 0, 0) -- an entirely
+    // reasonable "no steering input" call -- has been poisoning the tank's
+    // track state with NaN rather than being rejected.
+    //
+    // Both-zero is therefore read as the neutral multiplier Jolt wants. A
+    // single zero is left alone: that path's arithmetic is finite, and
+    // reinterpreting it would change a call that works today (a hard pivot is
+    // expressed with opposite signs, e.g. left=-1, right=1).
+    float left_ratio  = left;
+    float right_ratio = right;
+    if (left_ratio == 0.0f && right_ratio == 0.0f) {
+        left_ratio  = 1.0f;
+        right_ratio = 1.0f;
+    }
+
+    controller->SetDriverInput(throttle, left_ratio, right_ratio, brake);
 }
 
 // --- Queries -----------------------------------------------------------------
