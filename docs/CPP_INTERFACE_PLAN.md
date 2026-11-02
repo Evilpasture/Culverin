@@ -363,8 +363,10 @@ shrink considerably: `RMat44::GetQuaternion()` already rotates only the
 into a `Mat44`, zero the translation, convert), and `alignas(alignof(...))`
 out-parameter staging goes with it.
 
-Three pre-existing defects were found and **deliberately preserved**,
-each marked `TODO` at the site:
+Three pre-existing defects were found and preserved **at the time of the
+migration**, each marked `TODO` at the site. All three have since been fixed
+(see *Remediation status* below); the descriptions are kept because they
+explain what the migrated code was carrying.
 
 - `create_vehicle(transmission=...)` has never had any effect on a
   wheeled vehicle. The code builds a standalone transmission settings
@@ -393,6 +395,11 @@ sign of a wheel's local Z, so a −Z layout gets no steering wheels;
 `mMaxSteerAngle` is written twice in `create_single_wheel`; and
 `pack_transform` leaks its seven `PyFloat_FromDouble` references because
 `PyTuple_Pack` already increfs.
+
+All four have since been fixed: the tester's angle is `DegreesToRadians(80)`
+(Jolt's own default), steering can be stated per wheel with `WheelConfig::steers`,
+the duplicate store is gone, and `pack_transform` uses `PyTuple_SET_ITEM`
+(measured: 14,002 → 2 allocated blocks over 2,000 calls).
 
 *Landed so far — ships, and with them the last global proc table.*
 `Ship.cpp` no longer touches JoltC's listener machinery. JoltC's
@@ -878,12 +885,13 @@ Status of the migration:
   never holding both in the inverted order) instead of mutating the physics
   system after the lock was already released.
 
-  Preserved and marked with `TODO`s: `create_vehicle(transmission=...)` still
-  never reaches the controller (the settings are built and then discarded, so
-  the wheeled path runs Jolt's defaults); `WorldCreateVehicle` still takes the
-  extra world reference; `set_tank_input(0, 0, 0)` still reaches Jolt's
-  `inLeftRatio != 0` assert; the tester's 2.0 is still a slope angle rather
-  than a scale; steering is still inferred from the sign of a wheel's local Z.
+  Preserved and marked with `TODO`s at the time: `create_vehicle(transmission=...)`
+  never reached the controller (the settings were built and then discarded, so
+  the wheeled path ran Jolt's defaults); `WorldCreateVehicle` took an extra world
+  reference; `set_tank_input(0, 0, 0)` reached Jolt's `inLeftRatio != 0` assert;
+  the tester's 2.0 is a slope angle rather than a scale; steering was inferred
+  from the sign of a wheel's local Z. All five are now fixed — see
+  *Remediation status*.
   One ordering nuance: a malformed wheel dictionary is now rejected before the
   chassis handle is resolved rather than after, so a call that gets both wrong
   raises the wheel message. Every single-fault diagnostic is unchanged, byte
@@ -952,16 +960,21 @@ What moved:
 
 Preserved quirk-for-quirk, all now commented at the site:
 
-- a malformed `pos` in `RagdollSettingsAddPart` is *not* fatal: the
-  position is left unset, the call continues, and the exception stays
-  pending so CPython reports the NULL/exception-set mismatch. Re-raising
-  it through `ParseError` instead would have been a behaviour change;
-- `get_debug_info` still fetches `rotation` and still never surfaces it;
+- ~~a malformed `pos` in `RagdollSettingsAddPart` is *not* fatal~~ — **fixed.**
+  The position was left unset, the call continued, and the exception stayed
+  pending so CPython reported the NULL/exception-set mismatch as a
+  `SystemError`. The parse is now fatal (`ValueError`) and the part is not
+  added, so a caller is never handed a part it was told had failed;
+- ~~`get_debug_info` still fetches `rotation` and still never surfaces it~~ —
+  **fixed.** The rotation is now reported as `rot`, unit length;
 - the debug-info block is still over-allocated by `alignof(…)` and
   hand-aligned, because `Allocate()` is `PyMem_RawMalloc` and
   `PhysicsRagdollBodyDebugInfo` holds SIMD types (`alignof` 32);
-- `drive_to_pose` still returns `None` when the ragdoll or its world is
-  gone, and still reports a failed apply as `MemoryError`.
+- `drive_to_pose` returns `None` when the ragdoll or its world is gone, and
+  reports a failed apply as `MemoryError`. The silent-`None` path for a
+  *missing native object* is now a `RuntimeError`, as it is in
+  `get_body_handles` and `get_debug_info`; the "world is gone" case still
+  returns `None`, because that is a legitimate state rather than a bug.
 
 The `culverin_native_ecs`, `culverin_native_vehicles`,
 `culverin_native_characters`, `culverin_native_ragdolls` and
@@ -976,23 +989,27 @@ were missing, all now marked at the site:
 
 - `RagdollSettingsAddPart` carries on with a *pending* exception when `pos`
   is malformed (`TODO(bug)`; the old comment said "preserved quirk" but not
-  that it is a CPython contract violation).
+  that it is a CPython contract violation). **Fixed.**
 - `drive_to_pose` (and the same early return in `get_body_handles` /
   `get_debug_info`) reports success with `None` for a ragdoll whose native
-  object is missing (`TODO(smell)`).
+  object is missing (`TODO(smell)`). **Fixed** — `RuntimeError`.
 - The two divergent "modified after optimize" strings in the soft-body
-  binding had a comment but no marker (`TODO(smell)`).
+  binding had a comment but no marker (`TODO(smell)`). **Fixed** — one message.
 - `add_pinned_vertex`'s stated reason for being a no-op died with JoltC; the
-  array is writable now (`TODO(smell)`).
+  array is writable now (`TODO(smell)`). **Fixed** — the rationale is restated
+  against the current API.
 - `CPH::SoftBodySettings::AddFaces` indexes `materials` by face without stating
   that a non-empty span must be exactly `face_count` long (`TODO(bug)`,
-  unreachable from Python because the binding checks).
+  unreachable from Python because the binding checks). **Fixed** — the length
+  is validated at the source, not only at the binding.
 - `Arg` carries no default value, which is what limits `Thunk.hpp` to
-  all-required parsers (`TODO(smell)`).
-- `ValidateHandle` releases a lock it never took (`TODO(smell)`).
+  all-required parsers (`TODO(smell)`). **Documented as deliberate.**
+- `ValidateHandle` releases a lock it never took (`TODO(smell)`). **Fixed.**
 
-Nothing was fixed in that pass: each marker is a behaviour change waiting for
-a decision, and the gates stayed where they were.
+Nothing was fixed in that pass: each marker was a behaviour change waiting for
+a decision, and the gates stayed where they were. The follow-up remediation
+closed all but one; `Arg`'s missing default is kept on purpose, because it is
+what keeps `Thunk.hpp` to all-required parsers.
 
 ## Cross-platform build invariants
 
@@ -1077,3 +1094,43 @@ covered by contact/differential tests), and parser message drift
 three pre-existing diagnostic quirks it deliberately reproduces).
 Version coupling does not
 increase: JoltC was already version-locked to the same Jolt pin.
+
+## Remediation status
+
+The cleanups preserved by this migration were later resolved in one patch. This
+section is the index; the behaviour is documented where it is implemented.
+
+**Fixed — five defects.** `create_vehicle(transmission=...)` now reaches the
+controller (it had two independent causes: the settings were assembled into a
+local that was then discarded, *and* the Python side passed a dict where the
+parser reads attributes). `WorldCreateVehicle` takes exactly one reference to
+its world, matching `VehicleDealloc`. `set_tank_input(0, 0, 0)` no longer
+reaches Jolt's `inLeftRatio != 0` assert — both-zero is treated as neutral,
+because `SyncLeftRightTracks` divides left by right and `0/0` wrote `NaN` into
+both tracks. A malformed `pos` in `RagdollSettingsAddPart` is a `ValueError`
+with nothing added, instead of a `SystemError` from a pending exception.
+`CPH::SoftBodySettings::AddFaces` validates a non-empty `materials` span at the
+source.
+
+**Fixed — smells.** The vehicle collision tester's `2.0f` is now
+`DegreesToRadians(80)`, Jolt's own default, instead of a value named "scale"
+and passed as a slope angle. Steering can be stated per wheel with
+`WheelConfig::steers`, which is the only way to give a `-Z`-facing chassis
+steering wheels. `pack_transform` no longer leaks its seven
+`PyFloat_FromDouble` references. `get_debug_info` reports `rot`. Missing
+native objects raise `RuntimeError` instead of returning `None`. The soft-body
+binding emits one "modified after optimize" message. The duplicate
+`mMaxSteerAngle` store is gone. `ValidateHandle` no longer releases a lock it
+never took. `CommandBuffer` carries the object layer with the motion-type
+command instead of re-deriving it. `DebugLog` moved to `src/core/Log.hpp`. The
+divergent diagnostics in `Parser.hpp` are unchanged and now pinned by tests.
+
+**Documented as deliberate, not fixed.** `Arg` carries no default value, which
+is what limits `Thunk.hpp` to all-required parsers. `Character::SetPosition`
+snaps the previous frame too, because a teleport must not smear. `add_pinned_vertex`
+remains a no-op with a restated rationale. Jolt ignores `Transmission::mode`
+for wheeled vehicles — `mMode` is read only during serialisation, so
+`culverin.Manual` drives exactly like `culverin.Automatic`; the type still
+exposes the field because the tracked path uses it.
+
+`TODO(bug)` and `TODO(smell)` are now zero in `src/`.
