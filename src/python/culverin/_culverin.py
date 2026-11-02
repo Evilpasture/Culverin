@@ -98,6 +98,16 @@ class Engine:
         min_rpm: float = 1000.0,
         inertia: float = 0.5,
     ) -> None:
+        """
+        Defines the physical properties of a simulated internal combustion engine, passed to `create_vehicle` or `create_tracked_vehicle` as `engine=`.
+        **Arguments:**
+        - **`max_torque` (float):** Peak torque in Nm (default: `500.0`).
+        - **`max_rpm` (float):** Redline (default: `7000.0`).
+        - **`min_rpm` (float):** Idle speed (default: `1000.0`).
+        - **`inertia` (float):** Rotational inertia of the engine (default: `0.5`).
+        All four are readable and writable after construction.
+        **Not a dict:** `engine=` reads attributes, so a plain dictionary is accepted and silently ignored. Build one of these.
+        """
         self.max_torque = float(max_torque)
         self.max_rpm = float(max_rpm)
         self.min_rpm = float(min_rpm)
@@ -128,6 +138,14 @@ class Transmission:
     def __init__(
         self, gears: int = 5, clutch_strength: float = 2000.0, differential_ratio: float = 3.42
     ) -> None:
+        """
+        Base configuration for vehicle gearboxes, defining mechanical advantage and clutch properties. `Automatic` and `Manual` derive from it.
+        **Arguments:**
+        - **`gears` (int):** A **count**, not a list (default: `5`). It selects the first `gears` entries of the built-in stack `[2.66, 1.78, 1.30, 1.00, 0.74, 0.50]`. Assign `trans.ratios = [...]` afterwards to use your own.
+        - **`clutch_strength` (float):** Maximum torque the clutch transmits before slipping (default: `2000.0`).
+        - **`differential_ratio` (float):** The final drive ratio (default: `3.42`).
+        **Attributes:** `ratios`, `reverse_ratios` (default `[-2.90]`), plus the three above.
+        """
         self.clutch_strength = float(clutch_strength)
         self.differential_ratio = float(differential_ratio)
         presets = [2.66, 1.78, 1.30, 1.0, 0.74, 0.50]
@@ -162,6 +180,16 @@ class Automatic(Transmission):
         shift_up_rpm: float = 5000.0,
         shift_down_rpm: float = 2000.0,
     ) -> None:
+        """
+        An automated gearbox configuration. Automatically handles gear transitions based on engine RPM.
+        **Arguments:**
+        - **`gears` (int):** A count, as above (default: `5`).
+        - **`clutch_strength` (float):** Default `2000.0`.
+        - **`differential_ratio` (float):** Default `3.42`.
+        - **`shift_up_rpm` (float):** RPM at which the gearbox upshifts (default: `5000.0`).
+        - **`shift_down_rpm` (float):** RPM at which it downshifts (default: `2000.0`).
+        **Attributes:** all of `Transmission`'s, plus `shift_up_rpm`, `shift_down_rpm` and `mode == 0`.
+        """
         super().__init__(gears, clutch_strength, differential_ratio)
         self.mode = 0
         self.shift_up_rpm = float(shift_up_rpm)
@@ -184,6 +212,15 @@ class Manual(Transmission):
     def __init__(
         self, gears: int = 5, clutch_strength: float = 5000.0, differential_ratio: float = 3.42
     ) -> None:
+        """
+        A manual gearbox configuration.
+        **Arguments:**
+        - **`gears` (int):** A count, as above (default: `5`).
+        - **`clutch_strength` (float):** Default **`5000.0`** — deliberately higher than `Transmission`'s `2000.0`, for firmer shifts.
+        - **`differential_ratio` (float):** Default `3.42`.
+        **Attributes:** all of `Transmission`'s, plus `mode == 1`.
+        **On `mode`:** Jolt reads `Transmission::mode` only while serialising a wheeled vehicle, so an `Automatic` and a `Manual` drive identically there. The tracked path does use it.
+        """
         super().__init__(gears, clutch_strength, differential_ratio)
         self.mode = 1
 

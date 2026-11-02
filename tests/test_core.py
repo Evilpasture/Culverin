@@ -2575,9 +2575,18 @@ class TestDocumentation(unittest.TestCase):
                 # 3. Extract Docstring
                 actual_doc = member.__doc__
 
+                # A missing docstring here is almost never a missing docstring:
+                # it is DOCS.md being newer than the *installed* package. The
+                # staleness check below is separate so this failure names the
+                # real cause instead of sending you looking for a typo.
                 self.assertIsNotNone(
                     actual_doc,
-                    f"STITCHING FAILURE: {key} exists in DOCS.md but has no runtime __doc__",
+                    f"STITCHING FAILURE: {key} exists in DOCS.md but has no runtime __doc__\n"
+                    f"  importing culverin from: {culverin.__file__}\n"
+                    f"  version {getattr(culverin, '__version__', 'unknown')}\n"
+                    f"  If that path is a site-packages copy, the tests are running "
+                    f"against an installed build that predates DOCS.md. "
+                    f"Reinstall the package (or put src/python on PYTHONPATH) and retry.",
                 )
 
                 # 4. Content Match
